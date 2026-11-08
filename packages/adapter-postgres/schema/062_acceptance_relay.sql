@@ -166,3 +166,23 @@ BEGIN
 END $$;
 CREATE TRIGGER temporary_session_retirement_guard BEFORE UPDATE ON runtime_session
   FOR EACH ROW EXECUTE FUNCTION guard_temporary_session_retirement();
+
+-- A persisted acceptance handoff that cannot start is a Leader decision, not a silent orphan.
+-- The reason may live on a pending arrangement that will retry after the capability changes.
+-- One notice per arrangement is enough; the current work view carries later changes.
+ALTER TABLE leader_result_notice DROP CONSTRAINT leader_result_notice_kind_check;
+ALTER TABLE leader_result_notice ADD CONSTRAINT leader_result_notice_kind_check CHECK (kind IN
+  ('task_todo','delivery','observation','task_question','task_blocker',
+   'run_without_submission','run_submission_blocked','task_attention','acceptance_blocked'));
+CREATE FUNCTION leader_result_notice_from_acceptance_block() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF NEW.blocked_reason IS NOT NULL AND
+    (OLD.state IS DISTINCT FROM NEW.state OR OLD.blocked_reason IS DISTINCT FROM NEW.blocked_reason) THEN
+    PERFORM enqueue_leader_result_notice(NEW.project_id,'acceptance_blocked',NEW.relay_id,NEW.task_id,
+      NEW.task_revision_id,NEW.session_id,NEW.arranged_by,
+      'acceptance:'||NEW.relay_id||':'||COALESCE(NEW.blocked_reason,'unspecified'),NEW.updated_at);
+  END IF;
+  RETURN NEW;
+END $$;
+CREATE TRIGGER leader_result_notice_acceptance_block AFTER UPDATE ON task_acceptance_relay
+  FOR EACH ROW EXECUTE FUNCTION leader_result_notice_from_acceptance_block();

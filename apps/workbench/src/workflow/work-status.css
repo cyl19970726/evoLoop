@@ -15,3 +15,13 @@
 .leader-doc-time{display:block;color:#8490a2;font-size:10px;margin-top:4px}.work-index .table-wrap td>span{display:block}.work-index .table-wrap td>small{display:block;color:#7d8a9c;font-size:10px;margin-top:4px}
 .work-index .leader-doc-kind{min-width:64px}.work-index .leader-doc-status{min-width:142px}.work-index .leader-doc-revision{min-width:190px}.work-index .leader-doc-status small,.work-index .leader-doc-revision small{white-space:nowrap}
 @media(max-width:680px){.leader-work{margin-top:14px}.leader-work>header{align-items:flex-start;flex-direction:column;padding:15px}.leader-work>header>p{text-align:left}.leader-work-phases{padding:10px 14px}.leader-work-list li{grid-template-columns:1fr auto;gap:8px;padding:13px 14px}.leader-work-list li>.leader-phase{grid-column:1/-1}.leader-action-key{grid-column:2;grid-row:2}.leader-work>footer{padding:10px 14px}}
+
+.leader-capacity-summary{margin:0;padding:12px 20px 4px;color:#40536b;font-size:12px}
+.leader-capacity{margin:20px 0 24px;border:1px solid #cfd9e8;border-left:4px solid #2c5d87;background:linear-gradient(120deg,#f8fbfe 0%,#f2f6fa 62%,#eaf1f7 100%);border-radius:10px;overflow:hidden}
+.leader-capacity>header{display:flex;justify-content:space-between;gap:20px;align-items:flex-end;padding:18px 20px 14px;border-bottom:1px solid #dbe4ef}
+.leader-capacity h2{font-size:18px;margin:2px 0 0;color:#1c334e}.leader-capacity>header>p{margin:0;color:#6d7c91;font-size:11px;text-align:right}
+.leader-capacity-list{list-style:none;margin:0;padding:0}
+.leader-capacity-list li{display:grid;grid-template-columns:120px minmax(0,1fr) minmax(0,1fr) minmax(0,1fr) auto;gap:12px;align-items:center;padding:10px 20px;border-bottom:1px solid #e3eaf2;font-size:11px;color:#5b6c82}
+.leader-capacity-list li:last-child{border-bottom:0}
+.leader-capacity-list a{font-weight:600;white-space:nowrap}
+@media(max-width:680px){.leader-capacity{margin-top:14px}.leader-capacity>header{align-items:flex-start;flex-direction:column;padding:15px}.leader-capacity>header>p{text-align:left}.leader-capacity-summary{padding:10px 14px 2px}.leader-capacity-list li{grid-template-columns:1fr auto;gap:6px;padding:10px 14px}.leader-capacity-list li span{grid-column:1/-1}}

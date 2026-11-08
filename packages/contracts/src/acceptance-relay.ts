@@ -1,6 +1,8 @@
 import { z } from "zod";
+import type { LeaderWorkPage, LeaderWorkTask } from "./work-index.js";
 
 const id = z.uuid();
+const text = z.string().trim().min(1).max(4000);
 export const acceptanceArrangeSchema = z.strictObject({
   projectId:id,operationId:id,relayId:id,taskId:id,expectedTaskVersion:z.number().int().positive(),
   deliveryId:id,stage:z.enum(["candidate","formal"]),scopeKey:z.string().trim().min(1).max(120),
@@ -20,16 +22,52 @@ export const acceptanceArrangeSchema = z.strictObject({
 });
 export type AcceptanceArrangeInput=z.infer<typeof acceptanceArrangeSchema>;
 
+export const acceptanceReadSchema=z.strictObject({
+  projectId:id,taskId:id,relayId:id,operationId:id,
+  expectedVersion:z.number().int().positive(),evidence:text,
+});
+export const acceptanceObserveSchema=z.strictObject({
+  projectId:id,taskId:id,relayId:id,operationId:id,
+  expectedVersion:z.number().int().positive(),observationId:id,
+});
+export type AcceptanceReadInput=z.infer<typeof acceptanceReadSchema>;
+export type AcceptanceObserveInput=z.infer<typeof acceptanceObserveSchema>;
+
 /** Read projection: saving, delivery, native use and observation are separate facts. */
 export interface AcceptanceRelayView {
-  relayId:string; taskRevisionId:string; deliveryId:string; stage:"candidate"|"formal";
+  relayId:string; version:number; operationId:string; supersedesRelayId:string|null;
+  arrangedBy:string; taskId:string; taskRevisionId:string; deliveryId:string; stage:"candidate"|"formal";
   scopeKey:string; scopeDescription:string; entrypoint:string|null; publicationRef:string|null;
-  mode:"human"|"leader"|"session"; recipientActorId:string; sessionId:string|null;
-  state:"pending"|"linked"|"blocked"|"superseded"|"released";
-  blockedReason:string|null; messageId:string|null; messageState:string|null;
+  reason:string; mode:"human"|"leader"|"session"; recipientActorId:string; sessionId:string|null;
+  roleId:string|null; senderActorId:string|null; state:"pending"|"linked"|"blocked"|"superseded"|"released";
+  blockedReason:string|null; messageId:string|null; messageOperationId:string|null; messageState:string|null;
   processingState:string|null; nativeTurnId:string|null; readActorId:string|null;
   humanReadAt:string|null; observationId:string|null; observationResult:string|null;
-  observationActorId:string|null; createdAt:string;
+  observationActorId:string|null; evidenceLevel:string|null;
+  /** Exact session binding is the strongest independence fact stored; actor labels alone are never proof. */
+  independenceEvidence:"human_credential"|"distinct_runtime_session"|"unverified";
+  createdAt:string; updatedAt:string;
+}
+
+export interface AcceptanceCapacityView {
+  sessionId:string; roleId:string; sessionActorId:string; cwd:string; state:string;
+  nativeThreadId:string|null; tenure:"resident"|"temporary"|"unknown";
+  isLeader:boolean; activeRuns:number; pendingMessages:number; queueEntries:number;
+  openAssignments:number; openAcceptance:number; persistedWorkIdle:boolean;
+  missingCapabilities:string[]; readyForAcceptance:boolean;
+}
+
+export interface AcceptanceOverviewView {
+  work: LeaderWorkPage<LeaderWorkTask>|null;
+  capacity: AcceptanceCapacityView[];
+  observedAt:string;
+}
+
+export interface AcceptanceHumanItem {
+  projectId:string; relayId:string; taskId:string; taskRevisionId:string; deliveryId:string;
+  stage:"candidate"|"formal"; scopeKey:string; scopeDescription:string;
+  entrypoint:string|null; publicationRef:string|null; version:number;
+  createdAt:string; readAt:string|null; observationId:string|null;
 }
 
 export const retirementApprovalSchema=z.strictObject({operationId:id,decisionId:id,closeOperationId:id,

@@ -19,7 +19,7 @@ export interface LeaderResultNotice {
   projectId: string;
   id: string;
   kind: "task_todo"|"delivery"|"observation"|"task_question"|"task_blocker"|
-    "run_without_submission"|"run_submission_blocked"|"task_attention";
+    "run_without_submission"|"run_submission_blocked"|"task_attention"|"acceptance_blocked";
   sourceEventId: string;
   sourceSessionId: string | null;
   sourceActorId: string | null;

@@ -86,6 +86,8 @@ const help = {
     "work acceptance --project UUID [--limit 1..100 --cursor CURSOR] (Leader stage and persisted Session capacity)",
     "work acceptance TASK_UUID --project UUID (exact acceptance arrangements and dispatch outcomes)",
     "work acceptance mine --project UUID (human recipient's acceptance inbox)",
+    "work acceptance read RELAY_UUID --project UUID --task TASK_UUID --file BODY.json (named human records reading an arrangement)",
+    "work acceptance observe RELAY_UUID --project UUID --task TASK_UUID --file BODY.json (recipient links their existing observation)",
     "work retirement SESSION_UUID --project UUID (temporary Session blockers, decision and archive readback)",
     "request acceptance.assign --project UUID --id TASK_UUID --file BODY.json (persist one exact Delivery/recipient handoff)",
     "request session.retirement.approve --project UUID --id SESSION_UUID --file BODY.json (approve a temporary instance's exact close operation)",
@@ -270,6 +272,17 @@ async function dispatch(args: Args, env: Environment, io: IO): Promise<unknown> 
   const projectId = project(), prefix = `/api/projects/${projectId}`;
   if (action === "work") {
     if (args.words[1] === "acceptance") {
+      if (args.words[2] === "read" || args.words[2] === "observe") {
+        check(args,4,["project","task","file"]);
+        const file=option(args,"file");if(!file)throw new UsageError("Acceptance read/observe requires --file BODY.json.");
+        const raw=JSON.parse(await readFile(file,"utf8")) as Record<string,unknown>;
+        raw.relayId=uuid(args.words[3],"Acceptance arrangement");
+        const task=option(args,"task")??(typeof raw.taskId==="string"?raw.taskId:undefined);
+        if(!task)throw new UsageError("Acceptance read/observe requires --task TASK_UUID.");
+        raw.taskId=uuid(task,"Task");
+        const intent=prepareRequest(`acceptance.${args.words[2]}`,project(),raw,args.words[3]);
+        return dispatchMutation(client,store,origin,token,intent,value=>io.stderr(JSON.stringify(value)+"\n"),await verifiedActor());
+      }
       check(args,args.words[2]?3:2,["project","limit","cursor"]);
       if(args.words[2] === "mine")return client.get(`${prefix}/acceptance-relay/mine`);
       if(args.words[2])return client.get(`${prefix}/tasks/${uuid(args.words[2],"Task")}/acceptance-relay`);

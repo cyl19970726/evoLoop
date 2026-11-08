@@ -2,7 +2,8 @@ import type { FastifyInstance } from "fastify";
 import type { WorkflowService } from "@evoloop/core";
 import { DomainError } from "@evoloop/contracts/ports";
 import { z } from "zod";
-import { acceptanceArrangeSchema, retirementApprovalSchema } from "@evoloop/contracts/acceptance-relay";
+import { acceptanceArrangeSchema, acceptanceObserveSchema, acceptanceReadSchema,
+  retirementApprovalSchema } from "@evoloop/contracts/acceptance-relay";
 import type { AcceptanceRelayService } from "./service.js";
 import type { LeaderWorkIndexReader } from "../work-management/work-index.js";
 
@@ -18,7 +19,8 @@ export function registerAcceptanceRelayRoutes(app: FastifyInstance, workflow: Wo
     await workflow.getProject(request.principal,p.projectId);
     return {work:workIndex ? await workIndex.index(request.principal,p.projectId,
       {view:"tasks",limit:q.limit,includeClosed:false,...(q.cursor?{cursor:q.cursor}:{})}) : null,
-      capacity:await relay.capacity(request.principal,p.projectId)};
+      capacity:await relay.capacity(request.principal,p.projectId),
+      observedAt:new Date().toISOString()};
   });
   app.get("/api/projects/:projectId/acceptance-relay/mine", async request => {
     const p=z.strictObject({projectId:z.uuid()}).parse(request.params);
@@ -46,8 +48,9 @@ export function registerAcceptanceRelayRoutes(app: FastifyInstance, workflow: Wo
   });
   app.post("/api/projects/:projectId/tasks/:taskId/acceptance-relay/:relayId/read", async request => {
     const p=relayParams.parse(request.params);
-    const body=z.strictObject({operationId:z.uuid(),expectedVersion:z.number().int().positive(),
-      evidence:z.string().trim().min(1).max(4000)}).parse(request.body);
+    const body=acceptanceReadSchema.parse(request.body);
+    if(p.projectId!==body.projectId||p.taskId!==body.taskId||p.relayId!==body.relayId)
+      throw new DomainError("TARGET_MISMATCH","Route and human read target differ");
     if(!request.principal)throw new DomainError("FORBIDDEN","Authentication required");
     await workflow.getProject(request.principal,p.projectId);
     await relay.humanRead(request.principal,p.projectId,p.taskId,p.relayId,body.operationId,body.expectedVersion,body.evidence);
@@ -55,8 +58,9 @@ export function registerAcceptanceRelayRoutes(app: FastifyInstance, workflow: Wo
   });
   app.post("/api/projects/:projectId/tasks/:taskId/acceptance-relay/:relayId/observation", async request => {
     const p=relayParams.parse(request.params);
-    const body=z.strictObject({operationId:z.uuid(),expectedVersion:z.number().int().positive(),
-      observationId:z.uuid()}).parse(request.body);
+    const body=acceptanceObserveSchema.parse(request.body);
+    if(p.projectId!==body.projectId||p.taskId!==body.taskId||p.relayId!==body.relayId)
+      throw new DomainError("TARGET_MISMATCH","Route and observation target differ");
     if(!request.principal)throw new DomainError("FORBIDDEN","Authentication required");
     await workflow.getProject(request.principal,p.projectId);
     await relay.linkObservation(request.principal,p.projectId,p.taskId,p.relayId,body.observationId,

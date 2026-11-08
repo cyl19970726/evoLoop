@@ -280,6 +280,7 @@ const noticeLabel: Record<LeaderNotice["kind"], string> = {
   task_question: "关键问题", task_blocker: "执行受阻", run_without_submission: "Run 终态缺交付",
   run_submission_blocked: "Run 封存受阻",
   task_attention: "任务关注待跟进",
+  acceptance_blocked: "验收投递受阻",
 };
 
 export function LeaderTaskFacts({ leader, detail, projectId, token, responsibleName }: {

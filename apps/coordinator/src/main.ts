@@ -486,21 +486,28 @@ const messageService = new SessionMessageService({ uow, clock, ids, grantFor: as
   if (!grant || !await currentProjectWriter(message.projectId, grant.receiverActorId)) return null;
   try { return await realpath(session.cwd) === session.cwd ? grant : null; } catch { return null; }
 } });
+const acceptanceCapabilityProblems = async ({projectId,session,senderActorId,receiverActorId}:
+  {projectId:string;session:RuntimeSessionRecord;senderActorId:string;receiverActorId:string}) => {
+  const problems:string[]=[];
+  const current=await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE);
+  if(session.state!=="ready"||!session.nativeThreadId||!await currentSessionExecutionAuthority(session))
+    problems.push("SESSION_NOT_READY");
+  if(!await currentProjectWriter(projectId,senderActorId))problems.push("SENDER_IDENTITY_UNAVAILABLE");
+  if(!await currentProjectWriter(projectId,receiverActorId))problems.push("RECEIVER_IDENTITY_UNAVAILABLE");
+  const material=current.runtime?.enabled ? selectMaterialCli(current.runtime.materialCli,projectId,
+    session.id,session.actorId,undefined,session.roleId) : null;
+  if(material?.cliActorId!==receiverActorId)problems.push("RECIPIENT_BINDING_MISSING");
+  if(!current.sessionMessages?.enabled||!current.sessionMessages.grants.some(g=>g.enabled&&g.projectId===projectId&&
+    g.sessionId===session.id&&g.senderActorId===senderActorId&&g.receiverActorId===receiverActorId&&
+    g.receiverRoleId===session.roleId&&g.cwd===session.cwd))problems.push("MESSAGE_GRANT_MISSING");
+  return [...new Set(problems)];
+};
 const acceptanceRelay = new AcceptanceRelayService({pool,workflow:service,messages:messageService,
   principals:currentIdentity,canWrite:lease.canWrite,
   leaderSession:async projectId => (await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE)).leaderResultNotices?.targets
     .find(x=>x.projectId===projectId)?.sessionId??null,
-  qualify:async ({projectId,session,senderActorId,receiverActorId}) => {
-    const current=await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE);
-    if(session.state!=="ready"||!session.nativeThreadId||!await currentSessionExecutionAuthority(session))return "SESSION_NOT_READY";
-    if(!await currentProjectWriter(projectId,senderActorId)||!await currentProjectWriter(projectId,receiverActorId))return "BUSINESS_IDENTITY_UNAVAILABLE";
-    const material=current.runtime?.enabled ? selectMaterialCli(current.runtime.materialCli,projectId,session.id,session.actorId,undefined,session.roleId) : null;
-    if(material?.cliActorId!==receiverActorId)return "RECIPIENT_BINDING_MISSING";
-    if(!current.sessionMessages?.enabled||!current.sessionMessages.grants.some(g=>g.enabled&&g.projectId===projectId&&
-      g.sessionId===session.id&&g.senderActorId===senderActorId&&g.receiverActorId===receiverActorId&&
-      g.receiverRoleId===session.roleId&&g.cwd===session.cwd))return "MESSAGE_GRANT_MISSING";
-    return null;
-  }});
+  qualify:async input => (await acceptanceCapabilityProblems(input))[0]??null,
+  capabilities:acceptanceCapabilityProblems});
 let acceptanceTickBusy=false;
 const acceptanceTimer=setInterval(()=>{
   if(acceptanceTickBusy||!lease.canWrite())return;

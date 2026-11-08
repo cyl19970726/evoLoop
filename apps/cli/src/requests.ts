@@ -4,7 +4,8 @@ import { z, knowledgeCandidateInputSchema, knowledgeOperationInputSchema, knowle
 import { runtimeReconcileSchema, runtimeCompactionIntentSchema } from "@evoloop/contracts/runtime";
 import { ordinaryRunSubmissionSchema } from "@evoloop/contracts/ordinary-run-submission";
 import { leaderNoticeRecoverySchema } from "@evoloop/contracts/leader-notices";
-import { acceptanceArrangeSchema, retirementApprovalSchema } from "@evoloop/contracts/acceptance-relay";
+import { acceptanceArrangeSchema, acceptanceObserveSchema, acceptanceReadSchema,
+  retirementApprovalSchema } from "@evoloop/contracts/acceptance-relay";
 import { ArtifactReferenceError, parseArtifactReference } from "@evoloop/contracts/artifact-reference";
 import { formalSourceDecisionSchema, registerGitReferenceSchema, taskExternalReferenceSchema } from "@evoloop/contracts/references";
 import type { Intent, Recovery } from "./receipts.js";
@@ -15,7 +16,7 @@ export type RequestName =
   | "reference.git-register" | "reference.formal-decide" | "reference.task-decide"
   | "work.plan.set" | "work.dependencies.set" | "work.review.set"
   | "leader.notice.recover"
-  | "acceptance.assign" | "session.retirement.approve"
+  | "acceptance.assign" | "acceptance.read" | "acceptance.observe" | "session.retirement.approve"
   | "runtime.reconcile" | "runtime.recover" | "runtime.compact.start" | "runtime.compact.reconcile" | "ordinary.submit";
 
 export class RequestInputError extends Error {
@@ -45,6 +46,8 @@ const help: readonly RequestHelp[] = [
   { name: "work.review.set", requiredBodyKeys: ["operationId", "expectedTaskVersion", "expectedTaskRevisionId", "expectedWorkChangeSequence", "decision", "reason"], targetId: "taskId", operationId: "body", recovery: "core" },
   { name: "leader.notice.recover", requiredBodyKeys: ["expectedOperationId", "newNoticeId", "newMessageId", "newOperationId", "reason"], targetId: "original noticeId", operationId: "localReceipt", recovery: "manual" },
   { name: "acceptance.assign", requiredBodyKeys: ["projectId","taskId","operationId","relayId","expectedTaskVersion","deliveryId","stage","scopeKey","mode","recipientActorId"], targetId: "taskId", operationId: "body", recovery: "manual" },
+  { name: "acceptance.read", requiredBodyKeys: ["projectId","taskId","relayId","operationId","expectedVersion","evidence"], targetId: "relayId", operationId: "body", recovery: "manual" },
+  { name: "acceptance.observe", requiredBodyKeys: ["projectId","taskId","relayId","operationId","expectedVersion","observationId"], targetId: "relayId", operationId: "body", recovery: "manual" },
   { name: "session.retirement.approve", requiredBodyKeys: ["operationId","decisionId","closeOperationId","expectedSessionVersion","reason","handoffEvidence"], targetId: "sessionId", operationId: "body", recovery: "manual" },
   { name: "runtime.reconcile", requiredBodyKeys: ["expectedVersion", "reason"], targetId: "runId", operationId: "localReceipt", recovery: "manual" },
   { name: "runtime.recover", requiredBodyKeys: [], targetId: null, operationId: "localReceipt", recovery: "manual" },
@@ -99,6 +102,8 @@ function bodySchema(name: string) {
     case "work.review.set": return workReviewBody;
     case "leader.notice.recover": return leaderNoticeRecoverySchema;
     case "acceptance.assign": return acceptanceArrangeSchema;
+    case "acceptance.read": return acceptanceReadSchema;
+    case "acceptance.observe": return acceptanceObserveSchema;
     case "session.retirement.approve": return retirementApprovalSchema;
     case "runtime.reconcile": return runtimeReconcileSchema;
     case "runtime.compact.start": return runtimeCompactionIntentSchema;
@@ -264,6 +269,22 @@ export function prepareRequest(name: string, projectIdInput: string, bodyInput: 
     case "acceptance.assign": {
       path = `${base}/tasks/${id}/acceptance-relay`;
       recovery = {kind:"manual",path:`${base}/tasks/${id}/acceptance-relay`};
+      confirmation = "ack";
+      break;
+    }
+    case "acceptance.read": {
+      if("relayId" in body&&body.relayId!==id)
+        throw new RequestInputError("acceptance.read body relayId differs from route target");
+      path = `${base}/tasks/${String(body.taskId)}/acceptance-relay/${id}/read`;
+      recovery = {kind:"manual",path:`${base}/tasks/${String(body.taskId)}/acceptance-relay`};
+      confirmation = "ack";
+      break;
+    }
+    case "acceptance.observe": {
+      if("relayId" in body&&body.relayId!==id)
+        throw new RequestInputError("acceptance.observe body relayId differs from route target");
+      path = `${base}/tasks/${String(body.taskId)}/acceptance-relay/${id}/observation`;
+      recovery = {kind:"manual",path:`${base}/tasks/${String(body.taskId)}/acceptance-relay`};
       confirmation = "ack";
       break;
     }

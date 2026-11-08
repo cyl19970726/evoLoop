@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import type { Pool } from "pg";
 import type { Principal, RuntimeSessionRecord } from "@evoloop/contracts";
 import { DomainError } from "@evoloop/contracts/ports";
-import { type AcceptanceArrangeInput } from "@evoloop/contracts/acceptance-relay";
+import { type AcceptanceArrangeInput, type AcceptanceCapacityView } from "@evoloop/contracts/acceptance-relay";
 import type { WorkflowService } from "@evoloop/core";
 import type { SessionMessageService } from "@evoloop/core/session-messages";
 export interface AcceptanceRelayRecord {
@@ -40,7 +40,7 @@ const required = <T>(value: T | null, label: string): T => {
   return value;
 };
 const messageContent = (item: AcceptanceRelayRecord) =>
-  `验收接力 ${item.stage} / ${item.scopeKey}\nTask ${item.taskId}@${item.taskRevisionId}\n当前 Delivery ${item.deliveryId}。范围：${item.scopeDescription}。入口：${item.entrypoint??"按当前交付读取"}。请先读当前 Task、固定 Delivery 和验收安排 ${item.relayId}，按声明范围独立使用；本人以 ${item.recipientActorId} 留 observation，回报原 Leader。保存或排队不代表已开始、已使用或通过。`;
+  `验收接力 ${item.stage} / ${item.scopeKey}\nTask ${item.taskId}@${item.taskRevisionId}\n当前 Delivery ${item.deliveryId}。范围：${item.scopeDescription}。入口：${item.entrypoint??"按当前交付读取"}。请先读当前 Task、固定 Delivery 和验收安排 ${item.relayId}，按声明范围独立使用；先用 session.message.receipt 记录本人已读，再以 ${item.recipientActorId} 留 observation，回报原 Leader。保存或排队不代表已开始、已使用或通过。`;
 
 /** A durable handoff to the existing ordinary message queue. The saved message ID is never replaced on an unknown outcome. */
 export class AcceptanceRelayService {
@@ -49,11 +49,15 @@ export class AcceptanceRelayService {
     principals(): Promise<Principal[]>; canWrite(): boolean;
     leaderSession(projectId: string): Promise<string | null>;
     qualify(input: { projectId: string; session: RuntimeSessionRecord; senderActorId: string; receiverActorId: string }): Promise<string | null>;
+    /** Capability gaps for one exact Session and sender. Read-only; no grant is created here. */
+    capabilities(input: { projectId: string; session: RuntimeSessionRecord; senderActorId: string; receiverActorId: string }): Promise<string[]>;
   }) {}
 
   async arrange(principal: Principal, input: AcceptanceArrangeInput): Promise<AcceptanceRelayRecord> {
     if (!principal.projectIds.includes(input.projectId) || !principal.permissions.includes("review"))
       throw new DomainError("FORBIDDEN", "Acceptance arrangement requires project review authority");
+    if (input.mode !== "human" && input.senderActorId !== principal.actorId)
+      throw new DomainError("SENDER_MISMATCH", "The arranging reviewer must be the declared message sender");
     const client = await this.deps.pool.connect();
     try {
       await client.query("BEGIN");
@@ -156,7 +160,10 @@ export class AcceptanceRelayService {
     const result = await this.deps.pool.query(`SELECT a.*,m.state AS message_state,m.blocked_reason AS message_blocked_reason,
       p.state AS processing_state,p.native_turn_id,rr.actor_id AS read_actor_id,
       hr.read_at AS human_read_at,l.evidence_level,
-      o.result AS observation_result,o.observer AS observation_actor_id,o.observation_id
+      o.result AS observation_result,o.observer AS observation_actor_id,o.observation_id,
+      (SELECT r.session_id FROM delivery d JOIN runtime_run r
+        ON r.project_id=d.project_id AND r.run_id=d.run_id
+        WHERE d.project_id=a.project_id AND d.delivery_id=a.delivery_id LIMIT 1) AS author_session_id
       FROM task_acceptance_relay a
       LEFT JOIN session_message m ON m.project_id=a.project_id AND m.message_id=a.message_id
       LEFT JOIN session_message_processing p ON p.project_id=m.project_id AND p.message_id=m.message_id
@@ -170,13 +177,16 @@ export class AcceptanceRelayService {
       processingState:r.processing_state ?? null, nativeTurnId:r.native_turn_id ?? null,
       readActorId:r.read_actor_id ?? null, humanReadAt:r.human_read_at ? new Date(r.human_read_at).toISOString() : null,
       observationId:r.observation_id ?? null, observationResult:r.observation_result ?? null,
-      observationActorId:r.observation_actor_id ?? null, evidenceLevel:r.evidence_level ?? null }));
+      observationActorId:r.observation_actor_id ?? null, evidenceLevel:r.evidence_level ?? null,
+      independenceEvidence:r.mode === "human" ? "human_credential" :
+        r.session_id && r.author_session_id && r.session_id !== r.author_session_id
+          ? "distinct_runtime_session" : "unverified" }));
   }
 
   async mine(principal: Principal, projectId: string): Promise<unknown[]> {
     if (!principal.projectIds.includes(projectId) || !principal.permissions.includes("read"))
       throw new DomainError("FORBIDDEN", "Project read authority required");
-    const result = await this.deps.pool.query(`SELECT a.project_id,a.relay_id,a.task_id,a.task_revision_id,a.delivery_id,
+    const result = await this.deps.pool.query(`SELECT a.project_id,a.relay_id,a.task_id,a.task_revision_id,a.delivery_id,a.version,
       a.stage,a.scope_key,a.scope_description,a.entrypoint,a.publication_ref,a.created_at,
       hr.read_at,l.observation_id
       FROM task_acceptance_relay a
@@ -187,7 +197,7 @@ export class AcceptanceRelayService {
       ORDER BY a.created_at DESC,a.relay_id DESC LIMIT 100`,[projectId,principal.actorId]);
     return result.rows.map(r=>({projectId:r.project_id,relayId:r.relay_id,taskId:r.task_id,
       taskRevisionId:r.task_revision_id,deliveryId:r.delivery_id,stage:r.stage,scopeKey:r.scope_key,
-      scopeDescription:r.scope_description,entrypoint:r.entrypoint,publicationRef:r.publication_ref,
+      scopeDescription:r.scope_description,entrypoint:r.entrypoint,publicationRef:r.publication_ref,version:r.version,
       createdAt:new Date(r.created_at).toISOString(),readAt:r.read_at ? new Date(r.read_at).toISOString() : null,
       observationId:r.observation_id ?? null}));
   }
@@ -196,7 +206,8 @@ export class AcceptanceRelayService {
   async capacity(principal: Principal, projectId: string): Promise<unknown[]> {
     if (!principal.projectIds.includes(projectId) || !principal.permissions.includes("read"))
       throw new DomainError("FORBIDDEN", "Project read authority required");
-    const result = await this.deps.pool.query(`SELECT s.session_id,s.role_id,s.state,s.native_thread_id,
+    const leaderSession = await this.deps.leaderSession(projectId);
+    const result = await this.deps.pool.query(`SELECT s.session_id,s.role_id,s.actor_id,s.cwd,s.state,s.native_thread_id,
       p.tenure,
       (SELECT count(*)::int FROM runtime_run r WHERE r.project_id=s.project_id AND r.session_id=s.session_id
         AND r.state IN ('requested','dispatching','running','unknown')) AS active_runs,
@@ -214,14 +225,32 @@ export class AcceptanceRelayService {
       FROM runtime_session s LEFT JOIN session_profile p ON p.project_id=s.project_id
         AND p.target_kind='owned' AND p.target_id=s.session_id
       WHERE s.project_id=$1 ORDER BY s.role_id,s.session_id LIMIT 200`,[projectId]);
-    return result.rows.map(r=>({sessionId:r.session_id,roleId:r.role_id,state:r.state,
-      nativeThreadId:r.native_thread_id,tenure:r.tenure??"unknown",
-      activeRuns:r.active_runs,pendingMessages:r.pending_messages,queueEntries:r.queue_entries,
-      openAssignments:r.open_assignments,
-      openAcceptance:r.open_acceptance,
-      persistedWorkIdle:r.state==='ready' && !!r.native_thread_id &&
-        [r.active_runs,r.pending_messages,r.queue_entries,r.open_assignments,r.open_acceptance].every((n:number)=>n===0),
-      qualification:"runtime and message authorization require separate current checks"}));
+    const capacity: AcceptanceCapacityView[] = [];
+    for (const r of result.rows) {
+      const persistedWorkIdle = r.state === "ready" && !!r.native_thread_id &&
+        [r.active_runs,r.pending_messages,r.queue_entries,r.open_assignments,r.open_acceptance]
+          .every((n:number) => n === 0);
+      let missingCapabilities: string[] = [];
+      if (r.state === "ready" && r.native_thread_id) {
+        try {
+          const session = await this.deps.workflow.getRuntimeSession(principal, projectId, r.session_id);
+          missingCapabilities = await this.deps.capabilities({ projectId, session,
+            senderActorId: principal.actorId, receiverActorId: r.actor_id });
+        } catch {
+          missingCapabilities = ["SESSION_READBACK_FAILED"];
+        }
+      } else {
+        missingCapabilities = ["SESSION_NOT_READY"];
+      }
+      capacity.push({ sessionId:r.session_id, roleId:r.role_id, sessionActorId:r.actor_id, cwd:r.cwd,
+        state:r.state, nativeThreadId:r.native_thread_id, tenure:r.tenure ?? "unknown",
+        isLeader:r.session_id === leaderSession,
+        activeRuns:r.active_runs, pendingMessages:r.pending_messages, queueEntries:r.queue_entries,
+        openAssignments:r.open_assignments, openAcceptance:r.open_acceptance,
+        persistedWorkIdle, missingCapabilities,
+        readyForAcceptance:persistedWorkIdle && missingCapabilities.length === 0 });
+    }
+    return capacity;
   }
 
   async humanRead(principal: Principal, projectId: string, taskId: string, relayId: string, operationId: string,
@@ -334,11 +363,21 @@ export class AcceptanceRelayService {
       FROM runtime_session s LEFT JOIN session_profile p ON p.project_id=s.project_id AND p.target_kind='owned'
         AND p.target_id=s.session_id WHERE s.project_id=$1 AND s.session_id=$2`,[projectId,sessionId]);
     const x=required(result.rows[0]??null,"Session");
+    const blockers={activeRuns:x.active_runs,pendingMessages:x.pending_messages,queueEntries:x.queue_entries,
+      openAssignments:x.open_assignments,openAcceptance:x.open_acceptance};
+    const idle=Object.values(blockers).every(value=>value===0);
     return {sessionId:x.session_id,roleId:x.role_id,cwd:x.cwd,version:x.version,state:x.state,
       nativeThreadId:x.native_thread_id,tenure:x.tenure??"unknown",closeOperationId:x.close_operation_id,
       closeVerifiedAt:x.close_verified_at ? new Date(x.close_verified_at).toISOString() : null,
-      blockers:{activeRuns:x.active_runs,pendingMessages:x.pending_messages,queueEntries:x.queue_entries,
-        openAssignments:x.open_assignments,openAcceptance:x.open_acceptance},decision:x.decision??null};
+      nativeArchiveVerified:!!x.close_verified_at,
+      blockers,
+      nextAction:x.state==="closed" ? "closed and native archive verified; keep history and dependent resources"
+        :x.state==="closing" ? "closing; reconcile the original close operation before retrying archive"
+        :!idle ? "settle the listed Run, message, queue, assignment or acceptance responsibility first"
+        :x.tenure!=="temporary" ? "resident or unknown tenure stays reusable; retirement is not automatic"
+        :x.decision ? "approved; submit runtime.session.close with the recorded close operation"
+        :"record an exact retirement decision with handoff evidence before close",
+      decision:x.decision??null};
   }
 
   async approveRetirement(principal: Principal, input: {projectId:string;sessionId:string;decisionId:string;
@@ -385,8 +424,20 @@ export class AcceptanceRelayService {
   async tick(projectIds: string[]): Promise<void> {
     if (!this.deps.canWrite()) return;
     for (const projectId of projectIds) {
-      const pending = await this.deps.pool.query("SELECT * FROM task_acceptance_relay WHERE project_id=$1 AND state='pending' AND mode<>'human' ORDER BY created_at,relay_id LIMIT 30", [projectId]);
-      for (const value of pending.rows) await this.dispatch(row(value));
+      const pending = await this.deps.pool.query("SELECT * FROM task_acceptance_relay WHERE project_id=$1 AND state='pending' ORDER BY created_at,relay_id LIMIT 30", [projectId]);
+      let firstError: unknown = null;
+      for (const value of pending.rows) {
+        try {
+          const item = row(value);
+          // Human work has no message to cancel; a changed Delivery or Task revision still retires it.
+          if (!await this.current(item)) { await this.setState(item,"superseded","Current Delivery or Task revision changed"); continue; }
+          if (item.mode === "human") continue;
+          await this.dispatch(item);
+        } catch (error) {
+          firstError ??= error;
+        }
+      }
+      if (firstError) throw firstError;
     }
   }
 
