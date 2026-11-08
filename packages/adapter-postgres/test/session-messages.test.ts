@@ -12,6 +12,7 @@ import { leaseFencedUnitOfWork } from '../../../apps/coordinator/src/lease.ts';
 import { PgSessionMessages } from '../src/session-messages.ts';
 import { commandSchema } from '@evoloop/contracts';
 import type { SessionMessageManualStopEvidence,SessionMessageRecord } from '@evoloop/contracts/session-messages';
+import type { RuntimeSessionRecord } from '@evoloop/contracts/runtime';
 
 const url=process.env.TEST_DATABASE_URL;
 if(!url||!/^evoloop(?:_[a-z0-9]+)*_test$/.test(new URL(url).pathname.slice(1)))
@@ -810,7 +811,7 @@ test('manual stop evidence binds the original processing, preserves prior failur
     [projectId,m.id]),/immutable/);
 });
 
-test('manual stop settles original processing, blocks the gate, and exact recovery clears a resolved pin',async()=>{
+test('manual stop settles original processing, blocks the gate, and cancelling its pin opens safely',async()=>{
   const targetSessionId=randomUUID();await seedFullSession(targetSessionId);
   const local=new SessionMessageService({uow,clock:{now:()=>new Date().toISOString()},ids:{next:randomUUID},
     grantFor:async()=>({...grant,sessionId:targetSessionId,maxTurns:10})});
@@ -827,7 +828,8 @@ test('manual stop settles original processing, blocks the gate, and exact recove
   const preflightId=await seedManualStopPreflight(first.id,processingId,targetSessionId,turn);
   const before=await local.detail(projectId,first.id);
   const workflow=new WorkflowService({uow,clock:{now:()=>new Date().toISOString()},ids:{next:randomUUID},
-    hasher:{hash:value=>createHash('sha256').update(value).digest('hex')}});
+    hasher:{hash:value=>createHash('sha256').update(value).digest('hex')},
+    sessionMessageGrantFor:async(message,session)=>({...grant,sessionId:session.id,senderActorId:message.senderActorId})});
   const reviewer={actorId:'reviewer',projectIds:[projectId],permissions:['read' as const,'write' as const,'review' as const]};
   const sender={actorId:'sender',projectIds:[projectId],permissions:['write' as const]};
   const stopped=await workflow.execute(reviewer,{type:'session.message.manualStop',projectId,operationId:randomUUID(),
@@ -844,16 +846,112 @@ test('manual stop settles original processing, blocks the gate, and exact recove
   let gate=await uow.read(projectId,r=>r.recovery!.getRecoveryGate(targetSessionId));
   assert.equal(gate?.phase,'blocked');assert.equal(gate?.causeId,first.id);
   assert.equal(gate?.resumeMessageId,pinned.id);
+  await reviewBlockedMessage(first.id,targetSessionId);
+  gate=await uow.read(projectId,r=>r.recovery!.getRecoveryGate(targetSessionId));
+  assert.equal(gate?.phase,'message_pending');assert.equal(gate?.resumeMessageId,pinned.id);
   await workflow.execute(sender,{type:'session.message.cancel',projectId,operationId:randomUUID(),
     messageId:pinned.id,expectedVersion:1,reason:'Resolved queued follow-up before resuming'});
-  const resumed=await workflow.execute(reviewer,{type:'runtime.session.recovery.resume',projectId,
-    operationId:randomUUID(),sessionId:targetSessionId,expectedVersion:gate!.version,
-    expectedCauseId:first.id,resumeMessageId:pinned.id,
-    evidenceRef:`preflight:${preflightId}`,reason:'Original manual stop and cancelled pin reviewed'});
-  assert.equal(resumed.status,'applied');
   gate=await uow.read(projectId,r=>r.recovery!.getRecoveryGate(targetSessionId));
-  assert.equal(gate?.phase,'open');assert.equal(gate?.resumeMessageId,null);
+  assert.equal(gate?.phase,'open');assert.equal(gate?.resumeMessageId,null);assert.equal(gate?.causeId,null);
+  const decisions=await uow.read(projectId,r=>r.recovery!.listRecoveryDecisions(targetSessionId));
+  assert.equal(decisions[0]?.resumeMessageId,pinned.id,'original decision and pin remain in immutable history');
   assert.equal((await local.detail(projectId,first.id)).manualStop?.preflightId,preflightId);
+});
+
+test('cancelling a recovery pin advances atomically to the next currently eligible message',async()=>{
+  const targetSessionId=randomUUID();await seedFullSession(targetSessionId);
+  const allowed=new Set(['sender','successor-sender']);
+  const grantFor=async(message:SessionMessageRecord,session:RuntimeSessionRecord)=>
+    allowed.has(message.senderActorId)||message.senderActorId==='budget-sender'
+      ?{...grant,sessionId:session.id,senderActorId:message.senderActorId,receiverActorId:'receiver',
+        ...(message.senderActorId==='budget-sender'?{maxTurns:1}:{})}:null;
+  const local=new SessionMessageService({uow,clock:{now:()=>new Date().toISOString()},ids:{next:randomUUID},grantFor});
+  const cause={...item(),target:{kind:'owned' as const,sessionId:targetSessionId},createdAt:'2026-10-26T00:00:00.000Z'};
+  const pinned={...item(),target:{kind:'owned' as const,sessionId:targetSessionId},createdAt:'2026-10-26T00:00:01.000Z'};
+  const unrelated={...item(),target:{kind:'owned' as const,sessionId:targetSessionId},senderActorId:'outsider',
+    createdAt:'2026-10-26T00:00:02.000Z'};
+  const budgetCandidate={...item(),target:{kind:'owned' as const,sessionId:targetSessionId},senderActorId:'budget-sender',
+    createdAt:'2026-10-26T00:00:02.500Z'};
+  const budgetUsed={...item(),target:{kind:'owned' as const,sessionId:targetSessionId},senderActorId:'budget-sender',
+    state:'replied' as const,version:2,createdAt:'2026-10-26T00:00:00.500Z'};
+  const successor={...item(),target:{kind:'owned' as const,sessionId:targetSessionId},senderActorId:'successor-sender',
+    createdAt:'2026-10-26T00:00:03.000Z'};
+  await uow.transaction(projectId,async tx=>{
+    for(const message of [cause,pinned,unrelated,budgetUsed,budgetCandidate,successor])await tx.sessionMessages!.insertSessionMessage(message);
+    await tx.sessionMessages!.insertSessionMessageProcessing({projectId,id:randomUUID(),messageId:budgetUsed.id,
+      sessionId:targetSessionId,operationId:randomUUID(),receiverActorId:'receiver',state:'completed',
+      nativeTurnId:`budget-used-${budgetUsed.id}`,response:'prior reply',failure:null,
+      readOnlyPolicyFingerprint:qualified,version:1,startedAt:now,updatedAt:now});
+  });
+  await local.beginDispatch(projectId,cause.id,randomUUID(),randomUUID(),qualified);
+  await local.failBeforeStart(projectId,cause.id,'controlled pre-turn failure');
+  await reviewBlockedMessage(cause.id,targetSessionId);
+  let gate=await uow.read(projectId,r=>r.recovery!.getRecoveryGate(targetSessionId));
+  assert.equal(gate?.resumeMessageId,pinned.id);
+  const decisionBefore=(await uow.read(projectId,r=>r.recovery!.listRecoveryDecisions(targetSessionId)))[0]!;
+  const workflow=new WorkflowService({uow,clock:{now:()=>new Date().toISOString()},ids:{next:randomUUID},
+    hasher:{hash:value=>createHash('sha256').update(value).digest('hex')},sessionMessageGrantFor:grantFor});
+  const cancel={type:'session.message.cancel' as const,projectId,operationId:randomUUID(),messageId:pinned.id,
+    expectedVersion:1,reason:'Superseded Task revision'};
+  const cancelled=await workflow.execute({actorId:'sender',projectIds:[projectId],permissions:['write']},cancel);
+  assert.equal(cancelled.status,'applied');
+  gate=await uow.read(projectId,r=>r.recovery!.getRecoveryGate(targetSessionId));
+  assert.equal(gate?.phase,'message_pending');
+  assert.equal(gate?.resumeMessageId,successor.id,'the oldest ineligible sender is skipped');
+  assert.equal((await local.get(projectId,unrelated.id)).state,'queued');
+  assert.equal(await local.processing(projectId,unrelated.id),null);
+  assert.equal((await local.get(projectId,budgetCandidate.id)).state,'queued');
+  assert.equal(await local.processing(projectId,budgetCandidate.id),null);
+  const decisionAfter=(await uow.read(projectId,r=>r.recovery!.listRecoveryDecisions(targetSessionId)))[0]!;
+  assert.equal(decisionAfter.id,decisionBefore.id);
+  assert.equal(decisionAfter.resumeMessageId,pinned.id);
+  const versionAfterCancel=gate!.version;
+  assert.deepEqual(await workflow.execute({actorId:'sender',projectIds:[projectId],permissions:['write']},cancel),cancelled);
+  assert.equal((await uow.read(projectId,r=>r.recovery!.getRecoveryGate(targetSessionId)))?.version,versionAfterCancel,
+    'same operation replay is a readback and does not advance the gate twice');
+  const wrong=await workflow.execute({actorId:'wrong-sender',projectIds:[projectId],permissions:['write']},
+    {...cancel,operationId:randomUUID(),messageId:successor.id,expectedVersion:1});
+  assert.equal(wrong.status,'rejected');
+  if(wrong.status==='rejected')assert.equal(wrong.code,'MESSAGE_SENDER');
+  assert.equal((await local.get(projectId,successor.id)).state,'queued');
+  assert.equal((await uow.read(projectId,r=>r.recovery!.getRecoveryGate(targetSessionId)))?.resumeMessageId,successor.id);
+  await local.beginDispatch(projectId,successor.id,randomUUID(),randomUUID(),qualified);
+  assert.equal((await local.get(projectId,successor.id)).state,'processing');
+  const activeCancel=await workflow.execute({actorId:'successor-sender',projectIds:[projectId],permissions:['write']},
+    {...cancel,operationId:randomUUID(),messageId:successor.id,expectedVersion:2,reason:'Must not cancel active work'});
+  assert.equal(activeCancel.status,'rejected');
+  if(activeCancel.status==='rejected')assert.equal(activeCancel.code,'MESSAGE_NOT_PENDING');
+  const activeGate=await uow.read(projectId,r=>r.recovery!.getRecoveryGate(targetSessionId));
+  assert.equal(activeGate?.resumeMessageId,successor.id);
+  assert.equal(activeGate?.version,versionAfterCancel,'active/nonqueued pin remains unchanged');
+});
+
+test('cancelling a recovery pin with no eligible successor opens the gate without processing unrelated mail',async()=>{
+  const targetSessionId=randomUUID();await seedFullSession(targetSessionId);
+  const grantFor=async(message:SessionMessageRecord,session:RuntimeSessionRecord)=>
+    message.senderActorId==='sender'?{...grant,sessionId:session.id}:null;
+  const local=new SessionMessageService({uow,clock:{now:()=>new Date().toISOString()},ids:{next:randomUUID},grantFor});
+  const cause={...item(),target:{kind:'owned' as const,sessionId:targetSessionId},createdAt:'2026-10-26T00:01:00.000Z'};
+  const pinned={...item(),target:{kind:'owned' as const,sessionId:targetSessionId},createdAt:'2026-10-26T00:01:01.000Z'};
+  const unrelated={...item(),target:{kind:'owned' as const,sessionId:targetSessionId},senderActorId:'outsider',
+    createdAt:'2026-10-26T00:01:02.000Z'};
+  await uow.transaction(projectId,async tx=>{
+    for(const message of [cause,pinned,unrelated])await tx.sessionMessages!.insertSessionMessage(message);
+  });
+  await local.beginDispatch(projectId,cause.id,randomUUID(),randomUUID(),qualified);
+  await local.failBeforeStart(projectId,cause.id,'controlled pre-turn failure');
+  await reviewBlockedMessage(cause.id,targetSessionId);
+  const workflow=new WorkflowService({uow,clock:{now:()=>new Date().toISOString()},ids:{next:randomUUID},
+    hasher:{hash:value=>createHash('sha256').update(value).digest('hex')},sessionMessageGrantFor:grantFor});
+  await workflow.execute({actorId:'sender',projectIds:[projectId],permissions:['write']},
+    {type:'session.message.cancel',projectId,operationId:randomUUID(),messageId:pinned.id,expectedVersion:1,
+      reason:'No longer current'});
+  const gate=await uow.read(projectId,r=>r.recovery!.getRecoveryGate(targetSessionId));
+  assert.equal(gate?.phase,'open');assert.equal(gate?.resumeMessageId,null);assert.equal(gate?.causeId,null);
+  assert.equal((await local.get(projectId,unrelated.id)).state,'queued');
+  assert.equal(await local.processing(projectId,unrelated.id),null);
+  const decisions=await uow.read(projectId,r=>r.recovery!.listRecoveryDecisions(targetSessionId));
+  assert.equal(decisions[0]?.resumeMessageId,pinned.id);
 });
 
 test('049 migration preserves preexisting ordinary message and processing rows',async()=>{

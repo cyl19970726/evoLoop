@@ -67,6 +67,9 @@ export interface SessionRecoveryTransaction extends SessionRecoveryReader {
   beginExecutionProfileActivation(sessionId:string,revisionId:string,operationId:string):Promise<boolean>;
   settleExecutionProfileActivation(sessionId:string,revisionId:string,state:'active'|'unknown'|'rejected',evidence:string):Promise<void>;
   saveRecoveryDecision(decision:SessionRecoveryDecision,next:SessionRecoveryGate,expectedVersion:number):Promise<void>;
+  /** Atomically move a cancelled resume pin to the next reviewed candidate, or to a safe non-pinned phase. */
+  replaceCancelledResumePin(sessionId:string,cancelledMessageId:string,nextMessageId:string|null,
+    expectedVersion:number,reason:string,nowUtc:string):Promise<SessionRecoveryGate>;
   /** The queue.continue transaction grants one exact same-claim rework Run. */
   authorizeRework(sessionId:string,queueId:string,entryId:string,taskId:string,claimId:string,sourceRunId:string,
     sourceRunVersion:number,expectedGateVersion:number,newRunId:string,operationId:string,

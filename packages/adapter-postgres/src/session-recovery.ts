@@ -274,6 +274,39 @@ export class PgSessionRecovery implements SessionRecoveryTransaction {
         next.queueId,next.claimId,next.retryRunId,next.resumeMessageId,next.decisionOperationId,next.updatedAt,expectedVersion]);
     if(!r.rowCount)throw conflict('Recovery gate changed');
   }
+  async replaceCancelledResumePin(sessionId:string,cancelledMessageId:string,nextMessageId:string|null,
+    expectedVersion:number,reason:string,nowUtc:string):Promise<SessionRecoveryGate>{
+    if(!reason.trim())throw new DomainError('RECOVERY_DECISION_INVALID','Cancellation gate transition requires a reason');
+    const gate=await this.lockRecoveryGate(sessionId);
+    if(gate.version!==expectedVersion)throw conflict('Recovery gate changed',gate.version);
+    if(gate.phase!=='message_pending'||gate.resumeMessageId!==cancelledMessageId)
+      throw new DomainError('RECOVERY_SOURCE_CHANGED','Cancelled message is not the current recovery pin');
+    const cancelled=await this.client.query(`SELECT state,session_id FROM session_message
+      WHERE project_id=$1 AND message_id=$2 FOR UPDATE`,[this.projectId,cancelledMessageId]);
+    if(cancelled.rows[0]?.session_id!==sessionId||cancelled.rows[0]?.state!=='cancelled')
+      throw new DomainError('MESSAGE_STATE_MISMATCH','Original recovery pin was not cancelled');
+    if(nextMessageId){
+      const next=await this.client.query(`SELECT state,session_id,target_kind FROM session_message
+        WHERE project_id=$1 AND message_id=$2 FOR UPDATE`,[this.projectId,nextMessageId]);
+      if(next.rows[0]?.session_id!==sessionId||next.rows[0]?.target_kind!=='owned'||next.rows[0]?.state!=='queued')
+        throw new DomainError('RECOVERY_MESSAGE_CHANGED','Next eligible recovery message changed');
+    }
+    const phase=nextMessageId?'message_pending':gate.claimId?'awaiting_acceptance':'open';
+    const keepCause=phase!=='open';
+    const changed=await this.client.query(`UPDATE session_recovery_gate SET phase=$3,resume_message_id=$4,
+      cause_kind=CASE WHEN $5::boolean THEN cause_kind ELSE NULL END,
+      cause_id=CASE WHEN $5::boolean THEN cause_id ELSE NULL END,
+      cause_state=CASE WHEN $5::boolean THEN cause_state ELSE NULL END,
+      queue_id=CASE WHEN $5::boolean THEN queue_id ELSE NULL END,
+      claim_id=CASE WHEN $5::boolean THEN claim_id ELSE NULL END,
+      retry_run_id=NULL,reason=$6,version=version+1,updated_at=$7
+      WHERE project_id=$1 AND session_id=$2 AND version=$8`,
+      [this.projectId,sessionId,phase,nextMessageId,keepCause,reason.slice(0,4000),nowUtc,expectedVersion]);
+    if(changed.rowCount!==1)throw conflict('Recovery gate changed');
+    const saved=await this.getRecoveryGate(sessionId);
+    if(!saved)throw new DomainError('NOT_FOUND','Session recovery gate not found');
+    return saved;
+  }
   async authorizeRework(sessionId:string,queueId:string,entryId:string,taskId:string,claimId:string,sourceRunId:string,
     sourceRunVersion:number,expectedGateVersion:number,newRunId:string,operationId:string,
     actorId:string,reason:string,evidenceRef:string,nowUtc:string):Promise<void>{
