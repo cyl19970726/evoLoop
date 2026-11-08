@@ -5,6 +5,7 @@ import type { RuntimeSessionSpec } from "@evoloop/contracts/runtime";
 import { delegationTemplateSchema, type DelegationTemplate } from "@evoloop/contracts/division";
 import type { Principal } from "@evoloop/contracts";
 import type { TaskCollaborationPayload } from "@evoloop/contracts/discussions";
+import { directInputConfigurationSchema } from "./direct-input/configuration.js";
 
 const canonical = (value: unknown): string => JSON.stringify(value, (_key, item: unknown) => item && typeof item === "object" && !Array.isArray(item) ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a.localeCompare(b))) : item);
 export const delegationTemplateHash = (template: DelegationTemplate): string => createHash("sha256").update(canonical(template)).digest("hex");
@@ -56,6 +57,7 @@ export async function runtimeThreadConfigForSession(grants: RuntimeGrant[], spec
   return runtimeThreadConfig(grants,spec);
 }
 const integrationSchema = z.strictObject({
+  directInputs: directInputConfigurationSchema.optional(),
   repositories: z.array(z.strictObject({ projectId:z.uuid(), repositoryId:z.string().min(1).max(100), root:absolute, allowedPaths:z.array(z.string().min(1).max(1024)).min(1).max(200) })).max(200).default([]),
   feishu: z.strictObject({
     enabled: z.boolean(), appId: z.string().min(1), appSecret: z.string().min(1), appToken: z.string().min(1), tableId: z.string().min(1),
@@ -67,7 +69,11 @@ const integrationSchema = z.strictObject({
     enabled: z.boolean(), baseUrl: z.url(), manifestRoot: absolute, maintainerId: z.string().min(1).max(100), projectIds: z.array(z.uuid()).max(200),
   }).optional(),
   scheduling: z.strictObject({
-    enabled: z.boolean(), grants: z.array(z.strictObject({ projectId: z.uuid(), actorId: z.string().min(1).max(100), scopeId: z.string().min(1).max(4000), roleId: z.string().min(1).max(4000) })).max(200),
+    enabled: z.boolean(), grants: z.array(z.strictObject({ projectId: z.uuid(), actorId: z.string().min(1).max(100), scopeId: z.string().min(1).max(4000).refine(value => value !== "task-timing:*"), roleId: z.string().min(1).max(4000) })).max(200),
+    /** Create and continue ordinary daily Task series for this exact project, actor and Role. */
+    taskTimingGrants: z.array(z.strictObject({ projectId: z.uuid(), actorId: z.string().min(1).max(100), roleId: z.uuid() }))
+      .max(200).refine(values => new Set(values.map(value => `${value.projectId}:${value.actorId}:${value.roleId}`)).size === values.length,
+        "Task timing grants must be unique per project, actor and Role").default([]),
   }).optional(),
   residentQueue: z.strictObject({
     enabled: z.boolean(), pollIntervalMs: z.number().int().min(500).max(60000).default(2000),
@@ -136,6 +142,16 @@ const integrationSchema = z.strictObject({
   }).optional(),
 });
 type EngineeringActionGrant=NonNullable<z.infer<typeof integrationSchema>["residentQueue"]>["actionGrants"][number];
+type SchedulingConfiguration = NonNullable<z.infer<typeof integrationSchema>["scheduling"]>;
+export function hasTaskTimingGrant(configuration: SchedulingConfiguration | undefined,
+  projectId: string, actorId: string, roleId: string, scopeId: string): boolean {
+  if (!configuration?.enabled || !scopeId.startsWith("task-timing:") ||
+    !z.uuid().safeParse(scopeId.slice("task-timing:".length)).success) return false;
+  return configuration.grants.some(grant => grant.projectId === projectId && grant.actorId === actorId &&
+    grant.roleId === roleId && grant.scopeId === scopeId) ||
+    configuration.taskTimingGrants.some(grant => grant.projectId === projectId &&
+      grant.actorId === actorId && grant.roleId === roleId);
+}
 export type MaterialCliBinding = NonNullable<z.infer<typeof integrationSchema>["runtime"]>["materialCli"][number];
 export function selectMaterialCli(entries: MaterialCliBinding[], projectId: string, sessionId: string,
   sessionActorId: string, taskId?: string, roleId?: string): MaterialCliBinding | null {
@@ -177,5 +193,5 @@ export async function loadIntegrations(path?: string) {
     try { if (await realpath(template.cwd) !== template.cwd) return null; } catch { return null; }
     return { template, hash: delegationTemplateHash(template) };
   };
-  return { runtime, sessionMessages: configuration.sessionMessages, leaderResultNotices: configuration.leaderResultNotices, residentQueue: configuration.residentQueue, orchestration: configuration.orchestration, repositories: configuration.repositories, feishu: configuration.feishu, knowledge: configuration.knowledge, scheduling: configuration.scheduling, allowedRuntimeCwds, allowedRuntimeCwd, hasRuntimeGrant, getDelegationTemplate };
+  return { runtime, sessionMessages: configuration.sessionMessages, directInputs: configuration.directInputs, leaderResultNotices: configuration.leaderResultNotices, residentQueue: configuration.residentQueue, orchestration: configuration.orchestration, repositories: configuration.repositories, feishu: configuration.feishu, knowledge: configuration.knowledge, scheduling: configuration.scheduling, allowedRuntimeCwds, allowedRuntimeCwd, hasRuntimeGrant, getDelegationTemplate };
 }

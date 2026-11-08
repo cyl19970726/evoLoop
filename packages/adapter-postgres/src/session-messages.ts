@@ -26,6 +26,7 @@ const processing = (r: QueryResultRow): SessionMessageProcessing => ({
   projectId:r.project_id,id:r.processing_id,messageId:r.message_id,sessionId:r.session_id,
   operationId:r.operation_id,state:r.state,nativeTurnId:r.native_turn_id,response:r.response,
   failure:r.failure,readOnlyPolicyFingerprint:r.read_only_policy_fingerprint,receiverActorId:r.receiver_actor_id,
+  roleContext:r.role_context??null,
   nativeEnvironmentEpoch:nativeEpoch(r.native_environment_epoch),
   preTurnProof:r.pre_turn_proof==null?null:preTurnProofSchema.parse(r.pre_turn_proof),
   interruptOperationId:r.interrupt_operation_id??null,interruptActorId:r.interrupt_actor_id??null,
@@ -155,8 +156,14 @@ export class PgSessionMessages implements SessionMessageTransaction {
     if(!v.readOnlyPolicyFingerprint||!/^[a-f0-9]{64}$/.test(v.readOnlyPolicyFingerprint))
       throw new DomainError('POLICY_PROOF_MISSING','native Session execution admission policy proof is required');
     if(!v.receiverActorId?.trim())throw new DomainError('MESSAGE_RECIPIENT','actual receiving actor is required');
-    await this.client.query(`INSERT INTO session_message_processing(project_id,processing_id,message_id,session_id,operation_id,receiver_actor_id,state,native_turn_id,response,failure,read_only_policy_fingerprint,version,started_at,updated_at)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,[v.projectId,v.id,v.messageId,v.sessionId,v.operationId,v.receiverActorId,v.state,v.nativeTurnId,v.response,v.failure,v.readOnlyPolicyFingerprint,v.version,v.startedAt,v.updatedAt]);
+    try {
+      await this.client.query(`INSERT INTO session_message_processing(project_id,processing_id,message_id,session_id,operation_id,receiver_actor_id,state,native_turn_id,response,failure,read_only_policy_fingerprint,version,started_at,updated_at,role_context)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,[v.projectId,v.id,v.messageId,v.sessionId,v.operationId,v.receiverActorId,v.state,v.nativeTurnId,v.response,v.failure,v.readOnlyPolicyFingerprint,v.version,v.startedAt,v.updatedAt,v.roleContext??null]);
+    } catch (error) {
+      if ((error as {constraint?:string}).constraint === 'acceptance_source_current')
+        throw new DomainError('ACCEPTANCE_SOURCE_SUPERSEDED','Acceptance Delivery or arrangement changed before message start');
+      throw error;
+    }
   }
   async updateSessionMessageProcessing(v:SessionMessageProcessing,expectedVersion:number):Promise<void>{
     this.scope(v.projectId);const r=await this.client.query(`UPDATE session_message_processing SET state=$3,native_turn_id=$4,response=$5,failure=$6,version=$7,updated_at=$8,

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { Principal, RuntimeSessionRecord } from '@evoloop/contracts';
 import type { NativeInputSource } from '@evoloop/contracts/native-input';
+import type { DirectInputRecord } from '@evoloop/contracts/direct-input';
 import type { SessionMessageRecord, SessionMessageProcessing } from '@evoloop/contracts/session-messages';
 import type { NativeWorkspacePage, WorkspaceEntry, WorkspaceMessage, WorkspaceRuntimeUpdate } from '@evoloop/contracts/session-timeline';
 import { DomainError } from '@evoloop/contracts/ports';
@@ -37,6 +38,7 @@ const session:RuntimeSessionRecord={projectId:project,id:sessionId,roleId:'role'
   model:null,sandbox:'read-only',approvalPolicy:'on-request',state:'ready',version:1,nativeThreadId:thread,
   nativeSessionId:'native-session',operationId:id(99),actorId:'agent',createdAt:now,updatedAt:now};
 function harness(){
+  const directRecords:DirectInputRecord[]=[];
   const messages=[pg(10,'replied','human-a'),pg(11,'queued','other-agent')];
   const process:SessionMessageProcessing={projectId:project,id:id(110),messageId:id(10),sessionId,
     operationId:id(210),state:'completed',nativeTurnId:'turn-message',response:'Public answer',failure:null,
@@ -97,8 +99,9 @@ function harness(){
     onWorkspaceUpdate:(fn:(event:WorkspaceRuntimeUpdate)=>void)=>{update=fn;return()=>{update=null}},
     onWorkspaceDisconnect:(fn:()=>void)=>{disconnect=fn;return()=>{disconnect=null}},
   } as unknown as RuntimeRunner;
-  const service=new SessionTimelineService({uow,observation,runner});
-  return {service,messages,runner,emit:(event:WorkspaceRuntimeUpdate)=>update?.(event),
+  const service=new SessionTimelineService({uow,observation,runner,directInputs:{acceptedForInputs:async(p,s,ids)=>
+    directRecords.filter(record=>record.projectId===p&&record.sessionId===s&&ids.includes(record.inputId))} as never});
+  return {service,messages,runner,directRecords,emit:(event:WorkspaceRuntimeUpdate)=>update?.(event),
     disconnect:()=>disconnect?.(),setHistory:(v:boolean)=>{historyAvailable=v},revoke:()=>{revoked=true},
     historicalRunning:()=>{historicalRunning=true},
     ambiguous:()=>{ambiguous=true},unlink:()=>{sources.delete('turn-message')},
@@ -316,6 +319,41 @@ test('exact PG sender replaces native input, Run context hides envelope, and pag
   assert.equal(messagesOnly.pending[0]?.id,`message:${id(11)}`);
   assert.equal(h.calls().starts,0);
   h.service.close();
+});
+
+for(const kind of ['run','message'] as const)test(`accepted ${kind} steer uses exact native Item and keeps its primary source`,async()=>{
+  const h=harness(),inputId=id(kind==='run'?501:502),itemId='steer-item';
+  const source=kind==='run'?sourceRun:sourceMessage,turnId=kind==='run'?'turn-run':'turn-message';
+  const record:DirectInputRecord={projectId:project,sessionId,inputId,operationId:id(601),
+    actorId:'human-steer',content:'Private authorized supplement',mode:'steer',
+    source:{kind,id:kind==='run'?sourceRun.runId:sourceMessage.messageId,
+      processingId:kind==='run'?null:sourceMessage.processingId},
+    expectedTurnId:turnId,actualTurnId:turnId,nativeItemId:itemId,state:'accepted',reason:null,
+    version:2,createdAt:now,updatedAt:now};
+  h.directRecords.push(record);
+  const raw=nativeInput(itemId,turnId,inputId);
+  h.runner.workspaceHistory=async()=>({entries:[raw],turns:[{id:turnId,state:'completed',startedAt:now,
+    completedAt:now,origin:null}],nextCursor:null,observedAt:now,historyMode:'paginated',method:'items',
+    partial:false,limitations:[],unsupportedKinds:[]});
+  try{
+    const page=await h.service.page(reader,project,key,{limit:5,source:'native'});
+    const entry=page.entries[0];
+    assert.equal(entry?.kind,'message');assert.equal(entry?.author.id,'human-steer');
+    assert.equal(entry?.origin?.kind,kind);assert.equal(entry?.origin?.id,record.source.id);
+    assert.equal((entry as WorkspaceMessage).body,'已接受的即时补充');
+    assert.equal((await h.service.item(reviewer,project,key,turnId,itemId) as WorkspaceMessage).body,
+      'Private authorized supplement');
+    h.emit({projectId:project,sessionId,threadId:thread,turnId,observedAt:now,kind:'entry',entry:raw});
+    assert.equal((await h.service.updates(reader,project,key)).entries[0]?.author.id,'human-steer');
+    h.directRecords[0]={...record,nativeItemId:null};
+    assert.equal((await h.service.page(reader,project,key,{limit:5,source:'native'})).entries[0]?.author.id,
+      'human-steer','a settled, completely enumerated Turn can prove an accepted steer before PG Item backfill');
+    h.directRecords[0]={...record,nativeItemId:itemId};
+    h.directRecords[0]={...record,nativeItemId:'different-item'};
+    assert.equal((await h.service.page(reader,project,key,{limit:5,source:'native'})).entries[0]?.kind,'notice');
+    h.directRecords[0]={...record,source:{...record.source,id:id(999)}};
+    assert.equal((await h.service.page(reader,project,key,{limit:5,source:'native'})).entries[0]?.kind,'notice');
+  }finally{h.service.close()}
 });
 
 test('source ambiguity, cursor scope, revoked binding and original detail remain fenced',async()=>{

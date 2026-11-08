@@ -99,6 +99,7 @@ evoLoop 面向一个人与多个 Agent 持续推进的软件项目。[两张产�
 | --- | --- | --- |
 | [开发规范](development/standards.md) | 实际工作如何执行、验证、交接并改善 | 承担相应开发与方法维护工作的 session |
 | [Agent skill 与 CLI](development/agent-cli.md) | Agent 根据人类沟通读取固定依据、执行业务变更、恢复并核对共同状态 | 使用 evoLoop 推进实际工作的 Agent；人类从工作台观察结果 |
+| [Session 连续工作区与即时输入](development/session-direct-input-integration.md) | 活动 Turn 补充、空闲直启、唯一槽位、原输入恢复与连续阅读怎样接线 | Session 运行时、工作台与相关授权的维护者 |
 | [Leader 结果回程](development/leader-result-return.md) | 受管 Leader 通知怎样显式接线、对账与回退 | 结果回程运行服务的维护者 |
 | [普通 Task 定时与复制](development/task-timing-copy.md) | 字段继承、时间规则及异常授权怎样处理 | Task 与调度实现的维护者 |
 | [文档维护](development/documentation.md) | 文档如何保持一致、生成 HTML 并发布 | 修改正文或构建工具的贡献者 |

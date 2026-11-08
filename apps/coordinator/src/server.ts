@@ -18,11 +18,14 @@ import type { AllocationRelationsService } from "@evoloop/core/allocation-relati
 import { registerAllocationRelationRoutes } from "./allocation-relations/routes.js";
 import type { SessionMessageService } from "@evoloop/core/session-messages";
 import { registerSessionMessageRoutes } from "./session-messages/routes.js";
+import { registerDirectInputRoutes } from "./direct-input/routes.js";
+import type { DirectInputService } from "./direct-input/service.js";
 import type { ManualStopPreview } from "./session-messages/manual-stop.js";
 import type { SessionMessageManualStopPreflight } from "@evoloop/contracts/session-messages";
 import type { SessionTimelineService } from "./session-timeline/index.js";
 import { registerSessionTimelineRoutes } from "./session-timeline/routes.js";
-import { runtimeReconcileSchema, preTurnContinueSchema, messagePreTurnContinueSchema } from "@evoloop/contracts/runtime";
+import { runtimeReconcileSchema, runtimeCompactionIntentSchema, preTurnContinueSchema, messagePreTurnContinueSchema } from "@evoloop/contracts/runtime";
+import type { CompactionMaintenance } from "./runtime/compaction.js";
 import { grantAllowsModel, grantModels, type RuntimeGrant } from "./configuration.js";
 import { registerDocumentRoutes, type DocumentRouteOptions } from "./documents/routes.js";
 import { registerTaskMaterialRoutes } from "./documents/task-materials.js";
@@ -32,6 +35,8 @@ import type { DeliveryStore } from "@evoloop/contracts/delivery";
 import type { ScheduleGrant, SchedulingPump } from "./scheduling/pump.js";
 import { registerKnowledgeRoutes, type KnowledgeRouteOptions } from "./knowledge/routes.js";
 import { registerWorkManagementRoutes } from "./work-management/routes.js";
+import { registerAcceptanceRelayRoutes } from "./acceptance-relay/routes.js";
+import type { AcceptanceRelayService } from "./acceptance-relay/service.js";
 import type { LeaderWorkIndexReader } from "./work-management/work-index.js";
 import { registerLeaderNoticeRoutes, type LeaderNoticeReader } from "./work-management/leader-notice-routes.js";
 import { registerTaskAttentionRoutes } from "./task-attention/routes.js";
@@ -51,9 +56,11 @@ const errorStatus = (code: string) => code === "FORBIDDEN" ? 403 : code === "NOT
 export async function buildServer(options: {
   service: WorkflowService; credentials: AuthConfig; webRoot?: string; canWrite?: () => boolean;
   runtime?: RuntimeRunner; allowedRuntimeCwds?: (projectId: string) => string[];
+  compaction?: CompactionMaintenance;
   sessionWork?: SessionObservationService;
   allocationRelations?: AllocationRelationsService;
   sessionMessages?: SessionMessageService;
+  directInput?: DirectInputService;
   sessionTimeline?: SessionTimelineService;
   nativeInputs?: NativeInputBridge;
   nativeObservation?: NativeObservationBridge;
@@ -96,6 +103,7 @@ export async function buildServer(options: {
   orchestration?: OrchestrationRouteOptions;
   workStatuses?: WorkStatusesReader;
   workIndex?: LeaderWorkIndexReader;
+  acceptanceRelay?: AcceptanceRelayService;
   leaderNotices?: LeaderNoticeReader;
   taskAttentionPool?: Pool;
   planningSources?: PlanningSourcesReader;
@@ -417,6 +425,22 @@ export async function buildServer(options: {
     const p=params(request.params);
     return options.service.getSessionRecovery(who(request.principal),p.projectId!,p.id!);
   });
+  app.post("/api/projects/:projectId/runtime/sessions/:id/compactions", async request => {
+    const p=z.strictObject({projectId:z.uuid(),id:z.uuid()}).parse(request.params);
+    if(!options.compaction)throw new DomainError('CAPABILITY_UNAVAILABLE','Compaction maintenance is unavailable');
+    return options.compaction.start(who(request.principal),p.projectId,p.id,runtimeCompactionIntentSchema.parse(request.body));
+  });
+  app.get("/api/projects/:projectId/runtime/compactions/:id", async request => {
+    const p=z.strictObject({projectId:z.uuid(),id:z.uuid()}).parse(request.params);
+    if(!options.compaction)throw new DomainError('CAPABILITY_UNAVAILABLE','Compaction maintenance is unavailable');
+    return options.compaction.read(who(request.principal),p.projectId,p.id);
+  });
+  app.post("/api/projects/:projectId/runtime/compactions/:id/reconcile", async request => {
+    const p=z.strictObject({projectId:z.uuid(),id:z.uuid()}).parse(request.params);
+    z.strictObject({}).parse(request.body??{});
+    if(!options.compaction)throw new DomainError('CAPABILITY_UNAVAILABLE','Compaction maintenance is unavailable');
+    return options.compaction.reconcile(who(request.principal),p.projectId,p.id);
+  });
   if (options.allocationRelations) registerAllocationRelationRoutes(app, options.allocationRelations);
   if (options.sessionWork) registerSessionWorkRoutes(app, options.sessionWork, (principal, session) => ({
     ...session, capabilities: { ...session.capabilities,
@@ -452,6 +476,7 @@ export async function buildServer(options: {
   if (options.sessionWork && options.sessionMessages) registerSessionMessageRoutes(app, {
     workflow: options.service, observation: options.sessionWork, messages: options.sessionMessages,
   });
+  if (options.directInput) registerDirectInputRoutes(app, options.directInput);
   app.get("/api/projects/:projectId/session-messages/:id/manual-stop-preview", async request => {
     const {projectId,id}=z.strictObject({projectId:z.uuid(),id:z.uuid()}).parse(request.params);
     const principal=who(request.principal);
@@ -656,6 +681,7 @@ export async function buildServer(options: {
   if (options.planningSources) registerPlanningSourcesRoute(app, options.planningSources);
   if (options.collaboration) registerCollaborationRoutes(app, { ...options.collaboration, workflow: options.service });
   await registerWorkManagementRoutes(app, options.service, options.workIndex);
+  if (options.acceptanceRelay) registerAcceptanceRelayRoutes(app, options.service, options.acceptanceRelay, options.workIndex);
   if (options.leaderNotices) registerLeaderNoticeRoutes(app, options.service, options.leaderNotices);
   if (options.taskAttentionPool) registerTaskAttentionRoutes(app, options.service, options.taskAttentionPool);
   registerEvaluationRoutes(app, options.service, options.readEvaluationPacket);

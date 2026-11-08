@@ -28,6 +28,7 @@ import { PgTaskTimingStore } from "@evoloop/adapter-postgres/task-timing";
 import { SchedulingPump } from "./scheduling/pump.js";
 import { readDocumentOriginal } from "./documents/read-original.js";
 import { RuntimeRunner } from "./runtime/runner.js";
+import { CompactionMaintenance } from "./runtime/compaction.js";
 import { supportsFixedHandoff, supportsMaterialCli } from "./runtime/material-cli-capability.js";
 import { PreflightError } from "./runtime/preflight-report.js";
 import { parseQueueHandoff } from "@evoloop/contracts/runtime-handoff";
@@ -39,7 +40,7 @@ import { brokeredCliForRun } from "./runtime/brokered-cli.js";
 import { staticRecoveryAuthority } from "./runtime/recovery-authority.js";
 import { readEvaluationMaterial } from "./runtime/evaluation-sources.js";
 import { evaluationPacketMediaType } from "./runtime/evaluation-materials.js";
-import { hasExactEngineeringActionGrant, loadIntegrations, runtimeThreadConfigForSession, selectMaterialCli } from "./configuration.js";
+import { hasExactEngineeringActionGrant, hasTaskTimingGrant, loadIntegrations, runtimeThreadConfigForSession, selectMaterialCli } from "./configuration.js";
 import { OpenVikingKnowledgeRepository } from "@evoloop/adapter-wiki-openviking";
 import { DomainError } from "@evoloop/contracts/ports";
 import type { Principal } from "@evoloop/contracts";
@@ -64,6 +65,9 @@ import { AllocationRelationsService } from "@evoloop/core/allocation-relations";
 import { SessionMessageService } from "@evoloop/core/session-messages";
 import type { SessionMessageManualStopPreflight } from "@evoloop/contracts/session-messages";
 import { SessionMessagePump } from "./session-messages/pump.js";
+import { PgDirectInputs } from "@evoloop/adapter-postgres/direct-input";
+import { createDirectInputService } from "./direct-input/integration.js";
+import { requireDirectInputRuntime } from "./direct-input/service.js";
 import { previewManualStop, verifyManualStop } from "./session-messages/manual-stop.js";
 import { SessionTimelineService } from "./session-timeline/index.js";
 import { OrdinaryRunSubmissionService, leaseCheckedUnitOfWork } from "./ordinary-run-submission/service.js";
@@ -74,6 +78,8 @@ import { createMessageExecutionReader } from "./session-messages/execution-capab
 import { sessionMessageCanStart } from "./session-messages/scheduling.js";
 import { LeaderResultNoticePump } from "./leader-results/pump.js";
 import { TaskAttentionPump } from "./task-attention/pump.js";
+import { AcceptanceRelayService } from "./acceptance-relay/service.js";
+import { ordinaryRoleContext } from "./session-messages/role-context.js";
 
 const databaseUrl = process.env.EVOLOOP_DATABASE_URL;
 const authFile = process.env.EVOLOOP_AUTH_FILE;
@@ -135,8 +141,7 @@ const service = new WorkflowService({
   hasher,
   taskTimingAuthority: async (projectId, actorId, roleId, scopeId) => {
     const current = (await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE)).scheduling;
-    return !!current?.enabled && current.grants.some(grant =>
-      grant.projectId === projectId && grant.actorId === actorId && grant.roleId === roleId && grant.scopeId === scopeId) &&
+    return hasTaskTimingGrant(current, projectId, actorId, roleId, scopeId) &&
       await currentProjectWriter(projectId, actorId);
   },
   recoveryAuthority: staticRecoveryAuthority(
@@ -327,6 +332,7 @@ const runtimeFactory = runtimeConfig?.enabled ? () => {
   ...(runtimeConfig.executable ? { executable: runtimeConfig.executable } : {}),
   expectedVersion: `codex-cli ${runtimeConfig.protocolVersion}`,
   nativeUserInput: runtimeConfig.nativeUserInput,
+  workspaceExperimental: runtimeConfig.protocolVersion === "0.166.0-alpha.6",
   verifyBinding: async binding => {
     try { await trustedRuntime.verifyBinding(binding.projectId, binding); return true; } catch { return false; }
   },
@@ -458,6 +464,15 @@ const runner = runtimeFactory ? new RuntimeRunner({ runtimeFactory, workflow: se
   }) : null;
 const scheduling = new SchedulingPump({ store: new PgSchedulingStore(pool), taskTiming: new PgTaskTimingStore(pool), canWrite: lease.canWrite,
   credentials: () => credentials, grants: () => integrations.scheduling?.grants ?? [],
+  taskTimingGrants: async () => {
+    const current = (await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE)).scheduling;
+    if (!current?.enabled) return [];
+    const writers = await currentIdentity();
+    return current.taskTimingGrants.filter(grant => writers.some(identity =>
+      identity.actorId === grant.actorId && identity.projectIds.includes(grant.projectId) &&
+      identity.permissions.includes("read") && identity.permissions.includes("write") &&
+      identity.permissions.includes("review")));
+  },
   enabled: () => integrations.scheduling?.enabled ?? false,
   onError: () => console.error("Scheduling tick failed; inspect the saved schedule status before retrying."),
 });
@@ -471,6 +486,37 @@ const messageService = new SessionMessageService({ uow, clock, ids, grantFor: as
   if (!grant || !await currentProjectWriter(message.projectId, grant.receiverActorId)) return null;
   try { return await realpath(session.cwd) === session.cwd ? grant : null; } catch { return null; }
 } });
+const acceptanceCapabilityProblems = async ({projectId,session,senderActorId,receiverActorId}:
+  {projectId:string;session:RuntimeSessionRecord;senderActorId:string;receiverActorId:string}) => {
+  const problems:string[]=[];
+  const current=await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE);
+  if(session.state!=="ready"||!session.nativeThreadId||!await currentSessionExecutionAuthority(session))
+    problems.push("SESSION_NOT_READY");
+  if(!await currentProjectWriter(projectId,senderActorId))problems.push("SENDER_IDENTITY_UNAVAILABLE");
+  if(!await currentProjectWriter(projectId,receiverActorId))problems.push("RECEIVER_IDENTITY_UNAVAILABLE");
+  const material=current.runtime?.enabled ? selectMaterialCli(current.runtime.materialCli,projectId,
+    session.id,session.actorId,undefined,session.roleId) : null;
+  if(material?.cliActorId!==receiverActorId)problems.push("RECIPIENT_BINDING_MISSING");
+  if(!current.sessionMessages?.enabled||!current.sessionMessages.grants.some(g=>g.enabled&&g.projectId===projectId&&
+    g.sessionId===session.id&&g.senderActorId===senderActorId&&g.receiverActorId===receiverActorId&&
+    g.receiverRoleId===session.roleId&&g.cwd===session.cwd))problems.push("MESSAGE_GRANT_MISSING");
+  return [...new Set(problems)];
+};
+const acceptanceRelay = new AcceptanceRelayService({pool,workflow:service,messages:messageService,
+  principals:currentIdentity,canWrite:lease.canWrite,
+  leaderSession:async projectId => (await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE)).leaderResultNotices?.targets
+    .find(x=>x.projectId===projectId)?.sessionId??null,
+  qualify:async input => (await acceptanceCapabilityProblems(input))[0]??null,
+  capabilities:acceptanceCapabilityProblems});
+let acceptanceTickBusy=false;
+const acceptanceTimer=setInterval(()=>{
+  if(acceptanceTickBusy||!lease.canWrite())return;
+  acceptanceTickBusy=true;
+  void acceptanceRelay.tick([...new Set(credentials.flatMap(p=>p.projectIds))])
+    .catch(()=>console.error("Acceptance relay needs original-operation reconciliation."))
+    .finally(()=>{acceptanceTickBusy=false;});
+},2000);
+acceptanceTimer.unref();
 const leaderResultNoticePump = new LeaderResultNoticePump({
   store: {
     listPending: (projectId, query) => listPendingLeaderNotices(pool, projectId, query),
@@ -521,17 +567,38 @@ const taskAttentionPump = new TaskAttentionPump({pool,canWrite:lease.canWrite,no
 const businessBeforeMessage = sessionMessageCanStart({ workflow: service, service: messageService, principals: currentIdentity,
   onError: () => console.error("Task answer continuation requires review; inspect the saved queue and message reason.") });
 const messagePump = runner ? new SessionMessagePump({ service: messageService, runtime: () => runner.nativeAdapter(),
+  roleContext: async message => {
+    if(message.target.kind!=="owned")return null;
+    const session=await messageService.session(message.projectId,message.target.sessionId);
+    const current=await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE);
+    const grant=current.sessionMessages?.grants.find(g=>g.enabled&&g.projectId===message.projectId&&
+      g.sessionId===session.id&&g.senderActorId===message.senderActorId&&g.receiverRoleId===session.roleId&&g.cwd===session.cwd);
+    const material=current.runtime?.enabled ? selectMaterialCli(current.runtime.materialCli,message.projectId,
+      session.id,session.actorId,undefined,session.roleId) : null;
+    if(!grant||!material||material.cliActorId!==grant.receiverActorId||
+      !await currentProjectWriter(message.projectId,material.cliActorId))return null;
+    const reader=(await currentIdentity()).find(p=>p.projectIds.includes(message.projectId)&&p.permissions.includes("read"));
+    if(!reader)return null;
+    const role=await service.getRole(reader,message.projectId,session.roleId);
+    const paths=current.runtime?.roleSkills.find(x=>x.projectId===message.projectId&&x.roleId===session.roleId)?.paths??
+      [".agents/skills/evoloop-workflow/SKILL.md"];
+    const skills=await roleSkillReferences(skillSourceRoot,paths);
+    return ordinaryRoleContext({command:material.command,projectId:message.projectId,roleId:role.id,
+      revisionId:role.currentRevisionId,skills});
+  },
   nativeTurn: (projectId, sessionId) => nativeObservation.current(projectId, sessionId),
   projects: async () => [...new Set((await currentIdentity()).flatMap(p => p.projectIds))],
   canWrite: () => lease.canWrite() && runner.nativeStartsAvailable(),
   pollIntervalMs: integrations.sessionMessages?.pollIntervalMs ?? 2000,
   beforePreflight: async message => {
+    if(!await acceptanceRelay.messageAdmission(message.projectId,message.id))return false;
     const admission=await leaderResultNoticePump.messageAdmission(message);
     if(!admission.allowed&&admission.reason)
       await messageService.noteBlocked(message.projectId,message.id,admission.reason);
     return admission.allowed;
   },
   canStart: async message => {
+    if(!await acceptanceRelay.messageAdmission(message.projectId,message.id))return false;
     const current = (await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE)).sessionMessages;
     if (!current?.enabled) {
       await messageService.noteBlocked(message.projectId, message.id, "普通对话尚未启用，消息保留待处理。");
@@ -593,12 +660,27 @@ const managed = setupManagedLoops({pool, workflow: service, runtime: runner, int
   cliMain: fileURLToPath(new URL("../../cli/dist/main.js", import.meta.url))});
 managedCliBroker = managed?.broker ?? null;
 const sessionWork = new SessionObservationService({ uow });
-const sessionTimeline = new SessionTimelineService({uow,observation:sessionWork,...(runner?{runner}:{})});
+const sessionTimeline = new SessionTimelineService({uow,observation:sessionWork,
+  directInputs:new PgDirectInputs(pool),...(runner?{runner}:{})});
+const directInput = runner && integrations.runtime?.enabled ? createDirectInputService({
+  pool, uow,
+  runtime: () => requireDirectInputRuntime(runner.nativeAdapter()),
+  canWrite: () => lease.canWrite() && runner.nativeStartsAvailable(),
+  configuration: () => loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE),
+  currentProjectWriter, currentSessionExecutionAuthority,
+  allowedCwd: async (projectId,cwd) => {
+    const current = await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE);
+    try { return await realpath(cwd) === cwd && await current.allowedRuntimeCwd(projectId,cwd); }
+    catch { return false; }
+  },
+}) : undefined;
 if (runner) {
   try { await runner.start(); }
   catch { console.error("Codex runtime is unavailable; check the configured CLI version, protocol and project directories. No new dispatch was enabled."); }
 }
 const app = await buildServer({ service, credentials, canWrite: lease.canWrite, ordinarySubmissions,
+  acceptanceRelay,
+  ...(runner ? {compaction:new CompactionMaintenance(pool,runner)} : {}),
   taskAttentionPool: pool,
   workStatuses: (principal, projectId, taskIds) => readWorkStatuses(pool, service, principal, projectId, taskIds),
   workIndex: createLeaderWorkIndexReader(pool),
@@ -613,7 +695,7 @@ const app = await buildServer({ service, credentials, canWrite: lease.canWrite, 
         newMessageId:recovered.messageId,newOperationId:recovered.operationId,recovery:recovered.recovery};
     },
   },
-  sessionWork, sessionTimeline,
+  sessionWork, sessionTimeline, ...(directInput ? {directInput} : {}),
   allocationRelations: new AllocationRelationsService({ uow }),
   sessionMessages: messageService, nativeInputs, nativeObservation,
   ...(runner ? {manualStop: {
@@ -707,7 +789,7 @@ const app = await buildServer({ service, credentials, canWrite: lease.canWrite, 
 let shuttingDown = false;
 async function shutdown() {
   if (shuttingDown) return; shuttingDown = true;
-  try { taskAttentionPump.stop(); leaderResultNoticePump.stop(); messagePump?.stop(); residentQueue.stop(); ordinarySealPump.stop(); await managed?.stop(); await collaboration.stop(); await scheduling.stop(); await app.close(); sessionTimeline.close(); }
+  try { clearInterval(acceptanceTimer); taskAttentionPump.stop(); leaderResultNoticePump.stop(); messagePump?.stop(); residentQueue.stop(); ordinarySealPump.stop(); await managed?.stop(); await collaboration.stop(); await scheduling.stop(); await app.close(); sessionTimeline.close(); }
   finally {
     // Keep the coordinator lease while a native child may still be alive.
     // stop() only succeeds after the owned child's actual exit is observed.

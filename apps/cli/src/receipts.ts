@@ -26,7 +26,7 @@ export interface Recovery { kind: "core" | "orchestration" | "ordinary" | "candi
 export interface Intent {
   projectId: string; id: string; operationId: string | null; kind: string; path: string; body: unknown; recovery: Recovery;
   method?: "PUT"; // Absence preserves the POST method of existing receipts.
-  confirmation: "command" | "candidate" | "publish" | "ack" | "review" | "publish-reconcile" | "runtime-reconcile" | "runtime-recover" | "leader-notice-recovery";
+  confirmation: "command" | "candidate" | "publish" | "ack" | "review" | "publish-reconcile" | "runtime-reconcile" | "runtime-recover" | "leader-notice-recovery" | "compaction-start" | "compaction-reconcile";
   targetId?: string;
 }
 export interface Receipt extends Intent {
@@ -137,6 +137,11 @@ export class ReceiptStore {
 function confirmed(receipt: Receipt, result: unknown): boolean {
   const value = record(result), body = record(receipt.body);
   if (!value) return false;
+  if (receipt.confirmation === "compaction-start") return value.projectId === receipt.projectId &&
+    value.sessionId === receipt.targetId && value.operationId === receipt.operationId &&
+    ["unknown","accepted","completed","failed"].includes(String(value.state));
+  if (receipt.confirmation === "compaction-reconcile") return value.projectId === receipt.projectId &&
+    value.operationId === receipt.targetId && ["unknown","accepted","completed","failed"].includes(String(value.state));
   if (receipt.confirmation === "command") return value.status === "applied" && value.operationId === receipt.operationId && typeof value.entityId === "string";
   if (receipt.confirmation === "publish" || receipt.confirmation === "publish-reconcile") return value.status === "published" && value.operationId === receipt.operationId && typeof value.revision === "string";
   if (receipt.confirmation === "candidate") return value.operationId === receipt.operationId && value.candidateId === body?.candidateId &&

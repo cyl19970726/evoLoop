@@ -95,6 +95,27 @@ test("Leader overview hides empty review counts and maps cognition history to re
           nextCursor: null, total: 2, counts: { awaiting_delivery: 1, running: 1, review_deferred: 0 },
           changeSequence: 9, observedAt: stamp, partial: false,
         };
+        else if (url.pathname === `${root}/acceptance-relay/overview`) value = {
+          work: null, observedAt: stamp, capacity: [{
+            sessionId, roleId, sessionActorId: "product-docs-owner", cwd: "/tmp/evoloop",
+            state: "ready", nativeThreadId: "thread-1", tenure: "temporary", isLeader: false,
+            activeRuns: 0, pendingMessages: 0, queueEntries: 0, openAssignments: 0, openAcceptance: 0,
+            persistedWorkIdle: true, missingCapabilities: [], readyForAcceptance: true,
+          }, {
+            sessionId: "31000009-0000-4000-8000-000000000009", roleId, sessionActorId: "qa-two",
+            cwd: "/tmp/evoloop", state: "ready", nativeThreadId: "thread-2", tenure: "temporary",
+            isLeader: false, activeRuns: 0, pendingMessages: 0, queueEntries: 0, openAssignments: 0,
+            openAcceptance: 1, persistedWorkIdle: false, missingCapabilities: ["MESSAGE_GRANT_MISSING"],
+            readyForAcceptance: false,
+          }],
+        };
+        else if (url.pathname === `${root}/acceptance-relay/mine`) value = { items: [{
+          projectId, relayId: "31000010-0000-4000-8000-000000000010", taskId,
+          taskRevisionId: task.currentRevisionId, deliveryId: "31000011-0000-4000-8000-000000000011",
+          stage: "candidate", scopeKey: "human-use", scopeDescription: "使用当前固定交付",
+          entrypoint: null, publicationRef: null, version: 1, createdAt: stamp,
+          readAt: null, observationId: null,
+        }] };
         else if (url.pathname === `${root}/roles/${roleId}`) value = {
           projectId, id: roleId, proposal: { title: "cognition" },
         };
@@ -131,6 +152,11 @@ test("Leader overview hides empty review counts and maps cognition history to re
     await overview.getByText("历史判断记录 · 原任务责任见原任务").waitFor();
     await overview.getByText("受管 Session · 产品文档").waitFor();
     await overview.getByRole("link", { name: "打开 Session" }).waitFor();
+    await page.getByRole("heading", { name: "哪些阶段可以并行，谁还能接工作" }).waitFor();
+    await page.getByText("2 个 Session · 1 个可接新验收 · 1 个持久工作已清 · 1 个有能力缺项").waitFor();
+    await page.getByText("缺：MESSAGE_GRANT_MISSING").waitFor();
+    if (process.env.EVOLOOP_ACCEPTANCE_CAPACITY_SCREENSHOT)
+      await page.screenshot({ path: process.env.EVOLOOP_ACCEPTANCE_CAPACITY_SCREENSHOT, fullPage: false });
     const text = await overview.innerText();
     assert.doesNotMatch(text, /Cognition:|Role cognition|25deb2bf|Role cognition fallback/);
     assert.match(text, /待结果交付/);
@@ -149,4 +175,10 @@ test("Leader overview hides empty review counts and maps cognition history to re
     assert.equal(await overview.evaluate(element => element.scrollWidth <= element.clientWidth), true);
     if (process.env.EVOLOOP_LEADER_OVERVIEW_MOBILE_SCREENSHOT)
       await page.screenshot({ path: process.env.EVOLOOP_LEADER_OVERVIEW_MOBILE_SCREENSHOT, fullPage: false });
+    await page.goto(`${base}/#/p/${projectId}/inbox`);
+    await page.getByRole("heading", { name: "待我验收" }).waitFor();
+    await page.getByText("候选验收 · human-use").waitFor();
+    await page.getByText("尚未读取").waitFor();
+    if (process.env.EVOLOOP_HUMAN_INBOX_SCREENSHOT)
+      await page.screenshot({ path: process.env.EVOLOOP_HUMAN_INBOX_SCREENSHOT, fullPage: false });
   });

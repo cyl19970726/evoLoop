@@ -127,6 +127,26 @@ test('a reviewed pre-turn message continues with its original operation exactly 
   assert.equal(starts,1);assert.equal(claims,1);
 });
 
+test('reviewed continuation keeps the Role instructions captured before the first native attempt',async()=>{
+  const target=randomUUID(),m=message(randomUUID(),target,'unknown'),operationId=randomUUID();
+  const fixed='Fixed Role role@revision and Skill commit hash';
+  const input=`[evoloop-message-operation:${operationId}]\nOrdinary Session conversation using this Session's normal tools and full execution permissions. Act within the user's request and project identity. A reply does not by itself record Task delivery or acceptance.\n${fixed}\n${m.content}`;
+  const p={operationId,state:'unknown',nativeTurnId:null,readOnlyPolicyFingerprint:'a'.repeat(64),roleContext:fixed,
+    preTurnProof:{status:'approved',inputHash:createHash('sha256').update(input).digest('hex')}};
+  let starts=0;
+  const service={pending:async()=>[m],session:async()=>({...session(target),nativeThreadId:target}),
+    processing:async()=>p,claimPreTurnContinuation:async()=>{p.preTurnProof.status='attempting';return p;},
+    bindTurn:async()=>{p.state='running';p.nativeTurnId='fixed-turn';m.state='processing';}} as unknown as SessionMessageService;
+  const runtime={isReady:()=>true,registerBinding:async()=>{},qualifyConversationThread:async()=>({available:true,
+    reason:'safe',fingerprint:'a'.repeat(64)}),startConversationTurn:async(_binding:unknown,sent:string,op:string)=>{
+      assert.equal(sent,input);assert.equal(op,operationId);starts++;return{id:'fixed-turn',status:'inProgress',completedAtUtc:null};},
+    listTurns:async()=>({data:[],nextCursor:null}),listItems:async()=>({data:[],nextCursor:null})};
+  const pump=new SessionMessagePump({service,runtime:()=>runtime,projects:async()=>[projectId],
+    roleContext:async()=>{throw Error('current Role source must not replace the fixed dispatch input');},
+    canStart:async()=>true,canWrite:()=>true,pollIntervalMs:1000,onError:e=>{throw e;}});
+  await pump.tick();assert.equal(starts,1);
+});
+
 test('an exact live bound Turn prevents a transient history miss and settles when history appears',async()=>{
   const target=randomUUID(),m=message(randomUUID(),target,'processing');
   let unknown=0,settled=0,history:[{id:string;status:string;completedAtUtc:string}]|[]=[];

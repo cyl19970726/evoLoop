@@ -8,6 +8,7 @@ import type { SessionTarget } from '@evoloop/contracts/session-work';
 import type { NativeWorkspacePage, SessionTimelinePage, WorkspaceEntry, WorkspaceLiveRead,
   WorkspaceMessage, WorkspaceOrigin, WorkspaceRuntimeUpdate, WorkspaceTurn, NativeWorkspaceReadOptions } from '@evoloop/contracts/session-timeline';
 import type { RuntimeBinding, RuntimePort } from '@evoloop/contracts/runtime';
+import type { DirectInputRecord } from '@evoloop/contracts/direct-input';
 import type { SessionObservationService } from '@evoloop/core/session-observation';
 
 /** A started runner or a separately opened read-only adapter can own these exact reads. */
@@ -30,6 +31,7 @@ type LiveState = {generation:string; seq:number; events:LiveEvent[]; entries:Map
   stale:boolean; qualified:boolean; resetReason:string|null};
 type InputBinding = {itemId:string|null; ambiguous:boolean};
 type InputRead = {remaining:number; proofs:Map<string,InputBinding>; limitations:Set<string>};
+type DirectInputLookup = Pick<import('@evoloop/adapter-postgres/direct-input').PgDirectInputs,'acceptedForInputs'>;
 // Proofs belong to one read request; a display page or the process's first observed Item grants no binding.
 const inputRead=():InputRead=>({remaining:10,proofs:new Map(),limitations:new Set()});
 const hash=(value:unknown)=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -130,7 +132,8 @@ export class SessionTimelineService {
   private readonly instance=randomUUID();
   private unsubscribeUpdate:()=>void;
   private unsubscribeDisconnect:()=>void;
-  constructor(private readonly deps:{uow:UnitOfWork; observation:SessionObservationService; runner?:WorkspaceHistoryOwner}){
+  constructor(private readonly deps:{uow:UnitOfWork; observation:SessionObservationService; runner?:WorkspaceHistoryOwner;
+    directInputs?:DirectInputLookup}){
     this.unsubscribeUpdate=deps.runner?.onWorkspaceUpdate(event=>this.accept(event))??(()=>{});
     this.unsubscribeDisconnect=deps.runner?.onWorkspaceDisconnect(()=>this.disconnect())??(()=>{});
   }
@@ -271,10 +274,13 @@ export class SessionTimelineService {
     const turns=[...new Set([...live.entries.flatMap(e=>e.turnId?[e.turnId]:[]),...live.turns.map(t=>t.id)])];
     const associations=await this.sources(scope.projectId,scope.sessionId,turns);
     const bindings=await this.inputBindings(principal,scope,live.entries,associations.found,read);
+    const direct=await this.directBindings(principal,scope,live.entries,read);
     const entries=live.entries.map(raw=>{
       const source=raw.turnId?associations.found.get(raw.turnId)??null:null;
       const origin=originOf(source);
       if(raw.kind==='message'&&raw.role==='input'){
+        const steer=this.projectDirectInput(principal,scope,raw,source,direct.get(raw.clientId??''));
+        if(steer)return steer;
         return this.projectInput(raw,source,source?.kind==='message'?associations.messages.get(source.messageId):undefined,
           raw.turnId?bindings.get(raw.turnId):undefined);
       }
@@ -332,6 +338,7 @@ export class SessionTimelineService {
     const associations=scope.sessionId?await this.sources(projectId,scope.sessionId,turnIds):
       {found:new Map<string,NativeInputSource>(),messages:new Map<string,SessionMessageRecord>()};
     const bindings=await this.inputBindings(principal,scope,native?.entries??[],associations.found,inputReading);
+    const direct=await this.directBindings(principal,scope,native?.entries??[],inputReading);
     const page=readMessages?await this.deps.uow.read(projectId,async r=>{
       if(!r.sessionMessages)throw new DomainError('CAPABILITY_UNAVAILABLE','Session message storage unavailable');
       const messages=await r.sessionMessages.listSessionMessages(scope.target,limit,messagesCursor);
@@ -347,6 +354,8 @@ export class SessionTimelineService {
         const source=raw.turnId?associations.found.get(raw.turnId)??null:null;
         const origin=originOf(source);
         if(raw.kind==='message'&&raw.role==='input'){
+          const steer=this.projectDirectInput(principal,scope,raw,source,direct.get(raw.clientId??''));
+          if(steer)return [steer];
           const projected=this.projectInput(raw,source,
             source?.kind==='message'?associations.messages.get(source.messageId):undefined,
             raw.turnId?bindings.get(raw.turnId):undefined);
@@ -408,6 +417,7 @@ export class SessionTimelineService {
     const native=await this.deps.runner.workspaceHistory(principal,projectId,scope.sessionId,{turnId,itemId,limit:1,detail});
     const raw=native.entries.find(e=>e.turnId===turnId&&e.nativeItemId===itemId);
     if(!raw)throw new DomainError('NOT_FOUND','Native Item was not found in the exact Turn');
+    const direct=await this.directBindings(principal,scope,[raw],inputRead());
     const binding=source&&exactInput(raw,source)
       ? await this.inputBinding(principal,scope,turnId,source,inputRead()):undefined;
     const current=await this.scope(principal,projectId,key);
@@ -416,9 +426,72 @@ export class SessionTimelineService {
     if(raw.kind==='tool'&&!detail)throw new DomainError('FORBIDDEN','Original tool detail requires project review access');
     if(raw.kind==='message'&&raw.role==='assistant')return {...raw,origin:originOf(source),
       author:{kind:'session',id:scope.sessionId,label:scope.title}};
-    if(raw.kind==='message'&&raw.role==='input')return this.projectInput(raw,source,
-      source?.kind==='message'?associations.messages.get(source.messageId):undefined,binding);
+    if(raw.kind==='message'&&raw.role==='input')return this.projectDirectInput(principal,scope,raw,source,direct.get(raw.clientId??''))??
+      this.projectInput(raw,source,source?.kind==='message'?associations.messages.get(source.messageId):undefined,binding);
     return {...safeEntry(raw,detail),origin:originOf(source)};
+  }
+  private async directBindings(principal:Principal,scope:Scope,entries:WorkspaceEntry[],
+    read:InputRead):Promise<Map<string,DirectInputRecord>>{
+    if(!scope.sessionId||!this.deps.directInputs)return new Map();
+    const ids=[...new Set(entries.flatMap(e=>e.kind==='message'&&e.role==='input'&&e.clientId&&
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(e.clientId)?[e.clientId]:[]))];
+    const records=await this.deps.directInputs.acceptedForInputs(scope.projectId,scope.sessionId,ids);
+    const bound:DirectInputRecord[]=[];
+    for(const record of records){
+      if(record.nativeItemId){bound.push(record);continue}
+      const proof=await this.proveDirectBinding(principal,scope,record,read);
+      if(proof.itemId)bound.push({...record,nativeItemId:proof.itemId});
+      else read.limitations.add('已接受的即时补充尚未核实唯一原生 Item；原输入 ID 保留。');
+    }
+    return new Map(bound.map(record=>[record.inputId,record]));
+  }
+  private async proveDirectBinding(principal:Principal,scope:Scope,record:DirectInputRecord,
+    read:InputRead):Promise<InputBinding>{
+    const cached=read.proofs.get(`direct:${record.inputId}`);if(cached)return cached;
+    const unverified:InputBinding={itemId:null,ambiguous:false};
+    if(!scope.sessionId||!this.deps.runner||!record.actualTurnId)return unverified;
+    let cursor:string|undefined,itemId:string|null=null,completedAt:string|null=null;
+    const seen=new Set<string>();
+    while(read.remaining>0){
+      read.remaining--;
+      let page:NativeWorkspacePage;
+      try{page=await this.deps.runner.workspaceHistory(principal,scope.projectId,scope.sessionId,
+        {turnId:record.actualTurnId,limit:50,...(cursor?{cursor}:{})})}
+      catch(error){if(error instanceof DomainError&&error.code==='FORBIDDEN')throw error;return unverified}
+      const turns=page.turns.filter(turn=>turn.id===record.actualTurnId),turn=turns[0];
+      if(turns.length!==1||!turn?.completedAt||!['completed','failed','interrupted'].includes(turn.state)||
+        completedAt!==null&&completedAt!==turn.completedAt||page.entries.length>50||
+        page.entries.some(entry=>entry.turnId!==record.actualTurnId)||
+        page.limitations.length||page.unsupportedKinds.length)return unverified;
+      completedAt=turn.completedAt;
+      for(const entry of page.entries)if(entry.kind==='message'&&entry.role==='input'&&
+          entry.clientId===record.inputId&&!entry.inputReference){
+        if(!entry.nativeItemId)return unverified;
+        if(itemId&&itemId!==entry.nativeItemId)return {itemId:null,ambiguous:true};
+        itemId=entry.nativeItemId;
+      }
+      if(!page.nextCursor){
+        const proof=(page.itemEnumerationComplete??!page.partial)?{itemId,ambiguous:false}:unverified;
+        read.proofs.set(`direct:${record.inputId}`,proof);return proof;
+      }
+      if(!page.entries.length||seen.has(page.nextCursor))return unverified;
+      seen.add(page.nextCursor);cursor=page.nextCursor;
+    }
+    return unverified;
+  }
+  private projectDirectInput(principal:Principal,scope:Scope,raw:WorkspaceMessage,source:NativeInputSource|null,
+    record:DirectInputRecord|undefined):WorkspaceMessage|null{
+    if(!source||!record||!raw.turnId||!raw.nativeItemId||raw.clientId!==record.inputId||
+      record.projectId!==scope.projectId||!principal.projectIds.includes(scope.projectId)||
+      record.sessionId!==scope.sessionId||record.actualTurnId!==raw.turnId||
+      record.nativeItemId!==raw.nativeItemId||record.source.kind!==source.kind||
+      record.source.id!==(source.kind==='run'?source.runId:source.messageId)||
+      raw.inputReference)return null;
+    const readable=record.actorId===principal.actorId||principal.permissions.includes('review');
+    const {inputReference:_,...publicInput}=raw;
+    return {...publicInput,body:readable?bounded(record.content):'已接受的即时补充',
+      author:{kind:'actor',id:record.actorId,label:record.actorId},origin:originOf(source),
+      truncated:readable&&record.content.length>16000};
   }
   private projectInput(raw:WorkspaceMessage,source:NativeInputSource|null,message:SessionMessageRecord|undefined,
     binding:InputBinding|undefined):WorkspaceEntry{

@@ -10,15 +10,16 @@ import { Alert, date } from "../ui/shared";
 import { MarkdownBody } from "../ui/MarkdownBody";
 import { sessionClient } from "./client";
 import { sessionMessageEntry } from "./sessionMessageEntry";
+import { DirectInputEntry } from "./DirectInputEntry";
 import { useSessionTimeline } from "./useSessionTimeline";
-import { workspaceReadingGroups, workspaceReadingOrder } from "./workspaceTimelineModel";
+import { workspaceCurrentProgress, workspaceReadingGroups, workspaceReadingOrder, workspaceToolPreview } from "./workspaceTimelineModel";
 import { SessionIdentityMark } from "./SessionIdentityMark";
 import type { SessionIdentity } from "@evoloop/contracts/session-identity";
 import type { SessionTarget } from "@evoloop/contracts/session-work";
 
 const states: Record<WorkspaceState, string> = { pending: "待处理", running: "进行中", completed: "已完成", failed: "失败", interrupted: "已中断", declined: "已拒绝", unknown: "状态未确认" };
 const messageStates: Record<SessionMessageRecord["state"], string> = { queued: "待派发", processing: "原会话处理中", replied: "已回复", completed_without_reply: "已完成但无回复", failed: "失败", unknown: "结果未知", cancelled: "已取消", manual_pending: "待人工转交" };
-type ReadingPosition = { top: number; height: number; id: string | null; offset: number; follow: boolean };
+type ReadingPosition = { top: number; height: number; id: string | null; offset: number; viewportTop: number | null; follow: boolean };
 const readingPositions = new Map<string, ReadingPosition>();
 const expandedTools = new Map<string, Set<string>>();
 let viewCacheGeneration = 0;
@@ -27,11 +28,13 @@ function readingPosition(node: HTMLElement, follow: boolean): ReadingPosition {
   const top = node.getBoundingClientRect().top;
   const entry = [...node.querySelectorAll<HTMLElement>("[data-workspace-entry]")].find(item => item.getBoundingClientRect().bottom > top);
   return { top: node.scrollTop, height: node.scrollHeight, id: entry?.dataset.workspaceEntry ?? null,
-    offset: entry ? entry.getBoundingClientRect().top - top : 0, follow };
+    offset: entry ? entry.getBoundingClientRect().top - top : 0,
+    viewportTop: entry?.getBoundingClientRect().top ?? null, follow };
 }
 function restorePosition(node: HTMLElement, prior: ReadingPosition) {
   const entry = [...node.querySelectorAll<HTMLElement>("[data-workspace-entry]")].find(item => item.dataset.workspaceEntry === prior.id);
-  node.scrollTop = prior.follow ? node.scrollHeight : entry ? node.scrollTop + entry.getBoundingClientRect().top - node.getBoundingClientRect().top - prior.offset : prior.top;
+  node.scrollTop = prior.follow ? node.scrollHeight : entry ? node.scrollTop + entry.getBoundingClientRect().top -
+    (prior.viewportTop ?? node.getBoundingClientRect().top + prior.offset) : prior.top;
 }
 function ToolIcon({ entry }: { entry: WorkspaceTool }) {
   const kind = entry.nativeKind;
@@ -50,11 +53,13 @@ function StateIcon({ state }: { state: WorkspaceState }) {
       : state === "completed" ? <Check size={13} aria-hidden="true" /> : <Clock3 size={13} aria-hidden="true" />;
 }
 
-function ToolGroup({ entries, scope, onDetail }: { entries: WorkspaceTool[]; scope: string; onDetail(entry: WorkspaceEntry): void }) {
+function ToolGroup({ entries, scope, context, sessionKey, mayReadOriginal }: { entries: WorkspaceTool[]; scope: string; context: MutationContext; sessionKey: string; mayReadOriginal: boolean }) {
   const [open, setOpen] = useState(() => entries.some(entry => expandedTools.get(scope)?.has(entry.id)));
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const listId = useId();
   const failures = entries.filter(entry => ["failed", "interrupted", "declined"].includes(entry.state)).length;
   const running = entries.some(entry => entry.state === "running" && entry.freshness === "live");
+  const visible = open ? entries : workspaceToolPreview(entries, selectedId);
   return <div className={`workspace-tools ${failures ? "has-failure" : ""}`}>
     <button type="button" className="workspace-tools-toggle" aria-expanded={open} aria-controls={listId} onClick={() => {
       const next = !open, saved = expandedTools.get(scope) ?? new Set<string>();
@@ -65,19 +70,21 @@ function ToolGroup({ entries, scope, onDetail }: { entries: WorkspaceTool[]; sco
     }}><ChevronDown size={14} aria-hidden="true" /><Wrench size={15} aria-hidden="true" /><strong>工具与活动 · {entries.length} 项</strong>
       <span className="workspace-tools-status">{running && <><LoaderCircle size={13} className="workspace-spinning" aria-hidden="true" />进行中</>}{failures > 0 && <><CircleAlert size={13} aria-hidden="true" />{failures} 项失败或中断</>}</span>
     </button>
-    <div id={listId} className={`workspace-tool-list ${open ? "expanded" : "preview"}`}>
-      {(open ? entries : entries.slice(0, 4)).map(entry => <div className={`workspace-tool ${entry.state}`} key={entry.id} data-workspace-entry={entry.id} data-turn-id={entry.turnId ?? undefined}>
-        <ToolIcon entry={entry} /><div><strong>{toolLabel(entry.name)}</strong>{entry.summary && entry.summary !== entry.name && <span>{entry.summary}</span>}
-          <small><StateIcon state={entry.state === "running" && entry.freshness !== "live" ? "unknown" : entry.state} />{entry.freshness !== "live" && entry.state === "running" ? "上次进行中，当前待核对" : states[entry.state]}{entry.durationMs !== null && ` · ${Math.round(entry.durationMs) / 1000}s`}</small></div>
-        {open && <button type="button" className="workspace-entry-detail" onClick={() => onDetail(entry)} aria-label={`查看工具详情：${entry.name}`}>详情</button>}
+    <div id={listId} className="workspace-tool-list">
+      {visible.map(entry => <div className={`workspace-tool ${entry.state}`} key={entry.id} data-workspace-entry={entry.id} data-turn-id={entry.turnId ?? undefined}>
+        <div className="workspace-tool-main"><ToolIcon entry={entry} /><div><strong>{toolLabel(entry.name)}{toolLabel(entry.name) !== entry.name && <span className="workspace-tool-native"> · {entry.name}</span>}</strong>{entry.summary && entry.summary !== entry.name && <span>{entry.summary}</span>}</div>
+          <small><StateIcon state={entry.state === "running" && entry.freshness !== "live" ? "unknown" : entry.state} />{entry.freshness !== "live" && entry.state === "running" ? "上次进行中，当前待核对" : states[entry.state]}{entry.durationMs !== null && ` · ${Math.round(entry.durationMs) / 1000}s`}</small>
+          <button type="button" className="workspace-entry-detail" aria-label={`${selectedId === entry.id ? "收起" : "查看"}工具详情：${entry.name}`} aria-expanded={selectedId === entry.id} onClick={() => setSelectedId(value => value === entry.id ? null : entry.id)}>{selectedId === entry.id ? "收起详情" : "原位详情"}</button></div>
+        {selectedId === entry.id && <div className="workspace-tool-inline" role="region" aria-label={`${toolLabel(entry.name)}详情`}><EntryInspector key={entry.id} entry={entry} context={context} sessionKey={sessionKey} mayReadOriginal={mayReadOriginal} /></div>}
       </div>)}
     </div>
-    {!open && entries.length > 4 && <span className="workspace-tool-more">另有 {entries.length - 4} 项，展开查看</span>}
+    {!open && entries.length > visible.length && <span className="workspace-tool-more">显示最新与异常的 {visible.length} 项；另有 {entries.length - visible.length} 项可展开</span>}
   </div>;
 }
 
-function TimelineEntry({ item, context, title, sessionKey, target, identity, taskHref, onDetail, onMessage, onExpanded }: {
+function TimelineEntry({ item, context, title, taskTitle, sessionKey, target, identity, taskHref, onDetail, onMessage, onExpanded }: {
   item: WorkspaceEntry; context: MutationContext; title: string; sessionKey: string; target: SessionTarget; identity: SessionIdentity | null;
+  taskTitle: string | null;
   taskHref(taskId: string): string;
   onDetail(entry: WorkspaceEntry): void; onMessage(id: string): void; onExpanded?(entry: WorkspaceEntry): void;
 }) {
@@ -109,6 +116,10 @@ function TimelineEntry({ item, context, title, sessionKey, target, identity, tas
   const summary = item.kind === "message" ? null : item.kind === "tool" ? item.name : item.label;
   const expandedBody = item.kind === "message" && fullText && item.state !== "running" && fullText.body.startsWith(item.body) ? fullText : null;
   const body = expandedBody?.body ?? (item.kind === "tool" ? item.summary : item.body);
+  if (dispatched && item.origin?.taskId) return <article className="workspace-system-strip" data-workspace-entry={item.id} data-turn-id={item.turnId ?? undefined}>
+    <strong>系统派发 · 本轮任务</strong><span>来源：业务 Run · {taskTitle || "任务标题待核对"}</span>
+    <a href={`${taskHref(item.origin.taskId)}${taskHref(item.origin.taskId).includes("?") ? "&" : "?"}run=${encodeURIComponent(item.origin.id)}`}>查看任务与指令</a>
+  </article>;
   return <article aria-label={dispatched ? "项目派发的任务输入" : mine ? "我发出的消息" : label} className={`workspace-message ${mine ? "from-me" : assistant ? "from-agent" : "from-other"} ${item.kind !== "message" ? "workspace-record" : ""}`} data-workspace-entry={item.id} data-turn-id={item.turnId ?? undefined}>
     <span className="workspace-avatar" aria-hidden="true">{dispatched ? <FileText size={18} /> : mine ? <UserRound size={18} /> : assistant ? <Bot size={19} /> : item.author.kind === "actor" ? <Users size={18} /> : <Info size={18} />}</span>
     <div className="workspace-message-content"><header>{provenSession && <SessionIdentityMark target={target} identity={identity} name={title} size="small" />}<strong>{label}</strong>{item.occurredAt && <time dateTime={item.occurredAt}>{date(item.occurredAt)}</time>}
@@ -221,13 +232,13 @@ export function SessionTimeline({ context, snapshot, onApplied, taskHref, refres
   useEffect(() => {
     const node = scroll.current;
     if (!node) return;
-    let previousWidth = node.clientWidth;
+    let previousWidth = node.clientWidth, previousHeight = node.clientHeight;
     let hidden = node.clientHeight === 0;
     const observer = new ResizeObserver(() => {
       if (node.clientHeight === 0) { hidden = true; return; }
       const position = readingPositions.get(scope);
-      if ((hidden || previousWidth !== node.clientWidth && !follow.current) && position) restorePosition(node, position);
-      previousWidth = node.clientWidth; hidden = false;
+      if ((hidden || (previousWidth !== node.clientWidth || previousHeight !== node.clientHeight) && !follow.current) && position) restorePosition(node, position);
+      previousWidth = node.clientWidth; previousHeight = node.clientHeight; hidden = false;
       // Reflow changes scrollHeight; retain the reader's prior follow intention.
       if (follow.current && !anchor.current) { node.scrollTop = node.scrollHeight; setNearBottom(true); }
     });
@@ -275,10 +286,16 @@ export function SessionTimeline({ context, snapshot, onApplied, taskHref, refres
   const activeTurn = timeline.live?.activeTurnId
     ? timeline.turns.find(turn => turn.id === timeline.live!.activeTurnId && turn.state === "running") : undefined;
   const live = timeline.live?.freshness === "live";
+  const progress = workspaceCurrentProgress(items, live ? activeTurn?.id ?? null : null);
+  const currentTool = live && activeTurn ? [...items].reverse().find(entry => entry.kind === "tool" && entry.turnId === activeTurn.id && entry.state === "running") : null;
+  const source = activeTurn?.origin;
   const limitations = [...new Set([...(timeline.page?.limitations ?? []), ...(timeline.live?.limitations ?? [])])];
   return <section className="session-workspace-section session-conversation unified-session-timeline" aria-label="活动与对话">
     {snapshot.session.kind === "external" && <p className="workspace-range-note"><Info size={13} aria-hidden="true" />外部会话 · 这里只显示已同步内容，消息保存后需人工转交。</p>}
     {timeline.error && <Alert kind="error">活动暂不可读取：{timeline.error}<button type="button" onClick={timeline.reread}>重新读取活动</button></Alert>}
+    <div className="workspace-current-strip" role="status"><div><small>本轮来源</small><strong>{!activeTurn ? "当前无可确认的活动 Turn" : source?.kind === "run" ? "业务 Run" : source?.kind === "message" ? "消息执行" : "来源尚未关联"}</strong>{source?.taskId && <a href={taskHref(source.taskId)}>{snapshot.currentWork?.id === source.taskId ? snapshot.currentWork.title : "查看关联任务"}</a>}</div>
+      <div><small>当前工具</small><strong>{currentTool?.kind === "tool" ? toolLabel(currentTool.name) : "当前没有可确认的工具"}</strong>{currentTool?.kind === "tool" && <span>{currentTool.summary || currentTool.name}</span>}</div>
+      <div><small>本轮公开进展</small><strong>{progress?.kind === "plan" ? "执行计划" : progress ? "Agent 回复" : "尚未提供"}</strong>{progress && <span>{progress.body.slice(0, 160)}{progress.body.length > 160 ? "…" : ""}</span>}</div></div>
     <div ref={scroll} className="session-conversation-scroll workspace-timeline-scroll" role="log" tabIndex={0} aria-label="Session 消息与工具时间线" aria-live="off" aria-busy={!timeline.loaded} onScroll={event => {
       const node = event.currentTarget;
       if (!node.clientHeight || timeline.denied || cacheGeneration.current !== viewCacheGeneration) return;
@@ -290,14 +307,21 @@ export function SessionTimeline({ context, snapshot, onApplied, taskHref, refres
       {(timeline.nextCursor || timeline.messagesCursor) && <button className="session-conversation-older" type="button" disabled={timeline.moreBusy || timeline.reconciling} onClick={() => void more()}>{timeline.reconciling ? "正在校准历史…" : timeline.moreBusy ? "正在读取更早内容…" : "加载更早的消息与活动"}</button>}
       {!timeline.loaded && <p className="workspace-reading-status" role="status"><LoaderCircle size={16} className="workspace-spinning" aria-hidden="true" />正在读取会话…</p>}
       {timeline.loaded && !timeline.error && !groups.length && !children && !activeTurn && <div className="session-conversation-empty"><MessageCircle size={25} aria-hidden="true" /><strong>{timeline.page?.partial ? "当前来源尚未提供可读的活动" : "从这里开始沟通"}</strong><span>{timeline.page?.partial ? "这不代表原会话没有历史记录，可在读取范围中查看原因。" : "发送消息后，这个 Agent 的回复与工具活动会连续显示在这里。"}</span></div>}
-      {groups.map(group => group.kind === "tools" ? <ToolGroup key={`tools:${group.id}`} entries={group.entries} scope={scope} onDetail={entry => inspect({ entry })} /> : <TimelineEntry key={group.entry.id} item={group.entry} context={context} title={snapshot.session.title} sessionKey={snapshot.session.key} target={snapshot.session.target} identity={snapshot.session.identity} taskHref={taskHref} onExpanded={timeline.replaceEntry} onDetail={entry => inspect({ entry })} onMessage={messageId => inspect({ messageId })} />)}
+      {groups.map(group => group.kind === "tools" ? <ToolGroup key={`tools:${group.id}`} entries={group.entries} scope={scope} context={context} sessionKey={snapshot.session.key} mayReadOriginal={timeline.page?.capabilities.originalToolDetail ?? false} /> : <TimelineEntry key={group.entry.id} item={group.entry} context={context} title={snapshot.session.title} taskTitle={snapshot.currentWork && group.entry.origin?.taskId === snapshot.currentWork.id ? snapshot.currentWork.title : null} sessionKey={snapshot.session.key} target={snapshot.session.target} identity={snapshot.session.identity} taskHref={taskHref} onExpanded={timeline.replaceEntry} onDetail={entry => inspect({ entry })} onMessage={messageId => inspect({ messageId })} />)}
       {activeTurn && <div className={`workspace-turn-state ${live ? "" : "stale"}`} role="status"><span className="workspace-avatar"><Bot size={19} aria-hidden="true" /></span><div><strong>{live ? <><LoaderCircle size={15} className="workspace-spinning" aria-hidden="true" />处理中</> : "上次观察为进行中"}</strong><span>{live ? "活动将随原会话更新。" : "当前连接状态待核对。"}</span></div></div>}
       {!timeline.denied && children}
     </div>
-    {!nearBottom && items.length > 0 && <button className="workspace-jump-latest" type="button" onClick={() => { if (scroll.current) scroll.current.scrollTo({ top: scroll.current.scrollHeight, behavior: "smooth" }); follow.current = true; setNearBottom(true); }}><ArrowDown size={15} aria-hidden="true" />回到最新内容</button>}
+    {!nearBottom && items.length > 0 && <button className="workspace-jump-latest" type="button" onClick={() => { if (scroll.current) scroll.current.scrollTo({ top: scroll.current.scrollHeight, behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" }); follow.current = true; setNearBottom(true); }}><ArrowDown size={15} aria-hidden="true" />回到最新内容</button>}
     <div className="session-composer-host">
-      {!capability.canSave ? <Alert>{capability.sendReason || "当前不能保存消息。"}</Alert> : <ActionForm embedded submitOnModEnter context={{ ...context, draftScope: `session-message:${snapshot.session.key}` }} title={capability.actionTitle} fields={[{ name: "content", label: "消息内容", kind: "textarea", placeholder: snapshot.session.kind === "external" ? "写给当前外部 Session，保存后人工转交…" : "给当前 Session 发消息…", autoGrow: true }]} build={v => ({ type: "session.message.post", messageId: crypto.randomUUID(), target: snapshot.session.target, content: v.content, ...(snapshot.currentWork ? { context: { taskId: snapshot.currentWork.id, taskRevisionId: snapshot.currentWork.revisionId } } : {}) })} onApplied={applied} />}
+      {snapshot.session.kind === "owned" && snapshot.session.target.kind === "owned" ? <DirectInputEntry
+        token={context.token} projectId={context.projectId} sessionId={snapshot.session.target.sessionId}
+        actorId={context.principal.actorId} onApplied={applied} fallback={<>
+      {!capability.canSave ? <Alert>{capability.sendReason || "当前不能保存消息。"}</Alert> : <ActionForm embedded submitOnModEnter context={{ ...context, draftScope: `session-message:${snapshot.session.key}` }} title={capability.actionTitle} fields={[{ name: "content", label: "消息内容", kind: "textarea", placeholder: "给当前 Session 发消息…", autoGrow: true }]} build={v => ({ type: "session.message.post", messageId: crypto.randomUUID(), target: snapshot.session.target, content: v.content, ...(snapshot.currentWork ? { context: { taskId: snapshot.currentWork.id, taskRevisionId: snapshot.currentWork.revisionId } } : {}) })} onApplied={applied} />}
       <div className="workspace-composer-meta"><small>{snapshot.session.busy ? "当前处理中，新消息依序排队。" : "Enter 换行，⌘/Ctrl + Enter 保存。"}</small><details className="workspace-reading-scope"><summary>读取范围</summary><div><p>{capability.introduction}</p><p>自动处理：{capability.executionLabel}。{capability.executionReason}</p>{capability.budgetLabel && <p>{capability.budgetLabel}。账户额度与此累计次数分开。</p>}{capability.executionObservedAt && <p>执行状态读于 {date(capability.executionObservedAt)}；配置变化后请点上方“重新读取”。</p>}<p>{timeline.page?.capabilities.history ? "历史按原生来源分页读取。" : "当前原生历史不可读取。"}{timeline.live?.freshness === "live" ? "实时活动来自现有连接。" : "当前没有可确认的实时连接。"}</p>{timeline.page && <p>读取于 {date(timeline.page.observedAt)}{timeline.page.partial && " · 来源仅展示已读范围"}</p>}{limitations.length > 0 && <ul>{limitations.map(reason => <li key={reason}>{reason}</li>)}</ul>}</div></details></div>
+      </>} /> : <>
+      {!capability.canSave ? <Alert>{capability.sendReason || "当前不能保存消息。"}</Alert> : <ActionForm embedded submitOnModEnter context={{ ...context, draftScope: `session-message:${snapshot.session.key}` }} title={capability.actionTitle} fields={[{ name: "content", label: "消息内容", kind: "textarea", placeholder: "写给当前外部 Session，保存后人工转交…", autoGrow: true }]} build={v => ({ type: "session.message.post", messageId: crypto.randomUUID(), target: snapshot.session.target, content: v.content })} onApplied={applied} />}
+      <div className="workspace-composer-meta"><small>Enter 换行，⌘/Ctrl + Enter 保存。</small><details className="workspace-reading-scope"><summary>读取范围</summary><div><p>{capability.introduction}</p><p>自动处理：{capability.executionLabel}。{capability.executionReason}</p></div></details></div>
+      </>}
     </div>
     <Dialog.Root open={inspector !== null && !timeline.denied} onOpenChange={open => { if (!open) setInspector(null); }}><Dialog.Portal><Dialog.Overlay className="workspace-inspector-overlay" /><Dialog.Content className="workspace-inspector" aria-describedby="workspace-inspector-description" onCloseAutoFocus={event => { const trigger = inspectorTrigger.current; if (trigger?.isConnected && trigger.getClientRects().length) { event.preventDefault(); trigger.focus({ preventScroll: true }); } inspectorTrigger.current = null; }}><header><div><Dialog.Title>活动详情</Dialog.Title><Dialog.Description id="workspace-inspector-description">核对所选内容、消息状态与来源。</Dialog.Description></div><Dialog.Close aria-label="关闭活动详情"><X size={18} /></Dialog.Close></header>{inspector && !timeline.denied && ("entry" in inspector ? <EntryInspector key={inspector.entry.id} entry={inspector.entry} context={context} sessionKey={snapshot.session.key} mayReadOriginal={timeline.page?.capabilities.originalToolDetail ?? false} /> : <MessageInspector key={inspector.messageId} id={inspector.messageId} context={context} snapshot={snapshot} onApplied={applied} />)}</Dialog.Content></Dialog.Portal></Dialog.Root>
   </section>;

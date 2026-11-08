@@ -16,15 +16,17 @@ import { assignmentSessionKey, assignmentStatusLabel, isClosedTask, isMyCurrentW
 import { useTaskProjections } from "./useTaskProjections";
 import { TaskPreview } from "./TaskPreview";
 import type { LeaderWorkDocument, LeaderWorkPage, LeaderWorkTask } from "@evoloop/contracts/work-index";
+import type { AcceptanceHumanItem, AcceptanceOverviewView } from "@evoloop/contracts/acceptance-relay";
 import type { TaskAttentionItem } from "@evoloop/contracts";
 import { request } from "../api";
 import { latestProgressPresentation, taskType } from "./taskWorkspacePresentation";
 import { timingDate, timingDuration, timingStageLabel, timingWaitingFor } from "./LeaderTaskFacts";
-import { formatScheduled, repeatLabel } from "./taskTimingPresentation";
+import { formatScheduled, nextTimingLabel, repeatLabel } from "./taskTimingPresentation";
 import {
   appendLeaderWorkPage, leaderPhaseLabel, leaderSessionDisplayName, leaderWorkItemPresentation,
   loadLeaderDocumentsForIds, loadLeaderWorkStatuses, visibleLeaderDocuments,
 } from "./leaderWorkLoad";
+import { AcceptanceCapacitySummary, HumanAcceptanceInbox } from "./AcceptanceOverviewPanels";
 
 const states: Record<Task["state"], string> = { todo: "待办", in_progress: "进行中", done: "已完成", cancelled: "已取消" };
 const taskKinds = { implementation: "实施", research: "调研", validation: "验证" } as const;
@@ -93,6 +95,10 @@ export function WorkIndex({ context, refresh, view }: { context: MutationContext
   const [leaderDocumentCoverage, setLeaderDocumentCoverage] = useState<"idle" | "loading" | "complete" | "partial">("idle");
   const [leaderWorkBusy, setLeaderWorkBusy] = useState(false);
   const [leaderWorkError, setLeaderWorkError] = useState("");
+  const [acceptanceOverview, setAcceptanceOverview] = useState<AcceptanceOverviewView | null>(null);
+  const [acceptanceOverviewError, setAcceptanceOverviewError] = useState("");
+  const [acceptanceMine, setAcceptanceMine] = useState<AcceptanceHumanItem[] | null>(null);
+  const [acceptanceMineError, setAcceptanceMineError] = useState("");
   const [attentionRead, setAttentionRead] = useState<{ projectId: string; items: TaskAttentionItem[]; complete: boolean; error: string } | null>(null);
   const [leaderStatuses, setLeaderStatuses] = useState<Record<string, WorkTaskStatus>>({});
   const [leaderStatusReading, setLeaderStatusReading] = useState(false);
@@ -166,6 +172,30 @@ export function WorkIndex({ context, refresh, view }: { context: MutationContext
     });
     return () => { active = false; };
   }, [token, projectId, refresh, recheck, view, loading, visibleDocumentSignature, documentStatus]);
+  useEffect(() => {
+    let active = true;
+    setAcceptanceOverviewError("");
+    setAcceptanceOverview(null);
+    if (loading || view !== "work") return () => { active = false; };
+    api(token).acceptanceOverview(projectId).then(result => {
+      if (active) setAcceptanceOverview(result);
+    }).catch(cause => {
+      if (active) setAcceptanceOverviewError(errorText(cause));
+    });
+    return () => { active = false; };
+  }, [token, projectId, refresh, recheck, view, loading]);
+  useEffect(() => {
+    let active = true;
+    setAcceptanceMineError("");
+    setAcceptanceMine(null);
+    if (view !== "inbox") return () => { active = false; };
+    api(token).acceptanceMine(projectId).then(result => {
+      if (active) setAcceptanceMine(result.items);
+    }).catch(cause => {
+      if (active) setAcceptanceMineError(errorText(cause));
+    });
+    return () => { active = false; };
+  }, [token, projectId, refresh, recheck, view]);
   useEffect(() => {
     let active = true;
     setAttentionRead(null);
@@ -498,7 +528,8 @@ export function WorkIndex({ context, refresh, view }: { context: MutationContext
     {view === "documents" && leaderDocumentCoverage === "partial" &&
       <p className="work-list-read-status" role="status">文档生命周期尚未完整覆盖；未读到的行不会推测，可重新读取后再核对。</p>}
     {view === "documents" && create && <div className="panel"><h2>保存过程文档</h2><ActionForm context={context} title="创建 Markdown 文档" fields={[{ name: "title", label: "文档名称" }, { name: "kind", label: "类型（可选）", kind: "select", optional: true, options: Object.entries(documentKinds).filter(([key]) => key !== "task" && key !== "organization_review").map(([key, label]) => option(key, label)) }, { name: "body", label: "完整 Markdown 正文", kind: "textarea" }]} build={v => ({ type: "document.create", documentId: crypto.randomUUID(), title: v.title, body: v.body, kind: v.kind || null })} /><UploadDocument context={context} /></div>}
-    {view === "inbox" && <section className="panel impact-summary"><div className="panel-head"><h2>依据变化</h2><span>{pending.length} 项待复核</span></div>{!pending.length ? <p className="empty">当前没有待复核的依据变化。</p> : <ul className="impact-list">{pending.map(i => <li key={i.id}><a href={href(projectId, "task", i.taskId)}><strong>{tasks.items.find(t => t.id === i.taskId)?.title ?? `任务 ${i.taskId.slice(0, 8)}`}</strong><span>固定 <ShortId value={i.fromRevisionId} /> / 新采纳 <ShortId value={i.toRevisionId} /></span><span>查看影响</span></a></li>)}</ul>}</section>}
+    {view === "inbox" && <><HumanAcceptanceInbox items={acceptanceMine} projectId={projectId} error={acceptanceMineError} />
+      <section className="panel impact-summary"><div className="panel-head"><h2>依据变化</h2><span>{pending.length} 项待复核</span></div>{!pending.length ? <p className="empty">当前没有待复核的依据变化。</p> : <ul className="impact-list">{pending.map(i => <li key={i.id}><a href={href(projectId, "task", i.taskId)}><strong>{tasks.items.find(t => t.id === i.taskId)?.title ?? `任务 ${i.taskId.slice(0, 8)}`}</strong><span>固定 <ShortId value={i.fromRevisionId} /> / 新采纳 <ShortId value={i.toRevisionId} /></span><span>查看影响</span></a></li>)}</ul>}</section></>}
     <section className="list-surface" aria-label={title} aria-busy={loading}>
       <p className="work-list-read-status">{loading ? "正在核对当前列表…" : observedAt ? `列表读于 ${observedAt.toLocaleString("zh-CN")}；返回窗口时自动重读，也可手动刷新。` : "列表尚未读回。"}</p>
       {view !== "work" && <div className="list-toolbar"><label className="search-field"><Search size={16} aria-hidden="true" /><input aria-label={view === "documents" ? "搜索全部文档" : "搜索任务（分页读取，范围见下方）"} placeholder={view === "documents" ? "查找文档…" : "搜索任务标题或编号…"} value={query} onChange={e => setQuery(e.target.value)} /></label>
@@ -533,6 +564,7 @@ export function WorkIndex({ context, refresh, view }: { context: MutationContext
       roleName={(() => { const task = tasks.items.find(task => task.id === selectedTask); return task ? resolvedOwners[task.owner]?.title : null; })()}
       roleNameId={tasks.items.find(task => task.id === selectedTask)?.owner ?? null}
       outsideFilter={!visibleTasks.some(task => task.id === selectedTask)} />}</div>
+    {view === "work" && <AcceptanceCapacitySummary overview={acceptanceOverview} projectId={projectId} error={acceptanceOverviewError} />}
     {view === "work" && leaderWork && <details className="leader-work-disclosure"><summary>查看全项目 Leader 对账 <span>按项目全部未关闭工作核对</span></summary><LeaderWorkOverview page={leaderWork} projectId={projectId}
       ownerNames={resolvedOwners} statuses={statuses} leaderStatuses={leaderStatuses}
       sessionNames={leaderSessionNames} sourceReading={leaderStatusReading || leaderSessionReading}
@@ -659,7 +691,7 @@ function TaskListTable({ tasks, statuses, projectId, pending, ownerNames, projec
             {cognition && <>判断接续记录 · <a href={href(projectId, "task", t.id)}>查看来源</a></>}
             {!cognition && t.legacyDecision && legacyDecisionLabel(t.legacyDecision)}</small>
           {attentionCount > 0 && <div className="task-attention-row"><a className="task-attention-list-link" href={`${taskLink}${taskLink.includes("?") ? "&" : "?"}tab=overview&section=attention`}>{attentionCount} 项待关注</a></div>}
-          {taskTiming && <small>约定执行 {formatScheduled(taskTiming.executeAtUtc, taskTiming.timezone)} · {repeatLabel(taskTiming.repeat)}{taskTiming.nextAtUtc ? ` · 下次 ${formatScheduled(taskTiming.nextAtUtc, taskTiming.timezone)}` : ""}</small>}
+          {taskTiming && <small>约定执行 {formatScheduled(taskTiming.executeAtUtc, taskTiming.timezone)} · {repeatLabel(taskTiming.repeat)} · {nextTimingLabel(taskTiming)}</small>}
           {taskTiming?.repeat === "daily" && <small>同系列最近 {taskTiming.occurrences.length} 份{latestSeriesTask && <> · 最新 <a href={href(projectId, "task", latestSeriesTask.taskId)}>{states[latestSeriesTask.state]}任务</a></>}{latestFinishedSeriesTask ? <> · <a href={href(projectId, "task", latestFinishedSeriesTask.taskId)}>查看最近已完成任务的结果</a></> : " · 尚无已完成结果"}{taskTiming.waitingReason && ` · 等待：${taskTiming.waitingReason}`}</small>}
           {taskTimingReads?.errors[t.id] && <small title={taskTimingReads.errors[t.id]}>执行时间暂未读回</small>}
           {cognition && <span className="work-status-context">{status?.goalOutcome && <>目标：{status.goalOutcome}</>}{status?.stageDeliverable && <> · 阶段产物：{status.stageDeliverable}</>}</span>}
