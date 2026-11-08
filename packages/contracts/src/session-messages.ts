@@ -84,6 +84,9 @@ export interface SessionMessageDispatchGrant {
   projectId: string; sessionId: string; senderActorId: string; receiverRoleId: string; receiverActorId: string;
   /** Omitted means no cumulative ordinary-message turn limit. Existing explicit limits stay finite. */
   cwd: string; maxTurns?: number | undefined; enabled: boolean;
+  /** Connector execution is admitted only with this exact, current source binding and mode. */
+  connector?: { mode: "standard" | "restricted"; bindingId: string; routeVersion: number;
+    epoch: number; policyHash: string };
 }
 
 export function ordinaryMessageBudget(used:number,maxTurns:number|undefined){
@@ -93,6 +96,8 @@ export function ordinaryMessageBudget(used:number,maxTurns:number|undefined){
   return {used,limit:maxTurns??null,remaining:maxTurns===undefined?null:Math.max(0,maxTurns-used)};
 }
 export interface SessionMessageReader {
+  /** Recheck persisted source and route. Transaction implementations lock both rows. */
+  assertCurrentConnectorSource?(messageId: string, grant: NonNullable<SessionMessageDispatchGrant["connector"]>): Promise<void>;
   getSessionMessage(id: string): Promise<SessionMessageRecord | null>;
   getSessionMessages?(ids: string[]): Promise<SessionMessageRecord[]>;
   listSessionMessages(target: SessionTarget, limit: number, cursor?: string): Promise<{ items: SessionMessageRecord[]; nextCursor: string | null }>;

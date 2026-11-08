@@ -91,6 +91,7 @@ const help = {
     "work retirement SESSION_UUID --project UUID (temporary Session blockers, decision and archive readback)",
     "request acceptance.assign --project UUID --id TASK_UUID --file BODY.json (persist one exact Delivery/recipient handoff)",
     "request session.retirement.approve --project UUID --id SESSION_UUID --file BODY.json (approve a temporary instance's exact close operation)",
+    "work connectors --project UUID [--limit 1..50 --cursor UUID]; work connector BINDING_UUID --project UUID; work connector-deliveries BINDING_UUID --project UUID [--limit 1..50]; work connector-delivery BINDING_UUID DELIVERY_ID --project UUID; work connector-operation OPERATION_UUID --project UUID (saved route, deliveries and original write receipt)",
     "work attention --project UUID [--task TASK_UUID --state open|resolved --phase PHASE --signal SIGNAL --waiting-on-kind KIND --waiting-on-id ID --limit 1..100 --cursor CURSOR]",
     "work attention task TASK_UUID --project UUID (follow-up and Task attention history)",
     "work attention item ITEM_UUID --project UUID (one attention item and its events)",
