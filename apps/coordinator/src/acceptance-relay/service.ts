@@ -515,6 +515,10 @@ export class AcceptanceRelayService {
         m.rows[0]?.session_id===item.sessionId && m.rows[0]?.context_task_id===item.taskId &&
         m.rows[0]?.context_task_revision_id===item.taskRevisionId && m.rows[0]?.content===messageContent(item))return true;
     }
+    const currentMessage=await this.deps.pool.query("SELECT state FROM session_message WHERE project_id=$1 AND message_id=$2",
+      [projectId,messageId]);
+    // Never retire an in-flight or unknown native source; its original operation must settle first.
+    if(["processing","unknown"].includes(currentMessage.rows[0]?.state))return false;
     await this.deps.pool.query(`UPDATE session_message SET state='cancelled',version=version+1,
       blocked_reason='Acceptance source superseded',updated_at=now() WHERE project_id=$1 AND message_id=$2 AND state='queued'`,
       [projectId,messageId]);
