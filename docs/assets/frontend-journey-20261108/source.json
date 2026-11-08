@@ -1,0 +1,176 @@
+{
+  "observedAt": "2026-11-08",
+  "sourceRevision": {
+    "head": "36cb620382b1b7aa5e507b43f9f9983f4a95c7e6",
+    "schema": "062_acceptance_relay"
+  },
+  "service": {
+    "origin": "http://127.0.0.1:55431",
+    "mode": "maintenance",
+    "runtimeEnabled": false,
+    "automationEnabled": false
+  },
+  "projectId": "dfb56cce-4ecd-452d-94dc-bf9611babf11",
+  "source": "User-authorized screenshots from the normal local workbench UI running the formal 36cb620/schema062 maintenance service. Authentication was supplied outside these records; tokens and raw session files are not included.",
+  "sourceRecordLimited": "The transferred screenshot set and Task record identify the service revision, schema, viewport, DPR and scale. The screenshot tool version and browser UI zoom were not supplied.",
+  "captureConditions": {
+    "viewportCssPx": [
+      1440,
+      900
+    ],
+    "devicePixelRatio": 1,
+    "visualViewportScale": 1,
+    "browserUiZoom": null
+  },
+  "urlPolicy": "URLs below remove the in-memory access token. Detail routes use placeholders where the concrete entity identifier is not needed to establish the journey.",
+  "scope": "Read-only product UI verification on the formal post-release maintenance service. The interaction record covers Work table scrolling, Work summary entry, the Sessions directory, the redacted Session-detail layout, Markdown reading, HTML reading/resources, two old internal links on f2cf, and navigation to a fixed Document and back.",
+  "excludedSourceFiles": [
+    {
+      "file": "target-coldstart-1440x900.png",
+      "reason": "Target empty-database cold start only; it is not formal migration completion and is not part of this product journey."
+    }
+  ],
+  "screenshots": [
+    {
+      "file": "work-1440x900.png",
+      "sha256": "746e79806d522ee67826ef1308d6005ae7a8983d251fac73a7bedcc9431be69d",
+      "viewportCssPx": [
+        1440,
+        900
+      ],
+      "devicePixelRatio": 1,
+      "visualViewportScale": 1,
+      "outputPixelSize": [
+        1440,
+        900
+      ],
+      "sourceHead": "36cb620382b1b7aa5e507b43f9f9983f4a95c7e6",
+      "schema": "062_acceptance_relay",
+      "url": "http://127.0.0.1:55431/#/p/dfb56cce-4ecd-452d-94dc-bf9611babf11/work",
+      "action": "Open Work, leave all statuses selected, and select the same Task shown in the right summary.",
+      "observation": "The Task table and right summary share one selection. The first table position shows the left side of the six-column task row while the summary stays visible.",
+      "evidenceBoundary": "Shows a read-only 1440x900 desktop state. It does not prove narrow-window discoverability, horizontal scrolling by a human user, or that the selected Task is running."
+    },
+    {
+      "file": "work-horizontal-1440x900.png",
+      "sha256": "3e75f6556cb2390a534c2c8e7b48d7cf5fe0b4124c0b9d5bf49fbfb278c12700",
+      "viewportCssPx": [
+        1440,
+        900
+      ],
+      "devicePixelRatio": 1,
+      "visualViewportScale": 1,
+      "outputPixelSize": [
+        1440,
+        900
+      ],
+      "sourceHead": "36cb620382b1b7aa5e507b43f9f9983f4a95c7e6",
+      "schema": "062_acceptance_relay",
+      "url": "http://127.0.0.1:55431/#/p/dfb56cce-4ecd-452d-94dc-bf9611babf11/work",
+      "action": "Set the task table's own horizontal scroll position to scrollLeft=508 while keeping the Task selection unchanged.",
+      "observation": "Later columns move into view inside the table region; the right Task summary remains in place. The supplied interaction record also opens the selected Task from the summary.",
+      "evidenceBoundary": "The measured scrollLeft=508 belongs to the task-table scroller, not the whole workbench. This confirms independent table overflow at one desktop size; it does not prove ideal narrow-screen usability or a later full-Task screenshot."
+    },
+    {
+      "file": "sessions-1440x900.png",
+      "sha256": "0ecac58ec7e4b9991ff26177b026aec61036c7fd0ed9b12f567fe86967eab854",
+      "viewportCssPx": [
+        1440,
+        900
+      ],
+      "devicePixelRatio": 1,
+      "visualViewportScale": 1,
+      "outputPixelSize": [
+        1440,
+        900
+      ],
+      "sourceHead": "36cb620382b1b7aa5e507b43f9f9983f4a95c7e6",
+      "schema": "062_acceptance_relay",
+      "url": "http://127.0.0.1:55431/#/p/dfb56cce-4ecd-452d-94dc-bf9611babf11/sessions",
+      "action": "Open Sessions from the module rail and read the directory without opening a Session.",
+      "observation": "The Session directory occupies its own left rail; the project navigation remains a separate rail. Business Session entries and their current-task status are shown in the main directory.",
+      "evidenceBoundary": "Shows directory placement and grouping at one desktop size. It does not establish every history page, a System Session detail, or that any listed Session has a currently running Turn."
+    },
+    {
+      "file": "session-detail-1440x900.png",
+      "sha256": "d68aaaab21d324ce46ff3cb2ecca979e89f4adf83a522564e14780c0cd20d2ca",
+      "viewportCssPx": [
+        1440,
+        900
+      ],
+      "devicePixelRatio": 1,
+      "visualViewportScale": 1,
+      "outputPixelSize": [
+        1440,
+        900
+      ],
+      "sourceHead": "36cb620382b1b7aa5e507b43f9f9983f4a95c7e6",
+      "schema": "062_acceptance_relay",
+      "url": "http://127.0.0.1:55431/#/p/dfb56cce-4ecd-452d-94dc-bf9611babf11/sessions?session=owned%3A%3Csession-id%3E",
+      "redaction": "Derived 1440x900 public view of the same Session detail. The associated Task row and activity/tool bodies are replaced with explicit placeholders before publication; raw conversation and local paths are not included.",
+      "action": "打开同一真实 Session 布局；公开图中隐藏具体消息正文、工具详情与关联 Task，只保留目录、状态、Agent、页签和自适应输入区域。",
+      "observation": "公开图保留目录、状态、Agent 上下文、活动页签和输入区域，并以显式占位说明消息与工具内容已隐藏。",
+      "evidenceBoundary": "仅证明同一真实 Session 的视觉布局；具体消息正文、工具详情与关联 Task 已隐藏，不能声称完整对话内容可见。服务 runtime:false，不证明实时模型 Turn、工具执行、消息发送或自动 Agent 接续。"
+    },
+    {
+      "file": "document-1440x900.png",
+      "sha256": "1a85f83acbecaf7fb4483121fb80b5fd88c9348014d09e350d66e12310b27b87",
+      "viewportCssPx": [
+        1440,
+        900
+      ],
+      "devicePixelRatio": 1,
+      "visualViewportScale": 1,
+      "outputPixelSize": [
+        1440,
+        900
+      ],
+      "sourceHead": "36cb620382b1b7aa5e507b43f9f9983f4a95c7e6",
+      "schema": "062_acceptance_relay",
+      "url": "http://127.0.0.1:55431/#/p/dfb56cce-4ecd-452d-94dc-bf9611babf11/documents/<document-id>?revision=<revision-id>",
+      "action": "Open a fixed Markdown Document and read from its heading into the body and table.",
+      "observation": "Markdown uses the full main reading region without the former collapsed preview; fixed-revision controls and the return path remain in the compact header.",
+      "evidenceBoundary": "Shows continuous first-screen reading of one Markdown revision. It does not prove the final paragraph of a very long document or every attachment condition."
+    },
+    {
+      "file": "html-report-1440x900.png",
+      "sha256": "03a02cb775cc7a691f138701edde7f4321f3e7ec451644b6efc8cafcd602b5ec",
+      "viewportCssPx": [
+        1440,
+        900
+      ],
+      "devicePixelRatio": 1,
+      "visualViewportScale": 1,
+      "outputPixelSize": [
+        1440,
+        900
+      ],
+      "sourceHead": "36cb620382b1b7aa5e507b43f9f9983f4a95c7e6",
+      "schema": "062_acceptance_relay",
+      "url": "http://127.0.0.1:55431/#/p/dfb56cce-4ecd-452d-94dc-bf9611babf11/documents/<document-id>?revision=<revision-id>",
+      "action": "Open the fixed HTML sample whose identifier begins 26b5 and inspect the report and its secondary resources.",
+      "observation": "The isolated report occupies the main reading height; version/source controls are collapsed and the saved-resource section is secondary. This sample has no in-document href.",
+      "evidenceBoundary": "Proves continuous HTML reading and resource availability for 26b5 only. It does not prove internal-link rewriting, script execution or interactive-report support."
+    },
+    {
+      "file": "html-links-1440x900.png",
+      "sha256": "c41f4e1908db53a4c7f161171a7b93fcdfbcd96b1c631862097ae725d738f37f",
+      "viewportCssPx": [
+        1440,
+        900
+      ],
+      "devicePixelRatio": 1,
+      "visualViewportScale": 1,
+      "outputPixelSize": [
+        1440,
+        900
+      ],
+      "sourceHead": "36cb620382b1b7aa5e507b43f9f9983f4a95c7e6",
+      "schema": "062_acceptance_relay",
+      "url": "http://127.0.0.1:55431/#/p/dfb56cce-4ecd-452d-94dc-bf9611babf11/documents/<document-id>?revision=<revision-id>",
+      "action": "Open the fixed f2cf HTML sample, expand its two report-internal links, click a link into the fixed target Document, then return to the report.",
+      "observation": "The page lists exactly two valid legacy internal links and keeps the fixed HTML report as the source view. The supplied interaction record confirms an actual click opened the mapped fixed Document.",
+      "evidenceBoundary": "The screenshot itself shows the two-link panel; the transferred action record supplies the click-through. This does not prove that arbitrary HTML links are safe or that JavaScript in reports executed."
+    }
+  ]
+}
