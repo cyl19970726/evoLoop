@@ -12,7 +12,7 @@
   },
   "projectId": "dfb56cce-4ecd-452d-94dc-bf9611babf11",
   "source": "User-authorized screenshots from the normal local workbench UI running the formal 36cb620/schema062 maintenance service. Authentication was supplied outside these records; tokens and raw session files are not included.",
-  "sourceRecordLimited": "The transferred screenshot set and Task record identify the service revision, schema, viewport, DPR and scale. The screenshot tool version, browser UI zoom and an exact crop rectangle for the two 1212x831 PNG outputs were not supplied.",
+  "sourceRecordLimited": "The transferred screenshot set and Task record identify the service revision, schema, viewport, DPR and scale. The screenshot tool version and browser UI zoom were not supplied.",
   "captureConditions": {
     "viewportCssPx": [
       1440,
@@ -73,7 +73,7 @@
     },
     {
       "file": "sessions-1440x900.png",
-      "sha256": "9a171f54fa6aba02dc3679cc965ec46233df4f2a626512dd76ac637fa596db75",
+      "sha256": "0ecac58ec7e4b9991ff26177b026aec61036c7fd0ed9b12f567fe86967eab854",
       "viewportCssPx": [
         1440,
         900
@@ -81,10 +81,9 @@
       "devicePixelRatio": 1,
       "visualViewportScale": 1,
       "outputPixelSize": [
-        1212,
-        831
+        1440,
+        900
       ],
-      "outputSizeNote": "The supplied PNG is cropped to 1212x831; the supplied measured CSS viewport remains 1440x900. The exact crop rectangle was not transferred and is not inferred.",
       "sourceHead": "36cb620382b1b7aa5e507b43f9f9983f4a95c7e6",
       "schema": "062_acceptance_relay",
       "url": "http://127.0.0.1:55431/#/p/dfb56cce-4ecd-452d-94dc-bf9611babf11/sessions",
@@ -94,7 +93,7 @@
     },
     {
       "file": "session-detail-1440x900.png",
-      "sha256": "175fc1fe126a33a120aab126001c0023f7753b5d06b9f105e8b88d7aeea8f33b",
+      "sha256": "7c79b39eaf22214197c857d56867ac129ec5e3a8cbbd331c57faf851a4ee8b32",
       "viewportCssPx": [
         1440,
         900
@@ -102,10 +101,9 @@
       "devicePixelRatio": 1,
       "visualViewportScale": 1,
       "outputPixelSize": [
-        1212,
-        831
+        1440,
+        900
       ],
-      "outputSizeNote": "The supplied PNG is cropped to 1212x831; the supplied measured CSS viewport remains 1440x900. The exact crop rectangle was not transferred and is not inferred.",
       "sourceHead": "36cb620382b1b7aa5e507b43f9f9983f4a95c7e6",
       "schema": "062_acceptance_relay",
       "url": "http://127.0.0.1:55431/#/p/dfb56cce-4ecd-452d-94dc-bf9611babf11/sessions?session=owned%3A%3Csession-id%3E",

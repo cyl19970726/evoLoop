@@ -2,7 +2,7 @@
 
 2026-11-08 · **发布后当前路径**：本文先记录正式 `36cb620/schema062` 维护服务中的只读实景复测，再保留 2026-11-01 和 2026-11-02 的失败与候选样本作为历史差距。页面目标仍由各页面正文维护；一次维护模式截图不会把“页面可读”扩大成自动 Agent 运行、模型流或业务迁移完成。
 
-本轮沿同一件当前工作依次核对：任务表在自己的区域横向滚动，右侧摘要保持稳定；从摘要进入完整 Task；由 Task 到达确切 Session，并核对左侧 Session 目录与主工作区；打开固定 Markdown 和 HTML 成果；在带旧内部链接的 HTML 中进入固定 Document 后返回。七张当前图的 CSS 视口均为 **1440×900、DPR 1、visual viewport scale 1**。其中 Work、Markdown 和 HTML 文件的 PNG 为 1440×900；两张 Session 文件的转交 PNG 为 1212×831，但给定的测量 CSS 视口仍是 1440×900，精确裁切矩形未知，不能把它改写成另一组视口证据。逐图 URL、动作、哈希、服务修订、schema 和边界见[当前来源记录](../../assets/frontend-journey-20261108/source.json)。
+本轮沿同一件当前工作依次核对：任务表在自己的区域横向滚动，右侧摘要保持稳定；从摘要进入完整 Task；由 Task 到达确切 Session，并核对左侧 Session 目录与主工作区；打开固定 Markdown 和 HTML 成果；在带旧内部链接的 HTML 中进入固定 Document 后返回。七张当前图的 CSS 视口均为 **1440×900、DPR 1、visual viewport scale 1**，PNG 输出也全部为 **1440×900**。逐图 URL、动作、哈希、服务修订、schema 和边界见[当前来源记录](../../assets/frontend-journey-20261108/source.json)。
 
 服务健康回执同时记录 `runtime:false`、`automationEnabled:false`。因此本页证明的是维护模式中的普通读取、视觉布局和固定链接导航；它没有发起模型 Turn、消息发送、自动 Session、实时订阅或目标库正式业务迁移。
 
