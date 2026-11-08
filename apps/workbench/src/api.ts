@@ -111,6 +111,12 @@ export function api(token: string, timeoutMs = 15000) {
         `${projectPath(p)}/work-management/index?view=${view}&limit=50${cursor ? `&cursor=${key(cursor)}` : ""}${includeClosed ? "&includeClosed=true" : ""}`),
     leaderTask: (p: string, id: string) => call<LeaderWorkTask>(
       `${projectPath(p)}/work-management/tasks/${key(id)}`),
+    acceptanceRelay: (p: string, id: string) => call<{ items: import("@evoloop/contracts/acceptance-relay").AcceptanceRelayView[] }>(
+      `${projectPath(p)}/tasks/${key(id)}/acceptance-relay`),
+    acceptanceOverview: (p: string, cursor?: string) => call<import("@evoloop/contracts/acceptance-relay").AcceptanceOverviewView>(
+      `${projectPath(p)}/acceptance-relay/overview?limit=50${cursor ? `&cursor=${key(cursor)}` : ""}`),
+    acceptanceMine: (p: string) => call<{ items: import("@evoloop/contracts/acceptance-relay").AcceptanceHumanItem[] }>(
+      `${projectPath(p)}/acceptance-relay/mine`),
     leaderPlan: (p: string, id: string, command: LeaderWorkPlanCommand & { type?: string }) =>
       leaderWrite(`${projectPath(p)}/work-management/tasks/${key(id)}/plan`, command),
     leaderDependencies: (p: string, id: string, command: LeaderWorkDependenciesCommand & { type?: string }) =>
