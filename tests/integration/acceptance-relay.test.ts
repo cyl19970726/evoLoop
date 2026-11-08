@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
+import { readdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import pg from "pg";
@@ -410,8 +411,9 @@ test("Leader acceptance, capability gaps, blocked handoff notice and verified re
 test("acceptance relay migration upgrades a schema already at released 059 without renumbering history",async t=>{
   const schema=`acceptance_upgrade_${randomUUID().replaceAll("-","")}`;
   const migrations=fileURLToPath(new URL("../../packages/adapter-postgres/migrations/",import.meta.url));
+  const through059=(await readdir(migrations)).filter(name=>name.endsWith(".mjs")&&Number(name.slice(0,3))<=59).length;
   await runner({databaseUrl:database!,dir:migrations,migrationsTable:"pgmigrations",schema,
-    createSchema:true,createMigrationsSchema:true,direction:"up",singleTransaction:true,count:58,log:()=>{}});
+    createSchema:true,createMigrationsSchema:true,direction:"up",singleTransaction:true,count:through059,log:()=>{}});
   const pool=new pg.Pool({connectionString:database,options:`-c search_path=${schema}`});
   t.after(async()=>{
     await pool.end();
