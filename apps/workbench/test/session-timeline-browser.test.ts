@@ -691,17 +691,18 @@ test("dual-source history keeps the reader anchor, exhausts cursors, merges live
     "a real direct capability selects the direct composer");
   await directPage.getByLabel("即时发送到原 Session").fill("请核对这一条独立输入");
   await directPage.getByRole("button", { name: "开始一轮对话" }).click();
-  await directPage.getByText("结果未知，请按原输入核对").waitFor();
+  await directPage.getByText("发送结果未知，需核对原操作").waitFor();
   assert.equal(await (await fetch(`${base}/__fixture/direct-count`)).text(), "1");
   const originalInputId = String(directReceipt?.inputId);
   await directPage.reload();
   await directPage.getByLabel("访问令牌").fill("fixture-token");
   await directPage.getByRole("button", { name: "进入", exact: true }).click();
-  await directPage.getByText("结果未知，请按原输入核对").waitFor();
+  await directPage.getByText("发送结果未知，需核对原操作").waitFor();
   assert.ok((await directPage.locator(".session-direct-receipt").innerText()).includes(originalInputId));
   await directPage.locator(".session-direct-pending-draft > summary").click();
   assert.equal(await directPage.getByRole("button", { name: "开始一轮对话" }).isDisabled(), true);
-  await directPage.getByRole("button", { name: "按原输入核对" }).click();
+  await directPage.getByText("只读取原 inputId，不会重发。").waitFor();
+  await directPage.getByRole("button", { name: "核对结果（不会重发）" }).click();
   await directPage.getByRole("button", { name: "开始一轮对话" }).waitFor();
   assert.equal(await (await fetch(`${base}/__fixture/direct-count`)).text(), "1",
     "lost acknowledgement and reload never repost the original input");
@@ -739,10 +740,25 @@ test("dual-source history keeps the reader anchor, exhausts cursors, merges live
   await rejectedPage.getByRole("button", { name: "进入", exact: true }).click();
   await rejectedPage.getByLabel("即时发送到原 Session").fill("明确未接收的输入");
   await rejectedPage.getByRole("button", { name: "开始一轮对话" }).click();
-  await rejectedPage.getByText(/未接收：/).waitFor();
+  await rejectedPage.getByText("明确未接收 · 查看审计回执", { exact: true }).click();
+  const invalidAudit = await rejectedPage.locator(".session-direct-audit").innerText();
+  assert.match(invalidAudit, /INVALID_INPUT/);
+  assert.match(invalidAudit, /request rejected before reservation/);
+  assert.match(invalidAudit, /输入 ID：[0-9a-f-]{36}/);
+  assert.match(invalidAudit, /操作 ID：[0-9a-f-]{36}/);
   assert.equal(await rejectedPage.locator(".session-direct-receipt").count(), 0,
     "a server validation rejection before reservation frees the draft");
+  const rejectedStorage = await rejectedPage.evaluate(([project, session]) => ({
+    pending: sessionStorage.getItem(`direct-input:${project}:${session}:reader`),
+    operation: sessionStorage.getItem(`direct-input:${project}:${session}:reader:operation`),
+    audit: sessionStorage.getItem(`direct-input:${project}:${session}:reader:explicit-audit`),
+  }), [projectId, sessionId]);
+  assert.equal(rejectedStorage.pending, null);
+  assert.equal(rejectedStorage.operation, null);
+  assert.ok(rejectedStorage.audit);
   assert.equal(await rejectedPage.getByRole("button", { name: "开始一轮对话" }).isEnabled(), true);
+  assert.equal(await (await fetch(`${base}/__fixture/direct-count`)).text(), "3",
+    "the explicit rejection is one POST and does not create a recovery send");
   await rejectedPage.close();
 });
 

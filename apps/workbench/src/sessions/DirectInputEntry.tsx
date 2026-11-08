@@ -5,7 +5,22 @@ import { directInputClient, explicitlyUnaccepted } from "./directInputClient";
 
 const stateLabel: Record<DirectInputReceipt["state"], string> = {
   pending: "准备发送", attempted: "发送中，等待原操作回执", accepted: "原生已接收；不代表 Agent 已阅读或采用",
-  rejected: "已拒绝", unknown: "结果未知，请按原输入核对",
+  rejected: "已拒绝", unknown: "发送结果未知，需核对原操作",
+};
+type ExplicitAudit = { inputId: string; operationId: string; reason: string; observedAt: string };
+const readAudit = (value: string | null): ExplicitAudit | null => {
+  if (!value) return null;
+  try {
+    const parsed = JSON.parse(value) as Partial<ExplicitAudit>;
+    return typeof parsed.inputId === "string" && typeof parsed.operationId === "string" &&
+      typeof parsed.reason === "string" && typeof parsed.observedAt === "string"
+      ? parsed as ExplicitAudit : null;
+  } catch { return null; }
+};
+const explicitReason = (error: unknown) => {
+  const code = error instanceof ApiError && error.detail && typeof error.detail === "object"
+    ? (error.detail as { code?: unknown }).code : null;
+  return typeof code === "string" ? `${code}：${errorText(error)}` : errorText(error);
 };
 
 /** The original input ID survives a page reload. A lost acknowledgement never starts a new send. */
@@ -15,10 +30,12 @@ export function DirectInputEntry({ token, projectId, sessionId, actorId, fallbac
   const client = directInputClient(token, projectId, sessionId);
   const storageKey = `direct-input:${projectId}:${sessionId}:${actorId}`;
   const operationStorageKey = `${storageKey}:operation`;
+  const auditStorageKey = `${storageKey}:explicit-audit`;
   const [capability, setCapability] = useState<DirectInputCapability | null>(null);
   const [content, setContent] = useState("");
   const [pendingId, setPendingId] = useState(() => sessionStorage.getItem(storageKey));
   const [receipt, setReceipt] = useState<DirectInputReceipt | null>(null);
+  const [audit, setAudit] = useState<ExplicitAudit | null>(() => readAudit(sessionStorage.getItem(auditStorageKey)));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   useEffect(() => {
@@ -41,7 +58,8 @@ export function DirectInputEntry({ token, projectId, sessionId, actorId, fallbac
   const finish = (value: DirectInputReceipt) => {
     setReceipt(value); setError("");
     if (value.state === "accepted" || value.state === "rejected") {
-      sessionStorage.removeItem(storageKey); sessionStorage.removeItem(operationStorageKey); setPendingId(null);
+      sessionStorage.removeItem(storageKey); sessionStorage.removeItem(operationStorageKey);
+      sessionStorage.removeItem(auditStorageKey); setAudit(null); setPendingId(null);
       if (value.state === "accepted") { setContent(""); onApplied(); }
     }
   };
@@ -50,7 +68,8 @@ export function DirectInputEntry({ token, projectId, sessionId, actorId, fallbac
     const inputId = crypto.randomUUID(), operationId = crypto.randomUUID();
     sessionStorage.setItem(storageKey, inputId);
     sessionStorage.setItem(operationStorageKey, operationId);
-    setPendingId(inputId); setReceipt(null); setError(""); setBusy(true);
+    sessionStorage.removeItem(auditStorageKey);
+    setAudit(null); setPendingId(inputId); setReceipt(null); setError(""); setBusy(true);
     try { finish(await client.submit({ inputId, operationId, content: content.trim(),
       expectedTurnId: capability.mode === "steer" ? capability.expectedTurnId : null })); }
     catch (cause) {
@@ -58,8 +77,10 @@ export function DirectInputEntry({ token, projectId, sessionId, actorId, fallbac
       try { finish(await client.read(inputId)); }
       catch (readError) {
         if (explicitlyUnaccepted(cause) && readError instanceof ApiError && readError.status === 404) {
-          sessionStorage.removeItem(storageKey); sessionStorage.removeItem(operationStorageKey); setPendingId(null);
-          setError(`未接收：${errorText(cause)}`);
+          const rejected = { inputId, operationId, reason: explicitReason(cause), observedAt: new Date().toISOString() };
+          sessionStorage.removeItem(storageKey); sessionStorage.removeItem(operationStorageKey);
+          sessionStorage.setItem(auditStorageKey, JSON.stringify(rejected));
+          setPendingId(null); setAudit(rejected); setError("");
         } else setError("发送结果未知；保留原输入 ID，请核对后继续。");
       }
     } finally { setBusy(false); }
@@ -68,7 +89,7 @@ export function DirectInputEntry({ token, projectId, sessionId, actorId, fallbac
     if (!pendingId || busy) return;
     setBusy(true); setError("");
     try { finish(await client.reconcile(pendingId)); }
-    catch (cause) { setError(`原输入核对未完成：${errorText(cause)}`); }
+    catch (cause) { setError(`核对发送结果未完成：${errorText(cause)}`); }
     finally { setBusy(false); }
   };
   const direct = capability?.available === true && !!capability.mode;
@@ -82,9 +103,13 @@ export function DirectInputEntry({ token, projectId, sessionId, actorId, fallbac
   </form>;
   return <>
     {(pendingId || receipt) && <div className="session-direct-receipt" role={pendingId && error ? "alert" : "status"}><strong>{receipt ? stateLabel[receipt.state] : error || "正在读取原输入回执"}</strong>
-      <small>输入 ID：{receipt?.inputId ?? pendingId}</small>{receipt?.actualTurnId && <small>原 Turn：{receipt.actualTurnId}</small>}
+      <small className="session-direct-input-id">输入 ID：{receipt?.inputId ?? pendingId}</small>{receipt?.actualTurnId && <small className="session-direct-turn-id">原 Turn：{receipt.actualTurnId}</small>}
       {receipt?.reason && <span>{receipt.reason}</span>}
-      {pendingId && <button type="button" disabled={busy} onClick={() => void reconcile()}>按原输入核对</button>}</div>}
+      {pendingId && <small className="session-direct-no-resend-note">只读取原 inputId，不会重发。</small>}
+      {pendingId && <button type="button" disabled={busy} onClick={() => void reconcile()}>核对结果（不会重发）</button>}</div>}
+    {audit && <details className="session-direct-audit"><summary>明确未接收 · 查看审计回执</summary>
+      <small className="session-direct-input-id">输入 ID：{audit.inputId}</small><small className="session-direct-operation-id">操作 ID：{audit.operationId}</small>
+      <span>{audit.reason}</span><small>仅审计；不会恢复为未知草稿，可修正后重新发送。</small></details>}
     {error && !pendingId && <p className="session-direct-error" role="alert">{error}</p>}
     {pendingId && form ? <details className="session-direct-pending-draft"><summary>查看输入草稿</summary>{form}</details>
       : form || (!pendingId ? fallback : null)}

@@ -6,6 +6,8 @@ import { directInputClient, explicitlyUnaccepted } from "../src/sessions/directI
 
 test("direct input distinguishes a missing receipt after 503 from an explicit pre-reservation rejection", async t => {
   let submitStatus = 503;
+  let submitCode = "SERVICE_UNAVAILABLE";
+  let submitMessage = "commit outcome unknown";
   const paths: string[] = [];
   const server = createServer((request, response) => {
     paths.push(`${request.method} ${request.url}`);
@@ -14,9 +16,7 @@ test("direct input distinguishes a missing receipt after 503 from an explicit pr
       response.end(JSON.stringify({ items: [] })); // A 200 from an older route is not a capability.
     } else if (request.method === "POST") {
       response.statusCode = submitStatus;
-      response.end(JSON.stringify(submitStatus === 503
-        ? { code: "SERVICE_UNAVAILABLE", message: "commit outcome unknown" }
-        : { code: "INVALID_INPUT", message: "rejected before reservation" }));
+      response.end(JSON.stringify({ code: submitCode, message: submitMessage }));
     } else {
       response.statusCode = 404;
       response.end(JSON.stringify({ code: "NOT_FOUND", message: "no readable receipt yet" }));
@@ -39,7 +39,14 @@ test("direct input distinguishes a missing receipt after 503 from an explicit pr
   await assert.rejects(client.read(command.inputId), (error: unknown) => error instanceof ApiError && error.status === 404);
   assert.equal(explicitlyUnaccepted(cause), false, "503 followed by read 404 cannot release the original intent");
   submitStatus = 400;
+  submitCode = "INVALID_INPUT";
+  submitMessage = "rejected before reservation";
   try { await client.submit(command); } catch (error) { cause = error; }
   assert.equal(explicitlyUnaccepted(cause), true, "structured validation rejection precedes reservation");
-  assert.equal(paths.filter(path => path.includes("/direct-inputs") && path.startsWith("POST")).length, 2);
+  submitStatus = 409;
+  submitCode = "DIRECT_GRANT_MISSING";
+  submitMessage = "exact direct grant is unavailable";
+  try { await client.submit(command); } catch (error) { cause = error; }
+  assert.equal(explicitlyUnaccepted(cause), true, "a pre-reservation direct grant denial is an explicit rejection");
+  assert.equal(paths.filter(path => path.includes("/direct-inputs") && path.startsWith("POST")).length, 3);
 });

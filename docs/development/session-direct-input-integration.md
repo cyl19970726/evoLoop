@@ -27,7 +27,7 @@ direct start 在 PostgreSQL 事务中锁定原 Session，并检查业务 Run、�
 
 owned Session 的 composer 先读取 `direct-input-capability`，能力与提交使用同一组当前 writer、Session 执行、普通消息 grant、direct grant、cwd 和原生资格检查。只有服务明确返回 `steer` 或 `start` 时才显示即时发送；否则保留原消息入口。
 
-等待原生回执时，页面保留原输入 ID，并提供“按原输入核对”。未知状态不能被隐藏、合并成新消息或靠再次 POST 清除；明确未接收后才移除本机原意图。移动输入草稿放在可键盘展开的 disclosure 中，等待核对卡不得把历史阅读区压成一行。390px 条件使用真实 CSS 宽高、DPR 和 `visualViewport.scale` 验收，不能缩字、放大大视口或隐藏 unknown 换绿。
+等待原生回执时，页面保留原输入 ID，并提供“核对结果（不会重发）”；邻近说明明确它只读取原 `inputId`。未知状态不能被隐藏、合并成新消息或靠再次 POST 清除。预占前的明确拒绝（例如 409 `DIRECT_GRANT_MISSING` 后再读取原 input 为 404）不是 unknown：页面按可信回执显示“明确未接收”，清除 pending 与 operation 的未决存储，只保留可展开的 input/operation ID 审计回执，不把它恢复成未知草稿，也不阻止用户修正后重新发送。移动输入草稿放在可键盘展开的 disclosure 中，等待核对卡不得把历史阅读区压成一行。390px 条件使用真实 CSS 宽高、DPR 和 `visualViewport.scale` 验收，不能缩字、放大大视口或隐藏 unknown 换绿。
 
 连续阅读的当前来源、当前工具和本轮公开进展使用已关联的 Turn 与公开 Item；工具折叠仍保留最近运行、最近失败和实时项。工具原始输入输出只在服务再次核权的原位详情中读取，不进入所有读者共享的公开摘要。Task 往返、滚动锚点、键盘焦点、短窗和 `prefers-reduced-motion` 与这条输入路径一起回归。
 
@@ -63,10 +63,10 @@ owned Session 的 composer 先读取 `direct-input-capability`，能力与提交
 
 ## 检查边界
 
-- `direct-input-client.test.ts` 检查能力响应和 503 后 404 的原输入保留，以及明确预占前拒绝的区分。
+- `direct-input-client.test.ts` 检查能力响应、503 后 404 的原输入保留，以及 400/409 等明确预占前拒绝的区分。
 - `direct-input.test.ts` 在独立 PostgreSQL 18 schema 检查双启动唯一槽位、Run/消息两种主来源、两条同一 Turn 的 steer、TaskRevision/inputHash 不变、额度、撤权、未知和终态 CAS。
 - `direct-input-native-live.mts` 使用固定 alpha.6 二进制在隔离 HTTP/PG/Thread 中执行 direct start 和两条 steer，并回读三个精确 client ID/Item。
 - `direct-input-native-sources-live.mts` 在同一隔离边界分别使用已有业务 Run 和普通自动消息 processing，各送入两条 steer；前者核对固定 Run 输入未变，后者由现有 pump 完成终态结算。
-- 浏览器回归检查普通 owned 入口、长历史、unknown 卡、390/正常/短窗、减少动态、工具详情授权、Task 往返和滚动锚点。
+- 浏览器回归检查普通 owned 入口、长历史、unknown 卡、409 明确拒绝与 reload 后的审计/不恢复策略、390/正常/短窗、减少动态、工具详情授权、Task 往返和滚动锚点。
 
 真实原生试跑证明固定二进制和隔离数据路径；它不证明正式服务已启用该配置、已部署迁移、独立 acceptance-owner 已亲用或用户已在正式入口使用。发布后的普通入口复测、独立使用和 Task 验收仍分别留证。

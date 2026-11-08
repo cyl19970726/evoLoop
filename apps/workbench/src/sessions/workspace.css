@@ -216,10 +216,16 @@
 .session-direct-form button { min-height: 40px; padding: 8px 16px; color: #fff; background: #1556e7; border: 1px solid #1556e7; border-radius: 5px; }
 .session-direct-form button:disabled { opacity: .55; cursor: not-allowed; }
 .session-direct-form small { flex-basis: 100%; color: #667891; overflow-wrap: anywhere; }
-.session-direct-receipt { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 2px 8px; padding: 7px 9px; margin-bottom: 5px; border: 1px solid #cad8eb; border-radius: 5px; background: #f5f8fd; font-size: 12px; overflow-wrap: anywhere; }
-.session-direct-receipt strong, .session-direct-receipt span { grid-column: 1 / -1; }
-.session-direct-receipt small { grid-column: 1; }
-.session-direct-receipt button { grid-column: 2; grid-row: 2; align-self: center; justify-self: end; min-height: 40px; }
+.session-direct-receipt { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; padding: 6px 9px; margin-bottom: 5px; border: 1px solid #cad8eb; border-radius: 5px; background: #f5f8fd; font-size: 12px; overflow-wrap: anywhere; }
+.session-direct-receipt strong, .session-direct-receipt span { flex-basis: 100%; }
+.session-direct-receipt small { flex: 1 1 190px; min-width: 0; }
+.session-direct-input-id, .session-direct-operation-id { flex: 1 0 100% !important; font-family: ui-monospace,SFMono-Regular,Menlo,monospace; font-size: 11px !important; }
+.session-direct-no-resend-note { flex: 0 1 auto !important; }
+.session-direct-receipt button { margin-left: auto; white-space: nowrap; min-height: 36px; padding: 6px 10px; font-size: 11px; }
+.session-direct-audit { padding: 7px 10px; margin-bottom: 6px; border: 1px solid #e3c9a5; border-radius: 5px; background: #fffaf0; color: #6e542e; font-size: 12px; overflow-wrap: anywhere; }
+.session-direct-audit > summary { color: #7b4f16; cursor: pointer; font-weight: 600; }
+.session-direct-audit small { display: block; margin-top: 4px; color: #755f3f; }
+.session-direct-audit span { display: block; margin-top: 4px; color: #65451c; }
 .session-direct-pending-draft { margin: 0; color: #526b90; font-size: 12px; }
 .session-direct-pending-draft > summary { padding: 4px 0; cursor: pointer; }
 .session-direct-pending-draft .session-direct-form { margin-top: 6px; }

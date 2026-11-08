@@ -19,7 +19,8 @@ export function explicitlyUnaccepted(error: unknown): boolean {
   const code = (error.detail as { code?: unknown }).code;
   return (error.status === 400 && code === "INVALID_INPUT") ||
     (error.status === 413 && code === "TOO_LARGE") ||
-    (error.status === 403 && code === "FORBIDDEN");
+    (error.status === 403 && code === "FORBIDDEN") ||
+    (error.status === 409 && code === "DIRECT_GRANT_MISSING");
 }
 
 /** UI keeps the original IDs across an unknown response; it never resends automatically. */
