@@ -1457,9 +1457,10 @@ export class CodexAppServerAdapter implements RuntimePort {
       status=object(thread?.status)?.type;
       if (status !== "idle" && status !== "systemError")
         throw new RuntimeProtocolError("owned Thread is not ready after exact owner resume");
-      if (thread?.model !== profile.model ||
-        thread?.reasoningEffort !== profile.reasoningEffort)
-        throw new RuntimeProtocolError("owned Thread has a different active model or effort");
+      // Compaction uses the Thread default effort; per-Turn profile effort is
+      // applied only by turn/start and is intentionally not an equivalence gate here.
+      if (thread?.model !== profile.model)
+        throw new RuntimeProtocolError("owned Thread has a different active model");
       stage = "history";
       const turns=object(await this.request("thread/turns/list",{
         threadId:binding.nativeThreadId,limit:1,sortDirection:"desc",itemsView:"notLoaded",
