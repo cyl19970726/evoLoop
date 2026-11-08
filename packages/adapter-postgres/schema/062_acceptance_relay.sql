@@ -176,7 +176,7 @@ ALTER TABLE leader_result_notice ADD CONSTRAINT leader_result_notice_kind_check 
    'run_without_submission','run_submission_blocked','task_attention','acceptance_blocked'));
 CREATE FUNCTION leader_result_notice_from_acceptance_block() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
-  IF NEW.blocked_reason IS NOT NULL AND
+  IF NEW.state IN ('pending','blocked') AND NEW.blocked_reason IS NOT NULL AND
     (OLD.state IS DISTINCT FROM NEW.state OR OLD.blocked_reason IS DISTINCT FROM NEW.blocked_reason) THEN
     PERFORM enqueue_leader_result_notice(NEW.project_id,'acceptance_blocked',NEW.relay_id,NEW.task_id,
       NEW.task_revision_id,NEW.session_id,NEW.arranged_by,
