@@ -16,7 +16,7 @@ import { reserveRuntime } from "./runtime/reserve.js";
 import { currentRetentions, validateDispatchBasis, validateReselectedOriginals, validateSelectedExternalBasis } from "./runtime/basis.js";
 import { applyRole, RoleRuleError } from "./roles/index.js";
 import { applyResident } from "./resident-hosts.js";
-import { applySessionMessage } from "./session-messages/index.js";
+import { applySessionMessage, type SessionMessageGrantFor } from "./session-messages/index.js";
 import { applyNativeInputReply } from "./native-input/index.js";
 export { NativeInputService } from "./native-input/index.js";
 import type { SessionMessageCommand } from "@evoloop/contracts/session-messages";
@@ -40,6 +40,8 @@ import type { SessionRecoveryView } from '@evoloop/contracts/session-recovery';
 export { DomainError } from "@evoloop/contracts/ports";
 
 export interface WorkflowDependencies { uow: UnitOfWork; clock: Clock; ids: IdFactory; hasher: ContentHasher;
+  /** Current exact recipient/budget grant used to select a safe successor after cancelling a recovery pin. */
+  sessionMessageGrantFor?: SessionMessageGrantFor;
   taskTimingAuthority?: (projectId: string, actorId: string, roleId: string, scopeId: string) => Promise<boolean>;
   recoveryAuthority?: RecoveryAuthority;
   collaborationAuthority?: {
@@ -204,7 +206,8 @@ export class WorkflowService {
     if(command.type==='runtime.session.executionProfile.revise'||command.type==='runtime.session.recovery.resume')
       return applySessionRecovery(tx,principal,command,now,()=>this.deps.ids.next(),this.deps.recoveryAuthority);
     if (command.type.startsWith("session.message."))
-      return applySessionMessage(tx, principal, command as SessionMessageCommand, now);
+      return applySessionMessage(tx, principal, command as SessionMessageCommand, now,
+        this.deps.sessionMessageGrantFor?{grantFor:this.deps.sessionMessageGrantFor}:{});
     if (command.type === "session.input.reply")
       return applyNativeInputReply(tx, principal, command, now);
     if (command.type === "session.profile.set" || command.type === "session.identity.set" || command.type.startsWith("task.assignment.")) {

@@ -161,6 +161,8 @@ Task 或 Document 列表使用不可伪造业务含义的 base64url 位置；它
 
 `session.message.post` 的 `applied` 只证明真实发送者、target、正文及可选固定 Task 上下文已保存。普通 Session 消息用 `work message MESSAGE_ID` 核原消息及处理；Task 问题、答复和结果用该 Run 的 Task discussion 与固定 Document，不拿 discussion 事件证明普通消息已处理。普通对话无需新 Task；新的独立工作仍须正式 Task 与 Lead 排序。保存、原生接受、处理结束、完整回复和显式 read 是不同事实；实际收件人按 `command schema session.message.receipt` 对原消息签 read，发送者看到回复不能代签。 原消息已在精确 Session 绑定真实 Turn 且正在处理时即可签 read，无需为补已读再启动一轮；排队、未绑定和 unknown 仍不可签。已读不改变消息处理状态、队列占用或交付验收，失败或超时仍先按原 operation ID 回读，不能把旧的 rejected 意图换内容重试。撤回只适用于未派发的 queued／manual_pending；unknown 保留原 ID 回查。普通消息与业务 Run 使用相同 Session、Thread、adapter、full/never 配置和常规工具；sender/receiver grant 继续限定身份；缺省不限累计消息次数，显式 `maxTurns` 正整数才限定该发送者和 Session 的处理次数。业务对象仍按各自项目和固定修订授权读取。external 继续人工转交。
 
+若被取消的 queued 消息正是 `message_pending` 的 `resumeMessageId`，`session.message.cancel` 在同一事务内锁住消息与 recovery gate，并按当前 sender/receiver grant、执行配置、预算和固定来源重新选择最早的合格 queued 后继。没有合格后继时，无原 claim 的 gate 安全变为 `open` 并清空 pin；仍有原 claim 时保留其既有安全等待阶段。原 recovery decision、原 pin 和取消消息历史均不改写，后续命令只推进当前 gate version，不创建新决定。同 operation 和正文重读返回原结果；不能借取消绕过 grant／预算，也不能把无资格发送者的消息自动派发或标记 blocked。
+
 ### 读取和回复原生提问
 
 `read session SESSION_ID --inputs --project PROJECT_ID` 读取最多 20 条原生提问，待答优先；`read native-input INPUT_ID --project PROJECT_ID` 读取单条。Session snapshot 的 `nativeInputRequests` 使用相同观察，原生 RPC ID 和连接代号不对调用者开放。它不同于 Task 沟通通道，也不创建新的 Task。

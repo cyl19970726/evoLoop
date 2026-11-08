@@ -148,6 +148,15 @@ export class PgSessionMessages implements SessionMessageTransaction {
       ORDER BY m.created_at DESC,m.message_id DESC LIMIT $5`,[this.projectId,target.kind,value,cursor??null,limit+1]);
     const rows=r.rows.slice(0,limit);return{items:rows.map(message),nextCursor:r.rows.length>limit?rows.at(-1)!.message_id:null};
   }
+  async listQueuedSessionMessages(sessionId:string,limit:number,offset=0):Promise<SessionMessageRecord[]>{
+    if(!Number.isInteger(limit)||limit<1||limit>100)throw new RangeError('message limit must be 1..100');
+    if(!Number.isSafeInteger(offset)||offset<0)throw new RangeError('message offset must be a nonnegative safe integer');
+    const r=await this.client.query(`${SELECT_MESSAGE} WHERE m.project_id=$1 AND m.target_kind='owned'
+      AND m.session_id=$2 AND m.state='queued'
+      ORDER BY m.created_at,m.message_id LIMIT $3 OFFSET $4`,
+      [this.projectId,sessionId,limit,offset]);
+    return r.rows.map(message);
+  }
   async listPendingSessionMessages(limit:number,offset=0):Promise<SessionMessageRecord[]>{
     if(!Number.isInteger(limit)||limit<1||limit>100)throw new RangeError('message limit must be 1..100');
     if(!Number.isSafeInteger(offset)||offset<0)throw new RangeError('message offset must be a nonnegative safe integer');

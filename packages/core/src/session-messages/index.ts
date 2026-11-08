@@ -1,5 +1,5 @@
 import type { AppliedResult, Principal } from "@evoloop/contracts";
-import type { SessionMessageCommand, SessionMessageDispatchGrant, SessionMessageManualStopEvidence, SessionMessageManualStopPreflight, SessionMessageProcessing, SessionMessageRecord } from "@evoloop/contracts/session-messages";
+import type { SessionMessageCommand, SessionMessageDispatchGrant, SessionMessageManualStopEvidence, SessionMessageManualStopPreflight, SessionMessageProcessing, SessionMessageReader, SessionMessageRecord } from "@evoloop/contracts/session-messages";
 import { preTurnProofSchema, type PreTurnProof, type RuntimeTurn, type RuntimeSessionRecord } from "@evoloop/contracts/runtime";
 import type { Clock, IdFactory, Reader, Transaction, UnitOfWork } from "@evoloop/contracts/ports";
 import { DomainError } from "@evoloop/contracts/ports";
@@ -9,9 +9,72 @@ const required = <T>(value:T|null,label:string):T => {if(value===null)throw new 
 const sameTarget = (a:SessionMessageRecord['target'],b:SessionMessageRecord['target']) =>
   a.kind===b.kind && (a.kind==='owned' && b.kind==='owned'?a.sessionId===b.sessionId:a.kind==='external' && b.kind==='external' && a.linkId===b.linkId);
 const applied = (op:string,id:string,version:number):AppliedResult => ({status:'applied',operationId:op,entityId:id,version});
+export type SessionMessageGrantFor =
+  (message:SessionMessageRecord,session:RuntimeSessionRecord)=>Promise<SessionMessageDispatchGrant|null>;
+export type SessionMessageCommandOptions = {grantFor?:SessionMessageGrantFor};
+
+/** Shared admission used for both native dispatch and recovery-pin successor selection. */
+export async function admitSessionMessage(projectId:string,messageId:string,reader:Reader,
+  grantFor:SessionMessageGrantFor){
+  const store=reader.sessionMessages;
+  if(!store)throw new DomainError('SESSION_MESSAGES_UNAVAILABLE','message persistence is not configured');
+  const item=required(await store.getSessionMessage(messageId),'message');
+  if(item.state!=='queued'||item.target.kind!=='owned')throw new DomainError('MESSAGE_NOT_QUEUED','only an owned queued message may dispatch');
+  const session=required(await reader.getRuntimeSession(item.target.sessionId),'Session');
+  if(session.state!=='ready'||!session.nativeThreadId||!session.nativeSessionId)
+    throw new DomainError('SESSION_NOT_READY','recipient is unavailable');
+  const grant=await grantFor(item,session);
+  if(!grant||!grant.enabled||grant.projectId!==projectId||grant.sessionId!==session.id||
+    grant.senderActorId!==item.senderActorId||grant.receiverRoleId!==session.roleId||grant.cwd!==session.cwd||
+    !grant.receiverActorId?.trim()||grant.receiverActorId===item.senderActorId||
+    (grant.maxTurns!==undefined&&(!Number.isSafeInteger(grant.maxTurns)||grant.maxTurns<1)))
+    throw new DomainError('MESSAGE_GRANT_MISSING','exact ordinary conversation grant is unavailable');
+  const full=session.sandbox==='danger-full-access'&&session.approvalPolicy==='never'&&!grant.connector;
+  const standard=grant.connector?.mode==='standard'&&session.sandbox==='danger-full-access'&&
+    session.approvalPolicy==='never'&&!!session.authorizationScope&&
+    !session.authorizationScope.startsWith('connector-receiver:')&&
+    /^[a-f0-9]{64}$/.test(grant.connector.policyHash)&&grant.connector.routeVersion>0&&grant.connector.epoch>0;
+  const restricted=grant.connector?.mode==='restricted'&&session.sandbox==='read-only'&&session.approvalPolicy==='never'&&
+    session.authorizationScope===`connector-receiver:${grant.connector.bindingId}`&&
+    /^[a-f0-9]{64}$/.test(grant.connector.policyHash)&&grant.connector.routeVersion>0&&grant.connector.epoch>0;
+  if(!full&&!standard&&!restricted)
+    throw new DomainError('EXECUTION_PROFILE_NOT_ALLOWED','Message requires its exact full, standard Connector or restricted Connector execution grant');
+  if(standard||restricted){
+    if(!store.assertCurrentConnectorSource)
+      throw new DomainError('CONNECTOR_SOURCE_UNAVAILABLE','Connector source verification is unavailable');
+    await store.assertCurrentConnectorSource(item.id,grant.connector!);
+  }
+  if(grant.maxTurns!==undefined&&
+    await store.countSessionMessageTurns(session.id,item.senderActorId)>=grant.maxTurns)
+    throw new DomainError('MESSAGE_BUDGET_EXHAUSTED','ordinary conversation grant is exhausted');
+  return{item,session,grant};
+}
+
+export async function selectNextEligibleSessionMessage(projectId:string,sessionId:string,reader:Transaction,
+  grantFor:SessionMessageGrantFor):Promise<SessionMessageRecord|null>{
+  const store=reader.sessionMessages;
+  if(!store)throw new DomainError('SESSION_MESSAGES_UNAVAILABLE','message persistence is not configured');
+  let offset=0;
+  while(true){
+    const candidates=await store.listQueuedSessionMessages(sessionId,100,offset);
+    for(const candidate of candidates){
+      try{
+        await admitSessionMessage(projectId,candidate.id,reader,grantFor);
+        await store.assertCurrentLeaderSource(candidate.id);
+        return candidate;
+      }catch(error){
+        if(error instanceof DomainError)continue;
+        throw error;
+      }
+    }
+    if(candidates.length<100)return null;
+    offset+=candidates.length;
+  }
+}
 
 /** Called inside the shared command journal transaction; the principal supplies sender identity. */
-export async function applySessionMessage(tx:Transaction,principal:Principal,command:SessionMessageCommand,now:string):Promise<{result:AppliedResult;effects:{kind:string;entityId:string;version:number}[]}>{
+export async function applySessionMessage(tx:Transaction,principal:Principal,command:SessionMessageCommand,now:string,
+  options:SessionMessageCommandOptions={}):Promise<{result:AppliedResult;effects:{kind:string;entityId:string;version:number}[]}>{
   const store=tx.sessionMessages;
   if(!store)throw new DomainError('SESSION_MESSAGES_UNAVAILABLE','message persistence is not configured');
   if(command.type==='session.message.post'){
@@ -44,9 +107,23 @@ export async function applySessionMessage(tx:Transaction,principal:Principal,com
     if(item.senderActorId!==principal.actorId)throw new DomainError('MESSAGE_SENDER','only the sender may cancel a pending message');
     if(item.version!==command.expectedVersion)throw new DomainError('VERSION_CONFLICT','message changed',item.version);
     if(item.state!=='queued'&&item.state!=='manual_pending')throw new DomainError('MESSAGE_NOT_PENDING','only an unprocessed message may be cancelled');
+    const recovery=tx.recovery;
+    const ownedSessionId=item.target.kind==='owned'?item.target.sessionId:null;
+    const gate=ownedSessionId&&recovery?await recovery.lockRecoveryGate(ownedSessionId):null;
     const next={...item,state:'cancelled' as const,version:item.version+1,updatedAt:now};
     await store.updateSessionMessage(next,item.version);
-    return{result:applied(command.operationId,item.id,next.version),effects:[{kind:'session.message',entityId:item.id,version:next.version}]};
+    const effects=[{kind:'session.message',entityId:item.id,version:next.version}];
+    if(gate?.phase==='message_pending'&&gate.resumeMessageId===item.id){
+      if(!options.grantFor)
+        throw new DomainError('MESSAGE_ELIGIBILITY_UNAVAILABLE','cannot select a recovery successor without current message grants');
+      const successor=await selectNextEligibleSessionMessage(command.projectId,ownedSessionId!,tx,options.grantFor);
+      const changed=await recovery!.replaceCancelledResumePin(ownedSessionId!,item.id,successor?.id??null,
+        gate.version,'Cancelled recovery pin advanced to the next eligible queued message',now);
+      effects.push({kind:'session.recovery.gate',entityId:ownedSessionId!,version:changed.version});
+      if(successor)
+        effects.push({kind:'session.message.recoveryPin',entityId:successor.id,version:successor.version});
+    }
+    return{result:applied(command.operationId,item.id,next.version),effects};
   }
   if(command.type==='session.message.reconcile'||command.type==='session.message.interrupt'||
     command.type==='session.message.manualStop'){
@@ -136,38 +213,7 @@ export class SessionMessageService {
   }
   constructor(private readonly deps:SessionMessageServiceDeps){}
   private async admission(projectId:string,messageId:string,reader:Reader){
-    const store=reader.sessionMessages;
-    if(!store)throw new DomainError('SESSION_MESSAGES_UNAVAILABLE','message persistence is not configured');
-    const item=required(await store.getSessionMessage(messageId),'message');
-    if(item.state!=='queued'||item.target.kind!=='owned')throw new DomainError('MESSAGE_NOT_QUEUED','only an owned queued message may dispatch');
-    const session=required(await reader.getRuntimeSession(item.target.sessionId),'Session');
-    if(session.state!=='ready'||!session.nativeThreadId||!session.nativeSessionId)
-      throw new DomainError('SESSION_NOT_READY','recipient is unavailable');
-    const grant=await this.deps.grantFor(item,session);
-    if(!grant||!grant.enabled||grant.projectId!==projectId||grant.sessionId!==session.id||
-      grant.senderActorId!==item.senderActorId||grant.receiverRoleId!==session.roleId||grant.cwd!==session.cwd||
-      !grant.receiverActorId?.trim()||grant.receiverActorId===item.senderActorId||
-      (grant.maxTurns!==undefined&&(!Number.isSafeInteger(grant.maxTurns)||grant.maxTurns<1)))
-      throw new DomainError('MESSAGE_GRANT_MISSING','exact ordinary conversation grant is unavailable');
-    const full=session.sandbox==='danger-full-access'&&session.approvalPolicy==='never'&&!grant.connector;
-    const standard=grant.connector?.mode==='standard'&&session.sandbox==='danger-full-access'&&
-      session.approvalPolicy==='never'&&!!session.authorizationScope&&
-      !session.authorizationScope.startsWith('connector-receiver:')&&
-      /^[a-f0-9]{64}$/.test(grant.connector.policyHash)&&grant.connector.routeVersion>0&&grant.connector.epoch>0;
-    const restricted=grant.connector?.mode==='restricted'&&session.sandbox==='read-only'&&session.approvalPolicy==='never'&&
-      session.authorizationScope===`connector-receiver:${grant.connector.bindingId}`&&
-      /^[a-f0-9]{64}$/.test(grant.connector.policyHash)&&grant.connector.routeVersion>0&&grant.connector.epoch>0;
-    if(!full&&!standard&&!restricted)
-      throw new DomainError('EXECUTION_PROFILE_NOT_ALLOWED','Message requires its exact full, standard Connector or restricted Connector execution grant');
-    if(standard||restricted){
-      if(!store.assertCurrentConnectorSource)
-        throw new DomainError('CONNECTOR_SOURCE_UNAVAILABLE','Connector source verification is unavailable');
-      await store.assertCurrentConnectorSource(item.id,grant.connector!);
-    }
-    if(grant.maxTurns!==undefined&&
-      await store.countSessionMessageTurns(session.id,item.senderActorId)>=grant.maxTurns)
-      throw new DomainError('MESSAGE_BUDGET_EXHAUSTED','ordinary conversation grant is exhausted');
-    return{item,session,grant};
+    return admitSessionMessage(projectId,messageId,reader,this.deps.grantFor);
   }
   /** Side-effect-free gate before Task answer scheduling can act on behalf of the sender. */
   async preflightDispatch(projectId:string,messageId:string):Promise<void>{

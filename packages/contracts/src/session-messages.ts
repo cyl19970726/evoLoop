@@ -101,6 +101,8 @@ export interface SessionMessageReader {
   getSessionMessage(id: string): Promise<SessionMessageRecord | null>;
   getSessionMessages?(ids: string[]): Promise<SessionMessageRecord[]>;
   listSessionMessages(target: SessionTarget, limit: number, cursor?: string): Promise<{ items: SessionMessageRecord[]; nextCursor: string | null }>;
+  /** Oldest queued messages for one owned Session; callers still apply full admission checks. */
+  listQueuedSessionMessages(sessionId: string, limit: number, offset?: number): Promise<SessionMessageRecord[]>;
   /** Optional batch read used to build a conversation page without N+1 requests. */
   listSessionMessageProcessing?(messageIds: string[]): Promise<SessionMessageProcessing[]>;
   listPendingSessionMessages(limit: number, offset?: number): Promise<SessionMessageRecord[]>;
