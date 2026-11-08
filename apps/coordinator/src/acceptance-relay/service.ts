@@ -505,7 +505,8 @@ export class AcceptanceRelayService {
     const r = await this.deps.pool.query("SELECT * FROM task_acceptance_relay WHERE project_id=$1 AND message_id=$2",[projectId,messageId]);
     if (!r.rows[0]) return true;
     const item = row(r.rows[0]);
-    if ((item.state === "linked" || item.state === "pending") && await this.current(item)) {
+    if (item.state !== "linked" && item.state !== "pending") return false;
+    if (await this.current(item)) {
       if(!await this.publicationReady(item)){await this.note(item,"PUBLICATION_PENDING");return false;}
       const m=await this.deps.pool.query(`SELECT operation_id,sender_actor_id,session_id,
         context_task_id,context_task_revision_id,content FROM session_message
