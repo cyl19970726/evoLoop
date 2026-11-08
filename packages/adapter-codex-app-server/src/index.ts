@@ -148,6 +148,22 @@ export class RuntimeServerError extends RuntimeProtocolError {
   }
 }
 
+export type RuntimeCompactionPreflightStage = "request_validation" | "owner_resume" | "thread_read" | "history";
+/**
+ * A known failure before `thread/compact/start` was sent. The stage and safe
+ * cause distinguish this from a lost compaction acknowledgement.
+ */
+export class RuntimeCompactionPreflightError extends RuntimeProtocolError {
+  readonly code: string;
+  constructor(readonly stage: RuntimeCompactionPreflightStage, cause: unknown) {
+    const result = cause instanceof RuntimeUnknownError ? "unknown" :
+      cause instanceof RuntimeServerError ? cause.category : "rejected";
+    super(`thread/compact/start was not sent (${stage}, ${result})`);
+    this.name = "RuntimeCompactionPreflightError";
+    this.code = `${stage}_${result}`;
+  }
+}
+
 export type NativeChildStopReason = 'adapter_closed' | 'stdout_closed' | 'process_exited' | 'spawn_error' | 'protocol_error';
 /** Transport loss and child exit are separate observations. Neither proves a native Turn result. */
 export interface NativeChildDiagnostic {
@@ -1351,37 +1367,48 @@ export class CodexAppServerAdapter implements RuntimePort {
 
   async compactThread(binding: RuntimeBinding, baselineTurnId: string,
     beforeSend: (requestId: number) => Promise<void>, afterAccepted?: (connectionId: string) => Promise<void>): Promise<string | null> {
-    this.owned(binding);
-    if (this.expectedVersion !== "codex-cli 0.166.0-alpha.6")
-      throw new RuntimeProtocolError("owned compaction requires pinned alpha.6");
     const profile = binding.resumeProfile;
-    if (!profile || !fullProfile(profile) || !nonempty(profile.model) || !nonempty(profile.reasoningEffort))
-      throw new RuntimeProtocolError("compaction requires the active full owner profile");
-    // A failed native Turn can leave the Thread at systemError; a restarted
-    // owner can see notLoaded. Reattach through the same full-profile owner
-    // protocol used for ordinary Turns, which rejects a competing writer.
-    await this.resumeBinding(binding,{
-      actorId:profile.actorId,sessionId:binding.sessionId,roleId:binding.roleId,
-      projectId:binding.projectId,cwd:binding.cwd,authorizationScope:binding.authorizationScope,
-      model:profile.model,sandbox:FULL_SANDBOX,approvalPolicy:'never',
-      reasoningEffort:profile.reasoningEffort,
-      ...(profile.executionProfileRevisionId?{executionProfileRevisionId:profile.executionProfileRevisionId}:{}),
-    });
-    const read = object(await this.inspect(binding));
-    const thread = object(read?.thread);
-    const status=object(thread?.status)?.type;
-    if (status !== "idle" && status !== "systemError")
-      throw new RuntimeProtocolError("owned Thread is not ready after exact owner resume");
-    if (thread?.model !== profile.model ||
-      thread?.reasoningEffort !== profile.reasoningEffort)
-      throw new RuntimeProtocolError("owned Thread has a different active model or effort");
-    const turns=object(await this.request("thread/turns/list",{
-      threadId:binding.nativeThreadId,limit:1,sortDirection:"desc",itemsView:"notLoaded",
-    }));
-    const last=Array.isArray(turns?.data)?runtimeTurn(turns.data[0]):null;
-    if(last?.id!==baselineTurnId||!last.completedAtUtc||
-      status==="systemError"&&last.status!=="failed")
-      throw new RuntimeProtocolError("owned Thread changed after exact owner resume");
+    let stage: RuntimeCompactionPreflightStage = "request_validation";
+    let status: unknown;
+    let last: RuntimeTurn | null = null;
+    try {
+      this.owned(binding);
+      if (this.expectedVersion !== "codex-cli 0.166.0-alpha.6")
+        throw new RuntimeProtocolError("owned compaction requires pinned alpha.6");
+      if (!profile || !fullProfile(profile) || !nonempty(profile.model) || !nonempty(profile.reasoningEffort))
+        throw new RuntimeProtocolError("compaction requires the active full owner profile");
+      // A failed native Turn can leave the Thread at systemError; a restarted
+      // owner can see notLoaded. Reattach through the same full-profile owner
+      // protocol used for ordinary Turns, which rejects a competing writer.
+      stage = "owner_resume";
+      await this.resumeBinding(binding,{
+        actorId:profile.actorId,sessionId:binding.sessionId,roleId:binding.roleId,
+        projectId:binding.projectId,cwd:binding.cwd,authorizationScope:binding.authorizationScope,
+        model:profile.model,sandbox:FULL_SANDBOX,approvalPolicy:'never',
+        reasoningEffort:profile.reasoningEffort,
+        ...(profile.executionProfileRevisionId?{executionProfileRevisionId:profile.executionProfileRevisionId}:{}),
+      });
+      stage = "thread_read";
+      const read = object(await this.inspect(binding));
+      const thread = object(read?.thread);
+      status=object(thread?.status)?.type;
+      if (status !== "idle" && status !== "systemError")
+        throw new RuntimeProtocolError("owned Thread is not ready after exact owner resume");
+      if (thread?.model !== profile.model ||
+        thread?.reasoningEffort !== profile.reasoningEffort)
+        throw new RuntimeProtocolError("owned Thread has a different active model or effort");
+      stage = "history";
+      const turns=object(await this.request("thread/turns/list",{
+        threadId:binding.nativeThreadId,limit:1,sortDirection:"desc",itemsView:"notLoaded",
+      }));
+      last=Array.isArray(turns?.data)?runtimeTurn(turns.data[0]):null;
+      if(last?.id!==baselineTurnId||!last.completedAtUtc||
+        status==="systemError"&&last.status!=="failed")
+        throw new RuntimeProtocolError("owned Thread changed after exact owner resume");
+    } catch (error) {
+      if (error instanceof RuntimeCompactionPreflightError) throw error;
+      throw new RuntimeCompactionPreflightError(stage, error);
+    }
     const sendConnectionId=this.nativeInputConnectionId();
     if(!sendConnectionId)throw new RuntimeProtocolError('owner connection unavailable before compaction');
     let resolveStarted:(value:string)=>void=()=>{};

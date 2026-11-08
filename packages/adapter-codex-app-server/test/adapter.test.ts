@@ -3,7 +3,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
-import { CodexAppServerAdapter, RuntimeProtocolError, RuntimeServerError, RuntimeUnknownError, type CodexAppServerOptions } from "../src/index.js";
+import { CodexAppServerAdapter, RuntimeCompactionPreflightError, RuntimeProtocolError, RuntimeServerError, RuntimeUnknownError, type CodexAppServerOptions } from "../src/index.js";
 
 test('compaction readback requires the exact persisted item entry, not a Turn summary', async () => {
   const adapter = new CodexAppServerAdapter({expectedVersion:'codex-cli 0.166.0-alpha.6'});
@@ -52,6 +52,26 @@ test('failed owner Thread is reattached with its fixed profile before compaction
   latest='different-turn';
   await assert.rejects(()=>adapter.compactThread(binding,'old-turn',async()=>{}),RuntimeProtocolError);
   assert.equal(sent,1,'a changed native history cannot consume the compaction request');
+});
+
+test('known compaction preflight failure is distinct from a lost native request', async () => {
+  const adapter = new CodexAppServerAdapter({expectedVersion:'codex-cli 0.166.0-alpha.6'});
+  const internals=adapter as unknown as Record<string,unknown>;
+  const binding={sessionId:'session',roleId:'role',projectId:'project',nativeThreadId:'11111111-1111-4111-8111-111111111111',
+    nativeSessionId:'thread',cwd:'/tmp/compact',authorizationScope:'project',owner:'evoloop-codex-app-server',
+    resumeProfile:{actorId:'owner',model:'gpt-6-astra',reasoningEffort:'max',sandbox:'danger-full-access',approvalPolicy:'never'}} as Parameters<typeof adapter.compactThread>[0];
+  let requested=false;
+  internals.owned=()=>{};
+  internals.resumeBinding=async()=>{
+    throw new RuntimeServerError('thread/resume',7,-32600,
+      `thread ${binding.nativeThreadId} already has an active writer`,binding.nativeThreadId);
+  };
+  internals.request=async()=>{requested=true;throw new Error('compaction request must not be sent')};
+  await assert.rejects(()=>adapter.compactThread(binding,'old-turn',async()=>{
+    throw new Error('beforeSend must not run');
+  }),error=>error instanceof RuntimeCompactionPreflightError &&
+    error.code==='owner_resume_writer_conflict');
+  assert.equal(requested,false);
 });
 
 test('compaction acceptance is recorded only for a valid reply on the same owner connection', async () => {

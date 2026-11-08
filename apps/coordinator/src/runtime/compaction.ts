@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import type { Pool, PoolClient } from 'pg';
 import type { Principal } from '@evoloop/contracts';
 import { DomainError } from '@evoloop/contracts/ports';
-import { RuntimeServerError, RuntimeUnknownError } from '@evoloop/adapter-codex-app-server';
+import { RuntimeCompactionPreflightError, RuntimeServerError, RuntimeUnknownError } from '@evoloop/adapter-codex-app-server';
 import type { RuntimeCompactionObservation } from '@evoloop/contracts/runtime';
 import type { RuntimeRunner } from './runner.js';
 
@@ -168,7 +168,11 @@ export class CompactionMaintenance {
         native_turn_id=$3,updated_at=now()
         WHERE project_id=$1 AND operation_id=$2 AND state='unknown'`,[projectId,input.operationId,turnId]);
     }catch(error){
-      if(error instanceof RuntimeServerError){
+      if(error instanceof RuntimeCompactionPreflightError){
+        await this.pool.query(`UPDATE session_compaction SET state='failed',error_code=$3,updated_at=now()
+          WHERE project_id=$1 AND operation_id=$2 AND state='unknown'`,
+          [projectId,input.operationId,`preflight_${error.code}`]);
+      }else if(error instanceof RuntimeServerError){
         await this.pool.query(`UPDATE session_compaction SET state='failed',error_code=$3,updated_at=now()
           WHERE project_id=$1 AND operation_id=$2 AND state='unknown'`,
           [projectId,input.operationId,`native_${error.category}`]);

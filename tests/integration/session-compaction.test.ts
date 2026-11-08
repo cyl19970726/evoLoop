@@ -6,7 +6,7 @@ import {migrate,PostgresUnitOfWork} from '@evoloop/adapter-postgres';
 import {CompactionMaintenance} from '../../apps/coordinator/src/runtime/compaction.ts';
 import {buildServer} from '../../apps/coordinator/src/server.ts';
 import {WorkflowService} from '@evoloop/core';
-import {RuntimeUnknownError} from '@evoloop/adapter-codex-app-server';
+import {RuntimeCompactionPreflightError,RuntimeUnknownError} from '@evoloop/adapter-codex-app-server';
 import {RuntimeRunner} from '../../apps/coordinator/src/runtime/runner.ts';
 import type {RuntimeBinding,RuntimeCompactionObservation} from '@evoloop/contracts/runtime';
 import type {RuntimeSessionRecord} from '@evoloop/contracts';
@@ -155,7 +155,7 @@ test('durable compaction uses one native request and never opens a blocked gate 
     await pool.query(`UPDATE session_recovery_gate SET phase='blocked',cause_kind='message',
       cause_id=$3,cause_state='failed',version=version+1 WHERE project_id=$1 AND session_id=$2`,
       [projectId,sessionId,messageId]);
-    const gateVersion=(await pool.query<{version:number}>(`SELECT version FROM session_recovery_gate
+    let gateVersion=(await pool.query<{version:number}>(`SELECT version FROM session_recovery_gate
       WHERE project_id=$1 AND session_id=$2`,[projectId,sessionId])).rows[0]!.version;
     const binding:RuntimeBinding={projectId,sessionId,roleId:'role',cwd:'/tmp/compact-test',
       authorizationScope:'project',nativeThreadId:threadId,nativeSessionId:'native',owner:'evoloop-codex-app-server',
@@ -164,7 +164,7 @@ test('durable compaction uses one native request and never opens a blocked gate 
       reasoningEffort:'max',latestTurnId:'old-turn',latestTurnStatus:'failed',
       latestTurnCompletedAtUtc:new Date().toISOString(),compactionItemId:null,
       compactionItemCompleted:false,tokenUsage:{inputTokens:900000,outputTokens:100}};
-    let observation=before,starts=0,noEvent=false,unacknowledged=false;
+    let observation=before,starts=0,noEvent=false,unacknowledged=false,preflightRejected=false;
     let observedWithoutAck=false,capturedTurnId='captured-turn',successors:string[]|null=null;
     let connectionId='connection-A';
     const fake={compactionBinding:async()=>binding,observeCompaction:async()=>observation,
@@ -173,6 +173,8 @@ test('durable compaction uses one native request and never opens a blocked gate 
       compactThread:async(_binding:RuntimeBinding,baselineTurnId:string,beforeSend:(id:number)=>Promise<void>,
         afterAccepted:(connectionId:string)=>Promise<void>)=>{
         assert.equal(baselineTurnId,'old-turn');
+        if(preflightRejected)
+          throw new RuntimeCompactionPreflightError('thread_read',new Error('native profile mismatch'));
         starts++;await beforeSend(noEvent?18:17);
         if(unacknowledged){
           const lost=new RuntimeUnknownError('thread/compact/start',17,'no native acknowledgement');
@@ -192,9 +194,28 @@ test('durable compaction uses one native request and never opens a blocked gate 
     const app=await buildServer({service:workflow,credentials:[{token,...actor},
       {token:readToken,actorId:'reader',projectIds:[projectId],permissions:['read']}],compaction:service});
     try{
-    const input={operationId,threadId,expectedSessionVersion:1,expectedGateVersion:gateVersion,
-      evidenceRef:'incident://known-three-terminal-errors',reason:'one authorized maintenance attempt'};
     const path=`/api/projects/${projectId}/runtime/sessions/${sessionId}/compactions`;
+    preflightRejected=true;
+    const rejectedInput={operationId:randomUUID(),threadId,expectedSessionVersion:1,expectedGateVersion:gateVersion,
+      evidenceRef:'incident://known-three-terminal-errors',reason:'one authorized maintenance attempt'};
+    const rejectedResponse=await app.inject({method:'POST',url:path,
+      headers:{authorization:`Bearer ${token}`},payload:rejectedInput});
+    assert.equal(rejectedResponse.statusCode,200,rejectedResponse.body);
+    const rejected=rejectedResponse.json();
+    assert.equal(rejected.state,'failed');
+    assert.equal(rejected.errorCode,'preflight_thread_read_rejected');
+    assert.equal(rejected.nativeRequestId,null);
+    assert.equal(starts,0,'a known pre-send rejection cannot write the compaction request');
+    const rejectedAgain=await app.inject({method:'POST',url:path,
+      headers:{authorization:`Bearer ${token}`},payload:rejectedInput});
+    assert.equal(rejectedAgain.statusCode,200,rejectedAgain.body);
+    assert.deepEqual(rejectedAgain.json(),rejected,'same operation returns the settled preflight result');
+    assert.equal((await pool.query<{phase:string}>(`SELECT phase FROM session_recovery_gate
+      WHERE project_id=$1 AND session_id=$2`,[projectId,sessionId])).rows[0]?.phase,'blocked');
+    await pool.query(`UPDATE session_recovery_gate SET version=version+1
+      WHERE project_id=$1 AND session_id=$2`,[projectId,sessionId]);
+    gateVersion+=1;preflightRejected=false;
+    const input={...rejectedInput,operationId,expectedGateVersion:gateVersion};
     const [firstResponse,concurrent]=await Promise.all([1,2].map(()=>
       app.inject({method:'POST',url:path,headers:{authorization:`Bearer ${token}`},payload:input})));
     assert.equal(firstResponse.statusCode,200,firstResponse.body);
