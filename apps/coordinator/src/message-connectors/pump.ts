@@ -38,7 +38,8 @@ export interface ConnectorIngressPumpDeps {
     getUnhandledBySource?(projectId:string,source:ConnectorSource):Promise<boolean> };
   decisions?: {messages(projectId:string,bindingId:string,deliveryId:number):Promise<DeliveryMessage[]>;
     claim?(projectId:string,bindingId:string,deliveryId:number):Promise<{routeVersion:number;observed:boolean}|null>;
-    markClaimAttempted?(projectId:string,bindingId:string,deliveryId:number,routeVersion:number):Promise<boolean>;
+    markClaimAttempted?(projectId:string,bindingId:string,deliveryId:number,routeVersion:number,
+      route:{owner:string;epoch:number;sessionRef:string;policyHash:string;targetThreadId:string}):Promise<boolean>;
     markClaimObserved?(projectId:string,bindingId:string,deliveryId:number,routeVersion:number,
       value:{owner:string;epoch:number;cursorStart:number;cursorEnd:number}):Promise<boolean>;
     unhandled?(projectId:string,bindingId:string,deliveryId:number):Promise<Array<{
@@ -278,7 +279,8 @@ export class ConnectorIngressPump {
         return;
       }
       if(!await store.markClaimAttempted(route.projectId,route.bindingId,
-        pending.delivery_id as number,route.version)){
+        pending.delivery_id as number,route.version,{owner:route.owner,epoch:route.epoch,
+          sessionRef:route.sessionRef,policyHash:route.policyHash,targetThreadId:route.targetThreadId})){
         this.uncertain.add(route.bindingId);
         return;
       }

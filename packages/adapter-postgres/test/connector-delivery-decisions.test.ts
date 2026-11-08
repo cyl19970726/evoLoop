@@ -34,13 +34,17 @@ after(async()=>{
 
 test('one saved send attempt survives a new store instance and refuses changed text',async()=>{
   const store=new PgConnectorDeliveryDecisions(pool);
-  assert.equal(await store.markClaimAttempted(projectId,bindingId,7,1),true);
-  assert.deepEqual(await store.claim(projectId,bindingId,7),{routeVersion:1,observed:false,
+  const claimRoute={owner:'owner',epoch:1,sessionRef:'session',policyHash:'a'.repeat(64),
+    targetThreadId:'thread'};
+  assert.equal(await store.markClaimAttempted(projectId,bindingId,7,1,claimRoute),true);
+  assert.deepEqual(await store.claim(projectId,bindingId,7),{routeVersion:1,routeOwner:'owner',
+    routeEpoch:1,routeSessionRef:'session',routePolicyHash:'a'.repeat(64),targetThreadId:'thread',observed:false,
     owner:null,epoch:null,cursorStart:null,cursorEnd:null});
-  assert.equal(await store.markClaimAttempted(projectId,bindingId,7,1),false);
+  assert.equal(await store.markClaimAttempted(projectId,bindingId,7,1,claimRoute),false);
   assert.equal(await store.markClaimObserved(projectId,bindingId,7,1,{owner:'owner',epoch:1,
     cursorStart:2,cursorEnd:2}),true);
-  assert.deepEqual(await store.claim(projectId,bindingId,7),{routeVersion:1,observed:true,
+  assert.deepEqual(await store.claim(projectId,bindingId,7),{routeVersion:1,routeOwner:'owner',
+    routeEpoch:1,routeSessionRef:'session',routePolicyHash:'a'.repeat(64),targetThreadId:'thread',observed:true,
     owner:'owner',epoch:1,cursorStart:2,cursorEnd:2});
   assert.equal(await store.markReserve(projectId,bindingId,7,1),true);
   assert.equal(await new PgConnectorDeliveryDecisions(pool).markReserve(projectId,bindingId,7,1),false);

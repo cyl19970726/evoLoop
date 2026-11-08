@@ -14,11 +14,12 @@ export type DeliveryDecision = {
 };
 export type TransportAttempt={routeVersion:number;recordTurnId:string|null;
   finishStatus:'completed'|'interrupted'|'failed'|null};
-export type ClaimAttempt={routeVersion:number;observed:boolean;owner:string|null;epoch:number|null;
+export type ClaimAttempt={routeVersion:number;routeOwner:string;routeEpoch:number;routeSessionRef:string;
+  routePolicyHash:string;targetThreadId:string;observed:boolean;owner:string|null;epoch:number|null;
   cursorStart:number|null;cursorEnd:number|null};
 export type TerminalDeliveryObservation={owner:string;epoch:number;sessionRef:string;
   conversationId:string;cursorStart:number;cursorEnd:number};
-export type UnhandledDeliveryEvent={eventCursor:number;eventKind:string;direction:string;
+export type UnhandledDeliveryEvent={eventCursor:number;eventKind:string;direction:string;participantId:string|null;
   reason:'unsupported_content'|'empty_text'|'text_too_large'|'sender_not_allowed';contentLength:number;
   routeVersion:number;createdAt:string};
 const of=(row:Record<string,unknown>):DeliveryDecision=>({
@@ -35,18 +36,25 @@ const of=(row:Record<string,unknown>):DeliveryDecision=>({
 export class PgConnectorDeliveryDecisions {
   constructor(private readonly db:Pool){}
   async claim(projectId:string,bindingId:string,deliveryId:number):Promise<ClaimAttempt|null>{
-    const result=await this.db.query(`SELECT route_version,observed_at,owner,epoch,cursor_start,cursor_end
+    const result=await this.db.query(`SELECT route_version,route_owner,route_epoch,route_session_ref,
+      route_policy_hash,target_thread_id,observed_at,owner,epoch,cursor_start,cursor_end
       FROM connector_claim_attempt WHERE project_id=$1 AND binding_id=$2 AND delivery_id=$3`,
       [projectId,bindingId,deliveryId]);
-    const row=result.rows[0];return row?{routeVersion:Number(row.route_version),observed:!!row.observed_at,
+    const row=result.rows[0];return row?{routeVersion:Number(row.route_version),routeOwner:String(row.route_owner),
+      routeEpoch:Number(row.route_epoch),routeSessionRef:String(row.route_session_ref),
+      routePolicyHash:String(row.route_policy_hash),targetThreadId:String(row.target_thread_id),
+      observed:!!row.observed_at,
       owner:row.owner??null,epoch:row.epoch===null?null:Number(row.epoch),
       cursorStart:row.cursor_start===null?null:Number(row.cursor_start),
       cursorEnd:row.cursor_end===null?null:Number(row.cursor_end)}:null;
   }
-  async markClaimAttempted(projectId:string,bindingId:string,deliveryId:number,routeVersion:number):Promise<boolean>{
+  async markClaimAttempted(projectId:string,bindingId:string,deliveryId:number,routeVersion:number,
+    route:{owner:string;epoch:number;sessionRef:string;policyHash:string;targetThreadId:string}):Promise<boolean>{
     const result=await this.db.query(`INSERT INTO connector_claim_attempt
-      (project_id,binding_id,delivery_id,route_version) VALUES($1,$2,$3,$4)
-      ON CONFLICT DO NOTHING RETURNING delivery_id`,[projectId,bindingId,deliveryId,routeVersion]);
+      (project_id,binding_id,delivery_id,route_version,route_owner,route_epoch,route_session_ref,
+       route_policy_hash,target_thread_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)
+      ON CONFLICT DO NOTHING RETURNING delivery_id`,[projectId,bindingId,deliveryId,routeVersion,
+        route.owner,route.epoch,route.sessionRef,route.policyHash,route.targetThreadId]);
     return result.rowCount===1;
   }
   async markClaimObserved(projectId:string,bindingId:string,deliveryId:number,routeVersion:number,
@@ -129,12 +137,13 @@ export class PgConnectorDeliveryDecisions {
       decision:row.saved_decision?of(row.saved_decision):null}));
   }
   async unhandled(projectId:string,bindingId:string,deliveryId:number):Promise<UnhandledDeliveryEvent[]>{
-    const result=await this.db.query(`SELECT event_cursor,event_kind,direction,reason,content_length,
+    const result=await this.db.query(`SELECT event_cursor,event_kind,direction,participant_id,reason,content_length,
       route_version,created_at FROM connector_unhandled_event
       WHERE project_id=$1 AND binding_id=$2 AND delivery_id=$3 ORDER BY event_cursor`,
       [projectId,bindingId,deliveryId]);
     return result.rows.map(row=>({eventCursor:Number(row.event_cursor),eventKind:String(row.event_kind),
-      direction:String(row.direction),reason:row.reason as UnhandledDeliveryEvent['reason'],
+      direction:String(row.direction),participantId:row.participant_id??null,
+      reason:row.reason as UnhandledDeliveryEvent['reason'],
       contentLength:Number(row.content_length),routeVersion:Number(row.route_version),
       createdAt:new Date(row.created_at).toISOString()}));
   }

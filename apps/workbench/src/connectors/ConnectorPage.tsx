@@ -30,7 +30,8 @@ function DeliveryPeek({token,projectId,bindingId}:{token:string;projectId:string
       {detail.messages.map(message=><p key={message.messageId}>事件 {message.eventCursor} → 消息 <code>{message.messageId}</code>
         {' '}· {message.messageState}/{message.processingState??'未开始'} · Turn <code>{message.nativeTurnId??'未绑定'}</code></p>)}
       {detail.unhandled.map(event=><p key={`unhandled-${event.eventCursor}`}>事件 {event.eventCursor}
-        {' '}· {event.eventKind}/{event.direction} · {event.reason} · 原长度 {event.contentLength}，未创建平台消息</p>)}
+        {' '}· {event.eventKind}/{event.direction} · 发送者 {event.participantId??'未识别'} · {event.reason}
+        {' '}· 原长度 {event.contentLength}，未创建平台消息</p>)}
       <p>出站决定：{detail.decision?`${detail.decision.decision}/${detail.decision.state}`:'尚无'}
         {detail.decision?.requestId&&<> · 原请求 <code>{detail.decision.requestId}</code></>}</p></details>}
   </div>;

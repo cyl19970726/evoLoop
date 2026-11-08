@@ -20,6 +20,8 @@ CREATE TABLE connector_unhandled_event (
   cursor_start bigint NOT NULL CHECK(cursor_start BETWEEN 0 AND 9007199254740991),
   cursor_end bigint NOT NULL CHECK(cursor_end BETWEEN cursor_start AND 9007199254740991),
   event_cursor bigint NOT NULL CHECK(event_cursor BETWEEN cursor_start AND cursor_end),
+  participant_id text CHECK(participant_id IS NULL OR
+    participant_id ~ '^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,127}$'),
   event_kind text NOT NULL CHECK(event_kind ~ '^[a-z][a-z0-9_.-]{0,63}$'),
   direction text NOT NULL CHECK(direction ~ '^[a-z][a-z0-9_.-]{0,31}$'),
   reason text NOT NULL CHECK(reason IN ('unsupported_content','empty_text','text_too_large','sender_not_allowed')),

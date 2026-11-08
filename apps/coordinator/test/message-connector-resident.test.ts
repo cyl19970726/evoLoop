@@ -6,7 +6,8 @@ import type {WorkflowService} from '@evoloop/core';
 import {SessionMessageService} from '@evoloop/core/session-messages';
 import type {RuntimeSessionRecord} from '@evoloop/contracts/runtime';
 import type {ConnectorRoute, VersionedConnectorRoute} from '@evoloop/contracts/message-connectors';
-import {migrate, PgConnectorRoutes, PgConnectorMessageLinks, PostgresUnitOfWork} from '@evoloop/adapter-postgres';
+import {migrate, PgConnectorRoutes, PgConnectorMessageLinks, PgConnectorDeliveryDecisions,
+  PostgresUnitOfWork} from '@evoloop/adapter-postgres';
 import {authConfigSchema} from '../src/auth.ts';
 import {loadIntegrations} from '../src/configuration.ts';
 import {currentConnectorBusinessActor} from '../src/message-connectors/business-actor.ts';
@@ -122,6 +123,13 @@ test('HTTP activation and trusted message admission use existing requester scope
     payload:{operationId:randomUUID(),expectedVersion:1,route:active}});
   assert.equal(enabled.statusCode,200,enabled.body);
   assert.equal(enabled.json().route.state,'active');
+  const deliveryDecisions=new PgConnectorDeliveryDecisions(pool);
+  assert.equal(await deliveryDecisions.markClaimAttempted(projectId,bindingId,1,2,
+    {owner:route.owner,epoch:route.epoch,sessionRef:route.sessionRef,policyHash:route.policyHash,
+      targetThreadId:route.targetThreadId}),true);
+  assert.equal(await deliveryDecisions.markClaimObserved(projectId,bindingId,1,2,
+    {owner:route.owner,epoch:route.epoch,cursorStart:1,cursorEnd:1}),true);
+  assert.equal(await deliveryDecisions.markReserve(projectId,bindingId,1,2),true);
   const intent={projectId,bindingId,routeVersion:2,source:{source:route.source,deliveryId:1,cursorStart:1,
     cursorEnd:1,eventCursor:1,participantId:'external-person',replyToEventCursor:null},
     messageId:randomUUID(),messageOperationId:randomUUID(),decisionId:randomUUID(),content:'external text',

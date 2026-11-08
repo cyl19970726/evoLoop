@@ -69,6 +69,13 @@ test("disabled route refuses ingress without message, link, or journal",async ()
 test("standard active route admits once, joins unknown Turn, and rejects stale source",async () => {
   await routes.update({...route,version:2,state:"active"},1,randomUUID(),"lead");
   version=2;
+  const delivery=new PgConnectorDeliveryDecisions(pool);
+  const claimRoute={owner:route.owner,epoch:route.epoch,sessionRef:route.sessionRef,
+    policyHash:route.policyHash,targetThreadId:route.targetThreadId};
+  assert.equal(await delivery.markClaimAttempted(projectId,route.bindingId,41,2,claimRoute),true);
+  assert.equal(await delivery.markClaimObserved(projectId,route.bindingId,41,2,
+    {owner:route.owner,epoch:route.epoch,cursorStart:10,cursorEnd:12}),true);
+  assert.equal(await delivery.markReserve(projectId,route.bindingId,41,2),true);
   const unhandledSource={source:route.source,deliveryId:41,cursorStart:10,cursorEnd:12,eventCursor:12,
     participantId:"participant-a",replyToEventCursor:null};
   await links.recordUnhandled({projectId,bindingId:route.bindingId,routeVersion:2,source:unhandledSource,
@@ -148,7 +155,6 @@ test("standard active route admits once, joins unknown Turn, and rejects stale s
   assert.equal(unknown?.processingOperationId,processingOperationId);
   assert.equal(unknown?.processingState,"unknown");
   assert.equal(unknown?.nativeTurnId,"turn-link-1");
-  const delivery=new PgConnectorDeliveryDecisions(pool);
   assert.deepEqual((await delivery.messages(projectId,route.bindingId,intent.source.deliveryId))
     .map(value=>[value.eventCursor,value.messageId,value.messageState,value.nativeTurnId]),
     [[intent.source.eventCursor,intent.messageId,'unknown','turn-link-1']]);
@@ -156,7 +162,21 @@ test("standard active route admits once, joins unknown Turn, and rejects stale s
   assert.equal(recent?.deliveryId,intent.source.deliveryId);
   assert.equal(recent?.unhandledCount,1);
   assert.deepEqual((await delivery.unhandled(projectId,route.bindingId,intent.source.deliveryId))
-    .map(value=>[value.eventCursor,value.reason]),[[12,"unsupported_content"]]);
+    .map(value=>[value.eventCursor,value.participantId,value.reason]),[[12,"participant-a","unsupported_content"]]);
+  const resumedText={...admission(13),source:{source:route.source,deliveryId:42,cursorStart:13,
+    cursorEnd:14,eventCursor:13,participantId:"participant-a",replyToEventCursor:null}};
+  const resumedUnhandled={source:route.source,deliveryId:42,cursorStart:13,cursorEnd:14,
+    eventCursor:14,participantId:"participant-a",replyToEventCursor:null};
+  assert.equal(await delivery.markClaimAttempted(projectId,route.bindingId,42,2,claimRoute),true);
+  assert.equal(await delivery.markClaimObserved(projectId,route.bindingId,42,2,
+    {owner:route.owner,epoch:route.epoch,cursorStart:13,cursorEnd:14}),true);
+  assert.equal(await delivery.markReserve(projectId,route.bindingId,42,2),true);
+  await routes.update({...route,version:3,state:"paused"},2,randomUUID(),"lead");
+  await routes.update({...route,version:4,state:"active"},3,randomUUID(),"lead");
+  await links.recordUnhandled({projectId,bindingId:route.bindingId,routeVersion:2,source:resumedUnhandled,
+    eventKind:"message_observed",direction:"incoming",reason:"unsupported_content",contentLength:0,
+    gateway:{owner:route.owner,epoch:route.epoch,sessionRef:route.sessionRef,threadId:route.targetThreadId}});
+  assert.equal((await links.admitTrusted(resumedText)).messageId,resumedText.messageId);
   await pool.query(`UPDATE connector_route SET state='disabled',version=version+1
     WHERE project_id=$1 AND binding_id=$2`,[projectId,route.bindingId]);
   const retry=await links.admitTrusted(intent);

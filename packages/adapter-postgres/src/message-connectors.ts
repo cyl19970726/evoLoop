@@ -249,6 +249,23 @@ const fixedLinkFromTrusted = (intent: ConnectorTrustedAdmission): ConnectorMessa
 export class PgConnectorMessageLinks {
   constructor(private readonly db: Pool) {}
 
+  private async hasFrozenDeliveryPolicy(client:PoolClient,projectId:string,bindingId:string,
+    deliveryId:number,routeVersion:number,source:ConnectorSource,route:Row):Promise<boolean>{
+    const result=await client.query(`SELECT 1
+      FROM connector_claim_attempt c
+      JOIN connector_transport_attempt t
+        ON t.project_id=c.project_id AND t.binding_id=c.binding_id AND t.delivery_id=c.delivery_id
+      WHERE c.project_id=$1 AND c.binding_id=$2 AND c.delivery_id=$3 AND c.route_version=$4
+        AND c.observed_at IS NOT NULL
+        AND c.route_owner=$5 AND c.route_epoch=$6 AND c.route_session_ref=$7
+        AND c.route_policy_hash=$8 AND c.target_thread_id=$9
+        AND c.owner=$5 AND c.epoch=$6 AND c.cursor_start=$10 AND c.cursor_end=$11
+        AND t.route_version=$4`,
+      [projectId,bindingId,deliveryId,routeVersion,route.owner,route.epoch,route.session_ref,
+        route.policy_hash,route.target_thread_id,source.cursorStart,source.cursorEnd]);
+    return !!result.rows[0];
+  }
+
   private async recordAdmission(client: PoolClient, input: ConnectorMessageAdmission): Promise<ConnectorMessageLink> {
     const admission = connectorMessageAdmissionSchema.parse(input);
     const sourceKey = connectorSourceKey(admission.source);
@@ -330,17 +347,10 @@ export class PgConnectorMessageLinks {
         [intent.projectId,intent.bindingId]);
       const r = route.rows[0];
       const active=!!r&&r.state==="active"&&r.version===intent.routeVersion;
-      let resumable=false;
-      if(r&&["paused","disabled"].includes(r.state)&&r.version>=intent.routeVersion&&
-        r.provider===s.source.provider&&r.connection_id===s.source.connectionId&&
-        r.conversation_id===s.source.conversationId&&r.owner===intent.gateway.owner&&
-        r.epoch===intent.gateway.epoch&&r.session_ref===intent.gateway.sessionRef){
-        const priorAttempt=await client.query(`SELECT 1 FROM connector_transport_attempt
-          WHERE project_id=$1 AND binding_id=$2 AND delivery_id=$3 AND route_version=$4`,
-          [intent.projectId,intent.bindingId,s.deliveryId,intent.routeVersion]);
-        resumable=!!priorAttempt.rows[0];
-      }
-      if ((!active&&!resumable)||
+      const frozenVersion=!!r&&r.version>=intent.routeVersion;
+      const frozenPolicy=!!r&&await this.hasFrozenDeliveryPolicy(client,intent.projectId,
+        intent.bindingId,s.deliveryId,intent.routeVersion,s,r);
+      if ((!active&&!frozenVersion)||!frozenPolicy||
         r.provider !== s.source.provider || r.connection_id !== s.source.connectionId ||
         r.conversation_id !== s.source.conversationId ||
         r.owner !== intent.gateway.owner || r.epoch !== intent.gateway.epoch ||
@@ -407,6 +417,7 @@ export class PgConnectorMessageLinks {
           row.route_epoch!==intent.gateway.epoch||row.route_session_ref!==intent.gateway.sessionRef||
           row.route_target_thread_id!==intent.gateway.threadId||
           Number(row.cursor_start)!==s.cursorStart||Number(row.cursor_end)!==s.cursorEnd||
+          (row.participant_id??null)!==s.participantId||
           row.event_kind!==intent.eventKind||row.direction!==intent.direction||
           row.reason!==intent.reason||row.content_length!==intent.contentLength)
           throw new DomainError("CONNECTOR_SOURCE_CONFLICT","Unhandled event already has a different record");
@@ -427,7 +438,10 @@ export class PgConnectorMessageLinks {
         WHERE r.project_id=$1 AND r.binding_id=$2 FOR SHARE OF r,s`,
         [intent.projectId,intent.bindingId]);
       const r=route.rows[0];
-      if(!r||r.state!=='active'||r.mode!=='standard'||r.version!==intent.routeVersion||
+      const frozenVersion=!!r&&r.version>=intent.routeVersion&&r.mode==='standard';
+      const frozenPolicy=!!r&&await this.hasFrozenDeliveryPolicy(client,intent.projectId,
+        intent.bindingId,s.deliveryId,intent.routeVersion,s,r);
+      if(!r||!frozenVersion||!frozenPolicy||
         r.provider!==s.source.provider||r.connection_id!==s.source.connectionId||
         r.conversation_id!==s.source.conversationId||r.owner!==intent.gateway.owner||
         r.epoch!==intent.gateway.epoch||r.session_ref!==intent.gateway.sessionRef||
@@ -440,14 +454,14 @@ export class PgConnectorMessageLinks {
         throw new DomainError("CONNECTOR_ADMISSION_REFUSED","Exact active standard route is required");
       await client.query(`INSERT INTO connector_unhandled_event(project_id,binding_id,route_version,
         route_owner,route_epoch,route_session_ref,route_target_thread_id,route_policy_hash,
-        provider,connection_id,conversation_id,
-        delivery_id,cursor_start,cursor_end,event_cursor,event_kind,direction,reason,content_length)
-        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)`,
+        provider,connection_id,conversation_id,delivery_id,cursor_start,cursor_end,event_cursor,
+        participant_id,event_kind,direction,reason,content_length)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)`,
         [intent.projectId,intent.bindingId,intent.routeVersion,intent.gateway.owner,
           intent.gateway.epoch,intent.gateway.sessionRef,intent.gateway.threadId,r.policy_hash,
           s.source.provider,s.source.connectionId,s.source.conversationId,s.deliveryId,
-          s.cursorStart,s.cursorEnd,s.eventCursor,
-          intent.eventKind,intent.direction,intent.reason,intent.contentLength]);
+          s.cursorStart,s.cursorEnd,s.eventCursor,s.participantId,intent.eventKind,intent.direction,
+          intent.reason,intent.contentLength]);
       await client.query("COMMIT");
     } catch (error) {
       try { await client.query("ROLLBACK"); } catch { /* Preserve the original outcome. */ }
