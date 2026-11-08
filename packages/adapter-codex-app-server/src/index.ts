@@ -1206,20 +1206,96 @@ export class CodexAppServerAdapter implements RuntimePort {
       const attempts=this.fullTurnAttempts.get(threadId)??new Set<string>();
       if(attempts.has(operationId))throw new RuntimeProtocolError('original ordinary Turn operation cannot be replayed');
       attempts.add(operationId);this.fullTurnAttempts.set(threadId,attempts);
-      const started=object(await this.request('turn/start',{
-        threadId,input:[{type:'text',text:input}],clientUserMessageId:operationId,
-        cwd:binding.cwd,...(prior.model!=null?{model:prior.model}:{}),
-        ...(profile.reasoningEffort?{effort:profile.reasoningEffort}:{}),
-        sandboxPolicy:FULL_POLICY,approvalPolicy:'never',
-      }));
+      let started:Record<string,unknown>|null;
+      try{
+        started=object(await this.request('turn/start',{
+          threadId,input:[{type:'text',text:input}],clientUserMessageId:operationId,
+          cwd:binding.cwd,...(prior.model!=null?{model:prior.model}:{}),
+          ...(profile.reasoningEffort?{effort:profile.reasoningEffort}:{}),
+          sandboxPolicy:FULL_POLICY,approvalPolicy:'never',
+        }));
+      }catch(error){
+        if(error instanceof RuntimeProtocolError&&!(error instanceof RuntimeServerError)&&
+          error.message==='turn/start: response lacks result')
+          throw new RuntimeUnknownError('turn/start',null,'malformed acknowledgement; Turn may have started');
+        throw error;
+      }
       const turn=runtimeTurn(started?.turn);
-      if(!turn)throw new RuntimeUnknownError('turn/start',null,'invalid full conversation acknowledgement; Turn may have started');
+      if(!turn||turn.status!=='inProgress'||turn.completedAtUtc!==null)
+        throw new RuntimeUnknownError('turn/start',null,'invalid full conversation acknowledgement; Turn may have started');
       return turn;
     }finally{
       // A changed readback must not leave an implicit admission for another start.
       this.conversationQualifications.delete(threadId);
       this.conversationTurnInFlight.delete(threadId);
     }
+  }
+
+  /** Direct input on an idle owned Session. The caller persists the message ID before invoking this method. */
+  async startOwnedIdleTurn(binding:RuntimeBinding,input:string,clientUserMessageId:string):Promise<RuntimeTurn>{
+    if(this.expectedVersion!=="codex-cli 0.166.0-alpha.6")
+      throw new RuntimeProtocolError('direct input requires the pinned alpha.6 protocol');
+    this.owned(binding);
+    if(!nonempty(input)||!input.trim()||!nonempty(clientUserMessageId))
+      throw new RuntimeProtocolError('input and durable client message ID required');
+    if(this.fullTurnAttempts.get(binding.nativeThreadId)?.has(clientUserMessageId))
+      throw new RuntimeProtocolError('original direct input operation cannot be replayed');
+    const qualification=await this.qualifyConversationThread(binding);
+    if(!qualification.available)
+      throw new RuntimeProtocolError(qualification.reason);
+    return this.startConversationTurn(binding,input,clientUserMessageId);
+  }
+
+  /** Add input to exactly the active Turn. An acknowledgement confirms enqueue only, not consumption. */
+  async steerTurn(binding:RuntimeBinding,expectedTurnId:string,content:string,
+    inputId:string):Promise<{turnId:string;itemId:string|null}>{
+    this.owned(binding);
+    if(this.expectedVersion!=="codex-cli 0.166.0-alpha.6")
+      throw new RuntimeProtocolError('direct input requires the pinned alpha.6 protocol');
+    if(!binding.resumeProfile||!fullProfile(binding.resumeProfile)||
+      this.profileTransitionThreads.has(binding.nativeThreadId))
+      throw new RuntimeProtocolError('direct input requires an active full Session profile');
+    if(!nonempty(content)||!content.trim()||!nonempty(expectedTurnId)||!nonempty(inputId))
+      throw new RuntimeProtocolError('input, expected Turn ID and durable client message ID required');
+    const threadId=binding.nativeThreadId;
+    if(this.conversationTurnInFlight.has(threadId))
+      throw new RuntimeProtocolError('direct input is already in flight on this Thread');
+    if(this.fullTurnAttempts.get(threadId)?.has(inputId))
+      throw new RuntimeProtocolError('original direct input operation cannot be replayed');
+    this.conversationTurnInFlight.add(threadId);
+    try{
+      const result=object(await this.request('thread/read',{threadId,includeTurns:false}));
+      const thread=object(result?.thread);
+      if(thread?.id!==threadId||thread?.sessionId!==binding.nativeSessionId||thread?.cwd!==binding.cwd)
+        throw new RuntimeProtocolError('active Thread readback does not match owned Session');
+      if(object(thread.status)?.type!=='active')
+        throw new RuntimeProtocolError('owned Thread has no active Turn to steer');
+      if(binding.resumeProfile.model!=null&&thread.model!==binding.resumeProfile.model)
+        throw new RuntimeProtocolError('active Thread model differs from fixed profile');
+      const latest=(await this.listTurns(binding)).data[0];
+      if(latest?.id!==expectedTurnId||latest.status!=='inProgress'||latest.completedAtUtc!==null)
+        throw new RuntimeProtocolError('expected Turn is not the current active Turn');
+      this.owned(binding);
+      const attempts=this.fullTurnAttempts.get(threadId)??new Set<string>();
+      if(attempts.has(inputId))
+        throw new RuntimeProtocolError('original direct input operation cannot be replayed');
+      attempts.add(inputId);this.fullTurnAttempts.set(threadId,attempts);
+      // clientUserMessageId is a correlation ID, not a native idempotency promise.
+      let ack:Record<string,unknown>|null;
+      try{
+        ack=object(await this.request('turn/steer',{
+          threadId,expectedTurnId,input:[{type:'text',text:content}],clientUserMessageId:inputId,
+        }));
+      }catch(error){
+        if(error instanceof RuntimeProtocolError&&!(error instanceof RuntimeServerError)&&
+          error.message==='turn/steer: response lacks result')
+          throw new RuntimeUnknownError('turn/steer',null,'malformed acknowledgement; input may have been enqueued');
+        throw error;
+      }
+      if(ack?.turnId!==expectedTurnId)
+        throw new RuntimeUnknownError('turn/steer',null,'acknowledgement did not confirm the expected Turn');
+      return {turnId:expectedTurnId,itemId:null};
+    }finally{this.conversationTurnInFlight.delete(threadId);}
   }
 
   async inspect(binding: RuntimeBinding): Promise<unknown> {

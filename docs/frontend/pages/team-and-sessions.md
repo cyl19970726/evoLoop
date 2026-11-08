@@ -56,6 +56,8 @@ flowchart TD
 
 普通消息与业务 Run 共用同一 Session、Thread、adapter 和 full/never/联网执行配置；消息不切换专用进程、工具集或只读资格门。共享 Session 忙碌时，展示原消息仍在排队及具体原因；sender/receiver grant 仍限定身份；缺省消息 grant 不限累计处理次数，显式 `maxTurns` 才设上限。能力读取保留 `used`，无限时 `limit` 和 `remaining` 为 `null`；未核计数不显示为零。`ordinaryExecution` 在原生 Thread start/resume 明确回执 full/never 前保持 `unverified`／`unknown`；`thread/read` 没有权限字段不能推断已 active 或回执丢失。消息回复、处理结果和业务对象权限分别表达。GUI 阅读桥仍按 Run 的 reader、路由和证据范围限制业务对象访问；OS full access 不移除 Task/Document 授权边界，也不改变 Document iframe sandbox。后台控制原语完成不自动代表当前服务已启用，当前执行能力沿 Session snapshot 的实际回执读取。
 
+有明确 direct capability 时，活动业务 Run 或自动消息 processing 的底部输入把授权补充直接附着到原 running Turn；原 Thread 空闲时则启动一轮 direct mode。两条路径都保留原输入 ID、actor、期望／实际 Turn 与 Item 证据，不新建争用同一 Turn 的主 processing，也不改写原 Run 固定输入。只在服务返回 `steer`／`start` 时显示即时动作；主来源未绑定、额度不足、撤权或结果未知时显示真实原因并保留原意图，未知不能用再次点击或“已发送”标签清除。没有 direct capability 时继续显示原有排队语言。等待核对卡可以在窄屏折叠草稿，但不得隐藏 unknown、丢失原输入 ID、缩小正文或把历史阅读区压成一行；键盘、滚动锚点、短窗、减少动态和 Task 往返一起验。详细接线与恢复见[Session 连续工作区与即时输入](../../development/session-direct-input-integration.md)。
+
 原生运行中的文字／选项提问单独显示在对应 Session，带准确的运行或消息来源、待答／已保存／原生已清理／不可用状态和真实回复者。它不改变 Task 状态，也不要求新建验收任务。允许的发起者或项目复核者可回复当前仍有效的问题；保存回复、发入原生连接、原生清理和答案实际采用分别表达。已失效问题提供原因，不让用户在新连接补答旧请求。不支持的表单、认证和敏感问题诚实显示能力边界。具体桥接合同及运行模式限制见[原生提问](../../architecture/codex-integration.md#原生提问与业务问答)；工程接线通过不代替当前环境的真实可达性与亲用验收。
 
 原生进度面板须帮助人理解当前发生了什么：状态、精确 Turn 及运行或消息来源、工具、计划和变更预览都有观察时间和范围。旧连接保留最后内容并显示过期；预览不代表完整历史，原生 Turn 结束也不代替交付或验收。Token 须展示 Thread 累计与原生提供的范围，缓存和推理不重复计数，货币费用没有证据时保留未知。来源未绑定和数据缺失明确显示，详细合同见[有界原生观察](../../architecture/codex-integration.md#有界原生观察)。
