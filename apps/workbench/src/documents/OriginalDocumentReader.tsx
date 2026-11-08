@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { DocumentPayloadRevision } from "@evoloop/contracts/process-documents";
 import { errorText, request } from "../api";
 import { MarkdownBody } from "../ui/MarkdownBody";
+import { legacyWorkbenchRoute } from "../ui/legacyWorkbenchLink";
 import { imagePreview } from "./imagePreview";
 
 interface AvailableOriginal {
@@ -44,7 +45,8 @@ function resolveAsset(raw: string, entrypoint: string | null): string | null {
   return baseParts.join("/");
 }
 
-function staticHtml(original: AvailableOriginal): { html: string; urls: string[] } {
+interface InternalLink { href: string; label: string }
+function staticHtml(original: AvailableOriginal): { html: string; urls: string[]; internalLinks: InternalLink[] } {
   const urls: string[] = [];
   const registered = new Map<string, string>();
   const assets = new Map(original.assets.map(asset=>[asset.path,asset]));
@@ -65,6 +67,14 @@ function staticHtml(original: AvailableOriginal): { html: string; urls: string[]
   template.innerHTML = original.body;
   template.content.querySelectorAll("script,iframe,frame,object,embed,form,base,meta,link[rel=preload],link[rel=modulepreload]")
     .forEach(element => element.remove());
+  const internalLinks: InternalLink[] = [];
+  const seenLinks = new Set<string>();
+  for (const anchor of template.content.querySelectorAll("a[href]")) {
+    const href = legacyWorkbenchRoute(anchor.getAttribute("href") ?? "", original.revision.projectId);
+    if (!href || seenLinks.has(href)) continue;
+    seenLinks.add(href);
+    internalLinks.push({ href, label: anchor.textContent?.trim().replace(/\s+/g, " ").slice(0, 100) || `站内链接 ${internalLinks.length + 1}` });
+  }
   template.content.querySelectorAll('link[rel="stylesheet"]').forEach(element => {
     const name = resolveAsset(element.getAttribute("href") ?? "", original.revision.entrypoint);
     const asset = name ? assets.get(name) : null;
@@ -90,7 +100,7 @@ function staticHtml(original: AvailableOriginal): { html: string; urls: string[]
     if (element.tagName.toLowerCase() === "style") element.textContent = css(element.textContent ?? "", cssBases.get(element) ?? original.revision.entrypoint);
   });
   const csp = "default-src 'none'; script-src 'none'; connect-src 'none'; form-action 'none'; base-uri 'none'; frame-src 'none'; object-src 'none'; img-src blob: data:; style-src 'unsafe-inline'; font-src data:; media-src data:";
-  return { html: `<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="${csp}"><meta name="referrer" content="no-referrer"></head><body>${template.innerHTML}</body></html>`, urls };
+  return { html: `<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="${csp}"><meta name="referrer" content="no-referrer"></head><body>${template.innerHTML}</body></html>`, urls, internalLinks };
 }
 
 function download(name: string, data: Blob): void {
@@ -107,8 +117,8 @@ export function OriginalDocumentReader({ token, projectId, revisionId, documentI
   const original = storedOriginal?.revision.projectId === projectId && storedOriginal.revision.documentId === documentId && storedOriginal.revision.id === revisionId ? storedOriginal : null;
   const [error, setError] = useState("");
   const [refresh, setRefresh] = useState(0);
-  const [prepared, setPrepared] = useState<{ revisionId: string; hash: string; html: string } | null>(null);
-  const preview = original && prepared?.revisionId === original.revision.id && prepared.hash === original.revision.contentHash ? prepared.html : null;
+  const [prepared, setPrepared] = useState<{ revisionId: string; hash: string; html: string; internalLinks: InternalLink[] } | null>(null);
+  const preview = original && prepared?.revisionId === original.revision.id && prepared.hash === original.revision.contentHash ? prepared : null;
   const [assetPreview, setAssetPreview] = useState<string | null>(null);
   const [assetError, setAssetError] = useState<string | null>(null);
   useEffect(() => {
@@ -127,7 +137,7 @@ export function OriginalDocumentReader({ token, projectId, revisionId, documentI
     if (original?.status !== "available" || original.revision.format !== "html") { setPrepared(null); return; }
     try {
       const rendered = staticHtml(original);
-      setPrepared({ revisionId: original.revision.id, hash: original.revision.contentHash, html: rendered.html });
+      setPrepared({ revisionId: original.revision.id, hash: original.revision.contentHash, html: rendered.html, internalLinks: rendered.internalLinks });
       return () => rendered.urls.forEach(URL.revokeObjectURL);
     } catch { setError("配套资源无法安全构造预览。"); return; }
   }, [original]);
@@ -156,7 +166,10 @@ export function OriginalDocumentReader({ token, projectId, revisionId, documentI
       new Blob([original.body], { type: `${mime};charset=utf-8` }))}>下载原件</button></div>}
     {!continuous && <details className="doc-original-integrity"><summary>原件标识与校验</summary>{integrity}</details>}
     {original.revision.format === "html" ? <>{!readingMode && !continuous && <p>静态隔离预览，脚本未运行。下方保留完整 HTML 原文。</p>}
-      {preview ? <iframe className="doc-html-frame" key={`${revisionId}:${original.revision.contentHash}`} title="HTML 静态隔离预览" sandbox="" referrerPolicy="no-referrer" srcDoc={preview}
+      {preview?.internalLinks.length ? <details className="doc-internal-links"><summary>报告中的站内链接 · {preview.internalLinks.length}</summary>
+        <p>打开后可用浏览器返回此报告。</p><ul>{preview.internalLinks.map(link => <li key={link.href}><a href={link.href}>{link.label}</a></li>)}</ul>
+      </details> : null}
+      {preview ? <iframe className="doc-html-frame" key={`${revisionId}:${original.revision.contentHash}`} title="HTML 静态隔离预览" sandbox="" referrerPolicy="no-referrer" srcDoc={preview.html}
         style={{ width: "100%", minHeight: continuous ? undefined : readingMode ? "75vh" : 420, border: "1px solid #d8dfec", borderRadius: continuous ? 0 : 8 }} /> : <p role="status">正在准备此固定修订的隔离预览…</p>}</>
       : <MarkdownBody source={original.body} identity={original.revision.id} projectId={projectId} />}
     {continuous ? <details className="doc-continuous-secondary">

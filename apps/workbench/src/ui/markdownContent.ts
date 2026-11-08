@@ -1,4 +1,5 @@
 import MarkdownIt from "markdown-it";
+import { legacyWorkbenchRoute } from "./legacyWorkbenchLink";
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export function fixedWikiHref(value: string, projectId?: string): string | null {
@@ -37,7 +38,7 @@ export function splitMarkdown(source: string, options: { omitLeadingTitle?: stri
   const markdown = markdownFor(options.projectId);
   const tokens = markdown.parse(source, {});
   const TokenCtor = (MarkdownIt as unknown as {Token: new (type: string, tag: string, nesting: number) =>
-    {type: string; content: string; attrSet(name: string, value: string): void}}).Token;
+    {type: string; content: string; attrGet(name: string): string | null; attrSet(name: string, value: string): void}}).Token;
   if (options.projectId) for (const inline of tokens.filter(token => token.type === "inline") as unknown as ParsedTokenView[]) {
     if (!inline.children) continue;
     const children: Array<InstanceType<typeof TokenCtor>> = [];
@@ -62,6 +63,11 @@ export function splitMarkdown(source: string, options: { omitLeadingTitle?: stri
         else if (offset < child.content!.length) { const text = new TokenCtor("text", "", 0); text.content = child.content!.slice(offset); children.push(text); }
       }
       if (child.type === "link_close") insideLink = false;
+    }
+    for (const child of children) {
+      if (child.type !== "link_open") continue;
+      const route = legacyWorkbenchRoute(child.attrGet("href") ?? "", options.projectId);
+      if (route) child.attrSet("href", route);
     }
     inline.children = children;
   }

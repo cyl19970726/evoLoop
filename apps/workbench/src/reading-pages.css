@@ -157,6 +157,27 @@
 .workbench-layout .doc-original-reader .panel-head { align-items: center; margin-bottom: 16px; }
 .workbench-layout .doc-original-reader .panel-head h2 { font-size: 20px; }
 .workbench-layout .doc-original-reader .doc-original-integrity { margin: 0 0 18px; font-size: 14px; color: #607291; }
+.workbench-layout .doc-original-reader { position: relative; }
+.doc-internal-links {
+  position: absolute;
+  z-index: 1;
+  top: 10px;
+  right: 18px;
+  width: min(320px, calc(100% - 36px));
+  max-height: min(60vh, 450px);
+  overflow: auto;
+  box-sizing: border-box;
+  border: 1px solid #cbd8ea;
+  border-radius: 7px;
+  background: #fff;
+  box-shadow: 0 3px 12px rgb(22 42 75 / 12%);
+  color: #243858;
+  font-size: 13px;
+}
+.doc-internal-links summary { padding: 6px 10px; cursor: pointer; font-weight: 650; }
+.doc-internal-links p { margin: 4px 10px; color: #526787; }
+.doc-internal-links ul { margin: 4px 0 8px; padding: 0 12px 0 28px; }
+.doc-internal-links li { margin: 5px 0; overflow-wrap: anywhere; }
 /* 固定原件保持 100% 实际宽度，不缩放；宽内容在 iframe 内部横向滚动。 */
 .workbench-layout .doc-original-reader iframe { display: block; width: 100%; max-width: 100%; box-sizing: border-box; }
 /* HTML uses the space below the workbench header; the iframe is the primary scroll surface. */
