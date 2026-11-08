@@ -3,7 +3,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
-import { CodexAppServerAdapter, RuntimeProtocolError, RuntimeServerError, RuntimeUnknownError, type CodexAppServerOptions } from "../src/index.js";
+import { CodexAppServerAdapter, RuntimeCompactionPreflightError, RuntimeProtocolError, RuntimeServerError, RuntimeUnknownError, type CodexAppServerOptions } from "../src/index.js";
 
 test('compaction readback requires the exact persisted item entry, not a Turn summary', async () => {
   const adapter = new CodexAppServerAdapter({expectedVersion:'codex-cli 0.166.0-alpha.6'});
@@ -54,6 +54,48 @@ test('failed owner Thread is reattached with its fixed profile before compaction
   assert.equal(sent,1,'a changed native history cannot consume the compaction request');
 });
 
+test('known compaction preflight failure is distinct from a lost native request', async () => {
+  const adapter = new CodexAppServerAdapter({expectedVersion:'codex-cli 0.166.0-alpha.6'});
+  const internals=adapter as unknown as Record<string,unknown>;
+  const binding={sessionId:'session',roleId:'role',projectId:'project',nativeThreadId:'11111111-1111-4111-8111-111111111111',
+    nativeSessionId:'thread',cwd:'/tmp/compact',authorizationScope:'project',owner:'evoloop-codex-app-server',
+    resumeProfile:{actorId:'owner',model:'gpt-6-astra',reasoningEffort:'max',sandbox:'danger-full-access',approvalPolicy:'never'}} as Parameters<typeof adapter.compactThread>[0];
+  let requested=false;
+  internals.owned=()=>{};
+  internals.resumeBinding=async()=>{
+    throw new RuntimeServerError('thread/resume',7,-32600,
+      `thread ${binding.nativeThreadId} already has an active writer`,binding.nativeThreadId);
+  };
+  internals.request=async()=>{requested=true;throw new Error('compaction request must not be sent')};
+  await assert.rejects(()=>adapter.compactThread(binding,'old-turn',async()=>{
+    throw new Error('beforeSend must not run');
+  }),error=>error instanceof RuntimeCompactionPreflightError &&
+    error.code==='owner_resume_writer_conflict');
+  assert.equal(requested,false);
+});
+
+test('owner connection disappearing after preflight is a known unsent compaction', async () => {
+  const adapter = new CodexAppServerAdapter({expectedVersion:'codex-cli 0.166.0-alpha.6'});
+  const internals=adapter as unknown as Record<string,unknown>;
+  const binding={sessionId:'session',roleId:'role',projectId:'project',nativeThreadId:'thread',
+    nativeSessionId:'thread',cwd:'/tmp/compact',authorizationScope:'project',owner:'evoloop-codex-app-server',
+    resumeProfile:{actorId:'owner',model:'gpt-6-astra',reasoningEffort:'max',sandbox:'danger-full-access',approvalPolicy:'never'}} as Parameters<typeof adapter.compactThread>[0];
+  let sendCount=0;
+  internals.owned=()=>{};
+  internals.resumeBinding=async()=>{};
+  internals.inspect=async()=>({thread:{id:'thread',status:{type:'idle'},model:'gpt-6-astra',reasoningEffort:'max'}});
+  internals.request=async(method:string)=>{
+    if(method==='thread/turns/list')return {data:[{id:'old-turn',status:'failed',completedAt:1700000001}]};
+    sendCount++;throw new Error('compaction request must not be sent');
+  };
+  internals.nativeInputConnectionId=()=>null;
+  await assert.rejects(()=>adapter.compactThread(binding,'old-turn',async()=>{
+    throw new Error('beforeSend must not run');
+  }),error=>error instanceof RuntimeCompactionPreflightError &&
+    error.code==='send_connection_rejected');
+  assert.equal(sendCount,0);
+});
+
 test('compaction acceptance is recorded only for a valid reply on the same owner connection', async () => {
   const adapter = new CodexAppServerAdapter({expectedVersion:'codex-cli 0.166.0-alpha.6'});
   const internals=adapter as unknown as Record<string,unknown>;
@@ -74,9 +116,16 @@ test('compaction acceptance is recorded only for a valid reply on the same owner
     await beforeSend?.(17);
     if(reply==='event-before-send')listener?.({method:'turn/started',threadId:'thread',turnId:'foreign-turn'});
     afterSend?.();
+    if(reply==='event-before-send-reject'){
+      throw new RuntimeServerError(method,17,-32000,'controlled refusal');
+    }
     if(reply==='event-then-timeout'){
       listener?.({method:'turn/started',threadId:'thread',turnId:'captured-turn'});
       throw new RuntimeUnknownError(method,17,'response timeout');
+    }
+    if(reply==='event-then-reject'){
+      listener?.({method:'turn/started',threadId:'thread',turnId:'captured-rejected-turn'});
+      throw new RuntimeServerError(method,17,-32000,'controlled refusal');
     }
     if(reply instanceof Error)throw reply;
     if(reply==='connection-changed')connectionId='connection-B';
@@ -103,6 +152,13 @@ test('compaction acceptance is recorded only for a valid reply on the same owner
   reply='event-then-timeout';
   await assert.rejects(()=>adapter.compactThread(binding,'old-turn',beforeSend,afterAccepted),
     error=>error instanceof RuntimeUnknownError&&error.observedTurnId==='captured-turn');
+  reply='event-before-send-reject';
+  await assert.rejects(()=>adapter.compactThread(binding,'old-turn',beforeSend,afterAccepted),
+    error=>error instanceof RuntimeServerError&&error.category==='server_rejected');
+  reply='event-then-reject';
+  await assert.rejects(()=>adapter.compactThread(binding,'old-turn',beforeSend,afterAccepted),
+    error=>error instanceof RuntimeUnknownError&&error.method==='thread/compact/start'&&
+      error.requestId===17&&error.observedTurnId==='captured-rejected-turn');
 });
 
 import { mapWorkItem } from "../src/work-trace.js";
