@@ -23,7 +23,7 @@
     "browserUiZoom": null
   },
   "urlPolicy": "URLs below remove the in-memory access token. Detail routes use placeholders where the concrete entity identifier is not needed to establish the journey.",
-  "scope": "Read-only product UI verification on the formal post-release maintenance service. The interaction record covers Work table scrolling, Work summary entry, the Sessions directory and detail tabs, Markdown reading, HTML reading/resources, two old internal links on f2cf, and navigation to a fixed Document and back.",
+  "scope": "Read-only product UI verification on the formal post-release maintenance service. The interaction record covers Work table scrolling, Work summary entry, the Sessions directory, the redacted Session-detail layout, Markdown reading, HTML reading/resources, two old internal links on f2cf, and navigation to a fixed Document and back.",
   "excludedSourceFiles": [
     {
       "file": "target-coldstart-1440x900.png",
@@ -93,7 +93,7 @@
     },
     {
       "file": "session-detail-1440x900.png",
-      "sha256": "7c79b39eaf22214197c857d56867ac129ec5e3a8cbbd331c57faf851a4ee8b32",
+      "sha256": "d68aaaab21d324ce46ff3cb2ecca979e89f4adf83a522564e14780c0cd20d2ca",
       "viewportCssPx": [
         1440,
         900
@@ -107,9 +107,10 @@
       "sourceHead": "36cb620382b1b7aa5e507b43f9f9983f4a95c7e6",
       "schema": "062_acceptance_relay",
       "url": "http://127.0.0.1:55431/#/p/dfb56cce-4ecd-452d-94dc-bf9611babf11/sessions?session=owned%3A%3Csession-id%3E",
-      "action": "Select a Session from the left directory and stay on the current activity/conversation view.",
-      "observation": "The directory remains visible on the left. Activity and conversation use the main width; current Task, queue and result tabs and the bottom direct-input area remain in that main region.",
-      "evidenceBoundary": "Shows visual placement and historical message reading. The service health reports runtime:false, the visible connection is unavailable/pending, and this screenshot does not prove a live model turn, tool execution, message send or automatic Agent continuation."
+      "redaction": "Derived 1440x900 public view of the same Session detail. The associated Task row and activity/tool bodies are replaced with explicit placeholders before publication; raw conversation and local paths are not included.",
+      "action": "打开同一真实 Session 布局；公开图中隐藏具体消息正文、工具详情与关联 Task，只保留目录、状态、Agent、页签和自适应输入区域。",
+      "observation": "公开图保留目录、状态、Agent 上下文、活动页签和输入区域，并以显式占位说明消息与工具内容已隐藏。",
+      "evidenceBoundary": "仅证明同一真实 Session 的视觉布局；具体消息正文、工具详情与关联 Task 已隐藏，不能声称完整对话内容可见。服务 runtime:false，不证明实时模型 Turn、工具执行、消息发送或自动 Agent 接续。"
     },
     {
       "file": "document-1440x900.png",
