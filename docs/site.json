@@ -388,6 +388,11 @@
       "group": "开发与维护"
     },
     {
+      "path": "docs/development/session-direct-input-integration.md",
+      "title": "Session 连续工作区与即时输入",
+      "group": "开发与维护"
+    },
+    {
       "path": "docs/development/leader-result-return.md",
       "title": "Leader 结果回程",
       "group": "开发与维护"
