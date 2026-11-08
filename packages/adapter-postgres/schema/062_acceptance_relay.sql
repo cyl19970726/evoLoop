@@ -156,6 +156,10 @@ BEGIN
       SELECT 1 FROM task_acceptance_relay a WHERE a.project_id=NEW.project_id
         AND a.session_id=NEW.session_id AND a.state NOT IN ('superseded','released')
         AND NOT EXISTS (
+          SELECT 1 FROM session_message tm WHERE tm.project_id=a.project_id AND tm.message_id=a.message_id
+            AND tm.state IN ('failed','cancelled')
+        )
+        AND NOT EXISTS (
           SELECT 1 FROM task_acceptance_observation_link l
           JOIN consumer_observation o ON o.project_id=l.project_id AND o.observation_id=l.observation_id
           WHERE l.project_id=a.project_id AND l.relay_id=a.relay_id AND o.result IN ('used','failed','notUsed')

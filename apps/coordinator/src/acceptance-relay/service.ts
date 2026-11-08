@@ -133,7 +133,7 @@ export class AcceptanceRelayService {
         if(earlier.message_id){
           const message=(await client.query("SELECT state FROM session_message WHERE project_id=$1 AND message_id=$2 FOR UPDATE",
             [input.projectId,earlier.message_id])).rows[0];
-          if(message && message.state!=='queued' && message.state!=='cancelled')
+          if(message && !["queued","cancelled","failed"].includes(message.state))
             throw new DomainError("ACCEPTANCE_IN_FLIGHT","Started or unknown acceptance must settle before reassignment");
           if(message?.state==='queued')await client.query("UPDATE session_message SET state='cancelled',version=version+1,blocked_reason='Acceptance reassigned',updated_at=now() WHERE project_id=$1 AND message_id=$2",
             [input.projectId,earlier.message_id]);
@@ -221,6 +221,9 @@ export class AcceptanceRelayService {
       (SELECT count(*)::int FROM task_acceptance_relay a WHERE a.project_id=s.project_id AND a.session_id=s.session_id
         AND a.state NOT IN ('superseded','released') AND NOT EXISTS (
           SELECT 1 FROM task_acceptance_observation_link l WHERE l.project_id=a.project_id AND l.relay_id=a.relay_id
+        ) AND NOT EXISTS (
+          SELECT 1 FROM session_message tm WHERE tm.project_id=a.project_id AND tm.message_id=a.message_id
+            AND tm.state IN ('failed','cancelled')
         )) AS open_acceptance
       FROM runtime_session s LEFT JOIN session_profile p ON p.project_id=s.project_id
         AND p.target_kind='owned' AND p.target_id=s.session_id
@@ -356,6 +359,9 @@ export class AcceptanceRelayService {
       (SELECT count(*)::int FROM task_acceptance_relay a WHERE a.project_id=s.project_id AND a.session_id=s.session_id
         AND a.state NOT IN ('superseded','released') AND NOT EXISTS (
           SELECT 1 FROM task_acceptance_observation_link l WHERE l.project_id=a.project_id AND l.relay_id=a.relay_id
+        ) AND NOT EXISTS (
+          SELECT 1 FROM session_message tm WHERE tm.project_id=a.project_id AND tm.message_id=a.message_id
+            AND tm.state IN ('failed','cancelled')
         )) AS open_acceptance,
       (SELECT row_to_json(d) FROM (SELECT decision_id,close_operation_id,expected_session_version,actor_id,
         reason,handoff_evidence,created_at FROM session_retirement_decision d WHERE d.project_id=s.project_id
@@ -407,7 +413,10 @@ export class AcceptanceRelayService {
               AND t.state NOT IN ('done','cancelled'))
           OR EXISTS(SELECT 1 FROM task_acceptance_relay a WHERE a.project_id=$1 AND a.session_id=$2
             AND a.state NOT IN ('superseded','released') AND NOT EXISTS(
-              SELECT 1 FROM task_acceptance_observation_link l WHERE l.project_id=a.project_id AND l.relay_id=a.relay_id))
+              SELECT 1 FROM task_acceptance_observation_link l WHERE l.project_id=a.project_id AND l.relay_id=a.relay_id)
+            AND NOT EXISTS(
+              SELECT 1 FROM session_message tm WHERE tm.project_id=a.project_id AND tm.message_id=a.message_id
+                AND tm.state IN ('failed','cancelled')))
           AS blocked`,[input.projectId,input.sessionId]);
         if(pending.rows[0]?.blocked)throw new DomainError("RETIREMENT_BLOCKED","Session still has active or unhanded work");
         await client.query(`INSERT INTO session_retirement_decision(project_id,decision_id,session_id,
@@ -424,14 +433,22 @@ export class AcceptanceRelayService {
   async tick(projectIds: string[]): Promise<void> {
     if (!this.deps.canWrite()) return;
     for (const projectId of projectIds) {
-      const pending = await this.deps.pool.query("SELECT * FROM task_acceptance_relay WHERE project_id=$1 AND state='pending' ORDER BY created_at,relay_id LIMIT 30", [projectId]);
+      const active = await this.deps.pool.query(`SELECT a.*,m.state AS message_state
+        FROM task_acceptance_relay a LEFT JOIN session_message m
+          ON m.project_id=a.project_id AND m.message_id=a.message_id
+        WHERE a.project_id=$1 AND a.state IN ('pending','linked')
+        ORDER BY a.created_at,a.relay_id LIMIT 30`, [projectId]);
       let firstError: unknown = null;
-      for (const value of pending.rows) {
+      for (const value of active.rows) {
         try {
           const item = row(value);
           // Human work has no message to cancel; a changed Delivery or Task revision still retires it.
           if (!await this.current(item)) { await this.setState(item,"superseded","Current Delivery or Task revision changed"); continue; }
-          if (item.mode === "human") continue;
+          if (value.message_state === "failed" || value.message_state === "cancelled") {
+            await this.setState(item,"blocked",`ACCEPTANCE_MESSAGE_${String(value.message_state).toUpperCase()}`);
+            continue;
+          }
+          if (item.mode === "human" || item.state === "linked") continue;
           await this.dispatch(item);
         } catch (error) {
           firstError ??= error;
@@ -467,6 +484,10 @@ export class AcceptanceRelayService {
       await this.setState(item,"blocked",`MESSAGE_POST_${operation.result.status}`); return;
     }
     const message = await this.deps.messages.get(item.projectId,item.messageId);
+    if (message.state === "failed" || message.state === "cancelled") {
+      await this.setState(item,"blocked",`ACCEPTANCE_MESSAGE_${message.state.toUpperCase()}`);
+      return;
+    }
     if (message.operationId !== item.messageOperationId || message.senderActorId !== item.senderActorId ||
       message.target.kind !== "owned" || message.target.sessionId !== item.sessionId ||
       message.context?.taskId !== item.taskId || message.context?.taskRevisionId !== item.taskRevisionId ||
@@ -509,8 +530,12 @@ export class AcceptanceRelayService {
     if (await this.current(item)) {
       if(!await this.publicationReady(item)){await this.note(item,"PUBLICATION_PENDING");return false;}
       const m=await this.deps.pool.query(`SELECT operation_id,sender_actor_id,session_id,
-        context_task_id,context_task_revision_id,content FROM session_message
+        context_task_id,context_task_revision_id,content,state FROM session_message
         WHERE project_id=$1 AND message_id=$2`,[projectId,messageId]);
+      if (m.rows[0]?.state === "failed" || m.rows[0]?.state === "cancelled") {
+        await this.setState(item,"blocked",`ACCEPTANCE_MESSAGE_${String(m.rows[0].state).toUpperCase()}`);
+        return false;
+      }
       if(m.rows[0]?.operation_id===item.messageOperationId && m.rows[0]?.sender_actor_id===item.senderActorId &&
         m.rows[0]?.session_id===item.sessionId && m.rows[0]?.context_task_id===item.taskId &&
         m.rows[0]?.context_task_revision_id===item.taskRevisionId && m.rows[0]?.content===messageContent(item))return true;
@@ -519,6 +544,10 @@ export class AcceptanceRelayService {
       [projectId,messageId]);
     // Never retire an in-flight or unknown native source; its original operation must settle first.
     if(["processing","unknown"].includes(currentMessage.rows[0]?.state))return false;
+    if(["failed","cancelled"].includes(currentMessage.rows[0]?.state)){
+      await this.setState(item,"superseded",`Current Delivery changed after message ${String(currentMessage.rows[0].state)}`);
+      return false;
+    }
     await this.deps.pool.query(`UPDATE session_message SET state='cancelled',version=version+1,
       blocked_reason='Acceptance source superseded',updated_at=now() WHERE project_id=$1 AND message_id=$2 AND state='queued'`,
       [projectId,messageId]);
