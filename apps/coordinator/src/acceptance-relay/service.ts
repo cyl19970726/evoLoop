@@ -436,7 +436,8 @@ export class AcceptanceRelayService {
       const active = await this.deps.pool.query(`SELECT a.*,m.state AS message_state
         FROM task_acceptance_relay a LEFT JOIN session_message m
           ON m.project_id=a.project_id AND m.message_id=a.message_id
-        WHERE a.project_id=$1 AND a.state IN ('pending','linked')
+        WHERE a.project_id=$1 AND (a.state='pending' OR
+          (a.state='linked' AND m.state IN ('failed','cancelled')))
         ORDER BY a.created_at,a.relay_id LIMIT 30`, [projectId]);
       let firstError: unknown = null;
       for (const value of active.rows) {
