@@ -224,7 +224,7 @@ export class AcceptanceRelayService {
         )) AS open_acceptance
       FROM runtime_session s LEFT JOIN session_profile p ON p.project_id=s.project_id
         AND p.target_kind='owned' AND p.target_id=s.session_id
-      WHERE s.project_id=$1 ORDER BY s.role_id,s.session_id LIMIT 200`,[projectId]);
+      WHERE s.project_id=$1 AND s.state<>'closed' ORDER BY s.role_id,s.session_id LIMIT 200`,[projectId]);
     const capacity: AcceptanceCapacityView[] = [];
     for (const r of result.rows) {
       const persistedWorkIdle = r.state === "ready" && !!r.native_thread_id &&
