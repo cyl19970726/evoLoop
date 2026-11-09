@@ -49,3 +49,16 @@ test("refresh restores manually loaded pages before publishing a replacement and
     return {items:first,nextCursor:"second"};
   },"project-a",100),/后页不可读/);
 });
+
+test("a range read stops at its page limit and leaves the next cursor for a later load", async () => {
+  const cursors: (string | undefined)[] = [];
+  const short = await readDocumentRange(async cursor => {
+    cursors.push(cursor);
+    const at = Number(cursor ?? 0);
+    return { items: Array.from({length:10}, (_, i) => ({...document,id:`page-${at}-${i}`})), nextCursor: String(at + 1) };
+  }, "project-a", 500, 3);
+  assert.deepEqual(cursors, [undefined, "1", "2"]);
+  assert.equal(short.pages, 3);
+  assert.equal(short.page.items.length, 30);
+  assert.equal(short.page.nextCursor, "3");
+});
