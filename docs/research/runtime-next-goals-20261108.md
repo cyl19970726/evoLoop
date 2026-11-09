@@ -404,7 +404,7 @@ type ObservedCapabilities = { // 每个 Turn 一份
 
 ### 2.10 L5 设计：工作台的能力展示
 
-本节是设计，**还没有实现**。位置按[团队与具体 Session](../frontend/pages/team-and-sessions.md)现有的结构安排：
+本节是设计，**还没有实现**。位置按[Sessions](../frontend/pages/sessions.md)现有的结构安排：
 
 - **Agent 信息（紧凑区）。** 在模型、思考强度、权限旁边加一项“能力”，显示“skill N · plugin N · MCP N”，不展开清单。有差异时加一个标记：选了没加载，或者没选却出现。
 - **会话详情（低频详情）。** 加“能力”一节，分三块，每块都标明数据来源：
