@@ -16,3 +16,12 @@ export {
 } from "./components/overlays";
 export { AgentAvatar, PersonAvatar, avatarLook, avatarRoleBackgrounds, systemLooks, type AgentAvatarProps, type AvatarLook, type PersonAvatarProps } from "./components/avatar";
 export { Logo, type LogoProps } from "./components/logo";
+export {
+  Mention, MessageBubble, AgentMessage, ToolSummary, NestedActivity, LiveStatusLine, QuestionCard, TodoList, QueuedMessages, TurnSummary,
+  type MessageBubbleProps, type ToolStep, type ToolSummaryProps, type NestedActivityProps, type LiveStatusLineProps, type QuestionOption,
+  type QuestionCardProps, type TodoItem, type TodoStatus, type QueuedMessage, type QueuedMessagesProps, type TurnSummaryProps,
+} from "./components/conversation";
+export {
+  Composer, composerMenu, matchQuery,
+  type ComposerProps, type ComposerCommand, type ComposerAgent, type ComposerAttachment, type ComposerMenu,
+} from "./components/composer";

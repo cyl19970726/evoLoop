@@ -2,7 +2,7 @@
 
 工作台只用一套组件。新页面先在这里找，找不到再新增，并把新组件补进本表。
 
-**目标与现状。** 目标是基础组件放在 `packages/ui`（`@evoloop/ui`），基于 shadcn/ui 和 Radix，样式只引用[设计基础](foundations.md)的 token（[DEC-036](../decisions.md#用户已确定的方向)）。这个包不依赖业务合同、不发请求，文案由调用方传入。现状：`@evoloop/ui` 已有下表的基础组件和状态组件，以及头像与 Logo，样例页在工作台的 `#/ui`；对话流组件和对象速览还没有实现（#229 PR2b）。旧页面仍用 `apps/workbench/src/components/ui` 的 `Button`、`Sheet` 和 `ui/shared.tsx` 的 `Alert`、`.empty`，各页迁移时换成这里的组件。用这些组件的页面和弹层要放在 `data-ui` 作用域里，原因见[前端架构](architecture.md)。迁移由[前端改版 issue #229](https://github.com/cyl19970726/evoLoop/issues/229) 跟踪。上游组件的来源与许可登记在 `apps/workbench/THIRD_PARTY.md`。
+**目标与现状。** 目标是基础组件放在 `packages/ui`（`@evoloop/ui`），基于 shadcn/ui 和 Radix，样式只引用[设计基础](foundations.md)的 token（[DEC-036](../decisions.md#用户已确定的方向)）。这个包不依赖业务合同、不发请求，文案由调用方传入。现状：`@evoloop/ui` 已有下表的基础组件和状态组件，以及头像与 Logo，样例页在工作台的 `#/ui`；对话流组件也已实现（样例页“对话流与输入框”一节可以实际输入 `/` 和 `@`），对象速览还没有实现。旧页面仍用 `apps/workbench/src/components/ui` 的 `Button`、`Sheet` 和 `ui/shared.tsx` 的 `Alert`、`.empty`，各页迁移时换成这里的组件。用这些组件的页面和弹层要放在 `data-ui` 作用域里，原因见[前端架构](architecture.md)。迁移由[前端改版 issue #229](https://github.com/cyl19970726/evoLoop/issues/229) 跟踪。上游组件的来源与许可登记在 `apps/workbench/THIRD_PARTY.md`。
 
 ## 基础组件
 
@@ -39,9 +39,9 @@ Session 页中间栏用这一组组件，任务和文档的进展时间线也复
 
 | 组件 | 用途 |
 | --- | --- |
-| MessageBubble | 人的输入，深色气泡（`user-bubble`），靠右；提到的智能体显示成行内标记 |
+| MessageBubble、Mention | 人的输入，深色气泡（`user-bubble`），靠右，下方可加一行回执（如“已转给架构 · 已送达”）；提到的智能体用 Mention 显示成行内标记 |
 | AgentMessage | Agent 的回复，无气泡正文，支持 Markdown |
-| ToolSummaryRow | 工具调用折叠成一行灰字，例如“已执行 3 个指令 ›”，失败标红 |
+| ToolSummary | 工具调用折叠成一行灰字，例如“执行了 5 个指令、读了 3 个文件，1 次失败 ›”，展开后每步一行，失败标红 |
 | NestedActivity | 子 Agent 或子任务的内容，缩进显示在摘要下面 |
 | LiveStatusLine | 正在进行的事，一行，带耗时 |
 | QuestionCard | 需要人回答的问题，嵌在流里，写明谁能回答、何时有效 |
@@ -49,8 +49,8 @@ Session 页中间栏用这一组组件，任务和文档的进展时间线也复
 | QueuedMessages | 已排队、还没送进当前一轮的消息，可逐条取消 |
 | TurnSummary | 一轮结束时的一行小结：产出、交付、下一步等谁 |
 | Composer | 底部胶囊输入框，固定在中间栏底部；Enter 发送，运行中按运行时能力补充到当前一轮或排到下一轮，带停止按钮；可附带任务或文档引用；下方一行显示模型、上下文用量与排队数。输入 `/` 打开 CommandMenu，输入 `@` 打开 MentionMenu |
-| CommandMenu | 输入 `/` 弹出：上半是当前职责可用的技能（中文名、一句说明、右侧小字技能名），下半是命令（停止这一轮、撤回排队消息、关联任务或文档）；方向键选择，回车确认，Esc 关闭 |
-| MentionMenu | 输入 `@` 弹出：其他智能体（头像、状态、空闲时“立即送达”、忙时“排队”）和统筹；选中后这条消息另发一份给对方，两边时间线各留一条记录；可以 @ 多个 |
+| CommandMenu（Composer 内） | 只在输入框开头输入 `/` 时弹出，`/` 后出现空格就关闭；在中间输入的 `/` 是普通文字。内容：上半是当前职责可用的技能（中文名、一句说明、右侧小字技能名），下半是命令（停止这一轮、撤回排队消息、关联任务或文档）；方向键选择，回车确认，Esc 关闭 |
+| MentionMenu（Composer 内） | 在开头或空格后输入 `@` 时弹出（`mail@example` 里的 `@` 不算）。内容：其他智能体（头像、状态、空闲时“立即送达”、忙时“排队”）和统筹；选中后这条消息另发一份给对方，两边时间线各留一条记录；可以 @ 多个 |
 
 ## 对象速览
 
