@@ -81,6 +81,7 @@ export function RolesPanel({ context, refresh }: { context: MutationContext; ref
   const moreInFlightRef = useRef(false);
   const targetPages = useRef(0);
   const loadedScope = useRef("");
+  const rootRef = useRef<HTMLDivElement>(null);
   const [targetRoute, setTargetRoute] = useState(() => ({projectId:context.projectId,value:roleQuery(context.projectId),tick:0}));
   useEffect(() => {
     const reread = () => setTargetRoute(previous => ({projectId:context.projectId,value:roleQuery(context.projectId),tick:previous.tick+1}));
@@ -130,14 +131,15 @@ export function RolesPanel({ context, refresh }: { context: MutationContext; ref
     if (!target || !foundTarget) return;
     const frame = requestAnimationFrame(() => {
       if (roleQuery(context.projectId) !== target) return;
-      const card = document.getElementById(`role-${target}`);
+      // Visited pages stay mounted while hidden, so look inside this panel, not the whole document.
+      const card = rootRef.current?.querySelector(`[id="role-${target}"]`);
       if (card instanceof HTMLDetailsElement && card.getClientRects().length) {
         card.open = true; card.scrollIntoView({block:"start"}); card.focus({preventScroll:true});
       }
     });
     return () => cancelAnimationFrame(frame);
   }, [context.projectId, target, targetRoute.tick, foundTarget?.id, foundTarget?.version]);
-  return <div className="journey-board">
+  return <div className="journey-board" ref={rootRef}>
     <RoleTemplateSummary token={context.token} projectId={context.projectId} refresh={refresh} />
     <section className="panel"><div className="panel-head"><h2>职责试行</h2><button type="button" onClick={context.onChanged}>回读当前状态</button></div>
       <p>新会话仍可沿用已有职责。只有反复出现的独立责任缺口，才进入有边界、有成本上限的试行。</p>
