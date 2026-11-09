@@ -67,6 +67,12 @@ export interface ClaudeAgentSdkAdapterOptions {
   disallowedTools?: readonly string[];
   /** How long the child may take to accept the prompt before the start is withdrawn as not sent. */
   startTimeoutMs?: number;
+  /**
+   * How long a Turn's process may keep running after its result is settled (default 5000). The CLI normally exits
+   * once its prompt stream closes, but a tool it still waits on can keep it alive; past this bound the adapter
+   * sends SIGTERM to its process group (the CLI then stops its own tool shells), and SIGKILL after the same bound again.
+   */
+  exitGraceMs?: number;
   maxConcurrentTurns?: number;
   /**
    * The Role's skill plan, resolved before each Turn. Its plugins are loaded as local plugins (MCP discovery off)
@@ -159,6 +165,8 @@ export class ClaudeAgentSdkAdapter implements RuntimePort {
       throw new RuntimeProtocolError("Claude executable must be an absolute path");
     if (options.contextMode !== undefined && options.contextMode !== "project" && options.contextMode !== "explicit")
       throw new RuntimeProtocolError("Claude context mode must be project or explicit");
+    if (options.exitGraceMs !== undefined && !(Number.isFinite(options.exitGraceMs) && options.exitGraceMs > 0))
+      throw new RuntimeProtocolError("Claude exit grace must be a positive number of milliseconds");
     for (const name of options.envPassthrough ?? [])
       if (!/^[A-Z_][A-Z0-9_]{0,127}$/.test(name) || FORCED_ENV.has(name))
         throw new RuntimeProtocolError(`environment variable ${name} cannot be passed to Claude`);
@@ -398,7 +406,10 @@ export class ClaudeAgentSdkAdapter implements RuntimePort {
     let view: LedgerView;
     try { view = await this.view(binding); } catch { return unavailable("Claude Session ledger could not be read"); }
     if (view.archived) return unavailable("Claude Session is archived");
-    if (this.live.has(key) || view.turns.some(turn => !turn.withdrawn && !turn.settled)) return unavailable("A Claude Turn is running on this Session");
+    // A settled Turn whose process is only exiting is not running: the next start waits for that exit, bounded.
+    const running = this.live.get(key);
+    if ((running && !running.settled) || view.turns.some(turn => !turn.withdrawn && !turn.settled))
+      return unavailable("A Claude Turn is running on this Session");
     const latest = view.turns.filter(turn => !turn.withdrawn).at(-1) ?? null;
     const fingerprint = createHash("sha256").update(JSON.stringify({
       admission: "evoloop-claude-conversation-v1", projectId: binding.projectId, sessionId: binding.sessionId, roleId: binding.roleId,
@@ -461,9 +472,9 @@ export class ClaudeAgentSdkAdapter implements RuntimePort {
     if (previous?.settled) {
       // The previous Turn is already settled in the ledger and its process is only exiting. Wait for it (bounded)
       // instead of refusing, but never let two processes write the same transcript.
-      if (!await settledWithin(previous.done, 5_000) && previous.child) {
+      if (!await settledWithin(previous.done, this.exitGraceMs()) && previous.child) {
         signalGroup(previous.child, "SIGTERM");
-        await settledWithin(previous.done, 3_000);
+        await settledWithin(previous.done, this.exitGraceMs());
       }
       // Re-checked after the wait, in the same synchronous step that registers this start.
       if (this.attempted.has(attempt)) throw new RuntimeProtocolError("this Turn operation was already attempted; reconcile its original result");
@@ -623,6 +634,7 @@ export class ClaudeAgentSdkAdapter implements RuntimePort {
             message.is_error !== true && typeof message.result === "string" && message.result.length > 0
             ? { id: message.uuid, text: message.result } : null);
           live.release();
+          this.boundExit(live);
         }
       }
     } catch { /* the stream ended without a result; settled below */ }
@@ -640,6 +652,28 @@ export class ClaudeAgentSdkAdapter implements RuntimePort {
       if (live.child && live.child.exitCode === null && live.child.signalCode === null) signalGroup(live.child, "SIGTERM");
       if (live.sent && this.live.get(this.key(binding)) === live) this.live.delete(this.key(binding));
     }
+  }
+
+  private exitGraceMs(): number { return this.options.exitGraceMs ?? 5_000; }
+
+  /**
+   * After the result the process should exit on its own once the prompt stream closes. A tool it still waits on
+   * (seen live: a shell that kept a settled Turn's CLI alive for minutes) must not keep it, and the Session, busy.
+   */
+  private boundExit(live: LiveTurn): void {
+    const child = live.child;
+    const exited = () => !child || child.exitCode !== null || child.signalCode !== null;
+    if (exited()) return;
+    const grace = this.exitGraceMs();
+    let kill: NodeJS.Timeout | undefined;
+    const term = setTimeout(() => {
+      if (exited()) return;
+      signalGroup(child!, "SIGTERM");
+      kill = setTimeout(() => { if (!exited()) signalGroup(child!, "SIGKILL"); }, grace);
+      kill.unref();
+    }, grace);
+    term.unref();
+    child!.once("exit", () => { clearTimeout(term); if (kill) clearTimeout(kill); });
   }
 
   /** The first init report of the Turn process: what it actually loaded, next to what it was given. */

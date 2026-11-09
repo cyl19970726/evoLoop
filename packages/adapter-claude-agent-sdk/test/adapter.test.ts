@@ -28,8 +28,8 @@ async function setup(mode = "ok", extra: Partial<ClaudeAgentSdkAdapterOptions> =
   const spec: RuntimeSessionSpec = { actorId: "maintainer", sessionId: randomUUID(), roleId: "builder", projectId: randomUUID(), cwd,
     authorizationScope: "project", sandbox: "danger-full-access", approvalPolicy: "never" };
   const launches = async () => (await readFile(log, "utf8").catch(() => "")).split("\n").filter(Boolean)
-    .map(line => JSON.parse(line) as { argv: string[]; envKeys: string[]; configDir: string; disableMemory: string | null; clientApp: string | null;
-      claudeAiConnectors: string | null });
+    .map(line => JSON.parse(line) as { pid: number; argv: string[]; envKeys: string[]; configDir: string; disableMemory: string | null;
+      clientApp: string | null; claudeAiConnectors: string | null });
   return { root, configDir, cwd, options, adapter, spec, launches,
     cleanup: async () => { await adapter.close(); await rm(root, { recursive: true, force: true }); } };
 }
@@ -43,6 +43,8 @@ async function settled(adapter: ClaudeAgentSdkAdapter, binding: RuntimeBinding, 
     await new Promise(resolveWait => setTimeout(resolveWait, 25));
   }
 }
+
+const running = (pid: number): boolean => { try { process.kill(pid, 0); return true; } catch { return false; } };
 
 const deadPid = (): Promise<number> => new Promise((resolvePid, reject) => {
   const child = spawn(process.execPath, ["-e", ""], { stdio: "ignore" });
@@ -165,6 +167,36 @@ test("a start right after a settled Turn waits for that process to exit instead 
   } finally { await adapter.close(); await h.cleanup(); }
 });
 
+test("a process still running after its result does not hold the Session and is stopped after the exit grace", async () => {
+  // SIGTERM is enough for a CLI that honours it; one that ignores it is killed after the same grace again.
+  for (const ignoreTerm of [false, true]) {
+    const h = await setup("ok", { exitGraceMs: 200 });
+    h.options.environment = { ...h.options.environment, FAKE_CLAUDE_LINGER_MS: "60000", FAKE_CLAUDE_IGNORE_SIGTERM: ignoreTerm ? "1" : "0" };
+    h.options.envPassthrough = [...(h.options.envPassthrough ?? []), "FAKE_CLAUDE_LINGER_MS", "FAKE_CLAUDE_IGNORE_SIGTERM"];
+    const adapter = new ClaudeAgentSdkAdapter(h.options);
+    await adapter.open();
+    try {
+      const binding = await adapter.create(h.spec);
+      const first = randomUUID();
+      const started = await adapter.startTurn(binding, `${marker(first)}\nFirst`, first);
+      assert.equal((await settled(adapter, binding, started.id)).status, "completed");
+      const [launch] = await h.launches();
+      assert.ok(launch && running(launch.pid), "the process is still running after its result");
+      assert.equal((await adapter.qualifyConversationThread(binding)).available, true,
+        "a settled Turn whose process is only exiting is not a running Turn");
+      const deadline = Date.now() + 5_000;
+      while (running(launch.pid)) {
+        assert.ok(Date.now() < deadline, `the lingering process was not stopped (ignoreTerm=${ignoreTerm})`);
+        await new Promise(resolveWait => setTimeout(resolveWait, 25));
+      }
+      assert.equal((await adapter.listTurns(binding)).data[0]!.status, "completed", "stopping the exiting process keeps the settled outcome");
+      const second = randomUUID();
+      const next = await adapter.startConversationTurn(binding, `${marker(second)}\nSecond`, second);
+      assert.equal((await settled(adapter, binding, next.id)).status, "completed");
+    } finally { await adapter.close(); await h.cleanup(); }
+  }
+});
+
 test("a process that dies after the prompt was written settles as process_lost", async () => {
   const h = await setup("crash");
   try {
@@ -200,7 +232,8 @@ test("after a first Turn lost before any answer, the next Turn resumes the trans
 });
 
 test("an ordinary Session message starts only after a fresh admission and consumes it", async () => {
-  const h = await setup();
+  // The Turn hangs until interrupted, so the busy check below never races its result.
+  const h = await setup("hang");
   try {
     const binding = await h.adapter.create(h.spec);
     const early = randomUUID();
@@ -215,7 +248,8 @@ test("an ordinary Session message starts only after a fresh admission and consum
     assert.equal(started.status, "inProgress");
     const busy = await h.adapter.qualifyConversationThread(binding);
     assert.equal(busy.available, false, "a running Turn is not admitted");
-    assert.equal((await settled(h.adapter, binding, started.id)).status, "completed");
+    await h.adapter.interruptTurn(binding, started.id);
+    assert.equal((await settled(h.adapter, binding, started.id)).status, "interrupted");
     const again = randomUUID();
     await assert.rejects(h.adapter.startConversationTurn(binding, `${marker(again)}\nAgain`, again), RuntimeProtocolError,
       "the admission was consumed by the start");
@@ -369,6 +403,8 @@ test("capabilities declare per-turn process, caller session IDs and ledger archi
   assert.equal(declared.usage, "per_turn");
   assert.equal(declared.cost, true);
   assert.throws(() => new ClaudeAgentSdkAdapter({ configDir: "relative" }), /absolute/);
+  for (const exitGraceMs of [0, -1, Number.NaN, Number.POSITIVE_INFINITY])
+    assert.throws(() => new ClaudeAgentSdkAdapter({ configDir: "/tmp/evoloop-claude-capabilities", exitGraceMs }), /exit grace/);
 });
 
 const sha = (data: string | Buffer) => createHash("sha256").update(data).digest("hex");

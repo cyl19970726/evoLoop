@@ -129,5 +129,7 @@ lines.on("line", line => {
   }
   if (message.type === "user") turn(message);
 });
-// FAKE_CLAUDE_LINGER_MS keeps the process alive after stdin closes, like a CLI still flushing after its result.
+// FAKE_CLAUDE_LINGER_MS keeps the process alive after stdin closes, like a CLI still flushing after its result or
+// waiting on a tool shell. FAKE_CLAUDE_IGNORE_SIGTERM makes it ignore SIGTERM, so only SIGKILL stops it.
 lines.on("close", () => setTimeout(() => process.exit(0), Number(process.env.FAKE_CLAUDE_LINGER_MS ?? 0)));
+if (process.env.FAKE_CLAUDE_IGNORE_SIGTERM === "1") process.on("SIGTERM", () => undefined);
