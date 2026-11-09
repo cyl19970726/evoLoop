@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { Task } from "@evoloop/contracts";
-import { businessNextStep, cognitionSummary, partitionWorkTasks, visibleWorkGroups, type WorkTaskStatus } from "../src/workflow/workStatusPresentation.ts";
+import { businessNextStep, cognitionSummary, partitionWorkTasks, visibleWorkGroups, type WorkTaskStatus } from "../src/shared/workStatusPresentation.ts";
 
 const task={id:"task",kind:"research",state:"in_progress"} as Task;
 const base:WorkTaskStatus={taskId:"task",cognition:true,dispatchId:"dispatch",dispatchState:"accepted",outcome:null,

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { WorkspaceEntry, WorkspaceMessage, WorkspaceTool } from "@evoloop/contracts/session-timeline";
-import { mergeWorkspaceEntries, mergeWorkspaceTurns, workspaceCurrentProgress, workspaceEntryKey, workspaceReadingGroups, workspaceReadingOrder, workspaceToolPreview } from "../src/sessions/workspaceTimelineModel";
+import { mergeWorkspaceEntries, mergeWorkspaceTurns, workspaceCurrentProgress, workspaceEntryKey, workspaceReadingGroups, workspaceReadingOrder, workspaceToolPreview } from "../src/features/sessions/workspaceTimelineModel";
 
 const stamp = "2026-11-01T12:00:00.000Z";
 function message(id: string, role: WorkspaceMessage["role"], overrides: Partial<WorkspaceMessage> = {}): WorkspaceMessage {

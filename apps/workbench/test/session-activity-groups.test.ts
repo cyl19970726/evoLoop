@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { SessionActivity } from "@evoloop/contracts/session-observation";
-import { groupActivities } from "../src/sessions/activityGroups.ts";
+import { groupActivities } from "../src/features/sessions/activityGroups.ts";
 
 const event = (id: string, sourceId: string, taskId: string | null): SessionActivity => ({
   id, sequence: id, sessionKey: "owned:session", kind: "run.progress", summary: "相同标题",

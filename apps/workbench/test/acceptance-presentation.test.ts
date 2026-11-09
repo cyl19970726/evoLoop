@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { acceptancePoints } from '../src/workflow/acceptancePresentation.ts';
+import { acceptancePoints } from '../src/features/workflow/acceptancePresentation.ts';
 test('numbered acceptance keeps each original condition and punctuation',()=>{
  assert.deepEqual(acceptancePoints('1. 保留旧 Run。2. 核对当前版本。3. 返回原任务。'),['保留旧 Run。','核对当前版本。','返回原任务。']);
 });

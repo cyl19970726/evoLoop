@@ -15,20 +15,28 @@
 
 ## 2. 组件、路由与查询模型
 
-**代码分层。** 现状：`apps/workbench/src` 下 16 个领域目录，有循环依赖（sessions↔workflow、workflow↔runtime、workflow↔orchestration），`ui/shared.tsx` 反向依赖 `documents`。目标：
+**代码分层。** `apps/workbench/src` 分三层，依赖只向下：`app/ → features/ → shared/ → @evoloop/ui`。规则由 `apps/workbench/test/layers.test.ts` 检查，随 `npm test` 运行。
 
-| 层 | 内容 |
-| --- | --- |
-| `app/` | 外壳、路由表、身份与查询客户端装配 |
-| `features/<领域>/` | 页面、领域组件、该领域的查询与命令 |
-| `shared/` | API 客户端、对象引用、修订标签等跨领域部件 |
-| `@evoloop/ui`（`packages/ui`） | tokens、基于 shadcn 的基础组件、布局骨架、通用状态与对话流条目；不依赖 `@evoloop/contracts`，不发请求 |
+| 层 | 内容 | 现状 |
+| --- | --- | --- |
+| `app/` | 外壳、路由表、身份与查询客户端装配 | `App.tsx`（手写路由与项目切换）、`WorkbenchShell.tsx`、操作回执与恢复、组件样例页 `ui-samples/`。`src/` 根目录只留入口 `main.tsx`、全局类型声明和旧全局 CSS（PR10 删除），按 app 层对待 |
+| `features/<领域>/` | 页面、领域组件、该领域的查询与命令 | 17 个领域沿用旧目录名（任务仍叫 `workflow`，团队页是 `team`）；PR5–PR9 换页时按目标页面归并 |
+| `shared/` | API 客户端、对象引用、修订标签等跨领域部件 | `api.ts` 与被多个领域读取的 `*Client.ts`、命令表单 `ActionForm`、业务状态映射（`workStatusPresentation`、`leaderWorkLoad`、`taskTiming`）、对象链接与名称解析（`taskNavigation`、`deliveryPresentation`、`externalHostEntry`、`ownerRole`）、Markdown 与 HTML 原件阅读（`ui/`）、过渡期的本地 shadcn 组件（`components/ui/`）、假数据 `fixtures/` |
+| `@evoloop/ui`（`packages/ui`） | tokens、基于 shadcn 的基础组件、布局骨架、通用状态与对话流条目 | 见[组件](components.md) |
 
-依赖只能向下，领域之间只经对方的 `index.ts`，不许循环；用一个小的 node 检查脚本放进 `npm test`。
+检查的规则：
+
+- `shared/` 不引用 `features/` 和 `app/`（含 `import type`）；`features/` 不引用 `app/`。
+- 领域之间只经对方的 `index.ts`，不许成环。`index.ts` 只导出别的领域实际用到的组件、函数和类型。
+- `app/` 是组装根，直接引用各页面模块，不经 `index.ts`。PR4a 按路由拆包要逐页懒加载；若页面也放进 `index.ts`，别的领域引用其中一个小函数就会把整页连同它的旧 CSS 一起提前带进来。旧领域 CSS 没有分层，加载顺序就是层叠顺序；分层前后构建出的 CSS 逐字节相同。
+- 别的包按包名引用，不用相对路径跨包。检查读不懂的 import 写法直接报错，不会放过。
+- `@evoloop/ui` 不引用工作台和 `@evoloop/contracts`（含 `package.json` 依赖），不发请求，文案与数据由调用方传入。
+
+领域之间现有的依赖（检查运行时会打印）：overview → workflow；roles → discussions；runtime → discussions、orchestration、queues、sessions；sessions → discussions；team → discussions、roles、runtime；workflow → documents、references、runtime、sessions。运行面板 `RuntimePanel` 汇集编排、驻留队列、协作线程和 Session 链接，任务页和团队页再嵌入它。
 
 **路由。** URL 承载项目、对象稳定 ID、修订和筛选，刷新或分享后回到同一位置；改标题或移动 Git 路径不改链接。历史修订 URL 不跳到最新版。导航入口由[布局](layout.md)决定，不按路由生成。
 
-- **现状**：`App.tsx` 监听 `hashchange`，手写解析 `#/p/{项目}/{区域}/{ID}?revision=…`；所有页面在一个包里。
+- **现状**：`app/App.tsx` 监听 `hashchange`，手写解析 `#/p/{项目}/{区域}/{ID}?revision=…`；所有页面在一个包里。
 - **目标**：TanStack Router，路径 URL `/p/{项目}/…`，旧 `#/p/…` 链接（含正文里保存的）兼容跳转，按路由拆包，静态服务对非 `/api` 路径回退 `index.html`。以后要服务端渲染，可在同一套路由上换 TanStack Start。
 
 **读取。** 列表返回有界游标页，不首次加载全项目 Wiki 或全部 trace。搜索按任务、文档、知识分组，各给来源与修订，不把不同后端的分数合并排名。

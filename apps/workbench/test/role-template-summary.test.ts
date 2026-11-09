@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { initialRoleTemplates } from "@evoloop/contracts/roles";
-import { parseRoleTemplateSummary, roleTemplateHref } from "../src/roles/RoleTemplateSummary";
+import { parseRoleTemplateSummary, roleTemplateHref } from "../src/shared/RoleTemplateSummary";
 
 const projectId = "30000001-0000-4000-8000-000000000001";
 const roleId = "30000002-0000-4000-8000-000000000002";

@@ -5,7 +5,7 @@ import {
   businessRunReplyEligible,
   runReplyScope,
   terminalRunStates,
-} from "../src/sessions/businessRunReplyModel.ts";
+} from "../src/features/sessions/businessRunReplyModel.ts";
 
 test("business Run reply only appears for a task-linked owned Run", () => {
   assert.equal(businessRunReplyEligible("owned", { taskId: "task-a" }), true);

@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { mock, test } from "node:test";
 import type { TaskExternalReferenceRecord } from "@evoloop/contracts/references";
-import { ApiError, request } from "../src/api.ts";
-import { type FixedGitRead, verifyFixedGitRead } from "../src/references/fixedGitOriginal.ts";
+import { ApiError, request } from "../src/shared/api.ts";
+import { type FixedGitRead, verifyFixedGitRead } from "../src/features/references/fixedGitOriginal.ts";
 
 const projectId="11111111-1111-4111-8111-111111111111";
 const referenceId="22222222-2222-4222-8222-222222222222";

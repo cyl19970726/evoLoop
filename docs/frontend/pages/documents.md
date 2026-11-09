@@ -64,14 +64,14 @@ HTML 报告直接作为过程文档保存，脚本不执行，默认静态阅读
 
 ## 代码与测试
 
-源码在 `apps/workbench/src/documents/`，测试在 `apps/workbench/test/`。
+源码在 `apps/workbench/src/features/documents/`，测试在 `apps/workbench/test/`。
 
 | 部分 | 主要源码 | 相关测试 |
 | --- | --- | --- |
-| 文档表格 | `DocumentIndex.tsx`、`documentListModel.ts`、`apps/workbench/src/workflow/leaderWorkLoad.ts`（用途与关联补读） | `document-list-model.test.ts`、`leader-work-load.test.ts` |
-| 阅读页 | `DocumentPage.tsx`、`DocumentOutline.tsx`、`apps/workbench/src/ui/MarkdownBody.tsx`、`apps/workbench/src/ui/markdownContent.ts` | `markdown-content.test.ts` |
-| HTML 原件与资源 | `OriginalDocumentReader.tsx`、`imagePreview.ts` | `document-full-html-reading-browser.test.ts`、`document-image-preview.test.ts` |
-| 来源与返回 | `DocumentOrigin.tsx`、`originValidation.ts`、`apps/workbench/src/ui/returnRoute.ts` | `document-origin.test.ts`、`document-origin-refresh-browser.test.ts`、`session-document-return-browser.test.ts` |
+| 文档表格 | `DocumentIndex.tsx`、`documentListModel.ts`、`apps/workbench/src/shared/leaderWorkLoad.ts`（用途与关联补读） | `document-list-model.test.ts`、`leader-work-load.test.ts` |
+| 阅读页 | `DocumentPage.tsx`、`DocumentOutline.tsx`、`apps/workbench/src/shared/ui/MarkdownBody.tsx`、`apps/workbench/src/shared/ui/markdownContent.ts` | `markdown-content.test.ts` |
+| HTML 原件与资源 | `apps/workbench/src/shared/ui/OriginalDocumentReader.tsx`、`apps/workbench/src/shared/ui/imagePreview.ts`（任务页也用） | `document-full-html-reading-browser.test.ts`、`document-image-preview.test.ts` |
+| 来源与返回 | `DocumentOrigin.tsx`、`originValidation.ts`、`apps/workbench/src/shared/ui/returnRoute.ts` | `document-origin.test.ts`、`document-origin-refresh-browser.test.ts`、`session-document-return-browser.test.ts` |
 | 保存与修订 | `UploadDocument.tsx` | 暂无专门测试 |
 
 ## 相关

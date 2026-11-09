@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { checkedRecoveryView, recoveryActivationLabel, recoveryBudget, recoveryNextActionLabel, recoveryPhaseLabel, recoveryReasonSummary, recoverySourceStateLabel, type SessionRecoveryView } from "../src/sessions/recoveryPresentation.ts";
+import { checkedRecoveryView, recoveryActivationLabel, recoveryBudget, recoveryNextActionLabel, recoveryPhaseLabel, recoveryReasonSummary, recoverySourceStateLabel, type SessionRecoveryView } from "../src/features/sessions/recoveryPresentation.ts";
 
 const sessionId = "11111111-1111-4111-8111-111111111111";
 const projectId = "22222222-2222-4222-8222-222222222222";

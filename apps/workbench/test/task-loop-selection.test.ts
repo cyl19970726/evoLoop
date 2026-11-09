@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { RuntimeRunRecord } from "@evoloop/contracts/runtime";
-import type { WorkTaskStatus } from "../src/workflow/workStatusPresentation.ts";
-import { selectedTaskLoop, taskLoopAssociation } from "../src/orchestration/taskLoopSelection.ts";
+import type { WorkTaskStatus } from "../src/shared/workStatusPresentation.ts";
+import { selectedTaskLoop, taskLoopAssociation } from "../src/features/orchestration/taskLoopSelection.ts";
 
 const old = { loopId: "old-loop", dispatchIds: ["old-dispatch"], parentDispatchIds: [], sourceEventIds: [] };
 const current = { loopId: "new-loop", dispatchIds: ["new-dispatch"], parentDispatchIds: [], sourceEventIds: [] };

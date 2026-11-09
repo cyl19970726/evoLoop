@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { TaskSessionAssignment } from "@evoloop/contracts/session-assignments";
-import { assignedObservedSession, eligibleOwnedSessions } from "../src/sessions/assignmentEligibility.ts";
+import { assignedObservedSession, eligibleOwnedSessions } from "../src/features/sessions/assignmentEligibility.ts";
 
 const projectId = "20000001-0000-4000-8000-000000000001";
 const taskId = "20000002-0000-4000-8000-000000000002";

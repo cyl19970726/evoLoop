@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { imagePreview } from "../src/documents/imagePreview.ts";
+import { imagePreview } from "../src/shared/ui/imagePreview.ts";
 const encoded = (hex: string) => Buffer.from(hex, "hex").toString("base64");
 
 test("registered PNG/JPEG resources use a safe image decoder and expose a MIME mismatch", () => {

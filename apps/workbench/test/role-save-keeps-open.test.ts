@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
-import { api } from "../src/api";
-import { errorOutcome, resultOutcome } from "../src/workflow/submissionOutcome";
-import { roleCardKey, roleListScope, rolesWhileRereading } from "../src/roles/roleListRefresh";
-import { savedRuntimeNotice } from "../src/roles/roleRuntimePresentation";
+import { api } from "../src/shared/api";
+import { errorOutcome, resultOutcome } from "../src/shared/submissionOutcome";
+import { roleCardKey, roleListScope, rolesWhileRereading } from "../src/features/roles/roleListRefresh";
+import { savedRuntimeNotice } from "../src/features/roles/roleRuntimePresentation";
 
 const operationId = "30000003-0000-4000-8000-000000000003";
 const command = { type: "role.runtime.set", operationId } as never;

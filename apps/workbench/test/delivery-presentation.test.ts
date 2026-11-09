@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Document, DocumentRevision } from "@evoloop/contracts";
-import { deliveryTarget, verifiedDocumentTitle } from "../src/workflow/deliveryPresentation.ts";
+import { deliveryTarget, verifiedDocumentTitle } from "../src/shared/deliveryPresentation.ts";
 
 const projectId = "044d070e-d191-4844-883b-6c782984de73";
 const otherProject = "c868a7c4-ec96-4902-a9dc-4c659a6e24a4";

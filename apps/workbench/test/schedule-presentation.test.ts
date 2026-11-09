@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import type { Occurrence } from "@evoloop/contracts/scheduling";
-import { scheduleRuleLabel, latestOccurrence, occurrenceLabel, scheduleReadView, utcInstant } from "../src/scheduling/presentation.ts";
+import { scheduleRuleLabel, latestOccurrence, occurrenceLabel, scheduleReadView, utcInstant } from "../src/features/scheduling/presentation.ts";
 test("once and interval anchors label their stored UTC instant, not the browser's local zone",()=>{
  assert.match(scheduleRuleLabel({kind:"once",atUtc:"2026-10-30T00:00:00Z"}),/2026-10-30 00:00:00 UTC/);
  assert.match(scheduleRuleLabel({kind:"interval",anchorUtc:"2026-10-30T08:00:00+08:00",everyMinutes:30}),/2026-10-30 00:00:00 UTC/);

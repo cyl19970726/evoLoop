@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { test } from "node:test";
-import { ApiError } from "../src/api";
-import { directInputClient, explicitlyUnaccepted } from "../src/sessions/directInputClient";
+import { ApiError } from "../src/shared/api";
+import { directInputClient, explicitlyUnaccepted } from "../src/features/sessions/directInputClient";
 
 test("direct input distinguishes a missing receipt after 503 from an explicit pre-reservation rejection", async t => {
   let submitStatus = 503;

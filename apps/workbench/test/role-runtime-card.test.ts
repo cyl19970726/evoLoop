@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { defaultRoleSkillSelection, type RoleRuntimeView } from "@evoloop/contracts/role-skills";
-import { presentRoleRuntime, runtimeCommand, runtimeFields } from "../src/roles/roleRuntimePresentation";
+import { presentRoleRuntime, runtimeCommand, runtimeFields } from "../src/features/roles/roleRuntimePresentation";
 
 const projectId = "30000001-0000-4000-8000-000000000001", roleId = "30000002-0000-4000-8000-000000000002";
 const view = (overrides: Partial<RoleRuntimeView> = {}): RoleRuntimeView => ({

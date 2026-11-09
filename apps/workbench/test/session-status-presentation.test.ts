@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { currentNativeRunId, currentWorkRelationLabel, idleSessionResult, latestSessionResult, runStateLabel, sessionHeaderStatusLabel, sessionIdleSummary, sessionLifecycleLabel, sessionResultUseLabel, sessionStatusLabel } from "../src/sessions/sessionStatusPresentation.ts";
+import { currentNativeRunId, currentWorkRelationLabel, idleSessionResult, latestSessionResult, runStateLabel, sessionHeaderStatusLabel, sessionIdleSummary, sessionLifecycleLabel, sessionResultUseLabel, sessionStatusLabel } from "../src/features/sessions/sessionStatusPresentation.ts";
 import type { SessionResult } from "@evoloop/contracts/session-observation";
 
 test("owned lifecycle takes priority over activity and only ready can be idle", () => {

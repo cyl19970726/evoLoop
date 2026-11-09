@@ -3,7 +3,7 @@ import test from "node:test";
 import type { LeaderWorkTask } from "@evoloop/contracts/work-index";
 import {
   latestProgressPresentation, taskGoal, taskTimestamp, taskType,
-} from "../src/workflow/taskWorkspacePresentation.ts";
+} from "../src/features/workflow/taskWorkspacePresentation.ts";
 
 const stamp = "2026-10-31T08:15:00.000Z";
 const item = {

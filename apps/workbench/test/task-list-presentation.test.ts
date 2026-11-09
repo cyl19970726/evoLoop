@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { legacyDecisionLabel, taskNextStep } from "../src/workflow/taskListPresentation.ts";
+import { legacyDecisionLabel, taskNextStep } from "../src/features/workflow/taskListPresentation.ts";
 
 test("every Task state has a visible next-step hint without claiming authorization", () => {
   assert.match(taskNextStep("todo"), /核对任务范围与固定依据/);

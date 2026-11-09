@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { SessionCapabilities } from "@evoloop/contracts/session-work";
-import { sessionMessageEntry } from "../src/sessions/sessionMessageEntry.ts";
+import { sessionMessageEntry } from "../src/features/sessions/sessionMessageEntry.ts";
 
 const capability = { available: false, reason: null };
 const base: SessionCapabilities = { observe: capability, send: { available: true, reason: "保存原会话消息", mode: "owned-conversation" },
