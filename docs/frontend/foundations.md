@@ -2,7 +2,7 @@
 
 本页定义工作台共用的设计 token 和状态的视觉表达。数值只在代码里维护一份，文档只说明用途和规则。
 
-**目标与现状。** 目标是全部 token 放进 `packages/ui` 的一个 token 文件，并接入 Tailwind v4 主题，每个页面只引用 token（[DEC-036](../decisions.md#用户已确定的方向)）。现状是 `apps/workbench/src` 的 7 个全局 CSS 按导入顺序互相覆盖，实际生效的是 `completion.css` 的根变量；另有约 1600 处写死的颜色值。迁移由[前端改版 issue #229](https://github.com/cyl19970726/evoLoop/issues/229) 跟踪。下面的数值以当前实际生效值为起点，在 `packages/ui` 首个实现时用截图校准。
+**目标与现状。** 目标是全部 token 放进 `packages/ui` 的一个 token 文件，并接入 Tailwind v4 主题，每个页面只引用 token（[DEC-036](../decisions.md#用户已确定的方向)）。现状：token 已收进 `packages/ui/src/tokens.css`，Tailwind 主题在 `packages/ui/src/theme.css`；工作台旧的变量名（`--primary`、`--ink-muted` 等）暂由 `apps/workbench/src/legacy-tokens.css` 指向新 token，逐页迁移后删除。各页 CSS 里仍有约 1600 处写死的颜色值，`apps/workbench/test/style-budget.test.ts` 保证这个数只减不增，且 token 只能在 `packages/ui` 定义。迁移由[前端改版 issue #229](https://github.com/cyl19970726/evoLoop/issues/229) 跟踪。下面的数值以当前实际生效值为起点，在 `packages/ui` 首个实现时用截图校准。
 
 ## 颜色
 

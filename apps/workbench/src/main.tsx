@@ -1,6 +1,8 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
+import "@evoloop/ui/tokens.css";
+import "./legacy-tokens.css";
 import "./style.css";
 import "./workbench.css";
 import "./editorial.css";

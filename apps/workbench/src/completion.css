@@ -1,13 +1,9 @@
 /* Adopted blue/white reading system. Page-specific rules follow this file. */
 :root {
-  --background: #fff; --foreground: #17233b; --primary: #2457f5; --primary-strong: #1944d6;
-  --primary-soft: #edf3ff; --surface: #fff; --surface-rail: #f7f9fc; --surface-muted: #f6f8fb;
-  --border: #dce3ee; --border-strong: #bdcbe0; --ink-muted: #526078; --ink-faint: #68768c;
-  --editorial-sans: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
   font-family: var(--editorial-sans); font-size: 16px;
 }
 body, .workspace-body { background: #fff; }
-.workbench-layout { --primary: #2457f5; --border: #dce3ee; grid-template-columns: 88px 270px minmax(0,1fr); }
+.workbench-layout { grid-template-columns: 88px 270px minmax(0,1fr); }
 .workbench-layout.sidebar-collapsed { grid-template-columns: 88px 0 minmax(0,1fr); }
 .module-rail { width: 88px; padding: 16px 10px; gap: 14px; border-right: 1px solid var(--border); }
 .module-rail > a:not(.rail-brand) { width: 68px; min-height: 78px; gap: 8px; font-size: 15px; color: var(--ink-muted); }

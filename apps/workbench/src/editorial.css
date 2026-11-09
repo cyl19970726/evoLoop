@@ -1,23 +1,5 @@
 /* Shared visual language for the reader-first workbench. */
 :root {
-  color-scheme: light;
-  --background: #fefefd;
-  --foreground: #20232b;
-  --primary: #3157d5;
-  --primary-strong: #2447bd;
-  --primary-soft: #edf1ff;
-  --surface: #f5f5f1;
-  --surface-rail: #f9f9f6;
-  --surface-muted: #f7f7f4;
-  --border: #dedfe2;
-  --border-strong: #c9ccd2;
-  --ink-muted: #6f7480;
-  --ink-faint: #8c9099;
-  --warning: #965b17;
-  --warning-soft: #fff3df;
-  --danger: #98483f;
-  --danger-soft: #fff0ed;
-  --editorial-sans: "Avenir Next", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
   font-family: var(--editorial-sans);
   background: var(--surface);
 }
@@ -90,8 +72,6 @@ button.primary:hover:not(:disabled),
 }
 
 .workbench-layout {
-  --primary: #3157d5;
-  --border: #dedfe2;
   display: grid;
   grid-template-columns: clamp(76px, 5vw, 84px) clamp(272px, 18vw, 300px) minmax(0, 1fr);
   align-items: start;
