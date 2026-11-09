@@ -2,7 +2,7 @@
 
 本页只写工作台怎样实现。页面内容见[页面说明](README.md#页面说明)，共同原则见[设计原则](principles.md)，外壳见[布局](layout.md)，产品理由见[产品工作台](../product/workbench.md)；字段、状态与权限以[接口合同](../architecture/contracts.md)为准。
 
-“现状”指当前 main 的代码；“目标”是已选定、由前端改版 issue 实施的方向，落地前不能当作现状引用。
+“现状”指当前 main 的代码；“目标”是已选定、由[前端改版 issue #229](https://github.com/cyl19970726/evoLoop/issues/229) 实施的方向，落地前不能当作现状引用。
 
 ## 1. 工作台的职责与部署位置
 

@@ -2,7 +2,7 @@
 
 工作台只用一套组件。新页面先在这里找，找不到再新增，并把新组件补进本表。
 
-**目标与现状。** 目标是基础组件放在 `packages/ui`（`@evoloop/ui`），基于 shadcn/ui 和 Radix，样式只引用[设计基础](foundations.md)的 token（[DEC-036](../decisions.md#用户已确定的方向)）。这个包不依赖业务合同、不发请求，文案由调用方传入。现状是只有 `apps/workbench/src/components/ui` 里的 `Button` 和 `Sheet` 来自 shadcn，`Button` 全仓只用了 2 次；真正共用的只有 `ui/shared.tsx` 的 `Alert`（`.notice`）和 `.empty` 样式类，其他控件由各页自己写。迁移由前端改版 issue 跟踪。上游组件的来源与许可登记在 `apps/workbench/THIRD_PARTY.md`。
+**目标与现状。** 目标是基础组件放在 `packages/ui`（`@evoloop/ui`），基于 shadcn/ui 和 Radix，样式只引用[设计基础](foundations.md)的 token（[DEC-036](../decisions.md#用户已确定的方向)）。这个包不依赖业务合同、不发请求，文案由调用方传入。现状是只有 `apps/workbench/src/components/ui` 里的 `Button` 和 `Sheet` 来自 shadcn，`Button` 全仓只用了 2 次；真正共用的只有 `ui/shared.tsx` 的 `Alert`（`.notice`）和 `.empty` 样式类，其他控件由各页自己写。迁移由[前端改版 issue #229](https://github.com/cyl19970726/evoLoop/issues/229) 跟踪。上游组件的来源与许可登记在 `apps/workbench/THIRD_PARTY.md`。
 
 ## 基础组件
 
