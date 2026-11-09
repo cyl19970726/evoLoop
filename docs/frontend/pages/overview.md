@@ -36,7 +36,13 @@
 
 ## 截图
 
-暂无当前截图。
+由 `npm run docs:screenshots` 用合成夹具生成，怎样重新生成见[页面截图](../architecture.md#页面截图)。
+
+![项目总览，1440：右栏内嵌](../../assets/frontend-pages/overview-1440.png)
+
+![项目总览，1024：右栏以抽屉打开](../../assets/frontend-pages/overview-1024.png)
+
+![项目总览，390](../../assets/frontend-pages/overview-390.png)
 
 ## 代码与测试
 

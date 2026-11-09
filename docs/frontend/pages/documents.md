@@ -57,37 +57,23 @@ HTML 报告直接作为过程文档保存，脚本不执行，默认静态阅读
 
 ## 截图
 
-2026-11-09，#229 PR8 分支，测试实例的合成数据。
+由 `npm run docs:screenshots` 用合成夹具生成，怎样重新生成见[页面截图](../architecture.md#页面截图)。
 
-![文档列表：内层栏列表与中间的文档表格](../../assets/frontend-documents-20261109/document-list-1440x900.png)
+![文档列表，1440](../../assets/frontend-pages/documents-1440.png)
 
-1440×900，未选文档：内层栏是文档列表，中间是文档表格。
+文档列表的其他宽度：[390](../../assets/frontend-pages/documents-390.png)。
 
-![从任务打开的长 Markdown 文档](../../assets/frontend-documents-20261109/document-markdown-1440x900.png)
+![Markdown 文档阅读，1440：右栏内嵌](../../assets/frontend-pages/document-1440.png)
 
-1440×900，从任务打开的 Markdown：页首有返回来源和正在读的版本，右栏依次是版本、来源、引用它的任务和页内目录。
+![Markdown 文档阅读，1024：右栏以抽屉打开](../../assets/frontend-pages/document-1024.png)
 
-![HTML 报告占满页头以下](../../assets/frontend-documents-20261109/document-html-1280x800.png)
+![Markdown 文档阅读，390](../../assets/frontend-pages/document-390.png)
 
-1280×800，HTML 报告：右栏默认收起，隔离区域占满页头以下，在内部从首段滚到末段。
+![HTML 报告在隔离区域里阅读，1440](../../assets/frontend-pages/document-html-1440.png)
 
-![窄屏阅读 Markdown](../../assets/frontend-documents-20261109/document-markdown-390x844.png)
+HTML 报告的其他宽度：[390](../../assets/frontend-pages/document-html-390.png)。
 
-390×844：内层栏和右栏都收进抽屉，“版本与来源”从底部升起。
-
-下面三张来自 PR8 修复的浏览器用例，合成数据。
-
-![上传的 Markdown 从原件读出](../../assets/frontend-documents-20261109/document-uploaded-markdown-1440x900.png)
-
-1440×900，上传的 Markdown：正文从原件读出，右栏的页内目录列出各节。
-
-![窄屏阅读上传的 Markdown](../../assets/frontend-documents-20261109/document-uploaded-markdown-390x844.png)
-
-390×844，同一份上传的 Markdown。
-
-![HTML 原件没有读回时仍有修订与发布](../../assets/frontend-documents-20261109/document-html-original-failed-1440x900.png)
-
-1440×900，HTML 原件没有读回：说明原因并可重试，“修订与发布”仍在下方。
+![HTML 原件没有读回：说明原因，修订与发布仍在](../../assets/frontend-pages/document-html-failed-1440.png)
 
 ## 代码与测试
 

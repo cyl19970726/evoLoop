@@ -35,7 +35,27 @@
 
 ## 截图
 
-由 `team-roles-browser.test.ts` 生成（`EVOLOOP_TEAM_ROLES_SCREENSHOT_DIR`），宽度 1440、1024（右栏为抽屉）、390，不入库。
+由 `npm run docs:screenshots` 用合成夹具生成，怎样重新生成见[页面截图](../architecture.md#页面截图)。
+
+![职责，1440](../../assets/frontend-pages/team-roles-1440.png)
+
+职责的其他宽度：[1024 右栏抽屉](../../assets/frontend-pages/team-roles-1024.png)、[390](../../assets/frontend-pages/team-roles-390.png)。
+
+![分工与运行，1440](../../assets/frontend-pages/team-runtime-1440.png)
+
+分工与运行的其他宽度：[1024 右栏抽屉](../../assets/frontend-pages/team-runtime-1024.png)、[390](../../assets/frontend-pages/team-runtime-390.png)。
+
+![分工讨论，1440](../../assets/frontend-pages/team-discussions-1440.png)
+
+分工讨论的其他宽度：[1024 右栏抽屉](../../assets/frontend-pages/team-discussions-1024.png)、[390](../../assets/frontend-pages/team-discussions-390.png)。
+
+![组织复盘，1440](../../assets/frontend-pages/team-reviews-1440.png)
+
+组织复盘的其他宽度：[390](../../assets/frontend-pages/team-reviews-390.png)。
+
+![协作回执，1440](../../assets/frontend-pages/team-collaboration-1440.png)
+
+协作回执的其他宽度：[390](../../assets/frontend-pages/team-collaboration-390.png)。
 
 ## 代码与测试
 

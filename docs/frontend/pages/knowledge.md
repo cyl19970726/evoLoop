@@ -42,7 +42,13 @@
 
 ## 截图
 
-仓库内暂无截图。`knowledge-browser.test.ts` 设 `EVOLOOP_KNOWLEDGE_SCREENSHOT_DIR` 后输出 1440、1280、1024、390 宽度和降级状态的截图。
+由 `npm run docs:screenshots` 用合成夹具生成，怎样重新生成见[页面截图](../architecture.md#页面截图)。
+
+![知识页阅读，1440：右栏内嵌](../../assets/frontend-pages/knowledge-1440.png)
+
+![知识页阅读，1024：右栏以抽屉打开](../../assets/frontend-pages/knowledge-1024.png)
+
+![知识页阅读，390](../../assets/frontend-pages/knowledge-390.png)
 
 ## 代码与测试
 

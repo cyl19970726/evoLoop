@@ -12,6 +12,7 @@
   "scripts": {
     "docs:check": "node scripts/docs/cli.js check && node scripts/docs/frontend-pages.js",
     "docs:build": "node scripts/docs/cli.js build",
+    "docs:screenshots": "node scripts/frontend/screenshots.mjs",
     "test": "npm run test:docs && npm run test:unit",
     "test:pilot-storage": "node --test scripts/pilot-storage-check.test.mjs",
     "test:docs": "node --test scripts/docs/*.test.js scripts/architecture-map/*.test.js",
