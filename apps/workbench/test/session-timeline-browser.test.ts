@@ -687,10 +687,11 @@ test("dual-source history keeps the reader anchor, exhausts cursors, merges live
   await directPage.getByText("发送结果未知，需核对原操作").waitFor();
   await directPage.locator(".session-direct-receipt summary").click();
   assert.ok((await directPage.locator(".session-direct-receipt").innerText()).includes(originalInputId));
-  await directPage.getByRole("combobox", { name: "消息" }).fill("另一条输入");
-  assert.equal(await directPage.getByRole("button", { name: "发送", exact: true }).isDisabled(), true);
   await directPage.getByText("只按原输入核对，不会重发", { exact: false }).waitFor();
   await directPage.getByRole("button", { name: "核对结果（不会重发）" }).click();
+  await directPage.getByText("运行时已接收；不代表智能体已阅读或采用").waitFor();
+  assert.equal(await directPage.getByRole("combobox", { name: "消息" }).inputValue(), "", "a received input leaves nothing to send again");
+  await directPage.getByRole("combobox", { name: "消息" }).fill("核对之后的新一条");
   await directPage.getByRole("button", { name: "发送", exact: true, disabled: false }).waitFor();
   assert.equal(await (await fetch(`${base}/__fixture/direct-count`)).text(), "1",
     "lost acknowledgement and reload never repost the original input");

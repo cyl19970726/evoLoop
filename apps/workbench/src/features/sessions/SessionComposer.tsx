@@ -1,8 +1,11 @@
 // The bottom of the agent page: the checklist of the running turn and the queued messages above the composer, the
 // composer itself (Enter, Cmd/Ctrl+Enter, stop, / skills and commands, @ other agents), and one line of facts under it.
 // What Enter does follows composerPlan; the commands are the ones the project already has (ordinary message,
-// 即时输入, cancel, interrupt), each sent with a recovery receipt.
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+// 即时输入, cancel, interrupt), each sent with a recovery receipt. An ordinary message goes through the shared command
+// hook: an unknown result keeps the draft with its original operation ID and, once checked, applied clears it. A
+// 即时输入 found received on any path (at once, on reading the receipt, after 核对结果) clears the draft too, so the same
+// text is never sent again by mistake.
+import { useMemo, useRef, useState, type ReactNode } from "react";
 import type { SessionSnapshot } from "@evoloop/contracts/session-observation";
 import type { WorkspaceEntry, WorkspaceTurn } from "@evoloop/contracts/session-timeline";
 import type { SessionTarget } from "@evoloop/contracts/session-work";
@@ -10,12 +13,13 @@ import {
   AgentAvatar, Button, Composer, Dialog, DialogContent, DialogDescription, DialogFooter, DialogTitle, Field, QueuedMessages, Textarea, TodoList,
   composerMenu, type ComposerAgent, type ComposerAttachment, type ComposerCommand,
 } from "@evoloop/ui";
-import { commandDrafts, type MutationContext } from "../../shared/ActionForm";
+import { commandDrafts, useCommand, type MutationContext } from "../../shared/command";
 import { errorText } from "../../shared/api";
 import { useProjectQuery } from "../../shared/query";
 import { roleClient } from "../../shared/roleClient";
 import { sessionClient } from "../../shared/sessionClient";
 import type { SubmissionOutcome } from "../../shared/submissionOutcome";
+import { href } from "../../shared/ui/shared";
 import type { NativeProgressView } from "./NativeSessionPanel";
 import { composerPlan, contextUseText, mentionedAgents, messageWithSkill } from "./composerPresentation";
 import { latestPlan, planExplanation, planSteps } from "./conversationPresentation";
@@ -38,22 +42,30 @@ export function SessionComposer({ context, snapshot, entries, activeTurn, live, 
   const { projectId, principal } = context;
   const owned = session.kind === "owned" && session.target.kind === "owned" ? session.target.sessionId : null;
   const draftKey = `${principal.actorId}:${projectId}:session-composer:${session.key}`;
-  const [value, setValue] = useState(() => String((commandDrafts.get(draftKey)?.values as { content?: string } | undefined)?.content ?? ""));
   const [taskAttached, setTaskAttached] = useState(true);
   const [skill, setSkill] = useState<Skill | null>(null);
   const [picked, setPicked] = useState<Agent[]>([]);
   const [sending, setSending] = useState(false);
-  const [outcome, setOutcome] = useState<{ text: string; failed: boolean } | null>(null);
+  const [outcome, setOutcome] = useState<{ text: ReactNode; failed: boolean } | null>(null);
   const [stopOpen, setStopOpen] = useState(false);
-  useEffect(() => {
-    setValue(String((commandDrafts.get(draftKey)?.values as { content?: string } | undefined)?.content ?? ""));
-    setTaskAttached(true); setSkill(null); setPicked([]); setOutcome(null); setStopOpen(false);
-  }, [draftKey]);
+  // The message is gone: clear the box and its kept draft, the chosen skill and @ names, and what was said about it.
+  const sent = () => { setValue(""); setSkill(null); setPicked([]); setOutcome(null); };
+  // Ordinary messages: the shared command hook keeps the draft (and an unknown operation) under this agent's key.
+  // The page is mounted once per agent, so the key never changes under it.
+  const command = useCommand(context, undefined, { draft: { store: commandDrafts, key: draftKey }, onApplied: () => { sent(); onApplied(); } });
+  const [value, setValue] = useState(() => String((command.restoredDraft as { content?: string } | undefined)?.content ?? ""));
   const change = (next: string) => {
     setValue(next);
-    if (next) commandDrafts.set(draftKey, { values: { content: next }, baseline: undefined }); else commandDrafts.delete(draftKey);
+    if (next || command.unconfirmed) command.saveDraft({ content: next }); else command.dropDraft();
   };
-  const direct = useDirectInput({ projectId, sessionId: owned ?? "", actorId: principal.actorId, active: !!owned, onAccepted: onApplied });
+  // The @ copies of a 即时输入 go out once the runtime has received it, whichever way that is found out.
+  const afterDirect = useRef<{ content: string; agents: Agent[] } | null>(null);
+  const direct = useDirectInput({ projectId, sessionId: owned ?? "", actorId: principal.actorId, active: !!owned, onAccepted: () => {
+    command.dropDraft(); command.clear(); sent();
+    const copies = afterDirect.current; afterDirect.current = null;
+    if (copies) void sendCopies(copies.content, copies.agents);
+    onApplied();
+  } });
   const running = live && !!activeTurn || session.busy === true;
   const plan = composerPlan({
     kind: session.kind, canSave: session.capabilities.send.available, saveReason: session.capabilities.send.reason,
@@ -105,7 +117,7 @@ export function SessionComposer({ context, snapshot, entries, activeTurn, live, 
     ...(skills.data?.skills ?? []).filter(item => item.selected).map(item => ({ id: `skill:${item.source}:${item.name}`, name: item.name,
       description: item.description ?? undefined, slug: skillSourceLabel[item.source] ?? item.source, kind: "skill" as const })),
     ...(mayStop && running ? [{ id: "stop", name: "停止这一轮", description: "中断正在进行的这一轮", slug: "/stop", kind: "command" as const }] : []),
-    ...(queued.length ? [{ id: "withdraw", name: "撤回排队消息", description: "撤回最后一条还没处理的消息", slug: "/withdraw", kind: "command" as const }] : []),
+    ...(queued.length && !context.blocked ? [{ id: "withdraw", name: "撤回排队消息", description: "撤回最后一条还没处理的消息", slug: "/withdraw", kind: "command" as const }] : []),
     ...(snapshot.currentWork && !taskAttached ? [{ id: "task", name: "关联当前任务", description: snapshot.currentWork.title, slug: "/task", kind: "command" as const }] : []),
   ];
   const attachments: ComposerAttachment[] = [
@@ -126,39 +138,55 @@ export function SessionComposer({ context, snapshot, entries, activeTurn, live, 
     } catch (cause) { setOutcome({ text: `撤回前读取消息失败：${errorText(cause)}；没有撤回。`, failed: true }); }
   }
 
-  async function deliver(action: "start" | "steer" | "post", text: string) {
-    if (sending || !text.trim()) return;
-    const content = messageWithSkill(text.trim(), skill);
-    setSending(true); setOutcome(null);
-    let result: SubmissionOutcome | null = null, sent = false;
-    if (action === "post") {
-      result = await sendSessionCommand(context, { type: "session.message.post", messageId: crypto.randomUUID(), target: session.target, content,
-        ...(session.kind === "owned" && taskAttached && snapshot.currentWork ? { context: { taskId: snapshot.currentWork.id, taskRevisionId: snapshot.currentWork.revisionId } } : {}) });
-      sent = result.applied;
-    } else sent = await direct.send(content);
-    // @: a copy of the same message to each agent still named in the text, saved as an ordinary message to it.
-    const copies: string[] = [], failedCopies: string[] = [];
-    if (sent) for (const agent of mentionedAgents(text, picked)) {
+  /** @: a copy of the message to each agent named, saved as an ordinary message to it. An unknown result is not a failure. */
+  async function sendCopies(content: string, agents: Agent[]) {
+    if (!agents.length) return;
+    const copied: string[] = [], unknown: string[] = [], refused: string[] = [];
+    for (const agent of agents) {
       const copy = await sendSessionCommand(context, { type: "session.message.post", messageId: crypto.randomUUID(), target: agent.target, content });
-      (copy.applied ? copies : failedCopies).push(agent.name);
+      (copy.applied ? copied : copy.unconfirmed ? unknown : refused).push(agent.name);
     }
-    if (sent) { change(""); setSkill(null); setPicked([]); onApplied(); }
-    const parts = [result ? result.message : sent ? "已送入运行时，正在读取记录。" : "",
-      copies.length ? `已另发一份给 ${copies.join("、")}。` : "", failedCopies.length ? `另发给 ${failedCopies.join("、")} 没有成功，请在对方页面核对后重发。` : ""].filter(Boolean);
-    setOutcome(parts.length ? { text: parts.join(""), failed: !!result?.failed || failedCopies.length > 0 } : null);
-    setSending(false);
+    setOutcome({ failed: unknown.length + refused.length > 0, text: <>
+      {copied.length > 0 && `已另发一份给 ${copied.join("、")}。`}
+      {unknown.length > 0 && <>另发给 {unknown.join("、")} 的结果未确认：请先<a className="text-primary underline underline-offset-2" href={href(projectId, "operations")}>按原操作核对</a>，确认前不要重发。</>}
+      {refused.length > 0 && `另发给 ${refused.join("、")} 没有成功（服务明确拒绝），可以在对方页面重新发送。`}
+    </> });
+  }
+
+  async function deliver(action: "start" | "steer" | "post", text: string) {
+    if (sending || command.busy || !text.trim()) return;
+    const content = messageWithSkill(text.trim(), skill);
+    const agents = mentionedAgents(text, picked);
+    setOutcome(null);
+    if (action === "post") {
+      // Copies follow only an applied message; the hook calls back once it is applied, now or after it is checked.
+      await command.submit(() => ({ type: "session.message.post", messageId: crypto.randomUUID(), target: session.target, content,
+        ...(session.kind === "owned" && taskAttached && snapshot.currentWork ? { context: { taskId: snapshot.currentWork.id, taskRevisionId: snapshot.currentWork.revisionId } } : {}) }),
+      () => { void sendCopies(content, agents); });
+      return;
+    }
+    setSending(true); command.clear();
+    afterDirect.current = { content, agents };
+    try {
+      const result = await direct.send(content);
+      // Refused or not sent: its @ copies must never go out later with another input.
+      if (result === "rejected" || result === "skipped") afterDirect.current = null;
+    } finally { setSending(false); }
   }
 
   const queueCount = queued.length;
   const usage = contextUseText(progress?.usage);
   const meta = [...facts, ...(usage ? [usage] : []), ...(queueCount ? [`排队 ${queueCount} 条`] : []),
     ...(plan.hint ? [plan.hint] : []), ...(running && mayStop ? ["Esc 停止"] : stopNote && running ? [stopNote] : [])];
-  return <div className="session-composer-host relative flex shrink-0 flex-col gap-2 pt-2">
+  // data-dirty: leaving the project, reloading or signing out asks first while a message is unsent.
+  return <div className="session-composer-host relative flex shrink-0 flex-col gap-2 pt-2" data-dirty={value.trim() ? "true" : undefined}>
     {todo && <TodoList items={todo.items} note={todo.note || undefined} />}
     {queued.length > 0 && <QueuedMessages items={queued.map(entry => ({ id: entry.origin!.id, text: entry.body || "（没有可公开的正文）" }))}
-      note={running ? "这一轮结束后按顺序处理" : "按顺序处理"} onCancel={id => void withdraw(id)} />}
+      note={context.blocked ? "项目里还有结果未确认的操作，核对后才能撤回" : running ? "这一轮结束后按顺序处理" : "按顺序处理"}
+      onCancel={context.blocked ? undefined : id => void withdraw(id)} />}
     {direct.receipt}
     {plan.disabledReason && <p role="status" className="text-caption text-muted-foreground">{plan.disabledReason}</p>}
+    {command.outcome && <p role={command.outcome.failed ? "alert" : "status"} className={command.outcome.failed ? "text-caption text-destructive" : "text-caption text-muted-foreground"}>{command.outcome.message}</p>}
     {outcome && <p role={outcome.failed ? "alert" : "status"} className={outcome.failed ? "text-caption text-destructive" : "text-caption text-muted-foreground"}>{outcome.text}</p>}
     <Composer
       value={value}
@@ -167,11 +195,12 @@ export function SessionComposer({ context, snapshot, entries, activeTurn, live, 
       maxLength={16000}
       placeholder={plan.placeholder}
       disabled={!!plan.disabledReason}
-      busy={sending || direct.busy || direct.pending}
+      busy={sending || command.busy || direct.busy || direct.pending}
       running={plan.running}
       sendMode={plan.sendMode}
       onSend={text => { if (plan.enter) void deliver(plan.enter, text); }}
       onQueue={plan.modEnter ? text => void deliver("post", text) : undefined}
+      onQueueUnavailable={() => setOutcome({ text: plan.queueNote ?? "现在不能排到下一轮。", failed: false })}
       onStop={mayStop ? () => setStopOpen(true) : undefined}
       attachments={attachments}
       onRemoveAttachment={id => { if (id === "task") setTaskAttached(false); if (id === "skill") setSkill(null); }}

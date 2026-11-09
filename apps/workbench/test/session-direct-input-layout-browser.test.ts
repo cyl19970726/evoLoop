@@ -23,7 +23,7 @@ test("unknown direct input keeps a readable long history at the original window 
   skip: !modulePath && "Set EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE after building the workbench",
 }, async t => {
   const { chromium } = (await import(pathToFileURL(modulePath!).href)).default;
-  let postCount = 0;
+  let postCount = 0, ordinaryPosts = 0;
   const snapshot = { session: { key, target: { kind: "owned", sessionId }, aliases: [], title, profile: null,
     kind: "owned", roles: [], membership: "current", membershipReason: "fixture", runtimeState: "ready", busy: false,
     currentTask: null, latestBusinessRun: null, lastProgressAt: null,
@@ -38,6 +38,8 @@ test("unknown direct input keeps a readable long history at the original window 
   const server = createServer(async (req, res) => {
     const url = new URL(req.url, "http://127.0.0.1");
     if (url.pathname.startsWith("/api/")) {
+      // A 即时输入 that went out as an ordinary message instead would land here.
+      if (url.pathname === "/api/commands" && req.method === "POST") ordinaryPosts++;
       const root = `/api/projects/${projectId}`;
       const direct = `${root}/sessions/${sessionId}`;
       let value: unknown = { items: [], nextCursor: null, metadata }, status = 200;
@@ -129,13 +131,14 @@ test("unknown direct input keeps a readable long history at the original window 
     await context.close();
   }
   assert.equal(postCount, 4, "one POST per isolated viewport, with no resend after 503 and read 404");
+  assert.equal(ordinaryPosts, 0, "Enter and Cmd/Ctrl+Enter on an unknown 即时输入 never send an ordinary message");
 });
 
 test("a pre-reservation direct grant denial clears unknown pending and leaves only an audit receipt", {
   skip: !modulePath && "Set EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE after building the workbench",
 }, async t => {
   const { chromium } = (await import(pathToFileURL(modulePath!).href)).default;
-  let postCount = 0;
+  let postCount = 0, ordinaryPosts = 0;
   let submitted: { inputId: string; operationId: string } | null = null;
   const snapshot = { session: { key, target: { kind: "owned", sessionId }, aliases: [], title, profile: null,
     kind: "owned", roles: [], membership: "current", membershipReason: "fixture", runtimeState: "ready", busy: false,
@@ -151,6 +154,8 @@ test("a pre-reservation direct grant denial clears unknown pending and leaves on
   const server = createServer(async (req, res) => {
     const url = new URL(req.url, "http://127.0.0.1");
     if (url.pathname.startsWith("/api/")) {
+      // A 即时输入 that went out as an ordinary message instead would land here.
+      if (url.pathname === "/api/commands" && req.method === "POST") ordinaryPosts++;
       const root = `/api/projects/${projectId}`;
       const direct = `${root}/sessions/${sessionId}`;
       let value: unknown = { items: [], nextCursor: null, metadata }, status = 200;
@@ -246,6 +251,7 @@ test("a pre-reservation direct grant denial clears unknown pending and leaves on
   await page.getByRole("combobox", { name: "消息" }).fill("修正后重新发送");
   assert.equal(await page.getByRole("button", { name: "发送", exact: true }).isEnabled(), true);
   assert.equal(postCount, 1, "reload and explicit rejection never post a new operation");
+  assert.equal(ordinaryPosts, 0, "the rejected 即时输入 never goes out as an ordinary message");
   if (process.env.EVOLOOP_TIMELINE_CAPTURE_DIR)
     await page.screenshot({ path: join(process.env.EVOLOOP_TIMELINE_CAPTURE_DIR, "explicit-409-390-reload.png") });
   await context.close();

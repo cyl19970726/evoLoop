@@ -37,14 +37,17 @@ const storage = {
   remove: (key: string) => { try { sessionStorage.removeItem(key); } catch { /* nothing kept */ } },
 };
 
+/** `skipped`: nothing was sent (no capability, an earlier input still unknown, empty text). */
+export type DirectSendResult = "accepted" | "rejected" | "unknown" | "skipped";
+
 export interface DirectInput {
   /** undefined while read, null when it could not be read. */
   capability: DirectInputCapability | null | undefined;
   /** An input whose outcome is not known yet: nothing new is sent until it is checked. */
   pending: boolean;
   busy: boolean;
-  /** Sends `content` as 即时输入; resolves true once the runtime accepted it. */
-  send(content: string): Promise<boolean>;
+  /** Sends `content` as 即时输入: accepted now, refused (rejected or not sent at all) or unknown until it is checked. */
+  send(content: string): Promise<DirectSendResult>;
   receipt: React.ReactNode;
 }
 
@@ -67,16 +70,19 @@ export function useDirectInput({ projectId, sessionId, actorId, active, onAccept
     setPendingId(active ? storage.get(storageKey) : null); setAudit(active ? readAudit(storage.get(auditStorageKey)) : null);
     setReceipt(null); setError("");
   }, [storageKey, active]);
-  const finish = (value: DirectInputReceipt, inputId: string): boolean => {
+  // Every path that learns the outcome (the answer, a reread of the receipt, 核对结果) comes through here; an accepted
+  // input always calls onAccepted, so the page clears the draft it was sent from.
+  const finish = (value: DirectInputReceipt, inputId: string): DirectSendResult => {
     // Only the receipt of this exact input settles it; anything else leaves the outcome unknown.
-    if (!value || value.inputId !== inputId || !Object.hasOwn(stateLabel, value.state)) { setError("原输入回执与这条输入不符，结果未知；请核对后继续。"); return false; }
+    if (!value || value.inputId !== inputId || !Object.hasOwn(stateLabel, value.state)) { setError("原输入回执与这条输入不符，结果未知；请核对后继续。"); return "unknown"; }
     setReceipt(value); setError("");
     if (value.state === "accepted" || value.state === "rejected") {
       storage.remove(storageKey); storage.remove(operationStorageKey); storage.remove(auditStorageKey);
       setAudit(null); setPendingId(null);
-      if (value.state === "accepted") { onAccepted(); return true; }
+      if (value.state === "accepted") { onAccepted(); return "accepted"; }
+      return "rejected";
     }
-    return false;
+    return "unknown";
   };
   useEffect(() => {
     if (!pendingId || !active) return;
@@ -86,8 +92,8 @@ export function useDirectInput({ projectId, sessionId, actorId, active, onAccept
     return () => { live = false; };
   }, [projectId, sessionId, pendingId, active]);
   const current = capability.isError ? null : capability.data;
-  async function send(content: string): Promise<boolean> {
-    if (!current?.available || !current.mode || busy || pendingId || !content.trim()) return false;
+  async function send(content: string): Promise<DirectSendResult> {
+    if (!current?.available || !current.mode || busy || pendingId || !content.trim()) return "skipped";
     const inputId = crypto.randomUUID(), operationId = crypto.randomUUID();
     storage.set(storageKey, inputId); storage.set(operationStorageKey, operationId); storage.remove(auditStorageKey);
     setAudit(null); setPendingId(inputId); setReceipt(null); setError(""); setBusy(true);
@@ -102,8 +108,10 @@ export function useDirectInput({ projectId, sessionId, actorId, active, onAccept
           const rejected = { inputId, operationId, reason: explicitReason(cause), observedAt: new Date().toISOString() };
           storage.remove(storageKey); storage.remove(operationStorageKey); storage.set(auditStorageKey, JSON.stringify(rejected));
           setPendingId(null); setAudit(rejected); setError("");
-        } else setError("发送结果未知；保留原输入 ID，请核对后继续。");
-        return false;
+          return "rejected";
+        }
+        setError("发送结果未知；保留原输入 ID，请核对后继续。");
+        return "unknown";
       }
     } finally { setBusy(false); }
   }

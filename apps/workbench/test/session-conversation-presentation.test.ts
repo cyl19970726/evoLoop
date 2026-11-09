@@ -83,8 +83,8 @@ test("the live status line names what runs now and how long, never a negative or
 });
 
 test("a finished turn closes with what it produced; a delivery and who moves next only when the records say so", () => {
-  const turn = (id: string, state: WorkspaceTurn["state"], taskId: string | null = null): WorkspaceTurn =>
-    ({ id, state, startedAt: stamp, completedAt: stamp, origin: taskId ? { kind: "run", id: `run-${id}`, taskId, taskRevisionId: taskId, initiatingActorId: null } : null });
+  const turn = (id: string, state: WorkspaceTurn["state"], taskId: string | null = null, completedAt: string | null = "2026-11-10T09:30:00.000Z"): WorkspaceTurn =>
+    ({ id, state, startedAt: stamp, completedAt, origin: taskId ? { kind: "run", id: `run-${id}`, taskId, taskRevisionId: taskId, initiatingActorId: null } : null });
   const entries = [tool("a", { turnId: "t1" }), tool("b", { turnId: "t1", state: "failed" }), tool("c", { turnId: "t2" }), tool("d", { turnId: "t3" }), tool("e", { turnId: "t4" })];
   const result = { taskId: "task-1", taskTitle: "新版任务页", submittedAt: "2026-11-10T09:00:00.000Z" } as SessionResult;
   const lines = turnSummaries(entries, [turn("t1", "failed"), turn("t2", "completed", "task-1"), turn("t3", "running"), turn("t4", "completed")], [result], new Set(["t4"]));
@@ -94,6 +94,9 @@ test("a finished turn closes with what it produced; a delivery and who moves nex
   assert.deepEqual(lines.get("e"), { produced: "执行了 1 个指令", next: "下一步等你回答" });
   const earlier = { ...result, submittedAt: "2026-11-09T00:00:00.000Z" };
   assert.equal(turnSummaries(entries, [turn("t2", "completed", "task-1")], [earlier]).get("c")?.delivered, undefined, "a delivery from before the turn is not its output");
+  const later = { ...result, submittedAt: "2026-11-10T11:00:00.000Z" };
+  assert.equal(turnSummaries(entries, [turn("t2", "completed", "task-1")], [later]).get("c")?.delivered, undefined, "a later turn's delivery is not this turn's output");
+  assert.equal(turnSummaries(entries, [turn("t2", "completed", "task-1", null)], [result]).get("c")?.delivered, undefined, "without an end time nothing is claimed");
 });
 
 const facts = (overrides: Partial<ComposerFacts> = {}): ComposerFacts => ({ kind: "owned", canSave: true, saveReason: null, direct: undefined,
@@ -106,8 +109,14 @@ test("Enter adds to the running turn only where the runtime declares it can; oth
   assert.match(steer.hint, /Enter 补充到这一轮 · ⌘\/Ctrl\+Enter 排到下一轮/);
   const unsupported = composerPlan(facts({ running: true, direct: capability(null) }));
   assert.deepEqual([unsupported.enter, unsupported.modEnter, unsupported.sendMode], ["post", "post", "queue"]);
-  assert.equal(unsupported.steerNote, "这个智能体的运行时不支持补充到这一轮");
-  assert.match(unsupported.hint, /不支持补充到这一轮；Enter 排到下一轮/);
+  assert.equal(unsupported.steerNote, "这个智能体现在不能补充到这一轮", "an unexplained refusal is not called unsupported");
+  assert.match(unsupported.hint, /不能补充到这一轮；Enter 排到下一轮/);
+  const because = (reasonCode: string) => composerPlan(facts({ running: true, direct: { ...capability(null), reasonCode } })).steerNote;
+  assert.equal(because("DIRECT_STEER_DISABLED"), "这个智能体的运行时或授权不支持补充到这一轮");
+  assert.equal(because("SESSION_BUSY"), "这一轮正在做的工作不接受补充");
+  assert.equal(because("NATIVE_UNAVAILABLE"), "运行时连接暂不可用，不能补充到这一轮");
+  assert.equal(because("DIRECT_GRANT_MISSING"), "这个智能体没有即时输入的授权，不能补充到这一轮");
+  assert.equal(because("NATIVE_TURN_UNKNOWN"), "运行时里这一轮的状态无法判断，暂不补充");
   assert.equal(composerPlan(facts({ running: true, direct: undefined })).steerNote, "正在核对能否补充到这一轮", "a capability still being read is not a no");
   assert.equal(composerPlan(facts({ running: true, direct: null })).steerNote, "能否补充到这一轮暂无法判断");
   assert.equal(composerPlan(facts({ running: true, direct: capability("steer"), directPending: true })).enter, "post", "an unchecked earlier input blocks another addition");
@@ -129,6 +138,9 @@ test("nothing is sent without the right to write, during an unconfirmed operatio
   assert.equal(composerPlan(facts({ canSave: false, saveReason: "当前身份只有读取权限。" })).disabledReason, "当前身份只有读取权限。");
   assert.equal(composerPlan(facts({ canSave: false, direct: capability("start") })).enter, "start", "the runtime may still start a turn when saving is closed");
   assert.equal(composerPlan(facts({ canSave: false, direct: capability("start") })).modEnter, null);
+  assert.equal(composerPlan(facts({ canSave: false, saveReason: "保存已关闭。", running: true, direct: capability("steer") })).queueNote, "现在不能排到下一轮：保存已关闭。",
+    "Cmd/Ctrl+Enter says why it cannot queue instead of doing what Enter does");
+  assert.equal(composerPlan(facts({ direct: capability("start") })).queueNote, null);
   for (const plan of [composerPlan(facts()), composerPlan(facts({ running: true })), composerPlan(facts({ kind: "external" }))])
     assert.doesNotMatch(`${plan.hint}${plan.placeholder}${plan.disabledReason ?? ""}`, internal);
 });

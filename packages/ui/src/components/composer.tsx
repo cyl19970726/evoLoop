@@ -62,8 +62,10 @@ export interface ComposerProps {
   onChange: (value: string) => void;
   /** Sends the current text (Enter or the send button); the caller clears `value` once the message is saved. */
   onSend: (value: string) => void;
-  /** Cmd/Ctrl+Enter: queue the text for the next turn. Without it Cmd/Ctrl+Enter sends like Enter. */
+  /** Cmd/Ctrl+Enter: queue the text for the next turn. Without it Cmd/Ctrl+Enter does nothing; see `onQueueUnavailable`. */
   onQueue?: ((value: string) => void) | undefined;
+  /** Cmd/Ctrl+Enter was pressed while nothing can be queued: the caller says why. */
+  onQueueUnavailable?: (() => void) | undefined;
   /** Names what Enter does; defaults to `queue` while running and `send` otherwise. */
   sendMode?: ComposerSendMode | undefined;
   /** A send is in flight: keys and the send button wait, the text stays editable. */
@@ -95,7 +97,7 @@ export interface ComposerProps {
 type MenuItem = { type: "command"; item: ComposerCommand } | { type: "agent"; item: ComposerAgent };
 
 export function Composer({
-  value, onChange, onSend, onQueue, sendMode, busy, label = "消息", maxLength, onStop, running, placeholder = "发消息，/ 调用技能，@ 转给其他智能体",
+  value, onChange, onSend, onQueue, onQueueUnavailable, sendMode, busy, label = "消息", maxLength, onStop, running, placeholder = "发消息，/ 调用技能，@ 转给其他智能体",
   attachments = [], onRemoveAttachment, onAttach, commands = [], onPickCommand, agents = [], onPickAgent, meta, disabled, className, skillScope,
 }: ComposerProps) {
   const mode: ComposerSendMode = sendMode ?? (running ? "queue" : "send");
@@ -149,14 +151,19 @@ export function Composer({
   }
 
   function onKeyDown(event: React.KeyboardEvent<HTMLTextAreaElement>) {
-    if (event.nativeEvent.isComposing) return;
+    // Confirming an IME candidate is not sending; Safari reports it as keyCode 229 rather than isComposing.
+    if (event.nativeEvent.isComposing || event.keyCode === 229) return;
     if (open) {
       if (event.key === "ArrowDown") { event.preventDefault(); setActive((activeIndex + 1) % items.length); return; }
       if (event.key === "ArrowUp") { event.preventDefault(); setActive((activeIndex - 1 + items.length) % items.length); return; }
       if (event.key === "Enter" || event.key === "Tab") { event.preventDefault(); const entry = items[activeIndex]; if (entry) pick(entry); return; }
       if (event.key === "Escape") { event.preventDefault(); setDismissed(value); return; }
     }
-    if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && onQueue) { event.preventDefault(); queue(); return; }
+    if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+      event.preventDefault();
+      if (onQueue) queue(); else if (value.trim()) onQueueUnavailable?.();
+      return;
+    }
     if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); send(); return; }
     if (event.key === "Escape" && running && onStop && !value) { event.preventDefault(); onStop(); }
   }

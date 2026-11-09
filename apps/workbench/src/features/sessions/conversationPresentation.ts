@@ -147,7 +147,7 @@ export function liveStatusText(currentTool: Pick<WorkspaceTool, "name" | "summar
 export interface TurnSummaryLine { produced: string; delivered?: string; next?: string }
 
 /**
- * The line that closes a finished turn: what its tools did, a delivery the records tie to its task after it started,
+ * The line that closes a finished turn: what its tools did, a delivery the records tie to its task within the turn,
  * and who moves next when the records say so (a failure, an interruption, an unanswered question). Nothing is
  * claimed for a turn still running or of unknown outcome. Keyed by the id of the turn's last entry.
  */
@@ -163,8 +163,11 @@ export function turnSummaries(entries: readonly WorkspaceEntry[], turns: readonl
     const failures = tools.filter(isFailedEntry).length;
     const produced = tools.length ? `${toolGroupSummary(tools)}${failures ? `，${failures} 项失败或中断` : ""}` : "没有工具活动";
     const taskId = turn.origin?.taskId ?? null;
-    const delivery = taskId && turn.startedAt
-      ? results.filter(result => result.taskId === taskId && result.submittedAt >= turn.startedAt!).sort((a, b) => a.submittedAt.localeCompare(b.submittedAt)).at(-1)
+    // A delivery belongs to this turn only when it was submitted between the turn's start and its end; without both
+    // times nothing is claimed (every turn of a task would otherwise "deliver" its latest result).
+    const delivery = taskId && turn.startedAt && turn.completedAt
+      ? results.filter(result => result.taskId === taskId && result.submittedAt >= turn.startedAt! && result.submittedAt <= turn.completedAt!)
+        .sort((a, b) => a.submittedAt.localeCompare(b.submittedAt)).at(-1)
       : undefined;
     const next = waitingTurnIds.has(turn.id) ? "下一步等你回答"
       : turn.state === "failed" ? "这一轮失败，等你核对"
