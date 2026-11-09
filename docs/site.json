@@ -195,6 +195,11 @@
       "group": "架构 · 合同与存储"
     },
     {
+      "path": "docs/architecture/session-runtime.md",
+      "title": "Session 运行时",
+      "group": "架构 · 运行与实现"
+    },
+    {
       "path": "docs/architecture/codex-integration.md",
       "title": "Codex 运行时接入",
       "group": "架构 · 运行与实现"
@@ -202,6 +207,11 @@
     {
       "path": "docs/architecture/message-connectors.md",
       "title": "消息 Connector 候选边界",
+      "group": "架构 · 运行与实现"
+    },
+    {
+      "path": "docs/architecture/deployment.md",
+      "title": "部署与迁移",
       "group": "架构 · 运行与实现"
     },
     {
@@ -265,6 +275,11 @@
     {
       "path": "docs/references/lineage.md",
       "title": "来源与演进",
+      "group": "依据"
+    },
+    {
+      "path": "docs/references/roadmap-history.md",
+      "title": "路线图历史",
       "group": "依据"
     },
     {

@@ -17,7 +17,7 @@
 | 中间 | 所选文档的全文，Markdown 和 HTML 都从首段连续读到末段；未选文档时显示文档表格 |
 | 右栏 | 版本（正在读、当前版、已发布版）、来源、关联任务；可收起 |
 
-现状：列表和阅读是两页。列表是四列表格；阅读页顶部有返回来源和所读修订，正文在主区，右侧可收起的栏放页内目录、版本与来源、引用此文档的任务。
+现状（#229 PR8）：已按上表实现。内层栏可切换“文档 / 知识”，带搜索、类型和状态筛选，打开的文档高亮，并写明载入范围；内层栏不在屏上时，搜索和筛选移到表格上方。没选文档时中间是四列文档表格。选中后是全文：Markdown 可切换排版和原文；HTML 报告在隔离区域里占满页头以下，原件、HTML 原文和资源收在区域下方。右栏依次是版本、来源、引用它的任务（点开在右栏查看，正文不动）和页内目录。固定历史链接停在原修订，提示一直可见并给“查看当前版”。返回时保留来源、筛选、载入范围和刚打开的那一行。“修订与发布”仍用旧表单，折叠在正文下方。
 
 ## 内容与状态
 
@@ -54,13 +54,23 @@ HTML 报告直接作为过程文档保存，脚本不执行，默认静态阅读
 
 ## 截图
 
-![固定 Markdown 文档的阅读页](../../assets/frontend-journey-20261108/document-1440x900.png)
+2026-11-09，#229 PR8 分支，测试实例的合成数据。
 
-2026-11-08，正式发布版 36cb620，1440×900。固定 Markdown：页头有返回来源和所读修订；右栏收起后正文按可读行宽排版，右侧留白较多。
+![文档列表：内层栏列表与中间的文档表格](../../assets/frontend-documents-20261109/document-list-1440x900.png)
 
-![固定 HTML 报告的阅读页](../../assets/frontend-journey-20261108/html-report-1440x900.png)
+1440×900，未选文档：内层栏是文档列表，中间是文档表格。
 
-同一版本的 HTML 报告：隔离区域占满页头以下并在内部滚动；版本与来源收在按钮里，原件和资源收在正文下方。
+![从任务打开的长 Markdown 文档](../../assets/frontend-documents-20261109/document-markdown-1440x900.png)
+
+1440×900，从任务打开的 Markdown：页首有返回来源和正在读的版本，右栏依次是版本、来源、引用它的任务和页内目录。
+
+![HTML 报告占满页头以下](../../assets/frontend-documents-20261109/document-html-1280x800.png)
+
+1280×800，HTML 报告：右栏默认收起，隔离区域占满页头以下，在内部从首段滚到末段。
+
+![窄屏阅读 Markdown](../../assets/frontend-documents-20261109/document-markdown-390x844.png)
+
+390×844：内层栏和右栏都收进抽屉，“版本与来源”从底部升起。
 
 ## 代码与测试
 
@@ -68,11 +78,11 @@ HTML 报告直接作为过程文档保存，脚本不执行，默认静态阅读
 
 | 部分 | 主要源码 | 相关测试 |
 | --- | --- | --- |
-| 文档表格 | `DocumentIndex.tsx`、`documentListModel.ts`、`apps/workbench/src/shared/leaderWorkLoad.ts`（用途与关联补读） | `document-list-model.test.ts`、`leader-work-load.test.ts` |
-| 阅读页 | `DocumentPage.tsx`、`DocumentOutline.tsx`、`apps/workbench/src/shared/ui/MarkdownBody.tsx`、`apps/workbench/src/shared/ui/markdownContent.ts` | `markdown-content.test.ts` |
-| HTML 原件与资源 | `apps/workbench/src/shared/ui/OriginalDocumentReader.tsx`、`apps/workbench/src/shared/ui/imagePreview.ts`（任务页也用） | `document-full-html-reading-browser.test.ts`、`document-image-preview.test.ts` |
-| 来源与返回 | `DocumentOrigin.tsx`、`originValidation.ts`、`apps/workbench/src/shared/ui/returnRoute.ts` | `document-origin.test.ts`、`document-origin-refresh-browser.test.ts`、`session-document-return-browser.test.ts` |
-| 保存与修订 | `UploadDocument.tsx` | 暂无专门测试 |
+| 列表与表格 | `DocumentIndex.tsx`、`DocumentRail.tsx`、`DocumentTable.tsx`、`DocumentFilters.tsx`、`useDocumentList.ts`、`documentListState.ts`、`documentListModel.ts`、`apps/workbench/src/shared/leaderWorkLoad.ts`（用途与关联补读） | `document-list-model.test.ts`、`document-presentation.test.ts`、`discovery-browser.test.ts`、`leader-work-load.test.ts` |
+| 阅读页与右栏 | `DocumentPage.tsx`、`DocumentFacts.tsx`、`DocumentOutline.tsx`、`TaskPeek.tsx`、`documentPresentation.ts`、`apps/workbench/src/shared/ui/MarkdownBody.tsx`、`apps/workbench/src/shared/ui/markdownContent.ts` | `document-presentation.test.ts`、`markdown-content.test.ts` |
+| HTML 原件与资源 | `HtmlReport.tsx`、`apps/workbench/src/shared/ui/OriginalDocumentReader.tsx`（静态副本，任务页也用）、`apps/workbench/src/shared/ui/imagePreview.ts` | `document-full-html-reading-browser.test.ts`、`document-image-preview.test.ts` |
+| 来源与返回 | `DocumentOrigin.tsx`、`originValidation.ts`、`useRereadOnReturn.ts`、`apps/workbench/src/shared/ui/returnRoute.ts` | `document-origin.test.ts`、`document-origin-refresh-browser.test.ts`、`session-document-return-browser.test.ts` |
+| 保存与修订 | `DocumentRevise.tsx`、`UploadDocument.tsx` | 暂无专门测试 |
 
 ## 相关
 

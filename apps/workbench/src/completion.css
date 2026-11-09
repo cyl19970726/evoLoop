@@ -146,8 +146,6 @@ td{ font-size: 15px; }
 .workbench-layout .content > :first-child{ animation: none; }
 .workbench-layout .content h1{ color: #17233b; opacity: 1; }
 .workbench-layout .content .lede{ color: #526078; }
-.workbench-layout .document-index td{ font-size: 16px; padding: 20px 16px; }
-.workbench-layout .document-index .doc-index-title{ font-size: 16px; }
 .workbench-layout .team-workspace .team-table td{ font-size: 16px; padding: 18px 16px; }
 .workbench-layout .team-workspace .team-table td a, .workbench-layout .team-workspace .team-table td strong{ font-size: 16px; }
 .workbench-layout .team-workspace .team-table td small, .workbench-layout .team-workspace .team-table td details{ font-size: 14px; }
@@ -179,11 +177,3 @@ td{ font-size: 15px; }
 .task-acceptance-points{ padding-left: 26px; margin: 16px 0; color: #35435b; font-size: 16px; line-height: 1.75; }
 .task-acceptance-points li{ padding-left: 6px; margin-bottom: 12px; }
 .task-acceptance-points li::marker{ color: #2457f5; font-weight: 650; }
-.document-outline{ padding: 0 0 20px; margin-bottom: 20px; border-bottom: 1px solid var(--border); }
-.document-outline h2{ font-size: 22px; margin: 0 0 12px; }
-.document-outline ol{ list-style: decimal; margin: 0; padding-left: 24px; max-height: 280px; overflow: auto; }
-.document-outline li{ color: #2457f5; margin: 8px 0; }
-.document-outline button{ display: block; min-height: 32px; border: 0; background: none; text-align: left; color: #2457c4; padding: 0 4px; font-size: 14px; line-height: 1.6; }
-.document-outline .outline-subsection{ margin-left: 14px; }
-.document-outline-mobile{ display: none; }
-@media(max-width:760px) { .document-outline-desktop{ display: none; } .document-outline-mobile{ display: block; margin: 0 0 20px; border-block: 1px solid var(--border); padding: 12px 0; font-size: 15px; } .document-outline-mobile .document-outline{ margin: 12px 0 0; border: 0; padding-bottom: 0; } }

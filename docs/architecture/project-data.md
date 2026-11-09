@@ -66,6 +66,8 @@ Wiki 维护可以把需求修订、阶段评审和交付证据作为来源，通
 
 ### 同一职责的多个实际承接者
 
+同一 Role 开几个 Session 实例、什么时候增减，是 Leader 的编制决定（DEC-038）：依据每日评估，一次只增减一个，上一次增加的实例有被接受的交付后再加下一个，并划清各实例的工作树、文件与整合责任；新增长期职责（新 Role）仍由 Evocation 凭证据提出。规则见[接口合同](contracts.md#4-roleregistry-与-sessionruntime)。
+
 Task.owner 记录负责职责，`TaskSessionAssignment` 补充本轮究竟交给哪个 owned Session 或 external HostLink，并保留分派修订与接手来源。同 Role 两个外部聊天不能只靠正文说明或名字区分。指定执行者亲签与 Lead 记录的 `lead-observed` 人工通信观察是两种证据，后者不是接手者签名，也不证明产品已自动投递。已存在的队列 claim 和 Run 继续承担实际运行权威；改分派不得抢占在途或 unknown 工作，旧来源不覆盖。
 
 `SessionProfileRecord` 只维护项目内展示名、用途、当前／历史归类和常驻／临时说明；它不更名底层聊天，也不授权启动。普通 `SessionMessage` 保存发送者、实际收件目标、固定上下文和回复链；`SessionMessageProcessing` 保存原生处理操作、Thread 内 Turn、只读策略指纹及答复。普通问一句话无需制造 Task，消息答复也不等于 Delivery 或验收。

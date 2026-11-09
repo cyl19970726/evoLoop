@@ -1,6 +1,6 @@
 # 决定与设计状态
 
-2026-10-29。此页登记当前方向及待验证选择；引用来源是已公开抽象的项目要求和[历史来源说明](references/lineage.md)。原始会话不随公开仓库发布。编号用于其他文档引用，详细方案只在所属正文维护。
+2026-11-09。此页登记当前方向及待验证选择；引用来源是已公开抽象的项目要求和[历史来源说明](references/lineage.md)。原始会话不随公开仓库发布。编号用于其他文档引用，详细方案只在所属正文维护。
 
 当前有效边界速查：[两张产品卫星图](product/definition.md#两张产品卫星图经营交付与组织改进)（DEC-034）· [两维度与四部分](product/definition.md#两个维度四个组成部分)（DEC-012）· [领域自主与分工](product/daily-loop.md#一条提议怎样变成可做的任务)（DEC-002/013/034）· [任务、过程文档、Git 与外置 Wiki 的权威](architecture/project-data.md)（DEC-006/018/022/023）· [表格和 Markdown/HTML 全文](frontend/pages/documents.md#从表格打开完整过程文档)（DEC-024）· [阶段与当前状态](roadmap.md)。旧决定、被取代部分和 PROP 的验证状态仍以下表及其来源为准。
 
@@ -43,11 +43,15 @@
 | DEC-031 | Task 正文统一由 Document 保存，任务使用四态并在原任务内验收 | content 承载完整说明，acceptance 留 Task；一次创建 Task 与主正文，固定修订防止改写执行依据。Task 类型轻量可选、Doc 用途与格式分开；Task 仅 todo/in_progress/done/cancelled，默认不增待验收状态或验收子 Task。skill 指导清楚正文、必要图与有理由的固定链接；后续增强按实际使用证据决定。迁移和验收以路线 C5 为准。 |
 
 | DEC-032 | 按完整功能场景连接所有模块，并区分 System Session 与业务 Session；**演员分工已被 DEC-034 修订** | 一次性执行、周期检查、issue 回流修复和复测继续纳入[功能场景](product/functional-scenarios.md)。原认知/分工演员是历史设计；新方向的 Lead、Evocation、Human Requirement 与 User Session 分工以 DEC-034 为准。分类仍不是新增权限等级或已实现代码枚举；唤醒、hook 和外部自动接续仍须单独验证。 |
-| DEC-033 | 所有新建 Session 使用 `danger-full-access`、`approvalPolicy: never` 与正常网络；普通消息和业务工作共享原 Session、Thread、adapter 与工具面 | 取代消息专用进程／purpose、只读权限资格门与业务权限恢复状态机。既有 sender/receiver grant 和 `maxTurns` 预算继续限定身份与成本；project/Task/Document 授权不变。旧 Session、Run 与 profile snapshots 保留历史值，不经冷切迁移重写。native permission ack 未收到时仍为 unknown；thread/read 不足以证明权限或确认 lost ack。当前仅 fake adapter 与专用 PG 验证，未证明 Lead 实际使用、发布或部署。 |
-| DEC-034 | 以经营交付和组织方法改进两张卫星图定义 Agent Company 的完整场景 | Leader 管任务组合、依赖、顺序、承接与验收安排；Human Requirement 按需澄清方向；业务 Agent 自行判断并交付；User Session 独立亲用，Evocation 对照内部 trace 与亲用证据试行方法/组织改进。两循环共用 Task/Document/Run/Delivery/Observation。保留 DEC-012 的四种支撑能力、DEC-002 的领域自主与 DEC-003 的证据要求；修订 DEC-003/004/014/032 的中央演员与默认路由。图是目标责任，现有 Role 名称及有限实跑不证明全链自动化；详见[产品定义](product/definition.md)与[完整场景](product/functional-scenarios.md)。 |
+| DEC-033 | 所有新建 Session 使用 `danger-full-access`、`approvalPolicy: never` 与正常网络；普通消息和业务工作共享原 Session、Thread、adapter 与工具面；**普通消息预算默认值已被 DEC-039 修订** | 取代消息专用进程／purpose、只读权限资格门与业务权限恢复状态机。既有 sender/receiver grant 和 `maxTurns` 预算继续限定身份与成本；project/Task/Document 授权不变。旧 Session、Run 与 profile snapshots 保留历史值，不经冷切迁移重写。native permission ack 未收到时仍为 unknown；thread/read 不足以证明权限或确认 lost ack。当前仅 fake adapter 与专用 PG 验证，未证明 Lead 实际使用、发布或部署。 |
+| DEC-034 | 以经营交付和组织方法改进两张卫星图定义 Agent Company 的完整场景；**Leader 的编制与验收安排由 DEC-038 补充** | Leader 管任务组合、依赖、顺序、承接与验收安排；Human Requirement 按需澄清方向；业务 Agent 自行判断并交付；User Session 独立亲用，Evocation 对照内部 trace 与亲用证据试行方法/组织改进。两循环共用 Task/Document/Run/Delivery/Observation。保留 DEC-012 的四种支撑能力、DEC-002 的领域自主与 DEC-003 的证据要求；修订 DEC-003/004/014/032 的中央演员与默认路由。图是目标责任，现有 Role 名称及有限实跑不证明全链自动化；详见[产品定义](product/definition.md)与[完整场景](product/functional-scenarios.md)。 |
 | DEC-035 | Role 只绑定一种运行时（Codex 或 Claude），之后不可更换；一个协调服务按 Session 的运行时同时驱动两者；Role 此刻拥有的 skill 实时可见 | Role 首次绑定后只在该运行时内调整模型与 skill，未绑定的 Role 在首个 Session 预留时按服务默认运行时绑定。Session 一直按创建时的运行时分发。Role 的 skill 选择（业务 skill 必带；项目、个人、内置按开关，另可按名称增减）决定每个 Turn 的模型上下文，不是安全边界。CLI 与工作台每次读取都向运行时实时取值；逐 Turn 的 skill 记录不另建表，沿用 Claude 适配器 Turn 账本中的启动报告。配置与发现规则见[本机运行](development/local-run.md)。 |
 | DEC-036 | 工作台采用统一的设计语言：Tailwind v4 + shadcn/ui 作为唯一组件体系，保留双左栏并加“中间内容、右侧信息”的统一骨架，前端文档按原则、场景、基础、组件、布局、页面和架构重组 | 修订 DEC-029 的“按需使用 Tailwind、shadcn/ui”和各页自定主区：设计体系放进 `packages/ui`，token 单一来源；保留双左栏，外层模块栏选空间并放全局信号，内层上下文栏放项目切换、分区导航和对象列表；Session、任务、文档等内容页统一为中间主体流、右侧可收起信息栏；保持无绿色。技术方向为单页应用 + TanStack Router（路径 URL）+ TanStack Query + 推送事件失效重读，暂不用 Next.js，公开产品阶段另建官网应用。前端文档只写现状与目标，页面说明用固定模板并由 `docs:check` 检查。代码迁移由[前端改版 issue #229](https://github.com/cyl19970726/evoLoop/issues/229) 分 PR 实施，本决定不表示界面已改完 |
 | DEC-037 | 工作台视觉与界面用语定稿：暖纸底、墨蓝强调、陶土品牌色，浅色为默认并有一套深色；Logo 为“方块回环”；每个智能体有按职责取底色的卡通头像；界面文字只用中文，Session 在界面上叫“智能体”、Leader 叫“统筹”、Evocation 叫“复盘” | 补充 DEC-036 的设计语言：数值在 `packages/ui/src/tokens.css` 单一维护，用途与对比度规则见[设计基础](frontend/foundations.md)，用语表见[设计原则](frontend/principles.md#界面用语)。中间与右栏合为一块浮起的工作面板，面板内少用边框、靠柔底色块分层；人的消息用深色气泡；账号与设置在内层栏底部；智能体页输入框支持 `/` 调用技能和命令、`@` 把消息转给其他智能体。深色只对重做过的页面开启；旧页面在各自迁移的 PR 里改用新用语。本决定不表示页面已改完 |
+| DEC-038 | Leader 负责排程与同 Role 的人员编制：依据每日评估，一次只增减一个 Session；验收按 Task 约定由人、指定的 Leader 或 Leader 指派的独立业务 Session 承担 | 补充 DEC-034 的 Leader 职责。Leader 在工作周期里主动读取项目全部未完、未分配、阻塞、待验收和待发布的工作，结合依赖及各 Session 的能力、占用、健康和预算形成可执行集合并真正启动；同职责实例忙时比较复用、拆出独立部分或增加同 Role 实例，并划清工作树、文件与整合责任；负担下降或任务结束时决定复用、释放或退役临时实例（Leader 核业务责任，引擎核运行状态）；只维护一份当前总览。同 Role 增减实例是 Leader 的编制决定，不另设审批；新增长期职责（新 Role）仍按 DEC-001/003 由 Evocation 凭证据提出并试行，**产品与架构页中把“同职责增实例”归给 Evocation 的写法由此修订**。编制按天调整、一次只加一个：上一次增加的实例有被接受的交付后再加下一个；每次判断给出“补人”“先拆开”“必须等”之一，写明哪些工作可以并行、当前合适的最大并行度，过度并行算风险而不是目标。验收方式由 Task 声明：人、Task 明确允许的 Leader，或 Leader 指派的业务 Session；作者 Session 与安排者不能充当独立验收，候选通过不等于正式通过，Leader 不是默认验收者。业务结果由服务端引擎通知 Leader，不依赖插件或 Stop Hook；发布、私有配置、维护窗口与授权属于平台维护（Root），不计为 Leader 职责。验收接力、退役与容量视图已实现（schema 062），新实例尚未使用；每日评估的 Schedule 尚未配置 |
+| DEC-039 | 普通 Session 消息默认不限累计轮数；用户从工作台发给 Session 的消息立即进入执行，不排队（方案1） | 修订 DEC-033 的预算部分：精确 sender/receiver 授权继续生效，`maxTurns` 省略即不限，只有明确设置的正整数构成有限额度；历史 `used`、Session、Thread、失败和 Task/队列尝试限额均保留。用户消息不经等待发送队列：目标 Session 有活动 Turn 时补入当前 Turn，确切空闲时在原 Thread 开新 Turn；空闲直启计一次 Turn，补入不另计；一个 Turn 只有一个主执行来源，业务 Task 队列与自动 Leader 通知保持各自来源。能否补入按 Session 的运行时报告：Codex 取决于协议版本，Claude 运行时目前不支持运行中补入。实现已合入（#207、#216，schema 059）；新实例尚无即时输入记录，Task `281f3f07`、`109a0573` 的正式验收未完成 |
+| DEC-040 | 外部消息平台经统一的消息 Connector 接入，微信为第一个；先做标准 Session 接入，受限运行环境后置；飞书等文档 Connector 排在其后 | 通道合同不绑定具体平台，以后可接 WhatsApp、Discord 等；Agent 仍可直接用 skill＋平台 CLI 查询或发送，不必先订阅或注册平台 Agent。首版沿用所选标准 Session 的现有工具和运行权限，完成真实入站、查询、同会话回复、获准的主动发送和指定内部转交，不宣称已有受限沙箱；受限环境另作研究（Task `c05899bc`）。外部消息按外部来源处理，不冒充用户或内部 Agent 获得权限，订阅不等于任意发送授权。合同见[消息连接器](architecture/message-connectors.md)。fail-closed v1 已合入（#221，schema 063—066）；新实例未配置、未真实收发，可用于哪种运行时的 Session 待核 |
+| DEC-041 | evoLoop 部署在单台常驻主机，经单一 HTTPS 入口访问；迁移主机只搬业务历史，不搬运行现场 | 前端与已授权 API 走同一 HTTPS 站点；协调服务只听本机回环，PostgreSQL、模型控制和存储不开公共端口；沿用应用自身的登录与权限，多人账户与按项目授权按 [issue #219](https://github.com/cyl19970726/evoLoop/issues/219) 另行决定。迁移只搬 Task、Document 及其修订、固定 Blob 和 Delivery/Observation/Closure 业务链；旧 Session、Thread、令牌、授权、执行配置、锁、队列、运行日志和原始会话不迁，历史 Discussion 以只读归档保留、不为其伪造 Session；目标主机重新讨论 Agent 分工并重新 onboarding。目标主机按当时可用的 Codex 版本继续，版本不同本身不构成拒绝迁移的依据。部署形态、发布与备份做法写入[存储](architecture/storage.md)与[本机运行](development/local-run.md)，正文不写域名、路径与端口。新主机已上线并完成选择性迁移；迁移 Task `7db2326e` 的模型试跑与独立 QA 未完成，OpenViking 未在新主机部署，备份周期与保留未定 |
 
 ## 当前设计提议
 
@@ -67,11 +71,11 @@
 
 ## 仍未选定或未实施
 
-- S1a 已按 DEC-028 采用[工程基线](architecture/technology-selection.md)并接通真实本机 API；尚未实施完整工作台、前端知识图谱及各适配器。nashsu 保留体验参考，不作为第二个知识权威。
-- 远程工作台身份认证、常在线部署和真实多人使用；S1a 本机令牌模式与合成体验不证明这些能力。
-- OpenViking 固定版上线能力与有限 fork 的具体范围。新候选源码能力和 0.5.0 实测结论分别记录，正式服务尚未部署。
+- S1a 已按 DEC-028 采用[工程基线](architecture/technology-selection.md)并接通真实 API；工作台按 DEC-036 改版中（issue #229），前端知识图谱未实施。nashsu 保留体验参考，不作为第二个知识权威。
+- 多人账户、按项目与对象授权及真实多人使用（issue #219 只是方向）。DEC-041 的常驻主机与单一 HTTPS 入口沿用应用自身的令牌登录，不证明这些能力。
+- OpenViking 固定版上线能力与有限 fork 的具体范围。新候选源码能力和 0.5.0 实测结论分别记录，正式服务尚未部署，迁移后的新主机也未部署。
 - 飞书 connector 的实际租户、投影字段、权限、回写/并发和事件能力；云文档正文接入另行验证。
-- 首个运行时适配范围，尤其是唤醒、派发结果核对和重启后恢复。
+- 运行时：Codex 与 Claude 已接入（DEC-035）；定时唤醒（尚未配置 Schedule）、宿主失联后的原 Session 接续（Task `12e9910b`）及两种运行时的长期真实使用仍未验收。
 - 公开文档站的域名、托管、自动发布和持续运维；公开 Git 仓库与部署文档站是两个状态。
 - 项目许可证。公开源码可阅读不等于已选择某种开源许可证。
 
@@ -89,17 +93,17 @@ DEC-027 依据用户本轮“暂时用 OpenViking、以后可能自己实现知�
 
 DEC-028 来自用户要求“全面 review 所有设计，没有问题就开始实现”，并要求多角度审阅。工程实现中仍发现并修正了具体合同与恢复缺口，见[设计审阅与首片实测](research/design-review-20261020.md)。它授权可逆的实现选择，不把所有候选技术、生产发布或完整产品验收视为已完成。
 
-DEC-029 记录用户对真实前端重组及入口分工的明确要求：图形界面服务人的阅读、判断、反馈；现有 CLI 和后续业务 skill／MCP 服务 Agent 的常规工作，共用 API/core 的权威与恢复语义。界面组合按 [F1—F4](roadmap.md#前端重组-f1f4实施里程碑待验收) 推进；frontend-design 与 web-design-guidelines 只用于开发和评审，不是 evoLoop 业务 skill。组件来源、许可及项目范围记在 `apps/workbench/THIRD_PARTY.md`；该记录不证明新布局已通过普通入口或真人验收。
+DEC-029 记录用户对真实前端重组及入口分工的明确要求：图形界面服务人的阅读、判断、反馈；现有 CLI 和后续业务 skill／MCP 服务 Agent 的常规工作，共用 API/core 的权威与恢复语义。界面组合按 [F1—F4](references/roadmap-history.md#前端重组-f1f4实施里程碑待验收) 推进；frontend-design 与 web-design-guidelines 只用于开发和评审，不是 evoLoop 业务 skill。组件来源、许可及项目范围记在 `apps/workbench/THIRD_PARTY.md`；该记录不证明新布局已通过普通入口或真人验收。
 
-DEC-030 来自用户明确的人机入口分工：前端主要给人看发生了什么，大多数修改先与 Agent 沟通，再由 Agent 经业务 skill＋CLI 完成。已同步[产品定义](product/definition.md#用户与实际入口)、[架构总览](architecture/overview.md)和[包职责](architecture/packages.md)，入口实施按 [C1—C4](roadmap.md#agent-业务入口-c1c4实施里程碑) 与前端工作线分开管理；共同服务约束不能由技能或客户端绕过。实际 Agent 使用、工程合入和真人反馈分别留证。
+DEC-030 来自用户明确的人机入口分工：前端主要给人看发生了什么，大多数修改先与 Agent 沟通，再由 Agent 经业务 skill＋CLI 完成。已同步[产品定义](product/definition.md#用户与实际入口)、[架构总览](architecture/overview.md)和[包职责](architecture/packages.md)，入口实施按 [C1—C4](references/roadmap-history.md#agent-业务入口-c1c4实施里程碑) 与前端工作线分开管理；共同服务约束不能由技能或客户端绕过。实际 Agent 使用、工程合入和真人反馈分别留证。
 
-DEC-031 来自用户明确选择“正文统一存 Document”，并确认初期尽可能简单：验收标准清楚写出，默认在原任务内验证，再根据真实使用增强。同步[产品定义](product/tasks-and-documents.md)、固定主正文合同及[路线 C5](roadmap.md#c5-taskdocument-模型简化)，保留旧数据、授权和结果未知恢复；它不授权直接迁移正在使用的本机服务或部署生产。
+DEC-031 来自用户明确选择“正文统一存 Document”，并确认初期尽可能简单：验收标准清楚写出，默认在原任务内验证，再根据真实使用增强。同步[产品定义](product/tasks-and-documents.md)、固定主正文合同及[路线 C5](references/roadmap-history.md#c5-taskdocument-模型简化)，保留旧数据、授权和结果未知恢复；它不授权直接迁移正在使用的本机服务或部署生产。
 
 DEC-032 依据 2026-10-23 用户对完整功能场景、新的 Session 责任分类、真实工作驱动职责拆分与任务回流的明确要求；补充 DEC-001—004、008、014—015、025、030。原始私有会话不随仓库发布。前三条旅程在新场景页细化，后三条暂作待继续确认的关联索引；具体 hook、守护部署和唤醒方式仍是候选机制，未将其记为已通过运行验证。
 
 DEC-033 依据 2026-10-27 用户对 Task9a v5 的明确新选择：每个新 Session 使用 full/never/正常网络，普通消息与业务工作共享原生会话和常规工具配置，取消消息专用 readonly/cold 权限状态机。它取代 Codex 接入文档中旧的消息只读资格、purpose 专用适配器和冷切恢复要求；保留历史实验及 0.154.0 记录作为当时证据，不改旧 Session/Run snapshot。消息 receiver/sender 授权与 `maxTurns` 预算仍约束身份和成本，GUI reader 的 Run 范围与 Document iframe sandbox 不变。当前代码证据限 fake adapter 与专用 PostgreSQL 检查，Lead 原生使用、发布与部署仍未验证。
 
-2026-11-07 后续用户决定（Task `281f3f07-abc2-47f3-9560-1b743e46077d`）更新了 DEC-033 中的普通消息预算部分：精确 sender/receiver 授权继续生效，`maxTurns` 缺省为不限累计次数，只有显式正整数仍构成有限额度。原历史 `used`、Session、Thread、失败和 Task/队列尝试限额均保留。代码合入、旧私有 grant 转换、正式发布与独立使用分别核实；此段不把候选实现记成已发布。
+DEC-039 依据两项用户决定。2026-11-07 用户明确“evoLoop 的默认都不应该有消息上限，我们希望所有任务被完整处理完成”（Task `281f3f07-abc2-47f3-9560-1b743e46077d`），据此更新 DEC-033 的普通消息预算；原历史 `used`、Session、Thread、失败和 Task/队列尝试限额均保留，旧私有 grant 转换、正式发布与独立使用分别核实。2026-11-06 用户在 Session 执行界面的候选方案中选定方案1，并确认空闲直启沿用原授权、计一次 Turn（Task `109a0573` 正文与方案 Document `27b4af97`）；实现与验收边界见[即时输入集成](development/session-direct-input-integration.md)。此行不把候选实现记成已正式使用。
 
 DEC-034 依据 2026-10-29 用户对 Agent Company 完整蓝图、两张原图与相应场景的确认。固定来源是过程 Document `92e03220-59bb-4dea-b63a-bcd204f30f31` 的修订 `67b7ad3e-e64c-4800-a55e-784a50354492`；可公开的目标语义与原图已纳入[产品定义](product/definition.md#两张产品卫星图经营交付与组织改进)。原报告含本机运行和内部路径，不作为 Git 正文发布。此决定改变产品职责和阅读路径；现有运行配置、自动唤醒、真人亲用和持续收益各按[阶段路线](roadmap.md#当前基线)单独核验。
 
@@ -108,3 +112,9 @@ DEC-035 依据 2026-11-09 用户在运行时规划对话中的明确选择：角
 DEC-036 依据 2026-11-09 用户在前端设计语言讨论中的明确选择：在“在现有 CSS 上收敛”“真正落地 Tailwind + shadcn/ui”“引入完整组件库”三个方向中选择第二个；参考 Claude Code 桌面版与一个 Bot 应用的布局，要求 Session、任务和文档遵循“左边工作、中间对话与内容、右边信息”的同一布局，整体简约克制；做好分包；前端文档按页面对应并同步维护。用户曾选择把两条左栏合并成一条，随后要求综合全部使用场景从用户角度重新判断，并认为双左栏仍有用；[场景与交互](frontend/scenarios.md#从场景看布局)据此保留双左栏并重新分工。审计依据：当时 7 个全局 CSS 按导入顺序互相覆盖、主色有 4 个值，约 1600 处写死颜色，shadcn Button 只用 2 次而原生按钮 219 处，前端文档约 5.3 万字且页面说明无图。多机器方案（[issue #219](https://github.com/cyl19970726/evoLoop/issues/219)）先行，公开产品是后续方向；按既定架构转向公开产品以新增为主，多语言暂不提前实施。已同步[前端文档](frontend/README.md)、[设计原则](frontend/principles.md)、[场景与交互](frontend/scenarios.md)、[设计基础](frontend/foundations.md)、[组件清单](frontend/components.md)、[布局](frontend/layout.md)与[前端架构](frontend/architecture.md)。
 
 DEC-037 依据 2026-11-09 用户在视觉定稿讨论中的明确选择：在设计画布的三套配色里选择暖纸方案（B），要求更有质感、简约但不简单、间距和字体不能出错，并补一套深色；Logo 选第四张“方块回环”；每个 Session 配帅哥美女或卡通头像；尽量避免中英混用、以中文为主；账号名和设置放在左栏底部；智能体详情页的输入框可以直接发消息，并能用 `/` 触发技能、用 `@` 给其他 Session 发消息。用户看过画布上的智能体页、任务页、输入框、项目总览、统筹安排、待我处理、任务表格、文档详情和窄屏后确认“定稿，开始落地”。“成员”保留给 #219 的人类账户，所以 Session 不叫成员。定稿时按 4.5:1 对比度把 `text-muted` 与 `brand` 调深了一档。
+
+DEC-038 依据两次用户决定。2026-11-06 用户在组织复盘讨论中明确约定 Leader 的职责与三种验收选择；固定来源是组织复盘 Document `02954ad6`（修订 `ef4902e7`，仍为草稿）与 Task `6e278a52` 的正文，PR #217 据此实现验收接力、退役与容量视图。2026-11-09 用户在评估该 Task 时进一步要求：AI 像员工一样工作，由 Leader 排程和增减人员；编制按天依据评估文档调整，“不要一下就增加很多人，因为这样会打破原有的组织结构”；要判断项目是否适合、哪些任务能并行、最大并行容量是多少，“过度并行有时也不是一个好事”。当天初次评估给出的人数与先后属于评估文档，不写入本决定。业务结果经引擎通知 Leader、不依赖插件或 Stop Hook 的边界来自 Leader 编排方案 Document `434ce6d7`，它承接用户确认的 Leader 中枢定位。产品与架构正文尚未同步，同步前以本行为准。
+
+DEC-040 依据 2026-11-05 至 11-06 的用户取舍：讨论微信订阅、回复、查询与主动发送时，用户要求抽象通道以便以后接 WhatsApp、Discord，并保留直接用 skill＋平台 CLI 的方式；随后把消息 Connector 放在优先位置、飞书文档 Connector 后置；11-06 又明确“受限环境可以滞后，先把微信可以接入 session 完整做好”。来源是组织复盘 Document `02954ad6` 的案例五与补记，以及微信 Task `b698cd37` 的正文修订。早先“先稳定宿主再推进微信”的前置已在同一补记中收敛，不再挡住标准首版。
+
+DEC-041 依据 2026-11-07 至 11-08 的用户决定：选定正式域名，把服务和项目数据部署到一台常驻主机，前端与已授权 API 同站访问、内部服务不开公共端口（报告 Document `ee94a175`）；接受按目标主机现有的 Codex 0.167 继续迁移（报告 `43bacc6b`）；随后以新 Task `7db2326e` 取代原“全量项目连同原 Session/Thread 一起迁移”的 Task `d2b29601`，只迁业务资料并在目标主机重新 onboarding。域名、主机标识、端口与私有配置只留在私有部署记录中。

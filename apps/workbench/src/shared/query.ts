@@ -2,7 +2,7 @@
 // project), so switching project or identity can cancel and drop exactly that scope. A reread keeps what is
 // on screen and reports `checking` until the answer arrives; the cache only speeds up reads and never decides
 // which version is current.
-import { QueryClient, useQuery, type QueryClient as Client, type QueryKey } from "@tanstack/react-query";
+import { QueryClient, keepPreviousData, useQuery, type QueryClient as Client, type QueryKey } from "@tanstack/react-query";
 import { ApiError } from "./api";
 
 export const queryKeys = {
@@ -39,14 +39,19 @@ export function projectChanged(client: Client, projectId: string): Promise<void>
   return client.invalidateQueries({ queryKey: queryKeys.project(projectId) });
 }
 
-/** A project read. `checking` is true while a reread runs and the previous answer is still on screen. */
+/**
+ * A project read. `checking` is true while a reread runs and the previous answer is still on screen. With
+ * `keepPrevious`, a changed key (another filter, a longer range) keeps the last answer on screen until the new one
+ * arrives, instead of starting over empty.
+ */
 export function useProjectQuery<T>(projectId: string, key: readonly unknown[], read: (signal: AbortSignal) => Promise<T>,
-  options: { enabled?: boolean; refetchInterval?: number | false } = {}) {
+  options: { enabled?: boolean; refetchInterval?: number | false; keepPrevious?: boolean } = {}) {
   const query = useQuery({
     queryKey: queryKeys.project(projectId, ...key) as QueryKey,
     queryFn: ({ signal }) => read(signal),
     enabled: !!projectId && (options.enabled ?? true),
     ...(options.refetchInterval !== undefined ? { refetchInterval: options.refetchInterval } : {}),
+    ...(options.keepPrevious ? { placeholderData: keepPreviousData } : {}),
   });
   return { ...query, checking: query.isFetching && query.data !== undefined };
 }
