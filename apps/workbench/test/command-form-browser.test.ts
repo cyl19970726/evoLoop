@@ -79,15 +79,17 @@ test("the command form in an old region: new markup, required fields, a moved ba
     await page.getByLabel("访问令牌").fill("fixture-token");
     await page.getByRole("button", { name: "进入", exact: true }).click();
     const form = page.getByRole("form", { name: "创建日程" });
+    // Folded behind its title, as before; opening it shows the form.
+    await page.locator("summary", { hasText: "创建日程" }).click();
     await form.waitFor();
 
     // New markup even inside the old region: the old global button and field rules do not reach it.
+    // (No named helpers inside evaluate: the test runner's transform would wrap them in a helper the page lacks.)
     const look = await form.evaluate(element => {
-      const style = (selector: string) => getComputedStyle(element.querySelector(selector)!);
       const submit = element.querySelector<HTMLElement>("button[type=submit]")!;
-      return { legacy: !!element.closest("[data-legacy]"), island: element.hasAttribute("data-ui"), submitBorder: style("button[type=submit]").borderTopWidth,
-        submitRadius: parseFloat(style("button[type=submit]").borderTopLeftRadius), submitHeight: submit.getBoundingClientRect().height,
-        inputBorder: style("input[name=title]").borderTopWidth, labelWeight: style("label").fontWeight };
+      const submitStyle = getComputedStyle(submit), inputStyle = getComputedStyle(element.querySelector("input[name=title]")!);
+      return { legacy: !!element.closest("[data-legacy]"), island: element.hasAttribute("data-ui"), submitBorder: submitStyle.borderTopWidth,
+        submitRadius: parseFloat(submitStyle.borderTopLeftRadius), submitHeight: submit.getBoundingClientRect().height, inputBorder: inputStyle.borderTopWidth };
     });
     assert.deepEqual([look.legacy, look.island], [true, true], "the page still holds this form in an old region; the form marks itself as new markup");
     assert.equal(look.submitBorder, "0px", JSON.stringify(look));
@@ -133,10 +135,13 @@ test("the command form in an old region: new markup, required fields, a moved ba
     // 1024: the right column is a drawer the page never opens by itself; 390: nothing scrolls sideways.
     await page.setViewportSize({ width: 1024, height: 800 });
     assert.equal(await page.getByRole("dialog").count(), 0, "the right drawer does not open by itself");
-    if (shots) await page.screenshot({ path: `${shots}/command-form-unknown-1024.png`, fullPage: true });
+    // The page scrolls inside its own column, so the shots show the end of the form rather than a full page.
+    await form.getByText("这次提交的结果未确认").scrollIntoViewIfNeeded();
+    if (shots) await page.screenshot({ path: `${shots}/command-form-unknown-1024.png` });
     await page.setViewportSize({ width: 390, height: 844 });
     assert.equal(await page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1"), true, "the form fits 390px");
-    if (shots) await page.screenshot({ path: `${shots}/command-form-unknown-390.png`, fullPage: true });
+    await form.getByText("这次提交的结果未确认").scrollIntoViewIfNeeded();
+    if (shots) await page.screenshot({ path: `${shots}/command-form-unknown-390.png` });
     await page.setViewportSize({ width: 1440, height: 900 });
 
     // Checked by its original operation ID elsewhere: back on the page, the form reads the same operation and clears the draft.
