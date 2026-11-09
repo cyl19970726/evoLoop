@@ -1,0 +1,4 @@
+interface:
+  display_name: "以读者理解组织文档"
+  short_description: "从读者问题推导文档架构、理解路径与文字图表表达，并保留有效历史解释"
+  default_prompt: "使用 $reader-centered-docs，结合现有材料与最新产品定位，设计文档总体架构、读者理解路径和合适的表达形式，再完成或审阅文档。"
