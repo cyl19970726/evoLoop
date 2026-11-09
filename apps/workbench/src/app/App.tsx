@@ -278,7 +278,7 @@ function WorkspacePages({ route, context, refresh, operations }: { route: Route;
     if (r.section === "create-task") return <CreateTaskPage context={context} refresh={refresh} />;
     if (r.section === "task" && r.id) return <TaskPage context={context} token={token} projectId={projectId} id={r.id} selectedRevision={r.revision} refresh={refresh} onChanged={context.onChanged} onAttempt={context.onAttempt} onKnown={context.onKnown} blockedByUnknown={context.blocked} canReview={principal.permissions.includes("review")} active={active} />;
     if (r.section === "document" && r.id) return <DocumentPage context={context} refresh={refresh} projectId={projectId} id={r.id} selectedRevision={r.revision} />;
-    if (r.section === "knowledge") return <div className="content knowledge-page"><h1 tabIndex={-1}>知识空间</h1><nav className="context-links" aria-label="文档与知识"><a href={href(projectId, "documents")}>过程文档</a><a href={href(projectId, "knowledge")} aria-current="page">知识空间</a><a href={href(projectId, "repository")}>仓库规范</a></nav><KnowledgePanel context={context} refresh={refresh} /></div>;
+    if (r.section === "knowledge") return <KnowledgePanel context={context} refresh={refresh} />;
     if (r.section === "evaluations") {
       const query = new URLSearchParams(currentPath().split("?")[1] ?? "");
       return <EvaluationPage context={context} evaluationId={r.id} selectedRevision={r.revision} refresh={refresh}

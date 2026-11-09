@@ -168,7 +168,7 @@ flowchart TB
 
 例如，需求文档说明“接续时要核对实际成果”，技术讨论比较两种交接办法，任务交付给出采用情况。责任 session 从这些固定修订提取成立的要求，修改仓库现有产品验收和交接架构，而不是把整份讨论逐字搬进去。废弃方案留在工作文档，长期有价值且可公开的研究过程可另整理到 `docs/research/`，未决项保持未决。
 
-拟议 `DocumentIncorporation` 记录一次整理工作：来源过程文档及片段/固定修订、关联 Task 与交付/决定、目标 repo/path/章节与预期 base commit、纳入或不纳入的理由、责任者、候选变更/PR，以及核实后的 merge commit。目标是 Git 文档位置及其固定提交，不是 Document 表中的目标行。来源和目标保持独立身份；合入后可用 `incorporated_into` 将来源 DocumentRevision 关联到目标 GitSourceRef，并由整理记录保留具体采纳范围。该关联说明内容被整理纳入，不证明来源中的所有主张都成立。
+拟议 `DocumentIncorporation` 记录一次整理工作：来源过程文档及片段/固定修订、关联 Task 与交付/决定、目标 repo/path/章节与预期 base commit、纳入或不纳入的理由、责任者、候选变更/PR，以及核实后的 merge commit。目标是 Git 文档位置及其固定提交，不是 Document 表中的目标行。来源和目标保持独立身份；合入后可用 `incorporated_into` 将来源 DocumentRevision 关联到目标 GitSourceRef，并由整理记录保留具体采纳范围。该关联说明内容被整理纳入，不证明来源中的所有主张都成立。现已实现的只是其中的回链：先登记目标 Git 正文的固定提交，再在来源修订上记一条 `incorporated` 决定（命令见 [Agent CLI](../development/agent-cli.md#回链过程文档纳入了哪一页)）；整理记录的其余部分，例如候选 PR、merge commit 和责任者，尚未实现。
 
 - **先检查目标现状。** 基于当时 Git 正文生成差异；目标分支变化须重新核对，不覆盖后来编辑。来源修订改变时保留旧候选依据，明确是否重新整理；不悄悄换成最新版。
 - **经过原仓库流程。** 领域责任者可完成整理、改文、验证与审阅交接；不强制另设固定“出版 session”。读取 Git 的适配器仍只读，写入由获授权的仓库任务完成。自动化整理尚未实现。

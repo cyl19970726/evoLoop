@@ -1,4 +1,7 @@
 import { useEffect, useRef, useState } from "react";
+import { RefreshCw } from "lucide-react";
+import { Button, EmptyState, Notice as UiNotice } from "@evoloop/ui";
+import { SectionBoundary } from "../../shared/ui/SectionBoundary";
 import type { EvaluationAssessment, EvaluationAttempt, EvaluationConclusion, EvaluationFixedRef, EvaluationRevision, RuntimeRunRecord, RuntimeSessionRecord, TaskDetail } from "@evoloop/contracts";
 import { api, errorText, safeArtifactHref } from "../../shared/api";
 import { date } from "../../shared/ui/shared";
@@ -53,18 +56,37 @@ export function EvaluationPage({ context, evaluationId, selectedRevision, refres
     try { const result = await api(context.token).evaluations(context.projectId, cursor, taskId, knowledgePageId); if (started !== generation.current) return; setList(previous => [...previous, ...result.items]); setCursor(result.nextCursor); }
     catch (cause) { if (started === generation.current) setError(errorText(cause)); }
   }
-  return <div className="content evaluation-page">
-    <div className="evaluation-heading"><div>{evaluationId && <a className="back" href={evaluationHref(context.projectId)}>返回评价列表</a>}<h1>{evaluationId ? "固定评价与实际尝试" : "评价"}</h1><p className="muted">同一共同任务、同一指令与环境下，逐次看真实运行、交付、成本和判断。失败与未知也保留。</p></div><button type="button" onClick={() => setEpoch(value => value + 1)}>回读当前记录</button></div>
-    {error && <Notice error>{error}</Notice>}
-    {taskId && <p className="context-links">当前仅看此任务的评价 · <a href={`/p/${context.projectId}/tasks/${taskId}`}>返回来源任务</a></p>}
+  const muted = "text-caption text-muted-foreground";
+  return <div data-ui="" className="evaluation-shell mx-auto flex w-full max-w-[1080px] flex-col gap-5 px-4 py-5 compact:px-8 compact:py-7">
+    <header className="flex flex-wrap items-start justify-between gap-3">
+      <div className="min-w-0">
+        {evaluationId && <a className="text-small text-text-secondary hover:text-foreground" href={evaluationHref(context.projectId)}>← 返回评价列表</a>}
+        <h1 className="text-title font-semibold text-foreground" tabIndex={-1}>{evaluationId ? "固定评价与实际尝试" : "评价与后果"}</h1>
+        <p className="mt-1 text-small text-text-secondary">同一共同任务、同一指令与环境下，逐次看真实运行、交付、成本和判断。失败与未知也保留。</p>
+      </div>
+      <Button onClick={() => setEpoch(value => value + 1)} disabled={loading}><RefreshCw aria-hidden="true" className={loading ? "animate-spin" : undefined} />回读当前记录</Button>
+    </header>
+    {error && <UiNotice tone="error">{error}</UiNotice>}
+    {taskId && <p className="text-small text-text-secondary">当前仅看此任务的评价 · <a className="text-foreground underline" href={`/p/${context.projectId}/tasks/${taskId}`}>返回来源任务</a></p>}
     {!evaluationId ? <>
-      <section className="panel" aria-busy={loading || loadedScope !== scope}><h2>已建立的评价</h2>{(loading || loadedScope !== scope) && <p>正在读取当前范围的评价…</p>}{!loading && loadedScope === scope && !list.length && !error && <p className="empty">当前范围尚无评价定义。先准备进行中的共同任务与固定协议、材料和 Wiki 修订。</p>}
-        <div className="evaluation-list">{list.map(item => <a key={`${item.evaluationId}:${item.id}`} href={evaluationListHref(context.projectId, item)}><strong>{item.definition.question}</strong><span>匹配定义 v{item.version} · 共同任务 {short(item.definition.case.taskId)} · {date(item.createdAt)}</span></a>)}</div>
-        {cursor && loadedScope === scope && <button type="button" onClick={() => void more()}>继续读取</button>}
+      <section aria-label="已建立的评价" aria-busy={loading || loadedScope !== scope} className="flex flex-col gap-2">
+        <h2 className="text-label font-semibold text-foreground">已建立的评价</h2>
+        {(loading || loadedScope !== scope) && <p className="text-small text-text-secondary">正在读取当前范围的评价…</p>}
+        {!loading && loadedScope === scope && !list.length && !error && <EmptyState title="还没有评价" reason="当前范围尚无评价定义。先准备进行中的共同任务与固定协议、材料和 Wiki 修订。" />}
+        {list.length > 0 && <ul aria-label="评价" className="flex flex-col overflow-hidden rounded-xl bg-raised shadow-sm">{list.map(item => <li key={`${item.evaluationId}:${item.id}`} className="border-t border-border first:border-t-0">
+          <a href={evaluationListHref(context.projectId, item)} className="flex flex-col gap-0.5 px-4 py-3 outline-none hover:bg-selected focus-visible:shadow-[var(--focus-ring)]">
+            <span className="text-small font-medium text-foreground">{item.definition.question}</span>
+            <span className={muted}>匹配定义 v{item.version} · 共同任务 {short(item.definition.case.taskId)} · {date(item.createdAt)}</span>
+          </a>
+        </li>)}</ul>}
+        {cursor && loadedScope === scope && <Button size="compact" variant="ghost" className="w-fit" onClick={() => void more()}>继续读取</Button>}
       </section>
-      <details className="panel workflow-detail"><summary>需要时建立新的冻结评价</summary><DefinitionForm context={context} ownerTaskId={taskId} onApplied={id => { navigate(evaluationHref(context.projectId, id)); }} /></details>
-    </> : read ? <EvaluationDetail key={`${read.revision.evaluationId}:${read.revision.id}`} context={context} read={read} selectedRevision={!!selectedRevision} onChanged={() => setEpoch(value => value + 1)} />
-      : !error && <p>正在读取冻结定义与逐次记录…</p>}
+      <details className="rounded-xl bg-raised p-4 shadow-sm">
+        <summary className="cursor-pointer text-small font-medium text-foreground">需要时建立新的冻结评价</summary>
+        <SectionBoundary label="建立评价表单"><div data-legacy="" className="workbench-layout evaluation-page mt-3"><DefinitionForm context={context} ownerTaskId={taskId} onApplied={id => { navigate(evaluationHref(context.projectId, id)); }} /></div></SectionBoundary>
+      </details>
+    </> : read ? <SectionBoundary label="评价详情"><div data-legacy="" className="workbench-layout"><div className="evaluation-page"><EvaluationDetail key={`${read.revision.evaluationId}:${read.revision.id}`} context={context} read={read} selectedRevision={!!selectedRevision} onChanged={() => setEpoch(value => value + 1)} /></div></div></SectionBoundary>
+      : !error && <p className="text-small text-text-secondary">正在读取冻结定义与逐次记录…</p>}
   </div>;
 }
 
