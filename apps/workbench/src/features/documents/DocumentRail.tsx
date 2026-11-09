@@ -1,5 +1,6 @@
 // The inner rail's object list on the document pages (docs/frontend/layout.md 内层上下文栏): a 文档 / 知识 switch,
-// search and filters, the loaded documents with the open one highlighted, and what the list covers.
+// search and filters, the loaded documents with the open one highlighted, and what the list covers. A document opened
+// here is remembered like one opened from the table, so the table puts focus back on that row on return.
 import { useEffect, useRef } from "react";
 import { ReadingSpaceSwitch } from "../../shared/ui/ReadingSpaceSwitch";
 import { Button, ListRow, RefreshingIndicator } from "@evoloop/ui";
@@ -37,6 +38,7 @@ function DocumentRailList({ projectId, scope, selectedId }: { projectId: string;
     {shown > 0 && <ul ref={listRef} className="flex flex-col gap-0.5">
       {list.visible.map(document => <li key={document.id} data-document-id={document.id}>
         <ListRow href={href(projectId, "document", document.id)} selected={document.id === selectedId}
+          onSelect={() => update({ lastOpened: document.id })}
           title={<span title={document.title}>{document.title}</span>}
           meta={`${kindText(document.kind)} · ${lifecycleLabel[document.status]}`} />
       </li>)}

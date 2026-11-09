@@ -19,7 +19,7 @@
 
 外壳与左栏见[布局](../layout.md)。
 
-现状（#229 PR9c）：日程列表在内层栏（窄屏另有下拉切换）；中间是所选日程的检查目的与任务材料、发生记录（每次的结果、原因、生成的任务）和修订表单；右栏是触发条件、下次时间（按规则推算的预览）、产生的任务、授权与协调器。创建日程是中间的单独视图，表单仍是旧样式。
+现状（#229 PR9c）：日程列表在内层栏（窄屏另有下拉切换）；中间是所选日程的检查目的与任务材料、发生记录（每次的结果、原因、生成的任务）和修订表单；右栏是触发条件、下次时间（按规则推算的预览）、产生的任务、授权与协调器。创建日程是中间的单独视图，表单仍是旧样式。职责按名称显示；日程、修订、操作、授权范围、授权人、指定验收身份和固定目标（工作链、阶段、所属目标）的完整标识在各处“来源与完整标识”里。
 
 ## 内容与状态
 
@@ -29,6 +29,8 @@
 - 已配置规则 ≠ 下次一定执行。协调器未启用或当前身份没有授权时写明原因，规则预览只是预览。
 - 暂停和停止只影响未来的触发；已生成的 Task、在途 Run 和 Session 各有自己的状态。历史触发的 Task 链接一直可达。
 - 错过、重叠、旧定义排队和结果未知都写理由与下一责任；结果未知按原操作回读，不重复新建。
+- 协调器写的触发原因是英文代码，按代码写成中文；最近错误只写“最近一次检查出错”，原文收进来源层。
+- 授权正在重读或重读失败时整块标“上次读回，当前待核对”，不写“没有授权”。时区或时间不合法时，下次时间写“无法推算”。
 - 长的任务正文放在可展开的材料区，不压住时间和责任。
 - 修改普通日程看日程授权；指定受管目标的日程还要核对目标和执行授权。授权撤回后，已有定义仍可暂停或停止。
 - Task 自己的执行时间与每日重复在任务详情里设置，不在本页（规则见[一次与每日复制](../../architecture/contracts.md#普通-task-的一次与每日复制)）。
@@ -41,8 +43,8 @@
 
 | 范围 | 路径 |
 | --- | --- |
-| 源码（`apps/workbench/src/`） | `features/scheduling/SchedulingPanel.tsx`（日程表、详情卡、创建表单）、`features/scheduling/presentation.ts`、`features/scheduling/managedTarget.ts`、`features/scheduling/client.ts`；任务详情里的“执行时间与重复”是另一套机制，在 `features/workflow/TaskSchedulePanel.tsx` |
-| 测试（`apps/workbench/test/`） | `schedule-presentation.test.ts`、`schedule-managed-target.test.ts`、`schedule-run-session-path-browser.test.ts` |
+| 源码（`apps/workbench/src/`） | `features/scheduling/SchedulingPanel.tsx`（内层栏日程列表、所选日程、右栏、创建视图）、`features/scheduling/presentation.ts`（规则、下次时间、触发原因与授权用语）、`features/scheduling/managedTarget.ts`、`features/scheduling/client.ts`；名称与来源层在 `shared/ui/RecordName.tsx`、`shared/ui/FullIdentifiers.tsx`；任务详情里的“执行时间与重复”是另一套机制，在 `features/workflow/TaskSchedulePanel.tsx` |
+| 测试（`apps/workbench/test/`） | `schedule-presentation.test.ts`、`schedule-next-instant.test.ts`、`schedule-managed-target.test.ts`、`schedule-wording-browser.test.ts`、`schedule-run-session-path-browser.test.ts` |
 
 ## 相关
 
