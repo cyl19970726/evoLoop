@@ -11,6 +11,9 @@ import { clearRecoveryIntents, forgetRecoveryIntent, isSpecialOperation, operati
 import { readRoute, href, date, ShortId, Alert, type Route } from "../shared/ui/shared";
 import { clearKnowledgeReturnsOnLogin, rememberKnowledgeSource } from "../shared/ui/returnRoute";
 import { appHistory, appPath, currentPath, onNavigate } from "../shared/navigation";
+import { useQuery } from "@tanstack/react-query";
+import { leaveProject, projectChanged, queryKeys, useProjectQuery } from "../shared/query";
+import { queryClient } from "./queryClient";
 import { WorkbenchShell, sectionNames } from "./WorkbenchShell";
 
 // Each page is its own chunk: the first load carries login, the shell and shared code only.
@@ -166,30 +169,24 @@ function OperationCheck({ receipt, token, onConfirmed }: {
 }
 
 function ProjectChooser({ token, principal, receipts, operationNotice, onRefreshSession, onConfirmed, context }: { token: string; principal: Principal; receipts: OperationReceipt[]; operationNotice: string; onRefreshSession: () => Promise<void>; onConfirmed: (receipt: OperationReceipt, result: Operation["result"]) => void; context: MutationContext }) {
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [missing, setMissing] = useState<string[]>([]);
-  const [refresh, setRefresh] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
   const [refreshError, setRefreshError] = useState("");
-  const [reading, setReading] = useState(true);
-  useEffect(() => {
-    let active = true;
-    setReading(true);
-    Promise.all(principal.projectIds.map(async id => {
+  const listKey = queryKeys.identity(principal.actorId, "projects", ...principal.projectIds);
+  const list = useQuery({
+    queryKey: listKey,
+    queryFn: () => Promise.all(principal.projectIds.map(async id => {
       try { return { project: await api(token).project(id), id }; }
-      catch { return { project: null, id }; }
-    })).then(results => {
-      if (!active) return;
-      setProjects(results.flatMap(r => r.project ? [r.project] : []));
-      setMissing(results.filter(r => !r.project).map(r => r.id));
-      setReading(false);
-    });
-    return () => { active = false; };
-  }, [principal.projectIds, token, refresh]);
+      catch { return { project: null as Project | null, id }; }
+    })),
+  });
+  const projects = (list.data ?? []).flatMap(r => r.project ? [r.project] : []);
+  const missing = (list.data ?? []).filter(r => !r.project).map(r => r.id);
+  const reading = list.isFetching;
+  const reread = () => { void queryClient.invalidateQueries({ queryKey: listKey }); };
   async function refreshProjects() {
     if (refreshing) return;
     setRefreshing(true); setRefreshError("");
-    try { await onRefreshSession(); setRefresh(value => value + 1); }
+    try { await onRefreshSession(); reread(); }
     catch (cause) { setRefreshError(errorText(cause)); }
     finally { setRefreshing(false); }
   }
@@ -199,11 +196,11 @@ function ProjectChooser({ token, principal, receipts, operationNotice, onRefresh
     <button type="button" className="quiet" onClick={refreshProjects} disabled={refreshing}>{refreshing ? "刷新中…" : "刷新项目"}</button>
     {refreshError && <Alert kind="error">刷新失败：{refreshError}</Alert>}
     {operationNotice && <Alert>{operationNotice}</Alert>}
-    {receipts.map(receipt => <OperationCheck key={receipt.operationId} receipt={receipt} token={token} onConfirmed={result => { onConfirmed(receipt, result); setRefresh(value => value + 1); }} />)}
+    {receipts.map(receipt => <OperationCheck key={receipt.operationId} receipt={receipt} token={token} onConfirmed={result => { onConfirmed(receipt, result); reread(); }} />)}
     {reading && <p role="status">正在核对授权项目；已有列表来自上次读取。</p>}
     {projects.length ? <div className="project-list">{projects.filter(p => principal.projectIds.includes(p.id)).map(p => <a className="project-item" key={p.id} href={href(p.id, "work")}><strong>{p.title}</strong><span>{receipts.filter(r => r.projectId === p.id).length > 0 && `待核对操作 ${receipts.filter(r => r.projectId === p.id).length} 项 · `}<ShortId value={p.id} />　进入任务列表 →</span></a>)}</div> : !reading && <Alert>当前没有可读取的项目。可在授权范围内创建项目，再留下目标与首份需求。</Alert>}
     {missing.length > 0 && <Alert>有 {missing.length} 个授权项目尚未创建或暂不可读取。服务异常时请先重试，已存在项目不会被覆盖。</Alert>}
-    {missing.map(id => <section className="panel" key={id}><p>项目范围 <ShortId value={id} /></p><ActionForm context={{ ...context, projectId: id, blocked: hasProjectReceipt(receipts, id), onChanged: () => { setRefresh(v => v + 1); context.onChanged(); } }} title="创建项目" fields={[{ name: "title", label: "项目名称" }]} build={v => ({ type: "project.create", ...v })} /></section>)}
+    {missing.map(id => <section className="panel" key={id}><p>项目范围 <ShortId value={id} /></p><ActionForm context={{ ...context, projectId: id, blocked: hasProjectReceipt(receipts, id), onChanged: () => { reread(); context.onChanged(); } }} title="创建项目" fields={[{ name: "title", label: "项目名称" }]} build={v => ({ type: "project.create", ...v })} /></section>)}
   </section>;
 }
 
@@ -217,8 +214,6 @@ export function App() {
   const attemptInFlight = useRef(false);
   const [receiptStorageAvailable, setReceiptStorageAvailable] = useState(true);
   const [operationNotice, setOperationNotice] = useState("");
-  const [projectError, setProjectError] = useState("");
-  const [projectTitle, setProjectTitle] = useState("");
   const projectId = route.projectId && session?.principal.projectIds.includes(route.projectId) ? route.projectId : null;
   const client = useMemo(() => api(token), [token]);
   const visibleReceipts = session ? forPrincipal(receipts, session.principal.actorId, session.principal.projectIds) : [];
@@ -262,29 +257,34 @@ export function App() {
     window.addEventListener("beforeunload", beforeUnload);
     return () => window.removeEventListener("beforeunload", beforeUnload);
   }, []);
+  const projectRead = useProjectQuery(projectId ?? "", ["project"], () => client.project(projectId!), { enabled: !!session });
+  const projectTitle = projectRead.data?.title ?? "";
+  const projectError = projectRead.error ? errorText(projectRead.error) : "";
+  const shownProject = useRef<string | null>(null);
   useEffect(() => {
-    if (!projectId || !session) return;
-    let active = true;
-    client.project(projectId).then(p => { if (active) { setProjectError(""); setProjectTitle(p.title); } })
-      .catch(cause => { if (active) setProjectError(errorText(cause)); });
-    return () => { active = false; };
-  }, [client, projectId, session, refresh]);
+    const previous = shownProject.current;
+    shownProject.current = projectId;
+    if (previous && previous !== projectId) void leaveProject(queryClient, previous);
+  }, [projectId]);
+  /** A write applied: pages reread (refresh) and the project's queries go stale. */
+  const changed = () => { setRefresh(v => v + 1); if (projectId) void projectChanged(queryClient, projectId); };
   if (!session) return <AuthGate hasReceipts={receipts.length > 0} onSuccess={(value, next) => {
     clearKnowledgeReturnsOnLogin(next.principal.projectIds);
+    queryClient.clear();
     setToken(value); setSession(next);
   }} />;
   const principal = session.principal;
-  const context: MutationContext = { token, projectId: projectId ?? "", principal, blocked: visibleReceipts.some(r => r.projectId === projectId), onAttempt: beginAttempt, onKnown: finishKnown, onChanged: () => setRefresh(v => v + 1) };
+  const context: MutationContext = { token, projectId: projectId ?? "", principal, blocked: visibleReceipts.some(r => r.projectId === projectId), onAttempt: beginAttempt, onKnown: finishKnown, onChanged: changed };
   function logout() {
     if (document.querySelector('[data-dirty="true"]') && !window.confirm("还有未提交的草稿。退出会清除本页草稿，确定退出？")) return;
     if (visibleReceipts.length && !window.confirm(`仍有 ${visibleReceipts.length} 个结果未确认的操作。回执会留在当前浏览器会话；退出后请用同一身份登录核对。确定退出？`)) return;
-    clearCommandDrafts(); clearRecoveryIntents(); clearSessionSnapshots(); setToken(""); setSession(null);
+    clearCommandDrafts(); clearRecoveryIntents(); clearSessionSnapshots(); queryClient.clear(); setToken(""); setSession(null);
   }
   function confirmReceipt(receipt: OperationReceipt, result: Operation["result"]) {
     forgetRecoveryIntent(receipt.operationId);
     const scope = isSpecialOperation(receipt.commandType) ? "已核到服务端同身份、同项目、同类型及同 ID 的操作结果；浏览器未核对原提交正文摘要。" : "";
     setOperationNotice(`${result.status === "applied" ? `操作 ${receipt.operationId} 已应用；正在回读当前数据。` : `操作 ${receipt.operationId} 被拒绝：${result.message}`} ${scope}`.trim());
-    replaceReceipts(removeReceipt(receiptsRef.current, receipt.operationId)); setRefresh(v => v + 1);
+    replaceReceipts(removeReceipt(receiptsRef.current, receipt.operationId)); changed();
   }
   if (!projectId) return <div className="app-shell"><header className="project-chooser-header"><a className="brand" href="/">evoLoop</a><button className="quiet" onClick={logout}>退出</button></header><ProjectChooser context={context} token={token} principal={principal} receipts={visibleReceipts} operationNotice={operationNotice} onConfirmed={confirmReceipt} onRefreshSession={async () => setSession(await api(token).session())} /></div>;
   const projectReceipts = visibleReceipts.filter(r => r.projectId === projectId);

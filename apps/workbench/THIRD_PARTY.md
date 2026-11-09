@@ -10,3 +10,4 @@ Upstream source SHA-256: button `c2b999a96781e6c932632bd089095368e973bf5602e1b1a
 - `@evoloop/ui` components (`packages/ui/src/components/`) are written for this project following the shadcn/ui and Radix patterns above; no further upstream source was copied. Added runtime dependencies, all MIT: Radix Tabs, Tooltip, Dropdown Menu, Hover Card and Collapsible (versions fixed in `packages/ui/package.json` and the root lockfile). Agent avatars are project-drawn SVG.
 
 - TanStack Router (`@tanstack/react-router` 1.170.46 and its `router-core`, `history` and `store` packages), MIT: path URLs and browser history for the workbench (#229 PR4a). Used as a package; no source copied. Version fixed in `apps/workbench/package.json` and the root lockfile.
+- TanStack Query (`@tanstack/react-query` 5.104.5 and `query-core`), MIT: cached, project-scoped server reads (#229 PR4b). Used as a package; no source copied. Version fixed in `apps/workbench/package.json` and the root lockfile.

@@ -1,4 +1,4 @@
 {
-  "initialJsGzipBytes": 190000,
-  "note": "JavaScript the browser loads before the first page renders (the entry script and its modulepreloads in dist/index.html), gzip-compressed. Pages, Markdown, diagrams and the component samples load on demand. Set by #229 PR4a at 181 KB (was 392 KB as one bundle); raise it only with a reason in the same change."
+  "initialJsGzipBytes": 200000,
+  "note": "JavaScript the browser loads before the first page renders (the entry script and its modulepreloads in dist/index.html), gzip-compressed. Pages, Markdown, diagrams and the component samples load on demand. #229 PR4a set 190 KB at 181 KB (was 392 KB as one bundle); PR4b raised it to 200 KB for TanStack Query (about 10 KB), which the shell needs before any page. Raise it only with a reason in the same change."
 }
