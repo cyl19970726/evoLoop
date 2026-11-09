@@ -302,6 +302,8 @@ test("the task page's revision comparison lists assets on tokens, and a long CSS
   await preview.waitFor();
   for (const width of [1440, 390]) {
     await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
+    // The shell switches to its narrow layout on the resize event; measure once two frames have been drawn.
+    await page.evaluate(() => new Promise(done => requestAnimationFrame(() => requestAnimationFrame(() => done(null)))));
     const box = await preview.evaluate(el => {
       const pre = el.querySelector("pre")!;
       const style = getComputedStyle(pre);
