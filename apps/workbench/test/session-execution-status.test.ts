@@ -13,19 +13,26 @@ const progress = (status: NonNullable<NativeProgressView["turn"]>["status"],
 
 test("live binding with old activity reports native status without asserting useful progress or failure", () => {
   const observed = progress("inProgress");
-  assert.equal(nativeExecutionLabel(observed, true), "原生宿主回报 Turn 进行中");
+  assert.equal(nativeExecutionLabel(observed, true), "原生宿主回报这一轮进行中");
   assert.match(executionSourceNote(observed, true, "processing"), /不能据此认定仍在有效推进/);
   assert.equal(nativeExecutionLabel(observed, false), "原生观察已过期，当前状态待核对");
   assert.equal(nativeExecutionLabel(progress("inProgress", "stale"), true), "原生观察已过期，当前状态待核对");
-  assert.match(executionSourceNote(progress("inProgress", "stale"), true, "processing"), /按原 Session、Turn 和消息核对/);
+  assert.match(executionSourceNote(progress("inProgress", "stale"), true, "processing"), /按原智能体、这一轮和消息核对/);
 });
 
 test("exact Turn and persisted message conflict stays unresolved", () => {
   assert.match(executionSourceNote(progress("inProgress"), true, "replied"), /不一致/);
   assert.match(executionSourceNote(progress("completed"), true, "processing"), /不一致/);
   assert.match(executionSourceNote(progress("unknown"), true, "unknown"), /结果未知/);
-  assert.equal(nativeExecutionLabel(progress("completed"), true), "原生宿主回报 Turn 已结束");
+  assert.equal(nativeExecutionLabel(progress("completed"), true), "原生宿主回报这一轮已结束");
   const conflictingNative = { ...progress("inProgress"), status: "idle" as const };
-  assert.equal(nativeExecutionLabel(conflictingNative, true), "原生状态与 Turn 状态不一致，待核对");
+  assert.equal(nativeExecutionLabel(conflictingNative, true), "原生状态与这一轮的状态不一致，待核对");
   assert.match(executionSourceNote(conflictingNative, true, "processing"), /同一原生观察内状态冲突/);
+});
+
+test("execution notes speak plain Chinese, without internal source names", () => {
+  const notes = [progress("inProgress"), progress("completed"), progress("unknown"), progress("inProgress", "stale")]
+    .flatMap(item => [nativeExecutionLabel(item, true), nativeExecutionLabel(item, false),
+      ...(["processing", "replied", "unknown", null] as const).map(state => executionSourceNote(item, true, state))]);
+  for (const note of notes) assert.doesNotMatch(note, /Session|Turn|processing|live|Run/);
 });

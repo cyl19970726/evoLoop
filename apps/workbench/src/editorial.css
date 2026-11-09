@@ -494,37 +494,6 @@ tbody tr:hover{
   border-radius: 5px;
 }
 
-/* Unify secondary workspaces with the same restrained surfaces. */
-.session-workspace {
-  max-width: 1600px;
-}
-
-.session-workspace-section {
-  background: #fff;
-  border-color: var(--border);
-  border-radius: 7px;
-  box-shadow: none;
-}
-
-.session-workspace-tabs {
-  gap: 24px;
-  border-color: var(--border);
-}
-
-.session-workspace-tabs button {
-  color: #747985;
-  font-size: 12px;
-}
-
-.session-workspace-tabs button.selected {
-  color: var(--primary);
-  border-color: var(--primary);
-}
-
-.session-section-head h2 {
-  color: #5e6470;
-}
-
 .workflow-form input,.workflow-form textarea,.workflow-form select {
   border-color: var(--border-strong);
   border-radius: 6px;
@@ -533,12 +502,6 @@ tbody tr:hover{
 @media (min-width: 1600px) {
   .content{
     padding-inline: 42px;
-  }
-}
-
-@media (min-width: 1800px) {
-  .session-workspace {
-    max-width: none;
   }
 }
 

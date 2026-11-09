@@ -101,12 +101,12 @@ test("Session message entry distinguishes saving, execution and manual handoff",
   const readingScope = page.locator(".workspace-reading-scope");
   await readingScope.locator("summary").click();
   assert.match(await readingScope.innerText(), /自动处理：未启用.*不会启动此会话/);
-  assert.equal(await readingScope.getByText("消息先保存到原 Session 的待处理队列", { exact: false }).count(), 1);
-  assert.equal(await page.getByText("保存待处理", { exact: true }).count() > 0, true);
-  assert.equal(await page.getByLabel("消息内容").getAttribute("placeholder"), "给当前 Session 发消息…");
-  const composer = page.getByLabel("消息内容");
+  assert.equal(await readingScope.getByText("消息先保存为这个智能体的待处理消息", { exact: false }).count(), 1);
+  assert.equal(await page.getByText("Enter 保存并按顺序处理", { exact: true }).count(), 1, "the composer says what Enter does here");
+  const composer = page.getByRole("combobox", { name: "消息" });
+  assert.equal(await composer.getAttribute("placeholder"), "发消息，/ 调用技能，@ 转给其他智能体");
   const composerBox = (await composer.boundingBox())!;
-  assert.ok(composerBox.height >= 40 && composerBox.height <= 120, "the integrated composer is visible at its compact initial height");
+  assert.ok(composerBox.height >= 30 && composerBox.height <= 120, "the integrated composer is visible at its compact initial height");
   await composer.fill("第一行\n第二行\n第三行\n第四行");
   assert.ok((await composer.boundingBox())!.height > composerBox.height, "the composer grows to show multiline drafts");
   await composer.fill("");
@@ -116,10 +116,10 @@ test("Session message entry distinguishes saving, execution and manual handoff",
   await readingScope.getByText(/本次重读确认/).waitFor();
   assert.match(await readingScope.innerText(), /执行状态读于 .*配置变化后请点上方“重新读取”/,
     "the observed execution capability explains when its persisted snapshot can go stale");
-  await page.getByLabel("消息内容").fill("保存后的消息详情");
-  await page.getByRole("button", { name: "保存待处理", exact: true }).click();
+  await composer.fill("保存后的消息详情");
+  await page.getByRole("button", { name: "发送", exact: true }).click();
   await page.getByText(/活动暂不可读取：活动暂不可读/).waitFor();
-  const timeline = page.getByRole("log", { name: "Session 消息与工具时间线" });
+  const timeline = page.getByRole("log", { name: "消息与工具时间线" });
   assert.equal(await timeline.locator("[data-workspace-entry]").count(), 0, "a failed reread does not invent a persisted conversation entry");
   assert.equal(detailHeld, false, "saving the new conversation turn does not force open a stale detail panel");
   assert.equal(await page.getByText(/活动暂不可读取：活动暂不可读/).count(), 1);
@@ -133,20 +133,21 @@ test("Session message entry distinguishes saving, execution and manual handoff",
   }
   assert.match(await readingScope.innerText(), /暂不可核实.*不能预期自动回复/);
   assert.equal(await page.getByText("当前身份只有读取权限。").count(), 1);
-  assert.equal(await page.getByText("保存待处理", { exact: true }).count(), 0);
+  assert.equal(await page.getByRole("combobox", { name: "消息" }).isDisabled(), true, "a read-only agent cannot be written to");
 
   await page.evaluate(([project, key]) => { location.hash = `/p/${project}/runtime?session=${encodeURIComponent(key)}`; }, [projectId, keys.manual]);
   await page.getByRole("heading", { name: "外部会话" }).waitFor();
   if (await readingScope.getAttribute("open") === null) await readingScope.locator("summary").click();
   assert.match(await readingScope.innerText(), /需人工转交.*不代表原会话已收到或阅读/);
-  assert.equal(await page.getByText("保存人工转交", { exact: true }).count() > 0, true);
+  assert.equal(await page.getByText("Enter 保存，保存后需人工转交", { exact: true }).count(), 1);
+  assert.equal(await page.getByRole("combobox", { name: "消息" }).isDisabled(), false);
 
   await page.evaluate(([project, key]) => { location.hash = `/p/${project}/runtime?session=${encodeURIComponent(key)}`; }, [projectId, keys.revoked]);
   await page.getByRole("heading", { name: "已撤销外部会话" }).waitFor();
   if (await readingScope.getAttribute("open") === null) await readingScope.locator("summary").click();
   assert.match(await readingScope.innerText(), /不能向当前外部会话保存或转交消息/);
   assert.equal(await page.getByText("外部连接已撤销。", { exact: true }).count(), 1);
-  assert.equal(await page.getByText("保存人工转交", { exact: true }).count(), 0);
+  assert.equal(await page.getByRole("combobox", { name: "消息" }).isDisabled(), true);
 });
 
 test("the authenticated receiver can record a read while its exact message Turn is running", {
@@ -208,7 +209,7 @@ test("the authenticated receiver can record a read while its exact message Turn 
     await page.getByRole("button", { name: "消息详情" }).click();
     await detail.waitFor();
     assert.equal(await detail.getByText("记录本人已读原消息", { exact: true }).count(), 0, `${state} cannot sign a read`);
-    await detail.getByRole("button", { name: "关闭活动详情" }).click();
+    await detail.getByRole("button", { name: "关闭", exact: true }).click();
   }
   await fetch(`${base}/__fixture/set?mode=running`);
   await page.getByRole("button", { name: "消息详情" }).click();

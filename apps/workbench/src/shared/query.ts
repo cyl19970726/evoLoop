@@ -47,7 +47,8 @@ export function projectChanged(client: Client, projectId: string): Promise<void>
   return client.invalidateQueries({ queryKey: queryKeys.project(projectId), predicate: query => query.queryKey[2] !== fixedContent });
 }
 
-export interface ProjectQueryOptions { enabled?: boolean; refetchInterval?: number | false; keepPrevious?: boolean }
+/** `retry: false` for a read that polls anyway: a failed reread is reported at once instead of being tried again quietly. */
+export interface ProjectQueryOptions { enabled?: boolean; refetchInterval?: number | false; keepPrevious?: boolean; retry?: false }
 
 /**
  * `keepPrevious`: a changed key shows the last answer as a stand-in while the new one is read (`previous`). The last
@@ -69,6 +70,7 @@ export function projectQueryOptions<T>(projectId: string, key: readonly unknown[
     ...(key[0] === fixedContent ? { staleTime: Infinity } : {}),
     ...(options.refetchInterval !== undefined ? { refetchInterval: options.refetchInterval } : {}),
     ...(options.keepPrevious ? { placeholderData: previousOfProject(projectId) } : {}),
+    ...(options.retry === false ? { retry: false } : {}),
   };
 }
 

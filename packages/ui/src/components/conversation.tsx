@@ -1,5 +1,5 @@
 import * as React from "react";
-import { Check, ChevronRight, CornerDownRight, X } from "lucide-react";
+import { Check, ChevronRight, CornerDownRight, LoaderCircle, X } from "lucide-react";
 import { cn } from "../lib/cn";
 import { Button } from "./button";
 import { CollapsibleRow } from "./list";
@@ -38,39 +38,74 @@ export interface ToolStep {
   /** Right-aligned detail such as a duration or +12 −3. */
   meta?: string | undefined;
   failed?: boolean | undefined;
+  /** Still running: a spinner instead of a check. */
+  running?: boolean | undefined;
   /** Commands and paths read better in monospace. */
   code?: boolean | undefined;
+  /** Stable key, for steps that change while shown. */
+  id?: string | undefined;
+  /** Stays in sight under the summary while the list is folded: a failure, the step running now. */
+  pinned?: boolean | undefined;
+  /** A small control at the end of the row, such as 查看详情. */
+  action?: React.ReactNode | undefined;
+  /** Shown under the row when set, for example the step's input and output opened by its action. */
+  detail?: React.ReactNode | undefined;
+  /** Attributes for the row itself, such as data hooks the page uses to keep the reading position. */
+  rowProps?: (React.HTMLAttributes<HTMLLIElement> & Record<`data-${string}`, string | undefined>) | undefined;
 }
 
 export interface ToolSummaryProps {
   /** For example 执行了 5 个指令、读了 3 个文件. */
-  summary: string;
+  summary: React.ReactNode;
   steps: ToolStep[];
   defaultOpen?: boolean | undefined;
+  open?: boolean | undefined;
+  onOpenChange?: ((open: boolean) => void) | undefined;
+  /** Replaces the failure count after the summary, for example ，正在进行，1 次失败. */
+  status?: React.ReactNode | undefined;
   className?: string | undefined;
+  triggerClassName?: string | undefined;
+  listClassName?: string | undefined;
 }
 
-/** Tool calls folded into one muted line; failures are counted in the summary and marked in the steps. */
-export function ToolSummary({ summary, steps, defaultOpen, className }: ToolSummaryProps) {
+function StepRow({ step }: { step: ToolStep }) {
+  const { className, ...rowProps } = step.rowProps ?? {};
+  return (
+    <li {...rowProps} className={cn("flex min-w-0 flex-col gap-1.5", className)}>
+      <div className="flex min-w-0 items-center gap-2.5">
+        <span aria-hidden="true" className={cn("flex w-4 shrink-0 justify-center", step.failed ? "text-destructive" : "text-muted-foreground")}>
+          {step.failed ? <X className="size-3.5" /> : step.running ? <LoaderCircle className="size-3.5 animate-spin motion-reduce:animate-none" /> : <Check className="size-3.5" />}
+        </span>
+        {step.failed ? <span className="sr-only">失败：</span> : step.running ? <span className="sr-only">进行中：</span> : null}
+        <span className={cn("min-w-0 flex-1 truncate", step.code && "font-mono text-caption", step.failed && "text-destructive")}>{step.text}</span>
+        {step.meta && <span className="shrink-0 text-caption text-muted-foreground tabular-nums">{step.meta}</span>}
+        {step.action}
+      </div>
+      {step.detail}
+    </li>
+  );
+}
+
+const stepList = "m-0 flex list-none flex-col gap-[7px] rounded-md bg-muted px-3.5 py-2.5 text-label text-text-secondary";
+
+/** Tool calls folded into one muted line; failures are counted in the summary and marked in the steps. Pinned steps
+ *  stay in sight while the list is folded. */
+export function ToolSummary({ summary, steps, defaultOpen, open, onOpenChange, status, className, triggerClassName, listClassName }: ToolSummaryProps) {
   const failed = steps.filter(step => step.failed).length;
+  const pinned = steps.filter(step => step.pinned);
+  const key = (step: ToolStep, index: number) => step.id ?? String(index);
   return (
     <CollapsibleRow
       defaultOpen={defaultOpen}
+      open={open}
+      onOpenChange={onOpenChange}
       className={className}
-      summary={<span>{summary}{failed > 0 && <span className="text-destructive">，{failed} 次失败</span>}</span>}
+      triggerClassName={triggerClassName}
+      summary={<span>{summary}{status ?? (failed > 0 && <span className="text-destructive">，{failed} 次失败</span>)}</span>}
+      folded={pinned.length > 0 && <ol className={cn(stepList, "ml-[18px]", listClassName)}>{pinned.map((step, index) => <StepRow key={key(step, index)} step={step} />)}</ol>}
     >
-      <ol className="m-0 flex list-none flex-col gap-[7px] rounded-md bg-muted px-3.5 py-2.5 text-label text-text-secondary">
-        {steps.map((step, index) => (
-          <li key={index} className="flex items-center gap-2.5">
-            <span aria-hidden="true" className={cn("flex w-4 justify-center", step.failed ? "text-destructive" : "text-muted-foreground")}>
-              {step.failed ? <X className="size-3.5" /> : <Check className="size-3.5" />}
-            </span>
-            <span className={cn("min-w-0 flex-1 truncate", step.code && "font-mono text-caption", step.failed && "text-destructive")}>
-              {step.failed && <span className="sr-only">失败：</span>}{step.text}
-            </span>
-            {step.meta && <span className="shrink-0 text-caption text-muted-foreground tabular-nums">{step.meta}</span>}
-          </li>
-        ))}
+      <ol className={cn(stepList, listClassName)}>
+        {steps.map((step, index) => <StepRow key={key(step, index)} step={step} />)}
       </ol>
     </CollapsibleRow>
   );
@@ -101,20 +136,23 @@ export interface LiveStatusLineProps {
   text: string;
   /** For example 1 分 04 秒. */
   elapsed?: string | undefined;
+  /** After the text, for example a link to the task this turn works on. */
+  children?: React.ReactNode | undefined;
   className?: string | undefined;
 }
 
-/** One line at the end of the flow saying what is running right now. */
-export function LiveStatusLine({ avatar, text, elapsed, className }: LiveStatusLineProps) {
+/** One line at the end of the flow saying what is running right now. The ticking time is not announced. */
+export function LiveStatusLine({ avatar, text, elapsed, children, className }: LiveStatusLineProps) {
   return (
-    <div role="status" aria-live="polite" className={cn("flex items-center gap-2 text-label text-text-secondary", className)}>
+    <div role="status" aria-live="polite" className={cn("flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-label text-text-secondary", className)}>
       {avatar}
       <span className="relative flex size-2 shrink-0" aria-hidden="true">
         <span className="absolute inline-flex size-full animate-ping rounded-full bg-primary opacity-60 motion-reduce:animate-none" />
         <span className="relative inline-flex size-2 rounded-full bg-primary" />
       </span>
-      <span>{text}</span>
-      {elapsed && <span className="text-muted-foreground tabular-nums">· {elapsed}</span>}
+      <span className="min-w-0 [overflow-wrap:anywhere]">{text}</span>
+      {elapsed && <span aria-hidden="true" className="text-muted-foreground tabular-nums">· {elapsed}</span>}
+      {children && <span className="min-w-0">· {children}</span>}
     </div>
   );
 }
@@ -201,7 +239,7 @@ export interface TodoItem {
 }
 
 /** The agent's checklist, pinned above the composer. Folds into one line once everything is done. */
-export function TodoList({ items, className }: { items: TodoItem[]; className?: string | undefined }) {
+export function TodoList({ items, note, className }: { items: TodoItem[]; note?: React.ReactNode | undefined; className?: string | undefined }) {
   const done = items.filter(item => item.status === "done").length;
   const list = (
     <ol className="m-0 flex list-none flex-col gap-[7px] p-0">
@@ -228,6 +266,7 @@ export function TodoList({ items, className }: { items: TodoItem[]; className?: 
   );
   return (
     <section aria-label="待办清单" className={cn("rounded-[16px] bg-muted px-4 py-3 text-label", className)}>
+      {note && <p className="m-0 mb-2 text-caption text-muted-foreground">{note}</p>}
       {done === items.length && items.length > 0
         ? <CollapsibleRow summary={`待办 ${done} / ${items.length} 已完成`}>{list}</CollapsibleRow>
         : list}

@@ -77,10 +77,11 @@ test("unknown direct input keeps a readable long history at the original window 
     await page.goto(`${base}/p/${projectId}/sessions?session=${encodeURIComponent(key)}&tab=activity`);
     await page.getByLabel("访问令牌").fill("fixture-token");
     await page.getByRole("button", { name: "进入", exact: true }).click();
-    await page.getByLabel("即时发送到原 Session").fill("独立验收夹具：核对原输入未知结果，不启动模型。");
-    await page.getByRole("button", { name: "开始一轮对话" }).click();
+    await page.getByText("Enter 立即开始一轮 · ⌘/Ctrl+Enter 保存为排队消息").waitFor();
+    await page.getByRole("combobox", { name: "消息" }).fill("独立验收夹具：核对原输入未知结果，不启动模型。");
+    await page.getByRole("button", { name: "发送", exact: true }).click();
     await page.getByText("发送结果未知；保留原输入 ID，请核对后继续。").waitFor();
-    const history = page.getByRole("log", { name: "Session 消息与工具时间线" });
+    const history = page.getByRole("log", { name: "消息与工具时间线" });
     const layout = await page.evaluate(() => {
       const pane = document.querySelector<HTMLElement>(".workspace-timeline-scroll")!;
       const composer = document.querySelector<HTMLElement>(".session-composer-host")!;
@@ -96,9 +97,12 @@ test("unknown direct input keeps a readable long history at the original window 
     assert.ok(layout.historyHeight >= (viewport.height === 560 ? 90 : viewport.width === 390 ? 180 : 240) &&
       layout.scrollHeight > layout.historyHeight && layout.composerBottom <= viewport.height + 1,
       `unknown result must leave a continuous reading area: ${JSON.stringify(layout)}`);
-    assert.equal(await page.getByText("只读取原 inputId，不会重发。").isVisible(), true);
+    assert.equal(await page.getByText("只按原输入核对，不会重发", { exact: false }).isVisible(), true);
     assert.equal(await page.getByRole("button", { name: "核对结果（不会重发）" }).isVisible(), true);
-    assert.equal(await (await page.locator(".session-direct-receipt small").first().innerText()).startsWith("输入 ID："), true);
+    // The original input ID is in the source layer of the receipt.
+    await page.locator(".session-direct-receipt summary").click();
+    assert.match(await page.locator(".session-direct-receipt").innerText(), /输入 ID\s*[0-9a-f-]{36}/);
+    await page.locator(".session-direct-receipt summary").click();
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "no horizontal overflow");
     const first = history.locator('[data-workspace-entry="history-0"]');
     const middle = history.locator('[data-workspace-entry="history-48"]');
@@ -115,13 +119,13 @@ test("unknown direct input keeps a readable long history at the original window 
         await page.screenshot({ path: join(process.env.EVOLOOP_TIMELINE_CAPTURE_DIR,
           `unknown-${viewport.width}-${viewport.height}-dpr${viewport.dpr}-${position}.png`) });
     }
-    const disclosure = page.locator(".session-direct-pending-draft > summary");
-    await disclosure.focus(); await disclosure.press("Enter");
-    assert.equal(await page.getByLabel("即时发送到原 Session").isVisible(), true, "draft remains keyboard accessible");
-    assert.equal(await page.getByRole("button", { name: "开始一轮对话" }).isDisabled(), true,
-      "unknown original intent blocks another send even when the draft is expanded");
-    await disclosure.press("Enter");
-    assert.equal(await page.getByLabel("即时发送到原 Session").isVisible(), false);
+    // The draft stays in the composer and can be read and edited; neither key sends it again while the outcome is unknown.
+    const draft = page.getByRole("combobox", { name: "消息" });
+    assert.equal(await draft.inputValue(), "独立验收夹具：核对原输入未知结果，不启动模型。");
+    assert.equal(await draft.isEditable(), true, "draft remains keyboard accessible");
+    assert.equal(await page.getByRole("button", { name: "发送", exact: true }).isDisabled(), true,
+      "unknown original intent blocks another send");
+    await draft.focus(); await draft.press("Enter"); await draft.press("Control+Enter");
     await context.close();
   }
   assert.equal(postCount, 4, "one POST per isolated viewport, with no resend after 503 and read 404");
@@ -189,8 +193,9 @@ test("a pre-reservation direct grant denial clears unknown pending and leaves on
   await page.goto(`${base}/p/${projectId}/sessions?session=${encodeURIComponent(key)}&tab=activity`);
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button", { name: "进入", exact: true }).click();
-  await page.getByLabel("即时发送到原 Session").fill("提前授权拒绝的输入");
-  await page.getByRole("button", { name: "开始一轮对话" }).click();
+  await page.getByText("Enter 立即开始一轮 · ⌘/Ctrl+Enter 保存为排队消息").waitFor();
+  await page.getByRole("combobox", { name: "消息" }).fill("提前授权拒绝的输入");
+  await page.getByRole("button", { name: "发送", exact: true }).click();
   await page.getByText("明确未接收 · 查看审计回执", { exact: true }).click();
   const auditText = await page.locator(".session-direct-audit").innerText();
   assert.match(auditText, /DIRECT_GRANT_MISSING/);
@@ -202,8 +207,8 @@ test("a pre-reservation direct grant denial clears unknown pending and leaves on
   assert.equal(await page.locator(".session-direct-receipt").count(), 0, "explicit rejection is not an unknown pending receipt");
   assert.equal(await page.getByText("发送结果未知；保留原输入 ID，请核对后继续。").count(), 0);
   assert.equal(await page.getByRole("button", { name: "核对结果（不会重发）" }).count(), 0);
-  assert.equal(await page.getByRole("button", { name: "开始一轮对话" }).isEnabled(), true);
-  assert.equal(await page.getByLabel("即时发送到原 Session").inputValue(), "提前授权拒绝的输入");
+  assert.equal(await page.getByRole("button", { name: "发送", exact: true }).isEnabled(), true);
+  assert.equal(await page.getByRole("combobox", { name: "消息" }).inputValue(), "提前授权拒绝的输入");
   const retained = await page.evaluate(([project, session]) => ({
     pending: sessionStorage.getItem(`direct-input:${project}:${session}:reader`),
     operation: sessionStorage.getItem(`direct-input:${project}:${session}:reader:operation`),
@@ -238,8 +243,8 @@ test("a pre-reservation direct grant denial clears unknown pending and leaves on
   await page.getByText("明确未接收 · 查看审计回执", { exact: true }).click();
   assert.equal(await page.getByRole("button", { name: "核对结果（不会重发）" }).count(), 0,
     "reload does not turn an explicit rejection into a recoverable unknown input");
-  await page.getByLabel("即时发送到原 Session").fill("修正后重新发送");
-  assert.equal(await page.getByRole("button", { name: "开始一轮对话" }).isEnabled(), true);
+  await page.getByRole("combobox", { name: "消息" }).fill("修正后重新发送");
+  assert.equal(await page.getByRole("button", { name: "发送", exact: true }).isEnabled(), true);
   assert.equal(postCount, 1, "reload and explicit rejection never post a new operation");
   if (process.env.EVOLOOP_TIMELINE_CAPTURE_DIR)
     await page.screenshot({ path: join(process.env.EVOLOOP_TIMELINE_CAPTURE_DIR, "explicit-409-390-reload.png") });

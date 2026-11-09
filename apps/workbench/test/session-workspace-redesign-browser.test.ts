@@ -214,7 +214,7 @@ test("Sessions is the sole directory and renders conversation, source, reply and
   await identitySettings.getByLabel("身份颜色").selectOption("teal");
   await identitySettings.getByLabel("图形标记").selectOption("grid");
   await identitySettings.getByLabel("变更依据").fill("same Session identity across clients");
-  await identitySettings.getByRole("button", { name: "调整 Session 颜色与图标" }).click();
+  await identitySettings.getByRole("button", { name: "调整颜色与图标" }).click();
   await page.waitForTimeout(500);
   assert.equal(await page.locator(".session-panel section[aria-label=智能体] .session-identity-teal").count(), 1,
     JSON.stringify({ commands: posted.filter(command => command.type === "session.identity.set"),
@@ -228,14 +228,16 @@ test("Sessions is the sole directory and renders conversation, source, reply and
   if (await page.getByRole("button", { name: "展开右栏" }).count()) await page.getByRole("button", { name: "展开右栏" }).click();
   await page.locator(".session-panel section[aria-label=智能体] .session-identity-teal").waitFor();
   assert.match(await page.locator(".session-panel section[aria-label=智能体] .session-identity-teal").getAttribute("aria-label") ?? "",
-    /测试 Session.*青色.*方格/, "the mark gives screen readers both stable identity properties");
+    /测试 Session.*青蓝色.*方格/, "the mark gives screen readers both stable identity properties");
   await page.getByRole("link", { name: "验证 Sessions 阅读体验" }).first().waitFor();
   await page.getByText("已收到", { exact: false }).waitFor();
   assert.equal(await page.locator('[data-workspace-entry="answer-1"] .session-identity-teal').count(), 1,
     "a reply with the exact Session author uses the saved identity");
   assert.equal(await page.locator('[data-workspace-entry="long-answer"] .session-identity-mark').count(), 0,
     "an unproven Session author does not inherit the selected Session mark");
-  await page.locator(".workspace-tools").getByText("工具已完成", { exact: false }).waitFor();
+  // Folded, the tool group is one line; the failed step stays in sight, the finished one folds away.
+  await page.locator(".workspace-tools").getByText("图片暂不可读", { exact: true }).waitFor();
+  assert.equal(await page.locator(".workspace-tools").getByText("工具已完成", { exact: true }).count(), 0);
   const fullMessage = page.locator('[data-workspace-entry="long-answer"]');
   await fullMessage.getByText("截断预览", { exact: true }).waitFor();
   await fullMessage.getByRole("button", { name: "读取完整回复" }).click();
@@ -244,12 +246,13 @@ test("Sessions is the sole directory and renders conversation, source, reply and
     "a full native message read expands inside its existing timeline bubble");
   const tools = page.locator(".workspace-tools");
   assert.equal(await tools.count(), 1, await page.locator(".session-workspace").innerText());
-  await tools.getByText("核对图片", { exact: true }).waitFor();
+  await tools.getByText("图片暂不可读", { exact: true }).waitFor();
   assert.equal(await tools.getByText(/1 项失败或中断/).count(), 1, "failed tools remain visible in the collapsed preview");
   const toolToggle = tools.locator(".workspace-tools-toggle");
   await toolToggle.click();
   assert.equal(await toolToggle.getAttribute("aria-expanded"), "true");
-  await tools.getByText("核对图片", { exact: true }).waitFor();
+  await tools.getByText("图片暂不可读", { exact: true }).waitFor();
+  await tools.getByText("工具已完成", { exact: true }).waitFor();
   await tools.getByRole("button", { name: "查看工具详情：核对图片" }).click();
   const inlineTool = tools.getByRole("region", { name: "核对图片详情" });
   await inlineTool.getByText("来源标识与读取范围", { exact: true }).waitFor();
@@ -270,8 +273,8 @@ test("Sessions is the sole directory and renders conversation, source, reply and
     "an audit deep link restores the Session details panel");
   await deepLinkPage.close();
   await page.getByRole("button", { name: "会话详情" }).click();
-  await page.getByLabel("消息内容").fill("键盘发送");
-  await page.getByLabel("消息内容").press("Control+Enter");
+  await page.getByRole("combobox", { name: "消息" }).fill("键盘发送");
+  await page.getByRole("combobox", { name: "消息" }).press("Control+Enter");
   await page.getByText("已保存，正在读取持久记录。", { exact: true }).waitFor();
   const postedMessage = posted.find(command => command.type === "session.message.post");
   assert.equal(posted.filter(command => command.type === "session.message.post").length, 1);
@@ -293,7 +296,7 @@ test("Sessions is the sole directory and renders conversation, source, reply and
   assert.equal(await editor.getByLabel("思考强度").inputValue(), "max", "the editor keeps its choice when the column becomes a drawer");
   await editor.getByLabel("调整理由").fill("固定测试中的受控换模");
   await editor.getByLabel("授权与模型能力依据").fill("fixture-model-list-and-grant");
-  await editor.getByRole("button", { name: "保存 Session 下一轮模型与强度" }).click();
+  await editor.getByRole("button", { name: "保存下一轮的模型与强度" }).click();
   assert.equal(posted.filter(command => command.type === "runtime.session.executionProfile.revise").length, 1);
   assert.equal(posted.find(command => command.type === "runtime.session.executionProfile.revise")?.reasoningEffort, "max");
   await modelControl.getByText("gpt-6-astra / max", { exact: false }).first().waitFor();
@@ -306,7 +309,7 @@ test("Sessions is the sole directory and renders conversation, source, reply and
     revisionId: "95000015-0000-4000-8000-000000000015", version: currentRuntimeVersion,
     reasoningEffort: "high" } };
   await page.getByRole("button", { name: "重新读取", exact: true }).click();
-  await page.locator(".session-agent-card").getByText("high", { exact: true }).waitFor();
+  await page.locator(".session-panel").getByText("high", { exact: true }).first().waitFor();
   await modelControl.getByText("gpt-6-astra / high", { exact: false }).first().waitFor();
   assert.equal(await modelControl.getByText("页面两次读取的修订不一致").count(), 0);
   const adjust = modelControl.getByRole("button", { name: "调整模型与强度" });
@@ -314,11 +317,11 @@ test("Sessions is the sole directory and renders conversation, source, reply and
   const rereadEditor = modelControl.locator(".session-model-editor");
   await rereadEditor.getByLabel("思考强度").waitFor();
   assert.equal(await rereadEditor.getByLabel("思考强度").inputValue(), "high");
-  assert.equal(await rereadEditor.getByRole("button", { name: "保存 Session 下一轮模型与强度" }).isEnabled(), true);
+  assert.equal(await rereadEditor.getByRole("button", { name: "保存下一轮的模型与强度" }).isEnabled(), true);
   await rereadEditor.getByLabel("思考强度").selectOption("max");
   await rereadEditor.getByLabel("调整理由").fill("current reread baseline");
   await rereadEditor.getByLabel("授权与模型能力依据").fill("fixture catalog and grant");
-  await rereadEditor.getByRole("button", { name: "保存 Session 下一轮模型与强度" }).click();
+  await rereadEditor.getByRole("button", { name: "保存下一轮的模型与强度" }).click();
   await modelControl.getByText("gpt-6-astra / max", { exact: false }).first().waitFor();
   const secondRevision = posted.filter(command => command.type === "runtime.session.executionProfile.revise")[1];
   assert.deepEqual([secondRevision?.expectedVersion, secondRevision?.expectedExecutionProfileRevisionId],

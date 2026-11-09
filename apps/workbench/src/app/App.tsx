@@ -40,6 +40,8 @@ const OperationsPage = named(() => import("../features/settings/OperationsPage")
 const RepositoryPage = named(() => import("../features/settings/RepositoryPage"), "RepositoryPage");
 const SessionWorkspace = named(() => import("../features/sessions/SessionWorkspace"), "SessionWorkspace");
 const ArrangementPage = named(() => import("../features/sessions/ArrangementPage"), "ArrangementPage");
+// The execution queue (features/workflow) shown in an agent's right column; passed in so the two features do not import each other.
+const ResidentQueuePanel = named(() => import("../features/workflow"), "ResidentQueuePanel");
 const ConnectorPage = named(() => import("../features/connectors/ConnectorPage"), "ConnectorPage");
 // The frame loads after login; the login gate starts fetching it while the token is typed.
 const loadShell = () => import("./shell/AppShell");
@@ -294,14 +296,14 @@ function WorkspacePages({ route, context, refresh, operations }: { route: Route;
     if (r.section === "operations") return <OperationsPage projectId={projectId} checks={operations} />;
     if (r.section === "repository") return <RepositoryPage projectId={projectId} reference={<ReferencePanel context={context} />} />;
     if (r.section === "sessions") return r.session
-      ? <SessionWorkspace context={context} refresh={refresh} sessionKey={r.session} active={active} />
+      ? <SessionWorkspace context={context} refresh={refresh} sessionKey={r.session} active={active} queue={queue => <ResidentQueuePanel context={context} titled={false} {...queue} />} />
       : <ArrangementPage context={context} refresh={refresh} />;
     if (r.section === "schedules") return <SchedulingPanel context={context} refresh={refresh} />;
     if (r.section === "overview") return <ProjectSummary token={token} projectId={projectId} refresh={refresh} active={active} />;
     if (r.section === "settings") return <ProjectSettings context={context} refresh={refresh} />;
     if (r.section === "connectors") return <ConnectorPage context={context} />;
     if (r.section === "collaboration") return <CollaborationPanel context={context} refresh={refresh} />;
-    const components = { reviews: <TeamWorkspace context={context} refresh={refresh} section="reviews" />, discussions: <TeamWorkspace context={context} refresh={refresh} section="discussions" />, runtime: r.session?.includes(":") ? <SessionWorkspace context={context} refresh={refresh} sessionKey={r.session} active={active} /> : <TeamWorkspace context={context} refresh={refresh} section="runtime" sessionId={r.session} />, roles: <TeamWorkspace context={context} refresh={refresh} section="roles" />, collaboration: <CollaborationPanel context={context} refresh={refresh} /> };
+    const components = { reviews: <TeamWorkspace context={context} refresh={refresh} section="reviews" />, discussions: <TeamWorkspace context={context} refresh={refresh} section="discussions" />, runtime: r.session?.includes(":") ? <SessionWorkspace context={context} refresh={refresh} sessionKey={r.session} active={active} queue={queue => <ResidentQueuePanel context={context} titled={false} {...queue} />} /> : <TeamWorkspace context={context} refresh={refresh} section="runtime" sessionId={r.session} />, roles: <TeamWorkspace context={context} refresh={refresh} section="roles" />, collaboration: <CollaborationPanel context={context} refresh={refresh} /> };
     if (r.section === "runtime" || r.section === "discussions" || r.section === "reviews" || r.section === "roles") return components[r.section];
     return <div className="content"><h1 tabIndex={-1}>{sectionLabels[r.section]}</h1>{components[r.section as keyof typeof components]}</div>;
   }

@@ -3,8 +3,9 @@ import { ArrowUp, FileText, ListChecks, Plus, Slash, Sparkles, X } from "lucide-
 import { cn } from "../lib/cn";
 
 /* The agent page composer. Enter sends; while a turn runs the message is queued (or added to the turn where the
-   runtime supports it — the caller decides and says so in `meta`). Typing / opens skills and commands; typing @
-   picks another agent to send this message to as well. */
+   runtime supports it — the caller decides, says so with `sendMode` and in `meta`). Cmd/Ctrl+Enter queues for the
+   next turn when the caller handles `onQueue`. Typing / opens skills and commands; typing @ picks another agent to
+   send this message to as well. */
 
 export interface ComposerCommand {
   id: string;
@@ -52,11 +53,24 @@ export function matchQuery(query: string, ...fields: (string | undefined)[]) {
   return q === "" || fields.some(field => field?.toLowerCase().includes(q));
 }
 
+/** What Enter does with the text: start or send (`send`), add to the running turn (`steer`), or wait for the next turn (`queue`). */
+export type ComposerSendMode = "send" | "steer" | "queue";
+const sendLabels: Record<ComposerSendMode, string> = { send: "发送", steer: "补充到这一轮", queue: "发送，排到下一轮" };
+
 export interface ComposerProps {
   value: string;
   onChange: (value: string) => void;
-  /** Sends the current text; the caller clears `value` once the message is saved. */
+  /** Sends the current text (Enter or the send button); the caller clears `value` once the message is saved. */
   onSend: (value: string) => void;
+  /** Cmd/Ctrl+Enter: queue the text for the next turn. Without it Cmd/Ctrl+Enter sends like Enter. */
+  onQueue?: ((value: string) => void) | undefined;
+  /** Names what Enter does; defaults to `queue` while running and `send` otherwise. */
+  sendMode?: ComposerSendMode | undefined;
+  /** A send is in flight: keys and the send button wait, the text stays editable. */
+  busy?: boolean | undefined;
+  /** Accessible name of the text box. */
+  label?: string | undefined;
+  maxLength?: number | undefined;
   /** Stops the current turn. The stop button shows while `running` and the box is empty. */
   onStop?: (() => void) | undefined;
   running?: boolean | undefined;
@@ -81,9 +95,10 @@ export interface ComposerProps {
 type MenuItem = { type: "command"; item: ComposerCommand } | { type: "agent"; item: ComposerAgent };
 
 export function Composer({
-  value, onChange, onSend, onStop, running, placeholder = "发消息，/ 调用技能，@ 转给其他智能体", attachments = [], onRemoveAttachment, onAttach,
-  commands = [], onPickCommand, agents = [], onPickAgent, meta, disabled, className, skillScope,
+  value, onChange, onSend, onQueue, sendMode, busy, label = "消息", maxLength, onStop, running, placeholder = "发消息，/ 调用技能，@ 转给其他智能体",
+  attachments = [], onRemoveAttachment, onAttach, commands = [], onPickCommand, agents = [], onPickAgent, meta, disabled, className, skillScope,
 }: ComposerProps) {
+  const mode: ComposerSendMode = sendMode ?? (running ? "queue" : "send");
   const textarea = React.useRef<HTMLTextAreaElement>(null);
   const [caret, setCaret] = React.useState<number | null>(null);
   const [active, setActive] = React.useState(0);
@@ -124,8 +139,13 @@ export function Composer({
   }
 
   function send() {
-    if (!value.trim() || disabled) return;
+    if (!value.trim() || disabled || busy) return;
     onSend(value);
+  }
+
+  function queue() {
+    if (!value.trim() || disabled || busy || !onQueue) return;
+    onQueue(value);
   }
 
   function onKeyDown(event: React.KeyboardEvent<HTMLTextAreaElement>) {
@@ -136,6 +156,7 @@ export function Composer({
       if (event.key === "Enter" || event.key === "Tab") { event.preventDefault(); const entry = items[activeIndex]; if (entry) pick(entry); return; }
       if (event.key === "Escape") { event.preventDefault(); setDismissed(value); return; }
     }
+    if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && onQueue) { event.preventDefault(); queue(); return; }
     if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); send(); return; }
     if (event.key === "Escape" && running && onStop && !value) { event.preventDefault(); onStop(); }
   }
@@ -244,7 +265,8 @@ export function Composer({
             value={value}
             disabled={disabled}
             placeholder={placeholder}
-            aria-label="消息"
+            aria-label={label}
+            maxLength={maxLength}
             role="combobox"
             aria-expanded={open}
             aria-controls={open ? listId : undefined}
@@ -262,7 +284,7 @@ export function Composer({
               <span aria-hidden="true" className="size-[11px] rounded-[3px] bg-current" />
             </button>
           ) : (
-            <button type="button" aria-label={running ? "发送，排到下一轮" : "发送"} onClick={send} disabled={!value.trim() || disabled} className="inline-flex size-9 shrink-0 cursor-pointer items-center justify-center rounded-full border-0 bg-foreground text-background outline-none hover:opacity-90 focus-visible:shadow-[var(--focus-ring)] disabled:cursor-default disabled:bg-field disabled:text-muted-foreground disabled:opacity-100">
+            <button type="button" aria-label={sendLabels[mode]} title={sendLabels[mode]} onClick={send} disabled={!value.trim() || disabled || busy} className="inline-flex size-9 shrink-0 cursor-pointer items-center justify-center rounded-full border-0 bg-foreground text-background outline-none hover:opacity-90 focus-visible:shadow-[var(--focus-ring)] disabled:cursor-default disabled:bg-field disabled:text-muted-foreground disabled:opacity-100">
               <ArrowUp aria-hidden="true" className="size-4" strokeWidth={2.4} />
             </button>
           )}

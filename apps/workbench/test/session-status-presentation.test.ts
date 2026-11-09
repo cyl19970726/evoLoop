@@ -5,15 +5,15 @@ import type { SessionResult } from "@evoloop/contracts/session-observation";
 
 test("owned lifecycle takes priority over activity and only ready can be idle", () => {
   for (const [runtimeState, expected] of [["reserved", "已预留"], ["creating", "创建中"], ["closing", "关闭中"], ["unknown", "生命周期待核对"], ["closed", "已关闭"]] as const) {
-    assert.equal(sessionStatusLabel({ kind: "owned", runtimeState, busy: false }), `PG记录：${expected} · 原生状态待核`);
-    assert.equal(sessionStatusLabel({ kind: "owned", runtimeState, busy: true }), `PG记录：${expected} · 原生状态待核`);
+    assert.equal(sessionStatusLabel({ kind: "owned", runtimeState, busy: false }), `项目记录：${expected} · 原生状态待核`);
+    assert.equal(sessionStatusLabel({ kind: "owned", runtimeState, busy: true }), `项目记录：${expected} · 原生状态待核`);
   }
-  assert.equal(sessionStatusLabel({ kind: "owned", runtimeState: "ready", busy: false }), "PG记录：无在途占用 · 原生状态待核");
-  assert.equal(sessionStatusLabel({ kind: "owned", runtimeState: "ready", busy: true }), "PG记录：有在途占用 · 原生状态待核");
+  assert.equal(sessionStatusLabel({ kind: "owned", runtimeState: "ready", busy: false }), "项目记录：无在途占用 · 原生状态待核");
+  assert.equal(sessionStatusLabel({ kind: "owned", runtimeState: "ready", busy: true }), "项目记录：有在途占用 · 原生状态待核");
   for (const state of ["running", "dispatching", "requested"])
     assert.equal(sessionStatusLabel({ kind: "owned", runtimeState: "ready", busy: true, latestBusinessRun: { state } }),
-      "PG记录：有在途占用 · 原生状态待核", "recent PG Run cannot prove native execution");
-  assert.equal(sessionStatusLabel({ kind: "owned", runtimeState: null, busy: false }), "PG记录：生命周期未知 · 原生状态待核");
+      "项目记录：有在途占用 · 原生状态待核", "recent PG Run cannot prove native execution");
+  assert.equal(sessionStatusLabel({ kind: "owned", runtimeState: null, busy: false }), "项目记录：生命周期未知 · 原生状态待核");
   assert.equal(sessionLifecycleLabel({ kind: "owned", runtimeState: "closed", busy: false }), "已关闭");
 });
 
@@ -26,7 +26,7 @@ test("only a ready owned Session with confirmed no activity is called idle", () 
   for (const state of ["reserved", "creating", "closing", "unknown", "closed", null] as const) {
     assert.notEqual(sessionIdleSummary({ kind: "owned", runtimeState: state, busy: false }), "当前空闲");
   }
-  assert.equal(sessionIdleSummary({ kind: "owned", runtimeState: "ready", busy: false }), "PG记录无在途占用，原生状态待核");
+  assert.equal(sessionIdleSummary({ kind: "owned", runtimeState: "ready", busy: false }), "项目记录无在途占用，原生状态待核");
   assert.equal(sessionIdleSummary({ kind: "external", runtimeState: null, busy: null }), "外部会话状态需核对");
 });
 
@@ -64,41 +64,49 @@ test("stale or unmatched native Turn cannot make the latest PG Run live", () => 
       source: kind ? { kind, id } : null },
   }) as Parameters<typeof sessionHeaderStatusLabel>[1];
   assert.equal(sessionHeaderStatusLabel(session, progress("stale", "run"), true, true),
-    "PG记录：有在途占用 · 原生状态待核");
+    "项目记录：有在途占用 · 原生状态待核");
   assert.equal(currentNativeRunId(session, progress("stale", "run"), true, true), null);
   assert.equal(sessionHeaderStatusLabel(session, progress("live", "run"), true, false),
-    "原生连接不可用 · PG有在途记录");
+    "原生连接不可用 · 项目记录有在途工作");
   assert.equal(currentNativeRunId(session, progress("live", "run"), true, false), null);
   assert.equal(sessionHeaderStatusLabel(session, progress("live", "run"), false, true),
-    "PG记录：有在途占用 · 原生状态待核");
+    "项目记录：有在途占用 · 原生状态待核");
   assert.equal(sessionHeaderStatusLabel(session, progress("live", "run", "run-other"), true, true),
-    "原生 Turn 进行中 · Run 记录待核");
+    "原生这一轮进行中 · 任务运行记录待核");
   assert.equal(currentNativeRunId(session, progress("live", "run", "run-other"), true, true), null);
   assert.equal(sessionHeaderStatusLabel(session, progress("live", "message", "message-1"), true, true),
-    "原生宿主回报消息 Turn 进行中");
+    "原生宿主回报：正在回复消息");
   assert.equal(currentNativeRunId(session, progress("live", "message", "message-1"), true, true), null);
-  assert.equal(sessionHeaderStatusLabel(session, progress("live", null), true, true), "原生 Turn 进行中 · 来源待核");
-  assert.equal(sessionHeaderStatusLabel(session, progress("live", "run"), true, true), "原生宿主回报 Run Turn 进行中");
+  assert.equal(sessionHeaderStatusLabel(session, progress("live", null), true, true), "原生这一轮进行中 · 来源待核");
+  assert.equal(sessionHeaderStatusLabel(session, progress("live", "run"), true, true), "原生宿主回报：正在执行任务");
   assert.equal(currentNativeRunId(session, progress("live", "run"), true, true), "run-old");
   assert.equal(sessionHeaderStatusLabel({ ...session, latestBusinessRun: { ...session.latestBusinessRun, state: "completed" } },
-    progress("live", "run"), true, true), "原生 Turn 进行中 · Run 记录待核");
+    progress("live", "run"), true, true), "原生这一轮进行中 · 任务运行记录待核");
   assert.equal(currentNativeRunId({ ...session, latestBusinessRun: { ...session.latestBusinessRun, state: "completed" } },
     progress("live", "run"), true, true), null);
   assert.equal(sessionHeaderStatusLabel({ ...session, busy: false }, progress("live", "run"), true, true),
-    "原生 Turn 与 PG 占用不一致，待核对");
+    "原生这一轮与项目记录的占用不一致，待核对");
   assert.equal(sessionHeaderStatusLabel(session, { ...progress("live", "run"), status: "idle" }, true, true),
-    "PG有在途记录 · 原生执行待核");
+    "项目记录有在途工作 · 原生执行待核");
+});
+
+test("record and native status labels never show internal source names", () => {
+  const owned = (runtimeState: string | null, busy: boolean | null) => ({ kind: "owned" as const, runtimeState, busy });
+  const labels = [null, "ready", "closed", "creating"].flatMap(state => [true, false, null].flatMap(busy => [
+    sessionStatusLabel(owned(state, busy)), sessionIdleSummary(owned(state, busy)),
+    sessionHeaderStatusLabel(owned(state, busy), null, true, true), sessionHeaderStatusLabel(owned(state, busy), null, true, false)]));
+  for (const label of labels) assert.doesNotMatch(label, /PG|Session|Turn|Run|writer/);
 });
 
 test("late message progress cannot mask a closing or closed owned Session", () => {
   for (const state of ["closing", "closed", "unknown"] as const) {
     assert.equal(sessionHeaderStatusLabel({ kind: "owned", runtimeState: state, busy: true }, null, true, true), sessionLifecycleLabel({ kind: "owned", runtimeState: state, busy: true }));
   }
-  assert.equal(sessionHeaderStatusLabel({ kind: "owned", runtimeState: "ready", busy: true }, null, true, true), "PG记录：有在途占用 · 原生状态待核");
-  assert.equal(sessionHeaderStatusLabel({ kind: "owned", runtimeState: "ready", busy: false }, null, true, true), "PG记录：无在途占用 · 原生状态待核");
+  assert.equal(sessionHeaderStatusLabel({ kind: "owned", runtimeState: "ready", busy: true }, null, true, true), "项目记录：有在途占用 · 原生状态待核");
+  assert.equal(sessionHeaderStatusLabel({ kind: "owned", runtimeState: "ready", busy: false }, null, true, true), "项目记录：无在途占用 · 原生状态待核");
   assert.equal(sessionHeaderStatusLabel({ kind: "owned", runtimeState: "ready", busy: false },
     { freshness: "live", status: "idle", turn: null } as Parameters<typeof sessionHeaderStatusLabel>[1],
-    true, true), "原生活动空闲 · writer待核");
+    true, true), "原生活动空闲 · 写入控制待核");
 });
 
 test("a claimed Task uses its matching Run result before describing the next action", () => {
@@ -108,12 +116,12 @@ test("a claimed Task uses its matching Run result before describing the next act
   assert.equal(currentWorkRelationLabel(work, { ...session("task-1", "completed"), busy: false }, "awaiting_acceptance"), "执行已结束，等待交付与验收");
   assert.equal(currentWorkRelationLabel(work, session("task-1", "completed")), "最近一次执行已结束，结果待核对");
   assert.equal(currentWorkRelationLabel(work, session("task-1", "completed"), "reworking"), "前次执行已结束，同任务返工待运行");
-  assert.equal(currentWorkRelationLabel(work, session("task-1", "running"), "reworking"), "最近 Run 记录运行中；当前执行待核");
+  assert.equal(currentWorkRelationLabel(work, session("task-1", "running"), "reworking"), "最近一次运行记录为运行中；当前执行待核");
   assert.equal(currentWorkRelationLabel(work, { ...session("task-1", "unknown"), busy: true }), "最近一次执行结果未知，待核对");
-  assert.equal(currentWorkRelationLabel(work, session("other-task", "completed")), "Run／队列已认领或占用；当前运行待核对");
-  assert.equal(currentWorkRelationLabel(work, { kind: "owned", runtimeState: "ready", busy: false, latestBusinessRun: null }), "Run／队列已认领或占用；当前运行待核对");
-  assert.equal(currentWorkRelationLabel({ ...work, relation: "run" }, session("task-1", "running")), "有 Run 关联；不表示具体分派已接受");
-  assert.equal(currentWorkRelationLabel({ ...work, relation: "accepted" }, session("task-1", "running")), "具体 Session 已接手");
+  assert.equal(currentWorkRelationLabel(work, session("other-task", "completed")), "已从执行队列领取或占用；当前运行待核对");
+  assert.equal(currentWorkRelationLabel(work, { kind: "owned", runtimeState: "ready", busy: false, latestBusinessRun: null }), "已从执行队列领取或占用；当前运行待核对");
+  assert.equal(currentWorkRelationLabel({ ...work, relation: "run" }, session("task-1", "running")), "有运行关联；不表示分派已被接受");
+  assert.equal(currentWorkRelationLabel({ ...work, relation: "accepted" }, session("task-1", "running")), "这个智能体已接手");
 });
 
 test("recent Run states are readable without implying assignment acceptance", () => {

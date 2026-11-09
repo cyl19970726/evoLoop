@@ -132,7 +132,11 @@ test("Session results → fixed Document → return restores the exact Session r
   const directBack = direct.locator(".document-reading-backlinks").getByRole("link", { name: "返回来源", exact: false });
   assert.equal(await directBack.getAttribute("href"), returnHash);
   await directBack.click();
+  // At 390px the right column is a drawer that opens only when asked; it opens on the results the link named.
+  assert.equal(await direct.getByRole("heading", { name: "成果与使用" }).isVisible(), false, "the drawer does not open by itself");
+  await direct.getByRole("button", { name: "展开右栏" }).click();
   await direct.getByRole("heading", { name: "成果与使用" }).waitFor();
+  assert.equal(await direct.getByRole("tab", { name: "资料库", exact: true }).getAttribute("aria-selected"), "true");
   assert.equal(await direct.evaluate(() => (location.pathname + location.search)), returnHash);
   assert.ok(revisionReads.length >= 2 && revisionReads.every(id => id === fixedRevisionId), "every selected-revision read stays on the declared fixed revision");
   assert.deepEqual(errors, []);

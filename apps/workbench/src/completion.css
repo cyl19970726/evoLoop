@@ -76,5 +76,4 @@ td{ font-size: 15px; }
 .workbench-layout .content > :first-child{ animation: none; }
 .workbench-layout .content h1{ color: #17233b; opacity: 1; }
 .workbench-layout .content .lede{ color: #526078; }
-.session-workspace .session-activity-toggle[aria-expanded="false"] strong{ display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
 

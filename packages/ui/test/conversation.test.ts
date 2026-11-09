@@ -57,6 +57,29 @@ test("no menu without a trigger; the action button follows the turn state", () =
   assert.match(idle, /aria-label="发送"[^>]*disabled/);
   assert.match(html(h(Composer, { value: "", onChange: noop, onSend: noop, running: true, onStop: noop })), /aria-label="停止这一轮"/);
   assert.match(html(h(Composer, { value: "补一句", onChange: noop, onSend: noop, running: true, onStop: noop })), /aria-label="发送，排到下一轮"/);
+  assert.match(html(h(Composer, { value: "补一句", onChange: noop, onSend: noop, running: true, sendMode: "steer", onStop: noop })), /aria-label="补充到这一轮"/,
+    "where the runtime takes additions, Enter adds to the running turn");
+  assert.match(html(h(Composer, { value: "补一句", onChange: noop, onSend: noop, busy: true })), /aria-label="发送"[^>]*disabled/, "a send in flight waits");
+  assert.match(html(h(Composer, { value: "", onChange: noop, onSend: noop, label: "发给前端实现的消息", maxLength: 16000 })), /aria-label="发给前端实现的消息" maxLength="16000"|maxLength="16000"[^>]*aria-label="发给前端实现的消息"|aria-label="发给前端实现的消息"[^>]*maxLength="16000"/);
+});
+
+test("tool rows keep failures and the running step in sight while folded, and carry their own controls", () => {
+  const steps = [
+    { id: "a", text: "读取文件", rowProps: { "data-entry": "a" } },
+    { id: "b", text: "执行命令", failed: true, pinned: true, rowProps: { "data-entry": "b" } },
+    { id: "c", text: "运行测试", running: true, pinned: true, action: h("button", { type: "button" }, "查看详情"), detail: h("p", null, "输出") },
+  ];
+  const folded = html(h(ToolSummary, { summary: "执行了 3 个指令", steps }));
+  assert.match(folded, /aria-expanded="false"/);
+  assert.match(folded, /data-entry="b"/, "a failed step stays in sight");
+  assert.match(folded, /进行中：<\/span><span[^>]*>运行测试/, "the running step stays in sight");
+  assert.doesNotMatch(folded, /data-entry="a"/, "other steps fold away");
+  assert.match(folded, />查看详情</);
+  const open = html(h(ToolSummary, { summary: "执行了 3 个指令", steps, open: true, status: "，正在进行" }));
+  assert.match(open, /aria-expanded="true"/);
+  assert.match(open, /data-entry="a"/);
+  assert.match(open, /，正在进行/);
+  assert.doesNotMatch(open, /1 次失败/, "a caller's status replaces the failure count");
 });
 
 test("attachments show as removable chips", () => {

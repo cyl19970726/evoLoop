@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { WorkspaceEntry, WorkspaceMessage, WorkspaceTool } from "@evoloop/contracts/session-timeline";
-import { mergeWorkspaceEntries, mergeWorkspaceTurns, workspaceCurrentProgress, workspaceEntryKey, workspaceReadingGroups, workspaceReadingOrder, workspaceToolPreview } from "../src/features/sessions/workspaceTimelineModel";
+import { mergeWorkspaceEntries, mergeWorkspaceTurns, workspaceEntryKey, workspaceReadingGroups, workspaceReadingOrder } from "../src/features/sessions/workspaceTimelineModel";
+import { pinnedToolIds } from "../src/features/sessions/conversationPresentation";
 
 const stamp = "2026-11-01T12:00:00.000Z";
 function message(id: string, role: WorkspaceMessage["role"], overrides: Partial<WorkspaceMessage> = {}): WorkspaceMessage {
@@ -173,22 +174,16 @@ test("tool grouping is contiguous and scoped to one known turn", () => {
     [["a", "b"], "answer", ["c"], ["d"], ["e"], ["f"]]);
 });
 
-test("a folded group of 100 tools retains the newest running and failed evidence", () => {
+test("a folded group of 100 tools keeps every failure, the step running now and the step being read in sight", () => {
   const entries = Array.from({ length: 100 }, (_, index) => tool(`tool-${index}`, "turn-1"));
   entries[2] = tool("failed-early", "turn-1", { state: "failed" });
+  entries[7] = tool("interrupted", "turn-1", { state: "interrupted" });
   entries[40] = tool("running-middle", "turn-1", { state: "running", freshness: "live" });
-  const preview = workspaceToolPreview(entries);
-  assert.deepEqual(preview.map(entry => entry.id), ["failed-early", "running-middle", "tool-96", "tool-97", "tool-98", "tool-99"]);
-  assert.deepEqual(workspaceToolPreview(entries.slice(0, 3)).map(entry => entry.id), entries.slice(0, 3).map(entry => entry.id));
-});
-
-test("current progress is public content from the exact active Turn", () => {
-  const earlier = message("older", "assistant", { turnId: "turn-1", body: "old answer" });
-  const current = message("current", "assistant", { turnId: "turn-2", body: "current answer" });
-  const other = message("unrelated", "input", { turnId: "turn-2", body: "user input" });
-  assert.equal(workspaceCurrentProgress([earlier, current, other], "turn-2")?.id, "current");
-  assert.equal(workspaceCurrentProgress([earlier], "turn-2"), null);
-  assert.equal(workspaceCurrentProgress([current], null), null);
+  entries[50] = tool("running-stale", "turn-1", { state: "running", freshness: "stale" });
+  assert.deepEqual([...pinnedToolIds(entries)].sort(), ["failed-early", "interrupted", "running-middle"]);
+  assert.ok(pinnedToolIds(entries, "tool-60").has("tool-60"), "the step whose detail is open stays in sight");
+  assert.equal(pinnedToolIds(entries, "elsewhere").has("elsewhere"), false);
+  assert.equal(pinnedToolIds(entries.slice(10, 20)).size, 0, "a quiet group folds entirely");
 });
 
 test("turn merging replaces updates without changing first-seen turn order", () => {

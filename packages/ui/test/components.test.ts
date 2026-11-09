@@ -6,8 +6,8 @@ import { test } from "node:test";
 import { createElement as h } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import {
-  AgentAvatar, Badge, Button, CountDot, EmptyState, ErrorState, Field, IconButton, Input, ListRow, LoadingState, Logo, Notice, PersonAvatar,
-  StatusTag, UnknownState, avatarLook, avatarRoleBackgrounds, systemLooks, type StatusTone,
+  AgentAvatar, AgentMark, Badge, Button, CountDot, EmptyState, ErrorState, Field, IconButton, Input, ListRow, LoadingState, Logo, Notice, PersonAvatar,
+  StatusTag, UnknownState, agentMarkColors, avatarLook, avatarRoleBackgrounds, systemLooks, type StatusTone,
 } from "../src/index.ts";
 
 const html = (node: Parameters<typeof renderToStaticMarkup>[0]) => renderToStaticMarkup(node);
@@ -80,7 +80,7 @@ test("avatars are stable, share a background within a role, and never use green"
   const hues = new Set<string>();
   for (let index = 0; index < 200; index += 1) hues.add(`${avatarLook(`agent-${index}`, `role-${index}`).hair}`);
   assert.ok(hues.size > 3, "hair styles vary between agents");
-  for (const colour of [...avatarRoleBackgrounds, ...Object.values(systemLooks).map(look => look.background)]) {
+  for (const colour of [...avatarRoleBackgrounds, ...Object.values(systemLooks).map(look => look.background), ...Object.values(agentMarkColors)]) {
     const [r = 0, g = 0, b = 0] = [1, 3, 5].map(index => Number.parseInt(colour.slice(index, index + 2), 16));
     assert.ok(!(g > r + 8 && g > b + 8), `${colour} leans green`);
   }
@@ -88,6 +88,9 @@ test("avatars are stable, share a background within a role, and never use green"
   assert.match(markup, /role="img" aria-label="功能开发"/);
   assert.match(html(h(AgentAvatar, { seed: "agent-a" })), /aria-hidden="true"/);
   assert.match(html(h(PersonAvatar, { name: "zuhriddin" })), />Z</);
+  const mark = html(h(AgentMark, { color: "teal", icon: "◆", label: "测试的标识：青蓝色、菱形" }));
+  assert.match(mark, /role="img" aria-label="测试的标识：青蓝色、菱形"/);
+  assert.match(mark, /data-mark-color="teal"/);
 });
 
 test("the logo follows the theme tokens and thickens the loop at small sizes", () => {
