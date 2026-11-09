@@ -18,8 +18,8 @@ const documentId = "99000002-0000-4000-8000-000000000002";
 const fixedId = "99000003-0000-4000-8000-000000000003";
 const currentId = "99000004-0000-4000-8000-000000000004";
 const stamp = "2026-11-02T00:00:00.000Z";
-const returnHash = `#/p/${projectId}/documents`;
-const fixedRoute = `#/p/${projectId}/documents/${documentId}?revision=${fixedId}&return=${encodeURIComponent(returnHash)}`;
+const returnHash = `/p/${projectId}/documents`;
+const fixedRoute = `/p/${projectId}/documents/${documentId}?revision=${fixedId}&return=${encodeURIComponent(returnHash)}`;
 const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/lXcAAAAASUVORK5CYII=";
 const html = `<!doctype html><html lang="zh"><head><meta charset="utf-8"><style>
   body{margin:0;padding:28px;font:17px/1.7 sans-serif;color:#172b53} section{min-height:680px}
@@ -66,7 +66,7 @@ test("built HTML Document uses the available reading space and keeps fixed revis
       else if (url.pathname === `${root}/orchestration/work-status`) value = { items: [] };
       res.writeHead(status, { "content-type": "application/json" }); res.end(JSON.stringify(value)); return;
     }
-    const file = join(dist, url.pathname === "/" ? "index.html" : url.pathname);
+    const file = join(dist, /^\/(?:$|p\/|ui$)/.test(url.pathname) ? "index.html" : url.pathname);
     try { const body = await readFile(file); res.writeHead(200, { "content-type": ({ ".html": "text/html", ".js": "text/javascript", ".css": "text/css" } as Record<string, string>)[extname(file)] ?? "application/octet-stream" }); res.end(body); }
     catch { res.writeHead(404); res.end(); }
   });
@@ -78,7 +78,7 @@ test("built HTML Document uses the available reading space and keeps fixed revis
   const page = await browser.newPage({ viewport: { width: 1201, height: 819 } });
   const errors: string[] = [];
   page.on("pageerror", error => errors.push(error.message));
-  await page.goto(`${base}/${fixedRoute}`);
+  await page.goto(`${base}${fixedRoute}`);
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button", { name: "进入", exact: true }).click();
   await page.getByRole("heading", { name: document.title, exact: true }).waitFor();
@@ -204,7 +204,7 @@ test("built HTML Document uses the available reading space and keeps fixed revis
   const back = page.locator(".document-reading-backlinks").getByRole("link", { name: /返回来源/ });
   assert.equal(await back.getAttribute("href"), returnHash);
   await back.click();
-  assert.equal(await page.evaluate(() => location.hash), returnHash);
+  assert.equal(await page.evaluate(() => (location.pathname + location.search)), returnHash);
   assert.deepEqual(geometryFailures, [], `reading geometry failures: ${geometryFailures.join("; ")}`);
 });
 
@@ -256,7 +256,7 @@ test("optional real HTML original keeps all five images readable in the built fi
       else { status = 404; value = { message: "fixture route absent" }; }
       res.writeHead(status, { "content-type": "application/json" }); res.end(JSON.stringify(value)); return;
     }
-    const file = join(dist, url.pathname === "/" ? "index.html" : url.pathname);
+    const file = join(dist, /^\/(?:$|p\/|ui$)/.test(url.pathname) ? "index.html" : url.pathname);
     try { const body = await readFile(file); res.writeHead(200, { "content-type": ({ ".html": "text/html", ".js": "text/javascript", ".css": "text/css" } as Record<string, string>)[extname(file)] ?? "application/octet-stream" }); res.end(body); }
     catch { res.writeHead(404); res.end(); }
   });
@@ -266,14 +266,14 @@ test("optional real HTML original keeps all five images readable in the built fi
     ? { executablePath: process.env.EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH } : {}) });
   t.after(async () => { await browser.close(); await new Promise<void>(done => server.close(() => done())); });
   const base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
-  const route = `#/p/${realProjectId}/documents/${realDocumentId}?revision=${realRevisionId}`;
+  const route = `/p/${realProjectId}/documents/${realDocumentId}?revision=${realRevisionId}`;
   const report: Array<Record<string, unknown>> = [];
   if (output) await mkdir(output, { recursive: true, mode: 0o700 });
   for (const [width, height] of [[1201, 819], [1920, 1200], [900, 560], [390, 560]]) {
     const page = await browser.newPage({ viewport: { width, height }, deviceScaleFactor: 1 });
     const errors: string[] = [];
     page.on("pageerror", error => errors.push(error.message));
-    await page.goto(`${base}/${route}`);
+    await page.goto(`${base}${route}`);
     await page.getByLabel("访问令牌").fill("fixture-token");
     await page.getByRole("button", { name: "进入", exact: true }).click();
     await page.getByRole("heading", { name: title, exact: true }).waitFor();

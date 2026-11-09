@@ -11,7 +11,7 @@ const run = { id: runId, projectId, taskId, sessionId: "44444444-4444-4444-8444-
 test("an old Delivery opens its verified Run inside the source Task, rather than the Team landing page", () => {
   assert.equal(verifiedDeliveryRun(projectId, taskId, runId, run), run);
   assert.equal(deliveryRunHref(projectId, taskId, runId),
-    `#/p/${projectId}/tasks/${taskId}?tab=runtime&run=${runId}`);
+    `/p/${projectId}/tasks/${taskId}?tab=runtime&run=${runId}`);
 });
 
 test("a foreign, unrelated or different Run does not earn a source link", () => {

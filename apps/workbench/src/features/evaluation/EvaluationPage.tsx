@@ -8,6 +8,8 @@ import { activeFullExecution } from "../../shared/fullExecution";
 import { DefinitionForm } from "./DefinitionForm";
 import { assessmentLabels, attemptsForCondition, conclusionComparabilityOptions, costText, currentAssessments, deliveriesForAttempt, evaluationHref, evaluationListHref, fixedRefHref, nextActionHref, parseCostLines, parseFixedRefLines, parseNextActionRef, verifiedFixedDocumentTitle, type NextActionRef } from "./presentation";
 import "./evaluation.css";
+import { navigate } from "../../shared/navigation";
+import { appPath } from "../../shared/appPath";
 
 type EvaluationRead = Awaited<ReturnType<ReturnType<typeof api>["evaluation"]>>;
 type Packet = Awaited<ReturnType<ReturnType<typeof api>["evaluationPacket"]>>;
@@ -54,13 +56,13 @@ export function EvaluationPage({ context, evaluationId, selectedRevision, refres
   return <div className="content evaluation-page">
     <div className="evaluation-heading"><div>{evaluationId && <a className="back" href={evaluationHref(context.projectId)}>返回评价列表</a>}<h1>{evaluationId ? "固定评价与实际尝试" : "评价"}</h1><p className="muted">同一共同任务、同一指令与环境下，逐次看真实运行、交付、成本和判断。失败与未知也保留。</p></div><button type="button" onClick={() => setEpoch(value => value + 1)}>回读当前记录</button></div>
     {error && <Notice error>{error}</Notice>}
-    {taskId && <p className="context-links">当前仅看此任务的评价 · <a href={`#/p/${context.projectId}/tasks/${taskId}`}>返回来源任务</a></p>}
+    {taskId && <p className="context-links">当前仅看此任务的评价 · <a href={`/p/${context.projectId}/tasks/${taskId}`}>返回来源任务</a></p>}
     {!evaluationId ? <>
       <section className="panel" aria-busy={loading || loadedScope !== scope}><h2>已建立的评价</h2>{(loading || loadedScope !== scope) && <p>正在读取当前范围的评价…</p>}{!loading && loadedScope === scope && !list.length && !error && <p className="empty">当前范围尚无评价定义。先准备进行中的共同任务与固定协议、材料和 Wiki 修订。</p>}
         <div className="evaluation-list">{list.map(item => <a key={`${item.evaluationId}:${item.id}`} href={evaluationListHref(context.projectId, item)}><strong>{item.definition.question}</strong><span>匹配定义 v{item.version} · 共同任务 {short(item.definition.case.taskId)} · {date(item.createdAt)}</span></a>)}</div>
         {cursor && loadedScope === scope && <button type="button" onClick={() => void more()}>继续读取</button>}
       </section>
-      <details className="panel workflow-detail"><summary>需要时建立新的冻结评价</summary><DefinitionForm context={context} ownerTaskId={taskId} onApplied={id => { window.location.hash = evaluationHref(context.projectId, id); }} /></details>
+      <details className="panel workflow-detail"><summary>需要时建立新的冻结评价</summary><DefinitionForm context={context} ownerTaskId={taskId} onApplied={id => { navigate(evaluationHref(context.projectId, id)); }} /></details>
     </> : read ? <EvaluationDetail key={`${read.revision.evaluationId}:${read.revision.id}`} context={context} read={read} selectedRevision={!!selectedRevision} onChanged={() => setEpoch(value => value + 1)} />
       : !error && <p>正在读取冻结定义与逐次记录…</p>}
   </div>;
@@ -121,7 +123,7 @@ function EvaluationDetail({ context, read, selectedRevision, onChanged }: { cont
     </section>
     <section className="panel evaluation-definition"><details><summary>冻结输入与证据 · 协议、共同材料、指令与完整限制</summary>
       <p><strong>完整比较边界：</strong>{definition.limits}</p><p><strong>公开判定条件：</strong>{definition.case.criteria}</p><p><strong>共同指令：</strong>{definition.case.commonInput}</p>
-      <p>共同任务 <a href={`#/p/${context.projectId}/tasks/${definition.case.taskId}?revision=${encodeURIComponent(definition.case.sourceTaskRevisionId)}`}>{short(definition.case.taskId)} · 来源修订 {short(definition.case.sourceTaskRevisionId)} ↗</a>；运行将形成另一条实际修订，不把二者当同一 ID。</p>
+      <p>共同任务 <a href={`/p/${context.projectId}/tasks/${definition.case.taskId}?revision=${encodeURIComponent(definition.case.sourceTaskRevisionId)}`}>{short(definition.case.taskId)} · 来源修订 {short(definition.case.sourceTaskRevisionId)} ↗</a>；运行将形成另一条实际修订，不把二者当同一 ID。</p>
       <div className="evaluation-fixed"><strong>协议</strong><FixedRef value={definition.protocol} projectId={context.projectId} currentTitle={documentTitles[`${definition.protocol.id}:${definition.protocol.revision}`]} /><strong>共用材料</strong>{definition.case.materials.map((ref, index) => <FixedRef key={`${ref.kind}:${ref.id}:${index}`} value={ref} projectId={context.projectId} currentTitle={documentTitles[`${ref.id}:${ref.revision}`]} />)}</div>
       <details><summary>核对共同任务的固定业务签名</summary><pre>{JSON.stringify(definition.case.sourceSignature, null, 2)}</pre></details>
       <p className="muted">现名称只作阅读辅助，已逐项核对同项目固定修订及哈希；不能代表原修订创建时的标题。没有隐藏答案隔离保证；同机工具能否访问其他来源尚未验证。一次 case 不得推出因果收益或统计胜者。</p>
@@ -159,7 +161,7 @@ function RunForm({ context, revision, conditionId, task, sessions, runs, attempt
   return <div className="evaluation-run-form"><h3>第 {nextOrdinal} 次尝试 / 重试</h3>
     {active && <Notice>共同任务已有运行中或未知的尝试。先核对同一 Run，不能重发。</Notice>}
     {!fullExecution && <Notice>此历史定义保留旧执行权限，只供回读；新尝试请先另存完整权限的定义修订。</Notice>}
-    {fullExecution && !fresh.length && <p className="muted">没有符合冻结模型、授权与已激活执行配置的新自有会话。先在<a href={`#/p/${context.projectId}/runtime?view=execution`}>分工与会话</a>创建并核对激活；旧会话不可复用。</p>}
+    {fullExecution && !fresh.length && <p className="muted">没有符合冻结模型、授权与已激活执行配置的新自有会话。先在<a href={`/p/${context.projectId}/runtime?view=execution`}>分工与会话</a>创建并核对激活；旧会话不可复用。</p>}
     {!active && fresh.length > 0 && <ActionForm key={`${revision.id}:${conditionId}:${task.task.version}`} context={{ ...context, draftScope: `evaluation-run:${revision.id}:${conditionId}`, draftBaseline: `${revision.id}:${task.task.currentRevisionId}` }} review title={`派发第 ${nextOrdinal} 次真实运行`} fields={[
       { name: "sessionId", label: "全新自有会话", kind: "select", options: fresh.map(session => option(session.id, `${session.roleId} · ${short(session.id)} · ${session.model}`)) },
     ]} build={values => ({ type: "runtime.run.reserve", runId: crypto.randomUUID(), taskId: task.task.id,
@@ -177,7 +179,7 @@ function AttemptCard({ context, revision, attempt, run, task, assessments, onCha
   const deliveries = deliveriesForAttempt(attempt, taskId, task?.deliveries ?? []);
   const observations = (task?.observations ?? []).filter(item => deliveries.some(delivery => delivery.id === item.deliveryId));
   return <article className="evaluation-attempt"><h3>尝试 {attempt.ordinal} · {stateLabel[run?.state ?? ""] ?? "运行记录尚未读到"}</h3>
-    <p>来源 Task 修订 <code>{short(attempt.sourceTaskRevisionId)}</code> → <a href={`#/p/${context.projectId}/tasks/${taskId}?revision=${encodeURIComponent(attempt.actualTaskRevisionId)}`}>实际执行修订 <code>{short(attempt.actualTaskRevisionId)}</code> ↗</a> · Run <code>{short(attempt.runId)}</code></p>
+    <p>来源 Task 修订 <code>{short(attempt.sourceTaskRevisionId)}</code> → <a href={`/p/${context.projectId}/tasks/${taskId}?revision=${encodeURIComponent(attempt.actualTaskRevisionId)}`}>实际执行修订 <code>{short(attempt.actualTaskRevisionId)}</code> ↗</a> · Run <code>{short(attempt.runId)}</code></p>
     <p className="muted">自有会话 {short(attempt.sessionId)} · {date(attempt.createdAt)}；本次尝试不会覆盖此前失败或未知。</p>
     {!run && <Notice error>对应 Run 尚未读到，不能推断执行或成本。</Notice>}
     {run && <><p>{run.state === "unknown" ? "结果未知；先沿同一 Run/会话核对，不能视为失败后自动重试。" : `运行状态：${stateLabel[run.state] ?? run.state}`}</p>
@@ -191,9 +193,9 @@ function AttemptCard({ context, revision, attempt, run, task, assessments, onCha
     </>}
     {readError && <Notice error>{readError}</Notice>}
     <div className="evaluation-evidence"><strong>本次实际交付</strong>{!deliveries.length && <p>未读到明确归属此 Run 的交付；旧无归属记录不会自动套入。运行终态也不代表产物合格。</p>}{deliveries.map(delivery => { const artifact = safeArtifactHref(delivery.artifactRef, context.projectId); return <div key={delivery.id}>
-        <p>交付 <a href={`#/p/${context.projectId}/tasks/${delivery.taskId}`}>{short(delivery.id)} ↗</a> · 技术{delivery.technicalResult === "passed" ? "通过" : "失败"} · <a href={`#/p/${context.projectId}/tasks/${delivery.taskId}?revision=${encodeURIComponent(delivery.taskRevisionId)}`}>登记修订 {short(delivery.taskRevisionId)} ↗</a></p>
+        <p>交付 <a href={`/p/${context.projectId}/tasks/${delivery.taskId}`}>{short(delivery.id)} ↗</a> · 技术{delivery.technicalResult === "passed" ? "通过" : "失败"} · <a href={`/p/${context.projectId}/tasks/${delivery.taskId}?revision=${encodeURIComponent(delivery.taskRevisionId)}`}>登记修订 {short(delivery.taskRevisionId)} ↗</a></p>
         <p className="muted">声明来源 Run {short(delivery.runId!)}；这项归属不证明产物字节由模型生成。</p>
-        {artifact ? <a href={artifact} target={artifact.startsWith("#") ? undefined : "_blank"} rel={artifact.startsWith("#") ? undefined : "noopener noreferrer"}>阅读交付引用 ↗</a> : <span>原引用不可安全打开</span>}
+        {artifact ? <a href={artifact} target={appPath(artifact) ? undefined : "_blank"} rel={appPath(artifact) ? undefined : "noopener noreferrer"}>阅读交付引用 ↗</a> : <span>原引用不可安全打开</span>}
         <details><summary>核对原始位置、版本与哈希</summary><p className="evaluation-raw">{delivery.artifactRef}</p><p>固定修订 <code>{delivery.artifactRevision}</code><br />SHA-256 <code>{delivery.contentHash}</code></p></details>
       </div>; })}
       <strong>本次实际使用观察</strong>{!observations.length && <p>未读到本次交付的使用观察；Agent 使用不等于真人后果。</p>}{observations.map(item => <p key={item.id}>{item.observerKind === "human" ? "真人" : "Agent"} {item.observer} · {item.result} · {item.evidence} <code>{short(item.id)}</code></p>)}

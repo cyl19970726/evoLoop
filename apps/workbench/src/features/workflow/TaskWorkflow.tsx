@@ -12,6 +12,7 @@ import { ActionForm, Notice, option, reasonField, type MutationContext } from ".
 import { attributableRuns } from "./deliveryRun";
 import { RevisionHistory } from "./RevisionHistory";
 import { useRoleChoices } from "./useRoleChoices";
+import { appPath } from "../../shared/appPath";
 
 const { useEffect, useState } = React;
 const withoutOperationType = (value: Record<string, unknown>) => {
@@ -78,10 +79,10 @@ export function TaskWorkflow({ context, detail, documents, leader, mode = "actio
     {[...deliveries].reverse().map(delivery => <article className="decision" key={delivery.id}>
       <h3>{delivery.id === latest?.id ? "最新交付" : "历史交付"} · 技术{delivery.technicalResult === "passed" ? "通过" : "失败"}</h3>
       <p className="break-anywhere">产物：{safeArtifactHref(delivery.artifactRef, context.projectId)
-        ? <a href={safeArtifactHref(delivery.artifactRef, context.projectId)!} target={(safeArtifactHref(delivery.artifactRef, context.projectId) ?? "").startsWith("#") ? undefined : "_blank"} rel="noopener noreferrer">{delivery.artifactRef}</a>
+        ? <a href={safeArtifactHref(delivery.artifactRef, context.projectId)!} target={appPath(safeArtifactHref(delivery.artifactRef, context.projectId) ?? "") ? undefined : "_blank"} rel="noopener noreferrer">{delivery.artifactRef}</a>
         : delivery.artifactRef} · 固定修订 {delivery.artifactRevision}</p><p className="break-anywhere">SHA-256 {delivery.contentHash}</p>
       <p><strong>技术检查证据</strong><br />{delivery.technicalEvidence}</p>
-      <p>登记修订 <a href={`#/p/${context.projectId}/tasks/${task.id}?revision=${encodeURIComponent(delivery.taskRevisionId)}`}>{delivery.taskRevisionId} ↗</a>；{delivery.runId ? <>来源 Run {delivery.runId}（执行修订须从运行记录核对）</> : "无 Run 归属"}；提交者 {delivery.submittedByActorId ?? "未核实"}</p>
+      <p>登记修订 <a href={`/p/${context.projectId}/tasks/${task.id}?revision=${encodeURIComponent(delivery.taskRevisionId)}`}>{delivery.taskRevisionId} ↗</a>；{delivery.runId ? <>来源 Run {delivery.runId}（执行修订须从运行记录核对）</> : "无 Run 归属"}；提交者 {delivery.submittedByActorId ?? "未核实"}</p>
       <p className="muted">产物链接只指向位置；固定修订、哈希与实际内容仍须独立核对。</p>
       <h3>这次交付的使用观察</h3>
       {(detail.observations ?? []).filter(observation => observation.deliveryId === delivery.id).length === 0 && <p className="empty">尚无这次交付的使用观察。</p>}
@@ -90,16 +91,16 @@ export function TaskWorkflow({ context, detail, documents, leader, mode = "actio
     {(detail.closures ?? []).map(closure => <article className="decision" key={closure.id}><h3>任务验收决定</h3>
       <p>{closure.decisionId ? "依据：已结算的认知判断（仅完成本轮判断，不代表来源业务任务完成）" : "依据：本任务交付"}</p>
       <p className="break-anywhere">{closure.decisionId ? `判断 ${closure.decisionId} · 来源入站 ${closure.sourceInboxId} · 来源事件 ${closure.sourceEventId}` : `交付 ${closure.deliveryId}`}</p>
-      {closure.sourceTaskId && <p className="break-anywhere">原业务任务 <a href={`#/p/${context.projectId}/tasks/${closure.sourceTaskId}`}>{closure.sourceTaskId} ↗</a></p>}
+      {closure.sourceTaskId && <p className="break-anywhere">原业务任务 <a href={`/p/${context.projectId}/tasks/${closure.sourceTaskId}`}>{closure.sourceTaskId} ↗</a></p>}
       {closure.waitingInboxId && <p className="break-anywhere">待承接入站 {closure.waitingInboxId}（仍须处理原业务责任）</p>}
       {closure.handoffDispatchId && <p className="break-anywhere">正式子派发 {closure.handoffDispatchId}；
-        {closure.handoffTaskId && <>待办业务任务 <a href={`#/p/${context.projectId}/tasks/${closure.handoffTaskId}`}>{closure.handoffTaskId} ↗</a></>}
+        {closure.handoffTaskId && <>待办业务任务 <a href={`/p/${context.projectId}/tasks/${closure.handoffTaskId}`}>{closure.handoffTaskId} ↗</a></>}
         （父任务的本轮判断已验收，子任务仍需独立完成）</p>}
       <p>{closure.acceptanceEvidence}</p><p>{closure.reason}</p><small>审阅者 {closure.actorId} · {closure.createdAt}</small>
     </article>)}
   </section>;
   if (mode === "history") return <section className="panel"><div className="panel-head"><h2>任务状态与决定</h2><button type="button" onClick={context.onChanged}>回读当前状态</button></div>
-    {latestStateDecision ? <article className="decision"><strong>最近状态决定：{taskStateLabel[latestStateDecision.state]}</strong><p>理由：{latestStateDecision.reason}</p><small>{latestStateDecision.actorId} · {latestStateDecision.createdAt} · 固定修订 v{latestStateDecision.version}</small><p><a href={`#/p/${context.projectId}/tasks/${task.id}?revision=${encodeURIComponent(latestStateDecision.id)}`}>打开当次固定正文与依据 →</a></p></article>
+    {latestStateDecision ? <article className="decision"><strong>最近状态决定：{taskStateLabel[latestStateDecision.state]}</strong><p>理由：{latestStateDecision.reason}</p><small>{latestStateDecision.actorId} · {latestStateDecision.createdAt} · 固定修订 v{latestStateDecision.version}</small><p><a href={`/p/${context.projectId}/tasks/${task.id}?revision=${encodeURIComponent(latestStateDecision.id)}`}>打开当次固定正文与依据 →</a></p></article>
       : <p className="muted">{revisions.length ? "目前只有初始任务，尚无状态变更决定。" : "正在读取状态决定历史；读取失败时不能据当前状态推断理由。"}</p>}
     <RevisionHistory label="重新读取完整任务状态时间线" autoLoad load={async () => {
       const rows = await api(context.token).taskRevisions(context.projectId, task.id);
@@ -107,7 +108,7 @@ export function TaskWorkflow({ context, detail, documents, leader, mode = "actio
       return rows.map(({ revision, basis }) => ({ key: revision.id, title: `v${revision.version} · ${taskStateLabel[revision.state]}`,
         body: `正文：${revision.content.slice(0, 320)}${revision.content.length > 320 ? "…" : ""}\n验收：${revision.acceptance}\n固定过程依据：${basis?.members.length ?? 0} 项`,
         reason: revision.reason, actorId: revision.actorId, createdAt: revision.createdAt,
-        href: `#/p/${context.projectId}/tasks/${task.id}?revision=${encodeURIComponent(revision.id)}` }));
+        href: `/p/${context.projectId}/tasks/${task.id}?revision=${encodeURIComponent(revision.id)}` }));
     }} />
     {detail.proposal && <dl><div><dt>验收方式</dt><dd>{acceptanceMode === "independent_agent" ? "独立 Agent 使用当前交付" : acceptanceMode === "human_required" ? "受信本人使用当前交付" : "历史合同"}</dd></div><div><dt>目标消费者</dt><dd>{detail.proposal.consumer || "未指定；须由符合验收方式的身份签收"}</dd></div><div><dt>完成要求</dt><dd>{detail.proposal.useRequired ? "需有本次交付的实际使用记录" : "按历史合同核对"}</dd></div><div><dt>提议证据</dt><dd>{detail.proposal.evidence}</dd></div><div><dt>停止条件</dt><dd>{detail.proposal.stopCondition}</dd></div></dl>}
     {(detail.judgements ?? []).length > 0 && <><h3>旧提议判断历史</h3>{(detail.judgements ?? []).map(judgement => <article className="decision" key={judgement.id}><strong>{judgement.decision}</strong><p>{judgement.reason}</p><p>证据：{judgement.evidence}</p><small>{judgement.actorId} · {judgement.createdAt}</small></article>)}</>}

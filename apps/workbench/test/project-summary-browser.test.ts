@@ -88,17 +88,17 @@ test("overview shows scoped queue evidence, preserves stale read and refreshes o
       else if (url.pathname === `${base}/roles/${role}`) { roleReads++;value={projectId,id:role,version:1,currentRevisionId:role,state:"active",proposal:{title:"开发职责"},proposedBy:"reader",createdAtUtc:stamp,trialStartedAtUtc:stamp,reviewAtUtc:stamp,mergeTargetRoleId:null}; }
       res.writeHead(status,{"content-type":"application/json"});res.end(JSON.stringify(value));return;
     }
-    const file=join(dist,url.pathname === "/" ? "index.html" : url.pathname);
+    const file=join(dist,/^\/(?:$|p\/|ui$)/.test(url.pathname) ? "index.html" : url.pathname);
     try { const body=await readFile(file); res.writeHead(200,{"content-type":({".html":"text/html",".js":"text/javascript",".css":"text/css"})[extname(file)] ?? "application/octet-stream"});res.end(body); }
     catch { res.writeHead(404);res.end(); }
   });
   await new Promise<void>(resolve=>server.listen(0,"127.0.0.1",resolve));t.after(()=>server.close());
   const base=`http://127.0.0.1:${(server.address() as {port:number}).port}`;
-  const browser=await chromium.launch({headless:true});t.after(()=>browser.close());
+  const browser=await chromium.launch({ headless: true, ...(process.env.EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH ? { executablePath: process.env.EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH } : {}) });t.after(()=>browser.close());
   const page=await browser.newPage({viewport:{width:390,height:844}});
   const errors:string[]=[];page.on("pageerror",error=>errors.push(error.message));
   await fetch(`${base}/__fixture/mode?value=fail`);
-  await page.goto(`${base}/#/p/${a}/overview`);
+  await page.goto(`${base}/p/${a}/overview`);
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button",{name:"进入",exact:true}).click();
   await page.locator("#workspace-main:focus").waitFor();
@@ -125,10 +125,10 @@ test("overview shows scoped queue evidence, preserves stale read and refreshes o
   await page.getByText("已读队列范围内没有确认的领取占用。").waitFor();
   await fetch(`${base}/__fixture/mode?value=normal`);
   const before=Number(await (await fetch(`${base}/__fixture/reads`)).text());
-  await page.evaluate(projectId=>{location.hash=`#/p/${projectId}/work`;},a);
+  await page.evaluate(projectId=>{location.hash=`/p/${projectId}/work`;},a);
   await page.getByRole("heading",{name:"任务",exact:true}).waitFor();
   await page.locator("#workspace-main:focus").waitFor();
-  await page.evaluate(projectId=>{location.hash=`#/p/${projectId}/overview`;},a);
+  await page.evaluate(projectId=>{location.hash=`/p/${projectId}/overview`;},a);
   await page.getByRole("link",{name:"当前任务"}).waitFor({timeout:5000}).catch(async ()=>{
     assert.fail(`Return did not refresh. Reads ${await (await fetch(`${base}/__fixture/reads`)).text()} Body ${await page.locator("body").innerText()} Errors ${errors.join(" | ")}`);
   });
@@ -153,7 +153,7 @@ test("overview shows scoped queue evidence, preserves stale read and refreshes o
   await page.getByRole("button",{name:"重新读取"}).click();
   const activeSection=page.locator(".overview-current-work");
   await activeSection.getByRole("link",{name:"P1a 持续改进"}).waitFor();
-  assert.equal(await activeSection.getByRole("link",{name:"P1a 持续改进"}).getAttribute("href"),`#/p/${a}/tasks/${outside}`);
+  assert.equal(await activeSection.getByRole("link",{name:"P1a 持续改进"}).getAttribute("href"),`/p/${a}/tasks/${outside}`);
   assert.match(await activeSection.innerText(),/负责人 开发职责/);
   assert.equal(await activeSection.getByRole("link",{name:/Session/}).count(),0);
   assert.equal(await page.getByRole("heading",{name:"现在由谁承接"}).locator("..").getByText("已读队列范围内没有确认的领取占用。").count(),1);
@@ -185,9 +185,9 @@ test("overview shows scoped queue evidence, preserves stale read and refreshes o
   await page.getByRole("button",{name:"重新读取"}).click();
   await page.getByRole("link",{name:"当前任务"}).waitFor();
   await fetch(`${base}/__fixture/hold-b`);
-  await page.evaluate(projectId=>{location.hash=`#/p/${projectId}/overview`;},b);
+  await page.evaluate(projectId=>{location.hash=`/p/${projectId}/overview`;},b);
   await page.getByText(/正在读取项目摘要/).waitFor();
-  await page.evaluate(projectId=>{location.hash=`#/p/${projectId}/overview`;},a);
+  await page.evaluate(projectId=>{location.hash=`/p/${projectId}/overview`;},a);
   await fetch(`${base}/__fixture/release-b`);
   if (!(await page.locator(".overview-queue-details").evaluate(element=>(element as HTMLDetailsElement).open)))
     await page.locator(".overview-queue-details > summary").click();

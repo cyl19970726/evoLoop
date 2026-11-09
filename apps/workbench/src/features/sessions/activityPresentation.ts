@@ -11,7 +11,7 @@ export function activityPresentation(item: SessionActivity, projectId: string): 
         : source.evidence === "session-statement" ? "会话陈述" : "项目记录";
   const sourceLabel = `${evidence} · 登记者 ${item.actorId?.trim() || "未记录"}`;
   const discussionHref = source.kind === "discussion" && uuid.test(source.id)
-    ? `#/p/${encodeURIComponent(projectId)}/discussions?discussion=${encodeURIComponent(source.id)}` : null;
+    ? `/p/${encodeURIComponent(projectId)}/discussions?discussion=${encodeURIComponent(source.id)}` : null;
   return { sourceLabel, discussionHref };
 }
 

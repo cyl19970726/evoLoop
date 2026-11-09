@@ -20,6 +20,7 @@ import { taskRunFromHash } from "../../shared/taskNavigation";
 import { preflightPresentation } from "./preflightPresentation";
 import { SessionCreation } from "./SessionCreation";
 import "./session-focus.css";
+import { currentPath, onNavigate } from "../../shared/navigation";
 
 function readErrorText(cause: unknown): string {
   if (cause instanceof ApiError && (cause.status === 0 || cause.status >= 500))
@@ -43,7 +44,7 @@ export function RuntimePanel({ context, refresh, task, taskDetail, targetSession
   const [epoch, setEpoch] = useState(0);
   const [recovering, setRecovering] = useState(false);
   const [loadedScope, setLoadedScope] = useState<string | null>(null);
-  const [targetRunId, setTargetRunId] = useState(() => task ? taskRunFromHash(window.location.hash, context.projectId, task.id) : null);
+  const [targetRunId, setTargetRunId] = useState(() => task ? taskRunFromHash(currentPath(), context.projectId, task.id) : null);
   const [targetRunProblem, setTargetRunProblem] = useState("");
   const runtimePanelRef = useRef<HTMLElement | null>(null);
   const revealedRunHref = useRef<string | null>(null);
@@ -53,9 +54,8 @@ export function RuntimePanel({ context, refresh, task, taskDetail, targetSession
   const [assignmentRead, setAssignmentRead] = useState<{scope:string; value:TaskSessionAssignment|null; error:string}|null>(null);
   const sessionScope = JSON.stringify([context.token, context.projectId, task?.id ?? "", targetSessionId ?? "", targetRunId ?? ""]);
   useEffect(() => {
-    const onHash = () => setTargetRunId(task ? taskRunFromHash(window.location.hash, context.projectId, task.id) : null);
-    onHash(); window.addEventListener("hashchange", onHash);
-    return () => window.removeEventListener("hashchange", onHash);
+    const onHash = () => setTargetRunId(task ? taskRunFromHash(currentPath(), context.projectId, task.id) : null);
+    onHash(); return onNavigate(onHash);
   }, [context.projectId, task?.id]);
   useEffect(() => {
     let active = true, fetching = false, sequence = 0;
@@ -140,25 +140,25 @@ export function RuntimePanel({ context, refresh, task, taskDetail, targetSession
     draftBaseline: `${task.currentRevisionId}:${assigned?.version ?? 0}:${assigned?.state ?? "none"}:${assigned ? JSON.stringify(assigned.target) : ""}` } : context;
   useEffect(() => {
     const reveal = () => {
-      const requestedRun = task ? taskRunFromHash(window.location.hash, context.projectId, task.id) : null;
+      const requestedRun = task ? taskRunFromHash(currentPath(), context.projectId, task.id) : null;
       const id = requestedRun && task ? `runtime-run-${task.id}-${requestedRun}` : null;
       const targetId = id;
       if (!targetId) { revealedRunHref.current = null; revealedRunElement.current = null; return; }
       if (!/^[a-z0-9-]+$/i.test(targetId)) return;
       const target = runtimePanelRef.current?.querySelector(`#${targetId}`);
       if (target instanceof HTMLDetailsElement && target.getClientRects().length) {
-        const firstReveal = revealedRunHref.current !== window.location.hash;
+        const firstReveal = revealedRunHref.current !== currentPath();
         if (target !== revealedRunElement.current) { target.open = true; revealedRunElement.current = target; }
         if (firstReveal) {
-          revealedRunHref.current = window.location.hash;
+          revealedRunHref.current = currentPath();
           target.scrollIntoView({ block: "start" });
           target.querySelector("summary")?.focus({ preventScroll: true });
         }
       }
     };
     const frame = requestAnimationFrame(reveal);
-    window.addEventListener("hashchange", reveal);
-    return () => { cancelAnimationFrame(frame); window.removeEventListener("hashchange", reveal); };
+    const stopNavigate = onNavigate(reveal);
+    return () => { cancelAnimationFrame(frame); stopNavigate(); };
   }, [context.projectId, task?.id, runs, targetRunId]);
   return <><RoleTemplateSummary token={context.token} projectId={context.projectId} refresh={refresh + epoch} /><section ref={runtimePanelRef} className="panel"><div className="panel-head"><h2>受管执行会话</h2><button onClick={() => setEpoch(e => e + 1)}>读取运行状态</button></div>
     {error && <Notice error>{error}</Notice>}

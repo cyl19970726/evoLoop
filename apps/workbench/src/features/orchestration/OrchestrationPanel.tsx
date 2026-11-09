@@ -22,7 +22,7 @@ interface LoopData {
 }
 const empty = <T,>(): ResultPage<T> => ({ items: [], nextCursor: null });
 const short = (id: string) => id.slice(0, 8);
-const taskHref = (projectId: string, taskId: string) => `#/p/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(taskId)}`;
+const taskHref = (projectId: string, taskId: string) => `/p/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(taskId)}`;
 const statusLabel = (value: string) => ({ active: "运行中", paused: "已暂停新派发", stopped: "已停止新派发" }[value] ?? value);
 const dispositionLabel = (value: string | null) => ({ no_action: "无后续动作", waiting: "等待", failed: "处理失败", stop: "停止", dispatch: "已请求派发" }[value ?? ""] ?? "未登记");
 const outcomeLabel = (value: string) => ({ delivered: "已登记交付结果", no_action: "无后续动作", waiting: "等待", failed: "处理失败" }[value] ?? value);

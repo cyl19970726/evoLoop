@@ -7,7 +7,7 @@ const projectId = "044d070e-0000-4000-8000-000000000001";
 const knowledgeId = "2b026d3e-0000-4000-8000-000000000001";
 const oldRevision = "5d370000-0000-4000-8000-000000000001";
 const requestedRevision = "7326818d-0000-4000-8000-000000000001";
-const path = `#/p/${projectId}/knowledge`;
+const path = `/p/${projectId}/knowledge`;
 
 test("switching an already loaded page to a canonical fixed revision detaches the old body", () => {
   const oldPage = { knowledgeId, revision: oldRevision, body: "旧正文", contentHash: "旧 hash" };
@@ -48,7 +48,7 @@ test("unsupported legacy child path visibly invalidates the prior knowledge sele
     graph: { watermark: "old" },
   };
 
-  const next = transitionKnowledgeRoute(previous, `#/p/${projectId}/knowledge/${knowledgeId}?revision=${requestedRevision}`, projectId);
+  const next = transitionKnowledgeRoute(previous, `/p/${projectId}/knowledge/${knowledgeId}?revision=${requestedRevision}`, projectId);
   assert.equal(next.route.view, "invalid");
   assert.equal(next.page, null);
   assert.deepEqual(next.history, []);

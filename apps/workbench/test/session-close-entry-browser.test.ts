@@ -83,7 +83,7 @@ test("Session workspace exposes blockers, submits one close intent, and reads th
       res.writeHead(status, { "content-type": "application/json" }); res.end(JSON.stringify(value)); return;
     }
     try {
-      const file = url.pathname === "/" ? "index.html" : url.pathname;
+      const file = /^\/(?:$|p\/|ui$)/.test(url.pathname) ? "index.html" : url.pathname;
       const body = await readFile(join(dist, file));
       res.writeHead(200, { "content-type": ({ ".html": "text/html", ".js": "text/javascript", ".css": "text/css" } as Record<string, string>)[extname(file)] ?? "application/octet-stream" }); res.end(body);
     } catch { res.writeHead(404); res.end(); }
@@ -93,11 +93,11 @@ test("Session workspace exposes blockers, submits one close intent, and reads th
   const browser = await chromium.launch({ headless: true, ...(process.env.EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH
     ? { executablePath: process.env.EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH } : {}) }); t.after(() => browser.close());
   const page = await browser.newPage({ viewport: { width: 390, height: 840 } });
-  await page.goto(`${base}/#/p/${projectId}/runtime?session=${encodeURIComponent(sessionKey)}`);
+  await page.goto(`${base}/p/${projectId}/runtime?session=${encodeURIComponent(sessionKey)}`);
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button", { name: "进入", exact: true }).click();
   await page.getByRole("heading", { name: "关闭入口测试会话" }).waitFor();
-  await page.getByRole("button", { name: "关闭受管 Session", exact: true }).click();
+  await page.getByRole("button", { name: "关闭受管智能体", exact: true }).click();
   const panel = page.getByRole("region", { name: "结束会话与历史归类" });
   await panel.getByText(/未完 Task/).waitFor();
   for (const label of ["队列占用", "Run", "消息"]) assert.match(await panel.innerText(), new RegExp(label));

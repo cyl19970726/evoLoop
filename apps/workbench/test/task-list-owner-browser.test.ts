@@ -109,7 +109,7 @@ test("Task list resolves only displayed Role owners and rejects stale or failed 
       }
       res.writeHead(status,{"content-type":"application/json"});res.end(JSON.stringify(value));return;
     }
-    try {const body=await readFile(join(dist,url.pathname==="/"?"index.html":url.pathname));res.writeHead(200,{"content-type":({".html":"text/html",".js":"text/javascript",".css":"text/css"})[extname(url.pathname==="/"?"index.html":url.pathname)]??"application/octet-stream"});res.end(body);}
+    try {const body=await readFile(join(dist,/^\/(?:$|p\/|ui$)/.test(url.pathname) ? "index.html":url.pathname));res.writeHead(200,{"content-type":({".html":"text/html",".js":"text/javascript",".css":"text/css"})[extname(/^\/(?:$|p\/|ui$)/.test(url.pathname) ? "index.html":url.pathname)]??"application/octet-stream"});res.end(body);}
     catch {res.writeHead(404);res.end();}
   });
   await new Promise<void>(resolve=>server.listen(0,"127.0.0.1",resolve));t.after(()=>server.close());
@@ -119,7 +119,7 @@ test("Task list resolves only displayed Role owners and rejects stale or failed 
   const page=await browser.newPage({viewport:{width:390,height:844}});
   const pageErrors:string[]=[];
   page.on("pageerror", error => pageErrors.push(error.stack ?? error.message));
-  await page.goto(`${base}/#/p/${projectId}/work`);
+  await page.goto(`${base}/p/${projectId}/work`);
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button",{name:"进入",exact:true}).click();
   await page.locator(".leader-work-disclosure > summary").click();
@@ -192,16 +192,17 @@ test("Task list resolves only displayed Role owners and rejects stale or failed 
   await page.getByRole("columnheader",{name:"固定成果",exact:true}).waitFor();
   await page.setViewportSize({width:1171,height:635});
   await page.evaluate(()=>scrollTo(0,0));
-  await page.locator(".workbench-layout.sidebar-collapsed").waitFor();
-  const collapsedBody=await page.locator(".workspace-body").boundingBox();
-  assert.ok(collapsedBody && collapsedBody.y<70 && collapsedBody.width>900,"collapsed navigation must keep the workspace beside the rail");
+  // 1171px keeps both rails (the inner one collapses below 1100px); the content stays beside them.
+  await page.locator("[data-shell=frame][data-rail=shown]").waitFor();
+  const collapsedBody=await page.locator("#workspace-main").boundingBox();
+  assert.ok(collapsedBody && collapsedBody.y<70 && collapsedBody.width>800,"the content keeps its width beside the rails");
   const collapsedSummary=await page.locator(".task-summary").boundingBox();
   const collapsedMain=await page.locator(".task-list-main").boundingBox();
   assert.ok(collapsedMain && collapsedSummary && collapsedSummary.x>collapsedMain.x,
     "1171px keeps the task summary beside the table");
   await page.setViewportSize({width:1920,height:1080});
-  await page.locator(".workbench-layout:not(.sidebar-collapsed)").waitFor();
-  const wideBody=await page.locator(".workspace-body").boundingBox();
+  await page.locator("[data-shell=frame][data-rail=shown]").waitFor();
+  const wideBody=await page.locator("#workspace-main").boundingBox();
   assert.ok(wideBody && wideBody.y<70 && wideBody.width>1400);
   if (process.env.EVOLOOP_TASK_LIST_OWNER_DESKTOP_SCREENSHOT) await page.screenshot({path:process.env.EVOLOOP_TASK_LIST_OWNER_DESKTOP_SCREENSHOT,fullPage:false});
   await page.setViewportSize({width:1280,height:900});
@@ -213,7 +214,7 @@ test("Task list resolves only displayed Role owners and rejects stale or failed 
   const detailTiming=page.locator("#task-timing");
   await detailTiming.locator(":scope > summary").click();
   await detailTiming.getByText("发布证据").waitFor({timeout:5000}).catch(async () => {
-    assert.fail(`timing detail missing: route=${await page.evaluate(() => location.hash)} detail=${await detailTiming.innerText({timeout:1000}).catch(() => "absent")} body=${(await page.locator("body").innerText()).slice(0,1200)} errors=${pageErrors.join(" | ")}`);
+    assert.fail(`timing detail missing: route=${await page.evaluate(() => (location.pathname + location.search))} detail=${await detailTiming.innerText({timeout:1000}).catch(() => "absent")} body=${(await page.locator("body").innerText()).slice(0,1200)} errors=${pageErrors.join(" | ")}`);
   });
   assert.match(await detailTiming.innerText(),/未知；具备发布条件不代表已发布/);
   assert.match(await detailTiming.innerText(),/来源未知/);
@@ -253,11 +254,11 @@ test("Task list resolves only displayed Role owners and rejects stale or failed 
   await attention.getByText("1 项已关注").waitFor();
   assert.match(await attention.innerText(),/等待方 消费者 · 历史消费者/);
   await fetch(`${base}/__fixture/reset-attention`);
-  await page.goto(`${base}/?fresh=attention-narrow#/p/${projectId}/work`);
+  await page.goto(`${base}/p/${projectId}/work?fresh=attention-narrow`);
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button",{name:"进入",exact:true}).click();
   await row.getByRole("link",{name:"1 项待关注"}).click({timeout:5000}).catch(async () => {
-    assert.fail(`narrow discovery missing: hash=${await page.evaluate(() => location.hash)} state=${attentionState} reads=${attentionReads.length} link=${JSON.stringify(await row.locator(".task-attention-list-link").evaluateAll(els=>els.map(el=>({html:el.outerHTML,parent:getComputedStyle(el.parentElement!).display}))))} row=${await row.innerText()} body=${(await page.locator("body").innerText()).slice(0,500)} errors=${pageErrors.join(" | ")}`);
+    assert.fail(`narrow discovery missing: hash=${await page.evaluate(() => (location.pathname + location.search))} state=${attentionState} reads=${attentionReads.length} link=${JSON.stringify(await row.locator(".task-attention-list-link").evaluateAll(els=>els.map(el=>({html:el.outerHTML,parent:getComputedStyle(el.parentElement!).display}))))} row=${await row.innerText()} body=${(await page.locator("body").innerText()).slice(0,500)} errors=${pageErrors.join(" | ")}`);
   });
   await attention.getByText(/旧跟进属于历史 Task 修订/).waitFor();
   await attention.getByLabel("已做什么").fill("窄屏核对当前修订");

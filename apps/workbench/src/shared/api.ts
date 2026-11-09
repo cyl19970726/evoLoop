@@ -7,6 +7,7 @@ import type {
 } from "@evoloop/contracts";
 export type { TaskTimingView } from "@evoloop/contracts";
 import type { WorkTaskStatus } from "./workStatusPresentation";
+import { reportUnauthorized, requestAuth } from "./identity";
 import type {
   LeaderWorkChangesPage, LeaderWorkDependenciesCommand, LeaderWorkDocument, LeaderWorkPage,
   LeaderWorkPlanCommand, LeaderWorkReviewCommand, LeaderWorkTask,
@@ -27,14 +28,17 @@ async function requestJson<T>(token: string, path: string, timeoutMs: number, in
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
+    const auth = requestAuth(token);
     const response = await fetch(path, {
       ...init,
-      headers: { Authorization: `Bearer ${token}`, ...(init?.body ? { "Content-Type": "application/json" } : {}), ...init?.headers },
+      credentials: auth.credentials,
+      headers: { ...auth.headers, ...(init?.body ? { "Content-Type": "application/json" } : {}), ...init?.headers },
       signal: init?.signal ? AbortSignal.any([controller.signal, init.signal]) : controller.signal,
     });
     let body: unknown;
     try { body = await response.json(); }
     catch { if (response.ok) throw new ApiError(0, "响应不完整，操作结果尚未确认"); }
+    if (response.status === 401) reportUnauthorized();
     if (!response.ok) {
       const details = body && typeof body === "object" ? body as { message?: unknown; error?: unknown } : {};
       const message = typeof details.message === "string" ? details.message : typeof details.error === "string" ? details.error : `请求失败（${response.status}）`;
@@ -80,7 +84,8 @@ function checkedOperation(value: unknown, operationId: string): Operation {
 const projectPath = (projectId: string) => `/api/projects/${encodeURIComponent(projectId)}`;
 const key = (value: string) => encodeURIComponent(value);
 
-export function api(token: string, timeoutMs = 15000) {
+/** Server API. Without a token argument requests use the signed-in identity (shared/identity.ts). */
+export function api(token = "", timeoutMs = 15000) {
   const call = <T>(path: string, init?: RequestInit) => request<T>(token, path, timeoutMs, init);
   const leaderWrite = async <T extends { operationId: string }>(path: string, command: T & { type?: string }): Promise<CommandResult> => {
     const body = { ...command } as Record<string, unknown>;
@@ -149,15 +154,17 @@ export function api(token: string, timeoutMs = 15000) {
   };
 }
 
-/** Only navigate to this project's known hash routes or ordinary web URLs. */
+/** Only navigate to this project's known routes or ordinary web URLs. */
 export function safeArtifactHref(value: string, projectId: string): string | null {
   const reference = value.trim();
-  if (reference.startsWith("#/p/")) {
+  // Stored references use the former `#/p/…` form; path links are accepted too. Both open as a path.
+  if (reference.startsWith("#/p/") || reference.startsWith("/p/")) {
+    const route = reference.startsWith("#") ? reference.slice(1) : reference;
     const uuid = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
-    const knownRoute = new RegExp(`^#/p/([^/?#]+)/(?:overview|work|knowledge|(?:tasks|documents)/${uuid}(?:\\?revision=${uuid})?)$|^#/p/([^/?#]+)/knowledge\\?knowledgeId=${uuid}&knowledgeRevision=${uuid}$|^#/p/([^/?#]+)/evaluations/${uuid}\\?revision=${uuid}$`, "i");
-    const match = knownRoute.exec(reference);
+    const knownRoute = new RegExp(`^/p/([^/?#]+)/(?:overview|work|knowledge|(?:tasks|documents)/${uuid}(?:\\?revision=${uuid})?)$|^/p/([^/?#]+)/knowledge\\?knowledgeId=${uuid}&knowledgeRevision=${uuid}$|^/p/([^/?#]+)/evaluations/${uuid}\\?revision=${uuid}$`, "i");
+    const match = knownRoute.exec(route);
     if (!match) return null;
-    try { return decodeURIComponent(match[1] ?? match[2] ?? match[3]!) === projectId ? reference : null; }
+    try { return decodeURIComponent(match[1] ?? match[2] ?? match[3]!) === projectId ? route : null; }
     catch { return null; }
   }
   try {
@@ -168,6 +175,10 @@ export function safeArtifactHref(value: string, projectId: string): string | nul
     if (["127.0.0.1", "localhost", "[::1]"].includes(url.hostname)
       && ["/", "/app/"].includes(url.pathname) && !url.search && url.hash.startsWith("#/p/")) {
       const local = safeArtifactHref(url.hash, projectId);
+      if (local) return local;
+    }
+    if (["127.0.0.1", "localhost", "[::1]"].includes(url.hostname) && url.pathname.startsWith("/p/") && !url.hash) {
+      const local = safeArtifactHref(`${url.pathname}${url.search}`, projectId);
       if (local) return local;
     }
     return url.href;

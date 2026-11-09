@@ -11,7 +11,7 @@ export interface KnowledgeRouteSnapshot<TPage, THistory, TGraph> {
   graph: TGraph | null;
 }
 
-const knowledgePath = (projectId: string) => `#/p/${encodeURIComponent(projectId)}/knowledge`;
+const knowledgePath = (projectId: string) => `/p/${encodeURIComponent(projectId)}/knowledge`;
 
 function queryOnly(params: URLSearchParams, allowed: string[]): boolean {
   const keys = [...params.keys()];

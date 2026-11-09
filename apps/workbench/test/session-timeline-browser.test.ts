@@ -246,7 +246,7 @@ test("dual-source history keeps the reader anchor, exhausts cursors, merges live
     if (url.pathname === "/__fixture/deny-updates") { denyUpdates = true; res.end("ok"); return; }
     if (url.pathname === "/__fixture/requests") { res.setHeader("content-type", "application/json"); res.end(JSON.stringify(requests)); return; }
     try {
-      const file = url.pathname === "/" ? "index.html" : url.pathname;
+      const file = /^\/(?:$|p\/|ui$)/.test(url.pathname) ? "index.html" : url.pathname;
       const body = await readFile(join(dist, file));
       res.writeHead(200, { "content-type": ({ ".html": "text/html", ".js": "text/javascript", ".css": "text/css" } as Record<string, string>)[extname(file)] ?? "application/octet-stream" }); res.end(body);
     } catch { res.writeHead(404); res.end(); }
@@ -259,36 +259,31 @@ test("dual-source history keeps the reader anchor, exhausts cursors, merges live
   const pageErrors: string[] = [];
   page.on("pageerror", error => pageErrors.push(error.message));
   const baselinePage = await browser.newPage({ viewport: { width: 1536, height: 900 } });
-  await baselinePage.goto(`${base}/#/p/${projectId}/tasks/${taskId}`);
+  await baselinePage.goto(`${base}/p/${projectId}/tasks/${taskId}`);
   await baselinePage.getByLabel("访问令牌").fill("fixture-token");
   await baselinePage.getByRole("button", { name: "进入", exact: true }).click();
   await baselinePage.getByRole("heading", { name: taskTitle }).waitFor();
-  const taskShellBaseline = await baselinePage.locator(".workbench-layout").evaluate(element => ({
-    active: element.getAttribute("data-session-reader"),
-    header: getComputedStyle(element.querySelector<HTMLElement>(".workspace-header")!).height,
+  const taskShellBaseline = await baselinePage.locator("[data-shell=frame]").evaluate(element => ({
+    rail: element.getAttribute("data-rail"),
     columns: getComputedStyle(element).gridTemplateColumns.split(" ").slice(0, 2),
   }));
-  assert.equal(taskShellBaseline.active, "false", "a fresh Task page uses the standard shell");
+  assert.equal(taskShellBaseline.rail, "shown", "a fresh Task page shows the inner rail at this width");
   await baselinePage.close();
-  await page.goto(`${base}/#/p/${projectId}/sessions`);
+  await page.goto(`${base}/p/${projectId}/sessions`);
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button", { name: "进入", exact: true }).click();
   await page.getByRole("heading", { name: "Sessions", exact: true }).waitFor();
-  const directoryToggle = page.getByRole("button", { name: /^(展开|收起)项目导航$/ });
-  if (await directoryToggle.getAttribute("aria-expanded") !== "true") await directoryToggle.click();
-  const directory = page.locator(".project-sidebar .session-navigation");
+  if (await page.locator("[data-shell=frame]").getAttribute("data-rail") !== "shown") await page.getByRole("button", { name: "展开项目导航" }).click();
+  const directory = page.locator("aside[aria-label=项目导航] .session-navigation");
   await directory.locator(".session-nav-item").filter({ hasText: "时间线分页会话" }).click();
   await page.getByRole("heading", { name: "时间线分页会话" }).waitFor();
-  const shellLayout = async () => page.locator(".workbench-layout").evaluate(element => ({
-    active: element.getAttribute("data-session-reader"),
-    header: getComputedStyle(element.querySelector<HTMLElement>(".workspace-header")!).height,
+  const shellLayout = async () => page.locator("[data-shell=frame]").evaluate(element => ({
+    rail: element.getAttribute("data-rail"),
     columns: getComputedStyle(element).gridTemplateColumns.split(" ").slice(0, 2),
   }));
   const assertSessionReaderShell = async () => {
     const shell = await shellLayout();
-    assert.equal(shell.active, "true", "the selected Session activates its reader layout");
-    assert.deepEqual(shell.columns, ["88px", "256px"], "the selected Session uses the reader project grid");
-    assert.equal(shell.header, "48px", "the selected Session uses the compact header");
+    assert.deepEqual(shell, taskShellBaseline, "the selected Session uses the same frame as a Task");
   };
   const assertDefaultShell = async () => {
     const shell = await shellLayout();
@@ -316,7 +311,7 @@ test("dual-source history keeps the reader anchor, exhausts cursors, merges live
   for (const dpr of [1, 2]) {
     const context = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: dpr });
     const narrow = await context.newPage();
-    await narrow.goto(`${base}/#/p/${projectId}/sessions?session=${encodeURIComponent(sessionKey)}&tab=activity`);
+    await narrow.goto(`${base}/p/${projectId}/sessions?session=${encodeURIComponent(sessionKey)}&tab=activity`);
     await narrow.getByLabel("访问令牌").fill("fixture-token");
     await narrow.getByRole("button", { name: "进入", exact: true }).click();
     await narrow.locator(".workspace-current-strip > div:last-child span").waitFor();
@@ -346,7 +341,7 @@ test("dual-source history keeps the reader anchor, exhausts cursors, merges live
     `normal window keeps long progress and history readable: ${JSON.stringify(desktopCurrent)}`);
   const shortContext = await browser.newContext({ viewport: { width: 1280, height: 560 }, deviceScaleFactor: 1, reducedMotion: "reduce" });
   const short = await shortContext.newPage();
-  await short.goto(`${base}/#/p/${projectId}/sessions?session=${encodeURIComponent(sessionKey)}&tab=activity`);
+  await short.goto(`${base}/p/${projectId}/sessions?session=${encodeURIComponent(sessionKey)}&tab=activity`);
   await short.getByLabel("访问令牌").fill("fixture-token");
   await short.getByRole("button", { name: "进入", exact: true }).click();
   await short.locator(".workspace-current-strip > div:last-child span").waitFor();
@@ -559,7 +554,7 @@ test("dual-source history keeps the reader anchor, exhausts cursors, merges live
   }
 
   const switchPage = await browser.newPage({ viewport: { width: 1171, height: 871 } });
-  await switchPage.goto(`${base}/#/p/${projectId}/sessions?session=${encodeURIComponent(sessionKey)}&tab=activity`);
+  await switchPage.goto(`${base}/p/${projectId}/sessions?session=${encodeURIComponent(sessionKey)}&tab=activity`);
   await switchPage.getByLabel("访问令牌").fill("fixture-token");
   await switchPage.getByRole("button", { name: "进入", exact: true }).click();
   await switchPage.getByRole("heading", { name: "时间线分页会话" }).waitFor();
@@ -569,7 +564,7 @@ test("dual-source history keeps the reader anchor, exhausts cursors, merges live
   for (let attempt = 0; attempt < 60 && await (await fetch(`${base}/__fixture/message-page-held`)).text() !== "true"; attempt++)
     await new Promise(resolve => setTimeout(resolve, 25));
   assert.equal(await (await fetch(`${base}/__fixture/message-page-held`)).text(), "true", "Session A's messages page is held in flight");
-  await switchPage.evaluate(([project, key]) => { location.hash = `#/p/${project}/sessions?session=${encodeURIComponent(key)}&tab=activity`; }, [projectId, sessionBKey]);
+  await switchPage.evaluate(([project, key]) => { location.hash = `/p/${project}/sessions?session=${encodeURIComponent(key)}&tab=activity`; }, [projectId, sessionBKey]);
   await switchPage.getByRole("heading", { name: "乙时间线会话" }).waitFor();
   const timelineB = switchPage.getByRole("log", { name: "Session 消息与工具时间线" });
   await timelineB.locator(".workspace-turn-state").getByText("处理中", { exact: true }).waitFor();
@@ -580,7 +575,7 @@ test("dual-source history keeps the reader anchor, exhausts cursors, merges live
   const openSessionB = async (mode: "short" | "auto-cap" | "auto-fill" | "manual", viewport: { width: number; height: number }) => {
     await fetch(`${base}/__fixture/session-b-${mode}`);
     const testPage = await browser.newPage({ viewport });
-    await testPage.goto(`${base}/#/p/${projectId}/sessions?session=${encodeURIComponent(sessionBKey)}&tab=activity`);
+    await testPage.goto(`${base}/p/${projectId}/sessions?session=${encodeURIComponent(sessionBKey)}&tab=activity`);
     await testPage.getByLabel("访问令牌").fill("fixture-token");
     await testPage.getByRole("button", { name: "进入", exact: true }).click();
     await testPage.getByRole("heading", { name: "乙时间线会话" }).waitFor();
@@ -683,7 +678,7 @@ test("dual-source history keeps the reader anchor, exhausts cursors, merges live
     "a response from the prior Session scope cannot enter the new timeline");
   await fetch(`${base}/__fixture/direct-enable`);
   const directPage = await browser.newPage({ viewport: { width: 390, height: 844 } });
-  await directPage.goto(`${base}/#/p/${projectId}/sessions?session=${encodeURIComponent(sessionKey)}&tab=activity`);
+  await directPage.goto(`${base}/p/${projectId}/sessions?session=${encodeURIComponent(sessionKey)}&tab=activity`);
   await directPage.getByLabel("访问令牌").fill("fixture-token");
   await directPage.getByRole("button", { name: "进入", exact: true }).click();
   await directPage.getByLabel("即时发送到原 Session").waitFor();
@@ -709,7 +704,7 @@ test("dual-source history keeps the reader anchor, exhausts cursors, merges live
   await directPage.close();
   await fetch(`${base}/__fixture/direct-server-error`);
   const uncertainPage = await browser.newPage({ viewport: { width: 390, height: 844 } });
-  await uncertainPage.goto(`${base}/#/p/${projectId}/sessions?session=${encodeURIComponent(sessionKey)}&tab=activity`);
+  await uncertainPage.goto(`${base}/p/${projectId}/sessions?session=${encodeURIComponent(sessionKey)}&tab=activity`);
   await uncertainPage.getByLabel("访问令牌").fill("fixture-token");
   await uncertainPage.getByRole("button", { name: "进入", exact: true }).click();
   await uncertainPage.getByLabel("即时发送到原 Session").fill("保留未知的原输入");
@@ -735,7 +730,7 @@ test("dual-source history keeps the reader anchor, exhausts cursors, merges live
 
   await fetch(`${base}/__fixture/direct-invalid-input`);
   const rejectedPage = await browser.newPage({ viewport: { width: 390, height: 844 } });
-  await rejectedPage.goto(`${base}/#/p/${projectId}/sessions?session=${encodeURIComponent(sessionKey)}&tab=activity`);
+  await rejectedPage.goto(`${base}/p/${projectId}/sessions?session=${encodeURIComponent(sessionKey)}&tab=activity`);
   await rejectedPage.getByLabel("访问令牌").fill("fixture-token");
   await rejectedPage.getByRole("button", { name: "进入", exact: true }).click();
   await rejectedPage.getByLabel("即时发送到原 Session").fill("明确未接收的输入");
@@ -866,7 +861,7 @@ test("a reset survives a busy read, unavailable history and stale pagination res
     if (url.pathname === "/__fixture/update-state") { res.setHeader("content-type", "application/json"); res.end(JSON.stringify({ updateAfter, resetSnapshots })); return; }
     if (url.pathname === "/__fixture/enable-history") { historyAvailable = true; res.end("ok"); return; }
     try {
-      const file = url.pathname === "/" ? "index.html" : url.pathname;
+      const file = /^\/(?:$|p\/|ui$)/.test(url.pathname) ? "index.html" : url.pathname;
       const body = await readFile(join(dist, file));
       res.writeHead(200, { "content-type": ({ ".html": "text/html", ".js": "text/javascript", ".css": "text/css" } as Record<string, string>)[extname(file)] ?? "application/octet-stream" }); res.end(body);
     } catch { res.writeHead(404); res.end(); }
@@ -882,7 +877,7 @@ test("a reset survives a busy read, unavailable history and stale pagination res
     await new Promise<void>(resolve => server.close(() => resolve()));
   });
   const page = await browser.newPage({ viewport: { width: 1280, height: 850 } });
-  await page.goto(`${base}/#/p/${projectId}/sessions?session=${encodeURIComponent(sessionKey)}&tab=activity`);
+  await page.goto(`${base}/p/${projectId}/sessions?session=${encodeURIComponent(sessionKey)}&tab=activity`);
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button", { name: "进入", exact: true }).click();
   await page.getByRole("heading", { name: "时间线分页会话" }).waitFor();
@@ -983,7 +978,7 @@ test("revocation invalidates a held homepage, inspector and cache until an expli
       res.writeHead(status, { "content-type": "application/json" }); res.end(JSON.stringify(value)); return;
     }
     try {
-      const file = url.pathname === "/" ? "index.html" : url.pathname;
+      const file = /^\/(?:$|p\/|ui$)/.test(url.pathname) ? "index.html" : url.pathname;
       const body = await readFile(join(dist, file));
       res.writeHead(200, { "content-type": ({ ".html": "text/html", ".js": "text/javascript", ".css": "text/css" } as Record<string, string>)[extname(file)] ?? "application/octet-stream" }); res.end(body);
     } catch { res.writeHead(404); res.end(); }
@@ -993,7 +988,7 @@ test("revocation invalidates a held homepage, inspector and cache until an expli
   const browser = await chromium.launch({ headless: true, ...(process.env.EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH ? { executablePath: process.env.EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH } : {}) });
   t.after(() => browser.close()); t.after(() => releaseHomepage?.());
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
-  await page.goto(`${base}/#/p/${projectId}/sessions?session=${encodeURIComponent(sessionKey)}`);
+  await page.goto(`${base}/p/${projectId}/sessions?session=${encodeURIComponent(sessionKey)}`);
   await page.getByLabel("访问令牌").fill("fixture-token"); await page.getByRole("button", { name: "进入", exact: true }).click();
   await page.getByText("CURRENT_AUTHORIZED_BODY", { exact: true }).waitFor();
   const dispatch = page.locator(".workspace-system-strip");
@@ -1022,9 +1017,9 @@ test("revocation invalidates a held homepage, inspector and cache until an expli
   assert.equal(await page.getByRole("dialog").count(), 0, "the old inspector stays closed");
   const revokedReads = latestReads;
   await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
-  await page.evaluate(id => { location.hash = `#/p/${id}/sessions`; }, projectId);
+  await page.evaluate(id => { location.hash = `/p/${id}/sessions`; }, projectId);
   await page.locator(".unified-session-timeline").waitFor({ state: "detached" });
-  await page.evaluate(({ id, key }) => { location.hash = `#/p/${id}/sessions?session=${encodeURIComponent(key)}`; }, { id: projectId, key: sessionKey });
+  await page.evaluate(({ id, key }) => { location.hash = `/p/${id}/sessions?session=${encodeURIComponent(key)}`; }, { id: projectId, key: sessionKey });
   await page.getByText("活动暂不可读取：时间线读取权限已撤销", { exact: false }).waitFor();
   assert.equal(latestReads, revokedReads, "remount and visibility cannot refill a revoked cache");
   assert.equal(await page.locator("[data-workspace-entry]").count(), 0);
