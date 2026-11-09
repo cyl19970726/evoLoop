@@ -36,19 +36,32 @@ export function taskListReturn(hash: string, projectId: string, taskId: string):
   return list?.split("?")[0] === `/p/${encodeURIComponent(projectId)}/work` ? list : null;
 }
 
-/** Internal tab changes use the same URL as incoming links, so browser history and later same-Task links agree. */
-export function navigateTaskTab(projectId: string, taskId: string, section: TaskSection,
-  location: {path:string}, actorId?: string): boolean {
+/** The task list's filters and sort travel with the task's address, so the inner rail keeps them (tasks.md 列表). */
+export const taskListKeys = ["q", "state", "kind", "scope", "sort"] as const;
+
+/** The address of one task tab: the verified Session return, the list backlink and the list view are kept. */
+export function taskTabHref(path: string, projectId: string, taskId: string, section: TaskSection, actorId?: string): string {
   const params = new URLSearchParams({ tab: section });
-  const source = actorId ? taskSessionReturn(location.path, projectId, taskId, actorId) : null;
+  const source = actorId ? taskSessionReturn(path, projectId, taskId, actorId) : null;
   if (source) {
     params.set("return", source.href);
     params.set("actor", actorId!);
     params.set("returnTitle", source.title);
   }
-  const list = taskListReturn(location.path, projectId, taskId);
+  const list = taskListReturn(path, projectId, taskId);
   if (list) params.set("list", list);
-  const href = `${taskSectionHref(projectId, taskId)}?${params}`;
+  const [current, query = ""] = path.split("?");
+  if (current === taskSectionHref(projectId, taskId)) {
+    const existing = new URLSearchParams(query);
+    for (const key of taskListKeys) { const value = existing.get(key); if (value) params.set(key, value); }
+  }
+  return `${taskSectionHref(projectId, taskId)}?${params}`;
+}
+
+/** Internal tab changes use the same URL as incoming links, so browser history and later same-Task links agree. */
+export function navigateTaskTab(projectId: string, taskId: string, section: TaskSection,
+  location: {path:string}, actorId?: string): boolean {
+  const href = taskTabHref(location.path, projectId, taskId, section, actorId);
   if (location.path === href) return false;
   location.path = href;
   return true;

@@ -11,47 +11,49 @@
 
 ## 布局
 
-| 栏 | 放什么（目标） |
+| 栏 | 放什么 |
 | --- | --- |
-| 左栏（对象列表） | 专题目录：专题树或列表、最近修订、待复核的争议；可按类型、适用范围、有效状态筛选 |
-| 中间 | 所选知识页的完整正文：标题、三组标签、所读修订与当前版、适用条件、正文 |
-| 右栏（可收起） | 来源（支持与挑战，逐条打开原件）、相关认识（入链、出链、关系类型）、历史修订 |
-| 单独展开 | 关系图谱：按主题缩放，点节点回到完整页 |
+| 内层栏 | “文档 / 知识”切换；搜索、页面类型和有效状态筛选；“候选与审阅”入口（带待审数）；专题目录（专题在前，打开的专题下列出成员），其余知识页；载入范围和“载入更多” |
+| 中间 | 未选页：服务状态、降级时“此时仍可做什么”和目录。选中页：标题、三组标签、所读版本与当前版、完整正文（排版 / 原文）、“基于此页提出修订候选”。另有“候选与审阅”“提出候选”两个视图 |
+| 右栏 | 来源 → 挑战与反例 → 相关认识 → 版本（含历史版本）→ 评价 → 关系图（默认收起）→ 完整标识（默认收起）；候选视图是候选的来源、拟议关系和基线 |
 
-外壳与左栏见[布局](../layout.md)。
+外壳见[布局](../layout.md)。页标题和外壳导航都叫“知识空间”。
 
-现状（#229 PR9）：内层栏顶部是“文档 / 知识”切换，下面是知识列表（还没有专题目录）；中间是所读页面的正文（未选时为列表）；来源、挑战与反例、其他关系、历史版本和关系图在外壳右栏。候选与审阅、提出候选仍是中间的单独视图，正文和这些视图内部仍是旧样式。
+现状（#229 PR9i）：已按上表实现。1100–1439 宽度右栏默认收起，中间有“来源与反例”按钮（带反例数）；窄屏右栏是抽屉，只在点这个按钮时打开。内层栏不在屏上时，切换和筛选移到中间。切换页面时右栏保留上一页并标“正在读取”，栏宽不变；在右栏点历史版本，焦点留在原链接，点关系后焦点不丢到页面。尚未实现：按适用范围筛选（还没有结构化字段）、最近修订（列表没有时间）、关系图单独展开页。
 
 ### 知识空间是完整的阅读入口
 
 - 不经 Task 也能进入：从专题找到认识，读完整页面，核对原始来源，沿相关认识继续，有问题就提交纠正。
-- 阅读、知识树、来源与相关、图谱和 Review 的组织方式借鉴 [nashsu/llm_wiki 固定版](../../research/nashsu-llm-wiki/feature-workflows.md#24-人阅读编辑图谱与洞察)。正文与修订的权威仍是外置 Wiki，读取与权限见 [Wiki 工作台](../../architecture/wiki-workspace.md)。
-- 浏览中发现的新观点按来源提交候选；要形成任务，仍按正常的授权与创建条件。
+- 组织方式借鉴 [nashsu/llm_wiki 固定版](../../research/nashsu-llm-wiki/feature-workflows.md#24-人阅读编辑图谱与洞察)。正文与修订的权威仍是外置 Wiki，见 [Wiki 工作台](../../architecture/wiki-workspace.md)。
 
 ## 内容与状态
 
-通用的空、加载、失败、未知规则见[共同原则](../principles.md)。
+通用规则见[共同原则](../principles.md)。
 
-- 卡片写标题、一句话主张、类型、适用条件、当前修订、来源可核对性和反例提示；卡片只是某一修订的阅读入口，点开进完整页。
-- 三组标签分开：页面类型（概念、方法、专题）、认识性质（观察、解释、假设、已采纳决定、争议）、有效状态（当前、待复核、已取代、已撤回），不合成一个“可信”分（见 [Wiki 工作台](../../architecture/wiki-workspace.md#1-浏览对象和屏幕)）。假设写明怎样会被证伪；解释保留提出者、依据和反例。
-- Task 引用先打开它固定的修订，当前版另给入口；固定版读取失败时不拿当前版代替。
-- 只有登记引用、没有正文时，写明“这是引用”。
-- 来源逐条写身份、观察版本、权限和撤回状态；没有来源或来源被撤回时标“正文待复核”。引用编号存在 ≠ 主张已获支持。
-- “此版未登记挑战关系” ≠ 没有反例。
-- 图谱只帮助找线索，布局、聚类和相似度都不是正确性；每条边回到文字关系和原件。
-- 纠正写原件位置、挑战的主张和预期修正。Review 分开显示待判断、需补证、已决定、已发布、已被后续采用；结案 ≠ 正文已改（见[合同](../../architecture/contracts.md#3-evidencestore-与-knowledgerepository)）。
-- 知识后端不可达时，显示已有固定引用、失败范围和重读入口。
+- 三组标签分开：页面类型、认识性质、有效状态，不合成一个“可信”分（见 [Wiki 工作台](../../architecture/wiki-workspace.md#1-浏览对象和屏幕)）。
+- 固定版本链接停在原版本，提示一直可见并给“阅读当前版”；当前版没读回时写“当前版待核对”，不拿当前版代替。历史版本按位置称呼，不显示版本号。
+- 来源逐条写原件、状态和片段；没有来源、来源撤回或不可读时标“正文待复核”。“此版未登记挑战关系” ≠ 没有反例。
+- 知识 ID、版本号、哈希、候选和操作标识只在“完整标识”里；服务能力写成中文，放在“服务与读取范围”里。
+- 列表写明已载入多少、后续是否未读；筛选只作用于已载入的页。读取中或失败时不说“没有”。
+- 候选、审阅、发布分开：接受只记录决定；发布和撤回来源要二次确认。结果未知时保留操作回执，按原操作核对，核对前不能再发布或撤回。
+- 服务不可达或固定正文未接通时，列表改称“可核对的固定引用”，并写明此时仍可做什么。
 
 ## 截图
 
-暂无当前截图。
+仓库内暂无截图。`knowledge-browser.test.ts` 设 `EVOLOOP_KNOWLEDGE_SCREENSHOT_DIR` 后输出 1440、1280、1024、390 宽度和降级状态的截图。
 
 ## 代码与测试
 
-| 范围 | 路径 |
-| --- | --- |
-| 源码（`apps/workbench/src/`） | `features/knowledge/KnowledgePanel.tsx`（列表、阅读、来源栏、候选与审阅）、`features/knowledge/knowledgeRoute.ts`（固定修订路由）、`features/knowledge/availability.ts`（后端可读状态）、`features/knowledge/overviewRead.ts`、`shared/knowledgeClient.ts`；页面入口在 `app/App.tsx` |
-| 测试（`apps/workbench/test/`） | `knowledge-route.test.ts`、`knowledge-availability.test.ts`、`knowledge-overview-read.test.ts` |
+源码在 `apps/workbench/src/features/knowledge/`，页面入口在 `app/App.tsx`。
+
+| 部分 | 主要源码 | 相关测试 |
+| --- | --- | --- |
+| 页面与写操作 | `KnowledgePanel.tsx`、`knowledgeReceipts.ts`、`availability.ts` | `knowledge-browser.test.ts`、`knowledge-availability.test.ts` |
+| 读取 | `knowledgeData.ts`（`useProjectQuery`）、`knowledgeRead.ts`、`apps/workbench/src/shared/knowledgeClient.ts` | `knowledge-read.test.ts` |
+| 内层栏 | `KnowledgeRail.tsx` | `knowledge-presentation.test.ts`、`knowledge-browser.test.ts` |
+| 阅读与右栏 | `KnowledgeReader.tsx`、`KnowledgeFacts.tsx`、`KnowledgeGraph.tsx`、`apps/workbench/src/shared/ui/readingProse.ts` | `knowledge-browser.test.ts` |
+| 候选、审阅、发布、撤回 | `KnowledgeReview.tsx`、`KnowledgeCompose.tsx` | `knowledge-browser.test.ts` |
+| 用语与路由 | `knowledgePresentation.ts`、`knowledgeRoute.ts` | `knowledge-presentation.test.ts`、`knowledge-route.test.ts` |
 
 ## 相关
 
