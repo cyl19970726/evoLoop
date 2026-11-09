@@ -71,24 +71,6 @@ button.primary:hover:not(:disabled),
   border-color: transparent;
 }
 
-.development-preview{
-  position: fixed;
-  right: 18px;
-  bottom: 14px;
-  z-index: 80;
-  width: max-content;
-  max-width: calc(100vw - 36px);
-  padding: 4px 9px;
-  color: #755923;
-  background: #fff5dc;
-  border-color: #ead8ac;
-  border: 1px solid #ead8ac;
-  border-radius: 999px;
-  font-size: 10px;
-  letter-spacing: .02em;
-  box-shadow: 0 5px 16px rgb(53 45 20 / 8%);
-}
-
 .content{
   width: 100%;
   max-width: 2200px;
@@ -1746,25 +1728,9 @@ tbody tr:hover{
   border-color: #b9c7ed;
 }
 
-.workflow-form input,
-.workflow-form textarea,
-.workflow-form select,
-.review-form textarea,
-.auth-card input{
+.workflow-form input,.workflow-form textarea,.workflow-form select,.review-form textarea {
   border-color: var(--border-strong);
   border-radius: 6px;
-}
-
-.auth-shell{
-  background:
-    radial-gradient(circle at 18% 18%, rgb(49 87 213 / 9%), transparent 28rem),
-    var(--surface);
-}
-
-.auth-card{
-  border-color: var(--border);
-  border-radius: 9px;
-  box-shadow: 0 18px 50px rgb(31 38 62 / 10%);
 }
 
 @media (min-width: 1600px) {
