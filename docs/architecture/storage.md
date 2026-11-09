@@ -1,6 +1,6 @@
 # 存储逻辑：主数据、固定依据与外部引用
 
-状态：2026-10-20 **目标逻辑设计，S1a 的任务/过程 Markdown/依据/影响/操作日志/outbox 已建表、迁移并通过真实 PG 检查，其余表按切片实施。** 用户已选定 PostgreSQL 保存 evoLoop 主数据、飞书作为 connector；本页细化逻辑约束，不宣称字段名或 SQL 已成为合同。语义以[领域合同](contracts.md)为准，权威位置见[项目数据](project-data.md)，包和运行边界见[包架构](packages.md)与[技术选型](technology-selection.md)。
+状态：2026-10-20 **目标逻辑设计，S1a 的任务/过程 Markdown/依据/影响/操作日志/outbox 已建表、迁移并通过真实 PG 检查，其余表按切片实施。** 2026-11-09 补记迁移 054–068 新增的表，见[下文](#迁移-054-到-068-新增的表)；部署与迁移范围见[部署与迁移](deployment.md)。 用户已选定 PostgreSQL 保存 evoLoop 主数据、飞书作为 connector；本页细化逻辑约束，不宣称字段名或 SQL 已成为合同。语义以[领域合同](contracts.md)为准，权威位置见[项目数据](project-data.md)，包和运行边界见[包架构](packages.md)与[技术选型](technology-selection.md)。
 
 C5 的 Task 正文不再双存：头表和 TaskRevision 都固定引用主 DocumentRevision，读取联结产生 content。迁移保留旧 TaskRevision ID/状态/验收及 Run/Basis/operation；将原 goal 原字节存为对应的主正文修订，当前状态才映射为四态。不得向既有 sealed BasisSet 补写成员或改旧操作摘要。Document 追加用途 kind（可空）与 draft/published/archived；Schedule 历史 task_template JSON 保留原样，只读兼容旧 goal，新模板写 content。具体 DDL 以新增迁移 012 及非空迁移测试为准。
 
@@ -141,6 +141,26 @@ erDiagram
 
 这些记录为讨论页提供查询与交接锚点，不把聊天文本或通知送达当作判断已被消费的证据。关联到外部 Git/Wiki 的字段只能保存经权限检查的固定引用；没有外部修订可核验时显示缺项，而不是伪造本库 FK。
 
+## 迁移 054 到 068 新增的表
+
+下表按 `packages/adapter-postgres/schema/` 的实际文件逐个列出 054–068 新增的表和列。编号 053、060、061 没有使用（分支上曾占用，合入时改号），迁移仍按编号顺序执行。各表都带 `project_id` 并以同项目复合外键关联既有对象；“不可变”指有触发器拒绝更新或删除。语义以右列的合同为准。更早的 046、047（Leader 通知）见[接口合同](contracts.md#leader-通知层)。
+
+| 迁移 | 新增的表或列 | 归属与关键约束 | 语义见 |
+| --- | --- | --- | --- |
+| 054 `task_attention` | `task_attention_threshold`／`_revision`、`task_attention_follow_up`／`_revision`、`task_attention_item`、`task_attention_item_event` | 项目或阶段门槛、单 Task 检查点都以修订留历史，修订不可变；同一 Task 的同一信号同时只有一条打开的关注项，变化逐条追加为不可变事件。Leader 通知增加 `task_attention` 类型。 | [阶段等待](contracts.md#阶段等待由事实推导) |
+| 055 `pre_turn_continuation` | `runtime_run.pre_turn_proof`、`session_message_processing.pre_turn_proof` | 原 Run 或消息处理上带来源的写者冲突凭证和一次性续接许可，由触发器保护；更早的未知操作没有凭证，不能被重放。 | [宿主失联](session-runtime.md#宿主失联的三种情况) |
+| 056 `pre_turn_review_decision` | `pre_turn_review_decision` | 把复核操作 ID 绑定到原始意图与结果；同一 ID 只读回首次结果。为已执行 055 的候选库单独成文件。 | 同上 |
+| 057 `task_timing` | `task_timing_series`／`_revision`、`task_timing_occurrence`／`_revision`、`task_timing` | 系列以首个 Task 为根且唯一；每个时点 `(project, series, planned_at_utc)` 唯一并关联生成的 Task；系列修订与时点记录不可变，未生成时点改期另记修订。 | [一次与每日复制](contracts.md#普通-task-的一次与每日复制) |
+| 058 `session_compaction` | `session_compaction` | 每个原生请求一条持久意图；同一 Session 同时至多一条 `unknown` 或 `accepted`，同一恢复门版本至多一次；触发器保证压缩不打开恢复门。 | [托管压缩](session-runtime.md#4-托管压缩) |
+| 059 `session_direct_input` | `session_direct_input` | 不可删除、身份不可改写的输入证据；`start` 必须对应一条消息处理，`steer` 必须有期望 Turn，`accepted` 必须有实际 Turn；原处理终态后只释放对应的恢复门。 | [即时输入](session-runtime.md#3-即时输入执行中收到的消息怎样处理) |
+| 062 `acceptance_relay` | `task_proposal.acceptance_target`、`session_message_processing.role_context`、`task_acceptance_relay`、`task_acceptance_human_read`、`task_acceptance_observation_link`、`session_retirement_decision` | 同一 Delivery、阶段与范围只有一条现行安排；验收消息开始前、Task 关闭前和临时 Session 进入 `closing` 前各有触发器核对；`role_context` 派发后不可改；退役决定不可变。Leader 通知增加 `acceptance_blocked` 类型。 | [验收接力与退役](contracts.md#验收接力与临时-session-退役) |
+| 063 `message_connectors` | `connector_route`、`connector_route_operation` | 路由身份字段不可改；同一来源会话、同一目标 Session 各至多一条启用或暂停的路由；操作回执不可变。 | [消息 Connector](message-connectors.md) |
+| 064 `message_connector_links` | `connector_unhandled_event`、`connector_message_link` | 未处理事件只存不含正文的记录；来源与平台消息的关联写入前核对，之后不可变。 | 同上 |
+| 065 `message_connector_standard` | `connector_route` 增 `mode`、`send_targets`、`sender_ids`、`internal_targets` | 只有标准模式的路由可以离开 `disabled`，受限模式首版不启用。 | 同上 |
+| 066 `connector_delivery_decision` | `connector_claim_attempt`、`connector_delivery_decision`、`connector_transport_attempt` | 每次外部写入前先保存首次尝试；发送前冻结请求 ID、内容和唯一尝试状态，结果未知时只按原请求查询。 | 同上 |
+| 067 `runtime_provider` | `runtime_session.runtime_provider`、`runtime_run.usage`、`runtime_run.cost_usd` | Session 的运行时只能是 `codex` 或 `claude`，写定后不可改，已有行记为 `codex`；用量与费用为空表示运行时没有报告。 | [Session 运行时](session-runtime.md#6-一个-role-只绑定一种运行时) |
+| 068 `role_runtime_profile` | `role_runtime_revision` | 只追加；第 1 个修订固定 Role 的运行时，之后只改 skill 选择，选择内容由校验函数约束；新 Session 插入时触发器拒绝与 Role 绑定不一致的运行时。迁移按已有 Session 回填首个绑定。 | 同上 |
+
 ## 事务、幂等和读取
 
 `operation_journal` 用 `(project_id, operation_id)` 唯一记录请求身份、目标、读入基线、规范化命令摘要、预期副作用及 `pending/applied/rejected/unknown`。同一 ID 与摘要一致时，经当前授权核验后返回原结果或待对账状态；摘要不同则拒绝，不能把旧结果当作新命令成功。`outbox` 用 `(project_id, event_id)` PK，`(project_id, operation_id, effect_key, target_connector, event_kind)` 去重。`effect_key` 是命令内稳定的对象/项目项键：一次操作变更多个 Task、关系或投影时各项不同，同一项重试时不变。载荷只保存目标对象 ID/版本、最少投影内容、可见范围、尝试与回读回执，不把 outbox 当长期第二正文。唯一键字段均应非空；不能假设普通 UNIQUE 将多个 NULL 视为冲突。[PostgreSQL 约束文档](https://www.postgresql.org/docs/current/ddl-constraints.html)
@@ -230,7 +250,7 @@ evoLoop 的 BlobStore 与 OpenViking 内容层可以复用同一家存储服务�
 
 从本机目录迁到对象存储时保留 blob 稳定 ID、字节 hash、资源 manifest 和旧 DocumentRevision，只在适配绑定里调整物理位置。先复制、核验并试读，再切换绑定、按保留策略处理旧副本；Task/Wiki 的来源引用无需跟着本机路径变化。端口归[领域合同](contracts.md)，供应商 SDK 和迁移实现归[包架构](packages.md)，不为当前未部署的服务预建空包。
 
-**仍需明确的部署项**是数据库实例位置、容量/保留、备份频率与恢复目标、Wiki 固定版的底层后端及真实写入能力。这些在保存第一份真实且不可重建材料前落实。开发和 CI 用同主版本真实 PG 验约束，部署步骤先验空库建立、旧版升级和中断恢复。没有测量依据时不增加新的存储引擎；若 OpenViking 复用收益不足，重新比较薄知识后端，而不是在其旁边补一整套重复系统。
+**部署形态已定**：单台常驻主机、单一 HTTPS 入口，PostgreSQL 与存储不开公共端口，发布前停写备份，Blob 按内容寻址（DEC-041，见[部署与迁移](deployment.md)）。**仍需明确的部署项**是容量/保留、备份频率与恢复目标、外置 Wiki 是否部署及其底层后端与真实写入能力。开发和 CI 用同主版本真实 PG 验约束，部署步骤先验空库建立、旧版升级和中断恢复。没有测量依据时不增加新的存储引擎；若 OpenViking 复用收益不足，重新比较薄知识后端，而不是在其旁边补一整套重复系统。
 
 ## 切片与验收
 

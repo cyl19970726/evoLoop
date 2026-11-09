@@ -1,6 +1,6 @@
 # evoLoop 架构总览
 
-2026-10-29 · **目标架构；本机主数据、API、人类工作台与 Agent 业务 skill/CLI 已接通，完整系统尚未部署。** PostgreSQL 主数据归属与飞书 connector 方向已确定；本机受限验证和未接能力见[阶段路线](../roadmap.md)。本页先解释整个系统为什么这样组成，再沿一轮工作进入对象、失败处理和实现边界；产品目标与场景以[产品定义](../product/definition.md)为准。
+2026-10-29 · **目标架构；主数据、API、人类工作台与 Agent 业务 skill/CLI 已接通。** 2026-11-09 补记：服务已部署到一台常驻主机（DEC-041，见[部署与迁移](deployment.md)），协调服务可同时驱动 Codex 与 Claude 两种运行时（DEC-035），外部消息经统一的消息 Connector 接入（DEC-040）。PostgreSQL 主数据归属与飞书 connector 方向已确定；各能力实际配置、使用和验收到哪一步见[阶段路线](../roadmap.md#当前基线)。本页先解释整个系统为什么这样组成，再沿一轮工作进入对象、失败处理和实现边界；产品目标与场景以[产品定义](../product/definition.md)为准。
 
 ## 1. 架构要接住什么
 
@@ -36,13 +36,47 @@ evoLoop 要把真实工作中的认识持续带进下一次行动。一个 sessi
 | 部分 | 承担的责任 | 与其他部分怎样配合 |
 | --- | --- | --- |
 | **① 认知循环** | 各 Agent 在职责内比较目标、来源、相反解释和反馈；Human Requirement 按需澄清用户方向，Evocation 综合方法与组织问题。 | 有依据的行动进入共同 Task；判断依据及变化按需进入 Wiki，真实效果再检验判断。 |
-| **② 动态多 session** | Leader 组织承接与容量事实，Evocation 对照 User Session 亲用研究交接、方法和职责，比较工具、容量、临时专项或新职责试行。 | 改进任务与业务任务共用排期；后续亲用、成果和成本决定保留或撤回。 |
+| **② 动态多 session** | Leader 排程，并决定同一职责增减几个 Session 实例（按每日评估，一次一个，DEC-038）；Evocation 对照 User Session 亲用研究交接、方法和职责，比较工具、临时专项或新职责试行。 | 改进任务与业务任务共用排期；后续亲用、成果和成本决定保留或撤回。 |
 | **③ Task 与状态机** | 软件机制持有任务、接受条件、责任、交付和接续记录，并核对真实运行。 | 把已授权、已接受的选择变成可恢复的工作；完成判据由任务约定，运行结束不自动通过验收。 |
 | **④ Wiki 与 evaluator** | 外置 Wiki 保存有来源、适用条件和修订的认识；评价检查其是否被正确采用、是否改善实际成果及成本。 | session 按任务读取相关认识；纠正和评价发现的问题进入维护、复核和下一步选择。 |
 
-判断由承担相应责任的 Session 或人完成；协调软件负责权限、版本、触发、派发、记录与对账。Leader 负责跨 Task 顺序和承接，Evocation 负责组织与方法改进，User Session 提供独立体验；领域内常规修复不逐项经过中央会话审批。Wiki 存储、编译或检索也不能自行决定产品下一步。
+判断由承担相应责任的 Session 或人完成；协调软件负责权限、版本、触发、派发、记录与对账。Leader 负责跨 Task 顺序、承接、同职责编制和验收安排，Evocation 负责组织与方法改进，User Session 提供独立体验；领域内常规修复不逐项经过中央会话审批。Wiki 存储、编译或检索也不能自行决定产品下一步。
 
-**Role 是持续的逻辑职责，Session 是承载它的一次实例。** 同一职责可以续开窗口、换承载或增加经授权的并行实例。只有实际工作显示持续独立责任缺口时，才提出新 Role，并约定试行、收益和退出。四部分因而不等于四个固定岗位、四个包或四个进程。
+**Role 是持续的逻辑职责，Session 是承载它的一次实例。** 同一职责可以续开窗口、换承载，或由 Leader 决定增减并行实例。只有实际工作显示持续独立责任缺口时，才由 Evocation 提出新 Role，并约定试行、收益和退出。四部分因而不等于四个固定岗位、四个包或四个进程。
+
+### 消息从哪里进来，结果怎样回到 Leader
+
+上面的结构图画的是责任层，还没有画出后来加入的三条运行路径。下图只回答一个问题：**外部消息、业务结果和 Session 的执行，在协调服务里分别走哪条路。**
+
+```mermaid
+flowchart TB
+  H["人：工作台"] -->|查询与命令| API
+  A["Agent：业务 skill → CLI"] -->|查询与命令| API
+  EX["外部消息平台<br/>微信为第一个"] <-->|本机网关| MC
+  subgraph co["协调服务（单活）"]
+    API["共同 API 与 core"]
+    MC["消息 Connector<br/>路由、资格与回复"]
+    LN["Leader 通知泵"]
+    MP["Session 消息泵"]
+  end
+  DB[("PostgreSQL")]
+  API --> DB
+  MC -->|"入站成为目标 Session 的普通消息"| DB
+  DB -->|"结果、问题、阻塞<br/>由触发器登记为通知"| LN
+  LN -->|"作为普通消息投给 Leader Session"| DB
+  DB --> MP
+  MP -->|"按 Session 的运行时启动 Turn"| RT
+  subgraph RT["运行时：每个 Session 固定一种"]
+    CX["Codex App Server"]
+    CL["Claude Code"]
+  end
+```
+
+三条路径最后都落到同一处：一条带授权的普通 Session 消息，再由消息泵在目标 Session 的原会话里启动 Turn。
+
+- **外部消息。** 消息 Connector 按精确的会话路由把平台消息写成目标 Session 的普通消息；外部来源不冒充用户或内部 Agent 获得权限（DEC-040）。合同见[消息 Connector](message-connectors.md)。
+- **Leader 通知。** 交付、独立使用、问题、阻塞等需要 Leader 处理的事实，在写入的同一事务里由数据库触发器登记为通知，再由服务端的通知泵投给配置好的 Leader Session；不依赖插件或 Stop Hook（DEC-038）。合同见[Leader 通知层](contracts.md#leader-通知层)。
+- **两种运行时。** 每个 Role 只绑定 Codex 或 Claude 之一，Session 在创建时固定运行时；即时输入、托管压缩等能力因运行时而异。见[Session 运行时](session-runtime.md)。
 
 ## 3. 沿一轮工作理解系统
 
@@ -135,11 +169,17 @@ PG 事务能约束本库变更与待发意图，无法与飞书、Wiki、Codex �
 
 理解逻辑责任后，再看实现方案：人的工作台主要读共同状态，Agent 的业务技能+CLI 承担大多数常规写入，可选 MCP 工具仍经同一 API；协调进程装配数据库、飞书、Wiki、Git 和运行时适配器。人和 Agent 的沟通给出任务意图与授权，技能是工作过程约定，CLI 是机器操作客户端；授权范围、版本冲突、操作 ID、未知结果对账和业务状态由服务端统一约束。直接人工写入仍可按需存在，不成为所有 Agent 行动的审批关口。核心保留业务判断约束，平台包负责实际协议映射。npm 包是源码依赖边界，进程是运行单位，Role/Session 是责任与承载关系。
 
-目标装配是一个协调进程、它管理的 Codex App Server 子进程、PG 服务及独立知识服务。本机已有受限的 Codex owned Turn、OpenViking 0.5.1 固定修订读写、主数据与工作台路径；业务 CLI 和项目 skill 已接入共同 API，生产部署与长期效果尚未验证。能力、版本与证据边界以[阶段路线的当前基线](../roadmap.md#当前基线)为准。PG 引擎及主数据归属已选；OpenViking 是首个知识接入后端，保留替换路径（DEC-027）。
+装配是一个协调进程，加上它管理的运行时进程、PostgreSQL 和按需配置的外部网关：
 
-工作台组合各权威的授权视图和操作结果，不接管现有 Codex Desktop 聊天。自管 App Server 线程与桌面宿主是两个接入面，历史互读或一次宿主通知消费不代表独立 daemon 已具备桌面控制能力。
+- **两种运行时。** 协调进程经中立的 `RuntimePort` 同时驱动 Codex App Server（所有 Session 共用一个子进程）和 Claude Agent SDK（每个 Turn 一个 Claude Code 进程）。Role 第一次预留 Session 时绑定其中一种，之后不能更换（DEC-035）。两者的生命周期、恢复、即时输入与压缩差别见[Session 运行时](session-runtime.md)。
+- **部署在哪里。** 按 DEC-041，协调进程、运行时进程和 PostgreSQL 部署在一台常驻主机上，经唯一的 HTTPS 入口访问；协调服务只监听本机回环，数据库、模型控制和存储不开公共端口。迁移主机只搬业务历史，不搬 Session、Thread 和令牌。见[部署与迁移](deployment.md)。
+- **知识服务。** OpenViking 是首个知识接入后端，保留替换路径（DEC-027）；它的 0.5.1 固定修订读写只在旧开发机上做过受限验证，**新主机上没有部署**，知识相关入口按“未接入”处理。
 
-接下来读[包架构](packages.md)可把责任映射到源码和进程；读[技术选型](technology-selection.md)判断为何推荐、替代方案与采用条件；读[Codex 接入](codex-integration.md)核具体协议与固定实验范围。
+PG 引擎及主数据归属已选；业务 CLI 和项目 skill 已接入共同 API。能力、版本与证据边界，以及上述机制在当前实例上实际打开和用到哪一步，以[阶段路线的当前基线](../roadmap.md#当前基线)为准。
+
+工作台组合各权威的授权视图和操作结果，不接管现有 Codex 或 Claude 桌面客户端里的聊天。evoLoop 启动的 Session 只驱动运行时本身，桌面应用自带的浏览器面板、电脑操作等宿主功能不在其中；历史互读或一次宿主通知消费也不代表独立 daemon 已具备桌面控制能力。两者的具体差别见[Session 运行时](session-runtime.md#8-与原生桌面客户端的差别)。
+
+接下来读[包架构](packages.md)可把责任映射到源码和进程；读[技术选型](technology-selection.md)判断为何推荐、替代方案与采用条件；读[Session 运行时](session-runtime.md)理解 Session 怎样运行，再按需读[Codex 接入](codex-integration.md)核具体协议与固定实验范围。
 
 ## 7. 当前做到哪里，怎样继续实现
 
@@ -158,6 +198,9 @@ PG 事务能约束本库变更与待发意图，无法与飞书、Wiki、Codex �
 | 对象与权威：[项目数据](project-data.md) | 一条工作关系应连谁，正文在哪里，何时固定修订 | [领域合同](contracts.md)、[存储设计](storage.md) |
 | 认识怎样回来：[知识流](knowledge-flow.md) → [Wiki 维护](wiki-maintenance.md) | 来源如何被理解，修订怎样影响旧页、任务和下一消费者 | [Wiki 集成](wiki-integration.md)的 DTO、端口与候选后端接缝 |
 | 实现怎样装配：[包架构](packages.md) → [技术选型](technology-selection.md) | 一项能力属于哪个模块/进程，为何选它、采用前缺什么 | [Codex 接入](codex-integration.md)与具体适配合同 |
+| Session 怎样运行：[Session 运行时](session-runtime.md) → [Codex 接入](codex-integration.md) | 一个 Session 从创建到关闭系统各做什么；执行中来的消息怎样处理；Codex 与 Claude 有什么不同 | [接口合同](contracts.md#4-roleregistry-与-sessionruntime)、[存储](storage.md#迁移-054-到-068-新增的表) |
+| 实际跑在哪：[部署与迁移](deployment.md) | 服务部署成什么样；发布怎样保护数据；换主机搬什么、不搬什么 | [存储](storage.md)、[本机运行](../development/local-run.md) |
+| 外部消息怎样进来：[消息 Connector](message-connectors.md) | 平台消息怎样路由到 Session、怎样回复与恢复 | [接口合同](contracts.md#7a-connector-与-externalbinding) |
 | 人怎样阅读与决定：[前端架构](../frontend/architecture.md) → [Wiki 工作区](wiki-workspace.md) | 用户从哪里找依据、作取舍、核对后果，哪些仅为界面视图 | [工作台产品](../product/workbench.md)、[Wiki 集成](wiki-integration.md) |
 
 若要检验自己是否理解，可解释上面的通知场景，画出主要责任与数据归属，再推演“需求改版且飞书断线”会改变哪些记录、保留哪些历史、阻止哪些动作。找不到答案时应能定位到具体专题和缺项，而不是依赖作者重新讲一遍。
