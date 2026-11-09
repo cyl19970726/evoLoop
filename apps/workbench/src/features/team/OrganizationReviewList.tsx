@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
 import type { Document } from "@evoloop/contracts";
 import { api, errorText } from "../../shared/api";
-import { Alert, date, href } from "../../shared/ui/shared";
+import { Search } from "lucide-react";
+import { Button, EmptyState, Notice, cn } from "@evoloop/ui";
+import { date, href } from "../../shared/ui/shared";
 import type { MutationContext } from "../../shared/ActionForm";
 
 const statusLabel = { draft: "草稿", published: "已发布", archived: "已归档" };
@@ -40,21 +42,28 @@ export function OrganizationReviewList({ context, refresh }: { context: Mutation
   const visible = items.filter(item => item.title.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()))
     .sort((a, b) => Date.parse(b.organizationReview?.observedTo ?? b.updatedAt ?? "1970-01-01") -
       Date.parse(a.organizationReview?.observedTo ?? a.updatedAt ?? "1970-01-01") || a.id.localeCompare(b.id));
-  return <section className="organization-reviews" aria-label="组织复盘文档" aria-busy={loading}>
-    <div className="page-title-row"><div><h2>组织复盘</h2><p className="lede">每轮复盘是一份完整文档。选择标题，直接阅读原件。</p></div>
-      <a className="button-link" href={href(projectId, "documents")}>全部文档</a></div>
-    <div className="list-surface">
-      <div className="list-toolbar"><label className="search-field"><input aria-label="搜索复盘文档" placeholder="搜索复盘标题…" value={query} onChange={event => setQuery(event.target.value)} /></label>
-        <button type="button" className="quiet" disabled={loading} onClick={() => setReadAgain(value => value + 1)}>重新读取</button>
-        <span className="muted">{loading ? "读取中…" : error ? `已读 ${items.length} 份，尚未完整` : `${items.length} 份文档`}</span></div>
-      {error && <Alert kind="error">复盘文档未完整读回：{error}</Alert>}
-      {!loading && !error && !visible.length && <p className="list-message">{items.length ? "没有匹配的复盘文档。" : "Evo 保存组织复盘文档后，会出现在这里。"}</p>}
-      {visible.length > 0 && <div className="table-wrap" role="region" aria-label="复盘文档列表，可横向查看" tabIndex={0}><table><thead><tr><th>复盘文档</th><th>观察期间</th><th>提交时间</th><th>最近修订</th></tr></thead>
-        <tbody>{visible.map(item => <tr key={item.id}>
-          <td><a className="doc-index-title" href={href(projectId, "document", item.id, item.currentRevisionId)}>{item.title}</a><small>{statusLabel[item.status]}</small></td>
-          <td>{item.organizationReview ? <><span>{new Date(item.organizationReview.observedFrom).toLocaleString("zh-CN", { timeZone: item.organizationReview.timeZone })}</span><span>至 {new Date(item.organizationReview.observedTo).toLocaleString("zh-CN", { timeZone: item.organizationReview.timeZone })}</span><small>{item.organizationReview.timeZone}</small></> : "观察期间未登记"}</td>
-          <td>{date(item.createdAt)}</td><td>{date(item.updatedAt)}</td>
-        </tr>)}</tbody></table></div>}
+  const muted = "text-caption text-muted-foreground";
+  return <section className="organization-reviews flex flex-col gap-3" aria-label="组织复盘文档" aria-busy={loading}>
+    <div className="flex flex-wrap items-center gap-2">
+      <label className="flex h-9 min-w-[220px] flex-1 items-center gap-2 rounded-full bg-field px-3 text-muted-foreground">
+        <Search size={14} aria-hidden="true" />
+        <input aria-label="搜索复盘文档" placeholder="搜索复盘标题" value={query} onChange={event => setQuery(event.target.value)} className="w-full bg-transparent text-small text-foreground outline-none" />
+      </label>
+      <Button size="compact" variant="ghost" disabled={loading} onClick={() => setReadAgain(value => value + 1)}>重新读取</Button>
+      <a href={href(projectId, "documents")} className="text-small text-text-secondary hover:text-foreground">全部文档</a>
+      <span className={cn(muted, "ml-auto")}>{loading ? "读取中…" : error ? `已读 ${items.length} 份，尚未完整` : `${items.length} 份文档`}</span>
     </div>
+    {error && <Notice tone="error">复盘文档未完整读回：{error}</Notice>}
+    {!loading && !error && !visible.length && (items.length
+      ? <p className="text-small text-text-secondary">没有匹配的复盘文档。</p>
+      : <EmptyState title="还没有组织复盘" reason="Evo 保存组织复盘文档后，会出现在这里。复盘报告已保存不等于建议已采纳。" />)}
+    {visible.length > 0 && <ul aria-label="复盘文档" className="flex flex-col overflow-hidden rounded-xl bg-raised shadow-sm">{visible.map(item => <li key={item.id} className="border-t border-border first:border-t-0">
+      <a href={href(projectId, "document", item.id, item.currentRevisionId)} className="flex flex-col gap-0.5 px-4 py-3 outline-none hover:bg-selected focus-visible:shadow-[var(--focus-ring)]">
+        <span className="text-small font-medium text-foreground">{item.title}</span>
+        <span className={muted}>{statusLabel[item.status]}
+          {item.organizationReview ? ` · 观察 ${new Date(item.organizationReview.observedFrom).toLocaleString("zh-CN", { timeZone: item.organizationReview.timeZone })} 至 ${new Date(item.organizationReview.observedTo).toLocaleString("zh-CN", { timeZone: item.organizationReview.timeZone })}（${item.organizationReview.timeZone}）` : ""}
+          {` · 提交 ${date(item.createdAt)} · 最近修订 ${date(item.updatedAt)}`}</span>
+      </a>
+    </li>)}</ul>}
   </section>;
 }

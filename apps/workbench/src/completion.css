@@ -146,9 +146,6 @@ td{ font-size: 15px; }
 .workbench-layout .content > :first-child{ animation: none; }
 .workbench-layout .content h1{ color: #17233b; opacity: 1; }
 .workbench-layout .content .lede{ color: #526078; }
-.workbench-layout .team-workspace .team-table td{ font-size: 16px; padding: 18px 16px; }
-.workbench-layout .team-workspace .team-table td a, .workbench-layout .team-workspace .team-table td strong{ font-size: 16px; }
-.workbench-layout .team-workspace .team-table td small, .workbench-layout .team-workspace .team-table td details{ font-size: 14px; }
 .knowledge-list-layout:has(.knowledge-available-actions):has(.knowledge-list){ display: grid; grid-template-columns: minmax(0,1.5fr) minmax(280px,1fr); gap: 28px; align-items: start; }
 .knowledge-list-layout > .knowledge-list{ order: 1; margin-top: 0; }
 .knowledge-list-layout > .knowledge-available-actions{ order: 2; display: block; margin: 0; padding: 0 0 0 24px; background: none; border: 0; border-left: 1px solid var(--border); }
@@ -157,23 +154,11 @@ td{ font-size: 15px; }
 .knowledge-list-layout > .knowledge-available-actions li{ margin: 0; }
 .knowledge-list-layout > .knowledge-available-actions > a{ display: inline-block; margin-top: 24px; }
 .knowledge-list-layout > :not(.knowledge-list):not(.knowledge-available-actions){ grid-column: 1/-1; }
-.schedule-detail-columns{ display: grid; grid-template-columns: minmax(0,1.2fr) minmax(0,1fr); gap: 28px; margin-top: 24px; }
-.schedule-detail-columns h3{ font-size: 20px; margin-bottom: 16px; }
-.schedule-basic dl{ display: grid; gap: 12px; margin: 0; }
-.schedule-basic dl > div{ display: grid; grid-template-columns: 90px minmax(0,1fr); gap: 14px; font-size: 15px; }
-.schedule-basic dt{ color: #526078; }
-.schedule-basic dd{ margin: 0; overflow-wrap: anywhere; }
-.schedule-page .schedule-detail-columns .schedule-current{ display: flex; flex-direction: column; gap: 18px; background: none; padding: 0 0 0 24px; margin: 0; border: 0; border-left: 1px solid var(--border); }
-.schedule-rule-source{ border-top: 1px solid var(--border); padding: 16px 0; margin-top: 18px; font-size: 14px; }
-.schedule-rule-source summary{ cursor: pointer; }
 @media(max-width:760px) {
- .knowledge-list-layout:has(.knowledge-available-actions):has(.knowledge-list), .schedule-detail-columns{ display: block; }
- .knowledge-list-layout > .knowledge-available-actions, .schedule-page .schedule-detail-columns .schedule-current{ border-left: 0; border-top: 1px solid var(--border); padding: 22px 0 0; margin-top: 24px; }
- .workbench-layout .team-workspace .team-table td{ padding: 6px 0; }
+ .knowledge-list-layout:has(.knowledge-available-actions):has(.knowledge-list) { display: block; }
+ .knowledge-list-layout > .knowledge-available-actions { border-left: 0; border-top: 1px solid var(--border); padding: 22px 0 0; margin-top: 24px; }
 }
 .session-workspace .session-activity-toggle[aria-expanded="false"] strong{ display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
-.schedule-page > .panel{ border: 0; padding: 0; background: transparent; }
-.schedule-page > .panel > .panel-head h2{ display: none; }
 .task-acceptance-points{ padding-left: 26px; margin: 16px 0; color: #35435b; font-size: 16px; line-height: 1.75; }
 .task-acceptance-points li{ padding-left: 6px; margin-bottom: 12px; }
 .task-acceptance-points li::marker{ color: #2457f5; font-weight: 650; }
