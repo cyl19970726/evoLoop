@@ -43,11 +43,14 @@ export function DocumentTable({ projectId, list, state, update, toolbar }: {
   const usage = useDocumentUsage(projectId, list.visible, state.status);
   const active = useContext(PageActive);
   // Back from a document: the row it was opened from gets focus again, after the page restores its scroll position.
+  // The shell focuses the main landmark in the next frame; the timer starts from a frame requested after that one,
+  // so the row always comes last, however late frames run.
   useEffect(() => {
     if (!active || !state.lastOpened) return;
-    const timer = window.setTimeout(() => document.querySelector<HTMLElement>(
-      `[data-ui] a[data-document-title="${CSS.escape(state.lastOpened!)}"]`)?.focus({ preventScroll: true }), 120);
-    return () => window.clearTimeout(timer);
+    let timer = 0;
+    const frame = requestAnimationFrame(() => { timer = window.setTimeout(() => document.querySelector<HTMLElement>(
+      `[data-ui] a[data-document-title="${CSS.escape(state.lastOpened!)}"]`)?.focus({ preventScroll: true }), 120); });
+    return () => { cancelAnimationFrame(frame); window.clearTimeout(timer); };
   }, [active, state.lastOpened]);
   const open = (id: string) => update({ lastOpened: id });
   const empty = emptyListText({ filtered: list.filtered, more: list.more });

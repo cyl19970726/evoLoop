@@ -49,7 +49,8 @@
 - **现状**（PR4b）：读取层是 TanStack Query，在 `shared/query.ts`，缓存实例在 `app/queryClient.ts`。
   - **键**：`queryKeys.project(项目, …)` 与 `queryKeys.identity(身份, …)`，键以所属范围开头。
   - **隔离**：离开一个项目时取消它在途的请求并清掉它的缓存（`leaveProject`）；登录和退出清空全部。
-  - **写后重读**：写操作成功后，该项目的查询标为过期，可见的重读（`projectChanged`，由 `MutationContext.onChanged` 触发）。
+  - **写后重读**：写操作成功后，该项目的查询标为过期，可见的重读（`projectChanged`，由 `MutationContext.onChanged` 触发）。页面不必再按 `refresh` 自己重读一次，否则请求会被取消后重发。
+  - **固定内容**：固定修订和原件的键以 `fixedContent` 开头，只读一次：写入不使它们过期，也不自动重读；离开项目时照常清掉。
   - **重读**：保留旧内容，`useProjectQuery` 返回 `checking` 供页面标“正在核对”。
   - **重试**：4xx 是结论不重试，连接中断与 5xx 最多重试两次。
   - **已迁移**：外壳的项目标题与项目列表、项目设置。旧页面仍直接调用 `api(`（约 84 处），令牌以 `token: string` 传递（约 63 处）。这些页面在 PR6–PR9 重写时改用 `useProjectQuery`，不在旧页面上逐处替换。
@@ -121,7 +122,7 @@ QueryService 返回 `observedAt`、对象与 revision、权限能力、分源状
 
 | 责任 | 现状 | 目标 |
 | --- | --- | --- |
-| 样式 | token 与 Tailwind 主题已在 `@evoloop/ui`；7 个全局 CSS（style、workbench、editorial、reading-pages、team-pages、completion、task-production）与 22 个领域 CSS 仍各写各的样式，旧变量名经 `legacy-tokens.css` 指向 token；颜色字面量只减不增；旧 CSS 没有分层，直接给 `button`、`p`、`input` 等元素写样式，会压过 Tailwind；所以用 `@evoloop/ui` 的页面根节点和弹层都标 `data-ui`，`@evoloop/ui/scope.css`（在旧 CSS 之后加载）在作用域里补一层基础样式，并把旧 CSS 对这些元素的样式退回（`all: revert-layer`）。旧页面不受影响 | Tailwind v4 + shadcn/ui（DEC-036），token 只在 `@evoloop/ui` 定义，见[设计基础](foundations.md) |
+| 样式 | token 与 Tailwind 主题已在 `@evoloop/ui`；7 个全局 CSS（style、workbench、editorial、reading-pages、team-pages、completion、task-production）与 22 个领域 CSS 仍各写各的样式，旧变量名经 `legacy-tokens.css` 指向 token；颜色字面量只减不增；旧 CSS 没有分层，直接给 `button`、`p`、`input` 等元素写样式，会压过 Tailwind；所以用 `@evoloop/ui` 的页面根节点和弹层都标 `data-ui`，`@evoloop/ui/scope.css`（在旧 CSS 之后加载）在作用域里补一层基础样式，并把旧 CSS 对这些元素的样式退回（`all: revert-layer`），包括表格行 `tr`（旧的行悬停底色）和事实行 `dl > div`（旧的 170px 网格）。旧页面不受影响 | Tailwind v4 + shadcn/ui（DEC-036），token 只在 `@evoloop/ui` 定义，见[设计基础](foundations.md) |
 | 动效 | 无统一做法 | Radix `data-state` + tw-animate-css；列表与布局用 Motion（`motion` 包）；尊重 `prefers-reduced-motion` |
 | 构建 | 主 JS 一个文件约 1264 KB（gzip 380 KB），仅 mermaid 懒加载 | 按路由拆包 |
 
