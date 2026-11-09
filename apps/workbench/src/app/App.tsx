@@ -25,7 +25,6 @@ const ReferencePanel = named(() => import("../features/references/ReferencePanel
 const CollaborationPanel = named(() => import("../features/collaboration/CollaborationPanel"), "CollaborationPanel");
 const KnowledgePanel = named(() => import("../features/knowledge/KnowledgePanel"), "KnowledgePanel");
 const EvaluationPage = named(() => import("../features/evaluation/EvaluationPage"), "EvaluationPage");
-const RuntimePanel = named(() => import("../features/runtime/RuntimePanel"), "RuntimePanel");
 const TeamWorkspace = named(() => import("../features/team/TeamWorkspace"), "TeamWorkspace");
 const SchedulingPanel = named(() => import("../features/scheduling/SchedulingPanel"), "SchedulingPanel");
 const JourneyBoard = named(() => import("../features/workflow/JourneyBoard"), "JourneyBoard");
@@ -294,7 +293,7 @@ function WorkspacePages({ route, context, refresh, operations }: { route: Route;
     if (r.section === "overview") return <ProjectSummary token={token} projectId={projectId} refresh={refresh} active={active} />;
     if (r.section === "settings") return <ProjectSettings context={context} refresh={refresh} />;
     if (r.section === "connectors") return <ConnectorPage context={context} />;
-    const components = { reviews: <TeamWorkspace context={context} refresh={refresh} />, journey: <JourneyBoard context={context} refresh={refresh} propose={r.action === "propose"} />, discussions: <TeamWorkspace context={context} refresh={refresh} />, runtime: r.session?.includes(":") ? <SessionWorkspace context={context} refresh={refresh} sessionKey={r.session} active={active} /> : r.session ? <RuntimePanel context={context} refresh={refresh} targetSessionId={r.session} /> : <TeamWorkspace context={context} refresh={refresh} />, roles: <TeamWorkspace context={context} refresh={refresh} />, collaboration: <CollaborationPanel context={context} refresh={refresh} /> };
+    const components = { reviews: <TeamWorkspace context={context} refresh={refresh} section="reviews" />, journey: <JourneyBoard context={context} refresh={refresh} propose={r.action === "propose"} />, discussions: <TeamWorkspace context={context} refresh={refresh} section="discussions" />, runtime: r.session?.includes(":") ? <SessionWorkspace context={context} refresh={refresh} sessionKey={r.session} active={active} /> : <TeamWorkspace context={context} refresh={refresh} section="runtime" sessionId={r.session} />, roles: <TeamWorkspace context={context} refresh={refresh} section="roles" />, collaboration: <CollaborationPanel context={context} refresh={refresh} /> };
     if (r.section === "runtime" || r.section === "discussions" || r.section === "reviews" || r.section === "roles") return components[r.section];
     return <div className="content"><h1 tabIndex={-1}>{sectionLabels[r.section]}</h1>{components[r.section as keyof typeof components]}</div>;
   }
