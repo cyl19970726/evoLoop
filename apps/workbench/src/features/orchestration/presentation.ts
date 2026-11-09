@@ -7,7 +7,7 @@ function compactContext(value: string): string {
 }
 
 export function decisionHeading(hasWorkerDecision: boolean): string {
-  return hasWorkerDecision ? "Worker 署名判定" : "派发决定";
+  return hasWorkerDecision ? "执行方署名判定" : "派发决定";
 }
 
 export function sourceTriggerLabel(source: OrchestrationSourceFact | undefined): string {
@@ -17,14 +17,14 @@ export function sourceTriggerLabel(source: OrchestrationSourceFact | undefined):
     case "worker.outcome": return "上一轮工作结果需要接续判断";
     case "observation.record": return "交付的实际使用反馈需要接续判断";
     case "dispatch.gap": return "上一轮运行终结后缺少署名结果，需要恢复判断";
-    default: return `已登记来源：${source.kind}`;
+    default: return "其他已登记来源（原记录见来源层）";
   }
 }
 
 export function storyTitle(dispatch: OrchestrationDispatch, currentTaskTitle: string | undefined,
   source: OrchestrationSourceFact | undefined, status: WorkTaskStatus | undefined,
   sourceTaskStatus: WorkTaskStatus | undefined, scopeTitle: string | undefined): string {
-  if (dispatch.purpose !== "cognition") return currentTaskTitle ?? `任务 ${dispatch.taskId.slice(0,8)}`;
+  if (dispatch.purpose !== "cognition") return currentTaskTitle ?? "任务（名称待读取）";
   const trigger = sourceTriggerLabel(source);
   const matched = status?.dispatchId === dispatch.id ? status : undefined;
   const businessSource = matched?.sourceTaskTitle && sourceTaskStatus?.cognition === false ?
@@ -40,15 +40,31 @@ export const dispatchStateLabel: Record<OrchestrationDispatch["state"], string> 
   unknown: "派发结果未知", rejected: "派发被拒绝", completed: "派发流程完成",
 };
 export const submissionStateLabel: Record<OrchestrationSubmission["state"], string> = {
-  submitted: "Worker 已提交意图", sealing: "封存中", sealed: "已封存交付",
+  submitted: "执行方已提交意图", sealing: "封存中", sealed: "已封存交付",
   unknown: "封存结果未知", rejected: "封存被拒绝",
 };
 export function deliveryMeaning(submission: OrchestrationSubmission): string {
-  if (submission.state === "sealed" && submission.deliveryId) return "已形成正式 Delivery；仍须另行观察使用与 Task 验收。";
-  if (submission.state === "unknown") return "封存结果未知；须按原操作 ID 核对，不可推定交付失败或重发。";
-  return "这是一份有署名的提交意图；尚不能视为正式 Delivery 或验收。";
+  if (submission.state === "sealed" && submission.deliveryId) return "已形成正式交付；仍须另行观察使用与任务验收。";
+  if (submission.state === "unknown") return "封存结果未知；须按原操作核对，不可推定交付失败或重发。";
+  return "这是一份有署名的提交意图；尚不能视为正式交付或验收。";
 }
 export function sealReasonLabel(reason: string): string {
   return ({AUTHORITATIVE_DELIVERY:"已按原交付操作读回并封存正式记录",
     ALREADY_SEALED:"正式交付已封存，重复核对未再次登记"} as Record<string,string>)[reason] ?? reason;
+}
+
+export const loopStateLabel: Record<string, string> = { active: "运行中", paused: "已暂停新派发", stopped: "已停止新派发" };
+export const dispositionLabel = (value: string | null | undefined): string =>
+  ({ no_action: "无后续动作", waiting: "等待", failed: "处理失败", stop: "停止", dispatch: "已请求派发" } as Record<string, string>)[value ?? ""] ?? "未登记";
+export const outcomeLabel = (value: string): string =>
+  ({ delivered: "已登记交付结果", no_action: "无后续动作", waiting: "等待", failed: "处理失败" } as Record<string, string>)[value] ?? "其他结果";
+/** What an inbox entry or a dispatch is for; free-form purposes the page does not know stay in the source layer. */
+export const purposeLabel = (value: string): string =>
+  ({ cognitive_review: "判断复核", next_action: "下一步处理", cognition: "判断", business: "业务执行" } as Record<string, string>)[value] ?? "其他用途";
+
+/** A loop's name for a picker: its goal and stage, shortened. */
+export function loopName(title: string | undefined, max = 16): string {
+  const chars = [...(title ?? "").replace(/\s+/g, " ").trim()];
+  if (!chars.length) return "目标与阶段待读取";
+  return chars.length > max ? `${chars.slice(0, max).join("")}…` : chars.join("");
 }

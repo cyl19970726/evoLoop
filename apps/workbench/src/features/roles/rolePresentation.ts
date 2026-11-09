@@ -6,6 +6,12 @@ import type { StatusTone } from "@evoloop/ui";
 
 export const roleIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/** The task an evidence source names (`task://{id}`, or a bare task id on a task handoff); anything else is shown as written. */
+export function sourceRefTaskId(sourceRef: string): string | null {
+  const match = /^task:\/\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i.exec(sourceRef.trim());
+  return match ? match[1]! : null;
+}
+
 export const roleStateText: Record<RoleRecord["state"], string> = {
   candidate: "待判断", trial: "试行中", active: "持续职责", "retirement-pending": "待交接关闭",
   retired: "已撤回", rejected: "未采纳", deferred: "待重看",

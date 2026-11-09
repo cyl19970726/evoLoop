@@ -84,19 +84,15 @@ export function TaskRuntimeTab({ context, detail, active, overviewHref }: { cont
     </TabSection>
     <TabSection title="自动循环">
       <Fine>只列与这项任务同来源或父子派发的、已读回的循环记录。</Fine>
-      <div data-legacy="" className="min-w-0">
-        <OrchestrationPanel key={`${projectId}:${context.principal.actorId}:${task.id}`} token={context.token} projectId={projectId} refresh={pollCount}
-          taskId={task.id} verifiedRuns={runsRead.data && !runsRead.error ? runs : null} runtimePoll={pollCount} />
-      </div>
+      <OrchestrationPanel key={`${projectId}:${context.principal.actorId}:${task.id}`} projectId={projectId} refresh={pollCount}
+        taskId={task.id} verifiedRuns={runsRead.data && !runsRead.error ? runs : null} />
     </TabSection>
     <TabSection title="协作与待答问题">
       <p className="text-label text-text-secondary">这项任务的协作频道、提问与答复在“当前工作 › 进展与讨论”里。<a className="text-primary hover:underline" href={overviewHref}>打开进展与讨论</a></p>
     </TabSection>
     <TabSection title="Git 与外部来源登记">
       <Fine>为这一版任务登记固定的 Git 文件、知识页或运行来源，并对已登记的来源作采用、保留或替换决定。</Fine>
-      <div data-legacy="" className="min-w-0">
-        <ReferencePanel key={`refs:${task.currentRevisionId}`} context={context} taskId={task.id} taskRevisionId={task.currentRevisionId} taskVersion={task.version} />
-      </div>
+      <ReferencePanel key={`refs:${task.currentRevisionId}`} context={context} taskId={task.id} taskRevisionId={task.currentRevisionId} taskVersion={task.version} />
     </TabSection>
   </div>;
 }

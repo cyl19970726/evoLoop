@@ -52,9 +52,9 @@ test("presentation keeps Run, submission, sealed Delivery and use separate", () 
   assert.equal(dispatchStateLabel.unknown, "派发结果未知");
   assert.equal(submissionStateLabel.sealed, "已封存交付");
   const submission = { state: "submitted", deliveryId: null } as OrchestrationSubmission;
-  assert.match(deliveryMeaning(submission), /尚不能视为正式 Delivery/);
+  assert.match(deliveryMeaning(submission), /尚不能视为正式交付/);
   assert.match(deliveryMeaning({ ...submission, state: "unknown" }), /不可推定交付失败/);
-  assert.match(deliveryMeaning({ ...submission, state: "sealed", deliveryId: loopId }), /仍须另行观察使用与 Task 验收/);
+  assert.match(deliveryMeaning({ ...submission, state: "sealed", deliveryId: loopId }), /仍须另行观察使用与任务验收/);
   assert.match(sealReasonLabel("AUTHORITATIVE_DELIVERY"), /原交付操作读回/);
 });
 
@@ -226,7 +226,7 @@ test("human cognition title requires this dispatch's exact projection and never 
   assert.ok(compact.length < longGoal.length);
   assert.ok(compact.endsWith("…"));
   assert.equal(decisionHeading(false),"派发决定");
-  assert.equal(decisionHeading(true),"Worker 署名判定");
+  assert.equal(decisionHeading(true),"执行方署名判定");
 });
 
 test("current chain summary separates signed stop, Agent use and unclosed business Task", () => {
@@ -236,10 +236,10 @@ test("current chain summary separates signed stop, Agent use and unclosed busine
   const submission={dispatchId:dispatch.id,state:"sealed",deliveryId:"delivery"} as OrchestrationSubmission;
   const task={task:{id:dispatch.taskId,state:"in_progress"},closures:[],observations:[{deliveryId:"delivery",result:"used",observerKind:"agent"}]} as TaskDetail;
   const lines=currentChainSummary(loop,[dispatch],[submission],[decision],[task],dispatch.taskId,true).join(" ");
-  assert.match(lines,/署名停止决定/);assert.match(lines,/Agent 使用/);assert.match(lines,/尚未登记验收/);
+  assert.match(lines,/署名停止决定/);assert.match(lines,/智能体使用/);assert.match(lines,/尚未登记验收/);
   assert.doesNotMatch(lines,/人类使用记录/);
   assert.doesNotMatch(currentChainSummary(loop,[dispatch],[submission],[decision],[task],dispatch.taskId,false).join(" "),/已按署名停止决定/);
-  assert.doesNotMatch(currentChainSummary(loop,[],[],[],[],dispatch.taskId).join(" "),/尚未登记验收|Agent 使用/);
+  assert.doesNotMatch(currentChainSummary(loop,[],[],[],[],dispatch.taskId).join(" "),/尚未登记验收|智能体使用/);
 });
 
 test("task context and decision reads use scoped routes instead of scanning the first loop page", async () => {

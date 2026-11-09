@@ -24,6 +24,7 @@
 通用的空、加载、失败、未知规则见[设计原则](../principles.md)。
 
 - 职责存在 ≠ 已有可运行的实例。链接里的职责逐页查找：读取中写“正在定位”，读取失败写“无法定位”，读完仍没有才说没有；完整 ID 只在“完整标识”里。加载更多只读下一页，失败时保留已显示的职责。
+- 智能体写登记的名称，没读到写“（名称待读取）”，不用标识的前几位；提出依据和回看来源里的任务写任务名并可点开。
 - 提出试行只需写权限；决定、回看、交接、绑定和撤回需要审阅权限。
 - 运行时写明是否已绑定（绑定后不可更换）、每个 skill 是否加载及原因、清单来自运行时还是按文件推断。保存后所选职责不变，下一轮生效；规则见 [Agent CLI](../../development/agent-cli.md#准备或复用受管-session)。
 - 承载列表只有在最近一次读取成功时才给出打开、复制后的入口和路由核对；重读失败时保留旧内容并标明。
@@ -62,8 +63,8 @@
 | 范围 | 源码（`apps/workbench/src/`） | 测试（`apps/workbench/test/`） |
 | --- | --- | --- |
 | 外壳与组织复盘 | `features/team/TeamWorkspace.tsx`、`features/team/OrganizationReviewList.tsx`、`shared/routes.ts` | `team-browser.test.ts`、`team-presentation.test.ts` |
-| 职责 | `features/roles/RolesView.tsx`、`features/roles/RoleDetail.tsx`、`features/roles/RolePresence.tsx`、`features/roles/RoleRuntime.tsx`、`features/roles/RoleTemplates.tsx`、`features/roles/rolePresentation.ts` | `role-presentation.test.ts`、`role-runtime-card.test.ts`、`role-template-summary-browser.test.ts`、`role-card-keep-open-browser.test.ts`、`resident-observation-browser.test.ts`、`team-roles-browser.test.ts` |
-| 分工与运行 | `features/runtime/ExecutionView.tsx`、`features/runtime/ManagedSessionDetail.tsx`、`features/runtime/ManagedSessionCreate.tsx`、`features/runtime/RunList.tsx`、`features/runtime/executionPresentation.ts` | `execution-presentation.test.ts`、`runtime-session-role-browser.test.ts`、`runtime-model-selection-browser.test.ts`、`runtime-reconcile-browser.test.ts` |
+| 职责 | `features/roles/RolesView.tsx`、`features/roles/RoleDetail.tsx`、`features/roles/RolePresence.tsx`、`features/roles/RoleRuntime.tsx`、`features/roles/RoleTemplates.tsx`、`features/roles/SourceRef.tsx`、`features/roles/rolePresentation.ts` | `role-presentation.test.ts`、`role-runtime-card.test.ts`、`role-template-summary-browser.test.ts`、`role-card-keep-open-browser.test.ts`、`resident-observation-browser.test.ts`、`team-roles-browser.test.ts` |
+| 分工与运行 | `features/runtime/ExecutionView.tsx`、`features/runtime/ManagedSessionDetail.tsx`、`features/runtime/ManagedSessionCreate.tsx`、`features/runtime/RunList.tsx`、`features/runtime/AgentName.tsx`、`features/runtime/executionPresentation.ts`、`features/orchestration/OrchestrationPanel.tsx`（编排）、`features/orchestration/presentation.ts` | `execution-presentation.test.ts`、`orchestration-observation.test.ts`、`task-loop-browser.test.ts`、`runtime-session-role-browser.test.ts`、`runtime-model-selection-browser.test.ts`、`runtime-reconcile-browser.test.ts` |
 | 分工讨论 | `features/discussions/DiscussionPanel.tsx`、`features/discussions/DiscussionDetail.tsx`、`features/discussions/DiscussionForms.tsx`、`features/discussions/CommandForm.tsx`、`features/discussions/discussionClient.ts`、`features/discussions/discussionBaseline.ts`、`features/discussions/discussionPresentation.ts`、`features/discussions/commands.ts`、`features/discussions/AllocationRelationsPanel.tsx`、`features/discussions/AllocationBacklinks.tsx`、`features/discussions/useAllocationTraces.ts` | `team-discussions-browser.test.ts`（`EVOLOOP_DISCUSSIONS_SCREENSHOT_DIR`）、`discussion-presentation.test.ts`、`discussion-panel.test.ts`、`allocation-backlink-groups.test.ts`、`allocation-names.test.ts` |
 | 协作回执 | `features/collaboration/CollaborationPanel.tsx`、`features/collaboration/collaborationPresentation.ts`、`features/collaboration/client.ts` | `team-collaboration-browser.test.ts`（`EVOLOOP_COLLABORATION_SCREENSHOT_DIR`）、`collaboration-presentation.test.ts` |
 

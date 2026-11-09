@@ -23,9 +23,8 @@ export function RepositoryPage({ projectId, reference }: { projectId: string; re
       ]} />
     </SettingsSection>
     <p className="text-caption text-muted-foreground">这里打开仓库现行文档。任务实际采用哪一版，请回任务查看固定的 commit。<a href={href(projectId, "documents")} className="ml-1 text-foreground underline">查看过程文档</a></p>
-    <details className="rounded-xl bg-raised px-4 py-3 text-small shadow-sm">
-      <summary className="cursor-pointer font-medium text-foreground">登记固定 Git 来源与正式采用</summary>
-      <SectionBoundary label="固定来源登记"><div data-legacy="" className="workbench-layout mt-3">{reference}</div></SectionBoundary>
-    </details>
+    <SettingsSection title="登记固定 Git 来源与正式采用">
+      <SectionBoundary label="固定来源登记">{reference}</SectionBoundary>
+    </SettingsSection>
   </SettingsPage>;
 }

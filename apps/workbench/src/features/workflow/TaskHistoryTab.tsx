@@ -9,7 +9,6 @@ import { fixedContent, useProjectQuery } from "../../shared/query";
 import { taskSectionHref } from "../../shared/taskNavigation";
 import { FullIdentifiers } from "../../shared/ui/FullIdentifiers";
 import { MarkdownBody } from "../../shared/ui/MarkdownBody";
-import { readingProse } from "../../shared/ui/readingProse";
 import { date } from "../../shared/ui/shared";
 import { BasisList } from "./TaskBasisTab";
 import { taskStateLabel } from "./taskCommands";
@@ -115,7 +114,7 @@ function FixedRevision({ projectId, taskId, revisionId }: { projectId: string; t
         <div className="flex flex-col gap-1">
           <p className="text-caption font-medium text-muted-foreground">当时的正文 · <DocumentLink projectId={projectId} documentId={read.data.revision.contentDocumentId}
             revisionId={read.data.revision.contentRevisionId} title="当时的正文" relation="当时的主正文 · 固定修订">阅读当时的原件</DocumentLink></p>
-          <div className={readingProse}><MarkdownBody source={read.data.revision.content} identity={`history-${read.data.revision.id}`} projectId={projectId} /></div>
+          <MarkdownBody source={read.data.revision.content} identity={`history-${read.data.revision.id}`} projectId={projectId} />
         </div>
         <EvidenceText label="当时的验收" value={read.data.revision.acceptance} />
         <div className="flex flex-col gap-1">

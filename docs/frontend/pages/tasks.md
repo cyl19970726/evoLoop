@@ -40,6 +40,7 @@
 | 验收接力 | 逐项显示接收者、消息投递、运行处理、本人读取和使用观察；安排已保存或消息已排队时仍是“尚未使用”；旧交付被替代后，旧安排保留历史状态 |
 | 当前承接与历史承接 | 已完成或已取消的任务显示“历史承接”；Session 现在忙碌不说明这项任务仍在运行 |
 | 固定依据与新版 | 任务保留开始时固定的版本，有新版时标“待复核” |
+| 最近进展与时间 | 事件写成中文（如“任务内容或状态更新”），不显示内部事件名；时间都按全站格式显示读者本地时间 |
 | 读取中、读取失败与未登记 | 读取中写“正在读取”，失败写“无法判断”并可重新读取；只有读到回答才写“未分派”“没有运行”“未登记”。绑定按钮在分派读回前不可用 |
 | 下一步与下一责任 | 按阶段用工作台自己的话写下一步；受阻时写出卡住它的事实（几项依据待复核、哪项前置任务未通过验收、队列暂停原因），责任写类型和名称（如“职责 · 开发职责”）；名称未读回写“（名称待读取）”，服务端写给智能体的文字和原始 ID 只在“完整标识”里 |
 
@@ -78,7 +79,7 @@
 
 **收件页**
 
-- 现状：“待判断与复核”列出分配给我的验收安排和依据变化，每项链到固定任务。
+- 现状（PR9k）：“待我验收与判断”分两块列出分配给我的验收安排和待复核的依据变化，每项打开它的任务；读不到时不写 0。
 - 目标：按权限内待接、跨域或重大取舍、补证、外部编辑冲突、过期基线分组；每项能回到来源，权限不足时写明交给谁、何时再看。
 
 ## 截图
@@ -115,6 +116,10 @@
 
 新建任务的其他宽度：[390](../../assets/frontend-pages/task-new-390.png)。
 
+![待我验收与判断，1440](../../assets/frontend-pages/inbox-1440.png)
+
+![待我验收与判断，390](../../assets/frontend-pages/inbox-390.png)
+
 ## 代码与测试
 
 源码在 `apps/workbench/src/features/workflow/`，测试在 `apps/workbench/test/`。
@@ -124,10 +129,10 @@
 | 页面组合与左栏列表 | `TaskWorkspace.tsx`、`TaskRail.tsx`、`useTaskList.ts`、`taskListModel.ts`、`taskExperience.ts`、`apps/workbench/src/shared/taskStatus.ts` | `task-list-model.test.ts`、`task-experience.test.ts`、`task-workspace-browser.test.ts`、`work-filter-pagination-browser.test.ts`、`work-status-recovery-browser.test.ts`、`work-status-retry-pagination-browser.test.ts` |
 | 表格视图与对账 | `TaskTable.tsx`、`TaskReconciliation.tsx`、`taskWorkspacePresentation.ts`、`apps/workbench/src/shared/workStatusPresentation.ts`、`apps/workbench/src/shared/leaderWorkLoad.ts` | `task-workspace-presentation.test.ts`、`work-status.test.ts`、`leader-work-load.test.ts`、`leader-work-overview-browser.test.ts`、`task-list-owner-browser.test.ts` |
 | 右栏 | `TaskFacts.tsx`、`TaskAgentBlock.tsx`、`taskFactsPresentation.ts`、`TaskDocumentPeek.tsx`、`useCommand.ts`、`apps/workbench/src/shared/workPresentation.ts`（下一步、责任、验收接力用语）、`apps/workbench/src/shared/ui/RecordName.tsx` | `task-list-model.test.ts`、`task-work-wording.test.ts`、`task-workspace-browser.test.ts`、`task-preview-current-responsibility-browser.test.ts` |
-| 任务正文与进展 | `TaskPage.tsx`、`TaskArrangement.tsx`（当前关注、阶段区间与计划）、`TaskOwner.tsx` | `task-edit-role-recovery.test.ts`、`task-owner-browser.test.ts`、`task-list-owner-browser.test.ts`、`task-session-return-browser.test.ts`、`discovery-browser.test.ts` |
-| 五个页签 | `TaskBasisTab.tsx`、`TaskDeliveryTab.tsx`、`TaskRuntimeTab.tsx`、`ResidentQueuePanel.tsx`（团队的分工与运行也用）、`TaskHistoryTab.tsx`、`TaskActionsTab.tsx`、`EvidenceText.tsx` | `task-tabs-browser.test.ts`、`task-evidence-reading.test.ts`、`task-loop-browser.test.ts`、`schedule-run-session-path-browser.test.ts`、`document-original-reading-browser.test.ts` |
+| 任务正文与进展 | `TaskPage.tsx`、`TaskArrangement.tsx`（当前关注、阶段区间与计划）、`TaskOwner.tsx`、`taskOwnerPresentation.ts`、`apps/workbench/src/features/discussions/TaskCollaborationThread.tsx`、`apps/workbench/src/shared/ui/MarkdownBody.tsx` | `task-workspace-presentation.test.ts`、`legacy-bits-browser.test.ts`、`task-edit-role-recovery.test.ts`、`task-owner-browser.test.ts`、`task-list-owner-browser.test.ts`、`task-session-return-browser.test.ts`、`discovery-browser.test.ts` |
+| 五个页签 | `TaskBasisTab.tsx`、`TaskDeliveryTab.tsx`、`TaskRuntimeTab.tsx`、`ResidentQueuePanel.tsx`（团队的分工与运行也用）、`apps/workbench/src/features/orchestration/`（自动循环）、`apps/workbench/src/features/references/`（Git 与外部来源登记，仓库规范也用）、`TaskHistoryTab.tsx`、`TaskActionsTab.tsx`、`EvidenceText.tsx` | `task-tabs-browser.test.ts`、`task-evidence-reading.test.ts`、`task-loop-browser.test.ts`、`schedule-run-session-path-browser.test.ts`、`document-original-reading-browser.test.ts` |
 | 写入 | `useCommand.ts`（基线与回执）、`TaskForms.tsx`（表单与读取状态）、`taskCommands.ts`（各命令） | `task-commands.test.ts`、`task-list-model.test.ts` |
-| 收件页（未改版） | `InboxIndex.tsx`、`AcceptanceOverviewPanels.tsx`、`inbox.css` | `leader-work-overview-browser.test.ts` |
+| 收件页 | `InboxIndex.tsx` | `leader-work-overview-browser.test.ts`、`legacy-bits-browser.test.ts` |
 | 执行时间与重复 | `TaskScheduleSection.tsx`、`taskTimingPresentation.ts` | `task-timing-ui.test.ts`、`task-commands.test.ts` |
 | 新建任务 | `CreateTaskPage.tsx`、`taskCreate.ts`、`useCommand.ts` | `task-create.test.ts`、`journey-browser.test.ts`、`work-status-recovery-browser.test.ts` |
 

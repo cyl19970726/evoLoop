@@ -69,6 +69,9 @@ test("Task owner resolves one real Role and only verified bound agent links at 3
         {projectId,id:mismatchedSessionId,roleId:unknownOwner,state:"ready",authorizationScope:"其他任务",cwd:"/tmp/session-b",sandbox:"workspace-write",nativeThreadId:"native-b"},
         ...(includeForeignSession ? [{projectId:"20000099-0000-4000-8000-000000000099",id:"20000009-0000-4000-8000-000000000009",roleId,state:"ready"}] : []),
       ];
+      else if (url.pathname === `${p}/session-work/${encodeURIComponent(`owned:${sessionId}`)}/profile`)
+        value = {projectId,sessionKey:`owned:${sessionId}`,displayName:"前端实现",version:1,updatedAt:stamp};
+      else if (url.pathname.endsWith("/profile")) { status=404; value={message:"未登记"}; }
       else if (url.pathname === `${p}/runtime/runs`) value = [];
       else if (url.pathname === `${p}/runtime`) value = {available:true,error:null,allowedCwds:[],grants:[]};
       else if (url.pathname === `${p}/resident-queues`) value = [{projectId,id:queueId,version:2,adoptedVersion:2,maxRuns:6,reason:"先验收当前任务",actorId:"reader",entries:[
@@ -100,11 +103,11 @@ test("Task owner resolves one real Role and only verified bound agent links at 3
   await pageBrowser.getByRole("button",{name:"进入",exact:true}).click();
   // 负责职责与同职责的其他智能体 sits at the end of 进展与讨论 on the task's overview.
   await pageBrowser.locator(`[data-page-key="task:${taskId}:::"] [data-task-owner] > summary`).click();
-  const owner=pageBrowser.locator(`[data-page-key="task:${taskId}:::"] .task-owner-meta`);
+  const owner=pageBrowser.locator(`[data-page-key="task:${taskId}:::"] [data-task-owner-facts]`);
   await owner.getByRole("link",{name:"开发流程职责"}).waitFor({timeout:5000}).catch(async () => {
     assert.fail(`Role label missing: ${await pageBrowser.locator("body").innerText()} ${pageErrors.join(" | ")}`);
   });
-  await owner.getByRole("link",{name:/已登记的智能体 20000006（就绪）/}).waitFor({timeout:5000}).catch(async()=>assert.fail(`Bound Session missing: ${await owner.innerText()} ${pageErrors.join(" | ")}`));
+  await owner.getByRole("link",{name:/^前端实现（就绪）$/}).waitFor({timeout:5000}).catch(async()=>assert.fail(`Bound Session missing: ${await owner.innerText()} ${pageErrors.join(" | ")}`));
   assert.match(await owner.innerText(),/职责绑定不表示此任务正由该智能体运行/);
   assert.match(await owner.innerText(),/部分绑定记录未能核对/);
   assert.equal(await owner.getByRole("link",{name:/20000007/}).count(),0);
@@ -121,7 +124,7 @@ test("Task owner resolves one real Role and only verified bound agent links at 3
   if (process.env.EVOLOOP_TASK_OWNER_SCREENSHOT)
     await header.screenshot({path:process.env.EVOLOOP_TASK_OWNER_SCREENSHOT});
   assert.ok((await (await fetch(`${base}/__fixture/reads`)).json()).roleReads >= 1,"Task owner must verify the exact Role record");
-  assert.equal(await owner.getByRole("link",{name:/已登记的智能体 20000006/}).getAttribute("href"),
+  assert.equal(await owner.getByRole("link",{name:/^前端实现（就绪）$/}).getAttribute("href"),
     `/p/${projectId}/sessions?session=${encodeURIComponent(`owned:${sessionId}`)}`,
     "the verified owned Session opens through the sole Sessions directory route");
   await pageBrowser.evaluate(({projectId,taskId})=>{location.hash=`/p/${projectId}/tasks/${taskId}`;},{projectId,taskId});
@@ -136,7 +139,10 @@ test("Task owner resolves one real Role and only verified bound agent links at 3
   assert.doesNotMatch(await owner.innerText(),/过期列表职责/);
   await pageBrowser.evaluate(({projectId,otherTaskId})=>{location.hash=`/p/${projectId}/tasks/${otherTaskId}`;},{projectId,otherTaskId});
   await pageBrowser.locator(`[data-page-key="task:${otherTaskId}:::"] [data-task-owner] > summary`).click();
-  const unknown=pageBrowser.locator(`[data-page-key="task:${otherTaskId}:::"] .task-owner-meta`);
+  const unknown=pageBrowser.locator(`[data-page-key="task:${otherTaskId}:::"] [data-task-owner-facts]`);
   await unknown.getByText(/未找到已登记职责/).waitFor();
-  assert.match(await unknown.innerText(),new RegExp(unknownOwner));
+  // The raw identifier stays in the full-identifier layer, not in the reading text.
+  assert.doesNotMatch(await unknown.innerText(),new RegExp(unknownOwner));
+  assert.equal(await unknown.locator("code",{hasText:unknownOwner}).count(),1);
+  assert.equal(await unknown.getByRole("link").count(),0);
 });

@@ -13,11 +13,12 @@ import { queryKeys, useProjectQuery } from "../../shared/query";
 import { runtimeClient } from "../../shared/runtimeClient";
 import { ContextPanelContent, PageActive } from "../../shared/ui/ContextPanel";
 import { ContextRailContent } from "../../shared/ui/ContextRail";
-import { FactList, Legacy, PageSection, PanelSection, mutedText } from "../../shared/ui/PageParts";
+import { FactList, PageSection, PanelSection, mutedText } from "../../shared/ui/PageParts";
 import { SectionBoundary } from "../../shared/ui/SectionBoundary";
 import { href } from "../../shared/ui/shared";
 import { OrchestrationPanel } from "../orchestration";
 import { ResidentQueuePanel } from "../workflow";
+import { AgentName } from "./AgentName";
 import { ManagedSessionCreate } from "./ManagedSessionCreate";
 import { ManagedSessionDetail, RoleLabel } from "./ManagedSessionDetail";
 import { RunList } from "./RunList";
@@ -101,7 +102,7 @@ export function ExecutionView({ context, refresh, sessionId }: { context: Mutati
             return <a key={item.id} href={executionHref(projectId, item.id)} aria-current={sessionId === item.id ? "page" : undefined}
               className={cn("flex flex-col rounded-lg px-3 py-1.5 outline-none focus-visible:shadow-[var(--focus-ring)]", sessionId === item.id ? "bg-raised shadow-sm" : "hover:bg-selected")}>
               <span className="truncate text-small text-foreground">{name.title ?? name.fallback}</span>
-              <span className="truncate text-caption text-muted-foreground">{sessionStateText[item.state]} · 智能体 {item.id.slice(0, 8)}</span>
+              <span className="truncate text-caption text-muted-foreground">{sessionStateText[item.state]} · <AgentName projectId={projectId} sessionId={item.id} /></span>
             </a>;
           })}
         </div>)}
@@ -150,15 +151,15 @@ export function ExecutionView({ context, refresh, sessionId }: { context: Mutati
               const name = nameOf(item.roleId);
               return <li key={item.id} data-session-id={item.id}>
                 <ListRow href={executionHref(projectId, item.id)} title={`${name.title ?? name.fallback}${name.note ? ` · ${name.note}` : ""}`}
-                  meta={`智能体 ${item.id.slice(0, 8)} · ${permissionsText(item.sandbox, item.approvalPolicy)} · ${item.authorizationScope}`}
+                  meta={<><AgentName projectId={projectId} sessionId={item.id} /> · {permissionsText(item.sandbox, item.approvalPolicy)} · {item.authorizationScope}</>}
                   trailing={<StatusTag tone={sessionStateTone(item.state)} label={sessionStateText[item.state]} />} />
               </li>;
             })}</ul>
           </div>)}
         </PageSection>
         <PageSection title="编排与队列">
-          <SectionBoundary label="编排"><Legacy><OrchestrationPanel key={`${projectId}:${context.principal.actorId}`} token={context.token} projectId={projectId}
-            refresh={refresh + epoch} verifiedRuns={runsCurrent ? runs : null} runtimePoll={0} /></Legacy></SectionBoundary>
+          <SectionBoundary label="编排"><OrchestrationPanel key={`${projectId}:${context.principal.actorId}`} projectId={projectId}
+            refresh={refresh + epoch} verifiedRuns={runsCurrent ? runs : null} /></SectionBoundary>
           <SectionBoundary label="队列"><ResidentQueuePanel context={context} runs={runs} sessions={sessions} /></SectionBoundary>
         </PageSection>
         <PageSection title="运行记录" description="收到通知、读取材料、采用判断与真实效果分别留证；原生完成状态不会自动关闭任务。">
