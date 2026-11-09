@@ -21,7 +21,7 @@ import { date } from "../../shared/ui/shared";
 import { OrchestrationPanel } from "../orchestration";
 import { ReferencePanel } from "../references";
 import { eligibleOwnedSessions, sessionHref } from "../sessions";
-import { preflightPresentation } from "../../shared/preflightPresentation";
+import { preflightPresentation, preflightView } from "../../shared/preflightPresentation";
 import { readAgent } from "./agentRead";
 import { BindAgentForm } from "./TaskAgentBlock";
 import { assignmentAcknowledgeCommand, assignmentObserveCommand, assignmentReleaseCommand, handoffRecordCommand, queueCreateCommand,
@@ -270,6 +270,7 @@ function RunRecord({ context, run, anchor, readOnlyAgent }: { context: MutationC
   const projectId = context.projectId;
   const permissions = context.principal.permissions;
   const preflight = run.resultSummary ? preflightPresentation(run.resultSummary) : null;
+  const refused = preflight ? preflightView(preflight) : null;
   const [answer, setAnswer] = React.useState<{ value?: NativeResult; error?: string } | null>(null);
   const [events, setEvents] = React.useState<{ value?: Awaited<ReturnType<ReturnType<typeof runtimeClient>["events"]>>; error?: string } | null>(null);
   const tone = run.state === "running" || run.state === "dispatching" ? "progress" : run.state === "unknown" ? "unknown" : run.state === "failed" ? "blocked" : run.state === "requested" ? "waiting" : "idle";
@@ -286,7 +287,7 @@ function RunRecord({ context, run, anchor, readOnlyAgent }: { context: MutationC
       </p>
       <Fine>运行的状态不代表任务已验收，也不代表那个智能体现在仍在做这项任务。</Fine>
       {run.state === "unknown" && <Notice tone="error">派发或状态仍然未知，要沿已绑定的线程回查；不会自动再发一次。</Notice>}
-      {preflight && <Notice tone="error" title="派发前检查没有通过">模型没有开始。{preflight.actualBytes !== null && preflight.limitBytes !== null ? `大小 ${preflight.actualBytes} / ${preflight.limitBytes} 字节。` : ""}处理建议的原文见完整标识。</Notice>}
+      {refused && <Notice tone="error" title={`派发前检查没有通过：${refused.title}`}>模型没有开始。{[refused.source, refused.size].filter(Boolean).join("；")}{refused.source || refused.size ? "。" : ""}{refused.next}</Notice>}
       {run.resultSummary && !preflight && <div className="flex flex-col gap-1"><p className="text-caption text-muted-foreground">保存的结果摘要（可能截断，不能代替完整答复）</p>
         <p className="whitespace-pre-wrap text-label text-foreground [overflow-wrap:anywhere]">{run.resultSummary}</p></div>}
       {run.nativeTurnId && <div className="flex flex-col gap-2">
@@ -330,8 +331,8 @@ function RunRecord({ context, run, anchor, readOnlyAgent }: { context: MutationC
           description="只回读同一轮次；保留旧观察并登记修正，不再启动工作，也不自动关闭任务。"><ReconcileRun context={context} run={run} /></ActionRow>}
       </div>
       <FullIdentifiers rows={[{ label: "运行", value: run.id }, { label: "执行的任务修订", value: run.taskRevisionId }, { label: "依据集合", value: run.basisSetId },
-        { label: "智能体", value: run.sessionId }, { label: "线程轮次", value: run.nativeTurnId }, { label: "派发前检查代码", value: preflight?.code },
-        { label: "派发前检查来源", value: preflight?.source ? `${preflight.source.kind} ${preflight.source.id}${preflight.source.revisionId ? ` · ${preflight.source.revisionId}` : ""}` : null },
+        { label: "智能体", value: run.sessionId }, { label: "线程轮次", value: run.nativeTurnId },
+        ...(refused?.ids ?? []).map(([label, value]) => ({ label: `派发前${label}`, value })),
         { label: "处理建议原文", value: preflight?.nextAction, text: true }]} />
     </div>
   </details>;
