@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { api, ApiError, isStaleConflict, isUnconfirmed, safeArtifactHref } from "../src/api.ts";
-import { sessionClient } from "../src/sessions/client.ts";
+import { api, ApiError, isStaleConflict, isUnconfirmed, safeArtifactHref } from "../src/shared/api.ts";
+import { sessionClient } from "../src/shared/sessionClient.ts";
 
 const command = {
   type: "task.reviewBasis" as const,

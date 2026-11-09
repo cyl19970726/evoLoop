@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Command, Operation } from "@evoloop/contracts";
-import { ApiError } from "../src/api.ts";
-import type { OperationReceipt } from "../src/recovery.ts";
-import { clearRecoveryIntents, recoveryIntent, rememberRecoveryIntent, replayRecoveryIntent, verifyRecoveryOperation } from "../src/recoveryIntent.ts";
+import { ApiError } from "../src/shared/api.ts";
+import type { OperationReceipt } from "../src/app/recovery.ts";
+import { clearRecoveryIntents, recoveryIntent, rememberRecoveryIntent, replayRecoveryIntent, verifyRecoveryOperation } from "../src/app/recoveryIntent.ts";
 
 const projectId = "11111111-1111-4111-8111-111111111111";
 const operationId = "22222222-2222-4222-8222-222222222222";

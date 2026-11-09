@@ -3,8 +3,8 @@ import { test } from "node:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { ConsumerObservation } from "@evoloop/contracts";
-import { EvidenceText, evidencePreview } from "../src/workflow/EvidenceText.tsx";
-import { observationResultLabel, observationsForDelivery, observerKindLabel } from "../src/workflow/observationPresentation.ts";
+import { EvidenceText, evidencePreview } from "../src/features/workflow/EvidenceText.tsx";
+import { observationResultLabel, observationsForDelivery, observerKindLabel } from "../src/features/workflow/observationPresentation.ts";
 
 test("short evidence stays visible; long Unicode original remains complete behind disclosure", () => {
   const short = "首行\n复核通过";

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { taskRunFromHash, taskSectionFromHash, taskSectionHref } from "../src/orchestration/navigation.ts";
-import { observedRunTaskLink, taskRunLink } from "../src/sessions/taskRunLink.ts";
+import { taskRunFromHash, taskSectionFromHash, taskSectionHref } from "../src/shared/taskNavigation.ts";
+import { observedRunTaskLink, taskRunLink } from "../src/features/sessions/taskRunLink.ts";
 
 test("Session's recent Run opens its Task runtime and retains the Session return", () => {
   const projectId = "11111111-1111-4111-8111-111111111111";

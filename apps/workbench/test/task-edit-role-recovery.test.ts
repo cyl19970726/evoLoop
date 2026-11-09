@@ -4,9 +4,10 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { TaskDetail } from "@evoloop/contracts";
 import type { LeaderWorkTask } from "@evoloop/contracts/work-index";
-import type { MutationContext } from "../src/workflow/ActionForm.tsx";
-import { LeaderTaskFacts, TaskTiming } from "../src/workflow/LeaderTaskFacts.tsx";
-import { TaskWorkflow } from "../src/workflow/TaskWorkflow.tsx";
+import type { MutationContext } from "../src/shared/ActionForm.tsx";
+import { LeaderTaskFacts } from "../src/features/workflow/LeaderTaskFacts.tsx";
+import { TaskTiming } from "../src/shared/taskTiming.tsx";
+import { TaskWorkflow } from "../src/features/workflow/TaskWorkflow.tsx";
 
 const owner = "10000002-0000-4000-8000-000000000002";
 const task = { projectId: "10000001-0000-4000-8000-000000000001", id: "10000003-0000-4000-8000-000000000003",

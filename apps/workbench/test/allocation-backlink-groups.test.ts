@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { AllocationTrace } from "@evoloop/contracts/allocation-relations";
-import { groupAllocationBacklinks, loadedBacklinkSummary } from "../src/discussions/allocationBacklinkGroups.ts";
+import { groupAllocationBacklinks, loadedBacklinkSummary } from "../src/features/discussions/allocationBacklinkGroups.ts";
 
 const discussion = { id: "discussion-a", version: 2, status: "decided" as const, title: "确定职责分工",
   document: { id: "document-a", revisionId: "revision-a" }, latestDecisionEventId: "decision-a" };

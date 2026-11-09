@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { NativeProgressView } from "../src/sessions/NativeSessionPanel";
-import { executionSourceNote, nativeExecutionLabel } from "../src/sessions/executionStatusPresentation";
+import type { NativeProgressView } from "../src/features/sessions/NativeSessionPanel";
+import { executionSourceNote, nativeExecutionLabel } from "../src/features/sessions/executionStatusPresentation";
 
 const progress = (status: NonNullable<NativeProgressView["turn"]>["status"],
   freshness: NativeProgressView["freshness"] = "live"): NativeProgressView => ({

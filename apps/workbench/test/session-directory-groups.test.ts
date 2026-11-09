@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { sessionClient } from "../src/sessions/client.ts";
-import { readSessionDirectoryPages } from "../src/sessions/useSessionDirectoryGroup.ts";
+import { sessionClient } from "../src/shared/sessionClient.ts";
+import { readSessionDirectoryPages } from "../src/features/sessions/useSessionDirectoryGroup.ts";
 
 const projectId = "11111111-1111-4111-8111-111111111111";
 const totals = { current: 5, historical: 37, unclassified: 14 };

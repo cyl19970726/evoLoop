@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { nativeObservationPresentation } from '../src/sessions/nativeObservationPresentation';
+import { nativeObservationPresentation } from '../src/features/sessions/nativeObservationPresentation';
 
 test('protected native diff preserves the content indicator without receiving the raw patch',()=>{
   const projectId='00000000-0000-4000-8000-000000000001';

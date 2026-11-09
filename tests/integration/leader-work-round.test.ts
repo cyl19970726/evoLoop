@@ -16,7 +16,7 @@ import { listLeaderNotices } from "@evoloop/adapter-postgres/leader-result-notic
 import { OrdinaryRunSubmissionService } from "../../apps/coordinator/src/ordinary-run-submission/service.js";
 import { createOrdinaryRunSealer } from "../../apps/coordinator/src/ordinary-run-submission/seal.js";
 import { prepareRequest } from "../../apps/cli/src/requests.js";
-import { deliveryTarget } from "../../apps/workbench/src/workflow/deliveryPresentation.js";
+import { deliveryTarget } from "../../apps/workbench/src/shared/deliveryPresentation.js";
 
 const database = process.env.TEST_DATABASE_URL;
 if (!database || !/^\/evoloop(?:_[a-z0-9]+)*_test$/i.test(new URL(database).pathname))

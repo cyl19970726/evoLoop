@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { findFixedKnowledgeTitle, matchesKnowledgeRevision, transitionKnowledgeRoute,
-  unresolvedFixedKnowledgeTitle } from "../src/knowledge/knowledgeRoute.ts";
+  unresolvedFixedKnowledgeTitle } from "../src/features/knowledge/knowledgeRoute.ts";
 
 const projectId = "044d070e-0000-4000-8000-000000000001";
 const knowledgeId = "2b026d3e-0000-4000-8000-000000000001";

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { HostLink } from "@evoloop/contracts/resident-hosts";
 import type { ObservedSession } from "@evoloop/contracts/session-observation";
-import { sessionOpenHref, sessionOriginalRef } from "../src/sessions/SessionOpenEntry.tsx";
+import { sessionOpenHref, sessionOriginalRef } from "../src/features/sessions/SessionOpenEntry.tsx";
 
 const threadId = "01a158d7-f842-7ca3-9899-ce1efc33c030";
 const linkId = "1000000b-0000-4000-8000-000000000011";

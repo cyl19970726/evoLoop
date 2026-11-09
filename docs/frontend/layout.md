@@ -2,7 +2,7 @@
 
 所有内容页用同一个骨架：外层模块栏选空间，内层上下文栏选对象，中间读和对话，右边看这个对象的事实。中间不包卡片，次要信息是一行灰字，可以展开。这个布局由[场景与交互](scenarios.md#从场景看布局)推出。
 
-**目标与现状。** 下面是已选定的目标布局（[DEC-036](../decisions.md#用户已确定的方向)）。现状已有两条左栏：88px 模块栏（工作 / Sessions）加 270px 项目栏，由 `apps/workbench/src/ui/WorkbenchShell.tsx` 渲染，宽度写在 `completion.css`；但项目栏只放导航，任务和文档的列表放在主区，各页主区布局不同，大多没有右栏。迁移由[前端改版 issue #229](https://github.com/cyl19970726/evoLoop/issues/229) 跟踪。
+**目标与现状。** 下面是已选定的目标布局（[DEC-036](../decisions.md#用户已确定的方向)）。现状已有两条左栏：88px 模块栏（工作 / Sessions）加 270px 项目栏，由 `apps/workbench/src/app/WorkbenchShell.tsx` 渲染，宽度写在 `completion.css`；但项目栏只放导航，任务和文档的列表放在主区，各页主区布局不同，大多没有右栏。迁移由[前端改版 issue #229](https://github.com/cyl19970726/evoLoop/issues/229) 跟踪。
 
 ![布局线框图：外层模块栏，内层上下文栏为项目切换、导航和 Session 列表，中间为对话与 Agent 活动，右栏为 Session 信息](../assets/frontend-layout/three-column.svg)
 

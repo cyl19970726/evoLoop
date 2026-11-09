@@ -2,8 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import type { TaskDetail } from "@evoloop/contracts";
 import type { LeaderWorkTask } from "@evoloop/contracts/work-index";
-import type { WorkTaskStatus } from "../src/workflow/workStatusPresentation.ts";
-import { readOutcome,selectAttention } from "../src/overview/contextPresentation.ts";
+import type { WorkTaskStatus } from "../src/shared/workStatusPresentation.ts";
+import { readOutcome,selectAttention } from "../src/features/overview/contextPresentation.ts";
 const row=(overrides:Partial<LeaderWorkTask>={})=>({taskId:"task",version:2,currentRevisionId:"closed",taskState:"in_progress",phase:"blocked",plan:null,review:null,delivery:{deliveryId:"accepted"},...overrides}) as LeaderWorkTask;
 const statuses={task:{taskId:"task",cognition:false}} as Record<string,WorkTaskStatus>;
 test("attention ignores closed and formal cognition rows and keeps deferred work behind other current work",()=>{
