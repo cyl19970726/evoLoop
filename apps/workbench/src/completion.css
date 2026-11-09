@@ -8,8 +8,8 @@ body{ background: #fff; }
 h2{ color: var(--foreground); font-size: 22px; line-height: 1.5; }
 h3{ font-size: 17px; line-height: 1.5; }
 p, .lede{ font-size: 16px; line-height: 1.75; color: var(--ink-muted); }
-button, .button-link, input, textarea, select{ font-size: 15px; line-height: 1.5; }
-button, .button-link{ min-height: 40px; border-radius: 6px; padding: 8px 14px; }
+button, input, textarea, select{ font-size: 15px; line-height: 1.5; }
+button{ min-height: 40px; border-radius: 6px; padding: 8px 14px; }
 input, select, textarea{ border-radius: 6px; }
 input, select{ min-height: 40px; }
 :where(a, button, input, select, textarea, summary):focus-visible{ outline: 3px solid #759bff; outline-offset: 3px; }
@@ -23,7 +23,7 @@ th{ font-size: 14px; color: var(--ink-muted); text-transform: none; letter-spaci
 td{ font-size: 15px; }
 .pill{ display: inline-flex; width: fit-content; max-width: 100%; align-items: center; gap: 6px; font-size: 14px; padding: 4px 9px; line-height: 1.5; }
 
-.context-links a, .work-context-tabs a{ font-size: 14px; }
+.work-context-tabs a{ font-size: 14px; }
 /* Scan the task in three columns, read the selected work below. */
 
 .task-inline-result{ display: none; }

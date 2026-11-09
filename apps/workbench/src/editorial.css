@@ -31,8 +31,7 @@ a:hover{
   color: #1d3eae;
 }
 
-button,
-.button-link{
+button{
   min-height: 38px;
   padding: 8px 13px;
   color: #38445b;
@@ -43,23 +42,20 @@ button,
   font-weight: 600;
 }
 
-button:hover:not(:disabled),
-.button-link:hover{
+button:hover:not(:disabled){
   background: #f5f7fd;
   border-color: #aab4d0;
 }
 
 .primary,
-button.primary,
-.button-link.primary{
+button.primary{
   color: #fff;
   background: var(--primary);
   border-color: var(--primary);
 }
 
 .primary:hover:not(:disabled),
-button.primary:hover:not(:disabled),
-.button-link.primary:hover{
+button.primary:hover:not(:disabled){
   color: #fff;
   background: var(--primary-strong);
   border-color: var(--primary-strong);
@@ -152,7 +148,6 @@ button.primary:hover:not(:disabled),
   margin-bottom: 0;
 }
 
-.page-title-row > .button-link,
 .page-title-row > button{
   margin-bottom: 1px;
 }
@@ -205,7 +200,6 @@ button.primary:hover:not(:disabled),
   color: #6d5b86;
 }
 
-.context-links,
 .work-context-tabs{
   display: flex;
   align-items: center;
@@ -219,7 +213,6 @@ button.primary:hover:not(:disabled),
   white-space: nowrap;
 }
 
-.context-links a,
 .work-context-tabs a{
   min-height: 42px;
   padding: 10px 1px 11px;
@@ -228,13 +221,11 @@ button.primary:hover:not(:disabled),
   font-size: 13px;
 }
 
-.context-links a:hover,
 .work-context-tabs a:hover{
   color: var(--primary);
   text-decoration: none;
 }
 
-.context-links a[aria-current="page"],
 .work-context-tabs a[aria-current="page"]{
   color: var(--primary);
   border-color: var(--primary);
