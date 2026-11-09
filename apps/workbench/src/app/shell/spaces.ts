@@ -39,7 +39,7 @@ export const spaceLabels: Record<Space, string> = { work: "工作", agents: "智
 
 /** The page each section shows in the header and the browser title. */
 export const sectionLabels: Record<Section, string> = {
-  overview: "总览", work: "任务", "create-task": "创建任务", inbox: "待我验收与判断", task: "任务", documents: "过程文档",
+  overview: "总览", work: "任务", "create-task": "新建任务", inbox: "待我验收与判断", task: "任务", documents: "过程文档",
   document: "文档", knowledge: "知识空间", sessions: "智能体", journey: "目标与阶段", discussions: "分工讨论", reviews: "组织复盘",
   collaboration: "协作回执", runtime: "分工与运行", schedules: "日程", roles: "职责", repository: "仓库规范",
   operations: "结果未知的操作", evaluations: "评价与后果", settings: "项目设置", connectors: "微信连接",
