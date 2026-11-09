@@ -5,7 +5,7 @@ import { api, errorText } from "../../shared/api";
 import type { MutationContext } from "../../shared/ActionForm";
 import { useProjectQuery } from "../../shared/query";
 import { date, href } from "../../shared/ui/shared";
-import { Facts, LinkList, SettingsPage, SettingsSection } from "./pageParts";
+import { Facts, LinkList, SettingsPage, SettingsSection } from "../../shared/ui/SettingsParts";
 
 const permissionLabel: Record<string, string> = { read: "读取项目", write: "提交业务变更", review: "审阅与复核", approve: "接受与验收" };
 const identityLabel: Record<string, string> = { human: "人", agent: "智能体" };

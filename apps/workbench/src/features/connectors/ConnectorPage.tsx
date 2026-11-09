@@ -1,10 +1,12 @@
 import { useEffect, useState, type FormEvent } from "react";
 import type { ConnectorRoute, ConnectorRouteRecord } from "@evoloop/contracts/message-connectors";
 import { ApiError, errorText } from "../../shared/api";
-import { Alert, date, href } from "../../shared/ui/shared";
+import { RefreshCw } from "lucide-react";
+import { Button, EmptyState, Field, Input, Notice, Textarea, cn } from "@evoloop/ui";
+import { date, href } from "../../shared/ui/shared";
+import { SettingsPage, SettingsSection } from "../../shared/ui/SettingsParts";
 import type { MutationContext } from "../../shared/ActionForm";
 import { connectorClient, type ConnectorDeliverySummary, type ConnectorDeliveryDetail } from "./client";
-import "./connectors.css";
 
 const hash = /^[a-f0-9]{64}$/;
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -20,19 +22,18 @@ function DeliveryPeek({token,projectId,bindingId}:{token:string;projectId:string
     catch(cause){setError(errorText(cause));}}
   async function show(deliveryId:number){try{setDetail(await client.delivery(bindingId,deliveryId));setError('');}
     catch(cause){setError(errorText(cause));}}
-  return <div className="connector-deliveries"><button type="button" onClick={()=>void load()}>读取最近 delivery</button>
-    {error&&<p role="alert">{error}</p>}{items&&<div>{items.length===0?<p>尚无已关联的来源事件。</p>:
-      items.map(item=><div key={item.deliveryId}><button type="button" onClick={()=>void show(item.deliveryId)}>
-        delivery {item.deliveryId} · {item.eventCount} 个来源事件
-        {item.unhandledCount?` · ${item.unhandledCount} 个需人工处理`:''} · {item.latestMessageState}
-        {item.decision?` · ${item.decision.decision}/${item.decision.state}`:''}</button></div>)}</div>}
-    {detail&&<details open><summary>delivery {detail.deliveryId} 的原操作</summary>
-      {detail.messages.map(message=><p key={message.messageId}>事件 {message.eventCursor} → 消息 <code>{message.messageId}</code>
-        {' '}· {message.messageState}/{message.processingState??'未开始'} · Turn <code>{message.nativeTurnId??'未绑定'}</code></p>)}
-      {detail.unhandled.map(event=><p key={`unhandled-${event.eventCursor}`}>事件 {event.eventCursor}
-        {' '}· {event.eventKind}/{event.direction} · {event.reason} · 原长度 {event.contentLength}，未创建平台消息</p>)}
-      <p>出站决定：{detail.decision?`${detail.decision.decision}/${detail.decision.state}`:'尚无'}
-        {detail.decision?.requestId&&<> · 原请求 <code>{detail.decision.requestId}</code></>}</p></details>}
+  return <div className="connector-deliveries flex flex-col gap-1.5 text-small">
+    <Button size="compact" variant="ghost" className="w-fit" onClick={() => void load()}>读取最近的投递</Button>
+    {error && <p role="alert" className="text-caption text-destructive">{error}</p>}
+    {items && (items.length === 0 ? <p className="text-caption text-muted-foreground">尚无已关联的来源事件。</p>
+      : <ul className="flex flex-col gap-1">{items.map(item => <li key={item.deliveryId}><button type="button" onClick={() => void show(item.deliveryId)} className="text-left text-caption text-text-secondary hover:text-foreground hover:underline">
+        投递 {item.deliveryId} · {item.eventCount} 个来源事件{item.unhandledCount ? ` · ${item.unhandledCount} 个需人工处理` : ""} · {item.latestMessageState}{item.decision ? ` · ${item.decision.decision}/${item.decision.state}` : ""}
+      </button></li>)}</ul>)}
+    {detail && <details open className="rounded-lg bg-field px-3 py-2 text-caption text-text-secondary"><summary className="cursor-pointer text-foreground">投递 {detail.deliveryId} 的原操作</summary>
+      {detail.messages.map(message => <p key={message.messageId}>事件 {message.eventCursor} → 消息 <code className="font-mono">{message.messageId}</code> · {message.messageState}/{message.processingState ?? "未开始"} · 运行轮次 <code className="font-mono">{message.nativeTurnId ?? "未绑定"}</code></p>)}
+      {detail.unhandled.map(event => <p key={`unhandled-${event.eventCursor}`}>事件 {event.eventCursor} · {event.eventKind}/{event.direction} · {event.reason} · 原长度 {event.contentLength}，未创建平台消息</p>)}
+      <p>出站决定：{detail.decision ? `${detail.decision.decision}/${detail.decision.state}` : "尚无"}{detail.decision?.requestId && <> · 原请求 <code className="font-mono">{detail.decision.requestId}</code></>}</p>
+    </details>}
   </div>;
 }
 
@@ -145,41 +146,52 @@ export function ConnectorPage({ context }: { context: MutationContext }) {
       setRoutes(previous => [...previous, ...page.items]); setCursor(page.nextCursor);
     } catch (cause) { setError(errorText(cause)); } finally { setBusy(false); }
   }
-  return <div className="content connector-page"><div className="page-title-row"><div><h1>微信 Connector 路由</h1>
-    <p className="lede">查看固定来源与接收 Session，按已审策略保存和停订。路由状态不代表来源消息已处理或微信收件已确认。</p></div>
-    <button type="button" onClick={() => {setError("");setReadAgain(value => value + 1);}} disabled={busy}>重新读取</button></div>
-    <Alert>标准模式使用完整权限的专用 Session，启用前须核对群/私聊类型、发送者 allowlist、actor、精确原生 Thread、active execution profile 与 gateway 授权。受限模式仍缺隔离证明，不能激活。停订后不再领取新 delivery；已领取的在途记录沿冻结策略继续结算或保留 unknown。</Alert>
-    {pending && <Alert kind="error">有未确认的原操作 <code>{pending}</code>。<button type="button" disabled={busy} onClick={() => void reconcile()}>按原 ID 查回</button></Alert>}
-    {error && <Alert kind="error">{error}</Alert>}{notice && <Alert kind="success">{notice}</Alert>}
-    <section className="panel"><h2>当前路由</h2>{!loaded ? <p>正在读取…</p> : routes.length === 0 ? <p>当前项目没有已读回路由。</p> :
-      <div className="connector-list">{routes.map(route => <article key={route.bindingId} className="connector-card">
-        <h3>{route.conversationLabel}</h3>
-        <p>{route.source.provider} · {route.conversationKind === "group" ? "群聊" : "私聊"}
-          {' '}· <code>{route.source.conversationId}</code> · 连接 {route.source.connectionId}</p>
-        <p>Thread <code>{route.targetThreadId}</code> → <a href={`${href(projectId, "sessions")}?session=${encodeURIComponent(route.targetSessionId)}`}>Session {route.targetSessionId}</a></p>
-        <p><strong>{route.mode === "standard" ? "标准模式" : "受限模式"} · {route.state}</strong> · v{route.version} · 读回更新 {date(route.updatedAt)}</p>
-        <details><summary>路由范围与依据</summary><dl><dt>Binding</dt><dd><code>{route.bindingId}</code></dd><dt>允许发送者</dt><dd>{route.senderIds.join("、")}</dd><dt>接收 / 发送 actor</dt><dd>{route.targetActorId} / {route.senderActorId}</dd><dt>发送目标</dt><dd>{route.sendTargets.join("、") || "无"}</dd><dt>内部目标</dt><dd>{route.internalTargets.join("、") || "无"}</dd><dt>策略哈希</dt><dd><code>{route.policyHash}</code></dd></dl></details>
-        <DeliveryPeek token={token} projectId={projectId} bindingId={route.bindingId}/>
-        <p className="muted">这些状态来自项目消息与原发送意图；微信界面可见不等于对方已收件。</p>
-        {canReview && route.mode === "standard" && <div className="connector-actions">
-          {route.state === "active" ? <button type="button" disabled={busy || !!pending} onClick={() => void changeState(route, "paused")}>暂停订阅</button>
-            : <button type="button" disabled={busy || !!pending} onClick={() => void changeState(route, "active")}>{route.state === "paused" ? "恢复订阅" : "启用路由"}</button>}
-          {route.state === "paused" && <button type="button" disabled={busy || !!pending} onClick={() => void changeState(route, "disabled")}>停用配置</button>}
-        </div>}
-        {route.mode === "restricted" && <p>受限模式资格未获证明；此处不提供激活操作。</p>}
-      </article>)}</div>}{cursor && <button type="button" disabled={busy} onClick={() => void more()}>读取更多路由</button>}</section>
-    {canReview && <details className="panel connector-create"><summary>创建标准模式路由</summary><p>先固定并审核来源、接收 Session 和策略；新路由以 disabled 保存，启用另行核验。</p>
-      <form onSubmit={event => void create(event)}><div className="connector-fields">
-      {([ ["connectionId", "微信连接 ID"], ["conversationId", "来源 conversation ID"],
-        ["conversationLabel", "会话名称"], ["conversationKind", "会话类型 group|private"],
-        ["targetSessionId", "专用 Session UUID"],
-        ["targetThreadId", "原生 Thread ID"], ["targetActorId", "接收 actor"], ["senderActorId", "发送 actor"],
-        ["owner", "wx owner"], ["epoch", "wx epoch"],
-        ["sessionRef", "wx session_ref"], ["policyHash", "已审策略 SHA-256"], ["bindingId", "Binding UUID"] ] as const).map(([key, label]) =>
-        <label key={key}>{label}<input required value={form[key]} onChange={event => setForm(previous => ({ ...previous, [key]: event.target.value }))} /></label>)}
-      <label>允许发送的 conversation ID（每行一个，必须含来源）<textarea required value={form.sendTargets} onChange={event => setForm(previous => ({ ...previous, sendTargets: event.target.value }))} /></label>
-      <label>允许触发 Session 的微信发送者 ID（每行一个，至少一个）<textarea required value={form.senderIds} onChange={event => setForm(previous => ({ ...previous, senderIds: event.target.value }))} /></label>
-      <label>允许内部转交的 Session UUID（每行一个；留空即禁止）<textarea value={form.internalTargets} onChange={event => setForm(previous => ({ ...previous, internalTargets: event.target.value }))} /></label></div>
-      <button type="submit" disabled={busy || !!pending}>保存 disabled 路由</button></form></details>}
-  </div>;
+  const fields = ([["connectionId", "微信连接 ID"], ["conversationId", "来源会话 ID"], ["conversationLabel", "会话名称"], ["conversationKind", "会话类型 group|private"],
+    ["targetSessionId", "专用智能体 ID"], ["targetThreadId", "原生会话线程 ID"], ["targetActorId", "接收 actor"], ["senderActorId", "发送 actor"],
+    ["owner", "wx owner"], ["epoch", "wx epoch"], ["sessionRef", "wx session_ref"], ["policyHash", "已审策略 SHA-256"], ["bindingId", "绑定 ID"]] as const);
+  const areas = ([["sendTargets", "允许发送的会话 ID（每行一个，必须含来源）", true], ["senderIds", "允许触发智能体的微信发送者 ID（每行一个，至少一个）", true],
+    ["internalTargets", "允许内部转交的智能体 ID（每行一个；留空即禁止）", false]] as const);
+  const muted = "text-caption text-muted-foreground";
+  return <SettingsPage title="微信连接" description="查看固定来源与接收智能体，按已审策略保存和停订。路由状态不代表来源消息已处理或微信收件已确认。" className="connector-page"
+    action={<Button onClick={() => { setError(""); setReadAgain(value => value + 1); }} disabled={busy}><RefreshCw aria-hidden="true" />重新读取</Button>}>
+    <Notice tone="waiting">标准模式使用完整权限的专用智能体，启用前须核对群 / 私聊类型、发送者白名单、actor、精确的原生会话线程、生效中的执行配置与网关授权。受限模式仍缺隔离证明，不能激活。停订后不再领取新的投递；已领取的在途记录按冻结策略继续结算，或保留为结果未知。</Notice>
+    {pending && <Notice tone="error" action={<Button size="compact" disabled={busy} onClick={() => void reconcile()}>按原 ID 查回</Button>}>有未确认的原操作 <code className="break-all font-mono">{pending}</code>。</Notice>}
+    {error && <Notice tone="error">{error}</Notice>}{notice && <Notice>{notice}</Notice>}
+    <SettingsSection title="当前路由">
+      {!loaded ? <p className="text-small text-text-secondary">正在读取…</p> : routes.length === 0 ? <EmptyState title="还没有路由" reason="当前项目没有已读回的微信路由。" />
+        : <ul className="flex flex-col gap-3">{routes.map(route => <li key={route.bindingId} className="connector-card flex flex-col gap-2 rounded-xl bg-raised p-4 shadow-sm">
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="text-body font-semibold text-foreground">{route.conversationLabel}</h3>
+            <span className={cn("rounded-full px-2.5 py-0.5 text-caption", route.state === "active" ? "bg-accent text-foreground" : "bg-field text-text-secondary")}>{route.mode === "standard" ? "标准模式" : "受限模式"} · {route.state} · v{route.version}</span>
+          </div>
+          <p className="text-small text-text-secondary">{route.source.provider} · {route.conversationKind === "group" ? "群聊" : "私聊"} · 连接 {route.source.connectionId}</p>
+          <p className="text-small text-text-secondary">转给 <a href={`${href(projectId, "sessions")}?session=${encodeURIComponent(route.targetSessionId)}`} className="text-foreground underline">智能体 {route.targetSessionId.slice(0, 8)}</a> · 读回更新 {date(route.updatedAt)}</p>
+          <details className="text-small"><summary className="cursor-pointer text-text-secondary">路由范围与依据</summary>
+            <dl className="mt-2 flex flex-col gap-1.5 text-caption">{([["绑定", route.bindingId], ["来源会话", route.source.conversationId], ["原生会话线程", route.targetThreadId], ["允许发送者", route.senderIds.join("、")],
+              ["接收 / 发送 actor", `${route.targetActorId} / ${route.senderActorId}`], ["发送目标", route.sendTargets.join("、") || "无"], ["内部目标", route.internalTargets.join("、") || "无"], ["策略哈希", route.policyHash]] as const)
+              .map(([label, value]) => <div key={label} className="flex flex-col"><dt className="text-muted-foreground">{label}</dt><dd className="m-0 break-all font-mono text-foreground">{value}</dd></div>)}</dl>
+          </details>
+          <DeliveryPeek token={token} projectId={projectId} bindingId={route.bindingId} />
+          <p className={muted}>这些状态来自项目消息与原发送意图；微信界面可见不等于对方已收件。</p>
+          {canReview && route.mode === "standard" && <div className="flex flex-wrap gap-2">
+            {route.state === "active" ? <Button size="compact" disabled={busy || !!pending} onClick={() => void changeState(route, "paused")}>暂停订阅</Button>
+              : <Button size="compact" disabled={busy || !!pending} onClick={() => void changeState(route, "active")}>{route.state === "paused" ? "恢复订阅" : "启用路由"}</Button>}
+            {route.state === "paused" && <Button size="compact" variant="danger" disabled={busy || !!pending} onClick={() => void changeState(route, "disabled")}>停用配置</Button>}
+          </div>}
+          {route.mode === "restricted" && <p className={muted}>受限模式资格未获证明；此处不提供激活操作。</p>}
+        </li>)}</ul>}
+      {cursor && <Button size="compact" variant="ghost" className="w-fit" disabled={busy} onClick={() => void more()}>读取更多路由</Button>}
+    </SettingsSection>
+    {canReview && <details className="connector-create rounded-xl bg-raised p-4 shadow-sm">
+      <summary className="cursor-pointer text-small font-medium text-foreground">创建标准模式路由</summary>
+      <p className={cn(muted, "mt-2")}>先固定并审核来源、接收智能体和策略；新路由以停用状态保存，启用另行核验。</p>
+      <form onSubmit={event => void create(event)} className="mt-3 flex flex-col gap-3">
+        <div className="grid gap-3 compact:grid-cols-2">
+          {fields.map(([key, label]) => <Field key={key} label={label}>{control => <Input {...control} required value={form[key]} onChange={event => setForm(previous => ({ ...previous, [key]: event.target.value }))} />}</Field>)}
+        </div>
+        {areas.map(([key, label, required]) => <Field key={key} label={label}>{control => <Textarea {...control} required={required} value={form[key]} onChange={event => setForm(previous => ({ ...previous, [key]: event.target.value }))} />}</Field>)}
+        <Button type="submit" variant="primary" className="w-fit" disabled={busy || !!pending}>保存为停用路由</Button>
+      </form>
+    </details>}
+  </SettingsPage>;
 }
