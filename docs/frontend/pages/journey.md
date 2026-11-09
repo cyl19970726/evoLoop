@@ -33,7 +33,13 @@
 
 ## 截图
 
-暂无当前截图。浏览器回归可用 `EVOLOOP_JOURNEY_SCREENSHOT_DIR` 截 1440、1024（右栏为抽屉）和 390 三种宽度。
+由 `npm run docs:screenshots` 用合成夹具生成，怎样重新生成见[页面截图](../architecture.md#页面截图)。
+
+![目标与阶段，1440：右栏内嵌](../../assets/frontend-pages/journey-1440.png)
+
+![目标与阶段，1024：右栏以抽屉打开](../../assets/frontend-pages/journey-1024.png)
+
+![目标与阶段，390](../../assets/frontend-pages/journey-390.png)
 
 ## 代码与测试
 

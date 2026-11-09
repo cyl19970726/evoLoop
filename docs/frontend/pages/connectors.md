@@ -34,7 +34,11 @@
 
 ## 截图
 
-暂无当前截图。浏览器测试支持 `EVOLOOP_CONNECTORS_SCREENSHOT_DIR`，输出 1440、1024、390 三个宽度和读取失败时的截图。
+由 `npm run docs:screenshots` 用合成夹具生成，怎样重新生成见[页面截图](../architecture.md#页面截图)。
+
+![微信连接，1440：设置类页面没有右栏](../../assets/frontend-pages/connectors-1440.png)
+
+![微信连接，390](../../assets/frontend-pages/connectors-390.png)
 
 ## 代码与测试
 

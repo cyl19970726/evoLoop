@@ -151,3 +151,33 @@ QueryService 返回 `observedAt`、对象与 revision、权限能力、分源状
 5. **实时与 Hub**：coordinator 提供项目级失效事件流后，前端接入并让查询失效重读，Session 输出暂留长轮询；随 #219 接入 Hub cookie 与网关流式转发。
 
 每片验收：`npm test`、typecheck、build 通过；旧 `#/p/` 深链、历史修订链接和返回位置可用；切换项目不串入旧内容；断线后能恢复；首屏 JS 不超过 `bundle-budget.json`。
+
+### 页面截图
+
+[页面说明](README.md#页面说明)里的截图由 `npm run docs:screenshots`（`scripts/frontend/screenshots.mjs`）生成，不手工放图：
+
+- **数据**：`scripts/frontend/fixture/` 是一个合成项目（智能体、任务、文档、目标与阶段、知识、日程、评价、微信连接等），名称、标识和时间都是编的。夹具只应答读取，写入一律拒绝。个别失败状态（如 HTML 原件读不回）由场景自己拦截那一次读取。截图展示的是夹具数据下的界面，不是使用证据；真实路径的证据按[前端旅程与截图](../development/documentation.md#前端旅程与截图怎样进入仓库)进实景旅程。
+- **画面**：先构建工作台，再逐页打开 `scripts/frontend/pages.mjs` 里列的地址。每页截 1440（右栏内嵌）和 390；有右栏的页面再截 1024，点“展开右栏”打开抽屉。任务页另外五个页签等补充状态只截一个宽度。输出为 `docs/assets/frontend-pages/<页面>-<宽度>.png`，文件名固定。
+- **稳定**：浏览器时钟固定在 2026-11-10 11:00（Asia/Shanghai）、`zh-CN`、DPR 1，减少动态效果并关掉过渡、动画和光标；用软件光栅、单线程栅格化（GPU 栅格化每次抗锯齿边缘略有不同）；等读取停下、字体就绪后才截。PNG 压成 256 色索引图（`scripts/frontend/png.mjs`）。同一构建和夹具得到同样的字节，没变的图不重写。字体用本机系统字体，换操作系统重跑会整批变化。
+- **报告**：结束时列出几张变化、几张新增、目录总大小，以及页面读到而夹具没应答的接口（按空页应答）。页面报错、横向溢出或等不到内容时退出码非 0，失败画面存为 `failed-*.png`，不要提交。
+
+Playwright 不进依赖，和浏览器回归一样从环境变量载入：
+
+```sh
+export EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE=/path/to/playwright/index.js
+export EVOLOOP_BROWSER_TEST_CHROMIUM_EXECUTABLE=/path/to/chromium   # 不设则用 Playwright 自带的浏览器
+npm run docs:screenshots                                    # 全部页面
+npm run docs:screenshots -- --only task,tasks --skip-build  # 只截几页，复用已有构建
+```
+
+**什么时候重跑**：改了页面源码、布局或共用组件的 PR，重跑受影响的页面，提交变化的图，并在 PR 里写明变化了几张。新页面在 `pages.mjs` 加一项、在夹具里补数据，再在页面说明的“截图”一节引用。没有页面说明的入口页（登录、项目列表、项目设置）和组件样例页 `/ui` 也在这里：
+
+![登录](../assets/frontend-pages/login-1440.png)
+
+![项目列表](../assets/frontend-pages/projects-1440.png)
+
+![项目设置](../assets/frontend-pages/settings-1440.png)
+
+![组件样例页](../assets/frontend-pages/ui-samples-1440.png)
+
+窄屏：[登录](../assets/frontend-pages/login-390.png)、[项目列表](../assets/frontend-pages/projects-390.png)、[项目设置](../assets/frontend-pages/settings-390.png)、[组件样例](../assets/frontend-pages/ui-samples-390.png)。

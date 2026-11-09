@@ -37,7 +37,13 @@
 
 ## 截图
 
-暂无当前截图。
+由 `npm run docs:screenshots` 用合成夹具生成，怎样重新生成见[页面截图](../architecture.md#页面截图)。
+
+![日程，1440：右栏内嵌](../../assets/frontend-pages/schedules-1440.png)
+
+![日程，1024：右栏以抽屉打开](../../assets/frontend-pages/schedules-1024.png)
+
+![日程，390](../../assets/frontend-pages/schedules-390.png)
 
 ## 代码与测试
 

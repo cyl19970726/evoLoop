@@ -34,7 +34,17 @@
 
 ## 截图
 
-暂无当前截图。浏览器回归可按 `EVOLOOP_EVALUATIONS_SCREENSHOT_DIR` 输出 1440、1024、390 三个宽度。
+由 `npm run docs:screenshots` 用合成夹具生成，怎样重新生成见[页面截图](../architecture.md#页面截图)。
+
+![评价列表，1440](../../assets/frontend-pages/evaluations-1440.png)
+
+评价列表的其他宽度：[390](../../assets/frontend-pages/evaluations-390.png)。
+
+![一项评价，1440：右栏内嵌](../../assets/frontend-pages/evaluation-1440.png)
+
+![一项评价，1024：右栏以抽屉打开](../../assets/frontend-pages/evaluation-1024.png)
+
+![一项评价，390](../../assets/frontend-pages/evaluation-390.png)
 
 ## 代码与测试
 

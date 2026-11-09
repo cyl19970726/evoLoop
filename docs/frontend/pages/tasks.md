@@ -74,20 +74,37 @@
 
 ## 截图
 
-![表格视图：左栏任务列表，中间阶段计数和六列表格，右栏所选任务的状态、承接智能体与关联文档](../../assets/frontend-tasks-20261109/tasks-table-1440x900.png)
+由 `npm run docs:screenshots` 用合成夹具生成，怎样重新生成见[页面截图](../architecture.md#页面截图)。
 
-2026-11-09，PR7 分支，测试实例合成数据，1440×900。看点：选中一行，右栏换成这一行的事实，中间不动。
+![表格视图，1440：右栏内嵌](../../assets/frontend-pages/tasks-1440.png)
 
-![任务正文：目标、完成条件、正文、进展与讨论；右栏是状态与对账阶段、承接智能体、关联文档](../../assets/frontend-tasks-20261109/task-1440x900.png)
+![表格视图，1024：右栏以抽屉打开](../../assets/frontend-pages/tasks-1024.png)
 
-![在右栏打开固定依据：任务固定的旧版，并提示文档已有新版](../../assets/frontend-tasks-20261109/task-document-1440x900.png)
+![表格视图，390](../../assets/frontend-pages/tasks-390.png)
 
-看点：任务和对账阶段两个标签并列；已分派、已接受、正在运行分开写；依据按任务固定的那一版打开。
+![任务正文，1440：右栏内嵌](../../assets/frontend-pages/task-1440.png)
 
-![1280×800：右栏展开后与正文并排](../../assets/frontend-tasks-20261109/task-1280x800.png)
+![任务正文，1024：右栏以抽屉打开](../../assets/frontend-pages/task-1024.png)
 
-![390×844：正文占满屏幕](../../assets/frontend-tasks-20261109/task-390x844.png)
-![390×844：任务信息从底部升起](../../assets/frontend-tasks-20261109/task-facts-390x844.png)
+![任务正文，390](../../assets/frontend-pages/task-390.png)
+
+![390：任务信息从底部升起](../../assets/frontend-pages/task-facts-390.png)
+
+![在右栏打开固定依据，任务留在中间](../../assets/frontend-pages/task-document-1440.png)
+
+![依据与影响页签](../../assets/frontend-pages/task-basis-1440.png)
+
+![交付与使用页签](../../assets/frontend-pages/task-delivery-1440.png)
+
+![运行与关联页签](../../assets/frontend-pages/task-runtime-1440.png)
+
+![历史页签](../../assets/frontend-pages/task-history-1440.png)
+
+![任务操作页签](../../assets/frontend-pages/task-actions-1440.png)
+
+![新建任务，1440](../../assets/frontend-pages/task-new-1440.png)
+
+新建任务的其他宽度：[390](../../assets/frontend-pages/task-new-390.png)。
 
 ## 代码与测试
 

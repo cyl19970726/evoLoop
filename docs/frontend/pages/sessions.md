@@ -75,13 +75,21 @@ Session 页说明一个具体实例此刻在做什么、做出了什么；“Lea
 
 ## 截图
 
-[![Sessions 目录：两条左栏，项目栏和主区各有一份 Session 目录](../../assets/frontend-journey-20261108/sessions-1440x900.png)](../../assets/frontend-journey-20261108/sessions-1440x900.png)
+由 `npm run docs:screenshots` 用合成夹具生成，怎样重新生成见[页面截图](../architecture.md#页面截图)。
 
-2026-11-08，发布后维护服务 36cb620。看点：项目栏和主区各有一份 Session 目录；现在主区改为统筹安排。
+![统筹安排，1440：右栏内嵌](../../assets/frontend-pages/arrangement-1440.png)
 
-[![Session 详情公开脱敏版：没有右栏，状态卡在上，三个页签和底部输入在下](../../assets/frontend-journey-20261108/session-detail-1440x900.png)](../../assets/frontend-journey-20261108/session-detail-1440x900.png)
+![统筹安排，1024：右栏以抽屉打开](../../assets/frontend-pages/arrangement-1024.png)
 
-2026-11-08，同一版本，消息与工具正文已换成占位。看点：没有右栏，状态卡和关联任务占去首屏上部，下面是三个页签和底部输入。逐步说明见[实景旅程](../journeys/current-work.md#3-从任务核对具体承接者)。
+![统筹安排，390](../../assets/frontend-pages/arrangement-390.png)
+
+![智能体页，1440：右栏内嵌](../../assets/frontend-pages/agent-1440.png)
+
+![智能体页，1024：右栏以抽屉打开](../../assets/frontend-pages/agent-1024.png)
+
+![智能体页，390](../../assets/frontend-pages/agent-390.png)
+
+改版前真实使用的截图见[实景旅程](../journeys/current-work.md#3-从任务核对具体承接者)。
 
 ## 代码与测试
 
