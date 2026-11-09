@@ -1,10 +1,8 @@
 /* Old styles still used by the task page's not-yet-rebuilt islands (arrangement details) and the inbox page. */
-.work-index .list-toolbar{flex-wrap:wrap}
-.work-index .list-toolbar .search-field{min-width:140px}
+
 .task-arrangement-details{grid-column:1/-1;order:9;font-size:13px}
 .task-arrangement-details>summary{cursor:pointer;padding:14px;color:#315ec7;border:1px solid #e1e5ef;border-radius:7px}
 .task-arrangement-details .panel{margin-top:12px}
 .work-index .work-context-tabs{margin:0 0 12px;padding:0;min-height:30px}
 .work-index .work-context-tabs a{padding-top:6px;padding-bottom:6px;font-size:11px}
-.work-index .list-toolbar{padding:10px 14px}
-.work-index .list-toolbar>*{min-height:34px}
+

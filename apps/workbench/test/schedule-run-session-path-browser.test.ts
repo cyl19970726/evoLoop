@@ -86,10 +86,23 @@ test("old Schedule occurrence reaches its exact closed Run Session workspace", {
   await page.goto(`${base}/p/${projectId}/schedules`);
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button", { name: "进入", exact: true }).click();
-  const scheduleRow = page.locator(".schedule-table tbody tr").filter({ hasText: "旧日程创建的任务" });
-  await scheduleRow.getByRole("button", { name: "旧日程创建的任务" }).click();
-  assert.equal(await scheduleRow.getByRole("button", { name: "旧日程创建的任务" }).getAttribute("aria-current"), "true");
-  await page.locator(".schedule-definition[open]").waitFor();
+  // The schedule list sits in the inner rail; the selected schedule fills the center.
+  const scheduleItem = page.getByRole("navigation", { name: "日程" }).getByRole("button", { name: /旧日程创建的任务/ });
+  await scheduleItem.click();
+  assert.equal(await scheduleItem.getAttribute("aria-current"), "true");
+  await page.locator(".schedule-definition").waitFor();
+  if (process.env.EVOLOOP_SCHEDULE_SCREENSHOT_DIR) {
+    await page.getByRole("link", { name: "阅读此任务" }).waitFor();
+    const dir = process.env.EVOLOOP_SCHEDULE_SCREENSHOT_DIR;
+    await page.setViewportSize({ width: 1440, height: 900 });
+    if (await page.getByRole("button", { name: "展开右栏" }).count()) await page.getByRole("button", { name: "展开右栏" }).click();
+    await page.getByRole("region", { name: "触发条件" }).waitFor();
+    await page.screenshot({ path: `${dir}/schedule-1440.png` });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.screenshot({ path: `${dir}/schedule-390.png`, fullPage: true });
+    assert.equal(await page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1"), true);
+    await page.setViewportSize({ width: 1280, height: 720 });
+  }
   await page.getByRole("link", { name: "阅读此任务" }).click();
   assert.equal((url => url.pathname + url.search)(new URL(page.url())), `/p/${projectId}/tasks/${taskId}`);
   await page.getByRole("heading", { name: "旧日程创建的任务" }).waitFor({ timeout: 5000 }).catch(async () => {

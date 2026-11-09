@@ -55,6 +55,7 @@ export function AppShell(props: AppShellProps) {
     setSessionStates(previous => ({ ...previous, [scope]: update(previous[scope] ?? emptySessionNavigationState()) }));
   const [drawer, setDrawer] = React.useState(false);
   const navigatedFromDrawer = React.useRef(false);
+  const menuButton = React.useRef<HTMLButtonElement>(null);
   // The inner rail follows the width (shown from 1100px) until the reader toggles it; that choice is kept.
   const roomy = useMediaQuery("(min-width: 1100px)");
   const [railChoice, setRailChoice] = React.useState<"shown" | "hidden" | null>(() => {
@@ -72,10 +73,11 @@ export function AppShell(props: AppShellProps) {
   drawerOpen.current = drawer;
   React.useEffect(() => { if (drawerOpen.current) { navigatedFromDrawer.current = true; setDrawer(false); } }, [route]);
   // Leaving the drawer by a link hands focus to the content; closing it otherwise returns focus to the menu button.
+  // The menu button is not the Sheet's own trigger, so Radix would leave focus on <body>; hand it back explicitly.
   const drawerCloseFocus = (event: Event) => {
-    if (!navigatedFromDrawer.current) return;
-    navigatedFromDrawer.current = false;
     event.preventDefault();
+    if (!navigatedFromDrawer.current) { menuButton.current?.focus({ preventScroll: true }); return; }
+    navigatedFromDrawer.current = false;
     document.getElementById("workspace-main")?.focus({ preventScroll: true });
   };
   const spaceLink = (target: Space) => spaceHref(store, actor, projectId, target);
@@ -91,7 +93,7 @@ export function AppShell(props: AppShellProps) {
       {/* One tree for every width, switched by CSS at 760px: crossing it restyles the frame in the same frame as the
           viewport change and never remounts the pages (their state and drafts stay). */}
       <header data-ui="" data-shell="mobile-header" className="sticky top-0 z-30 flex h-12 items-center gap-2 border-b border-border bg-sunken/95 pl-2 pr-12 backdrop-blur compact:hidden">
-        <IconButton label="打开项目导航" icon={<Menu size={19} />} onClick={() => setDrawer(true)} />
+        <IconButton ref={menuButton} label="打开项目导航" icon={<Menu size={19} />} onClick={() => setDrawer(true)} />
         <span className="min-w-0 flex-1 truncate font-medium">{title}</span>
         <span className="max-w-[40%] truncate text-small text-muted-foreground">{props.projectTitle}</span>
       </header>
