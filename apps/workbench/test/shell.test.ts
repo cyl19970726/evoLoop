@@ -4,7 +4,7 @@ import { test } from "node:test";
 import { parseRoute } from "../src/shared/routes.ts";
 import { projectPaths } from "../src/app/routePaths.ts";
 import { leafOf, projectInitial, rememberSpace, sectionLabels, spaceHref, spaceOf, workNavigation, workSectionOf } from "../src/app/shell/spaces.ts";
-import { addObjectTab, clampWidth, maxObjectTabs, panelWidth, readPanelState, type PanelObject } from "../src/app/shell/ContextPanel.tsx";
+import { addObjectTab, clampWidth, maxObjectTabs, panelWidth, readPanelState, type PanelObject } from "../src/shared/ui/ContextPanel.tsx";
 
 const p = "11111111-1111-4111-8111-111111111111";
 const id = "22222222-2222-4222-8222-222222222222";

@@ -1,7 +1,7 @@
 // Component sample page (/ui): every @evoloop/ui component in its states, on fake data, in light and dark.
 // It is the only visual reference for components; docs do not carry component screenshots.
 import * as React from "react";
-import { ContextPanelColumn, ContextPanelContent, ContextPanelProvider, useContextPanel } from "../shell/ContextPanel";
+import { ContextPanelColumn, ContextPanelContent, ContextPanelProvider, useContextPanel } from "../../shared/ui/ContextPanel";
 import { Bell, Copy, MoreHorizontal, Pencil, Plus, Settings, Trash2 } from "lucide-react";
 import {
   AgentAvatar, Badge, Button, CollapsibleRow, CountDot, Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogTitle, DialogTrigger,

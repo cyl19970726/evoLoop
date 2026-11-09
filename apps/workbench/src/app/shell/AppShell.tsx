@@ -12,7 +12,7 @@ import {
 import { href, type Route, type Section } from "../../shared/routes";
 import { currentPath, navigate } from "../../shared/navigation";
 import { SessionNavigation, emptySessionNavigationState, type SessionNavigationState } from "../../features/sessions/SessionNavigation";
-import { ContextPanelColumn, ContextPanelProvider } from "./ContextPanel";
+import { ContextPanelColumn, ContextPanelProvider } from "../../shared/ui/ContextPanel";
 import {
   inboxNavigation, leafOf, projectInitial, rememberSpace, sectionLabels, spaceHref, spaceLabels, spaceOf, workNavigation, workSectionOf,
   type NavItem, type Space,

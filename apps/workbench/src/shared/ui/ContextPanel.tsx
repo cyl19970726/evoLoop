@@ -5,7 +5,8 @@ import * as React from "react";
 import { createPortal } from "react-dom";
 import { PanelRightClose, PanelRightOpen, X, ArrowUpRight } from "lucide-react";
 import { IconButton, Sheet, SheetContent, SheetTitle, SheetDescription, cn } from "@evoloop/ui";
-import type { Space } from "./spaces";
+/** The space the panel state belongs to (app/shell/spaces.ts); kept as a string so shared code does not depend on app. */
+type Space = string;
 
 export const panelWidth = { min: 280, max: 560, initial: 320 } as const;
 export const maxObjectTabs = 5;
@@ -94,11 +95,17 @@ export function ContextPanelProvider({ space, children }: { space: Space; childr
   const register = React.useCallback(() => { setProviders(count => count + 1); return () => setProviders(count => count - 1); }, []);
   const [tabs, setTabs] = React.useState<PanelObject[]>([]);
   const [active, setActive] = React.useState<string>("facts");
+  // Below 1100px the panel is a modal drawer: it opens only when asked and is never restored on its own.
+  const [drawerOpen, setDrawerOpen] = React.useState(false);
+  React.useEffect(() => { if (inline) setDrawerOpen(false); }, [inline]);
   const hasContent = providers > 0 || tabs.length > 0;
+  const shown = inline ? state.open : drawerOpen;
+  const setShown = (open: boolean) => inline ? update({ ...state, open }) : setDrawerOpen(open);
   const value: PanelInternals = {
-    open: state.open && hasContent, hasContent, state, update, inline, target, setTarget, register, providers, tabs, active, setActive,
-    setOpen: open => update({ ...state, open }),
-    openInPanel: object => { setTabs(current => addObjectTab(current, object)); setActive(object.id); update({ ...state, open: true }); },
+    open: shown && hasContent, hasContent, state: { ...state, open: shown }, update: next => { if (next.open !== shown) setShown(next.open); if (next.width !== state.width) update({ ...state, width: next.width }); },
+    inline, target, setTarget, register, providers, tabs, active, setActive,
+    setOpen: setShown,
+    openInPanel: object => { setTabs(current => addObjectTab(current, object)); setActive(object.id); setShown(true); },
     close: id => { setTabs(current => current.filter(tab => tab.id !== id)); if (active === id) setActive("facts"); },
   };
   return <PanelContext.Provider value={value}>{children}</PanelContext.Provider>;
