@@ -2,7 +2,7 @@ import type { ChildProcess } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { access, mkdir, readdir } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
-import { query, type Options, type Query, type SDKAssistantMessage, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
+import { query, type Options, type Query, type SDKAssistantMessage, type SDKResultMessage, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import type { RuntimeApprovalRequest, RuntimeBinding, RuntimeCapabilities, RuntimeEvent, RuntimeHistoryItem,
   RuntimeModelList, RuntimePage, RuntimePort, RuntimeSessionSpec, RuntimeSkillPlan, RuntimeTurn } from "@evoloop/contracts/runtime";
 import { ownerOf, RuntimeNotSentError, RuntimeProtocolError, RuntimeUnknownError } from "@evoloop/contracts/runtime";
@@ -629,7 +629,7 @@ export class ClaudeAgentSdkAdapter implements RuntimePort {
       for await (const message of live.query!) {
         if (message.type === "system" && message.subtype === "init") await this.observeCapabilities(live, message);
         else if (message.type === "assistant" && message.parent_tool_use_id === null) await this.observeAssistant(live, message);
-        else if (message.type === "result" && !live.settled && live.sent) {
+        else if (message.type === "result" && !live.settled && live.sent && this.answers(live, message)) {
           await this.settle(live, this.fromResult(live, message as ObservedResult), message.subtype === "success" &&
             message.is_error !== true && typeof message.result === "string" && message.result.length > 0
             ? { id: message.uuid, text: message.result } : null);
@@ -652,6 +652,18 @@ export class ClaudeAgentSdkAdapter implements RuntimePort {
       if (live.child && live.child.exitCode === null && live.child.signalCode === null) signalGroup(live.child, "SIGTERM");
       if (live.sent && this.live.get(this.key(binding)) === live) this.live.delete(this.key(binding));
     }
+  }
+
+  /**
+   * Whether a result answers this Turn's prompt, which is sent with the Turn ID as its uuid. The CLI echoes the
+   * uuids of the prompts a result consumed. A resumed Session may first replay a background-task notification
+   * queued after the previous Turn: that result has no echo, no model call and origin `task-notification`, and the
+   * prompt is only processed after it. A producer that echoes nothing is trusted unless the result is such a
+   * notification.
+   */
+  private answers(live: LiveTurn, message: SDKResultMessage): boolean {
+    const echoed = [...message.user_message_uuids ?? [], ...message.user_message_uuid ? [message.user_message_uuid] : []];
+    return echoed.length ? echoed.includes(live.turnId) : message.origin?.kind !== "task-notification";
   }
 
   private exitGraceMs(): number { return this.options.exitGraceMs ?? 5_000; }

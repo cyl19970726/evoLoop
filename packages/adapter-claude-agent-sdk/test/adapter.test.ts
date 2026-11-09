@@ -197,6 +197,30 @@ test("a process still running after its result does not hold the Session and is 
   }
 });
 
+test("a result for a background-task notification queued before the prompt does not settle the Turn", async () => {
+  // Seen with the real CLI 2.1.319 on a resumed Session: a zero-usage result with origin task-notification and no
+  // echo came first, then the prompt ran. Covered with and without the prompt uuid echo of the current CLI.
+  for (const echoed of [true, false]) {
+    const h = await setup();
+    h.options.environment = { ...h.options.environment, FAKE_CLAUDE_QUEUED_NOTIFICATION: "1", FAKE_CLAUDE_NO_ECHO: echoed ? "0" : "1" };
+    h.options.envPassthrough = [...(h.options.envPassthrough ?? []), "FAKE_CLAUDE_QUEUED_NOTIFICATION", "FAKE_CLAUDE_NO_ECHO"];
+    const adapter = new ClaudeAgentSdkAdapter(h.options);
+    await adapter.open();
+    try {
+      const binding = await adapter.create(h.spec);
+      const operationId = randomUUID();
+      const started = await adapter.startTurn(binding, `${marker(operationId)}\nDo the task`, operationId);
+      const turn = await settled(adapter, binding, started.id);
+      assert.equal(turn.status, "completed");
+      assert.deepEqual(turn.usage, { inputTokens: 10, outputTokens: 5, cacheReadInputTokens: 2, cacheCreationInputTokens: 0 },
+        `the Turn settles from the prompt's own result (echoed=${echoed})`);
+      const items = (await adapter.listItems(binding, started.id)).data as Array<Record<string, unknown>>;
+      assert.equal(items.at(-1)!.phase, "final_answer");
+      assert.match(String(items.at(-1)!.text), /^done: /);
+    } finally { await adapter.close(); await h.cleanup(); }
+  }
+});
+
 test("a process that dies after the prompt was written settles as process_lost", async () => {
   const h = await setup("crash");
   try {
