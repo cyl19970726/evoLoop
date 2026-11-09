@@ -4,8 +4,9 @@ import type { Delivery, Document, DocumentRevision, EvaluationAssessment, Evalua
 import { attemptsForCondition, conclusionComparabilityOptions, costText, currentAssessments, deliveriesForAttempt, evaluationHref, evaluationListHref, fixedRefHref, nextActionHref, parseCostLines, parseFixedRefLines, parseNextActionRef, verifiedFixedDocumentTitle } from "../src/features/evaluation/presentation.ts";
 import {
   actorKindLabels, approvalLabels, assessmentLabels, assessmentName, attemptRunText, comparabilityLabels, conclusionGlance, conditionGlance, conditionLabels,
-  correctedPosition, evaluationRowMeta, fixedRefIdentity, fixedRefKindLabels, fixedRefName, fixedTitleKey, frozenTaskTitle, labelOf, nextChoiceLabels,
-  observationResultLabels, runCostText, runStateLabels, runStateTones, sandboxLabels, taskStateLabels, technicalResultLabels,
+  correctedPosition, evaluationRowMeta, fixedRefIdentity, fixedRefKindLabels, fixedRefLineHint, fixedRefName, fixedTitleKey, frozenTaskTitle, labelOf,
+  nextActionLineHint, nextChoiceLabels, observationResultLabels, readStateOf, runCostText, runStateLabels, runStateTones, sandboxLabels, taskStateLabels,
+  technicalResultLabels, unreadSources,
 } from "../src/features/evaluation/presentation.ts";
 import { definitionFromForm } from "../src/features/evaluation/formData.ts";
 import { attributableRuns } from "../src/features/workflow/deliveryRun.ts";
@@ -192,4 +193,33 @@ test("fixed references are named by verified title or kind, and IDs only appear 
   assert.equal(fixedRefIdentity(ref), `文档 ${id} · 修订 ${other} · SHA-256 ${hash}`);
   assert.equal(fixedTitleKey(ref), fixedTitleKey({ ...ref, contentHash: hash.toUpperCase() }));
   assert.notEqual(fixedTitleKey(ref), fixedTitleKey({ ...ref, contentHash: "b".repeat(64) }), "a verified title belongs to one exact hash");
+});
+
+test("a reread that failed counts as failed even while the last answer stays on screen", () => {
+  assert.equal(readStateOf({ data: undefined, isError: false, isFetching: true }), "loading");
+  assert.equal(readStateOf({ data: [], isError: false, isFetching: false }), "read");
+  assert.equal(readStateOf({ data: [], isError: false, isFetching: true }), "loading", "a reread in flight cannot yet say what is missing");
+  assert.equal(readStateOf({ data: undefined, isError: true, isFetching: false }), "failed");
+  assert.equal(readStateOf({ data: [{ id: "kept" }], isError: true, isFetching: false }), "failed");
+  // A run missing from a list whose reread failed (or is still running) is undecidable, not "not found".
+  const rows = [{ ...attempt(id, other, 1), id: "a1", runId: "new-run" }] as EvaluationAttempt[];
+  const stale = [{ id: "old-run", state: "completed" as const }];
+  assert.equal(conditionGlance(revision, rows, [], other, stale, readStateOf({ data: stale, isError: true, isFetching: false })), "1 次尝试 · 运行状态无法判断 · 0 项判定");
+  assert.equal(conditionGlance(revision, rows, [], other, stale, readStateOf({ data: stale, isError: false, isFetching: true })), "1 次尝试 · 正在读取运行记录 · 0 项判定");
+  assert.equal(attemptRunText(stale[0], "failed"), "已完成", "a run that was read is still shown by its state");
+});
+
+test("failure messages name exactly the reads that failed", () => {
+  assert.equal(unreadSources({ agents: true }), "智能体列表");
+  assert.equal(unreadSources({ task: true, runs: true }), "共同任务、运行记录");
+  assert.equal(unreadSources({ task: false, runs: true, agents: true }), "运行记录、智能体列表");
+  assert.equal(unreadSources({}), "");
+});
+
+test("format hints and parser errors are written in Chinese; only the typed values stay as code", () => {
+  for (const text of [fixedRefLineHint, nextActionLineHint]) {
+    assert.doesNotMatch(text, /\b(kind|ID|revision|Task)\b/, text);
+  }
+  assert.throws(() => parseFixedRefLines("wiki | x | y | abc", ["document", "git"]), /^Error: 固定引用每行应为 类型 \| 标识 \| 修订 \| 64 位 SHA-256；类型可写 document、git$/);
+  assert.throws(() => parseNextActionRef(`task | ${id} | invalid`), /^Error: 任务后续动作应为 task \| 任务标识 \| 任务固定修订，不需要内容哈希。$/);
 });

@@ -29,15 +29,17 @@ export function DefinitionForm({ context, current, ownerTaskId, onApplied, hold 
     const id = taskId.trim();
     if (requested === id) void source.refetch(); else setRequested(id);
   };
-  const ready = requested && source.data && !source.isFetching ? source.data : null;
+  // Like the old form (setSource(null) before every read): only a source read that just succeeded shows the form;
+  // while rereading, or when the reread failed and the last answer is still cached, the form is hidden.
+  const ready = requested && source.data && !source.isFetching && !source.isError ? source.data : null;
   const fields = [
     { name: "ownerTaskId", label: "负责这次评价的任务 ID", value: definition?.ownerTaskId ?? ownerTaskId ?? "" },
     { name: "question", label: "共同评价问题", kind: "textarea" as const, value: definition?.question ?? "" },
     { name: "commonInput", label: "两条件相同的执行指令", kind: "textarea" as const, value: definition?.case.commonInput ?? "" },
     { name: "criteria", label: "公开判定条件", kind: "textarea" as const, value: definition?.case.criteria ?? "" },
-    { name: "protocol", label: "固定评价协议", kind: "textarea" as const, value: definition ? formatFixedRefs([definition.protocol]) : "", hint: "一行：document 或 git | ID | 固定修订 | SHA-256" },
-    { name: "materials", label: "两条件共用的固定材料", kind: "textarea" as const, value: definition ? formatFixedRefs(definition.case.materials) : "", hint: "每行：document 或 git | ID | 固定修订 | SHA-256；至少一项" },
-    { name: "wiki", label: "仅知识条件增加的固定 Wiki", kind: "textarea" as const, value: definition ? formatFixedRefs(definition.conditions[1].wikiRefs ?? []) : "", hint: "每行：wiki | ID | 固定修订 | SHA-256；至少一项。直接条件明确不适用 Wiki。" },
+    { name: "protocol", label: "固定评价协议", kind: "textarea" as const, value: definition ? formatFixedRefs([definition.protocol]) : "", hint: "一行：document 或 git | 标识 | 固定修订 | SHA-256" },
+    { name: "materials", label: "两条件共用的固定材料", kind: "textarea" as const, value: definition ? formatFixedRefs(definition.case.materials) : "", hint: "每行：document 或 git | 标识 | 固定修订 | SHA-256；至少一项" },
+    { name: "wiki", label: "仅知识条件增加的固定 Wiki", kind: "textarea" as const, value: definition ? formatFixedRefs(definition.conditions[1].wikiRefs ?? []) : "", hint: "每行：wiki | 标识 | 固定修订 | SHA-256；至少一项。直接条件明确不适用 Wiki。" },
     { name: "model", label: "两个条件相同的明确模型", value: definition?.conditions[0].model ?? "" },
     { name: "cwd", label: "执行工作目录", value: definition?.conditions[0].environment.cwd ?? "", hint: "绝对路径；两条件相同" },
     { name: "authorizationScope", label: "授权工作范围", kind: "textarea" as const, value: definition?.conditions[0].environment.authorizationScope ?? "" },
@@ -55,7 +57,7 @@ export function DefinitionForm({ context, current, ownerTaskId, onApplied, hold 
         <Input {...control} value={taskId} placeholder="进行中的任务 ID" autoComplete="off" onChange={event => { setTaskId(event.target.value); setRequested(null); }} />}</Field>
       <Button onClick={read} disabled={source.isFetching || !taskId.trim()}>{source.isFetching ? "读取中…" : "读取固定来源"}</Button>
     </div>
-    {requested && source.isError && !source.isFetching && <Notice tone="error">{errorText(source.error)}</Notice>}
+    {requested && source.isError && !source.isFetching && <Notice tone="error">共同任务没有读回：{errorText(source.error)}。重新读取成功之前不能冻结定义。</Notice>}
     {ready && <>
       <div className="flex flex-col gap-1 rounded-lg bg-accent px-4 py-3">
         <p className="m-0 text-small text-foreground"><strong className="font-semibold">《{ready.task.task.title}》</strong> · 当前进行中修订已固定 · 固定依据 {ready.sourceSignature.basis.length} 项</p>

@@ -39,6 +39,8 @@ export function EvaluationForm({ context, title, fields, build, review = false, 
   const [stale, setStale] = useState(false);
   const [draftSaved, setDraftSaved] = useState(false);
   const [copyFallback, setCopyFallback] = useState(false);
+  // A form rebuilt around a kept draft (for example after the task version changed) opens, so its notice is seen.
+  const [startOpen] = useState(!!saved);
   const allowed = context.principal.permissions.includes(review ? "review" : "write");
   const baselineChanged = dirty && readBaseline !== context.draftBaseline;
   const stopped = busy || !allowed || context.blocked || stale || baselineChanged || !!hold;
@@ -148,7 +150,7 @@ export function EvaluationForm({ context, title, fields, build, review = false, 
     <Button type="submit" variant="primary" className="w-fit" disabled={stopped}>{busy ? "保存中…" : title}</Button>
   </form>;
   if (!collapsible) return form;
-  return <details className="group min-w-0 rounded-xl bg-raised shadow-sm" data-dirty={dirty ? "true" : undefined}>
+  return <details className="group min-w-0 rounded-xl bg-raised shadow-sm" data-dirty={dirty ? "true" : undefined} open={startOpen || undefined}>
     <summary className={cn("cursor-pointer rounded-xl px-4 py-3 text-small font-medium text-foreground outline-none focus-visible:shadow-[var(--focus-ring)]")}>{title}</summary>
     <div className="border-t border-border px-4 pb-4 pt-3">{form}</div>
   </details>;

@@ -5,7 +5,7 @@ import { useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import type { EvaluationFixedRef, EvaluationRevision } from "@evoloop/contracts";
 import { api } from "../../shared/api";
-import { readOwnerRole, isRoleOwnerId } from "../../shared/ownerRole";
+import { readOwnerRole } from "../../shared/ownerRole";
 import { queryKeys, useProjectQuery } from "../../shared/query";
 import { runtimeClient } from "../../shared/runtimeClient";
 import { fixedTitleKey, verifiedFixedDocumentTitle } from "./presentation";
@@ -92,9 +92,9 @@ export function useFixedTitles(projectId: string, evaluationId: string, revision
   }, { enabled: documents.length > 0 });
 }
 
-/** Role names for the agents offered in the run form; a name that cannot be read is said to be unchecked. */
+/** Role names for the agents offered in the run form, older non-UUID role keys included; an unreadable name stays unread. */
 export function useRoleTitles(projectId: string, roleIds: string[]) {
-  const ids = [...new Set(roleIds.filter(isRoleOwnerId))].sort();
+  const ids = [...new Set(roleIds.filter(id => id.trim()))].sort();
   return useProjectQuery(projectId, ["evaluation", "role-titles", ids.join(",")], async signal => {
     const rows = await Promise.all(ids.map(async (id): Promise<[string, string | null]> => {
       try { return [id, (await readOwnerRole("", projectId, id, signal)).proposal?.title?.trim() || null]; }

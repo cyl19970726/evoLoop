@@ -14,7 +14,7 @@ import { useNativeOutput, usePacket } from "./evaluationReads";
 import { FixedRefLine, IdentityDetails, linkClass, muted, refRows } from "./parts";
 import {
   actorKindLabels, assessmentLabels, attemptRunText, attemptsForCondition, correctedPosition, costText, currentAssessments, deliveriesForAttempt,
-  labelOf, observationResultLabels, parseCostLines, parseFixedRefLines, runCostText, runStateLabels, runStateTones, technicalResultLabels, type ReadState,
+  fixedRefLineHint, labelOf, observationResultLabels, parseCostLines, parseFixedRefLines, runCostText, runStateLabels, runStateTones, technicalResultLabels, type ReadState,
 } from "./presentation";
 
 type Deliveries = NonNullable<TaskDetail["deliveries"]>;
@@ -75,11 +75,16 @@ export function AttemptRecord({ context, revision, attempt, run, runsState, task
 
     <section aria-label={`尝试 ${attempt.ordinal} 的交付与使用`} className={block}>
       <h4 className="text-label font-semibold text-foreground">本次实际交付</h4>
-      {taskState !== "read" ? <p className={cn(muted, "m-0")}>{taskState === "loading" ? "正在读取交付与使用记录…" : "共同任务没有读回，无法判断这次有没有交付与使用记录。"}</p> : <>
-        {!deliveries.length && <p className="m-0 text-small text-text-secondary">未读到明确归属这次运行的交付；旧的无归属记录不会自动套入。运行终态也不代表产物合格。</p>}
+      {!task ? <p className={cn(muted, "m-0")}>{taskState === "loading" ? "正在读取交付与使用记录…" : "共同任务没有读回，无法判断这次有没有交付与使用记录。"}</p> : <>
+        {taskState === "failed" && <p className={cn(muted, "m-0")}>共同任务重读失败；下面是上次读回的交付与使用记录，当前待核对。</p>}
+        {!deliveries.length && <p className="m-0 text-small text-text-secondary">{taskState === "read"
+          ? "未读到明确归属这次运行的交付；旧的无归属记录不会自动套入。运行终态也不代表产物合格。"
+          : taskState === "loading" ? "正在核对这次有没有交付…" : "无法判断这次有没有交付。"}</p>}
         {deliveries.map(delivery => <DeliveryLine key={delivery.id} projectId={projectId} delivery={delivery} />)}
         <h4 className="mt-1 text-label font-semibold text-foreground">本次交付的使用记录</h4>
-        {!observations.length && <p className="m-0 text-small text-text-secondary">未读到本次交付的使用记录；智能体使用不等于真人后果。</p>}
+        {!observations.length && <p className="m-0 text-small text-text-secondary">{taskState === "read"
+          ? "未读到本次交付的使用记录；智能体使用不等于真人后果。"
+          : taskState === "loading" ? "正在核对本次交付有没有使用记录…" : "无法判断本次交付有没有使用记录。"}</p>}
         {observations.map(item => <div key={item.id} className="flex min-w-0 flex-col gap-0.5">
           <p className="m-0 break-words text-small text-foreground">{labelOf(actorKindLabels, item.observerKind, "未识别的身份")} {item.observer} · {labelOf(observationResultLabels, item.result)} · {item.evidence}</p>
           <IdentityDetails rows={[["使用记录 ID", item.id], ["交付 ID", item.deliveryId]]} />
@@ -92,7 +97,7 @@ export function AttemptRecord({ context, revision, attempt, run, runsState, task
       <p className={cn(muted, "m-0")}>身份和署名只说明谁登记；实际判断是否独立，应由本次理由与证据说明。</p>
       {!assessments.length && <p className="m-0 text-small text-text-secondary">尚无逐次判定；运行终态不代替评价。</p>}
       {assessments.map(item => <AssessmentRecord key={item.id} item={item} all={assessments} projectId={projectId} deliveries={deliveries} observations={observations} taskState={taskState} titles={titles} />)}
-      <AssessmentForm context={context} revision={revision} attempt={attempt} assessments={assessments} deliveries={deliveries} observations={observations} taskState={taskState} hold={hold} />
+      <AssessmentForm context={context} revision={revision} attempt={attempt} assessments={assessments} deliveries={deliveries} observations={observations} taskState={taskState} hasTask={!!task} hold={hold} />
     </section>
   </article>;
 }
@@ -135,12 +140,14 @@ function AssessmentRecord({ item, all, projectId, deliveries, observations, task
   </div>;
 }
 
-function AssessmentForm({ context, revision, attempt, assessments, deliveries, observations, taskState, hold }: {
+function AssessmentForm({ context, revision, attempt, assessments, deliveries, observations, taskState, hasTask, hold }: {
   context: MutationContext; revision: EvaluationRevision; attempt: EvaluationAttempt; assessments: EvaluationAssessment[];
-  deliveries: Deliveries; observations: Observations; taskState: ReadState; hold?: string | undefined;
+  deliveries: Deliveries; observations: Observations; taskState: ReadState; hasTask: boolean; hold?: string | undefined;
 }) {
   const direct = revision.definition.conditions.find(item => item.id === attempt.conditionId)?.kind === "direct";
-  const unread = taskState === "loading" ? "交付与使用记录正在读取，暂不能选择。" : taskState === "failed" ? "共同任务没有读回，交付与使用记录暂不能选择。" : undefined;
+  const unread = !hasTask
+    ? taskState === "failed" ? "共同任务没有读回，交付与使用记录暂不能选择。" : "交付与使用记录正在读取，暂不能选择。"
+    : taskState === "failed" ? "共同任务重读失败；可选项来自上次读回，当前待核对。" : undefined;
   return <EvaluationForm context={{ ...context, draftScope: `evaluation-assessment:${attempt.id}`, draftBaseline: revision.id }} review hold={hold}
     title={assessments.length ? "追加更正判定" : "记录本次判定"} fields={[
       { name: "supersedesId", label: "更正此前判定（可选）", kind: "select", optional: true, options: currentAssessments(assessments).map(item => option(item.id, `${labelOf(actorKindLabels, item.assessorKind, "未识别的身份")} ${item.actorId} · ${date(item.createdAt)}`)) },
@@ -152,7 +159,7 @@ function AssessmentForm({ context, revision, attempt, assessments, deliveries, o
       { name: "humanEffect", label: "真人使用后果", kind: "select", options: [option("observed", "有真实人类证据"), option("unknown", "未知"), option("needs_review", "待复核")] },
       { name: "assessorKind", label: "本次判定者身份", kind: "select", options: [option("agent", "智能体"), option("human", "真人（需本人判断）")] },
       { name: "costs", label: "成本逐项记录（可留空=未记录）", kind: "textarea", optional: true, hint: "每行：阶段 | 单位 | 非负数或未测 | 来源。更正时重新填本次完整成本；不同单位不合计；0 只在确实测得零时填写。" },
-      { name: "evidence", label: "固定证据（可选）", kind: "textarea", optional: true, hint: "每行：kind | ID | revision | SHA-256" }, reasonField,
+      { name: "evidence", label: "固定证据（可选）", kind: "textarea", optional: true, hint: fixedRefLineHint }, reasonField,
     ]} build={values => ({ type: "evaluation.assessment.record", evaluationId: revision.evaluationId, revisionId: revision.id,
       assessmentId: crypto.randomUUID(), attemptId: attempt.id, deliveryId: values.deliveryId || null, observationId: values.observationId || null,
       supersedesId: values.supersedesId || null,
@@ -174,6 +181,7 @@ export function RunForm({ context, revision, conditionId, task, sessions, runs, 
     && !runs.some(run => run.sessionId === session.id)) : [];
   const active = runs.some(run => run.taskId === task.task.id && ["requested", "dispatching", "running", "unknown"].includes(run.state));
   const nextOrdinal = attemptsForCondition(revision, attempts, conditionId).length + 1;
+  // A role is shown by its name whenever it can be read; only an older, non-UUID role key that has no record is shown as written.
   const agentName = (session: RuntimeSessionRecord) => roleTitles?.[session.roleId] ?? (isRoleOwnerId(session.roleId) ? "职责名称待核对" : session.roleId);
   return <div className="flex min-w-0 flex-col gap-2 border-t border-border pt-4">
     <h3 className="text-small font-semibold text-foreground">第 {nextOrdinal} 次尝试 / 重试</h3>

@@ -282,11 +282,11 @@ test("评价 reads that fail say what cannot be judged instead of claiming there
   await open(`/p/${projectId}/evaluations/${evaluationId}`);
   const main = page.locator("main");
   await page.getByRole("heading", { name: "加入固定 Wiki 后首轮修复是否更快？", level: 1 }).waitFor();
-  await main.getByText("任务或运行旁证没有读回").waitFor({ timeout: 20000 });
+  await main.getByText("共同任务、运行记录没有读回", { exact: true }).waitFor({ timeout: 20000 });
   const direct = main.getByRole("region", { name: "直接材料" });
   await direct.getByText("运行记录没有读回，不能推断执行或成本。").waitFor({ timeout: 20000 });
   await direct.getByText("共同任务没有读回，无法判断这次有没有交付与使用记录。").waitFor();
-  await direct.getByText("任务或运行记录没有读回，无法判断能否派发下一次尝试。").waitFor();
+  await direct.getByText("共同任务、运行记录没有读回，无法判断能否派发下一次尝试。").waitFor();
   assert.match(await page.getByRole("navigation", { name: "评价概览" }).innerText(), /1 次尝试 · 运行状态无法判断/);
   const text = await main.innerText();
   assert.doesNotMatch(text, /运行记录未读到|未读到明确归属|未读到本次交付的使用记录/, "no claim of absence while reads failed");
@@ -304,3 +304,112 @@ test("评价 reads that fail say what cannot be judged instead of claiming there
   assert.equal(await page.evaluate(noOverflow), true, "no horizontal overflow at 390px");
   assert.deepEqual(errors, []);
 });
+
+test("评价写入保护: revision and conclusion commands carry their versions; a changed baseline or a failed reread stops writes",
+  { skip }, async t => {
+    const commands: Array<Record<string, unknown>> = [];
+    const state = { taskVersion: 7, taskRevision: sourceRevision, failSource: false, failRuns: false, failDetail: false, extraAttempt: false };
+    const fail = { status: 500, value: null };
+    const { page, errors, open } = await start(t, (url, req, body) => {
+      const root = `/api/projects/${projectId}`;
+      if (url.pathname === `${root}/evaluations`) return { value: { items: [revision], nextCursor: null } };
+      if (url.pathname === `${root}/evaluations/source-task/${taskId}`)
+        return state.failSource ? fail : { value: { sourceTaskRevisionId: sourceRevision, sourceSignature: definition.case.sourceSignature } };
+      if (url.pathname === `${root}/evaluations/${evaluationId}`) return state.failDetail ? fail : { value: { revision, revisions: [revision],
+        attempts: [attempt(1, directId, 1), attempt(2, wikiId, 1), ...state.extraAttempt ? [attempt(3, wikiId, 2)] : []], assessments: [assessment], conclusions: [conclusion] } };
+      if (url.pathname === `${root}/tasks/${taskId}`) return { value: { ...task, task: { ...task.task, version: state.taskVersion, currentRevisionId: state.taskRevision },
+        revision: { ...task.revision, id: state.taskRevision } } };
+      if (url.pathname === `${root}/runtime/runs`) return state.failRuns ? fail : { value: [run(1, "completed"), run(2, "failed")] };
+      if (url.pathname === `${root}/runtime/sessions`) return { value: [agent(usedAgent), agent(freshAgent)] };
+      if (url.pathname === `${root}/roles/${roleId}`) return { value: { projectId, id: roleId, version: 1, proposal: { title: "修复负责人" } } };
+      if (url.pathname === "/api/commands" && req.method === "POST") {
+        const command = JSON.parse(body) as Record<string, unknown>;
+        commands.push(command);
+        return { value: { status: "applied", operationId: command.operationId, entityId: evaluationId } };
+      }
+      return undefined;
+    });
+    const until = async (check: () => boolean, label: string) => {
+      for (let i = 0; i < 200 && !check(); i++) await new Promise(done => setTimeout(done, 100));
+      assert.ok(check(), label);
+    };
+    const reread = page.getByRole("button", { name: "回读当前记录" });
+    await open(`/p/${projectId}/evaluations/${evaluationId}`);
+    const main = page.locator("main");
+    await page.getByRole("heading", { name: definition.question, level: 1 }).waitFor();
+
+    // 结论：纳入的判定、可比性与下一选择原样进入命令。
+    const conclusions = main.getByRole("region", { name: "结论与下一步" });
+    await conclusions.locator("summary", { hasText: "追加更正结论" }).click();
+    const conclude = conclusions.getByRole("form", { name: "追加更正结论" });
+    await conclude.getByRole("checkbox", { name: /直接材料 · 尝试 1 · 真人 reviewer/ }).check();
+    await conclude.getByLabel("实际发现").fill("两条件各只有一次尝试");
+    await conclude.getByLabel("限制与未测事项").fill("没有重复尝试");
+    await conclude.getByLabel("可比较性", { exact: true }).selectOption("with_limits");
+    await conclude.getByLabel("可比性理由").fill("同一任务、同一环境");
+    await conclude.getByLabel("下一选择").selectOption("maintain");
+    await conclude.getByRole("button", { name: "追加更正结论" }).click();
+    await until(() => commands.some(command => command.type === "evaluation.conclusion.record"), "the conclusion is sent");
+    const concluded = commands.find(command => command.type === "evaluation.conclusion.record")!;
+    assert.deepEqual([concluded.evaluationId, concluded.revisionId, concluded.assessmentIds, concluded.supersedesId, concluded.comparability, concluded.nextChoice, concluded.nextActionRef],
+      [evaluationId, revisionId, [assessmentId], null, "with_limits", "maintain", null]);
+    assert.match(String(concluded.operationId), uuid);
+
+    // 另存定义：先读共同任务的固定来源，命令带读到的定义版本。
+    const revise = main.locator("details", { has: page.locator("summary", { hasText: "另存一版评价定义" }) });
+    await main.locator("summary", { hasText: "另存一版评价定义" }).click();
+    assert.equal(await revise.getByLabel("共同任务 ID").inputValue(), taskId);
+    await revise.getByRole("button", { name: "读取固定来源" }).click();
+    const reviseForm = revise.getByRole("form", { name: "冻结新定义修订" });
+    await reviseForm.getByLabel("修订定义的理由").fill("补充判定条件");
+    await reviseForm.getByRole("button", { name: "冻结新定义修订" }).click();
+    await until(() => commands.some(command => command.type === "evaluation.revise"), "the revision is sent");
+    const revised = commands.find(command => command.type === "evaluation.revise") as { expectedVersion: number; evaluationId: string; revisionId: string; reason: string;
+      definition: typeof definition; operationId: string };
+    assert.equal(revised.expectedVersion, revision.version);
+    assert.equal(revised.evaluationId, evaluationId);
+    assert.notEqual(revised.revisionId, revisionId);
+    assert.equal(revised.reason, "补充判定条件");
+    assert.equal(revised.definition.case.sourceTaskRevisionId, sourceRevision);
+    assert.deepEqual(revised.definition.conditions.map(condition => condition.environment), [environment, environment]);
+
+    // 共同任务重读失败：不能拿上次读到的来源继续冻结。
+    state.failSource = true;
+    await revise.getByRole("button", { name: "读取固定来源" }).click();
+    await revise.getByText(/共同任务没有读回：/).waitFor({ timeout: 20000 });
+    assert.equal(await reviseForm.count(), 0, "the definition form is hidden after a failed source reread");
+
+    // 基线已变：草稿保留，提交被拒，不发命令。
+    const direct = main.getByRole("region", { name: "直接材料" });
+    await direct.locator("summary", { hasText: "派发第 2 次真实运行" }).click();
+    const runForm = direct.getByRole("form", { name: "派发第 2 次真实运行" });
+    await runForm.getByLabel("全新的自有智能体").selectOption({ index: 1 });
+    state.taskVersion = 8; state.taskRevision = id(30);
+    await reread.click();
+    await runForm.getByText("当前版本或固定指针已经变化").waitFor({ timeout: 20000 });
+    assert.equal(await runForm.getByLabel("全新的自有智能体").inputValue(), freshAgent, "the draft is kept");
+    assert.equal(await runForm.getByRole("button", { name: "派发第 2 次真实运行" }).isDisabled(), true);
+    assert.equal(commands.some(command => command.type === "runtime.run.reserve"), false);
+
+    // 运行列表重读失败：新尝试的运行写“无法判断”，不写“未读到”。
+    state.failRuns = true; state.extraAttempt = true;
+    await reread.click();
+    const glance = page.getByRole("navigation", { name: "评价概览" });
+    await glance.getByText("2 次尝试 · 运行状态无法判断 · 0 项判定").waitFor({ timeout: 20000 });
+    const wiki = main.getByRole("region", { name: "加入固定 Wiki" });
+    await wiki.getByRole("article", { name: "尝试 2" }).getByText("运行记录没有读回，不能推断执行或成本。").waitFor();
+    assert.match(await wiki.getByRole("article", { name: "尝试 1" }).innerText(), /尝试 1\s*失败/, "a run read before stays readable");
+    await direct.getByText("运行记录没有读回，无法判断能否派发下一次尝试。").waitFor();
+    assert.doesNotMatch(await main.innerText(), /对应运行尚未读到|运行记录未读到|共同任务、/);
+
+    // 评价重读失败：保留上次读回并暂停写入。
+    state.failDetail = true;
+    await reread.click();
+    await main.getByText("上次读回，当前待核对", { exact: true }).waitFor({ timeout: 20000 });
+    assert.equal(await page.getByRole("heading", { name: definition.question, level: 1 }).count(), 1, "the last answer stays on screen");
+    await conclude.getByText("评价记录最近一次重读失败；页面保留上次读回，写入暂停。请先回读。").waitFor();
+    assert.equal(await conclude.getByRole("button", { name: "追加更正结论" }).isDisabled(), true);
+    if (shots) await page.screenshot({ path: `${shots}/evaluation-write-guards-1440.png` });
+    assert.equal(commands.length, 2, "only the conclusion and the revision were sent");
+    assert.deepEqual(errors, []);
+  });

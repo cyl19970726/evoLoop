@@ -34,7 +34,7 @@ export function parseNextActionRef(value: string): NextActionRef | null {
   const parts = input.split("|").map(part => part.trim());
   if (parts[0] === "task") {
     if (parts.length !== 3 || !uuid.test(parts[1] ?? "") || !uuid.test(parts[2] ?? ""))
-      throw new Error("Task 后续动作应为 task | Task ID | Task 固定修订 ID，不需要内容哈希。");
+      throw new Error("任务后续动作应为 task | 任务标识 | 任务固定修订，不需要内容哈希。");
     return { kind: "task", taskId: parts[1]!, taskRevisionId: parts[2]! };
   }
   const fixed = parseFixedRefLines(input, ["document", "git", "wiki", "delivery", "evidence"]);
@@ -52,10 +52,14 @@ export function parseFixedRefLines(value: string, allowed: readonly EvaluationFi
   return lines.map(line => {
     const parts = line.split("|").map(item => item.trim());
     if (parts.length !== 4 || !allowed.includes(parts[0] as EvaluationFixedRef["kind"]) || !parts[1] || !parts[2] || !/^[a-f0-9]{64}$/.test(parts[3]!))
-      throw new Error("固定引用每行应为 kind | ID | revision | 64位SHA-256");
+      throw new Error(`固定引用每行应为 类型 | 标识 | 修订 | 64 位 SHA-256；类型可写 ${allowed.join("、")}`);
     return { kind: parts[0] as EvaluationFixedRef["kind"], id: parts[1]!, revision: parts[2]!, contentHash: parts[3]! };
   });
 }
+
+/** Form hints for the fixed-reference lines; the typed format itself is unchanged. */
+export const fixedRefLineHint = "每行：类型 | 标识 | 修订 | SHA-256；类型写 document、git、wiki、delivery 或 evidence";
+export const nextActionLineHint = "任务：task | 任务标识 | 任务固定修订（无需哈希）；其他：类型 | 标识 | 修订 | SHA-256。留空不表示动作已发生。";
 
 export const formatFixedRefs = (refs: EvaluationFixedRef[]) => refs.map(ref => `${ref.kind} | ${ref.id} | ${ref.revision} | ${ref.contentHash}`).join("\n");
 
@@ -163,6 +167,19 @@ export function evaluationRowMeta(item: Pick<EvaluationRevision, "definition" | 
 }
 
 export type ReadState = "loading" | "failed" | "read";
+
+/**
+ * The latest read decides. A reread that failed is "failed" and one still running is "loading", even while the last
+ * answer stays on screen: absence ("not found", "no delivery") may only be said of a read that finished and succeeded.
+ */
+export function readStateOf(query: { data: unknown; isError: boolean; isFetching: boolean }): ReadState {
+  return query.isError ? "failed" : query.isFetching || query.data === undefined ? "loading" : "read";
+}
+
+/** Names the reads that failed, so a message says which records are missing rather than a fixed guess. */
+export function unreadSources(failed: { task?: boolean; runs?: boolean; agents?: boolean }): string {
+  return [failed.task && "共同任务", failed.runs && "运行记录", failed.agents && "智能体列表"].filter(Boolean).join("、");
+}
 
 /** A run still being read, or one whose read failed, is said to be so; "not found" needs a completed read. */
 export function attemptRunText(run: Pick<RuntimeRunRecord, "state"> | undefined, runs: ReadState): string {

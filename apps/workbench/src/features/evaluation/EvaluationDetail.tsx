@@ -16,10 +16,9 @@ import { Facts, FixedRefLine, IdentityDetails, PanelSection, card, linkClass, mu
 import {
   approvalLabels, assessmentName, attemptsForCondition, comparabilityLabels, conclusionComparabilityOptions, conclusionGlance, conditionGlance,
   conditionLabels, currentAssessments, evaluationHref, frozenTaskTitle, labelOf, nextActionHref, nextChoiceLabels, parseFixedRefLines, parseNextActionRef,
-  sandboxLabels, taskStateLabels, type NextActionRef, type ReadState,
+  fixedRefLineHint, nextActionLineHint, readStateOf, sandboxLabels, taskStateLabels, unreadSources, type NextActionRef,
 } from "./presentation";
 
-const readState = (query: { data: unknown; isError: boolean }): ReadState => query.data !== undefined ? "read" : query.isError ? "failed" : "loading";
 const taskHref = (projectId: string, taskId: string, revisionId?: string) =>
   `/p/${projectId}/tasks/${taskId}${revisionId ? `?revision=${encodeURIComponent(revisionId)}` : ""}`;
 
@@ -33,11 +32,11 @@ export function EvaluationDetail({ context, read, selectedRevision, hold }: {
   const evidence = useEvaluationEvidence(projectId, revision.evaluationId, definition.case.taskId, definition.ownerTaskId);
   const titles = useFixedTitles(projectId, revision.evaluationId, revision.id, [definition.protocol, ...definition.case.materials]);
   const roleTitles = useRoleTitles(projectId, (evidence.sessions.data ?? []).map(session => session.roleId));
-  const runsState = readState(evidence.runs);
-  const taskState = readState(evidence.task);
+  const runsState = readStateOf(evidence.runs);
+  const taskState = readStateOf(evidence.task);
   const sideFailure = [evidence.task, evidence.runs, evidence.sessions].find(query => query.isError)?.error;
   const sideKept = !!sideFailure && [evidence.task, evidence.runs, evidence.sessions].some(query => query.isError && query.data !== undefined);
-  const writeHold = hold ?? (sideFailure ? "任务或运行记录最近一次读取失败，派发暂停；请先回读。" : undefined);
+  const unread = unreadSources({ task: evidence.task.isError, runs: evidence.runs.isError, agents: evidence.sessions.isError });
   const effective = currentAssessments(assessments);
   const current = revisions.every(item => item.version <= revision.version);
   const latest = revisions.reduce<EvaluationRevision | undefined>((best, item) => !best || item.version > best.version ? item : best, undefined);
@@ -61,8 +60,8 @@ export function EvaluationDetail({ context, read, selectedRevision, hold }: {
       <p className={cn(muted, "m-0")}>协议、共同材料、Wiki 修订和固定业务签名在右栏；来源页可返回此固定评价定义。现名称只作阅读辅助，已逐项核对同项目固定修订及哈希，不能代表原修订创建时的标题。没有隐藏答案隔离保证；同机工具能否访问其他来源尚未验证。一次案例不得推出因果收益或统计胜者。</p>
     </section>
 
-    {sideFailure && <Notice tone="error" title="任务或运行旁证没有读回">
-      {errorText(sideFailure)}。既有评价事实仍可读；运行状态不能据此猜测。{sideKept && "下面的运行与交付为上次读回，当前待核对。"}</Notice>}
+    {sideFailure && <Notice tone="error" title={`${unread}没有读回`}>
+      {errorText(sideFailure)}。既有评价事实仍可读；运行状态不能据此猜测。{sideKept && "下面保留的是上次读回的记录，当前待核对；凡是要靠这些记录判断的地方都写“无法判断”。"}</Notice>}
 
     {definition.conditions.map(condition => {
       const rows = attemptsForCondition(revision, attempts, condition.id);
@@ -80,8 +79,8 @@ export function EvaluationDetail({ context, read, selectedRevision, hold }: {
         {!rows.length && <p className="m-0 text-small text-text-secondary">尚无真实尝试；条件定义本身不是运行结果。</p>}
         {!selectedRevision && current && (sideReady && !sideFailure
           ? <RunForm context={context} revision={revision} conditionId={condition.id} task={evidence.task.data!} sessions={evidence.sessions.data!}
-            runs={evidence.runs.data!} attempts={attempts} roleTitles={roleTitles.data} hold={writeHold} />
-          : <p className={cn(muted, "m-0 border-t border-border pt-4")}>{sideFailure ? "任务或运行记录没有读回，无法判断能否派发下一次尝试。" : "正在核对共同任务、运行与可用的智能体…"}</p>)}
+            runs={evidence.runs.data!} attempts={attempts} roleTitles={roleTitles.data} hold={hold} />
+          : <p className={cn(muted, "m-0 border-t border-border pt-4")}>{sideFailure ? `${unread}没有读回，无法判断能否派发下一次尝试。` : "正在核对共同任务、运行与可用的智能体…"}</p>)}
       </section>;
     })}
 
@@ -191,8 +190,8 @@ function ConclusionForm({ context, revision, assessments, attempts, conclusions,
       { name: "comparability", label: "可比较性", kind: "select", options: conclusionComparabilityOptions.map(item => option(item.value, item.label)) },
       { name: "comparabilityReason", label: "可比性理由", kind: "textarea" },
       { name: "nextChoice", label: "下一选择", kind: "select", options: (Object.keys(nextChoiceLabels) as (keyof typeof nextChoiceLabels)[]).map(value => option(value, nextChoiceLabels[value])) },
-      { name: "affectedRefs", label: "受影响固定来源（可选）", kind: "textarea", optional: true, hint: "每行：kind | ID | revision | SHA-256" },
-      { name: "nextActionRef", label: "实际后续动作固定引用（可选）", kind: "textarea", optional: true, hint: "任务：task | 任务 ID | 任务固定修订 ID（无需哈希）；其他：kind | ID | revision | SHA-256。留空不表示动作已发生。" },
+      { name: "affectedRefs", label: "受影响固定来源（可选）", kind: "textarea", optional: true, hint: fixedRefLineHint },
+      { name: "nextActionRef", label: "实际后续动作固定引用（可选）", kind: "textarea", optional: true, hint: nextActionLineHint },
     ]} build={values => {
       const next = parseNextActionRef(values.nextActionRef ?? "");
       return { type: "evaluation.conclusion.record", evaluationId: revision.evaluationId, revisionId: revision.id,
