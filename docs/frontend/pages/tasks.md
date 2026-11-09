@@ -89,7 +89,7 @@
 | 页面组合与左栏列表 | `TaskWorkspace.tsx`、`TaskRail.tsx`、`useTaskList.ts`、`taskListModel.ts`、`taskExperience.ts`、`apps/workbench/src/shared/taskStatus.ts` | `task-list-model.test.ts`、`task-experience.test.ts`、`task-workspace-browser.test.ts`、`work-filter-pagination-browser.test.ts`、`work-status-recovery-browser.test.ts`、`work-status-retry-pagination-browser.test.ts` |
 | 表格视图与对账 | `TaskTable.tsx`、`TaskReconciliation.tsx`、`taskWorkspacePresentation.ts`、`apps/workbench/src/shared/workStatusPresentation.ts`、`apps/workbench/src/shared/leaderWorkLoad.ts` | `task-workspace-presentation.test.ts`、`work-status.test.ts`、`leader-work-load.test.ts`、`leader-work-overview-browser.test.ts`、`task-list-owner-browser.test.ts` |
 | 右栏 | `TaskFacts.tsx`、`TaskAgentBlock.tsx`、`taskAgentPresentation.ts`、`TaskDocumentPeek.tsx`、`taskPreviewResponsibility.ts`、`useCommand.ts` | `task-list-model.test.ts`、`task-preview-responsibility.test.ts`、`task-preview-current-responsibility-browser.test.ts` |
-| 任务正文与各层 | `TaskPage.tsx`、`TaskWorkflow.tsx`、`DeliveryPanel.tsx`、`LeaderTaskFacts.tsx`、`TaskOwner.tsx`、`apps/workbench/src/shared/taskTiming.tsx` | `delivery-presentation.test.ts`、`task-evidence-reading.test.ts`、`task-edit-role-recovery.test.ts`、`task-owner-browser.test.ts`、`task-session-return-browser.test.ts`、`task-loop-browser.test.ts`、`discovery-browser.test.ts` |
+| 任务正文与各层 | `TaskPage.tsx`、`TaskWorkflow.tsx`、`DeliveryPanel.tsx`、`LeaderTaskFacts.tsx`、`TaskOwner.tsx`、`apps/workbench/src/shared/taskTiming.tsx`（阶段时间，智能体页也用）、`features/sessions/TaskAssignmentPanel.tsx`（确认接手与释放）、`features/queues/ResidentQueuePanel.tsx`（经 `features/runtime/RuntimePanel.tsx` 显示队列） | `delivery-presentation.test.ts`、`task-evidence-reading.test.ts`、`task-edit-role-recovery.test.ts`、`task-owner-browser.test.ts`、`task-session-return-browser.test.ts`、`task-loop-browser.test.ts`、`discovery-browser.test.ts` |
 | 收件页（未改版） | `InboxIndex.tsx`、`AcceptanceOverviewPanels.tsx` | `leader-work-overview-browser.test.ts` |
 | 执行时间与重复 | `TaskSchedulePanel.tsx`、`taskTimingPresentation.ts` | `task-timing-ui.test.ts` |
 
@@ -97,5 +97,5 @@
 
 - 产品：[任务与过程文档](../../product/tasks-and-documents.md)（四态、验收、改版）、[提议怎样变成任务](../../product/daily-loop.md#一条提议怎样变成可做的任务)
 - 合同：[Leader 工作投影与处理决定](../../architecture/contracts.md#5-coordinator派发交接与恢复)、[具体承接与职责分开](../../architecture/contracts.md#具体承接与职责分开)
-- 开发：[定时任务的编辑与历史](../../development/task-timing-copy.md#时间编辑与历史)、[验收安排的 CLI](../../development/agent-cli.md#观察会话具体接手与普通消息)
+- 开发：[定时任务的编辑与历史](../../references/task-timing-copy-design.md#时间编辑与历史)、[验收安排的 CLI](../../development/agent-cli.md#观察会话具体接手与普通消息)
 - 前端：[布局](../layout.md)、[设计原则](../principles.md)、[实景旅程](../journeys/current-work.md#1-在列表横向查看任务同时保留右侧摘要)

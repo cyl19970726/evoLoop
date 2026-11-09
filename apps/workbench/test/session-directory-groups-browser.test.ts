@@ -98,6 +98,7 @@ test("Session navigation retains order, pages and filters across selection, back
   await page.goto(`${base}/p/${projectId}/sessions`);
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button", { name: "进入", exact: true }).click();
+  await page.locator(".arrangement-page").waitFor();  // the Sessions root without a selection is 统筹安排
   const navigationToggle = page.getByRole("button", { name: /^(展开|收起)项目导航$/ });
   if (await navigationToggle.getAttribute("aria-expanded") !== "true") await navigationToggle.click();
   const sidebar = page.locator("aside[aria-label=项目导航] .session-navigation");
@@ -166,8 +167,8 @@ test("Session navigation retains order, pages and filters across selection, back
     "history expansion survives a Session switch");
   assert.equal(await current.locator(".session-nav-item").count(), 51,
     "loaded pages remain accessible in a Session detail");
-  assert.equal(await page.locator(".sessions-directory-page:visible").count(), 0,
-    "the selected Session keeps the directory in navigation instead of adding a second visible catalog");
+  assert.equal(await page.locator(".arrangement-page:visible").count(), 0,
+    "a selected Session opens its own page; the directory stays in navigation and 统筹安排 is not shown alongside");
   await page.goBack();
   await page.waitForURL(/session=external%3Acurrent-0/);
   assert.equal(await current.locator(".session-nav-item").count(), 51, "browser back preserves loaded pages");

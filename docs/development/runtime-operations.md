@@ -1,0 +1,279 @@
+# 运行接线手册
+
+本页写给负责打开、核对和关闭运行机制的维护者，覆盖五项：Leader 结果通知、即时输入、托管压缩、普通 Task 的每日复制和阶段关注。它们都已合入 main。Leader 结果通知、即时输入和每日复制要在私有配置里打开或授权后才生效；托管压缩默认开着，但只在特定 Codex 协议版本下可用；阶段关注没有开关，随服务运行。新实例当前打开了哪几项，看[阶段路线](../roadmap.md#已实现但新实例未用)。规则和设计理由在架构页：[接口与协作合同](../architecture/contracts.md)、[Session 运行时](../architecture/session-runtime.md)。服务的启动、身份、备份见[本机运行](local-run.md)，CLI 的通用用法见 [Agent CLI](agent-cli.md)。
+
+## 共同做法
+
+- **配置放在私有文件里。** 前四项的配置都写在 `EVOLOOP_INTEGRATIONS_FILE` 指向的私有 integrations 文件中；阶段关注没有开关，门槛用命令修订。这个文件放在仓库外，或明确被 Git 忽略。改动时保留所有原字段，只增加本节要的键；令牌、地址和真实 ID 不写进公开文档或日志。
+- **先关着核对，再打开。** 先在关闭状态下核配置、身份和存储，再切换。同一项目同一时刻只配一个目标。
+- **状态只说明到了哪一步。** 已保存、平台已接受、原生 Turn 已开始、接收者已读、实际处理和 Task 关闭，各看各的记录；前一步成立，不代表后一步也成立。
+- **结果不明时按原 ID 对账。** 回包丢失或状态为 `unknown` 时，用原 operation ID 或原输入 ID 读回，不换 ID 重发。
+- **注意配置什么时候生效。** 有的配置在运行中重读，有的只在服务启动时读一次：
+
+| 机制 | 私有配置 | 默认 | 改动什么时候生效 | 规则在哪 |
+| --- | --- | --- | --- | --- |
+| [Leader 结果通知](#1-leader-结果通知) | `leaderResultNotices` | 不投递（未配置或 `enabled:false`） | 通知泵每轮重读，默认约 2 秒一轮；`pollIntervalMs` 只在启动时读 | [Leader 通知层](../architecture/contracts.md#leader-通知层) |
+| [即时输入](#2-即时输入) | `directInputs` | 关闭 | 每次请求重读；前提是服务启动时已启用运行时 | [即时输入](../architecture/session-runtime.md#3-即时输入执行中收到的消息怎样处理) |
+| [托管压缩](#3-托管压缩) | `runtime.compaction.owned` | `true` | 启动时读，改后重启 | [托管压缩](../architecture/session-runtime.md#4-托管压缩) |
+| [普通 Task 的每日复制](#4-普通-task-的每日复制) | `scheduling.taskTimingGrants` | 空 | 每次创建、改时和物化时重读 | [一次与每日复制](../architecture/contracts.md#普通-task-的一次与每日复制) |
+| [阶段关注](#5-阶段关注) | 没有开关，门槛用命令修订 | 服务运行就评估，每 30 秒一次 | 不适用 | [阶段等待由事实推导](../architecture/contracts.md#阶段等待由事实推导) |
+
+## 1. Leader 结果通知
+
+业务结果写入时，数据库在同一事务里登记一条通知；哪些事实会登记，见 [Leader 通知层](../architecture/contracts.md#leader-通知层)。通知泵把通知作为一条普通 Session 消息发给受管 Leader Session。没打开时，通知照常入库，在表里等待投递。
+
+### 准备
+
+- **一条受管 Leader Session。** 它所在的 Role 是项目里唯一 active 或 trial 的 system Lead。核对实际接收 actor、项目写权限、原生 Thread、执行授权、工作目录和 CLI 身份。业务 Session 不能作为 Leader 目标。
+- **两个不同的 actor。** `senderActorId` 是配置里明确授权的技术通知者，`receiverActorId` 是实际的 Leader，二者都要是项目 writer。Leader 还要有 `review` 权限，才能保存计划和复核。
+- **消息授权。** `sessionMessages` 已启用，并有针对这个 sender、Leader Session、receiver actor、Role 和 cwd 的**精确授权**，额度可用。
+
+在私有 integrations 文件中增加：
+
+```json
+"leaderResultNotices": {
+  "enabled": false,
+  "pollIntervalMs": 2000,
+  "targets": [{
+    "projectId": "PROJECT_UUID",
+    "sessionId": "MANAGED_LEADER_SESSION_UUID",
+    "receiverRoleId": "LEAD_ROLE_UUID",
+    "receiverActorId": "ACTUAL_LEADER_ACTOR",
+    "senderActorId": "AUTHORIZED_NOTIFIER_ACTOR"
+  }]
+}
+```
+
+同一项目只配一个目标。通知只引用 Task 和结果的固定入口，Leader 不能凭通知摘要自动签验收。
+
+### 打开
+
+1. 保持 `enabled:false`，核对配置、身份和存储。
+2. 确认旧 Leader 的消息 Turn 都已静默，没有结果未知的处理。
+3. 新实例第一次打开前，先处理迁移导入的通知（见下一小节）。
+4. 把 `enabled` 改成 `true`。通知泵每轮都重读这份配置，所以打开、关闭和改目标都不用重启服务；只有 `pollIntervalMs` 在启动时读取。
+5. 用 `work leader notices --project PROJECT_ID` 核对通知从 `pending` 变成 `linked`，再用 `work message MESSAGE_ID --project PROJECT_ID` 核对消息的原生 Turn。这两条命令的完整参数见 CLI 自带的用法说明。
+
+打开之后，分别核对：通知已入库、消息已保存、原生已接收和已读、Leader 已作安排、验收方已实际观察、Task 已完成。旧修订的 Delivery 和观察不能用来关闭新修订。
+
+### 迁移之后先处理导入的通知
+
+导入业务历史时，数据库触发器和正常写入一样会登记通知（[部署与迁移 §5](../architecture/deployment.md#5-迁移之后重新接入)）。这些通知对应的事实在旧主机上大多已经送达或处理过，直接打开会让 Leader 重新收到一遍。打开之前，先用 `work leader notices` 列出 `pending`，逐类处理：
+
+- **通知泵会自动处置的两类。** 待编排 Task 的通知：Task 已不是当前修订下未分派的 todo 时，投递前会自动处置。阶段关注的通知：来源已过期时同样自动处置。
+- **要人工处置的其他类型。** 交付、观察等通知不会被自动处置。旧主机已送达、已关闭，或已被后来的交付取代的，由维护者在打开前标为 `blocked`，并逐条写明原因。
+
+2026-11-09 新实例打开前，维护者一次性把 163 条导入通知标为 `blocked`，其中 160 条带 `MIGRATION_REPLAY_*` 原因；另有 5 条由通知泵自动处置（`ATTENTION_SOURCE_EXPIRED` 3 条、`TODO_SOURCE_NOT_TODO` 2 条），合计就是[阶段路线](../roadmap.md#当前基线)里的 168 条阻塞。维护者用到的原因有：
+
+| 原因 | 含义 |
+| --- | --- |
+| `MIGRATION_REPLAY_DELIVERED_ON_SOURCE` | 旧主机已送达 |
+| `MIGRATION_REPLAY_SOURCE_CLOSED` | 来源 Task 在旧主机已关闭 |
+| `MIGRATION_REPLAY_COVERED_BY_BACKLOG_TRIAGE` | 已由积压整理覆盖 |
+| `MIGRATION_REPLAY_BLOCKED_ON_SOURCE:<原因>` | 旧主机上就已受阻 |
+| `SUPERSEDED_BY_LATER_DELIVERY` | 已被后来的交付取代 |
+| `LEADER_OWN_DELIVERY` | Leader 自己的交付 |
+
+这一步现在**没有正式命令**。服务和 CLI 都不会写这些原因；这批标记由维护者在通知泵关闭时直接改写数据库里的通知记录（`state` 与 `blocked_reason`），不经过权限检查，也没有操作回执。
+
+### 读取与诊断
+
+- **读取。** `work leader notices --project PROJECT_ID` 读取通知及其固定来源，`--task TASK_ID` 限定一个 Task。
+- **三种状态。** `pending` 是尚待投递，会记下最近一次没能投出的原因，例如 `LEADER_NOTICES_DISABLED`、`LEADER_TARGET_UNCONFIGURED`、`MESSAGE_GRANT_MISSING`、`LEADER_SESSION_UNAVAILABLE`、`OLD_LEADER_NOTICE_IN_FLIGHT`。`linked` 只表示已保存一条受管 Session 消息。`blocked` 带不可重试的原因。
+- **修复后自动继续。** 缺授权、Session 暂不可用或旧 Leader 有在途处理时，修好之后，通知泵会从同一条通知继续投递，不必新建。
+- **收件人固定后不改投。** 已固定收件人的通知不会自动改投到新 Session。
+
+### 被拒绝之后恢复
+
+原 `session.message.post` 的操作日志明确拒绝时，原通知转为 `blocked`，不再用原 ID 自动重试；结果未知时只读原 operation 对账。
+
+要重新投递，由有项目 `write` 和 `review` 权限的操作者处理：
+
+1. **先核对。** 核原 operation 的拒绝、当前 Task、消息状态和旧目标的 Turn。
+2. **建立新意图。** 用 `request leader.notice.recover --project PROJECT_UUID --id ORIGINAL_NOTICE_UUID --file BODY.json --receipt LOCAL_RECEIPT_UUID`。BODY 包含原 `expectedOperationId`、全新的 `newNoticeId`、`newMessageId`、`newOperationId` 和处置 `reason`。
+3. **读回结果。** 原通知用 `get /api/projects/PROJECT_UUID/work-management/notices/ORIGINAL_NOTICE_UUID` 读取，可以核对关联和结果。写入应答不明时，用 `receipts reconcile LOCAL_RECEIPT_UUID` 核对原通知和新通知的固定身份，不另造一组 ID 重发。
+
+新通知保留源事实和原拒绝的关联，按当前唯一的 Leader 目标投递。原通知、拒绝记录和历史成本都不改写。
+
+### 安排验收
+
+Leader 读到交付后，按 Task 声明的验收方式，用 `acceptance.assign` 安排验收（命令见 [Agent CLI](agent-cli.md#观察会话具体接手与普通消息)）。验收人可以是人、Task 允许的 Leader，或 Leader 指派的业务 Session；交付作者和安排者都不能验收。安排受阻会留下一条 `acceptance_blocked` 通知；验收结果仍以观察通知回到 Leader。
+
+### 关闭与回退
+
+把 `enabled` 改回 `false`，下一轮起就停止自动投递，数据库里的通知和已保存的消息都保留。已在途或结果未知的原生 Turn，先按原 operation 对账。数据库迁移不回滚、不删表，以免丢失结果历史。
+
+## 2. 即时输入
+
+即时输入让用户从工作台发给 owned Session 的消息立即进入执行：Session 正在跑时补入当前 Turn，空闲时直接在原会话开一个新 Turn。设计和规则见 [Session 运行时 §3](../architecture/session-runtime.md#3-即时输入执行中收到的消息怎样处理)。
+
+### 配置
+
+`directInputs` 默认关闭。打开时，要为同一个 Session 另加一条即时输入授权，并且它必须与普通消息授权 `sessionMessages.grants` 一起使用：即时输入授权不能替代 sender、receiver、Role、cwd 或累计 Turn 上限。
+
+```json
+{
+  "directInputs": {
+    "enabled": true,
+    "grants": [
+      {
+        "projectId": "PROJECT_UUID",
+        "sessionId": "OWNED_SESSION_UUID",
+        "senderActorId": "USER_ACTOR",
+        "canSteer": true,
+        "canStart": true
+      }
+    ]
+  }
+}
+```
+
+服务每次请求都会重读这份配置；但只有服务启动时已启用运行时，即时输入入口才存在。
+
+### 入口
+
+| 方法与路径 | 用途 |
+| --- | --- |
+| `GET /api/projects/:projectId/sessions/:sessionId/direct-input-capability` | 能力查询：返回 `steer`（补入）、`start`（空闲直启），或都不可用 |
+| `POST /api/projects/:projectId/sessions/:sessionId/direct-inputs` | 提交，正文含 `inputId`、`operationId`、`content`、`expectedTurnId` |
+| `GET /api/projects/:projectId/sessions/:sessionId/direct-inputs/:inputId` | 读回一条输入 |
+| `POST /api/projects/:projectId/sessions/:sessionId/direct-inputs/:inputId/reconcile` | 按原 `inputId` 只读对账 |
+
+所有读取都按当前项目、actor 和 review 权限重新授权。客户端自报的 `human`、`direct` 或角色名不能替代授权。
+
+能力查询和提交使用同一组检查：当前 writer、Session 执行授权、普通消息授权、即时输入授权、cwd 和原生资格。只有查询明确返回 `steer` 或 `start` 时，工作台才显示即时发送；否则只保留普通消息入口。
+
+**运行时限制。** 补入只在 Codex 固定 `0.166.0-alpha.6` 上可用；Claude 和其他 Codex 版本只能空闲直启。能力查询目前不核对运行时是否支持补入，这个已知缺口见 [Session 运行时 §3](../architecture/session-runtime.md#3-即时输入执行中收到的消息怎样处理)。
+
+### 占用、未知与恢复
+
+- **一个 Session 同时只有一个槽位。** 直启在 PostgreSQL 事务里锁定原 Session，并检查业务 Run、消息处理和排队消息。处于 `requested`、`dispatching`、`running` 或 `unknown` 的占用，都不会因为“原生看起来空闲”而被越过；重复点击也只会得到一条处理记录。
+- **先存意图，再调用运行时。** 回执丢失、数据库提交结果不明或历史尚未物化时，记为 `unknown` 并保留槽位，不换 ID 重发。
+- **对账只读原输入。** 恢复只读取原 `inputId` 的原生 Turn 和 Item 历史，或由现有 owner 泵对账原 operation 标记。零 Turn、方法不可用、多个候选或读取不完整，都继续保持 `unknown`；“查不到”不等于被拒绝。
+- **什么才算拒绝。** 只有明确的原生拒绝，或发送前授权发生变化，才记为 `rejected`。终态按原处理记录、operation、原生 Turn 和版本做 CAS 释放；迟到的旧终态不能清掉后来建立的槽位。
+- **撤权之后。** sender 撤权后不能再建立新补充；受信的 owner 仍可完成原 Turn 和原处理记录的对账与结算。
+
+预占之前的明确拒绝不是 `unknown`。例如提交得到 409 `DIRECT_GRANT_MISSING`，再读原输入得到 404：工作台按可信回执显示“明确未接收”，清除待决状态，只保留可展开的 input 和 operation ID 作审计，不把它恢复成未知草稿，用户修正后可以重新发送。
+
+证据表是 schema 059 的 `session_direct_input`：记录不可删除，身份不可改写；只有原处理记录到达终态，或精确的 Turn 前拒绝之后，才释放对应的恢复门。它不改已有 Run 的固定输入。
+
+### 检查
+
+| 检查 | 覆盖什么 |
+| --- | --- |
+| `apps/workbench/test/direct-input-client.test.ts` | 能力响应；503 之后 404 时保留原输入；400、409 等预占前明确拒绝的区分 |
+| `packages/adapter-postgres/test/direct-input.test.ts` | 在独立 PostgreSQL schema 里检查双启动唯一槽位、Run 与消息两种主来源、同一 Turn 的两条补入、TaskRevision 与输入哈希不变、额度、撤权、未知和终态 CAS |
+| `apps/coordinator/test/direct-input-native-live.mts` | 用固定 alpha.6 二进制在隔离的 HTTP、PostgreSQL 和 Thread 中执行一次直启和两条补入，回读三个精确的 client ID 和 Item |
+| `apps/coordinator/test/direct-input-native-sources-live.mts` | 同一隔离边界里，分别对已有业务 Run 和普通消息处理各补入两条；前者核对固定 Run 输入未变，后者由现有泵完成终态结算 |
+
+浏览器回归要看：普通 owned 入口、长历史、unknown 卡、409 明确拒绝与刷新后的审计和不恢复策略、390 宽与正常宽与短窗、减少动态效果、工具详情授权、Task 往返和滚动锚点。390 宽用真实的 CSS 宽高、DPR 和 `visualViewport.scale` 验收，不靠缩字、放大视口或隐藏 unknown 通过。页面本身的设计见 [Sessions 页面](../frontend/pages/sessions.md)。
+
+隔离环境里的原生试跑只证明固定二进制和隔离数据路径，不证明正式服务已启用配置、已部署迁移，也不证明验收方或用户已在正式入口使用过。
+
+## 3. 托管压缩
+
+Session 因失败被恢复门挡住时，维护者可以显式请求一次原生压缩，再决定是否恢复。设计和完成判据见 [Session 运行时 §4](../architecture/session-runtime.md#4-托管压缩)；记录表是 schema 058 的 `session_compaction`。
+
+### 前提
+
+- 运行时是 Codex 固定 `0.166.0-alpha.6`；Claude 不支持托管压缩。
+- 私有配置 `runtime.compaction.owned` 不为 `false`（默认 `true`，启动时读取）。设为 `false` 时关闭这组入口，压缩完全交给运行时自己。
+- 请求者有当前项目的 review 与 write 权限，以及该 Session 的精确运行授权。
+- 恢复门处于 `blocked`，原失败 Run 或消息有已知终态。
+
+正式操作前，回读原 Thread 的模型、思考强度、权限、当前 writer、最后一个原生 Turn、未知的在途处理和有效 hooks。任何一项无法证明，就保留 blocked 门，并记录准确缺了什么。
+
+### 命令
+
+1. 用 `request schema runtime.compact.start` 核对字段。
+2. 提交 `request runtime.compact.start --project PROJECT --id SESSION --file intent.json`。文件正文为 `operationId`、`threadId`、`expectedSessionVersion`、`expectedGateVersion`、`evidenceRef`、`reason`。相同 operation ID 加完全相同的正文只会读回原结果，不同正文被拒绝。
+3. 用 `get /api/projects/PROJECT/runtime/compactions/OPERATION` 读取原操作。
+4. 用 `request runtime.compact.reconcile --project PROJECT --id OPERATION --file empty.json` 只读原生证据并更新原记录，`empty.json` 的内容为 `{}`。
+5. 确认完成后，仍由有权者单独执行 `runtime.session.recovery.resume`。压缩本身不开门。
+
+### 怎样读结果
+
+| 结果 | 什么时候出现 | 怎么办 |
+| --- | --- | --- |
+| `accepted` | 压缩 RPC 得到合法的 `{}` 应答 | 继续对账，等完成证据 |
+| `completed` | 同一个已绑定的压缩 Turn 有完成的 `contextCompaction` Item、Turn 已结束、原 Thread 空闲 | 由有权者决定是否恢复 |
+| `failed`，`nativeRequestId` 为空 | 发出压缩请求之前，owner 恢复、Thread 读取、执行配置、基线或连接检查明确失败，记带阶段码的失败 | 按阶段码修正；这不是原生结果未知 |
+| `failed`，有原生请求 | 已绑定的 Turn 明确失败且有完成时间，或没有匹配 Turn 的明确原生拒绝 | blocked 门保留 |
+| `unknown` | 丢回包、发送中断、连接已更换、历史有歧义；或已收到匹配的 Turn 开始事件后又收到无法归属的服务端错误 | 按原 ID 对账，不用新 ID 重发 |
+
+外层 Turn 显示 `completed`，但缺少成功的压缩 Item，不算成功。原生 Thread 读取没有可靠的压缩前后 token 总量，所以回执里的 `beforeInputTokens`、`afterInputTokens` 可以为 `null`。
+
+原失败 Thread 为 `systemError`，或重启后为 `notLoaded` 时，入口要求原失败 Turn 有完成时间，再由当前 owner 用完全相同的执行配置执行 `thread/resume`；恢复后，最后一个 Turn 必须仍是原失败 Turn，且没有活动的 writer。不借新 Thread 绕过。
+
+### 隔离测试
+
+验收方可以在专用的 PostgreSQL 测试库运行手工脚本：
+
+```sh
+TEST_DATABASE_URL="$DEDICATED_TEST_DATABASE_URL" \
+E1_MANIFEST_PATH="$PRIVATE_MANIFEST_FILE" \
+E1_PORT="$FREE_LOCAL_PORT" \
+node --import tsx tests/manual/session-compaction-e1.ts
+```
+
+三个变量分别指向专用测试库、仓库外的私有 manifest 文件和一个空闲端口。
+
+- **脚本做什么。** 启动真实的 HTTP 服务，把随机生成的项目、Session、Thread、恢复门版本和两种测试身份的令牌写进权限为 0600 的 manifest。它的原生接口是一个**受控的丢回复替身**。
+- **验收方做什么。** 从 manifest 取值，通过 HTTP 或 CLI 发一次 `runtime.compact.start`，再用同一 operation ID 读回，并测试改正文被拒、只读身份被拒。
+- **重启与清理。** 重启脚本会得到新的独立 schema 和未用过的样本。结束时先停脚本，再按 manifest 里 `compact_e1_` 前缀的 schema，用专用测试库的 `DROP SCHEMA ... CASCADE` 清理。
+
+这个入口不验证有认证的 alpha.6 模型压缩；隔离迁移和 PostgreSQL、HTTP 回归也不代表原 Leader 的真实压缩已经验证。
+
+## 4. 普通 Task 的每日复制
+
+普通 Task 可以设一个执行时点，并可选每天重复。一次性时点和停止复制不需要额外授权；**每日重复**需要私有配置授权。复制规则见[一次与每日复制](../architecture/contracts.md#普通-task-的一次与每日复制)，命令见 [Agent CLI](agent-cli.md#提交与核对)。
+
+### 授权
+
+在私有 integrations 文件的 `scheduling` 对象中配置 `taskTimingGrants`，每项只含精确的 `projectId`、业务 `actorId` 和 Task owner 的 `roleId`：
+
+```json
+{"scheduling":{"enabled":true,"grants":[],"taskTimingGrants":[{"projectId":"<PROJECT_UUID>","actorId":"<BUSINESS_ACTOR>","roleId":"<OWNER_ROLE_UUID>"}]}}
+```
+
+- **授权范围。** 有了这项授权，该业务 actor 可以用普通 `task.create` 或 `task.timing.set`，为同一 Role 的新 Task 设每日重复，不必为每个尚未创建的 Task ID 预先添加范围。
+- **仍要满足的条件。** actor 在当前项目有读、写和审阅权限，Task owner 是有效 Role，`scheduling.enabled` 已打开。
+- **每次重读。** 创建、改时和物化时都重读授权；物化只选同项目、同 actor、同 Role 的已保存系列，并重核当前授权和身份资格。撤权后不能再创建、修改未来要求或继续复制。
+
+`taskTimingGrants` 与旧的 `scheduling.grants` 是两回事：
+
+- 后者按精确 scope 授权旧 Schedule，不能填 `task-timing:*`。
+- 前者不能创建或物化旧 Schedule，也不授予新的 Session 或 Run 执行资格。
+- 已经存在的 `task-timing:<首个 Task ID>` 精确授权，仍可继续管理原系列。
+
+### 读时间
+
+读取 `tasks/TASK_ID/timing` 得到下面这些字段：
+
+| 字段 | 含义 |
+| --- | --- |
+| `executeAtUtc` | 当前这份 Task 自己的约定时点 |
+| `nextTaskId` | 已生成的后一份 Task，可能已经完成 |
+| `occurrences` | 每份历史时点 |
+| `nextAtUtc` | 只对活跃的每日系列有值：下一个尚未物化的日历时点；停止或一次性时为 `null` |
+
+工作台对停止的系列显示“已停止后续复制”，对一次性时点显示“仅本次”。已生成的后续 Task 的时间和链接仍可读。活跃系列的下一时点已过、却还没物化时，标为待补约定时点，并保留等待原因。
+
+物化时的阻断（授权撤销、owner 退休、Stage 失活、消费者资格不成立、材料不可读、版本冲突、结果未知等）会保留原记录和可读原因，交给 Leader 处理。这个功能实施前的逐字段分析，见[普通 Task 定时复制：实施前分析](../references/task-timing-copy-design.md)。
+
+## 5. 阶段关注
+
+服务从已有事实推出每项进行中的 Task 停在哪一环、在等谁，并对超过门槛的环节生成持久关注项。规则、来源和门槛见[阶段等待由事实推导](../architecture/contracts.md#阶段等待由事实推导)。
+
+- **怎样运转。** 没有配置开关：服务运行时，每 30 秒为有读、写和审阅身份的项目评估一次。
+- **怎样送到 Leader。** 关注项以 `task_attention` 类型的 Leader 通知送达，所以要先打开 [Leader 结果通知](#1-leader-结果通知)；没打开时，关注项照常生成，用 CLI 读取。
+- **怎样读。** `work task`、`work attention`、`work attention task`、`work attention item`、`work attention thresholds`（见 [Agent CLI](agent-cli.md#观察会话具体接手与普通消息)）。
+- **怎样调整与跟进。** 项目默认门槛和单 Task 检查点用 `task.attention.thresholds.set` 修订并留历史；跟进、发布交接和处置分别用 `task.attention.followUp.set`、`task.attention.publication.record`、`task.attention.resolve`。
+
+门槛只要求核查，不代表 Run 失败；关注项不会自动取消、重试或关闭 Run，也不重置预算。隔离候选页面的截图见[桌面 1280×900](../assets/task-stage-attention/desktop-1280.png) 和[窄窗 390×844](../assets/task-stage-attention/narrow-390.png)，两张都来自合成的测试项目，不代表正式通知已送达或已读。
+
+## 已知缺口
+
+- **导入通知没有正式命令。** 迁移导入的 Leader 通知只能由维护者直接标记，没有权限检查和操作回执（见[迁移之后先处理导入的通知](#迁移之后先处理导入的通知)）。
+- **即时输入的能力查询不核运行时。** 对 Claude 或非 alpha.6 的 Codex 也可能回答 `steer`，提交时才被拒绝或记为未知（见 [Session 运行时 §3](../architecture/session-runtime.md#3-即时输入执行中收到的消息怎样处理)）。
+- **托管压缩只在 alpha.6 可用。** 隔离测试只用替身，不验证有认证的模型压缩。

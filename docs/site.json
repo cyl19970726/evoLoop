@@ -283,6 +283,11 @@
       "group": "依据"
     },
     {
+      "path": "docs/references/task-timing-copy-design.md",
+      "title": "Task 定时复制：实施前分析",
+      "group": "依据"
+    },
+    {
       "path": "docs/research/README.md",
       "title": "研究与探索",
       "group": "研究 · 综合判断"
@@ -453,23 +458,8 @@
       "group": "开发与维护"
     },
     {
-      "path": "docs/development/session-direct-input-integration.md",
-      "title": "Session 连续工作区与即时输入",
-      "group": "开发与维护"
-    },
-    {
-      "path": "docs/development/leader-result-return.md",
-      "title": "Leader 结果回程",
-      "group": "开发与维护"
-    },
-    {
-      "path": "docs/development/task-timing-copy.md",
-      "title": "普通 Task 定时与复制",
-      "group": "开发与维护"
-    },
-    {
-      "path": "docs/development/task-stage-attention.md",
-      "title": "Task 阶段时间与关注",
+      "path": "docs/development/runtime-operations.md",
+      "title": "运行接线手册",
       "group": "开发与维护"
     },
     {

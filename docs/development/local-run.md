@@ -1,6 +1,6 @@
 # 本机运行与恢复
 
-当前是可运行的本机试用切片：11 个工作区，会话正常关闭候选包含 PostgreSQL 迁移 018；旧试用环境的迁移和运行版本须分别核对，不随候选自动升级。目标、阶段、过程 Document、Task、负责人讨论、Role、Schedule、操作回执和运行记录经同一 coordinator API/工作台/CLI 使用。固定 Git 原件、Blob 与 Markdown/静态 HTML/CSS/SVG 阅读、外置 OpenViking 0.5.1 的写读和重启回读已有受限实测；普通工作台完成过知识候选→审阅→发布、来源变化需复核与 Task 显式采用。两次相连 Task 已有交付、独立 Agent 使用观察与阶段回看；后一次消费者下载新旧 HTML、CSS、SVG 的实际哈希均匹配，首次旧客户端失败观察仍保留。真实人的使用反馈、Wiki 语义索引和生产能力仍未验证。飞书真实租户由使用者明确延后，不是当前退出条件；尚无生产部署。
+本页说明怎样在一台机器上运行和恢复 evoLoop：环境与启动、身份与集成配置、运行时、备份与恢复。新实例当前打开了什么、用过什么，以[阶段路线的当前基线](../roadmap.md#当前基线)为准；部署形态见[部署与迁移](../architecture/deployment.md)。各项运行机制的打开与核对步骤见[运行接线手册](runtime-operations.md)。
 
 ## 环境与启动
 
@@ -49,8 +49,6 @@ JS
 
 集成默认关闭。以 `0600` 权限创建 `.local/integrations.json`，初始内容如下（`repositories`、`feishu`、`knowledge` 均可暂时省略）：
 
-业务结果通知受管 Leader 的配置、切换和回退见[结果回程](leader-result-return.md)。当前外部 Lead 阶段保持该通知泵关闭，数据库仍保存新业务事件。
-
 ```json
 {
   "scheduling": { "enabled": false, "grants": [] },
@@ -58,9 +56,9 @@ JS
 }
 ```
 
-Owned Session 的即时补充与空闲直启另用默认关闭的 `directInputs` 授权；它必须与同一 Session 的普通 `sessionMessages.grants` 并用，不能替代 sender、receiver、Role、cwd 或累计 Turn 上限。精确字段、能力读取、未知恢复和普通入口边界见[Session 连续工作区与即时输入](session-direct-input-integration.md)。
+Leader 结果通知、即时输入、托管压缩、普通 Task 的每日复制和阶段关注各有自己的配置、打开和核对步骤，见[运行接线手册](runtime-operations.md)。
 
-日程 grant 须明确 `projectId`、`actorId`、`scopeId`、`roleId`，与日程当前修订的授权一致；当前身份仍须该项目 `write` 和 `review` 权限。未配置 `template.managedTarget` 时，tick 只创建 `todo` Task 及其固定主正文。新修订可显式绑定已限定同一 active Stage 的既有 `{loopId,stageId}`，同库物化后将经核验的到期来源送给指定 Loop；认知需要工作时复用该 todo，仍按当前 runtime grant、预算与 Task 规则启动，不由 tick 直接运行。旧修订不自动升级为受管工作。停用、失去 coordinator 锁、撤权、过期和异常的状态见 `/api/projects/PROJECT_ID/scheduling/status`。runtime grant 须明确 `projectId`、`actorId`、`roleId`、`authorizationScope` 与绝对路径 `cwd`；每个新 Session 固定 `danger-full-access`、`approvalPolicy: never` 和正常网络。精确授权仍限定 actor、项目、Role、scope 与业务对象，不要把 OS 执行权限理解为项目数据授权。`repositories` 可按项目登记只读 Git 根目录与路径白名单；`feishu` 启用时须给凭据、Bitable 字段映射及逐项目/行为者、显式 `scope: "project"` 的 `grants`，自动轮询另需 `pollEnabled`。用户已将飞书 connector 留待后续，本轮不以实连为完成条件。飞书尚无真实租户验证，不要把 fake HTTP 测试当作实连；当前配置仅支持明确的项目全范围授权，拒绝未落实入站过滤的 owner 范围。身份和集成配置在启动时读取，修改后重启；HTTP 认证使用启动时的身份快照，重启后才会采用新凭据。普通 Run 封存器会再读当前身份文件，文件修改可能在 HTTP 重启前提前收紧原签署者的新写入资格；已提交 Delivery 的固定回读仍可继续。
+日程 grant 须明确 `projectId`、`actorId`、`scopeId`、`roleId`，与日程当前修订的授权一致；当前身份仍须该项目 `write` 和 `review` 权限。未配置 `template.managedTarget` 时，tick 只创建 `todo` Task 及其固定主正文。新修订可显式绑定已限定同一 active Stage 的既有 `{loopId,stageId}`，同库物化后将经核验的到期来源送给指定 Loop；认知需要工作时复用该 todo，仍按当前 runtime grant、预算与 Task 规则启动，不由 tick 直接运行。旧修订不自动升级为受管工作。停用、失去 coordinator 锁、撤权、过期和异常的状态见 `/api/projects/PROJECT_ID/scheduling/status`。runtime grant 须明确 `projectId`、`actorId`、`roleId`、`authorizationScope` 与绝对路径 `cwd`；每个新 Session 固定 `danger-full-access`、`approvalPolicy: never` 和正常网络。精确授权仍限定 actor、项目、Role、scope 与业务对象，不要把 OS 执行权限理解为项目数据授权。`repositories` 可按项目登记只读 Git 根目录与路径白名单；`feishu` 启用时须给凭据、Bitable 字段映射及逐项目/行为者、显式 `scope: "project"` 的 `grants`，自动轮询另需 `pollEnabled`。用户已将飞书 connector 留待后续，本轮不以实连为完成条件。飞书尚无真实租户验证，不要把 fake HTTP 测试当作实连；当前配置仅支持明确的项目全范围授权，拒绝未落实入站过滤的 owner 范围。身份在启动时读取，修改后重启；HTTP 认证使用启动时的身份快照，重启后才会采用新凭据。集成配置分两种：是否启用运行时、`runtime` 下的执行配置等在启动时读取，改后要重启；日程授权、Leader 通知、即时输入和每日复制授权等在使用时重读，见[运行接线手册](runtime-operations.md#共同做法)。普通 Run 封存器会再读当前身份文件，文件修改可能在 HTTP 重启前提前收紧原签署者的新写入资格；已提交 Delivery 的固定回读仍可继续。
 
 如要接外置 Wiki，另加 `knowledge` 配置：`enabled`、回环 HTTP `baseUrl`、仓库外绝对路径 `manifestRoot`、`maintainerId`、`projectIds`。`maintainerId` 必须与实际发布/对账身份的 `actorId` 一致，且该身份具有对应项目的 review 权限；任意标签或另一个未配置的身份不会取得维护权。Wiki 正文和修订由外置后端持有，PostgreSQL 只保存可核对引用；不要把正文、原始 session 或私有运行材料写入 Git。当前 0.5.1 已通过受限真实写读、重启回读和产品候选审核发布；这不证明语义索引、多写者安全或生产恢复。
 
@@ -70,7 +68,16 @@ npm run db:migrate
 npm start
 ```
 
-访问 `http://127.0.0.1:4318`，用身份文件中的 token 登录。令牌只留在当前页面内存，刷新后需重新登录。更新应用后请刷新已打开的标签页并重新登录；旧标签页仍可能运行旧版本界面，本轮独立消费曾因此失败，刷新后才成功，失败观察仍保留。`EVOLOOP_PORT` 可改端口；服务监听回环地址。迁移不会在启动时自动执行。C5 将 Task 正文归入 Document 并改为四态；既有实例须单独运行迁移并同步服务、CLI 和界面版本，本轮未自动升级其他会话的预览或持久数据。同一数据库只允许一个 coordinator 持有专用连接锁；锁丢失后写入不可用，不是双机自动接管证明。
+在浏览器打开服务监听的本机回环地址（端口由 `EVOLOOP_PORT` 设定，未设时用代码里的默认值），用身份文件中的 token 登录。令牌只留在当前页面内存，刷新后需重新登录。更新应用后请刷新已打开的标签页并重新登录；旧标签页仍可能运行旧版本界面，本轮独立消费曾因此失败，刷新后才成功，失败观察仍保留。服务只监听回环地址。迁移不会在启动时自动执行。C5 将 Task 正文归入 Document 并改为四态；既有实例须单独运行迁移并同步服务、CLI 和界面版本，本轮未自动升级其他会话的预览或持久数据。同一数据库只允许一个 coordinator 持有专用连接锁；锁丢失后写入不可用，不是双机自动接管证明。
+
+## 在常驻主机上运行
+
+常驻实例按本页同样的步骤安装、迁移和启动，部署形态见[部署与迁移](../architecture/deployment.md#1-部署形态)。与在开发机上试用相比，有四点不同：
+
+- **只经一个 HTTPS 入口访问。** 工作台和 CLI 都走这个入口（CLI 的 `EVOLOOP_API_URL` 指向它）；协调服务仍只监听本机回环，由入口转发。不为 PostgreSQL、运行时或协调服务另开对外端口。
+- **按版本发布。** 每个版本单独构建、单独存放；数据库、Blob、备份以及私有身份与 integrations 文件都放在发布目录之外，切换版本不搬动它们。发布按停写、备份、迁移、启动核对的顺序走，见[发布新版本](../architecture/deployment.md#2-发布新版本)。
+- **运行时登录属于主机。** Codex 的登录目录和 Claude 的 `configRoot` 留在主机上；换主机时不搬，在新主机上重新登录，见[迁移之后重新接入](../architecture/deployment.md#5-迁移之后重新接入)。
+- **地址不进公开文档。** 主机名、入口域名、目录和端口只记在私有运维记录里。
 
 ## 受管自动循环候选
 
@@ -114,11 +121,11 @@ npm run --silent cli -- list tasks --project "$PROJECT_ID"
 
 命令需稳定的 `operationId`、`projectId`；修改已有对象还需读入的 `expectedVersion`。同一 ID、身份和内容返回原回执；不同内容复用 ID 被拒绝。结果未知时先查 `/api/projects/PROJECT_ID/operations/OPERATION_ID`；404 只表示当次未查到，不能证明外部动作没发生。未知 Turn 必须按已有原生 thread 和 operation 标记对账，不能换 ID 盲目重派。工作台临时恢复索引在当前标签页 `sessionStorage`，不存令牌或正文；关闭标签页可能失去索引，重要操作应另存 ID。
 
-历史受控 `gpt-6-astra` owned Turn 使用 **codex-cli 0.154.0**，曾完成并在重启后读回答复；该记录保留为当时实测。当前 App Server 默认协议为 **0.166.0-alpha.5.1**，并支持显式选择 `0.167.0-alpha.3.2`、`0.166.0-alpha.6`、`0.164.0-alpha.11.1` 与 `0.154.0`。选择其它已核版本时须在私有运行配置中显式设置 `runtime.protocolVersion`，并核实际二进制与生成的标准或实验 schema 指纹；旧私有包的版本约束须由发布者另行更新。0.167 的目标隔离环境已完成无模型协议 smoke。另有一次经适配器、共用桌面版 `~/.codex`、由其已配置的 DeepSeek provider 执行的真实模型 Turn 验证，包括续接、工具、会话消息对账和中断，见[研究记录](../research/session-communication-and-deepseek-20261108.md#54-真实运行结果做法一)。经 coordinator 与工作台的真实 Session 仍待验证。0.167 在 `turn/start` 刚返回时会短暂拒绝 `thread/turns/list`（-32601），适配器对此做有界重试。未配置 `codexHome` 时，子进程共用 `~/.codex` 的登录、provider 与历史，evoLoop 创建的线程会出现在用户自己的 Codex 历史中；需要隔离时配置专用 `codexHome`。0.154 的历史模型实跑不证明新 full/never 配置已在 Lead 的真实 Session 使用。较早终态误判修复及原事件追加记录仍是既有事实；Turn 完成不自动证明技术验收、交付、消费者使用或 Task 关闭。启用前核对实际安装版本、schema、授权目录与隔离真实任务；升级须重新核协议、终态、断线与恢复。HTML/CSS/SVG 阅读中的 Document iframe sandbox 是独立内容隔离，不随 Session OS 权限变化。结果未知时保留原操作并人工核对。
+Codex App Server 的协议版本默认是 `0.166.0-alpha.5.1`。要选其他已核版本，在私有运行配置里显式设置 `runtime.protocolVersion`，并核对实际二进制与生成的标准或实验 schema 指纹；旧私有包的版本约束须由发布者另行更新。各版本可用的能力（托管压缩和运行中补入只在 `0.166.0-alpha.6`）见[Codex 接入](../architecture/codex-integration.md#协议版本与可选能力)，新实例用的是哪个版本见[阶段路线](../roadmap.md#当前基线)。未配置 `codexHome` 时，子进程共用使用者自己的 Codex 登录、provider 与历史，evoLoop 创建的线程会出现在使用者自己的 Codex 历史里；需要隔离时配置专用 `codexHome`。Turn 完成不自动证明技术验收、交付、消费者使用或 Task 关闭。启用前核对实际安装版本、schema、授权目录与隔离真实任务；升级须重新核协议、终态、断线与恢复。HTML/CSS/SVG 阅读中的 Document iframe sandbox 是独立内容隔离，不随 Session OS 权限变化。结果未知时保留原操作并人工核对。
 
 App Server、版本检查与协议探测使用同一份明确的子进程环境白名单，保留本机 Codex 登录目录、基本运行环境和代理/证书配置，不转发协调服务的数据库连接、身份配置路径、API 密钥或 Node 执行注入参数。本片沿用 Codex 的本机 ChatGPT 登录；这项环境筛选不限制读取 HOME 文件，工作目录也不是文件读取白名单。runtime 的 authorizationScope 当前用于精确匹配授权，不应把形似 Task ID 的字符串宣称为单任务执行隔离。
 
-Claude 运行时（候选，未经真实 API 验证）：在 runtime 配置中把 `claude` 列入 `providers`（或设 `provider: "claude"`），并设 `claude: { configRoot, executable?, maxTurns?, maxBudgetUsd?, skillBundle?, contextMode? }`。`configRoot` 是该协调服务专用的绝对路径，作为 `CLAUDE_CONFIG_DIR`，存放 Claude 会话记录、设置、登录与适配器的 Turn 账本，不与 `~/.claude` 共享；因此需要在该目录单独登录，或由协调服务环境提供 `ANTHROPIC_API_KEY`、`CLAUDE_CODE_OAUTH_TOKEN` 等凭据，配置文件不接收凭据。它不会自动复用 `~/.claude` 或 Claude 桌面应用的登录：桌面宿主注入给自身进程的会话令牌在子进程中返回 401。可由使用者本人运行 `claude setup-token`，再把结果设为 `CLAUDE_CODE_OAUTH_TOKEN`；也可以设置 `CLAUDE_CONFIG_DIR=<configRoot>` 后运行一次 `claude` 并登录。每个 Turn 启动一个 Claude Code 进程，使用同样的环境白名单，只加载项目级设置并关闭自动记忆；新 Session 按 DEC-033 使用跳过权限确认的完全访问。Turn 结果结算后，进程若因仍在等待某个工具而没有在 5 秒内自行退出，适配器向它的进程组发 SIGTERM（CLI 会自行停止它启动的工具 shell），再过 5 秒仍在则 SIGKILL；这段仅在退出的时间不算 Session 上有正在运行的 Turn，下一个 Turn 会等它退出后再启动。Turn 只按回显本次 prompt uuid 的 result 结算：续接的 Session 若先处理上个 Turn 之后排队的后台任务通知，那条不调用模型、来源为 `task-notification` 的 result 不算本次 Turn。Claude Session 暂不支持会话消息、命名与工作区历史。每个子进程都以 flag 设置 `crossSessionInbound: "refuse"` 启动，并禁用 SendMessage 与 ListAgents，Claude 的原生会话间消息在两个方向都关闭，Session 之间只通过 evoLoop 的授权消息通信。凭据失效时，Claude Code 在默认重试设置下会让 Turn 长时间没有结果，建议在协调服务环境中设置 `CLAUDE_CODE_MAX_RETRIES`（例如 2），适配器会把它传给子进程。除不调用模型的假 CLI 回归外，`scripts/claude-conformance.mjs` 已用真实 CLI 2.1.319 对本机模拟 API 验证了参数、隔离、续接、中断、进程丢失和错误分类，见[研究记录](../research/session-communication-and-deepseek-20261108.md#7-claude-适配器对真实-cli-的一致性验证)。真实模型的凭据、费用与限流行为仍待受控实验确认。
+Claude 运行时：新实例的 Dev Role 已在用，有真实 Run，尚未验收（计数见[阶段路线](../roadmap.md#当前基线)）。启用时在 runtime 配置中把 `claude` 列入 `providers`（或设 `provider: "claude"`），并设 `claude: { configRoot, executable?, maxTurns?, maxBudgetUsd?, skillBundle?, contextMode? }`。`configRoot` 是该协调服务专用的绝对路径，作为 `CLAUDE_CONFIG_DIR`，存放 Claude 会话记录、设置、登录与适配器的 Turn 账本，不与 `~/.claude` 共享；因此需要在该目录单独登录，或由协调服务环境提供 `ANTHROPIC_API_KEY`、`CLAUDE_CODE_OAUTH_TOKEN` 等凭据，配置文件不接收凭据。它不会自动复用 `~/.claude` 或 Claude 桌面应用的登录：桌面宿主注入给自身进程的会话令牌在子进程中返回 401。可由使用者本人运行 `claude setup-token`，再把结果设为 `CLAUDE_CODE_OAUTH_TOKEN`；也可以设置 `CLAUDE_CONFIG_DIR=<configRoot>` 后运行一次 `claude` 并登录。每个 Turn 启动一个 Claude Code 进程，使用同样的环境白名单，只加载项目级设置并关闭自动记忆；新 Session 按 DEC-033 使用跳过权限确认的完全访问。Turn 结果结算后，进程若因仍在等待某个工具而没有在 5 秒内自行退出，适配器向它的进程组发 SIGTERM（CLI 会自行停止它启动的工具 shell），再过 5 秒仍在则 SIGKILL；这段仅在退出的时间不算 Session 上有正在运行的 Turn，下一个 Turn 会等它退出后再启动。Turn 只按回显本次 prompt uuid 的 result 结算：续接的 Session 若先处理上个 Turn 之后排队的后台任务通知，那条不调用模型、来源为 `task-notification` 的 result 不算本次 Turn。Claude Session 支持普通消息与空闲直启，不支持会话命名、工作区历史和模型修订（对照见[Session 运行时](../architecture/session-runtime.md#7-codex-与-claude-能力对照)）。每个子进程都以 flag 设置 `crossSessionInbound: "refuse"` 启动，并禁用 SendMessage 与 ListAgents，Claude 的原生会话间消息在两个方向都关闭，Session 之间只通过 evoLoop 的授权消息通信。凭据失效时，Claude Code 在默认重试设置下会让 Turn 长时间没有结果，建议在协调服务环境中设置 `CLAUDE_CODE_MAX_RETRIES`（例如 2），适配器会把它传给子进程。除不调用模型的假 CLI 回归外，`scripts/claude-conformance.mjs` 用真实 CLI 2.1.319 对本机模拟 API 验证过参数、隔离、续接、中断、进程丢失和错误分类。真实模型下的费用与限流行为仍待观察。
 
 同一协调服务可以同时驱动 Codex 与 Claude：`runtime.providers` 列出要驱动的运行时，例如 `["codex", "claude"]`；`runtime.provider` 是尚未绑定的 Role 首次预留 Session 时绑定的默认运行时；不写 `providers` 时只驱动 `provider`。Role 只绑定一次运行时，之后只在该运行时内调整：Role 的 skill 随时可改，Session 的模型修订目前只在 Codex 实现，Claude Session 沿用创建时的模型；不能换成另一种运行时。Session 一直按创建时的运行时分发。未列入 `providers` 的运行时，其 Session 保持可读但不被驱动，绑定到它的 Role 也不能新建 Session。原生会话输入与浏览器读取桥只属于 Codex，只驱动 Claude 时不能开启。迁移 067 把既有 Session 记为 `codex`；068 按既有 Session 的运行时为已有 Role 写入首个绑定，优先未关闭的 Session，未关闭 Session 横跨两种运行时的 Role 保持未绑定，等一侧关闭后再绑定。两者须在新服务启动前依序应用。
 
@@ -132,7 +139,7 @@ Role 的 skill 选择决定每个 Turn 放进模型上下文的 skill，用 `rol
 
 ## 受管 worker 只读浏览器候选
 
-这是为本机 GUI 体验任务增加的可选实验入口。常规任务仍使用业务 skill＋CLI；浏览器不替代 `worker.submit` 或独立消费者的 used 观察。当前 origin 固定为 `http://127.0.0.1:55431`，不是任意站点浏览能力。启用前核对所选安装版本及实验 schema、实验初始化与动态工具声明，再按下表准备精确 scope；隔离检查通过后还须真实 worker 调用和原路径验收。
+这是为本机 GUI 体验任务增加的可选实验入口。常规任务仍使用业务 skill＋CLI；浏览器不替代 `worker.submit` 或独立消费者的 used 观察。当前 origin 固定为一个本机回环地址（`apps/coordinator/src/runtime/browser-read.ts` 的 `BROWSER_ORIGIN`），不是任意站点浏览能力。启用前核对所选安装版本及实验 schema、实验初始化与动态工具声明，再按下表准备精确 scope；隔离检查通过后还须真实 worker 调用和原路径验收。
 
 在既有 runtime 配置中额外提供 `browserRead: { scopePath, playwrightModulePath }`。两者为绝对路径；scope 放仓库外、当前用户所有的普通 `0600` 文件，拒绝符号链接。`playwrightModulePath` 指向明确安装且核过的 Playwright 模块入口，Chromium 由该安装提供；未配置时不加载它，不为此全局安装技能、插件或依赖。
 
