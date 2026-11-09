@@ -61,3 +61,10 @@ export function runtimeCommand(view: RoleRuntimeView, values: Record<string, str
     skills: { project: values.project === "on", personal: values.personal === "on", builtin: values.builtin === "on",
       add: names(values.add ?? ""), remove: names(values.remove ?? "") }, reason: values.reason };
 }
+
+/** The line shown under the saved form: it survives the form remount that follows a new revision. */
+export function savedRuntimeNotice(saved: boolean, loading: boolean, view: RoleRuntimeView | null): string | null {
+  if (!saved) return null;
+  if (loading) return "已保存，正在读取新修订…";
+  return view?.binding ? `已保存；回读到第 ${view.binding.revision} 次修订。` : null;
+}
