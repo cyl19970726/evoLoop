@@ -9,7 +9,7 @@ import { api, errorText } from "../../shared/api";
 import { date, href } from "../../shared/ui/shared";
 import { appendLeaderWorkPage, leaderPhaseLabel, loadLeaderWorkStatuses } from "../../shared/leaderWorkLoad";
 import type { WorkTaskStatus } from "../../shared/workStatusPresentation";
-import { workNextStep } from "../../shared/workPresentation";
+import { workItemNextStep } from "../../shared/workPresentation";
 import { isRoleOwnerId } from "../../shared/ownerRole";
 import { FullIdentifiers } from "../../shared/ui/FullIdentifiers";
 import { ResponsibleName, RoleName } from "../../shared/ui/RecordName";
@@ -164,7 +164,7 @@ export function ProjectContext({ token, projectId, refresh, active }: { token: s
           {attention ? <>
             <span className={pill}>{leaderPhaseLabel[attention.phase]}</span>
             <h3 className="text-body font-semibold"><a href={href(projectId, "task", attention.taskId)} className="text-foreground hover:underline">{attention.title}</a></h3>
-            <p className="text-small text-text-secondary">{workNextStep(attention.phase)}</p>
+            <p className="text-small text-text-secondary">{workItemNextStep(attention)}</p>
             <p className={muted}>下一责任：<ResponsibleName projectId={projectId} item={attention} /></p>
             {attention.review?.decision === "deferred" && <details className="text-small"><summary className="cursor-pointer text-text-secondary">已暂缓的原因</summary><p className="mt-1 text-text-secondary">{attention.review.reason}</p></details>}
             <a className="mt-auto flex w-fit items-center gap-1 text-small font-medium text-foreground hover:underline" href={`${href(projectId, "task", attention.taskId)}${attention.delivery ? "?tab=delivery" : ""}`}>{attention.delivery ? "核对交付与使用" : "查看当前工作"} <ArrowRight size={14} aria-hidden="true" /></a>

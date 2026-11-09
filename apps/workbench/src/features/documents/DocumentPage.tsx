@@ -15,6 +15,8 @@ import { fixedContent, queryKeys, useProjectQuery } from "../../shared/query";
 import { href } from "../../shared/routes";
 import { useContextPanel } from "../../shared/ui/ContextPanel";
 import { MarkdownBody } from "../../shared/ui/MarkdownBody";
+import { readingProse, readingSource } from "../../shared/ui/readingProse";
+import { useRereadOnReturn } from "../../shared/ui/rereadOnReturn";
 import { date, documentReturnHref } from "../../shared/ui/shared";
 import { DocumentFacts } from "./DocumentFacts";
 import { DocumentRail } from "./DocumentRail";
@@ -23,20 +25,6 @@ import { Foot, HtmlReport } from "./HtmlReport";
 import { kindText, lifecycleLabel, lifecycleTone, markdownSource, readingStanding, returnSourceLabel } from "./documentPresentation";
 import { readProblem } from "./useDocumentList";
 import { useOriginal } from "./useOriginal";
-import { useRereadOnReturn } from "./useRereadOnReturn";
-
-/** Markdown typography on design tokens. MarkdownBody keeps its own rendering and link rules. */
-const prose = cn("text-body leading-(--leading-reading) text-foreground",
-  "[&_:is(p,li,td,th,h1,h2,h3,h4,dt,dd)]:text-foreground",
-  "[&_h1]:mb-3 [&_h1]:mt-9 [&_h1]:text-heading [&_h1]:font-semibold [&_h1]:leading-(--leading-tight)",
-  "[&_h2]:mb-3 [&_h2]:mt-9 [&_h2]:text-heading [&_h2]:font-semibold [&_h2]:leading-(--leading-tight)",
-  "[&_h3]:mb-2 [&_h3]:mt-7 [&_h3]:text-body [&_h3]:font-semibold",
-  "[&_h4]:mb-2 [&_h4]:mt-6 [&_h4]:font-semibold",
-  "[&_p]:my-3 [&_ul]:my-3 [&_ol]:my-3 [&_ul]:list-disc [&_ol]:list-decimal [&_ul]:pl-6 [&_ol]:pl-6 [&_li]:my-1",
-  "[&_a]:text-primary [&_a]:underline [&_a]:underline-offset-2",
-  "[&_code]:rounded-sm [&_code]:bg-muted [&_code]:px-1 [&_code]:font-mono [&_code]:text-small",
-  "[&_pre]:my-4 [&_pre]:overflow-x-auto [&_pre]:rounded-lg [&_pre]:bg-muted [&_pre]:p-4 [&_pre]:text-small [&_pre]:leading-(--leading-body) [&_pre_code]:bg-transparent [&_pre_code]:p-0",
-  "[&_table]:my-4 [&_table]:block [&_table]:max-w-full [&_table]:overflow-x-auto [&_th]:border [&_th]:border-border [&_th]:bg-muted [&_th]:px-3 [&_th]:py-1.5 [&_th]:text-left [&_th]:font-semibold [&_td]:border [&_td]:border-border [&_td]:px-3 [&_td]:py-1.5");
 
 function useDocument(projectId: string, id: string, selectedRevision?: string) {
   const detail = useProjectQuery(projectId, ["document", id, "detail"], async () => {
@@ -78,7 +66,7 @@ export function DocumentPage({ context, projectId, id, selectedRevision }: {
   const failure = detail.error ?? fixed.error;
   if (!detail.data || !revision) return <div data-ui="" className="mx-auto flex w-full max-w-[920px] flex-col gap-4 px-4 py-6 compact:px-8">
     {rail}{back}
-    {failure ? <ErrorState title="文档没有读回" happened={readProblem(failure, "该文档")} next="可以重试，或回到来源核对链接。"
+    {failure ? <ErrorState title="文档没有读回" happened={`${readProblem(failure, "该文档")}。`} next="可以重试，或回到来源核对链接。"
       action={<Button size="compact" onClick={reread}>重新读取</Button>} />
       : <LoadingState lines={6} label="正在读取文档" />}
   </div>;
@@ -152,18 +140,18 @@ function MarkdownText({ projectId, revision, title }: { projectId: string; revis
   const source = markdownSource(revision.body, original);
   const retry = () => void original.refetch();
   if (source.state === "reading") return <LoadingState lines={6} label="正在读取原件" />;
-  if (source.state === "failed") return <ErrorState title="原件没有读回" happened={readProblem(source.error, "这份原件")}
+  if (source.state === "failed") return <ErrorState title="原件没有读回" happened={`${readProblem(source.error, "这份原件")}。`}
     next="可以重试；正文要从固定原件读出，不用摘要代替。" action={<Button size="compact" onClick={retry}>重试读取</Button>} />;
   if (source.state === "unavailable") return <UnknownState title="原件暂时不能完整读取" lastKnown="这一版已登记原件"
     reason={`原件不可用或没有通过校验（${source.reason}）`} howToCheck="检查存储与登记状态后重新核对。"
     action={<Button size="compact" onClick={retry}>重新核对</Button>} />;
   return <Tabs defaultValue="rendered">
     <TabsList aria-label="阅读方式" className="mb-4"><TabsTrigger value="rendered">排版</TabsTrigger><TabsTrigger value="source">原文</TabsTrigger></TabsList>
-    <TabsContent value="rendered" className={prose}>
+    <TabsContent value="rendered" className={readingProse}>
       <MarkdownBody source={source.text} identity={revision.id} omitLeadingTitle={title} projectId={projectId} />
     </TabsContent>
     <TabsContent value="source">
-      <pre className="overflow-x-auto whitespace-pre-wrap rounded-lg bg-muted p-4 font-mono text-small leading-(--leading-body) [overflow-wrap:anywhere]">{source.text}</pre>
+      <pre className={readingSource}>{source.text}</pre>
     </TabsContent>
   </Tabs>;
 }

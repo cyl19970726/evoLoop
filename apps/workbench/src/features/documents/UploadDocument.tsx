@@ -1,7 +1,8 @@
 import { useState, type FormEvent } from "react";
 import type { CommandResult } from "@evoloop/contracts";
 import type { DocumentPayloadCommand } from "@evoloop/contracts/process-documents";
-import { ApiError, errorText, isUnconfirmed, request } from "../../shared/api";
+import { ApiError, errorDetail, errorText, isUnconfirmed, request } from "../../shared/api";
+import { describeFailure } from "../../shared/errorPresentation";
 import { Notice, type MutationContext } from "../../shared/ActionForm";
 
 const maxBytes = 16 * 1024 * 1024;
@@ -33,12 +34,14 @@ export function UploadDocument({ context, mode = "create", documentId, expectedV
   const [unknown, setUnknown] = useState(false);
   const [stale, setStale] = useState(false);
   const [message, setMessage] = useState("");
+  // The service's original answer when the message says it in Chinese (诊断信息).
+  const [detail, setDetail] = useState<string | null>(null);
   const canWrite = context.principal.permissions.includes("write");
   async function submit(event: FormEvent) {
     event.preventDefault();
     const form = event.currentTarget as HTMLFormElement;
     if (busy || unknown || stale || context.blocked || !canWrite) return;
-    setMessage("");
+    setMessage(""); setDetail(null);
     if (!main || !reason.trim() || mode === "create" && !title.trim() ||
       mode === "revise" && (!documentId || !expectedVersion)) { setMessage("请填写名称、理由并选择原件。"); return; }
     if (!safeName(main.name) || assets.some(file => !safeName(file.name)) ||
@@ -77,7 +80,8 @@ export function UploadDocument({ context, mode = "create", documentId, expectedV
         { method: "POST", body: JSON.stringify({ command, uploads }) });
       context.onKnown(operationId);
       if (result.status === "rejected") {
-        setMessage(result.message); setStale(result.code === "VERSION_CONFLICT");
+        const refusal = describeFailure(result.message, result.code, 409);
+        setMessage(`${refusal.text}。输入已保留。`); setDetail(refusal.detail); setStale(result.code === "VERSION_CONFLICT");
       } else {
         setTitle(""); setKind(""); setReason(""); setMain(null); setAssets([]); setFormat("markdown"); form.reset();
         setMessage("原件和固定修订已保存。"); context.onChanged();
@@ -86,9 +90,10 @@ export function UploadDocument({ context, mode = "create", documentId, expectedV
       const known = cause instanceof ApiError && rejected(cause.detail) ? cause.detail : null;
       if (!isUnconfirmed(cause) && attemptId) context.onKnown(attemptId);
       if (known) {
-        setMessage(known.message); setStale(known.code === "VERSION_CONFLICT");
+        const refusal = describeFailure(known.message, known.code, cause instanceof ApiError ? cause.status : 409);
+        setMessage(`${refusal.text}。输入已保留。`); setDetail(refusal.detail); setStale(known.code === "VERSION_CONFLICT");
       } else {
-        setMessage(`${errorText(cause)}${isUnconfirmed(cause) ? "。请先按已保存的操作 ID 核对结果；此表单不会重新提交。" : "。输入已保留。"}`);
+        setMessage(`${errorText(cause)}${isUnconfirmed(cause) ? "。请先按已保存的操作 ID 核对结果；此表单不会重新提交。" : "。输入已保留。"}`); setDetail(errorDetail(cause));
         if (isUnconfirmed(cause)) setUnknown(true);
       }
     } finally { setBusy(false); }
@@ -111,7 +116,7 @@ export function UploadDocument({ context, mode = "create", documentId, expectedV
     {context.blocked && <Notice>本项目有结果未确认的操作，请先核对回执。</Notice>}
     {stale && <Notice error>版本已变化；输入保持原样，请先回读当前修订。</Notice>}
     {unknown && <Notice error>结果尚未确认。请使用已保存的操作 ID 回读，不要重新上传。</Notice>}
-    {message && <Notice error={stale || unknown}>{message}</Notice>}
+    {message && <Notice error={stale || unknown}>{message}{detail && <details><summary>诊断信息</summary><code>{detail}</code></details>}</Notice>}
     <button className="primary" type="submit" disabled={busy || unknown || stale || context.blocked || !canWrite}>
       {busy ? "正在核验并上传…" : mode === "create" ? "导入原件" : "保存新修订"}</button>
   </form>;

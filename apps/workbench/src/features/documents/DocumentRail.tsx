@@ -30,8 +30,11 @@ function DocumentRailList({ projectId, scope, selectedId }: { projectId: string;
     <ReadingSpaceSwitch projectId={projectId} current="documents" className="mx-1" />
     <DocumentFilters state={state} update={update} />
     {list.error && <p role="alert" className="mx-1 rounded-md bg-danger-soft px-3 py-2 text-caption text-text-secondary">
-      列表本次没有读回：{list.error}。{list.items.length ? "下面是上次读到的列表。" : ""}
+      列表本次没有读回：{list.error}。{list.stale ? "下面是上次读回的列表，当前待核对。" : ""}
       <button type="button" className="ml-1 text-primary underline" onClick={() => void list.reread()}>重试</button></p>}
+    {list.pageError && <p role="alert" className="mx-1 rounded-md bg-danger-soft px-3 py-2 text-caption text-text-secondary">
+      后面一页没有读回：{list.pageError}。已载入的仍可查看。
+      {list.more && <button type="button" className="ml-1 text-primary underline" onClick={list.loadMore}>重试这一页</button>}</p>}
     {list.loading && !list.error && <p role="status" className="mx-1 text-caption text-muted-foreground">正在读取文档…</p>}
     {!list.loading && !shown && !list.error && <div className="mx-1 rounded-md bg-muted px-3 py-2.5 text-caption text-text-secondary">
       <p className="font-medium text-foreground">{empty.title}</p><p className="mt-0.5">{empty.reason}</p></div>}
@@ -44,10 +47,10 @@ function DocumentRailList({ projectId, scope, selectedId }: { projectId: string;
       </li>)}
     </ul>}
     <div className="mx-1 flex flex-col gap-1.5 text-caption text-muted-foreground">
-      <span>{coverageText({ loaded: list.items.length, matched: shown, filtered: list.filtered, more: list.more })}</span>
+      <span>{coverageText({ loaded: list.items.length, matched: shown, filtered: list.filtered, more: list.more, coverage: list.coverage })}</span>
       {list.checking && <RefreshingIndicator label={list.filtered && state.query.trim() ? "正在搜索后续页面" : "正在核对列表"} />}
       {list.searchLimited && <span>搜索已自动读到上限，结果可能不完整；可以继续载入。</span>}
-      {list.more && <Button variant="secondary" size="compact" className="self-start" disabled={list.checking} onClick={list.loadMore}>载入更多</Button>}
+      {list.more && !list.pageError && <Button variant="secondary" size="compact" className="self-start" disabled={list.checking} onClick={list.loadMore}>载入更多</Button>}
     </div>
   </section>;
 }

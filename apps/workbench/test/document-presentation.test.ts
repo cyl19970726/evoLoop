@@ -51,7 +51,8 @@ test("the return link names where it goes back to", () => {
   assert.equal(returnSourceLabel(`/p/${projectId}/documents`), "文档列表");
   assert.equal(returnSourceLabel(`/p/${projectId}/tasks/${projectId}?tab=runtime`), "任务");
   assert.equal(returnSourceLabel(`/p/${projectId}/sessions?session=owned:${projectId}&tab=results`), "智能体");
-  assert.equal(returnSourceLabel(`/p/${projectId}/runtime?session=owned:${projectId}`), "智能体");
+  assert.equal(returnSourceLabel(`/p/${projectId}/runtime?session=owned:${projectId}`), "分工与运行", "/runtime is 分工与运行 with or without a session");
+  assert.equal(returnSourceLabel(`/p/${projectId}/runtime?session=${projectId}`), "分工与运行");
   assert.equal(returnSourceLabel(`/p/${projectId}/runtime`), "分工与运行");
   assert.equal(returnSourceLabel(`/p/${projectId}/work`), "任务列表");
   assert.equal(returnSourceLabel("/"), "项目列表");

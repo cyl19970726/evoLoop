@@ -31,7 +31,7 @@ export function HtmlReport({ projectId, documentId, revisionId, foot }: {
       : original?.status === "unavailable" ? <UnknownState title="原件暂时不能完整读取" lastKnown="这一版已登记原件和资源清单"
         reason={`资源不可用或没有通过校验（${original.reason}）`} howToCheck="检查存储与登记状态后重新核对。"
         action={<Button size="compact" onClick={retry}>重新核对</Button>} />
-      : query.isError ? <ErrorState title="原件没有读回" happened={errorText(query.error)} next="可以重试；正文要从固定原件读出，不用摘要代替。"
+      : query.isError ? <ErrorState title="原件没有读回" happened={`${errorText(query.error)}。`} next="可以重试；正文要从固定原件读出，不用摘要代替。"
         action={<Button size="compact" onClick={retry}>重试读取</Button>} />
       : <div className="flex-1 py-4"><LoadingState lines={6} label="正在读取原件及其资源" /></div>}
     <div className="flex flex-col gap-1.5">

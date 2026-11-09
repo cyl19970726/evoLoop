@@ -5,7 +5,7 @@ import React, { useContext, useEffect } from "react";
 import type { Document } from "@evoloop/contracts";
 import type { LeaderWorkDocument } from "@evoloop/contracts/work-index";
 import { Button, EmptyState, ErrorState, LoadingState, Notice, RefreshingIndicator, StatusTag, cn } from "@evoloop/ui";
-import { api } from "../../shared/api";
+import { api, errorDiagnostic } from "../../shared/api";
 import { loadLeaderDocumentsForIds } from "../../shared/leaderWorkLoad";
 import { useProjectQuery } from "../../shared/query";
 import { href } from "../../shared/routes";
@@ -20,21 +20,25 @@ import { readProblem, type useDocumentList } from "./useDocumentList";
 
 type List = ReturnType<typeof useDocumentList>;
 
-/** What the lifecycle index says about each shown document: its uses and the tasks that reference it. */
+/**
+ * What the lifecycle index says about each shown document: its uses and the tasks that reference it. Only this set's
+ * own answer counts (another set of rows is another key, read from nothing); a failed reread of this set keeps its
+ * answer as 上次读回 and never counts as complete, so no row concludes from it.
+ */
 function useDocumentUsage(projectId: string, documents: readonly Document[], status: DocumentListState["status"]) {
   const ids = documents.map(document => document.id).sort();
   const includeClosed = status === "all" || status === "archived";
   const usage = useProjectQuery(projectId, ["documents", "usage", includeClosed, ids.join(",")],
     () => loadLeaderDocumentsForIds(cursor => api().leaderWork(projectId, "documents", cursor, includeClosed), ids),
-    { enabled: ids.length > 0, keepPrevious: true });
+    { enabled: ids.length > 0 });
   const found = usage.data?.items ?? new Map<string, LeaderWorkDocument>();
   const matches = (document: Document): LeaderWorkDocument | undefined => {
     const projection = found.get(document.id);
     return projection && documentLifecycleMatches(document, projection) ? projection : undefined;
   };
-  const complete = !!usage.data?.complete && documents.every(document => !!matches(document));
-  return { matches, checking: usage.isFetching, partial: !usage.isFetching && ids.length > 0 && !complete,
-    error: usage.error ? readProblem(usage.error, "文档用途与关联工作") : "" };
+  const complete = !!usage.data?.complete && !usage.stale && documents.every(document => !!matches(document));
+  return { matches, checking: usage.isFetching, stale: usage.stale, partial: !usage.isFetching && ids.length > 0 && !complete,
+    error: usage.error ? readProblem(usage.error, "文档用途与关联工作") : "", diagnostic: usage.error ? errorDiagnostic(usage.error) : "" };
 }
 
 export function DocumentTable({ projectId, list, state, update, toolbar }: {
@@ -56,11 +60,16 @@ export function DocumentTable({ projectId, list, state, update, toolbar }: {
   const empty = emptyListText({ filtered: list.filtered, more: list.more });
   return <section aria-label="过程文档" aria-busy={list.loading || list.checking} className="flex flex-col gap-3">
     {toolbar}
-    {list.error && <ErrorState title="列表本次没有读回" happened={list.error} previousContentKept={list.items.length > 0}
-      next="可以重试；已显示的行只供核对，不能当作当前结果。" action={<Button size="compact" onClick={() => void list.reread()}>重试</Button>} />}
+    {list.error && <ErrorState title="列表本次没有读回" happened={`${list.error}。`} previousContentKept={list.stale}
+      next={list.stale ? "可以重试；已显示的行只供核对，不能当作当前结果。" : "可以重试；没有读回之前不能判断有哪些文档。"}
+      diagnostics={list.errorDetail ?? undefined} action={<Button size="compact" onClick={() => void list.reread()}>重试</Button>} />}
+    {list.pageError && <ErrorState title="后面一页没有读回" happened={`${list.pageError}。`}
+      next="已显示的行是读到的内容；后面的文档还没读到，可以只重试这一页。" diagnostics={list.errorDetail ?? undefined}
+      action={list.more ? <Button size="compact" disabled={list.checking} onClick={list.loadMore}>重试这一页</Button> : undefined} />}
     {list.searchLimited && <Notice tone="waiting">搜索已自动读到 {list.items.length} 项的上限，结果可能不完整；可以在表格下方继续载入。</Notice>}
-    {usage.partial && <Notice tone="waiting" title="用途与关联任务没有完整读回">没有资料的行显示为“待核对”，不代表没有引用。
-      {usage.error && <details className="mt-1 text-caption"><summary className="cursor-pointer">诊断信息</summary>{usage.error}</details>}</Notice>}
+    {usage.partial && <Notice tone="waiting" title={usage.stale ? "用途与关联任务这次没有重新读回" : "用途与关联任务没有完整读回"}>
+      {usage.stale ? "下面是上次读回的用途与引用，当前待核对，不代表现在的情况。" : "没有资料的行显示为“待核对”，不代表没有引用。"}
+      {usage.error && <details className="mt-1 text-caption"><summary className="cursor-pointer">诊断信息</summary>{usage.diagnostic}</details>}</Notice>}
     {list.loading && !list.error ? <LoadingState lines={5} label="正在读取文档" />
       : !list.visible.length && !list.error ? <EmptyState title={empty.title} reason={empty.reason}
         action={list.filtered ? <Button size="compact" onClick={() => update({ query: initialListState.query, kind: initialListState.kind, status: initialListState.status })}>清除筛选</Button> : undefined} />
@@ -88,7 +97,7 @@ export function DocumentTable({ projectId, list, state, update, toolbar }: {
                   {others.length > 0 && <li><details><summary className="cursor-pointer text-caption text-muted-foreground">另有 {others.length} 项任务引用</summary>
                     <ul className="mt-1 flex flex-col gap-1">{others.map(reference => <TaskReference key={reference.taskId} projectId={projectId}
                       taskId={reference.taskId} title={reference.title} relation={referenceText(reference.relations)} />)}</ul></details></li>}
-                </ul> : <span className="text-muted-foreground">还没有任务引用</span>
+                </ul> : <span className="text-muted-foreground">{usage.stale ? "上次读回时还没有任务引用" : "还没有任务引用"}</span>
                   : <span className="text-muted-foreground">{usage.checking ? "正在核对…" : "待核对"}</span>}
                 {owner && <span className="mt-1 block">{owner}</span>}
               </td>
@@ -101,11 +110,11 @@ export function DocumentTable({ projectId, list, state, update, toolbar }: {
       </div>}
     <div className="flex flex-wrap items-center justify-between gap-3 text-caption text-muted-foreground">
       <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
-        <span>{coverageText({ loaded: list.items.length, matched: list.visible.length, filtered: list.filtered, more: list.more })}</span>
+        <span>{coverageText({ loaded: list.items.length, matched: list.visible.length, filtered: list.filtered, more: list.more, coverage: list.coverage })}</span>
         {list.checking ? <RefreshingIndicator label={state.query.trim() ? "正在搜索后续页面；结果尚未完整" : "正在核对列表；已显示的是上次读到的内容"} />
           : list.observedAt && <span>列表读于 {list.observedAt.toLocaleString("zh-CN")}</span>}
       </span>
-      {list.more && <Button size="compact" disabled={list.checking} onClick={list.loadMore}>载入更多</Button>}
+      {list.more && !list.pageError && <Button size="compact" disabled={list.checking} onClick={list.loadMore}>载入更多</Button>}
     </div>
   </section>;
 }

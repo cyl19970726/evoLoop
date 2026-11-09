@@ -7,6 +7,8 @@ import { Button, EmptyState, Logo, Notice } from "@evoloop/ui";
 import type { Operation, Principal, Project } from "@evoloop/contracts";
 import { api, errorText } from "../../shared/api";
 import { ActionForm, type MutationContext } from "../../shared/ActionForm";
+import { serviceErrorCodes } from "../../shared/errorCodes";
+import { registerErrorCodes } from "../../shared/errorPresentation";
 import { queryKeys } from "../../shared/query";
 import { date, href } from "../../shared/ui/shared";
 import { FullIdentifiers } from "../../shared/ui/FullIdentifiers";
@@ -16,8 +18,11 @@ import { projectInitial } from "../shell/spaces";
 import { DevelopmentBanner } from "./AuthGate";
 import { OperationCheck } from "./OperationCheck";
 
-export function ProjectChooser({ token, principal, receipts, operationNotice, onRefreshSession, onConfirmed, context, logout }: {
-  token: string; principal: Principal; receipts: OperationReceipt[]; operationNotice: string; onRefreshSession: () => Promise<void>;
+// The service codes in words load with the project list, not with the sign-in page (shared/errorCodes.ts).
+registerErrorCodes(serviceErrorCodes);
+
+export function ProjectChooser({ token, principal, receipts, operationNotice, operationDetail = null, onRefreshSession, onConfirmed, context, logout }: {
+  token: string; principal: Principal; receipts: OperationReceipt[]; operationNotice: string; operationDetail?: string | null; onRefreshSession: () => Promise<void>;
   onConfirmed: (receipt: OperationReceipt, result: Operation["result"]) => void; context: MutationContext; logout: () => void;
 }) {
   const [refreshing, setRefreshing] = useState(false);
@@ -61,7 +66,7 @@ export function ProjectChooser({ token, principal, receipts, operationNotice, on
         </Button>
       </div>
       {refreshError && <Notice tone="error">刷新失败：{refreshError}</Notice>}
-      {operationNotice && <Notice>{operationNotice}</Notice>}
+      {operationNotice && <Notice>{operationNotice}{operationDetail && <details className="mt-1 text-caption"><summary className="cursor-pointer">诊断信息</summary><code className="break-all font-mono">{operationDetail}</code></details>}</Notice>}
       {receipts.map(receipt => <OperationCheck key={receipt.operationId} receipt={receipt} token={token} onConfirmed={result => { onConfirmed(receipt, result); reread(); }} />)}
       {reading && list.data && <p role="status" className="text-caption text-muted-foreground">正在核对授权项目；下面是上次读取的列表。</p>}
       {reading && !list.data && <p role="status" className="text-small text-muted-foreground">正在读取你有权限的项目…</p>}

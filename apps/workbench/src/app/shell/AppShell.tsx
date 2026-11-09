@@ -18,6 +18,11 @@ import {
   inboxNavigation, leafOf, projectInitial, rememberSpace, sectionLabels, spaceHref, spaceLabels, spaceOf, workNavigation, workSectionOf,
   type NavItem, type Space,
 } from "./spaces";
+import { serviceErrorCodes } from "../../shared/errorCodes";
+import { registerErrorCodes } from "../../shared/errorPresentation";
+
+// The service codes in words load with the workspace, not with the sign-in page (shared/errorCodes.ts).
+registerErrorCodes(serviceErrorCodes);
 
 export interface AppShellProps {
   route: Route; projectId: string; projectTitle: string; actor: string; permissions: readonly string[];
@@ -160,7 +165,7 @@ function ContextRail(props: AppShellProps & { space: Space; sessionState: Sessio
         <span aria-hidden="true" className="flex size-[30px] shrink-0 items-center justify-center rounded-[9px] bg-accent font-semibold text-accent-foreground">{projectInitial(props.projectTitle)}</span>
         <span className="flex min-w-0 flex-1 flex-col">
           <span className="truncate font-semibold" title={props.projectTitle}>{props.projectTitle || "正在读取项目…"}</span>
-          <span className="text-caption text-muted-foreground">本机 · 所在机器待接入</span>
+          <span className="text-caption text-muted-foreground">切换项目</span>
         </span>
         <ChevronsUpDown size={14} aria-hidden="true" className="shrink-0 text-muted-foreground" />
       </a>
@@ -227,12 +232,15 @@ function AccountMenu({ projectId, actor, permissions, receiptCount, logout, trig
 
 export interface ShellNoticeItem {
   key: string; tone?: NoticeTone; text: string;
+  /** The service's original answer behind `text`, shown folded as 诊断信息. */
+  detail?: string | null;
   link?: { href: string; label: string }; button?: { label: string; onClick: () => void; quiet?: boolean };
 }
 
 /** A notice above every page in the shell: unconfirmed operations, storage problems, project read failures. */
-function ShellNotice({ tone = "info", link, button, text }: Omit<ShellNoticeItem, "key">) {
+function ShellNotice({ tone = "info", link, button, text, detail }: Omit<ShellNoticeItem, "key">) {
   const action = link ? <Button asChild size="compact"><a href={link.href}>{link.label}</a></Button>
     : button ? <Button size="compact" variant={button.quiet ? "ghost" : "secondary"} onClick={button.onClick}>{button.label}</Button> : undefined;
-  return <div data-ui="" className="global-alert px-4 pt-3 compact:px-8"><Notice tone={tone} action={action}>{text}</Notice></div>;
+  return <div data-ui="" className="global-alert px-4 pt-3 compact:px-8"><Notice tone={tone} action={action}>{text}
+    {detail && <details className="mt-1 text-caption"><summary className="cursor-pointer">诊断信息</summary><code className="break-all font-mono">{detail}</code></details>}</Notice></div>;
 }

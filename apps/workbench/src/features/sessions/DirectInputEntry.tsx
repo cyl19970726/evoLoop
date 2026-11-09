@@ -20,7 +20,9 @@ const readAudit = (value: string | null): ExplicitAudit | null => {
 const explicitReason = (error: unknown) => {
   const code = error instanceof ApiError && error.detail && typeof error.detail === "object"
     ? (error.detail as { code?: unknown }).code : null;
-  return typeof code === "string" ? `${code}：${errorText(error)}` : errorText(error);
+  // The audit receipt keeps the service's own words (errorText would say them in Chinese for the body).
+  const said = error instanceof Error && error.message.trim() ? error.message : errorText(error);
+  return typeof code === "string" ? `${code}：${said}` : said;
 };
 
 /** The original input ID survives a page reload. A lost acknowledgement never starts a new send. */

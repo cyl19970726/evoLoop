@@ -4,7 +4,7 @@ import type { LeaderWorkTask, LeaderWorkTaskTiming } from "@evoloop/contracts/wo
 import type { LeaderNotice } from "@evoloop/contracts/leader-notices";
 import { api, errorText, isUnconfirmed, request } from "../../shared/api";
 import { leaderPhaseLabel } from "../../shared/leaderWorkLoad";
-import { TaskTiming, timingDate, timingWaitingFor, waitingKindLabel } from "../../shared/taskTiming";
+import { TaskTiming, timingDate, timingWaitingFor, waitingKindLabel, waitingParty } from "../../shared/taskTiming";
 import { responsibleText, workItemNextStep } from "../../shared/workPresentation";
 import { ResponsibleName } from "../../shared/ui/RecordName";
 
@@ -16,8 +16,7 @@ const taskHref = (projectId: string, taskId: string) =>
 
 function attentionWaitingFor(item: TaskAttentionItem, revisionId: string, timing?: LeaderWorkTaskTiming): string {
   if (item.waitingOn) {
-    const kind = waitingKindLabel[item.waitingOn.kind as keyof typeof waitingKindLabel] ?? "责任未知";
-    return `${kind}${item.waitingOn.id ? ` · ${item.waitingOn.id}` : ""}`;
+    return waitingParty(item.waitingOn);
   }
   if (item.taskRevisionId === revisionId && timing?.current.stage === item.phase)
     return `${timingWaitingFor(timing)}（当前阶段）`;
@@ -162,7 +161,7 @@ export function TaskAttention({ token, projectId, detail, leader, canWrite, bloc
       <div className="task-attention-followup"><h3>跟进安排</h3>
         {followUpStale && <p className="task-attention-stale">旧跟进属于历史 Task 修订 {value.followUp!.taskRevisionId}。请核对当前任务后，以已有跟进版本 v{value.followUp!.version} 保存新安排。</p>}
         {followUpCurrent && <p>已记录：{followUpCurrent.decision === "checked" ? "已核对" : followUpCurrent.decision === "acted" ? "已采取行动" : "等待中"} · {followUpCurrent.actionTaken}{followUpCurrent.evidenceRef && ` · 依据 ${followUpCurrent.evidenceRef}`}</p>}
-        <p>等待 {followUpCurrent?.waitingOn ? `${waitingKindLabel[followUpCurrent.waitingOn.kind]}${followUpCurrent.waitingOn.id ? ` · ${followUpCurrent.waitingOn.id}` : ""}` : "责任未知"}</p>
+        <p>等待 {followUpCurrent?.waitingOn ? waitingParty(followUpCurrent.waitingOn) : "责任未知"}</p>
         <p>下一检查点 {timingDate(followUpCurrent?.nextCheckAt)}</p>
         {followUpCurrent?.releaseHandoff && <p>具备发布条件，等待维护者 · {timingDate(followUpCurrent.releaseHandoff.readyForPublicationAt)} · {followUpCurrent.releaseHandoff.recipient}</p>}
         <p>{publicationCurrent ? `已发布且有固定证据 · ${timingDate(followUpCurrent!.publication!.publishedAt)} · ${followUpCurrent!.publication!.publicationRef}`

@@ -6,7 +6,7 @@ import { ArrowLeft, PanelRight } from "lucide-react";
 import {
   Badge, Button, ErrorState, LoadingState, Notice, RefreshingIndicator, StatusTag, Tabs, TabsContent, TabsList, TabsTrigger, cn,
 } from "@evoloop/ui";
-import { errorText } from "../../shared/api";
+import { errorDetail, errorText } from "../../shared/api";
 import { useContextPanel } from "../../shared/ui/ContextPanel";
 import { MarkdownBody } from "../../shared/ui/MarkdownBody";
 import { readingProse, readingSource } from "../../shared/ui/readingProse";
@@ -44,7 +44,7 @@ export function KnowledgeReader({ projectId, read, fixed, returnHref, pendingTit
   if (!reading) return <div className="flex flex-col gap-4">
     {back}
     {read.error ? <ErrorState title="这一页没有读回" happened={`${errorText(read.error)}。`} next="可以重试，或回到列表重新打开。"
-      action={<Button size="compact" onClick={onReread}>重新读取</Button>} />
+      diagnostics={errorDetail(read.error) ?? undefined} action={<Button size="compact" onClick={onReread}>重新读取</Button>} />
       : <LoadingState lines={6} label={pendingTitle ? `正在读取「${pendingTitle}」` : "正在读取知识页"} />}
   </div>;
   const { page, current } = reading;
@@ -59,7 +59,7 @@ export function KnowledgeReader({ projectId, read, fixed, returnHref, pendingTit
         {back}
         <div className="flex items-center gap-1 text-caption text-muted-foreground">
           {read.previous ? <RefreshingIndicator label={`正在读取${pendingTitle ? `「${pendingTitle}」` : "所选页面"}；下面仍是上一页`} />
-            : read.checking ? <RefreshingIndicator label="正在核对这一页" /> : <span>读于 {new Date(read.observedAt).toLocaleTimeString("zh-CN", { hour12: false })}</span>}
+            : read.checking ? <RefreshingIndicator label="正在核对这一页" /> : <span>{failed ? "上次读于" : "读于"} {new Date(read.observedAt).toLocaleTimeString("zh-CN", { hour12: false })}</span>}
           <Button variant="ghost" size="compact" aria-label="重新读取这一页" onClick={onReread}>重新读取</Button>
           {panel && <Button variant="ghost" size="compact" aria-expanded={panel.open} onClick={() => panel.setOpen(!panel.open)}>
             <PanelRight aria-hidden="true" />来源与反例{challenges > 0 && <Badge className="ml-0.5">{challenges}</Badge>}</Button>}
