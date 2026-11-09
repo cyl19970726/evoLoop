@@ -2,7 +2,8 @@
 // stages read from the project, the tasks under a stage with their next step and responsibility in words, reviews,
 // drafts kept across selection, leaving and rereads, a slow and a failed reread kept as the last read, a version conflict
 // that rereads before the person keeps the draft, a stage accepted, one task.create sent from `?action=propose` with the
-// fields the earlier forms sent, and first reads that fail (tasks; stages alone). Runs at 1440, 1024 and 390.
+// fields the earlier forms sent, a later index page that fails, and first reads that fail (tasks; stages alone).
+// Runs at 1440, 1024 and 390.
 // Set EVOLOOP_JOURNEY_SCREENSHOT_DIR to keep screenshots. (Replaces journey-current-read.test.ts, which launched the
 // browser without the configured executable and read the old board.)
 import assert from "node:assert/strict";
@@ -40,7 +41,7 @@ test("目标与阶段 reads goals, stages and their tasks in words, keeps drafts
   skip: !modulePath && "Set EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE after building the workbench",
 }, async t => {
   const { chromium } = (await import(pathToFileURL(modulePath!).href)).default;
-  const state = { current: false, failRecords: false, failStages: false, failWork: false, delay: false, accepted: false, goalVersion: 1 };
+  const state = { current: false, failRecords: false, failStages: false, failWork: false, failSecondWorkPage: false, delay: false, accepted: false, goalVersion: 1 };
   const waiting: (() => void)[] = [];
   let delayStarted: (() => void) | null = null;
   const hold = () => new Promise<void>(done => { waiting.push(done); delayStarted?.(); });
@@ -67,13 +68,13 @@ test("目标与阶段 reads goals, stages and their tasks in words, keeps drafts
       else if (path === `${root}/work-management/index`) {
         if (url.searchParams.get("includeClosed") === "true") closedRead = true;
         if (state.delay) await hold();
-        if (state.failWork) { status = 503; value = { message: "工作索引暂不可读" }; }
-        else value = { items: [
+        const paged = state.failSecondWorkPage;
+        if (state.failWork || paged && url.searchParams.get("cursor") === "two") { status = 503; value = { message: "工作索引暂不可读" }; }
+        else value = { nextCursor: null, ...paged ? { nextCursor: "two" } : {}, items: [
           projection(taskWaiting, "核对首个版本的使用记录", state.current ? "closed" : "awaiting_acceptance", stageActive),
           projection(taskBlocked, "接上日程提醒", "blocked", stageActive, { dependencies: [{ taskId: taskBefore, title: "前置结果", state: "in_progress", currentRevisionId: taskBefore, acceptanceSatisfied: false }] }),
-          projection(taskClosed, "汇总试用反馈", "closed", stageReviewed),
-          projection(taskLoose, "零散的修补", "ready", null),
-        ], nextCursor: null, total: 4, counts: {}, changeSequence: 4, observedAt: stamp, partial: false };
+          ...paged ? [] : [projection(taskClosed, "汇总试用反馈", "closed", stageReviewed), projection(taskLoose, "零散的修补", "ready", null)],
+        ], total: 4, counts: {}, changeSequence: 4, observedAt: stamp, partial: false };
       }
       else if (path === `${root}/stages/${stageReviewed}/reviews`) value = [{ projectId, id: reviewId, stageId: stageReviewed, stageVersion: 3, supersedesReviewId: null,
         adopted: "每天打开工作台的人变多", rejected: "提醒能代替使用", gap: "缺少周末数据", nextChoice: "stop", evidence: "试用记录", reason: "阶段目标已达成", actorId: "leader-actor", createdAt: stamp }];
@@ -315,8 +316,19 @@ test("目标与阶段 reads goals, stages and their tasks in words, keeps drafts
   assert.match(await facts.innerText(), /任务\s*没有读回，无法判断/);
   await shot("journey-read-failed-1440");
 
+  // A later index page that cannot be read keeps the first page and says the tasks are only partly read.
+  state.failWork = false; state.failSecondWorkPage = true;
+  await page.reload();
+  await login();
+  await main.getByRole("heading", { level: 2, name: "首个可用版本" }).waitFor();
+  await main.locator("[data-work-partial]").waitFor({ timeout: 15000 });
+  assert.match(await main.locator("[data-work-partial]").innerText(), /任务只读了一部分（工作索引暂不可读）/);
+  assert.match(await tasks.innerText(), /核对首个版本的使用记录/);
+  assert.match(await facts.innerText(), /任务\s*2 项，只读了一部分[\s\S]*不属于阶段的任务\s*0 项（已读部分）/);
+  state.failSecondWorkPage = false;
+
   // Stages that cannot be read leave the goals readable but conclude nothing about stages.
-  state.failWork = false; state.failStages = true;
+  state.failStages = true;
   await page.reload();
   await login();
   await main.getByRole("heading", { level: 1, name: "目标与阶段" }).waitFor();
