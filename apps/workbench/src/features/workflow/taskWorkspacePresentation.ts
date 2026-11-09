@@ -1,5 +1,5 @@
 import type { Task, TaskKind } from "@evoloop/contracts";
-import type { LeaderWorkTask } from "@evoloop/contracts/work-index";
+import type { LeaderWorkChange, LeaderWorkTask } from "@evoloop/contracts/work-index";
 import { leaderPhaseLabel } from "../../shared/leaderWorkLoad";
 
 const timestampFormat = new Intl.DateTimeFormat("zh-CN", {
@@ -40,6 +40,23 @@ export function currentProgressLabel(item: LeaderWorkTask | null | undefined, fa
   return ({ todo: "待办", in_progress: "进行中", done: "已完成", cancelled: "已取消" } as const)[fallback];
 }
 
+/** What kind of record the latest progress came from, in words (the service's own wording per kind). */
+const progressKindLabel: Record<LeaderWorkChange["entityKind"], string> = {
+  task: "任务内容或状态更新", document: "关联文档事件更新", assignment: "分派或接手更新", delivery: "交付已登记",
+  observation: "使用观察已登记", closure: "任务已关闭", run: "运行状态已更新", submission: "作者已提交封存意图",
+  impact: "依据影响已更新", queue: "队列状态已更新", plan: "工作计划已更新", dependency: "任务依赖已更新", review: "负责人核对已记录",
+};
+
+/**
+ * The latest progress event as a reader says it. The service names it in Chinese; a name that is not (an internal
+ * event name such as task.revised) is replaced by the wording for its record kind and never shown raw.
+ */
+export function progressEventName(progress: Pick<NonNullable<LeaderWorkTask["latestProgress"]>, "eventName" | "entityKind">): string {
+  const name = progress.eventName?.trim();
+  if (name && /[㐀-鿿]/.test(name)) return name;
+  return progressKindLabel[progress.entityKind] ?? "业务事件已更新";
+}
+
 export type LatestProgressPresentation = {
   name: string;
   time: string;
@@ -59,10 +76,10 @@ export function latestProgressPresentation(item: LeaderWorkTask | null | undefin
     unavailable: false, missing: true,
   };
   return {
-    name: item.latestProgress.eventName,
+    name: progressEventName(item.latestProgress),
     time: taskTimestamp(item.latestProgress.changedAt),
     fullTime: item.latestProgress.changedAt,
-    source: `事件 ${item.latestProgress.entityKind}`,
+    source: progressKindLabel[item.latestProgress.entityKind] ?? "业务事件",
     unavailable: false,
     missing: false,
   };

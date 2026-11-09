@@ -5,7 +5,7 @@ import test from "node:test";
 import type { HostLink } from "@evoloop/contracts/resident-hosts";
 import {
   alternativeKindText, evidenceKindText, handoffText, hostTitle, reviewDecisionText, roleActions, roleClassText, roleStateText,
-  actorText, revisionReasonText, roleTarget, routeStatusText, targetNotice, targetState,
+  actorText, revisionReasonText, roleTarget, routeStatusText, sourceRefTaskId, targetNotice, targetState,
 } from "../src/features/roles/rolePresentation.ts";
 
 const id = "30000002-0000-4000-8000-000000000002";
@@ -73,4 +73,12 @@ test("service-written revision reasons read as Chinese; a person's text stays; a
   assert.equal(actorText("lead", "lead"), "我");
   assert.equal(actorText("reviewer", "lead"), "reviewer");
   assert.equal(actorText(id, "lead"), "身份 30000002");
+});
+
+test("an evidence source that names a task is read as that task, never shown as task://<id>", () => {
+  assert.equal(sourceRefTaskId(`task://${id}`), id);
+  assert.equal(sourceRefTaskId(` task://${id.toUpperCase()} `), id.toUpperCase());
+  assert.equal(sourceRefTaskId("task://1"), null);
+  assert.equal(sourceRefTaskId("https://example.com/report"), null);
+  assert.equal(sourceRefTaskId(id), null);
 });

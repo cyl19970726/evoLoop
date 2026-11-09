@@ -125,7 +125,7 @@ function Reader({ context, projectId, detail, revision, body, rail, back, checki
         <section aria-label="文档完整正文" ref={body}>
           <MarkdownText projectId={projectId} revision={revision} title={document.title} />
         </section>
-        {revise && <details data-legacy="" className="workflow-detail mt-10"><summary>修订与发布</summary>{revise}</details>}
+        {revise && <details className="mt-10 border-t border-border pt-4"><summary className="w-fit cursor-pointer text-small font-medium text-foreground">修订与发布</summary><div className="mt-3">{revise}</div></details>}
       </>}
   </div>;
 }

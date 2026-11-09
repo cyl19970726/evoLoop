@@ -13,6 +13,7 @@ import { FactList, Legacy, PageSection, mutedText } from "../../shared/ui/PagePa
 import { SectionBoundary } from "../../shared/ui/SectionBoundary";
 import { AllocationBacklinks } from "../discussions";
 import { RolePresence } from "./RolePresence";
+import { SourceRef, SourceRefs, TaskLink } from "./SourceRef";
 import { ackHandoffForm, bindForm, decideForm, handoffForm, retireForm, reviewForm, type RoleForm } from "./roleForms";
 import {
   actorText, alternativeKindText, evidenceKindText, handoffText, reviewDecisionText, revisionReasonText, roleActions, roleClassText, roleIdPattern,
@@ -58,7 +59,7 @@ export function RoleDetail({ context, role, refresh, checking, roleTitle }: {
       {p.evidence.length > 0 && <ul aria-label="提出依据" className="flex flex-col gap-3">{p.evidence.map((item, index) => <li key={index} className="flex min-w-0 flex-col gap-0.5">
         <span className="text-small font-medium text-foreground">{evidenceKindText(item.kind)}</span>
         <span className="whitespace-pre-wrap break-words text-small text-text-secondary">{item.observation}</span>
-        <span className={`${mutedText} break-all`}>来源 {item.sourceRef} · 观察于 {stamp(item.observedAtUtc)}</span>
+        <span className={mutedText}>来源 <SourceRef projectId={context.projectId} sourceRef={item.sourceRef} /> · 观察于 {stamp(item.observedAtUtc)}</span>
       </li>)}</ul>}
       {p.alternatives.length > 0 && <FactList columns rows={p.alternatives.map(item => [`备选：${alternativeKindText(item.kind)}`, `${item.assessment}；估计成本 ${item.estimatedCost}`])} />}
     </PageSection>
@@ -110,14 +111,14 @@ function RoleHistory({ context, role, roleTitle }: { context: MutationContext; r
         <RevisionReason reason={item.reason} />, `${who(item.actorId)} · ${stamp(item.createdAtUtc)}`)))}
       {block("试行回看", "尚无回看；到期不会自动确认职责。", current.reviews.map(item => row(item.id, reviewDecisionText(item.decision), <>
         <span className="whitespace-pre-wrap break-words text-small text-text-secondary">效果：{item.effectEvidence}</span>
-        <span className="break-all text-caption text-text-secondary">效果来源：{item.effectEvidenceRefs.join("；")}</span>
+        <span className="text-caption text-text-secondary">效果来源：<SourceRefs projectId={context.projectId} refs={item.effectEvidenceRefs} /></span>
         <span className="whitespace-pre-wrap break-words text-small text-text-secondary">成本：{item.costEvidence}</span>
-        <span className="break-all text-caption text-text-secondary">成本来源：{item.costEvidenceRefs.join("；")}</span>
+        <span className="text-caption text-text-secondary">成本来源：<SourceRefs projectId={context.projectId} refs={item.costEvidenceRefs} /></span>
         <span className="whitespace-pre-wrap break-words text-small text-text-secondary">基线对比：{item.baselineComparison}</span>
       </>, `${who(item.actorId)} · ${stamp(item.createdAtUtc)}`)))}
       {block("交接", "尚无已登记交接事项。关闭前仍需核对未完任务、知识和在途智能体。", current.handoffs.map(item => row(item.id, handoffText(item), <>
         <span className="break-all text-small text-text-secondary">{item.kind === "task" && roleIdPattern.test(item.sourceRef)
-          ? <a href={href(context.projectId, "task", item.sourceRef)} className="text-primary hover:underline">任务 {item.sourceRef.slice(0, 8)}</a> : item.sourceRef}
+          ? <TaskLink projectId={context.projectId} taskId={item.sourceRef} /> : <SourceRef projectId={context.projectId} sourceRef={item.sourceRef} />}
           {" → "}<a href={`${href(context.projectId, "roles")}?role=${encodeURIComponent(item.targetRoleId)}`} className="text-primary hover:underline">接收职责 {roleTitle(item.targetRoleId) ?? item.targetRoleId.slice(0, 8)}</a></span>
         {item.state === "prepared" && <Legacy><ActionForm context={{ ...context, draftScope: `role:${role.id}:handoff:${item.id}` }} review {...ackHandoffForm(role, item)} /></Legacy>}
       </>, `登记于 ${stamp(item.preparedAtUtc)}${item.acknowledgedAtUtc ? ` · 确认于 ${stamp(item.acknowledgedAtUtc)}` : ""}`)))}

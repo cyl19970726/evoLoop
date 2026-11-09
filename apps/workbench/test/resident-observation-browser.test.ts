@@ -403,29 +403,29 @@ test("resident observation keeps acceptance, host authority and task replies dis
   assert.match(await pageBrowser.locator("[data-queue-meta]").innerText(),/累计尝试 2/);
   await queueItems.nth(0).getByRole("link",{name:/最近一次运行/}).click();
   await pageBrowser.locator(`#runtime-run-${taskA}-${runA}[open]`).waitFor();
-  await pageBrowser.locator(".task-collaboration-thread > summary").waitFor({timeout:5000}).catch(async () => {
+  await pageBrowser.locator("[data-task-collaboration] details > summary").first().waitFor({timeout:5000}).catch(async () => {
     assert.fail(`Task collaboration missing: ${await pageBrowser.locator("body").innerText()} ${pageErrors.join(" | ")}`);
   });
-  await pageBrowser.locator(".task-collaboration-thread > summary").click();
+  await pageBrowser.locator("[data-task-collaboration] details > summary").first().click();
   await pageBrowser.getByText(/提问 · 致 lead · 已答复/).waitFor();
-  await pageBrowser.getByText(/已记录采用至 Run/).waitFor();
-  await pageBrowser.getByText(/工程动作请求 · pr.merge · 有独立执行回执，结果另核/).waitFor();
+  await pageBrowser.getByText(/已记录采用到后续运行/).waitFor();
+  await pageBrowser.getByText(/工程动作请求 · 合并 · 有独立执行回执，结果另核/).waitFor();
   await pageBrowser.getByText(/工程动作决定 · 批准/).waitFor();
   await pageBrowser.getByText(/工程动作执行回执 · 结果未知/).waitFor();
-  await pageBrowser.getByText(/稳定操作 ID/).waitFor();
-  assert.equal(await pageBrowser.locator(".task-collaboration").evaluate(el=>el.scrollWidth<=el.clientWidth),true);
+  await pageBrowser.locator("[data-task-collaboration]").getByText("来源与完整标识").first().waitFor();
+  assert.equal(await pageBrowser.locator("[data-task-collaboration]").evaluate(el=>el.scrollWidth<=el.clientWidth),true);
   if (process.env.EVOLOOP_RESIDENT_SCREENSHOT) {
     await pageBrowser.addStyleTag({content:"[data-shell=mobile-header]{position:static!important}"});
-    await pageBrowser.locator(".task-collaboration").screenshot({path:process.env.EVOLOOP_RESIDENT_SCREENSHOT});
+    await pageBrowser.locator("[data-task-collaboration]").screenshot({path:process.env.EVOLOOP_RESIDENT_SCREENSHOT});
   }
   await fetch(`${base}/__fixture/fail-discussions`);
   await pageBrowser.getByRole("button",{name:"重新读取协作"}).click();
-  await pageBrowser.getByText(/协作读取未完成.*上次读回/).waitFor();
+  await pageBrowser.getByText(/重新读取协作失败/).waitFor();
   assert.equal(await pageBrowser.getByText(/提问 · 致 lead · 已答复/).count(),1);
   await fetch(`${base}/__fixture/long-discussions`);
   await pageBrowser.evaluate(({projectId,taskB})=>{location.hash=`/p/${projectId}/tasks/${taskB}?tab=runtime`;},{projectId,taskB});
-  await pageBrowser.getByText(/协作列表已达 20 页或 20 个关联频道上限/).waitFor();
-  assert.equal(await pageBrowser.getByText("当前没有已登记的任务协作频道。").count(),0);
+  await pageBrowser.getByText(/协作列表已读到 20 页或 20 个关联频道的上限/).waitFor();
+  assert.equal(await pageBrowser.getByText("这项任务还没有登记协作频道。").count(),0);
   await pageBrowser.evaluate(({projectId})=>{location.hash=`/p/${projectId}/roles?role=javascript%3Aalert(1)`;},{projectId});
   await pageBrowser.getByText(/目标职责 ID 无效；没有定位到其他职责/).waitFor();
   await pageBrowser.evaluate(({projectId})=>{location.hash=`/p/${projectId}/roles?role=ffffffff-ffff-ffff-ffff-ffffffffffff`;},{projectId});

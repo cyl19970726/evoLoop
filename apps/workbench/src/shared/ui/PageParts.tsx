@@ -40,7 +40,10 @@ export function FactList({ rows, columns = false }: { rows: Array<[string, React
   </dl>;
 }
 
-/** Old markup (the shared command forms, panels of other pages) kept inside a rebuilt page until it is rebuilt too. */
+/**
+ * Old markup kept inside a rebuilt page until it is rebuilt too: the shared command form (ActionForm) and the document
+ * upload form on 职责, 分工与运行 and 过程文档, and the allocation backlinks on 职责. Remove it when they are rebuilt.
+ */
 export function Legacy({ children, className }: { children: ReactNode; className?: string }) {
   return <div data-legacy="" className={cn("workbench-layout min-w-0", className)}>{children}</div>;
 }

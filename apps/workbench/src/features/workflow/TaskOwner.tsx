@@ -1,68 +1,73 @@
-import { useEffect, useState } from "react";
-import type { RoleRecord, RoleSessionBinding } from "@evoloop/contracts/roles";
+// 负责职责与同职责的其他智能体 (tasks.md 当前工作): the task's owner Role, read by its exact identifier, and the managed
+// agents bound to that Role in this project. A Role is the standing division of work; who takes this task is in the
+// right column, so a bound agent is never presented as running it. Until the Role is confirmed no agent link is offered.
+import { useEffect, useRef } from "react";
+import type { RoleSessionBinding } from "@evoloop/contracts/roles";
 import type { RuntimeSessionRecord } from "@evoloop/contracts/runtime";
-import { ApiError, errorText, request } from "../../shared/api";
-import { href } from "../../shared/ui/shared";
+import { errorText, request } from "../../shared/api";
 import { isRoleOwnerId, readOwnerRole } from "../../shared/ownerRole";
-import "./task-owner.css";
+import { useProjectQuery } from "../../shared/query";
+import { runtimeClient } from "../../shared/runtimeClient";
+import { FullIdentifiers } from "../../shared/ui/FullIdentifiers";
+import { useSessionName } from "../../shared/ui/RecordName";
+import { href } from "../../shared/ui/shared";
+import { nameOnly } from "../../shared/workPresentation";
+import { boundAgents, ownerRoleProblem, ownerSessionState } from "./taskOwnerPresentation";
 
-const sessionState: Record<RuntimeSessionRecord["state"], string> = {
-  reserved: "已预留", creating: "创建中", ready: "就绪", closing: "关闭中", unknown: "状态未知", closed: "已关闭",
-};
+const note = "text-caption text-muted-foreground";
+const link = "text-primary hover:underline";
 
-export function TaskOwner({ token, projectId, owner, readKey, onResolved }: {
-  token: string; projectId: string; owner: string; readKey: string;
+function AgentLink({ projectId, session }: { projectId: string; session: RuntimeSessionRecord }) {
+  const key = `owned:${session.id}`;
+  const name = nameOnly("智能体", useSessionName(projectId, key));
+  return <a className={link} href={`${href(projectId, "sessions")}?session=${encodeURIComponent(key)}`}>{name}（{ownerSessionState[session.state]}）</a>;
+}
+
+export function TaskOwner({ projectId, owner, readKey, onResolved }: {
+  projectId: string; owner: string; readKey: string;
   onResolved?: (title: string | null) => void;
 }) {
-  const [role, setRole] = useState<RoleRecord | null>(null);
-  const [roleError, setRoleError] = useState("");
-  const [sessions, setSessions] = useState<RuntimeSessionRecord[]>([]);
-  const [sessionNote, setSessionNote] = useState("");
-  const [reading, setReading] = useState(false);
+  const isRole = isRoleOwnerId(owner);
+  // Same key and value as the role names elsewhere (useRoleName), so they share one read.
+  const role = useProjectQuery(projectId, ["role", owner, "title"], signal => readOwnerRole("", projectId, owner, signal), { enabled: isRole });
+  const confirmed = !!role.data && !role.error;
+  const bindings = useProjectQuery(projectId, ["role", owner, "bindings"], signal => request<RoleSessionBinding[]>("",
+    `/api/projects/${encodeURIComponent(projectId)}/roles/${encodeURIComponent(owner)}/bindings`, 15000, { signal }), { enabled: confirmed });
+  const sessions = useProjectQuery(projectId, ["runtime", "sessions"], async () =>
+    (await runtimeClient("", projectId).sessions()).filter(session => session.projectId === projectId), { enabled: confirmed });
+  // “重新读取当前任务” moves readKey: the owner is checked again with the task.
+  const firstKey = useRef(readKey);
   useEffect(() => {
-    let active = true;
-    setRole(null); setRoleError(""); setSessions([]); setSessionNote(""); setReading(isRoleOwnerId(owner));
-    onResolved?.(null);
-    if (!isRoleOwnerId(owner)) return () => { active = false; };
-    const base = `/api/projects/${encodeURIComponent(projectId)}`;
-    void (async () => {
-      try {
-        const found = await readOwnerRole(token, projectId, owner);
-        if (!active) return;
-        setRole(found);
-        onResolved?.(found.proposal.title.trim() || null);
-        try {
-          const [bindings, registered] = await Promise.all([
-            request<RoleSessionBinding[]>(token, `${base}/roles/${encodeURIComponent(owner)}/bindings`, 15000),
-            request<RuntimeSessionRecord[]>(token, `${base}/runtime/sessions`, 15000),
-          ]);
-          if (!active) return;
-          if (bindings.some(item => item.projectId !== projectId || item.roleId !== owner) || registered.some(item => item.projectId !== projectId))
-            throw new Error("智能体关联响应与当前项目不符");
-          const bound = new Set(bindings.map(item => item.sessionId));
-          const verified = registered.filter(item => bound.has(item.id) && item.roleId === owner);
-          setSessions(verified);
-          if (bound.size > verified.length)
-            setSessionNote("部分绑定记录未能核对到同项目、同职责的智能体；未提供其入口。");
-          else if (bound.size === 0) setSessionNote("该职责暂无已登记的智能体绑定；任务具体承接看右栏的承接智能体。");
-        } catch (cause) { if (active) setSessionNote(`智能体关联暂不可核对：${errorText(cause)}`); }
-      } catch (cause) {
-        if (active) {
-          onResolved?.(null);
-          setRoleError(cause instanceof ApiError && cause.status === 404 ? "未找到已登记职责" : `职责暂不可核对：${errorText(cause)}`);
-        }
-      } finally { if (active) setReading(false); }
-    })();
-    return () => { active = false; };
-  }, [token, projectId, owner, readKey]);
-  return <span className="task-owner-meta">
-    <span>责任者：{role ? <><a href={href(projectId, "roles")}>{role.proposal.title}</a> <code title={role.id}>{role.id.slice(0, 8)}</code></> : <code>{owner}</code>}
-      {reading && <small> · 正在核对职责与智能体…</small>}
-      {roleError && <small> · {roleError}</small>}</span>
-    {role && <span className="task-owner-sessions">
-      {sessions.map(item => <a key={item.id} href={`${href(projectId, "sessions")}?session=${encodeURIComponent(`owned:${item.id}`)}`}>已登记的智能体 {item.id.slice(0, 8)}（{sessionState[item.state]}）</a>)}
-      {sessionNote && <small>{sessionNote}</small>}
-      {sessions.length > 0 && <small>职责绑定不表示此任务正由该智能体运行。</small>}
-    </span>}
-  </span>;
+    if (firstKey.current === readKey || !isRole) return;
+    firstKey.current = readKey;
+    void role.refetch(); void bindings.refetch(); void sessions.refetch();
+  }, [readKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  const title = confirmed ? role.data!.proposal.title.trim() || null : null;
+  useEffect(() => { onResolved?.(title); }, [title]); // eslint-disable-line react-hooks/exhaustive-deps
+  let agents: ReturnType<typeof boundAgents> | null = null, agentProblem = "";
+  if (bindings.error || sessions.error) agentProblem = `智能体关联暂不可核对：${errorText(bindings.error ?? sessions.error)}`;
+  else if (bindings.data && sessions.data) {
+    try { agents = boundAgents(projectId, owner, bindings.data, sessions.data); }
+    catch (cause) { agentProblem = `智能体关联暂不可核对：${errorText(cause)}`; }
+  }
+  return <div data-task-owner-facts="" className="flex min-w-0 flex-col gap-2 text-label text-foreground [overflow-wrap:anywhere]">
+    <p>负责职责：{!isRole ? owner
+      : confirmed ? <a className={link} href={`${href(projectId, "roles")}?role=${encodeURIComponent(owner)}`}>{role.data!.proposal.title}</a>
+        : role.data ? <>{role.data.proposal.title}<span className={note}>（上次读回，当前待核对）</span></>
+          : role.error ? <span className="text-text-secondary">{ownerRoleProblem(role.error)}</span>
+            : <span className={note}>正在核对职责…</span>}</p>
+    {isRole && role.error && role.data && <p className={note} role="status">{ownerRoleProblem(role.error)}。职责核对前不提供同职责智能体的入口。</p>}
+    {confirmed && <div className="flex flex-col gap-1">
+      <p className={note}>同职责的其他智能体</p>
+      {agentProblem ? <p className={note} role="status">{agentProblem}</p>
+        : !agents ? <p className={note}>正在核对绑定的智能体…</p>
+          : <>
+            {agents.agents.length > 0 && <ul className="flex flex-wrap gap-x-4 gap-y-1">{agents.agents.map(session => <li key={session.id}><AgentLink projectId={projectId} session={session} /></li>)}</ul>}
+            {agents.note && <p className={note}>{agents.note}</p>}
+            {agents.agents.length > 0 && <p className={note}>职责绑定不表示此任务正由该智能体运行。</p>}
+          </>}
+    </div>}
+    <FullIdentifiers rows={[{ label: isRole ? "负责职责" : "责任者", value: owner },
+      ...(agents?.agents ?? []).map(session => ({ label: "绑定的智能体", value: session.id }))]} />
+  </div>;
 }

@@ -1,122 +1,128 @@
-import { useEffect, useRef, useState } from "react";
+// 当前工作 › 进展与讨论 › 协作与待处理问题 (tasks.md): the task's collaboration channels, each with its messages,
+// receipts and engineering action requests in order. Read only: replies and receipts are written by the agents through
+// the CLI. Everything here is what the records say; an approval is not an execution and a read receipt is not use.
+import { useEffect, useRef, type ReactNode } from "react";
 import type { DiscussionEvent, DiscussionRecord, TaskCollaborationPayload } from "@evoloop/contracts/discussions";
-import { api, errorText } from "../../shared/api";
+import { Button, ErrorState, LoadingState, Notice, RefreshingIndicator } from "@evoloop/ui";
+import { errorText } from "../../shared/api";
+import { useProjectQuery } from "../../shared/query";
+import { FullIdentifiers, type IdentifierRow } from "../../shared/ui/FullIdentifiers";
+import { useSessionName } from "../../shared/ui/RecordName";
+import { nameOnly } from "../../shared/workPresentation";
 import { date, href } from "../../shared/ui/shared";
-import "./taskCollaboration.css";
+import {
+  actionRequestState, actionTypeLabel, executionStateLabel, isAnswered, messageKindLabel, readTaskCollaboration, receiptStageLabel,
+  threadSummary, type CollaborationThread,
+} from "./taskCollaborationPresentation";
 
-type Thread = { record: DiscussionRecord; events: DiscussionEvent[] };
 type DocumentRef = { documentId: string; revisionId: string };
-const key = encodeURIComponent;
-const short = (id: string) => id.slice(0, 8);
-const kindLabel = { question: "提问", answer: "答复", progress: "进展", blocker: "阻塞", handoff: "交接", result: "结果" };
-const stageLabel = { received: "已收到", read: "已阅读", adopted: "已采用", resolved: "已解决" };
-const actionLabel = { started: "已开始", succeeded: "已完成", failed: "执行失败", unknown: "结果未知" };
-function fixedDocument(projectId: string, reference: DocumentRef, label: string) {
-  return <a href={href(projectId, "document", reference.documentId, reference.revisionId)}>{label} · 固定修订 {short(reference.revisionId)}</a>;
+const note = "text-caption text-muted-foreground";
+const link = "text-primary hover:underline";
+
+function FixedDocument({ projectId, reference, label }: { projectId: string; reference: DocumentRef; label: string }) {
+  return <a className={link} href={href(projectId, "document", reference.documentId, reference.revisionId)}>{label}（固定修订）</a>;
 }
 
-export function TaskCollaborationThread({ token, projectId, taskId, refresh }: { token: string; projectId: string; taskId: string; refresh: number }) {
-  const [threads, setThreads] = useState<Thread[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-  const [partial, setPartial] = useState(false);
-  const [observedAt, setObservedAt] = useState("");
-  const [readVersion, setReadVersion] = useState(0);
+function AgentName({ projectId, sessionId }: { projectId: string; sessionId: string }) {
+  return <>{nameOnly("智能体", useSessionName(projectId, `owned:${sessionId}`))}</>;
+}
+
+function JumpTo({ eventId, children }: { eventId: string; children: ReactNode }) {
+  return <button type="button" className={link} onClick={() => document.getElementById(`collaboration-event-${eventId}`)?.scrollIntoView({ block: "center" })}>{children}</button>;
+}
+
+export function TaskCollaborationThread({ projectId, taskId, refresh }: { projectId: string; taskId: string; refresh: number }) {
+  const read = useProjectQuery(projectId, ["task", taskId, "collaboration"], () => readTaskCollaboration(projectId, taskId));
   const rootRef = useRef<HTMLElement>(null);
+  // The page's “重新读取当前任务” moves `refresh`; coming back to the window rereads what is on screen.
+  const firstRefresh = useRef(refresh);
   useEffect(() => {
-    let active = true;
-    const client = api(token);
-    setLoading(true); setError(""); setPartial(false);
-    void (async () => {
-      let cursor: string | undefined;
-      const seen = new Set<string>();
-      const matches = new Map<string, DiscussionRecord>();
-      let pages = 0, truncated = false;
-      do {
-        const page = await client.discussions(projectId, cursor);
-        if (!active) return;
-        if (page.items.length > 50 || page.items.some(record => record.projectId !== projectId)) throw new Error("协作分页响应与当前项目不符");
-        for (const record of page.items) if (record.kind === "task_collaboration" && record.task?.id === taskId) {
-          if (!matches.has(record.id) && matches.size >= 20) { truncated = true; continue; }
-          matches.set(record.id, record);
-        }
-        pages++;
-        if (page.nextCursor && (page.nextCursor === cursor || seen.has(page.nextCursor))) throw new Error("协作分页游标重复，读取未完成");
-        if (page.nextCursor) seen.add(page.nextCursor);
-        cursor = page.nextCursor ?? undefined;
-        if (truncated || cursor && (pages >= 20 || matches.size >= 20)) { truncated = true; break; }
-      } while (cursor);
-      if (!active) return;
-      const result: Thread[] = [];
-      for (const record of matches.values()) {
-        const [current, events] = await Promise.all([client.discussion(projectId, record.id), client.discussionEvents(projectId, record.id)]);
-        if (!active) return;
-        if (current.projectId !== projectId || current.id !== record.id || current.task?.id !== taskId ||
-          events.some(event => event.projectId !== projectId || event.discussionId !== record.id)) throw new Error("任务协作详情响应不匹配");
-        result.push({ record: current, events: [...events].sort((a, b) => a.version - b.version) });
-        setThreads([...result]);
-      }
-      if (active) { setThreads(result); setPartial(truncated); setObservedAt(new Date().toLocaleString("zh-CN")); setLoading(false); }
-    })().catch(cause => { if (active) { setError(errorText(cause)); setLoading(false); } });
-    return () => { active = false; };
-  }, [token, projectId, taskId, refresh, readVersion]);
+    if (firstRefresh.current === refresh) return;
+    firstRefresh.current = refresh;
+    void read.refetch();
+  }, [refresh]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
-    const reread = () => { if (document.visibilityState === "visible" && rootRef.current?.getClientRects().length) setReadVersion(value => value + 1); };
+    const reread = () => { if (document.visibilityState === "visible" && rootRef.current?.getClientRects().length) void read.refetch(); };
     window.addEventListener("focus", reread);
     return () => window.removeEventListener("focus", reread);
-  }, []);
-  return <section className="task-collaboration" ref={rootRef} aria-label="任务协作与待处理问题">
-    <div className="task-collaboration-head"><h3>协作与待处理问题</h3><button type="button" onClick={() => setReadVersion(value => value + 1)}>重新读取协作</button></div>
-    <p className="task-collaboration-observed">{loading ? "正在读取协作…" : observedAt ? `协作读于 ${observedAt}` : "协作尚未读回"}</p>
-    {error && <p className="task-collaboration-error" role="alert">协作读取未完成：{error}。以下是已读范围或上次读回，不能视为完整当前状态。</p>}
-    {partial && <p className="task-collaboration-error" role="status">协作列表已达 20 页或 20 个关联频道上限；结果未完整，不能据此判断没有其他问题。</p>}
-    {!loading && !error && !partial && threads.length === 0 && <p className="empty">当前没有已登记的任务协作频道。</p>}
-    {threads.map(({ record, events }) => <ThreadCard key={record.id} record={record} events={events} projectId={projectId} />)}
+  }, [read.refetch]); // eslint-disable-line react-hooks/exhaustive-deps
+  const data = read.data;
+  return <section ref={rootRef} aria-label="任务协作与待处理问题" data-task-collaboration="" className="flex min-w-0 flex-col gap-3">
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+      <h3 className="text-body font-semibold text-foreground">协作与待处理问题</h3>
+      <span className={note}>{data ? `协作读于 ${date(new Date(read.dataUpdatedAt).toISOString())}` : read.isPending ? "正在读取协作…" : "协作尚未读回"}</span>
+      <Button size="compact" variant="ghost" className="ml-auto" disabled={read.isFetching} onClick={() => void read.refetch()}>重新读取协作</Button>
+    </div>
+    {read.isPending && <LoadingState lines={2} label="正在读取协作" />}
+    {read.error && !data && <ErrorState title="协作暂不可读取" happened={errorText(read.error)}
+      next="可以重新读取；读取失败不代表这项任务没有协作或待答问题。" action={<Button size="compact" onClick={() => void read.refetch()}>重新读取</Button>} />}
+    {read.error && data && <Notice tone="waiting" title="上次读回，当前待核对">重新读取协作失败：{errorText(read.error)}。下面是上次读回的协作，不能视为当前状态。</Notice>}
+    {read.checking && !read.error && <RefreshingIndicator label="正在核对协作" />}
+    {data?.partial && <Notice tone="waiting">协作列表已读到 20 页或 20 个关联频道的上限，结果不完整，不能据此判断没有其他问题。</Notice>}
+    {data && !data.partial && data.threads.length === 0 && <p className="text-label text-text-secondary">这项任务还没有登记协作频道。</p>}
+    {data && data.threads.length > 0 && <ul className="flex flex-col">
+      {data.threads.map(thread => <li key={thread.record.id}><ThreadItem projectId={projectId} thread={thread} /></li>)}
+    </ul>}
   </section>;
 }
 
-function ThreadCard({ record, events, projectId }: { record: DiscussionRecord; events: DiscussionEvent[]; projectId: string }) {
+function ThreadItem({ projectId, thread }: { projectId: string; thread: CollaborationThread }) {
+  const { record, events } = thread;
   const context = record.collaboration;
-  const messageKind = (event: DiscussionEvent) => event.collaborationPayload?.type === "message" ? event.collaborationPayload.kind : null;
-  const openQuestions = events.filter(event => messageKind(event) === "question" && !events.some(reply =>
-    reply.collaborationPayload?.type === "message" && reply.collaborationPayload.kind === "answer" && reply.collaborationPayload.replyToEventId === event.id));
-  return <details className="task-collaboration-thread">
-    <summary>{record.question || "任务协作"} · {openQuestions.length ? `${openQuestions.length} 个问题待答` : "无已读到的待答问题"} · v{record.version}</summary>
-    <p>固定任务修订 <a href={href(projectId, "task", record.task!.id, record.task!.revisionId)}>{short(record.task!.revisionId)}</a>
-      {context && <> · 派出者 {context.issuerActorId} · 接收者 {context.recipientActorId} · 原 Session <a href={`${href(projectId, "sessions")}?session=${key(`owned:${context.sessionId}`)}`}>{short(context.sessionId)}</a> · <a href={`${href(projectId, "task", record.task!.id)}?tab=runtime&run=${key(context.runId)}`}>Run {short(context.runId)}</a></>}</p>
-    {events.length === 0 && <p>频道已有记录，但尚无协作消息或回执。</p>}
-    <ol>{events.filter(event => event.collaborationPayload).map(event => <li key={event.id} id={`collaboration-event-${event.id}`}>
-      <EventContent event={event} events={events} projectId={projectId} />
-      <small>{event.actorId} · {date(event.createdAt)} · 事件 {short(event.id)}</small>
-    </li>)}</ol>
+  const task = record.task!;
+  const shown = events.filter(event => event.collaborationPayload);
+  return <details className="group border-t border-border py-3 first:border-t-0">
+    <summary className="cursor-pointer text-label font-medium text-foreground [overflow-wrap:anywhere]">{threadSummary(thread)}</summary>
+    <div className="mt-2 flex flex-col gap-3 pl-4">
+      <p className="text-label text-text-secondary [overflow-wrap:anywhere]">
+        <a className={link} href={href(projectId, "task", task.id, task.revisionId)}>频道固定的任务修订</a>
+        {context && <> · 派出者 {context.issuerActorId} · 接收者 {context.recipientActorId} · 原智能体 <a className={link}
+          href={`${href(projectId, "sessions")}?session=${encodeURIComponent(`owned:${context.sessionId}`)}`}><AgentName projectId={projectId} sessionId={context.sessionId} /></a>
+          {" · "}<a className={link} href={`${href(projectId, "task", task.id)}?tab=runtime&run=${encodeURIComponent(context.runId)}`}>发起这次协作的运行</a></>}
+      </p>
+      {shown.length === 0 && <p className="text-label text-text-secondary">频道已登记，但还没有协作消息或回执。</p>}
+      {shown.length > 0 && <ol className="flex flex-col gap-2">{shown.map(event => <li key={event.id} id={`collaboration-event-${event.id}`}
+        className="flex min-w-0 scroll-mt-20 flex-col gap-1 border-l-2 border-border py-1 pl-3 text-label text-foreground [overflow-wrap:anywhere]">
+        <EventContent projectId={projectId} taskId={task.id} event={event} events={events} />
+        <p className={note}>{event.actorId} · {date(event.createdAt)}</p>
+      </li>)}</ol>}
+      <FullIdentifiers rows={identifiers(record, shown)} />
+    </div>
   </details>;
 }
 
-function EventContent({ event, events, projectId }: { event: DiscussionEvent; events: DiscussionEvent[]; projectId: string }) {
+function identifiers(record: DiscussionRecord, events: DiscussionEvent[]): IdentifierRow[] {
+  const rows: IdentifierRow[] = [{ label: "协作频道", value: record.id }, { label: "固定任务修订", value: record.task?.revisionId }];
+  if (record.collaboration) rows.push({ label: "原智能体", value: record.collaboration.sessionId }, { label: "运行", value: record.collaboration.runId });
+  for (const event of events) {
+    rows.push({ label: "事件", value: event.id });
+    const payload = event.collaborationPayload;
+    if (payload?.type === "action_execution") rows.push({ label: "外部操作", value: payload.externalOperationId });
+    if (payload?.type === "action_request") rows.push({ label: "工作树", value: payload.scope.worktree });
+  }
+  return rows;
+}
+
+function EventContent({ projectId, taskId, event, events }: { projectId: string; taskId: string; event: DiscussionEvent; events: DiscussionEvent[] }) {
   const payload = event.collaborationPayload as TaskCollaborationPayload;
+  const title = (text: string) => <p className="font-medium">{text}</p>;
   if (payload.type === "message") {
-    const answered = payload.kind === "question" && events.some(reply => reply.collaborationPayload?.type === "message" &&
-      reply.collaborationPayload.kind === "answer" && reply.collaborationPayload.replyToEventId === event.id);
-    return <><strong>{kindLabel[payload.kind]} · 致 {payload.recipientActorId}{payload.kind === "question" ? answered ? " · 已答复" : " · 待答复" : ""}</strong>
-      <p>{fixedDocument(projectId, payload.body, "阅读消息正文")}</p>
-      {payload.replyToEventId && <p>回复 <button type="button" className="quiet" onClick={() => document.getElementById(`collaboration-event-${payload.replyToEventId}`)?.scrollIntoView({block:"center"})}>事件 {short(payload.replyToEventId)}</button></p>}</>;
+    const state = payload.kind === "question" ? isAnswered(event, events) ? " · 已答复" : " · 待答复" : "";
+    return <>{title(`${messageKindLabel[payload.kind]} · 致 ${payload.recipientActorId}${state}`)}
+      <p><FixedDocument projectId={projectId} reference={payload.body} label="阅读消息正文" />
+        {payload.replyToEventId && <> · <JumpTo eventId={payload.replyToEventId}>跳到所回复的消息</JumpTo></>}</p></>;
   }
-  if (payload.type === "receipt") return <><strong>{stageLabel[payload.stage]} · 消息 {short(payload.messageEventId)}</strong>
-    <p>{fixedDocument(projectId, payload.evidence, "阅读回执证据")}</p>
-    {payload.stage === "adopted" && payload.continuation && <p>已记录采用至 Run {short(payload.continuation.runId)} · Task 修订 {short(payload.continuation.taskRevisionId)}；实际运行仍需单独核对。</p>}</>;
-  if (payload.type === "action_request") {
-    const decision = events.find(candidate => candidate.collaborationPayload?.type === "action_decision" && candidate.collaborationPayload.requestEventId === event.id);
-    const decisionState = decision?.collaborationPayload?.type === "action_decision" ? decision.collaborationPayload.decision : null;
-    const execution = events.find(candidate => candidate.collaborationPayload?.type === "action_execution" && candidate.collaborationPayload.requestEventId === event.id);
-    return <><strong>工程动作请求 · {payload.actionType} · {execution ? "有独立执行回执，结果另核" : decisionState === "approved" ? "已批准，未见执行回执" : decisionState === "rejected" ? "已拒绝" : decisionState === "expired" ? "已过期" : "待明确决定"}</strong>
-    <p>请求执行者 {payload.executorActorId} · 仓库 {payload.scope.repository} · 工作树 <code>{payload.scope.worktree}</code></p>
-    <p>精确路径：{payload.scope.paths.join("、")} · 截止 {date(payload.expiresAt)}</p>
-    <p>{fixedDocument(projectId, payload.detail, "阅读动作范围与理由")}</p></>;
-  }
-  if (payload.type === "action_decision") return <><strong>工程动作决定 · {payload.decision === "approved" ? "批准" : payload.decision === "rejected" ? "拒绝" : "已过期"}</strong>
-    <p>针对请求 {short(payload.requestEventId)}；决定者 {event.actorId}。{fixedDocument(projectId, payload.evidence, "阅读决定依据")}</p></>;
-  return <><strong>工程动作执行回执 · {actionLabel[payload.state]}</strong>
-    <p>实际执行者 {event.actorId}</p>
-    <p>请求 {short(payload.requestEventId)} · 决定 {short(payload.decisionEventId)} · 稳定操作 ID <code>{payload.externalOperationId}</code></p>
-    <p>{fixedDocument(projectId, payload.artifact, "阅读执行产物")}</p></>;
+  if (payload.type === "receipt") return <>{title(`${receiptStageLabel[payload.stage]}回执`)}
+    <p><FixedDocument projectId={projectId} reference={payload.evidence} label="阅读回执证据" /> · <JumpTo eventId={payload.messageEventId}>跳到对应消息</JumpTo></p>
+    {payload.stage === "adopted" && payload.continuation && <p className="text-text-secondary">已记录采用到<a className={link}
+      href={`${href(projectId, "task", taskId)}?tab=runtime&run=${encodeURIComponent(payload.continuation.runId)}`}>后续运行</a>；实际运行仍需单独核对。</p>}</>;
+  if (payload.type === "action_request") return <>{title(`工程动作请求 · ${actionTypeLabel[payload.actionType] ?? "其他动作"} · ${actionRequestState(event, events)}`)}
+    <p className="text-text-secondary">请求执行者 {payload.executorActorId} · 仓库 {payload.scope.repository} · 截止 {date(payload.expiresAt)}</p>
+    <p className="text-text-secondary">精确路径：{payload.scope.paths.join("、")}</p>
+    <p><FixedDocument projectId={projectId} reference={payload.detail} label="阅读动作范围与理由" /></p></>;
+  if (payload.type === "action_decision") return <>{title(`工程动作决定 · ${payload.decision === "approved" ? "批准" : payload.decision === "rejected" ? "拒绝" : "已过期"}`)}
+    <p>决定者 {event.actorId} · <JumpTo eventId={payload.requestEventId}>跳到对应请求</JumpTo> · <FixedDocument projectId={projectId} reference={payload.evidence} label="阅读决定依据" /></p></>;
+  return <>{title(`工程动作执行回执 · ${executionStateLabel[payload.state]}`)}
+    <p>实际执行者 {event.actorId} · <JumpTo eventId={payload.requestEventId}>跳到对应请求</JumpTo> · <JumpTo eventId={payload.decisionEventId}>跳到对应决定</JumpTo></p>
+    <p><FixedDocument projectId={projectId} reference={payload.artifact} label="阅读执行产物" /></p></>;
 }
