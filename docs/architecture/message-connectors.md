@@ -1,5 +1,17 @@
 # 消息 Connector：微信标准模式
 
+## 在整体中的位置
+
+外部消息平台经统一的消息 Connector 接入，微信是第一个；通道合同不绑定具体平台，以后可接其他平台（DEC-040）。外部消息按外部来源处理，不冒充用户或内部 Agent 获得权限；订阅不等于任意发送授权。Agent 仍可直接用 skill 加平台 CLI 查询或发送，不必先注册路由。
+
+- 在系统里的位置：[架构总览](overview.md#2-四部分如何组成系统)的结构图；代码分在 `packages/connector-wechat`（网关命令封装）与 `apps/coordinator/src/message-connectors/`（路由、资格与泵），见[包架构](packages.md#当前工作区与目标责任)。
+- 网关作为本机进程运行，平台凭据与原始事件留在网关；部署形态见[部署与迁移](deployment.md)。
+- 表结构见[存储](storage.md#迁移-054-到-068-新增的表)（schema 063–066），实现合入于 PR #221。
+
+**支持哪些运行时。** 以代码为准（2026-11-09 核对）：标准模式的资格检查 `qualifyStandardConnectorRoute`（`apps/coordinator/src/message-connectors/qualification.ts`）不区分运行时；入站消息作为该 Session 的普通消息，由消息泵经普通消息的原生准入启动 Turn，而 Codex 与 Claude 两个适配器都实现了这条准入（见[Session 运行时](session-runtime.md#7-codex-与-claude-能力对照)）。因此代码上 Claude Session 也能作为标准模式的接收方；但现有测试用的是不区分运行时的替身，没有专门覆盖 Claude Session 作为接收方，也没有实际用过，按“待核”处理。受限接收只在 Codex 固定 `0.166.0-alpha.6` 上有对应的只读配置，而且适配器在无法证明内置 shell 已关闭时总是回答不可用，首版不启用。
+
+## 标准模式的组成
+
 Task b698cd37 的首个 provider 是微信。wx-cli 持有原事件、inbox、发送尝试与共享 outbox；evoLoop 持有精确 conversation 到受管 Session 的路由、平台消息及来源关联。路由保存、订阅、消息处理、回复和独立收件分别核对。
 
 ```mermaid

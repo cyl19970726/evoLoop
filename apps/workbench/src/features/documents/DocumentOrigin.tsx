@@ -1,72 +1,60 @@
-import { useEffect, useState } from "react";
-import type { TaskRevision } from "@evoloop/contracts";
+// 来源 in the right column: the task revision (and run) registered when the document was created. Each is read
+// back and shown only when it matches the registered fixed revision. A reread keeps the last answer and says it is
+// being checked; a failed reread keeps it marked as the last read, never as the current state.
 import type { RuntimeRunRecord } from "@evoloop/contracts/runtime";
-import { api, errorText, request } from "../../shared/api";
-import { ShortId, href } from "../../shared/ui/shared";
+import { api, request } from "../../shared/api";
+import { useProjectQuery } from "../../shared/query";
+import { href } from "../../shared/routes";
 import { taskSectionHref } from "../../shared/taskNavigation";
 import { type DocumentOrigin as Origin, verifiedOriginRun, verifiedOriginTask } from "./originValidation";
+import { runStateLabel } from "./documentPresentation";
+import { readProblem } from "./useDocumentList";
 
-interface OriginReadback {
-  scope: string; refreshKey: string;
-  task: TaskRevision | null; taskProblem: string | null;
-  run: RuntimeRunRecord | null; runProblem: string | null;
-  runObservedAt: Date | null; runReading: boolean; runStale: boolean;
-}
-const runStateLabel: Record<string, string> = { requested: "待派发", dispatching: "派发中", running: "运行中", completed: "运行结束", failed: "运行失败", interrupted: "已中断", unknown: "结果未知" };
-
-export function DocumentOrigin({ token, projectId, documentId, revisionId, refreshKey, origin }: {
-  token: string; projectId: string; documentId: string; revisionId: string; refreshKey: string; origin: Origin;
-}) {
-  const [readback, setReadback] = useState<OriginReadback | null>(null);
-  const scope = JSON.stringify([token,projectId,documentId,revisionId,origin.taskId,origin.taskRevisionId,origin.runId]);
-  useEffect(() => {
-    let active = true;
-    const controller = new AbortController();
-    setReadback(previous => previous?.scope === scope ? { ...previous, refreshKey, runReading: !!origin.runId,
-      runStale: !!previous.run, runProblem: null } : { scope, refreshKey, task:null, taskProblem:null,
-      run:null, runProblem:null, runObservedAt:null, runReading:!!origin.runId, runStale:false });
-    void api(token).taskRevision(projectId, origin.taskId, origin.taskRevisionId).then(value => {
-      if (!active) return;
-      const task = verifiedOriginTask(projectId, origin, value.revision);
-      setReadback(previous => previous?.scope === scope && previous.refreshKey === refreshKey ? {
-        ...previous, task:task ?? previous.task,
-        taskProblem:task ? null : "回读对象与登记的固定任务修订不一致",
-      } : previous);
-    }).catch(cause => { if (active) setReadback(previous => previous?.scope === scope && previous.refreshKey === refreshKey ? {
-      ...previous, taskProblem:errorText(cause),
-    } : previous); });
-    if (origin.runId) void request<RuntimeRunRecord>(token,
-      `/api/projects/${encodeURIComponent(projectId)}/runtime/runs/${encodeURIComponent(origin.runId)}`,15000,
-      { signal:controller.signal }).then(value => {
-      if (!active) return;
-      const run = verifiedOriginRun(projectId, origin, value);
-      setReadback(previous => previous?.scope === scope && previous.refreshKey === refreshKey ? {
-        ...previous, run:run ?? previous.run, runProblem:run ? null : "回读 Run 与登记的固定任务修订不一致",
-        runObservedAt:run ? new Date() : previous.runObservedAt, runReading:false, runStale:!run && !!previous.run,
-      } : previous);
-    }).catch(cause => { if (active) setReadback(previous => previous?.scope === scope && previous.refreshKey === refreshKey ? {
-      ...previous, runProblem:errorText(cause), runReading:false, runStale:!!previous.run,
-    } : previous); });
-    return () => { active = false; controller.abort(); };
-  },[token,projectId,documentId,revisionId,refreshKey,origin.taskId,origin.taskRevisionId,origin.runId,scope]);
-  const current = readback?.scope === scope ? readback : null;
-  const staleRun = !!current?.run && (current.runStale || current.refreshKey !== refreshKey);
-  return <section className="doc-origin" aria-label="正式来源">
-    <h2>正式来源</h2>
-    <p>此文档创建时登记了下列来源，当前阅读的文档修订仍单独保留。来源记录不代表问题已修复、交付已验收或有人实际使用。</p>
-    <a className="doc-origin-task" href={href(projectId,"task",origin.taskId,origin.taskRevisionId)}>
-      {current?.task ? <>{current.task.title} · v{current.task.version}</> : "阅读来源任务固定修订"} <ShortId value={origin.taskRevisionId} /> →
-    </a>
-    {!current && <p className="muted">正在核对固定来源名称与运行归属…</p>}
-    {current?.taskProblem && <p className="doc-origin-limit">来源任务名称暂不可核实：{current.taskProblem}。上方链接仍指向登记的固定修订，不以任务当前版替代。</p>}
-    {origin.runId && current?.run && <details className="doc-origin-run"><summary>阅读来源 Run <ShortId value={origin.runId} /> · {runStateLabel[current.run.state] ?? current.run.state}{staleRun ? "（上次读回，当前待核对）" : ""}</summary>
-      <p>此 Run 回读的任务与执行修订均与上方来源一致。运行状态不表示问题已经修复。</p>
-      <p>运行 ID <code>{current.run.id}</code> · 执行任务修订 <code>{current.run.taskRevisionId}</code></p>
-      <p>输入 SHA-256 <code>{current.run.inputHash}</code></p>
-      <a href={`${taskSectionHref(projectId,origin.taskId,{tab:"runtime"})}&run=${encodeURIComponent(current.run.id)}`}>在所属任务核对这次 Run →</a>
+export function DocumentOrigin({ projectId, documentId, origin }: { projectId: string; documentId: string; origin: Origin }) {
+  const task = useProjectQuery(projectId, ["document", documentId, "origin-task", origin.taskId, origin.taskRevisionId], async () => {
+    const value = await api().taskRevision(projectId, origin.taskId, origin.taskRevisionId);
+    const verified = verifiedOriginTask(projectId, origin, value.revision);
+    if (!verified) throw new Error("读回的任务与登记的固定修订不一致");
+    return verified;
+  });
+  const run = useProjectQuery(projectId, ["document", documentId, "origin-run", origin.runId, origin.taskId, origin.taskRevisionId], async signal => {
+    const value = await request<RuntimeRunRecord>("", `/api/projects/${encodeURIComponent(projectId)}/runtime/runs/${encodeURIComponent(origin.runId!)}`, 15000, { signal });
+    const verified = verifiedOriginRun(projectId, origin, value);
+    if (!verified) throw new Error("读回的运行与登记的固定任务修订不一致");
+    return verified;
+  }, { enabled: !!origin.runId });
+  const runData = run.data;
+  const staleRun = !!runData && (run.isFetching || run.isError);
+  return <div className="flex flex-col gap-2 text-label text-text-secondary">
+    <p>创建这份文档时登记的来源。来源记录不代表问题已修复、交付已验收或有人用过。</p>
+    <a href={href(projectId, "task", origin.taskId, origin.taskRevisionId)} className="font-medium text-primary [overflow-wrap:anywhere] hover:underline">
+      {task.data ? `${task.data.title} · 第 ${task.data.version} 版` : "来源任务的固定版本"} →</a>
+    {task.isPending && <p className="text-caption text-muted-foreground">正在核对来源任务…</p>}
+    {task.isError && <p className="text-caption text-warning">来源任务名称暂不能核实：{readProblem(task.error, "来源任务")}。链接仍指向登记的固定版本，不用任务当前版代替。</p>}
+    {origin.runId && <details className="group rounded-md bg-muted px-3 py-2" data-origin-run="">
+      <summary className="cursor-pointer text-label text-foreground">
+        来源运行 <code title={origin.runId} className="font-mono text-caption">{origin.runId.slice(0, 8)}</code>
+        {runData ? ` · ${runStateLabel[runData.state] ?? runData.state}` : run.isPending ? " · 正在核对" : " · 未能核实"}
+        {staleRun ? "（上次读回，当前待核对）" : ""}
+      </summary>
+      {runData && <div className="mt-2 flex flex-col gap-1 text-caption">
+        <p>这次运行读回的任务和执行版本与上面的来源一致。运行状态不表示问题已经修复。</p>
+        <p className="[overflow-wrap:anywhere]">运行 ID <code className="font-mono">{runData.id}</code></p>
+        <p className="[overflow-wrap:anywhere]">执行的任务版本 <code className="font-mono">{runData.taskRevisionId}</code></p>
+        <p className="[overflow-wrap:anywhere]">输入 SHA-256 <code className="font-mono">{runData.inputHash}</code></p>
+        <a className="text-primary hover:underline" href={`${taskSectionHref(projectId, origin.taskId, { tab: "runtime" })}&run=${encodeURIComponent(runData.id)}`}>在所属任务核对这次运行 →</a>
+      </div>}
     </details>}
-    {origin.runId && current?.run && <p className="muted">来源 Run {staleRun ? "上次读于" : "读于"} {current.runObservedAt?.toLocaleString("zh-CN") ?? "时间未记录"}。{staleRun && (current.runReading || current.refreshKey !== refreshKey) ? "正在重新核对当前状态。" : ""}</p>}
-    {origin.runId && current?.runProblem && <p className="doc-origin-limit">{current.run ? `来源 Run 本次回读失败：${current.runProblem}。上次状态仅供核对，不能视为当前状态。` : `登记的来源 Run 尚不能确认为该固定任务修订：${current.runProblem}。此处不提供未经核实的运行入口。`}</p>}
-    <details className="doc-origin-ids"><summary>核对完整来源标识</summary><p>Task <code>{origin.taskId}</code> · 固定修订 <code>{origin.taskRevisionId}</code>{origin.runId && <> · 登记 Run <code>{origin.runId}</code></>}</p></details>
-  </section>;
+    {origin.runId && runData && <p className="text-caption text-muted-foreground">
+      来源运行{staleRun ? "上次读于" : "读于"} {new Date(run.dataUpdatedAt).toLocaleString("zh-CN")}。{run.isFetching ? "正在重新核对当前状态。" : ""}</p>}
+    {origin.runId && run.isError && !run.isFetching && <p role="alert" className="text-caption text-warning">{runData
+      ? `来源运行本次回读失败：${readProblem(run.error, "来源运行")}。上次状态只供核对，不能视为当前状态。`
+      : `登记的来源运行还不能确认属于这个固定任务版本：${readProblem(run.error, "来源运行")}。这里不提供未经核实的运行入口。`}</p>}
+    <details className="text-caption">
+      <summary className="cursor-pointer text-muted-foreground">核对完整来源标识</summary>
+      <p className="mt-1 [overflow-wrap:anywhere]">任务 <code className="font-mono">{origin.taskId}</code></p>
+      <p className="[overflow-wrap:anywhere]">固定版本 <code className="font-mono">{origin.taskRevisionId}</code></p>
+      {origin.runId && <p className="[overflow-wrap:anywhere]">登记的运行 <code className="font-mono">{origin.runId}</code></p>}
+    </details>
+  </div>;
 }

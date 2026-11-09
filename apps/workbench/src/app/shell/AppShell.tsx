@@ -168,7 +168,7 @@ function ContextRail(props: AppShellProps & { space: Space; sessionState: Sessio
       </div>
       : <nav data-ui="" aria-label={space === "inbox" ? "待我处理" : "工作分区"} className={cn("min-h-0 flex-1", !inDrawer && "overflow-y-auto")}>
         <SectionList items={space === "inbox" ? inboxNavigation : workNavigation} route={route} projectId={projectId} onNavigate={props.onNavigate} />
-        {(inDrawer || !compact) && <ContextRailSlot className="mt-3 empty:hidden" />}
+        {(inDrawer || !compact) && <ContextRailSlot className="mt-3 empty:hidden" onNavigate={props.onNavigate} />}
       </nav>}
     <div data-ui="" className="mt-2 flex items-center gap-2.5 border-t border-border px-2 pt-2.5">
       <PersonAvatar name={props.actor} size={30} />

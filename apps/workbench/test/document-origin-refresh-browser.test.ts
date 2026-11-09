@@ -19,7 +19,7 @@ const stamp = "2026-10-25T00:00:00.000Z";
 const documentRoute = `/p/${projectId}/documents/${documentId}?revision=${revisionId}`;
 const pageItems = { items: [], nextCursor: null };
 
-test("document source Run rereads after Delivery return and manual refresh, retaining an explicitly stale last read on failure", {
+test("document source run rereads after returning from the task and on manual refresh, retaining an explicitly stale last read on failure", {
   skip: !playwrightModule && "Set EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE",
 }, async t => {
   const { chromium } = (await import(pathToFileURL(playwrightModule!).href)).default;
@@ -78,45 +78,68 @@ test("document source Run rereads after Delivery return and manual refresh, reta
   const base=`http://127.0.0.1:${(server.address() as {port:number}).port}`;
   const browser=await chromium.launch({ headless: true, ...(process.env.EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH ? { executablePath: process.env.EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH } : {}) }); t.after(()=>browser.close());
   const page=await browser.newPage({viewport:{width:390,height:844}});
+  const errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message));
+  t.after(async () => { if (errors.length) console.log("page errors:", errors); });
+  const summary = page.locator("[data-origin-run] > summary");
+  const facts = page.getByRole("button",{name:"版本与来源"});
+  // On a phone the right column is a sheet; open it to read the source.
+  const openFacts = async () => { if (!await summary.isVisible()) await facts.click(); await summary.waitFor(); };
   await page.goto(`${base}${documentRoute}`);
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button",{name:"进入",exact:true}).click();
-  await page.locator(".doc-origin-run > summary").getByText(/运行中/).waitFor();
-  await page.evaluate(({projectId,taskId}) => {window.location.hash=`/p/${projectId}/tasks/${taskId}`;},{projectId,taskId});
-  await page.getByRole("heading",{name:"最新交付与使用"}).waitFor();
+  await page.getByRole("heading",{name:"正式报告 A",exact:true}).waitFor({timeout:8000}).catch(async cause => {
+    assert.fail(`${String(cause)}; errors=${JSON.stringify(errors)}; body=${(await page.locator("body").innerText()).slice(0, 800)}`);
+  });
+  await openFacts();
+  await summary.getByText(/运行中/).waitFor();
+  assert.match(await summary.innerText(),/来源运行 44444444/);
+  // Into the source task and back: the document reads its source run again.
+  await page.getByRole("dialog").getByRole("link",{name:/来源任务 A · 第 4 版/}).click();
+  await page.getByRole("heading",{name:"来源任务 A"}).first().waitFor();
   await fetch(`${base}/__fixture/complete`);
-  await page.locator(".task-delivery-summary .delivery-artifact-link").click();
-  await page.locator(".doc-origin-run > summary").getByText(/运行结束/).waitFor({timeout:3000});
+  await page.goBack();
+  await page.getByRole("heading",{name:"正式报告 A",exact:true}).waitFor();
+  await openFacts();
+  await summary.getByText(/运行结束/).waitFor({timeout:5000});
+  await page.getByRole("button",{name:"关闭右栏"}).click();
+  // A manual reread on a fresh page.
   await fetch(`${base}/__fixture/reset`);
   const second=await browser.newPage({viewport:{width:390,height:844}});
+  const secondSummary = second.locator("[data-origin-run] > summary");
+  const reread = () => second.getByRole("button",{name:"重新读取当前文档"}).click();
   await second.goto(`${base}${documentRoute}`);
   await second.getByLabel("访问令牌").fill("fixture-token");
   await second.getByRole("button",{name:"进入",exact:true}).click();
-  await second.locator(".doc-origin-run > summary").getByText(/运行中/).waitFor();
+  await second.getByRole("heading",{name:"正式报告 A",exact:true}).waitFor();
+  // From 1100px the column sits beside the text, so the reread button stays reachable while the source is visible.
+  await second.setViewportSize({width:1280,height:900});
+  await second.getByRole("button",{name:"版本与来源"}).click();
+  await secondSummary.getByText(/运行中/).waitFor();
   const before=Number(await (await fetch(`${base}/__fixture/run-reads`)).text());
   await fetch(`${base}/__fixture/complete`);
-  await second.getByRole("button",{name:"重新读取当前文档"}).click();
-  await second.locator(".doc-origin-run > summary").getByText(/运行结束/).waitFor({timeout:3000});
+  await reread();
+  await secondSummary.getByText(/运行结束/).waitFor({timeout:3000});
   assert.ok(Number(await (await fetch(`${base}/__fixture/run-reads`)).text()) > before);
   await fetch(`${base}/__fixture/fail-run`);
-  await second.getByRole("button",{name:"重新读取当前文档"}).click();
-  await second.getByText(/来源 Run 本次回读失败.*上次状态.*不能视为当前/).waitFor();
-  assert.match(await second.locator(".doc-origin-run > summary").innerText(),/上次读回/);
+  await reread();
+  await second.getByText(/来源运行本次回读失败.*上次状态.*不能视为当前/).waitFor({timeout:10000});
+  assert.match(await secondSummary.innerText(),/上次读回/);
   await fetch(`${base}/__fixture/recover-run`);
-  await second.getByRole("button",{name:"重新读取当前文档"}).click();
-  await second.locator(".doc-origin-run > summary").getByText(/运行结束$/).waitFor();
-  assert.doesNotMatch(await second.locator(".doc-origin-run > summary").innerText(),/上次读回/);
+  await reread();
+  await secondSummary.getByText(/运行结束$/).waitFor();
+  assert.doesNotMatch(await secondSummary.innerText(),/上次读回/);
   await fetch(`${base}/__fixture/hold-next-run`);
-  await second.getByRole("button",{name:"重新读取当前文档"}).click();
+  await reread();
   for (let attempt=0; attempt<30 && await (await fetch(`${base}/__fixture/held-run-reads`)).text() !== "1"; attempt++)
     await new Promise(resolve=>setTimeout(resolve,25));
   assert.equal(await (await fetch(`${base}/__fixture/held-run-reads`)).text(),"1");
-  assert.match(await second.locator(".doc-origin-run > summary").innerText(),/上次读回/);
+  assert.match(await secondSummary.innerText(),/上次读回/);
   await fetch(`${base}/__fixture/change-origin`);
-  await second.getByRole("button",{name:"重新读取当前文档"}).click();
-  await second.locator(".doc-origin-run > summary").getByText(/77777777.*运行结束/).waitFor();
+  await reread();
+  await secondSummary.getByText(/77777777.*运行结束/).waitFor();
   await fetch(`${base}/__fixture/release-held-run`);
   await second.waitForTimeout(100);
-  assert.match(await second.locator(".doc-origin-run > summary").innerText(),/77777777.*运行结束/);
-  assert.doesNotMatch(await second.locator(".doc-origin-run > summary").innerText(),/44444444/);
+  assert.match(await secondSummary.innerText(),/77777777.*运行结束/);
+  assert.doesNotMatch(await secondSummary.innerText(),/44444444/);
 });
