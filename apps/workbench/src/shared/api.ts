@@ -111,9 +111,9 @@ export function api(token = "", timeoutMs = 15000) {
     tasks: (p: string, cursor?: string) => call<Page<Task>>(`${projectPath(p)}/tasks?limit=50${cursor ? `&cursor=${key(cursor)}` : ""}`),
     workStatuses: (p: string, taskIds: string[]) => call<{items: WorkTaskStatus[]}>(
       `${projectPath(p)}/orchestration/work-status?taskIds=${taskIds.map(key).join(",")}`),
-    leaderWork: (p: string, view: "tasks" | "documents", cursor?: string, includeClosed = false) =>
+    leaderWork: (p: string, view: "tasks" | "documents", cursor?: string, includeClosed = false, signal?: AbortSignal) =>
       call<LeaderWorkPage<LeaderWorkTask | LeaderWorkDocument>>(
-        `${projectPath(p)}/work-management/index?view=${view}&limit=50${cursor ? `&cursor=${key(cursor)}` : ""}${includeClosed ? "&includeClosed=true" : ""}`),
+        `${projectPath(p)}/work-management/index?view=${view}&limit=50${cursor ? `&cursor=${key(cursor)}` : ""}${includeClosed ? "&includeClosed=true" : ""}`, { signal }),
     leaderTask: (p: string, id: string) => call<LeaderWorkTask>(
       `${projectPath(p)}/work-management/tasks/${key(id)}`),
     acceptanceRelay: (p: string, id: string) => call<{ items: import("@evoloop/contracts/acceptance-relay").AcceptanceRelayView[] }>(

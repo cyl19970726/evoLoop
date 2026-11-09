@@ -272,7 +272,8 @@ test("dual-source history keeps the reader anchor, exhausts cursors, merges live
   await page.goto(`${base}/p/${projectId}/sessions`);
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button", { name: "进入", exact: true }).click();
-  await page.getByRole("heading", { name: "Sessions", exact: true }).waitFor();
+  // Without a selected agent the Sessions space opens 统筹安排.
+  await page.getByRole("heading", { name: "统筹安排", exact: true }).waitFor();
   if (await page.locator("[data-shell=frame]").getAttribute("data-rail") !== "shown") await page.getByRole("button", { name: "展开项目导航" }).click();
   const directory = page.locator("aside[aria-label=项目导航] .session-navigation");
   await directory.locator(".session-nav-item").filter({ hasText: "时间线分页会话" }).click();

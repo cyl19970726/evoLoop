@@ -82,7 +82,7 @@
 | 列表、表格与对账 | `WorkIndex.tsx`、`taskListPresentation.ts`、`taskWorkspacePresentation.ts`、`apps/workbench/src/shared/workStatusPresentation.ts`、`apps/workbench/src/shared/leaderWorkLoad.ts` | `task-list-presentation.test.ts`、`task-workspace-presentation.test.ts`、`work-status.test.ts`、`leader-work-load.test.ts`、`work-filter-pagination-browser.test.ts`、`leader-work-overview-browser.test.ts` |
 | 右侧摘要 | `TaskPreview.tsx`、`taskPreviewResponsibility.ts` | `task-preview-responsibility.test.ts`、`task-preview-current-responsibility-browser.test.ts` |
 | 承接与身份 | `taskExperience.ts`、`TaskOwner.tsx` | `task-experience.test.ts`、`task-owner-browser.test.ts`、`task-list-owner-browser.test.ts` |
-| 完整任务 | `TaskPage.tsx`、`TaskWorkflow.tsx`、`DeliveryPanel.tsx`、`LeaderTaskFacts.tsx`、`apps/workbench/src/shared/taskTiming.tsx`（阶段时间，Session 页也用） | `delivery-presentation.test.ts`、`task-evidence-reading.test.ts`、`task-edit-role-recovery.test.ts`、`task-session-return-browser.test.ts` |
+| 完整任务 | `TaskPage.tsx`、`TaskWorkflow.tsx`、`DeliveryPanel.tsx`、`LeaderTaskFacts.tsx`、`apps/workbench/src/shared/taskTiming.tsx`（阶段时间，Session 页也用）、`features/sessions/TaskAssignmentPanel.tsx`（分派）、`features/queues/ResidentQueuePanel.tsx`（经 `features/runtime/RuntimePanel.tsx` 显示队列） | `delivery-presentation.test.ts`、`task-evidence-reading.test.ts`、`task-edit-role-recovery.test.ts`、`task-session-return-browser.test.ts` |
 | 验收接力与容量 | `AcceptanceRelayPanel.tsx`、`AcceptanceOverviewPanels.tsx` | `leader-work-overview-browser.test.ts` |
 | 执行时间与重复 | `TaskSchedulePanel.tsx`、`taskTimingPresentation.ts` | `task-timing-ui.test.ts` |
 

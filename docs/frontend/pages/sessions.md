@@ -15,13 +15,13 @@ Session 页说明一个具体实例此刻在做什么、做出了什么；“Lea
 | --- | --- | --- |
 | 内层栏（对象列表） | 顶部固定“Leader 安排”，下面是 Session 目录：搜索，分业务 / System / 待归类，历史可展开 | 同左 |
 | 中间 | 对话与 Agent 活动流（见下方“目标体验”），输入框固定在底部 | 上半部分是当前的编排总览文档，下半部分是安排看板：每个 Session 一行，写职责、当前任务、排队任务和状态；没有承接者的任务单独一组 |
-| 右栏（可收起） | 角色、运行时（读 Session 自己的绑定与执行配置）、所在机器（#219 之前显示“未知”）、当前任务、队列、成果 | 数据能证明的冲突与风险：同一 Session 有多项进行中任务、依赖未完成就已开始、截止已过或临近、待验收却没有可用的验收者 |
+| 右栏（可收起） | 角色、运行时（读 Session 自己的绑定与执行配置）、所在机器（#219 之前显示“未知”）、当前任务、队列、成果 | 数据能证明的冲突与风险：同一 Session 有多项进行中任务、依赖未通过验收就已开始、截止已过、待验收却未登记下一责任；再下面是空闲与过载、截止临近 |
 
 外壳与左栏见[布局](../layout.md)，场景见[场景 3](../scenarios.md#十个场景)与[场景 11](../scenarios.md#场景-11看清-leader-怎样安排-session)。
 
 现状（#229 PR6a–PR6c）：
 - **目录**：搜索、“统筹安排”、业务 / 系统分组，每项有头像、当前任务或职责、状态。
-- **统筹安排**：看板上每个智能体一行（正在做、已分派、排队），未分派的任务单独一组；右栏是冲突与风险、空闲与过载、截止临近。
+- **统筹安排**：看板每个智能体一行（正在做、已分派、排队），无承接者的任务单列并写下一步；另列待处理消息、待答问题与待验收数。
 - **详情**：页首胶囊（头像、名字、状态）；中间是对话流，回复不包卡片，我的消息是右侧气泡，工具调用收成一行灰字；输入框固定在底部；右栏是实体卡、“动态”（当前任务、配置、队列）和“资料库”（成果）。
 - **还没做的**：
   - 编排总览文档（合同缺“当前总览”标记）。
@@ -43,7 +43,7 @@ Session 页说明一个具体实例此刻在做什么、做出了什么；“Lea
 - 结果未知的输入保留原文（[即时输入](../../architecture/session-runtime.md#3-即时输入执行中收到的消息怎样处理)）。模型的配置、生效回执和实际运行分开写；外部 Desktop 会话只显示已核实的能力。
 - 关闭入口列出阻断原因：未完 Task、队列、Run、消息、待答问题、Session 忙碌；来源没读全时不按旧内容关闭。
 - 从 Task 进来再返回，恢复页签和阅读位置；切换项目、身份或 Session 时清掉旧数据。
-- Leader 安排：总览文档写的冲突以文档为准，界面只补充数据能证明的部分；调整安排回到与 Leader 的对话，由 Leader 经 CLI 修改。
+- Leader 安排：只写记录能证明的冲突，总览文档另写的以文档为准；任务或队列没读全时，空闲、冲突、无承接者写“?”或“无法判断”，重读失败标“上次读回，当前待核对”；调整安排找 Leader。
 
 **目标体验：像用 Claude Code 一样用 Session**
 
@@ -77,7 +77,7 @@ Session 页说明一个具体实例此刻在做什么、做出了什么；“Lea
 
 [![Sessions 目录：两条左栏，项目栏和主区各有一份 Session 目录](../../assets/frontend-journey-20261108/sessions-1440x900.png)](../../assets/frontend-journey-20261108/sessions-1440x900.png)
 
-2026-11-08，发布后维护服务 36cb620。看点：项目栏和主区各显示一份 Session 目录，内容重复；目标是只在内层栏保留一份目录，中间直接打开所选 Session。
+2026-11-08，发布后维护服务 36cb620。看点：项目栏和主区各有一份 Session 目录；现在主区改为统筹安排。
 
 [![Session 详情公开脱敏版：没有右栏，状态卡在上，三个页签和底部输入在下](../../assets/frontend-journey-20261108/session-detail-1440x900.png)](../../assets/frontend-journey-20261108/session-detail-1440x900.png)
 
@@ -90,7 +90,8 @@ Session 页说明一个具体实例此刻在做什么、做出了什么；“Lea
 | 外壳 | `app/shell/AppShell.tsx` | `shell.test.ts`、`session-directory-groups-browser.test.ts` |
 | 智能体目录（内层栏） | `features/sessions/SessionNavigation.tsx`（新目录）、`features/sessions/sessionDirectoryPresentation.ts`、`features/sessions/useSessionDirectoryGroup.ts` | `session-directory-presentation.test.ts`、`session-directory-groups.test.ts`、`session-directory-groups-browser.test.ts` |
 | 智能体详情 | `features/sessions/SessionWorkspace.tsx`（页首、中间、右栏）、`features/sessions/SessionTimeline.tsx`（对话流）、`features/sessions/workspaceTimelineModel.ts`、`features/sessions/DirectInputEntry.tsx`、`features/sessions/NativeSessionPanel.tsx`、`features/sessions/SessionModelControl.tsx`、`features/sessions/SessionClosePanel.tsx` | `session-workspace-redesign-browser.test.ts`、`session-timeline-browser.test.ts`、`session-workspace-timeline-model.test.ts`、`session-direct-input-layout-browser.test.ts`、`session-native-input-browser.test.ts`、`session-native-progress-browser.test.ts`、`session-close-entry-browser.test.ts`、`task-session-return-browser.test.ts` |
-| 统筹安排 | `features/sessions/ArrangementPage.tsx`（页面与右栏）、`features/sessions/arrangementModel.ts`（看板与风险规则）、`shared/leaderWorkLoad.ts`、`shared/queueClient.ts` | `arrangement-model.test.ts`、`arrangement-browser.test.ts`、`leader-work-load.test.ts` |
+| 统筹安排 | `features/sessions/ArrangementPage.tsx`（页面与右栏）、`features/sessions/arrangementModel.ts`（看板、空闲与风险规则）、`features/sessions/arrangementPresentation.ts`（下一步与读取状态用语） | `arrangement-model.test.ts`、`arrangement-presentation.test.ts`、`arrangement-browser.test.ts` |
+| Leader 安排的数据 | `shared/leaderWorkLoad.ts`（任务索引分页与阶段名）、`shared/queueClient.ts`；队列与分派面板 `features/queues/ResidentQueuePanel.tsx`、`features/sessions/TaskAssignmentPanel.tsx` 显示在任务详情，见[任务](tasks.md) | `leader-work-load.test.ts`、`leader-work-overview-browser.test.ts` |
 | 数据来源 | `packages/contracts/src/session-timeline.ts`、`packages/adapter-claude-agent-sdk/src/index.ts`、`packages/adapter-codex-app-server/src/workspace-map.ts`、`apps/coordinator/src/runtime/routed.ts` | — |
 
 ## 相关
