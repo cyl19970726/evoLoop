@@ -15,6 +15,7 @@ import { applyWorkflow } from "./workflow.js";
 import { reserveRuntime } from "./runtime/reserve.js";
 import { currentRetentions, validateDispatchBasis, validateReselectedOriginals, validateSelectedExternalBasis } from "./runtime/basis.js";
 import { applyRole, RoleRuleError } from "./roles/index.js";
+import { applyRoleRuntime } from "./roles/runtime.js";
 import { applyResident } from "./resident-hosts.js";
 import { applySessionMessage } from "./session-messages/index.js";
 import { applyNativeInputReply } from "./native-input/index.js";
@@ -40,6 +41,10 @@ import type { SessionRecoveryView } from '@evoloop/contracts/session-recovery';
 export { DomainError } from "@evoloop/contracts/ports";
 
 export interface WorkflowDependencies { uow: UnitOfWork; clock: Clock; ids: IdFactory; hasher: ContentHasher;
+  /** Runtime that Roles not yet bound are bound to when their first Session is reserved; absent means codex. */
+  runtimeProvider?: import("@evoloop/contracts/runtime").RuntimeProvider;
+  /** Runtimes this service drives; absent means only `runtimeProvider`. */
+  runtimeProviders?: readonly import("@evoloop/contracts/runtime").RuntimeProvider[];
   taskTimingAuthority?: (projectId: string, actorId: string, roleId: string, scopeId: string) => Promise<boolean>;
   recoveryAuthority?: RecoveryAuthority;
   collaborationAuthority?: {
@@ -55,6 +60,7 @@ function fixedUuid(hash:string):string {
   return `${h.slice(0,8)}-${h.slice(8,12)}-5${h.slice(13,16)}-8${h.slice(17,20)}-${h.slice(20,32)}`;
 }
 type Effect = { kind: string; entityId: string; version: number };
+const roleIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 type Outcome = { result: AppliedResult; effects: Effect[] };
 
 // The command hash is independent of object insertion order, including nested payloads.
@@ -702,6 +708,15 @@ export class WorkflowService {
             throw error;
           }
       }
+      case "role.runtime.set": {
+          try {
+            const result = await applyRoleRuntime(tx, principal, command, { nowUtc: now, availableProviders: this.runtimeProviders() });
+            return { result: { ...base, ...result }, effects: [{ kind: "role.runtime", entityId: result.entityId, version: result.version }] };
+          } catch (error) {
+            if (error instanceof RoleRuleError) throw new DomainError(error.code, error.message, error.currentVersion);
+            throw error;
+          }
+      }
       case "domain.create":
       case "domain.update":
       case "host.register":
@@ -835,7 +850,8 @@ export class WorkflowService {
         }
         if (command.type === "runtime.session.reserve" || command.type === "runtime.session.close" || command.type === "runtime.run.reserve" || command.type === "runtime.handoff.record" || (command.type === "runtime.run.interrupt" || command.type === "runtime.run.abandonReadOnly")) {
           if (command.type === "runtime.run.reserve") await requireTaskTimingReady(tx, command.taskId, now);
-          return reserveRuntime({ tx, command, principal, now, nextId: () => this.deps.ids.next(), hash: value => this.deps.hasher.hash(value) });
+          return reserveRuntime({ tx, command, principal, now, nextId: () => this.deps.ids.next(), hash: value => this.deps.hasher.hash(value),
+            ...(this.deps.runtimeProvider ? { runtimeProvider: this.deps.runtimeProvider } : {}), runtimeProviders: this.runtimeProviders() });
         }
         return applyWorkflow({ tx, command:command as Parameters<typeof applyWorkflow>[0]["command"], principal, now, nextId: () => this.deps.ids.next() }).then(outcome => ({ ...outcome, effects: outcome.effects.map(effect => ({ ...effect, kind: effect.kind === "workflow" ? command.type : effect.kind })) }));
     }
@@ -1059,6 +1075,21 @@ export class WorkflowService {
   }); }
   listRoleReviews(principal: Principal, projectId: string, roleId: string) { return this.read(principal, projectId, async reader => { required(await reader.getRole(roleId), "Role"); return reader.listReviews(roleId); }); }
   listRoleHandoffs(principal: Principal, projectId: string, roleId: string) { return this.read(principal, projectId, async reader => { required(await reader.getRole(roleId), "Role"); return reader.listHandoffs(roleId); }); }
+  /** Runtime binding and skill selection history of a Role, oldest first; empty while the Role is unbound. */
+  listRoleRuntimeRevisions(principal: Principal, projectId: string, roleId: string) { return this.read(principal, projectId, async reader => { required(await reader.getRole(roleId), "Role"); return reader.listRoleRuntimeRevisions(roleId); }); }
+  /** Runtime a new Session of `roleId` will use: the Role's binding, else the default for unbound Roles. */
+  roleRuntimeProvider(principal: Principal, projectId: string, roleId: string) { return this.read(principal, projectId, async reader => {
+    const fallback = this.deps.runtimeProvider ?? "codex";
+    if (!roleIdPattern.test(roleId)) return fallback;
+    return (await reader.getRoleRuntime(roleId))?.provider ?? fallback;
+  }); }
+  /** Default runtime for unbound Roles and the runtimes this service drives. */
+  runtimeProviderSettings(): { defaultProvider: import("@evoloop/contracts/runtime").RuntimeProvider; availableProviders: import("@evoloop/contracts/runtime").RuntimeProvider[] } {
+    return { defaultProvider: this.deps.runtimeProvider ?? "codex", availableProviders: this.runtimeProviders() };
+  }
+  private runtimeProviders(): import("@evoloop/contracts/runtime").RuntimeProvider[] {
+    return [...new Set(this.deps.runtimeProviders?.length ? this.deps.runtimeProviders : [this.deps.runtimeProvider ?? "codex"])];
+  }
   listRoleSessionBindings(principal: Principal, projectId: string, roleId: string) { return this.read(principal, projectId, async reader => { required(await reader.getRole(roleId), "Role"); return reader.listSessionBindings(roleId); }); }
   listBusinessDomains(principal: Principal, projectId: string) { return this.read(principal, projectId, reader => reader.listBusinessDomains()); }
   getBusinessDomain(principal: Principal, projectId: string, domainId: string) { return this.read(principal, projectId, async reader => required(await reader.getBusinessDomain(domainId), "Business domain")); }

@@ -338,3 +338,43 @@ test("CLI discovers the full-only default profile for core authorization",async(
     authorizationScope:"connector-receiver:00000000-0000-4000-8000-000000000004"}).success,false);
   assert.equal(commandSchema.safeParse({...input,approvalPolicy:"on-request"}).success,false);
 });
+test('role runtime CLI binds once from the live view, then changes only skills and reads back',async()=>{
+  const projectId='00000000-0000-4000-8000-000000000031',roleId='00000000-0000-4000-8000-000000000032';
+  const directory=await mkdtemp(join(tmpdir(),'evoloop-role-runtime-cli-'));
+  const selection={project:true,personal:true,builtin:false,add:[] as string[],remove:[] as string[]};
+  let binding:{revision:number;provider:string;skills:unknown}|null=null;const submitted:Record<string,unknown>[]=[];
+  const fetch=mock.method(globalThis,'fetch',async(url:string|URL|Request,init?:RequestInit)=>{
+    const path=new URL(String(url)).pathname;
+    if(path==='/api/session')return new Response(JSON.stringify({principal:{actorId:'lead',projectIds:[projectId]}}));
+    if(path===`/api/projects/${projectId}/roles/${roleId}/runtime`)return new Response(JSON.stringify({projectId,roleId,binding,
+      provider:binding?.provider??'codex',selection:binding?.skills??selection,skills:[]}));
+    if(path==='/api/commands'){
+      const command=JSON.parse(String(init?.body));submitted.push(command);
+      binding={revision:command.expectedRevision+1,provider:command.provider,skills:command.skills};
+      return new Response(JSON.stringify({status:'applied',operationId:command.operationId,entityId:roleId,version:binding.revision}));
+    }
+    throw new Error(`Unexpected path ${path}`);
+  });
+  const env={EVOLOOP_TOKEN:'fixture',EVOLOOP_STATE_DIR:directory};
+  try{
+    const shown=await run(['role','runtime','show',roleId,'--project',projectId],env);
+    assert.equal(shown.code,0,shown.stderr);
+    assert.equal(JSON.parse(shown.stdout).provider,'codex');
+    const first=await run(['role','runtime','set',roleId,'--project',projectId,'--provider','claude','--personal','off',
+      '--add','zeta, project:alpha','--reason','首次绑定'],env);
+    assert.equal(first.code,0,first.stderr);
+    assert.deepEqual([submitted[0]?.type,submitted[0]?.expectedRevision,submitted[0]?.provider,submitted[0]?.skills],
+      ['role.runtime.set',0,'claude',{project:true,personal:false,builtin:false,add:['zeta','project:alpha'],remove:[]}]);
+    assert.equal(JSON.parse(first.stdout).runtime.binding.revision,1);
+    const second=await run(['role','runtime','set',roleId,'--project',projectId,'--builtin','on','--add','none','--reason','调整'],env);
+    assert.equal(second.code,0,second.stderr);
+    assert.deepEqual([submitted[1]?.expectedRevision,submitted[1]?.provider,submitted[1]?.skills],
+      [1,'claude',{project:true,personal:false,builtin:true,add:[],remove:[]}],'the bound runtime is kept without --provider');
+    const wrong=await run(['role','runtime','set',roleId,'--project',projectId,'--personal','maybe','--reason','x'],env);
+    assert.equal(wrong.code,2);
+    assert.equal(JSON.parse(wrong.stderr).error.code,'INVALID_INPUT');
+    const noReason=await run(['role','runtime','set',roleId,'--project',projectId,'--personal','on'],env);
+    assert.equal(noReason.code,2);
+    assert.equal(submitted.length,2);
+  }finally{fetch.mock.restore();await rm(directory,{recursive:true,force:true});}
+});

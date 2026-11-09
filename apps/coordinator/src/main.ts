@@ -4,9 +4,12 @@ import { createReferenceDependencies } from "./references/routes.js";
 import { GitDocumentSource } from "@evoloop/adapter-git-documents";
 import { readFile, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
-import { resolve, isAbsolute, sep } from "node:path";
+import { resolve, isAbsolute, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { readFixedSkill, readRoleSkillSource, roleSkillReferences, roleSkillSourceReferences } from "./session-preparation/skills.js";
+import { businessSkillDirs, claudePlanContent, codexSkillConfig, discoverSkills, materializeSkillPlan } from "./session-preparation/role-skills.js";
+import { roleRuntimeView } from "./session-preparation/role-runtime-view.js";
+import { defaultRoleSkillSelection, type RoleSkillSelection } from "@evoloop/contracts/role-skills";
 import { createHash, randomUUID } from "node:crypto";
 import pg from "pg";
 import { WorkflowService } from "@evoloop/core";
@@ -21,6 +24,7 @@ import { buildServer } from "./server.js";
 import { acquireCoordinatorLease, leaseFencedUnitOfWork } from "./lease.js";
 import { RuntimeWorkflowService } from "@evoloop/core/runtime";
 import { CodexAppServerAdapter } from "@evoloop/adapter-codex-app-server";
+import { ClaudeAgentSdkAdapter } from "@evoloop/adapter-claude-agent-sdk";
 import { FeishuBitableConnector } from "@evoloop/connector-feishu";
 import { WechatGatewayClient } from "@evoloop/connector-wechat";
 import type { VersionedConnectorRoute } from "@evoloop/contracts/message-connectors";
@@ -30,7 +34,9 @@ import { PgSchedulingStore } from "@evoloop/adapter-postgres/scheduling";
 import { PgTaskTimingStore } from "@evoloop/adapter-postgres/task-timing";
 import { SchedulingPump } from "./scheduling/pump.js";
 import { readDocumentOriginal } from "./documents/read-original.js";
-import { RuntimeRunner } from "./runtime/runner.js";
+import { RuntimeRunner, type ManagedRuntime } from "./runtime/runner.js";
+import { ProviderRoutedRuntime } from "./runtime/routed.js";
+import type { RuntimeProvider } from "@evoloop/contracts/runtime";
 import { CompactionMaintenance } from "./runtime/compaction.js";
 import { supportsFixedHandoff, supportsMaterialCli } from "./runtime/material-cli-capability.js";
 import { PreflightError } from "./runtime/preflight-report.js";
@@ -43,7 +49,7 @@ import { brokeredCliForRun } from "./runtime/brokered-cli.js";
 import { staticRecoveryAuthority } from "./runtime/recovery-authority.js";
 import { readEvaluationMaterial } from "./runtime/evaluation-sources.js";
 import { evaluationPacketMediaType } from "./runtime/evaluation-materials.js";
-import { hasExactEngineeringActionGrant, hasTaskTimingGrant, loadIntegrations, runtimeThreadConfigForSession, selectMaterialCli } from "./configuration.js";
+import { drivenRuntimeProviders, hasExactEngineeringActionGrant, hasTaskTimingGrant, loadIntegrations, runtimeThreadConfigForSession, selectMaterialCli } from "./configuration.js";
 import { OpenVikingKnowledgeRepository } from "@evoloop/adapter-wiki-openviking";
 import { DomainError } from "@evoloop/contracts/ports";
 import type { Principal } from "@evoloop/contracts";
@@ -60,7 +66,7 @@ import { staticRunSessionAvailable } from "./references/source-run.js";
 import { BrowserReadBridge, createPlaywrightBrowserBackend, matchesBrowserRun, readerTokenForScope } from "./runtime/browser-read.js";
 import type { BrowserReadScope } from "./runtime/browser-read.js";
 import type { DynamicToolCall } from "@evoloop/adapter-codex-app-server";
-import type { RuntimeBinding, RuntimeSessionRecord } from "@evoloop/contracts/runtime";
+import { RuntimeNotSentError, type RuntimeBinding, type RuntimeSessionRecord, type RuntimeSessionSpec } from "@evoloop/contracts/runtime";
 import { loopIntentId } from "./orchestration/runner.js";
 import { ResidentQueuePump } from "./resident-queue/pump.js";
 import { SessionObservationService } from "@evoloop/core/session-observation";
@@ -146,6 +152,9 @@ const hasher = { hash: (value: string) => createHash("sha256").update(value, "ut
 const service = new WorkflowService({
   uow, clock, ids,
   hasher,
+  // A Role's first Session binds it to the default runtime; bound Roles keep theirs.
+  ...(integrations.runtime?.enabled ? { runtimeProvider: integrations.runtime.provider,
+    runtimeProviders: drivenRuntimeProviders(integrations.runtime) } : {}),
   taskTimingAuthority: async (projectId, actorId, roleId, scopeId) => {
     const current = (await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE)).scheduling;
     return hasTaskTimingGrant(current, projectId, actorId, roleId, scopeId) &&
@@ -334,15 +343,62 @@ const nativeInputs = new NativeInputBridge({ service: nativeInputService, canWri
   executionAuthorized: async (session, actorId) => await currentProjectWriter(session.projectId, actorId) &&
     await currentSessionExecutionAuthority(session),
 });
-const runtimeFactory = runtimeConfig?.enabled ? () => {
+const verifyRuntimeBinding = async (binding: RuntimeBinding) => {
+  try { await trustedRuntime.verifyBinding(binding.projectId, binding); return true; } catch { return false; }
+};
+const roleIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** The Role's latest skill selection; a Role without a runtime binding (or a non-Role id) uses the default. */
+const roleSkillSelection = async (projectId: string, roleId: string): Promise<RoleSkillSelection> =>
+  roleIdPattern.test(roleId) ? (await uow.read(projectId, reader => reader.getRoleRuntime(roleId.toLowerCase())))?.skills ?? defaultRoleSkillSelection()
+    : defaultRoleSkillSelection();
+/** Business SKILL.md paths the Role always carries: its configured ones, else the evoLoop workflow skill. */
+const roleBusinessSkillPaths = async (projectId: string, roleId: string): Promise<string[]> => {
+  const current = await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE);
+  return current.runtime?.roleSkills.find(value => value.projectId === projectId && value.roleId === roleId)?.paths ??
+    [".agents/skills/evoloop-workflow/SKILL.md"];
+};
+/** Claude: the Role's selected skills as local plugins under `pluginRoot`, recomputed from disk before every Turn. */
+const roleSkillPlan = async (binding: RuntimeBinding, pluginRoot: string, contextMode: "project" | "explicit") => {
+  const [selection, businessPaths] = await Promise.all([roleSkillSelection(binding.projectId, binding.roleId),
+    roleBusinessSkillPaths(binding.projectId, binding.roleId)]);
+  const { skills } = await discoverSkills({ businessRoot: skillSourceRoot, businessPaths, cwd: binding.cwd, home: homedir() });
+  return materializeSkillPlan(pluginRoot, claudePlanContent(skills, selection, contextMode));
+};
+/** Codex: Thread config that turns off the skills Codex lists for the cwd that the Role does not use. */
+const roleCodexSkillConfig = async (spec: RuntimeSessionSpec,
+  list: (cwd: string) => Promise<import("@evoloop/contracts/runtime").RuntimeCapabilityListing>) => {
+  let selection: RoleSkillSelection, businessPaths: string[];
+  try { [selection, businessPaths] = await Promise.all([roleSkillSelection(spec.projectId, spec.roleId), roleBusinessSkillPaths(spec.projectId, spec.roleId)]); }
+  catch { throw new RuntimeNotSentError("thread/start", "Role skills could not be read"); }
+  const listed = await list(spec.cwd).then(value => value.skills, () => null);
+  const discovered = listed ? [] : (await discoverSkills({ businessRoot: skillSourceRoot, businessPaths, cwd: spec.cwd, home: homedir() })).skills;
+  return codexSkillConfig({ selection, listed, discovered, businessDirs: await businessSkillDirs(skillSourceRoot, businessPaths) });
+};
+const createClaudeRuntime = (runtimeConfig: NonNullable<typeof integrations.runtime>) => {
+    // The configuration schema requires runtime.claude when claude is driven; no credential is read from it.
+    const claude = runtimeConfig.claude!;
+    const pluginRoot = join(claude.configRoot, "evoloop-skill-plugins");
+    return new ClaudeAgentSdkAdapter({
+      configDir: claude.configRoot,
+      ...(claude.executable ? { executable: claude.executable } : {}),
+      ...(claude.maxTurns ? { maxTurns: claude.maxTurns } : {}),
+      ...(claude.maxBudgetUsd ? { maxBudgetUsd: claude.maxBudgetUsd } : {}),
+      contextMode: claude.contextMode,
+      ...(claude.skillBundle ? { skillPlan: (binding: RuntimeBinding) => roleSkillPlan(binding, pluginRoot, claude.contextMode) } : {}),
+      verifyBinding: verifyRuntimeBinding,
+    });
+};
+const createCodexRuntime = (runtimeConfig: NonNullable<typeof integrations.runtime>) => {
   const adapter = new CodexAppServerAdapter({
   ...(runtimeConfig.executable ? { executable: runtimeConfig.executable } : {}),
   expectedVersion: `codex-cli ${runtimeConfig.protocolVersion}`,
+  protocolCheck: runtimeConfig.protocolCheck,
+  ...(runtimeConfig.minimumVersion ? { minimumVersion: `codex-cli ${runtimeConfig.minimumVersion}` } : {}),
+  blockedVersions: runtimeConfig.blockedVersions.map(version => `codex-cli ${version}`),
+  ...(runtimeConfig.codexHome ? { codexHome: runtimeConfig.codexHome } : {}),
   nativeUserInput: runtimeConfig.nativeUserInput,
   workspaceExperimental: runtimeConfig.protocolVersion === "0.166.0-alpha.6",
-  verifyBinding: async binding => {
-    try { await trustedRuntime.verifyBinding(binding.projectId, binding); return true; } catch { return false; }
-  },
+  verifyBinding: verifyRuntimeBinding,
   authorizeExecutionProfileActivation: async (current,target,revisionId,operationId) => {
     const configured=await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE);
     return !!configured.runtime?.enabled&&!await isBoundDynamicSession(pool,current.projectId,current.sessionId)&&
@@ -354,7 +410,10 @@ const runtimeFactory = runtimeConfig?.enabled ? () => {
   },
   threadConfig: async spec => {
     const current=await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE);
-    return current.runtime?.enabled ? runtimeThreadConfigForSession(current.runtime.grants,spec,sessionOrigin) : undefined;
+    if(!current.runtime?.enabled)return undefined;
+    const grant=await runtimeThreadConfigForSession(current.runtime.grants,spec,sessionOrigin);
+    const skills=await roleCodexSkillConfig(spec,cwd=>adapter.listCapabilities(cwd,{skillsOnly:true}));
+    return grant||skills?{...grant,...skills}:undefined;
   },
   ...(browserRead ? {dynamicTools:(spec:import("@evoloop/contracts/runtime").RuntimeSessionSpec)=>
     spec.authorizationScope.startsWith("connector-receiver:") ? Promise.resolve(undefined) : browserRead.tools(spec),
@@ -363,6 +422,12 @@ const runtimeFactory = runtimeConfig?.enabled ? () => {
   });
   if (browserRead) adapter.onDisconnect(() => { void browserRead.close(); });
   return adapter;
+};
+/** One runtime, or one per driven provider behind a router; each Session goes to the runtime it was reserved for. */
+const runtimeFactory = runtimeConfig?.enabled ? (): ManagedRuntime => {
+  const children = new Map<RuntimeProvider, ManagedRuntime>(drivenRuntimeProviders(runtimeConfig).map(provider =>
+    [provider, provider === "claude" ? createClaudeRuntime(runtimeConfig) : createCodexRuntime(runtimeConfig)]));
+  return children.size === 1 ? [...children.values()][0]! : new ProviderRoutedRuntime(children, runtimeConfig.provider);
 } : null;
 let managedCliBroker: WorkerCredentialBroker | null = null;
 const runner = runtimeFactory ? new RuntimeRunner({ runtimeFactory, workflow: service, trusted: trustedRuntime, nativeInputs, nativeObservation,
@@ -746,11 +811,11 @@ const directInput = runner && integrations.runtime?.enabled ? createDirectInputS
 }) : undefined;
 if (runner) {
   try { await runner.start(); }
-  catch { console.error("Codex runtime is unavailable; check the configured CLI version, protocol and project directories. No new dispatch was enabled."); }
+  catch { console.error(`${runtimeConfig?.provider === "claude" ? "Claude" : "Codex"} runtime is unavailable; check the configured CLI, its settings and project directories. No new dispatch was enabled.`); }
 }
 const app = await buildServer({ service, credentials, canWrite: lease.canWrite, ordinarySubmissions,
   acceptanceRelay,
-  ...(runner ? {compaction:new CompactionMaintenance(pool,runner)} : {}),
+  ...(runner ? {compaction:new CompactionMaintenance(pool,runner,{owned:()=>runtimeConfig?.compaction.owned!==false})} : {}),
   connectorRoutes, connectorDeliveries: connectorDecisions, connectorSources: connectorLinks,
   canActivateConnectorRoute: qualifyConnectorRoute,
   taskAttentionPool: pool,
@@ -801,7 +866,8 @@ const app = await buildServer({ service, credentials, canWrite: lease.canWrite, 
   ...(managed ? {orchestration: managed.routes, workers: managed.workers} : {}),
   ...(runner ? { runtime: runner, readEvaluationPacket: (principal, projectId, runId) =>
     runner.readEvaluationPacket(principal, projectId, runId),
-    listRuntimeModels: () => (runner.nativeAdapter() as CodexAppServerAdapter).listModels() } : {}), allowedRuntimeCwd: integrations.allowedRuntimeCwd,
+    listRuntimeModels: async provider => await runner.listModelsFor(provider ?? runtimeConfig!.provider) ??
+      { status: "unavailable" as const, models: [], options: [], error: "This runtime does not list models", observedAtUtc: new Date().toISOString() } } : {}), allowedRuntimeCwd: integrations.allowedRuntimeCwd,
   allowedRuntimeCwds: integrations.allowedRuntimeCwds,
   hasRuntimeGrant: async scope => (await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE)).hasRuntimeGrant(scope),
   isDynamicSession: sessionOrigin.isDynamicSession,
@@ -815,6 +881,11 @@ const app = await buildServer({ service, credentials, canWrite: lease.canWrite, 
   authorizeDynamicMessageRecovery: async (principal,session) => principal.permissions.includes("review") &&
     await dynamicAdmission?.canStartConversation(session) === true,
   runtimeGrants: (projectId, actorId) => runtimeConfig?.enabled ? runtimeConfig.grants.filter(g => g.projectId === projectId && g.actorId === actorId) : [],
+  roleRuntimeView: (principal, projectId, roleId) => roleRuntimeView({ service, runtime: runner ?? undefined,
+    grantCwds: (project, actorId, role) => runtimeConfig?.enabled ? runtimeConfig.grants.filter(g => g.projectId === project &&
+      g.actorId === actorId && g.roleId === role).map(g => g.cwd) : [],
+    skillRoots: async (project, role) => ({ businessRoot: skillSourceRoot, businessPaths: await roleBusinessSkillPaths(project, role) }),
+    claudeContextMode: runtimeConfig?.claude?.contextMode ?? null }, principal, projectId, roleId),
   sessionPreparation: async input => {
     const current=await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE);
     const cli=current.runtime?.enabled ? selectMaterialCli(current.runtime.materialCli,input.projectId,

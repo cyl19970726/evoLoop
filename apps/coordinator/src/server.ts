@@ -27,7 +27,7 @@ import type { ManualStopPreview } from "./session-messages/manual-stop.js";
 import type { SessionMessageManualStopPreflight } from "@evoloop/contracts/session-messages";
 import type { SessionTimelineService } from "./session-timeline/index.js";
 import { registerSessionTimelineRoutes } from "./session-timeline/routes.js";
-import { runtimeReconcileSchema, runtimeCompactionIntentSchema, preTurnContinueSchema, messagePreTurnContinueSchema } from "@evoloop/contracts/runtime";
+import { runtimeReconcileSchema, runtimeCompactionIntentSchema, preTurnContinueSchema, messagePreTurnContinueSchema, runtimeProviderSchema, sessionProvider } from "@evoloop/contracts/runtime";
 import type { CompactionMaintenance } from "./runtime/compaction.js";
 import { grantAllowsModel, grantModels, type RuntimeGrant } from "./configuration.js";
 import { registerDocumentRoutes, type DocumentRouteOptions } from "./documents/routes.js";
@@ -86,7 +86,10 @@ export async function buildServer(options: {
       preview: ManualStopPreview,preflight:SessionMessageManualStopPreflight): Promise<void>;
   };
   runtimeGrants?: (projectId: string, actorId: string) => RuntimeGrant[];
-  listRuntimeModels?: () => Promise<{status:"available"|"empty"|"unavailable";models:string[];
+  /** Live runtime binding and skills of a Role; absent when this coordinator cannot read them. */
+  roleRuntimeView?: (principal: Principal, projectId: string, roleId: string) => Promise<import("@evoloop/contracts/role-skills").RoleRuntimeView>;
+  /** Model choices of one driven runtime; absent provider means the default runtime. */
+  listRuntimeModels?: (provider?: import("@evoloop/contracts/runtime").RuntimeProvider) => Promise<{status:"available"|"empty"|"unavailable";models:string[];
     options?:Array<{model:string;supportedReasoningEfforts:string[];defaultReasoningEffort:string|null}>;
     error:string|null;observedAtUtc:string}>;
   sessionPreparation?: (input:{projectId:string;sessionId:string;roleId:string;sessionActorId:string;
@@ -174,13 +177,13 @@ export async function buildServer(options: {
   };
   const params = (value: unknown) => z.record(z.string(), idSchema).parse(value);
   const callerGrants = (projectId:string,actorId:string) => (options.runtimeGrants?.(projectId,actorId) ?? []).filter(g=>g.projectId===projectId && g.actorId===actorId);
-  const catalog = async () => {
+  const catalog = async (provider?: import("@evoloop/contracts/runtime").RuntimeProvider) => {
     if (!options.runtime?.status().available || !options.listRuntimeModels) return {status:"unavailable" as const,models:[] as string[],error:"模型目录暂不可读取",observedAtUtc:new Date().toISOString()};
-    try { return await options.listRuntimeModels(); }
+    try { return await options.listRuntimeModels(provider); }
     catch { return {status:"unavailable" as const,models:[] as string[],error:"模型目录读取失败或超时",observedAtUtc:new Date().toISOString()}; }
   };
-  const requireActiveModel = async (model:string|null) => {
-    const current=await catalog();
+  const requireActiveModel = async (model:string|null, provider:import("@evoloop/contracts/runtime").RuntimeProvider) => {
+    const current=await catalog(provider);
     if(current.status==="unavailable")throw new DomainError("MODEL_CATALOG_UNAVAILABLE","模型目录读取失败或超时，未创建会话或运行。请稍后重试。");
     if(current.status==="empty")throw new DomainError("MODEL_CATALOG_EMPTY","当前模型目录为空，未创建会话或运行。");
     if(model && !current.models.includes(model))throw new DomainError("MODEL_NOT_ACTIVE",`模型 ${model} 当前不在 App Server 可用目录中，未创建会话或运行。`);
@@ -262,14 +265,15 @@ export async function buildServer(options: {
           !await options.allowedRuntimeCwd?.(command.projectId, command.cwd)) {
           throw new DomainError("FORBIDDEN", "执行职责、范围、目录与权限须与项目授权完全一致。");
         }
-        if(!dynamic)await requireActiveModel(command.model!);
+        if(!dynamic)await requireActiveModel(command.model!,
+          await options.service.roleRuntimeProvider(principal,command.projectId,command.roleId));
       }
       // Closing is a reviewer request; the runner archives under the original Session grant.
       if (command.type === "runtime.session.executionProfile.revise" && command.reasoningEffort &&
         !await options.service.getOperation(principal,command.projectId,command.operationId)) {
         if(!options.runtime)throw new DomainError("RUNTIME_READ_UNAVAILABLE","原生执行服务不可读，未保存新配置；请恢复连接后重试。");
         await options.runtime.preflightExecutionProfileRevision(principal,command);
-        const current=await catalog();
+        const current=await catalog(sessionProvider(await options.service.getRuntimeSession(principal,command.projectId,command.sessionId)));
         if(current.status!=="available")throw new DomainError("MODEL_CATALOG_UNAVAILABLE","原生模型目录不可用，未保存新配置。");
         if(!current.options?.find(option=>option.model===command.model)?.supportedReasoningEfforts.includes(command.reasoningEffort??""))
           throw new DomainError("REASONING_EFFORT_UNSUPPORTED","该模型当前未列出所选思考强度，未保存新配置。");
@@ -285,7 +289,7 @@ export async function buildServer(options: {
           if (!await options.authorizeDynamicRun?.(principal, command, session))
           throw new DomainError("FORBIDDEN", "当前请求者未获该职责和范围的执行授权。");
         }
-        if(!dynamic)await requireActiveModel(session.executionProfile?.revision.model??session.model);
+        if(!dynamic)await requireActiveModel(session.executionProfile?.revision.model??session.model,sessionProvider(session));
       }
     }
     if (command.type === "schedule.create" || (command.type === "schedule.revise" && command.state === "active")) {
@@ -325,7 +329,8 @@ export async function buildServer(options: {
       g.authorizationScope===authorizationScope&&g.cwd===cwd&&g.sandbox==="danger-full-access"&&
       (g.approvalPolicy??"never")==="never");
     const modelAuthorized=!matchingEnvironment.length||matchingEnvironment.some(g=>grantAllowsModel(g,selectedModel));
-    const modelCatalog=await catalog();
+    const runtimeProvider=session?sessionProvider(session):await options.service.roleRuntimeProvider(principal,p.projectId,q.roleId);
+    const modelCatalog=await catalog(runtimeProvider);
     const bindings=await options.service.listRoleSessionBindings(principal,p.projectId,q.roleId);
     const bound=bindings.some(value=>value.sessionId===p.sessionId);
     const profile=session?await options.service.getRuntimeSessionProfile(principal,p.projectId,p.sessionId):null;
@@ -360,7 +365,7 @@ export async function buildServer(options: {
       ...(session?.state==="unknown"?["session_unknown"]:[]),
       ...(session&&session.state==="ready"&&!bound?["role_binding"]:[]),
       ...(session&&session.state==="ready"&&!profile?.displayName?.trim()?["display_profile"]:[])];
-    return {projectId:p.projectId,sessionId:p.sessionId,roleId:q.roleId,roleVersion:role.version,roleRevisionId:role.currentRevisionId,
+    return {projectId:p.projectId,sessionId:p.sessionId,roleId:q.roleId,roleVersion:role.version,roleRevisionId:role.currentRevisionId,runtimeProvider,
       roleState:role.state,responsibility:{goal:role.proposal.goal,independentResponsibility:role.proposal.independentResponsibility,
         workflow:role.proposal.workflow,handoffBoundary:role.proposal.handoffBoundary},
       session:session?{state:session.state,version:session.version,actorId:session.actorId,cwd:session.cwd,
@@ -377,6 +382,11 @@ export async function buildServer(options: {
       communication:{taskDiscussion:"available",nativeLeadMessage:"unverified",nextAction:"Use the Task discussion and confirm native communication in the actual host"},
       nameSync:"Saved profile is visible; native Thread name requires the runner's independent sync check",
       emptyThreadVisibility:"Native Desktop list may filter Threads without a first message; no message is created by preparation"};
+  });
+  app.get("/api/projects/:projectId/roles/:roleId/runtime", async request => {
+    const p=z.strictObject({projectId:z.uuid(),roleId:z.uuid()}).parse(request.params);
+    if(!options.roleRuntimeView)throw new DomainError("CAPABILITY_UNAVAILABLE","Role runtime view is unavailable");
+    return options.roleRuntimeView(who(request.principal),p.projectId,p.roleId.toLowerCase());
   });
   app.get("/api/projects/:projectId/roles/:roleId/skills/:name", async request => {
     const p=z.strictObject({projectId:z.uuid(),roleId:z.uuid(),name:z.string().regex(/^[A-Za-z0-9_-]+$/)}).parse(request.params);
@@ -416,12 +426,14 @@ export async function buildServer(options: {
   });
   app.get("/api/projects/:projectId/runtime/models", async request => {
     const projectId=params(request.params).projectId!,principal=who(request.principal);
+    const query=z.strictObject({provider:runtimeProviderSchema.optional()}).parse(request.query);
     await options.service.getProject(principal,projectId);
-    const current=await catalog();
+    const provider=query.provider??options.service.runtimeProviderSettings().defaultProvider;
+    const current=await catalog(provider);
     const fullGrants=callerGrants(projectId,principal.actorId).filter(g=>g.sandbox==="danger-full-access"&&
       (g.approvalPolicy??"never")==="never"&&g.networkAccess!==false);
     const allowed=new Set(fullGrants.flatMap(grantModels));
-    return {...current,models:current.status==="available"?current.models.filter(model=>allowed.has(model)):[],
+    return {...current,provider,models:current.status==="available"?current.models.filter(model=>allowed.has(model)):[],
       options:current.status==="available"?current.options?.filter(option=>allowed.has(option.model))??[]:[],
       authorizedModels:[...allowed],environments:fullGrants.map(g=>({roleId:g.roleId,authorizationScope:g.authorizationScope,
         cwd:g.cwd,configuredModel:g.model??null,models:current.status==="available"?

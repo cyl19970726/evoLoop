@@ -45,6 +45,7 @@
 | DEC-032 | 按完整功能场景连接所有模块，并区分 System Session 与业务 Session；**演员分工已被 DEC-034 修订** | 一次性执行、周期检查、issue 回流修复和复测继续纳入[功能场景](product/functional-scenarios.md)。原认知/分工演员是历史设计；新方向的 Lead、Evocation、Human Requirement 与 User Session 分工以 DEC-034 为准。分类仍不是新增权限等级或已实现代码枚举；唤醒、hook 和外部自动接续仍须单独验证。 |
 | DEC-033 | 所有新建 Session 使用 `danger-full-access`、`approvalPolicy: never` 与正常网络；普通消息和业务工作共享原 Session、Thread、adapter 与工具面 | 取代消息专用进程／purpose、只读权限资格门与业务权限恢复状态机。既有 sender/receiver grant 和 `maxTurns` 预算继续限定身份与成本；project/Task/Document 授权不变。旧 Session、Run 与 profile snapshots 保留历史值，不经冷切迁移重写。native permission ack 未收到时仍为 unknown；thread/read 不足以证明权限或确认 lost ack。当前仅 fake adapter 与专用 PG 验证，未证明 Lead 实际使用、发布或部署。 |
 | DEC-034 | 以经营交付和组织方法改进两张卫星图定义 Agent Company 的完整场景 | Leader 管任务组合、依赖、顺序、承接与验收安排；Human Requirement 按需澄清方向；业务 Agent 自行判断并交付；User Session 独立亲用，Evocation 对照内部 trace 与亲用证据试行方法/组织改进。两循环共用 Task/Document/Run/Delivery/Observation。保留 DEC-012 的四种支撑能力、DEC-002 的领域自主与 DEC-003 的证据要求；修订 DEC-003/004/014/032 的中央演员与默认路由。图是目标责任，现有 Role 名称及有限实跑不证明全链自动化；详见[产品定义](product/definition.md)与[完整场景](product/functional-scenarios.md)。 |
+| DEC-035 | Role 只绑定一种运行时（Codex 或 Claude），之后不可更换；一个协调服务按 Session 的运行时同时驱动两者；Role 此刻拥有的 skill 实时可见 | Role 首次绑定后只在该运行时内调整模型与 skill，未绑定的 Role 在首个 Session 预留时按服务默认运行时绑定。Session 一直按创建时的运行时分发。Role 的 skill 选择（业务 skill 必带；项目、个人、内置按开关，另可按名称增减）决定每个 Turn 的模型上下文，不是安全边界。CLI 与工作台每次读取都向运行时实时取值；逐 Turn 的 skill 记录不另建表，沿用 Claude 适配器 Turn 账本中的启动报告。配置与发现规则见[本机运行](development/local-run.md)。 |
 
 ## 当前设计提议
 
@@ -99,3 +100,5 @@ DEC-033 依据 2026-10-27 用户对 Task9a v5 的明确新选择：每个新 Ses
 2026-11-07 后续用户决定（Task `281f3f07-abc2-47f3-9560-1b743e46077d`）更新了 DEC-033 中的普通消息预算部分：精确 sender/receiver 授权继续生效，`maxTurns` 缺省为不限累计次数，只有显式正整数仍构成有限额度。原历史 `used`、Session、Thread、失败和 Task/队列尝试限额均保留。代码合入、旧私有 grant 转换、正式发布与独立使用分别核实；此段不把候选实现记成已发布。
 
 DEC-034 依据 2026-10-29 用户对 Agent Company 完整蓝图、两张原图与相应场景的确认。固定来源是过程 Document `92e03220-59bb-4dea-b63a-bcd204f30f31` 的修订 `67b7ad3e-e64c-4800-a55e-784a50354492`；可公开的目标语义与原图已纳入[产品定义](product/definition.md#两张产品卫星图经营交付与组织改进)。原报告含本机运行和内部路径，不作为 Git 正文发布。此决定改变产品职责和阅读路径；现有运行配置、自动唤醒、真人亲用和持续收益各按[阶段路线](roadmap.md#当前基线)单独核验。
+
+DEC-035 依据 2026-11-09 用户在运行时规划对话中的明确选择：角色绑定 Codex 后就只能用 Codex，可以改模型但不能换成另一种运行时；需要实时知道一个角色有哪些 skill；同一协调服务要同时运行 Codex 与 Claude；逐 Turn 记录由实现者判断。原始会话不随公开仓库发布。论证与场景见[运行时后续目标](research/runtime-next-goals-20261108.md)；研究记录仍是证据与方案，此行才是采纳。Claude 真实模型的凭据、费用与限流，以及经 coordinator 与工作台的真实双运行时 Session，仍待受控实验确认；Claude Session 的模型修订尚未实现。

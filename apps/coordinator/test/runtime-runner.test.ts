@@ -1128,7 +1128,7 @@ test("restart dispatches a reserved Run with the original Session profile and ne
   try {
     await runner.start();
     assert.deepEqual(profiles, [{ actorId, sessionId: persisted.id, roleId: persisted.roleId,
-      projectId, cwd: persisted.cwd, authorizationScope: persisted.authorizationScope,
+      projectId, provider: "codex", cwd: persisted.cwd, authorizationScope: persisted.authorizationScope,
       sandbox: persisted.sandbox, approvalPolicy: persisted.approvalPolicy, model: persisted.model }]);
     assert.equal(runtime.starts, 1);
     granted = false;
@@ -1404,7 +1404,7 @@ test("rehydration of a bound dynamic Session ignores a colliding static grant un
     current=true;
     await runner.pump();
     assert.equal(runtime.starts,1);
-    assert.deepEqual(profiles,[{actorId,sessionId:dynamicSession.id,roleId:dynamicSession.roleId,projectId,
+    assert.deepEqual(profiles,[{actorId,sessionId:dynamicSession.id,roleId:dynamicSession.roleId,projectId,provider:"codex",
       cwd:dynamicSession.cwd,authorizationScope:dynamicSession.authorizationScope,sandbox:"workspace-write",
       approvalPolicy:dynamicSession.approvalPolicy,model:dynamicSession.model}]);
   } finally {await runner.stop();}

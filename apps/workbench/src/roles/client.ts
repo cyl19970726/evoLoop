@@ -1,5 +1,6 @@
 import type { RoleHandoff, RoleRecord, RoleRevision, RoleSessionBinding, RoleTrialReview } from "@evoloop/contracts/roles";
 import type { Page } from "@evoloop/contracts";
+import type { RoleRuntimeView } from "@evoloop/contracts/role-skills";
 import { request } from "../api";
 
 const project = (id: string) => `/api/projects/${encodeURIComponent(id)}`;
@@ -12,5 +13,7 @@ export function roleClient(token: string, projectId: string) {
     reviews: (id: string) => request<RoleTrialReview[]>(token, `${base}/${key(id)}/reviews`, 15000),
     handoffs: (id: string) => request<RoleHandoff[]>(token, `${base}/${key(id)}/handoffs`, 15000),
     bindings: (id: string) => request<RoleSessionBinding[]>(token, `${base}/${key(id)}/bindings`, 15000),
+    /** Live: the runtime is asked again on every read. */
+    runtime: (id: string) => request<RoleRuntimeView>(token, `${base}/${key(id)}/runtime`, 20000),
   };
 }

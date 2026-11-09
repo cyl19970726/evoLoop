@@ -6,3 +6,9 @@
 .role-presence-error{color:#923f47}
 .external-host-entry code{user-select:text;overflow-wrap:anywhere}.external-host-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center}.external-host-actions a{display:inline-flex;align-items:center;min-height:34px;padding:6px 10px;border:1px solid #bdcbe6;border-radius:6px;background:#fff;font-weight:600}.external-host-actions button{min-height:34px;padding:6px 10px}.external-host-entry p{font-size:12px;line-height:1.55}
 .journey-board .workflow-detail[id^="role-"]{scroll-margin-top:80px}
+.role-runtime{margin:14px 0;border:1px solid #dce3f0;border-radius:8px;padding:12px;min-width:0;background:#fff;color:#34425b}
+.role-runtime .panel-head{display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap}
+.role-runtime-skills{list-style:none;margin:8px 0;padding:0}
+.role-runtime-skills li{border-top:1px solid #dce3f0;padding:8px 0;min-width:0;overflow-wrap:anywhere}
+.role-runtime-skills li p{margin:4px 0}
+.role-runtime-skills li.muted{color:var(--ink-muted)}

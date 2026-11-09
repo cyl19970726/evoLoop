@@ -12,6 +12,7 @@ import type { CognitiveClosureFact, WaitingHandoffFact, ChildHandoffFact } from 
 import { DomainError, WorkflowService } from "../src/index.ts";
 import { taskInputSignature } from "../src/task-input.ts";
 import type { RoleRecord, RoleRevision, RoleTrialReview, RoleHandoff, RoleSessionBinding } from "@evoloop/contracts/roles";
+import type { RoleRuntimeRevision } from "@evoloop/contracts/role-skills";
 import type { ScheduleDefinition, ScheduleRevision, Occurrence } from "@evoloop/contracts/scheduling";
 
 const projectId = "00000000-0000-4000-8000-000000000001";
@@ -55,6 +56,7 @@ type State = {
   roleReviews: RoleTrialReview[];
   roleHandoffs: RoleHandoff[];
   roleBindings: RoleSessionBinding[];
+  roleRuntime: RoleRuntimeRevision[];
   schedules: Record<string, ScheduleDefinition>;
   scheduleRevisions: ScheduleRevision[];
   occurrences: Occurrence[];
@@ -68,7 +70,7 @@ class MemoryUow implements UnitOfWork {
     taskRevisions: {}, bases: {}, links: [], impacts: {}, basisDecisions: [], operations: {}, outbox: [],
     goals: {}, goalRevisions: [], stages: {}, stageRevisions: [], stageReviews: [], proposals: [], judgements: [], deliveries: [], observations: [], closures: [], cognitiveClosureFact: null, waitingHandoffFact: null, childHandoffFact: null,
     discussions: {}, discussionEvents: [],
-    roles: {}, roleRevisions: [], roleReviews: [], roleHandoffs: [], roleBindings: [], schedules: {}, scheduleRevisions: [], occurrences: [],
+    roles: {}, roleRevisions: [], roleReviews: [], roleHandoffs: [], roleBindings: [], roleRuntime: [], schedules: {}, scheduleRevisions: [], occurrences: [],
   };
   async transaction<T>(_projectId: string, action: (tx: Transaction) => Promise<T>): Promise<T> {
     let state = structuredClone(this.state);
@@ -96,6 +98,8 @@ class MemoryUow implements UnitOfWork {
       listReviews: async id => state.roleReviews.filter(item => item.roleId === id),
       listHandoffs: async id => state.roleHandoffs.filter(item => item.roleId === id),
       listSessionBindings: async id => state.roleBindings.filter(item => item.roleId === id),
+      getRoleRuntime: async id => state.roleRuntime.filter(item => item.roleId === id).at(-1) ?? null,
+      listRoleRuntimeRevisions: async id => state.roleRuntime.filter(item => item.roleId === id),
       getSchedule: async id => state.schedules[id] ?? null,
       listSchedules: async () => Object.values(state.schedules),
       listScheduleRevisions: async id => state.scheduleRevisions.filter(item => item.scheduleId === id),
@@ -193,6 +197,7 @@ class MemoryUow implements UnitOfWork {
       listUnfinishedOwnedTasks: async id => Object.values(state.tasks).filter(item => item.owner === id && item.state !== "done" && item.state !== "cancelled"),
       listOpenRuntimeSessions: async () => [],
       addSessionBinding: async item => { state.roleBindings.push(item); },
+      addRoleRuntimeRevision: async item => { state.roleRuntime.push(item); },
       insertSchedule: async item => { state.schedules[item.id] = item; state.scheduleRevisions.push(item.revision); },
       updateSchedule: async (item, expected) => { assert.equal(state.schedules[item.id]?.version, expected); state.schedules[item.id] = item; state.scheduleRevisions.push(item.revision); },
       insertDocumentPayloadRevision: async item => { state.documentRevisions[item.id] = item; },

@@ -10,6 +10,7 @@
     "fastify": "5.12.7",
     "@fastify/static": "10.1.6",
     "pg": "8.23.1",
+    "@evoloop/adapter-claude-agent-sdk": "0.1.0",
     "@evoloop/adapter-codex-app-server": "0.1.0",
     "@evoloop/adapter-local-blobs": "0.1.0",
     "@evoloop/adapter-wiki-openviking": "0.1.0",

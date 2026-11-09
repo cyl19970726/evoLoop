@@ -1,19 +1,21 @@
-import { execFile, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { execFile, spawn, type ChildProcess, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { resolve } from "node:path";
-import { createInterface } from "node:readline";
+import { isAbsolute, resolve } from "node:path";
 import { promisify } from "node:util";
-import type { RuntimeApprovalRequest, RuntimeBinding, RuntimeCompactionObservation, RuntimeEvent, RuntimePage, RuntimePort, RuntimeSessionSpec, RuntimeTurn, RuntimeTurnFailure, RuntimeWorkPage } from "@evoloop/contracts/runtime";
+import type { RuntimeApprovalRequest, RuntimeBinding, RuntimeCapabilities, RuntimeCapabilityListing, RuntimeCompactionObservation, RuntimeEvent, RuntimeModelList, RuntimePage, RuntimePort, RuntimeSessionSpec, RuntimeTurn, RuntimeTurnFailure, RuntimeWorkPage } from "@evoloop/contracts/runtime";
+import { ownerOf, RuntimeNotSentError, RuntimeProtocolError, RuntimeServerError, RuntimeUnknownError } from "@evoloop/contracts/runtime";
 import type { ExecutionProfileSnapshot } from "@evoloop/contracts/session-recovery";
 import type { NativeInputCapture, NativeInputEvent, NativeInputQuestion } from "@evoloop/contracts/native-input";
 import type { NativeWorkspacePage, NativeWorkspaceReadOptions, WorkspaceRuntimeUpdate } from "@evoloop/contracts/session-timeline";
 import { mapWorkItem } from "./work-trace.js";
 import { mapWorkspaceEvent } from "./workspace-map.js";
 import { WorkspaceHistoryReader } from "./workspace-read.js";
+import { checkUsedSurface, compareCodexVersions, pinnedFeatures, versionAllowed, type ProtocolCheck, type ProtocolFeatures } from "./protocol-surface.js";
+export { checkUsedSurface, compareCodexVersions, pinnedFeatures, versionAllowed, type ProtocolCheck, type ProtocolFeatures } from "./protocol-surface.js";
 
-const OWNER = "evoloop-codex-app-server" as const;
+const OWNER = ownerOf("codex");
 const PINNED_PROTOCOLS = {
   "codex-cli 0.154.0": {
     standard: "f3487938786b729cb6773dbc9e83a7efab9c78c845db7094e8f539f373cbacc9",
@@ -37,11 +39,9 @@ const PINNED_PROTOCOLS = {
   },
 } as const;
 type PinnedProtocolVersion = keyof typeof PINNED_PROTOCOLS;
-const supportsModernProtocol = (version: PinnedProtocolVersion): boolean =>
-  version !== "codex-cli 0.154.0";
-const supportsExperimentalWorkspace = (version: PinnedProtocolVersion): boolean =>
-  version === "codex-cli 0.166.0-alpha.5.1" || version === "codex-cli 0.166.0-alpha.6" ||
-  version === "codex-cli 0.167.0-alpha.3.2";
+/** Reviewed v2 schema hashes for one pinned version, or null; read by the conformance script. */
+export const pinnedSchemaHashes = (version: string): { standard: string; experimental: string } | null =>
+  Object.hasOwn(PINNED_PROTOCOLS, version) ? { ...PINNED_PROTOCOLS[version as PinnedProtocolVersion] } : null;
 const execFileAsync = promisify(execFile);
 const APPROVAL_METHODS = new Set(["item/commandExecution/requestApproval", "item/fileChange/requestApproval", "applyPatchApproval", "execCommandApproval"]);
 // The App Server and its probes must not inherit coordinator credentials or Node execution flags.
@@ -87,9 +87,15 @@ const nonempty = (value: unknown): value is string => typeof value === "string" 
 const safeModelIdentity = (value:unknown):string|null => typeof value==="string"&&
   /^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$/.test(value)?value:null;
 const safeProviderCode = (value: unknown): string | null => typeof value === "string" && /^[a-z][a-z0-9_]{0,63}$/.test(value) ? value : null;
+/** Native classification first: the App Server reports overflow as a typed codexErrorInfo, not an HTTP status. */
+const contextWindowExceeded = (info: unknown): boolean =>
+  info === "contextWindowExceeded" || (!!object(info) && Object.hasOwn(object(info)!, "contextWindowExceeded"));
 function turnFailure(value: unknown): RuntimeTurnFailure | undefined {
   const native = object(value);
   if (!native) return undefined;
+  if (contextWindowExceeded(native.codexErrorInfo))
+    return { category: "context_window_exceeded", providerCode: null, httpStatus: null,
+      summary: "Context exceeded the model window; retry on the same Session after native compaction" };
   const raw = typeof native.message === "string" ? native.message : "";
   let parsed: Record<string, unknown> | null = null;
   try { parsed = object(JSON.parse(raw)); } catch { /* Native error text is not necessarily JSON. */ }
@@ -118,44 +124,9 @@ function runtimeTurn(value: unknown): RuntimeTurn | null {
   return { id: turn.id, status: turn.status, completedAtUtc: timestamp?.toISOString() ?? null, ...(error ? { error } : {}) };
 }
 
-/** Unknown means the process may have accepted an operation whose reply was lost. Never retry it automatically. */
-export class RuntimeUnknownError extends Error {
-  observedTurnId?: string;
-  constructor(public readonly method: string, public readonly requestId: number | null, reason: string) {
-    super(`${method}: outcome unknown (${reason})`); this.name = "RuntimeUnknownError";
-  }
-}
-export class RuntimeProtocolError extends Error {
-  constructor(message: string) { super(message); this.name = "RuntimeProtocolError"; }
-}
-export type RuntimeServerErrorCategory = "rollout_not_found" | "thread_unavailable" | "writer_conflict" | "invalid_params" | "method_not_found" | "permission_denied" | "server_rejected";
-const serverErrorCategory = (method: string, code: number, message: string): RuntimeServerErrorCategory => {
-  // The pinned native writer-lock rejection occurs before this resume can start a Turn.
-  if (method === 'thread/resume' && code === -32600 &&
-    /^thread [0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12} already has an active writer$/.test(message))
-    return "writer_conflict";
-  if (/rollout.{0,60}not found|not found.{0,60}rollout|no rollout found/i.test(message)) return "rollout_not_found";
-  if (/permission|unauthorized|forbidden/i.test(message)) return "permission_denied";
-  if (/thread.{0,60}(read|load)|(read|load).{0,60}thread/i.test(message)) return "thread_unavailable";
-  if (code === -32602 || /invalid params/i.test(message)) return "invalid_params";
-  if (code === -32601) return "method_not_found";
-  return "server_rejected";
-};
-/** Stable protocol evidence only. The native error message can contain private paths or session material. */
-export class RuntimeServerError extends RuntimeProtocolError {
-  readonly category: RuntimeServerErrorCategory;
-  readonly preTurnWriterConflict: boolean;
-  readonly rejectedThreadId: string | null;
-  constructor(public readonly method: string, public readonly requestId: number, public readonly code: number, nativeMessage: string, requestedThreadId?: string) {
-    const category = serverErrorCategory(method, code, nativeMessage);
-    super(`${method}: App Server rejected request (${category}, code ${code})`);
-    this.name = "RuntimeServerError";
-    this.category = category;
-    const rejectedThreadId = category === 'writer_conflict' ? nativeMessage.match(/^thread ([0-9a-f-]{36}) already has an active writer$/)?.[1] ?? null : null;
-    this.rejectedThreadId = rejectedThreadId ?? null;
-    this.preTurnWriterConflict = category === 'writer_conflict' && rejectedThreadId === requestedThreadId;
-  }
-}
+// Provider-neutral outcome errors live in contracts; re-exported for existing importers.
+export { RuntimeNotSentError, RuntimeProtocolError, RuntimeServerError, RuntimeUnknownError };
+export type { RuntimeServerErrorCategory } from "@evoloop/contracts/runtime";
 
 export type RuntimeCompactionPreflightStage = "request_validation" | "owner_resume" | "thread_read" | "history" | "send_connection";
 /**
@@ -173,7 +144,22 @@ export class RuntimeCompactionPreflightError extends RuntimeProtocolError {
   }
 }
 
-export type NativeChildStopReason = 'adapter_closed' | 'stdout_closed' | 'process_exited' | 'spawn_error' | 'protocol_error';
+
+/** POSIX: the App Server leads its own process group so close reaches tools it spawned. */
+function signalProcessGroup(child: ChildProcess, signal: NodeJS.Signals): void {
+  const pid = child.pid;
+  if (process.platform !== "win32" && Number.isSafeInteger(pid) && pid! > 0) {
+    try { process.kill(-pid!, signal); return; } catch { /* group already empty; fall back to the direct child */ }
+  }
+  try { child.kill(signal); } catch { /* already exited */ }
+}
+const DEFAULT_MAX_LINE_BYTES = 64 * 1024 * 1024;
+const MAX_SEEN_TOOL_CALLS = 10_000;
+// Bounded wait for the post-turn/start history attach window of thread/turns/list (about 1.5 s in total).
+const TURN_LIST_ATTACH_RETRIES = 5;
+const TURN_LIST_ATTACH_DELAY_MS = 100;
+
+export type NativeChildStopReason = 'adapter_closed' | 'stdout_closed' | 'stdin_error' | 'process_exited' | 'spawn_error' | 'protocol_error';
 /** Transport loss and child exit are separate observations. Neither proves a native Turn result. */
 export interface NativeChildDiagnostic {
   startId: string;
@@ -204,6 +190,18 @@ export interface CodexAppServerOptions {
   workspaceExperimental?: boolean;
   /** For fixtures only; production uses `app-server --stdio`. */
   spawnArgs?: string[];
+  /**
+   * `exact` (default): the CLI must be expectedVersion and its schema must hash to the reviewed value.
+   * `surface`: the CLI must be at least minimumVersion, not blocked, and its generated schema must still
+   * carry every method and request parameter evoLoop uses; optional features follow the schema.
+   */
+  protocolCheck?: ProtocolCheck;
+  /** Surface check only; defaults to expectedVersion. */
+  minimumVersion?: string;
+  /** Surface check only; exact `codex-cli X.Y.Z[-pre]` versions that must never run. */
+  blockedVersions?: readonly string[];
+  /** One JSON-RPC line larger than this loses protocol sync and disconnects. Default 64 MiB. */
+  maxLineBytes?: number;
   /** Actual child exit evidence, independent of a transport EOF. */
   onExited?: (receipt:{pid:number;code:number|null;signal:NodeJS.Signals|null})=>void|Promise<void>;
   /** Explicit per-request approval, never a session-wide grant. Default is deny. */
@@ -213,6 +211,11 @@ export interface CodexAppServerOptions {
   /** Trusted, persisted activation permit for exactly one adopted Session execution profile revision. */
   authorizeExecutionProfileActivation?: (current: RuntimeBinding, target: RuntimeSessionSpec,
     revisionId: string, operationId: string) => Promise<boolean>;
+  /**
+   * Dedicated Codex state directory (config, login, sessions) for this coordinator's App Server and probes.
+   * When absent the inherited CODEX_HOME or ~/.codex is shared with the user's own Codex use.
+   */
+  codexHome?: string;
   /** Synthetic parent environment for process-boundary tests; all values still pass through the allowlist. */
   environment?: NodeJS.ProcessEnv;
   /** Trusted local profile configuration, never accepted from a worker's request. */
@@ -231,12 +234,14 @@ export interface DynamicToolResult { contentItems: ({type:"inputText";text:strin
 
 interface Pending { method: string; threadId: string | null; resolve: (value: unknown) => void; reject: (error: Error) => void; timer: NodeJS.Timeout }
 const MAX_CHILD_DIAGNOSTICS = 16;
-type ModelListResult = {status:"available"|"empty"|"unavailable";models:string[];
-  options:Array<{model:string;supportedReasoningEfforts:string[];defaultReasoningEffort:string|null}>;
-  error:string|null;observedAtUtc:string};
+type ModelListResult = RuntimeModelList;
 const MODEL_LIST_PAGE_SIZE = 100;
 const MODEL_LIST_MAX_PAGES = 5;
 const MODEL_LIST_CACHE_MS = 10_000;
+const CAPABILITY_LIST_TIMEOUT_MS = 5_000;
+const CAPABILITY_LIST_MAX = 512;
+/** A listed name or id: bounded, printable, no line breaks. */
+const listedName = (value: unknown): value is string => typeof value === "string" && /^[^\u0000-\u001f\u007f]{1,160}$/u.test(value);
 interface PendingNativeInput { capture: NativeInputCapture; requestId: string | number; attempted: boolean }
 
 const nativeRequestKey=(value:unknown):string|null=>
@@ -289,7 +294,7 @@ export class CodexAppServerAdapter implements RuntimePort {
   private events = new Set<(event: RuntimeEvent) => void>();
   private workspaceUpdates = new Set<(event: WorkspaceRuntimeUpdate) => void>();
   private readonly workspaceReader = new WorkspaceHistoryReader((method, params) => this.request(method, params),
-    () => this.experimental && this.options.workspaceExperimental === true && supportsExperimentalWorkspace(this.expectedVersion));
+    () => this.experimental && this.options.workspaceExperimental === true && this.features.workspace);
   private approvals = new Set<(request: RuntimeApprovalRequest) => void | Promise<void>>();
   private declaredTools = new Map<string, Set<string>>();
   private profileTransitionThreads = new Set<string>();
@@ -317,8 +322,16 @@ export class CodexAppServerAdapter implements RuntimePort {
   private readonly timeout: number;
   private readonly initializationTimeout: number;
   private readonly dynamicToolTimeout: number;
+  private readonly maxLineBytes: number;
   private readonly environment: NodeJS.ProcessEnv;
   private readonly expectedVersion: PinnedProtocolVersion;
+  private readonly protocolCheck: ProtocolCheck;
+  private readonly minimumVersion: string;
+  private readonly blockedVersions: readonly string[];
+  /** Reviewed table for exact pinning; replaced by schema detection on each surface-checked open. */
+  private features: ProtocolFeatures;
+  /** The protocol a conversation admission was qualified under: the pinned or observed CLI version. */
+  private protocolIdentity: string;
   private modelListCache: {value:ModelListResult;expiresAt:number}|null = null;
   private modelListPending: Promise<ModelListResult>|null = null;
 
@@ -327,21 +340,49 @@ export class CodexAppServerAdapter implements RuntimePort {
     this.timeout = options.requestTimeoutMs ?? 15_000;
     this.initializationTimeout = options.initializationTimeoutMs ?? this.timeout;
     this.dynamicToolTimeout = options.dynamicToolTimeoutMs ?? 30_000;
+    this.maxLineBytes = options.maxLineBytes ?? DEFAULT_MAX_LINE_BYTES;
     this.environment = childEnvironment(options.environment ?? process.env);
+    if (options.codexHome !== undefined) {
+      if (typeof options.codexHome !== "string" || !isAbsolute(options.codexHome)) throw new RuntimeProtocolError("codexHome must be an absolute path");
+      this.environment.CODEX_HOME = options.codexHome;
+    }
     const expectedVersion = options.expectedVersion ?? "codex-cli 0.154.0";
     if (!(expectedVersion in PINNED_PROTOCOLS)) throw new RuntimeProtocolError("unsupported Codex CLI protocol version");
     this.expectedVersion = expectedVersion as PinnedProtocolVersion;
+    this.features = pinnedFeatures(this.expectedVersion)!;
+    this.protocolIdentity = this.expectedVersion;
+    this.protocolCheck = options.protocolCheck ?? "exact";
+    if (this.protocolCheck !== "exact" && this.protocolCheck !== "surface") throw new RuntimeProtocolError("protocolCheck must be exact or surface");
+    this.minimumVersion = options.minimumVersion ?? this.expectedVersion;
+    if (compareCodexVersions(this.minimumVersion, this.minimumVersion) === null) throw new RuntimeProtocolError("minimumVersion must be a codex-cli version");
+    this.blockedVersions = [...(options.blockedVersions ?? [])];
+    if (this.blockedVersions.some(version => compareCodexVersions(version, version) === null))
+      throw new RuntimeProtocolError("blockedVersions must list codex-cli versions");
     if(options.nativeUserInput!==undefined&&typeof options.nativeUserInput!=='boolean')
       throw new RuntimeProtocolError('nativeUserInput must be boolean');
-    if(options.nativeUserInput&&!supportsModernProtocol(this.expectedVersion))
+    if(options.nativeUserInput&&!this.features.modern)
       throw new RuntimeProtocolError('nativeUserInput requires a pinned modern Codex CLI protocol');
     if(options.workspaceExperimental!==undefined&&typeof options.workspaceExperimental!=='boolean')
       throw new RuntimeProtocolError('workspaceExperimental must be boolean');
-    if(options.workspaceExperimental&&!supportsExperimentalWorkspace(this.expectedVersion))
+    if(options.workspaceExperimental&&!this.features.workspace)
       throw new RuntimeProtocolError('workspaceExperimental requires a pinned experimental workspace protocol');
     if (!finite(this.timeout)) throw new Error("requestTimeoutMs must be positive");
     if (!finite(this.initializationTimeout)) throw new Error("initializationTimeoutMs must be positive");
     if (!finite(this.dynamicToolTimeout)) throw new Error("dynamicToolTimeoutMs must be positive");
+    if (!Number.isSafeInteger(this.maxLineBytes) || this.maxLineBytes <= 0) throw new Error("maxLineBytes must be a positive integer");
+  }
+  /** One shared stdio child serves every Session; a transport loss affects all in-flight Turns. */
+  capabilities(): RuntimeCapabilities {
+    const modern = this.features.modern;
+    return {
+      provider: "codex", process: "shared",
+      delivery: { midTurnInput: false, callerAssignedTurnKey: false, callerAssignedSessionId: false },
+      errors: { notSent: true, rejected: true },
+      compaction: { autoCompacts: true, mode: this.features.compaction ? "owned_request" : "unavailable" },
+      history: { workTrace: true, workspace: this.options.workspaceExperimental === true && this.features.workspace },
+      naming: modern, archive: "native", nativeInput: this.options.nativeUserInput === true && modern,
+      executionProfileActivation: modern, modelList: true, usage: "unavailable", cost: false,
+    };
   }
   isReady(): boolean { return this.ready && !!this.child; }
   hasProcessHandle():boolean{return this.ownedProcess!==null;}
@@ -410,6 +451,48 @@ export class CodexAppServerAdapter implements RuntimePort {
   onDisconnect(listener: (reason: string) => void): () => void { this.disconnects.add(listener); return () => this.disconnects.delete(listener); }
 
   /** Catalog observation only; a listed slug does not prove a Turn can use it. */
+  /**
+   * Skills the App Server discovers for `cwd` and, unless skillsOnly, its installed plugins and MCP servers.
+   * Read-only and bounded; skills are reloaded from disk. Plugin and MCP lists are best effort.
+   */
+  async listCapabilities(cwd: string, options: { skillsOnly?: boolean } = {}): Promise<RuntimeCapabilityListing> {
+    if (!this.isReady()) throw new RuntimeProtocolError("App Server not ready");
+    if (!this.features.capabilityLists) throw new RuntimeProtocolError("capability lists require a newer Codex protocol");
+    if (!cwd.startsWith("/") || resolve(cwd) !== cwd) throw new RuntimeProtocolError("invalid cwd");
+    const timeout = Math.min(this.timeout, CAPABILITY_LIST_TIMEOUT_MS);
+    const listed = object(await this.request("skills/list", { cwds: [cwd], forceReload: true }, timeout, undefined, undefined, true));
+    if (!Array.isArray(listed?.data)) throw new RuntimeProtocolError("invalid skills/list response");
+    const skills: RuntimeCapabilityListing["skills"] = [];
+    for (const entry of listed.data) {
+      for (const value of Array.isArray(object(entry)?.skills) ? object(entry)!.skills as unknown[] : []) {
+        const skill = object(value);
+        if (!skill || !listedName(skill.name) || typeof skill.path !== "string" || !skill.path.startsWith("/") ||
+          !["user", "repo", "system", "admin"].includes(String(skill.scope)) || typeof skill.enabled !== "boolean") continue;
+        if (skills.length >= CAPABILITY_LIST_MAX) break;
+        skills.push({ name: skill.name, path: skill.path, scope: skill.scope as RuntimeCapabilityListing["skills"][number]["scope"],
+          enabled: skill.enabled, description: typeof skill.description === "string" ? skill.description.slice(0, 500) : null,
+          pluginId: listedName(skill.pluginId) ? skill.pluginId : null });
+      }
+    }
+    if (options.skillsOnly) return { skills, plugins: null, mcpServers: null, errors: [] };
+    const errors: string[] = [];
+    let plugins: RuntimeCapabilityListing["plugins"] = null, mcpServers: RuntimeCapabilityListing["mcpServers"] = null;
+    try {
+      const result = object(await this.request("plugin/list", { cwds: [cwd] }, timeout, undefined, undefined, true));
+      if (!Array.isArray(result?.marketplaces)) throw new Error("invalid");
+      plugins = result.marketplaces.flatMap(market => Array.isArray(object(market)?.plugins) ? object(market)!.plugins as unknown[] : [])
+        .map(object).filter(plugin => plugin?.installed === true && listedName(plugin.name))
+        .map(plugin => ({ name: plugin!.name as string, enabled: plugin!.enabled === true })).slice(0, CAPABILITY_LIST_MAX);
+    } catch { errors.push("plugin/list"); }
+    try {
+      const result = object(await this.request("mcpServerStatus/list", { limit: 50 }, timeout, undefined, undefined, true));
+      if (!Array.isArray(result?.data)) throw new Error("invalid");
+      mcpServers = result.data.map(object).filter(server => listedName(server?.name))
+        .map(server => ({ name: server!.name as string, auth: typeof server!.authStatus === "string" ? server!.authStatus : null }));
+    } catch { errors.push("mcpServerStatus/list"); }
+    return { skills, plugins, mcpServers, errors };
+  }
+
   async listModels():Promise<ModelListResult>{
     const now=Date.now();
     if(this.modelListCache&&now<this.modelListCache.expiresAt&&this.isReady())
@@ -491,20 +574,32 @@ export class CodexAppServerAdapter implements RuntimePort {
     if(this.ownedProcess?.pid&&this.ownedProcess.exitCode===null&&this.ownedProcess.signalCode===null)
       throw new RuntimeProtocolError('previous App Server process has not exited');
     this.experimental=this.options.workspaceExperimental===true||!!(this.options.dynamicTools&&this.options.callDynamicTool)||
-      (supportsModernProtocol(this.expectedVersion)&&this.nativeInputListeners.size>0);
+      (this.features.modern&&this.nativeInputListeners.size>0);
     if (!this.options.spawnArgs) {
       const version = await this.probeVersion();
-      if (version !== this.expectedVersion) throw new RuntimeProtocolError(`Codex CLI version mismatch: expected ${this.expectedVersion}, got ${version}`);
-      await this.probeSchema();
+      if (this.protocolCheck === "exact") {
+        if (version !== this.expectedVersion) throw new RuntimeProtocolError(`Codex CLI version mismatch: expected ${this.expectedVersion}, got ${version}`);
+        await this.probeSchema();
+      } else {
+        if (!versionAllowed(version, this.minimumVersion, this.blockedVersions))
+          throw new RuntimeProtocolError(`Codex CLI version ${version} is below ${this.minimumVersion} or blocked`);
+        const features = await this.probeSurface();
+        if (this.options.nativeUserInput && !features.modern) throw new RuntimeProtocolError("nativeUserInput requires a modern Codex CLI protocol");
+        if (this.options.workspaceExperimental && !features.workspace) throw new RuntimeProtocolError("workspaceExperimental requires the workspace timeline protocol");
+        this.features = features;
+        this.protocolIdentity = version;
+      }
     }
     const child = spawn(this.executable, this.options.spawnArgs ?? this.appServerArguments(), {
-      stdio: ["pipe", "pipe", "pipe"], env: this.environment,
+      // detached: own process group, so close() also stops shells and tools the App Server started.
+      stdio: ["pipe", "pipe", "pipe"], env: this.environment, detached: process.platform !== "win32",
     });
     this.child = child;
     this.connectionId=randomUUID();
     this.childStartedAtUtc=new Date().toISOString();
     const startId=this.connectionId;
     this.seenNativeRequestIds.clear();
+    this.seenToolCalls.clear(); // Duplicate callId detection only spans one connection's Turns.
     this.ownedProcess=child;
     this.processExit=new Promise<void>(resolveExit=>{
       child.once('exit',()=>resolveExit());
@@ -512,6 +607,8 @@ export class CodexAppServerAdapter implements RuntimePort {
     });
     child.stderr.resume(); // Do not persist stderr: it may contain private paths or content.
     child.on("error", () => {if(this.child===child)this.disconnect('child process error','spawn_error');});
+    // EPIPE after the child stops reading must not become an uncaught coordinator exception.
+    child.stdin.on("error", () => {if(this.child===child)this.disconnect('stdin error','stdin_error');});
     child.on("exit", (code, signal) => {
       if(Number.isSafeInteger(child.pid)&&this.options.onExited){
         this.exitDelivery=Promise.resolve().then(()=>this.options.onExited!({pid:child.pid!,code,signal}));
@@ -528,9 +625,7 @@ export class CodexAppServerAdapter implements RuntimePort {
         this.emitChildDiagnostic(diagnostic);
       }
     });
-    const lines = createInterface({ input: child.stdout, crlfDelay: Infinity });
-    lines.on("line", line => this.receive(line));
-    lines.on("close", () => {if(this.child===child)this.disconnect("stdout closed",'stdout_closed');});
+    this.readLines(child);
     try {
       const result = object(await this.request("initialize", { clientInfo: { name: "evoloop", title: "evoLoop", version: this.options.clientVersion ?? "0.1.0" },
         ...(this.experimental ?
@@ -542,6 +637,38 @@ export class CodexAppServerAdapter implements RuntimePort {
       await this.close();
       throw error;
     }
+  }
+
+  /** Newline-delimited JSON with a per-line ceiling; an oversized line cannot be resynchronized. */
+  private readLines(child: ChildProcessWithoutNullStreams): void {
+    let buffered: Buffer[] = [], bufferedBytes = 0;
+    const overflow = (): void => { buffered = []; bufferedBytes = 0; if (this.child === child) this.disconnect("stdout line exceeded limit", "protocol_error"); };
+    const emit = (bytes: Buffer): void => {
+      const text = bytes.toString("utf8");
+      this.receive(text.endsWith("\r") ? text.slice(0, -1) : text);
+    };
+    child.stdout.on("data", (chunk: Buffer) => {
+      if (this.child !== child) return;
+      let start = 0;
+      for (let newline = chunk.indexOf(10, start); newline !== -1; newline = chunk.indexOf(10, start)) {
+        const part = chunk.subarray(start, newline);
+        start = newline + 1;
+        if (bufferedBytes + part.length > this.maxLineBytes) { overflow(); return; }
+        const line = bufferedBytes ? Buffer.concat([...buffered, part]) : part;
+        buffered = []; bufferedBytes = 0;
+        emit(line);
+        if (this.child !== child) return;
+      }
+      const rest = chunk.subarray(start);
+      if (!rest.length) return;
+      if (bufferedBytes + rest.length > this.maxLineBytes) { overflow(); return; }
+      buffered.push(Buffer.from(rest)); bufferedBytes += rest.length;
+    });
+    child.stdout.once("end", () => {
+      if (this.child === child && bufferedBytes) { const last = Buffer.concat(buffered); buffered = []; bufferedBytes = 0; emit(last); }
+      if (this.child === child) this.disconnect("stdout closed", "stdout_closed");
+    });
+    child.stdout.once("close", () => { if (this.child === child) this.disconnect("stdout closed", "stdout_closed"); });
   }
 
   private probeVersion(): Promise<string> {
@@ -556,27 +683,51 @@ export class CodexAppServerAdapter implements RuntimePort {
     });
   }
 
-  private async probeSchema(): Promise<void> {
+  private async generateSchema(): Promise<Buffer> {
     const directory = await mkdtemp(resolve(tmpdir(), "evoloop-codex-schema-"));
     try {
-      const experimental=this.experimental;
-      await execFileAsync(this.executable, ["app-server", "generate-json-schema", ...(experimental ? ["--experimental"] : []), "--out", directory], {
+      await execFileAsync(this.executable, ["app-server", "generate-json-schema", ...(this.experimental ? ["--experimental"] : []), "--out", directory], {
         timeout: this.timeout, maxBuffer: 64 * 1024, env: this.environment,
       });
-      const schema = await readFile(resolve(directory, "codex_app_server_protocol.v2.schemas.json"));
-      const expected = PINNED_PROTOCOLS[this.expectedVersion][experimental ? "experimental" : "standard"];
-      if (createHash("sha256").update(schema).digest("hex") !== expected) throw new RuntimeProtocolError("Codex App Server schema changed; review capabilities before use");
+      return await readFile(resolve(directory, "codex_app_server_protocol.v2.schemas.json"));
     } finally { await rm(directory, { recursive: true, force: true }); }
   }
 
-  private send(message: unknown): void {
-    if (!this.child || !this.child.stdin.writable) throw new RuntimeProtocolError("App Server disconnected");
-    this.child.stdin.write(`${JSON.stringify(message)}\n`);
+  private async probeSchema(): Promise<void> {
+    const schema = await this.generateSchema();
+    const expected = PINNED_PROTOCOLS[this.expectedVersion][this.experimental ? "experimental" : "standard"];
+    if (createHash("sha256").update(schema).digest("hex") !== expected) throw new RuntimeProtocolError("Codex App Server schema changed; review capabilities before use");
   }
 
+  /** Used-surface check: the schema must still accept every request evoLoop sends. */
+  private async probeSurface(): Promise<ProtocolFeatures> {
+    const schema = await this.generateSchema();
+    let parsed: unknown;
+    try { parsed = JSON.parse(schema.toString("utf8")); } catch { throw new RuntimeProtocolError("Codex App Server schema is not JSON"); }
+    const report = checkUsedSurface(parsed);
+    if (report.problems.length)
+      throw new RuntimeProtocolError(`Codex App Server schema no longer covers the used surface: ${report.problems.slice(0, 5).join("; ")}`);
+    return report.features;
+  }
+
+  /**
+   * Throws RuntimeNotSentError only from checks that run before stdin.write(). After write() is
+   * called the bytes may reach the App Server, so any later loss stays an unknown outcome.
+   */
+  private send(message: unknown): void {
+    const method = nonempty(object(message)?.method) ? object(message)!.method as string : "response";
+    if (!this.child || !this.child.stdin.writable || this.child.stdin.destroyed)
+      throw new RuntimeNotSentError(method, "App Server disconnected");
+    let line: string;
+    try { line = `${JSON.stringify(message)}\n`; }
+    catch { throw new RuntimeNotSentError(method, "message is not serializable"); }
+    this.child.stdin.write(line);
+  }
+
+  /** readOnly: a list request that cannot change a thread, so its timeout or failure keeps fresh-start proofs. */
   private request(method: string, params: unknown, timeoutMs = this.timeout,
-    beforeSend?: (requestId: number) => Promise<void>, afterSend?: () => void): Promise<unknown> {
-    if (!this.child) return Promise.reject(new RuntimeProtocolError("App Server not open"));
+    beforeSend?: (requestId: number) => Promise<void>, afterSend?: () => void, readOnly = false): Promise<unknown> {
+    if (!this.child) return Promise.reject(new RuntimeNotSentError(method, "App Server not open"));
     const threadId=object(params)?.threadId;
     // Invalidate before sending, including rejected or unknown native operations.
     if(nonempty(threadId)&&['turn/start','turn/interrupt','thread/resume','thread/archive'].includes(method))
@@ -585,7 +736,7 @@ export class CodexAppServerAdapter implements RuntimePort {
     return new Promise((resolveResult, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
-        this.freshThreads.clear();
+        if (!readOnly) this.freshThreads.clear();
         reject(new RuntimeUnknownError(method, id, "response timeout"));
       }, timeoutMs);
       this.pending.set(id, { method, threadId: nonempty(threadId) ? threadId : null, resolve: value => {
@@ -602,8 +753,10 @@ export class CodexAppServerAdapter implements RuntimePort {
       }, reject, timer });
       const fail = (error: unknown) => {
         clearTimeout(timer); this.pending.delete(id);
-        this.freshThreads.clear();
-        reject(new RuntimeUnknownError(method, id, error instanceof Error ? error.message : "send failed"));
+        if (!readOnly) this.freshThreads.clear();
+        // Only a pre-write refusal from send() proves nothing reached the App Server.
+        reject(error instanceof RuntimeNotSentError ? error :
+          new RuntimeUnknownError(method, id, error instanceof Error ? error.message : "send failed"));
       };
       const write=()=>{this.send({ id, method, params });afterSend?.()};
       if (beforeSend) void beforeSend(id).then(() => {
@@ -694,7 +847,7 @@ export class CodexAppServerAdapter implements RuntimePort {
       (params?.turnId!=null&&!boundedText(params.turnId,1024))){
       unsupported('Native input identity is unavailable');return;
     }
-    const supportedProtocol=supportsModernProtocol(this.expectedVersion)&&this.experimental;
+    const supportedProtocol=this.features.modern&&this.experimental;
     const observer=this.nativeInputListeners.size>0;
     const questions=isTool?nativeInputQuestions(params?.questions):null;
     const secret=isTool&&Array.isArray(params?.questions)&&params.questions.some(value=>object(value)?.isSecret===true);
@@ -736,7 +889,10 @@ export class CodexAppServerAdapter implements RuntimePort {
 
   private async serverRequest(message: Record<string, unknown>): Promise<void> {
     const id = message.id;
-    if ((typeof id !== "number" && typeof id !== "string") || !nonempty(message.method)) { this.disconnect("invalid server request"); return; }
+    // An invalid request is answered alone; the shared connection and other Sessions' Turns stay up.
+    if ((typeof id !== "number" && typeof id !== "string") || !nonempty(message.method)) {
+      this.send({ id: null, error: { code: -32600, message: "Invalid request" } }); return;
+    }
     const params = object(message.params);
     const threadId = params?.threadId ?? params?.conversationId;
     const binding = nonempty(threadId) ? this.bindings.get(threadId) : undefined;
@@ -750,7 +906,7 @@ export class CodexAppServerAdapter implements RuntimePort {
         creating ? { projectId: creating.projectId, sessionId: creating.sessionId } : {}),
       ...(nonempty(threadId) ? { threadId } : {}), ...(nonempty(params?.turnId) ? { turnId: params.turnId } : {}) };
     if (message.method === "currentTime/read") {
-      if (!supportsModernProtocol(this.expectedVersion)) {
+      if (!this.features.modern) {
         this.send({ id, error: { code: -32601, message: "Unsupported server request" } }); return;
       }
       if (!binding || params?.threadId !== binding.nativeThreadId) {
@@ -768,6 +924,7 @@ export class CodexAppServerAdapter implements RuntimePort {
         this.declaredTools.get(binding.nativeThreadId)?.has(call.tool) && !!this.options.callDynamicTool;
       if (!valid) { this.send({id,result:{contentItems:[{type:"inputText",text:"Browser read unavailable"}],success:false}}); return; }
       this.seenToolCalls.add(key!);
+      if (this.seenToolCalls.size > MAX_SEEN_TOOL_CALLS) this.seenToolCalls.delete(this.seenToolCalls.values().next().value!);
       const failed: DynamicToolResult = {contentItems:[{type:"inputText",text:"Browser read unavailable"}],success:false};
       const controller=new AbortController();
       const request:DynamicToolCall={threadId:call!.threadId as string,turnId:call!.turnId as string,
@@ -801,9 +958,8 @@ export class CodexAppServerAdapter implements RuntimePort {
     }
     if (!binding) { this.send({ id, error: { code: -32000, message: "Unregistered thread" } }); return; }
     if (!APPROVAL_METHODS.has(message.method)) {
-      // Unknown requests and user input cannot be silently answered as consent.
-      const result = message.method === "mcpServer/elicitation/request" ? { action: "decline" } : null;
-      this.send(result ? { id, result } : { id, error: { code: -32601, message: "Unsupported server request" } });
+      // Unknown requests cannot be silently answered as consent. Native input is handled above.
+      this.send({ id, error: { code: -32601, message: "Unsupported server request" } });
       return;
     }
     let decision: "accept" | "decline" = "decline";
@@ -847,7 +1003,8 @@ export class CodexAppServerAdapter implements RuntimePort {
     for(const handle of [...this.pendingNativeInputs.keys()])this.closeNativeInput(handle,'disconnected');
     this.connectionId=null;
     const child = this.child; this.child = null;
-    if (child && !child.killed) child.kill();
+    // Signal the group even when the leader already exited: tools it started may still run.
+    if (child) signalProcessGroup(child, "SIGTERM");
     for (const [id, pending] of this.pending) {
       clearTimeout(pending.timer);
       pending.reject(new RuntimeUnknownError(pending.method, id, reason));
@@ -889,7 +1046,8 @@ export class CodexAppServerAdapter implements RuntimePort {
   private owned(binding: RuntimeBinding): void {
     const saved = this.bindings.get(binding.nativeThreadId);
     if (!saved || !sameBinding(saved, binding)) throw new RuntimeProtocolError("thread is not registered to this adapter and scope");
-    if (!this.ready) throw new RuntimeProtocolError("App Server not ready");
+    // No connection: nothing for this call can have been written.
+    if (!this.ready) throw new RuntimeNotSentError("thread", "App Server not ready");
   }
 
   async create(spec: RuntimeSessionSpec): Promise<RuntimeBinding> {
@@ -897,6 +1055,8 @@ export class CodexAppServerAdapter implements RuntimePort {
     if (!nonempty(spec.sessionId) || !nonempty(spec.roleId) || !nonempty(spec.projectId) || !nonempty(spec.authorizationScope) || !spec.cwd.startsWith("/") || resolve(spec.cwd) !== spec.cwd) throw new RuntimeProtocolError("invalid session scope or cwd");
     if(!nativeProfile(spec,this.expectedVersion))throw new RuntimeProtocolError('new Session requires full policy or an exact alpha.6 connector receiver read-only/never scope');
     if(connectorReceiver(spec)&&!nonempty(spec.actorId))throw new RuntimeProtocolError('connector receiver requires a fixed actor before native creation');
+    // thread/start carries no effort; a requested effort would otherwise be silently dropped.
+    if(spec.reasoningEffort!=null)throw new RuntimeProtocolError('reasoning effort can only be set by execution profile activation');
     if (this.pendingCreate) throw new RuntimeProtocolError("another thread creation is pending");
     this.pendingCreate = { ...spec };
     const connectionId=this.connectionId;
@@ -1200,7 +1360,7 @@ export class CodexAppServerAdapter implements RuntimePort {
     this.owned(binding);
     const unavailable=(reason:string)=>{this.conversationQualifications.delete(binding.nativeThreadId);
       return {available:false,reason,fingerprint:null};};
-    if(!supportsModernProtocol(this.expectedVersion))return unavailable('Full conversation readback requires a pinned modern protocol');
+    if(!this.features.modern)return unavailable('Full conversation readback requires a pinned modern protocol');
     if(!binding.resumeProfile||!fullProfile(binding.resumeProfile)||
       this.profileTransitionThreads.has(binding.nativeThreadId))
       return unavailable('Owned Session has no active full execution profile');
@@ -1227,7 +1387,7 @@ export class CodexAppServerAdapter implements RuntimePort {
         return unavailable('Owned native Thread status is not ready');
       const model=nonempty(thread.model)?thread.model:binding.resumeProfile.model;
       const fingerprint=createHash('sha256').update(policyJson({
-        admission:'evoloop-full-conversation-v1',protocol:this.expectedVersion,
+        admission:'evoloop-full-conversation-v1',protocol:this.protocolIdentity,
         projectId:binding.projectId,sessionId:binding.sessionId,roleId:binding.roleId,
         threadId:binding.nativeThreadId,nativeSessionId:binding.nativeSessionId,
         cwd:binding.cwd,scope:binding.authorizationScope,profile:binding.resumeProfile,model,status,
@@ -1311,7 +1471,7 @@ export class CodexAppServerAdapter implements RuntimePort {
 
   /** Direct input on an idle owned Session. The caller persists the message ID before invoking this method. */
   async startOwnedIdleTurn(binding:RuntimeBinding,input:string,clientUserMessageId:string):Promise<RuntimeTurn>{
-    if(this.expectedVersion!=="codex-cli 0.166.0-alpha.6")
+    if(!this.features.directInput)
       throw new RuntimeProtocolError('direct input requires the pinned alpha.6 protocol');
     this.owned(binding);
     if(!nonempty(input)||!input.trim()||!nonempty(clientUserMessageId))
@@ -1328,7 +1488,7 @@ export class CodexAppServerAdapter implements RuntimePort {
   async steerTurn(binding:RuntimeBinding,expectedTurnId:string,content:string,
     inputId:string):Promise<{turnId:string;itemId:string|null}>{
     this.owned(binding);
-    if(this.expectedVersion!=="codex-cli 0.166.0-alpha.6")
+    if(!this.features.directInput)
       throw new RuntimeProtocolError('direct input requires the pinned alpha.6 protocol');
     if(!binding.resumeProfile||!fullProfile(binding.resumeProfile)||
       this.profileTransitionThreads.has(binding.nativeThreadId))
@@ -1386,7 +1546,7 @@ export class CodexAppServerAdapter implements RuntimePort {
 
   async observeCompaction(binding: RuntimeBinding, targetTurnId?:string): Promise<RuntimeCompactionObservation> {
     this.owned(binding);
-    if (this.expectedVersion !== "codex-cli 0.166.0-alpha.6")
+    if (!this.features.compaction)
       throw new RuntimeProtocolError("compaction observation requires pinned alpha.6");
     const read = object(await this.inspect(binding));
     const thread = object(read?.thread)!;
@@ -1436,7 +1596,7 @@ export class CodexAppServerAdapter implements RuntimePort {
     let preparedConnectionId: string | null = null;
     try {
       this.owned(binding);
-      if (this.expectedVersion !== "codex-cli 0.166.0-alpha.6")
+      if (!this.features.compaction)
         throw new RuntimeProtocolError("owned compaction requires pinned alpha.6");
       if (!profile || !fullProfile(profile) || !nonempty(profile.model) || !nonempty(profile.reasoningEffort))
         throw new RuntimeProtocolError("compaction requires the active full owner profile");
@@ -1522,7 +1682,7 @@ export class CodexAppServerAdapter implements RuntimePort {
 
   async setThreadName(binding: RuntimeBinding, name: string): Promise<void> {
     this.owned(binding);
-    if (!supportsModernProtocol(this.expectedVersion))
+    if (!this.features.modern)
       throw new RuntimeProtocolError("native Thread naming requires a pinned modern protocol");
     if (!name.trim() || name.length > 240) throw new RuntimeProtocolError("invalid native Thread name");
     // The response is empty by protocol. The coordinator verifies with thread/read.
@@ -1562,12 +1722,23 @@ export class CodexAppServerAdapter implements RuntimePort {
   async listTurns(binding: RuntimeBinding, cursor?: string): Promise<RuntimePage<RuntimeTurn>> {
     this.owned(binding);
     // Metadata-only listing is supported by the pinned modern protocols; 0.154 has no itemsView.
-    const result = object(await this.request("thread/turns/list", { threadId: binding.nativeThreadId, limit: 100,
-      sortDirection:'desc', ...(supportsModernProtocol(this.expectedVersion) ? { itemsView: "notLoaded" } : {}),
-      ...(cursor ? { cursor } : {}) }));
+    const params = { threadId: binding.nativeThreadId, limit: 100,
+      sortDirection:'desc', ...(this.features.modern ? { itemsView: "notLoaded" } : {}),
+      ...(cursor ? { cursor } : {}) };
+    // The pinned schemas declare this method, yet 0.167 answers -32601 for a short window right after
+    // turn/start while the Thread's history store attaches (observed about 50 ms on 0.167.0-alpha.3.2).
+    // A read has no side effect, so a bounded retry settles that window instead of reporting a fault.
+    let result: Record<string, unknown> | null = null;
+    for (let attempt = 0; ; attempt++) {
+      try { result = object(await this.request("thread/turns/list", params)); break; }
+      catch (error) {
+        if (!(error instanceof RuntimeServerError && error.code === -32601) || attempt >= TURN_LIST_ATTACH_RETRIES) throw error;
+        await new Promise(resolveDelay => setTimeout(resolveDelay, TURN_LIST_ATTACH_DELAY_MS * (attempt + 1)));
+      }
+    }
     const turns = Array.isArray(result?.data) ? result.data.map(runtimeTurn) : null;
     if (!turns || turns.some(turn => !turn)) throw new RuntimeProtocolError("invalid turns page");
-    if (supportsModernProtocol(this.expectedVersion) &&
+    if (this.features.modern &&
         result?.nextCursor !== null && !nonempty(result?.nextCursor))
       throw new RuntimeProtocolError("invalid turns continuation cursor");
     return { data: turns as RuntimeTurn[], nextCursor: nonempty(result?.nextCursor) ? result.nextCursor : null };
@@ -1634,10 +1805,17 @@ export class CodexAppServerAdapter implements RuntimePort {
       throw new RuntimeProtocolError('this full Turn operation was already attempted; reconcile its original result');
     // The caller persists operationId before this call. The CLI does not promise idempotency for clientUserMessageId.
     fullAttempts.add(operationId);this.fullTurnAttempts.set(binding.nativeThreadId,fullAttempts);
-    const result = object(await this.request("turn/start", { threadId: binding.nativeThreadId, input: [{ type: "text", text: input }], clientUserMessageId: operationId,
-      ...(binding.resumeProfile?.model?{model:binding.resumeProfile.model}:{}),
-      ...(executionProfile?.reasoningEffort?{effort:executionProfile.reasoningEffort}:{}),
-      cwd:binding.cwd,sandboxPolicy:FULL_POLICY,approvalPolicy:'never' }));
+    let result: Record<string, unknown> | null;
+    try {
+      result = object(await this.request("turn/start", { threadId: binding.nativeThreadId, input: [{ type: "text", text: input }], clientUserMessageId: operationId,
+        ...(binding.resumeProfile?.model?{model:binding.resumeProfile.model}:{}),
+        ...(executionProfile?.reasoningEffort?{effort:executionProfile.reasoningEffort}:{}),
+        cwd:binding.cwd,sandboxPolicy:FULL_POLICY,approvalPolicy:'never' }));
+    } catch (error) {
+      // Nothing was written, so the caller may withdraw its intent and dispatch this operation again.
+      if (error instanceof RuntimeNotSentError) fullAttempts.delete(operationId);
+      throw error;
+    }
     const turn = runtimeTurn(result?.turn);
     if (!turn) throw new RuntimeUnknownError("turn/start", null, "invalid acknowledgement; turn may have started");
     return turn;
@@ -1664,7 +1842,7 @@ export class CodexAppServerAdapter implements RuntimePort {
     });
     this.disconnect("adapter closed",'adapter_closed');
     if(!await waitExit()){
-      child.kill('SIGKILL');
+      signalProcessGroup(child,'SIGKILL');
       if(!await waitExit())throw new RuntimeUnknownError('close',null,'child process did not exit');
     }
     await this.flushChildDiagnostics();

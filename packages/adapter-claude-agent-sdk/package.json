@@ -1,0 +1,12 @@
+{
+  "name": "@evoloop/adapter-claude-agent-sdk",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./dist/index.js" },
+  "dependencies": {
+    "@evoloop/contracts": "0.1.0",
+    "@anthropic-ai/claude-agent-sdk": "0.3.319"
+  },
+  "scripts": { "build": "tsc -b", "test": "node --import tsx --test test/*.test.ts" }
+}

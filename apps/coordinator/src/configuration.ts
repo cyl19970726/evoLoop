@@ -11,6 +11,8 @@ const canonical = (value: unknown): string => JSON.stringify(value, (_key, item:
 export const delegationTemplateHash = (template: DelegationTemplate): string => createHash("sha256").update(canonical(template)).digest("hex");
 
 const absolute = z.string().min(1).max(1024).regex(/^\//);
+/** A Codex CLI release as `codex --version` prints it, without the `codex-cli ` prefix. */
+const codexVersion = z.string().max(64).regex(/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/);
 const grant = z.strictObject({
   projectId: z.uuid(), actorId: z.string().min(1).max(100), roleId: z.string().min(1).max(4000),
   authorizationScope: z.string().min(1).max(4000), cwd: absolute,
@@ -134,13 +136,66 @@ const integrationSchema = z.strictObject({
       .max(200).refine(values=>new Set(values.map(value=>`${value.projectId}:${value.sessionId??`role:${value.roleId}`}:${value.taskId??"*"}`)).size===values.length,
         "Material CLI bindings must be unique per project and Session/Role scope").default([]),
     roleSkills: z.array(z.strictObject({projectId:z.uuid(),roleId:z.uuid(),
-      paths:z.array(z.string().regex(/^\.agents\/skills\/[A-Za-z0-9_-]+\/SKILL\.md$/)).min(1).max(12)}))
+      paths:z.array(z.string().regex(/^\.agents\/skills\/[A-Za-z0-9_-]+\/SKILL\.md$/)).min(1).max(12),
+      /**
+       * Superseded by the Role's own skill selection (`role.runtime.set`), which covers built-in skills for both
+       * runtimes. Still accepted so older files load; it has no effect.
+       */
+      builtinSkills:z.array(z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/)).max(32).default([])}))
       .max(200).refine(values=>new Set(values.map(value=>`${value.projectId}:${value.roleId}`)).size===values.length,
         "Role skill sources must be unique per project and Role").default([]),
     /** Fixed modern experimental Default-mode input, scoped to this owned child only. */
     nativeUserInput: z.boolean().default(false),
     /** Exact locally reviewed App Server protocol; new configurations keep the reviewed 0.166 default. */
     protocolVersion: z.enum(["0.154.0", "0.164.0-alpha.11.1", "0.166.0-alpha.5.1", "0.166.0-alpha.6", "0.167.0-alpha.3.2"]).default("0.166.0-alpha.5.1"),
+    /**
+     * Runtime a Role is bound to when its first Session is reserved and it has no binding yet. A bound Role
+     * keeps its runtime; a Session keeps the runtime it was created with.
+     */
+    provider: z.enum(["codex", "claude"]).default("codex"),
+    /**
+     * Runtimes this coordinator drives at the same time; absent means only `provider`. Sessions of a runtime
+     * not listed stay readable but are not driven, and Roles bound to it cannot reserve new Sessions.
+     */
+    providers: z.array(z.enum(["codex", "claude"])).min(1).max(2)
+      .refine(values => new Set(values).size === values.length, "Runtime providers must be unique").optional(),
+    /**
+     * Codex version policy. `exact` (default) requires protocolVersion and its reviewed schema hash.
+     * `surface` accepts minimumVersion or newer, never a blocked version, when the generated schema still
+     * carries every method and parameter evoLoop sends; optional features follow that schema.
+     */
+    protocolCheck: z.enum(["exact", "surface"]).default("exact"),
+    minimumVersion: codexVersion.optional(),
+    blockedVersions: z.array(codexVersion).max(50).default([]),
+    /** Dedicated Codex state directory; absent means the inherited CODEX_HOME or ~/.codex is shared. */
+    codexHome: absolute.optional(),
+    /**
+     * `owned: true` keeps evoLoop's owner-requested compaction maintenance. `false` leaves compaction to the
+     * native runtime's own automatic behaviour and disables the maintenance endpoints.
+     */
+    compaction: z.strictObject({ owned: z.boolean().default(true) }).default({ owned: true }),
+    /** Claude Agent SDK runtime; required when this coordinator drives claude. No credential is stored here. */
+    claude: z.strictObject({
+      /** Claude Code executable; absent uses the one bundled with the pinned SDK. */
+      executable: absolute.optional(),
+      /**
+       * Dedicated CLAUDE_CONFIG_DIR for this coordinator: transcripts, settings, login and the adapter's Turn
+       * ledger stay out of ~/.claude. It needs its own login, or a credential the coordinator's environment provides.
+       */
+      configRoot: absolute,
+      maxTurns: z.number().int().positive().max(1000).optional(),
+      maxBudgetUsd: z.number().positive().max(1000).optional(),
+      /**
+       * true: each Turn loads the skills the Role's selection picks (its evoLoop business skills, and project,
+       * personal and built-in skills by switch) and turns the rest off. false: the CLI's own discovery.
+       */
+      skillBundle: z.boolean().default(true),
+      /**
+       * project: the CLI reads the work directory's project settings (CLAUDE.md, `.claude/` skills, agents, commands
+       * and hooks, which it runs). explicit: it reads none and evoLoop passes the directory's AGENTS.md (else CLAUDE.md).
+       */
+      contextMode: z.enum(["project", "explicit"]).default("project"),
+    }).optional(),
     /** Optional local-only experimental bridge. Scope and reader credentials live outside this config. */
     browserRead: z.strictObject({scopePath:absolute,playwrightModulePath:absolute}).optional(),
     delegationTemplates: z.array(delegationTemplateSchema).max(200).refine(values =>
@@ -150,13 +205,23 @@ const integrationSchema = z.strictObject({
     ]))).size === values.length, "Runtime authorization profiles must be unique"),
   }).refine(value => !value.nativeUserInput ||
     value.protocolVersion === "0.164.0-alpha.11.1" || value.protocolVersion === "0.166.0-alpha.5.1" || value.protocolVersion === "0.166.0-alpha.6" || value.protocolVersion === "0.167.0-alpha.3.2",
-  "Native user input requires a reviewed modern protocol").optional(),
+  "Native user input requires a reviewed modern protocol")
+    .refine(value => !value.providers || value.providers.includes(value.provider), "runtime.provider must be one of runtime.providers")
+    .refine(value => !drivenRuntimeProviders(value).includes("claude") || !!value.claude, "The claude provider requires runtime.claude settings")
+    .refine(value => drivenRuntimeProviders(value).includes("codex") || (!value.nativeUserInput && !value.browserRead),
+      "Native user input and the browser read bridge are Codex-only")
+    .refine(value => value.protocolCheck === "surface" || (value.minimumVersion === undefined && value.blockedVersions.length === 0),
+      "minimumVersion and blockedVersions apply only to the surface protocol check").optional(),
   orchestration: z.strictObject({
     enabled: z.boolean(), controllerActorId: z.string().min(1).max(100), workerRoot: absolute,
     credentialTtlMs: z.number().int().min(60000).max(86400000).default(3600000),
     pollIntervalMs: z.number().int().min(500).max(60000).default(2000),
   }).optional(),
 });
+/** Runtimes a coordinator drives: the configured list, else only the default provider. */
+export function drivenRuntimeProviders(runtime: { provider: "codex" | "claude"; providers?: ("codex" | "claude")[] | undefined }): ("codex" | "claude")[] {
+  return runtime.providers?.length ? [...runtime.providers] : [runtime.provider];
+}
 type EngineeringActionGrant=NonNullable<z.infer<typeof integrationSchema>["residentQueue"]>["actionGrants"][number];
 type SchedulingConfiguration = NonNullable<z.infer<typeof integrationSchema>["scheduling"]>;
 export function hasTaskTimingGrant(configuration: SchedulingConfiguration | undefined,

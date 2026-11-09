@@ -17,6 +17,7 @@
     "./task-timing": "./dist/task-timing.js",
     "./process-documents": "./dist/process-documents.js",
     "./roles": "./dist/roles.js",
+    "./role-skills": "./dist/role-skills.js",
     "./resident-hosts": "./dist/resident-hosts.js",
     "./delivery": "./dist/delivery.js",
     "./discussions": "./dist/discussions.js",

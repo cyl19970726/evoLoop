@@ -2,9 +2,10 @@ import { createHash } from 'node:crypto';
 import type { Pool, PoolClient } from 'pg';
 import type { Principal } from '@evoloop/contracts';
 import { DomainError } from '@evoloop/contracts/ports';
-import { RuntimeCompactionPreflightError, RuntimeServerError, RuntimeUnknownError } from '@evoloop/adapter-codex-app-server';
-import type { RuntimeCompactionObservation } from '@evoloop/contracts/runtime';
+import { RuntimeCompactionPreflightError } from '@evoloop/adapter-codex-app-server';
+import { RuntimeServerError, RuntimeUnknownError, type RuntimeBinding, type RuntimeCompactionObservation } from '@evoloop/contracts/runtime';
 import type { RuntimeRunner } from './runner.js';
+import { runtimeForBinding } from './routed.js';
 
 export interface CompactionIntent {
   operationId:string; threadId:string; expectedSessionVersion:number; expectedGateVersion:number;
@@ -38,7 +39,23 @@ const view=(row:Row)=>({projectId:row.project_id,operationId:row.operation_id,
 export class CompactionMaintenance {
   private readonly pool:Pool;
   private readonly runner:RuntimeRunner;
-  constructor(pool:Pool,runner:RuntimeRunner){this.pool=pool;this.runner=runner}
+  /**
+   * `owned` is the configured policy (runtime.compaction.owned). When it is false, or the runtime of the
+   * Session's own binding declares no owner compaction request, new operations are refused before any
+   * native call; reads and reconciliation of operations already recorded stay available so no persisted
+   * intent is stranded.
+   */
+  constructor(pool:Pool,runner:RuntimeRunner,private readonly policy:{owned?:()=>boolean}={}){this.pool=pool;this.runner=runner}
+  private requireOwnedPolicy(){
+    if(this.policy.owned&&!this.policy.owned())
+      throw new DomainError('CAPABILITY_UNAVAILABLE','Owner compaction is disabled; the native runtime compacts automatically');
+  }
+  /** A coordinator driving several runtimes asks the one this Session runs on, not the default. */
+  private requireOwnedRequest(binding:RuntimeBinding){
+    const declared=runtimeForBinding(this.runner.nativeAdapter(),binding).capabilities?.();
+    if(declared&&declared.compaction.mode!=='owned_request')
+      throw new DomainError('CAPABILITY_UNAVAILABLE','The native runtime does not accept owner compaction requests');
+  }
   private authorize(principal:Principal,projectId:string){
     if(!principal.projectIds.includes(projectId)||!principal.permissions.includes('review')||
       !principal.permissions.includes('write')||principal.actorId.startsWith('worker-'))
@@ -63,11 +80,13 @@ export class CompactionMaintenance {
       assertSame(existing,sessionId,input,principal.actorId);
       return view(existing);
     }
+    this.requireOwnedPolicy();
     let binding:Awaited<ReturnType<RuntimeRunner['compactionBinding']>>;
     let before:RuntimeCompactionObservation;
     try{
       binding=await this.runner.compactionBinding(principal,projectId,sessionId,
         input.expectedSessionVersion,input.threadId);
+      this.requireOwnedRequest(binding);
       before=await this.runner.observeCompaction(binding);
       if(!['idle','systemError','notLoaded'].includes(before.threadStatus)||
         before.threadStatus!=='idle'&&

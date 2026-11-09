@@ -1,11 +1,12 @@
+import { runtimeForBinding, runtimeForProvider, runtimeProvidersOf } from "./routed.js";
 import { createHash, randomUUID } from "node:crypto";
 import type { BasisSet, Command, EvaluationFixedRef, Principal, RuntimeRunRecord, RuntimeSessionRecord, TaskRevision } from "@evoloop/contracts";
-import type { RuntimeBinding, RuntimeCompactionObservation, RuntimePage, RuntimePort, RuntimeSessionSpec, RuntimeTurn, EvaluationPacketBinding, RuntimeWorkTrace, RuntimeReconcilePartial } from "@evoloop/contracts/runtime";
+import type { RuntimeBinding, RuntimeCapabilityListing, RuntimeCompactionObservation, RuntimeObservedCapabilities, RuntimePage, RuntimePort, RuntimeSessionSpec, RuntimeTurn, EvaluationPacketBinding, RuntimeWorkTrace, RuntimeReconcilePartial } from "@evoloop/contracts/runtime";
 import type { NativeWorkspacePage, NativeWorkspaceReadOptions, WorkspaceRuntimeUpdate } from "@evoloop/contracts/session-timeline";
 import type { BlobStore } from "@evoloop/contracts/sources";
 import { DomainError } from "@evoloop/contracts/ports";
-import { nativeChildDiagnosticSchema } from "@evoloop/contracts/runtime";
-import { RuntimeProtocolError, RuntimeServerError, RuntimeUnknownError, type NativeChildDiagnostic } from "@evoloop/adapter-codex-app-server";
+import { nativeChildDiagnosticSchema, ownerOf, sessionProvider, RuntimeNotSentError, RuntimeProtocolError, RuntimeServerError, RuntimeUnknownError,
+  type NativeChildDiagnosticRecord as NativeChildDiagnostic, type RuntimeProvider } from "@evoloop/contracts/runtime";
 import type { WorkflowService } from "@evoloop/core";
 import type { SessionProfileRecord } from "@evoloop/contracts/session-assignments";
 import type { RuntimeWorkflowService } from "@evoloop/core/runtime";
@@ -50,12 +51,13 @@ const dispatchFailureDetail = (error: unknown): string => {
   const safeMethod = method === "thread/resume" || method === "turn/start" ? method : "unavailable";
   if (error instanceof RuntimeServerError)
     return `native_rejected; method=${safeMethod}; category=${error.category}; code=${error.code}`;
+  if (error instanceof RuntimeNotSentError) return "native_not_sent";
   if (error instanceof RuntimeUnknownError) return `native_outcome_unknown; method=${safeMethod}`;
   if (error instanceof RuntimeProtocolError || error instanceof DomainError) return "local_verification_failed";
   return "unclassified_failure";
 };
 
-type ManagedRuntime = RuntimePort & { open(): Promise<void>; registerBinding(binding: RuntimeBinding): Promise<void>;
+export type ManagedRuntime = RuntimePort & { open(): Promise<void>; registerBinding(binding: RuntimeBinding): Promise<void>;
   isReady(): boolean; onDisconnect(listener: (reason: string) => void): () => void;
   listChildDiagnostics?(): NativeChildDiagnostic[];
   onChildDiagnostic?(listener:(diagnostic:NativeChildDiagnostic)=>void|Promise<void>):()=>void;
@@ -84,7 +86,7 @@ export function bindingOf(session: RuntimeSessionRecord): RuntimeBinding {
   if (!session.nativeThreadId || !session.nativeSessionId) throw new Error("Owned native binding is not available");
   return { sessionId: session.id, roleId: session.roleId, projectId: session.projectId, cwd: session.cwd,
     authorizationScope: session.authorizationScope, nativeThreadId: session.nativeThreadId,
-    nativeSessionId: session.nativeSessionId, owner: "evoloop-codex-app-server",
+    nativeSessionId: session.nativeSessionId, owner: ownerOf(sessionProvider(session)),
     resumeProfile:{actorId:session.actorId,
       model:session.executionProfile?.activationState==='active'?session.model:
         session.executionProfile?.activeModel??session.model,
@@ -97,6 +99,7 @@ export function bindingOf(session: RuntimeSessionRecord): RuntimeBinding {
 }
 function specOf(session: RuntimeSessionRecord): RuntimeSessionSpec {
   return { actorId: session.actorId, sessionId: session.id, roleId: session.roleId, projectId: session.projectId,
+    provider: sessionProvider(session),
     cwd: session.cwd, authorizationScope: session.authorizationScope, sandbox: session.sandbox,
     approvalPolicy: session.approvalPolicy,
     ...((session.executionProfile?.revision.model??session.model)?{model:(session.executionProfile?.revision.model??session.model)!}:{}),
@@ -166,6 +169,25 @@ export class RuntimeRunner {
     blobsForPrincipal?: (principal: Principal) => BlobStore | Promise<BlobStore>;
   }) { this.runtime = deps.runtimeFactory(); }
   nativeAdapter():ManagedRuntime { return this.runtime; }
+  /** The runtimes this coordinator drives; Sessions of any other runtime are left untouched. */
+  providers():RuntimeProvider[] { return runtimeProvidersOf(this.runtime); }
+  /** Model choices of one driven runtime; null when this coordinator does not drive it. */
+  async listModelsFor(provider:RuntimeProvider){
+    const native=runtimeForProvider(this.runtime,provider);
+    return native?.listModels ? native.listModels() : null;
+  }
+  /** One driven runtime's own skill, plugin and MCP lists for a directory; null when it cannot list them. */
+  async listCapabilitiesFor(provider:RuntimeProvider, cwd:string):Promise<RuntimeCapabilityListing|null>{
+    const native=runtimeForProvider(this.runtime,provider);
+    return native?.listCapabilities ? native.listCapabilities(cwd) : null;
+  }
+  /** What the Session's newest reporting Turn loaded (first history page only); null when none reported. */
+  async latestObservedCapabilities(session:RuntimeSessionRecord):Promise<RuntimeObservedCapabilities|null>{
+    if(!session.nativeThreadId||!session.nativeSessionId||!this.providers().includes(sessionProvider(session)))return null;
+    const binding=await this.readBinding(session);
+    const page=await this.runtime.listTurns(binding);
+    return page.data.find(turn=>turn.observedCapabilities)?.observedCapabilities??null;
+  }
   async compactionBinding(principal:Principal, projectId:string, sessionId:string,
     expectedVersion:number, threadId:string):Promise<RuntimeBinding>{
     if(!principal.projectIds.includes(projectId)||!principal.permissions.includes('review')||
@@ -392,7 +414,7 @@ export class RuntimeRunner {
     await this.runtime.open();
     await this.deps.nativeInputs?.opened();
     await this.deps.nativeObservation?.opened();
-    for (const projectId of this.projects()) await this.deps.trusted.recoverDispatching(projectId);
+    for (const projectId of this.projects()) await this.deps.trusted.recoverDispatching(projectId, this.providers());
     this.available = true;
     await this.pump();
     this.ensureTimer();
@@ -467,7 +489,7 @@ export class RuntimeRunner {
       await this.runtime.open();
       await this.deps.nativeInputs?.opened();
       await this.deps.nativeObservation?.opened();
-      for (const projectId of this.projects()) await this.deps.trusted.recoverDispatching(projectId);
+      for (const projectId of this.projects()) await this.deps.trusted.recoverDispatching(projectId, this.providers());
       this.serviceError = null;
       this.available = true;
       await this.pump();
@@ -497,8 +519,12 @@ export class RuntimeRunner {
           this.recordFault(projectId,"project_scan",error);
           continue;
         }
-        const sessions = await this.deps.workflow.listRuntimeSessions(principal, projectId);
-        const runs = await this.deps.workflow.listRuntimeRuns(principal, projectId);
+        // A Session belongs to the provider it was created with; never drive it through another adapter.
+        const providers = new Set(this.providers());
+        const allSessions = await this.deps.workflow.listRuntimeSessions(principal, projectId);
+        const sessions = allSessions.filter(session => providers.has(sessionProvider(session)));
+        const ownSessionIds = new Set(sessions.map(session => session.id));
+        const runs = (await this.deps.workflow.listRuntimeRuns(principal, projectId)).filter(run => ownSessionIds.has(run.sessionId));
         for (const session of sessions) {
           if (session.state === "ready") this.clearFault(projectId, session.id, undefined, undefined, "session_name_sync");
           if (session.state === "closed") this.clearFault(projectId, session.id);
@@ -529,8 +555,10 @@ export class RuntimeRunner {
           catch (error) { this.recordFault(projectId,"run_reconcile",error,run.sessionId,run.id); }
         }
         await this.flushApprovals();
-        await this.deps.nativeInputs?.pump(projectId, sessions);
-        await this.deps.nativeObservation?.pump(projectId, sessions);
+        // Native user input and workspace observation are Codex connection features.
+        const codexSessions = sessions.filter(session => sessionProvider(session) === "codex");
+        await this.deps.nativeInputs?.pump(projectId, codexSessions);
+        await this.deps.nativeObservation?.pump(projectId, codexSessions);
         this.clearFault(projectId);
       } catch (error) { this.recordFault(projectId,"project_scan",error); }
     }
@@ -610,8 +638,10 @@ export class RuntimeRunner {
         profile.target.sessionId !== session.id) return;
     if (this.checkedNames.get(session.id) === profile.version) return;
     if (!await this.authorized(session) || !await this.deps.allowedCwd(session.projectId, session.cwd)) return;
-    if (!this.runtime.readThreadName || !this.runtime.setThreadName) throw new Error("Native Thread naming unavailable");
     const binding = bindingOf(session);
+    // A runtime without native titles keeps the name in evoLoop's own profile only.
+    if (runtimeForBinding(this.runtime, binding).capabilities?.().naming === false) { this.checkedNames.set(session.id, profile.version); return; }
+    if (!this.runtime.readThreadName || !this.runtime.setThreadName) throw new Error("Native Thread naming unavailable");
     await this.runtime.registerBinding(binding);
     const currentName = await this.runtime.readThreadName(binding);
     if (currentName === profile.displayName) {
@@ -1022,6 +1052,13 @@ export class RuntimeRunner {
       try {
         turn = await this.runtime.startTurn(startBinding, input, run.operationId,run.executionProfile);
       } catch (error) {
+        // Only an adapter-proven unsent start may return to requested. A reviewed continuation has
+        // already consumed its one attempt grant, so it stays on the unknown path.
+        if (error instanceof RuntimeNotSentError && !continuation) {
+          await this.deps.trusted.withdrawDispatch(run.projectId, run.id, dispatchFailureDetail(error));
+          this.recordFault(run.projectId,"run_start",error,run.sessionId,run.id,"unavailable");
+          return false;
+        }
         await this.deps.trusted.markRunUnknown(run.projectId, run.id,
           `Task turn/start outcome was not confirmed; ${dispatchFailureDetail(error)}; reconcile owned history before any retry`);
         this.recordFault(run.projectId,"run_start",error,run.sessionId,run.id,"unknown_outcome");
@@ -1081,7 +1118,8 @@ export class RuntimeRunner {
     const messages = finalMessages(items);
     if (turn.error) messages.push(`Native failure: ${turn.error.summary}; category=${turn.error.category}; HTTP=${turn.error.httpStatus ?? "unknown"}; providerCode=${turn.error.providerCode ?? "unknown"}`);
     await this.deps.trusted.recordTurn(run.projectId, run.id, turn.id, turn.status as "completed" | "failed" | "interrupted",
-      messages.join("\n\n"), { itemsDigest: digest(JSON.stringify(items)), completedAtUtc: turn.completedAtUtc });
+      messages.join("\n\n"), { itemsDigest: digest(JSON.stringify(items)), completedAtUtc: turn.completedAtUtc,
+        ...(turn.usage ? { usage: turn.usage } : {}), ...(turn.costUsd != null ? { costUsd: turn.costUsd } : {}) });
     return true;
   }
   private async flushApprovals(target?: typeof this.approvalQueue[number]): Promise<void> {

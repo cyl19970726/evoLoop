@@ -1,6 +1,6 @@
 import type { Principal, RuntimeRecordEvent, RuntimeRunRecord, RuntimeSessionRecord } from "@evoloop/contracts";
-import { nativeChildDiagnosticSchema, preTurnProofSchema, type PreTurnProof, type EvaluationPacketBinding, type NativeChildDiagnosticRecord,
-  type NativeResumeRejection, type RuntimeBinding, type RuntimeSessionSpec, type RuntimeTurn } from "@evoloop/contracts/runtime";
+import { bindingMatchesSession, sessionProvider, type RuntimeProvider, nativeChildDiagnosticSchema, preTurnProofSchema, type PreTurnProof, type EvaluationPacketBinding, type NativeChildDiagnosticRecord,
+  type NativeResumeRejection, type RuntimeBinding, type RuntimeSessionSpec, type RuntimeTurn, type RuntimeUsage } from "@evoloop/contracts/runtime";
 import type { ExecutionProfileRevision } from "@evoloop/contracts/session-recovery";
 import { DomainError } from "@evoloop/contracts/ports";
 import type { Clock, IdFactory, Transaction, UnitOfWork } from "@evoloop/contracts/ports";
@@ -18,6 +18,10 @@ const safeDetail = (value: string): string => value.slice(0, 4000);
 const nativeResumeRejectionCategories = new Set<NativeResumeRejection["category"]>([
   "rollout_not_found", "thread_unavailable", "invalid_params", "method_not_found", "permission_denied", "server_rejected",
 ]);
+const tokenCount = (value: unknown): boolean => Number.isSafeInteger(value) && (value as number) >= 0;
+const validUsage = (usage: RuntimeUsage): boolean => tokenCount(usage.inputTokens) && tokenCount(usage.outputTokens) &&
+  (usage.cacheReadInputTokens === undefined || tokenCount(usage.cacheReadInputTokens)) &&
+  (usage.cacheCreationInputTokens === undefined || tokenCount(usage.cacheCreationInputTokens));
 const canonicalUtc = (value: string): boolean => {
   const instant = Date.parse(value);
   return Number.isFinite(instant) && new Date(instant).toISOString() === value;
@@ -50,7 +54,7 @@ export class RuntimeWorkflowService {
   async verifyBinding(projectId: string, binding: RuntimeBinding): Promise<RuntimeSessionRecord> {
     return this.deps.uow.read(projectId, async reader => {
       const saved = required(await reader.getRuntimeSession(binding.sessionId), "runtime session");
-      if (!["ready", "closing"].includes(saved.state) || binding.owner !== "evoloop-codex-app-server" ||
+      if (!["ready", "closing"].includes(saved.state) || !bindingMatchesSession(binding, saved) ||
         binding.projectId !== projectId || binding.roleId !== saved.roleId ||
         binding.cwd !== saved.cwd || binding.authorizationScope !== saved.authorizationScope ||
         binding.nativeThreadId !== saved.nativeThreadId || binding.nativeSessionId !== saved.nativeSessionId) {
@@ -168,7 +172,7 @@ export class RuntimeWorkflowService {
     return this.deps.uow.transaction(projectId, async tx => {
       const current = required(await tx.getRuntimeSession(binding.sessionId), "runtime session");
       if (current.state !== "closing" || current.closeOperationId !== closeOperationId ||
-        binding.owner !== "evoloop-codex-app-server" || binding.projectId !== projectId ||
+        !bindingMatchesSession(binding, current) || binding.projectId !== projectId ||
         binding.roleId !== current.roleId || binding.cwd !== current.cwd || binding.authorizationScope !== current.authorizationScope ||
         binding.nativeThreadId !== current.nativeThreadId || binding.nativeSessionId !== current.nativeSessionId)
         throw new DomainError("FOREIGN_BINDING", "close proof does not match pending owned session");
@@ -204,7 +208,7 @@ export class RuntimeWorkflowService {
     return this.deps.uow.transaction(projectId, async tx => {
       const current = required(await tx.getRuntimeSession(sessionId), "runtime session");
       if (!["creating", "unknown"].includes(current.state)) throw new DomainError("SESSION_NOT_CREATING", "session cannot bind from current state");
-      if (binding.owner !== "evoloop-codex-app-server" || binding.projectId !== projectId || binding.sessionId !== sessionId ||
+      if (!bindingMatchesSession(binding, current) || binding.projectId !== projectId || binding.sessionId !== sessionId ||
         binding.roleId !== current.roleId || binding.cwd !== current.cwd || binding.authorizationScope !== current.authorizationScope ||
         !binding.nativeThreadId || !binding.nativeSessionId ||
         (binding.observedModel != null && current.model != null && binding.observedModel !== current.model) ||
@@ -331,6 +335,24 @@ export class RuntimeWorkflowService {
     });
   }
 
+  /**
+   * The adapter proved the start request never left this process (RuntimeNotSentError: no write was
+   * attempted). Only then may a dispatching Run return to requested; any written or uncertain start
+   * must become unknown instead.
+   */
+  async withdrawDispatch(projectId: string, runId: string, detail: string): Promise<RuntimeRunRecord> {
+    return this.deps.uow.transaction(projectId, async tx => {
+      const current = required(await tx.getRuntimeRun(runId), "runtime run");
+      if (current.state !== "dispatching" || current.nativeTurnId !== null || current.preTurnProof)
+        throw new DomainError("RUN_NOT_DISPATCHING", "only an unstarted dispatching Run can be withdrawn");
+      const next: RuntimeRunRecord = { ...current, state: "requested", version: current.version + 1, updatedAt: this.deps.clock.now() };
+      await tx.updateRuntimeRun(next, current.version);
+      await this.emit(tx, runId, current.sessionId, "run.dispatchWithdrawn",
+        `Native start was not sent; Run returns to requested for a later dispatch; ${detail}`, null, projectId);
+      return next;
+    });
+  }
+
   async bindTurn(projectId: string, runId: string, turn: RuntimeTurn,
     proof: { kind: "startReply" | "historyMarker"; operationId: string;
       inputReceipt?: { protocol: string; contentHash: string; byteLength: number } }): Promise<RuntimeRunRecord> {
@@ -446,10 +468,15 @@ export class RuntimeWorkflowService {
 
   async recordTurn(projectId: string, runId: string, turnId: string,
     status: "running" | "completed" | "failed" | "interrupted", summary: string | null = null,
-    checkpoint: { cursor?: string; itemsDigest?: string; completedAtUtc?: string } = {}): Promise<RuntimeRunRecord> {
+    checkpoint: { cursor?: string; itemsDigest?: string; completedAtUtc?: string;
+      usage?: RuntimeUsage | null; costUsd?: number | null } = {}): Promise<RuntimeRunRecord> {
     if (checkpoint.completedAtUtc && !canonicalUtc(checkpoint.completedAtUtc)) {
       throw new DomainError("INVALID_OBSERVATION", "native completion time must be canonical UTC");
     }
+    if (checkpoint.usage && !validUsage(checkpoint.usage))
+      throw new DomainError("INVALID_OBSERVATION", "native usage must be non-negative token counts");
+    if (checkpoint.costUsd != null && (!Number.isFinite(checkpoint.costUsd) || checkpoint.costUsd < 0))
+      throw new DomainError("INVALID_OBSERVATION", "native cost must be a non-negative amount");
     return this.deps.uow.transaction(projectId, async tx => {
       const current = required(await tx.getRuntimeRun(runId), "runtime run");
       if (!current.nativeTurnId || current.nativeTurnId !== turnId) throw new DomainError("FOREIGN_TURN", "turn ID does not match bound run");
@@ -458,8 +485,12 @@ export class RuntimeWorkflowService {
         throw new DomainError("RUN_TERMINAL", "terminal run cannot be rewritten");
       }
       if (status === "running" && current.state === "running" && !checkpoint.cursor && !checkpoint.itemsDigest) return current;
+      const terminal = status !== "running";
       const next: RuntimeRunRecord = { ...current, state: status, version: current.version + 1,
         resultSummary: summary ? safeDetail(summary) : current.resultSummary,
+        // Provider-reported accounting of the bound Turn; never estimated or carried from another Turn.
+        ...(terminal && checkpoint.usage ? { usage: { ...checkpoint.usage } } : {}),
+        ...(terminal && checkpoint.costUsd != null ? { costUsd: checkpoint.costUsd } : {}),
         updatedAt: this.deps.clock.now() };
       await tx.updateRuntimeRun(next, current.version);
       const detail = `${status}${checkpoint.completedAtUtc ? `; completedAtUtc=${checkpoint.completedAtUtc}` : ""}${summary ? `: ${summary}` : ""}`;
@@ -533,12 +564,15 @@ export class RuntimeWorkflowService {
     });
   }
 
-  async recoverDispatching(projectId: string): Promise<{ sessions: string[]; runs: string[] }> {
+  /** Only Sessions of `providers` (all when absent) and their Runs: another coordinator may drive the rest. */
+  async recoverDispatching(projectId: string, providers?: readonly RuntimeProvider[]): Promise<{ sessions: string[]; runs: string[] }> {
     const sessions: string[] = [];
     const runs: string[] = [];
     // One project transaction is serialized with new dispatch reservations.
     await this.deps.uow.transaction(projectId, async tx => {
-      for (const current of await tx.listRuntimeSessions()) {
+      const owned = (await tx.listRuntimeSessions()).filter(session => !providers || providers.includes(sessionProvider(session)));
+      const ownedIds = new Set(owned.map(session => session.id));
+      for (const current of owned) {
         if (current.state !== "creating") continue;
         const next = { ...current, state: "unknown" as const, version: current.version + 1, updatedAt: this.deps.clock.now() };
         await tx.updateRuntimeSession(next, current.version);
@@ -546,7 +580,7 @@ export class RuntimeWorkflowService {
         sessions.push(current.id);
       }
       for (const current of await tx.listRuntimeRuns()) {
-        if (current.state !== "dispatching") continue;
+        if (current.state !== "dispatching" || !ownedIds.has(current.sessionId)) continue;
         const next = { ...current, state: "unknown" as const, version: current.version + 1, updatedAt: this.deps.clock.now() };
         await tx.updateRuntimeRun(next, current.version);
         await this.emit(tx, current.id, current.sessionId, "run.unknown", "Coordinator restarted during turn/start; no automatic retry", current.nativeTurnId, projectId);
