@@ -81,6 +81,36 @@ test("the Claude plan links selected skills by source and turns off what the CLI
   } finally { await l.cleanup(); }
 });
 
+test("a repository that links .claude/skills to .agents/skills gives Claude each skill once", async () => {
+  // Like this repository: the business skills live in the work repository and `.claude/skills` links to `.agents/skills`.
+  const root = await realpath(await mkdtemp(join(tmpdir(), "evoloop-role-skills-link-")));
+  const repo = join(root, "repo"), home = join(root, "home");
+  try {
+    await mkdir(join(repo, ".git"), { recursive: true });
+    await skill(join(repo, ".agents", "skills"), "evoloop-workflow");
+    await skill(join(repo, ".agents", "skills"), "frontend-design");
+    await mkdir(join(repo, ".claude"));
+    await symlink("../.agents/skills", join(repo, ".claude", "skills"));
+    const { skills } = await discoverSkills({ businessRoot: repo, businessPaths: [".agents/skills/evoloop-workflow/SKILL.md"],
+      cwd: repo, home });
+    assert.deepEqual(skills.map(item => [item.source, item.name, item.claudeNative, item.claudeNativeAliases ?? []]), [
+      ["evoloop", "evoloop-workflow", false, ["evoloop-workflow"]],
+      ["project", "frontend-design", false, ["frontend-design"]],
+    ], "each skill is found once by real path, with the name Claude also reads it under");
+    const project = claudePlanContent(skills, defaultRoleSkillSelection(), "project");
+    assert.deepEqual(project.plugins.map(plugin => [plugin.name, plugin.skills.map(item => item.name)]),
+      [["evoloop", ["evoloop-workflow"]], ["project", ["frontend-design"]]]);
+    assert.ok(project.off.includes("evoloop-workflow") && project.off.includes("frontend-design"),
+      "the native copies are off by name, so the plugin is each skill's one path");
+    const unselected = claudePlanContent(skills, { ...defaultRoleSkillSelection(), project: false }, "project");
+    assert.deepEqual(unselected.plugins.map(plugin => plugin.name), ["evoloop"]);
+    assert.ok(unselected.off.includes("frontend-design"), "an unselected project skill stays off through the link too");
+    const explicit = claudePlanContent(skills, defaultRoleSkillSelection(), "explicit");
+    assert.ok(!explicit.off.includes("frontend-design") && !explicit.off.includes("evoloop-workflow"),
+      "explicit mode reads no project settings, so nothing native needs turning off");
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
 test("a plan is written once as links, reused while it matches, and rewritten when altered", async () => {
   const l = await layout();
   try {

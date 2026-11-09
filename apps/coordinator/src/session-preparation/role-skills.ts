@@ -27,6 +27,11 @@ export interface DiscoveredSkill {
   contentHash: string;
   /** A project skill under `.claude/skills`, which Claude reads by itself when it reads project settings. */
   claudeNative: boolean;
+  /**
+   * Names under which a project `.claude/skills` entry links to this same skill (a repository may link `.claude/skills`
+   * to `.agents/skills`): in project context mode Claude also finds it natively under these names.
+   */
+  claudeNativeAliases?: string[];
 }
 export interface SkillRoots {
   /** Repository that holds the business skills. */
@@ -104,7 +109,13 @@ export async function discoverSkills(roots: SkillRoots): Promise<{ skills: Disco
     const front = skillFrontmatter(data.toString("utf8"));
     const name = front.name && skillName.test(front.name) ? front.name : skillName.test(fallbackName) ? fallbackName : null;
     if (!name) { notes.push(`${location}: skill 名称不可用`); return; }
-    if (seenDirs.has(dir) || seenNames.has(`${source}:${name}`)) return;
+    if (seenDirs.has(dir)) {
+      // A project `.claude/skills` link to a skill already found: Claude reads that copy too.
+      const first = claudeNative ? skills.find(item => item.dir === dir && !item.claudeNative) : undefined;
+      if (first && !first.claudeNativeAliases?.includes(name)) first.claudeNativeAliases = [...first.claudeNativeAliases ?? [], name];
+      return;
+    }
+    if (seenNames.has(`${source}:${name}`)) return;
     seenDirs.add(dir); seenNames.add(`${source}:${name}`);
     skills.push({ name, source, description: front.description, location, dir, contentHash: sha256(data), claudeNative });
   };
@@ -171,7 +182,8 @@ export type ClaudePlanContent = Pick<RuntimeSkillPlan, "off" | "builtin"> &
 
 /**
  * Claude: each selected skill is linked into the plugin of its source. In project context mode the CLI reads
- * `.claude/skills` itself, so those are not linked; the unselected ones are turned off by name instead.
+ * `.claude/skills` itself, so those are not linked; the unselected ones are turned off by name instead. A
+ * `.claude/skills` link to a skill found elsewhere is always turned off by name, so the plugin is its one path.
  */
 export function claudePlanContent(skills: readonly DiscoveredSkill[], selection: RoleSkillSelection,
   contextMode: "project" | "explicit", builtinNames: readonly string[] = selfModifyingBuiltinSkills): ClaudePlanContent {
@@ -181,6 +193,7 @@ export function claudePlanContent(skills: readonly DiscoveredSkill[], selection:
     const { selected } = decideDiscovered(skill, selection);
     const native = contextMode === "project" && skill.claudeNative;
     if (native) { if (!selected) off.add(skill.name); continue; }
+    if (contextMode === "project") for (const alias of skill.claudeNativeAliases ?? []) off.add(alias);
     if (!selected) continue;
     const list = linked.get(skill.source) ?? [];
     if (!list.some(item => item.name === skill.name)) list.push({ name: skill.name, target: skill.dir });
