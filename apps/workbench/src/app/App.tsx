@@ -25,14 +25,13 @@ const ReferencePanel = named(() => import("../features/references/ReferencePanel
 const CollaborationPanel = named(() => import("../features/collaboration/CollaborationPanel"), "CollaborationPanel");
 const KnowledgePanel = named(() => import("../features/knowledge/KnowledgePanel"), "KnowledgePanel");
 const EvaluationPage = named(() => import("../features/evaluation/EvaluationPage"), "EvaluationPage");
-const RuntimePanel = named(() => import("../features/runtime/RuntimePanel"), "RuntimePanel");
 const TeamWorkspace = named(() => import("../features/team/TeamWorkspace"), "TeamWorkspace");
 const SchedulingPanel = named(() => import("../features/scheduling/SchedulingPanel"), "SchedulingPanel");
 const JourneyBoard = named(() => import("../features/workflow/JourneyBoard"), "JourneyBoard");
-const TaskPage = named(() => import("../features/workflow/TaskPage"), "TaskPage");
+const TaskWorkspace = named(() => import("../features/workflow/TaskWorkspace"), "TaskWorkspace");
 const DocumentPage = named(() => import("../features/documents/DocumentPage"), "DocumentPage");
 const DocumentIndex = named(() => import("../features/documents/DocumentIndex"), "DocumentIndex");
-const WorkIndex = named(() => import("../features/workflow/WorkIndex"), "WorkIndex");
+const InboxIndex = named(() => import("../features/workflow/InboxIndex"), "InboxIndex");
 const CreateTaskPage = named(() => import("../features/workflow/CreateTaskPage"), "CreateTaskPage");
 const ProjectSummary = named(() => import("../features/overview/ProjectSummary"), "ProjectSummary");
 const ProjectSettings = named(() => import("../features/settings/ProjectSettings"), "ProjectSettings");
@@ -271,12 +270,13 @@ function WorkspacePages({ route, context, refresh, operations }: { route: Route;
     window.addEventListener("pagehide", remember);
     return () => { document.removeEventListener("click", beforeLink, true); window.removeEventListener("scroll", onScroll); window.removeEventListener("pagehide", remember); };
   }, [key, positionKey]);
-  const { projectId, token, principal } = context;
+  const { projectId, token } = context;
   function page(r: Route, active: boolean) {
     if (r.section === "documents") return <DocumentIndex context={context} />;
-    if (["work", "inbox"].includes(r.section)) return <WorkIndex context={context} refresh={refresh} view={r.section as "work" | "inbox"} />;
+    if (r.section === "work") return <TaskWorkspace context={context} refresh={refresh} active={active} />;
+    if (r.section === "inbox") return <InboxIndex context={context} refresh={refresh} />;
     if (r.section === "create-task") return <CreateTaskPage context={context} refresh={refresh} />;
-    if (r.section === "task" && r.id) return <TaskPage context={context} token={token} projectId={projectId} id={r.id} selectedRevision={r.revision} refresh={refresh} onChanged={context.onChanged} onAttempt={context.onAttempt} onKnown={context.onKnown} blockedByUnknown={context.blocked} canReview={principal.permissions.includes("review")} active={active} />;
+    if (r.section === "task" && r.id) return <TaskWorkspace context={context} refresh={refresh} active={active} taskId={r.id} selectedRevision={r.revision} />;
     if (r.section === "document" && r.id) return <DocumentPage context={context} projectId={projectId} id={r.id} selectedRevision={r.revision} />;
     if (r.section === "knowledge") return <KnowledgePanel context={context} refresh={refresh} />;
     if (r.section === "evaluations") {
@@ -294,7 +294,7 @@ function WorkspacePages({ route, context, refresh, operations }: { route: Route;
     if (r.section === "settings") return <ProjectSettings context={context} refresh={refresh} />;
     if (r.section === "connectors") return <ConnectorPage context={context} />;
     if (r.section === "collaboration") return <CollaborationPanel context={context} refresh={refresh} />;
-    const components = { reviews: <TeamWorkspace context={context} refresh={refresh} />, journey: <JourneyBoard context={context} refresh={refresh} propose={r.action === "propose"} />, discussions: <TeamWorkspace context={context} refresh={refresh} />, runtime: r.session?.includes(":") ? <SessionWorkspace context={context} refresh={refresh} sessionKey={r.session} active={active} /> : r.session ? <RuntimePanel context={context} refresh={refresh} targetSessionId={r.session} /> : <TeamWorkspace context={context} refresh={refresh} />, roles: <TeamWorkspace context={context} refresh={refresh} />, collaboration: <CollaborationPanel context={context} refresh={refresh} /> };
+    const components = { reviews: <TeamWorkspace context={context} refresh={refresh} section="reviews" />, journey: <JourneyBoard context={context} refresh={refresh} propose={r.action === "propose"} />, discussions: <TeamWorkspace context={context} refresh={refresh} section="discussions" />, runtime: r.session?.includes(":") ? <SessionWorkspace context={context} refresh={refresh} sessionKey={r.session} active={active} /> : <TeamWorkspace context={context} refresh={refresh} section="runtime" sessionId={r.session} />, roles: <TeamWorkspace context={context} refresh={refresh} section="roles" />, collaboration: <CollaborationPanel context={context} refresh={refresh} /> };
     if (r.section === "runtime" || r.section === "discussions" || r.section === "reviews" || r.section === "roles") return components[r.section];
     return <div className="content"><h1 tabIndex={-1}>{sectionLabels[r.section]}</h1>{components[r.section as keyof typeof components]}</div>;
   }

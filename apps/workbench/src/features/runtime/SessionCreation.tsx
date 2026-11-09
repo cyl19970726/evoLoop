@@ -2,11 +2,9 @@ import { useEffect, useState } from "react";
 import { errorText } from "../../shared/api";
 import { ActionForm, Notice, type MutationContext } from "../../shared/ActionForm";
 import { runtimeClient, type ExecutionGrant, type RuntimeModels } from "../../shared/runtimeClient";
+import { allowedModels } from "./executionPresentation";
 
-function allowedModels(grant: ExecutionGrant, catalog: string[]): string[] {
-  const authorized = [ ...(grant.model ? [grant.model] : []), ...(grant.models ?? []) ];
-  return [...new Set(catalog.filter(model => authorized.includes(model)))];
-}
+// The task page's older creation form (运行与关联). The team space uses ManagedSessionCreate.
 
 export function SessionCreation({ context, grants, refresh }: {
   context: MutationContext; grants: ExecutionGrant[]; refresh: number;

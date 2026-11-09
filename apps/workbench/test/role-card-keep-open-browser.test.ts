@@ -14,7 +14,7 @@ const proposal = { title: "真实功能开发职责", roleClass: "business", tem
   ownerScope: "项目", inputs: ["任务"], writableAssets: [], deliverables: ["交付"], triggers: ["分派"], workflow: "w", handoffBoundary: "b",
   evidence: [], alternatives: [], firstTaskId: roleId, baseline: "旧", expectedEffect: "可用", costLimit: "有限", trialDays: 7, reviewAtUtc: stamp, exitCriteria: "c" };
 
-test("saving runtime settings keeps the Role card open and shows the new revision", { skip: !modulePath && "Set EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE" }, async t => {
+test("saving runtime settings keeps the Role selected and shows the new revision", { skip: !modulePath && "Set EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE" }, async t => {
   const { chromium } = (await import(pathToFileURL(modulePath!).href)).default;
   let version = 2, revision = 0;
   const role = () => ({ projectId, id: roleId, version, currentRevisionId: roleId, state: "trial", proposal, proposedBy: "r", createdAtUtc: stamp, trialStartedAtUtc: stamp, reviewAtUtc: stamp, mergeTargetRoleId: null });
@@ -45,13 +45,21 @@ test("saving runtime settings keeps the Role card open and shows the new revisio
   await new Promise<void>(r => server.listen(0, "127.0.0.1", r)); t.after(() => server.close());
   const browser = await chromium.launch({ headless: true, ...(process.env.EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH ? { executablePath: process.env.EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH } : {}) }); t.after(() => browser.close());
   const page = await browser.newPage();
+  // The old address still opens 职责; the directory selects the Role, whose runtime and skills are in the right column.
   await page.goto(`http://127.0.0.1:${(server.address() as { port: number }).port}/p/${projectId}/runtime?view=roles`);
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button", { name: "进入", exact: true }).click();
-  await page.locator(`#role-${roleId} > summary`).click();
-  await page.getByText("绑定运行时并选择 skill").click();
-  await page.getByLabel(/理由/).fill("首次绑定");
-  await page.getByRole("button", { name: "绑定角色运行时" }).click();
-  await page.getByText("回读到第 1 次修订").waitFor();
-  assert.equal(await page.locator(`#role-${roleId}`).evaluate(node => (node as HTMLDetailsElement).open), true);
+  const directory = page.getByRole("navigation", { name: "职责目录" });
+  await directory.getByRole("link", { name: /真实功能开发职责/ }).click();
+  await page.locator(`#role-${roleId}`).waitFor();
+  if (await page.getByRole("button", { name: "展开右栏" }).count()) await page.getByRole("button", { name: "展开右栏" }).click();
+  const panel = page.getByRole("region", { name: "运行时与 skill" });
+  await panel.getByRole("button", { name: "绑定运行时并选择 skill" }).click();
+  await panel.getByLabel(/理由/).fill("首次绑定");
+  await panel.getByRole("button", { name: "绑定职责运行时" }).click();
+  await panel.getByText("回读到第 1 次修订").waitFor();
+  // Saving must not deselect the Role (#225): the address, the directory entry and the detail all keep it.
+  assert.equal(new URL(page.url()).searchParams.get("role"), roleId);
+  assert.equal(await directory.getByRole("link", { name: /真实功能开发职责/ }).getAttribute("aria-current"), "page");
+  assert.equal(await page.locator(`#role-${roleId}`).isVisible(), true);
 });

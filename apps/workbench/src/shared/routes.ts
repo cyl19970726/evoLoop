@@ -1,5 +1,5 @@
 // Section routes of the current workbench pages and the addresses that open them.
-import { currentPath } from "./navigation";
+import { appHistory, currentPath, onNavigate } from "./navigation";
 
 export type Section = "overview" | "work" | "create-task" | "knowledge" | "sessions" | "task" | "document" | "documents" | "inbox" | "journey" | "discussions" | "reviews" | "collaboration" | "runtime" | "schedules" | "roles" | "repository" | "operations" | "evaluations" | "settings" | "connectors";
 export type Route = { projectId: string | null; section: Section; id?: string; revision?: string; action?: string; session?: string };
@@ -26,6 +26,39 @@ export function parseRoute(path: string): Route {
   if (section === "evaluations") return { projectId: parts[1], section: "evaluations", id: parts[3], revision };
   if (["work", "knowledge", "sessions", "documents", "inbox", "journey", "discussions", "reviews", "collaboration", "runtime", "schedules", "roles", "repository", "operations", "settings", "connectors"].includes(section ?? "")) return { projectId: parts[1], section: section as Section, action, ...(["sessions", "runtime"].includes(section ?? "") ? { session } : {}) };
   return { projectId: parts[1], section: "overview" };
+}
+
+/**
+ * Older team addresses and where they open now: `/runtime?session={key with a colon}` is an agent conversation
+ * (`/sessions?session=`), `/runtime?view=roles|discussions` is its own section, and `?view=execution` is plain
+ * `/runtime`. `/runtime?session={uuid}` stays: it selects that managed agent in 分工与运行. Null when nothing changes.
+ */
+export function legacyTeamAddress(path: string): string | null {
+  const [pathname = "", query = ""] = path.split("?");
+  const parts = pathname.split("/");
+  // `/p/{project}/runtime` or the same with a trailing slash.
+  if (!(parts.length === 4 || parts.length === 5 && parts[4] === "") || parts[1] !== "p" || !parts[2] || parts[3] !== "runtime") return null;
+  const params = new URLSearchParams(query);
+  const rest = (section: string) => { const text = params.toString(); return `/p/${parts[2]}/${section}${text ? `?${text}` : ""}`; };
+  if (params.get("session")?.includes(":")) { params.delete("view"); return rest("sessions"); }
+  const view = params.get("view");
+  if (!params.has("view")) return null;
+  params.delete("view");
+  return rest(view === "roles" || view === "discussions" ? view : "runtime");
+}
+
+/** Rewrite an old team address in place, keeping the fragment. True when it did. */
+export function redirectLegacyTeam(): boolean {
+  const target = legacyTeamAddress(currentPath());
+  if (!target) return false;
+  appHistory().replace(`${target}${appHistory().location.hash}`, undefined, { ignoreBlocker: true });
+  return true;
+}
+
+/** Installed before the app subscribes to navigation (main.tsx), so no page ever opens on an old team address. */
+export function installLegacyTeamRedirect(): () => void {
+  redirectLegacyTeam();
+  return onNavigate(() => { redirectLegacyTeam(); });
 }
 
 export function href(projectId: string, section: Section, id?: string, revision?: string): string {

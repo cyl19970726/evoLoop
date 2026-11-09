@@ -55,21 +55,38 @@ export function currentDelivery(detail: TaskDetail) {
   return (detail.deliveries ?? []).filter(item => item.taskRevisionId === detail.task.currentRevisionId).at(-1);
 }
 
-export interface TaskListView { query: string; filter: string; kind: string; scope: string; selected: string }
+/** The task list's view: filters, sort and (in the table view) the selected row. Kept in the address bar. */
+export type TaskSort = "default" | "priority" | "due" | "progress" | "created" | "phase";
+export const taskSorts: readonly TaskSort[] = ["default", "priority", "due", "progress", "created", "phase"];
+export interface TaskListView { query: string; filter: string; kind: string; scope: string; selected: string; sort: TaskSort }
+export const defaultTaskListView: TaskListView = { query: "", filter: "open", kind: "all", scope: "all", selected: "", sort: "default" };
 export function taskListView(hash: string): TaskListView {
   const query = new URLSearchParams(hash.split("?")[1] ?? "");
+  const sort = query.get("sort");
   return { query: query.get("q") ?? "", filter: query.get("state") ?? "open",
     kind: query.get("kind") ?? "all", scope: query.get("scope") === "mine" ? "mine" : "all",
-    selected: query.get("selected") ?? "" };
+    selected: query.get("selected") ?? "", sort: taskSorts.includes(sort as TaskSort) ? sort as TaskSort : "default" };
 }
-export function taskListRoute(projectId: string, value: TaskListView): string {
+/** Only values that differ from the defaults are written, so a plain list keeps a plain address. */
+export function taskListParams(value: TaskListView): URLSearchParams {
   const query = new URLSearchParams();
   if (value.query) query.set("q", value.query);
   if (value.filter !== "open") query.set("state", value.filter);
   if (value.kind !== "all") query.set("kind", value.kind);
   if (value.scope !== "all") query.set("scope", value.scope);
+  if (value.sort !== "default") query.set("sort", value.sort);
   if (value.selected) query.set("selected", value.selected);
+  return query;
+}
+/** The table view (`/work`) with this view. */
+export function taskListRoute(projectId: string, value: TaskListView): string {
+  const query = taskListParams(value);
   return `/p/${projectId}/work${query.size ? `?${query}` : ""}`;
+}
+/** A task opened from the list carries the list's filters and sort (never the table's selected row). */
+export function taskRoute(projectId: string, taskId: string, value: TaskListView): string {
+  const query = taskListParams({ ...value, selected: "" });
+  return `/p/${projectId}/tasks/${taskId}${query.size ? `?${query}` : ""}`;
 }
 export function matchingProjection(task: Pick<Task, "id" | "version" | "currentRevisionId">, item?: LeaderWorkTask) {
   return item?.taskId === task.id && item.version === task.version && item.currentRevisionId === task.currentRevisionId ? item : undefined;

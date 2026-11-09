@@ -22,6 +22,13 @@ export interface MutationContext {
 interface Draft { values: Record<string, string>; baseline?: string }
 const drafts = new Map<string, Draft>();
 export function clearCommandDrafts() { drafts.clear(); }
+/** The same memory-only draft store for forms built on @evoloop/ui; clearCommandDrafts() empties it for them too. */
+export type CommandDraft = Draft;
+export const commandDrafts = {
+  get: (key: string): CommandDraft | undefined => drafts.get(key),
+  set: (key: string, draft: CommandDraft) => { drafts.set(key, draft); },
+  delete: (key: string) => { drafts.delete(key); },
+};
 export interface Field {
   name: string; label: string; value?: string; kind?: "text" | "textarea" | "select" | "multi";
   options?: { value: string; label: string }[]; optional?: boolean; hint?: string; advanced?: boolean;

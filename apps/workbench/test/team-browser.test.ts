@@ -73,7 +73,7 @@ test("团队 switches views in the inner rail, lists roles there and opens organ
     await directory.getByRole("link", { name: /测试验收/ }).click();
     await page.waitForURL(new RegExp(`role=${id(3)}`));
     assert.equal(await directory.getByRole("link", { name: /测试验收/ }).getAttribute("aria-current"), "page");
-    await page.locator(`#role-${id(3)}[open]`).waitFor();
+    await page.locator(`#role-${id(3)}`).getByRole("heading", { name: "测试验收" }).waitFor();
     if (shots) await page.screenshot({ path: `${shots}/team-roles-1440.png` });
 
     await views.getByRole("link", { name: "组织复盘", exact: true }).click();

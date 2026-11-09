@@ -17,7 +17,7 @@
 | 中间 | 选中任务的正文：目标 → 完成条件 → 正文 → 进展与讨论时间线。可切换到“表格视图”，用六列表格给 Leader 对账、批量扫读 |
 | 右栏 | 状态与对账阶段；承接 Session（显示并可设置绑定）；关联文档（主正文、需求总图、Leader 编排总览、固定依据、交付物）；交付与使用；版本；可收起 |
 
-现状：两条左栏之后，任务页是“六列任务表＋右侧所选任务摘要”；完整任务另开一页，用六个页签（当前工作、依据与影响、交付与使用、运行与关联、历史、任务操作）组织，进展与讨论分散在“运行与关联”和“历史”里。
+现状（#229 PR7）：三处已按上表实现。`/work` 是表格视图，`/tasks/{ID}` 读一项任务；筛选与排序写在地址里。依据与影响、交付与使用、运行与关联、历史、任务操作五个页签仍是旧样式。需求总图和统筹总览没有单独标记，作为关联文档列出。1440px 以下右栏默认收起，窄屏用“任务信息”打开。
 
 ## 内容与状态
 
@@ -31,6 +31,8 @@
 | 验收接力 | 逐项显示接收者、消息投递、运行处理、本人读取和使用观察；安排已保存或消息已排队时仍是“尚未使用”；旧交付被替代后，旧安排保留历史状态 |
 | 当前承接与历史承接 | 已完成或已取消的任务显示“历史承接”；Session 现在忙碌不说明这项任务仍在运行 |
 | 固定依据与新版 | 任务保留开始时固定的版本，有新版时标“待复核” |
+| 读取中、读取失败与未登记 | 读取中写“正在读取”，失败写“无法判断”并可重新读取；只有读到回答才写“未分派”“没有运行”“未登记”。绑定按钮在分派读回前不可用 |
+| 下一步与下一责任 | 按阶段用工作台自己的话写下一步；受阻时写出卡住它的事实（几项依据待复核、哪项前置任务未通过验收、队列暂停原因），责任写类型和名称（如“职责 · 开发职责”）；名称未读回写“（名称待读取）”，服务端写给智能体的文字和原始 ID 只在“完整标识”里 |
 
 **列表**
 
@@ -52,6 +54,7 @@
 - Role 是持续职责，具体承接看分派和接受回执；同 Role 的其他实例收在次级。
 - 查看固定历史修订时，只给“返回当前任务”，不放跳到当前交付的快捷按钮。
 - 修改、取消、重开等写入放在“任务操作”层。
+- 表单打开时记下所见的版本与分派；提交前这些已变，或服务端答复版本已变，就拒绝提交，请先看最新内容。
 
 **重开与重复**
 
@@ -65,13 +68,20 @@
 
 ## 截图
 
-![任务页初始位置：六列任务表和右侧所选任务摘要](../../assets/frontend-journey-20261108/work-1440x900.png)
+![表格视图：左栏任务列表，中间阶段计数和六列表格，右栏所选任务的状态、承接智能体与关联文档](../../assets/frontend-tasks-20261109/tasks-table-1440x900.png)
 
-2026-11-08，正式发布版 36cb620，1440×900。两条左栏、六列任务表和右侧摘要。看点：每行很高，首屏只放得下三行；“当前进展”格里出现 Role 的长 ID。
+2026-11-09，PR7 分支，测试实例合成数据，1440×900。看点：选中一行，右栏换成这一行的事实，中间不动。
 
-![任务表横向滚动后：后续列进入视野，右侧摘要不动](../../assets/frontend-journey-20261108/work-horizontal-1440x900.png)
+![任务正文：目标、完成条件、正文、进展与讨论；右栏是状态与对账阶段、承接智能体、关联文档](../../assets/frontend-tasks-20261109/task-1440x900.png)
 
-同一版本，表格在自己的区域横向滚到“最近进展”，任务名列和右侧摘要不动。
+![在右栏打开固定依据：任务固定的旧版，并提示文档已有新版](../../assets/frontend-tasks-20261109/task-document-1440x900.png)
+
+看点：任务和对账阶段两个标签并列；已分派、已接受、正在运行分开写；依据按任务固定的那一版打开。
+
+![1280×800：右栏展开后与正文并排](../../assets/frontend-tasks-20261109/task-1280x800.png)
+
+![390×844：正文占满屏幕](../../assets/frontend-tasks-20261109/task-390x844.png)
+![390×844：任务信息从底部升起](../../assets/frontend-tasks-20261109/task-facts-390x844.png)
 
 ## 代码与测试
 
@@ -79,11 +89,11 @@
 
 | 部分 | 主要源码 | 相关测试 |
 | --- | --- | --- |
-| 列表、表格与对账 | `WorkIndex.tsx`、`taskListPresentation.ts`、`taskWorkspacePresentation.ts`、`apps/workbench/src/shared/workStatusPresentation.ts`、`apps/workbench/src/shared/leaderWorkLoad.ts` | `task-list-presentation.test.ts`、`task-workspace-presentation.test.ts`、`work-status.test.ts`、`leader-work-load.test.ts`、`work-filter-pagination-browser.test.ts`、`leader-work-overview-browser.test.ts` |
-| 右侧摘要 | `TaskPreview.tsx`、`taskPreviewResponsibility.ts` | `task-preview-responsibility.test.ts`、`task-preview-current-responsibility-browser.test.ts` |
-| 承接与身份 | `taskExperience.ts`、`TaskOwner.tsx` | `task-experience.test.ts`、`task-owner-browser.test.ts`、`task-list-owner-browser.test.ts` |
-| 完整任务 | `TaskPage.tsx`、`TaskWorkflow.tsx`、`DeliveryPanel.tsx`、`LeaderTaskFacts.tsx`、`apps/workbench/src/shared/taskTiming.tsx`（阶段时间，Session 页也用）、`features/sessions/TaskAssignmentPanel.tsx`（分派）、`features/queues/ResidentQueuePanel.tsx`（经 `features/runtime/RuntimePanel.tsx` 显示队列） | `delivery-presentation.test.ts`、`task-evidence-reading.test.ts`、`task-edit-role-recovery.test.ts`、`task-session-return-browser.test.ts` |
-| 验收接力与容量 | `AcceptanceRelayPanel.tsx`、`AcceptanceOverviewPanels.tsx` | `leader-work-overview-browser.test.ts` |
+| 页面组合与左栏列表 | `TaskWorkspace.tsx`、`TaskRail.tsx`、`useTaskList.ts`、`taskListModel.ts`、`taskExperience.ts`、`apps/workbench/src/shared/taskStatus.ts` | `task-list-model.test.ts`、`task-experience.test.ts`、`task-workspace-browser.test.ts`、`work-filter-pagination-browser.test.ts`、`work-status-recovery-browser.test.ts`、`work-status-retry-pagination-browser.test.ts` |
+| 表格视图与对账 | `TaskTable.tsx`、`TaskReconciliation.tsx`、`taskWorkspacePresentation.ts`、`apps/workbench/src/shared/workStatusPresentation.ts`、`apps/workbench/src/shared/leaderWorkLoad.ts` | `task-workspace-presentation.test.ts`、`work-status.test.ts`、`leader-work-load.test.ts`、`leader-work-overview-browser.test.ts`、`task-list-owner-browser.test.ts` |
+| 右栏 | `TaskFacts.tsx`、`TaskAgentBlock.tsx`、`taskFactsPresentation.ts`、`TaskDocumentPeek.tsx`、`useCommand.ts`、`apps/workbench/src/shared/workPresentation.ts`（下一步、责任、验收接力用语）、`apps/workbench/src/shared/ui/RecordName.tsx` | `task-list-model.test.ts`、`task-work-wording.test.ts`、`task-workspace-browser.test.ts`、`task-preview-current-responsibility-browser.test.ts` |
+| 任务正文与各层 | `TaskPage.tsx`、`TaskWorkflow.tsx`、`DeliveryPanel.tsx`、`LeaderTaskFacts.tsx`、`TaskOwner.tsx`、`apps/workbench/src/shared/taskTiming.tsx`（阶段时间，智能体页也用）、`features/sessions/TaskAssignmentPanel.tsx`（确认接手与释放）、`features/queues/ResidentQueuePanel.tsx`（经 `features/runtime/RuntimePanel.tsx` 显示队列） | `delivery-presentation.test.ts`、`task-evidence-reading.test.ts`、`task-edit-role-recovery.test.ts`、`task-owner-browser.test.ts`、`task-session-return-browser.test.ts`、`task-loop-browser.test.ts`、`discovery-browser.test.ts` |
+| 收件页（未改版） | `InboxIndex.tsx`、`AcceptanceOverviewPanels.tsx` | `leader-work-overview-browser.test.ts` |
 | 执行时间与重复 | `TaskSchedulePanel.tsx`、`taskTimingPresentation.ts` | `task-timing-ui.test.ts` |
 
 ## 相关
