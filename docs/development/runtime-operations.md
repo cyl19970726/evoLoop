@@ -1,10 +1,10 @@
 # 运行接线手册
 
-本页写给负责打开、核对和关闭运行机制的维护者，覆盖五项：Leader 结果通知、即时输入、托管压缩、普通 Task 的每日复制和阶段关注。它们都已合入 main，但各自默认关闭，或只在配置之后才生效；新实例当前打开了哪几项，看[阶段路线](../roadmap.md#已实现但新实例未用)。规则和设计理由在架构页：[接口与协作合同](../architecture/contracts.md)、[Session 运行时](../architecture/session-runtime.md)。服务的启动、身份、备份见[本机运行](local-run.md)，CLI 的通用用法见 [Agent CLI](agent-cli.md)。
+本页写给负责打开、核对和关闭运行机制的维护者，覆盖五项：Leader 结果通知、即时输入、托管压缩、普通 Task 的每日复制和阶段关注。它们都已合入 main。Leader 结果通知、即时输入和每日复制要在私有配置里打开或授权后才生效；托管压缩默认开着，但只在特定 Codex 协议版本下可用；阶段关注没有开关，随服务运行。新实例当前打开了哪几项，看[阶段路线](../roadmap.md#已实现但新实例未用)。规则和设计理由在架构页：[接口与协作合同](../architecture/contracts.md)、[Session 运行时](../architecture/session-runtime.md)。服务的启动、身份、备份见[本机运行](local-run.md)，CLI 的通用用法见 [Agent CLI](agent-cli.md)。
 
 ## 共同做法
 
-- **配置放在私有文件里。** 五项都写在 `EVOLOOP_INTEGRATIONS_FILE` 指向的私有 integrations 文件中。这个文件放在仓库外，或明确被 Git 忽略。改动时保留所有原字段，只增加本节要的键；令牌、地址和真实 ID 不写进公开文档或日志。
+- **配置放在私有文件里。** 前四项的配置都写在 `EVOLOOP_INTEGRATIONS_FILE` 指向的私有 integrations 文件中；阶段关注没有开关，门槛用命令修订。这个文件放在仓库外，或明确被 Git 忽略。改动时保留所有原字段，只增加本节要的键；令牌、地址和真实 ID 不写进公开文档或日志。
 - **先关着核对，再打开。** 先在关闭状态下核配置、身份和存储，再切换。同一项目同一时刻只配一个目标。
 - **状态只说明到了哪一步。** 已保存、平台已接受、原生 Turn 已开始、接收者已读、实际处理和 Task 关闭，各看各的记录；前一步成立，不代表后一步也成立。
 - **结果不明时按原 ID 对账。** 回包丢失或状态为 `unknown` 时，用原 operation ID 或原输入 ID 读回，不换 ID 重发。
@@ -52,7 +52,7 @@
 2. 确认旧 Leader 的消息 Turn 都已静默，没有结果未知的处理。
 3. 新实例第一次打开前，先处理迁移导入的通知（见下一小节）。
 4. 把 `enabled` 改成 `true`。通知泵每轮都重读这份配置，所以打开、关闭和改目标都不用重启服务；只有 `pollIntervalMs` 在启动时读取。
-5. 用 `work leader notices --project PROJECT_ID` 核对通知从 `pending` 变成 `linked`，再用 `work message MESSAGE_ID` 核对消息的原生 Turn。
+5. 用 `work leader notices --project PROJECT_ID` 核对通知从 `pending` 变成 `linked`，再用 `work message MESSAGE_ID --project PROJECT_ID` 核对消息的原生 Turn。这两条命令的完整参数见 CLI 自带的用法说明。
 
 打开之后，分别核对：通知已入库、消息已保存、原生已接收和已读、Leader 已作安排、验收方已实际观察、Task 已完成。旧修订的 Delivery 和观察不能用来关闭新修订。
 
@@ -63,7 +63,7 @@
 - **通知泵会自动处置的两类。** 待编排 Task 的通知：Task 已不是当前修订下未分派的 todo 时，投递前会自动处置。阶段关注的通知：来源已过期时同样自动处置。
 - **要人工处置的其他类型。** 交付、观察等通知不会被自动处置。旧主机已送达、已关闭，或已被后来的交付取代的，由维护者在打开前标为 `blocked`，并逐条写明原因。
 
-2026-11-09 新实例打开前，维护者一次性把约 163 条导入通知标为 `blocked`。用到的原因有：
+2026-11-09 新实例打开前，维护者一次性把 163 条导入通知标为 `blocked`，其中 160 条带 `MIGRATION_REPLAY_*` 原因；另有 5 条由通知泵自动处置（`ATTENTION_SOURCE_EXPIRED` 3 条、`TODO_SOURCE_NOT_TODO` 2 条），合计就是[阶段路线](../roadmap.md#当前基线)里的 168 条阻塞。维护者用到的原因有：
 
 | 原因 | 含义 |
 | --- | --- |
@@ -74,7 +74,7 @@
 | `SUPERSEDED_BY_LATER_DELIVERY` | 已被后来的交付取代 |
 | `LEADER_OWN_DELIVERY` | Leader 自己的交付 |
 
-这一步现在**没有正式命令**。服务和 CLI 都不会写这些原因；这批标记由维护者直接写入，没有操作回执。
+这一步现在**没有正式命令**。服务和 CLI 都不会写这些原因；这批标记由维护者在通知泵关闭时直接改写数据库里的通知记录（`state` 与 `blocked_reason`），不经过权限检查，也没有操作回执。
 
 ### 读取与诊断
 

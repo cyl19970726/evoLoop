@@ -51,7 +51,7 @@ npm run --silent cli -- operation "$OPERATION_ID" --project "$PROJECT_ID"
 
 工作起点可以是目标、Task、过程文档或现有材料，不要求先创建 Wiki、Role 或讨论。用 `task.create` 提供清楚的 title/content/acceptance/owner，系统一次保存 Task 与主正文；`context` 即使在 todo 时也读取固定主正文。
 
-普通 Task 的 `task.create.timing` 可写 UTC 约定执行时点、IANA 时区和 `none`/`daily`。也可读 `tasks/TASK_ID/timing` 后以 `task.timing.set` 的当前 Task 版本和 timing 版本设置或改时；`task.timing.stop` 只停止以后复制。`task.update.repeatScope` 默认仅本次，显式 `this_and_future` 才把本次正文修订同步为以后模板；已开始或结束的任务可通过 `task.timing.set.scope=future` 单独改以后要求。每日复制要求当前调度 grant 精确匹配 `scopeId: "task-timing:<首次Task ID>"`、项目、actor 和 Role。创建时尚无该 grant，可先建普通或一次性 Task，再在配置授权后设每日；不会借用另一日程的 grant。CLI 以当前 `command schema task.create`、`task.timing.set`、`task.timing.stop` 的实际字段为准；复制规则见[接口合同](../architecture/contracts.md#普通-task-的一次与每日复制)，授权配置与时间读取见[运行接线手册](runtime-operations.md#4-普通-task-的每日复制)。
+普通 Task 的 `task.create.timing` 可写 UTC 约定执行时点、IANA 时区和 `none`/`daily`。也可读 `tasks/TASK_ID/timing` 后以 `task.timing.set` 的当前 Task 版本和 timing 版本设置或改时；`task.timing.stop` 只停止以后复制。`task.update.repeatScope` 默认仅本次，显式 `this_and_future` 才把本次正文修订同步为以后模板；已开始或结束的任务可通过 `task.timing.set.scope=future` 单独改以后要求。每日复制要求已打开 `scheduling.enabled`，且私有配置 `scheduling.taskTimingGrants` 里有与项目、actor 和 owner Role 匹配的授权，不必为每个 Task ID 预设范围；此前按 `task-timing:<首次Task ID>` 精确授权的系列仍可继续管理。不会借用另一日程的 grant。CLI 以当前 `command schema task.create`、`task.timing.set`、`task.timing.stop` 的实际字段为准；复制规则见[接口合同](../architecture/contracts.md#普通-task-的一次与每日复制)，授权配置与时间读取见[运行接线手册](runtime-operations.md#4-普通-task-的每日复制)。
 
 若声明 `consumer`，须填精确匹配的消费者标识；Agent 消费者应在启动前通过 `session` 核实实际 `principal.actorId`，并确认它会亲自使用当前 Delivery、签署观察。不要填 roleId、显示名或身份解释；解释写入 `evidence` 或 `reason`。外部 human 消费者继续使用现有 reviewer attestation 合同。验收确实要求使用时，应同时声明 `consumer` 并设置 `useRequired: true`；此时 `task.close` 要求当前 Delivery 最新的声明消费者观察结果为 `used`，worker 完成、仅有 Delivery 或其他 actor 使用都不能替代。`command schema task.create` 和 `command schema task.update` 会显示这些字段说明。
 
@@ -98,7 +98,7 @@ npm run --silent cli -- operation "$OPERATION_ID" --project "$PROJECT_ID"
 过程 Document 的结论合入仓库正文后，在来源修订上记下它进了哪一页、哪个提交。规则见[项目数据 §6](../architecture/project-data.md#6-工作文档怎样沉淀为仓库正式文档)；文档维护中的吸收检查见[文档维护](documentation.md#吸收检查)。
 
 1. **登记目标正文。** 用 `request reference.git-register --project PROJECT_UUID --file BODY.json`，正文含 `operationId`、`referenceId`、`repositoryId`、`path`、完整的 `commit` 和正文的 SHA-256 `contentHash`。仓库与路径须在私有配置 `repositories` 登记的只读范围内；服务读出该提交的正文并核哈希，读不到就拒绝。需要项目 `write`。
-2. **记录决定。** 用 `request reference.formal-decide --project PROJECT_UUID --file BODY.json`，正文含 `operationId`、`decisionId`、`gitReferenceId`、来源的 `documentId` 与 `documentRevisionId`、`decision` 和 `reason`。`decision` 取 `incorporated`（已纳入）、`adopted`（已采纳）或 `rejected`（不采纳）。需要项目 `review`。
+2. **记录决定。** 用 `request reference.formal-decide --project PROJECT_UUID --file BODY.json`，正文含 `operationId`、`decisionId`、`gitReferenceId`、来源的 `documentId` 与 `documentRevisionId`、`decision` 和 `reason`。`gitReferenceId` 填第一步的 `referenceId`。回链用 `decision: "incorporated"`，表示该修订的结论已纳入这份正文；服务要求 `documentRevisionId` 是该 Document 当前采纳的修订，否则拒绝。另两个取值 `adopted`、`rejected` 记录审阅者对这份正文的其他判断，服务只核来源与正文都存在，不判断判断本身。需要项目 `review`。
 
 两条都先用 `request schema NAME` 核字段，回执不明时按原 operation ID 对账。回链只说明内容被整理进了哪一页，不证明来源里的每条主张都成立；来源原件保留不动。
 
