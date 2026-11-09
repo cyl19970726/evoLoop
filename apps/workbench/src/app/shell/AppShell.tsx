@@ -84,7 +84,7 @@ export function AppShell(props: AppShellProps) {
         {window.location.port === "5181" ? "开发测试预览 · 模拟数据 · 尚未发布" : "开发预览 · 连接现有数据 · 尚未发布"}</div>}
       {/* One tree for every width, switched by CSS at 760px: crossing it restyles the frame in the same frame as the
           viewport change and never remounts the pages (their state and drafts stay). */}
-      <header data-ui="" data-shell="mobile-header" className="sticky top-0 z-30 flex h-12 items-center gap-2 border-b border-border bg-sunken/95 px-2 backdrop-blur compact:hidden">
+      <header data-ui="" data-shell="mobile-header" className="sticky top-0 z-30 flex h-12 items-center gap-2 border-b border-border bg-sunken/95 pl-2 pr-12 backdrop-blur compact:hidden">
         <IconButton label="打开项目导航" icon={<Menu size={19} />} onClick={() => setDrawer(true)} />
         <span className="min-w-0 flex-1 truncate font-medium">{title}</span>
         <span className="max-w-[40%] truncate text-small text-muted-foreground">{props.projectTitle}</span>

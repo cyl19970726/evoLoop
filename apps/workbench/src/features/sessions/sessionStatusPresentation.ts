@@ -60,6 +60,25 @@ export function sessionHeaderStatusLabel(session: StatusSource, progress: Native
   return "原生执行状态待核对";
 }
 
+/** Header wording for people, from the same facts as sessionHeaderStatusLabel; it never promotes a record to live work. */
+export function agentHeaderStatus(session: StatusSource, progress: NativeProgressView | null,
+  currentRead: boolean, runtimeAvailable: boolean | null): string {
+  if (session.kind !== "owned" || session.runtimeState !== "ready") return agentStatusLabel(session);
+  if (runtimeAvailable === false) return "连接不可用 · 状态待核对";
+  if (!currentRead || runtimeAvailable !== true || progress?.freshness !== "live") return agentStatusLabel(session);
+  const turn = progress.turn;
+  if (progress.status === "active" && turn?.status === "inProgress") {
+    if (session.busy !== true) return "运行记录不一致，待核对";
+    if (turn.source?.kind === "message") return "正在回复消息";
+    if (turn.source?.kind === "run") return turn.source.id === session.latestBusinessRun?.id && session.latestBusinessRun.state === "running"
+      ? "正在执行任务" : "正在执行 · 任务记录待核对";
+    return "正在运行 · 来源待核对";
+  }
+  if (session.busy === true) return "有在途工作 · 执行待核对";
+  if (progress.status === "idle" && turn?.status !== "inProgress" && session.busy === false) return "空闲";
+  return "执行状态待核对";
+}
+
 /** The activity feed needs an exact live binding; busy and latest Run alone are insufficient. */
 export function currentNativeRunId(session: StatusSource, progress: NativeProgressView | null,
   currentRead: boolean, runtimeAvailable: boolean | null): string | null {

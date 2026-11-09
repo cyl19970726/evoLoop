@@ -95,7 +95,8 @@ test("Session results → fixed Document → return restores the exact Session r
   await page.getByRole("heading", { name: session.title }).waitFor({ timeout: 5000 }).catch(async cause => {
     assert.fail(`${String(cause)}; pageErrors=${JSON.stringify(errors)}; apiReads=${JSON.stringify(apiReads)}; body=${(await page.locator("body").innerText()).slice(0, 1800)}`);
   });
-  await page.getByRole("navigation", { name: "Session 工作区栏目" }).getByRole("button", { name: "成果", exact: true }).click();
+  if (await page.getByRole("button", { name: "展开右栏" }).count()) await page.getByRole("button", { name: "展开右栏" }).click();
+  await page.getByRole("tab", { name: "资料库", exact: true }).click();
   await page.getByRole("heading", { name: "成果与使用" }).waitFor();
   const returnHash = await page.evaluate(() => (location.pathname + location.search));
   const artifact = page.locator(".session-results").getByRole("link", { name: "打开固定成果" });
@@ -111,7 +112,7 @@ test("Session results → fixed Document → return restores the exact Session r
   await back.click();
   await page.getByRole("heading", { name: "成果与使用" }).waitFor();
   assert.equal(await page.evaluate(() => (location.pathname + location.search)), returnHash);
-  assert.equal(await page.getByRole("navigation", { name: "Session 工作区栏目" }).getByRole("button", { name: "成果", exact: true }).getAttribute("aria-current"), "page");
+  assert.equal(await page.getByRole("tab", { name: "资料库", exact: true }).getAttribute("aria-selected"), "true");
 
   // Legacy bare fixed links still use the source captured on same-tab navigation.
   await page.evaluate(hash => { location.hash = hash; }, fixedDocument);
