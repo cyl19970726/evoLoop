@@ -91,7 +91,7 @@ OpenViking 的普通内容 API 负责存取；它不会因为写了一页而自�
 | Wiki 基座 | **独立 OpenViking 服务，HTTP 接入** | 0.5.1 已受限本机写读与回读；普通写页与 Wiki 综合编译的语义分开。语义索引、多写者与生产恢复须通过[正式采用与 fork 的门槛](#3-正式采用与-fork-的门槛)。 |
 | 上游语言 | **沿用 OpenViking 的 Python/Rust 等实现** | 上游独立构建，不把 Python 嵌入 Node core；HTTP 是语言和升级边界。Python 协议研究工具继续作为实验资产。 |
 | Agent 工具 | **CLI 优先，按需要加官方 MCP TypeScript SDK** | 两者都调用协调 API；MCP 是工具传输，不是第二个协调者或另一套业务权限。 |
-| 项目工作台 | **React + TypeScript / Vite SPA；Router + Query 为后续候选** | 工作台通过同一 API 组合任务、文档、认识与分工，支持依据追溯和复核；首期本机同源部署。飞书、Codex、公开静态站保留各自入口；S1a 已实现读取/复核，使用小型 hash 路由与显式读取状态；复杂页面增长后再评估 Router/Query。 |
+| 项目工作台 | **React + TypeScript / Vite SPA；目标采用 TanStack Router + Query（DEC-036）** | 工作台通过同一 API 组合任务、文档、认识与分工，支持依据追溯和复核；首期本机同源部署。飞书、Codex、公开静态站保留各自入口；S1a 已实现读取/复核，使用小型 hash 路由与显式读取状态；路由与读取的迁移见[前端架构](../frontend/architecture.md#2-组件路由与查询模型)。 |
 | 检查与观测 | **node:test、合同用例、真实切片、结构化 JSON 日志** | 沿用当前检查工具；按 task/run/operation/knowledge revision 关联，日志脱敏并记录模型和维护成本。 |
 
 Node 官方当前将 24 标为 LTS；Fastify 支持 TS，npm 原生支持 workspaces，Zod 提供 JSON Schema 转换。这里的项目选择是基于职责和代价的判断，并非这些官方文档证明了 evoLoop 的效果。[Node 生命周期][node] · [TS strict][ts] · [Fastify][fastify] · [npm workspaces][npm] · [Zod][zod]

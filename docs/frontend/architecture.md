@@ -1,213 +1,127 @@
 # 前端架构：项目工作台与共同 API
 
-状态：2026-10-20 **目标设计与本机试用并存：真实前端已重组，新增布局与普通阅读路径已做有限浏览器和独立 Agent QA；真人反馈待收集**。用户要求补齐前端产品与架构，因此修订此前“先只用飞书、Codex 和静态站”的入口建议。页面和使用验收见[工作台产品设计](../product/workbench.md)，存储设计见[存储层](../architecture/storage.md)，资料如何进入 Wiki 见[知识关联流程](../architecture/knowledge-flow.md)。S1a 已使用 React 19、TypeScript 7 和 Vite 8；现有应用仍用 hash 路由和直接 API 请求；React Router、TanStack Query、飞书页面及公网部署仍待后续决定和验证。
+本页只写工作台怎样实现。页面内容见[页面说明](README.md#页面说明)，共同原则见[设计原则](principles.md)，外壳见[布局](layout.md)，产品理由见[产品工作台](../product/workbench.md)；字段、状态与权限以[接口合同](../architecture/contracts.md)为准。
 
-本页先说明人如何从项目入口观察工作与固定依据、同既有 Agent 沟通后读回经共同 API 提交的变化；再给部署、技术和组件的实现选择。
+“现状”指当前 main 的代码；“目标”是已选定、由[前端改版 issue #229](https://github.com/cyl19970726/evoLoop/issues/229) 实施的方向，落地前不能当作现状引用。
 
 ## 1. 工作台的职责与部署位置
 
-人从项目首页看到目标、进展、变化、待判断事项与两类讨论准备；可从 Task 打开所依需求、知识固定修订和交付证据，也可直接进入知识空间追溯来源。默认先让人看清工作依据、责任、决定、结果和例外，带着判断回到既有 Agent 会话；Agent 在授权内通过 CLI 提交并核对回执，人再从同一对象读回。页面按需直接提出纠正、保存文档修订或请求复核时，也只发共同命令，随后区分接受、外部处理与实际使用的结果。工作台读取和组合各权威数据，不在浏览器中再维护一套任务状态机。飞书继续是移动协作入口，Codex 继续承载真实会话，公开文档站继续发布 Git 正式文档。
+工作台是登录后使用的单页应用，只经共同 Query／Command API 读写，不在浏览器维护第二套状态机。Agent 经业务 skill＋CLI 调用同一 API，授权、固定修订与操作回执规则相同（[DEC-030](../decisions.md#用户已确定的方向)）。浏览器不引入 core、数据库驱动、平台 SDK 或凭据，共用类型只从 `@evoloop/contracts` 的浏览器出口导入。
 
-GUI 的主要消费者是人：阅读完整依据、形成判断、处理例外并核对实际使用反馈。重要判断可在既有 Agent 会话中表达，由 Agent 带上下文与授权执行；服务端权限仍是最终约束，工作台不伪造内嵌 Desktop 聊天。现有项目业务 skill 指导 Agent 通过 CLI 开展常规工作；后续按需增加的 MCP 工具也调用同一 Query／Command API 和 core，遵守相同身份、授权、固定版本与回执恢复规则。直接页面操作保留为次要按需路径；不把浏览器点击作为 Agent 执行协议，也不要求人逐步确认权限内常规操作。浏览器 Agent 走读归于前端 QA，不归于真人反馈或消费者效果证据。开发界面所用 frontend-design 与 web-design-guidelines 是开发技能，不是上述业务 skill。
+- **现状**：本机 coordinator 同源提供 `apps/workbench/dist` 与 `/api/`；开发时 Vite 把 `/api` 代理到 coordinator。
+- **目标**：多机器方案（[#219](https://github.com/cyl19970726/evoLoop/issues/219)）后由 Hub 托管静态文件，经 Hub 网关访问各机器上的项目；单机模式不变。
 
-下图专看**页面读取和命令分别经过哪一层**，用于检查浏览器权限与服务端装配；外部权威的整体关系见[总览](../architecture/overview.md#4-为什么要有这些对象和权威边界)。
-
-```mermaid
-flowchart TB
-  subgraph entry["交互层"]
-    UI["项目工作台<br/>观察 · 阅读 · 反馈"]:::ui
-    Other["Agent 会话 → 业务 skill＋CLI<br/>飞书 / 可选 MCP 工具"]:::ui
-  end
-  subgraph application["同一 evoLoop 协调服务"]
-    API["身份与项目范围<br/>Query / Command API"]:::api
-    Q["查询装配<br/>版本 · 关系 · 缺项"]:::api
-    C["领域用例<br/>权限 · 状态 · 基线检查"]:::core
-  end
-  subgraph sources["权威与适配层"]
-    PG["PostgreSQL<br/>Task / Document / Relation"]:::data
-    Git["Git 文档适配器<br/>固定 commit 的正式规范"]:::data
-    Wiki["外置 Wiki 适配器<br/>知识修订 / 来源"]:::data
-    Run["SessionRuntime<br/>真实运行与回执"]:::data
-  end
-  UI --> API
-  Other --> API
-  API --> Q
-  API --> C
-  Q --> PG
-  Q --> Git
-  Q --> Wiki
-  C --> PG
-  C --> Run
-  C --> Wiki
-  classDef ui fill:#FFF1D6,stroke:#A86412,color:#402700
-  classDef api fill:#E5F0FF,stroke:#4270A8,color:#172F4B
-  classDef core fill:#EFE7FA,stroke:#8056A8,color:#40275D
-  classDef data fill:#E2F4F2,stroke:#297A73,color:#154B47
-```
-
-黄＝入口；蓝＝协议与读取；紫＝业务决定的约束；青＝数据和运行边界。图中箭头是调用关系，Wiki 写入仍走受控维护/发布流程；不是浏览器直接修改上游。
+公开文档站与工作台的认证空间分开。
 
 ## 2. 组件、路由与查询模型
 
-`apps/workbench` 按页面领域组织：`project`、`inbox`、`tasks`、`documents`、`knowledge`、`roles`、`schedules`、`evaluations`、`operations`。这些是代码与读取模型的边界，**不是侧栏目录**。页面导航以[体验与信息架构](experience.md)为唯一正文：主入口为**总览／工作／知识**；过程文档从工作区列表进入详情，关联追溯进入对象详情，讨论、分工、运行与日程由清楚的辅助路由到达，异常保留固定待处理入口。总览内容按实际可读来源与独立使用反馈逐步核定，整体验收仍以阶段路线为准。下面的路由是可刷新、可分享的深链，不能据路由数量生成同级导航。共用组件包括对象引用、修订标签、差异阅读、依据列表、关系路径、状态标签和命令结果。仅浏览器可用的公开 schema 从 `contracts` 单独出口导入；浏览器不得引入 core、数据库驱动、平台 SDK、凭据或上游客户端。
+**代码分层。** 现状：`apps/workbench/src` 下 16 个领域目录，有循环依赖（sessions↔workflow、workflow↔runtime、workflow↔orchestration），`ui/shared.tsx` 反向依赖 `documents`。目标：
 
-| 页面路由示意 | 页面装配的读取模型 | 按需直接操作 |
-| --- | --- | --- |
-| `/app/p/:projectId` | 总览：阶段目标、待判断事项、当前责任与工作、最近亲用结果、两个讨论入口及数据新鲜度 | 记录反馈，按权限进入相应工作或讨论 |
-| `/work` | 当前项目的待判断、在途工作及过程文档页签；按事项和下一动作组织 | 进入提议、任务和过程文档的稳定深链 |
-| `/inbox` | 提议类型/来源、接受状态、证据、判断责任者、需补内容 | 提交 dogfood/需求、归并依据、接受/补证/暂缓/拒绝；不直接派发 |
-| `/tasks/:taskId` | 当前 Task、固定主正文全文与图、独立验收标准、执行依据、交付与历史 | 创建、更新、开始、交付、关闭或重开；按权限开放 |
-| `/documents` | 过程文档表格：ID、标题、格式、当前修订/状态、关联 Task、更新时间及分页；不批量加载正文 | 筛选/搜索、打开行；行内 Task 链接单独导航 |
-| `/documents/:documentId?revision=...` | 完整正文、用途/格式、发布状态、所选修订/当前版及所属 Task；已发布版可与新候选并存 | 预览/原文、切换修订、返回列表；普通文档修订/发布/归档，任务主正文返回 Task 维护 |
-| `/documents/:documentId/incorporation` | 来源过程文档的整理面板：可选的多个固定来源/决定、目标 repo 路径/章节与 base commit、差异/PR、实际合入 commit 及构建状态 | 请求整理、送交仓库责任者、核对既有结果；不创建正式 Document 行，不直接改 Git 或把 Task 标完成 |
-| `/knowledge`、`/knowledge/topics/:knowledgeId` | 按类型、专题和来源分组的知识卡片，主题说明、近期变化和待审入口 | 筛选、搜索、打开专题与知识页 |
-| `/knowledge/:knowledgeId?revision=...` | 认识、适用条件、反例、来源、当前与任务使用版差异 | 提交纠正、请求维护；不直接接受其关联任务 |
-| `/knowledge/graph?focus=...&focusRevision=...` | 已授权的焦点邻域、关系类型/方向/来源、截断与分源缺项；指定修订时焦点页与出链固定到该版，反链另标当前索引水位 | 选择知识点或边、展开下一页、打开依据；图是知识入口内的导航 |
-| `/roles`、`/roles/:roleId` | 责任约定、承载会话、历史证据、试行与待回看 | 提出职责调整、记录试行评审 |
-| `/schedules/:scheduleId` | 定义修订、时区、下次计划、错过/重叠策略、触发实例与 Task | 修改或暂停后续触发；停止在途工作须另发命令 |
-| `/evaluations/:evaluationId` | 冻结协议/条件、输入与知识修订、case 产物、独立判据、成本与缺项 | 记录观察、提出复核或补证；不把模型评分直接改成已证明收益 |
-| `/operations/:operationId` | 已接受的操作、业务提交、外部结果和下一核对 | 查看恢复进展；授权范围内请求对账 |
+| 层 | 内容 |
+| --- | --- |
+| `app/` | 外壳、路由表、身份与查询客户端装配 |
+| `features/<领域>/` | 页面、领域组件、该领域的查询与命令 |
+| `shared/` | API 客户端、对象引用、修订标签等跨领域部件 |
+| `@evoloop/ui`（`packages/ui`） | tokens、基于 shadcn 的基础组件、布局骨架、通用状态与对话流条目；不依赖 `@evoloop/contracts`，不发请求 |
 
-子路径均位于项目路由下。`/inbox`、`/tasks/:taskId`、`/documents`、`/roles`、`/schedules/:scheduleId` 等可从工作入口或对象上下文进入；`/knowledge` 是独立知识入口，评价由知识或阶段回看进入；`/operations/:operationId` 可由固定待处理入口直达。对象目录使用稳定 ID；标题变化或 Git 路径移动不改变应用链接。历史修订 URL 不跳到最新版，另给“比较当前版本”。列表查询返回有边界的游标页；不要首次加载全项目 Wiki 和所有 trace。搜索按任务、文档、知识分组，分别给来源、命中字段、版本和新鲜度，不把不同后端分数直接排名成统一正确率。
+依赖只能向下，领域之间只经对方的 `index.ts`，不许循环；用一个小的 node 检查脚本放进 `npm test`。
 
-表中操作列说明仍可从 GUI 直接完成的按需动作，不是要求用户以表单完成每项日常工作。工作区与详情的首要读取应呈现进展、变化、依据、责任、决定和结果，并让 Agent 经 CLI 修改后的人能回到相同对象核对版本与回执。
+**路由。** URL 承载项目、对象稳定 ID、修订和筛选，刷新或分享后回到同一位置；改标题或移动 Git 路径不改链接。历史修订 URL 不跳到最新版。导航入口由[布局](layout.md)决定，不按路由生成。
 
-当前重组使用共用 WorkbenchShell 承载双层左栏和项目上下文；按项目保留已挂载页面，避免在辅助路由间切换时直接丢失内存草稿。刷新、登出或换身份仍会失去未持久化表单与内存令牌，不能把挂载保留写成持久恢复。实际路由仍是 hash 路由；上表部分子路径是目标读取模型，具体入口以已实现并验收的链接为准。
+- **现状**：`App.tsx` 监听 `hashchange`，手写解析 `#/p/{项目}/{区域}/{ID}?revision=…`；所有页面在一个包里。
+- **目标**：TanStack Router，路径 URL `/p/{项目}/…`，旧 `#/p/…` 链接（含正文里保存的）兼容跳转，按路由拆包，静态服务对非 `/api` 路径回退 `index.html`。以后要服务端渲染，可在同一套路由上换 TanStack Start。
 
-C5 的任务页直接阅读固定主正文和图，验收标准独立展示；当前状态只用 todo/in_progress/done/cancelled，旧修订保留原状态标签。一次任务创建同时生成主正文，普通 Document 编辑入口不能旁路修改。字段、类型及来源变更规则见[任务与过程文档](../product/tasks-and-documents.md)。
+**读取。** 列表返回有界游标页，不首次加载全项目 Wiki 或全部 trace。搜索按任务、文档、知识分组，各给来源与修订，不把不同后端的分数合并排名。
 
-Document Table 只列过程文档，可直接关联 Task Table；仓库正式文档不进入同一个目录或数据模式。正式产品、架构和规范仍从仓库 `docs/` 的独立入口及上下文出处链接访问。内容整理是过程文档的详情面板和跨来源关系：API 读取 DocumentStore/RelationStore 中的固定过程来源与 repo 路径/commit 链接，Git 适配器核实目标修订；不新增正式 Document 行或独立文档表。PR 写入和构建由授权仓库任务执行，前端只提出和跟踪。尚无对应服务时显示未接通，不用“打开 PR”“构建成功”的页面按钮冒充真实操作。
+- **现状**：组件直接调用 `api(` 约 84 处，没有缓存层；令牌以 `token: string` 传递约 63 处。
+- **目标**：TanStack Query。query key 以项目开头；切换项目或身份时取消旧请求、清除旧范围缓存；重读时保留旧内容并标“正在核对”。缓存只加速读取，不裁定当前版本或批准状态。
 
-QueryService 返回 `observedAt`、对象及 revision、权限能力、分源状态和缺项。PG 部分在一致的只读事务内取得；Wiki/Git 是分别读取的固定版本，标明校验结果，不能声称跨系统原子快照。知识服务不可用时显示“依据暂不可核对”，任务本体仍可读；需要该依据的接受/派发由服务端规则阻止。后端只对已授权的对象装配标题、摘要、链接和关系，前端隐藏按钮不是授权。
+QueryService 返回 `observedAt`、对象与 revision、权限能力、分源状态和缺项。PG 部分在一个只读事务内取得；Wiki/Git 分别读固定版本，不声称跨系统原子快照。知识服务不可用时任务仍可读，依据标为暂不可核对。服务端只装配已授权对象，前端隐藏按钮不是授权；空项目返回空态，前端不注入示例。
 
-所有列表/详情围绕同一稳定对象查询，列表不能保留已被详情推翻的旧状态。Review 按候选 revision 读取差异；决定已记录、正文已回读发布、索引已更新、消费者实际采用是独立字段。日程暂停只失效日程/后续计划查询，不把在途 Run 改为停止。评价读取模型保留每个 case 与条件、不比较不可比后端分数；具体记录见[评价合同](../architecture/contracts.md#6a-evaluationrecord评价证据与条件)。前端复用代码和三端接入落点见[Wiki 集成方案](../architecture/wiki-integration.md)。
-
-同一 Task 关联多个 Loop 时，运行页的默认上下文须从任务的真实 Run、正式 Dispatch 与 Loop 归属核定，不能把 Loop 列表首项或更新时间当作当前关系。明确区分当前在途运行与最近任务派发；读取失败、缺关联或多重匹配时显示未核定范围。用户主动选择历史循环后，普通回读或运行轮询不强行跳回默认项；切换项目、身份或任务时重新确定上下文。选择器先显示短标识、状态、实际时间及任务关联，完整目标与阶段正文按需展开，避免重复长文遮住当前运行和预算。
-
-首次目标与已有项目的读取状态按项目和权限隔离。首次进入时，Query 返回真实目标、消费者、约束、材料、未知与责任的已登记值及缺项；没有 Task、Document 或 Wiki 就返回明确空态，不注入已有项目的示例对象。已有项目总览读取当前阶段、最需处理事项、在途责任、最近消费者结果和决定后果；同一个 Task 的列表、详情与总览使用同一业务 revision 回读，分别呈现业务、运行、同步、知识和效果状态。“待补证”在任一投影中都不能显示为已处理。
+现状 `WorkbenchShell` 按项目保留已挂载页面以保住内存草稿，这不是持久恢复。
 
 ### 过程文档表格与完整阅读
 
-`DocumentTable` 只请求列表元数据。使用 `<table>`、列标题与可聚焦的文档标题入口；鼠标点行也可打开，Task 链接不触发行打开。详情由 `DocumentReader` 按 project/document/revision 请求完整内容，渲染器按明确的 `format` 分流；不靠文件后缀决定可信程度。返回列表恢复筛选、分页、选中行及焦点；历史修订在标题处持续可见。正文拥有主阅读宽度，右侧关系栏不能替代全文。
+`DocumentTable` 只请求列表元数据；用 `<table>` 和可聚焦的标题入口，行内 Task 链接不触发打开行，返回时恢复筛选、分页、选中行和焦点。`DocumentReader` 按项目、文档、修订读完整内容，按 `format` 字段而非文件后缀选择阅读器。
 
-| 阅读器 | 输入与展示 | 实现边界 |
-| --- | --- | --- |
-| `MarkdownDocumentReader` | 固定原文与附件清单，显示完整标题/表格/代码等；原文模式显示相同修订的文本 | 沿用 Markdown 阅读技术；原始 HTML 禁用，链接和资源经权限及 URL 规则解析，渲染结果可重建 |
-| `HtmlReportReader` | 固定 HTML 原件或带入口的资源包、资源完整状态、预览策略；独立样式与完整报告滚动区 | 本机试用由浏览器从固定原件构造受限静态预览，原件不改；用 iframe sandbox 默认禁脚本，与工作台 DOM 隔离，不把报告写入父页面 `innerHTML`。大包或交互报告另验隔离来源 |
-| `DocumentSourceView` | 原始 Markdown 或 HTML 文本、修订/文件名；较大包另提供受权原件下载 | 原文按文本显示；下载不走工作台同源的可执行 HTML 响应 |
+| 阅读器 | 实现边界 |
+| --- | --- |
+| Markdown | 现状用 markdown-it，关闭原始 HTML 与图片，链接按白名单校验；Mermaid 懒加载，SVG 放进带 CSP 的 sandbox iframe |
+| HTML 报告 | 从固定原件构造静态副本：清除脚本、表单、内嵌页面、自动跳转和外部资源，重写已登记资源路径；副本带限制来源的 CSP，放进禁脚本的 sandbox iframe，不写入父页面 `innerHTML`；原件不改 |
+| 原文 | 按纯文本显示；大包另给授权下载，不以同源可执行 HTML 响应 |
 
-HTML 静态预览可保留样式、表格、已保存图片及浏览器原生折叠；不会自动执行报告脚本。原件中的脚本、表单、内嵌页面、自动跳转或外部资源不直接继承工作台权限：预览副本清理这些入口、重写已登记资源路径，受 iframe sandbox 与限制加载来源的 CSP 共同约束。资源缺失或静态视图省略动态内容时显示具体缺项；不能把提取出的几段文本作为“完整 HTML 报告”。`srcdoc` 适用于小型自包含预览，大型包应由隔离的报告来源按授权提供。[iframe 的 sandbox / srcdoc 约定](https://developer.mozilla.org/en-US/docs/Web/HTML/Reference/Elements/iframe#sandbox) · [CSP sandbox](https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Content-Security-Policy/sandbox)
-
-需要 JavaScript 的交互报告作为另一项能力验证：使用与工作台不同的来源、限定资源/网络访问且不携带工作台凭据；不以同源 `allow-scripts` 加 `allow-same-origin` 开放任意上传报告。本机试用已完成 Markdown／静态 HTML 原件与 CSS／SVG 资源保存、回读、预览和下载；脚本不执行，不可把静态显示推成动态报告可用。原件与 BlobStore 的所有权见[存储设计](../architecture/storage.md)，Wiki 提取结果是派生来源，不替换报告。
+`srcdoc` 只用于小型自包含预览，大包由隔离来源提供。缺资源或省略动态内容时列出缺项。需要脚本的交互报告须用与工作台不同的来源、限定网络、不带工作台凭据；不对上传报告同时开放 `allow-scripts` 与 `allow-same-origin`。
 
 ### Session 的单一时间线
 
-`SessionTimeline` 只消费共同服务的 typed entry/page 和更新读数，不能用“普通消息列表＋最近 Run 回复＋最后十项观察”自行拼成历史。消息、公开进展和工具保留原始稳定键与轮次；工具按相邻同 Turn 聚合，失败/进行中仍有摘要。长正文按所选 Item 读取后在原位置展开。原始工具证据另核授权；读取范围、发送资格与执行状态不由模型名称或全局 ready 推导。
-
-原生 history cursor、PG messages cursor 和 live 更新位置分别推进。刷新最新内容不恢复已经耗尽的历史位置；两种历史响应都合并后，以原可见条目及相对位置恢复阅读，避免翻页跳动。live 的同一 Item 从开始、文字增量到完成原位替换；历史终态不能被迟到的 running 覆盖。断连/代次变化回读持久来源，切身份、项目或 Session 后取消旧请求并清除错范围内容。401/403 同时使在途响应与已入队更新失效，清空内容和详情选择，保留空的拒绝状态而不回填旧缓存；只有明确重新读取或新的身份范围才重新核权，普通刷新不能恢复被拒绝的内容。详见[原生读取合同](../architecture/codex-integration.md#session-工作区的历史与实时读取)。
-
-较高窗口中，已载内容不足且仍有历史时，可通过现有分页有界补读；正在回看旧内容时不自动移动阅读位置，也不拉伸消息来填充空间。
-
-Session 样式归 `sessions/workspace.css`，目录归 `sessions/sessions.css`；其他页面的样式不得再通过 `.session-workspace` 或通用 `!important` 覆盖其字体、上下文卡和输入宽度。共享外壳仍维护双左栏及收起行为，不在 Session 页复制一套外壳。
+`SessionTimeline` 只消费共同服务的 typed entry/page，不自行拼接历史。历史游标与 live 位置分别推进，同一 Item 原位替换，迟到的 running 不覆盖终态；切换身份、项目或 Session 时取消旧请求；401/403 后清空内容，普通刷新不恢复。见[原生读取合同](../architecture/codex-integration.md#session-工作区的历史与实时读取)。
 
 ## 3. 修改、刷新与失败如何呈现
 
-下图按用户看到的结果区分**命令提交、外部副作用和重新查询**。本库接受命令时，界面只显示该操作的已知状态；外部回执未知时要保留原输入并继续核对。
+每条命令带 `operationId` 和所读 revision。服务端同事务校验权限与基线、写入并登记 outbox；冲突时返回当前 revision，前端保留输入并给差异入口。
 
-```mermaid
-sequenceDiagram
-  participant U as 用户 / 工作台
-  participant A as 协调 API
-  participant P as PostgreSQL
-  participant E as 外部执行 / Wiki / 飞书
-  rect rgb(229,240,255)
-    U->>A: command + operationId + 所读 revision
-    A->>P: 权限与基线校验，同事务写入及 outbox
-    alt 版本冲突
-      P-->>A: 未应用，当前 revision
-      A-->>U: 保留输入，展示差异和复核入口
-    else 本库提交
-      P-->>A: 操作与对象 revision
-      A-->>U: 已记录；外部动作单独为 pending
-    end
-  end
-  rect rgb(226,244,242)
-    A->>E: 提交后的受控操作
-    E-->>A: 回执或结果未知
-    U->>A: 查询操作结果与对象变化
-    A-->>U: 当前数据 + 外部状态 + 核对时间
-  end
-```
+- 接受、发布、采纳和派发只显示服务端确认后的状态，不做乐观完成。
+- 回包丢失按同一 `operationId` 查询，不换新 ID 重发；`unknown` 显示为“正在核对”。
+- 成功读取不清除未知回执。
 
-蓝＝命令接受与本库变化；青＝外部副作用和读取恢复。认知发布、任务接受、文档采纳和派发使用确认后的服务端状态，不做乐观“已完成”。普通编辑可本地显示未保存草稿，但成功回包丢失时按同一 operationId 查询结果，保留原输入；不得产生新 ID 盲重发。`unknown` 的命令可显示“正在核对”，不能显示成失败后鼓励重复点击。
+**实时更新。**
 
-当前 S1a 页面在操作后重新读取，尚无有界轮询；后续接入后台变化时，只有当前页面/未结束操作轮询，退到后台降低频率，失败退避并显示最后核对时间。后续确有需求再加 SSE 变化提示；提示只使缓存失效，重连仍回读当前对象，不以事件到达替代业务状态。浏览器关闭不停止服务端任务，也不丢恢复责任。
+- **现状**：没有 SSE 或 WebSocket。Session 输出是长轮询：服务端每次最多挂起 15 秒（上限 20 秒），只有运行时提供实时更新时才会挂起，前端在上一次返回后立即发下一次。项目级变化靠定时轮询带游标的 `/session-work/changes`；另有若干页面级定时器和只读的“回读当前状态”。实时位置只在单个服务进程内有效，coordinator 重启后要重读。
+- **目标**：分两步。第一步只加**项目级失效事件流**：只推对象类型、ID 和修订号，不推标题或正文；前端让对应查询失效重读；Session 输出暂留长轮询。第二步再评估 Session 输出是否改推送。
+- **鉴权**：原生 `EventSource` 不能带 `Authorization` 头，所以用 fetch 流式读取：单机模式带现有令牌，Hub 模式用同源 cookie。服务端按项目授权过滤事件；收到 401/403 时断开流并清空内容。
+- **续传**：事件 ID 复用现有游标；重连时从上次游标续传，出现缺口或服务端要求重置（合同里的 `resetRequired`）时整体重读。coordinator 重启或部署后，客户端重置并重读。
+- **经 Hub 访问**：网关按项目路由到所在机器，不缓冲流式响应，心跳间隔短于各层空闲超时；机器离线时把页面标为“已过期”。这些要求需要写进 #219 的网关设计。
+- **多个标签页**：每个标签页各开一条流会占用同源连接数（HTTP/1.1 下同源最多 6 条）。多个标签页共享一条流（BroadcastChannel 或 SharedWorker），或在文档中注明这个限制。
 
-页面缓存不能替代对外部 CLI 变化的回读。阶段页提供只读“回读当前状态”：重新查询目标、阶段、文档与任务详情关联，不提交业务命令、不重新挂载整个工作区。加载和失败分别提示；旧数据可保留供对照，但部分失败后不能作为完整当前状态判断进度。缓存的草稿、滚动位置、内存登录与原操作回执保持各自生命周期；成功读取不清除未知回执，也不重发原命令。该入口补人工主动回读，尚不表示已实现后台轮询或实时订阅。
+事件到达不代替业务状态。轮询只覆盖当前页面与未结束操作，后台降频，失败退避并显示最后核对时间。
 
-服务端数据不默认长期存入 localStorage/离线缓存。未提交草稿首片保留在当前页面内，离开前提示；登出或切身份清除查询缓存。新文档修订出现时不要替换正在编辑的草稿，显示基线过期与比较入口。
+**本地状态。** 服务端数据不长期存入 localStorage；现状操作回执和返回位置存 sessionStorage。草稿留在页面内，离开前提示；登出或换身份清除查询缓存；新修订出现时不替换正在编辑的草稿。
 
 ### 状态复核与命令边界
 
-以下是前端必须从共同 API 读取或提交的状态，不由页面按钮、表单重渲染或查询缓存自行裁定。对象字段、状态转换与权限仍以[接口合同](../architecture/contracts.md)和[项目数据](../architecture/project-data.md)为准；本表只限定页面装配与可观察反馈。
-
-| 场景 | Query 必须返回与页面要显示的事实 | Command 校验及前端验收 |
-| --- | --- | --- |
-| 待判断与接受 | 提议当前接受状态、所读 revision、来源/类型、判断责任；若待补证、暂缓、越权或待独立判断，带原因、缺项/待取舍点、处理责任、最迟回看条件及历次处理记录。 | 待决项不能凭原输入再次点击接受，也不能用相同字段重提清掉状态。补充新来源或依据及处理结果后，服务端重判权限、范围、预算和消费者验收；超目标或跨域事项须有权者的具体取舍记录。接受命令固定所用目标、需求/知识修订、责任、范围、输入、停止及验收快照。后续表单编辑产生新提议或影响复核，不覆盖已接受快照；取消带预设理由或责任者的一键“采用”。 |
-| 交付、亲用与阶段回看 | Task 分别返回本轮成果修订、技术检查、目标消费者实际路径与结果、阶段选择和各自缺项；历史轮次可回查。 | 提交新成果或返工时开启本轮待核状态，旧轮技术通过和亲用成功留在历史，不能充作新成果验收。亲用失败可进入返工或有限补证；未观察时效果仍未知。阶段继续、补证、暂缓或结束须记录证据、认识变化或暂不改变理由、责任和再看条件；登记选择不自动生成下一任务。 |
-| 多入口刷新与异常 | 总览、列表、Task 详情和异常入口返回同一对象 revision、最后核对时间及分源状态；飞书同步、运行回执与业务/亲用状态分列。 | 相关命令成功后使这些 Query 失效并回读；回包未知按 operationId 对账。列表“待补证”不能显示为已处理，详情“亲用失败”不能仍显示待核，总览不能把技术通过写成目标达成。 |
-| 人工讨论与交接 | 交接包、目标既有会话和状态分列为待确认、待承接、已核实承接、决定已登记、执行与亲用待核等可证实步骤。 | 准备或复制材料只留下人工接续入口；未获得外部回读或人工核对前保持待承接。讨论决定按授权回填相应 Task、过程 Document、Wiki Review 或职责记录，显示受影响对象；打开聊天、发送通知或登记决定均不能单独证明已执行或被消费者采用。 |
-
-验收时用首次空项目和已有项目各走一次：首次项目不露出其他项目的 Task/知识；一个待补证提议在同字段重提后仍不可接受，补新依据及处理结果后才能重判；已接受任务的旧基线在上游改版后仍可回查；返工后旧技术/亲用结果仍在历史但当前轮待核；总览、列表与详情一致；人工交接无接收证据时始终显示待承接。此处是待实现的前端与 API 验收，不表示现有合成原型已经具备生产状态转换。
+接受、交付、使用观察、阶段选择与交接的状态只来自共同 API，按钮、表单或缓存不能自行裁定。同一对象在各入口使用同一 revision；业务、运行、同步、知识和效果状态分列。命令成功后让相关查询一起失效；日程暂停只失效日程查询，不改在途 Run。业务规则见[日常闭环](../product/daily-loop.md)。
 
 ## 4. 会话与权限边界
 
-“与负责该问题的 Agent 讨论”先准备带固定版本的上下文包，记录目标和要讨论的问题；方向歧义交 Human Requirement，跨 Task 安排交 Leader，方法／组织复盘交 Evocation，领域问题由业务 Session 判断。再打开已有绑定会话或在运行时能力允许、授权覆盖的情况下创建/继续。已有 Desktop 会话只提供已验证的跳转/工具衔接；没有宿主能力时展示可复制的上下文引用和人工打开入口。前端不假装嵌入 Codex Desktop，也不通过剪贴板自动发送未获授权消息。
+讨论入口准备带固定版本的交接包，再打开或在授权内创建会话。工作台不嵌入、不伪造 Codex Desktop 聊天，不自动发送消息；无法跳转时给可复制引用。
 
-由会话提交的讨论结果仍是候选；采纳后经共同命令写入 Task/Document/Role 约定。会话正在运行、消息已投递、交付可核对、用户效果已验证分别展示，不能用流式回答结束代表任务完成。
+- **现状**：用户在登录门输入 bearer 令牌，令牌只在内存，随请求放入 `Authorization` 头。
+- **目标**：外壳抽象“Hub 登录”和“本机令牌”两种方式；Hub 模式用 httpOnly cookie 并校验 Origin/CSRF，组件间不再传令牌。
 
-当前 S1a API 绑定本机地址，页面在内存中持有 bearer 凭据并随请求提交，服务端检查项目权限；浏览器使用验收仍待完成。一次性启动凭据换取 HttpOnly 会话 cookie、Origin/CSRF 防护是后续认证加固目标，不能以当前实现声称具备。公网工作台须另行落实 HTTPS、登录和身份映射后开放，不把 localhost 假设扩展成远程部署保证。Git/Wiki/飞书凭据只留服务端。Markdown 预览禁用不可信原始 HTML/脚本和危险 URL；附件下载经授权定位并限定允许的内容类型。未接入的安全与附件边界仍待实现。
+公网访问须先有 HTTPS 与登录。Git、Wiki、飞书和模型凭据只在服务端；附件下载经授权并限定内容类型。
 
 ## 5. 推荐前端技术与取舍
 
-首期本机单活 coordinator 同源提供 `/app/` 静态构建与 `/api/v1/`，本地开发可用 Vite 代理到同一 API。公开文档域名和工作台认证空间分开：用户同意可发布文档公开，不意味着任务、会话和 Wiki 公开。手机访问真实工作台需要后续常在线主机、HTTPS 和登录部署；在此之前手机日常入口仍可用飞书。响应式原型通过不等于手机已经能够连接本机服务。
+工作台保持 React + TypeScript + Vite 单页应用。暂不用 Next.js：工作台是登录后的工具；数据在各台机器上，Hub 网关要承载机器长连接；单机模式要简单；Server Actions 会形成 API／CLI 之外的第二条写入路径，与 DEC-030 冲突。以后做公开产品时新增独立的 `apps/site`（Next.js：官网、定价、用户文档、注册、公开分享页），共用设计体系，工作台不重写。
 
-| 责任 | 推荐 | 对本项目的理由及代价 |
+| 责任 | 现状 | 目标 |
 | --- | --- | --- |
-| 页面和组件 | React + TypeScript | 版本比较、关联详情和表格能组合成明确组件；与拟议 TS 合同衔接。S1a 已用 React 19、TypeScript 7 |
-| 构建 | Vite，客户端 SPA | 现有 coordinator 负责 API 和业务；公开内容另有静态站。无需为了内部工作台新增一个服务端渲染运行时，但需自行配置路由、缓存、错误页和部署 fallback |
-| 路由 | 目标：React Router 的库模式；S1a 目前为手写 hash 路由 | URL 表示项目、对象、修订与过滤条件，刷新和深链可以恢复阅读位置；不同时建第二套请求缓存 |
-| 服务数据 | 目标：TanStack Query；S1a 目前直接请求 API | 按用户/项目/对象/修订组织查询；变更后失效相关缓存再回读。缓存是读取优化，不能裁定当前版本或批准状态 |
-| 表格与文档阅读 | 原生语义 table、独立完整阅读区；Markdown 渲染与 HTML 报告预览分开 | 首片用现有样式和浏览器能力；正文按需读取，HTML 隔离渲染。不为列表引入协同富文本/CRDT，大数据量确有证据时再选虚拟化 |
-| 样式与组件 | 项目内 Tailwind + 按需采用 shadcn/ui 组件，保留必要的项目 CSS | 双层浅色 B2B 壳层、可收起项目上下文、蓝色主动作；不使用绿色或青绿状态。只引入所需基元，来源及许可见 `apps/workbench/THIRD_PARTY.md`，不批量导入后台模板 |
+| 样式 | 7 个全局 CSS（style、workbench、editorial、reading-pages、team-pages、completion、task-production）按导入顺序互相覆盖，另有 22 个领域 CSS；Tailwind 几乎只用于 shadcn 的 Button、Sheet | Tailwind v4 + shadcn/ui（DEC-036），token 只在 `@evoloop/ui` 定义，见[设计基础](foundations.md) |
+| 动效 | 无统一做法 | Radix `data-state` + tw-animate-css；列表与布局用 Motion（`motion` 包）；尊重 `prefers-reduced-motion` |
+| 构建 | 主 JS 一个文件约 1264 KB（gzip 380 KB），仅 mermaid 懒加载 | 按路由拆包 |
 
-React 官方说明从构建工具开始的 SPA 需补齐路由和数据获取，并提示框架能减少后续集成工作。本项目选择 SPA 的理由是架构已规划独立协调 API、工作台需认证且不承担公开文档 SEO；这是项目取舍，并非官方默认推荐所有应用这样构建。[React 建议](https://react.dev/learn/build-a-react-app-from-scratch) · [Vite](https://vite.dev/guide/) · [Router 模式](https://reactrouter.com/start/modes) · [Query 缓存失效](https://tanstack.com/query/latest/docs/framework/react/guides/query-invalidation)
-
-如果需要统一公网内容、服务端渲染或更复杂的全栈表单，重新比较 React Router framework/Next.js；如果团队已有成熟 Vue 工作台，则优先评估复用成本。目前没有证据需要同时维护两种前端。React/TypeScript/Vite 已在 S1a 落地；Tailwind 与按需 shadcn/ui 已获本轮前端重组授权，Router/Query 仍属 PROP-009 的后续候选，不改变 PostgreSQL 与首个知识后端 OpenViking 已选、Wiki 固定版本仍需验证的状态。
-
-Wiki 前端明确参考 nashsu/llm_wiki 的知识树、类型/来源筛选、完整阅读、双链、图谱和 Review 结构；单独的[知识工作区架构](../architecture/wiki-workspace.md#焦点图的组件接缝与阅读联动)说明固定源码、组件接缝、阅读联动与服务数据模型。图渲染器只消费共同 API 的授权子图；OpenViking 或未来自研知识库由后端 `KnowledgeRepository` 适配，以保留前端稳定深链和 Task 固定依据为替换验收目标。知识浏览是独立入口，不能缩成认知讨论旁的一条 Wiki 链接。
+第三方组件来源与许可证记在 `apps/workbench/THIRD_PARTY.md`。知识空间的组件接缝见[知识工作区架构](../architecture/wiki-workspace.md#焦点图的组件接缝与阅读联动)；图渲染器只消费 API 给的授权子图。
 
 ### nashsu 的技术组合如何取舍
 
-[逐文件核查](../research/nashsu-llm-wiki/frontend-reuse.md)记录 v0.6.12 的锁定版本。frontend-design 与 web-design-guidelines 仅指导开发实现和评审，这些前端开发 skill 不向 Agent 提供 evoLoop 业务命令。下面是 evoLoop 的实现建议，不能把上游锁文件当成本项目已经验证的依赖集。
+知识阅读参考 nashsu/llm_wiki，[逐文件核查](../research/nashsu-llm-wiki/frontend-reuse.md)记录其锁定版本；上游锁文件不是本项目已验证的依赖，复用按[移植验证约定](../development/standards.md#上游前端复用与工作台验证)。
 
-| 能力 | evoLoop 推荐使用方式 | 与 nashsu 的差异和采用条件 |
-| --- | --- | --- |
-| React / TypeScript / Vite | 沿用相同技术方向，首个实现切片再锁兼容版本 | 移除 Tauri 专用开发/HMR/文件入口，构建普通同源 Web 工作台 |
-| Markdown 阅读 | 优先评估 `react-markdown` + `remark-gfm`；公式按需要加 `remark-math` / `rehype-katex`；图块按需加载 Mermaid | 拆取只读展示布局，重写链接/图片解析为授权 API 和稳定 ID；原文 HTML 不启用，插件输出与危险 URL 另验 |
-| 图关系展示 | 在真实子图规模需要时采用 Graphology + Sigma + ForceAtlas2 worker | 保留焦点、高亮和布局交互；输入由 API 限量提供，浏览器不扫描全库；小型首片可用文字关系/简单 SVG，图算法不证明关系成立 |
-| 状态 | TanStack Query 管服务数据，URL/组件 state 管导航与临时交互 | 不移植 `useWikiStore`；只有跨组件临时交互确有负担才增 Zustand，它不再持凭据、文件树和模型队列 |
-| UI 基元与样式 | 沿用本项目 Tailwind 与按需 shadcn/ui 的实际依赖 | 使用已引入的基元和项目样式；nashsu 的 Button/Panel 不直接复制，来源及许可证见 `apps/workbench/THIRD_PARTY.md` |
-| 知识编辑 | 首片 Markdown 候选表单、预览与版本差异 | Milkdown 可在富文本确有需求时引入；编辑只创建候选，不自动保存到现行知识页 |
-
-`react-markdown` 提供自定义组件与 URL 转换，但自定义插件仍可破坏默认安全边界。采用时保持授权图片入口和受控链接解析；Mermaid 单独封装严格配置、错误状态和懒渲染，避免把上游 SVG 注入逻辑直接当作已安全。具体复用须按[移植验证约定](../development/standards.md#上游前端复用与工作台验证)执行。[Markdown 官方安全说明](https://github.com/remarkjs/react-markdown#security) · [Mermaid 配置](https://mermaid.js.org/config/usage.html)
+| 能力 | evoLoop 的做法 |
+| --- | --- |
+| 应用壳 | 去掉 Tauri 入口与文件命令，构建普通 Web 应用 |
+| Markdown | 若改用 `react-markdown` + `remark-gfm`，保持现有安全边界，链接与图片走授权 API |
+| 图关系 | 子图较大时用 Graphology + Sigma + ForceAtlas2 worker；输入由 API 限量提供 |
+| 状态 | 不移植 `useWikiStore`，服务数据交给 TanStack Query |
+| 知识编辑 | 只产生候选；富文本确有需要再评估 Milkdown |
 
 ## 6. 实现切片与验收
 
-1. **S1a 真实纵向切片：** 本机 PostgreSQL/API 已验证一份内联 Markdown 过程需求从 r1 到已采纳 r2、两个引用 r1 的 ready 未运行任务分别改用与保留依据；初版工作台接入相同 API，浏览器完整使用验收尚未完成。服务端校验身份、权限和所读基线；旧基线提交被拒，重复操作和回包丢失按原 operation ID 核对。页面不展示未接通的提议或外部操作为可用。Git 固定出处导航待 S1 后续接入只读 Git 适配器并验收 commit/hash 后开放；Wiki 不可用显示缺项。首片仍须在本机桌面完成浏览器验收，手机远程访问按本文部署边界另验。
-2. **后续受控工作切片：** 提交 dogfood/需求提议、更多文档修订与审阅、变更基线；覆盖旧版本提交、重复点击、回包丢失、权限收紧与输入保留。所有入口复用 core；分页、深链、键盘与窄屏布局随实际开放的页面逐项验收。
-3. **认识与分工切片：** 来源更新后的复核收件箱、认知讨论准备、真实运行回执、职责试行比较；先使用已有责任者，不为页面创建固定角色。
+按以下顺序拆成小 PR，具体以前端改版 issue 为准：
 
-F1 的验收重心是观察与读回：人从工作区定位进展、变化、固定依据、责任、决定和结果，向既有 Agent 表达判断，Agent 在授权内经 CLI 执行后，人从同一对象核对修订与回执。全部表单可见或浏览器 Agent 走读通过都不能单独证明 F1 可用，后者只属于前端 QA。
+1. **地基**：token 收进 `@evoloop/ui` 并接入 Tailwind 主题；基础、状态与对话流组件和组件样例页；`app/ → features/ → shared/` 分层，拆除循环，依赖检查进 `npm test`。
+2. **路由与读取**：分三个 PR：TanStack Router、路径 URL、旧链接跳转与按路由拆包；TanStack Query 替换直接请求；身份抽象。
+3. **外壳与页面**：双左栏、中间与右栏的新骨架，再依次迁移 Session、任务、文档和其余页面，每迁一页删掉该页旧 CSS。
+4. **收口**：删除旧全局 CSS，颜色字面量只允许在 token 文件里；页面自动截图。
+5. **实时与 Hub**：coordinator 提供项目级失效事件流后，前端接入并让查询失效重读，Session 输出暂留长轮询；随 #219 接入 Hub cookie 与网关流式转发。
 
-当前[可点击原型](../assets/workbench-prototype.html)只有示例状态，用来评审信息层级和路径，不证明 API、鉴权、同步或认知有效。正式验收须让用户从普通入口定位旧任务当时依据、看懂新纠正影响、经既有 Agent 会话完成有依据的复核，再由新 session 使用正确基线；自动检查和真人使用反馈分别报告。
+每片验收：`npm test`、typecheck、build 通过；旧 hash 深链、历史修订链接和返回位置可用；切换项目不串入旧内容；断线后能恢复；首屏 JS 小于现状。

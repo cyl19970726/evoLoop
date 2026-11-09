@@ -10,7 +10,7 @@
     "apps/*"
   ],
   "scripts": {
-    "docs:check": "node scripts/docs/cli.js check",
+    "docs:check": "node scripts/docs/cli.js check && node scripts/docs/frontend-pages.js",
     "docs:build": "node scripts/docs/cli.js build",
     "test": "npm run test:docs && npm run test:unit",
     "test:pilot-storage": "node --test scripts/pilot-storage-check.test.mjs",
