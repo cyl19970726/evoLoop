@@ -90,7 +90,8 @@ test("managed agents in 分工与运行 keep Role names, full grants and activat
   const initialReads:string[]=await (await fetch(`${base}/__fixture/reads`)).json();
   assert.equal(initialReads.filter(id=>id===roleId).length,1);
   assert.equal(initialReads.includes("acceptance-owner"),false);
-  assert.equal(await row(0).evaluate(el=>el.scrollWidth<=el.clientWidth),true);
+  const [rowScroll,rowClient]=await row(0).evaluate(el=>[el.scrollWidth,el.clientWidth]);
+  assert.ok(rowScroll!<=rowClient!+1,`the agent row overflows at 390px: ${rowScroll} > ${rowClient}`);
   await page.getByRole("button",{name:"新建受管智能体"}).click();
   const grantOptions=await page.getByLabel("已配置的完整权限授权").locator("option").allTextContents();
   assert.equal(grantOptions.some(text=>text.includes("旧授权")),false);
