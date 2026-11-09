@@ -51,7 +51,7 @@ npm run --silent cli -- operation "$OPERATION_ID" --project "$PROJECT_ID"
 
 工作起点可以是目标、Task、过程文档或现有材料，不要求先创建 Wiki、Role 或讨论。用 `task.create` 提供清楚的 title/content/acceptance/owner，系统一次保存 Task 与主正文；`context` 即使在 todo 时也读取固定主正文。
 
-普通 Task 的 `task.create.timing` 可写 UTC 约定执行时点、IANA 时区和 `none`/`daily`。也可读 `tasks/TASK_ID/timing` 后以 `task.timing.set` 的当前 Task 版本和 timing 版本设置或改时；`task.timing.stop` 只停止以后复制。`task.update.repeatScope` 默认仅本次，显式 `this_and_future` 才把本次正文修订同步为以后模板；已开始或结束的任务可通过 `task.timing.set.scope=future` 单独改以后要求。每日复制要求当前调度 grant 精确匹配 `scopeId: "task-timing:<首次Task ID>"`、项目、actor 和 Role。创建时尚无该 grant，可先建普通或一次性 Task，再在配置授权后设每日；不会借用另一日程的 grant。CLI 以当前 `command schema task.create`、`task.timing.set`、`task.timing.stop` 的实际字段为准；完整字段与失败规则见[Task 定时复制](task-timing-copy.md)。
+普通 Task 的 `task.create.timing` 可写 UTC 约定执行时点、IANA 时区和 `none`/`daily`。也可读 `tasks/TASK_ID/timing` 后以 `task.timing.set` 的当前 Task 版本和 timing 版本设置或改时；`task.timing.stop` 只停止以后复制。`task.update.repeatScope` 默认仅本次，显式 `this_and_future` 才把本次正文修订同步为以后模板；已开始或结束的任务可通过 `task.timing.set.scope=future` 单独改以后要求。每日复制要求当前调度 grant 精确匹配 `scopeId: "task-timing:<首次Task ID>"`、项目、actor 和 Role。创建时尚无该 grant，可先建普通或一次性 Task，再在配置授权后设每日；不会借用另一日程的 grant。CLI 以当前 `command schema task.create`、`task.timing.set`、`task.timing.stop` 的实际字段为准；复制规则见[接口合同](../architecture/contracts.md#普通-task-的一次与每日复制)，授权配置与时间读取见[运行接线手册](runtime-operations.md#4-普通-task-的每日复制)。
 
 若声明 `consumer`，须填精确匹配的消费者标识；Agent 消费者应在启动前通过 `session` 核实实际 `principal.actorId`，并确认它会亲自使用当前 Delivery、签署观察。不要填 roleId、显示名或身份解释；解释写入 `evidence` 或 `reason`。外部 human 消费者继续使用现有 reviewer attestation 合同。验收确实要求使用时，应同时声明 `consumer` 并设置 `useRequired: true`；此时 `task.close` 要求当前 Delivery 最新的声明消费者观察结果为 `used`，worker 完成、仅有 Delivery 或其他 actor 使用都不能替代。`command schema task.create` 和 `command schema task.update` 会显示这些字段说明。
 
@@ -75,7 +75,7 @@ npm run --silent cli -- operation "$OPERATION_ID" --project "$PROJECT_ID"
 
 若经明确的范围与成本决定仍需增加额度，由原登记控制者先读 Loop 和 `command schema loop.extendBudget`，以当前 `expectedLoopVersion`、`expectedMaxRuns`、只比原值多 1 的 `maxRuns`、批准依据 `evidenceRef` 和理由提交。该命令要求项目 write＋review、Loop paused 且无未结派发或在途/未知 Run；旧上限或版本不符、跨控制者、一次加多次、减额、active/stopped 都拒绝。成功追加预算变更事件并更新 Loop 版本，原 `dispatchCount`、策略、全部失败与其他 Loop 不变，也不会激活 Loop。原 operationId 同正文回读，不自动反复增额；worker 不能自行申请或通过新 Loop 重置计数。
 
-专用上传、知识和引用仍用 request schema；命令只证明服务回执，不证明长期效果。当前基线及本轮实测见[路线 C5](../references/roadmap-history.md#c5-taskdocument-模型简化)。
+专用上传、知识和引用仍用 request schema；命令只证明服务回执，不证明长期效果。当前能力见[阶段路线的当前基线](../roadmap.md#当前基线)；Task 与 Document 模型简化当时的实测见[路线图历史 C5](../references/roadmap-history.md#c5-taskdocument-模型简化)。
 
 负责人讨论的决定使用 `discussion.decision.record`，由核心同事务追加讨论事件和所属 Document 正文；通用 `document.revise` 不会同步讨论指针。若另行编辑后返回 `DOCUMENT_CHANGED`，先核对原操作的确定拒绝，再完整回读讨论登记版与文档当前版、哈希及最新决定。经实际判断后，以新意图/新操作 ID、当前 Discussion `expectedVersion`、真实当前 `documentRevisionId` 及最新决定的 supersede 引用提交，并显式增加 `documentRecovery: { expectedDocumentVersion, reason }`。核心仅在确有失配、版本匹配且原件可核时，从当前正文追加恢复依据和本次决定；旧修订、拒绝记录及冻结输入不变。不失配时不提供恢复字段，不能直接改数据库指针。操作未知仍先按原 ID 对账，讨论及文档权威见[项目数据](../architecture/project-data.md#3-关系与认知读取)；实际操作也应读取项目内业务技能的讨论指引。
 
@@ -92,6 +92,15 @@ npm run --silent cli -- operation "$OPERATION_ID" --project "$PROJECT_ID"
 通过当前 Task 协作通道提交 `discussion.action.request` 时，`inputHash` 逐字取该通道原 Run 的 `inputHash`；补丁、正文或产物的 hash 应固定在 `detail` 报告中，不能替代 Run 输入 hash。先回读 Run、通道、报告的固定修订和 `command schema discussion.action.request`；JSON 形状通过只说明结构有效，仍须核 Run 状态、参与者、版本和来源语义。原 Run 确认终态后，若仍需工程动作，先形成新的真实 Run 与自己的通道、Run 输入 hash 和同 Run 来源的报告，再在新答复指导下形成新意图；保留旧拒绝，不由 Lead 代造 worker 签名。具体命令和动作回执仍按本节的正式工程入口处理。
 
 工程回执让下一位可以复核：问题与实际改动、Task/Run/Session 及固定输入版本、commit/PR/merge commit、当前 head 的检查和失败项、固定产物链接与修订/hash、各动作真实执行者、部署状态与使用入口、已知限制及下一责任。没有发生的 PR、合并、部署或使用写为待办/未验，不能填占位符充完成。普通静态及队列 Run 的执行者按下文在运行中签 `ordinary.submit`，系统核终态后封存匹配 Delivery；broker worker 仍走下文的独立提交路径。独立消费者沿实际入口使用当前 Delivery，要求 `useRequired` 时由声明消费者亲签观察；失败保留原观察并回原 Task 修复、重新交付和复测，新发现的独立问题才另建有来源 Task。Run 终态、Delivery、合并、部署、消费者使用和 Task close 是不同证据。同一 owned Session 的受限常驻队列见[Lead 分派、返工与再次承接](#lead-分派返工与再次承接)；本节的 `runtime.run.reserve` 是显式手动路径。以所连服务、CLI schema、现行授权和队列读回核可用范围；任意 Desktop 自动唤醒仍未验证。
+
+### 回链：过程文档纳入了哪一页
+
+过程 Document 的结论合入仓库正文后，在来源修订上记下它进了哪一页、哪个提交。规则见[项目数据 §6](../architecture/project-data.md#6-工作文档怎样沉淀为仓库正式文档)；文档维护中的吸收检查见[文档维护](documentation.md#吸收检查)。
+
+1. **登记目标正文。** 用 `request reference.git-register --project PROJECT_UUID --file BODY.json`，正文含 `operationId`、`referenceId`、`repositoryId`、`path`、完整的 `commit` 和正文的 SHA-256 `contentHash`。仓库与路径须在私有配置 `repositories` 登记的只读范围内；服务读出该提交的正文并核哈希，读不到就拒绝。需要项目 `write`。
+2. **记录决定。** 用 `request reference.formal-decide --project PROJECT_UUID --file BODY.json`，正文含 `operationId`、`decisionId`、`gitReferenceId`、来源的 `documentId` 与 `documentRevisionId`、`decision` 和 `reason`。`decision` 取 `incorporated`（已纳入）、`adopted`（已采纳）或 `rejected`（不采纳）。需要项目 `review`。
+
+两条都先用 `request schema NAME` 核字段，回执不明时按原 operation ID 对账。回链只说明内容被整理进了哪一页，不证明来源里的每条主张都成立；来源原件保留不动。
 
 ### 普通 Run 本人提交与终态封存
 
@@ -143,7 +152,7 @@ npm run --silent cli -- request work.review.set --project "$PROJECT_ID" --id "$T
 
 `work leader` 是 Leader 的当前工作入口。它从 Task 四态、assignment、最近 Run、当前 TaskRevision 的 Delivery、声明消费者的使用观察、待复核依据、依赖和队列 hold 派生阶段与下一责任；返回值含当前 Task version/revision、创建／业务变化／实际开始／完成时间和可选的计划开始、截止、优先级。依赖只在其前置 Task 的当前修订有 Task closure 或同修订 accepted release 时视为满足，Run 结束不能替代。计划字段不决定实际排序，结果按风险阶段、截止、显式优先级和稳定对象次序读取。
 
-`work task` 给一项 Task 的时间投影：创建、各轮阶段起止、当前阶段停留、最新有据业务进展、仅属于当前 Task/Run 的原生活动和观测时间。缺失来源是未知，不把 Session 正在做另一项 Task 算作本项进展。`work attention` 列持久关注项，支持 `--task`、`--phase`、`--signal`、`--waiting-on-kind`、`--waiting-on-id`、`--state` 和有界续页；`work attention task` 读该 Task 的跟进/发布交接历史，`work attention item` 读一项关注的事件，`work attention thresholds` 读项目试行门槛及覆盖。时间门槛只要求核查，不代表 Run 失败，也不会自动取消、重试、封存或签消息已读。保存、原生送达、本人 read 和实际跟进分别核。业务口径与可调初值见 [Task 时间与关注](task-stage-attention.md)。
+`work task` 给一项 Task 的时间投影：创建、各轮阶段起止、当前阶段停留、最新有据业务进展、仅属于当前 Task/Run 的原生活动和观测时间。缺失来源是未知，不把 Session 正在做另一项 Task 算作本项进展。`work attention` 列持久关注项，支持 `--task`、`--phase`、`--signal`、`--waiting-on-kind`、`--waiting-on-id`、`--state` 和有界续页；`work attention task` 读该 Task 的跟进/发布交接历史，`work attention item` 读一项关注的事件，`work attention thresholds` 读项目试行门槛及覆盖。时间门槛只要求核查，不代表 Run 失败，也不会自动取消、重试、封存或签消息已读。保存、原生送达、本人 read 和实际跟进分别核。来源口径与可调初值见[接口合同](../architecture/contracts.md#阶段等待由事实推导)。
 
 `work acceptance --project PROJECT [--limit N --cursor CURSOR]` 同屏返回现有 `work leader` 的分页阶段投影和各 Session 的持久占用。`persistedWorkIdle` 只说明数据库中的 Run、消息、队列、assignment 和未观察验收已清；`missingCapabilities` 给出当前执行配置、材料 CLI、业务身份或消息授权的具体缺项，`readyForAcceptance` 要求占用已清且缺项为空。仍须核原生 writer 和实际能力，缺项由有权的配置责任者补齐，模型不能自授权限。`work acceptance TASK --project PROJECT` 读每次安排、消息 processing/Turn、接收读取和本人观察；`work acceptance mine` 是具名人类的待验收列表，工作台收件页同源显示。以 `request schema acceptance.assign` 读取完整私有请求字段，再用 `request acceptance.assign --project PROJECT --id TASK --file BODY.json` 保存当前 Delivery 的一个固定范围；Agent 分支的 `senderActorId` 必须是当前安排者的业务 actor。HTTP 成功回执含原 operation ID；回执不明时按原 ID 读取 `work acceptance TASK`，不另造消息 ID。Agent 分支的投递沿普通消息泵，只有 processing 与本人观察相继成立才可记作使用。安排受阻会留下一次 Leader 通知；结果仍由现有观察通知回传。人类本人读取及观察分别用 `work acceptance read RELAY --project PROJECT --task TASK --file BODY.json` 和 `work acceptance observe RELAY --project PROJECT --task TASK --file BODY.json`，Agent 凭据不能冒充人类。
 
