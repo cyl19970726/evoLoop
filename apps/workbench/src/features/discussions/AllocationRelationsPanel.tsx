@@ -12,7 +12,7 @@ import { muted } from "./CommandForm";
 import {
   acceptanceGapSentence, assignmentStatusLabel, limitationText, nameOr, sourceKindLabel, targetKindLabel, targetStatusTag,
 } from "./discussionPresentation";
-import { allocationSessionKey, useAllocationNames, type AllocationKnownNames } from "./useAllocationNames";
+import { allocationSessionKey, useAllocationNameState, type AllocationKnownNames } from "./useAllocationNames";
 import { useAllocationTraces } from "./useAllocationTraces";
 
 const project = (projectId: string) => `/p/${encodeURIComponent(projectId)}`;
@@ -28,7 +28,7 @@ function targetHref(projectId: string, target: Extract<AllocationTrace["relation
   return journeyHref(projectId);
 }
 
-export function AllocationTraceCard({ trace, projectId, names }: { trace: AllocationTrace; projectId: string; names: Record<string, string> }) {
+export function AllocationTraceCard({ trace, projectId, names, reading = () => false }: { trace: AllocationTrace; projectId: string; names: Record<string, string>; reading?: (key: string) => boolean }) {
   const relation = trace.relation;
   return <article className="flex flex-col gap-1.5 border-t border-border py-3 first:border-t-0 first:pt-0" aria-label="正式关系">
     {relation.kind === "decision-target" ? <>
@@ -37,7 +37,7 @@ export function AllocationTraceCard({ trace, projectId, names }: { trace: Alloca
           <span className="text-muted-foreground">{targetKindLabel[relation.target.kind]} · </span>
           <a className={link} href={targetHref(projectId, relation.target)}>{relation.target.kind === "stage"
             ? `第 ${relation.target.version} 版`
-            : nameOr(names[`${relation.target.kind}:${relation.target.id}`], targetKindLabel[relation.target.kind])}</a>
+            : nameOr(names[`${relation.target.kind}:${relation.target.id}`], targetKindLabel[relation.target.kind], reading(`${relation.target.kind}:${relation.target.id}`))}</a>
         </p>
         <StatusTag {...targetStatusTag[relation.targetStatus]} />
       </div>
@@ -47,10 +47,10 @@ export function AllocationTraceCard({ trace, projectId, names }: { trace: Alloca
       <div className="flex items-start justify-between gap-2">
         <p className="min-w-0 text-small text-foreground [overflow-wrap:anywhere]">
           <a className={link} href={`${project(projectId)}/sessions?session=${encodeURIComponent(allocationSessionKey(relation.assignment.target))}`}>
-            {nameOr(names[`session:${allocationSessionKey(relation.assignment.target)}`], "智能体")}</a>
+            {nameOr(names[`session:${allocationSessionKey(relation.assignment.target)}`], "智能体", reading(`session:${allocationSessionKey(relation.assignment.target)}`))}</a>
           <span className="text-text-secondary"> 接手了 </span>
           <a className={link} href={`${project(projectId)}/tasks/${encodeURIComponent(relation.task.id)}?revision=${encodeURIComponent(relation.task.revisionId)}`}>
-            {nameOr(names[`task:${relation.task.id}`], "任务")}</a>
+            {nameOr(names[`task:${relation.task.id}`], "任务", reading(`task:${relation.task.id}`))}</a>
         </p>
         <StatusTag {...targetStatusTag[relation.taskRevisionStatus]} />
       </div>
@@ -109,12 +109,12 @@ export function AllocationRelations({ context, record, refresh, known, namesRead
   refresh: number; known: AllocationKnownNames; namesReady: boolean }) {
   const root = useRef<HTMLElement>(null);
   const traces = useAllocationTraces(context, { discussionId: record.id }, refresh, root, "关系");
-  const names = useAllocationNames(context.token, context.projectId, traces.items, known, namesReady && !traces.loading,
+  const { names, reading } = useAllocationNameState(context.token, context.projectId, traces.items, known, namesReady && !traces.loading,
     `${record.id}\0${refresh}\0${traces.readAgain}`);
   return <section ref={root} aria-label="正式关系与具体承接" className="flex flex-col gap-2">
     <p className={muted}>只列决定后正式链接的对象，以及同一任务修订的接受记录。接受不等于已经运行、交付或实际使用。</p>
     <RelationReadState noun="关系" traces={traces} />
-    {traces.items.length > 0 && <div className="flex flex-col">{traces.items.map(item => <AllocationTraceCard key={item.id} trace={item} projectId={context.projectId} names={names} />)}</div>}
+    {traces.items.length > 0 && <div className="flex flex-col">{traces.items.map(item => <AllocationTraceCard key={item.id} trace={item} projectId={context.projectId} names={names} reading={reading} />)}</div>}
     {traces.cursor && <Button size="compact" variant="ghost" className="self-start" disabled={traces.moreBusy || traces.loading} onClick={() => void traces.more()}>{traces.moreBusy ? "正在读取…" : "加载更多关系"}</Button>}
   </section>;
 }

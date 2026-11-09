@@ -36,8 +36,18 @@ export function allocationVisibleNames(seeded: Record<string, string>, read: Rec
 /** Names are current display hints. Fixed revisions and acceptance still come only from the trace. */
 export function useAllocationNames(token: string, projectId: string, items: AllocationTrace[],
   known: AllocationKnownNames, ready: boolean, generation: string): Record<string, string> {
+  return useAllocationNameState(token, projectId, items, known, ready, generation).names;
+}
+
+/**
+ * The same names, plus whether a name is still being read: before `ready`, or while its lookup runs. A key that is not
+ * reading and has no name could not be read (or was past the lookup bound), and only then may a card say so.
+ */
+export function useAllocationNameState(token: string, projectId: string, items: AllocationTrace[],
+  known: AllocationKnownNames, ready: boolean, generation: string): { names: Record<string, string>; reading(key: string): boolean } {
   const scope = `${token}\0${projectId}`;
   const [read, setRead] = useState<{ scope: string; generation: string; values: Record<string, string> }>({ scope: "", generation: "", values: {} });
+  const [pending, setPending] = useState<{ scope: string; generation: string; keys: ReadonlySet<string> }>({ scope: "", generation: "", keys: new Set() });
   const cache = useRef<{ scope: string; generation: string; refreshNames: boolean; values: Record<string, string>; attempted: Set<string> }>(
     { scope: "", generation, refreshNames: false, values: {}, attempted: new Set() });
   const seeded: Record<string, string> = {};
@@ -56,6 +66,7 @@ export function useAllocationNames(token: string, projectId: string, items: Allo
     }
     const state = cache.current;
     const queue = allocationNameLookupKeys(neededKeys(items), seeded, state.values, state.attempted, state.refreshNames);
+    setPending({ scope, generation, keys: new Set(queue) });
     if (!queue.length) return;
     queue.forEach(key => state.attempted.add(key));
     const controller = new AbortController(), completed = new Set<string>();
@@ -94,7 +105,13 @@ export function useAllocationNames(token: string, projectId: string, items: Allo
             setRead({ scope, generation, values: { ...state.values } });
           }
         } catch { /* The card keeps its fixed link and says the name is unreadable. */ }
-        finally { if (active) completed.add(key); }
+        finally {
+          if (active) {
+            completed.add(key);
+            setPending(current => current.scope === scope && current.generation === generation
+              ? { ...current, keys: new Set([...current.keys].filter(item => item !== key)) } : current);
+          }
+        }
       }
     }
     void Promise.all(Array.from({ length: Math.min(4, queue.length) }, () => worker()));
@@ -104,5 +121,8 @@ export function useAllocationNames(token: string, projectId: string, items: Allo
     };
   }, [token, projectId, scope, items, ready, generation, known.tasks, known.roles, known.documents]);
   const refreshing = cache.current.scope === scope && (cache.current.generation !== generation || cache.current.refreshNames);
-  return allocationVisibleNames(seeded, read.scope === scope && read.generation === generation ? read.values : {}, refreshing);
+  const names = allocationVisibleNames(seeded, read.scope === scope && read.generation === generation ? read.values : {}, refreshing);
+  const current = pending.scope === scope && pending.generation === generation;
+  // Until this generation's lookups have been queued (the effect has run), every unnamed key is still being read.
+  return { names, reading: key => !names[key] && (!ready || !current || pending.keys.has(key)) };
 }

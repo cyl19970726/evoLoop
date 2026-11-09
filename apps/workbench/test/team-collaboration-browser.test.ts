@@ -16,10 +16,11 @@ const projectId = "36000001-0000-4000-8000-000000000001";
 const id = (n: number) => `36000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const stamp = "2026-11-09T08:00:00.000Z";
 const task = (n: number, title: string) => ({ projectId, id: id(n), version: 3, currentRevisionId: id(n + 50), title });
-const tasks = [task(1, "首页改版"), task(2, "知识空间入口")];
+const tasks = [task(1, "首页改版"), task(2, "知识空间入口"), task(3, "协作看板")];
 const delivery = (n: number, taskId: string, state: string, lastReason: string | null) => ({ projectId, eventId: id(n), consumerId: "feishu", operationId: id(n + 100), effectKey: `k${n}`,
   taskId, taskVersion: 3, state, fence: 1, leaseOwner: null, leaseUntilUtc: null, nextRetryAtUtc: null, lastReason, updatedAtUtc: stamp });
-const deliveries = [delivery(10, id(1), "unknown", "update acknowledged but readback missing"), delivery(11, id(2), "applied", null)];
+const unknownReason = "socket hang up while writing row";
+const deliveries = [delivery(10, id(1), "unknown", "update acknowledged but readback missing"), delivery(11, id(2), "applied", null), delivery(12, id(3), "failed", unknownReason)];
 const incoming = (n: number, taskId: string, patch: Record<string, string>, verified: boolean, reviewOnly: boolean, reason: string | null) => ({ projectId, id: id(n), operationId: id(n + 100),
   state: reviewOnly ? "review-only" : "pending", sourceEventId: id(n + 200), observedAtUtc: stamp, reviewedBy: null, reviewedAtUtc: null, entityId: taskId, remoteRecordId: `rec-${n}`,
   observedLocalVersion: 3, observedRemoteOperationId: `op-${n}`, observedRemoteModifiedTime: stamp, patch, reviewOnly,
@@ -42,6 +43,7 @@ test("协作回执 reconciles, reads attempts, polls, applies a remote edit and 
           const body = JSON.parse(raw || "{}") as Record<string, unknown>;
           posts.push({ path: path.slice(base.length), body });
           if (path === `${base}/deliveries/${id(10)}/reconcile`) { deliveries[0]!.state = "conflict"; deliveries[0]!.lastReason = "remote content differs from projection intent"; value = deliveries[0]; }
+          else if (path === `${base}/deliveries/${id(12)}/retry`) { deliveries[2]!.state = "pending"; deliveries[2]!.lastReason = null; value = { requested: true }; }
           else if (path === `${base}/poll`) { verifiedAtUtc = new Date().toISOString(); value = { observed: 1 }; }
           else if (path.startsWith(`${base}/incoming/`)) {
             const item = incomings.find(entry => path.includes(entry.id))!;
@@ -87,7 +89,7 @@ test("协作回执 reconciles, reads attempts, polls, applies a remote edit and 
     const panel = page.locator("aside[aria-label=右栏]");
     await panel.getByText("已核实", { exact: true }).waitFor();
     const visible = `${await page.locator("main").innerText()}\n${await panel.innerText()}`;
-    for (const raw of [id(1), id(2), id(10), id(20)]) assert.ok(!visible.includes(raw), `${raw} is shown only under 完整标识`);
+    for (const raw of [id(1), id(2), id(10), id(20), unknownReason]) assert.ok(!visible.includes(raw), `${raw} is shown only under 完整标识`);
     if (shots) await page.screenshot({ path: `${shots}/collaboration-1440.png`, fullPage: true });
 
     // 对账 an unknown projection, then read its attempts.
@@ -130,6 +132,17 @@ test("协作回执 reconciles, reads attempts, polls, applies a remote edit and 
     await receipts.getByRole("button", { name: "按原 ID 核对" }).click();
     await page.getByText("已按原 ID 读回结果。").waitFor();
     assert.equal(await receipts.count(), 0);
+
+    // 请求重新投影: a failed projection whose reason the page does not know keeps the English original under 完整标识.
+    const failed = projections.getByRole("listitem").filter({ hasText: "协作看板" });
+    await failed.getByText("写入失败", { exact: true }).waitFor();
+    await failed.getByText("协调器给出了一条页面不认识的原因，原文在“完整标识”里。").waitFor();
+    await failed.getByRole("button", { name: "尝试记录与完整标识" }).click();
+    await failed.getByText(unknownReason).waitFor();
+    await failed.getByLabel("处理依据").fill("飞书接口已恢复");
+    await failed.getByRole("button", { name: "请求重新投影" }).click();
+    await failed.getByText("待投影", { exact: true }).waitFor();
+    assert.deepEqual(posts.at(-1), { path: `/deliveries/${id(12)}/retry`, body: { reason: "飞书接口已恢复" } });
     if (shots) await page.screenshot({ path: `${shots}/collaboration-after-1440.png`, fullPage: true });
 
     await page.setViewportSize({ width: 1024, height: 800 });
@@ -140,5 +153,44 @@ test("协作回执 reconciles, reads attempts, polls, applies a remote edit and 
     await page.waitForTimeout(300);
     assert.equal(await page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1"), true, "no horizontal overflow at 390px");
     if (shots) await page.screenshot({ path: `${shots}/collaboration-390.png`, fullPage: true });
+    assert.deepEqual(errors, []);
+  });
+
+test("协作回执 says it cannot judge when the collaboration state cannot be read",
+  { skip: !modulePath && "Set EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE" }, async t => {
+    const { chromium } = (await import(pathToFileURL(modulePath!).href)).default;
+    const server = createServer(async (req, res) => {
+      const url = new URL(req.url!, "http://127.0.0.1");
+      const root = `/api/projects/${projectId}`;
+      if (url.pathname.startsWith("/api/")) {
+        if (url.pathname === `${root}/collaboration`) { res.writeHead(503, { "content-type": "application/json" }); res.end(JSON.stringify({ message: "协作服务暂时不可用" })); return; }
+        const value = url.pathname === "/api/session" ? { principal: { actorId: "owner", projectIds: [projectId], permissions: ["read", "write", "review"] }, capabilities: {} }
+          : url.pathname === root ? { id: projectId, title: "协作回执回归项目", createdAt: stamp } : { items: [], nextCursor: null };
+        res.writeHead(200, { "content-type": "application/json" }); res.end(JSON.stringify(value)); return;
+      }
+      try {
+        const path = /^\/(?:$|p\/|ui$)/.test(url.pathname) ? "index.html" : url.pathname;
+        const file = await readFile(join(dist, path));
+        res.writeHead(200, { "content-type": ({ ".html": "text/html", ".js": "text/javascript", ".css": "text/css" } as Record<string, string>)[extname(path)] ?? "application/octet-stream" });
+        res.end(file);
+      } catch { res.writeHead(404); res.end(); }
+    });
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve)); t.after(() => server.close());
+    const base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+    const browser = await chromium.launch({ headless: true, executablePath: process.env.EVOLOOP_BROWSER_TEST_CHROMIUM_EXECUTABLE }); t.after(() => browser.close());
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    const errors: string[] = [];
+    page.on("pageerror", error => errors.push(error.message));
+    await page.goto(`${base}/p/${projectId}/collaboration`);
+    await page.getByLabel("访问令牌").fill("fixture-token");
+    await page.getByRole("button", { name: "进入", exact: true }).click();
+    await page.getByRole("heading", { name: "协作回执", exact: true }).waitFor();
+    await page.getByText("协作状态没有读回").waitFor({ timeout: 15000 });
+    await page.getByText("现在无法判断投影和远端修改的情况。请重新读取。").waitFor();
+    await page.locator("aside[aria-label=右栏]").getByText("连接状态没有读回，无法判断。").waitFor();
+    const text = await page.locator("main").innerText();
+    for (const conclusion of ["还没有任务投影记录", "还没有远端修改", "未配置", "已同步"]) assert.ok(!text.includes(conclusion), `a failed read never says ${conclusion}`);
+    assert.equal(await page.getByRole("button", { name: "回读远端变化" }).count(), 0, "no write offered on an unread state");
+    if (shots) await page.screenshot({ path: `${shots}/collaboration-read-failed-1440.png`, fullPage: true });
     assert.deepEqual(errors, []);
   });

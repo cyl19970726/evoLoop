@@ -58,7 +58,7 @@ const reasons: Record<string, string> = {
 export function reasonText(raw: string | null | undefined): { text: string; original: string | null } {
   if (!raw?.trim()) return { text: "", original: null };
   const known = reasons[raw.trim()];
-  return known ? { text: known, original: null } : { text: "协调器给出了原因，原文见下。", original: raw };
+  return known ? { text: known, original: null } : { text: "协调器给出了一条页面不认识的原因，原文在“完整标识”里。", original: raw };
 }
 
 /** Configured, verified, and the last connection problem are three separate facts. */

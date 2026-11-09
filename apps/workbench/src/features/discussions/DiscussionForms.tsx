@@ -1,5 +1,7 @@
 // The four discussion writes: prepare a package, record an observed handoff, record (or correct) a decision, and
-// link an existing follow-up object. Each keeps its input when the discussion changes underneath it.
+// link an existing follow-up object. Each keeps its input when the page rereads, and remembers the baseline the reader
+// looked at (discussionBaseline.ts): when any fixed input changes, or the server says the view is stale, the form
+// will not send until the reader checks again; a recovery confirmation has to be given again.
 import { useEffect, useState } from "react";
 import type { DiscussionEvent, DiscussionRecord, DiscussionTarget } from "@evoloop/contracts";
 import { Button, Field, Input, Textarea, cn } from "@evoloop/ui";
@@ -10,16 +12,24 @@ import {
   type PrepareValues, type VerifiedDocumentHead,
 } from "./commands";
 import type { Choices } from "./discussionClient";
+import {
+  changedParts, decisionBaseline, handoffBaseline, linkBaseline, prepareBaseline, preparePart, targetKey, type Baseline, type PrepareSelection,
+} from "./discussionBaseline";
 import { targetKindLabel, type TargetKind } from "./discussionPresentation";
 
 const required = "必填";
 type Values = Record<string, string>;
 
-/** Follows the record's version until the reader starts typing; after that a change has to be acknowledged. */
-function useVersionGuard(version: number, dirty: boolean) {
-  const [baseline, setBaseline] = useState(version);
-  useEffect(() => { if (!dirty) setBaseline(version); }, [version, dirty]);
-  return { changed: dirty && baseline !== version, accept: () => setBaseline(version) };
+/**
+ * Follows the current baseline until the reader starts typing; after that a change has to be acknowledged. `adopt`
+ * takes one part as it reads now — used when the reader picks that object themself.
+ */
+function useBaseline(current: Baseline, dirty: boolean) {
+  const [seen, setSeen] = useState(current);
+  const key = JSON.stringify(current);
+  useEffect(() => { if (!dirty) setSeen(current); }, [key, dirty]); // `current` is followed through `key`
+  const changed = dirty ? changedParts(seen, current) : [];
+  return { changed, accept: () => setSeen(current), adopt: (part: string, value: string) => setSeen(previous => ({ ...previous, [part]: value })) };
 }
 
 function useDraft<T extends Values>(initial: T) {
@@ -47,23 +57,38 @@ const prepareInitial = { title: "", goalId: "", stageId: "", taskId: "", questio
   targetSessionLabel: "", targetSessionRef: "", body: "" };
 
 /** Prepare a fixed package: the goal version, optional stage and task, adopted documents, and the question to answer. */
-export function PrepareForm({ context, choices, onPrepared, onCancel }: { context: MutationContext; choices: Choices; onPrepared(id: string): void; onCancel(): void }) {
+export function PrepareForm({ context, choices, rereading, onPrepared, onCancel }: {
+  context: MutationContext; choices: Choices; rereading: boolean; onPrepared(id: string): void; onCancel(): void;
+}) {
   const [kind, setKind] = useState<PrepareValues["kind"]>("allocation");
   const [documentIds, setDocumentIds] = useState<string[]>([]);
   const draft = useDraft(prepareInitial);
-  const { state, submit } = useCommandSubmit(context);
+  const submit = useCommandSubmit(context);
   const { values } = draft;
+  const selection: PrepareSelection = { goalId: values.goalId, stageId: values.stageId, taskId: values.taskId, documentIds };
+  const guard = useBaseline(prepareBaseline(choices, selection), draft.dirty);
   const stages = choices.stages.filter(stage => stage.goalId === values.goalId);
   const adopted = choices.documents.filter(document => !!document.adoptedRevisionId);
   const requiredNames = ["title", "goalId", "question", "options", "authorizationBoundary", "targetSessionLabel"] as const;
-  const toggleDocument = (id: string) => { setDocumentIds(current => current.includes(id) ? current.filter(item => item !== id) : [...current, id]); draft.touch(); };
+  /** Picking an object takes its revision as read now; the stage list depends on the goal, so a new goal clears it. */
+  const pick = (part: "goal" | "stage" | "task", value: string) => {
+    const next = { ...selection, ...(part === "goal" ? { goalId: value, stageId: "" } : part === "stage" ? { stageId: value } : { taskId: value }) };
+    draft.set(`${part}Id` as "goalId", value);
+    if (part === "goal") { draft.set("stageId", ""); guard.adopt("stage", ""); }
+    guard.adopt(part, preparePart(choices, part, next));
+  };
+  const toggleDocument = (id: string) => {
+    const next = documentIds.includes(id) ? documentIds.filter(item => item !== id) : [...documentIds, id];
+    setDocumentIds(next); draft.touch(); guard.adopt("documents", preparePart(choices, "documents", { ...selection, documentIds: next }));
+  };
   const send = () => {
     draft.setTried(true);
-    if (draft.missing([...requiredNames]) || documentIds.length > 20) return;
-    void submit(() => discussionPreparePayload(choices, { ...values, kind, documentIds },
+    if (draft.missing([...requiredNames]) || documentIds.length > 20 || guard.changed.length) return;
+    void submit.submit(() => discussionPreparePayload(choices, { ...values, kind, documentIds },
       { discussionId: crypto.randomUUID(), documentId: crypto.randomUUID() }, context.projectId), id => { draft.clear(); setDocumentIds([]); onPrepared(id); });
   };
-  return <CommandFormShell label="准备讨论" submitLabel="生成交接包" dirty={draft.dirty} state={state} blocked={context.blocked} onCancel={onCancel}
+  return <CommandFormShell label="准备讨论" submitLabel="生成交接包" dirty={draft.dirty} submit={submit} blocked={context.blocked}
+    changed={guard.changed} rereading={rereading} onAccept={() => { guard.accept(); submit.reset(); }} onCancel={onCancel}
     onCopyDraft={() => void copyDraft("准备讨论", Object.entries(values))} onReread={context.onChanged} onSubmit={send}>
     <div role="group" aria-label="讨论什么" className="flex flex-wrap gap-2">
       {(["allocation", "direction"] as const).map(item => <Button key={item} size="compact" variant={kind === item ? "secondary" : "ghost"} aria-pressed={kind === item}
@@ -71,15 +96,15 @@ export function PrepareForm({ context, choices, onPrepared, onCancel }: { contex
     </div>
     <p className={muted}>交接包固定所选目标的版本、可选的阶段与任务、已采纳文档，系统生成完整来源头，正文只补充本次的问题。</p>
     <TextField label="交接包标题" value={values.title} error={draft.error("title")} onChange={value => draft.set("title", value)} />
-    <SelectField label="固定目标" value={values.goalId} error={draft.error("goalId")} onChange={value => { draft.set("goalId", value); draft.set("stageId", ""); }}>
+    <SelectField label="固定目标" value={values.goalId} error={draft.error("goalId")} onChange={value => pick("goal", value)}>
       <option value="">请选择</option>{choices.goals.map(goal => <option key={goal.id} value={goal.id}>{goal.outcome} · 第 {goal.version} 版</option>)}
     </SelectField>
     <div className="grid gap-4 compact:grid-cols-2">
-      <SelectField label="关联阶段（可选）" value={values.stageId} disabled={!values.goalId} onChange={value => draft.set("stageId", value)}
+      <SelectField label="关联阶段（可选）" value={values.stageId} disabled={!values.goalId} onChange={value => pick("stage", value)}
         hint={values.goalId ? (stages.length ? "只列出所选目标下的阶段。" : "所选目标下没有阶段。") : "先选目标。"}>
         <option value="">不关联阶段</option>{stages.map(stage => <option key={stage.id} value={stage.id}>{stage.deliverable} · 第 {stage.version} 版</option>)}
       </SelectField>
-      <SelectField label="关联任务（可选）" value={values.taskId} onChange={value => draft.set("taskId", value)} hint="同时选了阶段时，任务必须属于该阶段。">
+      <SelectField label="关联任务（可选）" value={values.taskId} onChange={value => pick("task", value)} hint="同时选了阶段时，任务必须属于该阶段。">
         <option value="">不关联任务</option>{choices.tasks.map(task => <option key={task.id} value={task.id}>{task.title}</option>)}
       </SelectField>
     </div>
@@ -102,20 +127,22 @@ export function PrepareForm({ context, choices, onPrepared, onCancel }: { contex
   </CommandFormShell>;
 }
 
-// The three forms below fold away (`onCancel`) once their write is applied; the reread shows what was recorded.
+// The three forms below fold away (`onCancel`) once their write is applied — including when an unknown result is
+// later read back as applied — and the reread shows what was recorded. `notReady` names why sending is not possible now.
+interface DetailFormProps { context: MutationContext; record: DiscussionRecord; notReady: string | undefined; rereading: boolean; onCancel(): void }
 
 /** Record that someone was actually seen taking the package over; it does not prove delivery or reading. */
-export function HandoffForm({ context, record, onCancel }: { context: MutationContext; record: DiscussionRecord; onCancel(): void }) {
+export function HandoffForm({ context, record, notReady, rereading, onCancel }: DetailFormProps) {
   const draft = useDraft({ evidence: "", reason: "" });
-  const guard = useVersionGuard(record.version, draft.dirty);
-  const { state, submit, reset } = useCommandSubmit(context);
+  const guard = useBaseline(handoffBaseline(record), draft.dirty);
+  const submit = useCommandSubmit(context);
   const send = () => {
     draft.setTried(true);
-    if (draft.missing(["evidence", "reason"])) return;
-    void submit(() => discussionHandoffPayload(record, draft.values), () => { draft.clear(); onCancel(); });
+    if (draft.missing(["evidence", "reason"]) || guard.changed.length || notReady) return;
+    void submit.submit(() => discussionHandoffPayload(record, draft.values), () => { draft.clear(); onCancel(); });
   };
-  return <CommandFormShell label="登记承接观察" submitLabel="登记承接" dirty={draft.dirty} state={state} blocked={context.blocked}
-    versionChanged={guard.changed} onAcceptVersion={() => { guard.accept(); reset(); }} onCancel={onCancel}
+  return <CommandFormShell label="登记承接观察" submitLabel="登记承接" dirty={draft.dirty} submit={submit} blocked={context.blocked}
+    changed={guard.changed} notReady={notReady} rereading={rereading} onAccept={() => { guard.accept(); submit.reset(); }} onCancel={onCancel}
     onCopyDraft={() => void copyDraft("登记承接观察", Object.entries(draft.values))} onReread={context.onChanged} onSubmit={send}>
     <TextField label="实际怎样观察到承接" hint="只登记人工观察，不证明自动送达或对方已读完。" multiline value={draft.values.evidence} error={draft.error("evidence")} onChange={value => draft.set("evidence", value)} />
     <TextField label="理由与依据" multiline value={draft.values.reason} error={draft.error("reason")} onChange={value => draft.set("reason", value)} />
@@ -124,26 +151,29 @@ export function HandoffForm({ context, record, onCancel }: { context: MutationCo
 
 /**
  * Record a decision, or a correction of the current one. When the document's current version differs from what the
- * discussion registered, the reader confirms both were compared and why the record continues from the document.
+ * discussion registered, the reader confirms both were compared and why the record continues from the document; that
+ * confirmation is dropped whenever the head, the discussion or the decision it corrects changes, or the view is stale.
  */
-export function DecisionForm({ context, record, latest, head, onCancel }: {
-  context: MutationContext; record: DiscussionRecord; latest: DiscussionEvent | undefined; head: VerifiedDocumentHead; onCancel(): void;
+export function DecisionForm({ context, record, latest, head, notReady, rereading, onCancel }: DetailFormProps & {
+  latest: DiscussionEvent | undefined; head: VerifiedDocumentHead;
 }) {
   const mismatch = head.revisionId !== record.currentDocumentRevisionId;
   const draft = useDraft({ choice: "", unresolved: "", relookCondition: "", evidence: "", reason: "", documentRecoveryReason: "" });
   const [confirmed, setConfirmed] = useState(false);
-  const guard = useVersionGuard(record.version, draft.dirty);
-  const { state, submit, reset } = useCommandSubmit(context);
+  const guard = useBaseline(decisionBaseline(record, latest, head), draft.dirty || confirmed);
+  const submit = useCommandSubmit(context);
+  const recheck = guard.changed.length > 0 || submit.state.stale;
+  useEffect(() => { if (recheck) setConfirmed(false); }, [recheck]);
   const names = ["choice", "unresolved", "relookCondition", "evidence", "reason", ...(mismatch ? ["documentRecoveryReason" as const] : [])] as const;
   const send = () => {
     draft.setTried(true);
-    if (draft.missing([...names]) || (mismatch && !confirmed)) return;
-    void submit(() => discussionDecisionPayload(record, latest, head, { ...draft.values, ...(confirmed ? { confirmRecovery: "confirmed" } : {}) }),
+    if (draft.missing([...names]) || (mismatch && !confirmed) || guard.changed.length || notReady) return;
+    void submit.submit(() => discussionDecisionPayload(record, latest, head, { ...draft.values, ...(confirmed ? { confirmRecovery: "confirmed" } : {}) }),
       () => { draft.clear(); setConfirmed(false); onCancel(); });
   };
   const title = latest ? "纠正当前决定" : "登记讨论决定";
-  return <CommandFormShell label={title} submitLabel={latest ? "保存纠正" : "保存决定"} dirty={draft.dirty || confirmed} state={state} blocked={context.blocked}
-    versionChanged={guard.changed} onAcceptVersion={() => { guard.accept(); reset(); }} onCancel={onCancel}
+  return <CommandFormShell label={title} submitLabel={latest ? "保存纠正" : "保存决定"} dirty={draft.dirty || confirmed} submit={submit} blocked={context.blocked}
+    changed={guard.changed} notReady={notReady} rereading={rereading} onAccept={() => { guard.accept(); submit.reset(); }} onCancel={onCancel}
     onCopyDraft={() => void copyDraft(title, Object.entries(draft.values))} onReread={context.onChanged} onSubmit={send}>
     {latest && <p className={muted}>保存后当前决定会标为已纠正。旧决定和已链接的对象都保留，不会自动撤销任何行动。</p>}
     <TextField label="本次取舍（也可以明确维持现状）" multiline value={draft.values.choice} error={draft.error("choice")} onChange={value => draft.set("choice", value)} />
@@ -153,10 +183,10 @@ export function DecisionForm({ context, record, latest, head, onCancel }: {
     <TextField label="理由" multiline value={draft.values.reason} error={draft.error("reason")} onChange={value => draft.set("reason", value)} />
     {mismatch && <div className="flex flex-col gap-3 rounded-lg bg-warning-soft p-3">
       <label className="flex items-start gap-2 text-small text-foreground">
-        <input type="checkbox" checked={confirmed} onChange={event => { setConfirmed(event.target.checked); }} className="mt-1 size-4 accent-[var(--accent)]" />
-        <span>我已核对讨论登记版和文档当前版，确认从文档当前版接续，追加恢复记录和本次决定。</span>
+        <input type="checkbox" checked={confirmed} disabled={recheck} onChange={event => setConfirmed(event.target.checked)} className="mt-1 size-4 accent-[var(--accent)]" />
+        <span>我已核对讨论登记版和文档当前版（第 {head.version} 版），确认从文档当前版接续，追加恢复记录和本次决定。</span>
       </label>
-      {draft.tried && !confirmed && <span className="text-caption text-destructive">两版不同时，需要先确认已核对。</span>}
+      {draft.tried && !confirmed && !recheck && <span className="text-caption text-destructive">两版不同时，需要先确认已核对。</span>}
       <TextField label="为什么从文档当前版接续" multiline value={draft.values.documentRecoveryReason} error={draft.error("documentRecoveryReason")} onChange={value => draft.set("documentRecoveryReason", value)} />
     </div>}
   </CommandFormShell>;
@@ -175,26 +205,25 @@ export function targetChoices(choices: Choices): TargetChoice[] {
 }
 
 /** Link one existing object as the follow-up of the current decision. The decision itself never creates it. */
-export function LinkForm({ context, record, decision, choices, onCancel }: {
-  context: MutationContext; record: DiscussionRecord; decision: DiscussionEvent; choices: TargetChoice[]; onCancel(): void;
-}) {
+export function LinkForm({ context, record, decision, choices, notReady, rereading, onCancel }: DetailFormProps & { decision: DiscussionEvent; choices: TargetChoice[] }) {
   const draft = useDraft({ target: "", reason: "" });
-  const guard = useVersionGuard(record.version, draft.dirty);
-  const { state, submit, reset } = useCommandSubmit(context);
+  const picked = choices.find(item => item.value === draft.values.target);
+  const guard = useBaseline(linkBaseline(record, decision, picked?.target), draft.dirty);
+  const submit = useCommandSubmit(context);
   const send = () => {
     draft.setTried(true);
-    if (draft.missing(["target", "reason"])) return;
-    void submit(() => {
-      const picked = choices.find(item => item.value === draft.values.target);
+    if (draft.missing(["target", "reason"]) || guard.changed.length || notReady) return;
+    void submit.submit(() => {
       if (!picked) throw new Error("所选对象已不在读回的清单里，请重新选择。");
       return discussionLinkPayload(record, decision, picked.target, draft.values.reason);
     }, () => { draft.clear(); onCancel(); });
   };
-  return <CommandFormShell label="链接后续对象" submitLabel="链接对象" dirty={draft.dirty} state={state} blocked={context.blocked}
-    versionChanged={guard.changed} onAcceptVersion={() => { guard.accept(); reset(); }} onCancel={onCancel}
+  const pick = (value: string) => { draft.set("target", value); guard.adopt("target", targetKey(choices.find(item => item.value === value)?.target)); };
+  return <CommandFormShell label="链接后续对象" submitLabel="链接对象" dirty={draft.dirty} submit={submit} blocked={context.blocked}
+    changed={guard.changed} notReady={notReady} rereading={rereading} onAccept={() => { guard.accept(); submit.reset(); }} onCancel={onCancel}
     onCopyDraft={() => void copyDraft("链接后续对象", Object.entries(draft.values))} onReread={context.onChanged} onSubmit={send}>
     <p className={muted}>只链接已经存在、能读到的对象；讨论决定本身不会创建任务、阶段或常设职责。</p>
-    <SelectField label="实际的后续对象" value={draft.values.target} error={draft.error("target")} onChange={value => draft.set("target", value)}>
+    <SelectField label="实际的后续对象" value={draft.values.target} error={draft.error("target")} onChange={pick}>
       <option value="">请选择</option>
       {(["task", "stage", "role", "document"] as const).map(kind => {
         const items = choices.filter(item => item.kind === kind);

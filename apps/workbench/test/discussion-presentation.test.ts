@@ -8,6 +8,9 @@ import {
 import {
   discussionHandoffPayload, discussionLinkPayload, discussionPreparePayload, safeSessionReference, type PrepareValues,
 } from "../src/features/discussions/commands.ts";
+import {
+  changedParts, decisionBaseline, handoffBaseline, linkBaseline, prepareBaseline, preparePart, targetKey,
+} from "../src/features/discussions/discussionBaseline.ts";
 
 const projectId = "11111111-1111-4111-8111-111111111111";
 const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
@@ -38,6 +41,8 @@ test("list rows read by question or by task name, never by ID", () => {
   const thread = record({ kind: "task_collaboration", task: { id: id(9), revisionId: id(10) } });
   assert.equal(listRow(thread, "改版首页", true).title, "任务协作 · 改版首页");
   assert.equal(listRow(thread, undefined, true).title, "任务协作 · 任务名称暂不可读");
+  assert.equal(listRow(thread, undefined, true, true).title, "任务协作 · 正在读取任务名称", "a name still being read is not called unreadable");
+  assert.equal(nameOr(undefined, "智能体", true), "正在读取智能体名称");
   assert.equal(nameOr("  ", "职责"), "职责名称暂不可读");
 });
 
@@ -97,4 +102,38 @@ test("handoff and link are recorded at the version the reader saw", () => {
   const link = commandSchema.parse({ ...discussionLinkPayload(seen, decision, { kind: "task", id: task.id, revisionId: id(8) }, "后续任务"), projectId, operationId: id(34) });
   assert.equal(link.type, "discussion.action.link");
   if (link.type === "discussion.action.link") { assert.equal(link.decisionEventId, id(21)); assert.deepEqual(link.target, { kind: "task", id: task.id, revisionId: id(8) }); }
+});
+
+test("a decision baseline moves with the document head, the registered package, the discussion version and the corrected decision", () => {
+  const seen = record({ version: 4, currentDocumentRevisionId: id(15) });
+  const head = { revisionId: id(16), version: 2 };
+  const baseline = decisionBaseline(seen, undefined, head);
+  assert.deepEqual(changedParts(baseline, decisionBaseline(seen, undefined, head)), []);
+  // Reviewed version 2 against the old registration; someone saves version 3 of the document.
+  assert.deepEqual(changedParts(baseline, decisionBaseline(seen, undefined, { revisionId: id(17), version: 3 })), ["文档当前版"]);
+  assert.deepEqual(changedParts(baseline, decisionBaseline(record({ version: 5, currentDocumentRevisionId: id(18) }), undefined, head)), ["讨论版本", "登记的交接包"]);
+  assert.deepEqual(changedParts(baseline, decisionBaseline(seen, { id: id(21) }, head)), ["当前决定"]);
+  assert.deepEqual(changedParts(handoffBaseline(seen), handoffBaseline(record({ version: 5, currentDocumentRevisionId: id(15) }))), ["讨论版本"]);
+});
+
+test("a link baseline follows the picked target's fixed revision, not just its ID", () => {
+  const seen = record({ version: 6 });
+  const decision = { id: id(21) };
+  const before = linkBaseline(seen, decision, { kind: "task", id: id(7), revisionId: id(8) });
+  assert.deepEqual(changedParts(before, linkBaseline(seen, decision, { kind: "task", id: id(7), revisionId: id(9) })), ["所选对象的修订"]);
+  assert.deepEqual(changedParts(before, linkBaseline(seen, decision, { kind: "task", id: id(7), revisionId: id(8) })), []);
+  assert.equal(targetKey({ kind: "stage", id: id(5), version: 2 }), `stage:${id(5)}@v2`);
+  assert.deepEqual(changedParts(linkBaseline(seen, decision, { kind: "stage", id: id(5), version: 1 }),
+    linkBaseline(seen, decision, { kind: "stage", id: id(5), version: 2 })), ["所选对象的修订"]);
+});
+
+test("a prepare baseline follows the goal version, stage version, task revision and adopted document revisions that were picked", () => {
+  const selection = { goalId: goal.id, stageId: stage.id, taskId: task.id, documentIds: [adopted.id] };
+  const seen = prepareBaseline(choices, selection);
+  assert.deepEqual(changedParts(seen, prepareBaseline(choices, selection)), []);
+  const moved = { goals: [{ ...goal, version: 3 }], stages: [{ ...stage, version: 2 }], tasks: [{ ...task, currentRevisionId: id(40) }],
+    documents: [{ ...adopted, adoptedRevisionId: id(41) }, draft] };
+  assert.deepEqual(changedParts(seen, prepareBaseline(moved, selection)), ["目标版本", "阶段版本", "任务修订", "采纳文档的修订"]);
+  assert.match(preparePart({ ...choices, tasks: [] }, "task", selection), /@missing$/, "a picked object that is gone is a change too");
+  assert.equal(preparePart(choices, "documents", { ...selection, documentIds: [] }), "");
 });

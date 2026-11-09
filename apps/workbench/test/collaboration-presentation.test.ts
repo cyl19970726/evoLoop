@@ -12,7 +12,7 @@ function memoryStore() {
 
 test("connector reasons are said in Chinese; an unknown one is kept verbatim", () => {
   assert.deepEqual(reasonText("prior update outcome unresolved; no automatic replay"), { text: "上一次更新的结果还没核实，不会自动重放。", original: null });
-  assert.deepEqual(reasonText("brand new failure"), { text: "协调器给出了原因，原文见下。", original: "brand new failure" });
+  assert.deepEqual(reasonText("brand new failure"), { text: "协调器给出了一条页面不认识的原因，原文在“完整标识”里。", original: "brand new failure" });
   assert.deepEqual(reasonText(null), { text: "", original: null });
 });
 

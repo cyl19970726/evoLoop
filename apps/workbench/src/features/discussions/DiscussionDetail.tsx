@@ -48,13 +48,14 @@ function RailBlock({ title, children, defaultOpen = true }: { title: string; chi
 /** Name of a linked object from the choices that were read; the ID stays in the source block. */
 function TargetLink({ target, choices, projectId }: { target: DiscussionTarget; choices: Choices | undefined; projectId: string }) {
   const id = encodeURIComponent(target.id);
+  const reading = !choices;
   if (target.kind === "task") return <a className={link} href={`${project(projectId)}/tasks/${id}?revision=${encodeURIComponent(target.revisionId)}`}>
-    {nameOr(choices?.tasks.find(item => item.id === target.id)?.title, "任务")}</a>;
+    {nameOr(choices?.tasks.find(item => item.id === target.id)?.title, "任务", reading)}</a>;
   if (target.kind === "document") return <a className={link} href={fixedDocument(projectId, target.id, target.revisionId)}>
-    {nameOr(choices?.documents.find(item => item.id === target.id)?.title, "文档")}</a>;
+    {nameOr(choices?.documents.find(item => item.id === target.id)?.title, "文档", reading)}</a>;
   if (target.kind === "role") return <a className={link} href={`${project(projectId)}/roles?role=${id}`}>
-    {nameOr(choices?.roles.find(item => item.id === target.id)?.proposal.title, "职责")}</a>;
-  return <a className={link} href={`${project(projectId)}/journey`}>{nameOr(choices?.stages.find(item => item.id === target.id)?.deliverable, "阶段")} · 第 {target.version} 版</a>;
+    {nameOr(choices?.roles.find(item => item.id === target.id)?.proposal.title, "职责", reading)}</a>;
+  return <a className={link} href={`${project(projectId)}/journey`}>{nameOr(choices?.stages.find(item => item.id === target.id)?.deliverable, "阶段", reading)} · 第 {target.version} 版</a>;
 }
 
 function usePackage(projectId: string, documentId: string, revisionId: string, enabled = true) {
@@ -74,10 +75,11 @@ function PackageView({ projectId, documentId, revisionId, label, read }: { proje
   return <div className="flex flex-col gap-2 rounded-lg bg-muted p-3">
     <div className="flex flex-wrap items-center justify-between gap-2">
       <span className="text-small font-medium text-foreground">{label}</span>
-      {read.data ? <StatusTag tone="done" label="原文已核对" /> : read.isError ? <StatusTag tone="blocked" label="无法核对" /> : <StatusTag tone="unknown" label="正在核对" />}
+      {/* A failed read wins over an older answer: the tag never says 已核对 next to a failed check. */}
+      {read.isError ? <StatusTag tone="blocked" label="无法核对" /> : read.data ? <StatusTag tone="done" label="原文已核对" /> : <StatusTag tone="unknown" label="正在核对" />}
     </div>
-    {read.isError && <p className="text-caption text-destructive">原文没有核对通过：{errorText(read.error)}。在核对通过之前，不能据此登记承接或决定。</p>}
-    {read.data && <>
+    {read.isError && <p className="text-caption text-destructive">原文没有核对通过：{errorText(read.error)}。现在无法判断交接包是否完整，核对通过之前不能据此登记承接或决定。</p>}
+    {read.data && !read.isError && <>
       <div className="flex flex-wrap items-center gap-2">
         <Button size="compact" onClick={() => void copy()}>{copied === "done" ? "已复制完整交接包" : "复制完整交接包"}</Button>
         <a className={`${link} text-label`} href={fixedDocument(projectId, documentId, revisionId)}>在文档页阅读</a>
@@ -127,14 +129,24 @@ export function DiscussionDetail({ context, record, events, choices, choicesLoad
   const { latest, earlier, corrected } = decisionHistory(events, record.latestDecisionEventId);
   const handoffs = events.filter(event => event.kind === "handoff");
   const links = events.filter(event => event.kind === "action" && event.target);
-  const mismatch = !!head.data && head.data.revisionId !== record.currentDocumentRevisionId;
-  const verified = !!current.data && !!head.data;
+  // Only a fresh, successful read counts: a failed reread or the previous version's head kept on screen while the new
+  // one loads cannot decide whether the two versions differ, so nothing that depends on it can be sent.
+  const headFresh = head.data && !head.isError && !head.isPlaceholderData ? head.data : undefined;
+  const currentFresh = current.data && !current.isError ? current.data : undefined;
+  const mismatch = !!headFresh && headFresh.revisionId !== record.currentDocumentRevisionId;
+  const verified = !!currentFresh && !!headFresh;
   const ordinaryReady = verified && !mismatch, recoveryReady = verified && mismatch;
+  const unverifiedReason = current.isError ? "交接包原文没有核对通过，无法判断它是否完整，暂不能保存。"
+    : head.isError ? "文档当前版没有核实，无法判断它与讨论登记版是否一致，暂不能保存。"
+      : !verified ? "正在核对交接包原文和文档当前版，核对完成后才能保存。" : undefined;
+  const ordinaryReason = unverifiedReason ?? (mismatch ? "文档当前版与讨论登记版不同，先在“决定”里对照两版并登记恢复。" : undefined);
+  const rereading = checking || head.isFetching || current.isFetching;
   const targets = choices ? targetChoices(choices) : [];
   const canReview = canWrite(context, "review");
   const status = statusTag(record.status);
   const title = record.kind === "task_collaboration"
-    ? `任务协作 · ${nameOr(choices?.tasks.find(task => task.id === record.task?.id)?.title, "任务")}` : record.question;
+    ? `任务协作 · ${nameOr(choices?.tasks.find(task => task.id === record.task?.id)?.title, "任务", choicesLoading)}` : record.question;
+  // An opened form stays mounted (hidden when folded) so its text survives rereads; whether it may send is `notReady`.
   const formSlot = (name: FormName, node: ReactNode) => opened.includes(name) && <div hidden={open !== name}>{node}</div>;
   const goal = record.goal && choices?.goals.find(item => item.id === record.goal!.id);
   const stage = record.stage && choices?.stages.find(item => item.id === record.stage!.id);
@@ -158,6 +170,7 @@ export function DiscussionDetail({ context, record, events, choices, choicesLoad
       {record.kind !== "task_collaboration" && <>
         <li>最初交接包修订 <code className={code}>{record.preparedDocumentRevisionId}</code></li>
         <li>当前登记修订 <code className={code}>{record.currentDocumentRevisionId}</code></li>
+        {!samePackage && prepared.data && <li>最初交接包 SHA-256 <code className={code}>{prepared.data.revision.contentHash}</code></li>}
         {current.data && <li>登记修订 SHA-256 <code className={code}>{current.data.revision.contentHash}</code></li>}
         {head.data && <li>文档当前修订 <code className={code}>{head.data.revisionId}</code> · 第 {head.data.version} 版 · SHA-256 <code className={code}>{head.data.contentHash}</code></li>}
       </>}
@@ -183,7 +196,7 @@ export function DiscussionDetail({ context, record, events, choices, choicesLoad
     </Section>
     <ContextPanelContent><div className="flex flex-col">
       <RailBlock title="关联任务">{record.task
-        ? <a className={`${link} text-small`} href={`${project(projectId)}/tasks/${encodeURIComponent(record.task.id)}?revision=${encodeURIComponent(record.task.revisionId)}`}>{nameOr(task?.title, "任务")}</a>
+        ? <a className={`${link} text-small`} href={`${project(projectId)}/tasks/${encodeURIComponent(record.task.id)}?revision=${encodeURIComponent(record.task.revisionId)}`}>{nameOr(task?.title, "任务", choicesLoading)}</a>
         : <p className="text-small text-text-secondary">没有绑定任务。</p>}</RailBlock>
       {sources}
     </div></ContextPanelContent>
@@ -212,8 +225,9 @@ export function DiscussionDetail({ context, record, events, choices, choicesLoad
       {record.status === "prepared" && !canWrite(context, "write") && <p className={muted}>当前身份没有写入权限，不能登记承接观察。</p>}
       {record.status === "prepared" && canWrite(context, "write") && (ordinaryReady
         ? open !== "handoff" && <Button className="self-start" onClick={() => show("handoff")}>登记承接观察</Button>
-        : <p className={muted}>{mismatch ? "文档当前版与讨论登记版不同，先在“决定”里核对两版。" : "交接包原文和文档当前版都核对通过后，才能登记承接。"}</p>)}
-      {record.status === "prepared" && formSlot("handoff", <HandoffForm context={context} record={record} onCancel={() => setOpen(null)} />)}
+        : open !== "handoff" && <p className={muted}>{ordinaryReason}</p>)}
+      {record.status === "prepared" && canWrite(context, "write") && formSlot("handoff",
+        <HandoffForm context={context} record={record} notReady={ordinaryReason} rereading={rereading} onCancel={() => setOpen(null)} />)}
     </Section>
 
     <Section title="决定">
@@ -231,12 +245,13 @@ export function DiscussionDetail({ context, record, events, choices, choicesLoad
       </CollapsibleRow>}
       {links.length > 0 && <p className="text-small text-text-secondary">已链接 {links.length} 个后续对象，见右栏“关联的任务、职责与文档”。</p>}
       {head.isPending && <p className={muted}>正在读回文档当前版并核对 SHA-256…</p>}
-      {head.isError && <Notice tone="error" title="文档当前版没有核实">{errorText(head.error)}。核实之前不能登记决定或链接对象。</Notice>}
-      {mismatch && head.data && <Notice tone="waiting" title="讨论登记版与文档当前版不同">
-        讨论登记的是另一份修订，文档后来又被修订到第 {head.data.version} 版（作者 {head.data.author}）。旧讨论原件不会被改写；只有明确确认后，才能从文档当前版接续登记决定。完整标识见右栏。
+      {head.isPlaceholderData && !head.isError && <p className={muted}>讨论已更新，正在重新核对文档当前版；核对完成前不判断两版是否一致。</p>}
+      {head.isError && <Notice tone="error" title="文档当前版没有核实">{errorText(head.error)}。现在无法判断它与讨论登记版是否一致；核实之前不能登记承接、决定或链接对象。</Notice>}
+      {mismatch && headFresh && <Notice tone="waiting" title="讨论登记版与文档当前版不同">
+        讨论登记的是另一份修订，文档后来又被修订到第 {headFresh.version} 版（作者 {headFresh.author}）。旧讨论原件不会被改写；只有明确确认后，才能从文档当前版接续登记决定。完整标识见右栏。
       </Notice>}
-      {mismatch && head.data && <CollapsibleRow summary={`对照文档当前版原文 · 第 ${head.data.version} 版`}>
-        <pre className="max-h-[60vh] overflow-auto whitespace-pre-wrap rounded-md bg-muted p-3 font-mono text-caption leading-[1.6] text-foreground [overflow-wrap:anywhere]">{head.data.body}</pre>
+      {mismatch && headFresh && <CollapsibleRow summary={`对照文档当前版原文 · 第 ${headFresh.version} 版`}>
+        <pre className="max-h-[60vh] overflow-auto whitespace-pre-wrap rounded-md bg-muted p-3 font-mono text-caption leading-[1.6] text-foreground [overflow-wrap:anywhere]">{headFresh.body}</pre>
       </CollapsibleRow>}
       {record.status !== "prepared" && !canReview && <p className={muted}>当前身份没有审阅权限，不能登记决定或链接后续对象。</p>}
       {record.status !== "prepared" && canReview && (ordinaryReady || recoveryReady) && <div className="flex flex-wrap gap-2">
@@ -245,8 +260,11 @@ export function DiscussionDetail({ context, record, events, choices, choicesLoad
           ? <Button onClick={() => show("link")}>链接后续对象</Button>
           : <span className={muted}>{choicesLoading ? "正在读取可链接的对象…" : "可链接的对象清单没有读回，暂不能链接。"}</span>)}
       </div>}
-      {record.status !== "prepared" && canReview && head.data && (ordinaryReady || recoveryReady) && formSlot("decision", <DecisionForm context={context} record={record} latest={latest} head={head.data} onCancel={() => setOpen(null)} />)}
-      {canReview && ordinaryReady && latest && formSlot("link", <LinkForm context={context} record={record} decision={latest} choices={targets} onCancel={() => setOpen(null)} />)}
+      {record.status !== "prepared" && canReview && !verified && !open && <p className={muted}>{unverifiedReason}</p>}
+      {record.status !== "prepared" && canReview && head.data && formSlot("decision",
+        <DecisionForm context={context} record={record} latest={latest} head={head.data} notReady={unverifiedReason} rereading={rereading} onCancel={() => setOpen(null)} />)}
+      {canReview && latest && formSlot("link",
+        <LinkForm context={context} record={record} decision={latest} choices={targets} notReady={ordinaryReason} rereading={rereading || choicesLoading} onCancel={() => setOpen(null)} />)}
     </Section>
 
     <CollapsibleRow summary={`讨论记录 · ${events.length} 条`}>
@@ -257,11 +275,11 @@ export function DiscussionDetail({ context, record, events, choices, choicesLoad
     <ContextPanelContent><div className="flex flex-col">
       <RailBlock title="讨论依据">
         {record.goal && <Fact label="目标">{goal ? goal.outcome : choicesLoading ? "正在读取目标名称" : "目标名称暂不可读"} · 第 {record.goal.version} 版</Fact>}
-        {record.stage && <Fact label="阶段"><a className={link} href={`${project(projectId)}/journey`}>{nameOr(stage?.deliverable, "阶段")}</a> · 第 {record.stage.version} 版</Fact>}
-        {record.task && <Fact label="任务"><a className={link} href={`${project(projectId)}/tasks/${encodeURIComponent(record.task.id)}?revision=${encodeURIComponent(record.task.revisionId)}`}>{nameOr(task?.title, "任务")}</a></Fact>}
+        {record.stage && <Fact label="阶段"><a className={link} href={`${project(projectId)}/journey`}>{nameOr(stage?.deliverable, "阶段", choicesLoading)}</a> · 第 {record.stage.version} 版</Fact>}
+        {record.task && <Fact label="任务"><a className={link} href={`${project(projectId)}/tasks/${encodeURIComponent(record.task.id)}?revision=${encodeURIComponent(record.task.revisionId)}`}>{nameOr(task?.title, "任务", choicesLoading)}</a></Fact>}
         <Fact label="已采纳文档">{record.adoptedDocuments.length === 0 ? "没有固定已采纳文档。"
           : <ul className="flex flex-col gap-1">{record.adoptedDocuments.map(item => <li key={item.documentId}>
-            <a className={link} href={fixedDocument(projectId, item.documentId, item.revisionId)}>{nameOr(choices?.documents.find(document => document.id === item.documentId)?.title, "文档")}</a></li>)}</ul>}</Fact>
+            <a className={link} href={fixedDocument(projectId, item.documentId, item.revisionId)}>{nameOr(choices?.documents.find(document => document.id === item.documentId)?.title, "文档", choicesLoading)}</a></li>)}</ul>}</Fact>
       </RailBlock>
       <RailBlock title="关联的任务、职责与文档">
         {record.kind === "allocation"

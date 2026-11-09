@@ -23,7 +23,7 @@ function PrepareView({ context, choices }: { context: MutationContext; choices: 
     next="交接包要固定完整的选择，读全之前不生成。请重新读取。" action={<Button size="compact" onClick={() => void choices.refetch()}>重新读取</Button>} />;
   if (!choices.data.goals.length) return <EmptyState title="还没有目标" reason="交接包要固定一个目标版本。先在“目标与阶段”建立目标，再回来准备讨论。"
     action={<a href={href(context.projectId, "journey")} className="text-small font-medium text-primary hover:underline">打开目标与阶段</a>} />;
-  return <PrepareForm context={context} choices={choices.data} onPrepared={id => navigate(discussionHref(context.projectId, id))}
+  return <PrepareForm context={context} choices={choices.data} rereading={choices.isFetching} onPrepared={id => navigate(discussionHref(context.projectId, id))}
     onCancel={() => navigate(discussionHref(context.projectId))} />;
 }
 
@@ -63,7 +63,7 @@ export function DiscussionPanel({ context, refresh }: { context: MutationContext
         {list.isError && <span className="px-3 py-2 text-caption text-destructive">讨论列表没有读全，见中间说明。</span>}
         {listed && !items.length && <span className="px-3 py-2 text-caption text-muted-foreground">这个范围还没有讨论。</span>}
         {items.map(item => {
-          const row = listRow(item, taskName(item.task?.id), scope === "all");
+          const row = listRow(item, taskName(item.task?.id), scope === "all", choices.isPending);
           const selected = !address.preparing && item.id === selectedId;
           return <a key={item.id} href={discussionHref(projectId, item.id)} aria-current={selected ? "page" : undefined}
             className={cn("flex flex-col rounded-lg px-3 py-1.5 outline-none focus-visible:shadow-[var(--focus-ring)]", selected ? "bg-raised shadow-sm" : "hover:bg-selected")}>
@@ -87,7 +87,7 @@ export function DiscussionPanel({ context, refresh }: { context: MutationContext
     {items.length > 1 && <label className="flex flex-col gap-1 desktop:hidden"><span className={muted}>切换讨论</span>
       <select className={cn(control, "h-9")} value={address.preparing ? "" : selectedId} onChange={event => navigate(event.target.value ? discussionHref(projectId, event.target.value) : prepareHref(projectId))}>
         {address.preparing && <option value="">正在准备新的讨论</option>}
-        {items.map(item => <option key={item.id} value={item.id}>{listRow(item, taskName(item.task?.id), scope === "all").title}</option>)}
+        {items.map(item => <option key={item.id} value={item.id}>{listRow(item, taskName(item.task?.id), scope === "all", choices.isPending).title}</option>)}
       </select></label>}
 
     {list.isError && <Notice tone="error" title="讨论列表没有读全">{errorText(list.error)}。{listed ? "左侧仍是上次读到的列表。" : "请重新读取。"}</Notice>}

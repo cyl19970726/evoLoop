@@ -36,11 +36,17 @@ function TaskName({ projectId, taskId }: { projectId: string; taskId: string }) 
   return <a className={`${link} text-small font-medium`} href={href(projectId, "task", taskId)}>{read.data || (read.isError ? "任务名称暂不可读" : "正在读取任务名称")}</a>;
 }
 
+/** The reason in Chinese. A reason the page does not know is not shown in the text; its original sits in 完整标识. */
 function Reason({ raw, fallback }: { raw: string | null | undefined; fallback?: string }) {
-  const { text, original } = reasonText(raw);
+  const { text } = reasonText(raw);
   if (!text && !fallback) return null;
-  return <div className="flex flex-col gap-0.5"><p className="text-small text-text-secondary">{text || fallback}</p>
-    {original && <code className={`${code} text-muted-foreground`}>{original}</code>}</div>;
+  return <p className="text-small text-text-secondary">{text || fallback}</p>;
+}
+
+/** The untranslated original of a reason, for the 完整标识 list. */
+function ReasonOriginal({ raw, label = "原因原文" }: { raw: string | null | undefined; label?: string }) {
+  const { original } = reasonText(raw);
+  return original ? <li>{label} <code className={code}>{original}</code></li> : null;
 }
 
 function RailBlock({ title, children }: { title: string; children: ReactNode }) {
@@ -91,6 +97,8 @@ function DeliveryRow({ item, projectId, allowed, busy, configured, onAction }: {
           <li>投影事件 <code className={code}>{item.eventId}</code></li>
           <li>任务 <code className={code}>{item.taskId}</code></li>
           <li>原操作 <code className={code}>{item.operationId}</code></li>
+          <ReasonOriginal raw={item.lastReason} />
+          {attempts.data?.map(attempt => <ReasonOriginal key={attempt.id} raw={attempt.reason} label={`${attemptActionLabel[attempt.action]}的原因原文`} />)}
         </ul>
       </div>
     </CollapsibleRow>
@@ -141,6 +149,7 @@ function IncomingRow({ item, projectId, allowed, busy, onAction }: { item: Incom
         <li>远端记录 <code className={code}>{item.remoteRecordId}</code>{item.observedRemoteOperationId && <> · 远端操作 <code className={code}>{item.observedRemoteOperationId}</code></>}</li>
         <li>任务 <code className={code}>{item.entityId}</code> · 原操作 <code className={code}>{item.operationId}</code></li>
         <li>来源事件 <code className={code}>{item.sourceEventId}</code></li>
+        <ReasonOriginal raw={item.reason} label="限制原文" />
       </ul>
     </CollapsibleRow>
   </li>;

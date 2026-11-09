@@ -40,9 +40,9 @@ export const eventLabel: Record<DiscussionEvent["kind"], string> = {
 };
 
 /** List rows: an allocation or direction discussion reads by its question, a task thread by its task. */
-export function listRow(record: DiscussionRecord, taskName: string | undefined, showKind: boolean): { title: string; meta: string } {
+export function listRow(record: DiscussionRecord, taskName: string | undefined, showKind: boolean, reading = false): { title: string; meta: string } {
   const status = record.kind === "task_collaboration" ? "" : statusTags[record.status].label;
-  const title = record.kind === "task_collaboration" ? (taskName ? `任务协作 · ${taskName}` : "任务协作 · 任务名称暂不可读") : record.question;
+  const title = record.kind === "task_collaboration" ? `任务协作 · ${nameOr(taskName, "任务", reading)}` : record.question;
   const parts = [showKind || record.kind === "direction" ? kindLabel[record.kind] : "", status].filter(Boolean);
   return { title, meta: parts.join(" · ") };
 }
@@ -99,8 +99,9 @@ export function limitationText(raw: string): { text: string; original: string | 
   return known ? { text: known, original: null } : { text: "关系来源给出了一条限制，原文如下。", original: raw };
 }
 
-/** A name read for the object, or a plain statement that it could not be read — never the ID. */
-export const nameOr = (name: string | undefined, kind: string) => name?.trim() || `${kind}名称暂不可读`;
+/** A name read for the object; while it is still being read, say so; only after that, that it could not be read — never the ID. */
+export const nameOr = (name: string | undefined, kind: string, reading = false) =>
+  name?.trim() || (reading ? `正在读取${kind}名称` : `${kind}名称暂不可读`);
 
 /** The decision events in order, with which ones a later decision corrected. */
 export function decisionHistory(events: readonly DiscussionEvent[], latestDecisionEventId: string | null) {
