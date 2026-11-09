@@ -122,94 +122,105 @@ test("Task list resolves only displayed Role owners and rejects stale or failed 
   await page.goto(`${base}/p/${projectId}/work`);
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button",{name:"进入",exact:true}).click();
-  await page.locator(".leader-work-disclosure > summary").click();
-  await page.getByRole("heading",{name:"现在需要处理什么"}).waitFor();
-  assert.match(await page.locator(".leader-work").innerText(),/可开始/);
-  assert.match(await page.locator(".leader-work").innerText(),/变更序号 4/);
-  assert.match(await page.locator(".leader-work").innerText(),/Leader 已暂缓/);
+  // 全项目统筹对账 under the table view.
+  await page.getByRole("button",{name:/查看全项目统筹对账/}).click();
+  const overview=page.locator("[data-leader-overview]");
+  await overview.getByText(/可开始/).first().waitFor();
+  assert.match(await overview.innerText(),/变更序号 4/);
+  assert.match(await overview.innerText(),/统筹已暂缓/);
   await page.setViewportSize({ width: 1280, height: 900 });
-  const row=page.getByRole("row").filter({hasText:"澄清分工页待办"});
+  const main=page.getByRole("main");
+  const row=main.getByRole("row").filter({hasText:"澄清分工页待办"});
   for (const name of ["任务","工作类型","当前进展","承接者","创建时间","最近进展"]) {
-    await page.getByRole("columnheader",{name,exact:true}).waitFor();
+    await main.getByRole("columnheader",{name,exact:true}).waitFor();
   }
-  assert.match(await row.locator(".task-list-kind").innerText(),/实施/);
-  assert.match(await row.locator(".task-list-created").innerText(),/2026/);
-  assert.match(await row.locator(".task-list-progress-time").innerText(),/交付已登记/);
-  assert.match(await row.locator(".task-list-stage-time").innerText(),/未知 · 等待 维护者/);
-  await page.locator(".task-selection .task-timing").getByText("具备发布条件，等待维护者").waitFor();
-  assert.doesNotMatch(await page.locator(".task-selection .task-timing").innerText(),/已发布|已历时 0/);
-  assert.equal(await page.getByRole("button",{name:"关闭任务摘要"}).count(),0,"desktop summary stays persistent");
+  assert.match(await row.innerText(),/实施/);
+  assert.match(await row.innerText(),/2026/);
+  assert.match(await row.innerText(),/交付已登记/);
+  assert.match(await row.locator("[data-stage-time]").innerText(),/本阶段 未知 · 等待维护者/);
+  // The selected row's facts sit in the right column. Below 1440px the shell starts it closed; once opened it stays.
+  await page.getByRole("button",{name:"展开右栏"}).click();
+  const panel=page.getByRole("complementary",{name:"右栏"});
+  const facts=panel.locator("[data-task-facts]");
+  await facts.getByText("具备发布条件，等待维护者").waitFor();
+  assert.doesNotMatch(await facts.locator('[aria-label="状态与下一步"]').innerText(),/已发布|已历时 0/);
   await row.getByText(/负责职责 · 开发流程与规范负责人/).waitFor({timeout:5000}).catch(async()=>{
     assert.fail(`Task owner label missing: ${await row.innerText()} reads=${JSON.stringify(reads)}`);
   });
-  await page.locator(".leader-work").getByText(/负责 开发流程与规范负责人/).waitFor();
-  assert.match(await row.locator(".task-list-owner").innerText(),/开发流程与规范负责人/);
-  assert.match(await page.getByRole("row").filter({hasText:"逻辑责任者"}).innerText(),/负责职责待核对/);
-  assert.match(await page.getByRole("row").filter({hasText:"未知职责"}).innerText(),/未找到已登记职责|负责职责待核对/);
+  await overview.getByText(/负责 开发流程与规范负责人/).waitFor();
+  assert.match(await row.locator("[data-owner-cell]").innerText(),/开发流程与规范负责人/);
+  assert.match(await main.getByRole("row").filter({hasText:"逻辑责任者"}).innerText(),/负责职责待核对/);
+  assert.match(await main.getByRole("row").filter({hasText:"未知职责"}).innerText(),/未找到已登记职责|负责职责待核对/);
   const initialReads:string[]=await (await fetch(`${base}/__fixture/reads`)).json();
   assert.equal(initialReads.includes("acceptance-owner"),false);
   assert.equal(initialReads.includes(offPageRole),false);
-  await page.getByRole("textbox",{name:"搜索任务（分页读取，范围见下方）"}).fill("跨页任务");
-  await page.getByRole("row").filter({hasText:"跨页任务"}).getByText("跨页职责",{exact:false}).waitFor();
-  assert.equal(await page.locator(".task-selection").count(),1,"the selected summary survives filtering");
-  await page.getByRole("button",{name:"跨页任务",exact:true}).click();
-  await page.locator(".task-selection").waitFor({state:"visible"});
-  await page.getByRole("textbox",{name:"搜索任务（分页读取，范围见下方）"}).fill("澄清分工页待办");
+  // Search lives in the inner rail; the table follows it.
+  const search=page.getByRole("searchbox",{name:"搜索任务"});
+  await search.fill("跨页任务");
+  await main.getByRole("row").filter({hasText:"跨页任务"}).getByText("跨页职责",{exact:false}).waitFor();
+  assert.equal(await facts.count(),1,"the selected task's facts survive filtering");
+  await main.getByRole("button",{name:"跨页任务",exact:true}).click();
+  await panel.locator('[data-task-facts="30000009-0000-4000-8000-000000000009"]').waitFor();
+  await search.fill("澄清分工页待办");
   await row.getByText("开发流程与规范负责人",{exact:false}).waitFor();
-  assert.match(await page.locator(".task-selection-top").innerText(),/不在当前筛选结果中/);
+  assert.match(await facts.innerText(),/不在当前筛选结果中/);
   await row.getByRole("button",{name:"澄清分工页待办",exact:true}).click();
-  await page.locator(".task-selection .task-timing").getByText("具备发布条件，等待维护者").waitFor();
+  await facts.getByText("具备发布条件，等待维护者").waitFor();
+  // 390px: the table scrolls inside its own region; the facts open as a drawer from the page.
   await page.setViewportSize({ width: 390, height: 844 });
-  assert.equal(await page.locator(".task-list-table").evaluate(el=>el.scrollWidth<=el.clientWidth),true);
-  assert.equal(await page.locator(".task-selection .task-timing").isVisible(),true);
+  assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= 390),"the page itself never scrolls sideways");
+  await main.getByRole("button",{name:"所选任务信息"}).click();
+  await page.getByRole("dialog").locator("[data-task-facts]").getByText("具备发布条件，等待维护者").waitFor();
+  await page.keyboard.press("Escape");
+  await page.getByRole("dialog").waitFor({state:"detached"});
+  const reread=main.getByRole("button",{name:"重新读取列表"});
   await fetch(`${base}/__fixture/hold`);
-  await page.getByRole("button",{name:"重新读取列表"}).click();
+  await reread.click();
   for (let i=0;i<30 && await (await fetch(`${base}/__fixture/held`)).text()!=="1";i++) await new Promise(resolve=>setTimeout(resolve,20));
   assert.equal(await (await fetch(`${base}/__fixture/held`)).text(),"1");
   await fetch(`${base}/__fixture/owner?id=${roleB}`);
-  await page.getByRole("button",{name:"重新读取列表"}).click();
+  await reread.click();
   await row.getByText("新职责负责人",{exact:false}).waitFor();
   await fetch(`${base}/__fixture/release`);
   await page.waitForTimeout(100);
   assert.equal(await row.getByText("开发流程与规范负责人",{exact:false}).count(),0);
   await fetch(`${base}/__fixture/fail?value=1`);
-  await page.getByRole("button",{name:"重新读取列表"}).click();
+  await reread.click();
   await row.getByText(/职责暂不可核对/).waitFor();
   assert.equal(await row.getByText("新职责负责人",{exact:false}).count(),0);
   await fetch(`${base}/__fixture/fail?value=0`);
-  await page.getByRole("button",{name:"重新读取列表"}).click();
+  await reread.click();
   await row.getByText("新职责负责人",{exact:false}).waitFor();
   if (process.env.EVOLOOP_TASK_LIST_OWNER_SCREENSHOT) await page.screenshot({path:process.env.EVOLOOP_TASK_LIST_OWNER_SCREENSHOT,fullPage:false});
   await page.setViewportSize({width:1280,height:900});
-  assert.equal(await row.locator(".task-list-owner").evaluate(el=>el.scrollWidth<=el.clientWidth),true);
-  assert.equal(await page.locator(".task-table-scroll").evaluate(el=>el.scrollWidth>el.clientWidth),true,
+  assert.equal(await row.locator("[data-owner-cell]").evaluate(el=>el.scrollWidth<=el.clientWidth),true);
+  assert.equal(await main.locator("[data-task-table]").evaluate(el=>el.scrollWidth>el.clientWidth),true,
     "six-column task table scrolls independently");
-  const mainBox=await page.locator(".task-list-main").boundingBox();
-  const summaryBox=await page.locator(".task-summary").boundingBox();
-  assert.ok(mainBox && summaryBox && summaryBox.x>mainBox.x,"desktop summary stays to the right");
-  await page.locator(".task-column-settings > summary").click();
+  const mainBox=await main.boundingBox();
+  const panelBox=await panel.boundingBox();
+  assert.ok(mainBox && panelBox && panelBox.x>=mainBox.x+mainBox.width-1,"desktop facts stay to the right");
+  await main.locator('summary[aria-label="列设置"]').click();
   await page.getByLabel("固定成果",{exact:true}).check();
-  await page.getByRole("columnheader",{name:"固定成果",exact:true}).waitFor();
+  await main.getByRole("columnheader",{name:"固定成果",exact:true}).waitFor();
   await page.setViewportSize({width:1171,height:635});
   await page.evaluate(()=>scrollTo(0,0));
-  // 1171px keeps both rails (the inner one collapses below 1100px); the content stays beside them.
+  // 1171px keeps both rails (the inner one collapses below 1100px); the work panel stays beside them.
   await page.locator("[data-shell=frame][data-rail=shown]").waitFor();
-  const collapsedBody=await page.locator("#workspace-main").boundingBox();
-  assert.ok(collapsedBody && collapsedBody.y<70 && collapsedBody.width>800,"the content keeps its width beside the rails");
-  const collapsedSummary=await page.locator(".task-summary").boundingBox();
-  const collapsedMain=await page.locator(".task-list-main").boundingBox();
-  assert.ok(collapsedMain && collapsedSummary && collapsedSummary.x>collapsedMain.x,
-    "1171px keeps the task summary beside the table");
+  const collapsedBody=await main.boundingBox();
+  const collapsedPanel=await panel.boundingBox();
+  assert.ok(collapsedBody && collapsedBody.y<70 && collapsedBody.width>450,"the table keeps a usable width beside the rails");
+  assert.ok(collapsedBody && collapsedPanel && collapsedPanel.x>=collapsedBody.x+collapsedBody.width-1,
+    "1171px keeps the task facts beside the table");
   await page.setViewportSize({width:1920,height:1080});
   await page.locator("[data-shell=frame][data-rail=shown]").waitFor();
-  const wideBody=await page.locator("#workspace-main").boundingBox();
-  assert.ok(wideBody && wideBody.y<70 && wideBody.width>1400);
+  const wideBody=await main.boundingBox();
+  assert.ok(wideBody && wideBody.y<70 && wideBody.width>1100);
   if (process.env.EVOLOOP_TASK_LIST_OWNER_DESKTOP_SCREENSHOT) await page.screenshot({path:process.env.EVOLOOP_TASK_LIST_OWNER_DESKTOP_SCREENSHOT,fullPage:false});
   await page.setViewportSize({width:1280,height:900});
   await row.getByRole("button",{name:"澄清分工页待办",exact:true}).click();
-  await page.locator(".task-selection .task-timing").getByText("具备发布条件，等待维护者").waitFor();
+  await facts.getByText("具备发布条件，等待维护者").waitFor();
   await row.getByRole("link",{name:"1 项待关注"}).click({timeout:5000}).catch(async () => {
-    assert.fail(`attention discovery missing: row=${await row.innerText()} status=${await page.locator(".task-attention-list-status").allInnerTexts()} reads=${attentionReads.join(" | ")} errors=${pageErrors.join(" | ")}`);
+    assert.fail(`attention discovery missing: row=${await row.innerText()} reads=${attentionReads.join(" | ")} errors=${pageErrors.join(" | ")}`);
   });
   const detailTiming=page.locator("#task-timing");
   await detailTiming.locator(":scope > summary").click();
@@ -257,8 +268,8 @@ test("Task list resolves only displayed Role owners and rejects stale or failed 
   await page.goto(`${base}/p/${projectId}/work?fresh=attention-narrow`);
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button",{name:"进入",exact:true}).click();
-  await row.getByRole("link",{name:"1 项待关注"}).click({timeout:5000}).catch(async () => {
-    assert.fail(`narrow discovery missing: hash=${await page.evaluate(() => (location.pathname + location.search))} state=${attentionState} reads=${attentionReads.length} link=${JSON.stringify(await row.locator(".task-attention-list-link").evaluateAll(els=>els.map(el=>({html:el.outerHTML,parent:getComputedStyle(el.parentElement!).display}))))} row=${await row.innerText()} body=${(await page.locator("body").innerText()).slice(0,500)} errors=${pageErrors.join(" | ")}`);
+  await page.getByRole("main").getByRole("row").filter({hasText:"澄清分工页待办"}).getByRole("link",{name:"1 项待关注"}).click({timeout:5000}).catch(async () => {
+    assert.fail(`narrow discovery missing: hash=${await page.evaluate(() => (location.pathname + location.search))} state=${attentionState} reads=${attentionReads.length} link=${JSON.stringify(await row.getByRole("link").evaluateAll(els=>els.map(el=>({html:el.outerHTML,parent:getComputedStyle(el.parentElement!).display}))))} row=${await row.innerText()} body=${(await page.locator("body").innerText()).slice(0,500)} errors=${pageErrors.join(" | ")}`);
   });
   await attention.getByText(/旧跟进属于历史 Task 修订/).waitFor();
   await attention.getByLabel("已做什么").fill("窄屏核对当前修订");

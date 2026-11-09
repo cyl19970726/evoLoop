@@ -4,8 +4,8 @@
 import React from "react";
 import { useQueries } from "@tanstack/react-query";
 import type { Task, TaskAttentionItem } from "@evoloop/contracts";
-import { ArrowUpRight, Columns3 } from "lucide-react";
-import { Button, EmptyState, ErrorState, LoadingState, StatusTag, cn } from "@evoloop/ui";
+import { ArrowUpRight, Columns3, RefreshCw } from "lucide-react";
+import { Button, EmptyState, ErrorState, IconButton, LoadingState, StatusTag, cn } from "@evoloop/ui";
 import { ApiError, api, errorText, request } from "../../shared/api";
 import { isRoleOwnerId, readOwnerRole } from "../../shared/ownerRole";
 import { queryKeys, useProjectQuery } from "../../shared/query";
@@ -78,6 +78,12 @@ export function TaskTable({ projectId, list, view, selectedId, onSelect, linkFor
     queryKey: queryKeys.project(projectId, "tasks", "timing", task.id),
     queryFn: () => api().taskTiming(projectId, task.id), retry: false,
   })) });
+  // Business work first; rows whose source is unread, and judgement records, are kept apart (never mixed in).
+  const groups = [
+    { id: list.groups.primaryKind === "unclassified" ? "unclassified" : "business", label: list.groups.primaryKind === "unclassified" ? "已载入任务 · 状态分类暂不可用" : "", note: "", tasks: list.groups.primary },
+    { id: "unknown", label: "来源与状态待核对", note: "状态投影未读全，暂不把这些任务归为业务或判断记录。", tasks: list.groups.unknown },
+    { id: "cognition", label: "判断与接续记录", note: "由正式认知派发关联；这里的本轮结果不改写任务状态。", tasks: list.groups.cognition },
+  ];
   const roleNames = Object.fromEntries(Object.entries(ownerNames).map(([id, value]) => [id, value.title]));
   return <div className="flex flex-col gap-4">
     <PhaseCounts counts={list.index.first?.counts} />
@@ -86,6 +92,7 @@ export function TaskTable({ projectId, list, view, selectedId, onSelect, linkFor
     {attention.data && !attention.data.complete && <p role="status" className="text-caption text-muted-foreground">关注项超过当前已读范围；未显示的任务仍需打开核对。</p>}
     <div className="flex items-center gap-2">
       <p className="flex-1 text-caption text-muted-foreground">{list.loading ? "正在核对当前列表…" : list.observedAt ? `列表读于 ${list.observedAt.toLocaleString("zh-CN")}；回到窗口时自动重读。` : "列表尚未读回。"}</p>
+      <IconButton compact label="重新读取列表" icon={<RefreshCw size={15} />} onClick={list.reread} />
       <details className="relative">
         <summary aria-label="列设置" className="flex cursor-pointer list-none items-center gap-1.5 rounded-full px-3 py-1 text-label text-text-secondary hover:bg-field [&::-webkit-details-marker]:hidden"><Columns3 size={15} aria-hidden="true" />列设置</summary>
         <fieldset className="absolute right-0 z-10 mt-1 flex w-44 flex-col gap-1.5 rounded-lg bg-raised p-3 shadow-md">
@@ -106,9 +113,13 @@ export function TaskTable({ projectId, list, view, selectedId, onSelect, linkFor
           {["任务", "工作类型", "当前进展", "承接者", "创建时间", "最近进展"].map(label => <th key={label} scope="col" className="px-2 py-2 font-medium">{label}</th>)}
           {optionalColumns.filter(column => columns[column.id]).map(column => <th key={column.id} scope="col" className="px-2 py-2 font-medium">{column.label}</th>)}
         </tr></thead>
-        <tbody>{rows.map((task, index) => <TableRow key={task.id} task={task} list={list} projectId={projectId}
-          selected={task.id === selectedId} onSelect={onSelect} linkFor={linkFor} columns={columns} owner={ownerNames[task.owner]}
-          agents={agents} attention={attention.data?.items ?? []} timing={timings[index]} />)}</tbody>
+        {groups.map(group => group.tasks.length > 0 && <tbody key={group.id} data-group={group.id}>
+          {group.label && <tr><th colSpan={6 + optionalColumns.filter(column => columns[column.id]).length} scope="colgroup" className="px-2 pb-1.5 pt-4 text-left text-caption font-medium text-muted-foreground">
+            {group.label} · {group.tasks.length} 项已载入{group.note && <span className="ml-2 font-normal">{group.note}</span>}</th></tr>}
+          {group.tasks.map(task => <TableRow key={task.id} task={task} list={list} projectId={projectId}
+            selected={task.id === selectedId} onSelect={onSelect} linkFor={linkFor} columns={columns} owner={ownerNames[task.owner]}
+            agents={agents} attention={attention.data?.items ?? []} timing={timings[rows.indexOf(task)]} />)}
+        </tbody>)}
       </table>
     </div>}
     {!list.loading && !list.firstError && !rows.length && !list.searching && !list.awaitingAssignments && !list.searchError &&

@@ -12,16 +12,16 @@ import type { MutationContext } from "../../shared/ActionForm";
 import { deliveryTarget } from "../../shared/deliveryPresentation";
 import { isRoleOwnerId, readOwnerRole } from "../../shared/ownerRole";
 import { queryKeys, useProjectQuery } from "../../shared/query";
-import { sessionClient } from "../../shared/sessionClient";
 import { timingDuration, timingStageLabel } from "../../shared/taskTiming";
 import type { TaskSection } from "../../shared/taskNavigation";
 import { phaseStatus, taskStateStatus } from "../../shared/taskStatus";
 import { useContextPanel } from "../../shared/ui/ContextPanel";
 import { date, href } from "../../shared/ui/shared";
+import { readAgent } from "./agentRead";
 import { TaskAgentBlock } from "./TaskAgentBlock";
 import { TaskDocumentPeek } from "./TaskDocumentPeek";
 import { observationResultLabel, observationsForDelivery } from "./observationPresentation";
-import { assignmentSessionKey, currentDelivery, matchingProjection } from "./taskExperience";
+import { assignmentSessionKey, currentDelivery, matchingProjection, matchingTaskDetail } from "./taskExperience";
 import { taskPreviewResponsibility } from "./taskPreviewResponsibility";
 import { taskTimestamp, taskType } from "./taskWorkspacePresentation";
 
@@ -47,24 +47,31 @@ function Fact({ label, children }: { label: string; children: React.ReactNode })
 }
 
 /** The right column for one task. `detail` and `leader` are passed when the page already read them. */
-export function TaskFacts({ context, taskId, detail: given, leader: givenLeader, leaderKnown: givenKnown, linkForTab, heading = false }: {
+export function TaskFacts({ context, taskId, detail: given, leader: givenLeader, leaderKnown: givenKnown, linkForTab, heading = false, outsideFilter = false }: {
   context: MutationContext; taskId: string; detail?: TaskDetail | null; leader?: LeaderWorkTask | null; leaderKnown?: boolean;
-  linkForTab(tab: TaskSection): string; heading?: boolean;
+  linkForTab(tab: TaskSection): string; heading?: boolean; outsideFilter?: boolean;
 }) {
   const projectId = context.projectId;
-  const detailRead = useProjectQuery(projectId, ["task", taskId, "detail"], () => api().task(projectId, taskId), { enabled: given === undefined });
-  const detail = given ?? detailRead.data ?? null;
+  const detailRead = useProjectQuery(projectId, ["task", taskId, "detail"], async () => {
+    const value = await api().task(projectId, taskId);
+    if (!matchingTaskDetail(value, projectId, taskId)) throw new Error("任务响应与所选项目、任务不符");
+    return value;
+  }, { enabled: given === undefined });
+  const detail = given ?? (detailRead.data && matchingTaskDetail(detailRead.data, projectId, taskId)) ?? null;
   const leaderRead = useProjectQuery(projectId, ["task", taskId, "leader"], async () => {
     try { return await api().leaderTask(projectId, taskId); }
     catch (cause) { if (cause instanceof ApiError && cause.status === 404) return null; throw cause; }
   }, { enabled: givenLeader === undefined });
   const leader = givenLeader !== undefined ? givenLeader : leaderRead.data;
   const leaderKnown = givenKnown ?? (givenLeader !== undefined || leaderRead.isSuccess || leaderRead.isError);
-  if (!detail) return detailRead.error
-    ? <ErrorState title="任务信息读取失败" happened={errorText(detailRead.error)} next="可以重新读取，或打开任务查看。" action={<Button size="compact" onClick={() => void detailRead.refetch()}>重新读取</Button>} />
-    : <LoadingState lines={6} label="正在读取任务信息" />;
+  const outside = outsideFilter && <p className="mb-2 rounded-md bg-muted px-3 py-1.5 text-caption text-text-secondary">保留所选任务 · 不在当前筛选结果中</p>;
+  if (!detail) return <div data-ui="" data-task-facts={taskId}>{outside}{detailRead.error
+    ? <ErrorState title="任务信息读取失败" happened={errorText(detailRead.error)} next="可以重新读取，或打开任务查看。"
+      action={<span className="flex gap-2"><Button size="compact" onClick={() => void detailRead.refetch()}>重新读取</Button><Button asChild size="compact" variant="ghost"><a href={linkForTab("overview")}>打开任务</a></Button></span>} />
+    : <LoadingState lines={6} label="正在读取任务信息" />}</div>;
   const projection = matchingProjection(detail.task, leader ?? undefined);
   return <div data-ui="" className="flex flex-col" data-task-facts={taskId}>
+    {outside}
     {heading && <header className="mb-2 flex flex-col gap-1">
       <p className="text-caption text-muted-foreground">{taskType(detail.task.kind)} · 第 {detail.task.version} 版</p>
       <h2 className="text-body font-semibold leading-snug text-foreground">{detail.task.title}</h2>
@@ -86,8 +93,8 @@ function StatusFacts({ context, detail, projection, leaderKnown, leaderStale, li
   const open = task.state === "todo" || task.state === "in_progress";
   const roleRead = useProjectQuery(projectId, ["roles", task.owner], signal => readOwnerRole("", projectId, task.owner, signal), { enabled: isRoleOwnerId(task.owner) });
   const sessionKey = projection ? assignmentSessionKey(projection) : null;
-  const agentRead = useProjectQuery(projectId, ["session-names", sessionKey], signal => sessionClient("", projectId).snapshot(sessionKey!, signal), { enabled: !!sessionKey });
-  const agentName = agentRead.data?.session.profile?.displayName?.trim() || agentRead.data?.session.title || null;
+  const agentRead = useProjectQuery(projectId, ["session-names", sessionKey], signal => readAgent(projectId, sessionKey!, signal), { enabled: !!sessionKey });
+  const agentName = agentRead.data?.profile?.displayName?.trim() || agentRead.data?.title || null;
   const roleName = roleRead.isSuccess ? roleRead.data.proposal.title.trim() : null;
   const pending = detail.impacts.filter(impact => impact.state === "pending").length;
   const timing = projection?.timing;
@@ -182,7 +189,7 @@ function DeliveryFacts({ projectId, detail, linkForTab }: { projectId: string; d
         : <span className="text-text-secondary">尚无本次交付的使用记录；旧记录不沿用。</span>}</Fact>
     </div> : <p className="text-label text-text-secondary">{(detail.deliveries ?? []).length ? "当前修订尚无交付；历史交付不沿用。" : "当前修订尚无交付。运行结束不代替成果。"}</p>}
     {relays.error && <p role="status" className="text-caption text-muted-foreground">验收安排暂未读回：{errorText(relays.error)}</p>}
-    {!!relays.data?.items.length && <div className="flex flex-col gap-1.5" aria-label="验收接力">
+    {!!relays.data?.items?.length && <div className="flex flex-col gap-1.5" aria-label="验收接力">
       <h4 className="text-caption font-medium text-muted-foreground">验收接力</h4>
       {relays.data.items.map(item => <div key={item.relayId} className="rounded-md bg-muted px-3 py-2 text-caption text-text-secondary">
         <p className="font-medium text-foreground">{relayStage[item.stage]} · {item.scopeKey} · {relayState[item.state]}</p>

@@ -113,6 +113,7 @@ export function TaskWorkspace({ context, refresh, active, taskId, selectedRevisi
       <TaskTable projectId={projectId} list={list} view={view} selectedId={selected || null} onSelect={id => setView({ selected: id })} linkFor={linkFor} />
     </div>
     {selected && <ContextPanelContent><TaskFacts key={selected} context={context} taskId={selected} heading linkForTab={tabLink(selected)}
+      outsideFilter={!list.loading && !list.visible.some(task => task.id === selected)}
       {...(list.projections[selected] ? { leader: list.projections[selected], leaderKnown: true } : {})} /></ContextPanelContent>}
   </>;
 }

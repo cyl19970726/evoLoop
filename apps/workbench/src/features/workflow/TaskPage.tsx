@@ -189,6 +189,7 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
   const [reading, setReading] = useState(false);
   const historyRequestRef = useRef(0);
   const leaderRequestRef = useRef(0);
+  const mismatchRef = useRef("");
   useEffect(() => { ++historyRequestRef.current; setHistorical(null);
     setTab(selectedRevision ? "history" : taskSectionFromHash(currentPath(), projectId, id) ?? "overview");
     setDetail(null); setBasisDocuments({}); setLeaderTask(null); setLeaderTaskError(""); setResponsibleName(null);
@@ -236,8 +237,13 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
       if (!leaderProjectionMatchesTask(value, {
         id, version: detail.task.version, currentRevisionId: detail.task.currentRevisionId,
       })) {
-        setLeaderTaskError("任务或工作安排已在读取期间变化；正在重新核对。");
-        setReadVersion(current => current + 1);
+        // One automatic recheck per task version; a projection that still lags is reported, not polled forever.
+        const seen = `${id}:${detail.task.version}:${detail.task.currentRevisionId}`;
+        if (mismatchRef.current !== seen) {
+          mismatchRef.current = seen;
+          setLeaderTaskError("任务或工作安排已在读取期间变化；正在重新核对。");
+          setReadVersion(current => current + 1);
+        } else setLeaderTaskError("当前工作安排还停在任务的旧版本上，暂不显示；可稍后重新读取当前任务。");
         return;
       }
       setLeaderTask(value);
@@ -323,10 +329,10 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
       {sessionReturn && <a className="text-label text-primary hover:underline" href={sessionReturn.href}>← 返回【{sessionReturn.title}】</a>}
       {viewSwitch}
       <span className="flex-1" />
-      {/* Below 1100px the right column is a drawer: its facts open from here. */}
-      {panel && <Button size="compact" className="min-[1100px]:hidden" onClick={() => panel.setOpen(true)}>任务信息</Button>}
       <span className="text-caption text-muted-foreground">{reading ? "正在核对当前任务…" : observedAt ? `读于 ${date(observedAt.toISOString())}` : "尚未读回"}</span>
       <Button size="compact" variant="ghost" onClick={() => setReadVersion(value => value + 1)}>重新读取当前任务</Button>
+      {/* Below 1100px the right column is a drawer: its facts open from here. */}
+      {panel && <Button size="compact" className="min-[1100px]:hidden" onClick={() => panel.setOpen(true)}>任务信息</Button>}
     </div>
     {selectedRevision && <Notice title={<>正在查看固定历史修订</>}>页首是当前任务；“历史”里单独列出当时的正文、验收与依据。<a className="ml-1 text-primary hover:underline" href={href(projectId, "task", id)}>返回当前任务</a></Notice>}
     <header className="flex flex-col gap-2" data-task-header="">
@@ -342,7 +348,7 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
     {leaderTaskError && <Notice tone="error">{leaderTaskError}</Notice>}
     {detail.task.legacyDecision && <Notice tone="waiting" title={legacyDecisionLabel(detail.task.legacyDecision)}
       action={<Button size="compact" onClick={() => selectTab("history")}>查看历史</Button>}>当前状态为“{taskStateLabel[detail.task.state]}”，请先核对旧判断与理由，再决定是否推进。旧判断理由：{detail.task.legacyDecision.reason}</Notice>}
-    {error && <Notice tone="error">当前任务回读失败：{error}。页首保留上次读回的内容，不能当作当前状态；编辑草稿仍留在本页。</Notice>}
+    {error && <Notice tone="error">当前任务回读失败：{error}。页首保留上次读回的内容，不能视为当前状态；编辑草稿仍留在本页。</Notice>}
     <Tabs value={tab} onValueChange={value => selectTab(value as TaskTab)}>
       <TabsList id={tabsId} aria-label="任务详情" className="max-w-full overflow-x-auto">
         {taskTabs.map(item => <TabsTrigger key={item.id} value={item.id} id={tabId(item.id)} aria-controls={panelId(item.id)}>

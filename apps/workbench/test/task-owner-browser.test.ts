@@ -19,7 +19,7 @@ const queueId = "20000008-0000-4000-8000-000000000008";
 const stamp = "2026-10-25T00:00:00.000Z";
 const page = {items:[],nextCursor:null};
 
-test("Task owner resolves one real Role and only verified bound Session links at 390px", {skip:!playwrightModule && "Set EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE"}, async t => {
+test("Task owner resolves one real Role and only verified bound agent links at 390px", {skip:!playwrightModule && "Set EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE"}, async t => {
   const {chromium} = (await import(pathToFileURL(playwrightModule!).href)).default;
   let roleFailure = false, roleReads = 0, roleListReads = 0;
   let holdNextRole = false, heldRoles = 0, releaseHeldRole: (()=>void)|null = null;
@@ -98,28 +98,30 @@ test("Task owner resolves one real Role and only verified bound Session links at
   await pageBrowser.goto(`${base}/p/${projectId}/tasks/${taskId}`);
   await pageBrowser.getByLabel("访问令牌").fill("fixture-token");
   await pageBrowser.getByRole("button",{name:"进入",exact:true}).click();
-  await pageBrowser.locator(".task-provenance > summary").click();
-  await pageBrowser.locator(".task-role-history > summary").click();
+  // 负责职责与同职责的其他智能体 sits at the end of 进展与讨论 on the task's overview.
+  await pageBrowser.locator(`[data-page-key="task:${taskId}:::"] .task-provenance > summary`).click();
   const owner=pageBrowser.locator(`[data-page-key="task:${taskId}:::"] .task-owner-meta`);
   await owner.getByRole("link",{name:"开发流程职责"}).waitFor({timeout:5000}).catch(async () => {
     assert.fail(`Role label missing: ${await pageBrowser.locator("body").innerText()} ${pageErrors.join(" | ")}`);
   });
-  await owner.getByRole("link",{name:/已登记 Session 20000006（就绪）/}).waitFor({timeout:5000}).catch(async()=>assert.fail(`Bound Session missing: ${await owner.innerText()} ${pageErrors.join(" | ")}`));
-  assert.match(await owner.innerText(),/职责绑定不表示此任务正在该会话运行/);
+  await owner.getByRole("link",{name:/已登记的智能体 20000006（就绪）/}).waitFor({timeout:5000}).catch(async()=>assert.fail(`Bound Session missing: ${await owner.innerText()} ${pageErrors.join(" | ")}`));
+  assert.match(await owner.innerText(),/职责绑定不表示此任务正由该智能体运行/);
   assert.match(await owner.innerText(),/部分绑定记录未能核对/);
   assert.equal(await owner.getByRole("link",{name:/20000007/}).count(),0);
   assert.equal(await owner.evaluate(element=>element.scrollWidth<=element.clientWidth),true);
-  assert.equal(await pageBrowser.locator(".task-page-header").evaluate(element=>element.scrollWidth<=element.clientWidth),true);
+  const header=pageBrowser.locator(`[data-page-key="task:${taskId}:::"] [data-task-header]`);
+  assert.equal(await header.evaluate(element=>element.scrollWidth<=element.clientWidth),true);
+  // At 1440 the task body keeps a full reading width and the facts sit in the right column at its default width.
   await pageBrowser.setViewportSize({width:1440,height:1024});
-  const narrativeWidth=(await pageBrowser.locator(`[data-page-key="task:${taskId}:::"] .task-narrative`).boundingBox())?.width ?? 0;
-  const evidenceWidth=(await pageBrowser.locator(`[data-page-key="task:${taskId}:::"] .task-evidence-rail`).boundingBox())?.width ?? 0;
+  const narrativeWidth=(await pageBrowser.locator(`[data-page-key="task:${taskId}:::"] [data-task-acceptance]`).boundingBox())?.width ?? 0;
+  const factsWidth=(await pageBrowser.getByRole("complementary",{name:"右栏"}).boundingBox())?.width ?? 0;
   assert.ok(narrativeWidth>=640,`1440 Task narrative is too narrow: ${narrativeWidth}px`);
-  assert.ok(evidenceWidth<=300.5,`1440 Task evidence rail exceeds its content cap: ${evidenceWidth}px`);
+  assert.ok(factsWidth>=280 && factsWidth<=560.5,`1440 right column outside 280–560px: ${factsWidth}px`);
   await pageBrowser.setViewportSize({width:390,height:844});
   if (process.env.EVOLOOP_TASK_OWNER_SCREENSHOT)
-    await pageBrowser.locator(".task-page-header").screenshot({path:process.env.EVOLOOP_TASK_OWNER_SCREENSHOT});
+    await header.screenshot({path:process.env.EVOLOOP_TASK_OWNER_SCREENSHOT});
   assert.ok((await (await fetch(`${base}/__fixture/reads`)).json()).roleReads >= 1,"Task owner must verify the exact Role record");
-  assert.equal(await owner.getByRole("link",{name:/已登记 Session 20000006/}).getAttribute("href"),
+  assert.equal(await owner.getByRole("link",{name:/已登记的智能体 20000006/}).getAttribute("href"),
     `/p/${projectId}/sessions?session=${encodeURIComponent(`owned:${sessionId}`)}`,
     "the verified owned Session opens through the sole Sessions directory route");
   await pageBrowser.evaluate(({projectId,taskId})=>{location.hash=`/p/${projectId}/tasks/${taskId}`;},{projectId,taskId});
@@ -134,7 +136,6 @@ test("Task owner resolves one real Role and only verified bound Session links at
   assert.doesNotMatch(await owner.innerText(),/过期列表职责/);
   await pageBrowser.evaluate(({projectId,otherTaskId})=>{location.hash=`/p/${projectId}/tasks/${otherTaskId}`;},{projectId,otherTaskId});
   await pageBrowser.locator(`[data-page-key="task:${otherTaskId}:::"] .task-provenance > summary`).click();
-  await pageBrowser.locator(`[data-page-key="task:${otherTaskId}:::"] .task-role-history > summary`).click();
   const unknown=pageBrowser.locator(`[data-page-key="task:${otherTaskId}:::"] .task-owner-meta`);
   await unknown.getByText(/未找到已登记职责/).waitFor();
   assert.match(await unknown.innerText(),new RegExp(unknownOwner));

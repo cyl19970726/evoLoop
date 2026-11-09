@@ -18,7 +18,7 @@ export function InboxIndex({ context }: { context: MutationContext; refresh: num
   const pending = (impacts.data ?? []).filter(item => item.state === "pending");
   const taskIds = [...new Set(pending.map(item => item.taskId))];
   const titles = useQueries({ queries: taskIds.map(id => ({ queryKey: queryKeys.project(projectId, "task", id, "detail"), queryFn: () => api().task(projectId, id), retry: false })) });
-  const title = (taskId: string) => titles[taskIds.indexOf(taskId)]?.data?.task.title;
+  const title = (taskId: string) => { const data = titles[taskIds.indexOf(taskId)]?.data; return data?.task?.id === taskId ? data.task.title : undefined; };
   const todo = taskListRoute(projectId, { ...defaultTaskListView, filter: "todo" });
   return <div className="content work-index">
     <div className="page-title-row"><div><h1>待判断与复核</h1><p className="lede">阅读分配给我的验收和依据变化，按当前状态决定下一步。</p></div>

@@ -11,6 +11,7 @@ import { useProjectQuery } from "../../shared/query";
 import { sessionClient } from "../../shared/sessionClient";
 import { date } from "../../shared/ui/shared";
 import { sessionHref } from "../sessions";
+import { readAgent } from "./agentRead";
 import { agentFacts, assignmentKey } from "./taskAgentPresentation";
 import { useCommand } from "./useCommand";
 
@@ -21,7 +22,7 @@ async function bindableAgents(projectId: string, role: string, signal: AbortSign
   const client = sessionClient("", projectId);
   let page = await client.directory({}, signal), items = page.items, pages = 1;
   while (page.nextCursor && pages < directoryPageLimit) { page = await client.directory({ cursor: page.nextCursor }, signal); items = [...items, ...page.items]; pages++; }
-  return { items: items.filter(item => item.roles.some(entry => entry.id === role) && item.membership === "current" && item.capabilities.observe.available), truncated: !!page.nextCursor };
+  return { items: items.filter(item => item.roles?.some(entry => entry.id === role) && item.membership === "current" && item.capabilities?.observe.available), truncated: !!page.nextCursor };
 }
 
 export function TaskAgentBlock({ context, task, leader, leaderKnown, runtimeHref }: {
@@ -35,8 +36,8 @@ export function TaskAgentBlock({ context, task, leader, leaderKnown, runtimeHref
   });
   const assignment = assignmentRead.data ?? null;
   const key = assignment ? assignmentKey(assignment) : null;
-  const agentRead = useProjectQuery(projectId, ["session-names", key], signal => sessionClient("", projectId).snapshot(key!, signal), { enabled: !!key });
-  const agent = agentRead.data?.session;
+  const agentRead = useProjectQuery(projectId, ["session-names", key], signal => readAgent(projectId, key!, signal), { enabled: !!key });
+  const agent = agentRead.data;
   const agentName = agent?.profile?.displayName?.trim() || agent?.title || "";
   const [binding, setBinding] = React.useState(false);
   const facts = agentFacts(task, assignment, leader?.latestRun, leaderKnown);

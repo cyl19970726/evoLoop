@@ -205,7 +205,7 @@ test("built Task page selects the current Loop, preserves manual history and fit
   const exactRunLink = currentTaskPage.getByRole("link",{name:"核对这次 Run →"});
   await exactRunLink.waitFor();
   assert.equal(await exactRunLink.getAttribute("href"),`/p/${projectId}/tasks/${taskId}?tab=runtime&run=${runId}`);
-  assert.equal(await currentTaskPage.getByRole("link",{name:"查看对应 Session →"}).getAttribute("href"),
+  assert.equal(await currentTaskPage.getByRole("link",{name:"查看对应智能体 →"}).getAttribute("href"),
     `/p/${projectId}/sessions?session=${encodeURIComponent(`owned:${taskId}`)}`);
   await exactRunLink.focus();
   await exactRunLink.press("Enter");

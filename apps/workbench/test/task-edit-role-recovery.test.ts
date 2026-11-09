@@ -46,8 +46,8 @@ test("Task actions expose planning, dependency and exact-position Leader review"
     context: reviewContext, detail, leader, mode: "actions",
   }));
   assert.match(html, /设置计划、截止与优先级/);
-  assert.match(html, /设置前置 Task 依赖/);
-  assert.match(html, /记录 Leader 处理决定/);
+  assert.match(html, /设置前置任务依赖/);
+  assert.match(html, /记录统筹处理决定/);
   assert.match(html, /已核对当前工作/);
 });
 

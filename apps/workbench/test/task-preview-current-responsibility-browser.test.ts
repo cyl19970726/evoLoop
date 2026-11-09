@@ -38,7 +38,7 @@ const projection = { kind: "task", taskId, version: 2, currentRevisionId: revisi
     completedAt: null, observedAt: stamp }, timing,
   actionKey: `task:${taskId}:v2:awaiting_acceptance:7` };
 
-test("ordinary Task row, right preview and full detail use current QA responsibility", {
+test("ordinary Task row, right-column facts and the full task use current QA responsibility", {
   skip: !modulePath && "Set EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE after building the workbench",
 }, async t => {
   const { chromium } = (await import(pathToFileURL(modulePath!).href)).default;
@@ -106,34 +106,39 @@ test("ordinary Task row, right preview and full detail use current QA responsibi
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button", { name: "进入", exact: true }).click();
 
-  const row = page.locator(".work-status-section").getByRole("row").filter({ hasText: title });
+  // Table view (center): the row's 承接者 is the concrete assignment; its next action is the current projection's.
+  const row = page.locator('main tbody[data-group="business"]').getByRole("row").filter({ hasText: title });
   await row.getByRole("button", { name: title }).waitFor();
-  await row.getByText("待验收").waitFor();
-  await row.locator(".task-list-owner").getByText("功能开发").waitFor();
-  assert.match(await row.locator(".task-list-owner").innerText(), /已接受/);
-  await page.locator(".task-column-settings > summary").click();
+  await row.getByText("待验收", { exact: true }).waitFor();
+  await row.locator("[data-owner-cell]").getByText("功能开发").waitFor();
+  assert.match(await row.locator("[data-owner-cell]").innerText(), /已接受/);
+  const columns = page.locator('main summary[aria-label="列设置"]');
+  await columns.click();
   await page.getByLabel("下一动作", { exact: true }).check();
-  assert.match(await row.locator(".task-list-next").innerText(), /QA 核对当前交付/);
-  await page.locator(".task-column-settings > summary").click();
+  assert.match(await row.locator("[data-next-cell]").innerText(), /QA 核对当前交付/);
+  await columns.click();
 
+  // Selecting the row shows its facts in the right column, which names the current QA responsibility.
   await row.getByRole("button", { name: title }).click();
-  const preview = page.getByRole("complementary", { name: "所选任务摘要" });
-  await preview.getByText("QA Session · 当前验收负责人").waitFor();
-  const previewNext = preview.getByRole("region", { name: "当前进展与下一责任" });
-  assert.match(await previewNext.innerText(), /待验收[\s\S]*QA 核对当前交付[\s\S]*QA Session/);
-  assert.doesNotMatch(await previewNext.innerText(), /功能开发|开发 Session/);
-  const mainBox = await page.locator(".task-list-main").boundingBox();
-  const previewBox = await preview.boundingBox();
-  assert.ok(mainBox && previewBox && previewBox.x > mainBox.x, "preview is to the right of the list");
+  const panel = page.getByRole("complementary", { name: "右栏" });
+  const facts = panel.locator(`[data-task-facts="${taskId}"]`);
+  const next = facts.locator('[aria-label="状态与下一步"]');
+  await next.getByText("QA Session · 当前验收负责人").waitFor();
+  assert.match(await next.innerText(), /待验收[\s\S]*QA 核对当前交付[\s\S]*QA Session/);
+  assert.doesNotMatch(await next.innerText(), /功能开发|开发 Session/);
+  const mainBox = await page.getByRole("main").boundingBox();
+  const panelBox = await panel.boundingBox();
+  assert.ok(mainBox && panelBox && panelBox.x >= mainBox.x + mainBox.width - 1, "the facts are to the right of the table");
   assert.deepEqual(await page.evaluate(() => [innerWidth, innerHeight]), [1440, 900]);
-  await page.screenshot({ path: "/private/tmp/evoloop-preview-after.png", fullPage: false });
 
-  await preview.getByRole("link", { name: "查看完整任务" }).click();
-  const detailNext = page.locator(".task-detail-result .task-result-facts");
+  // The full task shows the same facts beside its body.
+  await facts.getByRole("link", { name: "打开任务" }).click();
+  await page.getByRole("heading", { level: 1, name: title }).waitFor();
+  const detailNext = page.getByRole("complementary", { name: "右栏" }).locator(`[data-task-facts="${taskId}"] [aria-label="状态与下一步"]`);
   await detailNext.getByText("QA Session · 当前验收负责人").waitFor({ timeout: 5000 }).catch(async () => {
     assert.fail(`detail QA missing: url=${page.url()} detail=${await detailNext.innerText().catch(() => "absent")} body=${(await page.locator("body").innerText()).slice(0,1200)} errors=${pageErrors.join(" | ")}`);
   });
-  assert.match(await detailNext.innerText(), /下一责任[\s\S]*QA 核对当前交付[\s\S]*QA Session/);
+  assert.match(await detailNext.innerText(), /下一步[\s\S]*QA 核对当前交付[\s\S]*QA Session/);
   assert.doesNotMatch(await detailNext.innerText(), /功能开发|开发 Session/);
   assert.equal(pageErrors.length, 0, pageErrors.join(" | "));
 });

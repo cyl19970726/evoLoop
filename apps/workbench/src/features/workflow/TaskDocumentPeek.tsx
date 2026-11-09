@@ -11,9 +11,9 @@ export function TaskDocumentPeek({ projectId, documentId, revisionId, relation }
   projectId: string; documentId: string; revisionId: string | null; relation: string;
 }) {
   const documentRead = useProjectQuery(projectId, ["document-detail", documentId], () => api().document(projectId, documentId));
-  const shownRevision = revisionId ?? documentRead.data?.current.id ?? null;
+  const shownRevision = revisionId ?? documentRead.data?.current?.id ?? null;
   const revisionRead = useProjectQuery(projectId, ["document-revision", documentId, shownRevision], () => api().documentRevision(projectId, documentId, shownRevision!), { enabled: !!shownRevision });
-  const document = documentRead.data?.document;
+  const document = documentRead.data?.document?.id === documentId ? documentRead.data.document : undefined;
   const revision = revisionRead.data;
   const fixed = !!revisionId;
   const moved = fixed && document && document.currentRevisionId !== revisionId;

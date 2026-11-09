@@ -66,8 +66,16 @@ export function useTaskList(projectId: string, view: TaskListView, actorId: stri
     return next;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [statusReads.map(read => read.dataUpdatedAt).join(",")]);
-  const failedStatus = statusReads.find(read => read.error);
-  const statusProblem: StatusProblem | null = failedStatus ? { kind: "unavailable", diagnostic: errorText(failedStatus.error) }
+  // A failed page stays reported while it is read again (the query forgets the error when a retry starts) and
+  // until its statuses actually arrive.
+  const statusErrors = useRef(new Map<string, string>());
+  statusReads.forEach((read, index) => {
+    const page = String(pages.data?.pageParams[index] ?? "first");
+    if (read.error) statusErrors.current.set(page, errorText(read.error));
+    else if (read.data) statusErrors.current.delete(page);
+  });
+  const failedStatus = [...statusErrors.current.values()][0];
+  const statusProblem: StatusProblem | null = failedStatus ? { kind: "unavailable", diagnostic: failedStatus }
     : statusReads.some(read => read.data) && tasks.some(task => !Object.hasOwn(statuses, task.id)) && statusReads.every(read => !read.isFetching || read.data)
       ? { kind: "partial", diagnostic: partialStatusDiagnostic } : null;
   const [statusRetrying, setStatusRetrying] = useState(false);

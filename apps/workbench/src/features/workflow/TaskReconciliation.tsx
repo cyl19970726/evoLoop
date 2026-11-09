@@ -7,7 +7,7 @@ import { Badge, CollapsibleRow, StatusTag } from "@evoloop/ui";
 import { api, errorText } from "../../shared/api";
 import { leaderSessionDisplayName, leaderWorkItemPresentation, loadLeaderWorkStatuses } from "../../shared/leaderWorkLoad";
 import { queryKeys, useProjectQuery } from "../../shared/query";
-import { sessionClient } from "../../shared/sessionClient";
+import { readAgent } from "./agentRead";
 import { phaseOrder, phaseStatus } from "../../shared/taskStatus";
 import { timingDate, timingDuration, timingStageLabel } from "../../shared/taskTiming";
 import { href } from "../../shared/ui/shared";
@@ -31,13 +31,13 @@ export function useAgentNames(projectId: string, keys: readonly string[]) {
   const unique = [...new Set(keys)];
   const reads = useQueries({ queries: unique.map(key => ({
     queryKey: queryKeys.project(projectId, "session-names", key),
-    queryFn: ({ signal }: { signal: AbortSignal }) => sessionClient("", projectId).snapshot(key, signal),
+    queryFn: ({ signal }: { signal: AbortSignal }) => readAgent(projectId, key, signal),
     retry: false,
   })) });
   return Object.fromEntries(unique.map((key, index) => {
     const read = reads[index]!;
     return [key, read.error ? { name: null, problem: errorText(read.error) } : read.data
-      ? { name: leaderSessionDisplayName(read.data.session), problem: leaderSessionDisplayName(read.data.session) ? null : "未登记名称" } : { name: null, problem: null }];
+      ? { name: leaderSessionDisplayName(read.data), problem: leaderSessionDisplayName(read.data) ? null : "未登记名称" } : { name: null, problem: null }];
   })) as Record<string, { name: string | null; problem: string | null }>;
 }
 
