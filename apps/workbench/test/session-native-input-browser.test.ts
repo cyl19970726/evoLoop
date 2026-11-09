@@ -128,7 +128,7 @@ test("native question stays bound to its Session and one exact operation, then d
   await page.getByRole("button", { name: "会话详情" }).click();
   await page.getByText("已结束的原生提问").waitFor();
   assert.equal(await question.count(), 0, "closed question leaves the active area");
-  await page.getByRole("button", { name: "会话详情" }).click();
+  await page.keyboard.press("Escape"); // close the right drawer
 
   await fetch(`${base}/__fixture/set?state=pending&wrongSession=1`);
   await page.getByRole("button", { name: "重新读取" }).click();
