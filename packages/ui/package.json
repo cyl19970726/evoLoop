@@ -1,0 +1,12 @@
+{
+  "name": "@evoloop/ui",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "evoLoop workbench design system: tokens, Tailwind theme and shared components.",
+  "exports": {
+    "./tokens.css": "./src/tokens.css",
+    "./theme.css": "./src/theme.css"
+  },
+  "files": ["src"]
+}
