@@ -290,6 +290,7 @@ function WorkspacePages({ route, context, refresh, operations }: { route: Route;
     if (r.section === "sessions") return r.session
       ? <SessionWorkspace context={context} refresh={refresh} sessionKey={r.session} active={active} />
       : <ArrangementPage context={context} refresh={refresh} />;
+    if (r.section === "schedules") return <SchedulingPanel context={context} refresh={refresh} />;
     if (r.section === "overview") return <ProjectSummary token={token} projectId={projectId} refresh={refresh} active={active} />;
     if (r.section === "settings") return <ProjectSettings context={context} refresh={refresh} />;
     if (r.section === "connectors") return <ConnectorPage context={context} />;
