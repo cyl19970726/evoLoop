@@ -58,12 +58,17 @@ test("Task timing names the actual waiting party and does not present the owner 
     publication: { at: null, source: "unknown" }, latestEffectiveProgress: null,
     executionActivity: null, observedAt: "2026-11-04T13:01:00Z" };
   const ownerHtml = renderToStaticMarkup(createElement(TaskTiming, { timing: timing as never }));
-  assert.match(ownerHtml, /等待 任务负责 Role/);
-  assert.doesNotMatch(ownerHtml, /项目 Leader/);
+  assert.match(ownerHtml, /等待 任务负责职责/);
+  assert.doesNotMatch(ownerHtml, /项目统筹|Leader|Role|Session/);
+  assert.doesNotMatch(ownerHtml, new RegExp(owner), "the role's raw ID belongs to the full-identifier layer");
   const consumerHtml = renderToStaticMarkup(createElement(TaskTiming, { timing: {
     ...timing, current: { ...timing.current, waitingFor: { kind: "consumer", id: "qa-actor" } },
   } as never }));
-  assert.match(consumerHtml, /等待 消费者 · qa-actor/);
+  assert.match(consumerHtml, /等待 指定验收者 · qa-actor/);
+  for (const [kind, words] of [["session", "智能体"], ["leader", "项目统筹"], ["publisher", "发布维护者"], ["user", "指定的人"]] as const) {
+    const html = renderToStaticMarkup(createElement(TaskTiming, { timing: { ...timing, current: { ...timing.current, waitingFor: { kind, id: null } } } as never }));
+    assert.match(html, new RegExp(`等待 ${words}`), kind);
+  }
 });
 
 test("Task detail exposes current plan, responsibility, consumer, source and next action", () => {

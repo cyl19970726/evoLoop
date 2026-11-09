@@ -160,7 +160,7 @@ function ContextRail(props: AppShellProps & { space: Space; sessionState: Sessio
         <span aria-hidden="true" className="flex size-[30px] shrink-0 items-center justify-center rounded-[9px] bg-accent font-semibold text-accent-foreground">{projectInitial(props.projectTitle)}</span>
         <span className="flex min-w-0 flex-1 flex-col">
           <span className="truncate font-semibold" title={props.projectTitle}>{props.projectTitle || "正在读取项目…"}</span>
-          <span className="text-caption text-muted-foreground">本机 · 所在机器待接入</span>
+          <span className="text-caption text-muted-foreground">切换项目</span>
         </span>
         <ChevronsUpDown size={14} aria-hidden="true" className="shrink-0 text-muted-foreground" />
       </a>

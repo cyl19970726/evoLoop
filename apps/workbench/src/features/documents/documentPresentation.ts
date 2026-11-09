@@ -82,9 +82,10 @@ export function markdownSource(body: string | null, original: { data?: Original;
   return { state: "reading" };
 }
 
+// Address rules: `/sessions?session=` is one agent (智能体); `/runtime`, with or without a session, is 分工与运行.
 const sourceLabels: Partial<Record<Section, string>> = {
   documents: "文档列表", document: "文档", task: "任务", work: "任务列表", "create-task": "任务", inbox: "待我验收",
-  sessions: "智能体", runtime: "智能体", knowledge: "知识空间", overview: "总览", schedules: "日程", evaluations: "评价",
+  sessions: "智能体", runtime: "分工与运行", knowledge: "知识空间", overview: "总览", schedules: "日程", evaluations: "评价",
   journey: "目标与阶段", discussions: "分工讨论", reviews: "组织复盘", roles: "职责", repository: "仓库规范",
 };
 
@@ -92,7 +93,6 @@ const sourceLabels: Partial<Record<Section, string>> = {
 export function returnSourceLabel(path: string): string {
   const route = parseRoute(path);
   if (!route.projectId) return "项目列表";
-  if (route.section === "runtime" && !route.session) return "分工与运行";
   return sourceLabels[route.section] ?? "上一页";
 }
 

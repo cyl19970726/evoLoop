@@ -3,8 +3,8 @@ import assert from "node:assert/strict";
 import type { KnowledgeCapabilities, KnowledgeGraph, KnowledgeSummary } from "@evoloop/contracts/knowledge";
 import {
   capabilityFacts, coverageText, emptyFilter, emptyKnowledgeText, filterKnowledge, graphStatusText, historyLabel, isFiltered,
-  knowledgeDirectory, label, pageRelations, publishOutcome, readingStanding, reconcileOutcome, relationTypeLabel, sourceReview,
-  topicMembers, validityLabel,
+  knowledgeDirectory, label, listProblemText, pageRelations, publishOutcome, readingStanding, reconcileOutcome, relationTypeLabel,
+  sourceHint, sourceReview, topicMembers, validityLabel,
 } from "../src/features/knowledge/knowledgePresentation.ts";
 
 const latin = /[A-Za-z_]{3,}/;
@@ -94,4 +94,42 @@ test("publish and reconcile answers keep the service's reason out of the main te
   assert.equal(reconcileOutcome(null).settled, false);
   assert.equal(reconcileOutcome({ status: "unknown", operationId: "op", reason: "x" }).settled, false);
   assert.equal(reconcileOutcome({ status: "published", operationId: "op", revision: "r" }).settled, true);
+});
+
+test("reconciling a retracted source says what was found without calling it a publish", () => {
+  const found = reconcileOutcome({ status: "published", operationId: "op", revision: "r" }, "retract");
+  assert.equal(found.settled, true);
+  assert.doesNotMatch(`${found.title}${found.detail}`, /发布/);
+  const unchanged = reconcileOutcome({ status: "conflict", operationId: "op", currentRevision: null }, "retract");
+  assert.equal(unchanged.settled, true);
+  assert.doesNotMatch(`${unchanged.title}${unchanged.detail}`, /发布/);
+  assert.equal(reconcileOutcome({ status: "published", operationId: "op", revision: "r" }, "publish").title, "已核到发布记录");
+  assert.equal(reconcileOutcome(null, "retract").settled, false);
+});
+
+test("a list note says 上次读回 only for what was read before, and offers no retry to an unconfigured backend", () => {
+  const failed = listProblemText({ kind: "failed", text: "服务暂时出错", detail: "upstream 503" }, "知识列表");
+  assert.doesNotMatch(failed.text, /上次读回/, "a list never read is not 上次读回");
+  assert.equal(failed.retry, "重试");
+  assert.match(listProblemText({ kind: "stale", text: "服务暂时出错", detail: null }, "知识列表").text, /上次读回的，当前待核对/);
+  const page = listProblemText({ kind: "page", text: "服务暂时出错", detail: null }, "知识列表");
+  assert.match(page.text, /后面一页.*已载入的仍可查看/);
+  assert.equal(page.retry, "重试这一页");
+  const unconfigured = listProblemText({ kind: "unconfigured", text: "当前项目尚未配置外置知识后端", detail: null }, "知识列表");
+  assert.equal(unconfigured.retry, null);
+  assert.doesNotMatch(unconfigured.text, /重试|上次读回/);
+  assert.equal(listProblemText({ kind: "cursor", text: "", detail: null }, "知识列表").retry, null);
+  for (const kind of ["failed", "stale", "page", "cursor", "unconfigured"] as const)
+    assert.doesNotMatch(listProblemText({ kind, text: "服务暂时出错", detail: null }, "知识列表").text, /。。|：。/, kind);
+});
+
+test("提出候选 never says there are no sources when the source list was not read back", () => {
+  assert.equal(sourceHint(undefined, { error: "", stale: false }), "正在读取可选来源…");
+  const unread = sourceHint(undefined, { error: "服务暂时出错", stale: false });
+  assert.doesNotMatch(unread, /没有可读取的来源|没有来源/);
+  assert.match(unread, /没有读回/);
+  assert.match(sourceHint([], { error: "", stale: false }), /已读范围内没有可读取的来源/);
+  assert.match(sourceHint([{ state: "withdrawn" }], { error: "服务暂时出错", stale: true }), /上次读回/);
+  assert.match(sourceHint([{ state: "reachable" }], { error: "服务暂时出错", stale: true }), /上次读回/);
+  assert.equal(sourceHint([{ state: "reachable" }], { error: "", stale: false }), "选一份可读取的过程文档版本。");
 });

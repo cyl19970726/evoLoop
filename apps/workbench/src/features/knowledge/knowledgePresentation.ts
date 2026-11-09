@@ -137,7 +137,18 @@ export function sourceReview(sources: readonly { state: string }[]): string | nu
   return null;
 }
 
-export interface Outcome { tone: "info" | "waiting" | "error"; title: string; detail?: string; diagnostic?: string }
+/** The source list as read: `error` when the latest read failed, `stale` when what is shown was read before that. */
+export interface SourcesRead { error: string; stale: boolean }
+
+/** What the source field of 提出候选 says: reading, not read back (never "没有来源"), kept from before, or what is there. */
+export function sourceHint(sources: readonly { state: string }[] | undefined, read: SourcesRead): string {
+  if (sources === undefined) return read.error ? "可选来源这次没有读回，暂时不能保存；重新读取后再选。" : "正在读取可选来源…";
+  const reachable = sources.filter(source => source.state === "reachable").length;
+  if (!reachable) return read.stale ? "上次读回的范围内没有可读取的来源；重新读取后再选。" : "已读范围内没有可读取的来源，暂时不能保存。";
+  return read.stale ? "选一份可读取的过程文档版本（上次读回的列表，当前待核对）。" : "选一份可读取的过程文档版本。";
+}
+
+export interface Outcome { tone: "info" | "waiting" | "error"; title: string; detail?: string; diagnostic?: string | undefined }
 
 /** What a publish answer means for the reader. A service reason goes to the diagnostic layer only. */
 export function publishOutcome(result: PublishResult): Outcome {
@@ -146,13 +157,37 @@ export function publishOutcome(result: PublishResult): Outcome {
   return { tone: "error", title: "发布结果未知", detail: "没有确认是否已经写入。请按原操作核对结果，不要重新发布。", diagnostic: result.reason };
 }
 
-/** What a reconcile answer means. `null` is "the outside record does not list it yet", not a failure. */
-export function reconcileOutcome(result: PublishResult | null): Outcome & { settled: boolean } {
+/**
+ * What a reconcile answer means. `null` is "the outside record does not list it yet", not a failure. A retract is
+ * reconciled through the same record as a publish, so its answer is said without naming a publish.
+ */
+export function reconcileOutcome(result: PublishResult | null, kind: "publish" | "retract" = "publish"): Outcome & { settled: boolean } {
   if (!result) return { settled: false, tone: "waiting", title: "外部记录里还没有这次操作", detail: "保留回执，稍后再核对。" };
   if (result.status === "unknown") return { settled: false, tone: "waiting", title: "结果仍未知", detail: "保留回执，稍后再核对。", diagnostic: result.reason };
+  if (kind === "retract") return result.status === "published"
+    ? { settled: true, tone: "info", title: "已核到这次操作的记录", detail: "外部记录已经写入，正在读回当前状态。" }
+    : { settled: true, tone: "waiting", title: "已核到这次操作没有写入", detail: "外部记录没有因这次操作改变，正在读回当前状态。" };
   return result.status === "published"
     ? { settled: true, tone: "info", title: "已核到发布记录", detail: "正在读回当前状态。" }
     : { settled: true, tone: "waiting", title: "已核到发布冲突", detail: "当前版没有被覆盖。" };
 }
+
+/** Why the list or the service could not be read, said so that an unconfigured backend is not offered a retry. */
+export type ListProblem = { kind: "failed" | "stale" | "page" | "cursor" | "unconfigured"; text: string; detail: string | null };
+
+/**
+ * The note above a list after a failed read: the first read (nothing was read, so nothing is called 上次读回), a reread
+ * (上次读回，当前待核对), or the next page only (这一页没读到; the loaded pages are still what was read).
+ */
+export function listProblemText(problem: ListProblem, what: string): { text: string; retry: string | null } {
+  if (problem.kind === "unconfigured") return { text: `${problem.text}，暂时无法读取${what}。`, retry: null };
+  if (problem.kind === "cursor") return { text: `${what}的分页位置重复，后面的页面没有读完整。已载入的仍可查看。`, retry: null };
+  if (problem.kind === "page") return { text: `后面一页${what}这次没有读回：${problem.text}。已载入的仍可查看。`, retry: "重试这一页" };
+  if (problem.kind === "stale") return { text: `${what}这次没有读回：${problem.text}。下面是上次读回的，当前待核对。`, retry: "重试" };
+  return { text: `${what}这次没有读回：${problem.text}。`, retry: "重试" };
+}
+
+/** A service that is not configured for this project is a setting, not a passing failure. */
+export const notConfiguredCode = "KNOWLEDGE_NOT_CONFIGURED";
 
 export const receiptTitle = (kind: "publish" | "retract") => kind === "publish" ? "发布结果待核对" : "来源撤回结果待核对";

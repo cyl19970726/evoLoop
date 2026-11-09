@@ -33,8 +33,10 @@ export function Fact({ label: name, children }: { label: string; children: React
 export const quiet = "text-label text-text-secondary";
 const link = "text-label font-medium text-primary outline-none hover:underline focus-visible:shadow-[var(--focus-ring)] [overflow-wrap:anywhere]";
 
-export function KnowledgeFacts({ projectId, reading, previous, sourceTitles }: {
+export function KnowledgeFacts({ projectId, reading, previous, stale = false, sourceTitles }: {
   projectId: string; reading: KnowledgeReading; previous: boolean; sourceTitles: ReadonlyMap<string, string>;
+  /** A reread of this page failed: the facts below are 上次读回，当前待核对. */
+  stale?: boolean;
 }) {
   const { page, current, history, graph, titles } = reading;
   const standing = readingStanding(page.revision, current !== page.revision, current);
@@ -52,6 +54,7 @@ export function KnowledgeFacts({ projectId, reading, previous, sourceTitles }: {
   const historyNote = !readingCurrent && <p className="mb-2 text-caption text-muted-foreground">这一版不是当前版：只列它自己登记的关系，指向它的关系只对当前版读取。</p>;
   return <ContextPanelContent><div data-ui="" role="region" aria-label="来源、反例与版本" aria-busy={previous || undefined}>
     {previous && <RefreshingIndicator label="正在读取所选页面；下面仍是上一页" className="mb-2" />}
+    {stale && <p role="status" className="mb-2 rounded-md bg-warning-soft px-3 py-2 text-caption text-text-secondary">这一页这次没有重新读回；下面是上次读回的，当前待核对。</p>}
     <div className={cn("transition-opacity duration-150", previous && "opacity-60")}>
       <Block title="来源">
         {page.sources.length ? <ul className="flex flex-col gap-2.5">{page.sources.map((source, index) => {

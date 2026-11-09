@@ -9,10 +9,12 @@ export const timingStageLabel: Record<LeaderWorkTimingStage, string> = {
   awaiting_publication: "具备发布条件，等待维护者", rework: "返工中", blocked: "受阻",
   closed: "已关闭", cancelled: "已取消", unknown: "阶段未知",
 };
+/** Who the current stage waits on, in the words of shared/workPresentation.ts responsibleKind. */
 export const waitingKindLabel: Record<LeaderWorkTaskTiming["current"]["waitingFor"]["kind"], string> = {
-  session: "Session", consumer: "消费者", leader: "项目 Leader", role: "任务负责 Role", publisher: "维护者",
-  user: "用户", task: "前置任务", unknown: "责任未知",
+  session: "智能体", consumer: "指定验收者", leader: "项目统筹", role: "任务负责职责", publisher: "发布维护者",
+  user: "指定的人", task: "前置任务", unknown: "责任未知",
 };
+const recordId = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export function timingDate(value: string | null | undefined): string {
   if (!value) return "未知";
   const time = new Date(value);
@@ -27,9 +29,10 @@ export function timingDuration(value: number | null | undefined): string {
   const rest = minutes % 60;
   return [days && `${days} 天`, hours && `${hours} 小时`, rest && `${rest} 分钟`].filter(Boolean).join(" ");
 }
+/** The waiting party by kind; an actor name follows it, a record's raw ID does not (it belongs to 完整标识). */
 export function timingWaitingFor(timing: LeaderWorkTaskTiming): string {
   const waiting = timing.current.waitingFor;
-  return `${waitingKindLabel[waiting.kind]}${waiting.id ? ` · ${waiting.id}` : ""}`;
+  return `${waitingKindLabel[waiting.kind] ?? "责任未知"}${waiting.id && !recordId.test(waiting.id) ? ` · ${waiting.id}` : ""}`;
 }
 export function TaskTiming({ timing, detailed = false }: { timing?: LeaderWorkTaskTiming | null; detailed?: boolean }) {
   if (!timing) return <p className="task-timing-unavailable">阶段时间尚未读回；请重新读取本任务。</p>;

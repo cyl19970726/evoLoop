@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Document } from "@evoloop/contracts";
 import type { LeaderWorkDocument } from "@evoloop/contracts/work-index";
-import { documentLifecycleMatches, mergeDocumentPage, readDocumentRange, validDocumentPage } from "../src/features/documents/documentListModel.ts";
+import { documentLifecycleMatches, validDocumentPage } from "../src/features/documents/documentListModel.ts";
+import { pagedItems } from "../src/shared/query.ts";
 
 const document: Document = { projectId: "project-a", id: "document-a", title: "原件", version: 2,
   currentRevisionId: "revision-2", adoptedRevisionId: "revision-1", kind: "report", status: "published" };
@@ -17,11 +18,11 @@ test("Document paging rejects cross-project and repeating-cursor responses", () 
   assert.doesNotThrow(() => validDocumentPage({ items: [document], nextCursor: "next" }, "project-a", "current"));
 });
 
-test("Document pagination keeps existing rows and adds new IDs once", () => {
-  const next = mergeDocumentPage({ items: [document], nextCursor: "cursor" },
-    { items: [{ ...document, title: "重复" }, { ...document, id: "document-b" }], nextCursor: null });
-  assert.deepEqual(next.items.map(item => item.title), ["原件", "原件"]);
-  assert.equal(next.nextCursor, null);
+test("Document pagination lists each ID once, in the order first seen", () => {
+  const items = pagedItems([{ items: [document] }, { items: [{ ...document, title: "重复" }, { ...document, id: "document-b" }] }],
+    (item: Document) => item.id);
+  assert.deepEqual(items.map(item => item.id), ["document-a", "document-b"]);
+  assert.equal(items[0]?.title, "重复", "a later page's copy of the same document is the newer one");
 });
 
 test("lifecycle text is shown only for the exact Document version and publication state", () => {
@@ -29,36 +30,4 @@ test("lifecycle text is shown only for the exact Document version and publicatio
   assert.equal(documentLifecycleMatches(document, { ...lifecycle, version: 3 }), false);
   assert.equal(documentLifecycleMatches(document, { ...lifecycle, adoptedRevisionId: "revision-2" }), false);
   assert.equal(documentLifecycleMatches(document, { ...lifecycle, documentId: "document-b" }), false);
-});
-
-test("refresh restores manually loaded pages before publishing a replacement and rejects a failed range", async () => {
-  const first = Array.from({length:50}, (_, i) => ({...document,id:`first-${i}`}));
-  const second = Array.from({length:50}, (_, i) => ({...document,id:`second-${i}`}));
-  const cursors: (string | undefined)[] = [];
-  const refreshed = await readDocumentRange(async cursor => {
-    cursors.push(cursor);
-    return cursor ? {items:second,nextCursor:"third"} : {items:first,nextCursor:"second"};
-  }, "project-a", 100);
-  assert.deepEqual(cursors,[undefined,"second"]);
-  assert.equal(refreshed.page.items.length,100);
-  assert.equal(refreshed.page.items[99]?.id,"second-49");
-  assert.equal(refreshed.page.nextCursor,"third");
-  assert.equal(refreshed.pages,2);
-  await assert.rejects(readDocumentRange(async cursor => {
-    if (cursor) throw new Error("后页不可读");
-    return {items:first,nextCursor:"second"};
-  },"project-a",100),/后页不可读/);
-});
-
-test("a range read stops at its page limit and leaves the next cursor for a later load", async () => {
-  const cursors: (string | undefined)[] = [];
-  const short = await readDocumentRange(async cursor => {
-    cursors.push(cursor);
-    const at = Number(cursor ?? 0);
-    return { items: Array.from({length:10}, (_, i) => ({...document,id:`page-${at}-${i}`})), nextCursor: String(at + 1) };
-  }, "project-a", 500, 3);
-  assert.deepEqual(cursors, [undefined, "1", "2"]);
-  assert.equal(short.pages, 3);
-  assert.equal(short.page.items.length, 30);
-  assert.equal(short.page.nextCursor, "3");
 });

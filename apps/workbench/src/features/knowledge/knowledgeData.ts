@@ -1,22 +1,23 @@
 // Knowledge reads as project queries (shared/query.ts): every key starts with the project, the signed-in identity
-// is used without passing a token, and writes elsewhere (context.onChanged) reread them.
+// is used without passing a token, and writes elsewhere (context.onChanged) reread them. The page and candidate lists
+// read one more page on 载入更多; a failed page or reread keeps what was read.
 import type { KnowledgeCandidateSummary, KnowledgeSummary } from "@evoloop/contracts/knowledge";
 import { useQueryClient } from "@tanstack/react-query";
-import { knowledgeClient, type SourceDocument } from "../../shared/knowledgeClient";
-import { queryKeys, useProjectQuery } from "../../shared/query";
-import { readKnowledgePage, readPagesTo } from "./knowledgeRead";
+import { knowledgeClient } from "../../shared/knowledgeClient";
+import { queryKeys, useProjectList, useProjectQuery } from "../../shared/query";
+import { readKnowledgePage } from "./knowledgeRead";
 
 /** Requests and writes for one project; without a token argument they use the signed-in identity. */
 export const knowledgeApi = (projectId: string) => knowledgeClient("", projectId);
 
-export function useKnowledgeIndex(projectId: string, pageDepth: number, candidateDepth: number) {
+export function useKnowledgeIndex(projectId: string) {
   const capabilities = useProjectQuery(projectId, ["knowledge", "capabilities"], () => knowledgeApi(projectId).capabilities());
-  const pages = useProjectQuery(projectId, ["knowledge", "pages", pageDepth],
-    () => readPagesTo(cursor => knowledgeApi(projectId).pages(cursor), pageDepth, (item: KnowledgeSummary) => item.knowledgeId), { keepPrevious: true });
-  const candidates = useProjectQuery(projectId, ["knowledge", "candidates", candidateDepth],
-    () => readPagesTo(cursor => knowledgeApi(projectId).candidates(cursor), candidateDepth, (item: KnowledgeCandidateSummary) => item.candidateId), { keepPrevious: true });
-  const sources = useProjectQuery(projectId, ["knowledge", "sources"],
-    () => readPagesTo(cursor => knowledgeApi(projectId).sources(cursor), 1, (item: SourceDocument) => item.documentId));
+  const pages = useProjectList(projectId, ["knowledge", "pages"], cursor => knowledgeApi(projectId).pages(cursor),
+    (item: KnowledgeSummary) => item.knowledgeId);
+  const candidates = useProjectList(projectId, ["knowledge", "candidates"], cursor => knowledgeApi(projectId).candidates(cursor),
+    (item: KnowledgeCandidateSummary) => item.candidateId);
+  // The sources a candidate may cite: the first page (50 adopted process documents).
+  const sources = useProjectQuery(projectId, ["knowledge", "sources"], () => knowledgeApi(projectId).sources());
   return { capabilities, pages, candidates, sources };
 }
 

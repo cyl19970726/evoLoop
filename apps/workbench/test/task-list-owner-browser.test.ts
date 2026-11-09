@@ -236,8 +236,8 @@ test("Task list resolves only displayed Role owners and rejects stale or failed 
   const attention=page.locator(".task-attention-panel");
   await attention.getByText(/旧跟进属于历史 Task 修订/).waitFor();
   assert.match(await attention.innerText(),/2 项已关注/);
-  assert.match(await attention.innerText(),/等待方 消费者 · 历史消费者/);
-  assert.match(await attention.innerText(),/等待方 维护者/);
+  assert.match(await attention.innerText(),/等待方 指定验收者 · 历史消费者/);
+  assert.match(await attention.innerText(),/等待方 发布维护者/);
   await attention.getByLabel("已做什么").fill("核对固定产物与发布责任");
   await attention.getByLabel("跟进理由").fill("当前修订已具备交接条件");
   await attention.getByLabel("登记具备发布条件，交给维护者").check();
@@ -267,7 +267,7 @@ test("Task list resolves only displayed Role owners and rejects stale or failed 
   await attention.getByRole("button",{name:"记录已解决"}).click();
   await attention.getByText("1 项已关注").waitFor();
   // The panel rereads right after a write; wait for the historical item instead of sampling the text once.
-  await attention.getByText(/等待方 消费者 · 历史消费者/).waitFor();
+  await attention.getByText(/等待方 指定验收者 · 历史消费者/).waitFor();
   await fetch(`${base}/__fixture/reset-attention`);
   await page.goto(`${base}/p/${projectId}/work?fresh=attention-narrow`);
   await page.getByLabel("访问令牌").fill("fixture-token");

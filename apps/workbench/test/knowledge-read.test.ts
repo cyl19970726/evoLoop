@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import type { KnowledgeCapabilities, KnowledgeGraph, KnowledgeRevision } from "@evoloop/contracts/knowledge";
-import { readKnowledgePage, readPagesTo, serviceState, titleKey } from "../src/features/knowledge/knowledgeRead.ts";
+import { readKnowledgePage, serviceState, titleKey } from "../src/features/knowledge/knowledgeRead.ts";
 import { knowledgeAvailability } from "../src/features/knowledge/availability.ts";
 
 const caps: KnowledgeCapabilities = { backendVersion: null, backendReachable: true, fixedRevisionRead: "adapter_verified",
@@ -23,19 +23,9 @@ test("the service counts as readable only with its page index, and a failed rere
   assert.deepEqual(serviceState(q(undefined, false, true), q(undefined)), { standing: "failed", capabilities: null });
   // Capabilities alone, without the index, are still reading.
   assert.deepEqual(serviceState(q(caps), q(undefined, true)), { standing: "reading", capabilities: null });
-});
-
-test("reading several pages stops at the requested depth and refuses a repeated cursor", async () => {
-  const book: Record<string, { items: Array<{ id: string }>; nextCursor: string | null }> = {
-    "": { items: [{ id: "a" }, { id: "b" }], nextCursor: "2" },
-    "2": { items: [{ id: "b" }, { id: "c" }], nextCursor: "3" },
-    "3": { items: [{ id: "d" }], nextCursor: null },
-  };
-  const read = async (cursor?: string) => book[cursor ?? ""]!;
-  assert.deepEqual(await readPagesTo(read, 1, item => item.id), { items: [{ id: "a" }, { id: "b" }], nextCursor: "2" });
-  assert.deepEqual(await readPagesTo(read, 2, item => item.id), { items: [{ id: "a" }, { id: "b" }, { id: "c" }], nextCursor: "3" });
-  assert.deepEqual((await readPagesTo(read, 9, item => item.id)).nextCursor, null);
-  await assert.rejects(readPagesTo(async cursor => ({ items: [], nextCursor: cursor ?? "loop" }), 5, () => ""), /分页游标重复/);
+  // A list that was never read is not 上次读回, even when the capabilities were read.
+  assert.deepEqual(serviceState(q(caps), q(undefined, false, true)), { standing: "failed", capabilities: null });
+  assert.deepEqual(serviceState(q(caps, false, true), q(undefined, false, true)), { standing: "failed", capabilities: null });
 });
 
 const projectId = "p1";

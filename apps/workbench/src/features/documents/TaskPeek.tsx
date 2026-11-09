@@ -24,7 +24,7 @@ export function TaskPeek({ projectId, reference, documentTitle }: { projectId: s
     <p className="rounded-md bg-muted px-3 py-2 text-label text-text-secondary">
       这项任务把《{documentTitle}》作为{referenceText(reference.relations)}。</p>
     {task.isPending && <LoadingState lines={3} label="正在读取任务" />}
-    {task.isError && <ErrorState title="任务没有读回" happened={readProblem(task.error, "这项任务")} next="可以在中间打开任务再看。" />}
+    {task.isError && <ErrorState title="任务没有读回" happened={`${readProblem(task.error, "这项任务")}。`} next="可以在中间打开任务再看。" />}
     {current && <div className="flex flex-col gap-2 text-label">
       <p><span className="block text-caption text-muted-foreground">完成条件</span><span className="mt-0.5 block whitespace-pre-wrap [overflow-wrap:anywhere]">{current.acceptance || "未写明"}</span></p>
       <p><span className="block text-caption text-muted-foreground">当前版本</span><span className="mt-0.5 block">第 {current.version} 版</span></p>

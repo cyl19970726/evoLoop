@@ -10,7 +10,7 @@ import { ContextRailContent } from "../../shared/ui/ContextRail";
 import { ReadingSpaceSwitch } from "../../shared/ui/ReadingSpaceSwitch";
 import { knowledgeHref } from "./knowledgeRoute";
 import {
-  coverageText, emptyKnowledgeText, label, pageTypeLabel, pageTypes, validityLabel, type KnowledgeFilter,
+  coverageText, emptyKnowledgeText, label, listProblemText, pageTypeLabel, pageTypes, validityLabel, type KnowledgeFilter, type ListProblem,
 } from "./knowledgePresentation";
 
 const select = "h-8 min-w-0 rounded-md bg-field px-2 text-label text-foreground outline-none focus-visible:shadow-[var(--focus-ring)]";
@@ -35,7 +35,19 @@ export function KnowledgeFilters({ filter, update, layout = "rail" }: { filter: 
 export interface DirectoryList {
   topics: KnowledgeSummary[]; pages: KnowledgeSummary[]; members: KnowledgeSummary[]; openTopicId: string | null;
   loaded: number; matched: number; filtered: boolean; more: boolean; fullRead: boolean;
-  reading: boolean; checking: boolean; error: string; loadMore(): void; reread(): void;
+  reading: boolean; checking: boolean; loadingMore: boolean; problem: ListProblem | null; loadMore(): void; reread(): void;
+}
+
+/** The note above a list that was not (fully) read, with the retry it allows (none for an unconfigured backend). */
+export function ListProblemNote({ problem, what, onReread, onLoadMore, className }: {
+  problem: ListProblem; what: string; onReread(): void; onLoadMore(): void; className?: string;
+}) {
+  const note = listProblemText(problem, what);
+  return <div role="alert" className={cn("rounded-md bg-danger-soft px-3 py-2 text-caption text-text-secondary", problem.kind === "unconfigured" && "bg-warning-soft", className)}>
+    {note.text}
+    {note.retry && <button type="button" className="ml-1 text-primary underline" onClick={problem.kind === "page" ? onLoadMore : onReread}>{note.retry}</button>}
+    {problem.detail && <details className="mt-1"><summary className="cursor-pointer">诊断信息</summary><code className="break-all font-mono">{problem.detail}</code></details>}
+  </div>;
 }
 
 export function KnowledgeDirectory({ projectId, list, selectedId, compact = false }: { projectId: string; list: DirectoryList; selectedId: string | null; compact?: boolean }) {
@@ -46,12 +58,12 @@ export function KnowledgeDirectory({ projectId, list, selectedId, compact = fals
   </li>;
   const empty = emptyKnowledgeText({ filtered: list.filtered, more: list.more, fullRead: list.fullRead });
   const heading = cn("px-3 pb-1 pt-2 text-caption text-muted-foreground", compact && "px-1");
+  // A list never read says only that; one kept from before or missing its next page still shows what was read.
+  const unread = !!list.problem && (list.problem.kind === "failed" || list.problem.kind === "unconfigured");
   return <div className="flex flex-col gap-1">
-    {list.error && <p role="alert" className="mx-1 rounded-md bg-danger-soft px-3 py-2 text-caption text-text-secondary">
-      列表这次没有读回：{list.error}。{list.loaded ? "下面是上次读回的，当前待核对。" : ""}
-      <button type="button" className="ml-1 text-primary underline" onClick={list.reread}>重试</button></p>}
-    {list.reading && !list.error && <p role="status" className="mx-1 text-caption text-muted-foreground">正在读取知识页…</p>}
-    {!list.reading && !list.error && list.matched === 0 && <div className="mx-1 rounded-md bg-muted px-3 py-2.5 text-caption text-text-secondary">
+    {list.problem && <ListProblemNote problem={list.problem} what="知识列表" onReread={list.reread} onLoadMore={list.loadMore} className="mx-1" />}
+    {list.reading && !list.problem && <p role="status" className="mx-1 text-caption text-muted-foreground">正在读取知识页…</p>}
+    {!list.reading && !unread && list.matched === 0 && <div className="mx-1 rounded-md bg-muted px-3 py-2.5 text-caption text-text-secondary">
       <p className="font-medium text-foreground">{empty.title}</p><p className="mt-0.5">{empty.reason}</p></div>}
     {list.topics.length > 0 && <nav aria-label="专题目录" className="flex flex-col">
       <span className={heading}>专题 · {list.topics.length}</span>
@@ -65,9 +77,10 @@ export function KnowledgeDirectory({ projectId, list, selectedId, compact = fals
       <ul className="flex flex-col gap-0.5">{list.pages.map(item => row(item))}</ul>
     </nav>}
     <div className={cn("mx-1 mt-1 flex flex-col gap-1.5 text-caption text-muted-foreground", compact && "mx-0")}>
-      {!list.reading && <span>{coverageText({ loaded: list.loaded, matched: list.matched, filtered: list.filtered, more: list.more })}</span>}
+      {!list.reading && !unread && <span>{coverageText({ loaded: list.loaded, matched: list.matched, filtered: list.filtered, more: list.more })}</span>}
       {list.checking && <RefreshingIndicator label="正在核对列表" />}
-      {list.more && <Button variant="secondary" size="compact" className="self-start" disabled={list.checking} onClick={list.loadMore}>载入更多</Button>}
+      {list.loadingMore && <RefreshingIndicator label="正在载入下一页" />}
+      {list.more && list.problem?.kind !== "page" && <Button variant="secondary" size="compact" className="self-start" disabled={list.checking || list.loadingMore} onClick={list.loadMore}>载入更多</Button>}
     </div>
   </div>;
 }

@@ -59,6 +59,8 @@ export function ActionForm({ context, title, fields, build, validateCommand, sen
   const [readBaseline, setReadBaseline] = useState(saved?.baseline ?? context.draftBaseline);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+  // The service's original answer when the message says it in other words (诊断信息).
+  const [detail, setDetail] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
   const [stale, setStale] = useState(false);
   const [draftSaved, setDraftSaved] = useState(false);
@@ -73,7 +75,7 @@ export function ActionForm({ context, title, fields, build, validateCommand, sen
   async function submit(event: FormEvent) {
     event.preventDefault();
     if (busy || !allowed || context.blocked || stale || baselineChanged) return;
-    setMessage(""); setFailed(false);
+    setMessage(""); setDetail(null); setFailed(false);
     let command: SubmittableCommand;
     try {
       const candidate = { ...build(values), projectId: context.projectId, operationId: crypto.randomUUID() };
@@ -90,7 +92,7 @@ export function ActionForm({ context, title, fields, build, validateCommand, sen
       const result = sendCommand ? await sendCommand(command) : await api(context.token).command(command as Command);
       context.onKnown(command.operationId);
       const outcome = resultOutcome(result);
-      setMessage(outcome.message); setFailed(outcome.failed); setStale(outcome.stale);
+      setMessage(outcome.message); setDetail(outcome.detail ?? null); setFailed(outcome.failed); setStale(outcome.stale);
       if (outcome.applied && result.status === "applied") {
         if (draftKey) drafts.delete(draftKey);
         setDirty(false);
@@ -99,7 +101,7 @@ export function ActionForm({ context, title, fields, build, validateCommand, sen
     } catch (cause) {
       if (!isUnconfirmed(cause)) context.onKnown(command.operationId);
       const outcome = errorOutcome(cause);
-      setMessage(outcome.message); setFailed(true);
+      setMessage(outcome.message); setDetail(outcome.detail ?? null); setFailed(true);
       if (outcome.stale) setStale(true);
     } finally { setBusy(false); }
   }
@@ -135,7 +137,7 @@ export function ActionForm({ context, title, fields, build, validateCommand, sen
     {fields.some(field => field.advanced) && <details className="workflow-detail"><summary>高级选项</summary>{fields.filter(field => field.advanced).map(renderField)}</details>}
     {!allowed && <Notice>当前身份没有{review ? "审阅" : "写入"}权限。</Notice>}
     {context.blocked && <Notice>本项目仍有结果未确认的操作，请先核对上方回执。</Notice>}
-    {message && <Notice error={failed}>{message}</Notice>}
+    {message && <Notice error={failed}>{message}{detail && <details><summary>诊断信息</summary><code>{detail}</code></details>}</Notice>}
     {(stale || baselineChanged) && <div className="notice error"><p>当前版本或固定指针已经变化。输入仍保留，不能按新版本直接提交；请先保存完整草稿，再核对当前基线。</p>
       <div className="actions"><button type="button" onClick={() => void copyDraft()}>复制当前草稿</button>
         <button type="button" disabled={!draftSaved} onClick={() => {

@@ -5,7 +5,7 @@ import React, { useContext, useEffect } from "react";
 import type { Document } from "@evoloop/contracts";
 import type { LeaderWorkDocument } from "@evoloop/contracts/work-index";
 import { Button, EmptyState, ErrorState, LoadingState, Notice, RefreshingIndicator, StatusTag, cn } from "@evoloop/ui";
-import { api } from "../../shared/api";
+import { api, errorDiagnostic } from "../../shared/api";
 import { loadLeaderDocumentsForIds } from "../../shared/leaderWorkLoad";
 import { useProjectQuery } from "../../shared/query";
 import { href } from "../../shared/routes";
@@ -34,7 +34,7 @@ function useDocumentUsage(projectId: string, documents: readonly Document[], sta
   };
   const complete = !!usage.data?.complete && documents.every(document => !!matches(document));
   return { matches, checking: usage.isFetching, partial: !usage.isFetching && ids.length > 0 && !complete,
-    error: usage.error ? readProblem(usage.error, "文档用途与关联工作") : "" };
+    error: usage.error ? readProblem(usage.error, "文档用途与关联工作") : "", diagnostic: usage.error ? errorDiagnostic(usage.error) : "" };
 }
 
 export function DocumentTable({ projectId, list, state, update, toolbar }: {
@@ -56,11 +56,15 @@ export function DocumentTable({ projectId, list, state, update, toolbar }: {
   const empty = emptyListText({ filtered: list.filtered, more: list.more });
   return <section aria-label="过程文档" aria-busy={list.loading || list.checking} className="flex flex-col gap-3">
     {toolbar}
-    {list.error && <ErrorState title="列表本次没有读回" happened={list.error} previousContentKept={list.items.length > 0}
-      next="可以重试；已显示的行只供核对，不能当作当前结果。" action={<Button size="compact" onClick={() => void list.reread()}>重试</Button>} />}
+    {list.error && <ErrorState title="列表本次没有读回" happened={`${list.error}。`} previousContentKept={list.stale}
+      next={list.stale ? "可以重试；已显示的行只供核对，不能当作当前结果。" : "可以重试；没有读回之前不能判断有哪些文档。"}
+      diagnostics={list.errorDetail ?? undefined} action={<Button size="compact" onClick={() => void list.reread()}>重试</Button>} />}
+    {list.pageError && <ErrorState title="后面一页没有读回" happened={`${list.pageError}。`}
+      next="已显示的行是读到的内容；后面的文档还没读到，可以只重试这一页。" diagnostics={list.errorDetail ?? undefined}
+      action={list.more ? <Button size="compact" disabled={list.checking} onClick={list.loadMore}>重试这一页</Button> : undefined} />}
     {list.searchLimited && <Notice tone="waiting">搜索已自动读到 {list.items.length} 项的上限，结果可能不完整；可以在表格下方继续载入。</Notice>}
     {usage.partial && <Notice tone="waiting" title="用途与关联任务没有完整读回">没有资料的行显示为“待核对”，不代表没有引用。
-      {usage.error && <details className="mt-1 text-caption"><summary className="cursor-pointer">诊断信息</summary>{usage.error}</details>}</Notice>}
+      {usage.error && <details className="mt-1 text-caption"><summary className="cursor-pointer">诊断信息</summary>{usage.diagnostic}</details>}</Notice>}
     {list.loading && !list.error ? <LoadingState lines={5} label="正在读取文档" />
       : !list.visible.length && !list.error ? <EmptyState title={empty.title} reason={empty.reason}
         action={list.filtered ? <Button size="compact" onClick={() => update({ query: initialListState.query, kind: initialListState.kind, status: initialListState.status })}>清除筛选</Button> : undefined} />
@@ -105,7 +109,7 @@ export function DocumentTable({ projectId, list, state, update, toolbar }: {
         {list.checking ? <RefreshingIndicator label={state.query.trim() ? "正在搜索后续页面；结果尚未完整" : "正在核对列表；已显示的是上次读到的内容"} />
           : list.observedAt && <span>列表读于 {list.observedAt.toLocaleString("zh-CN")}</span>}
       </span>
-      {list.more && <Button size="compact" disabled={list.checking} onClick={list.loadMore}>载入更多</Button>}
+      {list.more && !list.pageError && <Button size="compact" disabled={list.checking} onClick={list.loadMore}>载入更多</Button>}
     </div>
   </section>;
 }
