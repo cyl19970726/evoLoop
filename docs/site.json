@@ -73,6 +73,11 @@
       "group": "前端文档"
     },
     {
+      "path": "docs/frontend/pages/journey.md",
+      "title": "目标与阶段",
+      "group": "前端文档"
+    },
+    {
       "path": "docs/frontend/pages/documents.md",
       "title": "过程文档",
       "group": "前端文档"

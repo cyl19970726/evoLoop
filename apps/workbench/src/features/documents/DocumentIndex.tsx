@@ -12,7 +12,7 @@ import { DocumentTable } from "./DocumentTable";
 import { kindLabel } from "./documentPresentation";
 import { useDocumentListState } from "./documentListState";
 import { useDocumentList } from "./useDocumentList";
-import { useRereadOnReturn } from "./useRereadOnReturn";
+import { useRereadOnReturn } from "../../shared/ui/rereadOnReturn";
 import { UploadDocument } from "./UploadDocument";
 
 export function DocumentIndex({ context }: { context: MutationContext }) {

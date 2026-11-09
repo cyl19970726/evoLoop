@@ -306,7 +306,7 @@ test("isolated Chromium follows complete Task pages for every status and TaskDet
 });
 
 const builtWorkbench=fileURLToPath(new URL("../../workbench/dist/",import.meta.url));
-test("built WorkIndex and JourneyBoard read every listed Task through the guarded context",
+test("built task list and 目标与阶段 read through the guarded context",
   {skip:!modulePath || !existsSync(join(builtWorkbench,"index.html"))},async t=>{
   const projectId="11111111-1111-4111-8111-111111111111";
   const taskId="22222222-2222-4222-8222-222222222222";
@@ -326,6 +326,15 @@ test("built WorkIndex and JourneyBoard read every listed Task through the guarde
   const base=`/api/projects/${projectId}`;
   const first=`${base}/tasks?limit=50`,second=`${first}&cursor=${taskAt(50)}`;
   const firstDocumentPage=`${base}/documents?limit=50`;
+  // 目标与阶段 reads each task's stage, phase and next responsibility from the work index, closed tasks included.
+  const journeyWork=`${base}/work-management/index?view=tasks&limit=50&includeClosed=true`;
+  const journeyWorkNext=`${base}/work-management/index?view=tasks&limit=50&cursor=index-two&includeClosed=true`;
+  const projection=(item:ReturnType<typeof task>)=>({kind:"task",taskId:item.id,version:1,currentRevisionId:item.currentRevisionId,
+    workChangeSequence:1,title:item.title,taskKind:null,taskState:"todo",phase:"unassigned",nextAction:"Assign",
+    responsible:{kind:"leader",id:"leader",label:"leader"},assignment:null,latestRun:null,delivery:null,pendingImpactCount:0,
+    queueHold:null,goal:null,stage:null,plan:null,dependencies:[],dependencyVersion:0,review:null,
+    dates:{createdAt:"2026-11-09T00:00:00.000Z",businessChangedAt:"2026-11-09T00:00:00.000Z",startedAt:null,completedAt:null,
+      observedAt:"2026-11-09T00:00:00.000Z"},timing:null,actionKey:`task:${item.id}`});
   const secondDocumentPage=`${firstDocumentPage}&cursor=${taskAt(5050)}`;
   const status=(items:ReturnType<typeof task>[])=>`${base}/orchestration/work-status?taskIds=${items.map(item=>item.id).join(",")}`;
   // The task list persists its initial preview selection in the URL. Pin that
@@ -370,6 +379,11 @@ test("built WorkIndex and JourneyBoard read every listed Task through the guarde
         dispatchState:null,unsettledRunState:null,hasClosure:false,readyForAcceptance:false,deliveryId:null}))});
     }
     if(path===`${base}/goals?limit=50`)return json({items:[],nextCursor:null});
+    // The service pages the index by 50, as for any other reader.
+    if(path===journeyWork)return json({items:firstTasks.map(projection),nextCursor:"index-two",total:57,counts:{},
+      changeSequence:1,observedAt:"2026-11-09T00:00:00.000Z",partial:false});
+    if(path===journeyWorkNext)return json({items:secondTasks.map(projection),nextCursor:null,total:57,counts:{},
+      changeSequence:1,observedAt:"2026-11-09T00:00:00.000Z",partial:false});
     if(path===`${base}/impacts` || path===`${base}/stages`)return json([]);
     const detail=/^\/api\/projects\/([0-9a-f-]{36})\/tasks\/([0-9a-f-]{36})$/.exec(path);
     if(detail?.[1]===projectId){
@@ -386,7 +400,7 @@ test("built WorkIndex and JourneyBoard read every listed Task through the guarde
     authorizationScope:"fixture",cwd:"/tmp/fixture",authorizationKind:"dynamic",sandbox:"workspace-write",
     readerActorId:"reader",origin,expiresAtUtc:new Date(Date.now()+60_000).toISOString(),entryRouteKey:"work",
     routes:[{key:"work",hash:workHash,apiPaths:[base,first,firstDocumentPage,`${base}/impacts`]},
-      {key:"journey",hash:journeyHash,apiPaths:[first,`${base}/goals?limit=50`,`${base}/stages`,firstDocumentPage]}]};
+      {key:"journey",hash:journeyHash,apiPaths:[`${base}/goals?limit=50`,`${base}/stages`,journeyWork]}]};
   const directory=await mkdtemp(join(tmpdir(),"evoloop-browser-built-app-"));t.after(()=>rm(directory,{recursive:true,force:true}));
   const scopePath=join(directory,"scope.json");await writeFile(scopePath,JSON.stringify(scope),{mode:0o600});
   const binding:RuntimeBinding={projectId,sessionId,roleId:scope.roleId,authorizationScope:scope.authorizationScope,
@@ -413,15 +427,14 @@ test("built WorkIndex and JourneyBoard read every listed Task through the guarde
   for(let attempt=0;attempt<50;attempt++){
     const result=await call("browser_snapshot",`journey-snapshot-${attempt}`);
     journeyText=result.contentItems[0]?.type==="inputText"?JSON.parse(result.contentItems[0].text).text:"";
-    if(/另有\s*57\s*项任务/.test(journeyText) && /文档\s*68\s*项已完整读取/.test(journeyText))break;
+    if(/任务\s*57\s*项（含已关闭）/.test(journeyText))break;
     await new Promise(resolve=>setTimeout(resolve,100));
   }
-  assert.match(journeyText,/另有\s*57\s*项任务/);
-  assert.match(journeyText,/文档\s*68\s*项已完整读取/);
-  assert.equal(journeyText.includes("任务关联未完整读取"),false);
+  assert.match(journeyText,/目标\s*0\s*项 · 阶段\s*0\s*项 · 任务\s*57\s*项（含已关闭）/);
+  assert.equal(/暂不可读取|尚未读回/.test(journeyText),false);
   assert.ok(observed.includes(`GET ${second}`));
-  assert.ok(observed.includes(`GET ${secondDocumentPage}`));
-  for(const item of [...firstTasks,...secondTasks])assert.ok(observed.includes(`GET ${base}/tasks/${item.id}`),item.id);
+  assert.ok(observed.includes(`GET ${journeyWork}`));
+  assert.ok(observed.includes(`GET ${journeyWorkNext}`),"the approved first index page lets its next page through");
   assert.equal(observed.some(item=>item.startsWith(`GET ${base}/documents/`)),false);
   assert.equal(observed.some(item=>item.startsWith("POST ")),false);
 });

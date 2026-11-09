@@ -8,15 +8,18 @@ import {
   Button, Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogTitle, DialogTrigger, EmptyState, ErrorState, Field,
   ListRow, LoadingState, Notice, RefreshingIndicator, StatusTag, Tabs, TabsContent, TabsList, TabsTrigger, Textarea,
 } from "@evoloop/ui";
-import { errorText } from "../../shared/api";
+import { errorDetail, errorText } from "../../shared/api";
 import type { SourceDocument } from "../../shared/knowledgeClient";
+import { coverageText, type ListCoverage } from "../../shared/listCoverage";
 import { ContextPanelContent, useContextPanel } from "../../shared/ui/ContextPanel";
 import { MarkdownBody } from "../../shared/ui/MarkdownBody";
 import { readingProse, readingSource } from "../../shared/ui/readingProse";
 import { Block, Fact, quiet } from "./KnowledgeFacts";
+import { ListProblemNote } from "./KnowledgeRail";
 import { knowledgeHref, sourceDocumentHref } from "./knowledgeRoute";
 import {
   candidateStatusLabel, candidateStatusTone, epistemicLabel, label, pageTypeLabel, relationTypeLabel, sourceDocumentId, sourceStateLabel,
+  type ListProblem, type SourcesRead,
 } from "./knowledgePresentation";
 
 /** A second confirmation that names what changes; Escape or 取消 returns focus to the button that opened it. */
@@ -36,7 +39,8 @@ export function Confirm({ trigger, title, children, confirm, onConfirm }: { trig
 }
 
 export interface CandidateList {
-  items: KnowledgeCandidateSummary[]; more: boolean; reading: boolean; checking: boolean; error: string; loadMore(): void;
+  items: KnowledgeCandidateSummary[]; more: boolean; reading: boolean; checking: boolean; loadingMore: boolean; coverage: ListCoverage;
+  problem: ListProblem | null; loadMore(): void;
 }
 export interface CandidateRead { data: KnowledgeCandidateRecord | undefined; error: unknown; checking: boolean }
 export interface ReviewActions {
@@ -46,28 +50,32 @@ export interface ReviewActions {
   retract(source: SourceDocument): void;
 }
 
-export function KnowledgeReview({ projectId, list, candidateId, candidate, sources, sourcesError, actions, toolbar }: {
+export function KnowledgeReview({ projectId, list, candidateId, candidate, sources, sourcesRead, actions, toolbar, onReread }: {
   projectId: string; list: CandidateList; candidateId: string | undefined; candidate: CandidateRead;
-  sources: SourceDocument[] | undefined; sourcesError: string; actions: ReviewActions; toolbar: ReactNode;
+  sources: SourceDocument[] | undefined; sourcesRead: SourcesRead; actions: ReviewActions; toolbar: ReactNode; onReread(): void;
 }) {
   return <div className="flex flex-col gap-5">
     <header className="flex flex-col gap-2 compact:pr-12">
       {toolbar}
-      <h1 tabIndex={-1} className="text-title font-semibold leading-[1.3] outline-none">候选与审阅</h1>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <h1 tabIndex={-1} className="text-title font-semibold leading-[1.3] outline-none">候选与审阅</h1>
+        <Button variant="ghost" size="compact" onClick={onReread}>重新读取</Button>
+      </div>
       <p className="text-small text-text-secondary">候选、审阅、发布各自独立：接受只记录决定，发布才写成新的固定版本，之后是否被用上另看使用记录。</p>
     </header>
     {candidateId ? <CandidateDetail key={candidateId} projectId={projectId} read={candidate} actions={actions} />
-      : <CandidateIndex projectId={projectId} list={list} />}
-    {actions.canReview && <RetractSources projectId={projectId} sources={sources} error={sourcesError} actions={actions} />}
+      : <CandidateIndex projectId={projectId} list={list} onReread={onReread} />}
+    {actions.canReview && <RetractSources projectId={projectId} sources={sources} read={sourcesRead} actions={actions} />}
   </div>;
 }
 
-function CandidateIndex({ projectId, list }: { projectId: string; list: CandidateList }) {
+function CandidateIndex({ projectId, list, onReread }: { projectId: string; list: CandidateList; onReread(): void }) {
+  const unread = !!list.problem && (list.problem.kind === "failed" || list.problem.kind === "unconfigured");
   return <section aria-label="知识候选" className="flex flex-col gap-2">
     <h2 className="text-small font-semibold text-foreground">候选</h2>
-    {list.error && <Notice tone="error" title="候选列表这次没有读回">{list.error}。{list.items.length ? "下面是上次读回的，当前待核对。" : ""}</Notice>}
-    {list.reading && !list.error ? <LoadingState lines={3} label="正在读取候选" />
-      : !list.items.length && !list.error ? <EmptyState title={list.more ? "这一页没有候选" : "还没有候选"}
+    {list.problem && <ListProblemNote problem={list.problem} what="候选列表" onReread={onReread} onLoadMore={list.loadMore} />}
+    {list.reading && !list.problem ? <LoadingState lines={3} label="正在读取候选" />
+      : !list.items.length && !unread ? <EmptyState title={list.more ? "这一页没有候选" : "还没有候选"}
         reason={list.more ? "还有后续页面没有读；载入更多才能确认。" : "浏览知识或过程文档时发现的新认识，可以按固定来源提出候选。"} />
         : <ul className="flex flex-col gap-0.5">{list.items.map(item => <li key={item.candidateId}>
           <ListRow href={knowledgeHref(projectId, { candidateId: item.candidateId })} title={item.title}
@@ -75,9 +83,10 @@ function CandidateIndex({ projectId, list }: { projectId: string; list: Candidat
             trailing={<StatusTag tone={candidateStatusTone[item.status] ?? "unknown"} label={label(candidateStatusLabel, item.status)} />} />
         </li>)}</ul>}
     <div className="flex flex-col gap-1.5 text-caption text-muted-foreground">
-      {!list.reading && <span>已载入 {list.items.length} 条{list.more ? " · 后续页面未读" : " · 已读完"}</span>}
+      {!list.reading && !unread && <span>{coverageText({ loaded: list.items.length, matched: list.items.length, filtered: false, more: list.more, coverage: list.coverage, unit: "条" })}</span>}
       {list.checking && <RefreshingIndicator label="正在核对候选" />}
-      {list.more && <Button variant="secondary" size="compact" className="self-start" disabled={list.checking} onClick={list.loadMore}>载入更多候选</Button>}
+      {list.loadingMore && <RefreshingIndicator label="正在载入下一页候选" />}
+      {list.more && list.problem?.kind !== "page" && <Button variant="secondary" size="compact" className="self-start" disabled={list.checking || list.loadingMore} onClick={list.loadMore}>载入更多候选</Button>}
     </div>
   </section>;
 }
@@ -88,7 +97,8 @@ function CandidateDetail({ projectId, read, actions }: { projectId: string; read
   const back = <a href={knowledgeHref(projectId, "review")} className="inline-flex items-center gap-1 text-label font-medium text-primary hover:underline"><ArrowLeft size={15} aria-hidden="true" />全部候选</a>;
   const candidate = read.data;
   if (!candidate) return <section className="flex flex-col gap-3">{back}
-    {read.error ? <ErrorState title="这条候选没有读回" happened={`${errorText(read.error)}。`} next="可以回到候选列表重新打开。" /> : <LoadingState lines={5} label="正在读取候选" />}
+    {read.error ? <ErrorState title="这条候选没有读回" happened={`${errorText(read.error)}。`} next="可以重新读取，或回到候选列表重新打开。"
+      diagnostics={errorDetail(read.error) ?? undefined} /> : <LoadingState lines={5} label="正在读取候选" />}
   </section>;
   const here = knowledgeHref(projectId, { candidateId: candidate.candidateId });
   const decide = async (decision: "accept" | "reject") => { if (await actions.review(candidate, decision, reason)) setReason(""); };
@@ -141,6 +151,7 @@ function CandidateDetail({ projectId, read, actions }: { projectId: string; read
       {candidate.status === "rejected" && <p className={quiet}>这条候选没有被采纳，不会发布。</p>}
     </section>
     <ContextPanelContent><div data-ui="" role="region" aria-label="候选的来源与关系">
+      {!!read.error && <p role="status" className="mb-2 rounded-md bg-warning-soft px-3 py-2 text-caption text-text-secondary">这条候选这次没有重新读回；下面是上次读回的，当前待核对。</p>}
       <Block title="来源">
         {candidate.sources.length ? <ul className="flex flex-col gap-2.5">{candidate.sources.map((source, index) => {
           const documentId = sourceDocumentId(source.sourceKey);
@@ -180,12 +191,13 @@ function CandidateDetail({ projectId, read, actions }: { projectId: string; read
   </section>;
 }
 
-function RetractSources({ projectId, sources, error, actions }: { projectId: string; sources: SourceDocument[] | undefined; error: string; actions: ReviewActions }) {
+function RetractSources({ projectId, sources, read, actions }: { projectId: string; sources: SourceDocument[] | undefined; read: SourcesRead; actions: ReviewActions }) {
+  const error = read.error;
   return <details className="group rounded-lg bg-muted px-4 py-3">
     <summary className="cursor-pointer text-small font-semibold text-foreground outline-none focus-visible:shadow-[var(--focus-ring)]">撤回固定来源</summary>
     <div className="mt-3 flex flex-col gap-3">
       <p className={quiet}>来源被证明错误或不该再用时撤回。撤回会把引用它的知识页标为待复核；旧版本仍可回读。</p>
-      {error && <Notice tone="error" title="来源列表这次没有读回">{error}。</Notice>}
+      {error && <Notice tone="error" title="来源列表这次没有读回">{error}。{read.stale ? "下面是上次读回的，当前待核对。" : ""}</Notice>}
       {!sources ? !error && <LoadingState lines={2} label="正在读取来源" />
         : !sources.length ? <p className={quiet}>已读范围内没有已采纳的固定来源。</p>
           : <ul className="flex flex-col gap-2">{sources.map(source => <li key={source.documentId} className="flex flex-wrap items-center justify-between gap-2">

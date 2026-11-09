@@ -82,9 +82,10 @@ export function markdownSource(body: string | null, original: { data?: Original;
   return { state: "reading" };
 }
 
+// Address rules: `/sessions?session=` is one agent (智能体); `/runtime`, with or without a session, is 分工与运行.
 const sourceLabels: Partial<Record<Section, string>> = {
   documents: "文档列表", document: "文档", task: "任务", work: "任务列表", "create-task": "任务", inbox: "待我验收",
-  sessions: "智能体", runtime: "智能体", knowledge: "知识空间", overview: "总览", schedules: "日程", evaluations: "评价",
+  sessions: "智能体", runtime: "分工与运行", knowledge: "知识空间", overview: "总览", schedules: "日程", evaluations: "评价",
   journey: "目标与阶段", discussions: "分工讨论", reviews: "组织复盘", roles: "职责", repository: "仓库规范",
 };
 
@@ -92,14 +93,11 @@ const sourceLabels: Partial<Record<Section, string>> = {
 export function returnSourceLabel(path: string): string {
   const route = parseRoute(path);
   if (!route.projectId) return "项目列表";
-  if (route.section === "runtime" && !route.session) return "分工与运行";
   return sourceLabels[route.section] ?? "上一页";
 }
 
 /** What the list covers, so a search or filter never reads as the whole project when pages are still unread. */
-export function coverageText({ loaded, matched, filtered, more }: { loaded: number; matched: number; filtered: boolean; more: boolean }): string {
-  return `已载入 ${loaded} 项${filtered ? ` · 匹配 ${matched} 项` : ""}${more ? " · 后续页面未读" : " · 已读完"}`;
-}
+export { coverageText } from "../../shared/listCoverage";
 
 /** The empty list, distinguished by why it is empty. */
 export function emptyListText({ filtered, more }: { filtered: boolean; more: boolean }): { title: string; reason: string } {

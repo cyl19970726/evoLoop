@@ -63,12 +63,18 @@
 - Role 是持续职责，具体承接看分派和接受回执；同 Role 的其他实例收在次级。
 - 查看固定历史修订时，只给“返回当前任务”，不放跳到当前交付的快捷按钮。
 - 修改、取消、重开等写入放在“任务操作”层。
-- 表单在第一次展开时记下所见的版本（任务、分派、队列、依据变化、交付、执行时间）；提交前这些已变，或服务端答复版本已变，就拒绝提交，请先看最新内容。收起后草稿和这份记录一起保留到离开页面。
+- 表单展开时记下所见的版本（任务、分派、队列、依据、交付、执行时间）。没改动的表单跟随最新内容；有改动的先提示，可只保留改过的部分或重填；版本冲突先重读再选。
 
 **重开与重复**
 
 - 重新打开的任务不沿用旧交付的通过或使用记录。
 - 每日重复产生独立的任务 A、B、C，各有自己的结果。编辑默认只改本次，“本次及后续”另选；停止系列和取消某一次分开。
+
+### 新建任务
+
+- 入口：任务页左栏的“＋”、表格视图的“新建任务”（`/tasks/new`）；从[目标与阶段](journey.md)进入时，所属阶段已选好。
+- 分四块填：要做什么（名称、为什么要做、期望结果）、怎样算完成（独立验收、验收方式、使用成果的身份）、责任与归属（负责职责、所属阶段、类型）、执行时间（本地时间加时区，可每日重复）。属于阶段的任务还要写来源证据和停止条件。
+- 保存发出一次 `task.create`；缺项写在各字段下，提示里列出字段名，隐藏的字段不算缺项。所属阶段在填写期间变了，先请人查看再提交。每日重复要审阅权限和任务时间授权。“只作判断记录”的任务不问验收方式和使用者（使用者就是负责职责）。
 
 **收件页**
 
@@ -106,6 +112,7 @@
 | 写入 | `useCommand.ts`（基线与回执）、`TaskForms.tsx`（表单与读取状态）、`taskCommands.ts`（各命令） | `task-commands.test.ts`、`task-list-model.test.ts` |
 | 收件页（未改版） | `InboxIndex.tsx`、`AcceptanceOverviewPanels.tsx`、`inbox.css` | `leader-work-overview-browser.test.ts` |
 | 执行时间与重复 | `TaskScheduleSection.tsx`、`taskTimingPresentation.ts` | `task-timing-ui.test.ts`、`task-commands.test.ts` |
+| 新建任务 | `CreateTaskPage.tsx`、`taskCreate.ts`、`useCommand.ts` | `task-create.test.ts`、`journey-browser.test.ts`、`work-status-recovery-browser.test.ts` |
 
 ## 相关
 

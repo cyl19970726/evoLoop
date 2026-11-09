@@ -28,7 +28,7 @@ import { assignmentAcknowledgeCommand, assignmentObserveCommand, assignmentRelea
   runAbandonCommand, runInterruptCommand, runReserveCommand } from "./taskCommands";
 import { runStateName } from "./taskExperience";
 import { assignmentKey } from "./taskFactsPresentation";
-import { ActionRow, CommandForm, Fine, ReadNote, TabSection, reasonField } from "./TaskForms";
+import { ActionRow, CommandForm, Fine, ReadNote, TabSection, readCurrent, reasonField } from "./TaskForms";
 import { ResidentQueuePanel } from "./ResidentQueuePanel";
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -185,8 +185,9 @@ function RunsSection({ context, detail, assignment, runs, runsRead, sessionsRead
   const sessions = sessionsRead.data ?? [];
   const assigned = assignment.data && assignment.data.state !== "released" ? assignment.data : null;
   const stale = !!assigned && assigned.taskRevisionId !== task.currentRevisionId;
-  const eligible = assignment.data !== undefined && !assignment.error && sessionsRead.data
-    ? eligibleOwnedSessions(task, sessions.filter(activeFullExecution), assignment.data ?? null) : [];
+  // Only current reads decide who may take the task: a failed reread of the agents or the assignment offers nothing.
+  const agentsKnown = readCurrent(sessionsRead) && readCurrent(assignment);
+  const eligible = agentsKnown ? eligibleOwnedSessions(task, sessions.filter(activeFullExecution), assignment.data ?? null) : [];
   const names = useQueries({ queries: eligible.map(session => ({ queryKey: queryKeys.project(projectId, "session-names", `owned:${session.id}`),
     queryFn: ({ signal }: { signal: AbortSignal }) => readAgent(projectId, `owned:${session.id}`, signal), retry: false })) });
   const roleName = (session: RuntimeSessionRecord) => {
@@ -194,17 +195,18 @@ function RunsSection({ context, detail, assignment, runs, runsRead, sessionsRead
     return `${agent?.profile?.displayName?.trim() || agent?.title || "智能体（名称待读取）"} · 创建于 ${date(session.createdAt)}`;
   };
   const arrange = { taskVersion: task.version, revisionId: task.currentRevisionId, owner: task.owner,
-    assignmentVersion: assigned?.version ?? 0, assignmentState: assigned?.state ?? "none", assignmentTarget: assigned ? assignmentKey(assigned) : "" };
+    assignmentVersion: assigned?.version ?? 0, assignmentState: assigned?.state ?? "none", assignmentTarget: assigned ? assignmentKey(assigned) : "",
+    agents: eligible.map(session => `${session.id}@${session.version}`).join(",") };
   const recover = useRecover(context);
   return <div className="flex flex-col gap-3" ref={useRevealRun(task.id, projectId, runs, targetRunId)}>
     {!!runsRead.error && <Notice tone="error">运行列表暂不可读取：{errorText(runsRead.error)}。{targetRunId && runs.some(run => run.id === targetRunId) ? "链接指向的运行已单独核对；" : ""}其他运行不能据此推断。</Notice>}
-    {!!sessionsRead.error && <Notice tone="error">会话列表暂不可读取：{errorText(sessionsRead.error)}。参与的智能体范围不能据此推断。</Notice>}
+    {!!sessionsRead.error && <Notice tone="error">智能体列表暂不可读取：{errorText(sessionsRead.error)}。参与的智能体范围不能据此推断。</Notice>}
     {targetProblem && <Notice tone="error">链接指向的运行暂不可核对：{targetProblem}。没有定位到其他运行。</Notice>}
     {status.data && !status.data.available && <Notice tone="waiting" title="执行服务尚未接通"
       action={permissions.includes("review") ? <Button size="compact" disabled={recover.busy} onClick={() => void recover.run()}>{recover.busy ? "正在核对…" : "受控恢复执行连接"}</Button> : undefined}>
       已有运行记录仍保留；不会自动重发结果未知的启动。{recover.message}</Notice>}
     {runsRead.isPending && !runsRead.error ? <ReadNote read={runsRead} what="运行记录" />
-      : runsRead.data && !runs.length && <p className="text-label text-text-secondary">这项任务还没有登记运行。</p>}
+      : readCurrent(runsRead) && !runs.length && <p className="text-label text-text-secondary">这项任务还没有登记运行。</p>}
     <div className="flex flex-col">{[...runs].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt)).map(run => <RunRecord key={`${run.id}:${run.version}`}
       context={context} run={run} anchor={`runtime-run-${task.id}-${run.id}`} readOnlyAgent={sessions.some(session => session.id === run.sessionId && session.sandbox === "read-only")} />)}</div>
     <Fine>收到通知、读取材料、采用判断和真实效果分别留证。运行结束不会自动关闭任务。</Fine>
@@ -213,8 +215,9 @@ function RunsSection({ context, detail, assignment, runs, runsRead, sessionsRead
       {assignment.error ? <Notice tone="error">具体分派暂不可核对：{errorText(assignment.error)}。先重新读取分派，暂不创建队列或预留新的运行。</Notice>
         : stale ? <Notice tone="waiting">任务修订已变化，原分派固定在旧修订。先核对并重新指定或释放分派。</Notice>
           : assigned?.target.kind === "external" ? <Fine>这项任务分派给了外部接入的智能体，不能改由项目内的智能体排队或运行；要先正式释放或重新分派。</Fine>
-            : sessionsRead.data && assignment.data !== undefined && !eligible.length ? <Fine>没有就绪、完整执行配置已激活且职责匹配的项目内智能体；请核对分派和智能体状态。</Fine>
-              : null}
+            : !agentsKnown ? <Fine>{sessionsRead.isPending ? "正在读取智能体列表…" : "智能体列表没有读回，暂不能排队或派发；先重新读取运行状态。"}</Fine>
+              : !eligible.length ? <Fine>没有就绪、完整执行配置已激活且职责匹配的项目内智能体；请核对分派和智能体状态。</Fine>
+                : null}
       {eligible.length > 0 && permissions.includes("review") && <ActionRow title="把任务排进具体智能体的队列" description="创建只有这一项的执行队列；还要有权者采纳，登记不表示已经开始。">
         <CommandForm context={context} submitLabel="创建队列" baseline={arrange} fields={[
           { name: "sessionId", label: "承接的智能体", kind: "select", options: eligible.map(session => ({ value: session.id, label: roleName(session) })) },

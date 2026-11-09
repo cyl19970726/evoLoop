@@ -213,3 +213,9 @@ test("date-time inputs convert both ways and an empty one is not a time", () => 
   assert.match(localInput("2026-11-10T08:00:00Z"), /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/);
   assert.equal(new Date(localInput("2026-11-10T08:00:00Z")).toISOString(), "2026-11-10T08:00:00.000Z");
 });
+
+test("the timing's waiting reason is shown without the record IDs it names", async () => {
+  const { timingWaitingText } = await import("../src/features/workflow/taskTimingPresentation.ts");
+  assert.equal(timingWaitingText(`上一份任务 ${uuid(5)} 仍为待办`), "上一份任务仍为待办");
+  assert.equal(timingWaitingText(`上一份任务 ${uuid(5)} 的运行尚未结算`), "上一份任务的运行尚未结算");
+});

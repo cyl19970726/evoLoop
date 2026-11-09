@@ -175,7 +175,7 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
   const queryClient = useQueryClient();
   const rereadTask = () => {
     setReadVersion(value => value + 1);
-    for (const key of [["task", id], ["tasks", "timing", id], ["runtime"], ["resident-queues"]])
+    for (const key of [["task", id], ["tasks", "timing", id], ["runtime"], ["resident-queues"], ["document-detail"]])
       void queryClient.invalidateQueries({ queryKey: queryKeys.project(projectId, ...key) });
   };
   // A fixed historical revision always opens 历史, where it is read (TaskHistoryTab).
@@ -301,7 +301,8 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
       </TabsContent>
       <TabsContent value="actions" forceMount hidden={tab !== "actions"} id={panelId("actions")} aria-labelledby={tabId("actions")} className="pt-5 outline-none">
         <SectionBoundary label="任务操作"><TaskActionsTab context={taskContext} detail={detail} leader={leaderTask} leaderState={leaderState}
-          documents={documents.documents} documentsPending={documents.pending} onRereadLeader={() => setReadVersion(value => value + 1)} /></SectionBoundary>
+          documents={documents.documents} documentsPending={documents.pending} documentsFailed={documents.failed} onRereadDocuments={rereadTask}
+          onRereadLeader={() => setReadVersion(value => value + 1)} /></SectionBoundary>
       </TabsContent>
     </Tabs>
     <ContextPanelContent><TaskFacts context={context} taskId={id} detail={detail} leader={leaderTask} leaderState={leaderState} linkForTab={linkForTab} /></ContextPanelContent>

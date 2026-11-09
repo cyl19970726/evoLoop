@@ -14,7 +14,8 @@ import { sessionHref } from "../sessions";
 import { readAgent } from "./agentRead";
 import { agentFacts, assignmentKey, type Read, type ReadState } from "./taskFactsPresentation";
 import { assignmentSetCommand } from "./taskCommands";
-import { baselineChangedText, useCommand } from "./useCommand";
+import { BaselineNotice, OutcomeNotice } from "./TaskForms";
+import { useCommand } from "./useCommand";
 
 const directoryPageLimit = 10;
 
@@ -88,9 +89,15 @@ export function BindAgentForm({ context, task, currentVersion, currentKey, onDon
   const [reason, setReason] = React.useState("");
   // What the person saw when the form opened. If the task or its assignment changes meanwhile, the form refuses to
   // submit until they have looked at the latest content; the versions sent are always the ones they saw.
-  const command = useCommand(context, { taskVersion: task.version, assignmentVersion: currentVersion, currentKey: currentKey ?? "" });
+  // A version conflict rereads the project, so the latest assignment is on screen before the person decides.
+  const command = useCommand(context, { taskVersion: task.version, assignmentVersion: currentVersion, currentKey: currentKey ?? "" }, { onStale: context.onChanged });
   const allowed = context.principal.permissions.includes("review");
   const dirty = !!(target || recipient || reason);
+  // The rule of every task form: an untouched form follows the latest content; a typed one waits for the person.
+  React.useEffect(() => {
+    if (!dirty && command.baselineChanged && !command.awaitingReread) command.rebase();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dirty, command.baselineChanged, command.awaitingReread]);
   async function submit(event: React.FormEvent) {
     event.preventDefault();
     const chosen = choices.find(item => item.key === target);
@@ -114,9 +121,11 @@ export function BindAgentForm({ context, task, currentVersion, currentKey, onDon
     </>}
     {!allowed && <p className="text-caption text-muted-foreground">当前身份没有审阅权限，不能绑定智能体。</p>}
     {context.blocked && <p className="text-caption text-muted-foreground">本项目仍有结果未确认的操作，请先核对回执。</p>}
-    {command.baselineChanged && <Notice tone="waiting" title="分派或任务已被更新" action={<Button size="compact" onClick={() => { command.rebase(); setTarget(""); }}>按最新内容重填</Button>}>
-      {baselineChangedText}上面的“承接智能体”已是最新读回。</Notice>}
-    {command.outcome && !command.baselineChanged && <Notice tone={command.outcome.failed ? "error" : "info"}>{command.outcome.message}</Notice>}
+    {command.baselineChanged && <BaselineNotice awaiting={command.awaitingReread} onReread={context.onChanged}
+      onRefill={() => { command.rebase(); setTarget(""); setRecipient(""); setReason(""); }}
+      onKeep={() => { command.rebase(); if (target === currentKey) setTarget(""); }}
+      keepNote="上面的“承接智能体”已是最新读回；保留我的修改：选择、执行者和依据不变，按最新的分派核对。" />}
+    {command.outcome && !(command.baselineChanged && command.outcome.stale) && <OutcomeNotice outcome={command.outcome} />}
     <div className="flex gap-2">
       <Button type="submit" variant="primary" size="compact" disabled={!allowed || context.blocked || command.busy || command.baselineChanged || !target || !reason.trim()}>{command.busy ? "保存中…" : "保存绑定"}</Button>
       <Button size="compact" variant="ghost" onClick={onDone}>取消</Button>

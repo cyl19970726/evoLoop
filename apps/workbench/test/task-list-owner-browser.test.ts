@@ -236,11 +236,11 @@ test("Task list resolves only displayed Role owners and rejects stale or failed 
   const attention=page.locator("#task-attention");
   await attention.getByText(/已有的跟进属于任务的旧修订/).waitFor();
   assert.match(await attention.innerText(),/2 项已关注/);
-  assert.match(await attention.innerText(),/等待验收者/);
-  assert.match(await attention.innerText(),/等待发布维护者/);
+  assert.match(await attention.innerText(),/等待方 指定验收者 · 历史消费者/);
+  assert.match(await attention.innerText(),/等待方 发布维护者/);
   // Each write opens in place; the person opens the follow-up before filling it.
   await attention.getByText("填写跟进安排").click();
-  await attention.getByLabel("已做的事").fill("核对固定产物与发布责任");
+  await attention.getByLabel("已做什么").fill("核对固定产物与发布责任");
   await attention.getByLabel("跟进理由").fill("当前修订已具备交接条件");
   await attention.getByLabel("登记具备发布条件，交给维护者").check();
   await attention.getByLabel("维护者或接收方").fill("发布维护者");
@@ -270,7 +270,7 @@ test("Task list resolves only displayed Role owners and rejects stale or failed 
   await attention.getByRole("button",{name:"记录已解决"}).click();
   await attention.getByText("1 项已关注").waitFor();
   // The panel rereads right after a write; wait for the historical item instead of sampling the text once.
-  await attention.getByText(/等待验收者/).waitFor();
+  await attention.getByText(/等待方 指定验收者 · 历史消费者/).waitFor();
   await fetch(`${base}/__fixture/reset-attention`);
   await page.goto(`${base}/p/${projectId}/work?fresh=attention-narrow`);
   await page.getByLabel("访问令牌").fill("fixture-token");
@@ -280,7 +280,7 @@ test("Task list resolves only displayed Role owners and rejects stale or failed 
   });
   await attention.getByText(/已有的跟进属于任务的旧修订/).waitFor();
   await attention.getByText("填写跟进安排").click();
-  await attention.getByLabel("已做的事").fill("窄屏核对当前修订");
+  await attention.getByLabel("已做什么").fill("窄屏核对当前修订");
   await attention.getByLabel("跟进理由").fill("安排下一检查点");
   await attention.getByLabel("下一检查时间").fill("2026-10-26T09:30");
   await attention.getByRole("button",{name:"保存跟进安排"}).click();

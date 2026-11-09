@@ -4,24 +4,6 @@ import type { KnowledgeCapabilities, KnowledgeGraph, KnowledgePage, KnowledgeRev
 import { findFixedKnowledgeTitle } from "./knowledgeRoute";
 import { pageRelations } from "./knowledgePresentation";
 
-type Paged<T> = { items: T[]; nextCursor: string | null };
-
-/** Reads `depth` pages of a cursor list from the start. A repeated cursor stops the read instead of looping. */
-export async function readPagesTo<T>(read: (cursor?: string) => Promise<Paged<T>>, depth: number, identity: (item: T) => string): Promise<Paged<T>> {
-  const items = new Map<string, T>();
-  const seen = new Set<string>();
-  let cursor: string | undefined, pages = 0;
-  do {
-    const page = await read(cursor);
-    for (const item of page.items) items.set(identity(item), item);
-    pages++;
-    if (page.nextCursor && (page.nextCursor === cursor || seen.has(page.nextCursor))) throw new Error("分页游标重复，列表没有读完整");
-    if (page.nextCursor) seen.add(page.nextCursor);
-    cursor = page.nextCursor ?? undefined;
-  } while (cursor && pages < depth);
-  return { items: [...items.values()], nextCursor: cursor ?? null };
-}
-
 /** The part of a query result these decisions need (useProjectQuery returns more). */
 export interface ReadLike<T> { data?: T | undefined; isFetching: boolean; isError: boolean }
 export type ServiceStanding = "reading" | "checking" | "current" | "stale" | "failed";
@@ -29,12 +11,13 @@ export type ServiceStanding = "reading" | "checking" | "current" | "stale" | "fa
 /**
  * Whether the knowledge service can be called fully readable now. Capabilities count only together with the page
  * index read beside them. While a reread runs the last answer stays on screen marked 正在核对; once a reread fails,
- * the old answer is kept for reading but no longer counts (上次读回，当前待核对).
+ * the old list is kept for reading but no longer counts (上次读回，当前待核对). A list that was never read is not
+ * 上次读回, even when the capabilities were.
  */
 export function serviceState(capabilities: ReadLike<KnowledgeCapabilities>, pages: ReadLike<unknown>): { standing: ServiceStanding; capabilities: KnowledgeCapabilities | null } {
   const failed = capabilities.isError || pages.isError;
   const hasData = capabilities.data !== undefined && pages.data !== undefined;
-  if (failed) return { standing: hasData || capabilities.data !== undefined || pages.data !== undefined ? "stale" : "failed", capabilities: null };
+  if (failed) return { standing: pages.data !== undefined ? "stale" : "failed", capabilities: null };
   if (!hasData) return { standing: "reading", capabilities: null };
   if (capabilities.isFetching || pages.isFetching) return { standing: "checking", capabilities: capabilities.data! };
   return { standing: "current", capabilities: capabilities.data! };

@@ -336,8 +336,9 @@ test("resident observation keeps acceptance, host authority and task replies dis
   assert.match(await queueItems.nth(0).innerText(),/承接职责 已更新的承接职责/);
   await fetch(`${base}/__fixture/fail-next-role`);
   await pageBrowser.getByRole("button",{name:"重新读取队列"}).click();
-  await pageBrowser.getByText(/部分名称暂不可读/).waitFor();
-  assert.match(await queueItems.nth(0).innerText(),/承接职责 职责（名称待读取）/);
+  await queueItems.nth(0).getByRole("link",{name:"职责 10000002"}).waitFor();
+  await pageBrowser.getByText(/部分名称未读回/).waitFor();
+  assert.match(await queueItems.nth(0).innerText(),/承接职责 职责 10000002/);
   await fetch(`${base}/__fixture/restore-role`);
   await pageBrowser.getByRole("button",{name:"重新读取队列"}).click();
   await queueItems.nth(0).getByText(/承接职责 已更新的承接职责/).waitFor();

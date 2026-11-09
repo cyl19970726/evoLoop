@@ -9,7 +9,9 @@ import type { SourceDocument } from "../../shared/knowledgeClient";
 import { ContextPanelContent } from "../../shared/ui/ContextPanel";
 import { Block, Fact, quiet } from "./KnowledgeFacts";
 import { knowledgeHref } from "./knowledgeRoute";
-import { epistemicLabel, epistemicStates, label, pageTypeLabel, pageTypes, relationTypeLabel, relationTypes } from "./knowledgePresentation";
+import {
+  epistemicLabel, epistemicStates, label, pageTypeLabel, pageTypes, relationTypeLabel, relationTypes, sourceHint, type SourcesRead,
+} from "./knowledgePresentation";
 
 export interface Draft {
   knowledgeId: string | null; baseRevision: string | null; baseTitle: string;
@@ -24,11 +26,12 @@ export const emptyDraft: Draft = {
 
 const select = "h-9 w-full rounded-md bg-field px-3 text-small text-foreground outline-none focus-visible:shadow-[var(--focus-ring)] disabled:opacity-50";
 
-export function KnowledgeCompose({ projectId, draft, update, sources, sourcesError, pages, canWrite, busy, blocked, onSubmit, onClear, onClose, backLabel }: {
-  projectId: string; draft: Draft; update(patch: Partial<Draft>): void; sources: SourceDocument[] | undefined; sourcesError: string;
+export function KnowledgeCompose({ projectId, draft, update, sources, sourcesRead, pages, canWrite, busy, blocked, onSubmit, onClear, onClose, backLabel }: {
+  projectId: string; draft: Draft; update(patch: Partial<Draft>): void; sources: SourceDocument[] | undefined; sourcesRead: SourcesRead;
   pages: KnowledgeSummary[]; canWrite: boolean; busy: boolean; blocked: boolean;
   onSubmit(): void; onClear(): void; onClose(): void; backLabel: string;
 }) {
+  const sourcesError = sourcesRead.error;
   const reachable = (sources ?? []).filter(source => source.state === "reachable");
   const edit = (patch: Partial<Draft>) => update({ ...patch, touched: true });
   const submit = (event: FormEvent) => { event.preventDefault(); onSubmit(); };
@@ -44,7 +47,7 @@ export function KnowledgeCompose({ projectId, draft, update, sources, sourcesErr
     </header>
     {draft.conflict && <Notice tone="waiting" title="草稿已保留，没有保存" action={draft.knowledgeId
       ? <Button asChild size="compact"><a href={knowledgeHref(projectId, { knowledgeId: draft.knowledgeId })}>阅读当前版</a></Button> : undefined}>{draft.conflict}</Notice>}
-    {sourcesError && <Notice tone="error" title="可选来源这次没有读回">{sourcesError}。</Notice>}
+    {sourcesError && <Notice tone="error" title="可选来源这次没有读回">{sourcesError}。{sourcesRead.stale ? "下面可选的是上次读回的来源，当前待核对。" : ""}</Notice>}
     <form onSubmit={submit} className="flex max-w-[720px] flex-col gap-4">
       <Field label="标题">{control => <Input {...control} required value={draft.title} onChange={event => edit({ title: event.target.value })} />}</Field>
       <div className="grid grid-cols-1 gap-4 compact:grid-cols-2">
@@ -54,7 +57,7 @@ export function KnowledgeCompose({ projectId, draft, update, sources, sourcesErr
           {epistemicStates.map(state => <option key={state} value={state}>{epistemicLabel[state]}</option>)}</select>}</Field>
       </div>
       <Field label="完整 Markdown 正文">{control => <Textarea {...control} required rows={12} value={draft.body} onChange={event => edit({ body: event.target.value })} className="font-mono" />}</Field>
-      <Field label="已采纳的固定来源" hint={sources === undefined && !sourcesError ? "正在读取可选来源…" : reachable.length ? "选一份可读取的过程文档版本。" : "已读范围内没有可读取的来源，暂时不能保存。"}>
+      <Field label="已采纳的固定来源" hint={sourceHint(sources, sourcesRead)}>
         {control => <select {...control} required className={select} value={draft.sourceId} onChange={event => {
           const id = event.target.value;
           edit({ sourceId: id, sourceRevision: reachable.find(source => source.documentId === id)?.revisionId ?? "", conflict: "" });

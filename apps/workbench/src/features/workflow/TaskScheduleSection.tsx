@@ -10,7 +10,7 @@ import { FullIdentifiers } from "../../shared/ui/FullIdentifiers";
 import { href } from "../../shared/ui/shared";
 import { seriesCurrentPromptCommand, seriesFuturePromptCommand, taskStateLabel } from "./taskCommands";
 import { ActionRow, CommandForm, Fact, Fine, ReadNote, TabSection, reasonField, type FormField } from "./TaskForms";
-import { formatScheduled, nextTimingLabel, repeatLabel, timingSetPayload, timingStopPayload, timingVersion } from "./taskTimingPresentation";
+import { formatScheduled, nextTimingLabel, repeatLabel, timingSetPayload, timingStopPayload, timingVersion, timingWaitingText } from "./taskTimingPresentation";
 
 type Scope = "this" | "this_and_future" | "future";
 // As the old forms: the shared schema checks the command, which is then sent exactly as built.
@@ -110,7 +110,7 @@ function TimingFacts({ projectId, timing }: { projectId: string; timing: TaskTim
       <Fact label="重复规则">{repeatLabel(timing.repeat)}{timing.repeat === "daily" ? ` · ${timing.seriesState === "active" ? "继续重复" : "已停止以后生成"}` : ""}</Fact>
       <Fact label="以后生成">{nextTimingLabel(timing)}</Fact>
       <Fact label="每份任务">单独执行，单独验收</Fact>
-      {timing.waitingReason && <Fact label="当前等待">{timing.waitingReason}</Fact>}
+      {timing.waitingReason && <Fact label="当前等待">{timingWaitingText(timing.waitingReason)}</Fact>}
     </div>
     {(timing.previousTaskId || timing.nextTaskId) && <p className="flex flex-wrap gap-x-4 text-label">
       {timing.previousTaskId && <a className="text-primary hover:underline" href={href(projectId, "task", timing.previousTaskId)}>上一份任务</a>}
@@ -120,6 +120,6 @@ function TimingFacts({ projectId, timing }: { projectId: string; timing: TaskTim
       <ol className="mt-2 flex flex-col gap-1">{timing.occurrences.map(item => <li key={item.taskId} className="text-label text-text-secondary">
         <a className="text-primary hover:underline" href={href(projectId, "task", item.taskId)}>{formatScheduled(item.executeAtUtc, timing.timezone)}</a> · {taskStateLabel[item.state]}
       </li>)}</ol></details>}
-    <FullIdentifiers rows={[{ label: "重复系列", value: timing.seriesId }, ...(timing.repeat === "daily" ? [{ label: "调度授权范围", value: `task-timing:${timing.rootTaskId}` }] : [])]} />
+    <FullIdentifiers rows={[{ label: "重复系列", value: timing.seriesId }, { label: "等待原文", value: timing.waitingReason, text: true }, ...(timing.repeat === "daily" ? [{ label: "调度授权范围", value: `task-timing:${timing.rootTaskId}` }] : [])]} />
   </div>;
 }

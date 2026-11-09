@@ -125,11 +125,14 @@ export function allowBrowserRequest(scope:BrowserReadScope,urlText:string,method
     const apiPaths=scope.routes.flatMap(value=>value.apiPaths);
     let derived=!!derivedPaths?.has(path);
     const cursors=url.searchParams.getAll("cursor");
-    if(!derived && derivedPaths && cursors.length===1 && cursors[0]!.length<=1024 &&
+    // A work index page with one cursor continues the same query: allowed when that query's first page is derived
+    // from a listed page, or is itself an approved route path (目标与阶段 reads every index page this way).
+    if(!derived && cursors.length===1 && cursors[0]!.length<=1024 &&
       cursors[0]!.trim()===cursors[0] && !/[\u0000-\u001f\u007f]/.test(cursors[0]!) &&
       url.pathname===`/api/projects/${scope.projectId}/work-management/index`) {
       const base=new URL(url);base.searchParams.delete("cursor");
-      derived=derivedPaths.has(base.pathname+base.search);
+      const first=base.pathname+base.search;
+      derived=!!derivedPaths?.has(first) || apiPaths.includes(first);
     }
     return url.origin===scope.origin && !url.username && !url.password && method==="GET" &&
       ["document","script","stylesheet","image","font","fetch","xhr"].includes(resourceType) &&

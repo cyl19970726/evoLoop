@@ -10,20 +10,17 @@ import { Button, Field, Input, Notice, Select, StatusTag, Textarea } from "@evol
 import { api, errorText, request } from "../../shared/api";
 import type { MutationContext } from "../../shared/ActionForm";
 import { useProjectPages, useProjectQuery } from "../../shared/query";
-import { timingDuration, timingStageLabel } from "../../shared/taskTiming";
+import { timingDuration, timingStageLabel, waitingKindLabel, waitingParty } from "../../shared/taskTiming";
 import { responsibleText, waitingText, workItemNextStep } from "../../shared/workPresentation";
 import { FullIdentifiers } from "../../shared/ui/FullIdentifiers";
 import { ResponsibleName } from "../../shared/ui/RecordName";
 import { date, href } from "../../shared/ui/shared";
 import { attentionResolveCommand, followUpCommand, localInput, publicationCommand } from "./taskCommands";
 import { runStateName } from "./taskExperience";
-import { ActionRow, CommandForm, Fact, Fine, ReadNote, TaskWriteBlock, reasonField } from "./TaskForms";
-import { baselineChangedText, useCommand } from "./useCommand";
+import { ActionRow, BaselineNotice, CommandForm, Fact, Fine, OutcomeNotice, ReadNote, TaskWriteBlock, followLatest, formDirty, keepEdits, readCurrent, reasonField, type FormState } from "./TaskForms";
+import { useCommand } from "./useCommand";
 
 type FollowUpKind = NonNullable<TaskAttentionFollowUp["waitingOn"]>["kind"];
-export const waitingKinds: Record<FollowUpKind | "role", string> = {
-  session: "智能体", consumer: "验收者", leader: "项目统筹", role: "负责职责", publisher: "发布维护者", user: "指定的人", task: "前置任务", unknown: "等待对象未登记",
-};
 const followUpKinds: FollowUpKind[] = ["session", "consumer", "leader", "publisher", "user", "task", "unknown"];
 const signalLabel: Record<TaskAttentionItem["signal"], string> = {
   stage_overdue: "阶段逾期", activity_without_progress: "有活动但缺少有效进展", observation_gap: "缺少使用观察",
@@ -44,10 +41,11 @@ async function readAttention(projectId: string, taskId: string): Promise<Attenti
   return value;
 }
 
+/** Who an attention item waits on: a kind, and an actor's name (a record's raw ID stays in 完整标识). */
 function attentionWaiting(item: TaskAttentionItem, revisionId: string, leader: LeaderWorkTask): string {
-  if (item.waitingOn) return item.waitingOn.kind in waitingKinds && item.waitingOn.kind !== "unknown" ? `等待${waitingKinds[item.waitingOn.kind as FollowUpKind]}` : "等待对象未登记";
-  if (item.taskRevisionId === revisionId && leader.timing?.current.stage === item.phase) return `${waitingText(leader.timing.current.waitingFor, leader.assignment)}（当前阶段）`;
-  return "等待对象未登记";
+  if (item.waitingOn) return `等待方 ${waitingParty(item.waitingOn)}`;
+  if (item.taskRevisionId === revisionId && leader.timing?.current.stage === item.phase) return `等待方 ${waitingParty(leader.timing.current.waitingFor)}（当前阶段）`;
+  return "等待方 责任未知";
 }
 
 /** 当前关注: the open attention items of this task, each resolvable on the current revision, and the follow-up. */
@@ -68,7 +66,8 @@ export function TaskAttentionSection({ context, detail, leader }: { context: Mut
   const publicationCurrent = !!followUp?.publication && proven && origin?.taskRevisionId === revisionId;
   const staleFollowUp = !!value?.followUp && !followUp;
   const permissions = context.principal.permissions;
-  const canWrite = permissions.includes("review") && permissions.includes("write") && leader.currentRevisionId === revisionId;
+  // Writes go out only from a current read: after a failed reread the last answer is shown, marked, and not written from.
+  const canWrite = permissions.includes("review") && permissions.includes("write") && leader.currentRevisionId === revisionId && readCurrent(read);
   const open = items.filter(item => item.state === "open");
   async function readMore() {
     if (!cursor) return;
@@ -92,14 +91,12 @@ export function TaskAttentionSection({ context, detail, leader }: { context: Mut
       </div>
       <Fine>首次发现 {date(item.firstDetectedAt)} · 最近核对 {date(item.lastDetectedAt)} · {attentionWaiting(item, revisionId, leader)}</Fine>
       {item.taskRevisionId !== revisionId && <Fine>属于任务的旧修订，不能按当前版本解决。</Fine>}
-      <details><summary className="w-fit cursor-pointer text-caption text-primary hover:underline">查看依据</summary>
-        <pre className="mt-1 max-h-64 overflow-auto whitespace-pre-wrap rounded-md bg-raised p-2 font-mono text-caption text-text-secondary [overflow-wrap:anywhere]">{JSON.stringify(item.evidence, null, 2)}</pre>
-        <Fine>来源观察于 {date(item.sourceObservedAt)}</Fine></details>
+      <Fine>依据：{Object.keys(item.evidence ?? {}).length ? `${Object.keys(item.evidence).length} 项观察记录` : "没有附带的观察记录"} · 来源观察于 {date(item.sourceObservedAt)}；原文见完整标识。</Fine>
       {item.state === "open" && item.taskRevisionId === revisionId && canWrite && <ActionRow title="解决这一项">
         <CommandForm context={context} submitLabel="记录已解决" baseline={{ itemId: item.id, itemVersion: item.version }} fields={[reasonField("解决依据")]}
           build={(values, seen) => attentionResolveCommand(item, seen, { reason: values.reason ?? "" })} /></ActionRow>}
       <FullIdentifiers rows={[{ label: "关注项", value: item.id }, { label: "通知", value: item.noticeId }, { label: "原因原文", value: item.reason, text: true },
-        { label: "等待对象", value: item.waitingOn?.id }]} />
+        { label: "等待对象", value: item.waitingOn?.id }, { label: "依据原文", value: Object.keys(item.evidence ?? {}).length ? JSON.stringify(item.evidence) : null, text: true }]} />
     </li>)}</ul>}
     {cursor && <div><Button size="compact" variant="ghost" onClick={() => void readMore()}>读取更多关注项</Button></div>}
     {more?.error && <Notice tone="error">{more.error}</Notice>}
@@ -107,7 +104,7 @@ export function TaskAttentionSection({ context, detail, leader }: { context: Mut
       <h4 className="text-label font-semibold text-foreground">跟进安排</h4>
       {staleFollowUp && <Fine>已有的跟进属于任务的旧修订；核对当前任务后，按已有跟进的第 {value.followUp!.version} 版保存新的安排。</Fine>}
       {followUp ? <p className="text-label text-text-secondary [overflow-wrap:anywhere]">{decisionLabel[followUp.decision]} · {followUp.actionTaken}</p> : !staleFollowUp && <p className="text-label text-text-secondary">还没有跟进安排。</p>}
-      <Fine>等待{followUp?.waitingOn ? waitingKinds[followUp.waitingOn.kind] : "对象未登记"} · 下一检查点 {followUp?.nextCheckAt ? date(followUp.nextCheckAt) : "未定"}</Fine>
+      <Fine>等待 {followUp?.waitingOn ? waitingParty(followUp.waitingOn) : "责任未知"} · 下一检查点 {followUp?.nextCheckAt ? date(followUp.nextCheckAt) : "未定"}</Fine>
       {followUp?.releaseHandoff && <Fine>具备发布条件，等待维护者 · {date(followUp.releaseHandoff.readyForPublicationAt)} · {followUp.releaseHandoff.recipient}</Fine>}
       <Fine>{publicationCurrent ? `已发布且有固定证据 · ${date(followUp!.publication!.publishedAt)}`
         : followUp?.publication ? "有发布记录；当前修订的发布来源还要核对" : "当前修订的发布证据未知"}</Fine>
@@ -117,7 +114,7 @@ export function TaskAttentionSection({ context, detail, leader }: { context: Mut
         <CommandForm context={context} submitLabel="记录已发布" baseline={{ taskVersion: detail.task.version, revisionId, followUpVersion: followUp.version }} fields={[
           { name: "publishedAt", label: "实际发布时间", kind: "datetime" }, { name: "publicationRef", label: "发布证据引用", maxLength: 500 }, reasonField("记录理由")]}
           build={(values, seen) => publicationCommand(detail.task.id, seen, { publishedAt: values.publishedAt ?? "", publicationRef: values.publicationRef ?? "", reason: values.reason ?? "" })} /></ActionRow>}
-      {!canWrite && <Fine>当前身份没有审阅与写入权限，或工作安排不是当前修订；可以阅读关注依据。</Fine>}
+      {!canWrite && <Fine>{read.error ? "关注项没有重新读回，暂不能按旧内容写入；先重新读取。" : "当前身份没有审阅与写入权限，或工作安排不是当前修订；可以阅读关注依据。"}</Fine>}
       {value.followUpHistory.length > 0 && <details><summary className="w-fit cursor-pointer text-caption text-primary hover:underline">跟进历史（{value.followUpHistory.length}）</summary>
         <ol className="mt-1 flex flex-col gap-0.5">{value.followUpHistory.map(item => <li key={item.version} className="text-caption text-text-secondary">第 {item.version} 版 · {date(item.updatedAt)} · {item.reason}</li>)}</ol></details>}
       <FullIdentifiers rows={[{ label: "等待对象", value: followUp?.waitingOn?.id }, { label: "依据引用", value: followUp?.evidenceRef },
@@ -126,64 +123,77 @@ export function TaskAttentionSection({ context, detail, leader }: { context: Mut
   </section>;
 }
 
+const followUpValues = (followUp: TaskAttentionFollowUp | null, published: boolean) => ({
+  decision: followUp?.decision ?? "waiting", actionTaken: followUp?.actionTaken ?? "", evidenceRef: followUp?.evidenceRef ?? "",
+  waitingKind: followUp?.waitingOn?.kind ?? "unknown", waitingId: followUp?.waitingOn?.id ?? "", nextCheck: localInput(followUp?.nextCheckAt), reason: "",
+  handoff: followUp?.releaseHandoff || published ? "1" : "", recipient: followUp?.releaseHandoff?.recipient ?? "",
+  artifact: followUp?.releaseHandoff?.artifactRef ?? "", note: followUp?.releaseHandoff?.note ?? "", readyAt: localInput(followUp?.releaseHandoff?.readyForPublicationAt),
+});
+
+/** 填写跟进安排. Untouched fields follow a newer follow-up (someone else's hand-off is never sent back as cleared). */
 function FollowUpForm({ context, detail, value, followUp, onReread }: {
   context: MutationContext; detail: TaskDetail; value: AttentionRead; followUp: TaskAttentionFollowUp | null; onReread(): Promise<{ data?: AttentionRead | undefined }>;
 }) {
   const block = React.useContext(TaskWriteBlock);
   const revisionId = detail.task.currentRevisionId;
-  const command = useCommand(context, { taskVersion: detail.task.version, revisionId, followUpVersion: value.followUp?.version ?? 0 });
-  const [decision, setDecision] = React.useState<TaskAttentionFollowUp["decision"]>(followUp?.decision ?? "waiting");
-  const [actionTaken, setActionTaken] = React.useState(followUp?.actionTaken ?? "");
-  const [evidenceRef, setEvidenceRef] = React.useState(followUp?.evidenceRef ?? "");
-  const [waitingKind, setWaitingKind] = React.useState<FollowUpKind>(followUp?.waitingOn?.kind ?? "unknown");
-  const [waitingId, setWaitingId] = React.useState(followUp?.waitingOn?.id ?? "");
-  const [nextCheck, setNextCheck] = React.useState(localInput(followUp?.nextCheckAt));
-  const [reason, setReason] = React.useState("");
-  const [handoff, setHandoff] = React.useState(!!followUp?.releaseHandoff || !!value.followUp?.publication);
-  const [recipient, setRecipient] = React.useState(followUp?.releaseHandoff?.recipient ?? "");
-  const [artifact, setArtifact] = React.useState(followUp?.releaseHandoff?.artifactRef ?? "");
-  const [note, setNote] = React.useState(followUp?.releaseHandoff?.note ?? "");
-  const [readyAt, setReadyAt] = React.useState(localInput(followUp?.releaseHandoff?.readyForPublicationAt));
+  const reread = () => { void onReread(); };
+  const command = useCommand(context, { taskVersion: detail.task.version, revisionId, followUpVersion: value.followUp?.version ?? 0 }, { onStale: reread });
+  const latest = followUpValues(followUp, !!value.followUp?.publication);
+  const latestKey = JSON.stringify(latest);
+  const [form, setForm] = React.useState<FormState>({ base: latest, values: latest });
   const [verify, setVerify] = React.useState("");
+  const v = form.values;
+  const dirty = formDirty(form);
+  React.useEffect(() => {
+    const next = followLatest(form, latest, command.baselineChanged, command.awaitingReread);
+    if (!next) return;
+    if (next.rebase) command.rebase();
+    setForm(next.state);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [latestKey, command.baselineChanged, command.awaitingReread, dirty]);
+  const set = (name: string) => (next: string) => setForm(current => ({ ...current, values: { ...current.values, [name]: next } }));
+  const handoff = !!v.handoff;
   const blocked = !!block || context.blocked;
-  const incomplete = !reason.trim() || !actionTaken.trim() || handoff && (!recipient.trim() || !artifact.trim() || !note.trim() || !readyAt);
+  const incomplete = !v.reason?.trim() || !v.actionTaken?.trim() || handoff && (!v.recipient?.trim() || !v.artifact?.trim() || !v.note?.trim() || !v.readyAt);
   async function submit(event: React.FormEvent) {
     event.preventDefault();
     if (blocked || incomplete) return;
     setVerify("");
-    const applied = await command.submit(seen => followUpCommand(detail.task.id, seen, { waitingKind, waitingId, decision, actionTaken, evidenceRef, nextCheck, reason,
-      handoff: handoff ? { recipient, artifactRef: artifact, note, readyAt } : null }));
+    const applied = await command.submit(seen => followUpCommand(detail.task.id, seen, { waitingKind: v.waitingKind as FollowUpKind, waitingId: v.waitingId ?? "",
+      decision: v.decision as TaskAttentionFollowUp["decision"], actionTaken: v.actionTaken ?? "", evidenceRef: v.evidenceRef ?? "", nextCheck: v.nextCheck ?? "", reason: v.reason ?? "",
+      handoff: handoff ? { recipient: v.recipient ?? "", artifactRef: v.artifact ?? "", note: v.note ?? "", readyAt: v.readyAt ?? "" } : null }));
     if (!applied) return;
+    setForm({ base: latest, values: latest });
     // Only a reread that shows the newer follow-up on this revision proves the write.
     const checked = (await onReread()).data;
     if (!checked?.followUp || checked.followUp.version <= (value.followUp?.version ?? 0) || checked.followUp.taskRevisionId !== revisionId)
       setVerify("写入已应用，但当前跟进版本还没有读回；请重新读取。");
-    else setReason("");
   }
-  const input = (label: string, current: string, set: (value: string) => void, options: { required?: boolean; type?: string; hint?: string } = {}) =>
-    <Field label={options.required ? label : `${label}（可选）`} hint={options.hint}>{control => <Input {...control} type={options.type ?? "text"} value={current} required={options.required}
-      maxLength={500} onChange={event => set(event.target.value)} autoComplete="off" />}</Field>;
-  return <form onSubmit={submit} aria-label="保存跟进安排" data-dirty={reason || actionTaken !== (followUp?.actionTaken ?? "") ? "true" : undefined} className="flex flex-col gap-3 rounded-lg bg-muted p-4">
-    <Field label="跟进判断">{control => <Select {...control} value={decision} onChange={event => setDecision(event.target.value as typeof decision)} className="w-full">
+  const input = (label: string, name: string, options: { required?: boolean; type?: string; hint?: string } = {}) =>
+    <Field label={options.required ? label : `${label}（可选）`} hint={options.hint}>{control => <Input {...control} type={options.type ?? "text"} value={v[name] ?? ""} required={options.required}
+      maxLength={500} onChange={event => set(name)(event.target.value)} autoComplete="off" />}</Field>;
+  return <form onSubmit={submit} aria-label="保存跟进安排" data-dirty={dirty ? "true" : undefined} className="flex flex-col gap-3 rounded-lg bg-muted p-4">
+    <Field label="跟进判断">{control => <Select {...control} value={v.decision} onChange={event => set("decision")(event.target.value)} className="w-full">
       {Object.entries(decisionLabel).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</Select>}</Field>
-    <Field label="已做的事">{control => <Textarea {...control} required value={actionTaken} onChange={event => setActionTaken(event.target.value)} rows={3} maxLength={4000} />}</Field>
-    {input("依据引用", evidenceRef, setEvidenceRef)}
-    <Field label="等待谁">{control => <Select {...control} value={waitingKind} onChange={event => setWaitingKind(event.target.value as FollowUpKind)} className="w-full">
-      {followUpKinds.map(kind => <option key={kind} value={kind}>{waitingKinds[kind]}</option>)}</Select>}</Field>
-    {input("具体对象", waitingId, setWaitingId, { hint: "智能体、身份或任务的标识。" })}
-    {input("下一检查时间", nextCheck, setNextCheck, { type: "datetime-local" })}
-    <Field label="跟进理由">{control => <Textarea {...control} required value={reason} onChange={event => setReason(event.target.value)} rows={3} maxLength={4000} />}</Field>
+    <Field label="已做什么">{control => <Textarea {...control} required value={v.actionTaken} onChange={event => set("actionTaken")(event.target.value)} rows={3} maxLength={4000} />}</Field>
+    {input("依据引用", "evidenceRef")}
+    <Field label="等待谁">{control => <Select {...control} value={v.waitingKind} onChange={event => set("waitingKind")(event.target.value)} className="w-full">
+      {followUpKinds.map(kind => <option key={kind} value={kind}>{waitingKindLabel[kind]}</option>)}</Select>}</Field>
+    {input("具体对象", "waitingId", { hint: "智能体、身份或任务的标识。" })}
+    {input("下一检查时间", "nextCheck", { type: "datetime-local" })}
+    <Field label="跟进理由">{control => <Textarea {...control} required value={v.reason} onChange={event => set("reason")(event.target.value)} rows={3} maxLength={4000} />}</Field>
     <label className="flex items-center gap-2 text-label text-foreground">
-      <input type="checkbox" checked={handoff} disabled={!!followUp?.publication} onChange={event => setHandoff(event.target.checked)} className="accent-[var(--accent)]" />
+      <input type="checkbox" checked={handoff} disabled={!!followUp?.publication} onChange={event => set("handoff")(event.target.checked ? "1" : "")} className="accent-[var(--accent)]" />
       登记具备发布条件，交给维护者</label>
     {handoff && <div className="flex flex-col gap-3 pl-6">
-      {input("维护者或接收方", recipient, setRecipient, { required: true })}
-      {input("待发布的固定产物引用", artifact, setArtifact, { required: true })}
-      <Field label="交接说明">{control => <Textarea {...control} required value={note} onChange={event => setNote(event.target.value)} rows={3} maxLength={4000} />}</Field>
-      {input("具备发布条件的时间", readyAt, setReadyAt, { required: true, type: "datetime-local" })}
+      {input("维护者或接收方", "recipient", { required: true })}
+      {input("待发布的固定产物引用", "artifact", { required: true })}
+      <Field label="交接说明">{control => <Textarea {...control} required value={v.note} onChange={event => set("note")(event.target.value)} rows={3} maxLength={4000} />}</Field>
+      {input("具备发布条件的时间", "readyAt", { required: true, type: "datetime-local" })}
     </div>}
-    {command.baselineChanged && <Notice tone="waiting" title="打开表单后内容已被更新" action={<Button size="compact" onClick={() => command.rebase()}>已看过最新内容</Button>}>{baselineChangedText}</Notice>}
-    {command.outcome && !command.baselineChanged && <Notice tone={command.outcome.failed ? "error" : "info"}>{command.outcome.message}</Notice>}
+    {command.baselineChanged && <BaselineNotice awaiting={command.awaitingReread} onReread={reread}
+      onKeep={() => { command.rebase(); setForm(keepEdits(form, latest)); }} onRefill={() => { command.rebase(); setForm({ base: latest, values: latest }); }} />}
+    {command.outcome && !(command.baselineChanged && command.outcome.stale) && <OutcomeNotice outcome={command.outcome} />}
     {verify && <Notice tone="waiting">{verify}</Notice>}
     {blocked && <p className="text-caption text-muted-foreground">暂不能提交：{block || "本项目还有结果未确认的操作，请先按原操作 ID 核对。"}</p>}
     <div><Button type="submit" variant="primary" size="compact" disabled={blocked || command.busy || command.baselineChanged || incomplete}>{command.busy ? "正在提交…" : "保存跟进安排"}</Button></div>
@@ -207,7 +217,7 @@ export function TaskArrangementFacts({ projectId, detail, leader, responsibleNam
     ? responsibleText(leader.responsible, leader.assignment, { state: "named", name: responsibleName.trim() })
     : <ResponsibleName projectId={projectId} item={leader} />;
   return <div className="flex flex-col gap-4" data-task-arrangement="">
-    <p data-task-next="" className="rounded-lg bg-accent px-4 py-2.5 text-label text-foreground"><span className="font-semibold">下一步：</span>{workItemNextStep(leader)}</p>
+    <p data-task-next="" className="rounded-lg bg-accent px-4 py-2.5 text-label text-foreground"><strong>下一步：</strong>{workItemNextStep(leader)}</p>
     {timing ? <div className="flex flex-col gap-1">
       <p className="text-label text-foreground">{timingStageLabel[timing.current.stage] ?? "阶段未知"} · 本阶段 {date(timing.current.startedAt ?? undefined)} 起 · 已历时 {timingDuration(timing.current.elapsedMs)} · {waitingText(timing.current.waitingFor, leader.assignment)}</p>
       <Fine>任务创建 {timing.createdAt ? date(timing.createdAt) : "未知"} · 发布证据 {timing.publication.source === "explicit" && timing.publication.at ? `已发布 ${date(timing.publication.at)}` : "未知；具备发布条件不代表已发布"} ·

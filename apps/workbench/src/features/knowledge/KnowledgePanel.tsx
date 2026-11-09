@@ -6,10 +6,11 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { KnowledgeCandidateRecord, KnowledgeRevision } from "@evoloop/contracts/knowledge";
 import { Button, Notice, RefreshingIndicator, cn } from "@evoloop/ui";
-import { errorText, isUnconfirmed } from "../../shared/api";
+import { errorCode, errorDetail, errorText, isUnconfirmed } from "../../shared/api";
 import type { MutationContext } from "../../shared/ActionForm";
 import type { SourceDocument } from "../../shared/knowledgeClient";
 import { currentPath, navigate, onNavigate } from "../../shared/navigation";
+import type { ProjectList } from "../../shared/projectList";
 import { href } from "../../shared/routes";
 import { useContextRailShown } from "../../shared/ui/ContextRail";
 import { ReadingSpaceSwitch } from "../../shared/ui/ReadingSpaceSwitch";
@@ -26,8 +27,8 @@ import { readReceipts, saveReceipts, type ExternalReceipt } from "./knowledgeRec
 import { KnowledgeReview, type ReviewActions } from "./KnowledgeReview";
 import { knowledgeHref, readKnowledgeRoute, readingOnScreen, type KnowledgeRoute } from "./knowledgeRoute";
 import {
-  capabilityFacts, emptyFilter, filterKnowledge, isFiltered, knowledgeDirectory, publishOutcome, receiptTitle, reconcileOutcome,
-  sourceDocumentId, topicMembers, type KnowledgeFilter, type Outcome,
+  capabilityFacts, emptyFilter, filterKnowledge, isFiltered, knowledgeDirectory, notConfiguredCode, publishOutcome, receiptTitle,
+  reconcileOutcome, sourceDocumentId, topicMembers, type KnowledgeFilter, type ListProblem, type Outcome,
 } from "./knowledgePresentation";
 
 type Message = Outcome & { ids?: Array<[string, string]> };
@@ -37,11 +38,19 @@ function routeHere(projectId: string): KnowledgeRoute {
   return route.view === "outside" ? { view: "list" } : route;
 }
 
+/** Why a list is not (fully) read: the first page, a reread, the next page, a looping cursor, or no backend at all. */
+function listProblem(list: ProjectList<unknown>): ListProblem | null {
+  if (!list.error) return list.repeatedCursor ? { kind: "cursor", text: "", detail: null } : null;
+  const text = errorText(list.error), detail = errorDetail(list.error);
+  if (errorCode(list.error) === notConfiguredCode) return { kind: "unconfigured", text, detail };
+  return { kind: list.pageFailed ? "page" : list.stale ? "stale" : "failed", text, detail };
+}
+
 function OutcomeNotice({ message, onClose }: { message: Message; onClose(): void }) {
   return <Notice tone={message.tone} title={message.title} action={<Button variant="ghost" size="compact" onClick={onClose}>知道了</Button>}>
     {message.detail}
     {(message.diagnostic || message.ids?.length) && <details className="mt-1 text-caption">
-      <summary className="cursor-pointer">{message.ids?.length ? "完整标识" : "诊断"}</summary>
+      <summary className="cursor-pointer">{message.ids?.length ? message.diagnostic ? "完整标识与诊断信息" : "完整标识" : "诊断信息"}</summary>
       {message.ids?.map(([name, value]) => <p key={name} className="[overflow-wrap:anywhere]">{name} <code className="font-mono">{value}</code></p>)}
       {message.diagnostic && <p className="[overflow-wrap:anywhere]">服务说明：{message.diagnostic}</p>}
     </details>}
@@ -70,16 +79,14 @@ export function KnowledgePanel({ context }: { context: MutationContext; refresh:
     setRoute(next); setComposing(false); setMessage(nextMessage.current); nextMessage.current = null;
   }), [projectId]);
   const [filter, setFilter] = useState<KnowledgeFilter>(emptyFilter);
-  const [pageDepth, setPageDepth] = useState(1);
-  const [candidateDepth, setCandidateDepth] = useState(1);
-  const index = useKnowledgeIndex(projectId, pageDepth, candidateDepth);
+  const index = useKnowledgeIndex(projectId);
   const selectedId = route.view === "read" ? route.id : null;
   const fixedRevision = route.view === "read" ? route.revision : undefined;
   const readQuery = useKnowledgeReading(projectId, selectedId, fixedRevision);
   const candidateId = route.view === "review" ? route.id : undefined;
   const candidateQuery = useKnowledgeCandidate(projectId, candidateId);
   const reread = useKnowledgeReread(projectId);
-  useRereadOnReturn(reread, 0);
+  useRereadOnReturn(reread);
   const railShown = useContextRailShown();
   const api = knowledgeApi(projectId);
 
@@ -90,26 +97,32 @@ export function KnowledgePanel({ context }: { context: MutationContext; refresh:
   const updateDraft = (patch: Partial<Draft>) => setDraft(previous => ({ ...previous, ...patch }));
 
   // ---- service and list
-  const service = serviceState(index.capabilities, index.pages);
+  // A failed next page is the list's own note (这一页没读到), not a failed service read.
+  const service = serviceState(index.capabilities, { data: index.pages.items, isFetching: index.pages.reading || index.pages.checking,
+    isError: index.pages.failed || index.pages.stale });
+  const notConfigured = [index.capabilities.error, index.pages.error].some(cause => errorCode(cause) === notConfiguredCode);
   const availability = knowledgeAvailability(service.capabilities);
-  const loadedPages = index.pages.data?.items ?? [];
+  const loadedPages = index.pages.items ?? [];
   const visible = filterKnowledge(loadedPages, filter);
   const directory = knowledgeDirectory(visible);
   const onScreen = readingOnScreen(readQuery.data?.page, readQuery.isPlaceholderData, projectId, selectedId, fixedRevision);
-  const reading = onScreen.previous && !carryPrevious ? { page: null, previous: false } : onScreen;
+  // Another page kept on screen only stands in while the asked-for page loads; once that read fails, the failure shows
+  // instead of the other page.
+  const reading = onScreen.previous && (!carryPrevious || readQuery.isError) ? { page: null, previous: false } : onScreen;
   const readingData = reading.page ? readQuery.data : undefined;
   const openTopic = readingData && !reading.previous && readingData.page.pageType === "topic" && readingData.current === readingData.page.revision ? readingData.page : null;
   const list: DirectoryList = {
     topics: directory.topics, pages: directory.pages, members: openTopic ? topicMembers(readingData!.graph, openTopic) : [],
     openTopicId: openTopic?.knowledgeId ?? null, loaded: loadedPages.length, matched: visible.length, filtered: isFiltered(filter),
-    more: !!index.pages.data?.nextCursor, fullRead: availability.fullRead, reading: index.pages.isPending,
-    checking: index.pages.isFetching && !!index.pages.data, error: index.pages.error ? errorText(index.pages.error) : "",
-    loadMore: () => setPageDepth(depth => depth + 1), reread,
+    more: index.pages.more, fullRead: availability.fullRead, reading: index.pages.reading, checking: index.pages.checking,
+    loadingMore: index.pages.loadingMore, coverage: index.pages.coverage, problem: listProblem(index.pages), loadMore: index.pages.loadMore, reread,
   };
-  const candidates = index.candidates.data?.items ?? [];
+  const candidates = index.candidates.items ?? [];
   const pending = candidates.filter(item => item.status === "pending").length;
-  const pendingCandidates = pending ? `${pending}${index.candidates.data?.nextCursor ? "+" : ""}` : null;
+  const pendingCandidates = pending ? `${pending}${index.candidates.more ? "+" : ""}` : null;
   const sources = index.sources.data?.items;
+  // The sources answer as the compose and retract views need it: failed (never read), kept from before, or current.
+  const sourcesRead = { error: index.sources.error ? errorText(index.sources.error) : "", stale: index.sources.stale };
   const sourceTitles = new Map((sources ?? []).map(source => [source.documentId, source.title]));
   const pendingTitle = selectedId ? loadedPages.find(item => item.knowledgeId === selectedId)?.title ?? null : null;
 
@@ -124,15 +137,18 @@ export function KnowledgePanel({ context }: { context: MutationContext; refresh:
     const next = readReceipts().filter(item => item.operationId !== operationId);
     if (saveReceipts(next)) setReceipts(next);
   };
-  async function reconcile(operationId: string) {
+  // A receipt is checked by its own operation ID, never a new one.
+  async function reconcile(receipt: ExternalReceipt) {
+    const { operationId } = receipt;
     setBusy(true); setMessage(null);
     try {
       const { result } = await api.reconcile(operationId);
-      const outcome = reconcileOutcome(result);
+      const outcome = reconcileOutcome(result, receipt.kind);
       if (outcome.settled) { dropReceipt(operationId); changed(); }
       setMessage(outcome);
-    } catch (cause) { setMessage({ tone: "error", title: "核对没有完成", detail: `${errorText(cause)}。回执保留，可以稍后再核对。` }); }
-    finally { setBusy(false); }
+    } catch (cause) {
+      setMessage({ tone: "error", title: "核对没有完成", detail: `${errorText(cause)}。回执保留，可以稍后再核对。`, diagnostic: errorDetail(cause) ?? undefined });
+    } finally { setBusy(false); }
   }
   async function externalWrite(kind: "publish" | "retract", targetId: string) {
     if (!canReview || busy || visibleReceipts.length) return;
@@ -155,7 +171,8 @@ export function KnowledgePanel({ context }: { context: MutationContext; refresh:
       const unknown = isUnconfirmed(cause);
       if (!unknown) dropReceipt(operationId);
       setMessage({ tone: "error", title: unknown ? `${kind === "publish" ? "发布" : "撤回"}结果未知` : `${kind === "publish" ? "发布" : "撤回"}没有完成`,
-        detail: `${errorText(cause)}。${unknown ? "回执已保留，请按原操作核对，不要重复操作。" : "请求没有被接受。"}`, ids: [["操作", operationId]] });
+        detail: `${errorText(cause)}。${unknown ? "回执已保留，请按原操作核对，不要重复操作。" : "请求没有被接受。"}`,
+        diagnostic: errorDetail(cause) ?? undefined, ids: [["操作", operationId]] });
     } finally { setBusy(false); }
   }
   async function propose() {
@@ -188,7 +205,8 @@ export function KnowledgePanel({ context }: { context: MutationContext; refresh:
       changed();
     } catch (cause) {
       setMessage({ tone: "error", title: isUnconfirmed(cause) ? "候选是否保存没有确认" : "候选没有保存",
-        detail: `${errorText(cause)}。草稿还在。${isUnconfirmed(cause) ? "请先在候选列表里找这条候选，不要直接重提。" : ""}`, ids: [["候选", candidateId]] });
+        detail: `${errorText(cause)}。草稿还在。${isUnconfirmed(cause) ? "请先在候选列表里找这条候选，不要直接重提。" : ""}`,
+        diagnostic: errorDetail(cause) ?? undefined, ids: [["候选", candidateId]] });
     } finally { setBusy(false); }
   }
   const actions: ReviewActions = {
@@ -203,7 +221,7 @@ export function KnowledgePanel({ context }: { context: MutationContext; refresh:
         changed(); return true;
       } catch (cause) {
         setMessage({ tone: "error", title: isUnconfirmed(cause) ? "审阅结果没有确认" : "审阅没有记录",
-          detail: `${errorText(cause)}。${isUnconfirmed(cause) ? "请重新读取这条候选再决定。" : ""}` });
+          detail: `${errorText(cause)}。${isUnconfirmed(cause) ? "请重新读取这条候选再决定。" : ""}`, diagnostic: errorDetail(cause) ?? undefined });
         return false;
       } finally { setBusy(false); }
     },
@@ -224,10 +242,14 @@ export function KnowledgePanel({ context }: { context: MutationContext; refresh:
   const clearDraft = () => { if (draft.touched && !window.confirm("清空没保存的知识候选草稿？")) return; setDraft(emptyDraft); };
 
   // ---- shared pieces
-  const observed = Math.max(index.capabilities.dataUpdatedAt, index.pages.dataUpdatedAt);
-  const serviceLine = service.standing === "reading" ? { title: "正在核对知识服务", detail: "先核对服务能力和列表；还没读回不代表没有知识。" }
+  const observed = Math.max(index.capabilities.dataUpdatedAt, index.pages.observedAt);
+  // Not configured is a setting of this project, not a passing failure: no retry is offered.
+  const serviceLine = notConfigured ? { title: "知识后端未配置", detail: "这个项目还没有配置外置知识后端，暂时不能阅读、提出或审阅知识。配置之前，可以去过程文档核对固定原件。" }
+    : service.standing === "reading" ? { title: "正在核对知识服务", detail: "先核对服务能力和列表；还没读回不代表没有知识。" }
     : service.standing === "failed" ? { title: "知识服务这次没有读回", detail: `${errorText(index.capabilities.error ?? index.pages.error)}。无法判断有哪些知识，可以重试。` }
-      : service.standing === "stale" ? { title: "知识服务这次没有读回", detail: "下面是上次读回的列表，当前待核对；不能据此断言正文当前可读。" }
+      : service.standing === "stale" ? { title: "知识服务这次没有读回", detail: index.pages.stale
+        ? "下面是上次读回的列表，当前待核对；不能据此断言正文当前可读。"
+        : "服务能力这次没有读回；列表是这次读到的，但不能据此断言正文当前可读。" }
         : availability;
   const facts = (service.capabilities ?? index.capabilities.data);
   const serviceBlock = <section aria-label="知识服务与读取范围" className={cn("flex flex-col gap-1 rounded-lg px-4 py-3", availability.fullRead && service.standing !== "stale" ? "bg-muted" : "bg-warning-soft")}>
@@ -235,14 +257,14 @@ export function KnowledgePanel({ context }: { context: MutationContext; refresh:
       {service.standing === "checking" ? <RefreshingIndicator label="正在核对" /> : observed > 0 && <span className="text-caption font-normal text-muted-foreground">{service.standing === "stale" ? "上次读于" : "读于"} {new Date(observed).toLocaleTimeString("zh-CN", { hour12: false })}</span>}</p>
     <p className="text-label text-text-secondary">{serviceLine.detail}</p>
     {facts && <details className="text-caption text-muted-foreground">
-      <summary className="cursor-pointer">{service.capabilities ? "服务与读取范围" : "上次读回的服务情况（当前待核对）"}</summary>
+      <summary className="cursor-pointer">{index.capabilities.stale ? "上次读回的服务情况（当前待核对）" : "服务与读取范围"}</summary>
       <div className="mt-1 flex flex-col gap-0.5">{capabilityFacts(facts).map(([name, value]) => <p key={name}>{name}：{value}</p>)}
         <p>列表与关系图只覆盖已登记的关系，不能据此推断来源完整或认识正确。</p></div>
     </details>}
   </section>;
   const notices = <>
     {visibleReceipts.map(item => <Notice key={item.operationId} tone="error" title={receiptTitle(item.kind)}
-      action={<Button size="compact" disabled={busy} onClick={() => void reconcile(item.operationId)}>核对结果</Button>}>
+      action={<Button size="compact" disabled={busy} onClick={() => void reconcile(item)}>核对结果</Button>}>
       {new Date(item.createdAt).toLocaleString("zh-CN", { hour12: false })} 发起，结果没有确认。按原操作核对，不要重复操作。
       <details className="mt-1 text-caption"><summary className="cursor-pointer">完整标识</summary><p className="[overflow-wrap:anywhere]">操作 <code className="font-mono">{item.operationId}</code></p></details>
     </Notice>)}
@@ -254,7 +276,7 @@ export function KnowledgePanel({ context }: { context: MutationContext; refresh:
 
   let center: ReactNode;
   if (composing) center = <KnowledgeCompose projectId={projectId} draft={draft} update={updateDraft} sources={sources}
-    sourcesError={index.sources.error ? errorText(index.sources.error) : ""} pages={loadedPages} canWrite={canWrite} busy={busy} blocked={context.blocked}
+    sourcesRead={sourcesRead} pages={loadedPages} canWrite={canWrite} busy={busy} blocked={context.blocked}
     onSubmit={() => void propose()} onClear={clearDraft} onClose={() => setComposing(false)}
     backLabel={route.view === "read" ? "返回阅读" : route.view === "review" ? "返回候选与审阅" : "返回知识空间"} />;
   else if (route.view === "read") center = <>
@@ -262,13 +284,14 @@ export function KnowledgePanel({ context }: { context: MutationContext; refresh:
     <KnowledgeReader projectId={projectId} fixed={!!fixedRevision} returnHref={returnHref} pendingTitle={pendingTitle} canWrite={canWrite}
       read={{ data: readingData, previous: reading.previous, error: readQuery.error, checking: readQuery.checking, observedAt: readQuery.dataUpdatedAt }}
       onRevise={startRevision} onReread={reread} />
-    {readingData && <KnowledgeFacts projectId={projectId} reading={readingData} previous={reading.previous} sourceTitles={sourceTitles} />}
+    {readingData && <KnowledgeFacts projectId={projectId} reading={readingData} previous={reading.previous}
+      stale={!reading.previous && readQuery.stale} sourceTitles={sourceTitles} />}
   </>;
   else if (route.view === "review") center = <KnowledgeReview projectId={projectId} candidateId={candidateId}
-    list={{ items: candidates, more: !!index.candidates.data?.nextCursor, reading: index.candidates.isPending, checking: index.candidates.isFetching && !!index.candidates.data,
-      error: index.candidates.error ? errorText(index.candidates.error) : "", loadMore: () => setCandidateDepth(depth => depth + 1) }}
+    list={{ items: candidates, more: index.candidates.more, reading: index.candidates.reading, checking: index.candidates.checking,
+      loadingMore: index.candidates.loadingMore, coverage: index.candidates.coverage, problem: listProblem(index.candidates), loadMore: index.candidates.loadMore }}
     candidate={{ data: candidateQuery.data, error: candidateQuery.error, checking: candidateQuery.checking }}
-    sources={sources} sourcesError={index.sources.error ? errorText(index.sources.error) : ""} actions={actions}
+    sources={sources} sourcesRead={sourcesRead} actions={actions} onReread={reread}
     toolbar={<div className="flex flex-wrap items-center gap-2">{switcher}<a href={knowledgeHref(projectId)} className="text-label font-medium text-primary hover:underline">← 知识空间</a></div>} />;
   else if (route.view === "invalid") center = <section className="flex flex-col items-start gap-3">
     <h1 tabIndex={-1} className="text-title font-semibold outline-none">知识空间</h1>
@@ -294,7 +317,7 @@ export function KnowledgePanel({ context }: { context: MutationContext; refresh:
       <ol className="ml-5 flex list-decimal flex-col gap-1.5 text-label text-text-secondary">
         <li><strong className="font-medium text-foreground">核对固定引用</strong>：打开下面已登记的引用，确认范围与现有结论；正文和来源仍待读取。</li>
         <li><strong className="font-medium text-foreground">查看候选记录</strong>：在候选与审阅里核查待审候选的来源，保留有价值的补充。</li>
-        <li><strong className="font-medium text-foreground">服务恢复后重新读取</strong>：再读正文与来源，判断当前认识。</li>
+        <li><strong className="font-medium text-foreground">{notConfigured ? "配置知识后端后重新读取" : "服务恢复后重新读取"}</strong>：再读正文与来源，判断当前认识。</li>
       </ol>
       <a href={href(projectId, "documents")} className="text-label font-medium text-primary hover:underline">去过程文档核对固定原件 →</a>
     </section>}

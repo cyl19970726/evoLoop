@@ -109,7 +109,7 @@ test("Task tabs and refresh retain the verified Session return; ordinary and wro
   assert.doesNotMatch(await page.locator(".session-current-task-timing").innerText(),/发布维护者/);
   leaderTaskMatches=true;
   await page.getByRole("button",{name:"重新读取",exact:true}).click();
-  await page.locator(".session-current-task-timing").getByText(/等待 维护者 · 发布维护者/).waitFor({timeout:5000}).catch(async()=>{
+  await page.locator(".session-current-task-timing").getByText(/等待 发布维护者 · 发布维护者/).waitFor({timeout:5000}).catch(async()=>{
     assert.fail(`exact Task timing missing: ${await page.locator(".session-current-task-timing").innerText()} reads=${leaderReads.length} errors=${errors.join(" | ")}`);
   });
   assert.ok(leaderReads.length>=2 && leaderReads.every(path=>path.endsWith(taskId)));

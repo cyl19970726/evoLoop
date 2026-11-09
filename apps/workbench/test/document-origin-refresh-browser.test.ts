@@ -134,7 +134,8 @@ test("document source run rereads after returning from the task and on manual re
   for (let attempt=0; attempt<30 && await (await fetch(`${base}/__fixture/held-run-reads`)).text() !== "1"; attempt++)
     await new Promise(resolve=>setTimeout(resolve,25));
   assert.equal(await (await fetch(`${base}/__fixture/held-run-reads`)).text(),"1");
-  assert.match(await secondSummary.innerText(),/上次读回/);
+  // The held read keeps the reread in flight; the page marks the last answer once it renders that state.
+  await secondSummary.getByText(/上次读回/).waitFor({timeout:3000});
   await fetch(`${base}/__fixture/change-origin`);
   await reread();
   await secondSummary.getByText(/77777777.*运行结束/).waitFor();

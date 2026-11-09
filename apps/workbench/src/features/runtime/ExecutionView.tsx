@@ -60,6 +60,7 @@ export function ExecutionView({ context, refresh, sessionId }: { context: Mutati
   const reread = () => {
     void client.invalidateQueries({ queryKey: queryKeys.project(projectId, "runtime") });
     void client.invalidateQueries({ queryKey: queryKeys.project(projectId, "roles") });
+    void client.invalidateQueries({ queryKey: queryKeys.project(projectId, "resident-queues") });
     setEpoch(value => value + 1);
   };
   async function recover() {

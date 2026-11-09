@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useState, type FormEvent } from "react";
 import type { ConnectorRoute, ConnectorRouteRecord } from "@evoloop/contracts/message-connectors";
-import { ApiError, errorText } from "../../shared/api";
+import { ApiError, errorDiagnostic, errorText } from "../../shared/api";
 import { RefreshCw } from "lucide-react";
 import { Button, EmptyState, ErrorState, Field, Input, ListRow, LoadingState, Notice, RefreshingIndicator, StatusTag, Textarea, cn } from "@evoloop/ui";
 import { date, href } from "../../shared/ui/shared";
@@ -110,7 +110,7 @@ export function ConnectorPage({ context }: { context: MutationContext }) {
     client.list().then(page => {
       if (page.items.some(route => route.projectId !== projectId)) throw new Error("路由响应不属于当前项目");
       if (active) setRead({ projectId, routes: page.items, cursor: page.nextCursor, error: "", reading: false });
-    }).catch(cause => { if (active) setRead(previous => ({ ...previous, error: errorText(cause), reading: false })); });
+    }).catch(cause => { if (active) setRead(previous => ({ ...previous, error: errorDiagnostic(cause), reading: false })); });
     return () => { active = false; };
   }, [token, projectId, readAgain]);
   const remember = (id: string) => { sessionStorage.setItem(pendingKey(projectId, principal.actorId), id); setPending(id); };

@@ -55,34 +55,36 @@ export function ResidentQueuePanel({ context, task, sessionId, runs, sessions, t
     return items;
   });
   const queues = list.data ?? [];
+  // “重新读取队列” reads the list and, in every open queue, its detail, attempts and the names it shows.
+  const [round, setRound] = React.useState(0);
   const visible = task || sessionId ? queues.filter(queue => queue.entries.some(entry => (!task || entry.taskId === task.id) && (!sessionId || entry.sessionId === sessionId))) : queues;
   return <section data-ui="" data-queue-panel="" aria-label="执行队列" className="flex min-w-0 flex-col gap-3">
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
       {titled && <h3 className="text-small font-semibold text-foreground">执行队列</h3>}
       <span className="text-caption text-muted-foreground">{list.isFetching ? "正在核对队列…" : list.dataUpdatedAt ? `读于 ${date(new Date(list.dataUpdatedAt).toISOString())}` : "尚未读回"}</span>
-      <Button size="compact" variant="ghost" className="ml-auto" disabled={list.isFetching} onClick={() => void list.refetch()}>重新读取队列</Button>
+      <Button size="compact" variant="ghost" className="ml-auto" disabled={list.isFetching} onClick={() => { void list.refetch(); setRound(value => value + 1); }}>重新读取队列</Button>
     </div>
     <Fine>项目自己的智能体按这里的顺序承接任务。排在前面不等于可以启动：每次还要核对任务修订、依赖、授权和占用。</Fine>
     <ReadNote read={list} what="执行队列" />
     {list.data && !list.error && !visible.length && <p className="text-label text-text-secondary">{sessionId ? "这个智能体还不在已登记的执行队列里。" : task ? "这项任务还不在已登记的执行队列里。" : "还没有登记执行队列。"}</p>}
-    {visible.map(queue => <QueueCard key={`${projectId}:${queue.id}`} context={context} queue={queue} task={task} sessionId={sessionId} runs={runs} sessions={sessions} />)}
+    {visible.map(queue => <QueueCard key={`${projectId}:${queue.id}`} context={context} queue={queue} task={task} sessionId={sessionId} runs={runs} sessions={sessions} round={round} />)}
   </section>;
 }
 
-function QueueCard({ context, queue, task, sessionId, runs, sessions }: {
-  context: MutationContext; queue: ResidentQueue; task?: Pick<Task, "id" | "title" | "currentRevisionId"> | undefined; sessionId?: string | undefined;
+function QueueCard({ context, queue, task, sessionId, runs, sessions, round }: {
+  context: MutationContext; queue: ResidentQueue; round: number; task?: Pick<Task, "id" | "title" | "currentRevisionId"> | undefined; sessionId?: string | undefined;
   runs: RuntimeRunRecord[]; sessions: RuntimeSessionRecord[];
 }) {
   const projectId = context.projectId;
   const [open, setOpen] = React.useState(!!sessionId || !!task);
   // Once opened, the content (and any draft in it) stays until the page goes away.
   const [opened, setOpened] = React.useState(!!sessionId || !!task);
-  const detail = useProjectQuery(projectId, ["resident-queues", queue.id, "detail", queue.version], async () => {
+  const detail = useProjectQuery(projectId, ["resident-queues", queue.id, "detail"], async () => {
     const value = await queueClient("", projectId).detail(queue.id);
     if (value.projectId !== projectId || value.id !== queue.id) throw new Error("队列详情不属于当前项目");
     return value;
   }, { enabled: opened });
-  const attemptRead = useProjectQuery(projectId, ["resident-queues", queue.id, "attempts", queue.version], async () => {
+  const attemptRead = useProjectQuery(projectId, ["resident-queues", queue.id, "attempts"], async () => {
     const rows = await queueClient("", projectId).attempts(queue.id);
     if (!Array.isArray(rows) || rows.some(row => row.attempts.some(attempt => attempt.projectId !== projectId))) throw new Error("尝试记录不属于当前项目");
     return rows;
@@ -109,8 +111,27 @@ function QueueCard({ context, queue, task, sessionId, runs, sessions }: {
       if (value.projectId !== projectId || value.id !== id) throw new Error("名称响应与当前项目或职责不符");
       return value;
     } })) });
-  const taskTitle = (id: string) => id === task?.id ? task.title : taskReads[taskIds.indexOf(id)]?.data?.task?.title?.trim() || "任务（名称待读取）";
-  const roleTitle = (id: string) => roleReads[roleIds.indexOf(id)]?.data?.proposal.title?.trim() || "职责（名称待读取）";
+  // The queue list's own summary (version, adoption) and an entry's state can change without the version; whenever
+  // the list or a reread brings anything new, the open card reads its detail, attempts and names again.
+  const listKey = JSON.stringify([queue.version, queue.adoptedVersion, queue.entries.map(entry => `${entry.id}:${entry.state}:${entry.version}`)]);
+  const mounted = React.useRef(false);
+  React.useEffect(() => {
+    if (!mounted.current) { mounted.current = true; return; }
+    if (!opened) return;
+    void detail.refetch(); void attemptRead.refetch();
+    for (const read of [...taskReads, ...roleReads]) void read.refetch();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [round, listKey]);
+  // A name whose reread failed is not shown from before: the entry keeps its short ID (full ID in 完整标识).
+  const taskTitle = (id: string) => {
+    if (id === task?.id) return task.title;
+    const read = taskReads[taskIds.indexOf(id)];
+    return !read?.error && read?.data?.task?.title?.trim() || "任务（名称待读取）";
+  };
+  const roleTitle = (id: string) => {
+    const read = roleReads[roleIds.indexOf(id)];
+    return !read?.error && read?.data?.proposal?.title?.trim() || `职责 ${id.slice(0, 8)}`;
+  };
   const failedNames = [...taskReads, ...roleReads].some(read => read.error);
   const attempts = new Map(attemptRead.data?.map(row => [row.entryId, row.attempts]) ?? []);
   const total = attemptRead.data?.reduce((sum, row) => sum + row.attempts.length, 0);
@@ -136,7 +157,7 @@ function QueueCard({ context, queue, task, sessionId, runs, sessions }: {
       <ReadNote read={detail} what="队列详情" />
       {attemptRead.error && <ReadNote read={attemptRead} what="尝试记录" />}
       {ordered.length > maxNamedEntries && <Fine>这一轮先核对当前占用和各智能体的下一顺位，最多读 {maxNamedEntries} 项名称；其余条目打开任务核对。</Fine>}
-      {failedNames && <Fine>部分名称暂不可读；完整标识里保留了原始编号。</Fine>}
+      {failedNames && <Fine>部分名称未读回，已保留对象编号供核对。</Fine>}
       {readable && canReview && <div className="flex flex-col">
         {shown.adoptedVersion !== shown.version && <ActionRow title="采纳当前顺序" description="采纳后调度才按这个顺序派发。">
           <CommandForm context={context} submitLabel="采纳当前顺序" baseline={{ queueVersion: shown.version }} fields={[]}
@@ -192,7 +213,7 @@ function AgentQueue({ context, queue, agentId, entries, session, runs, attempts,
           <StatusTag tone={standing.tone} label={standing.label} />
           <a className="min-w-0 text-label text-primary hover:underline [overflow-wrap:anywhere]" href={entryHref}>{taskTitle(entry.taskId)}</a>
         </div>
-        <Fine>承接职责 {roleTitle(entry.roleId)} · 验收者 {entry.consumerId} · 放行规则 {entry.releaseRule === "accepted" ? entry.useRequired ? "验收者实际使用并验收" : "验收者验收" : "有界的人工决定"}</Fine>
+        <Fine>承接职责 <a className="text-primary hover:underline" href={`${href(projectId, "roles")}?role=${key(entry.roleId)}`}>{roleTitle(entry.roleId)}</a> · 验收者 {entry.consumerId} · 放行规则 {entry.releaseRule === "accepted" ? entry.useRequired ? "验收者实际使用并验收" : "验收者验收" : "有界的人工决定"}</Fine>
         {dependencies.length > 0 && <Fine>要先放行：{dependencies.map(item => taskTitle(item.taskId)).join("、")}</Fine>}
         {entry.holdCode && <p className="text-caption text-warning [overflow-wrap:anywhere]">{holdLabel[entry.holdCode]}{entry.holdReason ? `：${entry.holdReason}` : ""}</p>}
         {entry.state === "claimed" && <Fine>这一项占用着这个智能体；后面的项即使有序号也不表示已经启动。</Fine>}

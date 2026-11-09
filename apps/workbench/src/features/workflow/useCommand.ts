@@ -4,7 +4,13 @@
 // depends on, such as the task version, the assignment, queue or timing version, the impact or the delivery. If any
 // of it changes before submitting, or the service answers that the version moved, the form refuses until the
 // person has looked at the latest content; the versions sent are always the recorded ones.
-import { useEffect, useRef, useState } from "react";
+// A form that keeps its draft between mounts passes `options.draft`: the draft is kept together with the baseline it
+// was written against, so a form mounted again later still compares against what the person saw, not what is on
+// screen now.
+// The hook never adopts a newer baseline by itself. The forms apply one rule (RecordForm, CommandForm and the task
+// page's own forms): a form nobody has typed into follows the latest content and records it as its new baseline; a
+// form with changes waits until the person has looked (`rebase`).
+import { useState } from "react";
 import { commandSchema, type Command, type CommandResult } from "@evoloop/contracts";
 import { api, isUnconfirmed } from "../../shared/api";
 import type { MutationContext, RecoverableCommand } from "../../shared/ActionForm";
@@ -33,6 +39,10 @@ export function submissionRefusal(state: { busy: boolean; blocked: boolean; stal
   return null;
 }
 
+/** A kept draft and the baseline it was written against (the baseline itself, an object or a string). */
+export interface SavedDraft { values: unknown; baseline: Baseline | string | undefined }
+/** Where drafts are kept between mounts (a Map works); the key names the object, and the record, the draft is for. */
+export type DraftStore = Pick<Map<string, SavedDraft>, "get" | "set" | "delete">;
 export interface CommandOptions {
   /** Sends to a dedicated endpoint (the Leader's plan, dependencies and review) instead of the command endpoint. */
   send?: ((command: SubmittableCommand) => Promise<CommandResult>) | undefined;
@@ -41,13 +51,21 @@ export interface CommandOptions {
    * For commands with their own endpoint or schema, as ActionForm's `validateCommand`.
    */
   validate?: ((candidate: Record<string, unknown>) => void) | undefined;
+  draft?: { store: DraftStore; key: string } | undefined;
+  /** The service answered that the version moved: reread, so the person can look at the latest content. */
+  onStale?: (() => void) | undefined;
+}
+
+/** The baseline a form compares against when it mounts: a kept draft's own baseline, else what is on screen now. */
+export function openingBaseline<B>(saved: SavedDraft | undefined, current: B): B {
+  return saved ? saved.baseline as B : current;
 }
 
 /**
  * Builds the command that is sent: the form's fields plus the project and a new operation ID, parsed by the shared
  * schema (which trims text), or checked by `validate` and kept as built. Throws a message for the person.
  */
-export function prepareCommand(built: Record<string, unknown>, projectId: string, operationId: string, options: CommandOptions = {}): SubmittableCommand {
+export function prepareCommand(built: Record<string, unknown>, projectId: string, operationId: string, options: Pick<CommandOptions, "validate"> = {}): SubmittableCommand {
   const candidate = { ...built, projectId, operationId };
   try {
     if (options.validate) { options.validate(candidate); return candidate as SubmittableCommand; }
@@ -58,17 +76,14 @@ export function prepareCommand(built: Record<string, unknown>, projectId: string
 export function useCommand<B extends Baseline | string | undefined = undefined>(context: MutationContext, baseline?: B, options: CommandOptions = {}) {
   const [busy, setBusy] = useState(false);
   const [outcome, setOutcome] = useState<SubmissionOutcome | null>(null);
-  const [recorded, setRecorded] = useState<B | undefined>(baseline);
+  const [restored] = useState(() => options.draft ? options.draft.store.get(options.draft.key) : undefined);
+  const [recorded, setRecorded] = useState(() => openingBaseline(restored, baseline));
   const [stale, setStale] = useState(false);
-  // After this form's own write is applied, the next baseline read back is its result: it becomes the new baseline.
-  const followNext = useRef(false);
+  // The baseline on screen when the service said the version moved: until a reread changes it, there is nothing new
+  // to look at, so the form waits instead of offering to keep or refill against the same old content.
+  const [staleAt, setStaleAt] = useState<string | undefined>(undefined);
+  const draftKey = options.draft?.key;
   const current = baselineText(baseline);
-  useEffect(() => {
-    if (recorded === undefined && baseline !== undefined) { setRecorded(baseline); return; }
-    if (followNext.current && current !== baselineText(recorded)) { followNext.current = false; setRecorded(baseline); }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [current]);
-  const seen = (recorded ?? baseline) as B;
   const baselineChanged = submissionRefusal({ busy: false, blocked: false, stale, recorded: baselineText(recorded), current }) === "baseline";
   /** Sends the command `build` returns from the recorded baseline. Resolves true only when the service applied it. */
   async function submit(build: (seen: B) => Record<string, unknown>): Promise<boolean> {
@@ -79,7 +94,7 @@ export function useCommand<B extends Baseline | string | undefined = undefined>(
     let command: SubmittableCommand;
     try {
       let built: Record<string, unknown>;
-      try { built = build(seen); }
+      try { built = build(recorded as B); }
       catch (cause) { throw new Error(cause instanceof Error && cause.message ? cause.message : incompleteText); }
       command = prepareCommand(built, context.projectId, crypto.randomUUID(), options);
     } catch (cause) { setOutcome(refused(cause instanceof Error ? cause.message : incompleteText)); return false; }
@@ -93,18 +108,31 @@ export function useCommand<B extends Baseline | string | undefined = undefined>(
       context.onKnown(command.operationId);
       const next = resultOutcome(result);
       setOutcome(next);
-      if (next.stale) setStale(true);
-      if (next.applied) { followNext.current = true; context.onChanged(); }
+      if (next.stale) { setStale(true); setStaleAt(current); options.onStale?.(); }
+      if (next.applied) { dropDraft(); context.onChanged(); }
       return next.applied;
     } catch (cause) {
       if (!isUnconfirmed(cause)) context.onKnown(command.operationId);
       const next = errorOutcome(cause);
       setOutcome(next);
-      if (next.stale) setStale(true);
+      if (next.stale) { setStale(true); setStaleAt(current); options.onStale?.(); }
       return false;
     } finally { setBusy(false); }
   }
-  /** The person has looked at the latest content: it becomes the form's new baseline. */
-  function rebase() { followNext.current = false; setRecorded(baseline); setStale(false); setOutcome(null); }
-  return { busy, outcome, submit, clear: () => setOutcome(null), baselineChanged, rebase, recordedBaseline: recorded, seen };
+  /** Keep the typed values with the baseline they are written against. */
+  function saveDraft(values: unknown) { if (options.draft && draftKey) options.draft.store.set(draftKey, { values, baseline: recorded }); }
+  function dropDraft() { if (options.draft && draftKey) options.draft.store.delete(draftKey); }
+  /** The person has looked at the latest content (or the form had no changes): it becomes the new baseline, the kept draft's too. */
+  function rebase() {
+    setRecorded(baseline as B); setStale(false); setStaleAt(undefined); setOutcome(null);
+    const kept = draftKey ? options.draft?.store.get(draftKey) : undefined;
+    if (kept && draftKey) options.draft!.store.set(draftKey, { ...kept, baseline });
+  }
+  return { busy, outcome, submit, clear: () => setOutcome(null), baselineChanged, rebase, recordedBaseline: recorded,
+    /** The service said the version moved and the latest content has not been read back yet. */
+    awaitingReread: stale && staleAt === current,
+    /** The recorded baseline the command is built from. */
+    seen: recorded as B,
+    /** The values kept from an earlier mount, or undefined. */
+    restoredDraft: restored?.values, saveDraft, dropDraft };
 }

@@ -144,7 +144,11 @@ test("built Task page selects the current Loop, preserves manual history and fit
   assert.deepEqual(sessionShell, taskShellBaseline, "a selected Session uses the same frame as a Task");
   const assertDefaultTaskShell = async () => {
     const viewport = pageBrowser.viewportSize();
-    if (viewport) await baselinePage.setViewportSize(viewport);
+    if (viewport) {
+      await baselinePage.setViewportSize(viewport);
+      // The frame's data-rail follows a media query listener, so it settles a render after the resize; read it then.
+      await baselinePage.waitForFunction(narrow => (document.querySelector("[data-shell=frame]")?.getAttribute("data-rail") === "drawer") === narrow, viewport.width < 760);
+    }
     const baseline = await readShell(baselinePage);
     const shell = await readShell();
     assert.deepEqual(shell, baseline,
@@ -225,5 +229,5 @@ test("built Task page selects the current Loop, preserves manual history and fit
   await currentOpenRun.waitFor();
   await pageBrowser.waitForFunction(runTitleClearsHeader,{taskId,runId});
   await currentTaskPage.getByText(/运行列表暂不可读取/).waitFor();
-  await currentTaskPage.getByText(/会话列表暂不可读取/).waitFor();
+  await currentTaskPage.getByText(/智能体列表暂不可读取/).waitFor();
 });

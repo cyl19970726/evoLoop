@@ -8,6 +8,8 @@ import type {
 export type { TaskTimingView } from "@evoloop/contracts";
 import type { WorkTaskStatus } from "./workStatusPresentation";
 import { reportUnauthorized, requestAuth } from "./identity";
+import { describeError } from "./errorPresentation";
+export { errorCode, errorDiagnostic } from "./errorPresentation";
 import type {
   LeaderWorkChangesPage, LeaderWorkDependenciesCommand, LeaderWorkDocument, LeaderWorkPage,
   LeaderWorkPlanCommand, LeaderWorkReviewCommand, LeaderWorkTask,
@@ -199,6 +201,16 @@ export function isStaleConflict(value: unknown): boolean {
   return typeof code === "string" && staleConflictCodes.has(code);
 }
 
+/**
+ * What went wrong, in Chinese, for the body of a page (shared/errorPresentation.ts): a known service code in words, a
+ * Chinese answer as it is, anything else as a general sentence. No closing period. The original answer is
+ * `errorDetail` (for an expandable 诊断信息) and `errorDiagnostic` (for a layer that is diagnostic already).
+ */
 export function errorText(error: unknown): string {
-  return error instanceof Error ? error.message : "暂时无法读取数据";
+  return describeError(error).text;
+}
+
+/** The original answer when `errorText` replaced it, else null. */
+export function errorDetail(error: unknown): string | null {
+  return describeError(error).detail;
 }

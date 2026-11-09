@@ -1,6 +1,7 @@
 import { Suspense, lazy, useEffect, useMemo, useRef, useState, useLayoutEffect, type ComponentType, type LazyExoticComponent, type ReactNode } from "react";
 import type { Operation } from "@evoloop/contracts";
 import { ApiError, api, errorText, type Session } from "../shared/api";
+import { describeFailure } from "../shared/errorPresentation";
 import { onUnauthorized, signIn, signOut } from "../shared/identity";
 import { clearCommandDrafts, type MutationContext, type RecoverableCommand } from "../shared/ActionForm";
 import { addReceipt, hasProjectReceipt, readReceipts, removeReceipt, visibleReceipts as forPrincipal, writeReceipts, type OperationReceipt } from "./recovery";
@@ -27,7 +28,7 @@ const KnowledgePanel = named(() => import("../features/knowledge/KnowledgePanel"
 const EvaluationPage = named(() => import("../features/evaluation/EvaluationPage"), "EvaluationPage");
 const TeamWorkspace = named(() => import("../features/team/TeamWorkspace"), "TeamWorkspace");
 const SchedulingPanel = named(() => import("../features/scheduling/SchedulingPanel"), "SchedulingPanel");
-const JourneyBoard = named(() => import("../features/workflow/JourneyBoard"), "JourneyBoard");
+const JourneyPage = named(() => import("../features/workflow/JourneyPage"), "JourneyPage");
 const TaskWorkspace = named(() => import("../features/workflow/TaskWorkspace"), "TaskWorkspace");
 const DocumentPage = named(() => import("../features/documents/DocumentPage"), "DocumentPage");
 const DocumentIndex = named(() => import("../features/documents/DocumentIndex"), "DocumentIndex");
@@ -107,6 +108,8 @@ export function App() {
   const attemptInFlight = useRef(false);
   const [receiptStorageAvailable, setReceiptStorageAvailable] = useState(true);
   const [operationNotice, setOperationNotice] = useState("");
+  // The service's original refusal behind the notice, for 诊断信息 (the notice itself says it in Chinese).
+  const [operationDetail, setOperationDetail] = useState<string | null>(null);
   const projectId = route.projectId && session?.principal.projectIds.includes(route.projectId) ? route.projectId : null;
   const client = useMemo(() => api(token), [token]);
   const visibleReceipts = session ? forPrincipal(receipts, session.principal.actorId, session.principal.projectIds) : [];
@@ -181,7 +184,7 @@ export function App() {
       setSession(next);
       if (!next.principal.projectIds.includes(route.projectId!)) {
         void leaveProject(queryClient, route.projectId!);
-        setOperationNotice("你已无权访问该项目，已回到项目列表。");
+        setOperationNotice("你已无权访问该项目，已回到项目列表。"); setOperationDetail(null);
         navigate("/", { replace: true });
       }
     }).catch(() => undefined);
@@ -205,17 +208,20 @@ export function App() {
   function confirmReceipt(receipt: OperationReceipt, result: Operation["result"]) {
     forgetRecoveryIntent(receipt.operationId);
     const scope = isSpecialOperation(receipt.commandType) ? "已核到服务端同身份、同项目、同类型及同 ID 的操作结果；浏览器未核对原提交正文摘要。" : "";
-    setOperationNotice(`${result.status === "applied" ? `操作 ${receipt.operationId} 已应用；正在回读当前数据。` : `操作 ${receipt.operationId} 被拒绝：${result.message}`} ${scope}`.trim());
+    const refusal = result.status === "applied" ? null : describeFailure(result.message, result.code, 409);
+    setOperationNotice(`${refusal ? `操作 ${receipt.operationId} 被拒绝：${refusal.text}。` : `操作 ${receipt.operationId} 已应用；正在回读当前数据。`} ${scope}`.trim());
+    setOperationDetail(refusal?.detail ?? null);
     replaceReceipts(removeReceipt(receiptsRef.current, receipt.operationId)); changed();
   }
-  if (!projectId) return <Suspense fallback={<p role="status" className="p-8 text-small">正在打开项目列表…</p>}><ProjectChooser context={context} token={token} principal={principal} receipts={visibleReceipts} operationNotice={operationNotice} onConfirmed={confirmReceipt} onRefreshSession={async () => setSession(await api(token).session())} logout={logout} /></Suspense>;
+  if (!projectId) return <Suspense fallback={<p role="status" className="p-8 text-small">正在打开项目列表…</p>}><ProjectChooser context={context} token={token} principal={principal} receipts={visibleReceipts} operationNotice={operationNotice} operationDetail={operationDetail} onConfirmed={confirmReceipt} onRefreshSession={async () => setSession(await api(token).session())} logout={logout} /></Suspense>;
   const projectReceipts = visibleReceipts.filter(r => r.projectId === projectId);
   // OperationCheck loads on demand; its own boundary keeps a first receipt from suspending the page around it.
   const operationChecks = projectReceipts.map(receipt => <Suspense key={receipt.operationId} fallback={null}><OperationCheck receipt={receipt} token={token} onConfirmed={result => confirmReceipt(receipt, result)} /></Suspense>);
   const notices: ShellNoticeItem[] = [
     ...route.section !== "operations" && projectReceipts.length > 0 ? [{ key: "receipts", tone: "error" as const, text: `${projectReceipts.length} 项操作结果尚未确认，提交已暂缓。`, link: { href: href(projectId, "operations"), label: "按原操作 ID 核对" } }] : [],
     ...!receiptStorageAvailable ? [{ key: "storage", tone: "error" as const, text: "浏览器未能暂存操作回执。请保留原操作 ID，并在待核对操作中查询。" }] : [],
-    ...operationNotice ? [{ key: "operation", tone: "info" as const, text: operationNotice, button: { label: "关闭", onClick: () => setOperationNotice(""), quiet: true } }] : [],
+    ...operationNotice ? [{ key: "operation", tone: "info" as const, text: operationNotice, detail: operationDetail,
+      button: { label: "关闭", onClick: () => { setOperationNotice(""); setOperationDetail(null); }, quiet: true } }] : [],
     ...projectError ? [{ key: "project", tone: "error" as const, text: `项目暂不可读取：${projectError}`, button: { label: "重试读取项目", onClick: context.onChanged } }] : [],
   ];
   return <Suspense fallback={<p className="content" role="status">正在打开工作台…</p>}><AppShell route={route} projectId={projectId} projectTitle={projectTitle} actor={principal.actorId} permissions={principal.permissions}
@@ -275,7 +281,8 @@ function WorkspacePages({ route, context, refresh, operations }: { route: Route;
     if (r.section === "documents") return <DocumentIndex context={context} />;
     if (r.section === "work") return <TaskWorkspace context={context} refresh={refresh} active={active} />;
     if (r.section === "inbox") return <InboxIndex context={context} refresh={refresh} />;
-    if (r.section === "create-task") return <CreateTaskPage context={context} refresh={refresh} />;
+    if (r.section === "create-task") return <CreateTaskPage context={context} active={active} />;
+    if (r.section === "journey") return <JourneyPage context={context} active={active} propose={r.action === "propose"} />;
     if (r.section === "task" && r.id) return <TaskWorkspace context={context} refresh={refresh} active={active} taskId={r.id} selectedRevision={r.revision} />;
     if (r.section === "document" && r.id) return <DocumentPage context={context} projectId={projectId} id={r.id} selectedRevision={r.revision} />;
     if (r.section === "knowledge") return <KnowledgePanel context={context} refresh={refresh} />;
@@ -294,7 +301,7 @@ function WorkspacePages({ route, context, refresh, operations }: { route: Route;
     if (r.section === "settings") return <ProjectSettings context={context} refresh={refresh} />;
     if (r.section === "connectors") return <ConnectorPage context={context} />;
     if (r.section === "collaboration") return <CollaborationPanel context={context} refresh={refresh} />;
-    const components = { reviews: <TeamWorkspace context={context} refresh={refresh} section="reviews" />, journey: <JourneyBoard context={context} refresh={refresh} propose={r.action === "propose"} />, discussions: <TeamWorkspace context={context} refresh={refresh} section="discussions" />, runtime: r.session?.includes(":") ? <SessionWorkspace context={context} refresh={refresh} sessionKey={r.session} active={active} /> : <TeamWorkspace context={context} refresh={refresh} section="runtime" sessionId={r.session} />, roles: <TeamWorkspace context={context} refresh={refresh} section="roles" />, collaboration: <CollaborationPanel context={context} refresh={refresh} /> };
+    const components = { reviews: <TeamWorkspace context={context} refresh={refresh} section="reviews" />, discussions: <TeamWorkspace context={context} refresh={refresh} section="discussions" />, runtime: r.session?.includes(":") ? <SessionWorkspace context={context} refresh={refresh} sessionKey={r.session} active={active} /> : <TeamWorkspace context={context} refresh={refresh} section="runtime" sessionId={r.session} />, roles: <TeamWorkspace context={context} refresh={refresh} section="roles" />, collaboration: <CollaborationPanel context={context} refresh={refresh} /> };
     if (r.section === "runtime" || r.section === "discussions" || r.section === "reviews" || r.section === "roles") return components[r.section];
     return <div className="content"><h1 tabIndex={-1}>{sectionLabels[r.section]}</h1>{components[r.section as keyof typeof components]}</div>;
   }

@@ -28,11 +28,15 @@ const context = { token: "fixture", projectId: task.projectId,
   onAttempt: () => true, onKnown: () => {}, onChanged: () => {}, draftScope: `task:${task.id}`, draftBaseline: task.currentRevisionId } as MutationContext;
 
 test("Task edit remains available while the Role directory is loading or unavailable", () => {
-  const html = render(actions({ context, detail }));
+  // Forms mount when their row opens; the update form is opened here, as a person would.
+  const html = render(actions({ context, detail, open: "update" }));
   assert.match(html, /更新任务内容/);
-  // The form keeps the current owner while the directory is still being read or could not be read.
-  for (const read of [{ isPending: true }, { error: new Error("职责暂不可读") }])
-    assert.deepEqual(ownerOptions(owner, read), [{ value: owner, label: "当前负责者（职责目录待核对）" }]);
+  assert.match(html, /name="content"/);
+  assert.match(html, /name="acceptance"/);
+  assert.match(html, /当前负责者（职责目录待核对）/);
+  assert.match(html, new RegExp(`value="${owner}"`));
+  // The same holds when the directory could not be read; a read directory lists the roles after the kept owner.
+  assert.deepEqual(ownerOptions(owner, { error: new Error("职责暂不可读") }), [{ value: owner, label: "当前负责者（职责目录待核对）" }]);
   const roles = [{ id: "other", state: "active", proposal: { title: "其他职责" } }] as never;
   assert.deepEqual(ownerOptions(owner, { data: roles }).map(item => item.label), ["当前负责者（未核为使用中的职责）", "其他职责 · 使用中"]);
 });
@@ -52,11 +56,11 @@ test("Task actions expose planning, dependency and exact-position Leader review"
   };
   const reviewContext = { ...context,
     principal: { ...context.principal, permissions: ["read", "write", "review"] } } as MutationContext;
-  const html = render(actions({ context: reviewContext, detail, leader }));
+  const html = render(actions({ context: reviewContext, detail, leader, open: "review" }));
   assert.match(html, /设置计划、截止与优先级/);
   assert.match(html, /设置前置任务依赖/);
   assert.match(html, /记录统筹处理决定/);
-  assert.match(html, /对这项任务的当前版本记“已核对”或“暂缓”/);
+  assert.match(html, /已核对当前工作/);
 });
 
 test("Task timing names the actual waiting party and does not present the owner Role as Leader", () => {
@@ -66,12 +70,17 @@ test("Task timing names the actual waiting party and does not present the owner 
     publication: { at: null, source: "unknown" }, latestEffectiveProgress: null,
     executionActivity: null, observedAt: "2026-11-04T13:01:00Z" };
   const ownerHtml = renderToStaticMarkup(createElement(TaskTiming, { timing: timing as never }));
-  assert.match(ownerHtml, /等待 任务负责 Role/);
-  assert.doesNotMatch(ownerHtml, /项目 Leader/);
+  assert.match(ownerHtml, /等待 任务负责职责/);
+  assert.doesNotMatch(ownerHtml, /项目统筹|Leader|Role|Session/);
+  assert.doesNotMatch(ownerHtml, new RegExp(owner), "the role's raw ID belongs to the full-identifier layer");
   const consumerHtml = renderToStaticMarkup(createElement(TaskTiming, { timing: {
     ...timing, current: { ...timing.current, waitingFor: { kind: "consumer", id: "qa-actor" } },
   } as never }));
-  assert.match(consumerHtml, /等待 消费者 · qa-actor/);
+  assert.match(consumerHtml, /等待 指定验收者 · qa-actor/);
+  for (const [kind, words] of [["session", "智能体"], ["leader", "项目统筹"], ["publisher", "发布维护者"], ["user", "指定的人"]] as const) {
+    const html = renderToStaticMarkup(createElement(TaskTiming, { timing: { ...timing, current: { ...timing.current, waitingFor: { kind, id: null } } } as never }));
+    assert.match(html, new RegExp(`等待 ${words}`), kind);
+  }
 });
 
 test("Task detail exposes current plan, responsibility, consumer, source and next action", () => {
@@ -103,7 +112,7 @@ test("Task detail exposes current plan, responsibility, consumer, source and nex
   }));
   // The next step names what holds the task (the unaccepted prerequisite), in the workbench's words; the
   // projection's nextAction is text for agents and is not shown.
-  assert.match(html, /下一步：<\/span>等待前置任务「前置结果」通过验收；处理后再安排承接/);
+  assert.match(html, /下一步：<\/strong>等待前置任务「前置结果」通过验收；处理后再安排承接/);
   assert.doesNotMatch(html, /等待前置结果验收/);
   assert.match(html, /P2 · 计划开始/);
   assert.match(html, /责任<\/p><div[^>]*>职责 · 验收与流程负责人/);

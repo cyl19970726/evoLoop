@@ -1,10 +1,12 @@
 // Visited pages stay mounted while hidden. A page reads again when the reader comes back to it (another page was on
-// screen in between), when the window regains focus, and after a write elsewhere in the app (`refresh`). The answer
-// on screen stays until the new one arrives. (Same rule as the document pages' useRereadOnReturn.)
+// screen in between) and when the window regains focus. The answer on screen stays until the new one arrives.
+// A write elsewhere in the app needs nothing here when the page reads through useProjectQuery: the write already makes
+// the project's reads stale (shared/query.ts projectChanged), and a second reread would cancel that request and send
+// it again. A page that still reads by hand passes the app's `refresh` counter to read again after a write.
 import { useContext, useEffect, useRef } from "react";
 import { PageActive } from "./pageActive";
 
-export function useRereadOnReturn(reread: () => void, refresh: number): boolean {
+export function useRereadOnReturn(reread: () => void, refresh?: number): boolean {
   const active = useContext(PageActive);
   const latest = useRef(reread);
   latest.current = reread;

@@ -5,7 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueries, useQueryClient } from "@tanstack/react-query";
 import type { Task } from "@evoloop/contracts";
 import type { LeaderWorkPage, LeaderWorkTask } from "@evoloop/contracts/work-index";
-import { api, errorText } from "../../shared/api";
+import { api, errorDiagnostic, errorText } from "../../shared/api";
 import { appendLeaderWorkPage } from "../../shared/leaderWorkLoad";
 import { queryKeys, useProjectPages, useProjectQuery } from "../../shared/query";
 import { visibleWorkGroups, type WorkTaskStatus } from "../../shared/workStatusPresentation";
@@ -75,7 +75,7 @@ export function useTaskList(projectId: string, view: TaskListView, actorId: stri
   const statusErrors = useRef(new Map<string, string>());
   statusReads.forEach((read, index) => {
     const page = String(pages.data?.pageParams[index] ?? "first");
-    if (read.error) statusErrors.current.set(page, errorText(read.error));
+    if (read.error) statusErrors.current.set(page, errorDiagnostic(read.error));
     else if (read.data) statusErrors.current.delete(page);
   });
   const failedStatus = [...statusErrors.current.values()][0];

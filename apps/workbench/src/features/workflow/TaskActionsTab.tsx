@@ -22,10 +22,10 @@ import {
   observationRecordCommand, olderBasisSources, planCommand, reviewCommand, taskCancelCommand, taskCloseCommand, taskReopenCommand,
   taskStartCommand, taskUpdateCommand, withoutOperationType,
 } from "./taskCommands";
-import { ActionRow, CommandForm, Fine, TabSection, TaskWriteBlock, reasonField } from "./TaskForms";
+import { ActionRow, BaselineNotice, CommandForm, Fine, OutcomeNotice, TabSection, TaskWriteBlock, reasonField } from "./TaskForms";
 import { TaskScheduleSection } from "./TaskScheduleSection";
 import type { ReadState } from "./taskFactsPresentation";
-import { baselineChangedText, useCommand } from "./useCommand";
+import { useCommand } from "./useCommand";
 
 type Permission = "write" | "review";
 interface Action { key: string; title: string; description?: React.ReactNode; needs: Permission[]; element: React.ReactNode }
@@ -55,9 +55,11 @@ export function ownerOptions(owner: string, read: { data?: RoleRecord[] | undefi
   return roles.some(role => role.value === owner) ? roles : [{ value: owner, label: "当前负责者（未核为使用中的职责）" }, ...roles];
 }
 
-export function TaskActionsTab({ context, detail, leader, leaderState, documents, documentsPending, onRereadLeader }: {
+export function TaskActionsTab({ context, detail, leader, leaderState, documents, documentsPending, documentsFailed = false, onRereadDocuments, onRereadLeader, open }: {
   context: MutationContext; detail: TaskDetail; leader: LeaderWorkTask | null; leaderState: ReadState;
-  documents: Record<string, DocumentDetail | undefined>; documentsPending: boolean; onRereadLeader(): void;
+  documents: Record<string, DocumentDetail | undefined>; documentsPending: boolean; documentsFailed?: boolean; onRereadDocuments?(): void; onRereadLeader(): void;
+  /** The action opened when the tab first shows (its key). */
+  open?: string | undefined;
 }) {
   const projectId = context.projectId;
   const task = detail.task;
@@ -111,6 +113,9 @@ export function TaskActionsTab({ context, detail, leader, leaderState, documents
   if (task.state === "todo") progress.push({ key: "start", title: "开始任务并固定依据", needs: ["review"],
     description: "开始时把正文和依据的当前修订固定下来；文档以后改版要复核。",
     element: documentsPending ? <Fine>正在核对依据文档是否已有新版…</Fine>
+      // Without the documents' current state nobody can tell whether a fixed revision is outdated: start waits for it.
+      : documentsFailed ? <Notice tone="waiting" action={onRereadDocuments && <Button size="compact" onClick={onRereadDocuments}>重新读取</Button>}>
+        依据文档的现状暂不可读，无法判断哪份已有新版；读回后再开始。</Notice>
       : <CommandForm context={context} submitLabel="开始任务" baseline={{ taskVersion: task.version, older: older.map(item => `${item.documentId}@${item.observedAdoptedRevisionId}`).join(",") }}
         notes={<Fine>主正文的固定修订会自动加入依据。已有且仍适用的保留决定会沿用；新的逐项理由和依据一起封存，上游再改版仍要复核。</Fine>}
         fields={[reasonField(),
@@ -125,7 +130,7 @@ export function TaskActionsTab({ context, detail, leader, leaderState, documents
     const humanOnly = acceptanceMode === "human_required" && context.principal.identityKind !== "human";
     if (latest && !humanOnly) progress.push({ key: "observation", title: "记录本次交付的使用观察", needs: ["write"],
       description: "谁实际用了最新的交付、结果怎样。登记不自动证明长期效果。",
-      element: <CommandForm context={context} submitLabel="记录使用观察" baseline={{ deliveryId: latest.id }} fields={[
+      element: <CommandForm context={context} submitLabel="记录使用观察" baseline={{ deliveryId: latest.id, acceptanceMode: acceptanceMode ?? "legacy" }} fields={[
         { name: "observer", label: "实际使用者", initial: context.principal.actorId },
         { name: "observerKind", label: "使用者类型", kind: "select", initial: acceptanceMode === "human_required" ? "human" : "agent",
           options: acceptanceMode === "independent_agent" ? [{ value: "agent", label: "智能体使用" }]
@@ -159,7 +164,7 @@ export function TaskActionsTab({ context, detail, leader, leaderState, documents
   return <div className="flex flex-col gap-8" data-task-actions="">
     <Fine>提交时按打开表单时看到的版本核对；结果未知时保留原操作 ID，先核对，不重复发送。</Fine>
     {groups.slice(0, 2).map(group => visible(group.actions).length > 0 && <TabSection key={group.title} title={group.title}>
-      <div className="flex flex-col">{visible(group.actions).map(action => <ActionRow key={action.key} title={action.title} description={action.description}>{action.element}</ActionRow>)}</div>
+      <div className="flex flex-col">{visible(group.actions).map(action => <ActionRow key={action.key} title={action.title} description={action.description} defaultOpen={action.key === open}>{action.element}</ActionRow>)}</div>
       {group.title === "推进与交付" && task.state === "in_progress" && latest && !closable && may(["review"]) && <Fine>当前修订还需要技术检查通过的交付{detail.proposal?.useRequired ? "，以及约定的使用者对这次交付的实际使用记录" : ""}，满足后才能关闭。</Fine>}
       {group.title === "推进与交付" && task.state === "in_progress" && latest && acceptanceMode === "human_required" && context.principal.identityKind !== "human" && <Fine>这项任务等指定的人本人登录后记录使用结果。</Fine>}
     </TabSection>)}
@@ -167,11 +172,11 @@ export function TaskActionsTab({ context, detail, leader, leaderState, documents
       {(leaderState === "loading" || leaderState === "checking") && <Fine>{shownLeader ? "正在重新核对当前工作安排…" : "正在读取当前工作安排…"}</Fine>}
       {leaderState === "failed" && <Notice tone="waiting" action={<Button size="compact" onClick={onRereadLeader}>重新读取</Button>}>当前工作安排暂不可读取。计划、依赖和统筹决定要按读到的版本提交，读回前暂不能修改。</Notice>}
       {leaderState === "ready" && !leader && <p className="text-label text-text-secondary">这项任务没有登记当前工作安排，不能设置计划、依赖或统筹决定。</p>}
-      {shownLeader && <LeaderActions context={context} detail={detail} leader={shownLeader} />}
+      {shownLeader && <LeaderActions context={context} detail={detail} leader={shownLeader} open={open} />}
     </TabSection>}
     <TaskScheduleSection context={context} detail={detail} />
     {visible(ending).length > 0 && <TabSection title="取消与重开">
-      <div className="flex flex-col">{visible(ending).map(action => <ActionRow key={action.key} title={action.title} description={action.description}>{action.element}</ActionRow>)}</div>
+      <div className="flex flex-col">{visible(ending).map(action => <ActionRow key={action.key} title={action.title} description={action.description} defaultOpen={action.key === open}>{action.element}</ActionRow>)}</div>
     </TabSection>}
     {hiddenCount > 0 && <Fine>另有 {hiddenCount} 项操作需要{permissions.includes("write") ? "审阅" : "写入或审阅"}权限，当前身份不能执行。</Fine>}
     {!visible(content).length && !visible(progress).length && !visible(ending).length && !canArrange && !may(["write"]) && <p className="text-label text-text-secondary">当前身份在这个状态下没有可做的操作。</p>}
@@ -205,13 +210,13 @@ function DeliveryRecordForm({ context, detail }: { context: MutationContext; det
           technicalEvidence: values.technicalEvidence ?? "", reason: values.reason ?? "" })} />;
 }
 
-function LeaderActions({ context, detail, leader }: { context: MutationContext; detail: TaskDetail; leader: LeaderWorkTask }) {
+function LeaderActions({ context, detail, leader, open }: { context: MutationContext; detail: TaskDetail; leader: LeaderWorkTask; open?: string | undefined }) {
   const projectId = context.projectId;
   const task = detail.task;
   const seen = leaderSeen(task, leader);
   const plan = leader.plan;
   return <div className="flex flex-col">
-    <ActionRow title="设置计划、截止与优先级" description={plan && (plan.priority || plan.dueAt || plan.plannedStartAt)
+    <ActionRow defaultOpen={open === "plan"} title="设置计划、截止与优先级" description={plan && (plan.priority || plan.dueAt || plan.plannedStartAt)
       ? [plan.priority ? `P${plan.priority}` : "", plan.plannedStartAt ? `计划开始 ${date(plan.plannedStartAt)}` : "", plan.dueAt ? `截止 ${date(plan.dueAt)}` : ""].filter(Boolean).join(" · ")
       : "还没有设置。只是负责人的安排，不改变任务状态。"}>
       <CommandForm context={context} submitLabel="保存计划" baseline={{ taskVersion: seen.taskVersion, planVersion: seen.planVersion }}
@@ -226,11 +231,11 @@ function LeaderActions({ context, detail, leader }: { context: MutationContext; 
         build={(values, recorded) => planCommand(task.id, recorded, { plannedStartAt: values.plannedStartAt ?? "", dueAt: values.dueAt ?? "",
           priority: values.priority ?? "", reason: values.reason ?? "" })} />
     </ActionRow>
-    <ActionRow title="设置前置任务依赖" description={leader.dependencies.length
+    <ActionRow defaultOpen={open === "dependencies"} title="设置前置任务依赖" description={leader.dependencies.length
       ? `${leader.dependencies.length} 项前置任务，${leader.dependencies.filter(item => !item.acceptanceSatisfied).length} 项尚未验收` : "没有前置任务。"}>
-      <DependenciesForm context={context} detail={detail} leader={leader} />
+      <DependenciesForm context={context} detail={detail} leader={leader} onReread={context.onChanged} />
     </ActionRow>
-    <ActionRow title="记录统筹处理决定" description={leader.review ? `${leader.review.decision === "deferred" ? "已暂缓" : "已核对"} · ${date(leader.review.at)}` : "对这项任务的当前版本记“已核对”或“暂缓”。"}>
+    <ActionRow defaultOpen={open === "review"} title="记录统筹处理决定" description={leader.review ? `${leader.review.decision === "deferred" ? "已暂缓" : "已核对"} · ${date(leader.review.at)}` : "对这项任务的当前版本记“已核对”或“暂缓”。"}>
       <CommandForm context={context} submitLabel="保存决定" baseline={{ taskVersion: seen.taskVersion, revisionId: seen.revisionId, workChangeSequence: seen.workChangeSequence }}
         options={{ validate: value => { leaderWorkReviewCommandSchema.parse(withoutOperationType(value)); },
           send: command => api().leaderReview(projectId, task.id, command as unknown as LeaderWorkReviewCommand) }}
@@ -247,7 +252,7 @@ function LeaderActions({ context, detail, leader }: { context: MutationContext; 
 const taskIdPattern = /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i;
 
 /** Prerequisites by name: keep or drop the current ones, add from the loaded task list or by a pasted task link. */
-function DependenciesForm({ context, detail, leader }: { context: MutationContext; detail: TaskDetail; leader: LeaderWorkTask }) {
+function DependenciesForm({ context, detail, leader, onReread }: { context: MutationContext; detail: TaskDetail; leader: LeaderWorkTask; onReread(): void }) {
   const block = React.useContext(TaskWriteBlock);
   const projectId = context.projectId;
   const task = detail.task;
@@ -255,24 +260,40 @@ function DependenciesForm({ context, detail, leader }: { context: MutationContex
   const command = useCommand(context, { taskVersion: task.version, dependencyVersion: leader.dependencyVersion }, {
     validate: value => { leaderWorkDependenciesCommandSchema.parse(withoutOperationType(value)); },
     send: built => api().leaderDependencies(projectId, task.id, built as unknown as LeaderWorkDependenciesCommand),
+    onStale: onReread,
   });
   const pages = useProjectPages(projectId, ["tasks", "list"], (cursor, signal) => api().tasks(projectId, cursor, signal));
   const known = (pages.data?.pages ?? []).flatMap(page => page.items);
+  // `base` is the list the form was last filled with; the person's changes are what differs from it.
+  const [base, setBase] = React.useState<string[]>(current);
   const [chosen, setChosen] = React.useState<string[]>(current);
   const [adding, setAdding] = React.useState("");
   const [pasted, setPasted] = React.useState("");
   const [reason, setReason] = React.useState("");
   const currentKey = current.join(",");
-  React.useEffect(() => { setChosen(current); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [currentKey]);
   const title = (id: string) => leader.dependencies.find(item => item.taskId === id)?.title || known.find(item => item.id === id)?.title || "任务（名称待读取）";
-  const dirty = chosen.join(",") !== currentKey || !!reason || !!pasted;
+  const dirty = chosen.join(",") !== base.join(",") || !!reason || !!pasted;
+  const refill = () => { setBase(current); setChosen(current); };
+  // An untouched form follows the latest prerequisites; a changed one waits for the person (the rule of every task form).
+  React.useEffect(() => {
+    if (dirty || command.awaitingReread) return;
+    if (command.baselineChanged) command.rebase();
+    if (command.baselineChanged || currentKey !== base.join(",")) refill();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentKey, command.baselineChanged, command.awaitingReread, dirty]);
+  /** “保留我的修改”: what the person added or removed is applied to the latest list. */
+  const keep = () => {
+    const removed = base.filter(id => !chosen.includes(id)), added = chosen.filter(id => !base.includes(id));
+    command.rebase(); setBase(current);
+    setChosen([...current.filter(id => !removed.includes(id)), ...added.filter(id => !current.includes(id))]);
+  };
   const blocked = !!block || context.blocked;
   const pastedId = taskIdPattern.exec(pasted)?.[1]?.toLowerCase() ?? null;
   async function submit(event: React.FormEvent) {
     event.preventDefault();
     if (blocked || !reason.trim()) return;
     const applied = await command.submit(seen => dependenciesCommand(task.id, seen, { dependsOnTaskIds: chosen, reason }));
-    if (applied) { setReason(""); setPasted(""); }
+    if (applied) { setReason(""); setPasted(""); setBase(chosen); }
   }
   return <form onSubmit={submit} aria-label="设置前置任务依赖" data-dirty={dirty ? "true" : undefined} className="flex flex-col gap-3 rounded-lg bg-muted p-4">
     <fieldset className="flex flex-col gap-1.5">
@@ -298,8 +319,9 @@ function DependenciesForm({ context, detail, leader }: { context: MutationContex
       <Button size="compact" disabled={!pastedId || pastedId === task.id || chosen.includes(pastedId)} onClick={() => { setChosen(list => [...list, pastedId!]); setPasted(""); }}>添加</Button>
     </div>
     <Field label="理由与依据">{control => <Textarea {...control} required value={reason} onChange={event => setReason(event.target.value)} rows={3} maxLength={4000} />}</Field>
-    {command.baselineChanged && <Notice tone="waiting" title="打开表单后内容已被更新" action={<Button size="compact" onClick={() => { command.rebase(); setChosen(current); }}>按最新内容重填</Button>}>{baselineChangedText}</Notice>}
-    {command.outcome && !command.baselineChanged && <Notice tone={command.outcome.failed ? "error" : "info"}>{command.outcome.message}</Notice>}
+    {command.baselineChanged && <BaselineNotice awaiting={command.awaitingReread} onReread={onReread}
+      onRefill={() => { command.rebase(); refill(); }} onKeep={keep} keepNote="保留我的修改：你加入和移除的前置任务套用到最新的列表上。" />}
+    {command.outcome && !(command.baselineChanged && command.outcome.stale) && <OutcomeNotice outcome={command.outcome} />}
     {blocked && <p className="text-caption text-muted-foreground">暂不能提交：{block || "本项目还有结果未确认的操作，请先按原操作 ID 核对。"}</p>}
     <div><Button type="submit" variant="primary" size="compact" disabled={blocked || command.busy || command.baselineChanged || !reason.trim()}>{command.busy ? "正在提交…" : "保存前置任务"}</Button></div>
   </form>;
