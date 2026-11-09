@@ -2,6 +2,9 @@
 // recovery receipt before anything is sent, an unconfirmed result keeps the receipt, and only an applied result
 // rereads. The form records what the person saw when it opened (its baseline); if that changes before submitting,
 // or the service answers that the version moved, the form refuses until the person has looked at the latest content.
+// A form that keeps its draft between mounts passes `options.draft`: the draft is kept together with the baseline it
+// was written against, so a form mounted again later still compares against what the person saw, not what is on
+// screen now.
 import { useState } from "react";
 import { commandSchema, type Command } from "@evoloop/contracts";
 import { api, isUnconfirmed } from "../../shared/api";
@@ -20,11 +23,28 @@ export function submissionRefusal(state: { busy: boolean; blocked: boolean; stal
   return null;
 }
 
-export function useCommand(context: MutationContext, baseline?: string) {
+/** A kept draft and the baseline it was written against. */
+export interface SavedDraft { values: unknown; baseline: string | undefined }
+/** Where drafts are kept between mounts (a Map works); the key names the object, and the record, the draft is for. */
+export type DraftStore = Pick<Map<string, SavedDraft>, "get" | "set" | "delete">;
+export interface CommandOptions {
+  draft?: { store: DraftStore; key: string } | undefined;
+  /** The service answered that the version moved: reread, so the person can look at the latest content. */
+  onStale?: (() => void) | undefined;
+}
+
+/** The baseline a form compares against when it mounts: a kept draft's own baseline, else what is on screen now. */
+export function openingBaseline(saved: SavedDraft | undefined, current: string | undefined): string | undefined {
+  return saved ? saved.baseline : current;
+}
+
+export function useCommand(context: MutationContext, baseline?: string, options: CommandOptions = {}) {
   const [busy, setBusy] = useState(false);
   const [outcome, setOutcome] = useState<SubmissionOutcome | null>(null);
-  const [recorded, setRecorded] = useState(baseline);
+  const [restored] = useState(() => options.draft ? options.draft.store.get(options.draft.key) : undefined);
+  const [recorded, setRecorded] = useState(() => openingBaseline(restored, baseline));
   const [stale, setStale] = useState(false);
+  const draftKey = options.draft?.key;
   const baselineChanged = submissionRefusal({ busy: false, blocked: false, stale, recorded, current: baseline }) === "baseline";
   async function submit(build: () => Record<string, unknown>): Promise<boolean> {
     const refusal = submissionRefusal({ busy, blocked: context.blocked, stale, recorded, current: baseline });
@@ -44,18 +64,27 @@ export function useCommand(context: MutationContext, baseline?: string) {
       context.onKnown(command.operationId);
       const next = resultOutcome(result);
       setOutcome(next);
-      if (next.stale) setStale(true);
-      if (next.applied) context.onChanged();
+      if (next.stale) { setStale(true); options.onStale?.(); }
+      if (next.applied) { dropDraft(); context.onChanged(); }
       return next.applied;
     } catch (cause) {
       if (!isUnconfirmed(cause)) context.onKnown(command.operationId);
       const next = errorOutcome(cause);
       setOutcome(next);
-      if (next.stale) setStale(true);
+      if (next.stale) { setStale(true); options.onStale?.(); }
       return false;
     } finally { setBusy(false); }
   }
-  /** The person has looked at the latest content: it becomes the form's new baseline. */
-  function rebase() { setRecorded(baseline); setStale(false); setOutcome(null); }
-  return { busy, outcome, submit, clear: () => setOutcome(null), baselineChanged, rebase, recordedBaseline: recorded };
+  /** Keep the typed values with the baseline they are written against. */
+  function saveDraft(values: unknown) { if (options.draft && draftKey) options.draft.store.set(draftKey, { values, baseline: recorded }); }
+  function dropDraft() { if (options.draft && draftKey) options.draft.store.delete(draftKey); }
+  /** The person has looked at the latest content: it becomes the form's new baseline (and the kept draft's). */
+  function rebase() {
+    setRecorded(baseline); setStale(false); setOutcome(null);
+    const kept = draftKey ? options.draft?.store.get(draftKey) : undefined;
+    if (kept && draftKey) options.draft!.store.set(draftKey, { ...kept, baseline });
+  }
+  return { busy, outcome, submit, clear: () => setOutcome(null), baselineChanged, rebase, recordedBaseline: recorded,
+    /** The values kept from an earlier mount, or undefined. */
+    restoredDraft: restored?.values, saveDraft, dropDraft };
 }

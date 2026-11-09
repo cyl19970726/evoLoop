@@ -151,8 +151,8 @@ Role 的 skill 选择决定每个 Turn 放进模型上下文的 skill，用 `rol
 | `roleId`、`authorizationScope`、`authorizationKind`、`cwd` | 当前候选只服务 `temporary-experience`，授权种类为 static 或 dynamic；Session 执行为 full/never/联网。GUI 读取仍只使用此 scope 下精确配置的 reader、路由和 Run 证据；完整 OS 权限不会扩大业务对象授权。 |
 | `readerActorId` | 派生新身份文件时保留所有原 actor/token，只新增一个恰好有本项目 `read` 的独立 reader；不覆写原身份文件。令牌只由宿主读取。 |
 | `entryRouteKey`、`routes` | 唯一普通入口与最多 32 个精确只读路由；每项有 `key`、`hash` 及最多 30 个必要 GET `apiPaths`，全部限同项目。先按普通 UI 观察所需路由和 API，不开放项目任意路径。 |
-| `followTaskList` | 默认 false。确需工作列表与阶段关联时显式 true，并在 `apiPaths` 列明本项目精确 `tasks?limit=50` 起点；仅从实际成功页派生下一页、已见 Task 根详情及该页原顺序的精确工作状态 GET。 |
-| `followDocumentList` | 默认 false。阶段页确需完整文档列表时显式 true，并列明本项目精确 `documents?limit=50` 起点；只追随实际 `nextCursor` 读取下一列表页，不据此开放文档详情、修订或原件。 |
+| `followTaskList` | 默认 false。确需工作列表时显式 true，并在 `apiPaths` 列明本项目精确 `tasks?limit=50` 起点；仅从实际成功页派生下一页、已见 Task 根详情及该页原顺序的精确工作状态 GET。目标与阶段页不需要它：在 `apiPaths` 列明 `work-management/index?view=tasks&limit=50&includeClosed=true`，同一查询带一个游标的后续页随之放行。 |
+| `followDocumentList` | 默认 false。确需完整文档列表时显式 true，并列明本项目精确 `documents?limit=50` 起点；只追随实际 `nextCursor` 读取下一列表页，不据此开放文档详情、修订或原件。 |
 
 保持原 Task、旧 Run、失败及预算历史。scope 身份只是预留资源，不承诺认知必派 child；原 todo Task 留给 runner 正常开始。实际调用还须核 ready owned Session、唯一 running Run/native Turn、无中断、当前 Task 修订等于该 Run 固定修订、主正文及 basis 相符、现行执行 grant/binding 和 reader。只读身份看不到的对象如实报告失败，不回退负责人令牌。
 

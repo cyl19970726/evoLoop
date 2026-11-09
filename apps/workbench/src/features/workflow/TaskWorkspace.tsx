@@ -91,7 +91,9 @@ export function TaskWorkspace({ context, refresh, active, taskId, selectedRevisi
   const detailHref = selected ? linkFor(selected) : null;
   const tabLink = (id: string) => (tab: TaskSection) => taskId === id && active
     ? taskTabHref(currentPath(), projectId, id, tab, principal.actorId) : linkFor(id, tab);
-  const rail = <ContextRailContent><div data-ui=""><TaskRail list={list} view={view} onView={setView} selectedId={selected || null} linkFor={id => linkFor(id)} /></div></ContextRailContent>;
+  const rail = <ContextRailContent><div data-ui="">
+    <a href={href(projectId, "create-task")} className="mb-1 flex items-center gap-1.5 rounded-md px-3 py-2 text-label font-medium text-text-secondary no-underline outline-none hover:bg-field/60 hover:text-foreground focus-visible:shadow-[var(--focus-ring)]"><Plus size={15} aria-hidden="true" />新建任务</a>
+    <TaskRail list={list} view={view} onView={setView} selectedId={selected || null} linkFor={id => linkFor(id)} /></div></ContextRailContent>;
   if (taskId) return <>
     {rail}
     <TaskPage context={context} token={context.token} projectId={projectId} id={taskId} selectedRevision={selectedRevision} refresh={refresh}
@@ -107,7 +109,7 @@ export function TaskWorkspace({ context, refresh, active, taskId, selectedRevisi
         <ViewSwitch detailHref={detailHref} tableHref={tableHref} current="table" />
         <span className="flex-1" />
         {panel && selected && <Button size="compact" className="min-[1100px]:hidden" onClick={() => panel.setOpen(true)}>所选任务信息</Button>}
-        <Button asChild variant="primary" size="compact"><a href={href(projectId, "create-task")}><Plus size={15} aria-hidden="true" />创建任务</a></Button>
+        <Button asChild variant="primary" size="compact"><a href={href(projectId, "create-task")}><Plus size={15} aria-hidden="true" />新建任务</a></Button>
       </header>
       <p className="text-label text-text-secondary">批量核对任务的进展、承接与成果。选中一行，右栏显示它的状态、承接、文档与交付；需要推进或调整时，先与相关智能体沟通，再回到这里读回。</p>
       <TaskTable projectId={projectId} list={list} view={view} selectedId={selected || null} onSelect={id => setView({ selected: id })} linkFor={linkFor} />
