@@ -233,21 +233,23 @@ test("Task list resolves only displayed Role owners and rejects stale or failed 
   assert.match(await detailTiming.innerText(),/未知；具备发布条件不代表已发布/);
   assert.match(await detailTiming.innerText(),/来源未知/);
   assert.doesNotMatch(await detailTiming.innerText(),/已发布 · 2026|历时 0/);
-  const attention=page.locator(".task-attention-panel");
-  await attention.getByText(/旧跟进属于历史 Task 修订/).waitFor();
+  const attention=page.locator("#task-attention");
+  await attention.getByText(/已有的跟进属于任务的旧修订/).waitFor();
   assert.match(await attention.innerText(),/2 项已关注/);
   assert.match(await attention.innerText(),/等待方 指定验收者 · 历史消费者/);
   assert.match(await attention.innerText(),/等待方 发布维护者/);
+  // Each write opens in place; the person opens the follow-up before filling it.
+  await attention.getByText("填写跟进安排").click();
   await attention.getByLabel("已做什么").fill("核对固定产物与发布责任");
   await attention.getByLabel("跟进理由").fill("当前修订已具备交接条件");
   await attention.getByLabel("登记具备发布条件，交给维护者").check();
   await attention.getByLabel("维护者或接收方").fill("发布维护者");
-  await attention.getByLabel("待发布固定产物引用").fill("artifact:fixed-42");
+  await attention.getByLabel("待发布的固定产物引用").fill("artifact:fixed-42");
   await attention.getByLabel("交接说明").fill("核对固定产物后发布");
-  await attention.getByLabel("具备发布条件时间").fill("2026-10-25T01:00");
+  await attention.getByLabel("具备发布条件的时间").fill("2026-10-25T01:00");
   await attention.getByRole("button",{name:"保存跟进安排"}).click();
   await attention.getByText(/具备发布条件，等待维护者/).waitFor();
-  assert.doesNotMatch(await attention.innerText(),/旧跟进属于历史 Task 修订/);
+  assert.doesNotMatch(await attention.innerText(),/已有的跟进属于任务的旧修订/);
   const desktopMetrics=await page.evaluate(() => ({width:innerWidth,height:innerHeight,dpr:devicePixelRatio,
     documentWidth:document.documentElement.scrollWidth}));
   assert.equal(desktopMetrics.width,1280);assert.ok(desktopMetrics.documentWidth<=1280,JSON.stringify(desktopMetrics));
@@ -256,13 +258,14 @@ test("Task list resolves only displayed Role owners and rejects stale or failed 
   if (process.env.EVOLOOP_TASK_ATTENTION_DESKTOP_FULL_SCREENSHOT) await page.screenshot({path:process.env.EVOLOOP_TASK_ATTENTION_DESKTOP_FULL_SCREENSHOT,fullPage:true});
   console.log(`Task attention desktop viewport: ${JSON.stringify(desktopMetrics)}`);
   await page.setViewportSize({width:390,height:844});
+  await attention.getByText("登记实际发布").click();
   await attention.getByLabel("实际发布时间").fill("2026-10-25T02:00");
   await attention.getByLabel("发布证据引用").fill("release:fixed-43");
   await attention.getByLabel("记录理由").fill("维护者已发布固定版本");
   await attention.getByRole("button",{name:"记录已发布"}).click();
   await attention.getByText(/已发布且有固定证据/).waitFor();
-  await attention.getByLabel("解决依据").waitFor();
-  assert.equal(await attention.getByLabel("解决依据").count(),1,"historical item cannot use the current Task resolve form");
+  assert.equal(await attention.getByText("解决这一项").count(),1,"historical item cannot use the current Task resolve form");
+  await attention.getByText("解决这一项").click();
   await attention.getByLabel("解决依据").fill("发布证据已核对");
   await attention.getByRole("button",{name:"记录已解决"}).click();
   await attention.getByText("1 项已关注").waitFor();
@@ -275,12 +278,14 @@ test("Task list resolves only displayed Role owners and rejects stale or failed 
   await page.getByRole("main").getByRole("row").filter({hasText:"澄清分工页待办"}).getByRole("link",{name:"1 项待关注"}).click({timeout:5000}).catch(async () => {
     assert.fail(`narrow discovery missing: hash=${await page.evaluate(() => (location.pathname + location.search))} state=${attentionState} reads=${attentionReads.length} link=${JSON.stringify(await row.getByRole("link").evaluateAll(els=>els.map(el=>({html:el.outerHTML,parent:getComputedStyle(el.parentElement!).display}))))} row=${await row.innerText()} body=${(await page.locator("body").innerText()).slice(0,500)} errors=${pageErrors.join(" | ")}`);
   });
-  await attention.getByText(/旧跟进属于历史 Task 修订/).waitFor();
+  await attention.getByText(/已有的跟进属于任务的旧修订/).waitFor();
+  await attention.getByText("填写跟进安排").click();
   await attention.getByLabel("已做什么").fill("窄屏核对当前修订");
   await attention.getByLabel("跟进理由").fill("安排下一检查点");
   await attention.getByLabel("下一检查时间").fill("2026-10-26T09:30");
   await attention.getByRole("button",{name:"保存跟进安排"}).click();
   await attention.getByText(/下一检查点.*2026\/10\/26/).waitFor();
+  await attention.getByText("解决这一项").click();
   await attention.getByLabel("解决依据").fill("当前关注已核对");
   await attention.getByRole("button",{name:"记录已解决"}).click();
   await attention.getByText("1 项已关注").waitFor();

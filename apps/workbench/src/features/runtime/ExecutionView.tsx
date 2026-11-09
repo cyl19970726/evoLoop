@@ -17,7 +17,7 @@ import { FactList, Legacy, PageSection, PanelSection, mutedText } from "../../sh
 import { SectionBoundary } from "../../shared/ui/SectionBoundary";
 import { href } from "../../shared/ui/shared";
 import { OrchestrationPanel } from "../orchestration";
-import { ResidentQueuePanel } from "../queues";
+import { ResidentQueuePanel } from "../workflow";
 import { ManagedSessionCreate } from "./ManagedSessionCreate";
 import { ManagedSessionDetail, RoleLabel } from "./ManagedSessionDetail";
 import { RunList } from "./RunList";
@@ -60,6 +60,7 @@ export function ExecutionView({ context, refresh, sessionId }: { context: Mutati
   const reread = () => {
     void client.invalidateQueries({ queryKey: queryKeys.project(projectId, "runtime") });
     void client.invalidateQueries({ queryKey: queryKeys.project(projectId, "roles") });
+    void client.invalidateQueries({ queryKey: queryKeys.project(projectId, "resident-queues") });
     setEpoch(value => value + 1);
   };
   async function recover() {
@@ -113,7 +114,7 @@ export function ExecutionView({ context, refresh, sessionId }: { context: Mutati
     </Notice>)(sessionTargetNotice({ valid: validTarget, reading: sessionsRead.isPending, error: sessionsError }))}
     {selected
       ? <SectionBoundary label="受管智能体"><ManagedSessionDetail key={selected.id} context={context} session={selected} name={nameOf(selected.roleId)}
-        runs={runs} runsRead={runsCurrent} sessions={sessions} refresh={refresh + epoch} onReread={reread} /></SectionBoundary>
+        runs={runs} runsRead={runsCurrent} sessions={sessions} onReread={reread} /></SectionBoundary>
       : sessionId !== undefined ? <a href={href(projectId, "runtime")} className="w-fit text-small text-primary hover:underline">查看全部受管智能体</a>
       : <>
         <header className="flex flex-wrap items-start justify-between gap-3">
@@ -158,7 +159,7 @@ export function ExecutionView({ context, refresh, sessionId }: { context: Mutati
         <PageSection title="编排与队列">
           <SectionBoundary label="编排"><Legacy><OrchestrationPanel key={`${projectId}:${context.principal.actorId}`} token={context.token} projectId={projectId}
             refresh={refresh + epoch} verifiedRuns={runsCurrent ? runs : null} runtimePoll={0} /></Legacy></SectionBoundary>
-          <SectionBoundary label="队列"><Legacy><ResidentQueuePanel context={context} token={context.token} projectId={projectId} refresh={refresh + epoch} runs={runs} sessions={sessions} /></Legacy></SectionBoundary>
+          <SectionBoundary label="队列"><ResidentQueuePanel context={context} runs={runs} sessions={sessions} /></SectionBoundary>
         </PageSection>
         <PageSection title="运行记录" description="收到通知、读取材料、采用判断与真实效果分别留证；原生完成状态不会自动关闭任务。">
           {runsRead.isPending ? <LoadingState lines={2} label="正在读取运行" />

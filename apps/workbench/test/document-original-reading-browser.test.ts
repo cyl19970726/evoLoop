@@ -289,7 +289,7 @@ test("the task page's revision comparison lists assets on tokens, and a long CSS
   // Opened on the 依据与影响 tab through the address, so an early click cannot be undone while the page settles.
   const { page, errors } = await open(`/p/${projectId}/tasks/${taskId}?tab=basis`);
   await page.getByRole("tab", { name: /依据与影响/, selected: true }).waitFor();
-  const compare = page.locator(".compare");
+  const compare = page.locator("[data-impact-compare]");
   await compare.getByRole("heading", { name: /配套资源 · 1 项/ }).nth(1).waitFor({ timeout: 30000 }).catch(async cause =>
     assert.fail(`${String(cause).split("\n")[0]}; compare=${await compare.count() ? (await compare.first().innerText()).slice(0, 600) : "absent"}; `
       + `panel=${(await page.locator("[role=tabpanel]:not([hidden])").first().innerText().catch(() => "")).slice(0, 400)}; errors=${JSON.stringify(errors)}`));
@@ -302,6 +302,8 @@ test("the task page's revision comparison lists assets on tokens, and a long CSS
   await preview.waitFor();
   for (const width of [1440, 390]) {
     await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
+    // The shell switches to its narrow layout on the resize event; measure once two frames have been drawn.
+    await page.evaluate(() => new Promise(done => requestAnimationFrame(() => requestAnimationFrame(() => done(null)))));
     const box = await preview.evaluate(el => {
       const pre = el.querySelector("pre")!;
       const style = getComputedStyle(pre);

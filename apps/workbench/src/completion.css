@@ -13,7 +13,7 @@ button{ min-height: 40px; border-radius: 6px; padding: 8px 14px; }
 input, select, textarea{ border-radius: 6px; }
 input, select{ min-height: 40px; }
 :where(a, button, input, select, textarea, summary):focus-visible{ outline: 3px solid #759bff; outline-offset: 3px; }
-small, .muted, .eyebrow, .task-fineprint, .work-guidance, .panel-head > span{ font-size: 14px; line-height: 1.65; color: var(--ink-muted); }
+small,.muted,.work-guidance,.panel-head > span { font-size: 14px; line-height: 1.65; color: var(--ink-muted); }
 .panel{ padding: 24px; border-radius: 8px; box-shadow: none; }
 .panel-head{ align-items: center; gap: 16px; }
 .notice{ font-size: 15px; padding: 16px 20px; border-radius: 6px; }
@@ -38,22 +38,12 @@ td{ font-size: 15px; }
 .task-outcome-row{ padding: 12px 0; gap: 14px; }
 /* Detail follows a narrative, with fixed results in their own evidence rail. */
 
-.task-page .task-focus{ padding: 20px 0; margin: 0; border-top: 1px solid var(--border); }
 
-.task-page .task-focus h2{ font-size: 22px; }
-.task-page .task-focus p{ font-size: 16px; }
-.task-page .task-focus .task-fineprint{ font-size: 14px; }
-.task-page .panel-head{ flex-wrap: wrap; gap: 8px; }
-.task-page .panel-head button, .task-page .panel-head a{ font-size: 14px; }
 .task-body-disclosure{ font-size: 16px; }
 .task-body-disclosure > summary{ font-size: 14px; }
-.task-page .task-delivery-summary .task-use-evidence, .task-page .task-delivery-summary > .evidence-text{ font-size: 14px; }
-.task-provenance, .task-arrangement-details{ grid-column: 1/-1; border-top: 1px solid var(--border); padding-top: 18px; margin-top: 24px; font-size: 14px; }
-.task-provenance summary{ cursor: pointer; }
 
 /* Contextual forms, receipt recovery, and repository reading routes. */
-.review-form label, .command-form label, .action-form label{ font-size: 15px; }
-.review-form input, .review-form textarea, .review-form select{ font-size: 16px; }
+.command-form label,.action-form label { font-size: 15px; }
 @media(min-width:1800px) { .workbench-layout .content{ padding-inline: 44px; } }
 @media(max-width:1180px) { .workbench-layout .content{ padding: 28px 24px 64px; } .task-selection-body{ gap: 24px; } }
 @media(max-width:980px) {   .task-selection-body{ grid-template-columns: minmax(0,1.3fr) minmax(240px,1fr); gap: 24px; } }

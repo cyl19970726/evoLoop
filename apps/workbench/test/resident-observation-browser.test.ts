@@ -299,30 +299,30 @@ test("resident observation keeps acceptance, host authority and task replies dis
   // The owned host opens that managed agent in 分工与运行, with its queue.
   await pageBrowser.locator(`#runtime-session-${sessionId}`).waitFor();
   assert.equal(new URL(pageBrowser.url()).pathname + new URL(pageBrowser.url()).search,`/p/${projectId}/runtime?session=${sessionId}`);
-  if (await pageBrowser.locator(".resident-queue-card").getAttribute("open") === null)
-    await pageBrowser.locator(".resident-queue-card > summary").click();
-  await pageBrowser.locator(".resident-queue-meta").getByText(/累计尝试 1/).waitFor();
-  const queueItems=pageBrowser.locator(".resident-queue-session li");
+  if (await pageBrowser.locator("[data-queue]").getAttribute("open") === null)
+    await pageBrowser.locator("[data-queue] > summary").click();
+  await pageBrowser.locator("[data-queue-meta]").getByText(/累计尝试 1/).waitFor();
+  const queueItems=pageBrowser.locator("[data-queue-entry]");
   assert.equal(await queueItems.count(),3);
   await queueItems.nth(0).getByRole("link",{name:"先完成 A 的实际使用"}).waitFor();
   await queueItems.nth(1).getByRole("link",{name:"验收后才启动 B"}).waitFor();
   assert.match(await queueItems.nth(0).innerText(),/承接职责 实际开发流程/);
-  assert.match(await pageBrowser.locator(".resident-queue-session h4").innerText(),/就绪/);
-  assert.match(await queueItems.nth(0).innerText(),/已领取／占用.*已读运行状态 running/s);
+  assert.match(await pageBrowser.locator("[data-queue-agent] h4").innerText(),/就绪/);
+  assert.match(await queueItems.nth(0).innerText(),/已领取／占用.*运行状态：运行中/s);
   assert.match(await queueItems.nth(1).innerText(),/等待前项放行/);
-  assert.equal(await pageBrowser.locator(".resident-queues").evaluate(el=>el.scrollWidth<=el.clientWidth),true);
+  assert.equal(await pageBrowser.locator("[data-queue-panel]").evaluate(el=>el.scrollWidth<=el.clientWidth),true);
   if (process.env.EVOLOOP_RESIDENT_QUEUE_SCREENSHOT) {
     await pageBrowser.addStyleTag({content:"[data-shell=mobile-header]{position:static!important}"});
-    await pageBrowser.locator(".resident-queues").screenshot({path:process.env.EVOLOOP_RESIDENT_QUEUE_SCREENSHOT});
+    await pageBrowser.locator("[data-queue-panel]").screenshot({path:process.env.EVOLOOP_RESIDENT_QUEUE_SCREENSHOT});
   }
   await fetch(`${base}/__fixture/terminal-run`);
   await pageBrowser.getByRole("button",{name:"读取运行状态"}).click();
-  await queueItems.nth(0).getByText(/本轮运行已结束，仍占用 Session/).waitFor();
-  assert.match(await queueItems.nth(0).innerText(),/已领取／占用.*等待消费者使用与验收/s);
-  assert.match(await queueItems.nth(0).innerText(),/本轮运行已结束，仍占用 Session；等待交付／验收或明确接续/);
-  assert.doesNotMatch(await queueItems.nth(1).innerText(),/running|已读运行状态/);
+  await queueItems.nth(0).getByText(/本轮运行已结束，仍占用这个智能体/).waitFor();
+  assert.match(await queueItems.nth(0).innerText(),/已领取／占用.*等待验收者使用与验收/s);
+  assert.match(await queueItems.nth(0).innerText(),/本轮运行已结束，仍占用这个智能体；等待交付／验收或明确接续/);
+  assert.doesNotMatch(await queueItems.nth(1).innerText(),/运行中|运行状态：/);
   assert.match(await queueItems.nth(2).innerText(),/暂停.*运行结果未知.*原操作 ID 尚待核对/s);
-  assert.equal(await pageBrowser.locator(".resident-queues").evaluate(el=>el.scrollWidth<=el.clientWidth),true);
+  assert.equal(await pageBrowser.locator("[data-queue-panel]").evaluate(el=>el.scrollWidth<=el.clientWidth),true);
   await fetch(`${base}/__fixture/hold-next-role`);
   await pageBrowser.getByRole("button",{name:"重新读取队列"}).click();
   for (let attempt=0; attempt<30 && await (await fetch(`${base}/__fixture/held-role-count`)).text() !== "1"; attempt++)
@@ -352,15 +352,15 @@ test("resident observation keeps acceptance, host authority and task replies dis
   await pageBrowser.getByText(/当前项目未读到目标智能体/).waitFor();
   await fetch(`${base}/__fixture/release-held-role`);
   await pageBrowser.waitForTimeout(100);
-  assert.equal(await pageBrowser.locator(".resident-queues:visible").count(),0);
+  assert.equal(await pageBrowser.locator("[data-queue-panel]:visible").count(),0);
   await pageBrowser.evaluate(hash => { window.location.hash = hash; },`/p/${projectId}/runtime?view=execution&session=${sessionId}`);
   await queueItems.nth(0).getByText(/承接职责 已更新的承接职责/).waitFor();
   await fetch(`${base}/__fixture/deep-queue`);
   await pageBrowser.getByRole("button",{name:"重新读取队列"}).click();
-  await pageBrowser.getByText(/本轮优先核对当前占用与各 Session 下一顺位，最多 24 项名称/).waitFor();
+  await pageBrowser.getByText(/这一轮先核对当前占用和各智能体的下一顺位，最多读 24 项名称/).waitFor();
   await pageBrowser.getByText(/当前占用：先完成 A 的实际使用/).waitFor();
   await pageBrowser.getByText(/后续顺位：验收后才启动 B/).waitFor();
-  const deepItems = pageBrowser.locator(".resident-queue-session li");
+  const deepItems = pageBrowser.locator("[data-queue-entry]");
   assert.equal(await deepItems.count(),27);
   await deepItems.nth(24).getByRole("link",{name:"先完成 A 的实际使用"}).waitFor();
   await deepItems.nth(25).getByRole("link",{name:"验收后才启动 B"}).waitFor();
@@ -384,7 +384,7 @@ test("resident observation keeps acceptance, host authority and task replies dis
   assert.ok((await (await fetch(`${base}/__fixture/task-reads`)).json() as string[]).includes(taskC));
   await fetch(`${base}/__fixture/restore-queue`);
   await pageBrowser.getByRole("button",{name:"重新读取队列"}).click();
-  await pageBrowser.locator(".resident-queue-session li").nth(3).waitFor({state:"detached"});
+  await pageBrowser.locator("[data-queue-entry]").nth(3).waitFor({state:"detached"});
   await fetch(`${base}/__fixture/hold-next-detail`);
   await pageBrowser.getByRole("button",{name:"回读详情与尝试"}).click();
   for (let attempt=0; attempt<20 && await (await fetch(`${base}/__fixture/held-detail-count`)).text() !== "1"; attempt++)
@@ -392,16 +392,16 @@ test("resident observation keeps acceptance, host authority and task replies dis
   assert.equal(await (await fetch(`${base}/__fixture/held-detail-count`)).text(),"1");
   await fetch(`${base}/__fixture/advance-queue`);
   await pageBrowser.getByRole("button",{name:"重新读取队列"}).click();
-  await pageBrowser.locator(".resident-queue-meta").getByText(/累计尝试 2/).waitFor();
+  await pageBrowser.locator("[data-queue-meta]").getByText(/累计尝试 2/).waitFor();
   await pageBrowser.getByText(/当前占用：验收后才启动 B/).waitFor();
   assert.match(await queueItems.nth(0).innerText(),/已放行/);
   assert.match(await queueItems.nth(1).innerText(),/已领取／占用/);
-  assert.equal(await pageBrowser.locator(".resident-queue-card").getAttribute("open"),"");
+  assert.equal(await pageBrowser.locator("[data-queue]").getAttribute("open"),"");
   await fetch(`${base}/__fixture/release-held-detail`);
   await pageBrowser.waitForTimeout(100);
   assert.match(await queueItems.nth(1).innerText(),/已领取／占用/);
-  assert.match(await pageBrowser.locator(".resident-queue-meta").innerText(),/累计尝试 2/);
-  await queueItems.nth(0).getByRole("link",{name:/最近 Run/}).click();
+  assert.match(await pageBrowser.locator("[data-queue-meta]").innerText(),/累计尝试 2/);
+  await queueItems.nth(0).getByRole("link",{name:/最近一次运行/}).click();
   await pageBrowser.locator(`#runtime-run-${taskA}-${runA}[open]`).waitFor();
   await pageBrowser.locator(".task-collaboration-thread > summary").waitFor({timeout:5000}).catch(async () => {
     assert.fail(`Task collaboration missing: ${await pageBrowser.locator("body").innerText()} ${pageErrors.join(" | ")}`);

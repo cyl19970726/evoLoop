@@ -99,7 +99,7 @@ test("Task owner resolves one real Role and only verified bound agent links at 3
   await pageBrowser.getByLabel("访问令牌").fill("fixture-token");
   await pageBrowser.getByRole("button",{name:"进入",exact:true}).click();
   // 负责职责与同职责的其他智能体 sits at the end of 进展与讨论 on the task's overview.
-  await pageBrowser.locator(`[data-page-key="task:${taskId}:::"] .task-provenance > summary`).click();
+  await pageBrowser.locator(`[data-page-key="task:${taskId}:::"] [data-task-owner] > summary`).click();
   const owner=pageBrowser.locator(`[data-page-key="task:${taskId}:::"] .task-owner-meta`);
   await owner.getByRole("link",{name:"开发流程职责"}).waitFor({timeout:5000}).catch(async () => {
     assert.fail(`Role label missing: ${await pageBrowser.locator("body").innerText()} ${pageErrors.join(" | ")}`);
@@ -135,7 +135,7 @@ test("Task owner resolves one real Role and only verified bound agent links at 3
   assert.equal(await owner.getByRole("link").count(),0,"failed exact Role read must not fall back to a stale list entry or its Session links");
   assert.doesNotMatch(await owner.innerText(),/过期列表职责/);
   await pageBrowser.evaluate(({projectId,otherTaskId})=>{location.hash=`/p/${projectId}/tasks/${otherTaskId}`;},{projectId,otherTaskId});
-  await pageBrowser.locator(`[data-page-key="task:${otherTaskId}:::"] .task-provenance > summary`).click();
+  await pageBrowser.locator(`[data-page-key="task:${otherTaskId}:::"] [data-task-owner] > summary`).click();
   const unknown=pageBrowser.locator(`[data-page-key="task:${otherTaskId}:::"] .task-owner-meta`);
   await unknown.getByText(/未找到已登记职责/).waitFor();
   assert.match(await unknown.innerText(),new RegExp(unknownOwner));

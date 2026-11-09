@@ -11,7 +11,7 @@ import { taskSectionHref } from "../../shared/taskNavigation";
 import { FactList, Legacy, mutedText } from "../../shared/ui/PageParts";
 import { sessionHref } from "../sessions";
 import { executionHref, pendingRun, runStateText, runStateTone, uuidPattern } from "./executionPresentation";
-import { preflightPresentation, preflightView } from "./preflightPresentation";
+import { preflightPresentation, preflightView } from "../../shared/preflightPresentation";
 
 const stamp = (value: string) => new Date(value).toLocaleString("zh-CN", { hour12: false });
 const short = (id: string) => id.slice(0, 8);
