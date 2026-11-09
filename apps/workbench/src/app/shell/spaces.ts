@@ -46,7 +46,8 @@ export const sectionLabels: Record<Section, string> = {
 };
 
 export function spaceOf(route: Route): Space {
-  if (route.section === "sessions" || route.section === "runtime" && !!route.session) return "agents";
+  // `/runtime?session=owned:…` is an old conversation link (redirected to /sessions); `?session={uuid}` is 分工与运行.
+  if (route.section === "sessions" || route.section === "runtime" && !!route.session?.includes(":")) return "agents";
   if (route.section === "inbox" || route.section === "operations") return "inbox";
   return "work";
 }

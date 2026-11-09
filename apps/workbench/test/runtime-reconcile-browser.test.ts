@@ -57,9 +57,9 @@ test("reconcile pages retain the same run baseline and never report a partial re
   await page.goto(`${base}/p/${projectId}/runtime?view=execution`);
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button", { name: "进入", exact: true }).click();
-  const card = page.locator(".runtime-run-card").filter({ hasText: runId.slice(0, 8) });
+  const card = page.locator(`[data-run-id="${runId}"]`);
   await card.locator(":scope > summary").click();
-  const form = card.locator(".workflow-detail").filter({ hasText: "核对已绑定运行的终态观察" }).first();
+  const form = card.locator("details").filter({ hasText: "核对已绑定运行的终态观察" }).first();
   await form.locator(":scope > summary").click();
   await form.getByLabel("复核理由").fill("复核原 Turn 的终态");
   await form.getByRole("button", { name: "回读原生终态并登记观察" }).click();
@@ -71,7 +71,7 @@ test("reconcile pages retain the same run baseline and never report a partial re
   await form.getByText(/尚未定位该运行，运行记录没有修改/).waitFor();
   assert.deepEqual(requests[1], { expectedVersion: 1, reason: "复核原 Turn 的终态", turnCursor: "page-1" });
   await form.getByRole("button", { name: "继续核对" }).click();
-  await page.waitForFunction(() => !!document.querySelector(".runtime-run-card .history-body"));
+  await page.waitForFunction(() => !!document.querySelector("[data-run-id] [data-run-summary]"));
   if (await card.getAttribute("open") === null) await card.locator(":scope > summary").click();
   await card.getByText(/原生终态已回读并登记/).waitFor();
   assert.deepEqual(requests[2], { expectedVersion: 1, reason: "复核原 Turn 的终态", turnCursor: "page-2" });
