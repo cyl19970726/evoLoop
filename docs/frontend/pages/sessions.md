@@ -19,16 +19,22 @@ Session 页说明一个具体实例此刻在做什么、做出了什么；“Lea
 
 外壳与左栏见[布局](../layout.md)，场景见[场景 3](../scenarios.md#十个场景)与[场景 11](../scenarios.md#场景-11看清-leader-怎样安排-session)。
 
-现状（#229 PR6a–PR6c）：
+现状（#229 PR6a–PR6d）：
 - **目录**：搜索、“统筹安排”、业务 / 系统分组，每项有头像、当前任务或职责、状态。
 - **统筹安排**：看板每个智能体一行（正在做、已分派、排队），无承接者的任务单列并写下一步；另列待处理消息、待答问题与待验收数。
-- **详情**：页首胶囊（头像、名字、状态）；中间是对话流，回复不包卡片，我的消息是右侧气泡，工具调用收成一行灰字；输入框固定在底部；右栏是实体卡、“动态”（当前任务、配置、队列）和“资料库”（成果）。
+- **详情**（PR6d 起全部用 `@evoloop/ui`）：
+  - 中间：对话流按目标体验实现；原生的英文说明改写成中文。
+  - 输入框：Enter 只在运行时声明可补充时补充，否则排到下一轮并写明原因。
+  - 右栏：实体卡与标识、动态（当前任务、分派、执行队列）、资料库（成果）、环境与用量（含调整模型）、详情与来源。
+  - “关闭受管智能体”在右栏列出阻断原因；窄屏下右栏只在点开时出现。
 - **还没做的**：
   - 编排总览文档（合同缺“当前总览”标记）。
   - 看板对象在右栏打开速览。
-  - 输入框新样式与 `/`、`@`（语义待定）。
-  - 待办清单与提问卡（缺结构化步骤）。
-  - 右栏旧子面板换新样式。
+  - 选中技能后运行时是否按技能执行待确认（现在在消息首行写明技能）。
+  - 关联文档到消息（上下文字段只能带任务）。
+  - Claude 的待办（TodoWrite）尚未接入。
+  - 提问卡仍是逐题表单，没用 QuestionCard。
+  - 所在机器等 #219。
 
 ## 内容与状态
 
@@ -51,15 +57,15 @@ Session 页说明一个具体实例此刻在做什么、做出了什么；“Lea
 
 | 交互 | 怎样做 | 数据来源与现状 |
 | --- | --- | --- |
-| 连续的工作流 | Agent 正文不包卡片；工具调用折叠成一行灰字（“已执行 5 个指令，已建立 1 个文件，1 个失败 ›”），展开后每步一行，失败标红，改动的文件带增删行数 | 时间线 tool 条目，Codex 已有；文件增删行数需要工具详情 |
+| 连续的工作流 | Agent 正文不包卡片；工具调用折叠成一行灰字（“已执行 5 个指令，已建立 1 个文件，1 个失败 ›”），展开后每步一行，失败标红，改动的文件带增删行数 | 已实现：折叠时失败与正在进行的一步仍可见，每步可原位看详情；增删行数需要工具详情 |
 | 需要你决定 | Agent 停下来等人时，流末出现提问卡：一句问题、几个可点的选项（A、B、C…），最后一项“其他”可以直接写；选好后点“提交”，等于发出这条回复，卡片随后折叠成一行“已回答：…” | 原生提问与业务问答已有，但不在时间线里（见下表） |
 | 输入框信息 | 输入框下方一行：当前模型、权限或执行配置、上下文用量 | Session 执行配置与用量部分已有 |
-| 实时状态行 | 流末一行，前面是 Session 的身份标记：“正在运行测试 · 1 分 04 秒 ›”，点开看当前工具 | 进行中的条目与开始时间，Codex 已有 |
-| 待办清单 | 固定在输入框上方，每步显示已完成、进行中、待做，随 Agent 更新；全部完成后折叠成一行 | Codex 的 `turn/plan/updated` 已有分步状态，但被压成一段文字；需要在合同里保留结构化步骤。Claude 的 TodoWrite 尚未接入 |
-| 发消息 | Enter 发送；运行中按 Enter 补充到当前这一轮（运行时支持时），Cmd/Ctrl+Enter 排到下一轮；已排队的消息显示在输入框上方，可取消；停止按钮中断当前这一轮 | 发送、排队、取消、中断已有命令；补充到当前轮目前只有 Codex |
-| `/` 与 `@` | 输入 `/` 弹出当前职责可用的技能和命令（停止这一轮、撤回排队消息、关联任务或文档）；输入 `@` 选择其他智能体，这条消息另发一份给对方，两边时间线各留一条记录（见[组件清单](../components.md#对话流组件)） | 技能清单来自职责配置；`@` 用现有的给指定智能体发消息命令；选中技能后运行时是否按技能执行待确认；关联文档需要扩展消息的上下文字段（现在只能带任务） |
+| 实时状态行 | 流末一行，前面是 Session 的身份标记：“正在运行测试 · 1 分 04 秒 ›”，点开看当前工具 | 已实现（头像、当前工具、耗时、关联任务）；连接过期时只写“上次读回” |
+| 待办清单 | 固定在输入框上方，每步显示已完成、进行中、待做，随 Agent 更新；全部完成后折叠成一行 | 已实现：从 Codex 计划条目的分步文字和原生进度里的计划读出；合同仍宜保留结构化步骤。Claude 的 TodoWrite 尚未接入 |
+| 发消息 | Enter 发送；运行中按 Enter 补充到当前这一轮（运行时支持时），Cmd/Ctrl+Enter 排到下一轮；已排队的消息显示在输入框上方，可取消；停止按钮中断当前这一轮 | 已实现：补充只在即时输入能力为 steer 时提供；停止按这一轮的来源发消息中断或运行中断，需要复核权限 |
+| `/` 与 `@` | 输入 `/` 弹出当前职责可用的技能和命令（停止这一轮、撤回排队消息、关联任务或文档）；输入 `@` 选择其他智能体，这条消息另发一份给对方，两边时间线各留一条记录（见[组件清单](../components.md#对话流组件)） | 已实现：技能来自职责的运行时视图；`@` 另存一条普通消息给对方；技能的执行语义与关联文档仍待定 |
 | 头像与称呼 | 界面上 Session 叫“智能体”、Leader 叫“统筹”（[界面用语](../principles.md#界面用语)）；每个智能体有按职责取底色的卡通头像，出现在目录、标题、状态行和 `@` 菜单里 | 头像由职责和实例推出，不需要新数据 |
-| 每轮小结 | 一轮结束时，最后一条回复后跟一行本轮产出：改了什么、交付了什么、下一步等谁 | 最终回复与交付记录已有 |
+| 每轮小结 | 一轮结束时，最后一条回复后跟一行本轮产出：改了什么、交付了什么、下一步等谁 | 已实现：只写记录能证明的（工具计数、本轮开始后关联任务的交付、失败或待答） |
 | 右栏 | 顶部是实体卡：身份标记、名称、职责、所在机器与状态（在线 / 空闲 / 休眠）；下面两个页签，“动态”看当前任务、队列和最近活动，“资料库”看本 Session 的产出、交付和关联文档；再往下是环境（工作目录、执行配置）和上下文用量 | 工作目录与用量部分已有；机器等 #219 |
 
 **两种运行时的现状差异**
@@ -97,7 +103,8 @@ Session 页说明一个具体实例此刻在做什么、做出了什么；“Lea
 | --- | --- | --- |
 | 外壳 | `app/shell/AppShell.tsx` | `shell.test.ts`、`session-directory-groups-browser.test.ts` |
 | 智能体目录（内层栏） | `features/sessions/SessionNavigation.tsx`（新目录）、`features/sessions/sessionDirectoryPresentation.ts`、`features/sessions/useSessionDirectoryGroup.ts` | `session-directory-presentation.test.ts`、`session-directory-groups.test.ts`、`session-directory-groups-browser.test.ts` |
-| 智能体详情 | `features/sessions/SessionWorkspace.tsx`（页首、中间、右栏）、`features/sessions/SessionTimeline.tsx`（对话流）、`features/sessions/workspaceTimelineModel.ts`、`features/sessions/DirectInputEntry.tsx`、`features/sessions/NativeSessionPanel.tsx`、`features/sessions/SessionModelControl.tsx`、`features/sessions/SessionClosePanel.tsx` | `session-workspace-redesign-browser.test.ts`、`session-timeline-browser.test.ts`、`session-workspace-timeline-model.test.ts`、`session-direct-input-layout-browser.test.ts`、`session-native-input-browser.test.ts`、`session-native-progress-browser.test.ts`、`session-close-entry-browser.test.ts`、`task-session-return-browser.test.ts` |
+| 智能体详情 | `features/sessions/SessionWorkspace.tsx`（页首、右栏；执行队列由 `app/App.tsx` 传入 `features/workflow` 的面板）、`features/sessions/SessionTimeline.tsx`（对话流）、`features/sessions/conversationPresentation.ts`（工具、计划、状态行与每轮小结的用语）、`features/sessions/workspaceTimelineModel.ts`、`features/sessions/NativeSessionPanel.tsx`、`features/sessions/SessionModelControl.tsx`、`features/sessions/SessionClosePanel.tsx` | `session-workspace-redesign-browser.test.ts`、`session-timeline-browser.test.ts`、`session-workspace-timeline-model.test.ts`、`session-conversation-presentation.test.ts`、`session-native-input-browser.test.ts`、`session-native-progress-browser.test.ts`、`session-close-entry-browser.test.ts`、`session-activity-narrow-browser.test.ts`、`task-session-return-browser.test.ts` |
+| 输入框 | `features/sessions/SessionComposer.tsx`（待办、排队、`/`、`@`、停止）、`features/sessions/composerPresentation.ts`（Enter 与 Cmd/Ctrl+Enter 做什么）、`features/sessions/useDirectInput.tsx`（即时输入与回执）、`features/sessions/sessionCommand.ts` | `session-composer-browser.test.ts`（三个宽度，`EVOLOOP_AGENT_SCREENSHOT_DIR` 存截图）、`session-direct-input-layout-browser.test.ts`、`session-message-entry-browser.test.ts`、`session-conversation-presentation.test.ts` |
 | 统筹安排 | `features/sessions/ArrangementPage.tsx`（页面与右栏）、`features/sessions/arrangementModel.ts`（看板、空闲与风险规则）、`features/sessions/arrangementPresentation.ts`（读取状态用语；按阶段的下一步与总览共用，在 `shared/workPresentation.ts`） | `arrangement-model.test.ts`、`arrangement-presentation.test.ts`、`work-presentation.test.ts`、`arrangement-browser.test.ts` |
 | Leader 安排的数据 | `shared/leaderWorkLoad.ts`（任务索引分页与阶段名）、`shared/queueClient.ts`；执行队列 `features/workflow/ResidentQueuePanel.tsx` 与分派、确认 `features/workflow/TaskRuntimeTab.tsx` 显示在任务详情的“运行与关联”，见[任务](tasks.md) | `leader-work-load.test.ts`、`leader-work-overview-browser.test.ts` |
 | 数据来源 | `packages/contracts/src/session-timeline.ts`、`packages/adapter-claude-agent-sdk/src/index.ts`、`packages/adapter-codex-app-server/src/workspace-map.ts`、`apps/coordinator/src/runtime/routed.ts` | — |

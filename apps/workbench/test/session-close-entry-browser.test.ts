@@ -99,17 +99,19 @@ test("Session workspace exposes blockers, submits one close intent, and reads th
   await page.getByRole("heading", { name: "关闭入口测试会话" }).waitFor();
   await page.getByRole("button", { name: "关闭受管智能体", exact: true }).click();
   const panel = page.getByRole("region", { name: "结束会话与历史归类" });
-  await panel.getByText(/未完 Task/).waitFor();
-  for (const label of ["队列占用", "Run", "消息"]) assert.match(await panel.innerText(), new RegExp(label));
-  assert.equal(await panel.getByRole("button", { name: "请求关闭受管 Session" }).count(), 0);
+  await panel.getByText(/未完成任务/).waitFor();
+  for (const label of ["执行队列的占用", "运行", "消息"]) assert.match(await panel.innerText(), new RegExp(label));
+  assert.equal(await panel.getByRole("button", { name: "请求关闭受管智能体" }).count(), 0);
   assert.equal(commandCount, 0);
   await fetch(`${base}/__fixture/clear`);
   await panel.getByRole("button", { name: "重新核对关闭条件" }).click();
   await panel.getByText(/未在本次已读范围发现/).waitFor();
-  await panel.locator("summary", { hasText: "请求关闭受管 Session" }).click();
+  await panel.locator("summary", { hasText: "请求关闭受管智能体" }).click();
   await panel.getByLabel("关闭理由与核对依据").fill("任务、队列、运行和消息均已核对");
-  await panel.getByRole("button", { name: "请求关闭受管 Session" }).click();
+  await panel.getByRole("button", { name: "请求关闭受管智能体" }).click();
   await panel.getByText(/原生归档已尝试/).waitFor();
+  // The native diagnostic codes and the original close operation are in the panel's source layer.
+  await panel.getByText("来源与完整标识").click();
   await panel.getByText(/错误码 -32600 · 安全类别 rollout_not_found/).waitFor();
   assert.equal(commandCount, 1);
   assert.equal(lastCommand?.type, "runtime.session.close");
@@ -120,7 +122,7 @@ test("Session workspace exposes blockers, submits one close intent, and reads th
   assert.equal(commandCount, 1, "closing reads the original intent without resubmitting");
   await fetch(`${base}/__fixture/closed`);
   await panel.getByRole("button", { name: "重新核对关闭条件" }).click();
-  await panel.getByText(/受管 Session 已关闭/).waitFor();
+  await panel.getByText(/受管智能体已关闭/).waitFor();
   assert.equal(commandCount, 1);
   assert.equal(await page.locator("body").evaluate(element => element.scrollWidth <= window.innerWidth), true);
 });

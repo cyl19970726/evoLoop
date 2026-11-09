@@ -126,12 +126,12 @@ test("native progress keeps source, freshness and cumulative usage separate from
   const facts = page.getByRole("region", { name: "执行与消息状态" });
   await fetch(`${base}/__fixture/set?mode=messageLive`);
   await page.getByRole("button", { name: "重新读取", exact: true }).click();
-  await facts.getByText("原生宿主回报 Turn 进行中").waitFor();
+  await facts.getByText("原生宿主回报这一轮进行中").waitFor();
   await facts.getByText("处理中 · 更新于", { exact: false }).waitFor();
   await facts.getByText("不能据此认定仍在有效推进", { exact: false }).waitFor();
   await fetch(`${base}/__fixture/set?mode=messageConflict`);
   await page.getByRole("button", { name: "重新读取", exact: true }).click();
-  await facts.getByText("原生 Turn 与持久消息状态不一致", { exact: false }).waitFor();
+  await facts.getByText("这一轮的原生状态与保存的消息状态不一致", { exact: false }).waitFor();
   await fetch(`${base}/__fixture/set?mode=messageUnknown`);
   await page.getByRole("button", { name: "重新读取", exact: true }).click();
   await facts.getByText("执行或消息结果未知", { exact: false }).waitFor();
@@ -152,17 +152,17 @@ test("native progress keeps source, freshness and cumulative usage separate from
   assert.equal(await card.locator(".native-progress-facts small").filter({ hasText: "当前工具" }).count(), 0,
     "a completed item is not presented as the current tool while the Turn continues");
 
-  for (const [terminal, label] of [["completed", "Turn 已结束"], ["failed", "Turn 执行失败"], ["interrupted", "Turn 已中断"]] as const) {
+  for (const [terminal, label] of [["completed", "这一轮已结束"], ["failed", "这一轮执行失败"], ["interrupted", "这一轮已中断"]] as const) {
     // Only the Turn ended: the fixture deliberately never supplies item/completed or a completed plan step.
     await fetch(`${base}/__fixture/set?mode=${terminal}`);
     await page.getByRole("button", { name: "重新读取", exact: true }).click();
     await card.getByText(label, { exact: true }).waitFor();
-    await card.getByText("Tool call · Turn 结束时结果未确认", { exact: true }).first().waitFor({ timeout: 2000 });
+    await card.getByText("Tool call · 这一轮结束时结果未确认", { exact: true }).first().waitFor({ timeout: 2000 });
     assert.equal(await card.locator(".native-progress-facts small").filter({ hasText: "当前工具" }).count(), 0);
     assert.equal(await card.getByText("Tool call · 进行中", { exact: true }).count(), 0);
-    const plan = card.locator("details").filter({ hasText: "计划步骤 · Turn turn-1" });
+    const plan = card.locator("details").filter({ hasText: "计划步骤" });
     if (!await plan.evaluate(element => (element as HTMLDetailsElement).open)) await plan.locator("summary").click();
-    await plan.getByText("Turn 结束时结果未确认 · 整理结果", { exact: true }).waitFor({ timeout: 2000 });
+    await plan.getByText("这一轮结束时结果未确认 · 整理结果", { exact: true }).waitFor({ timeout: 2000 });
     assert.equal(await card.getByText("1/2 步已完成", { exact: true }).count(), 1,
       "ending a Turn does not invent tool results or completed plan steps");
   }
@@ -170,7 +170,7 @@ test("native progress keeps source, freshness and cumulative usage separate from
   // Native Turn completion and native request cleanup are distinct notifications and may arrive apart.
   await fetch(`${base}/__fixture/set?mode=completedWaiting`);
   await page.getByRole("button", { name: "重新读取", exact: true }).click();
-  await card.getByText("Turn 已结束", { exact: true }).waitFor({ timeout: 2000 });
+  await card.getByText("这一轮已结束", { exact: true }).waitFor({ timeout: 2000 });
   assert.equal(await card.getByText("等待回答", { exact: true }).count(), 0,
     "a pending cleanup notification cannot hide the observed terminal Turn");
   assert.equal(await page.locator(".native-question-card").count(), 1,
@@ -183,7 +183,7 @@ test("native progress keeps source, freshness and cumulative usage separate from
   assert.equal(await card.getByText("运行中", { exact: true }).count(), 0, "stale in-progress Turn is never shown as live");
   await card.getByText("Tool call · 当时进行中，当前待核对").first().waitFor();
   await card.getByText("上次记录：1/2 步已完成").waitFor();
-  const stalePlan = card.locator("details").filter({ hasText: "计划步骤 · Turn turn-1" });
+  const stalePlan = card.locator("details").filter({ hasText: "计划步骤" });
   if (!await stalePlan.evaluate(element => (element as HTMLDetailsElement).open)) await stalePlan.locator("summary").click();
   await card.getByText("当时进行中，当前待核对 · 整理结果").waitFor();
 

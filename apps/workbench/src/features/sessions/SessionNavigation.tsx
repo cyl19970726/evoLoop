@@ -7,7 +7,9 @@ import { useSessionDirectoryGroup, type DirectoryMembership } from "./useSession
 import { agentStatusLabel } from "./sessionStatusPresentation";
 import { groupSessionsByClass, sessionClassLabel, sessionClassReason, type SessionClass } from "./sessionDirectoryPresentation";
 
-export const sessionHref = (projectId: string, key: string) => `${href(projectId, "sessions")}?session=${encodeURIComponent(key)}`;
+/** A link to one agent; `from` (a task of this project, its title and the reader) gives the agent page its way back. */
+export const sessionHref = (projectId: string, key: string, from?: { href: string; title: string; actorId: string }) =>
+  `${href(projectId, "sessions")}?${new URLSearchParams({ session: key, ...(from ? { return: from.href, actor: from.actorId, returnTitle: from.title.slice(0, 80) } : {}) })}`;
 
 const classOrder: SessionClass[] = ["business", "system", "unclassified"];
 export interface SessionNavigationState {

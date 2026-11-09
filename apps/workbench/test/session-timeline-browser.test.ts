@@ -214,7 +214,8 @@ test("dual-source history keeps the reader anchor, exhausts cursors, merges live
         else value = key === sessionKey && updated ? {
           cursor: "2", resetRequired: false, entries: [{ ...liveAnswer, body: "最终回复已完成", phase: "final_answer", state: "completed" }],
           turns: [{ id: "live-turn", state: "completed", startedAt: stamp, completedAt: stamp, origin: null }], freshness: "live", limitations: [], activeTurnId: null,
-        } : { cursor: "1", resetRequired: false, entries: [], turns: [], freshness: "live", limitations: [], activeTurnId: null };
+        } : { cursor: "1", resetRequired: false, entries: [], turns: [], freshness: "live", limitations: [],
+          activeTurnId: key === sessionKey ? "live-turn" : key === sessionBKey && sessionBMode === "empty" ? "b-live-turn" : null };
       }
       else if (url.pathname.endsWith("/timeline/items/live-tool")) { status = 403; value = { message: "原始工具证据需要复核权限" }; }
       else if (url.pathname.endsWith("/recovery")) { status = 404; value = { message: "无恢复记录" }; }
@@ -292,79 +293,73 @@ test("dual-source history keeps the reader anchor, exhausts cursors, merges live
       `non-Session routes restore the fresh Task shell after a Session visit (baseline=${JSON.stringify(taskShellBaseline)}, current=${JSON.stringify(shell)})`);
   };
   await assertSessionReaderShell();
-  const measureCurrent = async (target: typeof page) => target.evaluate(() => {
-    const strip = document.querySelector<HTMLElement>(".workspace-current-strip")!;
-    const label = strip.children[2].querySelector<HTMLElement>("small")!;
-    const progress = strip.children[2].querySelector<HTMLElement>("span")!;
-    const task = strip.children[0].querySelector<HTMLElement>("a")!;
+  // The live status line ends the flow: what runs now, how long, and the task the turn works on.
+  const measureCurrent = async (target: typeof page) => target.evaluate(text => {
+    const status = document.querySelector<HTMLElement>(".workspace-turn-state")!;
+    const task = status.querySelector<HTMLElement>("a")!;
     const history = document.querySelector<HTMLElement>(".workspace-timeline-scroll")!;
     const composer = document.querySelector<HTMLElement>(".session-composer-host")!;
+    const tabs = document.querySelector<HTMLElement>("[data-shell=tabs]");
+    const progress = [...history.querySelectorAll<HTMLElement>("[data-workspace-entry]")].find(entry => entry.textContent?.includes(text));
     return { dpr: devicePixelRatio, width: innerWidth, scale: visualViewport?.scale ?? null,
-      label: { width: label.getBoundingClientRect().width, height: label.getBoundingClientRect().height },
-      progress: { width: progress.getBoundingClientRect().width, height: progress.getBoundingClientRect().height },
-      stripHeight: strip.getBoundingClientRect().height, historyHeight: history.clientHeight,
-      composerBottom: composer.getBoundingClientRect().bottom, taskText: task.textContent ?? "",
-      progressText: progress.textContent ?? "", labelText: label.textContent ?? "" };
-  });
-  const narrowMeasurements: Array<{ dpr: number; label: { width: number; height: number }; progress: { width: number; height: number };
-    stripHeight: number; historyHeight: number; composerBottom: number; taskText: string; progressText: string; labelText: string;
-    width: number; scale: number | null }> = [];
+      statusHeight: status.getBoundingClientRect().height, statusWidth: status.getBoundingClientRect().width, statusText: status.textContent ?? "",
+      historyHeight: history.clientHeight, composerBottom: composer.getBoundingClientRect().bottom,
+      tabsTop: tabs && getComputedStyle(tabs).display !== "none" ? tabs.getBoundingClientRect().top : innerHeight,
+      taskText: task.textContent ?? "", progressShown: !!progress };
+  }, publicProgress);
+  const narrowMeasurements: Array<{ dpr: number; statusHeight: number; statusWidth: number; statusText: string; historyHeight: number;
+    composerBottom: number; tabsTop: number; taskText: string; progressShown: boolean; width: number; scale: number | null }> = [];
   for (const dpr of [1, 2]) {
     const context = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: dpr });
     const narrow = await context.newPage();
     await narrow.goto(`${base}/p/${projectId}/sessions?session=${encodeURIComponent(sessionKey)}&tab=activity`);
     await narrow.getByLabel("访问令牌").fill("fixture-token");
     await narrow.getByRole("button", { name: "进入", exact: true }).click();
-    await narrow.locator(".workspace-current-strip > div:last-child span").waitFor();
+    await narrow.locator(".workspace-turn-state a").waitFor();
     const measure = await measureCurrent(narrow);
     narrowMeasurements.push(measure);
     if (process.env.EVOLOOP_TIMELINE_CAPTURE_DIR)
       await narrow.screenshot({ path: join(process.env.EVOLOOP_TIMELINE_CAPTURE_DIR, `narrow-dpr${dpr}.png`) });
     await context.close();
   }
-  console.log("narrow current strip", narrowMeasurements);
+  console.log("narrow live status", narrowMeasurements);
   for (const measurement of narrowMeasurements) {
     assert.equal(measurement.width, 390);
     assert.equal(measurement.scale, 1);
-    assert.equal(measurement.labelText, "本轮公开进展");
-    assert.equal(measurement.taskText, taskTitle);
-    assert.equal(measurement.progressText, publicProgress);
-    assert.ok(measurement.label.width >= 60 && measurement.label.height <= 20,
-      `progress label reads horizontally at DPR${measurement.dpr}: ${JSON.stringify(measurement)}`);
-    assert.ok(measurement.progress.width >= 240 && measurement.progress.height <= 42,
-      `long public progress remains readable within two lines at DPR${measurement.dpr}: ${JSON.stringify(measurement)}`);
-    assert.ok(measurement.stripHeight <= 135 && measurement.historyHeight >= 120 && measurement.composerBottom <= 844,
-      `narrow layout reserves a scrollable history and visible composer at DPR${measurement.dpr}: ${JSON.stringify(measurement)}`);
+    assert.equal(measurement.taskText, `任务「${taskTitle}」`);
+    assert.match(measurement.statusText, /正在执行 实时命令/);
+    assert.ok(measurement.progressShown, "the turn's public progress reads in the flow");
+    assert.ok(measurement.statusWidth <= 390 && measurement.statusHeight <= 90,
+      `the live status line stays readable within the phone width at DPR${measurement.dpr}: ${JSON.stringify(measurement)}`);
+    assert.ok(measurement.historyHeight >= 120 && measurement.composerBottom <= measurement.tabsTop + 1,
+      `narrow layout reserves a scrollable history and a fully visible composer at DPR${measurement.dpr}: ${JSON.stringify(measurement)}`);
   }
   const desktopCurrent = await measureCurrent(page);
-  assert.ok(desktopCurrent.label.width >= 60 && desktopCurrent.label.height <= 20 &&
-    desktopCurrent.progress.width >= 240 && desktopCurrent.historyHeight >= 200 && desktopCurrent.composerBottom <= 900,
-    `normal window keeps long progress and history readable: ${JSON.stringify(desktopCurrent)}`);
+  assert.ok(desktopCurrent.statusHeight <= 40 && desktopCurrent.progressShown && desktopCurrent.historyHeight >= 200 && desktopCurrent.composerBottom <= 900,
+    `normal window keeps the live status, progress and history readable: ${JSON.stringify(desktopCurrent)}`);
   const shortContext = await browser.newContext({ viewport: { width: 1280, height: 560 }, deviceScaleFactor: 1, reducedMotion: "reduce" });
   const short = await shortContext.newPage();
   await short.goto(`${base}/p/${projectId}/sessions?session=${encodeURIComponent(sessionKey)}&tab=activity`);
   await short.getByLabel("访问令牌").fill("fixture-token");
   await short.getByRole("button", { name: "进入", exact: true }).click();
-  await short.locator(".workspace-current-strip > div:last-child span").waitFor();
+  await short.locator(".workspace-turn-state a").waitFor();
   const shortCurrent = await measureCurrent(short);
   if (process.env.EVOLOOP_TIMELINE_CAPTURE_DIR)
     await short.screenshot({ path: join(process.env.EVOLOOP_TIMELINE_CAPTURE_DIR, "short-running-reduced.png") });
-  assert.equal(shortCurrent.progressText, publicProgress);
-  assert.ok(shortCurrent.label.width >= 60 && shortCurrent.progress.width >= 180 &&
-    shortCurrent.stripHeight <= 100 && shortCurrent.historyHeight >= 45 && shortCurrent.composerBottom <= 560,
+  assert.ok(shortCurrent.progressShown && shortCurrent.statusHeight <= 40 && shortCurrent.historyHeight >= 45 && shortCurrent.composerBottom <= 560,
     `short reduced-motion window keeps the current progress and composer usable: ${JSON.stringify(shortCurrent)}`);
   await shortContext.close();
-  const timeline = page.getByRole("log", { name: "Session 消息与工具时间线" });
+  const timeline = page.getByRole("log", { name: "消息与工具时间线" });
   await timeline.locator('[data-workspace-entry="current-0"]').waitFor();
-  assert.equal(await timeline.locator(".workspace-tool").count(), 5, "100+ tools initially show only newest and failed evidence");
+  assert.equal(await timeline.locator(".workspace-tool").count(), 2, "100+ tools fold into one line; the failure and the running step stay in sight");
   if (process.env.EVOLOOP_TIMELINE_CAPTURE_DIR) {
     console.log("desktop viewport", await page.evaluate(() => ({ width: innerWidth, height: innerHeight, dpr: devicePixelRatio, scale: visualViewport?.scale ?? null })));
     await page.screenshot({ path: join(process.env.EVOLOOP_TIMELINE_CAPTURE_DIR, "desktop.png") });
   }
   assert.equal(await timeline.locator('[data-workspace-entry="live-answer"]').count(), 1);
-  await timeline.locator(".workspace-turn-state").getByText("处理中", { exact: true }).waitFor();
-  assert.ok(await timeline.locator(".workspace-turn-state").getByText("处理中", { exact: true }).count() === 1,
-    "a running turn named by the live read activeTurnId shows the processing footer");
+  await timeline.locator(".workspace-turn-state").getByText("正在执行 实时命令", { exact: true }).waitFor();
+  assert.ok(await timeline.locator(".workspace-turn-state").getByText("正在执行 实时命令", { exact: true }).count() === 1,
+    "a running turn named by the live read activeTurnId shows the live status line");
   await timeline.getByRole("button", { name: "加载更早的消息与活动" }).waitFor();
 
   await page.evaluate(() => {
@@ -405,14 +400,12 @@ test("dual-source history keeps the reader anchor, exhausts cursors, merges live
   await sourceTaskLink.click();
   await page.getByRole("heading", { name: taskTitle }).waitFor();
   await assertDefaultShell();
-  assert.equal(await page.locator(".task-detail-backlinks").count(), 1,
-    `Task route should retain its return control; route=${page.url()}, errors=${pageErrors.join(" | ")}, page=${(await page.locator("body").innerText()).slice(0, 500)}`);
-  const taskBacklinks = await page.locator(".task-detail-backlinks").innerText();
-  assert.match(taskBacklinks, /返回【时间线分页会话】/,
-    `opening a source Task should retain the exact Session return; route=${page.url()}, backlinks=${taskBacklinks}`);
-  await page.locator(".task-detail-backlinks a.back").filter({ hasText: "返回【时间线分页会话】" }).click();
+  const taskBack = page.getByRole("link", { name: /返回【时间线分页会话】/ });
+  assert.equal(await taskBack.count(), 1,
+    `Task route should retain its exact Session return; route=${page.url()}, errors=${pageErrors.join(" | ")}, page=${(await page.locator("body").innerText()).slice(0, 500)}`);
+  await taskBack.click();
   await page.getByRole("heading", { name: "时间线分页会话" }).waitFor();
-  const returnedTimeline = page.getByRole("log", { name: "Session 消息与工具时间线" });
+  const returnedTimeline = page.getByRole("log", { name: "消息与工具时间线" });
   const returnedEntry = returnedTimeline.locator('[data-workspace-entry="older-native-0"]');
   await returnedEntry.waitFor();
   await assertSessionReaderShell();
@@ -560,15 +553,15 @@ test("dual-source history keeps the reader anchor, exhausts cursors, merges live
   await switchPage.getByRole("button", { name: "进入", exact: true }).click();
   await switchPage.getByRole("heading", { name: "时间线分页会话" }).waitFor();
   await fetch(`${base}/__fixture/hold-message-page`);
-  const switchTimeline = switchPage.getByRole("log", { name: "Session 消息与工具时间线" });
+  const switchTimeline = switchPage.getByRole("log", { name: "消息与工具时间线" });
   await switchTimeline.getByRole("button", { name: "加载更早的消息与活动" }).click();
   for (let attempt = 0; attempt < 60 && await (await fetch(`${base}/__fixture/message-page-held`)).text() !== "true"; attempt++)
     await new Promise(resolve => setTimeout(resolve, 25));
   assert.equal(await (await fetch(`${base}/__fixture/message-page-held`)).text(), "true", "Session A's messages page is held in flight");
   await switchPage.evaluate(([project, key]) => { location.hash = `/p/${project}/sessions?session=${encodeURIComponent(key)}&tab=activity`; }, [projectId, sessionBKey]);
   await switchPage.getByRole("heading", { name: "乙时间线会话" }).waitFor();
-  const timelineB = switchPage.getByRole("log", { name: "Session 消息与工具时间线" });
-  await timelineB.locator(".workspace-turn-state").getByText("处理中", { exact: true }).waitFor();
+  const timelineB = switchPage.getByRole("log", { name: "消息与工具时间线" });
+  await timelineB.locator(".workspace-turn-state").getByText("正在处理", { exact: true }).waitFor();
   assert.equal(await timelineB.locator("[data-workspace-entry]").count(), 0,
     "the active-turn empty-state case has no public timeline entries");
   assert.equal(await timelineB.locator(".session-conversation-empty").count(), 0,
@@ -580,12 +573,12 @@ test("dual-source history keeps the reader anchor, exhausts cursors, merges live
     await testPage.getByLabel("访问令牌").fill("fixture-token");
     await testPage.getByRole("button", { name: "进入", exact: true }).click();
     await testPage.getByRole("heading", { name: "乙时间线会话" }).waitFor();
-    return { page: testPage, timeline: testPage.getByRole("log", { name: "Session 消息与工具时间线" }) };
+    return { page: testPage, timeline: testPage.getByRole("log", { name: "消息与工具时间线" }) };
   };
   const shortCase = await openSessionB("short", { width: 2880, height: 1772 });
   await shortCase.timeline.locator('[data-workspace-entry="b-current"]').waitFor();
   const shortThreadLayout = await shortCase.page.evaluate(() => {
-    const workspace = [...document.querySelectorAll<HTMLElement>(".content.session-workspace")]
+    const workspace = [...document.querySelectorAll<HTMLElement>(".session-workspace")]
       .find(element => element.getClientRects().length > 0)!;
     const timeline = workspace.querySelector<HTMLElement>(".workspace-timeline-scroll")!;
     const entries = [...timeline.querySelectorAll<HTMLElement>("[data-workspace-entry]")];
@@ -621,7 +614,7 @@ test("dual-source history keeps the reader anchor, exhausts cursors, merges live
   await fillCase.timeline.getByText("乙的更早原生内容 1-17", { exact: false }).waitFor();
   await fillCase.timeline.getByText("乙的更早保存消息 1-17", { exact: false }).waitFor();
   const filledWideTimeline = await fillCase.page.evaluate(() => {
-    const workspace = [...document.querySelectorAll<HTMLElement>(".content.session-workspace")]
+    const workspace = [...document.querySelectorAll<HTMLElement>(".session-workspace")]
       .find(element => element.getClientRects().length > 0)!;
     const timeline = workspace.querySelector<HTMLElement>(".workspace-timeline-scroll")!;
     return { clientHeight: timeline.clientHeight, scrollHeight: timeline.scrollHeight,
@@ -637,7 +630,7 @@ test("dual-source history keeps the reader anchor, exhausts cursors, merges live
     await fillCase.page.setViewportSize(viewport);
     await fillCase.page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
     const followLayout = await fillCase.page.evaluate(() => {
-      const workspace = [...document.querySelectorAll<HTMLElement>(".content.session-workspace")]
+      const workspace = [...document.querySelectorAll<HTMLElement>(".session-workspace")]
         .find(element => element.getClientRects().length > 0)!;
       const timeline = workspace.querySelector<HTMLElement>(".workspace-timeline-scroll")!;
       const latest = [...timeline.querySelectorAll<HTMLElement>("[data-workspace-entry]")].at(-1)!;
@@ -682,11 +675,9 @@ test("dual-source history keeps the reader anchor, exhausts cursors, merges live
   await directPage.goto(`${base}/p/${projectId}/sessions?session=${encodeURIComponent(sessionKey)}&tab=activity`);
   await directPage.getByLabel("访问令牌").fill("fixture-token");
   await directPage.getByRole("button", { name: "进入", exact: true }).click();
-  await directPage.getByLabel("即时发送到原 Session").waitFor();
-  assert.equal(await directPage.getByRole("button", { name: "保存待处理" }).count(), 0,
-    "a real direct capability selects the direct composer");
-  await directPage.getByLabel("即时发送到原 Session").fill("请核对这一条独立输入");
-  await directPage.getByRole("button", { name: "开始一轮对话" }).click();
+  await directPage.getByText("Enter 立即开始一轮 · ⌘/Ctrl+Enter 保存为排队消息").waitFor();
+  await directPage.getByRole("combobox", { name: "消息" }).fill("请核对这一条独立输入");
+  await directPage.getByRole("combobox", { name: "消息" }).press("Enter");
   await directPage.getByText("发送结果未知，需核对原操作").waitFor();
   assert.equal(await (await fetch(`${base}/__fixture/direct-count`)).text(), "1");
   const originalInputId = String(directReceipt?.inputId);
@@ -694,12 +685,14 @@ test("dual-source history keeps the reader anchor, exhausts cursors, merges live
   await directPage.getByLabel("访问令牌").fill("fixture-token");
   await directPage.getByRole("button", { name: "进入", exact: true }).click();
   await directPage.getByText("发送结果未知，需核对原操作").waitFor();
+  await directPage.locator(".session-direct-receipt summary").click();
   assert.ok((await directPage.locator(".session-direct-receipt").innerText()).includes(originalInputId));
-  await directPage.locator(".session-direct-pending-draft > summary").click();
-  assert.equal(await directPage.getByRole("button", { name: "开始一轮对话" }).isDisabled(), true);
-  await directPage.getByText("只读取原 inputId，不会重发。").waitFor();
+  await directPage.getByText("只按原输入核对，不会重发", { exact: false }).waitFor();
   await directPage.getByRole("button", { name: "核对结果（不会重发）" }).click();
-  await directPage.getByRole("button", { name: "开始一轮对话" }).waitFor();
+  await directPage.getByText("运行时已接收；不代表智能体已阅读或采用").waitFor();
+  assert.equal(await directPage.getByRole("combobox", { name: "消息" }).inputValue(), "", "a received input leaves nothing to send again");
+  await directPage.getByRole("combobox", { name: "消息" }).fill("核对之后的新一条");
+  await directPage.getByRole("button", { name: "发送", exact: true, disabled: false }).waitFor();
   assert.equal(await (await fetch(`${base}/__fixture/direct-count`)).text(), "1",
     "lost acknowledgement and reload never repost the original input");
   await directPage.close();
@@ -708,10 +701,12 @@ test("dual-source history keeps the reader anchor, exhausts cursors, merges live
   await uncertainPage.goto(`${base}/p/${projectId}/sessions?session=${encodeURIComponent(sessionKey)}&tab=activity`);
   await uncertainPage.getByLabel("访问令牌").fill("fixture-token");
   await uncertainPage.getByRole("button", { name: "进入", exact: true }).click();
-  await uncertainPage.getByLabel("即时发送到原 Session").fill("保留未知的原输入");
-  await uncertainPage.getByRole("button", { name: "开始一轮对话" }).click();
+  await uncertainPage.getByText("Enter 立即开始一轮 · ⌘/Ctrl+Enter 保存为排队消息").waitFor();
+  await uncertainPage.getByRole("combobox", { name: "消息" }).fill("保留未知的原输入");
+  await uncertainPage.getByRole("combobox", { name: "消息" }).press("Enter");
   await uncertainPage.getByText("发送结果未知；保留原输入 ID，请核对后继续。").waitFor();
-  const uncertainId = (await uncertainPage.locator(".session-direct-receipt small").first().innerText()).split("：")[1];
+  await uncertainPage.locator(".session-direct-receipt summary").click();
+  const uncertainId = /输入 ID\s*([0-9a-f-]{36})/.exec(await uncertainPage.locator(".session-direct-receipt").innerText())?.[1];
   assert.ok(uncertainId, "the 503 and missing readback retain the original input ID");
   const held = await uncertainPage.evaluate(([project, session]) => ({
     inputId: sessionStorage.getItem(`direct-input:${project}:${session}:reader`),
@@ -722,9 +717,10 @@ test("dual-source history keeps the reader anchor, exhausts cursors, merges live
   await uncertainPage.reload();
   await uncertainPage.getByLabel("访问令牌").fill("fixture-token");
   await uncertainPage.getByRole("button", { name: "进入", exact: true }).click();
-  await uncertainPage.getByText(`输入 ID：${uncertainId}`).waitFor();
-  await uncertainPage.locator(".session-direct-pending-draft > summary").click();
-  assert.equal(await uncertainPage.getByRole("button", { name: "开始一轮对话" }).isDisabled(), true,
+  await uncertainPage.locator(".session-direct-receipt summary").click();
+  await uncertainPage.locator(".session-direct-receipt").getByText(uncertainId!, { exact: true }).waitFor();
+  await uncertainPage.getByRole("combobox", { name: "消息" }).fill("保留未知的原输入");
+  assert.equal(await uncertainPage.getByRole("button", { name: "发送", exact: true }).isDisabled(), true,
     "an unknown response cannot silently enable a second send");
   assert.equal(await (await fetch(`${base}/__fixture/direct-count`)).text(), "2", "reload does not repost a 503 intent");
   await uncertainPage.close();
@@ -734,14 +730,15 @@ test("dual-source history keeps the reader anchor, exhausts cursors, merges live
   await rejectedPage.goto(`${base}/p/${projectId}/sessions?session=${encodeURIComponent(sessionKey)}&tab=activity`);
   await rejectedPage.getByLabel("访问令牌").fill("fixture-token");
   await rejectedPage.getByRole("button", { name: "进入", exact: true }).click();
-  await rejectedPage.getByLabel("即时发送到原 Session").fill("明确未接收的输入");
-  await rejectedPage.getByRole("button", { name: "开始一轮对话" }).click();
+  await rejectedPage.getByText("Enter 立即开始一轮 · ⌘/Ctrl+Enter 保存为排队消息").waitFor();
+  await rejectedPage.getByRole("combobox", { name: "消息" }).fill("明确未接收的输入");
+  await rejectedPage.getByRole("combobox", { name: "消息" }).press("Enter");
   await rejectedPage.getByText("明确未接收 · 查看审计回执", { exact: true }).click();
   const invalidAudit = await rejectedPage.locator(".session-direct-audit").innerText();
   assert.match(invalidAudit, /INVALID_INPUT/);
   assert.match(invalidAudit, /request rejected before reservation/);
-  assert.match(invalidAudit, /输入 ID：[0-9a-f-]{36}/);
-  assert.match(invalidAudit, /操作 ID：[0-9a-f-]{36}/);
+  assert.match(invalidAudit, /输入 ID\s*[0-9a-f-]{36}/);
+  assert.match(invalidAudit, /操作 ID\s*[0-9a-f-]{36}/);
   assert.equal(await rejectedPage.locator(".session-direct-receipt").count(), 0,
     "a server validation rejection before reservation frees the draft");
   const rejectedStorage = await rejectedPage.evaluate(([project, session]) => ({
@@ -752,7 +749,7 @@ test("dual-source history keeps the reader anchor, exhausts cursors, merges live
   assert.equal(rejectedStorage.pending, null);
   assert.equal(rejectedStorage.operation, null);
   assert.ok(rejectedStorage.audit);
-  assert.equal(await rejectedPage.getByRole("button", { name: "开始一轮对话" }).isEnabled(), true);
+  assert.equal(await rejectedPage.getByRole("button", { name: "发送", exact: true }).isEnabled(), true);
   assert.equal(await (await fetch(`${base}/__fixture/direct-count`)).text(), "3",
     "the explicit rejection is one POST and does not create a recovery send");
   await rejectedPage.close();
@@ -882,7 +879,7 @@ test("a reset survives a busy read, unavailable history and stale pagination res
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button", { name: "进入", exact: true }).click();
   await page.getByRole("heading", { name: "时间线分页会话" }).waitFor();
-  const timeline = page.getByRole("log", { name: "Session 消息与工具时间线" });
+  const timeline = page.getByRole("log", { name: "消息与工具时间线" });
   await timeline.getByText("当前原生内容", { exact: true }).waitFor();
 
   await fetch(`${base}/__fixture/hold-old-pages`);
@@ -1000,7 +997,7 @@ test("revocation invalidates a held homepage, inspector and cache until an expli
   assert.ok((await dispatch.getByRole("link", { name: "查看任务与指令" }).getAttribute("href"))?.includes(taskId));
   assert.equal(await page.getByRole("article", { name: "我发出的消息", exact: true }).count(), 1, "only the ordinary saved message is mine");
   await page.locator(".workspace-tools-toggle").click();
-  await page.getByRole("button", { name: "查看工具详情：Command", exact: true }).click();
+  await page.getByRole("button", { name: "查看工具详情：执行命令", exact: true }).click();
   await page.getByRole("button", { name: "读取原始输入与输出", exact: true }).click();
   await page.getByText("PRIVATE_DETAIL_OUTPUT", { exact: true }).waitFor();
   holdHomepage = true;

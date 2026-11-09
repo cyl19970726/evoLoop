@@ -116,7 +116,7 @@ export function useSessionTimeline(token: string, projectId: string, actorId: st
         const page = await client.timeline(sessionKey, {}, controller.signal);
         if (!authorized()) return;
         if (requestEpoch !== resetEpoch) { obsolete = true; return; }
-        if (page.sessionKey !== sessionKey || !Array.isArray(page.entries) || !Array.isArray(page.pending)) throw new Error("活动响应与当前 Session 不符");
+        if (page.sessionKey !== sessionKey || !Array.isArray(page.entries) || !Array.isArray(page.pending)) throw new Error("活动响应与当前智能体不符");
         const rebasing = reset || resetPending;
         const committedReset = rebasing && page.capabilities.history;
         if (committedReset) {
@@ -200,7 +200,7 @@ export function useSessionTimeline(token: string, projectId: string, actorId: st
       }
       const page = result.value;
       if (page.sessionKey !== sessionKey || !Array.isArray(page.entries) || !Array.isArray(page.pending)) {
-        setState(old => authorized() && old.scope === scope ? { ...old, error: "活动响应与当前 Session 不符" } : old); continue;
+        setState(old => authorized() && old.scope === scope ? { ...old, error: "活动响应与当前智能体不符" } : old); continue;
       }
       const source = reads[index]!.source;
       if (source === "native" && !page.capabilities.history) {
