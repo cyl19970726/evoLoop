@@ -567,7 +567,7 @@ tbody tr:hover{
 }
 
 /* Unify secondary workspaces with the same restrained surfaces. */
-.session-workspace,.knowledge-page,.evaluation-page {
+.session-workspace,.evaluation-page {
   max-width: 1600px;
 }
 
@@ -614,7 +614,7 @@ tbody tr:hover{
 }
 
 @media (min-width: 1800px) {
-  .session-workspace,.knowledge-page,.evaluation-page {
+  .session-workspace,.evaluation-page {
     max-width: none;
   }
 }
