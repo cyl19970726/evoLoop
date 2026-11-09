@@ -1,189 +1,150 @@
-import { DocumentOutline } from "./DocumentOutline";
-import { useEffect, useRef, useState } from "react";
-import type { DocumentDetail, DocumentRevision, DocumentTaskReference } from "@evoloop/contracts";
-import { ApiError, api, errorText } from "../../shared/api";
-import { Alert, ShortId, date, documentReturnHref, href, readRoute } from "../../shared/ui/shared";
+// One document read in full (docs/frontend/pages/documents.md): the center holds the text of the revision the
+// address names; the inner rail keeps the document list; the right column holds version, source, the tasks that
+// reference it and the outline. A fixed historical link stays on its revision and offers the current one.
+import React, { useRef } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { ArrowLeft, PanelRight } from "lucide-react";
+import type { DocumentDetail, DocumentRevision } from "@evoloop/contracts";
+import {
+  Button, ErrorState, LoadingState, Notice, RefreshingIndicator, StatusTag, Tabs, TabsContent, TabsList, TabsTrigger, cn,
+} from "@evoloop/ui";
+import { api } from "../../shared/api";
+import type { MutationContext } from "../../shared/ActionForm";
+import { queryKeys, useProjectQuery } from "../../shared/query";
+import { href } from "../../shared/routes";
+import { useContextPanel } from "../../shared/ui/ContextPanel";
 import { MarkdownBody } from "../../shared/ui/MarkdownBody";
-import { OriginalDocumentReader } from "../../shared/ui/OriginalDocumentReader";
-import { ActionForm, type MutationContext } from "../../shared/ActionForm";
-import { UploadDocument } from "./UploadDocument";
-import { DocumentOrigin } from "./DocumentOrigin";
-import "./document.css";
-import { onNavigate } from "../../shared/navigation";
-const kindLabel = { task: "任务正文", issue: "问题", spec: "规范", discussion: "讨论", report: "报告", organization_review: "组织复盘" } as const;
-const statusLabel = { draft: "草稿", published: "已发布", archived: "已归档" } as const;
-const relationLabel = { content: "任务正文", link: "已关联", basis: "当前固定依据" } as const;
-const docAsideCollapsedStorageKey = "evoloop.doc-reading-aside-collapsed";
-const readProblem = (cause: unknown): string => cause instanceof ApiError && (cause.status === 401 || cause.status === 403)
-  ? "当前身份无权读取该文档" : errorText(cause);
-function readStoredAsideCollapsed(): boolean {
-  try { return localStorage.getItem(docAsideCollapsedStorageKey) === "1"; }
-  catch { return false; }
+import { date, documentReturnHref } from "../../shared/ui/shared";
+import { DocumentFacts } from "./DocumentFacts";
+import { DocumentRail } from "./DocumentRail";
+import { DocumentRevise, canRevise } from "./DocumentRevise";
+import { Foot, HtmlReport } from "./HtmlReport";
+import { kindText, lifecycleLabel, lifecycleTone, readingStanding, returnSourceLabel } from "./documentPresentation";
+import { readProblem } from "./useDocumentList";
+import { useRereadOnReturn } from "./useRereadOnReturn";
+
+/** Markdown typography on design tokens. MarkdownBody keeps its own rendering and link rules. */
+const prose = cn("text-body leading-[1.8] text-foreground",
+  "[&_:is(p,li,td,th,h1,h2,h3,h4,dt,dd)]:text-foreground",
+  "[&_h1]:mb-3 [&_h1]:mt-9 [&_h1]:text-heading [&_h1]:font-semibold [&_h1]:leading-[1.35]",
+  "[&_h2]:mb-3 [&_h2]:mt-9 [&_h2]:text-heading [&_h2]:font-semibold [&_h2]:leading-[1.35]",
+  "[&_h3]:mb-2 [&_h3]:mt-7 [&_h3]:text-body [&_h3]:font-semibold",
+  "[&_h4]:mb-2 [&_h4]:mt-6 [&_h4]:font-semibold",
+  "[&_p]:my-3 [&_ul]:my-3 [&_ol]:my-3 [&_ul]:list-disc [&_ol]:list-decimal [&_ul]:pl-6 [&_ol]:pl-6 [&_li]:my-1",
+  "[&_a]:text-primary [&_a]:underline [&_a]:underline-offset-2",
+  "[&_code]:rounded-sm [&_code]:bg-muted [&_code]:px-1 [&_code]:font-mono [&_code]:text-[0.88em]",
+  "[&_pre]:my-4 [&_pre]:overflow-x-auto [&_pre]:rounded-lg [&_pre]:bg-muted [&_pre]:p-4 [&_pre]:text-small [&_pre]:leading-[1.6] [&_pre_code]:bg-transparent [&_pre_code]:p-0",
+  "[&_table]:my-4 [&_table]:block [&_table]:max-w-full [&_table]:overflow-x-auto [&_th]:border [&_th]:border-border [&_th]:bg-muted [&_th]:px-3 [&_th]:py-1.5 [&_th]:text-left [&_th]:font-semibold [&_td]:border [&_td]:border-border [&_td]:px-3 [&_td]:py-1.5");
+
+function useDocument(projectId: string, id: string, selectedRevision?: string) {
+  const detail = useProjectQuery(projectId, ["document", id, "detail"], async () => {
+    const value = await api().document(projectId, id);
+    if (value.document.projectId !== projectId || value.document.id !== id || value.current.projectId !== projectId || value.current.documentId !== id
+      || value.adopted && (value.adopted.projectId !== projectId || value.adopted.documentId !== id)) throw new Error("文档响应与当前项目不符");
+    return value;
+  });
+  // A fixed revision never changes; it is read once and kept outside the rereads that follow the current version.
+  const fixed = useProjectQuery(projectId, ["fixed-revision", id, selectedRevision ?? "", "revision"], async () => {
+    const value = await api().documentRevision(projectId, id, selectedRevision!);
+    if (value.projectId !== projectId || value.documentId !== id || value.id !== selectedRevision) throw new Error("文档响应与所选的固定修订不符");
+    return value;
+  }, { enabled: !!selectedRevision });
+  const revision: DocumentRevision | undefined = selectedRevision ? fixed.data : detail.data?.current;
+  return { detail, fixed, revision };
 }
-export function DocumentPage({ token, projectId, id, selectedRevision, context, refresh }: { token: string; projectId: string; id: string; selectedRevision?: string; context: MutationContext; refresh: number }) {
-  const outlineBody = useRef<HTMLElement | null>(null);
-  const [detail, setDetail] = useState<DocumentDetail | null>(null);
-  const [revision, setRevision] = useState<DocumentRevision | null>(null);
-  const [loadedScope, setLoadedScope] = useState("");
-  const [error, setError] = useState("");
-  const [loading, setLoading] = useState(true);
-  const [uploadBaselineVersion, setUploadBaselineVersion] = useState<number | null>(null);
-  const [uploadGeneration, setUploadGeneration] = useState(0);
-  const [readVersion, setReadVersion] = useState(0);
-  const [observedAt, setObservedAt] = useState<Date | null>(null);
-  const [relatedTasks, setRelatedTasks] = useState<DocumentTaskReference[]>([]);
-  const [relatedScope, setRelatedScope] = useState("");
-  const [relatedLoading, setRelatedLoading] = useState(true);
-  const [relatedError, setRelatedError] = useState("");
-  const [relatedPartial, setRelatedPartial] = useState(false);
-  const [asideCollapsed, setAsideCollapsed] = useState(readStoredAsideCollapsed);
-  const [htmlAsideOpen, setHtmlAsideOpen] = useState(false);
-  const toggleAside = () => {
-    const next = !asideCollapsed;
-    setAsideCollapsed(next);
-    try { localStorage.setItem(docAsideCollapsedStorageKey, next ? "1" : "0"); }
-    catch { /* storage may be unavailable; collapse still works for this view */ }
+
+export function DocumentPage({ context, refresh, projectId, id, selectedRevision }: {
+  context: MutationContext; refresh: number; projectId: string; id: string; selectedRevision?: string;
+}) {
+  const client = useQueryClient();
+  const body = useRef<HTMLElement | null>(null);
+  const { detail, fixed, revision } = useDocument(projectId, id, selectedRevision);
+  const reread = () => {
+    void client.invalidateQueries({ queryKey: queryKeys.project(projectId, "document", id) });
+    if (fixed.isError) void fixed.refetch();
   };
-  const scope = JSON.stringify([token, projectId, id, selectedRevision ?? null]);
-  const taskScope = JSON.stringify([token, projectId, id]);
-  useEffect(() => { setUploadBaselineVersion(null); setUploadGeneration(0); }, [token, projectId, id]);
-  useEffect(() => {
-    let active = true;
-    setLoading(true); setError("");
-    api(token).document(projectId, id).then(async d => {
-      const r = selectedRevision ? await api(token).documentRevision(projectId, id, selectedRevision) : d.current;
-      if (d.document.projectId !== projectId || d.document.id !== id || d.current.projectId !== projectId ||
-        d.current.documentId !== id || r.projectId !== projectId || r.documentId !== id ||
-        selectedRevision && r.id !== selectedRevision) throw new Error("文档响应与当前项目或固定修订不符");
-      if (active) { setDetail(d); setRevision(r); setLoadedScope(scope); setObservedAt(new Date()); setUploadBaselineVersion(value => value ?? d.document.version); setLoading(false); }
-    }).catch(cause => { if (active) { setError(readProblem(cause)); setLoading(false); } });
-    return () => { active = false; };
-  }, [token, projectId, id, selectedRevision, refresh, readVersion, scope]);
-  useEffect(() => {
-    const isCurrent = () => { const route = readRoute(); return route.section === "document" && route.projectId === projectId &&
-      route.id === id && route.revision === selectedRevision; };
-    let wasCurrent = isCurrent();
-    const returned = () => { const current = isCurrent(); if (current && !wasCurrent) setReadVersion(value => value + 1); wasCurrent = current; };
-    const reread = () => { if (document.visibilityState === "visible" && isCurrent()) setReadVersion(value => value + 1); };
-    const stopNavigate = onNavigate(returned);
-    window.addEventListener("focus", reread);
-    return () => { stopNavigate(); window.removeEventListener("focus", reread); };
-  }, [id, projectId, selectedRevision]);
-  useEffect(() => {
-    let active = true;
-    const controller = new AbortController();
-    if (relatedScope !== taskScope) setRelatedTasks([]);
-    setRelatedLoading(true); setRelatedError(""); setRelatedPartial(false);
-    const client = api(token);
-    void (async () => {
-      let cursor: string | undefined;
-      const seen = new Set<string>();
-      const matches = new Map<string, DocumentTaskReference>();
-      let pages = 0;
-      do {
-        const page = await client.documentTasks(projectId, id, cursor, controller.signal);
-        if (!active) return;
-        if (page.items.length > 50 || page.items.some(item => item.projectId !== projectId)) throw new Error("关联任务分页响应无效");
-        for (const task of page.items) matches.set(task.id, task);
-        setRelatedScope(taskScope); setRelatedTasks([...matches.values()]);
-        pages++;
-        if (page.nextCursor && (page.nextCursor === cursor || seen.has(page.nextCursor))) throw new Error("分页游标重复，关联任务读取未完成");
-        if (page.nextCursor) seen.add(page.nextCursor);
-        cursor = page.nextCursor ?? undefined;
-        if (cursor && (pages >= 20 || matches.size >= 1000)) {
-          if (active) { setRelatedPartial(true); setRelatedLoading(false); }
-          return;
-        }
-      } while (cursor);
-      if (active) { setRelatedScope(taskScope); setRelatedTasks([...matches.values()]); setRelatedLoading(false); }
-    })().catch(cause => { if (active) { setRelatedLoading(false); setRelatedError(readProblem(cause)); } });
-    return () => { active = false; controller.abort(); };
-  }, [token, projectId, id, refresh, readVersion]);
-  useEffect(() => {
-    if (revision?.format !== "html" || detail?.document.kind === "organization_review") return;
-    try { if (localStorage.getItem(docAsideCollapsedStorageKey) === null) setAsideCollapsed(true); }
-    catch { /* storage unavailable; keep current view */ }
-  }, [revision?.format, detail?.document.kind, revision?.documentId]);
-  if (!detail || !revision || loadedScope !== scope || detail.document.projectId !== projectId || detail.document.id !== id || revision.projectId !== projectId || revision.documentId !== id || selectedRevision && revision.id !== selectedRevision) {
-    return <div className="content"><a className="back" href={documentReturnHref(projectId)}>← 返回来源</a><p>{loading ? "正在读取文档…" : "当前文档尚未读回。"}</p>{error && <Alert kind="error">{error}</Alert>}</div>;
-  }
-  const formContext = { ...context, blocked: context.blocked || loading || !!error,
-    draftScope: `document:${id}`, draftBaseline: `${detail.document.version}:${detail.current.id}:${detail.document.adoptedRevisionId ?? ""}` };
-  const uploadStale = uploadBaselineVersion !== null && uploadBaselineVersion !== detail.document.version;
-  const taskOwned = detail.document.kind === "task";
-  const archived = detail.document.status === "archived";
-  const continuousHtml = revision.format === "html" && detail.document.kind !== "organization_review";
-  const readerAsideCollapsed = continuousHtml ? !htmlAsideOpen : asideCollapsed;
-  const editor = !taskOwned && <details className="workflow-detail doc-reading-editor"><summary>修订与发布</summary>{!archived && detail.current.format === "markdown" && detail.current.body !== null && <ActionForm context={formContext} title="保存候选修订" fields={[{ name: "body", label: "完整正文", kind: "textarea", value: detail.current.body ?? "" }, { name: "reason", label: "修订理由", kind: "textarea" }]} build={v => ({ type: "document.revise", documentId: id, expectedVersion: detail.document.version, ...v })} />}
-      {!archived && <>
-      {uploadStale && <Alert kind="error">上传表单仍使用打开时的文档版本 v{uploadBaselineVersion}；当前为 v{detail.document.version}。
-        请先核对新修订，再明确重新选择文件。<button onClick={() => {
-          if (!window.confirm("重新选择文件会清空当前上传表单，确定继续？")) return;
-          setUploadBaselineVersion(detail.document.version); setUploadGeneration(value => value + 1);
-        }}>以当前版重新开始上传</button></Alert>}
-      <UploadDocument key={`${id}:${uploadGeneration}`} context={{ ...formContext, blocked: formContext.blocked || uploadStale }} mode="revise"
-        documentId={id} expectedVersion={uploadBaselineVersion ?? detail.document.version} />
-      {detail.current.id === detail.adopted?.id
-        ? <p className="muted">当前修订已发布；如需更新，请先保存新修订。</p>
-        : <ActionForm context={formContext} review title="发布当前修订" fields={[{ name: "reason", label: "发布依据", kind: "textarea" }]} build={v => ({ type: "document.publish", documentId: id, expectedVersion: detail.document.version, revisionId: detail.current.id, ...v })} />}</>}
-      <ActionForm context={formContext} review title={archived ? "恢复文档" : "归档文档"} fields={[{ name: "reason", label: archived ? "恢复理由" : "归档理由", kind: "textarea" }]} build={v => ({ type: archived ? "document.restore" : "document.archive", documentId: id, expectedVersion: detail.document.version, ...v })} /></details>;
-  return <div className={`content reading document-reading-page${continuousHtml ? " html-continuous-reading" : ""}`}>
-    <div className="document-reading-toolbar">
-      <div className="document-reading-backlinks"><a className="back doc-back" href={documentReturnHref(projectId)}>← 返回来源</a><a className="doc-list-link" href={href(projectId, "documents")}>全部文档</a></div>
-      {continuousHtml && <button type="button" className="doc-html-aside-button" aria-expanded={htmlAsideOpen}
-        aria-controls="document-reading-aside" onClick={() => setHtmlAsideOpen(value => !value)}>
-        {htmlAsideOpen ? "收起版本与来源" : "查看版本与来源"}
-      </button>}
-      <div className="doc-read-status"><span>{loading ? "正在核对当前文档…" : observedAt ? `当前文档读于 ${observedAt.toLocaleString("zh-CN")}` : "当前文档尚未读回"}</span><button type="button" className="quiet" onClick={() => setReadVersion(value => value + 1)}>重新读取当前文档</button></div>
-    </div>
-    {loading && <Alert>正在核对当前修订；保存与采纳暂不可用。</Alert>}
-    {error && <Alert kind="error">当前文档回读未完成：{error}。页首保留上次读回内容，不能视为当前状态；草稿仍留在本页。</Alert>}
-    <header className="document-reading-header">
-      <h1>{detail.document.title}</h1>
-      <p className="doc-reading-version"><span>{statusLabel[detail.document.status]}</span><span>{detail.document.kind ? kindLabel[detail.document.kind] : "过程文档"}</span><strong>阅读{revision.id === detail.current.id ? "当前固定版" : "固定历史版"} <ShortId value={revision.id} /></strong><time>{date(revision.createdAt)}</time>{detail.document.primaryTaskId && <a href={href(projectId, "task", detail.document.primaryTaskId)}>查看所属任务 →</a>}</p>
-      {taskOwned && <Alert>这是任务主文档。此处只阅读固定修订；请从{detail.document.primaryTaskId
-        ? <a href={href(projectId, "task", detail.document.primaryTaskId)}>所属任务</a> : "所属任务页"}修改正文。</Alert>}
-      {revision.id !== detail.current.id && <Alert>所读为固定历史版。当前版已更新；请核对任务实际采用的修订。</Alert>}
-      {revision.id !== detail.adopted?.id && <p className="muted">所读修订不是已发布版；引用它时请核对任务固定依据。</p>}
-      {(revision.id !== detail.current.id || detail.adopted && revision.id !== detail.adopted.id || revision.previousRevisionId) && <div className="actions doc-version-actions">
-        {revision.id !== detail.current.id && <a className="button-link" href={href(projectId, "document", id, detail.current.id)}>阅读当前版</a>}
-        {detail.adopted && revision.id !== detail.adopted.id && <a className="button-link" href={href(projectId, "document", id, detail.adopted.id)}>阅读已发布版</a>}
-        {revision.previousRevisionId && <a className="button-link" href={href(projectId, "document", id, revision.previousRevisionId)}>上一版</a>}
-      </div>}
+  const active = useRereadOnReturn(reread, refresh);
+  const scope = `${context.principal.actorId}:${projectId}`;
+  // Read from the address while this page is on screen: the same page can be opened from several sources.
+  const returnTo = active ? documentReturnHref(projectId) : href(projectId, "documents");
+  const back = <div className="document-reading-backlinks flex flex-wrap items-center gap-x-3 gap-y-1">
+    <a href={returnTo} className="inline-flex items-center gap-1 text-label font-medium text-primary hover:underline">
+      <ArrowLeft size={15} aria-hidden="true" />返回来源<span className="font-normal text-muted-foreground"> · {returnSourceLabel(returnTo)}</span></a>
+    {returnTo.split("?")[0] !== href(projectId, "documents") && <a href={href(projectId, "documents")} className="text-caption text-muted-foreground hover:text-foreground">全部文档</a>}
+  </div>;
+  const rail = <DocumentRail projectId={projectId} scope={scope} selectedId={id} />;
+  const failure = detail.error ?? fixed.error;
+  if (!detail.data || !revision) return <div data-ui="" className="mx-auto flex w-full max-w-[920px] flex-col gap-4 px-4 py-6 compact:px-8">
+    {rail}{back}
+    {failure ? <ErrorState title="文档没有读回" happened={readProblem(failure, "该文档")} next="可以重试，或回到来源核对链接。"
+      action={<Button size="compact" onClick={reread}>重新读取</Button>} />
+      : <LoadingState lines={6} label="正在读取文档" />}
+  </div>;
+  return <Reader context={context} projectId={projectId} detail={detail.data} revision={revision} body={body} rail={rail} back={back}
+    checking={detail.isFetching} failure={detail.error ? readProblem(detail.error, "该文档") : ""} observedAt={detail.dataUpdatedAt} reread={reread} />;
+}
+
+function Reader({ context, projectId, detail, revision, body, rail, back, checking, failure, observedAt, reread }: {
+  context: MutationContext; projectId: string; detail: DocumentDetail; revision: DocumentRevision; body: React.RefObject<HTMLElement | null>;
+  rail: React.ReactNode; back: React.ReactNode; checking: boolean; failure: string; observedAt: number; reread(): void;
+}) {
+  const panel = useContextPanel();
+  const { document } = detail;
+  const standing = readingStanding(revision.id, detail);
+  const html = revision.format === "html";
+  const revise = canRevise(detail) && <DocumentRevise context={context} detail={detail} checking={checking} failed={!!failure} />;
+  const review = revision.organizationReview;
+  const zone = review?.timeZone;
+  return <div data-ui="" className={cn("flex w-full flex-col",
+    html ? "h-[calc(100dvh-48px)] px-3 pb-2 pt-2.5 compact:h-[calc(100dvh-16px)] compact:px-6 compact:pt-3" : "mx-auto max-w-[920px] px-4 py-5 compact:px-10 compact:py-7")}>
+    {rail}
+    <DocumentFacts projectId={projectId} detail={detail} revision={revision} body={body} />
+    <header className={cn("flex flex-none flex-col", html ? "gap-1 pb-2" : "gap-2 pb-5")}>
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 compact:pr-12">
+        {back}
+        <div className="flex items-center gap-1 text-caption text-muted-foreground">
+          {checking ? <RefreshingIndicator label="正在核对当前文档" /> : <span>读于 {new Date(observedAt).toLocaleTimeString("zh-CN")}</span>}
+          <Button variant="ghost" size="compact" aria-label="重新读取当前文档" onClick={reread}>重新读取</Button>
+          {panel && <Button variant="ghost" size="compact" aria-expanded={panel.open} onClick={() => panel.setOpen(!panel.open)}>
+            <PanelRight aria-hidden="true" />版本与来源</Button>}
+        </div>
+      </div>
+      <h1 tabIndex={-1} className={cn("font-semibold leading-[1.3] outline-none [overflow-wrap:anywhere]", html ? "text-heading" : "text-title")}>{document.title}</h1>
+      <p className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-label text-text-secondary">
+        <StatusTag tone={lifecycleTone[document.status]} label={lifecycleLabel[document.status]} />
+        <span>{kindText(document.kind)}</span>
+        <span aria-hidden="true">·</span>
+        <span>正在读 <strong className="font-medium text-foreground">{standing.label}</strong></span>
+        <time dateTime={revision.createdAt} className="text-muted-foreground">{date(revision.createdAt)}</time>
+        {document.primaryTaskId && <a href={href(projectId, "task", document.primaryTaskId)} className="text-primary hover:underline">所属任务 →</a>}
+      </p>
+      {review && <p className="text-caption text-muted-foreground">观察期间：{new Date(review.observedFrom).toLocaleString("zh-CN", { timeZone: zone })} 至 {new Date(review.observedTo).toLocaleString("zh-CN", { timeZone: zone })} · {zone}
+        {review.previous && <> · <a href={href(projectId, "document", review.previous.documentId, review.previous.revisionId)} className="text-primary hover:underline">上一轮复盘</a></>}</p>}
+      {standing.historical ? <Notice tone="waiting" className={html ? "py-2" : undefined} title={standing.note}
+        action={<Button asChild size="compact"><a href={href(projectId, "document", document.id, detail.current.id)}>查看当前版</a></Button>} />
+        : standing.note && <p className="text-caption text-muted-foreground">{standing.note}</p>}
+      {document.kind === "task" && <Notice>这是任务的主文档，这里只读固定修订。要修改正文，请到{document.primaryTaskId
+        ? <a href={href(projectId, "task", document.primaryTaskId)} className="text-primary hover:underline">所属任务</a> : "所属任务"}。</Notice>}
+      {failure && <Notice tone="error" title="当前文档这次没有读回">{failure}。页面保留上次读到的内容，不能当作当前状态；草稿仍留在本页。</Notice>}
     </header>
-    {revision.organizationReview && <p className="doc-review-period">观察期间：{new Date(revision.organizationReview.observedFrom).toLocaleString("zh-CN", { timeZone: revision.organizationReview.timeZone })} 至 {new Date(revision.organizationReview.observedTo).toLocaleString("zh-CN", { timeZone: revision.organizationReview.timeZone })} · {revision.organizationReview.timeZone}
-      {revision.organizationReview.previous && <> · <a href={href(projectId, "document", revision.organizationReview.previous.documentId, revision.organizationReview.previous.revisionId)}>上一轮复盘</a></>}</p>}
-    {revision.format === "markdown" && <details className="document-outline-mobile"><summary>文档目录</summary><DocumentOutline body={outlineBody} revision={revision.id} compact /></details>}
-    <div className={`document-read-layout${detail.document.kind === "organization_review" ? " organization-review-reading" : ""}${readerAsideCollapsed ? " aside-collapsed" : ""}`}>
-      <article className="document-read-main" ref={outlineBody}>
-        <section className="doc-primary-body" aria-label="文档完整正文">
-          {revision.body !== null && revision.format === "markdown" ? <><MarkdownBody source={revision.body} identity={revision.id} omitLeadingTitle={detail.document.title} projectId={projectId} /><details><summary>查看 Markdown 原文</summary><pre>{revision.body}</pre></details></>
-            : <OriginalDocumentReader token={token} projectId={projectId} documentId={id} revisionId={revision.id} readingMode={detail.document.kind === "organization_review"} continuous={continuousHtml} />}
+    {html ? <section aria-label="文档完整正文" className="flex min-h-0 flex-1 flex-col">
+      <HtmlReport projectId={projectId} documentId={document.id} revisionId={revision.id}
+        foot={revise && <Foot summary="修订与发布">{revise}</Foot>} />
+    </section>
+      : <>
+        <section aria-label="文档完整正文" ref={body}>
+          {revision.body === null ? <ErrorState title="这一版没有可读的正文" happened="Markdown 正文没有随这一版保存。" next="可以回到来源核对，或阅读其他版本。" />
+            : <Tabs defaultValue="rendered">
+              <TabsList aria-label="阅读方式" className="mb-4"><TabsTrigger value="rendered">排版</TabsTrigger><TabsTrigger value="source">原文</TabsTrigger></TabsList>
+              <TabsContent value="rendered" className={prose}>
+                <MarkdownBody source={revision.body} identity={revision.id} omitLeadingTitle={document.title} projectId={projectId} />
+              </TabsContent>
+              <TabsContent value="source">
+                <pre className="overflow-x-auto whitespace-pre-wrap rounded-lg bg-muted p-4 font-mono text-small leading-[1.7] [overflow-wrap:anywhere]">{revision.body}</pre>
+              </TabsContent>
+            </Tabs>}
         </section>
-      </article>
-      {detail.document.kind !== "organization_review" && !continuousHtml &&
-        <button type="button" className="doc-aside-toggle" aria-expanded={!asideCollapsed}
-          aria-label={asideCollapsed ? "展开版本、来源与关联" : "收起版本、来源与关联"}
-          onClick={toggleAside}>{asideCollapsed ? "›" : "‹"}</button>}
-      <aside id="document-reading-aside" className="document-read-aside" aria-label="文档版本、来源与关联">
-        {revision.format === "markdown" && <div className="document-outline-desktop"><DocumentOutline body={outlineBody} revision={revision.id} /></div>}
-        <details className="doc-reading-details" open={detail.document.kind !== "organization_review"}><summary>版本、原件与来源</summary>
-          <div className="doc-version-status" aria-label="文档修订状态">
-            <span><strong>正在阅读</strong> <ShortId value={revision.id} /><small>{date(revision.createdAt)}</small></span>
-            <span><strong>当前版</strong> <a href={href(projectId, "document", id, detail.current.id)}><ShortId value={detail.current.id} /></a><small>{date(detail.current.createdAt)}</small></span>
-            <span><strong>已发布版</strong> {detail.adopted ? <><a href={href(projectId, "document", id, detail.adopted.id)}><ShortId value={detail.adopted.id} /></a><small>{date(detail.adopted.createdAt)}</small></> : "尚未发布"}</span>
-          </div>
-          <p>原件格式 {revision.format}<br />作者 {revision.author}<br />修订理由 {revision.reason}</p>
-          <details className="doc-integrity"><summary>完整标识与哈希</summary><p>所读修订 <code>{revision.id}</code></p><p>内容 SHA-256 <code>{revision.contentHash}</code></p></details>
-          {detail.document.origin && <DocumentOrigin token={token} projectId={projectId} documentId={id} revisionId={revision.id}
-            refreshKey={`${refresh}:${readVersion}`} origin={detail.document.origin} />}
-        </details>
-        <section className="doc-related-tasks"><h2>引用此文档的任务</h2>{relatedLoading && <p role="status">正在读取当前关联任务；已显示关联来自上次读取。</p>}{relatedError && <Alert kind="error">任务关联本次未读完整：{relatedError}。下列可能包含上次读回的任务，不能视为当前完整结果。</Alert>}{relatedPartial && <Alert>已达 20 页或 1000 项读取上限；下列任务未必完整。</Alert>}
-          {relatedScope === taskScope && relatedTasks.length ? <ul>{relatedTasks.map(task => <li key={task.id}><a href={href(projectId, "task", task.id)}>{task.title}</a><span>{task.relations.map(relation => relationLabel[relation]).join(" · ")} · {task.state === "todo" ? "待办" : task.state === "in_progress" ? "进行中" : task.state === "done" ? "已完成" : "已取消"} · 责任者 {task.owner}</span></li>)}</ul> : !relatedLoading && !relatedError && !relatedPartial && <p className="empty">当前没有任务引用此文档。</p>}
-        </section>
-        {continuousHtml && editor}
-      </aside>
-    </div>
-    {!continuousHtml && editor}
+        {revise && <details data-legacy="" className="workflow-detail mt-10"><summary>修订与发布</summary>{revise}</details>}
+      </>}
   </div>;
 }

@@ -5,6 +5,7 @@ import * as React from "react";
 import { createPortal } from "react-dom";
 import { PanelRightClose, PanelRightOpen, X, ArrowUpRight } from "lucide-react";
 import { IconButton, Sheet, SheetContent, SheetTitle, SheetDescription, cn } from "@evoloop/ui";
+import { onNavigate } from "../navigation";
 import { PageActive } from "./pageActive";
 export { PageActive } from "./pageActive";
 /** The space the panel state belongs to (app/shell/spaces.ts); kept as a string so shared code does not depend on app. */
@@ -101,6 +102,9 @@ export function ContextPanelProvider({ space, children }: { space: Space; childr
   // Below 1100px the panel is a modal drawer: it opens only when asked and is never restored on its own.
   const [drawerOpen, setDrawerOpen] = React.useState(false);
   React.useEffect(() => { if (inline) setDrawerOpen(false); }, [inline]);
+  // Following a link (from the drawer or anywhere else) closes the drawer, so it never reopens over the next page
+  // or over this one when the reader comes back.
+  React.useEffect(() => onNavigate(() => setDrawerOpen(false)), []);
   const hasContent = providers > 0 || tabs.length > 0;
   const shown = inline ? state.open : drawerOpen;
   const setShown = (open: boolean) => inline ? update({ ...state, open }) : setDrawerOpen(open);
