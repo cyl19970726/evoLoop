@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 import { BookOpen, MessageSquare } from "lucide-react";
 import { Button, EmptyState } from "@evoloop/ui";
 import { href } from "../../shared/ui/shared";
-import { LinkList, SettingsPage, SettingsSection } from "./pageParts";
+import { LinkList, SettingsPage, SettingsSection } from "../../shared/ui/SettingsParts";
 
 export function OperationsPage({ projectId, checks }: { projectId: string; checks: ReactNode[] }) {
   return <SettingsPage title="待核对操作" description="查看当前身份保存的操作回执，按原操作核对结果。" className="operations-page">
