@@ -69,6 +69,14 @@ test("the reviewed feature table matches each pinned protocol", () => {
   assert.equal(new CodexAppServerAdapter({ expectedVersion: "codex-cli 0.167.0-alpha.3.2" }).capabilities().compaction.mode, "unavailable");
 });
 
+test("mid-Turn input is declared exactly where the pinned protocol can steer", () => {
+  const declared = (version: string) => new CodexAppServerAdapter({ expectedVersion: version }).capabilities().delivery.midTurnInput;
+  assert.equal(declared("codex-cli 0.166.0-alpha.6"), true);
+  for (const version of ["codex-cli 0.154.0", "codex-cli 0.164.0-alpha.11.1", "codex-cli 0.166.0-alpha.5.1", "codex-cli 0.167.0-alpha.3.2"])
+    assert.equal(declared(version), false, version);
+  assert.equal(new CodexAppServerAdapter().capabilities().delivery.midTurnInput, false, "the default pin cannot steer");
+});
+
 test("invalid surface policy options are refused at construction", () => {
   assert.throws(() => new CodexAppServerAdapter({ protocolCheck: "loose" as "exact" }), /protocolCheck/);
   assert.throws(() => new CodexAppServerAdapter({ protocolCheck: "surface", minimumVersion: "latest" }), /minimumVersion/);
@@ -103,6 +111,16 @@ test("surface check runs a newer CLI whose schema covers the used surface and re
   await stat(started);
   assert.equal(adapter.capabilities().compaction.mode, "owned_request");
   assert.equal(adapter.capabilities().naming, false);
+  assert.equal(adapter.capabilities().delivery.midTurnInput, false, "the schema lacks turn/steer");
+});
+
+test("surface check declares mid-Turn input only when the schema has every direct input method", { skip: process.platform === "win32" }, async t => {
+  const { executable } = await fakeCodex(t, "codex-cli 0.170.0", schema({ features: [...FEATURE_METHODS.directInput] }));
+  const adapter = new CodexAppServerAdapter({ executable, expectedVersion: "codex-cli 0.154.0", protocolCheck: "surface",
+    minimumVersion: "codex-cli 0.166.0-alpha.5.1", requestTimeoutMs: 5_000 });
+  t.after(() => adapter.close());
+  await adapter.open();
+  assert.equal(adapter.capabilities().delivery.midTurnInput, true);
 });
 
 test("surface check refuses an old, blocked or surface-breaking CLI before App Server startup", { skip: process.platform === "win32" }, async t => {

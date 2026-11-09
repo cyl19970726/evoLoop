@@ -13,14 +13,14 @@ function checkedCapability(value: DirectInputCapability): DirectInputCapability 
   return value;
 }
 
-/** Only route parsing and authorization errors precede every possible input reservation. */
+/** Only route parsing, authorization and runtime-support refusals precede every possible input reservation. */
 export function explicitlyUnaccepted(error: unknown): boolean {
   if (!(error instanceof ApiError) || !error.detail || typeof error.detail !== "object") return false;
   const code = (error.detail as { code?: unknown }).code;
   return (error.status === 400 && code === "INVALID_INPUT") ||
     (error.status === 413 && code === "TOO_LARGE") ||
     (error.status === 403 && code === "FORBIDDEN") ||
-    (error.status === 409 && code === "DIRECT_GRANT_MISSING");
+    (error.status === 409 && (code === "DIRECT_GRANT_MISSING" || code === "DIRECT_STEER_UNSUPPORTED"));
 }
 
 /** UI keeps the original IDs across an unknown response; it never resends automatically. */

@@ -1,10 +1,12 @@
 import type { Principal } from "@evoloop/contracts";
 import type { DirectInputCommand, DirectInputGrant, DirectInputReceipt, DirectInputRecord, DirectInputCapability } from "@evoloop/contracts/direct-input";
 import { publicDirectInput } from "@evoloop/contracts/direct-input";
-import type { RuntimeBinding, RuntimePage, RuntimeTurn } from "@evoloop/contracts/runtime";
+import type { RuntimeBinding, RuntimeCapabilities, RuntimePage, RuntimeTurn } from "@evoloop/contracts/runtime";
 import { DomainError } from "@evoloop/contracts/ports";
 import { RuntimeProtocolError, RuntimeServerError, RuntimeUnknownError } from "@evoloop/adapter-codex-app-server";
 import type { PgDirectInputs } from "@evoloop/adapter-postgres/direct-input";
+import { runtimeForBinding } from "../runtime/routed.js";
+import type { ManagedRuntime } from "../runtime/runner.js";
 
 type Native = {
   isReady():boolean;
@@ -14,6 +16,8 @@ type Native = {
   steerTurn(binding:RuntimeBinding,expectedTurnId:string,input:string,inputId:string):Promise<{turnId:string;itemId:string|null}>;
   listTurns(binding:RuntimeBinding,cursor?:string):Promise<RuntimePage<RuntimeTurn>>;
   listItems(binding:RuntimeBinding,turnId:string,cursor?:string):Promise<RuntimePage<unknown>>;
+  /** Declared adapter capabilities; behind a routed composite, the binding's own runtime answers. */
+  capabilities?():RuntimeCapabilities;
 };
 /** Narrow runtime adapter check at the shared composition edge. */
 export function requireDirectInputRuntime(value:unknown):Native{
@@ -25,6 +29,12 @@ export function requireDirectInputRuntime(value:unknown):Native{
     throw new DomainError("DIRECT_RUNTIME_UNAVAILABLE","Owned direct input adapter is unavailable");
   return native as Native;
 }
+/**
+ * Mid-Turn input is offered only when the runtime driving this binding declares it: Claude never does, Codex only on
+ * the pinned protocol that has `turn/steer`. A routed `steerTurn` exists for every binding once any runtime has it.
+ */
+const steerDeclared=(runtime:Native,binding:RuntimeBinding):boolean=>
+  runtimeForBinding(runtime as unknown as ManagedRuntime,binding).capabilities?.()?.delivery.midTurnInput===true;
 const marker=(operationId:string)=>`[evoloop-message-operation:${operationId}]`;
 const object=(v:unknown):Record<string,unknown>|null=>v&&typeof v==="object"&&!Array.isArray(v)?v as Record<string,unknown>:null;
 const textOf=(item:unknown):string=>{
@@ -58,6 +68,8 @@ export class DirectInputService {
     if(state.state==="busy")return result(false,null,null,"SESSION_BUSY");
     if(state.state==="running"){
       if(!grant.canSteer)return result(false,null,null,"DIRECT_STEER_DISABLED");
+      try{if(!steerDeclared(runtime,binding))return result(false,null,null,"DIRECT_STEER_UNSUPPORTED");}
+      catch{return result(false,null,null,"NATIVE_UNAVAILABLE");}
       try{
         await runtime.registerBinding(binding);
         const turn=await this.findTurn(runtime,binding,state.turnId!);
@@ -97,6 +109,9 @@ export class DirectInputService {
     const {grant,binding}=await this.deps.admission(principal,projectId,sessionId);
     const runtime=this.deps.runtime();
     if(!runtime.isReady())throw new DomainError("NATIVE_UNAVAILABLE","Owned native connection is unavailable");
+    // Only a steer names an expected Turn; refuse it before reservation so no attempt is left to reconcile.
+    if(command.expectedTurnId!==null&&!steerDeclared(runtime,binding))
+      throw new DomainError("DIRECT_STEER_UNSUPPORTED","This Session's runtime cannot add input to a running Turn; send an ordinary message instead");
     await runtime.registerBinding(binding);
     // Qualification must precede reservation for an idle start. The PG lock chooses the final mode.
     let fingerprint="";

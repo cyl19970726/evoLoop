@@ -36,6 +36,7 @@ test('steer sends the exact alpha.6 shape and accepts only the expected Turn ack
     events.push({method:event.method,projectId:event.projectId,
       sessionId:event.sessionId,turnId:event.turnId});resolveEvent();
   }));
+  assert.equal(adapter.capabilities().delivery.midTurnInput,true,'the declaration matches the steer it performs');
   assert.deepEqual(await adapter.steerTurn(binding,'turn-1','follow up','steer-id'),{turnId:'turn-1',itemId:null});
   await delivered;
   await assert.rejects(()=>adapter.steerTurn(binding,'turn-1','follow up','steer-id'),RuntimeProtocolError);

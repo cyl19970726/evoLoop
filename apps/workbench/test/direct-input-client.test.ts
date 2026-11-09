@@ -48,5 +48,12 @@ test("direct input distinguishes a missing receipt after 503 from an explicit pr
   submitMessage = "exact direct grant is unavailable";
   try { await client.submit(command); } catch (error) { cause = error; }
   assert.equal(explicitlyUnaccepted(cause), true, "a pre-reservation direct grant denial is an explicit rejection");
-  assert.equal(paths.filter(path => path.includes("/direct-inputs") && path.startsWith("POST")).length, 3);
+  submitCode = "DIRECT_STEER_UNSUPPORTED";
+  submitMessage = "this Session's runtime cannot add input to a running Turn";
+  try { await client.submit(command); } catch (error) { cause = error; }
+  assert.equal(explicitlyUnaccepted(cause), true, "a runtime that cannot steer refuses before reservation");
+  submitCode = "TURN_CONFLICT";
+  try { await client.submit(command); } catch (error) { cause = error; }
+  assert.equal(explicitlyUnaccepted(cause), false, "another 409 may follow a native send");
+  assert.equal(paths.filter(path => path.includes("/direct-inputs") && path.startsWith("POST")).length, 5);
 });
