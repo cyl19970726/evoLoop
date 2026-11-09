@@ -62,14 +62,20 @@ const transcript = join(transcriptDir, `${sessionId}.jsonl`);
 if (fixed && existsSync(transcript)) { process.stderr.write(`Session ID ${sessionId} is already in use\n`); process.exit(1); }
 if (resumed && !existsSync(transcript)) { process.stderr.write(`No conversation found with session ID: ${resumed}\n`); process.exit(1); }
 let total = resumed && existsSync(statePath) ? JSON.parse(readFileSync(statePath, "utf8")).total : 0;
-let pending = null;
+let pending = null, current = null;
 
 const assistant = (content, extra = {}) => out({ type: "assistant", parent_tool_use_id: null, uuid: randomUUID(), session_id: sessionId,
   message: { id: `msg_${randomUUID()}`, type: "message", role: "assistant", model: "claude-fake-1", content,
     stop_reason: null, stop_sequence: null, usage: { input_tokens: 1, output_tokens: 1 } }, ...extra });
+// Like the real CLI 2.1.319: a result echoes the uuid of the prompt it answers; FAKE_CLAUDE_NO_ECHO=1 acts as an
+// older producer that echoes nothing.
+const echo = () => current && process.env.FAKE_CLAUDE_NO_ECHO !== "1" ? { user_message_uuid: current, user_message_uuids: [current] } : {};
 const result = fields => out({ type: "result", duration_ms: 5, duration_api_ms: 4, num_turns: 1, stop_reason: "end_turn",
   total_cost_usd: total, usage: { input_tokens: 10, output_tokens: 5, cache_read_input_tokens: 2, cache_creation_input_tokens: 0 },
-  modelUsage: {}, permission_denials: [], uuid: randomUUID(), session_id: sessionId, ...fields });
+  modelUsage: {}, permission_denials: [], uuid: randomUUID(), session_id: sessionId, ...echo(), ...fields });
+// FAKE_CLAUDE_QUEUED_NOTIFICATION=1: like a resumed real CLI holding a background-task notification queued after the
+// previous Turn, it first answers that notification (no model call, no echo) and only then the prompt.
+let notificationQueued = process.env.FAKE_CLAUDE_QUEUED_NOTIFICATION === "1";
 const persist = () => {
   writeFileSync(statePath, JSON.stringify({ total }));
   mkdirSync(transcriptDir, { recursive: true });
@@ -85,6 +91,14 @@ function turn(message) {
       permissionMode: "bypassPermissions", slash_commands: [], output_style: "default",
       skills: [...nativeSkills, ...pluginSkills], plugins, ...(pluginErrors.length ? { plugin_errors: pluginErrors } : {}) });
   }
+  if (notificationQueued) {
+    notificationQueued = false;
+    out({ type: "result", subtype: "success", is_error: false, result: "", duration_ms: 1, duration_api_ms: 0, num_turns: 0,
+      stop_reason: null, total_cost_usd: total, modelUsage: {}, permission_denials: [], origin: { kind: "task-notification" },
+      usage: { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+      uuid: randomUUID(), session_id: sessionId });
+  }
+  current = message.uuid ?? null;
   persist();
   if (mode === "crash") process.exit(3);
   if (mode === "hang") { assistant([{ type: "text", text: "Working on it" }]); pending = message; return; }
@@ -129,5 +143,7 @@ lines.on("line", line => {
   }
   if (message.type === "user") turn(message);
 });
-// FAKE_CLAUDE_LINGER_MS keeps the process alive after stdin closes, like a CLI still flushing after its result.
+// FAKE_CLAUDE_LINGER_MS keeps the process alive after stdin closes, like a CLI still flushing after its result or
+// waiting on a tool shell. FAKE_CLAUDE_IGNORE_SIGTERM makes it ignore SIGTERM, so only SIGKILL stops it.
 lines.on("close", () => setTimeout(() => process.exit(0), Number(process.env.FAKE_CLAUDE_LINGER_MS ?? 0)));
+if (process.env.FAKE_CLAUDE_IGNORE_SIGTERM === "1") process.on("SIGTERM", () => undefined);
