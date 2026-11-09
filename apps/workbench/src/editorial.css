@@ -94,16 +94,12 @@ button.primary:hover:not(:disabled),
   min-height: 44px;
   margin-bottom: 14px;
   padding: 0;
-  color: #1f2b57;
-  border-radius: 7px;
-  font-size: 23px;
-  font-weight: 750;
-  letter-spacing: -2.8px;
 }
 
-.module-rail .rail-brand span {
-  color: var(--primary);
-  font-size: 23px;
+.module-rail .rail-brand img {
+  display: block;
+  width: 36px;
+  height: 36px;
 }
 
 .module-rail > a:not(.rail-brand) {

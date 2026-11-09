@@ -3,10 +3,15 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "evoLoop workbench design system: tokens, Tailwind theme and shared components.",
+  "description": "evoLoop workbench design system: tokens, Tailwind theme, logo and shared components.",
   "exports": {
     "./tokens.css": "./src/tokens.css",
-    "./theme.css": "./src/theme.css"
+    "./theme.css": "./src/theme.css",
+    "./logo.svg": "./src/logo.svg",
+    "./logo-dark.svg": "./src/logo-dark.svg",
+    "./logo-small.svg": "./src/logo-small.svg"
   },
-  "files": ["src"]
+  "files": [
+    "src"
+  ]
 }

@@ -39,9 +39,24 @@ test("only the legacy alias file defines design tokens, on :root or any other se
 
 test("the design tokens named in docs/frontend/foundations.md exist in @evoloop/ui", () => {
   const tokens = readFileSync(join(workbench, "../../packages/ui/src/tokens.css"), "utf8");
-  for (const name of ["background", "surface-muted", "surface-raised", "text", "text-secondary", "text-muted", "border", "border-strong",
-    "accent", "accent-soft", "warning", "warning-soft", "danger", "danger-soft", "brand", "font-caption", "font-small", "font-body",
-    "font-heading", "font-title", "duration-fast", "duration-base", "duration-slow"]) {
+  const foundations = readFileSync(join(workbench, "../../docs/frontend/foundations.md"), "utf8");
+  for (const name of ["surface-sunken", "background", "surface-raised", "surface-muted", "surface-field", "surface-selected", "text",
+    "text-secondary", "text-muted", "border", "border-strong", "accent", "accent-soft", "warning", "warning-soft", "danger", "danger-soft",
+    "brand", "user-bubble", "font-caption", "font-label", "font-small", "font-body", "font-heading", "font-title", "leading-reading",
+    "space-9", "radius-control", "radius-card", "radius-panel", "radius-pill", "shadow-panel", "shadow-control", "shadow-popover",
+    "duration-fast", "duration-base", "duration-slow"]) {
     assert.match(tokens, new RegExp(`--${name}:`), `missing --${name}`);
   }
+  for (const [, name] of foundations.matchAll(/^\| `([a-z][a-z0-9-]*)`(?: \/ `[a-z-]+`)? \|/gm)) {
+    assert.match(tokens, new RegExp(`--${name}:`), `foundations.md names --${name}, which tokens.css does not define`);
+  }
+});
+
+test("every light colour token has a dark value, and the logo files exist", () => {
+  const tokens = readFileSync(join(workbench, "../../packages/ui/src/tokens.css"), "utf8");
+  const [light, dark] = [/:root \{([\s\S]*?)\n\}/, /:root\[data-theme="dark"\] \{([\s\S]*?)\n\}/].map(pattern => tokens.match(pattern)?.[1] ?? "");
+  const colourNames = (block: string) => [...block.matchAll(/(--[a-z][\w-]*)\s*:\s*(#[0-9a-f]{3,8}|rgb\()/g)].map(match => match[1]);
+  const missing = colourNames(light).filter(name => !dark.includes(`${name}:`));
+  assert.deepEqual(missing, [], "Colour tokens defined for light must also be defined under [data-theme=\"dark\"].");
+  for (const file of ["logo.svg", "logo-dark.svg", "logo-small.svg"]) readFileSync(join(workbench, "../../packages/ui/src", file), "utf8");
 });
