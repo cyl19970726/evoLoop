@@ -69,6 +69,23 @@ test("the ledger tolerates a torn final line but not mid-file corruption", async
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
+test("an append after a torn final line drops the partial record instead of corrupting the ledger", async () => {
+  const root = await mkdtemp(join(tmpdir(), "evoloop-ledger-"));
+  try {
+    const ledger = new TurnLedger(root), projectId = randomUUID(), sessionId = randomUUID(), turnId = randomUUID();
+    await ledger.append(projectId, sessionId, { kind: "session", at: "t", projectId, sessionId, nativeSessionId: sessionId, cwd: "/w" });
+    await ledger.append(projectId, sessionId, { kind: "turn.started", at: "t", turnId, operationId: randomUUID(), input: "x", resume: false });
+    await appendFile(join(root, projectId, `${sessionId}.jsonl`), '{"kind":"turn.settled","turnId":"');
+    await ledger.append(projectId, sessionId, { kind: "turn.sent", at: "t", turnId });
+    await ledger.append(projectId, sessionId, { kind: "turn.process", at: "t", turnId, pid: 42 });
+    const view = await ledger.read(projectId, sessionId);
+    assert.equal(view.turns.length, 1);
+    assert.equal(view.turns[0]!.sent, true);
+    assert.equal(view.turns[0]!.pid, 42);
+    assert.equal(view.turns[0]!.settled, null, "the torn record was never durable and stays absent");
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
 test("init observation keeps MCP server names so an unconfigured server is visible", () => {
   const observed = observeInit({ mode: "explicit", plan: null, allowedSkills: null, instructions: null },
     { skills: ["simplify"], plugins: [], mcp_servers: [{ name: "claude.ai Fake Docs", status: "connected" }, { name: "bad\nname" }, null] }, "t");

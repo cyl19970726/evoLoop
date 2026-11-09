@@ -179,6 +179,69 @@ test("a process that dies after the prompt was written settles as process_lost",
   } finally { await h.cleanup(); }
 });
 
+test("after a first Turn lost before any answer, the next Turn resumes the transcript Claude already wrote", async () => {
+  const h = await setup("crash");
+  const recovered = new ClaudeAgentSdkAdapter({ ...h.options, environment: { ...h.options.environment, FAKE_CLAUDE_MODE: "ok" } });
+  try {
+    const binding = await h.adapter.create(h.spec);
+    const lost = randomUUID();
+    const first = await h.adapter.startTurn(binding, `${marker(lost)}\nTask`, lost);
+    assert.equal((await settled(h.adapter, binding, first.id)).status, "failed");
+    await h.adapter.close();
+    await recovered.open();
+    await recovered.registerBinding(binding);
+    const next = randomUUID();
+    const started = await recovered.startTurn(binding, `${marker(next)}\nContinue`, next);
+    assert.equal((await settled(recovered, binding, started.id)).status, "completed", "the Session is not stuck on an ID already in use");
+    const launches = await h.launches();
+    assert.match(launches[0]!.argv.join(" "), new RegExp(`--session-id[= ]${binding.nativeSessionId}`));
+    assert.match(launches.at(-1)!.argv.join(" "), new RegExp(`--resume[= ]${binding.nativeSessionId}`));
+  } finally { await recovered.close(); await h.cleanup(); }
+});
+
+test("an ordinary Session message starts only after a fresh admission and consumes it", async () => {
+  const h = await setup();
+  try {
+    const binding = await h.adapter.create(h.spec);
+    const early = randomUUID();
+    await assert.rejects(h.adapter.startConversationTurn(binding, `${marker(early)}\nHello`, early), RuntimeProtocolError,
+      "no admission, no start");
+    const admitted = await h.adapter.qualifyConversationThread(binding);
+    assert.equal(admitted.available, true);
+    assert.match(admitted.fingerprint ?? "", /^[0-9a-f]{64}$/);
+    assert.deepEqual(await h.adapter.qualifyConversationThread(binding), admitted, "an unchanged Session keeps its fingerprint");
+    const operationId = randomUUID();
+    const started = await h.adapter.startConversationTurn(binding, `${marker(operationId)}\nHello`, operationId);
+    assert.equal(started.status, "inProgress");
+    const busy = await h.adapter.qualifyConversationThread(binding);
+    assert.equal(busy.available, false, "a running Turn is not admitted");
+    assert.equal((await settled(h.adapter, binding, started.id)).status, "completed");
+    const again = randomUUID();
+    await assert.rejects(h.adapter.startConversationTurn(binding, `${marker(again)}\nAgain`, again), RuntimeProtocolError,
+      "the admission was consumed by the start");
+    const next = await h.adapter.qualifyConversationThread(binding);
+    assert.equal(next.available, true);
+    assert.notEqual(next.fingerprint, admitted.fingerprint, "the newest Turn is part of the admission");
+    await assert.rejects(h.adapter.startConversationTurn(binding, `${marker(operationId)}\nReplay`, operationId), RuntimeProtocolError,
+      "one operation gets one native start");
+    const [first] = await h.launches();
+    assert.match(first!.argv.join(" "), /bypassPermissions/);
+  } finally { await h.cleanup(); }
+});
+
+test("an ordinary Session message needs a full profile and an unarchived Session", async () => {
+  const h = await setup();
+  try {
+    const { actorId: _actorId, ...withoutActor } = h.spec;
+    const noProfile = await h.adapter.create(withoutActor);
+    assert.equal((await h.adapter.qualifyConversationThread(noProfile)).available, false);
+    const archived = await h.adapter.create({ ...h.spec, sessionId: randomUUID() });
+    await h.adapter.archiveThread(archived);
+    assert.deepEqual(await h.adapter.qualifyConversationThread(archived),
+      { available: false, reason: "Claude Session is archived", fingerprint: null });
+  } finally { await h.cleanup(); }
+});
+
 test("a spawn failure before the prompt write is not sent, withdrawn and retryable", async () => {
   // A NUL byte makes the spawn call throw synchronously, before any byte reaches a child.
   const h = await setup("ok", { executable: "/nonexistent/claude\u0000.mjs" });

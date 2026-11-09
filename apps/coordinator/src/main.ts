@@ -425,9 +425,11 @@ const createCodexRuntime = (runtimeConfig: NonNullable<typeof integrations.runti
 };
 /** One runtime, or one per driven provider behind a router; each Session goes to the runtime it was reserved for. */
 const runtimeFactory = runtimeConfig?.enabled ? (): ManagedRuntime => {
-  const children = new Map<RuntimeProvider, ManagedRuntime>(drivenRuntimeProviders(runtimeConfig).map(provider =>
-    [provider, provider === "claude" ? createClaudeRuntime(runtimeConfig) : createCodexRuntime(runtimeConfig)]));
-  return children.size === 1 ? [...children.values()][0]! : new ProviderRoutedRuntime(children, runtimeConfig.provider);
+  const build = (provider: RuntimeProvider): ManagedRuntime =>
+    provider === "claude" ? createClaudeRuntime(runtimeConfig) : createCodexRuntime(runtimeConfig);
+  const children = new Map<RuntimeProvider, ManagedRuntime>(drivenRuntimeProviders(runtimeConfig).map(provider => [provider, build(provider)]));
+  // Recovery replaces only the runtime that lost its connection; the other keeps its running Turns.
+  return children.size === 1 ? [...children.values()][0]! : new ProviderRoutedRuntime(children, runtimeConfig.provider, build);
 } : null;
 let managedCliBroker: WorkerCredentialBroker | null = null;
 const runner = runtimeFactory ? new RuntimeRunner({ runtimeFactory, workflow: service, trusted: trustedRuntime, nativeInputs, nativeObservation,

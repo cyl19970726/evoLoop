@@ -6,15 +6,19 @@ import type { ManagedRuntime } from "./runner.js";
 /** Binding-scoped optional methods: present when any runtime has them, unsupported for a binding whose runtime lacks them. */
 const routedOptional = ["compactThread", "observeCompaction", "readThreadName", "setThreadName", "readWorkPage", "readWorkspaceHistory",
   "archiveThread", "isThreadArchived", "startConversationTurn", "qualifyConversationThread", "activateExecutionProfile",
-  "inspectExecutionProfileActivation", "steerTurn"] as const;
+  "inspectExecutionProfileActivation", "steerTurn", "qualifyConnectorReceiver", "startConnectorTurn"] as const;
+type Subscription = { subscribe: (child: ManagedRuntime) => (() => void) | undefined; codexOnly: boolean;
+  active: Map<RuntimeProvider, () => void> };
 
 /**
  * One coordinator driving several native runtimes at once. Each Session is driven by the runtime it was
  * reserved for: creation routes by the spec's provider, everything else by the binding's owner. Codex
  * connection-level inputs (native user input, workspace updates) come from the Codex runtime only.
  *
- * The lifecycle is shared: the composite is ready only while every runtime is ready, so losing the Codex
- * connection pauses Claude Sessions too until the coordinator recovers.
+ * The composite is ready only while every runtime is ready, so losing the Codex connection pauses the pump for
+ * Claude Sessions too until the coordinator recovers. Recovery replaces only the runtimes that are not ready
+ * (`closeUnready`, `rebuild`, `openProviders`): a Claude Turn running in its own process is not stopped because
+ * Codex reconnects.
  */
 export class ProviderRoutedRuntime implements ManagedRuntime {
   readonly compactThread?: NonNullable<ManagedRuntime["compactThread"]>;
@@ -31,14 +35,24 @@ export class ProviderRoutedRuntime implements ManagedRuntime {
   readonly inspectExecutionProfileActivation?: NonNullable<ManagedRuntime["inspectExecutionProfileActivation"]>;
   /** Codex mid-Turn input used by direct input; not part of the runner's runtime type. */
   readonly steerTurn?: (binding: RuntimeBinding, expectedTurnId: string, input: string, inputId: string) => Promise<{ turnId: string; itemId: string | null }>;
+  /** Codex Connector receiver Turns; not part of the runner's runtime type. */
+  readonly qualifyConnectorReceiver?: (binding: RuntimeBinding, connectorBindingId: string) => Promise<{ available: boolean; reason: string; fingerprint: string | null }>;
+  readonly startConnectorTurn?: (binding: RuntimeBinding, input: string, operationId: string, connectorBindingId: string,
+    fingerprint: string) => Promise<import("@evoloop/contracts/runtime").RuntimeTurn>;
   readonly nativeInputConnectionId?: NonNullable<ManagedRuntime["nativeInputConnectionId"]>;
   readonly onNativeInput?: NonNullable<ManagedRuntime["onNativeInput"]>;
   readonly hasPendingInput?: NonNullable<ManagedRuntime["hasPendingInput"]>;
   readonly respondToInput?: NonNullable<ManagedRuntime["respondToInput"]>;
   readonly onWorkspaceUpdate?: NonNullable<ManagedRuntime["onWorkspaceUpdate"]>;
 
-  constructor(private readonly children: ReadonlyMap<RuntimeProvider, ManagedRuntime>, private readonly defaultProvider: RuntimeProvider) {
+  private readonly children: Map<RuntimeProvider, ManagedRuntime>;
+  private readonly subscriptions = new Set<Subscription>();
+
+  /** `replace` builds a fresh runtime for one provider when recovery replaces it; without it every child is rebuilt by the caller. */
+  constructor(children: ReadonlyMap<RuntimeProvider, ManagedRuntime>, private readonly defaultProvider: RuntimeProvider,
+    private readonly replace?: (provider: RuntimeProvider) => ManagedRuntime) {
     if (!children.size || !children.has(defaultProvider)) throw new Error("The default runtime must be one of the routed runtimes");
+    this.children = new Map(children);
     const self = this as unknown as Record<string, unknown>;
     for (const name of routedOptional) {
       const methodOf = (child: ManagedRuntime) => (child as unknown as Record<string, unknown>)[name] as ((...args: unknown[]) => unknown) | undefined;
@@ -50,14 +64,71 @@ export class ProviderRoutedRuntime implements ManagedRuntime {
         return method.call(child, binding, ...rest);
       };
     }
-    // Native user input and workspace updates belong to the one Codex connection.
+    // Native user input and workspace updates belong to the one Codex connection, whichever instance holds it now.
     const codex = children.get("codex");
     if (codex) {
-      for (const name of ["nativeInputConnectionId", "onNativeInput", "hasPendingInput", "respondToInput", "onWorkspaceUpdate"] as const) {
-        const method = codex[name] as ((...args: unknown[]) => unknown) | undefined;
-        if (typeof method === "function") self[name] = (...args: unknown[]) => method.apply(codex, args);
+      for (const name of ["nativeInputConnectionId", "hasPendingInput", "respondToInput"] as const) {
+        if (typeof codex[name] !== "function") continue;
+        self[name] = (...args: unknown[]) => {
+          const current = this.children.get("codex")!;
+          return (current[name] as (...values: unknown[]) => unknown).apply(current, args);
+        };
+      }
+      for (const name of ["onNativeInput", "onWorkspaceUpdate"] as const) {
+        if (typeof codex[name] !== "function") continue;
+        self[name] = (listener: unknown) => this.track(child => (child[name] as ((value: unknown) => () => void) | undefined)?.call(child, listener), true);
       }
     }
+  }
+
+  /** Providers whose runtime is not ready now; recovery replaces exactly these. */
+  unreadyProviders(): RuntimeProvider[] { return [...this.children].filter(([, child]) => !child.isReady()).map(([provider]) => provider); }
+  /** Whether recovery can replace one runtime without touching the others. */
+  canReplace(): boolean { return !!this.replace; }
+
+  /**
+   * Recovery, step 1: closes the runtimes that are not ready while every listener can still observe their exit.
+   * Runtimes that are still ready, and the Turns they are running, are left untouched.
+   */
+  async closeUnready(): Promise<RuntimeProvider[]> {
+    if (!this.replace) throw new Error("This routed runtime cannot replace a single provider");
+    const providers = this.unreadyProviders();
+    const results = await Promise.allSettled(providers.map(provider => this.children.get(provider)!.close()));
+    const failed = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
+    if (failed) throw failed.reason;
+    return providers;
+  }
+  /** Recovery, step 2: a new instance for each closed provider, with every current listener moved over to it. */
+  rebuild(providers: readonly RuntimeProvider[]): void {
+    if (!this.replace) throw new Error("This routed runtime cannot replace a single provider");
+    for (const provider of providers) {
+      this.forProvider(provider);
+      for (const subscription of this.subscriptions) { subscription.active.get(provider)?.(); subscription.active.delete(provider); }
+      const next = this.replace(provider);
+      this.children.set(provider, next);
+      for (const subscription of this.subscriptions) this.attach(subscription, provider, next);
+    }
+  }
+  /** Recovery, step 3: opens the rebuilt runtimes. */
+  async openProviders(providers: readonly RuntimeProvider[]): Promise<void> {
+    for (const provider of providers) await this.forProvider(provider).open();
+  }
+
+  private attach(subscription: Subscription, provider: RuntimeProvider, child: ManagedRuntime): void {
+    if (subscription.codexOnly && provider !== "codex") return;
+    const unsubscribe = subscription.subscribe(child);
+    if (unsubscribe) subscription.active.set(provider, unsubscribe);
+  }
+  /** Subscribes on every current runtime and on any runtime that later replaces one of them. */
+  private track(subscribe: Subscription["subscribe"], codexOnly = false): () => void {
+    const subscription: Subscription = { subscribe, codexOnly, active: new Map() };
+    this.subscriptions.add(subscription);
+    for (const [provider, child] of this.children) this.attach(subscription, provider, child);
+    return () => {
+      this.subscriptions.delete(subscription);
+      for (const unsubscribe of subscription.active.values()) unsubscribe();
+      subscription.active.clear();
+    };
   }
 
   providers(): RuntimeProvider[] { return [...this.children.keys()]; }
@@ -112,16 +183,12 @@ export class ProviderRoutedRuntime implements ManagedRuntime {
     if (failed) throw failed.reason;
   }
   isReady(): boolean { return this.all().every(child => child.isReady()); }
-  private subscribeAll(subscribe: (child: ManagedRuntime) => (() => void) | undefined): () => void {
-    const unsubscribers = this.all().map(subscribe).filter((value): value is () => void => !!value);
-    return () => { for (const unsubscribe of unsubscribers) unsubscribe(); };
-  }
-  onDisconnect(listener: (reason: string) => void) { return this.subscribeAll(child => child.onDisconnect(listener)); }
-  onEvent(listener: Parameters<ManagedRuntime["onEvent"]>[0]) { return this.subscribeAll(child => child.onEvent(listener)); }
-  onApprovalRequest(listener: Parameters<ManagedRuntime["onApprovalRequest"]>[0]) { return this.subscribeAll(child => child.onApprovalRequest(listener)); }
+  onDisconnect(listener: (reason: string) => void) { return this.track(child => child.onDisconnect(listener)); }
+  onEvent(listener: Parameters<ManagedRuntime["onEvent"]>[0]) { return this.track(child => child.onEvent(listener)); }
+  onApprovalRequest(listener: Parameters<ManagedRuntime["onApprovalRequest"]>[0]) { return this.track(child => child.onApprovalRequest(listener)); }
   listChildDiagnostics(): NativeChildDiagnostic[] { return this.all().flatMap(child => child.listChildDiagnostics?.() ?? []); }
   onChildDiagnostic(listener: (diagnostic: NativeChildDiagnostic) => void | Promise<void>) {
-    return this.subscribeAll(child => child.onChildDiagnostic?.(listener));
+    return this.track(child => child.onChildDiagnostic?.(listener));
   }
   async flushChildDiagnostics(): Promise<void> { await Promise.all(this.all().map(child => child.flushChildDiagnostics?.())); }
 }

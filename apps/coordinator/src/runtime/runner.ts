@@ -1,4 +1,4 @@
-import { runtimeForBinding, runtimeForProvider, runtimeProvidersOf } from "./routed.js";
+import { ProviderRoutedRuntime, runtimeForBinding, runtimeForProvider, runtimeProvidersOf } from "./routed.js";
 import { createHash, randomUUID } from "node:crypto";
 import type { BasisSet, Command, EvaluationFixedRef, Principal, RuntimeRunRecord, RuntimeSessionRecord, TaskRevision } from "@evoloop/contracts";
 import type { RuntimeBinding, RuntimeCapabilityListing, RuntimeCompactionObservation, RuntimeObservedCapabilities, RuntimePage, RuntimePort, RuntimeSessionSpec, RuntimeTurn, EvaluationPacketBinding, RuntimeWorkTrace, RuntimeReconcilePartial } from "@evoloop/contracts/runtime";
@@ -476,20 +476,28 @@ export class RuntimeRunner {
     this.workspaceDisconnected('Native runtime is being replaced');
     this.unsubscribeDisconnect?.(); this.unsubscribeApproval?.();
     try {
+      // Several runtimes: replace only those that lost readiness, so a Turn another runtime is running keeps going.
+      // With every runtime ready the fault is not a lost connection, and everything is replaced as before.
+      const routed = this.runtime instanceof ProviderRoutedRuntime && this.runtime.canReplace() &&
+        this.runtime.unreadyProviders().length ? this.runtime : null;
       // A replacement must wait for proof that the previous owned child exited.
-      await this.runtime.close();
+      let replaced: RuntimeProvider[];
+      if (routed) replaced = await routed.closeUnready();
+      else { replaced = this.providers(); await this.runtime.close(); }
       await this.runtime.flushChildDiagnostics?.();
       await this.deps.nativeInputs?.drain();
       await this.deps.nativeObservation?.drain();
       this.priorNativeChildDiagnostics=this.status().nativeChildDiagnostics;
       this.unsubscribeChildDiagnostic?.(); this.unsubscribeChildDiagnostic=null;
-      this.runtime = this.deps.runtimeFactory();
+      if (routed) routed.rebuild(replaced);
+      else this.runtime = this.deps.runtimeFactory();
       this.registered.clear(); this.checkedNames.clear(); this.interruptAttempted.clear();
       this.attachRuntime();
-      await this.runtime.open();
+      if (routed) await routed.openProviders(replaced);
+      else { await this.runtime.open(); replaced = this.providers(); }
       await this.deps.nativeInputs?.opened();
       await this.deps.nativeObservation?.opened();
-      for (const projectId of this.projects()) await this.deps.trusted.recoverDispatching(projectId, this.providers());
+      for (const projectId of this.projects()) await this.deps.trusted.recoverDispatching(projectId, replaced);
       this.serviceError = null;
       this.available = true;
       await this.pump();

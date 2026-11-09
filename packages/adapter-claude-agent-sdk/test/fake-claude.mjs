@@ -55,9 +55,13 @@ const out = value => process.stdout.write(JSON.stringify(value) + "\n");
 const sessions = join(configDir, "fake-sessions");
 mkdirSync(sessions, { recursive: true });
 const statePath = join(sessions, `${sessionId}.json`);
-if (fixed && existsSync(statePath)) { process.stderr.write(`Session ID ${sessionId} is already in use\n`); process.exit(1); }
-if (resumed && !existsSync(statePath)) { process.stderr.write(`No conversation found with session ID: ${resumed}\n`); process.exit(1); }
-let total = resumed ? JSON.parse(readFileSync(statePath, "utf8")).total : 0;
+// Like the real CLI: the transcript lives under projects/<cwd with every non-alphanumeric character as "-">/<id>.jsonl,
+// and its existence decides whether a fixed ID is taken or a resume finds the conversation.
+const transcriptDir = join(configDir, "projects", realpathSync(process.cwd()).replace(/[^A-Za-z0-9]/g, "-"));
+const transcript = join(transcriptDir, `${sessionId}.jsonl`);
+if (fixed && existsSync(transcript)) { process.stderr.write(`Session ID ${sessionId} is already in use\n`); process.exit(1); }
+if (resumed && !existsSync(transcript)) { process.stderr.write(`No conversation found with session ID: ${resumed}\n`); process.exit(1); }
+let total = resumed && existsSync(statePath) ? JSON.parse(readFileSync(statePath, "utf8")).total : 0;
 let pending = null;
 
 const assistant = (content, extra = {}) => out({ type: "assistant", parent_tool_use_id: null, uuid: randomUUID(), session_id: sessionId,
@@ -66,7 +70,11 @@ const assistant = (content, extra = {}) => out({ type: "assistant", parent_tool_
 const result = fields => out({ type: "result", duration_ms: 5, duration_api_ms: 4, num_turns: 1, stop_reason: "end_turn",
   total_cost_usd: total, usage: { input_tokens: 10, output_tokens: 5, cache_read_input_tokens: 2, cache_creation_input_tokens: 0 },
   modelUsage: {}, permission_denials: [], uuid: randomUUID(), session_id: sessionId, ...fields });
-const persist = () => writeFileSync(statePath, JSON.stringify({ total }));
+const persist = () => {
+  writeFileSync(statePath, JSON.stringify({ total }));
+  mkdirSync(transcriptDir, { recursive: true });
+  appendFileSync(transcript, JSON.stringify({ type: "fake-transcript-entry" }) + "\n");
+};
 
 function turn(message) {
   const text = typeof message.message?.content === "string" ? message.message.content : "";

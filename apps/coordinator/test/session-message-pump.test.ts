@@ -83,6 +83,24 @@ test('an explicit native pre-turn rejection is terminal rather than an uncertain
   await pump.tick();assert.equal(failed,1);assert.equal(unknown,0);
 });
 
+test('a Session whose runtime lacks ordinary messages is blocked once instead of failing every poll',async()=>{
+  const target=randomUUID(),m=message(randomUUID(),target,'queued');
+  let blocked='',dispatched=0;
+  const service={pending:async()=>[m],session:async()=>session(target),processing:async()=>null,preflightDispatch:async()=>{},
+    beginDispatch:async()=>{dispatched++;throw new Error('must not dispatch');},
+    noteBlocked:async(_project:string,_id:string,reason:string)=>{blocked=reason;}} as unknown as SessionMessageService;
+  // The routed runtime exposes the method for every Session and refuses it for a runtime without it.
+  const runtime={isReady:()=>true,registerBinding:async()=>{},
+    qualifyConversationThread:async()=>{throw new DomainError('CAPABILITY_UNAVAILABLE','claude 运行时不支持此操作（qualifyConversationThread）');},
+    startConversationTurn:async()=>{throw new Error('must not start');},
+    listTurns:async()=>({data:[],nextCursor:null}),listItems:async()=>({data:[],nextCursor:null})};
+  const pump=new SessionMessagePump({service,runtime:()=>runtime,projects:async()=>[projectId],canStart:async()=>true,
+    canWrite:()=>true,pollIntervalMs:1000,onError:e=>{throw e;}});
+  await pump.tick();
+  assert.equal(dispatched,0);
+  assert.match(blocked,/qualifyConversationThread/);
+});
+
 test('restricted Connector without native tool proof stays queued and cannot use the full Turn path',async()=>{
   const target=randomUUID(),bindingId=randomUUID(),m=message(randomUUID(),target,'queued');
   let restricted=0,full=0,started=0,dispatched=0,blocked='';

@@ -1,6 +1,6 @@
 import type { ChildProcess } from "node:child_process";
-import { randomUUID } from "node:crypto";
-import { mkdir } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import { access, mkdir, readdir } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 import { query, type Options, type Query, type SDKAssistantMessage, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import type { RuntimeApprovalRequest, RuntimeBinding, RuntimeCapabilities, RuntimeEvent, RuntimeHistoryItem,
@@ -144,6 +144,9 @@ export class ClaudeAgentSdkAdapter implements RuntimePort {
   private readonly bindings = new Map<string, RuntimeBinding>();
   private readonly live = new Map<string, LiveTurn>();
   private readonly attempted = new Set<string>();
+  /** Fresh ordinary-conversation admissions, keyed like live Turns; consumed by the next start. */
+  private readonly conversationQualifications = new Map<string, { fingerprint: string; observedAt: number }>();
+  private readonly conversationInFlight = new Set<string>();
   private readonly disconnects = new Set<(reason: string) => void>();
   private modelCache: { value: RuntimeModelList; expiresAt: number } | null = null;
   private ready = false;
@@ -359,6 +362,12 @@ export class ClaudeAgentSdkAdapter implements RuntimePort {
         executionProfile.cwd !== binding.cwd || executionProfile.authorizationScope !== binding.authorizationScope)
         throw new RuntimeProtocolError("Run does not carry this exact immutable execution profile");
     }
+    return this.profileEffort(binding);
+  }
+
+  /** The binding's own fixed profile: full access, a safe model and an effort Claude supports. */
+  private profileEffort(binding: RuntimeBinding): string | null {
+    const profile = binding.resumeProfile;
     if (!profile || !fullProfile(profile)) throw new RuntimeProtocolError("business Turn requires an active full execution profile");
     if (profile.model != null && safeModel(profile.model) === null) throw new RuntimeProtocolError("invalid model identity");
     const effort = profile.reasoningEffort ?? null;
@@ -369,7 +378,82 @@ export class ClaudeAgentSdkAdapter implements RuntimePort {
   async startTurn(binding: RuntimeBinding, input: string, operationId: string,
     executionProfile?: ExecutionProfileSnapshot | null): Promise<RuntimeTurn> {
     this.owned(binding);
-    const effort = this.checkProfile(binding, executionProfile);
+    return this.begin(binding, input, operationId, this.checkProfile(binding, executionProfile));
+  }
+
+  /**
+   * Admission evidence for an ordinary Session message: an owned full-profile Session whose ledger is readable,
+   * not archived and has no running or unsettled Turn. The exact profile is sent with the Turn itself.
+   */
+  async qualifyConversationThread(binding: RuntimeBinding): Promise<{ available: boolean; reason: string; fingerprint: string | null }> {
+    this.owned(binding);
+    const key = this.key(binding);
+    const unavailable = (reason: string) => {
+      this.conversationQualifications.delete(key);
+      return { available: false, reason, fingerprint: null };
+    };
+    const profile = binding.resumeProfile;
+    if (!profile || !fullProfile(profile)) return unavailable("Owned Session has no active full execution profile");
+    try { this.profileEffort(binding); } catch { return unavailable("Owned Session profile is not supported by Claude"); }
+    let view: LedgerView;
+    try { view = await this.view(binding); } catch { return unavailable("Claude Session ledger could not be read"); }
+    if (view.archived) return unavailable("Claude Session is archived");
+    if (this.live.has(key) || view.turns.some(turn => !turn.withdrawn && !turn.settled)) return unavailable("A Claude Turn is running on this Session");
+    const latest = view.turns.filter(turn => !turn.withdrawn).at(-1) ?? null;
+    const fingerprint = createHash("sha256").update(JSON.stringify({
+      admission: "evoloop-claude-conversation-v1", projectId: binding.projectId, sessionId: binding.sessionId, roleId: binding.roleId,
+      nativeSessionId: binding.nativeSessionId, cwd: binding.cwd, scope: binding.authorizationScope,
+      profile: { actorId: profile.actorId, model: profile.model ?? null, reasoningEffort: profile.reasoningEffort ?? null, sandbox: profile.sandbox,
+        approvalPolicy: profile.approvalPolicy, executionProfileRevisionId: profile.executionProfileRevisionId ?? null },
+      latestTurn: latest ? { id: latest.turnId, completedAtUtc: latest.settled?.completedAtUtc ?? null } : null,
+    })).digest("hex");
+    const prior = this.conversationQualifications.get(key);
+    if (prior && Date.now() - prior.observedAt <= 5_000 && prior.fingerprint !== fingerprint)
+      return unavailable("Owned Session profile or history changed during admission");
+    this.conversationQualifications.set(key, { fingerprint, observedAt: Date.now() });
+    return { available: true, reason: "Owned full-profile Claude Session has no running Turn; the exact profile is sent with the Turn", fingerprint };
+  }
+
+  /** The caller first persists the ordinary message dispatch; one operation gets one native start. */
+  async startConversationTurn(binding: RuntimeBinding, input: string, operationId: string): Promise<RuntimeTurn> {
+    this.owned(binding);
+    if (!nonempty(input) || !nonempty(operationId) || !binding.resumeProfile || !fullProfile(binding.resumeProfile))
+      throw new RuntimeProtocolError("full Session profile, input and durable operation ID required");
+    const key = this.key(binding);
+    const prior = this.conversationQualifications.get(key);
+    if (!prior || Date.now() - prior.observedAt > 5_000) throw new RuntimeProtocolError("ordinary Turn requires fresh owned full-profile admission");
+    if (this.conversationInFlight.has(key)) throw new RuntimeProtocolError("ordinary Turn start is already in flight on this Session");
+    this.conversationInFlight.add(key);
+    try {
+      const rechecked = await this.qualifyConversationThread(binding);
+      if (!rechecked.available || rechecked.fingerprint !== prior.fingerprint)
+        throw new RuntimeProtocolError("owned full-profile Session changed before ordinary Turn");
+      this.conversationQualifications.delete(key);
+      return await this.begin(binding, input, operationId, this.profileEffort(binding));
+    } finally {
+      // A changed readback must not leave an implicit admission for another start.
+      this.conversationQualifications.delete(key);
+      this.conversationInFlight.delete(key);
+    }
+  }
+
+  /** Whether Claude already wrote this Session's transcript under the dedicated config directory. */
+  private async transcriptExists(nativeSessionId: string): Promise<boolean> {
+    const projects = join(this.configDir, "projects");
+    let entries: string[];
+    try { entries = await readdir(projects); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+      throw error;
+    }
+    for (const entry of entries) {
+      try { await access(join(projects, entry, `${nativeSessionId}.jsonl`)); return true; }
+      catch { /* not in this project directory */ }
+    }
+    return false;
+  }
+
+  private async begin(binding: RuntimeBinding, input: string, operationId: string, effort: string | null): Promise<RuntimeTurn> {
     if (!nonempty(input) || !nonempty(operationId)) throw new RuntimeProtocolError("input and durable operation ID required");
     const key = this.key(binding), attempt = `${key}/${operationId}`;
     if (this.attempted.has(attempt)) throw new RuntimeProtocolError("this Turn operation was already attempted; reconcile its original result");
@@ -411,8 +495,13 @@ export class ClaudeAgentSdkAdapter implements RuntimePort {
         throw new RuntimeNotSentError("turn/start", "an earlier Turn process is still running");
       live.context = await this.turnContext(binding);
       const prior = view.turns.filter(turn => !turn.withdrawn);
-      // Resume only when the native transcript is known to exist: Claude answered an earlier Turn.
-      const resume = prior.some(turn => turn.items.length > 0 || turn.settled?.source === "result");
+      // Resume only when the native transcript exists: Claude answered an earlier Turn, or an earlier prompt reached
+      // a process that wrote the transcript before it was lost. Reusing the ID as a new session would be refused.
+      let resume = prior.some(turn => turn.items.length > 0 || turn.settled?.source === "result");
+      if (!resume && prior.some(turn => turn.sent)) {
+        try { resume = await this.transcriptExists(binding.nativeSessionId); }
+        catch { throw new RuntimeNotSentError("turn/start", "Claude transcript directory could not be read"); }
+      }
       live.previousCumulative = resume ? prior.at(-1)?.settled?.cumulativeCostUsd ?? null : 0;
       try {
         await this.ledger.append(binding.projectId, binding.nativeSessionId, { kind: "turn.started", at: this.now(),

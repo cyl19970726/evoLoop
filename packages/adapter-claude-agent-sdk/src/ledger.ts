@@ -76,8 +76,17 @@ export class TurnLedger {
     const previous = this.chains.get(path) ?? Promise.resolve();
     const next = previous.catch(() => undefined).then(async () => {
       await mkdir(join(this.root, projectId), { recursive: true, mode: 0o700 });
-      const handle = await open(path, "a", 0o600);
+      const handle = await open(path, "a+", 0o600);
       try {
+        const { size } = await handle.stat();
+        const last = Buffer.alloc(1);
+        if (size > 0 && (await handle.read(last, 0, 1, size - 1)).bytesRead === 1 && last[0] !== 0x0a) {
+          // A crash tore the previous append. Reads already skip that partial record; drop it so this record
+          // starts on its own line instead of turning the torn one into corruption in the middle of the file.
+          const content = Buffer.alloc(size);
+          await handle.read(content, 0, size, 0);
+          await handle.truncate(content.lastIndexOf(0x0a) + 1);
+        }
         await handle.write(`${JSON.stringify(record)}\n`);
         await handle.datasync();
       } finally { await handle.close(); }

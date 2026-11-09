@@ -25,9 +25,10 @@ plugin 和 MCP 先由各运行时自己加载，evoLoop 只负责展示；账号
 
 | 已经成立（有运行证据） | 还没有成立 |
 | --- | --- |
-| Codex 0.167 经适配器真实运行，模型为 DeepSeek，10 个场景全部通过（通信文档 §5.4） | Claude 经适配器、在完全访问模式下的真实运行（需要使用者批准，Q6） |
-| Claude 适配器对真实 CLI 的一致性运行，API 为本地模拟，43 项全部通过（§2.7） | 经 coordinator 和工作台的真实 Session、消息、Turn 端到端运行 |
-| Claude 的能力目录、两种上下文模式和每个 Turn 的实际清单：用专用登录真实运行，9 项全部通过（§2.7） | Role 运行时绑定与 skill 选择经 coordinator 驱动真实 Codex 与 Claude Session（实现与测试见 §2.11） |
+| Codex 0.167 经适配器真实运行，模型为 DeepSeek，10 个场景全部通过（通信文档 §5.4） | Claude 在完全访问模式下的工具、中断、归档（本次真实 Turn 只回答问题，没有用工具） |
+| Claude 适配器对真实 CLI 的一致性运行，API 为本地模拟，43 项全部通过（§2.7） | 经工作台的真实使用；Task 派发的 Run 经 coordinator 驱动真实运行时 |
+| Claude 的能力目录、两种上下文模式和每个 Turn 的实际清单：用专用登录真实运行，9 项全部通过（§2.7） | Session 之间的真实消息（本次发送方是 CLI 身份）；普通消息的用量和费用进 PostgreSQL |
+| 一个协调服务同时驱动 Codex 与 Claude：两个绑定不同运行时的 Role 各有一个 Session，经真实 CLI 各收两条普通消息，4 个真实 Turn 都已回复，Role 上下文送达（§2.11） | |
 | 两种运行时各从哪里加载 skill、plugin 和 MCP，已在本机核对（§2.0） | Codex Session 带了什么还看不见：现在共用个人 home，每个 Session 都带着个人 skill 和 4 个 MCP server，没有记录 |
 | Claude 子进程关闭账号连接器，并记录运行时报告的 MCP server（§2.7） | Codex 专用 home 和能力配置落地（L4） |
 | Codex 按 Thread 控制送到模型的 skill：模拟 API 和真实 DeepSeek 都成立（§2.8） | 角色卡片的真人使用（Agent 已在本机临时实例上查看并提交过一次，§2.11）；Claude Session 的模型修订 |
@@ -457,7 +458,30 @@ type ObservedCapabilities = { // 每个 Turn 一份
 - 在 Claude 卡片的表单里单独加入一个不存在的 skill 并保存：数据库写入第 3 次修订，actor 为浏览器身份，运行时不变；重新展开后卡片显示第 3 次修订和“单独加入但未找到”。
 - 观察到两点，留作后续：保存后角色条目会折叠，要重新展开才能看到结果；Role 还没有 Session 时，工作目录只按当前查看者自己的运行授权查找，没有授权的人看到“尚无会话或授权目录”，也看不到项目 skill。
 
-经 coordinator 驱动真实 Codex 与 Claude Session 还没有验证：适配器只接受完全访问（`danger-full-access` 与 `never`）的新 Session，启动带这类授权的 coordinator 需要使用者明确批准（Q6）。Claude 真实模型的凭据与费用、角色卡片的真人使用也还没有验证。Codex 由插件提供的个人 skill 可能不出现在 `skills/list` 中，视图因此可能少列。
+**经 coordinator 的真实 Turn（2026-11-09，使用者批准完全访问）：** 在另一个隔离临时实例上，一个协调服务同时驱动 Codex（DeepSeek，经本机模型网关）与 Claude（专用登录，haiku）。两个 Role 分别绑定 Codex 和 Claude，各用 CLI 的 `session prepare` 建一个完全访问的 Session；另一个身份经 CLI 给每个 Session 发两条普通消息。
+- 4 个 Turn 都已回复。每个回答都说出了自己所在的运行时和一个能看到的 skill；第二轮的回答确认收到了 Role 上下文，并指出其中的 `evoloop-workflow`。
+- Claude 第一个 Turn 新建会话，第二个 Turn 续接同一份转录。适配器账本记下每个 Turn 的用量和费用，两个 Turn 共约 0.0036 美元；第二个 Turn 读到了缓存的上文。每个 Turn 的启动报告都列出 19 个 skill，没有缺失；5 个 plugin，没有 MCP server。
+- 转录只出现在专用配置目录中按工作目录命名的位置；个人 Claude 目录里没有同名转录。这项只按文件名核对，没有读内容。
+- 两个 Role 的视图分别标明 `codex.list` 和 `claude.init`；工作目录来自 Session。
+
+真实运行暴露的问题与修正：
+- **Claude 不能接普通 Session 消息。** 适配器没有提供普通消息需要的准入和启动方法，消息一直排队，消息泵每轮都重试。现在 Claude 在启动前做一次准入：要求完整的执行配置、Session 未归档、没有进行中的 Turn，并按 Session 和最近一个 Turn 计算指纹。准入只在 5 秒内有效，用一次就作废。运行时缺这项能力时，消息泵只把消息标记为受阻一次，不再每轮失败。
+- **第一个 Turn 没有回答就中断，下一个 Turn 会失败。** 真实 CLI 发现某个会话 ID 的转录已经存在时，会拒绝再次用它新建会话。现在，只要之前有发出过的 Turn 且转录文件存在，就改为续接；转录目录读不出来时，按未发送处理。
+- **Role 上下文的送达取决于授权配置。** 第一轮消息的授权里，接收者写成了项目拥有者，Codex 的回答因此没有 Role 上下文。接收者必须是 Role 的执行身份，也就是 material CLI 的身份。改正临时实例的配置后，第二轮两种运行时都收到了。这是配置问题，没有改代码。
+
+同一轮代码审查还修正了两处，这两处没有在真实运行中复现：
+- 以前任一运行时断开，恢复时会把两个运行时一起替换，正在跑的 Claude Turn 也会被停掉。现在只替换失去连接的那个，派发恢复也只处理被替换的运行时。
+- 适配器账本的最后一行若在写入时被中断而残缺，下次追加前会先截掉这行，避免它变成文件中间的坏记录。
+
+单元测试为这些修正各补了用例。全量单元测试只余已另行登记的 material CLI 用例失败；PostgreSQL 集成测试和文档检查通过。
+
+**还没有验证：**
+- 普通消息的用量和费用不进 PostgreSQL：Claude 只在适配器账本里有，Codex 没有。
+- Session 之间的真实消息，包括 Codex↔Claude；本次发送方是 CLI 身份。
+- Task 派发的 Run 经 coordinator 驱动真实运行时。
+- Claude 在完全访问模式下的工具、中断和归档。
+- 工作台对这些 Session 的展示，以及角色卡片的真人使用。
+- Codex 由插件提供的个人 skill 可能不出现在 `skills/list` 中，视图因此可能少列。
 
 ## 3. 登录与运行环境
 
@@ -515,13 +539,13 @@ type ObservedCapabilities = { // 每个 Turn 一份
 
 | 场景 | Codex（DeepSeek） | Claude |
 | --- | --- | --- |
-| 经适配器直接运行：多 Turn、工具、中断、归档 | 通过（通信文档 §5.4） | 未验证。真实凭据只跑了只读的能力检查（§2.7）；完全访问模式需要批准（Q6） |
+| 经适配器直接运行：多 Turn、工具、中断、归档 | 通过（通信文档 §5.4） | 部分：经 coordinator 在完全访问模式下跑了两个真实 Turn，第二个续接（§2.11）；工具、中断、归档未验证 |
 | 能力清单生效 | Thread 级覆盖在真实模型上生效；共用个人 home 时，个人 skill 和 plugin 带来的 skill 会漏进来（§2.8）；适配器还没实现 | 真实凭据下通过（§2.7） |
 | 实际清单被记录 | 未实现，只能推导 | 写进适配器的 Turn 账本；还没进 PostgreSQL（L3） |
 | 外部连接看得见（O7） | 空的专用 home 关闭 plugin 后，启动时没有外连（模拟 API）。共用个人 home 时不成立：带着 4 个 MCP server，其中 `codex_apps` 用账号令牌，都没有记录 | 账号连接器两处关闭；真实运行里没有 MCP server（§2.7） |
-| 经 coordinator 和工作台的端到端运行 | 未验证（需要 Q6） | 未验证 |
-| 跨 Session 消息（同运行时 / 跨运行时） | 未验证 | 未验证 |
-| 个人环境未被写入（O5） | 做法一下不成立 | 转录只写进 configRoot（§2.7）；设置和其他文件没有逐项核对 |
+| 经 coordinator 的普通 Session 消息 | 通过：与 Claude 由同一个协调服务驱动，2 个真实 Turn，Role 上下文送达（§2.11）。工作台和 Task Run 未验证 | 通过：2 个真实 Turn，第二个续接同一转录，账本记下用量和费用（§2.11）。工作台和 Task Run 未验证 |
+| 跨 Session 消息（同运行时 / 跨运行时） | 未验证（本次发送方是 CLI 身份） | 未验证（同左） |
+| 个人环境未被写入（O5） | 做法一下不成立 | 转录只写进 configRoot（§2.7）；经 coordinator 的真实运行后，个人目录里也没有同名转录，只按文件名核对（§2.11）；设置和其他文件没有逐项核对 |
 
 ## 6. 待决定
 
@@ -532,7 +556,7 @@ type ObservedCapabilities = { // 每个 Turn 一份
 | Q3 | Claude 的 `settingSources` 怎么设 | 两种模式都已实现，真实凭据运行也已通过（§2.7）。推荐现在把 `contextMode` 的默认值切到 `explicit`，单独一个 PR，说明里写明：项目 CLAUDE.md 和项目 hook 从此不再生效 | L2 |
 | Q4 | Codex 什么时候切换到专用 home | L4 开工时切换，先在隔离实例上验证。模板里关闭 plugin（Q11） | L4 |
 | Q5 | 配置与实际不一致时怎么办 | 只标记，不拒绝派发。“选了没加载”和“没选却出现”都在工作台醒目显示（§2.6） | L3、L4 |
-| Q6 | 是否批准在隔离实例上创建完全访问的测试 Session，做端到端核对 | 批准，只用于临时工作目录 | L5、L7 |
+| Q6 | 是否批准在隔离实例上创建完全访问的测试 Session，做端到端核对 | 使用者已批准（2026-11-09），只用于隔离实例的临时工作目录；结果见 §2.11 | L5、L7 |
 | Q7 | 当前分支上未提交的改动怎么处理 | 拆成三个 PR，依次合入：① 运行时合同和 Codex 适配器审计修复；② 运行时提供方选择和 Claude 适配器，含 L2；③ 研究文档。每个 PR 单独构建和测试。合入之后再开始 L3，避免新工作叠在未合入的改动上 | L3 及之后 |
 | Q8 | 是否加 `sender_session_id` 和回复链深度上限 | 加；深度上限的默认值取小 | L6 |
 | Q9 | 运行时自带的 skill 默认怎么处理 | “运行时自带”开关默认打开。会修改自身配置的几项默认去掉：Codex 的 `skill-installer`，Claude 的 `update-config` 和 `fewer-permission-prompts` | L2、L4 |

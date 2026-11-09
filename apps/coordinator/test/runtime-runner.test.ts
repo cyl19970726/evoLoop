@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import type { WorkflowService } from "@evoloop/core";
 import type { RuntimeWorkflowService } from "@evoloop/core/runtime";
-import type { RuntimeApprovalRequest, RuntimeBinding, RuntimePage, RuntimePort, RuntimeSessionSpec, RuntimeTurn } from "@evoloop/contracts/runtime";
+import type { RuntimeApprovalRequest, RuntimeBinding, RuntimePage, RuntimePort, RuntimeProvider, RuntimeSessionSpec, RuntimeTurn } from "@evoloop/contracts/runtime";
 import type { SessionProfileRecord } from "@evoloop/contracts/session-assignments";
 import type { Principal, RuntimeRunRecord, RuntimeSessionRecord } from "@evoloop/contracts";
 import type { WorkspaceRuntimeUpdate } from "@evoloop/contracts/session-timeline";
@@ -11,7 +11,8 @@ import type { UnitOfWork } from "@evoloop/contracts/ports";
 import type { SessionObservationService } from "@evoloop/core/session-observation";
 import { RuntimeProtocolError, RuntimeServerError, RuntimeUnknownError } from "@evoloop/adapter-codex-app-server";
 import { DomainError } from "@evoloop/contracts/ports";
-import { RuntimeRunner } from "../src/runtime/runner.js";
+import { RuntimeRunner, type ManagedRuntime } from "../src/runtime/runner.js";
+import { ProviderRoutedRuntime } from "../src/runtime/routed.js";
 import { SessionTimelineService } from "../src/session-timeline/index.js";
 import { currentSessionGrant } from "../src/orchestration/dynamic-admission.js";
 import { grantAllowsModel } from "../src/configuration.js";
@@ -969,6 +970,43 @@ test("transport disconnect closes admission; explicit recovery reconciles unknow
     assert.equal(instances.length, 2);
     assert.equal(recoveries, 2);
     assert.equal(instances.reduce((total, item) => total + item.starts, 0), 0);
+  } finally { await runner.stop(); }
+});
+
+test("with several runtimes, recovery replaces only the one that lost its connection", async () => {
+  const codex = new FakeRuntime(), claude = new FakeRuntime();
+  const built: Array<{ provider: RuntimeProvider; runtime: FakeRuntime }> = [];
+  const recovered: RuntimeProvider[][] = [];
+  let claudeCloses = 0;
+  const originalClose = claude.close.bind(claude);
+  claude.close = async () => { claudeCloses++; await originalClose(); };
+  const routed = new ProviderRoutedRuntime(new Map<RuntimeProvider, ManagedRuntime>([
+    ["codex", codex as unknown as ManagedRuntime], ["claude", claude as unknown as ManagedRuntime]]), "codex", provider => {
+    const runtime = new FakeRuntime(); built.push({ provider, runtime }); return runtime as unknown as ManagedRuntime;
+  });
+  const workflow = { getProject: async () => ({ id: projectId }), listRuntimeSessions: async () => [], listRuntimeRuns: async () => [] } as unknown as WorkflowService;
+  const trusted = { recoverDispatching: async (_projectId: string, providers: RuntimeProvider[]) => {
+    recovered.push([...providers]); return { sessions: [], runs: [] }; } } as unknown as RuntimeWorkflowService;
+  const runner = new RuntimeRunner({ runtimeFactory: () => routed, workflow, trusted,
+    principals: [{ actorId, projectIds: [projectId], permissions: ["read", "write", "review"] }],
+    canWrite: () => true, allowedCwd: async () => true, hasGrant: () => true });
+  try {
+    await runner.start();
+    assert.deepEqual(recovered, [["codex", "claude"]]);
+    codex.disconnect("child exited");
+    assert.equal(runner.status().available, false, "losing Codex pauses the whole runner");
+    await runner.recover();
+    assert.equal(runner.status().available, true);
+    assert.deepEqual(built.map(entry => entry.provider), ["codex"], "only Codex is rebuilt");
+    assert.equal(claudeCloses, 0, "Claude, and the Turns its processes run, are not closed");
+    assert.equal(claude.isReady(), true);
+    assert.deepEqual(recovered.at(-1), ["codex"], "only the replaced runtime's dispatches are reconciled");
+    // The runner's disconnect listener moved to the new Codex instance.
+    built[0]!.runtime.disconnect("second loss");
+    assert.equal(runner.status().available, false);
+    await runner.recover();
+    assert.deepEqual(built.map(entry => entry.provider), ["codex", "codex"]);
+    assert.equal(claudeCloses, 0);
   } finally { await runner.stop(); }
 });
 
