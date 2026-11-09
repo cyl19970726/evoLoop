@@ -260,6 +260,8 @@ function DependenciesForm({ context, detail, leader, onReread }: { context: Muta
     validate: value => { leaderWorkDependenciesCommandSchema.parse(withoutOperationType(value)); },
     send: built => api().leaderDependencies(projectId, task.id, built as unknown as LeaderWorkDependenciesCommand),
     onStale: onReread,
+    // Applied, now or when an unknown result is read back: the list sent becomes the base and the reason is cleared.
+    onApplied: () => { setReason(""); setPasted(""); setBase(chosen); setTried(false); },
   });
   const pages = useProjectPages(projectId, ["tasks", "list"], (cursor, signal) => api().tasks(projectId, cursor, signal));
   const known = (pages.data?.pages ?? []).flatMap(page => page.items);
@@ -291,8 +293,7 @@ function DependenciesForm({ context, detail, leader, onReread }: { context: Muta
   async function submit() {
     setTried(true);
     if (!reason.trim()) return;
-    const applied = await command.submit(seen => dependenciesCommand(task.id, seen, { dependsOnTaskIds: chosen, reason }));
-    if (applied) { setReason(""); setPasted(""); setBase(chosen); setTried(false); }
+    await command.submit(seen => dependenciesCommand(task.id, seen, { dependsOnTaskIds: chosen, reason }));
   }
   return <CommandFrame context={context} command={command} label="设置前置任务依赖" submitLabel="保存前置任务" dirty={dirty} onSubmit={() => void submit()}
     onReread={onReread} onRefill={() => { command.rebase(); refill(); }} onKeep={keep} keepNote="保留我的修改：你加入和移除的前置任务套用到最新的列表上。">

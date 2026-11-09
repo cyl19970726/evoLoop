@@ -17,7 +17,7 @@ import { errorOutcome, resultOutcome, type SubmissionOutcome } from "../submissi
 import type { MutationContext, RecoverableCommand } from "./context";
 import type { DraftStore, PendingOperation, SavedDraft } from "./drafts";
 import {
-  baselineChangedText, baselineText, changedParts, openingBaseline, personMessage, prepareCommand, receiptFailedText,
+  baselineChangedText, baselineText, changedParts, commonPartLabels, openingBaseline, personMessage, prepareCommand, receiptFailedText,
   submissionRefusal, unconfirmedNote, type Baseline, type SubmittableCommand,
 } from "./rules";
 
@@ -32,9 +32,13 @@ export interface CommandOptions {
   draft?: { store: DraftStore; key: string } | undefined;
   /** The service answered that the version moved: reread, so the person can look at the latest content. */
   onStale?: (() => void) | undefined;
-  /** Called with the applied result, also when an unknown result is later read back as applied. */
+  /**
+   * What the form does once its write is applied: clear its fields, fold away, move on. It runs for every applied
+   * result, also when an unknown result is read back as applied later, so register it here rather than relying on
+   * `submit`'s return value.
+   */
   onApplied?: ((result: AppliedResult) => void) | undefined;
-  /** Readable names of the parts of an object baseline, for “变化的是：…”. */
+  /** Readable names of the parts of an object baseline, for “变化的是：…” (common parts are named already). */
   partLabels?: Readonly<Record<string, string>> | undefined;
   /**
    * What the form shows besides its baseline (its latest field values, as one string). After a version conflict the
@@ -55,6 +59,8 @@ export function useCommand<B extends Baseline | string | undefined = undefined>(
   // A submission whose result is unknown (restored with its draft after a remount).
   const [pending, setPending] = useState<PendingOperation | null>(() => restored?.pending ?? null);
   const [checking, setChecking] = useState(false);
+  // A second submission while one is being sent is refused here, whatever the last render said.
+  const sending = useRef(false);
   const latest = useRef(options);
   latest.current = options;
   // The per-submission callback of the operation that is pending, for when it is read back as applied.
@@ -91,7 +97,7 @@ export function useCommand<B extends Baseline | string | undefined = undefined>(
    * `onApplied` runs for this submission, also when its unknown result is read back as applied later.
    */
   async function submit(build: (seen: B) => Record<string, unknown>, onApplied?: (result: AppliedResult) => void): Promise<boolean> {
-    const refusal = submissionRefusal({ busy, blocked: context.blocked, stale, unconfirmed: !!pending, recorded: baselineText(recorded), current });
+    const refusal = submissionRefusal({ busy: busy || sending.current, blocked: context.blocked, stale, unconfirmed: !!pending, recorded: baselineText(recorded), current });
     if (refusal === "baseline") { setOutcome(refused(baselineChangedText)); return false; }
     if (refusal) return false;
     setOutcome(null);
@@ -102,11 +108,12 @@ export function useCommand<B extends Baseline | string | undefined = undefined>(
       catch (cause) { throw new Error(personMessage(cause)); }
       command = prepareCommand(built, context.projectId, crypto.randomUUID(), options);
     } catch (cause) { setOutcome(refused(personMessage(cause))); return false; }
+    sending.current = true;
     setBusy(true);
     let receipt = false;
     try { receipt = await context.onAttempt(command as RecoverableCommand); }
     catch { /* A receipt that could not be saved must never send its command. */ }
-    if (!receipt) { setBusy(false); setOutcome(refused(receiptFailedText)); return false; }
+    if (!receipt) { sending.current = false; setBusy(false); setOutcome(refused(receiptFailedText)); return false; }
     try {
       const result = options.send ? await options.send(command) : await api().command(command as Command);
       context.onKnown(command.operationId);
@@ -129,7 +136,7 @@ export function useCommand<B extends Baseline | string | undefined = undefined>(
       setOutcome(next);
       if (next.stale) markStale();
       return false;
-    } finally { setBusy(false); }
+    } finally { sending.current = false; setBusy(false); }
   }
 
   /** Reads the pending operation by its original ID: applied clears the draft, rejected keeps it for a new submission. */
@@ -145,7 +152,10 @@ export function useCommand<B extends Baseline | string | undefined = undefined>(
       const here = appliedHere.current;
       appliedHere.current = undefined;
       if (record.result.status === "applied") {
-        setOutcome({ applied: true, failed: false, stale: false, unconfirmed: false, message: "原操作已核对为已应用，这份草稿已清除。" });
+        // Only a form that clears something says so.
+        const clears = !!(here || latest.current.onApplied || store());
+        setOutcome({ applied: true, failed: false, stale: false, unconfirmed: false,
+          message: clears ? "原操作已核对为已应用，这份草稿已清除。" : "原操作已核对为已应用。" });
         applied(record.result, here);
       } else {
         const refusal = resultOutcome(record.result);
@@ -183,7 +193,7 @@ export function useCommand<B extends Baseline | string | undefined = undefined>(
     /** The recorded baseline the command is built from. */
     recordedBaseline: recorded, seen: recorded as B,
     /** The readable names of the baseline parts that moved since the form recorded them. */
-    changed: baselineChanged ? changedParts(recorded, baseline, options.partLabels) : [],
+    changed: baselineChanged ? changedParts(recorded, baseline, { ...commonPartLabels, ...options.partLabels }) : [],
     /** The service said the version moved and the latest content has not been read back yet. */
     awaitingReread: stale && staleAt === view,
     stale,

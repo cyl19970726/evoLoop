@@ -156,3 +156,108 @@ test("the command form in an old region: new markup, required fields, a moved ba
       `the check and the form both read the original operation ID only: ${JSON.stringify(state.operationReads)}`);
     assert.deepEqual(errors, []);
   });
+
+test("a field both the person and someone else changed is never kept silently; long text is saved whole",
+  { skip: !modulePath && "Set EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE" }, async t => {
+    const { chromium } = (await import(pathToFileURL(modulePath!).href)).default;
+    const scheduleId = id(20);
+    const schedule = { version: 1, content: "第一段\n第二段（v1）" };
+    const commands: Record<string, unknown>[] = [];
+    const definition = () => ({ projectId, id: scheduleId, version: schedule.version, currentRevisionId: id(30 + schedule.version), state: "active", watermarkUtc: stamp,
+      revision: { projectId, scheduleId, id: id(30 + schedule.version), version: schedule.version, timezone: "Asia/Taipei", rule: { kind: "daily", localTime: "09:00" },
+        misfire: { kind: "latest" }, overlap: "skip", reason: "建立", actorId: "reader", createdAtUtc: stamp,
+        template: { title: "每日巡检", content: schedule.content, acceptance: "留下报告", owner: roleId, acceptanceMode: "independent_agent" },
+        authorization: { scopeId: "scope-dev", roleId, authorizedBy: "reader", expiresAtUtc: null } } });
+    const server = createServer(async (req, res) => {
+      const url = new URL(req.url!, "http://127.0.0.1");
+      const json = (value: unknown, status = 200) => { res.writeHead(status, { "content-type": "application/json" }); res.end(JSON.stringify(value)); };
+      if (url.pathname === "/__fixture/someone-else") { schedule.version += 1; schedule.content = "第一段\n第二段（别人改的）\n第三段（别人新增）"; res.end("ok"); return; }
+      if (url.pathname === "/api/commands" && req.method === "POST") {
+        let raw = ""; for await (const chunk of req) raw += chunk;
+        const command = JSON.parse(raw) as Record<string, unknown> & { expectedVersion: number; template: { content: string } };
+        commands.push(command);
+        if (command.expectedVersion !== schedule.version) return json({ operationId: command.operationId, status: "rejected", code: "VERSION_CONFLICT", message: "版本已变化" });
+        schedule.version += 1; schedule.content = command.template.content;
+        return json({ operationId: command.operationId, status: "applied", entityId: scheduleId, version: schedule.version });
+      }
+      if (url.pathname.startsWith("/api/")) {
+        const base = `/api/projects/${projectId}`;
+        if (url.pathname === "/api/session") return json({ principal: { actorId: "reader", projectIds: [projectId], permissions: ["read", "write", "review"] }, capabilities: {} });
+        if (url.pathname === base) return json({ id: projectId, title: "表单项目", createdAt: stamp });
+        if (url.pathname === `${base}/impacts`) return json([]);
+        if (url.pathname === `${base}/schedules`) return json([definition()]);
+        if (url.pathname === `${base}/scheduling/status`) return json({ state: "idle", lastTickAt: stamp, lastError: null, lastCreated: 0,
+          grants: [{ projectId, actorId: "reader", scopeId: "scope-dev", roleId }] });
+        if (url.pathname === `${base}/schedules/${scheduleId}/revisions`) return json([definition().revision]);
+        if (url.pathname === `${base}/schedules/${scheduleId}/occurrences`) return json([]);
+        if (url.pathname.startsWith(`${base}/roles/`)) return json({ projectId, id: roleId, version: 1, currentRevisionId: roleId, state: "active", proposal: { title: "巡检职责" },
+          proposedBy: "reader", createdAtUtc: stamp, trialStartedAtUtc: stamp, reviewAtUtc: stamp, mergeTargetRoleId: null });
+        return json({ items: [], nextCursor: null });
+      }
+      const file = join(dist, /^\/(?:$|p\/|ui$)/.test(url.pathname) ? "index.html" : url.pathname);
+      try { const body = await readFile(file); res.writeHead(200, { "content-type": ({ ".html": "text/html", ".js": "text/javascript", ".css": "text/css" } as Record<string, string>)[extname(file)] ?? "application/octet-stream" }); res.end(body); }
+      catch { res.writeHead(404); res.end(); }
+    });
+    await new Promise<void>(done => server.listen(0, "127.0.0.1", done)); t.after(() => { server.close(); });
+    const base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+    const browser = await chromium.launch({ headless: true, ...(process.env.EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH ? { executablePath: process.env.EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH } : {}) });
+    t.after(() => browser.close());
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    const errors: string[] = [];
+    page.on("pageerror", error => errors.push(error.message));
+    await page.goto(`${base}/p/${projectId}/schedules`);
+    await page.getByLabel("访问令牌").fill("fixture-token");
+    await page.getByRole("button", { name: "进入", exact: true }).click();
+    const form = page.getByRole("form", { name: "保存日程修订" });
+    // The schedule card is mounted again after every reread; its folds are opened when they are closed.
+    const open = async () => {
+      const outer = page.locator("details", { has: page.locator(":scope > summary", { hasText: "修订规则、暂停或恢复" }) });
+      await outer.waitFor();
+      if (!await outer.evaluate(element => (element as HTMLDetailsElement).open)) await outer.locator(":scope > summary").click();
+      if (!await form.isVisible()) await page.locator("summary", { hasText: "保存日程修订" }).click();
+      await form.waitFor();
+    };
+    await open();
+
+    // A edits the body written for version 1 and gives a reason; B saves version 2 with another body meanwhile.
+    await form.getByLabel("新任务正文（Markdown）").fill("第一段（我改的）\n第二段（v1）");
+    await form.getByLabel("理由与依据").fill("把第一段说清楚");
+    await fetch(`${base}/__fixture/someone-else`);
+    await page.getByRole("button", { name: "回读当前状态" }).click();
+    await open();
+    await form.getByText(/变化的是：版本、新任务正文（Markdown）/).waitFor();
+    await form.getByText("这些字段你改过，打开表单后别人也改了", { exact: false }).waitFor();
+    assert.equal(await form.getByRole("button", { name: "保留我的修改" }).count(), 0, "no one-click keep while the body conflicts");
+    const proceed = form.getByRole("button", { name: "按所选继续" });
+    assert.equal(await proceed.isDisabled(), true, "continuing waits for a choice");
+    assert.equal(await form.getByRole("button", { name: "保存日程修订" }).isDisabled(), true);
+    if (shots) await page.screenshot({ path: `${shots}/command-form-conflict-1440.png`, fullPage: true });
+    // Refilling asks once more before it drops the input.
+    await form.getByRole("button", { name: "按最新内容重填" }).click();
+    await form.getByText("重填会丢掉你在这张表单里的全部修改").waitFor();
+    await form.getByRole("button", { name: "先不重填" }).click();
+    assert.equal(await form.getByLabel("理由与依据").inputValue(), "把第一段说清楚");
+    // A takes the latest body; the reason only A wrote stays. B's body is what is sent, against version 2.
+    await form.getByRole("radiogroup", { name: "新任务正文（Markdown）用哪一版" }).getByLabel("用最新内容").check();
+    await proceed.click();
+    assert.equal(await form.getByLabel("新任务正文（Markdown）").inputValue(), "第一段\n第二段（别人改的）\n第三段（别人新增）");
+    assert.equal(await form.getByLabel("理由与依据").inputValue(), "把第一段说清楚");
+    await form.getByRole("button", { name: "保存日程修订" }).click();
+    for (let attempt = 0; attempt < 50 && !commands.length; attempt++) await page.waitForTimeout(50);
+    const first = commands[0] as { expectedVersion: number; template: { content: string }; reason: string };
+    assert.deepEqual([first.expectedVersion, first.template.content, first.reason], [2, "第一段\n第二段（别人改的）\n第三段（别人新增）", "把第一段说清楚"],
+      "B's body is not overwritten by text written against version 1");
+
+    // Long text is saved whole: no browser limit cuts it. (The card is mounted again once version 3 is read back.)
+    await page.getByText("已启用 · v3").waitFor();
+    await open();
+    const long = Array.from({ length: 1200 }, (_, index) => `第 ${index + 1} 行巡检说明。`).join("\n");
+    assert.ok(long.length > 5000);
+    await form.getByLabel("新任务正文（Markdown）").fill(long);
+    assert.equal((await form.getByLabel("新任务正文（Markdown）").inputValue()).length, long.length, "the field keeps every character");
+    await form.getByLabel("理由与依据").fill("补全巡检说明");
+    await form.getByRole("button", { name: "保存日程修订" }).click();
+    for (let attempt = 0; attempt < 50 && commands.length < 2; attempt++) await page.waitForTimeout(50);
+    assert.equal((commands[1] as { template: { content: string } }).template.content, long, `the whole ${long.length}-character body is sent`);
+    assert.deepEqual(errors, []);
+  });

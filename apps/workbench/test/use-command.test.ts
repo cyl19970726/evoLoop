@@ -7,7 +7,7 @@ import { test } from "node:test";
 import * as React from "react";
 import type { Operation } from "@evoloop/contracts";
 import {
-  changedParts, contentMoved, followLatest, formDirty, keepEdits, permissionText, personMessage, restoredFormState, submissionRefusal, useCommand,
+  changedParts, conflictingFields, contentMoved, followLatest, formDirty, keepEdits, movedFields, permissionText, personMessage, restoredFormState, submissionRefusal, useCommand,
   type MutationContext, type RecoverableCommand, type SavedDraft,
 } from "../src/shared/command/index.ts";
 
@@ -296,4 +296,98 @@ test("small rules: permissions, messages for the person, and drafts kept before 
   assert.equal(personMessage(new Error("Unexpected token")), "请补全必需字段并检查输入格式。", "an English or internal message is not shown");
   assert.deepEqual(restoredFormState({ reason: "旧草稿" }, { reason: "", title: "名" }), { base: { reason: "", title: "名" }, values: { reason: "旧草稿", title: "名" } });
   assert.equal(restoredFormState(undefined, {}), undefined);
+});
+
+test("keeping changes never sends text written against older content over a newer edit of the same field", () => {
+  // A changes the body on version 3; B saves version 4 with another body. A's body is a conflict, not a kept change.
+  const opened = { body: "第一段\n第二段（v3）", reason: "" };
+  const typed = { base: opened, values: { body: "第一段（我改的）\n第二段（v3）", reason: "补充" } };
+  const latest = { body: "第一段\n第二段（v4 别人改的）\n第三段（v4 新增）", reason: "" };
+  assert.deepEqual(movedFields(typed, latest), ["body"]);
+  assert.deepEqual(conflictingFields(typed, latest), ["body"]);
+  const kept = keepEdits(typed, latest);
+  assert.equal(kept.values.body, latest.body, "without a choice the conflicting field takes the latest content");
+  assert.equal(kept.values.reason, "补充", "a field only the person changed is kept");
+  assert.equal(keepEdits(typed, latest, { body: "mine" }).values.body, typed.values.body, "the person's text only when they chose it for that field");
+  // The same text on both sides is no conflict; a field only someone else changed is no conflict either.
+  assert.deepEqual(conflictingFields({ base: opened, values: { ...opened, body: latest.body } }, latest), []);
+  assert.deepEqual(conflictingFields({ base: opened, values: { ...opened, reason: "补充" } }, latest), []);
+});
+
+test("moved baseline parts are named: common parts of object baselines, and a string baseline as 版本", () => {
+  const log = newLog();
+  const render = hookRunner((baseline: { taskVersion: number; queueVersion: number }) => useCommand(contextWith(log), baseline));
+  render({ taskVersion: 1, queueVersion: 1 });
+  assert.deepEqual(render({ taskVersion: 2, queueVersion: 1 }).changed, ["任务版本"]);
+  assert.deepEqual(changedParts("3:r3", "4:r4"), ["版本"]);
+  assert.deepEqual(changedParts("3:r3", "3:r3"), []);
+});
+
+test("a version conflict thrown as HTTP 409 rereads and waits like a rejected result", async t => {
+  const log = newLog();
+  t.mock.method(globalThis, "fetch", async () => reply({ code: "VERSION_CONFLICT", message: "版本已变化" }, 409)());
+  let rereads = 0;
+  const render = hookRunner((baseline: { taskVersion: number }) => useCommand(contextWith(log), baseline, { onStale: () => { rereads++; } }));
+  let command = render({ taskVersion: 2 });
+  assert.equal(await command.submit(seen => ({ type: "task.cancel", taskId, expectedVersion: seen.taskVersion, reason: "r" })), false);
+  command = render({ taskVersion: 2 });
+  assert.equal(rereads, 1);
+  assert.equal(command.unconfirmed, false, "a 409 is a known answer");
+  assert.equal(log.known.length, 1, "its receipt is removed");
+  assert.equal(command.awaitingReread, true);
+  assert.equal(command.baselineChanged, true);
+});
+
+test("a second submission while one is being sent is refused, even before the next render", async t => {
+  const log = newLog();
+  let release: () => void = () => undefined;
+  const posted: string[] = [];
+  t.mock.method(globalThis, "fetch", async (_url: string, init: RequestInit) => {
+    const body = JSON.parse(String(init.body)) as Record<string, unknown>; posted.push(String(body.operationId));
+    await new Promise<void>(done => { release = done; });
+    return reply({ operationId: body.operationId, status: "applied", entityId: taskId })();
+  });
+  const render = hookRunner(() => useCommand(contextWith(log)));
+  const command = render(undefined);
+  const build = () => ({ type: "task.cancel", taskId, expectedVersion: 1, reason: "r" });
+  const first = command.submit(build);
+  await settle();
+  assert.equal(await command.submit(build), false, "the double click is refused");
+  release();
+  assert.equal(await first, true);
+  assert.equal(posted.length, 1);
+  assert.equal(log.attempts.length, 1, "no second receipt either");
+});
+
+test("an unknown result read back as applied runs the form's registered cleanup; a form without one does not claim it cleared", async t => {
+  let posted: Record<string, unknown> | null = null;
+  t.mock.method(globalThis, "fetch", async (_url: string, init?: RequestInit) => {
+    if (init?.method === "POST") { posted = JSON.parse(String(init.body)) as Record<string, unknown>; return reply({ message: "网关超时" }, 504)(); }
+    const operationId = String(posted!.operationId);
+    return reply({ projectId, id: operationId, actorId: "reader", commandHash: "c".repeat(64), commandType: "task.cancel", createdAt: "2026-11-10T00:00:00.000Z",
+      result: { status: "applied", operationId, entityId: taskId } })();
+  });
+  // A form registers its reset with the hook (the follow-up form does), so a lost answer read back as applied leaves
+  // nothing behind that could be sent a second time.
+  let resets = 0;
+  let blocked = false;
+  const withCleanup = hookRunner(() => useCommand(contextWith(newLog(), { blocked }), undefined, { onApplied: () => { resets++; } }));
+  let command = withCleanup(undefined);
+  await command.submit(() => ({ type: "task.cancel", taskId, expectedVersion: 1, reason: "r" }));
+  blocked = true; withCleanup(undefined);
+  blocked = false; withCleanup(undefined);
+  await settle();
+  command = withCleanup(undefined);
+  assert.equal(resets, 1, "the cleanup ran for the read-back result");
+  assert.match(command.outcome!.message, /草稿已清除/);
+  assert.equal(command.unconfirmed, false);
+  // Without any cleanup the message says only what was checked.
+  const plain = hookRunner(() => useCommand(contextWith(newLog(), { blocked })));
+  let other = plain(undefined);
+  await other.submit(() => ({ type: "task.cancel", taskId, expectedVersion: 1, reason: "r" }));
+  blocked = true; plain(undefined);
+  blocked = false; plain(undefined);
+  await settle();
+  other = plain(undefined);
+  assert.equal(other.outcome!.message, "原操作已核对为已应用。");
 });

@@ -77,7 +77,7 @@ function RunItem({ context, run, mayAbandon }: { context: MutationContext; run: 
           fields={[reasonField, { name: "evidence", label: "所属线程历史与失败原因核对证据", kind: "textarea" }]}
           build={v => ({ type: "runtime.run.abandonReadOnly", runId: run.id, expectedVersion: run.version, ...v })} /></Legacy>
       </details>}
-      {pendingRun(run.state) && run.nativeTurnId && !run.interruptRequested && <Legacy><ActionForm context={context} review title="请求中断本次运行" baseline={{ runVersion: run.version }} fields={[reasonField]}
+      {pendingRun(run.state) && run.nativeTurnId && !run.interruptRequested && <Legacy><ActionForm context={context} review title="请求中断本次运行" fields={[reasonField]}
         build={v => ({ type: "runtime.run.interrupt", runId: run.id, ...v })} /></Legacy>}
       {run.state === "completed" && <Legacy><ActionForm context={context} title="记录本次交接使用" fields={[
         { name: "stage", label: "本身份的交接阶段", kind: "select", options: [option("received", "收到材料"), option("read", "实际阅读"), option("adopted", "已采用到行动"), option("effect", "观察到实际后果")] },

@@ -15,7 +15,7 @@ import { responsibleText, waitingText, workItemNextStep } from "../../shared/wor
 import { FullIdentifiers } from "../../shared/ui/FullIdentifiers";
 import { ResponsibleName } from "../../shared/ui/RecordName";
 import { date, href } from "../../shared/ui/shared";
-import { CommandForm, CommandFrame, followLatest, formDirty, keepEdits, useCommand, type FormState } from "../../shared/command";
+import { CommandForm, CommandFrame, conflictingFields, followLatest, formDirty, keepEdits, useCommand, type FormState } from "../../shared/command";
 import { attentionResolveCommand, followUpCommand, localInput, publicationCommand } from "./taskCommands";
 import { runStateName } from "./taskExperience";
 import { ActionRow, Fact, Fine, ReadNote, readCurrent, reasonField } from "./TaskForms";
@@ -130,13 +130,30 @@ const followUpValues = (followUp: TaskAttentionFollowUp | null, published: boole
   artifact: followUp?.releaseHandoff?.artifactRef ?? "", note: followUp?.releaseHandoff?.note ?? "", readyAt: localInput(followUp?.releaseHandoff?.readyForPublicationAt),
 });
 
+const followUpLabels: Record<string, string> = {
+  decision: "跟进判断", actionTaken: "已做什么", evidenceRef: "依据引用", waitingKind: "等待谁", waitingId: "具体对象", nextCheck: "下一检查时间",
+  reason: "跟进理由", handoff: "登记具备发布条件", recipient: "维护者或接收方", artifact: "待发布的固定产物引用", note: "交接说明", readyAt: "具备发布条件的时间",
+};
+
 /** 填写跟进安排. Untouched fields follow a newer follow-up (someone else's hand-off is never sent back as cleared). */
 function FollowUpForm({ context, detail, value, followUp, onReread }: {
   context: MutationContext; detail: TaskDetail; value: AttentionRead; followUp: TaskAttentionFollowUp | null; onReread(): Promise<{ data?: AttentionRead | undefined }>;
 }) {
   const revisionId = detail.task.currentRevisionId;
   const reread = () => { void onReread(); };
-  const command = useCommand(context, { taskVersion: detail.task.version, revisionId, followUpVersion: value.followUp?.version ?? 0 }, { onStale: reread });
+  // Applied, now or when an unknown result is read back: the fields go back to untouched (so the same follow-up is not
+  // written twice) and only a reread that shows the newer follow-up on this revision proves the write.
+  const command = useCommand(context, { taskVersion: detail.task.version, revisionId, followUpVersion: value.followUp?.version ?? 0 }, {
+    onStale: reread,
+    onApplied: () => {
+      setForm({ base: latest, values: latest }); setTried(false);
+      const before = value.followUp?.version ?? 0;
+      void onReread().then(({ data }) => {
+        if (!data?.followUp || data.followUp.version <= before || data.followUp.taskRevisionId !== revisionId)
+          setVerify("写入已应用，但当前跟进版本还没有读回；请重新读取。");
+      });
+    },
+  });
   const latest = followUpValues(followUp, !!value.followUp?.publication);
   const latestKey = JSON.stringify(latest);
   const [form, setForm] = React.useState<FormState>({ base: latest, values: latest });
@@ -159,20 +176,16 @@ function FollowUpForm({ context, detail, value, followUp, onReread }: {
     setTried(true);
     if (incomplete) return;
     setVerify("");
-    const applied = await command.submit(seen => followUpCommand(detail.task.id, seen, { waitingKind: v.waitingKind as FollowUpKind, waitingId: v.waitingId ?? "",
+    await command.submit(seen => followUpCommand(detail.task.id, seen, { waitingKind: v.waitingKind as FollowUpKind, waitingId: v.waitingId ?? "",
       decision: v.decision as TaskAttentionFollowUp["decision"], actionTaken: v.actionTaken ?? "", evidenceRef: v.evidenceRef ?? "", nextCheck: v.nextCheck ?? "", reason: v.reason ?? "",
       handoff: handoff ? { recipient: v.recipient ?? "", artifactRef: v.artifact ?? "", note: v.note ?? "", readyAt: v.readyAt ?? "" } : null }));
-    if (!applied) return;
-    setForm({ base: latest, values: latest }); setTried(false);
-    // Only a reread that shows the newer follow-up on this revision proves the write.
-    const checked = (await onReread()).data;
-    if (!checked?.followUp || checked.followUp.version <= (value.followUp?.version ?? 0) || checked.followUp.taskRevisionId !== revisionId)
-      setVerify("写入已应用，但当前跟进版本还没有读回；请重新读取。");
   }
+  const conflicts = conflictingFields(form, latest).map(name => ({ name, label: followUpLabels[name] ?? name }));
   const input = (label: string, name: string, options: { required?: boolean; type?: string; hint?: string } = {}) =>
     <Field label={options.required ? label : `${label}（可选）`} hint={options.hint} error={options.required ? missing(name, label) : undefined}>{control => <Input {...control} type={options.type ?? "text"} value={v[name] ?? ""} required={options.required}
       maxLength={500} onChange={event => set(name)(event.target.value)} autoComplete="off" />}</Field>;
   return <CommandFrame context={context} command={command} label="保存跟进安排" submitLabel="保存跟进安排" dirty={dirty} onSubmit={() => void submit()} onReread={reread}
+    conflicts={conflicts} onResolve={choices => { command.rebase(); setForm(keepEdits(form, latest, choices)); }}
     onKeep={() => { command.rebase(); setForm(keepEdits(form, latest)); }} onRefill={() => { command.rebase(); setForm({ base: latest, values: latest }); }}>
     <Field label="跟进判断">{control => <Select {...control} value={v.decision} onChange={event => set("decision")(event.target.value)} className="w-full">
       {Object.entries(decisionLabel).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</Select>}</Field>

@@ -48,7 +48,7 @@ export function ActionRow({ title, description, children, defaultOpen = false, i
   </details>;
 }
 
-export const reasonField = (label = "理由与依据", hint?: string): FormField => ({ name: "reason", label, kind: "textarea", ...(hint ? { hint } : {}) });
+export const reasonField = (label = "理由与依据", hint?: string): FormField => ({ name: "reason", label, kind: "textarea", maxLength: 4000, ...(hint ? { hint } : {}) });
 
 interface QueryLike<T> { data: T | undefined; error: unknown; isPending: boolean; isFetching: boolean; isPlaceholderData?: boolean; refetch(): unknown }
 

@@ -45,7 +45,7 @@ function fields(grants: SchedulingGrant[], definition?: ScheduleDefinition, fres
     { name: "maxCatchUp", label: "有限补做的最多次数", optional: true, value: revision?.misfire.kind === "bounded" ? String(revision.misfire.maxCatchUp) : "" },
     { name: "overlap", label: "上次任务未结束时", kind: "select", value: revision?.overlap ?? "skip", options: [option("skip", "跳过新时刻"), option("queue", "排队待核对")] },
     { name: "title", label: "新提议任务的名称", value: revision?.template.title ?? "" },
-    { name: "content", label: "新任务正文（Markdown）", kind: "textarea", value: revision?.template.content ?? "" },
+    { name: "content", label: "新任务正文（Markdown）", kind: "textarea", value: revision?.template.content ?? "", maxLength: 65536 },
     { name: "acceptance", label: "新提议任务的接受条件", kind: "textarea", value: revision?.template.acceptance ?? "" },
     { name: "owner", label: "任务责任角色 ID", value: revision?.template.owner ?? "" },
     ...(revision?.template.managedTarget ? [] : [

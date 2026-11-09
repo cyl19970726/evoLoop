@@ -89,7 +89,9 @@ export function BindAgentForm({ context, task, currentVersion, currentKey, onDon
   // What the person saw when the form opened. If the task or its assignment changes meanwhile, the form refuses to
   // submit until they have looked at the latest content; the versions sent are always the ones they saw.
   // A version conflict rereads the project, so the latest assignment is on screen before the person decides.
-  const command = useCommand(context, { taskVersion: task.version, assignmentVersion: currentVersion, currentKey: currentKey ?? "" }, { onStale: context.onChanged });
+  // Applied, now or when an unknown result is read back: the form folds away and the reread shows the binding.
+  const command = useCommand(context, { taskVersion: task.version, assignmentVersion: currentVersion, currentKey: currentKey ?? "" },
+    { onStale: context.onChanged, onApplied: onDone });
   const dirty = !!(target || recipient || reason);
   // The rule of every task form: an untouched form follows the latest content; a typed one waits for the person.
   React.useEffect(() => {
@@ -101,8 +103,7 @@ export function BindAgentForm({ context, task, currentVersion, currentKey, onDon
     setTried(true);
     const chosen = choices.find(item => item.key === target);
     if (!chosen || !reason.trim()) return;
-    const applied = await command.submit(seen => assignmentSetCommand(task.id, seen, { target: chosen.target, recipientActorId: recipient, reason }));
-    if (applied) onDone();
+    await command.submit(seen => assignmentSetCommand(task.id, seen, { target: chosen.target, recipientActorId: recipient, reason }));
   }
   return <CommandFrame context={context} command={command} label="绑定智能体" submitLabel="保存绑定" dirty={dirty} permission="review" className="p-3"
     onSubmit={() => void submit()} onCancel={onDone} cancelLabel="取消"

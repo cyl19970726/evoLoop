@@ -129,6 +129,45 @@ test("a kept draft comes back with the baseline it was written against: same bas
   clearCommandDrafts();
 });
 
+test("a field both the person and someone else changed is decided field by field; nothing is kept in one click", () => {
+  clearCommandDrafts();
+  // 文档修订: A changed the body on version 3; B saved version 4 with another body. A also wrote a reason.
+  const scope = "document:d1";
+  const at = (draftBaseline: string) => context({ draftScope: scope, draftBaseline });
+  const fields: Field[] = [{ name: "body", label: "完整正文", kind: "textarea", maxLength: 65536 }, { name: "reason", label: "修订理由", kind: "textarea" }];
+  commandDrafts.set(draftKeyFor(at("3"), scope, "保存候选修订"), { baseline: "3",
+    values: { base: { body: "第二段（v3）", reason: "" }, values: { body: "第二段（我改的）", reason: "补充" } } });
+  const html = render({ context: at("4"), title: "保存候选修订", embedded: true,
+    fields: [{ ...fields[0]!, value: "第二段（v4 别人改的）" }, fields[1]!] });
+  assert.match(html, /变化的是：版本、完整正文。/, "the notice names what moved");
+  assert.match(html, /这些字段你改过，打开表单后别人也改了/);
+  assert.match(html, /role="radiogroup" aria-label="完整正文用哪一版"/);
+  assert.match(html, /用最新内容/);
+  assert.match(html, /用我的版本（覆盖别人的修改）/);
+  assert.doesNotMatch(html, />保留我的修改</, "no one-click keep while a field conflicts");
+  assert.match(html, /<button[^>]*disabled=""[^>]*>按所选继续<\/button>/, "continuing waits for a choice on every conflicting field");
+  assert.match(html, />按最新内容重填</);
+  assert.equal(submitDisabled(html), true);
+  // Only the person changed the reason: no conflict, keeping is one click and keeps only that.
+  commandDrafts.set(draftKeyFor(at("3"), scope, "保存候选修订"), { baseline: "3",
+    values: { base: { body: "第二段（v3）", reason: "" }, values: { body: "第二段（v3）", reason: "补充" } } });
+  const plain = render({ context: at("4"), title: "保存候选修订", embedded: true, fields: [{ ...fields[0]!, value: "第二段（v4 别人改的）" }, fields[1]!] });
+  assert.match(plain, />保留我的修改</);
+  assert.doesNotMatch(plain, /radiogroup/);
+  clearCommandDrafts();
+});
+
+test("long text: no browser limit cuts it; a limit from the contract is checked before sending with the count", () => {
+  const html = render({ context: context(), embedded: true, title: "创建 Markdown 文档",
+    fields: [{ name: "body", label: "完整 Markdown 正文", kind: "textarea", maxLength: 65536 }, { name: "reason", label: "理由", kind: "textarea" }] });
+  assert.doesNotMatch(html, /maxLength|maxlength/i, "no maxlength attribute: a pasted text is never cut without a word");
+  const body = toFormField({ name: "body", label: "完整 Markdown 正文", kind: "textarea", maxLength: 65536 });
+  const long = "长".repeat(12000);
+  assert.deepEqual(missingFields([body], { body: long }), {}, "12000 characters are within the document contract");
+  assert.deepEqual(missingFields([body], { body: "长".repeat(65537) }), { body: "最多 65536 字，现在是 65537 字，请删减后再提交。" });
+  assert.deepEqual(missingFields([toFormField({ name: "reason", label: "理由", kind: "textarea" })], { reason: long }), {}, "no limit unless the field names one");
+});
+
 test("the baseline: named fixed inputs, the older draftBaseline string, or both", () => {
   assert.deepEqual(actionBaseline({ sessionVersion: 3 }, undefined), { sessionVersion: 3 });
   assert.equal(actionBaseline(undefined, "3"), "3");

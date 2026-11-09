@@ -49,8 +49,21 @@ export function openingBaseline<B>(saved: { baseline: unknown } | undefined, cur
   return saved ? saved.baseline as B : current;
 }
 
-/** The parts of two object baselines that differ, by their readable name; parts without a name are not listed. */
+/** Readable names of the baseline parts forms commonly record; a form can name its own (`partLabels`). */
+export const commonPartLabels: Readonly<Record<string, string>> = {
+  taskVersion: "任务版本", revisionId: "任务修订", assignmentVersion: "分派", currentKey: "承接的智能体", planVersion: "计划",
+  dependencyVersion: "前置任务", timingVersion: "执行时间", executeAt: "执行时间", seriesState: "重复设置", queueVersion: "队列",
+  entryId: "队列项", entryVersion: "队列项", entryState: "队列项状态", runVersion: "运行", deliveryId: "最新交付", followUpVersion: "跟进安排",
+  itemId: "关注项", itemVersion: "关注项", sessionVersion: "智能体", profileRevision: "执行配置", roleVersion: "职责", linkVersion: "连接登记",
+  handoffState: "交接状态", grants: "日程授权", draftBaseline: "版本",
+};
+
+/**
+ * The parts of two baselines that differ, by their readable name; parts without a name are not listed. Two string
+ * baselines that differ are one part, “版本”.
+ */
 export function changedParts(seen: unknown, current: unknown, labels: Readonly<Record<string, string>> = {}): string[] {
+  if (typeof seen === "string" && typeof current === "string") return seen === current ? [] : ["版本"];
   if (!seen || !current || typeof seen !== "object" || typeof current !== "object") return [];
   const before = seen as Record<string, unknown>, after = current as Record<string, unknown>;
   return [...new Set([...Object.keys(before), ...Object.keys(after)])]
@@ -86,10 +99,34 @@ export function formDirty(state: FormState): boolean {
   return Object.keys({ ...state.base, ...state.values }).some(key => (state.values[key] ?? "") !== (state.base[key] ?? ""));
 }
 
-/** “保留我的修改”: the fields the person changed stay; every other field takes the latest content. */
-export function keepEdits(state: FormState, latest: Values): FormState {
-  const values = Object.fromEntries(Object.keys(latest).map(key =>
-    [key, (state.values[key] ?? "") !== (state.base[key] ?? "") ? state.values[key] ?? "" : latest[key] ?? ""]));
+const changedFrom = (from: Values, to: Values, key: string) => (to[key] ?? "") !== (from[key] ?? "");
+
+/** The fields whose latest content differs from what the form was filled with (what moved while the person typed). */
+export function movedFields(state: FormState, latest: Values): string[] {
+  return Object.keys({ ...state.base, ...latest }).filter(key => changedFrom(state.base, latest, key));
+}
+
+/**
+ * The fields both the person and someone else changed, to different text. Keeping the person's text there would send
+ * what they wrote against the older content as if it were written against the latest one, so these are never kept
+ * without asking field by field.
+ */
+export function conflictingFields(state: FormState, latest: Values): string[] {
+  return Object.keys({ ...state.base, ...latest }).filter(key => changedFrom(state.base, state.values, key)
+    && changedFrom(state.base, latest, key) && (state.values[key] ?? "") !== (latest[key] ?? ""));
+}
+
+/**
+ * “保留我的修改”: the fields only the person changed stay; every other field takes the latest content. A field both
+ * changed (`conflictingFields`) takes the latest content unless `choices` says the person chose their own text for it.
+ */
+export function keepEdits(state: FormState, latest: Values, choices: Readonly<Record<string, "mine" | "latest">> = {}): FormState {
+  const conflicts = new Set(conflictingFields(state, latest));
+  const values = Object.fromEntries(Object.keys(latest).map(key => {
+    const mine = changedFrom(state.base, state.values, key);
+    const keep = conflicts.has(key) ? choices[key] === "mine" : mine;
+    return [key, keep ? state.values[key] ?? "" : latest[key] ?? ""];
+  }));
   return { base: latest, values };
 }
 

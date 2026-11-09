@@ -51,7 +51,7 @@ export function DocumentIndex({ context }: { context: MutationContext }) {
         <ActionForm context={context} title="创建 Markdown 文档" fields={[{ name: "title", label: "文档名称" },
           { name: "kind", label: "类型（可选）", kind: "select", optional: true, options: Object.entries(kindLabel)
             .filter(([key]) => key !== "task" && key !== "organization_review").map(([key, label]) => option(key, label)) },
-          { name: "body", label: "完整 Markdown 正文", kind: "textarea" }]}
+          { name: "body", label: "完整 Markdown 正文", kind: "textarea", maxLength: 65536 }]}
           build={values => ({ type: "document.create", documentId: crypto.randomUUID(), title: values.title, body: values.body, kind: values.kind || null })} />
         <UploadDocument context={context} />
       </Legacy>

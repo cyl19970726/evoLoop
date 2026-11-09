@@ -19,6 +19,8 @@ export interface Field {
   name: string; label: string; value?: string; kind?: "text" | "textarea" | "select" | "multi" | "datetime";
   options?: { value: string; label: string }[]; optional?: boolean; hint?: string; advanced?: boolean;
   placeholder?: string; autoGrow?: boolean;
+  /** The contract's length limit, checked before sending (no limit by default, as before). */
+  maxLength?: number;
 }
 
 /** The old page notice (`.notice`) for pages that still draw old markup; forms use @evoloop/ui's Notice. */

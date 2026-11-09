@@ -240,13 +240,14 @@ function SubmitBar({ context, stage, taskId, draft, problems, ready, onInvalid, 
   context: MutationContext; stage: Stage | undefined; taskId: string; draft: TaskDraft; problems: DraftProblems; ready: boolean;
   onInvalid(): void; onApplied(): void; onClear: (() => void) | undefined;
 }) {
-  const command = useCommand(context, stage ? `${stage.version}:${stage.state}` : undefined, { onStale: context.onChanged });
+  // Applied, now or when an unknown result is read back: the draft is done with (the page moves on).
+  const command = useCommand(context, stage ? `${stage.version}:${stage.state}` : undefined, { onStale: context.onChanged, onApplied: () => onApplied() });
   const count = Object.keys(problems).length;
   const [tried, setTried] = React.useState(false);
   async function send() {
     setTried(true);
     if (count) { onInvalid(); return; }
-    if (await command.submit(() => taskCreateCommand(draft, taskId))) onApplied();
+    await command.submit(() => taskCreateCommand(draft, taskId));
   }
   return <div className="flex flex-col gap-3">
     {tried && count > 0 && <Notice tone="waiting">还有 {count} 处需要补充：{(Object.keys(problems) as (keyof TaskDraft)[]).map(key => draftFieldLabels[key]).join("、")}。说明写在各项下面。</Notice>}

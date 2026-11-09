@@ -3,12 +3,12 @@
 export type { MutationContext, RecoverableCommand } from "./context";
 export { clearCommandDrafts, commandDrafts, draftKeyFor, readableDraft, type DraftStore, type PendingOperation, type SavedDraft } from "./drafts";
 export {
-  baselineChangedText, baselineText, blockedText, changedParts, contentMoved, followLatest, formDirty, incompleteText, keepEdits,
+  baselineChangedText, baselineText, blockedText, changedParts, commonPartLabels, conflictingFields, contentMoved, followLatest, formDirty, incompleteText, keepEdits, movedFields,
   openingBaseline, permissionText, personMessage, prepareCommand, receiptFailedText, restoredFormState, submissionRefusal,
   unconfirmedNote, unconfirmedTitle, type Baseline, type FormState, type SubmittableCommand,
 } from "./rules";
 export { useCommand, type CommandOptions } from "./useCommand";
 export {
   BaselineNotice, CommandBlock, CommandForm, CommandFrame, OutcomeNotice, initialValues, missingFields,
-  type CommandFormProps, type CommandFrameProps, type CommandView, type FormField, type FormHandle,
+  type CommandFormProps, type CommandFrameProps, type CommandView, type ConflictChoices, type FieldConflict, type FormField, type FormHandle,
 } from "./CommandForm";

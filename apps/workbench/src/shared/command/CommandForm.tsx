@@ -12,7 +12,7 @@ import type { SubmissionOutcome } from "../submissionOutcome";
 import type { MutationContext } from "./context";
 import { readableDraft } from "./drafts";
 import {
-  baselineChangedText, blockedText, contentMoved, followLatest, formDirty, keepEdits, permissionText, restoredFormState,
+  baselineChangedText, blockedText, conflictingFields, contentMoved, followLatest, formDirty, keepEdits, movedFields, permissionText, restoredFormState,
   unconfirmedNote, unconfirmedTitle, type Baseline, type FormState,
 } from "./rules";
 import { useCommand, type CommandOptions } from "./useCommand";
@@ -31,16 +31,26 @@ function Diagnostic({ detail }: { detail: string }) {
     <p className="mt-1 whitespace-pre-wrap [overflow-wrap:anywhere]">{detail}</p></details>;
 }
 
+/** A field both the person and someone else changed: the person chooses which text it keeps. */
+export interface FieldConflict { name: string; label: string }
+export type ConflictChoices = Record<string, "mine" | "latest">;
+
 /**
  * The notice for a form whose baseline moved. While a version conflict is read back it waits (refilling from the
- * latest content is always possible); then the person keeps the fields they changed, or refills. `copy` offers the
- * draft as text first; when the clipboard is not available, the text is shown for a manual copy.
+ * latest content is always possible); then the person keeps their changes or refills. Changes are kept only where
+ * nobody else changed the same field: a field both changed (`conflicts`) is decided field by field. Refilling drops
+ * the person's input, so it asks once more and offers the copy first. `copy` gives the draft as text; when the
+ * clipboard is not available, the text is shown for a manual copy.
  */
-export function BaselineNotice({ awaiting, onReread, onKeep, onRefill, keepLabel = "保留我的修改", keepNote, changed = [], copy, rereading, title }: {
-  awaiting: boolean; onReread(): void; onKeep(): void; onRefill(): void; keepLabel?: string | undefined; keepNote?: string | undefined;
+export function BaselineNotice({ awaiting, onReread, onKeep, onRefill, onResolve, conflicts = [], keepLabel = "保留我的修改", keepNote, changed = [], copy, rereading, title }: {
+  awaiting: boolean; onReread(): void; onKeep(): void; onRefill(): void; onResolve?: ((choices: ConflictChoices) => void) | undefined;
+  conflicts?: readonly FieldConflict[] | undefined; keepLabel?: string | undefined; keepNote?: string | undefined;
   changed?: readonly string[] | undefined; copy?: (() => string) | undefined; rereading?: boolean | undefined; title?: string | undefined;
 }) {
   const [copied, setCopied] = React.useState<"no" | "yes" | "manual">("no");
+  const [confirming, setConfirming] = React.useState(false);
+  const [choices, setChoices] = React.useState<ConflictChoices>({});
+  const name = React.useId();
   const copyDraft = async () => {
     try { await navigator.clipboard.writeText(copy!()); setCopied("yes"); } catch { setCopied("manual"); }
   };
@@ -49,15 +59,35 @@ export function BaselineNotice({ awaiting, onReread, onKeep, onRefill, keepLabel
   const manual = copy && copied === "manual" && <span className="mt-2 flex flex-col gap-1.5">
     <span className="text-caption">剪贴板不可用。请选择并手动复制下面的全部字段。</span>
     <Textarea readOnly aria-label="完整草稿" value={copy()} rows={8} onFocus={event => event.currentTarget.select()} /></span>;
-  return awaiting
-    ? <Notice tone="waiting" data-baseline-changed="" title="版本已变化，正在读回最新内容" action={<span className="flex flex-col items-start gap-1.5">
-      <Button size="compact" disabled={rereading} onClick={onReread}>{rereading ? "正在重新读取…" : "重新读取"}</Button>
-      <Button size="compact" variant="ghost" onClick={onRefill}>按最新内容重填</Button>{copyButton}</span>}>
-      读回后再决定保留修改还是按最新内容重填；修改留在下面，暂不能提交。{parts}{manual}</Notice>
-    : <Notice tone="waiting" data-baseline-changed="" title={title ?? "打开表单后内容已被更新"} action={<span className="flex flex-col items-start gap-1.5">
-      <Button size="compact" disabled={rereading} onClick={onRefill}>按最新内容重填</Button>
-      <Button size="compact" variant="ghost" disabled={rereading} onClick={onKeep}>{keepLabel}</Button>{copyButton}</span>}>
-      {baselineChangedText}{parts}{keepNote ?? "保留我的修改：只保留你改过的部分，其余换成最新内容。"}{manual}</Notice>;
+  // Refilling drops the person's input: one more click to confirm, with the copy right beside it.
+  const refill = confirming
+    ? <span className="flex flex-col items-start gap-1.5" role="group" aria-label="确认按最新内容重填">
+      <Button size="compact" variant="danger" onClick={() => { setConfirming(false); onRefill(); }}>丢弃修改并重填</Button>
+      <Button size="compact" variant="ghost" onClick={() => setConfirming(false)}>先不重填</Button></span>
+    : <Button size="compact" variant="ghost" disabled={rereading} onClick={() => setConfirming(true)}>按最新内容重填</Button>;
+  const confirmNote = confirming && <p className="mt-1 font-medium text-foreground">重填会丢掉你在这张表单里的全部修改；需要的话先复制草稿。</p>;
+  if (awaiting) return <Notice tone="waiting" data-baseline-changed="" title="版本已变化，正在读回最新内容" action={<span className="flex flex-col items-start gap-1.5">
+    <Button size="compact" disabled={rereading} onClick={onReread}>{rereading ? "正在重新读取…" : "重新读取"}</Button>{refill}{copyButton}</span>}>
+    读回后再决定保留修改还是按最新内容重填；修改留在下面，暂不能提交。{parts}{confirmNote}{manual}</Notice>;
+  const decided = conflicts.every(conflict => choices[conflict.name]);
+  return <Notice tone="waiting" data-baseline-changed="" title={title ?? "打开表单后内容已被更新"} action={<span className="flex flex-col items-start gap-1.5">
+    {conflicts.length
+      ? <Button size="compact" disabled={rereading || !decided} onClick={() => onResolve?.(choices)}>按所选继续</Button>
+      : <Button size="compact" disabled={rereading} onClick={onKeep}>{keepLabel}</Button>}
+    {refill}{copyButton}</span>}>
+    {baselineChangedText}{parts}
+    {conflicts.length
+      ? <span className="mt-2 flex flex-col gap-2">
+        <span>这些字段你改过，打开表单后别人也改了。保留你的文字会覆盖别人的修改，请逐项选择；只有你改过的其他字段照旧保留。</span>
+        {conflicts.map(conflict => <span key={conflict.name} role="radiogroup" aria-label={`${conflict.label}用哪一版`} className="flex flex-wrap items-center gap-x-4 gap-y-1">
+          <span className="font-medium text-foreground">{conflict.label}</span>
+          {(["latest", "mine"] as const).map(choice => <label key={choice} className="flex items-center gap-1.5">
+            <input type="radio" name={`${name}-${conflict.name}`} checked={choices[conflict.name] === choice} className="accent-[var(--accent)]"
+              onChange={() => setChoices(current => ({ ...current, [conflict.name]: choice }))} />
+            {choice === "latest" ? "用最新内容" : "用我的版本（覆盖别人的修改）"}</label>)}
+        </span>)}</span>
+      : keepNote ?? "保留我的修改：只保留你改过的部分，其余换成最新内容。"}
+    {confirmNote}{manual}</Notice>;
 }
 
 /** The part of useCommand the frame reads. */
@@ -83,6 +113,11 @@ export interface CommandFrameProps {
   baselineTitle?: string | undefined;
   /** The content the form was filled with moved while the person was typing (no baseline part changed). */
   moved?: boolean | undefined;
+  /** The readable names of the fields whose latest content moved, for “变化的是：…”. */
+  changedFields?: readonly string[] | undefined;
+  /** Fields both the person and someone else changed; with them, keeping is decided field by field (`onResolve`). */
+  conflicts?: readonly FieldConflict[] | undefined;
+  onResolve?: ((choices: ConflictChoices) => void) | undefined;
   /** The permissions needed to send (write by default). */
   permission?: Permission | readonly Permission[] | undefined;
   /** Why sending waits (the content on screen is being checked), or nothing. */
@@ -107,6 +142,7 @@ export interface CommandFrameProps {
 }
 
 export function CommandFrame({ context, command, label, submitLabel, dirty, onSubmit, onKeep, onRefill, onReread, keepLabel, keepNote, baselineTitle, moved = false,
+  changedFields = [], conflicts, onResolve,
   permission = "write", paused, danger, saved, copy, rereading, onCancel, cancelLabel = "收起", actions, surface = "muted", layout = "stack", submitOnModEnter, className, children }: CommandFrameProps) {
   const block = React.useContext(CommandBlock);
   const needed: readonly Permission[] = typeof permission === "string" ? [permission] : permission;
@@ -122,7 +158,8 @@ export function CommandFrame({ context, command, label, submitLabel, dirty, onSu
     {denied && <p className="text-caption text-muted-foreground">{denied}</p>}
     {blocked && <p className="text-caption text-muted-foreground">{block ? `暂不能提交：${block}` : blockedText}</p>}
     {changed && <BaselineNotice awaiting={command.awaitingReread} onReread={reread} onKeep={onKeep} onRefill={onRefill} keepLabel={keepLabel}
-      keepNote={keepNote} changed={command.changed} copy={copy} rereading={rereading || !!paused} title={baselineTitle} />}
+      keepNote={keepNote} changed={[...new Set([...command.changed, ...changedFields])]} copy={copy} rereading={rereading || !!paused} title={baselineTitle}
+      conflicts={conflicts} onResolve={onResolve} />}
     {command.unconfirmed && <Notice tone="waiting" title={unconfirmedTitle} action={!context.blocked &&
       <Button size="compact" disabled={command.checking} onClick={() => void command.readBack()}>{command.checking ? "正在核对…" : "按原操作核对"}</Button>}>
       {command.outcome?.unconfirmed ? command.outcome.message : `请在上方按原操作 ID 核对，确认前不要再次提交。${unconfirmedNote}`}
@@ -148,7 +185,12 @@ export interface FormField {
   /** `multi`: several choices, kept as a JSON array; `datetime`: a local date and time. */
   kind?: "text" | "textarea" | "select" | "multi" | "datetime" | "radio" | undefined;
   initial?: string | undefined; options?: { value: string; label: string; disabled?: boolean | undefined }[] | undefined;
-  optional?: boolean | undefined; hint?: string | undefined; rows?: number | undefined; placeholder?: string | undefined; maxLength?: number | undefined;
+  optional?: boolean | undefined; hint?: string | undefined; rows?: number | undefined; placeholder?: string | undefined;
+  /**
+   * The contract's limit, checked before sending with a message (never by cutting the text: the browser's own limit
+   * would cut a pasted text without saying so). No limit by default.
+   */
+  maxLength?: number | undefined;
   /** Folded under “高级选项”. */
   advanced?: boolean | undefined;
   /** One line that grows with its text (a message composer). */
@@ -161,10 +203,13 @@ export function initialValues(fields: readonly FormField[]): Record<string, stri
 
 const chosen = (value: string): string[] => { try { const list = JSON.parse(value || "[]"); return Array.isArray(list) ? list.map(String) : []; } catch { return []; } };
 
-/** The required fields that are empty, with what to do about each. */
+/** The fields that cannot be sent as they are (an empty required field, a text over its limit), with what to do about each. */
 export function missingFields(fields: readonly FormField[], values: Record<string, string>): Record<string, string> {
-  return Object.fromEntries(fields.filter(field => !field.optional).flatMap(field => {
+  return Object.fromEntries(fields.flatMap(field => {
     const value = values[field.name] ?? "";
+    if (field.maxLength !== undefined && field.kind !== "multi" && value.length > field.maxLength)
+      return [[field.name, `最多 ${field.maxLength} 字，现在是 ${value.length} 字，请删减后再提交。`]];
+    if (field.optional) return [];
     if (field.kind === "multi") return chosen(value).length ? [] : [[field.name, "请至少选择一项。"]];
     if (value.trim()) return [];
     return [[field.name, field.kind === "select" || field.kind === "radio" ? `请选择${field.label}。` : `请填写${field.label}。`]];
@@ -240,7 +285,11 @@ export function CommandForm<B extends Baseline | string | undefined = undefined>
     const values = form.values;
     void command.submit(seen => build(values, seen));
   }
-  const keep = () => { const next = keepEdits(form, initials); command.rebase(next); setForm(next); setFromEarlierMount(false); };
+  // Kept only where nobody else changed the same field; a field both changed is decided field by field.
+  const keep = (choices = {}) => { const next = keepEdits(form, initials, choices); command.rebase(next); setForm(next); setFromEarlierMount(false); };
+  const labelOf = (name: string) => fields.find(field => field.name === name)?.label ?? name;
+  const conflicts = conflictingFields(form, initials).map(name => ({ name, label: labelOf(name) }));
+  const changedFields = dirty ? movedFields(form, initials).map(labelOf) : [];
   const refill = () => { command.rebase(); command.dropDraft(); setForm({ base: initials, values: initials }); setErrors({}); setFromEarlierMount(false); };
   const clear = () => { command.dropDraft(); setForm({ base: initials, values: initials }); setErrors({}); };
   const fill = (values: Record<string, string>) => { const next = { ...form, values: { ...form.values, ...values } }; setForm(next); command.saveDraft(next); };
@@ -249,8 +298,9 @@ export function CommandForm<B extends Baseline | string | undefined = undefined>
   const control = (field: FormField) => <FieldControl key={field.name} field={field} value={form.values[field.name] ?? ""} error={errors[field.name]}
     hideLabel={inline} onChange={value => set(field.name, value)} />;
   const advanced = fields.filter(field => field.advanced);
-  return <CommandFrame context={context} command={command} label={name} submitLabel={submitLabel} dirty={dirty} onSubmit={submit} onKeep={keep}
+  return <CommandFrame context={context} command={command} label={name} submitLabel={submitLabel} dirty={dirty} onSubmit={submit} onKeep={() => keep()}
     onRefill={refill} onReread={reread} moved={moved} permission={permission} paused={paused} danger={danger} saved={saved}
+    conflicts={conflicts} onResolve={keep} changedFields={changedFields}
     baselineTitle={fromEarlierMount && !command.outcome ? "这份草稿写于较早的版本" : undefined}
     actions={clearable && dirty && <Button size="compact" variant="ghost" onClick={clear} disabled={command.busy}>清空草稿</Button>}
     copy={copyable ? () => readableDraft(name, fields, form.values) : undefined} surface={surface} layout={inline ? "inline" : "stack"}
@@ -284,15 +334,15 @@ function FieldControl({ field, value, error, hideLabel, onChange }: { field: For
   }
   return <Field label={label} hint={field.hint} error={error} className={hideLabel ? "[&>label]:sr-only" : undefined}>{control => field.kind === "textarea"
     ? field.autoGrow
-      ? <Textarea {...control} name={field.name} value={value} required={!field.optional} rows={1} maxLength={field.maxLength} placeholder={field.placeholder}
+      ? <Textarea {...control} name={field.name} value={value} required={!field.optional} rows={1} placeholder={field.placeholder}
         autoComplete="off" className="min-h-10 resize-none" onChange={event => onChange(event.target.value)}
         ref={node => { if (node) { node.style.height = "auto"; node.style.height = `${Math.min(node.scrollHeight, 120)}px`; } }} />
-      : <Textarea {...control} name={field.name} value={value} required={!field.optional} rows={field.rows ?? 3} maxLength={field.maxLength ?? 4000}
+      : <Textarea {...control} name={field.name} value={value} required={!field.optional} rows={field.rows ?? 3}
         placeholder={field.placeholder} autoComplete="off" onChange={event => onChange(event.target.value)} />
     : field.kind === "select" ? <Select {...control} name={field.name} value={value} required={!field.optional} onChange={event => onChange(event.target.value)} className="w-full">
       {(field.optional || !field.options?.some(option => option.value === value)) && <option value="">{field.optional ? "不设置" : "请选择"}</option>}
       {field.options?.map(option => <option key={option.value} value={option.value} disabled={option.disabled}>{option.label}</option>)}
     </Select>
       : <Input {...control} name={field.name} type={field.kind === "datetime" ? "datetime-local" : "text"} value={value} required={!field.optional}
-        maxLength={field.maxLength} placeholder={field.placeholder} autoComplete="off" onChange={event => onChange(event.target.value)} />}</Field>;
+        placeholder={field.placeholder} autoComplete="off" onChange={event => onChange(event.target.value)} />}</Field>;
 }
