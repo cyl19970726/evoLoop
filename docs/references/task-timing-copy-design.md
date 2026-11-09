@@ -1,18 +1,8 @@
-# 普通 Task 定时与后继复制：字段和授权设计
+# 普通 Task 定时复制：实施前分析
 
-> 2026-11-06 的字段与授权核对；2026-11-08 补停止状态和普通新 Task 准入。下文保留实施前的风险分析，便于追溯复制边界。各阶段的候选、独立验收和正式结果以对应固定报告为准。
+本页保留普通 Task 定时与后继复制在实施前的字段与授权分析，便于追溯复制边界为什么这样划。它是 2026-11-06 的核对，2026-11-08 补了停止状态和普通新 Task 的准入。文中“现状”指当时的代码，“拟实施”是当时的方案；后来实现时，每日重复的授权从每个系列一个精确范围，补充为按项目、actor 和 Role 授权的 `scheduling.taskTimingGrants`。
 
-## 普通新 Task 的每日重复授权
-
-项目维护者可在私有 integrations 文件的 `scheduling` 对象中配置 `taskTimingGrants`，每项只含精确的 `projectId`、业务 `actorId` 和 Task owner `roleId`。这允许该业务 actor 从普通 `task.create` 或 `task.timing.set` 为同 Role 的新 Task 设置每日重复，不再预先为每个尚未创建的 Task ID 添加范围。服务仍要求 actor 在当前项目拥有读、写和审阅权限、Task owner 为有效 Role，且调度开关已启用；物化时只选择同项目、同 actor、同 Role 的已保存系列，并重新读取当前 grant 和身份资格。撤权后不能创建、修改未来或继续复制。
-
-`taskTimingGrants` 与旧 `scheduling.grants` 分开。后者仍只按精确 scope 授权旧 Schedule，不能填 `task-timing:*`；前者不能创建或物化旧 Schedule，也不授予新的 Session/Run 执行资格。已存在的 `task-timing:<A taskId>` 精确 grant 仍可继续管理原系列。一次性时间和停止未来复制不要求新的每日重复授权。示例（实际项目、actor、Role 由维护者核定）：
-
-```json
-{"scheduling":{"enabled":true,"grants":[],"taskTimingGrants":[{"projectId":"<PROJECT_UUID>","actorId":"<BUSINESS_ACTOR>","roleId":"<OWNER_ROLE_UUID>"}]}}
-```
-
-时间读模型中，`executeAtUtc` 是当前 Task 自己的约定时点；`nextTaskId` 指向已经生成的后一份，可能是已完成的历史；`occurrences` 保存每份历史时点。`nextAtUtc` 只表示 active 每日系列尚未物化的下一个日历时点。停止或一次性任务返回 `null`，页面显示“已停止后续复制”或“仅本次”；已生成 B 的历史时间及链接继续可读。活跃系列的下一时点已过而尚未物化时，页面标为待补约定时点，并保留等待原因。
+已采纳并实现的规则见[接口合同](../architecture/contracts.md#普通-task-的一次与每日复制)，配置与读取见[运行接线手册](../development/runtime-operations.md#4-普通-task-的每日复制)。各阶段的候选、独立验收和正式结果，以对应的固定报告为准。
 
 ## 权威与入口
 

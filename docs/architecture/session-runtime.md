@@ -131,7 +131,7 @@ flowchart TD
 
 **两种运行时的差别。** 能力声明里的 `delivery.midTurnInput` 两者目前都是 `false`。对 Codex 来说，这项声明还没有跟上实现：补入由适配器的 `steerTurn` 按协议特性表单独检查，只有固定 `0.166.0-alpha.6` 同时具备 `turn/steer` 与 `thread/settings/update`（`packages/adapter-codex-app-server/src/protocol-surface.ts`）；默认的 `0.166.0-alpha.5.1` 不能补入。Claude 适配器没有补入方法。两种运行时都实现了空闲直启所用的普通消息启动。
 
-工作台入口与核对按钮的设计见[Sessions 页面](../frontend/pages/sessions.md)，接线与检查清单见[即时输入集成](../development/session-direct-input-integration.md)。
+工作台入口与核对按钮的设计见[Sessions 页面](../frontend/pages/sessions.md)，配置、入口、对账与检查清单见[运行接线手册](../development/runtime-operations.md#2-即时输入)。
 
 ## 4. 托管压缩
 
@@ -143,7 +143,7 @@ flowchart TD
 4. **压缩不开门。** 完成后仍由有权者单独执行 `runtime.session.recovery.resume`。
 5. **沿用 Thread 默认思考强度。** `thread/compact/start` 没有强度参数，压缩用 Thread 当前的默认值；之后的业务 Turn 仍逐 Turn 传执行配置里的强度（PR #222）。
 
-托管压缩只在 Codex 固定 `0.166.0-alpha.6` 时可用（协议特性表里只有该版本具备 `thread/compact/start`），Claude 的声明是 `compaction.mode: "unavailable"`。私有配置 `runtime.compaction.owned` 默认 `true`；设为 `false` 时关闭这组维护入口，压缩完全交给运行时自己。命令与核对步骤见开发页 `docs/development/owned-compaction.md`。
+托管压缩只在 Codex 固定 `0.166.0-alpha.6` 时可用（协议特性表里只有该版本具备 `thread/compact/start`），Claude 的声明是 `compaction.mode: "unavailable"`。私有配置 `runtime.compaction.owned` 默认 `true`；设为 `false` 时关闭这组维护入口，压缩完全交给运行时自己。命令与核对步骤见[运行接线手册](../development/runtime-operations.md#3-托管压缩)。
 
 ## 5. 普通消息默认不限轮数
 
