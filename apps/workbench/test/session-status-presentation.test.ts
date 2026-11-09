@@ -122,3 +122,16 @@ test("recent Run states are readable without implying assignment acceptance", ()
   assert.equal(runStateLabel("unknown"), "结果未知");
   assert.equal(runStateLabel("unrecognized"), "状态待核对（unrecognized）");
 });
+
+test("the agent directory says what the record shows in plain words, never internal source names", async () => {
+  const { agentStatusLabel } = await import("../src/features/sessions/sessionStatusPresentation.ts");
+  const owned = (runtimeState: string, busy: boolean | null) => ({ kind: "owned" as const, runtimeState, busy }) as Parameters<typeof agentStatusLabel>[0];
+  assert.equal(agentStatusLabel(owned("ready", true)), "有在途工作");
+  assert.equal(agentStatusLabel(owned("ready", false)), "无在途工作");
+  assert.equal(agentStatusLabel(owned("ready", null)), "占用待核对");
+  assert.equal(agentStatusLabel(owned("closed", null)), "已关闭");
+  assert.equal(agentStatusLabel(owned("strange", null)), "状态待核对");
+  assert.equal(agentStatusLabel({ kind: "external", runtimeState: "ready", busy: false } as Parameters<typeof agentStatusLabel>[0]), "外部 · 空闲");
+  for (const state of ["ready", "closed", "creating"]) for (const busy of [true, false, null])
+    assert.doesNotMatch(agentStatusLabel(owned(state, busy)), /PG|原生|Session|writer/);
+});
