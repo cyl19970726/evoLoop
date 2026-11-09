@@ -26,4 +26,5 @@ test("a daily rule follows the definition's timezone, including daylight saving"
   // On 2026-03-08 New York moves to UTC-4, so 08:00 is 12:00 UTC.
   assert.equal(nextRuleInstant({ kind: "daily", localTime: "08:00" }, "America/New_York", Date.parse("2026-03-08T06:00:00.000Z")), "2026-03-08T12:00:00.000Z");
   assert.equal(nextRuleInstant({ kind: "daily", localTime: "08:00" }, "Not/AZone", now), null);
+  assert.equal(nextRuleInstant({ kind: "daily", localTime: "24:30" }, "Asia/Taipei", now), null, "an out-of-range time has no instant");
 });

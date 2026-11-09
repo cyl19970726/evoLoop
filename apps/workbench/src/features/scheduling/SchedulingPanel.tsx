@@ -12,8 +12,13 @@ import { schedulingClient, type SchedulingGrant, type SchedulingStatus } from ".
 import { MarkdownBody } from "../../shared/ui/MarkdownBody";
 import { orchestrationClient } from "../../shared/orchestrationClient";
 import { managedTargetProblem, scheduleTemplate, suspendSchedule } from "./managedTarget";
+import { FullIdentifiers } from "../../shared/ui/FullIdentifiers";
+import { RoleName } from "../../shared/ui/RecordName";
 
-import { scheduleRuleLabel, latestOccurrence, nextRuleInstant, occurrenceLabel, scheduleReadView } from "./presentation";
+import {
+  coordinatorErrorText, grantEmptyText, latestOccurrence, nextTimeText, occurrenceLabel, occurrenceReasonKnown,
+  occurrenceReasonText, scheduleReadView, scheduleRuleLabel,
+} from "./presentation";
 
 const stamp = (value: string) => new Date(value).toLocaleString("zh-CN", { timeZone: "Asia/Taipei", hour12: false }) + " · 台北";
 const stateLabel = { active: "已启用", paused: "已暂停", stopped: "已停止" } as const;
@@ -94,14 +99,23 @@ function PanelSection({ title, children }: { title: string; children: ReactNode 
   </section>;
 }
 
-function CoordinatorFacts({ status, fresh }: { status: SchedulingStatus | null; fresh: boolean }) {
-  if (!status) return <p className={muted}>协调器状态尚未读回。</p>;
-  return <Facts rows={[
-    [fresh ? "协调器" : "协调器（上次读回）", coordinatorLabel[status.state]],
-    ["最近检查", status.lastTickAt ? stamp(status.lastTickAt) : "尚无成功检查时刻"],
-    ...status.lastError ? [["最近错误", status.lastError] as [string, ReactNode]] : [],
-    ["当前身份的日程授权", status.grants.length ? status.grants.map(grant => `${grant.scopeId} · 职责 ${grant.roleId}`).join("；") : "没有；已有安排可阅读，已撤权的定义仍可暂停或停止"],
-  ]} />;
+function CoordinatorFacts({ status, fresh, loading, projectId }: { status: SchedulingStatus | null; fresh: boolean; loading: boolean; projectId: string }) {
+  if (!status) return <p className={muted}>{loading ? "正在读取协调器状态与授权…" : "协调器状态尚未读回。"}</p>;
+  return <div className="flex flex-col gap-2">
+    {!fresh && <p className={muted} role="status">以下为上次读回，当前待核对{loading ? "（正在重新读取）" : "（重新读取失败）"}。</p>}
+    <Facts rows={[
+      ["协调器", coordinatorLabel[status.state]],
+      ["最近检查", status.lastTickAt ? stamp(status.lastTickAt) : "尚无成功检查时刻"],
+      ...status.lastError ? [["最近错误", coordinatorErrorText] as [string, ReactNode]] : [],
+      ["当前身份的日程授权", status.grants.length
+        ? <>{status.grants.map((grant, index) => <span key={grantKey(grant)}>{index ? "、" : ""}按职责“<RoleName projectId={projectId} roleId={grant.roleId} />”授权</span>)}</>
+        : grantEmptyText({ fresh, loading })],
+    ]} />
+    <FullIdentifiers rows={[
+      ...status.grants.flatMap(grant => [{ label: "授权范围", value: grant.scopeId }, { label: "授权职责", value: grant.roleId }]),
+      { label: "最近错误原文", value: status.lastError, text: true },
+    ]} />
+  </div>;
 }
 
 export function SchedulingPanel({ context, refresh }: { context: MutationContext; refresh: number }) {
@@ -168,7 +182,7 @@ export function SchedulingPanel({ context, refresh }: { context: MutationContext
       </div>
     </header>
     {error && <UiNotice tone="error">日程与授权本次未读完整：{error}。{value ? "旧定义仅供阅读，保存与创建已暂停。" : "请重试读取。"}</UiNotice>}
-    {status && ["disabled","unavailable","no-authority","error","stopped"].includes(status.state) && <UiNotice tone="error">{fresh ? "协调器状态" : "上次读回的协调器状态"}：{coordinatorLabel[status.state]}{status.lastError ? ` · ${status.lastError}` : ""}。已登记的规则不会自行执行。</UiNotice>}
+    {status && ["disabled","unavailable","no-authority","error","stopped"].includes(status.state) && <UiNotice tone="error">{fresh ? "协调器状态" : "上次读回的协调器状态"}：{coordinatorLabel[status.state]}{status.lastError ? "，最近一次检查出错（原文在右栏的来源里）" : ""}。已登记的规则不会自行执行。</UiNotice>}
     {schedules.length > 1 && <label className="flex flex-col gap-1 desktop:hidden"><span className={muted}>切换日程</span>
       <select className="h-9 rounded-md bg-field px-3 text-small text-foreground" value={showCreate ? "" : selectedSchedule?.id ?? ""} onChange={event => select(event.target.value)}>
         {showCreate && <option value="">正在创建新日程</option>}
@@ -181,12 +195,12 @@ export function SchedulingPanel({ context, refresh }: { context: MutationContext
         {createForm}
         {schedules.length > 0 && <Button variant="ghost" className="w-fit" onClick={() => setCreating(false)}>返回日程</Button>}
       </section>
-      : selectedSchedule && <ScheduleCard key={`${readKey}:${selectedSchedule.id}:${selectedSchedule.version}`} definition={selectedSchedule} context={formContext} grants={status?.grants ?? []} status={status} fresh={fresh} onResult={(result) => setLastResults(previous => ({ ...previous, [`${selectedSchedule.id}:${selectedSchedule.version}`]: result }))} />}
-    {(showCreate || !selectedSchedule) && <ContextPanelContent><div className="flex flex-col gap-4"><PanelSection title="协调器与授权"><CoordinatorFacts status={status} fresh={fresh} /></PanelSection></div></ContextPanelContent>}
+      : selectedSchedule && <ScheduleCard key={`${readKey}:${selectedSchedule.id}:${selectedSchedule.version}`} definition={selectedSchedule} context={formContext} grants={status?.grants ?? []} status={status} fresh={fresh} loading={loading} onResult={(result) => setLastResults(previous => ({ ...previous, [`${selectedSchedule.id}:${selectedSchedule.version}`]: result }))} />}
+    {(showCreate || !selectedSchedule) && <ContextPanelContent><div className="flex flex-col gap-4"><PanelSection title="协调器与授权"><CoordinatorFacts status={status} fresh={fresh} loading={loading} projectId={context.projectId} /></PanelSection></div></ContextPanelContent>}
   </div>;
 }
 
-function ScheduleCard({ definition, context, grants, status, fresh, onResult }: { definition: ScheduleDefinition; context: MutationContext; grants: SchedulingGrant[]; status: SchedulingStatus | null; fresh: boolean; onResult(result: string): void }) {
+function ScheduleCard({ definition, context, grants, status, fresh, loading, onResult }: { definition: ScheduleDefinition; context: MutationContext; grants: SchedulingGrant[]; status: SchedulingStatus | null; fresh: boolean; loading: boolean; onResult(result: string): void }) {
   const historyScope = JSON.stringify([context.token, context.projectId, definition.id, definition.version]);
   const [historySnapshot, setHistorySnapshot] = useState<{ scope: string; revisions: ScheduleRevision[]; occurrences: Occurrence[] } | null>(null);
   const history = historySnapshot?.scope === historyScope ? historySnapshot : null;
@@ -235,7 +249,6 @@ function ScheduleCard({ definition, context, grants, status, fresh, onResult }: 
   const revision = definition.revision;
   const last = history ? latestOccurrence(history.occurrences) : null;
   const editContext = { ...context, draftScope: `schedule:${definition.id}`, draftBaseline: `${definition.version}:${definition.currentRevisionId}` };
-  const next = definition.state === "active" ? nextRuleInstant(revision.rule, revision.timezone, Date.now()) : null;
   const taskHref = (taskId: string) => href(context.projectId, "task", taskId);
   const created = history?.occurrences.filter(item => item.taskId) ?? [];
   const card = "flex flex-col gap-3 rounded-xl bg-raised p-4 shadow-sm compact:p-5";
@@ -245,18 +258,25 @@ function ScheduleCard({ definition, context, grants, status, fresh, onResult }: 
         <h2 className="text-heading font-semibold text-foreground">{revision.template.title}</h2>
         <span className={cn("rounded-full px-2.5 py-0.5 text-caption", stateTone[definition.state])}>{stateLabel[definition.state]} · v{definition.version}</span>
       </div>
-      <p className="flex items-center gap-1.5 text-small text-text-secondary"><CalendarClock size={15} aria-hidden="true" />{ruleText(revision.rule, revision.timezone)}{revision.rule.kind !== "daily" && ` · ${revision.timezone}`} · 责任 {revision.template.owner}</p>
+      <p className="flex items-center gap-1.5 text-small text-text-secondary"><CalendarClock size={15} aria-hidden="true" />{ruleText(revision.rule, revision.timezone)}{revision.rule.kind !== "daily" && ` · ${revision.timezone}`} · 责任 <RoleName projectId={context.projectId} roleId={revision.template.owner} /></p>
       <p className={muted}>上次已读结果：{last ? `${occurrenceLabel(last)} · 观察于 ${stamp(last.observedAtUtc)}` : busy ? "正在核对发生记录…" : history ? "尚无发生记录" : "发生记录待核"}</p>
     </header>
     {!fresh && <UiNotice tone="waiting">这是上次读回的定义；当前规则与授权正在核对或读取失败。保存、暂停和恢复暂不可用。</UiNotice>}
     {target && targetRead.state === "invalid" && <UiNotice tone="error">{targetRead.reason}。不能保存普通修订或恢复运行；可在下方保持原定义暂停或停止。</UiNotice>}
     <section aria-label="检查目的与任务材料" className={card}>
       <h3 className="text-label font-semibold text-foreground">检查目的与任务材料</h3>
-      <Facts rows={[["每次创建的任务", revision.template.title], ["验收", revision.template.acceptance], ["责任", revision.template.owner],
-        ["验收方式", revision.template.managedTarget ? "受管判断合同" : revision.template.acceptanceMode === "human_required" ? "必须本人验收" : "独立智能体验收"]]} />
+      <Facts rows={[["每次创建的任务", revision.template.title], ["验收", revision.template.acceptance], ["责任", <RoleName projectId={context.projectId} roleId={revision.template.owner} />],
+        ["验收方式", revision.template.managedTarget ? "受管判断合同" : revision.template.acceptanceMode === "human_required" ? "必须本人验收" : "独立智能体验收"],
+        ...revision.template.managedTarget ? [] : [["指定验收身份", revision.template.consumer ? "已指定，身份见下方来源" : "未指定"] as [string, ReactNode]]]} />
       <details className="text-small"><summary className="cursor-pointer text-text-secondary">阅读触发时使用的完整任务材料</summary>
         <div className="mt-2">{legacy("任务材料", <MarkdownBody source={revision.template.content} identity={`schedule-${revision.id}`} projectId={context.projectId} />)}</div>
       </details>
+      <FullIdentifiers summary="来源与完整标识（含固定目标）" rows={[
+        { label: "日程", value: definition.id }, { label: "当前修订", value: definition.currentRevisionId },
+        { label: "责任职责", value: revision.template.owner }, { label: "指定验收身份", value: revision.template.consumer },
+        ...target ? [{ label: "受管工作链", value: target.loopId }, { label: "受管阶段", value: target.stageId },
+          { label: "所属目标", value: targetRead.goalId ?? (targetRead.state === "checking" ? "正在核对" : "未能读回") }] : [],
+      ]} />
     </section>
     <section aria-label="发生记录" className={card}>
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -269,13 +289,16 @@ function ScheduleCard({ definition, context, grants, status, fresh, onResult }: 
         {history.occurrences.length === 0 ? <p className="text-small text-text-secondary">尚无已检查的发生时刻；定义日程不等于执行任务。</p>
           : <ol className="flex flex-col">{[...history.occurrences].reverse().map(item => <li key={`${item.revisionId}:${item.plannedAtUtc}`} className="flex flex-col gap-0.5 border-t border-border py-2.5 first:border-t-0">
             <span className="text-small font-medium text-foreground">{stamp(item.plannedAtUtc)} · {occurrenceLabel(item)}</span>
-            <span className="text-small text-text-secondary">{item.reason}</span>
-            <span className={muted}>{item.taskId ? <><a href={taskHref(item.taskId)} className="text-foreground underline">阅读此任务</a> · </> : null}操作 <code className="font-mono">{item.operationId}</code></span>
+            <span className="text-small text-text-secondary">{occurrenceReasonText(item.reason)}</span>
+            {item.taskId && <a href={taskHref(item.taskId)} className="w-fit text-caption text-foreground underline">阅读此任务</a>}
+            <FullIdentifiers rows={[{ label: "操作", value: item.operationId }, { label: "任务", value: item.taskId }, { label: "日程修订", value: item.revisionId },
+              { label: "原因原文", value: occurrenceReasonKnown(item.reason) ? null : item.reason, text: true }]} />
           </li>)}</ol>}
         <details className="text-small"><summary className="cursor-pointer text-text-secondary">日程修订 · {history.revisions.length} 版已读</summary>
           {history.revisions.length === 0 ? <p className={cn(muted, "mt-2")}>尚无修订记录。</p> : <ol className="mt-2 flex flex-col gap-2">{history.revisions.map(item => <li key={item.id} className="flex flex-col gap-0.5">
             <span className="font-medium text-foreground">v{item.version} · {ruleText(item.rule, item.timezone)}</span>
-            <span className="text-text-secondary">{item.reason}</span><span className={muted}>{item.actorId} · {stamp(item.createdAtUtc)}</span>
+            <span className="text-text-secondary">{item.reason}</span><span className={muted}>修订于 {stamp(item.createdAtUtc)}</span>
+            <FullIdentifiers rows={[{ label: "修订", value: item.id }, { label: "修订人", value: item.actorId }]} />
           </li>)}</ol>}
         </details>
       </> : <p className="text-small text-text-secondary">{busy ? "正在核对发生记录…" : "发生记录尚未读回。"}</p>}
@@ -303,7 +326,7 @@ function ScheduleCard({ definition, context, grants, status, fresh, onResult }: 
           ]} />
         </PanelSection>
         <PanelSection title="下次时间">
-          <p className="text-small text-foreground">{definition.state !== "active" ? (definition.state === "paused" ? "已暂停，以后不触发" : "已停止，以后不触发") : next ? `${stamp(next)}（按规则推算的预览）` : "规则里没有以后的时刻"}</p>
+          <p className="text-small text-foreground">{definition.state !== "active" ? (definition.state === "paused" ? "已暂停，以后不触发" : "已停止，以后不触发") : nextTimeText(revision.rule, revision.timezone, Date.now(), stamp)}</p>
           {definition.state === "active" && <p className={muted}>是否真的创建任务，取决于协调器、授权以及错过和重叠的处理方式。</p>}
         </PanelSection>
         <PanelSection title="产生的任务">
@@ -314,12 +337,13 @@ function ScheduleCard({ definition, context, grants, status, fresh, onResult }: 
         </PanelSection>
         <PanelSection title="授权与协调器">
           <Facts rows={[
-            ["日程授权", `${revision.authorization.scopeId} · 职责 ${revision.authorization.roleId}`],
-            ["授权人", revision.authorization.authorizedBy],
+            ["日程授权", <>按职责“<RoleName projectId={context.projectId} roleId={revision.authorization.roleId} />”授权</>],
             ["到期", revision.authorization.expiresAtUtc ? stamp(revision.authorization.expiresAtUtc) : "未设"],
-            ...target ? [["受管目标", targetRead.state === "verified" ? `阶段产物：${targetRead.stageName} · 工作链 ${target.loopId.slice(0, 8)}（${({ active: "可运行", paused: "已暂停", stopped: "已停止" } as Record<string, string>)[targetRead.loopState ?? ""] ?? "状态未核"}）` : targetRead.state === "checking" ? "正在核对绑定的工作链与阶段…" : "绑定暂不可核对"] as [string, ReactNode]] : [],
+            ...target ? [["受管目标", targetRead.state === "verified" ? `阶段产物：${targetRead.stageName}（工作链${({ active: "可运行", paused: "已暂停", stopped: "已停止" } as Record<string, string>)[targetRead.loopState ?? ""] ?? "状态未核"}）` : targetRead.state === "checking" ? "正在核对绑定的工作链与阶段…" : "绑定暂不可核对"] as [string, ReactNode]] : [],
           ]} />
-          <CoordinatorFacts status={status} fresh={fresh} />
+          <FullIdentifiers rows={[{ label: "授权范围", value: revision.authorization.scopeId }, { label: "授权职责", value: revision.authorization.roleId },
+            { label: "授权人", value: revision.authorization.authorizedBy }]} />
+          <CoordinatorFacts status={status} fresh={fresh} loading={loading} projectId={context.projectId} />
         </PanelSection>
       </div>
     </ContextPanelContent>

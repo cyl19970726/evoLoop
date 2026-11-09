@@ -4,12 +4,17 @@ import { ArrowRight, RefreshCw } from "lucide-react";
 import { Button, Notice, cn } from "@evoloop/ui";
 import type { Task, TaskDetail } from "@evoloop/contracts";
 import type { RoleRecord } from "@evoloop/contracts/roles";
-import type { ResidentQueue, QueueHoldCode } from "@evoloop/contracts/queues";
+import type { ResidentQueue } from "@evoloop/contracts/queues";
 import { api, errorText, request, type TaskTimingView } from "../../shared/api";
 import { queueClient } from "../../shared/queueClient";
 import { date, href } from "../../shared/ui/shared";
 import { ContextPanelContent } from "../../shared/ui/ContextPanel";
 import { isRoleOwnerId, readOwnerRole } from "../../shared/ownerRole";
+import { nameText } from "../../shared/workPresentation";
+import { roleStateText, roleTakesWork } from "../../shared/rolePresentation";
+import { FullIdentifiers } from "../../shared/ui/FullIdentifiers";
+import { SessionName } from "../../shared/ui/RecordName";
+import { holdText, scheduledEmptyText, timingWaitText, unsettledRunText } from "./overviewPresentation";
 import { scanProjectTasks, selectSummary, taskMatchesQueue, type SummaryItem } from "./summary";
 import { visibleWorkGroups, type WorkTaskStatus } from "../../shared/workStatusPresentation";
 import { formatScheduled, nextTimingLabel, repeatLabel } from "../workflow";
@@ -31,14 +36,9 @@ interface Snapshot {
   failedNames: number;
   observedAt: string;
 }
-const short = (id: string) => id.slice(0, 8);
-const holdLabels: Record<QueueHoldCode, string> = {
-  not_adopted: "队列尚未采纳", task_changed: "任务修订已变化", task_unavailable: "任务不可承接",
-  dependency: "依赖尚未放行", session_unready: "会话尚未就绪", binding_changed: "职责绑定已变化",
-  grant_revoked: "授权已撤销", occupied: "会话已占用", run_in_flight: "运行仍在途",
-  unknown: "运行结果未知", awaiting_acceptance: "等待消费者使用与验收", budget_exhausted: "尝试达到上限",
-  manual_review: "等待人工复核",
-};
+// A name that the summary read could not get back; the identifier stays in the item's source layer.
+const unreadRole = nameText("职责", { state: "failed" });
+const unreadTask = nameText("任务", { state: "failed" });
 
 async function readSnapshot(token: string, projectId: string, scope: string, signal: AbortSignal): Promise<Snapshot> {
   const [queues, scan] = await Promise.all([
@@ -121,13 +121,15 @@ const muted = "text-caption text-muted-foreground";
 const link = "text-foreground hover:underline";
 
 function ActiveTaskItem({ task, snapshot, projectId }: { task: Task; snapshot: Snapshot; projectId: string }) {
-  const role = isRoleOwnerId(task.owner) ? snapshot.roles[task.owner] : undefined;
-  const owner = role?.proposal.title?.trim() || (isRoleOwnerId(task.owner) ? `职责 ${short(task.owner)}` : task.owner || "负责人未登记");
+  const roleOwner = isRoleOwnerId(task.owner);
+  const role = roleOwner ? snapshot.roles[task.owner] : undefined;
+  const owner = role?.proposal.title?.trim() || (roleOwner ? unreadRole : task.owner || "负责人未登记");
+  const run = unsettledRunText(snapshot.statuses[task.id]?.unsettledRunState);
   return <li className="flex flex-col gap-0.5 border-t border-border py-2.5 first:border-t-0">
-    <a href={href(projectId, "task", task.id)} className={cn("text-small font-medium", link)}>{task.title?.trim() || `任务 ${short(task.id)}`}</a>
-    <span className={muted}>负责人 {role ? <a href={href(projectId, "roles")} className="hover:underline">{owner}</a> : owner}
-      {role && role.state !== "active" && role.state !== "trial" && ` · 职责当前为 ${role.state}，请核对分工`}
-      {snapshot.statuses[task.id]?.unsettledRunState && ` · 运行：${snapshot.statuses[task.id]!.unsettledRunState}`}</span>
+    <a href={href(projectId, "task", task.id)} className={cn("text-small font-medium", link)}>{task.title?.trim() || unreadTask}</a>
+    <span className={muted}>负责人 {role ? <a href={href(projectId, "roles")} className="hover:underline">{owner}</a> : <span title={roleOwner ? task.owner : undefined}>{owner}</span>}
+      {role && !roleTakesWork(role.state) && ` · 职责当前为${roleStateText(role.state)}，请核对分工`}
+      {run && ` · ${run}`}</span>
   </li>;
 }
 
@@ -135,21 +137,26 @@ function QueueItem({ item, snapshot, projectId, kind }: { item: SummaryItem; sna
   const { entry, queue } = item;
   const task = snapshot.tasks[entry.taskId];
   const validTask = taskMatchesQueue(task, entry);
-  const taskName = task?.title?.trim() || `任务 ${short(entry.taskId)}`;
+  const taskName = task?.title?.trim() || unreadTask;
   const role = snapshot.roles[entry.roleId];
-  const roleName = role?.proposal.title || `职责 ${short(entry.roleId)}`;
+  const roleName = role?.proposal.title || unreadRole;
   const taskLink = href(projectId, "task", entry.taskId);
-  const sessionLink = `${href(projectId, "sessions")}?session=${encodeURIComponent(`owned:${entry.sessionId}`)}`;
-  const reason = entry.holdCode ? holdLabels[entry.holdCode] : "队列已暂停，原因待核对";
+  const sessionKey = `owned:${entry.sessionId}`;
+  const sessionLink = `${href(projectId, "sessions")}?session=${encodeURIComponent(sessionKey)}`;
   const note = "rounded-md bg-warning-soft px-2 py-1 text-caption text-text-secondary";
   return <li className="flex flex-col gap-1 border-t border-border py-2.5 first:border-t-0">
     <a href={taskLink} className={cn("text-small font-medium", link)}>{taskName}</a>
-    <span className={muted}><a href={href(projectId, "roles")} className="hover:underline">{roleName}</a> · <a href={sessionLink} className="hover:underline">智能体 {short(entry.sessionId)}</a></span>
-    <span className={muted}>{kind === "current" ? "队列已领取／占用；实际运行状态请进原任务核对" : kind === "next" ? "下一顺位；启动仍须通过依赖、授权和智能体校验" : `${reason}${entry.holdReason ? `：${entry.holdReason}` : ""}`}</span>
+    <span className={muted}><a href={href(projectId, "roles")} className="hover:underline">{roleName}</a> · <a href={sessionLink} className="hover:underline"><SessionName projectId={projectId} sessionKey={sessionKey} /></a></span>
+    <span className={muted}>{kind === "current" ? "队列已领取／占用；实际执行状态请进原任务核对" : kind === "next" ? "下一顺位；启动仍须通过依赖、授权和智能体校验" : holdText(entry.holdCode)}</span>
     {!validTask && <span role="status" className={note}>任务负责人、状态或固定修订未核对一致；请以<a href={taskLink} className="underline">原任务</a>为准。</span>}
-    {role && role.state !== "active" && role.state !== "trial" && <span role="status" className={note}>承接职责当前为 {role.state}，不能按正常承接理解；请核对<a href={href(projectId, "roles")} className="underline">分工记录</a>。</span>}
-    {kind === "held" && entry.holdCode === "awaiting_acceptance" && <span className={muted}>待消费者 {entry.consumerId} 使用与验收；领取不代表验收完成。<a href={`${taskLink}?tab=runtime`} className="underline">核对原任务协作与交付</a></span>}
+    {role && !roleTakesWork(role.state) && <span role="status" className={note}>承接职责当前为{roleStateText(role.state)}，不能按正常承接理解；请核对<a href={href(projectId, "roles")} className="underline">分工记录</a>。</span>}
+    {kind === "held" && entry.holdCode === "awaiting_acceptance" && <span className={muted}>待指定的消费者使用与验收；领取不代表验收完成。<a href={`${taskLink}?tab=runtime`} className="underline">核对原任务协作与交付</a></span>}
     {queue.adoptedVersion !== queue.version && <span className={muted}>队列 v{queue.version} 尚未采纳当前顺序。</span>}
+    <FullIdentifiers rows={[
+      { label: "任务", value: entry.taskId }, { label: "职责", value: entry.roleId }, { label: "智能体", value: entry.sessionId },
+      { label: "指定消费者", value: entry.consumerId },
+      ...kind === "held" ? [{ label: "暂停原因原文", value: entry.holdReason, text: true }] : [],
+    ]} />
   </li>;
 }
 
@@ -203,7 +210,7 @@ export function ProjectSummary({ token, projectId, refresh, active }: { token: s
       <Button onClick={() => setReread(value => value + 1)} disabled={pending}><RefreshCw aria-hidden="true" className={pending ? "animate-spin" : undefined} />重新读取</Button>
     </header>
     {error && <Notice tone="error">摘要读取失败：{error}。{current ? "以下保留上次读回，不能视为当前状态。" : "请重试或进入原页面核对。"}</Notice>}
-    {current?.failedNames ? <Notice tone="waiting">有 {current.failedNames} 个名称未读回；仅显示登记 ID，并保留原任务与承载入口。</Notice> : null}
+    {current?.failedNames ? <Notice tone="waiting">有 {current.failedNames} 个名称未读回，显示为“名称暂不可读”；完整标识在各项的来源里，原任务与承载入口仍保留。</Notice> : null}
     <ProjectContext token={token} projectId={projectId} refresh={refresh + reread} active={active} />
 
     <section className={cn(card, "overview-current-work")} aria-label="当前工作">
@@ -235,10 +242,11 @@ export function ProjectSummary({ token, projectId, refresh, active }: { token: s
                 {timing.previousTaskId && <> · <a href={href(projectId, "task", timing.previousTaskId)} className="hover:underline">上一份</a></>}
                 {timing.nextTaskId && <> · <a href={href(projectId, "task", timing.nextTaskId)} className="hover:underline">后一份已生成任务</a></>}
                 {latestDone ? <> · <a href={href(projectId, "task", latestDone.taskId)} className="hover:underline">最近已完成任务的结果</a></> : " · 尚无已完成结果"}
-                {timing.waitingReason && ` · 等待：${timing.waitingReason}`}</span>
+                {timing.waitingReason && ` · ${timingWaitText}`}</span>
+              <FullIdentifiers rows={[{ label: "任务", value: task.id }, { label: "等待原因原文", value: timing.waitingReason, text: true }]} />
             </li>;
-          })}</ul> : current && !stale ? empty("已读范围内没有约定执行的未结束任务。") : empty("约定执行任务待读回。")}
-          {current && (current.timingScanLimited || current.timingReadFailed > 0) && empty(`最多核对已载入的前 60 项未结束任务；${current.timingReadFailed} 项执行时间未读回，完整范围请到任务列表核对。`)}
+          })}</ul> : empty(scheduledEmptyText({ hasSnapshot: !!current, stale, timingReadFailed: current?.timingReadFailed ?? 0, timingScanLimited: current?.timingScanLimited ?? false }))}
+          {!!current?.scheduled.length && (current.timingScanLimited || current.timingReadFailed > 0) && empty(`最多核对已载入的前 60 项未结束任务；${current.timingReadFailed} 项执行时间未读回，完整范围请到任务列表核对。`)}
         </PanelSection>
         <PanelSection title="队列与承接">
           <p className={muted}>队列占用不等于任务进度，当前进度以原任务为准。{selection ? ` ${selection.total.held} 条暂停或待核记录。` : ""}</p>
