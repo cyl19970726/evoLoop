@@ -31,6 +31,13 @@ export function sessionStatusLabel(session: StatusSource): string {
   return session.busy === true ? "有活动" : session.busy === false ? "空闲" : "状态未知";
 }
 
+/** Directory wording for people: what the project record says, without claiming live state it has not checked. */
+export function agentStatusLabel(session: StatusSource): string {
+  if (session.kind === "external") return session.busy === true ? "外部 · 有活动" : session.busy === false ? "外部 · 空闲" : "外部 · 状态未知";
+  if (session.runtimeState !== "ready") return lifecycle[session.runtimeState ?? ""] ?? "状态待核对";
+  return session.busy === true ? "有在途工作" : session.busy === false ? "无在途工作" : "占用待核对";
+}
+
 /** The header may describe an exact native Turn, but never promote the latest PG Run to live work. */
 export function sessionHeaderStatusLabel(session: StatusSource, progress: NativeProgressView | null,
   currentRead: boolean, runtimeAvailable: boolean | null): string {

@@ -183,9 +183,10 @@ test("Sessions is the sole directory and renders conversation, source, reply and
   assert.deepEqual(await page.locator('[data-shell=rail] a:not([aria-label])').evaluateAll(links => links.map(link => link.firstChild?.nextSibling?.textContent ?? link.textContent)), ["工作", "智能体", "待我处理"]);
   if (await page.locator("[data-shell=frame]").getAttribute("data-rail") !== "shown") await page.getByRole("button", { name: "展开项目导航" }).click();
   const sidebar = page.locator("aside[aria-label=项目导航] .session-navigation");
-  await sidebar.locator(`.session-nav-item[href*="${sessionId}"] .session-identity-violet`).waitFor();
-  await sidebar.getByText("业务 Session · 已加载 1", { exact: true }).waitFor();
-  await sidebar.getByText("System Session · 已加载 1", { exact: true }).waitFor();
+  // The directory shows each agent with its role-based avatar; the saved colour mark stays on the agent page.
+  await sidebar.locator(`.session-nav-item[href*="${sessionId}"]`).waitFor();
+  await sidebar.getByText("业务智能体 · 已加载 1", { exact: true }).waitFor();
+  await sidebar.getByText("系统智能体 · 已加载 1", { exact: true }).waitFor();
   await sidebar.getByText("待归类 · 已加载 1", { exact: true }).waitFor();
   const workPage = await browser.newPage({ viewport: { width: 1280, height: 900 } });
   const workPageErrors: string[] = [];

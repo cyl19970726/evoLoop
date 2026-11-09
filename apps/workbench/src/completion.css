@@ -3,9 +3,6 @@
   font-family: var(--editorial-sans); font-size: 16px;
 }
 body{ background: #fff; }
-.session-navigation{ padding-top: 20px; }
-.session-navigation h2, .session-navigation header, .session-navigation summary{ font-size: 14px; }
-.session-navigation a, .session-navigation .session-nav-item{ font-size: 15px; line-height: 1.5; min-height: 42px; }
 .workbench-layout .content{ max-width: 1520px; padding: 30px 32px 64px; }
 .workbench-layout .content h1{ font-size: 32px; line-height: 1.35; letter-spacing: -.025em; color: var(--foreground); margin-bottom: 12px; }
 h2{ color: var(--foreground); font-size: 22px; line-height: 1.5; }
@@ -159,14 +156,8 @@ td{ font-size: 15px; }
 }
 @media(max-width:680px) { .work-index .task-list-main .task-list-table td{ padding: 6px 0; } .work-index .task-list-main .task-list-table tr{ padding: 16px; } .work-index .task-list-main .task-list-table td:first-child{ padding-left: 0; } .work-index .task-list-main .task-list-table .task-list-open{ padding-top: 12px; } .work-index .task-list-main .task-list-table .mobile-field-label{ font-size: 14px; } .work-index .task-list-main .task-list-table .task-list-state{ display: flex; align-items: center; gap: 8px; } }
 .work-index .task-list-main .task-list-inline-next{ display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 1; overflow: hidden; margin-top: 5px; color: #526078; font-size: 14px; font-weight: 400; line-height: 1.6; }
-.session-nav{ font-size: 15px; }
-.session-nav .session-nav-heading, .session-nav .session-nav-section-label{ font-size: 14px; }
-.session-nav a strong, .session-nav a, .session-nav button{ font-size: 14px; }
 .repository-links > a > span{ flex: 1; }
 .operation-context > a > span{ flex: 1; }
-.session-navigation .session-nav-item strong{ font-size: 15px; line-height: 1.5; }
-.session-navigation .session-nav-group > span, .session-navigation .session-nav-head button, .session-navigation .session-nav-all, .session-navigation .session-nav-history{ font-size: 14px; }
-.session-navigation .session-nav-meta{ font-size: 14px; }
 .workbench-layout .repository-links{ grid-template-columns: 1fr; gap: 0; }
 .workbench-layout .repository-links a{ background: #fff; padding: 20px; font-size: 16px; }
 .workbench-layout .overview-stage-details > summary{ cursor: pointer; padding: 8px 0; font-size: 14px; color: #2457c4; }
