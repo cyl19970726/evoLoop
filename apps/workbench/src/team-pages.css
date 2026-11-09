@@ -29,5 +29,3 @@
 /* Legacy component rules use 11–13px text; keep reading facts legible. */
 .knowledge-space :is(p,li,dd,dt,summary) {font-size:15px}
 .knowledge-space :is(small,.muted) {font-size:14px!important}
-/* Team scan: one compact toolbar and two reading lines per row. */
-

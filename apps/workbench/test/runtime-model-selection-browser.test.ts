@@ -65,10 +65,10 @@ test("Session creation requires a catalog model authorized by the selected grant
   await page.goto(`${base}/p/${projectId}/runtime?view=execution`);
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button", { name: "进入", exact: true }).click();
-  await page.getByText("创建授权范围内的新会话").click();
+  await page.getByRole("button", { name: "新建受管智能体" }).click();
   const grant = page.getByLabel("已配置的完整权限授权");
-  const model = page.locator("label").filter({ hasText: /^精确模型/ }).locator("select");
-  const create = page.getByRole("button", { name: "登记并创建会话" });
+  const model = page.getByLabel("精确模型");
+  const create = page.getByRole("button", { name: "登记并创建智能体" });
   assert.equal(await create.count(), 0);
   await grant.selectOption("0");
   assert.deepEqual(await model.locator("option").allTextContents(), ["请选择模型", "gpt-6-sol", "gpt-6-luna"]);

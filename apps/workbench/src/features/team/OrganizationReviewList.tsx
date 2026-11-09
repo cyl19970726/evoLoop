@@ -56,7 +56,7 @@ export function OrganizationReviewList({ context, refresh }: { context: Mutation
     {error && <Notice tone="error">复盘文档未完整读回：{error}</Notice>}
     {!loading && !error && !visible.length && (items.length
       ? <p className="text-small text-text-secondary">没有匹配的复盘文档。</p>
-      : <EmptyState title="还没有组织复盘" reason="Evo 保存组织复盘文档后，会出现在这里。复盘报告已保存不等于建议已采纳。" />)}
+      : <EmptyState title="还没有组织复盘" reason="组织复盘保存为文档后会列在这里。报告已保存不等于建议已采纳。" />)}
     {visible.length > 0 && <ul aria-label="复盘文档" className="flex flex-col overflow-hidden rounded-xl bg-raised shadow-sm">{visible.map(item => <li key={item.id} className="border-t border-border first:border-t-0">
       <a href={href(projectId, "document", item.id, item.currentRevisionId)} className="flex flex-col gap-0.5 px-4 py-3 outline-none hover:bg-selected focus-visible:shadow-[var(--focus-ring)]">
         <span className="text-small font-medium text-foreground">{item.title}</span>

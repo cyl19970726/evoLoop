@@ -28,6 +28,24 @@ export function parseRoute(path: string): Route {
   return { projectId: parts[1], section: "overview" };
 }
 
+/**
+ * Older team addresses and where they open now: `/runtime?session={key with a colon}` is an agent conversation
+ * (`/sessions?session=`), `/runtime?view=roles|discussions` is its own section, and `?view=execution` is plain
+ * `/runtime`. `/runtime?session={uuid}` stays: it selects that managed agent in 分工与运行. Null when nothing changes.
+ */
+export function legacyTeamAddress(path: string): string | null {
+  const [pathname = "", query = ""] = path.split("?");
+  const parts = pathname.split("/");
+  if (parts.length !== 4 || parts[1] !== "p" || !parts[2] || parts[3] !== "runtime") return null;
+  const params = new URLSearchParams(query);
+  const rest = (section: string) => { const text = params.toString(); return `/p/${parts[2]}/${section}${text ? `?${text}` : ""}`; };
+  if (params.get("session")?.includes(":")) { params.delete("view"); return rest("sessions"); }
+  const view = params.get("view");
+  if (!params.has("view")) return null;
+  params.delete("view");
+  return rest(view === "roles" || view === "discussions" ? view : "runtime");
+}
+
 export function href(projectId: string, section: Section, id?: string, revision?: string): string {
   const part = section === "task" ? `tasks/${id}` : section === "create-task" ? "tasks/new" : section === "document" ? `documents/${id}` : section === "evaluations" && id ? `evaluations/${id}` : section;
   return `/p/${projectId}/${part}${revision ? `?revision=${encodeURIComponent(revision)}` : ""}`;
