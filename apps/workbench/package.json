@@ -5,8 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
-    "typecheck": "tsc --noEmit",
-    "build": "tsc --noEmit && vite build"
+    "typecheck": "tsc --noEmit && tsc -p ../../packages/ui",
+    "build": "tsc --noEmit && tsc -p ../../packages/ui && vite build"
   },
   "dependencies": {
     "@evoloop/contracts": "0.1.0",

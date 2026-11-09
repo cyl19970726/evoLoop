@@ -24,6 +24,12 @@
   --color-warning-soft: var(--warning-soft);
   --color-danger-soft: var(--danger-soft);
   --color-brand: var(--brand);
+  --color-on-brand: var(--on-brand);
+  --color-text-secondary: var(--text-secondary);
+  --color-user-bubble: var(--user-bubble);
+  --color-on-user-bubble: var(--on-user-bubble);
+  --color-field: var(--surface-field);
+  --color-raised: var(--surface-raised);
   --radius-sm: var(--radius-inline);
   --radius-md: var(--radius-control);
   --radius-lg: var(--radius-card);
@@ -31,6 +37,12 @@
   --shadow-sm: var(--shadow-control);
   --shadow-md: var(--shadow-popover);
   --shadow-lg: var(--shadow-panel);
+  --text-caption: var(--font-caption);
+  --text-label: var(--font-label);
+  --text-small: var(--font-small);
+  --text-body: var(--font-body);
+  --text-heading: var(--font-heading);
+  --text-title: var(--font-title);
   --font-sans: var(--font-sans);
   --font-mono: var(--font-mono);
 }

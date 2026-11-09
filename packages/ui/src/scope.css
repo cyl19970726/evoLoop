@@ -1,0 +1,56 @@
+/*
+ * Isolation for pages and overlays built on @evoloop/ui while the old workbench CSS still exists (#229, removed in PR10).
+ *
+ * The old CSS is unlayered and styles bare elements (button, p, input, h1 …). Unlayered rules beat every cascade layer,
+ * so they would override Tailwind utilities on new components. Inside an element marked [data-ui]:
+ *   1. a scoped preflight (layer base) replaces browser defaults, the way Tailwind's preflight would;
+ *   2. an unlayered rule rolls the old element rules back with `all: revert-layer`, so layered utilities apply again.
+ * Load this file after the old CSS. Old pages without [data-ui] are untouched.
+ */
+@layer base {
+  [data-ui],
+  [data-ui] *,
+  [data-ui] ::before,
+  [data-ui] ::after {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+    border: 0 solid;
+  }
+
+  [data-ui] {
+    font-family: var(--font-sans);
+    line-height: var(--leading-body);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  [data-ui] :is(h1, h2, h3, h4, h5, h6) { font-size: inherit; font-weight: inherit; }
+  [data-ui] a { color: inherit; text-decoration: inherit; }
+  [data-ui] :is(b, strong) { font-weight: var(--weight-strong); }
+  [data-ui] small { font-size: inherit; }
+  [data-ui] :is(code, kbd, samp, pre) { font-family: var(--font-mono); font-size: 1em; }
+  [data-ui] :is(ol, ul, menu) { list-style: none; }
+  [data-ui] :is(img, svg, video, canvas) { display: block; vertical-align: middle; }
+  [data-ui] :is(img, video) { max-width: 100%; height: auto; }
+  [data-ui] :is(button, input, select, optgroup, textarea) {
+    font: inherit;
+    letter-spacing: inherit;
+    color: inherit;
+    background-color: transparent;
+    border-radius: 0;
+    opacity: 1;
+  }
+  [data-ui] ::placeholder { opacity: 1; color: var(--text-muted); }
+  [data-ui] textarea { resize: vertical; }
+  [data-ui] :is(button, [role="button"]) { cursor: pointer; }
+  [data-ui] :disabled { cursor: default; }
+  [data-ui] table { border-collapse: collapse; text-indent: 0; border-color: inherit; }
+  [data-ui] summary { display: list-item; }
+  [data-ui] [hidden]:where(:not([hidden="until-found"])) { display: none !important; }
+}
+
+/* Unlayered on purpose: it has to win over the old unlayered element rules, then hand control back to the layers. */
+[data-ui][data-ui] :is(a, button, input, select, textarea, label, summary, p, small, span, li, ul, ol, dl, dt, dd, h1, h2, h3, h4, table, tbody, th, td, code, pre) {
+  all: revert-layer;
+}

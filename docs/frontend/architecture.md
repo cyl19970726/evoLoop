@@ -96,7 +96,7 @@ QueryService 返回 `observedAt`、对象与 revision、权限能力、分源状
 
 | 责任 | 现状 | 目标 |
 | --- | --- | --- |
-| 样式 | token 与 Tailwind 主题已在 `@evoloop/ui`；7 个全局 CSS（style、workbench、editorial、reading-pages、team-pages、completion、task-production）与 22 个领域 CSS 仍各写各的样式，旧变量名经 `legacy-tokens.css` 指向 token；颜色字面量只减不增；Tailwind 几乎只用于 shadcn 的 Button、Sheet | Tailwind v4 + shadcn/ui（DEC-036），token 只在 `@evoloop/ui` 定义，见[设计基础](foundations.md) |
+| 样式 | token 与 Tailwind 主题已在 `@evoloop/ui`；7 个全局 CSS（style、workbench、editorial、reading-pages、team-pages、completion、task-production）与 22 个领域 CSS 仍各写各的样式，旧变量名经 `legacy-tokens.css` 指向 token；颜色字面量只减不增；旧 CSS 没有分层，直接给 `button`、`p`、`input` 等元素写样式，会压过 Tailwind；所以用 `@evoloop/ui` 的页面根节点和弹层都标 `data-ui`，`@evoloop/ui/scope.css`（在旧 CSS 之后加载）在作用域里补一层基础样式，并把旧 CSS 对这些元素的样式退回（`all: revert-layer`）。旧页面不受影响 | Tailwind v4 + shadcn/ui（DEC-036），token 只在 `@evoloop/ui` 定义，见[设计基础](foundations.md) |
 | 动效 | 无统一做法 | Radix `data-state` + tw-animate-css；列表与布局用 Motion（`motion` 包）；尊重 `prefers-reduced-motion` |
 | 构建 | 主 JS 一个文件约 1264 KB（gzip 380 KB），仅 mermaid 懒加载 | 按路由拆包 |
 
