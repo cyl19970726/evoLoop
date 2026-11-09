@@ -1,6 +1,6 @@
 # Codex App Server 接入边界与最小切片
 
-> 状态：**本机受限接入已运行，生产与 Desktop 自动桥接未验**。本页把[SessionRuntime 领域合同](contracts.md)映射到 Codex App Server；2026-10-20 的协议调查与隔离实测保留为当时证据，见[调查报告](../research/codex-app-server-20261019.md)和[隔离闭环实测](../research/codex-app-server-proof-20261019.md)。当前 owned Turn、重启回读和终态纠错的范围见[本机运行](../development/local-run.md)，目标与责任仍以[产品定义](../product/definition.md)和[架构总览](overview.md)为准。
+> 状态：**本机受限接入已运行，生产与 Desktop 自动桥接未验**。本页把[SessionRuntime 领域合同](contracts.md)映射到 Codex App Server；2026-10-20 的协议调查与隔离实测保留为当时证据，见[调查报告](../research/codex-app-server-20261019.md)和[隔离闭环实测](../research/codex-app-server-proof-20261019.md)。当前 owned Turn、重启回读和终态纠错的范围见[本机运行](../development/local-run.md)，目标与责任仍以[产品定义](../product/definition.md)和[架构总览](overview.md)为准。Codex 与 Claude 共同的 Session 生命周期、即时输入、托管压缩和两者的能力对照见[Session 运行时](session-runtime.md)；本页只放 Codex 专有的协议、版本与宿主细节。
 
 ## 位置与权威
 
@@ -64,7 +64,7 @@ worker 文档路由仅接受显式修订及原件读取，拒绝无版本详情�
 
 运行期间不能调用终态 Delivery 登记，因此执行者在 Run 活跃时提交不可变交付意图，固定实际 Run 修订/hash、产物、检查、原 actor 和稳定 operationId。终态回收者验证受托身份，在同一业务 core 下以原 actor/同意图封存，并核实际 journal 与 Delivery；封存身份单独记录，模型 final 不代写。无动作、等待、失败、停止也是有署名决定。暂停阻止新准入，既有 Run 可收尾；原生启动未知只回查，纯 PostgreSQL 封存命令按原 ID 幂等恢复，不能借此重发原生 Turn。缺少意图、撤权与未知结果保留可追责缺口。
 
-这是受管自动接续的本机候选边界；真实运行和负责人验收以对应版本证据为准。当前仍逐派发新建受管 Session，正常关闭已支持显式意图、原生归档与身份回读；本次第三条已实际收束十三个临时 Session，常驻 Session 不随之关闭，具体结果与限制见[路线记录](../roadmap.md#2026-10-25-原路返工使用与前端回读缺口)。池化复用尚未实现；持续业务巡检、跨职责研究的一般化、试行成本/效果的长期回看与 Desktop 自动桥接仍待验证。配置与操作见[本机运行](../development/local-run.md#受管自动循环候选)和[Agent CLI](../development/agent-cli.md#受管执行与自动接续)。
+这是受管自动接续的本机候选边界；真实运行和负责人验收以对应版本证据为准。当前仍逐派发新建受管 Session，正常关闭已支持显式意图、原生归档与身份回读；本次第三条已实际收束十三个临时 Session，常驻 Session 不随之关闭，具体结果与限制见[路线记录](../references/roadmap-history.md#2026-10-25-原路返工使用与前端回读缺口)。池化复用尚未实现；持续业务巡检、跨职责研究的一般化、试行成本/效果的长期回看与 Desktop 自动桥接仍待验证。配置与操作见[本机运行](../development/local-run.md#受管自动循环候选)和[Agent CLI](../development/agent-cli.md#受管执行与自动接续)。
 
 ## 业务 worker 的受限工作台阅读
 
@@ -171,11 +171,27 @@ flowchart LR
 | `resume(sessionId)` | 从映射取 `threadId`，按当前完整执行 profile 调用 `thread/resume(excludeTurns: true)` | 不因续窗或恢复生成新 Role；核 actor、现行授权、绑定、配置降权与已知在途 Turn；只读历史可达不代表可恢复写入。 |
 | `inspect(sessionId)` | `thread/read`、分页 `thread/turns/list` 与 `thread/items/list` | 授权读范围、历史锚点、去重 ID；若后端不支持分页或历史不可达，返回 `unsupported`／`unknown`。 |
 | `run(sessionId, taskId, brief, operationId)` | `turn/start` 返回初始 `turn.id`；通知 `item/*`、`turn/completed` | 派发意图与唯一操作 ID、任务和知识基线、请求 ID／时间、返回的 Turn ID、实际终态；重复请求无强幂等保证。 |
-| 运行中修正（Codex 扩展） | `turn/steer(expectedTurnId)` | 仅针对已确认仍进行的 Turn；新任务走 `turn/start`。该能力是宿主可选扩展，不强制所有运行时实现。 |
+| 即时输入（DEC-039，PR #216） | 运行中补入：`turn/steer(expectedTurnId)`；原 Thread 空闲：普通消息的 `turn/start` | 补入只针对数据库与原生都确认仍在运行的那个 Turn，不新建 Turn，不改原 Run 的固定输入；保存每条输入的 `inputId`、期望与实际 Turn 和状态（schema 059），回执丢失记 `unknown` 并只读核对。补入只在固定 `0.166.0-alpha.6` 可用，见下文协议特性表；设计与两种运行时的差别见[Session 运行时](session-runtime.md#3-即时输入执行中收到的消息怎样处理)。 |
 | `interrupt(sessionId, runId)` | 适配器把项目运行映射到原生 `threadId`／`turnId`，调用 `turn/interrupt` 并继续等最终 `turn/completed` | “请求已收”与“实际停止”分开；仍须核对已发生副作用。 |
 | `observe`／`reconcile` | 消费通知；断线后分页回读 | 运行记录、水位、未知结果与下次对账时间；不能把通知当完整持久事件流。 |
 
-本机支持 `codex-cli 0.154.0`、`codex-cli 0.164.0-alpha.11.1`、`codex-cli 0.166.0-alpha.5.1` 与 `codex-cli 0.166.0-alpha.6`；当前默认协议为 `0.166.0-alpha.5.1`。适配器启动前核实安装二进制报告的版本，并生成对应标准或实验 v2 schema，与该版本登记的 SHA-256 指纹精确匹配；不匹配就拒绝接入，不能跳过指纹检查或更改全局 CLI。alpha.5.1 的标准/实验指纹分别为 `3164e5e1b190371566a3c163f6f4e56ee75552b5652ece246149e028cbabf23d` 和 `ab788279bb5212b13701b505f7d8f119a71705d91f46e6e09c1e893e98c4a541`；alpha.6 的指纹分别为 `e025e54fb11354eb82767ea040b40efa17b34dfc706c9433a6115b5f4771c465` 和 `f72bb03a3f519cd19b37a030b42453128ff5b88abaad8c1264cf1ca197dbbed0`。以下只是可选运行配置片段，不代表安装路径或凭据：
+### 协议版本与可选能力
+
+运行配置 `runtime.protocolVersion` 可选 5 个已核版本：`0.154.0`、`0.164.0-alpha.11.1`、`0.166.0-alpha.5.1`、`0.166.0-alpha.6`、`0.167.0-alpha.3.2`；默认值以 `apps/coordinator/src/configuration.ts` 为准，当前为 `0.166.0-alpha.5.1`（与[本机运行](../development/local-run.md)一致）。默认的 `protocolCheck: "exact"` 下，适配器启动前核实安装二进制报告的版本，并生成对应标准或实验 v2 schema，与该版本登记的 SHA-256 指纹精确匹配；不匹配就拒绝接入，不能跳过指纹检查或更改全局 CLI。另有 `protocolCheck: "surface"`：接受不低于 `minimumVersion`、不在 `blockedVersions` 中、且生成的 schema 仍含 evoLoop 发送的全部方法与参数的版本，可选能力随该 schema 决定。
+
+各版本可用的可选能力由协议特性表固定（`packages/adapter-codex-app-server/src/protocol-surface.ts`）；一项能力只在其全部方法都存在时开启：
+
+| 版本 | 现代协议（命名、当前时间、模型修订） | 工作区历史 | 托管压缩 | 即时输入补入 | 能力列表 |
+| --- | --- | --- | --- | --- | --- |
+| `0.154.0` | 否 | 否 | 否 | 否 | 否 |
+| `0.164.0-alpha.11.1` | 是 | 否 | 否 | 否 | 否 |
+| `0.166.0-alpha.5.1`（默认） | 是 | 是 | 否 | 否 | 是 |
+| `0.166.0-alpha.6` | 是 | 是 | 是 | 是 | 是 |
+| `0.167.0-alpha.3.2` | 是 | 是 | 否 | 否 | 是 |
+
+也就是说，托管压缩与即时输入的运行中补入只在 `0.166.0-alpha.6` 可用；选择其他版本时这两项按“不支持”处理，空闲直启与普通消息不受影响。0.167 在 `turn/start` 刚返回时会短暂拒绝 `thread/turns/list`，适配器对此做有界重试（PR #213）。
+
+各版本的标准/实验指纹登记在 `packages/adapter-codex-app-server/src/index.ts` 的 `PINNED_PROTOCOLS`。例如 alpha.5.1 为 `3164e5e1b190371566a3c163f6f4e56ee75552b5652ece246149e028cbabf23d` 和 `ab788279bb5212b13701b505f7d8f119a71705d91f46e6e09c1e893e98c4a541`；alpha.6 为 `e025e54fb11354eb82767ea040b40efa17b34dfc706c9433a6115b5f4771c465` 和 `f72bb03a3f519cd19b37a030b42453128ff5b88abaad8c1264cf1ca197dbbed0`；0.167.0-alpha.3.2 为 `f2576ca5d46be4cfb159906264fbc173efcfcc917ea8fdc38323770e7b657b5a` 和 `b1e5d17224b9d9732b5976012438ba78e2cf7e418b67f8f8a5f5cffe301b875d`。以下只是可选运行配置片段，不代表安装路径或凭据：
 
 ```json
 {"runtime":{"enabled":true,"protocolVersion":"0.166.0-alpha.5.1"}}
@@ -183,13 +199,15 @@ flowchart LR
 
 现代协议提供 `currentTime/read`，适配器只对注册表中精确绑定的 owned Thread 响应当前 Unix 秒数；缺少绑定、Thread 不符或使用 0.154 时拒绝。它只是只读时间能力，不授予 Thread／Turn 控制，也不改变权限或启动策略。`model/list` 显示模型仅代表协议可列出该选项，不能证明特定模型会被 Turn 接受或是实际运行模型；新模型仍须由 Lead 核实，实际结果以后续受控 Turn 证据为准。官方 [App Server 方法说明](https://learn.chatgpt.com/docs/app-server#api-overview)和[Turn 生命周期](https://learn.chatgpt.com/docs/app-server#turns)是外部合同；每次 CLI 升级仍须重新读取 schema 并核对所选功能对应的标准／实验指纹。
 
+### 关闭与轨迹读取
+
 正常结束已有 owned Session 时，项目审阅者可署名请求 `runtime.session.close`，无需取得该职责的启动执行 grant；这不授予 Session/Run reserve 权限。实际归档仍由 runner 核验原 `Session.actorId` 的精确项目、职责、scope、cwd、sandbox grant 和原生绑定，原授权缺失时保持 `closing`，不归档或假报 `closed`。关闭请求只接受已绑定且空闲的 `ready` Session；同项目事务把它改为 `closing`，立即阻止新 Run。受管执行器先保存关闭操作 ID 和归档尝试时间，再对显式选定、已通过对应版本与 schema 指纹核验的 `thread/archive` 发一次请求；空回包不是结束证据。只有受限分页的 `thread/list` 在 `archived:true`、原目录下核到相同 thread/session 身份才记为 `closed`。原生 `source` 是宿主分类，不是 owned 创建权威；本系统保存的 `thread/start` 回执与不可变绑定才是归属依据。丢回包、重启、查询不完整或身份不符时保留 `closing` 和原 ID，只读对账，不自动重发归档。原 Session、Run、事件及 Task/Knowledge 历史不删改；旧未知只读 Run 放弃仍是独立特例。适配器的 `close()` 仅关闭共享 App Server 子进程，不代表逐 Session 关闭。关闭后原生 trace 的历史读取尚未开放，须在关闭前固定需要的实际证据。隔离的单 Turn owned 样本已核到归档和同一身份回读；空 Thread 样本在重启后无法回读，保持 `closing`，不视为已关闭。
 
 已绑定 Run 的答复和轨迹 Item 读取以原 Session/Thread 绑定和保存的 `nativeTurnId` 为范围，直接调用原生 `thread/items/list` 分页，不先扫描整个 Thread 的 Turn 目录。Turn 终态元数据另经 `thread/turns/list` 最多两页回读：命中即停，未读完返回独立的 `nextTurnCursor`；只有到达原生目录末尾才说明本次未找到。轨迹即使尚未找到 Turn 元数据，仍可返回已绑定 Turn 的 Item 和 `partial` 标记；不得用数据库 Run 状态伪造原生 Turn。显式终态对账在分页未完时返回无写入的 `partial`，续页命中后仍须核原生终态时间、现行授权和 Run 版本。Session 历史只展示最近 20 个 Turn，读满即停，未读完如实标记截断。`finalPhaseConfirmed` 只说明读到 `final_answer` Item，不代替 Turn 终态或 Task 验收；轨迹的终态元数据与人工复核仍须各自核对。
 
 ## 普通消息与业务执行共用原会话
 
-普通消息使用独立的持久消息与回执记录，不复用带 Task／basis 关系的业务 Run，也不制造假任务；但消息和业务工作都沿同一个 Session、Thread、App Server adapter 与 full/never execution profile 运行，使用正常工具和网络配置。新 Session 固定 `danger-full-access`、`approvalPolicy: never`、网络开启；消息不再切换到消息专用进程、purpose、sandbox、工具集或只读准入门槛，也没有消息后的业务权限恢复状态机。既有消息 sender/receiver grant 与 `maxTurns` 继续约束身份和成本，业务对象仍按各自 project/Task/Document 权限校验；OS 执行权限不会删除这些对象边界。
+普通消息使用独立的持久消息与回执记录，不复用带 Task／basis 关系的业务 Run，也不制造假任务；但消息和业务工作都沿同一个 Session、Thread、App Server adapter 与 full/never execution profile 运行，使用正常工具和网络配置。新 Session 固定 `danger-full-access`、`approvalPolicy: never`、网络开启；消息不再切换到消息专用进程、purpose、sandbox、工具集或只读准入门槛，也没有消息后的业务权限恢复状态机。精确的消息 sender/receiver grant 继续约束身份；普通消息默认不限累计轮数，grant 省略 `maxTurns` 即不限，只有明确写成正整数时才是有限额度（DEC-039，PR #195、#207），历史已用轮数与 Task／队列尝试上限照常保留。业务对象仍按各自 project/Task/Document 权限校验；OS 执行权限不会删除这些对象边界。
 
 消息保存、原生接受、处理结束、完整回复和收件 actor 的显式 read 是不同事实。消息不需要创建 Task；独立工作仍须按正常规则 Task 化。Run 与消息共用 Session 槽位、公平调度、持久 recovery gate 与 unknown 对账；消息历史上的 grant 和预算继续保留，不代表另一权限档位。发送、处理和业务结果不得互相冒充。外部 Desktop HostLink 仍只有已核能力的人工转交，不自动唤醒或接管聊天。
 
@@ -199,7 +217,7 @@ flowchart LR
 
 迁移 035 及更早存下的 Session、Run 与 profile 快照保持历史原值，不依赖冷切迁移或启动时重写。迁移 036 退役旧 cold 启动围栏，保留 035 控制行和原 epoch 不变；新建 Session 统一 full/never。不能把旧 readonly/workspace profile 重新解释成新权限。普通消息与业务共享这套新 Session 默认。GUI 阅读桥仍可按单个 Run 使用精确只读 reader、路由与证据范围；这只是业务对象读取范围，不能视为 OS sandbox，也不改变 Document iframe sandbox。
 
-当前验证是 fake adapter 与专用 PostgreSQL 检查；尚无 Lead 对该策略的实际原生使用、发布或部署验收。历史 CLI 0.154.0 实验保留为当时证据，不代表当前默认或新权限实跑。真实模型／页面使用与消费者采用仍另行核验。
+这套执行配置已在旧开发机上实际使用：升级到 alpha.6 后，原 Leader 与 QA 的常驻 Session 在各自原 Thread 上保持 full/never 完成了实际工作，Task `090a92b4` 按此验收后关闭。迁移到新主机时 Session 不随迁（DEC-041），新主机上的 Session 是重新建立的，其配置、使用与验收见[当前基线](../roadmap.md#当前基线)。历史 CLI 0.154.0 实验保留为当时证据，不代表当前默认。真实页面使用与消费者采用仍另行核验。
 
 owned Thread 由 evoLoop 排他派发；不能同时用其他原生客户端向同一 Thread 发送输入。数据库占用只协调本系统的写者，原生空闲检查不能阻止外部客户端在检查后抢先启动；当前协议可能将后到输入转入已有 Turn，未提供跨客户端的原子“仅空闲时启动”保证。外部 Desktop 聊天继续走人工转交。
 

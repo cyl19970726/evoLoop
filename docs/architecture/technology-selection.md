@@ -4,7 +4,7 @@
 
 先读[包与进程边界](packages.md)，再看本页的取舍。需要决定的是谁来维护协调规则、知识服务和外部接缝；不会因为选一个库就自动获得业务保证。
 
-**已选：**PostgreSQL 为项目主数据与运行存储，飞书为 connector；OpenViking 是首个知识接入后端，前端参考 nashsu 图谱与阅读体验。过程 Document、Git 正式正文、外置 Wiki 各自持有权威。**本机已采用：**TS/Node 核心、React/Vite、PG 驱动与迁移、Agent CLI 与业务技能，OpenViking 0.5.1 已做受限写读和回读。**待验证：**真实飞书租户、OpenViking 语义索引/多写者/生产恢复、后续前端库与可选 MCP。以下先比较理由与门槛，再列完整技术清单和部署约束。
+**已选：**PostgreSQL 为项目主数据与运行存储，飞书为 connector；OpenViking 是首个知识接入后端，前端参考 nashsu 图谱与阅读体验。过程 Document、Git 正式正文、外置 Wiki 各自持有权威。**本机已采用：**TS/Node 核心、React/Vite、PG 驱动与迁移、Agent CLI 与业务技能，Codex App Server 与 Claude Agent SDK 两种会话运行时（DEC-035），微信消息 Connector 标准模式（DEC-040）；OpenViking 0.5.1 曾在旧开发机做受限写读和回读，新主机未部署（DEC-041）。**待验证：**真实飞书租户、OpenViking 语义索引/多写者/生产恢复、后续前端库与可选 MCP。以下先比较理由与门槛，再列完整技术清单和部署约束。
 
 ## 1. 为什么主语言选 TypeScript
 
@@ -23,6 +23,8 @@ Codex 隔离研究曾使用 Python 跑通受限闭环，[PR #2](https://github.c
 ### 首个接入后端：OpenViking
 
 **用户已确定先用 OpenViking（DEC-027）。实现建议保持“独立服务 + evoLoop 知识适配器 + 认知维护流程”，以后可在同一合同后接自研知识服务。** 前端的知识图谱体验独立于后端选择；系统仅有一个活动知识写入权威。
+
+**部署现状（DEC-041）。** 下文 0.5.1 的受限写读、重启回读与候选审阅发布都发生在旧开发机上。迁到常驻主机时 OpenViking 没有随迁部署，新主机目前没有知识服务；知识相关入口按“未接入”处理，选型结论不变。是否在新主机部署、部署哪个版本另行决定，见[部署与迁移](deployment.md#6-尚未决定的事)。
 
 依据有两类：一是 OpenViking 已有面向多客户端的内容/检索服务边界和真正的 Wiki compile；二是已有固定版实验观察到纠正合并、保留未决解释和外置恢复的有限可行性。nashsu 也有 HTTP/MCP 写页，但完整摄入依赖桌面前端状态、队列、文件调用和模型客户端；把它变成无人值守服务需要实质拆分。我们的核心目标是多 session 持续维护与消费项目认知，因而更适合前者。具体证据和相反条件见[已有基座比较](../research/wiki-base-selection-20261019.md)。
 
@@ -85,7 +87,8 @@ OpenViking 的普通内容 API 负责存取；它不会因为写了一页而自�
 | 入口服务 | **Fastify 5，本机协调 API** | 统一工作台、现有 CLI 与按需 MCP 的身份、授权、输入和状态检查；初期只监听本机，服务启动/关闭和健康检查由 daemon 负责。 |
 | 边界合同 | **Zod 4 → JSON Schema，版本化 JSON 消息** | 同一可表达 schema 生成 TS 类型和外部契约；业务状态守卫仍在 core，禁止另外手写一套漂移的协议。 |
 | 主数据与协作入口 | **PostgreSQL 主数据 + 飞书 Bitable 任务投影** | evoLoop 持 Task、Schedule、原生 Document/Revision、Relation 和同步记录；飞书 connector 提供可见与受控编辑。入站身份/基线、字段权限、分页、限流仍须实测；飞书云文档是另一套待验证 API。 |
-| 会话运行时 | **Codex App Server，stdio JSONL** | 已有隔离创建/续接/历史恢复证据；生成协议类型留在 Codex 适配器，桌面宿主桥接另外声明能力。 |
+| 会话运行时 | **Codex App Server（stdio JSONL）＋ Claude Agent SDK（每 Turn 一个 Claude Code 进程）** | 一个协调服务可同时驱动两者，Role 只绑定一种（DEC-035）。Codex 有隔离创建/续接/历史恢复证据，协议版本按指纹锁定；Claude 的 SDK 版本由包 manifest 锁定，适配器自管 Turn 账本。两者经同一 `RuntimePort` 声明能力，差别见[Session 运行时](session-runtime.md)。 |
+| 外部消息平台 | **统一消息 Connector；微信为第一个，经本机网关接入** | 通道合同不绑定具体平台（DEC-040），平台凭据与原始事件留在网关，evoLoop 只保存路由、平台消息与来源关联。首版只有标准模式，受限接收环境后置。见[消息 Connector](message-connectors.md)。 |
 | 主数据与运行持久化 | **PostgreSQL 已选定；推荐 18.x + node-postgres（pg）** | 从第一版统一数据库引擎，保存业务主数据、修订、映射、Journal/outbox 与水位；承担数据库服务、迁移、连接和备份成本。Wiki 正文和 Git 正式文档仍在各自权威位置。 |
 | 日程与状态推进 | **core 状态转换 + cron-parser 到期计算 + 周期对账** | 一次性 UTC 时点；重复日程带 IANA 时区，计划实例持久化。解析器只算时间，不提供持久投递或恰好一次。 |
 | Wiki 基座 | **独立 OpenViking 服务，HTTP 接入** | 0.5.1 已受限本机写读与回读；普通写页与 Wiki 综合编译的语义分开。语义索引、多写者与生产恢复须通过[正式采用与 fork 的门槛](#3-正式采用与-fork-的门槛)。 |
@@ -102,7 +105,7 @@ Node 官方当前将 24 标为 LTS；Fastify 支持 TS，npm 原生支持 worksp
 
 ## 5. 数据与部署边界
 
-目标部署单位是**一个 evoLoop daemon、它管理的 Codex 子进程、PostgreSQL 数据库服务，以及独立的 OpenViking 服务**。本机试用已运行协调 API、PostgreSQL、同源静态工作台，以及经明确配置启用的 Codex 与 OpenViking 受限接缝；这不是生产部署。每个业务 session 不是独立后端服务，每个 npm 包也不是进程。源码依赖和进程图见[包架构](packages.md)。
+目标部署单位是**一个 evoLoop daemon、它管理的运行时进程（Codex App Server 子进程、每 Turn 一个的 Claude Code 进程）、PostgreSQL 数据库服务、配置后的消息 Connector 网关，以及独立的知识服务**。按 DEC-041，它们部署在一台常驻主机上，经单一 HTTPS 入口访问；协调服务只监听本机回环，PostgreSQL、模型控制和存储不开公共端口。知识服务（OpenViking）尚未部署到该主机。部署形态、发布轮换与迁移范围见[部署与迁移](deployment.md)。每个业务 session 不是独立后端服务，每个 npm 包也不是进程。源码依赖和进程图见[包架构](packages.md)。
 
 | 数据 | 唯一可改写权威 | 其他系统保存什么 |
 | --- | --- | --- |
@@ -114,7 +117,7 @@ Node 官方当前将 24 标为 LTS；Fastify 支持 TS，npm 原生支持 worksp
 
 **为什么直接使用 PostgreSQL 主数据。** 用户先选择 PostgreSQL 以避免 SQLite 过渡迁移，随后明确选择 evoLoop 保存主数据、飞书作为 connector 和协作入口。Task、Schedule、原生 Document/Revision、Relation 与运行记录因此共用一个可版本化、可事务提交的数据库。代价是要维护数据库服务、迁移、连接、备份、文档正文权限，以及与飞书投影的冲突和对账；不能把“已有飞书视图”当作原生文档审核或 PG 状态的证明。
 
-推荐采用当前受支持的 **18.x**，首片锁定当时的小版本和驱动；官方当前将 18 列为受支持版本。开发、CI 与正式部署使用同一引擎/主版本，不用 SQLite 替身证明数据库行为。[版本政策][pg-version] 本机已有 PostgreSQL 18 试用数据库，远端托管实例的位置在部署时确定。
+推荐采用当前受支持的 **18.x**，首片锁定当时的小版本和驱动；官方当前将 18 列为受支持版本。开发、CI 与正式部署使用同一引擎/主版本，不用 SQLite 替身证明数据库行为。[版本政策][pg-version] PostgreSQL 18 与协调服务同在常驻主机上，不对外开放端口（DEC-041）。
 
 主数据与运行记录约定如下；S1a 首片只验证当时的任务/过程文档事务、修订、操作日志与出站记录。后来本机运行时和隔离备份恢复另有受限证据，生产恢复仍待验：
 
@@ -126,7 +129,7 @@ Node 官方当前将 24 标为 LTS；Fastify 支持 TS，npm 原生支持 worksp
 
 PostgreSQL 事务不能覆盖飞书、Codex 或 Wiki 的网络副作用。丢失写入回执时仍可能 `unknown`，必须对账而非盲重发。飞书出站由 outbox 投影，入站观察须映射成含可核验行为者、对象 ID 与读入基线的 command，经 core 身份、授权、状态和冲突检查再提交 PG；证据不足则暂停处理。禁止最后写入覆盖。飞书 SDK 的 Bitable 权限、事件、分页和版本能力尚未实测，首片可先由核心 CLI 写 PG 并单向投影，再按实测能力开放受控字段回写。
 
-初期在开发机验证闭环，通过后才将唯一常驻协调者迁到确定的常在线主机；迁移时停止旧写者、保持同一主数据库或验证数据库迁移、核对在途操作。任务多端协作视图由飞书投影提供，不要求每台电脑各跑一个可派发 daemon。数据库连接、备份和监控是新增运维责任；跨主机执行和独立桌面唤醒仍未由本机协议实测证明。
+闭环先在开发机验证，之后唯一常驻协调者已迁到常驻主机（DEC-041）。迁移停止旧写者，只搬业务历史：Task、过程 Document 及其修订、固定 Blob 与交付链；旧 Session、Thread、令牌、授权、执行配置、锁、队列和运行日志不搬，目标主机重新 onboarding。完整范围与理由见[部署与迁移](deployment.md#4-迁移主机搬什么不搬什么)。任务多端协作视图由飞书投影提供，不要求每台电脑各跑一个可派发 daemon。数据库连接、备份和监控是新增运维责任，备份周期与保留仍未定；跨主机执行和独立桌面唤醒仍未由本机协议实测证明。
 
 本机 API 也需要身份和可操作项目范围，凭据由运行配置提供，不能信任模型自报的 Role。CLI/MCP 与飞书入站 command 的所有主数据变更进入同一协调入口；飞书原生人工编辑只改变投影，经回读、身份/基线与冲突检查后才可能进入主数据。网络鉴权、密钥和私有日志不进入公开仓库。
 
