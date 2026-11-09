@@ -62,7 +62,7 @@ export function TaskRail({ list, view, onView, selectedId, linkFor }: {
   const empty = !list.loading && !list.firstError && !list.searching && !list.awaitingAssignments && !list.searchError && !list.visible.length;
   return <section aria-label="任务列表" className="flex flex-col gap-2 pb-2" data-task-rail="">
     <div className="flex items-center gap-1 px-1">
-      <h2 className="flex-1 text-label font-semibold text-foreground">任务</h2>
+      <h2 className="flex-1 text-label font-semibold text-foreground">任务列表</h2>
       {list.checking && <RefreshingIndicator label="正在核对" />}
       <IconButton compact label="重新读取列表" icon={<RefreshCw size={15} />} onClick={list.reread} />
     </div>

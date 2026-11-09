@@ -266,7 +266,8 @@ test("Task list resolves only displayed Role owners and rejects stale or failed 
   await attention.getByLabel("解决依据").fill("发布证据已核对");
   await attention.getByRole("button",{name:"记录已解决"}).click();
   await attention.getByText("1 项已关注").waitFor();
-  assert.match(await attention.innerText(),/等待方 消费者 · 历史消费者/);
+  // The panel rereads right after a write; wait for the historical item instead of sampling the text once.
+  await attention.getByText(/等待方 消费者 · 历史消费者/).waitFor();
   await fetch(`${base}/__fixture/reset-attention`);
   await page.goto(`${base}/p/${projectId}/work?fresh=attention-narrow`);
   await page.getByLabel("访问令牌").fill("fixture-token");
