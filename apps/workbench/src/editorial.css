@@ -125,14 +125,6 @@ button.primary:hover:not(:disabled){
   line-height: 1.72;
 }
 
-.eyebrow{
-  margin-bottom: 7px;
-  color: #747985;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: .055em;
-}
-
 .muted,
 .empty,
 .panel-head span{
@@ -356,10 +348,6 @@ tbody tr:hover{
   gap: 12px;
 }
 
-.review-layout{
-  align-items: start;
-}
-
 .task-list-inline-next{
   display: block;
   margin-top: 8px;
@@ -483,66 +471,16 @@ tbody tr:hover{
 }
 
 /* Full task detail: one readable narrative, with secondary evidence below it. */
-.task-page{
-  max-width: 1600px;
-  color: #242831;
-}
 
-.task-page > .back{
-  margin-bottom: 12px;
-  color: #4c5e91;
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.task-page .pill{
-  color: #465da3;
-  background: var(--primary-soft);
-}
-
-.task-focus{
-  min-width: 0;
-  margin: 0;
-  padding: 20px 0;
-  background: transparent;
-  border: 0;
-  border-top: 1px solid var(--border);
-  border-radius: 0;
-  box-shadow: none;
-}
 
 .task-overview-grid .task-delivery-summary{
   grid-column: 1 / -1;
   border-top: 2px solid #7690d9;
 }
 
-.task-focus h2{
-  color: #2d323b;
-  font-size: 15px;
-}
-
-.task-focus p{
-  color: #555c67;
-  font-size: 13px;
-  line-height: 1.75;
-}
-
-.task-page .panel-head{
-  align-items: center;
-  padding-bottom: 10px;
-  border-bottom: 1px solid #e8e8e4;
-}
-
 .task-body-disclosure > summary{
   padding: 8px 0;
   color: var(--primary);
-}
-
-.task-page .delivery-artifact{
-  padding: 12px 0;
-  background: transparent;
-  border: 0;
-  border-bottom: 1px solid #e8e8e4;
 }
 
 .task-use-summary{
@@ -554,16 +492,6 @@ tbody tr:hover{
   color: var(--warning);
   background: var(--warning-soft);
   border-radius: 5px;
-}
-
-.task-page .review-form{
-  background: #f8f8f5;
-  border-color: var(--border);
-}
-
-.task-page .notice.success{
-  color: #40568f;
-  background: #f0f3fb;
 }
 
 /* Unify secondary workspaces with the same restrained surfaces. */
@@ -602,7 +530,7 @@ tbody tr:hover{
   border-color: #b9c7ed;
 }
 
-.workflow-form input,.workflow-form textarea,.workflow-form select,.review-form textarea {
+.workflow-form input,.workflow-form textarea,.workflow-form select {
   border-color: var(--border-strong);
   border-radius: 6px;
 }

@@ -32,7 +32,7 @@
 - 别的包按包名引用，不用相对路径跨包。检查读不懂的 import 写法直接报错，不会放过。
 - `@evoloop/ui` 不引用工作台和 `@evoloop/contracts`（含 `package.json` 依赖），不发请求，文案与数据由调用方传入。
 
-领域之间现有的依赖（检查运行时会打印）：overview → workflow；roles → discussions；runtime → discussions、orchestration、queues、sessions；sessions → discussions；team → discussions、roles、runtime；workflow → documents、references、runtime、sessions。运行面板 `RuntimePanel` 汇集编排、驻留队列、协作线程和 Session 链接，任务页和团队页再嵌入它。
+领域之间现有的依赖（检查运行时会打印）：overview → workflow；roles → discussions；runtime → orchestration、sessions、workflow；sessions → discussions；team → discussions、roles、runtime；workflow → discussions、orchestration、references、sessions。团队页的运行面板 `RuntimePanel` 汇集编排、执行队列和 Session 链接；任务的分派、队列和运行在任务自己的“运行与关联”（`workflow/TaskRuntimeTab.tsx`），执行队列 `ResidentQueuePanel` 由 workflow 提供给两处。
 
 **路由。** URL 承载项目、对象稳定 ID、修订和筛选，刷新或分享后回到同一位置；改标题或移动 Git 路径不改链接。历史修订 URL 不跳到最新版。导航入口由[布局](layout.md)决定，不按路由生成。
 

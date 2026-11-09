@@ -202,7 +202,7 @@ test("built Task page selects the current Loop, preserves manual history and fit
     const titleRect=title.getBoundingClientRect(), top=header ? header.getBoundingClientRect().bottom+8 : 0;
     return titleRect.top>=top && titleRect.bottom<window.innerHeight;
   };
-  const exactRunLink = currentTaskPage.getByRole("link",{name:"核对这次 Run →"});
+  const exactRunLink = currentTaskPage.getByRole("link",{name:"核对这次运行 →"});
   await exactRunLink.waitFor();
   assert.equal(await exactRunLink.getAttribute("href"),`/p/${projectId}/tasks/${taskId}?tab=runtime&run=${runId}`);
   assert.equal(await currentTaskPage.getByRole("link",{name:"查看对应智能体 →"}).getAttribute("href"),
@@ -221,7 +221,7 @@ test("built Task page selects the current Loop, preserves manual history and fit
   await pageBrowser.evaluate(({projectId,taskId}) => { location.hash = `/p/${projectId}/tasks/${taskId}?tab=delivery`; },{projectId,taskId});
   await fetch(`${base}/__fixture/fail-run-list`);
   await fetch(`${base}/__fixture/fail-session-list`);
-  await currentTaskPage.getByRole("link",{name:"核对这次 Run →"}).click();
+  await currentTaskPage.getByRole("link",{name:"核对这次运行 →"}).click();
   await currentOpenRun.waitFor();
   await pageBrowser.waitForFunction(runTitleClearsHeader,{taskId,runId});
   await currentTaskPage.getByText(/运行列表暂不可读取/).waitFor();

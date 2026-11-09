@@ -1,13 +1,22 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { createElement } from "react";
+import * as ReactModule from "react";
+import { createElement, type ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { TaskDetail } from "@evoloop/contracts";
 import type { LeaderWorkTask } from "@evoloop/contracts/work-index";
 import type { MutationContext } from "../src/shared/ActionForm.tsx";
-import { LeaderTaskFacts } from "../src/features/workflow/LeaderTaskFacts.tsx";
+import { TaskArrangementFacts } from "../src/features/workflow/TaskArrangement.tsx";
 import { TaskTiming } from "../src/shared/taskTiming.tsx";
-import { TaskWorkflow } from "../src/features/workflow/TaskWorkflow.tsx";
+import { TaskActionsTab, ownerOptions } from "../src/features/workflow/TaskActionsTab.tsx";
+
+// Shared parts written for the automatic JSX runtime expect React in scope under this test loader.
+Object.assign(globalThis, { React: ReactModule });
+// The task page's reads go through TanStack Query; rendered once on the server, nothing has been read yet.
+const render = (element: ReactElement) => renderToStaticMarkup(createElement(QueryClientProvider, { client: new QueryClient() }, element));
+const actions = (props: Record<string, unknown>) => createElement(TaskActionsTab, { leader: null, leaderState: "ready", documents: {}, documentsPending: false,
+  onRereadLeader: () => {}, ...props } as never);
 
 const owner = "10000002-0000-4000-8000-000000000002";
 const task = { projectId: "10000001-0000-4000-8000-000000000001", id: "10000003-0000-4000-8000-000000000003",
@@ -19,12 +28,13 @@ const context = { token: "fixture", projectId: task.projectId,
   onAttempt: () => true, onKnown: () => {}, onChanged: () => {}, draftScope: `task:${task.id}`, draftBaseline: task.currentRevisionId } as MutationContext;
 
 test("Task edit remains available while the Role directory is loading or unavailable", () => {
-  const html = renderToStaticMarkup(createElement(TaskWorkflow, { context, detail, mode: "actions" }));
+  const html = render(actions({ context, detail }));
   assert.match(html, /更新任务内容/);
-  assert.match(html, /name="content"/);
-  assert.match(html, /name="acceptance"/);
-  assert.match(html, /当前负责者（职责目录待核对）/);
-  assert.match(html, new RegExp(`value="${owner}"`));
+  // The form keeps the current owner while the directory is still being read or could not be read.
+  for (const read of [{ isPending: true }, { error: new Error("职责暂不可读") }])
+    assert.deepEqual(ownerOptions(owner, read), [{ value: owner, label: "当前负责者（职责目录待核对）" }]);
+  const roles = [{ id: "other", state: "active", proposal: { title: "其他职责" } }] as never;
+  assert.deepEqual(ownerOptions(owner, { data: roles }).map(item => item.label), ["当前负责者（未核为使用中的职责）", "其他职责 · 使用中"]);
 });
 
 test("Task actions expose planning, dependency and exact-position Leader review", () => {
@@ -42,13 +52,11 @@ test("Task actions expose planning, dependency and exact-position Leader review"
   };
   const reviewContext = { ...context,
     principal: { ...context.principal, permissions: ["read", "write", "review"] } } as MutationContext;
-  const html = renderToStaticMarkup(createElement(TaskWorkflow, {
-    context: reviewContext, detail, leader, mode: "actions",
-  }));
+  const html = render(actions({ context: reviewContext, detail, leader }));
   assert.match(html, /设置计划、截止与优先级/);
   assert.match(html, /设置前置任务依赖/);
   assert.match(html, /记录统筹处理决定/);
-  assert.match(html, /已核对当前工作/);
+  assert.match(html, /对这项任务的当前版本记“已核对”或“暂缓”/);
 });
 
 test("Task timing names the actual waiting party and does not present the owner Role as Leader", () => {
@@ -90,15 +98,15 @@ test("Task detail exposes current plan, responsibility, consumer, source and nex
     consumer: "acceptance-agent", useRequired: true, acceptanceMode: "independent_agent",
     evidence: "来自需求会话的固定依据", stopCondition: "前置结果变化时停止", createdAt: "2026-10-29T00:00:00Z",
   } } as TaskDetail;
-  const html = renderToStaticMarkup(createElement(LeaderTaskFacts, {
+  const html = render(createElement(TaskArrangementFacts, {
     leader, detail: withAcceptance, projectId: task.projectId, responsibleName: "验收与流程负责人",
   }));
   // The next step names what holds the task (the unaccepted prerequisite), in the workbench's words; the
   // projection's nextAction is text for agents and is not shown.
-  assert.match(html, /下一步：<\/strong>等待前置任务「前置结果」通过验收；处理后再安排承接/);
+  assert.match(html, /下一步：<\/span>等待前置任务「前置结果」通过验收；处理后再安排承接/);
   assert.doesNotMatch(html, /等待前置结果验收/);
   assert.match(html, /P2 · 计划开始/);
-  assert.match(html, /责任<\/dt><dd>职责 · 验收与流程负责人/);
+  assert.match(html, /责任<\/p><div[^>]*>职责 · 验收与流程负责人/);
   assert.doesNotMatch(html, new RegExp(`负责 Role ${owner}`));
   assert.match(html, /acceptance-agent/);
   assert.match(html, /来自需求会话的固定依据/);

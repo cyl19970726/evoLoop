@@ -13,6 +13,7 @@ import { date } from "../../shared/ui/shared";
 import { sessionHref } from "../sessions";
 import { readAgent } from "./agentRead";
 import { agentFacts, assignmentKey, type Read, type ReadState } from "./taskFactsPresentation";
+import { assignmentSetCommand } from "./taskCommands";
 import { baselineChangedText, useCommand } from "./useCommand";
 
 const directoryPageLimit = 10;
@@ -76,7 +77,8 @@ export function TaskAgentBlock({ context, task, run, runtimeHref }: {
   </div>;
 }
 
-function BindAgentForm({ context, task, currentVersion, currentKey, onDone }: {
+/** Binds the task to one agent of its role, or changes the binding; shared by the right column and 运行与关联. */
+export function BindAgentForm({ context, task, currentVersion, currentKey, onDone }: {
   context: MutationContext; task: Task; currentVersion: number; currentKey: string | null; onDone(): void;
 }) {
   const choicesRead = useProjectQuery(context.projectId, ["task", task.id, "bindable-agents", task.owner], signal => bindableAgents(context.projectId, task.owner, signal));
@@ -86,16 +88,14 @@ function BindAgentForm({ context, task, currentVersion, currentKey, onDone }: {
   const [reason, setReason] = React.useState("");
   // What the person saw when the form opened. If the task or its assignment changes meanwhile, the form refuses to
   // submit until they have looked at the latest content; the versions sent are always the ones they saw.
-  const command = useCommand(context, `${task.version}:${currentVersion}:${currentKey ?? ""}`);
-  const [seenTaskVersion, seenAssignmentVersion] = (command.recordedBaseline ?? "").split(":").map(Number);
+  const command = useCommand(context, { taskVersion: task.version, assignmentVersion: currentVersion, currentKey: currentKey ?? "" });
   const allowed = context.principal.permissions.includes("review");
   const dirty = !!(target || recipient || reason);
   async function submit(event: React.FormEvent) {
     event.preventDefault();
     const chosen = choices.find(item => item.key === target);
     if (!chosen) return;
-    const applied = await command.submit(() => ({ type: "task.assignment.set", taskId: task.id, expectedTaskVersion: seenTaskVersion,
-      expectedVersion: seenAssignmentVersion, target: chosen.target, recipientActorId: recipient.trim() || null, reason: reason.trim() }));
+    const applied = await command.submit(seen => assignmentSetCommand(task.id, seen, { target: chosen.target, recipientActorId: recipient, reason }));
     if (applied) onDone();
   }
   return <form onSubmit={submit} className="flex flex-col gap-3 rounded-lg bg-muted p-3" data-dirty={dirty ? "true" : undefined} aria-label="绑定智能体">

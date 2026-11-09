@@ -9,7 +9,7 @@ import { queryKeys, useProjectQuery } from "../../shared/query";
 import { ShortId, href } from "../../shared/ui/shared";
 import { HumanAcceptanceInbox } from "./AcceptanceOverviewPanels";
 import { defaultTaskListView, taskListRoute } from "./taskExperience";
-import "./task-experience.css";
+import "./inbox.css";
 
 export function InboxIndex({ context }: { context: MutationContext; refresh: number }) {
   const { projectId } = context;

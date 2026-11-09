@@ -115,13 +115,10 @@ test("old Schedule occurrence reaches its exact closed Run Session workspace", {
   const card = page.locator(`#runtime-run-${taskId}-${runId}`);
   await card.locator(":scope > summary").waitFor();
   await card.locator(":scope > summary").click();
-  const exact = card.getByRole("link", { name: "查看此 Run 登记的 Session 工作区" });
+  // The run names the agent it ran on; the agents' own cards are on the agent's page, not the task's.
+  const exact = card.getByRole("link", { name: "查看这次运行的智能体" });
   assert.equal(await exact.getAttribute("href"), `/p/${projectId}/sessions?session=${encodeURIComponent(sessionKey)}`);
-  assert.match(await card.innerText(), /Run 的状态不代表任务验收或当前接手/);
-  const sessionCard = page.locator(".runtime-session-card").filter({ hasText: sessionId });
-  await sessionCard.locator(":scope > summary").click();
-  assert.equal(await sessionCard.getByRole("link", { name: "查看此 Session 工作区" }).getAttribute("href"),
-    `/p/${projectId}/sessions?session=${encodeURIComponent(sessionKey)}`);
+  assert.match(await card.innerText(), /运行的状态不代表任务已验收/);
   await exact.click();
   await page.getByRole("heading", { name: "历史 Session 77500006" }).waitFor();
   assert.match(await page.locator(".session-detail-header").innerText(), /历史/);
