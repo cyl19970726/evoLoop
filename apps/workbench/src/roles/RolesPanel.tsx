@@ -7,7 +7,7 @@ import { roleClient } from "./client";
 import { RolePresenceCard } from "./RolePresenceCard";
 import { codexThreadHref } from "./externalHostEntry";
 import { RoleTemplateSummary } from "./RoleTemplateSummary";
-import { roleCardKey, roleListScope } from "./roleListRefresh";
+import { roleCardKey, roleListScope, rolesWhileRereading } from "./roleListRefresh";
 import { RoleRuntimeCard } from "./RoleRuntimeCard";
 import { AllocationBacklinks } from "../discussions/AllocationBacklinks";
 import { href } from "../ui/shared";
@@ -95,7 +95,8 @@ export function RolesPanel({ context, refresh }: { context: MutationContext; ref
     moreInFlightRef.current = false;
     // A refresh of the same project keeps the cards mounted (so open entries stay open); only another scope clears them.
     const scope = roleListScope(context.token, context.projectId);
-    if (loadedScope.current !== scope) { setRoles([]); setNextCursor(null); loadedScope.current = scope; }
+    if (loadedScope.current !== scope) setNextCursor(null);
+    setRoles(previous => rolesWhileRereading(loadedScope.current, scope, previous)); loadedScope.current = scope;
     setLoading(true); setLoadingMore(false); setError(""); setMoreError("");
     roleClient(context.token, context.projectId).list()
       .then(page => { if (active && epochRef.current === epoch) { setRoles(page.items); setNextCursor(page.nextCursor); } })

@@ -30,7 +30,10 @@ test("saving runtime settings keeps the Role card open and shows the new revisio
       else if (url.pathname === root) value = { id: projectId, title: "p", createdAt: stamp };
       else if (url.pathname === `${root}/roles`) value = { items: [role()], nextCursor: null };
       else if (url.pathname === `${root}/roles/${roleId}/runtime`) value = runtime();
-      else if (url.pathname === `${root}/commands` && req.method === "POST") { version += 1; revision += 1; value = { status: "applied", entityId: roleId }; }
+      else if (url.pathname === "/api/commands" && req.method === "POST") {
+        const body = JSON.parse(await new Promise<string>(done => { let text = ""; req.on("data", chunk => { text += chunk; }); req.on("end", () => done(text)); })) as { operationId: string };
+        version += 1; revision += 1; value = { status: "applied", operationId: body.operationId, entityId: roleId };
+      }
       else if ([`${root}/role-templates`].includes(url.pathname)) value = { templates: [], roles: [], nextCursor: null };
       else if (url.pathname.endsWith("/hosts") || url.pathname.endsWith("/bindings")) value = [];
       res.writeHead(200, { "content-type": "application/json" }); res.end(JSON.stringify(value)); return;

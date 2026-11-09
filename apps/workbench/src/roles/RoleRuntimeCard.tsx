@@ -3,7 +3,7 @@ import type { RoleRuntimeView } from "@evoloop/contracts/role-skills";
 import { errorText } from "../api";
 import { ActionForm, Notice, type MutationContext } from "../workflow/ActionForm";
 import { roleClient } from "./client";
-import { presentRoleRuntime, runtimeCommand, runtimeFields } from "./roleRuntimePresentation";
+import { presentRoleRuntime, runtimeCommand, savedRuntimeNotice, runtimeFields } from "./roleRuntimePresentation";
 import "./presence.css";
 
 export function RoleRuntimeCard({ context, roleId, refresh }: { context: MutationContext; roleId: string; refresh: number }) {
@@ -20,11 +20,11 @@ export function RoleRuntimeCard({ context, roleId, refresh }: { context: Mutatio
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, [context.token, context.projectId, roleId, refresh, tick]);
+  const savedNotice = savedRuntimeNotice(saved, loading, view);
   const shown = view ? presentRoleRuntime(view) : null;
   return <section className="role-runtime" aria-label="运行时与 skill">
     <div className="panel-head"><h3>运行时与 skill</h3><button type="button" onClick={() => setTick(value => value + 1)} disabled={loading}>{loading ? "读取中…" : "重新读取"}</button></div>
-    {saved && !error && (loading ? <Notice>已保存，正在读取新修订…</Notice>
-      : view?.binding && <Notice>已保存；回读到第 {view.binding.revision} 次修订。</Notice>)}
+    {!error && savedNotice && <Notice>{savedNotice}</Notice>}
     {error && <Notice error>运行时与 skill 暂不可读：{error}</Notice>}
     {view && shown && <>
       <dl>
