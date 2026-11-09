@@ -121,6 +121,8 @@ test("native progress keeps source, freshness and cumulative usage separate from
     await page.setViewportSize({ width: 390, height: 840 });
   }
 
+  // From here the checks read the centre and the right column together: at 1440px the column sits beside the page.
+  await page.setViewportSize({ width: 1440, height: 900 });
   const facts = page.getByRole("region", { name: "执行与消息状态" });
   await fetch(`${base}/__fixture/set?mode=messageLive`);
   await page.getByRole("button", { name: "重新读取", exact: true }).click();

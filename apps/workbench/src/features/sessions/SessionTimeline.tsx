@@ -1,5 +1,5 @@
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ArrowDown, Bot, Check, ChevronDown, CircleAlert, Clock3, FileCode2, FileText, FolderOpen, Info, LoaderCircle, MessageCircle, Search, TerminalSquare, UserRound, Users, Wrench, X } from "lucide-react";
+import { ArrowDown, Check, ChevronDown, CircleAlert, Clock3, FileCode2, FileText, FolderOpen, Info, LoaderCircle, MessageCircle, Search, TerminalSquare, Users, Wrench, X } from "lucide-react";
 import * as Dialog from "@radix-ui/react-dialog";
 import type { SessionSnapshot } from "@evoloop/contracts/session-observation";
 import type { SessionMessageProcessing, SessionMessageRecord } from "@evoloop/contracts/session-messages";
@@ -14,6 +14,7 @@ import { DirectInputEntry } from "./DirectInputEntry";
 import { useSessionTimeline } from "./useSessionTimeline";
 import { workspaceCurrentProgress, workspaceReadingGroups, workspaceReadingOrder, workspaceToolPreview } from "./workspaceTimelineModel";
 import { SessionIdentityMark } from "./SessionIdentityMark";
+import { AgentAvatar, cn } from "@evoloop/ui";
 import type { SessionIdentity } from "@evoloop/contracts/session-identity";
 import type { SessionTarget } from "@evoloop/contracts/session-work";
 
@@ -60,25 +61,29 @@ function ToolGroup({ entries, scope, context, sessionKey, mayReadOriginal }: { e
   const failures = entries.filter(entry => ["failed", "interrupted", "declined"].includes(entry.state)).length;
   const running = entries.some(entry => entry.state === "running" && entry.freshness === "live");
   const visible = open ? entries : workspaceToolPreview(entries, selectedId);
-  return <div className={`workspace-tools ${failures ? "has-failure" : ""}`}>
-    <button type="button" className="workspace-tools-toggle" aria-expanded={open} aria-controls={listId} onClick={() => {
+  return <div className={cn("workspace-tools flex flex-col gap-1.5", failures && "has-failure")}>
+    <button type="button" className="workspace-tools-toggle flex items-center gap-1.5 self-start rounded-md px-1 py-0.5 text-label text-muted-foreground hover:text-foreground" aria-expanded={open} aria-controls={listId} onClick={() => {
       const next = !open, saved = expandedTools.get(scope) ?? new Set<string>();
       for (const entry of entries) if (next) saved.add(entry.id); else saved.delete(entry.id);
       expandedTools.delete(scope); expandedTools.set(scope, saved);
       while (expandedTools.size > 2) expandedTools.delete(expandedTools.keys().next().value!);
       setOpen(next);
-    }}><ChevronDown size={14} aria-hidden="true" /><Wrench size={15} aria-hidden="true" /><strong>工具与活动 · {entries.length} 项</strong>
-      <span className="workspace-tools-status">{running && <><LoaderCircle size={13} className="workspace-spinning" aria-hidden="true" />进行中</>}{failures > 0 && <><CircleAlert size={13} aria-hidden="true" />{failures} 项失败或中断</>}</span>
+    }}><Wrench size={14} aria-hidden="true" /><strong className="font-normal">工具与活动 · {entries.length} 项</strong>
+      <span className="workspace-tools-status flex items-center gap-1">{running && <><LoaderCircle size={13} className="animate-spin motion-reduce:animate-none" aria-hidden="true" />进行中</>}{failures > 0 && <span className="flex items-center gap-1 text-destructive"><CircleAlert size={13} aria-hidden="true" />{failures} 项失败或中断</span>}</span>
+      <ChevronDown size={14} aria-hidden="true" className={cn("transition-transform", !open && "-rotate-90")} />
     </button>
-    <div id={listId} className="workspace-tool-list">
-      {visible.map(entry => <div className={`workspace-tool ${entry.state}`} key={entry.id} data-workspace-entry={entry.id} data-turn-id={entry.turnId ?? undefined}>
-        <div className="workspace-tool-main"><ToolIcon entry={entry} /><div><strong>{toolLabel(entry.name)}{toolLabel(entry.name) !== entry.name && <span className="workspace-tool-native"> · {entry.name}</span>}</strong>{entry.summary && entry.summary !== entry.name && <span>{entry.summary}</span>}</div>
-          <small><StateIcon state={entry.state === "running" && entry.freshness !== "live" ? "unknown" : entry.state} />{entry.freshness !== "live" && entry.state === "running" ? "上次进行中，当前待核对" : states[entry.state]}{entry.durationMs !== null && ` · ${Math.round(entry.durationMs) / 1000}s`}</small>
-          <button type="button" className="workspace-entry-detail" aria-label={`${selectedId === entry.id ? "收起" : "查看"}工具详情：${entry.name}`} aria-expanded={selectedId === entry.id} onClick={() => setSelectedId(value => value === entry.id ? null : entry.id)}>{selectedId === entry.id ? "收起详情" : "原位详情"}</button></div>
-        {selectedId === entry.id && <div className="workspace-tool-inline" role="region" aria-label={`${toolLabel(entry.name)}详情`}><EntryInspector key={entry.id} entry={entry} context={context} sessionKey={sessionKey} mayReadOriginal={mayReadOriginal} /></div>}
+    <div id={listId} className="workspace-tool-list flex flex-col gap-1 rounded-md bg-muted px-3 py-2">
+      {visible.map(entry => <div className={cn("workspace-tool flex flex-col gap-1.5", entry.state)} key={entry.id} data-workspace-entry={entry.id} data-turn-id={entry.turnId ?? undefined}>
+        <div className="workspace-tool-main flex items-center gap-2.5 text-label text-text-secondary">
+          <span className={cn("shrink-0", ["failed", "interrupted", "declined"].includes(entry.state) ? "text-destructive" : "text-muted-foreground")}><ToolIcon entry={entry} /></span>
+          <div className="min-w-0 flex-1"><strong className="font-medium text-foreground">{toolLabel(entry.name)}{toolLabel(entry.name) !== entry.name && <span className="workspace-tool-native font-normal text-muted-foreground"> · {entry.name}</span>}</strong>{entry.summary && entry.summary !== entry.name && <span className="block truncate">{entry.summary}</span>}</div>
+          <small className="flex shrink-0 items-center gap-1 text-caption text-muted-foreground"><StateIcon state={entry.state === "running" && entry.freshness !== "live" ? "unknown" : entry.state} />{entry.freshness !== "live" && entry.state === "running" ? "上次进行中，当前待核对" : states[entry.state]}{entry.durationMs !== null && ` · ${Math.round(entry.durationMs) / 1000}s`}</small>
+          <button type="button" className="workspace-entry-detail shrink-0 rounded px-1.5 py-0.5 text-caption text-primary hover:bg-accent" aria-label={`${selectedId === entry.id ? "收起" : "查看"}工具详情：${entry.name}`} aria-expanded={selectedId === entry.id} onClick={() => setSelectedId(value => value === entry.id ? null : entry.id)}>{selectedId === entry.id ? "收起详情" : "原位详情"}</button>
+        </div>
+        {selectedId === entry.id && <div data-legacy="" className="workspace-tool-inline workbench-layout" role="region" aria-label={`${toolLabel(entry.name)}详情`}><EntryInspector key={entry.id} entry={entry} context={context} sessionKey={sessionKey} mayReadOriginal={mayReadOriginal} /></div>}
       </div>)}
     </div>
-    {!open && entries.length > visible.length && <span className="workspace-tool-more">显示最新与异常的 {visible.length} 项；另有 {entries.length - visible.length} 项可展开</span>}
+    {!open && entries.length > visible.length && <span className="workspace-tool-more text-caption text-muted-foreground">显示最新与异常的 {visible.length} 项；另有 {entries.length - visible.length} 项可展开</span>}
   </div>;
 }
 
@@ -116,25 +121,37 @@ function TimelineEntry({ item, context, title, taskTitle, sessionKey, target, id
   const summary = item.kind === "message" ? null : item.kind === "tool" ? item.name : item.label;
   const expandedBody = item.kind === "message" && fullText && item.state !== "running" && fullText.body.startsWith(item.body) ? fullText : null;
   const body = expandedBody?.body ?? (item.kind === "tool" ? item.summary : item.body);
-  if (dispatched && item.origin?.taskId) return <article className="workspace-system-strip" data-workspace-entry={item.id} data-turn-id={item.turnId ?? undefined}>
-    <strong>系统派发 · 本轮任务</strong><span>来源：业务 Run · {taskTitle || "任务标题待核对"}</span>
-    <a href={`${taskHref(item.origin.taskId)}${taskHref(item.origin.taskId).includes("?") ? "&" : "?"}run=${encodeURIComponent(item.origin.id)}`}>查看任务与指令</a>
+  const runHref = item.origin?.kind === "run" && item.origin.taskId ? `${taskHref(item.origin.taskId)}${taskHref(item.origin.taskId).includes("?") ? "&" : "?"}run=${encodeURIComponent(item.origin.id)}` : null;
+  if (dispatched && item.origin?.taskId) return <article className="workspace-system-strip flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md border border-border px-3 py-2 text-label text-text-secondary" data-workspace-entry={item.id} data-turn-id={item.turnId ?? undefined}>
+    <FileText size={15} aria-hidden="true" /><strong className="font-medium text-foreground">系统派发 · 本轮任务</strong><span>来源：业务 Run · {taskTitle || "任务标题待核对"}</span>
+    <a className="text-primary" href={runHref!}>查看任务与指令</a>
   </article>;
-  return <article aria-label={dispatched ? "项目派发的任务输入" : mine ? "我发出的消息" : label} className={`workspace-message ${mine ? "from-me" : assistant ? "from-agent" : "from-other"} ${item.kind !== "message" ? "workspace-record" : ""}`} data-workspace-entry={item.id} data-turn-id={item.turnId ?? undefined}>
-    <span className="workspace-avatar" aria-hidden="true">{dispatched ? <FileText size={18} /> : mine ? <UserRound size={18} /> : assistant ? <Bot size={19} /> : item.author.kind === "actor" ? <Users size={18} /> : <Info size={18} />}</span>
-    <div className="workspace-message-content"><header>{provenSession && <SessionIdentityMark target={target} identity={identity} name={title} size="small" />}<strong>{label}</strong>{item.occurredAt && <time dateTime={item.occurredAt}>{date(item.occurredAt)}</time>}
-      {item.freshness === "stale" && <span className="workspace-stale">上次观察</span>}
-      {item.kind === "message" && item.role === "input" && ["pending", "running", "failed", "unknown", "interrupted", "declined"].includes(item.state) && <span className={`workspace-input-state ${item.state}`}>{states[item.state]}</span>}
-    </header><div className={`workspace-message-body ${item.kind === "message" ? item.phase : ""}`}>
-      {summary && <h3>{summary}</h3>}
-      {body ? <MarkdownBody source={body} identity={`workspace-${item.id}`} projectId={context.projectId} /> : <p className="muted">{assistant && item.state === "running" ? "正在回复…" : "原生来源未提供可公开的正文。"}</p>}
-      {(expandedBody?.truncated ?? item.truncated) && <button className="workspace-entry-detail" type="button" disabled={bodyBusy} onClick={() => void expandBody()}>{bodyBusy ? "读取完整内容中…" : `读取完整${assistant ? "回复" : "内容"}`}</button>}
-      {bodyError && <p role="alert" className="workspace-input-state failed">{bodyError}</p>}
-      <footer>{messageId && <button type="button" className="workspace-entry-detail" onClick={() => onMessage(messageId)}>消息详情</button>}
-        {item.origin?.kind === "run" && item.origin.taskId && <a href={`${taskHref(item.origin.taskId)}${taskHref(item.origin.taskId).includes("?") ? "&" : "?"}run=${encodeURIComponent(item.origin.id)}`}>查看来源任务</a>}
-        {!messageId && item.nativeItemId && !mine && <button type="button" className="workspace-entry-detail" onClick={() => onDetail(item)}>查看来源</button>}
-      </footer>
-    </div></div>
+  const stateTag = item.kind === "message" && item.role === "input" && ["pending", "running", "failed", "unknown", "interrupted", "declined"].includes(item.state)
+    ? <span className={cn("workspace-input-state rounded-full px-2 py-px text-caption", item.state, ["failed", "unknown", "interrupted", "declined"].includes(item.state) ? "bg-danger-soft text-destructive" : "bg-field text-text-secondary")}>{states[item.state]}</span> : null;
+  const actions = <>
+    {(expandedBody?.truncated ?? item.truncated) && <button className="workspace-entry-detail text-primary" type="button" disabled={bodyBusy} onClick={() => void expandBody()}>{bodyBusy ? "读取完整内容中…" : `读取完整${assistant ? "回复" : "内容"}`}</button>}
+    {messageId && <button type="button" className="workspace-entry-detail text-primary" onClick={() => onMessage(messageId)}>消息详情</button>}
+    {runHref && <a className="text-primary" href={runHref}>查看来源任务</a>}
+    {!messageId && item.nativeItemId && !mine && <button type="button" className="workspace-entry-detail text-primary" onClick={() => onDetail(item)}>查看来源</button>}
+  </>;
+  const time = item.occurredAt ? <time dateTime={item.occurredAt}>{date(item.occurredAt)}</time> : null;
+  if (mine) return <article aria-label="我发出的消息" className="workspace-message from-me flex flex-col items-end gap-1.5 self-end" data-workspace-entry={item.id} data-turn-id={item.turnId ?? undefined}>
+    <div className="workspace-message-body max-w-[86%] whitespace-pre-wrap break-words rounded-[20px_20px_6px_20px] bg-user-bubble px-4 py-[11px] text-small leading-[1.65] text-on-user-bubble">{body || "（没有可公开的正文）"}</div>
+    <footer className="flex flex-wrap items-center justify-end gap-x-3 gap-y-1 text-caption text-muted-foreground">{stateTag}{time}{item.freshness === "stale" && <span className="workspace-stale">上次观察</span>}{actions}</footer>
+    {bodyError && <p role="alert" className="workspace-input-state failed text-caption text-destructive">{bodyError}</p>}
+  </article>;
+  return <article aria-label={dispatched ? "项目派发的任务输入" : label} className={cn("workspace-message flex gap-3", assistant ? "from-agent" : "from-other", item.kind !== "message" && "workspace-record")} data-workspace-entry={item.id} data-turn-id={item.turnId ?? undefined}>
+    {assistant ? <AgentAvatar seed={sessionKey} roleSeed={title} size={28} label={title} className="mt-0.5 shrink-0" />
+      : <span className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full bg-field text-muted-foreground" aria-hidden="true">{dispatched ? <FileText size={15} /> : item.author.kind === "actor" ? <Users size={15} /> : <Info size={15} />}</span>}
+    <div className="workspace-message-content min-w-0 flex-1">
+      <header className="mb-1 flex flex-wrap items-center gap-x-2 text-caption text-muted-foreground">{provenSession && <SessionIdentityMark target={target} identity={identity} name={title} size="small" />}<strong className="font-medium text-text-secondary">{label}</strong>{time}{item.freshness === "stale" && <span className="workspace-stale">上次观察</span>}{stateTag}</header>
+      {summary && <h3 className="mb-1 text-label font-medium text-text-secondary">{summary}</h3>}
+      <div data-legacy="" className={cn("workspace-message-body", item.kind === "message" ? item.phase : "")}>
+        {body ? <MarkdownBody source={body} identity={`workspace-${item.id}`} projectId={context.projectId} /> : <p className="muted">{assistant && item.state === "running" ? "正在回复…" : "原生来源未提供可公开的正文。"}</p>}
+      </div>
+      {bodyError && <p role="alert" className="workspace-input-state failed mt-1 text-caption text-destructive">{bodyError}</p>}
+      <footer className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-caption">{actions}</footer>
+    </div>
   </article>;
 }
 
@@ -290,13 +307,13 @@ export function SessionTimeline({ context, snapshot, onApplied, taskHref, refres
   const currentTool = live && activeTurn ? [...items].reverse().find(entry => entry.kind === "tool" && entry.turnId === activeTurn.id && entry.state === "running") : null;
   const source = activeTurn?.origin;
   const limitations = [...new Set([...(timeline.page?.limitations ?? []), ...(timeline.live?.limitations ?? [])])];
-  return <section className="session-workspace-section session-conversation unified-session-timeline" aria-label="活动与对话">
-    {snapshot.session.kind === "external" && <p className="workspace-range-note"><Info size={13} aria-hidden="true" />外部会话 · 这里只显示已同步内容，消息保存后需人工转交。</p>}
-    {timeline.error && <Alert kind="error">活动暂不可读取：{timeline.error}<button type="button" onClick={timeline.reread}>重新读取活动</button></Alert>}
-    <div className="workspace-current-strip" role="status"><div><small>本轮来源</small><strong>{!activeTurn ? "当前无可确认的活动 Turn" : source?.kind === "run" ? "业务 Run" : source?.kind === "message" ? "消息执行" : "来源尚未关联"}</strong>{source?.taskId && <a href={taskHref(source.taskId)}>{snapshot.currentWork?.id === source.taskId ? snapshot.currentWork.title : "查看关联任务"}</a>}</div>
+  return <section data-ui="" className="session-conversation unified-session-timeline flex min-h-0 flex-1 flex-col gap-3 overflow-hidden" aria-label="活动与对话">
+    {snapshot.session.kind === "external" && <p className="workspace-range-note flex items-center gap-1.5 text-caption text-muted-foreground"><Info size={13} aria-hidden="true" />外部会话 · 这里只显示已同步内容，消息保存后需人工转交。</p>}
+    {timeline.error && <div data-legacy=""><Alert kind="error">活动暂不可读取：{timeline.error}<button type="button" onClick={timeline.reread}>重新读取活动</button></Alert></div>}
+    <div className="workspace-current-strip grid gap-x-6 gap-y-1 rounded-md bg-muted px-3 py-2 text-caption text-muted-foreground compact:grid-cols-3 [&>div]:flex [&>div]:min-w-0 [&>div]:items-baseline [&>div]:gap-x-2 compact:[&>div]:flex-col compact:[&>div]:items-stretch [&_small]:shrink-0 [&_strong]:shrink-0 [&_strong]:font-medium [&_strong]:text-text-secondary [&_span]:min-w-0 [&_span]:truncate [&>div:last-child]:flex-wrap [&>div:last-child>span]:basis-full [&>div:last-child>span]:whitespace-normal [&>div:last-child>span]:line-clamp-2 [&_a]:min-w-0 [&_a]:truncate [&_a]:text-primary" role="status"><div><small>本轮来源</small><strong>{!activeTurn ? "当前无可确认的活动 Turn" : source?.kind === "run" ? "业务 Run" : source?.kind === "message" ? "消息执行" : "来源尚未关联"}</strong>{source?.taskId && <a href={taskHref(source.taskId)}>{snapshot.currentWork?.id === source.taskId ? snapshot.currentWork.title : "查看关联任务"}</a>}</div>
       <div><small>当前工具</small><strong>{currentTool?.kind === "tool" ? toolLabel(currentTool.name) : "当前没有可确认的工具"}</strong>{currentTool?.kind === "tool" && <span>{currentTool.summary || currentTool.name}</span>}</div>
       <div><small>本轮公开进展</small><strong>{progress?.kind === "plan" ? "执行计划" : progress ? "Agent 回复" : "尚未提供"}</strong>{progress && <span>{progress.body.slice(0, 160)}{progress.body.length > 160 ? "…" : ""}</span>}</div></div>
-    <div ref={scroll} className="session-conversation-scroll workspace-timeline-scroll" role="log" tabIndex={0} aria-label="Session 消息与工具时间线" aria-live="off" aria-busy={!timeline.loaded} onScroll={event => {
+    <div ref={scroll} className="session-conversation-scroll workspace-timeline-scroll flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto py-2 pr-1 outline-none" role="log" tabIndex={0} aria-label="Session 消息与工具时间线" aria-live="off" aria-busy={!timeline.loaded} onScroll={event => {
       const node = event.currentTarget;
       if (!node.clientHeight || timeline.denied || cacheGeneration.current !== viewCacheGeneration) return;
       const near = node.scrollHeight - node.scrollTop - node.clientHeight < 90;
@@ -304,15 +321,15 @@ export function SessionTimeline({ context, snapshot, onApplied, taskHref, refres
       readingPositions.delete(scope); readingPositions.set(scope, readingPosition(node, near));
       while (readingPositions.size > 2) readingPositions.delete(readingPositions.keys().next().value!);
     }}>
-      {(timeline.nextCursor || timeline.messagesCursor) && <button className="session-conversation-older" type="button" disabled={timeline.moreBusy || timeline.reconciling} onClick={() => void more()}>{timeline.reconciling ? "正在校准历史…" : timeline.moreBusy ? "正在读取更早内容…" : "加载更早的消息与活动"}</button>}
-      {!timeline.loaded && <p className="workspace-reading-status" role="status"><LoaderCircle size={16} className="workspace-spinning" aria-hidden="true" />正在读取会话…</p>}
-      {timeline.loaded && !timeline.error && !groups.length && !children && !activeTurn && <div className="session-conversation-empty"><MessageCircle size={25} aria-hidden="true" /><strong>{timeline.page?.partial ? "当前来源尚未提供可读的活动" : "从这里开始沟通"}</strong><span>{timeline.page?.partial ? "这不代表原会话没有历史记录，可在读取范围中查看原因。" : "发送消息后，这个 Agent 的回复与工具活动会连续显示在这里。"}</span></div>}
+      {(timeline.nextCursor || timeline.messagesCursor) && <button className="session-conversation-older self-center rounded-full px-3 py-1 text-caption text-primary hover:bg-accent disabled:text-muted-foreground" type="button" disabled={timeline.moreBusy || timeline.reconciling} onClick={() => void more()}>{timeline.reconciling ? "正在校准历史…" : timeline.moreBusy ? "正在读取更早内容…" : "加载更早的消息与活动"}</button>}
+      {!timeline.loaded && <p className="workspace-reading-status flex items-center gap-2 text-small text-muted-foreground" role="status"><LoaderCircle size={16} className="animate-spin motion-reduce:animate-none" aria-hidden="true" />正在读取会话…</p>}
+      {timeline.loaded && !timeline.error && !groups.length && !children && !activeTurn && <div className="session-conversation-empty flex flex-col items-center gap-1.5 py-10 text-center text-small text-muted-foreground [&_strong]:text-body [&_strong]:font-medium [&_strong]:text-foreground"><MessageCircle size={25} aria-hidden="true" /><strong>{timeline.page?.partial ? "当前来源尚未提供可读的活动" : "从这里开始沟通"}</strong><span>{timeline.page?.partial ? "这不代表原会话没有历史记录，可在读取范围中查看原因。" : "发送消息后，这个 Agent 的回复与工具活动会连续显示在这里。"}</span></div>}
       {groups.map(group => group.kind === "tools" ? <ToolGroup key={`tools:${group.id}`} entries={group.entries} scope={scope} context={context} sessionKey={snapshot.session.key} mayReadOriginal={timeline.page?.capabilities.originalToolDetail ?? false} /> : <TimelineEntry key={group.entry.id} item={group.entry} context={context} title={snapshot.session.title} taskTitle={snapshot.currentWork && group.entry.origin?.taskId === snapshot.currentWork.id ? snapshot.currentWork.title : null} sessionKey={snapshot.session.key} target={snapshot.session.target} identity={snapshot.session.identity} taskHref={taskHref} onExpanded={timeline.replaceEntry} onDetail={entry => inspect({ entry })} onMessage={messageId => inspect({ messageId })} />)}
-      {activeTurn && <div className={`workspace-turn-state ${live ? "" : "stale"}`} role="status"><span className="workspace-avatar"><Bot size={19} aria-hidden="true" /></span><div><strong>{live ? <><LoaderCircle size={15} className="workspace-spinning" aria-hidden="true" />处理中</> : "上次观察为进行中"}</strong><span>{live ? "活动将随原会话更新。" : "当前连接状态待核对。"}</span></div></div>}
+      {activeTurn && <div className={cn("workspace-turn-state flex items-center gap-2.5 text-label text-text-secondary", !live && "stale")} role="status"><AgentAvatar seed={snapshot.session.key} roleSeed={snapshot.session.title} size={22} /><div><strong>{live ? <><LoaderCircle size={15} className="animate-spin motion-reduce:animate-none" aria-hidden="true" />处理中</> : "上次观察为进行中"}</strong><span>{live ? "活动将随原会话更新。" : "当前连接状态待核对。"}</span></div></div>}
       {!timeline.denied && children}
     </div>
-    {!nearBottom && items.length > 0 && <button className="workspace-jump-latest" type="button" onClick={() => { if (scroll.current) scroll.current.scrollTo({ top: scroll.current.scrollHeight, behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" }); follow.current = true; setNearBottom(true); }}><ArrowDown size={15} aria-hidden="true" />回到最新内容</button>}
-    <div className="session-composer-host">
+    {!nearBottom && items.length > 0 && <button className="workspace-jump-latest flex items-center gap-1.5 self-center rounded-full bg-raised px-3 py-1.5 text-caption shadow-md" type="button" onClick={() => { if (scroll.current) scroll.current.scrollTo({ top: scroll.current.scrollHeight, behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" }); follow.current = true; setNearBottom(true); }}><ArrowDown size={15} aria-hidden="true" />回到最新内容</button>}
+    <div data-legacy="" className="session-composer-host workbench-layout shrink-0">
       {snapshot.session.kind === "owned" && snapshot.session.target.kind === "owned" ? <DirectInputEntry
         token={context.token} projectId={context.projectId} sessionId={snapshot.session.target.sessionId}
         actorId={context.principal.actorId} onApplied={applied} fallback={<>

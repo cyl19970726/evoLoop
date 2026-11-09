@@ -1,55 +1,7 @@
 
-.session-navigation{min-height:0;flex:1;min-width:0;overflow-y:auto;overscroll-behavior:contain}
-.session-navigation{max-width:320px}
-.session-nav-fold{border:0;background:transparent;color:#50627f;font-size:12px;font-weight:650;padding:3px;text-align:left}
-.session-nav-head{display:flex;justify-content:space-between;align-items:center;padding:7px 10px;color:#50627f;font-size:12px}
-.session-nav-head button{min-height:26px;padding:2px}
-.session-nav-search{display:flex;align-items:center;gap:6px;border:1px solid var(--border);border-radius:6px;padding:5px 8px;background:#fff;color:#8994a7}
-.session-nav-search input{width:100%;min-width:0;border:0;background:transparent;outline:0;font-size:12px}
-.session-nav-group{display:grid;gap:3px;margin:12px 0}
-.session-nav-group>span{font-size:11px;color:#8a94a8;padding:0 10px}
-.session-nav-item{display:grid;gap:3px;min-width:0;padding:8px 10px;border-radius:6px;color:#46536c}
-.session-nav-item:hover,.session-nav-item.selected{background:#e9effe;text-decoration:none}
-.session-nav-item strong{font-size:12px;overflow-wrap:anywhere}
-.session-nav-item small{font-size:10px;color:#8490a3;overflow-wrap:anywhere}
-.session-nav-muted,.session-nav-error{font-size:11px;line-height:1.5;padding:4px 10px;color:#7d8799}
-.session-nav-error{color:#a23d45}
-.session-nav-history,.session-nav-more{border:0;background:transparent;text-align:left;color:#68748d;font-size:11px;padding:7px 10px}
-.session-nav-more{width:100%;border-top:1px solid var(--border)}
-.session-connect-sheet{background:#fff;overflow:auto}.session-connect-options{display:grid;grid-template-columns:1fr;gap:12px;margin-top:22px}.session-connect-options article{border:1px solid var(--border);border-radius:8px;padding:14px}.session-connect-options h3{font-size:14px}.session-connect-options p{font-size:12px;line-height:1.55;color:#6d778a}
-@media(max-width:760px){.session-connect-options{grid-template-columns:1fr}}
 
 /* Sessions is the sole Session catalog. Work keeps project navigation and no Session shortcut list. */
-.session-nav-head{min-height:38px;padding:4px 2px;gap:8px}
-.session-nav-head>strong,.session-nav-head>a{font-size:14px;color:#26385c;font-weight:700}
-.session-nav-head>span{margin-left:auto;color:#71809a;font-size:12px}
-.session-nav-search{margin:2px 0 8px;border-color:#d8e1ef;border-radius:5px;min-height:36px;background:#fff}
-.session-nav-search input{font-size:13px;color:#263958;padding:0}
-.session-nav-current{margin-top:6px}
-.session-nav-current>span,.session-nav-class>span{font-size:11px;letter-spacing:.02em;color:#7d8798;padding:5px 5px 2px}
-.session-nav-class{display:grid;gap:2px;margin:5px 0 8px}
-.session-nav-class:last-child{margin-bottom:0}
-.session-nav-item{grid-template-columns:18px minmax(0,1fr);gap:8px;align-items:start;padding:8px 7px;margin:0 1px;border-radius:5px}
-.session-nav-item:hover,.session-nav-item.selected{background:#edf3ff;color:#2457c5}
-.session-nav-item>svg{color:#7484a2;margin-top:3px}
-.session-nav-status{display:inline-block;width:8px;height:8px;border-radius:50%;margin-top:5px;flex-shrink:0}
-.session-nav-status.running{background:#245bd6}
-.session-nav-status.failed{background:#c94a4a}
-.session-nav-status.idle{background:#a8b4c8}
-.session-nav-status.unknown{background:#d0d5dd;border:1px dashed #a8b4c8}
-.session-nav-signal{display:block;font-size:10px;color:#3d5a8f;line-height:1.35;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.session-nav-copy{display:grid;gap:2px;min-width:0}
-.session-nav-copy strong{font-size:12px;line-height:1.45;color:#263959;font-weight:650}
-.session-nav-item.selected .session-nav-copy strong{color:#174ab8}
-.session-nav-item:has(> .session-identity-mark){grid-template-columns:28px minmax(0,1fr)}
-.session-nav-state .session-nav-status{vertical-align:middle;margin-top:0}
-.session-nav-copy small{line-height:1.35}
-.session-nav-meta,.session-nav-state{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.session-nav-reason{color:#9b6728!important;white-space:normal!important}
-.session-nav-directory-link{display:flex;justify-content:space-between;align-items:center;padding:10px 7px;margin:2px 0 6px;border-top:1px solid #e2e7ef;color:#2457c5;font-size:12px;font-weight:600}
-.session-nav-directory-link:hover{text-decoration:none;color:#163d96}
-.session-nav-history>svg.collapsed{transform:rotate(-90deg)}
-.session-nav-history{justify-content:flex-start;gap:4px}
+
 .sessions-empty-state{display:flex;align-items:center;justify-content:center;min-height:60vh}
 .sessions-empty-card{text-align:center;max-width:480px;padding:48px 32px}
 .sessions-empty-card h1{font-size:32px;margin:0 0 12px;color:#14264a}

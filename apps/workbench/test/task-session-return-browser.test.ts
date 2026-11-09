@@ -102,7 +102,7 @@ test("Task tabs and refresh retain the verified Session return; ordinary and wro
   await page.getByRole("heading",{name:"临时开发 Session"}).waitFor({timeout:5000}).catch(async () => {
     assert.fail(`Session view missing after return: body=${(await page.locator("body").innerText()).slice(0,900)}, errors=${errors.join(" | ")}`);
   });
-  await page.getByRole("button",{name:"展开任务与 Agent 信息"}).click();
+  if (await page.getByRole("button", { name: "展开右栏" }).count()) await page.getByRole("button", { name: "展开右栏" }).click(); // current task and timing live in the right column
   leaderTaskMatches=false;
   await page.getByRole("button",{name:"重新读取",exact:true}).click();
   await page.locator(".session-current-task-timing").getByText(/阶段时间暂不可读/).waitFor();

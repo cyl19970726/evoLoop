@@ -53,7 +53,7 @@ interface PanelApi {
 }
 interface PanelInternals extends PanelApi {
   state: PanelState; update(next: PanelState): void; inline: boolean;
-  target: HTMLElement | null; setTarget(node: HTMLElement | null): void; register(): () => void;
+  target: HTMLElement | null; host(node: HTMLElement | null): void; register(): () => void;
   providers: number; tabs: PanelObject[]; active: string; setActive(id: string): void; close(id: string): void;
 }
 const PanelContext = React.createContext<PanelInternals | null>(null);
@@ -94,7 +94,11 @@ export function ContextPanelProvider({ space, children }: { space: Space; childr
     setStates(previous => ({ ...previous, [space]: next }));
     try { store?.setItem(`evoloop:panel:${space}`, JSON.stringify(next)); } catch { /* memory only */ }
   };
-  const [target, setTarget] = React.useState<HTMLElement | null>(null);
+  // One container for the page's facts for the whole life of the shell. The column, the drawer or a hidden holder
+  // takes it in turn (moved in the DOM), so the portal never changes target and forms in it keep their state when the
+  // panel collapses or switches between column and drawer.
+  const [target] = React.useState<HTMLElement | null>(() => typeof document === "undefined" ? null : document.createElement("div"));
+  const host = React.useCallback((node: HTMLElement | null) => { if (node && target && target.parentNode !== node) node.appendChild(target); }, [target]);
   const [providers, setProviders] = React.useState(0);
   const register = React.useCallback(() => { setProviders(count => count + 1); return () => setProviders(count => count - 1); }, []);
   const [tabs, setTabs] = React.useState<PanelObject[]>([]);
@@ -110,7 +114,7 @@ export function ContextPanelProvider({ space, children }: { space: Space; childr
   const setShown = (open: boolean) => inline ? update({ ...state, open }) : setDrawerOpen(open);
   const value: PanelInternals = {
     open: shown && hasContent, hasContent, state: { ...state, open: shown }, update: next => { if (next.open !== shown) setShown(next.open); if (next.width !== state.width) update({ ...state, width: next.width }); },
-    inline, target, setTarget, register, providers, tabs, active, setActive,
+    inline, target, host, register, providers, tabs, active, setActive,
     setOpen: setShown,
     openInPanel: object => { setTabs(current => addObjectTab(current, object)); setActive(object.id); setShown(true); },
     close: id => { setTabs(current => current.filter(tab => tab.id !== id)); if (active === id) setActive("facts"); },
@@ -123,7 +127,7 @@ export function ContextPanelProvider({ space, children }: { space: Space; childr
 export function ContextPanelColumn({ embedded = false }: { embedded?: boolean } = {}) {
   const panel = React.useContext(PanelContext);
   if (!panel) return null;
-  const { state, update, inline, setTarget, providers, tabs, active, setActive, close, hasContent } = panel;
+  const { state, update, inline, host, providers, tabs, active, setActive, close, hasContent } = panel;
   const activeTab = tabs.find(tab => tab.id === active);
   const showFacts = active === "facts" || !activeTab;
   const body = <div className="flex h-full min-h-0 flex-col" data-ui="">
@@ -141,7 +145,7 @@ export function ContextPanelColumn({ embedded = false }: { embedded?: boolean } 
       {!inline && <IconButton label="关闭右栏" icon={<X size={17} />} compact onClick={() => update({ ...state, open: false })} />}
     </div>
     <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
-      <div ref={setTarget} hidden={!showFacts} />
+      <div ref={host} hidden={!showFacts} />
       {activeTab && !showFacts && <div key={activeTab.id}>{activeTab.render()}</div>}
     </div>
   </div>;
@@ -153,8 +157,8 @@ export function ContextPanelColumn({ embedded = false }: { embedded?: boolean } 
   };
   // The facts container must stay mounted for portals even while the column is hidden.
   if (!hasContent || !state.open) return <>
-    <div hidden><div ref={setTarget} /></div>
-    {hasContent && <div data-ui="" className={embedded ? "absolute right-2 top-2" : "fixed right-4 top-3 z-20"}><IconButton label="展开右栏" icon={<PanelRightOpen size={17} />} variant="secondary" onClick={() => update({ ...state, open: true })} /></div>}
+    <div hidden ref={host} />
+    {hasContent && <div data-ui="" className={embedded ? "absolute right-2 top-2" : "fixed right-2 top-1.5 z-40 compact:right-4 compact:top-3 compact:z-20"}><IconButton label="展开右栏" icon={<PanelRightOpen size={17} />} variant="secondary" onClick={() => update({ ...state, open: true })} /></div>}
   </>;
   if (!inline) return <Sheet open onOpenChange={open => update({ ...state, open })}>
     <SheetContent side={typeof window !== "undefined" && window.matchMedia("(min-width: 760px)").matches ? "right" : "bottom"} className="p-0">

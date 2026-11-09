@@ -97,7 +97,7 @@ test("Session workspace exposes blockers, submits one close intent, and reads th
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button", { name: "进入", exact: true }).click();
   await page.getByRole("heading", { name: "关闭入口测试会话" }).waitFor();
-  await page.getByRole("button", { name: "关闭受管 Session", exact: true }).click();
+  await page.getByRole("button", { name: "关闭受管智能体", exact: true }).click();
   const panel = page.getByRole("region", { name: "结束会话与历史归类" });
   await panel.getByText(/未完 Task/).waitFor();
   for (const label of ["队列占用", "Run", "消息"]) assert.match(await panel.innerText(), new RegExp(label));

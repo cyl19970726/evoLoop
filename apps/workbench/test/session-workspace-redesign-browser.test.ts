@@ -183,9 +183,10 @@ test("Sessions is the sole directory and renders conversation, source, reply and
   assert.deepEqual(await page.locator('[data-shell=rail] a:not([aria-label])').evaluateAll(links => links.map(link => link.firstChild?.nextSibling?.textContent ?? link.textContent)), ["工作", "智能体", "待我处理"]);
   if (await page.locator("[data-shell=frame]").getAttribute("data-rail") !== "shown") await page.getByRole("button", { name: "展开项目导航" }).click();
   const sidebar = page.locator("aside[aria-label=项目导航] .session-navigation");
-  await sidebar.locator(`.session-nav-item[href*="${sessionId}"] .session-identity-violet`).waitFor();
-  await sidebar.getByText("业务 Session · 已加载 1", { exact: true }).waitFor();
-  await sidebar.getByText("System Session · 已加载 1", { exact: true }).waitFor();
+  // The directory shows each agent with its role-based avatar; the saved colour mark stays on the agent page.
+  await sidebar.locator(`.session-nav-item[href*="${sessionId}"]`).waitFor();
+  await sidebar.getByText("业务智能体 · 已加载 1", { exact: true }).waitFor();
+  await sidebar.getByText("系统智能体 · 已加载 1", { exact: true }).waitFor();
   await sidebar.getByText("待归类 · 已加载 1", { exact: true }).waitFor();
   const workPage = await browser.newPage({ viewport: { width: 1280, height: 900 } });
   const workPageErrors: string[] = [];
@@ -203,8 +204,9 @@ test("Sessions is the sole directory and renders conversation, source, reply and
   await workPage.close();
   await sidebar.getByRole("link").filter({ hasText: "测试 Session" }).first().click();
   await page.getByRole("heading", { name: /测试 Session/ }).waitFor();
-  await page.locator(".session-detail-heading .session-identity-violet").waitFor();
-  await page.getByRole("button", { name: "展开任务与 Agent 信息" }).click();
+  // The saved colour mark sits beside the name in the right column; the header shows the role avatar.
+  if (await page.getByRole("button", { name: "展开右栏" }).count()) await page.getByRole("button", { name: "展开右栏" }).click();
+  await page.locator(".session-panel section[aria-label=智能体] .session-identity-violet").waitFor();
   const identitySettings = page.locator(".session-identity-settings");
   await identitySettings.locator("summary").first().click();
   await identitySettings.locator(".command-disclosure > summary").click();
@@ -213,19 +215,19 @@ test("Sessions is the sole directory and renders conversation, source, reply and
   await identitySettings.getByLabel("变更依据").fill("same Session identity across clients");
   await identitySettings.getByRole("button", { name: "调整 Session 颜色与图标" }).click();
   await page.waitForTimeout(500);
-  assert.equal(await page.locator(".session-detail-heading .session-identity-teal").count(), 1,
+  assert.equal(await page.locator(".session-panel section[aria-label=智能体] .session-identity-teal").count(), 1,
     JSON.stringify({ commands: posted.filter(command => command.type === "session.identity.set"),
-      control: await identitySettings.innerText(), header: await page.locator(".session-detail-heading").innerText() }));
+      control: await identitySettings.innerText(), panel: await page.locator(".session-panel").innerText() }));
   const identityCommand = posted.find(command => command.type === "session.identity.set");
   assert.deepEqual([identityCommand?.target, identityCommand?.expectedVersion, identityCommand?.color, identityCommand?.mark],
     [{ kind: "owned", sessionId }, 1, "teal", "grid"]);
   await page.reload();
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button", { name: "进入", exact: true }).click();
-  await page.locator(".session-detail-heading .session-identity-teal").waitFor();
-  assert.match(await page.locator(".session-detail-heading .session-identity-teal").getAttribute("aria-label") ?? "",
+  if (await page.getByRole("button", { name: "展开右栏" }).count()) await page.getByRole("button", { name: "展开右栏" }).click();
+  await page.locator(".session-panel section[aria-label=智能体] .session-identity-teal").waitFor();
+  assert.match(await page.locator(".session-panel section[aria-label=智能体] .session-identity-teal").getAttribute("aria-label") ?? "",
     /测试 Session.*青色.*方格/, "the mark gives screen readers both stable identity properties");
-  await page.getByRole("button", { name: "展开任务与 Agent 信息" }).click();
   await page.getByRole("link", { name: "验证 Sessions 阅读体验" }).first().waitFor();
   await page.getByText("已收到", { exact: false }).waitFor();
   assert.equal(await page.locator('[data-workspace-entry="answer-1"] .session-identity-teal').count(), 1,
@@ -257,7 +259,7 @@ test("Sessions is the sole directory and renders conversation, source, reply and
   assert.equal(await informationPanel.evaluate(element => (element as HTMLDetailsElement).open), true);
   assert.equal(await informationPanel.locator(".session-project-activity").count(), 1,
     "project audit remains reachable inside Session details");
-  assert.equal(await page.locator(".unified-session-timeline:visible").count(), 0, "the audit panel temporarily replaces the main stream");
+  assert.equal(await page.locator(".unified-session-timeline:visible").count(), 1, "details open in the right column beside the conversation, which stays in place");
   const deepLinkPage = await browser.newPage({ viewport: { width: 1280, height: 900 } });
   await deepLinkPage.goto(`${base}/p/${projectId}/sessions?session=${encodeURIComponent(sessionKey)}&tab=activity&filter=important&open=${encodeURIComponent(`message:${messageId}`)}`);
   await deepLinkPage.getByLabel("访问令牌").fill("fixture-token");
@@ -267,8 +269,6 @@ test("Sessions is the sole directory and renders conversation, source, reply and
     "an audit deep link restores the Session details panel");
   await deepLinkPage.close();
   await page.getByRole("button", { name: "会话详情" }).click();
-  const contextToggle = page.locator(".session-context-toggle");
-  if (await contextToggle.getAttribute("aria-expanded") === "false") await contextToggle.click();
   await page.getByLabel("消息内容").fill("键盘发送");
   await page.getByLabel("消息内容").press("Control+Enter");
   await page.getByText("已保存，正在读取持久记录。", { exact: true }).waitFor();
@@ -285,14 +285,19 @@ test("Sessions is the sole directory and renders conversation, source, reply and
     path: `${process.env.EVOLOOP_CAPTURE_MODEL_CONTROL}-wide.png`, fullPage: true });
   await page.setViewportSize({ width: 390, height: 840 });
   assert.equal(await page.locator("body").evaluate(element => element.scrollWidth <= innerWidth), true);
+  // Below 1100px the right column is a drawer; its contents (and this half-filled editor) keep their state.
+  await page.getByRole("button", { name: "展开右栏" }).click();
   if (process.env.EVOLOOP_CAPTURE_MODEL_CONTROL) await page.screenshot({
     path: `${process.env.EVOLOOP_CAPTURE_MODEL_CONTROL}-narrow.png`, fullPage: true });
+  assert.equal(await editor.getByLabel("思考强度").inputValue(), "max", "the editor keeps its choice when the column becomes a drawer");
   await editor.getByLabel("调整理由").fill("固定测试中的受控换模");
   await editor.getByLabel("授权与模型能力依据").fill("fixture-model-list-and-grant");
   await editor.getByRole("button", { name: "保存 Session 下一轮模型与强度" }).click();
   assert.equal(posted.filter(command => command.type === "runtime.session.executionProfile.revise").length, 1);
   assert.equal(posted.find(command => command.type === "runtime.session.executionProfile.revise")?.reasoningEffort, "max");
   await modelControl.getByText("gpt-6-astra / max", { exact: false }).first().waitFor();
+  // Back to a wide window: the right column sits beside the page again, so page and column work together.
+  await page.setViewportSize({ width: 1440, height: 900 });
   // A CLI writer changes the same Session while this page stays open. The top
   // reread must update both the summary and the editor's CAS baseline.
   currentRuntimeVersion++;
