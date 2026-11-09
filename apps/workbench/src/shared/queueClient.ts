@@ -6,7 +6,7 @@ export function queueClient(token: string, projectId: string) {
   const base = `/api/projects/${encodeURIComponent(projectId)}/resident-queues`;
   const key = encodeURIComponent;
   return {
-    list: () => request<ResidentQueue[]>(token, base, 15000),
+    list: (signal?: AbortSignal) => request<ResidentQueue[]>(token, base, 15000, { signal }),
     detail: (id: string) => request<ResidentQueue>(token, `${base}/${key(id)}`, 15000),
     attempts: (id: string) => request<EntryAttempts[]>(token, `${base}/${key(id)}/attempts`, 15000),
   };

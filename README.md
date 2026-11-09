@@ -8,7 +8,7 @@
 
 **人类与 Agent 使用不同入口，接续同一份工作。** 人从工作台观察进展、依据和结果，在既有 Agent 会话中沟通；Agent 按项目业务 skill＋CLI 读取固定依据、执行并核对，人再回看变化。人工直接操作按需保留，权限内工作不要求人逐步确认，也不要求 Agent 点击 GUI。入口与恢复见[日常接力](docs/product/daily-loop.md#人和-agent-怎样在两类入口间接力)及[业务技能与 CLI](docs/development/agent-cli.md)。
 
-当前已有**本机试用切片**：PostgreSQL 支撑目标、阶段、任务、过程文档、交付、使用观察、职责与日程；协调 API、CLI 和 React 工作台可操作。固定 Git 原件、本机 Blob/静态 HTML 阅读、外置 OpenViking 0.5.1 与自管 Codex 运行均有受限实测。两次相连真实任务已有交付、独立 Agent 使用观察及阶段回看；后续运行的终态误判已由普通工作台显式复核修正，真人亲用、语义索引、飞书真实租户与生产部署未验。工程版本与已验范围以[当前阶段](docs/roadmap.md#当前基线)为准，运行方式见[本机运行](docs/development/local-run.md)。
+当前由一台常驻主机上的实例承接本项目的真实工作：PostgreSQL 保存目标、任务、过程文档、交付、使用观察、职责与日程，协调 API、CLI 和 React 工作台可操作，Leader（Codex）与 Dev（Claude）两个 Role 在试行。哪些能力已在新实例上用过、哪些做好了还没用过（例如即时输入、受管压缩、Task 每日复制），以及外置 Wiki 尚未在新实例部署，见[当前基线](docs/roadmap.md#当前基线)；真人整体体验、飞书真实租户与生产级可靠性未验。部署形态见[部署与迁移](docs/architecture/deployment.md)，运行方式见[本机运行](docs/development/local-run.md)。
 
 ## 从这里开始
 
@@ -26,11 +26,14 @@
 | 认识怎样进入 Wiki、被使用及证明有效 | [Wiki 建设与有效性评价](docs/product/wiki-evaluation.md) |
 | Dogfood、新需求、日常讨论和定时工作如何接续 | [日常工作闭环](docs/product/daily-loop.md) |
 | 包怎样分层，怎样集成 Codex | [包架构](docs/architecture/packages.md) · [Codex 接入](docs/architecture/codex-integration.md) |
+| Session 怎样运行与恢复，Codex 与 Claude 有何不同 | [Session 运行时](docs/architecture/session-runtime.md) |
+| 常驻实例怎样部署、发布和迁移 | [部署与迁移](docs/architecture/deployment.md) |
 | 选择什么语言与核心技术，集成或修改哪个 Wiki | [技术选型与 Wiki 改造](docs/architecture/technology-selection.md) |
 | 任务、需求文档、Wiki 和外部平台怎样连起来 | [项目数据与 Connector](docs/architecture/project-data.md) |
 | 层级、组件、数据归属和失败恢复 | [架构总览](docs/architecture/overview.md) |
 | 任务、会话、知识和交接的最小接口语义 | [接口与协作合同](docs/architecture/contracts.md) |
 | 如何开展开发、验证和文档维护 | [开发规范](docs/development/standards.md) · [文档维护](docs/development/documentation.md) |
+| 运行机制怎样打开、核对和回退 | [运行接线手册](docs/development/runtime-operations.md) |
 | 哪些方向已确定、哪些仍需验证 | [决定记录](docs/decisions.md) · [阶段路线](docs/roadmap.md) |
 | 与觉察的关系、知识底座试验结果 | [来源与演进](docs/references/lineage.md) · [验证摘要](docs/references/validation-summary.md) |
 | 选型探索、实验方法、完整结果与改造建议 | [研究与探索](docs/research/README.md) |
@@ -39,8 +42,8 @@
 
 ## 当前边界
 
-- **分工随项目演进。** 从实际工作、成果和使用反馈判断是否增加、合并或撤回角色；同职责换会话不等于新角色。
-- **各领域都形成和使用认识。** 业务 session 可以发现并解决问题；专门认知 session 综合认识、推动下一阶段并承担初期 Wiki 维护，分工管理者评估职责安排。
+- **分工随项目演进。** 同一 Role 加不加 Session 由 Leader 按每日评估决定，一次只增减一个；新的长期 Role 由 Evocation 依据实际工作、成果和使用反馈提出并试行。同职责换会话不等于新角色。
+- **各领域都形成和使用认识。** 业务 session 可以发现并解决问题；专门认知 session 综合认识、推动下一阶段并承担初期 Wiki 维护。
 - **evoLoop 管理主数据，飞书提供协作入口。** PostgreSQL 保存任务、日程、原生需求文档及关系；connector 映射外部视图和受控编辑，Wiki 与 Git 正文仍各有权威。
 - **认知保存在开发仓库外。** 独立 Markdown vault 或知识服务都可；仓库保存代码、正式产品/架构/规范、接入配置和可公开的研究报告。
 - **阶段结束要实际使用。** 看交付是否有效、哪些判断需要改、下一阶段为什么值得做。
