@@ -6,7 +6,8 @@ import { Button } from "@evoloop/ui";
 import { ActionForm, option, type MutationContext } from "../../shared/ActionForm";
 import { useContextRailShown } from "../../shared/ui/ContextRail";
 import { DocumentFilters } from "./DocumentFilters";
-import { DocumentRail, ReadingSpaceSwitch } from "./DocumentRail";
+import { DocumentRail } from "./DocumentRail";
+import { ReadingSpaceSwitch } from "../../shared/ui/ReadingSpaceSwitch";
 import { DocumentTable } from "./DocumentTable";
 import { kindLabel } from "./documentPresentation";
 import { useDocumentListState } from "./documentListState";
@@ -24,7 +25,7 @@ export function DocumentIndex({ context, refresh }: { context: MutationContext; 
   const [create, setCreate] = useState(false);
   const canWrite = context.principal.permissions.includes("write");
   const toolbar = railShown ? null : <div className="flex flex-col gap-2.5">
-    <ReadingSpaceSwitch projectId={projectId} className="w-40" />
+    <ReadingSpaceSwitch projectId={projectId} current="documents" className="w-40" />
     <div className="flex flex-wrap items-center gap-2">
       <DocumentFilters state={state} update={update} layout="toolbar" />
       <Button variant="ghost" size="compact" onClick={() => void list.reread()}>重新读取</Button>
