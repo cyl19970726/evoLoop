@@ -15,7 +15,7 @@ import { appHistory, appPath, currentPath, navigate, onNavigate } from "../share
 import { useQuery } from "@tanstack/react-query";
 import { leaveProject, projectChanged, queryKeys, useProjectQuery } from "../shared/query";
 import { queryClient } from "./queryClient";
-import { WorkbenchShell, sectionNames } from "./WorkbenchShell";
+import { sectionLabels } from "./shell/spaces";
 import { PageBoundary } from "./PageBoundary";
 
 // Each page is its own chunk: the first load carries login, the shell and shared code only.
@@ -42,6 +42,9 @@ const ProjectSettings = named(() => import("../features/settings/ProjectSettings
 const SessionWorkspace = named(() => import("../features/sessions/SessionWorkspace"), "SessionWorkspace");
 const SessionsDirectoryPage = named(() => import("../features/sessions/SessionsDirectoryPage"), "SessionsDirectoryPage");
 const ConnectorPage = named(() => import("../features/connectors/ConnectorPage"), "ConnectorPage");
+// The frame loads after login; the login gate starts fetching it while the token is typed.
+const loadShell = () => import("./shell/AppShell");
+const AppShell = named(loadShell, "AppShell");
 
 /** Session caches live in the Session page module; if it was never loaded there is nothing to clear. */
 function clearSessionSnapshots() {
@@ -102,6 +105,7 @@ function AuthGate({ onSuccess, hasReceipts, notice }: { onSuccess: (token: strin
     } catch (cause) { setError(hub && cause instanceof ApiError && cause.status === 401 ? "尚未登录 Hub，或登录已过期。" : errorText(cause)); }
     finally { setBusy(false); }
   }
+  useEffect(() => { void loadShell(); }, []);
   // Behind the Hub the browser already carries the login; check it once instead of asking for a token.
   useEffect(() => { if (hub) void check(""); }, [hub]);
   async function submit(event: FormEvent) {
@@ -273,6 +277,8 @@ export function App() {
   }, []);
   const projectRead = useProjectQuery(projectId ?? "", ["project"], () => client.project(projectId!), { enabled: !!session });
   const projectTitle = projectRead.data?.title ?? "";
+  const acceptance = useProjectQuery(projectId ?? "", ["acceptance", "mine"], () => client.acceptanceMine(projectId!), { enabled: !!session });
+  const acceptanceCount = acceptance.data?.items.length ?? 0;
   const projectError = projectRead.error ? errorText(projectRead.error) : "";
   const shownProject = useRef<string | null>(null);
   useEffect(() => {
@@ -330,13 +336,14 @@ export function App() {
   if (!projectId) return <div className="app-shell"><header className="project-chooser-header"><a className="brand" href="/">evoLoop</a><button className="quiet" onClick={logout}>退出</button></header><ProjectChooser context={context} token={token} principal={principal} receipts={visibleReceipts} operationNotice={operationNotice} onConfirmed={confirmReceipt} onRefreshSession={async () => setSession(await api(token).session())} /></div>;
   const projectReceipts = visibleReceipts.filter(r => r.projectId === projectId);
   const operationChecks = <>{projectReceipts.map(receipt => <div className="global-alert" key={receipt.operationId}><OperationCheck receipt={receipt} token={token} onConfirmed={result => confirmReceipt(receipt, result)} /></div>)}{!projectReceipts.length && <section className="operation-empty"><ClipboardCheck aria-hidden="true" /><h2>当前没有待核对的共同命令</h2><p>这里只覆盖当前身份保存的回执，其他业务记录仍在原页面。</p><a className="button-link" href={href(projectId!, "work")}>返回当前工作 <ArrowRight size={18} /></a></section>}</>;
-  return <WorkbenchShell route={route} projectTitle={projectTitle} actor={principal.actorId} receiptCount={projectReceipts.length} token={token} logout={logout}>
+  return <Suspense fallback={<p className="content" role="status">正在打开工作台…</p>}><AppShell route={route} projectId={projectId} projectTitle={projectTitle} actor={principal.actorId} permissions={principal.permissions}
+    receiptCount={projectReceipts.length} inboxCount={acceptanceCount} token={token} logout={logout}>
     {route.section !== "operations" && projectReceipts.length > 0 && <div className="global-alert"><Alert kind="error">{projectReceipts.length} 项操作结果尚未确认，提交已暂缓。<a href={href(projectId, "operations")}>按原操作 ID 核对</a></Alert></div>}
     {!receiptStorageAvailable && <div className="global-alert"><Alert kind="error">浏览器未能暂存操作回执。请保留原操作 ID，并在待核对操作中查询。</Alert></div>}
     {operationNotice && <div className="global-alert"><Alert>{operationNotice} <button className="quiet" onClick={() => setOperationNotice("")}>关闭</button></Alert></div>}
     {projectError && <div className="global-alert"><Alert kind="error">项目暂不可读取：{projectError} <button onClick={context.onChanged}>重试读取项目</button></Alert></div>}
     <WorkspacePages key={`${principal.actorId}:${projectId}`} route={route} context={context} refresh={refresh} operations={operationChecks} />
-  </WorkbenchShell>;
+  </AppShell></Suspense>;
 }
 
 function WorkspacePages({ route, context, refresh, operations }: { route: Route; context: MutationContext; refresh: number; operations: ReactNode }) {
@@ -419,7 +426,7 @@ function WorkspacePages({ route, context, refresh, operations }: { route: Route;
     if (r.section === "connectors") return <ConnectorPage context={context} />;
     const components = { reviews: <TeamWorkspace context={context} refresh={refresh} />, journey: <JourneyBoard context={context} refresh={refresh} propose={r.action === "propose"} />, discussions: <TeamWorkspace context={context} refresh={refresh} />, runtime: r.session?.includes(":") ? <SessionWorkspace context={context} refresh={refresh} sessionKey={r.session} active={active} /> : r.session ? <RuntimePanel context={context} refresh={refresh} targetSessionId={r.session} /> : <TeamWorkspace context={context} refresh={refresh} />, schedules: <SchedulingPanel context={context} refresh={refresh} />, roles: <RolesPanel context={context} refresh={refresh} />, collaboration: <CollaborationPanel context={context} refresh={refresh} /> };
     if (r.section === "runtime" || r.section === "discussions" || r.section === "reviews") return components[r.section];
-    return <div className="content"><h1 tabIndex={-1}>{sectionNames[r.section]}</h1>{components[r.section as keyof typeof components]}</div>;
+    return <div className="content"><h1 tabIndex={-1}>{sectionLabels[r.section]}</h1>{components[r.section as keyof typeof components]}</div>;
   }
   return <>{Array.from(cache.current.entries()).map(([pageKey, r]) => <div key={pageKey} data-page-key={pageKey} hidden={pageKey !== key}>
     <PageBoundary><Suspense fallback={<p className="content" role="status">正在打开页面…</p>}>{page(r, pageKey === key)}</Suspense></PageBoundary></div>)}</>;

@@ -263,32 +263,27 @@ test("dual-source history keeps the reader anchor, exhausts cursors, merges live
   await baselinePage.getByLabel("访问令牌").fill("fixture-token");
   await baselinePage.getByRole("button", { name: "进入", exact: true }).click();
   await baselinePage.getByRole("heading", { name: taskTitle }).waitFor();
-  const taskShellBaseline = await baselinePage.locator(".workbench-layout").evaluate(element => ({
-    active: element.getAttribute("data-session-reader"),
-    header: getComputedStyle(element.querySelector<HTMLElement>(".workspace-header")!).height,
+  const taskShellBaseline = await baselinePage.locator("[data-shell=frame]").evaluate(element => ({
+    rail: element.getAttribute("data-rail"),
     columns: getComputedStyle(element).gridTemplateColumns.split(" ").slice(0, 2),
   }));
-  assert.equal(taskShellBaseline.active, "false", "a fresh Task page uses the standard shell");
+  assert.equal(taskShellBaseline.rail, "shown", "a fresh Task page shows the inner rail at this width");
   await baselinePage.close();
   await page.goto(`${base}/p/${projectId}/sessions`);
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button", { name: "进入", exact: true }).click();
   await page.getByRole("heading", { name: "Sessions", exact: true }).waitFor();
-  const directoryToggle = page.getByRole("button", { name: /^(展开|收起)项目导航$/ });
-  if (await directoryToggle.getAttribute("aria-expanded") !== "true") await directoryToggle.click();
-  const directory = page.locator(".project-sidebar .session-navigation");
+  if (await page.locator("[data-shell=frame]").getAttribute("data-rail") !== "shown") await page.getByRole("button", { name: "展开项目导航" }).click();
+  const directory = page.locator("aside[aria-label=项目导航] .session-navigation");
   await directory.locator(".session-nav-item").filter({ hasText: "时间线分页会话" }).click();
   await page.getByRole("heading", { name: "时间线分页会话" }).waitFor();
-  const shellLayout = async () => page.locator(".workbench-layout").evaluate(element => ({
-    active: element.getAttribute("data-session-reader"),
-    header: getComputedStyle(element.querySelector<HTMLElement>(".workspace-header")!).height,
+  const shellLayout = async () => page.locator("[data-shell=frame]").evaluate(element => ({
+    rail: element.getAttribute("data-rail"),
     columns: getComputedStyle(element).gridTemplateColumns.split(" ").slice(0, 2),
   }));
   const assertSessionReaderShell = async () => {
     const shell = await shellLayout();
-    assert.equal(shell.active, "true", "the selected Session activates its reader layout");
-    assert.deepEqual(shell.columns, ["88px", "256px"], "the selected Session uses the reader project grid");
-    assert.equal(shell.header, "48px", "the selected Session uses the compact header");
+    assert.deepEqual(shell, taskShellBaseline, "the selected Session uses the same frame as a Task");
   };
   const assertDefaultShell = async () => {
     const shell = await shellLayout();

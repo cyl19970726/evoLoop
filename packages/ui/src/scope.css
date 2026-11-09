@@ -5,13 +5,14 @@
  * so they would override Tailwind utilities on new components. Inside an element marked [data-ui]:
  *   1. a scoped preflight (layer base) replaces browser defaults, the way Tailwind's preflight would;
  *   2. an unlayered rule rolls the old element rules back with `all: revert-layer`, so layered utilities apply again.
- * Load this file after the old CSS. Old pages without [data-ui] are untouched.
+ * Load this file after the old CSS. Old pages without [data-ui] are untouched, and so is old markup that the new
+ * frame has to hold inside [data-ui] (the Session list in the mobile drawer): it is marked [data-legacy] and skipped.
  */
 @layer base {
   [data-ui],
-  [data-ui] *,
-  [data-ui] ::before,
-  [data-ui] ::after {
+  [data-ui] *:not([data-legacy], [data-legacy] *),
+  [data-ui] :where(*:not([data-legacy], [data-legacy] *))::before,
+  [data-ui] :where(*:not([data-legacy], [data-legacy] *))::after {
     box-sizing: border-box;
     margin: 0;
     padding: 0;
@@ -25,15 +26,15 @@
     text-rendering: optimizeLegibility;
   }
 
-  [data-ui] :is(h1, h2, h3, h4, h5, h6) { font-size: inherit; font-weight: inherit; }
-  [data-ui] a { color: inherit; text-decoration: inherit; }
-  [data-ui] :is(b, strong) { font-weight: var(--weight-strong); }
-  [data-ui] small { font-size: inherit; }
-  [data-ui] :is(code, kbd, samp, pre) { font-family: var(--font-mono); font-size: 1em; }
-  [data-ui] :is(ol, ul, menu) { list-style: none; }
-  [data-ui] :is(img, svg, video, canvas) { display: block; vertical-align: middle; }
-  [data-ui] :is(img, video) { max-width: 100%; height: auto; }
-  [data-ui] :is(button, input, select, optgroup, textarea) {
+  [data-ui] :is(h1, h2, h3, h4, h5, h6):not([data-legacy], [data-legacy] *) { font-size: inherit; font-weight: inherit; }
+  [data-ui] a:not([data-legacy], [data-legacy] *) { color: inherit; text-decoration: inherit; }
+  [data-ui] :is(b, strong):not([data-legacy], [data-legacy] *) { font-weight: var(--weight-strong); }
+  [data-ui] small:not([data-legacy], [data-legacy] *) { font-size: inherit; }
+  [data-ui] :is(code, kbd, samp, pre):not([data-legacy], [data-legacy] *) { font-family: var(--font-mono); font-size: 1em; }
+  [data-ui] :is(ol, ul, menu):not([data-legacy], [data-legacy] *) { list-style: none; }
+  [data-ui] :is(img, svg, video, canvas):not([data-legacy], [data-legacy] *) { display: block; vertical-align: middle; }
+  [data-ui] :is(img, video):not([data-legacy], [data-legacy] *) { max-width: 100%; height: auto; }
+  [data-ui] :is(button, input, select, optgroup, textarea):not([data-legacy], [data-legacy] *) {
     font: inherit;
     letter-spacing: inherit;
     color: inherit;
@@ -41,16 +42,16 @@
     border-radius: 0;
     opacity: 1;
   }
-  [data-ui] ::placeholder { opacity: 1; color: var(--text-muted); }
-  [data-ui] textarea { resize: vertical; }
-  [data-ui] :is(button, [role="button"]) { cursor: pointer; }
-  [data-ui] :disabled { cursor: default; }
-  [data-ui] table { border-collapse: collapse; text-indent: 0; border-color: inherit; }
-  [data-ui] summary { display: list-item; }
-  [data-ui] [hidden]:where(:not([hidden="until-found"])) { display: none !important; }
+  [data-ui] :where(*:not([data-legacy], [data-legacy] *))::placeholder { opacity: 1; color: var(--text-muted); }
+  [data-ui] textarea:not([data-legacy], [data-legacy] *) { resize: vertical; }
+  [data-ui] :is(button, [role="button"]):not([data-legacy], [data-legacy] *) { cursor: pointer; }
+  [data-ui] :disabled:not([data-legacy], [data-legacy] *) { cursor: default; }
+  [data-ui] table:not([data-legacy], [data-legacy] *) { border-collapse: collapse; text-indent: 0; border-color: inherit; }
+  [data-ui] summary:not([data-legacy], [data-legacy] *) { display: list-item; }
+  [data-ui] [hidden]:where(:not([hidden="until-found"])):not([data-legacy], [data-legacy] *) { display: none !important; }
 }
 
 /* Unlayered on purpose: it has to win over the old unlayered element rules, then hand control back to the layers. */
-[data-ui][data-ui] :is(a, button, input, select, textarea, label, summary, p, small, span, li, ul, ol, dl, dt, dd, h1, h2, h3, h4, table, tbody, th, td, code, pre) {
+[data-ui][data-ui] :is(a, button, input, select, textarea, label, summary, p, small, span, li, ul, ol, dl, dt, dd, h1, h2, h3, h4, table, tbody, th, td, code, pre):not([data-legacy], [data-legacy] *) {
   all: revert-layer;
 }

@@ -1,6 +1,7 @@
 // Component sample page (/ui): every @evoloop/ui component in its states, on fake data, in light and dark.
 // It is the only visual reference for components; docs do not carry component screenshots.
 import * as React from "react";
+import { ContextPanelColumn, ContextPanelContent, ContextPanelProvider, useContextPanel } from "../shell/ContextPanel";
 import { Bell, Copy, MoreHorizontal, Pencil, Plus, Settings, Trash2 } from "lucide-react";
 import {
   AgentAvatar, Badge, Button, CollapsibleRow, CountDot, Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogTitle, DialogTrigger,
@@ -44,6 +45,36 @@ const tones: { tone: StatusTone; label: string; detail?: string }[] = [
   { tone: "progress", label: "进行中" }, { tone: "waiting", label: "待验收" }, { tone: "blocked", label: "受阻", detail: "依据待复核" },
   { tone: "done", label: "已完成" }, { tone: "idle", label: "待办" }, { tone: "unknown", label: "状态未核对" }, { tone: "history", label: "历史承接" },
 ];
+
+/** The shell's right column on fake data: default facts from the page, objects opened beside them. */
+function PanelSample() {
+  return <ContextPanelProvider space="work">
+    <div className="relative flex overflow-hidden rounded-lg border border-border bg-background">
+      <div className="min-w-0 flex-1 p-4 text-small">
+        <p className="mb-3 text-text-secondary">中间是正在读的对象。点下面的链接，对象在右栏打开，中间不动。</p>
+        <PanelOpeners />
+      </div>
+      <ContextPanelColumn embedded />
+    </div>
+    <ContextPanelContent>
+      <dl className="flex flex-col gap-3 text-small">
+        <div><dt className="text-muted-foreground">状态</dt><dd><StatusTag tone="progress" label="进行中" /></dd></div>
+        <div><dt className="text-muted-foreground">对账阶段</dt><dd>待验收 · 第 2 版</dd></div>
+        <div><dt className="text-muted-foreground">承接智能体</dt><dd>功能开发 · 已接受</dd></div>
+      </dl>
+    </ContextPanelContent>
+  </ContextPanelProvider>;
+}
+
+function PanelOpeners() {
+  const panel = useContextPanel();
+  const open = (id: string, title: string) => panel?.openInPanel({ id, title, href: "/ui",
+    render: () => <div className="text-small"><p className="mb-2 font-medium">{title}</p><p className="text-text-secondary">右栏里打开的对象，可以关闭，或点“在中间打开”切过去。</p></div> });
+  return <ul className="flex flex-col gap-1.5">
+    {["需求总图", "编排总览", "交付说明 第 3 版", "依据：接口约定", "测试报告", "复盘记录"].map((title, index) =>
+      <li key={title}><button type="button" className="text-primary underline-offset-4 hover:underline" onClick={() => open(`doc-${index}`, title)}>{title}</button></li>)}
+  </ul>;
+}
 
 function ConversationSample() {
   const dev = sampleAgent("agent-dev-1")!;
@@ -271,6 +302,9 @@ export default function UiSamplesPage() {
             <ConversationSample />
           </Section>
 
+          <Section title="右栏" note="页面把当前对象的信息放进右栏；在中间点到的对象以页签叠放在旁边，最多 5 个；可以拖宽、收起">
+            <PanelSample />
+          </Section>
           <Section title="头像与标志" note="底色跟职责走，发型和配饰跟智能体走">
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
               {sampleAgents.map(agent => (

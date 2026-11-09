@@ -261,7 +261,7 @@ test("resident observation keeps acceptance, host authority and task replies dis
   await pageBrowser.getByRole("button",{name:"核对当前路由"}).click();
   await pageBrowser.getByText(/外部宿主需人工领取/).waitFor();
   if (process.env.EVOLOOP_RESIDENT_ROLE_SCREENSHOT) {
-    await pageBrowser.addStyleTag({content:".workspace-header{position:static!important}"});
+    await pageBrowser.addStyleTag({content:"[data-shell=mobile-header]{position:static!important}"});
     await pageBrowser.locator(`#role-${roleId} .role-presence`).screenshot({path:process.env.EVOLOOP_RESIDENT_ROLE_SCREENSHOT});
   }
   await fetch(`${base}/__fixture/hold-next-route`);
@@ -301,7 +301,7 @@ test("resident observation keeps acceptance, host authority and task replies dis
   assert.match(await queueItems.nth(1).innerText(),/等待前项放行/);
   assert.equal(await pageBrowser.locator(".resident-queues").evaluate(el=>el.scrollWidth<=el.clientWidth),true);
   if (process.env.EVOLOOP_RESIDENT_QUEUE_SCREENSHOT) {
-    await pageBrowser.addStyleTag({content:".workspace-header{position:static!important}"});
+    await pageBrowser.addStyleTag({content:"[data-shell=mobile-header]{position:static!important}"});
     await pageBrowser.locator(".resident-queues").screenshot({path:process.env.EVOLOOP_RESIDENT_QUEUE_SCREENSHOT});
   }
   await fetch(`${base}/__fixture/terminal-run`);
@@ -404,7 +404,7 @@ test("resident observation keeps acceptance, host authority and task replies dis
   await pageBrowser.getByText(/稳定操作 ID/).waitFor();
   assert.equal(await pageBrowser.locator(".task-collaboration").evaluate(el=>el.scrollWidth<=el.clientWidth),true);
   if (process.env.EVOLOOP_RESIDENT_SCREENSHOT) {
-    await pageBrowser.addStyleTag({content:".workspace-header{position:static!important}"});
+    await pageBrowser.addStyleTag({content:"[data-shell=mobile-header]{position:static!important}"});
     await pageBrowser.locator(".task-collaboration").screenshot({path:process.env.EVOLOOP_RESIDENT_SCREENSHOT});
   }
   await fetch(`${base}/__fixture/fail-discussions`);

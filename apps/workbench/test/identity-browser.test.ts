@@ -39,7 +39,7 @@ test("a 401 signs out and clears the page; a revoked project returns to the proj
   await page.goto(`${base}/p/${projectA}/settings`);
   await signIn();
   await page.getByRole("heading", { name: "项目设置" }).waitFor();
-  await page.locator(".project-switch strong", { hasText: "甲项目" }).waitFor();
+  await page.locator('aside[aria-label="项目导航"] a[href="/"]', { hasText: "甲项目" }).waitFor();
 
   expired = true;
   await page.getByRole("button", { name: "重新读取" }).first().click();
@@ -50,15 +50,15 @@ test("a 401 signs out and clears the page; a revoked project returns to the proj
 
   expired = false;
   await signIn();
-  await page.locator(".project-switch strong", { hasText: "甲项目" }).waitFor();
+  await page.locator('aside[aria-label="项目导航"] a[href="/"]', { hasText: "甲项目" }).waitFor();
   assert.equal(await page.locator(".auth-card").count(), 0);
 
   revokedA = true;
-  await page.locator('nav[aria-label="主导航"] a.rail-brand').click();
+  await page.locator('[data-shell=rail] a[href="/"]').click();
   await page.getByRole("heading", { name: "你的项目" }).waitFor();
   assert.equal(await page.locator(`a[href="/p/${projectA}/work"]`).count(), 0, "the list rereads each project; A is no longer readable");
   await page.evaluate(path => { const link = Object.assign(document.createElement("a"), { href: path }); document.body.append(link); link.click(); link.remove(); }, `/p/${projectB}/settings`);
-  await page.locator(".project-switch strong", { hasText: "乙项目" }).waitFor();
+  await page.locator('aside[aria-label="项目导航"] a[href="/"]', { hasText: "乙项目" }).waitFor();
   // A saved link to the revoked project, opened inside the app.
   await page.evaluate(path => { const link = Object.assign(document.createElement("a"), { href: path }); document.body.append(link); link.click(); link.remove(); }, `/p/${projectA}/settings`);
   await page.getByText("你已无权访问该项目，已回到项目列表。").waitFor();
