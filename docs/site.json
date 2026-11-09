@@ -33,23 +33,33 @@
       "group": "前端文档"
     },
     {
-      "path": "docs/frontend/business-to-interface.md",
-      "title": "从业务推导前端",
+      "path": "docs/frontend/principles.md",
+      "title": "设计原则",
       "group": "前端文档"
     },
     {
-      "path": "docs/frontend/experience.md",
-      "title": "体验与信息架构",
+      "path": "docs/frontend/scenarios.md",
+      "title": "场景与交互",
+      "group": "前端文档"
+    },
+    {
+      "path": "docs/frontend/layout.md",
+      "title": "布局",
+      "group": "前端文档"
+    },
+    {
+      "path": "docs/frontend/foundations.md",
+      "title": "设计基础",
+      "group": "前端文档"
+    },
+    {
+      "path": "docs/frontend/components.md",
+      "title": "组件清单",
       "group": "前端文档"
     },
     {
       "path": "docs/frontend/journeys/current-work.md",
       "title": "实景旅程：工作到成果",
-      "group": "前端文档"
-    },
-    {
-      "path": "docs/frontend/design-system.md",
-      "title": "设计系统与共同交互",
       "group": "前端文档"
     },
     {
@@ -59,12 +69,12 @@
     },
     {
       "path": "docs/frontend/pages/tasks.md",
-      "title": "任务列表与详情",
+      "title": "任务",
       "group": "前端文档"
     },
     {
       "path": "docs/frontend/pages/documents.md",
-      "title": "过程文档阅读",
+      "title": "过程文档",
       "group": "前端文档"
     },
     {
@@ -74,12 +84,12 @@
     },
     {
       "path": "docs/frontend/pages/schedules.md",
-      "title": "日程与触发",
+      "title": "日程",
       "group": "前端文档"
     },
     {
       "path": "docs/frontend/pages/team-and-sessions.md",
-      "title": "团队与具体 Session",
+      "title": "团队与 Session",
       "group": "前端文档"
     },
     {

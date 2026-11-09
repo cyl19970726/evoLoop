@@ -36,7 +36,7 @@
 | DEC-026 | 停止继续完整实现工作台静态原型，问题转入真实前端首片方案；当时暂不写前端代码；该暂停已由 DEC-028 取代 | 用户明确选择先收敛方案，待主数据/API 首片一起实现。原型审查发现的问题保留为实施与验收约束；目录不按全部对象平铺，具体精简导航仍待真实前端验证。此决定不批准待选技术栈或把本地未完成原型候选当作交付 |
 | DEC-027 | 暂用 OpenViking 作为首个知识后端，前端保留类似 nashsu 的知识图谱与阅读体验；允许以后自研替换 | 用户明确本阶段方向，采纳 PROP-008 的后端选择部分。知识合同、稳定 ID/修订/关系和迁移验收独立于供应商；具体版本、补丁、前端依赖和自研计划仍待验证。此次只补架构，保留 DEC-026 的暂不写前端代码范围 |
 | DEC-028 | 全面、多角度审阅设计，修正后开始实现，保持明确抽象与分包 | 授权进入真实主数据/API/前端首片，取代 DEC-026 的暂停。S1a 实现过程 Markdown 修订、任务固定依据与影响复核；本次工程选择及固定版本见技术选型。外部平台接入、完整 Agent loop 和生产部署仍未完成。 |
-| DEC-029 | 按已接能力重组真实前端，并区分人的 GUI 与 Agent 业务入口 | 人用浅色、无绿色的双层左栏默认阅读、按需判断与反馈；工作和知识先行、总览待真实反馈。保留 React/TS/Vite 与当前 hash 路由，按需使用 Tailwind、shadcn/ui 和项目内开发技能；Agent 常规业务入口另由项目业务 skill 配合 CLI／MCP 调用相同 API/core，浏览器 Agent QA 不算真人亲用。F1—F4 的源码、测试和实际使用分别验收，不因本决定声称完成。 |
+| DEC-029 | 按已接能力重组真实前端，并区分人的 GUI 与 Agent 业务入口；**按需组件与页面骨架已被 DEC-036 修订** | 人用浅色、无绿色的双层左栏默认阅读、按需判断与反馈；工作和知识先行、总览待真实反馈。保留 React/TS/Vite 与当前 hash 路由，按需使用 Tailwind、shadcn/ui 和项目内开发技能；Agent 常规业务入口另由项目业务 skill 配合 CLI／MCP 调用相同 API/core，浏览器 Agent QA 不算真人亲用。F1—F4 的源码、测试和实际使用分别验收，不因本决定声称完成。 |
 
 | DEC-030 | 人从工作台观察并与 Agent 沟通，Agent 通过项目业务 skill＋CLI 执行大多数常规修改 | 补充 DEC-014/029 的默认使用路径：工作台观察→现有会话沟通→Agent 受控执行→共同查询回看。两端共享 API/core 的授权、固定修订、状态和恢复；人工直接操作按需保留，不要求 Agent 点击 GUI 或人批准每个常规动作。前端 F 系列与 Agent 入口 C 系列并行验收，总览后置、飞书实连延后；未接 MCP 不冒称已建工具包。 |
 
@@ -46,6 +46,7 @@
 | DEC-033 | 所有新建 Session 使用 `danger-full-access`、`approvalPolicy: never` 与正常网络；普通消息和业务工作共享原 Session、Thread、adapter 与工具面 | 取代消息专用进程／purpose、只读权限资格门与业务权限恢复状态机。既有 sender/receiver grant 和 `maxTurns` 预算继续限定身份与成本；project/Task/Document 授权不变。旧 Session、Run 与 profile snapshots 保留历史值，不经冷切迁移重写。native permission ack 未收到时仍为 unknown；thread/read 不足以证明权限或确认 lost ack。当前仅 fake adapter 与专用 PG 验证，未证明 Lead 实际使用、发布或部署。 |
 | DEC-034 | 以经营交付和组织方法改进两张卫星图定义 Agent Company 的完整场景 | Leader 管任务组合、依赖、顺序、承接与验收安排；Human Requirement 按需澄清方向；业务 Agent 自行判断并交付；User Session 独立亲用，Evocation 对照内部 trace 与亲用证据试行方法/组织改进。两循环共用 Task/Document/Run/Delivery/Observation。保留 DEC-012 的四种支撑能力、DEC-002 的领域自主与 DEC-003 的证据要求；修订 DEC-003/004/014/032 的中央演员与默认路由。图是目标责任，现有 Role 名称及有限实跑不证明全链自动化；详见[产品定义](product/definition.md)与[完整场景](product/functional-scenarios.md)。 |
 | DEC-035 | Role 只绑定一种运行时（Codex 或 Claude），之后不可更换；一个协调服务按 Session 的运行时同时驱动两者；Role 此刻拥有的 skill 实时可见 | Role 首次绑定后只在该运行时内调整模型与 skill，未绑定的 Role 在首个 Session 预留时按服务默认运行时绑定。Session 一直按创建时的运行时分发。Role 的 skill 选择（业务 skill 必带；项目、个人、内置按开关，另可按名称增减）决定每个 Turn 的模型上下文，不是安全边界。CLI 与工作台每次读取都向运行时实时取值；逐 Turn 的 skill 记录不另建表，沿用 Claude 适配器 Turn 账本中的启动报告。配置与发现规则见[本机运行](development/local-run.md)。 |
+| DEC-036 | 工作台采用统一的设计语言：Tailwind v4 + shadcn/ui 作为唯一组件体系，保留双左栏并加“中间内容、右侧信息”的统一骨架，前端文档按原则、场景、基础、组件、布局、页面和架构重组 | 修订 DEC-029 的“按需使用 Tailwind、shadcn/ui”和各页自定主区：设计体系放进 `packages/ui`，token 单一来源；保留双左栏，外层模块栏选空间并放全局信号，内层上下文栏放项目切换、分区导航和对象列表；Session、任务、文档等内容页统一为中间主体流、右侧可收起信息栏；保持无绿色。技术方向为单页应用 + TanStack Router（路径 URL）+ TanStack Query + 推送事件失效重读，暂不用 Next.js，公开产品阶段另建官网应用。前端文档只写现状与目标，页面说明用固定模板并由 `docs:check` 检查。代码迁移由前端改版 issue 分 PR 实施，本决定不表示界面已改完 |
 
 ## 当前设计提议
 
@@ -59,7 +60,7 @@
 | PROP-006 | core、contracts 与平台适配分层，单活 daemon 装配；日程与任务主数据按 DEC-018 存于 evoLoop | 语言与部署选型、外置运行记录实现、真实表结构及时间/去重/重叠语义 |
 | PROP-007 | 主应用推荐 TS/Node 24 LTS、npm workspaces、Fastify、Zod；主数据及运行存储按 DEC-017/018 使用 PostgreSQL | S1a 已采用并锁定 TS/Node/npm/Fastify/Zod、PG 驱动与迁移，见[技术选型](architecture/technology-selection.md)；协议迁移与生产恢复仍待后续验证 |
 | PROP-008 | OpenViking 接入方向已由 DEC-027 采纳；独立服务、认知维护留在 evoLoop 与有限 fork 仍按能力细化 | v0.5.1 是新候选而非已通过版本；核所有写入入口、来源撤回、修订/恢复及许可安排后再确定补丁 |
-| PROP-009 | 同源 React/TS/Vite 工作台，Router + Query 曾作为导航和读取的目标建议；共用协调 API | 见[前端架构](frontend/architecture.md)；当前仍用 hash 路由与直接请求，本轮已授权按需采用 Tailwind/shadcn/ui；Router/Query 未安装，远程手机访问需登录/常在线部署 |
+| PROP-009 | 同源 React/TS/Vite 工作台，Router + Query 曾作为导航和读取的目标建议；共用协调 API | 见[前端架构](frontend/architecture.md)；当前仍用 hash 路由与直接请求，本轮已授权按需采用 Tailwind/shadcn/ui；Router/Query 未安装，已由 DEC-036 选为目标；远程手机访问需登录/常在线部署 |
 | PROP-010 | 采用固定 Task/Document 修订、类型化关系和来源桥接，连接 PG、Git 与外置 Wiki | 见[存储](architecture/storage.md)与[知识关联](architecture/knowledge-flow.md)；需实测约束、纠正传播、权限变化和跨系统恢复 |
 | PROP-011 | 经共同 API 改造知识阅读/关系/Review，按固定来源接 OpenViking 与 PG/Git；原型覆盖六条产品路径 | [集成方案](architecture/wiki-integration.md)和[原型审阅](research/workbench-prototype-review.md)说明切片；待验证代码移植、许可安排、发布恢复和真实效果 |
 
@@ -102,3 +103,5 @@ DEC-033 依据 2026-10-27 用户对 Task9a v5 的明确新选择：每个新 Ses
 DEC-034 依据 2026-10-29 用户对 Agent Company 完整蓝图、两张原图与相应场景的确认。固定来源是过程 Document `92e03220-59bb-4dea-b63a-bcd204f30f31` 的修订 `67b7ad3e-e64c-4800-a55e-784a50354492`；可公开的目标语义与原图已纳入[产品定义](product/definition.md#两张产品卫星图经营交付与组织改进)。原报告含本机运行和内部路径，不作为 Git 正文发布。此决定改变产品职责和阅读路径；现有运行配置、自动唤醒、真人亲用和持续收益各按[阶段路线](roadmap.md#当前基线)单独核验。
 
 DEC-035 依据 2026-11-09 用户在运行时规划对话中的明确选择：角色绑定 Codex 后就只能用 Codex，可以改模型但不能换成另一种运行时；需要实时知道一个角色有哪些 skill；同一协调服务要同时运行 Codex 与 Claude；逐 Turn 记录由实现者判断。原始会话不随公开仓库发布。论证与场景见[运行时后续目标](research/runtime-next-goals-20261108.md)；研究记录仍是证据与方案，此行才是采纳。Claude 真实模型的凭据、费用与限流，以及经 coordinator 与工作台的真实双运行时 Session，仍待受控实验确认；Claude Session 的模型修订尚未实现。
+
+DEC-036 依据 2026-11-09 用户在前端设计语言讨论中的明确选择：在“在现有 CSS 上收敛”“真正落地 Tailwind + shadcn/ui”“引入完整组件库”三个方向中选择第二个；参考 Claude Code 桌面版与一个 Bot 应用的布局，要求 Session、任务和文档遵循“左边工作、中间对话与内容、右边信息”的同一布局，整体简约克制；做好分包；前端文档按页面对应并同步维护。用户曾选择把两条左栏合并成一条，随后要求综合全部使用场景从用户角度重新判断，并认为双左栏仍有用；[场景与交互](frontend/scenarios.md#从场景看布局)据此保留双左栏并重新分工。审计依据：当时 7 个全局 CSS 按导入顺序互相覆盖、主色有 4 个值，约 1600 处写死颜色，shadcn Button 只用 2 次而原生按钮 219 处，前端文档约 5.3 万字且页面说明无图。多机器方案（[issue #219](https://github.com/cyl19970726/evoLoop/issues/219)）先行，公开产品是后续方向；按既定架构转向公开产品以新增为主，多语言暂不提前实施。已同步[前端文档](frontend/README.md)、[设计原则](frontend/principles.md)、[场景与交互](frontend/scenarios.md)、[设计基础](frontend/foundations.md)、[组件清单](frontend/components.md)、[布局](frontend/layout.md)与[前端架构](frontend/architecture.md)。

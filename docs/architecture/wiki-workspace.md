@@ -73,7 +73,7 @@ flowchart LR
 
 ### 焦点图的组件接缝与阅读联动
 
-图谱留在 `/knowledge/graph`，作为知识入口内的关系导航；总览／工作／知识仍是三个主入口，首个交付切片仍按[前端架构](../frontend/architecture.md#6-实现切片与验收)先完成 Task、过程文档及固定依据的可导航读取。图在知识阅读切片中加入，不要求首次进入就加载全库或完成全局布局。
+图谱留在 `/knowledge/graph`，作为知识入口内的关系导航；入口由[布局](../frontend/layout.md#内层上下文栏)决定，知识在“文档与知识”下进入；实现顺序见[前端架构](../frontend/architecture.md#6-实现切片与验收)。图在知识阅读切片中加入，不要求首次进入就加载全库或完成全局布局。
 
 建议 `GraphScene` 接收共同 API 返回的有界 `GraphNeighborhood`、焦点/选中稳定 ID、过滤条件、加载/截断/缺项状态与可用能力，只上抛 `onFocus`、`onSelectNode`、`onSelectEdge`、`onExpand(cursor)`、`onOpenKnowledge(id, revision)`、`onOpenEvidence(edgeId)` 等意图事件；页面容器负责路由、授权查询、版本比较和缓存失效。`RendererGraphologySigma` 是可替换的渲染实现建议，只接收 `GraphScene` 的可视节点/边并回报命中与视口事件，不导入 OpenViking SDK、Tauri/store，也不自行推断关系或读取全库。关系列表与图使用同一查询结果和事件；以后换 SVG、Canvas 或别的渲染器，阅读与查询合同不变。具体字段以[Wiki 集成方案的拟议 DTO](wiki-integration.md#5-查询-dto-与错误语义)和后续浏览器 schema 为准，这里的组件名/事件是实施建议。
 

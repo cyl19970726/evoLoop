@@ -1,0 +1,84 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1040 560" width="1040" height="560" role="img" aria-labelledby="t d" font-family="-apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif">
+  <title id="t">工作台布局线框图（目标）</title>
+  <desc id="d">外层模块栏有工作、Sessions、待我处理和账号；内层上下文栏依次为项目切换和 Session 目录；中间为 Session 的对话与 Agent 活动流，底部是输入框；右栏为角色、运行时、所在机器、当前任务、队列和成果。</desc>
+  <rect x="0.5" y="0.5" width="1039" height="559" rx="8" fill="#ffffff" stroke="#dce3ee"/>
+  <rect x="1" y="1" width="63" height="558" fill="#ffffff"/>
+  <rect x="65" y="1" width="219" height="558" fill="#f7f9fc"/>
+  <line x1="64.5" y1="1" x2="64.5" y2="559" stroke="#dce3ee"/>
+  <line x1="284.5" y1="1" x2="284.5" y2="559" stroke="#dce3ee"/>
+  <line x1="783.5" y1="1" x2="783.5" y2="559" stroke="#dce3ee"/>
+
+  <text x="32" y="36" font-size="16" font-weight="600" fill="#17233b" text-anchor="middle">eL</text>
+  <rect x="6" y="58" width="52" height="44" rx="8" fill="#ffffff" stroke="#dce3ee"/>
+  <text x="32" y="85" font-size="11" fill="#526078" text-anchor="middle">工作</text>
+  <rect x="6" y="112" width="52" height="44" rx="8" fill="#edf3ff"/>
+  <text x="32" y="139" font-size="11" font-weight="600" fill="#2457f5" text-anchor="middle">Sessions</text>
+  <text x="32" y="480" font-size="11" fill="#526078" text-anchor="middle">待我处理</text>
+  <circle cx="50" cy="452" r="7" fill="#965b17"/>
+  <text x="50" y="456" font-size="9" fill="#ffffff" text-anchor="middle">3</text>
+  <circle cx="32" cy="526" r="13" fill="#edf3ff"/>
+  <text x="32" y="530" font-size="11" fill="#2457f5" text-anchor="middle">HH</text>
+
+  <rect x="78" y="14" width="194" height="48" rx="6" fill="#ffffff" stroke="#dce3ee"/>
+  <rect x="88" y="24" width="28" height="28" rx="6" fill="#edf3ff"/>
+  <text x="102" y="43" font-size="14" font-weight="600" fill="#2457f5" text-anchor="middle">E</text>
+  <text x="126" y="35" font-size="13" font-weight="600" fill="#17233b">evoLoop</text>
+  <text x="126" y="53" font-size="11" fill="#68768c">Mac mini · 在线</text>
+  <text x="260" y="43" font-size="12" fill="#68768c" text-anchor="end">⌄</text>
+
+  <rect x="78" y="76" width="194" height="30" rx="6" fill="#ffffff" stroke="#dce3ee"/>
+  <text x="90" y="96" font-size="12" fill="#68768c">搜索 Session</text>
+  <text x="90" y="132" font-size="11" fill="#68768c">业务 Session</text>
+  <rect x="78" y="142" width="194" height="30" rx="6" fill="#ffffff" stroke="#dce3ee"/>
+  <text x="90" y="162" font-size="13" font-weight="600" fill="#17233b">功能开发 · 并行交付</text>
+  <text x="90" y="194" font-size="13" fill="#526078">架构 · 方案设计</text>
+  <text x="90" y="222" font-size="13" fill="#526078">独立验收 · 用户旅程</text>
+  <text x="90" y="250" font-size="13" fill="#526078">需求 · 方向澄清</text>
+  <text x="90" y="286" font-size="11" fill="#68768c">System Session</text>
+  <text x="90" y="310" font-size="13" fill="#526078">Leader</text>
+  <text x="90" y="338" font-size="13" fill="#526078">Evocation</text>
+
+  <text x="308" y="36" font-size="15" font-weight="600" fill="#17233b">功能开发 · 并行业务交付</text>
+  <line x1="300" y1="54" x2="768" y2="54" stroke="#dce3ee"/>
+
+  <rect x="494" y="72" width="274" height="34" rx="12" fill="#f7f9fc"/>
+  <text x="508" y="94" font-size="13" fill="#17233b">先把 Session 时间线接上 Claude 运行时</text>
+
+  <text x="308" y="134" font-size="13" fill="#17233b">好的。我先看 adapter 现在记录了哪些条目，</text>
+  <text x="308" y="154" font-size="13" fill="#17233b">再决定合同字段怎么加。</text>
+
+  <text x="308" y="186" font-size="12" fill="#526078">›  已执行 3 个指令，读取 2 个文件</text>
+  <text x="308" y="214" font-size="12" fill="#526078">⌄  子 Agent：代码审查</text>
+  <line x1="316" y1="224" x2="316" y2="274" stroke="#bdcbe0"/>
+  <text x="328" y="240" font-size="12" fill="#526078">›  已读取 index.ts</text>
+  <text x="328" y="264" font-size="12" fill="#526078">parent_tool_use_id 没有保留，需要补记录。</text>
+
+  <text x="308" y="302" font-size="13" fill="#17233b">审查完成。下一步补 workspace history。</text>
+  <text x="308" y="334" font-size="12" fill="#2457f5">◌  正在运行测试 · 1 分 04 秒</text>
+
+  <rect x="300" y="496" width="468" height="44" rx="12" fill="#ffffff" stroke="#bdcbe0"/>
+  <text x="316" y="523" font-size="13" fill="#68768c">给当前 Session 发消息</text>
+
+  <g font-size="11" fill="#68768c">
+    <text x="800" y="36">角色</text>
+    <text x="800" y="96">运行时</text>
+    <text x="800" y="156">所在机器</text>
+    <text x="800" y="216">当前任务</text>
+    <text x="800" y="276">队列</text>
+    <text x="800" y="336">成果</text>
+  </g>
+  <g font-size="13" fill="#17233b">
+    <text x="800" y="56">功能开发负责人</text>
+    <text x="800" y="116">Claude · Opus</text>
+    <text x="800" y="176">Mac mini · 在线</text>
+    <text x="800" y="236" fill="#2457f5">实现 Session 连续工作区</text>
+    <text x="800" y="296">2 条待处理消息</text>
+    <text x="800" y="356">PR #224 · 待验收</text>
+  </g>
+
+  <g font-size="11" fill="#68768c" text-anchor="middle">
+    <text x="175" y="430">内层栏：项目与对象列表</text>
+    <text x="534" y="430">中间：主体内容流</text>
+    <text x="910" y="430">右栏：信息（可收起）</text>
+  </g>
+</svg>

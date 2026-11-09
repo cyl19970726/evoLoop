@@ -1,87 +1,80 @@
-# 团队与具体 Session：职责、承接和实际执行
+# 团队与 Session：谁负责，谁在做，做到哪里
 
-2026-11-02 · 页面目标与阅读合同；2026-11-08 增补正式发布后的目录与详情复测。人在团队页辨清谁持续负责，再从唯一 Sessions 目录进入真正承接某项工作的实例，追到成果与实际使用。
+团队页说明每项持续职责由谁承担；Session 页说明一个具体实例此刻在做什么、做出了什么。
 
-本页承接Leader组织承接、业务执行和独立使用，以及方法/容量/职责试行和回看，产品理由及整段验收仍见[工作台产品目标](../../product/workbench.md)。实现能力和实际使用范围分别沿[阶段路线](../../roadmap.md#当前基线)核对；方案、源码、候选体验和已部署不互相代替。共用导航、状态、权限缺项及响应方式见[体验架构](../experience.md)与[设计系统](../design-system.md)。
+## 这一页回答什么
 
-## 团队首屏与具体实例
+- 这项职责用哪个运行时和哪些 skill，最近有哪些讨论和复盘？
+- 某项任务实际由哪个 Session 承接，现在做到哪、卡在哪？
+- 这个 Session 的输入、Agent 活动、工具调用和回复按什么顺序发生？
+- 它交付了什么，有没有问题在等我回答？
 
-团队分工页负责持续职责、组织复盘、分工讨论和受管执行，不再复制 Session 目录。最左模块栏只保留工作与 Sessions；项目内文档、知识、日程和团队分工继续可达。Sessions 是全部当前、历史、待归类实例的唯一目录，业务 Session 与 System Session 按已核正式 RoleClass 分组。多职责跨类、没有正式 Role 或读取失败进入待归类并显示原因，不按名称猜测。Role存在不代表已有可运行实例，外部状态未知不显示为空闲。
+## 布局
 
-Sessions 左栏在目录与详情间使用同一组已加载成员和稳定顺序。选择 Session 只改变高亮与主工作区，搜索、历史展开、已加载分页和侧栏滚动保留；组标题标明已加载数，目录总数与继续加载入口分别显示。窄窗通过项目导航抽屉访问相同列表。
+| 栏 | 团队 | Session |
+| --- | --- | --- |
+| 左栏（对象列表） | 职责目录，分业务 / System；另有分工讨论、组织复盘两个列表 | Session 目录：搜索，分业务 / System / 待归类，历史可展开 |
+| 中间 | 所选职责：目标、范围、交接、试行状态；承载它的 Session（链到 Session 页）；相关讨论与决定 | 对话与 Agent 活动流：人的输入用气泡；Agent 回复是无气泡正文；工具调用折叠成一行灰色摘要（如“已执行 3 个指令 ›”），可展开；子 Agent 的内容在摘要下缩进；实时状态只占一行；需要人回答的问题以卡片嵌在流里；输入框固定在底部 |
+| 右栏（可收起） | 运行时与 skill、试行指标与回看时间 | 角色、运行时、所在机器、当前任务、队列、成果 |
 
-Session详情首屏先标具体实例、真实状态、职责和接入方式，再显示当前任务和紧凑Agent信息。Agent信息把配置模型、思考强度、权限与外部未同步范围分开；当前任务提供确切Task入口。任务与队列、成果页签继续承载分派、Run、队列、结果和使用证据。同Role关系只写相关任务，不当成接受或执行证据；任务已关闭的关联明确历史。
+外壳与左栏见[布局](../layout.md)。
 
-## 当前工作与阅读区
+现状：Session 目录在项目栏里。团队页是主区的四个页签（职责档案、组织复盘、分工讨论、受管执行）。Session 详情没有右栏：页首是状态卡，下面是“活动与对话 / 任务与队列 / 成果”三个页签和底部输入；连续工具调用合并为“工具与活动 · N 项”，还没有子 Agent 层级；“所在机器”还没有数据来源。
 
-这轮常驻协作应从现有工作、Sessions目录、Task 详情逐层读到：当前领域与正式责任、owned 或外部人工承载及其已核能力；Lead 采纳的顺序和依赖理由；当前队列条目是待领取、已领取、held 还是已释放，卡在哪项输入、授权、未知 Run 或验收；本次 Run 固定输入、同一 Thread 的历史尝试、问题与答复、动作请求和实际执行者；当前交付及消费者使用。页面让人知道下一责任与可执行的承接入口，不把“已发消息”“ready”“Run completed”合并成“已接受/已完成”。外部 Desktop link 仅展示已验证的 open/read/manual-claim，未核能力标未知，不能出现自动唤醒按钮。沿已有页面加关联与状态即可，不另造一个覆盖全产品的大总览。
+## 内容与状态
 
-Session 详情以“当前任务＋Agent信息、活动与对话／任务与队列／成果”组织；原聊天、职责、资源、原生进度与正常恢复记录进入可展开详情；待答与当前异常就近显示。活动与对话以消息阅读为主：本人、其他Agent和当前Agent按真实发送者/目标区分，长Markdown、链接和代码完整可读；项目事件与原生回复标来源。连续工具活动默认合并成带观察时间的摘要，失败、待答和阻断始终可见，展开后再核对必要摘要和来源。消息保存、排队、处理、回复、已读和人工转交分别表达。活动按确切来源聚合，只有唯一有据的 Task 关系才显示任务入口；Run 轨迹和消息正文按授权及有界分页读取。进入原 Task 详情后，返回来源 Session 应恢复原页签、筛选、展开项和阅读位置；切换项目、身份或 Session 不沿用其他范围的缓存。任务进度、会话状态、技术交付与消费者实际使用仍分别表达。
+通用的空、加载、失败、未知规则见[共同原则](../principles.md)。
 
-**2026-11-08 发布后复测：** `36cb620/schema062` 维护服务在 1440×900 CSS、DPR 1、scale 1 下显示左侧只有 Session 目录，活动与对话、任务与队列、成果以及自适应输入都在主工作区。截图中的原生连接不可用、PG 状态待核是读取边界；服务 `runtime:false`，没有证明自动 Agent、模型流或实时工具执行。图见[实景用户旅程](../journeys/current-work.md#3-从任务核对具体承接者)。
+**团队**
 
-主阅读区是一条连续工作时间线：输入、Agent 公开进展、工具和最终回复按真实顺序呈现。既有业务 Run 的答复进入该流，不另置“最近业务回复”卡；项目审计、接入、配置与恢复从“会话详情”打开，不能继续堆在对话页尾。任务与 Agent 信息默认紧凑收起，展开按实际阅读宽度排布，模型与权限不得挤成逐字竖排。目录给出“查看全部 Session”，不让少量快捷项冒充完整目录。
+- 具体实例只从 Session 目录进入。Role 存在 ≠ 已有可运行的实例。
+- 职责卡片写明运行时是否已绑定（绑定后不可更换），每个 skill 是否加载及原因，清单来自运行时还是按文件推断。有 review 权限的人可修改，下一个 Turn 生效；规则见 [Agent CLI](../../development/agent-cli.md#准备或复用受管-session)。
+- 同 Role ≠ 已接手：接手只认同一 Task 修订的接受记录（[可信关系](../../architecture/contracts.md#9-分工讨论的可信关系反查)）。
+- 分工讨论分开显示未落到任务、未接受、已转交、被取代。讨论正文另被修订时并列两版，由人明确确认后再接续（[项目数据](../../architecture/project-data.md#3-关系与认知读取)）。
+- 新聊天或绑定 Role ≠ 试行有效（[分工试行](../../product/daily-loop.md#分工提议怎样试行)）。
+- 组织复盘是 `organization_review` 类型的 Document，列表点开即进入同一份原件阅读器（[项目数据](../../architecture/project-data.md#4-文档表怎样设计)）。报告已保存 ≠ 建议已采纳。
 
-原生历史与保存消息各自分页，加载更早内容保持原可见条目的位置；新进展不抢走正在阅读历史的人。长公开回复在原位置读取完整内容，工具详情就在所选工具旁进入，拒绝仍保留可读摘要。底部输入与阅读列等宽并随文字增长；桌面使用可用高度，窄屏同样使用消息内部滚动与可达的底部输入，短窗收紧页首而不挤成整页长对话。来源、完整性和实时连接状况放在“读取范围”，明确未同步、过期或失败，不能显示为没有消息。具体类型、原始工具授权与只读边界见[历史与实时读取](../../architecture/codex-integration.md#session-工作区的历史与实时读取)。
+**Session**
 
-## 分工讨论与试行
+- 目录按正式 RoleClass 分组；没有正式 Role、跨类或读取失败的进“待归类”并写原因。外部状态未知 ≠ 空闲。
+- 切换 Session 时，目录的搜索、展开、分页和滚动位置保留。
+- 首屏先认清实例：名称、真实状态、职责、受管还是外部接入。
+- Session 就绪 ≠ Run 运行中；已发送 ≠ 已读 ≠ 已采用；Run 结束 ≠ 已交付；closing ≠ closed。
+- 活动流按真实顺序和发送者显示，唯一有据的 Task 关系才给任务入口（[历史与实时读取](../../architecture/codex-integration.md#session-工作区的历史与实时读取)）。失败、待答和阻断不折叠。
+- 加载更早内容时保持阅读位置，新进展不抢走阅读位置。
+- 待答卡片区分待答、已保存、已发入原生连接、已清理（[原生提问](../../architecture/codex-integration.md#原生提问与业务问答)）。实时状态断线后标过期，Token 与费用无证据写未知（[原生观察](../../architecture/codex-integration.md#有界原生观察)）。
+- 输入框能补充到运行中的 Turn 时直接补充，否则写排队原因；结果未知时保留原输入（[即时输入](../../development/session-direct-input-integration.md)）。
+- 模型的配置、生效回执和实际运行分开写。外部 Desktop 会话只显示已核实的能力，不给自动唤醒按钮。
+- 关闭入口列出阻断原因：未完 Task、队列、Run、消息、待答问题、Session 忙碌；来源没读全时不按旧内容关闭。
+- 从 Task 进来再返回，恢复页签和阅读位置；切换项目、身份或 Session 时清掉旧数据。
 
-用户查看一个职责或具体会话时，应能追到相关分工讨论、当时的决定和正式链接的任务。具体接手者只由同一 Task 固定修订的接受记录证明；同职责成员、仅登记分派或接受其他修订不能算已接手。讨论尚未落实到任务、尚未接受、已经转交和决定被取代要可区分，旧路径与 Lead 代为观察的署名仍保留。未决探索从分工讨论列表进入，不需要为显示它先建假角色；关联、接受与试行有效分别核对。路径未读全时不显示“没有后续”，读取失败也不显示成正常空态。读取与[可信关系合同](../../architecture/contracts.md#9-分工讨论的可信关系反查)对应；本段不将源码检查视为页面已部署或实际使用验收。
+**已知数据限制（现状）**
 
-讨论正文若被独立修订，页面应同时显示讨论登记版与文档当前版，允许核对完整原文及哈希。继续登记决定前，须明确确认采用当前正文接续并写明理由；界面不预选确认。恢复会追加可追溯记录，旧决定、旧正文与先前执行依据仍可回查；版本已变时重新读取并判断。
+- Claude 运行时还不向时间线提供条目，子 Agent 的消息被丢弃。
+- 时间线合同没有父子层级字段，计划加 `parentEntryId`；Codex 的子 Agent 活动目前是平铺条目。
 
-进入分工研究先看持续负担、返工和User Session体验，比较改方法、补同职责容量、临时专项和新持续职责。试行给首项工作、指标、成本、回看和退出，改进仍使用同一Task/Document。撤回须看未完工作接续；新聊天、绑定Role或内部自评不自动算试行有效。
+## 截图
 
-## 组织复盘：同一类Document的阅读入口
+[![Sessions 目录：两条左栏，项目栏和主区各有一份 Session 目录](../../assets/frontend-journey-20261108/sessions-1440x900.png)](../../assets/frontend-journey-20261108/sessions-1440x900.png)
 
-团队Session列表回答现在谁负责什么；组织复盘列表回答各轮有哪些完整复盘可读。Evo依据方向、Leader与业务轨迹、独立User体验完成判断和改进工作，再把报告及图资源经CLI保存为 `organization_review` Document。报告按事实自由组织，图工具不固定。
+2026-11-08，发布后维护服务 36cb620。看点：项目栏和主区各显示一份 Session 目录，内容重复；目标是只在内层栏保留一份目录，中间直接打开所选 Session。
 
-页面仅按Document类型列出标题、观察期间和提交／修订时间；点击后进入同一份Document的普通完整原件阅读器，并能返回列表。文档库也能找到该documentId；无需右侧摘要、固定报告栏目或另一份复盘正文。
+[![Session 详情公开脱敏版：没有右栏，状态卡在上，三个页签和底部输入在下](../../assets/frontend-journey-20261108/session-detail-1440x900.png)](../../assets/frontend-journey-20261108/session-detail-1440x900.png)
 
-```mermaid
-flowchart TD
-  I[方向、真实工作与User体验] --> E[Evo复盘与判断]
-  S[Evo skill] -.指导.-> E
-  E --> A[授权内推动Task、方法与分工改进]
-  A --> W[后续真实工作与效果回看]
-  W --> I
-  E --> R[本轮完整报告与图资源]
-  R --> C[CLI保存]
-  C --> D[Document：组织复盘类型]
-  D --> L[组织复盘列表：按类型筛选]
-  L --> V[同一Document完整原件阅读]
-```
+2026-11-08，同一版本，消息与工具正文已换成占位。看点：没有右栏，状态卡和关联任务占去首屏上部，下面是三个页签和底部输入。逐步说明见[实景旅程](../journeys/current-work.md#3-从任务核对具体承接者)。
 
-观察期间与提交时刻分别呈现。下一轮默认接上轮观察截止点；首轮或专项明确选择范围。旧正文和观察元数据随固定修订保留，之后事实由下一轮承接。提交、读到和改进有效分别核对；报告保存不会自动采纳建议或创建任务。
+## 代码与测试
 
-## 运行、消息与观察的阅读边界
+| 范围 | 源码（`apps/workbench/src/`） | 测试（`apps/workbench/test/`） |
+| --- | --- | --- |
+| 外壳 | `ui/WorkbenchShell.tsx` | `sheet-layout.test.ts` |
+| 团队 | `roles/TeamWorkspace.tsx`、`roles/RolesPanel.tsx`、`roles/RoleRuntimeCard.tsx`、`roles/roleRuntimePresentation.ts`、`discussions/DiscussionPanel.tsx`、`discussions/AllocationRelationsPanel.tsx`、`documents/OrganizationReviewList.tsx`、`runtime/RuntimePanel.tsx` | `role-runtime-card.test.ts`、`role-template-summary.test.ts`、`runtime-session-role-browser.test.ts`、`discussion-panel.test.ts`、`allocation-backlink-groups.test.ts`；组织复盘列表暂无专门测试 |
+| Session 目录 | `sessions/SessionNavigation.tsx`、`sessions/SessionsDirectoryPage.tsx`、`sessions/sessionDirectoryPresentation.ts`、`sessions/useSessionDirectoryGroup.ts` | `session-directory-presentation.test.ts`、`session-directory-groups.test.ts`、`session-directory-groups-browser.test.ts` |
+| Session 详情 | `sessions/SessionWorkspace.tsx`、`sessions/SessionTimeline.tsx`、`sessions/workspaceTimelineModel.ts`、`sessions/DirectInputEntry.tsx`、`sessions/NativeSessionPanel.tsx`、`sessions/SessionModelControl.tsx`、`sessions/SessionClosePanel.tsx` | `session-workspace-redesign-browser.test.ts`、`session-timeline-browser.test.ts`、`session-workspace-timeline-model.test.ts`、`session-direct-input-layout-browser.test.ts`、`session-native-input-browser.test.ts`、`session-native-progress-browser.test.ts`、`session-close-entry-browser.test.ts`、`task-session-return-browser.test.ts` |
+| 数据来源 | `packages/contracts/src/session-timeline.ts`、`packages/adapter-claude-agent-sdk/src/index.ts` | — |
 
-普通消息与业务 Run 共用同一 Session、Thread、adapter 和 full/never/联网执行配置；消息不切换专用进程、工具集或只读资格门。共享 Session 忙碌时，展示原消息仍在排队及具体原因；sender/receiver grant 仍限定身份；缺省消息 grant 不限累计处理次数，显式 `maxTurns` 才设上限。能力读取保留 `used`，无限时 `limit` 和 `remaining` 为 `null`；未核计数不显示为零。`ordinaryExecution` 在原生 Thread start/resume 明确回执 full/never 前保持 `unverified`／`unknown`；`thread/read` 没有权限字段不能推断已 active 或回执丢失。消息回复、处理结果和业务对象权限分别表达。GUI 阅读桥仍按 Run 的 reader、路由和证据范围限制业务对象访问；OS full access 不移除 Task/Document 授权边界，也不改变 Document iframe sandbox。后台控制原语完成不自动代表当前服务已启用，当前执行能力沿 Session snapshot 的实际回执读取。
+## 相关
 
-有明确 direct capability 时，活动业务 Run 或自动消息 processing 的底部输入把授权补充直接附着到原 running Turn；原 Thread 空闲时则启动一轮 direct mode。两条路径都保留原输入 ID、actor、期望／实际 Turn 与 Item 证据，不新建争用同一 Turn 的主 processing，也不改写原 Run 固定输入。只在服务返回 `steer`／`start` 时显示即时动作；主来源未绑定、额度不足、撤权或结果未知时显示真实原因并保留原意图，未知不能用再次点击或“已发送”标签清除。没有 direct capability 时继续显示原有排队语言。等待核对卡可以在窄屏折叠草稿，但不得隐藏 unknown、丢失原输入 ID、缩小正文或把历史阅读区压成一行；键盘、滚动锚点、短窗、减少动态和 Task 往返一起验。详细接线与恢复见[Session 连续工作区与即时输入](../../development/session-direct-input-integration.md)。
-
-原生运行中的文字／选项提问单独显示在对应 Session，带准确的运行或消息来源、待答／已保存／原生已清理／不可用状态和真实回复者。它不改变 Task 状态，也不要求新建验收任务。允许的发起者或项目复核者可回复当前仍有效的问题；保存回复、发入原生连接、原生清理和答案实际采用分别表达。已失效问题提供原因，不让用户在新连接补答旧请求。不支持的表单、认证和敏感问题诚实显示能力边界。具体桥接合同及运行模式限制见[原生提问](../../architecture/codex-integration.md#原生提问与业务问答)；工程接线通过不代替当前环境的真实可达性与亲用验收。
-
-原生进度面板须帮助人理解当前发生了什么：状态、精确 Turn 及运行或消息来源、工具、计划和变更预览都有观察时间和范围。旧连接保留最后内容并显示过期；预览不代表完整历史，原生 Turn 结束也不代替交付或验收。Token 须展示 Thread 累计与原生提供的范围，缓存和推理不重复计数，货币费用没有证据时保留未知。来源未绑定和数据缺失明确显示，详细合同见[有界原生观察](../../architecture/codex-integration.md#有界原生观察)。
-
-## 角色的运行时与 skill
-
-团队分工页展开一个职责时，显示它绑定的运行时和此刻拥有的 skill。卡片先写运行时、是否已绑定（已绑定写明修订号与“运行时不可更换”，未绑定写明将按默认运行时绑定）、读取所用的工作目录，以及 skill 由运行时列出、最近一次 Claude Turn 报告还是仅按文件推断；按文件推断时不能写成运行时已确认。skill 按业务、项目、个人、内置分组，各组写加载数与总数，每项写是否加载及原因：来源开关、单独加入或移除、业务 skill 经 Role 上下文交付，以及默认不加载的自修改类内置 skill。单独加入却没找到的名称、插件与 MCP、当前协调服务未驱动该运行时，以及“当前选择与最近一次 Turn 加载的不同，下一个 Turn 生效”等提示单独显示；读取失败显示原因，不显示为空列表。每次展开或点击重新读取都实时取值。有 review 权限者在卡片内调整：未绑定时可选运行时，已绑定后只能改 skill 开关与名称；保存走带回执的命令并回读，下一个 Turn 生效。该卡片只说明模型上下文，不代表权限边界，也不证明某个 skill 已被实际使用。
-
-## 关闭、配置与返回
-
-模型和执行配置来自真实可用目录及所选授权；显示配置、原生生效回执和实际运行证据各自范围，不能用配置名宣称模型已经运行。已合入的新模型选择与关闭能力不因本次阅读改造退回；当前运行状态和限制按实际API读取，版本与使用证据沿[路线](../../roadmap.md#当前基线)核对。
-
-关闭入口保留未完Task、队列、Run、消息、原生线程和既有关闭意图的阻断原因。忙碌状态、阻断中的原生提问、分派/队列或消息尚未完整读回，同样会阻止提交；来源未读全或当前状态未核实也不能据旧内容关闭。closing是请求登记，closed是原生归档核实；停止日程、取消Task与关闭Session各自处理。低频配置、关闭和诊断按需展开，当前异常与待答不被折叠隐藏。
-
-从Task进入后，可沿Session → 队列项 → Task → 固定交付 → 来源Run返回原Session，恢复页签、展开和位置。切项目、身份或Session清除错范围数据；请求迟到不覆盖新的读取。
-
-## 怎样验证
-
-给另一位使用者一项Task，让其从Sessions完整目录找到真实签收的实例、区分同Role其他Session，再到Task/固定成果并返回。覆盖外部已签收但运行未知、受管Session ready而Run在途、历史已关闭Task、不同模型真实配置与正常关闭/受阻。固定视觉对照先使用本轮用户的实际窗口，记录尺寸与缩放，再补受影响的短窗和窄屏；查看首屏上下文、长消息、工具折叠、底部输入与目录收起，不只用构建通过或作者自测。作者自测不代消费者，技术、实例归档和职责试行收益分别验。
-
-共享外壳在桌面按“模块栏 → Session 目录/项目上下文 → 阅读区”布局，窄屏先收起项目/Session栏，再从模块入口进入完整目录。Session 详情采用本轮选定的统一工作区视觉与单位置阅读结构：顶部 Agent 与当前任务上下文，随后活动与对话、任务与队列、成果；原来的独立右栏不再压缩消息正文。对话底部输入随内容增长，活动区域独立滚动，桌面和390px都不得遮住历史；窄屏同样保留消息内部滚动与底部输入，短窗进一步收紧页首；低频详情单独滚动。原草稿与 operation ID 仍按当前身份、项目和确切 Session 隔离。外部会话保存转交与实际送达、已读、接受分别核对，不因版式改变扩大能力。
-
-## 当前页面、目标与真实旅程
-
-[业务推导](../business-to-interface.md#怎样由场景推导一张页面)说明未回复时为什么也需要真实工作进展；[实景旅程](../journeys/current-work.md#3-从任务核对具体承接者)用发布后的服务截图展示 Task 怎样到达确切 Session。目标布局让活动与对话占主区域、底部输入位置稳定，配置与项目依据进入次级入口；2026-11-01 的旧结构只作为历史差距保留。发布后截图仍不代替长消息、键盘焦点、当前 Run 归属、原生实时性和观察过期等独立验收。
+- 产品：[对象关系与能力职责](../../product/workbench.md#对象关系与能力职责)、[职责与 Session](../../product/functional-scenarios.md#职责session-与项目初始安排)
+- 合同：[Session 工作观察](../../architecture/contracts.md#session-工作观察有界读取同一份事实)、[RoleRegistry 与 SessionRuntime](../../architecture/contracts.md#4-roleregistry-与-sessionruntime)、[具体承接与职责分开](../../architecture/contracts.md#具体承接与职责分开)
+- 运行时：[普通消息与业务执行](../../architecture/codex-integration.md#普通消息与业务执行共用原会话)、[执行配置](../../architecture/codex-integration.md#受控-session-恢复与执行配置)、[Session 关闭](../../architecture/codex-integration.md#端口合同拟议)、[消息额度](../../development/agent-cli.md#普通消息累计用量与旧试用-grant-转换)

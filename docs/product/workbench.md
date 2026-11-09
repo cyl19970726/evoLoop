@@ -26,7 +26,7 @@
 
 先沿两张产品卫星图理解谁提出目标、谁组织和承接、谁实际使用，以及反馈怎样影响下一步。随后再判断人在每个时刻要看什么、作什么决定，由此安排页面关系和空间：工作用于比较与跟进，Sessions用于观察与沟通，完整Task/Document用于深入阅读。对象数量不直接决定菜单数量，来源完整也不要求所有元数据常驻首屏。
 
-[从完整业务推导前端](../frontend/business-to-interface.md)把这段思考画成总图；[实景用户旅程](../frontend/journeys/current-work.md)用同一工作在各页的截图连接目标与实际。页面分工、交互与实现分别下钻现有前端目录；用户指出的差距回到所属正文和原Task修正。
+[设计原则](../frontend/principles.md#从业务到界面)把这段思考落到界面；[实景用户旅程](../frontend/journeys/current-work.md)用同一工作在各页的截图连接目标与实际。页面分工、交互与实现分别下钻现有前端目录；用户指出的差距回到所属正文和原Task修正。
 
 ## 从旅程推到功能和页面
 
@@ -126,19 +126,19 @@ flowchart LR
 
 ### 信息层级与共同约定
 
-正文见[对应前端说明](../frontend/experience.md)。
+正文见[对应前端说明](../frontend/principles.md)。
 
 ### 首次进入与已有项目的首页
 
-正文见[对应前端说明](../frontend/experience.md#首次进入与已有项目的首页)。
+正文见[对应前端说明](../frontend/pages/overview.md)。
 
 ### 同一项工作，信息主次怎样随结果改变
 
-正文见[对应前端说明](../frontend/experience.md#同一项工作信息主次怎样随结果改变)。
+正文见[对应前端说明](../frontend/principles.md#信息主次随结果变化)。
 
 ### 项目范围、导航与事实状态
 
-正文见[对应前端说明](../frontend/experience.md#项目范围导航与事实状态)。
+正文见[对应前端说明](../frontend/layout.md#导航与项目范围)。
 
 ### 页面与动作
 
@@ -154,11 +154,11 @@ flowchart LR
 
 ### 控制与评价：让失败及收益可见
 
-正文见[对应前端说明](../frontend/experience.md#上下文页面与返回)。
+正文见[对应前端说明](../frontend/layout.md#上下文页面与返回)。
 
 ### 首页与核心详情的布局约束
 
-正文见[对应前端说明](../frontend/experience.md#首页与核心详情的布局约束)。
+正文见[对应前端说明](../frontend/layout.md#各页面的分工)。
 
 ### 从表格打开完整过程文档
 
@@ -174,8 +174,8 @@ flowchart LR
 
 ### 关键交互怎样闭合
 
-正文见[对应前端说明](../frontend/experience.md#关键交互怎样闭合)。
+正文见[对应前端说明](../frontend/principles.md#交互怎样闭合)。
 
 ### 桌面、手机与阶段范围
 
-正文见[对应前端说明](../frontend/design-system.md#桌面手机与阶段范围)。
+正文见[对应前端说明](../frontend/layout.md#窄屏与手机)。
