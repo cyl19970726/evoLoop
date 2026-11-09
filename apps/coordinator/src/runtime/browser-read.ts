@@ -209,7 +209,11 @@ export function isApprovedPageUrl(scope:BrowserReadScope,urlText:string,approved
   if (!approvedHash || !scope.routes.some(route=>route.hash===approvedHash)) return false;
   try {
     const url=new URL(urlText);
-    return url.origin===scope.origin && url.pathname==="/" && !url.search && url.hash===approvedHash;
+    if (url.origin!==scope.origin) return false;
+    // Approved routes are stored as `#/p/…`; the workbench opens them as the same path (`/p/…`).
+    const path=new URL(approvedHash.slice(1),scope.origin);
+    return url.pathname==="/" && !url.search && url.hash===approvedHash ||
+      url.pathname===path.pathname && url.search===path.search && !url.hash;
   } catch { return false; }
 }
 export function validPngBase64(value:string):boolean {

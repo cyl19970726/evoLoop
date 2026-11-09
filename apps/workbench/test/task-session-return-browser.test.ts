@@ -37,7 +37,7 @@ test("Task tabs and refresh retain the verified Session return; ordinary and wro
   const {chromium} = (await import(pathToFileURL(modulePath!).href)).default;
   const server = createServer(async (req,res) => {
     const url = new URL(req.url,"http://127.0.0.1");
-    const file = join(dist,url.pathname === "/" ? "index.html" : url.pathname);
+    const file = join(dist,/^\/(?:$|p\/|ui$)/.test(url.pathname) ? "index.html" : url.pathname);
     if (!file.startsWith(dist+"/")) {res.writeHead(404);res.end();return;}
     try {const body=await readFile(file);res.writeHead(200,{"content-type":({".html":"text/html",".js":"text/javascript",".css":"text/css"})[extname(file)] ?? "application/octet-stream"});res.end(body);}
     catch {res.writeHead(404);res.end();}
@@ -77,9 +77,9 @@ test("Task tabs and refresh retain the verified Session return; ordinary and wro
     await route.fulfill({status,contentType:"application/json",body:JSON.stringify(value)});
   });
   const base=`http://127.0.0.1:${(server.address() as {port:number}).port}`;
-  const returnRoute=`#/p/${projectId}/sessions?session=${encodeURIComponent(sessionKey)}&tab=queue&filter=all`;
-  const taskRoute=`#/p/${projectId}/tasks/${taskId}`;
-  await page.goto(`${base}/${taskRoute}?${new URLSearchParams({return:returnRoute,actor:"reader",returnTitle:"临时开发 Session"})}`);
+  const returnRoute=`/p/${projectId}/sessions?session=${encodeURIComponent(sessionKey)}&tab=queue&filter=all`;
+  const taskRoute=`/p/${projectId}/tasks/${taskId}`;
+  await page.goto(`${base}${taskRoute}?${new URLSearchParams({return:returnRoute,actor:"reader",returnTitle:"临时开发 Session"})}`);
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button",{name:"进入",exact:true}).click();
   const back=page.getByRole("link",{name:"← 返回【临时开发 Session】"});
@@ -89,7 +89,7 @@ test("Task tabs and refresh retain the verified Session return; ordinary and wro
   await page.getByRole("tab",{name:"运行与关联"}).click({timeout:5000}).catch(async () => {
     assert.fail(`Task tab missing: url=${page.url()}, body=${(await page.locator("body").innerText()).slice(0,1100)}, errors=${errors.join(" | ")}`);
   });
-  const query=new URLSearchParams((await page.evaluate(() => location.hash)).split("?")[1]);
+  const query=new URLSearchParams((await page.evaluate(() => (location.pathname + location.search))).split("?")[1]);
   assert.equal(query.get("return"),returnRoute);
   assert.equal(query.get("actor"),"reader");
   await page.reload();
@@ -98,11 +98,11 @@ test("Task tabs and refresh retain the verified Session return; ordinary and wro
   await back.waitFor();
   assert.equal(await page.getByRole("tab",{name:"运行与关联"}).getAttribute("aria-selected"),"true");
   await back.click();
-  assert.equal(await page.evaluate(() => location.hash),returnRoute);
+  assert.equal(await page.evaluate(() => (location.pathname + location.search)),returnRoute);
   await page.getByRole("heading",{name:"临时开发 Session"}).waitFor({timeout:5000}).catch(async () => {
     assert.fail(`Session view missing after return: body=${(await page.locator("body").innerText()).slice(0,900)}, errors=${errors.join(" | ")}`);
   });
-  await page.getByRole("button",{name:"展开任务与 Agent 信息"}).click();
+  if (await page.getByRole("button", { name: "展开右栏" }).count()) await page.getByRole("button", { name: "展开右栏" }).click(); // current task and timing live in the right column
   leaderTaskMatches=false;
   await page.getByRole("button",{name:"重新读取",exact:true}).click();
   await page.locator(".session-current-task-timing").getByText(/阶段时间暂不可读/).waitFor();
@@ -113,13 +113,13 @@ test("Task tabs and refresh retain the verified Session return; ordinary and wro
     assert.fail(`exact Task timing missing: ${await page.locator(".session-current-task-timing").innerText()} reads=${leaderReads.length} errors=${errors.join(" | ")}`);
   });
   assert.ok(leaderReads.length>=2 && leaderReads.every(path=>path.endsWith(taskId)));
-  await page.goto(`${base}/?fresh=1${taskRoute}`);
+  await page.goto(`${base}${taskRoute}?fresh=1`);
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button",{name:"进入",exact:true}).click();
   await page.getByRole("tab",{name:"运行与关联"}).click();
-  assert.equal(await page.evaluate(() => location.hash),`${taskRoute}?tab=runtime`);
+  assert.equal(await page.evaluate(() => (location.pathname + location.search)),`${taskRoute}?tab=runtime`);
   await page.evaluate(({taskRoute,returnRoute}) => {location.hash=`${taskRoute}?${new URLSearchParams({return:returnRoute,actor:"other",returnTitle:"冒名 Session"})}`;},
     {taskRoute,returnRoute});
   await page.getByRole("tab",{name:"运行与关联"}).click();
-  assert.equal(await page.evaluate(() => location.hash),`${taskRoute}?tab=runtime`);
+  assert.equal(await page.evaluate(() => (location.pathname + location.search)),`${taskRoute}?tab=runtime`);
 });

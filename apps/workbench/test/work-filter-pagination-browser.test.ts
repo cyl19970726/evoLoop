@@ -65,17 +65,17 @@ for (const scenario of ["visible", "failure", "closed", "mine"] as const) test({
       res.writeHead(status, { "content-type": "application/json" }); res.end(JSON.stringify(value)); return;
     }
     try {
-      const file = url.pathname === "/" ? "index.html" : url.pathname;
+      const file = /^\/(?:$|p\/|ui$)/.test(url.pathname) ? "index.html" : url.pathname;
       res.writeHead(200, { "content-type": ({ ".html": "text/html", ".js": "text/javascript", ".css": "text/css" } as Record<string, string>)[extname(file)] ?? "application/octet-stream" });
       res.end(await readFile(join(dist, file)));
     } catch { res.end(); }
   });
   await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve)); t.after(() => { heldProjections.splice(0).forEach(release => release()); server.close(); });
   const base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
-  const browser = await chromium.launch({ headless: true }); t.after(() => browser.close());
+  const browser = await chromium.launch({ headless: true, ...(process.env.EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH ? { executablePath: process.env.EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH } : {}) }); t.after(() => browser.close());
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
   const errors: string[] = []; page.on("pageerror", error => errors.push(error.message));
-  await page.goto(`${base}/#/p/${projectId}/work${mine ? "?scope=mine" : ""}`);
+  await page.goto(`${base}/p/${projectId}/work${mine ? "?scope=mine" : ""}`);
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button", { name: "进入", exact: true }).click();
   if (mine) {

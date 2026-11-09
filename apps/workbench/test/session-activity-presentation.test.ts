@@ -10,13 +10,13 @@ const event = {
   summary: "任务沟通", occurredAt: null, recordedAt: "2026-10-26T00:00:00Z",
   actorId: "integration-owner", taskId: "33333333-3333-4333-8333-333333333333", importance: "important",
   source: { kind: "discussion", id: discussionId, revision: "event", evidence: "session-statement",
-    href: `#/p/${projectId}/discussions/${discussionId}` },
+    href: `/p/${projectId}/discussions/${discussionId}` },
 } as SessionActivity;
 
 test("related discussion identifies the recorder and opens the original discussion", () => {
   const presented = activityPresentation(event, projectId);
   assert.equal(presented.sourceLabel, "讨论记录 · 登记者 integration-owner");
-  assert.equal(presented.discussionHref, `#/p/${projectId}/discussions?discussion=${discussionId}`);
+  assert.equal(presented.discussionHref, `/p/${projectId}/discussions?discussion=${discussionId}`);
 });
 
 test("unverified discussion identity cannot become a navigation target", () => {

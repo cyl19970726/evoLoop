@@ -157,14 +157,22 @@ function ScheduleCard({ definition, context, grants, fresh, onResult }: { defini
       if (historyEpoch.current === epoch) { const latest = latestOccurrence(occurrences); setHistorySnapshot({ scope: historyScope, revisions, occurrences }); setHistoryReadAt(new Date().toISOString()); onResult(latest ? occurrenceLabel(latest) : "尚无发生记录"); }
     } catch (cause) { if (historyEpoch.current === epoch) setError(errorText(cause)); } finally { if (historyEpoch.current === epoch) setBusy(false); }
   }
-  useEffect(() => { historyEpoch.current++; setHistorySnapshot(null); setHistoryReadAt(null); setBusy(false); setError(""); return () => { historyEpoch.current++; }; }, [historyScope]);
+  // A new scope (token, project, definition version) drops the old history and any read still in flight. The first
+  // mount is not a scope change: the open <details> may already have started the first read before effects run.
+  const readScope = useRef(historyScope);
+  useEffect(() => {
+    if (readScope.current === historyScope) return;
+    readScope.current = historyScope;
+    historyEpoch.current++; setHistorySnapshot(null); setHistoryReadAt(null); setBusy(false); setError("");
+  }, [historyScope]);
+  useEffect(() => () => { historyEpoch.current++; }, []);
   const revision = definition.revision;
   const last = history ? latestOccurrence(history.occurrences) : null;
   const editContext = { ...context, draftScope: `schedule:${definition.id}`, draftBaseline: `${definition.version}:${definition.currentRevisionId}` };
   return <details className="workflow-detail schedule-definition" open onToggle={event => { if (event.currentTarget.open && !history && !busy) void readHistory(); }}><summary>{revision.template.title} <span className="pill">{stateLabel[definition.state]} · v{definition.version}</span><small className="schedule-summary-rule">{ruleText(revision.rule, revision.timezone)}{revision.rule.kind !== "daily" && ` · ${revision.timezone}`} · 责任 {revision.template.owner}</small><small className="schedule-summary-result">{history ? `上次已读结果：${last ? occurrenceLabel(last) : "尚无发生记录"} · 读于 ${historyReadAt ? stamp(historyReadAt) : "未记录"}` : busy ? "正在核对上次发生记录…" : "上次结果尚未读回，展开核对"}</small></summary>
     {!fresh && <p className="schedule-stale-note" role="status">这是上次读回的定义；当前规则与授权正在核对或读取失败。保存、暂停和恢复暂不可用。</p>}
     <div className="schedule-detail-columns"><section className="schedule-basic"><h3>基本信息</h3><dl><div><dt>检查目的</dt><dd>{revision.template.title}</dd></div><div><dt>负责范围</dt><dd>{revision.template.owner}</dd></div><div><dt>时间与时区</dt><dd>{ruleText(revision.rule, revision.timezone)} · {revision.timezone}</dd></div><div><dt>当前状态</dt><dd>{stateLabel[definition.state]}</dd></div></dl></section>
-    <section className="schedule-current" aria-label="当前规则与上次检查"><h3>触发与任务</h3><div><span>后续触发</span><strong>{definition.state === "active" ? "按已登记规则检查，实际执行仍需协调器与授权" : definition.state === "paused" ? "已暂停后续检查" : "已停止后续检查"}</strong></div><div><span>上次已读结果</span><strong>{last ? occurrenceLabel(last) : busy ? "正在核对发生记录…" : history ? "尚无发生记录" : "发生记录待核"}</strong>{last && <small>观察于 {stamp(last.observedAtUtc)} · {last.reason}</small>}{last?.taskId && <a href={`#/p/${encodeURIComponent(context.projectId)}/tasks/${encodeURIComponent(last.taskId)}`}>查看生成的任务 →</a>}</div></section>
+    <section className="schedule-current" aria-label="当前规则与上次检查"><h3>触发与任务</h3><div><span>后续触发</span><strong>{definition.state === "active" ? "按已登记规则检查，实际执行仍需协调器与授权" : definition.state === "paused" ? "已暂停后续检查" : "已停止后续检查"}</strong></div><div><span>上次已读结果</span><strong>{last ? occurrenceLabel(last) : busy ? "正在核对发生记录…" : history ? "尚无发生记录" : "发生记录待核"}</strong>{last && <small>观察于 {stamp(last.observedAtUtc)} · {last.reason}</small>}{last?.taskId && <a href={`/p/${encodeURIComponent(context.projectId)}/tasks/${encodeURIComponent(last.taskId)}`}>查看生成的任务 →</a>}</div></section>
     </div>
     <p className="schedule-scope">暂停/停止只影响未来触发，已经生成的Task、在途Run与Session各有自己的状态。</p>
     <details className="schedule-rule-source"><summary>规则、授权与触发材料</summary><dl><div><dt>规则</dt><dd>{ruleText(revision.rule, revision.timezone)}{revision.rule.kind !== "daily" && ` · 日程定义时区 ${revision.timezone}`}</dd></div>
@@ -187,7 +195,7 @@ function ScheduleCard({ definition, context, grants, fresh, onResult }: { defini
     </details>}
     <div className="actions"><button type="button" onClick={readHistory} disabled={busy}>{busy ? "读取中…" : "阅读修订与发生记录"}</button></div>{error && <Notice error>{error}</Notice>}
     {history && <><p className="schedule-history-time">本定义 v{definition.version} 的发生记录读于 {historyReadAt ? stamp(historyReadAt) : "未核"}{error || !fresh ? " · 保留上次读回" : ""}。生成Task不等于Run已执行或交付验收。</p><details className="schedule-revisions"><summary>日程修订 · {history.revisions.length} 版已读</summary>{history.revisions.length === 0 && <p className="empty">尚无修订记录。</p>}{history.revisions.map(item => <article className="history" key={item.id}><strong>v{item.version} · {ruleText(item.rule, item.timezone)}</strong><p>{item.reason}</p><small>{item.actorId} · {stamp(item.createdAtUtc)}</small></article>)}
-      </details><h3>发生记录</h3>{history.occurrences.length === 0 && <p className="empty">尚无已检查的发生时刻；定义日程不等于执行任务。</p>}{history.occurrences.map(item => <article className="decision" key={`${item.revisionId}:${item.plannedAtUtc}`}><strong>{stamp(item.plannedAtUtc)} · {occurrenceLabel(item)}</strong><p>{item.reason}</p>{item.taskId && <p>任务：<a href={`#/p/${encodeURIComponent(context.projectId)}/tasks/${encodeURIComponent(item.taskId)}`}>阅读此任务</a> · <code>{item.taskId}</code></p>}<small>操作 {item.operationId}</small></article>)}
+      </details><h3>发生记录</h3>{history.occurrences.length === 0 && <p className="empty">尚无已检查的发生时刻；定义日程不等于执行任务。</p>}{history.occurrences.map(item => <article className="decision" key={`${item.revisionId}:${item.plannedAtUtc}`}><strong>{stamp(item.plannedAtUtc)} · {occurrenceLabel(item)}</strong><p>{item.reason}</p>{item.taskId && <p>任务：<a href={`/p/${encodeURIComponent(context.projectId)}/tasks/${encodeURIComponent(item.taskId)}`}>阅读此任务</a> · <code>{item.taskId}</code></p>}<small>操作 {item.operationId}</small></article>)}
     </>}
   </details>;
 }

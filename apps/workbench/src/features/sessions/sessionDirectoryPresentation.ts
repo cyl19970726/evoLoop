@@ -3,8 +3,8 @@ import type { ObservedSession } from "@evoloop/contracts/session-observation";
 export type SessionClass = "business" | "system" | "unclassified";
 
 export const sessionClassLabel: Record<SessionClass, string> = {
-  business: "业务 Session",
-  system: "System Session",
+  business: "业务智能体",
+  system: "系统智能体",
   unclassified: "待归类",
 };
 

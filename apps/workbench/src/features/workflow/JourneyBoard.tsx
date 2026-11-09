@@ -3,6 +3,7 @@ import type { Document, Goal, Page, Stage, TaskDetail } from "@evoloop/contracts
 import { api, errorText } from "../../shared/api";
 import { ActionForm, Notice, option, reasonField, type Field, type MutationContext } from "../../shared/ActionForm";
 import { RevisionHistory } from "./RevisionHistory";
+import { navigate } from "../../shared/navigation";
 
 const goalFields: Field[] = [
   { name: "outcome", label: "想达成的结果", kind: "textarea" }, { name: "constraints", label: "必须遵守的约束", kind: "textarea" },
@@ -90,7 +91,7 @@ export function JourneyBoard({ context, refresh, propose = false }: { context: M
             const relatedTasks = taskDetails.filter(detail => detail.proposal?.stageId === stage.id);
             return <div className="journey-stage" key={stage.id}><div className="journey-stage-head"><strong>{stage.deliverable}</strong><span className="pill">{stage.state} · {relatedTasks.length} 项任务</span></div>
               <p>学习问题：{stage.learningQuestion}</p><p><strong>下一动作：</strong>{nextAction(stage, relatedTasks)}</p>
-              {relatedTasks.length ? <ul>{relatedTasks.map(detail => <li key={detail.task.id}><a href={`#/p/${context.projectId}/tasks/${detail.task.id}`}>{detail.task.title}</a><span className="muted"> · {detail.task.state}</span></li>)}</ul> : <p className="empty">这个阶段尚无所属任务。</p>}
+              {relatedTasks.length ? <ul>{relatedTasks.map(detail => <li key={detail.task.id}><a href={`/p/${context.projectId}/tasks/${detail.task.id}`}>{detail.task.title}</a><span className="muted"> · {detail.task.state}</span></li>)}</ul> : <p className="empty">这个阶段尚无所属任务。</p>}
             </div>;
           })}
         </div>;
@@ -127,7 +128,7 @@ export function JourneyBoard({ context, refresh, propose = false }: { context: M
         { name: "evidence", label: "来源或反馈证据（所属阶段任务必填）", kind: "textarea", optional: true }, { name: "stopCondition", label: "停止条件（所属阶段任务必填）", kind: "textarea", optional: true },
       ]} build={v => ({ type: "task.create", taskId: crypto.randomUUID(), title: v.title, content: v.content, acceptance: v.acceptance, owner: v.owner,
         kind: v.kind || null, documentIds: JSON.parse(v.documentIds || "[]"), ...(v.stageId ? { stageId: v.stageId } : {}), ...(v.consumer ? { consumer: v.consumer } : {}),
-        useRequired: v.useRequired === "true", ...(v.evidence ? { evidence: v.evidence } : {}), ...(v.stopCondition ? { stopCondition: v.stopCondition } : {}) })} onApplied={result => { window.location.hash = `/p/${context.projectId}/tasks/${result.entityId}`; }} />
+        useRequired: v.useRequired === "true", ...(v.evidence ? { evidence: v.evidence } : {}), ...(v.stopCondition ? { stopCondition: v.stopCondition } : {}) })} onApplied={result => { navigate(`/p/${context.projectId}/tasks/${result.entityId}`); }} />
     </details>
   </div>;
 }

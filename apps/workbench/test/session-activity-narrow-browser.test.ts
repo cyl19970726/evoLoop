@@ -146,7 +146,7 @@ test("long Run activity and expanded source stay inside the Session page at mobi
       res.writeHead(status, { "content-type": "application/json" }); res.end(JSON.stringify(value)); return;
     }
     try {
-      const file = url.pathname === "/" ? "index.html" : url.pathname;
+      const file = /^\/(?:$|p\/|ui$)/.test(url.pathname) ? "index.html" : url.pathname;
       const body = await readFile(join(dist, file));
       res.writeHead(200, { "content-type": ({ ".html": "text/html", ".js": "text/javascript", ".css": "text/css" } as Record<string, string>)[extname(file)] ?? "application/octet-stream" }); res.end(body);
     } catch { res.writeHead(404); res.end(); }
@@ -156,7 +156,7 @@ test("long Run activity and expanded source stay inside the Session page at mobi
   const browser = await chromium.launch({ headless: true, ...(process.env.EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH
     ? { executablePath: process.env.EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH } : {}) }); t.after(() => browser.close());
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
-  await page.goto(`${base}/#/p/${projectId}/runtime?session=${encodeURIComponent(sessionKey)}&tab=activity`);
+  await page.goto(`${base}/p/${projectId}/runtime?session=${encodeURIComponent(sessionKey)}&tab=activity`);
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button", { name: "进入", exact: true }).click();
   await page.getByRole("heading", { name: "窄屏活动测试会话" }).waitFor();
@@ -188,7 +188,7 @@ test("long Run activity and expanded source stay inside the Session page at mobi
   await fetch(`${base}/__fixture/active-run`);
   await page.getByRole("button", { name: "重新读取", exact: true }).click();
   await page.locator(".session-workspace:visible .session-current-work").getByText("最近 Run 记录运行中；当前执行待核", { exact: false }).waitFor();
-  assert.equal(await page.locator('.project-sidebar [aria-current="page"]').count(), 1, "only the Session is selected in the project sidebar");
+  assert.equal(await page.locator('aside[aria-label=项目导航] [aria-current="page"]').count(), 1, "only the Session is selected in the project sidebar");
   const item = page.locator(".session-activity-list li").first();
   async function showTool(index: number) { const tool = page.locator(".session-feed:visible .session-trace-item").nth(index); await tool.locator("summary").waitFor(); if (await tool.getAttribute("open") === null) await tool.locator("summary").click(); }
   await item.getByText("关联的真实任务 · 运行中", { exact: false }).waitFor();
@@ -259,7 +259,7 @@ test("long Run activity and expanded source stay inside the Session page at mobi
   assert.ok(returnedAuditScrollTop > 0,
     `return restores the Session reading position inside its scrollable details pane (scrollTop=${returnedAuditScrollTop})`);
   assert.equal(await page.evaluate(() => window.scrollY), 0, "return keeps the mobile Session page inside its viewport");
-  assert.match(new URL(page.url()).hash, /open=/);
+  assert.match((url => url.pathname + url.search)(new URL(page.url())), /open=/);
   await page.getByRole("link", { name: "查看任务" }).first().click();
   await page.goBack();
   await showTool(1);
@@ -350,7 +350,8 @@ test("long Run activity and expanded source stay inside the Session page at mobi
   await fetch(`${base}/__fixture/hold-trace`);
   await idleItem.getByRole("button", { name: "重读执行轨迹" }).click();
   await page.waitForFunction(async base => await (await fetch(`${base}/__fixture/trace-held`)).text() === "true", base);
-  await page.getByRole("button", { name: "退出" }).click();
+  await page.getByRole("button", { name: "我的：账号与设置" }).click();
+  await page.getByRole("menuitem", { name: "退出" }).click();
   await fetch(`${base}/__fixture/fresh-trace`);
   await fetch(`${base}/__fixture/release-trace`);
   await page.getByLabel("访问令牌").fill("fixture-token");

@@ -27,6 +27,7 @@ import {
   loadLeaderDocumentsForIds, loadLeaderWorkStatuses, visibleLeaderDocuments,
 } from "../../shared/leaderWorkLoad";
 import { AcceptanceCapacitySummary, HumanAcceptanceInbox } from "./AcceptanceOverviewPanels";
+import { currentPath, replaceQuietly } from "../../shared/navigation";
 
 const states: Record<Task["state"], string> = { todo: "待办", in_progress: "进行中", done: "已完成", cancelled: "已取消" };
 const taskKinds = { implementation: "实施", research: "调研", validation: "验证" } as const;
@@ -74,11 +75,11 @@ export function WorkIndex({ context, refresh, view }: { context: MutationContext
   const [recheck, setRecheck] = useState(0);
   const [observedAt, setObservedAt] = useState<Date | null>(null);
   const [error, setError] = useState("");
-  const [query, setQuery] = useState(() => view === "work" ? taskListView(window.location.hash).query : "");
-  const [filter, setFilter] = useState(() => view === "work" ? taskListView(window.location.hash).filter : "open");
-  const [kindFilter, setKindFilter] = useState(() => view === "work" ? taskListView(window.location.hash).kind : "all");
-  const [scope, setScope] = useState(() => taskListView(window.location.hash).scope);
-  const [selectedTask, setSelectedTask] = useState(() => taskListView(window.location.hash).selected);
+  const [query, setQuery] = useState(() => view === "work" ? taskListView(currentPath()).query : "");
+  const [filter, setFilter] = useState(() => view === "work" ? taskListView(currentPath()).filter : "open");
+  const [kindFilter, setKindFilter] = useState(() => view === "work" ? taskListView(currentPath()).kind : "all");
+  const [scope, setScope] = useState(() => taskListView(currentPath()).scope);
+  const [selectedTask, setSelectedTask] = useState(() => taskListView(currentPath()).selected);
   const [optionalColumns, setOptionalColumns] = useState<Record<OptionalTaskColumn, boolean>>(() => {
     try {
       const stored = JSON.parse(localStorage.getItem(optionalColumnsStorageKey) ?? "{}") as Partial<Record<OptionalTaskColumn, boolean>>;
@@ -393,8 +394,8 @@ export function WorkIndex({ context, refresh, view }: { context: MutationContext
     .sort((a, b) => Number(b.assignment?.state === "accepted") - Number(a.assignment?.state === "accepted") || Date.parse(b.dates.businessChangedAt) - Date.parse(a.dates.businessChangedAt));
   const listRoute = taskListRoute(projectId, { query, filter, kind: kindFilter, scope, selected: selectedTask });
   useEffect(() => {
-    if (view !== "work" || window.location.hash.split("?")[0] !== href(projectId, "work")) return;
-    window.history.replaceState(window.history.state, "", listRoute);
+    if (view !== "work" || currentPath().split("?")[0] !== href(projectId, "work")) return;
+    replaceQuietly(listRoute);
     try { sessionStorage.setItem(`evoloop:list:${projectId}`, listRoute); } catch { /* optional return state */ }
   }, [view, projectId, listRoute]);
   const listProps = { projections: projections.items, sessionNames: leaderSessionNames, actorId: context.principal.actorId,
@@ -610,7 +611,7 @@ function LeaderWorkOverview({ page, projectId, ownerNames, statuses, leaderStatu
       <span className={`leader-phase phase-${item.phase}`}>{leaderPhaseLabel[item.phase]}</span>
       <div><a href={href(projectId,"task",item.taskId)}>{presentation.title}</a><p>{item.nextAction}</p>
         <small>{presentation.responsibility}
-          {sessionKey && item.responsible.id && <> · <a href={`${href(projectId,"sessions")}?session=${encodeURIComponent(sessionKey)}&tab=overview`}>打开 Session</a> · <ShortId value={item.responsible.id} /></>}
+          {sessionKey && item.responsible.id && <> · <a href={`${href(projectId,"sessions")}?session=${encodeURIComponent(sessionKey)}`}>打开 Session</a> · <ShortId value={item.responsible.id} /></>}
           {item.plan?.priority?` · P${item.plan.priority}`:""}
           {item.dependencies.length?` · ${item.dependencies.length} 项依赖`:""}
           {item.plan?.dueAt?` · 截止 ${new Date(item.plan.dueAt).toLocaleString("zh-CN")}`:" · 截止未设置"}</small>
@@ -672,7 +673,7 @@ function TaskListTable({ tasks, statuses, projectId, pending, ownerNames, projec
           : Clock3;
       const sessionKey = projection && assignmentSessionKey(projection);
       const taskLink = `${href(projectId, "task", t.id)}${returnTo ? `?list=${encodeURIComponent(returnTo)}` : ""}`;
-      const sessionLink = sessionKey ? `${href(projectId, "sessions")}?session=${encodeURIComponent(sessionKey)}&tab=overview&actor=${encodeURIComponent(actorId)}&return=${encodeURIComponent(returnTo ?? href(projectId, "work"))}` : null;
+      const sessionLink = sessionKey ? `${href(projectId, "sessions")}?session=${encodeURIComponent(sessionKey)}&actor=${encodeURIComponent(actorId)}&return=${encodeURIComponent(returnTo ?? href(projectId, "work"))}` : null;
       const progress = latestProgressPresentation(projection);
       const attentionCount = attentionItems.filter(item => item.taskId === t.id && item.taskRevisionId === t.currentRevisionId).length;
       const ownerName = ownerNames[t.owner]?.title;

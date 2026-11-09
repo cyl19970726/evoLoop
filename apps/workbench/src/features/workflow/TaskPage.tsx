@@ -3,7 +3,8 @@ import { useEffect, useRef, useState, useId, type FormEvent } from "react";
 import type { BasisSet, Command, DocumentDetail, DocumentRevision, Impact, TaskDetail, TaskRevision } from "@evoloop/contracts";
 import type { LeaderWorkTask } from "@evoloop/contracts/work-index";
 import { api, ApiError, errorText, isUnconfirmed } from "../../shared/api";
-import { Alert, ShortId, RevisionBody, date, href, taskListHref } from "../../shared/ui/shared";
+import { Alert, ShortId, date, href, taskListHref } from "../../shared/ui/shared";
+import { RevisionBody } from "../../shared/ui/RevisionBody";
 import type { MutationContext } from "../../shared/ActionForm";
 import { RuntimePanel } from "../runtime";
 import { TaskAssignmentPanel } from "../sessions";
@@ -26,6 +27,7 @@ import "./task-experience.css";
 import { currentDelivery } from "./taskExperience";
 import { AcceptanceRelayPanel } from "./AcceptanceRelayPanel";
 import { taskGoal, taskType } from "./taskWorkspacePresentation";
+import { appLocation, currentPath, onNavigate } from "../../shared/navigation";
 type UnknownCommand = Command;
 type TaskTab = "overview" | "basis" | "delivery" | "runtime" | "history" | "actions";
 const taskTabs: { id: TaskTab; label: string }[] = [
@@ -145,9 +147,9 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
   selectedRevision?: string;
   onChanged: () => void; onAttempt: (command: UnknownCommand) => boolean | Promise<boolean>; onKnown: (operationId: string) => void; blockedByUnknown: boolean; canReview: boolean; active: boolean;
 }) {
-  const sessionReturn = active ? taskSessionReturn(window.location.hash, projectId, id, context.principal.actorId) : null;
+  const sessionReturn = active ? taskSessionReturn(currentPath(), projectId, id, context.principal.actorId) : null;
   const listReturnRef = useRef<string | null>(null);
-  const requestedList = taskListReturn(window.location.hash, projectId, id);
+  const requestedList = taskListReturn(currentPath(), projectId, id);
   if (active && requestedList) listReturnRef.current = requestedList;
   if (!listReturnRef.current) try {
     const saved = sessionStorage.getItem(`evoloop:list:${projectId}`);
@@ -162,10 +164,10 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
   const landingRef = useRef<TaskTab | null>(null);
   const [landingVersion, setLandingVersion] = useState(0);
   const [tab, setTab] = useState<TaskTab>(() => selectedRevision ? "history" :
-    taskSectionFromHash(window.location.hash, projectId, id) ?? "overview");
+    taskSectionFromHash(currentPath(), projectId, id) ?? "overview");
   useEffect(() => {
     const onHash = (navigated: boolean) => {
-      const requested = taskSectionFromHash(window.location.hash, projectId, id);
+      const requested = taskSectionFromHash(currentPath(), projectId, id);
       if (requested) {
         if (navigated || requested !== "overview") {
           landingRef.current = requested;
@@ -175,9 +177,9 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
       }
     };
     const onHashChange = () => onHash(true);
-    window.addEventListener("hashchange", onHashChange);
+    const stopNavigate = onNavigate(onHashChange);
     onHash(false);
-    return () => window.removeEventListener("hashchange", onHashChange);
+    return () => stopNavigate();
   }, [projectId, id, selectedRevision]);
   const [basisDocuments, setBasisDocuments] = useState<Record<string, DocumentDetail>>({});
   const [basisError, setBasisError] = useState("");
@@ -189,12 +191,12 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
   const historyRequestRef = useRef(0);
   const leaderRequestRef = useRef(0);
   useEffect(() => { ++historyRequestRef.current; setHistorical(null);
-    setTab(selectedRevision ? "history" : taskSectionFromHash(window.location.hash, projectId, id) ?? "overview");
+    setTab(selectedRevision ? "history" : taskSectionFromHash(currentPath(), projectId, id) ?? "overview");
     setDetail(null); setBasisDocuments({}); setLeaderTask(null); setLeaderTaskError(""); setResponsibleName(null);
   }, [id, projectId]);
   useEffect(() => {
     if (!detail || detail.task.id !== id || landingRef.current !== tab) return;
-    const targetRun = tab === "runtime" ? taskRunFromHash(window.location.hash, projectId, id) : null;
+    const targetRun = tab === "runtime" ? taskRunFromHash(currentPath(), projectId, id) : null;
     if (targetRun && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(targetRun)) {
       landingRef.current = null;
       return;
@@ -208,9 +210,9 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
   }, [detail, id, projectId, selectedRevision, tab, landingVersion]);
   useEffect(() => {
     if (!active || !detail || detail.task.id !== id || selectedRevision) return;
-    const params = new URLSearchParams(window.location.hash.split("?")[1] ?? "");
+    const params = new URLSearchParams(currentPath().split("?")[1] ?? "");
     const section = params.get("section");
-    if ((section !== "attention" && section !== "task-schedule") || window.location.hash.split("?")[0] !== href(projectId, "task", id)) return;
+    if ((section !== "attention" && section !== "task-schedule") || currentPath().split("?")[0] !== href(projectId, "task", id)) return;
     if (section === "attention" && !leaderTask) return;
     const frame = window.requestAnimationFrame(() => document.getElementById(section === "attention" ? "task-attention" : "task-schedule")?.scrollIntoView({ block: "start" }));
     return () => window.cancelAnimationFrame(frame);
@@ -301,7 +303,7 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
   const panelId = (value: TaskTab) => `task-panel-${projectId}-${id}-${instanceId}-${value}`;
   function selectTab(value: TaskTab) {
     if (selectedRevision && value === "history") return;
-    if (!navigateTaskTab(projectId, id, value, window.location, context.principal.actorId)) {
+    if (!navigateTaskTab(projectId, id, value, appLocation, context.principal.actorId)) {
       landingRef.current = value;
       setLandingVersion(current => current + 1);
       setTab(value);
@@ -385,7 +387,7 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
         {leaderTask && <div id="task-attention"><TaskAttention key={`${projectId}:${id}:${detail.task.currentRevisionId}`} token={token} projectId={projectId} detail={detail} leader={leaderTask}
           canWrite={canReview && context.principal.permissions.includes("write")} blocked={blockedByUnknown || reading || !!error || !!context.blocked}
           onAttempt={onAttempt} onKnown={onKnown} onChanged={onChanged} /></div>}
-        {leaderTask && <details className="task-arrangement-details" id="task-timing" {...(new URLSearchParams(window.location.hash.split("?")[1] ?? "").get("section") === "timing" ? { open: true } : {})}><summary>阶段区间、计划与来源</summary><LeaderTaskFacts leader={leaderTask} detail={detail} projectId={projectId} token={token} responsibleName={responsibleName} /></details>}
+        {leaderTask && <details className="task-arrangement-details" id="task-timing" {...(new URLSearchParams(currentPath().split("?")[1] ?? "").get("section") === "timing" ? { open: true } : {})}><summary>阶段区间、计划与来源</summary><LeaderTaskFacts leader={leaderTask} detail={detail} projectId={projectId} token={token} responsibleName={responsibleName} /></details>}
 
       </div>
       <details className="task-provenance"><summary>职责、任务修订与评价入口</summary><p>任务固定修订 <ShortId value={detail.revision.id} /></p>    <details className="task-role-history"><summary>负责职责与同 Role 的其他会话（不代表本任务承接）</summary><TaskOwner token={token} projectId={projectId} owner={detail.task.owner} readKey={`${refresh}:${readVersion}:${detail.revision.id}`} onResolved={setResponsibleName} /></details>

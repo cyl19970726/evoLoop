@@ -42,7 +42,7 @@ test("missing work progress stays compact, retryable, and leaves read-only tasks
       res.writeHead(status, { "content-type": "application/json" }); res.end(JSON.stringify(value)); return;
     }
     try {
-      const path = url.pathname === "/" ? "index.html" : url.pathname;
+      const path = /^\/(?:$|p\/|ui$)/.test(url.pathname) ? "index.html" : url.pathname;
       const body = await readFile(join(dist, path));
       res.writeHead(200, { "content-type": ({ ".html": "text/html", ".js": "text/javascript", ".css": "text/css" } as Record<string, string>)[extname(path)] ?? "application/octet-stream" });
       res.end(body);
@@ -50,9 +50,9 @@ test("missing work progress stays compact, retryable, and leaves read-only tasks
   });
   await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve)); t.after(() => server.close());
   const base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
-  const browser = await chromium.launch({ headless: true }); t.after(() => browser.close());
+  const browser = await chromium.launch({ headless: true, ...(process.env.EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH ? { executablePath: process.env.EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH } : {}) }); t.after(() => browser.close());
   const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
-  await page.goto(`${base}/#/p/${projectId}/work`);
+  await page.goto(`${base}/p/${projectId}/work`);
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button", { name: "进入", exact: true }).click();
   const warning = page.locator(".work-status-warning");
