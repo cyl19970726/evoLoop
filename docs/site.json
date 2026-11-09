@@ -98,6 +98,11 @@
       "group": "前端文档"
     },
     {
+      "path": "docs/frontend/pages/connectors.md",
+      "title": "微信连接",
+      "group": "前端文档"
+    },
+    {
       "path": "docs/frontend/architecture.md",
       "title": "前端架构",
       "group": "前端文档"
