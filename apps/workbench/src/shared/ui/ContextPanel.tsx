@@ -5,6 +5,8 @@ import * as React from "react";
 import { createPortal } from "react-dom";
 import { PanelRightClose, PanelRightOpen, X, ArrowUpRight } from "lucide-react";
 import { IconButton, Sheet, SheetContent, SheetTitle, SheetDescription, cn } from "@evoloop/ui";
+import { PageActive } from "./pageActive";
+export { PageActive } from "./pageActive";
 /** The space the panel state belongs to (app/shell/spaces.ts); kept as a string so shared code does not depend on app. */
 type Space = string;
 
@@ -62,9 +64,10 @@ export function useContextPanel(): PanelApi | null {
 /** A page's default facts for the right column. Renders nothing when the shell has no panel (tests, samples). */
 export function ContextPanelContent({ children }: { children: React.ReactNode }) {
   const panel = React.useContext(PanelContext);
+  const pageActive = React.useContext(PageActive);
   const register = panel?.register;
-  React.useEffect(() => register?.(), [register]);
-  return panel?.target ? createPortal(children, panel.target) : null;
+  React.useEffect(() => pageActive ? register?.() : undefined, [register, pageActive]);
+  return pageActive && panel?.target ? createPortal(children, panel.target) : null;
 }
 
 function useMediaQuery(query: string): boolean {

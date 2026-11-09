@@ -17,6 +17,7 @@ import { leaveProject, projectChanged, queryKeys, useProjectQuery } from "../sha
 import { queryClient } from "./queryClient";
 import { sectionLabels } from "./shell/spaces";
 import { PageBoundary } from "./PageBoundary";
+import { PageActive } from "../shared/ui/pageActive";
 
 // Each page is its own chunk: the first load carries login, the shell and shared code only.
 // lazy() accepts any component; the props stay typed through M[K].
@@ -429,5 +430,5 @@ function WorkspacePages({ route, context, refresh, operations }: { route: Route;
     return <div className="content"><h1 tabIndex={-1}>{sectionLabels[r.section]}</h1>{components[r.section as keyof typeof components]}</div>;
   }
   return <>{Array.from(cache.current.entries()).map(([pageKey, r]) => <div key={pageKey} data-page-key={pageKey} hidden={pageKey !== key}>
-    <PageBoundary><Suspense fallback={<p className="content" role="status">正在打开页面…</p>}>{page(r, pageKey === key)}</Suspense></PageBoundary></div>)}</>;
+    <PageActive.Provider value={pageKey === key}><PageBoundary><Suspense fallback={<p className="content" role="status">正在打开页面…</p>}>{page(r, pageKey === key)}</Suspense></PageBoundary></PageActive.Provider></div>)}</>;
 }

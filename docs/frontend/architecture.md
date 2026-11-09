@@ -19,7 +19,7 @@
 
 | 层 | 内容 | 现状 |
 | --- | --- | --- |
-| `app/` | 外壳、路由表、身份与查询客户端装配 | `router.tsx`（路由表）与 `routePaths.ts`、`queryClient.ts`（查询缓存）、`PageBoundary.tsx`（单页出错不影响外壳）、`shell/`（外壳：`AppShell.tsx`、空间与分区模型 `spaces.ts`，登录后按需加载；右栏在 `shared/ui/ContextPanel.tsx`，页面经 `ContextPanelContent` 填入）、`App.tsx`（登录、项目切换、按区域选页面并逐页懒加载）、操作回执与恢复、组件样例页 `ui-samples/`。`src/` 根目录只留入口 `main.tsx`、全局类型声明和旧全局 CSS（PR10 删除），按 app 层对待 |
+| `app/` | 外壳、路由表、身份与查询客户端装配 | `router.tsx`（路由表）与 `routePaths.ts`、`queryClient.ts`（查询缓存）、`PageBoundary.tsx`（单页出错不影响外壳）、`shell/`（外壳：`AppShell.tsx`、空间与分区模型 `spaces.ts`，登录后按需加载；页面经 `shared/ui/` 的两个入口填外壳：`ContextRailContent` 把对象列表放进内层栏，`ContextPanelContent` 把当前对象的信息放进右栏（`ContextPanel.tsx`）；只有屏上的那一页能填，`pageActive.ts` 由 `App.tsx` 按页提供）、`App.tsx`（登录、项目切换、按区域选页面并逐页懒加载）、操作回执与恢复、组件样例页 `ui-samples/`。`src/` 根目录只留入口 `main.tsx`、全局类型声明和旧全局 CSS（PR10 删除），按 app 层对待 |
 | `features/<领域>/` | 页面、领域组件、该领域的查询与命令 | 17 个领域沿用旧目录名（任务仍叫 `workflow`，团队页是 `team`）；PR5–PR9 换页时按目标页面归并 |
 | `shared/` | API 客户端、对象引用、修订标签等跨领域部件 | 地址与历史（`navigation.ts`、`appPath.ts`、`routes.ts`）、身份（`identity.ts`）、读取层（`query.ts`）、`api.ts` 与被多个领域读取的 `*Client.ts`、命令表单 `ActionForm`、业务状态映射（`workStatusPresentation`、`leaderWorkLoad`、`taskTiming`）、对象链接与名称解析（`taskNavigation`、`deliveryPresentation`、`externalHostEntry`、`ownerRole`）、Markdown 与 HTML 原件阅读（`ui/`）、过渡期的本地 shadcn 组件（`components/ui/`）、假数据 `fixtures/` |
 | `@evoloop/ui`（`packages/ui`） | tokens、基于 shadcn 的基础组件、布局骨架、通用状态与对话流条目 | 见[组件](components.md) |

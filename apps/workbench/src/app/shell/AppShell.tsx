@@ -13,6 +13,7 @@ import { href, type Route, type Section } from "../../shared/routes";
 import { currentPath, navigate } from "../../shared/navigation";
 import { SessionNavigation, emptySessionNavigationState, type SessionNavigationState } from "../../features/sessions/SessionNavigation";
 import { ContextPanelColumn, ContextPanelProvider } from "../../shared/ui/ContextPanel";
+import { ContextRailProvider, ContextRailSlot } from "../../shared/ui/ContextRail";
 import {
   inboxNavigation, leafOf, projectInitial, rememberSpace, sectionLabels, spaceHref, spaceLabels, spaceOf, workNavigation, workSectionOf,
   type NavItem, type Space,
@@ -72,9 +73,10 @@ export function AppShell(props: AppShellProps) {
     document.getElementById("workspace-main")?.focus({ preventScroll: true });
   };
   const spaceLink = (target: Space) => spaceHref(store, actor, projectId, target);
-  const railProps = { ...props, space, sessionState, onSessionState: updateSessionState, onNavigate: afterNavigate };
+  // One object-list slot at a time: the wide rail, or the drawer on narrow screens.
+  const railProps = { ...props, space, sessionState, onSessionState: updateSessionState, onNavigate: afterNavigate, compact };
 
-  return <ContextPanelProvider space={space}>
+  return <ContextRailProvider><ContextPanelProvider space={space}>
     <div className="min-h-dvh bg-sunken text-foreground">
       <div data-ui=""><a href="#workspace-main" onClick={event => { event.preventDefault(); document.getElementById("workspace-main")?.focus(); }}
         className="sr-only z-50 rounded-md bg-raised px-3 py-2 shadow-md focus:not-sr-only focus:fixed focus:left-3 focus:top-3">跳到内容</a></div>
@@ -119,7 +121,7 @@ export function AppShell(props: AppShellProps) {
         <AccountMenu {...props} trigger={<button type="button" aria-label="我的：账号与设置" className="flex flex-col items-center gap-0.5 py-2 text-caption text-muted-foreground"><PersonAvatar name={actor} size={22} />我的</button>} />
       </nav>
     </div>
-  </ContextPanelProvider>;
+  </ContextPanelProvider></ContextRailProvider>;
 }
 
 function RailLink({ href: target, label, selected, icon, count = 0 }: { href: string; label: string; selected: boolean; icon: React.ReactNode; count?: number }) {
@@ -140,8 +142,8 @@ function TabLink({ href: target, label, selected, icon, count = 0 }: { href: str
 }
 
 function ContextRail(props: AppShellProps & { space: Space; sessionState: SessionNavigationState;
-  onSessionState(update: (state: SessionNavigationState) => SessionNavigationState): void; onNavigate(): void; inDrawer?: boolean }) {
-  const { route, projectId, space, inDrawer = false } = props;
+  onSessionState(update: (state: SessionNavigationState) => SessionNavigationState): void; onNavigate(): void; inDrawer?: boolean; compact: boolean }) {
+  const { route, projectId, space, inDrawer = false, compact } = props;
   const selectedSession = route.session ? route.session.includes(":") ? route.session : `owned:${route.session}` : undefined;
   // On the wide frame the object list scrolls inside the rail; in the drawer the whole drawer scrolls.
   return <aside aria-label="项目导航" className={cn("flex flex-col gap-0.5 pb-3 pl-1 pr-3 pt-3.5", inDrawer ? "min-h-full pl-3" : "h-full")}>
@@ -162,6 +164,7 @@ function ContextRail(props: AppShellProps & { space: Space; sessionState: Sessio
       </div>
       : <nav data-ui="" aria-label={space === "inbox" ? "待我处理" : "工作分区"} className={cn("min-h-0 flex-1", !inDrawer && "overflow-y-auto")}>
         <SectionList items={space === "inbox" ? inboxNavigation : workNavigation} route={route} projectId={projectId} onNavigate={props.onNavigate} />
+        {(inDrawer || !compact) && <ContextRailSlot className="mt-3 empty:hidden" />}
       </nav>}
     <div data-ui="" className="mt-2 flex items-center gap-2.5 border-t border-border px-2 pt-2.5">
       <PersonAvatar name={props.actor} size={30} />
