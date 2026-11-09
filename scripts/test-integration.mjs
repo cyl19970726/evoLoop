@@ -1,5 +1,6 @@
 import { readdir } from "node:fs/promises";
-import { spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
+import { availableParallelism } from "node:os";
 import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
 import pg from "pg";
@@ -13,6 +14,11 @@ try { base = new URL(input); } catch { throw new Error("TEST_DATABASE_URL is not
 const baseName = decodeURIComponent(base.pathname.slice(1));
 if (!/^evoloop(?:_[a-z0-9]+)*_test$/.test(baseName) || !["postgres:", "postgresql:"].includes(base.protocol)) {
   throw new Error("TEST_DATABASE_URL must use PostgreSQL and a dedicated evoloop_*_test database name");
+}
+const requestedConcurrency = process.env.EVOLOOP_INTEGRATION_CONCURRENCY;
+const concurrency = requestedConcurrency === undefined ? Math.min(4, availableParallelism()) : Number(requestedConcurrency);
+if (!Number.isInteger(concurrency) || concurrency < 1) {
+  throw new Error("EVOLOOP_INTEGRATION_CONCURRENCY must be a positive integer");
 }
 
 const requiredDatabase = new Map([
@@ -68,13 +74,51 @@ try {
   await admin.end();
 }
 
-const failed = [];
-for (const file of files) {
-  process.stdout.write(`\nRunning ${file.path} on ${file.database}\n`);
-  const result = spawnSync(process.execPath, ["--import", "tsx", "--test", file.path], {
-    cwd: root, stdio: "inherit", env: { ...process.env, TEST_DATABASE_URL: urlFor(file.database) },
+// Files that share a database run one after another, because fixtures reset and inspect their own database.
+// Different databases share nothing, so their groups run side by side, the largest group first.
+const groups = [...Map.groupBy(files, file => file.database).values()].sort((a, b) => b.length - a.length);
+const runFile = file => new Promise(resolvePromise => {
+  const started = Date.now();
+  const output = [];
+  let settled = false;
+  const finish = code => {
+    if (settled) return;
+    settled = true;
+    const passed = code === 0;
+    // Each file's output is printed whole when it ends, so parallel groups never interleave in the log.
+    process.stdout.write(`\nRunning ${file.path} on ${file.database}\n`);
+    process.stdout.write(Buffer.concat(output));
+    process.stdout.write(`${passed ? "Passed" : "FAILED"} ${file.path} in ${((Date.now() - started) / 1000).toFixed(1)}s\n`);
+    resolvePromise(passed);
+  };
+  const child = spawn(process.execPath, ["--import", "tsx", "--test", file.path], {
+    cwd: root, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, TEST_DATABASE_URL: urlFor(file.database) },
   });
-  if (result.status !== 0) failed.push(file.path);
+  child.stdout.on("data", chunk => output.push(chunk));
+  child.stderr.on("data", chunk => output.push(chunk));
+  child.on("error", error => { output.push(Buffer.from(`${error?.stack ?? error}\n`)); finish(null); });
+  child.on("close", code => finish(code));
+});
+
+const failed = [];
+const durations = [];
+const startedAll = Date.now();
+const queue = [...groups];
+const worker = async () => {
+  for (let group = queue.shift(); group; group = queue.shift()) {
+    const started = Date.now();
+    for (const file of group) {
+      process.stdout.write(`Started ${file.path} on ${file.database}\n`);
+      if (!(await runFile(file))) failed.push(file.path);
+    }
+    durations.push({ database: group[0].database, files: group.length, seconds: (Date.now() - started) / 1000 });
+  }
+};
+await Promise.all(Array.from({ length: Math.min(concurrency, groups.length) }, worker));
+
+process.stdout.write(`\nIntegration groups (${groups.length} databases, concurrency ${concurrency}, wall time ${((Date.now() - startedAll) / 1000).toFixed(0)}s):\n`);
+for (const { database, files: count, seconds } of durations.sort((a, b) => b.seconds - a.seconds)) {
+  process.stdout.write(`  ${database}: ${count} files, ${seconds.toFixed(0)}s\n`);
 }
 if (failed.length) {
   process.stderr.write(`\nIntegration test failures: ${failed.join(", ")}\n`);

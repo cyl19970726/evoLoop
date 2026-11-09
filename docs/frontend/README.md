@@ -22,7 +22,8 @@
 | [过程文档](pages/documents.md) | 从哪读完整原件，任务用了哪版，新版影响谁？ |
 | [知识空间](pages/knowledge.md) | 当前认识、适用条件、支持和反例在哪里？ |
 | [日程](pages/schedules.md) | 为什么检查，下次何时，上次产生的工作怎样？ |
-| [团队与 Session](pages/team-and-sessions.md) | 哪个职责由哪个实例承载，它在做什么，需不需要我？ |
+| [Sessions](pages/sessions.md) | 哪个 Session 在做什么、做到哪一步，需不需要我；Leader 怎样安排这些 Session？ |
+| [团队](pages/team.md) | 哪些持续职责由谁承担，用什么运行时与 skill？ |
 
 ## 目标与现状
 

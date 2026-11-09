@@ -70,7 +70,7 @@ flowchart TB
 
 Task 与 Document 的单一正文、类型和状态遵循[任务与过程文档](tasks-and-documents.md)。Task 主正文的修改从任务操作完成；通用文档入口提供固定阅读与跳回，避免旁路修改已执行的说明。
 
-具体实例、队列、原生消息与观察怎样呈现，见[团队与Session页面](../frontend/pages/team-and-sessions.md)。
+具体实例、队列、原生消息与观察怎样呈现，见[Sessions 页面](../frontend/pages/sessions.md)。
 
 ## 六条端到端使用路径
 

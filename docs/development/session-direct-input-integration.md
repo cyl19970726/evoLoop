@@ -1,6 +1,6 @@
 # Session 连续工作区与即时输入
 
-本页说明 owned Session 的连续阅读、活动 Turn 补充和空闲直接启动怎样共用现有 Run、消息处理、原生 Thread 与授权。页面目标见[团队与具体 Session](../frontend/pages/team-and-sessions.md)，历史与实时读取合同见[Codex 接入](../architecture/codex-integration.md#session-工作区的历史与实时读取)。
+本页说明 owned Session 的连续阅读、活动 Turn 补充和空闲直接启动怎样共用现有 Run、消息处理、原生 Thread 与授权。页面目标见[团队与具体 Session](../frontend/pages/sessions.md)，历史与实时读取合同见[Codex 接入](../architecture/codex-integration.md#session-工作区的历史与实时读取)。
 
 ## 一个主来源，一份原输入
 

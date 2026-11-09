@@ -88,8 +88,13 @@
       "group": "前端文档"
     },
     {
-      "path": "docs/frontend/pages/team-and-sessions.md",
-      "title": "团队与 Session",
+      "path": "docs/frontend/pages/sessions.md",
+      "title": "Sessions",
+      "group": "前端文档"
+    },
+    {
+      "path": "docs/frontend/pages/team.md",
+      "title": "团队",
       "group": "前端文档"
     },
     {
