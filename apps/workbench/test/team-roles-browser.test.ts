@@ -136,7 +136,7 @@ test("职责 and 分工与运行 read and write in the shell layout, and old run
   const next = candidate.getByRole("region", { name: "下一步" });
   assert.deepEqual(await next.locator("summary").allTextContents(), ["决定是否试行"]);
   await next.locator("summary", { hasText: "决定是否试行" }).click();
-  await next.getByLabel("决定").selectOption("accept-trial");
+  await next.getByLabel("决定", { exact: true }).selectOption("accept-trial");
   await next.getByLabel("理由与依据").fill("证据充分，接受两周试行");
   await next.getByRole("button", { name: "决定是否试行" }).click();
   for (let i = 0; i < 50 && !commands.some(item => item.type === "role.decide"); i++) await page.waitForTimeout(50);
