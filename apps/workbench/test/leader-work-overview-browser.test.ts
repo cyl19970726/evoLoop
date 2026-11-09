@@ -184,9 +184,9 @@ test("reconciliation overview hides empty review counts and maps cognition histo
       await page.screenshot({ path: process.env.EVOLOOP_LEADER_OVERVIEW_MOBILE_SCREENSHOT, fullPage: false });
     // In-app navigation keeps the in-memory login, as a click on an inbox link would.
     await page.evaluate(path => { const link = Object.assign(document.createElement("a"), { href: path }); document.body.append(link); link.click(); link.remove(); }, `/p/${projectId}/inbox`);
-    await page.getByRole("heading", { name: "待我验收" }).waitFor();
-    await page.getByText("候选验收 · human-use").waitFor();
-    await page.getByText("尚未读取").waitFor();
+    await page.getByRole("heading", { name: "待我验收", exact: true }).waitFor();
+    await page.getByText("候选验收 · 使用当前固定交付").waitFor();
+    await page.getByText(/尚未读取/).first().waitFor();
     if (process.env.EVOLOOP_HUMAN_INBOX_SCREENSHOT)
       await page.screenshot({ path: process.env.EVOLOOP_HUMAN_INBOX_SCREENSHOT, fullPage: false });
   });

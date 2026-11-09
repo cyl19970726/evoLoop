@@ -83,7 +83,8 @@ test("managed agents in 分工与运行 keep Role names, full grants and activat
   // 分工与运行 lists every managed agent with its Role name, state and short identity.
   const row=(index:number)=>page.locator(`[data-session-id="${sessions[index]!.id}"]`);
   await row(0).getByText(/开发流程与规范负责人/).waitFor();
-  assert.match(await row(0).innerText(),/开发流程与规范负责人.*智能体 40000004.*就绪/s);
+  assert.match(await row(0).innerText(),/开发流程与规范负责人.*智能体（.*就绪/s);
+  assert.doesNotMatch(await row(0).innerText(),/40000004/);
   assert.match(await row(1).innerText(),/开发流程与规范负责人.*已关闭/s);
   assert.match(await row(2).innerText(),/acceptance-owner/);
   assert.match(await row(3).innerText(),/职责 40000003.*未找到已登记职责/s);

@@ -45,6 +45,8 @@ export const scenes = [
     ready: both(heading(tasks.t1.title, 1), page => page.getByRole("tab", { name: new RegExp(`^${label}`), selected: true }).waitFor()),
   })),
   { name: "task-new", path: p("tasks/new"), ready: both(heading("新建任务"), text("要做什么")) },
+  // 待我处理 › 待我验收与判断: nothing arranged for the reader, one basis change waiting.
+  { name: "inbox", path: p("inbox"), ready: both(heading("待我验收与判断", 1), text("依据有新版待复核")) },
   { name: "journey", path: p("journey"), drawer: true, ready: both(heading("目标与阶段"), text("新版任务与文档页")) },
   { name: "evaluations", path: p("evaluations"), ready: both(heading("评价与后果"), text("只给需求总图")) },
   { name: "evaluation", path: p(`evaluations/${evaluations.id}`), drawer: true, ready: heading("加入固定知识页后，右栏核对是否一次通过？", 1) },

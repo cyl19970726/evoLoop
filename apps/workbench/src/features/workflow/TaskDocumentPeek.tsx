@@ -36,7 +36,7 @@ export function TaskDocumentPeek({ projectId, documentId, revisionId, relation }
     {(documentRead.error || revisionRead.error) && <Notice tone="error">读取失败：{errorText(documentRead.error ?? revisionRead.error)}。可以在中间打开再试。</Notice>}
     {!revision && !revisionRead.error && !documentRead.error && <LoadingState lines={6} label="正在读取文档正文" />}
     {revision && (revision.body !== null && revision.format === "markdown"
-      ? <div data-legacy=""><MarkdownBody source={revision.body} identity={`peek-${revision.id}`} projectId={projectId} /></div>
+      ? <MarkdownBody className="text-small" source={revision.body} identity={`peek-${revision.id}`} projectId={projectId} />
       : <p className="text-label text-text-secondary">这份原件是 {revision.format === "html" ? "HTML" : "其他格式"}，需要更宽的阅读区。<a className="text-primary hover:underline" href={href(projectId, "document", documentId, revision.id)}>在中间宽屏阅读</a></p>)}
   </article>;
 }

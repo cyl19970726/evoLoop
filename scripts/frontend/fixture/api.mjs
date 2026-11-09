@@ -14,7 +14,8 @@ function projectRoutes(params) {
   const includeClosed = params.get("includeClosed") === "true";
   return {
     "": project,
-    "/impacts": [],
+    // The one pending basis change of the featured task (its detail lists the same impact).
+    "/impacts": work.taskDetail(work.tasks.t1).impacts,
     "/acceptance-relay/mine": { items: [] },
     "/tasks": work.taskListPage(),
     "/work-management/index": params.get("view") === "documents" ? work.documentWorkIndex() : work.workIndex(includeClosed),

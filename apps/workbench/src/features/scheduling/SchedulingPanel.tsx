@@ -4,7 +4,7 @@ import { Button, EmptyState, Notice as UiNotice, cn } from "@evoloop/ui";
 import { ContextPanelContent } from "../../shared/ui/ContextPanel";
 import { ContextRailContent } from "../../shared/ui/ContextRail";
 import { SectionBoundary } from "../../shared/ui/SectionBoundary";
-import { href } from "../../shared/ui/shared";
+import { date, href } from "../../shared/ui/shared";
 import type { MisfirePolicy, Occurrence, ScheduleDefinition, ScheduleRevision, ScheduleRule } from "@evoloop/contracts/scheduling";
 import { errorText } from "../../shared/api";
 import { ActionForm, option, reasonField, type Field, type MutationContext } from "../../shared/ActionForm";
@@ -17,10 +17,11 @@ import { RoleName } from "../../shared/ui/RecordName";
 
 import {
   coordinatorErrorText, grantEmptyText, latestOccurrence, nextTimeText, occurrenceLabel, occurrenceReasonKnown,
-  occurrenceReasonText, scheduleReadView, scheduleRuleLabel,
+  occurrenceReasonText, scheduleReadView, scheduleRuleText, scheduleTime, zoneName,
 } from "./presentation";
 
-const stamp = (value: string) => new Date(value).toLocaleString("zh-CN", { timeZone: "Asia/Taipei", hour12: false }) + " · 台北";
+// Times of the schedule itself (rule instants, planned times, watermark, expiry) are said in the schedule's own zone,
+// with the reader's clock added when it differs; record and read times are the reader's local time, as everywhere else.
 const stateLabel = { active: "已启用", paused: "已暂停", stopped: "已停止" } as const;
 const grantKey = (grant: Pick<SchedulingGrant,"scopeId"|"roleId">) => JSON.stringify([grant.scopeId,grant.roleId]);
 function fields(grants: SchedulingGrant[], definition?: ScheduleDefinition, fresh = true): Field[] {
@@ -74,10 +75,7 @@ function fromValues(values: Record<string, string>, context: MutationContext, gr
     authorization: { scopeId: grant?.scopeId ?? old!.scopeId, roleId: grant?.roleId ?? old!.roleId, authorizedBy: context.principal.actorId,
       expiresAtUtc: values.expiresAtUtc ? new Date(values.expiresAtUtc).toISOString() : null }, reason: values.reason };
 }
-const ruleText = (rule: ScheduleRule, timezone?: string): string => rule.kind === "once"
-  ? `仅一次 · ${stamp(rule.atUtc)}`
-  : rule.kind === "interval" ? `从 ${stamp(rule.anchorUtc)} 起，每 ${rule.everyMinutes} 分钟`
-    : scheduleRuleLabel(rule, timezone);
+const ruleText = (rule: ScheduleRule, timezone: string): string => scheduleRuleText(rule, timezone);
 interface ScheduleSnapshot { scope: string; readKey: string; schedules: ScheduleDefinition[]; status: SchedulingStatus; observedAt: string }
 
 const coordinatorLabel: Record<SchedulingStatus["state"], string> = {
@@ -85,6 +83,7 @@ const coordinatorLabel: Record<SchedulingStatus["state"], string> = {
 };
 const stateTone: Record<ScheduleDefinition["state"], string> = { active: "bg-accent text-foreground", paused: "bg-warning-soft text-foreground", stopped: "bg-field text-muted-foreground" };
 const muted = "text-caption text-muted-foreground";
+// The forms here are the shared command form, drawn as new markup inside this old region; the region itself is rebuilt separately.
 const legacy = (label: string, children: ReactNode) => <SectionBoundary label={label}><div data-legacy="" className="workbench-layout">{children}</div></SectionBoundary>;
 
 function Facts({ rows }: { rows: Array<[string, ReactNode]> }) {
@@ -105,7 +104,7 @@ function CoordinatorFacts({ status, fresh, loading, projectId }: { status: Sched
     {!fresh && <p className={muted} role="status">以下为上次读回，当前待核对{loading ? "（正在重新读取）" : "（重新读取失败）"}。</p>}
     <Facts rows={[
       ["协调器", coordinatorLabel[status.state]],
-      ["最近检查", status.lastTickAt ? stamp(status.lastTickAt) : "尚无成功检查时刻"],
+      ["最近检查", status.lastTickAt ? date(status.lastTickAt) : "尚无成功检查时刻"],
       ...status.lastError ? [["最近错误", coordinatorErrorText] as [string, ReactNode]] : [],
       ["当前身份的日程授权", status.grants.length
         ? <>{status.grants.map((grant, index) => <span key={grantKey(grant)}>{index ? "、" : ""}按职责“<RoleName projectId={projectId} roleId={grant.roleId} />”授权</span>)}</>
@@ -173,7 +172,7 @@ export function SchedulingPanel({ context, refresh }: { context: MutationContext
       <div className="min-w-0">
         <h1 className="text-title font-semibold text-foreground" tabIndex={-1}>日程</h1>
         <p className="mt-1 text-small text-text-secondary">日程只按授权范围创建待办任务；生成后仍要在任务里核对责任、计划、依赖与执行。</p>
-        <p className={cn(muted, "schedule-read-scope mt-1")} role="status">{value ? `日程与当前身份授权读于 ${stamp(value.observedAt)}；已读 ${schedules.length} 项。${fresh ? "" : "以下保留上次读回，授权与后续触发待核对。"}`
+        <p className={cn(muted, "schedule-read-scope mt-1")} role="status">{value ? `日程与当前身份授权读于 ${date(value.observedAt)}；已读 ${schedules.length} 项。${fresh ? "" : "以下保留上次读回，授权与后续触发待核对。"}`
           : loading ? "正在读取本项目日程与当前身份授权…" : "本项目日程与当前身份授权尚未读回。"}</p>
       </div>
       <div className="flex items-center gap-2">
@@ -251,6 +250,8 @@ function ScheduleCard({ definition, context, grants, status, fresh, loading, onR
   const editContext = { ...context, draftScope: `schedule:${definition.id}`, draftBaseline: `${definition.version}:${definition.currentRevisionId}` };
   const taskHref = (taskId: string) => href(context.projectId, "task", taskId);
   const created = history?.occurrences.filter(item => item.taskId) ?? [];
+  // An occurrence is said in the zone of the revision that planned it.
+  const zoneOf = (revisionId: string) => history?.revisions.find(item => item.id === revisionId)?.timezone ?? revision.timezone;
   const card = "flex flex-col gap-3 rounded-xl bg-raised p-4 shadow-sm compact:p-5";
   return <article className="schedule-definition flex flex-col gap-4" aria-label={revision.template.title}>
     <header className="flex flex-col gap-1.5">
@@ -258,8 +259,8 @@ function ScheduleCard({ definition, context, grants, status, fresh, loading, onR
         <h2 className="text-heading font-semibold text-foreground">{revision.template.title}</h2>
         <span className={cn("rounded-full px-2.5 py-0.5 text-caption", stateTone[definition.state])}>{stateLabel[definition.state]} · v{definition.version}</span>
       </div>
-      <p className="flex items-center gap-1.5 text-small text-text-secondary"><CalendarClock size={15} aria-hidden="true" />{ruleText(revision.rule, revision.timezone)}{revision.rule.kind !== "daily" && ` · ${revision.timezone}`} · 责任 <RoleName projectId={context.projectId} roleId={revision.template.owner} /></p>
-      <p className={muted}>上次已读结果：{last ? `${occurrenceLabel(last)} · 观察于 ${stamp(last.observedAtUtc)}` : busy ? "正在核对发生记录…" : history ? "尚无发生记录" : "发生记录待核"}</p>
+      <p className="flex items-center gap-1.5 text-small text-text-secondary"><CalendarClock size={15} aria-hidden="true" />{ruleText(revision.rule, revision.timezone)} · 责任 <RoleName projectId={context.projectId} roleId={revision.template.owner} /></p>
+      <p className={muted}>上次已读结果：{last ? `${occurrenceLabel(last)} · 观察于 ${date(last.observedAtUtc)}` : busy ? "正在核对发生记录…" : history ? "尚无发生记录" : "发生记录待核"}</p>
     </header>
     {!fresh && <UiNotice tone="waiting">这是上次读回的定义；当前规则与授权正在核对或读取失败。保存、暂停和恢复暂不可用。</UiNotice>}
     {target && targetRead.state === "invalid" && <UiNotice tone="error">{targetRead.reason}。不能保存普通修订或恢复运行；可在下方保持原定义暂停或停止。</UiNotice>}
@@ -269,7 +270,7 @@ function ScheduleCard({ definition, context, grants, status, fresh, loading, onR
         ["验收方式", revision.template.managedTarget ? "受管判断合同" : revision.template.acceptanceMode === "human_required" ? "必须本人验收" : "独立智能体验收"],
         ...revision.template.managedTarget ? [] : [["指定验收身份", revision.template.consumer ? "已指定，身份见下方来源" : "未指定"] as [string, ReactNode]]]} />
       <details className="text-small"><summary className="cursor-pointer text-text-secondary">阅读触发时使用的完整任务材料</summary>
-        <div className="mt-2">{legacy("任务材料", <MarkdownBody source={revision.template.content} identity={`schedule-${revision.id}`} projectId={context.projectId} />)}</div>
+        <div className="mt-2"><SectionBoundary label="任务材料"><MarkdownBody className="text-small" source={revision.template.content} identity={`schedule-${revision.id}`} projectId={context.projectId} /></SectionBoundary></div>
       </details>
       <FullIdentifiers summary="来源与完整标识（含固定目标）" rows={[
         { label: "日程", value: definition.id }, { label: "当前修订", value: definition.currentRevisionId },
@@ -285,10 +286,10 @@ function ScheduleCard({ definition, context, grants, status, fresh, loading, onR
       </div>
       {error && <UiNotice tone="error">{error}</UiNotice>}
       {history ? <>
-        <p className={muted}>本定义 v{definition.version} 的记录读于 {historyReadAt ? stamp(historyReadAt) : "未核"}{error || !fresh ? " · 保留上次读回" : ""}。生成任务不等于已执行，也不等于已验收。</p>
+        <p className={muted}>本定义 v{definition.version} 的记录读于 {historyReadAt ? date(historyReadAt) : "未核"}{error || !fresh ? " · 保留上次读回" : ""}。生成任务不等于已执行，也不等于已验收。</p>
         {history.occurrences.length === 0 ? <p className="text-small text-text-secondary">尚无已检查的发生时刻；定义日程不等于执行任务。</p>
           : <ol className="flex flex-col">{[...history.occurrences].reverse().map(item => <li key={`${item.revisionId}:${item.plannedAtUtc}`} className="flex flex-col gap-0.5 border-t border-border py-2.5 first:border-t-0">
-            <span className="text-small font-medium text-foreground">{stamp(item.plannedAtUtc)} · {occurrenceLabel(item)}</span>
+            <span className="text-small font-medium text-foreground">{scheduleTime(item.plannedAtUtc, zoneOf(item.revisionId))} · {occurrenceLabel(item)}</span>
             <span className="text-small text-text-secondary">{occurrenceReasonText(item.reason)}</span>
             {item.taskId && <a href={taskHref(item.taskId)} className="w-fit text-caption text-foreground underline">阅读此任务</a>}
             <FullIdentifiers rows={[{ label: "操作", value: item.operationId }, { label: "任务", value: item.taskId }, { label: "日程修订", value: item.revisionId },
@@ -297,7 +298,7 @@ function ScheduleCard({ definition, context, grants, status, fresh, loading, onR
         <details className="text-small"><summary className="cursor-pointer text-text-secondary">日程修订 · {history.revisions.length} 版已读</summary>
           {history.revisions.length === 0 ? <p className={cn(muted, "mt-2")}>尚无修订记录。</p> : <ol className="mt-2 flex flex-col gap-2">{history.revisions.map(item => <li key={item.id} className="flex flex-col gap-0.5">
             <span className="font-medium text-foreground">v{item.version} · {ruleText(item.rule, item.timezone)}</span>
-            <span className="text-text-secondary">{item.reason}</span><span className={muted}>修订于 {stamp(item.createdAtUtc)}</span>
+            <span className="text-text-secondary">{item.reason}</span><span className={muted}>修订于 {date(item.createdAtUtc)}</span>
             <FullIdentifiers rows={[{ label: "修订", value: item.id }, { label: "修订人", value: item.actorId }]} />
           </li>)}</ol>}
         </details>
@@ -320,26 +321,26 @@ function ScheduleCard({ definition, context, grants, status, fresh, loading, onR
         <PanelSection title="触发条件">
           <Facts rows={[
             ["规则", ruleText(revision.rule, revision.timezone)],
-            ["时区", revision.timezone],
+            ["时区", zoneName(revision.timezone) === revision.timezone ? revision.timezone : `${zoneName(revision.timezone)}（${revision.timezone}）`],
             ["错过时刻", revision.misfire.kind === "bounded" ? `最多补做 ${revision.misfire.maxCatchUp} 次` : revision.misfire.kind === "latest" ? "只取最近一次" : "跳过"],
             ["上次任务未结束时", revision.overlap === "queue" ? "排队待核对" : "跳过新时刻"],
-            ["规则核对水位", stamp(definition.watermarkUtc)],
+            ["规则核对水位", scheduleTime(definition.watermarkUtc, revision.timezone)],
           ]} />
         </PanelSection>
         <PanelSection title="下次时间">
-          <p className="text-small text-foreground">{definition.state !== "active" ? (definition.state === "paused" ? "已暂停，以后不触发" : "已停止，以后不触发") : nextTimeText(revision.rule, revision.timezone, Date.now(), stamp)}</p>
+          <p className="text-small text-foreground">{definition.state !== "active" ? (definition.state === "paused" ? "已暂停，以后不触发" : "已停止，以后不触发") : nextTimeText(revision.rule, revision.timezone, Date.now(), value => scheduleTime(value, revision.timezone))}</p>
           {definition.state === "active" && <p className={muted}>是否真的创建任务，取决于协调器、授权以及错过和重叠的处理方式。</p>}
         </PanelSection>
         <PanelSection title="产生的任务">
           {created.length ? <ul className="flex flex-col gap-1.5">{[...created].reverse().slice(0, 6).map(item => <li key={`${item.revisionId}:${item.plannedAtUtc}`} className="flex flex-col">
-            <a href={taskHref(item.taskId!)} className="truncate text-small text-foreground hover:underline">{stamp(item.plannedAtUtc)} 的任务</a>
+            <a href={taskHref(item.taskId!)} className="truncate text-small text-foreground hover:underline">{scheduleTime(item.plannedAtUtc, zoneOf(item.revisionId))} 的任务</a>
             <span className={muted}>{occurrenceLabel(item)}</span>
           </li>)}</ul> : <p className={muted}>{history ? "这个日程还没有创建过任务。" : "发生记录尚未读回。"}</p>}
         </PanelSection>
         <PanelSection title="授权与协调器">
           <Facts rows={[
             ["日程授权", <>按职责“<RoleName projectId={context.projectId} roleId={revision.authorization.roleId} />”授权</>],
-            ["到期", revision.authorization.expiresAtUtc ? stamp(revision.authorization.expiresAtUtc) : "未设"],
+            ["到期", revision.authorization.expiresAtUtc ? scheduleTime(revision.authorization.expiresAtUtc, revision.timezone) : "未设"],
             ...target ? [["受管目标", targetRead.state === "verified" ? `阶段产物：${targetRead.stageName}（工作链${({ active: "可运行", paused: "已暂停", stopped: "已停止" } as Record<string, string>)[targetRead.loopState ?? ""] ?? "状态未核"}）` : targetRead.state === "checking" ? "正在核对绑定的工作链与阶段…" : "绑定暂不可核对"] as [string, ReactNode]] : [],
           ]} />
           <FullIdentifiers rows={[{ label: "授权范围", value: revision.authorization.scopeId }, { label: "授权职责", value: revision.authorization.roleId },
