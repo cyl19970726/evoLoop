@@ -61,6 +61,12 @@
 - 重新打开的任务不沿用旧交付的通过或使用记录。
 - 每日重复产生独立的任务 A、B、C，各有自己的结果。编辑默认只改本次，“本次及后续”另选；停止系列和取消某一次分开。
 
+### 新建任务
+
+- 入口：任务页左栏的“＋”、表格视图的“新建任务”（`/tasks/new`）；从[目标与阶段](journey.md)进入时，所属阶段已选好。
+- 分四块填：要做什么（名称、为什么要做、期望结果）、怎样算完成（独立验收、验收方式、使用成果的身份）、责任与归属（负责职责、所属阶段、类型）、执行时间（本地时间加时区，可每日重复）。属于阶段的任务还要写来源证据和停止条件。
+- 保存发出一次 `task.create`；缺项写在各字段下，提示里列出字段名，隐藏的字段不算缺项。所属阶段在填写期间变了，先请人查看再提交。每日重复要审阅权限和任务时间授权。“只作判断记录”的任务不问验收方式和使用者（使用者就是负责职责）。
+
 **收件页**
 
 - 现状：“待判断与复核”列出分配给我的验收安排和依据变化，每项链到固定任务。
@@ -95,6 +101,7 @@
 | 任务正文与各层 | `TaskPage.tsx`、`TaskWorkflow.tsx`、`DeliveryPanel.tsx`、`LeaderTaskFacts.tsx`、`TaskOwner.tsx`、`apps/workbench/src/shared/taskTiming.tsx`（阶段时间，智能体页也用）、`features/sessions/TaskAssignmentPanel.tsx`（确认接手与释放）、`features/queues/ResidentQueuePanel.tsx`（经 `features/runtime/RuntimePanel.tsx` 显示队列） | `delivery-presentation.test.ts`、`task-evidence-reading.test.ts`、`task-edit-role-recovery.test.ts`、`task-owner-browser.test.ts`、`task-session-return-browser.test.ts`、`task-loop-browser.test.ts`、`discovery-browser.test.ts` |
 | 收件页（未改版） | `InboxIndex.tsx`、`AcceptanceOverviewPanels.tsx` | `leader-work-overview-browser.test.ts` |
 | 执行时间与重复 | `TaskSchedulePanel.tsx`、`taskTimingPresentation.ts` | `task-timing-ui.test.ts` |
+| 新建任务 | `CreateTaskPage.tsx`、`taskCreate.ts`、`useCommand.ts` | `task-create.test.ts`、`journey-browser.test.ts`、`work-status-recovery-browser.test.ts` |
 
 ## 相关
 

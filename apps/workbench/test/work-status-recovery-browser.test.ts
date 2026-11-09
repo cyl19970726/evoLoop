@@ -66,9 +66,9 @@ test("missing work progress stays compact, retryable, and leaves read-only tasks
   await warning.getByText("查看诊断信息").click();
   await warning.getByText(diagnostic).waitFor();
   await warning.getByText("查看诊断信息").click();
-  await page.getByRole("link", { name: "创建任务" }).click();
-  await page.getByText("当前身份没有写入权限，不能创建任务。").waitFor();
-  assert.equal(await page.getByRole("button", { name: "保存任务，继续安排" }).count(), 0);
+  await page.getByRole("main").getByRole("link", { name: "新建任务" }).click();
+  await page.getByText("当前身份没有写入权限，不能新建任务。").waitFor();
+  assert.equal(await page.getByRole("button", { name: "保存任务" }).count(), 0);
   await page.getByRole("link", { name: "返回任务列表" }).first().click();
   await warning.waitFor();
   const readsBeforeRetry = await (await fetch(`${base}/__fixture/task-reads`)).text();
