@@ -2,6 +2,10 @@ import { useEffect, useMemo, useState, type FormEvent } from "react";
 import type { KnowledgeCandidateRecord, KnowledgeCandidateSummary, KnowledgeCapabilities, KnowledgeGraph,
   KnowledgeRevision, KnowledgeSummary, PublishResult } from "@evoloop/contracts/knowledge";
 import { errorText, isUnconfirmed } from "../../shared/api";
+import { Button, cn } from "@evoloop/ui";
+import { ContextPanelContent } from "../../shared/ui/ContextPanel";
+import { ContextRailContent } from "../../shared/ui/ContextRail";
+import { ReadingSpaceSwitch } from "../../shared/ui/ReadingSpaceSwitch";
 import { MarkdownBody } from "../../shared/ui/MarkdownBody";
 import { href } from "../../shared/ui/shared";
 import { knowledgeReturnHref } from "../../shared/ui/returnRoute";
@@ -350,14 +354,37 @@ export function KnowledgePanel({ context, refresh }: { context: MutationContext;
     fullRead: false, title: listingReading ? "正在核对知识读取状态" : "本次知识读取状态未核对",
     detail: observedAt ? "保留上次完整读回的记录；本次能力与列表未核实，不能据旧状态断言正文当前可读。" : "先核对服务能力和完整列表；尚未读回不代表没有知识。",
   };
-  return <div className="knowledge-space">
-    <div className="knowledge-toolbar">
-      <div><p className="knowledge-purpose">理解当前认识，核对来源与反例，再决定是否修订。</p></div>
-      <div className="actions"><button onClick={refreshAll}>回读当前状态</button>
-        <a className="button-link" href={`/p/${context.projectId}/evaluations${selectedId ? `?knowledgePageId=${encodeURIComponent(selectedId)}` : ""}`}>关联评价 →</a>
-        {canWrite && <button onClick={startNewCandidate}>{composeTouched ? "继续候选草稿" : "提出候选"}</button>}
-        <button onClick={showReview}>候选与审阅{candidates.length ? ` · ${candidates.length}` : ""}</button></div>
-    </div>
+  // Rail: the 文档 / 知识 switch and the knowledge list. Center: the list, the page being read, or the candidate views
+  // (older markup kept inside [data-legacy]). Right panel: sources, challenges, relations and history of the open page.
+  const railItem = "flex w-full flex-col gap-0.5 rounded-lg px-3 py-2 text-left outline-none focus-visible:shadow-[var(--focus-ring)]";
+  return <div data-ui="" className="knowledge-page mx-auto flex w-full max-w-[1080px] flex-col gap-4 px-4 py-5 compact:px-8 compact:py-7">
+    <ContextRailContent>
+      <div className="flex flex-col gap-2 pt-2">
+        <ReadingSpaceSwitch projectId={context.projectId} current="knowledge" className="mx-1" />
+        <nav aria-label="知识页面" className="flex flex-col gap-0.5">
+          <span className="px-3 pb-1 pt-2 text-caption text-muted-foreground">{availability.fullRead ? "知识页面" : "可核对的固定引用"} · {pages.length}</span>
+          {pages.map(item => <button type="button" key={item.knowledgeId} onClick={() => openPage(item.knowledgeId)} aria-current={view === "read" && selectedId === item.knowledgeId ? "page" : undefined}
+            className={cn(railItem, view === "read" && selectedId === item.knowledgeId ? "bg-raised shadow-sm" : "hover:bg-selected")}>
+            <span className="truncate text-small text-foreground">{item.title}</span>
+            <span className="truncate text-caption text-muted-foreground">{statusText(item.pageType)} · {statusText(item.validity)}</span>
+          </button>)}
+          {!pages.length && <span className="px-3 py-2 text-caption text-muted-foreground">{listingReading ? "正在读取…" : "已读范围内没有知识页面。"}</span>}
+        </nav>
+      </div>
+    </ContextRailContent>
+    <header className="flex flex-wrap items-start justify-between gap-3">
+      <div className="min-w-0">
+        <h1 className="text-title font-semibold text-foreground" tabIndex={-1}>知识</h1>
+        <p className="mt-1 text-small text-text-secondary">理解当前认识，核对来源与反例，再决定是否修订。</p>
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <Button size="compact" onClick={refreshAll}>回读当前状态</Button>
+        <Button size="compact" asChild><a href={`/p/${context.projectId}/evaluations${selectedId ? `?knowledgePageId=${encodeURIComponent(selectedId)}` : ""}`}>关联评价</a></Button>
+        {canWrite && <Button size="compact" onClick={startNewCandidate}>{composeTouched ? "继续候选草稿" : "提出候选"}</Button>}
+        <Button size="compact" onClick={showReview}>候选与审阅{candidates.length ? ` · ${candidates.length}` : ""}</Button>
+      </div>
+    </header>
+    <div data-legacy="" className="workbench-layout"><div className="knowledge-space">
     <section className={`knowledge-read-state${availability.fullRead ? "" : " limited"}`} aria-label="知识服务与读取范围"><strong>{availability.title}</strong><p>{availability.detail}</p><small>{listingReading ? "正在重新核对…" : observedAt ? `${capabilities ? "读于" : "上次完整读取"} ${new Date(observedAt).toLocaleString("zh-CN", { timeZone: "Asia/Taipei" })} · 台北${overviewError ? " · 本次未核实" : ""}` : "尚未完整读回"}</small><details><summary>{capabilities ? "服务与索引证据" : "上次能力证据（当前未核实）"}</summary><p>后端报告版本：{(capabilities ?? lastCapabilities)?.backendVersion ?? "未报告"} · 固定修订读取：{(capabilities ?? lastCapabilities)?.fixedRevisionRead ?? "未核"} · 语义索引：未验证。列表与图只覆盖已登记的关系，不能推断来源完整或认识正确。</p></details></section>
     <div className="knowledge-list-layout">
     {!availability.fullRead && <aside className="knowledge-available-actions" aria-label="此时仍可做什么"><h2>此时仍可做什么</h2><ol><li><strong>核对固定引用</strong><span>打开下方已登记的引用，确认范围与现有结论；正文和来源仍待读取。</span></li><li><strong>查看候选记录</strong><span>核查待审的候选来源，保留有价值的补充信息。</span></li><li><strong>服务恢复后重新读取</strong><span>回读正文与来源，再判断当前认识。</span></li></ol><a href={href(context.projectId, "documents")}>去过程文档核对固定原件 →</a></aside>}
@@ -396,31 +423,6 @@ export function KnowledgePanel({ context, refresh }: { context: MutationContext;
               : <p className="muted">正在阅读历史版。请先阅读当前发布版，再明确基于当前版提出修订；历史正文不会自动当作当前基线。</p>}</details>}
         </article> : error ? <p>无法读取此固定修订。</p> : <p>正在读取知识全文…</p>}
       </div>
-      {visiblePage && <aside className="knowledge-reader-side" aria-label="来源、关系与版本">
-        <section><h3>固定来源</h3>{visiblePage.sources.length ? <ul className="knowledge-source-list">{visiblePage.sources.map(source => { const id = sourceId(source.sourceKey);
-          return <li key={`${source.sourceKey}:${source.originRevision}`}><strong>{id ? "过程文档" : source.sourceKey}</strong>
-            <span>{statusText(source.state)} · 修订 {source.originRevision.slice(0, 8)}</span>
-            <code title={source.contentHash}>SHA-256 {source.contentHash.slice(0, 16)}…</code>
-            {source.fragment && <span>片段：{source.fragment}</span>}
-            {id && <a href={documentLink(context.projectId, id, source.originRevision,
-              knowledgeHash(context.projectId, { knowledgeId: visiblePage.knowledgeId, knowledgeRevision: visiblePage.revision }))}>阅读固定原件 →</a>}</li>; })}</ul> : <p className="muted">此版未登记来源。</p>}</section>
-        <section><h3>挑战与反例</h3>{relations.filter(item => item.edge.type === "contradicts").length ?
-          <ul className="knowledge-relation-list">{relations.filter(item => item.edge.type === "contradicts").map(item =>
-            <li key={item.edge.edgeId}><button onClick={() => openPage(item.otherId, item.otherRevision)}>{relationName(item.otherId, item.otherRevision)} →</button>
-              <small>{item.direction}此页 · {statusText(item.edge.state)} · 固定版 {item.otherRevision} · 知识 ID {item.otherId} · 来源 {item.edge.sourceKeys.join("、") || "未登记"}</small></li>)}</ul>
-          : <p className="muted">此版未登记挑战关系；不能据此断言没有反例。请结合正文与来源判断。</p>}</section>
-        <section><h3>其他已登记关系</h3>{relations.filter(item => item.edge.type !== "contradicts").length ?
-          <ul className="knowledge-relation-list">{relations.filter(item => item.edge.type !== "contradicts").map(item =>
-            <li key={item.edge.edgeId}><span>{statusText(item.edge.type)} · {statusText(item.edge.state)}</span>
-              <button onClick={() => openPage(item.otherId, item.otherRevision)}>{relationName(item.otherId, item.otherRevision)} →</button>
-              <small>{item.direction}此页 · 固定版 {item.otherRevision} · 知识 ID {item.otherId} · 来源 {item.edge.sourceKeys.join("、") || "未登记"}</small></li>)}</ul>
-          : <p className="muted">此版未登记其他关系。</p>}</section>
-        <section><h3>历史版本</h3><div className="knowledge-history">{history.map(item => <button key={item.revision}
-          className={visiblePage.revision === item.revision ? "selected" : ""} onClick={() => openPage(item.knowledgeId, item.revision)}>
-          {item.revision.slice(0, 8)} · {statusText(item.validity)}</button>)}</div></section>
-        {graph && readingCurrent && <details className="knowledge-graph"><summary>关系图（辅助导航）</summary>
-          <Graph graph={graph} onOpen={openPage} /></details>}
-      </aside>}
     </div>}
 
     <section className="knowledge-workspace" hidden={view !== "review"} aria-label="候选与审阅">
@@ -477,5 +479,31 @@ export function KnowledgePanel({ context, refresh }: { context: MutationContext;
         {sources.map(item => <p key={item.documentId}>{item.title} · {statusText(item.state)} <button disabled={busy || visibleReceipts.length > 0 || item.state !== "reachable"}
           onClick={() => externalWrite("retract", item.documentId)}>撤回此来源</button></p>)}</details>}
     </section>
+    </div></div>
+      {visiblePage && view === "read" && <ContextPanelContent><div data-legacy="" className="workbench-layout knowledge-space"><aside className="knowledge-reader-side" aria-label="来源、关系与版本">
+        <section><h3>固定来源</h3>{visiblePage.sources.length ? <ul className="knowledge-source-list">{visiblePage.sources.map(source => { const id = sourceId(source.sourceKey);
+          return <li key={`${source.sourceKey}:${source.originRevision}`}><strong>{id ? "过程文档" : source.sourceKey}</strong>
+            <span>{statusText(source.state)} · 修订 {source.originRevision.slice(0, 8)}</span>
+            <code title={source.contentHash}>SHA-256 {source.contentHash.slice(0, 16)}…</code>
+            {source.fragment && <span>片段：{source.fragment}</span>}
+            {id && <a href={documentLink(context.projectId, id, source.originRevision,
+              knowledgeHash(context.projectId, { knowledgeId: visiblePage.knowledgeId, knowledgeRevision: visiblePage.revision }))}>阅读固定原件 →</a>}</li>; })}</ul> : <p className="muted">此版未登记来源。</p>}</section>
+        <section><h3>挑战与反例</h3>{relations.filter(item => item.edge.type === "contradicts").length ?
+          <ul className="knowledge-relation-list">{relations.filter(item => item.edge.type === "contradicts").map(item =>
+            <li key={item.edge.edgeId}><button onClick={() => openPage(item.otherId, item.otherRevision)}>{relationName(item.otherId, item.otherRevision)} →</button>
+              <small>{item.direction}此页 · {statusText(item.edge.state)} · 固定版 {item.otherRevision} · 知识 ID {item.otherId} · 来源 {item.edge.sourceKeys.join("、") || "未登记"}</small></li>)}</ul>
+          : <p className="muted">此版未登记挑战关系；不能据此断言没有反例。请结合正文与来源判断。</p>}</section>
+        <section><h3>其他已登记关系</h3>{relations.filter(item => item.edge.type !== "contradicts").length ?
+          <ul className="knowledge-relation-list">{relations.filter(item => item.edge.type !== "contradicts").map(item =>
+            <li key={item.edge.edgeId}><span>{statusText(item.edge.type)} · {statusText(item.edge.state)}</span>
+              <button onClick={() => openPage(item.otherId, item.otherRevision)}>{relationName(item.otherId, item.otherRevision)} →</button>
+              <small>{item.direction}此页 · 固定版 {item.otherRevision} · 知识 ID {item.otherId} · 来源 {item.edge.sourceKeys.join("、") || "未登记"}</small></li>)}</ul>
+          : <p className="muted">此版未登记其他关系。</p>}</section>
+        <section><h3>历史版本</h3><div className="knowledge-history">{history.map(item => <button key={item.revision}
+          className={visiblePage.revision === item.revision ? "selected" : ""} onClick={() => openPage(item.knowledgeId, item.revision)}>
+          {item.revision.slice(0, 8)} · {statusText(item.validity)}</button>)}</div></section>
+        {graph && readingCurrent && <details className="knowledge-graph"><summary>关系图（辅助导航）</summary>
+          <Graph graph={graph} onOpen={openPage} /></details>}
+      </aside></div></ContextPanelContent>}
   </div>;
 }
