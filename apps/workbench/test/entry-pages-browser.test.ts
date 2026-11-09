@@ -76,6 +76,10 @@ test("login, project list and settings pages use the new layout and keep their b
     const projectFacts = page.getByRole("region", { name: "当前项目" });
     await projectFacts.getByText("入口回归项目").waitFor();
     assert.match(await projectFacts.innerText(), new RegExp(projectId));
+    // The fact rows keep their own grid; the old global `dl > div` (170px, gap 12px) stays out of [data-ui].
+    const factRow = await projectFacts.locator("dl > div").first().evaluate(el => ({
+      columns: getComputedStyle(el).gridTemplateColumns, gap: getComputedStyle(el).columnGap }));
+    assert.ok(factRow.columns.startsWith("160px ") && factRow.gap === "16px", `settings fact row: ${JSON.stringify(factRow)}`);
     const access = page.getByRole("region", { name: "当前登录身份" });
     assert.match(await access.innerText(), /zhang-reviewer[\s\S]*人[\s\S]*读取项目[\s\S]*提交业务变更[\s\S]*审阅与复核/);
     assert.equal(await page.getByRole("list", { name: "各类记录的入口" }).getByRole("link").count(), 5);

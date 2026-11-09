@@ -273,11 +273,11 @@ function WorkspacePages({ route, context, refresh, operations }: { route: Route;
   }, [key, positionKey]);
   const { projectId, token, principal } = context;
   function page(r: Route, active: boolean) {
-    if (r.section === "documents") return <DocumentIndex context={context} refresh={refresh} />;
+    if (r.section === "documents") return <DocumentIndex context={context} />;
     if (["work", "inbox"].includes(r.section)) return <WorkIndex context={context} refresh={refresh} view={r.section as "work" | "inbox"} />;
     if (r.section === "create-task") return <CreateTaskPage context={context} refresh={refresh} />;
     if (r.section === "task" && r.id) return <TaskPage context={context} token={token} projectId={projectId} id={r.id} selectedRevision={r.revision} refresh={refresh} onChanged={context.onChanged} onAttempt={context.onAttempt} onKnown={context.onKnown} blockedByUnknown={context.blocked} canReview={principal.permissions.includes("review")} active={active} />;
-    if (r.section === "document" && r.id) return <DocumentPage context={context} refresh={refresh} projectId={projectId} id={r.id} selectedRevision={r.revision} />;
+    if (r.section === "document" && r.id) return <DocumentPage context={context} projectId={projectId} id={r.id} selectedRevision={r.revision} />;
     if (r.section === "knowledge") return <KnowledgePanel context={context} refresh={refresh} />;
     if (r.section === "evaluations") {
       const query = new URLSearchParams(currentPath().split("?")[1] ?? "");

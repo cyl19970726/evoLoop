@@ -29,7 +29,7 @@ function Block({ title, children, defaultOpen = true }: { title: string; childre
   </details>;
 }
 
-/** A labelled fact. Plain blocks, not <dl>: the old global `dl > div` grid would override the layout. */
+/** A labelled fact. */
 function Fact({ label, children }: { label: string; children: React.ReactNode }) {
   return <div className="flex flex-col gap-0.5"><span className="text-caption text-muted-foreground">{label}</span><div className="text-label text-foreground">{children}</div></div>;
 }

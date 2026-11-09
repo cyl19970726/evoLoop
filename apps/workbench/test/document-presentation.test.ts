@@ -2,8 +2,9 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Document, DocumentDetail, DocumentRevision } from "@evoloop/contracts";
 import {
-  coverageText, emptyListText, kindText, publicationText, readingStanding, referenceText, returnSourceLabel,
+  coverageText, emptyListText, kindText, markdownSource, publicationText, readingStanding, referenceText, returnSourceLabel,
 } from "../src/features/documents/documentPresentation.ts";
+import type { Original } from "../src/shared/ui/OriginalDocumentReader.tsx";
 import {
   automaticItemLimit, initialListState, isFiltered, loadMoreTarget, nextListState, pageSize, pagesFor,
 } from "../src/features/documents/documentListState.ts";
@@ -77,4 +78,19 @@ test("list conditions widen the range once for a search and keep it after the se
   assert.equal(loadMoreTarget({ target: pageSize }, 50), 100);
   assert.equal(loadMoreTarget({ target: 500 }, 120), 550);
   assert.equal(pagesFor({ target: 1 }), 1);
+});
+
+test("Markdown kept only as its original is read from the original, and each way that read can fail is kept apart", () => {
+  const stored = { ...revision("r3"), body: null, payloadRef: "blob-r3" };
+  const original = (patch: object) => ({ revision: stored, ...patch }) as Original;
+  assert.deepEqual(markdownSource("内联正文", { error: null }), { state: "ready", text: "内联正文" }, "an inline body needs no original");
+  assert.deepEqual(markdownSource(null, { data: undefined, error: null }), { state: "reading" });
+  assert.deepEqual(markdownSource(null, { data: original({ status: "available", body: "# 上传的正文\n\n## 第一节", assets: [] }), error: null }),
+    { state: "ready", text: "# 上传的正文\n\n## 第一节" });
+  const failure = new Error("连接中断");
+  assert.deepEqual(markdownSource(null, { data: undefined, error: failure }), { state: "failed", error: failure });
+  assert.deepEqual(markdownSource(null, { data: original({ status: "available", body: "上次读到的原件", assets: [] }), error: failure }),
+    { state: "ready", text: "上次读到的原件" }, "an original already read stays when a later read fails");
+  assert.deepEqual(markdownSource(null, { data: original({ status: "unavailable", reason: "hash mismatch" }), error: null }),
+    { state: "unavailable", reason: "hash mismatch" });
 });

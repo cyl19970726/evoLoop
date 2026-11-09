@@ -15,7 +15,7 @@ export interface DocumentListState {
   status: StatusFilter;
   /** How many documents the list should hold from the first page on. */
   target: number;
-  /** The document last opened from the table, highlighted and focused on return. */
+  /** The document last opened from the table or the inner rail, highlighted and focused in the table on return. */
   lastOpened: string | null;
 }
 
