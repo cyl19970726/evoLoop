@@ -148,7 +148,7 @@ test("built workbench discovers later Chinese task and document pages, linked ta
   assert.ok(diagram.lastLinkBottom <= diagram.frameHeight - 8, JSON.stringify(diagram));
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
   if (process.env.EVOLOOP_DIAGRAM_SCREENSHOT) {
-    await page.addStyleTag({content:".workspace-header{position:static!important}"});
+    await page.addStyleTag({content:"[data-shell=mobile-header]{position:static!important}"});
     await page.locator(".markdown-diagram").screenshot({path:process.env.EVOLOOP_DIAGRAM_SCREENSHOT});
   }
   await page.getByRole("link",{name:"中文跨页实施任务"}).click();

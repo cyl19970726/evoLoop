@@ -188,7 +188,7 @@ test("long Run activity and expanded source stay inside the Session page at mobi
   await fetch(`${base}/__fixture/active-run`);
   await page.getByRole("button", { name: "重新读取", exact: true }).click();
   await page.locator(".session-workspace:visible .session-current-work").getByText("最近 Run 记录运行中；当前执行待核", { exact: false }).waitFor();
-  assert.equal(await page.locator('.project-sidebar [aria-current="page"]').count(), 1, "only the Session is selected in the project sidebar");
+  assert.equal(await page.locator('aside[aria-label=项目导航] [aria-current="page"]').count(), 1, "only the Session is selected in the project sidebar");
   const item = page.locator(".session-activity-list li").first();
   async function showTool(index: number) { const tool = page.locator(".session-feed:visible .session-trace-item").nth(index); await tool.locator("summary").waitFor(); if (await tool.getAttribute("open") === null) await tool.locator("summary").click(); }
   await item.getByText("关联的真实任务 · 运行中", { exact: false }).waitFor();
@@ -350,7 +350,8 @@ test("long Run activity and expanded source stay inside the Session page at mobi
   await fetch(`${base}/__fixture/hold-trace`);
   await idleItem.getByRole("button", { name: "重读执行轨迹" }).click();
   await page.waitForFunction(async base => await (await fetch(`${base}/__fixture/trace-held`)).text() === "true", base);
-  await page.getByRole("button", { name: "退出" }).click();
+  await page.getByRole("button", { name: "我的：账号与设置" }).click();
+  await page.getByRole("menuitem", { name: "退出" }).click();
   await fetch(`${base}/__fixture/fresh-trace`);
   await fetch(`${base}/__fixture/release-trace`);
   await page.getByLabel("访问令牌").fill("fixture-token");

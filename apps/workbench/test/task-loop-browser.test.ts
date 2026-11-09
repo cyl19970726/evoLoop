@@ -121,12 +121,11 @@ test("built Task page selects the current Loop, preserves manual history and fit
   await baselinePage.getByLabel("访问令牌").fill("fixture-token");
   await baselinePage.getByRole("button",{name:"进入",exact:true}).click();
   await baselinePage.getByRole("heading",{name:"固定历史任务修订"}).waitFor();
-  const taskShellBaseline = await baselinePage.locator(".workbench-layout").evaluate(element => ({
-    active: element.getAttribute("data-session-reader"),
-    header: getComputedStyle(element.querySelector<HTMLElement>(".workspace-header")!).height,
+  const taskShellBaseline = await baselinePage.locator("[data-shell=frame]").evaluate(element => ({
+    rail: element.getAttribute("data-rail"),
     columns: getComputedStyle(element).gridTemplateColumns.split(" ").slice(0, 2),
   }));
-  assert.equal(taskShellBaseline.active, "false", "a fresh Task page uses the standard shell");
+  assert.deepEqual(taskShellBaseline, { rail: "shown", columns: ["68px", "264px"] }, "a fresh Task page uses the standard frame");
   const pageBrowser = await browser.newPage({viewport:{width:1280,height:720}});
   const pageErrors: string[] = [];
   pageBrowser.on("pageerror", error => pageErrors.push(error.stack ?? error.message));
@@ -137,15 +136,12 @@ test("built Task page selects the current Loop, preserves manual history and fit
   await pageBrowser.getByRole("heading",{name:"布局回归 Session"}).waitFor({timeout:5000}).catch(async () => {
     assert.fail(`selected Session fixture did not render: route=${pageBrowser.url()}, errors=${pageErrors.join(" | ")}, body=${(await pageBrowser.locator("body").innerText()).slice(0,900)}`);
   });
-  const readShell = async (target = pageBrowser) => target.locator(".workbench-layout").evaluate(element => ({
-    active: element.getAttribute("data-session-reader"),
-    header: getComputedStyle(element.querySelector<HTMLElement>(".workspace-header")!).height,
+  const readShell = async (target = pageBrowser) => target.locator("[data-shell=frame]").evaluate(element => ({
+    rail: element.getAttribute("data-rail"),
     columns: getComputedStyle(element).gridTemplateColumns.split(" ").slice(0, 2),
   }));
   const sessionShell = await readShell();
-  assert.equal(sessionShell.active, "true", "a selected Session activates its reader layout");
-  assert.equal(sessionShell.header, "48px", "a selected Session uses its compact header");
-  assert.deepEqual(sessionShell.columns, ["88px", "256px"], "a selected Session uses its reader navigation grid");
+  assert.deepEqual(sessionShell, taskShellBaseline, "a selected Session uses the same frame as a Task");
   const assertDefaultTaskShell = async () => {
     const viewport = pageBrowser.viewportSize();
     if (viewport) await baselinePage.setViewportSize(viewport);
@@ -200,10 +196,11 @@ test("built Task page selects the current Loop, preserves manual history and fit
   const runTitleClearsHeader = ({taskId,runId}:{taskId:string;runId:string}) => {
     const run=document.querySelector(`[data-page-key="task:${taskId}:::"] #runtime-run-${taskId}-${runId}`);
     const title=run?.querySelector(":scope > summary");
-    const header=document.querySelector(".workspace-header");
-    if (!title || !header) return false;
-    const titleRect=title.getBoundingClientRect(), headerRect=header.getBoundingClientRect();
-    return titleRect.top>=headerRect.bottom+8 && titleRect.bottom<window.innerHeight;
+    // Only the narrow layout has a sticky header; on wide screens the title just has to be in view.
+    const header=document.querySelector("[data-shell=mobile-header]");
+    if (!title) return false;
+    const titleRect=title.getBoundingClientRect(), top=header ? header.getBoundingClientRect().bottom+8 : 0;
+    return titleRect.top>=top && titleRect.bottom<window.innerHeight;
   };
   const exactRunLink = currentTaskPage.getByRole("link",{name:"核对这次 Run →"});
   await exactRunLink.waitFor();

@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "sideEffects": [
+    "*.css"
+  ],
   "description": "evoLoop workbench design system: tokens, Tailwind theme, logo and shared components.",
   "exports": {
     ".": "./src/index.ts",

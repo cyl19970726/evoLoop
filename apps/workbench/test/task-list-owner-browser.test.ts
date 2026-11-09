@@ -192,16 +192,17 @@ test("Task list resolves only displayed Role owners and rejects stale or failed 
   await page.getByRole("columnheader",{name:"固定成果",exact:true}).waitFor();
   await page.setViewportSize({width:1171,height:635});
   await page.evaluate(()=>scrollTo(0,0));
-  await page.locator(".workbench-layout.sidebar-collapsed").waitFor();
-  const collapsedBody=await page.locator(".workspace-body").boundingBox();
-  assert.ok(collapsedBody && collapsedBody.y<70 && collapsedBody.width>900,"collapsed navigation must keep the workspace beside the rail");
+  // 1171px keeps both rails (the inner one collapses below 1100px); the content stays beside them.
+  await page.locator("[data-shell=frame][data-rail=shown]").waitFor();
+  const collapsedBody=await page.locator("#workspace-main").boundingBox();
+  assert.ok(collapsedBody && collapsedBody.y<70 && collapsedBody.width>800,"the content keeps its width beside the rails");
   const collapsedSummary=await page.locator(".task-summary").boundingBox();
   const collapsedMain=await page.locator(".task-list-main").boundingBox();
   assert.ok(collapsedMain && collapsedSummary && collapsedSummary.x>collapsedMain.x,
     "1171px keeps the task summary beside the table");
   await page.setViewportSize({width:1920,height:1080});
-  await page.locator(".workbench-layout:not(.sidebar-collapsed)").waitFor();
-  const wideBody=await page.locator(".workspace-body").boundingBox();
+  await page.locator("[data-shell=frame][data-rail=shown]").waitFor();
+  const wideBody=await page.locator("#workspace-main").boundingBox();
   assert.ok(wideBody && wideBody.y<70 && wideBody.width>1400);
   if (process.env.EVOLOOP_TASK_LIST_OWNER_DESKTOP_SCREENSHOT) await page.screenshot({path:process.env.EVOLOOP_TASK_LIST_OWNER_DESKTOP_SCREENSHOT,fullPage:false});
   await page.setViewportSize({width:1280,height:900});

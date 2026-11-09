@@ -180,10 +180,9 @@ test("Sessions is the sole directory and renders conversation, source, reply and
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button", { name: "进入", exact: true }).click();
   await page.getByRole("heading", { name: "Sessions", exact: true }).waitFor();
-  assert.deepEqual(await page.locator(".module-rail > a:not(.rail-brand)").allTextContents(), ["工作", "Sessions"]);
-  const navigationToggle = page.locator(".sidebar-toggle");
-  if (await navigationToggle.getAttribute("aria-expanded") !== "true") await navigationToggle.click();
-  const sidebar = page.locator(".project-sidebar .session-navigation");
+  assert.deepEqual(await page.locator('[data-shell=rail] a:not([aria-label])').evaluateAll(links => links.map(link => link.firstChild?.nextSibling?.textContent ?? link.textContent)), ["工作", "智能体", "待我处理"]);
+  if (await page.locator("[data-shell=frame]").getAttribute("data-rail") !== "shown") await page.getByRole("button", { name: "展开项目导航" }).click();
+  const sidebar = page.locator("aside[aria-label=项目导航] .session-navigation");
   await sidebar.locator(`.session-nav-item[href*="${sessionId}"] .session-identity-violet`).waitFor();
   await sidebar.getByText("业务 Session · 已加载 1", { exact: true }).waitFor();
   await sidebar.getByText("System Session · 已加载 1", { exact: true }).waitFor();
@@ -198,10 +197,8 @@ test("Sessions is the sole directory and renders conversation, source, reply and
   await workPage.waitForTimeout(500);
   assert.equal(await workPage.locator(".workbench-layout").count(), 1,
     `the Work route mounts the shared shell; errors=${workPageErrors.join(" | ")}; current page: ${(await workPage.locator("body").innerText()).slice(0, 500)}`);
-  const workNavigationToggle = workPage.locator(".sidebar-toggle");
-  await workNavigationToggle.waitFor();
-  if (await workNavigationToggle.getAttribute("aria-expanded") !== "true") await workNavigationToggle.click();
-  await workPage.locator(".project-sidebar").waitFor({ state: "visible" });
+  if (await workPage.locator("[data-shell=frame]").getAttribute("data-rail") !== "shown") await workPage.getByRole("button", { name: "展开项目导航" }).click();
+  await workPage.locator("aside[aria-label=项目导航]").waitFor({ state: "visible" });
   assert.equal(await workPage.locator(".session-navigation:visible").count(), 0, "Work does not duplicate the Session directory");
   await workPage.close();
   await sidebar.getByRole("link").filter({ hasText: "测试 Session" }).first().click();

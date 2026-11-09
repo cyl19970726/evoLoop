@@ -100,7 +100,7 @@ test("Session navigation retains order, pages and filters across selection, back
   await page.getByRole("button", { name: "进入", exact: true }).click();
   const navigationToggle = page.getByRole("button", { name: /^(展开|收起)项目导航$/ });
   if (await navigationToggle.getAttribute("aria-expanded") !== "true") await navigationToggle.click();
-  const sidebar = page.locator(".project-sidebar .session-navigation");
+  const sidebar = page.locator("aside[aria-label=项目导航] .session-navigation");
   const current = sidebar.locator(".session-nav-current");
   await current.getByText("业务 Session · 已加载 5", { exact: true }).waitFor();
   assert.equal(await current.locator(".session-nav-item").count(), 5,
@@ -129,12 +129,12 @@ test("Session navigation retains order, pages and filters across selection, back
   await sidebar.getByRole("button", { name: "加载更多当前 Session" }).click();
   await page.waitForFunction(async base => (await (await fetch(`${base}/__fixture/pending`)).json()).pending, base);
   await sidebar.getByRole("textbox", { name: "搜索 Session 名称或职责" }).fill("当前成员 24");
-  await page.waitForFunction(() => document.querySelectorAll(".project-sidebar .session-nav-current .session-nav-item").length === 0);
+  await page.waitForFunction(() => document.querySelectorAll("aside[aria-label=项目导航] .session-nav-current .session-nav-item").length === 0);
   await fetch(`${base}/__fixture/release`);
-  await page.waitForFunction(() => document.querySelectorAll(".project-sidebar .session-nav-current .session-nav-item").length === 1);
+  await page.waitForFunction(() => document.querySelectorAll("aside[aria-label=项目导航] .session-nav-current .session-nav-item").length === 1);
   await current.getByText("当前成员 24", { exact: true }).waitFor();
   await sidebar.getByRole("textbox", { name: "搜索 Session 名称或职责" }).fill("");
-  await page.waitForFunction(() => document.querySelectorAll(".project-sidebar .session-nav-current .session-nav-item").length === 5);
+  await page.waitForFunction(() => document.querySelectorAll("aside[aria-label=项目导航] .session-nav-current .session-nav-item").length === 5);
   assert.equal(await current.locator(".session-nav-item").count(), 5,
     "a stale page response during the search debounce must not restore the old page count");
   const afterSearchReads = await (await fetch(`${base}/__fixture/reads`)).json() as typeof reads;
@@ -201,7 +201,7 @@ test("Session navigation retains order, pages and filters across selection, back
   await page.keyboard.press("Escape");
   await page.setViewportSize({ width: 1280, height: 800 });
   await sidebar.getByRole("textbox", { name: "搜索 Session 名称或职责" }).fill("当前成员 24");
-  await page.waitForFunction(() => document.querySelectorAll(".project-sidebar .session-nav-current .session-nav-item").length === 1);
+  await page.waitForFunction(() => document.querySelectorAll("aside[aria-label=项目导航] .session-nav-current .session-nav-item").length === 1);
   await current.getByText("当前成员 24", { exact: true }).waitFor();
   assert.equal(await current.locator(".session-nav-item").count(), 1, "search narrows the loaded directory without changing the selected route");
   await current.locator(".session-nav-item").click();
@@ -209,13 +209,13 @@ test("Session navigation retains order, pages and filters across selection, back
   assert.equal(await sidebar.getByRole("textbox", { name: "搜索 Session 名称或职责" }).inputValue(), "当前成员 24",
     "the search term survives navigation to its matching Session");
   await sidebar.getByRole("textbox", { name: "搜索 Session 名称或职责" }).fill("");
-  await page.waitForFunction(() => document.querySelectorAll(".project-sidebar .session-nav-current .session-nav-item").length === 5);
+  await page.waitForFunction(() => document.querySelectorAll("aside[aria-label=项目导航] .session-nav-current .session-nav-item").length === 5);
   assert.equal(await current.locator(".session-nav-item").count(), 5, "clearing search restores the first bounded page");
   const deepLink = await browser.newPage({ viewport: { width: 1920, height: 1200 } });
   await deepLink.goto(`${base}/p/${projectId}/sessions?session=external%3Acurrent-4`);
   await deepLink.getByLabel("访问令牌").fill("fixture-token");
   await deepLink.getByRole("button", { name: "进入", exact: true }).click();
-  const deepCurrent = deepLink.locator(".project-sidebar .session-nav-current");
+  const deepCurrent = deepLink.locator("aside[aria-label=项目导航] .session-nav-current");
   await deepCurrent.getByText("当前成员 5", { exact: true }).waitFor();
   assert.equal(await deepCurrent.locator(".session-nav-item").count(), 5, "direct entry keeps the bounded directory available");
   assert.equal(await deepCurrent.locator('.session-nav-item[aria-current="page"][href*="current-4"]').count(), 1);

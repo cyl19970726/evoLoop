@@ -19,7 +19,7 @@
 
 | 层 | 内容 | 现状 |
 | --- | --- | --- |
-| `app/` | 外壳、路由表、身份与查询客户端装配 | `router.tsx`（路由表）与 `routePaths.ts`、`queryClient.ts`（查询缓存）、`PageBoundary.tsx`（单页出错不影响外壳）、`App.tsx`（登录、项目切换、按区域选页面并逐页懒加载）、`WorkbenchShell.tsx`、操作回执与恢复、组件样例页 `ui-samples/`。`src/` 根目录只留入口 `main.tsx`、全局类型声明和旧全局 CSS（PR10 删除），按 app 层对待 |
+| `app/` | 外壳、路由表、身份与查询客户端装配 | `router.tsx`（路由表）与 `routePaths.ts`、`queryClient.ts`（查询缓存）、`PageBoundary.tsx`（单页出错不影响外壳）、`shell/`（外壳：`AppShell.tsx`、空间与分区模型 `spaces.ts`，登录后按需加载；页面经 `shared/ui/` 的两个入口填外壳：`ContextRailContent` 把对象列表放进内层栏，`ContextPanelContent` 把当前对象的信息放进右栏（`ContextPanel.tsx`）；只有屏上的那一页能填，`pageActive.ts` 由 `App.tsx` 按页提供）、`App.tsx`（登录、项目切换、按区域选页面并逐页懒加载）、操作回执与恢复、组件样例页 `ui-samples/`。`src/` 根目录只留入口 `main.tsx`、全局类型声明和旧全局 CSS（PR10 删除），按 app 层对待 |
 | `features/<领域>/` | 页面、领域组件、该领域的查询与命令 | 17 个领域沿用旧目录名（任务仍叫 `workflow`，团队页是 `team`）；PR5–PR9 换页时按目标页面归并 |
 | `shared/` | API 客户端、对象引用、修订标签等跨领域部件 | 地址与历史（`navigation.ts`、`appPath.ts`、`routes.ts`）、身份（`identity.ts`）、读取层（`query.ts`）、`api.ts` 与被多个领域读取的 `*Client.ts`、命令表单 `ActionForm`、业务状态映射（`workStatusPresentation`、`leaderWorkLoad`、`taskTiming`）、对象链接与名称解析（`taskNavigation`、`deliveryPresentation`、`externalHostEntry`、`ownerRole`）、Markdown 与 HTML 原件阅读（`ui/`）、过渡期的本地 shadcn 组件（`components/ui/`）、假数据 `fixtures/` |
 | `@evoloop/ui`（`packages/ui`） | tokens、基于 shadcn 的基础组件、布局骨架、通用状态与对话流条目 | 见[组件](components.md) |
@@ -57,7 +57,7 @@
 
 QueryService 返回 `observedAt`、对象与 revision、权限能力、分源状态和缺项。PG 部分在一个只读事务内取得；Wiki/Git 分别读固定版本，不声称跨系统原子快照。知识服务不可用时任务仍可读，依据标为暂不可核对。服务端只装配已授权对象，前端隐藏按钮不是授权；空项目返回空态，前端不注入示例。
 
-现状 `WorkbenchShell` 按项目保留已挂载页面以保住内存草稿，这不是持久恢复。
+现状 `App.tsx` 的 `WorkspacePages` 按项目保留已挂载页面以保住内存草稿，这不是持久恢复；外壳在 760px 两侧只换样式、不换结构，跨断点也不会卸载页面。
 
 ### 过程文档表格与完整阅读
 
