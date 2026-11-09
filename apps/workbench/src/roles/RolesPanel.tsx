@@ -7,6 +7,7 @@ import { roleClient } from "./client";
 import { RolePresenceCard } from "./RolePresenceCard";
 import { codexThreadHref } from "./externalHostEntry";
 import { RoleTemplateSummary } from "./RoleTemplateSummary";
+import { roleCardKey, roleListScope } from "./roleListRefresh";
 import { RoleRuntimeCard } from "./RoleRuntimeCard";
 import { AllocationBacklinks } from "../discussions/AllocationBacklinks";
 import { href } from "../ui/shared";
@@ -78,6 +79,7 @@ export function RolesPanel({ context, refresh }: { context: MutationContext; ref
   const epochRef = useRef(0);
   const moreInFlightRef = useRef(false);
   const targetPages = useRef(0);
+  const loadedScope = useRef("");
   const [targetRoute, setTargetRoute] = useState(() => ({projectId:context.projectId,value:roleQuery(context.projectId),tick:0}));
   useEffect(() => {
     const reread = () => setTargetRoute(previous => ({projectId:context.projectId,value:roleQuery(context.projectId),tick:previous.tick+1}));
@@ -91,7 +93,10 @@ export function RolesPanel({ context, refresh }: { context: MutationContext; ref
   useEffect(() => {
     let active = true; const epoch = ++epochRef.current;
     moreInFlightRef.current = false;
-    setRoles([]); setNextCursor(null); setLoading(true); setLoadingMore(false); setError(""); setMoreError("");
+    // A refresh of the same project keeps the cards mounted (so open entries stay open); only another scope clears them.
+    const scope = roleListScope(context.token, context.projectId);
+    if (loadedScope.current !== scope) { setRoles([]); setNextCursor(null); loadedScope.current = scope; }
+    setLoading(true); setLoadingMore(false); setError(""); setMoreError("");
     roleClient(context.token, context.projectId).list()
       .then(page => { if (active && epochRef.current === epoch) { setRoles(page.items); setNextCursor(page.nextCursor); } })
       .catch(cause => { if (active && epochRef.current === epoch) setError(errorText(cause)); })
@@ -142,7 +147,7 @@ export function RolesPanel({ context, refresh }: { context: MutationContext; ref
         : `当前项目已读完职责，未找到目标 ${target}；没有定位到其他职责。`}</Notice>}
       {loading && <p>正在读取职责…</p>}{error && <Notice error>职责暂不可读：{error}</Notice>}
       {!loading && !error && roles.length === 0 && <p className="empty">本项目还没有职责提案；不会自动创建常设角色。</p>}
-      {roles.map(role => <RoleCard key={`${role.id}:${role.version}`} context={context} role={role} refresh={refresh} />)}
+      {roles.map(role => <RoleCard key={roleCardKey(role)} context={context} role={role} refresh={refresh} />)}
       {moreError && <Notice error>{moreError}</Notice>}
       {nextCursor && !loading && !error && <button type="button" className="more" onClick={loadMore} disabled={loadingMore}>{loadingMore ? "继续读取中…" : "加载更多职责"}</button>}
     </section>

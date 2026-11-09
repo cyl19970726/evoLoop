@@ -11,6 +11,7 @@ export function RoleRuntimeCard({ context, roleId, refresh }: { context: Mutatio
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [tick, setTick] = useState(0);
+  const [saved, setSaved] = useState(false);
   useEffect(() => {
     let active = true; setLoading(true); setError("");
     roleClient(context.token, context.projectId).runtime(roleId)
@@ -22,6 +23,8 @@ export function RoleRuntimeCard({ context, roleId, refresh }: { context: Mutatio
   const shown = view ? presentRoleRuntime(view) : null;
   return <section className="role-runtime" aria-label="运行时与 skill">
     <div className="panel-head"><h3>运行时与 skill</h3><button type="button" onClick={() => setTick(value => value + 1)} disabled={loading}>{loading ? "读取中…" : "重新读取"}</button></div>
+    {saved && !error && (loading ? <Notice>已保存，正在读取新修订…</Notice>
+      : view?.binding && <Notice>已保存；回读到第 {view.binding.revision} 次修订。</Notice>)}
     {error && <Notice error>运行时与 skill 暂不可读：{error}</Notice>}
     {view && shown && <>
       <dl>
@@ -47,7 +50,8 @@ export function RoleRuntimeCard({ context, roleId, refresh }: { context: Mutatio
       <details className="workflow-detail"><summary>{view.binding ? "调整 skill" : "绑定运行时并选择 skill"}</summary>
         <p>选择决定运行时把哪些 skill 放进模型上下文，不是安全边界；保存后下一个 Turn 生效。</p>
         <ActionForm key={`${view.binding?.revision ?? 0}`} context={context} review title={view.binding ? "调整角色 skill" : "绑定角色运行时"}
-          fields={runtimeFields(view)} build={values => runtimeCommand(view, values)} />
+          fields={runtimeFields(view)} build={values => runtimeCommand(view, values)}
+          onApplied={() => setSaved(true)} />
       </details>
     </>}
   </section>;
