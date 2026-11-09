@@ -8,8 +8,9 @@ import type { MutationContext } from "../../shared/ActionForm";
 import { useProjectQuery } from "../../shared/query";
 import { FullIdentifiers } from "../../shared/ui/FullIdentifiers";
 import { href } from "../../shared/ui/shared";
+import { CommandForm, type FormField } from "../../shared/command";
 import { seriesCurrentPromptCommand, seriesFuturePromptCommand, taskStateLabel } from "./taskCommands";
-import { ActionRow, CommandForm, Fact, Fine, ReadNote, TabSection, reasonField, type FormField } from "./TaskForms";
+import { ActionRow, Fact, Fine, ReadNote, TabSection, reasonField } from "./TaskForms";
 import { formatScheduled, nextTimingLabel, repeatLabel, timingSetPayload, timingStopPayload, timingVersion, timingWaitingText } from "./taskTimingPresentation";
 
 type Scope = "this" | "this_and_future" | "future";

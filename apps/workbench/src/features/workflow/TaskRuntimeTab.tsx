@@ -22,13 +22,14 @@ import { OrchestrationPanel } from "../orchestration";
 import { ReferencePanel } from "../references";
 import { eligibleOwnedSessions, sessionHref } from "../sessions";
 import { preflightPresentation, preflightView } from "../../shared/preflightPresentation";
+import { CommandForm } from "../../shared/command";
 import { readAgent } from "./agentRead";
 import { BindAgentForm } from "./TaskAgentBlock";
 import { assignmentAcknowledgeCommand, assignmentObserveCommand, assignmentReleaseCommand, handoffRecordCommand, queueCreateCommand,
   runAbandonCommand, runInterruptCommand, runReserveCommand } from "./taskCommands";
 import { runStateName } from "./taskExperience";
 import { assignmentKey } from "./taskFactsPresentation";
-import { ActionRow, CommandForm, Fine, ReadNote, TabSection, readCurrent, reasonField } from "./TaskForms";
+import { ActionRow, Fine, ReadNote, TabSection, readCurrent, reasonField } from "./TaskForms";
 import { ResidentQueuePanel } from "./ResidentQueuePanel";
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

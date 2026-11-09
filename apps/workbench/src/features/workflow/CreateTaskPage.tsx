@@ -13,10 +13,10 @@ import { useProjectQuery } from "../../shared/query";
 import { ContextPanelContent, useContextPanel } from "../../shared/ui/ContextPanel";
 import { FullIdentifiers } from "../../shared/ui/FullIdentifiers";
 import { href } from "../../shared/ui/shared";
+import { baselineChangedText, OutcomeNotice, useCommand } from "../../shared/command";
 import { journeyKey, readOwnerRoles, readPublishedDocuments, useGoals, useStages } from "./journeyRead";
 import { draftFieldLabels, draftTouched, emptyTaskDraft, maxLinkedDocuments, taskCreateCommand, taskDraftProblems, taskKinds, zonedInstant, type DraftProblems, type TaskDraft } from "./taskCreate";
 import { formatScheduled } from "./taskTimingPresentation";
-import { baselineChangedText, useCommand } from "./useCommand";
 
 const muted = "text-caption text-muted-foreground";
 const section = "flex flex-col gap-4 rounded-xl bg-raised p-4 shadow-sm compact:p-5";
@@ -253,9 +253,9 @@ function SubmitBar({ context, stage, taskId, draft, problems, ready, onInvalid, 
     {context.blocked && <p className={muted}>本项目仍有结果未确认的操作，请先核对回执，再保存。</p>}
     {command.baselineChanged && <Notice tone="waiting" title="所属阶段已被更新" action={<Button size="compact" onClick={command.rebase}>已查看，继续</Button>}>
       {baselineChangedText}右栏“所属阶段”已是最新读回。</Notice>}
-    {command.outcome && !command.baselineChanged && <Notice tone={command.outcome.failed ? "error" : "info"}>{command.outcome.message}</Notice>}
+    {command.outcome && !command.baselineChanged && <OutcomeNotice outcome={command.outcome} />}
     <div className="flex flex-wrap items-center gap-2">
-      <Button variant="primary" onClick={() => void send()} disabled={!ready || context.blocked || command.busy || command.baselineChanged}>{command.busy ? "保存中…" : "保存任务"}</Button>
+      <Button variant="primary" onClick={() => void send()} disabled={!ready || context.blocked || command.busy || command.baselineChanged || command.unconfirmed}>{command.busy ? "保存中…" : "保存任务"}</Button>
       {onClear && <Button variant="ghost" onClick={onClear}>清空草稿</Button>}
     </div>
   </div>;

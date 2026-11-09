@@ -198,11 +198,11 @@ test("目标与阶段 reads goals, stages and their tasks in words, keeps drafts
   state.goalVersion = 2;
   const revising = main.getByRole("form", { name: "修订目标" });
   await revising.getByRole("button", { name: "保存修订" }).click();
-  await revising.getByRole("button", { name: "保留草稿，按最新版本核对" }).waitFor({ timeout: 15000 });
+  await revising.getByRole("button", { name: "保留我的修改" }).waitFor({ timeout: 15000 });
   await main.locator("[data-goal]").getByText(/第 2 版/).waitFor();
   assert.equal(await revising.getByLabel("理由与依据").inputValue(), "未提交草稿");
   assert.equal(await revising.getByRole("button", { name: "保存修订" }).isDisabled(), true);
-  await revising.getByRole("button", { name: "保留草稿，按最新版本核对" }).click();
+  await revising.getByRole("button", { name: "保留我的修改" }).click();
   await revising.getByRole("button", { name: "保存修订" }).click();
   await revising.getByText(/已保存/).first().waitFor();
   assert.deepEqual(commands.filter(item => item.type === "goal.revise").map(item => [item.expectedVersion, item.reason]), [[1, "未提交草稿"], [2, "未提交草稿"]]);

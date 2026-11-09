@@ -11,11 +11,10 @@ import { useProjectQuery } from "../../shared/query";
 import { sessionClient } from "../../shared/sessionClient";
 import { date } from "../../shared/ui/shared";
 import { sessionHref } from "../sessions";
+import { CommandFrame, useCommand } from "../../shared/command";
 import { readAgent } from "./agentRead";
 import { agentFacts, assignmentKey, type Read, type ReadState } from "./taskFactsPresentation";
 import { assignmentSetCommand } from "./taskCommands";
-import { BaselineNotice, OutcomeNotice } from "./TaskForms";
-import { useCommand } from "./useCommand";
 
 const directoryPageLimit = 10;
 
@@ -91,44 +90,37 @@ export function BindAgentForm({ context, task, currentVersion, currentKey, onDon
   // submit until they have looked at the latest content; the versions sent are always the ones they saw.
   // A version conflict rereads the project, so the latest assignment is on screen before the person decides.
   const command = useCommand(context, { taskVersion: task.version, assignmentVersion: currentVersion, currentKey: currentKey ?? "" }, { onStale: context.onChanged });
-  const allowed = context.principal.permissions.includes("review");
   const dirty = !!(target || recipient || reason);
   // The rule of every task form: an untouched form follows the latest content; a typed one waits for the person.
   React.useEffect(() => {
     if (!dirty && command.baselineChanged && !command.awaitingReread) command.rebase();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dirty, command.baselineChanged, command.awaitingReread]);
-  async function submit(event: React.FormEvent) {
-    event.preventDefault();
+  const [tried, setTried] = React.useState(false);
+  async function submit() {
+    setTried(true);
     const chosen = choices.find(item => item.key === target);
-    if (!chosen) return;
+    if (!chosen || !reason.trim()) return;
     const applied = await command.submit(seen => assignmentSetCommand(task.id, seen, { target: chosen.target, recipientActorId: recipient, reason }));
     if (applied) onDone();
   }
-  return <form onSubmit={submit} className="flex flex-col gap-3 rounded-lg bg-muted p-3" data-dirty={dirty ? "true" : undefined} aria-label="绑定智能体">
+  return <CommandFrame context={context} command={command} label="绑定智能体" submitLabel="保存绑定" dirty={dirty} permission="review" className="p-3"
+    onSubmit={() => void submit()} onCancel={onDone} cancelLabel="取消"
+    onRefill={() => { command.rebase(); setTarget(""); setRecipient(""); setReason(""); }}
+    onKeep={() => { command.rebase(); if (target === currentKey) setTarget(""); }}
+    keepNote="上面的“承接智能体”已是最新读回；保留我的修改：选择、执行者和依据不变，按最新的分派核对。">
     {choicesRead.isPending && <p role="status" className="text-label text-muted-foreground">正在读取同一职责下可以承接的智能体…</p>}
     {choicesRead.error && <Notice tone="error">可选智能体暂不可读取：{errorText(choicesRead.error)}</Notice>}
     {choicesRead.data?.truncated && <Notice tone="waiting">智能体目录超过本次读取范围，下面只列出已读到的部分。</Notice>}
     {choicesRead.isSuccess && !choices.length && <p className="text-label text-text-secondary">没有读到承担本任务职责、且属于当前团队的智能体。可以先在团队分工里连接或归类智能体。</p>}
     {choices.length > 0 && <>
-      <Field label="承接的智能体">{control => <Select {...control} required value={target} onChange={event => setTarget(event.target.value)} className="w-full">
+      <Field label="承接的智能体" error={tried && !target ? "请选择承接的智能体。" : undefined}>{control => <Select {...control} required value={target} onChange={event => setTarget(event.target.value)} className="w-full">
         <option value="">请选择</option>
         {choices.map(item => <option key={item.key} value={item.key} disabled={item.key === currentKey}>
           {(item.profile?.displayName?.trim() || item.title)}{item.kind === "external" ? " · 外部接入" : ""}{item.key === currentKey ? " · 当前" : ""}</option>)}
       </Select>}</Field>
       <Field label="指定执行者身份（可选）" hint="只填已核实的真实执行者身份；本人确认接手时按这个身份核验。">{control => <Input {...control} value={recipient} onChange={event => setRecipient(event.target.value)} autoComplete="off" />}</Field>
-      <Field label="分派依据">{control => <Textarea {...control} required value={reason} onChange={event => setReason(event.target.value)} rows={3} />}</Field>
+      <Field label="分派依据" error={tried && !reason.trim() ? "请填写分派依据。" : undefined}>{control => <Textarea {...control} required value={reason} onChange={event => setReason(event.target.value)} rows={3} />}</Field>
     </>}
-    {!allowed && <p className="text-caption text-muted-foreground">当前身份没有审阅权限，不能绑定智能体。</p>}
-    {context.blocked && <p className="text-caption text-muted-foreground">本项目仍有结果未确认的操作，请先核对回执。</p>}
-    {command.baselineChanged && <BaselineNotice awaiting={command.awaitingReread} onReread={context.onChanged}
-      onRefill={() => { command.rebase(); setTarget(""); setRecipient(""); setReason(""); }}
-      onKeep={() => { command.rebase(); if (target === currentKey) setTarget(""); }}
-      keepNote="上面的“承接智能体”已是最新读回；保留我的修改：选择、执行者和依据不变，按最新的分派核对。" />}
-    {command.outcome && !(command.baselineChanged && command.outcome.stale) && <OutcomeNotice outcome={command.outcome} />}
-    <div className="flex gap-2">
-      <Button type="submit" variant="primary" size="compact" disabled={!allowed || context.blocked || command.busy || command.baselineChanged || !target || !reason.trim()}>{command.busy ? "保存中…" : "保存绑定"}</Button>
-      <Button size="compact" variant="ghost" onClick={onDone}>取消</Button>
-    </div>
-  </form>;
+  </CommandFrame>;
 }

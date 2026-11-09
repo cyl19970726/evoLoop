@@ -67,7 +67,8 @@ export function ManagedSessionDetail({ context, session, name, runs, runsRead, s
     </PageSection>
     {needsFullAccessUpgrade(session) && permissions.includes("write") && permissions.includes("review") && <PageSection title="登记为完整权限"
       description="填写为原智能体创建者配置的精确授权模型；服务端按原创建者、职责、工作目录及范围核验。提交后会在原智能体与原生线程上登记新配置修订，仍须核对激活；历史运行不会改写。">
-      <Legacy><ActionForm key={session.executionProfile!.revision.revisionId} context={context} review embedded title="升级原智能体执行配置" fields={[
+      <Legacy><ActionForm key={session.executionProfile!.revision.revisionId} context={context} review embedded title="升级原智能体执行配置"
+        baseline={{ sessionVersion: session.version, profileRevision: session.executionProfile!.revision.revisionId }} fields={[
         { name: "targetModel", label: "原创建者精确授权的目标模型" }, { name: "evidenceRef", label: "本次授权依据" }, reasonField,
       ]} build={v => {
         const model = v.targetModel!.trim();

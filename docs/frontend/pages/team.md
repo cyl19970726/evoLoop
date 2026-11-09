@@ -29,7 +29,7 @@
 - 承载列表只有在最近一次读取成功时才给出打开、复制后的入口和路由核对；重读失败时保留旧内容并标明。
 - 关闭只在没有阻断时提供。阻断逐条写明：状态不是就绪、原生线程未绑定、在途或结果未知的运行、队列占用，以及运行或队列没读回。消息与分派的完整核对在智能体空间的关闭面板。
 - 同职责 ≠ 已接手：接手只认同一任务修订的接受记录（[可信关系](../../architecture/contracts.md#9-分工讨论的可信关系反查)）。新聊天或绑定职责 ≠ 试行有效（[分工试行](../../product/daily-loop.md#分工提议怎样试行)）。
-- 分工讨论分开显示未落到任务、未接受、已转交、被取代。讨论正文另被修订时并列两版，由人明确确认后再接续（[项目数据](../../architecture/project-data.md#3-关系与认知读取)）。交接包原文和文档当前版都核对通过才能登记，读取失败时写“无法判断”。填写中讨论、文档当前版或所选对象的修订变了，或服务端答复所见已过期，都保留输入但拒绝提交，要重新核对；恢复确认要重新勾选。结果未知的写入按原操作核对为已应用后，草稿自动清除。
+- 分工讨论分开显示未落到任务、未接受、已转交、被取代。讨论正文另被修订时并列两版，由人明确确认后再接续（[项目数据](../../architecture/project-data.md#3-关系与认知读取)）。交接包原文和文档当前版都核对通过才能登记，读取失败时写“无法判断”。填写中讨论、文档当前版或所选对象的修订变了，或服务端答复所见已过期（先自动重读），都保留输入但拒绝提交，写明变了哪部分，由人选保留修改或重填；恢复确认要重新勾选。结果未知的写入按原操作核对为已应用后，草稿自动清除。
 - 协作回执：结果未知的投影只按稳定键对账，不重发；只有身份已核实、只改标题的远端修改能采纳，采纳和拒绝都先确认。写入结果丢失时只留项目、对象与操作 ID，按原 ID 读回。
 - 组织复盘是 `organization_review` 类型的文档；报告已保存 ≠ 建议已采纳。
 
@@ -64,7 +64,7 @@
 | 外壳与组织复盘 | `features/team/TeamWorkspace.tsx`、`features/team/OrganizationReviewList.tsx`、`shared/routes.ts` | `team-browser.test.ts`、`team-presentation.test.ts` |
 | 职责 | `features/roles/RolesView.tsx`、`features/roles/RoleDetail.tsx`、`features/roles/RolePresence.tsx`、`features/roles/RoleRuntime.tsx`、`features/roles/RoleTemplates.tsx`、`features/roles/rolePresentation.ts` | `role-presentation.test.ts`、`role-runtime-card.test.ts`、`role-template-summary-browser.test.ts`、`role-card-keep-open-browser.test.ts`、`resident-observation-browser.test.ts`、`team-roles-browser.test.ts` |
 | 分工与运行 | `features/runtime/ExecutionView.tsx`、`features/runtime/ManagedSessionDetail.tsx`、`features/runtime/ManagedSessionCreate.tsx`、`features/runtime/RunList.tsx`、`features/runtime/executionPresentation.ts` | `execution-presentation.test.ts`、`runtime-session-role-browser.test.ts`、`runtime-model-selection-browser.test.ts`、`runtime-reconcile-browser.test.ts` |
-| 分工讨论 | `features/discussions/DiscussionPanel.tsx`、`features/discussions/DiscussionDetail.tsx`、`features/discussions/DiscussionForms.tsx`、`features/discussions/CommandForm.tsx`、`features/discussions/discussionClient.ts`、`features/discussions/discussionBaseline.ts`、`features/discussions/discussionPresentation.ts`、`features/discussions/commands.ts`、`features/discussions/AllocationRelationsPanel.tsx`、`features/discussions/AllocationBacklinks.tsx`、`features/discussions/useAllocationTraces.ts` | `team-discussions-browser.test.ts`（`EVOLOOP_DISCUSSIONS_SCREENSHOT_DIR`）、`discussion-presentation.test.ts`、`discussion-panel.test.ts`、`allocation-backlink-groups.test.ts`、`allocation-names.test.ts` |
+| 分工讨论 | `features/discussions/DiscussionPanel.tsx`、`features/discussions/DiscussionDetail.tsx`、`features/discussions/DiscussionForms.tsx`、`features/discussions/formParts.tsx`、`shared/command/CommandForm.tsx`、`features/discussions/discussionClient.ts`、`features/discussions/discussionBaseline.ts`、`features/discussions/discussionPresentation.ts`、`features/discussions/commands.ts`、`features/discussions/AllocationRelationsPanel.tsx`、`features/discussions/AllocationBacklinks.tsx`、`features/discussions/useAllocationTraces.ts` | `team-discussions-browser.test.ts`（`EVOLOOP_DISCUSSIONS_SCREENSHOT_DIR`）、`discussion-presentation.test.ts`、`discussion-panel.test.ts`、`allocation-backlink-groups.test.ts`、`allocation-names.test.ts` |
 | 协作回执 | `features/collaboration/CollaborationPanel.tsx`、`features/collaboration/collaborationPresentation.ts`、`features/collaboration/client.ts` | `team-collaboration-browser.test.ts`（`EVOLOOP_COLLABORATION_SCREENSHOT_DIR`）、`collaboration-presentation.test.ts` |
 
 ## 相关

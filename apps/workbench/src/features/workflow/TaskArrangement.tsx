@@ -15,10 +15,10 @@ import { responsibleText, waitingText, workItemNextStep } from "../../shared/wor
 import { FullIdentifiers } from "../../shared/ui/FullIdentifiers";
 import { ResponsibleName } from "../../shared/ui/RecordName";
 import { date, href } from "../../shared/ui/shared";
+import { CommandForm, CommandFrame, followLatest, formDirty, keepEdits, useCommand, type FormState } from "../../shared/command";
 import { attentionResolveCommand, followUpCommand, localInput, publicationCommand } from "./taskCommands";
 import { runStateName } from "./taskExperience";
-import { ActionRow, BaselineNotice, CommandForm, Fact, Fine, OutcomeNotice, ReadNote, TaskWriteBlock, followLatest, formDirty, keepEdits, readCurrent, reasonField, type FormState } from "./TaskForms";
-import { useCommand } from "./useCommand";
+import { ActionRow, Fact, Fine, ReadNote, readCurrent, reasonField } from "./TaskForms";
 
 type FollowUpKind = NonNullable<TaskAttentionFollowUp["waitingOn"]>["kind"];
 const followUpKinds: FollowUpKind[] = ["session", "consumer", "leader", "publisher", "user", "task", "unknown"];
@@ -134,7 +134,6 @@ const followUpValues = (followUp: TaskAttentionFollowUp | null, published: boole
 function FollowUpForm({ context, detail, value, followUp, onReread }: {
   context: MutationContext; detail: TaskDetail; value: AttentionRead; followUp: TaskAttentionFollowUp | null; onReread(): Promise<{ data?: AttentionRead | undefined }>;
 }) {
-  const block = React.useContext(TaskWriteBlock);
   const revisionId = detail.task.currentRevisionId;
   const reread = () => { void onReread(); };
   const command = useCommand(context, { taskVersion: detail.task.version, revisionId, followUpVersion: value.followUp?.version ?? 0 }, { onStale: reread });
@@ -153,51 +152,48 @@ function FollowUpForm({ context, detail, value, followUp, onReread }: {
   }, [latestKey, command.baselineChanged, command.awaitingReread, dirty]);
   const set = (name: string) => (next: string) => setForm(current => ({ ...current, values: { ...current.values, [name]: next } }));
   const handoff = !!v.handoff;
-  const blocked = !!block || context.blocked;
   const incomplete = !v.reason?.trim() || !v.actionTaken?.trim() || handoff && (!v.recipient?.trim() || !v.artifact?.trim() || !v.note?.trim() || !v.readyAt);
-  async function submit(event: React.FormEvent) {
-    event.preventDefault();
-    if (blocked || incomplete) return;
+  const [tried, setTried] = React.useState(false);
+  const missing = (name: string, label: string) => tried && !v[name]?.trim() ? `请填写${label}。` : undefined;
+  async function submit() {
+    setTried(true);
+    if (incomplete) return;
     setVerify("");
     const applied = await command.submit(seen => followUpCommand(detail.task.id, seen, { waitingKind: v.waitingKind as FollowUpKind, waitingId: v.waitingId ?? "",
       decision: v.decision as TaskAttentionFollowUp["decision"], actionTaken: v.actionTaken ?? "", evidenceRef: v.evidenceRef ?? "", nextCheck: v.nextCheck ?? "", reason: v.reason ?? "",
       handoff: handoff ? { recipient: v.recipient ?? "", artifactRef: v.artifact ?? "", note: v.note ?? "", readyAt: v.readyAt ?? "" } : null }));
     if (!applied) return;
-    setForm({ base: latest, values: latest });
+    setForm({ base: latest, values: latest }); setTried(false);
     // Only a reread that shows the newer follow-up on this revision proves the write.
     const checked = (await onReread()).data;
     if (!checked?.followUp || checked.followUp.version <= (value.followUp?.version ?? 0) || checked.followUp.taskRevisionId !== revisionId)
       setVerify("写入已应用，但当前跟进版本还没有读回；请重新读取。");
   }
   const input = (label: string, name: string, options: { required?: boolean; type?: string; hint?: string } = {}) =>
-    <Field label={options.required ? label : `${label}（可选）`} hint={options.hint}>{control => <Input {...control} type={options.type ?? "text"} value={v[name] ?? ""} required={options.required}
+    <Field label={options.required ? label : `${label}（可选）`} hint={options.hint} error={options.required ? missing(name, label) : undefined}>{control => <Input {...control} type={options.type ?? "text"} value={v[name] ?? ""} required={options.required}
       maxLength={500} onChange={event => set(name)(event.target.value)} autoComplete="off" />}</Field>;
-  return <form onSubmit={submit} aria-label="保存跟进安排" data-dirty={dirty ? "true" : undefined} className="flex flex-col gap-3 rounded-lg bg-muted p-4">
+  return <CommandFrame context={context} command={command} label="保存跟进安排" submitLabel="保存跟进安排" dirty={dirty} onSubmit={() => void submit()} onReread={reread}
+    onKeep={() => { command.rebase(); setForm(keepEdits(form, latest)); }} onRefill={() => { command.rebase(); setForm({ base: latest, values: latest }); }}>
     <Field label="跟进判断">{control => <Select {...control} value={v.decision} onChange={event => set("decision")(event.target.value)} className="w-full">
       {Object.entries(decisionLabel).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</Select>}</Field>
-    <Field label="已做什么">{control => <Textarea {...control} required value={v.actionTaken} onChange={event => set("actionTaken")(event.target.value)} rows={3} maxLength={4000} />}</Field>
+    <Field label="已做什么" error={missing("actionTaken", "已做什么")}>{control => <Textarea {...control} required value={v.actionTaken} onChange={event => set("actionTaken")(event.target.value)} rows={3} maxLength={4000} />}</Field>
     {input("依据引用", "evidenceRef")}
     <Field label="等待谁">{control => <Select {...control} value={v.waitingKind} onChange={event => set("waitingKind")(event.target.value)} className="w-full">
       {followUpKinds.map(kind => <option key={kind} value={kind}>{waitingKindLabel[kind]}</option>)}</Select>}</Field>
     {input("具体对象", "waitingId", { hint: "智能体、身份或任务的标识。" })}
     {input("下一检查时间", "nextCheck", { type: "datetime-local" })}
-    <Field label="跟进理由">{control => <Textarea {...control} required value={v.reason} onChange={event => set("reason")(event.target.value)} rows={3} maxLength={4000} />}</Field>
+    <Field label="跟进理由" error={missing("reason", "跟进理由")}>{control => <Textarea {...control} required value={v.reason} onChange={event => set("reason")(event.target.value)} rows={3} maxLength={4000} />}</Field>
     <label className="flex items-center gap-2 text-label text-foreground">
       <input type="checkbox" checked={handoff} disabled={!!followUp?.publication} onChange={event => set("handoff")(event.target.checked ? "1" : "")} className="accent-[var(--accent)]" />
       登记具备发布条件，交给维护者</label>
     {handoff && <div className="flex flex-col gap-3 pl-6">
       {input("维护者或接收方", "recipient", { required: true })}
       {input("待发布的固定产物引用", "artifact", { required: true })}
-      <Field label="交接说明">{control => <Textarea {...control} required value={v.note} onChange={event => set("note")(event.target.value)} rows={3} maxLength={4000} />}</Field>
+      <Field label="交接说明" error={missing("note", "交接说明")}>{control => <Textarea {...control} required value={v.note} onChange={event => set("note")(event.target.value)} rows={3} maxLength={4000} />}</Field>
       {input("具备发布条件的时间", "readyAt", { required: true, type: "datetime-local" })}
     </div>}
-    {command.baselineChanged && <BaselineNotice awaiting={command.awaitingReread} onReread={reread}
-      onKeep={() => { command.rebase(); setForm(keepEdits(form, latest)); }} onRefill={() => { command.rebase(); setForm({ base: latest, values: latest }); }} />}
-    {command.outcome && !(command.baselineChanged && command.outcome.stale) && <OutcomeNotice outcome={command.outcome} />}
     {verify && <Notice tone="waiting">{verify}</Notice>}
-    {blocked && <p className="text-caption text-muted-foreground">暂不能提交：{block || "本项目还有结果未确认的操作，请先按原操作 ID 核对。"}</p>}
-    <div><Button type="submit" variant="primary" size="compact" disabled={blocked || command.busy || command.baselineChanged || incomplete}>{command.busy ? "正在提交…" : "保存跟进安排"}</Button></div>
-  </form>;
+  </CommandFrame>;
 }
 
 /** 阶段区间、计划与来源: the facts of the current work behind the task's next step. */

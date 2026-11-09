@@ -10,7 +10,7 @@ import { currentPath, navigate, onNavigate } from "../../shared/navigation";
 import { useProjectQuery } from "../../shared/query";
 import { ContextRailContent } from "../../shared/ui/ContextRail";
 import { href } from "../../shared/ui/shared";
-import { canWrite, control, muted } from "./CommandForm";
+import { canWrite, control, muted } from "./formParts";
 import { readChoices, readDiscussion, readDiscussions, type Choices } from "./discussionClient";
 import { DiscussionDetail } from "./DiscussionDetail";
 import { PrepareForm } from "./DiscussionForms";

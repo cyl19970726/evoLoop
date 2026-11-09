@@ -306,7 +306,8 @@ function ScheduleCard({ definition, context, grants, status, fresh, loading, onR
     {definition.state !== "stopped" && <details className={cn(card, "text-small")}>
       <summary className="cursor-pointer font-medium text-foreground">修订规则、暂停或恢复</summary>
       <p className={muted}>修订以当前版本为基线；已排队的旧修订时刻仍需单独核对，不会悄悄改写。</p>
-      {targetRead.state === "verified" ? legacy("日程修订表单", <ActionForm context={editContext} review title="保存日程修订" fields={fields(grants,definition,fresh)} build={v => ({ type: "schedule.revise", scheduleId: definition.id, expectedVersion: definition.version, revisionId: crypto.randomUUID(), ...fromValues(v, context,grants,definition) })} />)
+      {targetRead.state === "verified" ? legacy("日程修订表单", <ActionForm context={editContext} review title="保存日程修订"
+        baseline={{ grants: JSON.stringify(grants.map(grant => grantKey(grant)).sort()) }} fields={fields(grants,definition,fresh)} build={v => ({ type: "schedule.revise", scheduleId: definition.id, expectedVersion: definition.version, revisionId: crypto.randomUUID(), ...fromValues(v, context,grants,definition) })} />)
         : targetRead.state === "checking" ? <p className="text-text-secondary">请等候固定目标核对完成，再编辑日程。</p>
           : legacy("停用表单", <ActionForm context={editContext} review title="保持原定义并暂停或停止" fields={[
             { name: "state", label: "停用状态", kind: "select", value: definition.state === "active" ? "paused" : "stopped",

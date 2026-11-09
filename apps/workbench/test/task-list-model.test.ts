@@ -5,7 +5,7 @@ import type { LeaderWorkTask } from "@evoloop/contracts/work-index";
 import { isMine, matchesFilters, rowMeta, sortTasks, sortValue } from "../src/features/workflow/taskListModel.ts";
 import { rowStatus } from "../src/shared/taskStatus.ts";
 import { agentFacts, phaseFact } from "../src/features/workflow/taskFactsPresentation.ts";
-import { submissionRefusal } from "../src/features/workflow/useCommand.ts";
+import { submissionRefusal } from "../src/shared/command/index.ts";
 import { taskTabHref } from "../src/shared/taskNavigation.ts";
 
 const task = (id: string, overrides: Partial<Task> = {}): Task => ({ projectId: "p", id, version: 1, currentRevisionId: `${id}-r1`, title: `任务 ${id}`,

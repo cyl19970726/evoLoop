@@ -1,20 +1,27 @@
-// useCommand itself, rendered with a minimal hook runner (the hook only uses useState), and the one rule every task
-// form applies to newer content (followLatest): an untouched form follows it, a form with changes waits for the
-// person, a version conflict rereads before anyone decides, and a kept draft keeps the baseline it was written on.
+// The one command implementation (shared/command): useCommand rendered with a minimal hook runner, and the rules every
+// form applies (rules.ts): an untouched form follows newer content, a form with changes waits for the person, a
+// version conflict rereads before anyone decides, a kept draft keeps the baseline it was written on, and an unknown
+// result blocks the form until it is read back by its original operation ID.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import * as React from "react";
-import type { MutationContext, RecoverableCommand } from "../src/shared/ActionForm.tsx";
-import { useCommand, type SavedDraft } from "../src/features/workflow/useCommand.ts";
-import { followLatest, formDirty, keepEdits } from "../src/features/workflow/TaskForms.tsx";
+import type { Operation } from "@evoloop/contracts";
+import {
+  changedParts, contentMoved, followLatest, formDirty, keepEdits, permissionText, personMessage, restoredFormState, submissionRefusal, useCommand,
+  type MutationContext, type RecoverableCommand, type SavedDraft,
+} from "../src/shared/command/index.ts";
 
-/** Runs a hook outside a renderer: state lives in slots across renders, and every update is applied at the next render. */
+/**
+ * Runs a hook outside a renderer: state and refs live in slots across renders, every update is applied at the next
+ * render, and an effect runs right after the render whose dependencies changed.
+ */
 function hookRunner<P, R>(hook: (props: P) => R) {
   const slots: unknown[] = [];
   const internals = (React as unknown as { __CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE: { H: unknown } })
     .__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE;
   return (props: P): R => {
     let index = 0;
+    const effects: Array<() => void> = [];
     const dispatcher = {
       useState(initial: unknown) {
         const at = index++;
@@ -22,23 +29,40 @@ function hookRunner<P, R>(hook: (props: P) => R) {
         const set = (next: unknown) => { slots[at] = typeof next === "function" ? (next as (value: unknown) => unknown)(slots[at]) : next; };
         return [slots[at], set];
       },
+      useRef(initial: unknown) {
+        const at = index++;
+        if (!(at in slots)) slots[at] = { current: initial };
+        return slots[at];
+      },
+      useEffect(effect: () => void, deps?: unknown[]) {
+        const at = index++;
+        const before = slots[at] as unknown[] | undefined;
+        if (!before || !deps || deps.length !== before.length || deps.some((dep, i) => !Object.is(dep, before[i]))) effects.push(effect);
+        slots[at] = deps;
+      },
     };
     const previous = internals.H;
     internals.H = dispatcher;
-    try { return hook(props); } finally { internals.H = previous; }
+    let result: R;
+    try { result = hook(props); } finally { internals.H = previous; }
+    for (const effect of effects) effect();
+    return result;
   };
 }
 
 const projectId = "10000001-0000-4000-8000-000000000001";
 const taskId = "10000002-0000-4000-8000-000000000002";
-function contextWith(log: { attempts: RecoverableCommand[]; changed: number; known: string[] }): MutationContext {
+type Log = { attempts: RecoverableCommand[]; changed: number; known: string[] };
+const newLog = (): Log => ({ attempts: [], changed: 0, known: [] });
+function contextWith(log: Log, patch: Partial<MutationContext> = {}): MutationContext {
   return { token: "", projectId, principal: { actorId: "reader", projectIds: [projectId], permissions: ["read", "write", "review"] }, blocked: false,
-    onAttempt: command => { log.attempts.push(command); return true; }, onKnown: id => { log.known.push(id); }, onChanged: () => { log.changed++; } };
+    onAttempt: command => { log.attempts.push(command); return true; }, onKnown: id => { log.known.push(id); }, onChanged: () => { log.changed++; }, ...patch };
 }
 const reply = (body: unknown, status = 200) => async () => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+const settle = () => new Promise(resolve => setTimeout(resolve, 0));
 
 test("a form refuses while its recorded baseline differs, and sends the recorded versions once the person has looked", async t => {
-  const log = { attempts: [] as RecoverableCommand[], changed: 0, known: [] as string[] };
+  const log = newLog();
   const context = contextWith(log);
   const sent: Record<string, unknown>[] = [];
   t.mock.method(globalThis, "fetch", async (_url: string, init: RequestInit) => {
@@ -62,12 +86,37 @@ test("a form refuses while its recorded baseline differs, and sends the recorded
   assert.equal(await command.submit(seen => ({ type: "task.cancel", taskId, expectedVersion: seen.taskVersion, reason: "r" })), true);
   assert.equal(sent[0]!.expectedVersion, 4);
   assert.equal(log.changed, 1, "an applied write rereads");
+  assert.deepEqual(log.known, [sent[0]!.operationId], "a known result removes its receipt");
   // After the write is read back, the form is told the baseline moved; it is the form that follows (followLatest).
   assert.equal(render({ taskVersion: 5 }).baselineChanged, true);
 });
 
+test("every submission gets a new operation ID, and a receipt that cannot be saved sends nothing", async t => {
+  const log = newLog();
+  const sent: string[] = [];
+  t.mock.method(globalThis, "fetch", async (_url: string, init: RequestInit) => {
+    const body = JSON.parse(String(init.body)) as Record<string, unknown>; sent.push(String(body.operationId));
+    return reply({ operationId: body.operationId, status: "rejected", code: "TASK_STATE", message: "任务已关闭" })();
+  });
+  let saveReceipt = false;
+  const render = hookRunner(() => useCommand(contextWith(log, { onAttempt: command => { log.attempts.push(command); return saveReceipt; } })));
+  let command = render(undefined);
+  const build = () => ({ type: "task.cancel", taskId, expectedVersion: 1, reason: "r" });
+  assert.equal(await command.submit(build), false);
+  command = render(undefined);
+  assert.equal(sent.length, 0, "the command is not sent without a saved receipt");
+  assert.match(command.outcome!.message, /不能保存恢复回执/);
+  saveReceipt = true;
+  await command.submit(build);
+  command = render(undefined);
+  await command.submit(build);
+  assert.equal(sent.length, 2);
+  assert.notEqual(sent[0], sent[1], "a new submission is a new operation");
+  assert.deepEqual(log.attempts.slice(1).map(item => item.operationId), sent, "each receipt names the operation that was sent");
+});
+
 test("a version conflict rereads, and the form waits for the reread before offering to keep or refill", async t => {
-  const log = { attempts: [] as RecoverableCommand[], changed: 0, known: [] as string[] };
+  const log = newLog();
   const context = contextWith(log);
   t.mock.method(globalThis, "fetch", async (_url: string, init: RequestInit) => {
     const body = JSON.parse(String(init.body)) as Record<string, unknown>;
@@ -88,8 +137,82 @@ test("a version conflict rereads, and the form waits for the reread before offer
   assert.equal(render({ taskVersion: 6 }).baselineChanged, false);
 });
 
+test("after a conflict, a reread that changes only what the form shows also ends the wait", async t => {
+  const log = newLog();
+  t.mock.method(globalThis, "fetch", async (_url: string, init: RequestInit) => {
+    const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+    return reply({ operationId: body.operationId, status: "rejected", code: "VERSION_CONFLICT", message: "版本已变化" })();
+  });
+  // An ActionForm without a baseline: the content it shows is all there is to compare.
+  const render = hookRunner((content: string) => useCommand(contextWith(log), undefined, { content }));
+  let command = render("旧名");
+  await command.submit(() => ({ type: "task.cancel", taskId, expectedVersion: 1, reason: "r" }));
+  command = render("旧名");
+  assert.equal(command.awaitingReread, true);
+  assert.equal(render("别人改的名").awaitingReread, false);
+});
+
+test("an unknown result keeps the receipt and blocks the form; once checked as applied, the draft is cleared", async t => {
+  const log = newLog();
+  const store = new Map<string, SavedDraft>();
+  let operation: Operation | null = null;
+  const sent: Record<string, unknown>[] = [];
+  t.mock.method(globalThis, "fetch", async (url: string, init?: RequestInit) => {
+    if (init?.method === "POST") { sent.push(JSON.parse(String(init.body)) as Record<string, unknown>); return reply({ message: "网关超时" }, 504)(); }
+    assert.match(url, new RegExp(`/operations/${String(sent[0]!.operationId)}$`), "the operation is read by its original ID");
+    return reply(operation)();
+  });
+  let blocked = false;
+  let applied: string | null = null;
+  const key = `cancel:${taskId}`;
+  const render = hookRunner((baseline: { taskVersion: number }) => useCommand(contextWith(log, { blocked }), baseline,
+    { draft: { store, key }, onApplied: result => { applied = result.entityId; } }));
+  let command = render({ taskVersion: 2 });
+  command.saveDraft({ reason: "范围已变" });
+  assert.equal(await command.submit(seen => ({ type: "task.cancel", taskId, expectedVersion: seen.taskVersion, reason: "范围已变" })), false);
+  blocked = true; // App keeps the receipt: every write in the project waits.
+  command = render({ taskVersion: 2 });
+  assert.equal(command.unconfirmed, true);
+  assert.deepEqual(log.known, [], "the receipt stays");
+  assert.match(command.outcome!.message, /请在上方按原操作 ID 核对，确认前不要再次提交/);
+  assert.equal(store.get(key)!.pending?.operationId, sent[0]!.operationId, "the draft remembers the operation still to be checked");
+  assert.equal(submissionRefusal({ busy: false, blocked: false, stale: false, unconfirmed: command.unconfirmed }), "unconfirmed");
+  assert.equal(await command.submit(seen => ({ type: "task.cancel", taskId, expectedVersion: seen.taskVersion, reason: "再发一次" })), false);
+  assert.equal(sent.length, 1, "nothing more is sent while the result is unknown");
+  // The receipt is checked elsewhere (结果未知的操作) and removed: the form reads the operation by its original ID.
+  operation = { projectId, id: String(sent[0]!.operationId), actorId: "reader", commandHash: "a".repeat(64), commandType: "task.cancel", createdAt: "2026-11-10T00:00:00.000Z",
+    result: { status: "applied", operationId: String(sent[0]!.operationId), entityId: taskId } };
+  blocked = false;
+  render({ taskVersion: 2 });
+  await settle();
+  command = render({ taskVersion: 2 });
+  assert.equal(command.unconfirmed, false);
+  assert.equal(applied, taskId);
+  assert.equal(store.get(key), undefined, "an applied result clears the draft");
+  assert.match(command.outcome!.message, /已核对为已应用/);
+  assert.equal(log.changed, 1);
+});
+
+test("an unknown result read back as rejected keeps the draft for a new submission; a remount checks it too", async t => {
+  const log = newLog();
+  const store = new Map<string, SavedDraft>();
+  const operationId = "10000009-0000-4000-8000-000000000009";
+  store.set("cancel", { values: { reason: "保留的理由" }, baseline: { taskVersion: 2 }, pending: { operationId, type: "task.cancel" } });
+  t.mock.method(globalThis, "fetch", async () => reply({ projectId, id: operationId, actorId: "reader", commandHash: "b".repeat(64), commandType: "task.cancel",
+    createdAt: "2026-11-10T00:00:00.000Z", result: { status: "rejected", operationId, code: "TASK_STATE", message: "任务已关闭" } })());
+  const render = hookRunner((baseline: { taskVersion: number }) => useCommand(contextWith(log), baseline, { draft: { store, key: "cancel" } }));
+  let command = render({ taskVersion: 2 });
+  assert.equal(command.unconfirmed, true, "a draft whose operation was never checked comes back blocked");
+  assert.deepEqual(command.restoredDraft, { reason: "保留的理由" });
+  await settle();
+  command = render({ taskVersion: 2 });
+  assert.equal(command.unconfirmed, false);
+  assert.match(command.outcome!.message, /已核对为被拒绝：.*草稿保留/);
+  assert.deepEqual(store.get("cancel"), { values: { reason: "保留的理由" }, baseline: { taskVersion: 2 } });
+});
+
 test("a kept draft keeps the baseline it was written against, and rebase moves that baseline with it", () => {
-  const log = { attempts: [] as RecoverableCommand[], changed: 0, known: [] as string[] };
+  const log = newLog();
   const store = new Map<string, SavedDraft>();
   const render = hookRunner((baseline: { assignmentVersion: number }) =>
     useCommand(contextWith(log), baseline, { draft: { store, key: `assignment:${taskId}` } }));
@@ -102,8 +225,8 @@ test("a kept draft keeps the baseline it was written against, and rebase moves t
   command = again({ assignmentVersion: 2 });
   assert.deepEqual(command.restoredDraft, { reason: "写到一半" });
   assert.equal(command.baselineChanged, true);
-  command.rebase();
-  assert.deepEqual(store.get(`assignment:${taskId}`)!.baseline, { assignmentVersion: 2 });
+  command.rebase({ reason: "保留下来的理由" });
+  assert.deepEqual(store.get(`assignment:${taskId}`), { values: { reason: "保留下来的理由" }, baseline: { assignmentVersion: 2 } });
   assert.equal(again({ assignmentVersion: 2 }).baselineChanged, false);
   // A string baseline (目标与阶段) works the same way.
   const journey = hookRunner((baseline: string) => useCommand(contextWith(log), baseline, { draft: { store, key: "goal:g1" } }));
@@ -111,8 +234,21 @@ test("a kept draft keeps the baseline it was written against, and rebase moves t
   assert.equal(store.get("goal:g1")!.baseline, "3:active");
 });
 
+test("picking an object takes its part of the baseline as read now, and moved parts are named", () => {
+  const log = newLog();
+  const labels = { goal: "目标版本", task: "任务修订" };
+  const render = hookRunner((baseline: Record<string, string>) => useCommand(contextWith(log), baseline, { partLabels: labels }));
+  let command = render({ goal: "", task: "" });
+  command.adopt({ goal: "g1@3" });
+  command = render({ goal: "g1@3", task: "" });
+  assert.equal(command.baselineChanged, false, "the reader's own pick is not a change to look at");
+  command = render({ goal: "g1@4", task: "t1@r2" });
+  assert.deepEqual(command.changed, ["目标版本", "任务修订"]);
+  assert.deepEqual(changedParts({ goal: "a", internal: "1" }, { goal: "a", internal: "2" }, labels), [], "a part without a readable name is not listed");
+});
+
 test("dedicated endpoints and their own schema: validated commands are sent as built through `send`", async () => {
-  const log = { attempts: [] as RecoverableCommand[], changed: 0, known: [] as string[] };
+  const log = newLog();
   const sent: Record<string, unknown>[] = [];
   const render = hookRunner((baseline: { planVersion: number }) => useCommand(contextWith(log), baseline, {
     validate: candidate => { if (!candidate.reason) throw new Error("missing"); },
@@ -133,10 +269,12 @@ test("the form rule: untouched forms follow the latest content, changed forms wa
   assert.equal(followLatest({ base: opened, values: opened }, opened, false, false), null);
   // Waiting for the reread after a conflict: nothing moves yet.
   assert.equal(followLatest({ base: opened, values: opened }, latest, true, true), null);
-  // Typed: never followed silently.
+  // Typed: never followed silently, and asked about even when no baseline part moved.
   const typed = { base: opened, values: { ...opened, reason: "我的理由" } };
   assert.equal(formDirty(typed), true);
   assert.equal(followLatest(typed, latest, true, false), null);
+  assert.equal(contentMoved(typed, latest), true);
+  assert.equal(contentMoved(typed, opened), false);
   assert.deepEqual(keepEdits(typed, latest).values, { title: "别人改的名", content: "别人改的正文", reason: "我的理由" },
     "only the reason the person wrote is kept; the title and text they did not touch take the latest content");
 });
@@ -149,4 +287,13 @@ test("a write that is read back late does not carry an edit made in between over
   assert.equal(followLatest(edited, { title: "别人后来改的名" }, true, false), null);
   // Untouched, the same reread is simply followed.
   assert.deepEqual(followLatest(afterWrite, { title: "别人后来改的名" }, true, false)!.state.values, { title: "别人后来改的名" });
+});
+
+test("small rules: permissions, messages for the person, and drafts kept before the form state had a base", () => {
+  assert.equal(permissionText(["read", "write"], ["review"]), "当前身份没有审阅权限。");
+  assert.equal(permissionText(["read", "write"], ["write"]), null);
+  assert.equal(personMessage(new Error("模型不在授权与目录交集内")), "模型不在授权与目录交集内");
+  assert.equal(personMessage(new Error("Unexpected token")), "请补全必需字段并检查输入格式。", "an English or internal message is not shown");
+  assert.deepEqual(restoredFormState({ reason: "旧草稿" }, { reason: "", title: "名" }), { base: { reason: "", title: "名" }, values: { reason: "旧草稿", title: "名" } });
+  assert.equal(restoredFormState(undefined, {}), undefined);
 });

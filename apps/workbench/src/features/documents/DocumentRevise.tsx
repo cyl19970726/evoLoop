@@ -1,6 +1,7 @@
 // 修订与发布: the low-frequency write operations on a document. The page folds them under the text (Markdown) or
-// into the reader's foot (HTML). The forms are the shared command forms (old markup, kept under data-legacy until
-// they are rebuilt); they carry the version they were opened on, so a newer version asks the reader to compare first.
+// into the reader's foot (HTML). The forms are the shared command form (ActionForm on shared/command, new markup even
+// inside this data-legacy block); they carry the version they were opened on, so a newer version asks the reader to
+// compare first. The upload form is still the old one.
 import { useState } from "react";
 import type { DocumentDetail } from "@evoloop/contracts";
 import { ActionForm, type MutationContext } from "../../shared/ActionForm";
