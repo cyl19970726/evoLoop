@@ -31,6 +31,7 @@
   --danger: #a9432b;
   --danger-soft: #faeae4;
   --brand: #b5582f;
+  --on-brand: #fff;
 
   /* Colour: conversation */
   --user-bubble: #1f1d1a;
@@ -115,6 +116,7 @@
   --danger: #e58d73;
   --danger-soft: #3b231c;
   --brand: #e08a62;
+  --on-brand: #12131a;
 
   --user-bubble: #2f2c28;
   --on-user-bubble: #ede9e3;

@@ -29,12 +29,13 @@
 | `text-secondary` | 辅助文字 | `#57534e` | `#bdb6ab` |
 | `text-muted` | 说明、时间、占位 | `#67615a` | `#958d81` |
 | `border` / `border-strong` | 细线 / 强调分隔 | `#ece7df` / `#dcd5ca` | `#2f2c28` / `#403c36` |
-| `accent` / `accent-soft` | 主操作、链接、进行中 / 选中底色 | `#2f4bb3` / `#e9edfa` | `#93a6f2` / `#26304f` |
+| `accent` / `accent-soft` | 链接、选中、进行中 / 选中底色 | `#2f4bb3` / `#e9edfa` | `#93a6f2` / `#26304f` |
 | `warning` / `warning-soft` | 等你处理、待验收 | `#965a12` / `#faeedb` | `#e2a55c` / `#3a2b17` |
 | `danger` / `danger-soft` | 受阻、失败、返工、危险操作 | `#a9432b` / `#faeae4` | `#e58d73` / `#3b231c` |
-| `brand` | Logo 的对外版本、账号头像、待我处理计数 | `#b5582f` | `#e08a62` |
+| `brand` / `on-brand` | Logo 的对外版本、账号头像、待我处理计数 / 其上的文字 | `#b5582f` / `#ffffff` | `#e08a62` / `#12131a` |
 | `user-bubble` | 人发的消息气泡（深色底、浅色字） | `#1f1d1a` | `#2f2c28` |
 
+- 主按钮用墨色：`text` 作底、`background` 作字，每屏最多一个；墨蓝 `accent` 不用来做按钮底色。
 - **不使用绿色**，包括青绿、薄荷绿和绿色状态（DEC-029）。“完成、通过、在线”用中性色加图标和文字。
 - 颜色之外总有文字或图标；不靠色点表达唯一含义。
 - 以上组合都满足 4.5:1 对比度（小字）。`text-muted` 与 `brand` 的定稿值比设计稿略深，就是为此。
@@ -80,7 +81,7 @@
 
 ## 智能体头像
 
-每个智能体有一个卡通头像：**底色区分职责**，发型和配饰区分同一职责下的不同实例。底色取自暖色和蓝紫系，不用绿色。头像在左栏 30px、标题 32–36px、对话流和表格里 16–24px。头像组件见[组件清单](components.md)。现有 `apps/workbench/src/sessions/session-identity.css` 的身份色里有青绿和橄榄绿，智能体页迁移（PR6）时由头像替换。
+每个智能体有一个卡通头像：**底色区分职责**，发型和配饰区分同一职责下的不同实例。底色取自暖色和蓝紫系，不用绿色。头像在左栏 30px、标题 32–36px、对话流和表格里 16–24px。头像是插画，配色写在 `packages/ui/src/components/avatar.tsx`，不属于用途 token；职责底色按职责 ID 稳定选取，发型与配饰按智能体 ID 选取，统筹和复盘用固定形象。头像组件见[组件清单](components.md)。现有 `apps/workbench/src/sessions/session-identity.css` 的身份色里有青绿和橄榄绿，智能体页迁移（PR6）时由头像替换。
 
 ## 断点
 
