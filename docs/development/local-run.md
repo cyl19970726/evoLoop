@@ -122,7 +122,7 @@ Claude 运行时（候选，未经真实 API 验证）：在 runtime 配置中�
 
 同一协调服务可以同时驱动 Codex 与 Claude：`runtime.providers` 列出要驱动的运行时，例如 `["codex", "claude"]`；`runtime.provider` 是尚未绑定的 Role 首次预留 Session 时绑定的默认运行时；不写 `providers` 时只驱动 `provider`。Role 只绑定一次运行时，之后只在该运行时内调整：Role 的 skill 随时可改，Session 的模型修订目前只在 Codex 实现，Claude Session 沿用创建时的模型；不能换成另一种运行时。Session 一直按创建时的运行时分发。未列入 `providers` 的运行时，其 Session 保持可读但不被驱动，绑定到它的 Role 也不能新建 Session。原生会话输入与浏览器读取桥只属于 Codex，只驱动 Claude 时不能开启。迁移 067 把既有 Session 记为 `codex`；068 按既有 Session 的运行时为已有 Role 写入首个绑定，优先未关闭的 Session，未关闭 Session 横跨两种运行时的 Role 保持未绑定，等一侧关闭后再绑定。两者须在新服务启动前依序应用。
 
-Role 的 skill 选择决定每个 Turn 放进模型上下文的 skill，用 `role runtime set` 或工作台角色卡片修改，下一个 Turn 生效。evoLoop 业务 skill 按 Role 配置始终加载；项目、个人与运行时内置 skill 按开关加载，`add`、`remove` 按名称单独增减；会修改运行时自身配置的内置 skill（例如安装器）默认不加载。Codex 由线程配置关闭未选的 skill，业务 skill 经 Role 上下文交付；Claude 在 `claude.skillBundle` 为默认的 `true` 时，把选中的 skill 链接成本次 Turn 的本地插件并关闭其余。`runtime.roleSkills[].builtinSkills` 已被这项选择取代，旧配置仍可加载但不再生效。选择只决定上下文，不是安全边界。
+Role 的 skill 选择决定每个 Turn 放进模型上下文的 skill，用 `role runtime set` 或工作台角色卡片修改，下一个 Turn 生效。evoLoop 业务 skill 按 Role 配置始终加载；项目、个人与运行时内置 skill 按开关加载，`add`、`remove` 按名称单独增减；会修改运行时自身配置的内置 skill（例如安装器）默认不加载。Codex 由线程配置关闭未选的 skill，业务 skill 经 Role 上下文交付；Claude 在 `claude.skillBundle` 为默认的 `true` 时，把选中的 skill 链接成本次 Turn 的本地插件并关闭其余。工作目录仓库把 `.claude/skills` 链接到 `.agents/skills` 时（本仓库即如此），Claude 原生读到的同一份 skill 会按名称关闭，每个 skill 只经插件加载一次。`runtime.roleSkills[].builtinSkills` 已被这项选择取代，旧配置仍可加载但不再生效。选择只决定上下文，不是安全边界。
 
 `role runtime show` 与工作台角色卡片每次读取时都实时取值。Codex 角色在最近一个 Session 的工作目录（没有时用授权目录）询问运行中的 App Server 的 skill、插件与 MCP 列表；Claude 角色按文件列出 skill，再用最近一次 Turn 启动时的报告补上内置 skill、插件与 MCP，尚无 Turn 时注明内置 skill 待首个 Turn 后显示。运行时不可用时退回按文件推断，并在结果中标明来源。Codex 由插件提供的 skill 可能不出现在它的列表中。
 
