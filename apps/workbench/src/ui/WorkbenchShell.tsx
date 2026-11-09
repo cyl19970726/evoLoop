@@ -4,6 +4,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription, SheetTr
 import { Button } from "../components/ui/button";
 import { href, type Route, type Section } from "./shared";
 import { SessionNavigation, emptySessionNavigationState, type SessionNavigationState } from "../sessions/SessionNavigation";
+import logoUrl from "@evoloop/ui/logo.svg";
 
 export const sectionNames: Record<Section, string> = { overview: "项目总览", work: "任务", "create-task": "创建任务", inbox: "待判断与复核", task: "任务详情", documents: "文档与知识", document: "文档阅读", knowledge: "知识空间", sessions: "Sessions", journey: "目标与阶段", discussions: "团队分工", reviews: "组织复盘", collaboration: "协作回执", runtime: "团队分工", schedules: "日程", roles: "团队分工", repository: "仓库规范", operations: "待核对操作", evaluations: "评价与后果", settings: "项目设置", connectors: "微信 Connector" };
 const workFunctions = [
@@ -88,7 +89,7 @@ export function WorkbenchShell({ route, projectTitle, actor, receiptCount, token
   </>;
   return <div className={`workbench-layout ${collapsed ? "sidebar-collapsed" : ""}`} data-session-reader={!!route.session && (route.section === "sessions" || route.section === "runtime" && route.session.includes(":"))}>
     <a className="skip-link" href="#workspace-main" onClick={e => { e.preventDefault(); document.getElementById("workspace-main")?.focus(); }}>跳到内容</a>
-    <nav className="module-rail" aria-label="主导航"><a className="rail-brand" href="#/" aria-label="evoLoop 项目选择">e<span>L</span></a>
+    <nav className="module-rail" aria-label="主导航"><a className="rail-brand" href="#/" aria-label="evoLoop 项目选择"><img src={logoUrl} alt="" width={36} height={36} /></a>
       <a className={currentModule === "work" ? "selected" : ""} href={href(projectId, "work")} aria-current={currentModule === "work" ? "page" : undefined}><BriefcaseBusiness size={22} aria-hidden="true" /><span>工作</span></a>
       <a className={currentModule === "sessions" ? "selected" : ""} href={href(projectId, "sessions")} aria-current={currentModule === "sessions" ? "page" : undefined}><MessagesSquare size={22} aria-hidden="true" /><span>Sessions</span></a>
       <span className="rail-footer">本机<br />试用</span>

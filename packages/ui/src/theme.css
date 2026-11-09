@@ -2,9 +2,13 @@
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--text);
+  --color-card: var(--surface-raised);
+  --color-card-foreground: var(--text);
+  --color-popover: var(--surface-raised);
+  --color-popover-foreground: var(--text);
   --color-primary: var(--accent);
   --color-primary-foreground: var(--on-accent);
-  --color-secondary: var(--surface-muted);
+  --color-secondary: var(--surface-field);
   --color-secondary-foreground: var(--text);
   --color-muted: var(--surface-muted);
   --color-muted-foreground: var(--text-muted);
@@ -12,11 +16,21 @@
   --color-accent-foreground: var(--accent);
   --color-destructive: var(--danger);
   --color-border: var(--border);
-  --color-input: var(--border);
+  --color-input: var(--surface-field);
   --color-ring: var(--accent);
-  --radius-sm: var(--radius-control);
+  --color-sunken: var(--surface-sunken);
+  --color-selected: var(--surface-selected);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --color-danger-soft: var(--danger-soft);
+  --color-brand: var(--brand);
+  --radius-sm: var(--radius-inline);
   --radius-md: var(--radius-control);
-  --radius-lg: var(--radius-panel);
+  --radius-lg: var(--radius-card);
+  --radius-xl: var(--radius-panel);
+  --shadow-sm: var(--shadow-control);
+  --shadow-md: var(--shadow-popover);
+  --shadow-lg: var(--shadow-panel);
   --font-sans: var(--font-sans);
   --font-mono: var(--font-mono);
 }
