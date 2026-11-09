@@ -193,6 +193,9 @@ test("Task list resolves only displayed Role owners and rejects stale or failed 
   await row.getByText("新职责负责人",{exact:false}).waitFor();
   if (process.env.EVOLOOP_TASK_LIST_OWNER_SCREENSHOT) await page.screenshot({path:process.env.EVOLOOP_TASK_LIST_OWNER_SCREENSHOT,fullPage:false});
   await page.setViewportSize({width:1280,height:900});
+  // The rails and the right column return through React state after the media query changes; measure after that.
+  await page.locator("[data-shell=frame][data-rail=shown]").waitFor();
+  await panel.waitFor();
   assert.equal(await row.locator("[data-owner-cell]").evaluate(el=>el.scrollWidth<=el.clientWidth),true);
   assert.equal(await main.locator("[data-task-table]").evaluate(el=>el.scrollWidth>el.clientWidth),true,
     "six-column task table scrolls independently");
