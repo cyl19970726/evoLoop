@@ -1303,22 +1303,11 @@ tbody tr:hover{
 }
 
 /* Unify secondary workspaces with the same restrained surfaces. */
-.project-overview,
-.team-workspace,
-.session-workspace,
-.schedule-page,
-.knowledge-page,
-.evaluation-page{
+.project-overview,.session-workspace,.schedule-page,.knowledge-page,.evaluation-page {
   max-width: 1600px;
 }
 
-.overview-goal,
-.overview-attention,
-.overview-use,
-.team-directory,
-.discussion-exploration-column,
-.session-workspace-section,
-.schedule-page > .panel{
+.overview-goal,.overview-attention,.overview-use,.discussion-exploration-column,.session-workspace-section,.schedule-page > .panel {
   background: #fff;
   border-color: var(--border);
   border-radius: 7px;
@@ -1329,32 +1318,23 @@ tbody tr:hover{
   border-top-color: #7189cc;
 }
 
-.team-tabs,
-.session-workspace-tabs{
+.session-workspace-tabs {
   gap: 24px;
   border-color: var(--border);
 }
 
-.team-tabs button,
-.team-tabs a,
-.session-workspace-tabs button{
+.session-workspace-tabs button {
   color: #747985;
   font-size: 12px;
 }
 
-.team-tabs button.selected,
-.session-workspace-tabs button.selected{
+.session-workspace-tabs button.selected {
   color: var(--primary);
   border-color: var(--primary);
 }
 
-.team-table th,
-.session-section-head h2{
+.session-section-head h2 {
   color: #5e6470;
-}
-
-.team-table td{
-  border-color: var(--border);
 }
 
 .discussion-exploration-list .discussion-list button.active{
@@ -1390,12 +1370,7 @@ tbody tr:hover{
 }
 
 @media (min-width: 1800px) {
-  .project-overview,
-  .team-workspace,
-  .session-workspace,
-  .schedule-page,
-  .knowledge-page,
-  .evaluation-page{
+  .project-overview,.session-workspace,.schedule-page,.knowledge-page,.evaluation-page {
     max-width: none;
   }
 }

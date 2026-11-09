@@ -1,31 +1,14 @@
 /* Reader layout for team, sessions, knowledge and schedules. Loaded after editorial.css. */
-.team-workspace,.knowledge-space,.schedule-page{color:#182b52;font-size:16px;line-height:1.55;min-width:0;max-width:100%}
-.team-workspace *, .knowledge-space *, .schedule-page *{box-sizing:border-box}
-.team-workspace :is(p,small,dt,dd,li,span,summary),.knowledge-space :is(p,small,dt,dd,li,span,summary),.schedule-page :is(p,small,dt,dd,li,span,summary){line-height:1.55}
-.team-workspace :is(small,.muted,.team-read-at,.team-directory-state,.team-help),.knowledge-space :is(small,.muted,.knowledge-purpose),.schedule-page :is(small,.muted,.schedule-read-scope,.schedule-scope,.schedule-history-time){font-size:14px;color:#536487}
-.team-workspace :is(button,input,select,textarea),.knowledge-space :is(button,input,select,textarea),.schedule-page :is(button,input,select,textarea){font-size:15px}
-.team-workspace :is(a,button,summary):focus-visible,.knowledge-space :is(a,button,summary):focus-visible,.schedule-page :is(a,button,summary):focus-visible{outline:2px solid #0758ed;outline-offset:3px}
-.team-workspace :is(code,pre),.knowledge-space :is(code,pre),.schedule-page :is(code,pre){overflow-wrap:anywhere;max-width:100%}
-.team-workspace h1,.schedule-page h1{font-size:clamp(28px,3vw,38px);color:#102654;line-height:1.2}
-.team-workspace .lede,.schedule-page .panel-head p{color:#536487;font-size:16px;margin:6px 0 0}
-.team-workspace .team-tabs{gap:22px;overflow-x:auto;max-width:100%;white-space:nowrap}
-.team-workspace .team-tabs button{font-size:15px;min-height:44px;color:#536487}
-.team-workspace .team-tabs button.selected{color:#0758ed;border-color:#0758ed}
-.team-workspace .team-directory{border-radius:5px;box-shadow:none}
-.team-workspace .team-directory-head{padding:16px 18px 12px}
-.team-workspace .team-directory-head p{font-size:14px}
-.team-workspace .team-table{min-width:0;table-layout:fixed}
-.team-workspace .team-table th{font-size:14px;color:#30466e;background:#f4f7fc;padding:12px 16px}
-.team-workspace .team-table td{font-size:15px;padding:17px 16px;color:#34476b;vertical-align:middle}
-.team-workspace .team-table td:nth-child(1){width:24%}
-.team-workspace .team-table td:nth-child(2){width:22%}
-.team-workspace .team-table td:nth-child(3){width:38%}
-.team-workspace .team-table td:nth-child(4){width:16%}
-.team-workspace .team-table td strong,.team-workspace .team-table .team-session-name{font-size:16px;color:#152d5b}
-.team-workspace .team-table td small,.team-workspace .team-responsibility{font-size:14px;color:#5a6a89}
-.team-workspace .team-responsibility{margin-top:5px}
-.team-workspace .team-state{font-size:14px;color:#254a9a;background:#eaf0fc;padding:5px 9px}
-.team-workspace .team-table a,.knowledge-space a,.schedule-page a{color:#0758ed}
+.knowledge-space,.schedule-page {color:#182b52;font-size:16px;line-height:1.55;min-width:0;max-width:100%}
+.knowledge-space *,.schedule-page * {box-sizing:border-box}
+.knowledge-space :is(p,small,dt,dd,li,span,summary),.schedule-page :is(p,small,dt,dd,li,span,summary) {line-height:1.55}
+.knowledge-space :is(small,.muted,.knowledge-purpose),.schedule-page :is(small,.muted,.schedule-read-scope,.schedule-scope,.schedule-history-time) {font-size:14px;color:#536487}
+.knowledge-space :is(button,input,select,textarea),.schedule-page :is(button,input,select,textarea) {font-size:15px}
+.knowledge-space :is(a,button,summary):focus-visible,.schedule-page :is(a,button,summary):focus-visible {outline:2px solid #0758ed;outline-offset:3px}
+.knowledge-space :is(code,pre),.schedule-page :is(code,pre) {overflow-wrap:anywhere;max-width:100%}
+.schedule-page h1 {font-size:clamp(28px,3vw,38px);color:#102654;line-height:1.2}
+.schedule-page .panel-head p {color:#536487;font-size:16px;margin:6px 0 0}
+.knowledge-space a,.schedule-page a {color:#0758ed}
 .knowledge-space .knowledge-toolbar{align-items:center}
 .knowledge-space .knowledge-purpose{font-size:16px;color:#4d6287}
 .knowledge-space .knowledge-read-state{padding:15px 18px;border-radius:5px;margin:16px 0}
@@ -57,35 +40,14 @@
 .schedule-page .schedule-current strong{font-size:16px}
 .schedule-page .schedule-definition>dl dd{overflow-wrap:anywhere}
 .schedule-page .schedule-definition>dl>div:has(.schedule-material),.schedule-page .schedule-definition>dl>div:has(.schedule-material)+div{min-width:0}
-@media(max-width:850px){.team-workspace .team-table tr{padding:13px 16px}.team-workspace .team-table td{padding:5px 0}.team-workspace .team-table td::before{font-size:14px}.knowledge-space .knowledge-available-actions{grid-template-columns:1fr}}
-@media(max-width:650px){.team-workspace,.knowledge-space,.schedule-page{width:100%;overflow-wrap:anywhere}.team-workspace .page-title-row,.schedule-page .panel-head{display:block}.team-workspace .team-entry-actions,.schedule-page .panel-head>button{margin-top:12px}.team-workspace .team-table-wrap{overflow:visible}.schedule-page .schedule-table,.schedule-page .schedule-table tbody,.schedule-page .schedule-table tr,.schedule-page .schedule-table td{display:block;width:100%}.schedule-page .schedule-table thead{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)}.schedule-page .schedule-table tr{padding:12px;border-top:1px solid #dfe7f4}.schedule-page .schedule-table td{border:0;padding:4px 0}.schedule-page .schedule-table td::before{content:attr(data-label);display:block;font-size:14px;color:#5a6c8d}.schedule-page .schedule-current{grid-template-columns:1fr}.knowledge-space .knowledge-reader{grid-template-columns:1fr}.knowledge-space .knowledge-available-actions{padding:15px}.knowledge-space .knowledge-list,.knowledge-space .knowledge-workspace{padding:16px}}
-.team-workspace .runtime-session-card,.team-workspace .runtime-run-card,.team-workspace .runtime-session-focus{border:1px solid #dce5f3;border-radius:5px;background:#fff;max-width:100%;min-width:0}
-.team-workspace .runtime-session-focus{background:#f7faff}
-.team-workspace .runtime-session-card>summary,.team-workspace .runtime-run-card>summary{font-size:15px;color:#263e69;cursor:pointer;overflow-wrap:anywhere}
-.team-workspace .runtime-session-role code,.team-workspace .runtime-session-role small{font-size:14px;color:#63718e}
-.team-workspace .runtime-session-focus-key,.team-workspace .runtime-session-card :is(p,small,dd,dt),.team-workspace .runtime-run-card :is(p,small,dd,dt){font-size:14px;overflow-wrap:anywhere}
-.team-workspace .runtime-result{max-width:100%;overflow:auto;white-space:pre-wrap}
-.team-workspace :is(.pill,.team-state),.knowledge-space .pill,.schedule-page .pill{background:#eaf0fc;color:#254a9a;border-color:#cbd8f4}
-.team-workspace :is(.notice.success,.status-success),.knowledge-space :is(.notice.success,.status-success),.schedule-page :is(.notice.success,.status-success){background:#eaf0fc;color:#254a9a;border-color:#cbd8f4}
-@media(max-width:390px){.team-workspace .team-directory-head,.team-workspace .team-table tr,.schedule-page>.panel{padding-inline:14px}}
-.team-workspace .team-search{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:10px 18px;border-top:1px solid #e4eaf4;color:#506487;font-size:14px}
-.team-workspace .team-search input{width:min(420px,100%);min-width:0;min-height:42px;border:1px solid #bfcce3;border-radius:5px;padding:8px 12px;background:#fff;color:#1b315d}
-@media(max-width:650px){.team-workspace .team-search{display:grid}.team-workspace .team-search input{width:100%}}
+@media(max-width:850px){.knowledge-space .knowledge-available-actions{grid-template-columns:1fr}}
+@media(max-width:650px){.knowledge-space,.schedule-page {width:100%;overflow-wrap:anywhere}.schedule-page .panel-head {display:block}.schedule-page .panel-head>button {margin-top:12px}.schedule-page .schedule-table,.schedule-page .schedule-table tbody,.schedule-page .schedule-table tr,.schedule-page .schedule-table td{display:block;width:100%}.schedule-page .schedule-table thead{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)}.schedule-page .schedule-table tr{padding:12px;border-top:1px solid #dfe7f4}.schedule-page .schedule-table td{border:0;padding:4px 0}.schedule-page .schedule-table td::before{content:attr(data-label);display:block;font-size:14px;color:#5a6c8d}.schedule-page .schedule-current{grid-template-columns:1fr}.knowledge-space .knowledge-reader{grid-template-columns:1fr}.knowledge-space .knowledge-available-actions{padding:15px}.knowledge-space .knowledge-list,.knowledge-space .knowledge-workspace{padding:16px}}
+.knowledge-space .pill,.schedule-page .pill {background:#eaf0fc;color:#254a9a;border-color:#cbd8f4}
+.knowledge-space :is(.notice.success,.status-success),.schedule-page :is(.notice.success,.status-success) {background:#eaf0fc;color:#254a9a;border-color:#cbd8f4}
+@media(max-width:390px){.schedule-page>.panel {padding-inline:14px}}
 /* Legacy component rules use 11–13px text; keep reading facts legible. */
-.team-workspace :is(p,li,dd,dt,summary),.knowledge-space :is(p,li,dd,dt,summary),.schedule-page :is(p,li,dd,dt,summary){font-size:15px}
-.team-workspace :is(small,.muted),.knowledge-space :is(small,.muted),.schedule-page :is(small,.muted){font-size:14px!important}
+.knowledge-space :is(p,li,dd,dt,summary),.schedule-page :is(p,li,dd,dt,summary) {font-size:15px}
+.knowledge-space :is(small,.muted),.schedule-page :is(small,.muted) {font-size:14px!important}
 /* Team scan: one compact toolbar and two reading lines per row. */
-.team-workspace .team-directory-toolbar{display:flex;align-items:center;gap:16px;min-height:72px;padding:10px 18px;border-bottom:1px solid #e4eaf4}
-.team-workspace .team-directory-toolbar .team-search{display:block;flex:0 1 390px;padding:0;border:0;min-width:200px}
-.team-workspace .team-search-label{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap}
-.team-workspace .team-directory-toolbar .team-search input{width:100%}
-.team-workspace .team-directory-toolbar .team-read-at{flex:1;margin:0;padding:0;border:0;font-size:14px;line-height:1.35}
-.team-workspace .team-directory-toolbar>button{flex:none;white-space:nowrap}
-.team-workspace .team-table td{padding:10px 16px;line-height:1.4}
-.team-workspace .team-table td small{margin-top:3px;line-height:1.4}
-.team-workspace .team-responsibility,.team-workspace .team-work-detail{margin-top:3px;font-size:14px;color:#60718e}
-.team-workspace .team-responsibility summary,.team-workspace .team-work-detail summary{font-size:14px;color:#315bb1;cursor:pointer}
-.team-workspace .team-work-detail p{margin:4px 0 0;white-space:normal}
-@media(max-width:900px){.team-workspace .team-directory-toolbar{flex-wrap:wrap}.team-workspace .team-directory-toolbar .team-search{flex:1 1 100%;min-width:0}.team-workspace .team-directory-toolbar .team-read-at{flex:1 1 250px}}
-@media(max-width:650px){.team-workspace .team-directory-toolbar{gap:8px;padding:12px 14px}.team-workspace .team-directory-toolbar>button{min-height:40px}.team-workspace .team-table td{width:100%!important;padding:4px 0}.team-workspace .team-table td:first-child{padding-top:0}}
+
 .schedule-page>.panel>.panel-head h2{font-size:20px;color:#102654;margin:0}
