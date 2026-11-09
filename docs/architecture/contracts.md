@@ -239,7 +239,38 @@ Task 协作通道把 question/answer/progress/blocker/handoff/result 固定到�
 
 “最近有效推进”只认真实的业务进展：接手、固定里程碑、提交、Delivery、独立使用结果、解除阻塞或阶段交接。心跳、页面刷新、重复读取、无新依据的延期和工具噪声不重置计时；原生执行活动与观测新鲜度另列，不冒充业务进展。
 
-各阶段有试行的关注门槛（例如已下发待确认 4 小时、执行中无有效推进 8 小时、Delivery 待独立验收 8 小时），项目默认值和单 Task 检查点都经正式命令修订并留历史（`task_attention_threshold`、`task_attention_follow_up` 及其修订表）。同一 Task、阶段、来源和检查窗口只形成一条持久关注项（`task_attention_item`，同一信号同时只开一项），变化记入不可变的 `task_attention_item_event`。关注项只提醒原 Leader（通知类型 `task_attention`），从不自动取消、重试或关闭 Run，也不重置预算；当前 Run 的原生观测暂时未知时关注项保持打开，确证失效后才处置未开始的提醒。字段口径见[Task 时间与关注](../development/task-stage-attention.md)。
+各段从哪条记录取时间：
+
+| 业务含义 | 原记录 | 计算和缺口 |
+| --- | --- | --- |
+| 创建、进入待办 | 首个 Task 修订的 `created_at` | 当前无独立发布动作；此时间显示为“创建/进入待办”，不能称为代码上线。旧记录缺首修订则未知。 |
+| 下发、接手 | Task assignment 历史的 `updated_at` 与 `ack.at` | 每次分派单独成段；待接手从本次分派算至本人确认，尚未确认以观察时间作临时终点。旧 assignment 被替代时结束原段。 |
+| Run 预留、执行和结束 | 同一 Task 的 runtime Run `created_at`、终态事件和原生 Turn 观察 | 预留不等于原生开始。仅精确绑定该 Task/Run 的活动可显示为执行活动；Session 上其他 Task 的工具和消息不可归属。缺原生开始证据时显示预留，不补造执行起点。 |
+| 作者提交、封存 | ordinary submission 的 `created_at_utc`，Delivery 的 `created_at` 与 `run_id` | 提交后等待封存从 submission 开始；Delivery 必须属于同一 Task 和正确修订，候选交付不等于使用。失败的旧提交和 Delivery 留在原轮。 |
+| 独立使用、验收 | Observation 的 `created_at`、结果、消费者及所指 Delivery | 当前 Delivery 后等待验收，失败/未使用进入返工或待决定。重复暂缓评审无新依据时只记审计，不重置有效推进。 |
+| 成果发布 | 明确的发布交接与外部固定证据 | 代码合并、服务部署、研究报告发布分别记其实际来源；没有结构化记录就显示未知，不根据 PR 文字或 Task 更新时间猜。 |
+| 关闭、重开 | closure `created_at` 与后续 Task 修订 | 首次和每轮保留；关闭总历时从首修订算到该次 closure，重开再形成新轮。并行等待区间不能相加冒充总历时。 |
+| 最近有效推进 | 精确 Task 的 assignment 接手、固定里程碑、提交、Delivery、独立使用结果变化、解除阻塞或阶段交接 | 展示事件类型、原对象和时间。 |
+| 最近执行活动与观测新鲜度 | 当前 Task/Run 的原生公开活动与运行观察时间 | 两者与业务进展分开。原生数据不可读时为未知/过期；传输存活不能证明进展。 |
+
+发布交接改指另一产物或责任人时，当前等待取交接的最新修订；新交接追认的就绪时间早于旧记录时，当前责任从新修订的保存时间起算，旧交接留在历史。
+
+各阶段有试行的关注门槛。它们是核查用的初值，不是从少量样本推断的正常工期：
+
+| 阶段或信号 | 初始检查门槛 | 避免误报的条件 |
+| --- | --- | --- |
+| 已下发待确认 | 4 小时 | assignment 被替换或 Task 已结束时结案。 |
+| 已确认待启动 | 2 小时 | 有对应 Run 预留但原生未开始时显示“核启动”，不称挂死。 |
+| 执行中无有效推进 | 8 小时 | 若有当前 Run 的新活动，提示“有活动、成果待核”，不称停止；里程碑须有新依据。 |
+| 当前 Run 观察中断 | 30 分钟 | 仅对在途 Run；短暂传播和服务暂时不可读单列，先核原操作。 |
+| 提交待封存 | 1 小时 | 已知封存阻塞和结果未知分别展示原原因，不重发。 |
+| Delivery 待独立验收 | 8 小时 | 明确的合理等待且下次检查点未到时不催促。 |
+| 已具发布责任且待发布 | 24 小时 | 只在有明确交接记录及发布责任时启用，不以普通 Delivery 自动推断。 |
+| 依赖或等待输入 | 下次检查点 | 记录责任、原因与时刻；超过检查点只提示核查，不自动解除依赖。 |
+
+项目默认值和单 Task 检查点都经正式命令修订并留历史（`task_attention_threshold`、`task_attention_follow_up` 及其修订表）。同一 Task、阶段、来源和检查窗口只形成一条持久关注项（`task_attention_item`，同一信号同时只开一项），冷却后仍未处理可沿同一项升级，变化记入不可变的 `task_attention_item_event`。阶段变化或新的有证进展可以解决旧项，历史不删除。关注项只提醒原 Leader（通知类型 `task_attention`），从不自动取消、重试或关闭 Run，也不重置预算。当前 Run 的原生观测暂时未知时，关注项保持打开，待发通知和已排队未开始的消息暂缓；同一来源恢复为触发状态后，沿原通知、消息和操作继续。Task 修订、阶段、来源改变或门槛明确关闭等确证失效后，才处置未开始的提醒；原生启动事务内会再核一次当前性，已开始的消息保留原处理历史。
+
+第一版口径来自 Task `7700932d-0d59-4497-b621-03f0818382bf`，固定观察样本是 Document `c3685781-54b1-459e-94d0-0ceebc706210@af2de0c1-36ea-431f-9582-1b430950c47a`，于 2026-11-04 读取，不代表当前健康状态。读取命令、跟进命令与截图见[运行接线手册](../development/runtime-operations.md#5-阶段关注)。
 
 ### Leader 通知层
 
@@ -249,7 +280,7 @@ Task 协作通道把 question/answer/progress/blocker/handoff/result 固定到�
 2. **按配置投递。** 协调服务的通知泵（私有配置 `leaderResultNotices`，每个项目至多一个目标）把待投递通知作为一条普通 Session 消息发给 Leader。投递前逐次核对：目标已配置；技术通知者与 Leader 接收者是不同 actor，前者有项目读写、后者另有 review；项目里恰有一个试行或活跃的 system Lead Role 且与配置一致；该 Role 恰有一个就绪 Session 且与配置一致；Session 执行授权与精确消息授权都在。任一不满足时通知保持 `pending` 并记下原因，不改投别处。
 3. **状态只说明到哪一步。** `linked` 只表示已保存一条受管 Session 消息；原生 Turn、Leader 是否读到、后续安排和 Task 关闭各看自己的记录。收件人一旦固定就不自动改投；原消息操作被明确拒绝时转为 `blocked`，不以原 ID 自动重试。有权者核对后用 `leader.notice.recover` 建立带全新 ID 的新通知，并关联原通知与原拒绝（047）。
 
-通知以普通 Session 消息送达，所以 Leader 用 Codex 还是 Claude 运行时都走同一条路径。因为通知由数据库触发器生成，批量导入业务历史同样会生成通知；迁移后的处置见[部署与迁移](deployment.md#5-迁移之后重新接入)。接线与诊断步骤见[Leader 结果回程](../development/leader-result-return.md)。
+通知以普通 Session 消息送达，所以 Leader 用 Codex 还是 Claude 运行时都走同一条路径。因为通知由数据库触发器生成，批量导入业务历史同样会生成通知；迁移后的处置见[部署与迁移](deployment.md#5-迁移之后重新接入)。接线、诊断与恢复步骤见[运行接线手册](../development/runtime-operations.md#1-leader-结果通知)。
 
 ### 验收接力与临时 Session 退役
 
@@ -330,7 +361,7 @@ Task 协作通道把 question/answer/progress/blocker/handoff/result 固定到�
 - **停止只停未来。** 停止系列后不再生成新的时点，已生成和在途的 Task 不受影响，下一时点显示为空。
 - **授权。** 私有配置 `scheduling.taskTimingGrants` 按项目、业务 actor 和 owner Role 授权每日重复；它不能创建旧 Schedule，也不授予 Session 或 Run 的执行资格。一次性时点和停止系列不需要这项授权。
 
-字段逐项的复制、重建与阻断规则见[普通 Task 定时与后继复制](../development/task-timing-copy.md)。
+授权配置与时间读取见[运行接线手册](../development/runtime-operations.md#4-普通-task-的每日复制)；实施前逐字段的复制、重建与阻断分析见[实施前分析](../references/task-timing-copy-design.md)。
 
 ## 7a. Connector 与 ExternalBinding
 
