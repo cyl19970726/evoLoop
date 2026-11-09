@@ -30,10 +30,10 @@ plugin 和 MCP 先由各运行时自己加载，evoLoop 只负责展示；账号
 | Claude 的能力目录、两种上下文模式和每个 Turn 的实际清单：用专用登录真实运行，9 项全部通过（§2.7） | Role 运行时绑定与 skill 选择经 coordinator 驱动真实 Codex 与 Claude Session（实现与测试见 §2.11） |
 | 两种运行时各从哪里加载 skill、plugin 和 MCP，已在本机核对（§2.0） | Codex Session 带了什么还看不见：现在共用个人 home，每个 Session 都带着个人 skill 和 4 个 MCP server，没有记录 |
 | Claude 子进程关闭账号连接器，并记录运行时报告的 MCP server（§2.7） | Codex 专用 home 和能力配置落地（L4） |
-| Codex 按 Thread 控制送到模型的 skill：模拟 API 和真实 DeepSeek 都成立（§2.8） | 角色卡片的真人使用；Claude Session 的模型修订 |
+| Codex 按 Thread 控制送到模型的 skill：模拟 API 和真实 DeepSeek 都成立（§2.8） | 角色卡片的真人使用（Agent 已在本机临时实例上查看并提交过一次，§2.11）；Claude Session 的模型修订 |
 | 空的专用 Codex home 关闭 plugin 后，启动时没有外连（§2.8） | Session 间通信的 P0–P2 修正；运行时版本记录和 Codex 一致性脚本（L8） |
 
-本分支上的代码改动都还**没有提交**（Q7）。
+本分支的改动已经提交，并变基到主干 PR216–222 之后（2026-11-09）；合入主干前仍需使用者确认（Q7）。
 
 **顺序：**
 
@@ -445,7 +445,19 @@ type ObservedCapabilities = { // 每个 Turn 一份
 - Claude Role：尚无 Turn，按文件推断并注明内置 skill 待首个 Turn 上报；单独加入的不存在名称列为缺失；改为 Codex 同样被拒。
 - 数据库中两种 Role 的修订连续、运行时不变、都带 operation ID。
 
-工作台卡片本轮未在浏览器中登录查看。经 coordinator 驱动真实 Codex 与 Claude Session、Claude 真实模型的凭据与费用，以及角色卡片的真人使用，都还没有验证。Codex 由插件提供的个人 skill 可能不出现在 `skills/list` 中，视图因此可能少列。
+**变基到主干后（2026-11-09）：**
+- 迁移改为 067/068，排在主干 062–066 之后。主干的连接器迁移测试原先断言 066 是最后一个迁移，改为断言 066 已应用。
+- 主干的压缩预检阶段（PR218）和只核对模型（PR222）保留；本分支只把“是否支持 owner 压缩”从核对版本号改为看 Session 自己运行时的能力。
+- 全量单元测试 1343 个：只余已另行登记的 material CLI 用例失败。主干新增的连接器常驻测试需要 `TEST_DATABASE_URL`，提供临时库后通过。
+- PostgreSQL 集成测试 52 个文件全部通过。之前用旧编号 060/061 迁移过的临时库会被 node-pg-migrate 的顺序检查拒绝，需要重建；本分支没有在任何正式库上运行过旧编号。
+- 文档检查通过。
+
+**工作台卡片（2026-11-09）：** 在只读授权的临时实例上，用浏览器登录工作台，打开团队分工页。
+- Codex 与 Claude 两个 Role 的卡片都能显示绑定的运行时、修订号、“运行时不可更换”、业务 skill 必带、个人 skill 关闭（个人 skill 只按数量记录）。
+- 在 Claude 卡片的表单里单独加入一个不存在的 skill 并保存：数据库写入第 3 次修订，actor 为浏览器身份，运行时不变；重新展开后卡片显示第 3 次修订和“单独加入但未找到”。
+- 观察到两点，留作后续：保存后角色条目会折叠，要重新展开才能看到结果；Role 还没有 Session 时，工作目录只按当前查看者自己的运行授权查找，没有授权的人看到“尚无会话或授权目录”，也看不到项目 skill。
+
+经 coordinator 驱动真实 Codex 与 Claude Session 还没有验证：适配器只接受完全访问（`danger-full-access` 与 `never`）的新 Session，启动带这类授权的 coordinator 需要使用者明确批准（Q6）。Claude 真实模型的凭据与费用、角色卡片的真人使用也还没有验证。Codex 由插件提供的个人 skill 可能不出现在 `skills/list` 中，视图因此可能少列。
 
 ## 3. 登录与运行环境
 
