@@ -63,9 +63,15 @@ test("login, project list and settings pages use the new layout and keep their b
     await page.getByRole("heading", { name: "你的项目" }).waitFor();
     const list = page.getByRole("list", { name: "项目" });
     await list.getByRole("link", { name: /入口回归项目/ }).waitFor();
-    assert.match(await list.innerText(), /本机 · 建立于/);
+    assert.match(await list.innerText(), /建立于/);
+    assert.doesNotMatch(await list.innerText(), /本机/, "a project is not assumed to be on this machine");
     await page.getByText("有 1 个授权项目尚未创建或暂不可读取").waitFor();
-    await page.getByRole("region", { name: "创建项目" }).getByLabel("项目名称").waitFor({ state: "attached" });
+    const create = page.getByRole("region", { name: "创建项目" });
+    await create.getByLabel("项目名称").waitFor({ state: "attached" });
+    // The card explains itself in words; the full project ID is one click away for the CLI, never an 8-character prefix.
+    assert.doesNotMatch(await create.innerText(), /33000002/);
+    await create.getByText("完整标识（用于 CLI）").click();
+    assert.match(await create.innerText(), new RegExp(missingId));
     assert.equal(await noOverflow(), true);
     if (shots) await page.screenshot({ path: `${shots}/projects-1440.png` });
 
@@ -76,6 +82,10 @@ test("login, project list and settings pages use the new layout and keep their b
     const projectFacts = page.getByRole("region", { name: "当前项目" });
     await projectFacts.getByText("入口回归项目").waitFor();
     assert.match(await projectFacts.innerText(), new RegExp(projectId));
+    // The fact rows keep their own grid; the old global `dl > div` (170px, gap 12px) stays out of [data-ui].
+    const factRow = await projectFacts.locator("dl > div").first().evaluate(el => ({
+      columns: getComputedStyle(el).gridTemplateColumns, gap: getComputedStyle(el).columnGap }));
+    assert.ok(factRow.columns.startsWith("160px ") && factRow.gap === "16px", `settings fact row: ${JSON.stringify(factRow)}`);
     const access = page.getByRole("region", { name: "当前登录身份" });
     assert.match(await access.innerText(), /zhang-reviewer[\s\S]*人[\s\S]*读取项目[\s\S]*提交业务变更[\s\S]*审阅与复核/);
     assert.equal(await page.getByRole("list", { name: "各类记录的入口" }).getByRole("link").count(), 5);

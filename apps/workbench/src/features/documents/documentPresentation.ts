@@ -4,6 +4,7 @@
 import type { Document, DocumentDetail, DocumentKind, DocumentStatus, DocumentTaskReference, TaskState } from "@evoloop/contracts";
 import type { StatusTone } from "@evoloop/ui";
 import { parseRoute, type Section } from "../../shared/routes";
+import type { Original } from "../../shared/ui/OriginalDocumentReader";
 
 export const kindLabel: Record<DocumentKind, string> = {
   issue: "问题", spec: "规范", discussion: "讨论", report: "报告", organization_review: "组织复盘", task: "任务正文",
@@ -60,6 +61,25 @@ export function readingStanding(revisionId: string, detail: Pick<DocumentDetail,
   if (revisionId === adopted) return { label: "已发布版 · 不是当前版", historical: true,
     note: "你在读已发布的那一版。当前版已更新但还没有发布，请核对任务实际采用的版本。" };
   return { label: "固定历史版", historical: true, note: "你在读固定的历史版本，当前版已更新。请核对任务实际采用的版本。" };
+}
+
+/** Where the Markdown text on screen comes from, or why there is none yet. */
+export type MarkdownSource =
+  | { state: "ready"; text: string }
+  | { state: "reading" }
+  | { state: "failed"; error: unknown }
+  | { state: "unavailable"; reason: string };
+
+/**
+ * The text saved with the revision, else the text of its original (an uploaded file or an import saves only the
+ * original). An original already read stays on screen when a later read fails.
+ */
+export function markdownSource(body: string | null, original: { data?: Original; error: unknown }): MarkdownSource {
+  if (body !== null) return { state: "ready", text: body };
+  if (original.data?.status === "available") return { state: "ready", text: original.data.body };
+  if (original.data?.status === "unavailable") return { state: "unavailable", reason: original.data.reason };
+  if (original.error) return { state: "failed", error: original.error };
+  return { state: "reading" };
 }
 
 const sourceLabels: Partial<Record<Section, string>> = {

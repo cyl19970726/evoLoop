@@ -19,14 +19,14 @@ export function managedTargetProblem(projectId: string, definition: ScheduleDefi
   const target = definition.revision.template.managedTarget;
   if (!target) return "此日程没有登记受管目标。";
   if (definition.projectId !== projectId || !loop || !stage || loop.projectId !== projectId || stage.projectId !== projectId)
-    return "目标 Loop 或 Stage 不在当前项目，无法核对原绑定。";
+    return "绑定的工作链或阶段不在当前项目，无法核对原绑定。";
   if (loop.id !== target.loopId || stage.id !== target.stageId || loop.stageId !== stage.id || loop.goalId !== stage.goalId)
-    return "目标 Loop、Stage 或所属目标与日程登记不一致，无法核对原绑定。";
+    return "绑定的工作链、阶段或所属目标与日程登记不一致，无法核对原绑定。";
   if (loop.state === "stopped" || stage.state !== "active")
-    return "目标 Loop 已停止或 Stage 不再活动，不能保存运行中的日程。";
+    return "绑定的工作链已停止或阶段不再活动，不能保存运行中的日程。";
   if (definition.revision.template.owner !== definition.revision.authorization.roleId ||
     !loop.allowedBusinessRoleIds.includes(definition.revision.template.owner))
-    return "任务责任者不在此 Loop 允许的业务职责中，不能恢复运行。";
+    return "任务的责任职责不在这条工作链允许的业务职责中，不能恢复运行。";
   return null;
 }
 

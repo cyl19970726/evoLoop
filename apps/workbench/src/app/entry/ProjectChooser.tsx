@@ -9,6 +9,7 @@ import { api, errorText } from "../../shared/api";
 import { ActionForm, type MutationContext } from "../../shared/ActionForm";
 import { queryKeys } from "../../shared/query";
 import { date, href } from "../../shared/ui/shared";
+import { FullIdentifiers } from "../../shared/ui/FullIdentifiers";
 import { queryClient } from "../queryClient";
 import { hasProjectReceipt, type OperationReceipt } from "../recovery";
 import { projectInitial } from "../shell/spaces";
@@ -71,7 +72,7 @@ export function ProjectChooser({ token, principal, receipts, operationNotice, on
             <span aria-hidden="true" className="flex size-10 shrink-0 items-center justify-center rounded-[11px] bg-accent font-semibold text-accent-foreground">{projectInitial(project.title)}</span>
             <span className="flex min-w-0 flex-1 flex-col">
               <strong className="truncate font-semibold">{project.title}</strong>
-              <span className="text-caption text-muted-foreground">本机 · 建立于 {date(project.createdAt)}{pending ? ` · ${pending} 项操作待核对` : ""}</span>
+              <span className="text-caption text-muted-foreground">建立于 {date(project.createdAt)}{pending ? ` · ${pending} 项操作待核对` : ""}</span>
             </span>
             <ChevronRight size={18} aria-hidden="true" className="shrink-0 text-muted-foreground" />
           </a>
@@ -80,7 +81,8 @@ export function ProjectChooser({ token, principal, receipts, operationNotice, on
       {!projects.length && !reading && !missing.length && <EmptyState title="还没有可读取的项目" reason="当前身份没有任何项目的授权。请让项目管理员把你加入项目，再点“刷新项目”。" />}
       {missing.length > 0 && <Notice tone="waiting">有 {missing.length} 个授权项目尚未创建或暂不可读取。服务异常时请先重试，已存在的项目不会被覆盖。</Notice>}
       {missing.map(id => <section key={id} aria-label="创建项目" className="rounded-xl bg-raised p-4 shadow-sm">
-        <p className="mb-2 text-caption text-muted-foreground">授权范围 <code className="font-mono">{id.slice(0, 8)}</code></p>
+        <p className="text-small text-text-secondary">你有一个项目授权，但这里还没有读到对应的项目：可能尚未建立，也可能暂时读不到。</p>
+        <FullIdentifiers className="mb-2 mt-1" summary="完整标识（用于 CLI）" rows={[{ label: "项目", value: id }]} />
         <div data-legacy="" className="workbench-layout">
           <ActionForm context={{ ...context, projectId: id, blocked: hasProjectReceipt(receipts, id), onChanged: () => { reread(); context.onChanged(); } }} title="创建项目" fields={[{ name: "title", label: "项目名称" }]} build={v => ({ type: "project.create", ...v })} />
         </div>
