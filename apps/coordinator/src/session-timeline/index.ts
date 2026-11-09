@@ -17,14 +17,15 @@ export interface WorkspaceHistoryOwner {
   workspaceHistory(principal:Principal,projectId:string,sessionId:string,options:NativeWorkspaceReadOptions):Promise<NativeWorkspacePage>;
   onWorkspaceUpdate(listener:(event:WorkspaceRuntimeUpdate)=>void):()=>void;
   onWorkspaceDisconnect(listener:(reason:string)=>void):()=>void;
-  nativeAdapter():Pick<RuntimePort,'readWorkspaceHistory'|'onWorkspaceUpdate'>;
+  /** With a binding, the runtime that drives that Session; a routed coordinator's composite has every provider's methods. */
+  nativeAdapter(binding?:Pick<RuntimeBinding,'owner'>):Pick<RuntimePort,'readWorkspaceHistory'|'onWorkspaceUpdate'>;
   status(projectId?:string):{available:boolean};
 }
 
 type Query = {cursor?:string|undefined; messagesCursor?:string|undefined; limit:number;
   turnId?:string|undefined; itemId?:string|undefined; source?:'native'|'messages'|'both'|undefined};
 type Scope = {projectId:string; key:string; sessionId:string|null; threadId:string|null;
-  nativeSessionId:string|null;target:SessionTarget; title:string};
+  nativeSessionId:string|null;target:SessionTarget; title:string; binding:RuntimeBinding|null};
 type LiveEvent = {seq:number; entry?:WorkspaceEntry; turn?:WorkspaceTurn};
 type LiveState = {generation:string; seq:number; events:LiveEvent[]; entries:Map<string,WorkspaceEntry>;
   turns:Map<string,WorkspaceTurn>; activeTurnId:string|null; terminalTurns:Set<string>;
@@ -206,17 +207,28 @@ export class SessionTimelineService {
     const snapshot=await this.deps.observation.snapshot(principal,projectId,key);
     if(snapshot.session.key!==key)throw new DomainError('FORBIDDEN','Session key changed');
     const target=snapshot.session.target;
-    if(target.kind==='external')return {projectId,key,sessionId:null,threadId:null,nativeSessionId:null,target,title:snapshot.session.title};
+    if(target.kind==='external')return {projectId,key,sessionId:null,threadId:null,nativeSessionId:null,target,
+      title:snapshot.session.title,binding:null};
     const session=await this.deps.uow.read(projectId,r=>r.getRuntimeSession(target.sessionId));
     if(!session||session.projectId!==projectId||session.id!==target.sessionId)
       throw new DomainError('FORBIDDEN','Owned Session binding is missing');
+    let binding:RuntimeBinding|null=null;
     if(this.deps.runner&&session.nativeThreadId){
-      const binding=await this.deps.runner.workspaceBinding(principal,projectId,session.id);
+      binding=await this.deps.runner.workspaceBinding(principal,projectId,session.id);
       if(binding.nativeThreadId!==session.nativeThreadId||binding.nativeSessionId!==session.nativeSessionId)
         throw new DomainError('FORBIDDEN','Native binding changed');
     }
     return {projectId,key,sessionId:session.id,threadId:session.nativeThreadId,nativeSessionId:session.nativeSessionId,
-      target,title:snapshot.session.title};
+      target,title:snapshot.session.title,binding};
+  }
+  /** What this Session's own runtime supports. A routed composite has Codex's live updates and any runtime's history
+   * reader, so asking it would report them for a Claude Session too; an unknown or disabled runtime supports neither. */
+  private support(scope:Scope):{history:boolean;live:boolean}{
+    if(!this.deps.runner||!scope.binding)return {history:false,live:false};
+    try{
+      const adapter=this.deps.runner.nativeAdapter(scope.binding);
+      return {history:!!adapter.readWorkspaceHistory,live:!!adapter.onWorkspaceUpdate};
+    }catch{return {history:false,live:false}}
   }
   private fence(principal:Principal,scope:Scope,mode:string,turnId?:string,itemId?:string){
     return hash([scope.projectId,principal.actorId,[...principal.permissions].sort(),scope.key,scope.sessionId,
@@ -231,7 +243,7 @@ export class SessionTimelineService {
   }
   private token(position:string|null,fence:string){return position?encode({v:1,fence,position}):null}
   private liveRead(principal:Principal,scope:Scope,after?:string):WorkspaceLiveRead{
-    if(!scope.sessionId||!scope.threadId||!this.deps.runner?.nativeAdapter().onWorkspaceUpdate)
+    if(!scope.sessionId||!scope.threadId||!this.deps.runner||!this.support(scope).live)
       return {cursor:'',resetRequired:false,entries:[],turns:[],freshness:'unavailable',activeTurnId:null,
         limitations:['Live native updates unavailable']};
     const state=this.state(liveKey(scope.projectId,scope.sessionId,scope.threadId));
@@ -258,7 +270,7 @@ export class SessionTimelineService {
     const scope=await this.scope(principal,projectId,key);
     let view=this.liveRead(principal,scope,after);
     if(after&&!view.resetRequired&&!view.entries.length&&!view.turns.length&&view.freshness!=='stale'&&
-        !!this.deps.runner?.nativeAdapter().onWorkspaceUpdate&&this.deps.runner.status(projectId).available&&
+        this.support(scope).live&&!!this.deps.runner?.status(projectId).available&&
         waitMs>0&&scope.sessionId&&scope.threadId){
       await this.wait(liveKey(projectId,scope.sessionId,scope.threadId),Math.min(waitMs,20000));
       view=this.liveRead(principal,scope,after);
@@ -320,6 +332,7 @@ export class SessionTimelineService {
     const nativeCursor=readNative?this.position(query.cursor,nativeFence):undefined;
     const messagesCursor=readMessages?this.position(query.messagesCursor,messageFence):undefined;
     const historyKey=scope.sessionId&&scope.threadId?liveKey(projectId,scope.sessionId,scope.threadId):null;
+    const support=this.support(scope);
     const now=new Date().toISOString();let native:NativeWorkspacePage|null=null;
     const limitations:string[]=[];
     if(!readNative){/* source-specific continuation leaves native history untouched */}
@@ -369,7 +382,7 @@ export class SessionTimelineService {
       });
       turns=native.turns.map(turn=>({...turn,origin:originOf(associations.found.get(turn.id)??null)}));
     }else if(readMessages&&(readNative||!scope.threadId||!this.deps.runner?.status(projectId).available||
-      !this.deps.runner?.nativeAdapter().readWorkspaceHistory||historyKey&&this.historyAvailability.get(historyKey)===false))
+      !support.history||historyKey&&this.historyAvailability.get(historyKey)===false))
       for(const m of [...page.messages.items].reverse()){
       const p=processing.get(m.id);
       if(p?.response&&p.nativeTurnId)entries.push({...messageEntry(m,p.nativeTurnId),id:`message-response:${m.id}`,
@@ -399,9 +412,9 @@ export class SessionTimelineService {
       limitations:[...limitations,...(native?.limitations??[]),...(readNative?[...inputReading.limitations]:[]),
         ...(scope.target.kind==='external'?['Manual handoff records do not prove native delivery or reading']:[])],
       unsupportedKinds:native?.unsupportedKinds??[],live,
-      capabilities:{history:!readNative?!!scope.threadId&&!!this.deps.runner?.nativeAdapter().readWorkspaceHistory&&
+      capabilities:{history:!readNative?!!scope.threadId&&support.history&&
           this.historyAvailability.get(historyKey!)!==false:!!native,
-        live:!!scope.threadId&&!!this.deps.runner?.nativeAdapter().onWorkspaceUpdate,
+        live:!!scope.threadId&&support.live,
         originalToolDetail:principal.permissions.includes('review'),reason:!readNative||native?null:'Native history unavailable or unsupported'}};
   }
   async item(principal:Principal,projectId:string,key:string,turnId:string,itemId:string,

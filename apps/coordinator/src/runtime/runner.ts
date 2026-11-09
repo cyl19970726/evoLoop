@@ -5,7 +5,7 @@ import type { RuntimeBinding, RuntimeCapabilityListing, RuntimeCompactionObserva
 import type { NativeWorkspacePage, NativeWorkspaceReadOptions, WorkspaceRuntimeUpdate } from "@evoloop/contracts/session-timeline";
 import type { BlobStore } from "@evoloop/contracts/sources";
 import { DomainError } from "@evoloop/contracts/ports";
-import { nativeChildDiagnosticSchema, ownerOf, sessionProvider, RuntimeNotSentError, RuntimeProtocolError, RuntimeServerError, RuntimeUnknownError,
+import { nativeChildDiagnosticSchema, ownerOf, providerOfOwner, sessionProvider, RuntimeNotSentError, RuntimeProtocolError, RuntimeServerError, RuntimeUnknownError,
   type NativeChildDiagnosticRecord as NativeChildDiagnostic, type RuntimeProvider } from "@evoloop/contracts/runtime";
 import type { WorkflowService } from "@evoloop/core";
 import type { SessionProfileRecord } from "@evoloop/contracts/session-assignments";
@@ -168,7 +168,18 @@ export class RuntimeRunner {
     readEvaluationMaterial?: ReadEvaluationMaterial;
     blobsForPrincipal?: (principal: Principal) => BlobStore | Promise<BlobStore>;
   }) { this.runtime = deps.runtimeFactory(); }
-  nativeAdapter():ManagedRuntime { return this.runtime; }
+  /**
+   * The coordinator's runtime; with a binding, the runtime that drives that Session. A routed composite answers for
+   * every provider at once, and a single runtime answers only for its own provider.
+   */
+  nativeAdapter(binding?:Pick<RuntimeBinding,"owner">):ManagedRuntime {
+    if(!binding)return this.runtime;
+    const provider=providerOfOwner(binding.owner);
+    if(!provider)throw new DomainError("RUNTIME_OWNER_UNKNOWN","binding owner is not a runtime this service knows");
+    const native=runtimeForProvider(this.runtime,provider);
+    if(!native)throw new DomainError("RUNTIME_PROVIDER_UNAVAILABLE",`本服务未启用 ${provider} 运行时`);
+    return native;
+  }
   /** The runtimes this coordinator drives; Sessions of any other runtime are left untouched. */
   providers():RuntimeProvider[] { return runtimeProvidersOf(this.runtime); }
   /** Model choices of one driven runtime; null when this coordinator does not drive it. */
