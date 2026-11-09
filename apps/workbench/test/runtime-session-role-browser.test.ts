@@ -69,7 +69,7 @@ test("runtime Session cards preserve Role history, full grants, and activation s
       }
       res.writeHead(status,{"content-type":"application/json"});res.end(JSON.stringify(value));return;
     }
-    try {const file=url.pathname==="/"?"index.html":url.pathname;const body=await readFile(join(dist,file));res.writeHead(200,{"content-type":({".html":"text/html",".js":"text/javascript",".css":"text/css"})[extname(file)]??"application/octet-stream"});res.end(body);}
+    try {const file=/^\/(?:$|p\/|ui$)/.test(url.pathname) ? "index.html":url.pathname;const body=await readFile(join(dist,file));res.writeHead(200,{"content-type":({".html":"text/html",".js":"text/javascript",".css":"text/css"})[extname(file)]??"application/octet-stream"});res.end(body);}
     catch {res.writeHead(404);res.end();}
   });
   await new Promise<void>(resolve=>server.listen(0,"127.0.0.1",resolve));t.after(()=>server.close());
@@ -77,7 +77,7 @@ test("runtime Session cards preserve Role history, full grants, and activation s
   const browser=await chromium.launch({headless:true,...(process.env.EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH
     ? {executablePath:process.env.EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH} : {})});t.after(()=>browser.close());
   const page=await browser.newPage({viewport:{width:390,height:844}});
-  await page.goto(`${base}/#/p/${projectId}/runtime?view=execution`);
+  await page.goto(`${base}/p/${projectId}/runtime?view=execution`);
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button",{name:"进入",exact:true}).click();
   const first=page.locator(`#runtime-session-${sessions[0]!.id}`);

@@ -17,7 +17,7 @@ test("same-project fixed Document link resolves to the old revision, not today's
   const target = deliveryTarget(input, projectId);
   assert.equal(target.kind, "document");
   if (target.kind !== "document") return;
-  assert.equal(target.href, `#/p/${projectId}/documents/${documentId}?revision=${oldRevision}`);
+  assert.equal(target.href, `/p/${projectId}/documents/${documentId}?revision=${oldRevision}`);
   assert.equal(target.revisionId, oldRevision);
   assert.equal(verifiedDocumentTitle(input, target, projectId, document, revision), document.title);
   assert.equal(verifiedDocumentTitle(input, target, projectId, document, { ...revision, id: newRevision }), null);
@@ -27,7 +27,7 @@ test("same-project fixed Document link resolves to the old revision, not today's
 
 test("a mismatched version, foreign project, external URL or unsafe scheme never earns a document title", () => {
   assert.deepEqual(deliveryTarget({ ...input, artifactRevision: newRevision }, projectId), { kind: "fallback", label: "链接与交付固定修订不一致", href: null });
-  assert.equal(deliveryTarget({ ...input, artifactRef: `#/p/${otherProject}/documents/${documentId}?revision=${oldRevision}` }, projectId).kind, "fallback");
+  assert.equal(deliveryTarget({ ...input, artifactRef: `/p/${otherProject}/documents/${documentId}?revision=${oldRevision}` }, projectId).kind, "fallback");
   assert.deepEqual(deliveryTarget({ ...input, artifactRef: `http://127.0.0.1:55421/#/p/${otherProject}/documents/${documentId}?revision=${oldRevision}` }, projectId), { kind: "fallback", label: "其他项目或无法核实的本机链接", href: null });
   const external = deliveryTarget({ ...input, artifactRef: "https://example.test/report?revision=old" }, projectId);
   assert.deepEqual(external, { kind: "fallback", label: "外部产物 · example.test", href: "https://example.test/report?revision=old" });
@@ -44,24 +44,24 @@ test("real fixed knowledge delivery opens the actual version while keeping the s
   const knowledgeId = "2b026d3e-8cfd-4989-9809-1b0f97d0064b";
   const knowledgeRevision = "66fce895-291e-4940-87c9-3ac31c249c5e";
   const declared = "knowledge-reader PR21 merge e5732277 + 390px patch PR23 cea2529; deployed isolated 55421";
-  const ref = `#/p/${projectId}/knowledge?knowledgeId=${knowledgeId}&knowledgeRevision=${knowledgeRevision}`;
-  assert.deepEqual(deliveryTarget({ ...input, artifactRef: `http://127.0.0.1:55421/${ref}`, artifactRevision: declared }, projectId),
+  const ref = `/p/${projectId}/knowledge?knowledgeId=${knowledgeId}&knowledgeRevision=${knowledgeRevision}`;
+  assert.deepEqual(deliveryTarget({ ...input, artifactRef: `http://127.0.0.1:55421/#${ref}`, artifactRevision: declared }, projectId),
     { kind: "knowledge", revisionId: knowledgeRevision, href: ref, label: "知识固定版本入口" });
   for (const bad of [
-    `#/p/${otherProject}/knowledge?knowledgeId=${knowledgeId}&knowledgeRevision=${knowledgeRevision}`,
+    `/p/${otherProject}/knowledge?knowledgeId=${knowledgeId}&knowledgeRevision=${knowledgeRevision}`,
     `${ref}&review=1`, `${ref}&knowledgeId=${knowledgeId}`, `${ref}&knowledgeRevision=${knowledgeRevision}`,
-    `#/p/${projectId}/knowledge?knowledgeId=${knowledgeId}&knowledgeRevision=bad`,
-  ]) assert.equal(deliveryTarget({ ...input, artifactRef: `http://127.0.0.1:55421/${bad}` }, projectId).href, null, bad);
+    `/p/${projectId}/knowledge?knowledgeId=${knowledgeId}&knowledgeRevision=bad`,
+  ]) assert.equal(deliveryTarget({ ...input, artifactRef: `http://127.0.0.1:55421/#${bad}` }, projectId).href, null, bad);
 });
 
 test("evaluation delivery opens only this project's exact definition revision", () => {
   const evaluationId = "2b026d3e-8cfd-4989-9809-1b0f97d0064b";
-  const ref = `#/p/${projectId}/evaluations/${evaluationId}?revision=${oldRevision}`;
-  assert.deepEqual(deliveryTarget({ ...input, artifactRef: `http://127.0.0.1:55421/${ref}`, artifactRevision: "deployed build 123" }, projectId),
+  const ref = `/p/${projectId}/evaluations/${evaluationId}?revision=${oldRevision}`;
+  assert.deepEqual(deliveryTarget({ ...input, artifactRef: `http://127.0.0.1:55421/#${ref}`, artifactRevision: "deployed build 123" }, projectId),
     { kind: "evaluation", revisionId: oldRevision, href: ref, label: "评价固定定义入口" });
   for (const bad of [
-    `#/p/${otherProject}/evaluations/${evaluationId}?revision=${oldRevision}`,
+    `/p/${otherProject}/evaluations/${evaluationId}?revision=${oldRevision}`,
     `${ref}&revision=${oldRevision}`, `${ref}&action=run`,
-    `#/p/${projectId}/evaluations/${evaluationId}?revision=bad`,
-  ]) assert.equal(deliveryTarget({ ...input, artifactRef: `http://127.0.0.1:55421/${bad}` }, projectId).href, null, bad);
+    `/p/${projectId}/evaluations/${evaluationId}?revision=bad`,
+  ]) assert.equal(deliveryTarget({ ...input, artifactRef: `http://127.0.0.1:55421/#${bad}` }, projectId).href, null, bad);
 });

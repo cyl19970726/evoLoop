@@ -69,7 +69,7 @@ export function taskListRoute(projectId: string, value: TaskListView): string {
   if (value.kind !== "all") query.set("kind", value.kind);
   if (value.scope !== "all") query.set("scope", value.scope);
   if (value.selected) query.set("selected", value.selected);
-  return `#/p/${projectId}/work${query.size ? `?${query}` : ""}`;
+  return `/p/${projectId}/work${query.size ? `?${query}` : ""}`;
 }
 export function matchingProjection(task: Pick<Task, "id" | "version" | "currentRevisionId">, item?: LeaderWorkTask) {
   return item?.taskId === task.id && item.version === task.version && item.currentRevisionId === task.currentRevisionId ? item : undefined;

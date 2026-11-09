@@ -230,6 +230,11 @@ test("browser request guard rejects arbitrary origins, methods, WebSocket, redir
   assert.equal(isApprovedPageUrl(scope,`${BROWSER_ORIGIN}/${scope.routes[0]!.hash}`,scope.routes[0]!.hash),true);
   assert.equal(isApprovedPageUrl(scope,`${BROWSER_ORIGIN}/#/p/${projectId}/runtime`,scope.routes[0]!.hash),false);
   assert.equal(isApprovedPageUrl(scope,`https://evil.invalid/${scope.routes[0]!.hash}`,scope.routes[0]!.hash),false);
+  const pathForm=scope.routes[0]!.hash.slice(1);
+  assert.equal(isApprovedPageUrl(scope,`${BROWSER_ORIGIN}${pathForm}`,scope.routes[0]!.hash),true,"the workbench opens the route as a path");
+  assert.equal(isApprovedPageUrl(scope,`${BROWSER_ORIGIN}${pathForm}#extra`,scope.routes[0]!.hash),false);
+  assert.equal(isApprovedPageUrl(scope,`${BROWSER_ORIGIN}/p/${projectId}/runtime`,scope.routes[0]!.hash),false);
+  assert.equal(isApprovedPageUrl(scope,`https://evil.invalid${pathForm}`,scope.routes[0]!.hash),false);
 });
 
 test("exact project GET paths can include encoded Git names and cursor punctuation",async t=>{

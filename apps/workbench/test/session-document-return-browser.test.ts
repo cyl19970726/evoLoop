@@ -18,7 +18,7 @@ const currentRevisionId = "96000005-0000-4000-8000-000000000005";
 const taskId = "96000006-0000-4000-8000-000000000006";
 const deliveryId = "96000007-0000-4000-8000-000000000007";
 const stamp = "2026-11-02T00:00:00.000Z";
-const fixedDocument = `#/p/${projectId}/documents/${documentId}?revision=${fixedRevisionId}`;
+const fixedDocument = `/p/${projectId}/documents/${documentId}?revision=${fixedRevisionId}`;
 const metadata = { generatedAt: stamp, sourceObservedAt: stamp, partial: false, limitations: [] };
 const unavailable = { available: false, reason: "fixture unavailable" };
 
@@ -76,8 +76,8 @@ test("Session results → fixed Document → return restores the exact Session r
       res.writeHead(status, { "content-type": "application/json" }); res.end(JSON.stringify(value)); return;
     }
     try {
-      const body = await readFile(join(dist, url.pathname === "/" ? "index.html" : url.pathname));
-      res.writeHead(200, { "content-type": ({ ".html": "text/html", ".js": "text/javascript", ".css": "text/css" } as Record<string, string>)[extname(url.pathname === "/" ? "index.html" : url.pathname)] ?? "application/octet-stream" });
+      const body = await readFile(join(dist, /^\/(?:$|p\/|ui$)/.test(url.pathname) ? "index.html" : url.pathname));
+      res.writeHead(200, { "content-type": ({ ".html": "text/html", ".js": "text/javascript", ".css": "text/css" } as Record<string, string>)[extname(/^\/(?:$|p\/|ui$)/.test(url.pathname) ? "index.html" : url.pathname)] ?? "application/octet-stream" });
       res.end(body);
     } catch { res.writeHead(404); res.end(); }
   });
@@ -89,7 +89,7 @@ test("Session results → fixed Document → return restores the exact Session r
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
   const errors: string[] = [];
   page.on("pageerror", error => errors.push(error.message));
-  await page.goto(`${base}/#/p/${projectId}/sessions?${new URLSearchParams({ session: sessionKey, tab: "activity", filter: "all" })}`);
+  await page.goto(`${base}/p/${projectId}/sessions?${new URLSearchParams({ session: sessionKey, tab: "activity", filter: "all" })}`);
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button", { name: "进入", exact: true }).click();
   await page.getByRole("heading", { name: session.title }).waitFor({ timeout: 5000 }).catch(async cause => {
@@ -97,7 +97,7 @@ test("Session results → fixed Document → return restores the exact Session r
   });
   await page.getByRole("navigation", { name: "Session 工作区栏目" }).getByRole("button", { name: "成果", exact: true }).click();
   await page.getByRole("heading", { name: "成果与使用" }).waitFor();
-  const returnHash = await page.evaluate(() => location.hash);
+  const returnHash = await page.evaluate(() => (location.pathname + location.search));
   const artifact = page.locator(".session-results").getByRole("link", { name: "打开固定成果" });
   const artifactHref = (await artifact.getAttribute("href"))!;
   assert.equal(new URLSearchParams(artifactHref.split("?")[1]).get("revision"), fixedRevisionId);
@@ -110,7 +110,7 @@ test("Session results → fixed Document → return restores the exact Session r
   assert.equal(await back.getAttribute("href"), returnHash, "Document returns to the exact source Session and results tab");
   await back.click();
   await page.getByRole("heading", { name: "成果与使用" }).waitFor();
-  assert.equal(await page.evaluate(() => location.hash), returnHash);
+  assert.equal(await page.evaluate(() => (location.pathname + location.search)), returnHash);
   assert.equal(await page.getByRole("navigation", { name: "Session 工作区栏目" }).getByRole("button", { name: "成果", exact: true }).getAttribute("aria-current"), "page");
 
   // Legacy bare fixed links still use the source captured on same-tab navigation.
@@ -123,7 +123,7 @@ test("Session results → fixed Document → return restores the exact Session r
   // A direct fixed link carries its own source and does not depend on this tab's navigation history.
   assert.equal(new URLSearchParams(artifactHref.split("?")[1]).get("return"), returnHash);
   const direct = await browser.newPage({ viewport: { width: 390, height: 844 } });
-  await direct.goto(`${base}/${artifactHref}`);
+  await direct.goto(`${base}${artifactHref}`);
   await direct.getByLabel("访问令牌").fill("fixture-token");
   await direct.getByRole("button", { name: "进入", exact: true }).click();
   await direct.getByRole("heading", { name: document.title, exact: true }).waitFor();
@@ -132,7 +132,7 @@ test("Session results → fixed Document → return restores the exact Session r
   assert.equal(await directBack.getAttribute("href"), returnHash);
   await directBack.click();
   await direct.getByRole("heading", { name: "成果与使用" }).waitFor();
-  assert.equal(await direct.evaluate(() => location.hash), returnHash);
+  assert.equal(await direct.evaluate(() => (location.pathname + location.search)), returnHash);
   assert.ok(revisionReads.length >= 2 && revisionReads.every(id => id === fixedRevisionId), "every selected-revision read stays on the declared fixed revision");
   assert.deepEqual(errors, []);
 });

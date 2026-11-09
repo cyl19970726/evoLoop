@@ -65,7 +65,7 @@ test("Journey reads current Stage and Task together after a cached return, retai
     sessionStorage.setItem("evoloop.unconfirmed-operations.v1", JSON.stringify([{ actorId: "owner", projectId, taskId, operationId: "unknown-1", commandType: "task.reviewBasis", createdAt }]));
   }, { projectId, taskId, createdAt });
   const browserPage = await context.newPage();
-  await browserPage.goto(`${base}/#/p/${projectId}/journey`);
+  await browserPage.goto(`${base}/p/${projectId}/journey`);
   await browserPage.getByLabel("访问令牌").fill("fixture-token");
   await browserPage.getByRole("button", { name: "进入", exact: true }).click();
   const board = browserPage.locator(".journey-board");
@@ -75,11 +75,11 @@ test("Journey reads current Stage and Task together after a cached return, retai
   await board.getByText("建立一个目标").click();
   await board.locator("summary", { hasText: "保存目标" }).click();
   await board.locator('textarea[name="outcome"]').last().fill("未提交草稿");
-  await browserPage.evaluate((p) => { location.hash = `#/p/${p}/tasks/00000000-0000-4000-8000-000000000004`; }, projectId);
+  await browserPage.evaluate((p) => { location.hash = `/p/${p}/tasks/00000000-0000-4000-8000-000000000004`; }, projectId);
   await browserPage.waitForURL(/\/tasks\//);
   await browserPage.getByRole("heading", { name: "任务甲" }).waitFor();
   await fetch(`${base}/__fixture/advance`, { method: "POST" });
-  await browserPage.evaluate((p) => { location.hash = `#/p/${p}/journey`; }, projectId);
+  await browserPage.evaluate((p) => { location.hash = `/p/${p}/journey`; }, projectId);
   await board.getByText("active · 1 项任务").waitFor();
   assert.equal(await board.locator('textarea[name="outcome"]').last().inputValue(), "未提交草稿");
 

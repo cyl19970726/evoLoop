@@ -1,4 +1,4 @@
-// Component sample page (#/ui): every @evoloop/ui component in its states, on fake data, in light and dark.
+// Component sample page (/ui): every @evoloop/ui component in its states, on fake data, in light and dark.
 // It is the only visual reference for components; docs do not carry component screenshots.
 import * as React from "react";
 import { Bell, Copy, MoreHorizontal, Pencil, Plus, Settings, Trash2 } from "lucide-react";
@@ -134,7 +134,7 @@ export default function UiSamplesPage() {
               <TabsTrigger value="dark">深色</TabsTrigger>
             </TabsList>
           </Tabs>
-          <Button asChild variant="ghost" size="compact"><a href="#/">返回工作台</a></Button>
+          <Button asChild variant="ghost" size="compact"><a href="/">返回工作台</a></Button>
         </header>
 
         <main className="mx-auto flex max-w-[1080px] flex-col gap-4 px-4 pb-16 pt-2 md:px-8">
@@ -220,7 +220,7 @@ export default function UiSamplesPage() {
                 </CollapsibleRow>
                 <div className="flex flex-wrap items-center gap-2">
                   <HoverCard>
-                    <HoverCardTrigger asChild><a href="#/ui" className="text-primary underline-offset-4 hover:underline">对账规则</a></HoverCardTrigger>
+                    <HoverCardTrigger asChild><a href="/ui" className="text-primary underline-offset-4 hover:underline">对账规则</a></HoverCardTrigger>
                     <HoverCardContent>
                       <p className="m-0 font-semibold">对账规则</p>
                       <p className="m-0 mt-1 text-label text-text-secondary">文档 · 第 2 版 · 统筹 今天 14:51 修改 · 3 个任务在引用</p>

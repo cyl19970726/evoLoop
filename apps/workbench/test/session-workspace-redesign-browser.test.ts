@@ -165,7 +165,7 @@ test("Sessions is the sole directory and renders conversation, source, reply and
       res.writeHead(status, { "content-type": "application/json" }); res.end(JSON.stringify(value)); return;
     }
     try {
-      const file = url.pathname === "/" ? "index.html" : url.pathname;
+      const file = /^\/(?:$|p\/|ui$)/.test(url.pathname) ? "index.html" : url.pathname;
       const body = await readFile(join(dist, file));
       res.writeHead(200, { "content-type": ({ ".html": "text/html", ".js": "text/javascript", ".css": "text/css" } as Record<string, string>)[extname(file)] ?? "application/octet-stream" });
       res.end(body);
@@ -176,7 +176,7 @@ test("Sessions is the sole directory and renders conversation, source, reply and
   const browser = await chromium.launch({ headless: true, ...(process.env.EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH
     ? { executablePath: process.env.EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH } : {}) }); t.after(() => browser.close());
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
-  await page.goto(`${base}/#/p/${projectId}/sessions`);
+  await page.goto(`${base}/p/${projectId}/sessions`);
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button", { name: "进入", exact: true }).click();
   await page.getByRole("heading", { name: "Sessions", exact: true }).waitFor();
@@ -192,7 +192,7 @@ test("Sessions is the sole directory and renders conversation, source, reply and
   const workPageErrors: string[] = [];
   workPage.on("pageerror", error => workPageErrors.push(error.message));
   workPage.on("console", message => { if (message.type() === "error") workPageErrors.push(message.text()); });
-  await workPage.goto(`${base}/#/p/${projectId}/work`);
+  await workPage.goto(`${base}/p/${projectId}/work`);
   await workPage.getByLabel("访问令牌").fill("fixture-token");
   await workPage.getByRole("button", { name: "进入", exact: true }).click();
   await workPage.waitForTimeout(500);
@@ -262,7 +262,7 @@ test("Sessions is the sole directory and renders conversation, source, reply and
     "project audit remains reachable inside Session details");
   assert.equal(await page.locator(".unified-session-timeline:visible").count(), 0, "the audit panel temporarily replaces the main stream");
   const deepLinkPage = await browser.newPage({ viewport: { width: 1280, height: 900 } });
-  await deepLinkPage.goto(`${base}/#/p/${projectId}/sessions?session=${encodeURIComponent(sessionKey)}&tab=activity&filter=important&open=${encodeURIComponent(`message:${messageId}`)}`);
+  await deepLinkPage.goto(`${base}/p/${projectId}/sessions?session=${encodeURIComponent(sessionKey)}&tab=activity&filter=important&open=${encodeURIComponent(`message:${messageId}`)}`);
   await deepLinkPage.getByLabel("访问令牌").fill("fixture-token");
   await deepLinkPage.getByRole("button", { name: "进入", exact: true }).click();
   await deepLinkPage.getByRole("heading", { name: /测试 Session/ }).waitFor();

@@ -60,7 +60,7 @@ test("unknown direct input keeps a readable long history at the original window 
       res.writeHead(status, { "content-type": "application/json" }); res.end(JSON.stringify(value)); return;
     }
     try {
-      const file = url.pathname === "/" ? "index.html" : url.pathname;
+      const file = /^\/(?:$|p\/|ui$)/.test(url.pathname) ? "index.html" : url.pathname;
       const body = await readFile(join(dist, file));
       res.writeHead(200, { "content-type": ({ ".html": "text/html", ".js": "text/javascript", ".css": "text/css" } as Record<string, string>)[extname(file)] ?? "application/octet-stream" }); res.end(body);
     } catch { res.writeHead(404); res.end(); }
@@ -74,7 +74,7 @@ test("unknown direct input keeps a readable long history at the original window 
     const context = await browser.newContext({ viewport, deviceScaleFactor: viewport.dpr,
       reducedMotion: viewport.height === 560 ? "reduce" : "no-preference" });
     const page = await context.newPage();
-    await page.goto(`${base}/#/p/${projectId}/sessions?session=${encodeURIComponent(key)}&tab=activity`);
+    await page.goto(`${base}/p/${projectId}/sessions?session=${encodeURIComponent(key)}&tab=activity`);
     await page.getByLabel("访问令牌").fill("fixture-token");
     await page.getByRole("button", { name: "进入", exact: true }).click();
     await page.getByLabel("即时发送到原 Session").fill("独立验收夹具：核对原输入未知结果，不启动模型。");
@@ -175,7 +175,7 @@ test("a pre-reservation direct grant denial clears unknown pending and leaves on
       res.writeHead(status, { "content-type": "application/json" }); res.end(JSON.stringify(value)); return;
     }
     try {
-      const file = url.pathname === "/" ? "index.html" : url.pathname;
+      const file = /^\/(?:$|p\/|ui$)/.test(url.pathname) ? "index.html" : url.pathname;
       const body = await readFile(join(dist, file));
       res.writeHead(200, { "content-type": ({ ".html": "text/html", ".js": "text/javascript", ".css": "text/css" } as Record<string, string>)[extname(file)] ?? "application/octet-stream" }); res.end(body);
     } catch { res.writeHead(404); res.end(); }
@@ -186,7 +186,7 @@ test("a pre-reservation direct grant denial clears unknown pending and leaves on
     ? { executablePath: process.env.EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH } : {}) }); t.after(() => browser.close());
   const context = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 1 });
   const page = await context.newPage();
-  await page.goto(`${base}/#/p/${projectId}/sessions?session=${encodeURIComponent(key)}&tab=activity`);
+  await page.goto(`${base}/p/${projectId}/sessions?session=${encodeURIComponent(key)}&tab=activity`);
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button", { name: "进入", exact: true }).click();
   await page.getByLabel("即时发送到原 Session").fill("提前授权拒绝的输入");

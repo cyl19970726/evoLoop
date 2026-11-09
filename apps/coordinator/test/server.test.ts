@@ -301,3 +301,21 @@ test("manual stop previews the original Turn and verifies owner evidence before 
     assert.equal(executed,1);assert.equal(previews,3);
   }finally{await app.close();}
 });
+
+test("workbench path addresses load the page; API and unknown files keep their own answers", async () => {
+  const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
+  const { join } = await import("node:path");
+  const { tmpdir } = await import("node:os");
+  const webRoot = await mkdtemp(join(tmpdir(), "evoloop-web-"));
+  await writeFile(join(webRoot, "index.html"), "<!doctype html><title>workbench</title>");
+  const app = await buildServer({ credentials, service: workManagementQueries as unknown as WorkflowService, webRoot });
+  try {
+    for (const url of ["/", "/ui", `/p/${projectId}/work`, `/p/${projectId}/tasks/${projectId}?tab=runtime`]) {
+      const page = await app.inject({ url });
+      assert.equal(page.statusCode, 200, url);
+      assert.match(page.body, /<title>workbench<\/title>/, url);
+    }
+    assert.equal((await app.inject({ url: "/api/session" })).statusCode, 401, "API stays behind the token");
+    assert.equal((await app.inject({ url: "/assets/missing.js" })).statusCode, 404, "a missing asset is not the page");
+  } finally { await app.close(); await rm(webRoot, { recursive: true, force: true }); }
+});

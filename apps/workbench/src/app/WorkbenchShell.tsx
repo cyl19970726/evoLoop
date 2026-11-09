@@ -82,14 +82,14 @@ export function WorkbenchShell({ route, projectTitle, actor, receiptCount, token
   const link = (section: Section, title: string, Icon: typeof Home) => <a key={section} href={href(projectId, section)} className={current === section ? "selected" : ""} aria-current={current === section ? "page" : undefined} onClick={closeAfterNavigation}><Icon size={18} aria-hidden="true" /><span>{title}</span></a>;
   const functions = currentModule === "sessions" ? sessionFunctions : workFunctions;
   const sidebar = <>
-    <a className="project-switch" href="#/" onClick={closeAfterNavigation}><span className="project-monogram">E</span><span><small>当前项目</small><strong title={projectTitle}>{projectTitle || "读取项目…"}</strong></span><ChevronRight size={15} aria-hidden="true" /></a>
+    <a className="project-switch" href="/" onClick={closeAfterNavigation}><span className="project-monogram">E</span><span><small>当前项目</small><strong title={projectTitle}>{projectTitle || "读取项目…"}</strong></span><ChevronRight size={15} aria-hidden="true" /></a>
     {functions.length > 0 && <nav className="project-functions" aria-label="项目功能">{functions.map(item => link(item.section, item.title, item.Icon))}</nav>}
     {currentModule === "sessions" && <SessionNavigation key={navigationScope} token={token} projectId={projectId} selectedId={selectedSession} onNavigate={closeAfterNavigation} state={navigationState} onState={updateNavigationState} />}
     <div className="nav-resources"><a aria-current={route.section === "operations" ? "page" : undefined} href={href(projectId, "operations")} onClick={closeAfterNavigation}><TriangleAlert size={17} />待核对操作{receiptCount > 0 && <span className="nav-count">{receiptCount}</span>}</a><a aria-current={route.section === "repository" ? "page" : undefined} href={href(projectId, "repository")} onClick={closeAfterNavigation}><FolderOpen size={17} />仓库规范</a><a aria-current={route.section === "settings" ? "page" : undefined} href={href(projectId, "settings")} onClick={closeAfterNavigation}><Settings size={17} />项目设置</a></div>
   </>;
   return <div className={`workbench-layout ${collapsed ? "sidebar-collapsed" : ""}`} data-session-reader={!!route.session && (route.section === "sessions" || route.section === "runtime" && route.session.includes(":"))}>
     <a className="skip-link" href="#workspace-main" onClick={e => { e.preventDefault(); document.getElementById("workspace-main")?.focus(); }}>跳到内容</a>
-    <nav className="module-rail" aria-label="主导航"><a className="rail-brand" href="#/" aria-label="evoLoop 项目选择"><img src={logoUrl} alt="" width={36} height={36} /></a>
+    <nav className="module-rail" aria-label="主导航"><a className="rail-brand" href="/" aria-label="evoLoop 项目选择"><img src={logoUrl} alt="" width={36} height={36} /></a>
       <a className={currentModule === "work" ? "selected" : ""} href={href(projectId, "work")} aria-current={currentModule === "work" ? "page" : undefined}><BriefcaseBusiness size={22} aria-hidden="true" /><span>工作</span></a>
       <a className={currentModule === "sessions" ? "selected" : ""} href={href(projectId, "sessions")} aria-current={currentModule === "sessions" ? "page" : undefined}><MessagesSquare size={22} aria-hidden="true" /><span>Sessions</span></a>
       <span className="rail-footer">本机<br />试用</span>

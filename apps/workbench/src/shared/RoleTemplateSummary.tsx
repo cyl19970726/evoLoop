@@ -19,7 +19,7 @@ const category = (value: "system" | "business") => value === "system" ? "系统�
 /** A link is offered only for a Role whose project, ID and template mapping were checked. */
 export function roleTemplateHref(projectId: string, roleId: string): string | null {
   return uuid.test(projectId) && uuid.test(roleId)
-    ? `#/p/${encodeURIComponent(projectId)}/roles?role=${encodeURIComponent(roleId)}` : null;
+    ? `/p/${encodeURIComponent(projectId)}/roles?role=${encodeURIComponent(roleId)}` : null;
 }
 
 /** Validate the single server projection; never infer seven established Roles from the catalog. */

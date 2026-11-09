@@ -149,15 +149,17 @@ export function api(token: string, timeoutMs = 15000) {
   };
 }
 
-/** Only navigate to this project's known hash routes or ordinary web URLs. */
+/** Only navigate to this project's known routes or ordinary web URLs. */
 export function safeArtifactHref(value: string, projectId: string): string | null {
   const reference = value.trim();
-  if (reference.startsWith("#/p/")) {
+  // Stored references use the former `#/p/…` form; path links are accepted too. Both open as a path.
+  if (reference.startsWith("#/p/") || reference.startsWith("/p/")) {
+    const route = reference.startsWith("#") ? reference.slice(1) : reference;
     const uuid = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
-    const knownRoute = new RegExp(`^#/p/([^/?#]+)/(?:overview|work|knowledge|(?:tasks|documents)/${uuid}(?:\\?revision=${uuid})?)$|^#/p/([^/?#]+)/knowledge\\?knowledgeId=${uuid}&knowledgeRevision=${uuid}$|^#/p/([^/?#]+)/evaluations/${uuid}\\?revision=${uuid}$`, "i");
-    const match = knownRoute.exec(reference);
+    const knownRoute = new RegExp(`^/p/([^/?#]+)/(?:overview|work|knowledge|(?:tasks|documents)/${uuid}(?:\\?revision=${uuid})?)$|^/p/([^/?#]+)/knowledge\\?knowledgeId=${uuid}&knowledgeRevision=${uuid}$|^/p/([^/?#]+)/evaluations/${uuid}\\?revision=${uuid}$`, "i");
+    const match = knownRoute.exec(route);
     if (!match) return null;
-    try { return decodeURIComponent(match[1] ?? match[2] ?? match[3]!) === projectId ? reference : null; }
+    try { return decodeURIComponent(match[1] ?? match[2] ?? match[3]!) === projectId ? route : null; }
     catch { return null; }
   }
   try {
@@ -168,6 +170,10 @@ export function safeArtifactHref(value: string, projectId: string): string | nul
     if (["127.0.0.1", "localhost", "[::1]"].includes(url.hostname)
       && ["/", "/app/"].includes(url.pathname) && !url.search && url.hash.startsWith("#/p/")) {
       const local = safeArtifactHref(url.hash, projectId);
+      if (local) return local;
+    }
+    if (["127.0.0.1", "localhost", "[::1]"].includes(url.hostname) && url.pathname.startsWith("/p/") && !url.hash) {
+      const local = safeArtifactHref(`${url.pathname}${url.search}`, projectId);
       if (local) return local;
     }
     return url.href;

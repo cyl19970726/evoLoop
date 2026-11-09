@@ -2,7 +2,7 @@ export type TaskSection = "overview" | "basis" | "delivery" | "runtime" | "histo
 const sections = new Set<TaskSection>(["overview", "basis", "delivery", "runtime", "history", "actions"]);
 
 export function taskSectionHref(projectId: string, taskId: string, target: {revisionId?: string; tab?: TaskSection} = {}): string {
-  const base = `#/p/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(taskId)}`;
+  const base = `/p/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(taskId)}`;
   return target.revisionId ? `${base}?revision=${encodeURIComponent(target.revisionId)}` :
     target.tab ? `${base}?tab=${target.tab}` : base;
 }
@@ -18,7 +18,7 @@ export function taskSessionReturn(hash: string, projectId: string, taskId: strin
   const destination = params.get("return");
   if (!destination) return null;
   const [returnPath, returnQuery, returnExtra] = destination.split("?");
-  const project = `#/p/${encodeURIComponent(projectId)}`;
+  const project = `/p/${encodeURIComponent(projectId)}`;
   if (returnExtra !== undefined || !returnQuery ||
     (returnPath !== `${project}/sessions` && returnPath !== `${project}/runtime`)) return null;
   const session = new URLSearchParams(returnQuery).get("session");
@@ -33,24 +33,24 @@ export function taskListReturn(hash: string, projectId: string, taskId: string):
   const params = new URLSearchParams(query ?? "");
   if (params.getAll("list").length !== 1) return null;
   const list = params.get("list");
-  return list?.split("?")[0] === `#/p/${encodeURIComponent(projectId)}/work` ? list : null;
+  return list?.split("?")[0] === `/p/${encodeURIComponent(projectId)}/work` ? list : null;
 }
 
 /** Internal tab changes use the same URL as incoming links, so browser history and later same-Task links agree. */
 export function navigateTaskTab(projectId: string, taskId: string, section: TaskSection,
-  location: {hash:string}, actorId?: string): boolean {
+  location: {path:string}, actorId?: string): boolean {
   const params = new URLSearchParams({ tab: section });
-  const source = actorId ? taskSessionReturn(location.hash, projectId, taskId, actorId) : null;
+  const source = actorId ? taskSessionReturn(location.path, projectId, taskId, actorId) : null;
   if (source) {
     params.set("return", source.href);
     params.set("actor", actorId!);
     params.set("returnTitle", source.title);
   }
-  const list = taskListReturn(location.hash, projectId, taskId);
+  const list = taskListReturn(location.path, projectId, taskId);
   if (list) params.set("list", list);
   const href = `${taskSectionHref(projectId, taskId)}?${params}`;
-  if (location.hash === href) return false;
-  location.hash = href;
+  if (location.path === href) return false;
+  location.path = href;
   return true;
 }
 

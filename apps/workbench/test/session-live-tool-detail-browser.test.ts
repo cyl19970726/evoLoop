@@ -168,7 +168,7 @@ test("observable-owner tool detail remains readable after real history/live merg
     return { items: [], nextCursor: null, metadata, total: 0, counts: {}, changeSequence: 1, observedAt: stamp, partial: false };
   });
   const staticFile = async (pathname: string, reply: import("fastify").FastifyReply) => {
-    const file = pathname === "/" ? "index.html" : pathname;
+    const file = /^\/(?:$|p\/|ui$)/.test(pathname) ? "index.html" : pathname;
     try { return reply.type(({ ".html": "text/html", ".js": "text/javascript", ".css": "text/css" } as Record<string, string>)[extname(file)] ?? "application/octet-stream").send(await readFile(join(dist, file))); }
     catch { return reply.code(404).send(); }
   };
@@ -203,7 +203,7 @@ test("observable-owner tool detail remains readable after real history/live merg
   const openSession = async (token: string) => {
     const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
     page.on("pageerror", error => pageErrors.push(error.message));
-    await page.goto(`${base}/#/p/${projectId}/sessions?${new URLSearchParams({ session: sessionKey, tab: "activity" })}`);
+    await page.goto(`${base}/p/${projectId}/sessions?${new URLSearchParams({ session: sessionKey, tab: "activity" })}`);
     await page.getByLabel("访问令牌").fill(token);
     await page.getByRole("button", { name: "进入", exact: true }).click();
     await page.getByRole("heading", { name: observedSession.title }).waitFor();

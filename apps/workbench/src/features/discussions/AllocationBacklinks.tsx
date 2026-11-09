@@ -74,7 +74,7 @@ export function AllocationBacklinks({ context, filter, refresh }: { context: Mut
       ? "来源读取不完整，暂不能判断是否有关联。"
       : cursor ? "当前页没有来源；后续页面尚未读完。" : "尚无可确认的正式分工讨论来源。"}</p>}
     <ul className="allocation-backlink-groups">{groups.map(group => <li key={group.discussion.id}>
-      <a href={`#/p/${encodeURIComponent(context.projectId)}/discussions?discussion=${encodeURIComponent(group.discussion.id)}`}>{group.discussion.title || "分工讨论"}</a>
+      <a href={`/p/${encodeURIComponent(context.projectId)}/discussions?discussion=${encodeURIComponent(group.discussion.id)}`}>{group.discussion.title || "分工讨论"}</a>
       <small>{loadedBacklinkSummary(group, Boolean(cursor || partial))}</small>
       <details><summary>展开 {group.traces.length} 条具体关系</summary>
         <p className="muted">讨论 ID <code>{group.discussion.id}</code> · 当前读到版本 v{group.discussion.version}；下列关系各有固定来源。</p>
