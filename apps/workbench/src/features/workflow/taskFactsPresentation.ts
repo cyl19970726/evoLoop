@@ -6,7 +6,7 @@ import type { TaskSessionAssignment } from "@evoloop/contracts/session-assignmen
 import type { LeaderWorkRunFact, LeaderWorkTask } from "@evoloop/contracts/work-index";
 import type { StatusTone } from "@evoloop/ui";
 import { phaseStatus } from "../../shared/taskStatus";
-import { workNextStep } from "../../shared/workPresentation";
+import { workItemNextStep } from "../../shared/workPresentation";
 
 /** loading: no answer yet; checking: an answer is being confirmed again; failed: no usable answer; ready: answered. */
 export type ReadState = "loading" | "checking" | "failed" | "ready";
@@ -65,7 +65,7 @@ export function phaseFact(read: Read<LeaderWorkTask | null>): { tone: StatusTone
     case "checking": return { tone: "unknown", label: "正在核对", next: "当前工作安排正在重新核对…" };
     case "failed": return { tone: "unknown", label: "无法判断", next: "当前工作安排暂不可读取，无法判断下一步；可重新读取。" };
     case "ready": return read.value
-      ? { ...phaseStatus[read.value.phase], next: workNextStep(read.value.phase) }
+      ? { ...phaseStatus[read.value.phase], next: workItemNextStep(read.value) }
       : { tone: "idle", label: "未登记", next: "当前工作安排未登记；与统筹沟通后回读。" };
   }
 }

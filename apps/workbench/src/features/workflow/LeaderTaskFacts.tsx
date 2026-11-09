@@ -5,7 +5,7 @@ import type { LeaderNotice } from "@evoloop/contracts/leader-notices";
 import { api, errorText, isUnconfirmed, request } from "../../shared/api";
 import { leaderPhaseLabel } from "../../shared/leaderWorkLoad";
 import { TaskTiming, timingDate, timingWaitingFor, waitingKindLabel } from "../../shared/taskTiming";
-import { responsibleText, workNextStep } from "../../shared/workPresentation";
+import { responsibleText, workItemNextStep } from "../../shared/workPresentation";
 import { ResponsibleName } from "../../shared/ui/RecordName";
 
 const date = (value: string) => new Date(value).toLocaleString("zh-CN");
@@ -261,7 +261,7 @@ export function LeaderTaskFacts({ leader, detail, projectId, token, responsibleN
     : <ResponsibleName projectId={projectId} item={leader} />;
   return <section className="panel task-focus task-leader-facts">
     <div className="panel-head"><h2>当前工作与安排</h2><span className="pill subtle">{leaderPhaseLabel[leader.phase]}</span></div>
-    <p className="task-attention"><strong>下一步：</strong>{workNextStep(leader.phase)}</p>
+    <p className="task-attention"><strong>下一步：</strong>{workItemNextStep(leader)}</p>
     <TaskTiming timing={leader.timing} detailed />
     <dl>
       <div><dt>责任</dt><dd>{responsibility}

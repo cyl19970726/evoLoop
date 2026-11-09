@@ -12,7 +12,7 @@ import { queryKeys, useProjectQuery } from "../../shared/query";
 import { rowStatus, taskStateStatus } from "../../shared/taskStatus";
 import { timingDate, timingDuration, timingStageLabel } from "../../shared/taskTiming";
 import { cognitionSummary, businessNextStep } from "../../shared/workStatusPresentation";
-import { waitingText, workNextStep } from "../../shared/workPresentation";
+import { waitingText, workItemNextStep } from "../../shared/workPresentation";
 import { href } from "../../shared/ui/shared";
 import { sessionHref } from "../sessions";
 import { PhaseCounts, ReconciliationDetails, useAgentNames } from "./TaskReconciliation";
@@ -150,7 +150,7 @@ function TableRow({ task, list, projectId, selected, onSelect, linkFor, columns,
   const shown = cognition ? { tone: "unknown" as const, label: cognition.phase } : rowStatus(task.state, projection?.phase);
   const key = projection ? assignmentSessionKey(projection) : null;
   const progress = latestProgressPresentation(projection);
-  const next = cognition?.next ?? (projection ? workNextStep(projection.phase) : null) ?? (status && businessNextStep(task, status)) ?? taskNextStep(task.state, task.legacyDecision);
+  const next = cognition?.next ?? (projection ? workItemNextStep(projection) : null) ?? (status && businessNextStep(task, status)) ?? taskNextStep(task.state, task.legacyDecision);
   const attentionCount = attention.filter(item => item.taskId === task.id && item.taskRevisionId === task.currentRevisionId).length;
   const title = cognition?.title ?? task.title;
   const scheduled = timing?.data;

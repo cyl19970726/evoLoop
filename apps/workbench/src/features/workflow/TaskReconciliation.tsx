@@ -13,7 +13,7 @@ import { timingDate, timingDuration, timingStageLabel } from "../../shared/taskT
 import { href } from "../../shared/ui/shared";
 import type { WorkTaskStatus } from "../../shared/workStatusPresentation";
 import { sessionHref } from "../sessions";
-import { nameOnly, workNextStep, type NameRead } from "../../shared/workPresentation";
+import { nameOnly, workItemNextStep, type NameRead } from "../../shared/workPresentation";
 
 /** Phase counts across the project's open work, in the order that needs a decision first. */
 export function PhaseCounts({ counts, label = "对账阶段计数" }: { counts: Record<string, number> | undefined; label?: string }) {
@@ -74,7 +74,7 @@ export function LeaderOverview({ projectId, page, statuses, roleNames }: {
         <div className="flex flex-wrap items-center gap-2"><StatusTag tone={status.tone} label={status.label} />
           <a className="font-medium text-foreground hover:underline" href={href(projectId, "task", item.taskId)}>{presentation.title}</a>
           <span className="ml-auto text-caption text-muted-foreground">第 {item.version} 版</span></div>
-        <p className="text-label text-text-secondary">{workNextStep(item.phase)}</p>
+        <p className="text-label text-text-secondary">{workItemNextStep(item)}</p>
         <p className="text-caption text-muted-foreground">{presentation.responsibility}
           {key && <> · <a className="text-primary hover:underline" href={sessionHref(projectId, key)}>打开智能体</a></>}
           {item.plan?.priority ? ` · P${item.plan.priority}` : ""}{item.dependencies.length ? ` · ${item.dependencies.length} 项依赖` : ""}

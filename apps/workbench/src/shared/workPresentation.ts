@@ -79,6 +79,37 @@ export function responsibleSessionKey(responsible: Pick<Responsible, "kind" | "i
   return `${assignment?.targetId === responsible.id ? assignment.targetKind : "owned"}:${responsible.id}`;
 }
 
+// Why blocked work is blocked. The service sets the phase from these facts (basis changes waiting for review,
+// prerequisite tasks not yet accepted, a queue hold) but its next-action text names none of them; the page says
+// which ones hold this task, and falls back to the phase's general step only when none is given.
+const queueHolds: Record<string, string> = {
+  not_adopted: "队列尚未采纳", task_changed: "任务修订已变化", task_unavailable: "任务不可承接", dependency: "依赖尚未放行",
+  session_unready: "智能体尚未就绪", binding_changed: "职责绑定已变化", grant_revoked: "授权已撤销", occupied: "智能体已占用",
+  run_in_flight: "运行仍在途", unknown: "运行结果未知", budget_exhausted: "尝试次数达到上限", manual_review: "等待人工复核",
+};
+type BlockFacts = Pick<LeaderWorkTask, "pendingImpactCount" | "dependencies" | "queueHold">;
+
+/** Each fact that holds this work, in words: "1 项依据变化待复核", "等待前置任务「前置结果」通过验收", "队列暂停：…". */
+export function blockedReasons(item: BlockFacts): string[] {
+  const reasons: string[] = [];
+  if (item.pendingImpactCount > 0) reasons.push(`${item.pendingImpactCount} 项依据变化待复核`);
+  const waiting = item.dependencies.filter(dependency => !dependency.acceptanceSatisfied);
+  if (waiting.length) {
+    const named = waiting.slice(0, 3).map(dependency => `「${dependency.title.trim() || "名称待读取"}」`).join("");
+    reasons.push(`等待前置任务${named}${waiting.length > 3 ? `等 ${waiting.length} 项` : ""}通过验收`);
+  }
+  // A dependency hold says the same as the prerequisites above; acceptance is not a block.
+  if (item.queueHold && item.queueHold !== "awaiting_acceptance" && !(item.queueHold === "dependency" && waiting.length))
+    reasons.push(`队列暂停：${queueHolds[item.queueHold] ?? "原因待核对"}`);
+  return reasons;
+}
+
+/** The next step for one piece of work: blocked work names what holds it; every other phase uses `workNextStep`. */
+export function workItemNextStep(item: BlockFacts & Pick<LeaderWorkTask, "phase">): string {
+  const reasons = item.phase === "blocked" ? blockedReasons(item) : [];
+  return reasons.length ? `${reasons.join("；")}；处理后再安排承接` : workNextStep(item.phase);
+}
+
 /** Who the current stage waits on, by kind (the task timing's waitingFor has the same kinds as `responsible`). */
 export function waitingText(waitingFor: Pick<Responsible, "kind" | "id">, assignment: Assignment): string {
   return waitingFor.kind === "unknown" ? "等待对象未登记" : `等待${responsibleKind(waitingFor, assignment)}`;
