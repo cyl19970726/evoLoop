@@ -51,7 +51,7 @@ export function currentChainSummary(loop: OrchestrationLoop, dispatches: Orchest
   } else if (loop.state === "paused") lines.push("本循环已暂停新派发；既有工作仍需核对。");
   else lines.push("本循环仍可接续；下方按已读回的派发与来源展示。");
   if (used.some(item => item.observerKind === "human")) lines.push("已读回正式交付的人类使用记录；这不等于任务验收。");
-  else if (used.some(item => item.observerKind === "agent")) lines.push("已读回正式交付的 Agent 使用记录；真人使用与任务验收仍须另行核对。");
+  else if (used.some(item => item.observerKind === "agent")) lines.push("已读回正式交付的智能体使用记录；真人使用与任务验收仍须另行核对。");
   const focus = taskId ? tasks.find(item => item.task.id === taskId) : undefined;
   if (focus?.task.state === "in_progress" && focus.closures?.length === 0 &&
     dispatches.some(item => item.taskId === taskId && item.purpose === "business"))
@@ -83,7 +83,7 @@ export function readableOutcome(dispatch: OrchestrationDispatch, submission: Orc
     const humanUse = observations.some(item => item.observerKind === "human" && item.result === "used");
     return `已封存正式交付；技术检查${delivery.technicalResult === "passed" ? "通过" : "未通过"}。${humanUse ? "有人记录实际使用；仍需查看使用证据和任务验收。" : "尚无可确认的人类使用记录；不等于任务验收。"}`;
   }
-  if (submission) return "Worker 已提交交付意图，等待正式封存。";
+  if (submission) return "执行方已提交交付意图，等待正式封存。";
   if (dispatch.runtimeRunId) return "已绑定运行；尚无可确认的正式交付或决定。";
   return "等待派发或运行结果。";
 }
@@ -93,8 +93,8 @@ export function nextAction(inbox: OrchestrationInbox | undefined, dispatch: Orch
   if (inbox?.state === "pending") return "接收职责核对入站来源并作出处理决定。";
   if (inbox?.state === "acknowledged" && !dispatch) return "接收职责已确认入站，等待登记处理或派发。";
   if (!dispatch) return "当前读取范围尚无后续派发；核对完整记录。";
-  if (dispatch.state === "unknown") return "按原派发与 Run 记录核对未知结果。";
-  if (submission?.state === "unknown") return "按原交付操作 ID 核对封存结果。";
+  if (dispatch.state === "unknown") return "按原派发与运行记录核对未知结果。";
+  if (submission?.state === "unknown") return "按原交付操作核对封存结果。";
   if (submission?.state === "submitted" || submission?.state === "sealing") return "等待交付封存，之后核对使用与任务验收。";
   if (submission?.state === "sealed") return "查看正式交付，再核对使用反馈与任务验收。";
   if (dispatch.outcome === "waiting") return "核对等待条件；有新事实后再判断。";

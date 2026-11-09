@@ -21,7 +21,7 @@ import { ResponsibleName } from "../../shared/ui/RecordName";
 import type { ReadState } from "./taskFactsPresentation";
 import { PeekBoundary, TaskDocumentPeek } from "./TaskDocumentPeek";
 import { TaskFacts } from "./TaskFacts";
-import { taskGoal, taskType } from "./taskWorkspacePresentation";
+import { progressEventName, taskGoal, taskType } from "./taskWorkspacePresentation";
 import { appLocation, currentPath, onNavigate } from "../../shared/navigation";
 import { taskStateLabel } from "./taskCommands";
 import { useTaskDocuments } from "./taskDocuments";
@@ -267,16 +267,14 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
             {panel ? <button type="button" className="text-label text-primary hover:underline" onClick={openContent}>在右栏核对固定原件</button>
               : <a className="text-label text-primary hover:underline" href={href(projectId, "document", detail.task.contentDocumentId, detail.task.contentRevisionId)}>阅读固定原件</a>}
           </div>
-          <div data-legacy="" className="task-body"><MarkdownBody source={detail.task.content} identity={`task-${detail.revision.id}`} projectId={projectId} /></div>
+          <MarkdownBody source={detail.task.content} identity={`task-${detail.revision.id}`} projectId={projectId} />
           <p className="text-caption text-muted-foreground">正文来自任务固定的主文档修订；修改走“任务操作”里的“更新任务内容”，不从文档页绕过任务。</p>
         </section>
         <section aria-labelledby={`${panelId("overview")}-progress`} className="flex flex-col gap-3" data-task-progress="">
           <h2 id={`${panelId("overview")}-progress`} className={heading}>进展与讨论</h2>
-          {projection?.timing && <p className="text-label text-text-secondary">现在：{timingStageLabel[projection.timing.current.stage] ?? "阶段未知"} · 本阶段已历时 {timingDuration(projection.timing.current.elapsedMs)}{projection.latestProgress ? ` · 最近进展 ${projection.latestProgress.eventName}（${date(projection.latestProgress.changedAt)}）` : " · 最近进展未记录"}</p>}
+          {projection?.timing && <p className="text-label text-text-secondary">现在：{timingStageLabel[projection.timing.current.stage] ?? "阶段未知"} · 本阶段已历时 {timingDuration(projection.timing.current.elapsedMs)}{projection.latestProgress ? ` · 最近进展 ${progressEventName(projection.latestProgress)}（${date(projection.latestProgress.changedAt)}）` : " · 最近进展未记录"}</p>}
           <TimingLine projectId={projectId} taskId={id} onOpen={openSchedule} />
-          <div data-legacy="" className="flex flex-col gap-4">
-            <TaskCollaborationThread token={token} projectId={projectId} taskId={id} refresh={refresh + readVersion} />
-          </div>
+          <TaskCollaborationThread projectId={projectId} taskId={id} refresh={refresh + readVersion} />
           {leaderTask && <TaskAttentionSection key={`${projectId}:${id}:${detail.task.currentRevisionId}`} context={taskContext} detail={detail} leader={leaderTask} />}
           {leaderTask && <details id="task-timing" className="group border-t border-border pt-3" {...(sectionOpen === "timing" ? { open: true } : {})}>
             <summary className="w-fit cursor-pointer text-label font-medium text-primary hover:underline">阶段区间、计划与来源</summary>
@@ -284,7 +282,7 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
           </details>}
           <details data-task-owner="" className="border-t border-border pt-3"><summary className="w-fit cursor-pointer text-label font-medium text-primary hover:underline">负责职责与同职责的其他智能体</summary>
             <p className="mt-2 text-caption text-muted-foreground">职责是持续的分工，具体承接看右栏的绑定与接受记录；同职责的其他智能体不代表承接了本任务。</p>
-            <div data-legacy=""><TaskOwner token={token} projectId={projectId} owner={detail.task.owner} readKey={`${refresh}:${readVersion}:${detail.revision.id}`} onResolved={setResponsibleName} /></div></details>
+            <div className="mt-2"><TaskOwner projectId={projectId} owner={detail.task.owner} readKey={`${refresh}:${readVersion}:${detail.revision.id}`} onResolved={setResponsibleName} /></div></details>
         </section>
       </TabsContent>
       <TabsContent value="basis" forceMount hidden={tab !== "basis"} id={panelId("basis")} aria-labelledby={tabId("basis")} className="pt-5 outline-none">

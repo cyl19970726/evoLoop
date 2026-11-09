@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import type { Occurrence } from "@evoloop/contracts/scheduling";
 import {
   coordinatorErrorText, grantEmptyText, nextTimeText, occurrenceReasonKnown, occurrenceReasonText, ruleIsComputable,
-  scheduleRuleLabel, latestOccurrence, occurrenceLabel, scheduleReadView, utcInstant,
+  scheduleRuleLabel, latestOccurrence, occurrenceLabel, scheduleReadView, scheduleRuleText, scheduleTime, utcInstant, zoneName,
 } from "../src/features/scheduling/presentation.ts";
 test("occurrence reasons from the scheduler read as Chinese; an unknown reason is summarised, not shown",()=>{
  // The codes written by packages/core/src/scheduling/index.ts.
@@ -58,4 +58,21 @@ test("schedule read keeps prior same-scope facts visible but revokes write fresh
  assert.equal(failed.fresh,false);
  assert.equal(failed.error,"服务不可用");
  assert.equal(scheduleReadView(old,"project-b:actor-a","read-2",{readKey:"read-1",loading:false,error:""}).value,null);
+});
+test("a schedule's times are said in its own zone, with the reader's clock when it reads otherwise",()=>{
+ const at="2026-11-10T01:00:00.000Z";
+ // Same wall clock (Taipei and Shanghai are both UTC+8): no second time.
+ assert.equal(scheduleTime(at,"Asia/Taipei","Asia/Shanghai"),"2026/11/10 09:00:00 · 台北");
+ // A reader in another zone also gets their own time.
+ assert.equal(scheduleTime(at,"Asia/Taipei","Europe/London"),"2026/11/10 09:00:00 · 台北（你的时间 2026/11/10 01:00:00）");
+ assert.equal(scheduleTime(at,"America/New_York","America/New_York"),"2026/11/9 20:00:00 · 纽约");
+ // An unknown zone is not guessed: the reader's time, said as such.
+ assert.equal(scheduleTime(at,"Not/AZone","Asia/Shanghai"),"2026/11/10 09:00:00（你的时间；日程时区无法识别）");
+ assert.equal(zoneName("Pacific/Auckland"),"Pacific/Auckland");
+ assert.equal(scheduleRuleText({kind:"once",atUtc:at},"Asia/Taipei",0,"Asia/Taipei"),"仅一次 · 2026/11/10 09:00:00 · 台北");
+ assert.equal(scheduleRuleText({kind:"interval",anchorUtc:at,everyMinutes:30},"UTC",0,"UTC"),"从 2026/11/10 01:00:00 · UTC 起，每 30 分钟");
+ const now=Date.parse("2026-11-10T00:00:00Z");
+ assert.equal(scheduleRuleText({kind:"daily",localTime:"09:00"},"Asia/Taipei",now,"Asia/Shanghai"),"每天 09:00（台北当地时间）");
+ assert.equal(scheduleRuleText({kind:"daily",localTime:"09:00"},"Asia/Taipei",now,"Europe/London"),"每天 09:00（台北当地时间，你的时间 01:00）");
+ assert.equal(scheduleRuleText({kind:"daily",localTime:"09:00"},"Not/AZone",now,"Asia/Shanghai"),"每天 09:00（Not/AZone 当地时间）");
 });

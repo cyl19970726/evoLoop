@@ -5,6 +5,7 @@ import { useState } from "react";
 import { Button } from "@evoloop/ui";
 import { ActionForm, option, type MutationContext } from "../../shared/ActionForm";
 import { useContextRailShown } from "../../shared/ui/ContextRail";
+import { Legacy } from "../../shared/ui/PageParts";
 import { DocumentFilters } from "./DocumentFilters";
 import { DocumentRail } from "./DocumentRail";
 import { ReadingSpaceSwitch } from "../../shared/ui/ReadingSpaceSwitch";
@@ -43,14 +44,17 @@ export function DocumentIndex({ context }: { context: MutationContext }) {
         {canWrite && <Button variant="primary" size="compact" aria-expanded={create} onClick={() => setCreate(value => !value)}>保存文档</Button>}
       </div>
     </header>
-    {create && <section data-legacy="" aria-label="保存过程文档" className="panel">
-      <h2>保存过程文档</h2>
-      <ActionForm context={context} title="创建 Markdown 文档" fields={[{ name: "title", label: "文档名称" },
-        { name: "kind", label: "类型（可选）", kind: "select", optional: true, options: Object.entries(kindLabel)
-          .filter(([key]) => key !== "task" && key !== "organization_review").map(([key, label]) => option(key, label)) },
-        { name: "body", label: "完整 Markdown 正文", kind: "textarea" }]}
-        build={values => ({ type: "document.create", documentId: crypto.randomUUID(), title: values.title, body: values.body, kind: values.kind || null })} />
-      <UploadDocument context={context} />
+    {create && <section aria-label="保存过程文档" className="flex flex-col gap-3 rounded-xl bg-raised p-4 shadow-sm compact:p-5">
+      <h2 className="text-heading font-semibold text-foreground">保存过程文档</h2>
+      {/* The two forms keep their old markup until the shared command form and the upload form are rebuilt. */}
+      <Legacy>
+        <ActionForm context={context} title="创建 Markdown 文档" fields={[{ name: "title", label: "文档名称" },
+          { name: "kind", label: "类型（可选）", kind: "select", optional: true, options: Object.entries(kindLabel)
+            .filter(([key]) => key !== "task" && key !== "organization_review").map(([key, label]) => option(key, label)) },
+          { name: "body", label: "完整 Markdown 正文", kind: "textarea" }]}
+          build={values => ({ type: "document.create", documentId: crypto.randomUUID(), title: values.title, body: values.body, kind: values.kind || null })} />
+        <UploadDocument context={context} />
+      </Legacy>
     </section>}
     <DocumentTable projectId={projectId} list={list} state={state} update={update} toolbar={toolbar} />
   </div>;

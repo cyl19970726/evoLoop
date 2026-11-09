@@ -131,19 +131,6 @@ button.primary:hover:not(:disabled){
   color: var(--ink-muted);
 }
 
-.page-title-row{
-  align-items: flex-end;
-  margin-bottom: 22px;
-}
-
-.page-title-row .lede{
-  margin-bottom: 0;
-}
-
-.page-title-row > button{
-  margin-bottom: 1px;
-}
-
 .panel{
   color: #343943;
   background: #fff;
@@ -192,38 +179,6 @@ button.primary:hover:not(:disabled){
   color: #6d5b86;
 }
 
-.work-context-tabs{
-  display: flex;
-  align-items: center;
-  gap: 24px;
-  min-height: 42px;
-  margin: 0 0 18px;
-  padding: 0;
-  overflow-x: auto;
-  color: #747985;
-  border-bottom: 1px solid var(--border);
-  white-space: nowrap;
-}
-
-.work-context-tabs a{
-  min-height: 42px;
-  padding: 10px 1px 11px;
-  color: #6e7380;
-  border-bottom: 2px solid transparent;
-  font-size: 13px;
-}
-
-.work-context-tabs a:hover{
-  color: var(--primary);
-  text-decoration: none;
-}
-
-.work-context-tabs a[aria-current="page"]{
-  color: var(--primary);
-  border-color: var(--primary);
-  font-weight: 650;
-}
-
 table{
   color: #505661;
 }
@@ -250,9 +205,7 @@ tbody tr:hover{
 /* Session directory: keep discovery while giving the current work more room. */
 
 /* Work list and selected reader. */
-.work-index{
-  max-width: none;
-}
+
 
 .work-more-filters{
   position: relative;
@@ -554,19 +507,6 @@ tbody tr:hover{
     font-size: 13px;
   }
 
-  .page-title-row{
-    align-items: flex-start;
-  }
-
-  .page-title-row .lede{
-    margin-top: 5px;
-  }
-
-  .work-index > .page-title-row{
-    align-items: flex-start;
-    flex-direction: row;
-  }
-
   
 
   
@@ -591,30 +531,6 @@ tbody tr:hover{
 
   .my-work-row .current-work-facts{
     grid-template-columns: 1fr;
-  }
-
-  
-
-  
-
-  
-
-  
-
-  
-
-  
-
-  
-
-  
-
-  
-
-  
-
-  .work-index .task-list-main .task-list-table .task-list-open{
-    display: none;
   }
 
   

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { LeaderWorkTask } from "@evoloop/contracts/work-index";
 import {
-  latestProgressPresentation, taskGoal, taskTimestamp, taskType,
+  latestProgressPresentation, progressEventName, taskGoal, taskTimestamp, taskType,
 } from "../src/features/workflow/taskWorkspacePresentation.ts";
 
 const stamp = "2026-10-31T08:15:00.000Z";
@@ -47,4 +47,13 @@ test("latest progress distinguishes a real business event from unavailable or mi
   const unavailable = latestProgressPresentation(undefined);
   assert.equal(unavailable.name, "最近进展尚未读回");
   assert.equal(unavailable.unavailable, true);
+});
+
+test("latest progress never shows an internal event name", () => {
+  assert.equal(progressEventName({ eventName: "交付已登记", entityKind: "delivery" }), "交付已登记");
+  assert.equal(progressEventName({ eventName: "task.revised", entityKind: "task" }), "任务内容或状态更新");
+  assert.equal(progressEventName({ eventName: "", entityKind: "run" }), "运行状态已更新");
+  const raw = latestProgressPresentation({ ...item, latestProgress: { ...item.latestProgress!, eventName: "delivery.recorded" } });
+  assert.equal(raw.name, "交付已登记");
+  assert.equal(raw.source, "交付已登记");
 });

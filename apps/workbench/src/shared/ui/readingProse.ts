@@ -1,5 +1,5 @@
 // Typography for a full Markdown text read in the center (documents, knowledge), on design tokens only.
-// MarkdownBody keeps its own rendering and link rules; this only sets type, spacing and code/table blocks.
+// MarkdownBody applies it to every Markdown text; pages that typeset other long text (a candidate, a revision) use it too.
 import { cn } from "@evoloop/ui";
 
 export const readingProse = cn("text-body leading-(--leading-reading) text-foreground",
@@ -10,6 +10,7 @@ export const readingProse = cn("text-body leading-(--leading-reading) text-foreg
   "[&_h4]:mb-2 [&_h4]:mt-6 [&_h4]:font-semibold",
   "[&_p]:my-3 [&_ul]:my-3 [&_ol]:my-3 [&_ul]:list-disc [&_ol]:list-decimal [&_ul]:pl-6 [&_ol]:pl-6 [&_li]:my-1",
   "[&_a]:text-primary [&_a]:underline [&_a]:underline-offset-2",
+  "[&_blockquote]:my-3 [&_blockquote]:border-l-2 [&_blockquote]:border-border [&_blockquote]:pl-4 [&_blockquote_p]:text-text-secondary [&_hr]:my-6 [&_hr]:border-border",
   "[&_code]:rounded-sm [&_code]:bg-muted [&_code]:px-1 [&_code]:font-mono [&_code]:text-small",
   "[&_pre]:my-4 [&_pre]:overflow-x-auto [&_pre]:rounded-lg [&_pre]:bg-muted [&_pre]:p-4 [&_pre]:text-small [&_pre]:leading-(--leading-body) [&_pre_code]:bg-transparent [&_pre_code]:p-0",
   "[&_table]:my-4 [&_table]:block [&_table]:max-w-full [&_table]:overflow-x-auto [&_th]:border [&_th]:border-border [&_th]:bg-muted [&_th]:px-3 [&_th]:py-1.5 [&_th]:text-left [&_th]:font-semibold [&_td]:border [&_td]:border-border [&_td]:px-3 [&_td]:py-1.5");

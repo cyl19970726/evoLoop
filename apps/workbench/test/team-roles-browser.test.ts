@@ -51,6 +51,11 @@ test("职责 and 分工与运行 read and write in the shell layout, and old run
       const root = `/api/projects/${projectId}`;
       let value: unknown = { items: [], nextCursor: null };
       if (url.pathname === "/api/session") value = { principal: { actorId: "lead", projectIds: [projectId], permissions }, capabilities: {} };
+      // Agents are named by their registered profile (never by the identifier's first characters).
+      else if (url.pathname.startsWith(`${root}/session-work/`) && url.pathname.endsWith("/profile")) {
+        const sessionKey = decodeURIComponent(url.pathname.split("/").at(-2)!);
+        value = { projectId, sessionKey, displayName: sessionKey === `owned:${id(11)}` ? "前端甲" : "前端乙", version: 1, updatedAt: stamp };
+      }
       else if (url.pathname === "/api/commands" && req.method === "POST") {
         let body = ""; for await (const chunk of req) body += String(chunk);
         const command = JSON.parse(body) as Record<string, unknown>; commands.push(command);
@@ -189,7 +194,8 @@ test("职责 and 分工与运行 read and write in the shell layout, and old run
   assert.equal(await busy.getByRole("button", { name: "请求关闭受管智能体" }).count(), 0);
   await page.getByRole("complementary", { name: "右栏" }).getByRole("region", { name: "受管智能体" }).getByText("1 项已登记").waitFor();
   if (shots) await page.screenshot({ path: `${shots}/team-agent-1440.png`, fullPage: true });
-  await agents.getByRole("link", { name: /智能体 35000000/ }).nth(1).click();
+  assert.equal(await agents.getByText(/35000000/).count(), 0, "the rail names agents, not identifiers");
+  await agents.getByRole("link", { name: /前端乙/ }).click();
   const idle = page.locator(`#runtime-session-${id(12)}`);
   await idle.waitFor();
   await idle.getByText(/没有发现在途运行或占用/).waitFor();

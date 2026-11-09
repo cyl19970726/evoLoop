@@ -9,7 +9,7 @@ import type { MutationContext } from "../../shared/ActionForm";
 import { FullIdentifiers } from "../../shared/ui/FullIdentifiers";
 import { MarkdownBody } from "../../shared/ui/MarkdownBody";
 import { OriginalDocumentReader } from "../../shared/ui/OriginalDocumentReader";
-import { readingProse, readingSource } from "../../shared/ui/readingProse";
+import { readingSource } from "../../shared/ui/readingProse";
 import { date } from "../../shared/ui/shared";
 import { DocumentLink } from "./DocumentLink";
 import { impactSeen, reviewBasisCommand } from "./taskCommands";
@@ -146,7 +146,7 @@ function RevisionColumn({ label, read }: { label: string; read: { data: Document
         <p className="text-caption text-muted-foreground">{date(revision.createdAt)} · {revision.author}</p>
         {revision.body !== null && revision.format === "markdown"
           ? <>
-            <div className={`${readingProse} text-label`}><MarkdownBody source={revision.body} identity={`impact-${revision.id}`} projectId={revision.projectId} /></div>
+            <MarkdownBody className="text-label" source={revision.body} identity={`impact-${revision.id}`} projectId={revision.projectId} />
             <details><summary className="w-fit cursor-pointer text-caption text-primary hover:underline">查看 Markdown 原文</summary>
               <pre className={`mt-2 max-h-96 ${readingSource}`}>{revision.body}</pre></details>
           </>
