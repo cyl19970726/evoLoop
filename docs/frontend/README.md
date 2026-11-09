@@ -24,6 +24,7 @@
 | [日程](pages/schedules.md) | 为什么检查，下次何时，上次产生的工作怎样？ |
 | [Sessions](pages/sessions.md) | 哪个 Session 在做什么、做到哪一步，需不需要我；Leader 怎样安排这些 Session？ |
 | [团队](pages/team.md) | 哪些持续职责由谁承担，用什么运行时与 skill？ |
+| [微信连接](pages/connectors.md) | 哪个微信会话转给哪个智能体，最近的投递处理得怎样？ |
 
 ## 目标与现状
 

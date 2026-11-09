@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 import { BookOpen, FileText, FolderOpen } from "lucide-react";
 import { href } from "../../shared/ui/shared";
 import { SectionBoundary } from "../../shared/ui/SectionBoundary";
-import { LinkList, SettingsPage, SettingsSection } from "./pageParts";
+import { LinkList, SettingsPage, SettingsSection } from "../../shared/ui/SettingsParts";
 
 const repo = "https://github.com/cyl19970726/evoLoop/blob/main";
 
