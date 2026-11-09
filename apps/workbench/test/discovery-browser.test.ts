@@ -88,15 +88,15 @@ test("built workbench discovers later Chinese task and document pages, linked ta
       else if (url.pathname === `${p}/runtime/sessions`) value = [];
       res.writeHead(200,{"content-type":"application/json"}); res.end(JSON.stringify(value)); return;
     }
-    const file = join(dist,url.pathname === "/" ? "index.html" : url.pathname);
+    const file = join(dist,/^\/(?:$|p\/|ui$)/.test(url.pathname) ? "index.html" : url.pathname);
     try { const body = await readFile(file); res.writeHead(200,{"content-type":({".html":"text/html",".js":"text/javascript",".css":"text/css"})[extname(file)] ?? "application/octet-stream"}); res.end(body); }
     catch { res.writeHead(404); res.end(); }
   });
   await new Promise<void>(resolve => server.listen(0,"127.0.0.1",resolve)); t.after(() => server.close());
   const base = `http://127.0.0.1:${(server.address() as {port:number}).port}`;
-  const browser = await chromium.launch({headless:true}); t.after(() => browser.close());
+  const browser = await chromium.launch({ headless: true, ...(process.env.EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH ? { executablePath: process.env.EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH } : {}) }); t.after(() => browser.close());
   const page = await browser.newPage({viewport:{width:390,height:844}});
-  await page.goto(`${base}/#/p/${projectId}/work`);
+  await page.goto(`${base}/p/${projectId}/work`);
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button",{name:"进入",exact:true}).click();
   await page.getByRole("button",{name:"加载更多"}).waitFor();
@@ -148,23 +148,23 @@ test("built workbench discovers later Chinese task and document pages, linked ta
   assert.ok(diagram.lastLinkBottom <= diagram.frameHeight - 8, JSON.stringify(diagram));
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
   if (process.env.EVOLOOP_DIAGRAM_SCREENSHOT) {
-    await page.addStyleTag({content:".workspace-header{position:static!important}"});
+    await page.addStyleTag({content:"[data-shell=mobile-header]{position:static!important}"});
     await page.locator(".markdown-diagram").screenshot({path:process.env.EVOLOOP_DIAGRAM_SCREENSHOT});
   }
   await page.getByRole("link",{name:"中文跨页实施任务"}).click();
   await fetch(`${base}/__fixture/close`,{method:"POST"});
-  await page.evaluate(projectId => { location.hash = `#/p/${projectId}/documents`; }, projectId);
+  await page.evaluate(projectId => { location.hash = `/p/${projectId}/documents`; }, projectId);
   await page.getByRole("button",{name:"载入更多"}).waitFor();
-  await page.evaluate(({projectId,taskId}) => { location.hash = `#/p/${projectId}/tasks/${taskId}`; }, {projectId,taskId});
+  await page.evaluate(({projectId,taskId}) => { location.hash = `/p/${projectId}/tasks/${taskId}`; }, {projectId,taskId});
   await page.getByRole("heading",{name:"最新交付与使用"}).waitFor();
   await page.getByText("任务 · v2").waitFor({timeout:5000}).catch(async () => {
     assert.fail(`Task return did not refresh: ${await page.locator('.task-page').innerText()}`);
   });
   await page.getByText("技术检查：通过").waitFor();
   await fetch(`${base}/__fixture/fail-task-read`,{method:"POST"});
-  await page.evaluate(projectId => { location.hash = `#/p/${projectId}/documents`; }, projectId);
+  await page.evaluate(projectId => { location.hash = `/p/${projectId}/documents`; }, projectId);
   await page.getByRole("button",{name:"载入更多"}).waitFor();
-  await page.evaluate(({projectId,taskId}) => { location.hash = `#/p/${projectId}/tasks/${taskId}`; }, {projectId,taskId});
+  await page.evaluate(({projectId,taskId}) => { location.hash = `/p/${projectId}/tasks/${taskId}`; }, {projectId,taskId});
   await page.getByText(/当前任务回读失败.*不能视为当前状态/).waitFor();
   await fetch(`${base}/__fixture/recover-task-read`,{method:"POST"});
   await page.getByRole("button",{name:"重新读取当前任务"}).click();
@@ -172,7 +172,7 @@ test("built workbench discovers later Chinese task and document pages, linked ta
   await fetch(`${base}/__fixture/change`,{method:"POST"});
   await page.getByRole("button",{name:"重新读取当前任务"}).click();
   await page.getByRole("heading",{name:"命令行已更新的实施任务"}).waitFor();
-  await page.evaluate(projectId => { location.hash = `#/p/${projectId}/documents`; }, projectId);
+  await page.evaluate(projectId => { location.hash = `/p/${projectId}/documents`; }, projectId);
   await page.getByRole("button",{name:"载入更多"}).waitFor();
   await page.getByRole("textbox",{name:"搜索文档"}).fill("中文跨页方案文档");
   await page.waitForTimeout(700); assert.equal(await (await fetch(`${base}/__fixture/doc-page-count`)).text(),"1");
@@ -186,7 +186,7 @@ test("built workbench discovers later Chinese task and document pages, linked ta
   await page.getByRole("button",{name:"重新读取当前文档"}).click();
   await page.getByText(/已达 20 页或 1000 项读取上限/).waitFor();
   await fetch(`${base}/__fixture/long-pages`,{method:"POST"});
-  await page.evaluate(projectId => { location.hash = `#/p/${projectId}/work`; }, projectId);
+  await page.evaluate(projectId => { location.hash = `/p/${projectId}/work`; }, projectId);
   await page.getByRole("button",{name:"重新读取列表"}).click();
   await page.getByRole("textbox",{name:"搜索任务（分页读取，范围见下方）"}).fill("不存在的中文任务");
   await page.getByText(/自动搜索已达 10 页或 500 项上限；结果未完整/).waitFor();

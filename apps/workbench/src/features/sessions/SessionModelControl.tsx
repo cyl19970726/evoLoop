@@ -41,11 +41,11 @@ export function SessionModelControl({context,sessionId,recovery,busy,onApplied}:
   const currentRevision=profile?.revision;
   const viewMismatch=!!recovery&&!!currentRevision&&recovery.executionProfile?.revision.revisionId!==currentRevision.revisionId;
   const observedProfile=recovery ? recovery.executionProfile : profile;
-  const options=catalog?.options.find(option=>option.model===selectedModel)?.supportedReasoningEfforts??[];
+  const options=catalog?.options?.find(option=>option.model===selectedModel)?.supportedReasoningEfforts??[];
   const canEdit=context.principal.permissions.includes('write')&&context.principal.permissions.includes('review')&&
     !context.blocked&&!!recovery&&!viewMismatch&&runtime?.state==='ready'&&runtime.sandbox==='danger-full-access'&&
     runtime.approvalPolicy==='never'&&!!currentRevision&&catalog?.status==='available'&&
-    !!catalog.options.length&&observedProfile?.activationState!=='attempting'&&observedProfile?.activationState!=='unknown';
+    !!catalog.options?.length&&observedProfile?.activationState!=='attempting'&&observedProfile?.activationState!=='unknown';
   const target=currentRevision?`${currentRevision.model??'默认模型'} / ${currentRevision.reasoningEffort??'未配置'}`:'未读到受管配置';
   const active=observedProfile?.activeRevisionId?
     `${observedProfile.activeModel??'未确认'} / ${observedProfile.activeReasoningEffort??'未记录'}`:'未确认';

@@ -338,8 +338,9 @@ test("real CLI Leader writes connect to the HTTP round, recovery, authorization 
   assert.equal(delivered?.artifactRef,`#/p/${projectId}/documents/${reportId}?revision=${reportRevision}`);
   assert.equal(delivered?.artifactRevision,reportRevision);
   assert.equal(delivered?.contentHash,hash(reportBody));
+  // The stored reference keeps its #/p/ form; the workbench opens it as a path.
   assert.deepEqual(deliveryTarget(delivered!,projectId),{kind:'document',documentId:reportId,
-    revisionId:reportRevision,href:`#/p/${projectId}/documents/${reportId}?revision=${reportRevision}`});
+    revisionId:reportRevision,href:`/p/${projectId}/documents/${reportId}?revision=${reportRevision}`});
 
   const used = await command(consumerToken, {
     projectId, operationId: randomUUID(), type: "observation.record", taskId: prerequisiteTaskId,

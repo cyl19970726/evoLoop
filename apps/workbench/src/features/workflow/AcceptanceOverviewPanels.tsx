@@ -31,7 +31,7 @@ export function AcceptanceCapacitySummary({ overview, projectId, error }: {
         <span>{item.persistedWorkIdle ? "持久工作已清" : "仍在工作"} · 验收 {item.openAcceptance} · 消息 {item.pendingMessages} · 队列 {item.queueEntries}</span>
         <span>{item.readyForAcceptance ? "可接验收" : item.missingCapabilities.length
           ? `缺：${item.missingCapabilities.join("、")}` : "不可接验收"}</span>
-        <a href={`${href(projectId, "sessions")}?session=${encodeURIComponent(`owned:${item.sessionId}`)}&tab=overview`}>打开 Session</a>
+        <a href={`${href(projectId, "sessions")}?session=${encodeURIComponent(`owned:${item.sessionId}`)}`}>打开 Session</a>
       </li>)}</ul> : <p className="empty">当前没有可读取的 Session。</p>}
     <footer>容量只说明数据库义务已清；原生 writer、当前执行配置和消息授权仍按缺项单独核对。此处不会自动创建授权。</footer>
   </section>;

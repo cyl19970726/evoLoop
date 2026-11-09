@@ -84,7 +84,7 @@ test("Session message entry distinguishes saving, execution and manual handoff",
       res.writeHead(status, { "content-type": "application/json" }); res.end(JSON.stringify(value)); return;
     }
     try {
-      const file = url.pathname === "/" ? "index.html" : url.pathname;
+      const file = /^\/(?:$|p\/|ui$)/.test(url.pathname) ? "index.html" : url.pathname;
       const body = await readFile(join(dist, file));
       res.writeHead(200, { "content-type": ({ ".html": "text/html", ".js": "text/javascript", ".css": "text/css" } as Record<string, string>)[extname(file)] ?? "application/octet-stream" }); res.end(body);
     } catch { res.writeHead(404); res.end(); }
@@ -94,7 +94,7 @@ test("Session message entry distinguishes saving, execution and manual handoff",
   const browser = await chromium.launch({ headless: true, ...(process.env.EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH
     ? { executablePath: process.env.EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH } : {}) }); t.after(() => browser.close());
   const page = await browser.newPage();
-  await page.goto(`${base}/#/p/${projectId}/runtime?session=${encodeURIComponent(keys.disabled)}`);
+  await page.goto(`${base}/p/${projectId}/runtime?session=${encodeURIComponent(keys.disabled)}`);
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button", { name: "进入", exact: true }).click();
   await page.getByRole("heading", { name: "关闭自动回复的会话" }).waitFor();
@@ -125,7 +125,7 @@ test("Session message entry distinguishes saving, execution and manual handoff",
   assert.equal(await page.getByText(/活动暂不可读取：活动暂不可读/).count(), 1);
   assert.equal(await timeline.locator("[data-workspace-entry]").count(), 0);
 
-  await page.evaluate(([project, key]) => { location.hash = `#/p/${project}/runtime?session=${encodeURIComponent(key)}`; }, [projectId, keys.legacy]);
+  await page.evaluate(([project, key]) => { location.hash = `/p/${project}/runtime?session=${encodeURIComponent(key)}`; }, [projectId, keys.legacy]);
   await page.getByRole("heading", { name: "旧版只读会话" }).waitFor();
   assert.equal(await page.getByText("保存后的消息详情", { exact: true }).count(), 0);
   if (await readingScope.locator("summary").count()) {
@@ -135,13 +135,13 @@ test("Session message entry distinguishes saving, execution and manual handoff",
   assert.equal(await page.getByText("当前身份只有读取权限。").count(), 1);
   assert.equal(await page.getByText("保存待处理", { exact: true }).count(), 0);
 
-  await page.evaluate(([project, key]) => { location.hash = `#/p/${project}/runtime?session=${encodeURIComponent(key)}`; }, [projectId, keys.manual]);
+  await page.evaluate(([project, key]) => { location.hash = `/p/${project}/runtime?session=${encodeURIComponent(key)}`; }, [projectId, keys.manual]);
   await page.getByRole("heading", { name: "外部会话" }).waitFor();
   if (await readingScope.getAttribute("open") === null) await readingScope.locator("summary").click();
   assert.match(await readingScope.innerText(), /需人工转交.*不代表原会话已收到或阅读/);
   assert.equal(await page.getByText("保存人工转交", { exact: true }).count() > 0, true);
 
-  await page.evaluate(([project, key]) => { location.hash = `#/p/${project}/runtime?session=${encodeURIComponent(key)}`; }, [projectId, keys.revoked]);
+  await page.evaluate(([project, key]) => { location.hash = `/p/${project}/runtime?session=${encodeURIComponent(key)}`; }, [projectId, keys.revoked]);
   await page.getByRole("heading", { name: "已撤销外部会话" }).waitFor();
   if (await readingScope.getAttribute("open") === null) await readingScope.locator("summary").click();
   assert.match(await readingScope.innerText(), /不能向当前外部会话保存或转交消息/);
@@ -189,7 +189,7 @@ test("the authenticated receiver can record a read while its exact message Turn 
       } else if (url.pathname.includes("/recovery")) { status = 404; value = { message: "无恢复记录" }; }
       res.writeHead(status, { "content-type": "application/json" }); res.end(JSON.stringify(value)); return;
     }
-    try { const body = await readFile(join(dist, url.pathname === "/" ? "index.html" : url.pathname));
+    try { const body = await readFile(join(dist, /^\/(?:$|p\/|ui$)/.test(url.pathname) ? "index.html" : url.pathname));
       res.writeHead(200, { "content-type": ({ ".html": "text/html", ".js": "text/javascript", ".css": "text/css" } as Record<string, string>)[extname(url.pathname)] ?? "text/html" }); res.end(body);
     } catch { res.writeHead(404); res.end(); }
   });
@@ -198,7 +198,7 @@ test("the authenticated receiver can record a read while its exact message Turn 
   const browser = await chromium.launch({ headless: true, ...(process.env.EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH
     ? { executablePath: process.env.EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH } : {}) }); t.after(() => browser.close());
   const page = await browser.newPage();
-  await page.goto(`${base}/#/p/${projectId}/runtime?session=${encodeURIComponent(keys.disabled)}`);
+  await page.goto(`${base}/p/${projectId}/runtime?session=${encodeURIComponent(keys.disabled)}`);
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button", { name: "进入", exact: true }).click();
   await page.getByRole("heading", { name: "关闭自动回复的会话" }).waitFor();

@@ -11,8 +11,8 @@ const oldLink = `http://127.0.0.1:55431/#/p/${migrationProject}/tasks/${migratio
 test("fixed Markdown links from the former workbench use the reader's current origin", () => {
   const fixed = `http://127.0.0.1:55431/#/p/${migrationProject}/documents/${migrationDoc}?revision=02a1fcc9-f3a3-4b2b-918b-7ecf7c74d4f0`;
   const rendered = splitMarkdown(`[任务](${oldLink}) [报告](${fixed})`, { projectId: migrationProject }).map(part => part.value).join("");
-  assert.match(rendered, new RegExp(`href="#/p/${migrationProject}/tasks/${migrationTask}"`));
-  assert.match(rendered, new RegExp(`href="#/p/${migrationProject}/documents/${migrationDoc}\\?revision=02a1fcc9-f3a3-4b2b-918b-7ecf7c74d4f0"`));
+  assert.match(rendered, new RegExp(`href="/p/${migrationProject}/tasks/${migrationTask}"`));
+  assert.match(rendered, new RegExp(`href="/p/${migrationProject}/documents/${migrationDoc}\\?revision=02a1fcc9-f3a3-4b2b-918b-7ecf7c74d4f0"`));
   assert.doesNotMatch(rendered, /href="http:\/\/127\.0\.0\.1:55431/);
   assert.match(splitMarkdown(`[任务](${oldLink})`).map(part => part.value).join(""), /href="http:\/\/127\.0\.0\.1:55431/,
     "without a verified project context the source link is left alone");
@@ -29,15 +29,17 @@ test("only exact former-origin same-project Task and Document routes become trus
     `${oldLink}#https://evil.example`, `${oldLink}?return=https%3A%2F%2Fevil.example`,
     "javascript:alert(1)", "data:text/html,evil", "https://example.com/#/p/" + migrationProject + "/tasks/" + migrationTask,
   ]) assert.equal(legacyWorkbenchRoute(invalid, migrationProject), null, invalid);
-  assert.equal(legacyWorkbenchRoute(oldLink, migrationProject), `#/p/${migrationProject}/tasks/${migrationTask}`);
+  assert.equal(legacyWorkbenchRoute(oldLink, migrationProject), `/p/${migrationProject}/tasks/${migrationTask}`);
 });
 
 test("migration retains valid route context and rejects forged nested returns", () => {
-  const source = `#/p/${migrationProject}/sessions?session=owned%3A${migrationTask}`;
-  const valid = `${oldLink}?${new URLSearchParams({ tab: "history", return: source, actor: "product-docs-owner", returnTitle: "原 Session" })}`;
-  assert.equal(legacyWorkbenchRoute(valid, migrationProject), valid.slice("http://127.0.0.1:55431/".length));
+  // Former-workbench links carry nested `#/p/` addresses; the link and its nested addresses open as paths.
+  const source = `/p/${migrationProject}/sessions?session=owned%3A${migrationTask}`;
+  const path = oldLink.slice("http://127.0.0.1:55431/#".length);
+  const valid = `${oldLink}?${new URLSearchParams({ tab: "history", return: `#${source}`, actor: "product-docs-owner", returnTitle: "原 Session" })}`;
+  assert.equal(legacyWorkbenchRoute(valid, migrationProject), `${path}?${new URLSearchParams({ tab: "history", return: source, actor: "product-docs-owner", returnTitle: "原 Session" })}`);
   const list = `${oldLink}?${new URLSearchParams({ list: `#/p/${migrationProject}/work?search=report` })}`;
-  assert.equal(legacyWorkbenchRoute(list, migrationProject), list.slice("http://127.0.0.1:55431/".length));
+  assert.equal(legacyWorkbenchRoute(list, migrationProject), `${path}?${new URLSearchParams({ list: `/p/${migrationProject}/work?search=report` })}`);
   for (const value of [`#/p/${migrationProject}/not-a-route`, `#/p/${migrationProject}/work#https://evil.example`,
     `#/p/${migrationProject}/work\nnext`]) {
     assert.equal(legacyWorkbenchRoute(`${oldLink}?${new URLSearchParams({ return: value })}`, migrationProject), null);
@@ -158,11 +160,11 @@ test("fixed Wiki links render only in the owning project, including an exact bar
   const other = "22222222-2222-4222-8222-222222222222";
   const knowledge = "33333333-3333-4333-8333-333333333333";
   const revision = "44444444-4444-4444-8444-444444444444";
-  const target = `#/p/${project}/knowledge?knowledgeId=${knowledge}&knowledgeRevision=${revision}`;
+  const target = `/p/${project}/knowledge?knowledgeId=${knowledge}&knowledgeRevision=${revision}`;
   const html = (source: string, projectId = project) => splitMarkdown(source, {projectId})
     .map(part => part.value).join("");
-  assert.match(html(`[固定知识](${target})`), /<a href="#\/p\/11111111[^\"]+knowledgeRevision=44444444[^\"]+">固定知识<\/a>/);
-  assert.match(html(`来源 ${target}`), /<a href="#\/p\/11111111[^\"]+">#\/p\/11111111/);
+  assert.match(html(`[固定知识](${target})`), /<a href="\/p\/11111111[^\"]+knowledgeRevision=44444444[^\"]+">固定知识<\/a>/);
+  assert.match(html(`来源 ${target}`), /<a href="\/p\/11111111[^\"]+">\/p\/11111111/);
   for (const invalid of [target.replace(project, other), `${target}&unexpected=x`,
     target.replace(`knowledgeRevision=${revision}`, `knowledgeRevision=${revision}&knowledgeRevision=${revision}`),
     target.replace(revision, "invalid"), target.replace("/knowledge?", `/knowledge/${knowledge}?`),

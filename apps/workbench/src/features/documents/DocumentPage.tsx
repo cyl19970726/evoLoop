@@ -9,6 +9,7 @@ import { ActionForm, type MutationContext } from "../../shared/ActionForm";
 import { UploadDocument } from "./UploadDocument";
 import { DocumentOrigin } from "./DocumentOrigin";
 import "./document.css";
+import { onNavigate } from "../../shared/navigation";
 const kindLabel = { task: "任务正文", issue: "问题", spec: "规范", discussion: "讨论", report: "报告", organization_review: "组织复盘" } as const;
 const statusLabel = { draft: "草稿", published: "已发布", archived: "已归档" } as const;
 const relationLabel = { content: "任务正文", link: "已关联", basis: "当前固定依据" } as const;
@@ -64,9 +65,9 @@ export function DocumentPage({ token, projectId, id, selectedRevision, context, 
     let wasCurrent = isCurrent();
     const returned = () => { const current = isCurrent(); if (current && !wasCurrent) setReadVersion(value => value + 1); wasCurrent = current; };
     const reread = () => { if (document.visibilityState === "visible" && isCurrent()) setReadVersion(value => value + 1); };
-    window.addEventListener("hashchange", returned);
+    const stopNavigate = onNavigate(returned);
     window.addEventListener("focus", reread);
-    return () => { window.removeEventListener("hashchange", returned); window.removeEventListener("focus", reread); };
+    return () => { stopNavigate(); window.removeEventListener("focus", reread); };
   }, [id, projectId, selectedRevision]);
   useEffect(() => {
     let active = true;

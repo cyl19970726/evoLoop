@@ -42,7 +42,7 @@ test("current completion and projection must match task version and revision", (
 test("filters and selected row survive a URL round trip, including long and non-ASCII titles", () => {
   const value = { query: "很长的任务 / & 结果?", filter: "done", kind: "validation", scope: "mine", selected: "task" };
   assert.deepEqual(taskListView(taskListRoute("project", value)), value);
-  assert.deepEqual(taskListView("#/p/project/work"), { query: "", filter: "open", kind: "all", scope: "all", selected: "" });
+  assert.deepEqual(taskListView("/p/project/work"), { query: "", filter: "open", kind: "all", scope: "all", selected: "" });
 });
 test("done tasks keep the exact closure-bound delivery, while reopened tasks cannot reuse it", () => {
   const detail = { task: { state: "done", currentRevisionId: "closed-rev" },

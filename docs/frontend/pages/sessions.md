@@ -19,7 +19,14 @@ Session 页说明一个具体实例此刻在做什么、做出了什么；“Lea
 
 外壳与左栏见[布局](../layout.md)，场景见[场景 3](../scenarios.md#十个场景)与[场景 11](../scenarios.md#场景-11看清-leader-怎样安排-session)。
 
-现状：Session 目录在项目栏和主区各有一份。详情没有右栏：页首是状态卡，下面是“活动与对话 / 任务与队列 / 成果”三个页签和底部输入；连续工具调用合并为“工具与活动 · N 项”，没有子 Agent 层级；“所在机器”没有数据来源。没有“Leader 安排”视图，编排总览只是一份普通过程文档。
+现状（#229 PR6a、PR6c）：
+- **目录**：搜索、“统筹安排”、业务 / 系统智能体分组，每项有头像、当前任务或职责、平白状态。
+- **详情**：页首胶囊（头像、名字、状态）；中间是对话流，回复不包卡片，我的消息是右侧气泡，工具调用收成一行灰字；输入框固定在底部；右栏是实体卡、“动态”（当前任务、配置、队列）和“资料库”（成果），下方是关闭入口与会话详情。
+- **还没做的**：
+  - 统筹安排视图（PR6b）。
+  - 输入框新样式与 `/`、`@`（后端语义待确认）。
+  - 待办清单与提问卡（缺结构化数据）。
+  - 右栏旧子面板的新样式。
 
 ## 内容与状态
 
@@ -78,9 +85,9 @@ Session 页说明一个具体实例此刻在做什么、做出了什么；“Lea
 
 | 范围 | 源码（`apps/workbench/src/`） | 测试（`apps/workbench/test/`） |
 | --- | --- | --- |
-| 外壳 | `app/WorkbenchShell.tsx` | `sheet-layout.test.ts` |
-| Session 目录 | `features/sessions/SessionNavigation.tsx`、`features/sessions/SessionsDirectoryPage.tsx`、`features/sessions/sessionDirectoryPresentation.ts`、`features/sessions/useSessionDirectoryGroup.ts` | `session-directory-presentation.test.ts`、`session-directory-groups.test.ts`、`session-directory-groups-browser.test.ts` |
-| Session 详情 | `features/sessions/SessionWorkspace.tsx`、`features/sessions/SessionTimeline.tsx`、`features/sessions/workspaceTimelineModel.ts`、`features/sessions/DirectInputEntry.tsx`、`features/sessions/NativeSessionPanel.tsx`、`features/sessions/SessionModelControl.tsx`、`features/sessions/SessionClosePanel.tsx` | `session-workspace-redesign-browser.test.ts`、`session-timeline-browser.test.ts`、`session-workspace-timeline-model.test.ts`、`session-direct-input-layout-browser.test.ts`、`session-native-input-browser.test.ts`、`session-native-progress-browser.test.ts`、`session-close-entry-browser.test.ts`、`task-session-return-browser.test.ts` |
+| 外壳 | `app/shell/AppShell.tsx` | `shell.test.ts`、`session-directory-groups-browser.test.ts` |
+| 智能体目录（内层栏） | `features/sessions/SessionNavigation.tsx`（新目录）、`features/sessions/SessionsDirectoryPage.tsx`、`features/sessions/sessionDirectoryPresentation.ts`、`features/sessions/useSessionDirectoryGroup.ts` | `session-directory-presentation.test.ts`、`session-directory-groups.test.ts`、`session-directory-groups-browser.test.ts` |
+| 智能体详情 | `features/sessions/SessionWorkspace.tsx`（页首、中间、右栏）、`features/sessions/SessionTimeline.tsx`（对话流）、`features/sessions/workspaceTimelineModel.ts`、`features/sessions/DirectInputEntry.tsx`、`features/sessions/NativeSessionPanel.tsx`、`features/sessions/SessionModelControl.tsx`、`features/sessions/SessionClosePanel.tsx` | `session-workspace-redesign-browser.test.ts`、`session-timeline-browser.test.ts`、`session-workspace-timeline-model.test.ts`、`session-direct-input-layout-browser.test.ts`、`session-native-input-browser.test.ts`、`session-native-progress-browser.test.ts`、`session-close-entry-browser.test.ts`、`task-session-return-browser.test.ts` |
 | Leader 安排的数据 | `features/queues/ResidentQueuePanel.tsx`、`shared/leaderWorkLoad.ts`、`features/sessions/TaskAssignmentPanel.tsx` | `leader-work-load.test.ts`、`leader-work-overview-browser.test.ts` |
 | 数据来源 | `packages/contracts/src/session-timeline.ts`、`packages/adapter-claude-agent-sdk/src/index.ts`、`packages/adapter-codex-app-server/src/workspace-map.ts`、`apps/coordinator/src/runtime/routed.ts` | — |
 

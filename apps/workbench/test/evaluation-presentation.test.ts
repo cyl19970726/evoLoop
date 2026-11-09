@@ -14,11 +14,11 @@ const attempt = (revisionId: string, conditionId: string, ordinal: number) => ({
 test("the selected definition alone supplies condition attempts, including retries", () => {
   const rows = [attempt(other, id, 1), attempt(id, id, 2), attempt(id, other, 1), attempt(id, id, 1)];
   assert.deepEqual(attemptsForCondition(revision, rows, id).map(row => row.ordinal), [1, 2]);
-  assert.equal(evaluationHref(id, other, id), `#/p/${id}/evaluations/${other}?revision=${id}`);
+  assert.equal(evaluationHref(id, other, id), `/p/${id}/evaluations/${other}?revision=${id}`);
 });
 
 test("a filtered historical match opens its own fixed definition revision", () => {
-  assert.equal(evaluationListHref(id, { evaluationId: other, id }), `#/p/${id}/evaluations/${other}?revision=${id}`);
+  assert.equal(evaluationListHref(id, { evaluationId: other, id }), `/p/${id}/evaluations/${other}?revision=${id}`);
 });
 
 test("first-slice conclusion choices do not claim full comparability", () => {
@@ -68,7 +68,7 @@ test("definition form freezes the server signature and source revision with dire
 test("a next Task action uses its fixed Task revision without pretending to have a content hash", () => {
   const value = parseNextActionRef(`task | ${id} | ${other}`);
   assert.deepEqual(value, { kind: "task", taskId: id, taskRevisionId: other });
-  assert.equal(nextActionHref(id, value!), `#/p/${id}/tasks/${id}?revision=${other}`);
+  assert.equal(nextActionHref(id, value!), `/p/${id}/tasks/${id}?revision=${other}`);
   assert.throws(() => parseNextActionRef(`task | ${id} | ${other} | ${hash}`));
   assert.throws(() => parseNextActionRef(`task | ${id} | invalid`));
   assert.deepEqual(parseNextActionRef(`document | ${id} | ${other} | ${hash}`), { kind: "document", id, revision: other, contentHash: hash });
@@ -102,9 +102,9 @@ test("the registration picker excludes unsettled and foreign Runs", () => {
 
 test("fixed Wiki source opens the canonical knowledge reader in this authenticated tab", () => {
   const wiki = { kind: "wiki", id, revision: other, contentHash: hash } as const;
-  assert.equal(fixedRefHref(id, wiki), `#/p/${id}/knowledge?knowledgeId=${id}&knowledgeRevision=${other}`);
+  assert.equal(fixedRefHref(id, wiki), `/p/${id}/knowledge?knowledgeId=${id}&knowledgeRevision=${other}`);
   assert.equal(fixedRefHref(id, { ...wiki, revision: "bad" }), null);
-  assert.equal(fixedRefHref(id, { ...wiki, kind: "document" }), `#/p/${id}/documents/${id}?revision=${other}`);
+  assert.equal(fixedRefHref(id, { ...wiki, kind: "document" }), `/p/${id}/documents/${id}?revision=${other}`);
   assert.equal(fixedRefHref(id, { ...wiki, kind: "git" }), null);
 });
 

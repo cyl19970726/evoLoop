@@ -1,7 +1,7 @@
 import type { Delivery, Document, DocumentRevision, EvaluationAssessment, EvaluationAttempt, EvaluationCost, EvaluationFixedRef, EvaluationRevision } from "@evoloop/contracts";
 
 export const evaluationHref = (projectId: string, evaluationId?: string, revisionId?: string) =>
-  `#/p/${projectId}/evaluations${evaluationId ? `/${evaluationId}${revisionId ? `?revision=${encodeURIComponent(revisionId)}` : ""}` : ""}`;
+  `/p/${projectId}/evaluations${evaluationId ? `/${evaluationId}${revisionId ? `?revision=${encodeURIComponent(revisionId)}` : ""}` : ""}`;
 
 /** Filtered listings may return a historical matching definition rather than today's head. */
 export const evaluationListHref = (projectId: string, item: Pick<EvaluationRevision, "evaluationId" | "id">) =>
@@ -10,8 +10,8 @@ export const evaluationListHref = (projectId: string, item: Pick<EvaluationRevis
 const routeUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export function fixedRefHref(projectId: string, value: EvaluationFixedRef): string | null {
   if (!routeUuid.test(value.id) || !routeUuid.test(value.revision)) return null;
-  if (value.kind === "document") return `#/p/${encodeURIComponent(projectId)}/documents/${value.id}?revision=${value.revision}`;
-  if (value.kind === "wiki") return `#/p/${encodeURIComponent(projectId)}/knowledge?knowledgeId=${value.id}&knowledgeRevision=${value.revision}`;
+  if (value.kind === "document") return `/p/${encodeURIComponent(projectId)}/documents/${value.id}?revision=${value.revision}`;
+  if (value.kind === "wiki") return `/p/${encodeURIComponent(projectId)}/knowledge?knowledgeId=${value.id}&knowledgeRevision=${value.revision}`;
   return null;
 }
 
@@ -43,7 +43,7 @@ export function parseNextActionRef(value: string): NextActionRef | null {
 
 export function nextActionHref(projectId: string, value: NextActionRef): string | null {
   return value.kind === "task" && uuid.test(value.taskId) && uuid.test(value.taskRevisionId)
-    ? `#/p/${projectId}/tasks/${value.taskId}?revision=${encodeURIComponent(value.taskRevisionId)}` : null;
+    ? `/p/${projectId}/tasks/${value.taskId}?revision=${encodeURIComponent(value.taskRevisionId)}` : null;
 }
 
 export function parseFixedRefLines(value: string, allowed: readonly EvaluationFixedRef["kind"][]): EvaluationFixedRef[] {

@@ -6,6 +6,7 @@ import { roleClient } from "../../shared/roleClient";
 import { ActionForm, Notice, option, reasonField, type Field, type MutationContext } from "../../shared/ActionForm";
 import { AllocationRelationsPanel } from "./AllocationRelationsPanel";
 import { discussionCopyEnvelope, discussionDecisionPayload, type VerifiedDocumentHead } from "./commands";
+import { currentPath, navigate, onNavigate } from "../../shared/navigation";
 
 type Choices = { goals: Goal[]; stages: Stage[]; tasks: Task[]; documents: Document[]; roles: RoleRecord[] };
 const emptyChoices: Choices = { goals: [], stages: [], tasks: [], documents: [], roles: [] };
@@ -36,8 +37,8 @@ const statusLabel: Record<DiscussionRecord["status"], string> = {
 };
 const kindLabel: Record<DiscussionRecord["kind"], string> = { allocation: "讨论当前分工", direction: "讨论下一阶段", task_collaboration: "任务协作频道" };
 function discussionFromHash(projectId: string): string {
-  const [path, query = ""] = window.location.hash.split("?");
-  if (path !== `#/p/${encodeURIComponent(projectId)}/discussions`) return "";
+  const [path, query = ""] = currentPath().split("?");
+  if (path !== `/p/${encodeURIComponent(projectId)}/discussions`) return "";
   const values = new URLSearchParams(query).getAll("discussion");
   return values.length === 1 && /^[0-9a-f-]{36}$/i.test(values[0]!) ? values[0]! : "";
 }
@@ -78,8 +79,7 @@ export function DiscussionPanel({ context, refresh }: { context: MutationContext
   const listEpoch = useRef(0);
   useEffect(() => {
     const sync = () => setSelectedId(discussionFromHash(context.projectId));
-    window.addEventListener("hashchange", sync);
-    return () => window.removeEventListener("hashchange", sync);
+    return onNavigate(sync);
   }, [context.projectId]);
   useEffect(() => { setSelectedId(discussionFromHash(context.projectId)); }, [context.token, context.projectId]);
   useEffect(() => {
@@ -138,11 +138,11 @@ export function DiscussionPanel({ context, refresh }: { context: MutationContext
     <div className="discussion-exploration-grid">
       <aside className="discussion-exploration-column discussion-exploration-list" aria-label="讨论列表">
         <h2>讨论列表</h2>
-        <label className="discussion-kind-filter">范围<select value={listKind} onChange={event => { setListKind(event.target.value as typeof listKind); setSelectedId(""); window.location.hash = `#/p/${encodeURIComponent(context.projectId)}/discussions`; }}><option value="allocation">当前分工</option><option value="direction">下一阶段</option><option value="all">全部讨论</option></select></label>
+        <label className="discussion-kind-filter">范围<select value={listKind} onChange={event => { setListKind(event.target.value as typeof listKind); setSelectedId(""); navigate(`/p/${encodeURIComponent(context.projectId)}/discussions`); }}><option value="allocation">当前分工</option><option value="direction">下一阶段</option><option value="all">全部讨论</option></select></label>
         <p className="muted">查看已有讨论；未决和维持现状也保留原记录。</p>
         {loading && <p>正在读取讨论列表…</p>}{error && <Notice error>{error}</Notice>}
         {!loading && items.length === 0 && <p className="empty">尚无讨论交接包。没有新取舍时无需制造任务或常设职责。</p>}
-        <div className="discussion-list">{items.map(item => <button type="button" key={item.id} className={item.id === selectedId ? "active" : ""} onClick={() => { setSelectedId(item.id); window.location.hash = `#/p/${encodeURIComponent(context.projectId)}/discussions?discussion=${encodeURIComponent(item.id)}`; }}>
+        <div className="discussion-list">{items.map(item => <button type="button" key={item.id} className={item.id === selectedId ? "active" : ""} onClick={() => { setSelectedId(item.id); navigate(`/p/${encodeURIComponent(context.projectId)}/discussions?discussion=${encodeURIComponent(item.id)}`); }}>
           <strong>{item.kind === "allocation" ? item.question : kindLabel[item.kind]}</strong><span>{item.kind === "task_collaboration" ? `Task ${item.task?.id ?? "未绑定"}` : item.kind === "allocation" ? kindLabel[item.kind] : item.question}</span><small>{statusLabel[item.status]} · v{item.version}</small>
         </button>)}</div>
         {nextCursor && <button type="button" className="more" disabled={moreBusy} onClick={() => void more()}>{moreBusy ? "加载中…" : "加载更多讨论"}</button>}
@@ -156,7 +156,7 @@ export function DiscussionPanel({ context, refresh }: { context: MutationContext
       <p>派出者：{selected.collaboration?.issuerActorId ?? "未绑定"} · 执行者：{selected.collaboration?.recipientActorId ?? "未绑定"}</p>
       {events.map(event=><article className="decision" key={event.id}><strong>{eventLabel[event.kind]} · v{event.version}</strong>
         <p>事件 <code>{event.id}</code> · {event.actorId} · {event.createdAt}</p>
-        {event.collaborationPayload?.type === "message" && <p>固定正文：<a href={`#/p/${context.projectId}/documents/${event.collaborationPayload.body.documentId}?revision=${event.collaborationPayload.body.revisionId}`}>阅读消息原文</a></p>}
+        {event.collaborationPayload?.type === "message" && <p>固定正文：<a href={`/p/${context.projectId}/documents/${event.collaborationPayload.body.documentId}?revision=${event.collaborationPayload.body.revisionId}`}>阅读消息原文</a></p>}
       </article>)}
         </div>}
         {selected && selected.kind !== "task_collaboration" && <DiscussionDetail key={`${selected.id}:${selected.version}:${refresh}`} context={context} record={selected} events={events} choices={choices} />}
@@ -289,7 +289,7 @@ function DiscussionDetail({ context, record, events, choices }: { context: Mutat
       {event.choice && <p>取舍：{event.choice}</p>}{event.evidence && <p>证据：{event.evidence}</p>}{event.reason && <p>理由：{event.reason}</p>}
       {event.unresolved && <p>未解：{event.unresolved}</p>}{event.relookCondition && <p>重看条件：{event.relookCondition}</p>}
       {event.target && <DiscussionTargetLink target={event.target} choices={choices} projectId={context.projectId} />}
-      {event.documentRevisionId && <p><a href={`#/p/${context.projectId}/documents/${record.documentId}?revision=${encodeURIComponent(event.documentRevisionId)}`}>阅读当次固定过程文档 →</a></p>}
+      {event.documentRevisionId && <p><a href={`/p/${context.projectId}/documents/${record.documentId}?revision=${encodeURIComponent(event.documentRevisionId)}`}>阅读当次固定过程文档 →</a></p>}
       <small>{event.actorId} · {event.createdAt}</small>
     </article>)}
   </div>;
@@ -299,18 +299,18 @@ function DiscussionTargetLink({ target, choices, projectId }: { target: Discussi
   const id = encodeURIComponent(target.id);
   if (target.kind === "task") {
     const task = choices.tasks.find(item => item.id === target.id);
-    return <p>实际后续任务：{task?.title ?? "名称暂不可读"} · 固定修订 <code>{target.revisionId}</code> · <a href={`#/p/${projectId}/tasks/${id}?revision=${encodeURIComponent(target.revisionId)}`}>阅读任务固定修订 →</a></p>;
+    return <p>实际后续任务：{task?.title ?? "名称暂不可读"} · 固定修订 <code>{target.revisionId}</code> · <a href={`/p/${projectId}/tasks/${id}?revision=${encodeURIComponent(target.revisionId)}`}>阅读任务固定修订 →</a></p>;
   }
   if (target.kind === "document") {
     const document = choices.documents.find(item => item.id === target.id);
-    return <p>实际后续过程文档：{document?.title ?? "名称暂不可读"} · 固定修订 <code>{target.revisionId}</code> · <a href={`#/p/${projectId}/documents/${id}?revision=${encodeURIComponent(target.revisionId)}`}>阅读目标文档固定原件 →</a></p>;
+    return <p>实际后续过程文档：{document?.title ?? "名称暂不可读"} · 固定修订 <code>{target.revisionId}</code> · <a href={`/p/${projectId}/documents/${id}?revision=${encodeURIComponent(target.revisionId)}`}>阅读目标文档固定原件 →</a></p>;
   }
   if (target.kind === "stage") {
     const stage = choices.stages.find(item => item.id === target.id);
-    return <p>实际后续阶段：{stage?.deliverable ?? "名称暂不可读"} · 固定 v{target.version} · <a href={`#/p/${projectId}/overview`}>返回当前项目总览（不是固定历史） →</a></p>;
+    return <p>实际后续阶段：{stage?.deliverable ?? "名称暂不可读"} · 固定 v{target.version} · <a href={`/p/${projectId}/overview`}>返回当前项目总览（不是固定历史） →</a></p>;
   }
   const role = choices.roles.find(item => item.id === target.id);
-  return <p>实际后续职责：{role?.proposal.title ?? "名称暂不可读"} · 固定修订 <code>{target.revisionId}</code> · <a href={`#/p/${projectId}/work`}>返回当前工作区（不是固定历史） →</a></p>;
+  return <p>实际后续职责：{role?.proposal.title ?? "名称暂不可读"} · 固定修订 <code>{target.revisionId}</code> · <a href={`/p/${projectId}/work`}>返回当前工作区（不是固定历史） →</a></p>;
 }
 
 function PackageReader({ context, record, revisionId, label, onVerified }: { context: MutationContext; record: DiscussionRecord; revisionId: string; label: string; onVerified?: (revisionId: string | null) => void }) {

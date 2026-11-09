@@ -46,23 +46,23 @@ test("seven template states appear in runtime and Roles with truthful refresh an
       else if (url.pathname === `${root}/roles/${roleId}/hosts` || url.pathname === `${root}/roles/${roleId}/bindings`) value = [];
       res.writeHead(status, { "content-type": "application/json" }); res.end(JSON.stringify(value)); return;
     }
-    const file = join(dist, url.pathname === "/" ? "index.html" : url.pathname);
+    const file = join(dist, /^\/(?:$|p\/|ui$)/.test(url.pathname) ? "index.html" : url.pathname);
     try { const body = await readFile(file); res.writeHead(200, { "content-type": ({ ".html": "text/html", ".js": "text/javascript", ".css": "text/css" })[extname(file)] ?? "application/octet-stream" }); res.end(body); }
     catch { res.writeHead(404); res.end(); }
   });
   await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve)); t.after(() => server.close());
   const base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
-  const browser = await chromium.launch({ headless: true }); t.after(() => browser.close());
+  const browser = await chromium.launch({ headless: true, ...(process.env.EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH ? { executablePath: process.env.EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH } : {}) }); t.after(() => browser.close());
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
   const errors: string[] = []; page.on("pageerror", error => errors.push(error.stack ?? error.message));
-  await page.goto(`${base}/#/p/${projectId}/runtime?view=execution`);
+  await page.goto(`${base}/p/${projectId}/runtime?view=execution`);
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button", { name: "进入", exact: true }).click();
   const summary = page.locator(".role-template-summary:visible");
   await summary.getByText("真实功能开发职责").waitFor();
   assert.equal(await summary.locator("li").count(), 7);
   assert.match(await summary.innerText(), /认知.*未建立/s);
-  assert.equal(await summary.getByRole("link", { name: /真实功能开发职责/ }).getAttribute("href"), `#/p/${projectId}/roles?role=${roleId}`);
+  assert.equal(await summary.getByRole("link", { name: /真实功能开发职责/ }).getAttribute("href"), `/p/${projectId}/roles?role=${roleId}`);
   await fetch(`${base}/__fixture/mode?value=fail`);
   await summary.getByRole("button", { name: "回读当前状态" }).click();
   await summary.getByRole("alert").getByText(/保留上次观察/).waitFor();
@@ -72,7 +72,7 @@ test("seven template states appear in runtime and Roles with truthful refresh an
   await summary.getByText(/Role 列表尚有未读页/).waitFor();
   assert.match(await summary.innerText(), /认知.*未知/s);
   await summary.getByRole("link", { name: /真实功能开发职责/ }).click();
-  await page.waitForURL(url => url.hash === `#/p/${projectId}/roles?role=${roleId}`);
+  await page.waitForURL(url => url.pathname + url.search === `/p/${projectId}/roles?role=${roleId}`);
   await page.locator(`#role-${roleId}[open]`).waitFor();
   const rolesSummary = page.locator(".role-template-summary:visible");
   await rolesSummary.getByText("真实功能开发职责").waitFor();
