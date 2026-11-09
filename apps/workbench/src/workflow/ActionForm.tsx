@@ -3,7 +3,8 @@ import type { FormEvent, ReactNode } from "react";
 import {
   commandSchema, type Command, type CommandResult, type Operation, type Permission, type Principal,
 } from "@evoloop/contracts";
-import { api, errorText, isStaleConflict, isUnconfirmed } from "../api";
+import { api, isUnconfirmed } from "../api";
+import { errorOutcome, resultOutcome } from "./submissionOutcome";
 
 const { useEffect, useState } = React;
 
@@ -81,22 +82,18 @@ export function ActionForm({ context, title, fields, build, validateCommand, sen
     try {
       const result = sendCommand ? await sendCommand(command) : await api(context.token).command(command as Command);
       context.onKnown(command.operationId);
-      if (result.status === "rejected") {
-        setMessage(result.message); setFailed(true); setStale(isStaleConflict(result.code));
-      } else {
+      const outcome = resultOutcome(result);
+      setMessage(outcome.message); setFailed(outcome.failed); setStale(outcome.stale);
+      if (outcome.applied && result.status === "applied") {
         if (draftKey) drafts.delete(draftKey);
         setDirty(false);
-        setMessage("已保存，正在读取持久记录。");
         onApplied?.(result); context.onChanged();
       }
     } catch (cause) {
       if (!isUnconfirmed(cause)) context.onKnown(command.operationId);
-      const unconfirmed = isUnconfirmed(cause);
-      const changed = isStaleConflict(cause);
-      setMessage(`${errorText(cause)}${unconfirmed ? "。请在上方按原操作 ID 核对，确认前不要再次提交。" : changed
-        ? "。所见版本或固定指针已变化；先保存草稿，再回读当前状态。" : "。这次请求已被明确拒绝；草稿保留，可修改选择后以新操作提交。"}`);
-      setFailed(true);
-      if (!unconfirmed && changed) setStale(true);
+      const outcome = errorOutcome(cause);
+      setMessage(outcome.message); setFailed(true);
+      if (outcome.stale) setStale(true);
     } finally { setBusy(false); }
   }
   async function copyDraft() {
