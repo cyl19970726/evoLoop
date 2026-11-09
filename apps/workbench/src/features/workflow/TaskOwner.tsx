@@ -38,14 +38,14 @@ export function TaskOwner({ token, projectId, owner, readKey, onResolved }: {
           ]);
           if (!active) return;
           if (bindings.some(item => item.projectId !== projectId || item.roleId !== owner) || registered.some(item => item.projectId !== projectId))
-            throw new Error("会话关联响应与当前项目不符");
+            throw new Error("智能体关联响应与当前项目不符");
           const bound = new Set(bindings.map(item => item.sessionId));
           const verified = registered.filter(item => bound.has(item.id) && item.roleId === owner);
           setSessions(verified);
           if (bound.size > verified.length)
-            setSessionNote("部分绑定记录未能核对到同项目、同职责的会话；未提供其入口。");
-          else if (bound.size === 0) setSessionNote("该职责暂无已登记的受管会话绑定；任务具体承接请看下方分派。");
-        } catch (cause) { if (active) setSessionNote(`会话关联暂不可核对：${errorText(cause)}`); }
+            setSessionNote("部分绑定记录未能核对到同项目、同职责的智能体；未提供其入口。");
+          else if (bound.size === 0) setSessionNote("该职责暂无已登记的智能体绑定；任务具体承接看右栏的承接智能体。");
+        } catch (cause) { if (active) setSessionNote(`智能体关联暂不可核对：${errorText(cause)}`); }
       } catch (cause) {
         if (active) {
           onResolved?.(null);
@@ -57,12 +57,12 @@ export function TaskOwner({ token, projectId, owner, readKey, onResolved }: {
   }, [token, projectId, owner, readKey]);
   return <span className="task-owner-meta">
     <span>责任者：{role ? <><a href={href(projectId, "roles")}>{role.proposal.title}</a> <code title={role.id}>{role.id.slice(0, 8)}</code></> : <code>{owner}</code>}
-      {reading && <small> · 正在核对职责与会话…</small>}
+      {reading && <small> · 正在核对职责与智能体…</small>}
       {roleError && <small> · {roleError}</small>}</span>
     {role && <span className="task-owner-sessions">
-      {sessions.map(item => <a key={item.id} href={`${href(projectId, "sessions")}?session=${encodeURIComponent(`owned:${item.id}`)}`}>已登记 Session {item.id.slice(0, 8)}（{sessionState[item.state]}）</a>)}
+      {sessions.map(item => <a key={item.id} href={`${href(projectId, "sessions")}?session=${encodeURIComponent(`owned:${item.id}`)}`}>已登记的智能体 {item.id.slice(0, 8)}（{sessionState[item.state]}）</a>)}
       {sessionNote && <small>{sessionNote}</small>}
-      {sessions.length > 0 && <small>职责绑定不表示此任务正在该会话运行。</small>}
+      {sessions.length > 0 && <small>职责绑定不表示此任务正由该智能体运行。</small>}
     </span>}
   </span>;
 }

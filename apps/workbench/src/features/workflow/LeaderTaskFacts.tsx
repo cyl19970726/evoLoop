@@ -5,6 +5,8 @@ import type { LeaderNotice } from "@evoloop/contracts/leader-notices";
 import { api, errorText, isUnconfirmed, request } from "../../shared/api";
 import { leaderPhaseLabel } from "../../shared/leaderWorkLoad";
 import { TaskTiming, timingDate, timingWaitingFor, waitingKindLabel } from "../../shared/taskTiming";
+import { responsibleText, workItemNextStep } from "../../shared/workPresentation";
+import { ResponsibleName } from "../../shared/ui/RecordName";
 
 const date = (value: string) => new Date(value).toLocaleString("zh-CN");
 const ShortId = ({ value }: { value: string }) =>
@@ -253,17 +255,19 @@ export function LeaderTaskFacts({ leader, detail, projectId, token, responsibleN
   const plan = leader.plan;
   const consumer = detail.proposal?.consumer ?? leader.delivery?.consumer ?? null;
   const source = detail.proposal?.evidence?.trim() || null;
-  const responsibility = leader.responsible.kind === "role" && leader.responsible.id === detail.task.owner &&
-    responsibleName?.trim() ? responsibleName.trim() : leader.responsible.label;
+  // The owner role's name is already read for 负责职责; every other kind is read by ResponsibleName.
+  const responsibility = leader.responsible.kind === "role" && leader.responsible.id === detail.task.owner && responsibleName?.trim()
+    ? responsibleText(leader.responsible, leader.assignment, { state: "named", name: responsibleName.trim() })
+    : <ResponsibleName projectId={projectId} item={leader} />;
   return <section className="panel task-focus task-leader-facts">
     <div className="panel-head"><h2>当前工作与安排</h2><span className="pill subtle">{leaderPhaseLabel[leader.phase]}</span></div>
-    <p className="task-attention"><strong>下一步：</strong>{leader.nextAction}</p>
+    <p className="task-attention"><strong>下一步：</strong>{workItemNextStep(leader)}</p>
     <TaskTiming timing={leader.timing} detailed />
     <dl>
       <div><dt>责任</dt><dd>{responsibility}
         {leader.assignment && <> · {leader.assignment.state === "accepted" ? "已承接" : leader.assignment.state === "assigned" ? "待承接" : "已释放"}
           {leader.assignment.recipientActorId && <> · 接收者 {leader.assignment.recipientActorId}</>}
-          <br /><small>{leader.assignment.targetKind === "owned" ? "受管 Session" : "外部 HostLink"} <ShortId value={leader.assignment.targetId} /></small></>}
+          <br /><small>{leader.assignment.targetKind === "owned" ? "智能体" : "外部智能体"} <ShortId value={leader.assignment.targetId} /></small></>}
       </dd></div>
       <div><dt>计划</dt><dd>{plan ? <>
         P{plan.priority ?? "未设"} · 计划开始 {plan.plannedStartAt ? date(plan.plannedStartAt) : "未设"} ·
@@ -278,7 +282,7 @@ export function LeaderTaskFacts({ leader, detail, projectId, token, responsibleN
         {leader.stage ? <>阶段：{leader.stage.deliverable}<br /></> : "未关联 Stage"}
         {source ?? (detail.proposal ? "该任务没有另写创建依据说明。" : "历史任务没有新验收合同。")}</dd></div>
       <div><dt>当前验收与消费者</dt><dd>{detail.proposal?.acceptanceMode === "independent_agent"
-        ? "独立 Agent 使用当前交付"
+        ? "独立智能体使用当前交付"
         : detail.proposal?.acceptanceMode === "human_required" ? "受信本人使用当前交付" : "历史合同"}
         {consumer ? ` · ${consumer}` : " · 消费身份待签收"}<br />
         {detail.proposal?.useRequired ? "关闭前要求当前交付的实际使用证据。" : "按既有合同核对使用证据。"}
@@ -291,13 +295,13 @@ export function LeaderTaskFacts({ leader, detail, projectId, token, responsibleN
       <div><dt>当前交付</dt><dd>{leader.delivery ? <>
         技术{leader.delivery.technicalResult === "passed" ? "通过" : "失败"} · <ShortId value={leader.delivery.deliveryId} />
         <br />使用：{leader.delivery.observationResult
-          ? `${leader.delivery.observationKind === "human" ? "本人" : "Agent"} ${leader.delivery.observationActorId} · ${leader.delivery.observationResult}`
+          ? `${leader.delivery.observationKind === "human" ? "本人" : "智能体"} ${leader.delivery.observationActorId} · ${leader.delivery.observationResult}`
           : "尚无本次使用观察"}
       </> : "当前修订尚无交付。"}</dd></div>
-      <div><dt>Leader 决定</dt><dd>{leader.review ? <>
+      <div><dt>统筹决定</dt><dd>{leader.review ? <>
         {leader.review.decision === "acknowledged" ? "已核对" : "暂缓"} · {leader.review.reason}<br />
         <small>{leader.review.actorId} · {date(leader.review.at)} · 变化 {leader.review.reviewedChangeSequence}</small>
-      </> : "当前工作位置尚未记录 Leader 决定。"}</dd></div>
+      </> : "当前工作位置尚未记录统筹决定。"}</dd></div>
     </dl>
     <h3>结果回程</h3><button type="button" disabled={noticeLoading} onClick={() => setNoticeRefresh(value => value + 1)}>重新读取通知</button>
     {noticeError && <p role="status">{noticeError}</p>}
@@ -307,18 +311,18 @@ export function LeaderTaskFacts({ leader, detail, projectId, token, responsibleN
           ? `原通知${item.messageState === "failed" ? "失败" : "已取消"}；须核原消息和 Task，再作新的人工安排` :
           item.blockedReason?.startsWith("MESSAGE_POST_REJECTED") || item.blockedReason === "PINNED_RECIPIENT_CHANGED"
             ? "原消息意图已被拒绝或目标已变；核原操作后人工安排新意图" :
-          item.state === "linked" ? item.readAt ? `Leader 已记录收阅 · ${date(item.readAt)}；下一安排另核` :
+          item.state === "linked" ? item.readAt ? `统筹已记录收阅 · ${date(item.readAt)}；下一安排另核` :
             item.messageBlockedReason ? `消息待恢复：${item.messageBlockedReason}` :
-            item.nativeTurnId ? "原生 Turn 已关联；收阅与下一安排另核" : "已保存给 Leader 的消息，尚未核到原生接收" :
+            item.nativeTurnId ? "这一轮已关联；收阅与下一安排另核" : "已保存给统筹的消息，尚未核到接收" :
           item.blockedReason ? `待恢复：${item.blockedReason}` :
-          item.stale ? "来源属于历史修订，须核当前 Task" : "待通知 Leader"}</span>
+          item.stale ? "来源属于历史修订，须核当前 Task" : "待通知统筹"}</span>
         <small>来源 <code className="break-anywhere">{item.sourceRef}</code> · Task 修订 <ShortId value={item.taskRevisionId} />
           {item.stale && <> · 来源属于历史修订</>}
-          {item.sourceSessionId && <> · 来源 Session <ShortId value={item.sourceSessionId} /></>}
+          {item.sourceSessionId && <> · 来源智能体 <ShortId value={item.sourceSessionId} /></>}
           {item.sourceActorId && <> · 来源 actor {item.sourceActorId}</>}
           {item.recovery?.parentNoticeId && <> · 新意图继承原拒绝通知 <ShortId value={item.recovery.parentNoticeId} /></>}
           {item.recovery?.replacementNoticeId && <> · 已由 {item.recovery.dispositionActorId} 保存替代通知 <ShortId value={item.recovery.replacementNoticeId} /></>}
-          {item.linkedSessionId && <> · <a href={`/p/${encodeURIComponent(projectId)}/sessions?session=${encodeURIComponent(`owned:${item.linkedSessionId}`)}`}>查看目标 Session ↗</a></>}</small>
+          {item.linkedSessionId && <> · <a href={`/p/${encodeURIComponent(projectId)}/sessions?session=${encodeURIComponent(`owned:${item.linkedSessionId}`)}`}>查看目标智能体 ↗</a></>}</small>
         {(item.state === "linked" || item.blockedReason) && <details><summary>核对原通知身份</summary>
           <small>消息 <code className="break-anywhere">{item.messageId}</code><br />
             操作 <code className="break-anywhere">{item.operationId}</code></small></details>}

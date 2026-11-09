@@ -55,13 +55,16 @@ test("missing work progress stays compact, retryable, and leaves read-only tasks
   await page.goto(`${base}/p/${projectId}/work`);
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button", { name: "进入", exact: true }).click();
-  const warning = page.locator(".work-status-warning");
+  // The table view (center) and the inner rail both report it; the table's copy is the full one.
+  const warning = page.locator("main [data-status-warning]");
   await warning.getByText("工作进度暂时无法读取，已加载任务仍可查看。").waitFor({timeout:5000}).catch(async()=>assert.fail(`First status read: ${await page.locator("body").innerText()}`));
   await page.getByRole("button", { name: "可读任务 1", exact: true }).waitFor();
-  assert.equal(await page.getByText(diagnostic).isVisible(), false);
+  // The inner rail lists the same readable tasks while their progress is unknown.
+  await page.getByRole("region", { name: "任务列表" }).getByRole("link").first().filter({ hasText: /^可读任务 1(?!\d)/ }).waitFor();
+  assert.equal(await warning.getByText(diagnostic).isVisible(), false);
   assert.equal(await warning.evaluate(element => element.getBoundingClientRect().height < 150), true);
   await warning.getByText("查看诊断信息").click();
-  await page.getByText(diagnostic).waitFor();
+  await warning.getByText(diagnostic).waitFor();
   await warning.getByText("查看诊断信息").click();
   await page.getByRole("link", { name: "创建任务" }).click();
   await page.getByText("当前身份没有写入权限，不能创建任务。").waitFor();

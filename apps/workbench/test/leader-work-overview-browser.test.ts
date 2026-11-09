@@ -28,7 +28,7 @@ const ordinaryTask = {
   kind: "implementation", acceptance: "确认", owner: roleId, state: "todo", createdAt: stamp,
 };
 
-test("Leader overview hides empty review counts and maps cognition history to readable Chinese labels",
+test("reconciliation overview hides empty review counts and maps cognition history to readable Chinese labels",
   { skip: !modulePath && "Set EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE" }, async t => {
     const { chromium } = (await import(pathToFileURL(modulePath!).href)).default;
     const workStatusCalls: string[][] = [], sessionSnapshotCalls: string[] = [];
@@ -140,27 +140,34 @@ test("Leader overview hides empty review counts and maps cognition history to re
     const browser = await chromium.launch({ headless: true,
       executablePath: process.env.EVOLOOP_BROWSER_TEST_CHROMIUM_EXECUTABLE }); t.after(() => browser.close());
     const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+    const pageErrors: string[] = [];
+    page.on("pageerror", error => pageErrors.push(error.message));
+    page.on("console", message => { if (message.type() === "error") pageErrors.push(message.text()); });
     await page.goto(`${base}/p/${projectId}/work`);
     await page.getByLabel("访问令牌").fill("fixture-token");
     await page.getByRole("button", { name: "进入", exact: true }).click();
-    await page.locator(".leader-work-disclosure > summary").click();
-    const overview = page.locator(".leader-work");
-    await overview.getByRole("heading", { name: "现在需要处理什么" }).waitFor();
-    assert.equal(await overview.locator(".leader-work-phases").count(), 1);
-    assert.doesNotMatch(await overview.innerText(), /^\s*0\s*$/m);
+    // 对账摘要: phase counts above the table; empty review counts stay hidden.
+    const counts = page.getByRole("main").locator('[aria-label="对账阶段计数"]');
+    await counts.getByText("待交付 · 1").waitFor({ timeout: 8000 }).catch(async () => assert.fail(`counts missing: ${(await page.getByRole("main").innerText()).slice(0, 900)} errors=${pageErrors.join(" | ")}`));
+    await counts.getByText("运行中 · 1").waitFor();
+    assert.doesNotMatch(await counts.innerText(), /统筹已暂缓|^\s*0\s*$/m);
+    await page.getByRole("button", { name: /查看全项目统筹对账/ }).click();
+    const overview = page.locator("[data-leader-overview]");
     await overview.getByText("业务结果反馈 · 完成真实闭环验收").waitFor();
     await overview.getByText("历史判断记录 · 原任务责任见原任务").waitFor();
-    await overview.getByText("受管 Session · 产品文档").waitFor();
-    await overview.getByRole("link", { name: "打开 Session" }).waitFor();
+    await overview.getByText("智能体 · 产品文档").waitFor();
+    const agentLink = overview.getByRole("link", { name: "打开智能体" });
+    await agentLink.waitFor();
     await page.getByRole("heading", { name: "哪些阶段可以并行，谁还能接工作" }).waitFor();
-    await page.getByText("2 个 Session · 1 个可接新验收 · 1 个持久工作已清 · 1 个有能力缺项").waitFor();
+    await page.getByText("2 个智能体 · 1 个可接新验收 · 1 个已登记工作已清 · 1 个有能力缺项").waitFor();
     await page.getByText("缺：MESSAGE_GRANT_MISSING").waitFor();
     if (process.env.EVOLOOP_ACCEPTANCE_CAPACITY_SCREENSHOT)
       await page.screenshot({ path: process.env.EVOLOOP_ACCEPTANCE_CAPACITY_SCREENSHOT, fullPage: false });
     const text = await overview.innerText();
-    assert.doesNotMatch(text, /Cognition:|Role cognition|25deb2bf|Role cognition fallback/);
-    assert.match(text, /待结果交付/);
-    assert.match(text, new RegExp(sessionId.slice(0, 8)));
+    assert.doesNotMatch(text, /Cognition:|Role cognition|25deb2bf|Role cognition fallback|Session|Leader/);
+    assert.match(text, /待交付/);
+    // The agent stays reachable by its exact key even though raw IDs are not printed.
+    assert.equal(await agentLink.getAttribute("href"), `/p/${projectId}/sessions?session=${encodeURIComponent(ownedSessionKey)}`);
     await page.waitForFunction(async () =>
       (await (await fetch("/__fixture/work-status-calls")).json() as string[][]).some(ids => ids.includes(
         "31000006-0000-4000-8000-000000000006")));

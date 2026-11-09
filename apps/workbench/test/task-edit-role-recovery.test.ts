@@ -46,8 +46,8 @@ test("Task actions expose planning, dependency and exact-position Leader review"
     context: reviewContext, detail, leader, mode: "actions",
   }));
   assert.match(html, /设置计划、截止与优先级/);
-  assert.match(html, /设置前置 Task 依赖/);
-  assert.match(html, /记录 Leader 处理决定/);
+  assert.match(html, /设置前置任务依赖/);
+  assert.match(html, /记录统筹处理决定/);
   assert.match(html, /已核对当前工作/);
 });
 
@@ -93,9 +93,12 @@ test("Task detail exposes current plan, responsibility, consumer, source and nex
   const html = renderToStaticMarkup(createElement(LeaderTaskFacts, {
     leader, detail: withAcceptance, projectId: task.projectId, responsibleName: "验收与流程负责人",
   }));
-  assert.match(html, /等待前置结果验收/);
+  // The next step names what holds the task (the unaccepted prerequisite), in the workbench's words; the
+  // projection's nextAction is text for agents and is not shown.
+  assert.match(html, /下一步：<\/strong>等待前置任务「前置结果」通过验收；处理后再安排承接/);
+  assert.doesNotMatch(html, /等待前置结果验收/);
   assert.match(html, /P2 · 计划开始/);
-  assert.match(html, /责任<\/dt><dd>验收与流程负责人/);
+  assert.match(html, /责任<\/dt><dd>职责 · 验收与流程负责人/);
   assert.doesNotMatch(html, new RegExp(`负责 Role ${owner}`));
   assert.match(html, /acceptance-agent/);
   assert.match(html, /来自需求会话的固定依据/);

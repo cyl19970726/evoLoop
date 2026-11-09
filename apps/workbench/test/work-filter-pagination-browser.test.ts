@@ -46,8 +46,11 @@ for (const scenario of ["visible", "failure", "closed", "mine"] as const) test({
           : onlyClosed ? { items: [], nextCursor: null }
           : cursor === "second" ? { items: [current], nextCursor: "third" } : { items: [future], nextCursor: null };
       } else if (url.pathname.startsWith(`${root}/tasks/`)) {
-        const found = [...closed, current, future].find(item => url.pathname.endsWith(item.id))!;
-        value = { task: found, revision: { ...found, taskId: found.id }, basis: null, links: [], impacts: [], decisions: [], deliveries: [], observations: [], closures: [] };
+        // Only the task detail itself is served; its sub-resources (timing, assignment, relays) are absent here.
+        const [taskId, sub] = url.pathname.slice(`${root}/tasks/`.length).split("/");
+        const found = [...closed, current, future].find(item => item.id === taskId);
+        if (!found || sub) { status = 404; value = { message: "夹具未提供" }; }
+        else value = { task: found, revision: { ...found, taskId: found.id }, basis: null, links: [], impacts: [], decisions: [], deliveries: [], observations: [], closures: [] };
       } else if (url.pathname === `${root}/orchestration/work-status`) value = { items: (url.searchParams.get("taskIds") ?? "").split(",").filter(Boolean).map(taskId => ({ taskId, cognition: false, hasClosure: false, readyForAcceptance: false })) };
       else if (url.pathname === `${root}/impacts`) value = [];
       else if (url.pathname === `${root}/work-management/index`) {
@@ -78,39 +81,48 @@ for (const scenario of ["visible", "failure", "closed", "mine"] as const) test({
   await page.goto(`${base}/p/${projectId}/work${mine ? "?scope=mine" : ""}`);
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button", { name: "进入", exact: true }).click();
+  // At 390px the list's filters sit in the navigation drawer; the table view fills the center.
+  const main = page.getByRole("main");
+  const filterState = async (value: string) => {
+    await page.getByRole("button", { name: "打开项目导航" }).click();
+    await page.getByLabel("任务状态筛选").selectOption(value);
+    await page.keyboard.press("Escape");
+    await page.getByRole("dialog").waitFor({ state: "detached" });
+  };
   if (mine) {
-    await page.getByText("我的承接信息尚未读全，当前结果不完整。", { exact: true }).waitFor();
+    await main.getByText("我的承接信息尚未读全，当前结果不完整。", { exact: true }).waitFor();
     await page.waitForTimeout(300);
     assert.deepEqual(cursors, ["first"], "an unread assignment is not evidence to fetch more Tasks");
     await fetch(`${base}/__fixture/restore`);
-    await page.getByRole("row").filter({ hasText: current.title }).waitFor();
+    await main.getByRole("row").filter({ hasText: current.title }).waitFor();
     await page.waitForTimeout(300);
     assert.deepEqual(cursors, ["first"], "a matching current assignment stops continuation");
     assert.deepEqual(errors, []); return;
   }
   if (onlyClosed) {
-    await page.getByRole("heading", { name: "没有匹配项", exact: true }).waitFor({ timeout: 5000 });
+    await main.getByText("没有匹配项", { exact: true }).waitFor({ timeout: 5000 });
     assert.deepEqual(cursors, ["first", "second"]);
-    assert.equal(await page.getByRole("heading", { name: "还没有任务", exact: true }).count(), 0);
-    await page.getByLabel("任务状态筛选").selectOption("all");
-    await page.getByRole("row").filter({ hasText: "历史任务 1" }).first().waitFor();
+    assert.equal(await main.getByText("还没有任务", { exact: true }).count(), 0);
+    await filterState("all");
+    await main.getByRole("row").filter({ hasText: "历史任务 1" }).first().waitFor();
     assert.deepEqual(errors, []); return;
   }
   if (failingPage) {
-    await page.getByText(/搜索未完成：.*后页暂不可读/).waitFor({ timeout: 5000 });
-    assert.equal(await page.getByRole("heading", { name: "还没有任务", exact: true }).count(), 0);
+    await main.getByText(/搜索未完成：.*后页暂不可读/).waitFor({ timeout: 5000 });
+    assert.equal(await main.getByText("还没有任务", { exact: true }).count(), 0);
     await fetch(`${base}/__fixture/restore`);
-    await page.getByRole("button", { name: "加载更多", exact: true }).click();
+    await main.getByRole("button", { name: "加载更多", exact: true }).click();
   }
-  await page.getByRole("row").filter({ hasText: current.title }).waitFor({ timeout: 5000 });
+  await main.getByRole("row").filter({ hasText: current.title }).waitFor({ timeout: 5000 });
   await page.waitForTimeout(300);
   assert.equal(cursors.filter(cursor => cursor === "second").length, failingPage ? 2 : 1);
   assert.equal(cursors.includes("third"), false, "stop automatic continuation once matching work is visible");
-  await page.getByLabel("任务状态筛选").selectOption("todo");
-  await page.getByRole("row").filter({ hasText: future.title }).waitFor({ timeout: 5000 });
+  await filterState("todo");
+  await main.getByRole("row").filter({ hasText: future.title }).waitFor({ timeout: 5000 });
   assert.equal(cursors.filter(cursor => cursor === "third").length, 1);
-  await page.getByLabel("任务状态筛选").selectOption("all");
-  await page.getByRole("row").filter({ hasText: "历史任务 1" }).first().waitFor();
+  assert.match(page.url(), /[?&]state=todo/, "the filter is written into the address");
+  await filterState("all");
+  await main.getByRole("row").filter({ hasText: "历史任务 1" }).first().waitFor();
   assert.equal(await page.locator("body").evaluate(element => element.scrollWidth <= window.innerWidth), true);
   assert.deepEqual(errors, []);
 });

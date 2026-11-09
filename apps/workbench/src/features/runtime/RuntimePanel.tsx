@@ -34,7 +34,8 @@ const sessionState: Record<RuntimeSessionRecord["state"], string> = {
   reserved: "已预留", creating: "创建中", ready: "就绪", closing: "关闭中", unknown: "状态未知", closed: "已关闭",
 };
 type RoleName = { title?: string; error?: string };
-export function RuntimePanel({ context, refresh, task, taskDetail, targetSessionId }: { context: MutationContext; refresh: number; task?: Task; taskDetail?: TaskDetail; targetSessionId?: string }) {
+/** `collaboration={false}` when the task page already shows the task's collaboration thread under 进展与讨论. */
+export function RuntimePanel({ context, refresh, task, taskDetail, targetSessionId, collaboration = true }: { context: MutationContext; refresh: number; task?: Task; taskDetail?: TaskDetail; targetSessionId?: string; collaboration?: boolean }) {
   const [status, setStatus] = useState<RuntimeStatus | null>(null);
   const [sessions, setSessions] = useState<RuntimeSessionRecord[]>([]);
   const [runs, setRuns] = useState<RuntimeRunRecord[]>([]);
@@ -178,7 +179,7 @@ export function RuntimePanel({ context, refresh, task, taskDetail, targetSession
     </section>}
     <OrchestrationPanel key={`${context.projectId}:${context.principal.actorId}:${task?.id ?? "project"}`} token={context.token} projectId={context.projectId} refresh={refresh + epoch} taskId={task?.id} verifiedRuns={!error && runsForTask === task?.id ? runs : null} runtimePoll={runtimePoll && runtimePoll.taskId === task?.id ? runtimePoll.sequence : 0} />
     {!hasTarget && <ResidentQueuePanel context={context} token={context.token} projectId={context.projectId} refresh={refresh + epoch} task={task} runs={runs} sessions={sessions} />}
-    {task && <TaskCollaborationThread token={context.token} projectId={context.projectId} taskId={task.id} refresh={refresh + epoch} />}
+    {task && collaboration && <TaskCollaborationThread token={context.token} projectId={context.projectId} taskId={task.id} refresh={refresh + epoch} />}
     {loadedScope === sessionScope && visibleSessions.length === 0 && !hasTarget && <p className="empty">{task ? "本任务还没有关联的受管会话。" : "还没有受管会话。仅管理在本项目明确授权并由 evoLoop 创建的会话。"}</p>}
     {visibleSessions.filter(session => !focusedSession || session.id !== focusedSession.id).map(session => <SessionCard key={session.id} context={context} session={session} focused={false} anchor={!task} role={resolvedRoles[session.roleId]} />)}
     {status?.available && status.grants.length > 0 && grants.length === 0 && <Notice>当前没有同时允许完整本机权限、无需逐次审批和联网的精确授权；请核对项目执行配置后再创建新会话。</Notice>}

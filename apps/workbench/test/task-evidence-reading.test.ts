@@ -30,7 +30,7 @@ test("latest failed observation remains scoped to its delivery with registered k
   const reason = "本次访问失败。".repeat(35);
   const failed = { id: "new-failed", deliveryId: "new", observer: "核对者", observerKind: "agent", result: "failed", evidence: "实际读取失败", reason, actorId: "reviewer", createdAt: "2026-10-24T02:00:00.000Z" } as ConsumerObservation;
   assert.deepEqual(observationsForDelivery([old, failed], "new"), [failed]);
-  assert.equal(observerKindLabel[failed.observerKind], "登记为 Agent");
+  assert.equal(observerKindLabel[failed.observerKind], "登记为智能体");
   assert.equal(observationResultLabel[failed.result], "使用失败");
   assert.equal(observationResultLabel[old.result], "已使用");
   const renderedReason = renderToStaticMarkup(createElement(EvidenceText, { label: "记录理由", value: failed.reason }));

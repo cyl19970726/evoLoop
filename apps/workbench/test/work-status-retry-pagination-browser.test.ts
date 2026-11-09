@@ -62,7 +62,9 @@ test("a delayed retry preserves statuses from a newly loaded Task page", { skip:
   await page.goto(`${base}/p/${projectId}/work`);
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button", { name: "进入", exact: true }).click();
-  const warning = page.locator(".work-status-warning");
+  // The table view (center) and the inner rail both report it; assertions use the table's copy.
+  const warning = page.locator("main [data-status-warning]");
+  const business = page.locator('main tbody[data-group="business"]');
   await warning.waitFor({timeout:5000}).catch(async()=>assert.fail(`First status read: ${await page.locator("body").innerText()}`));
   await warning.getByRole("button", { name: "重试读取工作进度" }).click({timeout:5000}).catch(async()=>assert.fail(`Retry button: ${await page.locator("body").innerText()}`));
   let pending = false;
@@ -71,11 +73,11 @@ test("a delayed retry preserves statuses from a newly loaded Task page", { skip:
     if (!pending) await new Promise(resolve => setTimeout(resolve, 20));
   }
   assert.equal(pending, true, "retry did not become pending");
-  await page.getByRole("button", { name: "加载更多" }).click();
-  await page.locator(".work-status-section").first().getByRole("link", { name: "第二页任务" }).waitFor();
+  await page.getByRole("main").getByRole("button", { name: "加载更多" }).click();
+  await business.getByRole("link", { name: "第二页任务" }).waitFor();
   assert.equal(await warning.isVisible(), true);
   await fetch(`${base}/__fixture/release-retry`);
   await warning.waitFor({ state: "detached" });
-  await page.locator(".work-status-section").first().getByRole("link", { name: "第二页任务" }).waitFor();
-  assert.equal(await page.getByRole("link", { name: "第二页任务" }).count(), 1);
+  await business.getByRole("link", { name: "第二页任务" }).waitFor();
+  assert.equal(await page.getByRole("main").getByRole("link", { name: "第二页任务" }).count(), 1);
 });
