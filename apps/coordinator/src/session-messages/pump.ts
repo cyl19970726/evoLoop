@@ -99,9 +99,16 @@ export class SessionMessagePump {
         : !runtime.startConversationTurn||!runtime.qualifyConversationThread){
         await this.deps.service.noteBlocked(message.projectId,message.id,'Native Session execution profile verification is unavailable');return;
       }
-      const qualification=connectorBindingId
+      let qualification:{available:boolean;reason:string;fingerprint:string|null};
+      try{qualification=connectorBindingId
         ? await runtime.qualifyConnectorReceiver!(binding,connectorBindingId)
-        : await runtime.qualifyConversationThread!(binding);
+        : await runtime.qualifyConversationThread!(binding);}
+      catch(error){
+        // Several runtimes: the method exists for the Session's runtime kind only when that runtime supports it.
+        if(error instanceof DomainError&&error.code==='CAPABILITY_UNAVAILABLE'){
+          await this.deps.service.noteBlocked(message.projectId,message.id,error.message);return;}
+        throw error;
+      }
       if(!qualification.available||!qualification.fingerprint){
         await this.deps.service.noteBlocked(message.projectId,message.id,qualification.reason);return;
       }

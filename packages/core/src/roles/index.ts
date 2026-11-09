@@ -18,6 +18,7 @@ export async function applyRole(tx: RoleTransaction, principal: Principal, input
   if (!principal.actorId || !principal.projectIds.includes(command.projectId) || !principal.permissions.includes("write")) return fail("FORBIDDEN", "project write permission required");
   if (command.type !== "role.propose" && !principal.permissions.includes("review")) return fail("FORBIDDEN", "role decision requires review permission");
   if (!Number.isFinite(date(context.nowUtc))) return fail("INVALID_TIME", "nowUtc must be a valid instant");
+  if (command.type === "role.runtime.set") return fail("INVALID_COMMAND", "role runtime commands are applied by applyRoleRuntime");
 
   if (command.type === "role.propose") {
     if (command.proposal.templateKey && !command.proposal.roleClass)

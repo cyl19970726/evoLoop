@@ -1,3 +1,5 @@
+import { spawn } from "node:child_process";
+import { closeSync, writeFileSync } from "node:fs";
 import { createInterface } from "node:readline";
 
 const mode = process.argv[2] ?? "normal";
@@ -21,6 +23,11 @@ let selectedModel = mode==='model-effort-active'?'new-model':'old-model';
 let selectedEffort = mode==='model-effort-active'?'max':'high';
 const sequenceInputs = [];
 let unloaded = mode.startsWith('full-unloaded')||mode==='model-effort-unloaded';
+if (mode === "grandchild") {
+  // A tool process the App Server started; close must reach it through the process group.
+  const sleeper = spawn("sleep", ["30"], { stdio: "ignore" });
+  writeFileSync(process.argv[3], String(sleeper.pid));
+}
 for await (const line of lines) {
   const message = JSON.parse(line);
   if (message.method === "initialized") {
@@ -33,6 +40,11 @@ for await (const line of lines) {
       process.on('SIGTERM',()=>{});
       process.stdout.end();
     }
+    continue;
+  }
+  if (mode === "invalid-server-request" && message.id === null && message.error) {
+    send({ method: "fixture/invalidRequestAnswered", params: { threadId: thread.id, code: message.error.code } });
+    send({ method: "turn/completed", params: { threadId: thread.id, turn: { id: "turn-1", status: "completed", completedAt: 1792498484 } } });
     continue;
   }
   if (message.id === approvalId && pendingCreateId !== null) {
@@ -88,6 +100,35 @@ for await (const line of lines) {
   if (mode === 'workspace-history' && method === 'thread/turns/list') {
     send({id,result:{data:[{id:'turn-1',status:'completed',startedAt:1700000000,completedAt:1700000001,items:[]}],nextCursor:null}});continue;
   }
+  if (mode.startsWith("capability-lists") && method === "skills/list") {
+    if (JSON.stringify(params) !== JSON.stringify({ cwds: ["/tmp/evoloop-fixture"], forceReload: true })) {
+      send({ id, error: { code: -32602, message: "unexpected skills/list params" } }); continue;
+    }
+    send({ id, result: { data: [{ cwd: "/private/tmp/evoloop-fixture", errors: [], skills: [
+      { name: "alpha", path: "/tmp/evoloop-fixture/.agents/skills/alpha/SKILL.md", scope: "repo", enabled: true, description: "Alpha skill" },
+      { name: "mine", path: "/home/fixture/.agents/skills/mine/SKILL.md", scope: "user", enabled: true, description: "x".repeat(900), pluginId: "tools@local" },
+      { name: "skill-installer", path: "/home/fixture/.codex/skills/.system/skill-installer/SKILL.md", scope: "system", enabled: true, description: "" },
+      { name: "bad\nname", path: "/x/SKILL.md", scope: "repo", enabled: true, description: "" },
+      { name: "relative", path: "skills/relative/SKILL.md", scope: "repo", enabled: true, description: "" },
+      { name: "odd-scope", path: "/x/odd/SKILL.md", scope: "team", enabled: true, description: "" },
+    ] }] } });
+    continue;
+  }
+  if (mode.startsWith("capability-lists") && method === "plugin/list") {
+    if (mode === "capability-lists-partial") { send({ id, error: { code: -32000, message: "private marketplace path" } }); continue; }
+    send({ id, result: { marketplaces: [{ name: "local", plugins: [
+      { id: "tools@local", name: "tools", installed: true, enabled: true },
+      { id: "other@local", name: "other", installed: false, enabled: false },
+      { id: "off@local", name: "off", installed: true, enabled: false },
+    ] }] } });
+    continue;
+  }
+  if (mode.startsWith("capability-lists") && method === "mcpServerStatus/list") {
+    if (mode === "capability-lists-partial") continue;
+    send({ id, result: { data: [{ name: "docs", authStatus: "oAuth", tools: {}, resources: [], resourceTemplates: [] },
+      { name: 7, authStatus: "unknown" }], nextCursor: null } });
+    continue;
+  }
   if (method === "model/list") {
     modelListReads++;
     if (params.limit !== 100) { send({id,error:{code:-32602,message:"wrong page size"}}); continue; }
@@ -121,6 +162,12 @@ for await (const line of lines) {
   }
   if (mode === "malformed" && method === "turn/start") { process.stdout.write("{broken\n"); continue; }
   if (mode === "disconnect" && method === "turn/start") { process.exit(0); }
+  if (mode === "overlong-line" && method === "turn/start") {
+    // One line split across writes, larger than the adapter's per-line ceiling.
+    process.stdout.write(`{"id":${id},"result":{"pad":"${"x".repeat(3000)}`);
+    setTimeout(() => process.stdout.write(`${"y".repeat(3000)}"}}\n`), 20);
+    continue;
+  }
   if ((mode === "timeout" || mode === "zero-turn-timeout") && method === "turn/start") continue;
   if (mode === "reject-start" && method === "turn/start") { send({ id, error: { code: -32602, message: "invalid params: private fixture detail" } }); continue; }
   if (method === "thread/start") {
@@ -145,7 +192,15 @@ for await (const line of lines) {
       const nativeThread={...thread,model:params.model??'gpt-6-sol'};
       send({id,result:{thread:nativeThread,model:nativeThread.model,modelProvider:'openai',cwd:thread.cwd,
         approvalPolicy:params.approvalPolicy,
-        sandbox:mode==='full-start-wrong'?{type:'readOnly',networkAccess:false}:{type:'dangerFullAccess'}}});continue;
+        sandbox:mode==='full-start-wrong'?{type:'readOnly',networkAccess:false}:{type:'dangerFullAccess'}}});
+      if(mode==='stdin-closed-live'){
+        // Stop reading while staying alive: the adapter's next write meets a closed pipe.
+        // libuv never closes stdio descriptors on destroy, so close fd 0 explicitly.
+        setInterval(()=>{},1000);
+        process.stdin.destroy();
+        closeSync(0);
+      }
+      continue;
     }
     send({id,error:{code:-32602,message:"new fixture Session requires full policy"}});continue;
   }
@@ -300,7 +355,9 @@ for await (const line of lines) {
     send({ id, result: { data: [{ id: "turn-1",
       status: mode === "transient-interrupted" && turnListReads === 1 ? "interrupted" : mode === "failed-turn" ? "failed" : "completed",
       completedAt: mode === "transient-interrupted" && turnListReads === 1 ? null : mode === "invalid-completed-at" ? "not-a-timestamp" : 1792498484,
-      ...(mode === "failed-turn" ? { error: { message: JSON.stringify({ status: 400, error: { type: "invalid_request_error", message: "The 'gpt-6.1-sol' model is not supported when using Codex with a ChatGPT account. Private fixture detail" } }) } } : {})
+      ...(mode === "failed-turn" ? { error: { message: JSON.stringify({ status: 400, error: { type: "invalid_request_error", message: "The 'gpt-6.1-sol' model is not supported when using Codex with a ChatGPT account. Private fixture detail" } }) } } : {}),
+      ...(mode === "context-window-turn" ? { status: "failed", error: { message: "private overflow detail", codexErrorInfo: "contextWindowExceeded" } } : {}),
+      ...(mode === "context-window-object" ? { status: "failed", error: { message: JSON.stringify({ status: 400 }), codexErrorInfo: { contextWindowExceeded: null } } } : {})
     }], nextCursor: null } }); continue;
   }
   if (method === "thread/items/list") {
@@ -363,6 +420,7 @@ for await (const line of lines) {
       send({ id: 853, method: "unreviewed/serverRequest", params: { threadId: thread.id } });
     }
     if (mode === "approval") send({ id: approvalId, method: "item/commandExecution/requestApproval", params: { threadId: thread.id, turnId: "turn-1", command: "echo fixture" } });
+    if (mode === "invalid-server-request") send({ id: { invalid: true }, method: "item/commandExecution/requestApproval", params: { threadId: thread.id, turnId: "turn-1" } });
     if(mode==='full-dynamic')send({id:toolId,method:'item/tool/call',params:{
       threadId:thread.id,turnId:startedTurnId,callId:'full-call',tool:'browser_snapshot',arguments:{}}});
     if (mode==="dynamic-persisted-resume") {

@@ -16,7 +16,7 @@ type Environment = Record<string, string | undefined>;
 interface IO { stdout(text: string): void; stderr(text: string): void }
 class UsageError extends Error { readonly code = "INVALID_INPUT"; }
 interface Args { words: string[]; options: Map<string, string | true> }
-const values = new Set(["project", "revision", "limit", "cursor", "turn-cursor", "messages-cursor", "source", "turn-id", "after", "wait-ms", "out", "file", "id", "receipt", "attempt", "task", "state", "phase", "signal", "waiting-on-kind", "waiting-on-id", "stage", "knowledge", "loop", "search", "membership", "importance", "role", "session", "discussion", "message", "kind", "hash", "asset-hash", "model", "effort", "color", "mark", "reason", "evidence-ref", "operation"]);
+const values = new Set(["project", "revision", "limit", "cursor", "turn-cursor", "messages-cursor", "source", "turn-id", "after", "wait-ms", "out", "file", "id", "receipt", "attempt", "task", "state", "phase", "signal", "waiting-on-kind", "waiting-on-id", "stage", "knowledge", "loop", "search", "membership", "importance", "role", "session", "discussion", "message", "kind", "hash", "asset-hash", "model", "effort", "color", "mark", "reason", "evidence-ref", "operation", "provider", "project-skills", "personal", "builtin", "add", "remove"]);
 const switches = ["help", "history", "graph", "events", "revisions", "result", "trace", "occurrences", "reviews", "handoffs", "bindings", "route", "hosts", "attempts", "recovery", "inputs", "observation", "documents", "closed"];
 function uuid(value: string | undefined, label: string): string {
   if (!idSchema.safeParse(value).success) throw new UsageError(`${label} must be a UUID.`);
@@ -105,6 +105,8 @@ const help = {
     "session identity show owned:UUID|external:UUID --project UUID",
     "session identity set owned:UUID|external:UUID --project UUID --color TOKEN --mark TOKEN --reason TEXT [--operation UUID] (read current version, save and read back)",
     "models --project UUID (read authorized, currently available App Server models before session prepare)",
+    "role runtime show ROLE_UUID --project UUID (bound runtime and the skills the Role has now, read live)",
+    "role runtime set ROLE_UUID --project UUID [--provider codex|claude] [--project-skills on|off] [--personal on|off] [--builtin on|off] [--add NAMES|none] [--remove NAMES|none] --reason TEXT [--operation UUID] (binds the runtime once; afterwards only skills change; reads back)",
     "work message MESSAGE_UUID --project UUID; work profile KEY|assignment TASK_UUID --project UUID [--history --limit 1..50 --cursor VERSION]",
     "task UUID --project UUID [--revision UUID | --history]", "context TASK_UUID --project UUID [--revision UUID] (current todo includes observed planning pointers; use original for exact source bytes)",
     "materials TASK_UUID --project UUID --revision UUID (bounded fixed Task and sealed basis catalog)",
@@ -235,6 +237,42 @@ async function dispatch(args: Args, env: Environment, io: IO): Promise<unknown> 
       return {result,identity:record(record(await client.get(`/api/projects/${projectId}/session-work/${encodeURIComponent(sessionKey)}`))?.session)?.identity??null};
     }
     throw new UsageError('Use session identity show or set.');
+  }
+  if(action==="role"&&args.words[1]==="runtime"){
+    const mode=args.words[2],roleId=uuid(args.words[3],"Role"),projectId=project();
+    const path=`/api/projects/${projectId}/roles/${roleId}/runtime`;
+    if(mode==="show"){check(args,4,["project"]);return client.get(path);}
+    if(mode==="set"){
+      check(args,4,["project","provider","project-skills","personal","builtin","add","remove","reason","operation"]);
+      const reason=option(args,"reason");
+      if(!reason)throw new UsageError("role runtime set requires --reason.");
+      const view=record(await client.get(path));
+      const selection=record(view?.selection),binding=record(view?.binding);
+      if(!view||!selection||typeof view.provider!=="string")throw new UsageError("Current Role runtime is unavailable; use role runtime show.");
+      const toggle=(key:string,current:unknown)=>{
+        const value=option(args,key);
+        if(value===undefined)return current;
+        if(value!=="on"&&value!=="off")throw new UsageError(`--${key} takes on or off.`);
+        return value==="on";
+      };
+      const names=(key:string,current:unknown)=>{
+        const value=option(args,key);
+        if(value===undefined)return current;
+        return value==="none"?[]:value.split(",").map(item=>item.trim()).filter(Boolean);
+      };
+      const operationId=option(args,"operation")?uuid(option(args,"operation"),"Operation"):randomUUID();
+      const command=commandSchema.parse({type:"role.runtime.set",projectId,roleId,operationId,
+        expectedRevision:typeof binding?.revision==="number"?binding.revision:0,
+        provider:option(args,"provider")??view.provider,
+        skills:{project:toggle("project-skills",selection.project),personal:toggle("personal",selection.personal),
+          builtin:toggle("builtin",selection.builtin),add:names("add",selection.add),remove:names("remove",selection.remove)},reason});
+      const result=await dispatchMutation(client,store,origin,token,{id:operationId,operationId,projectId,
+        kind:command.type,path:"/api/commands",body:command,confirmation:"command",
+        recovery:{kind:"core",path:`/api/projects/${projectId}/operations/${operationId}`}},
+        value=>io.stderr(JSON.stringify(value)+"\n"),await verifiedActor());
+      return {result,runtime:await client.get(path)};
+    }
+    throw new UsageError("Use role runtime show or role runtime set.");
   }
   if (action === "session") { check(args, 1); return client.get("/api/session"); }
   if (action === "models") { check(args, 1, ["project"]); return client.get(`/api/projects/${project()}/runtime/models`); }

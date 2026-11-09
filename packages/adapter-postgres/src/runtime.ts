@@ -19,6 +19,8 @@ const session = (r: QueryResultRow): RuntimeSessionRecord => ({
   projectId: r.project_id, id: r.session_id, roleId: r.role_id, cwd: r.cwd,
   authorizationScope: r.authorization_scope, model: r.model, sandbox: r.sandbox,
   observedModel:r.observed_model??null,observedProvider:r.observed_provider??null,
+  // Codex is the implicit provider (sessionProvider); only another provider is carried explicitly.
+  ...(r.runtime_provider && r.runtime_provider !== "codex" ? { runtimeProvider: r.runtime_provider } : {}),
   approvalPolicy: r.approval_policy, state: r.state, version: r.version,
   nativeThreadId: r.native_thread_id, nativeSessionId: r.native_session_id,
   operationId: r.operation_id, actorId: r.actor_id,
@@ -52,6 +54,8 @@ const run = (r: QueryResultRow): RuntimeRunRecord => ({
   nativeEnvironmentEpoch: nativeEpoch(r.native_environment_epoch),
   resultSummary: r.result_summary, actorId: r.actor_id,
   createdAt: iso(r.created_at), updatedAt: iso(r.updated_at),
+  ...(r.usage ? { usage: r.usage } : {}),
+  ...(r.cost_usd != null ? { costUsd: Number(r.cost_usd) } : {}),
   evaluationBinding: r.evaluation_id ? {
     evaluationId: r.evaluation_id, revisionId: r.evaluation_revision_id, caseId: r.evaluation_case_id,
     conditionId: r.evaluation_condition_id, sourceTaskRevisionId: r.evaluation_source_task_revision_id,
@@ -128,9 +132,10 @@ export class PgRuntimeStore {
   }
   async insertRuntimeSession(item: RuntimeSessionRecord): Promise<void> {
     this.scope(item.projectId);
-    await this.client.query(`INSERT INTO runtime_session(project_id,session_id,role_id,cwd,authorization_scope,model,sandbox,approval_policy,state,version,native_thread_id,native_session_id,operation_id,actor_id,created_at,updated_at)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
-      [item.projectId,item.id,item.roleId,item.cwd,item.authorizationScope,item.model,item.sandbox,item.approvalPolicy,item.state,item.version,item.nativeThreadId,item.nativeSessionId,item.operationId,item.actorId,item.createdAt,item.updatedAt]);
+    await this.client.query(`INSERT INTO runtime_session(project_id,session_id,role_id,cwd,authorization_scope,model,sandbox,approval_policy,state,version,native_thread_id,native_session_id,operation_id,actor_id,created_at,updated_at,runtime_provider)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
+      [item.projectId,item.id,item.roleId,item.cwd,item.authorizationScope,item.model,item.sandbox,item.approvalPolicy,item.state,item.version,item.nativeThreadId,item.nativeSessionId,item.operationId,item.actorId,item.createdAt,item.updatedAt,
+        item.runtimeProvider ?? "codex"]);
   }
   async updateRuntimeSession(item: RuntimeSessionRecord, expectedVersion: number): Promise<void> {
     this.scope(item.projectId);
@@ -155,11 +160,13 @@ export class PgRuntimeStore {
   }
   async updateRuntimeRun(item: RuntimeRunRecord, expectedVersion: number): Promise<void> {
     this.scope(item.projectId);
-    const result = await this.client.query(`UPDATE runtime_run SET state=$3,version=$4,native_turn_id=$5,interrupt_requested=$6,result_summary=$7,updated_at=$8,evaluation_packet=$9::jsonb,pre_turn_proof=$11::jsonb
+    const result = await this.client.query(`UPDATE runtime_run SET state=$3,version=$4,native_turn_id=$5,interrupt_requested=$6,result_summary=$7,updated_at=$8,evaluation_packet=$9::jsonb,pre_turn_proof=$11::jsonb,
+      usage=$12::jsonb,cost_usd=$13
       WHERE project_id=$1 AND run_id=$2 AND version=$10`,
       [item.projectId,item.id,item.state,item.version,item.nativeTurnId,item.interruptRequested,item.resultSummary,item.updatedAt,
         item.evaluationPacket ? JSON.stringify(item.evaluationPacket) : null,expectedVersion,
-        item.preTurnProof ? JSON.stringify(preTurnProofSchema.parse(item.preTurnProof)) : null]);
+        item.preTurnProof ? JSON.stringify(preTurnProofSchema.parse(item.preTurnProof)) : null,
+        item.usage ? JSON.stringify(item.usage) : null, item.costUsd ?? null]);
     if (!result.rowCount) throw new DomainError("VERSION_CONFLICT", "runtime run version changed", (await this.getRuntimeRun(item.id))?.version);
   }
   async appendRuntimeEvent(item: RuntimeRecordEvent): Promise<void> {

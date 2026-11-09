@@ -1,4 +1,5 @@
 import type { Pool, PoolClient } from "pg";
+import type { RoleRuntimeRevision } from "@evoloop/contracts/role-skills";
 import type { RoleDecision, RoleHandoff, RoleHandoffEvent, RoleReader, RoleRecord, RoleRevision, RoleRuntimeSessionSnapshot, RoleSessionBinding, RoleTaskSnapshot, RoleTransaction, RoleTrialReview } from "@evoloop/contracts/roles";
 
 const iso = (value: Date | string): string => new Date(value).toISOString();
@@ -107,14 +108,34 @@ export class PgRoleQueries implements RoleTransaction, RoleReader {
     if (result.rows.length > 100) throw new PgRoleConflict("too many unfinished tasks to verify");
     return result.rows.map(row => ({ id: row.task_id, owner: row.owner, version: row.version, state: row.state }));
   }
+  private sessionSnapshot(row: any): RoleRuntimeSessionSnapshot {
+    return { id: row.session_id, roleId: row.role_id, state: row.state, nativeThreadId: row.native_thread_id, runtimeProvider: row.runtime_provider };
+  }
   async getRuntimeSession(sessionId: string): Promise<RoleRuntimeSessionSnapshot | null> {
-    const result = await this.client.query("SELECT session_id,role_id,state,native_thread_id FROM runtime_session WHERE project_id=$1 AND session_id=$2", [this.projectId,sessionId]);
-    const row = result.rows[0]; return row ? { id: row.session_id, roleId: row.role_id, state: row.state, nativeThreadId: row.native_thread_id } : null;
+    const result = await this.client.query("SELECT session_id,role_id,state,native_thread_id,runtime_provider FROM runtime_session WHERE project_id=$1 AND session_id=$2", [this.projectId,sessionId]);
+    const row = result.rows[0]; return row ? this.sessionSnapshot(row) : null;
   }
   async listOpenRuntimeSessions(roleId: string): Promise<RoleRuntimeSessionSnapshot[]> {
-    const result = await this.client.query("SELECT session_id,role_id,state,native_thread_id FROM runtime_session WHERE project_id=$1 AND role_id=$2 AND state<>'closed' ORDER BY session_id LIMIT 101", [this.projectId,roleId]);
+    const result = await this.client.query("SELECT session_id,role_id,state,native_thread_id,runtime_provider FROM runtime_session WHERE project_id=$1 AND role_id=$2 AND state<>'closed' ORDER BY session_id LIMIT 101", [this.projectId,roleId]);
     if (result.rows.length > 100) throw new PgRoleConflict("too many open runtime sessions to verify");
-    return result.rows.map(row => ({ id: row.session_id, roleId: row.role_id, state: row.state, nativeThreadId: row.native_thread_id }));
+    return result.rows.map(row => this.sessionSnapshot(row));
+  }
+  private runtimeRevision(row: any): RoleRuntimeRevision {
+    return { projectId: row.project_id, roleId: row.role_id, revision: row.revision, provider: row.runtime_provider, skills: row.skills,
+      actorId: row.actor_id, reason: row.reason, operationId: row.operation_id, createdAtUtc: iso(row.created_at_utc) };
+  }
+  async getRoleRuntime(roleId: string): Promise<RoleRuntimeRevision | null> {
+    const result = await this.client.query("SELECT * FROM role_runtime_revision WHERE project_id=$1 AND role_id=$2 ORDER BY revision DESC LIMIT 1", [this.projectId,roleId]);
+    return result.rows[0] ? this.runtimeRevision(result.rows[0]) : null;
+  }
+  async listRoleRuntimeRevisions(roleId: string): Promise<RoleRuntimeRevision[]> {
+    const result = await this.client.query("SELECT * FROM role_runtime_revision WHERE project_id=$1 AND role_id=$2 ORDER BY revision LIMIT 1001", [this.projectId,roleId]);
+    if (result.rows.length > 1000) throw new PgRoleConflict("role runtime history exceeds read limit");
+    return result.rows.map(row => this.runtimeRevision(row));
+  }
+  async addRoleRuntimeRevision(value: RoleRuntimeRevision): Promise<void> {
+    await this.client.query(`INSERT INTO role_runtime_revision(project_id,role_id,revision,runtime_provider,skills,actor_id,reason,operation_id,created_at_utc)
+      VALUES($1,$2,$3,$4,$5::jsonb,$6,$7,$8,$9)`, [this.projectId,value.roleId,value.revision,value.provider,JSON.stringify(value.skills),value.actorId,value.reason,value.operationId,value.createdAtUtc]);
   }
   async addSessionBinding(value: RoleSessionBinding): Promise<void> {
     await this.client.query(`INSERT INTO role_session_binding(project_id,binding_id,role_id,session_id,role_revision_id,actor_id,note,created_at_utc)

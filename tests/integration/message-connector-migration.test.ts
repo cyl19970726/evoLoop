@@ -89,7 +89,7 @@ test("a failed 064 rolls the whole Connector upgrade back, then a corrected reru
   assert.equal((await client.query("SELECT to_regclass('connector_route')")).rows[0]?.to_regclass,null);
   await client.query("DROP TABLE connector_unhandled_event");
   await migrate(database!,schema);
-  assert.equal((await client.query("SELECT name FROM pgmigrations ORDER BY id DESC LIMIT 1")).rows[0]?.name,
-    "066_connector_delivery_decision");
+  // Later migrations may follow 066; the corrected rerun must have applied it.
+  assert.equal((await client.query("SELECT count(*)::int AS n FROM pgmigrations WHERE name='066_connector_delivery_decision'")).rows[0]?.n,1);
   assert.equal((await client.query("SELECT count(*)::int AS n FROM pgmigrations WHERE name LIKE '063_%' OR name LIKE '064_%' OR name LIKE '065_%' OR name LIKE '066_%'")).rows[0]?.n,4);
 });

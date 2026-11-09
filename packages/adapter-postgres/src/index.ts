@@ -25,6 +25,7 @@ export { PgConnectorDeliveryDecisions } from "./connector-delivery-decisions.js"
 export { PgTaskAttention, taskAttentionNoticeCurrent, disposeStaleTaskAttentionNotice,
   scanTaskAttentionCandidates } from "./task-attention.js";
 import type { RoleDecision, RoleHandoff, RoleHandoffEvent, RoleRecord, RoleRevision, RoleSessionBinding, RoleTrialReview } from "@evoloop/contracts/roles";
+import type { RoleRuntimeRevision } from "@evoloop/contracts/role-skills";
 import type { BusinessDomain, BusinessDomainRevision, HostLink, HostLinkRevision } from "@evoloop/contracts/resident-hosts";
 import { PgResidentHosts } from "./resident-hosts.js";
 import { PgResidentQueue, type QueueGrantCheck, type QueueLeadCheck, type QueueBindingCheck } from "./queues.js";
@@ -177,6 +178,8 @@ class PgReader implements Reader {
   listReviews(id: string) { return this.roles.listReviews(id); }
   listHandoffs(id: string) { return this.roles.listHandoffs(id); }
   listSessionBindings(id: string) { return this.roles.listSessionBindings(id); }
+  getRoleRuntime(id: string) { return this.roles.getRoleRuntime(id); }
+  listRoleRuntimeRevisions(id: string) { return this.roles.listRoleRuntimeRevisions(id); }
   getBusinessDomain(id: string) { return this.residents.getBusinessDomain(id); }
   listBusinessDomains() { return this.residents.listBusinessDomains(); }
   listBusinessDomainRevisions(id: string) { return this.residents.listBusinessDomainRevisions(id); }
@@ -615,6 +618,7 @@ class PgTransaction extends PgReader implements Transaction {
   listUnfinishedOwnedTasks(id: string) { return this.roles.listUnfinishedOwnedTasks(id); }
   listOpenRuntimeSessions(id: string) { return this.roles.listOpenRuntimeSessions(id); }
   addSessionBinding(value: RoleSessionBinding) { return this.roles.addSessionBinding(value); }
+  addRoleRuntimeRevision(value: RoleRuntimeRevision) { return this.roles.addRoleRuntimeRevision(value); }
   insertSchedule(value: ScheduleDefinition) { return this.scheduling.insertSchedule(value); }
   updateSchedule(value: ScheduleDefinition, expectedVersion: number) { return this.scheduling.updateSchedule(value, expectedVersion); }
   insertDocumentPayloadRevision(value: DocumentPayloadRevision) { return this.payloads.insertDocumentPayloadRevision(value); }

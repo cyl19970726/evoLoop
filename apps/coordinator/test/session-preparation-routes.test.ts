@@ -21,7 +21,7 @@ test("preparation reports a real readiness snapshot only to the project reviewer
   const role={id:roleId,version:2,currentRevisionId:revisionId,state:"active",proposal:{goal:"Goal",independentResponsibility:"Responsibility",
     workflow:"Workflow",handoffBoundary:"Boundary"}};
   const empty=async()=>[];
-  const service={getProject:async()=>({id:projectId}),getRole:async()=>role,getRuntimeSession:async()=>{
+  const service={getProject:async()=>({id:projectId}),roleRuntimeProvider:async()=>"codex" as const,getRole:async()=>role,getRuntimeSession:async()=>{
     throw new DomainError("NOT_FOUND","missing");
   },listRoleSessionBindings:empty,listRoleRevisions:empty,listRoleReviews:empty,listRoleHandoffs:empty,
   listSchedules:empty,listScheduleRevisions:empty,listScheduleOccurrences:empty,
@@ -56,7 +56,7 @@ test("existing Session requires its actual full profile, open recovery and match
   let cliActor="agent";
   let displayName: string | null = "Agent";
   const empty=async()=>[];
-  const service={getProject:async()=>({id:projectId}),getRole:async()=>role,getRuntimeSession:async()=>current,
+  const service={getProject:async()=>({id:projectId}),roleRuntimeProvider:async()=>"codex" as const,getRole:async()=>role,getRuntimeSession:async()=>current,
     getSessionRecovery:async()=>({gate,executionProfile:current.executionProfile,partial:false,nextAction:"normal_work"}),
     getRuntimeSessionProfile:async()=>({version:1,displayName,purpose:"Work"}),
     listRoleSessionBindings:async()=>[{sessionId}],listRoleRevisions:empty,listRoleReviews:empty,listRoleHandoffs:empty,

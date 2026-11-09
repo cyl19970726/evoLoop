@@ -41,6 +41,17 @@
 
 [Codex App Server 调查](codex-app-server-20261019.md)固定本机 `codex-cli 0.154.0` 的生成 schema，并核对官方协议。该原调查实际只运行版本、schema 与初始化握手，未验证真实任务、模型执行、桌面聊天互通或定时恢复。后续[执行、恢复与认知接收实测](codex-app-server-proof-20261019.md)（原 PR #2 固定实验 `9c095fce`）验证了自管线程的隔离夹具闭环和桌面宿主通知消费；它不证明真实项目任务接通、现有桌面聊天互控或生产恢复。当前阶段另见[路线](../roadmap.md#当前基线)，实现提议见[接入架构](../architecture/codex-integration.md)，代码责任见[包架构](../architecture/packages.md)。
 
+2026-11-08 的运行时研究，均为提议，未被采纳：
+
+| 研究 | 回答的问题 | 证据与状态 |
+| --- | --- | --- |
+| [Codex 适配器审计](codex-adapter-audit-20261108.md) | 现有 Codex 适配器有哪些协议、恢复与隔离问题？ | 源码与固定 schema 审阅 |
+| [Claude Agent SDK 接入方案](claude-agent-sdk-integration-20261108.md) | Claude Agent SDK 能力怎样映射到 `RuntimePort`？ | SDK 0.3.319 类型与文档核对 |
+| [Codex 与 Claude 运行时并存](runtime-coexistence-codex-claude-20261108.md) | 两种运行时怎样共用契约，按 facet 分开能力？ | 设计提议 |
+| [运行时修复与 Claude 接入计划](runtime-fix-and-claude-plan-20261108.md) | 修复和接入按什么顺序做，各自怎样验收？ | 计划 |
+| [会话间通信与 DeepSeek 执行模型](session-communication-and-deepseek-20261108.md) | 两种运行时各自的原生会话通信、跨运行时消息设计、DeepSeek 作为 Codex 模型 | 源码推断；真实 Claude CLI 对模拟 API 的一致性运行；DeepSeek 经 Codex 0.167 适配器真实运行；带凭据的 Claude 真实运行未做 |
+| [运行时后续目标](runtime-next-goals-20261108.md) | 每个 Session 怎样明确配置 skill 和 plugin，登录与运行环境怎样隔离，后续阶段怎样验收 | 两种运行时的 skill 发现实测；其余为目标与提议 |
+
 ## 早期候选与其他探索
 
 | 研究 | 范围 | 怎样使用 |

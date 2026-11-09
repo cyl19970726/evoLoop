@@ -22,6 +22,9 @@
       "path": "../../packages/adapter-codex-app-server"
     },
     {
+      "path": "../../packages/adapter-claude-agent-sdk"
+    },
+    {
       "path": "../../packages/adapter-local-blobs"
     },
     {

@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { roleSkillSelectionSchema, type RoleRuntimeRevision } from "./role-skills.js";
+import { runtimeProviderSchema, type RuntimeProvider } from "./runtime.js";
 
 const id = z.uuid();
 const text = z.string().trim().min(1).max(4000);
@@ -31,6 +33,9 @@ export const roleCommands = [
   z.strictObject({ ...common, type: z.literal("role.ackHandoff"), expectedVersion: z.number().int().positive(), handoffId: id, note: text }),
   z.strictObject({ ...common, type: z.literal("role.bindSession"), expectedVersion: z.number().int().positive(), sessionId: id, note: text }),
   z.strictObject({ ...common, type: z.literal("role.classify"), expectedVersion: z.number().int().positive(), roleClass: z.enum(["system", "business"]), templateKey: roleTemplateKeySchema.nullable().optional(), reason: text }),
+  /** Binds the Role to a runtime on first use and changes its skill selection afterwards; the runtime never changes. */
+  z.strictObject({ ...common, type: z.literal("role.runtime.set"), expectedRevision: z.number().int().min(0), provider: runtimeProviderSchema,
+    skills: roleSkillSelectionSchema, reason: text }),
   z.strictObject({ ...common, type: z.literal("role.retire"), expectedVersion: z.number().int().positive(), reason: text, knowledgeDisposition: text, runtimeDisposition: text }),
 ] as const;
 export const roleCommandSchema = z.discriminatedUnion("type", roleCommands);
@@ -53,7 +58,7 @@ export interface RoleHandoff { projectId: string; id: string; roleId: string; ki
 export interface RoleHandoffEvent { projectId: string; id: string; handoffId: string; roleId: string; state: "prepared" | "acknowledged"; actorId: string; note: string; createdAtUtc: string }
 export interface RoleSessionBinding { projectId: string; id: string; roleId: string; sessionId: string; roleRevisionId: string; actorId: string; note: string; createdAtUtc: string }
 export interface RoleTaskSnapshot { id: string; owner: string; version: number; state: string }
-export interface RoleRuntimeSessionSnapshot { id: string; roleId: string; state: string; nativeThreadId: string | null }
+export interface RoleRuntimeSessionSnapshot { id: string; roleId: string; state: string; nativeThreadId: string | null; runtimeProvider?: RuntimeProvider }
 export interface RoleTransaction {
   getRole(roleId: string): Promise<RoleRecord | null>;
   createRole(record: RoleRecord, revision: RoleRevision): Promise<void>;
@@ -69,6 +74,10 @@ export interface RoleTransaction {
   getRuntimeSession(sessionId: string): Promise<RoleRuntimeSessionSnapshot | null>;
   listOpenRuntimeSessions(roleId: string): Promise<RoleRuntimeSessionSnapshot[]>;
   addSessionBinding(value: RoleSessionBinding): Promise<void>;
+  /** Latest runtime revision of the Role; null while it is unbound. */
+  getRoleRuntime(roleId: string): Promise<RoleRuntimeRevision | null>;
+  /** Append-only; the store rejects a gap in revisions or a provider other than revision 1's. */
+  addRoleRuntimeRevision(value: RoleRuntimeRevision): Promise<void>;
 }
 export interface RoleReader {
   getRole(roleId: string): Promise<RoleRecord | null>;
@@ -77,4 +86,6 @@ export interface RoleReader {
   listReviews(roleId: string): Promise<RoleTrialReview[]>;
   listHandoffs(roleId: string): Promise<RoleHandoff[]>;
   listSessionBindings(roleId: string): Promise<RoleSessionBinding[]>;
+  getRoleRuntime(roleId: string): Promise<RoleRuntimeRevision | null>;
+  listRoleRuntimeRevisions(roleId: string): Promise<RoleRuntimeRevision[]>;
 }

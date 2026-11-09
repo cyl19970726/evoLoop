@@ -1,11 +1,14 @@
 import type { AppliedResult, BasisSet, Command, Principal, RuntimeRecordEvent, RuntimeRunRecord, RuntimeSessionRecord, TaskRevision } from "@evoloop/contracts";
 import { DomainError } from "@evoloop/contracts/ports";
+import type { RuntimeProvider } from "@evoloop/contracts/runtime";
 import type { Transaction } from "@evoloop/contracts/ports";
 import { validateDispatchBasis } from "./basis.js";
 import { requireAssignedSession } from "../session-assignments/dispatch.js";
 import { canonicalEvaluationJson, nextAttemptOrdinal, taskSignature } from "../evaluation/index.js";
 import { parseQueueHandoff } from "@evoloop/contracts/runtime-handoff";
 import { canonicalTaskInputJson, taskInputSignature } from "../task-input.js";
+import { sessionRuntimeProvider } from "../roles/runtime.js";
+import { RoleRuleError } from "../roles/index.js";
 
 type ReserveCommand = Extract<Command, { type: "runtime.session.reserve" | "runtime.session.close" | "runtime.run.reserve" | "runtime.run.interrupt" | "runtime.run.abandonReadOnly" | "runtime.handoff.record" }>;
 type Effect = { kind: string; entityId: string; version: number };
@@ -16,6 +19,10 @@ export interface ReserveContext {
   now: string;
   nextId(): string;
   hash(value: string): string;
+  /** Runtime for Sessions of Roles that are not bound yet; absent means codex. Never from a command. */
+  runtimeProvider?: RuntimeProvider;
+  /** Runtimes this service drives; absent means only the default. A bound Role's runtime must be one of them. */
+  runtimeProviders?: readonly RuntimeProvider[];
   /** Internal claim from the same journalled transaction. Never accepted from a public command. */
   queueClaim?: {claimId:string;runId:string;operationId:string;taskId:string;sessionId:string;actorId:string};
 }
@@ -27,7 +34,7 @@ const applied = (operationId: string, entityId: string, version: number, revisio
   status: "applied", operationId, entityId, version, ...(revisionId ? { revisionId } : {}),
 });
 
-export async function reserveRuntime({ tx, command, principal, now, nextId, hash, queueClaim }: ReserveContext): Promise<{ result: AppliedResult; effects: Effect[] }> {
+export async function reserveRuntime({ tx, command, principal, now, nextId, hash, queueClaim, runtimeProvider, runtimeProviders }: ReserveContext): Promise<{ result: AppliedResult; effects: Effect[] }> {
   if (command.type === "runtime.handoff.record") {
     const run = required(await tx.getRuntimeRun(command.runId), "runtime run");
     if (run.state !== "completed") throw new DomainError("RUN_NOT_COMPLETED", "handoff follows a completed native run");
@@ -67,6 +74,16 @@ export async function reserveRuntime({ tx, command, principal, now, nextId, hash
     if (command.cwd.split("/").some((segment, index) => index > 0 && (segment === "" || segment === "." || segment === ".."))) {
       throw new DomainError("INVALID_CWD", "runtime cwd must be a normalized absolute path");
     }
+    const defaultProvider = runtimeProvider ?? "codex";
+    let resolved: Awaited<ReturnType<typeof sessionRuntimeProvider>>;
+    try {
+      resolved = await sessionRuntimeProvider(tx, { projectId: command.projectId, roleId: command.roleId, operationId: command.operationId,
+        actorId: principal.actorId, nowUtc: now, defaultProvider, availableProviders: runtimeProviders ?? [defaultProvider] });
+    } catch (error) {
+      if (error instanceof RoleRuleError) throw new DomainError(error.code, error.message, error.currentVersion);
+      throw error;
+    }
+    const provider = resolved.provider;
     const session: RuntimeSessionRecord = {
       projectId: command.projectId, id: command.sessionId, roleId: command.roleId,
       cwd: command.cwd, authorizationScope: command.authorizationScope,
@@ -74,10 +91,13 @@ export async function reserveRuntime({ tx, command, principal, now, nextId, hash
       approvalPolicy: command.approvalPolicy, state: "reserved", version: 1,
       nativeThreadId: null, nativeSessionId: null, operationId: command.operationId,
       actorId: principal.actorId, createdAt: now, updatedAt: now,
+      ...(provider !== "codex" ? { runtimeProvider: provider } : {}),
     };
     await tx.insertRuntimeSession(session);
     await tx.appendRuntimeEvent(event(command.projectId, nextId(), null, session.id, "session.reserved", "Session reserved before external creation", null, principal.actorId, now));
-    return { result: applied(command.operationId, session.id, 1), effects: [{ kind: "runtime.session.reserved", entityId: session.id, version: 1 }] };
+    const effects: Effect[] = [{ kind: "runtime.session.reserved", entityId: session.id, version: 1 }];
+    if (resolved.bound) effects.push({ kind: "role.runtime", entityId: resolved.bound.roleId, version: resolved.bound.revision });
+    return { result: applied(command.operationId, session.id, 1), effects };
   }
 
   if (command.type === "runtime.session.close") {

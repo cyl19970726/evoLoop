@@ -100,6 +100,7 @@ const workManagementQueries = {
   listRoles: async () => ({ items: [], nextCursor: null }), listRoleRevisions: async () => [],
   listRoleReviews: async () => [], listRoleHandoffs: async () => [], listRoleSessionBindings: async () => [],
   listSchedules: async () => [], listScheduleRevisions: async () => [], listScheduleOccurrences: async () => [],
+  roleRuntimeProvider: async () => "codex" as const,
 };
 
 test("runtime config grants are exact and reviewer-only reservation does not call core when denied", async () => {

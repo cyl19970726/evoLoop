@@ -1630,3 +1630,26 @@ test('first ordinary message sends the fixed reasoning effort to the native Turn
   await adapter.startConversationTurn(binding,'first message','message-operation');
   assert.equal((await adapter.inspect(binding) as {observedTurnStarts:number}).observedTurnStarts,1);
 });
+
+test('turn listing waits out the brief -32601 history attach window after turn/start, and only that', async () => {
+  const adapter = new CodexAppServerAdapter({expectedVersion:'codex-cli 0.167.0-alpha.3.2'});
+  const internals=adapter as unknown as Record<string,unknown>;
+  internals.owned=()=>{};
+  const binding={nativeThreadId:'thread'} as Parameters<typeof adapter.listTurns>[0];
+  let calls=0,failures=2,code=-32601;
+  internals.request=async(method:string)=>{
+    assert.equal(method,'thread/turns/list');calls++;
+    if(failures-->0)throw new RuntimeServerError(method,calls,code,'list_turns is not supported yet');
+    return {data:[{id:'turn',status:'inProgress'}],nextCursor:null};
+  };
+  assert.deepEqual((await adapter.listTurns(binding)).data.map(turn=>turn.id),['turn']);
+  assert.equal(calls,3,'two transient rejections then the page');
+
+  calls=0;failures=Infinity;
+  await assert.rejects(()=>adapter.listTurns(binding),(error:unknown)=>error instanceof RuntimeServerError&&error.category==='method_not_found');
+  assert.equal(calls,6,'the wait is bounded; a persistent rejection still surfaces');
+
+  calls=0;failures=1;code=-32600;
+  await assert.rejects(()=>adapter.listTurns(binding),RuntimeServerError);
+  assert.equal(calls,1,'other rejections, such as a missing rollout, are never retried');
+});

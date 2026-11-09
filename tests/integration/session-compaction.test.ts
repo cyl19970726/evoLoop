@@ -168,7 +168,7 @@ test('durable compaction uses one native request and never opens a blocked gate 
     let preflightFailure:'thread_read'|'send_connection'|null=null;
     let observedWithoutAck=false,capturedTurnId='captured-turn',successors:string[]|null=null;
     let connectionId='connection-A';
-    const fake={compactionBinding:async()=>binding,observeCompaction:async()=>observation,
+    const fake={nativeAdapter:()=>({}),compactionBinding:async()=>binding,observeCompaction:async()=>observation,
       compactionConnectionId:()=>connectionId,
       compactionTurnsAfter:async()=>successors,
       compactThread:async(_binding:RuntimeBinding,baselineTurnId:string,beforeSend:(id:number)=>Promise<void>,
