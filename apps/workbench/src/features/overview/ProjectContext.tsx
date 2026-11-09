@@ -9,6 +9,10 @@ import { api, errorText } from "../../shared/api";
 import { date, href } from "../../shared/ui/shared";
 import { appendLeaderWorkPage, leaderPhaseLabel, loadLeaderWorkStatuses } from "../../shared/leaderWorkLoad";
 import type { WorkTaskStatus } from "../../shared/workStatusPresentation";
+import { workNextStep } from "../../shared/workPresentation";
+import { isRoleOwnerId } from "../../shared/ownerRole";
+import { FullIdentifiers } from "../../shared/ui/FullIdentifiers";
+import { ResponsibleName, RoleName } from "../../shared/ui/RecordName";
 import { readOutcome, selectAttention, type ProjectOutcome } from "./contextPresentation";
 
 interface ContextSnapshot {
@@ -135,12 +139,20 @@ export function ProjectContext({ token, projectId, refresh, active }: { token: s
     <section className={cn(card, "overview-goal")} aria-label="当前目标">
       {title(<Target />, "当前目标", <a href={href(projectId, "journey")} className="ml-auto flex items-center gap-1 text-caption text-text-secondary hover:text-foreground">目标与阶段 <ArrowRight size={13} aria-hidden="true" /></a>)}
       <h3 className="text-heading font-semibold text-foreground">{goal?.outcome ?? (stages.length > 1 ? `当前有 ${stages.length} 个正在推进的阶段` : reading && !value ? "正在核对项目目标…" : value?.goalProblem ? "目标与阶段暂未核对完整" : value?.goals.length ? "项目有多个目标，请进入目标与阶段核对" : "项目目标尚未读回或登记")}</h3>
-      {!stage && stages.length > 1 && <div className="flex flex-col gap-1"><p className={muted}>选一个阶段阅读：</p>{stages.slice(0, 3).map(item => <div key={item.id} className="rounded-lg bg-field">{stageButton(item)}<span className="block px-3 pb-2 text-caption text-muted-foreground">{value?.goals.find(entry => entry.id === item.goalId)?.outcome ?? "目标名称尚未核对"}</span></div>)}</div>}
+      {/* The inner rail is hidden below 1100px or when folded, so the card always offers every active stage. */}
+      {!stage && stages.length > 1 && <div className="flex flex-col gap-1"><p className={muted}>选一个阶段阅读：</p>{stages.map(item => <div key={item.id} className="rounded-lg bg-field">{stageButton(item)}<span className="block px-3 pb-2 text-caption text-muted-foreground">{value?.goals.find(entry => entry.id === item.goalId)?.outcome ?? "目标名称尚未核对"}</span></div>)}</div>}
+      {stage && stages.length > 1 && <label className="flex flex-col gap-1">
+        <span className={muted}>切换阶段 · 共 {stages.length} 个正在推进</span>
+        <select className="h-9 w-full min-w-0 rounded-md bg-field px-3 text-small text-foreground outline-none focus-visible:shadow-[var(--focus-ring)]"
+          value={stage.id} onChange={event => choose(event.target.value)}>
+          {stages.map(item => <option key={item.id} value={item.id}>{item.deliverable}</option>)}
+        </select>
+      </label>}
       {stage ? <dl className="grid gap-3 compact:grid-cols-2">
         <div><dt className={muted}>阶段交付</dt><dd className="m-0 text-small text-foreground">{stage.deliverable}</dd></div>
         <div><dt className={muted}>要弄清的问题</dt><dd className="m-0 text-small text-foreground">{stage.learningQuestion}</dd></div>
       </dl> : <p className={muted}>{value && !value.goalProblem && stages.length === 0 ? "没有读到正在推进的阶段。可与现有责任智能体明确首项工作、消费者和需要补的证据。" : "按真实阶段关系阅读，不从最近任务或队列推定项目目标。"}</p>}
-      {goal && <details className="text-small"><summary className="cursor-pointer text-text-secondary">目标的消费者、约束与范围</summary><div className="mt-2 flex flex-col gap-1 text-text-secondary"><p>消费者：{goal.consumer} · 责任：{goal.owner}</p><p>{goal.constraints}</p><p>{goal.scope}</p></div></details>}
+      {goal && <details className="text-small"><summary className="cursor-pointer text-text-secondary">目标的消费者、约束与范围</summary><div className="mt-2 flex flex-col gap-1 text-text-secondary"><p>消费者：{goal.consumer} · 责任：{isRoleOwnerId(goal.owner) ? <RoleName projectId={projectId} roleId={goal.owner} /> : goal.owner}</p><p>{goal.constraints}</p><p>{goal.scope}</p></div></details>}
       {value?.goalProblem && <div className={problem} role="status">目标与阶段读取未完成，已读工作仍可查看。<details><summary className="cursor-pointer">读取原因</summary>{value.goalProblem}</details></div>}
       {value?.retainedGoals && <p className={problem}>保留上次目标与阶段，读于 {value.goalObservedAt ? date(value.goalObservedAt) : "上次读取"}，本次未能确认最新状态。</p>}
       {value && !value.goalsComplete && <p className={muted}>目标列表仅覆盖已读部分。</p>}
@@ -152,10 +164,11 @@ export function ProjectContext({ token, projectId, refresh, active }: { token: s
           {attention ? <>
             <span className={pill}>{leaderPhaseLabel[attention.phase]}</span>
             <h3 className="text-body font-semibold"><a href={href(projectId, "task", attention.taskId)} className="text-foreground hover:underline">{attention.title}</a></h3>
-            <p className="text-small text-text-secondary">{attention.nextAction}</p>
-            <p className={muted}>下一责任：{attention.responsible.label}</p>
+            <p className="text-small text-text-secondary">{workNextStep(attention.phase)}</p>
+            <p className={muted}>下一责任：<ResponsibleName projectId={projectId} item={attention} /></p>
             {attention.review?.decision === "deferred" && <details className="text-small"><summary className="cursor-pointer text-text-secondary">已暂缓的原因</summary><p className="mt-1 text-text-secondary">{attention.review.reason}</p></details>}
             <a className="mt-auto flex w-fit items-center gap-1 text-small font-medium text-foreground hover:underline" href={`${href(projectId, "task", attention.taskId)}${attention.delivery ? "?tab=delivery" : ""}`}>{attention.delivery ? "核对交付与使用" : "查看当前工作"} <ArrowRight size={14} aria-hidden="true" /></a>
+            <FullIdentifiers rows={[{ label: "任务", value: attention.taskId }, { label: "下一责任", value: attention.responsible.id }]} />
           </> : <p className="text-small text-text-secondary">{!value || reading ? "正在核对当前工作…" : value.workProblem || !value.complete ? "已读范围尚不能确定当前需核对事项，请进入任务列表。" : "已读工作中没有未关闭的业务任务。"}</p>}
           {value?.workProblem && <details className={problem}><summary className="cursor-pointer">工作来源或使用回读存在缺项</summary>{value.workProblem}</details>}
           {value?.retainedWork && <p className={problem}>以上为上次工作，读于 {value.workObservedAt ? date(value.workObservedAt) : "上次读取"}，请回原任务核对当前状态。</p>}
@@ -166,8 +179,9 @@ export function ProjectContext({ token, projectId, refresh, active }: { token: s
             <span className={pill}>{use.observation.observerKind === "human" ? "真人" : "智能体"} · {({ used: "已使用", failed: "使用失败", notUsed: "未使用" } as const)[use.observation.result]}</span>
             <h3 className="text-body font-semibold"><a href={`${href(projectId, "task", use.taskId)}?tab=delivery`} className="text-foreground hover:underline">{use.title}</a></h3>
             <p className="text-small text-text-secondary">{use.observation.reason.slice(0, 200)}{use.observation.reason.length > 200 ? "…" : ""}</p>
-            <p className={muted}>{use.observation.observer} · {date(use.observation.createdAt)} · 本次技术检查{use.delivery.technicalResult === "passed" ? "通过" : "失败"}</p>
+            <p className={muted}>{use.observation.observerKind === "human" ? "真人" : "智能体"}登记于 {date(use.observation.createdAt)} · 本次技术检查{use.delivery.technicalResult === "passed" ? "通过" : "失败"}</p>
             <details className="text-small"><summary className="cursor-pointer text-text-secondary">实际使用的完整证据</summary><div className="mt-1 flex flex-col gap-1 text-text-secondary"><p>{use.observation.evidence}</p><p>{use.observation.reason}</p></div></details>
+            <FullIdentifiers rows={[{ label: "任务", value: use.taskId }, { label: "交付", value: use.delivery.id }, { label: "观察者", value: use.observation.observer }]} />
           </> : <p className="text-small text-text-secondary">{!value || reading ? "正在核对当前交付的使用…" : value.workProblem || value.useFailures ? "当前交付的使用来源未能核实。请到原任务核对；读取失败不代表没有使用。" : "已读范围尚无可展示的当前交付使用观察。技术通过和任务关闭都不替代实际使用。"}</p>}
           {value?.retainedUse && <p className={problem}>保留上次核对的反馈，读于 {value.useObservedAt ? date(value.useObservedAt) : "上次读取"}；本次尚未确认它仍是当前交付。</p>}
           {value && <p className={muted}>从最近变化的 {value.useReadCount} 项已登记使用的交付核对；已读工作中共 {value.useCandidateCount} 项候选{value.useFailures ? `，${value.useFailures} 项来源未核实` : ""}。{!value.complete ? "工作索引未完整读取。" : ""}</p>}
