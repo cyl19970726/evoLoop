@@ -84,7 +84,7 @@ test("Session navigation retains order, pages and filters across selection, back
       res.writeHead(status, { "content-type": "application/json" }); res.end(JSON.stringify(value)); return;
     }
     try {
-      const path = url.pathname === "/" ? "index.html" : url.pathname;
+      const path = /^\/(?:$|p\/|ui$)/.test(url.pathname) ? "index.html" : url.pathname;
       const body = await readFile(join(dist, path));
       res.writeHead(200, { "content-type": ({ ".html": "text/html", ".js": "text/javascript", ".css": "text/css" } as Record<string, string>)[extname(path)] ?? "application/octet-stream" });
       res.end(body);
@@ -95,7 +95,7 @@ test("Session navigation retains order, pages and filters across selection, back
   const browser = await chromium.launch({ headless: true, ...(process.env.EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH
     ? { executablePath: process.env.EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH } : {}) }); t.after(() => browser.close());
   const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
-  await page.goto(`${base}/#/p/${projectId}/sessions`);
+  await page.goto(`${base}/p/${projectId}/sessions`);
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button", { name: "进入", exact: true }).click();
   const navigationToggle = page.getByRole("button", { name: /^(展开|收起)项目导航$/ });
@@ -212,7 +212,7 @@ test("Session navigation retains order, pages and filters across selection, back
   await page.waitForFunction(() => document.querySelectorAll(".project-sidebar .session-nav-current .session-nav-item").length === 5);
   assert.equal(await current.locator(".session-nav-item").count(), 5, "clearing search restores the first bounded page");
   const deepLink = await browser.newPage({ viewport: { width: 1920, height: 1200 } });
-  await deepLink.goto(`${base}/#/p/${projectId}/sessions?session=external%3Acurrent-4`);
+  await deepLink.goto(`${base}/p/${projectId}/sessions?session=external%3Acurrent-4`);
   await deepLink.getByLabel("访问令牌").fill("fixture-token");
   await deepLink.getByRole("button", { name: "进入", exact: true }).click();
   const deepCurrent = deepLink.locator(".project-sidebar .session-nav-current");

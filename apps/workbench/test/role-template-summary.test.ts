@@ -22,7 +22,7 @@ test("seven contract templates show real role names and keep work kind separate"
     ["functional-development", "business", "not-established"],
   ]);
   assert.deepEqual(value.rows[0]?.roles, [{ id: roleId, title: "实际 Lead 职责" }]);
-  assert.equal(roleTemplateHref(projectId, roleId), `#/p/${projectId}/roles?role=${roleId}`);
+  assert.equal(roleTemplateHref(projectId, roleId), `/p/${projectId}/roles?role=${roleId}`);
   assert.equal(roleTemplateHref(projectId, "not-a-role"), null);
 });
 

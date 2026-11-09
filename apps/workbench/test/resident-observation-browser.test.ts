@@ -197,13 +197,13 @@ test("resident observation keeps acceptance, host authority and task replies dis
       else if (url.pathname === `${p}/orchestration/work-status`) value = {items:[]};
       res.writeHead(200,{"content-type":"application/json"});res.end(JSON.stringify(value));return;
     }
-    const file = join(dist,url.pathname === "/" ? "index.html" : url.pathname);
+    const file = join(dist,/^\/(?:$|p\/|ui$)/.test(url.pathname) ? "index.html" : url.pathname);
     try {const body=await readFile(file);res.writeHead(200,{"content-type":({".html":"text/html",".js":"text/javascript",".css":"text/css"})[extname(file)] ?? "application/octet-stream"});res.end(body);}
     catch {res.writeHead(404);res.end();}
   });
   await new Promise<void>(resolve=>server.listen(0,"127.0.0.1",resolve)); t.after(()=>server.close());
   const base=`http://127.0.0.1:${(server.address() as {port:number}).port}`;
-  const browser=await chromium.launch({headless:true}); t.after(()=>browser.close());
+  const browser=await chromium.launch({ headless: true, ...(process.env.EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH ? { executablePath: process.env.EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH } : {}) }); t.after(()=>browser.close());
   const pageBrowser=await browser.newPage({viewport:process.env.EVOLOOP_RESIDENT_VIEWPORT === "desktop" ? {width:1280,height:900} : {width:390,height:844}});
   await pageBrowser.addInitScript(`
     Object.defineProperty(navigator, "clipboard", {configurable:true, value:{writeText:async function(value) {
@@ -213,7 +213,7 @@ test("resident observation keeps acceptance, host authority and task replies dis
     window.fixtureClipboardInstalled = true;
   `);
   const pageErrors:string[]=[]; pageBrowser.on("pageerror", error=>pageErrors.push(error.stack ?? error.message));
-  await pageBrowser.goto(`${base}/#/p/${projectId}/roles?role=${roleId}`);
+  await pageBrowser.goto(`${base}/p/${projectId}/roles?role=${roleId}`);
   await pageBrowser.getByLabel("访问令牌").fill("fixture-token");
   await pageBrowser.getByRole("button",{name:"进入",exact:true}).click();
   await pageBrowser.locator(`#role-${roleId} > summary`).getByText("业务职责").waitFor();
@@ -337,12 +337,12 @@ test("resident observation keeps acceptance, host authority and task replies dis
     await new Promise(resolve=>setTimeout(resolve,25));
   assert.equal(await (await fetch(`${base}/__fixture/held-role-count`)).text(),"2");
   const missingSession = "20000003-0000-4000-8000-000000000003";
-  await pageBrowser.evaluate(hash => { window.location.hash = hash; },`#/p/${projectId}/runtime?view=execution&session=${missingSession}`);
+  await pageBrowser.evaluate(hash => { window.location.hash = hash; },`/p/${projectId}/runtime?view=execution&session=${missingSession}`);
   await pageBrowser.getByText(/当前项目未读到目标 Session/).waitFor();
   await fetch(`${base}/__fixture/release-held-role`);
   await pageBrowser.waitForTimeout(100);
   assert.equal(await pageBrowser.locator(".resident-queues:visible").count(),0);
-  await pageBrowser.evaluate(hash => { window.location.hash = hash; },`#/p/${projectId}/runtime?view=execution&session=${sessionId}`);
+  await pageBrowser.evaluate(hash => { window.location.hash = hash; },`/p/${projectId}/runtime?view=execution&session=${sessionId}`);
   await queueItems.nth(0).getByText(/承接职责 已更新的承接职责/).waitFor();
   await fetch(`${base}/__fixture/deep-queue`);
   await pageBrowser.getByRole("button",{name:"重新读取队列"}).click();
@@ -412,14 +412,14 @@ test("resident observation keeps acceptance, host authority and task replies dis
   await pageBrowser.getByText(/协作读取未完成.*上次读回/).waitFor();
   assert.equal(await pageBrowser.getByText(/提问 · 致 lead · 已答复/).count(),1);
   await fetch(`${base}/__fixture/long-discussions`);
-  await pageBrowser.evaluate(({projectId,taskB})=>{location.hash=`#/p/${projectId}/tasks/${taskB}?tab=runtime`;},{projectId,taskB});
+  await pageBrowser.evaluate(({projectId,taskB})=>{location.hash=`/p/${projectId}/tasks/${taskB}?tab=runtime`;},{projectId,taskB});
   await pageBrowser.getByText(/协作列表已达 20 页或 20 个关联频道上限/).waitFor();
   assert.equal(await pageBrowser.getByText("当前没有已登记的任务协作频道。").count(),0);
-  await pageBrowser.evaluate(({projectId})=>{location.hash=`#/p/${projectId}/roles?role=javascript%3Aalert(1)`;},{projectId});
+  await pageBrowser.evaluate(({projectId})=>{location.hash=`/p/${projectId}/roles?role=javascript%3Aalert(1)`;},{projectId});
   await pageBrowser.getByText(/目标职责 ID 无效；没有定位到其他职责/).waitFor();
-  await pageBrowser.evaluate(({projectId})=>{location.hash=`#/p/${projectId}/roles?role=ffffffff-ffff-ffff-ffff-ffffffffffff`;},{projectId});
+  await pageBrowser.evaluate(({projectId})=>{location.hash=`/p/${projectId}/roles?role=ffffffff-ffff-ffff-ffff-ffffffffffff`;},{projectId});
   await pageBrowser.getByText(/当前项目已读完职责，未找到目标 ffffffff/).waitFor();
-  await pageBrowser.evaluate(({projectId,roleId})=>{location.hash=`#/p/${projectId}/roles?role=${roleId}`;},{projectId,roleId});
+  await pageBrowser.evaluate(({projectId,roleId})=>{location.hash=`/p/${projectId}/roles?role=${roleId}`;},{projectId,roleId});
   await pageBrowser.locator(`#role-${roleId}[open]`).waitFor();
   await fetch(`${base}/__fixture/restore-hosts`);
   if (await pageBrowser.locator(`#role-${roleId} .role-presence`).getAttribute("open") === null)
@@ -431,7 +431,7 @@ test("resident observation keeps acceptance, host authority and task replies dis
   for (let attempt=0; attempt<20 && await (await fetch(`${base}/__fixture/held-host-list-count`)).text() !== "2"; attempt++)
     await new Promise(resolve=>setTimeout(resolve,25));
   assert.equal(await (await fetch(`${base}/__fixture/held-host-list-count`)).text(),"2");
-  await pageBrowser.evaluate(({otherProjectId,roleId})=>{location.hash=`#/p/${otherProjectId}/roles?role=${roleId}`;},{otherProjectId,roleId});
+  await pageBrowser.evaluate(({otherProjectId,roleId})=>{location.hash=`/p/${otherProjectId}/roles?role=${roleId}`;},{otherProjectId,roleId});
   await pageBrowser.locator(`#role-${roleId}[open]`).waitFor();
   await pageBrowser.locator(`#role-${roleId}`).getByText("承载与业务领域").click();
   await pageBrowser.getByText(/读取失败：新项目承载暂不可读/).waitFor();

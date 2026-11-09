@@ -1,0 +1,4 @@
+{
+  "initialJsGzipBytes": 190000,
+  "note": "JavaScript the browser loads before the first page renders (the entry script and its modulepreloads in dist/index.html), gzip-compressed. Pages, Markdown, diagrams and the component samples load on demand. Set by #229 PR4a at 181 KB (was 392 KB as one bundle); raise it only with a reason in the same change."
+}

@@ -6,6 +6,7 @@ import type { MutationContext } from "../../shared/ActionForm";
 import { allocationRelations, type AllocationTrace } from "./allocationClient";
 import { useAllocationChanges } from "./useAllocationChanges";
 import { allocationSessionKey, useAllocationNames, type AllocationKnownNames } from "./useAllocationNames";
+import { appPath } from "../../shared/appPath";
 
 const status = { current: "当前修订", changed: "修订已改变", unavailable: "目标暂不可核实" } as const;
 const assignmentStatus = { current: "当前承接", historical: "历史承接", unknown: "当前承接待核" } as const;
@@ -16,7 +17,7 @@ const taskAcceptanceGap = {
   unavailable: "该 Task 固定修订暂不可核实",
 } as const;
 
-function stageJourneyHref(projectId: string): string { return `#/p/${encodeURIComponent(projectId)}/journey`; }
+function stageJourneyHref(projectId: string): string { return `/p/${encodeURIComponent(projectId)}/journey`; }
 
 export function AllocationTraceCard({ trace, projectId, names }: { trace: AllocationTrace; projectId: string; names: Record<string, string> }) {
   const relation = trace.relation;
@@ -30,11 +31,11 @@ export function AllocationTraceCard({ trace, projectId, names }: { trace: Alloca
     {relation.kind === "decision-target" ? <>
       <strong>{relation.target.kind === "role" ? "正式关联职责" : relation.target.kind === "task" ? "正式关联任务" : relation.target.kind === "document" ? "正式关联文档" : "正式关联阶段"}{targetName && ` · ${targetName}`}</strong>
       <p>{relation.target.kind === "task"
-        ? <a href={`#/p/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(relation.target.id)}?revision=${encodeURIComponent(relation.target.revisionId)}`}>{targetName ? "查看该任务固定修订" : "任务名称暂不可读 · 查看固定修订"}</a>
+        ? <a href={`/p/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(relation.target.id)}?revision=${encodeURIComponent(relation.target.revisionId)}`}>{targetName ? "查看该任务固定修订" : "任务名称暂不可读 · 查看固定修订"}</a>
         : relation.target.kind === "role"
-          ? <a href={`#/p/${encodeURIComponent(projectId)}/roles?role=${encodeURIComponent(relation.target.id)}`}>{targetName ? "查看该职责档案" : "职责名称暂不可读 · 查看档案"}</a>
+          ? <a href={`/p/${encodeURIComponent(projectId)}/roles?role=${encodeURIComponent(relation.target.id)}`}>{targetName ? "查看该职责档案" : "职责名称暂不可读 · 查看档案"}</a>
           : relation.target.kind === "document"
-            ? <a href={`#/p/${encodeURIComponent(projectId)}/documents/${encodeURIComponent(relation.target.id)}?revision=${encodeURIComponent(relation.target.revisionId)}`}>{targetName ? "查看该文档固定修订" : "文档名称暂不可读 · 查看固定修订"}</a>
+            ? <a href={`/p/${encodeURIComponent(projectId)}/documents/${encodeURIComponent(relation.target.id)}?revision=${encodeURIComponent(relation.target.revisionId)}`}>{targetName ? "查看该文档固定修订" : "文档名称暂不可读 · 查看固定修订"}</a>
             : <>阶段 v{relation.target.version} · <a href={stageJourneyHref(projectId)}>查看当前阶段入口</a>（不是固定版本历史）</>} · {status[relation.targetStatus]}</p>
       {relation.target.kind === "task" && relation.taskAcceptanceGap !== undefined && <small>
         {relation.taskAcceptanceGap === null
@@ -43,14 +44,14 @@ export function AllocationTraceCard({ trace, projectId, names }: { trace: Alloca
       </small>}
     </> : <>
       <strong>{sessionName ?? "Session 名称暂不可读"} 曾接手 {taskName ?? "名称暂不可读的任务"}</strong>
-      <p><a href={`#/p/${encodeURIComponent(projectId)}/sessions?session=${encodeURIComponent(allocationSessionKey(relation.assignment.target))}`}>打开该 Session</a>
+      <p><a href={`/p/${encodeURIComponent(projectId)}/sessions?session=${encodeURIComponent(allocationSessionKey(relation.assignment.target))}`}>打开该 Session</a>
         {relation.assignment.target.kind === "external" ? " · 外部连接" : " · 项目受管"} · {assignmentStatus[relation.assignmentStatus]}</p>
-      <p>对应 <a href={`#/p/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(relation.task.id)}?revision=${encodeURIComponent(relation.task.revisionId)}`}>任务固定修订</a> · {status[relation.taskRevisionStatus]}</p>
+      <p>对应 <a href={`/p/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(relation.task.id)}?revision=${encodeURIComponent(relation.task.revisionId)}`}>任务固定修订</a> · {status[relation.taskRevisionStatus]}</p>
       <small>{relation.assignment.method === "direct" ? "指定执行者本人确认" : "负责人观察到接手"} · {date(relation.assignment.acceptedAt)} · 分派 v{relation.assignment.version}</small>
       {relation.assignment.method === "lead-observed" && <small>负责人观察记录；这不是接收者亲签。</small>}
     </>}
     {history && <small>关联历史决定；当前决定已变化，后续关系需重新核对。</small>}
-    {trace.decisionDocumentRevisionId && <p><a href={`#/p/${encodeURIComponent(projectId)}/documents/${encodeURIComponent(trace.discussion.document.id)}?revision=${encodeURIComponent(trace.decisionDocumentRevisionId)}`}>阅读这次决定所依据的固定原文</a></p>}
+    {trace.decisionDocumentRevisionId && <p><a href={`/p/${encodeURIComponent(projectId)}/documents/${encodeURIComponent(trace.discussion.document.id)}?revision=${encodeURIComponent(trace.decisionDocumentRevisionId)}`}>阅读这次决定所依据的固定原文</a></p>}
     <details><summary>固定来源与标识</summary><ul>
       <li>关系 ID <code>{trace.id}</code> · 决定事件 <code>{trace.decisionEventId}</code>{trace.decisionDocumentRevisionId && <> · 决定固定修订 <code>{trace.decisionDocumentRevisionId}</code></>}</li>
       {relation.kind === "decision-target"
@@ -58,7 +59,7 @@ export function AllocationTraceCard({ trace, projectId, names }: { trace: Alloca
         : <li>Session <code>{allocationSessionKey(relation.assignment.target)}</code> · Task ID <code>{relation.task.id}</code> · Task 固定修订 <code>{relation.task.revisionId}</code> · 行动事件 <code>{relation.taskActionEventId}</code>{relation.assignment.method === "lead-observed" && <> · 观察者 <code>{relation.assignment.observerActorId}</code></>}</li>}
       {trace.sources.map((source, index) => {
         const link = source.kind === "stage"
-          ? source.href === stageJourneyHref(projectId) ? source.href : null
+          ? appPath(source.href) === stageJourneyHref(projectId) ? stageJourneyHref(projectId) : null
           : safeArtifactHref(source.href, projectId);
         return <li key={`${source.kind}:${source.id}:${index}`}>{link ? <a href={link}>{source.kind} · {source.id}</a> : <span>{source.kind} · {source.id}</span>}{source.revision && ` · ${source.revision}`}{source.kind === "stage" && " · 链接打开当前阶段入口；固定版本需另行核对"}</li>;
       })}</ul></details>

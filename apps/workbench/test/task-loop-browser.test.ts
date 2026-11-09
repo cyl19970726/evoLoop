@@ -106,7 +106,7 @@ test("built Task page selects the current Loop, preserves manual history and fit
       else if (url.pathname.startsWith(`${p}/orchestration/loops/`)) value = page([]);
       res.writeHead(status,{"content-type":"application/json"}); res.end(JSON.stringify(value)); return;
     }
-    const file = join(dist,url.pathname === "/" ? "index.html" : url.pathname);
+    const file = join(dist,/^\/(?:$|p\/|ui$)/.test(url.pathname) ? "index.html" : url.pathname);
     if (!file.startsWith(dist+"/")) { res.writeHead(404); res.end(); return; }
     try { const body=await readFile(file); res.writeHead(200,{"content-type":({".html":"text/html",".js":"text/javascript",".css":"text/css"})[extname(file)] ?? "application/octet-stream"}); res.end(body); }
     catch { res.writeHead(404); res.end(); }
@@ -117,7 +117,7 @@ test("built Task page selects the current Loop, preserves manual history and fit
   const browser = await chromium.launch({headless:true,...(process.env.EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH
     ? {executablePath:process.env.EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH} : {})}); t.after(() => browser.close());
   const baselinePage = await browser.newPage({viewport:{width:1280,height:720}});
-  await baselinePage.goto(`${base}/#/p/${projectId}/tasks/${taskId}?revision=${taskId}`);
+  await baselinePage.goto(`${base}/p/${projectId}/tasks/${taskId}?revision=${taskId}`);
   await baselinePage.getByLabel("访问令牌").fill("fixture-token");
   await baselinePage.getByRole("button",{name:"进入",exact:true}).click();
   await baselinePage.getByRole("heading",{name:"固定历史任务修订"}).waitFor();
@@ -131,7 +131,7 @@ test("built Task page selects the current Loop, preserves manual history and fit
   const pageErrors: string[] = [];
   pageBrowser.on("pageerror", error => pageErrors.push(error.stack ?? error.message));
   await pageBrowser.clock.install();
-  await pageBrowser.goto(`${base}/#/p/${projectId}/sessions?session=${encodeURIComponent(cachedSessionKey)}`);
+  await pageBrowser.goto(`${base}/p/${projectId}/sessions?session=${encodeURIComponent(cachedSessionKey)}`);
   await pageBrowser.getByLabel("访问令牌").fill("fixture-token");
   await pageBrowser.getByRole("button",{name:"进入",exact:true}).click();
   await pageBrowser.getByRole("heading",{name:"布局回归 Session"}).waitFor({timeout:5000}).catch(async () => {
@@ -154,11 +154,11 @@ test("built Task page selects the current Loop, preserves manual history and fit
     assert.deepEqual(shell, baseline,
       `Task routes restore the fresh Task shell after a Session visit (initial=${JSON.stringify(taskShellBaseline)}, viewportBaseline=${JSON.stringify(baseline)}, current=${JSON.stringify(shell)})`);
   };
-  await pageBrowser.evaluate(({projectId,taskId}) => { location.hash = `#/p/${projectId}/tasks/${taskId}?revision=${taskId}`; },{projectId,taskId});
+  await pageBrowser.evaluate(({projectId,taskId}) => { location.hash = `/p/${projectId}/tasks/${taskId}?revision=${taskId}`; },{projectId,taskId});
   const historicalPage = pageBrowser.locator(`[data-page-key="task:${taskId}:${taskId}::"]`);
   await historicalPage.getByRole("heading",{name:"固定历史任务修订"}).waitFor();
   await assertDefaultTaskShell();
-  await pageBrowser.evaluate(({projectId,taskId}) => { location.hash = `#/p/${projectId}/tasks/${taskId}?tab=runtime`; },{projectId,taskId});
+  await pageBrowser.evaluate(({projectId,taskId}) => { location.hash = `/p/${projectId}/tasks/${taskId}?tab=runtime`; },{projectId,taskId});
   await pageBrowser.getByRole("tab",{name:"运行与关联"}).waitFor();
   const panel = pageBrowser.getByRole("region",{name:"自动循环观察"});
   await panel.getByText(/当前运行 33333333 关联循环 22222222/).waitFor();
@@ -186,13 +186,13 @@ test("built Task page selects the current Loop, preserves manual history and fit
   await panel.getByText(/显示上次读回的循环 11111111/).waitFor();
   assert.match(await panel.locator(".orch-loop-head h3").innerText(),/11111111/);
   await fetch(`${base}/__fixture/status-ready`,{method:"POST"});
-  await pageBrowser.evaluate(({projectId,otherTaskId}) => { location.hash = `#/p/${projectId}/tasks/${otherTaskId}?tab=runtime`; },{projectId,otherTaskId});
+  await pageBrowser.evaluate(({projectId,otherTaskId}) => { location.hash = `/p/${projectId}/tasks/${otherTaskId}?tab=runtime`; },{projectId,otherTaskId});
   const nextPanel = pageBrowser.locator(`[data-page-key="task:${otherTaskId}:::"]`).getByRole("region",{name:"自动循环观察"});
   await nextPanel.getByText(/当前运行 44444444 关联循环 22222222/).waitFor();
   await assertDefaultTaskShell();
   assert.match(await nextPanel.locator(".orch-loop-head h3").innerText(),/22222222/);
   assert.equal(await (await fetch(`${base}/__fixture/exact-run-reads`)).text(),"0", "hidden Delivery tab must not prefetch historical Runs");
-  await pageBrowser.evaluate(({projectId,taskId}) => { location.hash = `#/p/${projectId}/tasks/${taskId}?tab=delivery`; },{projectId,taskId});
+  await pageBrowser.evaluate(({projectId,taskId}) => { location.hash = `/p/${projectId}/tasks/${taskId}?tab=delivery`; },{projectId,taskId});
   const currentTaskPage = pageBrowser.locator(`[data-page-key="task:${taskId}:::"]`);
   await assertDefaultTaskShell();
   const currentRun = currentTaskPage.locator(`#runtime-run-${taskId}-${runId}`);
@@ -207,9 +207,9 @@ test("built Task page selects the current Loop, preserves manual history and fit
   };
   const exactRunLink = currentTaskPage.getByRole("link",{name:"核对这次 Run →"});
   await exactRunLink.waitFor();
-  assert.equal(await exactRunLink.getAttribute("href"),`#/p/${projectId}/tasks/${taskId}?tab=runtime&run=${runId}`);
+  assert.equal(await exactRunLink.getAttribute("href"),`/p/${projectId}/tasks/${taskId}?tab=runtime&run=${runId}`);
   assert.equal(await currentTaskPage.getByRole("link",{name:"查看对应 Session →"}).getAttribute("href"),
-    `#/p/${projectId}/sessions?session=${encodeURIComponent(`owned:${taskId}`)}`);
+    `/p/${projectId}/sessions?session=${encodeURIComponent(`owned:${taskId}`)}`);
   await exactRunLink.focus();
   await exactRunLink.press("Enter");
   await currentOpenRun.waitFor();
@@ -221,7 +221,7 @@ test("built Task page selects the current Loop, preserves manual history and fit
   assert.equal(await pageBrowser.evaluate(() => window.scrollY),0,"polling must not reclaim manual scrolling");
   assert.equal(await currentRun.getByText(/list version one/).count(),0);
   await pageBrowser.setViewportSize({width:1280,height:720});
-  await pageBrowser.evaluate(({projectId,taskId}) => { location.hash = `#/p/${projectId}/tasks/${taskId}?tab=delivery`; },{projectId,taskId});
+  await pageBrowser.evaluate(({projectId,taskId}) => { location.hash = `/p/${projectId}/tasks/${taskId}?tab=delivery`; },{projectId,taskId});
   await fetch(`${base}/__fixture/fail-run-list`);
   await fetch(`${base}/__fixture/fail-session-list`);
   await currentTaskPage.getByRole("link",{name:"核对这次 Run →"}).click();

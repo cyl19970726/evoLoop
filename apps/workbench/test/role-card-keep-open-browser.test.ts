@@ -38,14 +38,14 @@ test("saving runtime settings keeps the Role card open and shows the new revisio
       else if (url.pathname.endsWith("/hosts") || url.pathname.endsWith("/bindings")) value = [];
       res.writeHead(200, { "content-type": "application/json" }); res.end(JSON.stringify(value)); return;
     }
-    const file = join(dist, url.pathname === "/" ? "index.html" : url.pathname);
+    const file = join(dist, /^\/(?:$|p\/|ui$)/.test(url.pathname) ? "index.html" : url.pathname);
     try { const body = await readFile(file); res.writeHead(200, { "content-type": ({ ".html": "text/html", ".js": "text/javascript", ".css": "text/css" })[extname(file)] ?? "application/octet-stream" }); res.end(body); }
     catch { res.writeHead(404); res.end(); }
   });
   await new Promise<void>(r => server.listen(0, "127.0.0.1", r)); t.after(() => server.close());
-  const browser = await chromium.launch({ headless: true }); t.after(() => browser.close());
+  const browser = await chromium.launch({ headless: true, ...(process.env.EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH ? { executablePath: process.env.EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH } : {}) }); t.after(() => browser.close());
   const page = await browser.newPage();
-  await page.goto(`http://127.0.0.1:${(server.address() as { port: number }).port}/#/p/${projectId}/runtime?view=roles`);
+  await page.goto(`http://127.0.0.1:${(server.address() as { port: number }).port}/p/${projectId}/runtime?view=roles`);
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button", { name: "进入", exact: true }).click();
   await page.locator(`#role-${roleId} > summary`).click();

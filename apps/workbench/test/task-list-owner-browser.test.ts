@@ -109,7 +109,7 @@ test("Task list resolves only displayed Role owners and rejects stale or failed 
       }
       res.writeHead(status,{"content-type":"application/json"});res.end(JSON.stringify(value));return;
     }
-    try {const body=await readFile(join(dist,url.pathname==="/"?"index.html":url.pathname));res.writeHead(200,{"content-type":({".html":"text/html",".js":"text/javascript",".css":"text/css"})[extname(url.pathname==="/"?"index.html":url.pathname)]??"application/octet-stream"});res.end(body);}
+    try {const body=await readFile(join(dist,/^\/(?:$|p\/|ui$)/.test(url.pathname) ? "index.html":url.pathname));res.writeHead(200,{"content-type":({".html":"text/html",".js":"text/javascript",".css":"text/css"})[extname(/^\/(?:$|p\/|ui$)/.test(url.pathname) ? "index.html":url.pathname)]??"application/octet-stream"});res.end(body);}
     catch {res.writeHead(404);res.end();}
   });
   await new Promise<void>(resolve=>server.listen(0,"127.0.0.1",resolve));t.after(()=>server.close());
@@ -119,7 +119,7 @@ test("Task list resolves only displayed Role owners and rejects stale or failed 
   const page=await browser.newPage({viewport:{width:390,height:844}});
   const pageErrors:string[]=[];
   page.on("pageerror", error => pageErrors.push(error.stack ?? error.message));
-  await page.goto(`${base}/#/p/${projectId}/work`);
+  await page.goto(`${base}/p/${projectId}/work`);
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button",{name:"进入",exact:true}).click();
   await page.locator(".leader-work-disclosure > summary").click();
@@ -213,7 +213,7 @@ test("Task list resolves only displayed Role owners and rejects stale or failed 
   const detailTiming=page.locator("#task-timing");
   await detailTiming.locator(":scope > summary").click();
   await detailTiming.getByText("发布证据").waitFor({timeout:5000}).catch(async () => {
-    assert.fail(`timing detail missing: route=${await page.evaluate(() => location.hash)} detail=${await detailTiming.innerText({timeout:1000}).catch(() => "absent")} body=${(await page.locator("body").innerText()).slice(0,1200)} errors=${pageErrors.join(" | ")}`);
+    assert.fail(`timing detail missing: route=${await page.evaluate(() => (location.pathname + location.search))} detail=${await detailTiming.innerText({timeout:1000}).catch(() => "absent")} body=${(await page.locator("body").innerText()).slice(0,1200)} errors=${pageErrors.join(" | ")}`);
   });
   assert.match(await detailTiming.innerText(),/未知；具备发布条件不代表已发布/);
   assert.match(await detailTiming.innerText(),/来源未知/);
@@ -253,11 +253,11 @@ test("Task list resolves only displayed Role owners and rejects stale or failed 
   await attention.getByText("1 项已关注").waitFor();
   assert.match(await attention.innerText(),/等待方 消费者 · 历史消费者/);
   await fetch(`${base}/__fixture/reset-attention`);
-  await page.goto(`${base}/?fresh=attention-narrow#/p/${projectId}/work`);
+  await page.goto(`${base}/p/${projectId}/work?fresh=attention-narrow`);
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button",{name:"进入",exact:true}).click();
   await row.getByRole("link",{name:"1 项待关注"}).click({timeout:5000}).catch(async () => {
-    assert.fail(`narrow discovery missing: hash=${await page.evaluate(() => location.hash)} state=${attentionState} reads=${attentionReads.length} link=${JSON.stringify(await row.locator(".task-attention-list-link").evaluateAll(els=>els.map(el=>({html:el.outerHTML,parent:getComputedStyle(el.parentElement!).display}))))} row=${await row.innerText()} body=${(await page.locator("body").innerText()).slice(0,500)} errors=${pageErrors.join(" | ")}`);
+    assert.fail(`narrow discovery missing: hash=${await page.evaluate(() => (location.pathname + location.search))} state=${attentionState} reads=${attentionReads.length} link=${JSON.stringify(await row.locator(".task-attention-list-link").evaluateAll(els=>els.map(el=>({html:el.outerHTML,parent:getComputedStyle(el.parentElement!).display}))))} row=${await row.innerText()} body=${(await page.locator("body").innerText()).slice(0,500)} errors=${pageErrors.join(" | ")}`);
   });
   await attention.getByText(/旧跟进属于历史 Task 修订/).waitFor();
   await attention.getByLabel("已做什么").fill("窄屏核对当前修订");

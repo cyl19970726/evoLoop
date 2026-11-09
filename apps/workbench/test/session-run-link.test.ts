@@ -7,7 +7,7 @@ test("Session's recent Run opens its Task runtime and retains the Session return
   const projectId = "11111111-1111-4111-8111-111111111111";
   const taskId = "22222222-2222-4222-8222-222222222222";
   const runId = "33333333-3333-4333-8333-333333333333";
-  const returnRoute = `#/p/${projectId}/runtime?session=owned%3Acurrent&tab=queue&filter=all`;
+  const returnRoute = `/p/${projectId}/runtime?session=owned%3Acurrent&tab=queue&filter=all`;
   const params = new URLSearchParams({ return: returnRoute, actor: "reader", returnTitle: "当前 Session" });
   const taskHref = `${taskSectionHref(projectId, taskId)}?${params}`;
 
@@ -26,7 +26,7 @@ test("failed Run uses its own recorded Task, and missing association cannot crea
   const currentTaskId = "22222222-2222-4222-8222-222222222222";
   const runTaskId = "44444444-4444-4444-8444-444444444444";
   const runId = "33333333-3333-4333-8333-333333333333";
-  const returnRoute = `#/p/${projectId}/runtime?session=owned%3A55555555-5555-4555-8555-555555555555&tab=queue`;
+  const returnRoute = `/p/${projectId}/runtime?session=owned%3A55555555-5555-4555-8555-555555555555&tab=queue`;
   const visitedTasks: string[] = [];
   const taskHref = (taskId: string) => {
     visitedTasks.push(taskId);

@@ -29,6 +29,7 @@ import { TaskTiming } from "../../shared/taskTiming";
 import { SessionTimeline, clearSessionTimelineViews } from "./SessionTimeline";
 import { clearSessionTimelineReads } from "./useSessionTimeline";
 import "./workspace.css";
+import { currentPath, navigate, onNavigate, replaceQuietly } from "../../shared/navigation";
 
 type Tab = "activity" | "queue" | "results";
 const tabLabels: Record<Tab, string> = { activity: "活动与对话", queue: "任务与队列", results: "成果" };
@@ -49,12 +50,12 @@ function assignmentLabel({ assignment, task, stale }: SessionSnapshot["assignmen
   return assignment.state === "assigned" ? "待确认" : "已释放";
 }
 function tabFromHash(sessionKey: string): Tab {
-  const values = new URLSearchParams(window.location.hash.split("?")[1] ?? "");
+  const values = new URLSearchParams(currentPath().split("?")[1] ?? "");
   const value = values.get("tab");
   return values.get("session") === sessionKey && value && value in tabLabels ? value as Tab : "activity";
 }
 function viewFromHash(sessionKey: string) {
-  const values = new URLSearchParams(window.location.hash.split("?")[1] ?? "");
+  const values = new URLSearchParams(currentPath().split("?")[1] ?? "");
   const open = (values.get("open") ?? "").split(",").filter(Boolean).slice(0, 10);
   return values.get("session") === sessionKey ? {
     filter: values.get("filter") === "all" ? "all" as ActivityFilter : "important" as ActivityFilter,
@@ -138,8 +139,7 @@ export function SessionWorkspace({ context, sessionKey, active, refresh }: { con
         pendingActivityScroll.current = view.open.at(-1) ?? null;
       }
     };
-    sync(); window.addEventListener("hashchange", sync);
-    return () => window.removeEventListener("hashchange", sync);
+    sync(); return onNavigate(sync);
   }, [sessionKey, active]);
   useLayoutEffect(() => {
     const node = workspaceRef.current;
@@ -163,7 +163,7 @@ export function SessionWorkspace({ context, sessionKey, active, refresh }: { con
   }
   function showInformation(next: boolean) {
     setInformationOpen(next);
-    window.history.replaceState(null, "", viewUrl(tab, filter, open, next));
+    replaceQuietly(viewUrl(tab, filter, open, next));
   }
   useEffect(() => {
     if (!active) return;
@@ -405,7 +405,7 @@ export function SessionWorkspace({ context, sessionKey, active, refresh }: { con
     </div>
     {failedRun && <p className="session-run-attention" role="status">最近运行{failedRun.state === "failed" ? "失败" : failedRun.state === "interrupted" ? "已中断" : "结果未知"}；{recentRunHref ? <>请先<a href={recentRunHref}>核对原 Run</a>和当前任务，再决定下一步。</> : "原 Run 缺少可核对的 Task 关联，暂不能直达；请重新读取会话并核对任务运行记录。"}</p>}
     {(session.runtimeState === "unknown" || session.runtimeState === "closed" || recoveryRead.status === "failed") && session.kind === "owned" && <p className="session-run-attention" role="status">{session.runtimeState === "closed" ? "当前 Session 已关闭。" : "当前执行状态尚待核对。"}<button type="button" onClick={() => showInformation(true)}>查看恢复与接入详情</button></p>}
-    <nav className="session-workspace-tabs" aria-label="Session 工作区栏目">{(Object.keys(tabLabels) as Tab[]).map(key => <button key={key} type="button" className={tab === key ? "selected" : ""} aria-current={tab === key ? "page" : undefined} onClick={() => { setInformationOpen(false); setTab(key); window.location.hash = viewUrl(key, filter, open, false); }}>{tabLabels[key]}</button>)}</nav>
+    <nav className="session-workspace-tabs" aria-label="Session 工作区栏目">{(Object.keys(tabLabels) as Tab[]).map(key => <button key={key} type="button" className={tab === key ? "selected" : ""} aria-current={tab === key ? "page" : undefined} onClick={() => { setInformationOpen(false); setTab(key); navigate(viewUrl(key, filter, open, false)); }}>{tabLabels[key]}</button>)}</nav>
     <details className="session-support session-information" id="session-information-panel" open={informationOpen} onToggle={event => { if (event.currentTarget.open !== informationOpen) showInformation(event.currentTarget.open); }}><summary>接入、职责、配置与恢复详情</summary>
       <div className="session-support-grid">
         <section><h2>原聊天入口</h2><p>{session.kind === "owned" ? "项目受管；消息保存后进入真实处理队列。" : "外部接入；消息只保存为人工转交。"}</p><SessionOpenEntry session={session} token={context.token} projectId={context.projectId} currentRead={active && !loading && !error} active={active} /></section>

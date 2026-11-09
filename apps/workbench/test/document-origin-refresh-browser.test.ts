@@ -16,7 +16,7 @@ const nextRunId = "77777777-7777-4777-8777-777777777777";
 const documentId = "55555555-5555-4555-8555-555555555555";
 const revisionId = "66666666-6666-4666-8666-666666666666";
 const stamp = "2026-10-25T00:00:00.000Z";
-const documentRoute = `#/p/${projectId}/documents/${documentId}?revision=${revisionId}`;
+const documentRoute = `/p/${projectId}/documents/${documentId}?revision=${revisionId}`;
 const pageItems = { items: [], nextCursor: null };
 
 test("document source Run rereads after Delivery return and manual refresh, retaining an explicitly stale last read on failure", {
@@ -70,26 +70,26 @@ test("document source Run rereads after Delivery return and manual refresh, reta
       else if (url.pathname.startsWith(`${p}/references/`)) value = [];
       res.writeHead(200,{"content-type":"application/json"});res.end(JSON.stringify(value));return;
     }
-    const file = join(dist,url.pathname === "/" ? "index.html" : url.pathname);
+    const file = join(dist,/^\/(?:$|p\/|ui$)/.test(url.pathname) ? "index.html" : url.pathname);
     try {const body=await readFile(file);res.writeHead(200,{"content-type":({".html":"text/html",".js":"text/javascript",".css":"text/css"})[extname(file)] ?? "application/octet-stream"});res.end(body);}
     catch {res.writeHead(404);res.end();}
   });
   await new Promise<void>(resolve=>server.listen(0,"127.0.0.1",resolve)); t.after(()=>server.close());
   const base=`http://127.0.0.1:${(server.address() as {port:number}).port}`;
-  const browser=await chromium.launch({headless:true}); t.after(()=>browser.close());
+  const browser=await chromium.launch({ headless: true, ...(process.env.EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH ? { executablePath: process.env.EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH } : {}) }); t.after(()=>browser.close());
   const page=await browser.newPage({viewport:{width:390,height:844}});
-  await page.goto(`${base}/${documentRoute}`);
+  await page.goto(`${base}${documentRoute}`);
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button",{name:"进入",exact:true}).click();
   await page.locator(".doc-origin-run > summary").getByText(/运行中/).waitFor();
-  await page.evaluate(({projectId,taskId}) => {window.location.hash=`#/p/${projectId}/tasks/${taskId}`;},{projectId,taskId});
+  await page.evaluate(({projectId,taskId}) => {window.location.hash=`/p/${projectId}/tasks/${taskId}`;},{projectId,taskId});
   await page.getByRole("heading",{name:"最新交付与使用"}).waitFor();
   await fetch(`${base}/__fixture/complete`);
   await page.locator(".task-delivery-summary .delivery-artifact-link").click();
   await page.locator(".doc-origin-run > summary").getByText(/运行结束/).waitFor({timeout:3000});
   await fetch(`${base}/__fixture/reset`);
   const second=await browser.newPage({viewport:{width:390,height:844}});
-  await second.goto(`${base}/${documentRoute}`);
+  await second.goto(`${base}${documentRoute}`);
   await second.getByLabel("访问令牌").fill("fixture-token");
   await second.getByRole("button",{name:"进入",exact:true}).click();
   await second.locator(".doc-origin-run > summary").getByText(/运行中/).waitFor();

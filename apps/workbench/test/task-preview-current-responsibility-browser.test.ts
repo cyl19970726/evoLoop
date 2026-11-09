@@ -83,7 +83,7 @@ test("ordinary Task row, right preview and full detail use current QA responsibi
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify(value)); return;
     }
-    const file = join(dist, url.pathname === "/" ? "index.html" : url.pathname);
+    const file = join(dist, /^\/(?:$|p\/|ui$)/.test(url.pathname) ? "index.html" : url.pathname);
     if (!file.startsWith(`${dist}/`)) { res.writeHead(404); res.end(); return; }
     try {
       const body = await readFile(file);
@@ -102,7 +102,7 @@ test("ordinary Task row, right preview and full detail use current QA responsibi
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
   const pageErrors: string[] = [];
   page.on("pageerror", error => pageErrors.push(error.message));
-  await page.goto(`${base}/#/p/${projectId}/work`);
+  await page.goto(`${base}/p/${projectId}/work`);
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button", { name: "进入", exact: true }).click();
 

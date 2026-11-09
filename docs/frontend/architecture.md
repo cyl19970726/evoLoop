@@ -19,9 +19,9 @@
 
 | 层 | 内容 | 现状 |
 | --- | --- | --- |
-| `app/` | 外壳、路由表、身份与查询客户端装配 | `App.tsx`（手写路由与项目切换）、`WorkbenchShell.tsx`、操作回执与恢复、组件样例页 `ui-samples/`。`src/` 根目录只留入口 `main.tsx`、全局类型声明和旧全局 CSS（PR10 删除），按 app 层对待 |
+| `app/` | 外壳、路由表、身份与查询客户端装配 | `router.tsx`（路由表）与 `routePaths.ts`、`App.tsx`（登录、项目切换、按区域选页面并逐页懒加载）、`WorkbenchShell.tsx`、操作回执与恢复、组件样例页 `ui-samples/`。`src/` 根目录只留入口 `main.tsx`、全局类型声明和旧全局 CSS（PR10 删除），按 app 层对待 |
 | `features/<领域>/` | 页面、领域组件、该领域的查询与命令 | 17 个领域沿用旧目录名（任务仍叫 `workflow`，团队页是 `team`）；PR5–PR9 换页时按目标页面归并 |
-| `shared/` | API 客户端、对象引用、修订标签等跨领域部件 | `api.ts` 与被多个领域读取的 `*Client.ts`、命令表单 `ActionForm`、业务状态映射（`workStatusPresentation`、`leaderWorkLoad`、`taskTiming`）、对象链接与名称解析（`taskNavigation`、`deliveryPresentation`、`externalHostEntry`、`ownerRole`）、Markdown 与 HTML 原件阅读（`ui/`）、过渡期的本地 shadcn 组件（`components/ui/`）、假数据 `fixtures/` |
+| `shared/` | API 客户端、对象引用、修订标签等跨领域部件 | 地址与历史（`navigation.ts`、`appPath.ts`、`routes.ts`）、`api.ts` 与被多个领域读取的 `*Client.ts`、命令表单 `ActionForm`、业务状态映射（`workStatusPresentation`、`leaderWorkLoad`、`taskTiming`）、对象链接与名称解析（`taskNavigation`、`deliveryPresentation`、`externalHostEntry`、`ownerRole`）、Markdown 与 HTML 原件阅读（`ui/`）、过渡期的本地 shadcn 组件（`components/ui/`）、假数据 `fixtures/` |
 | `@evoloop/ui`（`packages/ui`） | tokens、基于 shadcn 的基础组件、布局骨架、通用状态与对话流条目 | 见[组件](components.md) |
 
 检查的规则：
@@ -36,8 +36,13 @@
 
 **路由。** URL 承载项目、对象稳定 ID、修订和筛选，刷新或分享后回到同一位置；改标题或移动 Git 路径不改链接。历史修订 URL 不跳到最新版。导航入口由[布局](layout.md)决定，不按路由生成。
 
-- **现状**：`app/App.tsx` 监听 `hashchange`，手写解析 `#/p/{项目}/{区域}/{ID}?revision=…`；所有页面在一个包里。
-- **目标**：TanStack Router，路径 URL `/p/{项目}/…`，旧 `#/p/…` 链接（含正文里保存的）兼容跳转，按路由拆包，静态服务对非 `/api` 路径回退 `index.html`。以后要服务端渲染，可在同一套路由上换 TanStack Start。
+- **现状**（PR4a）：TanStack Router 管地址与历史，路径 URL `/p/{项目}/{区域}/{ID}?revision=…`，`/` 是项目列表，`/ui` 是组件样例页。路由表在 `app/router.tsx`，地址清单在 `app/routePaths.ts`；页面仍由 `App.tsx` 按解析出的区域选择（`shared/routes.ts` 的 `parseRoute`），访问过的页面保持挂载，PR5 新外壳再改成布局路由。
+  - **旧链接**：文档正文、交付登记、消息里保存的 `#/p/…` 链接继续可用。打开带 `#/…` 的地址（书签、粘贴、Agent 只读浏览器）时先换成对应路径；渲染保存的链接时用 `appPath()` 改写为路径。合同和数据库里的保存格式不变。
+  - **站内跳转**：`shared/navigation.ts` 是唯一入口：`navigate()`、`currentPath()`、`onNavigate()`；只改地址栏、不通知页面的视图状态（筛选、展开项）用 `replaceQuietly()`。站内 `<a href="/p/…">` 的点击统一转成历史导航，不整页刷新，所以内存里的登录不丢；带修饰键、新标签页、下载和外站链接不拦。
+  - **离开项目**：有未提交草稿时先确认，前进后退同样拦截。
+  - **拆包**：每个页面是单独的 chunk，首屏只带登录、外壳与共用代码。首屏 JS 预算在 `apps/workbench/bundle-budget.json`（gzip 190 KB；拆包前单包 392 KB），由 `bundle-budget.test.ts` 对构建产物检查。
+  - **服务**：coordinator 对 `/p/*` 和 `/ui` 返回 `index.html`，`/api` 与静态资源不受影响；Vite 开发服务默认同样回退。
+- **目标**：PR5 起页面改为路由组件（布局路由承载外壳），筛选与排序用路由的 search 校验写进地址栏。以后要服务端渲染，可在同一套路由上换 TanStack Start。
 
 **读取。** 列表返回有界游标页，不首次加载全项目 Wiki 或全部 trace。搜索按任务、文档、知识分组，各给来源与修订，不把不同后端的分数合并排名。
 
@@ -132,4 +137,4 @@ QueryService 返回 `observedAt`、对象与 revision、权限能力、分源状
 4. **收口**：删除旧全局 CSS，颜色字面量只允许在 token 文件里；页面自动截图。
 5. **实时与 Hub**：coordinator 提供项目级失效事件流后，前端接入并让查询失效重读，Session 输出暂留长轮询；随 #219 接入 Hub cookie 与网关流式转发。
 
-每片验收：`npm test`、typecheck、build 通过；旧 hash 深链、历史修订链接和返回位置可用；切换项目不串入旧内容；断线后能恢复；首屏 JS 小于现状。
+每片验收：`npm test`、typecheck、build 通过；旧 `#/p/` 深链、历史修订链接和返回位置可用；切换项目不串入旧内容；断线后能恢复；首屏 JS 不超过 `bundle-budget.json`。

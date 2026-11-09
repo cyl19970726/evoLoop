@@ -6,9 +6,10 @@ const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function validReturn(value: string, projectId: string): boolean {
   if (value.length > 2048 || value.includes("#", 1) || /[\u0000-\u001f\u007f]/.test(value)) return false;
-  const path = value.split("?")[0];
-  const match = new RegExp(`^#/p/${projectId}/documents/([^/?#]+)$`, "i").exec(path ?? "");
-  return isProjectRoute(value, projectId) || (!!match && uuid.test(match[1]!));
+  const route = value.startsWith("#") ? value.slice(1) : value;
+  const path = route.split("?")[0];
+  const match = new RegExp(`^/p/${projectId}/documents/([^/?#]+)$`, "i").exec(path ?? "");
+  return isProjectRoute(route, projectId) || (!!match && uuid.test(match[1]!));
 }
 
 function validRoute(hash: string, projectId: string): boolean {
@@ -42,5 +43,13 @@ export function legacyWorkbenchRoute(raw: string, projectId?: string): string | 
   try { url = new URL(raw); } catch { return null; }
   if (url.origin !== legacyOrigin || url.username || url.password || url.pathname !== "/" || url.search ||
     !validRoute(url.hash, projectId)) return null;
-  return url.hash;
+  // Open as a path; nested return and list addresses written as `#/p/…` become paths too.
+  const [path, query] = url.hash.slice(1).split("?");
+  if (query === undefined) return path!;
+  const params = new URLSearchParams(query);
+  for (const key of ["return", "list"]) {
+    const value = params.get(key);
+    if (value?.startsWith("#/")) params.set(key, value.slice(1));
+  }
+  return `${path}?${params}`;
 }

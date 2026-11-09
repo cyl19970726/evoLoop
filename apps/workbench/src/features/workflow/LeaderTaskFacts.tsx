@@ -10,7 +10,7 @@ const date = (value: string) => new Date(value).toLocaleString("zh-CN");
 const ShortId = ({ value }: { value: string }) =>
   React.createElement("code", { title: value }, value.slice(0, 8));
 const taskHref = (projectId: string, taskId: string) =>
-  `#/p/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(taskId)}`;
+  `/p/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(taskId)}`;
 
 function attentionWaitingFor(item: TaskAttentionItem, revisionId: string, timing?: LeaderWorkTaskTiming): string {
   if (item.waitingOn) {
@@ -318,7 +318,7 @@ export function LeaderTaskFacts({ leader, detail, projectId, token, responsibleN
           {item.sourceActorId && <> · 来源 actor {item.sourceActorId}</>}
           {item.recovery?.parentNoticeId && <> · 新意图继承原拒绝通知 <ShortId value={item.recovery.parentNoticeId} /></>}
           {item.recovery?.replacementNoticeId && <> · 已由 {item.recovery.dispositionActorId} 保存替代通知 <ShortId value={item.recovery.replacementNoticeId} /></>}
-          {item.linkedSessionId && <> · <a href={`#/p/${encodeURIComponent(projectId)}/sessions?session=${encodeURIComponent(`owned:${item.linkedSessionId}`)}`}>查看目标 Session ↗</a></>}</small>
+          {item.linkedSessionId && <> · <a href={`/p/${encodeURIComponent(projectId)}/sessions?session=${encodeURIComponent(`owned:${item.linkedSessionId}`)}`}>查看目标 Session ↗</a></>}</small>
         {(item.state === "linked" || item.blockedReason) && <details><summary>核对原通知身份</summary>
           <small>消息 <code className="break-anywhere">{item.messageId}</code><br />
             操作 <code className="break-anywhere">{item.operationId}</code></small></details>}

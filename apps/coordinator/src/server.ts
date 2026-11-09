@@ -715,6 +715,10 @@ export async function buildServer(options: {
   }
   if (options.webRoot) {
     await app.register(staticPlugin, { root: options.webRoot, index: "index.html", wildcard: true, cacheControl: false });
+    // The workbench uses path addresses (/p/{project}/…, /ui); each loads the same page, which routes in the browser.
+    const workbenchPage = (_request: unknown, reply: { sendFile(name: string): unknown }) => reply.sendFile("index.html");
+    app.get("/p/*", workbenchPage);
+    app.get("/ui", workbenchPage);
   }
   return app;
 }
