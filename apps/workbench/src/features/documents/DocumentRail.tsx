@@ -1,7 +1,8 @@
 // The inner rail's object list on the document pages (docs/frontend/layout.md 内层上下文栏): a 文档 / 知识 switch,
 // search and filters, the loaded documents with the open one highlighted, and what the list covers.
 import { useEffect, useRef } from "react";
-import { Button, ListRow, RefreshingIndicator, cn } from "@evoloop/ui";
+import { ReadingSpaceSwitch } from "../../shared/ui/ReadingSpaceSwitch";
+import { Button, ListRow, RefreshingIndicator } from "@evoloop/ui";
 import { href } from "../../shared/routes";
 import { ContextRailContent } from "../../shared/ui/ContextRail";
 import { DocumentFilters } from "./DocumentFilters";
@@ -11,15 +12,6 @@ import { useDocumentList } from "./useDocumentList";
 
 export function DocumentRail({ projectId, scope, selectedId }: { projectId: string; scope: string; selectedId?: string }) {
   return <ContextRailContent><DocumentRailList projectId={projectId} scope={scope} selectedId={selectedId} /></ContextRailContent>;
-}
-
-/** 文档 / 知识: the two reading spaces of this section, as a pair of links. */
-export function ReadingSpaceSwitch({ projectId, className }: { projectId: string; className?: string }) {
-  const item = "flex h-7 items-center justify-center rounded-full text-label outline-none focus-visible:shadow-[var(--focus-ring)]";
-  return <nav aria-label="文档与知识" className={cn("grid grid-cols-2 rounded-full bg-field p-0.5", className)}>
-    <a href={href(projectId, "documents")} aria-current="page" className={cn(item, "bg-raised font-medium text-foreground shadow-sm")}>文档</a>
-    <a href={href(projectId, "knowledge")} className={cn(item, "text-muted-foreground hover:text-foreground")}>知识</a>
-  </nav>;
 }
 
 function DocumentRailList({ projectId, scope, selectedId }: { projectId: string; scope: string; selectedId?: string }) {
@@ -34,7 +26,7 @@ function DocumentRailList({ projectId, scope, selectedId }: { projectId: string;
   }, [selectedId, shown]);
   const empty = emptyListText({ filtered: list.filtered, more: list.more });
   return <section data-ui="" aria-label="文档列表" className="flex flex-col gap-2.5 pb-2">
-    <ReadingSpaceSwitch projectId={projectId} className="mx-1" />
+    <ReadingSpaceSwitch projectId={projectId} current="documents" className="mx-1" />
     <DocumentFilters state={state} update={update} />
     {list.error && <p role="alert" className="mx-1 rounded-md bg-danger-soft px-3 py-2 text-caption text-text-secondary">
       列表本次没有读回：{list.error}。{list.items.length ? "下面是上次读到的列表。" : ""}
