@@ -75,6 +75,18 @@ test("ordinary Task row, right-column facts and the full task use current QA res
       else if (url.pathname === `${root}/roles/${developerRoleId}`) value = {
         projectId, id: developerRoleId, proposal: { title: "功能开发职责" },
       };
+      else if (decodeURIComponent(url.pathname) === `${root}/session-work/owned:${qaSessionId}/profile`) value = {
+        projectId, target: { kind: "owned", sessionId: qaSessionId }, version: 1, displayName: "当前验收负责人", purpose: null,
+        membership: "current", tenure: "resident", actorId: "lead", reason: "fixture", updatedAt: stamp,
+      };
+      else if (decodeURIComponent(url.pathname) === `${root}/session-work/owned:${developerSessionId}/profile`) value = {
+        projectId, target: { kind: "owned", sessionId: developerSessionId }, version: 1, displayName: "功能开发", purpose: null,
+        membership: "current", tenure: "resident", actorId: "lead", reason: "fixture", updatedAt: stamp,
+      };
+      else if (decodeURIComponent(url.pathname) === `${root}/session-work/owned:${qaSessionId}`) value = {
+        session: { key: `owned:${qaSessionId}`, title: "QA 会话", target: { kind: "owned", sessionId: qaSessionId },
+          profile: { displayName: "当前验收负责人" } },
+      };
       else if (decodeURIComponent(url.pathname) === `${root}/session-work/owned:${developerSessionId}`) value = {
         session: { key: `owned:${developerSessionId}`, title: "开发 Session",
           target: { kind: "owned", sessionId: developerSessionId },
@@ -115,7 +127,9 @@ test("ordinary Task row, right-column facts and the full task use current QA res
   const columns = page.locator('main summary[aria-label="列设置"]');
   await columns.click();
   await page.getByLabel("下一动作", { exact: true }).check();
-  assert.match(await row.locator("[data-next-cell]").innerText(), /QA 核对当前交付/);
+  // The next step is the workbench's own words for the phase, never the server's text for agents.
+  assert.match(await row.locator("[data-next-cell]").innerText(), /等验收者核对交付与实际使用/);
+  assert.doesNotMatch(await row.locator("[data-next-cell]").innerText(), new RegExp(nextAction));
   await columns.click();
 
   // Selecting the row shows its facts in the right column, which names the current QA responsibility.
@@ -123,8 +137,9 @@ test("ordinary Task row, right-column facts and the full task use current QA res
   const panel = page.getByRole("complementary", { name: "右栏" });
   const facts = panel.locator(`[data-task-facts="${taskId}"]`);
   const next = facts.locator('[aria-label="状态与下一步"]');
-  await next.getByText("QA Session · 当前验收负责人").waitFor();
-  assert.match(await next.innerText(), /待验收[\s\S]*QA 核对当前交付[\s\S]*QA Session/);
+  await next.getByText("智能体 · 当前验收负责人").waitFor();
+  assert.match(await next.innerText(), /待验收[\s\S]*等验收者核对交付与实际使用[\s\S]*智能体 · 当前验收负责人/);
+  assert.doesNotMatch(await next.innerText(), new RegExp(`${nextAction}|${qaSessionId}|QA Session`));
   assert.doesNotMatch(await next.innerText(), /功能开发|开发 Session/);
   const mainBox = await page.getByRole("main").boundingBox();
   const panelBox = await panel.boundingBox();
@@ -135,10 +150,12 @@ test("ordinary Task row, right-column facts and the full task use current QA res
   await facts.getByRole("link", { name: "打开任务" }).click();
   await page.getByRole("heading", { level: 1, name: title }).waitFor();
   const detailNext = page.getByRole("complementary", { name: "右栏" }).locator(`[data-task-facts="${taskId}"] [aria-label="状态与下一步"]`);
-  await detailNext.getByText("QA Session · 当前验收负责人").waitFor({ timeout: 5000 }).catch(async () => {
+  await detailNext.getByText("智能体 · 当前验收负责人").waitFor({ timeout: 5000 }).catch(async () => {
     assert.fail(`detail QA missing: url=${page.url()} detail=${await detailNext.innerText().catch(() => "absent")} body=${(await page.locator("body").innerText()).slice(0,1200)} errors=${pageErrors.join(" | ")}`);
   });
-  assert.match(await detailNext.innerText(), /下一步[\s\S]*QA 核对当前交付[\s\S]*QA Session/);
+  assert.match(await detailNext.innerText(), /下一步[\s\S]*等验收者核对交付与实际使用[\s\S]*智能体 · 当前验收负责人/);
+  // The page header names the same current responsibility.
+  assert.match(await page.locator(`[data-task-page="${taskId}"] [data-task-header]`).innerText(), /智能体 · 当前验收负责人/);
   assert.doesNotMatch(await detailNext.innerText(), /功能开发|开发 Session/);
   assert.equal(pageErrors.length, 0, pageErrors.join(" | "));
 });

@@ -19,6 +19,8 @@ export function TaskListNotices({ list, query = "", compact = false }: { list: T
       <details className="text-caption"><summary className="cursor-pointer">查看诊断信息</summary><code className="break-all">{list.statusProblem.diagnostic}</code></details>
     </Notice>}
     {list.awaitingAssignments && <p role="status" className={cn(line, "text-muted-foreground")}>我的承接信息尚未读全，当前结果不完整。</p>}
+    {list.awaitingAssignments && list.index.truncated && <p className={line}>
+      <Button size="compact" variant="ghost" disabled={list.index.reading} onClick={list.index.readMore}>{list.index.reading ? "正在读取…" : "继续读取承接信息"}</Button></p>}
     {list.searching && !list.searchError && <p role="status" className={cn(line, "text-muted-foreground")}>{query ? "正在搜索后续页面；结果尚未完整。" : "正在读取后续页面中的匹配任务…"}</p>}
     {list.searchError && <Notice tone="error" className={cn(compact && "px-3 py-2")}>搜索未完成：{list.searchError}。当前结果只覆盖已载入的任务。</Notice>}
   </>;

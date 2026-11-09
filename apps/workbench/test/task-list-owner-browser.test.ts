@@ -137,7 +137,7 @@ test("Task list resolves only displayed Role owners and rejects stale or failed 
   assert.match(await row.innerText(),/实施/);
   assert.match(await row.innerText(),/2026/);
   assert.match(await row.innerText(),/交付已登记/);
-  assert.match(await row.locator("[data-stage-time]").innerText(),/本阶段 未知 · 等待维护者/);
+  assert.match(await row.locator("[data-stage-time]").innerText(),/本阶段 未知 · 等待发布维护者/);
   // The selected row's facts sit in the right column. Below 1440px the shell starts it closed; once opened it stays.
   await page.getByRole("button",{name:"展开右栏"}).click();
   const panel=page.getByRole("complementary",{name:"右栏"});

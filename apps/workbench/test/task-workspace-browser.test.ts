@@ -29,6 +29,7 @@ const projection = (item: ReturnType<typeof task>, phase: string, priority: numb
   dates: { createdAt: stamp, businessChangedAt: stamp, startedAt: null, completedAt: null, observedAt: stamp },
   timing: null, actionKey: `task:${item.id}`,
 });
+const indexed = [projection(tasks[0]!, "awaiting_acceptance", 2), projection(tasks[1]!, "unassigned", 1)];
 const documents: Record<string, { title: string; kind: string; current: string; body: Record<string, string> }> = {
   [docA]: { title: "甲的主正文", kind: "task", current: revA, body: { [revA]: "# 目标\n甲的正文。" } },
   [docMap]: { title: "需求总图：本轮切片", kind: "spec", current: revMap, body: { [revMap]: "## 本轮切片\n总图正文：先做列表，再做右栏。" } },
@@ -40,6 +41,7 @@ test("task list sort survives opening, Back and reload; documents open beside th
 }, async t => {
   const { chromium } = (await import(pathToFileURL(modulePath!).href)).default;
   let assignment: Record<string, unknown> | null = null;
+  let assignmentFails = true;
   const commands: Record<string, unknown>[] = [];
   const server = createServer(async (req, res) => {
     const url = new URL(req.url!, "http://127.0.0.1");
@@ -51,14 +53,18 @@ test("task list sort survives opening, Back and reload; documents open beside th
       else if (path === root) value = { id: projectId, title: "核心路径夹具", createdAt: stamp };
       else if (path === `${root}/tasks`) value = { items: tasks, nextCursor: null };
       else if (path === `${root}/orchestration/work-status`) value = { items: (url.searchParams.get("taskIds") ?? "").split(",").filter(Boolean).map(taskId => ({ taskId, cognition: false, hasClosure: false, readyForAcceptance: false })) };
-      else if (path === `${root}/work-management/index`) value = { items: [projection(tasks[0]!, "awaiting_acceptance", 2), projection(tasks[1]!, "unassigned", 1)],
-        nextCursor: null, total: 2, counts: { awaiting_acceptance: 1, unassigned: 1 }, changeSequence: 3, observedAt: stamp, partial: false };
-      else if (path.startsWith(`${root}/work-management/tasks/`)) { status = 404; value = { message: "未登记" }; }
+      else if (path === `${root}/work-management/index`) value = { items: indexed, nextCursor: null, total: 2,
+        counts: { awaiting_acceptance: 1, unassigned: 1 }, changeSequence: 3, observedAt: stamp, partial: false };
+      else if (path.startsWith(`${root}/work-management/tasks/`)) {
+        // The same projections the index lists; a task the index does not list is not registered.
+        const found = indexed.find(item => item.taskId === path.slice(`${root}/work-management/tasks/`.length));
+        if (found) value = found; else { status = 404; value = { message: "未登记" }; }
+      }
       else if (path.startsWith(`${root}/tasks/`)) {
         const [id, sub] = path.slice(`${root}/tasks/`.length).split("/");
         const found = tasks.find(item => item.id === id);
         if (!found) { status = 404; value = { message: "无此任务" }; }
-        else if (sub === "assignment") value = id === taskA ? assignment : null;
+        else if (sub === "assignment") { if (assignmentFails) { status = 400; value = { message: "分派暂不可读" }; } else value = id === taskA ? assignment : null; }
         else if (sub) { status = 404; value = { message: "夹具未提供" }; }
         else value = { task: found, revision: { ...found, taskId: found.id, id: found.currentRevisionId, actorId: "reader", reason: "夹具修订", createdAt: stamp, basisSetId: null },
           basis: id === taskA ? { projectId, taskId: id, taskRevisionId: found.currentRevisionId, id: "basis", sealed: true,
@@ -118,6 +124,17 @@ test("task list sort survives opening, Back and reload; documents open beside th
   const railTitles = async () => (await rail.getByRole("listitem").allInnerTexts()).map(text => text.split("\n")[0]);
   await rail.getByRole("link").first().waitFor();
   assert.deepEqual(await railTitles(), ["甲：进行中的任务", "乙：待办的任务"], "default: work in progress first, closed work filtered out");
+
+  // The assignment cannot be read: the right column says it cannot tell, and binding waits for a fresh read.
+  const selectedAgent = page.getByRole("complementary", { name: "右栏" }).locator(`[data-task-facts="${taskA}"] [data-task-agent]`);
+  await selectedAgent.getByText(/承接暂不可读取/).waitFor();
+  assert.match(await selectedAgent.innerText(), /已分派\s*无法判断[\s\S]*已接受\s*无法判断/);
+  assert.doesNotMatch(await selectedAgent.innerText(), /未分派|未接受/);
+  assert.equal(await selectedAgent.getByRole("button", { name: "绑定智能体" }).isDisabled(), true);
+  assignmentFails = false;
+  await selectedAgent.getByRole("button", { name: "重新读取" }).click();
+  await selectedAgent.getByText("未分派").waitFor();
+  assert.equal(await selectedAgent.getByRole("button", { name: "绑定智能体" }).isDisabled(), false);
 
   // Sort by priority: written to the address, scoped to the loaded pages, and kept across open → Back → reload.
   await page.getByLabel("任务排序").selectOption("priority");

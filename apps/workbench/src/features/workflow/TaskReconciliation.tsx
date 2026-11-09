@@ -13,6 +13,7 @@ import { timingDate, timingDuration, timingStageLabel } from "../../shared/taskT
 import { href } from "../../shared/ui/shared";
 import type { WorkTaskStatus } from "../../shared/workStatusPresentation";
 import { sessionHref } from "../sessions";
+import { nameOnly, workNextStep, type NameRead } from "../../shared/workPresentation";
 
 /** Phase counts across the project's open work, in the order that needs a decision first. */
 export function PhaseCounts({ counts, label = "对账阶段计数" }: { counts: Record<string, number> | undefined; label?: string }) {
@@ -73,7 +74,7 @@ export function LeaderOverview({ projectId, page, statuses, roleNames }: {
         <div className="flex flex-wrap items-center gap-2"><StatusTag tone={status.tone} label={status.label} />
           <a className="font-medium text-foreground hover:underline" href={href(projectId, "task", item.taskId)}>{presentation.title}</a>
           <span className="ml-auto text-caption text-muted-foreground">第 {item.version} 版</span></div>
-        <p className="text-label text-text-secondary">{item.nextAction}</p>
+        <p className="text-label text-text-secondary">{workNextStep(item.phase)}</p>
         <p className="text-caption text-muted-foreground">{presentation.responsibility}
           {key && <> · <a className="text-primary hover:underline" href={sessionHref(projectId, key)}>打开智能体</a></>}
           {item.plan?.priority ? ` · P${item.plan.priority}` : ""}{item.dependencies.length ? ` · ${item.dependencies.length} 项依赖` : ""}
@@ -100,9 +101,13 @@ export function CapacitySummary({ projectId, overview, error }: { projectId: str
     <PhaseCounts counts={overview.work?.counts} label="阶段计数" />
     <p className="text-label text-text-secondary">{capacity.length} 个智能体 · {ready} 个可接新验收 · {idle} 个已登记工作已清 · {missing} 个有能力缺项</p>
     {capacity.length ? <ul className="flex flex-col divide-y divide-border">{capacity.map(item => {
-      const name = names[`owned:${item.sessionId}`]?.name;
+      const read = names[`owned:${item.sessionId}`];
+      // While the name is being read nothing is concluded; an agent without a registered name shows its account.
+      const nameRead: NameRead = read?.name ? { state: "named", name: read.name } : read?.problem === "未登记名称" ? { state: "unnamed" }
+        : read?.problem ? { state: "failed" } : { state: "reading" };
+      const name = nameOnly("智能体", nameRead);
       return <li key={item.sessionId} className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 py-2 text-label">
-        <a className="font-medium text-foreground hover:underline" href={sessionHref(projectId, `owned:${item.sessionId}`)}>{item.isLeader ? "统筹" : name ?? item.sessionActorId ?? "未登记名称的智能体"}</a>
+        <a className="font-medium text-foreground hover:underline" href={sessionHref(projectId, `owned:${item.sessionId}`)}>{item.isLeader ? "统筹" : name}</a>
         <span className="text-caption text-muted-foreground">{item.tenure === "temporary" ? "临时" : "常驻"} · {item.persistedWorkIdle ? "已登记工作已清" : "仍在工作"} · 验收 {item.openAcceptance} · 消息 {item.pendingMessages} · 队列 {item.queueEntries}</span>
         <span className="text-caption">{item.readyForAcceptance ? "可接验收" : item.missingCapabilities.length ? `缺：${item.missingCapabilities.join("、")}` : "不可接验收"}</span>
       </li>;

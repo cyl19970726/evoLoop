@@ -23,9 +23,9 @@ export function InboxIndex({ context }: { context: MutationContext; refresh: num
   return <div className="content work-index">
     <div className="page-title-row"><div><h1>待判断与复核</h1><p className="lede">阅读分配给我的验收和依据变化，按当前状态决定下一步。</p></div>
       <button className="quiet" aria-label="重新读取" onClick={context.onChanged}><RefreshCw size={16} /></button></div>
-    <nav className="work-context-tabs" aria-label="任务相关页面"><a href={href(projectId, "work")}>任务列表</a><a href={href(projectId, "journey")}>目标与阶段</a><a href={href(projectId, "inbox")} aria-current="page">依据复核{pending.length ? ` · ${pending.length}` : ""}</a></nav>
+    <nav className="work-context-tabs" aria-label="任务相关页面"><a href={href(projectId, "work")}>任务列表</a><a href={href(projectId, "journey")}>目标与阶段</a><a href={href(projectId, "inbox")} aria-current="page">依据复核{impacts.data && pending.length ? ` · ${pending.length}` : ""}</a></nav>
     <HumanAcceptanceInbox items={mine.data?.items ?? (mine.error ? [] : null)} projectId={projectId} error={mine.error ? errorText(mine.error) : ""} />
-    <section className="panel impact-summary"><div className="panel-head"><h2>依据变化</h2><span>{pending.length} 项待复核</span></div>
+    <section className="panel impact-summary"><div className="panel-head"><h2>依据变化</h2><span>{impacts.data ? `${pending.length} 项待复核` : impacts.error ? "暂不可读取" : "正在读取"}</span></div>
       {impacts.error ? <p role="status">依据变化暂未读回：{errorText(impacts.error)}</p>
         : impacts.isPending ? <p role="status">正在读取依据变化…</p>
           : !pending.length ? <p className="empty">当前没有待复核的依据变化。</p>

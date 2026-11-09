@@ -12,6 +12,7 @@ import { queryKeys, useProjectQuery } from "../../shared/query";
 import { rowStatus, taskStateStatus } from "../../shared/taskStatus";
 import { timingDate, timingDuration, timingStageLabel } from "../../shared/taskTiming";
 import { cognitionSummary, businessNextStep } from "../../shared/workStatusPresentation";
+import { waitingText, workNextStep } from "../../shared/workPresentation";
 import { href } from "../../shared/ui/shared";
 import { sessionHref } from "../sessions";
 import { PhaseCounts, ReconciliationDetails, useAgentNames } from "./TaskReconciliation";
@@ -27,7 +28,6 @@ const optionalColumns: { id: OptionalColumn; label: string }[] = [
   { id: "responsibility", label: "负责职责" }, { id: "nextAction", label: "下一动作" }, { id: "delivery", label: "固定成果" }, { id: "revision", label: "任务版本" },
 ];
 const columnsKey = "evoloop:task-columns";
-const waitingLabel: Record<string, string> = { session: "智能体", consumer: "使用方", leader: "统筹", role: "负责职责", publisher: "维护者", user: "用户", task: "前置任务", unknown: "责任未知" };
 
 function readColumns(): Record<OptionalColumn, boolean> {
   const none = { responsibility: false, nextAction: false, delivery: false, revision: false };
@@ -74,10 +74,14 @@ export function TaskTable({ projectId, list, view, selectedId, onSelect, linkFor
   const agentKeys = rows.map(task => { const item = matchingProjection(task, list.projections[task.id]); return item ? assignmentSessionKey(item) : null; }).filter((key): key is string => !!key);
   const agents = useAgentNames(projectId, agentKeys);
   const attention = useProjectQuery(projectId, ["tasks", "attention"], () => readAttention(projectId));
-  const timings = useQueries({ queries: rows.map(task => ({
+  // Execution times are one read per row: at most four run at once, as the old list read them.
+  const [timingLimit, setTimingLimit] = React.useState(4);
+  const timings = useQueries({ queries: rows.map((task, index) => ({
     queryKey: queryKeys.project(projectId, "tasks", "timing", task.id),
-    queryFn: () => api().taskTiming(projectId, task.id), retry: false,
+    queryFn: () => api().taskTiming(projectId, task.id), retry: false, enabled: index < timingLimit,
   })) });
+  const timingsSettled = timings.filter(read => read.isSuccess || read.isError).length;
+  React.useEffect(() => { setTimingLimit(timingsSettled + 4); }, [timingsSettled]);
   // Business work first; rows whose source is unread, and judgement records, are kept apart (never mixed in).
   const groups = [
     { id: list.groups.primaryKind === "unclassified" ? "unclassified" : "business", label: list.groups.primaryKind === "unclassified" ? "已载入任务 · 状态分类暂不可用" : "", note: "", tasks: list.groups.primary },
@@ -146,7 +150,7 @@ function TableRow({ task, list, projectId, selected, onSelect, linkFor, columns,
   const shown = cognition ? { tone: "unknown" as const, label: cognition.phase } : rowStatus(task.state, projection?.phase);
   const key = projection ? assignmentSessionKey(projection) : null;
   const progress = latestProgressPresentation(projection);
-  const next = cognition?.next ?? projection?.nextAction ?? (status && businessNextStep(task, status)) ?? taskNextStep(task.state, task.legacyDecision);
+  const next = cognition?.next ?? (projection ? workNextStep(projection.phase) : null) ?? (status && businessNextStep(task, status)) ?? taskNextStep(task.state, task.legacyDecision);
   const attentionCount = attention.filter(item => item.taskId === task.id && item.taskRevisionId === task.currentRevisionId).length;
   const title = cognition?.title ?? task.title;
   const scheduled = timing?.data;
@@ -174,12 +178,12 @@ function TableRow({ task, list, projectId, selected, onSelect, linkFor, columns,
     <td className={cell}>
       <StatusTag tone={shown.tone} label={shown.label} />
       {(cognition || projection && !closed && rowStatus(task.state, projection.phase).label !== taskStateStatus[task.state].label) && <span className="mt-1 block text-caption text-muted-foreground">任务{taskStateStatus[task.state].label}</span>}
-      {projection?.timing && <span className="mt-0.5 block text-caption text-muted-foreground" data-stage-time="">{timingStageLabel[projection.timing.current.stage] ?? "阶段未知"} · 本阶段 {timingDuration(projection.timing.current.elapsedMs)} · 等待{waitingLabel[projection.timing.current.waitingFor.kind]}</span>}
+      {projection?.timing && <span className="mt-0.5 block text-caption text-muted-foreground" data-stage-time="">{timingStageLabel[projection.timing.current.stage] ?? "阶段未知"} · 本阶段 {timingDuration(projection.timing.current.elapsedMs)} · {waitingText(projection.timing.current.waitingFor, projection.assignment)}</span>}
     </td>
     <td className={cell} data-owner-cell="">
       {key ? <><a className="text-primary hover:underline" href={sessionHref(projectId, key)}>{agents[key]?.name ?? (agents[key]?.problem ? "未登记名称的智能体" : "正在读取名称…")}</a>
         <span className="mt-0.5 block text-caption text-muted-foreground">{assignmentStatusLabel(projection!)}</span></>
-        : <><span className="text-text-secondary">{closed ? "无当前分派" : projection ? "待具体承接" : "承接尚未读回"}</span>
+        : <><span className="text-text-secondary">{!projection ? "承接尚未读回" : closed ? "无当前分派" : "待具体承接"}</span>
           <span className="mt-0.5 block text-caption text-muted-foreground">{owner?.title ? `负责职责 · ${owner.title}` : owner?.error ?? "负责职责待核对"}</span></>}
     </td>
     <td className={cell}>{projection ? <><time dateTime={projection.timing?.createdAt ?? undefined}>{timingDate(projection.timing?.createdAt)}</time><span className="block text-caption text-muted-foreground">首次任务修订</span></> : <span className="text-muted-foreground">创建时间尚未读回</span>}</td>

@@ -24,9 +24,11 @@ import { timingDuration, timingStageLabel } from "../../shared/taskTiming";
 import { TaskSchedulePanel } from "./TaskSchedulePanel";
 import { leaderProjectionMatchesTask } from "../../shared/leaderWorkLoad";
 import { phaseStatus, taskStateStatus } from "../../shared/taskStatus";
+import { ResponsibleName } from "../../shared/ui/RecordName";
+import type { ReadState } from "./taskFactsPresentation";
 import "./task-page.css";
 import "./task-experience.css";
-import { TaskDocumentPeek } from "./TaskDocumentPeek";
+import { PeekBoundary, TaskDocumentPeek } from "./TaskDocumentPeek";
 import { TaskFacts } from "./TaskFacts";
 import { taskGoal, taskType } from "./taskWorkspacePresentation";
 import { appLocation, currentPath, onNavigate } from "../../shared/navigation";
@@ -157,6 +159,8 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
   const [detail, setDetail] = useState<TaskDetail | null>(null);
   const [leaderTask, setLeaderTask] = useState<LeaderWorkTask | null>(null);
   const [leaderTaskError, setLeaderTaskError] = useState("");
+  // What the current-work read allows to conclude: a 404 is "not registered", any other failure is "cannot tell".
+  const [leaderState, setLeaderState] = useState<ReadState>("loading");
   const [responsibleName, setResponsibleName] = useState<string | null>(null);
   const [selectedImpactId, setSelectedImpactId] = useState<string | null>(null);
   const [historical, setHistorical] = useState<{ taskId: string; revision: TaskRevision; basis: BasisSet | null } | null>(null);
@@ -192,7 +196,7 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
   const mismatchRef = useRef("");
   useEffect(() => { ++historyRequestRef.current; setHistorical(null);
     setTab(selectedRevision ? "history" : taskSectionFromHash(currentPath(), projectId, id) ?? "overview");
-    setDetail(null); setBasisDocuments({}); setLeaderTask(null); setLeaderTaskError(""); setResponsibleName(null);
+    setDetail(null); setBasisDocuments({}); setLeaderTask(null); setLeaderTaskError(""); setLeaderState("loading"); setResponsibleName(null);
   }, [id, projectId]);
   useEffect(() => {
     if (!detail || detail.task.id !== id || landingRef.current !== tab) return;
@@ -231,7 +235,7 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
     if (!detail || detail.task.id !== id) return;
     const request = ++leaderRequestRef.current;
     let active = true;
-    setLeaderTask(null); setLeaderTaskError("");
+    setLeaderTask(null); setLeaderTaskError(""); setLeaderState(current => current === "checking" ? "checking" : "loading");
     api(token).leaderTask(projectId, id).then(value => {
       if (!active || request !== leaderRequestRef.current) return;
       if (!leaderProjectionMatchesTask(value, {
@@ -241,15 +245,20 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
         const seen = `${id}:${detail.task.version}:${detail.task.currentRevisionId}`;
         if (mismatchRef.current !== seen) {
           mismatchRef.current = seen;
-          setLeaderTaskError("任务或工作安排已在读取期间变化；正在重新核对。");
+          setLeaderState("checking");
           setReadVersion(current => current + 1);
-        } else setLeaderTaskError("当前工作安排还停在任务的旧版本上，暂不显示；可稍后重新读取当前任务。");
+        } else {
+          setLeaderState("failed");
+          setLeaderTaskError("当前工作安排还停在任务的旧版本上，暂不显示；可稍后重新读取当前任务。");
+        }
         return;
       }
-      setLeaderTask(value);
+      setLeaderTask(value); setLeaderState("ready");
     }).catch(cause => {
       if (active && request === leaderRequestRef.current) {
         setLeaderTask(null);
+        if (cause instanceof ApiError && cause.status === 404) { setLeaderState("ready"); return; }
+        setLeaderState("failed");
         setLeaderTaskError(`当前工作安排暂未读回：${errorText(cause)}`);
       }
     });
@@ -310,11 +319,10 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
   }
   const goal = taskGoal(leaderTask, detail.task);
   const projection = leaderTask ?? undefined;
-  const responsibilityLabel = !leaderTask ? "职责尚未读回"
-    : leaderTask.responsible.kind === "role" && leaderTask.responsible.id === detail.task.owner
-      ? responsibleName ? `负责职责 · ${responsibleName}` : "负责职责待核对"
-      : leaderTask.responsible.kind === "session" ? `智能体 · ${leaderTask.responsible.label.replace(/^(受管 Session|外部 HostLink|Session)\s*/, "") || "名称待核对"}`
-        : leaderTask.responsible.label;
+  const responsibilityLabel = leaderState === "loading" || leaderState === "checking" ? "正在核对责任…"
+    : leaderState === "failed" ? "责任暂无法判断"
+      : !leaderTask ? "当前工作安排未登记"
+        : <ResponsibleName projectId={projectId} item={leaderTask} />;
   const acceptanceNote = `${detail.proposal?.acceptanceMode === "independent_agent" ? "须由不同于实际提交者的智能体使用当前交付" : detail.proposal?.acceptanceMode === "human_required" ? "须由指定的受信用户本人使用当前交付" : "按任务原有验收合同核对"}${detail.proposal?.consumer ? ` · 指定身份 ${detail.proposal.consumer}` : detail.proposal?.acceptanceMode ? " · 验收身份待实际签收" : ""}。任务状态、技术检查和实际使用分别记录。`;
   const state = taskStateStatus[detail.task.state];
   const sectionOpen = new URLSearchParams(currentPath().split("?")[1] ?? "").get("section");
@@ -322,7 +330,7 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
   const openContent = () => panel?.openInPanel({
     id: `document:${detail.task.contentDocumentId}@${detail.task.contentRevisionId}`, title: "主正文",
     href: href(projectId, "document", detail.task.contentDocumentId, detail.task.contentRevisionId),
-    render: () => <TaskDocumentPeek projectId={projectId} documentId={detail.task.contentDocumentId} revisionId={detail.task.contentRevisionId} relation="主正文 · 任务固定的修订" />,
+    render: () => <PeekBoundary><TaskDocumentPeek projectId={projectId} documentId={detail.task.contentDocumentId} revisionId={detail.task.contentRevisionId} relation="主正文 · 任务固定的修订" /></PeekBoundary>,
   });
   return <div data-ui="" className="task-page mx-auto flex w-full max-w-[880px] flex-col gap-5 px-6 pb-16 pt-5 max-compact:px-4" data-task-page={id}>
     <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
@@ -344,7 +352,7 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
         <span className="text-label text-text-secondary">{responsibilityLabel}</span>
       </div>
     </header>
-    {!leaderTask && !leaderTaskError && <p className="text-caption text-muted-foreground" role="status">正在核对本任务当前的进展与具体责任…</p>}
+    {(leaderState === "loading" || leaderState === "checking") && <p className="text-caption text-muted-foreground" role="status">{leaderState === "checking" ? "任务或工作安排已在读取期间变化，正在重新核对…" : "正在核对本任务当前的进展与具体责任…"}</p>}
     {leaderTaskError && <Notice tone="error">{leaderTaskError}</Notice>}
     {detail.task.legacyDecision && <Notice tone="waiting" title={legacyDecisionLabel(detail.task.legacyDecision)}
       action={<Button size="compact" onClick={() => selectTab("history")}>查看历史</Button>}>当前状态为“{taskStateLabel[detail.task.state]}”，请先核对旧判断与理由，再决定是否推进。旧判断理由：{detail.task.legacyDecision.reason}</Notice>}
@@ -436,6 +444,6 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
         </div>
       </TabsContent>
     </Tabs>
-    <ContextPanelContent><TaskFacts context={context} taskId={id} detail={detail} leader={leaderTask} leaderKnown={!!leaderTask || !!leaderTaskError} linkForTab={linkForTab} /></ContextPanelContent>
+    <ContextPanelContent><TaskFacts context={context} taskId={id} detail={detail} leader={leaderTask} leaderState={leaderState} linkForTab={linkForTab} /></ContextPanelContent>
   </div>;
 }

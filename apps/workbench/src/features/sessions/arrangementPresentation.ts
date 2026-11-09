@@ -1,29 +1,9 @@
 // Words for 统筹安排. The server's `nextAction` is written for agents working through the CLI and names internal
-// records; people see a next step per phase instead. Read states decide what the page may conclude: a read that
+// records; people see a next step per phase instead (workNextStep in shared/workPresentation.ts). Read states decide what the page may conclude: a read that
 // is still running or failed never becomes "free", "no conflict" or a count of 0, and a failed reread that keeps
 // the previous answer on screen says so.
-import type { LeaderWorkPhase } from "@evoloop/contracts/work-index";
 import type { ObservedTask } from "@evoloop/contracts/session-observation";
 import type { FreeCapacity } from "./arrangementModel";
-
-const nextSteps: Record<LeaderWorkPhase, string> = {
-  unassigned: "等统筹指定承接的智能体",
-  awaiting_assignment: "等承接的智能体确认接手",
-  ready: "可以开始，等统筹安排执行",
-  running: "等这次执行结束；执行结束不等于验收通过",
-  awaiting_delivery: "等执行的智能体提交结果；没有交付前不推定结果",
-  awaiting_acceptance: "等验收者核对交付与实际使用",
-  rework: "先核对失败的结果，再安排返工",
-  blocked: "先解决依赖、待复核或暂停，再安排承接",
-  unknown: "上次执行结果未知，先核对，不要重复派发",
-  closed: "已关闭，可查看交付与关闭依据",
-  cancelled: "已取消；要继续，先核对取消原因",
-};
-
-/** The next step for a Task in this phase, in the page's own words. */
-export function arrangementNextStep(phase: LeaderWorkPhase): string {
-  return nextSteps[phase] ?? "下一步待核对";
-}
 
 const directoryRelations: Record<ObservedTask["relation"], string> = {
   accepted: "已接手",

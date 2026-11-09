@@ -71,11 +71,11 @@ export function rowMeta(task: Task, sort: TaskSort, projection: LeaderWorkTask |
   const key = (() => {
     switch (sort) {
       case "default": return "";
-      case "priority": return item?.plan?.priority ? `P${item.plan.priority}` : "优先级未设";
-      case "due": return item?.plan?.dueAt ? `截止 ${taskTimestamp(item.plan.dueAt)}` : "截止未设";
+      case "priority": return !item ? "优先级未读回" : item.plan?.priority ? `P${item.plan.priority}` : "优先级未设";
+      case "due": return !item ? "截止未读回" : item.plan?.dueAt ? `截止 ${taskTimestamp(item.plan.dueAt)}` : "截止未设";
       case "progress": return item?.latestProgress ? `进展 ${taskTimestamp(item.latestProgress.changedAt)}` : item ? "进展未记录" : "进展未读回";
       case "created": { const created = item?.timing?.createdAt ?? item?.dates.createdAt; return created ? `创建 ${taskTimestamp(created)}` : "创建时间未读回"; }
-      case "phase": return item && open ? `阶段 ${phaseStatus[item.phase].label}` : "";
+      case "phase": return !open ? "" : item ? `阶段 ${phaseStatus[item.phase].label}` : "阶段未读回";
     }
   })();
   return [state, key].filter(Boolean).join(" · ");

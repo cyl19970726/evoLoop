@@ -5,7 +5,7 @@ export function HumanAcceptanceInbox({ items, projectId, error }: {
   items: AcceptanceHumanItem[] | null; projectId: string; error: string;
 }) {
   return <section className="panel impact-summary" aria-label="待我验收">
-    <div className="panel-head"><h2>待我验收</h2><span>{items?.length ?? 0} 项</span></div>
+    <div className="panel-head"><h2>待我验收</h2><span>{items ? `${items.length} 项` : error ? "暂不可读取" : "正在读取"}</span></div>
     {error && <p role="status">待验收列表暂未读回：{error}</p>}
     {!error && items === null && <p role="status">正在读取待验收事项…</p>}
     {items?.length === 0 && <p className="empty">当前没有分配给我的验收事项。</p>}

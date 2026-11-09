@@ -19,16 +19,20 @@ const indexItemLimit = 500;
 const partialStatusDiagnostic = "接口未返回全部已载入任务的工作进度。";
 
 export interface StatusProblem { kind: "unavailable" | "partial"; diagnostic: string }
-export interface ProjectionIndex { first: LeaderWorkPage<LeaderWorkTask> | null; items: Record<string, LeaderWorkTask>; complete: boolean; error: string; loading: boolean }
+export interface ProjectionIndex {
+  first: LeaderWorkPage<LeaderWorkTask> | null; items: Record<string, LeaderWorkTask>; complete: boolean; error: string; loading: boolean;
+  /** More open work exists than was read; readMore() reads the next 500 rows. */
+  truncated: boolean; reading: boolean; readMore(): void;
+}
 
 /** The current-work index for open tasks, read up to 500 rows. A partial read never becomes "nobody is assigned". */
-async function readProjectionIndex(projectId: string): Promise<{ first: LeaderWorkPage<LeaderWorkTask>; page: LeaderWorkPage<LeaderWorkTask>; problem: string }> {
+async function readProjectionIndex(projectId: string, limit: number): Promise<{ first: LeaderWorkPage<LeaderWorkTask>; page: LeaderWorkPage<LeaderWorkTask>; problem: string }> {
   const client = api();
   const first = await client.leaderWork(projectId, "tasks") as LeaderWorkPage<LeaderWorkTask>;
   let page = first, problem = "";
   const seen = new Set<string>();
   try {
-    while (page.nextCursor && page.items.length < indexItemLimit) {
+    while (page.nextCursor && page.items.length < limit) {
       if (seen.has(page.nextCursor)) throw new Error("当前工作分页游标重复");
       seen.add(page.nextCursor);
       page = appendLeaderWorkPage(page, await client.leaderWork(projectId, "tasks", page.nextCursor) as LeaderWorkPage<LeaderWorkTask>);
@@ -87,12 +91,16 @@ export function useTaskList(projectId: string, view: TaskListView, actorId: stri
   }
 
   // Current-work projections: the open-task index, plus single reads for listed tasks the index leaves out (closed ones).
-  const indexRead = useProjectQuery(projectId, ["tasks", "leader-index"], () => readProjectionIndex(projectId));
+  // Open work is read 500 rows at a time; beyond that the reader asks for more (继续读取) instead of waiting forever.
+  const [indexLimit, setIndexLimit] = useState(indexItemLimit);
+  const indexRead = useProjectQuery(projectId, ["tasks", "leader-index", indexLimit], () => readProjectionIndex(projectId, indexLimit), { keepPrevious: true });
   const indexItems = useMemo(() => Object.fromEntries((indexRead.data?.page.items ?? []).map(item => [item.taskId, item])), [indexRead.data]);
   const index: ProjectionIndex = {
     first: indexRead.data?.first ?? null, items: indexItems, loading: indexRead.isPending,
     complete: !!indexRead.data && !indexRead.data.page.nextCursor && !indexRead.data.page.partial && !indexRead.data.problem,
     error: indexRead.error ? errorText(indexRead.error) : indexRead.data?.problem ?? "",
+    truncated: !!indexRead.data?.page.nextCursor && !indexRead.data.problem && indexRead.data.page.items.length >= indexLimit,
+    reading: indexRead.isFetching, readMore: () => setIndexLimit(limit => limit + indexItemLimit),
   };
   const filtered = useMemo(() => tasks.filter(task => matchesFilters(task, view, statuses[task.id])), [tasks, view.query, view.filter, view.kind, statuses]);
   const wanted = options.projectionsFor === "none" && !sortUsesProjection(view.sort) ? [] : filtered;

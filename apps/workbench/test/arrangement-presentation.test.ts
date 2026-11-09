@@ -1,27 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { LeaderWorkPhase } from "@evoloop/contracts/work-index";
 import {
-  arrangementNextStep, capacityUnknownReason, directoryWorkCaption, noConflictText, noFreeAgentText, readStateOf,
+  capacityUnknownReason, directoryWorkCaption, noConflictText, noFreeAgentText, readStateOf,
 } from "../src/features/sessions/arrangementPresentation.ts";
-
-const phases: LeaderWorkPhase[] = ["unknown", "rework", "blocked", "awaiting_delivery", "awaiting_acceptance", "ready",
-  "awaiting_assignment", "running", "unassigned", "closed", "cancelled"];
-// The server's nextAction for the unassigned phase, word for word: written for agents, not for this page.
-const serverUnassigned = "负责人选择真实 Role/Session 并按当前版本正式分派";
-const internal = /Role|Session|Run|operation|assignment|queue/i;
-
-test("each phase has its own next step in plain words", () => {
-  const steps = phases.map(arrangementNextStep);
-  assert.equal(new Set(steps).size, phases.length, "no two phases share a step");
-  for (const [index, step] of steps.entries()) {
-    assert.doesNotMatch(step, internal, phases[index]);
-    assert.doesNotMatch(step, /[A-Za-z]/, `${phases[index]} has no English words`);
-  }
-  assert.equal(arrangementNextStep("unassigned"), "等统筹指定承接的智能体");
-  assert.notEqual(arrangementNextStep("unassigned"), serverUnassigned);
-  assert.equal(arrangementNextStep("future_phase" as LeaderWorkPhase), "下一步待核对");
-});
 
 test("the directory's current work says where it comes from and that its phase is unread", () => {
   assert.equal(directoryWorkCaption("accepted"), "智能体目录记录：已接手 · 阶段未读取");

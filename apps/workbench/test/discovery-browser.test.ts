@@ -106,6 +106,8 @@ test("built workbench discovers later Chinese task and document pages, linked ta
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button",{name:"进入",exact:true}).click();
   const main=page.getByRole("main");
+  // In-app navigation, as a link click does: the page and its in-memory login stay.
+  const go=(path: string) => page.evaluate(target => { const link=Object.assign(document.createElement("a"),{href:target}); document.body.append(link); link.click(); link.remove(); }, path);
   // At 390px the task list (with its search box) is in the navigation drawer; the table view fills the center.
   const openNavigation=async () => { await page.getByRole("button",{name:"打开项目导航"}).click(); };
   const closeNavigation=async () => { await page.keyboard.press("Escape"); await page.getByRole("dialog").waitFor({state:"detached"}); };
@@ -138,22 +140,21 @@ test("built workbench discovers later Chinese task and document pages, linked ta
   await main.getByRole("link",{name:"打开任务：中文跨页实施任务"}).click();
   await page.getByRole("heading",{level:1,name:"中文跨页实施任务"}).waitFor();
   assert.equal(await main.locator("[data-task-acceptance]").evaluate(el => el.scrollWidth <= el.clientWidth),true);
-  // Related documents are listed in the task's right column (a sheet at 390px); 在中间打开 opens the document page.
+  // Related documents are listed in the task's right column (a sheet from the bottom at 390px). The document opens
+  // beside the task, and 在中间打开 goes to the document's own page; the sheet closes on the way.
   await main.getByRole("button",{name:"任务信息"}).click();
-  // Listed under 关联文档. Opening it inside the 390px sheet is left to the desktop test (task-workspace-browser):
-  // this fixture's long diagram keeps the sheet moving while it renders (a known follow-up).
-  await page.getByRole("dialog").getByRole("button",{name:/中文跨页方案文档/}).waitFor();
-  await page.keyboard.press("Escape");
-  await page.getByRole("dialog").waitFor({state:"detached"});
-  // The linked document's own page (the sheet's 在中间打开 goes there; this fixture's long diagram keeps the sheet
-  // moving, so go by address). The document assertions live in the documents test below.
-  await page.evaluate(({projectId,documentId}) => { location.hash = `/p/${projectId}/documents/${documentId}`; }, {projectId,documentId});
+  const sheet=page.getByRole("dialog");
+  await sheet.getByRole("button",{name:/中文跨页方案文档/}).click();
+  await sheet.getByRole("tab",{name:"中文跨页方案文档"}).waitFor();
+  await sheet.getByRole("link",{name:"在中间打开"}).click();
   await page.getByRole("heading",{name:"中文跨页方案文档",level:1}).waitFor();
+  await sheet.waitFor({state:"detached"});
   await page.goBack();
+  await page.getByRole("heading",{level:1,name:"中文跨页实施任务"}).waitFor();
   await fetch(`${base}/__fixture/close`,{method:"POST"});
-  await page.evaluate(projectId => { location.hash = `/p/${projectId}/documents`; }, projectId);
+  await go(`/p/${projectId}/documents`);
   await page.getByRole("button",{name:"载入更多"}).waitFor();
-  await page.evaluate(({projectId,taskId}) => { location.hash = `/p/${projectId}/tasks/${taskId}`; }, {projectId,taskId});
+  await go(`/p/${projectId}/tasks/${taskId}`);
   // Coming back to the task rereads it: the header shows the new version, the right column the new delivery.
   const header=page.locator(`[data-page-key="task:${taskId}:::"] [data-task-header]`);
   await header.getByText(/第 2 版/).waitFor({timeout:5000}).catch(async () => {
@@ -168,9 +169,9 @@ test("built workbench discovers later Chinese task and document pages, linked ta
   };
   await deliveryChecked();
   await fetch(`${base}/__fixture/fail-task-read`,{method:"POST"});
-  await page.evaluate(projectId => { location.hash = `/p/${projectId}/documents`; }, projectId);
+  await go(`/p/${projectId}/documents`);
   await page.getByRole("button",{name:"载入更多"}).waitFor();
-  await page.evaluate(({projectId,taskId}) => { location.hash = `/p/${projectId}/tasks/${taskId}`; }, {projectId,taskId});
+  await go(`/p/${projectId}/tasks/${taskId}`);
   await page.getByText(/当前任务回读失败.*不能视为当前状态/).waitFor();
   await fetch(`${base}/__fixture/recover-task-read`,{method:"POST"});
   await page.getByRole("button",{name:"重新读取当前任务"}).click();
@@ -179,7 +180,7 @@ test("built workbench discovers later Chinese task and document pages, linked ta
   await page.getByRole("button",{name:"重新读取当前任务"}).click();
   await page.getByRole("heading",{name:"命令行已更新的实施任务"}).waitFor();
   await fetch(`${base}/__fixture/long-pages`,{method:"POST"});
-  await page.evaluate(projectId => { location.hash = `/p/${projectId}/work`; }, projectId);
+  await go(`/p/${projectId}/work`);
   await page.getByRole("main").getByRole("button",{name:"重新读取列表"}).click();
   await page.getByRole("button",{name:"打开项目导航"}).click();
   await page.getByRole("searchbox",{name:"搜索任务"}).fill("不存在的中文任务");

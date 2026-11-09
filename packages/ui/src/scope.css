@@ -52,7 +52,7 @@
 }
 
 /* Unlayered on purpose: it has to win over the old unlayered element rules, then hand control back to the layers. */
-[data-ui][data-ui] :is(a, button, input, select, textarea, label, summary, p, small, span, li, ul, ol, dl, dt, dd, h1, h2, h3, h4, table, tbody, th, td, code, pre):not([data-legacy], [data-legacy] *) {
+[data-ui][data-ui] :is(a, button, input, select, textarea, label, summary, p, small, span, li, ul, ol, dl, dt, dd, h1, h2, h3, h4, table, thead, tbody, tr, th, td, code, pre):not([data-legacy], [data-legacy] *) {
   all: revert-layer;
 }
 
