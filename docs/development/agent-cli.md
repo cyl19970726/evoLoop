@@ -75,13 +75,13 @@ npm run --silent cli -- operation "$OPERATION_ID" --project "$PROJECT_ID"
 
 若经明确的范围与成本决定仍需增加额度，由原登记控制者先读 Loop 和 `command schema loop.extendBudget`，以当前 `expectedLoopVersion`、`expectedMaxRuns`、只比原值多 1 的 `maxRuns`、批准依据 `evidenceRef` 和理由提交。该命令要求项目 write＋review、Loop paused 且无未结派发或在途/未知 Run；旧上限或版本不符、跨控制者、一次加多次、减额、active/stopped 都拒绝。成功追加预算变更事件并更新 Loop 版本，原 `dispatchCount`、策略、全部失败与其他 Loop 不变，也不会激活 Loop。原 operationId 同正文回读，不自动反复增额；worker 不能自行申请或通过新 Loop 重置计数。
 
-专用上传、知识和引用仍用 request schema；命令只证明服务回执，不证明长期效果。当前基线及本轮实测见[路线 C5](../roadmap.md#c5-taskdocument-模型简化)。
+专用上传、知识和引用仍用 request schema；命令只证明服务回执，不证明长期效果。当前基线及本轮实测见[路线 C5](../references/roadmap-history.md#c5-taskdocument-模型简化)。
 
 负责人讨论的决定使用 `discussion.decision.record`，由核心同事务追加讨论事件和所属 Document 正文；通用 `document.revise` 不会同步讨论指针。若另行编辑后返回 `DOCUMENT_CHANGED`，先核对原操作的确定拒绝，再完整回读讨论登记版与文档当前版、哈希及最新决定。经实际判断后，以新意图/新操作 ID、当前 Discussion `expectedVersion`、真实当前 `documentRevisionId` 及最新决定的 supersede 引用提交，并显式增加 `documentRecovery: { expectedDocumentVersion, reason }`。核心仅在确有失配、版本匹配且原件可核时，从当前正文追加恢复依据和本次决定；旧修订、拒绝记录及冻结输入不变。不失配时不提供恢复字段，不能直接改数据库指针。操作未知仍先按原 ID 对账，讨论及文档权威见[项目数据](../architecture/project-data.md#3-关系与认知读取)；实际操作也应读取项目内业务技能的讨论指引。
 
 评价入口的首片针对**一个固定 Task、两组条件**。先读取 `evaluation-source TASK_UUID --project UUID`，取得进行中 Task 当前来源修订及服务端推导的签名；再查看 `command schema evaluation.create`，以固定协议/共同材料、同一指令与判据建立直接组和额外 Wiki 组。直接组要求 Task 本身没有必需 Wiki；两组声明相同模型和运行环境。修订定义用 `evaluation.revise` 追加新版本，既有尝试不搬到新版。`list evaluations --project UUID [--task UUID | --knowledge UUID]` 与 `evaluation EVALUATION_UUID --project UUID [--revision UUID]` 读取定义、全部真实尝试、判定、更正与结论。普通 `runtime.run.reserve` 不要求评价；只有声明为评价尝试的 Run 才须固定 `evaluation` 绑定，每次尝试使用新的受管 Session。成功预留才有真实 Attempt，派发前还须完成受控输入包绑定。用 `evaluation-packet EVALUATION_UUID --project UUID --revision UUID --attempt UUID` 回读实际包及固定来源，不能把定义中的材料清单当作已送达证明。
 
-本节已记录的历史评价尝试在 Run 确认终态后，以 `delivery.record` 和 `runId` 显式登记产物；新普通受管 Run 应由执行者在本轮按[本人提交](#普通-run-本人提交与终态封存)签意图，再核终态封存的 Delivery。两条路径均须先核任务业务输入仍与执行时一致；交付登记修订不等于 Run 的执行修订。每个尝试用 `evaluation.assessment.record` 记录显式关联该 Run 的 Delivery/Observation、失败、采用、真人效果、证据与成本；旧无 Run 归因的交付不能推测为评价成果。没有成本回执填 `null`，不填零。更正指定 `supersedesId`；`evaluation.conclusion.record` 必须选取所有首次及重试尝试的当前判定，并明确比较限制和下一步选择。首片只允许 `with_limits` 或 `unknown`，不能把两组记录与局部成本标成完全可比。`nextActionRef` 可固定引用已有 Task 的 `{kind:"task",taskId,taskRevisionId}`，服务端校验同项目及修订归属，不自动创建或开始它。命令结构以 `command schema TYPE` 为准，读回包、Run、交付及观察后再下结论。评价不会自动关闭原 Task 或发布 Wiki。本轮已由授权的负责人 Agent 完成两组真实运行、完整输入包与产物回读，并登记有限评价；具体范围与阶段决定见[完整旅程接续试用](../roadmap.md#完整旅程接续试用)。Wiki 采用正确不代表增量收益，Agent 使用不代表真人效果。
+本节已记录的历史评价尝试在 Run 确认终态后，以 `delivery.record` 和 `runId` 显式登记产物；新普通受管 Run 应由执行者在本轮按[本人提交](#普通-run-本人提交与终态封存)签意图，再核终态封存的 Delivery。两条路径均须先核任务业务输入仍与执行时一致；交付登记修订不等于 Run 的执行修订。每个尝试用 `evaluation.assessment.record` 记录显式关联该 Run 的 Delivery/Observation、失败、采用、真人效果、证据与成本；旧无 Run 归因的交付不能推测为评价成果。没有成本回执填 `null`，不填零。更正指定 `supersedesId`；`evaluation.conclusion.record` 必须选取所有首次及重试尝试的当前判定，并明确比较限制和下一步选择。首片只允许 `with_limits` 或 `unknown`，不能把两组记录与局部成本标成完全可比。`nextActionRef` 可固定引用已有 Task 的 `{kind:"task",taskId,taskRevisionId}`，服务端校验同项目及修订归属，不自动创建或开始它。命令结构以 `command schema TYPE` 为准，读回包、Run、交付及观察后再下结论。评价不会自动关闭原 Task 或发布 Wiki。本轮已由授权的负责人 Agent 完成两组真实运行、完整输入包与产物回读，并登记有限评价；具体范围与阶段决定见[完整旅程接续试用](../references/roadmap-history.md#完整旅程接续试用)。Wiki 采用正确不代表增量收益，Agent 使用不代表真人效果。
 
 ## 仓库工程任务与动作交接
 
@@ -324,7 +324,7 @@ worker 凭据的有限有效期由外部配置 `orchestration.credentialTtlMs` �
 
 ## 当前边界
 
-具名读取、固定 context/原件、专用请求 schema、持久回执与服务端核对已实现；当前能力以 `help`、`command types`、`request types`、对应 schema 与实际读回为准。新上下文 Agent 已仅经业务 skill＋CLI 完成一项隔离静态归档任务：上游改版显式保留旧依据，交接引用错误产生的两次失败保留，修正版经另一 Agent 实际读取和字节核验后关闭；普通工作台独立只读 QA 可见相同固定原件、交付、观察和旧历史。整合检查与 C1—C4 状态统一见[阶段路线](../roadmap.md#agent-业务入口-c1c4实施里程碑)。这核验了机器入口与人的观察面能够接续，不能替代真人亲用或证明整体产品效果。外置 Wiki 已有受限写读与候选复核证据，语义索引未验；飞书真实租户延后；生产可靠性与长期效果仍需独立验收。
+具名读取、固定 context/原件、专用请求 schema、持久回执与服务端核对已实现；当前能力以 `help`、`command types`、`request types`、对应 schema 与实际读回为准。新上下文 Agent 已仅经业务 skill＋CLI 完成一项隔离静态归档任务：上游改版显式保留旧依据，交接引用错误产生的两次失败保留，修正版经另一 Agent 实际读取和字节核验后关闭；普通工作台独立只读 QA 可见相同固定原件、交付、观察和旧历史。整合检查与 C1—C4 状态统一见[阶段路线](../references/roadmap-history.md#agent-业务入口-c1c4实施里程碑)。这核验了机器入口与人的观察面能够接续，不能替代真人亲用或证明整体产品效果。外置 Wiki 已有受限写读与候选复核证据，语义索引未验；飞书真实租户延后；生产可靠性与长期效果仍需独立验收。
 
 C5 补充验证了新模型：一项 Task 无需预建主文档，经 CLI 一次创建后直接读取正文、开始并交付；首版错误深链的失败观察保留，修订时实际走 reopen→update→start，省略 basis 仍继承原归档修订。修正版经另一 Agent 重读固定 context、导出并核验 355 字节 HTML/CSS/SVG 后关闭，普通 GUI 独立回读相同正文、交付和历史。图在 390px 下保持可读字号并内部横向滚动；这些仍是隔离样本与 Agent 使用，未升级既有预览或证明真人体验。
 

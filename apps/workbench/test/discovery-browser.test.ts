@@ -23,7 +23,8 @@ C --> D["交付与使用记录技术检查和真实使用等待负责人决定�
 D --> E["完成决定检查末节点和最后箭头完整显示保存结论回到任务"]
 \`\`\``;
 
-test("built workbench discovers later Chinese task and document pages, linked tasks, and external changes", { skip: !playwrightModule && "Set EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE" }, async t => {
+/** The fixture coordinator and a browser: two task pages, two document pages, reverse references and switches. */
+async function startFixture(t: { after(fn: () => unknown): void }) {
   const { chromium } = (await import(pathToFileURL(playwrightModule!).href)).default;
   let title = "中文跨页实施任务", version = 1, failReverse = false, delivered = false, failTaskRead = false;
   let holdTaskPage = false, releaseTaskPage: (() => void) | null = null, taskPageRequests = 0, docPageRequests = 0, longPages = false, longReverse = false;
@@ -95,6 +96,11 @@ test("built workbench discovers later Chinese task and document pages, linked ta
   await new Promise<void>(resolve => server.listen(0,"127.0.0.1",resolve)); t.after(() => server.close());
   const base = `http://127.0.0.1:${(server.address() as {port:number}).port}`;
   const browser = await chromium.launch({ headless: true, ...(process.env.EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH ? { executablePath: process.env.EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH } : {}) }); t.after(() => browser.close());
+  return { base, browser };
+}
+
+test("built workbench discovers later Chinese task and document pages, linked tasks, and external changes", { skip: !playwrightModule && "Set EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE" }, async t => {
+  const { base, browser } = await startFixture(t);
   const page = await browser.newPage({viewport:{width:390,height:844}});
   await page.goto(`${base}/p/${projectId}/work`);
   await page.getByLabel("访问令牌").fill("fixture-token");
@@ -135,41 +141,14 @@ test("built workbench discovers later Chinese task and document pages, linked ta
   // Related documents are listed in the task's right column (a sheet at 390px); 在中间打开 opens the document page.
   await main.getByRole("button",{name:"任务信息"}).click();
   await page.getByRole("dialog").getByRole("button",{name:/中文跨页方案文档/}).click();
-  await page.getByRole("dialog").getByRole("tab",{name:"中文跨页方案文档"}).waitFor({timeout:8000}).catch(async () => {
-    await page.screenshot({path:"/private/tmp/claude-501/-Users-gongshi006-evoloop/ea68c036-7e5c-461c-8217-9004b9831c66/scratchpad/disc-fail.png"});
-    assert.fail(`peek missing: dialog=${await page.getByRole("dialog").innerText().catch(() => "none")}`);
-  });
+  await page.getByRole("dialog").getByRole("tab",{name:"中文跨页方案文档"}).waitFor();
   await page.keyboard.press("Escape");
   await page.getByRole("dialog").waitFor({state:"detached"});
-  // The document's own page (the sheet's 在中间打开 goes there; this fixture's long diagram keeps the sheet moving).
+  // The linked document's own page (the sheet's 在中间打开 goes there; this fixture's long diagram keeps the sheet
+  // moving, so go by address). The document assertions live in the documents test below.
   await page.evaluate(({projectId,documentId}) => { location.hash = `/p/${projectId}/documents/${documentId}`; }, {projectId,documentId});
-  await page.getByText(/阅读当前固定版/).waitFor();
-  await page.getByRole("heading",{name:"引用此文档的任务"}).waitFor();
-  await page.getByRole("link",{name:"中文跨页实施任务"}).waitFor();
-  assert.equal(await page.locator(".doc-related-tasks").evaluate(el => el.scrollWidth <= el.clientWidth),true);
-  const iframe = page.locator('iframe[title="静态 Mermaid 图"]');
-  await iframe.waitFor();
-  const diagram = await iframe.contentFrame().locator("svg").evaluate(svg => {
-    const nodes = [...svg.querySelectorAll("g.node")];
-    const links = [...svg.querySelectorAll("path.flowchart-link")];
-    return {nodeCount:nodes.length, linkCount:links.length, naturalHeight:(svg as SVGSVGElement).viewBox.baseVal.height,
-      naturalWidth:(svg as SVGSVGElement).viewBox.baseVal.width, renderedWidth:svg.getBoundingClientRect().width,
-      frameHeight:document.documentElement.clientHeight, svgBottom:svg.getBoundingClientRect().bottom,
-      lastNodeBottom:nodes.at(-1)?.getBoundingClientRect().bottom ?? 0,
-      lastLinkBottom:links.at(-1)?.getBoundingClientRect().bottom ?? 0};
-  });
-  assert.equal(diagram.nodeCount,5);
-  assert.ok(diagram.naturalHeight > 760, JSON.stringify(diagram));
-  assert.ok(diagram.linkCount >= 4, JSON.stringify(diagram));
-  assert.ok(diagram.svgBottom <= diagram.frameHeight - 8, JSON.stringify(diagram));
-  assert.ok(diagram.lastNodeBottom <= diagram.frameHeight - 8, JSON.stringify(diagram));
-  assert.ok(diagram.lastLinkBottom <= diagram.frameHeight - 8, JSON.stringify(diagram));
-  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
-  if (process.env.EVOLOOP_DIAGRAM_SCREENSHOT) {
-    await page.addStyleTag({content:"[data-shell=mobile-header]{position:static!important}"});
-    await page.locator(".markdown-diagram").screenshot({path:process.env.EVOLOOP_DIAGRAM_SCREENSHOT});
-  }
-  await page.getByRole("link",{name:"中文跨页实施任务"}).click();
+  await page.getByRole("heading",{name:"中文跨页方案文档",level:1}).waitFor();
+  await page.goBack();
   await fetch(`${base}/__fixture/close`,{method:"POST"});
   await page.evaluate(projectId => { location.hash = `/p/${projectId}/documents`; }, projectId);
   await page.getByRole("button",{name:"载入更多"}).waitFor();
@@ -198,19 +177,6 @@ test("built workbench discovers later Chinese task and document pages, linked ta
   await fetch(`${base}/__fixture/change`,{method:"POST"});
   await page.getByRole("button",{name:"重新读取当前任务"}).click();
   await page.getByRole("heading",{name:"命令行已更新的实施任务"}).waitFor();
-  await page.evaluate(projectId => { location.hash = `/p/${projectId}/documents`; }, projectId);
-  await page.getByRole("button",{name:"载入更多"}).waitFor();
-  await page.getByRole("textbox",{name:"搜索文档"}).fill("中文跨页方案文档");
-  await page.waitForTimeout(700); assert.equal(await (await fetch(`${base}/__fixture/doc-page-count`)).text(),"1");
-  await page.getByRole("link",{name:"中文跨页方案文档"}).waitFor();
-  await fetch(`${base}/__fixture/fail-reverse`,{method:"POST"});
-  await page.getByRole("link",{name:"中文跨页方案文档"}).click();
-  await page.getByRole("button",{name:"重新读取当前文档"}).click();
-  await page.getByText(/任务关联本次未读完整/).waitFor();
-  assert.equal(await page.getByText("当前没有任务引用此文档。").count(),0);
-  await fetch(`${base}/__fixture/long-reverse`,{method:"POST"});
-  await page.getByRole("button",{name:"重新读取当前文档"}).click();
-  await page.getByText(/已达 20 页或 1000 项读取上限/).waitFor();
   await fetch(`${base}/__fixture/long-pages`,{method:"POST"});
   await page.evaluate(projectId => { location.hash = `/p/${projectId}/work`; }, projectId);
   await page.getByRole("main").getByRole("button",{name:"重新读取列表"}).click();
@@ -218,4 +184,78 @@ test("built workbench discovers later Chinese task and document pages, linked ta
   await page.getByRole("searchbox",{name:"搜索任务"}).fill("不存在的中文任务");
   await page.getByRole("dialog").getByText(/自动搜索已达 10 页或 500 项上限；结果未完整/).waitFor();
   assert.equal(await page.getByText("没有匹配项").count(),0);
+});
+
+test("built documents list finds a later page by search, reads Markdown in full with its referencing tasks, and keeps partial reads partial", { skip: !playwrightModule && "Set EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE" }, async t => {
+  const { base, browser } = await startFixture(t);
+  const page = await browser.newPage({viewport:{width:390,height:844}});
+  const errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message));
+  await page.goto(`${base}/p/${projectId}/documents`);
+  await page.getByLabel("访问令牌").fill("fixture-token");
+  await page.getByRole("button",{name:"进入",exact:true}).click();
+  // At 390px the inner rail is a closed drawer, so the table carries the search and filters.
+  await page.getByRole("button",{name:"载入更多"}).waitFor();
+  const search = page.getByRole("searchbox",{name:"搜索文档"});
+  assert.equal(await search.count(), 1, "one search box on the page");
+  await search.fill("中文跨页方案文档");
+  await page.waitForTimeout(700); assert.equal(await (await fetch(`${base}/__fixture/doc-page-count`)).text(),"1", "the search reads the later page once");
+  const row = page.getByRole("table").getByRole("link",{name:"中文跨页方案文档"});
+  await row.waitFor();
+  await page.getByText("已载入 51 项 · 匹配 1 项 · 已读完").waitFor();
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+  await row.click();
+  await page.getByRole("heading",{name:"中文跨页方案文档",level:1}).waitFor();
+  // Markdown keeps the long Mermaid diagram whole in its sandboxed frame.
+  const iframe = page.locator('iframe[title="静态 Mermaid 图"]');
+  await iframe.waitFor();
+  const diagram = await iframe.contentFrame().locator("svg").evaluate(svg => {
+    const nodes = [...svg.querySelectorAll("g.node")];
+    const links = [...svg.querySelectorAll("path.flowchart-link")];
+    return {nodeCount:nodes.length, linkCount:links.length, naturalHeight:(svg as SVGSVGElement).viewBox.baseVal.height,
+      frameHeight:document.documentElement.clientHeight, svgBottom:svg.getBoundingClientRect().bottom,
+      lastNodeBottom:nodes.at(-1)?.getBoundingClientRect().bottom ?? 0,
+      lastLinkBottom:links.at(-1)?.getBoundingClientRect().bottom ?? 0};
+  });
+  assert.equal(diagram.nodeCount,5);
+  assert.ok(diagram.naturalHeight > 760, JSON.stringify(diagram));
+  assert.ok(diagram.linkCount >= 4, JSON.stringify(diagram));
+  assert.ok(diagram.svgBottom <= diagram.frameHeight - 8, JSON.stringify(diagram));
+  assert.ok(diagram.lastNodeBottom <= diagram.frameHeight - 8, JSON.stringify(diagram));
+  assert.ok(diagram.lastLinkBottom <= diagram.frameHeight - 8, JSON.stringify(diagram));
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+  if (process.env.EVOLOOP_DIAGRAM_SCREENSHOT) {
+    await page.addStyleTag({content:"[data-shell=mobile-header]{position:static!important}"});
+    await page.locator(".markdown-diagram").screenshot({path:process.env.EVOLOOP_DIAGRAM_SCREENSHOT});
+  }
+  // Referencing tasks are read across pages; one opens beside the text in the right column.
+  await page.getByRole("button",{name:"版本与来源"}).click();
+  const facts = page.getByRole("dialog").getByRole("region",{name:"文档版本、来源与关联"});
+  await facts.getByRole("link",{name:/中文跨页实施任务/}).waitFor();
+  assert.equal(await facts.evaluate(el => el.scrollWidth <= el.clientWidth), true, "the right column does not scroll sideways");
+  await facts.getByRole("link",{name:/中文跨页实施任务/}).click();
+  await page.getByRole("tab",{name:"中文跨页实施任务"}).waitFor();
+  await page.getByRole("dialog").getByText("完成条件").waitFor();
+  assert.match(await page.evaluate(() => location.pathname), /\/documents\//, "opening a referencing task keeps the document in the center");
+  await page.getByRole("tab",{name:"信息"}).click();
+  await page.getByRole("button",{name:"关闭右栏"}).click();
+  // A failed or capped reverse read stays partial and never says there are no references.
+  const reread = () => page.getByRole("button",{name:"重新读取当前文档"}).click();
+  await fetch(`${base}/__fixture/fail-reverse`,{method:"POST"});
+  await reread();
+  await page.getByRole("button",{name:"版本与来源"}).click();
+  await page.getByText(/引用它的任务这次没有读完整/).waitFor({timeout:10000});
+  assert.equal(await page.getByText("目前没有任务引用这份文档。").count(),0);
+  await page.getByRole("button",{name:"关闭右栏"}).click();
+  await fetch(`${base}/__fixture/long-reverse`,{method:"POST"});
+  await reread();
+  await page.getByRole("button",{name:"版本与来源"}).click();
+  await page.getByText(/已读到 20 页或 1000 项的上限/).waitFor();
+  await page.getByRole("button",{name:"关闭右栏"}).click();
+  // Back to the list: the same search, range and row, with focus on the document just read.
+  await page.locator(".document-reading-backlinks").getByRole("link",{name:/返回来源/}).click();
+  await row.waitFor();
+  assert.equal(await search.inputValue(),"中文跨页方案文档");
+  await page.waitForFunction("document.activeElement?.textContent === '中文跨页方案文档'");
+  assert.deepEqual(errors, []);
 });

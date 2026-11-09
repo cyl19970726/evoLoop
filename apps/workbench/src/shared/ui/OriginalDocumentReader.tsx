@@ -5,23 +5,24 @@ import { MarkdownBody } from "./MarkdownBody";
 import { legacyWorkbenchRoute } from "./legacyWorkbenchLink";
 import { imagePreview } from "./imagePreview";
 
-interface AvailableOriginal {
+export interface AvailableOriginal {
   status: "available"; revision: DocumentPayloadRevision; body: string;
   assets: Array<{ path: string; mediaType: string; base64: string }>;
 }
 interface UnavailableOriginal { status: "unavailable"; revision: DocumentPayloadRevision; reason: string }
-type Original = AvailableOriginal | UnavailableOriginal;
+export type Original = AvailableOriginal | UnavailableOriginal;
 const path = (value: string) => encodeURIComponent(value);
-const base = (p: string, d: string, r: string) =>
+/** Where one fixed revision's original and its registered assets are read. */
+export const originalPath = (p: string, d: string, r: string) =>
   `/api/projects/${path(p)}/documents/${path(d)}/revisions/${path(r)}/original`;
 
-function bytes(base64: string): Uint8Array {
+export function bytes(base64: string): Uint8Array {
   const binary = atob(base64);
   const result = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) result[i] = binary.charCodeAt(i);
   return result;
 }
-function blobBytes(base64: string): ArrayBuffer {
+export function blobBytes(base64: string): ArrayBuffer {
   const source = bytes(base64);
   const copy = new Uint8Array(source.length);
   copy.set(source);
@@ -45,8 +46,12 @@ function resolveAsset(raw: string, entrypoint: string | null): string | null {
   return baseParts.join("/");
 }
 
-interface InternalLink { href: string; label: string }
-function staticHtml(original: AvailableOriginal): { html: string; urls: string[]; internalLinks: InternalLink[] } {
+export interface InternalLink { href: string; label: string }
+/**
+ * The static copy shown in a sandboxed iframe: scripts, forms, embedded pages, redirects and outside resources are
+ * removed, registered asset paths become data URLs, and a restrictive CSP is added. The original is never changed.
+ */
+export function staticHtml(original: AvailableOriginal): { html: string; urls: string[]; internalLinks: InternalLink[] } {
   const urls: string[] = [];
   const registered = new Map<string, string>();
   const assets = new Map(original.assets.map(asset=>[asset.path,asset]));
@@ -103,15 +108,15 @@ function staticHtml(original: AvailableOriginal): { html: string; urls: string[]
   return { html: `<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="${csp}"><meta name="referrer" content="no-referrer"></head><body>${template.innerHTML}</body></html>`, urls, internalLinks };
 }
 
-function download(name: string, data: Blob): void {
+export function download(name: string, data: Blob): void {
   const url = URL.createObjectURL(data);
   const link = document.createElement("a");
   link.href = url; link.download = name; link.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-export function OriginalDocumentReader({ token, projectId, revisionId, documentId, readingMode = false, continuous = false }: {
-  token: string; projectId: string; revisionId: string; documentId: string; readingMode?: boolean; continuous?: boolean;
+export function OriginalDocumentReader({ token, projectId, revisionId, documentId }: {
+  token: string; projectId: string; revisionId: string; documentId: string;
 }) {
   const [storedOriginal, setOriginal] = useState<Original | null>(null);
   const original = storedOriginal?.revision.projectId === projectId && storedOriginal.revision.documentId === documentId && storedOriginal.revision.id === revisionId ? storedOriginal : null;
@@ -124,7 +129,7 @@ export function OriginalDocumentReader({ token, projectId, revisionId, documentI
   useEffect(() => {
     let active = true;
     setOriginal(null); setAssetPreview(null); setAssetError(null); setError("");
-    request<Original>(token, base(projectId, documentId, revisionId), 30000)
+    request<Original>(token, originalPath(projectId, documentId, revisionId), 30000)
       .then(result => {
         if (result.revision.projectId !== projectId || result.revision.documentId !== documentId || result.revision.id !== revisionId)
           throw new Error("原件响应与所选项目、文档及固定修订不符。");
@@ -161,21 +166,17 @@ export function OriginalDocumentReader({ token, projectId, revisionId, documentI
           : <p>{assetError === asset.path ? "图片未能解码，请下载原件核对。" : "此资源格式暂不支持页面预览，可下载原件查看。"}</p>}
       </div>}
     </li>; })}</ul></div>;
-  return <section className={`panel reading doc-original-reader${continuous ? " doc-html-continuous" : ""}`}>{!continuous && <div className="panel-head"><h2>{readingMode ? "完整报告" : "完整原件"}</h2>
+  return <section className="panel reading doc-original-reader"><div className="panel-head"><h2>完整原件</h2>
     <button onClick={() => download(original.revision.originalName,
-      new Blob([original.body], { type: `${mime};charset=utf-8` }))}>下载原件</button></div>}
-    {!continuous && <details className="doc-original-integrity"><summary>原件标识与校验</summary>{integrity}</details>}
-    {original.revision.format === "html" ? <>{!readingMode && !continuous && <p>静态隔离预览，脚本未运行。下方保留完整 HTML 原文。</p>}
+      new Blob([original.body], { type: `${mime};charset=utf-8` }))}>下载原件</button></div>
+    <details className="doc-original-integrity"><summary>原件标识与校验</summary>{integrity}</details>
+    {original.revision.format === "html" ? <><p>静态隔离预览，脚本未运行。下方保留完整 HTML 原文。</p>
       {preview?.internalLinks.length ? <details className="doc-internal-links"><summary>报告中的站内链接 · {preview.internalLinks.length}</summary>
         <p>打开后可用浏览器返回此报告。</p><ul>{preview.internalLinks.map(link => <li key={link.href}><a href={link.href}>{link.label}</a></li>)}</ul>
       </details> : null}
       {preview ? <iframe className="doc-html-frame" key={`${revisionId}:${original.revision.contentHash}`} title="HTML 静态隔离预览" sandbox="" referrerPolicy="no-referrer" srcDoc={preview.html}
-        style={{ width: "100%", minHeight: continuous ? undefined : readingMode ? "75vh" : 420, border: "1px solid #d8dfec", borderRadius: continuous ? 0 : 8 }} /> : <p role="status">正在准备此固定修订的隔离预览…</p>}</>
+        style={{ width: "100%", minHeight: 420, border: "1px solid #d8dfec", borderRadius: 8 }} /> : <p role="status">正在准备此固定修订的隔离预览…</p>}</>
       : <MarkdownBody source={original.body} identity={original.revision.id} projectId={projectId} />}
-    {continuous ? <details className="doc-continuous-secondary">
-      <summary>原件信息、HTML 原文与配套资源{original.assets.length > 0 ? ` · ${original.assets.length} 项` : ""}</summary>
-      <div className="doc-continuous-secondary-body"><button type="button" onClick={() => download(original.revision.originalName,
-        new Blob([original.body], { type: `${mime};charset=utf-8` }))}>下载原件</button><div className="doc-original-integrity">{integrity}</div>{raw}{assets}</div>
-    </details> : <>{raw}{assets}</>}
+    {raw}{assets}
   </section>;
 }
