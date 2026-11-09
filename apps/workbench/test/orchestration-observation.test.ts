@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
 import { mock, test } from "node:test";
-import { ApiError } from "../src/api.ts";
-import { mergePage, orchestrationClient } from "../src/orchestration/client.ts";
-import { decisionHeading, deliveryMeaning, dispatchStateLabel, inboxStateLabel, sealReasonLabel, sourceTriggerLabel, storyTitle, submissionStateLabel } from "../src/orchestration/presentation.ts";
-import { currentChainSummary, hasTerminalIntentGap, hasUnreadChainPages, inTaskContext, nextAction, orderDispatches, readableOutcome, storyNextAction } from "../src/orchestration/summary.ts";
-import { navigateTaskTab, scrollToTaskSection, taskRunFromHash, taskSectionFromHash, taskSectionHref } from "../src/orchestration/navigation.ts";
+import { ApiError } from "../src/shared/api.ts";
+import { mergePage, orchestrationClient } from "../src/shared/orchestrationClient.ts";
+import { decisionHeading, deliveryMeaning, dispatchStateLabel, inboxStateLabel, sealReasonLabel, sourceTriggerLabel, storyTitle, submissionStateLabel } from "../src/features/orchestration/presentation.ts";
+import { currentChainSummary, hasTerminalIntentGap, hasUnreadChainPages, inTaskContext, nextAction, orderDispatches, readableOutcome, storyNextAction } from "../src/features/orchestration/summary.ts";
+import { navigateTaskTab, scrollToTaskSection, taskRunFromHash, taskSectionFromHash, taskSectionHref } from "../src/shared/taskNavigation.ts";
 import type { OrchestrationDispatch, OrchestrationEvent, OrchestrationInbox, OrchestrationLoop, OrchestrationSourceFact, OrchestrationSubmission, OrchestrationWorkerDecision } from "@evoloop/contracts/orchestration";
 import type { TaskDetail } from "@evoloop/contracts";
-import type { WorkTaskStatus } from "../src/workflow/workStatusPresentation.ts";
+import type { WorkTaskStatus } from "../src/shared/workStatusPresentation.ts";
 
 const projectId = "11111111-1111-4111-8111-111111111111", loopId = "22222222-2222-4222-8222-222222222222";
 const response = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status });

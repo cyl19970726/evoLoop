@@ -39,8 +39,8 @@
 
 | 范围 | 源码（`apps/workbench/src/`） | 测试（`apps/workbench/test/`） |
 | --- | --- | --- |
-| 团队 | `roles/TeamWorkspace.tsx`、`roles/RolesPanel.tsx`、`roles/RoleRuntimeCard.tsx`、`roles/roleRuntimePresentation.ts`、`discussions/DiscussionPanel.tsx`、`discussions/AllocationRelationsPanel.tsx`、`documents/OrganizationReviewList.tsx`、`runtime/RuntimePanel.tsx` | `role-runtime-card.test.ts`、`role-template-summary.test.ts`、`runtime-session-role-browser.test.ts`、`discussion-panel.test.ts`、`allocation-backlink-groups.test.ts`；组织复盘列表暂无专门测试 |
-| 飞书协作 | `collaboration/CollaborationPanel.tsx` | — |
+| 团队 | `features/team/TeamWorkspace.tsx`、`features/team/OrganizationReviewList.tsx`、`features/roles/RolesPanel.tsx`、`features/roles/RoleRuntimeCard.tsx`、`features/roles/roleRuntimePresentation.ts`、`shared/RoleTemplateSummary.tsx`、`features/discussions/DiscussionPanel.tsx`、`features/discussions/AllocationRelationsPanel.tsx`、`features/runtime/RuntimePanel.tsx` | `role-runtime-card.test.ts`、`role-template-summary.test.ts`、`runtime-session-role-browser.test.ts`、`discussion-panel.test.ts`、`allocation-backlink-groups.test.ts`；组织复盘列表暂无专门测试 |
+| 飞书协作 | `features/collaboration/CollaborationPanel.tsx` | — |
 
 ## 相关
 

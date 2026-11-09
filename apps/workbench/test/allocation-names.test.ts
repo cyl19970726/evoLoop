@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { allocationNameLookupKeys, allocationVisibleNames } from "../src/discussions/useAllocationNames.ts";
+import { allocationNameLookupKeys, allocationVisibleNames } from "../src/features/discussions/useAllocationNames.ts";
 
 test("relationship reread looks up already seeded names within the existing bound", () => {
   const keys = ["task:one", "role:two", "session:owned:three"];

@@ -3,7 +3,7 @@ import { test } from "node:test";
 import type { Stage } from "@evoloop/contracts";
 import type { OrchestrationLoop } from "@evoloop/contracts/orchestration";
 import type { ScheduleDefinition } from "@evoloop/contracts/scheduling";
-import { managedTargetProblem, scheduleTemplate, suspendSchedule } from "../src/scheduling/managedTarget.ts";
+import { managedTargetProblem, scheduleTemplate, suspendSchedule } from "../src/features/scheduling/managedTarget.ts";
 
 const projectId = "11111111-1111-4111-8111-111111111111";
 const otherProjectId = "22222222-2222-4222-8222-222222222222";

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { splitMarkdown } from "../src/ui/markdownContent.ts";
-import { legacyWorkbenchRoute } from "../src/ui/legacyWorkbenchLink.ts";
+import { splitMarkdown } from "../src/shared/ui/markdownContent.ts";
+import { legacyWorkbenchRoute } from "../src/shared/ui/legacyWorkbenchLink.ts";
 
 const migrationProject = "dfb56cce-4ecd-452d-94dc-bf9611babf11";
 const migrationTask = "21199600-fb2b-4d32-a540-7a03da8de4e8";

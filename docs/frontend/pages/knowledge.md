@@ -50,7 +50,7 @@
 
 | 范围 | 路径 |
 | --- | --- |
-| 源码（`apps/workbench/src/`） | `knowledge/KnowledgePanel.tsx`（列表、阅读、来源栏、候选与审阅）、`knowledge/knowledgeRoute.ts`（固定修订路由）、`knowledge/availability.ts`（后端可读状态）、`knowledge/overviewRead.ts`、`knowledge/client.ts`；页面入口在 `App.tsx` |
+| 源码（`apps/workbench/src/`） | `features/knowledge/KnowledgePanel.tsx`（列表、阅读、来源栏、候选与审阅）、`features/knowledge/knowledgeRoute.ts`（固定修订路由）、`features/knowledge/availability.ts`（后端可读状态）、`features/knowledge/overviewRead.ts`、`shared/knowledgeClient.ts`；页面入口在 `app/App.tsx` |
 | 测试（`apps/workbench/test/`） | `knowledge-route.test.ts`、`knowledge-availability.test.ts`、`knowledge-overview-read.test.ts` |
 
 ## 相关

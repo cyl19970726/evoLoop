@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { isProjectRoute } from "../src/ui/returnRoute.ts";
-import { deliveryTarget } from "../src/workflow/deliveryPresentation.ts";
+import { isProjectRoute } from "../src/shared/ui/returnRoute.ts";
+import { deliveryTarget } from "../src/shared/deliveryPresentation.ts";
 
 const projectId = "96000001-0000-4000-8000-000000000001";
 const documentId = "96000002-0000-4000-8000-000000000002";

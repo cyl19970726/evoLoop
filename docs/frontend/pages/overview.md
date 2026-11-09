@@ -39,7 +39,7 @@
 
 ## 代码与测试
 
-源码在 `apps/workbench/src/overview/`，测试在 `apps/workbench/test/`。
+源码在 `apps/workbench/src/features/overview/`，测试在 `apps/workbench/test/`。
 
 | 部分 | 主要源码 | 相关测试 |
 | --- | --- | --- |

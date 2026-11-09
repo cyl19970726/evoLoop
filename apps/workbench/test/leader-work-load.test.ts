@@ -4,8 +4,8 @@ import type { LeaderWorkDocument, LeaderWorkPage, LeaderWorkTask } from "@evoloo
 import {
   appendLeaderWorkPage, leaderProjectionMatchesTask, leaderSessionDisplayName, leaderWorkItemPresentation,
   loadLeaderDocumentsForIds, loadLeaderWorkStatuses, visibleLeaderDocuments,
-} from "../src/workflow/leaderWorkLoad.ts";
-import type { WorkTaskStatus } from "../src/workflow/workStatusPresentation.ts";
+} from "../src/shared/leaderWorkLoad.ts";
+import type { WorkTaskStatus } from "../src/shared/workStatusPresentation.ts";
 
 const document = (id: string): LeaderWorkDocument => ({
   kind: "document", documentId: id, version: 1, title: id, documentKind: "report", status: "published",

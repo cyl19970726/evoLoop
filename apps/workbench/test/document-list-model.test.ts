@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Document } from "@evoloop/contracts";
 import type { LeaderWorkDocument } from "@evoloop/contracts/work-index";
-import { documentLifecycleMatches, mergeDocumentPage, readDocumentRange, validDocumentPage } from "../src/documents/documentListModel.ts";
+import { documentLifecycleMatches, mergeDocumentPage, readDocumentRange, validDocumentPage } from "../src/features/documents/documentListModel.ts";
 
 const document: Document = { projectId: "project-a", id: "document-a", title: "原件", version: 2,
   currentRevisionId: "revision-2", adoptedRevisionId: "revision-1", kind: "report", status: "published" };

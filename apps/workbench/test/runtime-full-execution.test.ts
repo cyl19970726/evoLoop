@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { RuntimeSessionRecord } from "@evoloop/contracts/runtime";
-import { activeFullExecution } from "../src/runtime/fullExecution.ts";
+import { activeFullExecution } from "../src/shared/fullExecution.ts";
 
 const revisionId = "11111111-1111-4111-8111-111111111111";
 const session = {

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { addReceipt, hasProjectReceipt, parseReceipts, removeReceipt, visibleReceipts, type OperationReceipt } from "../src/recovery.ts";
+import { addReceipt, hasProjectReceipt, parseReceipts, removeReceipt, visibleReceipts, type OperationReceipt } from "../src/app/recovery.ts";
 
 const a: OperationReceipt = {
   actorId: "reviewer-a", projectId: "project-1", taskId: "task-a",

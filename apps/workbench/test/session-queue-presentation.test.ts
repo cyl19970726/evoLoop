@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { queuePosition, queueStateLabel } from "../src/sessions/queuePresentation.ts";
+import { queuePosition, queueStateLabel } from "../src/features/sessions/queuePresentation.ts";
 
 test("Session queue shows human sequence and readable states", () => {
   assert.equal(queuePosition(0), 1);

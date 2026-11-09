@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { currentKnowledgeCapabilities, readKnowledgeOverview, type KnowledgeOverviewRead } from "../src/knowledge/overviewRead.ts";
-import { knowledgeAvailability } from "../src/knowledge/availability.ts";
+import { currentKnowledgeCapabilities, readKnowledgeOverview, type KnowledgeOverviewRead } from "../src/features/knowledge/overviewRead.ts";
+import { knowledgeAvailability } from "../src/features/knowledge/availability.ts";
 
 type Client = Parameters<typeof readKnowledgeOverview>[0];
 const caps = { backendVersion: null, backendReachable: true, fixedRevisionRead: "adapter_verified", conditionalPublish: "unavailable",

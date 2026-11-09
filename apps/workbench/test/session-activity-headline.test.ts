@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { SessionActivity } from "@evoloop/contracts/session-observation";
-import { activityHeadline } from "../src/sessions/activityPresentation.ts";
+import { activityHeadline } from "../src/features/sessions/activityPresentation.ts";
 
 function item(kind: string, summary: string): SessionActivity {
   return { id: kind, sequence: "1", sessionKey: "owned:session", kind, summary,

@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { api, ApiError, type TaskTimingView } from "../src/api.ts";
+import { api, ApiError, type TaskTimingView } from "../src/shared/api.ts";
 import { commandSchema } from "@evoloop/contracts";
-import { dailyScheduledInstant, formatScheduled, nextTimingLabel, scheduledInstant, scheduledTimezone, timingSetPayload, timingStopPayload, timingVersion } from "../src/workflow/taskTimingPresentation.ts";
+import { dailyScheduledInstant, formatScheduled, nextTimingLabel, scheduledInstant, scheduledTimezone, timingSetPayload, timingStopPayload, timingVersion } from "../src/features/workflow/taskTimingPresentation.ts";
 
 const timing: TaskTimingView = {
   projectId: "project-1", taskId: "task-1", seriesId: "series-1", rootTaskId: "task-1", version: 4,

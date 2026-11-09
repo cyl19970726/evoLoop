@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { ResidentQueue, ResidentQueueEntry } from "@evoloop/contracts/queues";
-import { scanProjectTasks, selectSummary, taskMatchesQueue } from "../src/overview/summary";
+import { scanProjectTasks, selectSummary, taskMatchesQueue } from "../src/features/overview/summary";
 
 const queueId = "q", projectId = "p", sessionId = "s", roleId = "r";
 function entry(id: string, position: number, state: ResidentQueueEntry["state"], holdCode: ResidentQueueEntry["holdCode"] = null): ResidentQueueEntry {

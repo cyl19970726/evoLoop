@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { HostLink } from "@evoloop/contracts/resident-hosts";
-import { codexThreadHref, externalHostOpenHref, externalHostOpenReason } from "../src/roles/externalHostEntry.ts";
+import { codexThreadHref, externalHostOpenHref, externalHostOpenReason } from "../src/shared/externalHostEntry.ts";
 
 const ref = "01a158d7-f842-7ca3-9899-ce1efc33c030";
 const host = {host:{kind:"external",provider:"codex-desktop",ref},state:"verified",verifiedCapabilities:["open"]} as HostLink;

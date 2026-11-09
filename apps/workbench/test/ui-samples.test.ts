@@ -3,8 +3,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import UiSamplesPage from "../src/ui-samples/UiSamplesPage.tsx";
-import { sampleAgents, sampleTasks } from "../src/fixtures/index.ts";
+import UiSamplesPage from "../src/app/ui-samples/UiSamplesPage.tsx";
+import { sampleAgents, sampleTasks } from "../src/shared/fixtures/index.ts";
 
 test("the sample page renders all sections inside the data-ui scope", () => {
   const markup = renderToStaticMarkup(createElement(UiSamplesPage));

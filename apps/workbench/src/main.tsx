@@ -1,6 +1,6 @@
 import React, { Suspense, lazy, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { App } from "./App";
+import { App } from "./app/App";
 import "@evoloop/ui/tokens.css";
 import "./legacy-tokens.css";
 import "./style.css";
@@ -17,7 +17,7 @@ import faviconUrl from "@evoloop/ui/logo-small.svg";
 document.querySelector<HTMLLinkElement>('link[rel="icon"]')?.setAttribute("href", faviconUrl);
 
 // #/ui is the component sample page: fake data only, no login, loaded on demand.
-const UiSamplesPage = lazy(() => import("./ui-samples/UiSamplesPage"));
+const UiSamplesPage = lazy(() => import("./app/ui-samples/UiSamplesPage"));
 const isSamples = () => window.location.hash === "#/ui" || window.location.hash.startsWith("#/ui?");
 
 function Root() {

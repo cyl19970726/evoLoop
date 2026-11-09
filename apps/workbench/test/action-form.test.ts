@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { readableDraft } from "../src/workflow/ActionForm.tsx";
+import { readableDraft } from "../src/shared/ActionForm.tsx";
 
 test("the recovery draft includes every current field and preserves user text", () => {
   const fields = [

@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { allocationRelations } from "../src/discussions/allocationClient.ts";
-import { allocationChangeRequiresReload, subscribeAllocationChanges } from "../src/discussions/useAllocationChanges.ts";
-import { api } from "../src/api.ts";
-import { sessionClient } from "../src/sessions/client.ts";
+import { allocationRelations } from "../src/features/discussions/allocationClient.ts";
+import { allocationChangeRequiresReload, subscribeAllocationChanges } from "../src/features/discussions/useAllocationChanges.ts";
+import { api } from "../src/shared/api.ts";
+import { sessionClient } from "../src/shared/sessionClient.ts";
 import type { SessionChanges } from "@evoloop/contracts/session-observation";
 
 const projectId = "11111111-1111-4111-8111-111111111111";

@@ -78,10 +78,10 @@ Session 页说明一个具体实例此刻在做什么、做出了什么；“Lea
 
 | 范围 | 源码（`apps/workbench/src/`） | 测试（`apps/workbench/test/`） |
 | --- | --- | --- |
-| 外壳 | `ui/WorkbenchShell.tsx` | `sheet-layout.test.ts` |
-| Session 目录 | `sessions/SessionNavigation.tsx`、`sessions/SessionsDirectoryPage.tsx`、`sessions/sessionDirectoryPresentation.ts`、`sessions/useSessionDirectoryGroup.ts` | `session-directory-presentation.test.ts`、`session-directory-groups.test.ts`、`session-directory-groups-browser.test.ts` |
-| Session 详情 | `sessions/SessionWorkspace.tsx`、`sessions/SessionTimeline.tsx`、`sessions/workspaceTimelineModel.ts`、`sessions/DirectInputEntry.tsx`、`sessions/NativeSessionPanel.tsx`、`sessions/SessionModelControl.tsx`、`sessions/SessionClosePanel.tsx` | `session-workspace-redesign-browser.test.ts`、`session-timeline-browser.test.ts`、`session-workspace-timeline-model.test.ts`、`session-direct-input-layout-browser.test.ts`、`session-native-input-browser.test.ts`、`session-native-progress-browser.test.ts`、`session-close-entry-browser.test.ts`、`task-session-return-browser.test.ts` |
-| Leader 安排的数据 | `queues/ResidentQueuePanel.tsx`、`workflow/leaderWorkLoad.ts`、`sessions/TaskAssignmentPanel.tsx` | `leader-work-load.test.ts`、`leader-work-overview-browser.test.ts` |
+| 外壳 | `app/WorkbenchShell.tsx` | `sheet-layout.test.ts` |
+| Session 目录 | `features/sessions/SessionNavigation.tsx`、`features/sessions/SessionsDirectoryPage.tsx`、`features/sessions/sessionDirectoryPresentation.ts`、`features/sessions/useSessionDirectoryGroup.ts` | `session-directory-presentation.test.ts`、`session-directory-groups.test.ts`、`session-directory-groups-browser.test.ts` |
+| Session 详情 | `features/sessions/SessionWorkspace.tsx`、`features/sessions/SessionTimeline.tsx`、`features/sessions/workspaceTimelineModel.ts`、`features/sessions/DirectInputEntry.tsx`、`features/sessions/NativeSessionPanel.tsx`、`features/sessions/SessionModelControl.tsx`、`features/sessions/SessionClosePanel.tsx` | `session-workspace-redesign-browser.test.ts`、`session-timeline-browser.test.ts`、`session-workspace-timeline-model.test.ts`、`session-direct-input-layout-browser.test.ts`、`session-native-input-browser.test.ts`、`session-native-progress-browser.test.ts`、`session-close-entry-browser.test.ts`、`task-session-return-browser.test.ts` |
+| Leader 安排的数据 | `features/queues/ResidentQueuePanel.tsx`、`shared/leaderWorkLoad.ts`、`features/sessions/TaskAssignmentPanel.tsx` | `leader-work-load.test.ts`、`leader-work-overview-browser.test.ts` |
 | 数据来源 | `packages/contracts/src/session-timeline.ts`、`packages/adapter-claude-agent-sdk/src/index.ts`、`packages/adapter-codex-app-server/src/workspace-map.ts`、`apps/coordinator/src/runtime/routed.ts` | — |
 
 ## 相关

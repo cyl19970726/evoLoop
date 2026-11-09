@@ -41,7 +41,7 @@
 
 | 范围 | 路径 |
 | --- | --- |
-| 源码（`apps/workbench/src/`） | `scheduling/SchedulingPanel.tsx`（日程表、详情卡、创建表单）、`scheduling/presentation.ts`、`scheduling/managedTarget.ts`、`scheduling/client.ts`；任务详情里的“执行时间与重复”是另一套机制，在 `workflow/TaskSchedulePanel.tsx` |
+| 源码（`apps/workbench/src/`） | `features/scheduling/SchedulingPanel.tsx`（日程表、详情卡、创建表单）、`features/scheduling/presentation.ts`、`features/scheduling/managedTarget.ts`、`features/scheduling/client.ts`；任务详情里的“执行时间与重复”是另一套机制，在 `features/workflow/TaskSchedulePanel.tsx` |
 | 测试（`apps/workbench/test/`） | `schedule-presentation.test.ts`、`schedule-managed-target.test.ts`、`schedule-run-session-path-browser.test.ts` |
 
 ## 相关

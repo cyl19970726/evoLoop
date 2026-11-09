@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { taskPreviewResponsibility } from "../src/workflow/taskPreviewResponsibility.ts";
+import { taskPreviewResponsibility } from "../src/features/workflow/taskPreviewResponsibility.ts";
 
 test("current QA responsibility wins over the historical developer assignment", () => {
   assert.equal(taskPreviewResponsibility({

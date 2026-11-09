@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { ObservedRole, ObservedSession } from "@evoloop/contracts/session-observation";
-import { groupSessionsByClass, sessionClass, sessionClassReason } from "../src/sessions/sessionDirectoryPresentation.ts";
+import { groupSessionsByClass, sessionClass, sessionClassReason } from "../src/features/sessions/sessionDirectoryPresentation.ts";
 
 const role = (id: string, roleClass: ObservedRole["roleClass"]): ObservedRole => ({
   id, title: id, state: "active", roleClass, templateKey: null, responsibility: `${id} responsibility`,

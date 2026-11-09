@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import type { Task, TaskDetail } from "@evoloop/contracts";
 import type { LeaderWorkTask } from "@evoloop/contracts/work-index";
-import { assignmentSessionKey, currentDelivery, executionSummary, isMyCurrentWork, matchingProjection, taskListRoute, taskListView } from "../src/workflow/taskExperience.ts";
+import { assignmentSessionKey, currentDelivery, executionSummary, isMyCurrentWork, matchingProjection, taskListRoute, taskListView } from "../src/features/workflow/taskExperience.ts";
 
 const work = (overrides: Partial<LeaderWorkTask> = {}) => ({ taskId: "task", version: 2, currentRevisionId: "rev2", taskState: "in_progress",
   assignment: { state: "accepted", targetKind: "external", targetId: "session", recipientActorId: "me" }, latestRun: null,
@@ -54,7 +54,7 @@ test("done tasks keep the exact closure-bound delivery, while reopened tasks can
 });
 
 test("closed assignments retain their Session link but are never labelled current acceptance or execution", async () => {
-  const { assignmentStatusLabel } = await import("../src/workflow/taskExperience.ts");
+  const { assignmentStatusLabel } = await import("../src/features/workflow/taskExperience.ts");
   for (const taskState of ["done", "cancelled"] as const) {
     const closed = work({ taskState });
     assert.equal(assignmentSessionKey(closed), "external:session", "retain the evidence entry");
@@ -68,7 +68,7 @@ test("closed assignments retain their Session link but are never labelled curren
 });
 
 test("the first render after a selection change rejects the previous Task or project before effects", async () => {
-  const { matchingTaskDetail } = await import("../src/workflow/taskExperience.ts");
+  const { matchingTaskDetail } = await import("../src/features/workflow/taskExperience.ts");
   const loadedA = { task: { id: "A", projectId: "project-one", title: "A facts" }, deliveries: [] } as unknown as TaskDetail;
   assert.equal(matchingTaskDetail(loadedA, "project-one", "A"), loadedA);
   assert.equal(matchingTaskDetail(loadedA, "project-one", "B"), null, "A body cannot appear beside the B link");
