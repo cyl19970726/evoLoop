@@ -4,7 +4,8 @@
 import type { KnowledgeCandidateSummary, KnowledgeSummary } from "@evoloop/contracts/knowledge";
 import { useQueryClient } from "@tanstack/react-query";
 import { knowledgeClient } from "../../shared/knowledgeClient";
-import { queryKeys, useProjectList, useProjectQuery } from "../../shared/query";
+import { useProjectList } from "../../shared/projectList";
+import { queryKeys, useProjectQuery } from "../../shared/query";
 import { readKnowledgePage } from "./knowledgeRead";
 
 /** Requests and writes for one project; without a token argument they use the signed-in identity. */

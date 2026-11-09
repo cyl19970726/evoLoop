@@ -1,13 +1,15 @@
 // Query scopes: a project's answers never outlive leaving it, writes make only that project stale, 4xx is final.
-// A failed read keeps the last answer (marked stale) instead of emptying the screen, and a list reads one page at a time.
+// 上次读回 is only a key's own earlier answer, another key that fails was never read, and a list reads one page at a time.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { InfiniteQueryObserver, QueryObserver, type InfiniteData, type QueryObserverResult } from "@tanstack/react-query";
 import { ApiError } from "../src/shared/api.ts";
 import {
-  createQueryClient, fixedContent, keepLastAnswer, leaveProject, pagedItems, previousOfProject, projectChanged, projectPagesOptions,
-  projectQueryOptions, queryKeys, shouldRetry, type KeptAnswer,
+  createQueryClient, fixedContent, leaveProject, previousOfProject, projectChanged, projectPagesOptions,
+  projectQueryOptions, queryKeys, readStanding, shouldRetry,
 } from "../src/shared/query.ts";
+import { pagedItems, projectListState } from "../src/shared/projectList.ts";
+import { coverageText } from "../src/shared/listCoverage.ts";
 
 /** Wait until the observer's result satisfies `done` (TanStack notifies asynchronously). */
 async function until<R>(read: () => R, done: (result: R) => boolean): Promise<R> {
@@ -90,73 +92,71 @@ test("4xx answers are final; connection and server failures retry twice", () => 
   assert.equal(shouldRetry(2, new ApiError(503, "busy")), false);
 });
 
-test("a deeper range that fails keeps the last answer on screen, marked stale, and a retry reads the deeper range", async () => {
+test("上次读回 is only a key's own earlier answer: another key that fails before it was ever read has failed", async () => {
   const client = createQueryClient();
-  const reads: number[] = [];
-  let deeperFails = true;
-  // A range read: depth 1 answers, depth 2 fails until it is allowed (409 is not retried, so the test does not wait).
-  const read = (depth: number) => async () => {
-    reads.push(depth);
-    if (depth === 2 && deeperFails) throw new ApiError(409, "range unavailable");
-    return Array.from({ length: depth * 2 }, (_, index) => `item-${index}`);
+  let planFails = false, allFails = false;
+  // Two objects under one component: the 计划 list and the 全部 list (another kind is another key). 409 is not retried.
+  const read = (kind: string) => async () => {
+    if ((kind === "plan" && planFails) || (kind === "all" && allFails)) throw new ApiError(409, "list unavailable");
+    return [`${kind}-1`, `${kind}-2`];
   };
-  const memory: { current: KeptAnswer<string[]> | null } = { current: null };
-  const observer = new QueryObserver(client, projectQueryOptions(a, ["list", 1], read(1), { keepPrevious: true }));
+  const observer = new QueryObserver(client, projectQueryOptions(a, ["list", "plan"], read("plan"), { keepPrevious: true }));
   const stop = observer.subscribe(() => undefined);
-  const first = await until(() => observer.getCurrentResult(), result => result.data !== undefined);
-  assert.deepEqual(keepLastAnswer(a, first, true, memory), { data: ["item-0", "item-1"], isPlaceholderData: false, dataUpdatedAt: first.dataUpdatedAt, stale: false });
+  const plan = await until(() => observer.getCurrentResult(), result => result.data !== undefined);
+  assert.deepEqual(readStanding(plan), { failed: false, stale: false, previous: false });
 
-  observer.setOptions(projectQueryOptions(a, ["list", 2], read(2), { keepPrevious: true }));
+  // Switch to 全部 while its first read is on the way: the 计划 rows only stand in, marked `previous`.
+  allFails = true;
+  observer.setOptions(projectQueryOptions(a, ["list", "all"], read("all"), { keepPrevious: true }));
   const pending = observer.getCurrentResult();
-  assert.equal(pending.isPlaceholderData, true, "while the deeper range is read, the last answer stands in");
+  assert.deepEqual(pending.data, ["plan-1", "plan-2"]);
+  assert.deepEqual(readStanding(pending), { failed: false, stale: false, previous: true }, "a stand-in, never a result");
+  // 全部 fails before it was ever read: a failed read, not the 计划 rows as 上次读回.
   const failed = await until(() => observer.getCurrentResult(), result => result.isError);
-  assert.equal(failed.data, undefined, "TanStack itself drops the placeholder once the new key fails");
-  const kept = keepLastAnswer(a, failed, true, memory);
-  assert.deepEqual(kept, { data: ["item-0", "item-1"], isPlaceholderData: true, dataUpdatedAt: first.dataUpdatedAt, stale: true },
-    "the list on screen stays, as 上次读回");
-  assert.equal(keepLastAnswer(a, failed, false, { current: memory.current }).data, undefined, "without keepPrevious nothing is kept");
+  assert.equal(failed.data, undefined);
+  assert.deepEqual(readStanding(failed), { failed: true, stale: false, previous: false });
 
-  // A retry reads the deeper range again, not the old one.
-  deeperFails = false;
-  reads.length = 0;
+  // Once 全部 was read, a failed reread of it keeps its own answer: that is 上次读回.
+  allFails = false;
   await observer.refetch();
-  const deeper = await until(() => observer.getCurrentResult(), result => !result.isPlaceholderData && result.data?.length === 4);
-  assert.deepEqual(reads, [2]);
-  assert.deepEqual(keepLastAnswer(a, deeper, true, memory), { data: deeper.data, isPlaceholderData: false, dataUpdatedAt: deeper.dataUpdatedAt, stale: false });
+  const all = await until(() => observer.getCurrentResult(), result => !result.isPlaceholderData && result.data?.[0] === "all-1");
+  assert.deepEqual(readStanding(all), { failed: false, stale: false, previous: false });
+  allFails = true;
+  await observer.refetch();
+  const stale = await until(() => observer.getCurrentResult(), result => result.isError);
+  assert.deepEqual(stale.data, ["all-1", "all-2"]);
+  assert.deepEqual(readStanding(stale), { failed: false, stale: true, previous: false });
   stop();
   client.clear();
 });
 
-test("another project never shows the last project's answer, as a placeholder or as 上次读回", async () => {
+test("another project never shows the last project's answer, even as a stand-in", async () => {
   const client = createQueryClient();
-  const memory: { current: KeptAnswer<string> | null } = { current: null };
   const observer = new QueryObserver(client, projectQueryOptions(a, ["summary"], async () => "A 的摘要", { keepPrevious: true }));
   const stop = observer.subscribe(() => undefined);
-  keepLastAnswer(a, await until(() => observer.getCurrentResult(), result => result.data !== undefined), true, memory);
+  await until(() => observer.getCurrentResult(), result => result.data !== undefined);
   // The same component now reads project B; its first read is still on the way.
   let answerB = (_value: string) => undefined as void;
   observer.setOptions(projectQueryOptions(b, ["summary"], () => new Promise<string>(resolve => { answerB = resolve; }), { keepPrevious: true }));
   const pending = observer.getCurrentResult();
-  assert.equal(pending.data, undefined, "A's answer is not a placeholder for B");
-  assert.equal(pending.isPlaceholderData, false);
-  // And when B's read fails, A's last answer is not kept for B either.
-  const failedForB = { data: undefined, isError: true, isPlaceholderData: false, dataUpdatedAt: 0 };
-  assert.deepEqual(keepLastAnswer(b, failedForB, true, memory), { data: undefined, isPlaceholderData: false, dataUpdatedAt: 0, stale: false });
+  assert.equal(pending.data, undefined, "A's answer does not stand in for B");
+  assert.deepEqual(readStanding(pending), { failed: false, stale: false, previous: false });
   assert.equal(previousOfProject(b)("A 的摘要", { queryKey: queryKeys.project(a, "summary") }), undefined);
   assert.equal(previousOfProject(a)("A 的摘要", { queryKey: queryKeys.project(a, "summary") }), "A 的摘要");
-  // A failed reread of the same key keeps its data in TanStack and is marked stale the same way.
-  assert.equal(keepLastAnswer(a, { data: "A 的摘要", isError: true, isPlaceholderData: false, dataUpdatedAt: 1 }, true, { current: null }).stale, true);
   answerB("B 的摘要");
   assert.equal((await until(() => observer.getCurrentResult(), result => result.data !== undefined)).data, "B 的摘要");
   stop();
   client.clear();
 });
 
+type Page = { items: string[]; nextCursor: string | null };
+type PagedObserverResult = QueryObserverResult<InfiniteData<Page, string | null>> & {
+  hasNextPage: boolean; isFetchNextPageError: boolean; isRefetchError: boolean; isFetchingNextPage: boolean };
+
 test("a list reads one more page on load more; a failed next page keeps the loaded pages and is retried alone", async () => {
   const client = createQueryClient();
   const asked: Array<string | undefined> = [];
   let failing: string | null = "c3";
-  type Page = { items: string[]; nextCursor: string | null };
   const book: Record<string, Page> = {
     first: { items: ["a", "b"], nextCursor: "c2" }, c2: { items: ["b", "c"], nextCursor: "c3" }, c3: { items: ["d"], nextCursor: null },
   };
@@ -168,33 +168,78 @@ test("a list reads one more page on load more; a failed next page keeps the load
   const observer = new InfiniteQueryObserver<Page, Error, InfiniteData<Page, string | null>, readonly unknown[], string | null>(client,
     projectPagesOptions(a, ["list"], read) as never);
   const stop = observer.subscribe(() => undefined);
-  const result = () => observer.getCurrentResult() as QueryObserverResult<InfiniteData<Page, string | null>> & {
-    hasNextPage: boolean; isFetchNextPageError: boolean; isRefetchError: boolean };
+  const result = () => observer.getCurrentResult() as PagedObserverResult;
+  const state = () => projectListState(result());
+  assert.equal(state().reading, true);
+  assert.equal(state().coverage, "reading");
   await until(result, value => value.data?.pages.length === 1);
+  assert.deepEqual([state().coverage, state().more, state().pages], ["current", true, 1]);
   await observer.fetchNextPage();
   assert.deepEqual(asked, [undefined, "c2"], "page 2 is one request, not the range from page 1 again");
   assert.deepEqual(pagedItems(result().data!.pages, item => item), ["a", "b", "c"], "each item once");
 
   await observer.fetchNextPage();
-  const pageFailed = result();
-  assert.equal(pageFailed.isFetchNextPageError, true, "这一页没读到");
-  assert.equal(pageFailed.isRefetchError, false);
-  assert.equal(pageFailed.data?.pages.length, 2, "the loaded pages stay");
+  const pageFailed = state();
+  assert.equal(pageFailed.pageFailed, true, "这一页没读到");
+  assert.deepEqual([pageFailed.stale, pageFailed.failed, pageFailed.pages, pageFailed.more], [false, false, 2, true], "the loaded pages stay current");
+  assert.equal(pageFailed.coverage, "current", "the loaded pages were read; the coverage line says 后续页面未读");
   failing = null;
   asked.length = 0;
   await observer.fetchNextPage();
   assert.deepEqual(asked, ["c3"], "the retry reads only the failed page");
   assert.deepEqual(pagedItems(result().data!.pages, item => item), ["a", "b", "c", "d"]);
-  assert.equal(result().hasNextPage, false);
+  assert.deepEqual([state().more, state().pageFailed, state().coverage], [false, false, "current"]);
 
-  // A reread that fails keeps all loaded pages, as 上次读回.
+  // A reread that fails keeps all loaded pages, as 上次读回, and no longer claims 已读完.
   failing = "c2";
   await observer.refetch();
-  const stale = result();
-  assert.equal(stale.isRefetchError, true);
-  assert.equal(stale.data?.pages.length, 3);
+  const stale = state();
+  assert.deepEqual([stale.stale, stale.pageFailed, stale.failed, stale.pages, stale.coverage], [true, false, false, 3, "stale"]);
   stop();
   client.clear();
+});
+
+test("a list whose first page fails was never read: failed, with no 上次读回 and no 已读完", async () => {
+  const client = createQueryClient();
+  const observer = new InfiniteQueryObserver(client, projectPagesOptions(a, ["broken"], async () => {
+    throw new ApiError(503, "list unavailable");
+  }) as never);
+  const stop = observer.subscribe(() => undefined);
+  const failed = projectListState(await until(() => observer.getCurrentResult() as PagedObserverResult, value => value.isError));
+  assert.deepEqual([failed.failed, failed.stale, failed.pageFailed, failed.pages, failed.coverage], [true, false, false, 0, "failed"]);
+  assert.equal(coverageText({ loaded: 0, matched: 0, filtered: false, more: false, coverage: failed.coverage }), "列表没有读回，无法判断有多少");
+  stop();
+  client.clear();
+});
+
+test("every combination of list flags maps to one coverage, and only a list just read says 已读完", () => {
+  const base = { data: undefined, error: null, isPending: true, isFetching: false, isFetchingNextPage: false, isError: false,
+    isFetchNextPageError: false, isRefetchError: false, hasNextPage: false, dataUpdatedAt: 0 };
+  const read = { pages: [{ nextCursor: "n2" }] }, done = { pages: [{ nextCursor: null }] };
+  const cases: Array<[string, Parameters<typeof projectListState>[0], Partial<ReturnType<typeof projectListState>>]> = [
+    ["first page on its way", { ...base, isFetching: true }, { reading: true, coverage: "reading" }],
+    ["first page failed", { ...base, isPending: false, isError: true, error: new Error("x") }, { failed: true, stale: false, coverage: "failed" }],
+    ["read, more to come", { ...base, isPending: false, data: read, hasNextPage: true }, { coverage: "current", more: true, pages: 1 }],
+    ["read to the end", { ...base, isPending: false, data: done }, { coverage: "current", more: false }],
+    ["reread under way", { ...base, isPending: false, data: done, isFetching: true }, { checking: true, coverage: "checking" }],
+    ["next page under way", { ...base, isPending: false, data: read, hasNextPage: true, isFetching: true, isFetchingNextPage: true },
+      { loadingMore: true, checking: false, coverage: "current" }],
+    ["next page failed", { ...base, isPending: false, data: read, hasNextPage: true, isError: true, isFetchNextPageError: true, error: new Error("x") },
+      { pageFailed: true, stale: false, failed: false, coverage: "current" }],
+    ["reread failed", { ...base, isPending: false, data: done, isError: true, isRefetchError: true, error: new Error("x") },
+      { stale: true, failed: false, coverage: "stale" }],
+    ["cursor came back", { ...base, isPending: false, data: read, hasNextPage: false }, { repeatedCursor: true, more: false }],
+  ];
+  for (const [name, result, expected] of cases) {
+    const state = projectListState(result);
+    for (const [field, value] of Object.entries(expected)) assert.deepEqual(state[field as keyof typeof state], value, `${name}: ${field}`);
+    const text = coverageText({ loaded: 2, matched: 2, filtered: false, more: state.more, coverage: state.coverage });
+    if (state.coverage !== "current") assert.doesNotMatch(text, /已读完/, name);
+  }
+  assert.equal(coverageText({ loaded: 3, matched: 3, filtered: false, more: false, coverage: "stale" }), "上次读回 3 项 · 当前待核对");
+  assert.equal(coverageText({ loaded: 3, matched: 1, filtered: true, more: true, coverage: "checking" }), "已载入 3 项 · 匹配 1 项 · 后续页面未读 · 正在核对");
+  assert.equal(coverageText({ loaded: 3, matched: 3, filtered: false, more: false }), "已载入 3 项 · 已读完");
+  assert.equal(coverageText({ loaded: 0, matched: 0, filtered: false, more: false, coverage: "reading" }), "正在读取");
 });
 
 test("a cursor that comes back again ends the list instead of looping", async () => {
@@ -205,6 +250,7 @@ test("a cursor that comes back again ends the list instead of looping", async ()
   await until(() => observer.getCurrentResult(), value => value.data !== undefined);
   await observer.fetchNextPage();
   assert.equal((observer.getCurrentResult() as { hasNextPage: boolean }).hasNextPage, false, "the cursor came back: no further page");
+  assert.equal(projectListState(observer.getCurrentResult() as PagedObserverResult).repeatedCursor, true);
   stop();
   client.clear();
 });

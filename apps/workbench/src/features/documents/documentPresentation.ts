@@ -97,9 +97,7 @@ export function returnSourceLabel(path: string): string {
 }
 
 /** What the list covers, so a search or filter never reads as the whole project when pages are still unread. */
-export function coverageText({ loaded, matched, filtered, more }: { loaded: number; matched: number; filtered: boolean; more: boolean }): string {
-  return `已载入 ${loaded} 项${filtered ? ` · 匹配 ${matched} 项` : ""}${more ? " · 后续页面未读" : " · 已读完"}`;
-}
+export { coverageText } from "../../shared/listCoverage";
 
 /** The empty list, distinguished by why it is empty. */
 export function emptyListText({ filtered, more }: { filtered: boolean; more: boolean }): { title: string; reason: string } {

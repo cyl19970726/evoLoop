@@ -47,7 +47,7 @@ function DocumentRailList({ projectId, scope, selectedId }: { projectId: string;
       </li>)}
     </ul>}
     <div className="mx-1 flex flex-col gap-1.5 text-caption text-muted-foreground">
-      <span>{coverageText({ loaded: list.items.length, matched: shown, filtered: list.filtered, more: list.more })}</span>
+      <span>{coverageText({ loaded: list.items.length, matched: shown, filtered: list.filtered, more: list.more, coverage: list.coverage })}</span>
       {list.checking && <RefreshingIndicator label={list.filtered && state.query.trim() ? "正在搜索后续页面" : "正在核对列表"} />}
       {list.searchLimited && <span>搜索已自动读到上限，结果可能不完整；可以继续载入。</span>}
       {list.more && !list.pageError && <Button variant="secondary" size="compact" className="self-start" disabled={list.checking} onClick={list.loadMore}>载入更多</Button>}

@@ -1,12 +1,14 @@
 // The project's documents as the list conditions ask for them. The inner rail and the table read the same key, so
 // they share one answer. The list reads page by page: a longer range (载入更多, or a search reading ahead) reads only
 // the pages it lacks, and a failed page leaves the loaded rows in place (这一页没读到) while a failed reread keeps them as
-// 上次读回. Another kind is another list, read from its first page while the last list stays on screen.
+// 上次读回. Another kind is another list (another key), read from its first page: it never shows the last kind's rows,
+// and a failed first read of it is a failed read, not 上次读回.
 import type { Document, Page } from "@evoloop/contracts";
 import { useQueryClient } from "@tanstack/react-query";
 import { ApiError, api, errorDetail, errorText } from "../../shared/api";
 import { visibleLeaderDocuments } from "../../shared/leaderWorkLoad";
-import { queryKeys, useProjectList } from "../../shared/query";
+import { useProjectList } from "../../shared/projectList";
+import { queryKeys } from "../../shared/query";
 import { validDocumentPage } from "./documentListModel";
 import { isFiltered, loadMoreTarget, pagesFor, type DocumentListState } from "./documentListState";
 
@@ -21,7 +23,7 @@ export function useDocumentList(projectId: string, state: DocumentListState, upd
     const page: Page<Document> = await api().documents(projectId, cursor, kind === "all" ? undefined : kind, signal);
     validDocumentPage(page, projectId, cursor);
     return page;
-  }, (document: Document) => document.id, { target: state.target, maxPages, keepPrevious: true });
+  }, (document: Document) => document.id, { target: state.target, maxPages });
   const items = list.items?.filter(item => item.projectId === projectId) ?? [];
   const visible = visibleLeaderDocuments(items, state.status, state.kind, state.query.trim());
   const searching = !!state.query.trim();
@@ -35,6 +37,8 @@ export function useDocumentList(projectId: string, state: DocumentListState, upd
     /** The first read or a reread failed (`stale`: the rows shown are 上次读回). */
     error: list.pageFailed || (!list.error && list.repeatedCursor) ? "" : problem,
     stale: list.stale,
+    /** What the coverage line may claim (only a list just read says 已读完). */
+    coverage: list.coverage,
     /** The next page failed or could not continue; the rows shown are what was read and are still current. */
     pageError: list.pageFailed || (!list.error && list.repeatedCursor) ? problem : "",
     /** The original answer behind `error` or `pageError`, for 诊断信息. */

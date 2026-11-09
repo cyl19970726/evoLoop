@@ -6,6 +6,7 @@ import React from "react";
 import { Search } from "lucide-react";
 import type { KnowledgeSummary } from "@evoloop/contracts/knowledge";
 import { Badge, Button, Input, ListRow, RefreshingIndicator, cn } from "@evoloop/ui";
+import type { ListCoverage } from "../../shared/listCoverage";
 import { ContextRailContent } from "../../shared/ui/ContextRail";
 import { ReadingSpaceSwitch } from "../../shared/ui/ReadingSpaceSwitch";
 import { knowledgeHref } from "./knowledgeRoute";
@@ -35,7 +36,7 @@ export function KnowledgeFilters({ filter, update, layout = "rail" }: { filter: 
 export interface DirectoryList {
   topics: KnowledgeSummary[]; pages: KnowledgeSummary[]; members: KnowledgeSummary[]; openTopicId: string | null;
   loaded: number; matched: number; filtered: boolean; more: boolean; fullRead: boolean;
-  reading: boolean; checking: boolean; loadingMore: boolean; problem: ListProblem | null; loadMore(): void; reread(): void;
+  reading: boolean; checking: boolean; loadingMore: boolean; coverage: ListCoverage; problem: ListProblem | null; loadMore(): void; reread(): void;
 }
 
 /** The note above a list that was not (fully) read, with the retry it allows (none for an unconfigured backend). */
@@ -77,7 +78,7 @@ export function KnowledgeDirectory({ projectId, list, selectedId, compact = fals
       <ul className="flex flex-col gap-0.5">{list.pages.map(item => row(item))}</ul>
     </nav>}
     <div className={cn("mx-1 mt-1 flex flex-col gap-1.5 text-caption text-muted-foreground", compact && "mx-0")}>
-      {!list.reading && !unread && <span>{coverageText({ loaded: list.loaded, matched: list.matched, filtered: list.filtered, more: list.more })}</span>}
+      {!list.reading && !unread && <span>{coverageText({ loaded: list.loaded, matched: list.matched, filtered: list.filtered, more: list.more, coverage: list.coverage })}</span>}
       {list.checking && <RefreshingIndicator label="正在核对列表" />}
       {list.loadingMore && <RefreshingIndicator label="正在载入下一页" />}
       {list.more && list.problem?.kind !== "page" && <Button variant="secondary" size="compact" className="self-start" disabled={list.checking || list.loadingMore} onClick={list.loadMore}>载入更多</Button>}

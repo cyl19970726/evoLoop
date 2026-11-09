@@ -81,9 +81,7 @@ export function topicMembers(graph: KnowledgeGraph | null, topic: Pick<Knowledge
 }
 
 /** What a list covers, so a filter or a short first page never reads as the whole project. */
-export function coverageText({ loaded, matched, filtered, more }: { loaded: number; matched: number; filtered: boolean; more: boolean }): string {
-  return `已载入 ${loaded} 项${filtered ? ` · 匹配 ${matched} 项` : ""}${more ? " · 后续页面未读" : " · 已读完"}`;
-}
+export { coverageText } from "../../shared/listCoverage";
 
 /** The empty list, distinguished by why it is empty. A failed or unfinished read never says "没有". */
 export function emptyKnowledgeText({ filtered, more, fullRead }: { filtered: boolean; more: boolean; fullRead: boolean }): { title: string; reason: string } {

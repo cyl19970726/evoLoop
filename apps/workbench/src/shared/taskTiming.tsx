@@ -29,10 +29,14 @@ export function timingDuration(value: number | null | undefined): string {
   const rest = minutes % 60;
   return [days && `${days} 天`, hours && `${hours} 小时`, rest && `${rest} 分钟`].filter(Boolean).join(" ");
 }
-/** The waiting party by kind; an actor name follows it, a record's raw ID does not (it belongs to 完整标识). */
+/** A waiting party by kind; an actor name follows it, a record's raw ID does not (it belongs to 完整标识). */
+export function waitingParty(waiting: { kind: string; id?: string | null }): string {
+  const kind = (waitingKindLabel as Record<string, string>)[waiting.kind] ?? "责任未知";
+  return `${kind}${waiting.id && !recordId.test(waiting.id) ? ` · ${waiting.id}` : ""}`;
+}
+
 export function timingWaitingFor(timing: LeaderWorkTaskTiming): string {
-  const waiting = timing.current.waitingFor;
-  return `${waitingKindLabel[waiting.kind] ?? "责任未知"}${waiting.id && !recordId.test(waiting.id) ? ` · ${waiting.id}` : ""}`;
+  return waitingParty(timing.current.waitingFor);
 }
 export function TaskTiming({ timing, detailed = false }: { timing?: LeaderWorkTaskTiming | null; detailed?: boolean }) {
   if (!timing) return <p className="task-timing-unavailable">阶段时间尚未读回；请重新读取本任务。</p>;

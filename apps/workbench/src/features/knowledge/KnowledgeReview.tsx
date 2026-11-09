@@ -10,6 +10,7 @@ import {
 } from "@evoloop/ui";
 import { errorDetail, errorText } from "../../shared/api";
 import type { SourceDocument } from "../../shared/knowledgeClient";
+import { coverageText, type ListCoverage } from "../../shared/listCoverage";
 import { ContextPanelContent, useContextPanel } from "../../shared/ui/ContextPanel";
 import { MarkdownBody } from "../../shared/ui/MarkdownBody";
 import { readingProse, readingSource } from "../../shared/ui/readingProse";
@@ -38,7 +39,7 @@ export function Confirm({ trigger, title, children, confirm, onConfirm }: { trig
 }
 
 export interface CandidateList {
-  items: KnowledgeCandidateSummary[]; more: boolean; reading: boolean; checking: boolean; loadingMore: boolean;
+  items: KnowledgeCandidateSummary[]; more: boolean; reading: boolean; checking: boolean; loadingMore: boolean; coverage: ListCoverage;
   problem: ListProblem | null; loadMore(): void;
 }
 export interface CandidateRead { data: KnowledgeCandidateRecord | undefined; error: unknown; checking: boolean }
@@ -82,7 +83,7 @@ function CandidateIndex({ projectId, list, onReread }: { projectId: string; list
             trailing={<StatusTag tone={candidateStatusTone[item.status] ?? "unknown"} label={label(candidateStatusLabel, item.status)} />} />
         </li>)}</ul>}
     <div className="flex flex-col gap-1.5 text-caption text-muted-foreground">
-      {!list.reading && !unread && <span>已载入 {list.items.length} 条{list.more ? " · 后续页面未读" : " · 已读完"}</span>}
+      {!list.reading && !unread && <span>{coverageText({ loaded: list.items.length, matched: list.items.length, filtered: false, more: list.more, coverage: list.coverage, unit: "条" })}</span>}
       {list.checking && <RefreshingIndicator label="正在核对候选" />}
       {list.loadingMore && <RefreshingIndicator label="正在载入下一页候选" />}
       {list.more && list.problem?.kind !== "page" && <Button variant="secondary" size="compact" className="self-start" disabled={list.checking || list.loadingMore} onClick={list.loadMore}>载入更多候选</Button>}

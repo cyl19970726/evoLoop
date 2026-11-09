@@ -3,7 +3,7 @@ import { test } from "node:test";
 import type { Document } from "@evoloop/contracts";
 import type { LeaderWorkDocument } from "@evoloop/contracts/work-index";
 import { documentLifecycleMatches, validDocumentPage } from "../src/features/documents/documentListModel.ts";
-import { pagedItems } from "../src/shared/query.ts";
+import { pagedItems } from "../src/shared/projectList.ts";
 
 const document: Document = { projectId: "project-a", id: "document-a", title: "原件", version: 2,
   currentRevisionId: "revision-2", adoptedRevisionId: "revision-1", kind: "report", status: "published" };

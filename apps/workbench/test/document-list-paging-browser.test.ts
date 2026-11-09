@@ -1,7 +1,9 @@
 // Opt-in built-app regression: build workbench, then set EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE.
 // The document list reads page by page (shared/query.ts useProjectList): 载入更多 reads only the next page, a failed
 // next page keeps the loaded rows and is retried alone (这一页没读到), a failed reread keeps the rows as 上次读回 with
-// the service's English only in 诊断信息, and a list never read is not called 上次读回. All data is synthetic.
+// the service's English only in 诊断信息, and a list never read is not called 上次读回 — also after switching to
+// another kind, whose first page failing never shows the last kind's rows. The coverage line says 已读完 only for a
+// list that was just read. All data is synthetic.
 // Screenshots: EVOLOOP_DOCUMENT_SCREENSHOT_DIR.
 import assert from "node:assert/strict";
 import { test } from "node:test";
@@ -16,7 +18,7 @@ const dist = resolve(import.meta.dirname, "../dist");
 const id = (n: number) => `46000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const projectId = id(1);
 const stamp = "2026-11-10T08:00:00.000Z";
-const document = (n: number) => ({ projectId, id: id(1000 + n), version: 1, title: `过程文档 ${String(n).padStart(3, "0")}`, kind: "report",
+const document = (n: number, kind = "report") => ({ projectId, id: id(1000 + n), version: 1, title: `${kind === "spec" ? "规范文档" : "过程文档"} ${String(n).padStart(3, "0")}`, kind,
   status: "draft", currentRevisionId: id(5000 + n), adoptedRevisionId: null, primaryTaskId: null, origin: null });
 /** Three pages of 50: cursors p2 and p3. */
 const pages: Record<string, { items: ReturnType<typeof document>[]; nextCursor: string | null }> = {
@@ -24,6 +26,7 @@ const pages: Record<string, { items: ReturnType<typeof document>[]; nextCursor: 
   p2: { items: Array.from({ length: 50 }, (_, i) => document(i + 51)), nextCursor: "p3" },
   p3: { items: Array.from({ length: 20 }, (_, i) => document(i + 101)), nextCursor: null },
 };
+const specs = { items: [document(901, "spec"), document(902, "spec")], nextCursor: null };
 
 test("the document list reads one more page at a time and keeps what it read when a page or a reread fails", {
   skip: !modulePath && "Set EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE",
@@ -39,10 +42,12 @@ test("the document list reads one more page at a time and keeps what it read whe
       if (url.pathname === "/api/session") return send({ principal: { actorId: "fixture", projectIds: [projectId], permissions: ["read", "write", "review"] }, capabilities: {} });
       if (url.pathname === p) return send({ id: projectId, title: "文档分页项目", createdAt: stamp });
       if (url.pathname === `${p}/documents`) {
-        const cursor = url.searchParams.get("cursor") ?? "first";
+        const kind = url.searchParams.get("kind") ?? "all";
+        const cursor = `${kind}:${url.searchParams.get("cursor") ?? "first"}`;
         reads.push(cursor);
         if ((fail[cursor] ?? 0) > 0) { fail[cursor]!--; return send({ message: "list store unavailable" }, 503); }
-        return send(pages[cursor] ?? { items: [], nextCursor: null });
+        if (kind === "spec") return send(specs);
+        return send(pages[cursor.slice(4)] ?? { items: [], nextCursor: null });
       }
       if (url.pathname === `${p}/work-management/index`) return send({ items: [], nextCursor: null, total: 0, counts: {}, changeSequence: 0, observedAt: stamp, partial: false });
       return send({ items: [], nextCursor: null });
@@ -68,21 +73,22 @@ test("the document list reads one more page at a time and keeps what it read whe
   const count = (cursor: string) => reads.filter(item => item === cursor).length;
 
   // ---- A list never read says only that: no 上次读回, no English.
-  fail.first = 1;
+  fail["all:first"] = 1;
   const page = await open();
   const main = page.locator("main");
   await main.getByText("列表本次没有读回").waitFor();
   const unread = await main.innerText();
   assert.match(unread, /服务暂时出错[\s\S]*没有读回之前不能判断有哪些文档/);
-  assert.doesNotMatch(unread, /上次读到的内容|只供核对|list store unavailable/);
+  assert.doesNotMatch(unread, /上次读到的内容|只供核对|list store unavailable|已读完|已载入 0 项/);
+  assert.match(unread, /列表没有读回，无法判断有多少/);
   await main.getByRole("button", { name: "重试", exact: true }).click();
   const rows = main.locator("tbody tr");
   await main.getByRole("link", { name: "过程文档 050" }).waitFor();
   assert.equal(await rows.count(), 50);
 
   // ---- 载入更多 reads only the next page; a failed next page keeps the rows and is retried alone.
-  const firstReads = count("first");
-  fail.p2 = 1;
+  const firstReads = count("all:first");
+  fail["all:p2"] = 1;
   await main.getByRole("button", { name: "载入更多" }).click();
   await main.getByText("后面一页没有读回").waitFor();
   assert.equal(await rows.count(), 50, "the loaded rows stay");
@@ -91,21 +97,41 @@ test("the document list reads one more page at a time and keeps what it read whe
   await main.getByRole("button", { name: "重试这一页" }).click();
   await main.getByRole("link", { name: "过程文档 100" }).waitFor();
   assert.equal(await rows.count(), 100);
-  assert.equal(count("first"), firstReads, "loading more never reads the first page again");
-  assert.equal(count("p2"), 2);
-  assert.equal(count("p3"), 0, "no page is read ahead of the range asked for");
+  assert.equal(count("all:first"), firstReads, "loading more never reads the first page again");
+  assert.equal(count("all:p2"), 2);
+  assert.equal(count("all:p3"), 0, "no page is read ahead of the range asked for");
 
   // ---- A failed reread keeps the rows, marked, and the service's English is only in 诊断信息.
-  fail.first = 1;
+  fail["all:first"] = 1;
   await main.getByRole("button", { name: "重新读取" }).first().click();
   await main.getByText("列表本次没有读回").waitFor();
   const stale = await main.innerText();
   assert.match(stale, /下面仍是上次读到的内容/);
   assert.doesNotMatch(stale, /list store unavailable/);
   assert.equal(await rows.count(), 100);
+  assert.match(stale, /上次读回 100 项 · 后续页面未读 · 当前待核对/);
+  assert.doesNotMatch(stale, /已读完/);
   await main.getByText("诊断信息").click();
   await main.getByText("list store unavailable").waitFor();
   if (shots) await page.screenshot({ path: `${shots}/document-list-reread-failed-1440.png` });
+
+  // ---- Another kind is another list: its first page failing is a failed read, never the last kind's rows as 上次读回.
+  await main.getByRole("button", { name: "重试", exact: true }).click();
+  await main.getByRole("link", { name: "过程文档 100" }).waitFor();
+  fail["spec:first"] = 1;
+  // At 1440 the filters sit in the inner rail.
+  await page.locator("aside[aria-label=项目导航]").getByLabel("文档类型筛选").selectOption("spec");
+  await main.getByText("列表本次没有读回").waitFor();
+  const switched = await main.innerText();
+  assert.equal(await rows.count(), 0, "the last kind's rows are not shown for this kind");
+  assert.doesNotMatch(switched, /过程文档 0|上次读回|上次读到的内容|只供核对|已读完/);
+  assert.match(switched, /没有读回之前不能判断有哪些文档/);
+  const rail = page.locator("aside[aria-label=项目导航]");
+  assert.doesNotMatch(await rail.innerText(), /过程文档 0|上次读回|已读完/, "the inner rail says the same");
+  if (shots) await page.screenshot({ path: `${shots}/document-list-kind-failed-1440.png` });
+  await main.getByRole("button", { name: "重试", exact: true }).click();
+  await main.getByRole("link", { name: "规范文档 901" }).waitFor();
+  assert.match(await main.innerText(), /已载入 2 项 · 匹配 2 项 · 已读完/);
   await page.close();
 
   // ---- 1024 and 390: the same list without horizontal overflow of the page.

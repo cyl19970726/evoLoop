@@ -10,7 +10,7 @@ import { errorCode, errorDetail, errorText, isUnconfirmed } from "../../shared/a
 import type { MutationContext } from "../../shared/ActionForm";
 import type { SourceDocument } from "../../shared/knowledgeClient";
 import { currentPath, navigate, onNavigate } from "../../shared/navigation";
-import type { ProjectList } from "../../shared/query";
+import type { ProjectList } from "../../shared/projectList";
 import { href } from "../../shared/routes";
 import { useContextRailShown } from "../../shared/ui/ContextRail";
 import { ReadingSpaceSwitch } from "../../shared/ui/ReadingSpaceSwitch";
@@ -115,7 +115,7 @@ export function KnowledgePanel({ context }: { context: MutationContext; refresh:
     topics: directory.topics, pages: directory.pages, members: openTopic ? topicMembers(readingData!.graph, openTopic) : [],
     openTopicId: openTopic?.knowledgeId ?? null, loaded: loadedPages.length, matched: visible.length, filtered: isFiltered(filter),
     more: index.pages.more, fullRead: availability.fullRead, reading: index.pages.reading, checking: index.pages.checking,
-    loadingMore: index.pages.loadingMore, problem: listProblem(index.pages), loadMore: index.pages.loadMore, reread,
+    loadingMore: index.pages.loadingMore, coverage: index.pages.coverage, problem: listProblem(index.pages), loadMore: index.pages.loadMore, reread,
   };
   const candidates = index.candidates.items ?? [];
   const pending = candidates.filter(item => item.status === "pending").length;
@@ -289,7 +289,7 @@ export function KnowledgePanel({ context }: { context: MutationContext; refresh:
   </>;
   else if (route.view === "review") center = <KnowledgeReview projectId={projectId} candidateId={candidateId}
     list={{ items: candidates, more: index.candidates.more, reading: index.candidates.reading, checking: index.candidates.checking,
-      loadingMore: index.candidates.loadingMore, problem: listProblem(index.candidates), loadMore: index.candidates.loadMore }}
+      loadingMore: index.candidates.loadingMore, coverage: index.candidates.coverage, problem: listProblem(index.candidates), loadMore: index.candidates.loadMore }}
     candidate={{ data: candidateQuery.data, error: candidateQuery.error, checking: candidateQuery.checking }}
     sources={sources} sourcesRead={sourcesRead} actions={actions} onReread={reread}
     toolbar={<div className="flex flex-wrap items-center gap-2">{switcher}<a href={knowledgeHref(projectId)} className="text-label font-medium text-primary hover:underline">← 知识空间</a></div>} />;
