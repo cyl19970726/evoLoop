@@ -95,7 +95,8 @@ test("overview shows scoped queue evidence, preserves stale read and refreshes o
   await new Promise<void>(resolve=>server.listen(0,"127.0.0.1",resolve));t.after(()=>server.close());
   const base=`http://127.0.0.1:${(server.address() as {port:number}).port}`;
   const browser=await chromium.launch({ headless: true, ...(process.env.EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH ? { executablePath: process.env.EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH } : {}) });t.after(()=>browser.close());
-  const page=await browser.newPage({viewport:{width:390,height:844}});
+  // Queue and scheduled-work evidence sit in the right column, which is inline from 1100px; narrow checks switch to 390px.
+  const page=await browser.newPage({viewport:{width:1440,height:900}});
   const errors:string[]=[];page.on("pageerror",error=>errors.push(error.message));
   await fetch(`${base}/__fixture/mode?value=fail`);
   await page.goto(`${base}/p/${a}/overview`);
@@ -107,13 +108,17 @@ test("overview shows scoped queue evidence, preserves stale read and refreshes o
   assert.equal(await page.getByText("已读队列范围内没有确认的领取占用。").count(),0);
   await fetch(`${base}/__fixture/mode?value=normal`);
   await page.getByRole("button",{name:"重新读取"}).click();
-  if (!(await page.locator(".overview-queue-details").evaluate(element=>(element as HTMLDetailsElement).open)))
-    await page.locator(".overview-queue-details > summary").click();
   await page.getByRole("link",{name:"当前任务"}).waitFor();
   await page.getByRole("link",{name:"下一任务"}).waitFor();
   await page.getByText(/等待消费者使用与验收/).first().waitFor();
   assert.match(await page.locator("body").innerText(),/观察于/);
+  const shots=process.env.EVOLOOP_OVERVIEW_SCREENSHOT_DIR;
+  if (shots) await page.screenshot({path:`${shots}/overview-1440.png`});
+  await page.setViewportSize({width:390,height:844});
+  if (shots) await page.screenshot({path:`${shots}/overview-390.png`,fullPage:true});
   assert.equal(await page.getByRole("heading",{name:"项目总览",exact:true}).locator("..").evaluate(el=>el.scrollWidth<=el.clientWidth),true);
+  assert.equal(await page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1"),true,"the overview fits 390px");
+  await page.setViewportSize({width:1440,height:900});
   assert.equal(errors.length,0,errors.join(" | "));
   await fetch(`${base}/__fixture/mode?value=fail`);
   await page.getByRole("button",{name:"重新读取"}).click();
@@ -189,10 +194,9 @@ test("overview shows scoped queue evidence, preserves stale read and refreshes o
   await page.getByText(/正在读取项目摘要/).waitFor();
   await page.evaluate(projectId=>{location.hash=`/p/${projectId}/overview`;},a);
   await fetch(`${base}/__fixture/release-b`);
-  if (!(await page.locator(".overview-queue-details").evaluate(element=>(element as HTMLDetailsElement).open)))
-    await page.locator(".overview-queue-details > summary").click();
   await page.getByRole("link",{name:"当前任务"}).waitFor({timeout:5000}).catch(async()=>assert.fail(`Project A after B: ${await page.locator("body").innerText()} Errors ${errors.join(" | ")}`));
   assert.equal(await page.getByRole("link",{name:"乙项目任务"}).count(),0);
+  await page.setViewportSize({width:390,height:844});
   const observeMenuClose = async () => page.evaluate(`(() => {
     if (window.__menuFocusObserver) document.removeEventListener("focusin", window.__menuFocusObserver, true);
     document.documentElement.dataset.menuTriggerRestore = "no";

@@ -1,14 +1,12 @@
 /* Reader layout for team, sessions, knowledge and schedules. Loaded after editorial.css. */
-.knowledge-space,.schedule-page {color:#182b52;font-size:16px;line-height:1.55;min-width:0;max-width:100%}
-.knowledge-space *,.schedule-page * {box-sizing:border-box}
-.knowledge-space :is(p,small,dt,dd,li,span,summary),.schedule-page :is(p,small,dt,dd,li,span,summary) {line-height:1.55}
-.knowledge-space :is(small,.muted,.knowledge-purpose),.schedule-page :is(small,.muted,.schedule-read-scope,.schedule-scope,.schedule-history-time) {font-size:14px;color:#536487}
-.knowledge-space :is(button,input,select,textarea),.schedule-page :is(button,input,select,textarea) {font-size:15px}
-.knowledge-space :is(a,button,summary):focus-visible,.schedule-page :is(a,button,summary):focus-visible {outline:2px solid #0758ed;outline-offset:3px}
-.knowledge-space :is(code,pre),.schedule-page :is(code,pre) {overflow-wrap:anywhere;max-width:100%}
-.schedule-page h1 {font-size:clamp(28px,3vw,38px);color:#102654;line-height:1.2}
-.schedule-page .panel-head p {color:#536487;font-size:16px;margin:6px 0 0}
-.knowledge-space a,.schedule-page a {color:#0758ed}
+.knowledge-space {color:#182b52;font-size:16px;line-height:1.55;min-width:0;max-width:100%}
+.knowledge-space * {box-sizing:border-box}
+.knowledge-space :is(p,small,dt,dd,li,span,summary) {line-height:1.55}
+.knowledge-space :is(small,.muted,.knowledge-purpose) {font-size:14px;color:#536487}
+.knowledge-space :is(button,input,select,textarea) {font-size:15px}
+.knowledge-space :is(a,button,summary):focus-visible {outline:2px solid #0758ed;outline-offset:3px}
+.knowledge-space :is(code,pre) {overflow-wrap:anywhere;max-width:100%}
+.knowledge-space a {color:#0758ed}
 .knowledge-space .knowledge-toolbar{align-items:center}
 .knowledge-space .knowledge-purpose{font-size:16px;color:#4d6287}
 .knowledge-space .knowledge-read-state{padding:15px 18px;border-radius:5px;margin:16px 0}
@@ -24,30 +22,12 @@
 .knowledge-space .knowledge-available-actions li strong,.knowledge-space .knowledge-available-actions li span{display:block;font-size:15px}
 .knowledge-space .knowledge-available-actions li span{color:#5a6c8e}
 .knowledge-space .knowledge-available-actions>a{align-self:end;font-size:15px}
-.schedule-page>.panel{padding:20px;border-radius:5px}
-.schedule-page>.panel>.panel-head{align-items:flex-start}
-.schedule-page .schedule-permission,.schedule-page .schedule-read-scope,.schedule-page .schedule-stale-note{font-size:14px}
-.schedule-page .schedule-table-wrap{max-width:100%;overflow-x:auto;margin:18px 0 20px;border:1px solid #dfe7f4}
-.schedule-page .schedule-table{width:100%;border-collapse:collapse;table-layout:fixed}
-.schedule-page .schedule-table th{background:#f4f7fc;color:#354a71;text-align:left;font-size:14px;padding:12px 14px}
-.schedule-page .schedule-table td{border-top:1px solid #e1e8f3;padding:14px;color:#2c436a;font-size:15px;vertical-align:middle;overflow-wrap:anywhere}
-.schedule-page .schedule-table tr.selected{background:#eff5ff;box-shadow:inset 3px 0 #0758ed}
-.schedule-page .schedule-table td button{border:0;background:none;padding:0;color:#0758ed;font-size:16px;font-weight:650;text-align:left;min-height:0}
-.schedule-page .schedule-table td small{display:block;font-size:14px;color:#586c90;margin-top:4px}
-.schedule-page .schedule-definition{margin-top:12px}
-.schedule-page .schedule-definition>summary{font-size:20px;font-weight:700;color:#102654}
-.schedule-page .schedule-definition>summary .pill,.schedule-page .schedule-definition>summary small,.schedule-page .schedule-current small,.schedule-page .schedule-current span,.schedule-page .schedule-definition>dl :is(dt,dd),.schedule-page .schedule-material>summary,.schedule-page .schedule-revisions>summary{font-size:14px}
-.schedule-page .schedule-current strong{font-size:16px}
-.schedule-page .schedule-definition>dl dd{overflow-wrap:anywhere}
-.schedule-page .schedule-definition>dl>div:has(.schedule-material),.schedule-page .schedule-definition>dl>div:has(.schedule-material)+div{min-width:0}
 @media(max-width:850px){.knowledge-space .knowledge-available-actions{grid-template-columns:1fr}}
-@media(max-width:650px){.knowledge-space,.schedule-page {width:100%;overflow-wrap:anywhere}.schedule-page .panel-head {display:block}.schedule-page .panel-head>button {margin-top:12px}.schedule-page .schedule-table,.schedule-page .schedule-table tbody,.schedule-page .schedule-table tr,.schedule-page .schedule-table td{display:block;width:100%}.schedule-page .schedule-table thead{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)}.schedule-page .schedule-table tr{padding:12px;border-top:1px solid #dfe7f4}.schedule-page .schedule-table td{border:0;padding:4px 0}.schedule-page .schedule-table td::before{content:attr(data-label);display:block;font-size:14px;color:#5a6c8d}.schedule-page .schedule-current{grid-template-columns:1fr}.knowledge-space .knowledge-reader{grid-template-columns:1fr}.knowledge-space .knowledge-available-actions{padding:15px}.knowledge-space .knowledge-list,.knowledge-space .knowledge-workspace{padding:16px}}
-.knowledge-space .pill,.schedule-page .pill {background:#eaf0fc;color:#254a9a;border-color:#cbd8f4}
-.knowledge-space :is(.notice.success,.status-success),.schedule-page :is(.notice.success,.status-success) {background:#eaf0fc;color:#254a9a;border-color:#cbd8f4}
-@media(max-width:390px){.schedule-page>.panel {padding-inline:14px}}
+@media(max-width:650px){.knowledge-space {width:100%;overflow-wrap:anywhere}.knowledge-space .knowledge-reader{grid-template-columns:1fr}.knowledge-space .knowledge-available-actions{padding:15px}.knowledge-space .knowledge-list,.knowledge-space .knowledge-workspace{padding:16px}}
+.knowledge-space .pill {background:#eaf0fc;color:#254a9a;border-color:#cbd8f4}
+.knowledge-space :is(.notice.success,.status-success) {background:#eaf0fc;color:#254a9a;border-color:#cbd8f4}
 /* Legacy component rules use 11–13px text; keep reading facts legible. */
-.knowledge-space :is(p,li,dd,dt,summary),.schedule-page :is(p,li,dd,dt,summary) {font-size:15px}
-.knowledge-space :is(small,.muted),.schedule-page :is(small,.muted) {font-size:14px!important}
+.knowledge-space :is(p,li,dd,dt,summary) {font-size:15px}
+.knowledge-space :is(small,.muted) {font-size:14px!important}
 /* Team scan: one compact toolbar and two reading lines per row. */
 
-.schedule-page>.panel>.panel-head h2{font-size:20px;color:#102654;margin:0}
