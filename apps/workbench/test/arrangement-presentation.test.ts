@@ -4,6 +4,8 @@ import {
   capacityUnknownReason, directoryWorkCaption, noConflictText, noFreeAgentText, readStateOf,
 } from "../src/features/sessions/arrangementPresentation.ts";
 
+// The next step per phase moved to shared/workPresentation.ts; its tests are in work-presentation.test.ts.
+
 test("the directory's current work says where it comes from and that its phase is unread", () => {
   assert.equal(directoryWorkCaption("accepted"), "智能体目录记录：已接手 · 阶段未读取");
   assert.equal(directoryWorkCaption("claimed"), "智能体目录记录：已从排队中领取 · 阶段未读取");

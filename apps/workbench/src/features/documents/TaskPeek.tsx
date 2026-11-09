@@ -15,7 +15,7 @@ export function TaskPeek({ projectId, reference, documentTitle }: { projectId: s
   const state = current?.state ?? reference.state;
   return <article data-ui="" className="flex flex-col gap-3">
     <header className="flex flex-col gap-1.5">
-      <h3 className="text-body font-semibold leading-[1.4] [overflow-wrap:anywhere]">{current?.title ?? reference.title}</h3>
+      <h3 className="text-body font-semibold leading-(--leading-tight) [overflow-wrap:anywhere]">{current?.title ?? reference.title}</h3>
       <div className="flex flex-wrap items-center gap-2 text-caption text-muted-foreground">
         <StatusTag tone={taskStateTone[state]} label={taskStateLabel[state]} />
         <span>责任者 <OwnerName projectId={projectId} owner={current?.owner ?? reference.owner} /></span>

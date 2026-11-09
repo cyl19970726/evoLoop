@@ -1,7 +1,7 @@
 // Words for 统筹安排. The server's `nextAction` is written for agents working through the CLI and names internal
-// records; people see a next step per phase instead (workNextStep in shared/workPresentation.ts). Read states decide what the page may conclude: a read that
-// is still running or failed never becomes "free", "no conflict" or a count of 0, and a failed reread that keeps
-// the previous answer on screen says so.
+// records; people see a next step per phase instead (`workNextStep` in shared/workPresentation.ts, shared with
+// the overview). Read states decide what the page may conclude: a read that is still running or failed never becomes
+// "free", "no conflict" or a count of 0, and a failed reread that keeps the previous answer on screen says so.
 import type { ObservedTask } from "@evoloop/contracts/session-observation";
 import type { FreeCapacity } from "./arrangementModel";
 

@@ -34,25 +34,41 @@ export async function leaveProject(client: Client, projectId: string): Promise<v
   client.removeQueries({ queryKey });
 }
 
-/** After a write in a project, every read of that project is stale and the visible ones reread. */
+/**
+ * The first key part of reads whose content never changes once saved: a fixed document revision and its original
+ * (an HTML report with its assets can be 16 MiB). They are read once: a write does not make them stale and they never
+ * reread on their own. Leaving the project still drops them.
+ */
+export const fixedContent = "fixed-revision";
+
+/** After a write in a project, every read of that project is stale and the visible ones reread; fixed content stays. */
 export function projectChanged(client: Client, projectId: string): Promise<void> {
-  return client.invalidateQueries({ queryKey: queryKeys.project(projectId) });
+  return client.invalidateQueries({ queryKey: queryKeys.project(projectId), predicate: query => query.queryKey[2] !== fixedContent });
+}
+
+export interface ProjectQueryOptions { enabled?: boolean; refetchInterval?: number | false; keepPrevious?: boolean }
+
+/** What useProjectQuery asks of TanStack Query; tests observe a read through the same options. */
+export function projectQueryOptions<T>(projectId: string, key: readonly unknown[], read: (signal: AbortSignal) => Promise<T>,
+  options: ProjectQueryOptions = {}) {
+  return {
+    queryKey: queryKeys.project(projectId, ...key) as QueryKey,
+    queryFn: ({ signal }: { signal: AbortSignal }) => read(signal),
+    enabled: !!projectId && (options.enabled ?? true),
+    ...(key[0] === fixedContent ? { staleTime: Infinity } : {}),
+    ...(options.refetchInterval !== undefined ? { refetchInterval: options.refetchInterval } : {}),
+    ...(options.keepPrevious ? { placeholderData: keepPreviousData } : {}),
+  };
 }
 
 /**
  * A project read. `checking` is true while a reread runs and the previous answer is still on screen. With
  * `keepPrevious`, a changed key (another filter, a longer range) keeps the last answer on screen until the new one
- * arrives, instead of starting over empty.
+ * arrives, instead of starting over empty. A key that starts with `fixedContent` is read once.
  */
 export function useProjectQuery<T>(projectId: string, key: readonly unknown[], read: (signal: AbortSignal) => Promise<T>,
-  options: { enabled?: boolean; refetchInterval?: number | false; keepPrevious?: boolean } = {}) {
-  const query = useQuery({
-    queryKey: queryKeys.project(projectId, ...key) as QueryKey,
-    queryFn: ({ signal }) => read(signal),
-    enabled: !!projectId && (options.enabled ?? true),
-    ...(options.refetchInterval !== undefined ? { refetchInterval: options.refetchInterval } : {}),
-    ...(options.keepPrevious ? { placeholderData: keepPreviousData } : {}),
-  });
+  options: ProjectQueryOptions = {}) {
+  const query = useQuery(projectQueryOptions(projectId, key, read, options));
   return { ...query, checking: query.isFetching && query.data !== undefined };
 }
 

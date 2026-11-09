@@ -15,12 +15,12 @@ import { useDocumentList } from "./useDocumentList";
 import { useRereadOnReturn } from "./useRereadOnReturn";
 import { UploadDocument } from "./UploadDocument";
 
-export function DocumentIndex({ context, refresh }: { context: MutationContext; refresh: number }) {
+export function DocumentIndex({ context }: { context: MutationContext }) {
   const { projectId } = context;
   const scope = `${context.principal.actorId}:${projectId}`;
   const [state, update] = useDocumentListState(scope);
   const list = useDocumentList(projectId, state, update);
-  useRereadOnReturn(() => void list.reread(), refresh);
+  useRereadOnReturn(() => void list.reread());
   const railShown = useContextRailShown();
   const [create, setCreate] = useState(false);
   const canWrite = context.principal.permissions.includes("write");

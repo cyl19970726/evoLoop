@@ -154,15 +154,19 @@ export function OriginalDocumentReader({ token, projectId, revisionId, documentI
   const mime = original.revision.mediaType;
   const integrity = <><p>固定修订 <code>{original.revision.id}</code></p><p>SHA-256 <code>{original.revision.contentHash}</code></p></>;
   const raw = <details className="revision-body"><summary>查看完整原文</summary><pre>{original.body}</pre></details>;
-  const assets = original.assets.length > 0 && <div className="doc-assets"><h3>配套资源 · {original.assets.length} 项</h3><ul>{original.assets.map(asset => { const image = imagePreview(asset.mediaType, asset.base64); return <li key={asset.path}>
-      <span className="break-anywhere">{asset.path}<small>{asset.mediaType} · SHA-256 <code>{original.revision.assetsManifest.find(item=>item.path===asset.path)?.contentHash}</code></small></span>
+  // The asset list sits in old pages (the task page's revision comparison), so its layout is written on tokens here.
+  // A preview takes the row's full width, scrolls inside its own height limit and wraps long lines instead of
+  // widening the page.
+  const assets = original.assets.length > 0 && <div><h3>配套资源 · {original.assets.length} 项</h3><ul className="m-0 list-none p-0">{original.assets.map(asset => { const image = imagePreview(asset.mediaType, asset.base64); return <li key={asset.path}
+      className="flex min-w-0 flex-wrap items-center justify-between gap-3 border-t border-border py-4">
+      <span className="min-w-0 [overflow-wrap:anywhere]">{asset.path}<small className="mt-1 block [overflow-wrap:anywhere]">{asset.mediaType} · SHA-256 <code>{original.revision.assetsManifest.find(item=>item.path===asset.path)?.contentHash}</code></small></span>
       <span className="actions"><button onClick={() => { setAssetError(null); setAssetPreview(value => value === asset.path ? null : asset.path); }}
         aria-expanded={assetPreview === asset.path}> {assetPreview === asset.path ? "收起预览" : "预览"}</button>
       <button onClick={() => download(asset.path.split("/").at(-1) ?? "resource",
         new Blob([blobBytes(asset.base64)], { type: asset.mediaType }))}>下载</button></span>
-      {assetPreview === asset.path && <div className="doc-asset-preview">
-        {image && assetError !== asset.path ? <>{image.mismatch && <p>资源声明为 {asset.mediaType}，图片字节识别为 {image.mediaType}。预览按图片解码，下载保留原字节。</p>}<img alt={`资源 ${asset.path} 的静态预览`} src={`data:${image.mediaType};base64,${asset.base64}`} onError={() => setAssetError(asset.path)} /></>
-          : asset.mediaType === "text/css" ? <pre>{new TextDecoder().decode(bytes(asset.base64))}</pre>
+      {assetPreview === asset.path && <div data-asset-preview="" className="max-h-[440px] min-w-0 shrink-0 grow basis-full overflow-auto rounded-md border border-border bg-muted p-3">
+        {image && assetError !== asset.path ? <>{image.mismatch && <p>资源声明为 {asset.mediaType}，图片字节识别为 {image.mediaType}。预览按图片解码，下载保留原字节。</p>}<img alt={`资源 ${asset.path} 的静态预览`} src={`data:${image.mediaType};base64,${asset.base64}`} onError={() => setAssetError(asset.path)} className="h-auto max-w-full" /></>
+          : asset.mediaType === "text/css" ? <pre className="m-0 max-w-full whitespace-pre-wrap [overflow-wrap:anywhere]">{new TextDecoder().decode(bytes(asset.base64))}</pre>
           : <p>{assetError === asset.path ? "图片未能解码，请下载原件核对。" : "此资源格式暂不支持页面预览，可下载原件查看。"}</p>}
       </div>}
     </li>; })}</ul></div>;

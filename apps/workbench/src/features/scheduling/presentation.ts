@@ -38,7 +38,7 @@ export function nextRuleInstant(rule: ScheduleRule, timezone: string, now: numbe
     return new Date(anchor + (Math.floor((now - anchor) / every) + 1) * every).toISOString();
   }
   const match = /^(\d{2}):(\d{2})$/.exec(rule.localTime);
-  if (!match) return null;
+  if (!match || !validLocalTime(rule.localTime)) return null;
   try {
     const format = new Intl.DateTimeFormat("en-US", { timeZone: timezone, year: "numeric", month: "2-digit", day: "2-digit",
       hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
@@ -57,4 +57,48 @@ export function nextRuleInstant(rule: ScheduleRule, timezone: string, now: numbe
     }
     return null;
   } catch { return null; }
+}
+
+/** Whether the next instant can be worked out at all: a bad timezone or time is not "no future instant". */
+export function ruleIsComputable(rule: ScheduleRule, timezone: string): boolean {
+  if (rule.kind === "once") return Number.isFinite(Date.parse(rule.atUtc));
+  if (rule.kind === "interval") return Number.isFinite(Date.parse(rule.anchorUtc)) && Number.isFinite(rule.everyMinutes) && rule.everyMinutes > 0;
+  if (!validLocalTime(rule.localTime)) return false;
+  try { new Intl.DateTimeFormat("en-US", { timeZone: timezone }); return true; } catch { return false; }
+}
+
+function validLocalTime(value: string): boolean {
+  const match = /^(\d{2}):(\d{2})$/.exec(value);
+  return !!match && Number(match[1]) < 24 && Number(match[2]) < 60;
+}
+
+/** 下次时间 for an active schedule: the previewed instant, no future instant, or a rule that cannot be worked out. */
+export function nextTimeText(rule: ScheduleRule, timezone: string, now: number, format: (iso: string) => string): string {
+  if (!ruleIsComputable(rule, timezone)) return "无法推算：规则的时区或时间不合法";
+  const next = nextRuleInstant(rule, timezone, now);
+  return next ? `${format(next)}（按规则推算的预览）` : "规则里没有以后的时刻";
+}
+
+const occurrenceReasons: Record<string, string> = {
+  scheduled: "到了规则时刻，按规则创建任务",
+  "overlap skipped": "上一份任务还没结束，按设置跳过这个时刻",
+  "overlap queued": "上一份任务还没结束，这个时刻排队等待",
+  "queued occurrence admitted": "排队的时刻已放行，创建了任务",
+};
+
+/** Why an instant ended as it did. The scheduler records a short English code (packages/core/src/scheduling). */
+export function occurrenceReasonText(reason: string): string {
+  return occurrenceReasons[reason] ?? "按协调器记录的原因处理，原文见来源";
+}
+export function occurrenceReasonKnown(reason: string): boolean {
+  return Object.hasOwn(occurrenceReasons, reason);
+}
+
+/** The coordinator's last error is free English text; the page names it and keeps the original in the source layer. */
+export const coordinatorErrorText = "最近一次检查出错，原文见来源";
+
+/** What 当前身份的日程授权 says with no grant listed. Only a current, complete read may say there is none. */
+export function grantEmptyText(read: { fresh: boolean; loading: boolean }): string {
+  if (read.fresh) return "没有；已有安排可阅读，已撤权的定义仍可暂停或停止";
+  return read.loading ? "正在重新核对授权，暂不能判断" : "授权未能重新读取，无法判断";
 }

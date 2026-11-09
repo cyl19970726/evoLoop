@@ -19,9 +19,9 @@
 
 | 层 | 内容 | 现状 |
 | --- | --- | --- |
-| `app/` | 外壳、路由表、身份与查询客户端装配 | `router.tsx`（路由表）与 `routePaths.ts`、`queryClient.ts`（查询缓存）、`PageBoundary.tsx`（单页出错不影响外壳）、`shell/`（外壳：`AppShell.tsx`、空间与分区模型 `spaces.ts`，登录后按需加载；页面经 `shared/ui/` 的两个入口填外壳：`ContextRailContent` 把对象列表放进内层栏，`ContextPanelContent` 把当前对象的信息放进右栏（`ContextPanel.tsx`）；只有屏上的那一页能填，`pageActive.ts` 由 `App.tsx` 按页提供）、`App.tsx`（按区域选页面并逐页懒加载）、`entry/`（登录门、项目列表、操作核对；登录门在首屏里，不引用组件库）、操作回执与恢复、组件样例页 `ui-samples/`。`src/` 根目录只留入口 `main.tsx`、全局类型声明和旧全局 CSS（PR10 删除），按 app 层对待 |
+| `app/` | 外壳、路由表、身份与查询客户端装配 | `router.tsx`（路由表）与 `routePaths.ts`、`queryClient.ts`（查询缓存）、`PageBoundary.tsx`（单页出错不影响外壳）、`shell/`（外壳：`AppShell.tsx`、空间与分区模型 `spaces.ts`，登录后按需加载；页面经 `shared/ui/` 的两个入口填外壳：`ContextRailContent` 把对象列表放进内层栏，`ContextPanelContent` 把当前对象的信息放进右栏（`ContextPanel.tsx`）；只有屏上的那一页能填，`pageActive.ts` 由 `App.tsx` 按页提供）、`App.tsx`（按区域选页面并逐页懒加载）、`entry/`（登录门、项目列表、操作核对；登录门在首屏里，只从组件库按名引用不依赖 `cn` 的 `Logo`，不用其他组件，免得把 tailwind-merge 和图标带进首屏；项目列表登录后按需加载，可用组件库）、操作回执与恢复、组件样例页 `ui-samples/`。`src/` 根目录只留入口 `main.tsx`、全局类型声明和旧全局 CSS（PR10 删除），按 app 层对待 |
 | `features/<领域>/` | 页面、领域组件、该领域的查询与命令 | 17 个领域沿用旧目录名（任务仍叫 `workflow`，团队页是 `team`）；PR5–PR9 换页时按目标页面归并 |
-| `shared/` | API 客户端、对象引用、修订标签等跨领域部件 | 地址与历史（`navigation.ts`、`appPath.ts`、`routes.ts`）、身份（`identity.ts`）、读取层（`query.ts`）、`api.ts` 与被多个领域读取的 `*Client.ts`、命令表单 `ActionForm`、业务状态映射（`workStatusPresentation`、`leaderWorkLoad`、`taskTiming`）、对象链接与名称解析（`taskNavigation`、`deliveryPresentation`、`externalHostEntry`、`ownerRole`）、Markdown 与 HTML 原件阅读（`ui/`）、过渡期的本地 shadcn 组件（`components/ui/`）、假数据 `fixtures/` |
+| `shared/` | API 客户端、对象引用、修订标签等跨领域部件 | 地址与历史（`navigation.ts`、`appPath.ts`、`routes.ts`）、身份（`identity.ts`）、读取层（`query.ts`）、`api.ts` 与被多个领域读取的 `*Client.ts`、命令表单 `ActionForm`、业务状态映射（`workStatusPresentation`、`leaderWorkLoad`、`taskTiming`、下一动作与下一责任 `workPresentation`、职责状态 `rolePresentation`）、对象链接与名称解析（`taskNavigation`、`deliveryPresentation`、`externalHostEntry`、`ownerRole`、按名称显示职责、智能体与任务的 `ui/RecordName`）、来源与完整标识层（`ui/FullIdentifiers`）、Markdown 与 HTML 原件阅读（`ui/`）、过渡期的本地 shadcn 组件（`components/ui/`）、假数据 `fixtures/` |
 | `@evoloop/ui`（`packages/ui`） | tokens、基于 shadcn 的基础组件、布局骨架、通用状态与对话流条目 | 见[组件](components.md) |
 
 检查的规则：
@@ -49,10 +49,11 @@
 - **现状**（PR4b）：读取层是 TanStack Query，在 `shared/query.ts`，缓存实例在 `app/queryClient.ts`。
   - **键**：`queryKeys.project(项目, …)` 与 `queryKeys.identity(身份, …)`，键以所属范围开头。
   - **隔离**：离开一个项目时取消它在途的请求并清掉它的缓存（`leaveProject`）；登录和退出清空全部。
-  - **写后重读**：写操作成功后，该项目的查询标为过期，可见的重读（`projectChanged`，由 `MutationContext.onChanged` 触发）。
+  - **写后重读**：写操作成功后，该项目的查询标为过期，可见的重读（`projectChanged`，由 `MutationContext.onChanged` 触发）。页面不必再按 `refresh` 自己重读一次，否则请求会被取消后重发。
+  - **固定内容**：固定修订和原件的键以 `fixedContent` 开头，只读一次：写入不使它们过期，也不自动重读；离开项目时照常清掉。
   - **重读**：保留旧内容，`useProjectQuery` 返回 `checking` 供页面标“正在核对”。
   - **重试**：4xx 是结论不重试，连接中断与 5xx 最多重试两次。
-  - **已迁移**：外壳的项目标题与项目列表。旧页面仍直接调用 `api(`（约 84 处），令牌以 `token: string` 传递（约 63 处）。这些页面在 PR6–PR9 重写时改用 `useProjectQuery`，不在旧页面上逐处替换。
+  - **已迁移**：外壳的项目标题与项目列表、项目设置。旧页面仍直接调用 `api(`（约 84 处），令牌以 `token: string` 传递（约 63 处）。这些页面在 PR6–PR9 重写时改用 `useProjectQuery`，不在旧页面上逐处替换。
 - **目标**：所有服务端读取经 Query；缓存只加速读取，不裁定当前版本或批准状态。
 
 QueryService 返回 `observedAt`、对象与 revision、权限能力、分源状态和缺项。PG 部分在一个只读事务内取得；Wiki/Git 分别读固定版本，不声称跨系统原子快照。知识服务不可用时任务仍可读，依据标为暂不可核对。服务端只装配已授权对象，前端隐藏按钮不是授权；空项目返回空态，前端不注入示例。
@@ -121,7 +122,7 @@ QueryService 返回 `observedAt`、对象与 revision、权限能力、分源状
 
 | 责任 | 现状 | 目标 |
 | --- | --- | --- |
-| 样式 | token 与 Tailwind 主题已在 `@evoloop/ui`；7 个全局 CSS（style、workbench、editorial、reading-pages、team-pages、completion、task-production）与 22 个领域 CSS 仍各写各的样式，旧变量名经 `legacy-tokens.css` 指向 token；颜色字面量只减不增；旧 CSS 没有分层，直接给 `button`、`p`、`input` 等元素写样式，会压过 Tailwind；所以用 `@evoloop/ui` 的页面根节点和弹层都标 `data-ui`，`@evoloop/ui/scope.css`（在旧 CSS 之后加载）在作用域里补一层基础样式，并把旧 CSS 对这些元素的样式退回（`all: revert-layer`）。旧页面不受影响 | Tailwind v4 + shadcn/ui（DEC-036），token 只在 `@evoloop/ui` 定义，见[设计基础](foundations.md) |
+| 样式 | token 与 Tailwind 主题已在 `@evoloop/ui`；7 个全局 CSS（style、workbench、editorial、reading-pages、team-pages、completion、task-production）与 22 个领域 CSS 仍各写各的样式，旧变量名经 `legacy-tokens.css` 指向 token；颜色字面量只减不增；旧 CSS 没有分层，直接给 `button`、`p`、`input` 等元素写样式，会压过 Tailwind；所以用 `@evoloop/ui` 的页面根节点和弹层都标 `data-ui`，`@evoloop/ui/scope.css`（在旧 CSS 之后加载）在作用域里补一层基础样式，并把旧 CSS 对这些元素的样式退回（`all: revert-layer`），包括表格行 `tr`（旧的行悬停底色）和事实行 `dl > div`（旧的 170px 网格）。旧页面不受影响 | Tailwind v4 + shadcn/ui（DEC-036），token 只在 `@evoloop/ui` 定义，见[设计基础](foundations.md) |
 | 动效 | 无统一做法 | Radix `data-state` + tw-animate-css；列表与布局用 Motion（`motion` 包）；尊重 `prefers-reduced-motion` |
 | 构建 | 主 JS 一个文件约 1264 KB（gzip 380 KB），仅 mermaid 懒加载 | 按路由拆包 |
 

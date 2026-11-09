@@ -14,7 +14,6 @@ import { sessionClient } from "../../shared/sessionClient";
 import { queueClient } from "../../shared/queueClient";
 import { appendLeaderWorkPage, leaderPhaseLabel } from "../../shared/leaderWorkLoad";
 import { useProjectQuery } from "../../shared/query";
-import { workNextStep } from "../../shared/workPresentation";
 import { date, href } from "../../shared/ui/shared";
 import { ContextPanelContent, useContextPanel } from "../../shared/ui/ContextPanel";
 import { readSessionDirectoryPages } from "./useSessionDirectoryGroup";
@@ -27,6 +26,7 @@ import {
   capacityUnknownReason, directoryWorkCaption, noConflictText, noFreeAgentText, readStateOf,
   staleLabel, type ReadState,
 } from "./arrangementPresentation";
+import { workNextStep } from "../../shared/workPresentation";
 
 const maxSessionPages = 10;
 const maxTaskPages = 20;

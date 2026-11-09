@@ -1,4 +1,4 @@
 {
-  "cssColorLiterals": 782,
+  "cssColorLiterals": 781,
   "note": "Colour literals (#hex, rgb(), hsl()) in apps/workbench/src CSS. Tokens live in packages/ui. This number may only go down; when a change removes literals, lower it to the new count in the same change."
 }
