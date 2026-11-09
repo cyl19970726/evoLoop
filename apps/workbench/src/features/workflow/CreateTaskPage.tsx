@@ -14,7 +14,7 @@ import { ContextPanelContent, useContextPanel } from "../../shared/ui/ContextPan
 import { FullIdentifiers } from "../../shared/ui/FullIdentifiers";
 import { href } from "../../shared/ui/shared";
 import { journeyKey, readOwnerRoles, readPublishedDocuments, useGoals, useStages } from "./journeyRead";
-import { draftTouched, emptyTaskDraft, maxLinkedDocuments, taskCreateCommand, taskDraftProblems, taskKinds, zonedInstant, type DraftProblems, type TaskDraft } from "./taskCreate";
+import { draftFieldLabels, draftTouched, emptyTaskDraft, maxLinkedDocuments, taskCreateCommand, taskDraftProblems, taskKinds, zonedInstant, type DraftProblems, type TaskDraft } from "./taskCreate";
 import { formatScheduled } from "./taskTimingPresentation";
 import { baselineChangedText, useCommand } from "./useCommand";
 
@@ -54,6 +54,7 @@ export function CreateTaskView({ context, active, pathname, back, embedded = fal
   const [draft, setDraft] = React.useState<TaskDraft>(() => ({ ...fresh, stageId: stageFromAddress(pathname) }));
   const [taskId, setTaskId] = React.useState(() => crypto.randomUUID());
   const [showProblems, setShowProblems] = React.useState(false);
+  const [moreOpen, setMoreOpen] = React.useState(false);
   const touched = draftTouched(draft, fresh);
   // A link here with another stage (目标与阶段 → 新建任务) chooses that stage while nothing has been typed yet.
   React.useEffect(() => onNavigate(() => {
@@ -152,7 +153,8 @@ export function CreateTaskView({ context, active, pathname, back, embedded = fal
         ? "每日重复要求维护者已为本项目、你的身份和负责职责授予任务时间授权（授权范围见右栏的完整标识）。还没有授权时，可以先建仅本次的任务，授权后在任务里改成每日重复。"
         : "当前身份可以约定一次执行时间；每日重复需由有审阅权限的身份设置。"}</p>
     </section>
-    <details className={cn(section, "group")}>
+    {/* A problem inside 更多设置 opens it, so the field named in the summary is on screen. */}
+    <details className={cn(section, "group")} open={moreOpen || !!shown.documentIds} onToggle={event => setMoreOpen(event.currentTarget.open)}>
       <summary className="cursor-pointer text-label font-semibold text-foreground">更多设置</summary>
       <div className="mt-4 flex flex-col gap-4">
         <DocumentChoices read={documentsRead} chosen={draft.documentIds} error={shown.documentIds} onChange={documentIds => edit({ documentIds })} />
@@ -221,6 +223,7 @@ function DocumentChoices({ read, chosen, error, onChange }: {
     {read.isPending && <p className={muted}>正在读取已发布的文档…</p>}
     {!!read.error && <p className={muted}>已发布的文档暂不可读取：{errorText(read.error)}。可以先不关联，保存后在任务里补充。</p>}
     {read.isSuccess && !documents.length && <p className={muted}>{read.data?.complete ? "项目里还没有已发布的文档。" : "已读范围内没有已发布的文档。"}</p>}
+    {documents.length > 0 && read.data && !read.data.complete && <p className={muted} data-documents-partial="">文档只读了一部分，下面没有列出的已发布文档可以保存后在任务里补充。</p>}
     {documents.length > 0 && <ul className="flex max-h-56 flex-col gap-1 overflow-y-auto rounded-md bg-muted p-2">{documents.map(document => <li key={document.id}>
       <label className="flex items-start gap-2 text-small text-foreground">
         <input type="checkbox" className="mt-1 accent-[var(--brand)]" checked={chosen.includes(document.id)}
@@ -237,7 +240,7 @@ function SubmitBar({ context, stage, taskId, draft, problems, ready, onInvalid, 
   context: MutationContext; stage: Stage | undefined; taskId: string; draft: TaskDraft; problems: DraftProblems; ready: boolean;
   onInvalid(): void; onApplied(): void; onClear: (() => void) | undefined;
 }) {
-  const command = useCommand(context, stage ? `${stage.version}:${stage.state}` : undefined);
+  const command = useCommand(context, stage ? `${stage.version}:${stage.state}` : undefined, { onStale: context.onChanged });
   const count = Object.keys(problems).length;
   const [tried, setTried] = React.useState(false);
   async function send() {
@@ -246,7 +249,7 @@ function SubmitBar({ context, stage, taskId, draft, problems, ready, onInvalid, 
     if (await command.submit(() => taskCreateCommand(draft, taskId))) onApplied();
   }
   return <div className="flex flex-col gap-3">
-    {tried && count > 0 && <Notice tone="waiting">还有 {count} 处需要补充，见各项下面的说明。</Notice>}
+    {tried && count > 0 && <Notice tone="waiting">还有 {count} 处需要补充：{(Object.keys(problems) as (keyof TaskDraft)[]).map(key => draftFieldLabels[key]).join("、")}。说明写在各项下面。</Notice>}
     {context.blocked && <p className={muted}>本项目仍有结果未确认的操作，请先核对回执，再保存。</p>}
     {command.baselineChanged && <Notice tone="waiting" title="所属阶段已被更新" action={<Button size="compact" onClick={command.rebase}>已查看，继续</Button>}>
       {baselineChangedText}右栏“所属阶段”已是最新读回。</Notice>}

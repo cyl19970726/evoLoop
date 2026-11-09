@@ -34,6 +34,7 @@ export function stageNextStep(stage: Pick<Stage, "state">, tasks: readonly Stage
   if (has("rework", "blocked")) return "先处理待返工或受阻的任务，再推进其他工作。";
   if (has("running", "awaiting_delivery")) return "继续执行，并登记可核对的交付。";
   if (open.length) return "核对任务正文与来源，安排承接后开始。";
+  if (!complete) return "已读的所属任务都已结束，但任务没有读全，暂不能判断阶段能否回看。";
   return "所属任务都已结束：核对交付与使用结果，再记录阶段回看。";
 }
 

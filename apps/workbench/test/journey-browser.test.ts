@@ -1,7 +1,8 @@
 // Opt-in built-app regression for 目标与阶段 and 新建任务 (docs/frontend/pages/journey.md, tasks.md 新建任务): goals and
 // stages read from the project, the tasks under a stage with their next step and responsibility in words, reviews,
-// drafts kept across selection and rereads, a slow and a failed reread kept as the last read, a first read that fails, a stage accepted,
-// and one task.create sent from `?action=propose` with the fields the earlier forms sent. Runs at 1440, 1024 and 390.
+// drafts kept across selection, leaving and rereads, a slow and a failed reread kept as the last read, a version conflict
+// that rereads before the person keeps the draft, a stage accepted, one task.create sent from `?action=propose` with the
+// fields the earlier forms sent, and first reads that fail (tasks; stages alone). Runs at 1440, 1024 and 390.
 // Set EVOLOOP_JOURNEY_SCREENSHOT_DIR to keep screenshots. (Replaces journey-current-read.test.ts, which launched the
 // browser without the configured executable and read the old board.)
 import assert from "node:assert/strict";
@@ -39,9 +40,10 @@ test("目标与阶段 reads goals, stages and their tasks in words, keeps drafts
   skip: !modulePath && "Set EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE after building the workbench",
 }, async t => {
   const { chromium } = (await import(pathToFileURL(modulePath!).href)).default;
-  const state = { current: false, failRecords: false, failWork: false, delayWork: false, accepted: false };
-  let release: (() => void) | null = null;
-  let workStarted: (() => void) | null = null;
+  const state = { current: false, failRecords: false, failStages: false, failWork: false, delay: false, accepted: false, goalVersion: 1 };
+  const waiting: (() => void)[] = [];
+  let delayStarted: (() => void) | null = null;
+  const hold = () => new Promise<void>(done => { waiting.push(done); delayStarted?.(); });
   const requests: string[] = [];
   let closedRead = false;
   const commands: Record<string, unknown>[] = [];
@@ -56,11 +58,15 @@ test("目标与阶段 reads goals, stages and their tasks in words, keeps drafts
         stage(stageProposed, goalB, "对外说明初稿", state.accepted ? "active" : "proposed", state.accepted ? 2 : 1)];
       if (path === "/api/session") value = { principal: { actorId: "leader-actor", projectIds: [projectId], permissions: ["read", "write", "review"] }, capabilities: {} };
       else if (path === root) value = { id: projectId, title: "目标与阶段夹具", createdAt: stamp };
-      else if (path === `${root}/goals`) value = state.failRecords ? (status = 503, { message: "目标暂不可读" }) : { items: [goal(goalA, "让试用团队每天用上工作台"), goal(goalB, "整理第二季度的对外说明")], nextCursor: null };
-      else if (path === `${root}/stages`) value = state.failRecords ? (status = 503, { message: "阶段暂不可读" }) : stages;
+      else if (path === `${root}/goals`) value = state.failRecords ? (status = 503, { message: "目标暂不可读" }) : { items: [
+        { ...goal(goalA, "让试用团队每天用上工作台", state.goalVersion), ...state.goalVersion > 1 ? { scope: "本季度和下季度" } : {} }, goal(goalB, "整理第二季度的对外说明")], nextCursor: null };
+      else if (path === `${root}/stages`) {
+        if (state.delay) await hold();
+        value = state.failRecords || state.failStages ? (status = 503, { message: "阶段暂不可读" }) : stages;
+      }
       else if (path === `${root}/work-management/index`) {
         if (url.searchParams.get("includeClosed") === "true") closedRead = true;
-        if (state.delayWork) await new Promise<void>(done => { release = done; workStarted?.(); });
+        if (state.delay) await hold();
         if (state.failWork) { status = 503; value = { message: "工作索引暂不可读" }; }
         else value = { items: [
           projection(taskWaiting, "核对首个版本的使用记录", state.current ? "closed" : "awaiting_acceptance", stageActive),
@@ -81,7 +87,12 @@ test("目标与阶段 reads goals, stages and their tasks in words, keeps drafts
         const command = JSON.parse(Buffer.concat(chunks).toString()) as Record<string, unknown>;
         commands.push(command);
         if (command.type === "stage.accept") state.accepted = true;
-        value = { operationId: command.operationId, status: "applied", entityId: command.taskId ?? command.stageId, version: 1 };
+        if (command.type === "goal.revise" && command.expectedVersion !== state.goalVersion)
+          value = { operationId: command.operationId, status: "rejected", code: "VERSION_CONFLICT", message: "The observed version is no longer current" };
+        else {
+          if (command.type === "goal.revise") state.goalVersion += 1;
+          value = { operationId: command.operationId, status: "applied", entityId: command.taskId ?? command.stageId ?? command.goalId, version: 1 };
+        }
       }
       res.writeHead(status, { "content-type": "application/json" }); res.end(JSON.stringify(value)); return;
     }
@@ -122,8 +133,8 @@ test("目标与阶段 reads goals, stages and their tasks in words, keeps drafts
   const centerText = await main.innerText();
   for (const raw of [roleId, taskWaiting, stageActive, goalA, "Run the acceptance relay", "role:"]) assert.equal(centerText.includes(raw), false, `${raw} stays in the identifier layer`);
   const facts = page.getByRole("complementary", { name: "右栏" }).getByRole("region", { name: "目标与阶段的信息" });
-  await facts.getByText("目标 2 项 · 阶段 3 项").waitFor();
-  assert.match(await facts.innerText(), /任务\s*4 项，已读全（含已关闭）[\s\S]*任务进展\s*受阻 1 · 待验收 1[\s\S]*不属于阶段的任务\s*1 项/);
+  await facts.getByText("3 项", { exact: true }).waitFor();
+  assert.match(await facts.innerText(), /目标\s*2 项\s*阶段\s*3 项\s*任务\s*4 项，已读全（含已关闭）[\s\S]*任务进展\s*受阻 1 · 待验收 1[\s\S]*不属于阶段的任务\s*1 项/);
   assert.ok(closedRead, "closed tasks are read too");
   await shot("journey-1440");
 
@@ -141,17 +152,26 @@ test("目标与阶段 reads goals, stages and their tasks in words, keeps drafts
   await rail.getByRole("link", { name: /试用反馈/ }).click();
   await main.getByRole("heading", { level: 2, name: "试用反馈" }).waitFor();
   assert.equal(await main.getByRole("form", { name: "修订目标" }).getByLabel("理由与依据").inputValue(), "未提交草稿");
+  // Leaving for a task and coming back keeps the draft.
+  await main.getByRole("link", { name: "汇总试用反馈" }).click();
+  await page.waitForURL(new RegExp(`/tasks/${taskClosed}`));
+  await page.goBack();
+  await main.getByRole("heading", { level: 2, name: "试用反馈" }).waitFor();
+  assert.equal(await main.getByRole("form", { name: "修订目标" }).getByLabel("理由与依据").inputValue(), "未提交草稿");
 
-  // A slow reread keeps the last read on screen and the button busy; the answer replaces it.
-  state.delayWork = true; state.current = true;
-  const started = new Promise<void>(done => { workStarted = done; });
+  // A slow reread keeps the last read on screen and the button busy; meanwhile the latest review is only the one
+  // read back last time. The answer replaces it.
+  state.delay = true; state.current = true;
+  const started = new Promise<void>(done => { delayStarted = done; });
   await main.getByRole("button", { name: "重新读取" }).click();
   await started;
   await main.getByRole("button", { name: "正在核对…" }).waitFor();
   assert.equal(await main.getByRole("button", { name: "正在核对…" }).isDisabled(), true);
   await main.getByText("试用反馈能否被真实使用？").waitFor();
-  state.delayWork = false; release!();
+  await main.getByText("停止并保留理由 · 上次读回的判断").waitFor();
+  state.delay = false; for (const done of waiting.splice(0)) done();
   await main.getByRole("button", { name: "重新读取" }).waitFor();
+  await main.getByText("停止并保留理由 · 当前判断").waitFor();
   await rail.getByRole("link", { name: /首个可用版本/ }).click();
   await main.locator(`[data-stage-task="${taskWaiting}"]`).getByText("已关闭").waitFor();
 
@@ -171,6 +191,20 @@ test("目标与阶段 reads goals, stages and their tasks in words, keeps drafts
   await main.getByRole("button", { name: "再试一次" }).click();
   await main.getByText("重新读取失败，下面是上次读回的内容，当前待核对").waitFor({ state: "detached", timeout: 15000 });
   assert.deepEqual([...new Set(requests.map(item => item.split(" ")[0]))], ["GET"], "reading never writes");
+
+  // Someone else saves the goal meanwhile: the answer is a version conflict, the page rereads, the draft stays, and
+  // only after the latest version is on screen may the person keep the draft (or refill) and send against it.
+  state.goalVersion = 2;
+  const revising = main.getByRole("form", { name: "修订目标" });
+  await revising.getByRole("button", { name: "保存修订" }).click();
+  await revising.getByRole("button", { name: "保留草稿，按最新版本核对" }).waitFor({ timeout: 15000 });
+  await main.locator("[data-goal]").getByText(/第 2 版/).waitFor();
+  assert.equal(await revising.getByLabel("理由与依据").inputValue(), "未提交草稿");
+  assert.equal(await revising.getByRole("button", { name: "保存修订" }).isDisabled(), true);
+  await revising.getByRole("button", { name: "保留草稿，按最新版本核对" }).click();
+  await revising.getByRole("button", { name: "保存修订" }).click();
+  await revising.getByText(/已保存/).first().waitFor();
+  assert.deepEqual(commands.filter(item => item.type === "goal.revise").map(item => [item.expectedVersion, item.reason]), [[1, "未提交草稿"], [2, "未提交草稿"]]);
 
   // 1024: the right column is a drawer the page never opens by itself.
   await page.setViewportSize({ width: 1024, height: 800 });
@@ -193,12 +227,13 @@ test("目标与阶段 reads goals, stages and their tasks in words, keeps drafts
   const accept = main.getByRole("form", { name: "接受阶段" });
   await accept.getByRole("button", { name: "接受阶段" }).click();
   await accept.getByText("请填写理由与依据。").waitFor();
-  assert.equal(commands.length, 0);
+  assert.equal(commands.filter(item => item.type === "stage.accept").length, 0);
   await accept.getByLabel("理由与依据").fill("交付和学习问题都清楚");
   await accept.getByRole("button", { name: "接受阶段" }).click();
   await main.locator(`[data-stage="${stageProposed}"]`).getByText("推进中").waitFor();
-  assert.equal(commands.length, 1);
-  const { operationId: acceptOperation, projectId: acceptProject, ...accepted } = commands[0]!;
+  const acceptCommands = commands.filter(item => item.type === "stage.accept");
+  assert.equal(acceptCommands.length, 1);
+  const { operationId: acceptOperation, projectId: acceptProject, ...accepted } = acceptCommands[0]!;
   assert.match(String(acceptOperation), /^[0-9a-f-]{36}$/);
   assert.equal(acceptProject, projectId);
   assert.deepEqual(accepted, { type: "stage.accept", stageId: stageProposed, expectedVersion: 1, reason: "交付和学习问题都清楚" });
@@ -216,7 +251,8 @@ test("目标与阶段 reads goals, stages and their tasks in words, keeps drafts
   await form.getByRole("button", { name: "保存任务" }).click();
   await form.getByText(/还有 \d+ 处需要补充/).waitFor();
   await form.getByText("属于阶段的任务要写明来源或反馈证据。").waitFor();
-  assert.equal(commands.length, 1);
+  assert.match(await form.getByText(/还有 \d+ 处需要补充/).innerText(), /任务名称[\s\S]*来源或反馈证据/, "the summary names the fields");
+  assert.equal(commands.filter(item => item.type === "task.create").length, 0);
   await form.getByLabel("任务名称").fill("把验收清单接进日程");
   await form.getByLabel("为什么要做").fill("试用团队每天要手动核对。");
   await form.getByLabel("期望结果").fill("日程每天生成核对任务");
@@ -233,8 +269,9 @@ test("目标与阶段 reads goals, stages and their tasks in words, keeps drafts
   await shot("create-task-1440");
   await form.getByRole("button", { name: "保存任务" }).click();
   await page.waitForURL(/\/tasks\/[0-9a-f-]{36}$/);
-  assert.equal(commands.length, 2);
-  const { operationId, projectId: sentProject, taskId, ...sent } = commands[1]!;
+  const creates = commands.filter(item => item.type === "task.create");
+  assert.equal(creates.length, 1);
+  const { operationId, projectId: sentProject, taskId, ...sent } = creates[0]!;
   assert.match(String(operationId), /^[0-9a-f-]{36}$/);
   assert.equal(sentProject, projectId);
   assert.match(page.url(), new RegExp(`/tasks/${taskId}$`));
@@ -277,5 +314,22 @@ test("目标与阶段 reads goals, stages and their tasks in words, keeps drafts
   assert.match(await main.locator("[data-stage-next]").innerText(), /尚未读全，暂不能判断/);
   assert.match(await facts.innerText(), /任务\s*没有读回，无法判断/);
   await shot("journey-read-failed-1440");
+
+  // Stages that cannot be read leave the goals readable but conclude nothing about stages.
+  state.failWork = false; state.failStages = true;
+  await page.reload();
+  await login();
+  await main.getByRole("heading", { level: 1, name: "目标与阶段" }).waitFor();
+  await main.getByText("阶段读取失败").waitFor({ timeout: 15000 });
+  await rail.getByText("阶段没有读回，无法判断各目标下有哪些阶段。").waitFor();
+  assert.match(await rail.innerText(), /让试用团队每天用上工作台\s*目标 · 阶段无法判断/);
+  await rail.getByRole("link", { name: /整理第二季度的对外说明/ }).click();
+  await main.getByRole("heading", { level: 2, name: "整理第二季度的对外说明" }).waitFor();
+  const stagesFailed = await main.innerText();
+  assert.match(stagesFailed, /目标 · 第 1 版 · 阶段无法判断/);
+  assert.match(stagesFailed, /阶段没有读回，无法判断这个目标下有哪些阶段/);
+  assert.doesNotMatch(`${stagesFailed}\n${await rail.innerText()}`, /0 个阶段|还没有阶段/);
+  assert.match(await facts.innerText(), /阶段\s*没有读回，无法判断[\s\S]*不属于阶段的任务\s*没有读回，无法判断/);
+  await shot("journey-stages-failed-1440");
   assert.deepEqual(errors, []);
 });

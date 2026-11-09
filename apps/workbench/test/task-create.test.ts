@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { commandSchema } from "@evoloop/contracts";
-import { emptyTaskDraft, taskCreateCommand, taskDraftProblems, zonedInstant, type TaskDraft } from "../src/features/workflow/taskCreate.ts";
+import { draftFieldLabels, emptyTaskDraft, hiddenFields, taskCreateCommand, taskDraftProblems, zonedInstant, type TaskDraft } from "../src/features/workflow/taskCreate.ts";
 
 const taskId = "41000001-0000-4000-8000-000000000001";
 const roleId = "41000002-0000-4000-8000-000000000002";
@@ -55,13 +55,28 @@ test("the journey form's fields: stage, linked published documents, consumer, ev
   parse(command);
 });
 
-test("a decision-only task sends useRequired false without an acceptance mode, and names its owner as consumer", () => {
-  const command = taskCreateCommand(draft({ closeRule: "decision", stageId, kind: "research", consumer: "ignored", evidence: "证据", stopCondition: "停止" }), taskId);
+test("a decision-only task can be saved: nothing hidden is asked for, useRequired is false, and the owner is the consumer", () => {
+  // The form hides 验收方式 and 使用成果的身份 here; the service accepts useRequired false only when consumer === owner.
+  const decision = draft({ closeRule: "decision", stageId, kind: "research", evidence: "证据", stopCondition: "停止" });
+  assert.deepEqual(taskDraftProblems(decision, { canReview: true }), {});
+  const command = taskCreateCommand(decision, taskId);
   assert.equal(command.useRequired, false);
   assert.equal("acceptanceMode" in command, false);
   assert.equal(command.consumer, roleId);
   assert.equal(command.stageId, stageId);
   parse(command);
+});
+
+test("a problem is never reported for a field the form hides", () => {
+  const drafts = [draft({ closeRule: "decision" }), draft({ closeRule: "decision", stageId, acceptanceMode: "human_required" }),
+    { ...emptyTaskDraft("Asia/Taipei"), closeRule: "decision" as const, stageId, repeat: "daily" as const }];
+  for (const candidate of drafts) {
+    const hidden = hiddenFields(candidate);
+    assert.deepEqual(hidden.sort(), ["acceptanceMode", "consumer"]);
+    for (const key of Object.keys(taskDraftProblems(candidate, { canReview: false }))) assert.equal(hidden.includes(key as keyof TaskDraft), false, key);
+  }
+  assert.deepEqual(hiddenFields(draft({})), []);
+  for (const key of Object.keys(emptyTaskDraft()) as (keyof TaskDraft)[]) assert.ok(draftFieldLabels[key], key);
 });
 
 test("the draft names each missing or contradictory field before anything is sent", () => {

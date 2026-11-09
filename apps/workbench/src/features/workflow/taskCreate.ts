@@ -73,6 +73,21 @@ export function zonedInstant(local: string, timezone: string): string {
 
 export type DraftProblems = Partial<Record<keyof TaskDraft, string>>;
 
+/** The form's label for each field, so a summary can say where the problems are. */
+export const draftFieldLabels: Record<keyof TaskDraft, string> = {
+  title: "任务名称", why: "为什么要做", outcome: "期望结果", acceptance: "怎样独立验收", owner: "负责职责", stageId: "所属阶段",
+  kind: "任务类型", acceptanceMode: "验收方式", consumer: "实际使用成果的身份", closeRule: "关闭条件", executeAt: "执行时间",
+  timezone: "时区", repeat: "是否重复", evidence: "来源或反馈证据", stopCondition: "停止条件", documentIds: "关联已发布的文档",
+};
+
+/**
+ * Fields the form does not show for this draft. A decision-only task names no acceptance mode, and its consumer is
+ * its owner (the service accepts `useRequired: false` only then), so neither is asked for.
+ */
+export function hiddenFields(draft: Pick<TaskDraft, "closeRule">): (keyof TaskDraft)[] {
+  return draft.closeRule === "decision" ? ["acceptanceMode", "consumer"] : [];
+}
+
 /** What must be fixed before the draft can be sent, field by field, in words the form shows under each field. */
 export function taskDraftProblems(draft: TaskDraft, options: { canReview: boolean }): DraftProblems {
   const problems: DraftProblems = {};
@@ -83,7 +98,7 @@ export function taskDraftProblems(draft: TaskDraft, options: { canReview: boolea
   missing("acceptance", "写明独立验收要看的证据。");
   missing("owner", "选择负责这项任务的职责。");
   if (draft.stageId) {
-    missing("consumer", "属于阶段的任务要写明实际使用成果的身份。");
+    if (draft.closeRule === "use") missing("consumer", "属于阶段的任务要写明实际使用成果的身份。");
     missing("evidence", "属于阶段的任务要写明来源或反馈证据。");
     missing("stopCondition", "属于阶段的任务要写明在什么情况下停止。");
   }
@@ -105,6 +120,8 @@ export function taskDraftProblems(draft: TaskDraft, options: { canReview: boolea
   }
   try { scheduledTimezone(draft.timezone); } catch (cause) { if (draft.executeAt.trim()) problems.timezone = cause instanceof Error ? cause.message : "时区无效。"; }
   if (draft.documentIds.length > maxLinkedDocuments) problems.documentIds = `最多关联 ${maxLinkedDocuments} 份文档。`;
+  // A field the person cannot see is never named as the thing to fix.
+  for (const key of hiddenFields(draft)) delete problems[key];
   return problems;
 }
 

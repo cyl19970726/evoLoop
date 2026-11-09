@@ -421,3 +421,23 @@ test("Document-list opt-in follows only exact list pages, never Document bodies 
   assert.equal(bounded.register(first,200,jsonHeaders,docs([501],null)),false);
   assert.equal(bounded.allowedPaths.has(`${first}&cursor=doc-page-10`),false);
 });
+
+test("an approved work index first page lets the same query's next pages through, and nothing else",()=>{
+  const index=`/api/projects/${projectId}/work-management/index?view=tasks&limit=50&includeClosed=true`;
+  const journey:BrowserReadScope={...scope,routes:[{key:"journey",hash:`#/p/${projectId}/journey`,apiPaths:[index]}]};
+  const at=(path:string)=>allowBrowserRequest(journey,BROWSER_ORIGIN+path,"GET","fetch");
+  assert.equal(at(index),true);
+  // The workbench writes the cursor before includeClosed; the query is the same once the cursor is set aside.
+  assert.equal(at(`/api/projects/${projectId}/work-management/index?view=tasks&limit=50&cursor=opaque&includeClosed=true`),true);
+  assert.equal(at(`${index}&cursor=opaque`),true);
+  for(const forbidden of [
+    `${index}&cursor=one&cursor=two`,
+    `${index}&cursor=%20padded`,
+    `/api/projects/${projectId}/work-management/index?view=tasks&limit=50&cursor=opaque`,
+    `/api/projects/${projectId}/work-management/index?view=documents&limit=50&includeClosed=true&cursor=opaque`,
+    `/api/projects/${projectId}/work-management/index?view=tasks&limit=500&includeClosed=true&cursor=opaque`,
+    `/api/projects/${runId}/work-management/index?view=tasks&limit=50&includeClosed=true&cursor=opaque`,
+  ])assert.equal(at(forbidden),false,forbidden);
+  assert.equal(allowBrowserRequest(journey,`${BROWSER_ORIGIN+index}&cursor=opaque`,"POST","fetch"),false);
+  assert.equal(allowBrowserRequest(journey,`${BROWSER_ORIGIN+index}&cursor=opaque`,"GET","document"),false);
+});

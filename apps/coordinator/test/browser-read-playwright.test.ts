@@ -328,6 +328,7 @@ test("built task list and 目标与阶段 read through the guarded context",
   const firstDocumentPage=`${base}/documents?limit=50`;
   // 目标与阶段 reads each task's stage, phase and next responsibility from the work index, closed tasks included.
   const journeyWork=`${base}/work-management/index?view=tasks&limit=50&includeClosed=true`;
+  const journeyWorkNext=`${base}/work-management/index?view=tasks&limit=50&cursor=index-two&includeClosed=true`;
   const projection=(item:ReturnType<typeof task>)=>({kind:"task",taskId:item.id,version:1,currentRevisionId:item.currentRevisionId,
     workChangeSequence:1,title:item.title,taskKind:null,taskState:"todo",phase:"unassigned",nextAction:"Assign",
     responsible:{kind:"leader",id:"leader",label:"leader"},assignment:null,latestRun:null,delivery:null,pendingImpactCount:0,
@@ -378,7 +379,10 @@ test("built task list and 目标与阶段 read through the guarded context",
         dispatchState:null,unsettledRunState:null,hasClosure:false,readyForAcceptance:false,deliveryId:null}))});
     }
     if(path===`${base}/goals?limit=50`)return json({items:[],nextCursor:null});
-    if(path===journeyWork)return json({items:[...firstTasks,...secondTasks].map(projection),nextCursor:null,total:57,counts:{},
+    // The service pages the index by 50, as for any other reader.
+    if(path===journeyWork)return json({items:firstTasks.map(projection),nextCursor:"index-two",total:57,counts:{},
+      changeSequence:1,observedAt:"2026-11-09T00:00:00.000Z",partial:false});
+    if(path===journeyWorkNext)return json({items:secondTasks.map(projection),nextCursor:null,total:57,counts:{},
       changeSequence:1,observedAt:"2026-11-09T00:00:00.000Z",partial:false});
     if(path===`${base}/impacts` || path===`${base}/stages`)return json([]);
     const detail=/^\/api\/projects\/([0-9a-f-]{36})\/tasks\/([0-9a-f-]{36})$/.exec(path);
@@ -430,6 +434,7 @@ test("built task list and 目标与阶段 read through the guarded context",
   assert.equal(/暂不可读取|尚未读回/.test(journeyText),false);
   assert.ok(observed.includes(`GET ${second}`));
   assert.ok(observed.includes(`GET ${journeyWork}`));
+  assert.ok(observed.includes(`GET ${journeyWorkNext}`),"the approved first index page lets its next page through");
   assert.equal(observed.some(item=>item.startsWith(`GET ${base}/documents/`)),false);
   assert.equal(observed.some(item=>item.startsWith("POST ")),false);
 });

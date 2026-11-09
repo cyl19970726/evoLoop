@@ -27,6 +27,7 @@ test("a stage's next step follows its state and its tasks, and never concludes f
   assert.match(stageNextStep({ state: "active" }, [row("a", "running", "s")]), /继续执行/);
   assert.match(stageNextStep({ state: "active" }, [row("a", "unassigned", "s")]), /安排承接/);
   assert.match(stageNextStep({ state: "active" }, [row("a", "closed", "s"), row("b", "cancelled", "s")]), /阶段回看/);
+  assert.match(stageNextStep({ state: "active" }, [row("a", "closed", "s")], false), /没有读全，暂不能判断/, "a partial read never says every task has ended");
   assert.deepEqual(Object.values(stageStatus).map(item => item.label), ["待接受", "推进中", "已回看"]);
 });
 
