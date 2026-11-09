@@ -16,8 +16,6 @@ import { SectionBoundary } from "../../shared/ui/SectionBoundary";
 import { useProjectQuery } from "../../shared/query";
 import { roleClient } from "../../shared/roleClient";
 import { sectionOf, teamViewOf, roleGroups, roleStateLabel, type TeamView } from "./teamPresentation";
-// Still styles the discussion panel shown under 分工讨论.
-import "./team-workspace.css";
 
 // The sections themselves are in the shell's 团队 navigation; this page adds the role directory under it.
 const views: Array<{ key: TeamView; label: string; detail: string }> = [
@@ -66,10 +64,10 @@ export function TeamWorkspace({ context, refresh }: { context: MutationContext; 
       </div>
     </header>
     {view === "reviews" ? <OrganizationReviewList context={context} refresh={refresh} />
+      : view === "discussions" ? <SectionBoundary label={current.label}><DiscussionPanel context={context} refresh={refresh} /></SectionBoundary>
       : <SectionBoundary label={current.label}><div data-legacy="" className="workbench-layout team-legacy">
         {view === "roles" && <RolesPanel context={context} refresh={refresh} />}
         {view === "execution" && <RuntimePanel context={context} refresh={refresh} />}
-        {view === "discussions" && <DiscussionPanel context={context} refresh={refresh} />}
       </div></SectionBoundary>}
   </div>;
 }
