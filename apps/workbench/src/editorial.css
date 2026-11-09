@@ -495,11 +495,11 @@ tbody tr:hover{
 }
 
 /* Unify secondary workspaces with the same restrained surfaces. */
-.session-workspace,.evaluation-page {
+.session-workspace {
   max-width: 1600px;
 }
 
-.discussion-exploration-column,.session-workspace-section {
+.session-workspace-section {
   background: #fff;
   border-color: var(--border);
   border-radius: 7px;
@@ -525,11 +525,6 @@ tbody tr:hover{
   color: #5e6470;
 }
 
-.discussion-exploration-list .discussion-list button.active{
-  background: var(--primary-soft);
-  border-color: #b9c7ed;
-}
-
 .workflow-form input,.workflow-form textarea,.workflow-form select {
   border-color: var(--border-strong);
   border-radius: 6px;
@@ -542,7 +537,7 @@ tbody tr:hover{
 }
 
 @media (min-width: 1800px) {
-  .session-workspace,.evaluation-page {
+  .session-workspace {
     max-width: none;
   }
 }

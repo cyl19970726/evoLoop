@@ -22,7 +22,7 @@ const role = { projectId, id: roleId, version: 2, currentRevisionId: roleId, sta
 const templates = initialRoleTemplates.map(item => ({ ...item, state: item.key === "functional-development" ? "established" : "not-established",
   roleIds: item.key === "functional-development" ? [roleId] : [] }));
 
-test("seven template states appear in runtime and Roles with truthful refresh and target link", { skip: !modulePath && "Set EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE after integration" }, async t => {
+test("seven template states appear on 职责 with truthful refresh and target link", { skip: !modulePath && "Set EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE after integration" }, async t => {
   const { chromium } = (await import(pathToFileURL(modulePath!).href)).default;
   let mode: "normal" | "fail" | "partial" = "normal";
   const server = createServer(async (req, res) => {
@@ -55,12 +55,13 @@ test("seven template states appear in runtime and Roles with truthful refresh an
   const browser = await chromium.launch({ headless: true, ...(process.env.EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH ? { executablePath: process.env.EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH } : {}) }); t.after(() => browser.close());
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
   const errors: string[] = []; page.on("pageerror", error => errors.push(error.stack ?? error.message));
-  await page.goto(`${base}/p/${projectId}/runtime?view=execution`);
+  // 基础职责 lives on the 职责 overview; 分工与运行 no longer repeats it.
+  await page.goto(`${base}/p/${projectId}/roles`);
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button", { name: "进入", exact: true }).click();
-  const summary = page.locator(".role-template-summary:visible");
+  const summary = page.getByRole("region", { name: "基础职责" });
   await summary.getByText("真实功能开发职责").waitFor();
-  assert.equal(await summary.locator("li").count(), 7);
+  assert.equal(await summary.getByRole("listitem").count(), 7);
   assert.match(await summary.innerText(), /认知.*未建立/s);
   assert.equal(await summary.getByRole("link", { name: /真实功能开发职责/ }).getAttribute("href"), `/p/${projectId}/roles?role=${roleId}`);
   await fetch(`${base}/__fixture/mode?value=fail`);
@@ -69,13 +70,14 @@ test("seven template states appear in runtime and Roles with truthful refresh an
   assert.equal(await summary.getByText("真实功能开发职责").count(), 1);
   await fetch(`${base}/__fixture/mode?value=partial`);
   await summary.getByRole("button", { name: "回读当前状态" }).click();
-  await summary.getByText(/Role 列表尚有未读页/).waitFor();
+  await summary.getByText(/职责列表尚有未读页/).waitFor();
   assert.match(await summary.innerText(), /认知.*未知/s);
   await summary.getByRole("link", { name: /真实功能开发职责/ }).click();
   await page.waitForURL(url => url.pathname + url.search === `/p/${projectId}/roles?role=${roleId}`);
-  await page.locator(`#role-${roleId}[open]`).waitFor();
-  const rolesSummary = page.locator(".role-template-summary:visible");
+  await page.locator(`#role-${roleId}`).getByRole("heading", { name: "真实功能开发职责" }).waitFor();
+  await page.getByRole("link", { name: "全部职责", exact: true }).click();
+  const rolesSummary = page.getByRole("region", { name: "基础职责" });
   await rolesSummary.getByText("真实功能开发职责").waitFor();
-  assert.equal(await rolesSummary.locator("li").count(), 7);
+  assert.equal(await rolesSummary.getByRole("listitem").count(), 7);
   assert.equal(errors.length, 0, errors.join(" | "));
 });

@@ -1,20 +1,34 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { RoleRecord } from "@evoloop/contracts/roles";
-import { roleGroups, sectionOf, teamViewOf } from "../src/features/team/teamPresentation.ts";
+import { teamViewOf } from "../src/features/team/teamPresentation.ts";
+import { roleGroups } from "../src/features/roles/rolePresentation.ts";
+import { legacyTeamAddress, parseRoute } from "../src/shared/routes.ts";
+import { spaceOf } from "../src/app/shell/spaces.ts";
 
 const role = (id: string, title: string, state: RoleRecord["state"], roleClass?: "system" | "business") =>
   ({ id, state, proposal: { title, ...roleClass ? { roleClass } : {} } }) as unknown as RoleRecord;
 
-test("team addresses map to their view", () => {
-  assert.equal(teamViewOf("/p/a/reviews"), "reviews");
-  assert.equal(teamViewOf("/p/a/discussions"), "discussions");
-  assert.equal(teamViewOf("/p/a/runtime?view=execution"), "execution");
-  assert.equal(teamViewOf("/p/a/runtime?view=roles&role=r1"), "roles");
-  assert.equal(teamViewOf("/p/a/runtime"), "execution");
-  assert.equal(teamViewOf("/p/a/roles"), "roles");
-  assert.equal(sectionOf("/p/a/runtime?view=execution"), "runtime");
-  assert.equal(sectionOf("/p/a/roles"), "roles");
+test("each team section shows its own view, whatever address is on screen when the page mounts", () => {
+  assert.equal(teamViewOf("reviews"), "reviews");
+  assert.equal(teamViewOf("discussions"), "discussions");
+  assert.equal(teamViewOf("roles"), "roles");
+  assert.equal(teamViewOf("runtime"), "execution");
+});
+
+test("old team links open their current place; a managed agent stays in 分工与运行", () => {
+  const id = "22222222-2222-4222-8222-222222222222";
+  assert.equal(legacyTeamAddress(`/p/a/runtime?view=roles&role=${id}`), `/p/a/roles?role=${id}`);
+  assert.equal(legacyTeamAddress("/p/a/runtime?view=discussions"), "/p/a/discussions");
+  assert.equal(legacyTeamAddress(`/p/a/runtime?view=execution&session=${id}`), `/p/a/runtime?session=${id}`);
+  assert.equal(legacyTeamAddress("/p/a/runtime?view=execution"), "/p/a/runtime");
+  assert.equal(legacyTeamAddress(`/p/a/runtime?session=owned%3A${id}&tab=queue`), `/p/a/sessions?session=owned%3A${id}&tab=queue`);
+  assert.equal(legacyTeamAddress(`/p/a/runtime?session=${id}`), null, "a managed agent link is already the 分工与运行 address");
+  assert.equal(legacyTeamAddress("/p/a/runtime"), null);
+  assert.equal(legacyTeamAddress("/p/a/runtime/?view=roles"), "/p/a/roles", "a trailing slash is the same address");
+  assert.equal(legacyTeamAddress("/p/a/roles?view=roles"), null);
+  assert.equal(spaceOf(parseRoute(`/p/a/runtime?session=${id}`)), "work", "分工与运行 belongs to the work space");
+  assert.equal(spaceOf(parseRoute(`/p/a/runtime?session=owned:${id}`)), "agents");
 });
 
 test("established and trial roles group by class; proposals and closed roles come last", () => {

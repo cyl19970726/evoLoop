@@ -32,12 +32,12 @@
 - 别的包按包名引用，不用相对路径跨包。检查读不懂的 import 写法直接报错，不会放过。
 - `@evoloop/ui` 不引用工作台和 `@evoloop/contracts`（含 `package.json` 依赖），不发请求，文案与数据由调用方传入。
 
-领域之间现有的依赖（检查运行时会打印）：overview → workflow；roles → discussions；runtime → orchestration、sessions、workflow；sessions → discussions；team → discussions、roles、runtime；workflow → discussions、orchestration、references、sessions。团队页的运行面板 `RuntimePanel` 汇集编排、执行队列和 Session 链接；任务的分派、队列和运行在任务自己的“运行与关联”（`workflow/TaskRuntimeTab.tsx`），执行队列 `ResidentQueuePanel` 由 workflow 提供给两处。
+领域之间现有的依赖（检查运行时会打印）：overview → workflow；roles → discussions；runtime → orchestration、sessions、workflow；sessions → discussions；team → discussions、roles、runtime；workflow → discussions、orchestration、references、sessions。任务的分派、执行队列和运行在任务自己的“运行与关联”（`workflow/TaskRuntimeTab.tsx`）；团队页“分工与运行”是 `ExecutionView`，嵌入编排与执行队列。执行队列 `ResidentQueuePanel` 由 workflow 提供给这两处。
 
 **路由。** URL 承载项目、对象稳定 ID、修订和筛选，刷新或分享后回到同一位置；改标题或移动 Git 路径不改链接。历史修订 URL 不跳到最新版。导航入口由[布局](layout.md)决定，不按路由生成。
 
 - **现状**（PR4a）：TanStack Router 管地址与历史，路径 URL `/p/{项目}/{区域}/{ID}?revision=…`，`/` 是项目列表，`/ui` 是组件样例页。路由表在 `app/router.tsx`，地址清单在 `app/routePaths.ts`；页面仍由 `App.tsx` 按解析出的区域选择（`shared/routes.ts` 的 `parseRoute`），访问过的页面保持挂载，PR5 新外壳再改成布局路由。
-  - **旧链接**：文档正文、交付登记、消息里保存的 `#/p/…` 链接继续可用。打开带 `#/…` 的地址（书签、粘贴、Agent 只读浏览器）时先换成对应路径；渲染保存的链接时用 `appPath()` 改写为路径。合同和数据库里的保存格式不变。
+  - **旧链接**：文档正文、交付登记、消息里保存的 `#/p/…` 链接继续可用。打开带 `#/…` 的地址（书签、粘贴、Agent 只读浏览器）时先换成对应路径；渲染保存的链接时用 `appPath()` 改写为路径。合同和数据库里的保存格式不变。团队页的旧地址 `/runtime?view=roles|discussions` 与 `/runtime?session={含冒号的键}` 由 `shared/routes.ts` 的 `legacyTeamAddress` 改写到 `/roles`、`/discussions`、`/sessions`；`/runtime?session={UUID}` 就是“分工与运行”里选中该受管智能体的地址。
   - **站内跳转**：`shared/navigation.ts` 是唯一入口：`navigate()`、`currentPath()`、`onNavigate()`；只改地址栏、不通知页面的视图状态（筛选、展开项）用 `replaceQuietly()`。站内 `<a href="/p/…">` 的点击统一转成历史导航，不整页刷新，所以内存里的登录不丢；带修饰键、新标签页、下载和外站链接不拦。
   - **离开项目**：有未提交草稿时先确认，前进后退同样拦截。
   - **拆包**：每个页面是单独的 chunk，首屏只带登录、外壳与共用代码。首屏 JS 预算在 `apps/workbench/bundle-budget.json`（gzip 190 KB；拆包前单包 392 KB），由 `bundle-budget.test.ts` 对构建产物检查。

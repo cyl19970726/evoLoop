@@ -216,15 +216,23 @@ test("resident observation keeps acceptance, host authority and task replies dis
   await pageBrowser.goto(`${base}/p/${projectId}/roles?role=${roleId}`);
   await pageBrowser.getByLabel("访问令牌").fill("fixture-token");
   await pageBrowser.getByRole("button",{name:"进入",exact:true}).click();
-  await pageBrowser.locator(`#role-${roleId} > summary`).getByText("业务职责").waitFor();
-  await pageBrowser.locator(`#role-${systemRoleId} > summary`).getByText("系统职责").waitFor();
-  await pageBrowser.locator(`#role-${legacyRoleId} > summary`).getByText("分类未登记").waitFor();
-  await pageBrowser.locator(`#role-${roleId}[open]`).waitFor({timeout:3000});
-  const targetRoleBox=await pageBrowser.locator(`#role-${roleId} > summary`).boundingBox();
+  // The linked Role is selected and its detail starts in the first viewport.
+  await pageBrowser.locator(`#role-${roleId}`).waitFor({timeout:5000});
+  await pageBrowser.locator(`#role-${roleId} [data-role-facts]`).getByText("业务职责").waitFor();
+  const targetRoleBox=await pageBrowser.locator(`#role-${roleId} h1`).boundingBox();
   assert.ok(targetRoleBox && targetRoleBox.y >= 0 && targetRoleBox.y < 844,`target Role outside first viewport: ${JSON.stringify(targetRoleBox)}`);
-  await pageBrowser.locator(`#role-${roleId}`).getByText("承载与业务领域").click();
-  await pageBrowser.getByText("外部 Codex Desktop 宿主").waitFor();
-  const externalCard=pageBrowser.locator(".role-presence-item").filter({hasText:"外部 Codex Desktop 宿主"});
+  // Every Role states its class: the overview lists all three, including the one without a recorded class.
+  await pageBrowser.evaluate(hash => { window.location.hash = hash; },`/p/${projectId}/roles`);
+  await pageBrowser.getByRole("link",{name:/Lead.*系统职责/}).waitFor();
+  await pageBrowser.getByRole("link",{name:/旧职责.*分类未登记/}).waitFor();
+  await pageBrowser.getByRole("link",{name:/实际开发流程.*业务职责/}).waitFor();
+  await pageBrowser.evaluate(hash => { window.location.hash = hash; },`/p/${projectId}/roles?role=${roleId}`);
+  await pageBrowser.locator(`#role-${roleId}`).waitFor();
+  const presence=pageBrowser.getByRole("region",{name:"承载与业务领域"});
+  const presenceReread=presence.getByRole("button",{name:"重新读取承载"});
+  const presenceRead=presence.locator("[data-presence-read]");
+  await presence.getByText("外部 Codex Desktop 聊天 · 已核实").waitFor();
+  const externalCard=presence.getByRole("listitem").filter({hasText:"外部 Codex Desktop 聊天"});
   assert.equal(await externalCard.getByRole("link",{name:"请求在 Codex Desktop 打开聊天"}).getAttribute("href"),`codex://threads/${externalRef}`);
   await pageBrowser.evaluate(() => document.addEventListener("click", event => {
     if ((event.target as Element).closest('a[href^="codex://threads/"]')) event.preventDefault();
@@ -240,21 +248,21 @@ test("resident observation keeps acceptance, host authority and task replies dis
   await externalCard.getByText(/复制失败；可选中上方完整引用手工复制/).waitFor();
   assert.match(await externalCard.innerText(),new RegExp(externalRef));
   await fetch(`${base}/__fixture/hold-next-host-list`);
-  await pageBrowser.locator(".role-presence-head button").click();
+  await presenceReread.click();
   for (let attempt=0; attempt<20 && await (await fetch(`${base}/__fixture/held-host-list-count`)).text() !== "1"; attempt++)
     await new Promise(resolve=>setTimeout(resolve,25));
   assert.equal(await (await fetch(`${base}/__fixture/held-host-list-count`)).text(),"1");
   assert.equal(await externalCard.getByRole("link",{name:"请求在 Codex Desktop 打开聊天"}).count(),0);
-  assert.match(await pageBrowser.locator(".role-presence-head").innerText(),/上次读于/);
+  assert.match(await presenceRead.innerText(),/上次读于/);
   await fetch(`${base}/__fixture/fail-presence-list`);
-  await pageBrowser.locator(".role-presence-head button").click();
+  await presenceReread.click();
   await pageBrowser.getByText(/读取失败：承载暂不可读/).waitFor();
   assert.equal(await externalCard.getByRole("link",{name:"请求在 Codex Desktop 打开聊天"}).count(),0);
   await fetch(`${base}/__fixture/release-held-host-list`);
   await pageBrowser.waitForTimeout(100);
   assert.equal(await externalCard.getByRole("link",{name:"请求在 Codex Desktop 打开聊天"}).count(),0);
   await fetch(`${base}/__fixture/restore-presence-list`);
-  await pageBrowser.locator(".role-presence-head button").click();
+  await presenceReread.click();
   await externalCard.getByRole("link",{name:"请求在 Codex Desktop 打开聊天"}).waitFor();
   assert.match(await externalCard.innerText(),/声称能力：.*启动/);
   assert.equal(await externalCard.locator("p").filter({hasText:"已核能力："}).innerText(),"已核能力：打开、读取、人工领取");
@@ -262,7 +270,7 @@ test("resident observation keeps acceptance, host authority and task replies dis
   await pageBrowser.getByText(/外部宿主需人工领取/).waitFor();
   if (process.env.EVOLOOP_RESIDENT_ROLE_SCREENSHOT) {
     await pageBrowser.addStyleTag({content:"[data-shell=mobile-header]{position:static!important}"});
-    await pageBrowser.locator(`#role-${roleId} .role-presence`).screenshot({path:process.env.EVOLOOP_RESIDENT_ROLE_SCREENSHOT});
+    await presence.screenshot({path:process.env.EVOLOOP_RESIDENT_ROLE_SCREENSHOT});
   }
   await fetch(`${base}/__fixture/hold-next-route`);
   await pageBrowser.getByRole("button",{name:"核对当前路由"}).click();
@@ -270,24 +278,27 @@ test("resident observation keeps acceptance, host authority and task replies dis
     await new Promise(resolve=>setTimeout(resolve,25));
   assert.equal(await (await fetch(`${base}/__fixture/held-route-count`)).text(),"1");
   await fetch(`${base}/__fixture/revoke-route`);
-  await pageBrowser.locator(".role-presence-head button").click();
-  await pageBrowser.locator(".role-presence-item").filter({hasText:"外部 Codex Desktop 宿主"}).locator("strong").getByText("已撤权").waitFor();
-  assert.equal(await pageBrowser.locator(".role-presence-item").filter({hasText:"外部 Codex Desktop 宿主"}).getByRole("link",{name:"请求在 Codex Desktop 打开聊天"}).count(),0);
+  await presenceReread.click();
+  await externalCard.locator("strong").getByText(/已撤权/).waitFor();
+  assert.equal(await externalCard.getByRole("link",{name:"请求在 Codex Desktop 打开聊天"}).count(),0);
   await fetch(`${base}/__fixture/fail-presence-list`);
-  await pageBrowser.locator(".role-presence-head button").click();
+  await presenceReread.click();
   await pageBrowser.getByText(/读取失败：承载暂不可读/).waitFor();
-  assert.equal(await pageBrowser.getByRole("link",{name:"打开 Session 与原线程历史"}).count(),0);
+  assert.equal(await presence.getByRole("link",{name:"查看运行与队列"}).count(),0);
   const delayedRouteResponse = pageBrowser.waitForResponse(response => response.url().endsWith(`/domains/${domainId}/route`) && response.status() === 200, {timeout:3000});
   await fetch(`${base}/__fixture/release-held-route`);
   await delayedRouteResponse;
   await pageBrowser.waitForTimeout(100);
-  assert.equal(await pageBrowser.getByText(/自有会话可承接/).count(),0);
-  assert.match(await pageBrowser.locator(`#role-${roleId} .role-presence`).innerText(),/读取失败：承载暂不可读/);
+  assert.equal(await pageBrowser.getByText(/受管智能体可承接/).count(),0);
+  assert.match(await presence.innerText(),/读取失败：承载暂不可读/);
   await fetch(`${base}/__fixture/restore-presence-list`);
-  await pageBrowser.locator(".role-presence-head button").click();
-  await pageBrowser.getByRole("link",{name:"打开 Session 与原线程历史"}).waitFor();
-  await pageBrowser.getByRole("link",{name:"打开 Session 与原线程历史"}).click();
-  await pageBrowser.locator(`#runtime-session-${sessionId}[open]`).waitFor();
+  await presenceReread.click();
+  await presence.getByRole("link",{name:"查看运行与队列"}).waitFor();
+  assert.equal(await presence.getByRole("link",{name:"在智能体空间打开"}).getAttribute("href"),`/p/${projectId}/sessions?session=${encodeURIComponent(`owned:${sessionId}`)}`);
+  await presence.getByRole("link",{name:"查看运行与队列"}).click();
+  // The owned host opens that managed agent in 分工与运行, with its queue.
+  await pageBrowser.locator(`#runtime-session-${sessionId}`).waitFor();
+  assert.equal(new URL(pageBrowser.url()).pathname + new URL(pageBrowser.url()).search,`/p/${projectId}/runtime?session=${sessionId}`);
   if (await pageBrowser.locator("[data-queue]").getAttribute("open") === null)
     await pageBrowser.locator("[data-queue] > summary").click();
   await pageBrowser.locator("[data-queue-meta]").getByText(/累计尝试 1/).waitFor();
@@ -337,7 +348,7 @@ test("resident observation keeps acceptance, host authority and task replies dis
   assert.equal(await (await fetch(`${base}/__fixture/held-role-count`)).text(),"2");
   const missingSession = "20000003-0000-4000-8000-000000000003";
   await pageBrowser.evaluate(hash => { window.location.hash = hash; },`/p/${projectId}/runtime?view=execution&session=${missingSession}`);
-  await pageBrowser.getByText(/当前项目未读到目标 Session/).waitFor();
+  await pageBrowser.getByText(/当前项目未读到目标智能体/).waitFor();
   await fetch(`${base}/__fixture/release-held-role`);
   await pageBrowser.waitForTimeout(100);
   assert.equal(await pageBrowser.locator("[data-queue-panel]:visible").count(),0);
@@ -417,24 +428,22 @@ test("resident observation keeps acceptance, host authority and task replies dis
   await pageBrowser.evaluate(({projectId})=>{location.hash=`/p/${projectId}/roles?role=javascript%3Aalert(1)`;},{projectId});
   await pageBrowser.getByText(/目标职责 ID 无效；没有定位到其他职责/).waitFor();
   await pageBrowser.evaluate(({projectId})=>{location.hash=`/p/${projectId}/roles?role=ffffffff-ffff-ffff-ffff-ffffffffffff`;},{projectId});
-  await pageBrowser.getByText(/当前项目已读完职责，未找到目标 ffffffff/).waitFor();
+  await pageBrowser.getByText(/当前项目已读完职责，没有链接里的这项职责/).waitFor();
+  assert.match(await pageBrowser.locator("[data-role-target]").innerText(),/完整标识/,"the full ID is offered under 完整标识, not in the sentence");
   await pageBrowser.evaluate(({projectId,roleId})=>{location.hash=`/p/${projectId}/roles?role=${roleId}`;},{projectId,roleId});
-  await pageBrowser.locator(`#role-${roleId}[open]`).waitFor();
+  await pageBrowser.locator(`#role-${roleId}`).waitFor();
   await fetch(`${base}/__fixture/restore-hosts`);
-  if (await pageBrowser.locator(`#role-${roleId} .role-presence`).getAttribute("open") === null)
-    await pageBrowser.locator(`#role-${roleId}`).getByText("承载与业务领域").click();
-  await pageBrowser.locator(".role-presence-head button").click();
+  await presenceReread.click();
   await pageBrowser.getByRole("link",{name:"请求在 Codex Desktop 打开聊天"}).waitFor();
   await fetch(`${base}/__fixture/hold-next-host-list`);
-  await pageBrowser.locator(".role-presence-head button").click();
+  await presenceReread.click();
   for (let attempt=0; attempt<20 && await (await fetch(`${base}/__fixture/held-host-list-count`)).text() !== "2"; attempt++)
     await new Promise(resolve=>setTimeout(resolve,25));
   assert.equal(await (await fetch(`${base}/__fixture/held-host-list-count`)).text(),"2");
   await pageBrowser.evaluate(({otherProjectId,roleId})=>{location.hash=`/p/${otherProjectId}/roles?role=${roleId}`;},{otherProjectId,roleId});
-  await pageBrowser.locator(`#role-${roleId}[open]`).waitFor();
-  await pageBrowser.locator(`#role-${roleId}`).getByText("承载与业务领域").click();
+  await pageBrowser.locator(`#role-${roleId}`).waitFor();
   await pageBrowser.getByText(/读取失败：新项目承载暂不可读/).waitFor();
-  assert.match(await pageBrowser.locator(`#role-${roleId} .role-presence`).innerText(),/当前身份尚未读回/);
+  assert.match(await presence.innerText(),/当前身份尚未读回/);
   assert.equal(await pageBrowser.getByRole("link",{name:"请求在 Codex Desktop 打开聊天"}).count(),0);
   await fetch(`${base}/__fixture/release-held-host-list`);
   await pageBrowser.waitForTimeout(100);

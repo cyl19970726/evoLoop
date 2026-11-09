@@ -1,122 +1,324 @@
-import { useEffect, useRef, useState } from "react";
-import type { DeliveryAttempt, DeliveryRecord, IncomingRecord } from "@evoloop/contracts/delivery";
+// 协作回执 (Feishu projection, docs/frontend/pages/team.md): how each task projection read back, the edits made in
+// Feishu that wait for review, and the receipts of writes whose result is not yet known. Reads and rereads go through
+// project queries; a write whose answer is lost keeps a receipt (IDs only) until it is read back by the same IDs.
+import { useState, type ReactNode } from "react";
+import { ChevronRight, RefreshCw } from "lucide-react";
+import type { DeliveryRecord, IncomingRecord } from "@evoloop/contracts/delivery";
+import type { TaskDetail } from "@evoloop/contracts";
+import {
+  Badge, Button, CollapsibleRow, Dialog, DialogContent, DialogDescription, DialogFooter, DialogTitle, EmptyState, ErrorState, Field, Input,
+  LoadingState, Notice, RefreshingIndicator, StatusTag,
+} from "@evoloop/ui";
 import { api, errorText, isUnconfirmed } from "../../shared/api";
-import { Notice, type MutationContext } from "../../shared/ActionForm";
+import type { MutationContext } from "../../shared/ActionForm";
+import { useProjectQuery } from "../../shared/query";
+import { ContextPanelContent } from "../../shared/ui/ContextPanel";
+import { date, href } from "../../shared/ui/shared";
 import { collaborationClient } from "./client";
+import {
+  attemptActionLabel, canApplyIncoming, clearReceipt, connectionSummary, deliveryTag, incomingTag, mergeById, reasonText, receiptKindLabel,
+  receiptSettled, receiptsFor, rememberReceipt, type Receipt, type ReceiptKind,
+} from "./collaborationPresentation";
 
-const stamp = (value: string | null) => value ? new Date(value).toLocaleString() : "—";
-const deliveryLabel: Record<DeliveryRecord["state"],string> = { pending:"待投影",claimed:"已领取",dispatching:"正在请求",applied:"远端回读已匹配",unknown:"结果未知，需对账",conflict:"远端冲突",failed:"请求失败" };
-type Receipt = { projectId:string;actorId:string;kind:"reconcile"|"retry"|"poll"|"review";id:string;operationId?:string;createdAt:string };
-const storageKey = "evoloop:collaboration:uncertain";
-function receipts(): Receipt[] { try { const value=JSON.parse(sessionStorage.getItem(storageKey) ?? "[]"); return Array.isArray(value) ? value : []; } catch { return []; } }
-function remember(receipt: Receipt): void { try { sessionStorage.setItem(storageKey,JSON.stringify([...receipts().filter(x=>!(x.projectId===receipt.projectId && x.kind===receipt.kind && x.id===receipt.id)),receipt].slice(-100))); } catch { /* in-memory warning still shown */ } }
-function clearReceipt(projectId:string,kind:Receipt["kind"],id:string): void { try { sessionStorage.setItem(storageKey,JSON.stringify(receipts().filter(x=>!(x.projectId===projectId && x.kind===kind && x.id===id)))); } catch { /* UI still refreshes */ } }
+const muted = "text-caption text-muted-foreground";
+const code = "font-mono text-caption [overflow-wrap:anywhere]";
+const link = "text-primary underline-offset-4 hover:underline outline-none focus-visible:shadow-[var(--focus-ring)] rounded-sm";
+const store = () => { try { return typeof sessionStorage === "undefined" ? null : sessionStorage; } catch { return null; } };
+type Act = (kind: ReceiptKind, id: string, operationId: string | undefined, send: () => Promise<unknown>) => Promise<void>;
 
-export function CollaborationPanel({ context, refresh }: { context: MutationContext; refresh: number }) {
-  const [configured,setConfigured]=useState(false), [verifiedAt,setVerifiedAt]=useState<string|null>(null), [connectionError,setConnectionError]=useState<string|null>(null);
-  const [deliveries,setDeliveries]=useState<DeliveryRecord[]>([]), [deliveryCursor,setDeliveryCursor]=useState<string|null>(null);
-  const [incoming,setIncoming]=useState<IncomingRecord[]>([]), [incomingCursor,setIncomingCursor]=useState<string|null>(null);
-  const [loading,setLoading]=useState(true), [error,setError]=useState(""), [moreError,setMoreError]=useState(""), [busy,setBusy]=useState(false);
-  const [pending,setPending]=useState<Receipt[]>([]);
-  const epoch=useRef(0), moreBusy=useRef(false);
-  const client=collaborationClient(context.token,context.projectId);
-  useEffect(()=>{
-    const current=++epoch.current; let active=true;
-    setLoading(true);setError("");setMoreError("");setDeliveries([]);setIncoming([]);setDeliveryCursor(null);setIncomingCursor(null);
-    setPending(receipts().filter(x=>x.projectId===context.projectId && x.actorId===context.principal.actorId));
-    collaborationClient(context.token,context.projectId).overview().then(value=>{ if(!active||epoch.current!==current)return;
-      setConfigured(value.configured);setVerifiedAt(value.verifiedAtUtc);setConnectionError(value.error);
-      setDeliveries(value.deliveries.items);setDeliveryCursor(value.deliveries.nextCursor);
-      setIncoming(value.incoming.items);setIncomingCursor(value.incoming.nextCursor);
-    }).catch(cause=>{if(active&&epoch.current===current)setError(errorText(cause));}).finally(()=>{if(active&&epoch.current===current)setLoading(false);});
-    return ()=>{active=false;if(epoch.current===current)epoch.current++;};
-  },[context.token,context.projectId,context.principal.actorId,refresh]);
-  async function loadMore(which:"deliveries"|"incoming") {
-    const cursor=which==="deliveries"?deliveryCursor:incomingCursor;
-    if(!cursor||moreBusy.current)return; moreBusy.current=true;setMoreError(""); const current=epoch.current;
-    try { if(which==="deliveries") { const page=await client.deliveries(cursor); if(epoch.current===current){setDeliveries(old=>[...new Map([...old,...page.items].map(x=>[x.eventId,x])).values()]);setDeliveryCursor(page.nextCursor);} }
-      else {const page=await client.incoming(cursor);if(epoch.current===current){setIncoming(old=>[...new Map([...old,...page.items].map(x=>[x.id,x])).values()]);setIncomingCursor(page.nextCursor);}}
-    } catch(cause){if(epoch.current===current)setMoreError(errorText(cause));} finally{moreBusy.current=false;}
-  }
-  async function action(kind:Receipt["kind"],id:string,operationId:string|undefined,send:()=>Promise<unknown>) {
-    if(busy||context.blocked)return;setBusy(true);setError("");
-    try {const result=await send();
-      if (typeof result === "object" && result !== null && "state" in result && result.state === "unknown") {
-        const receipt:Receipt={projectId:context.projectId,actorId:context.principal.actorId,kind,id,operationId,createdAt:new Date().toISOString()};
-        remember(receipt);setPending(receipts().filter(x=>x.projectId===context.projectId&&x.actorId===context.principal.actorId));
-        setError("原操作结果仍未核实；保留回执，稍后按原 ID 回读。");context.onChanged();return;
-      }
-      clearReceipt(context.projectId,kind,id);setPending(receipts().filter(x=>x.projectId===context.projectId&&x.actorId===context.principal.actorId));context.onChanged();}
-    catch(cause){if(isUnconfirmed(cause)){const receipt:Receipt={projectId:context.projectId,actorId:context.principal.actorId,kind,id,operationId,createdAt:new Date().toISOString()};remember(receipt);setPending(receipts().filter(x=>x.projectId===context.projectId&&x.actorId===context.principal.actorId));}
-      setError(`${errorText(cause)}${isUnconfirmed(cause)?"；已保留对象/操作 ID，请回读核对，确认前不要重复提交。":""}`);}
-    finally{setBusy(false);}
-  }
-  async function checkReceipt(receipt:Receipt) {
-    if(busy)return;setBusy(true);setError("");
+/** A task by its title; the ID stays in 完整标识. */
+function TaskName({ projectId, taskId }: { projectId: string; taskId: string }) {
+  const read = useProjectQuery(projectId, ["task", taskId, "title"], async () => {
+    const detail: TaskDetail = await api().task(projectId, taskId);
+    if (detail.task.projectId !== projectId || detail.task.id !== taskId) throw new Error("任务名称来源不匹配");
+    return detail.task.title.trim();
+  });
+  return <a className={`${link} text-small font-medium`} href={href(projectId, "task", taskId)}>{read.data || (read.isError ? "任务名称暂不可读" : "正在读取任务名称")}</a>;
+}
+
+/** The reason in Chinese. A reason the page does not know is not shown in the text; its original sits in 完整标识. */
+function Reason({ raw, fallback }: { raw: string | null | undefined; fallback?: string }) {
+  const { text } = reasonText(raw);
+  if (!text && !fallback) return null;
+  return <p className="text-small text-text-secondary">{text || fallback}</p>;
+}
+
+/** The untranslated original of a reason, for the 完整标识 list. */
+function ReasonOriginal({ raw, label = "原因原文" }: { raw: string | null | undefined; label?: string }) {
+  const { original } = reasonText(raw);
+  return original ? <li>{label} <code className={code}>{original}</code></li> : null;
+}
+
+function RailBlock({ title, children }: { title: string; children: ReactNode }) {
+  return <details open className="group border-b border-border py-3 first:pt-0 last:border-b-0">
+    <summary className="flex cursor-pointer list-none items-center gap-1.5 text-label font-semibold text-foreground outline-none focus-visible:shadow-[var(--focus-ring)] [&::-webkit-details-marker]:hidden">
+      <ChevronRight size={14} aria-hidden="true" className="text-muted-foreground transition-transform duration-150 group-open:rotate-90 motion-reduce:transition-none" />{title}
+    </summary>
+    <div className="mt-2.5 flex flex-col gap-2 pl-5">{children}</div>
+  </details>;
+}
+
+function DeliveryRow({ item, projectId, allowed, busy, configured, onAction }: { item: DeliveryRecord; projectId: string; allowed: boolean; busy: boolean; configured: boolean; onAction: Act }) {
+  const [reason, setReason] = useState("");
+  const [showAttempts, setShowAttempts] = useState(false);
+  const client = collaborationClient("", projectId);
+  const attempts = useProjectQuery(projectId, ["collaboration", "attempts", item.eventId], () => client.attempts(item.eventId), { enabled: showAttempts });
+  const tag = deliveryTag[item.state];
+  const actionable = item.state === "unknown" || item.state === "failed";
+  return <li className="flex flex-col gap-2 border-t border-border py-3 first:border-t-0 first:pt-0">
+    <div className="flex items-start justify-between gap-3">
+      <div className="flex min-w-0 flex-col gap-0.5"><TaskName projectId={projectId} taskId={item.taskId} />
+        <span className={muted}>本地第 {item.taskVersion} 版 · 更新于 {date(item.updatedAtUtc)}</span></div>
+      <StatusTag tone={tag.tone} label={tag.label} />
+    </div>
+    <Reason raw={item.lastReason} fallback={tag.detail} />
+    {actionable && configured && allowed && <form className="flex flex-col gap-2" onSubmit={event => {
+      event.preventDefault();
+      if (!reason.trim()) return;
+      void onAction(item.state === "unknown" ? "reconcile" : "retry", item.eventId, item.operationId,
+        () => item.state === "unknown" ? client.reconcile(item.eventId, reason) : client.retry(item.eventId, reason));
+    }}>
+      <Field label="处理依据" className="flex-1" hint={item.state === "unknown" ? "结果未知时只能按稳定键对账，不会重发。" : undefined}>
+        {control => <Input {...control} value={reason} autoComplete="off" onChange={event => setReason(event.target.value)} />}</Field>
+      <Button type="submit" className="self-start" disabled={busy || !reason.trim()}>{item.state === "unknown" ? "按稳定键对账" : "请求重新投影"}</Button>
+    </form>}
+    <CollapsibleRow summary="尝试记录与完整标识">
+      <div className="flex flex-col gap-2">
+        {!showAttempts && <Button size="compact" variant="ghost" className="self-start" onClick={() => setShowAttempts(true)}>读取尝试记录</Button>}
+        {showAttempts && attempts.isPending && <LoadingState lines={2} label="正在读取尝试记录" />}
+        {attempts.isError && <p className="text-caption text-destructive">尝试记录没有读回：{errorText(attempts.error)}</p>}
+        {attempts.data && (attempts.data.length === 0 ? <p className="text-small text-text-secondary">还没有尝试记录。</p>
+          : <ol className="flex flex-col gap-1.5">{attempts.data.map(attempt => <li key={attempt.id} className="flex flex-col gap-0.5">
+            <span className="text-small text-foreground">{attemptActionLabel[attempt.action]} → {deliveryTag[attempt.outcome].label}</span>
+            <Reason raw={attempt.reason} />
+            <span className={muted}>{attempt.actorId} · {date(attempt.createdAtUtc)}</span>
+          </li>)}</ol>)}
+        <ul className="flex flex-col gap-0.5 text-caption text-muted-foreground">
+          <li>投影事件 <code className={code}>{item.eventId}</code></li>
+          <li>任务 <code className={code}>{item.taskId}</code></li>
+          <li>原操作 <code className={code}>{item.operationId}</code></li>
+          <ReasonOriginal raw={item.lastReason} />
+          {attempts.data?.map(attempt => <ReasonOriginal key={attempt.id} raw={attempt.reason} label={`${attemptActionLabel[attempt.action]}的原因原文`} />)}
+        </ul>
+      </div>
+    </CollapsibleRow>
+  </li>;
+}
+
+function IncomingRow({ item, projectId, allowed, busy, onAction }: { item: IncomingRecord; projectId: string; allowed: boolean; busy: boolean; onAction: Act }) {
+  const [reason, setReason] = useState("");
+  const [confirm, setConfirm] = useState<"apply" | "reject" | null>(null);
+  const client = collaborationClient("", projectId);
+  const tag = incomingTag[item.state];
+  const reviewable = item.state === "pending" || item.state === "review-only";
+  const decide = (decision: "apply" | "reject") => { setConfirm(null); void onAction("review", item.id, item.operationId, () => client.review(item.id, decision, reason)); };
+  return <li className="flex flex-col gap-2 border-t border-border py-3 first:border-t-0 first:pt-0">
+    <div className="flex items-start justify-between gap-3">
+      <div className="flex min-w-0 flex-col gap-0.5"><TaskName projectId={projectId} taskId={item.entityId} />
+        <span className={muted}>修改人 {item.actor?.verified ? item.actor.projectActorId : "身份未核实"} · 观察于 {date(item.observedAtUtc)} · 基于本地第 {item.observedLocalVersion} 版</span></div>
+      <div className="flex shrink-0 items-center gap-1.5">{item.reviewOnly && item.state === "pending" && <Badge>仅供审阅</Badge>}<StatusTag tone={tag.tone} label={tag.label} /></div>
+    </div>
+    <p className="text-small text-foreground">{item.patch.title ? `建议把标题改为「${item.patch.title}」` : "没有标题修改"}
+      {item.patch.status && <span className="text-text-secondary">；远端状态改为「{item.patch.status}」，状态变化要走普通任务流程</span>}</p>
+    <Reason raw={item.reason} />
+    {item.reviewedBy && <span className={muted}>由 {item.reviewedBy} 于 {date(item.reviewedAtUtc ?? undefined)} 处理</span>}
+    {item.state === "unknown" && <Notice tone="waiting">任务操作的结果还不知道。按原操作回读后再决定，不要另建新操作。</Notice>}
+    {reviewable && allowed && <form className="flex flex-col gap-2" onSubmit={event => event.preventDefault()}>
+      <Field label="审阅理由">{control => <Input {...control} value={reason} autoComplete="off" onChange={event => setReason(event.target.value)} />}</Field>
+      <div className="flex flex-wrap gap-2">
+        {canApplyIncoming(item) && <Button disabled={busy || !reason.trim()} onClick={() => setConfirm("apply")}>采纳为任务修订</Button>}
+        <Button variant="danger" disabled={busy || !reason.trim()} onClick={() => setConfirm("reject")}>拒绝回写</Button>
+      </div>
+      {!canApplyIncoming(item) && <p className={muted}>只有修改人身份已核实、只改标题、不改状态的修改可以采纳；其余只能审阅后拒绝回写。</p>}
+    </form>}
+    <Dialog open={confirm !== null} onOpenChange={open => { if (!open) setConfirm(null); }}>
+      <DialogContent>
+        <DialogTitle>{confirm === "apply" ? "采纳这条远端修改？" : "拒绝这条远端修改？"}</DialogTitle>
+        <DialogDescription>{confirm === "apply"
+          ? `将按当前基线为这项任务提出标题修订「${item.patch.title ?? ""}」，修订仍走普通任务流程。`
+          : "保留这条远端记录，不把它写回任务。"} 审阅理由：{reason}</DialogDescription>
+        <DialogFooter>
+          <Button variant="ghost" onClick={() => setConfirm(null)}>取消</Button>
+          <Button variant={confirm === "reject" ? "danger" : "primary"} onClick={() => confirm && decide(confirm)}>{confirm === "apply" ? "确认采纳" : "确认拒绝"}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+    <CollapsibleRow summary="完整标识">
+      <ul className="flex flex-col gap-0.5 text-caption text-muted-foreground">
+        <li>远端候选 <code className={code}>{item.id}</code></li>
+        <li>远端记录 <code className={code}>{item.remoteRecordId}</code>{item.observedRemoteOperationId && <> · 远端操作 <code className={code}>{item.observedRemoteOperationId}</code></>}</li>
+        <li>任务 <code className={code}>{item.entityId}</code> · 原操作 <code className={code}>{item.operationId}</code></li>
+        <li>来源事件 <code className={code}>{item.sourceEventId}</code></li>
+        <ReasonOriginal raw={item.reason} label="限制原文" />
+      </ul>
+    </CollapsibleRow>
+  </li>;
+}
+
+/** Later pages after the overview's first page, read again as one answer so the rows stay consistent. */
+function useMore<T>(projectId: string, which: "deliveries" | "incoming", first: string | null | undefined, pages: number,
+  load: (cursor: string) => Promise<{ items: T[]; nextCursor: string | null }>) {
+  return useProjectQuery(projectId, ["collaboration", which, first ?? "", pages], async () => {
+    const items: T[] = [];
+    let cursor = first ?? null;
+    for (let page = 0; page < pages && cursor; page++) {
+      const answer = await load(cursor);
+      if (answer.nextCursor === cursor) throw new Error("分页没有前进，后续记录尚未读全");
+      items.push(...answer.items); cursor = answer.nextCursor;
+    }
+    return { items, nextCursor: cursor };
+  }, { enabled: !!first && pages > 0, keepPrevious: true });
+}
+
+export function CollaborationPanel({ context }: { context: MutationContext; refresh: number }) {
+  const { projectId, principal } = context;
+  const client = collaborationClient("", projectId);
+  const overview = useProjectQuery(projectId, ["collaboration", "overview"], () => client.overview());
+  const [deliveryPages, setDeliveryPages] = useState(0);
+  const [incomingPages, setIncomingPages] = useState(0);
+  const moreDeliveries = useMore(projectId, "deliveries", overview.data?.deliveries.nextCursor, deliveryPages, cursor => client.deliveries(cursor));
+  const moreIncoming = useMore(projectId, "incoming", overview.data?.incoming.nextCursor, incomingPages, cursor => client.incoming(cursor));
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<{ text: string; error: boolean } | null>(null);
+  const [receipts, setReceipts] = useState<Receipt[]>(() => receiptsFor(store(), projectId, principal.actorId));
+  const reloadReceipts = () => setReceipts(receiptsFor(store(), projectId, principal.actorId));
+  const allowed = principal.permissions.includes("review") && principal.permissions.includes("write") && !context.blocked;
+  const data = overview.data;
+  const deliveries = data ? mergeById([...data.deliveries.items, ...(moreDeliveries.data?.items ?? [])], item => item.eventId) : [];
+  const incoming = data ? mergeById([...data.incoming.items, ...(moreIncoming.data?.items ?? [])], item => item.id) : [];
+  // Until the first later page arrives, the overview's cursor still says there is more.
+  const deliveryCursor = deliveryPages && moreDeliveries.data ? moreDeliveries.data.nextCursor : data?.deliveries.nextCursor ?? null;
+  const incomingCursor = incomingPages && moreIncoming.data ? moreIncoming.data.nextCursor : data?.incoming.nextCursor ?? null;
+  const connection = data ? connectionSummary(data.configured, data.verifiedAtUtc, data.error) : null;
+  const pendingIds = new Set(receipts.map(item => item.id));
+
+  const act: Act = async (kind, id, operationId, send) => {
+    if (busy || !allowed) return;
+    setBusy(true); setMessage(null);
+    const receipt: Receipt = { projectId, actorId: principal.actorId, kind, id, ...(operationId ? { operationId } : {}), createdAt: new Date().toISOString() };
     try {
-      let settled=false;let message="结果仍未核实；保留原对象/操作 ID，稍后回读尝试记录。";
-      if(receipt.kind==="review") {
-        const item=await client.incomingItem(receipt.id);
-        settled=!!item&&["applied","rejected","conflict"].includes(item.state);
-        if(!settled&&receipt.operationId) {
-          try { const operation=await api(context.token).operation(context.projectId,receipt.operationId);
-            message=`原任务操作已记录为 ${operation.result.status}，候选仍需审阅结案；保留回执。`;
-          } catch { message="原任务操作仍未核实；保留回执，不重发。"; }
-        }
-      } else if(receipt.kind==="poll") {
-        const overview=await client.overview(); settled=!!overview.verifiedAtUtc&&Date.parse(overview.verifiedAtUtc)>=Date.parse(receipt.createdAt);
-      } else {
-        const item=await client.delivery(receipt.id);
-        settled=!!item&&(receipt.kind==="reconcile"?["applied","conflict","failed"].includes(item.state):item.state!=="failed");
+      const result = await send();
+      if (typeof result === "object" && result !== null && "state" in result && result.state === "unknown") {
+        rememberReceipt(store(), receipt); reloadReceipts();
+        setMessage({ text: "原操作的结果还没核实，已保留回执，稍后按原 ID 回读。", error: true }); context.onChanged(); return;
       }
-      if(settled){clearReceipt(context.projectId,receipt.kind,receipt.id);setPending(receipts().filter(x=>x.projectId===context.projectId&&x.actorId===context.principal.actorId));context.onChanged();}
-      else setError(message);
-    }catch(cause){setError(`核对失败：${errorText(cause)}。保留回执。`);}finally{setBusy(false);}
-  }
-  const allowed=context.principal.permissions.includes("review")&&context.principal.permissions.includes("write")&&!context.blocked;
-  return <div className="journey-board"><section className="panel"><div className="panel-head"><h2>飞书任务协作</h2><button type="button" onClick={context.onChanged}>回读当前状态</button></div>
-    {loading&&<p>正在读取协作状态…</p>}{error&&<Notice error>{error}</Notice>}
-    {!loading&&!error&&<><p><strong>{!configured?"未配置":verifiedAt?"已核实远端读取":"已配置，尚未核实远端读取"}</strong>{verifiedAt&&` · 最近核实 ${stamp(verifiedAt)}`}</p>
-      {connectionError&&<Notice error={configured}><p>{configured ? "本次未能核实飞书连接，请先回读状态和原操作结果。" : "飞书连接尚未配置。当前可继续使用项目内的任务、文档和使用记录。"}</p><details><summary>连接诊断</summary>{connectionError}</details></Notice>}
-      <p>任务、投影同步、通知和实际阅读分别核对；远端表格不会直接改写已接受任务。</p>
-      {configured&&<button type="button" disabled={!allowed||busy||pending.some(x=>x.kind==="poll")} onClick={()=>void action("poll",context.projectId,undefined,()=>client.poll())}>回读远端变化</button>}
-      {pending.length>0&&<Notice error>有 {pending.length} 项写入结果尚未核实。仅保存项目、对象与操作 ID，没有保存令牌。先回读状态和尝试记录；未知投影只可对账。</Notice>}
-      {pending.map(receipt=><p key={`${receipt.kind}:${receipt.id}`} className="break-anywhere">{receipt.kind} · {receipt.id}{receipt.operationId&&` · 操作 ${receipt.operationId}`} <button type="button" disabled={busy} onClick={()=>void checkReceipt(receipt)}>按原 ID 核对</button>{receipt.kind==="review"&&incoming.some(item=>item.id===receipt.id&&item.state==="unknown")&&<button type="button" disabled={busy||!allowed} onClick={()=>void action("review",receipt.id,receipt.operationId,()=>client.review(receipt.id,"apply","按原任务操作 ID 复核结案"))}>按原任务操作结案</button>}</p>)}
-      <h3>投影状态</h3>{deliveries.length===0&&<p className="empty">尚无任务投影记录；未配置或无待投影事件不能解释为已同步。</p>}
-      {deliveries.map(item=><DeliveryCard key={item.eventId} item={item} context={context} busy={busy||pending.some(x=>x.id===item.eventId)} configured={configured} onAction={action} />)}
-      {deliveryCursor&&<button type="button" className="more" onClick={()=>void loadMore("deliveries")}>加载更多投影</button>}
-      <h3>远端修改候选</h3>{incoming.length===0&&<p className="empty">尚无远端候选；轮询没有可靠修改人身份时只能人工审阅。</p>}
-      {incoming.map(item=><IncomingCard key={item.id} item={item} context={context} busy={busy||pending.some(x=>x.id===item.id)} onAction={action} />)}
-      {incomingCursor&&<button type="button" className="more" onClick={()=>void loadMore("incoming")}>加载更多候选</button>}
-      {moreError&&<Notice error>{moreError}</Notice>}
-    </>}
-  </section></div>;
-}
+      clearReceipt(store(), receipt); reloadReceipts();
+      setMessage({ text: `${receiptKindLabel[kind]}已提交，正在回读。`, error: false }); context.onChanged();
+    } catch (cause) {
+      const unconfirmed = isUnconfirmed(cause);
+      if (unconfirmed) { rememberReceipt(store(), receipt); reloadReceipts(); }
+      setMessage({ text: `${errorText(cause)}${unconfirmed ? "。已保留对象与操作 ID，请按原 ID 回读，确认前不要重复提交。" : ""}`, error: true });
+    } finally { setBusy(false); }
+  };
 
-function DeliveryCard({item,context,busy,configured,onAction}:{item:DeliveryRecord;context:MutationContext;busy:boolean;configured:boolean;onAction:(kind:Receipt["kind"],id:string,operationId:string|undefined,send:()=>Promise<unknown>)=>Promise<void>}) {
-  const [attempts,setAttempts]=useState<DeliveryAttempt[]|null>(null),[error,setError]=useState(""),[reason,setReason]=useState("");
-  const client=collaborationClient(context.token,context.projectId);
-  const allowed=configured&&context.principal.permissions.includes("review")&&context.principal.permissions.includes("write")&&!context.blocked&&!busy;
-  return <article className="decision"><strong>{deliveryLabel[item.state]}</strong><p>任务 <code>{item.taskId}</code> · 本地版本 {item.taskVersion}</p><p>{item.lastReason??"等待协调器处理"}</p>
-    <small>事件 {item.eventId} · 更新 {stamp(item.updatedAtUtc)}</small>
-    {(item.state==="unknown"||item.state==="failed")&&<div className="workflow-form"><label>处理依据<input value={reason} onChange={event=>setReason(event.target.value)} /></label>
-      <button type="button" disabled={!allowed||!reason.trim()} onClick={()=>void onAction(item.state==="unknown"?"reconcile":"retry",item.eventId,item.operationId,
-        ()=>item.state==="unknown"?client.reconcile(item.eventId,reason):client.retry(item.eventId,reason))}>{item.state==="unknown"?"按稳定键对账":"请求重新投影"}</button></div>}
-    <button type="button" onClick={()=>void client.attempts(item.eventId).then(setAttempts).catch(cause=>setError(errorText(cause)))}>阅读尝试证据</button>
-    {error&&<Notice error>{error}</Notice>}{attempts?.map(attempt=><p key={attempt.id}>{attempt.action} → {deliveryLabel[attempt.outcome]} · {attempt.reason} · {stamp(attempt.createdAtUtc)}</p>)}
-  </article>;
-}
-function IncomingCard({item,context,busy,onAction}:{item:IncomingRecord;context:MutationContext;busy:boolean;onAction:(kind:Receipt["kind"],id:string,operationId:string|undefined,send:()=>Promise<unknown>)=>Promise<void>}) {
-  const [reason,setReason]=useState(""); const client=collaborationClient(context.token,context.projectId);
-  const allowed=context.principal.permissions.includes("review")&&context.principal.permissions.includes("write")&&!context.blocked&&!busy;
-  const canApply=item.state==="pending"&&!item.reviewOnly&&!!item.actor?.verified&&!!item.patch.title&&!item.patch.status;
-  return <article className="decision"><strong>{item.state}{item.reviewOnly?" · 仅供审阅":""}</strong><p>任务 <code>{item.entityId}</code> · 观察的本地版本 {item.observedLocalVersion}</p>
-    <p>远端记录 {item.remoteRecordId} · 修改人 {item.actor?.verified?item.actor.projectActorId:"未核实"}</p>
-    <p>建议字段：{item.patch.title?`标题「${item.patch.title}」`:"无标题修改"}{item.patch.status?`；远端状态「${item.patch.status}」须走普通任务流程`:""}</p>
-    {item.reason&&<p>限制：{item.reason}</p>}
-    {(["pending","review-only"] as string[]).includes(item.state)&&<div className="workflow-form"><label>审阅理由<input value={reason} onChange={event=>setReason(event.target.value)} /></label>
-      {canApply&&<button type="button" disabled={!allowed||!reason.trim()} onClick={()=>void onAction("review",item.id,item.operationId,()=>client.review(item.id,"apply",reason))}>按当前基线提出任务修订</button>}
-      <button type="button" disabled={!allowed||!reason.trim()} onClick={()=>void onAction("review",item.id,item.operationId,()=>client.review(item.id,"reject",reason))}>保留记录并拒绝回写</button></div>}
-    {item.state==="unknown"&&<Notice error>任务操作结果未知：按操作 ID <code>{item.operationId}</code> 回读后再决定；请勿重建新操作。</Notice>}
-  </article>;
+  async function check(receipt: Receipt) {
+    if (busy) return;
+    setBusy(true); setMessage(null);
+    try {
+      let text = "结果还没核实，保留原对象与操作 ID，稍后再回读。";
+      let settled: boolean;
+      if (receipt.kind === "review") {
+        const item = await client.incomingItem(receipt.id);
+        settled = receiptSettled(receipt, { incoming: item });
+        if (!settled && receipt.operationId) {
+          try {
+            const operation = await api().operation(projectId, receipt.operationId);
+            text = `原任务操作已记录为${operation.result.status === "applied" ? "已应用" : "被拒绝"}，这条候选还要审阅结案；保留回执。`;
+          } catch { text = "原任务操作还没核实；保留回执，不要重发。"; }
+        }
+      } else if (receipt.kind === "poll") settled = receiptSettled(receipt, { verifiedAt: (await client.overview()).verifiedAtUtc });
+      else settled = receiptSettled(receipt, { delivery: await client.delivery(receipt.id) });
+      if (settled) { clearReceipt(store(), receipt); reloadReceipts(); setMessage({ text: "已按原 ID 读回结果。", error: false }); context.onChanged(); }
+      else setMessage({ text, error: true });
+    } catch (cause) { setMessage({ text: `核对失败：${errorText(cause)}。回执保留。`, error: true }); }
+    finally { setBusy(false); }
+  }
+
+  const receiptObject = (receipt: Receipt): ReactNode => {
+    if (receipt.kind === "poll") return "本项目";
+    const taskId = receipt.kind === "review" ? incoming.find(item => item.id === receipt.id)?.entityId : deliveries.find(item => item.eventId === receipt.id)?.taskId;
+    return taskId ? <TaskName projectId={projectId} taskId={taskId} /> : "一条记录（不在已读列表里）";
+  };
+
+  return <div data-ui="" className="collaboration-page mx-auto flex w-full max-w-[980px] flex-col gap-5 px-4 py-5 compact:px-8 compact:py-7">
+    <header className="flex flex-wrap items-start justify-between gap-3">
+      <div className="min-w-0">
+        <h1 className="text-title font-semibold text-foreground" tabIndex={-1}>协作回执</h1>
+        <p className="mt-1 text-small text-text-secondary">任务投影到飞书后的回读结果，以及在飞书里改动、等待审阅的修改。</p>
+        <p className={`${muted} mt-1`} role="status">{overview.isPending ? "正在读取协作状态…" : data ? `协作状态读于 ${date(new Date(overview.dataUpdatedAt).toISOString())}${overview.isError ? "；这次重读失败，以下是上次读回，当前待核对。" : ""}` : "协作状态尚未读回。"}
+          {overview.checking && <RefreshingIndicator className="ml-2" />}</p>
+      </div>
+      <div className="flex items-center gap-2">
+        {data?.configured && allowed && <Button disabled={busy || receipts.some(item => item.kind === "poll")} onClick={() => void act("poll", projectId, undefined, () => client.poll())}>回读远端变化</Button>}
+        <Button variant="ghost" disabled={overview.isFetching} onClick={context.onChanged}><RefreshCw aria-hidden="true" className={overview.isFetching ? "animate-spin motion-reduce:animate-none" : undefined} />重新读取</Button>
+      </div>
+    </header>
+
+    {overview.isPending && <LoadingState lines={5} label="正在读取协作状态" />}
+    {overview.isError && !data && <ErrorState title="协作状态没有读回" happened={errorText(overview.error)} next="现在无法判断投影和远端修改的情况。请重新读取。"
+      action={<Button size="compact" onClick={() => void overview.refetch()}>重新读取</Button>} />}
+    {message && <Notice tone={message.error ? "error" : "info"}>{message.text}</Notice>}
+    {data && !allowed && <p className={muted}>{context.blocked ? "本项目还有结果未确认的操作，先在“结果未知的操作”里核对，再处理这里。" : "当前身份没有审阅与写入权限，只能查看。"}</p>}
+
+    {receipts.length > 0 && <section aria-label="待核对的写入" className="flex flex-col gap-3">
+      <Notice tone="error" title={`有 ${receipts.length} 项写入结果尚未核实`}>只保存了项目、对象和操作 ID，没有保存令牌。先按原 ID 回读；结果未知的投影只能对账。</Notice>
+      <ul className="flex flex-col">{receipts.map(receipt => <li key={`${receipt.kind}:${receipt.id}`} className="flex flex-col gap-2 border-t border-border py-2.5 first:border-t-0 first:pt-0">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <span className="text-small text-foreground">{receiptKindLabel[receipt.kind]} · {receiptObject(receipt)}<span className={`${muted} ml-2`}>{date(receipt.createdAt)}</span></span>
+          <div className="flex flex-wrap gap-2">
+            <Button size="compact" disabled={busy} onClick={() => void check(receipt)}>按原 ID 核对</Button>
+            {receipt.kind === "review" && allowed && incoming.some(item => item.id === receipt.id && item.state === "unknown") &&
+              <Button size="compact" disabled={busy} onClick={() => void act("review", receipt.id, receipt.operationId, () => client.review(receipt.id, "apply", "按原任务操作 ID 复核结案"))}>按原任务操作结案</Button>}
+          </div>
+        </div>
+        <CollapsibleRow summary="完整标识"><ul className="flex flex-col gap-0.5 text-caption text-muted-foreground">
+          <li>对象 <code className={code}>{receipt.id}</code></li>{receipt.operationId && <li>原操作 <code className={code}>{receipt.operationId}</code></li>}
+        </ul></CollapsibleRow>
+      </li>)}</ul>
+    </section>}
+
+    {data && <>
+      <section aria-label="投影状态" className="flex flex-col gap-3">
+        <h2 className="text-heading font-semibold text-foreground">投影状态 <span className={muted}>· 已读 {deliveries.length} 条{deliveryCursor ? "，还有后续" : ""}</span></h2>
+        {deliveries.length === 0 ? <EmptyState title="还没有任务投影记录" reason="没有记录不等于已经同步：可能没有配置连接，也可能还没有要投影的任务变化。" />
+          : <ul className="flex flex-col rounded-xl bg-raised px-4 py-3 shadow-sm">{deliveries.map(item => <DeliveryRow key={item.eventId} item={item} projectId={projectId} allowed={allowed}
+            busy={busy || pendingIds.has(item.eventId)} configured={data.configured} onAction={act} />)}</ul>}
+        {moreDeliveries.isError && <p className="text-caption text-destructive">后续投影没有读回：{errorText(moreDeliveries.error)}</p>}
+        {deliveryCursor && <Button size="compact" variant="ghost" className="self-start" disabled={moreDeliveries.isFetching} onClick={() => setDeliveryPages(value => value + 1)}>{moreDeliveries.isFetching ? "正在读取…" : "加载更多投影"}</Button>}
+      </section>
+      <section aria-label="远端修改" className="flex flex-col gap-3">
+        <h2 className="text-heading font-semibold text-foreground">远端修改 <span className={muted}>· 已读 {incoming.length} 条{incomingCursor ? "，还有后续" : ""}</span></h2>
+        {incoming.length === 0 ? <EmptyState title="还没有远端修改" reason="回读远端变化后，飞书里对任务的改动会作为候选出现在这里；没有可靠的修改人身份时只能人工审阅。" />
+          : <ul className="flex flex-col rounded-xl bg-raised px-4 py-3 shadow-sm">{incoming.map(item => <IncomingRow key={item.id} item={item} projectId={projectId} allowed={allowed}
+            busy={busy || pendingIds.has(item.id)} onAction={act} />)}</ul>}
+        {moreIncoming.isError && <p className="text-caption text-destructive">后续远端修改没有读回：{errorText(moreIncoming.error)}</p>}
+        {incomingCursor && <Button size="compact" variant="ghost" className="self-start" disabled={moreIncoming.isFetching} onClick={() => setIncomingPages(value => value + 1)}>{moreIncoming.isFetching ? "正在读取…" : "加载更多远端修改"}</Button>}
+      </section>
+    </>}
+
+    <ContextPanelContent><div className="flex flex-col">
+      <RailBlock title="飞书连接">
+        {connection ? <>
+          <StatusTag tone={connection.tone} label={connection.label} className="self-start" />
+          <p className="text-small text-text-secondary">{connection.sentence}</p>
+          <p className={muted}>最近核实：{data?.verifiedAtUtc ? date(data.verifiedAtUtc) : "还没有核实记录"}</p>
+          {data?.error && <CollapsibleRow summary="连接诊断"><code className={`${code} text-muted-foreground`}>{data.error}</code></CollapsibleRow>}
+        </> : <p className="text-small text-text-secondary">{overview.isError ? "连接状态没有读回，无法判断。" : "正在读取连接状态。"}</p>}
+      </RailBlock>
+      <RailBlock title="待处理">
+        {data ? <ul className="flex flex-col gap-1 text-small text-text-secondary">
+          <li>待审阅的远端修改：{data.incomingPending} 条</li>
+          <li>结果未知的投影：已读到 {deliveries.filter(item => item.state === "unknown").length} 条{deliveryCursor ? "（后续页未读）" : ""}</li>
+          <li>本机保留的待核对回执：{receipts.length} 项</li>
+        </ul> : <p className="text-small text-text-secondary">{overview.isError ? "无法判断。" : "正在读取。"}</p>}
+      </RailBlock>
+      <RailBlock title="规则">
+        <ul className="flex list-disc flex-col gap-1 pl-4 text-small text-text-secondary">
+          <li>任务、投影、通知和实际阅读分别核对，飞书已同步不等于有人读过。</li>
+          <li>结果未知的投影只能按稳定键对账，不会重发。</li>
+          <li>远端表格不会直接改写已接受的任务；采纳只是按当前基线提出修订。</li>
+        </ul>
+      </RailBlock>
+    </div></ContextPanelContent>
+  </div>;
 }

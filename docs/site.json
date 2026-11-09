@@ -88,6 +88,11 @@
       "group": "前端文档"
     },
     {
+      "path": "docs/frontend/pages/evaluations.md",
+      "title": "评价与后果",
+      "group": "前端文档"
+    },
+    {
       "path": "docs/frontend/pages/sessions.md",
       "title": "Sessions",
       "group": "前端文档"
