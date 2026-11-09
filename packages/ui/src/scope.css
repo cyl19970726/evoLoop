@@ -55,3 +55,8 @@
 [data-ui][data-ui] :is(a, button, input, select, textarea, label, summary, p, small, span, li, ul, ol, dl, dt, dd, h1, h2, h3, h4, table, tbody, th, td, code, pre):not([data-legacy], [data-legacy] *) {
   all: revert-layer;
 }
+
+/* The old global sheet lays out every `dl > div` as a 170px grid; inside new UI the classes decide. */
+[data-ui][data-ui] dl > div:not([data-legacy], [data-legacy] *) {
+  all: revert-layer;
+}

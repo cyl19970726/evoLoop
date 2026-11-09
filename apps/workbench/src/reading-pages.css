@@ -1,45 +1,4 @@
 /* Page-level reading hierarchy. Imported after editorial.css by the workbench entry. */
-.workbench-layout .project-overview { max-width: 1500px; min-width: 0; }
-.workbench-layout .project-overview h1 { font-size: clamp(28px, 2.5vw, 36px); line-height: 1.25; margin-bottom: 10px; }
-.workbench-layout .project-overview .lede { font-size: 16px; color: #57698e; }
-.workbench-layout .project-overview > .muted{ font-size: 14px; }
-.workbench-layout .project-overview .project-context{ display: flex; flex-direction: column; gap: 24px; }
-.workbench-layout .project-overview .overview-goal,
-.workbench-layout .project-overview .overview-attention,
-.workbench-layout .project-overview .overview-use{ border: 0; border-radius: 6px; padding: 0; background: transparent; }
-.workbench-layout .project-overview .overview-goal{ margin: 0; }
-.workbench-layout .project-overview .overview-goal h3{ margin: 10px 0; padding: 22px 24px; border-radius: 6px; background: #eef4ff; font-size: clamp(21px, 2vw, 28px); line-height: 1.4; color: #10244c; }
-.workbench-layout .project-overview .overview-section-title{ margin: 0 0 8px; }
-.workbench-layout .project-overview .overview-section-title h2,
-.workbench-layout .project-overview .overview-current-head h2{ font-size: 21px; color: #14264a; }
-.workbench-layout .project-overview .overview-section-title a,
-.workbench-layout .project-overview .overview-current-head a{ font-size: 15px; }
-.workbench-layout .project-overview .overview-goal p,
-.workbench-layout .project-overview .overview-goal details,
-.workbench-layout .project-overview .overview-stage-contexts li,
-.workbench-layout .project-overview .overview-evidence-grid p,
-.workbench-layout .project-overview .overview-evidence-grid details,
-.workbench-layout .project-overview .overview-source-note{ font-size: 14px; }
-.workbench-layout .project-overview .overview-goal-facts dt,
-.workbench-layout .project-overview .overview-goal-facts dd{ font-size: 15px; }
-.workbench-layout .project-overview .overview-evidence-grid{ display: grid; grid-template-columns: 1fr; gap: 22px; }
-.workbench-layout .project-overview .overview-attention{ padding: 20px 24px; background: #fff9ee; }
-.workbench-layout .project-overview .overview-attention h3{ font-size: 18px; }
-.workbench-layout .project-overview .overview-use{ padding: 20px 24px; border: 1px solid #dce4f0; }
-.workbench-layout .project-overview .overview-evidence-grid .pill{ font-size: 14px; }
-.workbench-layout .project-overview .overview-text-action{ font-size: 15px; }
-.workbench-layout .project-overview .overview-current-work{ border: 0; padding: 0; margin: 8px 0 0; background: transparent; }
-.workbench-layout .project-overview .overview-current-head{ display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin-bottom: 8px; }
-.workbench-layout .project-overview .overview-current-work ul{ list-style: none; margin: 0; padding: 0; border: 1px solid #dce4f0; }
-.workbench-layout .project-overview .overview-current-work li{ display: block; margin: 0; padding: 14px 16px; border-bottom: 1px solid #dce4f0; font-size: 15px; }
-.workbench-layout .project-overview .overview-current-work li:last-child{ border-bottom: 0; }
-.workbench-layout .project-overview .overview-current-work li a{ color: #172b53; font-weight: 600; }
-.workbench-layout .project-overview .overview-current-work .muted{ font-size: 14px; }
-.workbench-layout .project-overview .overview-context-links{ padding: 8px 0; }
-.workbench-layout .project-overview .overview-queue-details{ margin-top: 10px; }
-@media (max-width: 760px) {
-  .workbench-layout .project-overview .overview-current-work{ width: 100%; }
-}
 .workbench-layout .doc-original-reader .panel-head{ align-items: center; margin-bottom: 16px; }
 .workbench-layout .doc-original-reader .panel-head h2{ font-size: 20px; }
 .workbench-layout .doc-original-reader .doc-original-integrity{ margin: 0 0 18px; font-size: 14px; color: #607291; }
