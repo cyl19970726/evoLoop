@@ -25,7 +25,6 @@ td{ font-size: 15px; }
 .workbench-layout .leader-phase.phase-ready, .workbench-layout .task-state-done{ color: #2457c4; background: #edf3ff; }
 .workbench-layout .phase-rework, .workbench-layout .phase-blocked{ color: #a65b08; background: #fff5e7; }
 .context-links a, .work-context-tabs a{ font-size: 14px; }
-.development-preview{ font-size: 12px; opacity: .9; padding: 3px 8px; right: 12px; bottom: 6px; }
 /* Scan the task in three columns, read the selected work below. */
 .task-index-view > .page-title-row{ margin-bottom: 10px; }
 .task-index-view > .page-title-row .lede{ display: none; }
@@ -113,26 +112,9 @@ td{ font-size: 15px; }
 /* Contextual forms, receipt recovery, and repository reading routes. */
 .review-form label, .command-form label, .action-form label{ font-size: 15px; }
 .review-form input, .review-form textarea, .review-form select{ font-size: 16px; }
-.operation-empty{ padding: 70px 20px 54px; text-align: center; }
-.operation-empty > svg{ width: 64px; height: 64px; color: #687eaa; margin-bottom: 20px; }
-.operation-empty h2{ font-size: 26px; margin-bottom: 12px; }
-.operation-empty p{ max-width: 620px; margin: 0 auto 24px; }
-.operation-context{ margin-top: 28px; border-top: 1px solid var(--border); }
-.operation-context > a{ display: flex; align-items: center; gap: 16px; padding: 24px 0; border-bottom: 1px solid var(--border); }
-.operation-context strong{ display: block; font-size: 18px; }
-.operation-context small{ display: block; }
-.operation-context svg{ flex-shrink: 0; }
-.repository-layout{ display: grid; grid-template-columns: minmax(0,2fr) minmax(240px,1fr); gap: 32px; margin-top: 30px; }
-.repository-reading-note{ border-left: 1px solid var(--border); padding-left: 24px; }
-.repository-group{ margin-bottom: 30px; }
-.repository-group h2{ margin-bottom: 14px; }
-.repository-links a{ display: flex; align-items: center; gap: 16px; padding: 20px; border: 1px solid var(--border); border-radius: 6px; margin: 0; }
-.repository-links strong{ display: block; font-size: 17px; }
-.repository-links small{ display: block; margin-top: 4px; }
-.repository-links svg{ width: 22px; flex-shrink: 0; }
 @media(min-width:1800px) { .workbench-layout .content{ padding-inline: 44px; } }
 @media(max-width:1180px) { .workbench-layout .content{ padding: 28px 24px 64px; } .task-selection-body, .task-overview-grid{ gap: 24px; } }
-@media(max-width:980px) { .task-overview-grid{ grid-template-columns: 1fr; } .task-evidence-rail{ border-left: 0; padding-left: 0; border-top: 1px solid var(--border); padding-top: 24px; } .task-selection-body{ grid-template-columns: minmax(0,1.3fr) minmax(240px,1fr); gap: 24px; } .repository-layout{ grid-template-columns: 1fr; } .repository-reading-note{ border-left: 0; padding: 20px 0; border-top: 1px solid var(--border); } }
+@media(max-width:980px) { .task-overview-grid{ grid-template-columns: 1fr; } .task-evidence-rail{ border-left: 0; padding-left: 0; border-top: 1px solid var(--border); padding-top: 24px; } .task-selection-body{ grid-template-columns: minmax(0,1.3fr) minmax(240px,1fr); gap: 24px; } }
 @media(max-width:760px) {
  .workbench-layout .content{ padding: 24px 18px 64px; }
  .workbench-layout .content h1{ font-size: 28px; }
@@ -156,12 +138,6 @@ td{ font-size: 15px; }
 }
 @media(max-width:680px) { .work-index .task-list-main .task-list-table td{ padding: 6px 0; } .work-index .task-list-main .task-list-table tr{ padding: 16px; } .work-index .task-list-main .task-list-table td:first-child{ padding-left: 0; } .work-index .task-list-main .task-list-table .task-list-open{ padding-top: 12px; } .work-index .task-list-main .task-list-table .mobile-field-label{ font-size: 14px; } .work-index .task-list-main .task-list-table .task-list-state{ display: flex; align-items: center; gap: 8px; } }
 .work-index .task-list-main .task-list-inline-next{ display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 1; overflow: hidden; margin-top: 5px; color: #526078; font-size: 14px; font-weight: 400; line-height: 1.6; }
-.repository-links > a > span{ flex: 1; }
-.operation-context > a > span{ flex: 1; }
-.workbench-layout .repository-links{ grid-template-columns: 1fr; gap: 0; }
-.workbench-layout .repository-links a{ background: #fff; padding: 20px; font-size: 16px; }
-.workbench-layout .overview-stage-details > summary{ cursor: pointer; padding: 8px 0; font-size: 14px; color: #2457c4; }
-.workbench-layout .overview-goal .overview-stage-details[open]{ margin-bottom: 16px; }
 .workbench-layout code{ font-size: 13px; }
 .work-index .task-scan-region{ max-height: 370px; overflow: auto; overscroll-behavior: contain; scrollbar-width: thin; }
 .work-index .task-scan-region thead th{ position: sticky; top: 0; z-index: 2; }
@@ -170,14 +146,9 @@ td{ font-size: 15px; }
 .workbench-layout .content > :first-child{ animation: none; }
 .workbench-layout .content h1{ color: #17233b; opacity: 1; }
 .workbench-layout .content .lede{ color: #526078; }
-.workbench-layout .document-index td{ font-size: 16px; padding: 20px 16px; }
-.workbench-layout .document-index .doc-index-title{ font-size: 16px; }
 .workbench-layout .team-workspace .team-table td{ font-size: 16px; padding: 18px 16px; }
 .workbench-layout .team-workspace .team-table td a, .workbench-layout .team-workspace .team-table td strong{ font-size: 16px; }
 .workbench-layout .team-workspace .team-table td small, .workbench-layout .team-workspace .team-table td details{ font-size: 14px; }
-.workbench-layout .repository-links a > svg:first-child{ box-sizing: content-box; width: 24px; height: 24px; padding: 10px; border-radius: 6px; background: #edf3ff; color: #2457f5; }
-.operation-empty > .button-link{ border-color: #2457f5; color: #2457f5; font-size: 16px; padding: 12px 22px; }
-.operation-empty > svg{ width: 76px; height: 76px; }
 .knowledge-list-layout:has(.knowledge-available-actions):has(.knowledge-list){ display: grid; grid-template-columns: minmax(0,1.5fr) minmax(280px,1fr); gap: 28px; align-items: start; }
 .knowledge-list-layout > .knowledge-list{ order: 1; margin-top: 0; }
 .knowledge-list-layout > .knowledge-available-actions{ order: 2; display: block; margin: 0; padding: 0 0 0 24px; background: none; border: 0; border-left: 1px solid var(--border); }
@@ -195,18 +166,6 @@ td{ font-size: 15px; }
 .schedule-page .schedule-detail-columns .schedule-current{ display: flex; flex-direction: column; gap: 18px; background: none; padding: 0 0 0 24px; margin: 0; border: 0; border-left: 1px solid var(--border); }
 .schedule-rule-source{ border-top: 1px solid var(--border); padding: 16px 0; margin-top: 18px; font-size: 14px; }
 .schedule-rule-source summary{ cursor: pointer; }
-@media(min-width:1100px) {
- .workbench-layout .project-overview{ display: grid; grid-template-columns: minmax(0,1.6fr) minmax(300px,1fr); gap: 20px 30px; align-items: start; }
- .workbench-layout .project-overview > h1, .workbench-layout .project-overview > .lede, .workbench-layout .project-overview > .muted, .workbench-layout .project-overview > .notice{ grid-column: 1/-1; margin-bottom: 0; }
- .workbench-layout .project-overview > .project-context, .workbench-layout .project-overview .overview-evidence-grid{ display: contents; }
- .workbench-layout .project-overview .overview-goal{ grid-column: 1/-1; grid-row: auto; order: 1; }
- .workbench-layout .project-overview .overview-attention{ grid-column: 1/-1; grid-row: auto; order: 2; }
- .workbench-layout .project-overview .overview-current-work{ grid-column: 1; grid-row: auto; order: 3; }
- .workbench-layout .project-overview .overview-use{ grid-column: 2; grid-row: auto; order: 3; }
- .workbench-layout .project-overview .overview-source-note{ grid-column: 1/-1; grid-row: auto; order: 4; }
- .workbench-layout .project-overview > .overview-context-links, .workbench-layout .project-overview > .overview-queue-details{ grid-column: 1/-1; order: 5; }
-}
-@media(max-width:1099px) { .workbench-layout .project-overview .overview-evidence-grid > *{ grid-column: auto; grid-row: auto; } }
 @media(max-width:760px) {
  .knowledge-list-layout:has(.knowledge-available-actions):has(.knowledge-list), .schedule-detail-columns{ display: block; }
  .knowledge-list-layout > .knowledge-available-actions, .schedule-page .schedule-detail-columns .schedule-current{ border-left: 0; border-top: 1px solid var(--border); padding: 22px 0 0; margin-top: 24px; }
@@ -215,15 +174,6 @@ td{ font-size: 15px; }
 .session-workspace .session-activity-toggle[aria-expanded="false"] strong{ display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
 .schedule-page > .panel{ border: 0; padding: 0; background: transparent; }
 .schedule-page > .panel > .panel-head h2{ display: none; }
-@media(min-width:1100px) { .workbench-layout .project-overview{ grid-auto-flow: row dense; } .workbench-layout .project-overview > .muted:last-child{ grid-column: 1/-1; order: 6; } .workbench-layout .project-overview > details{ grid-column: 1/-1; order: 5; } }
 .task-acceptance-points{ padding-left: 26px; margin: 16px 0; color: #35435b; font-size: 16px; line-height: 1.75; }
 .task-acceptance-points li{ padding-left: 6px; margin-bottom: 12px; }
 .task-acceptance-points li::marker{ color: #2457f5; font-weight: 650; }
-.document-outline{ padding: 0 0 20px; margin-bottom: 20px; border-bottom: 1px solid var(--border); }
-.document-outline h2{ font-size: 22px; margin: 0 0 12px; }
-.document-outline ol{ list-style: decimal; margin: 0; padding-left: 24px; max-height: 280px; overflow: auto; }
-.document-outline li{ color: #2457f5; margin: 8px 0; }
-.document-outline button{ display: block; min-height: 32px; border: 0; background: none; text-align: left; color: #2457c4; padding: 0 4px; font-size: 14px; line-height: 1.6; }
-.document-outline .outline-subsection{ margin-left: 14px; }
-.document-outline-mobile{ display: none; }
-@media(max-width:760px) { .document-outline-desktop{ display: none; } .document-outline-mobile{ display: block; margin: 0 0 20px; border-block: 1px solid var(--border); padding: 12px 0; font-size: 15px; } .document-outline-mobile .document-outline{ margin: 12px 0 0; border: 0; padding-bottom: 0; } }

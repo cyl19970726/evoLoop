@@ -13,13 +13,17 @@ export function mergeDocumentPage(current: Page<Document>, next: Page<Document>)
   return { items: [...current.items, ...next.items.filter(item => !ids.has(item.id))], nextCursor: next.nextCursor };
 }
 
-/** Refresh the already loaded range before replacing any visible rows. */
-export async function readDocumentRange(read: (cursor?: string) => Promise<Page<Document>>, projectId: string, minimumItems: number) {
+/**
+ * Read the list from its first page until at least `minimumItems` are loaded, the pages run out, or `maxPages` pages
+ * were read. A refresh reads the whole range again before any visible row is replaced.
+ */
+export async function readDocumentRange(read: (cursor?: string) => Promise<Page<Document>>, projectId: string, minimumItems: number,
+  maxPages = Number.POSITIVE_INFINITY) {
   let page = await read();
   validDocumentPage(page, projectId);
   const cursors = new Set<string>();
   let pages = 1;
-  while (page.nextCursor && page.items.length < minimumItems) {
+  while (page.nextCursor && page.items.length < minimumItems && pages < maxPages) {
     const cursor = page.nextCursor;
     if (cursors.has(cursor)) throw new Error("文档分页游标重复，无法确认后续结果");
     cursors.add(cursor);

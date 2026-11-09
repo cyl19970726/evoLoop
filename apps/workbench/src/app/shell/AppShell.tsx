@@ -7,7 +7,7 @@ import * as React from "react";
 import { BriefcaseBusiness, ChevronsUpDown, Inbox, LogOut, Menu, PanelLeftClose, PanelLeftOpen, Settings, Users, FolderGit2, Plug, TriangleAlert, X } from "lucide-react";
 import {
   CountDot, DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger,
-  IconButton, Logo, PersonAvatar, Sheet, SheetClose, SheetContent, SheetDescription, SheetTitle, cn,
+  Button, IconButton, Logo, Notice, PersonAvatar, Sheet, SheetClose, SheetContent, SheetDescription, SheetTitle, cn, type NoticeTone,
 } from "@evoloop/ui";
 import { href, type Route, type Section } from "../../shared/routes";
 import { currentPath, navigate } from "../../shared/navigation";
@@ -22,6 +22,8 @@ import {
 export interface AppShellProps {
   route: Route; projectId: string; projectTitle: string; actor: string; permissions: readonly string[];
   receiptCount: number; inboxCount: number; token: string; logout(): void; children: React.ReactNode;
+  /** Notices above every page: unconfirmed operations, storage problems, project read failures. */
+  notices?: ShellNoticeItem[];
 }
 
 const permissionText = (permissions: readonly string[]) =>
@@ -53,6 +55,7 @@ export function AppShell(props: AppShellProps) {
     setSessionStates(previous => ({ ...previous, [scope]: update(previous[scope] ?? emptySessionNavigationState()) }));
   const [drawer, setDrawer] = React.useState(false);
   const navigatedFromDrawer = React.useRef(false);
+  const menuButton = React.useRef<HTMLButtonElement>(null);
   // The inner rail follows the width (shown from 1100px) until the reader toggles it; that choice is kept.
   const roomy = useMediaQuery("(min-width: 1100px)");
   const [railChoice, setRailChoice] = React.useState<"shown" | "hidden" | null>(() => {
@@ -66,10 +69,11 @@ export function AppShell(props: AppShellProps) {
   };
   const afterNavigate = () => { if (drawer) navigatedFromDrawer.current = true; setDrawer(false); };
   // Leaving the drawer by a link hands focus to the content; closing it otherwise returns focus to the menu button.
+  // The menu button is not the Sheet's own trigger, so Radix would leave focus on <body>; hand it back explicitly.
   const drawerCloseFocus = (event: Event) => {
-    if (!navigatedFromDrawer.current) return;
-    navigatedFromDrawer.current = false;
     event.preventDefault();
+    if (!navigatedFromDrawer.current) { menuButton.current?.focus({ preventScroll: true }); return; }
+    navigatedFromDrawer.current = false;
     document.getElementById("workspace-main")?.focus({ preventScroll: true });
   };
   const spaceLink = (target: Space) => spaceHref(store, actor, projectId, target);
@@ -85,7 +89,7 @@ export function AppShell(props: AppShellProps) {
       {/* One tree for every width, switched by CSS at 760px: crossing it restyles the frame in the same frame as the
           viewport change and never remounts the pages (their state and drafts stay). */}
       <header data-ui="" data-shell="mobile-header" className="sticky top-0 z-30 flex h-12 items-center gap-2 border-b border-border bg-sunken/95 pl-2 pr-12 backdrop-blur compact:hidden">
-        <IconButton label="打开项目导航" icon={<Menu size={19} />} onClick={() => setDrawer(true)} />
+        <IconButton ref={menuButton} label="打开项目导航" icon={<Menu size={19} />} onClick={() => setDrawer(true)} />
         <span className="min-w-0 flex-1 truncate font-medium">{title}</span>
         <span className="max-w-[40%] truncate text-small text-muted-foreground">{props.projectTitle}</span>
       </header>
@@ -110,7 +114,7 @@ export function AppShell(props: AppShellProps) {
         </nav>
         {!railHidden && <div className="sticky top-0 hidden h-dvh compact:block"><ContextRail {...railProps} /></div>}
         <div className="flex min-w-0 bg-background compact:m-2 compact:ml-0 compact:min-h-[calc(100dvh-16px)] compact:rounded-xl compact:shadow-lg">
-          <main id="workspace-main" tabIndex={-1} className="workbench-layout min-w-0 flex-1 outline-none max-compact:pb-20">{props.children}</main>
+          <main id="workspace-main" tabIndex={-1} className="workbench-layout min-w-0 flex-1 outline-none max-compact:pb-20">{props.notices?.map(({ key, ...notice }) => <ShellNotice key={key} {...notice} />)}{props.children}</main>
           <ContextPanelColumn />
         </div>
       </div>
@@ -164,7 +168,7 @@ function ContextRail(props: AppShellProps & { space: Space; sessionState: Sessio
       </div>
       : <nav data-ui="" aria-label={space === "inbox" ? "待我处理" : "工作分区"} className={cn("min-h-0 flex-1", !inDrawer && "overflow-y-auto")}>
         <SectionList items={space === "inbox" ? inboxNavigation : workNavigation} route={route} projectId={projectId} onNavigate={props.onNavigate} />
-        {(inDrawer || !compact) && <ContextRailSlot className="mt-3 empty:hidden" />}
+        {(inDrawer || !compact) && <ContextRailSlot className="mt-3 empty:hidden" onNavigate={props.onNavigate} />}
       </nav>}
     <div data-ui="" className="mt-2 flex items-center gap-2.5 border-t border-border px-2 pt-2.5">
       <PersonAvatar name={props.actor} size={30} />
@@ -215,4 +219,16 @@ function AccountMenu({ projectId, actor, permissions, receiptCount, logout, trig
       <DropdownMenuItem onSelect={logout}><LogOut size={16} aria-hidden="true" />退出</DropdownMenuItem>
     </DropdownMenuContent>
   </DropdownMenu>;
+}
+
+export interface ShellNoticeItem {
+  key: string; tone?: NoticeTone; text: string;
+  link?: { href: string; label: string }; button?: { label: string; onClick: () => void; quiet?: boolean };
+}
+
+/** A notice above every page in the shell: unconfirmed operations, storage problems, project read failures. */
+function ShellNotice({ tone = "info", link, button, text }: Omit<ShellNoticeItem, "key">) {
+  const action = link ? <Button asChild size="compact"><a href={link.href}>{link.label}</a></Button>
+    : button ? <Button size="compact" variant={button.quiet ? "ghost" : "secondary"} onClick={button.onClick}>{button.label}</Button> : undefined;
+  return <div data-ui="" className="global-alert px-4 pt-3 compact:px-8"><Notice tone={tone} action={action}>{text}</Notice></div>;
 }
