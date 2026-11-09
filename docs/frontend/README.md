@@ -25,6 +25,7 @@
 | [评价与后果](pages/evaluations.md) | 同一任务两种条件，每次真实运行交付、使用、成本与判断怎样，结论和下一步是什么？ |
 | [Sessions](pages/sessions.md) | 哪个 Session 在做什么、做到哪一步，需不需要我；Leader 怎样安排这些 Session？ |
 | [团队](pages/team.md) | 哪些持续职责由谁承担，用什么运行时与 skill？ |
+| [微信连接](pages/connectors.md) | 哪个微信会话转给哪个智能体，最近的投递处理得怎样？ |
 
 ## 目标与现状
 

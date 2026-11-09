@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
 import { api } from "../src/shared/api";
 import { errorOutcome, resultOutcome } from "../src/shared/submissionOutcome";
-import { roleCardKey, roleListScope, rolesWhileRereading } from "../src/features/roles/roleListRefresh";
+import { roleTarget } from "../src/features/roles/rolePresentation";
 import { savedRuntimeNotice } from "../src/features/roles/roleRuntimePresentation";
 
 const operationId = "30000003-0000-4000-8000-000000000003";
@@ -11,11 +11,11 @@ const realFetch = globalThis.fetch;
 afterEach(() => { globalThis.fetch = realFetch; });
 const reply = (status: number, body: unknown) => { globalThis.fetch = (async () => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } })) as typeof fetch; };
 
-test("a saved revision rereads into an open card: same key, kept list, revision shown", () => {
-  const before = [{ id: "r1", version: 2 }], after = [{ id: "r1", version: 3 }];
-  assert.equal(roleCardKey(before[0]!), roleCardKey(after[0]!), "a new version must not remount the card");
-  assert.deepEqual(rolesWhileRereading(roleListScope("t", "p"), roleListScope("t", "p"), before), before, "a same-scope refresh keeps the cards while rereading");
-  assert.deepEqual(rolesWhileRereading(roleListScope("t", "p"), roleListScope("t", "p2"), before), [], "another project never shows the old list");
+test("a saved revision rereads into the selected Role: the address keeps the selection, the revision is shown", () => {
+  // The selected Role lives in the address, not in component state, so a reread after saving cannot deselect it.
+  const address = "/p/p/roles?role=r1";
+  assert.equal(roleTarget(address, "/p/p/roles"), "r1");
+  assert.equal(roleTarget(address, "/p/p2/roles"), null, "another project never selects the old Role");
   assert.equal(savedRuntimeNotice(false, false, null), null);
   assert.equal(savedRuntimeNotice(true, true, null), "已保存，正在读取新修订…");
   const view = { binding: { revision: 4 } } as never;

@@ -1,4 +1,5 @@
 import * as React from "react";
+import { ChevronDown } from "lucide-react";
 import { cn } from "../lib/cn";
 
 const control =
@@ -13,6 +14,19 @@ export const Textarea = React.forwardRef<HTMLTextAreaElement, React.TextareaHTML
   <textarea ref={ref} className={cn(control, "min-h-20 py-2.5 leading-[1.55]", className)} {...props} />
 ));
 Textarea.displayName = "Textarea";
+
+/** A native select with the same look as Input; the browser's own list keeps it usable on every device. */
+export interface SelectProps extends React.SelectHTMLAttributes<HTMLSelectElement> {
+  /** 32px tall with label-size text, for toolbars and rails. */
+  compact?: boolean | undefined;
+}
+export const Select = React.forwardRef<HTMLSelectElement, SelectProps>(({ className, compact, ...props }, ref) => (
+  <span className={cn("relative inline-flex min-w-0", className)}>
+    <select ref={ref} className={cn(control, "cursor-pointer appearance-none pr-8", compact ? "h-8 text-label" : "h-9")} {...props} />
+    <ChevronDown aria-hidden="true" className="pointer-events-none absolute right-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+  </span>
+));
+Select.displayName = "Select";
 
 export interface FieldProps {
   label: string;

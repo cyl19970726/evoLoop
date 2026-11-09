@@ -105,60 +105,86 @@ test("built workbench discovers later Chinese task and document pages, linked ta
   await page.goto(`${base}/p/${projectId}/work`);
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button",{name:"进入",exact:true}).click();
-  await page.getByRole("button",{name:"加载更多"}).waitFor();
+  const main=page.getByRole("main");
+  // In-app navigation, as a link click does: the page and its in-memory login stay.
+  const go=(path: string) => page.evaluate(target => { const link=Object.assign(document.createElement("a"),{href:target}); document.body.append(link); link.click(); link.remove(); }, path);
+  // At 390px the task list (with its search box) is in the navigation drawer; the table view fills the center.
+  const openNavigation=async () => { await page.getByRole("button",{name:"打开项目导航"}).click(); };
+  const closeNavigation=async () => { await page.keyboard.press("Escape"); await page.getByRole("dialog").waitFor({state:"detached"}); };
+  await main.getByRole("button",{name:"加载更多"}).waitFor();
   await fetch(`${base}/__fixture/hold-task-page`,{method:"POST"});
-  await page.getByRole("button",{name:"加载更多"}).click();
-  const taskSearch=page.getByRole("textbox",{name:"搜索任务（分页读取，范围见下方）"});
+  await main.getByRole("button",{name:"加载更多"}).click();
+  await openNavigation();
+  const taskSearch=page.getByRole("searchbox",{name:"搜索任务"});
   await taskSearch.fill("中文跨页实施任务");
   await page.waitForTimeout(250);
   assert.equal(await (await fetch(`${base}/__fixture/task-page-count`)).text(),"1");
   await fetch(`${base}/__fixture/release-task-page`,{method:"POST"});
-  await page.getByRole("button",{name:"中文跨页实施任务",exact:true}).waitFor();
-  assert.equal(await page.getByRole("button",{name:"中文跨页实施任务",exact:true}).count(),1);
-  await taskSearch.fill("");
-  await page.locator(".list-footer").getByText(/已载入 51 项/).waitFor();
-  await taskSearch.fill("中文跨页实施任务");
+  await page.getByRole("dialog").getByRole("link",{name:/中文跨页实施任务/}).waitFor();
+  await closeNavigation();
+  await main.getByRole("button",{name:"中文跨页实施任务",exact:true}).waitFor();
+  assert.equal(await main.getByRole("button",{name:"中文跨页实施任务",exact:true}).count(),1);
+  await openNavigation(); await taskSearch.fill(""); await closeNavigation();
+  await main.getByText(/已载入 51 项/).waitFor();
+  await openNavigation(); await taskSearch.fill("中文跨页实施任务"); await closeNavigation();
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
-  await page.getByRole("button",{name:"中文跨页实施任务",exact:true}).click();
-  await page.locator(".task-selection").waitFor();
-  await page.getByRole("link",{name:"查看完整任务"}).click();
-  await page.getByRole("heading",{name:"关联过程文档"}).waitFor();
-  await page.getByRole("link",{name:"返回任务列表"}).click();
-  await page.getByRole("textbox",{name:"搜索任务（分页读取，范围见下方）"}).waitFor();
-  assert.equal(await page.getByRole("textbox",{name:"搜索任务（分页读取，范围见下方）"}).inputValue(),"中文跨页实施任务");
-  await page.locator(".task-selection").waitFor();
-  await page.getByRole("link",{name:"查看完整任务"}).click();
-  await page.getByRole("heading",{name:"关联过程文档"}).waitFor();
-  assert.equal(await page.locator(".task-overview-grid").evaluate(el => el.scrollWidth <= el.clientWidth),true);
-  // The task's linked document opens in full; the document assertions live in the documents test below.
-  await page.getByRole("link",{name:"中文跨页方案文档"}).click();
-  await page.getByRole("heading",{name:"中文跨页方案文档",level:1}).waitFor();
+  // Open the task from the table; Back returns to the same searched list (the search is in the address).
+  await main.getByRole("link",{name:"打开任务：中文跨页实施任务"}).click();
+  await page.getByRole("heading",{level:1,name:"中文跨页实施任务"}).waitFor();
   await page.goBack();
+  await main.getByRole("button",{name:"中文跨页实施任务",exact:true}).waitFor();
+  assert.match(page.url(),/[?&]q=/);
+  await openNavigation();
+  assert.equal(await taskSearch.inputValue(),"中文跨页实施任务");
+  await closeNavigation();
+  await main.getByRole("link",{name:"打开任务：中文跨页实施任务"}).click();
+  await page.getByRole("heading",{level:1,name:"中文跨页实施任务"}).waitFor();
+  assert.equal(await main.locator("[data-task-acceptance]").evaluate(el => el.scrollWidth <= el.clientWidth),true);
+  // Related documents are listed in the task's right column (a sheet from the bottom at 390px). The document opens
+  // beside the task, and 在中间打开 goes to the document's own page; the sheet closes on the way.
+  await main.getByRole("button",{name:"任务信息"}).click();
+  const sheet=page.getByRole("dialog");
+  await sheet.getByRole("button",{name:/中文跨页方案文档/}).click();
+  await sheet.getByRole("tab",{name:"中文跨页方案文档"}).waitFor();
+  await sheet.getByRole("link",{name:"在中间打开"}).click();
+  await page.getByRole("heading",{name:"中文跨页方案文档",level:1}).waitFor();
+  await sheet.waitFor({state:"detached"});
+  await page.goBack();
+  await page.getByRole("heading",{level:1,name:"中文跨页实施任务"}).waitFor();
   await fetch(`${base}/__fixture/close`,{method:"POST"});
-  await page.evaluate(projectId => { location.hash = `/p/${projectId}/documents`; }, projectId);
+  await go(`/p/${projectId}/documents`);
   await page.getByRole("button",{name:"载入更多"}).waitFor();
-  await page.evaluate(({projectId,taskId}) => { location.hash = `/p/${projectId}/tasks/${taskId}`; }, {projectId,taskId});
-  await page.getByRole("heading",{name:"最新交付与使用"}).waitFor();
-  await page.getByText("任务 · v2").waitFor({timeout:5000}).catch(async () => {
+  await go(`/p/${projectId}/tasks/${taskId}`);
+  // Coming back to the task rereads it: the header shows the new version, the right column the new delivery.
+  const header=page.locator(`[data-page-key="task:${taskId}:::"] [data-task-header]`);
+  await header.getByText(/第 2 版/).waitFor({timeout:5000}).catch(async () => {
     assert.fail(`Task return did not refresh: ${await page.locator('.task-page').innerText()}`);
   });
-  await page.getByText("技术检查：通过").waitFor();
+  // The delivery's technical check, read in the task's 交付与使用 layer.
+  const deliveryChecked=async () => {
+    const page_=page.locator(`[data-page-key="task:${taskId}:::"]`);
+    await page_.getByRole("tab",{name:"交付与使用"}).click();
+    await page_.getByText(/技术检查通过/).first().waitFor();
+    await page_.getByRole("tab",{name:"当前工作"}).click();
+  };
+  await deliveryChecked();
   await fetch(`${base}/__fixture/fail-task-read`,{method:"POST"});
-  await page.evaluate(projectId => { location.hash = `/p/${projectId}/documents`; }, projectId);
+  await go(`/p/${projectId}/documents`);
   await page.getByRole("button",{name:"载入更多"}).waitFor();
-  await page.evaluate(({projectId,taskId}) => { location.hash = `/p/${projectId}/tasks/${taskId}`; }, {projectId,taskId});
+  await go(`/p/${projectId}/tasks/${taskId}`);
   await page.getByText(/当前任务回读失败.*不能视为当前状态/).waitFor();
   await fetch(`${base}/__fixture/recover-task-read`,{method:"POST"});
   await page.getByRole("button",{name:"重新读取当前任务"}).click();
-  await page.getByText("技术检查：通过").waitFor();
+  await deliveryChecked();
   await fetch(`${base}/__fixture/change`,{method:"POST"});
   await page.getByRole("button",{name:"重新读取当前任务"}).click();
   await page.getByRole("heading",{name:"命令行已更新的实施任务"}).waitFor();
   await fetch(`${base}/__fixture/long-pages`,{method:"POST"});
-  await page.evaluate(projectId => { location.hash = `/p/${projectId}/work`; }, projectId);
-  await page.getByRole("button",{name:"重新读取列表"}).click();
-  await page.getByRole("textbox",{name:"搜索任务（分页读取，范围见下方）"}).fill("不存在的中文任务");
-  await page.getByText(/自动搜索已达 10 页或 500 项上限；结果未完整/).waitFor();
+  await go(`/p/${projectId}/work`);
+  await page.getByRole("main").getByRole("button",{name:"重新读取列表"}).click();
+  await page.getByRole("button",{name:"打开项目导航"}).click();
+  await page.getByRole("searchbox",{name:"搜索任务"}).fill("不存在的中文任务");
+  await page.getByRole("dialog").getByText(/自动搜索已达 10 页或 500 项上限；结果未完整/).waitFor();
   assert.equal(await page.getByText("没有匹配项").count(),0);
 });
 

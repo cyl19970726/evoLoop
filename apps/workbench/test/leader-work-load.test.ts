@@ -146,6 +146,6 @@ test("Leader overview maps historical cognition to readable source labels", () =
     assignment:{state:"accepted",targetKind:"owned",targetId:"session-1",recipientActorId:"worker"},
   }, undefined, undefined, "产品文档"), {
     title:"任务记录 · 来源状态待核对",
-    responsibility:"受管 Session · 产品文档",
+    responsibility:"智能体 · 产品文档",
   });
 });

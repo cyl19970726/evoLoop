@@ -110,7 +110,7 @@ export function TaskWorkflow({ context, detail, documents, leader, mode = "actio
         reason: revision.reason, actorId: revision.actorId, createdAt: revision.createdAt,
         href: `/p/${context.projectId}/tasks/${task.id}?revision=${encodeURIComponent(revision.id)}` }));
     }} />
-    {detail.proposal && <dl><div><dt>验收方式</dt><dd>{acceptanceMode === "independent_agent" ? "独立 Agent 使用当前交付" : acceptanceMode === "human_required" ? "受信本人使用当前交付" : "历史合同"}</dd></div><div><dt>目标消费者</dt><dd>{detail.proposal.consumer || "未指定；须由符合验收方式的身份签收"}</dd></div><div><dt>完成要求</dt><dd>{detail.proposal.useRequired ? "需有本次交付的实际使用记录" : "按历史合同核对"}</dd></div><div><dt>提议证据</dt><dd>{detail.proposal.evidence}</dd></div><div><dt>停止条件</dt><dd>{detail.proposal.stopCondition}</dd></div></dl>}
+    {detail.proposal && <dl><div><dt>验收方式</dt><dd>{acceptanceMode === "independent_agent" ? "独立智能体使用当前交付" : acceptanceMode === "human_required" ? "受信本人使用当前交付" : "历史合同"}</dd></div><div><dt>目标消费者</dt><dd>{detail.proposal.consumer || "未指定；须由符合验收方式的身份签收"}</dd></div><div><dt>完成要求</dt><dd>{detail.proposal.useRequired ? "需有本次交付的实际使用记录" : "按历史合同核对"}</dd></div><div><dt>提议证据</dt><dd>{detail.proposal.evidence}</dd></div><div><dt>停止条件</dt><dd>{detail.proposal.stopCondition}</dd></div></dl>}
     {(detail.judgements ?? []).length > 0 && <><h3>旧提议判断历史</h3>{(detail.judgements ?? []).map(judgement => <article className="decision" key={judgement.id}><strong>{judgement.decision}</strong><p>{judgement.reason}</p><p>证据：{judgement.evidence}</p><small>{judgement.actorId} · {judgement.createdAt}</small></article>)}</>}
   </section>;
   return <section className="panel"><div className="panel-head"><h2>任务操作</h2><button type="button" onClick={context.onChanged}>回读当前状态</button></div>
@@ -136,7 +136,7 @@ export function TaskWorkflow({ context, detail, documents, leader, mode = "actio
         sendCommand={command => api(context.token).leaderPlan(context.projectId, task.id, command as unknown as LeaderWorkPlanCommand)}
         fields={[
           { name: "plannedStartAt", label: "计划开始（ISO 8601，可留空）", optional: true,
-            value: leader.plan?.plannedStartAt ?? "", hint: "只表示负责人安排的开始时间，不改变 Task 四态。" },
+            value: leader.plan?.plannedStartAt ?? "", hint: "只表示负责人安排的开始时间，不改变任务四态。" },
           { name: "dueAt", label: "计划截止（ISO 8601，可留空）", optional: true,
             value: leader.plan?.dueAt ?? "" },
           { name: "priority", label: "人工优先级（可留空）", kind: "select", optional: true,
@@ -151,12 +151,12 @@ export function TaskWorkflow({ context, detail, documents, leader, mode = "actio
           dueAt: v.dueAt.trim() ? new Date(v.dueAt).toISOString() : null,
           priority: v.priority ? Number(v.priority) : null, reason: v.reason,
         })} />
-      <ActionForm context={context} review requiredPermissions={["write", "review"]} title="设置前置 Task 依赖"
+      <ActionForm context={context} review requiredPermissions={["write", "review"]} title="设置前置任务依赖"
         validateCommand={value => { leaderWorkDependenciesCommandSchema.parse(withoutOperationType(value)); }}
         sendCommand={command => api(context.token).leaderDependencies(context.projectId, task.id,
           command as unknown as LeaderWorkDependenciesCommand)}
         fields={[
-          { name: "dependsOnTaskIds", label: "前置 Task UUID（逗号或换行分隔）",
+          { name: "dependsOnTaskIds", label: "前置任务 ID（逗号或换行分隔）",
             value: leader.dependencies.map(item => item.taskId).join("\n"),
             hint: "保存前核对每项当前修订；依赖只在真实验收或 accepted queue release 后满足。" },
           reasonField,
@@ -167,7 +167,7 @@ export function TaskWorkflow({ context, detail, documents, leader, mode = "actio
           dependsOnTaskIds: v.dependsOnTaskIds.split(/[\s,]+/).map(item => item.trim()).filter(Boolean),
           reason: v.reason,
         })} />
-      <ActionForm context={context} review requiredPermissions={["write", "review"]} title="记录 Leader 处理决定"
+      <ActionForm context={context} review requiredPermissions={["write", "review"]} title="记录统筹处理决定"
         validateCommand={value => { leaderWorkReviewCommandSchema.parse(withoutOperationType(value)); }}
         sendCommand={command => api(context.token).leaderReview(context.projectId, task.id,
           command as unknown as LeaderWorkReviewCommand)}
@@ -182,13 +182,13 @@ export function TaskWorkflow({ context, detail, documents, leader, mode = "actio
           expectedWorkChangeSequence: leader.workChangeSequence,
           decision: v.decision, reason: v.reason,
         })} />
-    </> : <Notice>当前工作的计划、依赖与 Leader 决定暂未读回。正文和其他任务操作仍可继续，但不会用旧版本补写规划。</Notice>}
+    </> : <Notice>当前工作的计划、依赖与统筹决定暂未读回。正文和其他任务操作仍可继续，但不会用旧版本补写规划。</Notice>}
     {task.state === "todo" && context.principal.permissions.includes("review") && <ActionForm context={context} review title="修订验收责任" fields={[
       { name: "acceptanceMode", label: "验收方式", kind: "select", value: acceptanceMode ?? "legacy", options: [
         ...(acceptanceMode ? [] : [option("legacy", "保留旧任务历史合同")]),
-        option("independent_agent", "独立 Agent 验收"), option("human_required", "必须本人验收")] },
+        option("independent_agent", "独立智能体验收"), option("human_required", "必须本人验收")] },
       { name: "consumer", label: "指定验收身份（可选）", optional: true, value: detail.proposal?.consumer ?? "",
-        hint: "本人验收必须填写本人受信身份 ID；独立 Agent 可以不预先指定。" }, reasonField,
+        hint: "本人验收必须填写本人受信身份 ID；独立智能体可以不预先指定。" }, reasonField,
     ]} build={v => ({ ...base, type: "task.update", title: task.title, content: task.content, acceptance: task.acceptance,
       owner: task.owner, kind: task.kind, documentIds: detail.links.map(link => link.documentId),
       ...(v.acceptanceMode !== "legacy" ? { acceptanceMode: v.acceptanceMode, useRequired: true } : {}),
@@ -200,7 +200,7 @@ export function TaskWorkflow({ context, detail, documents, leader, mode = "actio
       const retentions = olderSources.filter(source => v[`retain_${source.documentId}`]?.trim()).map(source => ({ documentId: source.documentId,
         revisionId: source.revisionId, observedAdoptedRevisionId: source.observedAdoptedRevisionId, reason: v[`retain_${source.documentId}`].trim() }));
       return { ...base, type: "task.start", reason: v.reason, ...(retentions.length ? { retentions } : {}) };
-    }} /><Notice>任务正文的固定修订由服务自动加入依据，无需预建独立文档；额外来源可由 Agent 按固定修订提交。已有且仍适用的保留决定会沿用；新的逐项理由与依据一起封存，上游再改版仍需复核。</Notice></>}
+    }} /><Notice>任务正文的固定修订由服务自动加入依据，无需预建独立文档；额外来源可由智能体按固定修订提交。已有且仍适用的保留决定会沿用；新的逐项理由与依据一起封存，上游再改版仍需复核。</Notice></>}
     {task.state === "in_progress" && <>
       {runReadError && <Notice error>{runReadError}</Notice>}
       <details className="workflow-detail" open={!latest}><summary>{latest ? "提交新的交付（旧记录保留）" : "登记本次交付"}</summary><ActionForm context={context} title="登记交付" fields={[
@@ -212,7 +212,7 @@ export function TaskWorkflow({ context, detail, documents, leader, mode = "actio
       ]} build={v => { const { runId, ...fields } = v; return { ...base, type: "delivery.record", ...fields, ...(runId ? { runId } : {}) }; }} /></details>
       {latest && <>{acceptanceMode === "human_required" && context.principal.identityKind !== "human" && <Notice>本任务等待指定的受信用户本人登录并记录使用结果。</Notice>}
       {(acceptanceMode !== "human_required" || context.principal.identityKind === "human") && <ActionForm context={context} title="记录本次交付的使用观察" fields={[
-        { name: "observer", label: "实际使用者", value: context.principal.actorId }, { name: "observerKind", label: "使用者类型", kind: "select", options: acceptanceMode === "independent_agent" ? [option("agent", "Agent 使用")] : acceptanceMode === "human_required" ? [option("human", "受信本人使用")] : [option("agent", "Agent 使用"), option("human", "人类使用（需实际证据）")] },
+        { name: "observer", label: "实际使用者", value: context.principal.actorId }, { name: "observerKind", label: "使用者类型", kind: "select", options: acceptanceMode === "independent_agent" ? [option("agent", "智能体使用")] : acceptanceMode === "human_required" ? [option("human", "受信本人使用")] : [option("agent", "智能体使用"), option("human", "人类使用（需实际证据）")] },
         { name: "result", label: "使用结果", kind: "select", options: [option("used", "实际使用并有结果"), option("failed", "尝试使用但失败"), option("notUsed", "尚未使用")] },
         { name: "evidence", label: "使用过程、结果与反馈证据", kind: "textarea" }, reasonField,
       ]} build={v => ({ type: "observation.record", taskId: task.id, deliveryId: latest.id, ...v })} />}

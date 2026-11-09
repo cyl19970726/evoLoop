@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { findFixedKnowledgeTitle, matchesKnowledgeRevision, transitionKnowledgeRoute,
+import { findFixedKnowledgeTitle, knowledgeHref, matchesKnowledgeRevision, readKnowledgeRoute, readingOnScreen,
   unresolvedFixedKnowledgeTitle } from "../src/features/knowledge/knowledgeRoute.ts";
 
 const projectId = "044d070e-0000-4000-8000-000000000001";
@@ -9,25 +9,20 @@ const oldRevision = "5d370000-0000-4000-8000-000000000001";
 const requestedRevision = "7326818d-0000-4000-8000-000000000001";
 const path = `/p/${projectId}/knowledge`;
 
-test("switching an already loaded page to a canonical fixed revision detaches the old body", () => {
-  const oldPage = { knowledgeId, revision: oldRevision, body: "旧正文", contentHash: "旧 hash" };
-  const previous = {
-    route: { view: "read" as const, id: knowledgeId, revision: oldRevision },
-    page: oldPage,
-    history: [{ revision: oldRevision }],
-    graph: { watermark: "old" },
-  };
-
-  const next = transitionKnowledgeRoute(previous, `${path}?knowledgeId=${knowledgeId}&knowledgeRevision=${requestedRevision}`, projectId);
-  assert.deepEqual(next.route, { view: "read", id: knowledgeId, revision: requestedRevision });
-  assert.equal(next.page, null);
-  assert.deepEqual(next.history, []);
-  assert.equal(next.graph, null);
-  assert.equal(matchesKnowledgeRevision(oldPage, next.route.id, next.route.revision), false);
-  assert.equal(matchesKnowledgeRevision(next.page, next.route.id), false);
-
-  const failedRead = null;
-  assert.equal(matchesKnowledgeRevision(failedRead, next.route.id, next.route.revision), false);
+test("switching pages keeps the previous page on screen only as the previous page", () => {
+  const projectPage = (revision: string) => ({ projectId, knowledgeId, revision, body: "旧正文" });
+  const oldPage = projectPage(oldRevision);
+  // The next fixed revision is loading: the old body stays, marked previous, never as the revision asked for.
+  assert.deepEqual(readingOnScreen(oldPage, true, projectId, knowledgeId, requestedRevision), { page: oldPage, previous: true });
+  // Even a cached answer that no longer matches the address is previous.
+  assert.equal(readingOnScreen(oldPage, false, projectId, knowledgeId, requestedRevision).previous, true);
+  assert.equal(readingOnScreen(oldPage, false, projectId, "another-page").previous, true);
+  // From a fixed link back to the current version: the fixed body is a placeholder until the current one arrives.
+  assert.equal(readingOnScreen(oldPage, true, projectId, knowledgeId).previous, true);
+  assert.equal(readingOnScreen(projectPage(requestedRevision), false, projectId, knowledgeId, requestedRevision).previous, false);
+  // Another project's answer is never shown.
+  assert.deepEqual(readingOnScreen({ ...oldPage, projectId: "other" }, false, projectId, knowledgeId), { page: null, previous: false });
+  assert.deepEqual(readingOnScreen(undefined, false, projectId, knowledgeId), { page: null, previous: false });
 });
 
 test("an unversioned page response remains readable when the separately fetched listing is stale", () => {
@@ -37,33 +32,27 @@ test("an unversioned page response remains readable when the separately fetched 
   assert.equal(matchesKnowledgeRevision(currentResponse, knowledgeId), true);
   assert.equal(matchesKnowledgeRevision(currentResponse, "another-page"), false);
   assert.equal(matchesKnowledgeRevision(currentResponse, knowledgeId, oldRevision), false);
+  assert.equal(matchesKnowledgeRevision(null, knowledgeId), false);
 });
 
-test("unsupported legacy child path visibly invalidates the prior knowledge selection", () => {
-  const oldPage = { knowledgeId, revision: oldRevision, body: "不能冒充的旧正文" };
-  const previous = {
-    route: { view: "read" as const, id: knowledgeId, revision: oldRevision },
-    page: oldPage,
-    history: [{ revision: oldRevision }],
-    graph: { watermark: "old" },
-  };
-
-  const next = transitionKnowledgeRoute(previous, `/p/${projectId}/knowledge/${knowledgeId}?revision=${requestedRevision}`, projectId);
-  assert.equal(next.route.view, "invalid");
-  assert.equal(next.page, null);
-  assert.deepEqual(next.history, []);
-  assert.equal(next.graph, null);
-  assert.equal(matchesKnowledgeRevision(oldPage, null), false);
+test("unsupported legacy child path and mixed parameters are invalid, not a silent list", () => {
+  assert.equal(readKnowledgeRoute(`/p/${projectId}/knowledge/${knowledgeId}?revision=${requestedRevision}`, projectId).view, "invalid");
+  assert.equal(readKnowledgeRoute(`${path}?knowledgeId=${knowledgeId}&revision=${requestedRevision}`, projectId).view, "invalid");
+  assert.equal(readKnowledgeRoute(`${path}?knowledgeId=${knowledgeId}&knowledgeRevision=${requestedRevision}&candidateId=other`, projectId).view, "invalid");
+  assert.equal(readKnowledgeRoute(`${path}?knowledgeRevision=${requestedRevision}`, projectId).view, "invalid");
+  assert.equal(readKnowledgeRoute(`/p/${projectId}/documents`, projectId).view, "outside");
+  assert.deepEqual(readKnowledgeRoute(`${path}?review=1`, projectId), { view: "review" });
+  assert.deepEqual(readKnowledgeRoute(`${path}?candidateId=c1`, projectId), { view: "review", id: "c1" });
 });
 
-test("canonical reader query rejects legacy revision and mixed selection parameters", () => {
-  const oldQuery = transitionKnowledgeRoute({ route: { view: "list" as const }, page: null, history: [], graph: null },
-    `${path}?knowledgeId=${knowledgeId}&revision=${requestedRevision}`, projectId);
-  assert.equal(oldQuery.route.view, "invalid");
-
-  const mixed = transitionKnowledgeRoute({ route: { view: "list" as const }, page: null, history: [], graph: null },
-    `${path}?knowledgeId=${knowledgeId}&knowledgeRevision=${requestedRevision}&candidateId=other`, projectId);
-  assert.equal(mixed.route.view, "invalid");
+test("knowledge links round-trip and keep the fixed-link parameter order", () => {
+  const fixed = knowledgeHref(projectId, { knowledgeId, revision: requestedRevision });
+  assert.equal(fixed, `${path}?knowledgeId=${knowledgeId}&knowledgeRevision=${requestedRevision}`);
+  assert.deepEqual(readKnowledgeRoute(fixed, projectId), { view: "read", id: knowledgeId, revision: requestedRevision });
+  assert.deepEqual(readKnowledgeRoute(knowledgeHref(projectId, { knowledgeId }), projectId), { view: "read", id: knowledgeId, revision: undefined });
+  assert.deepEqual(readKnowledgeRoute(knowledgeHref(projectId, "review"), projectId), { view: "review" });
+  assert.deepEqual(readKnowledgeRoute(knowledgeHref(projectId, { candidateId: "c1" }), projectId), { view: "review", id: "c1" });
+  assert.deepEqual(readKnowledgeRoute(knowledgeHref(projectId), projectId), { view: "list" });
 });
 
 test("relation titles resolve by both fixed knowledge ID and revision, never by current title alone", () => {

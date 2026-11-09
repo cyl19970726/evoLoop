@@ -18,14 +18,6 @@ export function Alert({ children, kind = "info" }: { children: ReactNode; kind?:
   return <div className={`notice ${kind}`} role={kind === "error" ? "alert" : "status"}>{children}</div>;
 }
 
-export function taskListHref(projectId: string): string {
-  try {
-    const value = sessionStorage.getItem(`evoloop:list:${projectId}`);
-    if (value === href(projectId, "work") || value === href(projectId, "inbox")) return value;
-  } catch { /* optional navigation state */ }
-  return href(projectId, "work");
-}
-
 export function documentReturnHref(projectId: string): string {
   const query = new URLSearchParams(currentPath().split("?")[1] ?? "");
   const requested = query.get("return");

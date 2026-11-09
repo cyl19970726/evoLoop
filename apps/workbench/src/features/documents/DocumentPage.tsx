@@ -1,16 +1,17 @@
 // One document read in full (docs/frontend/pages/documents.md): the center holds the text of the revision the
 // address names; the inner rail keeps the document list; the right column holds version, source, the tasks that
-// reference it and the outline. A fixed historical link stays on its revision and offers the current one.
+// reference it and the outline. A fixed historical link stays on its revision and offers the current one. Markdown
+// saved only as its original (an uploaded file, an import) is read from that original.
 import React, { useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, PanelRight } from "lucide-react";
 import type { DocumentDetail, DocumentRevision } from "@evoloop/contracts";
 import {
-  Button, ErrorState, LoadingState, Notice, RefreshingIndicator, StatusTag, Tabs, TabsContent, TabsList, TabsTrigger, cn,
+  Button, ErrorState, LoadingState, Notice, RefreshingIndicator, StatusTag, Tabs, TabsContent, TabsList, TabsTrigger, UnknownState, cn,
 } from "@evoloop/ui";
 import { api } from "../../shared/api";
 import type { MutationContext } from "../../shared/ActionForm";
-import { queryKeys, useProjectQuery } from "../../shared/query";
+import { fixedContent, queryKeys, useProjectQuery } from "../../shared/query";
 import { href } from "../../shared/routes";
 import { useContextPanel } from "../../shared/ui/ContextPanel";
 import { MarkdownBody } from "../../shared/ui/MarkdownBody";
@@ -19,21 +20,22 @@ import { DocumentFacts } from "./DocumentFacts";
 import { DocumentRail } from "./DocumentRail";
 import { DocumentRevise, canRevise } from "./DocumentRevise";
 import { Foot, HtmlReport } from "./HtmlReport";
-import { kindText, lifecycleLabel, lifecycleTone, readingStanding, returnSourceLabel } from "./documentPresentation";
+import { kindText, lifecycleLabel, lifecycleTone, markdownSource, readingStanding, returnSourceLabel } from "./documentPresentation";
 import { readProblem } from "./useDocumentList";
+import { useOriginal } from "./useOriginal";
 import { useRereadOnReturn } from "./useRereadOnReturn";
 
 /** Markdown typography on design tokens. MarkdownBody keeps its own rendering and link rules. */
-const prose = cn("text-body leading-[1.8] text-foreground",
+const prose = cn("text-body leading-(--leading-reading) text-foreground",
   "[&_:is(p,li,td,th,h1,h2,h3,h4,dt,dd)]:text-foreground",
-  "[&_h1]:mb-3 [&_h1]:mt-9 [&_h1]:text-heading [&_h1]:font-semibold [&_h1]:leading-[1.35]",
-  "[&_h2]:mb-3 [&_h2]:mt-9 [&_h2]:text-heading [&_h2]:font-semibold [&_h2]:leading-[1.35]",
+  "[&_h1]:mb-3 [&_h1]:mt-9 [&_h1]:text-heading [&_h1]:font-semibold [&_h1]:leading-(--leading-tight)",
+  "[&_h2]:mb-3 [&_h2]:mt-9 [&_h2]:text-heading [&_h2]:font-semibold [&_h2]:leading-(--leading-tight)",
   "[&_h3]:mb-2 [&_h3]:mt-7 [&_h3]:text-body [&_h3]:font-semibold",
   "[&_h4]:mb-2 [&_h4]:mt-6 [&_h4]:font-semibold",
   "[&_p]:my-3 [&_ul]:my-3 [&_ol]:my-3 [&_ul]:list-disc [&_ol]:list-decimal [&_ul]:pl-6 [&_ol]:pl-6 [&_li]:my-1",
   "[&_a]:text-primary [&_a]:underline [&_a]:underline-offset-2",
-  "[&_code]:rounded-sm [&_code]:bg-muted [&_code]:px-1 [&_code]:font-mono [&_code]:text-[0.88em]",
-  "[&_pre]:my-4 [&_pre]:overflow-x-auto [&_pre]:rounded-lg [&_pre]:bg-muted [&_pre]:p-4 [&_pre]:text-small [&_pre]:leading-[1.6] [&_pre_code]:bg-transparent [&_pre_code]:p-0",
+  "[&_code]:rounded-sm [&_code]:bg-muted [&_code]:px-1 [&_code]:font-mono [&_code]:text-small",
+  "[&_pre]:my-4 [&_pre]:overflow-x-auto [&_pre]:rounded-lg [&_pre]:bg-muted [&_pre]:p-4 [&_pre]:text-small [&_pre]:leading-(--leading-body) [&_pre_code]:bg-transparent [&_pre_code]:p-0",
   "[&_table]:my-4 [&_table]:block [&_table]:max-w-full [&_table]:overflow-x-auto [&_th]:border [&_th]:border-border [&_th]:bg-muted [&_th]:px-3 [&_th]:py-1.5 [&_th]:text-left [&_th]:font-semibold [&_td]:border [&_td]:border-border [&_td]:px-3 [&_td]:py-1.5");
 
 function useDocument(projectId: string, id: string, selectedRevision?: string) {
@@ -43,8 +45,8 @@ function useDocument(projectId: string, id: string, selectedRevision?: string) {
       || value.adopted && (value.adopted.projectId !== projectId || value.adopted.documentId !== id)) throw new Error("文档响应与当前项目不符");
     return value;
   });
-  // A fixed revision never changes; it is read once and kept outside the rereads that follow the current version.
-  const fixed = useProjectQuery(projectId, ["fixed-revision", id, selectedRevision ?? "", "revision"], async () => {
+  // A fixed revision never changes; it is read once and kept outside the rereads that follow the current version and writes.
+  const fixed = useProjectQuery(projectId, [fixedContent, id, selectedRevision ?? "", "revision"], async () => {
     const value = await api().documentRevision(projectId, id, selectedRevision!);
     if (value.projectId !== projectId || value.documentId !== id || value.id !== selectedRevision) throw new Error("文档响应与所选的固定修订不符");
     return value;
@@ -53,8 +55,8 @@ function useDocument(projectId: string, id: string, selectedRevision?: string) {
   return { detail, fixed, revision };
 }
 
-export function DocumentPage({ context, refresh, projectId, id, selectedRevision }: {
-  context: MutationContext; refresh: number; projectId: string; id: string; selectedRevision?: string;
+export function DocumentPage({ context, projectId, id, selectedRevision }: {
+  context: MutationContext; projectId: string; id: string; selectedRevision?: string;
 }) {
   const client = useQueryClient();
   const body = useRef<HTMLElement | null>(null);
@@ -63,7 +65,7 @@ export function DocumentPage({ context, refresh, projectId, id, selectedRevision
     void client.invalidateQueries({ queryKey: queryKeys.project(projectId, "document", id) });
     if (fixed.isError) void fixed.refetch();
   };
-  const active = useRereadOnReturn(reread, refresh);
+  const active = useRereadOnReturn(reread);
   const scope = `${context.principal.actorId}:${projectId}`;
   // Read from the address while this page is on screen: the same page can be opened from several sources.
   const returnTo = active ? documentReturnHref(projectId) : href(projectId, "documents");
@@ -109,7 +111,7 @@ function Reader({ context, projectId, detail, revision, body, rail, back, checki
             <PanelRight aria-hidden="true" />版本与来源</Button>}
         </div>
       </div>
-      <h1 tabIndex={-1} className={cn("font-semibold leading-[1.3] outline-none [overflow-wrap:anywhere]", html ? "text-heading" : "text-title")}>{document.title}</h1>
+      <h1 tabIndex={-1} className={cn("font-semibold leading-(--leading-tight) outline-none [overflow-wrap:anywhere]", html ? "text-heading" : "text-title")}>{document.title}</h1>
       <p className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-label text-text-secondary">
         <StatusTag tone={lifecycleTone[document.status]} label={lifecycleLabel[document.status]} />
         <span>{kindText(document.kind)}</span>
@@ -133,18 +135,35 @@ function Reader({ context, projectId, detail, revision, body, rail, back, checki
     </section>
       : <>
         <section aria-label="文档完整正文" ref={body}>
-          {revision.body === null ? <ErrorState title="这一版没有可读的正文" happened="Markdown 正文没有随这一版保存。" next="可以回到来源核对，或阅读其他版本。" />
-            : <Tabs defaultValue="rendered">
-              <TabsList aria-label="阅读方式" className="mb-4"><TabsTrigger value="rendered">排版</TabsTrigger><TabsTrigger value="source">原文</TabsTrigger></TabsList>
-              <TabsContent value="rendered" className={prose}>
-                <MarkdownBody source={revision.body} identity={revision.id} omitLeadingTitle={document.title} projectId={projectId} />
-              </TabsContent>
-              <TabsContent value="source">
-                <pre className="overflow-x-auto whitespace-pre-wrap rounded-lg bg-muted p-4 font-mono text-small leading-[1.7] [overflow-wrap:anywhere]">{revision.body}</pre>
-              </TabsContent>
-            </Tabs>}
+          <MarkdownText projectId={projectId} revision={revision} title={document.title} />
         </section>
         {revise && <details data-legacy="" className="workflow-detail mt-10"><summary>修订与发布</summary>{revise}</details>}
       </>}
   </div>;
+}
+
+/**
+ * The Markdown text of the revision on screen: saved with the revision, or read from its original when the revision
+ * keeps only the original (an uploaded .md file, an import). Reading, a failed read and an unusable original are each
+ * said as they are; a summary never stands in for the text.
+ */
+function MarkdownText({ projectId, revision, title }: { projectId: string; revision: DocumentRevision; title: string }) {
+  const original = useOriginal(projectId, revision.documentId, revision.id, revision.body === null);
+  const source = markdownSource(revision.body, original);
+  const retry = () => void original.refetch();
+  if (source.state === "reading") return <LoadingState lines={6} label="正在读取原件" />;
+  if (source.state === "failed") return <ErrorState title="原件没有读回" happened={readProblem(source.error, "这份原件")}
+    next="可以重试；正文要从固定原件读出，不用摘要代替。" action={<Button size="compact" onClick={retry}>重试读取</Button>} />;
+  if (source.state === "unavailable") return <UnknownState title="原件暂时不能完整读取" lastKnown="这一版已登记原件"
+    reason={`原件不可用或没有通过校验（${source.reason}）`} howToCheck="检查存储与登记状态后重新核对。"
+    action={<Button size="compact" onClick={retry}>重新核对</Button>} />;
+  return <Tabs defaultValue="rendered">
+    <TabsList aria-label="阅读方式" className="mb-4"><TabsTrigger value="rendered">排版</TabsTrigger><TabsTrigger value="source">原文</TabsTrigger></TabsList>
+    <TabsContent value="rendered" className={prose}>
+      <MarkdownBody source={source.text} identity={revision.id} omitLeadingTitle={title} projectId={projectId} />
+    </TabsContent>
+    <TabsContent value="source">
+      <pre className="overflow-x-auto whitespace-pre-wrap rounded-lg bg-muted p-4 font-mono text-small leading-(--leading-body) [overflow-wrap:anywhere]">{source.text}</pre>
+    </TabsContent>
+  </Tabs>;
 }

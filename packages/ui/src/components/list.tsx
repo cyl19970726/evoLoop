@@ -14,6 +14,7 @@ export interface ListRowProps {
   selected?: boolean | undefined;
   /** A link row when set; otherwise a button row when onSelect is set; otherwise static. */
   href?: string | undefined;
+  /** Runs when the row is chosen: the button row's action, or a note taken as a link row is followed. */
   onSelect?: () => void | undefined;
   className?: string | undefined;
 }
@@ -36,7 +37,7 @@ export function ListRow({ leading, title, meta, trailing, selected, href, onSele
     (href || onSelect) && "cursor-pointer",
     className,
   );
-  if (href) return <a href={href} aria-current={selected ? "page" : undefined} className={rowClass}>{body}</a>;
+  if (href) return <a href={href} aria-current={selected ? "page" : undefined} onClick={onSelect} className={rowClass}>{body}</a>;
   if (onSelect) return <button type="button" aria-current={selected ? "true" : undefined} onClick={onSelect} className={cn(rowClass, "font-[inherit]")}>{body}</button>;
   return <div className={rowClass}>{body}</div>;
 }

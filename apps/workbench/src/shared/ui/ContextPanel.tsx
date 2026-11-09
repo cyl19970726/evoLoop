@@ -130,7 +130,7 @@ export function ContextPanelColumn({ embedded = false }: { embedded?: boolean } 
   const { state, update, inline, host, providers, tabs, active, setActive, close, hasContent } = panel;
   const activeTab = tabs.find(tab => tab.id === active);
   const showFacts = active === "facts" || !activeTab;
-  const body = <div className="flex h-full min-h-0 flex-col" data-ui="">
+  const body = <div className="flex h-full min-h-0 flex-1 flex-col" data-ui="">
     <div className="flex items-center gap-1 border-b border-border px-2 py-1.5">
       <div role="tablist" aria-label="右栏内容" className="flex min-w-0 flex-1 gap-1 overflow-x-auto">
         {providers > 0 && <button role="tab" type="button" aria-selected={showFacts} onClick={() => setActive("facts")}
@@ -160,8 +160,11 @@ export function ContextPanelColumn({ embedded = false }: { embedded?: boolean } 
     <div hidden ref={host} />
     {hasContent && <div data-ui="" className={embedded ? "absolute right-2 top-2" : "fixed right-2 top-1.5 z-40 compact:right-4 compact:top-3 compact:z-20"}><IconButton label="展开右栏" icon={<PanelRightOpen size={17} />} variant="secondary" onClick={() => update({ ...state, open: true })} /></div>}
   </>;
+  const bottom = typeof window !== "undefined" && !window.matchMedia("(min-width: 760px)").matches;
   if (!inline) return <Sheet open onOpenChange={open => update({ ...state, open })}>
-    <SheetContent side={typeof window !== "undefined" && window.matchMedia("(min-width: 760px)").matches ? "right" : "bottom"} className="p-0">
+    {/* The bottom quick view keeps one height (layout.md: about nine tenths of the screen) so content that grows while
+        it renders, such as a diagram in a document, never moves the sheet or its tabs. */}
+    <SheetContent side={bottom ? "bottom" : "right"} className={cn("p-0", bottom && "h-[85dvh]")}>
       <SheetTitle className="sr-only">右栏</SheetTitle><SheetDescription className="sr-only">当前对象的信息与在旁边打开的对象</SheetDescription>
       {body}
     </SheetContent>

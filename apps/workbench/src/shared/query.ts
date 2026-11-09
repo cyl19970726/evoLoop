@@ -2,7 +2,7 @@
 // project), so switching project or identity can cancel and drop exactly that scope. A reread keeps what is
 // on screen and reports `checking` until the answer arrives; the cache only speeds up reads and never decides
 // which version is current.
-import { QueryClient, keepPreviousData, useQuery, type QueryClient as Client, type QueryKey } from "@tanstack/react-query";
+import { QueryClient, keepPreviousData, useInfiniteQuery, useQuery, type InfiniteData, type QueryClient as Client, type QueryKey } from "@tanstack/react-query";
 import { ApiError } from "./api";
 
 export const queryKeys = {
@@ -34,24 +34,62 @@ export async function leaveProject(client: Client, projectId: string): Promise<v
   client.removeQueries({ queryKey });
 }
 
-/** After a write in a project, every read of that project is stale and the visible ones reread. */
+/**
+ * The first key part of reads whose content never changes once saved: a fixed document revision and its original
+ * (an HTML report with its assets can be 16 MiB). They are read once: a write does not make them stale and they never
+ * reread on their own. Leaving the project still drops them.
+ */
+export const fixedContent = "fixed-revision";
+
+/** After a write in a project, every read of that project is stale and the visible ones reread; fixed content stays. */
 export function projectChanged(client: Client, projectId: string): Promise<void> {
-  return client.invalidateQueries({ queryKey: queryKeys.project(projectId) });
+  return client.invalidateQueries({ queryKey: queryKeys.project(projectId), predicate: query => query.queryKey[2] !== fixedContent });
+}
+
+export interface ProjectQueryOptions { enabled?: boolean; refetchInterval?: number | false; keepPrevious?: boolean }
+
+/** What useProjectQuery asks of TanStack Query; tests observe a read through the same options. */
+export function projectQueryOptions<T>(projectId: string, key: readonly unknown[], read: (signal: AbortSignal) => Promise<T>,
+  options: ProjectQueryOptions = {}) {
+  return {
+    queryKey: queryKeys.project(projectId, ...key) as QueryKey,
+    queryFn: ({ signal }: { signal: AbortSignal }) => read(signal),
+    enabled: !!projectId && (options.enabled ?? true),
+    ...(key[0] === fixedContent ? { staleTime: Infinity } : {}),
+    ...(options.refetchInterval !== undefined ? { refetchInterval: options.refetchInterval } : {}),
+    ...(options.keepPrevious ? { placeholderData: keepPreviousData } : {}),
+  };
 }
 
 /**
  * A project read. `checking` is true while a reread runs and the previous answer is still on screen. With
  * `keepPrevious`, a changed key (another filter, a longer range) keeps the last answer on screen until the new one
- * arrives, instead of starting over empty.
+ * arrives, instead of starting over empty. A key that starts with `fixedContent` is read once.
  */
 export function useProjectQuery<T>(projectId: string, key: readonly unknown[], read: (signal: AbortSignal) => Promise<T>,
-  options: { enabled?: boolean; refetchInterval?: number | false; keepPrevious?: boolean } = {}) {
-  const query = useQuery({
-    queryKey: queryKeys.project(projectId, ...key) as QueryKey,
-    queryFn: ({ signal }) => read(signal),
-    enabled: !!projectId && (options.enabled ?? true),
-    ...(options.refetchInterval !== undefined ? { refetchInterval: options.refetchInterval } : {}),
-    ...(options.keepPrevious ? { placeholderData: keepPreviousData } : {}),
-  });
+  options: ProjectQueryOptions = {}) {
+  const query = useQuery(projectQueryOptions(projectId, key, read, options));
   return { ...query, checking: query.isFetching && query.data !== undefined };
+}
+
+/**
+ * A paged project read (a list API with cursors). Pages load on request and stay together under one key, so every
+ * component showing the list shares them; a reread refetches the loaded pages in order. Not retried: a failed page
+ * is reported and loaded again on request, never silently repeated.
+ */
+export function useProjectPages<T extends { nextCursor: string | null }>(projectId: string, key: readonly unknown[],
+  read: (cursor: string | undefined, signal: AbortSignal) => Promise<T>, options: { enabled?: boolean } = {}) {
+  const query = useInfiniteQuery<T, Error, InfiniteData<T, string | null>, QueryKey, string | null>({
+    queryKey: queryKeys.project(projectId, ...key) as QueryKey,
+    queryFn: ({ pageParam, signal }) => read(pageParam ?? undefined, signal),
+    initialPageParam: null,
+    // A cursor seen before would loop; the list stops there and reports it (`repeatedCursor`).
+    getNextPageParam: (last, _pages, lastCursor, cursors) =>
+      last.nextCursor && last.nextCursor !== lastCursor && !cursors.includes(last.nextCursor) ? last.nextCursor : null,
+    enabled: !!projectId && (options.enabled ?? true),
+    retry: false,
+  });
+  const last = query.data?.pages.at(-1);
+  return { ...query, checking: query.isFetching && !query.isFetchingNextPage && query.data !== undefined,
+    repeatedCursor: !!last?.nextCursor && !query.hasNextPage };
 }

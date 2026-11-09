@@ -130,9 +130,9 @@ export function SessionNavigation({ token, projectId, selectedId, onNavigate, st
         <SheetDescription>同一职责可以有多个承接的智能体。登记不表示已发送消息或开始执行。</SheetDescription>
         <div className="grid gap-3">
           <article className="rounded-lg bg-muted p-4"><h3 className="font-medium">连接已有会话</h3><p className="mt-1 text-small text-text-secondary">登记原会话引用，核实打开、读取和人工接单能力。</p>
-            <a className="mt-2 inline-block text-small text-primary" href={`${href(projectId, "runtime")}?view=roles`} onClick={() => { setConnectOpen(false); onNavigate(); }}>查看职责档案并连接</a></article>
+            <a className="mt-2 inline-block text-small text-primary" href={href(projectId, "roles")} onClick={() => { setConnectOpen(false); onNavigate(); }}>查看职责档案并连接</a></article>
           <article className="rounded-lg bg-muted p-4"><h3 className="font-medium">建立受管智能体</h3><p className="mt-1 text-small text-text-secondary">使用项目授权预留，之后核实运行状态。</p>
-            <a className="mt-2 inline-block text-small text-primary" href={`${href(projectId, "runtime")}?view=execution`} onClick={() => { setConnectOpen(false); onNavigate(); }}>打开受管执行入口</a></article>
+            <a className="mt-2 inline-block text-small text-primary" href={href(projectId, "runtime")} onClick={() => { setConnectOpen(false); onNavigate(); }}>打开受管执行入口</a></article>
         </div>
       </SheetContent>
     </Sheet>
