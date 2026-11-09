@@ -3,7 +3,7 @@
 // challenges, related pages and versions of the open page (or the open candidate's sources). Reads are project queries;
 // writes go through the knowledge API and reread with context.onChanged; publish and retract keep an operation receipt
 // until the outside result is reconciled.
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { KnowledgeCandidateRecord, KnowledgeRevision } from "@evoloop/contracts/knowledge";
 import { Button, Notice, RefreshingIndicator, cn } from "@evoloop/ui";
 import { errorText, isUnconfirmed } from "../../shared/api";
@@ -53,13 +53,21 @@ export function KnowledgePanel({ context }: { context: MutationContext; refresh:
   const canWrite = principal.permissions.includes("write");
   const canReview = principal.permissions.includes("review");
   const [route, setRoute] = useState<KnowledgeRoute>(() => routeHere(projectId));
+  // Only a page-to-page switch keeps the previous page on screen while the next loads; opening a page from the index
+  // or from 候选与审阅 starts from a loading state instead of resurfacing a page read earlier.
+  const routeNow = useRef(route);
+  routeNow.current = route;
+  const [carryPrevious, setCarryPrevious] = useState(false);
   const [composing, setComposing] = useState(false);
   const [message, setMessage] = useState<Message | null>(null);
+  // A note written together with a navigation (候选已保存) is handed to the view it opens.
+  const nextMessage = useRef<Message | null>(null);
   useEffect(() => onNavigate(() => {
     const next = readKnowledgeRoute(currentPath(), projectId);
     if (next.view === "outside") return;
+    setCarryPrevious(routeNow.current.view === "read" && next.view === "read");
     // A result note belongs to the view it was written in; opening another view drops it (receipts stay).
-    setRoute(next); setComposing(false); setMessage(null);
+    setRoute(next); setComposing(false); setMessage(nextMessage.current); nextMessage.current = null;
   }), [projectId]);
   const [filter, setFilter] = useState<KnowledgeFilter>(emptyFilter);
   const [pageDepth, setPageDepth] = useState(1);
@@ -87,7 +95,8 @@ export function KnowledgePanel({ context }: { context: MutationContext; refresh:
   const loadedPages = index.pages.data?.items ?? [];
   const visible = filterKnowledge(loadedPages, filter);
   const directory = knowledgeDirectory(visible);
-  const reading = readingOnScreen(readQuery.data?.page, readQuery.isPlaceholderData, projectId, selectedId, fixedRevision);
+  const onScreen = readingOnScreen(readQuery.data?.page, readQuery.isPlaceholderData, projectId, selectedId, fixedRevision);
+  const reading = onScreen.previous && !carryPrevious ? { page: null, previous: false } : onScreen;
   const readingData = reading.page ? readQuery.data : undefined;
   const openTopic = readingData && !reading.previous && readingData.page.pageType === "topic" && readingData.current === readingData.page.revision ? readingData.page : null;
   const list: DirectoryList = {
@@ -172,8 +181,10 @@ export function KnowledgePanel({ context }: { context: MutationContext; refresh:
         sources: [{ documentId: source.documentId, revisionId: draft.sourceRevision, fragment: null }],
         relations: target ? [{ toKnowledgeId: target.knowledgeId, toRevision: draft.relationRevision, type: draft.relationType, sourceKeys: [source.sourceKey] }] : [] });
       setDraft(emptyDraft);
-      navigate(knowledgeHref(projectId, { candidateId: result.candidateId }));
-      setMessage({ tone: "info", title: "候选已保存", detail: "还要经过审阅和发布，当前认识才会改变。" });
+      const saved: Message = { tone: "info", title: "候选已保存", detail: "还要经过审阅和发布，当前认识才会改变。" };
+      setComposing(false);
+      nextMessage.current = saved;
+      if (!navigate(knowledgeHref(projectId, { candidateId: result.candidateId }))) { nextMessage.current = null; setMessage(saved); }
       changed();
     } catch (cause) {
       setMessage({ tone: "error", title: isUnconfirmed(cause) ? "候选是否保存没有确认" : "候选没有保存",

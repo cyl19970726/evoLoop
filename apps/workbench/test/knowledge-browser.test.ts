@@ -75,7 +75,7 @@ test("知识空间 reads, filters, switches pages without collapsing the right c
         else if (pageMatch && pageMatch[2] === "/history") value = { items: [summary(n, 2), { ...summary(n, 1), validity: "valid" }], nextCursor: null, watermark: 3 };
         else if (pageMatch && pageMatch[2] === "/graph") value = graph(n);
         else if (pageMatch) {
-          if (n === 1) await new Promise(done => setTimeout(done, 700));
+          if (n === 1 || n === 4) await new Promise(done => setTimeout(done, 700));
           const wanted = url.searchParams.get("revision");
           value = revision(n, wanted === rid(n, 1) ? 1 : 2);
         }
@@ -151,7 +151,7 @@ test("知识空间 reads, filters, switches pages without collapsing the right c
     assert.equal(await directory.getByRole("link", { name: /窄屏不能换组件树/ }).count(), 0);
     await directory.getByRole("searchbox", { name: "搜索知识" }).fill("");
     await directory.getByLabel("有效状态筛选").selectOption("needs_review");
-    assert.match(await directory.innerText(), /已载入范围没有匹配的知识页/);
+    await directory.getByText("已载入范围没有匹配的知识页").waitFor();
     await directory.getByLabel("有效状态筛选").selectOption("all");
     if (shots) await page.screenshot({ path: `${shots}/knowledge-index-1440.png` });
 
@@ -188,13 +188,21 @@ test("知识空间 reads, filters, switches pages without collapsing the right c
     assert.equal(await panelWidth(), widthBefore, "the right column keeps its width while the next page loads");
     await main.getByRole("heading", { name: "右栏只在要时打开", level: 1 }).waitFor();
     assert.equal(await panelWidth(), widthBefore);
-    assert.notEqual(await page.evaluate(() => document.activeElement?.tagName), "BODY", "focus is not dropped on the page body");
+    await page.waitForFunction(() => !!document.activeElement && document.activeElement !== document.body, undefined, { timeout: 3000 });
 
     // The open topic lists its members under it in the rail.
     await directory.getByRole("link", { name: /布局专题/ }).click();
     await main.getByRole("heading", { name: "布局专题", level: 1 }).waitFor();
     await directory.getByRole("list", { name: "布局专题的成员" }).getByRole("link", { name: /右栏只在要时打开/ }).waitFor();
     assert.match(await main.innerText(), /这一版没有登记来源，正文待复核/);
+
+    // From the index, a page opens from a loading state, not from the page read before.
+    await rail.getByRole("navigation", { name: "文档与知识" }).getByRole("link", { name: "知识" }).click();
+    await main.getByRole("heading", { name: "知识空间", level: 1 }).waitFor();
+    await directory.getByRole("link", { name: /列表要写明覆盖范围/ }).click();
+    await main.getByText("正在读取「列表要写明覆盖范围」").waitFor({ state: "attached" });
+    assert.equal(await page.getByText("下面仍是上一页").count(), 0);
+    await main.getByRole("heading", { name: "列表要写明覆盖范围", level: 1 }).waitFor();
 
     // ---- Propose a candidate, reject the existing one, accept ours, publish (result unknown), reconcile.
     await page.locator("aside[aria-label=项目导航]").getByRole("navigation", { name: "文档与知识" }).getByRole("link", { name: "知识" }).click();
