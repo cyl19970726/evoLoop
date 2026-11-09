@@ -72,3 +72,6 @@
 .allocation-backlink-relations .discussion-relation-card{margin:0;background:#fff}
 @media(max-width:1250px){.discussion-exploration-grid{grid-template-columns:minmax(190px,.8fr) minmax(320px,1.3fr)}.discussion-exploration-relations{grid-column:1/-1;min-height:0}}
 @media(max-width:850px){.team-workspace .discussion-toolbar{align-items:stretch;flex-direction:column}.discussion-exploration-grid{grid-template-columns:1fr;gap:12px}.discussion-exploration-column{min-height:0;padding:18px}.discussion-exploration-relations{grid-column:auto}}
+
+/* Organization review list. Moved from documents/document.css, which loaded only after a document page had opened. */
+.organization-reviews .page-title-row h2{font-size:24px;margin:0 0 8px}.organization-reviews .table-wrap{max-width:100%;overflow:auto;contain:paint}.organization-reviews table{width:100%;min-width:650px}.organization-reviews td{vertical-align:top;padding:18px}.organization-reviews td:first-child{width:38%}.organization-reviews td span,.organization-reviews td small{display:block}.organization-reviews .list-toolbar{flex-wrap:wrap}

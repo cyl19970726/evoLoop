@@ -82,8 +82,9 @@ test("built HTML Document uses the available reading space and keeps fixed revis
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button", { name: "进入", exact: true }).click();
   await page.getByRole("heading", { name: document.title, exact: true }).waitFor();
-  const iframe = page.locator(".doc-html-frame");
+  const iframe = page.locator("iframe[data-report-frame]");
   await iframe.waitFor();
+  assert.equal(await iframe.getAttribute("sandbox"), "", "the report frame runs no scripts and has no same-origin access");
   const frame = await iframe.contentFrame();
   assert.ok(frame, "sandboxed HTML frame is present");
   await frame.locator("#last").waitFor();
@@ -91,7 +92,9 @@ test("built HTML Document uses the available reading space and keeps fixed revis
   assert.equal(await frame.locator("#middle h2").innerText(), "FIXED-MIDDLE");
   assert.equal(await frame.locator("#last h2").innerText(), "FIXED-LAST");
   assert.equal(await frame.locator("#report-image").evaluate((image: HTMLImageElement) => image.complete && image.naturalWidth > 0), true);
-  assert.equal(await page.getByText("所读为固定历史版").count() > 0, true);
+  // A fixed historical link stays on its revision, says so while reading, and offers the current one.
+  await page.getByText(/你在读固定的历史版本/).waitFor();
+  assert.equal(await page.getByRole("link", { name: "查看当前版" }).getAttribute("href"), `/p/${projectId}/documents/${documentId}?revision=${currentId}`);
   assert.equal(await frame.locator("body").getByText("CURRENT-FIRST").count(), 0);
 
   const geometryFailures: string[] = [];
@@ -100,9 +103,10 @@ test("built HTML Document uses the available reading space and keeps fixed revis
     await page.setViewportSize({ width, height });
     const box = await iframe.evaluate((element: HTMLIFrameElement) => {
       const rect = element.getBoundingClientRect();
-      const main = document.querySelector(".document-read-main")!.getBoundingClientRect();
-      const layout = document.querySelector(".document-read-layout")!.getBoundingClientRect();
-      const page = document.querySelector(".document-reading-page")!.getBoundingClientRect();
+      const body = element.closest('section[aria-label="文档完整正文"]')!;
+      const main = body.getBoundingClientRect();
+      const layout = main;
+      const page = body.parentElement!.getBoundingClientRect();
       let visibleBottom = Math.min(rect.bottom, innerHeight), visibleTop = Math.max(rect.top, 0);
       let ancestorBottom = Infinity;
       const clippers: Array<{ name: string; bottom: number; overflow: string }> = [];
@@ -131,39 +135,42 @@ test("built HTML Document uses the available reading space and keeps fixed revis
       if (box.frameHeight < height * 0.42) geometryFailures.push(`${width}: narrow iframe too short (${box.frameHeight}px)`);
       if (box.clipped > 2 && box.frameBottom <= height) geometryFailures.push(`${width}: narrow iframe clipped by ancestor (${box.clipped}px)`);
     }
-    if (width === 1181) assert.equal(await page.locator(".document-read-layout").evaluate(el => getComputedStyle(el).display), "grid");
   }
 
   // A short phone window must preserve a usable iframe and let the outer page reach content below it.
   await page.setViewportSize({ width: 390, height: 560 });
   const short = await iframe.evaluate(el => ({ frame: Math.round(el.getBoundingClientRect().height),
-    main: Math.round(document.querySelector(".document-read-main")!.getBoundingClientRect().height),
+    main: Math.round(el.closest('section[aria-label="文档完整正文"]')!.getBoundingClientRect().height),
     outerScroll: document.scrollingElement!.scrollHeight - innerHeight,
-    overflow: getComputedStyle(document.querySelector(".document-reading-page")!).overflowY }));
+    overflow: getComputedStyle(el.closest('section[aria-label="文档完整正文"]')!.parentElement!).overflowY }));
   assert.ok(short.main >= 220 && short.frame >= 150, `short phone reader stays usable: ${JSON.stringify(short)}`);
   assert.ok(short.outerScroll > 0 && short.overflow === "visible", `short phone page can scroll: ${JSON.stringify(short)}`);
   await page.evaluate(() => scrollTo(0, document.scrollingElement!.scrollHeight));
   assert.ok(await page.evaluate(() => scrollY) > 0, "short phone outer page reaches its bottom");
   await page.evaluate(() => scrollTo(0, 0));
 
-  // At 900px the evidence rail overlays a single reading column and scrolls independently.
+  // At 900px version and source open as a drawer over the reader (the report keeps the full width) and scroll on their own.
   await page.setViewportSize({ width: 900, height: 560 });
-  await page.getByRole("button", { name: "查看版本与来源" }).click();
-  const narrowAside = await page.locator(".document-read-aside").evaluate(el => {
-    const layout = document.querySelector(".document-read-layout")!;
-    const layoutBox = layout.getBoundingClientRect(), asideBox = el.getBoundingClientRect();
-    el.scrollTop = el.scrollHeight;
-    return { columns: getComputedStyle(layout).gridTemplateColumns, position: getComputedStyle(el).position,
-      layoutWidth: Math.round(layoutBox.width), asideWidth: Math.round(asideBox.width),
-      asideHeight: Math.round(asideBox.height), layoutHeight: Math.round(layoutBox.height),
-      scrollTop: el.scrollTop, scrollable: el.scrollHeight - el.clientHeight };
+  const frameWidth = await iframe.evaluate(el => Math.round(el.getBoundingClientRect().width));
+  await page.getByRole("button", { name: "版本与来源" }).click();
+  const drawer = page.getByRole("dialog");
+  await drawer.getByRole("region", { name: "文档版本、来源与关联" }).waitFor();
+  await page.waitForFunction("(() => { const box = document.querySelector('[role=dialog]')?.getBoundingClientRect(); return !!box && box.left >= 0 && box.right <= innerWidth + 0.5 && document.getAnimations().length === 0; })()");
+  await drawer.getByText("完整标识与哈希").click();
+  const narrowAside = await drawer.evaluate(el => {
+    const box = el.getBoundingClientRect();
+    let scroller = el.querySelector<HTMLElement>('[role="region"]')!;
+    while (scroller !== el && getComputedStyle(scroller).overflowY !== "auto") scroller = scroller.parentElement!;
+    scroller.scrollTop = scroller.scrollHeight;
+    return { left: Math.round(box.left), right: Math.round(box.right), height: Math.round(box.height), width: innerWidth, viewport: innerHeight,
+      scrollTop: scroller.scrollTop, scrollable: scroller.scrollHeight - scroller.clientHeight };
   });
-  assert.equal(narrowAside.position, "absolute");
-  assert.equal(narrowAside.columns.trim().split(/\s+/).length, 1, `900px reader uses one column: ${JSON.stringify(narrowAside)}`);
-  assert.ok(narrowAside.asideWidth <= narrowAside.layoutWidth && narrowAside.asideHeight <= narrowAside.layoutHeight + 2,
-    `900px rail fits its overlay: ${JSON.stringify(narrowAside)}`);
-  assert.ok(narrowAside.scrollable > 0 && narrowAside.scrollTop > 0, `900px rail scrolls: ${JSON.stringify(narrowAside)}`);
-  await page.getByRole("button", { name: "收起版本与来源" }).click();
+  assert.ok(narrowAside.left >= 0 && narrowAside.right <= narrowAside.width && narrowAside.height <= narrowAside.viewport,
+    `900px drawer fits the window: ${JSON.stringify(narrowAside)}`);
+  assert.ok(narrowAside.scrollable > 0 && narrowAside.scrollTop > 0, `900px drawer scrolls: ${JSON.stringify(narrowAside)}`);
+  assert.equal(await iframe.evaluate(el => Math.round(el.getBoundingClientRect().width)), frameWidth, "the report keeps its width under the drawer");
+  await page.getByRole("button", { name: "关闭右栏" }).click();
+  await drawer.waitFor({ state: "hidden" });
 
   // Reading happens inside the same fixed, isolated frame at the first, middle, image, and last sections.
   await page.setViewportSize({ width: 1201, height: 819 });
@@ -181,24 +188,21 @@ test("built HTML Document uses the available reading space and keeps fixed revis
   await frame.locator("#report-image").evaluate(el => el.scrollIntoView({ block: "center" }));
   assert.equal(await frame.locator("#report-image").evaluate((image: HTMLImageElement) => image.getBoundingClientRect().bottom > 0 && image.getBoundingClientRect().top < innerHeight), true);
 
-  const modernToggle = page.getByRole("button", { name: "查看版本与来源" });
-  if (await modernToggle.count()) {
-    await modernToggle.click();
-    assert.equal(await page.getByRole("button", { name: "收起版本与来源" }).getAttribute("aria-expanded"), "true");
-    assert.equal(await page.getByRole("complementary", { name: "文档版本、来源与关联" }).isVisible(), true);
-    await page.getByRole("button", { name: "收起版本与来源" }).click();
-    assert.equal(await page.getByRole("complementary", { name: "文档版本、来源与关联" }).isVisible(), false);
-  } else {
-    await page.getByRole("button", { name: "展开版本、来源与关联" }).click();
-    assert.equal(await page.getByRole("button", { name: "收起版本、来源与关联" }).getAttribute("aria-expanded"), "true");
-    assert.equal(await page.getByRole("complementary", { name: "文档版本、来源与关联" }).isVisible(), true);
-    await page.getByRole("button", { name: "收起版本、来源与关联" }).click();
-    assert.equal(await page.getByRole("complementary", { name: "文档版本、来源与关联" }).isVisible(), false);
-  }
-  await page.locator(".doc-continuous-secondary > summary").click();
-  await page.locator(".doc-continuous-secondary .revision-body > summary").click();
-  assert.equal(await page.locator(".doc-continuous-secondary .revision-body pre").isVisible(), true);
-  assert.match(await page.locator(".doc-continuous-secondary .revision-body pre").innerText(), /FIXED-LAST/);
+  // At 1201px the right column sits beside the report; the toggle opens and closes it and the frame keeps reading.
+  const toggle = page.getByRole("button", { name: "版本与来源" });
+  const facts = page.getByRole("region", { name: "文档版本、来源与关联" });
+  await toggle.click();
+  assert.equal(await toggle.getAttribute("aria-expanded"), "true");
+  await facts.waitFor();
+  assert.equal(await page.getByRole("dialog").count(), 0, "from 1100px the column is inline, not a drawer");
+  assert.match(await facts.innerText(), /固定历史版/);
+  await toggle.click();
+  assert.equal(await toggle.getAttribute("aria-expanded"), "false");
+  assert.equal(await facts.isVisible(), false);
+  await page.getByText(/^原件信息、HTML 原文与配套资源/).click();
+  await page.getByText("查看 HTML 原文", { exact: true }).click();
+  const source = page.locator("details[open] pre").filter({ hasText: "FIXED-LAST" });
+  assert.equal(await source.isVisible(), true);
   assert.ok(reads.includes(fixedId) && reads.includes(`${fixedId}:original`) && !reads.includes(`${currentId}:original`), `fixed revision reads: ${reads.join(", ")}`);
   assert.deepEqual(errors, []);
   const back = page.locator(".document-reading-backlinks").getByRole("link", { name: /返回来源/ });
@@ -277,16 +281,17 @@ test("optional real HTML original keeps all five images readable in the built fi
     await page.getByLabel("访问令牌").fill("fixture-token");
     await page.getByRole("button", { name: "进入", exact: true }).click();
     await page.getByRole("heading", { name: title, exact: true }).waitFor();
-    const iframe = page.locator(".doc-html-frame");
+    const iframe = page.locator("iframe[data-report-frame]");
     await iframe.waitFor();
     const frame = await iframe.contentFrame();
     assert.ok(frame);
     await frame.locator("main section").last().waitFor();
     const geometry = await iframe.evaluate((element: HTMLIFrameElement) => {
       const rect = element.getBoundingClientRect();
-      const main = document.querySelector(".document-read-main")!.getBoundingClientRect();
-      const layout = document.querySelector(".document-read-layout")!.getBoundingClientRect();
-      const readingPage = document.querySelector(".document-reading-page")!.getBoundingClientRect();
+      const body = element.closest('section[aria-label="文档完整正文"]')!;
+      const main = body.getBoundingClientRect();
+      const layout = main;
+      const readingPage = body.parentElement!.getBoundingClientRect();
       const ancestors: Array<{ className: string; top: number; bottom: number; overflowY: string }> = [];
       let clipBottom = Infinity, clipTop = -Infinity;
       for (let parent = element.parentElement; parent; parent = parent.parentElement) {
@@ -315,10 +320,10 @@ test("optional real HTML original keeps all five images readable in the built fi
     await saveReport();
     if (width === 390) {
       const outer = await page.evaluate(() => ({ scrollable: document.scrollingElement!.scrollHeight - innerHeight,
-        overflow: getComputedStyle(document.querySelector(".document-reading-page")!).overflowY }));
+        overflow: getComputedStyle(document.querySelector('section[aria-label="文档完整正文"]')!.parentElement!).overflowY }));
       await page.evaluate(() => scrollTo(0, document.scrollingElement!.scrollHeight));
       const reached = await page.evaluate(() => scrollY);
-      const readerFootAtBottom = await page.locator(".doc-continuous-secondary > summary").evaluate(el => {
+      const readerFootAtBottom = await page.getByText(/^原件信息、HTML 原文与配套资源/).evaluate(el => {
         const box = el.getBoundingClientRect(); return box.top < innerHeight && box.bottom > 0;
       });
       Object.assign(entry, { outer: { ...outer, reached, readerFootAtBottom } });
@@ -331,23 +336,26 @@ test("optional real HTML original keeps all five images readable in the built fi
       await page.evaluate(() => scrollTo(0, 0));
     }
     if (width === 900) {
-      await page.getByRole("button", { name: "查看版本与来源" }).click();
-      const aside = await page.locator(".document-read-aside").evaluate(el => {
-        const layout = document.querySelector(".document-read-layout")!;
-        el.scrollTop = el.scrollHeight;
-        return { columns: getComputedStyle(layout).gridTemplateColumns, position: getComputedStyle(el).position,
-          layoutWidth: Math.round(layout.getBoundingClientRect().width), asideWidth: Math.round(el.getBoundingClientRect().width),
-          layoutHeight: Math.round(layout.getBoundingClientRect().height), asideHeight: Math.round(el.getBoundingClientRect().height),
-          scrollTop: el.scrollTop, scrollable: el.scrollHeight - el.clientHeight };
+      await page.getByRole("button", { name: "版本与来源" }).click();
+      const drawer = page.getByRole("dialog");
+      await drawer.getByRole("region", { name: "文档版本、来源与关联" }).waitFor();
+      await page.waitForFunction("(() => { const box = document.querySelector('[role=dialog]')?.getBoundingClientRect(); return !!box && box.left >= 0 && box.right <= innerWidth + 0.5 && document.getAnimations().length === 0; })()");
+      await drawer.getByText("完整标识与哈希").click();
+      const aside = await drawer.evaluate(el => {
+        const box = el.getBoundingClientRect();
+        let scroller = el.querySelector<HTMLElement>('[role="region"]')!;
+        while (scroller !== el && getComputedStyle(scroller).overflowY !== "auto") scroller = scroller.parentElement!;
+        scroller.scrollTop = scroller.scrollHeight;
+        return { left: Math.round(box.left), right: Math.round(box.right), height: Math.round(box.height), width: innerWidth, viewport: innerHeight,
+          scrollTop: scroller.scrollTop, scrollable: scroller.scrollHeight - scroller.clientHeight };
       });
       Object.assign(entry, { aside });
       await saveReport();
       if (output) await page.screenshot({ path: join(output, "900x560-aside.png") });
-      assert.equal(aside.columns.trim().split(/\s+/).length, 1, `900px real reader has one column: ${JSON.stringify(aside)}`);
-      assert.equal(aside.position, "absolute");
-      assert.ok(aside.asideWidth <= aside.layoutWidth && aside.asideHeight <= aside.layoutHeight + 2 &&
-        aside.scrollable > 0 && aside.scrollTop > 0, `900px real rail scrolls: ${JSON.stringify(aside)}`);
-      await page.getByRole("button", { name: "收起版本与来源" }).click();
+      assert.ok(aside.left >= 0 && aside.right <= aside.width && aside.height <= aside.viewport &&
+        aside.scrollable > 0 && aside.scrollTop > 0, `900px real drawer fits and scrolls: ${JSON.stringify(aside)}`);
+      await page.getByRole("button", { name: "关闭右栏" }).click();
+      await drawer.waitFor({ state: "hidden" });
     }
     const images = frame.locator("img");
     assert.equal(await images.count(), 5);
