@@ -371,12 +371,15 @@ export class CodexAppServerAdapter implements RuntimePort {
     if (!finite(this.dynamicToolTimeout)) throw new Error("dynamicToolTimeoutMs must be positive");
     if (!Number.isSafeInteger(this.maxLineBytes) || this.maxLineBytes <= 0) throw new Error("maxLineBytes must be a positive integer");
   }
-  /** One shared stdio child serves every Session; a transport loss affects all in-flight Turns. */
+  /**
+   * One shared stdio child serves every Session; a transport loss affects all in-flight Turns.
+   * Mid-Turn input follows the same direct input feature `steerTurn` checks; of the pinned versions only 0.166.0-alpha.6 has it.
+   */
   capabilities(): RuntimeCapabilities {
     const modern = this.features.modern;
     return {
       provider: "codex", process: "shared",
-      delivery: { midTurnInput: false, callerAssignedTurnKey: false, callerAssignedSessionId: false },
+      delivery: { midTurnInput: this.features.directInput, callerAssignedTurnKey: false, callerAssignedSessionId: false },
       errors: { notSent: true, rejected: true },
       compaction: { autoCompacts: true, mode: this.features.compaction ? "owned_request" : "unavailable" },
       history: { workTrace: true, workspace: this.options.workspaceExperimental === true && this.features.workspace },

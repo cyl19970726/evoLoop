@@ -155,7 +155,9 @@ test("HTTP keeps exact input and actor receipts while repeated steer uses the sa
     resumeProfile:{actorId:"agent",model:null,sandbox:"danger-full-access" as const,approvalPolicy:"never" as const}};
   const turn={id:"http-turn",status:"inProgress" as const,completedAtUtc:null};
   const writes:string[]=[];
-  const runtime={isReady:()=>true,registerBinding:async()=>{},qualifyConversationThread:async()=>({available:true,reason:"",fingerprint:hash}),
+  // The alpha.6 Codex declaration; mid-Turn input is offered only when the binding's runtime declares it.
+  const runtime={capabilities:()=>({delivery:{midTurnInput:true}}) as never,
+    isReady:()=>true,registerBinding:async()=>{},qualifyConversationThread:async()=>({available:true,reason:"",fingerprint:hash}),
     startConversationTurn:async(_binding:unknown,_content:string,id:string)=>{writes.push(`start:${id}`);return turn;},
     steerTurn:async(_binding:unknown,_turnId:string,_content:string,id:string)=>{writes.push(`steer:${id}`);return {turnId:turn.id,itemId:null};},
     listTurns:async()=>({data:[turn],nextCursor:null}),listItems:async()=>({data:[],nextCursor:null})};
