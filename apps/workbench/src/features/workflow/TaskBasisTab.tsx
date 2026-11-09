@@ -11,10 +11,11 @@ import { MarkdownBody } from "../../shared/ui/MarkdownBody";
 import { OriginalDocumentReader } from "../../shared/ui/OriginalDocumentReader";
 import { readingSource } from "../../shared/ui/readingProse";
 import { date } from "../../shared/ui/shared";
+import { CommandForm } from "../../shared/command";
 import { DocumentLink } from "./DocumentLink";
 import { impactSeen, reviewBasisCommand } from "./taskCommands";
 import { useFixedRevision, type DocumentRead } from "./taskDocuments";
-import { ActionRow, CommandForm, Fine, TabSection, reasonField } from "./TaskForms";
+import { ActionRow, Fine, TabSection, reasonField } from "./TaskForms";
 
 /** Where one fixed revision stands against the document's published version, as far as the read can tell. */
 export function basisStanding(revisionId: string, read: DocumentRead | undefined): { tone: "done" | "waiting" | "unknown" | "idle"; label: string; note: string } {

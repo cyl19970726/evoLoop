@@ -226,10 +226,10 @@ test("a write rereads the current versions once and never a visited fixed revisi
   const aborted: string[] = [];
   page.on("requestfailed", request => aborted.push(request.url()));
   if (!await revise.evaluate(el => (el.parentElement as HTMLDetailsElement).open)) await revise.click();
-  const archive = reader.locator("details.command-disclosure").filter({ has: page.locator("summary", { hasText: "归档文档" }) });
-  if (!await archive.locator("textarea").isVisible()) await archive.locator("summary").click();
-  await archive.locator("textarea").fill("夹具：确认写入后不重读固定内容");
-  await archive.locator("button[type=submit]").click();
+  const archive = reader.getByRole("form", { name: "归档文档" });
+  if (!await archive.isVisible()) await reader.locator("summary", { hasText: "归档文档" }).click();
+  await archive.getByLabel("归档理由").fill("夹具：确认写入后不重读固定内容");
+  await archive.getByRole("button", { name: "归档文档" }).click();
   for (let attempt = 0; attempt < 40 && (fixture.commands < 1 || read(`detail:${htmlDoc}`) === before.htmlDetail); attempt++)
     await new Promise(done => setTimeout(done, 100));
   await settle();

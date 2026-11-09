@@ -73,7 +73,7 @@ function RunItem({ context, run, mayAbandon }: { context: MutationContext; run: 
       {mayAbandon && run.state === "unknown" && !run.nativeTurnId && <details className="text-small">
         <summary className="cursor-pointer text-primary">复核只读派发并保留失败记录</summary>
         <p className={`${mutedText} mt-2`}>仅适用于没有绑定一轮的只读运行。放弃会关闭旧智能体的后续派发；不证明外部未执行，也不自动重发。</p>
-        <Legacy><ActionForm context={context} review embedded title="复核并放弃未知只读派发"
+        <Legacy><ActionForm context={context} review embedded title="复核并放弃未知只读派发" baseline={{ runVersion: run.version }}
           fields={[reasonField, { name: "evidence", label: "所属线程历史与失败原因核对证据", kind: "textarea" }]}
           build={v => ({ type: "runtime.run.abandonReadOnly", runId: run.id, expectedVersion: run.version, ...v })} /></Legacy>
       </details>}

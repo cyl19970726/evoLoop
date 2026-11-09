@@ -384,7 +384,10 @@ test("the task page's five tabs read, write and refuse as the record allows, at 
   await center.getByText("第 7 版", { exact: false }).first().waitFor();
   await update.getByText("打开表单后内容已被更新").waitFor();
   assert.equal(await update.getByRole("button", { name: "保存任务内容" }).isDisabled(), true, "the edit is not sent on a version it was not written against");
-  assert.equal(await update.getByLabel("任务名称").inputValue(), "甲：又改了一次名");
+  // Someone else renamed the task too: the name is decided field by field, never kept in one click.
+  await update.getByRole("radiogroup", { name: "任务名称用哪一版" }).waitFor();
+  assert.equal(await update.getByRole("button", { name: "保留我的修改" }).count(), 0);
+  assert.equal(await update.getByLabel("任务名称", { exact: true }).inputValue(), "甲：又改了一次名");
   assert.equal(commands.filter(command => command.type === "task.update").length, 1);
   const stop = panel.getByRole("form", { name: "停止以后重复" });
   await panel.getByText("停止以后重复", { exact: true }).click();

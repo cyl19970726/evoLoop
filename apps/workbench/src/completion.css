@@ -41,7 +41,6 @@ td{ font-size: 15px; }
 .task-body-disclosure > summary{ font-size: 14px; }
 
 /* Contextual forms, receipt recovery, and repository reading routes. */
-.command-form label,.action-form label { font-size: 15px; }
 @media(min-width:1800px) { .workbench-layout .content{ padding-inline: 44px; } }
 @media(max-width:1180px) { .workbench-layout .content{ padding: 28px 24px 64px; } .task-selection-body{ gap: 24px; } }
 @media(max-width:980px) {   .task-selection-body{ grid-template-columns: minmax(0,1.3fr) minmax(240px,1fr); gap: 24px; } }

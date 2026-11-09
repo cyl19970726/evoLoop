@@ -17,7 +17,7 @@ import {
   taskCloseCommand, taskReopenCommand, taskStartCommand, taskUpdateCommand, withoutOperationType,
 } from "../src/features/workflow/taskCommands.ts";
 import { timingSetPayload, timingStopPayload } from "../src/features/workflow/taskTimingPresentation.ts";
-import { baselineText, incompleteText, prepareCommand, submissionRefusal } from "../src/features/workflow/useCommand.ts";
+import { baselineText, incompleteText, prepareCommand, submissionRefusal } from "../src/shared/command/index.ts";
 
 const uuid = (n: number) => `${String(n).padStart(8, "0")}-0000-4000-8000-000000000000`;
 const projectId = uuid(1), taskId = uuid(2), revisionId = uuid(3), owner = uuid(4), docA = uuid(5), docB = uuid(6);

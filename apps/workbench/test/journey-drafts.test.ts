@@ -8,7 +8,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import type { Goal, Stage, StageReview } from "@evoloop/contracts";
 import type { MutationContext } from "../src/shared/ActionForm.tsx";
 import { DraftsContext, GoalReviseForm, StageCorrectForm, draftKeys, type Drafts } from "../src/features/workflow/JourneyForms.tsx";
-import { openingBaseline, submissionRefusal, useCommand } from "../src/features/workflow/useCommand.ts";
+import { openingBaseline, submissionRefusal, useCommand } from "../src/shared/command/index.ts";
 
 const projectId = "43000001-0000-4000-8000-000000000001";
 const goalId = "43000002-0000-4000-8000-000000000002";

@@ -15,6 +15,7 @@ import { useProjectPages, useProjectQuery } from "../../shared/query";
 import { roleClient } from "../../shared/roleClient";
 import { runtimeClient } from "../../shared/runtimeClient";
 import { date, href } from "../../shared/ui/shared";
+import { CommandForm, CommandFrame, useCommand } from "../../shared/command";
 import { attributableRuns } from "./deliveryRun";
 import { runStateName } from "./taskExperience";
 import {
@@ -22,10 +23,9 @@ import {
   observationRecordCommand, olderBasisSources, planCommand, reviewCommand, taskCancelCommand, taskCloseCommand, taskReopenCommand,
   taskStartCommand, taskUpdateCommand, withoutOperationType,
 } from "./taskCommands";
-import { ActionRow, BaselineNotice, CommandForm, Fine, OutcomeNotice, TabSection, TaskWriteBlock, reasonField } from "./TaskForms";
+import { ActionRow, Fine, TabSection, reasonField } from "./TaskForms";
 import { TaskScheduleSection } from "./TaskScheduleSection";
 import type { ReadState } from "./taskFactsPresentation";
-import { useCommand } from "./useCommand";
 
 type Permission = "write" | "review";
 interface Action { key: string; title: string; description?: React.ReactNode; needs: Permission[]; element: React.ReactNode }
@@ -253,7 +253,6 @@ const taskIdPattern = /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]
 
 /** Prerequisites by name: keep or drop the current ones, add from the loaded task list or by a pasted task link. */
 function DependenciesForm({ context, detail, leader, onReread }: { context: MutationContext; detail: TaskDetail; leader: LeaderWorkTask; onReread(): void }) {
-  const block = React.useContext(TaskWriteBlock);
   const projectId = context.projectId;
   const task = detail.task;
   const current = leader.dependencies.map(item => item.taskId);
@@ -261,6 +260,8 @@ function DependenciesForm({ context, detail, leader, onReread }: { context: Muta
     validate: value => { leaderWorkDependenciesCommandSchema.parse(withoutOperationType(value)); },
     send: built => api().leaderDependencies(projectId, task.id, built as unknown as LeaderWorkDependenciesCommand),
     onStale: onReread,
+    // Applied, now or when an unknown result is read back: the list sent becomes the base and the reason is cleared.
+    onApplied: () => { setReason(""); setPasted(""); setBase(chosen); setTried(false); },
   });
   const pages = useProjectPages(projectId, ["tasks", "list"], (cursor, signal) => api().tasks(projectId, cursor, signal));
   const known = (pages.data?.pages ?? []).flatMap(page => page.items);
@@ -287,15 +288,15 @@ function DependenciesForm({ context, detail, leader, onReread }: { context: Muta
     command.rebase(); setBase(current);
     setChosen([...current.filter(id => !removed.includes(id)), ...added.filter(id => !current.includes(id))]);
   };
-  const blocked = !!block || context.blocked;
   const pastedId = taskIdPattern.exec(pasted)?.[1]?.toLowerCase() ?? null;
-  async function submit(event: React.FormEvent) {
-    event.preventDefault();
-    if (blocked || !reason.trim()) return;
-    const applied = await command.submit(seen => dependenciesCommand(task.id, seen, { dependsOnTaskIds: chosen, reason }));
-    if (applied) { setReason(""); setPasted(""); setBase(chosen); }
+  const [tried, setTried] = React.useState(false);
+  async function submit() {
+    setTried(true);
+    if (!reason.trim()) return;
+    await command.submit(seen => dependenciesCommand(task.id, seen, { dependsOnTaskIds: chosen, reason }));
   }
-  return <form onSubmit={submit} aria-label="设置前置任务依赖" data-dirty={dirty ? "true" : undefined} className="flex flex-col gap-3 rounded-lg bg-muted p-4">
+  return <CommandFrame context={context} command={command} label="设置前置任务依赖" submitLabel="保存前置任务" dirty={dirty} onSubmit={() => void submit()}
+    onReread={onReread} onRefill={() => { command.rebase(); refill(); }} onKeep={keep} keepNote="保留我的修改：你加入和移除的前置任务套用到最新的列表上。">
     <fieldset className="flex flex-col gap-1.5">
       <legend className="mb-1 text-label font-semibold text-foreground">前置任务</legend>
       {!chosen.length && <p className="text-label text-text-secondary">没有前置任务。</p>}
@@ -318,12 +319,8 @@ function DependenciesForm({ context, detail, leader, onReread }: { context: Muta
       <Field label="按任务链接添加" hint="粘贴任务页的地址。" className="min-w-0 flex-1">{control => <Input {...control} value={pasted} onChange={event => setPasted(event.target.value)} autoComplete="off" />}</Field>
       <Button size="compact" disabled={!pastedId || pastedId === task.id || chosen.includes(pastedId)} onClick={() => { setChosen(list => [...list, pastedId!]); setPasted(""); }}>添加</Button>
     </div>
-    <Field label="理由与依据">{control => <Textarea {...control} required value={reason} onChange={event => setReason(event.target.value)} rows={3} maxLength={4000} />}</Field>
-    {command.baselineChanged && <BaselineNotice awaiting={command.awaitingReread} onReread={onReread}
-      onRefill={() => { command.rebase(); refill(); }} onKeep={keep} keepNote="保留我的修改：你加入和移除的前置任务套用到最新的列表上。" />}
-    {command.outcome && !(command.baselineChanged && command.outcome.stale) && <OutcomeNotice outcome={command.outcome} />}
-    {blocked && <p className="text-caption text-muted-foreground">暂不能提交：{block || "本项目还有结果未确认的操作，请先按原操作 ID 核对。"}</p>}
-    <div><Button type="submit" variant="primary" size="compact" disabled={blocked || command.busy || command.baselineChanged || !reason.trim()}>{command.busy ? "正在提交…" : "保存前置任务"}</Button></div>
-  </form>;
+    <Field label="理由与依据" error={tried && !reason.trim() ? "请填写理由与依据。" : undefined}>{control =>
+      <Textarea {...control} required value={reason} onChange={event => setReason(event.target.value)} rows={3} maxLength={4000} />}</Field>
+  </CommandFrame>;
 }
 

@@ -45,7 +45,7 @@ function fields(grants: SchedulingGrant[], definition?: ScheduleDefinition, fres
     { name: "maxCatchUp", label: "有限补做的最多次数", optional: true, value: revision?.misfire.kind === "bounded" ? String(revision.misfire.maxCatchUp) : "" },
     { name: "overlap", label: "上次任务未结束时", kind: "select", value: revision?.overlap ?? "skip", options: [option("skip", "跳过新时刻"), option("queue", "排队待核对")] },
     { name: "title", label: "新提议任务的名称", value: revision?.template.title ?? "" },
-    { name: "content", label: "新任务正文（Markdown）", kind: "textarea", value: revision?.template.content ?? "" },
+    { name: "content", label: "新任务正文（Markdown）", kind: "textarea", value: revision?.template.content ?? "", maxLength: 65536 },
     { name: "acceptance", label: "新提议任务的接受条件", kind: "textarea", value: revision?.template.acceptance ?? "" },
     { name: "owner", label: "任务责任角色 ID", value: revision?.template.owner ?? "" },
     ...(revision?.template.managedTarget ? [] : [
@@ -83,7 +83,7 @@ const coordinatorLabel: Record<SchedulingStatus["state"], string> = {
 };
 const stateTone: Record<ScheduleDefinition["state"], string> = { active: "bg-accent text-foreground", paused: "bg-warning-soft text-foreground", stopped: "bg-field text-muted-foreground" };
 const muted = "text-caption text-muted-foreground";
-// The shared command forms keep their old markup (ActionForm, rebuilt separately) under data-legacy until then.
+// The forms here are the shared command form, drawn as new markup inside this old region; the region itself is rebuilt separately.
 const legacy = (label: string, children: ReactNode) => <SectionBoundary label={label}><div data-legacy="" className="workbench-layout">{children}</div></SectionBoundary>;
 
 function Facts({ rows }: { rows: Array<[string, ReactNode]> }) {
@@ -307,7 +307,8 @@ function ScheduleCard({ definition, context, grants, status, fresh, loading, onR
     {definition.state !== "stopped" && <details className={cn(card, "text-small")}>
       <summary className="cursor-pointer font-medium text-foreground">修订规则、暂停或恢复</summary>
       <p className={muted}>修订以当前版本为基线；已排队的旧修订时刻仍需单独核对，不会悄悄改写。</p>
-      {targetRead.state === "verified" ? legacy("日程修订表单", <ActionForm context={editContext} review title="保存日程修订" fields={fields(grants,definition,fresh)} build={v => ({ type: "schedule.revise", scheduleId: definition.id, expectedVersion: definition.version, revisionId: crypto.randomUUID(), ...fromValues(v, context,grants,definition) })} />)
+      {targetRead.state === "verified" ? legacy("日程修订表单", <ActionForm context={editContext} review title="保存日程修订"
+        baseline={{ grants: JSON.stringify(grants.map(grant => grantKey(grant)).sort()) }} fields={fields(grants,definition,fresh)} build={v => ({ type: "schedule.revise", scheduleId: definition.id, expectedVersion: definition.version, revisionId: crypto.randomUUID(), ...fromValues(v, context,grants,definition) })} />)
         : targetRead.state === "checking" ? <p className="text-text-secondary">请等候固定目标核对完成，再编辑日程。</p>
           : legacy("停用表单", <ActionForm context={editContext} review title="保持原定义并暂停或停止" fields={[
             { name: "state", label: "停用状态", kind: "select", value: definition.state === "active" ? "paused" : "stopped",

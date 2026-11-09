@@ -1,20 +1,21 @@
-// What each discussion form fixes when it is sent. A form keeps the reader's text across rereads, so it remembers the
-// baseline the reader looked at; when any part changes, the form refuses to send until the reader checks again.
+// What each discussion form fixes when it is sent: its baseline for the shared command form (shared/command). The form
+// records it when it opens; when any part moves while the reader has typed, the form refuses to send until the reader
+// has looked, and names the parts that moved.
 import type { DiscussionEvent, DiscussionRecord, DiscussionTarget, Document, Goal, Stage, Task } from "@evoloop/contracts";
+import { changedParts as movedParts } from "../../shared/command/rules";
 import type { VerifiedDocumentHead } from "./commands";
 
 export type Baseline = Record<string, string>;
 
-const partLabel: Record<string, string> = {
+/** The readable name of each part, for “变化的是：…”. */
+export const discussionPartLabels: Readonly<Record<string, string>> = {
   discussion: "讨论版本", package: "登记的交接包", head: "文档当前版", decision: "当前决定", target: "所选对象的修订",
   goal: "目标版本", stage: "阶段版本", task: "任务修订", documents: "采纳文档的修订",
 };
 
 /** The parts whose value differs from what the reader acknowledged, as reader-facing labels. */
 export function changedParts(seen: Baseline, current: Baseline): string[] {
-  return [...new Set([...Object.keys(seen), ...Object.keys(current)])]
-    .filter(part => (seen[part] ?? "") !== (current[part] ?? ""))
-    .map(part => partLabel[part] ?? part);
+  return movedParts(seen, current, discussionPartLabels);
 }
 
 export function handoffBaseline(record: Pick<DiscussionRecord, "version" | "currentDocumentRevisionId">): Baseline {
