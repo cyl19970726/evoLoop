@@ -38,10 +38,16 @@ export function TaskRail({ list, view, onView, selectedId, linkFor }: {
 }) {
   const listRef = React.useRef<HTMLDivElement>(null);
   // Keep the selected row in sight when a task opens from elsewhere (a link, the table, back navigation).
+  // Only the rail's own scroll container moves; the page keeps its reading position (Back restores it).
   React.useEffect(() => {
     if (!selectedId) return;
     const row = listRef.current?.querySelector<HTMLElement>(`[data-task-id="${CSS.escape(selectedId)}"]`);
-    row?.scrollIntoView({ block: "nearest" });
+    let box = row?.parentElement ?? null;
+    while (box && !/(auto|scroll)/.test(getComputedStyle(box).overflowY)) box = box.parentElement;
+    if (!row || !box || box === document.documentElement || box === document.body) return;
+    const rowRect = row.getBoundingClientRect(), boxRect = box.getBoundingClientRect();
+    if (rowRect.top < boxRect.top) box.scrollTop -= boxRect.top - rowRect.top + 8;
+    else if (rowRect.bottom > boxRect.bottom) box.scrollTop += rowRect.bottom - boxRect.bottom + 8;
   }, [selectedId, list.visible.length]);
   const sorted = view.sort !== "default";
   const row = (task: Task, title = task.title) => {

@@ -166,7 +166,7 @@ function ContextRail(props: AppShellProps & { space: Space; sessionState: Sessio
         <SessionNavigation key={`${props.actor}:${projectId}`} token={props.token} projectId={projectId} selectedId={selectedSession}
           onNavigate={props.onNavigate} state={props.sessionState} onState={props.onSessionState} />
       </div>
-      : <nav data-ui="" aria-label={space === "inbox" ? "待我处理" : "工作分区"} className={cn("min-h-0 flex-1", !inDrawer && "overflow-y-auto")}>
+      : <nav data-ui="" aria-label={space === "inbox" ? "待我处理" : "工作分区"} className={cn("flex-1", !inDrawer && "min-h-0 overflow-y-auto")}>
         <SectionList items={space === "inbox" ? inboxNavigation : workNavigation} route={route} projectId={projectId} onNavigate={props.onNavigate} />
         {(inDrawer || !compact) && <ContextRailSlot className="mt-3 empty:hidden" />}
       </nav>}
