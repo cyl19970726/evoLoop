@@ -84,7 +84,8 @@ export function RelationReadState({ noun, traces }: { noun: "关系" | "来源";
     <div className="flex flex-wrap items-center gap-2">
       <span className={muted}>{observedAt ? `${noun}读于 ${date(observedAt)}` : loading ? `正在读取${noun}` : `${noun}尚未读回`}</span>
       {loading && observedAt && <RefreshingIndicator />}
-      <Button size="compact" variant="ghost" disabled={loading} onClick={traces.reread}>重新读取</Button>
+      {/* Named after what it rereads: the host pages (agent, role card) have their own 重新读取. */}
+      <Button size="compact" variant="ghost" disabled={loading} onClick={traces.reread}>重新读取{noun}</Button>
     </div>
     {changesError && <Notice tone="waiting">{changesError}</Notice>}
     {error && <Notice tone="error">{noun}读取失败：{error}。不能据此判断没有{noun === "关系" ? "承接" : "关联"}。{observedAt ? "下面仍是上次读到的内容。" : ""}</Notice>}
