@@ -1,6 +1,6 @@
 # 任务与过程文档：把工作交代清楚
 
-2026-10-21 · 已确认的产品定义，DEC-031。实现与实际验收状态见[阶段路线 C5](../roadmap.md#c5-taskdocument-模型简化)。
+2026-10-21 · 已确认的产品定义，DEC-031。实现与实际验收状态见[阶段路线 C5](../references/roadmap-history.md#c5-taskdocument-模型简化)。
 
 Task 回答“谁要完成什么工作、现在到哪、怎样算完成”；Document 保存这份工作的完整正文及其他过程材料。人从工作台看清工作，和现有 Agent 沟通；Agent 经业务 skill＋CLI 维护同一组对象，再由人回看结果。
 

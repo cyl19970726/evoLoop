@@ -93,11 +93,11 @@ DEC-027 依据用户本轮“暂时用 OpenViking、以后可能自己实现知�
 
 DEC-028 来自用户要求“全面 review 所有设计，没有问题就开始实现”，并要求多角度审阅。工程实现中仍发现并修正了具体合同与恢复缺口，见[设计审阅与首片实测](research/design-review-20261020.md)。它授权可逆的实现选择，不把所有候选技术、生产发布或完整产品验收视为已完成。
 
-DEC-029 记录用户对真实前端重组及入口分工的明确要求：图形界面服务人的阅读、判断、反馈；现有 CLI 和后续业务 skill／MCP 服务 Agent 的常规工作，共用 API/core 的权威与恢复语义。界面组合按 [F1—F4](roadmap.md#前端重组-f1f4实施里程碑待验收) 推进；frontend-design 与 web-design-guidelines 只用于开发和评审，不是 evoLoop 业务 skill。组件来源、许可及项目范围记在 `apps/workbench/THIRD_PARTY.md`；该记录不证明新布局已通过普通入口或真人验收。
+DEC-029 记录用户对真实前端重组及入口分工的明确要求：图形界面服务人的阅读、判断、反馈；现有 CLI 和后续业务 skill／MCP 服务 Agent 的常规工作，共用 API/core 的权威与恢复语义。界面组合按 [F1—F4](references/roadmap-history.md#前端重组-f1f4实施里程碑待验收) 推进；frontend-design 与 web-design-guidelines 只用于开发和评审，不是 evoLoop 业务 skill。组件来源、许可及项目范围记在 `apps/workbench/THIRD_PARTY.md`；该记录不证明新布局已通过普通入口或真人验收。
 
-DEC-030 来自用户明确的人机入口分工：前端主要给人看发生了什么，大多数修改先与 Agent 沟通，再由 Agent 经业务 skill＋CLI 完成。已同步[产品定义](product/definition.md#用户与实际入口)、[架构总览](architecture/overview.md)和[包职责](architecture/packages.md)，入口实施按 [C1—C4](roadmap.md#agent-业务入口-c1c4实施里程碑) 与前端工作线分开管理；共同服务约束不能由技能或客户端绕过。实际 Agent 使用、工程合入和真人反馈分别留证。
+DEC-030 来自用户明确的人机入口分工：前端主要给人看发生了什么，大多数修改先与 Agent 沟通，再由 Agent 经业务 skill＋CLI 完成。已同步[产品定义](product/definition.md#用户与实际入口)、[架构总览](architecture/overview.md)和[包职责](architecture/packages.md)，入口实施按 [C1—C4](references/roadmap-history.md#agent-业务入口-c1c4实施里程碑) 与前端工作线分开管理；共同服务约束不能由技能或客户端绕过。实际 Agent 使用、工程合入和真人反馈分别留证。
 
-DEC-031 来自用户明确选择“正文统一存 Document”，并确认初期尽可能简单：验收标准清楚写出，默认在原任务内验证，再根据真实使用增强。同步[产品定义](product/tasks-and-documents.md)、固定主正文合同及[路线 C5](roadmap.md#c5-taskdocument-模型简化)，保留旧数据、授权和结果未知恢复；它不授权直接迁移正在使用的本机服务或部署生产。
+DEC-031 来自用户明确选择“正文统一存 Document”，并确认初期尽可能简单：验收标准清楚写出，默认在原任务内验证，再根据真实使用增强。同步[产品定义](product/tasks-and-documents.md)、固定主正文合同及[路线 C5](references/roadmap-history.md#c5-taskdocument-模型简化)，保留旧数据、授权和结果未知恢复；它不授权直接迁移正在使用的本机服务或部署生产。
 
 DEC-032 依据 2026-10-23 用户对完整功能场景、新的 Session 责任分类、真实工作驱动职责拆分与任务回流的明确要求；补充 DEC-001—004、008、014—015、025、030。原始私有会话不随仓库发布。前三条旅程在新场景页细化，后三条暂作待继续确认的关联索引；具体 hook、守护部署和唤醒方式仍是候选机制，未将其记为已通过运行验证。
 
