@@ -43,19 +43,25 @@ test("职责 and 分工与运行 read and write in the shell layout, and old run
   const { chromium } = (await import(pathToFileURL(modulePath!).href)).default;
   const commands: Array<Record<string, unknown>> = [];
   let available = true, recovered = 0;
+  // Later in the test: a reader who may write but not review, and a Role list with a second page that fails once.
+  let permissions = ["read", "write", "review"], paged = false, failNextPage = true;
   const server = createServer(async (req, res) => {
     const url = new URL(req.url!, "http://127.0.0.1");
     if (url.pathname.startsWith("/api/")) {
       const root = `/api/projects/${projectId}`;
       let value: unknown = { items: [], nextCursor: null };
-      if (url.pathname === "/api/session") value = { principal: { actorId: "lead", projectIds: [projectId], permissions: ["read", "write", "review"] }, capabilities: {} };
+      if (url.pathname === "/api/session") value = { principal: { actorId: "lead", projectIds: [projectId], permissions }, capabilities: {} };
       else if (url.pathname === "/api/commands" && req.method === "POST") {
         let body = ""; for await (const chunk of req) body += String(chunk);
         const command = JSON.parse(body) as Record<string, unknown>; commands.push(command);
         value = { status: "applied", operationId: command.operationId, entityId: command.roleId ?? command.sessionId ?? command.linkId };
       }
       else if (url.pathname === root) value = { id: projectId, title: "团队深化项目", createdAt: stamp };
-      else if (url.pathname === `${root}/roles`) value = { items: roles, nextCursor: null };
+      else if (url.pathname === `${root}/roles` && url.searchParams.get("cursor") === "page-2") {
+        if (failNextPage) { res.writeHead(409, { "content-type": "application/json" }); res.end(JSON.stringify({ message: "下一页暂不可读" })); return; }
+        value = { items: [role(4, "第二页职责", "active", "business")], nextCursor: null };
+      }
+      else if (url.pathname === `${root}/roles`) value = { items: roles, nextCursor: paged ? "page-2" : null };
       else if (url.pathname === `${root}/role-templates`) value = { templates: initialRoleTemplates.map(item => item.key === "functional-development"
         ? { ...item, state: "established", roleIds: [id(1)] } : { ...item, state: "not-established", roleIds: [] }), roles: [{ ...roles[0], proposal: { ...roles[0]!.proposal, templateKey: "functional-development" } }], nextCursor: null };
       else if (url.pathname === `${root}/roles/${id(1)}/hosts`) value = [];
@@ -212,5 +218,34 @@ test("职责 and 分工与运行 read and write in the shell layout, and old run
   assert.equal(new URL(page.url()).searchParams.get("tab"), "queue");
   await page.evaluate(hash => { location.hash = hash; }, `/p/${projectId}/runtime?session=${id(12)}`);
   await page.locator(`#runtime-session-${id(12)}`).waitFor();
+
+  // A reader with write but no review permission can propose a Role (role.propose needs write only) but not decide.
+  permissions = ["read", "write"]; paged = true;
+  const writer = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+  writer.on("pageerror", error => errors.push(error.message));
+  await writer.goto(`${base}/p/${projectId}/roles`);
+  await writer.getByLabel("访问令牌").fill("fixture-token");
+  await writer.getByRole("button", { name: "进入", exact: true }).click();
+  const all = writer.getByRole("region", { name: "全部职责" });
+  await all.getByRole("link", { name: /前端实现/ }).waitFor();
+  // Loading more reads only the next page; when it fails the Roles already shown stay and the failure is its own.
+  await all.getByRole("button", { name: "加载更多职责" }).click();
+  await writer.getByText(/下一页职责未读回/).waitFor();
+  assert.equal(await all.getByRole("link", { name: /前端实现/ }).count(), 1);
+  assert.match(await writer.getByRole("status").filter({ hasText: "职责读于" }).innerText(), /已读 3 项，还有更多/);
+  failNextPage = false;
+  await all.getByRole("button", { name: "重新加载下一页" }).click();
+  await all.getByRole("link", { name: /第二页职责/ }).waitFor();
+  assert.equal(await all.getByRole("link", { name: /前端实现/ }).count(), 1);
+  await writer.getByRole("button", { name: "提出职责试行" }).first().click();
+  const proposalForm = writer.getByRole("region", { name: "提出有证据的职责试行" });
+  await proposalForm.getByLabel("职责名称").waitFor();
+  assert.equal(await proposalForm.getByRole("button", { name: "提出职责试行" }).isEnabled(), true, "write permission is enough to propose");
+  assert.equal(await proposalForm.getByText("当前身份没有审阅权限").count(), 0);
+  await writer.getByRole("navigation", { name: "职责目录" }).getByRole("link", { name: /测试验收/ }).click();
+  const decision = writer.locator(`#role-${id(2)}`).getByRole("region", { name: "下一步" });
+  await decision.locator("summary", { hasText: "决定是否试行" }).click();
+  await decision.getByText("当前身份没有审阅权限。").waitFor();
+  assert.equal(await decision.getByRole("button", { name: "决定是否试行" }).isDisabled(), true, "deciding still needs review permission");
   assert.deepEqual(errors, []);
 });

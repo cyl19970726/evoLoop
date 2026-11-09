@@ -11,7 +11,7 @@ import { taskSectionHref } from "../../shared/taskNavigation";
 import { FactList, Legacy, mutedText } from "../../shared/ui/PageParts";
 import { sessionHref } from "../sessions";
 import { executionHref, pendingRun, runStateText, runStateTone, uuidPattern } from "./executionPresentation";
-import { preflightPresentation } from "./preflightPresentation";
+import { preflightPresentation, preflightView } from "./preflightPresentation";
 
 const stamp = (value: string) => new Date(value).toLocaleString("zh-CN", { hour12: false });
 const short = (id: string) => id.slice(0, 8);
@@ -36,7 +36,8 @@ function RunItem({ context, run, mayAbandon }: { context: MutationContext; run: 
   const [native, setNative] = useState<NativeResult | null>(null);
   const [nativeError, setNativeError] = useState("");
   const client = runtimeClient("", context.projectId);
-  const preflight = run.resultSummary ? preflightPresentation(run.resultSummary) : null;
+  const report = run.resultSummary ? preflightPresentation(run.resultSummary) : null;
+  const preflight = report ? preflightView(report) : null;
   const review = context.principal.permissions.includes("review");
   const linkable = run.projectId === context.projectId && uuidPattern.test(run.sessionId);
   return <details aria-label={`运行 ${short(run.id)}`} data-run-id={run.id} className="group min-w-0 px-4 py-3">
@@ -53,8 +54,7 @@ function RunItem({ context, run, mayAbandon }: { context: MutationContext; run: 
       </p>
       <p className={mutedText}>链接只定位来源；运行的状态不代表任务验收或当前接手。</p>
       {run.state === "unknown" && <Notice tone="error">派发或状态仍未知，须沿已绑定线程回查；不会自动再发一次。</Notice>}
-      {preflight && <Notice tone="error" title="派发前检查未通过">模型尚未开始。{preflight.source ? `来源：${preflight.source.kind} ${preflight.source.id}${preflight.source.revisionId ? ` · 修订 ${preflight.source.revisionId}` : ""}。` : ""}
-        {preflight.actualBytes !== null && preflight.limitBytes !== null ? `大小：${preflight.actualBytes} / ${preflight.limitBytes} 字节。` : ""}下一步：{preflight.nextAction}</Notice>}
+      {preflight && <Notice tone="error" title={`派发前检查没通过：${preflight.title}`} data-preflight="">模型尚未开始。{[preflight.source, preflight.size].filter(Boolean).join("，")}{preflight.source || preflight.size ? "。" : ""}下一步：{preflight.next}</Notice>}
       {run.resultSummary && !preflight && <p className="whitespace-pre-wrap break-words text-small text-text-secondary" data-run-summary="">已保存的结果摘要（可能截断，不能代替原生全文）：{run.resultSummary}</p>}
       {run.interruptRequested && <Notice>已登记中断请求；是否停止以原生运行终态为准。</Notice>}
       <div className="flex flex-wrap gap-2">
@@ -85,7 +85,8 @@ function RunItem({ context, run, mayAbandon }: { context: MutationContext; run: 
       ]} build={v => ({ type: "runtime.handoff.record", runId: run.id, ...v })} /></Legacy>}
       <details className="text-caption text-muted-foreground">
         <summary className="cursor-pointer">来源与完整标识</summary>
-        <FactList rows={[["运行", run.id], ["任务", run.taskId], ["任务修订", run.taskRevisionId], ["依据集合", run.basisSetId], ["受管智能体", run.sessionId], ["原操作", run.operationId]]} />
+        <FactList rows={[["运行", run.id], ["任务", run.taskId], ["任务修订", run.taskRevisionId], ["依据集合", run.basisSetId], ["受管智能体", run.sessionId], ["原操作", run.operationId],
+          ...preflight?.ids ?? []]} />
       </details>
     </div>
   </details>;

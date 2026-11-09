@@ -5,10 +5,11 @@ import test from "node:test";
 import type { ResidentQueue } from "@evoloop/contracts/queues";
 import type { RuntimeRunRecord, RuntimeSessionRecord } from "@evoloop/contracts/runtime";
 import {
-  allowedModels, closeBlockers, fullGrants, needsFullAccessUpgrade, permissionsText, profileText, sessionGroups,
+  allowedModels, closeBlockers, fullGrants, messageKindText, needsFullAccessUpgrade, permissionsText, profileText, sessionGroups, sessionTargetNotice, turnStatusText,
 } from "../src/features/runtime/executionPresentation.ts";
 import { roleNameOf } from "../src/features/runtime/useRoleNames.ts";
 import { ApiError } from "../src/shared/api.ts";
+import { preflightPresentation, preflightView } from "../src/features/runtime/preflightPresentation.ts";
 
 const sessionId = "40000004-0000-4000-8000-000000000004";
 const roleId = "40000002-0000-4000-8000-000000000002";
@@ -68,4 +69,28 @@ test("a Role name shows only after its own read succeeds; a free-text owner is s
   assert.equal(roleNameOf(roleId, { pending: true }).note, "正在核对名称");
   assert.equal(roleNameOf(roleId, { error: new ApiError(404, "x"), pending: false }).note, "未找到已登记职责");
   assert.equal(roleNameOf(roleId, { error: new ApiError(503, "x"), pending: false }).note, "名称暂不可核对");
+});
+
+test("a linked agent is located, unreadable or absent — 没有 only after the list was read back", () => {
+  assert.deepEqual(sessionTargetNotice({ valid: true, reading: true, error: "" }).tone, "info");
+  assert.equal(sessionTargetNotice({ valid: true, reading: true, error: "" }).title, "正在定位");
+  assert.equal(sessionTargetNotice({ valid: true, reading: false, error: "503" }).title, "无法定位");
+  assert.doesNotMatch(sessionTargetNotice({ valid: true, reading: false, error: "503" }).text, /没有这个|未读到/);
+  assert.equal(sessionTargetNotice({ valid: true, reading: false, error: "" }).title, "没有这个智能体");
+  assert.equal(sessionTargetNotice({ valid: false, reading: false, error: "" }).title, "链接无效");
+});
+
+test("thread history and refused dispatches read as words; codes and source IDs go to 完整标识", () => {
+  assert.equal(turnStatusText("completed"), "已完成");
+  assert.equal(turnStatusText("weird"), "状态未识别");
+  assert.equal(messageKindText("agentMessage"), "智能体回复");
+  assert.equal(messageKindText("somethingNew"), "其他记录");
+  const report = preflightPresentation(`evoloop-preflight-v1:${JSON.stringify({ version: 1, code: "FIXED_SOURCE_UNAVAILABLE", category: "unavailable", actualBytes: null, limitBytes: null,
+    source: { kind: "document", id: "doc-1", revisionId: "rev-1" }, modelStarted: false, nextAction: "用本 Run 的执行身份读取固定资料" })}`)!;
+  const view = preflightView(report);
+  assert.equal(view.title, "读不到固定资料");
+  assert.equal(view.source, "来源是一份文档的固定修订");
+  assert.doesNotMatch(`${view.title}${view.next}${view.source}`, /Run|Session|doc-1|rev-1|document/);
+  assert.deepEqual(view.ids, [["检查代码", "FIXED_SOURCE_UNAVAILABLE"], ["来源", "doc-1"], ["来源修订", "rev-1"]]);
+  assert.equal(preflightView({ ...report, code: "NEW_CODE", source: null }).title, "原因未识别");
 });

@@ -21,7 +21,7 @@ import { ResidentQueuePanel } from "../queues";
 import { ManagedSessionCreate } from "./ManagedSessionCreate";
 import { ManagedSessionDetail, RoleLabel } from "./ManagedSessionDetail";
 import { RunList } from "./RunList";
-import { executionHref, fullGrants, permissionsText, sessionGroups, sessionStateText, sessionStateTone, uuidPattern } from "./executionPresentation";
+import { executionHref, fullGrants, permissionsText, sessionGroups, sessionStateText, sessionStateTone, sessionTargetNotice, uuidPattern } from "./executionPresentation";
 import { useRoleNames } from "./useRoleNames";
 
 const stamp = (value: number) => new Date(value).toLocaleString("zh-CN", { hour12: false });
@@ -108,11 +108,9 @@ export function ExecutionView({ context, refresh, sessionId }: { context: Mutati
     </ContextRailContent>
     {sessionsError && <Notice tone="error" title="受管智能体未读完整">智能体列表暂不可读取：{sessionsError}。范围不能据此推断。</Notice>}
     {runsError && <Notice tone="error" title="运行未读完整">运行列表暂不可读取：{runsError}。其他运行不能据此推断。</Notice>}
-    {sessionId !== undefined && !selected && <Notice tone="error" title="没有定位到目标智能体">
-      {!validTarget ? "链接中的智能体 ID 无效，无法定位。"
-        : sessionsRead.isPending ? `正在核对目标智能体 ${sessionId}…`
-          : sessionsError ? `目标智能体暂不可核对：${sessionsError}；没有定位到其他智能体。`
-            : `当前项目未读到目标智能体 ${sessionId}；没有定位到其他智能体。`}</Notice>}
+    {sessionId !== undefined && !selected && (notice => <Notice tone={notice.tone} title={notice.title} data-session-target="">{notice.text}
+      <details className="mt-1 text-caption text-muted-foreground"><summary className="cursor-pointer">完整标识</summary><code className="break-all font-mono">{sessionId}</code></details>
+    </Notice>)(sessionTargetNotice({ valid: validTarget, reading: sessionsRead.isPending, error: sessionsError }))}
     {selected
       ? <SectionBoundary label="受管智能体"><ManagedSessionDetail key={selected.id} context={context} session={selected} name={nameOf(selected.roleId)}
         runs={runs} runsRead={runsCurrent} sessions={sessions} refresh={refresh + epoch} onReread={reread} /></SectionBoundary>

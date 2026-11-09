@@ -102,3 +102,20 @@ export function closeBlockers(session: RuntimeSessionRecord, read: CloseRead): s
 
 /** The address of one managed agent in 分工与运行. */
 export const executionHref = (projectId: string, sessionId: string) => `/p/${projectId}/runtime?session=${encodeURIComponent(sessionId)}`;
+
+/** A linked agent that is not on screen: still being read, unreadable, or read back and not there — never guessed. */
+export function sessionTargetNotice(read: { valid: boolean; reading: boolean; error: string }): { tone: "info" | "error"; title: string; text: string } {
+  if (!read.valid) return { tone: "error", title: "链接无效", text: "链接中的智能体 ID 无效，无法定位；没有定位到其他智能体。" };
+  if (read.reading) return { tone: "info", title: "正在定位", text: "正在读取受管智能体，定位链接里的智能体…" };
+  if (read.error) return { tone: "error", title: "无法定位", text: `受管智能体没有读回，暂时无法判断链接里的智能体是否存在：${read.error}` };
+  return { tone: "error", title: "没有这个智能体", text: "当前项目未读到目标智能体：受管智能体已读回，其中没有链接里的这一个；没有定位到其他智能体。" };
+}
+
+const turnStatus: Record<string, string> = { completed: "已完成", failed: "失败", interrupted: "已中断", inProgress: "进行中", in_progress: "进行中" };
+const messageKind: Record<string, string> = {
+  userMessage: "用户消息", agentMessage: "智能体回复", reasoning: "思考摘要", commandExecution: "执行命令", fileChange: "修改文件",
+  mcpToolCall: "工具调用", webSearch: "网页搜索", plan: "计划", contextCompaction: "上下文压缩",
+};
+/** Native thread history: turn states and item kinds as words; an unknown value is named as unknown, not shown raw. */
+export const turnStatusText = (status: string) => turnStatus[status] ?? "状态未识别";
+export const messageKindText = (type: string) => messageKind[type] ?? "其他记录";

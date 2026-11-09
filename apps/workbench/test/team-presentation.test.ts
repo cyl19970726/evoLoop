@@ -25,6 +25,7 @@ test("old team links open their current place; a managed agent stays in 分工�
   assert.equal(legacyTeamAddress(`/p/a/runtime?session=owned%3A${id}&tab=queue`), `/p/a/sessions?session=owned%3A${id}&tab=queue`);
   assert.equal(legacyTeamAddress(`/p/a/runtime?session=${id}`), null, "a managed agent link is already the 分工与运行 address");
   assert.equal(legacyTeamAddress("/p/a/runtime"), null);
+  assert.equal(legacyTeamAddress("/p/a/runtime/?view=roles"), "/p/a/roles", "a trailing slash is the same address");
   assert.equal(legacyTeamAddress("/p/a/roles?view=roles"), null);
   assert.equal(spaceOf(parseRoute(`/p/a/runtime?session=${id}`)), "work", "分工与运行 belongs to the work space");
   assert.equal(spaceOf(parseRoute(`/p/a/runtime?session=owned:${id}`)), "agents");

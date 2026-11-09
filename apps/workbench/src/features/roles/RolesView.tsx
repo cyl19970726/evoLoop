@@ -39,11 +39,14 @@ export function RolesView({ context, refresh }: { context: MutationContext; refr
   const [proposing, setProposing] = useState(false);
   const roles = list.items;
   const selected = target ? roles.find(role => role.id === target && role.projectId === projectId) : undefined;
-  const state = targetState(target, !!selected, { loading: list.loading || list.checking, error: list.error, more: list.more, pages: list.pages, maxPages: maxAutoPages });
-  const notice = target !== null ? targetNotice(state, target) : null;
+  const state = targetState(target, !!selected, { loading: list.loading || list.checking, error: list.error, more: list.more, pages: list.pages,
+    maxPages: maxAutoPages, loadingMore: list.loadingMore, moreError: list.moreError });
+  const notice = targetNotice(state);
   const groups = roleGroups(roles);
-  // A linked Role on a later page: keep reading pages until it is found or the automatic limit is reached.
-  useEffect(() => { if (state.kind === "searching" && !list.loading && !list.checking) list.extend(); }, [state.kind, list.loading, list.checking, list.pages]);
+  const roleTitle = (id: string) => roles.find(role => role.id === id)?.proposal.title;
+  // A linked Role on a later page: read the next page until it is found or the automatic limit is reached.
+  useEffect(() => { if (state.kind === "searching" && !list.loading && !list.checking && !list.loadingMore && list.more) list.loadMore(); },
+    [state.kind, list.loading, list.checking, list.loadingMore, list.more, list.pages]);
   const detailRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!selected) return;
@@ -73,16 +76,18 @@ export function RolesView({ context, refresh }: { context: MutationContext; refr
         {list.more && <span className="px-3 py-2 text-caption text-muted-foreground">已列出 {roles.length} 项；更多职责在“全部职责”页底继续加载。</span>}
       </nav>
     </ContextRailContent>
-    {notice && <Notice tone={notice.tone}>{notice.text}</Notice>}
+    {notice && target !== null && <Notice tone={notice.tone} title={notice.title} data-role-target="">{notice.text}
+      {target && <details className="mt-1 text-caption text-muted-foreground"><summary className="cursor-pointer">完整标识</summary><code className="break-all font-mono">{target}</code></details>}</Notice>}
     {list.error && <Notice tone="error" title="职责未读完整">{list.error}{roles.length ? "。下面是上次读回的职责，当前待核对。" : "。请重新读取。"}</Notice>}
+    {list.moreError && <Notice tone="error" title="下一页职责未读回">{list.moreError}。已显示的职责保留；可再次加载下一页。</Notice>}
     {selected
-      ? <SectionBoundary label="职责详情"><RoleDetail key={selected.id} context={context} role={selected} refresh={refresh} checking={list.checking} /></SectionBoundary>
+      ? <SectionBoundary label="职责详情"><RoleDetail key={selected.id} context={context} role={selected} refresh={refresh} checking={list.checking} roleTitle={roleTitle} /></SectionBoundary>
       : <>
         <header className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
             <h1 className="text-title font-semibold text-foreground" tabIndex={-1}>职责</h1>
             <p className="mt-1 text-small text-text-secondary">持续职责、试行与承载它的智能体。新聊天可以沿用已有职责；只有反复出现的独立责任缺口，才进入有边界、有成本上限的试行。</p>
-            <p className={cn(mutedText, "mt-1")} role="status">{list.observedAt ? `${list.checking ? "正在核对；下列仍是" : "职责读于"} ${stamp(list.observedAt)}${list.checking ? " 读回的内容" : ""}，已读 ${roles.length} 项${list.more ? "，还有更多" : ""}。` : list.loading ? "正在读取本项目职责…" : "本项目职责尚未读回。"}</p>
+            <p className={cn(mutedText, "mt-1")} role="status">{list.observedAt ? `${list.checking ? "正在核对；下列仍是" : "职责读于"} ${stamp(list.observedAt)}${list.checking ? " 读回的内容" : ""}，已读 ${roles.length} 项${list.more ? "，还有更多" : ""}${list.loadingMore ? "，正在读取下一页" : ""}。` : list.loading ? "正在读取本项目职责…" : "本项目职责尚未读回。"}</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Button onClick={() => setProposing(value => !value)} aria-pressed={showProposal}><Plus aria-hidden="true" />提出职责试行</Button>
@@ -90,7 +95,7 @@ export function RolesView({ context, refresh }: { context: MutationContext; refr
           </div>
         </header>
         {showProposal && <PageSection title="提出有证据的职责试行" description="提案会保存观察与备选方案；审阅接受后才进入试行。首项任务需通过普通任务流程承接。">
-          <Legacy><ActionForm context={{ ...context, draftScope: "role:propose" }} review embedded title="提出职责试行" fields={proposalFields}
+          <Legacy><ActionForm context={{ ...context, draftScope: "role:propose" }} embedded title="提出职责试行" fields={proposalFields}
             build={v => ({ type: "role.propose", roleId: crypto.randomUUID(), proposal: buildProposal(v) })} onApplied={() => setProposing(false)} /></Legacy>
         </PageSection>}
         <SectionBoundary label="基础职责"><RoleTemplates projectId={projectId} /></SectionBoundary>
@@ -103,18 +108,18 @@ export function RolesView({ context, refresh }: { context: MutationContext; refr
               <ListRow href={roleLink(role)} title={role.proposal.title} meta={`${roleClassText(role.proposal)} · ${roleStateText[role.state]} · 回看 ${new Date(role.reviewAtUtc).toLocaleDateString("zh-CN")}`} />
             </li>)}</ul>
           </div>)}
-          {list.more && !list.loading && <Button variant="ghost" className="w-fit" disabled={list.checking} onClick={list.loadMore}>{list.checking ? "继续读取中…" : "加载更多职责"}</Button>}
+          {list.more && !list.loading && <Button variant="ghost" className="w-fit" disabled={list.loadingMore} onClick={list.loadMore}>{list.loadingMore ? "继续读取中…" : list.moreError ? "重新加载下一页" : "加载更多职责"}</Button>}
         </PageSection>
       </>}
     <ContextPanelContent>
       <div className="flex flex-col gap-4">
         {selected ? <>
-          <PanelSection title="试行与回看"><RoleTrialFacts role={selected} /></PanelSection>
+          <PanelSection title="试行与回看"><RoleTrialFacts role={selected} roleTitle={roleTitle} /></PanelSection>
           <SectionBoundary label="运行时与 skill"><RoleRuntime key={selected.id} context={context} roleId={selected.id} /></SectionBoundary>
         </> : <PanelSection title="职责概况">
           {list.observedAt ? <FactList rows={[
             ...groups.map(group => [group.label, `${group.items.length} 项`] as [string, string]),
-            ["读取范围", list.more ? `已读 ${roles.length} 项，还有更多未读` : `已读完 ${roles.length} 项`],
+            ["读取范围", `${list.more ? `已读 ${roles.length} 项，还有更多未读` : `已读完 ${roles.length} 项`}${list.loadingMore ? "；正在读取下一页" : ""}`],
           ]} /> : <p className={mutedText}>{list.loading ? "正在读取职责…" : "职责尚未读回，无法判断数量。"}</p>}
           <p className={mutedText}>选中一项职责后，这里显示它的试行指标、回看时间、运行时与 skill。</p>
         </PanelSection>}

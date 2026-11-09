@@ -83,11 +83,11 @@ test("Session creation requires a catalog model authorized by the selected grant
   assert.deepEqual(await model.locator("option").allTextContents(), ["请选择模型", "gpt-6-luna"]);
   assert.equal(await create.count(), 0);
   await grant.selectOption("2");
-  await page.getByText("此环境尚未配置精确模型授权", { exact: false }).waitFor();
+  await page.getByText("这个授权还没写明允许使用哪些模型", { exact: false }).waitFor();
   assert.equal(await model.count(), 0);
   assert.equal(await create.count(), 0);
   await grant.selectOption("3");
-  await page.getByText("此授权与当前模型目录没有交集").waitFor();
+  await page.getByText("此授权允许的模型都不在当前模型目录里").waitFor();
   assert.equal(await create.count(), 0);
   assert.equal(commands.length, 1);
 

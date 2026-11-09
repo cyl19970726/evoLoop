@@ -1,47 +1,56 @@
-// The project's Roles, read as a range of pages under one key so the directory in the inner rail, the overview and
-// the selected Role share one answer. A longer range keeps the last answer on screen until the new one arrives; a
-// write elsewhere invalidates the project and the range is read again without clearing what is shown.
-import { useState } from "react";
+// The project's Roles, read page by page under one key so the directory in the inner rail, the overview and the
+// selected Role share one answer. Loading more reads only the next page and keeps the pages already shown; a failed
+// next page is reported on its own. A write elsewhere invalidates the project and the loaded pages are read again
+// without clearing what is shown.
+import { useInfiniteQuery } from "@tanstack/react-query";
+import type { Page } from "@evoloop/contracts";
 import type { RoleRecord } from "@evoloop/contracts/roles";
 import { errorText } from "../../shared/api";
-import { useProjectQuery } from "../../shared/query";
+import { queryKeys } from "../../shared/query";
 import { roleClient } from "../../shared/roleClient";
 
 export const maxAutoPages = 20;
 
-export async function readRoleRange(projectId: string, pages: number): Promise<{ items: RoleRecord[]; nextCursor: string | null; pages: number }> {
+/** One page, checked: it belongs to this project and its cursor moves on. */
+export async function readRolePage(projectId: string, cursor: string): Promise<Page<RoleRecord>> {
+  const page = await roleClient("", projectId).list(cursor || undefined);
+  if (!Array.isArray(page.items) || page.items.some(item => item.projectId !== projectId)) throw new Error("职责列表返回了其他项目的记录");
+  if (page.nextCursor && page.nextCursor === cursor) throw new Error("职责列表游标没有前进，请回读当前状态。");
+  return page;
+}
+
+/** Pages in reading order, later pages winning for a Role read twice. */
+export function mergeRolePages(pages: ReadonlyArray<Page<RoleRecord>>): RoleRecord[] {
   const byId = new Map<string, RoleRecord>();
-  const seen = new Set<string>();
-  let cursor: string | undefined, read = 0, next: string | null = null;
-  do {
-    const page = await roleClient("", projectId).list(cursor);
-    if (page.items.some(item => item.projectId !== projectId)) throw new Error("职责列表返回了其他项目的记录");
-    for (const item of page.items) byId.set(item.id, item);
-    read += 1; next = page.nextCursor;
-    if (next && (next === cursor || seen.has(next))) throw new Error("职责列表游标没有前进，请回读当前状态。");
-    if (next) seen.add(next);
-    cursor = next ?? undefined;
-  } while (cursor && read < pages);
-  return { items: [...byId.values()], nextCursor: next, pages: read };
+  for (const page of pages) for (const item of page.items) byId.set(item.id, item);
+  return [...byId.values()];
 }
 
 export function useRoleList(projectId: string) {
-  const [pages, setPages] = useState(1);
-  const list = useProjectQuery(projectId, ["roles", "list", pages], () => readRoleRange(projectId, pages), { keepPrevious: true });
-  const data = list.data;
+  const list = useInfiniteQuery({
+    queryKey: queryKeys.project(projectId, "roles", "list"),
+    queryFn: ({ pageParam }) => readRolePage(projectId, pageParam),
+    initialPageParam: "",
+    // A cursor seen before would loop; stop there and say so through `more` staying false.
+    getNextPageParam: (last, _pages, _param, params) => last.nextCursor && !params.includes(last.nextCursor) ? last.nextCursor : undefined,
+    enabled: !!projectId,
+  });
+  const pages = list.data?.pages ?? [];
+  const nextFailed = list.isFetchNextPageError;
   return {
-    items: data?.items ?? [],
-    more: !!data?.nextCursor,
-    pages,
+    items: mergeRolePages(pages),
+    more: !!list.hasNextPage,
+    pages: pages.length,
     /** First read: nothing to show yet. */
     loading: list.isPending,
-    /** A reread or a longer range is under way; what is shown is the previous answer. */
-    checking: list.isFetching && !list.isPending,
-    error: list.error ? errorText(list.error) : "",
+    /** The loaded pages are being read again; what is shown is the previous answer. */
+    checking: list.isFetching && !list.isFetchingNextPage && !list.isPending,
+    loadingMore: list.isFetchingNextPage,
+    /** The first page (or a reread of the loaded pages) failed. */
+    error: list.isError && !nextFailed ? errorText(list.error) : "",
+    /** Only the next page failed; the pages already shown stay. */
+    moreError: nextFailed ? errorText(list.error) : "",
     observedAt: list.dataUpdatedAt ? new Date(list.dataUpdatedAt) : null,
-    loadMore: () => setPages(value => value + 1),
-    /** Ask for more pages only while the current range has been read and more remain. */
-    extend: () => { if (!list.isFetching && data?.nextCursor && data.pages >= pages) setPages(value => value + 1); },
-    reread: () => list.refetch(),
+    loadMore: () => { if (list.hasNextPage && !list.isFetchingNextPage) void list.fetchNextPage(); },
   };
 }

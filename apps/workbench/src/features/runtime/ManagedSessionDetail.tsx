@@ -15,7 +15,7 @@ import { SectionBoundary } from "../../shared/ui/SectionBoundary";
 import { href } from "../../shared/ui/shared";
 import { ResidentQueuePanel } from "../queues";
 import { recoveryActivationLabel, sessionHref } from "../sessions";
-import { closeBlockers, needsFullAccessUpgrade, permissionsText, profileText, sessionStateText, sessionStateTone } from "./executionPresentation";
+import { closeBlockers, messageKindText, needsFullAccessUpgrade, permissionsText, profileText, sessionStateText, sessionStateTone, turnStatusText } from "./executionPresentation";
 import { nativeReadError, Receipts, RunList } from "./RunList";
 import type { RoleName } from "./useRoleNames";
 
@@ -120,8 +120,9 @@ function ThreadHistory({ projectId, sessionId }: { projectId: string; sessionId:
     {history && <>
       <p className={mutedText}>读回 {history.turns.length} 轮 · {history.observedAt} · {history.truncated ? "有更多历史未读，不代表完整" : "当前范围读取完成"}</p>
       {history.turns.map((turn, index) => <details key={turn.id} className="text-small">
-        <summary className="cursor-pointer text-foreground">第 {index + 1} 轮 · {turn.status}</summary>
-        {turn.messages.map((message, i) => <pre key={i} className="mt-1 whitespace-pre-wrap break-words rounded-md bg-sunken p-3 font-mono text-caption">{message.type}: {message.text}</pre>)}
+        <summary className="cursor-pointer text-foreground">第 {index + 1} 轮 · {turnStatusText(turn.status)}</summary>
+        {turn.messages.map((message, i) => <div key={i} className="mt-1 flex flex-col gap-0.5"><span className="text-caption text-muted-foreground">{messageKindText(message.type)}</span>
+          <pre className="whitespace-pre-wrap break-words rounded-md bg-sunken p-3 font-mono text-caption">{message.text}</pre></div>)}
       </details>)}
     </>}
   </div>;

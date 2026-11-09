@@ -24,7 +24,8 @@ export function ManagedSessionCreate({ context, grants, roleName }: { context: M
   const choices = grant ? allowedModels(grant, models) : [];
   const chosen = choices.includes(model) ? model : "";
   return <div className="flex flex-col gap-3">
-    <p className={mutedText}>新智能体统一登记完整本机权限（danger-full-access）及无需逐次审批（never）。创建请求不等于原生配置已激活；请回读智能体状态与执行配置。</p>
+    <p className="text-small text-text-secondary">新智能体可以使用这台机器上的全部权限，做每一步时不再逐次请你批准。提交只是登记创建请求，不代表它已经按这个配置启动；创建后请回到这里核对它的状态和执行配置。</p>
+    <p className={mutedText}>技术名：沙盒 danger-full-access，审批策略 never。</p>
     {catalog.isPending && <p role="status" className="text-small text-text-secondary">正在读取可用模型…</p>}
     {error && <Notice tone="error">模型目录读取失败：{error}。请重读运行状态后重试。</Notice>}
     {!error && value?.status === "unavailable" && <Notice tone="error">模型目录暂不可用：{value.error || "执行服务未能列出模型"}。请重读运行状态后重试。</Notice>}
@@ -37,8 +38,8 @@ export function ManagedSessionCreate({ context, grants, roleName }: { context: M
         </select>}</Field>
       {grant && (choices.length === 0
         ? <Notice tone="error">{!grant.model && !grant.models?.length
-          ? "此环境尚未配置精确模型授权。请在 runtime.grants 的 model 或 models 中配置所需模型后重读运行状态。"
-          : "此授权与当前模型目录没有交集，无法创建智能体。"}</Notice>
+          ? <>这个授权还没写明允许使用哪些模型，暂时不能用它创建智能体。请项目管理员在执行授权里补上允许的模型，再读取运行状态。<span className="mt-1 block text-caption text-muted-foreground">配置项：runtime.grants 的 model 或 models。</span></>
+          : "此授权允许的模型都不在当前模型目录里，无法创建智能体。"}</Notice>
         : <Field label="精确模型">{control => <select {...control} className={select} value={chosen} onChange={event => setModel(event.target.value)}>
             <option value="">请选择模型</option>
             {choices.map(item => <option key={item} value={item}>{item}</option>)}

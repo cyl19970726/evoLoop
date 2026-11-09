@@ -429,7 +429,8 @@ test("resident observation keeps acceptance, host authority and task replies dis
   await pageBrowser.evaluate(({projectId})=>{location.hash=`/p/${projectId}/roles?role=javascript%3Aalert(1)`;},{projectId});
   await pageBrowser.getByText(/目标职责 ID 无效；没有定位到其他职责/).waitFor();
   await pageBrowser.evaluate(({projectId})=>{location.hash=`/p/${projectId}/roles?role=ffffffff-ffff-ffff-ffff-ffffffffffff`;},{projectId});
-  await pageBrowser.getByText(/当前项目已读完职责，未找到目标 ffffffff/).waitFor();
+  await pageBrowser.getByText(/当前项目已读完职责，没有链接里的这项职责/).waitFor();
+  assert.match(await pageBrowser.locator("[data-role-target]").innerText(),/完整标识/,"the full ID is offered under 完整标识, not in the sentence");
   await pageBrowser.evaluate(({projectId,roleId})=>{location.hash=`/p/${projectId}/roles?role=${roleId}`;},{projectId,roleId});
   await pageBrowser.locator(`#role-${roleId}`).waitFor();
   await fetch(`${base}/__fixture/restore-hosts`);

@@ -1,5 +1,5 @@
 // Section routes of the current workbench pages and the addresses that open them.
-import { currentPath } from "./navigation";
+import { appHistory, currentPath, onNavigate } from "./navigation";
 
 export type Section = "overview" | "work" | "create-task" | "knowledge" | "sessions" | "task" | "document" | "documents" | "inbox" | "journey" | "discussions" | "reviews" | "collaboration" | "runtime" | "schedules" | "roles" | "repository" | "operations" | "evaluations" | "settings" | "connectors";
 export type Route = { projectId: string | null; section: Section; id?: string; revision?: string; action?: string; session?: string };
@@ -36,7 +36,8 @@ export function parseRoute(path: string): Route {
 export function legacyTeamAddress(path: string): string | null {
   const [pathname = "", query = ""] = path.split("?");
   const parts = pathname.split("/");
-  if (parts.length !== 4 || parts[1] !== "p" || !parts[2] || parts[3] !== "runtime") return null;
+  // `/p/{project}/runtime` or the same with a trailing slash.
+  if (!(parts.length === 4 || parts.length === 5 && parts[4] === "") || parts[1] !== "p" || !parts[2] || parts[3] !== "runtime") return null;
   const params = new URLSearchParams(query);
   const rest = (section: string) => { const text = params.toString(); return `/p/${parts[2]}/${section}${text ? `?${text}` : ""}`; };
   if (params.get("session")?.includes(":")) { params.delete("view"); return rest("sessions"); }
@@ -44,6 +45,20 @@ export function legacyTeamAddress(path: string): string | null {
   if (!params.has("view")) return null;
   params.delete("view");
   return rest(view === "roles" || view === "discussions" ? view : "runtime");
+}
+
+/** Rewrite an old team address in place, keeping the fragment. True when it did. */
+export function redirectLegacyTeam(): boolean {
+  const target = legacyTeamAddress(currentPath());
+  if (!target) return false;
+  appHistory().replace(`${target}${appHistory().location.hash}`, undefined, { ignoreBlocker: true });
+  return true;
+}
+
+/** Installed before the app subscribes to navigation (main.tsx), so no page ever opens on an old team address. */
+export function installLegacyTeamRedirect(): () => void {
+  redirectLegacyTeam();
+  return onNavigate(() => { redirectLegacyTeam(); });
 }
 
 export function href(projectId: string, section: Section, id?: string, revision?: string): string {

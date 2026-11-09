@@ -5,7 +5,7 @@ import test from "node:test";
 import type { HostLink } from "@evoloop/contracts/resident-hosts";
 import {
   alternativeKindText, evidenceKindText, handoffText, hostTitle, reviewDecisionText, roleActions, roleClassText, roleStateText,
-  roleTarget, routeStatusText, targetNotice, targetState,
+  actorText, revisionReasonText, roleTarget, routeStatusText, targetNotice, targetState,
 } from "../src/features/roles/rolePresentation.ts";
 
 const id = "30000002-0000-4000-8000-000000000002";
@@ -49,7 +49,28 @@ test("a linked Role is found, searched page by page, or reported missing; never 
   assert.equal(targetState(id, false, read({ more: true, pages: 20 })).kind, "limit");
   assert.equal(targetState(id, false, read()).kind, "missing");
   assert.deepEqual(targetState(id, false, read({ error: "503" })), { kind: "unreadable", error: "503" });
-  assert.match(targetNotice({ kind: "missing" }, id)!.text, /已读完职责，未找到目标/);
-  assert.match(targetNotice({ kind: "invalid" }, "x")!.text, /目标职责 ID 无效；没有定位到其他职责/);
-  assert.equal(targetNotice({ kind: "found" }, id), null);
+  assert.deepEqual(targetState(id, false, read({ more: true, pages: 2, moreError: "503" } as never)), { kind: "unreadable", error: "503" },
+    "a failed next page is 无法定位, never 没有");
+  assert.equal(targetState(id, false, read({ loadingMore: true } as never)).kind, "searching");
+  assert.deepEqual(targetNotice({ kind: "searching" }), { tone: "info", title: "正在定位", text: "正在逐页定位链接里的职责…" });
+  assert.equal(targetNotice({ kind: "unreadable", error: "503" })!.title, "无法定位");
+  assert.match(targetNotice({ kind: "missing" })!.text, /已读完职责，没有链接里的这项职责/);
+  assert.match(targetNotice({ kind: "invalid" })!.text, /目标职责 ID 无效；没有定位到其他职责/);
+  assert.equal(targetNotice({ kind: "found" }), null);
+  for (const state of [{ kind: "searching" }, { kind: "limit" }, { kind: "missing" }] as const)
+    assert.doesNotMatch(targetNotice(state)!.text, /[0-9a-f]{8}-/, "the full ID stays out of the sentence");
+});
+
+test("service-written revision reasons read as Chinese; a person's text stays; anything else goes to 完整标识", () => {
+  assert.deepEqual(revisionReasonText("prepared task handoff"), { text: "登记待交接：未完成任务" });
+  assert.deepEqual(revisionReasonText("prepared session handoff"), { text: "登记待交接：智能体现场" });
+  assert.deepEqual(revisionReasonText("handoff acknowledged"), { text: "确认交接已完成" });
+  assert.deepEqual(revisionReasonText("runtime session binding"), { text: "绑定承载智能体" });
+  assert.deepEqual(revisionReasonText("evidence-backed proposal"), { text: "附证据提出职责" });
+  assert.deepEqual(revisionReasonText("职责合并; knowledge: 已归档; runtime: 无在途"), { text: "撤回：职责合并\n知识与材料的处理：已归档\n在途智能体的核对：无在途" });
+  assert.deepEqual(revisionReasonText("证据充分，接受两周试行"), { text: "证据充分，接受两周试行" });
+  assert.deepEqual(revisionReasonText("role reclassified by migration"), { text: "系统记录的修订原因（未识别）", raw: "role reclassified by migration" });
+  assert.equal(actorText("lead", "lead"), "我");
+  assert.equal(actorText("reviewer", "lead"), "reviewer");
+  assert.equal(actorText(id, "lead"), "身份 30000002");
 });

@@ -7,7 +7,6 @@ import { addReceipt, hasProjectReceipt, readReceipts, removeReceipt, visibleRece
 import { clearRecoveryIntents, forgetRecoveryIntent, isSpecialOperation, rememberRecoveryIntent } from "./recoveryIntent";
 
 import { readRoute, href, type Route } from "../shared/ui/shared";
-import { legacyTeamAddress } from "../shared/routes";
 import { clearKnowledgeReturnsOnLogin, rememberKnowledgeSource } from "../shared/ui/returnRoute";
 import { appHistory, appPath, currentPath, navigate, onNavigate } from "../shared/navigation";
 import { leaveProject, projectChanged, useProjectQuery } from "../shared/query";
@@ -55,16 +54,8 @@ function clearSessionSnapshots() {
   void import("../features/sessions/SessionWorkspace").then(module => module.clearSessionSnapshots(), () => undefined);
 }
 
-/** Old team addresses open their current place; the replaced entry is reported like any navigation. */
-function redirectLegacyTeam(): boolean {
-  const target = legacyTeamAddress(currentPath());
-  if (!target) return false;
-  appHistory().replace(target, undefined, { ignoreBlocker: true });
-  return true;
-}
-
 function useRoute(): Route {
-  const [route, setRoute] = useState(() => { redirectLegacyTeam(); return readRoute(); });
+  const [route, setRoute] = useState(readRoute);
   useEffect(() => {
     const projectOf = (path: string) => path.split("?")[0]!.split("/")[2] ?? null;
     const rememberList = () => {
@@ -83,7 +74,6 @@ function useRoute(): Route {
       enableBeforeUnload: false,
     });
     const stop = onNavigate(() => {
-      if (redirectLegacyTeam()) return;
       const nextPath = currentPath();
       if (nextPath === previousPath) return;
       const next = readRoute();

@@ -82,24 +82,45 @@ export type TargetState =
   | { kind: "unreadable"; error: string } | { kind: "limit" } | { kind: "missing" };
 
 /** Where a linked Role stands: found, still being looked for page by page, or provably not in this project. */
-export function targetState(target: string | null, found: boolean, read: { loading: boolean; error: string; more: boolean; pages: number; maxPages: number }): TargetState {
+export function targetState(target: string | null, found: boolean, read: { loading: boolean; error: string; more: boolean; pages: number; maxPages: number; loadingMore?: boolean; moreError?: string }): TargetState {
   if (target === null) return { kind: "none" };
   if (!roleIdPattern.test(target)) return { kind: "invalid" };
   if (found) return { kind: "found" };
   if (read.error) return { kind: "unreadable", error: read.error };
-  if (read.loading || read.more && read.pages < read.maxPages) return { kind: "searching" };
+  if (read.moreError) return { kind: "unreadable", error: read.moreError };
+  if (read.loading || read.loadingMore || read.more && read.pages < read.maxPages) return { kind: "searching" };
   return read.more ? { kind: "limit" } : { kind: "missing" };
 }
 
-export function targetNotice(state: TargetState, target: string): { tone: "info" | "error"; text: string } | null {
+/** What the page says about a linked Role. The full ID is never in the sentence; the page offers it under 完整标识. */
+export function targetNotice(state: TargetState): { tone: "info" | "error"; title: string; text: string } | null {
   switch (state.kind) {
-    case "invalid": return { tone: "error", text: "链接中的目标职责 ID 无效；没有定位到其他职责。" };
-    case "searching": return { tone: "info", text: `正在定位目标职责 ${target}…` };
-    case "unreadable": return { tone: "error", text: `目标职责暂不可核对：${state.error}` };
-    case "limit": return { tone: "error", text: `目标职责尚未定位；自动追加读取已到上限，可继续加载并核对 ${target}。` };
-    case "missing": return { tone: "error", text: `当前项目已读完职责，未找到目标 ${target}；没有定位到其他职责。` };
+    case "invalid": return { tone: "error", title: "链接无效", text: "链接中的目标职责 ID 无效；没有定位到其他职责。" };
+    case "searching": return { tone: "info", title: "正在定位", text: "正在逐页定位链接里的职责…" };
+    case "unreadable": return { tone: "error", title: "无法定位", text: `职责列表没有读完，暂时无法定位链接里的职责：${state.error}` };
+    case "limit": return { tone: "error", title: "尚未定位", text: "自动追加读取已到上限，链接里的职责尚未定位；可在“全部职责”继续加载后再核对。" };
+    case "missing": return { tone: "error", title: "没有这项职责", text: "当前项目已读完职责，没有链接里的这项职责；没有定位到其他职责。" };
     default: return null;
   }
+}
+
+/** Role revision reasons the service writes itself, in words; anything else written by a person is shown as is. */
+export function revisionReasonText(reason: string): { text: string; raw?: string } {
+  const handoff = /^prepared (task|knowledge|session) handoff$/.exec(reason);
+  if (handoff) return { text: `登记待交接：${handoffText({ kind: handoff[1] as RoleHandoff["kind"], state: "prepared" }).split(" · ")[0]}` };
+  if (reason === "evidence-backed proposal") return { text: "附证据提出职责" };
+  if (reason === "handoff acknowledged") return { text: "确认交接已完成" };
+  if (reason === "runtime session binding") return { text: "绑定承载智能体" };
+  const retire = /^([\s\S]*); knowledge: ([\s\S]*); runtime: ([\s\S]*)$/.exec(reason);
+  if (retire) return { text: `撤回：${retire[1]}\n知识与材料的处理：${retire[2]}\n在途智能体的核对：${retire[3]}` };
+  // Free text from a person is kept; an unrecognised service sentence (no Chinese at all) is not shown raw.
+  return /[\u3400-\u9fff]/.test(reason) || !reason.trim() ? { text: reason || "未写原因" } : { text: "系统记录的修订原因（未识别）", raw: reason };
+}
+
+/** A person in the record: the reader is 我, a readable account name stays, an opaque identifier is shortened. */
+export function actorText(actorId: string, me: string): string {
+  if (actorId === me) return "我";
+  return roleIdPattern.test(actorId) ? `身份 ${actorId.slice(0, 8)}` : actorId;
 }
 
 const live = new Set<RoleRecord["state"]>(["active", "trial", "retirement-pending"]);
