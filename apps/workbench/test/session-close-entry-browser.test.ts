@@ -106,7 +106,7 @@ test("Session workspace exposes blockers, submits one close intent, and reads th
   await fetch(`${base}/__fixture/clear`);
   await panel.getByRole("button", { name: "重新核对关闭条件" }).click();
   await panel.getByText(/未在本次已读范围发现/).waitFor();
-  await panel.locator(".command-disclosure > summary").click();
+  await panel.locator("summary", { hasText: "请求关闭受管智能体" }).click();
   await panel.getByLabel("关闭理由与核对依据").fill("任务、队列、运行和消息均已核对");
   await panel.getByRole("button", { name: "请求关闭受管智能体" }).click();
   await panel.getByText(/原生归档已尝试/).waitFor();

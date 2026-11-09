@@ -3,7 +3,8 @@ import type { Operation } from "@evoloop/contracts";
 import { ApiError, api, errorText, type Session } from "../shared/api";
 import { describeFailure } from "../shared/errorPresentation";
 import { onUnauthorized, signIn, signOut } from "../shared/identity";
-import { clearCommandDrafts, type MutationContext, type RecoverableCommand } from "../shared/ActionForm";
+import type { MutationContext, RecoverableCommand } from "../shared/command/context";
+import { clearCommandDrafts } from "../shared/command/drafts";
 import { addReceipt, hasProjectReceipt, readReceipts, removeReceipt, visibleReceipts as forPrincipal, writeReceipts, type OperationReceipt } from "./recovery";
 import { clearRecoveryIntents, forgetRecoveryIntent, isSpecialOperation, rememberRecoveryIntent } from "./recoveryIntent";
 

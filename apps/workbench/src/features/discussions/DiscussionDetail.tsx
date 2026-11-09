@@ -10,7 +10,7 @@ import { useProjectQuery } from "../../shared/query";
 import { ContextPanelContent } from "../../shared/ui/ContextPanel";
 import { date } from "../../shared/ui/shared";
 import { AllocationRelations } from "./AllocationRelationsPanel";
-import { canWrite, muted } from "./CommandForm";
+import { canWrite, muted } from "./formParts";
 import { discussionCopyEnvelope } from "./commands";
 import { readDocumentHead, readVerifiedPackage, type Choices } from "./discussionClient";
 import { DecisionForm, HandoffForm, LinkForm, targetChoices } from "./DiscussionForms";

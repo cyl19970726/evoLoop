@@ -52,7 +52,11 @@ export function buildProposal(values: Record<string, string>): RoleProposal {
   };
 }
 
-export interface RoleForm { title: string; fields: Field[]; build(values: Record<string, string>): Record<string, unknown> }
+export interface RoleForm {
+  title: string; fields: Field[]; build(values: Record<string, string>): Record<string, unknown>;
+  /** The versions the command depends on, when the form's context does not already record them (`draftBaseline`). */
+  baseline?: Record<string, string | number>;
+}
 
 const base = (role: RoleRecord) => ({ roleId: role.id, expectedVersion: role.version });
 
@@ -89,7 +93,7 @@ export const handoffForm = (role: RoleRecord): RoleForm => ({
 });
 
 export const ackHandoffForm = (role: RoleRecord, handoff: RoleHandoff): RoleForm => ({
-  title: "确认交接已完成",
+  title: "确认交接已完成", baseline: { roleVersion: role.version, handoffState: handoff.state },
   fields: [{ name: "note", label: "接收与核对证据", kind: "textarea" }],
   build: v => ({ ...base(role), type: "role.ackHandoff", handoffId: handoff.id, ...v }),
 });
@@ -108,7 +112,7 @@ export const retireForm = (role: RoleRecord): RoleForm => ({
 });
 
 export const registerHostForm = (role: RoleRecord): RoleForm => ({
-  title: "登记外部聊天",
+  title: "登记外部聊天", baseline: { roleVersion: role.version },
   fields: [{ name: "ref", label: "原聊天完整引用", hint: "填写 codex://threads/<聊天 UUID>；历史裸 UUID 也会规范化。先在原应用核对。" }, reasonField],
   build: v => {
     const ref = codexThreadHref(v.ref);
@@ -119,7 +123,7 @@ export const registerHostForm = (role: RoleRecord): RoleForm => ({
 });
 
 export const verifyHostForm = (role: RoleRecord, link: HostLink): RoleForm => ({
-  title: "核实人工连接能力",
+  title: "核实人工连接能力", baseline: { roleVersion: role.version, linkVersion: link.version },
   fields: [{ name: "verifiedCapabilities", label: "亲自核实的能力", kind: "multi", options: [option("open", "打开原聊天"), option("read", "读取原聊天"), option("manual-claim", "人工领取")] },
     { name: "evidence", label: "核实证据", kind: "textarea" }, reasonField],
   build: v => ({ type: "host.verify", linkId: link.id, expectedVersion: link.version, expectedRoleVersion: role.version,

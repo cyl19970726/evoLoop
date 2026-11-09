@@ -8,7 +8,7 @@ import { appPath } from "../../shared/appPath";
 import { date } from "../../shared/ui/shared";
 import type { MutationContext } from "../../shared/ActionForm";
 import type { AllocationTrace } from "./allocationClient";
-import { muted } from "./CommandForm";
+import { muted } from "./formParts";
 import {
   acceptanceGapSentence, assignmentStatusLabel, limitationText, nameOr, sourceKindLabel, targetKindLabel, targetStatusTag,
 } from "./discussionPresentation";

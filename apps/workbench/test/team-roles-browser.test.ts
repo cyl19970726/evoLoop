@@ -133,6 +133,8 @@ test("职责 and 分工与运行 read and write in the shell layout, and old run
   const host = commands.find(item => item.type === "host.register")!;
   assert.deepEqual([host.roleId, host.expectedRoleVersion, (host.host as { ref: string }).ref], [id(1), 3, "codex://threads/01a158d7-f842-7ca3-9899-ce1efc33c030"]);
   if (shots) await page.screenshot({ path: `${shots}/team-role-1440.png`, fullPage: true });
+  // The discussion links are new markup inside the role's old region; this shot shows how they look there.
+  if (shots) await page.getByRole("region", { name: "相关讨论与决定" }).screenshot({ path: `${shots}/team-role-backlinks-1440.png` });
 
   // A candidate Role offers only the decision; the decision is sent with the Role's version.
   await directory.getByRole("link", { name: /测试验收/ }).click();
@@ -141,7 +143,7 @@ test("职责 and 分工与运行 read and write in the shell layout, and old run
   const next = candidate.getByRole("region", { name: "下一步" });
   assert.deepEqual(await next.locator("summary").allTextContents(), ["决定是否试行"]);
   await next.locator("summary", { hasText: "决定是否试行" }).click();
-  await next.getByLabel("决定").selectOption("accept-trial");
+  await next.getByLabel("决定", { exact: true }).selectOption("accept-trial");
   await next.getByLabel("理由与依据").fill("证据充分，接受两周试行");
   await next.getByRole("button", { name: "决定是否试行" }).click();
   for (let i = 0; i < 50 && !commands.some(item => item.type === "role.decide"); i++) await page.waitForTimeout(50);

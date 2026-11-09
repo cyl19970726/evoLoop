@@ -1,6 +1,7 @@
 // 修订与发布: the low-frequency write operations on a document. The page folds them under the text (Markdown) or
-// into the reader's foot (HTML). The forms are the shared command forms (old markup, kept under data-legacy until
-// they are rebuilt); they carry the version they were opened on, so a newer version asks the reader to compare first.
+// into the reader's foot (HTML). The forms are the shared command form (ActionForm on shared/command, new markup even
+// inside this data-legacy block); they carry the version they were opened on, so a newer version asks the reader to
+// compare first. The upload form is still the old one.
 import { useState } from "react";
 import type { DocumentDetail } from "@evoloop/contracts";
 import { ActionForm, type MutationContext } from "../../shared/ActionForm";
@@ -22,7 +23,7 @@ export function DocumentRevise({ context, detail, checking, failed }: {
   return <div data-legacy="" className="doc-revise">
     {checking && <Alert>正在核对当前版本；保存与发布暂不可用。</Alert>}
     {!archived && detail.current.format === "markdown" && detail.current.body !== null && <ActionForm context={formContext} title="保存候选修订"
-      fields={[{ name: "body", label: "完整正文", kind: "textarea", value: detail.current.body ?? "" }, { name: "reason", label: "修订理由", kind: "textarea" }]}
+      fields={[{ name: "body", label: "完整正文", kind: "textarea", value: detail.current.body ?? "", maxLength: 65536 }, { name: "reason", label: "修订理由", kind: "textarea" }]}
       build={values => ({ type: "document.revise", documentId: id, expectedVersion: document.version, ...values })} />}
     {!archived && <>
       {uploadStale && <Alert kind="error">上传表单仍按打开时的第 {uploadBaseline} 版填写，当前已是第 {document.version} 版。请先核对新版本，再重新选择文件。

@@ -28,7 +28,7 @@
 - **阶段的下一步**按阶段状态和所属任务的进展推出：待接受先接受；有结果未知的先核对；有待验收的先核对交付与使用；全部结束后记录回看。
 - **读取中与失败**：首次读取用占位；任务读不回时写“阶段下的任务暂不可读取，这不表示阶段没有任务”，下一步写“暂不能判断”。重新读取时旧内容保留并标“正在核对”；失败时标“上次读回，当前待核对”，回看的最新一条写“上次读回的判断”。任务只读了一部分时，不说“没有所属任务”或“都已结束”。阶段读不回时目标照常显示，但不写阶段数和“还没有阶段”，不属于阶段的任务也写“无法判断”。
 - **写入**：建立和修订目标、提出阶段要写入权限；接受阶段、记录回看、追加纠正要审阅权限。目标与阶段正在核对或没读回时提交暂停。
-- **草稿与版本**：草稿连同写下它时看到的版本留在页面里，切换目标或阶段、离开再回来、重新读取都不丢。版本已变（切回时发现，或保存时服务端答复版本冲突）就先重新读取，再请人选“保留草稿，按最新版本核对”或“用最新内容重填”，选之前不能提交。
+- **草稿与版本**：草稿连同写下它时看到的版本留在页面里，切换目标或阶段、离开再回来、重新读取都不丢。版本已变（切回时发现，或保存时服务端答复版本冲突）就先重新读取，再请人选“保留我的修改”或“按最新内容重填”，选之前不能提交（[提交表单](../components.md#提交表单)）。
 - **纠正回看**：只针对读回的最新一条，草稿按所纠正的那条分开保存；那条被新的纠正替代后，旧草稿不会填进新表单，只提示可以带入。旧判断保留在回看记录里，标“已被后续回看替代”。
 
 ## 截图
@@ -50,7 +50,7 @@
 | 页面、左栏、右栏 | `features/workflow/JourneyPage.tsx`；任务的下一步与下一责任在 `apps/workbench/src/shared/workPresentation.ts`，名称在 `apps/workbench/src/shared/ui/RecordName.tsx` | `journey-browser.test.ts` |
 | 阶段状态、下一步、任务归属、回看先后 | `features/workflow/journeyPresentation.ts` | `journey-presentation.test.ts` |
 | 读取 | `features/workflow/journeyRead.ts` | `journey-browser.test.ts` |
-| 目标与阶段的写入、草稿与版本 | `features/workflow/JourneyForms.tsx`、`features/workflow/useCommand.ts` | `journey-drafts.test.ts`、`journey-browser.test.ts` |
+| 目标与阶段的写入、草稿与版本 | `features/workflow/JourneyForms.tsx`、`shared/command/CommandForm.tsx`、`shared/command/useCommand.ts` | `journey-drafts.test.ts`、`journey-browser.test.ts` |
 | 新建任务 | `features/workflow/CreateTaskPage.tsx`、`features/workflow/taskCreate.ts` | `task-create.test.ts`、`journey-browser.test.ts` |
 
 ## 相关

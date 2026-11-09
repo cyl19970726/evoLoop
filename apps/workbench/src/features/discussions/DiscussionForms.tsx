@@ -1,19 +1,20 @@
 // The four discussion writes: prepare a package, record an observed handoff, record (or correct) a decision, and
-// link an existing follow-up object. Each keeps its input when the page rereads, and remembers the baseline the reader
-// looked at (discussionBaseline.ts): when any fixed input changes, or the server says the view is stale, the form
-// will not send until the reader checks again; a recovery confirmation has to be given again.
+// link an existing follow-up object. Each is the shared command form (shared/command: useCommand with CommandFrame)
+// with its own field layout and the baseline it fixes (discussionBaseline.ts). The form records the baseline when it
+// opens; while the reader has typed, a part that moves (or a version conflict, which rereads first) stops sending until
+// the reader keeps their input or refills; a recovery confirmation has to be given again.
 import { useEffect, useState } from "react";
 import type { DiscussionEvent, DiscussionRecord, DiscussionTarget } from "@evoloop/contracts";
 import { Button, Field, Input, Textarea, cn } from "@evoloop/ui";
-import type { MutationContext } from "../../shared/ActionForm";
-import { CommandFormShell, SelectField, copyDraft, muted, useCommandSubmit } from "./CommandForm";
+import { CommandFrame, readableDraft, useCommand, type MutationContext } from "../../shared/command";
+import { SelectField, muted } from "./formParts";
 import {
   discussionDecisionPayload, discussionHandoffPayload, discussionLinkPayload, discussionPreparePayload,
   type PrepareValues, type VerifiedDocumentHead,
 } from "./commands";
 import type { Choices } from "./discussionClient";
 import {
-  changedParts, decisionBaseline, handoffBaseline, linkBaseline, prepareBaseline, preparePart, targetKey, type Baseline, type PrepareSelection,
+  decisionBaseline, discussionPartLabels, handoffBaseline, linkBaseline, prepareBaseline, preparePart, targetKey, type Baseline, type PrepareSelection,
 } from "./discussionBaseline";
 import { targetKindLabel, type TargetKind } from "./discussionPresentation";
 
@@ -21,16 +22,23 @@ const required = "必填";
 type Values = Record<string, string>;
 
 /**
- * Follows the current baseline until the reader starts typing; after that a change has to be acknowledged. `adopt`
- * takes one part as it reads now — used when the reader picks that object themself.
+ * The shared command for one discussion form. An untouched form follows the latest baseline; once the reader has
+ * typed, a moved part has to be looked at. A version conflict rereads the page first. `command.adopt` takes one part
+ * as it reads now, when the reader picks that object themself.
  */
-function useBaseline(current: Baseline, dirty: boolean) {
-  const [seen, setSeen] = useState(current);
-  const key = JSON.stringify(current);
-  useEffect(() => { if (!dirty) setSeen(current); }, [key, dirty]); // `current` is followed through `key`
-  const changed = dirty ? changedParts(seen, current) : [];
-  return { changed, accept: () => setSeen(current), adopt: (part: string, value: string) => setSeen(previous => ({ ...previous, [part]: value })) };
+function useDiscussionCommand(context: MutationContext, current: Baseline, dirty: boolean) {
+  const command = useCommand(context, current, { partLabels: discussionPartLabels, onStale: context.onChanged });
+  useEffect(() => {
+    if (!dirty && command.baselineChanged && !command.awaitingReread) command.rebase();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dirty, command.baselineChanged, command.awaitingReread]);
+  return command;
 }
+
+const keepNote = "保留我的修改：输入不变；先看上方读回的新内容，确认这份输入仍然适用，再保存。";
+/** The draft as text for “复制当前草稿”: each label with what was typed. */
+const draftText = (title: string, labels: Record<string, string>, values: Values) =>
+  () => readableDraft(title, Object.entries(labels).map(([name, label]) => ({ name, label })), values);
 
 function useDraft<T extends Values>(initial: T) {
   const [values, setValues] = useState<T>(initial);
@@ -55,6 +63,9 @@ function TextField({ label, hint, error, value, onChange, multiline, rows }: {
 
 const prepareInitial = { title: "", goalId: "", stageId: "", taskId: "", question: "", options: "", authorizationBoundary: "",
   targetSessionLabel: "", targetSessionRef: "", body: "" };
+// The typed text; the picked objects are chosen again from the reread lists, so their identifiers are not copied.
+const prepareLabels = { title: "交接包标题", question: "本次要讨论的问题", options: "备选做法", authorizationBoundary: "授权与不能自行决定的边界",
+  targetSessionLabel: "拟交接的智能体", targetSessionRef: "智能体的安全引用", body: "补充上下文" };
 
 /** Prepare a fixed package: the goal version, optional stage and task, adopted documents, and the question to answer. */
 export function PrepareForm({ context, choices, rereading, onPrepared, onCancel }: {
@@ -63,10 +74,9 @@ export function PrepareForm({ context, choices, rereading, onPrepared, onCancel 
   const [kind, setKind] = useState<PrepareValues["kind"]>("allocation");
   const [documentIds, setDocumentIds] = useState<string[]>([]);
   const draft = useDraft(prepareInitial);
-  const submit = useCommandSubmit(context);
   const { values } = draft;
   const selection: PrepareSelection = { goalId: values.goalId, stageId: values.stageId, taskId: values.taskId, documentIds };
-  const guard = useBaseline(prepareBaseline(choices, selection), draft.dirty);
+  const command = useDiscussionCommand(context, prepareBaseline(choices, selection), draft.dirty);
   const stages = choices.stages.filter(stage => stage.goalId === values.goalId);
   const adopted = choices.documents.filter(document => !!document.adoptedRevisionId);
   const requiredNames = ["title", "goalId", "question", "options", "authorizationBoundary", "targetSessionLabel"] as const;
@@ -74,22 +84,23 @@ export function PrepareForm({ context, choices, rereading, onPrepared, onCancel 
   const pick = (part: "goal" | "stage" | "task", value: string) => {
     const next = { ...selection, ...(part === "goal" ? { goalId: value, stageId: "" } : part === "stage" ? { stageId: value } : { taskId: value }) };
     draft.set(`${part}Id` as "goalId", value);
-    if (part === "goal") { draft.set("stageId", ""); guard.adopt("stage", ""); }
-    guard.adopt(part, preparePart(choices, part, next));
+    if (part === "goal") { draft.set("stageId", ""); command.adopt({ stage: "" }); }
+    command.adopt({ [part]: preparePart(choices, part, next) });
   };
   const toggleDocument = (id: string) => {
     const next = documentIds.includes(id) ? documentIds.filter(item => item !== id) : [...documentIds, id];
-    setDocumentIds(next); draft.touch(); guard.adopt("documents", preparePart(choices, "documents", { ...selection, documentIds: next }));
+    setDocumentIds(next); draft.touch(); command.adopt({ documents: preparePart(choices, "documents", { ...selection, documentIds: next }) });
   };
   const send = () => {
     draft.setTried(true);
-    if (draft.missing([...requiredNames]) || documentIds.length > 20 || guard.changed.length) return;
-    void submit.submit(() => discussionPreparePayload(choices, { ...values, kind, documentIds },
-      { discussionId: crypto.randomUUID(), documentId: crypto.randomUUID() }, context.projectId), id => { draft.clear(); setDocumentIds([]); onPrepared(id); });
+    if (draft.missing([...requiredNames]) || documentIds.length > 20) return;
+    void command.submit(() => discussionPreparePayload(choices, { ...values, kind, documentIds },
+      { discussionId: crypto.randomUUID(), documentId: crypto.randomUUID() }, context.projectId), result => { draft.clear(); setDocumentIds([]); onPrepared(result.entityId); });
   };
-  return <CommandFormShell label="准备讨论" submitLabel="生成交接包" dirty={draft.dirty} submit={submit} blocked={context.blocked}
-    changed={guard.changed} rereading={rereading} onAccept={() => { guard.accept(); submit.reset(); }} onCancel={onCancel}
-    onCopyDraft={() => void copyDraft("准备讨论", Object.entries(values))} onReread={context.onChanged} onSubmit={send}>
+  const refill = () => { command.rebase(); draft.clear(); setDocumentIds([]); };
+  return <CommandFrame context={context} command={command} label="准备讨论" submitLabel="生成交接包" dirty={draft.dirty} onSubmit={send}
+    onKeep={() => command.rebase()} onRefill={refill} keepNote={keepNote} rereading={rereading} onCancel={onCancel} className="gap-4 rounded-xl"
+    copy={draftText("准备讨论", prepareLabels, values)}>
     <div role="group" aria-label="讨论什么" className="flex flex-wrap gap-2">
       {(["allocation", "direction"] as const).map(item => <Button key={item} size="compact" variant={kind === item ? "secondary" : "ghost"} aria-pressed={kind === item}
         className={cn(kind === item && "bg-selected")} onClick={() => setKind(item)}>{item === "allocation" ? "讨论当前分工" : "讨论下一阶段"}</Button>)}
@@ -124,7 +135,7 @@ export function PrepareForm({ context, choices, rereading, onPrepared, onCancel 
       <TextField label="智能体的安全引用（可选）" hint="本项目页面、http(s) 地址或 codex://threads/<ID>。记下引用不表示已送达。" value={values.targetSessionRef} onChange={value => draft.set("targetSessionRef", value)} />
     </div>
     <TextField label="补充上下文（可选）" hint="固定来源由系统生成，这里只写补充说明。" multiline value={values.body} onChange={value => draft.set("body", value)} />
-  </CommandFormShell>;
+  </CommandFrame>;
 }
 
 // The three forms below fold away (`onCancel`) once their write is applied — including when an unknown result is
@@ -134,19 +145,18 @@ interface DetailFormProps { context: MutationContext; record: DiscussionRecord; 
 /** Record that someone was actually seen taking the package over; it does not prove delivery or reading. */
 export function HandoffForm({ context, record, notReady, rereading, onCancel }: DetailFormProps) {
   const draft = useDraft({ evidence: "", reason: "" });
-  const guard = useBaseline(handoffBaseline(record), draft.dirty);
-  const submit = useCommandSubmit(context);
+  const command = useDiscussionCommand(context, handoffBaseline(record), draft.dirty);
   const send = () => {
     draft.setTried(true);
-    if (draft.missing(["evidence", "reason"]) || guard.changed.length || notReady) return;
-    void submit.submit(() => discussionHandoffPayload(record, draft.values), () => { draft.clear(); onCancel(); });
+    if (draft.missing(["evidence", "reason"])) return;
+    void command.submit(() => discussionHandoffPayload(record, draft.values), () => { draft.clear(); onCancel(); });
   };
-  return <CommandFormShell label="登记承接观察" submitLabel="登记承接" dirty={draft.dirty} submit={submit} blocked={context.blocked}
-    changed={guard.changed} notReady={notReady} rereading={rereading} onAccept={() => { guard.accept(); submit.reset(); }} onCancel={onCancel}
-    onCopyDraft={() => void copyDraft("登记承接观察", Object.entries(draft.values))} onReread={context.onChanged} onSubmit={send}>
+  return <CommandFrame context={context} command={command} label="登记承接观察" submitLabel="登记承接" dirty={draft.dirty} onSubmit={send}
+    onKeep={() => command.rebase()} onRefill={() => { command.rebase(); draft.clear(); }} keepNote={keepNote} paused={notReady} rereading={rereading}
+    onCancel={onCancel} className="gap-4 rounded-xl" copy={draftText("登记承接观察", { evidence: "实际怎样观察到承接", reason: "理由与依据" }, draft.values)}>
     <TextField label="实际怎样观察到承接" hint="只登记人工观察，不证明自动送达或对方已读完。" multiline value={draft.values.evidence} error={draft.error("evidence")} onChange={value => draft.set("evidence", value)} />
     <TextField label="理由与依据" multiline value={draft.values.reason} error={draft.error("reason")} onChange={value => draft.set("reason", value)} />
-  </CommandFormShell>;
+  </CommandFrame>;
 }
 
 /**
@@ -160,21 +170,22 @@ export function DecisionForm({ context, record, latest, head, notReady, rereadin
   const mismatch = head.revisionId !== record.currentDocumentRevisionId;
   const draft = useDraft({ choice: "", unresolved: "", relookCondition: "", evidence: "", reason: "", documentRecoveryReason: "" });
   const [confirmed, setConfirmed] = useState(false);
-  const guard = useBaseline(decisionBaseline(record, latest, head), draft.dirty || confirmed);
-  const submit = useCommandSubmit(context);
-  const recheck = guard.changed.length > 0 || submit.state.stale;
+  const command = useDiscussionCommand(context, decisionBaseline(record, latest, head), draft.dirty || confirmed);
+  const recheck = command.baselineChanged;
   useEffect(() => { if (recheck) setConfirmed(false); }, [recheck]);
   const names = ["choice", "unresolved", "relookCondition", "evidence", "reason", ...(mismatch ? ["documentRecoveryReason" as const] : [])] as const;
   const send = () => {
     draft.setTried(true);
-    if (draft.missing([...names]) || (mismatch && !confirmed) || guard.changed.length || notReady) return;
-    void submit.submit(() => discussionDecisionPayload(record, latest, head, { ...draft.values, ...(confirmed ? { confirmRecovery: "confirmed" } : {}) }),
+    if (draft.missing([...names]) || (mismatch && !confirmed)) return;
+    void command.submit(() => discussionDecisionPayload(record, latest, head, { ...draft.values, ...(confirmed ? { confirmRecovery: "confirmed" } : {}) }),
       () => { draft.clear(); setConfirmed(false); onCancel(); });
   };
   const title = latest ? "纠正当前决定" : "登记讨论决定";
-  return <CommandFormShell label={title} submitLabel={latest ? "保存纠正" : "保存决定"} dirty={draft.dirty || confirmed} submit={submit} blocked={context.blocked}
-    changed={guard.changed} notReady={notReady} rereading={rereading} onAccept={() => { guard.accept(); submit.reset(); }} onCancel={onCancel}
-    onCopyDraft={() => void copyDraft(title, Object.entries(draft.values))} onReread={context.onChanged} onSubmit={send}>
+  return <CommandFrame context={context} command={command} label={title} submitLabel={latest ? "保存纠正" : "保存决定"} dirty={draft.dirty || confirmed}
+    onSubmit={send} onKeep={() => command.rebase()} onRefill={() => { command.rebase(); draft.clear(); setConfirmed(false); }} keepNote={keepNote}
+    permission="review" paused={notReady} rereading={rereading} onCancel={onCancel} className="gap-4 rounded-xl"
+    copy={draftText(title, { choice: "本次取舍", unresolved: "还没解决的问题", relookCondition: "什么情况下重看", evidence: "讨论依据与实际观察", reason: "理由",
+      documentRecoveryReason: "为什么从文档当前版接续" }, draft.values)}>
     {latest && <p className={muted}>保存后当前决定会标为已纠正。旧决定和已链接的对象都保留，不会自动撤销任何行动。</p>}
     <TextField label="本次取舍（也可以明确维持现状）" multiline value={draft.values.choice} error={draft.error("choice")} onChange={value => draft.set("choice", value)} />
     <TextField label="还没解决的问题" multiline value={draft.values.unresolved} error={draft.error("unresolved")} onChange={value => draft.set("unresolved", value)} />
@@ -189,7 +200,7 @@ export function DecisionForm({ context, record, latest, head, notReady, rereadin
       {draft.tried && !confirmed && !recheck && <span className="text-caption text-destructive">两版不同时，需要先确认已核对。</span>}
       <TextField label="为什么从文档当前版接续" multiline value={draft.values.documentRecoveryReason} error={draft.error("documentRecoveryReason")} onChange={value => draft.set("documentRecoveryReason", value)} />
     </div>}
-  </CommandFormShell>;
+  </CommandFrame>;
 }
 
 export interface TargetChoice { value: string; kind: TargetKind; label: string; target: DiscussionTarget }
@@ -208,20 +219,19 @@ export function targetChoices(choices: Choices): TargetChoice[] {
 export function LinkForm({ context, record, decision, choices, notReady, rereading, onCancel }: DetailFormProps & { decision: DiscussionEvent; choices: TargetChoice[] }) {
   const draft = useDraft({ target: "", reason: "" });
   const picked = choices.find(item => item.value === draft.values.target);
-  const guard = useBaseline(linkBaseline(record, decision, picked?.target), draft.dirty);
-  const submit = useCommandSubmit(context);
+  const command = useDiscussionCommand(context, linkBaseline(record, decision, picked?.target), draft.dirty);
   const send = () => {
     draft.setTried(true);
-    if (draft.missing(["target", "reason"]) || guard.changed.length || notReady) return;
-    void submit.submit(() => {
+    if (draft.missing(["target", "reason"])) return;
+    void command.submit(() => {
       if (!picked) throw new Error("所选对象已不在读回的清单里，请重新选择。");
       return discussionLinkPayload(record, decision, picked.target, draft.values.reason);
     }, () => { draft.clear(); onCancel(); });
   };
-  const pick = (value: string) => { draft.set("target", value); guard.adopt("target", targetKey(choices.find(item => item.value === value)?.target)); };
-  return <CommandFormShell label="链接后续对象" submitLabel="链接对象" dirty={draft.dirty} submit={submit} blocked={context.blocked}
-    changed={guard.changed} notReady={notReady} rereading={rereading} onAccept={() => { guard.accept(); submit.reset(); }} onCancel={onCancel}
-    onCopyDraft={() => void copyDraft("链接后续对象", Object.entries(draft.values))} onReread={context.onChanged} onSubmit={send}>
+  const pick = (value: string) => { draft.set("target", value); command.adopt({ target: targetKey(choices.find(item => item.value === value)?.target) }); };
+  return <CommandFrame context={context} command={command} label="链接后续对象" submitLabel="链接对象" dirty={draft.dirty} onSubmit={send}
+    onKeep={() => command.rebase()} onRefill={() => { command.rebase(); draft.clear(); }} keepNote={keepNote} permission="review" paused={notReady}
+    rereading={rereading} onCancel={onCancel} className="gap-4 rounded-xl" copy={draftText("链接后续对象", { reason: "理由" }, draft.values)}>
     <p className={muted}>只链接已经存在、能读到的对象；讨论决定本身不会创建任务、阶段或常设职责。</p>
     <SelectField label="实际的后续对象" value={draft.values.target} error={draft.error("target")} onChange={pick}>
       <option value="">请选择</option>
@@ -231,5 +241,5 @@ export function LinkForm({ context, record, decision, choices, notReady, rereadi
       })}
     </SelectField>
     <TextField label="理由" multiline value={draft.values.reason} error={draft.error("reason")} onChange={value => draft.set("reason", value)} />
-  </CommandFormShell>;
+  </CommandFrame>;
 }

@@ -210,7 +210,7 @@ test("Sessions is the sole directory and renders conversation, source, reply and
   await page.locator(".session-panel section[aria-label=智能体] .session-identity-violet").waitFor();
   const identitySettings = page.locator(".session-identity-settings");
   await identitySettings.locator("summary").first().click();
-  await identitySettings.locator(".command-disclosure > summary").click();
+  await identitySettings.locator("summary", { hasText: "调整颜色与图标" }).click();
   await identitySettings.getByLabel("身份颜色").selectOption("teal");
   await identitySettings.getByLabel("图形标记").selectOption("grid");
   await identitySettings.getByLabel("变更依据").fill("same Session identity across clients");

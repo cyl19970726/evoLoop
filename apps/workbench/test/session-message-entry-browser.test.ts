@@ -213,9 +213,10 @@ test("the authenticated receiver can record a read while its exact message Turn 
   }
   await fetch(`${base}/__fixture/set?mode=running`);
   await page.getByRole("button", { name: "消息详情" }).click();
-  const form = detail.locator(".command-disclosure").filter({ hasText: "记录本人已读原消息" });
-  await form.waitFor({ timeout: 2000 });
-  await form.locator("summary").click();
+  const fold = detail.locator("summary", { hasText: "记录本人已读原消息" });
+  await fold.waitFor({ timeout: 2000 });
+  await fold.click();
+  const form = detail.getByRole("form", { name: "记录本人已读原消息" });
   await form.getByLabel("阅读证据").fill("Read the original message in this running Turn");
   await form.getByRole("button", { name: "记录本人已读原消息", exact: true }).click();
   await detail.getByText("已读回执：Read the original message in this running Turn", { exact: false }).waitFor();

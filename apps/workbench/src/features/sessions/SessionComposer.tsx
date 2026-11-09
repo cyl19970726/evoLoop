@@ -51,7 +51,7 @@ export function SessionComposer({ context, snapshot, entries, activeTurn, live, 
   }, [draftKey]);
   const change = (next: string) => {
     setValue(next);
-    if (next) commandDrafts.set(draftKey, { values: { content: next } }); else commandDrafts.delete(draftKey);
+    if (next) commandDrafts.set(draftKey, { values: { content: next }, baseline: undefined }); else commandDrafts.delete(draftKey);
   };
   const direct = useDirectInput({ projectId, sessionId: owned ?? "", actorId: principal.actorId, active: !!owned, onAccepted: onApplied });
   const running = live && !!activeTurn || session.busy === true;

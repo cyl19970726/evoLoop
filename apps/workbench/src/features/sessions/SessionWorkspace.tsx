@@ -444,7 +444,7 @@ export function SessionWorkspace({ context, sessionKey, active, refresh, queue }
         </div>
       </section>
       <details className="session-identity-settings min-w-0 text-caption">
-        <summary className="w-fit cursor-pointer text-muted-foreground hover:text-foreground">调整颜色与图标</summary>
+        <summary className="w-fit cursor-pointer text-muted-foreground hover:text-foreground">标识设置</summary>
         <div className="mt-2"><SessionIdentityControl context={context} session={session} onApplied={() => void snapshotRead.refetch()} /></div>
       </details>
       <Tabs value={panelTab} onValueChange={value => showPanelTab(value as PanelTab)}>

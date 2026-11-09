@@ -386,7 +386,7 @@ test("评价写入保护: revision and conclusion commands carry their versions;
     await runForm.getByLabel("全新的自有智能体").selectOption({ index: 1 });
     state.taskVersion = 8; state.taskRevision = id(30);
     await reread.click();
-    await runForm.getByText("当前版本或固定指针已经变化").waitFor({ timeout: 20000 });
+    await runForm.getByText("这份草稿写于较早的版本").waitFor({ timeout: 20000 });
     assert.equal(await runForm.getByLabel("全新的自有智能体").inputValue(), freshAgent, "the draft is kept");
     assert.equal(await runForm.getByRole("button", { name: "派发第 2 次真实运行" }).isDisabled(), true);
     assert.equal(commands.some(command => command.type === "runtime.run.reserve"), false);

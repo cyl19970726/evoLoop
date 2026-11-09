@@ -15,10 +15,11 @@ import { queryKeys, useProjectQuery } from "../../shared/query";
 import { queueClient } from "../../shared/queueClient";
 import { FullIdentifiers } from "../../shared/ui/FullIdentifiers";
 import { date, href } from "../../shared/ui/shared";
+import { CommandForm } from "../../shared/command";
 import { readAgent } from "./agentRead";
 import { queueAdoptCommand, queueAmendCommand, queueHoldCommand, queueReorderCommand, queueUnholdCommand } from "./taskCommands";
 import { runStateName } from "./taskExperience";
-import { ActionRow, CommandForm, Fine, ReadNote, reasonField } from "./TaskForms";
+import { ActionRow, Fine, ReadNote, reasonField } from "./TaskForms";
 
 const maxNamedEntries = 24;
 const key = encodeURIComponent;

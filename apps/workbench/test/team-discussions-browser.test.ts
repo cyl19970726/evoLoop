@@ -298,10 +298,10 @@ test("分工讨论 refuses to send on a changed baseline or a stale answer, reco
   // 讨论已更新: someone else's write moves the discussion while the reader types.
   state.discussion.version += 1;
   await reread();
-  await decision.getByText("内容已变化，请重新核对").waitFor();
+  await decision.getByText("打开表单后内容已被更新").waitFor();
   await decision.getByText(/变化的是：讨论版本/).waitFor();
   assert.equal(await save.isDisabled(), true, "a changed baseline refuses to send");
-  await decision.getByRole("button", { name: "已重新核对", exact: true }).click();
+  await decision.getByRole("button", { name: "保留我的修改" }).click();
 
   // The reader confirms version 2; the document then moves to version 3 before saving: the confirmation is dropped.
   await confirm.check();
@@ -310,23 +310,24 @@ test("分工讨论 refuses to send on a changed baseline or a stale answer, reco
   await decision.getByText(/变化的是：文档当前版/).waitFor();
   assert.equal(await confirm.isChecked(), false, "a recovery confirmation does not survive a new document version");
   assert.equal(await save.isDisabled(), true);
-  await decision.getByRole("button", { name: "已重新核对", exact: true }).click();
+  await decision.getByRole("button", { name: "保留我的修改" }).click();
   await decision.getByText("第 3 版").waitFor();
   await confirm.check();
 
-  // The server answers DOCUMENT_CHANGED (version 4 was saved meanwhile): stale disables saving until reread and checked.
+  // The server answers DOCUMENT_CHANGED (version 4 was saved meanwhile): the form rereads first, and saving stays
+  // disabled until the reader has looked at the newer head.
   state.next.push({ reject: "DOCUMENT_CHANGED", then: () => { state.head = 4; } });
   await save.click();
-  await decision.getByText("所见内容已过期").waitFor();
+  await decision.getByText(/版本已变化，正在读回最新内容|打开表单后内容已被更新/).waitFor();
   const rejected = state.commands.at(-1)!;
   assert.deepEqual([rejected.documentRevisionId, rejected.documentRecovery], [id(13), { expectedDocumentVersion: 3, reason: "负责人在文档里补了范围" }]);
   assert.equal(await save.isDisabled(), true, "a stale answer refuses to send");
   assert.equal(await confirm.isChecked(), false);
-  await decision.getByRole("button", { name: "重新读取" }).click();
-  await decision.getByRole("button", { name: "已重新核对，继续" }).click();
+  await decision.getByText(/变化的是：文档当前版/).waitFor();
+  await decision.getByRole("button", { name: "保留我的修改" }).click();
   await decision.getByText("第 4 版").waitFor();
   // Acknowledging before the reread lands is safe: the newer head then shows up as a change to check once more.
-  if (await decision.getByText("内容已变化，请重新核对").isVisible()) await decision.getByRole("button", { name: "已重新核对", exact: true }).click();
+  if (await decision.getByText("打开表单后内容已被更新").isVisible()) await decision.getByRole("button", { name: "保留我的修改" }).click();
   const sent = state.commands.length;
   await save.click();
   await decision.getByText("两版不同时，需要先确认已核对。").waitFor();

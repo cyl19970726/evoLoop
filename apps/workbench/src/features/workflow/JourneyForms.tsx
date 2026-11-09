@@ -1,23 +1,19 @@
 // The writes on 目标与阶段: create and revise a goal, propose, accept and review a stage, correct the latest review.
-// Each form is built on @evoloop/ui and sends through useCommand, so the operation ID is kept as a recovery receipt
-// first, and a form opened on one version refuses to send after the record moved until the person has looked again.
-// Drafts live in the page (not storage), each kept with the baseline it was written against: switching stages and
-// coming back keeps what was typed, and a draft written on an older version is never sent as if it were current.
+// Each form is the shared command form (shared/command, docs/frontend/components.md “提交表单”): the operation ID is
+// kept as a recovery receipt first, and a form opened on one version refuses to send after the record moved until
+// the person has looked again. Drafts live in the page (not storage), each kept with the baseline it was written
+// against: switching stages and coming back keeps what was typed, and a draft written on an older version is never
+// sent as if it were current.
 import React from "react";
 import type { Goal, Stage, StageReview } from "@evoloop/contracts";
-import { Button, Field, Input, Notice, Select, Textarea } from "@evoloop/ui";
-import type { MutationContext } from "../../shared/ActionForm";
+import { Button, Notice } from "@evoloop/ui";
+import { CommandForm, restoredFormState, type FormField, type MutationContext, type SavedDraft } from "../../shared/command";
 import { nextChoiceLabel } from "./journeyPresentation";
-import { baselineChangedText, useCommand, type SavedDraft } from "./useCommand";
 
 export type Drafts = Map<string, SavedDraft>;
 /** The page's drafts; the page is remounted for another project or identity, which drops them. */
 export const DraftsContext = React.createContext<Drafts | null>(null);
 
-interface FormField {
-  name: string; label: string; kind?: "text" | "textarea" | "select";
-  options?: { value: string; label: string }[]; hint?: string; optional?: boolean; rows?: number;
-}
 type Values = Record<string, string>;
 
 /**
@@ -31,78 +27,21 @@ export function RecordForm({ context, label, submitLabel, fields, initial, basel
   build(values: Values, seen: string | undefined): Record<string, unknown>; onApplied?(): void;
 }) {
   const drafts = React.useContext(DraftsContext);
-  // A version conflict rereads the project, so the latest content is on screen before the person decides.
-  const command = useCommand(context, baseline, { draft: drafts ? { store: drafts, key: draftKey } : undefined, onStale: context.onChanged });
-  const [base, setBase] = React.useState(initial);
-  const [values, setValues] = React.useState<Values>(() => (command.restoredDraft as Values | undefined) ?? initial);
-  const [errors, setErrors] = React.useState<Values>({});
-  const [saved, setSaved] = React.useState(false);
   const [, setLooked] = React.useState(0);
-  const allowed = context.principal.permissions.includes(permission);
-  const dirty = fields.some(field => (values[field.name] ?? "") !== (base[field.name] ?? ""));
-  const latest = JSON.stringify(initial);
-  const reset = () => { command.dropDraft(); setBase(initial); setValues(initial); setErrors({}); };
-  // An untouched form follows the latest record; a typed draft waits until the person has looked at it.
-  React.useEffect(() => {
-    if (!dirty && (command.baselineChanged || latest !== JSON.stringify(base))) { command.rebase(); reset(); }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [command.baselineChanged, dirty, latest]);
-  const update = (name: string, value: string) => {
-    const next = { ...values, [name]: value };
-    setValues(next); setSaved(false);
-    command.saveDraft(next);
-    if (errors[name]) setErrors(({ [name]: _, ...rest }) => rest);
-  };
-  /** Keep the draft: from now on it is checked against the latest version, which the person has looked at. */
-  const keepDraft = () => { command.rebase(); setBase(initial); };
-  const refill = () => { command.rebase(); reset(); };
   const earlier = earlierDrafts && drafts ? [...drafts.keys()].find(key => key.startsWith(earlierDrafts) && key !== draftKey) : undefined;
-  const bringOver = (key: string) => {
-    const kept = drafts?.get(key)?.values as Values | undefined;
-    drafts?.delete(key);
-    if (kept) { setValues(kept); command.saveDraft(kept); }
-    setLooked(count => count + 1);
-  };
-  async function submit(event: React.FormEvent) {
-    event.preventDefault();
-    const problems = Object.fromEntries(fields.filter(field => !field.optional && !(values[field.name] ?? "").trim())
-      .map(field => [field.name, `请填写${field.label}。`]));
-    setErrors(problems);
-    if (Object.keys(problems).length) return;
-    const applied = await command.submit(() => build(values, command.recordedBaseline));
-    if (applied) { reset(); setSaved(true); onApplied?.(); }
-  }
-  const control = (field: FormField) => (props: { id: string; "aria-describedby"?: string | undefined; "aria-invalid"?: boolean | undefined }) => {
-    const common = { ...props, name: field.name, value: values[field.name] ?? "", autoComplete: "off" };
-    if (field.kind === "textarea") return <Textarea {...common} rows={field.rows ?? 3} onChange={event => update(field.name, event.target.value)} />;
-    if (field.kind === "select") return <Select {...common} className="w-full" onChange={event => update(field.name, event.target.value)}>
-      <option value="">请选择</option>{field.options?.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}
-    </Select>;
-    return <Input {...common} onChange={event => update(field.name, event.target.value)} />;
-  };
-  const fromEarlierMount = command.restoredDraft !== undefined && !command.outcome;
-  return <form onSubmit={submit} aria-label={label} data-dirty={dirty ? "true" : undefined} className="flex flex-col gap-3" noValidate>
-    {earlier && !dirty && <Notice tone="waiting" title="还有一份针对较早回看写的草稿" data-earlier-draft=""
-      action={<span className="flex flex-wrap gap-2"><Button size="compact" onClick={() => bringOver(earlier)}>带入这份草稿</Button>
-        <Button size="compact" variant="ghost" onClick={() => { drafts?.delete(earlier); setLooked(count => count + 1); }}>丢弃</Button></span>}>
-      那条回看已被后来的纠正替代，草稿没有提交。带入后请对照上面的最新回看再提交。</Notice>}
-    {command.baselineChanged && <Notice tone="waiting" data-baseline-changed="" title={fromEarlierMount ? "这份草稿写于较早的版本" : "内容已被更新"}
-      action={paused ? undefined : <span className="flex flex-wrap gap-2">
-        <Button size="compact" onClick={keepDraft}>保留草稿，按最新版本核对</Button>
-        <Button size="compact" variant="ghost" onClick={refill}>用最新内容重填</Button></span>}>
-      {paused ? "正在读回最新内容；读回后再决定保留草稿还是重填。草稿在下面，暂不能提交。"
-        : `${baselineChangedText}页面上已是读回的最新内容。保留草稿：草稿不变，提交时按最新版本核对；重填：换成最新内容，草稿丢弃。`}</Notice>}
-    {fields.map(field => <Field key={field.name} label={field.optional ? `${field.label}（可选）` : field.label} hint={field.hint} error={errors[field.name]}>{control(field)}</Field>)}
-    {!allowed && <p className="text-caption text-muted-foreground">当前身份没有{permission === "review" ? "审阅" : "写入"}权限，不能{submitLabel}。</p>}
-    {context.blocked && <p className="text-caption text-muted-foreground">本项目仍有结果未确认的操作，请先核对回执，再提交。</p>}
-    {paused && <p className="text-caption text-muted-foreground">{paused}</p>}
-    {command.outcome && !(command.baselineChanged && command.outcome.stale) && <Notice tone={command.outcome.failed ? "error" : "info"}>{command.outcome.message}</Notice>}
-    {saved && !command.outcome && <p role="status" className="text-caption text-muted-foreground">已保存，上面已是读回的最新内容。</p>}
-    <div className="flex flex-wrap items-center gap-2">
-      <Button type="submit" size="compact" disabled={!allowed || context.blocked || !!paused || command.busy || command.baselineChanged}>{command.busy ? "保存中…" : submitLabel}</Button>
-      {dirty && <Button size="compact" variant="ghost" onClick={reset}>清空草稿</Button>}
-    </div>
-  </form>;
+  const drop = (key: string) => { drafts?.delete(key); setLooked(count => count + 1); };
+  return <CommandForm<string | undefined> context={context} label={label} submitLabel={submitLabel} permission={permission} paused={paused}
+    fields={fields.map(field => ({ ...field, initial: initial[field.name] ?? "" }))} baseline={baseline} build={build} onApplied={onApplied}
+    options={{ draft: drafts ? { store: drafts, key: draftKey } : undefined }} surface="plain" clearable
+    notes={form => earlier && !form.dirty && <Notice tone="waiting" title="还有一份针对较早回看写的草稿" data-earlier-draft=""
+      action={<span className="flex flex-wrap gap-2">
+        <Button size="compact" onClick={() => {
+          const kept = restoredFormState(drafts?.get(earlier)?.values, form.initials);
+          drop(earlier);
+          if (kept) form.fill(kept.values);
+        }}>带入这份草稿</Button>
+        <Button size="compact" variant="ghost" onClick={() => drop(earlier)}>丢弃</Button></span>}>
+      那条回看已被后来的纠正替代，草稿没有提交。带入后请对照上面的最新回看再提交。</Notice>} />;
 }
 
 /** Draft keys name the object a draft is for; a correction also names the review it replaces. */

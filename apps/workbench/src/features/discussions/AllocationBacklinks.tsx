@@ -6,7 +6,7 @@ import type { MutationContext } from "../../shared/ActionForm";
 import type { AllocationFilter } from "./allocationClient";
 import { groupAllocationBacklinks, loadedBacklinkSummary } from "./allocationBacklinkGroups";
 import { AllocationTraceCard, RelationReadState } from "./AllocationRelationsPanel";
-import { muted } from "./CommandForm";
+import { muted } from "./formParts";
 import { discussionHref } from "./discussionPresentation";
 import { useAllocationNameState, type AllocationKnownNames } from "./useAllocationNames";
 import { useAllocationTraces } from "./useAllocationTraces";
