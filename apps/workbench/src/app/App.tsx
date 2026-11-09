@@ -41,7 +41,7 @@ const CreateTaskPage = named(() => import("../features/workflow/CreateTaskPage")
 const ProjectSummary = named(() => import("../features/overview/ProjectSummary"), "ProjectSummary");
 const ProjectSettings = named(() => import("../features/settings/ProjectSettings"), "ProjectSettings");
 const SessionWorkspace = named(() => import("../features/sessions/SessionWorkspace"), "SessionWorkspace");
-const SessionsDirectoryPage = named(() => import("../features/sessions/SessionsDirectoryPage"), "SessionsDirectoryPage");
+const ArrangementPage = named(() => import("../features/sessions/ArrangementPage"), "ArrangementPage");
 const ConnectorPage = named(() => import("../features/connectors/ConnectorPage"), "ConnectorPage");
 // The frame loads after login; the login gate starts fetching it while the token is typed.
 const loadShell = () => import("./shell/AppShell");
@@ -421,7 +421,7 @@ function WorkspacePages({ route, context, refresh, operations }: { route: Route;
       <details className="workflow-detail"><summary>登记固定 Git 来源与正式采用</summary><ReferencePanel context={context} /></details></div>;
     if (r.section === "sessions") return r.session
       ? <SessionWorkspace context={context} refresh={refresh} sessionKey={r.session} active={active} />
-      : <SessionsDirectoryPage context={context} refresh={refresh} />;
+      : <ArrangementPage context={context} refresh={refresh} />;
     if (r.section === "overview") return <ProjectSummary token={token} projectId={projectId} refresh={refresh} active={active} />;
     if (r.section === "settings") return <ProjectSettings context={context} refresh={refresh} />;
     if (r.section === "connectors") return <ConnectorPage context={context} />;
