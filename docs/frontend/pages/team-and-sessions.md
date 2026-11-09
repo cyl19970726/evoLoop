@@ -15,7 +15,7 @@
 | --- | --- | --- |
 | 左栏（对象列表） | 职责目录，分业务 / System；另有分工讨论、组织复盘两个列表 | Session 目录：搜索，分业务 / System / 待归类，历史可展开 |
 | 中间 | 所选职责：目标、范围、交接、试行状态；承载它的 Session（链到 Session 页）；相关讨论与决定 | 对话与 Agent 活动流：人的输入用气泡；Agent 回复是无气泡正文；工具调用折叠成一行灰色摘要（如“已执行 3 个指令 ›”），可展开；子 Agent 的内容在摘要下缩进；实时状态只占一行；需要人回答的问题以卡片嵌在流里；输入框固定在底部 |
-| 右栏（可收起） | 运行时与 skill、试行指标与回看时间 | 角色、运行时、所在机器、当前任务、队列、成果 |
+| 右栏（可收起） | 运行时与 skill、试行指标与回看时间 | 角色、运行时（读 Session 自己的绑定与执行配置）、所在机器（#219 之前显示“未知”）、当前任务、队列、成果 |
 
 外壳与左栏见[布局](../layout.md)。
 
@@ -43,15 +43,21 @@
 - 活动流按真实顺序和发送者显示，唯一有据的 Task 关系才给任务入口（[历史与实时读取](../../architecture/codex-integration.md#session-工作区的历史与实时读取)）。失败、待答和阻断不折叠。
 - 加载更早内容时保持阅读位置，新进展不抢走阅读位置。
 - 待答卡片区分待答、已保存、已发入原生连接、已清理（[原生提问](../../architecture/codex-integration.md#原生提问与业务问答)）。实时状态断线后标过期，Token 与费用无证据写未知（[原生观察](../../architecture/codex-integration.md#有界原生观察)）。
-- 输入框能补充到运行中的 Turn 时直接补充，否则写排队原因；结果未知时保留原输入（[即时输入](../../development/session-direct-input-integration.md)）。
+- 输入框按运行时能力工作（见下表）：能补充到运行中的 Turn 时直接补充，否则写排队原因；结果未知时保留原输入（[即时输入](../../development/session-direct-input-integration.md)）。
 - 模型的配置、生效回执和实际运行分开写。外部 Desktop 会话只显示已核实的能力，不给自动唤醒按钮。
 - 关闭入口列出阻断原因：未完 Task、队列、Run、消息、待答问题、Session 忙碌；来源没读全时不按旧内容关闭。
 - 从 Task 进来再返回，恢复页签和阅读位置；切换项目、身份或 Session 时清掉旧数据。
 
-**已知数据限制（现状）**
+**两种运行时的现状差异**
 
-- Claude 运行时还不向时间线提供条目，子 Agent 的消息被丢弃。
-- 时间线合同没有父子层级字段，计划加 `parentEntryId`；Codex 的子 Agent 活动目前是平铺条目。
+界面按 Session 自己的运行时判断能做什么；组合运行时对外报告的能力会把 Claude Session 误报为支持实时更新。做不到的功能写明限制，不留空白。
+
+| 能力 | Codex | Claude |
+| --- | --- | --- |
+| 时间线历史与实时 | 需开启实验性工作区读取且服务端支持 | 没有；中间栏目前只有 evoLoop 自己保存的输入消息 |
+| 子 Agent | 主线程只有一条“Agent collaboration”工具条目和一条空的 notice；子线程未读取，读取它要按接收线程 ID 并单独设计授权范围 | 子消息与主流在同一个流里，但现在被丢弃；父级是发起它的工具调用 ID，可直接映射到计划中的 `parentEntryId` |
+| 待答问题 | 开启原生提问时经单独通道读写，不在时间线里 | 不支持 |
+| 运行中补充输入 | 经组合运行时的转向能力 | 不支持，只能排队到下一轮 |
 
 ## 截图
 
@@ -71,7 +77,7 @@
 | 团队 | `roles/TeamWorkspace.tsx`、`roles/RolesPanel.tsx`、`roles/RoleRuntimeCard.tsx`、`roles/roleRuntimePresentation.ts`、`discussions/DiscussionPanel.tsx`、`discussions/AllocationRelationsPanel.tsx`、`documents/OrganizationReviewList.tsx`、`runtime/RuntimePanel.tsx` | `role-runtime-card.test.ts`、`role-template-summary.test.ts`、`runtime-session-role-browser.test.ts`、`discussion-panel.test.ts`、`allocation-backlink-groups.test.ts`；组织复盘列表暂无专门测试 |
 | Session 目录 | `sessions/SessionNavigation.tsx`、`sessions/SessionsDirectoryPage.tsx`、`sessions/sessionDirectoryPresentation.ts`、`sessions/useSessionDirectoryGroup.ts` | `session-directory-presentation.test.ts`、`session-directory-groups.test.ts`、`session-directory-groups-browser.test.ts` |
 | Session 详情 | `sessions/SessionWorkspace.tsx`、`sessions/SessionTimeline.tsx`、`sessions/workspaceTimelineModel.ts`、`sessions/DirectInputEntry.tsx`、`sessions/NativeSessionPanel.tsx`、`sessions/SessionModelControl.tsx`、`sessions/SessionClosePanel.tsx` | `session-workspace-redesign-browser.test.ts`、`session-timeline-browser.test.ts`、`session-workspace-timeline-model.test.ts`、`session-direct-input-layout-browser.test.ts`、`session-native-input-browser.test.ts`、`session-native-progress-browser.test.ts`、`session-close-entry-browser.test.ts`、`task-session-return-browser.test.ts` |
-| 数据来源 | `packages/contracts/src/session-timeline.ts`、`packages/adapter-claude-agent-sdk/src/index.ts` | — |
+| 数据来源 | `packages/contracts/src/session-timeline.ts`、`packages/adapter-claude-agent-sdk/src/index.ts`、`packages/adapter-codex-app-server/src/workspace-map.ts`、`apps/coordinator/src/runtime/routed.ts` | — |
 
 ## 相关
 

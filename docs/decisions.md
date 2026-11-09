@@ -36,7 +36,7 @@
 | DEC-026 | 停止继续完整实现工作台静态原型，问题转入真实前端首片方案；当时暂不写前端代码；该暂停已由 DEC-028 取代 | 用户明确选择先收敛方案，待主数据/API 首片一起实现。原型审查发现的问题保留为实施与验收约束；目录不按全部对象平铺，具体精简导航仍待真实前端验证。此决定不批准待选技术栈或把本地未完成原型候选当作交付 |
 | DEC-027 | 暂用 OpenViking 作为首个知识后端，前端保留类似 nashsu 的知识图谱与阅读体验；允许以后自研替换 | 用户明确本阶段方向，采纳 PROP-008 的后端选择部分。知识合同、稳定 ID/修订/关系和迁移验收独立于供应商；具体版本、补丁、前端依赖和自研计划仍待验证。此次只补架构，保留 DEC-026 的暂不写前端代码范围 |
 | DEC-028 | 全面、多角度审阅设计，修正后开始实现，保持明确抽象与分包 | 授权进入真实主数据/API/前端首片，取代 DEC-026 的暂停。S1a 实现过程 Markdown 修订、任务固定依据与影响复核；本次工程选择及固定版本见技术选型。外部平台接入、完整 Agent loop 和生产部署仍未完成。 |
-| DEC-029 | 按已接能力重组真实前端，并区分人的 GUI 与 Agent 业务入口；**按需组件与页面骨架已被 DEC-036 修订** | 人用浅色、无绿色的双层左栏默认阅读、按需判断与反馈；工作和知识先行、总览待真实反馈。保留 React/TS/Vite 与当前 hash 路由，按需使用 Tailwind、shadcn/ui 和项目内开发技能；Agent 常规业务入口另由项目业务 skill 配合 CLI／MCP 调用相同 API/core，浏览器 Agent QA 不算真人亲用。F1—F4 的源码、测试和实际使用分别验收，不因本决定声称完成。 |
+| DEC-029 | 按已接能力重组真实前端，并区分人的 GUI 与 Agent 业务入口；**按需组件、页面骨架与 hash 路由已被 DEC-036 修订（目标改为路径 URL）** | 人用浅色、无绿色的双层左栏默认阅读、按需判断与反馈；工作和知识先行、总览待真实反馈。保留 React/TS/Vite 与当前 hash 路由，按需使用 Tailwind、shadcn/ui 和项目内开发技能；Agent 常规业务入口另由项目业务 skill 配合 CLI／MCP 调用相同 API/core，浏览器 Agent QA 不算真人亲用。F1—F4 的源码、测试和实际使用分别验收，不因本决定声称完成。 |
 
 | DEC-030 | 人从工作台观察并与 Agent 沟通，Agent 通过项目业务 skill＋CLI 执行大多数常规修改 | 补充 DEC-014/029 的默认使用路径：工作台观察→现有会话沟通→Agent 受控执行→共同查询回看。两端共享 API/core 的授权、固定修订、状态和恢复；人工直接操作按需保留，不要求 Agent 点击 GUI 或人批准每个常规动作。前端 F 系列与 Agent 入口 C 系列并行验收，总览后置、飞书实连延后；未接 MCP 不冒称已建工具包。 |
 
@@ -60,7 +60,7 @@
 | PROP-006 | core、contracts 与平台适配分层，单活 daemon 装配；日程与任务主数据按 DEC-018 存于 evoLoop | 语言与部署选型、外置运行记录实现、真实表结构及时间/去重/重叠语义 |
 | PROP-007 | 主应用推荐 TS/Node 24 LTS、npm workspaces、Fastify、Zod；主数据及运行存储按 DEC-017/018 使用 PostgreSQL | S1a 已采用并锁定 TS/Node/npm/Fastify/Zod、PG 驱动与迁移，见[技术选型](architecture/technology-selection.md)；协议迁移与生产恢复仍待后续验证 |
 | PROP-008 | OpenViking 接入方向已由 DEC-027 采纳；独立服务、认知维护留在 evoLoop 与有限 fork 仍按能力细化 | v0.5.1 是新候选而非已通过版本；核所有写入入口、来源撤回、修订/恢复及许可安排后再确定补丁 |
-| PROP-009 | 同源 React/TS/Vite 工作台，Router + Query 曾作为导航和读取的目标建议；共用协调 API | 见[前端架构](frontend/architecture.md)；当前仍用 hash 路由与直接请求，本轮已授权按需采用 Tailwind/shadcn/ui；Router/Query 未安装，已由 DEC-036 选为目标；远程手机访问需登录/常在线部署 |
+| PROP-009 | **已由 DEC-036 采纳**：同源 React/TS/Vite 工作台，Router + Query 曾作为导航和读取的目标建议；共用协调 API | 见[前端架构](frontend/architecture.md)；当前仍用 hash 路由与直接请求，本轮已授权按需采用 Tailwind/shadcn/ui；Router/Query 未安装，已由 DEC-036 选为目标；远程手机访问需登录/常在线部署 |
 | PROP-010 | 采用固定 Task/Document 修订、类型化关系和来源桥接，连接 PG、Git 与外置 Wiki | 见[存储](architecture/storage.md)与[知识关联](architecture/knowledge-flow.md)；需实测约束、纠正传播、权限变化和跨系统恢复 |
 | PROP-011 | 经共同 API 改造知识阅读/关系/Review，按固定来源接 OpenViking 与 PG/Git；原型覆盖六条产品路径 | [集成方案](architecture/wiki-integration.md)和[原型审阅](research/workbench-prototype-review.md)说明切片；待验证代码移植、许可安排、发布恢复和真实效果 |
 
