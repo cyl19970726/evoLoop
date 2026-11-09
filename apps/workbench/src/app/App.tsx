@@ -3,18 +3,20 @@ import { Suspense, lazy, useEffect, useMemo, useRef, useState, useLayoutEffect, 
 import type {
   Operation, Principal, Project,
 } from "@evoloop/contracts";
-import { api, errorText, type Session } from "../shared/api";
+import { ApiError, api, errorText, type Session } from "../shared/api";
+import { authMode, onUnauthorized, signIn, signOut } from "../shared/identity";
 import { ActionForm, clearCommandDrafts, type MutationContext, type RecoverableCommand } from "../shared/ActionForm";
 import { addReceipt, hasProjectReceipt, readReceipts, removeReceipt, visibleReceipts as forPrincipal, writeReceipts, type OperationReceipt } from "./recovery";
 import { clearRecoveryIntents, forgetRecoveryIntent, isSpecialOperation, operationNotFound, recoveryIntent, rememberRecoveryIntent, replayRecoveryIntent, verifyRecoveryOperation } from "./recoveryIntent";
 
 import { readRoute, href, date, ShortId, Alert, type Route } from "../shared/ui/shared";
 import { clearKnowledgeReturnsOnLogin, rememberKnowledgeSource } from "../shared/ui/returnRoute";
-import { appHistory, appPath, currentPath, onNavigate } from "../shared/navigation";
+import { appHistory, appPath, currentPath, navigate, onNavigate } from "../shared/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { leaveProject, projectChanged, queryKeys, useProjectQuery } from "../shared/query";
 import { queryClient } from "./queryClient";
 import { WorkbenchShell, sectionNames } from "./WorkbenchShell";
+import { PageBoundary } from "./PageBoundary";
 
 // Each page is its own chunk: the first load carries login, the shell and shared code only.
 // lazy() accepts any component; the props stay typed through M[K].
@@ -86,33 +88,42 @@ function useRoute(): Route {
   return route;
 }
 
-function AuthGate({ onSuccess, hasReceipts }: { onSuccess: (token: string, session: Session) => void; hasReceipts: boolean }) {
+function AuthGate({ onSuccess, hasReceipts, notice }: { onSuccess: (token: string, session: Session) => void; hasReceipts: boolean; notice: string }) {
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  async function submit(event: FormEvent) {
-    event.preventDefault();
-    if (!input.trim() || busy) return;
+  const hub = authMode() === "hub";
+  async function check(value: string) {
     setBusy(true); setError("");
     try {
-      const value = input.trim();
       const session = await api(value).session();
       setInput("");
       onSuccess(value, session);
-    } catch (cause) { setError(errorText(cause)); }
+    } catch (cause) { setError(hub && cause instanceof ApiError && cause.status === 401 ? "尚未登录 Hub，或登录已过期。" : errorText(cause)); }
     finally { setBusy(false); }
+  }
+  // Behind the Hub the browser already carries the login; check it once instead of asking for a token.
+  useEffect(() => { if (hub) void check(""); }, [hub]);
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    if (!input.trim() || busy) return;
+    await check(input.trim());
   }
   return <main className="auth-shell">{import.meta.env.DEV && <div className="development-preview" role="status">{window.location.port === "5181" ? "开发测试预览 · 模拟数据 · 尚未发布" : "开发预览 · 连接现有数据 · 尚未发布"}</div>}
     <div className="auth-card">
-      <div className="eyebrow">evoLoop · 本机工作台</div>
+      <div className="eyebrow">evoLoop · {hub ? "工作台" : "本机工作台"}</div>
       <h1>进入项目工作台</h1>
-      <p>输入本机访问令牌以读取你有权限的项目。令牌只保存在当前页面内存中，刷新后需要重新输入。</p>
+      {notice && <Alert kind="error">{notice}</Alert>}
+      {hub
+        ? <><p>通过 Hub 的登录读取你有权限的项目。</p>
+          <button className="primary" type="button" disabled={busy} onClick={() => void check("")}>{busy ? "正在核对…" : "重新检查登录"}</button></>
+        : <><p>输入本机访问令牌以读取你有权限的项目。令牌只保存在当前页面内存中，刷新后需要重新输入。</p>
+          <form onSubmit={submit}>
+            <label htmlFor="token">访问令牌</label>
+            <input id="token" type="password" autoComplete="off" value={input} onChange={e => setInput(e.target.value)} required />
+            <button className="primary" type="submit" disabled={busy}>{busy ? "正在核对…" : "进入"}</button>
+          </form></>}
       {hasReceipts && <Alert>本浏览器会话保留了尚未核对的操作 ID。用原身份登录后可逐项查询；回执不包含令牌或复核正文。</Alert>}
-      <form onSubmit={submit}>
-        <label htmlFor="token">访问令牌</label>
-        <input id="token" type="password" autoComplete="off" value={input} onChange={e => setInput(e.target.value)} required />
-        <button className="primary" type="submit" disabled={busy}>{busy ? "正在核对…" : "进入"}</button>
-      </form>
       {error && <Alert kind="error">{error}</Alert>}
     </div>
   </main>;
@@ -208,6 +219,9 @@ export function App() {
   const route = useRoute();
   const [token, setToken] = useState("");
   const [session, setSession] = useState<Session | null>(null);
+  const sessionRef = useRef(session);
+  sessionRef.current = session;
+  const [authNotice, setAuthNotice] = useState("");
   const [refresh, setRefresh] = useState(0);
   const [receipts, setReceipts] = useState<OperationReceipt[]>(readReceipts);
   const receiptsRef = useRef(receipts);
@@ -266,11 +280,38 @@ export function App() {
     shownProject.current = projectId;
     if (previous && previous !== projectId) void leaveProject(queryClient, previous);
   }, [projectId]);
+  /** Logout or a lost login: nothing read or drafted under this identity stays in the page. Receipts stay for the same identity. */
+  function endSession() {
+    clearCommandDrafts(); clearRecoveryIntents(); clearSessionSnapshots(); queryClient.clear(); signOut(); setToken(""); setSession(null);
+  }
+  const ended = useRef(endSession);
+  ended.current = endSession;
+  useEffect(() => onUnauthorized(() => {
+    if (!sessionRef.current) return;
+    setAuthNotice("登录已失效，页面内容已清除。请重新登录；未确认的操作回执仍保留，用原身份登录后可核对。");
+    ended.current();
+  }), []);
+  // A 403 on the project itself means the grant is gone: reread the identity, and leave the project if it is no longer granted.
+  useEffect(() => {
+    if (!(projectRead.error instanceof ApiError) || projectRead.error.status !== 403 || !route.projectId) return;
+    let active = true;
+    void api(token).session().then(next => {
+      if (!active) return;
+      setSession(next);
+      if (!next.principal.projectIds.includes(route.projectId!)) {
+        void leaveProject(queryClient, route.projectId!);
+        setOperationNotice("你已无权访问该项目，已回到项目列表。");
+        navigate("/", { replace: true });
+      }
+    }).catch(() => undefined);
+    return () => { active = false; };
+  }, [projectRead.error, route.projectId, token]);
   /** A write applied: pages reread (refresh) and the project's queries go stale. */
   const changed = () => { setRefresh(v => v + 1); if (projectId) void projectChanged(queryClient, projectId); };
-  if (!session) return <AuthGate hasReceipts={receipts.length > 0} onSuccess={(value, next) => {
+  if (!session) return <AuthGate hasReceipts={receipts.length > 0} notice={authNotice} onSuccess={(value, next) => {
     clearKnowledgeReturnsOnLogin(next.principal.projectIds);
     queryClient.clear();
+    signIn(value); setAuthNotice("");
     setToken(value); setSession(next);
   }} />;
   const principal = session.principal;
@@ -278,7 +319,7 @@ export function App() {
   function logout() {
     if (document.querySelector('[data-dirty="true"]') && !window.confirm("还有未提交的草稿。退出会清除本页草稿，确定退出？")) return;
     if (visibleReceipts.length && !window.confirm(`仍有 ${visibleReceipts.length} 个结果未确认的操作。回执会留在当前浏览器会话；退出后请用同一身份登录核对。确定退出？`)) return;
-    clearCommandDrafts(); clearRecoveryIntents(); clearSessionSnapshots(); queryClient.clear(); setToken(""); setSession(null);
+    endSession();
   }
   function confirmReceipt(receipt: OperationReceipt, result: Operation["result"]) {
     forgetRecoveryIntent(receipt.operationId);
@@ -381,5 +422,5 @@ function WorkspacePages({ route, context, refresh, operations }: { route: Route;
     return <div className="content"><h1 tabIndex={-1}>{sectionNames[r.section]}</h1>{components[r.section as keyof typeof components]}</div>;
   }
   return <>{Array.from(cache.current.entries()).map(([pageKey, r]) => <div key={pageKey} data-page-key={pageKey} hidden={pageKey !== key}>
-    <Suspense fallback={<p className="content" role="status">正在打开页面…</p>}>{page(r, pageKey === key)}</Suspense></div>)}</>;
+    <PageBoundary><Suspense fallback={<p className="content" role="status">正在打开页面…</p>}>{page(r, pageKey === key)}</Suspense></PageBoundary></div>)}</>;
 }

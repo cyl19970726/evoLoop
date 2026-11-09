@@ -7,6 +7,7 @@ import type {
 } from "@evoloop/contracts";
 export type { TaskTimingView } from "@evoloop/contracts";
 import type { WorkTaskStatus } from "./workStatusPresentation";
+import { reportUnauthorized, requestAuth } from "./identity";
 import type {
   LeaderWorkChangesPage, LeaderWorkDependenciesCommand, LeaderWorkDocument, LeaderWorkPage,
   LeaderWorkPlanCommand, LeaderWorkReviewCommand, LeaderWorkTask,
@@ -27,14 +28,17 @@ async function requestJson<T>(token: string, path: string, timeoutMs: number, in
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
+    const auth = requestAuth(token);
     const response = await fetch(path, {
       ...init,
-      headers: { Authorization: `Bearer ${token}`, ...(init?.body ? { "Content-Type": "application/json" } : {}), ...init?.headers },
+      credentials: auth.credentials,
+      headers: { ...auth.headers, ...(init?.body ? { "Content-Type": "application/json" } : {}), ...init?.headers },
       signal: init?.signal ? AbortSignal.any([controller.signal, init.signal]) : controller.signal,
     });
     let body: unknown;
     try { body = await response.json(); }
     catch { if (response.ok) throw new ApiError(0, "响应不完整，操作结果尚未确认"); }
+    if (response.status === 401) reportUnauthorized();
     if (!response.ok) {
       const details = body && typeof body === "object" ? body as { message?: unknown; error?: unknown } : {};
       const message = typeof details.message === "string" ? details.message : typeof details.error === "string" ? details.error : `请求失败（${response.status}）`;
@@ -80,7 +84,8 @@ function checkedOperation(value: unknown, operationId: string): Operation {
 const projectPath = (projectId: string) => `/api/projects/${encodeURIComponent(projectId)}`;
 const key = (value: string) => encodeURIComponent(value);
 
-export function api(token: string, timeoutMs = 15000) {
+/** Server API. Without a token argument requests use the signed-in identity (shared/identity.ts). */
+export function api(token = "", timeoutMs = 15000) {
   const call = <T>(path: string, init?: RequestInit) => request<T>(token, path, timeoutMs, init);
   const leaderWrite = async <T extends { operationId: string }>(path: string, command: T & { type?: string }): Promise<CommandResult> => {
     const body = { ...command } as Record<string, unknown>;
