@@ -1,4 +1,5 @@
-import type { Delivery, Document, DocumentRevision, EvaluationAssessment, EvaluationAttempt, EvaluationCost, EvaluationFixedRef, EvaluationRevision } from "@evoloop/contracts";
+import type { ConsumerObservation, Delivery, Document, DocumentRevision, EvaluationAssessment, EvaluationAttempt, EvaluationCondition, EvaluationConclusion, EvaluationCost, EvaluationFixedRef, EvaluationRevision, RuntimeRunRecord, RuntimeRunState, TaskState } from "@evoloop/contracts";
+import type { StatusTone } from "@evoloop/ui";
 
 export const evaluationHref = (projectId: string, evaluationId?: string, revisionId?: string) =>
   `/p/${projectId}/evaluations${evaluationId ? `/${evaluationId}${revisionId ? `?revision=${encodeURIComponent(revisionId)}` : ""}` : ""}`;
@@ -104,3 +105,110 @@ export const assessmentLabels = {
   deliveryQuality: { qualified: "交付合格", failed: "交付失败", unknown: "未知", needs_review: "待复核" },
   humanEffect: { observed: "已观察到真人后果", unknown: "未知", needs_review: "待复核" },
 } as const;
+
+// ---- 界面用语：评价页里出现的枚举一律经这里译成中文；未识别的值写明未识别，不把英文原样露出。 ----
+
+export function labelOf<K extends string>(labels: Record<K, string>, value: string | null | undefined, unknown = "未识别的状态"): string {
+  return value && Object.prototype.hasOwnProperty.call(labels, value) ? labels[value as K] : unknown;
+}
+
+export const runStateLabels: Record<RuntimeRunState, string> = {
+  requested: "待派发", dispatching: "派发中", running: "运行中", completed: "已完成", failed: "失败", interrupted: "已中断", unknown: "结果未知",
+};
+/** Tones follow docs/frontend/foundations.md: in flight is progress, ended is neutral, failed is blocked, unknown stays unknown. */
+export const runStateTones: Record<RuntimeRunState, StatusTone> = {
+  requested: "waiting", dispatching: "progress", running: "progress", completed: "done", failed: "blocked", interrupted: "blocked", unknown: "unknown",
+};
+export const nextChoiceLabels: Record<EvaluationConclusion["nextChoice"], string> = {
+  read_direct: "先读直接来源", adopt_with_limits: "带限制采用", maintain: "维持当前做法", research: "继续研究", wait: "等待证据", stop: "停止",
+};
+export const comparabilityLabels: Record<EvaluationConclusion["comparability"], string> = {
+  comparable: "历史记录声称可比较", with_limits: "有限比较", unknown: "未知",
+};
+export const conditionLabels: Record<EvaluationCondition["kind"], string> = { direct: "直接材料", wiki: "加入固定 Wiki" };
+export const sandboxLabels: Record<EvaluationCondition["environment"]["sandbox"], string> = {
+  "read-only": "只读", "workspace-write": "只写工作目录", "danger-full-access": "完整本机权限",
+};
+export const approvalLabels: Record<EvaluationCondition["environment"]["approvalPolicy"], string> = {
+  "on-request": "按需请求审批", untrusted: "不受信命令需审批", never: "无需逐次审批",
+};
+export const fixedRefKindLabels: Record<EvaluationFixedRef["kind"], string> = { document: "文档", git: "Git 来源", wiki: "Wiki 页", delivery: "交付", evidence: "证据" };
+export const technicalResultLabels: Record<Delivery["technicalResult"], string> = { passed: "技术检查通过", failed: "技术检查未通过" };
+export const observationResultLabels: Record<ConsumerObservation["result"], string> = { used: "已使用", failed: "用后失败", notUsed: "未使用" };
+export const actorKindLabels: Record<EvaluationAssessment["assessorKind"], string> = { human: "真人", agent: "智能体" };
+export const taskStateLabels: Record<TaskState, string> = { todo: "待办", in_progress: "进行中", done: "已完成", cancelled: "已取消" };
+
+const anyUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** A fixed reference by name: a verified document title, a Git source's own name, otherwise its kind; IDs stay in 完整标识. */
+export function fixedRefName(ref: Pick<EvaluationFixedRef, "kind" | "id">, verifiedTitle?: string | null): string {
+  if (verifiedTitle) return `《${verifiedTitle}》`;
+  if (ref.kind === "git" && !anyUuid.test(ref.id)) return `Git 来源 ${ref.id}`;
+  return `${labelOf(fixedRefKindLabels, ref.kind, "固定来源")}（名称未核实）`;
+}
+
+/** A verified title belongs to one exact revision and hash; the same key finds it wherever that reference reappears. */
+export const fixedTitleKey = (ref: Pick<EvaluationFixedRef, "id" | "revision" | "contentHash">) => `${ref.id}:${ref.revision}:${ref.contentHash.toLowerCase()}`;
+
+/** Full identity of a fixed reference, for the 完整标识 layer only. */
+export const fixedRefIdentity = (ref: EvaluationFixedRef) =>
+  `${labelOf(fixedRefKindLabels, ref.kind, "固定来源")} ${ref.id} · 修订 ${ref.revision} · SHA-256 ${ref.contentHash}`;
+
+/** The list names the common task by the title frozen in the definition's source signature, never by its ID. */
+export function frozenTaskTitle(item: Pick<EvaluationRevision, "definition">): string {
+  return item.definition.case.sourceSignature?.title?.trim() || "名称未登记的共同任务";
+}
+
+export function evaluationRowMeta(item: Pick<EvaluationRevision, "definition" | "version" | "createdAt">, when: (value: string) => string): string {
+  return `匹配定义 v${item.version} · 共同任务《${frozenTaskTitle(item)}》 · ${when(item.createdAt)}`;
+}
+
+export type ReadState = "loading" | "failed" | "read";
+
+/** A run still being read, or one whose read failed, is said to be so; "not found" needs a completed read. */
+export function attemptRunText(run: Pick<RuntimeRunRecord, "state"> | undefined, runs: ReadState): string {
+  if (run) return labelOf(runStateLabels, run.state);
+  if (runs === "loading") return "正在读取运行记录";
+  if (runs === "failed") return "运行状态无法判断";
+  return "运行记录未读到";
+}
+
+export function conditionGlance(revision: EvaluationRevision, attempts: EvaluationAttempt[], assessments: Pick<EvaluationAssessment, "attemptId">[],
+  conditionId: string, runs: Pick<RuntimeRunRecord, "id" | "state">[] | undefined, runsState: ReadState): string {
+  const rows = attemptsForCondition(revision, attempts, conditionId);
+  const last = rows.at(-1);
+  const judged = assessments.filter(item => rows.some(attempt => attempt.id === item.attemptId)).length;
+  const state = last ? attemptRunText(runs?.find(run => run.id === last.runId), runsState) : "尚未运行";
+  return `${rows.length} 次尝试 · ${state} · ${judged} 项判定`;
+}
+
+export function conclusionGlance(conclusions: Pick<EvaluationConclusion, "comparability" | "nextChoice">[]): string {
+  const latest = conclusions.at(-1);
+  return latest ? `${labelOf(comparabilityLabels, latest.comparability)} · ${labelOf(nextChoiceLabels, latest.nextChoice)}`
+    : "尚无结论；需看两条件的实际尝试与判定";
+}
+
+/** Names an assessment by where it belongs (condition, attempt, who, when) instead of by its ID. */
+export function assessmentName(item: Pick<EvaluationAssessment, "attemptId" | "assessorKind" | "actorId" | "createdAt">, revision: EvaluationRevision,
+  attempts: Pick<EvaluationAttempt, "id" | "conditionId" | "ordinal">[], when: (value: string) => string): string {
+  const attempt = attempts.find(row => row.id === item.attemptId);
+  const condition = attempt && revision.definition.conditions.find(row => row.id === attempt.conditionId);
+  const place = attempt ? `${condition ? labelOf(conditionLabels, condition.kind, "未识别的条件") : "未识别的条件"} · 尝试 ${attempt.ordinal}` : "所属尝试未读到";
+  return `${place} · ${labelOf(actorKindLabels, item.assessorKind, "未识别的身份")} ${item.actorId} · ${when(item.createdAt)}`;
+}
+
+/** Where (1-based, in record order) the assessment a correction replaces sits among the attempt's assessments. */
+export function correctedPosition(item: Pick<EvaluationAssessment, "supersedesId">, assessments: Pick<EvaluationAssessment, "id">[]): number | null {
+  if (!item.supersedesId) return null;
+  const index = assessments.findIndex(row => row.id === item.supersedesId);
+  return index < 0 ? null : index + 1;
+}
+
+/** Provider-reported cost and usage of the attempt's run. What was not reported stays unreported, never zero. */
+export function runCostText(run: Pick<RuntimeRunRecord, "costUsd" | "usage">): string {
+  const parts: string[] = [];
+  if (typeof run.costUsd === "number") parts.push(`服务商报告费用 ${run.costUsd} 美元`);
+  const usage = run.usage;
+  if (usage && (usage.inputTokens !== null || usage.outputTokens !== null))
+    parts.push(`输入 ${usage.inputTokens ?? "未报告"} 个、输出 ${usage.outputTokens ?? "未报告"} 个词元`);
+  return parts.length ? parts.join(" · ") : "运行未报告费用与用量；不视为零。";
+}

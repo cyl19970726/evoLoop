@@ -2,6 +2,11 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Delivery, Document, DocumentRevision, EvaluationAssessment, EvaluationAttempt, EvaluationRevision, RuntimeRunRecord } from "@evoloop/contracts";
 import { attemptsForCondition, conclusionComparabilityOptions, costText, currentAssessments, deliveriesForAttempt, evaluationHref, evaluationListHref, fixedRefHref, nextActionHref, parseCostLines, parseFixedRefLines, parseNextActionRef, verifiedFixedDocumentTitle } from "../src/features/evaluation/presentation.ts";
+import {
+  actorKindLabels, approvalLabels, assessmentLabels, assessmentName, attemptRunText, comparabilityLabels, conclusionGlance, conditionGlance, conditionLabels,
+  correctedPosition, evaluationRowMeta, fixedRefIdentity, fixedRefKindLabels, fixedRefName, fixedTitleKey, frozenTaskTitle, labelOf, nextChoiceLabels,
+  observationResultLabels, runCostText, runStateLabels, runStateTones, sandboxLabels, taskStateLabels, technicalResultLabels,
+} from "../src/features/evaluation/presentation.ts";
 import { definitionFromForm } from "../src/features/evaluation/formData.ts";
 import { attributableRuns } from "../src/features/workflow/deliveryRun.ts";
 
@@ -116,4 +121,75 @@ test("current Document name is an aid only after same-project exact revision and
   assert.equal(verifiedFixedDocumentTitle(ref, id, { ...document, projectId: other }, revision), null);
   assert.equal(verifiedFixedDocumentTitle(ref, id, document, { ...revision, id }), null);
   assert.equal(verifiedFixedDocumentTitle(ref, id, document, { ...revision, contentHash: "b".repeat(64) }), null);
+});
+
+// ---- 界面用语，以及读取中或失败时不下结论 ----
+const english = /[A-Za-z]/;
+const untranslated = (labels: Record<string, string>) => Object.entries(labels).filter(([, text]) => english.test(text.replace(/Wiki|Git/g, "")));
+
+test("every enum the evaluation page shows has a Chinese label, and an unknown value is never echoed in English", () => {
+  const maps = { runStateLabels, nextChoiceLabels, comparabilityLabels, conditionLabels, sandboxLabels, approvalLabels, fixedRefKindLabels,
+    technicalResultLabels, observationResultLabels, actorKindLabels, taskStateLabels, ...assessmentLabels };
+  for (const [name, labels] of Object.entries(maps)) assert.deepEqual(untranslated(labels), [], name);
+  assert.deepEqual(Object.keys(runStateLabels).sort(), ["completed", "dispatching", "failed", "interrupted", "requested", "running", "unknown"]);
+  assert.deepEqual(Object.keys(runStateTones).sort(), Object.keys(runStateLabels).sort());
+  assert.deepEqual(Object.keys(nextChoiceLabels).sort(), ["adopt_with_limits", "maintain", "read_direct", "research", "stop", "wait"]);
+  assert.deepEqual(Object.keys(sandboxLabels).sort(), ["danger-full-access", "read-only", "workspace-write"]);
+  assert.deepEqual(Object.keys(approvalLabels).sort(), ["never", "on-request", "untrusted"]);
+  assert.equal(labelOf(runStateLabels, "unknown"), "结果未知");
+  assert.equal(labelOf(runStateLabels, "paused"), "未识别的状态");
+  assert.equal(labelOf(runStateLabels, "constructor"), "未识别的状态");
+  assert.equal(labelOf(actorKindLabels, undefined, "未识别的身份"), "未识别的身份");
+});
+
+test("the list names the common task by its frozen title, not by its ID", () => {
+  const item = { version: 2, createdAt: "2026-11-09T08:00:00.000Z", definition: { case: { taskId: other, sourceSignature: { title: " 修复首轮回归 " } } } } as unknown as EvaluationRevision;
+  assert.equal(frozenTaskTitle(item), "修复首轮回归");
+  const meta = evaluationRowMeta(item, () => "11/9");
+  assert.equal(meta, "匹配定义 v2 · 共同任务《修复首轮回归》 · 11/9");
+  assert.doesNotMatch(meta, /2222/);
+  assert.equal(frozenTaskTitle({ definition: { case: {} } } as unknown as EvaluationRevision), "名称未登记的共同任务");
+});
+
+test("a run that is still being read or failed to read is not reported as missing or as a state", () => {
+  assert.equal(attemptRunText(undefined, "loading"), "正在读取运行记录");
+  assert.equal(attemptRunText(undefined, "failed"), "运行状态无法判断");
+  assert.equal(attemptRunText(undefined, "read"), "运行记录未读到");
+  assert.equal(attemptRunText({ state: "failed" }, "read"), "失败");
+  const rows = [{ ...attempt(id, other, 1), id: "a1", runId: "r1" }, { ...attempt(id, other, 2), id: "a2", runId: "r2" }] as EvaluationAttempt[];
+  const judged = [{ attemptId: "a1" }, { attemptId: "a2" }, { attemptId: "elsewhere" }];
+  assert.equal(conditionGlance(revision, rows, judged, other, undefined, "loading"), "2 次尝试 · 正在读取运行记录 · 2 项判定");
+  assert.equal(conditionGlance(revision, rows, judged, other, undefined, "failed"), "2 次尝试 · 运行状态无法判断 · 2 项判定");
+  assert.equal(conditionGlance(revision, rows, judged, other, [{ id: "r2", state: "unknown" }], "read"), "2 次尝试 · 结果未知 · 2 项判定");
+  assert.equal(conditionGlance(revision, [], [], other, undefined, "loading"), "0 次尝试 · 尚未运行 · 0 项判定");
+});
+
+test("conclusions, assessments and corrections are named in Chinese without IDs", () => {
+  assert.equal(conclusionGlance([]), "尚无结论；需看两条件的实际尝试与判定");
+  assert.equal(conclusionGlance([{ comparability: "unknown", nextChoice: "stop" }, { comparability: "with_limits", nextChoice: "adopt_with_limits" }]), "有限比较 · 带限制采用");
+  const defined = { evaluationId: id, id, definition: { case: { id }, conditions: [{ id: "direct", kind: "direct" }, { id: "wiki", kind: "wiki" }] } } as unknown as EvaluationRevision;
+  const attempts = [{ id: "a1", conditionId: "wiki", ordinal: 3 }];
+  assert.equal(assessmentName({ attemptId: "a1", assessorKind: "human", actorId: "reviewer", createdAt: "t" }, defined, attempts, () => "11/9"), "加入固定 Wiki · 尝试 3 · 真人 reviewer · 11/9");
+  assert.equal(assessmentName({ attemptId: "gone", assessorKind: "agent", actorId: "bot", createdAt: "t" }, defined, attempts, () => "11/9"), "所属尝试未读到 · 智能体 bot · 11/9");
+  assert.equal(correctedPosition({ supersedesId: "b" }, [{ id: "a" }, { id: "b" }, { id: "c" }]), 2);
+  assert.equal(correctedPosition({ supersedesId: "x" }, [{ id: "a" }]), null);
+  assert.equal(correctedPosition({ supersedesId: null }, [{ id: "a" }]), null);
+});
+
+test("run cost is what the provider reported; nothing reported is not zero", () => {
+  assert.equal(runCostText({ costUsd: null, usage: null }), "运行未报告费用与用量；不视为零。");
+  assert.equal(runCostText({ costUsd: 0.42, usage: { inputTokens: 1200, outputTokens: null } }), "服务商报告费用 0.42 美元 · 输入 1200 个、输出 未报告 个词元");
+  assert.equal(runCostText({ costUsd: 0 }), "服务商报告费用 0 美元");
+});
+
+test("fixed references are named by verified title or kind, and IDs only appear in the full identity", () => {
+  const ref = { kind: "document", id, revision: other, contentHash: hash } as const;
+  assert.equal(fixedRefName(ref, "评价协议"), "《评价协议》");
+  assert.equal(fixedRefName(ref), "文档（名称未核实）");
+  assert.equal(fixedRefName({ kind: "wiki", id }), "Wiki 页（名称未核实）");
+  assert.equal(fixedRefName({ kind: "git", id: "evoLoop" }), "Git 来源 evoLoop");
+  assert.equal(fixedRefName({ kind: "git", id }), "Git 来源（名称未核实）");
+  assert.equal(fixedRefIdentity(ref), `文档 ${id} · 修订 ${other} · SHA-256 ${hash}`);
+  assert.equal(fixedTitleKey(ref), fixedTitleKey({ ...ref, contentHash: hash.toUpperCase() }));
+  assert.notEqual(fixedTitleKey(ref), fixedTitleKey({ ...ref, contentHash: "b".repeat(64) }), "a verified title belongs to one exact hash");
 });
