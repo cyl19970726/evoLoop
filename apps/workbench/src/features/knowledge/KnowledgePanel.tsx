@@ -12,6 +12,7 @@ import { findFixedKnowledgeTitle, matchesKnowledgeRevision, readKnowledgeRoute, 
 import "./knowledge.css";
 import { knowledgeAvailability } from "./availability";
 import { currentKnowledgeCapabilities, readKnowledgeOverview, type KnowledgeOverviewRead } from "./overviewRead";
+import { currentPath, navigate, onNavigate } from "../../shared/navigation";
 
 interface ExternalReceipt { projectId: string; actorId: string; operationId: string; kind: "publish" | "retract"; targetId: string; createdAt: string }
 const receiptKey = "evoloop.external-knowledge-operations.v1";
@@ -29,7 +30,7 @@ function saveReceipts(values: ExternalReceipt[]): boolean {
 }
 const sourceId = (key: string) => key.startsWith("document:") ? key.slice(9) : null;
 const knowledgeHash = (projectId: string, selection?: { knowledgeId: string; knowledgeRevision?: string } | { candidateId: string }) => {
-  const path = `#/p/${encodeURIComponent(projectId)}/knowledge`;
+  const path = `/p/${encodeURIComponent(projectId)}/knowledge`;
   if (!selection) return path;
   const params = new URLSearchParams();
   if ("candidateId" in selection) params.set("candidateId", selection.candidateId);
@@ -38,7 +39,7 @@ const knowledgeHash = (projectId: string, selection?: { knowledgeId: string; kno
   return `${path}?${params}`;
 };
 const documentLink = (projectId: string, documentId: string, revision: string, returnHash: string) =>
-  `#/p/${encodeURIComponent(projectId)}/documents/${encodeURIComponent(documentId)}?revision=${encodeURIComponent(revision)}&return=${encodeURIComponent(returnHash)}`;
+  `/p/${encodeURIComponent(projectId)}/documents/${encodeURIComponent(documentId)}?revision=${encodeURIComponent(revision)}&return=${encodeURIComponent(returnHash)}`;
 const statusText = (status: string) => ({ valid: "有效", needs_review: "待复核", withdrawn: "已撤回", pending: "待审",
   accepted: "已接受", rejected: "未采纳", published: "已发布", truncated: "已截断", partial: "部分缺项",
   unavailable: "不可用", complete: "完整", reachable: "可读取", active: "已登记",
@@ -86,17 +87,17 @@ export function KnowledgePanel({ context, refresh }: { context: MutationContext;
   const [sources, setSources] = useState<SourceDocument[]>([]);
   const [lastCapabilities, setLastCapabilities] = useState<KnowledgeCapabilities | null>(null);
   const [overviewRead, setOverviewRead] = useState<KnowledgeOverviewRead>({ key: "", status: "reading" });
-  const [selectedId, setSelectedId] = useState<string | null>(() => { const route = readKnowledgeRoute(window.location.hash, context.projectId); return route.view === "read" ? route.id : null; });
-  const [fixedRevision, setFixedRevision] = useState<string | undefined>(() => { const route = readKnowledgeRoute(window.location.hash, context.projectId); return route.view === "read" ? route.revision : undefined; });
+  const [selectedId, setSelectedId] = useState<string | null>(() => { const route = readKnowledgeRoute(currentPath(), context.projectId); return route.view === "read" ? route.id : null; });
+  const [fixedRevision, setFixedRevision] = useState<string | undefined>(() => { const route = readKnowledgeRoute(currentPath(), context.projectId); return route.view === "read" ? route.revision : undefined; });
   const [page, setPage] = useState<KnowledgeRevision | null>(null);
   const [currentHead, setCurrentHead] = useState<{ knowledgeId: string; revision: string } | null>(null);
   const [history, setHistory] = useState<KnowledgeSummary[]>([]);
   const [graph, setGraph] = useState<KnowledgeGraph | null>(null);
   const [relationTitleCache, setRelationTitleCache] = useState<RelationTitleCache>({ scope: "", entries: {} });
-  const [selectedCandidateId, setSelectedCandidateId] = useState<string | null>(() => { const route = readKnowledgeRoute(window.location.hash, context.projectId); return route.view === "review" ? route.id ?? null : null; });
+  const [selectedCandidateId, setSelectedCandidateId] = useState<string | null>(() => { const route = readKnowledgeRoute(currentPath(), context.projectId); return route.view === "review" ? route.id ?? null : null; });
   const [candidate, setCandidate] = useState<KnowledgeCandidateRecord | null>(null);
   const [error, setError] = useState("");
-  const [routeError, setRouteError] = useState(() => { const route = readKnowledgeRoute(window.location.hash, context.projectId); return route.view === "invalid" ? route.message : ""; });
+  const [routeError, setRouteError] = useState(() => { const route = readKnowledgeRoute(currentPath(), context.projectId); return route.view === "invalid" ? route.message : ""; });
   const [message, setMessage] = useState("");
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
@@ -120,14 +121,14 @@ export function KnowledgePanel({ context, refresh }: { context: MutationContext;
   const listingReading = overviewRead.key !== overviewKey || overviewRead.status === "reading";
   const overviewError = overviewRead.key === overviewKey && overviewRead.status === "failed" ? overviewRead.error : "";
   const [view, setView] = useState<"list" | "read" | "review" | "compose" | "invalid">(() => {
-    const route = readKnowledgeRoute(window.location.hash, context.projectId);
+    const route = readKnowledgeRoute(currentPath(), context.projectId);
     return route.view === "outside" ? "list" : route.view;
   });
   const canWrite = context.principal.permissions.includes("write");
   const canReview = context.principal.permissions.includes("review");
   useEffect(() => {
     const sync = () => {
-      const next = transitionKnowledgeRoute({ route: { view: "list" }, page: null, history: [], graph: null }, window.location.hash, context.projectId);
+      const next = transitionKnowledgeRoute({ route: { view: "list" }, page: null, history: [], graph: null }, currentPath(), context.projectId);
       if (next.route.view === "outside") return;
       setPage(next.page); setCurrentHead(null); setHistory(next.history); setGraph(next.graph);
       setError(""); setRouteError(""); setCandidate(null);
@@ -141,8 +142,7 @@ export function KnowledgePanel({ context, refresh }: { context: MutationContext;
         setSelectedId(null); setFixedRevision(undefined); setSelectedCandidateId(null); setView("list");
       }
     };
-    window.addEventListener("hashchange", sync);
-    return () => window.removeEventListener("hashchange", sync);
+    return onNavigate(sync);
   }, [context.projectId]);
   useEffect(() => {
     let active = true;
@@ -273,14 +273,14 @@ export function KnowledgePanel({ context, refresh }: { context: MutationContext;
   const openPage = (id: string, revision?: string) => {
     setPage(null); setCurrentHead(null); setHistory([]); setGraph(null);
     setSelectedId(id); setFixedRevision(revision); setView("read");
-    window.location.hash = knowledgeHash(context.projectId, { knowledgeId: id, knowledgeRevision: revision });
+    navigate(knowledgeHash(context.projectId, { knowledgeId: id, knowledgeRevision: revision }));
   };
   const openCandidate = (id: string) => {
     setSelectedCandidateId(id); setView("review");
-    window.location.hash = knowledgeHash(context.projectId, { candidateId: id });
+    navigate(knowledgeHash(context.projectId, { candidateId: id }));
   };
-  const showList = () => { setView("list"); window.location.hash = knowledgeHash(context.projectId); };
-  const showReview = () => { setView("review"); window.location.hash = `${knowledgeHash(context.projectId)}?review=1`; };
+  const showList = () => { setView("list"); navigate(knowledgeHash(context.projectId)); };
+  const showReview = () => { setView("review"); navigate(`${knowledgeHash(context.projectId)}?review=1`); };
   const startNewCandidate = () => {
     if (!composeTouched) {
       setComposeKnowledgeId(null); setEditingRevision(null); setTitle(""); setBody("");
@@ -354,7 +354,7 @@ export function KnowledgePanel({ context, refresh }: { context: MutationContext;
     <div className="knowledge-toolbar">
       <div><p className="knowledge-purpose">理解当前认识，核对来源与反例，再决定是否修订。</p></div>
       <div className="actions"><button onClick={refreshAll}>回读当前状态</button>
-        <a className="button-link" href={`#/p/${context.projectId}/evaluations${selectedId ? `?knowledgePageId=${encodeURIComponent(selectedId)}` : ""}`}>关联评价 →</a>
+        <a className="button-link" href={`/p/${context.projectId}/evaluations${selectedId ? `?knowledgePageId=${encodeURIComponent(selectedId)}` : ""}`}>关联评价 →</a>
         {canWrite && <button onClick={startNewCandidate}>{composeTouched ? "继续候选草稿" : "提出候选"}</button>}
         <button onClick={showReview}>候选与审阅{candidates.length ? ` · ${candidates.length}` : ""}</button></div>
     </div>

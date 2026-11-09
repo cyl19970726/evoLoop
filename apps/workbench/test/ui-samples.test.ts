@@ -1,4 +1,4 @@
-// The component sample page (#/ui) renders every section on fake data, inside the data-ui isolation scope.
+// The component sample page (/ui) renders every section on fake data, inside the data-ui isolation scope.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createElement } from "react";

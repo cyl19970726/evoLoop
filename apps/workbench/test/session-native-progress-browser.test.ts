@@ -87,7 +87,7 @@ test("native progress keeps source, freshness and cumulative usage separate from
       else if (url.pathname.endsWith("/messages")) value = { items: [], nextCursor: null, metadata };
       res.writeHead(status, { "content-type": "application/json" }); res.end(JSON.stringify(value)); return;
     }
-    try { const file = url.pathname === "/" ? "index.html" : url.pathname; const body = await readFile(join(dist, file));
+    try { const file = /^\/(?:$|p\/|ui$)/.test(url.pathname) ? "index.html" : url.pathname; const body = await readFile(join(dist, file));
       res.writeHead(200, { "content-type": ({ ".html": "text/html", ".js": "text/javascript", ".css": "text/css" } as Record<string, string>)[extname(file)] ?? "application/octet-stream" }); res.end(body);
     } catch { res.writeHead(404); res.end(); }
   });
@@ -96,7 +96,7 @@ test("native progress keeps source, freshness and cumulative usage separate from
   const browser = await chromium.launch({ headless: true, ...(process.env.EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH
     ? { executablePath: process.env.EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH } : {}) }); t.after(() => browser.close());
   const page = await browser.newPage({ viewport: { width: 390, height: 840 } });
-  await page.goto(`${base}/#/p/${projectId}/runtime?session=${encodeURIComponent(sessionKey)}`);
+  await page.goto(`${base}/p/${projectId}/runtime?session=${encodeURIComponent(sessionKey)}`);
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button", { name: "进入", exact: true }).click();
   await page.getByRole("heading", { name: "进度测试会话" }).waitFor();
@@ -121,6 +121,8 @@ test("native progress keeps source, freshness and cumulative usage separate from
     await page.setViewportSize({ width: 390, height: 840 });
   }
 
+  // From here the checks read the centre and the right column together: at 1440px the column sits beside the page.
+  await page.setViewportSize({ width: 1440, height: 900 });
   const facts = page.getByRole("region", { name: "执行与消息状态" });
   await fetch(`${base}/__fixture/set?mode=messageLive`);
   await page.getByRole("button", { name: "重新读取", exact: true }).click();

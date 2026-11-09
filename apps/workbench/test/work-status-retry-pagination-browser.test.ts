@@ -48,7 +48,7 @@ test("a delayed retry preserves statuses from a newly loaded Task page", { skip:
       res.writeHead(responseStatus, { "content-type": "application/json" }); res.end(JSON.stringify(value)); return;
     }
     try {
-      const path = url.pathname === "/" ? "index.html" : url.pathname;
+      const path = /^\/(?:$|p\/|ui$)/.test(url.pathname) ? "index.html" : url.pathname;
       const body = await readFile(join(dist, path));
       res.writeHead(200, { "content-type": ({ ".html": "text/html", ".js": "text/javascript", ".css": "text/css" } as Record<string, string>)[extname(path)] ?? "application/octet-stream" });
       res.end(body);
@@ -59,7 +59,7 @@ test("a delayed retry preserves statuses from a newly loaded Task page", { skip:
   const browser = await chromium.launch({ headless: true,
     executablePath: process.env.EVOLOOP_BROWSER_TEST_CHROMIUM_EXECUTABLE || undefined }); t.after(() => browser.close());
   const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
-  await page.goto(`${base}/#/p/${projectId}/work`);
+  await page.goto(`${base}/p/${projectId}/work`);
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button", { name: "进入", exact: true }).click();
   const warning = page.locator(".work-status-warning");

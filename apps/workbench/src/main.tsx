@@ -1,6 +1,10 @@
-import React, { Suspense, lazy, useEffect, useState } from "react";
+import React from "react";
 import { createRoot } from "react-dom/client";
-import { App } from "./app/App";
+import { RouterProvider } from "@tanstack/react-router";
+import { QueryClientProvider } from "@tanstack/react-query";
+import { router } from "./app/router";
+import { queryClient } from "./app/queryClient";
+import { installLinkNavigation, redirectLegacyHash } from "./shared/navigation";
 import "@evoloop/ui/tokens.css";
 import "./legacy-tokens.css";
 import "./style.css";
@@ -16,18 +20,10 @@ import faviconUrl from "@evoloop/ui/logo-small.svg";
 // The favicon comes from @evoloop/ui so the logo has one source; Vite resolves this import in dev and build alike.
 document.querySelector<HTMLLinkElement>('link[rel="icon"]')?.setAttribute("href", faviconUrl);
 
-// #/ui is the component sample page: fake data only, no login, loaded on demand.
-const UiSamplesPage = lazy(() => import("./app/ui-samples/UiSamplesPage"));
-const isSamples = () => window.location.hash === "#/ui" || window.location.hash.startsWith("#/ui?");
+// Old `#/p/…` links (bookmarks, documents, other tools) land on the matching path before anything renders.
+redirectLegacyHash();
+installLinkNavigation();
 
-function Root() {
-  const [samples, setSamples] = useState(isSamples);
-  useEffect(() => {
-    const onHash = () => setSamples(isSamples());
-    window.addEventListener("hashchange", onHash);
-    return () => window.removeEventListener("hashchange", onHash);
-  }, []);
-  return samples ? <Suspense fallback={null}><UiSamplesPage /></Suspense> : <App />;
-}
-
-createRoot(document.getElementById("root")!).render(<React.StrictMode><Root /></React.StrictMode>);
+createRoot(document.getElementById("root")!).render(<React.StrictMode>
+  <QueryClientProvider client={queryClient}><RouterProvider router={router} /></QueryClientProvider>
+</React.StrictMode>);

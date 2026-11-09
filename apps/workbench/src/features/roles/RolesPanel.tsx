@@ -11,10 +11,11 @@ import { roleCardKey, roleListScope, rolesWhileRereading } from "./roleListRefre
 import { RoleRuntimeCard } from "./RoleRuntimeCard";
 import { AllocationBacklinks } from "../discussions";
 import { href } from "../../shared/ui/shared";
+import { currentPath, onNavigate } from "../../shared/navigation";
 
 const roleIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 function roleQuery(projectId: string): string | null {
-  const [path, query = ""] = window.location.hash.split("?");
+  const [path, query = ""] = currentPath().split("?");
   if (path !== href(projectId,"roles")) return null;
   const params = new URLSearchParams(query);
   if (!params.has("role")) return null;
@@ -83,8 +84,7 @@ export function RolesPanel({ context, refresh }: { context: MutationContext; ref
   const [targetRoute, setTargetRoute] = useState(() => ({projectId:context.projectId,value:roleQuery(context.projectId),tick:0}));
   useEffect(() => {
     const reread = () => setTargetRoute(previous => ({projectId:context.projectId,value:roleQuery(context.projectId),tick:previous.tick+1}));
-    reread(); window.addEventListener("hashchange",reread);
-    return () => window.removeEventListener("hashchange",reread);
+    reread(); return onNavigate(reread);
   }, [context.projectId]);
   const target = targetRoute.projectId === context.projectId ? targetRoute.value : roleQuery(context.projectId);
   const validTarget = target !== null && roleIdPattern.test(target);

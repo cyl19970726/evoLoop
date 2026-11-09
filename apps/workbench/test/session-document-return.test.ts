@@ -7,15 +7,15 @@ const projectId = "96000001-0000-4000-8000-000000000001";
 const documentId = "96000002-0000-4000-8000-000000000002";
 const revisionId = "96000003-0000-4000-8000-000000000003";
 const sessionKey = "owned:96000004-0000-4000-8000-000000000004";
-const source = `#/p/${projectId}/sessions?${new URLSearchParams({ session: sessionKey, tab: "results", filter: "all", open: "run:fixed", panel: "conversation" })}`;
-const fixedDocument = `#/p/${projectId}/documents/${documentId}?revision=${revisionId}`;
+const source = `/p/${projectId}/sessions?${new URLSearchParams({ session: sessionKey, tab: "results", filter: "all", open: "run:fixed", panel: "conversation" })}`;
+const fixedDocument = `/p/${projectId}/documents/${documentId}?revision=${revisionId}`;
 const delivery = { artifactRef: fixedDocument, artifactRevision: revisionId, contentHash: "a".repeat(64) };
 
 test("Document source validation accepts the same project's exact Session view", () => {
   assert.equal(isProjectRoute(source, projectId), true);
   assert.equal(isProjectRoute(source.replace(projectId, documentId), projectId), false);
   assert.equal(isProjectRoute(`https://example.test/${source}`, projectId), false);
-  assert.equal(isProjectRoute(`#/p/${projectId}/not-a-page?session=${sessionKey}`, projectId), false);
+  assert.equal(isProjectRoute(`/p/${projectId}/not-a-page?session=${sessionKey}`, projectId), false);
 });
 
 test("Session delivery source context preserves the declared fixed Document and revision", () => {

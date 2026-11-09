@@ -85,7 +85,7 @@ test("Task owner resolves one real Role and only verified bound Session links at
       else if (url.pathname.startsWith(`${p}/references/tasks/`)) value = [];
       res.writeHead(status,{"content-type":"application/json"}); res.end(JSON.stringify(value)); return;
     }
-    const file=join(dist,url.pathname === "/" ? "index.html" : url.pathname);
+    const file=join(dist,/^\/(?:$|p\/|ui$)/.test(url.pathname) ? "index.html" : url.pathname);
     try {const body=await readFile(file);res.writeHead(200,{"content-type":({".html":"text/html",".js":"text/javascript",".css":"text/css"})[extname(file)] ?? "application/octet-stream"});res.end(body);}
     catch {res.writeHead(404);res.end();}
   });
@@ -95,7 +95,7 @@ test("Task owner resolves one real Role and only verified bound Session links at
     ? {executablePath:process.env.EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH}:{})}); t.after(()=>browser.close());
   const pageBrowser=await browser.newPage({viewport:{width:390,height:844}});
   const pageErrors:string[]=[]; pageBrowser.on("pageerror",error=>pageErrors.push(error.stack ?? error.message));
-  await pageBrowser.goto(`${base}/#/p/${projectId}/tasks/${taskId}`);
+  await pageBrowser.goto(`${base}/p/${projectId}/tasks/${taskId}`);
   await pageBrowser.getByLabel("访问令牌").fill("fixture-token");
   await pageBrowser.getByRole("button",{name:"进入",exact:true}).click();
   await pageBrowser.locator(".task-provenance > summary").click();
@@ -120,9 +120,9 @@ test("Task owner resolves one real Role and only verified bound Session links at
     await pageBrowser.locator(".task-page-header").screenshot({path:process.env.EVOLOOP_TASK_OWNER_SCREENSHOT});
   assert.ok((await (await fetch(`${base}/__fixture/reads`)).json()).roleReads >= 1,"Task owner must verify the exact Role record");
   assert.equal(await owner.getByRole("link",{name:/已登记 Session 20000006/}).getAttribute("href"),
-    `#/p/${projectId}/sessions?session=${encodeURIComponent(`owned:${sessionId}`)}`,
+    `/p/${projectId}/sessions?session=${encodeURIComponent(`owned:${sessionId}`)}`,
     "the verified owned Session opens through the sole Sessions directory route");
-  await pageBrowser.evaluate(({projectId,taskId})=>{location.hash=`#/p/${projectId}/tasks/${taskId}`;},{projectId,taskId});
+  await pageBrowser.evaluate(({projectId,taskId})=>{location.hash=`/p/${projectId}/tasks/${taskId}`;},{projectId,taskId});
   await owner.getByRole("link",{name:"开发流程职责"}).waitFor();
   const exactReadsBeforeFailure = (await (await fetch(`${base}/__fixture/reads`)).json()).roleReads as number;
   await fetch(`${base}/__fixture/fail-role`);
@@ -132,7 +132,7 @@ test("Task owner resolves one real Role and only verified bound Session links at
     "Task reread must request the exact Role even when a Role list is available");
   assert.equal(await owner.getByRole("link").count(),0,"failed exact Role read must not fall back to a stale list entry or its Session links");
   assert.doesNotMatch(await owner.innerText(),/过期列表职责/);
-  await pageBrowser.evaluate(({projectId,otherTaskId})=>{location.hash=`#/p/${projectId}/tasks/${otherTaskId}`;},{projectId,otherTaskId});
+  await pageBrowser.evaluate(({projectId,otherTaskId})=>{location.hash=`/p/${projectId}/tasks/${otherTaskId}`;},{projectId,otherTaskId});
   await pageBrowser.locator(`[data-page-key="task:${otherTaskId}:::"] .task-provenance > summary`).click();
   await pageBrowser.locator(`[data-page-key="task:${otherTaskId}:::"] .task-role-history > summary`).click();
   const unknown=pageBrowser.locator(`[data-page-key="task:${otherTaskId}:::"] .task-owner-meta`);

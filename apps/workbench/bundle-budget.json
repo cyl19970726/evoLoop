@@ -1,0 +1,4 @@
+{
+  "initialJsGzipBytes": 170000,
+  "note": "JavaScript the browser loads before the first page renders (the entry script and its modulepreloads in dist/index.html), gzip-compressed. That first page is the login gate; the frame (app/shell), every page, Markdown, diagrams and the component samples load on demand. History: one bundle at 392 KB; PR4a split pages (181 KB, budget 190); PR4b added TanStack Query (budget 200); PR5 loads the frame after login (160 KB, budget 170). Raise it only with a reason in the same change."
+}

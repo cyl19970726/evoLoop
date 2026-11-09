@@ -1,23 +1,26 @@
 import MarkdownIt from "markdown-it";
+import { appPath } from "../appPath";
 import { legacyWorkbenchRoute } from "./legacyWorkbenchLink";
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** A fixed Wiki revision link (stored as `#/p/…` or written as `/p/…`), returned as the path to open. */
 export function fixedWikiHref(value: string, projectId?: string): string | null {
   if (!projectId || !uuid.test(projectId)) return null;
-  const [path, query, extra] = value.split("?");
-  if (extra !== undefined || path !== `#/p/${projectId}/knowledge` || !query) return null;
+  const route = value.startsWith("#/p/") ? value.slice(1) : value;
+  const [path, query, extra] = route.split("?");
+  if (extra !== undefined || path !== `/p/${projectId}/knowledge` || !query) return null;
   const params = new URLSearchParams(query);
   if ([...params.keys()].join(",") !== "knowledgeId,knowledgeRevision") return null;
   const knowledgeId = params.get("knowledgeId"), revision = params.get("knowledgeRevision");
   return knowledgeId && revision && uuid.test(knowledgeId) && uuid.test(revision) &&
-    value === `#/p/${projectId}/knowledge?knowledgeId=${knowledgeId}&knowledgeRevision=${revision}` ? value : null;
+    route === `/p/${projectId}/knowledge?knowledgeId=${knowledgeId}&knowledgeRevision=${revision}` ? route : null;
 }
 function markdownFor(projectId?: string) {
   const markdown = new MarkdownIt({ html: false, linkify: false, breaks: false });
   markdown.disable("image");
   markdown.validateLink = value => {
-    if (value.startsWith("#/p/")) return !!fixedWikiHref(value, projectId) ||
-      /^#\/p\/[a-z0-9-]+\/(?:tasks|documents)\/[a-z0-9-]+(?:\?revision=[a-z0-9-]+)?$/i.test(value);
+    if (value.startsWith("#/p/") || value.startsWith("/p/")) return !!fixedWikiHref(value, projectId) ||
+      /^#?\/p\/[a-z0-9-]+\/(?:tasks|documents)\/[a-z0-9-]+(?:\?revision=[a-z0-9-]+)?$/i.test(value);
     if (value.startsWith("#")) return /^#[a-z0-9_-]+$/i.test(value);
     try {
       const url = new URL(value);
@@ -47,7 +50,7 @@ export function splitMarkdown(source: string, options: { omitLeadingTitle?: stri
       if (child.type === "link_open") insideLink = true;
       if (child.type !== "text" || insideLink) children.push(child as InstanceType<typeof TokenCtor>);
       else {
-        const pattern = /#\/p\/[0-9a-f-]+\/knowledge\?knowledgeId=[0-9a-f-]+&knowledgeRevision=[0-9a-f-]+/gi;
+        const pattern = /#?\/p\/[0-9a-f-]+\/knowledge\?knowledgeId=[0-9a-f-]+&knowledgeRevision=[0-9a-f-]+/gi;
         let offset = 0;
         for (const match of (child.content ?? "").matchAll(pattern)) {
           const href = fixedWikiHref(match[0], options.projectId);
@@ -70,6 +73,14 @@ export function splitMarkdown(source: string, options: { omitLeadingTitle?: stri
       if (route) child.attrSet("href", route);
     }
     inline.children = children;
+  }
+  // Documents keep the `#/p/…` links they were written with; they open as paths.
+  for (const inline of tokens.filter(token => token.type === "inline") as unknown as ParsedTokenView[]) {
+    for (const child of (inline.children ?? []) as unknown as Array<InstanceType<typeof TokenCtor>>) {
+      const target = child.type === "link_open" ? child.attrGet("href") : null;
+      const path = target?.startsWith("#/") ? appPath(target) : null;
+      if (path) child.attrSet("href", path);
+    }
   }
   const expectedTitle = options.omitLeadingTitle?.replace(/\s+/gu, " ").trim();
   if (expectedTitle) {

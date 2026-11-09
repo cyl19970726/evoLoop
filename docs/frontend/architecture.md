@@ -19,9 +19,9 @@
 
 | 层 | 内容 | 现状 |
 | --- | --- | --- |
-| `app/` | 外壳、路由表、身份与查询客户端装配 | `App.tsx`（手写路由与项目切换）、`WorkbenchShell.tsx`、操作回执与恢复、组件样例页 `ui-samples/`。`src/` 根目录只留入口 `main.tsx`、全局类型声明和旧全局 CSS（PR10 删除），按 app 层对待 |
+| `app/` | 外壳、路由表、身份与查询客户端装配 | `router.tsx`（路由表）与 `routePaths.ts`、`queryClient.ts`（查询缓存）、`PageBoundary.tsx`（单页出错不影响外壳）、`shell/`（外壳：`AppShell.tsx`、空间与分区模型 `spaces.ts`，登录后按需加载；页面经 `shared/ui/` 的两个入口填外壳：`ContextRailContent` 把对象列表放进内层栏，`ContextPanelContent` 把当前对象的信息放进右栏（`ContextPanel.tsx`）；只有屏上的那一页能填，`pageActive.ts` 由 `App.tsx` 按页提供）、`App.tsx`（登录、项目切换、按区域选页面并逐页懒加载）、操作回执与恢复、组件样例页 `ui-samples/`。`src/` 根目录只留入口 `main.tsx`、全局类型声明和旧全局 CSS（PR10 删除），按 app 层对待 |
 | `features/<领域>/` | 页面、领域组件、该领域的查询与命令 | 17 个领域沿用旧目录名（任务仍叫 `workflow`，团队页是 `team`）；PR5–PR9 换页时按目标页面归并 |
-| `shared/` | API 客户端、对象引用、修订标签等跨领域部件 | `api.ts` 与被多个领域读取的 `*Client.ts`、命令表单 `ActionForm`、业务状态映射（`workStatusPresentation`、`leaderWorkLoad`、`taskTiming`）、对象链接与名称解析（`taskNavigation`、`deliveryPresentation`、`externalHostEntry`、`ownerRole`）、Markdown 与 HTML 原件阅读（`ui/`）、过渡期的本地 shadcn 组件（`components/ui/`）、假数据 `fixtures/` |
+| `shared/` | API 客户端、对象引用、修订标签等跨领域部件 | 地址与历史（`navigation.ts`、`appPath.ts`、`routes.ts`）、身份（`identity.ts`）、读取层（`query.ts`）、`api.ts` 与被多个领域读取的 `*Client.ts`、命令表单 `ActionForm`、业务状态映射（`workStatusPresentation`、`leaderWorkLoad`、`taskTiming`）、对象链接与名称解析（`taskNavigation`、`deliveryPresentation`、`externalHostEntry`、`ownerRole`）、Markdown 与 HTML 原件阅读（`ui/`）、过渡期的本地 shadcn 组件（`components/ui/`）、假数据 `fixtures/` |
 | `@evoloop/ui`（`packages/ui`） | tokens、基于 shadcn 的基础组件、布局骨架、通用状态与对话流条目 | 见[组件](components.md) |
 
 检查的规则：
@@ -36,17 +36,28 @@
 
 **路由。** URL 承载项目、对象稳定 ID、修订和筛选，刷新或分享后回到同一位置；改标题或移动 Git 路径不改链接。历史修订 URL 不跳到最新版。导航入口由[布局](layout.md)决定，不按路由生成。
 
-- **现状**：`app/App.tsx` 监听 `hashchange`，手写解析 `#/p/{项目}/{区域}/{ID}?revision=…`；所有页面在一个包里。
-- **目标**：TanStack Router，路径 URL `/p/{项目}/…`，旧 `#/p/…` 链接（含正文里保存的）兼容跳转，按路由拆包，静态服务对非 `/api` 路径回退 `index.html`。以后要服务端渲染，可在同一套路由上换 TanStack Start。
+- **现状**（PR4a）：TanStack Router 管地址与历史，路径 URL `/p/{项目}/{区域}/{ID}?revision=…`，`/` 是项目列表，`/ui` 是组件样例页。路由表在 `app/router.tsx`，地址清单在 `app/routePaths.ts`；页面仍由 `App.tsx` 按解析出的区域选择（`shared/routes.ts` 的 `parseRoute`），访问过的页面保持挂载，PR5 新外壳再改成布局路由。
+  - **旧链接**：文档正文、交付登记、消息里保存的 `#/p/…` 链接继续可用。打开带 `#/…` 的地址（书签、粘贴、Agent 只读浏览器）时先换成对应路径；渲染保存的链接时用 `appPath()` 改写为路径。合同和数据库里的保存格式不变。
+  - **站内跳转**：`shared/navigation.ts` 是唯一入口：`navigate()`、`currentPath()`、`onNavigate()`；只改地址栏、不通知页面的视图状态（筛选、展开项）用 `replaceQuietly()`。站内 `<a href="/p/…">` 的点击统一转成历史导航，不整页刷新，所以内存里的登录不丢；带修饰键、新标签页、下载和外站链接不拦。
+  - **离开项目**：有未提交草稿时先确认，前进后退同样拦截。
+  - **拆包**：每个页面是单独的 chunk，首屏只带登录、外壳与共用代码。首屏 JS 预算在 `apps/workbench/bundle-budget.json`（gzip 190 KB；拆包前单包 392 KB），由 `bundle-budget.test.ts` 对构建产物检查。
+  - **服务**：coordinator 对 `/p/*` 和 `/ui` 返回 `index.html`，`/api` 与静态资源不受影响；Vite 开发服务默认同样回退。
+- **目标**：PR5 起页面改为路由组件（布局路由承载外壳），筛选与排序用路由的 search 校验写进地址栏。以后要服务端渲染，可在同一套路由上换 TanStack Start。
 
 **读取。** 列表返回有界游标页，不首次加载全项目 Wiki 或全部 trace。搜索按任务、文档、知识分组，各给来源与修订，不把不同后端的分数合并排名。
 
-- **现状**：组件直接调用 `api(` 约 84 处，没有缓存层；令牌以 `token: string` 传递约 63 处。
-- **目标**：TanStack Query。query key 以项目开头；切换项目或身份时取消旧请求、清除旧范围缓存；重读时保留旧内容并标“正在核对”。缓存只加速读取，不裁定当前版本或批准状态。
+- **现状**（PR4b）：读取层是 TanStack Query，在 `shared/query.ts`，缓存实例在 `app/queryClient.ts`。
+  - **键**：`queryKeys.project(项目, …)` 与 `queryKeys.identity(身份, …)`，键以所属范围开头。
+  - **隔离**：离开一个项目时取消它在途的请求并清掉它的缓存（`leaveProject`）；登录和退出清空全部。
+  - **写后重读**：写操作成功后，该项目的查询标为过期，可见的重读（`projectChanged`，由 `MutationContext.onChanged` 触发）。
+  - **重读**：保留旧内容，`useProjectQuery` 返回 `checking` 供页面标“正在核对”。
+  - **重试**：4xx 是结论不重试，连接中断与 5xx 最多重试两次。
+  - **已迁移**：外壳的项目标题与项目列表。旧页面仍直接调用 `api(`（约 84 处），令牌以 `token: string` 传递（约 63 处）。这些页面在 PR6–PR9 重写时改用 `useProjectQuery`，不在旧页面上逐处替换。
+- **目标**：所有服务端读取经 Query；缓存只加速读取，不裁定当前版本或批准状态。
 
 QueryService 返回 `observedAt`、对象与 revision、权限能力、分源状态和缺项。PG 部分在一个只读事务内取得；Wiki/Git 分别读固定版本，不声称跨系统原子快照。知识服务不可用时任务仍可读，依据标为暂不可核对。服务端只装配已授权对象，前端隐藏按钮不是授权；空项目返回空态，前端不注入示例。
 
-现状 `WorkbenchShell` 按项目保留已挂载页面以保住内存草稿，这不是持久恢复。
+现状 `App.tsx` 的 `WorkspacePages` 按项目保留已挂载页面以保住内存草稿，这不是持久恢复；外壳在 760px 两侧只换样式、不换结构，跨断点也不会卸载页面。
 
 ### 过程文档表格与完整阅读
 
@@ -93,8 +104,14 @@ QueryService 返回 `observedAt`、对象与 revision、权限能力、分源状
 
 讨论入口准备带固定版本的交接包，再打开或在授权内创建会话。工作台不嵌入、不伪造 Codex Desktop 聊天，不自动发送消息；无法跳转时给可复制引用。
 
-- **现状**：用户在登录门输入 bearer 令牌，令牌只在内存，随请求放入 `Authorization` 头。
-- **目标**：外壳抽象“Hub 登录”和“本机令牌”两种方式；Hub 模式用 httpOnly cookie 并校验 Origin/CSRF，组件间不再传令牌。
+- **现状**（PR4c）：`shared/identity.ts` 是唯一的身份来源，所有请求经 `shared/api.ts` 的同一处读取它。
+  - **本机令牌**：用户在登录门输入令牌，只存在页面内存，请求带 `Authorization` 头。
+  - **Hub 登录**：Hub 托管的页面带 `<meta name="evoloop-auth" content="hub">`，登录门不要令牌，直接用同源 cookie 核对 `/api/session`；Origin/CSRF 校验在 Hub 一侧（#219）。
+  - **新代码**：调用 `api()` 不传令牌即用当前身份；旧页面仍从 `MutationContext.token` 传，PR6–PR9 重写时去掉。
+  - **401**：任何请求收到 401 视为登录失效：清空查询缓存、草稿、恢复意图和页面缓存，回登录门并说明原因。地址保留，未确认的操作回执保留给同一身份。
+  - **403**：403 只说明某个对象无权读取，由页面自己说明。只有读取项目本身得到 403 时，外壳重读身份；项目已不在授权内就清掉它的缓存，回到项目列表并提示。
+  - **页面出错**：某一页渲染出错只替换这一页（`app/PageBoundary.tsx`），外壳、登录和其他已访问页面保留；路由层兜底的错误页同样是中文。
+- **目标**：组件间不再传令牌（随页面重写完成）。
 
 公网访问须先有 HTTPS 与登录。Git、Wiki、飞书和模型凭据只在服务端；附件下载经授权并限定内容类型。
 
@@ -132,4 +149,4 @@ QueryService 返回 `observedAt`、对象与 revision、权限能力、分源状
 4. **收口**：删除旧全局 CSS，颜色字面量只允许在 token 文件里；页面自动截图。
 5. **实时与 Hub**：coordinator 提供项目级失效事件流后，前端接入并让查询失效重读，Session 输出暂留长轮询；随 #219 接入 Hub cookie 与网关流式转发。
 
-每片验收：`npm test`、typecheck、build 通过；旧 hash 深链、历史修订链接和返回位置可用；切换项目不串入旧内容；断线后能恢复；首屏 JS 小于现状。
+每片验收：`npm test`、typecheck、build 通过；旧 `#/p/` 深链、历史修订链接和返回位置可用；切换项目不串入旧内容；断线后能恢复；首屏 JS 不超过 `bundle-budget.json`。

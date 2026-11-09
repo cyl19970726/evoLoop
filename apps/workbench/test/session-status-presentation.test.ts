@@ -122,3 +122,32 @@ test("recent Run states are readable without implying assignment acceptance", ()
   assert.equal(runStateLabel("unknown"), "结果未知");
   assert.equal(runStateLabel("unrecognized"), "状态待核对（unrecognized）");
 });
+
+test("the agent directory says what the record shows in plain words, never internal source names", async () => {
+  const { agentStatusLabel } = await import("../src/features/sessions/sessionStatusPresentation.ts");
+  const owned = (runtimeState: string, busy: boolean | null) => ({ kind: "owned" as const, runtimeState, busy }) as Parameters<typeof agentStatusLabel>[0];
+  assert.equal(agentStatusLabel(owned("ready", true)), "有在途工作");
+  assert.equal(agentStatusLabel(owned("ready", false)), "无在途工作");
+  assert.equal(agentStatusLabel(owned("ready", null)), "占用待核对");
+  assert.equal(agentStatusLabel(owned("closed", null)), "已关闭");
+  assert.equal(agentStatusLabel(owned("strange", null)), "状态待核对");
+  assert.equal(agentStatusLabel({ kind: "external", runtimeState: "ready", busy: false } as Parameters<typeof agentStatusLabel>[0]), "外部 · 空闲");
+  for (const state of ["ready", "closed", "creating"]) for (const busy of [true, false, null])
+    assert.doesNotMatch(agentStatusLabel(owned(state, busy)), /PG|原生|Session|writer/);
+});
+
+test("the agent page header speaks plainly and only claims live work it has observed", async () => {
+  const { agentHeaderStatus } = await import("../src/features/sessions/sessionStatusPresentation.ts");
+  const session = (busy: boolean | null, run: { id: string; state: string } | null = null) => ({ kind: "owned" as const, runtimeState: "ready", busy, latestBusinessRun: run }) as Parameters<typeof agentHeaderStatus>[0];
+  const live = (source: { kind: string; id?: string } | null, status = "active", turn = "inProgress") =>
+    ({ freshness: "live", status, turn: { status: turn, source } }) as unknown as Parameters<typeof agentHeaderStatus>[1];
+  assert.equal(agentHeaderStatus(session(true), live({ kind: "message" }), true, true), "正在回复消息");
+  assert.equal(agentHeaderStatus(session(true, { id: "r1", state: "running" }), live({ kind: "run", id: "r1" }), true, true), "正在执行任务");
+  assert.equal(agentHeaderStatus(session(true, { id: "r0", state: "completed" }), live({ kind: "run", id: "r1" }), true, true), "正在执行 · 任务记录待核对");
+  assert.equal(agentHeaderStatus(session(false), live({ kind: "message" }), true, true), "运行记录不一致，待核对");
+  assert.equal(agentHeaderStatus(session(false), live(null, "idle", "completed"), true, true), "空闲");
+  assert.equal(agentHeaderStatus(session(true), live({ kind: "message" }), false, true), "有在途工作", "a stale read falls back to the record");
+  assert.equal(agentHeaderStatus(session(true), null, true, false), "连接不可用 · 状态待核对");
+  for (const value of [agentHeaderStatus(session(null), null, true, null), agentHeaderStatus(session(true), live({ kind: "x" }), true, true)])
+    assert.doesNotMatch(value, /PG|原生|Turn|writer/);
+});
