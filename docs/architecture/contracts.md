@@ -1,6 +1,6 @@
 # evoLoop 领域合同
 
-> 状态：目标语义合同与受限本机实现并存。C5 将 Task 正文统一归入固定 DocumentRevision、当前任务收敛为四态；11 个工作区、迁移 012 的实际字段以 `packages/contracts` 和[本机运行](../development/local-run.md)为准，逐项已验范围与限制见[阶段路线](../roadmap.md#当前基线)。PostgreSQL 保存主数据，工作台与项目业务 skill＋CLI 经同一 API 使用；飞书真实租户、完整目标合同、真人效果与生产保证仍待验证。整体位置见[架构总览](overview.md)，数据权威见[项目数据](project-data.md)，用户行为见[产品定义](../product/definition.md)，实现规范见[开发规范](../development/standards.md)。
+> 状态：目标语义合同与受限本机实现并存。C5 将 Task 正文统一归入固定 DocumentRevision、当前任务收敛为四态；实际字段以 `packages/contracts`、`packages/adapter-postgres/schema/` 的迁移和[本机运行](../development/local-run.md)为准，逐项已验范围与限制见[阶段路线](../roadmap.md#当前基线)。PostgreSQL 保存主数据，工作台与项目业务 skill＋CLI 经同一 API 使用；飞书真实租户、完整目标合同、真人效果与生产保证仍待验证。整体位置见[架构总览](overview.md)，数据权威见[项目数据](project-data.md)，用户行为见[产品定义](../product/definition.md)，实现规范见[开发规范](../development/standards.md)。
 
 ## 对象如何配合
 
@@ -159,23 +159,27 @@ PG 在源写入的同一事务追加只含引用、状态与短预览的观察�
 
 ## 4. RoleRegistry 与 SessionRuntime
 
-`RoleRegistry` 记录逻辑责任的稳定 ID、目标、范围、主要输入、可写资产、交付、触发条件、与其他 Role 的交接、试行状态和修订。Role 可处于候选、试行、活跃、调整中、撤回；这描述职责约定，不是 session 运行状态。一个 Role 可有先后多个 Session 或经批准的并行实例。会话换窗、上下文压缩、模型替换都不自动变成新 Role。
+`RoleRegistry` 记录逻辑责任的稳定 ID、目标、范围、主要输入、可写资产、交付、触发条件、与其他 Role 的交接、试行状态和修订。Role 可处于候选、试行、活跃、调整中、撤回；这描述职责约定，不是 session 运行状态。一个 Role 可有先后多个 Session，或由 Leader 按编制决定的并行实例（DEC-038）。会话换窗、上下文压缩、模型替换都不自动变成新 Role。
 
 正式 Role 的可选 `roleClass` 区分 system/business，旧未分类 Role 仍可读取；Lead、认知、分工、产品、架构、开发流程、功能开发是分类模板，不自动生成七个 Role。分类沿 Role 的不可变修订与 reviewer CAS 决定更新，模板键须与分类一致；持续新责任仍走原 `role.propose` 与试行审阅。BusinessDomain 有稳定 ID、标题、修订、Role 映射、路由选择理由和授权证据；Task 的可选 `domainId` 与 `kind` 独立并固定于 TaskRevision。只读领域路由仅对当前 trial/active Role 给出承载状态，不能凭显示名、领域或模板取得执行权。
 
 HostLink 独立记录 Role、owned Session 或外部 Codex Desktop 引用及历史。owned 登记要求同项目、同 Role、ready、真实原生 Thread 与正式绑定；external 只可声称并经 reviewer 核实 open/read/manual-claim，核实能力、证据、观察者和时间分开保存，未核实显示未知。撤销、Role 退出或承载失效时不能沿旧验证继续派发。Desktop link 不是 RuntimeSession，也不提供 start/send/interrupt 自动控制；路由查询本身永不启动模型。本机已按该合同核回 owned/external 承载与领域登记；已建立范围与本轮证据统一见[当前基线](../roadmap.md#当前基线)。登记、已核能力、队列执行及页面展示分别取证，不能由一个链接推定 Desktop 自动控制。
 
-`SessionRuntime` 的能力按实际宿主逐项声明：创建/继续、查询状态、发送已授权任务、读取回复/产物、请求停止、恢复关联；某能力不存在就返回 unsupported。发送消息或唤醒并不等于接收、执行、完成。不能凭“创建请求已发出”就登记为已运行。运行时身份映射保留 `roleId ↔ sessionId ↔ taskId` 的时间范围和来源；同一任务因续做换 session 时保留交接链。
+`SessionRuntime` 合同不绑定具体运行时。协调服务只经中立的 `RuntimePort`（`packages/contracts/src/runtime.ts`）调用运行时：创建/继续、查询状态、发送已授权任务、读取回复/产物、请求停止、恢复关联。每个适配器用 `capabilities()` 逐项声明进程模型、执行中补入、压缩、历史、命名、归档、模型修订、用量与费用等能力；未声明的能力返回 unsupported，不由协调服务模拟。当前有 Codex App Server 与 Claude Agent SDK 两个适配器，一个协调服务可同时驱动两者；Role 第一次预留 Session 时绑定一种运行时，之后不能更换，Session 在预留时固定运行时（DEC-035，schema 067、068）。两者的生命周期与能力差别见[Session 运行时](session-runtime.md)。
 
-Codex App Server 协议版本由本机运行配置显式固定；省略时维持兼容旧配置。升级到受支持的新候选前，配置保管人先核选中的二进制版本与标准／实验 schema 指纹，服务按该版本做精确匹配，不自动升级或放宽协议锁。新增的 `currentTime/read` 仅为精确绑定 owned Thread 提供只读时间，不授予执行权或模型能力；即使 `model/list` 返回某模型，也不能证明新 Turn 会被服务商接受或其实际运行模型。
+发送消息或唤醒并不等于接收、执行、完成。不能凭“创建请求已发出”就登记为已运行。运行时身份映射保留 `roleId ↔ sessionId ↔ taskId` 的时间范围和来源；同一任务因续做换 session 时保留交接链。
+
+运行时专有的版本锁定由适配器负责，不进入共同合同。Codex 的 App Server 协议版本由运行配置显式固定，服务按选中版本精确核对二进制与 schema 指纹，不自动升级或放宽协议锁；`model/list` 返回某模型也不能证明新 Turn 会被接受或其实际运行模型。版本与可选能力见[Codex 接入](codex-integration.md#协议版本与可选能力)。
 
 受管 Session 的启动失败或结果未知会在项目事务内阻断该 Session 后续 Run 与普通消息启动，保留失败来源、原 Task claim 和最早已排队消息；结果未知先沿原 Run／消息 ID 只读对账，不自动重发，也不清除失败事实。Lead 的 `queue.retryFailed` 只针对原 claim 最新、已确认 `failed` 或 `interrupted` 的 Run；retry 不改写来源 Run 的终态，也不把 `interrupted` 重新命名为 `failed`，并仍禁止 `unknown`／`completed`。只要业务 Task 输入未变，新 Run 的输入仍包含原 Run 固定输入，但会创建新的沟通通道和执行封套，因此保存并区分来源 Run/inputHash 与新 Run 实际 inputHash，不能把字节不同的两个输入称为同一 hash。每次 retry 都要求控制者复核影响、固定输入与原 claim，消耗同队列累计预算，且不自动重试。retry 成功后只允许恢复原来 pin 的那条 queued 消息一次；消息完成后保持 `awaiting_acceptance`，直到原 claim 的交付、消费者使用、Task 验收与 accepted release 满足既有条件，才开放下一个启动。任何后续失败或未知都会重新阻断。
 
 已完成 retry 且原 claim 仍等待验收时，独立复核可要求同 Task 返工。若依据是业务输入变更，控制者先修订并重新封存 Task 业务输入、amend 并 readopt 队列；若依据是合法问答，则固定前一 Task 通道的真实问答。随后以 `queue.continue.rework` 固定 gate 版本、最近 completed Run 的 ID/version/inputHash、active 执行配置及依据。项目事务只为此原 claim 的一个新 Run 进入 `reworking`，PG 启动栅栏和 attempt 追加只认该 Run；旧失败来源、retry 决定、消息 pin 和累计预算不变。完成后回 `awaiting_acceptance`，失败或未知重回 `blocked`；其他 Task、claim、Run 或普通消息均不因返工许可开放。若业务输入未改且无合法问答，或来源、身份、权限、预算、配置、采纳版本不符，事务拒绝且不留下许可。
 
-`runtime.session.executionProfile.revise` 只登记新的不可变执行配置修订，本次可改已授权的 model；它不是运行时观测到的实际模型，也不直接调用原生宿主或解除恢复门槛。每个 Run 固定其启动时的配置修订快照，旧 Run 不随 Session 后续换模改写。重试还必须明确匹配受审的 `expectedExecutionProfileRevisionId`，不能在读入后悄悄换用另一配置。新配置需要在同一原生 Thread 以显式配置恢复并取得肯定回读后才可启动；激活回执未知时只对原 Thread 只读对账，不重复调用激活。即使只读对账确认配置已 active，有权者仍须显式作 `runtime.session.recovery.resume`，不会因回读成功自动启动后续工作。显示配置、激活状态与逐 Turn 实际模型时必须区分；没有可靠原生实际模型遥测时仍为未知。 已确认完整权限的 Session 可在新修订固定原生目录所列的模型和思考强度；已确认运行的旧 Turn 继续使用原不可变快照，目标修订 pending 时不启动新业务。激活用原 Thread 的模型与强度读回证明配置，后续 `turn/start` 仍同时显式携带固定的两个参数；原生请求入队回包和启动回包均不能证明 provider 真实执行参数。
+`runtime.session.executionProfile.revise` 只登记新的不可变执行配置修订，本次可改已授权的 model；它不是运行时观测到的实际模型，也不直接调用原生宿主或解除恢复门槛。每个 Run 固定其启动时的配置修订快照，旧 Run 不随 Session 后续换模改写。重试还必须明确匹配受审的 `expectedExecutionProfileRevisionId`，不能在读入后悄悄换用另一配置。新配置需要在同一原生 Thread 以显式配置恢复并取得肯定回读后才可启动；激活回执未知时只对原 Thread 只读对账，不重复调用激活。即使只读对账确认配置已 active，有权者仍须显式作 `runtime.session.recovery.resume`，不会因回读成功自动启动后续工作。显示配置、激活状态与逐 Turn 实际模型时必须区分；没有可靠原生实际模型遥测时仍为未知。 已确认完整权限的 Session 可在新修订固定原生目录所列的模型和思考强度；已确认运行的旧 Turn 继续使用原不可变快照，目标修订 pending 时不启动新业务。激活用原 Thread 的模型与强度读回证明配置，后续 `turn/start` 仍同时显式携带固定的两个参数；原生请求入队回包和启动回包均不能证明 provider 真实执行参数。模型与思考强度修订依赖运行时声明的 `executionProfileActivation`：Codex 现代协议支持，Claude 适配器不支持，Claude Session 沿用创建时的模型。
 
-Evocation 在授权范围内对照任务负荷、结果、User Session 亲用和 Wiki 缺口，提出替代动作：改方法/工具、同职责增实例、临时专项、新 Role、合并或撤回；Leader 组织试行承接。提案进入 TaskStore，不在 RoleRegistry 中直接悄悄改正式约定；试行含目标、成本、效果观察和退出条件。所有 Session 可提出，Evocation 不控制全部业务任务。[产品职责](../product/functional-scenarios.md#共同前提谁负责信息在哪里)
+**同职责容量归 Leader（DEC-038）。** 同一 Role 增减 Session 实例是 Leader 的编制决定，不另设审批，也不由 Evocation 提出。Leader 在工作周期里主动读取项目全部未完成、未分派、阻塞、待验收和待发布的工作，结合依赖与各 Session 的能力、占用、健康和预算，每次判断给出“补人”“先拆开”“必须等”之一，并写明哪些工作可以并行、当前合适的最大并行度；过度并行算风险，不是目标。编制按天调整，一次只增减一个：上一次增加的实例有被接受的交付后，才考虑下一个。增加实例时划清它的工作树、文件与整合责任；负担下降或任务结束时决定复用、释放或退役（Leader 核业务责任，引擎核运行状态，见[验收接力与临时 Session 退役](#验收接力与临时-session-退役)）。
+
+Evocation 在授权范围内对照任务负荷、结果、User Session 亲用和 Wiki 缺口，提出方法与组织的替代动作：改方法/工具、临时专项、新 Role、合并或撤回；新增长期职责（新 Role）仍按 DEC-001/003 凭证据提出并试行。提案进入 TaskStore，不在 RoleRegistry 中直接悄悄改正式约定；试行含目标、成本、效果观察和退出条件。所有 Session 可提出，Evocation 不控制全部业务任务。[产品职责](../product/functional-scenarios.md#共同前提谁负责信息在哪里)
 
 要在后台 runner 已运行时给首次认知固定 trace，`loop.enroll` 可选以 paused 状态登记，再由原有声明命令以 Loop CAS 固定材料，最后通过原有 `loop.state active` 开始。旧 enroll 省略初态仍为 active，历史操作摘要与预算不变；暂停中的 runner 不建立新的 Task/Dispatch/Run。
 
@@ -213,7 +217,7 @@ Evocation 在授权范围内对照任务负荷、结果、User Session 亲用和
 
 队列额度通常在创建时固定；受控恢复中的 `queue.extendBudget` 是有边界的显式追加：当前登记控制者以队列版本和旧上限做 CAS，记录新上限、理由与依据，保留累计 attempts、claim 及历史决定，不自动解除 held 条目或派发 Run。变更后的队列版本须重新采纳。`queue.retryFailed` 使用同一队列累计预算，并固定原失败 Run、Run 版本/inputHash、Task 修订、Session gate 和原 claim；不能用继续运行、重排或新建队列擦除失败或重置用量。只有精确授权且剩余额度足够时才可形成唯一 successor；失败/未知保留原记录并再次阻断。`queue.unhold` 只处理仍可解除的普通 hold，不越过预算耗尽或 Session recovery gate。
 
-Task 协作通道把 question/answer/progress/blocker/handoff/result 固定到同项目 TaskRevision、Run、Session 与 DocumentRevision；事件与 `received`、`read`、`adopted`、`resolved` 回执分开，发出不等于读到或采用。答复若改变范围，应先按 Task 版本规则修订；原 Turn 的输入不静默 steering。原 Run 已知终态后，控制者经显式 `queue.continue` 引用此前同一通道的问答，固定答复正文/hash 进入同一 Session 的新 Run 输入。实际收件者可在新 Run 已绑定原生 Turn、正在运行或已完成时签采用回执；仍须同 Task/Session、完整业务输入一致且包含精确答复，不能以采用代替交付或验收。受限工程动作另有 request、review 决定和实际 executor 执行回执：请求固定原 Run 输入 hash、精确 repo/worktree/路径/commit/PR 范围、授权证据和到期；批准不等于外部动作已发生，执行时再核真实 actor 与现行精确 grant，unknown 沿原外部操作 ID 对账。缺配置或权限即阻断，不借 controller 身份代业务执行。原 Session 的真实问答、固定答复采用、消费者使用及受限动作回执已按[当前基线](../roadmap.md#当前基线)分别取证；答复、采用、请求、批准和实际执行各有独立记录。当前没有独立通知消费者，重复 Task 消息和 pump 的回归不表示外部通知传输重投或 Desktop 自动唤醒已验。
+Task 协作通道把 question/answer/progress/blocker/handoff/result 固定到同项目 TaskRevision、Run、Session 与 DocumentRevision；事件与 `received`、`read`、`adopted`、`resolved` 回执分开，发出不等于读到或采用。答复若改变范围，应先按 Task 版本规则修订；原 Turn 的输入不静默 steering。原 Run 已知终态后，控制者经显式 `queue.continue` 引用此前同一通道的问答，固定答复正文/hash 进入同一 Session 的新 Run 输入。实际收件者可在新 Run 已绑定原生 Turn、正在运行或已完成时签采用回执；仍须同 Task/Session、完整业务输入一致且包含精确答复，不能以采用代替交付或验收。受限工程动作另有 request、review 决定和实际 executor 执行回执：请求固定原 Run 输入 hash、精确 repo/worktree/路径/commit/PR 范围、授权证据和到期；批准不等于外部动作已发生，执行时再核真实 actor 与现行精确 grant，unknown 沿原外部操作 ID 对账。缺配置或权限即阻断，不借 controller 身份代业务执行。原 Session 的真实问答、固定答复采用、消费者使用及受限动作回执已按[当前基线](../roadmap.md#当前基线)分别取证；答复、采用、请求、批准和实际执行各有独立记录。问题、阻塞等需要 Leader 处理的事实，经下文的 [Leader 通知层](#leader-通知层)送到受管 Leader Session；它不表示 Desktop 自动唤醒已实现。
 
 一次派发超时的恢复顺序是：按操作 ID 回读 PostgreSQL 中的任务、Journal 与 outbox → 查运行时是否有对应 Session/动作 → 需要外部协作投影时另查 connector 绑定和同步结果 → 能证实已派发则继续跟踪，能证实未派发才重发，仍不明则保留 `unknown` 并暂停重复执行。飞书投影同步成功不是默认派发前置条件；只有任务目标明确要求远端可见或远端协作时才按判据等待。重复创建、通知和外部副作用各自需要可查询的去重依据；TaskStore 的幂等键不能替代运行时幂等。重启先对账未结束动作、未复核交付和未决外部同步，之后才派发新任务。
 
@@ -228,6 +232,35 @@ Task 协作通道把 question/answer/progress/blocker/handoff/result 固定到�
 请求派发时的 TaskVersion 与实际 Run 的固定 TaskRevision 分别保存：自动准备、正文固定和开始会推进版本，不能假定两者相等。恢复读取须核对原请求范围与实际 Run 输入；新认知只因自身已接收的有效缺口获得原 Run、实际固定 Task 修订及其必要原件的读取权限，不借此获得原任务后来的正文或所有历史运行。旧格式缺口从不可变操作结果及原 Dispatch/Run 绑定还原，证据缺失时不猜测。实际验证进度另见[路线图](../roadmap.md#当前自动接续切片2026-10-23)。
 
 通知最少区分“已请求发送、平台已接受、接收者已读/可处理、处理完成”；运行时只提供到哪一层就记录哪一层。没有投递或消费回执时保持未知，不能把请求 200 解释为受托人已醒来。对方完成后，责任者核对成果修订、检查结果和是否满足验收，再更新任务。阶段亲用另行记录，不能被技术检查通过自动替代。
+
+### 阶段等待由事实推导
+
+一项进行中的 Task 现在停在哪个阶段、在等谁，不另设一个可编辑的状态，而由已有事实推导（PR #190、#191，schema 054）：Task 修订、assignment 与接手、Run 预留与原生活动、本人提交、Delivery、Observation、closure 和明确的发布交接。每段的起止都带来源；无法从事实确定的段落或等待方（执行 Session、消费者、Leader、发布维护者、用户或依赖 Task）显示为未知，不补造。
+
+“最近有效推进”只认真实的业务进展：接手、固定里程碑、提交、Delivery、独立使用结果、解除阻塞或阶段交接。心跳、页面刷新、重复读取、无新依据的延期和工具噪声不重置计时；原生执行活动与观测新鲜度另列，不冒充业务进展。
+
+各阶段有试行的关注门槛（例如已下发待确认 4 小时、执行中无有效推进 8 小时、Delivery 待独立验收 8 小时），项目默认值和单 Task 检查点都经正式命令修订并留历史（`task_attention_threshold`、`task_attention_follow_up` 及其修订表）。同一 Task、阶段、来源和检查窗口只形成一条持久关注项（`task_attention_item`，同一信号同时只开一项），变化记入不可变的 `task_attention_item_event`。关注项只提醒原 Leader（通知类型 `task_attention`），从不自动取消、重试或关闭 Run，也不重置预算；当前 Run 的原生观测暂时未知时关注项保持打开，确证失效后才处置未开始的提醒。字段口径见[Task 时间与关注](../development/task-stage-attention.md)。
+
+### Leader 通知层
+
+需要 Leader 处理的业务事实，由服务端引擎送到受管 Leader Session，不依赖插件、Stop Hook 或 Agent 自己记得去查（DEC-038；schema 046、047）。
+
+1. **在源事务里入库。** 数据库触发器在源写入的同一事务里，把事实登记进 `leader_result_notice`：待编排的 Task（`task_todo`）、封存的 Delivery、独立使用 Observation、Task 通道里的问题与阻塞、终态却缺少本人提交的 Run、提交被封存阻断的 Run，以及后来加入的阶段关注（`task_attention`，054）和验收安排受阻（`acceptance_blocked`，062）。普通进度、阅读、审阅和计划变化不进入。每条通知固定来源事件、Task 修订和预先分配的消息与操作 ID；同一来源只登记一次。
+2. **按配置投递。** 协调服务的通知泵（私有配置 `leaderResultNotices`，每个项目至多一个目标）把待投递通知作为一条普通 Session 消息发给 Leader。投递前逐次核对：目标已配置；技术通知者与 Leader 接收者是不同 actor，前者有项目读写、后者另有 review；项目里恰有一个试行或活跃的 system Lead Role 且与配置一致；该 Role 恰有一个就绪 Session 且与配置一致；Session 执行授权与精确消息授权都在。任一不满足时通知保持 `pending` 并记下原因，不改投别处。
+3. **状态只说明到哪一步。** `linked` 只表示已保存一条受管 Session 消息；原生 Turn、Leader 是否读到、后续安排和 Task 关闭各看自己的记录。收件人一旦固定就不自动改投；原消息操作被明确拒绝时转为 `blocked`，不以原 ID 自动重试。有权者核对后用 `leader.notice.recover` 建立带全新 ID 的新通知，并关联原通知与原拒绝（047）。
+
+通知以普通 Session 消息送达，所以 Leader 用 Codex 还是 Claude 运行时都走同一条路径。因为通知由数据库触发器生成，批量导入业务历史同样会生成通知；迁移后的处置见[部署与迁移](deployment.md#5-迁移之后重新接入)。接线与诊断步骤见[Leader 结果回程](../development/leader-result-return.md)。
+
+### 验收接力与临时 Session 退役
+
+验收由谁做，由 Task 声明，不默认交给 Leader（DEC-038；PR #217，schema 062）。
+
+- **三种验收方式。** Task 的 `acceptance_target` 声明为人、Task 明确允许的 Leader，或 Leader 指派的独立业务 Session；收件人还须与 Task 声明的消费者和验收模式一致。作者 Session 与安排者不能充当独立验收（DEC-038），只有 Task 明确允许时 Leader 才能验收。代码层面：选 Leader 方式时，收件 Session 必须是项目当前的 Leader Session；选业务 Session 方式时，它不能是 Leader Session，也不能是当前 Delivery 的作者 Run 所在的 Session；安排者须有项目 review 权限，并且就是那条验收消息的发送者。
+- **接力记录。** Leader 用 `task_acceptance_relay` 安排验收：固定 Task 修订、当前 Delivery、阶段（候选 `candidate` 或正式 `formal`）、验收范围、入口与收件人。非人工方式同时固定一条发给收件 Session 的消息。同一 Delivery、阶段和范围同时只有一条现行安排；改派以原安排和版本为前提，旧安排保留为 `superseded` 或 `released`。
+- **开始前再核。** 验收消息真正开始处理前，触发器再次核对 Task 未结束、当前修订和最新 Delivery 仍是安排时那一份；不符就拒绝开始，避免验收旧版本。
+- **验收证据。** 人的阅读记入 `task_acceptance_human_read`；验收者本人的 Observation 经 `task_acceptance_observation_link` 关联到安排，并标明证据级别。存在现行安排时，Task 关闭要求指定收件人对该 Delivery 有已关联的 `used` 观察。候选阶段通过不等于正式通过。安排无法开始时生成 `acceptance_blocked` 通知交给 Leader。
+- **临时 Session 退役。** 标为临时的 Session 进入 `closing` 前，必须有一条匹配的 `session_retirement_decision`（理由、交接证据、所见版本、Role 与原 Thread）；它名下若还有未释放的未结束 Task 分派或未结束的验收安排，数据库拒绝关闭。Leader 核业务责任，引擎核运行状态。
+- **容量视图。** 只读的容量视图按 Session 汇总在途 Run、排队消息、队列条目、未结束分派和验收安排，是 Leader 做编制判断的输入；它只反映数据库里的持久占用，不证明原生写入权。
 
 ## 6. StageReview：从交付到下一阶段
 
@@ -278,6 +311,26 @@ Task 协作通道把 question/answer/progress/blocker/handoff/result 固定到�
 日程变更先核对旧修订尚未派发的实例；暂停默认只禁止后续触发，已运行任务按各自合同处理。要停止在途工作需显式产生停止操作并核实际结果。恢复或改时间后重算下一时点；重复事件、时钟回拨和重启不得仅凭触发次数新建工作。创建任务结果未知时先按稳定操作键查 PostgreSQL 事务记录；外部投影不明时再查 connector 绑定并对账，无法排除已有外部副作用就保留 unknown；没有跨系统恰好一次保证。
 
 计划触发和 Codex 桌面产品自动化分别有宿主。首期只有一个自动调度权威，不同时为同一日程注册两套定时器。[定时产品行为](../product/daily-loop.md) · [Codex 映射](codex-integration.md)
+
+### 普通 Task 的一次与每日复制
+
+用户可以直接给一条普通 Task 设一个执行时点，并可选每天重复（PR #202、#212，schema 057）。它复用 Schedule 的时区计算与去重算法，但系列本身有自己的单一权威，Task 详情和总览都读它，不要求用户另外维护一份 Schedule 模板。
+
+| 记录 | 回答什么 |
+| --- | --- |
+| `task_timing_series` 与 `task_timing_series_revision` | 一个系列以首个 Task 为根；修订保存时区、`none`／`daily`、执行时点、未来有效的要求模板、启停状态与修订理由。同一系列只有一个当前修订。 |
+| `task_timing_occurrence` 与其修订 | 每个有效时点以 `(project, series, plannedAtUtc)` 唯一，关联本次生成的 Task 和前一份 Task。尚未生成的时点改期时先记旧新两个时点；已生成或已开始的工作不改写。 |
+| `task_timing` | 每份 Task 属于哪个系列的哪个时点。 |
+
+规则：
+
+- **首个时点只释放原 Task。** 后续每个时点新建一条普通 todo Task，有自己的 ID、主正文修订和历史；复制的是系列当前的“未来有效要求”，不从旧副本递归取正文。分派、Run、Delivery、观察、关闭和成本都不复制，每份 Task 独立产生。
+- **复制前重核资格。** 物化在同一事务里重核授权、owner Role、Stage、消费者与验收要求、可读材料和系列版本；任一失效就保留原记录并给出原因，交 Leader 处理，不降级成无 Stage、无消费者或弱验收的 Task。
+- **漏时与串行。** 只补最近一个漏掉的时点并记下漏掉的数量；前一份未完成或结果未知时，新一份照常生成，但标为系列串行等待，不自动开工。
+- **停止只停未来。** 停止系列后不再生成新的时点，已生成和在途的 Task 不受影响，下一时点显示为空。
+- **授权。** 私有配置 `scheduling.taskTimingGrants` 按项目、业务 actor 和 owner Role 授权每日重复；它不能创建旧 Schedule，也不授予 Session 或 Run 的执行资格。一次性时点和停止系列不需要这项授权。
+
+字段逐项的复制、重建与阻断规则见[普通 Task 定时与后继复制](../development/task-timing-copy.md)。
 
 ## 7a. Connector 与 ExternalBinding
 
