@@ -59,7 +59,7 @@
 | 页面与写操作 | `KnowledgePanel.tsx`、`knowledgeReceipts.ts`、`availability.ts` | `knowledge-browser.test.ts`、`knowledge-availability.test.ts` |
 | 读取 | `knowledgeData.ts`（`useProjectQuery`、逐页读取的 `useProjectList`）、`knowledgeRead.ts`、`apps/workbench/src/shared/knowledgeClient.ts` | `knowledge-read.test.ts`、`query.test.ts` |
 | 内层栏 | `KnowledgeRail.tsx` | `knowledge-presentation.test.ts`、`knowledge-browser.test.ts` |
-| 阅读与右栏 | `KnowledgeReader.tsx`、`KnowledgeFacts.tsx`、`KnowledgeGraph.tsx`、`apps/workbench/src/shared/ui/readingProse.ts` | `knowledge-browser.test.ts` |
+| 阅读与右栏 | `KnowledgeReader.tsx`、`KnowledgeFacts.tsx`、`KnowledgeGraph.tsx`、`apps/workbench/src/shared/ui/MarkdownBody.tsx`（正文，排版取自 `readingProse`）、`apps/workbench/src/shared/ui/readingProse.ts` | `knowledge-browser.test.ts` |
 | 候选、审阅、发布、撤回 | `KnowledgeReview.tsx`、`KnowledgeCompose.tsx` | `knowledge-browser.test.ts` |
 | 用语与路由 | `knowledgePresentation.ts`、`knowledgeRoute.ts` | `knowledge-presentation.test.ts`、`knowledge-route.test.ts` |
 
