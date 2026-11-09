@@ -1285,11 +1285,11 @@ tbody tr:hover{
 }
 
 /* Unify secondary workspaces with the same restrained surfaces. */
-.team-workspace,.session-workspace,.schedule-page,.knowledge-page,.evaluation-page {
+.team-workspace,.session-workspace,.knowledge-page,.evaluation-page {
   max-width: 1600px;
 }
 
-.team-directory,.discussion-exploration-column,.session-workspace-section,.schedule-page > .panel {
+.team-directory,.discussion-exploration-column,.session-workspace-section {
   background: #fff;
   border-color: var(--border);
   border-radius: 7px;
@@ -1341,7 +1341,7 @@ tbody tr:hover{
 }
 
 @media (min-width: 1800px) {
-  .team-workspace,.session-workspace,.schedule-page,.knowledge-page,.evaluation-page {
+  .team-workspace,.session-workspace,.knowledge-page,.evaluation-page {
     max-width: none;
   }
 }
