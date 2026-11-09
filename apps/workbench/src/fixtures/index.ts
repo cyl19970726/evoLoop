@@ -67,3 +67,22 @@ export const samplePerson = { name: "Zuhriddin", role: "项目负责人" };
 export function sampleAgent(id: string | null) {
   return sampleAgents.find(agent => agent.id === id) ?? null;
 }
+
+/** Skills and commands for the composer's / menu. Skill names are the real repository skills; descriptions are Chinese. */
+export const sampleCommands = [
+  { id: "skill-requirements", name: "需求整理", description: "把目标整理成可验收的任务", slug: "evoloop-requirements", kind: "skill" },
+  { id: "skill-workflow", name: "按依据交付", description: "固定依据、交付并记录使用", slug: "evoloop-workflow", kind: "skill" },
+  { id: "skill-frontend", name: "前端设计", description: "界面方向、排版与配色", slug: "frontend-design", kind: "skill" },
+  { id: "skill-guidelines", name: "界面规范检查", description: "无障碍与交互逐项核对", slug: "web-design-guidelines", kind: "skill" },
+  { id: "command-stop", name: "停止这一轮", slug: "/stop", kind: "command" },
+  { id: "command-cancel", name: "撤回排队消息", slug: "/cancel", kind: "command" },
+  { id: "command-link", name: "关联任务或文档", slug: "/link", kind: "command" },
+] as const;
+
+export const sampleTodos = [
+  { text: "读适配器现有的时间线条目", status: "done" },
+  { text: "在合同里加父子关系字段", status: "done" },
+  { text: "补 Claude 的历史读取", status: "active" },
+  { text: "子智能体缩进显示", status: "todo" },
+  { text: "跑时间线测试", status: "todo" },
+] as const;

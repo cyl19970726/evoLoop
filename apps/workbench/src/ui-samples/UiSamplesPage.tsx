@@ -8,8 +8,10 @@ import {
   HoverCard, HoverCardContent, HoverCardTrigger, IconButton, Input, ListRow, LoadingState, Logo, Notice, PersonAvatar, RefreshingIndicator, Sheet,
   SheetContent, SheetDescription, SheetTitle, SheetTrigger, StatusTag, Tabs, TabsContent, TabsList, TabsTrigger, Textarea, Tooltip, TooltipContent,
   TooltipProvider, TooltipTrigger, UnknownState, systemLooks, type StatusTone,
+  AgentMessage, Composer, LiveStatusLine, Mention, MessageBubble, NestedActivity, QuestionCard, QueuedMessages, TodoList, ToolSummary, TurnSummary,
+  type ComposerAgent, type ComposerAttachment, type ComposerCommand, type QueuedMessage,
 } from "@evoloop/ui";
-import { sampleAgent, sampleAgents, sampleInbox, samplePerson, sampleTasks, type SampleAgent } from "../fixtures";
+import { sampleAgent, sampleAgents, sampleCommands, sampleInbox, samplePerson, sampleTasks, sampleTodos, type SampleAgent } from "../fixtures";
 
 type Theme = "light" | "dark";
 
@@ -42,6 +44,69 @@ const tones: { tone: StatusTone; label: string; detail?: string }[] = [
   { tone: "progress", label: "进行中" }, { tone: "waiting", label: "待验收" }, { tone: "blocked", label: "受阻", detail: "依据待复核" },
   { tone: "done", label: "已完成" }, { tone: "idle", label: "待办" }, { tone: "unknown", label: "状态未核对" }, { tone: "history", label: "历史承接" },
 ];
+
+function ConversationSample() {
+  const dev = sampleAgent("agent-dev-1")!;
+  const arch = sampleAgent("agent-arch-1")!;
+  const review = sampleAgent("agent-review")!;
+  const [draft, setDraft] = React.useState("");
+  const [answer, setAnswer] = React.useState<string | undefined>(undefined);
+  const [queue, setQueue] = React.useState<QueuedMessage[]>([{ id: "q-1", text: "窄屏下速览改成从底部升起" }]);
+  const [attachments, setAttachments] = React.useState<ComposerAttachment[]>([{ id: "task-1", label: "任务 · 右栏信息核对", kind: "task" }]);
+  const [running, setRunning] = React.useState(true);
+  const agents: ComposerAgent[] = sampleAgents
+    .filter(agent => agent.id !== dev.id && agent.system !== "review")
+    .map(agent => ({ id: agent.id, name: agent.name, state: agent.state, delivery: agent.tone === "idle" ? "now" : "queued", system: agent.system === "leader", avatar: <Avatar agent={agent} size={28} /> }));
+  const commands: ComposerCommand[] = sampleCommands.map(command => ({ ...command }));
+
+  return (
+    <div className="mx-auto flex w-full max-w-[680px] flex-col gap-[18px]">
+      <span className="self-center text-caption text-muted-foreground">今天 14:52</span>
+      <MessageBubble>先把时间线接上 Claude 运行时，子智能体的内容要能缩进显示。</MessageBubble>
+      <AgentMessage><p>好的。我先看适配器现在记录了哪些条目，再决定合同里的父子字段怎么加。</p></AgentMessage>
+      <ToolSummary summary="执行了 5 个指令、读了 3 个文件" steps={[
+        { text: "packages/adapter-claude-agent-sdk/src/history.ts", code: true, meta: "读取" },
+        { text: "npm test -- timeline", code: true, meta: "12 秒" },
+        { text: "npx tsc -p packages/contracts", code: true, meta: "类型错误 2 处", failed: true },
+      ]} />
+      <NestedActivity avatar={<Avatar agent={review} size={18} />} summary="子智能体 · 代码审查 · 执行了 2 个指令">
+        <AgentMessage><p>原有记录没有保留父子关系，子消息在读取时被丢弃。</p></AgentMessage>
+      </NestedActivity>
+      <AgentMessage><p>审查发现原有记录没有保留父子关系。我会在合同里加 <code>parentEntryId</code>，再补上 Claude 的历史读取。</p></AgentMessage>
+      <QuestionCard
+        question="子智能体的内容默认怎样显示？"
+        options={[{ key: "A", label: "折叠成一行，点开再看" }, { key: "B", label: "展开显示前三条" }, { key: "C", label: "全部展开" }]}
+        note="只有项目负责人能回答 · 今天 18:00 前有效"
+        answer={answer}
+        onSubmit={setAnswer}
+      />
+      <MessageBubble footer={<><Avatar agent={arch} size={16} /><span>已转给架构 · 对方空闲，已送达</span></>}>
+        <Mention name="架构" /> 右栏的数据结构是否需要改合同，请你看一下
+      </MessageBubble>
+      <TurnSummary produced="改了 3 个文件" delivered="合同草案第 1 版" next="下一步等架构回复" />
+      {running && <LiveStatusLine avatar={<Avatar agent={dev} size={20} />} text="正在运行单元测试" elapsed="1 分 04 秒" />}
+      <div className="flex flex-col gap-2.5 pt-2">
+        <TodoList items={sampleTodos.map(todo => ({ ...todo }))} />
+        <QueuedMessages items={queue} onCancel={id => setQueue(items => items.filter(item => item.id !== id))} onEdit={id => { const item = queue.find(entry => entry.id === id); if (item) { setDraft(item.text); setQueue(items => items.filter(entry => entry.id !== id)); } }} />
+        <Composer
+          value={draft}
+          onChange={setDraft}
+          running={running}
+          onStop={() => setRunning(false)}
+          onSend={text => { if (running) setQueue(items => [...items, { id: `q-${Date.now()}`, text }]); setDraft(""); }}
+          attachments={attachments}
+          onRemoveAttachment={id => setAttachments(items => items.filter(item => item.id !== id))}
+          onAttach={() => setAttachments(items => items.some(item => item.id === "doc-1") ? items : [...items, { id: "doc-1", label: "文档 · 对账规则", kind: "document" }])}
+          commands={commands}
+          skillScope="功能开发可用"
+          onPickCommand={command => { if (command.kind === "skill") setAttachments(items => [...items.filter(item => item.kind !== "skill"), { id: command.id, label: `技能 · ${command.name}`, kind: "skill" }]); if (command.id === "command-stop") setRunning(false); }}
+          agents={agents}
+          meta={<><span>Claude Opus</span><span>上下文 42%</span><span>{queue.length} 条排队</span><span>{running ? "回车排到下一轮 · Esc 停止" : "回车发送"}</span></>}
+        />
+      </div>
+    </div>
+  );
+}
 
 export default function UiSamplesPage() {
   const [theme, setTheme] = React.useState<Theme>("light");
@@ -200,6 +265,10 @@ export default function UiSamplesPage() {
                 </div>
               </div>
             </div>
+          </Section>
+
+          <Section title="对话流与输入框" note="在输入框里打 / 或 @ 试试；运行中发送会排队">
+            <ConversationSample />
           </Section>
 
           <Section title="头像与标志" note="底色跟职责走，发型和配饰跟智能体走">
