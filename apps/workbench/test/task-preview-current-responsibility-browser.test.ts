@@ -159,9 +159,9 @@ test("ordinary Task row, right-column facts and the full task use current QA res
   assert.doesNotMatch(await detailNext.innerText(), /功能开发|开发 Session/);
   // The folded 当前工作与安排 uses the same words: never the server's next action or its responsibility label.
   const fold = page.locator(`[data-task-page="${taskId}"] details#task-timing`);
-  await fold.locator("summary").click();
+  await fold.locator(":scope > summary").click();
   await fold.getByText("智能体 · 当前验收负责人").waitFor();
-  assert.match(await fold.locator(".task-attention").innerText(), /等验收者核对交付与实际使用/);
+  assert.match(await fold.locator("[data-task-next]").innerText(), /等验收者核对交付与实际使用/);
   assert.doesNotMatch(await fold.innerText(), new RegExp(`${nextAction}|QA Session`));
   assert.equal(pageErrors.length, 0, pageErrors.join(" | "));
 });

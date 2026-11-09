@@ -9,7 +9,7 @@ import {
 } from "../src/features/runtime/executionPresentation.ts";
 import { roleNameOf } from "../src/features/runtime/useRoleNames.ts";
 import { ApiError } from "../src/shared/api.ts";
-import { preflightPresentation, preflightView } from "../src/features/runtime/preflightPresentation.ts";
+import { preflightPresentation, preflightView } from "../src/shared/preflightPresentation.ts";
 
 const sessionId = "40000004-0000-4000-8000-000000000004";
 const roleId = "40000002-0000-4000-8000-000000000002";

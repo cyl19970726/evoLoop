@@ -17,12 +17,12 @@ test("short evidence stays visible; long Unicode original remains complete behin
   assert.equal(preview, "🧪".repeat(160) + "…");
   assert.equal(Array.from(preview ?? "").length, 161);
   const collapsed = renderToStaticMarkup(createElement(EvidenceText, { label: "使用证据", value: long }));
-  assert.match(collapsed, /<details[^>]*><summary>展开完整使用证据<\/summary>/);
-  assert.ok(collapsed.includes(`<p>${long}</p>`), "disclosure preserves the exact original, including its last line");
+  assert.match(collapsed, /<details[^>]*><summary[^>]*>展开完整使用证据<\/summary>/);
+  assert.ok(collapsed.includes(`>${long}</p>`), "disclosure preserves the exact original, including its last line");
   const manyLines = "🧪\n".repeat(100) + "末行";
   assert.equal(evidencePreview(manyLines), "🧪\n🧪\n🧪\n🧪…", "a short-line preview stays within four lines");
   const expandedLines = renderToStaticMarkup(createElement(EvidenceText, { label: "记录理由", value: manyLines }));
-  assert.ok(expandedLines.includes(`<p>${manyLines}</p>`), "all original lines remain in the disclosure");
+  assert.ok(expandedLines.includes(`>${manyLines}</p>`), "all original lines remain in the disclosure");
 });
 
 test("latest failed observation remains scoped to its delivery with registered kind, result, time and full reason", () => {
@@ -35,5 +35,5 @@ test("latest failed observation remains scoped to its delivery with registered k
   assert.equal(observationResultLabel[old.result], "已使用");
   const renderedReason = renderToStaticMarkup(createElement(EvidenceText, { label: "记录理由", value: failed.reason }));
   assert.match(renderedReason, /展开完整记录理由/);
-  assert.ok(renderedReason.includes(`<p>${reason}</p>`));
+  assert.ok(renderedReason.includes(`>${reason}</p>`));
 });

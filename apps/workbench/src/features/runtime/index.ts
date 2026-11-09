@@ -1,4 +1,3 @@
 // Public entry of the runtime feature. Code outside features/runtime/ imports only from this file.
-// RuntimePanel is the task page's 运行与关联 block; ExecutionView is the team space's 分工与运行.
-export { RuntimePanel } from "./RuntimePanel";
+// ExecutionView is the team space's 分工与运行. A task's runs are in the task's own 运行与关联 (features/workflow).
 export { ExecutionView } from "./ExecutionView";

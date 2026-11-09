@@ -97,7 +97,6 @@ export function TaskWorkspace({ context, refresh, active, taskId, selectedRevisi
   if (taskId) return <>
     {rail}
     <TaskPage context={context} token={context.token} projectId={projectId} id={taskId} selectedRevision={selectedRevision} refresh={refresh}
-      onChanged={context.onChanged} onAttempt={context.onAttempt} onKnown={context.onKnown} blockedByUnknown={context.blocked}
       canReview={principal.permissions.includes("review")} active={active}
       viewSwitch={<ViewSwitch detailHref={detailHref} tableHref={tableHref} current="detail" />} linkForTab={tabLink(taskId)} />
   </>;

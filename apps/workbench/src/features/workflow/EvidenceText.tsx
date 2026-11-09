@@ -1,3 +1,5 @@
+// Evidence and reasons as written: short text in full; long text as a preview with the complete original one
+// click away (never cut without a way to read the rest).
 import React, { type ReactNode } from "react";
 
 export function evidencePreview(value: string): string | null {
@@ -12,13 +14,18 @@ export function evidencePreview(value: string): string | null {
   return prefix.slice(0, end).join("") + "…";
 }
 
+const text = "whitespace-pre-wrap text-label leading-relaxed text-foreground [overflow-wrap:anywhere]";
+
 export function EvidenceText({ label, value }: { label: string; value: string }): ReactNode {
   const preview = evidencePreview(value);
-  return <div className="task-evidence-text">
-    <strong>{label}</strong>
-    {preview === null ? <p>{value}</p> : <React.Fragment>
-      <p>{preview}</p>
-      <details className="task-evidence-disclosure"><summary>展开完整{label}</summary><p>{value}</p></details>
+  return <div className="flex min-w-0 flex-col gap-1">
+    <p className="text-caption font-medium text-muted-foreground">{label}</p>
+    {preview === null ? <p className={text}>{value}</p> : <React.Fragment>
+      <p className={text}>{preview}</p>
+      <details className="group">
+        <summary className="w-fit cursor-pointer text-caption text-primary hover:underline">展开完整{label}</summary>
+        <p className={`mt-1 ${text}`}>{value}</p>
+      </details>
     </React.Fragment>}
   </div>;
 }

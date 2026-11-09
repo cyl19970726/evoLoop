@@ -67,3 +67,9 @@ export function timingSetPayload(taskId: string, taskVersion: number, current: T
 export function timingStopPayload(taskId: string, current: TaskTimingView, reason: string) {
   return { type: "task.timing.stop" as const, taskId, expectedTimingVersion: timingVersion(current), reason: reason.trim() };
 }
+
+const recordId = /\s*[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\s*/gi;
+/** The service's waiting reason without the record IDs it names (they belong to 完整标识): “上一份任务仍为待办”. */
+export function timingWaitingText(reason: string): string {
+  return reason.replace(recordId, "").trim() || "有尚未结算的前一份任务";
+}

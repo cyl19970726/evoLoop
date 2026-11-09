@@ -2,4 +2,3 @@
 export { sessionHref } from "./SessionNavigation";
 export { recoveryActivationLabel } from "./recoveryPresentation";
 export { eligibleOwnedSessions } from "./assignmentEligibility";
-export { TaskAssignmentPanel } from "./TaskAssignmentPanel";

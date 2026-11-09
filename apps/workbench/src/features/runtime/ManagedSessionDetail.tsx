@@ -13,7 +13,7 @@ import { runtimeClient } from "../../shared/runtimeClient";
 import { FactList, Legacy, PageSection, mutedText } from "../../shared/ui/PageParts";
 import { SectionBoundary } from "../../shared/ui/SectionBoundary";
 import { href } from "../../shared/ui/shared";
-import { ResidentQueuePanel } from "../queues";
+import { ResidentQueuePanel } from "../workflow";
 import { recoveryActivationLabel, sessionHref } from "../sessions";
 import { closeBlockers, messageKindText, needsFullAccessUpgrade, permissionsText, profileText, sessionStateText, sessionStateTone, turnStatusText } from "./executionPresentation";
 import { nativeReadError, Receipts, RunList } from "./RunList";
@@ -24,9 +24,9 @@ export function RoleLabel({ projectId, roleId, name }: { projectId: string; role
   return <span>{name.fallback}{name.note && <span className={mutedText}> · {name.note}</span>}</span>;
 }
 
-export function ManagedSessionDetail({ context, session, name, runs, runsRead, sessions, refresh, onReread }: {
+export function ManagedSessionDetail({ context, session, name, runs, runsRead, sessions, onReread }: {
   context: MutationContext; session: RuntimeSessionRecord; name: RoleName; runs: RuntimeRunRecord[]; runsRead: boolean;
-  sessions: RuntimeSessionRecord[]; refresh: number; onReread(): void;
+  sessions: RuntimeSessionRecord[]; onReread(): void;
 }) {
   const { projectId } = context;
   const queues = useProjectQuery(projectId, ["runtime", "queues"], async () => {
@@ -78,7 +78,7 @@ export function ManagedSessionDetail({ context, session, name, runs, runsRead, s
       }} /></Legacy>
     </PageSection>}
     <PageSection title="队列">
-      <SectionBoundary label="队列"><Legacy><ResidentQueuePanel context={context} token={context.token} projectId={projectId} refresh={refresh} sessionId={session.id} runs={runs} sessions={sessions} /></Legacy></SectionBoundary>
+      <SectionBoundary label="队列"><ResidentQueuePanel context={context} sessionId={session.id} runs={runs} sessions={sessions} /></SectionBoundary>
     </PageSection>
     <PageSection title="此智能体的运行">
       {!runsRead && <Notice tone="error">运行列表未读回；下面只有上次读到的运行，不能据此判断没有其他运行。</Notice>}
