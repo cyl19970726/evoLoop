@@ -163,7 +163,10 @@ test("long Run activity and expanded source stay inside the Session page at mobi
   // At 390px the agent's facts live in the right column, a drawer that opens only when asked (展开右栏). The header's
   // 重新读取 sits under that drawer, so the helpers close it before rereading and open it again to read the facts.
   const panelToggle = page.getByRole("button", { name: "展开右栏" });
-  async function openPanel() { if (await panelToggle.isVisible()) await panelToggle.click(); await page.locator(".session-panel").waitFor({ state: "visible" }); }
+  async function openPanel() {
+    if (await panelToggle.isVisible()) { await panelToggle.click(); await page.getByRole("button", { name: "关闭右栏" }).waitFor(); }
+    await page.locator(".session-panel").waitFor({ state: "visible" });
+  }
   async function closePanel() {
     const close = page.getByRole("button", { name: "关闭右栏" });
     if (await close.isVisible()) { await close.click(); await close.waitFor({ state: "hidden" }); }
@@ -177,7 +180,9 @@ test("long Run activity and expanded source stay inside the Session page at mobi
     if (await detailsButton.getAttribute("aria-expanded") !== "true") await detailsButton.click();
     else await openPanel();
     const audit = page.locator(".session-panel .session-project-activity");
+    await audit.waitFor({ state: "visible" });
     if (await audit.getAttribute("open") === null) await audit.locator("> summary").click();
+    await page.locator(".session-panel .session-feed").waitFor({ state: "visible" });
   }
   // The new entry to the agent's task and details: the right column's toggle, not the removed in-page band.
   assert.equal(await page.getByRole("button", { name: "展开任务与 Agent 信息" }).count(), 0);

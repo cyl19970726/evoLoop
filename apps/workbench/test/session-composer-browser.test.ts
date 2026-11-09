@@ -134,12 +134,15 @@ test("the composer sends, adds, queues, stops, lists skills and agents, and says
     const page = await context.newPage();
     const errors: string[] = [];
     page.on("pageerror", error => errors.push(error.message));
-    await page.goto(`${base}/p/${projectId}/sessions?session=${encodeURIComponent(sessionKey)}`);
+    // Opened from the task: the page offers the way back to it.
+    const taskPath = `/p/${projectId}/tasks/${taskId}`;
+    await page.goto(`${base}/p/${projectId}/sessions?${new URLSearchParams({ session: sessionKey, return: taskPath, actor: "reader", returnTitle: "新版智能体页" })}`);
     await page.getByLabel("访问令牌").fill("fixture-token");
     await page.getByRole("button", { name: "进入", exact: true }).click();
     await page.getByRole("heading", { name: "前端实现" }).waitFor();
     const box = page.getByRole("combobox", { name: "消息" });
     await box.waitFor();
+    assert.equal(await page.getByRole("link", { name: "← 返回【新版智能体页】" }).getAttribute("href"), taskPath);
     // The running turn: its checklist and what runs now; my queued message above the composer, withdrawable.
     const todo = page.getByRole("region", { name: "待办清单" });
     await todo.getByText("重写输入框").waitFor();
@@ -175,6 +178,10 @@ test("the composer sends, adds, queues, stops, lists skills and agents, and says
     await panel.getByText("新版智能体页").first().waitFor();
     assert.doesNotMatch(await panel.innerText(), internalWords, `${viewport.width}: no internal words in the right column`);
     if (shots) { await page.waitForTimeout(600); await page.screenshot({ path: join(shots, `panel-${viewport.width}.png`) }); }
+    await panel.getByRole("tab", { name: "资料库" }).click();
+    await panel.getByRole("heading", { name: "成果与使用" }).waitFor();
+    assert.equal(new URLSearchParams(page.url().split("?")[1]).get("return"), taskPath, "switching the right column keeps the way back");
+    await panel.getByRole("tab", { name: "动态" }).click();
     if (viewport.width < 1100) await page.getByRole("button", { name: "关闭右栏" }).click();
     assert.doesNotMatch(await page.locator(".unified-session-timeline").innerText(), internalWords, `${viewport.width}: no internal words in the flow`);
 

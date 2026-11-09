@@ -39,6 +39,7 @@ import { SessionIdentityControl } from "./SessionIdentityControl";
 import { nativeInputPresentation } from "./nativeInputPresentation";
 import { nativeObservationPresentation } from "./nativeObservationPresentation";
 import { observedRunTaskLink } from "./taskRunLink";
+import { sessionTaskReturn, sourceParams } from "./sessionReturn";
 import { SessionTimeline, clearSessionTimelineViews } from "./SessionTimeline";
 import { clearSessionTimelineReads } from "./useSessionTimeline";
 
@@ -93,6 +94,7 @@ export function SessionWorkspace({ context, sessionKey, active, refresh, queue }
   const [open, setOpen] = useState<string[]>(() => viewFromHash(sessionKey).open);
   const [activitySectionOpen, setActivitySectionOpen] = useState(() => viewFromHash(sessionKey).open.length > 0);
   const [informationOpen, setInformationOpen] = useState(() => viewFromHash(sessionKey).informationOpen);
+  const [source, setSource] = useState(() => sessionTaskReturn(currentPath(), projectId, sessionKey, context.principal.actorId));
   const [closeOpen, setCloseOpen] = useState(false);
   const [readAgain, setReadAgain] = useState(0);
   const [accessReadAgain, setAccessReadAgain] = useState(0);
@@ -182,6 +184,7 @@ export function SessionWorkspace({ context, sessionKey, active, refresh, queue }
       setFilter(view.filter);
       setOpen(view.open);
       setInformationOpen(view.informationOpen);
+      setSource(sessionTaskReturn(currentPath(), projectId, sessionKey, context.principal.actorId));
       if (view.open.length) {
         setActivitySectionOpen(true);
         pendingActivityScroll.current = view.open.at(-1) ?? null;
@@ -204,6 +207,8 @@ export function SessionWorkspace({ context, sessionKey, active, refresh, queue }
     const params = new URLSearchParams({ session: sessionKey, tab: nextTab, filter: nextFilter });
     if (nextOpen.length) params.set("open", nextOpen.slice(-10).join(","));
     if (nextInformationOpen || nextOpen.length) params.set("panel", nextInformationOpen ? "information" : "conversation");
+    // The way back to the task this page was opened from stays in the address while the page rewrites it.
+    if (source) for (const [name, value] of sourceParams(currentPath())) params.set(name, value);
     return `${href(projectId, "sessions")}?${params}`;
   }
   function taskHref(taskId: string) {
@@ -461,6 +466,7 @@ export function SessionWorkspace({ context, sessionKey, active, refresh, queue }
   const headerButton = (label: string, icon: ReactNode, onClick: () => void, extra: Record<string, unknown> = {}) =>
     <Button variant="ghost" size="compact" aria-label={label} title={label} onClick={onClick} {...extra}>{icon}<span className="max-compact:sr-only">{label}</span></Button>;
   return <div ref={workspaceRef} data-ui="" className="session-workspace mx-auto flex h-[calc(100dvh-var(--session-top,0px)-0.5rem)] min-h-[420px] w-full min-w-0 max-w-[1480px] flex-col px-3 pt-3 max-compact:h-[calc(100dvh-var(--session-top,48px)-5rem)] max-compact:min-h-[360px] compact:px-6 compact:pt-4" data-view={panelTab}>
+    {source && <a className="mb-1 w-fit text-label text-primary hover:underline" href={source.href}>← 返回【{source.title}】</a>}
     {/* While the right column is closed its toggle sits at the top right of this area: the header leaves room for it. */}
     <header className={cn("session-detail-header mb-2 flex min-h-11 min-w-0 shrink-0 items-center gap-2", panel && !panel.open && "compact:pr-11")}>
       <div className="session-detail-heading flex min-w-0 flex-1 items-center gap-2 compact:justify-center">

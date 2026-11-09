@@ -8,6 +8,20 @@ import {
   toolStepState, toolStepText, turnSummaries,
 } from "../src/features/sessions/conversationPresentation";
 import { composerPlan, contextUseText, mentionedAgents, messageWithSkill, type ComposerFacts } from "../src/features/sessions/composerPresentation";
+import { sessionTaskReturn, sourceParams } from "../src/features/sessions/sessionReturn";
+
+test("an agent page opened from a task offers the way back only to that project's task and its reader", () => {
+  const project = "96000001-0000-4000-8000-000000000001", task = "96000000-0000-4000-8000-000000000005", key = "owned:96000000-0000-4000-8000-000000000002";
+  const taskPath = `/p/${project}/tasks/${task}`;
+  const link = (from: string, actor = "reader") => `/p/${project}/sessions?${new URLSearchParams({ session: key, return: from, actor, returnTitle: "新版智能体页" })}`;
+  assert.deepEqual(sessionTaskReturn(link(taskPath), project, key, "reader"), { href: taskPath, title: "新版智能体页" });
+  assert.equal(sessionTaskReturn(link(taskPath, "someone-else"), project, key, "reader"), null, "the way back belongs to the reader the link was made for");
+  assert.equal(sessionTaskReturn(link(taskPath), project, "owned:other", "reader"), null);
+  assert.equal(sessionTaskReturn(link(`/p/other/tasks/${task}`), project, key, "reader"), null, "only this project");
+  assert.equal(sessionTaskReturn(link(`/p/${project}/documents`), project, key, "reader"), null, "only a task");
+  assert.equal(sessionTaskReturn(`/p/${project}/sessions?session=${encodeURIComponent(key)}`, project, key, "reader"), null);
+  assert.deepEqual(sourceParams(link(taskPath)).map(([name]) => name), ["return", "actor", "returnTitle"]);
+});
 
 const stamp = "2026-11-10T08:00:00.000Z";
 const internal = /Session|Turn|Run\b|Thread|Agent|Plan|Command|Read file|Changed|Context|writer|PG|queue|operation/;
