@@ -108,9 +108,9 @@ export function api(token = "", timeoutMs = 15000) {
     documentTasks: (p: string, id: string, cursor?: string, signal?: AbortSignal) => call<Page<DocumentTaskReference>>(
       `${projectPath(p)}/documents/${key(id)}/tasks?limit=50${cursor ? `&cursor=${key(cursor)}` : ""}`, { signal }),
     documentRevision: (p: string, id: string, revision: string) => call<DocumentRevision>(`${projectPath(p)}/documents/${key(id)}/revisions/${key(revision)}`),
-    tasks: (p: string, cursor?: string) => call<Page<Task>>(`${projectPath(p)}/tasks?limit=50${cursor ? `&cursor=${key(cursor)}` : ""}`),
-    workStatuses: (p: string, taskIds: string[]) => call<{items: WorkTaskStatus[]}>(
-      `${projectPath(p)}/orchestration/work-status?taskIds=${taskIds.map(key).join(",")}`),
+    tasks: (p: string, cursor?: string, signal?: AbortSignal) => call<Page<Task>>(`${projectPath(p)}/tasks?limit=50${cursor ? `&cursor=${key(cursor)}` : ""}`, signal ? { signal } : undefined),
+    workStatuses: (p: string, taskIds: string[], signal?: AbortSignal) => call<{items: WorkTaskStatus[]}>(
+      `${projectPath(p)}/orchestration/work-status?taskIds=${taskIds.map(key).join(",")}`, signal ? { signal } : undefined),
     leaderWork: (p: string, view: "tasks" | "documents", cursor?: string, includeClosed = false) =>
       call<LeaderWorkPage<LeaderWorkTask | LeaderWorkDocument>>(
         `${projectPath(p)}/work-management/index?view=${view}&limit=50${cursor ? `&cursor=${key(cursor)}` : ""}${includeClosed ? "&includeClosed=true" : ""}`),

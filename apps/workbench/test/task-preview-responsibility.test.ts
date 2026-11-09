@@ -9,11 +9,11 @@ test("current QA responsibility wins over the historical developer assignment", 
   }, "开发 Session", null, "developer-role"), "Session qa-session");
 });
 
-test("a running assignment may use its verified Session name", () => {
+test("a running assignment may use its verified agent name", () => {
   assert.equal(taskPreviewResponsibility({
     responsible: { kind: "session", id: "developer-session", label: "Session developer-session" },
     assignment: { targetKind: "owned", targetId: "developer-session" },
-  }, "功能开发", null, "developer-role"), "受管 Session · 功能开发");
+  }, "功能开发", null, "developer-role"), "智能体 · 功能开发");
 });
 
 test("role name is used only for the matching owner and unknown stays unknown", () => {

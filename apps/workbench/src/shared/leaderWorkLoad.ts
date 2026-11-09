@@ -53,7 +53,7 @@ export function leaderWorkItemPresentation(
     return {
       title: "任务记录 · 来源状态待核对",
       responsibility: item.responsible.kind === "session"
-        ? `${item.assignment?.targetKind === "external" ? "外部 HostLink" : "受管 Session"} · ${resolvedSessionTitle?.trim() || "名称待核对"}`
+        ? `${item.assignment?.targetKind === "external" ? "外部智能体" : "智能体"} · ${resolvedSessionTitle?.trim() || "名称待核对"}`
         : "责任与来源待核对",
     };
   const roleTitle = item.responsible.kind === "role" && item.responsible.id ? resolvedRoleTitle?.trim() : null;
@@ -61,7 +61,7 @@ export function leaderWorkItemPresentation(
   return {
     title: item.title,
     responsibility: item.responsible.kind === "session"
-      ? `${item.assignment?.targetKind === "external" ? "外部 HostLink" : "受管 Session"} · ${sessionTitle || "名称待核对"}`
+      ? `${item.assignment?.targetKind === "external" ? "外部智能体" : "智能体"} · ${sessionTitle || "名称待核对"}`
       : roleTitle ? `负责 ${roleTitle}` : item.responsible.label,
   };
 }

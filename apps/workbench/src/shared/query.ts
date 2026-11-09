@@ -2,7 +2,7 @@
 // project), so switching project or identity can cancel and drop exactly that scope. A reread keeps what is
 // on screen and reports `checking` until the answer arrives; the cache only speeds up reads and never decides
 // which version is current.
-import { QueryClient, useQuery, type QueryClient as Client, type QueryKey } from "@tanstack/react-query";
+import { QueryClient, useInfiniteQuery, useQuery, type InfiniteData, type QueryClient as Client, type QueryKey } from "@tanstack/react-query";
 import { ApiError } from "./api";
 
 export const queryKeys = {
@@ -49,4 +49,26 @@ export function useProjectQuery<T>(projectId: string, key: readonly unknown[], r
     ...(options.refetchInterval !== undefined ? { refetchInterval: options.refetchInterval } : {}),
   });
   return { ...query, checking: query.isFetching && query.data !== undefined };
+}
+
+/**
+ * A paged project read (a list API with cursors). Pages load on request and stay together under one key, so every
+ * component showing the list shares them; a reread refetches the loaded pages in order. Not retried: a failed page
+ * is reported and loaded again on request, never silently repeated.
+ */
+export function useProjectPages<T extends { nextCursor: string | null }>(projectId: string, key: readonly unknown[],
+  read: (cursor: string | undefined, signal: AbortSignal) => Promise<T>, options: { enabled?: boolean } = {}) {
+  const query = useInfiniteQuery<T, Error, InfiniteData<T, string | null>, QueryKey, string | null>({
+    queryKey: queryKeys.project(projectId, ...key) as QueryKey,
+    queryFn: ({ pageParam, signal }) => read(pageParam ?? undefined, signal),
+    initialPageParam: null,
+    // A cursor seen before would loop; the list stops there and reports it (`repeatedCursor`).
+    getNextPageParam: (last, _pages, lastCursor, cursors) =>
+      last.nextCursor && last.nextCursor !== lastCursor && !cursors.includes(last.nextCursor) ? last.nextCursor : null,
+    enabled: !!projectId && (options.enabled ?? true),
+    retry: false,
+  });
+  const last = query.data?.pages.at(-1);
+  return { ...query, checking: query.isFetching && !query.isFetchingNextPage && query.data !== undefined,
+    repeatedCursor: !!last?.nextCursor && !query.hasNextPage };
 }

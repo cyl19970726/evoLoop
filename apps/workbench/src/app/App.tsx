@@ -33,10 +33,10 @@ const RolesPanel = named(() => import("../features/roles/RolesPanel"), "RolesPan
 const TeamWorkspace = named(() => import("../features/team/TeamWorkspace"), "TeamWorkspace");
 const SchedulingPanel = named(() => import("../features/scheduling/SchedulingPanel"), "SchedulingPanel");
 const JourneyBoard = named(() => import("../features/workflow/JourneyBoard"), "JourneyBoard");
-const TaskPage = named(() => import("../features/workflow/TaskPage"), "TaskPage");
+const TaskWorkspace = named(() => import("../features/workflow/TaskWorkspace"), "TaskWorkspace");
 const DocumentPage = named(() => import("../features/documents/DocumentPage"), "DocumentPage");
 const DocumentIndex = named(() => import("../features/documents/DocumentIndex"), "DocumentIndex");
-const WorkIndex = named(() => import("../features/workflow/WorkIndex"), "WorkIndex");
+const InboxIndex = named(() => import("../features/workflow/InboxIndex"), "InboxIndex");
 const CreateTaskPage = named(() => import("../features/workflow/CreateTaskPage"), "CreateTaskPage");
 const ProjectSummary = named(() => import("../features/overview/ProjectSummary"), "ProjectSummary");
 const ProjectSettings = named(() => import("../features/settings/ProjectSettings"), "ProjectSettings");
@@ -393,12 +393,13 @@ function WorkspacePages({ route, context, refresh, operations }: { route: Route;
     window.addEventListener("pagehide", remember);
     return () => { document.removeEventListener("click", beforeLink, true); window.removeEventListener("scroll", onScroll); window.removeEventListener("pagehide", remember); };
   }, [key, positionKey]);
-  const { projectId, token, principal } = context;
+  const { projectId, token } = context;
   function page(r: Route, active: boolean) {
     if (r.section === "documents") return <DocumentIndex context={context} refresh={refresh} />;
-    if (["work", "inbox"].includes(r.section)) return <WorkIndex context={context} refresh={refresh} view={r.section as "work" | "inbox"} />;
+    if (r.section === "work") return <TaskWorkspace context={context} refresh={refresh} active={active} />;
+    if (r.section === "inbox") return <InboxIndex context={context} refresh={refresh} />;
     if (r.section === "create-task") return <CreateTaskPage context={context} refresh={refresh} />;
-    if (r.section === "task" && r.id) return <TaskPage context={context} token={token} projectId={projectId} id={r.id} selectedRevision={r.revision} refresh={refresh} onChanged={context.onChanged} onAttempt={context.onAttempt} onKnown={context.onKnown} blockedByUnknown={context.blocked} canReview={principal.permissions.includes("review")} active={active} />;
+    if (r.section === "task" && r.id) return <TaskWorkspace context={context} refresh={refresh} active={active} taskId={r.id} selectedRevision={r.revision} />;
     if (r.section === "document" && r.id) return <DocumentPage context={context} refresh={refresh} token={token} projectId={projectId} id={r.id} selectedRevision={r.revision} />;
     if (r.section === "knowledge") return <div className="content knowledge-page"><h1 tabIndex={-1}>知识空间</h1><nav className="context-links" aria-label="文档与知识"><a href={href(projectId, "documents")}>过程文档</a><a href={href(projectId, "knowledge")} aria-current="page">知识空间</a><a href={href(projectId, "repository")}>仓库规范</a></nav><KnowledgePanel context={context} refresh={refresh} /></div>;
     if (r.section === "evaluations") {

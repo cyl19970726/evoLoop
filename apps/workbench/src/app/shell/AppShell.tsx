@@ -65,6 +65,10 @@ export function AppShell(props: AppShellProps) {
     try { localStorage.setItem("evoloop:rail", next); } catch { /* memory only */ }
   };
   const afterNavigate = () => { if (drawer) navigatedFromDrawer.current = true; setDrawer(false); };
+  // A link in a page's object list (in the drawer through ContextRailContent) closes the drawer like the shell's own links.
+  const drawerOpen = React.useRef(drawer);
+  drawerOpen.current = drawer;
+  React.useEffect(() => { if (drawerOpen.current) { navigatedFromDrawer.current = true; setDrawer(false); } }, [route]);
   // Leaving the drawer by a link hands focus to the content; closing it otherwise returns focus to the menu button.
   const drawerCloseFocus = (event: Event) => {
     if (!navigatedFromDrawer.current) return;
