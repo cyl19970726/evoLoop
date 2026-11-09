@@ -7,7 +7,7 @@ import * as React from "react";
 import { BriefcaseBusiness, ChevronsUpDown, Inbox, LogOut, Menu, PanelLeftClose, PanelLeftOpen, Settings, Users, FolderGit2, Plug, TriangleAlert, X } from "lucide-react";
 import {
   CountDot, DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger,
-  IconButton, Logo, PersonAvatar, Sheet, SheetClose, SheetContent, SheetDescription, SheetTitle, cn,
+  Button, IconButton, Logo, Notice, PersonAvatar, Sheet, SheetClose, SheetContent, SheetDescription, SheetTitle, cn, type NoticeTone,
 } from "@evoloop/ui";
 import { href, type Route, type Section } from "../../shared/routes";
 import { currentPath, navigate } from "../../shared/navigation";
@@ -22,6 +22,8 @@ import {
 export interface AppShellProps {
   route: Route; projectId: string; projectTitle: string; actor: string; permissions: readonly string[];
   receiptCount: number; inboxCount: number; token: string; logout(): void; children: React.ReactNode;
+  /** Notices above every page: unconfirmed operations, storage problems, project read failures. */
+  notices?: ShellNoticeItem[];
 }
 
 const permissionText = (permissions: readonly string[]) =>
@@ -110,7 +112,7 @@ export function AppShell(props: AppShellProps) {
         </nav>
         {!railHidden && <div className="sticky top-0 hidden h-dvh compact:block"><ContextRail {...railProps} /></div>}
         <div className="flex min-w-0 bg-background compact:m-2 compact:ml-0 compact:min-h-[calc(100dvh-16px)] compact:rounded-xl compact:shadow-lg">
-          <main id="workspace-main" tabIndex={-1} className="workbench-layout min-w-0 flex-1 outline-none max-compact:pb-20">{props.children}</main>
+          <main id="workspace-main" tabIndex={-1} className="workbench-layout min-w-0 flex-1 outline-none max-compact:pb-20">{props.notices?.map(({ key, ...notice }) => <ShellNotice key={key} {...notice} />)}{props.children}</main>
           <ContextPanelColumn />
         </div>
       </div>
@@ -215,4 +217,16 @@ function AccountMenu({ projectId, actor, permissions, receiptCount, logout, trig
       <DropdownMenuItem onSelect={logout}><LogOut size={16} aria-hidden="true" />退出</DropdownMenuItem>
     </DropdownMenuContent>
   </DropdownMenu>;
+}
+
+export interface ShellNoticeItem {
+  key: string; tone?: NoticeTone; text: string;
+  link?: { href: string; label: string }; button?: { label: string; onClick: () => void; quiet?: boolean };
+}
+
+/** A notice above every page in the shell: unconfirmed operations, storage problems, project read failures. */
+function ShellNotice({ tone = "info", link, button, text }: Omit<ShellNoticeItem, "key">) {
+  const action = link ? <Button asChild size="compact"><a href={link.href}>{link.label}</a></Button>
+    : button ? <Button size="compact" variant={button.quiet ? "ghost" : "secondary"} onClick={button.onClick}>{button.label}</Button> : undefined;
+  return <div data-ui="" className="global-alert px-4 pt-3 compact:px-8"><Notice tone={tone} action={action}>{text}</Notice></div>;
 }

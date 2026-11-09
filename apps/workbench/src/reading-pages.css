@@ -1,13 +1,7 @@
 /* Page-level reading hierarchy. Imported after editorial.css by the workbench entry. */
-.workbench-layout .project-overview,
-.workbench-layout .project-settings{ max-width: 1500px; min-width: 0; }
-.workbench-layout .project-overview h1,
-.workbench-layout .project-settings h1{ font-size: clamp(28px, 2.5vw, 36px); line-height: 1.25; margin-bottom: 10px; }
-.workbench-layout .project-overview .lede,
-.workbench-layout .project-settings .lede{ font-size: 16px; color: #57698e; }
-.workbench-layout .project-settings .context-links{ padding: 10px 0 0; margin: 0 0 20px; gap: 28px; border-bottom: 1px solid #dfe6f2; }
-.workbench-layout .project-settings .context-links a{ display: inline-block; padding: 8px 4px 11px; font-size: 15px; color: #526487; }
-.workbench-layout .project-settings .page-title-row > button{ background: white; color: #1b59d6; border-color: #2b63df; font-size: 15px; min-height: 44px; }
+.workbench-layout .project-overview { max-width: 1500px; min-width: 0; }
+.workbench-layout .project-overview h1 { font-size: clamp(28px, 2.5vw, 36px); line-height: 1.25; margin-bottom: 10px; }
+.workbench-layout .project-overview .lede { font-size: 16px; color: #57698e; }
 .workbench-layout .project-overview > .muted{ font-size: 14px; }
 .workbench-layout .project-overview .project-context{ display: flex; flex-direction: column; gap: 24px; }
 .workbench-layout .project-overview .overview-goal,
@@ -43,33 +37,9 @@
 .workbench-layout .project-overview .overview-current-work .muted{ font-size: 14px; }
 .workbench-layout .project-overview .overview-context-links{ padding: 8px 0; }
 .workbench-layout .project-overview .overview-queue-details{ margin-top: 10px; }
-.workbench-layout .project-settings .settings-section{ padding: 20px 0 22px; border-bottom: 1px solid #dce4f0; scroll-margin-top: 76px; }
-.workbench-layout .project-settings .settings-section h2{ margin: 0 0 15px; font-size: 22px; color: #14264a; }
-.workbench-layout .project-settings .settings-facts{ margin: 0; }
-.workbench-layout .project-settings .settings-facts > div{ display: grid; grid-template-columns: 180px minmax(0, 1fr); gap: 12px; padding: 7px 12px; font-size: 16px; }
-.workbench-layout .project-settings .settings-facts dt{ color: #607291; }
-.workbench-layout .project-settings .settings-facts dd{ min-width: 0; margin: 0; overflow-wrap: anywhere; color: #14264a; }
-.workbench-layout .project-settings .settings-facts ul{ padding: 0; margin: 0; list-style: none; }
-.workbench-layout .project-settings .settings-facts li{ display: flex; gap: 30px; margin-bottom: 7px; }
-.workbench-layout .project-settings .settings-facts li span{ color: #245bc5; }
-.workbench-layout .project-settings .settings-note,
-.workbench-layout .project-settings details{ margin: 10px 12px 0; font-size: 14px; color: #647592; }
-.workbench-layout .project-settings .project-source-links{ grid-template-columns: 1fr; gap: 0; }
-.workbench-layout .project-settings .project-source-links > a{ grid-template-columns: minmax(130px, 190px) minmax(0, 1fr) 16px; align-items: center; gap: 14px; padding: 12px 14px; background: transparent; border: 0; border-bottom: 1px solid #dce4f0; font-size: 15px; }
-.workbench-layout .project-settings .project-source-links > a::after{ content: '›'; color: #14264a; font-size: 24px; }
-.workbench-layout .project-settings .project-source-links strong,
-.workbench-layout .project-settings .project-source-links span{ font-size: 15px; }
 @media (max-width: 760px) {
-  .workbench-layout .project-settings .page-title-row{ align-items: flex-start; }
   .workbench-layout .project-overview .overview-current-work{ width: 100%; }
-  .workbench-layout .project-settings .settings-facts > div{ grid-template-columns: 1fr; gap: 2px; }
-  .workbench-layout .project-settings .project-source-links > a{ grid-template-columns: 1fr 16px; gap: 3px; }
-  .workbench-layout .project-settings .project-source-links span{ grid-column: 1; grid-row: 2; }
-  .workbench-layout .project-settings .project-source-links > a::after{ grid-column: 2; grid-row: 1 / 3; }
 }
-.workbench-layout .project-settings .context-links button{ min-height: 0; padding: 8px 4px 11px; border: 0; border-radius: 0; background: transparent; color: #526487; font-size: 15px; font-weight: 500; }
-.workbench-layout .project-settings .context-links button:first-child{ color: #1959df; border-bottom: 2px solid #1959df; font-weight: 650; }
-.workbench-layout .project-settings .context-links button:hover{ color: #1959df; }
 .workbench-layout .doc-original-reader .panel-head{ align-items: center; margin-bottom: 16px; }
 .workbench-layout .doc-original-reader .panel-head h2{ font-size: 20px; }
 .workbench-layout .doc-original-reader .doc-original-integrity{ margin: 0 0 18px; font-size: 14px; color: #607291; }
