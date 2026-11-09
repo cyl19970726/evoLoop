@@ -414,7 +414,7 @@ for(const scenario of ['normal','lost','rework-completed','rework-failed','rewor
             version:originalSubmission.version+1},originalSubmission.version);
           let waiting=false;
           for(let i=0;i<100;i++){
-            const activity=await pool.query(`SELECT 1 FROM pg_stat_activity WHERE wait_event_type='Lock'
+            const activity=await pool.query(`SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock'
               AND query LIKE 'SELECT pg_advisory_xact_lock(hashtextextended%' AND pid<>pg_backend_pid()`);
             if(activity.rowCount){waiting=true;break;}
             await new Promise(resolve=>setTimeout(resolve,10));
@@ -473,7 +473,7 @@ for(const scenario of ['normal','lost','rework-completed','rework-failed','rewor
             operationId:blockedOperation,documentId:blockedDocument,title:'Must not start',body:'Lease lost while waiting'});
           let waiting=false;
           for(let i=0;i<100;i++){
-            const activity=await pool.query(`SELECT 1 FROM pg_stat_activity WHERE wait_event_type='Lock'
+            const activity=await pool.query(`SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock'
               AND query LIKE 'SELECT pg_advisory_xact_lock(hashtextextended%' AND pid<>pg_backend_pid()`);
             if(activity.rowCount){waiting=true;break;}
             await new Promise(resolve=>setTimeout(resolve,10));
