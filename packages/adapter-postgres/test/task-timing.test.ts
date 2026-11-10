@@ -251,3 +251,41 @@ test("an ineligible linked document blocks only its own series",async()=>{
   assert.equal((await queries(q=>q.get(good)))?.occurrences.length,2);
   assert.equal((await queries(q=>q.get(bad)))?.occurrences.length,1);
 });
+
+test("the project list shows one-time, daily and stopped series with their latest Task, and never an untimed Task",async()=>{
+  const owner="list-reviewer";
+  const plain=await task("LIST plain task","No timing");
+  const once=await task("LIST one-time","Once prompt");
+  const daily=await task("LIST daily","Daily prompt");
+  const ended=await task("LIST ended","Ended prompt");
+  const t0="2026-11-06T00:00:00.000Z";
+  await queries(q=>q.create(once,timing(first,"none"),owner,t0));
+  await queries(q=>q.create(daily,timing(first),owner,t0));
+  await queries(q=>q.create(ended,timing(first),owner,t0));
+  for(const root of [once,daily,ended]) await tick(root).tick(projectId,first,owner,roleId);
+  const copy=(await tick(daily).tick(projectId,second,owner,roleId)).find(item=>item.created)!;
+  await tick(ended).tick(projectId,second,owner,roleId);
+  await queries(q=>q.stop({type:"task.timing.stop",projectId,operationId:randomUUID(),taskId:ended,expectedTimingVersion:1,reason:"Done"},owner,"2026-11-08T02:00:00.000Z"));
+  // Read through pages of one: the cursor must visit every series exactly once.
+  const seen:Awaited<ReturnType<PgTaskTimingQueries["list"]>>["items"]=[];
+  let cursor:string|undefined;
+  for(let guard=0;guard<50;guard++){
+    const page=await queries(q=>q.list(1,cursor));
+    seen.push(...page.items);
+    if(!page.nextCursor)break;
+    cursor=page.nextCursor;
+  }
+  assert.equal(new Set(seen.map(item=>item.seriesId)).size,seen.length,"no series is listed twice");
+  const mine=seen.filter(item=>item.title.startsWith("LIST "));
+  assert.deepEqual(mine.map(item=>item.title).sort(),["LIST daily","LIST ended","LIST one-time"]);
+  assert.ok(!seen.some(item=>item.rootTaskId===plain||item.latestTask.taskId===plain),"an untimed Task is not listed");
+  const byTitle=Object.fromEntries(mine.map(item=>[item.title,item]));
+  assert.deepEqual([byTitle["LIST one-time"]!.repeat,byTitle["LIST one-time"]!.seriesState,byTitle["LIST one-time"]!.nextAtUtc,byTitle["LIST one-time"]!.latestTask.taskId],["none","active",null,once]);
+  const d=byTitle["LIST daily"]!;
+  assert.deepEqual([d.repeat,d.seriesState,d.timezone,d.executeAtUtc,d.occurrenceCount,d.latestTask.taskId,d.latestTask.state,d.latestTask.plannedAtUtc],
+    ["daily","active","Asia/Taipei",first,2,copy.taskId,"todo",second]);
+  assert.equal(d.nextAtUtc,third);
+  const e=byTitle["LIST ended"]!;
+  assert.deepEqual([e.seriesState,e.nextAtUtc,e.occurrenceCount],["stopped",null,2]);
+  await assert.rejects(queries(q=>q.list(10,"not-a-cursor")),/invalid task timing cursor/);
+});

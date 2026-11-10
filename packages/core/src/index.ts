@@ -959,6 +959,13 @@ export class WorkflowService {
       return await reader.taskTiming?.get(taskId) ?? null;
     });
   }
+  /** The project's timed Tasks (one-time and daily series, stopped ones included); read-only. */
+  listTaskTimings(principal: Principal, projectId: string, limit: number, cursor?: string): Promise<import("@evoloop/contracts/task-timing").TaskTimingSeriesPage> {
+    return this.read(principal, projectId, async reader => {
+      if (!reader.taskTiming) throw new DomainError("TIMING_UNAVAILABLE", "Task timing store unavailable");
+      return reader.taskTiming.list(limit, cursor);
+    });
+  }
   getTaskRevision(principal: Principal, projectId: string, taskId: string, revisionId: string): Promise<{ revision: TaskRevision; basis: BasisSet | null }> {
     return this.read(principal, projectId, async (reader) => {
       const revision = required(await reader.getTaskRevision(taskId, revisionId), "Task revision");

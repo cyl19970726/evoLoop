@@ -4,7 +4,7 @@
 // `prepare` after it is ready. Names are the file names under docs/assets/frontend-pages/ and stay fixed.
 import { actorId, agentKey, ago, id, projectId, roles } from "./fixture/common.mjs";
 import { docs, tasks, workIndex } from "./fixture/work.mjs";
-import { evaluations, knowledge } from "./fixture/spaces.mjs";
+import { evaluations, knowledge, timedFocus } from "./fixture/spaces.mjs";
 
 const p = path => `/p/${projectId}/${path}`;
 const heading = (name, level) => page => page.getByRole("heading", { name, exact: true, ...(level ? { level } : {}) }).filter({ visible: true }).first().waitFor();
@@ -88,6 +88,8 @@ export const scenes = [
   { name: "knowledge", path: p(`knowledge?knowledgeId=${knowledge.firstPage}`), drawer: true, ready: heading("右栏只在要时打开", 1) },
 
   { name: "schedules", path: p("schedules"), drawer: true, ready: both(heading("日程"), text("每日验收巡检")) },
+  // 定时任务 beside the definitions; the link back from a timed Task lands on its item (`?timing=`).
+  { name: "schedules-timed", path: p(`schedules?timing=${timedFocus}`), ready: both(heading("日程"), text("定时任务"), text("已停止，不再复制后续时点")) },
 
   // Agents: the directory with 统筹安排, one agent's conversation.
   { name: "arrangement", path: p("sessions"), drawer: true, ready: both(heading("统筹安排"), text("前端实现")) },
