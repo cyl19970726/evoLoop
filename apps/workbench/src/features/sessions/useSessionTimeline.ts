@@ -5,8 +5,11 @@ import { sessionClient } from "../../shared/sessionClient";
 import { mergeWorkspaceEntries, mergeWorkspaceTurns, workspaceEntryKey } from "./workspaceTimelineModel";
 import { describeLimitation } from "./readingScopePresentation";
 
-/** A limitation for an error line, in Chinese; `fallback` when the service gave none. */
-const limitationSentence = (raw: string | null | undefined, fallback: string) => (raw && describeLimitation(raw).text) || fallback;
+/** A limitation for an error line, in Chinese (`fallback` when the service gave none), with the wording it replaced. */
+function limitationError(prefix: string, raw: string | null | undefined, fallback: string): { error: string; errorOriginal: string | null } {
+  const said = raw ? describeLimitation(raw) : null;
+  return { error: `${prefix}${said?.text || fallback}`, errorOriginal: said?.original ?? null };
+}
 
 type Read = {
   scope: string;
@@ -19,6 +22,8 @@ type Read = {
   live: WorkspaceLiveRead | null;
   page: SessionTimelinePage | null;
   error: string;
+  /** The service's wording an `error` replaced, for 原文; null when the error is said as the service said it. */
+  errorOriginal: string | null;
   denied: boolean;
   reconciling: boolean;
   updatesCursor: string | null;
@@ -26,7 +31,7 @@ type Read = {
   nativeBoundary: string | null;
   messagesBoundary: string | null;
 };
-const empty = (scope: string): Read => ({ scope, loaded: false, entries: [], pending: [], turns: [], nextCursor: null, messagesCursor: null, live: null, page: null, error: "", denied: false, reconciling: false, updatesCursor: null, nativeInitialized: false, nativeBoundary: null, messagesBoundary: null });
+const empty = (scope: string): Read => ({ scope, loaded: false, entries: [], pending: [], turns: [], nextCursor: null, messagesCursor: null, live: null, page: null, error: "", errorOriginal: null, denied: false, reconciling: false, updatesCursor: null, nativeInitialized: false, nativeBoundary: null, messagesBoundary: null });
 const pendingMerge = (previous: WorkspaceMessage[], incoming: WorkspaceMessage[]) => mergeWorkspaceEntries(previous, incoming) as WorkspaceMessage[];
 const recentReads = new Map<string, Read>();
 function rememberRead(read: Read) {
@@ -107,7 +112,7 @@ export function useSessionTimeline(token: string, projectId: string, actorId: st
       if (!authorized()) return;
       const forbidden = cause instanceof ApiError && (cause.status === 401 || cause.status === 403);
       if (forbidden) { revoke(cause, requestAuthorizationEpoch); return; }
-      setState(old => authorized() ? ({ ...(old.scope !== scope ? empty(scope) : old), loaded: true, error: errorText(cause), denied: false,
+      setState(old => authorized() ? ({ ...(old.scope !== scope ? empty(scope) : old), loaded: true, error: errorText(cause), errorOriginal: null, denied: false,
         entries: old.scope !== scope ? [] : old.entries.map(entry => entry.freshness === "live" ? { ...entry, freshness: "stale" } : entry),
         live: old.scope === scope && old.live ? { ...old.live, freshness: "stale" } : null }) : old);
     };
@@ -143,7 +148,7 @@ export function useSessionTimeline(token: string, projectId: string, actorId: st
             nativeBoundary: initializeNative || committedReset ? (page.entries[0] ? workspaceEntryKey(page.entries[0]) : null) : prior.nativeBoundary,
             messagesBoundary: !prior.loaded || committedReset ? (page.entries[0] ? workspaceEntryKey(page.entries[0]) : null) : prior.messagesBoundary,
             live: page.live, page, updatesCursor: liveCursor ?? null, reconciling: resetPending,
-            error: resetPending ? `历史尚未完成校准：${limitationSentence(page.capabilities.reason || page.limitations[0], "原生历史暂不可读取")}` : "", denied: false };
+            ...(resetPending ? limitationError("历史尚未完成校准：", page.capabilities.reason || page.limitations[0], "原生历史暂不可读取") : { error: "", errorOriginal: null }), denied: false };
         });
       } catch (cause) { failure(cause); }
       finally { latestBusy = false; if (obsolete && authorized() && resetPending) void readLatest(true); }
@@ -163,7 +168,7 @@ export function useSessionTimeline(token: string, projectId: string, actorId: st
         setState(old => authorized() && old.scope === scope ? { ...old, entries: mergeWorkspaceEntries(old.entries
           .map(entry => (live.resetRequired || live.freshness !== "live") && entry.freshness === "live" ? { ...entry, freshness: "stale" as const } : entry), live.entries),
           turns: mergeWorkspaceTurns(old.turns, live.turns), live, updatesCursor: live.cursor,
-          reconciling: resetPending, error: resetPending ? old.error : "" } : old);
+          reconciling: resetPending, error: resetPending ? old.error : "", errorOriginal: resetPending ? old.errorOriginal : null } : old);
         if (resetPending) await readLatest(true);
       } catch (cause) { failure(cause); }
       finally { updatesBusy = false; }
@@ -199,16 +204,16 @@ export function useSessionTimeline(token: string, projectId: string, actorId: st
       if (result.status === "rejected") {
         const forbidden = result.reason instanceof ApiError && (result.reason.status === 401 || result.reason.status === 403);
         if (forbidden) { revoke(result.reason, requestAuthorizationEpoch); break; }
-        setState(old => authorized() && old.scope === scope ? { ...old, error: errorText(result.reason) } : old);
+        setState(old => authorized() && old.scope === scope ? { ...old, error: errorText(result.reason), errorOriginal: null } : old);
         continue;
       }
       const page = result.value;
       if (page.sessionKey !== sessionKey || !Array.isArray(page.entries) || !Array.isArray(page.pending)) {
-        setState(old => authorized() && old.scope === scope ? { ...old, error: "活动响应与当前智能体不符" } : old); continue;
+        setState(old => authorized() && old.scope === scope ? { ...old, error: "活动响应与当前智能体不符", errorOriginal: null } : old); continue;
       }
       const source = reads[index]!.source;
       if (source === "native" && !page.capabilities.history) {
-        setState(old => authorized() && old.scope === scope ? { ...old, error: `历史尚未读完：${limitationSentence(page.limitations[0] || page.capabilities.reason, "原生来源暂不可读取")}` } : old);
+        setState(old => authorized() && old.scope === scope ? { ...old, ...limitationError("历史尚未读完：", page.limitations[0] || page.capabilities.reason, "原生来源暂不可读取") } : old);
         continue;
       }
       setState(old => authorized() && old.scope === scope ? { ...old,

@@ -2,8 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { ChevronDown, LayoutDashboard, Plus, Search } from "lucide-react";
 import { AgentAvatar, IconButton, Sheet, SheetContent, SheetDescription, SheetTitle, cn } from "@evoloop/ui";
 import type { ObservedSession } from "@evoloop/contracts/session-observation";
-import { date, href } from "../../shared/ui/shared";
-import { agentDisplayName, agentNameHint } from "../../shared/agentNamePresentation";
+import { href } from "../../shared/ui/shared";
+import { agentDisplayName, agentNameCollisions, agentNameHint } from "../../shared/agentNamePresentation";
 import { useSessionDirectoryGroup, type DirectoryMembership } from "./useSessionDirectoryGroup";
 import { agentStatusLabel } from "./sessionStatusPresentation";
 import { groupSessionsByClass, sessionClassLabel, sessionClassReason, type SessionClass } from "./sessionDirectoryPresentation";
@@ -13,6 +13,7 @@ export const sessionHref = (projectId: string, key: string, from?: { href: strin
   `${href(projectId, "sessions")}?${new URLSearchParams({ session: key, ...(from ? { return: from.href, actor: from.actorId, returnTitle: from.title.slice(0, 80) } : {}) })}`;
 
 const classOrder: SessionClass[] = ["business", "system", "unclassified"];
+const shortTime = (iso: string) => { const at = new Date(iso); return Number.isNaN(at.getTime()) ? iso : at.toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false }); };
 export interface SessionNavigationState {
   query: string;
   historyOpen: boolean;
@@ -59,13 +60,17 @@ export function SessionNavigation({ token, projectId, selectedId, onNavigate, st
   const totals = current.page?.totals;
   const grouped = groupSessionsByClass(current.items);
   const historicalCount = (totals?.historical ?? 0) + (totals?.unclassified ?? 0);
+  // Agents that would show the same name are told apart by their short identifier, first on the second line.
+  const collisions = agentNameCollisions([...current.items, ...historical.items, ...unclassified.items]);
   function item(session: ObservedSession) {
     const roles = session.roles.map(role => role.title).join(" · ");
     const name = agentDisplayName(session);
     const taskSignal = session.currentTask ? session.currentTask.title : null;
-    // A generated name already says the role; the last activity tells two such agents apart.
-    const hint = agentNameHint(session, session.lastProgressAt ? date(session.lastProgressAt) : null);
+    // A generated name already says the role; what the service records about the agent says the rest.
+    const hint = agentNameHint(session, shortTime);
+    const short = collisions.get(session.key);
     const status = agentStatusLabel(session);
+    const signal = `${short ? `标识 ${short} · ` : ""}${taskSignal ?? hint ?? (roles || sessionClassReason(session))} · ${status}`;
     const dot = session.busy === true ? "bg-primary" : session.runtimeState === "failed" ? "bg-destructive" : session.busy === false && session.runtimeState === "ready" ? "bg-border" : "bg-warning";
     const selected = selectedId === session.key;
     return <a key={session.key} href={sessionHref(projectId, session.key)} aria-current={selected ? "page" : undefined} onClick={onNavigate}
@@ -74,7 +79,7 @@ export function SessionNavigation({ token, projectId, selectedId, onNavigate, st
       <AgentAvatar seed={session.key} roleSeed={session.roles[0]?.id ?? session.title} size={30} />
       <span className="flex min-w-0 flex-1 flex-col">
         <span className="truncate" title={name}>{name}</span>
-        <span className="session-nav-signal truncate text-caption font-normal text-muted-foreground">{taskSignal ?? hint ?? (roles || sessionClassReason(session))}{` · ${status}`}</span>
+        <span className="session-nav-signal truncate text-caption font-normal text-muted-foreground" title={signal}>{signal}</span>
       </span>
       <span aria-hidden="true" className={cn("size-[7px] shrink-0 rounded-full", dot)} />
     </a>;

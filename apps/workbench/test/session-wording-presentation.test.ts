@@ -33,9 +33,19 @@ test("live-read limitations, reset reasons and history metadata gaps are known",
   }
 });
 
-test("Chinese stays as written; an unknown English limitation gets one general sentence with its original", () => {
-  assert.deepEqual(describeLimitation("已接受的即时补充尚未核实唯一原生 Item；原输入 ID 保留。"),
-    { text: "已接受的即时补充尚未核实唯一原生 Item；原输入 ID 保留", original: null }, "a Chinese limitation is kept, without its closing period");
+test("plain Chinese stays as written; Chinese with implementation words and unknown English are said in words with their original", () => {
+  assert.deepEqual(describeLimitation("重复接入别名仅返回前20项。仍按真实身份归并。"),
+    { text: "重复接入别名仅返回前20项。仍按真实身份归并", original: null }, "a plain Chinese limitation is kept, without its closing period");
+  // The service's own Chinese that still names Item / Turn / ID: said without those words, the original kept.
+  for (const raw of ["已接受的即时补充尚未核实唯一原生 Item；原输入 ID 保留。", "同一原生 Turn 有多个精确匹配的输入 Item，无法核实唯一发送者绑定。",
+    "未能在有界的完整已终结 Turn 中核实唯一输入 Item；业务消息仍可独立读取。"]) {
+    const { text, original } = describeLimitation(raw);
+    assert.notEqual(text, unknownLimitation, raw);
+    assert.doesNotMatch(text, english, raw);
+    assert.equal(original, raw.replace(/。$/, ""));
+  }
+  // Chinese mixed with English words is not kept just because it has Chinese.
+  assert.deepEqual(describeLimitation("新的 Thread 尚未绑定"), { text: unknownLimitation, original: "新的 Thread 尚未绑定" });
   assert.deepEqual(describeLimitation("workspace history: invalid items page"), { text: unknownLimitation, original: "workspace history: invalid items page" });
   const two = describeLimitations(["first odd thing", "second odd thing", "", "人工转交记录不证明原聊天已收到。"]);
   assert.deepEqual(two.lines, [unknownLimitation, "人工转交记录不证明原聊天已收到"], "the general sentence is said once");

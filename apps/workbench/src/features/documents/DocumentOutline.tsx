@@ -1,15 +1,14 @@
 // 页内目录: the headings of the rendered Markdown body, read from the page so code blocks and diagrams stay out.
 import { useEffect, useState, type RefObject } from "react";
 import { useContextPanel } from "../../shared/ui/ContextPanel";
-
-const selector = ".markdown-body h2, .markdown-body h3";
+import { outlineSelector as selector } from "../../shared/ui/markdownContent";
 
 export function DocumentOutline({ body, revision }: { body: RefObject<HTMLElement | null>; revision: string }) {
   const panel = useContextPanel();
   const [headings, setHeadings] = useState<Array<{ text: string; level: 2 | 3 }>>([]);
   useEffect(() => {
     const read = () => setHeadings([...(body.current?.querySelectorAll<HTMLElement>(selector) ?? [])]
-      .map(heading => ({ text: heading.textContent?.trim() ?? "", level: heading.tagName === "H3" ? 3 : 2 })));
+      .map(heading => ({ text: heading.textContent?.trim() ?? "", level: heading.dataset.sourceLevel === "3" ? 3 : 2 })));
     read();
     // The body can switch between rendered text and the original; follow what is on screen.
     const observer = body.current ? new MutationObserver(read) : null;

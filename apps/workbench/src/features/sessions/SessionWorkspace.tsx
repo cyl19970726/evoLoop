@@ -11,7 +11,8 @@ import type { RuntimeRunRecord, RuntimeSessionRecord } from "@evoloop/contracts/
 import { commandSchema, type Command } from "@evoloop/contracts";
 import { AgentAvatar, Button, CollapsibleRow, Notice, Tabs, TabsContent, TabsList, TabsTrigger, cn } from "@evoloop/ui";
 import { ApiError, api, errorText, isUnconfirmed } from "../../shared/api";
-import { ActionForm, option, type MutationContext } from "../../shared/ActionForm";
+import { ActionForm, type MutationContext } from "../../shared/ActionForm";
+import { sessionProfileCommand, sessionProfileFields } from "./sessionProfilePresentation";
 import { deliveryTarget } from "../../shared/deliveryPresentation";
 import { useProjectPages, useProjectQuery } from "../../shared/query";
 import { date, href } from "../../shared/ui/shared";
@@ -529,11 +530,6 @@ function OwnedQueue({ context, sessionId, enabled, queue }: { context: MutationC
 
 function SessionProfileForm({ context, snapshot, onApplied }: { context: MutationContext; snapshot: SessionSnapshot; onApplied(): void }) {
   const profile = snapshot.session.profile;
-  return <ActionForm context={{ ...context, draftScope: `session-profile:${snapshot.session.key}`, draftBaseline: `${profile?.version ?? 0}` }} review title="设置展示信息" fields={[
-    { name: "displayName", label: "展示名称", value: profile?.displayName ?? agentDisplayName(snapshot.session) },
-    { name: "purpose", label: "用途", kind: "textarea", optional: true, value: profile?.purpose ?? "" },
-    { name: "membership", label: "团队归属", kind: "select", value: profile?.membership ?? snapshot.session.membership, options: [option("current", "当前团队"), option("historical", "历史"), option("unclassified", "待归类")] },
-    { name: "tenure", label: "会话性质", kind: "select", value: profile?.tenure ?? "unknown", options: [option("resident", "常驻"), option("temporary", "临时"), option("unknown", "未知")] },
-    { name: "reason", label: "变更依据", kind: "textarea" },
-  ]} build={v => ({ type: "session.profile.set", target: profile?.target ?? snapshot.session.target, expectedVersion: profile?.version ?? 0, displayName: v.displayName, purpose: v.purpose, membership: v.membership, tenure: v.tenure, reason: v.reason })} onApplied={onApplied} />;
+  return <ActionForm context={{ ...context, draftScope: `session-profile:${snapshot.session.key}`, draftBaseline: `${profile?.version ?? 0}` }} review title="设置展示信息"
+    fields={sessionProfileFields(snapshot)} build={v => sessionProfileCommand(snapshot, v)} onApplied={onApplied} />;
 }

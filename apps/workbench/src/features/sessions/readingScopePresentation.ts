@@ -1,10 +1,13 @@
 // What “消息怎样处理与读取范围” says about the limits of a conversation read. The service writes these limitations for
-// agents and logs, mostly in English (`Native history is unsupported for this Session`). The reader sees Chinese
-// (docs/frontend/principles.md 界面用语): a known limitation is said in words, one already written in Chinese is kept,
-// and any other gets a general sentence. Every original that was replaced stays available as 原文 (the same way
-// shared/errorPresentation.ts keeps a failure's original answer as 诊断信息).
+// agents and logs, mostly in English (`Native history is unsupported for this Session`), sometimes in Chinese that still
+// names implementation objects (“原生 Item”“原生 Turn”). The reader sees Chinese without implementation words
+// (docs/frontend/principles.md 界面用语): a known limitation is said in words; one written wholly in Chinese is kept; any
+// other, including Chinese mixed with English words, gets a general sentence. Every original that was replaced stays
+// available as 原文 (the same way shared/errorPresentation.ts keeps a failure's original answer as 诊断信息).
 
 const chinese = /[㐀-鿿]/;
+/** An English word inside the text: such a text is not kept as written, even when it also has Chinese. */
+const latinWord = /[A-Za-z]{2,}/;
 
 /** Known service wordings (apps/coordinator/src/session-timeline, packages/adapter-codex-app-server), first match wins. */
 const known: ReadonlyArray<readonly [RegExp, string]> = [
@@ -20,9 +23,13 @@ const known: ReadonlyArray<readonly [RegExp, string]> = [
   [/^turn metadata unavailable for requested items$/i, "部分活动缺少所属轮次的信息"],
   [/^turn metadata outside bounded (?:scan|page)\b/i, "部分活动的所属轮次超出本次读取范围"],
   [/^realtime timeline entries have no turn association$/i, "部分实时内容没有所属轮次，暂未显示"],
+  // Chinese the service writes with implementation words (session-timeline/index.ts, input binding proofs).
+  [/^已接受的即时补充尚未核实唯一原生\s*Item/i, "已接受的即时补充还没核实到唯一对应的原始记录，补充本身的记录照常保留"],
+  [/^同一原生\s*Turn\s*有多个精确匹配的输入\s*Item/i, "同一轮里有多条内容完全相同的输入，无法核实是谁发出的"],
+  [/^未能在有界的完整已终结\s*Turn\s*中核实唯一输入\s*Item/i, "在已读取的已结束轮次里没有核实到唯一对应的输入，业务消息仍可单独读取"],
 ];
-/** Said for a limitation in a language the page does not know; the original stays in 原文. */
-export const unknownLimitation = "来源还说明了一项读取限制（原文为英文，可展开查看）";
+/** Said for a limitation the page cannot say in its own words; the original stays in 原文. */
+export const unknownLimitation = "来源还说明了一项读取限制（原文未翻译，可展开“原文”查看）";
 
 const trimmed = (value: string) => value.trim().replace(/[。．.；;，,\s]+$/u, "");
 
@@ -30,9 +37,10 @@ const trimmed = (value: string) => value.trim().replace(/[。．.；;，,\s]+$/u
 export function describeLimitation(raw: string): { text: string; original: string | null } {
   const value = trimmed(raw);
   if (!value) return { text: "", original: null };
-  if (chinese.test(value)) return { text: value, original: null };
   const match = known.find(([pattern]) => pattern.test(value));
-  return { text: match ? match[1] : unknownLimitation, original: value };
+  if (match) return { text: match[1], original: value };
+  if (chinese.test(value) && !latinWord.test(value)) return { text: value, original: null };
+  return { text: unknownLimitation, original: value };
 }
 
 /** Lines for a list of limitations: each Chinese sentence once, and every replaced original once for 原文. */

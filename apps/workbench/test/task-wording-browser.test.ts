@@ -8,6 +8,7 @@ import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { extname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { plannedTime } from "../src/shared/revisionPresentation";
 
 const modulePath = process.env.EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE;
 const shots = process.env.EVOLOOP_TASK_WORDING_SCREENSHOT_DIR;
@@ -68,6 +69,12 @@ test("a task's version line says in Chinese who made it and why; identifiers sta
         else if (sub === "revisions") value = [{ revision: revisionOf(found), basis: null }];
         else if (sub) { status = 404; value = { message: "夹具未提供" }; }
         else value = { task: found, revision: revisionOf(found), basis: null, links: [], impacts: [], decisions: [], deliveries: [], observations: [], closures: [] };
+      } else if (path.startsWith(`${root}/documents/${docA}`)) {
+        // The schedule's task body document: written by the schedule, as the service writes it.
+        const revision = { projectId, documentId: docA, id: tasks[0]!.contentRevisionId, body, format: "markdown", mediaType: "text/markdown", originalName: "task.md",
+          payloadRef: null, entrypoint: null, assetsManifest: [], contentHash: "a".repeat(64), author: `schedule:${roleId}`, createdAt: stamp, previousRevisionId: null, reason: scheduleReason };
+        value = path.includes("/revisions/") ? revision : { document: { projectId, id: docA, title: "每日巡检：交付使用核对", version: 1, currentRevisionId: revision.id,
+          adoptedRevisionId: null, kind: "task", status: "draft" }, current: revision, adopted: null };
       } else if (path.startsWith(`${root}/documents/`)) { status = 404; value = { message: "夹具未提供" }; }
       else if (path === `${root}/roles/${roleId}`) value = { projectId, id: roleId, proposal: { title: "巡检" } };
       res.writeHead(status, { "content-type": "application/json" }); res.end(JSON.stringify(value)); return;
@@ -92,17 +99,25 @@ test("a task's version line says in Chinese who made it and why; identifiers sta
   await page.goto(`${base}/p/${projectId}/tasks/${scheduled}`);
   await login();
   await page.getByRole("heading", { level: 1, name: "每日巡检：交付使用核对" }).waitFor();
-  const local = await page.evaluate(at => new Date(at).toLocaleString("zh-CN"), plannedAt);
+  // The planned time, in the schedule's own zone as the schedule page writes it (plus the reader's clock when it differs).
+  const planned = plannedTime(plannedAt, "Asia/Shanghai", await page.evaluate(() => Intl.DateTimeFormat().resolvedOptions().timeZone));
 
   // 版本: the schedule is named once its name is read; the service's wording and identifiers are not in the text.
   if (await page.getByRole("button", { name: "展开右栏" }).count()) await page.getByRole("button", { name: "展开右栏" }).click();
   const facts = page.getByRole("complementary", { name: "右栏" }).locator(`[data-task-facts="${scheduled}"]`);
   const line = facts.locator("[data-revision-origin]");
-  await line.getByText(`由日程「每日巡检」在 ${local} 生成`, { exact: true }).waitFor();
+  await line.getByText(`按日程「每日巡检」生成，计划时间 ${planned}`, { exact: true }).waitFor();
   const text = await facts.innerText();
   for (const raw of [scheduleId, roleId, "schedule ", "schedule:", plannedAt]) assert.ok(!text.includes(raw), `“${raw}” is not in the right column's text`);
   await facts.locator("summary", { hasText: "来源与完整标识" }).last().click();
   for (const raw of [scheduleId, plannedAt, roleId, scheduleReason]) await facts.getByText(raw, { exact: true }).first().waitFor();
+
+  // The task body's document, opened beside the task, names the schedule that wrote it, not schedule:<id>.
+  await facts.getByRole("button", { name: /每日巡检：交付使用核对/ }).first().click();
+  const peek = page.getByRole("complementary", { name: "右栏" }).getByRole("article", { name: "每日巡检：交付使用核对" });
+  await peek.getByText(/任务固定的修订 · .* · 日程「每日巡检」/).waitFor();
+  assert.doesNotMatch(await peek.innerText(), /schedule:/);
+  await page.getByRole("complementary", { name: "右栏" }).getByRole("tab", { name: "信息" }).click();
 
   // The body's headings sit below the page title: one h1 on the page.
   assert.equal(await page.locator("h1").count(), 1, "the page has a single h1");
@@ -114,7 +129,7 @@ test("a task's version line says in Chinese who made it and why; identifiers sta
   await page.goto(`${base}/p/${projectId}/tasks/${scheduled}?tab=history`);
   await login();
   const history = page.getByRole("list", { name: "任务修订" });
-  await history.getByText(`理由：在 ${local} 按日程自动生成`, { exact: true }).waitFor();
+  await history.getByText(`理由：按日程「每日巡检」自动生成，计划时间 ${planned}`, { exact: true }).waitFor();
   assert.ok(!(await history.innerText()).includes(scheduleId));
 
   // The first revision of a seeded task: “新建任务”, not “Initial task”.
@@ -132,7 +147,7 @@ test("a task's version line says in Chinese who made it and why; identifiers sta
   await page.getByRole("heading", { level: 1, name: "每日巡检：交付使用核对" }).waitFor();
   const opener = page.getByRole("main").getByRole("button", { name: "任务信息" });
   if (await opener.count()) await opener.click(); else if (await page.getByRole("button", { name: "展开右栏" }).count()) await page.getByRole("button", { name: "展开右栏" }).click();
-  await page.locator(`[data-task-facts="${scheduled}"] [data-revision-origin]`).getByText(`由日程「每日巡检」在 ${local} 生成`, { exact: true }).last().waitFor();
+  await page.locator(`[data-task-facts="${scheduled}"] [data-revision-origin]`).getByText(`按日程「每日巡检」生成，计划时间 ${planned}`, { exact: true }).last().waitFor();
   await page.waitForTimeout(500); // the drawer has finished sliding in
   if (shots) await page.screenshot({ path: `${shots}/task-schedule-version-1024.png` });
   await page.keyboard.press("Escape");

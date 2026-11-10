@@ -18,11 +18,10 @@ import { errorText } from "../../shared/api";
 import { useProjectQuery } from "../../shared/query";
 import { roleClient } from "../../shared/roleClient";
 import { sessionClient } from "../../shared/sessionClient";
-import { agentDisplayName } from "../../shared/agentNamePresentation";
 import type { SubmissionOutcome } from "../../shared/submissionOutcome";
 import { href } from "../../shared/ui/shared";
 import type { NativeProgressView } from "./NativeSessionPanel";
-import { composerPlan, contextUseText, mentionedAgents, messageWithSkill } from "./composerPresentation";
+import { composerPlan, contextUseText, mentionCandidates, mentionedAgents, messageWithSkill } from "./composerPresentation";
 import { latestPlan, planExplanation, planSteps } from "./conversationPresentation";
 import { agentStatusLabel } from "./sessionStatusPresentation";
 import { sendSessionCommand } from "./sessionCommand";
@@ -108,8 +107,8 @@ export function SessionComposer({ context, snapshot, entries, activeTurn, live, 
     if (!Array.isArray(page.items)) throw new Error("智能体目录响应不完整");
     return page;
   }, { enabled: menu?.kind === "mention" || picked.length > 0 });
-  const agents: Agent[] = (directory.data?.items ?? []).filter(item => item.key !== session.key).map(item => ({
-    id: item.key, name: agentDisplayName(item), target: item.target, state: agentStatusLabel(item),
+  const agents: Agent[] = mentionCandidates(directory.data?.items ?? [], session.key).map(({ item, name }) => ({
+    id: item.key, name, target: item.target, state: agentStatusLabel(item),
     // A copy is saved as an ordinary message to that agent and handled in its order: never promised as delivered now.
     delivery: "queued", system: item.roles.length > 0 && item.roles.every(role => role.roleClass === "system"),
     avatar: <AgentAvatar seed={item.key} roleSeed={item.roles[0]?.id ?? item.title} size={28} />,

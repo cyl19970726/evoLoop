@@ -15,12 +15,12 @@ import { taskStateLabel } from "./taskCommands";
 import { DocumentLink } from "./DocumentLink";
 import { EvidenceText } from "./EvidenceText";
 import { Fact, Fine, ReadNote, TabSection } from "./TaskForms";
-import { useRevisionOrigin } from "./useRevisionOrigin";
-import type { RevisionOrigin } from "./revisionPresentation";
+import { useRevisionOrigin } from "../../shared/useRevisionOrigin";
+import type { RevisionOrigin } from "../../shared/revisionPresentation";
 
 /** A revision's author and reason in words (the schedule's name is read when a schedule generated it). */
-function RevisionWho({ projectId, revision, children }: { projectId: string; revision: { actorId?: string | null; reason?: string | null }; children(origin: RevisionOrigin): React.ReactNode }) {
-  return <>{children(useRevisionOrigin(projectId, revision))}</>;
+function RevisionWho({ projectId, revision, children }: { projectId: string; revision: { actorId?: string | null; reason?: string | null; taskId?: string }; children(origin: RevisionOrigin): React.ReactNode }) {
+  return <>{children(useRevisionOrigin(projectId, revision, revision.taskId))}</>;
 }
 
 const judgementLabel = { approve: "同意", needsEvidence: "需要补充证据", defer: "暂缓", reject: "不采纳" } as const;

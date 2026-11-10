@@ -25,7 +25,7 @@ import { observationResultLabel, observationsForDelivery } from "./observationPr
 import { currentDelivery, matchingProjection, matchingTaskDetail } from "./taskExperience";
 import { phaseFact, type Read, type ReadState } from "./taskFactsPresentation";
 import { taskTimestamp, taskType } from "./taskWorkspacePresentation";
-import { useRevisionOrigin } from "./useRevisionOrigin";
+import { useRevisionOrigin } from "../../shared/useRevisionOrigin";
 
 const documentKinds: Record<string, string> = { issue: "问题", spec: "规范", discussion: "讨论", report: "报告", organization_review: "组织复盘", task: "任务正文" };
 
@@ -205,7 +205,7 @@ function DeliveryFacts({ projectId, detail, linkForTab }: { projectId: string; d
 function VersionFacts({ projectId, detail, linkForTab }: { projectId: string; detail: TaskDetail; linkForTab(tab: TaskSection): string }) {
   const { task, revision } = detail;
   const pending = detail.impacts.filter(impact => impact.state === "pending").length;
-  const origin = useRevisionOrigin(projectId, revision);
+  const origin = useRevisionOrigin(projectId, revision, task.id);
   return <div className="flex flex-col gap-2">
     <div className="flex flex-col gap-2.5">
       <Fact label="当前版本">第 {task.version} 版 · {date(revision.createdAt)}<span className="mt-0.5 block text-caption text-muted-foreground" data-revision-origin="">{origin.line}</span></Fact>
