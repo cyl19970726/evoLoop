@@ -27,6 +27,10 @@
 | [Sessions](pages/sessions.md) | 哪个 Session 在做什么、做到哪一步，需不需要我；Leader 怎样安排这些 Session？ |
 | [团队](pages/team.md) | 哪些持续职责由谁承担，用什么运行时与 skill？ |
 | [微信连接](pages/connectors.md) | 哪个微信会话转给哪个智能体，最近的投递处理得怎样？ |
+| [登录与项目列表](pages/entry.md) | 用哪个身份登录，能进哪些项目，进入前有没有要先核对的操作？ |
+| [项目设置](pages/settings.md) | 在哪个项目，以谁的身份，有哪些权限，各类记录在哪里？ |
+| [待核对操作](pages/operations.md) | 哪次提交结果未知，怎样按原操作 ID 查回或重试？ |
+| [仓库规范](pages/repository.md) | 正式规则在哪里读，怎样登记固定 Git 来源和正式采用？ |
 
 ## 目标与现状
 
