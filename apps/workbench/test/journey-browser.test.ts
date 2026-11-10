@@ -262,7 +262,7 @@ test("目标与阶段 reads goals, stages and their tasks in words, keeps drafts
   await form.getByLabel("来源或反馈证据").fill("试用反馈汇总第 3 条");
   await form.getByLabel("停止条件").fill("试用团队不再需要提醒");
   await form.getByLabel("执行时间", { exact: true }).fill("2026-11-12T09:30");
-  await form.getByLabel("时区").fill("Asia/Taipei");
+  await form.getByLabel("时区").selectOption("Asia/Taipei");
   await form.getByLabel("是否重复").selectOption("daily");
   await form.locator("[data-schedule-preview]").getByText(/之后每天同一时刻/).waitFor();
   await form.getByText("更多设置").click();

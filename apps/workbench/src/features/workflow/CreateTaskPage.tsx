@@ -19,6 +19,7 @@ import { CommandFrame, useCommand } from "../../shared/command";
 import { journeyKey, readOwnerRoles, readPublishedDocuments, useGoals, useStages } from "./journeyRead";
 import { draftFieldLabels, draftTouched, emptyTaskDraft, maxLinkedDocuments, taskCreateCommand, taskDraftProblems, taskKinds, zonedInstant, type DraftProblems, type TaskDraft } from "./taskCreate";
 import { formatScheduled } from "./taskTimingPresentation";
+import { timezoneOptions } from "../../shared/zonedTime";
 
 const muted = "text-caption text-muted-foreground";
 const section = "flex flex-col gap-4 rounded-xl bg-raised p-4 shadow-sm compact:p-5";
@@ -177,7 +178,9 @@ export function CreateTaskView({ context, active, pathname, back, embedded = fal
         <p className={muted}>约定时间只记录在任务上；到时谁来执行，仍要在任务里安排承接。</p></div>
       <div className="grid grid-cols-1 gap-4 compact:grid-cols-3">
         <Field label="执行时间" {...field("executeAt")}>{control => <Input {...control} type="datetime-local" step={60} value={draft.executeAt} onChange={event => edit({ executeAt: event.target.value })} />}</Field>
-        <Field label="时区" hint="IANA 时区，例如 Asia/Taipei。" {...field("timezone")}>{control => <Input {...control} value={draft.timezone} onChange={event => edit({ timezone: event.target.value })} autoComplete="off" />}</Field>
+        <Field label="时区" hint="执行时间按这个时区的当地时间填写。" {...field("timezone")}>{control => <Select {...control} className="w-full" value={draft.timezone} onChange={event => edit({ timezone: event.target.value })}>
+          {timezoneOptions([draft.timezone]).map(zone => <option key={zone.value} value={zone.value}>{zone.label}</option>)}
+        </Select>}</Field>
         <Field label="是否重复" {...field("repeat")}>{control => <Select {...control} className="w-full" value={draft.repeat} onChange={event => edit({ repeat: event.target.value as TaskDraft["repeat"] })}>
           <option value="none">仅本次</option>{canReview && <option value="daily">每天重复</option>}
         </Select>}</Field>

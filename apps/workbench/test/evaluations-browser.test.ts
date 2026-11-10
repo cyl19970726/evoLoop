@@ -62,7 +62,8 @@ const conclusion = { projectId, id: conclusionId, evaluationId, revisionId, asse
   limits: "只有一次尝试", comparability: "with_limits", comparabilityReason: "加入 Wiki 的条件还没有判定", nextChoice: "adopt_with_limits", affectedRefs: [], nextActionRef: null,
   actorId: "reviewer", createdAt: stamp };
 
-type Handler = (url: URL, req: IncomingMessage, body: string) => { status?: number; value: unknown } | undefined;
+type Answer = { status?: number; value: unknown } | undefined;
+type Handler = (url: URL, req: IncomingMessage, body: string) => Answer | Promise<Answer>;
 async function start(t: TestContext, handle: Handler) {
   const { chromium } = (await import(pathToFileURL(modulePath!).href)).default;
   const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
@@ -70,7 +71,7 @@ async function start(t: TestContext, handle: Handler) {
     if (url.pathname.startsWith("/api/")) {
       const body = await new Promise<string>(done => { let text = ""; req.on("data", chunk => { text += chunk; }); req.on("end", () => done(text)); });
       const root = `/api/projects/${projectId}`;
-      let answer = handle(url, req, body);
+      let answer = await handle(url, req, body);
       if (!answer) {
         if (url.pathname === "/api/session") answer = { value: { principal: { actorId: "reviewer", projectIds: [projectId], permissions: ["read", "write", "review"] }, capabilities: {} } };
         else if (url.pathname === root) answer = { value: { id: projectId, title: "评价回归项目", createdAt: stamp } };
@@ -127,8 +128,10 @@ test("评价与后果 lists evaluations by task name in the rail and the middle,
     const rail = page.locator("aside[aria-label=项目导航]").getByRole("navigation", { name: "评价目录" });
     assert.match(await rail.innerText(), /当前范围的评价 · 2[\s\S]*直接材料能否独立完成？[\s\S]*《整理发布说明》 · v1/);
     await page.getByText("需要时建立新的冻结评价").click();
-    await page.getByRole("button", { name: "读取固定来源" }).waitFor();
-    assert.equal(await page.getByLabel("共同任务 ID").count(), 1);
+    // The common task is chosen by name; nothing asks for an ID.
+    await page.getByRole("searchbox", { name: "共同任务", exact: true }).waitFor();
+    assert.equal(await page.getByLabel("共同任务 ID").count(), 0);
+    await page.getByText("已读的任务里没有进行中的任务。").waitFor();
     if (shots) await page.screenshot({ path: `${shots}/evaluations-list-1440.png` });
     await page.setViewportSize({ width: 390, height: 844 });
     assert.equal(await page.evaluate(noOverflow), true, "no horizontal overflow at 390px");
@@ -358,7 +361,7 @@ test("评价写入保护: revision and conclusion commands carry their versions;
     // 另存定义：先读共同任务的固定来源，命令带读到的定义版本。
     const revise = main.locator("details", { has: page.locator("summary", { hasText: "另存一版评价定义" }) });
     await main.locator("summary", { hasText: "另存一版评价定义" }).click();
-    assert.equal(await revise.getByLabel("共同任务 ID").inputValue(), taskId);
+    await revise.getByRole("group", { name: "共同任务" }).getByText("修复首轮回归").waitFor();
     await revise.getByRole("button", { name: "读取固定来源" }).click();
     const reviseForm = revise.getByRole("form", { name: "冻结新定义修订" });
     await reviseForm.getByLabel("修订定义的理由").fill("补充判定条件");
@@ -411,5 +414,150 @@ test("评价写入保护: revision and conclusion commands carry their versions;
     assert.equal(await conclude.getByRole("button", { name: "追加更正结论" }).isDisabled(), true);
     if (shots) await page.screenshot({ path: `${shots}/evaluation-write-guards-1440.png` });
     assert.equal(commands.length, 2, "only the conclusion and the revision were sent");
+    assert.deepEqual(errors, []);
+  });
+
+test("建立冻结评价: the common task, the owner task, documents, a Wiki page and their versions are chosen by name; the command carries their IDs and hashes",
+  { skip }, async t => {
+    const commands: Array<Record<string, unknown>> = [];
+    const root = `/api/projects/${projectId}`;
+    const materialId = id(40), materialRevision = id(41), olderProtocol = id(42), otherTask = id(43);
+    const documentRow = (docId: string, title: string, current: string) => ({ projectId, id: docId, title, version: 2, currentRevisionId: current, adoptedRevisionId: null, kind: "spec", status: "published" });
+    const documentRevision = (docId: string, revId: string, contentHash: string, previous: string | null, createdAt: string) =>
+      ({ projectId, documentId: docId, id: revId, body: "正文", format: "markdown", mediaType: "text/markdown", originalName: "a.md", payloadRef: null, entrypoint: null,
+        assetsManifest: [], contentHash, author: "reviewer", createdAt, previousRevisionId: previous, reason: previous ? "补充判定口径" : "首版" });
+    const protocolCurrent = documentRevision(protocolId, protocolRevision, hash("a"), olderProtocol, "2026-11-09T08:00:00.000Z");
+    const protocolOlder = documentRevision(protocolId, olderProtocol, hash("9"), null, "2026-11-01T08:00:00.000Z");
+    const materialCurrent = documentRevision(materialId, materialRevision, hash("b"), null, "2026-11-08T08:00:00.000Z");
+    const taskRow = (rowId: string, title: string, state: string) => ({ ...task.task, id: rowId, title, state });
+    let wikiDelay = 0;
+    const { page, errors, open } = await start(t, async (url, req, body) => {
+      if (url.pathname === `${root}/evaluations`) return { value: { items: [], nextCursor: null } };
+      if (url.pathname === `${root}/evaluations/${evaluationId}`) return { value: { revision, revisions: [revision], attempts: [], assessments: [], conclusions: [] } };
+      if (url.pathname === `${root}/runtime/runs`) return { value: [] };
+      if (url.pathname === `${root}/runtime/sessions`) return { value: [] };
+      if (url.pathname === `${root}/roles/${roleId}`) return { value: { projectId, id: roleId, version: 1, proposal: { title: "修复负责人" } } };
+      if (url.pathname === `${root}/tasks`) return { value: { items: [taskRow(taskId, "修复首轮回归", "in_progress"), taskRow(ownerTaskId, "评价首轮修复", "todo"),
+        taskRow(otherTask, "整理发布说明", "done")], nextCursor: null } };
+      if (url.pathname === `${root}/tasks/${taskId}`) return { value: task };
+      if (url.pathname === `${root}/tasks/${ownerTaskId}`) return { value: { ...task, task: { ...task.task, id: ownerTaskId, title: "评价首轮修复", state: "todo" } } };
+      if (url.pathname === `${root}/evaluations/source-task/${taskId}`) return { value: { sourceTaskRevisionId: sourceRevision, sourceSignature: definition.case.sourceSignature } };
+      if (url.pathname === `${root}/documents`) return { value: { items: [documentRow(protocolId, "评价协议 v2", protocolRevision), documentRow(materialId, "首轮回归记录", materialRevision)], nextCursor: null } };
+      if (url.pathname === `${root}/documents/${protocolId}`) return { value: { document: documentRow(protocolId, "评价协议 v2", protocolRevision), current: protocolCurrent, adopted: null } };
+      if (url.pathname === `${root}/documents/${protocolId}/revisions/${protocolRevision}`) return { value: protocolCurrent };
+      if (url.pathname === `${root}/documents/${protocolId}/revisions/${olderProtocol}`) return { value: protocolOlder };
+      if (url.pathname === `${root}/documents/${materialId}`) return { value: { document: documentRow(materialId, "首轮回归记录", materialRevision), current: materialCurrent, adopted: null } };
+      if (url.pathname === `${root}/documents/${materialId}/revisions/${materialRevision}`) return { value: materialCurrent };
+      if (url.pathname === `${root}/knowledge/pages`) return { value: { items: [{ knowledgeId: wikiPage, revision: wikiRevision, title: "首轮修复经验", pageType: "lesson", validity: "current" }], nextCursor: null, watermark: 1 } };
+      if (url.pathname === `${root}/knowledge/pages/${wikiPage}/history`) return { value: { items: [], nextCursor: null, watermark: 1 } };
+      if (url.pathname === `${root}/knowledge/pages/${wikiPage}` && url.searchParams.get("revision") === wikiRevision) {
+        if (wikiDelay) await new Promise(done => setTimeout(done, wikiDelay));
+        return { value: { projectId, knowledgeId: wikiPage, revision: wikiRevision, previousRevision: null, title: "首轮修复经验", body: "先复现再修", contentHash: hash("d"),
+          pageType: "lesson", epistemicStatus: "observed", validity: "current", observedValidity: "current", sources: [], relations: [], createdAt: stamp } };
+      }
+      if (url.pathname === "/api/commands" && req.method === "POST") {
+        const command = JSON.parse(body) as Record<string, unknown>;
+        commands.push(command);
+        return { value: { status: "applied", operationId: command.operationId, entityId: evaluationId } };
+      }
+      return undefined;
+    });
+    const shot = async (name: string) => { if (shots) await page.screenshot({ path: `${shots}/${name}.png`, fullPage: true }); };
+    await open(`/p/${projectId}/evaluations?taskId=${ownerTaskId}`);
+    await page.getByRole("heading", { name: "评价与后果", exact: true }).waitFor();
+    await page.getByText("需要时建立新的冻结评价").click();
+    const create = page.getByRole("region", { name: "建立冻结评价" });
+
+    // The common task: searched by name, only tasks in progress offered; choosing it reads its fixed source.
+    const common = create.getByRole("group", { name: "共同任务" });
+    await common.getByRole("button", { name: /修复首轮回归/ }).waitFor();
+    assert.equal(await common.getByRole("button", { name: /评价首轮修复|整理发布说明/ }).count(), 0, "only tasks in progress");
+    await create.getByRole("searchbox", { name: "共同任务", exact: true }).fill("首轮");
+    await common.getByRole("button", { name: /修复首轮回归/ }).click();
+    await create.getByText(/《修复首轮回归》 · 当前进行中修订已固定 · 固定依据 1 项/).waitFor();
+    const form = create.getByRole("form", { name: "冻结评价定义" });
+    await form.waitFor();
+    // The owner task comes from the page's task filter and is named, not shown as an ID.
+    await form.getByRole("group", { name: "负责这次评价的任务" }).getByText("评价首轮修复").waitFor();
+    await form.getByLabel("共同评价问题").fill("加入固定 Wiki 后首轮修复是否更快？");
+    await form.getByLabel("两条件相同的执行指令").fill("修复首轮回归并说明原因");
+    await form.getByLabel("公开判定条件").fill("同一回归测试通过；记录耗时");
+    await shot("evaluation-create-1440-01-task");
+
+    // The protocol: a document by name, then one of its versions (an earlier one is read on request).
+    const protocolGroup = form.getByRole("group", { name: "固定评价协议" });
+    await protocolGroup.getByRole("button", { name: "选择协议文档" }).click();
+    await form.getByRole("searchbox", { name: "固定评价协议" }).fill("协议");
+    await protocolGroup.getByRole("button", { name: /评价协议 v2/ }).click();
+    await protocolGroup.getByRole("button", { name: /当前版本/ }).waitFor();
+    await protocolGroup.getByRole("button", { name: "读取更早的版本" }).click();
+    await protocolGroup.getByRole("button", { name: /较早版本/ }).waitFor();
+    await shot("evaluation-create-1440-02-versions");
+    await protocolGroup.getByRole("button", { name: /当前版本/ }).click();
+    await protocolGroup.getByRole("button", { name: "移除 《评价协议 v2》" }).waitFor();
+    await protocolGroup.getByText(/^当前版本 · /).waitFor();
+
+    // The shared material: another document's current version; and a Git source by its full identifiers.
+    const materials = form.getByRole("group", { name: "两条件共用的固定材料" });
+    await materials.getByRole("button", { name: "添加材料文档" }).click();
+    await form.getByRole("searchbox", { name: "两条件共用的固定材料" }).fill("回归记录");
+    await materials.getByRole("button", { name: /首轮回归记录/ }).click();
+    await materials.getByRole("button", { name: /当前版本/ }).click();
+    await materials.getByRole("button", { name: "移除 《首轮回归记录》" }).waitFor();
+    await materials.getByRole("button", { name: "添加材料文档" }).click();
+    await materials.getByText(/按完整标识添加/).click();
+    await materials.getByLabel("完整标识").fill(`git | evoLoop | abc1234 | ${hash("e")}`);
+    await materials.getByRole("button", { name: "添加", exact: true }).click();
+    await materials.getByText("Git 来源 evoLoop").waitFor();
+
+    // The Wiki condition: a page by name and its current version. Its hash is read after the click; what the person
+    // types meanwhile stays.
+    const wiki = form.getByRole("group", { name: "仅知识条件增加的固定 Wiki" });
+    await wiki.getByRole("button", { name: "添加 Wiki 页" }).click();
+    await form.getByRole("searchbox", { name: "仅知识条件增加的固定 Wiki" }).fill("经验");
+    await wiki.getByRole("button", { name: /首轮修复经验/ }).click();
+    wikiDelay = 800;
+    await wiki.getByRole("button", { name: /当前版本/ }).click();
+    await form.getByLabel("两个条件相同的明确模型").fill("gpt-6-sol");
+    await wiki.getByRole("button", { name: "移除 《首轮修复经验》" }).waitFor();
+    wikiDelay = 0;
+    assert.equal(await form.getByLabel("两个条件相同的明确模型").inputValue(), "gpt-6-sol", "typing while a version is read is kept");
+
+    await form.getByLabel("执行工作目录").fill("/work/case");
+    await form.getByLabel("授权工作范围").fill("本案例目录");
+    // Names and versions only; IDs and hashes wait under 完整标识, where they can be read and copied.
+    assert.doesNotMatch(await create.innerText(), uuid, "no raw ID in the form");
+    assert.doesNotMatch(await create.innerText(), /[0-9a-f]{64}/, "no hash in the form");
+    await protocolGroup.getByText("来源与完整标识").click();
+    assert.match(await protocolGroup.innerText(), new RegExp(`${protocolRevision}[\\s\\S]*${hash("a")}`));
+    await shot("evaluation-create-1440-03-filled");
+    await form.getByRole("button", { name: "冻结评价定义" }).click();
+    for (let i = 0; i < 100 && !commands.length; i++) await new Promise(done => setTimeout(done, 50));
+    const sent = commands.find(command => command.type === "evaluation.create") as { definition: typeof definition } | undefined;
+    assert.ok(sent, "the definition is sent");
+    const { definition: frozen } = sent;
+    assert.equal(frozen.ownerTaskId, ownerTaskId);
+    assert.deepEqual(frozen.protocol, { kind: "document", id: protocolId, revision: protocolRevision, contentHash: hash("a") });
+    assert.deepEqual(frozen.case.materials, [{ kind: "document", id: materialId, revision: materialRevision, contentHash: hash("b") },
+      { kind: "git", id: "evoLoop", revision: "abc1234", contentHash: hash("e") }]);
+    assert.deepEqual(frozen.conditions[1].wikiRefs, [{ kind: "wiki", id: wikiPage, revision: wikiRevision, contentHash: hash("d") }]);
+    assert.equal(frozen.conditions[0].wikiRefs, null);
+    assert.deepEqual([frozen.case.taskId, frozen.case.sourceTaskRevisionId, frozen.case.sourceSignature], [taskId, sourceRevision, definition.case.sourceSignature]);
+    assert.deepEqual(frozen.conditions.map(condition => [condition.model, condition.environment]), [["gpt-6-sol", environment], ["gpt-6-sol", environment]]);
+
+    // The form at the other widths: the right drawer stays closed at 1024; nothing overflows at 390.
+    await open(`/p/${projectId}/evaluations?taskId=${ownerTaskId}`);
+    await page.getByText("需要时建立新的冻结评价").click();
+    await page.setViewportSize({ width: 1024, height: 900 });
+    assert.equal(await page.getByRole("dialog").count(), 0, "the right drawer does not open by itself");
+    await shot("evaluation-create-1024");
+    await page.setViewportSize({ width: 390, height: 844 });
+    await create.getByRole("group", { name: "共同任务" }).getByRole("button", { name: /修复首轮回归/ }).click();
+    await form.waitFor();
+    await form.getByRole("group", { name: "固定评价协议" }).getByRole("button", { name: "选择协议文档" }).click();
+    await form.getByRole("group", { name: "固定评价协议" }).getByRole("button", { name: /评价协议 v2/ }).click();
+    await form.getByRole("group", { name: "固定评价协议" }).getByRole("button", { name: /当前版本/ }).waitFor();
+    assert.equal(await page.evaluate(noOverflow), true, "no horizontal overflow at 390px");
+    await shot("evaluation-create-390");
     assert.deepEqual(errors, []);
   });
