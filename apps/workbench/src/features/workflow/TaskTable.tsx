@@ -20,6 +20,7 @@ import { PhaseCounts, ReconciliationDetails, useAgentNames } from "./TaskReconci
 import { emptyListText, TaskListNotices } from "./TaskRail";
 import { assignmentSessionKey, assignmentStatusLabel, isClosedTask, matchingProjection, type TaskListView } from "./taskExperience";
 import { legacyDecisionLabel, taskNextStep } from "./taskListPresentation";
+import { tableOrigin } from "./taskOrigin";
 import { formatScheduled, nextTimingLabel, repeatLabel } from "./taskTimingPresentation";
 import { latestProgressPresentation, taskType } from "./taskWorkspacePresentation";
 import type { TaskListRead } from "./useTaskList";
@@ -54,9 +55,9 @@ async function readAttention(projectId: string) {
   return { items, complete: !cursor };
 }
 
-export function TaskTable({ projectId, list, view, selectedId, onSelect, linkFor, stacked = false }: {
+export function TaskTable({ projectId, list, view, selectedId, onSelect, linkFor, stacked = false, actorId }: {
   projectId: string; list: TaskListRead; view: TaskListView; selectedId: string | null; onSelect(taskId: string): void;
-  linkFor(taskId: string, tab?: string): string; stacked?: boolean;
+  linkFor(taskId: string, tab?: string): string; stacked?: boolean; actorId?: string;
 }) {
   const [chosenColumns, setColumns] = React.useState(readColumns);
   // The compact list has one column; the added columns come back with the table.
@@ -127,7 +128,7 @@ export function TaskTable({ projectId, list, view, selectedId, onSelect, linkFor
             {group.label} · {group.tasks.length} 项已载入{group.note && <span className="ml-2 font-normal">{group.note}</span>}</th></tr>}
           {group.tasks.map(task => <TableRow key={task.id} task={task} list={list} projectId={projectId}
             selected={task.id === selectedId} onSelect={onSelect} linkFor={linkFor} columns={columns} owner={ownerNames[task.owner]}
-            agents={agents} attention={attention.data?.items ?? []} timing={timings[rows.indexOf(task)]} stacked={stacked} />)}
+            agents={agents} attention={attention.data?.items ?? []} timing={timings[rows.indexOf(task)]} stacked={stacked} actorId={actorId} />)}
         </tbody>)}
       </table>
     </div>}
@@ -138,12 +139,13 @@ export function TaskTable({ projectId, list, view, selectedId, onSelect, linkFor
       {list.hasMore && <Button size="compact" disabled={list.loadingMore || list.searching} onClick={() => void list.loadMore()}>{list.loadingMore || list.searching ? "加载中…" : "加载更多"}</Button>}
     </div>}
     <ReconciliationDetails projectId={projectId} page={list.index.first ? { ...list.index.first, items: Object.values(list.index.items) } : null}
-      statuses={list.statuses} roleNames={roleNames} error={list.index.error} />
+      statuses={list.statuses} roleNames={roleNames} error={list.index.error} actorId={actorId} />
   </div>;
 }
 
-function TableRow({ task, list, projectId, selected, onSelect, linkFor, columns, owner, agents, attention, timing, stacked }: {
+function TableRow({ task, list, projectId, selected, onSelect, linkFor, columns, owner, agents, attention, timing, stacked, actorId }: {
   task: Task; list: TaskListRead; projectId: string; selected: boolean; onSelect(id: string): void; linkFor(taskId: string, tab?: string): string;
+  actorId?: string | undefined;
   columns: Record<OptionalColumn, boolean>; owner: { title?: string; error?: string; pending?: boolean } | undefined;
   agents: Record<string, { name: string | null; problem: string | null }>; attention: TaskAttentionItem[];
   timing: { data?: Awaited<ReturnType<ReturnType<typeof api>["taskTiming"]>>; error: unknown } | undefined; stacked: boolean;
@@ -165,7 +167,7 @@ function TableRow({ task, list, projectId, selected, onSelect, linkFor, columns,
   const cell = "px-2 py-2.5 align-top";
   const kind = taskType(projection?.taskKind ?? task.kind);
   const taskStateNote = (cognition || projection && !closed && rowStatus(task.state, projection.phase).label !== taskStateStatus[task.state].label) ? `任务${taskStateStatus[task.state].label}` : null;
-  const agent = key ? <a className="text-primary hover:underline" href={sessionHref(projectId, key)}>{agents[key]?.name ?? (agents[key]?.problem ? "未登记名称的智能体" : "正在读取名称…")}</a> : null;
+  const agent = key ? <a className="text-primary hover:underline" href={sessionHref(projectId, key, actorId ? tableOrigin(projectId, actorId, undefined, { id: task.id, title }) : null)}>{agents[key]?.name ?? (agents[key]?.problem ? "未登记名称的智能体" : "正在读取名称…")}</a> : null;
   const unassigned = !projection ? "承接尚未读回" : closed ? "无当前分派" : "待具体承接";
   const notes = <div className="mt-0.5 flex flex-col gap-0.5 text-caption text-muted-foreground">
     {pending && <span className="text-warning">依据待复核</span>}

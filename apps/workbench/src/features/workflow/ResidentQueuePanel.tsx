@@ -13,6 +13,8 @@ import { ApiError, request } from "../../shared/api";
 import type { MutationContext } from "../../shared/ActionForm";
 import { queryKeys, useProjectQuery } from "../../shared/query";
 import { queueClient } from "../../shared/queueClient";
+import { hereOrigin, withReturn } from "../../shared/returnLink";
+import { taskOrigin } from "./taskOrigin";
 import { FullIdentifiers } from "../../shared/ui/FullIdentifiers";
 import { date, href } from "../../shared/ui/shared";
 import { CommandForm } from "../../shared/command";
@@ -186,7 +188,7 @@ function QueueCard({ context, queue, task, sessionId, runs, sessions, round }: {
 function AgentQueue({ context, queue, agentId, entries, session, runs, attempts, attemptsRead, task, taskTitle, roleTitle, canWrite }: {
   context: MutationContext; queue: ResidentQueue; agentId: string; entries: ResidentQueueEntry[]; session?: RuntimeSessionRecord | undefined;
   runs: RuntimeRunRecord[]; attempts: Map<string, import("@evoloop/contracts/queues").QueueAttempt[]>; attemptsRead: boolean;
-  task?: Pick<Task, "id"> | undefined; taskTitle(id: string): string; roleTitle(id: string): string; canWrite: boolean;
+  task?: Pick<Task, "id" | "title"> | undefined; taskTitle(id: string): string; roleTitle(id: string): string; canWrite: boolean;
 }) {
   const projectId = context.projectId;
   const agentKey = `owned:${agentId}`;
@@ -197,7 +199,7 @@ function AgentQueue({ context, queue, agentId, entries, session, runs, attempts,
   let priorReleased = true;
   return <div className="flex min-w-0 flex-col gap-2" data-queue-agent={agentId}>
     <h4 className="flex flex-wrap items-center gap-2 text-label font-semibold text-foreground">
-      <a className="text-primary hover:underline" href={`${href(projectId, "sessions")}?session=${key(agentKey)}`}>{name}</a>
+      <a className="text-primary hover:underline" href={withReturn(`${href(projectId, "sessions")}?session=${key(agentKey)}`, task ? taskOrigin(projectId, task, context.principal.actorId) : hereOrigin(context.principal.actorId))}>{name}</a>
       <span className="text-caption font-normal text-muted-foreground">{session ? agentState[session.state] ?? "状态待核对" : "状态未在这里读到"}</span>
     </h4>
     <p className="text-label text-text-secondary">当前占用：{current ? taskTitle(current.taskId) : "没有已确认的占用"}；后续顺位：{next ? `${taskTitle(next.taskId)}（不代表可以启动）` : "没有"}</p>

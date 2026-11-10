@@ -4,13 +4,14 @@
 import type { RuntimeRunRecord } from "@evoloop/contracts/runtime";
 import { api, request } from "../../shared/api";
 import { useProjectQuery } from "../../shared/query";
-import { href } from "../../shared/routes";
+import { withReturn, type ReturnFrom } from "../../shared/returnLink";
 import { taskSectionHref } from "../../shared/taskNavigation";
+import { taskLinkFrom } from "./taskLinks";
 import { type DocumentOrigin as Origin, verifiedOriginRun, verifiedOriginTask } from "./originValidation";
 import { runStateLabel } from "./documentPresentation";
 import { readProblem } from "./useDocumentList";
 
-export function DocumentOrigin({ projectId, documentId, origin }: { projectId: string; documentId: string; origin: Origin }) {
+export function DocumentOrigin({ projectId, documentId, origin, from }: { projectId: string; documentId: string; origin: Origin; from?: ReturnFrom | null }) {
   const task = useProjectQuery(projectId, ["document", documentId, "origin-task", origin.taskId, origin.taskRevisionId], async () => {
     const value = await api().taskRevision(projectId, origin.taskId, origin.taskRevisionId);
     const verified = verifiedOriginTask(projectId, origin, value.revision);
@@ -27,7 +28,7 @@ export function DocumentOrigin({ projectId, documentId, origin }: { projectId: s
   const staleRun = !!runData && (run.isFetching || run.isError);
   return <div className="flex flex-col gap-2 text-label text-text-secondary">
     <p>创建这份文档时登记的来源。来源记录不代表问题已修复、交付已验收或有人用过。</p>
-    <a href={href(projectId, "task", origin.taskId, origin.taskRevisionId)} className="font-medium text-primary [overflow-wrap:anywhere] hover:underline">
+    <a href={taskLinkFrom(projectId, origin.taskId, from, origin.taskRevisionId)} className="font-medium text-primary [overflow-wrap:anywhere] hover:underline">
       {task.data ? `${task.data.title} · 第 ${task.data.version} 版` : "来源任务的固定版本"} →</a>
     {task.isPending && <p className="text-caption text-muted-foreground">正在核对来源任务…</p>}
     {task.isError && <p className="text-caption text-warning">来源任务名称暂不能核实：{readProblem(task.error, "来源任务")}。链接仍指向登记的固定版本，不用任务当前版代替。</p>}
@@ -42,7 +43,7 @@ export function DocumentOrigin({ projectId, documentId, origin }: { projectId: s
         <p className="[overflow-wrap:anywhere]">运行 ID <code className="font-mono">{runData.id}</code></p>
         <p className="[overflow-wrap:anywhere]">执行的任务版本 <code className="font-mono">{runData.taskRevisionId}</code></p>
         <p className="[overflow-wrap:anywhere]">输入 SHA-256 <code className="font-mono">{runData.inputHash}</code></p>
-        <a className="text-primary hover:underline" href={`${taskSectionHref(projectId, origin.taskId, { tab: "runtime" })}&run=${encodeURIComponent(runData.id)}`}>在所属任务核对这次运行 →</a>
+        <a className="text-primary hover:underline" href={withReturn(`${taskSectionHref(projectId, origin.taskId, { tab: "runtime" })}&run=${encodeURIComponent(runData.id)}`, from)}>在所属任务核对这次运行 →</a>
       </div>}
     </details>}
     {origin.runId && runData && <p className="text-caption text-muted-foreground">

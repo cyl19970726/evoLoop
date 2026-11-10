@@ -7,7 +7,9 @@ import {
   Badge, Button, ErrorState, LoadingState, Notice, RefreshingIndicator, StatusTag, Tabs, TabsContent, TabsList, TabsTrigger, cn,
 } from "@evoloop/ui";
 import { errorDetail, errorText } from "../../shared/api";
+import { returnPlaceOf } from "../../shared/returnLink";
 import { useContextPanel } from "../../shared/ui/ContextPanel";
+import { ReturnLink } from "../../shared/ui/ReturnLink";
 import { MarkdownBody } from "../../shared/ui/MarkdownBody";
 import { readingProse, readingSource } from "../../shared/ui/readingProse";
 import type { KnowledgeReading } from "./knowledgeRead";
@@ -35,11 +37,12 @@ export function KnowledgeReader({ projectId, read, fixed, returnHref, pendingTit
     const active = document.activeElement;
     if (!active || active === document.body) heading.current?.focus({ preventScroll: true });
   }, [shownKey]);
+  // The page it was opened from, named (返回任务：<名称>, 返回文档列表 …; shared/returnLink.ts).
+  const source = returnHref ? returnPlaceOf(returnHref, projectId) : null;
   const back = <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-    {returnHref && <a href={returnHref} className="inline-flex items-center gap-1 text-label font-medium text-primary hover:underline">
-      <ArrowLeft size={15} aria-hidden="true" />返回来源</a>}
-    <a href={knowledgeHref(projectId)} className={cn("text-label", returnHref ? "text-muted-foreground hover:text-foreground" : "inline-flex items-center gap-1 font-medium text-primary hover:underline")}>
-      {!returnHref && <ArrowLeft size={15} aria-hidden="true" />}全部知识</a>
+    {returnHref && source && <ReturnLink projectId={projectId} href={returnHref} place={source} />}
+    <a href={knowledgeHref(projectId)} className={cn("text-label", source ? "text-muted-foreground hover:text-foreground" : "inline-flex items-center gap-1 font-medium text-primary hover:underline")}>
+      {!source && <ArrowLeft size={15} aria-hidden="true" />}全部知识</a>
   </div>;
   if (!reading) return <div className="flex flex-col gap-4">
     {back}

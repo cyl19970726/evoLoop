@@ -3,7 +3,14 @@
 // the overview). Read states decide what the page may conclude: a read that is still running or failed never becomes
 // "free", "no conflict" or a count of 0, and a failed reread that keeps the previous answer on screen says so.
 import type { ObservedTask } from "@evoloop/contracts/session-observation";
+import type { LeaderWorkTask } from "@evoloop/contracts/work-index";
+import { leaderPhaseLabel } from "../../shared/leaderWorkLoad";
 import type { FreeCapacity } from "./arrangementModel";
+
+/** A task's phase on the board. An assignment that would stop the next dispatch (`Arrangement.stale`) is not “待接手”. */
+export function boardPhaseText(task: Pick<LeaderWorkTask, "phase">, stale?: "assigned" | "accepted" | null): string {
+  return stale ? `${stale === "accepted" ? "接手" : "分派"}属于旧修订 · 要重新指定` : leaderPhaseLabel[task.phase];
+}
 
 const directoryRelations: Record<ObservedTask["relation"], string> = {
   accepted: "已接手",

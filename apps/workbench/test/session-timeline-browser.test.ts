@@ -400,7 +400,7 @@ test("dual-source history keeps the reader anchor, exhausts cursors, merges live
   await sourceTaskLink.click();
   await page.getByRole("heading", { name: taskTitle }).waitFor();
   await assertDefaultShell();
-  const taskBack = page.getByRole("link", { name: /返回【时间线分页会话】/ });
+  const taskBack = page.getByRole("link", { name: /返回智能体：时间线分页会话/ });
   assert.equal(await taskBack.count(), 1,
     `Task route should retain its exact Session return; route=${page.url()}, errors=${pageErrors.join(" | ")}, page=${(await page.locator("body").innerText()).slice(0, 500)}`);
   await taskBack.click();

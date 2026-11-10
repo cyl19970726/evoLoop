@@ -10,6 +10,7 @@ import { errorText, request } from "../../shared/api";
 import { ActionForm, type MutationContext } from "../../shared/ActionForm";
 import { externalHostOpenHref, externalHostOpenReason } from "../../shared/externalHostEntry";
 import { useProjectQuery } from "../../shared/query";
+import { hereOrigin, withReturn } from "../../shared/returnLink";
 import { href } from "../../shared/ui/shared";
 import { FullIdentifiers } from "../../shared/ui/FullIdentifiers";
 import { SessionName } from "../../shared/ui/RecordName";
@@ -66,7 +67,7 @@ export function RolePresence({ context, role }: { context: MutationContext; role
       {hosts.map(host => <li key={host.id} className="flex min-w-0 flex-col gap-1.5 border-t border-border px-4 py-3 first:border-t-0">
         <strong className="text-small font-semibold text-foreground">{hostTitle(host)}</strong>
         {host.host.kind === "owned"
-          ? <OwnedHost projectId={projectId} sessionId={host.host.sessionId} current={current} />
+          ? <OwnedHost projectId={projectId} sessionId={host.host.sessionId} current={current} actorId={context.principal.actorId} />
           : <ExternalHost key={`${host.id}:${host.version}:${host.host.ref}`} host={host} roleState={role.state} current={current} />}
         <p className="text-small text-text-secondary">声称能力：{capabilitiesText(host.claimedCapabilities) || "未声明"}</p>
         <p className="text-small text-text-secondary">已核能力：{host.state === "verified" ? capabilitiesText(host.verifiedCapabilities) || "无" : "未核实"}</p>
@@ -98,12 +99,12 @@ export function RolePresence({ context, role }: { context: MutationContext; role
   </PageSection>;
 }
 
-function OwnedHost({ projectId, sessionId, current }: { projectId: string; sessionId: string; current: boolean }) {
+function OwnedHost({ projectId, sessionId, current, actorId }: { projectId: string; sessionId: string; current: boolean; actorId: string }) {
   return <>
     <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-small">
       {current ? <>
         <a className="text-primary hover:underline" href={`${href(projectId, "runtime")}?session=${key(sessionId)}`}>查看运行与队列</a>
-        <a className="text-primary hover:underline" href={`${href(projectId, "sessions")}?session=${key(`owned:${sessionId}`)}`}>在智能体空间打开</a>
+        <a className="text-primary hover:underline" href={withReturn(`${href(projectId, "sessions")}?session=${key(`owned:${sessionId}`)}`, hereOrigin(actorId))}>在智能体空间打开</a>
       </> : <span className={mutedText}>上次读回，暂不可作为当前入口</span>}
       <span className={mutedText}><SessionName projectId={projectId} sessionKey={`owned:${sessionId}`} /></span>
     </p>

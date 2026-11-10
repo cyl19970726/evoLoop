@@ -167,7 +167,7 @@ test("reconciliation overview hides empty review counts and maps cognition histo
     assert.doesNotMatch(text, /Cognition:|Role cognition|25deb2bf|Role cognition fallback|Session|Leader/);
     assert.match(text, /待交付/);
     // The agent stays reachable by its exact key even though raw IDs are not printed.
-    assert.equal(await agentLink.getAttribute("href"), `/p/${projectId}/sessions?session=${encodeURIComponent(ownedSessionKey)}`);
+    assert.equal((await agentLink.getAttribute("href"))?.split("&return=")[0], `/p/${projectId}/sessions?session=${encodeURIComponent(ownedSessionKey)}`);
     await page.waitForFunction(async () =>
       (await (await fetch("/__fixture/work-status-calls")).json() as string[][]).some(ids => ids.includes(
         "31000006-0000-4000-8000-000000000006")));

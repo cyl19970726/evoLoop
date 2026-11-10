@@ -13,6 +13,7 @@ import { runtimeClient } from "../../shared/runtimeClient";
 import { FactList, PageSection, mutedText } from "../../shared/ui/PageParts";
 import { SectionBoundary } from "../../shared/ui/SectionBoundary";
 import { href } from "../../shared/ui/shared";
+import { hereOrigin } from "../../shared/returnLink";
 import { ResidentQueuePanel } from "../workflow";
 import { recoveryActivationLabel, sessionHref } from "../sessions";
 import { closeBlockers, messageKindText, needsFullAccessUpgrade, permissionsText, profileText, sessionStateText, sessionStateTone, turnStatusText } from "./executionPresentation";
@@ -50,7 +51,7 @@ export function ManagedSessionDetail({ context, session, name, runs, runsRead, s
       <div className="flex flex-wrap items-center gap-2">
         <StatusTag tone={sessionStateTone(session.state)} label={sessionStateText[session.state]} />
         <span className={mutedText}>登记版本 {session.version}</span>
-        <a href={sessionHref(projectId, `owned:${session.id}`)} className="text-small text-primary hover:underline">在智能体空间打开对话与活动</a>
+        <a href={sessionHref(projectId, `owned:${session.id}`, hereOrigin(context.principal.actorId))} className="text-small text-primary hover:underline">在智能体空间打开对话与活动</a>
         <Button size="compact" variant="ghost" onClick={onReread}><RefreshCw aria-hidden="true" />读取运行状态</Button>
       </div>
     </header>

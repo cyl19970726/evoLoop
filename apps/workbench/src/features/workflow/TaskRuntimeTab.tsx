@@ -31,6 +31,7 @@ import { runStateName } from "./taskExperience";
 import { assignmentKey } from "./taskFactsPresentation";
 import { ActionRow, Fine, ReadNote, TabSection, readCurrent, reasonField } from "./TaskForms";
 import { ResidentQueuePanel } from "./ResidentQueuePanel";
+import { taskOrigin } from "./taskOrigin";
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const inFlight = ["requested", "dispatching", "running", "unknown"];
@@ -131,7 +132,7 @@ function AssignmentSection({ context, task, read }: { context: MutationContext; 
         <AgentAvatar seed={key!} roleSeed={agent.data?.roles[0]?.id ?? task.owner} size={30} />
         <span className="text-small font-medium text-foreground">{name}</span>
         {state && <StatusTag tone={state.tone} label={state.label} />}
-        <a className="text-label text-primary hover:underline" href={sessionHref(projectId, key!)}>进入对话</a>
+        <a className="text-label text-primary hover:underline" href={sessionHref(projectId, key!, taskOrigin(projectId, task, context.principal.actorId))}>进入对话</a>
       </div>
       <Fine>{assignment.target.kind === "owned" ? "项目内智能体" : "外部接入的智能体"} · 更新于 {date(assignment.updatedAt)} · 分派人 {assignment.actorId}{assignment.recipientActorId ? ` · 指定执行者 ${assignment.recipientActorId}` : ""}</Fine>
       <p className="text-label text-text-secondary [overflow-wrap:anywhere]">分派依据：{assignment.reason}</p>
@@ -205,7 +206,7 @@ function RunsSection({ context, detail, assignment, runs, runsRead, sessionsRead
     {runsRead.isPending && !runsRead.error ? <ReadNote read={runsRead} what="运行记录" />
       : readCurrent(runsRead) && !runs.length && <p className="text-label text-text-secondary">这项任务还没有登记运行。</p>}
     <div className="flex flex-col">{[...runs].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt)).map(run => <RunRecord key={`${run.id}:${run.version}`}
-      context={context} run={run} anchor={`runtime-run-${task.id}-${run.id}`} readOnlyAgent={sessions.some(session => session.id === run.sessionId && session.sandbox === "read-only")} />)}</div>
+      context={context} run={run} taskTitle={run.taskId === task.id ? task.title : null} anchor={`runtime-run-${task.id}-${run.id}`} readOnlyAgent={sessions.some(session => session.id === run.sessionId && session.sandbox === "read-only")} />)}</div>
     <Fine>收到通知、读取材料、采用判断和真实效果分别留证。运行结束不会自动关闭任务。</Fine>
     {task.state === "in_progress" && <div className="flex flex-col gap-2">
       <h3 className="text-small font-semibold text-foreground">安排执行</h3>
@@ -266,7 +267,9 @@ function useRevealRun(taskId: string, projectId: string, runs: RuntimeRunRecord[
   return root;
 }
 
-function RunRecord({ context, run, anchor, readOnlyAgent }: { context: MutationContext; run: RuntimeRunRecord; anchor: string; readOnlyAgent: boolean }) {
+function RunRecord({ context, run, taskTitle, anchor, readOnlyAgent }: {
+  context: MutationContext; run: RuntimeRunRecord; taskTitle: string | null; anchor: string; readOnlyAgent: boolean;
+}) {
   const projectId = context.projectId;
   const permissions = context.principal.permissions;
   const preflight = run.resultSummary ? preflightPresentation(run.resultSummary) : null;
@@ -283,7 +286,7 @@ function RunRecord({ context, run, anchor, readOnlyAgent }: { context: MutationC
     <div className="flex flex-col gap-3 pb-4 pl-1">
       <p className="flex flex-wrap gap-x-4 text-label">
         <a className="text-primary hover:underline" href={taskSectionHref(projectId, run.taskId, { revisionId: run.taskRevisionId })}>执行时的任务修订</a>
-        {run.projectId === projectId && uuid.test(run.sessionId) && <a className="text-primary hover:underline" href={sessionHref(projectId, `owned:${run.sessionId}`)}>查看这次运行的智能体</a>}
+        {run.projectId === projectId && uuid.test(run.sessionId) && <a className="text-primary hover:underline" href={sessionHref(projectId, `owned:${run.sessionId}`, taskOrigin(projectId, { id: run.taskId, title: taskTitle }, context.principal.actorId))}>查看这次运行的智能体</a>}
       </p>
       <Fine>运行的状态不代表任务已验收，也不代表那个智能体现在仍在做这项任务。</Fine>
       {run.state === "unknown" && <Notice tone="error">派发或状态仍然未知，要沿已绑定的线程回查；不会自动再发一次。</Notice>}

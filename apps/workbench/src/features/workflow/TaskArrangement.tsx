@@ -19,6 +19,8 @@ import { CommandForm, CommandFrame, conflictingFields, followLatest, formDirty, 
 import { attentionResolveCommand, followUpCommand, localInput, publicationCommand } from "./taskCommands";
 import { runStateName } from "./taskExperience";
 import { ActionRow, Fact, Fine, ReadNote, readCurrent, reasonField } from "./TaskForms";
+import { withReturn } from "../../shared/returnLink";
+import { taskOrigin } from "./taskOrigin";
 
 type FollowUpKind = NonNullable<TaskAttentionFollowUp["waitingOn"]>["kind"];
 const followUpKinds: FollowUpKind[] = ["session", "consumer", "leader", "publisher", "user", "task", "unknown"];
@@ -214,8 +216,8 @@ function FollowUpForm({ context, detail, value, followUp, onReread }: {
 }
 
 /** 阶段区间、计划与来源: the facts of the current work behind the task's next step. */
-export function TaskArrangementFacts({ projectId, detail, leader, responsibleName }: {
-  projectId: string; detail: TaskDetail; leader: LeaderWorkTask; responsibleName?: string | null;
+export function TaskArrangementFacts({ projectId, detail, leader, responsibleName, actorId }: {
+  projectId: string; detail: TaskDetail; leader: LeaderWorkTask; responsibleName?: string | null; actorId?: string;
 }) {
   const notices = useProjectPages(projectId, ["task", detail.task.id, "leader-notices", detail.task.version], async cursor => {
     const page = await api().leaderNotices(projectId, detail.task.id, cursor);
@@ -274,7 +276,8 @@ export function TaskArrangementFacts({ projectId, detail, leader, responsibleNam
       {notices.data && (noticeItems.length ? <ul className="flex flex-col gap-1.5">{noticeItems.map(item => <li key={item.id} className="flex flex-col gap-0.5">
         <p className="text-label text-foreground">{noticeLabel[item.kind] ?? "通知"} · {date(item.occurredAt)}</p>
         <Fine>{noticeState(item)}{item.stale ? " · 来源属于历史修订" : ""}{item.linkedSessionId ? <> · <a className="text-primary hover:underline"
-          href={`/p/${encodeURIComponent(projectId)}/sessions?session=${encodeURIComponent(`owned:${item.linkedSessionId}`)}`}>查看收到通知的智能体</a></> : null}</Fine>
+          href={withReturn(`/p/${encodeURIComponent(projectId)}/sessions?session=${encodeURIComponent(`owned:${item.linkedSessionId}`)}`,
+            actorId ? taskOrigin(projectId, detail.task, actorId) : null)}>查看收到通知的智能体</a></> : null}</Fine>
         <FullIdentifiers rows={[{ label: "来源", value: item.sourceRef }, { label: "任务修订", value: item.taskRevisionId }, { label: "来源智能体", value: item.sourceSessionId },
           { label: "来源身份", value: item.sourceActorId }, { label: "受阻原因", value: item.blockedReason ?? item.messageBlockedReason, text: true },
           { label: "消息", value: item.messageId }, { label: "操作", value: item.operationId }, { label: "替代通知", value: item.recovery?.replacementNoticeId },

@@ -18,7 +18,7 @@ import { RoleName } from "../../shared/ui/RecordName";
 import { date } from "../../shared/ui/shared";
 import type { WorkTaskStatus } from "../../shared/workStatusPresentation";
 import {
-  decisionHeading, deliveryMeaning, dispatchStateLabel, dispositionLabel, inboxStateLabel, loopName, loopStateLabel, outcomeLabel, purposeLabel,
+  decisionHeading, deliveryMeaning, dispatchStateLabel, emptyLoopsText, dispositionLabel, inboxStateLabel, loopName, loopStateLabel, outcomeLabel, purposeLabel,
   scopeText, scopeTitleOf, sealReasonLabel, sourceTriggerLabel, storyTitle, submissionStateLabel, taskTitleText, type ScopeTitle,
 } from "./presentation";
 import { currentChainSummary, hasTerminalIntentGap, hasUnreadChainPages, inTaskContext, orderDispatches, readableOutcome, storyNextAction } from "./summary";
@@ -94,7 +94,7 @@ export function OrchestrationPanel({ projectId, refresh, taskId, verifiedRuns }:
       const { status, loops } = await client.overview();
       return { status, loops, titles: await scopeTitles(client, loops.items), contexts: { items: [], nextCursor: null }, workStatus: null };
     }
-    const [status, contexts, work] = await Promise.all([client.status(), client.taskContext(taskId), api().workStatuses(projectId, [taskId])]);
+    const [{ status, contexts }, work] = await Promise.all([client.taskOverview(taskId), api().workStatuses(projectId, [taskId])]);
     const related = await Promise.all(contexts.items.map(item => client.loop(item.loopId)));
     return { status, loops: { items: related, nextCursor: null }, titles: await scopeTitles(client, related), contexts,
       workStatus: work.items.find(item => item.taskId === taskId) ?? null };
@@ -157,8 +157,7 @@ export function OrchestrationPanel({ projectId, refresh, taskId, verifiedRuns }:
       next="可以重新读取；读取失败不代表没有循环或后续处理。" action={<Button size="compact" onClick={() => setEpoch(value => value + 1)}>重新读取</Button>} />}
     {problem && data && <Notice tone="error">自动循环读取未完成：{problem}。下面保留上次读回的循环供核对，当前关联未确认。</Notice>}
     {status && <StatusLine status={status} />}
-    {data && !problem && !read.isFetching && loops.length === 0 && <p className="text-label text-text-secondary">{taskId ? "没有读到这项任务关联的自动循环。"
-      : status?.state === "disabled" ? "自动循环未配置或尚未启用，没有可观察的循环。" : "还没有登记自动循环。"}</p>}
+    {data && !problem && !read.isFetching && loops.length === 0 && <p className="text-label text-text-secondary">{emptyLoopsText(!!taskId, status)}</p>}
     {taskId && loops.length > 0 && <p className="rounded-md bg-muted px-3 py-2 text-label text-foreground [overflow-wrap:anywhere]" role="status"
       data-association={read.isFetching ? "checking" : association?.kind ?? "unresolved"} data-association-loop={association && association.kind !== "unresolved" ? association.loopId : undefined}
       data-association-run={association && association.kind !== "unresolved" ? association.runId ?? undefined : undefined}

@@ -1133,6 +1133,43 @@ test("the SQL timing query keeps four reserved Runs through their automatic assi
   assert.equal(value?.timing.latestEffectiveProgress?.sourceId, rounds.at(-1)?.deliveryId);
 });
 
+test("the assignment fact keeps the Task revision it was fixed to after the Task moves to a new revision", async () => {
+  const fixture = await seedProject();
+  const projectId = fixture.project.id, taskId = fixture.prerequisite.head.id, assignedRevision = fixture.prerequisite.revision.id;
+  const sessionId = randomUUID();
+  await uow.transaction(projectId, async tx => {
+    await tx.insertRuntimeSession({ projectId, id: sessionId, roleId: actor,
+      cwd: "/tmp/leader-work", authorizationScope: "project", model: null, sandbox: "danger-full-access",
+      approvalPolicy: "never", state: "ready", version: 1, nativeThreadId: `thread-${sessionId}`,
+      nativeSessionId: `native-${sessionId}`, operationId: randomUUID(), actorId: actor, createdAt: now, updatedAt: now });
+    await tx.sessionAssignments!.saveTaskSessionAssignment({ projectId, taskId, version: 1, taskRevisionId: assignedRevision,
+      target: { kind: "owned", sessionId }, recipientActorId: actor, state: "assigned", ack: null, actorId: actor,
+      reason: "Assign this Task", updatedAt: now }, 0);
+  });
+  const before = await readLeaderWorkTask(pool, projectId, taskId);
+  assert.equal(before?.assignment?.taskRevisionId, assignedRevision);
+  assert.equal(before?.currentRevisionId, assignedRevision);
+
+  // A new Task revision without a new assignment.
+  const nextRevision = randomUUID(), nextBasis = randomUUID();
+  await uow.transaction(projectId, async tx => {
+    const head = (await tx.getTask(taskId))!;
+    const previous = (await tx.getTaskRevision(taskId, head.currentRevisionId))!;
+    await tx.insertTaskRevision({ ...previous, id: nextRevision, version: 2, basisSetId: nextBasis, reason: "revised",
+      createdAt: "2026-10-28T01:00:00.000Z" });
+    await tx.insertSealedBasisSet({ ...fixture.prerequisite.basis, taskRevisionId: nextRevision, id: nextBasis });
+    await tx.updateTask({ ...head, version: 2, currentRevisionId: nextRevision }, 1);
+  });
+  const after = await readLeaderWorkTask(pool, projectId, taskId);
+  assert.equal(after?.currentRevisionId, nextRevision);
+  assert.equal(after?.assignment?.state, "assigned");
+  assert.equal(after?.assignment?.taskRevisionId, assignedRevision, "the assignment's own fixed revision, not the Task's");
+  assert.notEqual(after?.assignment?.taskRevisionId, after?.currentRevisionId);
+  const page = await readLeaderWorkTasks(pool, projectId, { view: "tasks", limit: 50 });
+  assert.equal(page.items.find(item => item.taskId === taskId)?.assignment?.taskRevisionId, assignedRevision,
+    "the paged index carries the same fact");
+});
+
 test("the Leader index can page beyond the former 5000-row ceiling", async () => {
   const projectId = randomUUID(), count = 5_001;
   await pool.query("INSERT INTO project(project_id,title,created_at) VALUES($1,'Large Leader index',$2)",

@@ -198,11 +198,13 @@ test("结果未知的操作, 仓库规范 and 项目设置: back to the object, 
     assert.equal(await row(960).getByRole("link", { name: "打开原对象" }).getAttribute("href"), `/p/${projectId}/documents/${docs.rule.id}?${back}`);
     await row(960).getByRole("link", { name: "打开原对象" }).click();
     await heading(operations, docs.rule.title).waitFor();
-    await operations.getByRole("link", { name: /返回来源/ }).filter({ visible: true }).first().click();
+    await operations.getByRole("link", { name: "返回结果未知的操作", exact: true }).filter({ visible: true }).first().click();
     await heading(operations, "结果未知的操作").waitFor();
     assert.equal(new URL(operations.url()).pathname, `/p/${projectId}/operations`);
     await row(961).getByRole("link", { name: "打开原对象" }).click();
     await heading(operations, tasks.t1.title).waitFor();
+    // The task page reads the same way back (shared/returnLink.ts).
+    await operations.getByRole("link", { name: "返回结果未知的操作", exact: true }).filter({ visible: true }).first().waitFor();
     await operations.goBack();
     await heading(operations, "结果未知的操作").waitFor();
     assert.deepEqual(errors, []);

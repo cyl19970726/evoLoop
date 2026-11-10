@@ -43,6 +43,7 @@ import { nativeInputPresentation } from "./nativeInputPresentation";
 import { nativeObservationPresentation } from "./nativeObservationPresentation";
 import { observedRunTaskLink } from "./taskRunLink";
 import { sessionTaskReturn, sourceParams } from "./sessionReturn";
+import { ReturnLink } from "../../shared/ui/ReturnLink";
 import { SessionTimeline, clearSessionTimelineViews } from "./SessionTimeline";
 import { SourceLimitations } from "./SourceLimitations";
 import { clearSessionTimelineReads } from "./useSessionTimeline";
@@ -469,7 +470,7 @@ export function SessionWorkspace({ context, sessionKey, active, refresh, queue }
   const headerButton = (label: string, icon: ReactNode, onClick: () => void, extra: Record<string, unknown> = {}) =>
     <Button variant="ghost" size="compact" aria-label={label} title={label} onClick={onClick} {...extra}>{icon}<span className="max-compact:sr-only">{label}</span></Button>;
   return <div ref={workspaceRef} data-ui="" className="session-workspace mx-auto flex h-[calc(100dvh-var(--session-top,0px)-0.5rem)] min-h-[420px] w-full min-w-0 max-w-[1480px] flex-col px-3 pt-3 max-compact:h-[calc(100dvh-var(--session-top,48px)-5rem)] max-compact:min-h-[360px] compact:px-6 compact:pt-4" data-view={panelTab}>
-    {source && <a className="mb-1 w-fit text-label text-primary hover:underline" href={source.href}>← 返回【{source.title}】</a>}
+    {source && <ReturnLink projectId={projectId} href={source.href} place={source.place} label={source.label} className="mb-1 w-fit" />}
     {/* While the right column is closed its toggle sits at the top right of this area: the header leaves room for it. */}
     <header className={cn("session-detail-header mb-2 flex min-h-11 min-w-0 shrink-0 items-center gap-2", panel && !panel.open && "compact:pr-11")}>
       <div className="session-detail-heading flex min-w-0 flex-1 items-center gap-2 compact:justify-center">

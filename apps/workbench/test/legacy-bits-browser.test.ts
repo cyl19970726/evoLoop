@@ -147,7 +147,7 @@ test("rebuilt legacy parts read, write and fail as the record allows, at three w
   await thread.getByText(/接口说明放哪里 · 1 个问题待答 · 第 4 版/).click();
   await thread.getByText("提问 · 致 lead · 待答复").waitFor();
   await thread.getByText("工程动作请求 · 推送分支 · 已批准，未见执行回执").waitFor();
-  assert.equal(await thread.getByRole("link", { name: "文档助手" }).getAttribute("href"), `/p/${projectId}/sessions?session=${encodeURIComponent(`owned:${sessionId}`)}`);
+  assert.equal((await thread.getByRole("link", { name: "文档助手" }).getAttribute("href"))?.split("&return=")[0], `/p/${projectId}/sessions?session=${encodeURIComponent(`owned:${sessionId}`)}`);
   assert.doesNotMatch(await thread.innerText(), /29000\d{3}|Run |Session|git\.push/, "no identifiers or internal words in the reading text");
   await shoot("task-collaboration");
   await fetch(`${base}/__fixture/fail?what=discussions`);

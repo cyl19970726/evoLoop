@@ -4,8 +4,9 @@ import type { ObservedRole, ObservedSession } from "@evoloop/contracts/session-o
 import type { LeaderWorkTask } from "@evoloop/contracts/work-index";
 import type { ResidentQueue } from "@evoloop/contracts/queues";
 import {
-  buildArrangement, freeAgents, freeCapacity, dueSoonMs, type ArrangementEvidence,
+  buildArrangement, freeAgents, freeCapacity, dueSoonMs, staleAssignment, type ArrangementEvidence,
 } from "../src/features/sessions/arrangementModel.ts";
+import { boardPhaseText } from "../src/features/sessions/arrangementPresentation.ts";
 
 const stamp = "2026-11-09T00:00:00.000Z";
 const now = Date.parse(stamp);
@@ -172,4 +173,69 @@ test("an assignee missing from a directory read up to its limit is 未读到, no
     .elsewhere.map(group => group.label), ["受管智能体 · 未读到", "外部接入 · 未读到"]);
   assert.deepEqual(buildArrangement([agent(1, false)], tasks, [], now, complete)
     .elsewhere.map(group => group.label), ["受管智能体 · 不在当前目录", "外部接入 · 不在当前目录"]);
+});
+
+test("an assignment the server would refuse next is a risk to reassign; the normal flow's new revisions are not", () => {
+  const old = id(900);
+  const fixedTo = (state: "assigned" | "accepted" | "released", revision?: string, targetKind: "owned" | "external" = "owned") =>
+    ({ state, targetKind, targetId: id(1), recipientActorId: null, ...(revision ? { taskRevisionId: revision } : {}) });
+  const read = { read: true, claimed: false };
+  // Next step is a dispatch, and the server would answer ASSIGNMENT_STALE.
+  const waiting = task(1, { phase: "awaiting_assignment", assignment: fixedTo("assigned", old) });
+  const ready = task(2, { phase: "ready", assignment: fixedTo("accepted", old) });
+  const rework = task(3, { phase: "rework", assignment: fixedTo("accepted", old) });
+  // The normal flow: delivery.record made a revision; a run was dispatched after acceptance; both leave the assignment behind.
+  const delivered = task(4, { phase: "awaiting_acceptance", assignment: fixedTo("accepted", old) });
+  const running = task(5, { phase: "running", assignment: fixedTo("accepted", old) });
+  const awaitingDelivery = task(6, { phase: "awaiting_delivery", assignment: fixedTo("accepted", old) });
+  // Not provable or not the server's rule.
+  const current = task(7, { phase: "awaiting_assignment", assignment: fixedTo("assigned", id(107)) });
+  const unknown = task(8, { phase: "awaiting_assignment", assignment: fixedTo("assigned") });
+  const released = task(9, { phase: "unassigned", assignment: fixedTo("released", old) });
+  const external = task(10, { phase: "ready", assignment: fixedTo("accepted", old, "external") });
+  assert.equal(staleAssignment(waiting, read), "assigned");
+  assert.equal(staleAssignment(ready, read), "accepted");
+  assert.equal(staleAssignment(rework, read), "accepted", "返工: the next dispatch would be refused");
+  assert.equal(staleAssignment(delivered, read), null, "a delivery makes a new revision; waiting for acceptance is not stale");
+  assert.equal(staleAssignment(running, read), null, "accepted, then dispatched: the run carries on");
+  assert.equal(staleAssignment(awaitingDelivery, read), null);
+  assert.equal(staleAssignment(current, read), null);
+  assert.equal(staleAssignment(unknown, read), null, "a server that does not say the revision proves nothing");
+  assert.equal(staleAssignment(released, read), null, "a released assignment is not waiting for anyone");
+  assert.equal(staleAssignment(external, read), null, "an accepted external assignment: evoLoop never dispatches it and nothing refuses it");
+
+  // 已分派 follows the acknowledgement rule (BASELINE_CHANGED), owned or external, in any phase.
+  const externalAssigned = task(11, { phase: "awaiting_assignment", assignment: fixedTo("assigned", old, "external") });
+  const ownedAssignedRunning = task(12, { phase: "running", assignment: fixedTo("assigned", old) });
+  assert.equal(staleAssignment(externalAssigned, read), "assigned", "an external agent can no longer take it on");
+  assert.equal(staleAssignment(externalAssigned, { read: false, claimed: false }), "assigned", "queues play no part for an external target");
+  assert.equal(staleAssignment(task(13, { phase: "ready", assignment: fixedTo("assigned", id(113), "external") }), read), null, "same revision");
+  assert.equal(staleAssignment(ownedAssignedRunning, read), "assigned", "an observed acceptance is refused once the revision moved");
+  assert.equal(staleAssignment(ownedAssignedRunning, { read: true, claimed: true }), null,
+    "a queue claim's run may be acknowledged by its owned recipient (the server's one exception)");
+  assert.equal(staleAssignment(ownedAssignedRunning, { read: false, claimed: false }), null, "unread queues: that exception cannot be ruled out");
+  assert.equal(staleAssignment(ready, { read: true, claimed: true }), null, "a dispatch from a queue claim keeps its own frozen input");
+  assert.equal(staleAssignment(ready, { read: false, claimed: false }), null, "unread queues: a claim cannot be ruled out");
+
+  const tasks = [waiting, ready, rework, delivered, running, awaitingDelivery, current, unknown, released];
+  const board = buildArrangement([agent(1, false)], tasks, [], now, complete);
+  assert.deepEqual(board.risks.map(risk => [risk.kind, risk.title]), [
+    ["stale_assignment", "「任务1」的分派属于旧修订，要重新指定"],
+    ["stale_assignment", "「任务2」的接手属于旧修订，要重新指定"],
+    ["stale_assignment", "「任务3」的接手属于旧修订，要重新指定"],
+  ]);
+  assert.deepEqual([...board.stale.keys()], [waiting.taskId, ready.taskId, rework.taskId]);
+  assert.ok(board.rows[0]!.assigned.some(item => item.title === "任务1"), "the stale work stays on the agent's row");
+  assert.deepEqual(buildArrangement([agent(1, false)], tasks, [queue([{ session: 1, task: 2, position: 1, state: "claimed" }])], now, complete)
+    .risks.map(risk => risk.taskIds[0]), [waiting.taskId, rework.taskId], "a claimed queue entry dispatches without the stale check");
+  assert.deepEqual(buildArrangement([agent(1, false)], tasks, [], now, { ...complete, queuesRead: false }).risks
+    .filter(risk => risk.kind === "stale_assignment"), [], "without the queues nothing owned is concluded");
+  const withExternal = buildArrangement([agent(1, false)], [...tasks, externalAssigned], [], now, { ...complete, queuesRead: false });
+  assert.deepEqual(withExternal.risks.filter(risk => risk.kind === "stale_assignment").map(risk => [risk.title, risk.detail]),
+    [["「任务11」的分派属于旧修订，要重新指定", "任务修订已变化，按原来的分派确认接手会被拒绝"]]);
+  assert.equal(boardPhaseText(externalAssigned, withExternal.stale.get(externalAssigned.taskId)), "分派属于旧修订 · 要重新指定");
+  assert.equal(boardPhaseText(waiting, board.stale.get(waiting.taskId)), "分派属于旧修订 · 要重新指定");
+  assert.equal(boardPhaseText(ready, board.stale.get(ready.taskId)), "接手属于旧修订 · 要重新指定");
+  assert.equal(boardPhaseText(delivered, board.stale.get(delivered.taskId)), "待验收");
+  assert.equal(boardPhaseText(current, board.stale.get(current.taskId)), "待接手");
 });

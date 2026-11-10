@@ -251,7 +251,7 @@ test("focus returns to the row opened from the table or the inner rail, and its 
   const { page, errors } = await open(`/p/${projectId}/documents`);
   const table = page.getByRole("table");
   await table.getByRole("link", { name: "内联方案" }).waitFor();
-  const back = () => page.locator(".document-reading-backlinks").getByRole("link", { name: /返回来源/ }).click();
+  const back = () => page.locator(".document-reading-backlinks").getByRole("link", { name: /^返回/ }).click();
   await table.getByRole("link", { name: "内联方案" }).click();
   await page.getByRole("heading", { name: "内联方案", level: 1 }).waitFor();
   await back();
