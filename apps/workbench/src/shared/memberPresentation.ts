@@ -78,7 +78,7 @@ export function memberChoices(view: ProjectMembersView, need: MemberNeed, kind: 
     const member = view.items.find(item => item.actorId === value);
     const why = !member ? "不在本项目的成员清单里" : kind && member.identityKind !== kind ? `是${kindText(member.identityKind)}，这里要${kindText(kind)}`
       : memberCan(member, need) === null ? `能否${needText[need]}无法判断` : `不能${needText[need]}`;
-    options.unshift({ value, label: `${value}（当前登记；${why}）`, disabled: false });
+    options.unshift({ value, label: `${value}（当前所填；${why}）`, disabled: false });
   }
   const reasons = [left.cannot ? `${left.cannot} 位不能${needText[need]}` : "", left.kind ? `${left.kind} 位不是${kindText(kind ?? "")}` : ""].filter(Boolean);
   const notice: MemberChoices["notice"] = view.identityFile === "changed"

@@ -133,7 +133,7 @@ test("验收身份 by member name: only members who can write, of the right kind
     await create.getByText("按完整标识填写").click();
     await create.getByLabel("完整标识").fill("li-observer");
     assert.equal(await user.inputValue(), "li-observer");
-    assert.equal(await user.locator("option:checked").innerText(), "li-observer（当前登记；不能写入）");
+    assert.equal(await user.locator("option:checked").innerText(), "li-observer（当前所填；不能写入）");
     await user.selectOption("zhang-reviewer");
     assert.equal(await create.getByLabel("完整标识").inputValue(), "zhang-reviewer");
     await shoot(create, "members-task-new");

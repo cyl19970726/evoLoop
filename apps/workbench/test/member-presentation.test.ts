@@ -41,10 +41,10 @@ test("a place that needs review offers only members who can review", () => {
 
 test("the value already registered stays offered as it is, said for what it is", () => {
   const kept = (value: string, kind: "human" | "agent" | null = "human") => memberChoices(view(team), "write", kind, value).options[0]!;
-  assert.deepEqual(kept("li-reader"), { value: "li-reader", label: "li-reader（当前登记；不能写入）", disabled: false });
-  assert.equal(kept("someone-else").label, "someone-else（当前登记；不在本项目的成员清单里）");
-  assert.equal(kept("verify-agent").label, "verify-agent（当前登记；是智能体，这里要人）");
-  assert.equal(kept("wang-unsure").label, "wang-unsure（当前登记；能否写入无法判断）");
+  assert.deepEqual(kept("li-reader"), { value: "li-reader", label: "li-reader（当前所填；不能写入）", disabled: false });
+  assert.equal(kept("someone-else").label, "someone-else（当前所填；不在本项目的成员清单里）");
+  assert.equal(kept("verify-agent").label, "verify-agent（当前所填；是智能体，这里要人）");
+  assert.equal(kept("wang-unsure").label, "wang-unsure（当前所填；能否写入无法判断）");
   assert.equal(memberChoices(view(team), "write", "human", "zhang-reviewer").options.filter(option => option.value === "zhang-reviewer").length, 1,
     "an offered member is not listed twice");
 });
