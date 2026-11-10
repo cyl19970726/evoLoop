@@ -6,6 +6,7 @@ import { api, errorText } from "../../shared/api";
 import type { MutationContext } from "../../shared/ActionForm";
 import { useProjectQuery } from "../../shared/query";
 import { date, href } from "../../shared/ui/shared";
+import { FullIdentifiers } from "../../shared/ui/FullIdentifiers";
 import { Facts, LinkList, SettingsPage, SettingsSection } from "../../shared/ui/SettingsParts";
 import { operationsTitle } from "./operationsPresentation";
 import { identityChanges, identityLabel, identityReadText, permissionLabel } from "./settingsPresentation";
@@ -38,8 +39,8 @@ export function ProjectSettings({ context }: { context: MutationContext; refresh
         ["名称", <strong key="t" className="font-semibold">{current?.title ?? (project.isFetching ? "正在核对项目…" : "项目尚未读回")}</strong>],
         ["建立于", current ? date(current.createdAt) : "待读回"],
         ["最后读取", current ? `${observed}${error ? " · 旧数据" : project.isFetching ? " · 正在重新核对" : ""}` : "待读回"],
-        ["项目标识", <code key="i" className="break-all font-mono text-caption">{projectId}</code>],
       ]} />
+      <FullIdentifiers summary="完整标识" rows={[{ label: "项目", value: projectId }]} />
     </SettingsSection>
     <SettingsSection id="settings-access" title="当前登录身份">
       {identityError && <Notice tone="waiting" title="上次读回，当前待核对">身份与权限本次重新读取失败：{identityError}。

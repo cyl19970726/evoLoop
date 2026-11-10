@@ -190,6 +190,7 @@ export function DiscussionDetail({ context, record, events, choices, choicesLoad
         <li>派出者 {record.collaboration.issuerActorId} · 执行者 {record.collaboration.recipientActorId}</li>
       </>}
       {record.latestDecisionEventId && <li>当前决定事件 <code className={code}>{record.latestDecisionEventId}</code></li>}
+      {record.targetSessionRef && <li>拟交接对象的引用 <code className={code}>{record.targetSessionRef}</code></li>}
     </ul>
   </RailBlock>;
 
@@ -218,7 +219,7 @@ export function DiscussionDetail({ context, record, events, choices, choicesLoad
         <Fact label="拟交接的智能体">{record.targetSessionLabel}
           {record.targetSessionRef && (safeArtifactHref(record.targetSessionRef, projectId)
             ? <> · <a className={link} href={safeArtifactHref(record.targetSessionRef, projectId)!} target="_blank" rel="noopener noreferrer">打开引用</a></>
-            : <> · <code className={code}>{record.targetSessionRef}</code></>)}
+            : <> · 引用见“来源与完整标识”</>)}
           <span className={`${muted} block`}>记下的是拟交接对象，不表示已送达或已承接。</span></Fact>
       </div>
       <PackageView projectId={projectId} documentId={record.documentId} revisionId={record.preparedDocumentRevisionId} label="最初准备的交接包" read={prepared} />

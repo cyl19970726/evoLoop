@@ -109,6 +109,12 @@ test("结果未知的操作, 仓库规范 and 项目设置: back to the object, 
     // 项目设置: the identity is read again on the page, with its time; a change is said, a failed reread keeps the last answer.
     const settings = await open(`/p/${projectId}/settings`);
     await heading(settings, "项目设置").waitFor();
+    // The project is named; its identifier is only under 完整标识.
+    const current = settings.getByRole("region", { name: "当前项目" });
+    await current.getByText("完整标识", { exact: true }).waitFor();
+    assert.doesNotMatch(await current.innerText(), uuid, "no project identifier in the text");
+    await current.getByText("完整标识", { exact: true }).click();
+    assert.match(await current.innerText(), new RegExp(`项目\\s*${projectId}`));
     const access = settings.getByRole("region", { name: "当前登录身份" });
     await access.getByText(/^\d{4}\/\d{1,2}\/\d{1,2} \d{1,2}:\d{2}:\d{2}$/).waitFor();
     assert.match(await access.innerText(), /zhang-reviewer[\s\S]*人[\s\S]*读取项目[\s\S]*提交业务变更[\s\S]*审阅与复核[\s\S]*最后读取/);

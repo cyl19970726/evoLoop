@@ -4,6 +4,7 @@ import { ApiError, errorDiagnostic, errorText } from "../../shared/api";
 import { RefreshCw } from "lucide-react";
 import { Button, EmptyState, ErrorState, Field, Input, ListRow, LoadingState, Notice, RefreshingIndicator, Select, StatusTag, Textarea, cn } from "@evoloop/ui";
 import { date, href } from "../../shared/ui/shared";
+import { FullIdentifiers } from "../../shared/ui/FullIdentifiers";
 import { SettingsPage, SettingsSection } from "../../shared/ui/SettingsParts";
 import { useProjectQuery } from "../../shared/query";
 import { hereOrigin, withReturn } from "../../shared/returnLink";
@@ -58,10 +59,14 @@ function DeliveryPeek({token,projectId,bindingId}:{token:string;projectId:string
       </li>)}</ul>)}
     {detail && <details open className={cn("rounded-lg bg-field px-3 py-2 text-caption text-text-secondary", wrap)}>
       <summary className="cursor-pointer text-foreground">投递 {detail.deliveryId} 的明细</summary>
-      {detail.messages.map(message => <p key={message.messageId}>事件 {message.eventCursor}：{messageStateLabel(message.messageState)} · {processingStateLabel(message.processingState)}
-        <span className="text-muted-foreground"> · 消息 <code className="font-mono">{message.messageId}</code>{message.nativeTurnId && <> · 一轮 <code className="font-mono">{message.nativeTurnId}</code></>}</span></p>)}
+      {detail.messages.map(message => <p key={message.messageId}>事件 {message.eventCursor}：{messageStateLabel(message.messageState)} · {processingStateLabel(message.processingState)}</p>)}
       {detail.unhandled.map(event => <p key={`unhandled-${event.eventCursor}`}>事件 {event.eventCursor}：{unhandledEventLabel(event)}，{unhandledReasonLabel(event.reason)}，原长 {event.contentLength} 字，没有转给智能体</p>)}
-      <p>出站：{decisionLabel(detail.decision)}{detail.decision?.requestId && <> · 原请求 <code className="font-mono">{detail.decision.requestId}</code></>}</p>
+      <p>出站：{decisionLabel(detail.decision)}</p>
+      {/* The project message, the agent's turn and the outbound request behind each line: identifiers, not text. */}
+      <FullIdentifiers summary="完整标识" rows={[
+        ...detail.messages.flatMap(message => [{ label: `事件 ${message.eventCursor} 的消息`, value: message.messageId },
+          { label: `事件 ${message.eventCursor} 的一轮`, value: message.nativeTurnId }]),
+        { label: "出站原请求", value: detail.decision?.requestId }]} />
     </details>}
   </div>;
 }
@@ -204,7 +209,8 @@ export function ConnectorPage({ context }: { context: MutationContext }) {
   return <SettingsPage title="微信连接" description="查看固定来源与接收智能体，按已审策略保存和停订。路由状态不代表来源消息已处理或微信收件已确认。" className="connector-page"
     action={<Button onClick={() => { setError(""); setReadAgain(value => value + 1); }} disabled={busy}><RefreshCw aria-hidden="true" />重新读取</Button>}>
     <Notice tone="waiting">标准模式使用完整权限的专用智能体。启用前要核对：群聊还是私聊、允许的发送者、收发身份、智能体的对话线程、生效中的执行配置和网关授权。受限模式还缺隔离证明，不能启用。暂停或停用后不再领取新的投递；已领取的按原策略处理完，或标为结果未知。</Notice>
-    {pending && <Notice tone="error" action={<Button size="compact" disabled={busy} onClick={() => void reconcile()}>按原 ID 查回</Button>}>有一项操作的结果还没确认，原操作 ID <code className="break-all font-mono">{pending}</code>。查回之前不再提交新的修改。</Notice>}
+    {pending && <Notice tone="error" action={<Button size="compact" disabled={busy} onClick={() => void reconcile()}>按原 ID 查回</Button>}>有一项操作的结果还没确认。查回之前不再提交新的修改。
+      <FullIdentifiers className="mt-1" summary="完整标识" rows={[{ label: "原操作", value: pending }]} /></Notice>}
     {error && <Notice tone="error">{error}</Notice>}{notice && <Notice>{notice}</Notice>}
     <SettingsSection title="当前路由">
       {list.checking && <RefreshingIndicator />}

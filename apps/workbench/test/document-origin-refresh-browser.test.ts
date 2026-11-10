@@ -60,7 +60,8 @@ test("document source run rereads after returning from the task and on manual re
         if (failRun) { res.writeHead(503,{"content-type":"application/json"});res.end(JSON.stringify({message:"来源运行暂不可读"}));return; }
         value = {projectId,id:url.pathname.endsWith(nextRunId) ? nextRunId : runId,taskId,taskRevisionId,basisSetId:taskRevisionId,sessionId:runId,operationId:runId,input:"固定输入",
           inputHash:"a".repeat(64),state:runState,version:runState === "running" ? 1 : 2,nativeTurnId:"turn",interruptRequested:false,
-          resultSummary:null,actorId:"developer",createdAt:stamp,updatedAt:stamp};
+          // The two runs started on different days: the summary tells them apart by when, not by identifier.
+          resultSummary:null,actorId:"developer",createdAt:url.pathname.endsWith(nextRunId) ? "2026-10-26T00:00:00.000Z" : stamp,updatedAt:stamp};
         if (holdNextRun) { holdNextRun = false; heldRunReads++;
           await new Promise<void>(resolve => { releaseHeldRun = resolve; }); }
       }
@@ -93,7 +94,16 @@ test("document source run rereads after returning from the task and on manual re
   });
   await openFacts();
   await summary.getByText(/运行中/).waitFor();
-  assert.match(await summary.innerText(),/来源运行 44444444/);
+  // The run is said in words, when it started and where it stands; its identifiers are only under 完整标识.
+  assert.match(await summary.innerText(),/^由一次运行产生 · 开始于 2026\/10\/25 \d{2}:00:00 · 运行中$/);
+  assert.doesNotMatch(await summary.innerText(),/44444444/);
+  await summary.click();
+  const run = page.locator("[data-origin-run]");
+  await run.getByText("在所属任务核对这次运行 →").waitFor();
+  assert.doesNotMatch(await run.innerText(),/[0-9a-f]{8}-[0-9a-f]{4}-|a{64}/, "no run, revision or hash in the text");
+  await run.locator("summary", { hasText: "完整标识" }).click();
+  assert.match(await run.innerText(),new RegExp(`运行\\s*${runId}[\\s\\S]*执行的任务版本\\s*${taskRevisionId}[\\s\\S]*输入 SHA-256\\s*a{64}`));
+  await summary.click();
   // Into the source task and back: the document reads its source run again.
   await page.getByRole("dialog").getByRole("link",{name:/来源任务 A · 第 4 版/}).click();
   await page.getByRole("heading",{name:"来源任务 A"}).first().waitFor();
@@ -138,9 +148,9 @@ test("document source run rereads after returning from the task and on manual re
   await secondSummary.getByText(/上次读回/).waitFor({timeout:3000});
   await fetch(`${base}/__fixture/change-origin`);
   await reread();
-  await secondSummary.getByText(/77777777.*运行结束/).waitFor();
+  await secondSummary.getByText(/开始于 2026\/10\/26 .*运行结束/).waitFor();
   await fetch(`${base}/__fixture/release-held-run`);
   await second.waitForTimeout(100);
-  assert.match(await secondSummary.innerText(),/77777777.*运行结束/);
-  assert.doesNotMatch(await secondSummary.innerText(),/44444444/);
+  assert.match(await secondSummary.innerText(),/开始于 2026\/10\/26 .*运行结束/);
+  assert.doesNotMatch(await secondSummary.innerText(),/2026\/10\/25|44444444|77777777/);
 });

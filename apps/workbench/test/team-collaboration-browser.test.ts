@@ -129,6 +129,10 @@ test("协作回执 reconciles, reads attempts, polls, applies a remote edit and 
     const receipts = page.getByRole("region", { name: "待核对的写入" });
     await receipts.getByText("有 1 项写入结果尚未核实").waitFor();
     await receipts.getByText("知识空间入口").waitFor();
+    // The receipt names its object; the object and the operation are identifiers, only under 完整标识.
+    assert.doesNotMatch(await receipts.innerText(), /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i, "no identifier in the receipt's text");
+    await receipts.getByRole("button", { name: "完整标识" }).click();
+    assert.match(await receipts.innerText(), /对象 \S+[\s\S]*原操作 [0-9a-f]{8}-/);
     await receipts.getByRole("button", { name: "按原 ID 核对" }).click();
     await page.getByText("已按原 ID 读回结果。").waitFor();
     assert.equal(await receipts.count(), 0);

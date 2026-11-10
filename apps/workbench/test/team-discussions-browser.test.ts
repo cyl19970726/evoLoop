@@ -43,7 +43,8 @@ function fixture(start: { status: string; version: number; head: number; registe
     discussion: { projectId, id: id(30), version: start.version, kind: "allocation", status: start.status, documentId: id(10), preparedDocumentRevisionId: id(10 + 1),
       currentDocumentRevisionId: id(10 + start.registered), latestDecisionEventId: null as string | null, goal: { id: id(1), version: 2 }, stage: { id: id(2), version: 1 },
       task: { id: id(3), revisionId: id(4) }, adoptedDocuments: [{ documentId: id(7), revisionId: id(8) }], question, options: ["前端实现职责接手", "统筹另派"],
-      authorizationBoundary: "不改后端接口", targetSessionLabel: "前端智能体", targetSessionRef: null, actorId: "owner", createdAt: stamp, updatedAt: stamp, collaboration: null },
+      // A reference that is not a link is an identifier: said in words in the body, kept under 来源与完整标识.
+      authorizationBoundary: "不改后端接口", targetSessionLabel: "前端智能体", targetSessionRef: "codex-thread-frontend-7", actorId: "owner", createdAt: stamp, updatedAt: stamp, collaboration: null },
     head: start.head,
     events: [] as Event[], commands: [] as Array<Record<string, unknown>>, next: [] as Next[], operations: new Map<string, unknown>(),
     failHead: false, failPackage: false, receiptBeforeSend: [] as boolean[],
@@ -186,6 +187,13 @@ test("分工讨论 lists, reads, records a handoff, a decision and a link, and p
   await panel.getByRole("link", { name: "重写分工讨论页" }).waitFor();
   await panel.getByRole("link", { name: "团队空间需求" }).waitFor();
   await panel.getByText("还没有正式链接的后续对象").waitFor();
+  // The reference to the agent to hand over to is not a link: the body says where it is, the reference is a source.
+  assert.match(await center.innerText(), /拟交接的智能体[\s\S]*前端智能体 · 引用见“来源与完整标识”/);
+  assert.doesNotMatch(`${await center.innerText()}\n${await panel.innerText()}`, /codex-thread-frontend-7/);
+  const sources = page.locator("details").filter({ has: page.locator("summary", { hasText: "来源与完整标识" }) }).first();
+  await sources.locator("summary").click();
+  await sources.getByText("拟交接对象的引用 codex-thread-frontend-7").waitFor();
+  await sources.locator("summary").click();
   if (shots) await page.screenshot({ path: `${shots}/discussions-prepared-1440.png`, fullPage: true });
 
   // 交接: a required field left empty is named, then the handoff is recorded at the version that was read.

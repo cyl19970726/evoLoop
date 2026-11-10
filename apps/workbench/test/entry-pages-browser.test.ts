@@ -81,7 +81,10 @@ test("login, project list and settings pages use the new layout and keep their b
     await page.getByRole("heading", { name: "项目设置" }).waitFor();
     const projectFacts = page.getByRole("region", { name: "当前项目" });
     await projectFacts.getByText("入口回归项目").waitFor();
-    assert.match(await projectFacts.innerText(), new RegExp(projectId));
+    // The project's identifier is only under 完整标识, not in the facts' text.
+    assert.doesNotMatch(await projectFacts.innerText(), new RegExp(projectId));
+    await projectFacts.getByText("完整标识", { exact: true }).click();
+    assert.match(await projectFacts.innerText(), new RegExp(`项目\\s*${projectId}`));
     // The fact rows keep their own grid; the old global `dl > div` (170px, gap 12px) stays out of [data-ui].
     const factRow = await projectFacts.locator("dl > div").first().evaluate(el => ({
       columns: getComputedStyle(el).gridTemplateColumns, gap: getComputedStyle(el).columnGap }));

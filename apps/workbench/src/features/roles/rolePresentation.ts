@@ -123,10 +123,18 @@ export function revisionReasonText(reason: string): { text: string; raw?: string
   return /[\u3400-\u9fff]/.test(reason) || !reason.trim() ? { text: reason || "未写原因" } : { text: "系统记录的修订原因（未识别）", raw: reason };
 }
 
-/** A person in the record: the reader is 我, a readable account name stays, an opaque identifier is shortened. */
+/**
+ * A person in the record: the reader is 我, a readable account name stays; an opaque identifier is never shortened into
+ * the text (原始标识放在来源层): it is “未登记名称的身份”, its identifier under 完整标识 (`actorIdentifier`).
+ */
 export function actorText(actorId: string, me: string): string {
   if (actorId === me) return "我";
-  return roleIdPattern.test(actorId) ? `身份 ${actorId.slice(0, 8)}` : actorId;
+  return roleIdPattern.test(actorId) ? "未登记名称的身份" : actorId;
+}
+
+/** The identifier to keep under 完整标识 for a person `actorText` does not name, or null. */
+export function actorIdentifier(actorId: string, me: string): string | null {
+  return actorId !== me && roleIdPattern.test(actorId) ? actorId : null;
 }
 
 const live = new Set<RoleRecord["state"]>(["active", "trial", "retirement-pending"]);

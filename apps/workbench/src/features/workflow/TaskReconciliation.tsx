@@ -5,7 +5,7 @@ import type { LeaderWorkPage, LeaderWorkTask } from "@evoloop/contracts/work-ind
 import type { AcceptanceOverviewView } from "@evoloop/contracts/acceptance-relay";
 import { Badge, CollapsibleRow, StatusTag } from "@evoloop/ui";
 import { api, errorText } from "../../shared/api";
-import { agentDisplayName, agentNameIsGenerated } from "../../shared/agentNamePresentation";
+import { agentDisplayName, agentNameCollisions, agentNameIsGenerated } from "../../shared/agentNamePresentation";
 import { agentNameKey, readAgent } from "../../shared/agentRead";
 import { leaderWorkItemPresentation, loadLeaderWorkStatuses } from "../../shared/leaderWorkLoad";
 import { queryKeys, useProjectQuery } from "../../shared/query";
@@ -29,12 +29,16 @@ export function PhaseCounts({ counts, label = "对账阶段计数" }: { counts: 
   </div>;
 }
 
-/** The name of an agent a row names: `name` as the agent pages say it, or why it is not read; null while reading. */
-export interface AgentNameState { name: string | null; problem: string | null; describesKind?: boolean }
+/**
+ * The name of an agent a row names: `name` as the agent pages say it, or why it is not read; null while reading.
+ * `short` is its short identifier, given only when another agent named by these rows has the same name.
+ */
+export interface AgentNameState { name: string | null; problem: string | null; describesKind?: boolean; short?: string }
 
 /**
  * Display names of the agents named by rows, as the agent pages say them (agentDisplayName): a registered name, or for
- * a generated title its role and kind (`describesKind`), never its short identifier. Failures stay visible.
+ * a generated title its role and kind (`describesKind`). Agents whose names collide get their short identifier as
+ * secondary text, as the agent directory does (agentNameCollisions); otherwise it never shows. Failures stay visible.
  */
 export function useAgentNames(projectId: string, keys: readonly string[]) {
   const unique = [...new Set(keys)];
@@ -43,10 +47,13 @@ export function useAgentNames(projectId: string, keys: readonly string[]) {
     queryFn: ({ signal }: { signal: AbortSignal }) => readAgent(projectId, key, signal),
     retry: false,
   })) });
+  const collisions = agentNameCollisions(reads.flatMap(read => read.data ? [read.data] : []));
   return Object.fromEntries(unique.map((key, index) => {
     const read = reads[index]!;
+    const short = collisions.get(key);
     return [key, read.error ? { name: null, problem: errorText(read.error) } : read.data
-      ? { name: agentDisplayName(read.data), problem: null, describesKind: agentNameIsGenerated(read.data) } : { name: null, problem: null }];
+      ? { name: agentDisplayName(read.data), problem: null, describesKind: agentNameIsGenerated(read.data), ...short ? { short } : {} }
+      : { name: null, problem: null }];
   })) as Record<string, AgentNameState>;
 }
 
@@ -84,7 +91,7 @@ export function LeaderOverview({ projectId, page, statuses, roleNames, actorId }
           <a className="font-medium text-foreground hover:underline" href={href(projectId, "task", item.taskId)}>{presentation.title}</a>
           <span className="ml-auto text-caption text-muted-foreground">第 {item.version} 版</span></div>
         <p className="text-label text-text-secondary">{workItemNextStep(item)}</p>
-        <p className="text-caption text-muted-foreground">{presentation.responsibility}
+        <p className="text-caption text-muted-foreground">{presentation.responsibility}{key && names[key]?.short ? ` · 标识 ${names[key]!.short}` : ""}
           {key && <> · <a className="text-primary hover:underline" href={sessionHref(projectId, key, actorId ? tableOrigin(projectId, actorId, undefined, { id: item.taskId, title: presentation.title }) : null)}>打开智能体</a></>}
           {item.plan?.priority ? ` · P${item.plan.priority}` : ""}{item.dependencies.length ? ` · ${item.dependencies.length} 项依赖` : ""}
           {item.plan?.dueAt ? ` · 截止 ${new Date(item.plan.dueAt).toLocaleString("zh-CN")}` : " · 截止未设置"}</p>

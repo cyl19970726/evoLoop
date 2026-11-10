@@ -18,7 +18,7 @@ import { RolePresence } from "./RolePresence";
 import { SourceRef, SourceRefs, TaskLink } from "./SourceRef";
 import { ackHandoffForm, bindForm, decideForm, handoffForm, retireForm, reviewForm, type RoleForm } from "./roleForms";
 import {
-  actorText, alternativeKindText, evidenceKindText, handoffText, reviewDecisionText, revisionReasonText, roleActions, roleClassText, roleIdPattern,
+  actorIdentifier, actorText, alternativeKindText, evidenceKindText, handoffText, reviewDecisionText, revisionReasonText, roleActions, roleClassText, roleIdPattern,
   roleStateText, roleStateTone,
 } from "./rolePresentation";
 import { failureOf, type Failure } from "../../shared/errorPresentation";
@@ -104,22 +104,24 @@ function RoleHistory({ context, role, roleTitle }: { context: MutationContext; r
     <h3 className="text-small font-semibold text-foreground">{title}</h3>
     {items.length ? <ul className="flex flex-col gap-2">{items}</ul> : <p className="text-small text-text-secondary">{empty}</p>}
   </div>;
-  const row = (key: string, title: ReactNode, body: ReactNode, meta: string) => <li key={key} className="flex min-w-0 flex-col gap-0.5">
-    <span className="text-small font-medium text-foreground">{title}</span>{body}<span className={mutedText}>{meta}</span></li>;
+  // `actorId`: who recorded it; an opaque identifier is said in words and kept under 完整标识.
+  const row = (key: string, title: ReactNode, body: ReactNode, meta: string, actorId?: string) => <li key={key} className="flex min-w-0 flex-col gap-0.5">
+    <span className="text-small font-medium text-foreground">{title}</span>{body}<span className={mutedText}>{meta}</span>
+    {actorId && <FullIdentifiers summary="记录者的完整标识" rows={[{ label: "记录者", value: actorIdentifier(actorId, context.principal.actorId) }]} />}</li>;
   return <PageSection title="修订与交接历史" action={<Button size="compact" variant="ghost" disabled={busy} onClick={() => void read()}>
     {busy ? "读取中…" : current ? "重新读取历史" : "阅读修订与交接历史"}</Button>}>
     {error && <Notice tone="error" title="历史未读回">{error.text}<ErrorDetails failure={error} /></Notice>}
     {!current && !error && <p className="text-small text-text-secondary">{history ? "职责已有新版本，历史需要重新读取。" : "修订、试行回看、交接与绑定按需读取。"}</p>}
     {current && <div className="flex flex-col gap-5">
       {block("修订", "没有修订记录。", current.revisions.map(item => row(item.id, `第 ${item.version} 版 · ${roleStateText[item.state]}`,
-        <RevisionReason reason={item.reason} />, `${who(item.actorId)} · ${stamp(item.createdAtUtc)}`)))}
+        <RevisionReason reason={item.reason} />, `${who(item.actorId)} · ${stamp(item.createdAtUtc)}`, item.actorId)))}
       {block("试行回看", "尚无回看；到期不会自动确认职责。", current.reviews.map(item => row(item.id, reviewDecisionText(item.decision), <>
         <span className="whitespace-pre-wrap break-words text-small text-text-secondary">效果：{item.effectEvidence}</span>
         <span className="text-caption text-text-secondary">效果来源：<SourceRefs projectId={context.projectId} refs={item.effectEvidenceRefs} /></span>
         <span className="whitespace-pre-wrap break-words text-small text-text-secondary">成本：{item.costEvidence}</span>
         <span className="text-caption text-text-secondary">成本来源：<SourceRefs projectId={context.projectId} refs={item.costEvidenceRefs} /></span>
         <span className="whitespace-pre-wrap break-words text-small text-text-secondary">基线对比：{item.baselineComparison}</span>
-      </>, `${who(item.actorId)} · ${stamp(item.createdAtUtc)}`)))}
+      </>, `${who(item.actorId)} · ${stamp(item.createdAtUtc)}`, item.actorId)))}
       {block("交接", "尚无已登记交接事项。关闭前仍需核对未完任务、知识和在途智能体。", current.handoffs.map(item => row(item.id, handoffText(item), <>
         <span className="break-all text-small text-text-secondary">{item.kind === "task" && roleIdPattern.test(item.sourceRef)
           ? <TaskLink projectId={context.projectId} taskId={item.sourceRef} /> : <SourceRef projectId={context.projectId} sourceRef={item.sourceRef} />}
@@ -133,7 +135,7 @@ function RoleHistory({ context, role, roleTitle }: { context: MutationContext; r
           <SessionName projectId={context.projectId} sessionKey={`owned:${item.sessionId}`} kind="受管智能体" /></a>,
         <>{item.note ? <span className="text-small text-text-secondary">{item.note}</span> : null}
           <FullIdentifiers rows={[{ label: "受管智能体", value: item.sessionId }, { label: "绑定", value: item.id }]} /></>,
-        `${who(item.actorId)} · ${stamp(item.createdAtUtc)}`)))}
+        `${who(item.actorId)} · ${stamp(item.createdAtUtc)}`, item.actorId)))}
     </div>}
   </PageSection>;
 }

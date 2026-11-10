@@ -28,7 +28,9 @@ const agent = (sessionId: string, title: string, displayName: string | null) => 
   key: `owned:${sessionId}`, target: { kind: "owned", sessionId }, aliases: [], title, profile: displayName ? { displayName } : null } });
 
 type Answer = { status?: number; value: unknown };
-async function open(t: TestContext, answer: (path: string) => Answer | null) {
+const uuid = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+
+async function open(t: TestContext, answer: (path: string) => Answer | null, setup?: (page: { addInitScript(script: string): Promise<unknown> }) => Promise<unknown>) {
   const { chromium } = (await import(pathToFileURL(modulePath!).href)).default;
   const server = createServer(async (req, res) => {
     const url = new URL(req.url!, "http://127.0.0.1");
@@ -57,6 +59,7 @@ async function open(t: TestContext, answer: (path: string) => Answer | null) {
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
   const errors: string[] = [];
   page.on("pageerror", (error: Error) => errors.push(error.message));
+  await setup?.(page);
   await page.goto(`${base}/p/${projectId}/connectors`);
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button", { name: "进入", exact: true }).click();
@@ -94,11 +97,17 @@ test("微信连接 lists routes with their deliveries and keeps the create form 
     await card.getByRole("button", { name: "读取最近的投递" }).click();
     const delivery = card.getByRole("button", { name: /投递 11\s*2 条来源消息 · 1 条需人工处理 · 最新：已回复 · 出站：发送回复/ });
     await delivery.click();
-    const detail = await card.getByText("投递 11 的明细").locator("..").innerText();
+    const details = card.getByText("投递 11 的明细").locator("..");
+    const detail = await details.innerText();
     assert.match(detail, /事件 5：已回复 · 这一轮已结束/);
     assert.match(detail, /事件 6：收到的消息，发送者不在名单内，原长 12 字，没有转给智能体/);
-    assert.match(detail, /出站：发送回复 · 本机可见、对方未确认 · 原请求 req-1/);
+    assert.match(detail, /出站：发送回复 · 本机可见、对方未确认/);
     assert.doesNotMatch(detail, /replied|completed|sender_not_allowed|message_observed|observed/);
+    // The message, the agent's turn and the outbound request are identifiers: only under 完整标识.
+    assert.doesNotMatch(detail, uuid);
+    assert.doesNotMatch(detail, /req-1|turn-1/);
+    await details.locator("summary", { hasText: "完整标识" }).click();
+    assert.match(await details.innerText(), /事件 5 的消息\s*36000006-0000-4000-8000-000000000006[\s\S]*事件 5 的一轮\s*turn-1[\s\S]*出站原请求\s*req-1/);
     await card.getByRole("button", { name: "暂停订阅" }).waitFor();
     const long = page.locator(".connector-card").filter({ hasText: "长名称" });
     assert.match(await long.innerText(), /暂停\s*标准模式 · 第 1 版[\s\S]*转给 智能体（名称待读取）/);
@@ -117,6 +126,23 @@ test("微信连接 lists routes with their deliveries and keeps the create form 
     assert.equal(await page.evaluate(noOverflow), true, "no horizontal overflow at 390px");
     assert.equal(await long.evaluate((node: HTMLElement) => node.scrollWidth <= node.clientWidth + 1), true, "a 128-character connection ID wraps inside its card");
     if (shots) await page.screenshot({ path: `${shots}/connectors-390.png`, fullPage: true });
+    assert.deepEqual(errors, []);
+  });
+
+test("微信连接 keeps an unconfirmed operation's ID under 完整标识, not in the notice",
+  { skip: !modulePath && "Set EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE" }, async t => {
+    const operationId = "36000009-0000-4000-8000-000000000009";
+    const { page, errors } = await open(t, path => path === `/api/projects/${projectId}/message-connectors/routes` ? { value: { items: [route], nextCursor: null } }
+      : path.includes("/session-work/") ? { status: 404, value: { message: "not found" } } : null,
+      target => target.addInitScript(`sessionStorage.setItem("connector-operation:${projectId}:reviewer", "${operationId}")`));
+    const notice = page.getByRole("alert").filter({ hasText: "有一项操作的结果还没确认" });
+    await notice.waitFor();
+    assert.match(await notice.innerText(), /有一项操作的结果还没确认。查回之前不再提交新的修改。/);
+    assert.doesNotMatch(await notice.innerText(), uuid, "no operation ID in the notice");
+    assert.doesNotMatch(await page.locator(".connector-page").innerText(), uuid, "no identifier in the page's text");
+    await notice.locator("summary", { hasText: "完整标识" }).click();
+    assert.match(await notice.innerText(), new RegExp(`原操作\\s*${operationId}`));
+    await notice.getByRole("button", { name: "按原 ID 查回" }).waitFor();
     assert.deepEqual(errors, []);
   });
 
