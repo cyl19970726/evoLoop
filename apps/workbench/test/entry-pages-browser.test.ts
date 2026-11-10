@@ -1,5 +1,5 @@
 // Opt-in built-app regression: build workbench, then set EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE.
-// Login, the project list, and the pages behind the settings menu (项目设置, 待核对操作, 仓库规范).
+// Login, the project list, and the pages behind the settings menu (项目设置, 结果未知的操作, 仓库规范).
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createServer } from "node:http";
@@ -92,8 +92,8 @@ test("login, project list and settings pages use the new layout and keep their b
     if (shots) await page.screenshot({ path: `${shots}/settings-1440.png` });
 
     await go(`/p/${projectId}/operations`);
-    await page.getByRole("heading", { name: "待核对操作" }).waitFor();
-    await page.getByText("没有待核对的操作").waitFor();
+    await page.getByRole("heading", { name: "结果未知的操作", level: 1 }).waitFor();
+    await page.getByText("没有结果未知的操作").waitFor();
     if (shots) await page.screenshot({ path: `${shots}/operations-1440.png` });
 
     await go(`/p/${projectId}/repository`);
