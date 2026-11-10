@@ -26,8 +26,26 @@ import { latestPlan, planExplanation, planSteps } from "./conversationPresentati
 import { agentStatusLabel } from "./sessionStatusPresentation";
 import { sendSessionCommand } from "./sessionCommand";
 import { useDirectInput } from "./useDirectInput";
+import { queuedMessageSummary } from "./queuedMessagePresentation";
+import { nameOnly } from "../../shared/workPresentation";
+import { useTaskName } from "../../shared/ui/RecordName";
+import { date } from "../../shared/ui/shared";
 
 type Agent = ComposerAgent & { target: SessionTarget };
+
+/** One queued message as a short Chinese line (kind · task · time); the original text stays behind “原文与标识”. */
+function QueuedSummary({ projectId, body, originTaskId }: { projectId: string; body: string; originTaskId: string | null }) {
+  const summary = queuedMessageSummary(body, originTaskId);
+  const task = useTaskName(projectId, summary.taskId);
+  if (!summary.label) return <>{summary.preview}</>;
+  return <><strong className="font-medium text-foreground">{summary.label}</strong>{summary.taskId && <> · {nameOnly("任务", task)}</>}{summary.occurredAt && <> · {date(summary.occurredAt)}</>}</>;
+}
+function queuedItem(projectId: string, entry: Extract<WorkspaceEntry, { kind: "message" }>) {
+  const body = entry.body || "";
+  const summary = queuedMessageSummary(body, entry.origin?.taskId ?? null);
+  return { id: entry.origin!.id, text: <QueuedSummary projectId={projectId} body={body} originTaskId={entry.origin?.taskId ?? null} />,
+    ...(summary.label || body.trim() !== summary.preview ? { detail: body } : {}) };
+}
 type Skill = { id: string; name: string; slug: string };
 const skillSourceLabel: Record<string, string> = { evoloop: "evoLoop 业务", project: "项目", personal: "个人", builtin: "运行时内置" };
 
@@ -181,7 +199,7 @@ export function SessionComposer({ context, snapshot, entries, activeTurn, live, 
   // data-dirty: leaving the project, reloading or signing out asks first while a message is unsent.
   return <div className="session-composer-host relative flex shrink-0 flex-col gap-2 pt-2" data-dirty={value.trim() ? "true" : undefined}>
     {todo && <TodoList items={todo.items} note={todo.note || undefined} />}
-    {queued.length > 0 && <QueuedMessages items={queued.map(entry => ({ id: entry.origin!.id, text: entry.body || "（没有可公开的正文）" }))}
+    {queued.length > 0 && <QueuedMessages items={queued.map(entry => queuedItem(projectId, entry))}
       note={context.blocked ? "项目里还有结果未确认的操作，核对后才能撤回" : running ? "这一轮结束后按顺序处理" : "按顺序处理"}
       onCancel={context.blocked ? undefined : id => void withdraw(id)} />}
     {direct.receipt}

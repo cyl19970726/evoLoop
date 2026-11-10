@@ -276,34 +276,59 @@ export function TodoList({ items, note, className }: { items: TodoItem[]; note?:
 
 export interface QueuedMessage {
   id: string;
-  text: string;
+  /** What the row says (a short summary); the full original goes in `detail`. */
+  text: React.ReactNode;
+  /** The original text and identifiers, behind “原文与标识”. */
+  detail?: React.ReactNode;
 }
 
 export interface QueuedMessagesProps {
   items: QueuedMessage[];
   /** For example 这一轮结束后按顺序送达. */
   note?: string | undefined;
+  /** How many rows show before the rest fold into “还有 N 条”. */
+  visibleCount?: number | undefined;
   onEdit?: ((id: string) => void) | undefined;
   onCancel?: ((id: string) => void) | undefined;
   className?: string | undefined;
 }
 
-/** Messages waiting for the next turn; each can be edited or withdrawn until it is delivered. */
-export function QueuedMessages({ items, note = "这一轮结束后按顺序送达", onEdit, onCancel, className }: QueuedMessagesProps) {
+/**
+ * Messages waiting for the next turn; each can be edited or withdrawn until it is delivered. The area is bounded: a few
+ * rows show, the rest fold into “还有 N 条”, and opened it scrolls inside its own height, so a long queue never pushes the
+ * timeline or the composer out of the page.
+ */
+export function QueuedMessages({ items, note = "这一轮结束后按顺序送达", visibleCount = 3, onEdit, onCancel, className }: QueuedMessagesProps) {
+  const [open, setOpen] = React.useState(false);
   if (items.length === 0) return null;
+  const folded = items.length > visibleCount;
+  const shown = folded && !open ? items.slice(0, visibleCount) : items;
   return (
-    <section aria-label="排队消息" className={cn("flex flex-col gap-2 rounded-lg bg-muted px-3.5 py-3", className)}>
-      <span className="text-caption text-muted-foreground">排队中 · {note}</span>
-      <ol className="m-0 flex list-none flex-col gap-1.5 p-0">
-        {items.map((item, index) => (
+    <section aria-label="排队消息" data-queued-count={items.length} className={cn("flex shrink-0 flex-col gap-2 rounded-lg bg-muted px-3.5 py-3", className)}>
+      <span className="text-caption text-muted-foreground">排队中 {items.length} 条 · {note}</span>
+      <ol data-queued-list="" className="m-0 flex max-h-[min(28dvh,13rem)] min-h-0 list-none flex-col gap-1.5 overflow-y-auto p-0">
+        {shown.map((item, index) => (
           <li key={item.id} className="flex items-start gap-2.5 text-small">
             <span aria-hidden="true" className="flex size-5 shrink-0 items-center justify-center rounded-full bg-field text-caption text-text-secondary">{index + 1}</span>
-            <span className="min-w-0 flex-1 break-words">{item.text}</span>
+            <span className="min-w-0 flex-1 break-words">
+              {item.text}
+              {item.detail !== undefined && (
+                <details className="mt-0.5 text-caption text-muted-foreground">
+                  <summary className="w-fit cursor-pointer">原文与标识</summary>
+                  <div className="mt-1 max-h-40 overflow-y-auto whitespace-pre-wrap break-words font-mono">{item.detail}</div>
+                </details>
+              )}
+            </span>
             {onEdit && <button type="button" onClick={() => onEdit(item.id)} className="cursor-pointer border-0 bg-transparent p-0 text-caption text-muted-foreground hover:text-foreground">编辑</button>}
             {onCancel && <button type="button" onClick={() => onCancel(item.id)} className="cursor-pointer border-0 bg-transparent p-0 text-caption text-muted-foreground hover:text-destructive">撤回</button>}
           </li>
         ))}
       </ol>
+      {folded && (
+        <button type="button" aria-expanded={open} onClick={() => setOpen(value => !value)} className="w-fit cursor-pointer border-0 bg-transparent p-0 text-caption text-primary hover:underline">
+          {open ? "收起" : `还有 ${items.length - visibleCount} 条 · 展开`}
+        </button>
+      )}
     </section>
   );
 }
