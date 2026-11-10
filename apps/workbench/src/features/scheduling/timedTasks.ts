@@ -35,6 +35,8 @@ export function nextTimeText(series: TaskTimingSeriesSummary, now = Date.now(), 
   const at = (value: string) => scheduleTime(value, series.timezone, reader);
   if (series.seriesState === "stopped") return "已停止，不再复制后续时点";
   if (series.repeat === "daily") {
+    // nextAtUtc is the slot after the latest planned one; while that Task is still todo and ahead, its own slot comes first.
+    if (series.latestTask.state === "todo" && Date.parse(series.latestTask.plannedAtUtc) > now) return at(series.latestTask.plannedAtUtc);
     if (!series.nextAtUtc) return "下一时点尚未安排";
     return Date.parse(series.nextAtUtc) <= now ? `${at(series.nextAtUtc)}（已过，待协调器补上）` : at(series.nextAtUtc);
   }

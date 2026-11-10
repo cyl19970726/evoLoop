@@ -43,6 +43,16 @@ test("next time is said in the Task's zone, naming it, for one-time, daily, late
   assert.match(nextTimeText(daily, Date.parse("2026-11-11T02:00:00.000Z"), "Asia/Shanghai"), /已过，待协调器补上/);
   assert.match(nextTimeText({ ...once, latestTask: { ...once.latestTask, state: "done" } }, NOW, "Asia/Shanghai"), /仅本次，无后续时点（约定 2026\/11\/12 09:00:00 · 上海）/);
   assert.equal(nextTimeText({ ...daily, nextAtUtc: null }, NOW), "下一时点尚未安排");
+  // First slot still ahead and todo: the next time is that slot, not the one after (nextAtUtc is the slot after the latest planned one).
+  const first = { ...daily, executeAtUtc: "2026-11-13T04:30:00.000Z", nextAtUtc: "2026-11-14T04:30:00.000Z", timezone: "Asia/Tashkent", occurrenceCount: 1, skippedCount: 0,
+    latestTask: { taskId: id(2), title: "系列2", state: "todo" as const, plannedAtUtc: "2026-11-13T04:30:00.000Z" } };
+  assert.match(nextTimeText(first, NOW, "Asia/Tashkent"), /^2026\/11\/13 09:30:00 · /);
+  assert.doesNotMatch(nextTimeText(first, NOW, "Asia/Tashkent"), /11\/14/);
+  // First slot passed while still todo, or already copied/started: nextAtUtc.
+  const passed = Date.parse("2026-11-13T05:00:00.000Z");
+  assert.match(nextTimeText(first, passed, "Asia/Tashkent"), /^2026\/11\/14 09:30:00 · /);
+  assert.match(nextTimeText({ ...first, latestTask: { ...first.latestTask, state: "in_progress" } }, NOW, "Asia/Tashkent"), /^2026\/11\/14 09:30:00/);
+  assert.equal(nextTimeText({ ...first, seriesState: "stopped", nextAtUtc: null }, NOW), "已停止，不再复制后续时点");
   assert.equal(nextTimeText(stopped, NOW), "已停止，不再复制后续时点");
 });
 
