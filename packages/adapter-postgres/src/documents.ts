@@ -11,6 +11,8 @@ const revision = (row: any): DocumentPayloadRevision => ({
   assetsManifest: row.assets_manifest as DocumentAsset[], author: row.author, reason: row.reason,
   createdAt: new Date(row.created_at).toISOString(),
   ...(row.organization_review ? { organizationReview: row.organization_review } : {}),
+  // Not part of any packed run input: runtime materials copy explicit fields, never the whole object.
+  ...(row.revision_number == null ? {} : { revisionNumber: Number(row.revision_number) }),
 });
 
 /** Compose into an existing scoped PgReader/PgTransaction; it never owns a connection. */

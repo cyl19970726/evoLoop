@@ -6,7 +6,7 @@ import { taskTimingScopeId } from "@evoloop/contracts/task-timing";
 export { assessTaskAttention, trialAttentionThreshold, trialAttentionThresholdMs } from "./task-attention.js";
 import type {
   AppliedResult, BasisDecision, BasisSet, Command, CommandInput, CommandResult, Document, DocumentDecision,
-  DocumentDetail, DocumentRevision, DocumentTaskReference, Impact, Operation, OutboxEvent, Page, Principal, Project,
+  DocumentDetail, DocumentRevision, DocumentRevisionPage, DocumentTaskReference, Impact, Operation, OutboxEvent, Page, Principal, Project,
   Task, TaskDetail, TaskDocumentLink, TaskRevision, RuntimeRunRecord,
 } from "@evoloop/contracts";
 import { parseQueueHandoff, type QueueHandoff } from "@evoloop/contracts/runtime-handoff";
@@ -1006,6 +1006,26 @@ export class WorkflowService {
       if (!reader.listDocumentTaskReferences)
         throw new DomainError("UNSUPPORTED_QUERY", "Document Task references are not supported by this reader");
       return reader.listDocumentTaskReferences(documentId, boundedLimit, cursor);
+    });
+  }
+  /** Newest-first revision metadata; state flags come from the document head in the same read snapshot. */
+  listDocumentRevisions(principal: Principal, projectId: string, documentId: string, limit?: number, cursor?: string): Promise<DocumentRevisionPage> {
+    return this.read(principal, projectId, async reader => {
+      const document = required(await reader.getDocument(documentId), "Document");
+      const boundedLimit = pageLimit(limit);
+      if (!reader.listDocumentRevisions)
+        throw new DomainError("UNSUPPORTED_QUERY", "Document revision history is not supported by this reader");
+      const page = await reader.listDocumentRevisions(documentId, boundedLimit, cursor);
+      return {
+        document: { id: document.id, title: document.title, kind: document.kind, version: document.version,
+          currentRevisionId: document.currentRevisionId, adoptedRevisionId: document.adoptedRevisionId, status: document.status },
+        revisionCount: page.revisionCount,
+        items: page.items.map(item => {
+          const current = item.id === document.currentRevisionId, published = item.id === document.adoptedRevisionId;
+          return { ...item, current, published, state: current ? "current" as const : published ? "published" as const : "historical" as const };
+        }),
+        nextCursor: page.nextCursor,
+      };
     });
   }
   listImpacts(principal: Principal, projectId: string, taskId?: string): Promise<Impact[]> {

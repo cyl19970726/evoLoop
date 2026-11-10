@@ -84,7 +84,7 @@ Document 修订及载荷归属由 PostgreSQL 管理；正文可内联或按固�
 | --- | --- |
 | 身份与范围 | 稳定 documentId、projectId、文档类型、负责人、可见范围；项目内过程文档可独立存在，不要求先有 Task |
 | 正文与修订 | evoLoop 管理过程文档正文和不可变修订；固定修订记录作者、时间、所读基线和变更理由 |
-| 过程文档修订 | revisionId、可扩展的 `format`、`mediaType`、`originalName`、源内容 hash、`body` 或 `payloadRef`、`entrypoint`、`assetsManifest`、完整性状态及作者/时间/基线/变更理由；首次创建后不可覆写历史修订 |
+| 过程文档修订 | revisionId、文档内按保存顺序的序号 `revisionNumber`、可扩展的 `format`、`mediaType`、`originalName`、源内容 hash、`body` 或 `payloadRef`、`entrypoint`、`assetsManifest`、完整性状态及作者/时间/基线/变更理由；首次创建后不可覆写历史修订 |
 | 当前指针与采纳 | 草稿、待审、已采纳、已取代/归档分别表达；候选的新修订不自动替换现行已采纳修订，发布采用条件更新 |
 | 关联 | Task 与 Document 可多对多建立导航链接；任务接受或执行时在依据集合固定实际使用的 DocumentRevision。GitSourceRef、知识、证据和成果作为独立来源/对象引用 |
 
