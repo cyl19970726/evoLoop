@@ -26,6 +26,18 @@ export function hasCurrentStudyReviewer(credentials: AuthConfig, projectId: stri
   return entries.length > 0 && entries.every(entry =>
     (["read", "write", "review"] as const).every(permission => entry.permissions.includes(permission)));
 }
+/**
+ * Some single credential of this actor grants every listed permission in the project. Grants of different credentials
+ * are never added together: a request authenticates as exactly one credential (authenticate below).
+ */
+export function credentialGrants(credentials: AuthConfig, projectId: string, actorId: string,
+  permissions: readonly ("read" | "write" | "review")[]): boolean {
+  return credentials.some(entry => entry.actorId === actorId && entry.projectIds.includes(projectId) &&
+    permissions.every(permission => entry.permissions.includes(permission)));
+}
+/** The business writer check (main.ts currentProjectWriter): one credential with read and write in the project. */
+export const isProjectWriter = (credentials: AuthConfig, projectId: string, actorId: string): boolean =>
+  credentialGrants(credentials, projectId, actorId, ["read", "write"]);
 export function authenticate(header: string | undefined, credentials: AuthConfig): Principal | null {
   if (!header?.startsWith("Bearer ")) return null;
   const token = Buffer.from(header.slice(7));
