@@ -6,6 +6,7 @@ import { delegationTemplateSchema, type DelegationTemplate } from "@evoloop/cont
 import type { Principal } from "@evoloop/contracts";
 import type { TaskCollaborationPayload } from "@evoloop/contracts/discussions";
 import { directInputConfigurationSchema } from "./direct-input/configuration.js";
+import { credentialGrants, type AuthConfig } from "./auth.js";
 
 const canonical = (value: unknown): string => JSON.stringify(value, (_key, item: unknown) => item && typeof item === "object" && !Array.isArray(item) ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a.localeCompare(b))) : item);
 export const delegationTemplateHash = (template: DelegationTemplate): string => createHash("sha256").update(canonical(template)).digest("hex");
@@ -224,10 +225,26 @@ export function drivenRuntimeProviders(runtime: { provider: "codex" | "claude"; 
 }
 type EngineeringActionGrant=NonNullable<z.infer<typeof integrationSchema>["residentQueue"]>["actionGrants"][number];
 type SchedulingConfiguration = NonNullable<z.infer<typeof integrationSchema>["scheduling"]>;
+type IntegrationFile = z.infer<typeof integrationSchema>;
+/** A scope that names one Task timing: `task-timing:` followed by a UUID. */
+export const isTaskTimingScope = (scopeId: string): boolean =>
+  scopeId.startsWith("task-timing:") && z.uuid().safeParse(scopeId.slice("task-timing:".length)).success;
+/** The schedule grants of one actor in one project while scheduling is enabled (schedule.create authorization). */
+export const schedulingGrantsFor = (configuration: SchedulingConfiguration | undefined, projectId: string, actorId: string) =>
+  configuration?.enabled ? configuration.grants.filter(grant => grant.projectId === projectId && grant.actorId === actorId) : [];
+/** Daily-copy grants the scheduling pump acts on: enabled, and held by an actor with read, write and review. */
+export const activeTaskTimingGrants = (configuration: SchedulingConfiguration | undefined, identities: AuthConfig) =>
+  configuration?.enabled ? configuration.taskTimingGrants.filter(grant =>
+    credentialGrants(identities, grant.projectId, grant.actorId, ["read", "write", "review"])) : [];
+/** The external knowledge backend serves this project. */
+export const knowledgeServesProject = (knowledge: IntegrationFile["knowledge"], projectId: string): boolean =>
+  !!knowledge?.enabled && knowledge.projectIds.includes(projectId);
+/** Feishu collaboration is granted to this actor in this project. */
+export const hasFeishuActorGrant = (feishu: IntegrationFile["feishu"], projectId: string, actorId: string): boolean =>
+  !!feishu?.enabled && feishu.grants.some(g => g.projectId === projectId && g.actorId === actorId && g.scope === "project");
 export function hasTaskTimingGrant(configuration: SchedulingConfiguration | undefined,
   projectId: string, actorId: string, roleId: string, scopeId: string): boolean {
-  if (!configuration?.enabled || !scopeId.startsWith("task-timing:") ||
-    !z.uuid().safeParse(scopeId.slice("task-timing:".length)).success) return false;
+  if (!configuration?.enabled || !isTaskTimingScope(scopeId)) return false;
   return configuration.grants.some(grant => grant.projectId === projectId && grant.actorId === actorId &&
     grant.roleId === roleId && grant.scopeId === scopeId) ||
     configuration.taskTimingGrants.some(grant => grant.projectId === projectId &&

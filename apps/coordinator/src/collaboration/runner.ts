@@ -10,6 +10,13 @@ const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const now = () => new Date().toISOString();
 const reason = (error: unknown) => error instanceof Error ? error.message.slice(0,500) : "connector outcome unknown";
 
+/** The identity collaboration acts as in a project: one credential with read and write there whose actor holds the grant. */
+export function collaborationPrincipal<P extends Principal>(principals: readonly P[], projectId: string,
+  hasGrant: (projectId: string, actorId: string) => boolean): P | null {
+  return principals.find(p => p.projectIds.includes(projectId) && p.permissions.includes("read") &&
+    p.permissions.includes("write") && hasGrant(projectId, p.actorId)) ?? null;
+}
+
 /** Project-scoped outbox consumer. PG claims fence local workers; remote effects need stable-key readback. */
 export class CollaborationRunner {
   private timer: ReturnType<typeof setInterval> | null = null;
@@ -31,8 +38,7 @@ export class CollaborationRunner {
     if (deps.pollIntervalMs !== undefined && (!Number.isSafeInteger(deps.pollIntervalMs) || deps.pollIntervalMs < 30000)) throw new RangeError("poll interval must be at least 30 seconds");
   }
   private principal(projectId: string): Principal | null {
-    return this.deps.principals.find(p => p.projectIds.includes(projectId) && p.permissions.includes("read") &&
-      p.permissions.includes("write") && this.hasGrant(projectId,p.actorId)) ?? null;
+    return collaborationPrincipal(this.deps.principals, projectId, (project, actorId) => this.hasGrant(project, actorId));
   }
   private hasGrant(projectId: string, actorId: string): boolean { return this.deps.hasGrant?.(projectId,actorId) === true; }
   private projects(): string[] { return [...new Set(this.deps.principals.flatMap(p=>p.projectIds))].filter(id=>this.principal(id)!==null); }

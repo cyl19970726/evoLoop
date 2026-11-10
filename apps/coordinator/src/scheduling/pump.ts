@@ -10,6 +10,10 @@ export interface ScheduleGrant {
   roleId: string;
 }
 export type TaskTimingGrant = Pick<ScheduleGrant, "projectId" | "actorId" | "roleId">;
+/** The credential a schedule or daily-copy grant acts as: one with write and review in the grant's project. */
+export const scheduleGrantCredential = (credentials: AuthConfig, grant: Pick<ScheduleGrant, "projectId" | "actorId">) =>
+  credentials.find(item => item.actorId === grant.actorId && item.projectIds.includes(grant.projectId) &&
+    item.permissions.includes("write") && item.permissions.includes("review"));
 
 export interface SchedulingPumpOptions {
   store: ScheduleStore;
@@ -100,16 +104,13 @@ export class SchedulingPump {
   }
 
   private principal(grant: ScheduleGrant): Principal | null {
-    const credential = this.options.credentials().find(item => item.actorId === grant.actorId &&
-      item.projectIds.includes(grant.projectId) && item.permissions.includes("write") && item.permissions.includes("review"));
+    const credential = scheduleGrantCredential(this.options.credentials(), grant);
     return credential ? { actorId: credential.actorId, projectIds: [...credential.projectIds], permissions: [...credential.permissions] } : null;
   }
 
   private taskTimingPermitted(grant: TaskTimingGrant): boolean {
     return !this.stopped && this.options.enabled() && this.options.canWrite() &&
-      this.options.credentials().some(item => item.actorId === grant.actorId &&
-        item.projectIds.includes(grant.projectId) && item.permissions.includes("write") &&
-        item.permissions.includes("review"));
+      !!scheduleGrantCredential(this.options.credentials(), grant);
   }
 
   private permitted(grant: ScheduleGrant, definition?: ScheduleDefinition): boolean {

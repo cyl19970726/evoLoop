@@ -155,9 +155,16 @@ PG 在源写入的同一事务追加只含引用、状态与短预览的观察�
 
 `GET /api/projects/:projectId/repositories`、`.../capabilities` 与 `.../members` 只读本项目的配置，要求调用者有该项目的读取权限（无权 403，项目不存在 404）；读取不启动运行时、不改授权。类型在 `contracts/project-configuration`。三者都返回 `{projectId,status}`：`available` 带 `items`；服务没有相应来源（`reason: "not_provided"`）或来源读取失败（`read_failed`）时为 `unavailable`，不用空列表冒充“没有”。
 
-- **仓库**：取服务启动时载入的集成配置 `repositories` 里本项目的条目，只给 `repositoryId` 与 `allowedPaths`。服务器检出路径 `root` 不返回；配置里没有仓库网址，也不补造。登记 Git 固定来源按同一份启动配置核验。
-- **能力**：每项为 `{key,scope,state,reason}`，`state` 是 `configured`、`not_configured` 或 `unknown`。Git 来源、知识（`knowledge.projectIds`）、日程（`task-timing:` 以外的日程授权）、任务定时与每日复制、自动循环与编排（控制者身份含本项目，且有它在本项目的运行授权或本项目的委派模板）、运行时（本项目的运行授权或委派模板）、飞书（项目授权）和微信连接（本项目已启用的接收授权）都只看本项目，`scope: "project"`；文档原件与 HTML 是全服务一项设置，`scope: "service"`。`reason` 区分服务未启用、本项目未配置和运行时读取时不可用。服务启动时载入配置，部分授权在使用时重读：磁盘上的集成文件现在得出另一结论时记 `unknown` 与 `configuration_changed`，文件读不了时记 `unknown` 与 `configuration_unreadable`。只报告配置状态，不返回路径、令牌、密钥、网址或其中的凭据。
-- **成员**：本机 coordinator 从 HTTP 认证所用的身份快照（启动时读取，改后重启）列出本项目的 `actorId`、`identityKind` 与 `permissions`，`source: "local_identities"`；Hub 模式（#219）由 Hub 账户经同一注入接口提供。同一 actor 在轮换期可有多条凭据，权限取它在本项目各条凭据的交集，与 `hasCurrentStudyReviewer` 一致：不把几条不完整的授权拼成完整权限。不返回令牌或其任何派生值，不列别的项目的成员，也不列成员能访问的其他项目。项目成员能看到同项目其他成员的身份与权限，用于选择验收人。
+每个结论都调用服务实际执行时的同一处检查，对同一份配置得出同一结论；对应关系写在 `apps/coordinator/src/project-configuration/local.ts` 各项旁，测试逐项对照服务端的函数。
+
+- **仓库**：取服务启动时载入的集成配置 `repositories` 里本项目的条目，只给 `repositoryId` 与 `allowedPaths`。Git 来源不接受的条目（允许路径是绝对路径或越出仓库，或同一仓库登记两次）不返回。服务器检出路径 `root` 不返回；配置里没有仓库网址，也不补造。
+- **能力**：每项为 `{key,scope,readAt,state,reason,pending}`，`state` 是 `configured`、`not_configured` 或 `unknown`，`scope` 标出只看本项目（`project`）还是全服务一项设置（`service`，文档原件与 HTML）。
+  - **按哪处检查**：Git 来源要整份仓库登记被 Git 来源接受，任一条不合法则所有项目都读不了（`repository_registration_invalid`）；知识看 `knowledge.projectIds`；日程看本项目的日程授权，持有者要有写与复核权限；任务定时与每日复制只认后缀是 UUID 的 `task-timing:` 授权和每日复制授权，持有者此刻须有读、写、复核；自动循环与编排要控制者身份有读写复核、含本项目，并在本项目某个职责下恰有一条运行授权且目录被接受；运行时看本项目的运行授权（目录须被接受），或在编排启用时控制者自己的、未过期的委派模板；飞书要有持该项目授权且能读写的身份；微信只认已启用的 `standard` 接收授权，`restricted` 不能激活，不计入。
+  - **reason**：写明是哪个开关没开（`knowledge_disabled`、`scheduling_disabled`、`orchestration_disabled`、`runtime_disabled`、`feishu_disabled`、`message_connectors_disabled`、`session_messages_disabled`、`documents_disabled`、启动时没有网关 `gateway_not_configured`），或本项目未配置、授权持有者权限不够、目录不被接受、控制者不含本项目等。
+  - **调用者**：日程、任务定时、运行时、飞书按身份授权，`state` 说本项目有没有可用授权，`callerGranted` 说当前调用者有没有。
+  - **何时生效**：`readAt` 标明服务端是启动时读（`start`：仓库、知识、日程、编排、飞书、文档原件）还是开关在启动时读、其余在使用时重读（`start_and_use`：任务定时、运行时、微信）。返回的是当前实际生效的结论；磁盘上的集成文件或身份文件重启后会得出另一结论时，`pending` 给出那个结论，否则为 null。文件读不了时，依赖它的部分记 `unknown`（`configuration_unreadable` 或 `identities_unreadable`）。
+  - 只报告配置状态，不返回路径、令牌、密钥、网址、其中的凭据或控制者身份。
+- **成员**：每人给出 `identityKind` 与三项结论，各按服务端对应的检查：`canRead` 是 HTTP 认证（启动时的身份快照）接受的某一条凭据有读取权限；`canWrite` 是 `currentProjectWriter`（每次使用时重读身份文件，某一条凭据有读与写）；`canReview` 是 `hasCurrentStudyReviewer`（启动时的快照，该身份在本项目的每条凭据都有读、写、复核，几条不完整的授权不拼成完整权限）。`identityFile` 标出身份文件自启动后对本项目有没有改动（只比对身份、类型与权限，不比对令牌）；改过、尚未重启时，`pending` 给出重启后的登录与复核结论。本机 coordinator 用本机身份文件，`source: "local_identities"`；Hub 模式（#219）由 Hub 账户经同一注入接口提供。不返回令牌或其任何派生值，不列别的项目的成员，也不列成员能访问的其他项目。项目成员能看到同项目其他成员的身份与权限，用于选择验收人。
 
 ### UnitOfWork：同库原子命令
 

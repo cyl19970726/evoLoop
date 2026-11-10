@@ -1,7 +1,6 @@
 import { timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import type { Principal } from "@evoloop/contracts";
-import type { ProjectMember } from "@evoloop/contracts/project-configuration";
 
 export const authConfigSchema = z.array(z.strictObject({
   token: z.string().min(32),
@@ -27,27 +26,18 @@ export function hasCurrentStudyReviewer(credentials: AuthConfig, projectId: stri
   return entries.length > 0 && entries.every(entry =>
     (["read", "write", "review"] as const).every(permission => entry.permissions.includes(permission)));
 }
-const permissionOrder = ["read", "write", "review"] as const;
 /**
- * The actors configured for one project, for choosing a reviewer or consumer. An actor may hold several tokens for
- * the project while one is being rotated; it is listed once, with the permissions that every one of those credentials
- * grants (their intersection). That is the hasCurrentStudyReviewer rule: incomplete grants are never combined into a
- * fuller one, so an actor is a full reviewer here exactly when hasCurrentStudyReviewer says so. Other projects'
- * actors, the actor's other projects, tokens and anything derived from a token stay out.
+ * Some single credential of this actor grants every listed permission in the project. Grants of different credentials
+ * are never added together: a request authenticates as exactly one credential (authenticate below).
  */
-export function projectMembers(credentials: AuthConfig, projectId: string): ProjectMember[] {
-  const members = new Map<string, { identityKind: "agent" | "human"; permissions: Set<string> }>();
-  for (const entry of credentials) {
-    if (!entry.projectIds.includes(projectId)) continue;
-    const prior = members.get(entry.actorId);
-    if (!prior) members.set(entry.actorId, { identityKind: entry.identityKind ?? "agent", permissions: new Set(entry.permissions) });
-    // The schema keeps one identity kind per actor and project, so only permissions can differ.
-    else prior.permissions = new Set(entry.permissions.filter(permission => prior.permissions.has(permission)));
-  }
-  return [...members].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([actorId, member]) => ({
-    actorId, identityKind: member.identityKind, permissions: permissionOrder.filter(permission => member.permissions.has(permission)),
-  }));
+export function credentialGrants(credentials: AuthConfig, projectId: string, actorId: string,
+  permissions: readonly ("read" | "write" | "review")[]): boolean {
+  return credentials.some(entry => entry.actorId === actorId && entry.projectIds.includes(projectId) &&
+    permissions.every(permission => entry.permissions.includes(permission)));
 }
+/** The business writer check (main.ts currentProjectWriter): one credential with read and write in the project. */
+export const isProjectWriter = (credentials: AuthConfig, projectId: string, actorId: string): boolean =>
+  credentialGrants(credentials, projectId, actorId, ["read", "write"]);
 export function authenticate(header: string | undefined, credentials: AuthConfig): Principal | null {
   if (!header?.startsWith("Bearer ")) return null;
   const token = Buffer.from(header.slice(7));
