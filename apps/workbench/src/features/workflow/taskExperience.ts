@@ -16,12 +16,18 @@ export function isClosedTask(state: Task["state"]): boolean {
   return state === "done" || state === "cancelled";
 }
 
-/** Retained assignments on a closed Task are evidence of past responsibility. */
-export function assignmentStatusLabel(item: Pick<LeaderWorkTask, "taskState" | "assignment">): string {
+/** What the concrete assignment says beside the current Run; a closed Task keeps its assignment as history. */
+export function assignmentStatusLabel(item: Pick<LeaderWorkTask, "taskState" | "assignment" | "latestRun">): string {
   const state = item.assignment?.state;
   if (isClosedTask(item.taskState)) {
     return state === "accepted" ? "历史承接 · 当时已接受" : state === "assigned"
       ? "历史分派 · 当时待接受" : state === "released" ? "历史分派已释放" : "暂无历史分派记录";
+  }
+  if (state === "assigned" && item.latestRun) {
+    if (item.latestRun.state === "requested") return "已派发，等待启动；接手回执未到";
+    if (item.latestRun.state === "dispatching" || item.latestRun.state === "running") return "已开始执行，接手回执未到";
+    if (item.latestRun.state === "unknown") return "已派发执行，结果未知；接手回执未到";
+    return "已执行结束，接手回执未到";
   }
   return state === "accepted" ? "已接受" : state === "assigned"
     ? "已分派，仍待接受（分派回执）" : "暂无有效分派";
