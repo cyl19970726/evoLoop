@@ -56,6 +56,8 @@ JS
 }
 ```
 
+给 Role 新建受管 Session 还要 `runtime.materialCli`（Role 级 CLI 绑定）、**`residentQueue.roleActors`**（Role → 业务身份，须与前者的 `cliActorId` 一致，`residentQueue.enabled` 为 `true`）和 `runtime.grants`；缺哪项，`session prepare` 的 `missingDetails` 会指明配置项与修法，完整清单见 [Agent CLI](agent-cli.md#编制所需私有配置清单session-prepare-缺项时)。
+
 Leader 结果通知、即时输入、托管压缩、普通 Task 的每日复制和阶段关注各有自己的配置、打开和核对步骤，见[运行接线手册](runtime-operations.md)。
 
 日程 grant 须明确 `projectId`、`actorId`、`scopeId`、`roleId`，与日程当前修订的授权一致；当前身份仍须该项目 `write` 和 `review` 权限。未配置 `template.managedTarget` 时，tick 只创建 `todo` Task 及其固定主正文。新修订可显式绑定已限定同一 active Stage 的既有 `{loopId,stageId}`，同库物化后将经核验的到期来源送给指定 Loop；认知需要工作时复用该 todo，仍按当前 runtime grant、预算与 Task 规则启动，不由 tick 直接运行。旧修订不自动升级为受管工作。停用、失去 coordinator 锁、撤权、过期和异常的状态见 `/api/projects/PROJECT_ID/scheduling/status`。runtime grant 须明确 `projectId`、`actorId`、`roleId`、`authorizationScope` 与绝对路径 `cwd`；每个新 Session 固定 `danger-full-access`、`approvalPolicy: never` 和正常网络。精确授权仍限定 actor、项目、Role、scope 与业务对象，不要把 OS 执行权限理解为项目数据授权。`repositories` 可按项目登记只读 Git 根目录与路径白名单；`feishu` 启用时须给凭据、Bitable 字段映射及逐项目/行为者、显式 `scope: "project"` 的 `grants`，自动轮询另需 `pollEnabled`。用户已将飞书 connector 留待后续，本轮不以实连为完成条件。飞书尚无真实租户验证，不要把 fake HTTP 测试当作实连；当前配置仅支持明确的项目全范围授权，拒绝未落实入站过滤的 owner 范围。身份在启动时读取，修改后重启；HTTP 认证使用启动时的身份快照，重启后才会采用新凭据。集成配置分两种：是否启用运行时、`runtime` 下的执行配置和 `repositories` 的仓库登记等在启动时读取，改后要重启；日程授权、Leader 通知、即时输入和每日复制授权等在使用时重读，见[运行接线手册](runtime-operations.md#共同做法)。普通 Run 封存器会再读当前身份文件，文件修改可能在 HTTP 重启前提前收紧原签署者的新写入资格；已提交 Delivery 的固定回读仍可继续。

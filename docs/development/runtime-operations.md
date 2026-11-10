@@ -16,6 +16,7 @@
 | [即时输入](#2-即时输入) | `directInputs` | 关闭 | 每次请求重读；前提是服务启动时已启用运行时 | [即时输入](../architecture/session-runtime.md#3-即时输入执行中收到的消息怎样处理) |
 | [托管压缩](#3-托管压缩) | `runtime.compaction.owned` | `true` | 启动时读，改后重启 | [托管压缩](../architecture/session-runtime.md#4-托管压缩) |
 | [普通 Task 的每日复制](#4-普通-task-的每日复制) | `scheduling.taskTimingGrants` | 空 | 每次创建、改时和物化时重读 | [一次与每日复制](../architecture/contracts.md#普通-task-的一次与每日复制) |
+| [受管 Session 编制](#6-受管-session-编制所需配置) | `residentQueue.roleActors`、`runtime.materialCli`、`runtime.grants` 等 | 无（逐项见该节） | `session prepare` 每次重读；只有 `runtime.enabled` 与新增 HTTP 令牌要重启 | [准备或复用受管 Session](agent-cli.md#准备或复用受管-session) |
 | [阶段关注](#5-阶段关注) | 没有开关，门槛用命令修订 | 服务运行就评估，每 30 秒一次 | 不适用 | [阶段等待由事实推导](../architecture/contracts.md#阶段等待由事实推导) |
 
 ## 1. Leader 结果通知
@@ -277,3 +278,11 @@ node --import tsx tests/manual/session-compaction-e1.ts
 - **导入通知没有正式命令。** 迁移导入的 Leader 通知只能由维护者直接标记，没有权限检查和操作回执（见[迁移之后先处理导入的通知](#迁移之后先处理导入的通知)）。
 - **即时输入的能力查询不核运行时。** 对 Claude 或非 alpha.6 的 Codex 也可能回答 `steer`，提交时才被拒绝或记为未知（见 [Session 运行时 §3](../architecture/session-runtime.md#3-即时输入执行中收到的消息怎样处理)）。
 - **托管压缩只在 alpha.6 可用。** 隔离测试只用替身，不验证有认证的模型压缩。
+
+## 6. 受管 Session 编制所需配置
+
+给一个 Role 新建受管 Session，要同时配好：业务身份（身份文件里对本项目有 read 与 write）、`runtime.grants`（含工作区 `cwd`）、Role 级 `runtime.materialCli`、**`residentQueue.roleActors`** 与 `residentQueue.enabled`、需要时的 `sessionMessages.grants`，以及 `runtime.enabled`。完整清单、每项的格式和生效时机见 [Agent CLI：编制所需私有配置清单](agent-cli.md#编制所需私有配置清单session-prepare-缺项时)。
+
+- **缺项怎么看。** `session prepare` 返回 `status=blocked`，`missing` 是代码，`missingDetails` 写明要设的配置项、可复制的修法和是否需重启；`role_actor` 就是缺 `residentQueue.roleActors`（或它没启用、或该身份无写权限）。
+- **哪些要重启。** 按代码核对，`session prepare` 每次调用都重读 integrations 与身份文件，补 `residentQueue.roleActors`、`runtime.materialCli`、`runtime.grants` 不需要重启；只有 `runtime.enabled`（运行时只在启动时建立）和新增 HTTP 令牌要重启。
+- **同一个事实写两处。** `runtime.materialCli` 的 `cliActorId` 与 `residentQueue.roleActors` 的 `actorId` 在 Role 级必须一致，不一致时报 `material_cli_actor_mismatch`；为什么暂不合并见 Agent CLI 那一节。

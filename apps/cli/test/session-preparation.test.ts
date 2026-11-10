@@ -189,3 +189,18 @@ test("the complete preparation intent is frozen before native readiness and on r
       "http://localhost:4318","private-token",actor,()=>{}),/different saved intent/);
   } finally {await rm(dir,{recursive:true,force:true});}
 });
+
+test("a blocked preparation says what to fix, from the service's details or, for an older service, from the same hints",async()=>{
+  const dir=await mkdtemp(join(tmpdir(),"evoloop-prepare-"));
+  try {
+    const blocked=(extra:Record<string,unknown>)=>({...snapshot(null),missing:["role_actor"],config:{...config,roleActorId:null},...extra});
+    const run=(view:Record<string,unknown>)=>prepareSession(spec,{get:async()=>view,post:async()=>{throw new Error("a blocked preparation must not write");}} as unknown as ApiClient,
+      new ReceiptStore(dir),origin,token,actor,()=>{});
+    const served=await run(blocked({missingDetails:[{code:"role_actor",setting:"residentQueue.roleActors",problem:"p",fix:"served fix",reread:"per_call"}]})) as unknown as {status:string;missing:string[];missingDetails:Array<Record<string,any>>};
+    assert.deepEqual([served.status,served.missing],["blocked",["role_actor"]]);
+    assert.equal(served.missingDetails[0]!.fix,"served fix");
+    const local=await run(blocked({})) as unknown as {missingDetails:Array<Record<string,any>>};
+    assert.equal(local.missingDetails[0]!.setting,"residentQueue.roleActors");
+    assert.deepEqual(local.missingDetails[0]!.example.residentQueue.roleActors[0],{projectId,roleId,actorId:"<该 Role 的业务身份 actorId>"});
+  } finally {await rm(dir,{recursive:true,force:true});}
+});
