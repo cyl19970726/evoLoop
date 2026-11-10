@@ -55,7 +55,7 @@
 - 字体：系统中文无衬线（`-apple-system, "PingFang SC", "Microsoft YaHei", sans-serif`）；代码、命令、技能名用等宽字体。
 - 字重三档：常规 400、中等 500（列表标题、按钮）、强调 600（页面与区块标题）。
 - 行高三档：正文阅读 1.8，界面 1.55，标题 1.3。正文行宽不超过 `reading-width`（680px）。
-- 页面只用 token 类：字号 `text-caption` 到 `text-title`；行高 `leading-(--leading-reading)`、`leading-(--leading-body)`、`leading-(--leading-tight)`（`leading-tight` 也指向同一个 token）。不写 `text-[11px]`、`leading-[1.6]` 这类方括号值，也不用 Tailwind 自带、token 之外的档（`text-sm`、`leading-relaxed` 等）。
+- 页面只用 token 类：字号 `text-caption` 到 `text-title`；行高 `leading-(--leading-reading)`、`leading-(--leading-body)`、`leading-(--leading-tight)`。不写 `text-[11px]`、`leading-[1.6]` 这类方括号值，也不用任意属性（`[font-size:…]`）、字号上的行高修饰（`text-small/6`）、内联样式，或 Tailwind 自带、token 之外的档（`text-sm`、`leading-relaxed`、`leading-5`、`leading-tight` 等）。`packages/ui` 的样式表（`tokens.css` 之外）同样只写 `var(--…)`。
 - 数字用等宽数字（`tabular-nums`）。中文与数字、英文之间留一个空格。
 
 ## 间距、尺寸与圆角

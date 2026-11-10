@@ -40,18 +40,27 @@ test("colour literals appear only in packages/ui/src/tokens.css", () => {
 });
 
 // Type size, corner radius and line height are token classes (text-caption … text-title; rounded-sm/md/lg/xl/full;
-// leading-(--leading-reading|body|tight) or leading-tight), never a bracket value or Tailwind's own scale beside the
-// tokens. A literal that is truly needed goes in this list with its reason; it is empty since #229 F6.
-const typeExceptions: ReadonlyArray<{ file: string; literal: string; reason: string }> = [];
+// leading-(--leading-reading|body|tight)), never a bracket value, an arbitrary property, an inline style, a modifier
+// such as text-small/6, or Tailwind's own scale beside the tokens (text-sm, rounded-2xl, leading-5, leading-tight …).
+// The stylesheets of @evoloop/ui other than tokens.css use var(--…) for them. A literal that is truly needed goes in
+// this list with its reason.
+const typeExceptions: ReadonlyArray<{ file: string; literal: string; reason: string }> = [
+  { file: "packages/ui/src/base.css", literal: "font-size: 1em",
+    reason: "code, kbd, samp and pre keep the size of the text around them (browsers shrink monospace text by default); it is a reset, not a new size." },
+];
+const sizeNames = "caption|label|small|body|heading|title|xs|sm|base|lg|[2-9]?xl";
 const typeLiteralPatterns: ReadonlyArray<[RegExp, string]> = [
   [/(?<![\w-])text-\[(?:length:)?[\d.]+[a-z%]*\]/g, "font size"],
-  [/(?<![\w-])text-(?:xs|sm|base|lg|[2-9]?xl)(?![\w-])/g, "font size outside the token scale"],
-  [/\bfontSize[=:]\s*["'{]?\d/g, "font size"],
+  [/(?<![\w-])text-(?:xs|sm|base|lg|[2-9]?xl)(?![\w/-])/g, "font size outside the token scale"],
+  [new RegExp(`(?<![\\w-])text-(?:${sizeNames})/[^\\s"'\`]+`, "g"), "line height through a font-size modifier"],
+  [/\b(?:fontSize|lineHeight|borderRadius)[=:]\s*["'{]?\d/g, "inline type size, line height or radius"],
+  [/\[(?:font-size|line-height|border(?:-[a-z]+)*-radius):/g, "arbitrary property for type size, line height or radius"],
   [/(?<![\w-])rounded(?:-(?:t|r|b|l|s|e|tl|tr|br|bl|ss|se|es|ee))?-\[[^\]\s]*\]/g, "radius"],
   [/(?<![\w-])rounded(?:-(?:t|r|b|l|s|e|tl|tr|br|bl|ss|se|es|ee))?(?:-(?:xs|2xl|3xl|4xl))?(?![\w[(-])/g, "radius outside the token scale"],
   [/(?<![\w-])leading-\[[^\]\s]*\]/g, "line height"],
-  [/(?<![\w-])leading-(?:snug|normal|relaxed|loose)(?![\w-])/g, "line height outside the token scale"],
+  [/(?<![\w-])leading-(?:none|tight|snug|normal|relaxed|loose|[\d.]+)(?![\w.-])/g, "line height outside the token scale"],
 ];
+const cssTypeLiteral = /(?<![\w-])(?:font-size|line-height|border(?:-[a-z]+)*-radius)\s*:\s*(?!\s|var\(|inherit\b|0\s*[;}])[^;}]+/g;
 
 test("type size, radius and line height come from tokens in the workbench and @evoloop/ui", () => {
   const found = [...files(source, /\.tsx?$/), ...files(ui, /\.tsx?$/)].flatMap(file => {
@@ -59,6 +68,10 @@ test("type size, radius and line height come from tokens in the workbench and @e
     const name = relative(join(workbench, "../.."), file);
     return typeLiteralPatterns.flatMap(([pattern, kind]) => [...text.matchAll(pattern)].map(match => ({ file: name, literal: match[0], kind })));
   });
+  for (const file of [...files(source, /\.css$/), ...files(ui, /\.css$/)].filter(file => !file.endsWith(join("ui", "src", "tokens.css")))) {
+    const text = withoutComments(readFileSync(file, "utf8"));
+    for (const match of text.matchAll(cssTypeLiteral)) found.push({ file: relative(join(workbench, "../.."), file), literal: match[0].trim(), kind: "stylesheet value" });
+  }
   const offenders = found.filter(item => !typeExceptions.some(allowed => item.file.endsWith(allowed.file) && item.literal === allowed.literal))
     .map(item => `${item.file}: ${item.literal} (${item.kind})`);
   assert.deepEqual(offenders, [], "Use the token classes in docs/frontend/foundations.md; a new value needs a token in tokens.css first.");
@@ -76,11 +89,12 @@ const nativeControlExceptions: ReadonlyArray<{ file: string; control: string; co
   { file: "app/PageBoundary.tsx", control: "<button", count: 1,
     reason: "The page error boundary wraps every page from the first load; same reason as the router's error page." },
 ];
+// JSX and createElement (h) alike; confirm() is the browser's (bare or on window), not a method of the same name.
 const nativeControls: ReadonlyArray<[string, RegExp]> = [
-  ["<button", /<button\b/g],
-  ["<select", /<select\b/g],
+  ["<button", /<button\b|\b(?:h|createElement)\(\s*["']button["']/g],
+  ["<select", /<select\b|\b(?:h|createElement)\(\s*["']select["']/g],
   ["checkbox or radio input", /type[=:]\s*["'{]*(?:checkbox|radio)\b/g],
-  ["window.confirm", /\b(?:window\.)?confirm\(/g],
+  ["window.confirm", /(?<![\w$.])confirm\(|\b(?:window|globalThis|self)\.confirm\(/g],
 ];
 
 test("native buttons, selects, checkboxes, radios and confirm() are gone from the workbench, except the listed few", () => {

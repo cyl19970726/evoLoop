@@ -344,19 +344,21 @@ const optionRow = "flex min-w-0 items-start gap-2 text-label text-foreground";
 function FieldControl(props: FieldProps) {
   if (!props.field.preview) return <FieldInput {...props} />;
   const preview = props.field.preview(props.values);
-  return <div className="flex min-w-0 flex-col gap-1.5"><FieldInput {...props} />
-    <div role="status" data-field-preview={props.field.name} className="text-caption text-text-secondary empty:hidden [overflow-wrap:anywhere]">{preview ?? null}</div></div>;
+  // Spaced by a margin it drops while empty, not hidden: a status line that is display:none is not announced when it fills.
+  return <div className="flex min-w-0 flex-col"><FieldInput {...props} />
+    <div role="status" data-field-preview={props.field.name} className="mt-1.5 text-caption text-text-secondary empty:mt-0 [overflow-wrap:anywhere]">{preview ?? null}</div></div>;
 }
 
 function FieldInput({ field, value, values, error, hideLabel, onChange }: FieldProps) {
   const label = field.optional && !field.label.includes("可选") ? `${field.label}（可选）` : field.label;
   const errorId = React.useId();
+  const legendId = React.useId();
   if (field.kind === "radio" || field.kind === "multi") {
     const picked = field.kind === "multi" ? chosen(value) : [];
     return <fieldset className="flex min-w-0 flex-col gap-1.5" aria-describedby={error ? errorId : undefined}>
-      <legend className="mb-1 text-label font-semibold text-foreground">{label}</legend>
+      <legend id={legendId} className="mb-1 text-label font-semibold text-foreground">{label}</legend>
       {field.options?.length ? field.kind === "radio"
-        ? <RadioGroup name={field.name} value={value || null} onValueChange={onChange}>{field.options.map(option => <label key={option.value} className={optionRow}>
+        ? <RadioGroup aria-labelledby={legendId} name={field.name} value={value || null} onValueChange={onChange}>{field.options.map(option => <label key={option.value} className={optionRow}>
           <RadioGroupItem value={option.value} disabled={option.disabled} className="mt-0.5" />
           <span className="min-w-0 [overflow-wrap:anywhere]">{option.label}</span></label>)}</RadioGroup>
         : field.options.map(option => <label key={option.value} className={optionRow}>

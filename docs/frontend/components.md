@@ -11,11 +11,11 @@
 | Button | 触发操作 | 胶囊形。变体：`primary`（墨色，每屏最多一个）、`secondary`（默认）、`ghost`（列表与工具栏）、`danger`（不可逆操作）；尺寸 `default`、`compact`。文字以动词开头，2–6 个字。另有三种不是胶囊的变体，默认尺寸 `inline`（不带高度、内边距和字号）：`link` 是写在文字里的操作（“重试”“在右栏查看”），墨蓝字、悬停下划线；`row` 是点了会改变页面所显示内容的行或卡片（阶段、循环、目录项），用 `aria-pressed` 标出选中项；`tab` 是页签条里的一项，用 `aria-selected` |
 | IconButton | 只有图标的操作 | `label` 必填，用作可读名称和悬停提示 |
 | Field、Input、Textarea、Select | 表单输入 | 标签在上，说明和错误在下，三者都和输入框关联；错误写原因和改法。Select 是原生下拉，外观同 Input；`compact` 用于工具栏和左栏的筛选 |
-| Checkbox、RadioGroup | 多选、单选 | 基于 Radix。放进 `<label>` 和文字写在一起，点文字也能勾选；空格切换，单选组用方向键移动并选中；在表单里仍随表单提交值 |
+| Checkbox、RadioGroup | 多选、单选 | 基于 Radix。放进 `<label>` 和文字写在一起，点文字也能勾选；空格切换，单选组用方向键移动并选中，Enter 不切换，也不提交表单（原生的会）；在表单里仍随表单提交值。单选组用 `aria-labelledby` 指向组标题（`legend`） |
 | StatusTag | 显示状态 | 只按[状态表](foundations.md#状态的视觉表达)渲染，颜色加图标加文字 |
 | Badge、CountDot | 计数、类型、短标记 | Badge 只用中性色，不表达状态；CountDot 是“待我处理”等入口上的陶土色计数，0 时不显示；数目核对不了时（`count={null}`）显示灰色问号，读作“数目待核对”，不显示可能错的数字 |
 | Notice | 页内提示 | 信息、等待、失败三种；不代替空状态 |
-| Dialog、ConfirmDialog | 确认危险或低频操作 | 写清影响对象和确认后的结果；不放长表单。会丢东西的一问一答（清空草稿、离开项目）用 ConfirmDialog：焦点先落在取消上，Esc 和点空白处都算取消。首屏还没有组件库时（`App.tsx` 里离开项目、退出）用 `shared/confirm.ts` 的 `askConfirm()`，由登录后加载的 `ConfirmHost` 显示同一个弹窗，浏览器前进后退也等它的答复。不用浏览器的 `confirm()` |
+| Dialog、ConfirmDialog | 确认危险或低频操作 | 写清影响对象和确认后的结果；不放长表单。会丢东西的一问一答（清空草稿、离开项目）用 ConfirmDialog：焦点先落在取消上；Esc 和关闭按钮算取消，点空白处不作答；关闭后焦点回到打开前的位置（从菜单项打开时回到打开菜单的按钮），那里已不在页面上时回到 `fallbackFocus`。首屏还没有组件库时（`App.tsx` 里离开项目、退出）用 `shared/confirm.ts` 的 `askConfirm()`，由登录后加载的 `ConfirmHost` 显示同一个弹窗；退出、登录失效时未答的问题按取消结束，弹窗的代码加载失败或 10 秒内没加载好也按取消结束并提示。浏览器前进后退先被拦下、地址立即复原再问，确认离开才走到目标；问题开着时其他导航一律拦下。不用浏览器的 `confirm()` |
 | Sheet | 窄屏导航、窄屏右栏 | 从边缘滑出，Escape 关闭并回到触发位置 |
 | DropdownMenu、Tooltip | 次要操作、补充说明 | 不把主要操作藏进菜单 |
 | Tabs | 同一对象的平级视图 | 少用；优先一条连续的内容流 |

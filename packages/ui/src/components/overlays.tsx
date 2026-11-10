@@ -90,7 +90,8 @@ const overlayClass = "fixed inset-0 z-50 bg-[var(--scrim)] data-[state=open]:ani
 
 export const DialogContent = React.forwardRef<React.ComponentRef<typeof DialogPrimitive.Content>, React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content>>(({ className, children, ...props }, ref) => (
   <DialogPrimitive.Portal>
-    <DialogPrimitive.Overlay className={overlayClass} />
+    {/* Pressing on the scrim never takes focus out of the dialog (it would land on <body>). */}
+    <DialogPrimitive.Overlay className={overlayClass} onMouseDown={event => event.preventDefault()} />
     <DialogPrimitive.Content
       ref={ref}
       data-ui=""
@@ -130,18 +131,43 @@ export interface ConfirmDialogProps {
   /** Confirming discards or ends something: the confirm button is drawn as danger. */
   danger?: boolean | undefined;
   onConfirm(): void;
-  /** Cancel, Escape, the close button and a click outside all cancel. */
+  /** Cancel, Escape and the close button cancel. A click outside does nothing: the question waits for an answer. */
   onCancel(): void;
+  /** Where focus goes on closing when the element that had it is gone (default: the page's <main>). */
+  fallbackFocus?: (() => HTMLElement | null) | undefined;
 }
+
+const useIsomorphicLayoutEffect = typeof window === "undefined" ? React.useEffect : React.useLayoutEffect;
+
+/**
+ * Where focus was before a dialog took it. For an item of a menu, which closes when chosen, it is the button that
+ * opened the menu (the menu is labelled by it).
+ */
+function focusOrigin(): HTMLElement | null {
+  const active = document.activeElement;
+  if (!(active instanceof HTMLElement) || active === document.body) return null;
+  const trigger = active.closest('[role="menu"]')?.getAttribute("aria-labelledby");
+  return (trigger ? document.getElementById(trigger) : null) ?? active;
+}
+const canTakeFocus = (element: HTMLElement | null): element is HTMLElement => !!element?.isConnected && element.getClientRects().length > 0;
 
 /**
  * Asks before a step that loses something (role alertdialog). Focus starts on the cancel button, so Enter never
- * confirms by accident; when the dialog closes, focus returns to where it was.
+ * confirms by accident. When the dialog closes, focus returns to where it was before it opened (Radix would send it to
+ * a Trigger, and this dialog is opened from code); if that element is gone, to `fallbackFocus`.
  */
-export function ConfirmDialog({ open, title, description, confirmLabel, cancelLabel = "取消", danger = false, onConfirm, onCancel }: ConfirmDialogProps) {
+export function ConfirmDialog({ open, title, description, confirmLabel, cancelLabel = "取消", danger = false, onConfirm, onCancel, fallbackFocus }: ConfirmDialogProps) {
+  const origin = React.useRef<HTMLElement | null>(null);
+  useIsomorphicLayoutEffect(() => { if (open) origin.current = focusOrigin(); }, [open]);
+  const returnFocus = (event: Event) => {
+    event.preventDefault();
+    const target = canTakeFocus(origin.current) ? origin.current : fallbackFocus ? fallbackFocus() : document.querySelector<HTMLElement>("main");
+    origin.current = null;
+    target?.focus({ preventScroll: true });
+  };
   return (
     <Dialog open={open} onOpenChange={next => { if (!next) onCancel(); }}>
-      <DialogContent role="alertdialog">
+      <DialogContent role="alertdialog" onPointerDownOutside={event => event.preventDefault()} onCloseAutoFocus={returnFocus}>
         <DialogTitle>{title}</DialogTitle>
         {description ? <DialogDescription>{description}</DialogDescription> : <DialogDescription className="sr-only">{title}</DialogDescription>}
         <DialogFooter>

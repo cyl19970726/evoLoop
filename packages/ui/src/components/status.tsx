@@ -35,10 +35,10 @@ export function StatusTag({ tone, label, detail, className, ...props }: StatusTa
 
 /** Counts, kinds and short marks. Neutral only: a badge never states a status. */
 export function Badge({ className, ...props }: React.HTMLAttributes<HTMLSpanElement>) {
-  return <span className={cn("inline-flex min-w-5 items-center justify-center rounded-full bg-field px-2 text-caption leading-5 text-text-secondary tabular-nums", className)} {...props} />;
+  return <span className={cn("inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-field px-2 text-caption leading-(--leading-body) text-text-secondary tabular-nums", className)} {...props} />;
 }
 
-const dot = "inline-flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-caption font-semibold leading-4 tabular-nums";
+const dot = "inline-flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-caption font-semibold leading-(--leading-tight) tabular-nums";
 
 /**
  * The small count on 待我处理 and similar entries. `null` is a count that cannot be checked right now: a muted question

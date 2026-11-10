@@ -22,13 +22,15 @@ export function LocalTimeInput({ control, name, value, timezone, onChange, activ
   const choose = (which: "earlier" | "later") => onChange(joinTimeField({ local, instant: which === "later" ? repeated!.later : repeated!.earlier }));
   const option = (which: "earlier" | "later", label: string) => h("label", { key: which, className: "flex items-center gap-1.5" },
     h(RadioGroupItem, { value: which }), label);
-  return h("div", { className: "flex min-w-0 flex-col gap-1.5" },
+  // The line is spaced by its own margin, which it drops while empty: it takes no room then, yet stays in the
+  // accessibility tree, so the status is announced when its first words appear (display:none would not be).
+  return h("div", { className: "flex min-w-0 flex-col" },
     h(Input, { ...control, name, type: "datetime-local", step: /:\d{2}:\d{2}$/.test(local) ? 1 : 60, value: local, autoComplete: "off",
       onChange: event => onChange((event.target as HTMLInputElement).value) }),
-    h("div", { role: "status", "data-field-preview": name, className: "text-caption text-text-secondary empty:hidden [overflow-wrap:anywhere]" },
+    h("div", { role: "status", "data-field-preview": name, className: "mt-1.5 text-caption text-text-secondary empty:mt-0 [overflow-wrap:anywhere]" },
       active ? timeFieldPreview(value, timezone) : null),
     repeated && h(RadioGroup, { "aria-label": "这一当地时刻出现两次，用哪一次", name: `${name}-occurrence`, value: later ? "later" : "earlier",
-      onValueChange: (which: string) => choose(which === "later" ? "later" : "earlier"), className: "gap-1 text-caption text-foreground" },
+      onValueChange: (which: string) => choose(which === "later" ? "later" : "earlier"), className: "mt-1.5 gap-1 text-caption text-foreground" },
       h("span", { className: "text-text-secondary" }, "这一当地时刻在夏令时结束时出现两次。协调器的每日规则取较早的一次；这里按所选的一次记录。"),
       option("earlier", `较早一次（${utcText(repeated.earlier)}）`), option("later", `较晚一次（${utcText(repeated.later)}）`)));
 }
