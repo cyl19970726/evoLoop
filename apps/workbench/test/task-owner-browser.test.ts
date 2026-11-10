@@ -124,7 +124,7 @@ test("Task owner resolves one real Role and only verified bound agent links at 3
   if (process.env.EVOLOOP_TASK_OWNER_SCREENSHOT)
     await header.screenshot({path:process.env.EVOLOOP_TASK_OWNER_SCREENSHOT});
   assert.ok((await (await fetch(`${base}/__fixture/reads`)).json()).roleReads >= 1,"Task owner must verify the exact Role record");
-  assert.equal(await owner.getByRole("link",{name:/^前端实现（就绪）$/}).getAttribute("href"),
+  assert.equal((await owner.getByRole("link",{name:/^前端实现（就绪）$/}).getAttribute("href"))?.split("&return=")[0],
     `/p/${projectId}/sessions?session=${encodeURIComponent(`owned:${sessionId}`)}`,
     "the verified owned Session opens through the sole Sessions directory route");
   await pageBrowser.evaluate(({projectId,taskId})=>{location.hash=`/p/${projectId}/tasks/${taskId}`;},{projectId,taskId});

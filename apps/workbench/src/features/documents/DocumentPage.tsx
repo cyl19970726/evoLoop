@@ -59,7 +59,7 @@ export function DocumentPage({ context, projectId, id, selectedRevision }: {
   const scope = `${context.principal.actorId}:${projectId}`;
   // Read from the address while this page is on screen: the same page can be opened from several sources.
   const returnTo = documentReturnPlace(active ? documentReturnHref(projectId) : href(projectId, "documents"), projectId);
-  const back = <div className="document-reading-backlinks flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
+  const back = <div className="document-reading-backlinks flex flex-wrap items-center gap-x-3 gap-y-1">
     <ReturnLink projectId={projectId} href={returnTo.href} place={returnTo.place} />
     {returnTo.href.split("?")[0] !== href(projectId, "documents") && <a href={href(projectId, "documents")} className="text-caption text-muted-foreground hover:text-foreground">全部文档</a>}
   </div>;

@@ -39,7 +39,7 @@ export function KnowledgeReader({ projectId, read, fixed, returnHref, pendingTit
   }, [shownKey]);
   // The page it was opened from, named (返回任务：<名称>, 返回文档列表 …; shared/returnLink.ts).
   const source = returnHref ? returnPlaceOf(returnHref, projectId) : null;
-  const back = <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
+  const back = <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
     {returnHref && source && <ReturnLink projectId={projectId} href={returnHref} place={source} />}
     <a href={knowledgeHref(projectId)} className={cn("text-label", source ? "text-muted-foreground hover:text-foreground" : "inline-flex items-center gap-1 font-medium text-primary hover:underline")}>
       {!source && <ArrowLeft size={15} aria-hidden="true" />}全部知识</a>

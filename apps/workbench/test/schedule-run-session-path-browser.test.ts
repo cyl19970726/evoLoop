@@ -122,7 +122,7 @@ test("old Schedule occurrence reaches its exact closed Run Session workspace", {
   await exact.click();
   await page.getByRole("heading", { name: "历史 Session 77500006" }).waitFor();
   assert.match(await page.locator(".session-detail-header").innerText(), /历史/);
-  assert.equal((url => url.pathname + url.search)(new URL(page.url())), `/p/${projectId}/sessions?session=${encodeURIComponent(sessionKey)}`);
+  assert.equal((url => url.pathname + url.search)(new URL(page.url())).split("&return=")[0], `/p/${projectId}/sessions?session=${encodeURIComponent(sessionKey)}`);
   assert.ok(requests.includes(`${rootPath(projectId)}/session-work/${encodeURIComponent(sessionKey)}`));
   assert.equal(requests.includes(`${rootPath(projectId)}/session-work/${encodeURIComponent(`owned:${otherSessionId}`)}`), false);
   assert.equal(errors.length, 0, errors.join(" | "));

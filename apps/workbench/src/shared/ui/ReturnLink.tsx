@@ -16,9 +16,9 @@ export function ReturnLink({ projectId, href, place, title, className }: {
   const task = useTaskName(projectId, taskId);
   const agent = useSessionName(projectId, !title && place.kind === "agent" ? place.sessionKey : null);
   const name = title || (taskId ? named(task) : place.kind === "agent" ? named(agent) : null);
-  const label = returnText(place, name);
-  return <a href={href} title={label} data-return-link=""
-    className={cn("inline-flex w-fit max-w-full items-center gap-1 text-label font-medium text-primary hover:underline", className)}>
-    <ArrowLeft size={15} aria-hidden="true" className="shrink-0" /><span className="min-w-0 truncate">{label}</span>
+  // Same box as the page headers' other links: one text line that wraps a long name rather than widening the header.
+  return <a href={href} data-return-link=""
+    className={cn("inline-flex max-w-full items-center gap-1 text-label font-medium text-primary [overflow-wrap:anywhere] hover:underline", className)}>
+    <ArrowLeft size={15} aria-hidden="true" className="shrink-0" />{returnText(place, name)}
   </a>;
 }

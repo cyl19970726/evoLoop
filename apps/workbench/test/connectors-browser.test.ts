@@ -86,8 +86,9 @@ test("微信连接 lists routes with their deliveries and keeps the create form 
     const text = await card.innerText();
     assert.match(text, /启用\s*标准模式 · 第 3 版[\s\S]*微信 · 群聊 · 连接 wx-1[\s\S]*转给 前端实现助手/);
     assert.doesNotMatch(text, /active|wechat|v3|36000003/, "raw state, provider, version and agent ID stay out of the card body");
-    assert.equal(await card.getByRole("link", { name: "前端实现助手" }).getAttribute("href"),
-      `/p/${projectId}/sessions?session=${encodeURIComponent(route.targetSessionId)}`);
+    const agentLink = new URLSearchParams((await card.getByRole("link", { name: "前端实现助手" }).getAttribute("href"))!.split("?")[1]);
+    assert.equal(agentLink.get("session"), route.targetSessionId);
+    assert.equal(agentLink.get("return"), `/p/${projectId}/connectors`, "the agent page offers 返回微信连接");
     await card.getByText("完整标识与范围").click();
     await card.getByText(route.targetSessionId, { exact: true }).waitFor();
     await card.getByRole("button", { name: "读取最近的投递" }).click();
