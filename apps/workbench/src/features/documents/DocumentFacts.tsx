@@ -1,4 +1,4 @@
-// The right column for an open document (docs/frontend/layout.md 右栏): 版本 → 来源 → 引用它的任务 → 页内目录,
+// The right column for an open document (docs/frontend/layout.md 右栏): 版本 → 全部版本 → 来源 → 引用它的任务 → 页内目录,
 // each a block that folds on its own. Raw IDs and hashes live here, in the source layer, never in the text.
 import React, { type RefObject } from "react";
 import { ChevronRight } from "lucide-react";

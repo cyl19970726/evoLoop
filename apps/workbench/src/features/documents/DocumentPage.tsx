@@ -1,6 +1,7 @@
 // One document read in full (docs/frontend/pages/documents.md): the center holds the text of the revision the
-// address names; the inner rail keeps the document list; the right column holds version, source, the tasks that
-// reference it and the outline. A fixed historical link stays on its revision and offers the current one. Markdown
+// address names, numbered 第 N 版 / 共 M 版 (M from the revision list); the inner rail keeps the document list; the
+// right column holds version, all versions, source, the tasks that reference it and the outline. A fixed historical
+// link stays on its revision and offers the current one. Markdown
 // saved only as its original (an uploaded file, an import) is read from that original.
 import React, { useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
