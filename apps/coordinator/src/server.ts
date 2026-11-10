@@ -79,6 +79,8 @@ export async function buildServer(options: {
   isDynamicSession?: (projectId: string, sessionId: string) => Promise<boolean>;
   authorizeDynamicSession?: (principal: Principal, command: Extract<Command,{type:"runtime.session.reserve"}>) => Promise<boolean>;
   authorizeDynamicRun?: (principal: Principal, command: Extract<Command,{type:"runtime.run.reserve"}>, session: RuntimeSessionRecord) => Promise<boolean>;
+  /** Refuses a Run reservation whose fixed recipient the preflight would reject later; must not write. */
+  requireRunRecipient?: (principal: Principal, command: Extract<Command,{type:"runtime.run.reserve"}>, session: RuntimeSessionRecord) => Promise<void>;
   authorizeDynamicMessageRecovery?: (principal: Principal, session: RuntimeSessionRecord) => Promise<boolean>;
   manualStop?: {
     execute(principal:Principal,command:Extract<Command,{type:"session.message.manualStop"}>):ReturnType<WorkflowService["execute"]>;
@@ -293,6 +295,7 @@ export async function buildServer(options: {
           throw new DomainError("FORBIDDEN", "当前请求者未获该职责和范围的执行授权。");
         }
         if(!dynamic)await requireActiveModel(session.executionProfile?.revision.model??session.model,sessionProvider(session));
+        await options.requireRunRecipient?.(principal, command, session);
       }
     }
     if (command.type === "schedule.create" || (command.type === "schedule.revise" && command.state === "active")) {
