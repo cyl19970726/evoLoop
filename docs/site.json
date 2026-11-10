@@ -113,6 +113,26 @@
       "group": "前端文档"
     },
     {
+      "path": "docs/frontend/pages/entry.md",
+      "title": "登录与项目列表",
+      "group": "前端文档"
+    },
+    {
+      "path": "docs/frontend/pages/settings.md",
+      "title": "项目设置",
+      "group": "前端文档"
+    },
+    {
+      "path": "docs/frontend/pages/operations.md",
+      "title": "待核对操作",
+      "group": "前端文档"
+    },
+    {
+      "path": "docs/frontend/pages/repository.md",
+      "title": "仓库规范",
+      "group": "前端文档"
+    },
+    {
       "path": "docs/frontend/architecture.md",
       "title": "前端架构",
       "group": "前端文档"
