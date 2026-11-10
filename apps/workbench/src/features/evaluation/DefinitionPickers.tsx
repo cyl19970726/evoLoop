@@ -3,15 +3,18 @@
 // stay those of the shared command form; IDs, revisions and hashes are shown only under 完整标识.
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import type { Document, DocumentDetail, DocumentRevision, EvaluationFixedRef, Page, Task } from "@evoloop/contracts";
+import type { Document, DocumentRevisionSummary, EvaluationFixedRef, Page, Task } from "@evoloop/contracts";
 import type { KnowledgeSummary } from "@evoloop/contracts/knowledge";
 import { Button, Input, ListRow, Notice } from "@evoloop/ui";
 import { api, errorText } from "../../shared/api";
 import { knowledgeClient } from "../../shared/knowledgeClient";
 import { useProjectList } from "../../shared/projectList";
+import { revisionLine } from "../../shared/documentRevisions";
+import { readRevisionHead, useDocumentRevisions } from "../../shared/useDocumentRevisions";
 import { fixedContent, projectQueryOptions, queryKeys, useProjectQuery } from "../../shared/query";
 import { useTaskName } from "../../shared/ui/RecordName";
 import { FullIdentifiers } from "../../shared/ui/FullIdentifiers";
+import { RevisionListStatus } from "../../shared/ui/RevisionListStatus";
 import { date } from "../../shared/ui/shared";
 import { nameOnly } from "../../shared/workPresentation";
 import { documentFixedRef, documentVersionLabel, refRows, typedRef, wikiFixedRef, withRef, withoutRef, type ChoosableKind } from "./fixedRefChoice";
@@ -80,14 +83,27 @@ export function TaskChoice({ projectId, value, onChange, control, label, inProgr
   </div>;
 }
 
-/** A fixed reference by name and version, after the exact revision and hash were read back; never by its identifiers. */
+/** Reads one document revision under the key the document page reads fixed revisions with. */
+function fixedDocumentRevision(projectId: string, documentId: string, revisionId: string) {
+  return projectQueryOptions(projectId, [fixedContent, documentId, revisionId, "revision"], async () => {
+    const value = await api().documentRevision(projectId, documentId, revisionId);
+    if (value.projectId !== projectId || value.documentId !== documentId || value.id !== revisionId) throw new Error("文档响应与所选的固定修订不符");
+    return value;
+  });
+}
+
+/**
+ * A fixed reference by name and version, after the exact revision and hash were read back; never by its identifiers.
+ * A document's name and current state come from the head of its revision list, which reads no text.
+ */
 function useRefName(projectId: string, ref: EvaluationFixedRef) {
+  const client = useQueryClient();
   return useProjectQuery(projectId, ["evaluation-choice", "ref", ref.kind, ref.id, ref.revision, ref.contentHash], async (): Promise<{ name: string; version: string }> => {
     if (ref.kind === "document") {
-      const [detail, fixed] = await Promise.all([api().document(projectId, ref.id), api().documentRevision(projectId, ref.id, ref.revision)]);
-      const title = verifiedFixedDocumentTitle(ref, projectId, detail.document, fixed);
+      const [head, fixed] = await Promise.all([readRevisionHead(projectId, ref.id), client.fetchQuery(fixedDocumentRevision(projectId, ref.id, ref.revision))]);
+      const title = verifiedFixedDocumentTitle(ref, projectId, { ...head, projectId }, fixed);
       if (!title) throw new Error("文档的固定修订与哈希没有核对上");
-      return { name: `《${title}》`, version: documentVersionLabel(detail.document, fixed.id, date(fixed.createdAt)) };
+      return { name: `《${title}》`, version: documentVersionLabel(head, fixed, date(fixed.createdAt)) };
     }
     const page = await knowledgeClient("", projectId).page(ref.id, ref.revision);
     if (!wikiFixedRef(projectId, ref.id, ref.revision, page) || page.contentHash !== ref.contentHash) throw new Error("Wiki 页的固定修订与哈希没有核对上");
@@ -110,18 +126,9 @@ function RefRowView({ projectId, ref, onRemove }: { projectId: string; ref: Eval
   </li>;
 }
 
-/** Reads one document revision under the key the document page reads fixed revisions with. */
-function fixedDocumentRevision(projectId: string, documentId: string, revisionId: string) {
-  return projectQueryOptions(projectId, [fixedContent, documentId, revisionId, "revision"], async () => {
-    const value = await api().documentRevision(projectId, documentId, revisionId);
-    if (value.projectId !== projectId || value.documentId !== documentId || value.id !== revisionId) throw new Error("文档响应与所选的固定修订不符");
-    return value;
-  });
-}
-
 /**
- * Reads that answer after the person moved on (another document or page, another version, the adder closed) are
- * dropped: each read takes a ticket, and moving on or closing draws a new one.
+ * Reads that answer after the person moved on (another page, another version, the adder closed) are dropped: each
+ * read takes a ticket, and moving on or closing draws a new one.
  */
 function useReadTicket() {
   const ticket = useRef(0);
@@ -129,56 +136,34 @@ function useReadTicket() {
   return { take: () => ++ticket.current, current: (mine: number) => mine === ticket.current, drop: () => { ticket.current++; } };
 }
 
-/** Choose a document, then one of its versions: the current one, the adopted one, or earlier ones read one at a time. */
+/**
+ * Choose a document, then one of its versions from the document's revision list (第 N 版, when, by whom, why and how it
+ * stands), newest first, page by page. The list carries the document's name, so no text is read to name it; the
+ * revision and hash put in the definition are the ones the list read back.
+ */
 function DocumentAdder({ projectId, control, onAdd }: { projectId: string; control?: Control | undefined; onAdd(ref: EvaluationFixedRef): void }) {
-  const client = useQueryClient();
   const [query, setQuery] = useState("");
   const [picked, setPicked] = useState<string | null>(null);
-  const [earlier, setEarlier] = useState<DocumentRevision[]>([]);
   const [problem, setProblem] = useState("");
-  const [reading, setReading] = useState(false);
-  const ticket = useReadTicket();
   const reread = useReread(projectId, ["documents", "list", "all"]);
   const list = useProjectList(projectId, ["documents", "list", "all"], (cursor, signal) => api().documents(projectId, cursor, undefined, signal), (document: Document) => document.id);
-  const detail = useProjectQuery(projectId, ["document", picked ?? "", "detail"], async (): Promise<DocumentDetail> => {
-    const value = await api().document(projectId, picked!);
-    if (value.document.projectId !== projectId || value.document.id !== picked || value.current.projectId !== projectId || value.current.documentId !== picked
-      || value.adopted && (value.adopted.projectId !== projectId || value.adopted.documentId !== picked)) throw new Error("文档响应与当前项目不符");
-    return value;
-  }, { enabled: !!picked });
-  const choose = (document: DocumentDetail["document"], revision: DocumentRevision) => {
-    const ref = documentFixedRef(projectId, document, revision);
+  const revisions = useDocumentRevisions(projectId, picked ?? "", { enabled: !!picked });
+  const choose = (documentId: string, revision: DocumentRevisionSummary) => {
+    const ref = documentFixedRef(projectId, { id: documentId, projectId }, revision);
     if (!ref) { setProblem("这个版本没有可用的内容哈希，不能作为固定来源。"); return; }
-    ticket.drop(); onAdd(ref); setPicked(null); setEarlier([]); setProblem(""); setReading(false); setQuery("");
+    onAdd(ref); setPicked(null); setProblem(""); setQuery("");
   };
-  const another = () => { ticket.drop(); setPicked(null); setEarlier([]); setProblem(""); setReading(false); };
+  const another = () => { setPicked(null); setProblem(""); };
   if (picked) {
-    const value = detail.data;
-    const versions: DocumentRevision[] = value ? [value.current, ...value.adopted && value.adopted.id !== value.current.id ? [value.adopted] : [], ...earlier]
-      .filter((item, index, all) => all.findIndex(other => other.id === item.id) === index) : [];
-    // Earlier versions follow the chain back from the current one (the adopted one may sit anywhere on it).
-    const oldest = value ? earlier.at(-1) ?? value.current : undefined;
-    const readEarlier = async () => {
-      if (!oldest?.previousRevisionId) return;
-      const mine = ticket.take();
-      setReading(true); setProblem("");
-      try {
-        const previous = await client.fetchQuery(fixedDocumentRevision(projectId, picked, oldest.previousRevisionId));
-        if (ticket.current(mine)) setEarlier(current => [...current, previous]);
-      } catch (cause) { if (ticket.current(mine)) setProblem(`《${value!.document.title}》更早的版本没有读回：${errorText(cause)}`); }
-      finally { if (ticket.current(mine)) setReading(false); }
-    };
+    const model = revisions.model;
     return <div className="flex min-w-0 flex-col gap-2">
-      <p className="m-0 text-small text-foreground">{value ? <>选择《{value.document.title}》的版本</> : detail.isError ? "文档没有读回" : "正在读取文档的版本…"}</p>
-      {detail.isError && <Notice tone="error">{errorText(detail.error)}。读回之前不能选择版本。</Notice>}
-      {versions.length > 0 && value && <ul aria-label="可选的版本" className="m-0 flex list-none flex-col gap-0.5 p-0">{versions.map(revision =>
-        <li key={revision.id}><ListRow title={documentVersionLabel(value.document, revision.id, date(revision.createdAt))} meta={revision.reason || undefined}
-          onSelect={() => choose(value.document, revision)} /></li>)}</ul>}
+      <p className="m-0 text-small text-foreground">{model ? <>选择《{model.head.title}》的版本</> : revisions.failed ? "文档的版本没有读回，读回之前不能选择版本" : "正在读取文档的版本…"}</p>
+      {model && model.items.length > 0 && <ul aria-label="可选的版本" className="m-0 flex list-none flex-col gap-0.5 p-0">{model.items.map(revision =>
+        <li key={revision.id}><ListRow title={documentVersionLabel(model.head, revision, date(revision.createdAt))}
+          meta={revisionLine(revision) || undefined} onSelect={() => choose(picked, revision)} /></li>)}</ul>}
+      <RevisionListStatus list={revisions} noun="版本" />
       {problem && <p className="m-0 text-caption text-destructive">{problem}</p>}
-      <div className="flex flex-wrap gap-2">
-        {oldest?.previousRevisionId && <Button size="compact" variant="ghost" disabled={reading} onClick={() => void readEarlier()}>{reading ? "读取中…" : "读取更早的版本"}</Button>}
-        <Button size="compact" variant="ghost" onClick={another}>换一份文档</Button>
-      </div>
+      <Button size="compact" variant="ghost" className="w-fit" onClick={another}>换一份文档</Button>
     </div>;
   }
   const items = (list.items ?? []).filter(document => document.projectId === projectId);

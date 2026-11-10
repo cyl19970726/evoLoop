@@ -10,7 +10,9 @@ import { ArrowLeft } from "lucide-react";
 import { Button, Checkbox, Field, Input, Notice, Select, Textarea, cn } from "@evoloop/ui";
 import { errorText } from "../../shared/api";
 import type { MutationContext } from "../../shared/ActionForm";
+import { acceptanceMemberKind } from "../../shared/memberPresentation";
 import { currentPath, navigate, onNavigate } from "../../shared/navigation";
+import { MemberChoice } from "../../shared/ui/MemberChoice";
 import { useProjectQuery } from "../../shared/query";
 import { ContextPanelContent, useContextPanel } from "../../shared/ui/ContextPanel";
 import { FullIdentifiers } from "../../shared/ui/FullIdentifiers";
@@ -141,8 +143,10 @@ export function CreateTaskView({ context, active, pathname, back, embedded = fal
         <option value="independent_agent">独立的智能体验收（默认）</option><option value="human_required">必须由本人验收</option>
       </Select>}</Field>}
       {draft.closeRule === "use" && <Field label={draft.stageId || draft.acceptanceMode === "human_required" ? "实际使用成果的身份" : "实际使用成果的身份（可选）"} {...field("consumer")}
-        hint={draft.acceptanceMode === "human_required" ? "填写验收人的受信身份；关闭时要有这个身份对本次交付的使用记录。" : "填写会实际使用成果的受信身份；不填时可以稍后由统筹确定独立验收。"}>
-        {control => <Input {...control} value={draft.consumer} onChange={event => edit({ consumer: event.target.value })} autoComplete="off" />}</Field>}
+        hint={draft.acceptanceMode === "human_required" ? "选验收的人本人；关闭时要有他对本次交付的使用记录。只列出能写入的人。"
+          : "选会实际使用成果的智能体；不选时可以稍后由统筹确定独立验收。只列出能写入的智能体。"}>
+        {control => <MemberChoice projectId={context.projectId} control={control} value={draft.consumer} onChange={consumer => edit({ consumer })}
+          need="write" kind={acceptanceMemberKind(draft.acceptanceMode)} optional={!(draft.stageId || draft.acceptanceMode === "human_required")} />}</Field>}
     </section>
     <section aria-label="责任与归属" className={section}>
       <h2 className="text-label font-semibold text-foreground">责任与归属</h2>

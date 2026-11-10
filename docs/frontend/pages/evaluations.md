@@ -29,8 +29,8 @@
 - 失败、中断和结果未知的尝试都保留；结果未知时先沿同一运行核对，派发表单不会出现。
 - 成本按判定里逐项登记的阶段和单位显示，另列运行自己报告的费用和用量；没登记的写“未记录，不视为零”。
 - 运行、任务或评价没有读回时写“无法判断”，不写“没有尝试”“没有交付”“没有结论”；重读失败保留旧内容，标“上次读回，当前待核对”，写入暂停。
-- 文档现名称只在核对了固定修订和哈希后显示；原始 ID 和哈希只在“完整标识”里展开。
-- 建立或另存定义时，共同任务（只列进行中的）和负责任务按名称搜索选择；协议、材料选文档再选版本，Wiki 选页面再选版本，修订和哈希由页面读回后填入，界面只写名称和版本。列表里没有的来源（如 Git）可在“按完整标识添加”里写一行。发出的命令与原来手填标识和哈希时一样。
+- 文档现名称只在核对了固定修订和哈希后显示，名称取自修订列表的文档头，不为拿名称读正文；原始 ID 和哈希只在“完整标识”里展开。
+- 建立或另存定义时，共同任务（只列进行中的）和负责任务按名称搜索选择；协议、材料选文档再选版本，Wiki 选页面再选版本，修订和哈希由页面读回后填入，界面只写名称和版本。文档版本来自修订列表，逐页列出第 N 版、时间、作者、理由和状态；翻页后各版状态按最新读回的文档重算；翻页期间有了新修订才提示回到第一页，只是发布或归档时只说明状态已重算；读到重复的读取位置时说明后面没读到。列表里没有的来源（如 Git）可在“按完整标识添加”里写一行。发出的命令与原来手填标识和哈希时一样。
 - 新定义统一采用完整本机权限、无需逐次审批；旧定义保留原权限，只供回读。
 
 ## 截图
@@ -51,8 +51,8 @@
 
 | 范围 | 路径 |
 | --- | --- |
-| 源码（`apps/workbench/src/`） | `features/evaluation/EvaluationPage.tsx`（列表、左栏、详情外框）、`features/evaluation/EvaluationDetail.tsx`（冻结定义、条件、结论、右栏）、`features/evaluation/Attempts.tsx`（逐次尝试、判定、派发）、`features/evaluation/DefinitionForm.tsx`、`features/evaluation/DefinitionPickers.tsx`（按名称选任务、文档与 Wiki 版本）、`features/evaluation/fixedRefChoice.ts`、`features/evaluation/formData.ts`、`features/evaluation/EvaluationForm.tsx`、`features/evaluation/evaluationReads.ts`、`features/evaluation/presentation.ts` |
-| 测试（`apps/workbench/test/`） | `evaluation-presentation.test.ts`、`evaluation-definition-form.test.ts`（命令与原表单一致）、`evaluations-browser.test.ts` |
+| 源码（`apps/workbench/src/`） | `features/evaluation/EvaluationPage.tsx`（列表、左栏、详情外框）、`features/evaluation/EvaluationDetail.tsx`（冻结定义、条件、结论、右栏）、`features/evaluation/Attempts.tsx`（逐次尝试、判定、派发）、`features/evaluation/DefinitionForm.tsx`、`features/evaluation/DefinitionPickers.tsx`（按名称选任务、文档与 Wiki 版本）、`features/evaluation/fixedRefChoice.ts`、`features/evaluation/formData.ts`、`features/evaluation/EvaluationForm.tsx`、`features/evaluation/evaluationReads.ts`、`features/evaluation/presentation.ts`；文档版本列表在 `shared/useDocumentRevisions.ts`、`shared/documentRevisions.ts`、`shared/ui/RevisionListStatus.tsx`（过程文档、仓库规范共用） |
+| 测试（`apps/workbench/test/`） | `evaluation-presentation.test.ts`、`evaluation-definition-form.test.ts`（命令与原表单一致）、`document-revisions.test.ts`、`evaluations-browser.test.ts`（版本分页与回到第一页） |
 
 ## 相关
 

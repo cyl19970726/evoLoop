@@ -32,8 +32,9 @@ const receipts = [
 test("结果未知的操作, 仓库规范 and 项目设置: back to the object, sources chosen by name, the identity read again",
   { skip: !modulePath && "Set EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE" }, async t => {
     const { chromium } = (await import(pathToFileURL(modulePath!).href)).default;
-    const state = { permissions: ["read", "write", "review"], failSession: false };
+    const state = { permissions: ["read", "write", "review"], failSession: false, repositories: "fixture", failCapabilities: false };
     const posts: Array<{ path: string; body: Record<string, unknown> }> = [];
+    const reads: string[] = [];
     const server = createServer(async (req, res) => {
       const url = new URL(req.url!, "http://127.0.0.1");
       const send = (status: number, value: unknown) => { res.writeHead(status, { "content-type": "application/json" }); res.end(JSON.stringify(value)); };
@@ -56,6 +57,13 @@ test("结果未知的操作, 仓库规范 and 项目设置: back to the object, 
         if (path === `${root}/references/git/${id(952)}`) return send(200, { status: "unavailable", referenceId: id(952), reason: "commit",
           ref: { projectId, repositoryId: "evoLoop", path: "docs/guide.md", commit, contentHash }, observedAt: stamp });
         if (path.startsWith(`${root}/references/git/`)) return send(404, { message: "没有这条固定引用" });
+        reads.push(path);
+        if (path === `${root}/repositories` && state.repositories === "refused") return send(200, { projectId, status: "unavailable", reason: "registration_invalid",
+          items: [{ repositoryId: "workbench", allowedPaths: ["docs/"] }] });
+        if (path === `${root}/repositories` && state.repositories === "not_provided") return send(200, { projectId, status: "unavailable", reason: "not_provided" });
+        if (path === `${root}/repositories` && state.repositories === "none") return send(200, { projectId, status: "available", items: [] });
+        if (path === `${root}/repositories` && state.repositories === "fail") return send(503, { message: "仓库清单暂不可读" });
+        if (path === `${root}/capabilities` && state.failCapabilities) return send(503, { message: "能力配置暂不可读" });
         const result = answer(path, url.searchParams) as { status: number; value: unknown } | undefined;
         return result ? send(result.status, result.value) : send(200, { items: [], nextCursor: null });
       }
@@ -119,17 +127,30 @@ test("结果未知的操作, 仓库规范 and 项目设置: back to the object, 
     await go(settings, `/p/${projectId}/repository`);
     const repository = settings;
     await heading(repository, "仓库规范").waitFor();
+    // The capabilities judged for this project (GET /capabilities), not the identity's declaration on /api/session.
     const capabilities = repository.getByRole("region", { name: "已配置的能力" });
-    await capabilities.getByText("已为本项目配置。").waitFor();
-    assert.match(await capabilities.innerText(), /本项目的仓库[\s\S]*无法判断[\s\S]*没有提供列出仓库的接口/);
-    assert.match(await capabilities.innerText(), /受管智能体运行[\s\S]*未配置/);
+    await capabilities.getByText("本项目已配置。").first().waitFor();
+    const capabilityText = async (key: string) => capabilities.locator(`[data-capability="${key}"]`).innerText();
+    assert.match(await capabilityText("knowledge"), /已配置[\s\S]*本项目[\s\S]*改动要重启后才生效：重启后会变为未配置（服务端没有开启外部知识库）/);
+    assert.match(await capabilityText("taskTiming"), /本项目有授权，但你没有。/);
+    assert.match(await capabilityText("orchestration"), /未配置[\s\S]*本项目未配置：服务端没有开启自动循环与编排。/);
+    assert.match(await capabilityText("documentOriginals"), /全服务[\s\S]*全服务已开启。/);
+    // The repositories configured for the project, with what each may read.
+    const repositories = repository.getByRole("region", { name: "本项目的仓库" });
+    await repositories.getByText("design-notes").waitFor();
+    assert.match(await repositories.innerText(), /workbench[\s\S]*允许读取：docs\/ 下的文件、README\.md[\s\S]*design-notes[\s\S]*允许读取：pages\/ 下的文件/);
     assert.equal(await repository.getByRole("link", { name: /贡献与变更入口/ }).getAttribute("target"), "_blank");
     const forms = repository.getByRole("region", { name: "登记固定 Git 来源与正式采用" });
     const block = (title: string) => forms.locator("details").filter({ has: repository.getByText(title, { exact: true }) }).first();
     const register = block("登记 Git 固定来源");
     await register.getByText("登记 Git 固定来源", { exact: true }).click();
-    await register.getByLabel("仓库标识").fill("evoLoop");
+    // The repository is chosen from the list; a path it does not allow is said before sending.
+    await register.getByLabel("仓库标识", { exact: true }).selectOption("workbench");
+    await register.getByText("允许读取：docs/ 下的文件、README.md。").waitFor();
+    await register.getByLabel("相对路径").fill("src/main.ts");
+    await register.getByText("仓库 workbench 只允许读取 docs/ 下的文件、README.md；这个路径不在其中，服务端会拒绝。").waitFor();
     await register.getByLabel("相对路径").fill("docs/api.md");
+    assert.equal(await register.getByText(/这个路径不在其中/).count(), 0);
     await register.getByLabel("完整 commit").fill(commit.toUpperCase());
     await register.getByText("完整 commit 要用小写字母 a–f。").waitFor();
     await register.getByLabel("完整 commit").fill(commit);
@@ -139,21 +160,22 @@ test("结果未知的操作, 仓库规范 and 项目设置: back to the object, 
     await forms.getByText("已保存。登记的固定引用已填入下面的表单。").waitFor();
     const registered = posts.find(item => item.path.endsWith("/references/git"))!;
     assert.deepEqual(Object.keys(registered.body).sort(), ["commit", "contentHash", "operationId", "path", "referenceId", "repositoryId"], "the same fields as before");
-    assert.deepEqual([registered.body.repositoryId, registered.body.path, registered.body.commit, registered.body.contentHash], ["evoLoop", "docs/api.md", commit, contentHash]);
+    assert.deepEqual([registered.body.repositoryId, registered.body.path, registered.body.commit, registered.body.contentHash], ["workbench", "docs/api.md", commit, contentHash]);
 
     const formal = block("记录正式文档与过程文档的关系");
     await formal.getByText("记录正式文档与过程文档的关系", { exact: true }).click();
-    await formal.getByText("刚登记的固定来源：evoLoop · docs/api.md").waitFor();
+    await formal.getByText("刚登记的固定来源：workbench · docs/api.md").waitFor();
     const documentSelect = formal.getByLabel("过程文档", { exact: true });
     await formal.locator("option", { hasText: docs.rule.title }).waitFor({ state: "attached" });
     await documentSelect.selectOption({ label: docs.rule.title });
     const revisionSelect = formal.getByLabel("过程文档修订");
-    await formal.locator("option", { hasText: "当前版，已采用" }).waitFor({ state: "attached" });
-    assert.equal(await formal.locator("option", { hasText: "建立对账规则" }).count(), 0, "earlier revisions are read when asked for");
-    await formal.getByRole("button", { name: "列出更早的修订" }).click();
-    const older = formal.locator("option", { hasText: "建立对账规则" });
-    await older.waitFor({ state: "attached" });
+    // The revisions come from the document's revision list, numbered, without reading any text.
+    await formal.locator("option", { hasText: "第 2 版 · 当前版，已采用" }).waitFor({ state: "attached" });
+    await formal.getByText("共 2 版，已列出 2 版，已读完。").waitFor();
+    const older = formal.locator("option", { hasText: "第 1 版 · " });
+    assert.match(await older.innerText(), /建立对账规则/);
     await revisionSelect.selectOption(await older.getAttribute("value") ?? "");
+    assert.equal(reads.filter(path => path === `${root}/documents/${docs.rule.id}`).length, 0, "no document text is read to choose a revision");
     await formal.getByLabel("决定").selectOption("incorporated");
     await formal.getByLabel("理由").fill("第 1 版的规则已并入接口说明第 2 节");
     assert.doesNotMatch(await formal.innerText(), uuid, "identifiers stay in the closed full-identifier layer");
@@ -176,8 +198,45 @@ test("结果未知的操作, 仓库规范 and 项目设置: back to the object, 
     await reference.fill(id(952));
     await formal.getByText("已登记的固定来源：evoLoop · docs/guide.md（原文当前读不到，提交时服务端会再核验）").waitFor();
     await reference.fill(gitRef);
-    await formal.getByText("刚登记的固定来源：evoLoop · docs/api.md").waitFor();
+    await formal.getByText("刚登记的固定来源：workbench · docs/api.md").waitFor();
     await shoot(repository, "repository");
+
+    // A registration the Git source refuses as a whole is said as such, never as "no repository configured"; the
+    // registration form holds back what the service would refuse.
+    state.repositories = "refused";
+    await repositories.getByRole("button", { name: "重新读取" }).click();
+    await repositories.getByText("仓库登记被拒，现在读不了 Git").waitFor();
+    assert.match(await repositories.innerText(), /整份登记被拒，所有项目现在都读不了 Git 固定来源[\s\S]*workbench[\s\S]*这个仓库现在读不了/);
+    assert.doesNotMatch(await repository.locator("body").innerText(), /没有配置仓库/);
+    await register.getByText("服务端的仓库登记有误，现在所有项目都读不了 Git 固定来源，登记会被拒绝。").waitFor();
+    assert.equal(await register.getByRole("button", { name: "核验并登记" }).isDisabled(), true);
+    await shoot(repository, "repository-refused");
+    // The project has none (read just now): sending is held back. When that answer is kept after a failed reread, the
+    // identifier can still be typed under its fold and sent, since the last answer may be out of date.
+    state.repositories = "none";
+    await repositories.getByRole("button", { name: "重新读取" }).click();
+    await repositories.getByText("本项目没有配置仓库", { exact: true }).waitFor();
+    await register.getByText("本项目没有配置仓库，登记 Git 固定来源会被拒绝。").waitFor();
+    state.repositories = "fail";
+    await repositories.getByRole("button", { name: "重新读取" }).click();
+    await repositories.getByText("上次读回，当前待核对").waitFor({ timeout: 20000 });
+    assert.equal(await register.getByLabel("仓库标识", { exact: true }).isDisabled(), true, "nothing to choose from the last answer");
+    await register.getByText("按完整标识填写").click();
+    await register.getByLabel("完整的仓库标识").fill("evoLoop");
+    assert.equal(await register.getByLabel("仓库标识", { exact: true }).inputValue(), "evoLoop");
+    assert.equal(await register.getByLabel("仓库标识", { exact: true }).locator("option:checked").innerText(), "evoLoop（不在读回的仓库清单里）");
+    assert.equal(await register.getByRole("button", { name: "核验并登记" }).isDisabled(), false, "a kept answer does not hold the form back");
+    await register.getByLabel("完整的仓库标识").fill("");
+    // No list from the service: the identifier is typed again, with the reason.
+    state.repositories = "not_provided";
+    await repositories.getByRole("button", { name: "重新读取" }).click();
+    await repositories.getByText(/服务端没有提供仓库清单/).waitFor();
+    await register.getByLabel("仓库标识", { exact: true }).fill("evoLoop");
+    assert.equal(await register.getByLabel("仓库标识", { exact: true }).inputValue(), "evoLoop");
+    // The capabilities cannot be read at all: said as unknown, never as none.
+    state.failCapabilities = true;
+    await capabilities.getByRole("button", { name: "重新读取" }).click();
+    await capabilities.getByText("上次读回，当前待核对").waitFor({ timeout: 20000 });
     await repository.context().close();
 
     // 结果未知的操作: each receipt says where its operation was and opens it, with the way back.

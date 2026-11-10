@@ -1,13 +1,14 @@
 // The two sources a formal decision names (记录正式文档与过程文档的关系), chosen by name instead of typed as identifiers:
 // the fixed Git source registered just before (or one pasted from a task's full identifiers, read back to say what it
 // is), and a process document with one of its revisions. The identifiers themselves go to the full-identifier layer.
-import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import type { Document, DocumentRevision, Page } from "@evoloop/contracts";
+import type { Document, Page } from "@evoloop/contracts";
 import { Button, Field, Input, Notice, Select } from "@evoloop/ui";
 import { ApiError, api, errorText, request } from "../../shared/api";
+import { useDocumentRevisions } from "../../shared/useDocumentRevisions";
 import { useProjectList } from "../../shared/projectList";
 import { queryKeys, useProjectQuery } from "../../shared/query";
+import { RevisionListStatus } from "../../shared/ui/RevisionListStatus";
 import { date } from "../../shared/ui/shared";
 import type { FixedGitRead } from "./fixedGitOriginal";
 import { documentChoiceLabel, gitSourceText, isRecordId, referenceIdProblem, revisionChoices } from "./referencePresentation";
@@ -46,22 +47,10 @@ export function GitReferenceChoice({ projectId, enabled, value, onChange, regist
   </div>;
 }
 
-const revisionsPerRead = 10;
-
-/** Revisions before `from`, newest first, ten at a time, following each one's previous revision. */
-async function readEarlier(projectId: string, documentId: string, from: string): Promise<Page<DocumentRevision>> {
-  const items: DocumentRevision[] = [];
-  let next: string | null = from;
-  while (next && items.length < revisionsPerRead) {
-    const revision: DocumentRevision = await api().documentRevision(projectId, documentId, next);
-    if (revision.projectId !== projectId || revision.documentId !== documentId || revision.id !== next) throw new Error("修订响应与所选文档不符");
-    items.push(revision);
-    next = revision.previousRevisionId;
-  }
-  return { items, nextCursor: next };
-}
-
-/** 过程文档 and 过程文档修订: the project's documents by title, then the chosen one's revisions by when, who and why. */
+/**
+ * 过程文档 and 过程文档修订: the project's documents by title, then the chosen one's revisions from its revision list (no
+ * text is read), named by number, state, when, who and why; earlier pages on request.
+ */
 export function ProcessRevisionChoice({ projectId, enabled, documentId, revisionId, onDocument, onRevision }: {
   projectId: string; enabled: boolean; documentId: string; revisionId: string; onDocument(id: string): void; onRevision(id: string): void;
 }) {
@@ -71,24 +60,12 @@ export function ProcessRevisionChoice({ projectId, enabled, documentId, revision
     if (!Array.isArray(page?.items) || page.items.some(item => item.projectId !== projectId)) throw new Error("文档列表与当前项目不符");
     return page;
   }, (item: Document) => item.id, { enabled });
-  const chosen = useProjectQuery(projectId, ["references", "document", documentId], async () => {
-    const detail = await api().document(projectId, documentId);
-    if (detail.document.projectId !== projectId || detail.document.id !== documentId) throw new Error("文档响应与所选文档不符");
-    return detail;
-  }, { enabled: enabled && isRecordId(documentId) });
-  const detail = chosen.data?.document.id === documentId ? chosen.data : undefined;
-  const start = detail?.current.previousRevisionId ?? null;
-  // Earlier revisions are read only when asked for, for this document and its current revision.
-  const [askedFor, setAskedFor] = useState("");
-  const asked = !!detail && askedFor === `${documentId}:${detail.current.id}`;
-  const earlier = useProjectList(projectId, ["references", "document", documentId, "earlier", detail?.current.id],
-    cursor => readEarlier(projectId, documentId, cursor ?? start!), (item: DocumentRevision) => item.id, { enabled: enabled && asked && !!start });
-  const choices = detail ? revisionChoices(detail.current, detail.adopted, earlier.items ?? [], date) : [];
-  const canReadEarlier = !!detail && (asked ? earlier.more || earlier.pageFailed : !!start);
-  const readingEarlier = asked && (earlier.reading || earlier.loadingMore);
+  const revisions = useDocumentRevisions(projectId, documentId, { enabled: enabled && isRecordId(documentId) });
+  const model = revisions.model?.head.id === documentId ? revisions.model : null;
+  const choices = model ? revisionChoices(model.items, model.head.status, date) : [];
   const listed = documents.items ?? [];
   // A document chosen before the list was read (or after it changed) still shows by its read-back title.
-  const options = documentId && detail && !listed.some(item => item.id === documentId) ? [detail.document, ...listed] : listed;
+  const options = documentId && model && !listed.some(item => item.id === documentId) ? [model.head, ...listed] : listed;
   return <>
     <Field label="过程文档" error={documents.failed ? `文档列表暂不可读取：${errorText(documents.error)}` : undefined}>
       {props => <Select {...props} className={wide} value={documentId} disabled={!documents.items}
@@ -103,15 +80,12 @@ export function ProcessRevisionChoice({ projectId, enabled, documentId, revision
     {(documents.more || documents.pageFailed) && <Button size="compact" variant="ghost" className="w-fit" disabled={documents.loadingMore}
       onClick={documents.loadMore}>{documents.loadingMore ? "正在读取更多文档…" : documents.pageFailed ? "后面的文档没有读到，重新读取" : "列出更多文档"}</Button>}
     {documentId && <>
-      <Field label="过程文档修订" error={chosen.isError && !detail ? `这份文档的修订暂不可读取：${errorText(chosen.error)}` : undefined}>
-        {props => <Select {...props} className={wide} value={revisionId} disabled={!detail} onChange={event => onRevision(event.target.value)}>
-          <option value="">{detail ? "选择一个修订" : chosen.isError ? "修订没有读回" : "正在读取修订…"}</option>
+      <Field label="过程文档修订">
+        {props => <Select {...props} className={wide} value={revisionId} disabled={!model} onChange={event => onRevision(event.target.value)}>
+          <option value="">{model ? "选择一个修订" : revisions.failed ? "修订没有读回" : "正在读取修订…"}</option>
           {choices.map(choice => <option key={choice.id} value={choice.id}>{choice.label}</option>)}
         </Select>}</Field>
-      {asked && earlier.error && <Notice tone={earlier.items ? "waiting" : "error"}>更早的修订没有读到：{errorText(earlier.error)}。</Notice>}
-      {canReadEarlier && <Button size="compact" variant="ghost" className="w-fit" disabled={readingEarlier}
-        onClick={() => asked ? earlier.loadMore() : setAskedFor(`${documentId}:${detail!.current.id}`)}>
-        {readingEarlier ? "正在读取更早的修订…" : "列出更早的修订"}</Button>}
+      <RevisionListStatus list={revisions} />
     </>}
   </>;
 }

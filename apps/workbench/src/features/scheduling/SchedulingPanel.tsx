@@ -16,7 +16,7 @@ import { schedulingClient, type SchedulingGrant, type SchedulingStatus } from ".
 import { MarkdownBody } from "../../shared/ui/MarkdownBody";
 import { orchestrationClient } from "../../shared/orchestrationClient";
 import { managedTargetProblem, suspendSchedule } from "./managedTarget";
-import { grantKey, scheduleCommandValues, scheduleFields, type ScheduleRoleNames } from "./scheduleForm";
+import { grantKey, scheduleCommandValues, scheduleFields, withMemberChoice, type ScheduleRoleNames } from "./scheduleForm";
 import { FullIdentifiers } from "../../shared/ui/FullIdentifiers";
 import { RoleName } from "../../shared/ui/RecordName";
 
@@ -129,7 +129,7 @@ export function SchedulingPanel({ context, refresh }: { context: MutationContext
       meta={<>{stateLabel[schedule.state]} · {ruleText(schedule.revision.rule, schedule.revision.timezone)}<br />{lastResults[`${schedule.id}:${schedule.version}`] ?? "上次结果尚未读回"}</>} />;
   };
   const createForm = status && status.grants.length > 0
-    ? <>{!fresh && <p className={muted}>以下为上次读回的授权；重新核对完成前不可提交。</p>}{bounded("创建日程表单", <ActionForm context={{ ...formContext, draftScope: "schedule:create", draftBaseline: JSON.stringify(status.grants.map(grant => grantKey(grant)).sort()) }} review title="创建日程" fields={scheduleFields(status.grants, names, undefined, fresh).filter(field => field.name !== "state")} build={v => ({ type: "schedule.create", scheduleId: crypto.randomUUID(), revisionId: crypto.randomUUID(), watermarkUtc: new Date().toISOString(), ...scheduleCommandValues({ ...v, state: "active" }, context.principal.actorId, status.grants), state: "active" })} />)}</>
+    ? <>{!fresh && <p className={muted}>以下为上次读回的授权；重新核对完成前不可提交。</p>}{bounded("创建日程表单", <ActionForm context={{ ...formContext, draftScope: "schedule:create", draftBaseline: JSON.stringify(status.grants.map(grant => grantKey(grant)).sort()) }} review title="创建日程" fields={withMemberChoice(scheduleFields(status.grants, names, undefined, fresh).filter(field => field.name !== "state"), context.projectId)} build={v => ({ type: "schedule.create", scheduleId: crypto.randomUUID(), revisionId: crypto.randomUUID(), watermarkUtc: new Date().toISOString(), ...scheduleCommandValues({ ...v, state: "active" }, context.principal.actorId, status.grants), state: "active" })} />)}</>
     : <p className="text-small text-text-secondary">{loading ? "正在核对当前身份的创建授权。" : "取得本项目明确授权后才能创建日程。"}</p>;
   return <div data-ui="" className="schedule-page mx-auto flex w-full max-w-[980px] flex-col gap-5 px-4 py-5 compact:px-8 compact:py-7">
     {schedules.length > 0 && <ContextRailContent>
@@ -278,7 +278,7 @@ function ScheduleCard({ definition, context, grants, names, status, fresh, loadi
       <summary className="cursor-pointer font-medium text-foreground">修订规则、暂停或恢复</summary>
       <p className={muted}>修订以当前版本为基线；已排队的旧修订时刻仍需单独核对，不会悄悄改写。</p>
       {targetRead.state === "verified" ? bounded("日程修订表单", <ActionForm context={editContext} review title="保存日程修订"
-        baseline={{ grants: JSON.stringify(grants.map(grant => grantKey(grant)).sort()) }} fields={scheduleFields(grants, names, definition, fresh)} build={v => ({ type: "schedule.revise", scheduleId: definition.id, expectedVersion: definition.version, revisionId: crypto.randomUUID(), ...scheduleCommandValues(v, context.principal.actorId, grants, definition) })} />)
+        baseline={{ grants: JSON.stringify(grants.map(grant => grantKey(grant)).sort()) }} fields={withMemberChoice(scheduleFields(grants, names, definition, fresh), context.projectId)} build={v => ({ type: "schedule.revise", scheduleId: definition.id, expectedVersion: definition.version, revisionId: crypto.randomUUID(), ...scheduleCommandValues(v, context.principal.actorId, grants, definition) })} />)
         : targetRead.state === "checking" ? <p className="text-text-secondary">请等候固定目标核对完成，再编辑日程。</p>
           : bounded("停用表单", <ActionForm context={editContext} review title="保持原定义并暂停或停止" fields={[
             { name: "state", label: "停用状态", kind: "select", value: definition.state === "active" ? "paused" : "stopped",

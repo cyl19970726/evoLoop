@@ -75,11 +75,14 @@ test("a revision that is not the chosen document's, or has no usable hash, is ne
   assert.ok(rows[0]!.ref && !rows[1]!.ref && rows[1]!.problem, "an unreadable line is said, the others still read");
 });
 
-test("a version is named as current, adopted or earlier, by its date", () => {
+test("a version is named by its number, as current, adopted or earlier, and by its date", () => {
   const doc = { ...document(protocolDoc, protocolRev), adoptedRevisionId: id(16) };
-  assert.equal(documentVersionLabel(doc, protocolRev, "2026/11/9 08:00:00"), "当前版本 · 2026/11/9 08:00:00");
-  assert.equal(documentVersionLabel(doc, id(16), "2026/11/8"), "已采用版本 · 2026/11/8");
-  assert.equal(documentVersionLabel(doc, id(17), "2026/11/7"), "较早版本 · 2026/11/7");
+  assert.equal(documentVersionLabel(doc, { id: protocolRev, revisionNumber: 3 }, "2026/11/9 08:00:00"), "第 3 版 · 当前版本 · 2026/11/9 08:00:00");
+  assert.equal(documentVersionLabel(doc, { id: id(16), revisionNumber: 2 }, "2026/11/8"), "第 2 版 · 已采用版本 · 2026/11/8");
+  assert.equal(documentVersionLabel(doc, { id: id(17), revisionNumber: 1 }, "2026/11/7"), "第 1 版 · 较早版本 · 2026/11/7");
+  // A revision read before numbers existed is still named; an archived document's published version is not called adopted.
+  assert.equal(documentVersionLabel(doc, { id: protocolRev }, "2026/11/9"), "当前版本 · 2026/11/9");
+  assert.equal(documentVersionLabel({ ...doc, status: "archived" }, { id: id(16), revisionNumber: 2 }, "2026/11/8"), "第 2 版 · 归档前发布的版本 · 2026/11/8");
 });
 
 test("a revision opened on the frozen definition and saved untouched keeps its sources", () => {

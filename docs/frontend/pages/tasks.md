@@ -26,7 +26,7 @@
 | 交付与使用 | 每次交付的固定成果、技术检查、来源运行和这次的使用观察；验收接力；验收与关闭 |
 | 运行与关联 | 分派与确认（含分派记录）、执行队列、运行记录（可按链接定位）、自动循环、协作入口、Git 与外部来源登记（三种登记都是共同的提交表单；“复核此依据”直接展开采用表单并在表单里说明载入了什么；采用决定按打开表单时的任务版本和修订提交；记录正式关系时按标题选过程文档、按时间和作者选修订，Git 字段当场校验，见[仓库规范](repository.md)） |
 | 历史 | 状态变化、修订时间线、依据复核决定、验收约定；固定修订只读，只给“返回当前任务” |
-| 任务操作 | 当前身份在当前状态下能做的写入；执行时间与重复（与新建任务相同，按任务时区填当地日期和时间）；做不了的只计数 |
+| 任务操作 | 当前身份在当前状态下能做的写入；执行时间与重复（与新建任务相同，按任务时区填当地日期和时间）；做不了的只计数。指定验收身份按本项目成员名称选：必须本人验收和独立智能体验收只列此刻能写入、类型符合的成员（必须本人验收不能不指定）；保留旧约定时人的使用由复核者代登记，人列出全部成员，智能体仍要能写入。身份文件改过时写明重启后的变化；成员读取中、列不出或要填服务身份时按完整标识填写 |
 
 ## 内容与状态
 
@@ -80,7 +80,7 @@
 ### 新建任务
 
 - 入口：任务页左栏的“＋”、表格视图的“新建任务”（`/tasks/new`）；从[目标与阶段](journey.md)进入时，所属阶段已选好。
-- 分四块填：要做什么（名称、为什么要做、期望结果）、怎样算完成（独立验收、验收方式、使用成果的身份）、责任与归属（负责职责、所属阶段、类型）、执行时间（本地时间加时区，可每日重复）。属于阶段的任务还要写来源证据和停止条件。
+- 分四块填：要做什么（名称、为什么要做、期望结果）、怎样算完成（独立验收、验收方式、按成员选使用者）、责任与归属（负责职责、所属阶段、类型）、执行时间（本地时间加时区，可每日重复）。属于阶段的任务还要写来源证据和停止条件。
 - 整页是共同的提交表单，保存发出一次 `task.create`；缺项和超长写在各字段下，提示里列出字段名，隐藏的字段不算缺项。所选阶段之后变了，先请人查看再提交。每日重复要审阅权限和任务时间授权。“只作判断记录”的任务不问验收方式和使用者（使用者就是负责职责）。
 
 **收件页**（待我处理）
@@ -148,6 +148,7 @@
 | 收件页与计数 | `InboxIndex.tsx`、`inboxModel.ts`（等我使用的判断、计数）、`inboxReads.ts`（三项读取，外壳计数共用）、`inboxDeliveries.ts`（逐页读工作索引） | `inbox-model.test.ts`、`inbox-browser.test.ts`、`leader-work-overview-browser.test.ts`、`legacy-bits-browser.test.ts` |
 | 执行时间与重复 | `TaskScheduleSection.tsx`、`taskTimingPresentation.ts`、`apps/workbench/src/shared/zonedTime.ts`、`apps/workbench/src/shared/ui/LocalTimeInput.ts` | `task-timing-ui.test.ts`、`task-commands.test.ts`、`zoned-time.test.ts`、`task-tabs-browser.test.ts` |
 | 新建任务 | `CreateTaskPage.tsx`、`taskCreate.ts` | `task-create.test.ts`、`journey-browser.test.ts`、`work-status-recovery-browser.test.ts` |
+| 按成员选验收身份（任务操作、新建任务，日程同用） | `apps/workbench/src/shared/ui/MemberChoice.tsx`、`apps/workbench/src/shared/memberPresentation.ts`、`apps/workbench/src/shared/projectConfiguration.ts` | `member-presentation.test.ts`（与手填时请求体相同）、`member-choice-browser.test.ts`（`EVOLOOP_MEMBERS_SCREENSHOT_DIR`） |
 
 ## 相关
 
