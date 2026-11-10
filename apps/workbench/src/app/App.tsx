@@ -17,6 +17,8 @@ import { sectionLabels } from "./shell/spaces";
 import { PageBoundary } from "./PageBoundary";
 import { PageActive } from "../shared/ui/pageActive";
 import { AuthGate } from "./entry/AuthGate";
+import { useInboxCount } from "../features/workflow/inboxReads";
+import { shellInboxCount } from "../features/workflow/inboxModel";
 
 // Each page is its own chunk: the first load carries login, the shell and shared code only.
 // lazy() accepts any component; the props stay typed through M[K].
@@ -158,8 +160,8 @@ export function App() {
   }, []);
   const projectRead = useProjectQuery(projectId ?? "", ["project"], () => client.project(projectId!), { enabled: !!session });
   const projectTitle = projectRead.data?.title ?? "";
-  const acceptance = useProjectQuery(projectId ?? "", ["acceptance", "mine"], () => client.acceptanceMine(projectId!), { enabled: !!session });
-  const acceptanceCount = acceptance.data?.items.length ?? 0;
+  // 待我处理 counts 验收安排, 依据变化 and 等我使用的交付 under the page's own keys; an unknown part is never counted as 0.
+  const inbox = useInboxCount(projectId ?? "", session?.principal.actorId ?? "", !!session);
   const projectError = projectRead.error ? errorText(projectRead.error) : "";
   const shownProject = useRef<string | null>(null);
   useEffect(() => {
@@ -226,9 +228,10 @@ export function App() {
     ...operationNotice ? [{ key: "operation", tone: "info" as const, text: operationNotice, detail: operationDetail,
       button: { label: "关闭", onClick: () => { setOperationNotice(""); setOperationDetail(null); }, quiet: true } }] : [],
     ...projectError ? [{ key: "project", tone: "error" as const, text: `项目暂不可读取：${projectError}`, button: { label: "重试读取项目", onClick: context.onChanged } }] : [],
+    ...route.section !== "inbox" && inbox.state === "unknown" ? [{ key: "inbox", tone: "waiting" as const, text: inbox.text, link: { href: href(projectId, "inbox"), label: "去待我处理核对" } }] : [],
   ];
   return <Suspense fallback={<p className={opening} role="status">正在打开工作台…</p>}><AppShell route={route} projectId={projectId} projectTitle={projectTitle} actor={principal.actorId} permissions={principal.permissions}
-    receiptCount={projectReceipts.length} inboxCount={acceptanceCount} token={token} logout={logout} notices={notices}>
+    receiptCount={projectReceipts.length} inboxCount={shellInboxCount(inbox, projectReceipts.length)} token={token} logout={logout} notices={notices}>
     <WorkspacePages key={`${principal.actorId}:${projectId}`} route={route} context={context} refresh={refresh} operations={operationChecks} />
   </AppShell></Suspense>;
 }
