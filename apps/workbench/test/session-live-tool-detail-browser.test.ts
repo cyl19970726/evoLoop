@@ -207,7 +207,7 @@ test("observable-owner tool detail remains readable after real history/live merg
     await page.getByLabel("访问令牌").fill(token);
     await page.getByRole("button", { name: "进入", exact: true }).click();
     await page.getByRole("heading", { name: observedSession.title }).waitFor();
-    const timeline = page.getByRole("log", { name: "Session 消息与工具时间线" });
+    const timeline = page.getByRole("log", { name: "消息与工具时间线" });
     await timeline.locator(".workspace-tools-toggle").click();
     return { page, timeline };
   };

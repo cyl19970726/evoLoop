@@ -47,17 +47,27 @@ export interface CollapsibleRowProps {
   summary: React.ReactNode;
   children: React.ReactNode;
   defaultOpen?: boolean | undefined;
+  /** Controlled state; leave unset to let the row keep its own. */
+  open?: boolean | undefined;
+  onOpenChange?: ((open: boolean) => void) | undefined;
+  /** Shown under the summary only while collapsed, for what must stay in sight (a failure, the step running now). */
+  folded?: React.ReactNode | undefined;
   className?: string | undefined;
+  triggerClassName?: string | undefined;
 }
 
 /** A muted one-line summary that expands into indented detail. */
-export function CollapsibleRow({ summary, children, defaultOpen, className }: CollapsibleRowProps) {
+export function CollapsibleRow({ summary, children, defaultOpen, open, onOpenChange, folded, className, triggerClassName }: CollapsibleRowProps) {
+  const [own, setOwn] = React.useState(!!defaultOpen);
+  const isOpen = open ?? own;
+  const change = (next: boolean) => { if (open === undefined) setOwn(next); onOpenChange?.(next); };
   return (
-    <CollapsiblePrimitive.Root defaultOpen={defaultOpen} className={cn("flex flex-col gap-2", className)}>
-      <CollapsiblePrimitive.Trigger className="group inline-flex cursor-pointer items-center gap-1.5 self-start rounded-md border-0 bg-transparent p-0 text-label text-muted-foreground outline-none hover:text-text-secondary focus-visible:shadow-[var(--focus-ring)]">
-        <ChevronRight aria-hidden="true" className="size-3 transition-transform duration-150 group-data-[state=open]:rotate-90 motion-reduce:transition-none" />
+    <CollapsiblePrimitive.Root open={isOpen} onOpenChange={change} className={cn("flex flex-col gap-2", className)}>
+      <CollapsiblePrimitive.Trigger className={cn("group inline-flex cursor-pointer items-center gap-1.5 self-start rounded-md border-0 bg-transparent p-0 text-left text-label text-muted-foreground outline-none hover:text-text-secondary focus-visible:shadow-[var(--focus-ring)]", triggerClassName)}>
+        <ChevronRight aria-hidden="true" className="size-3 shrink-0 transition-transform duration-150 group-data-[state=open]:rotate-90 motion-reduce:transition-none" />
         {summary}
       </CollapsiblePrimitive.Trigger>
+      {!isOpen && folded}
       <CollapsiblePrimitive.Content className="pl-[18px]">{children}</CollapsiblePrimitive.Content>
     </CollapsiblePrimitive.Root>
   );

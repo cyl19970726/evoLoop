@@ -36,7 +36,7 @@ export function nativeObservationPresentation(value: unknown, projectId: string,
       (turn.source.kind === "run" ? !text(turn.source.runId) || !text(turn.source.taskId) ||
         !text(turn.source.taskRevisionId) : turn.source.kind === "message" ?
           !text(turn.source.messageId) || !text(turn.source.processingId) : true))))
-    return invalid("Turn 来源无法核实");
+    return invalid("这一轮的来源无法核实");
   if (!Array.isArray(value.items) || value.items.length > 10) return invalid("工具活动超出已读范围");
   const items: NativeProgressView["items"] = [];
   for (const item of value.items) {
@@ -58,10 +58,10 @@ export function nativeObservationPresentation(value: unknown, projectId: string,
   const usage = value.usage;
   if (usage !== null && (!object(usage) || !text(usage.turnId) || !usageBreakdown(usage.total) ||
     !usageBreakdown(usage.last) || !metric(usage.modelContextWindow) || !time(usage.observedAt)))
-    return invalid("Token 用量无法核实");
+    return invalid("用量无法核实");
   if (turn === null && (items.length || plan !== null || diff !== null || usage !== null) ||
     turn !== null && [plan, diff, usage].some(part => part !== null && part.turnId !== turn.id))
-    return invalid("Turn 与事件范围不一致");
+    return invalid("这一轮与事件范围不一致");
   const source = turn && object(turn.source) ? turn.source : null;
   return { progress: {
     projectId, sessionId, threadId: value.threadId, observedAt: value.observedAt,

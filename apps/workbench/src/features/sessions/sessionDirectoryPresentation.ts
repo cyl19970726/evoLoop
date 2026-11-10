@@ -32,9 +32,9 @@ export function sessionClassReason(session: ObservedSession): string {
   const system = session.roles.filter(role => role.roleClass === "system").length;
   const business = session.roles.filter(role => role.roleClass === "business").length;
   const unknown = session.roles.length - system - business;
-  if (!session.roles.length) return "没有可核对的正式 Role；保留原 Session，不按名称猜测分类。";
-  if (unknown) return "存在 RoleClass 未核的职责；待职责档案确认后再归类。";
-  if (system && business) return "同时关联 System 与业务职责；跨类 Session 待明确主职责。";
-  if (system > 1) return "关联多个 System Role；不把复合职责猜成单一 System Session。";
+  if (!session.roles.length) return "没有可核对的正式职责；保留原智能体，不按名称猜测分类。";
+  if (unknown) return "有职责的类别还没核实；待职责档案确认后再归类。";
+  if (system && business) return "同时关联系统职责与业务职责；跨类的智能体待明确主职责。";
+  if (system > 1) return "关联多个系统职责；不把复合职责猜成单一的系统智能体。";
   return session.membershipReason;
 }

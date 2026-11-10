@@ -14,7 +14,10 @@ export {
   Dialog, DialogTrigger, DialogClose, DialogContent, DialogTitle, DialogDescription, DialogFooter,
   Sheet, SheetTrigger, SheetClose, SheetContent, SheetTitle, SheetDescription,
 } from "./components/overlays";
-export { AgentAvatar, PersonAvatar, avatarLook, avatarRoleBackgrounds, systemLooks, type AgentAvatarProps, type AvatarLook, type PersonAvatarProps } from "./components/avatar";
+export {
+  AgentAvatar, AgentMark, PersonAvatar, agentMarkColors, avatarLook, avatarRoleBackgrounds, systemLooks,
+  type AgentAvatarProps, type AgentMarkColor, type AgentMarkProps, type AvatarLook, type PersonAvatarProps,
+} from "./components/avatar";
 export { Logo, type LogoProps } from "./components/logo";
 export {
   Mention, MessageBubble, AgentMessage, ToolSummary, NestedActivity, LiveStatusLine, QuestionCard, TodoList, QueuedMessages, TurnSummary,
@@ -22,6 +25,6 @@ export {
   type QuestionCardProps, type TodoItem, type TodoStatus, type QueuedMessage, type QueuedMessagesProps, type TurnSummaryProps,
 } from "./components/conversation";
 export {
-  Composer, composerMenu, matchQuery,
+  Composer, composerMenu, matchQuery, type ComposerSendMode,
   type ComposerProps, type ComposerCommand, type ComposerAgent, type ComposerAttachment, type ComposerMenu,
 } from "./components/composer";

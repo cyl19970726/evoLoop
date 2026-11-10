@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { checkedRecoveryView, recoveryActivationLabel, recoveryBudget, recoveryNextActionLabel, recoveryPhaseLabel, recoveryReasonSummary, recoverySourceStateLabel, type SessionRecoveryView } from "../src/features/sessions/recoveryPresentation.ts";
+import { checkedRecoveryView, permissionLabel, recoveryActivationLabel, recoveryBudget, recoveryNextActionLabel, recoveryPhaseLabel, recoveryReasonSummary, recoverySourceStateLabel, type SessionRecoveryView } from "../src/features/sessions/recoveryPresentation.ts";
 
 const sessionId = "11111111-1111-4111-8111-111111111111";
 const projectId = "22222222-2222-4222-8222-222222222222";
@@ -12,9 +12,9 @@ const base: SessionRecoveryView = {
 test("all five recovery phases describe permission and waiting rather than inferred execution", () => {
   assert.deepEqual(["open", "blocked", "retrying", "message_pending", "awaiting_acceptance"].map(phase =>
     recoveryPhaseLabel(phase as NonNullable<SessionRecoveryView["gate"]>["phase"])), [
-    "数据库恢复门未限制", "已停止接续", "等待原任务重试", "等待原排队消息", "等待交付与验收",
+    "恢复门未限制", "已停止接续", "等待原任务重试", "等待原排队消息", "等待交付与验收",
   ]);
-  assert.match(recoveryNextActionLabel("await_authorized_retry"), /是否运行以 Run 记录为准/);
+  assert.match(recoveryNextActionLabel("await_authorized_retry"), /是否运行以运行记录为准/);
   assert.match(recoveryNextActionLabel("await_original_message"), /消息记录为准/);
   assert.match(recoveryNextActionLabel("reconcile_original_operation"), /核对原操作/);
   assert.match(recoveryNextActionLabel("normal_work", "closed"), /已关闭.*不能直接接续/);
@@ -30,7 +30,7 @@ test("queue budget keeps failed and unknown attempts in cumulative used count", 
 });
 
 test("a mismatched or incomplete recovery response cannot be shown on another Session", () => {
-  assert.throws(() => checkedRecoveryView(base, projectId, "33333333-3333-4333-8333-333333333333"), /所选 Session 不符/);
+  assert.throws(() => checkedRecoveryView(base, projectId, "33333333-3333-4333-8333-333333333333"), /所选智能体不符/);
   assert.equal(checkedRecoveryView(base, projectId, sessionId).gate, null);
   assert.equal(checkedRecoveryView({ ...base, partial: true }, projectId, sessionId).partial, true);
   assert.throws(() => checkedRecoveryView({ ...base, executionProfile: undefined } as unknown as SessionRecoveryView, projectId, sessionId), /内容不完整/);
@@ -58,4 +58,13 @@ test("recovery reason summarizes only recognized saved outcomes", () => {
   assert.equal(recoveryReasonSummary({ ...gate, causeState: "new_state" }), "当前等待原因需核对原始记录");
   assert.equal(recoverySourceStateLabel("new_state"), "状态需核对原始记录");
   assert.equal(recoverySourceStateLabel("toString"), "状态需核对原始记录");
+});
+
+test("registered permissions read in plain words, never as raw policy codes", () => {
+  assert.equal(permissionLabel("danger-full-access", "never"), "完整权限 · 不需要逐次确认");
+  assert.equal(permissionLabel("read-only", "on-request"), "只读 · 按需确认");
+  assert.equal(permissionLabel("future-sandbox", "never"), "权限待核对 · 不需要逐次确认");
+  assert.equal(permissionLabel(null, null), "未读到权限配置");
+  for (const action of ["await_authorized_retry", "await_authorized_rework", "normal_work", "unknown_action"])
+    assert.doesNotMatch(recoveryNextActionLabel(action), /Run|Session|Turn/);
 });

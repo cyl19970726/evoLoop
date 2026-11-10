@@ -171,7 +171,7 @@ function ContextRail(props: AppShellProps & { space: Space; sessionState: Sessio
       </a>
     </div>
     {space === "agents"
-      ? <div className={cn("min-h-0 flex-1", !inDrawer && "overflow-y-auto")}>
+      ? <div className={cn("flex-1", !inDrawer && "min-h-0 overflow-y-auto")}>
         <SessionNavigation key={`${props.actor}:${projectId}`} token={props.token} projectId={projectId} selectedId={selectedSession}
           onNavigate={props.onNavigate} state={props.sessionState} onState={props.onSessionState} />
       </div>

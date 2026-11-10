@@ -135,6 +135,38 @@ export function AgentAvatar({ seed, roleSeed, look, size = 30, label, className 
   );
 }
 
+/**
+ * Colours of an agent's saved mark (a small badge beside its name that the person chose: colour plus icon). Like the
+ * avatars these are illustration colours, not usage tokens; none is green (DEC-029).
+ */
+export const agentMarkColors = {
+  violet: "#5b3fb5", copper: "#9d4b18", blue: "#325ea8", teal: "#2b6488",
+  magenta: "#a32967", olive: "#8a6514", coral: "#a83b32", plum: "#6b4a99",
+} as const;
+export type AgentMarkColor = keyof typeof agentMarkColors;
+
+export interface AgentMarkProps {
+  color: AgentMarkColor;
+  /** The chosen icon, about 14–18px. */
+  icon: React.ReactNode;
+  /** Accessible name, for example 测试的标识：紫色、菱形. */
+  label: string;
+  size?: number | undefined;
+  className?: string | undefined;
+}
+
+/** The mark an agent keeps across clients: an icon on a tinted square in the chosen colour. */
+export function AgentMark({ color, icon, label, size = 28, className }: AgentMarkProps) {
+  const value = agentMarkColors[color];
+  return (
+    <span role="img" aria-label={label} title={label} data-mark-color={color}
+      className={cn("inline-flex shrink-0 items-center justify-center rounded-md border-[1.5px] border-solid", className)}
+      style={{ width: size, height: size, color: value, borderColor: value, background: `color-mix(in srgb, ${value} 10%, var(--surface-raised))` }}>
+      {icon}
+    </span>
+  );
+}
+
 export interface PersonAvatarProps {
   name: string;
   size?: number | undefined;
