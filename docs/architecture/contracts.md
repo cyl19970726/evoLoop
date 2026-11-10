@@ -64,9 +64,11 @@ Git 文档不创建 Document 行；独立 `GitSourceRef`（或等价来源元数
 
 Document 目录列表返回 ID、标题、类型、状态、当前修订和内容格式等摘要；点行后按授权读取所选不可变 DocumentRevision 的完整载荷，不依赖 Task 描述字段或外链再取内容。修订可采用 Markdown、HTML 等格式；详情层解析 Markdown，HTML 报告可保留原件并预览。固定修订的 hash 必须在读取时核验，缺失资源或无权读取时明确显示不完整/不可达，不用旧摘要伪装完整正文。
 
-`GET /api/projects/:projectId/documents/:id/revisions` 列出一份文档的全部修订，按创建时间倒序（同一时刻再按修订 ID 倒序），`limit` 默认 50、上限 100。每项只有元数据：单修订读取已公开的全部字段去掉 `body`（修订 ID、作者、创建时间、理由、内容 hash、格式、媒体类型、原件名、载荷引用、入口、资源清单、上一修订、组织复盘元数据），另加 `revisionNumber` 和状态。`revisionNumber` 是这份文档全部修订按同一顺序升序排到第几个，从 1 起；它不是 Document `version`，后者在发布、归档时也会增加。状态是两个布尔值 `current`（当前修订）、`published`（当前已发布的修订）和合成的 `state`：当前修订为 `current`（同时已发布时 `published` 仍为 true），其次 `published`，其余 `historical`。正文仍从单修订的 `body`、`original` 读取并核验 hash。
+每个修订保存时得到这份文档内的序号 `revisionNumber`：从 1 起按保存顺序加 1，没有空号，写入后不变（迁移 069）。序号由数据库在插入时分配，与创建时间无关：同一毫秒保存的两次修订、或服务器时钟回拨后保存的修订，仍按实际保存先后编号。它不是 Document `version`，后者在发布、归档时也会增加。单修订读取（含文档详情里的 `current`、`adopted`）都带这个序号；当前修订的序号就是总修订数，可直接显示“第 N 版 / 共 M 版”。
 
-返回同时带同一只读快照里的文档头 `document`（`version`、`currentRevisionId`、`adoptedRevisionId`、`status`）和修订总数 `revisionCount`；状态只对这一页读到的文档头成立，跨页比较 `document.version` 才知道其间是否有新修订或发布。`nextCursor` 不透明，绑定项目、文档和本页最后一条修订；换文档、换项目、无法解码或指向别处修订的游标都返回 `INVALID_CURSOR`（409），从第一页重读。修订不可变，翻页期间新增的修订排在已读位置之前，不会让后续页重复或漏项。权限与单修订读取相同：要本项目读取权限，文档不在本项目时返回 404；受管 worker 只能按固定修订读取，修订列表由 worker 守卫拒绝（见 [Agent CLI](../development/agent-cli.md)）。查询走迁移 069 的 `(project_id, document_id, created_at, revision_id)` 索引：本页按索引倒序取，编号和总数在这份文档的索引范围内计数，都不读正文。
+`GET /api/projects/:projectId/documents/:id/revisions` 按序号倒序列出一份文档的全部修订，`limit` 默认 50、上限 100。每项只有元数据：单修订读取已公开的全部字段去掉 `body`（修订 ID、序号、作者、创建时间、理由、内容 hash、格式、媒体类型、原件名、载荷引用、入口、资源清单、上一修订、组织复盘元数据），另加状态：两个布尔值 `current`（当前修订）、`published`（文档发布指针 `adoptedRevisionId` 所指的修订）和合成的 `state`。当前修订为 `current`（同时已发布时 `published` 仍为 true），其次 `published`，其余 `historical`。归档不清除发布指针，所以归档文档的那一版仍是 `published: true`，是否还算“已发布”看文档头的 `status`。正文仍从单修订的 `body`、`original` 读取并核验 hash。
+
+返回同时带同一只读快照里的文档头 `document`（`title`、`kind`、`version`、`currentRevisionId`、`adoptedRevisionId`、`status`）和修订总数 `revisionCount`。`nextCursor` 不透明，只记本页最后一条的序号，并绑定项目和文档；换文档、换项目或无法解码的游标都返回 `INVALID_CURSOR`（409），从第一页重读。序号只增不改，翻页期间新增的修订排在已读位置之前：后续页不重复、不漏项，已读到的序号不变。状态只对该页读到的文档头成立；载入多页时，用最新一页的 `document` 重算所有已载入项的状态，`document.version` 与首页不同时提示回到首页查看新修订。权限与单修订读取相同：要本项目读取权限，文档不在本项目时返回 404；受管 worker 只能按固定修订读取，修订列表由 worker 守卫拒绝（见 [Agent CLI](../development/agent-cli.md)）。本页和总数都走 `(project_id, document_id, revision_number)` 唯一索引，不读正文，扫描量也不随翻页深度增加。
 
 不可变的是原始载荷、资源清单和形成修订时的事实；当前权限、可达性、完整性核验结果和采纳状态另记带时间的观察或决定，不回写旧正文。
 

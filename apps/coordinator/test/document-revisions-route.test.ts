@@ -49,7 +49,8 @@ test("document revision list requires project read access and returns metadata p
     const page = read.json();
     assert.deepEqual(page.items.map((item: { id: string; state: string; revisionNumber: number }) => [item.id, item.state, item.revisionNumber]),
       [[r2, "current", 2], [r1, "published", 1]]);
-    assert.deepEqual(page.document, { id: documentId, version: 3, currentRevisionId: r2, adoptedRevisionId: r1, status: "published" });
+    assert.deepEqual(page.document, { id: documentId, title: "Spec", kind: "spec", version: 3, currentRevisionId: r2,
+      adoptedRevisionId: r1, status: "published" });
     assert.equal(page.revisionCount, 2);
     assert.equal(page.nextCursor, null);
     assert.deepEqual(calls.at(-1), { projectId, documentId, limit: 50, cursor: undefined }, "limit defaults to 50");

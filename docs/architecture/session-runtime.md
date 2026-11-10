@@ -244,5 +244,5 @@ Codex 一列有几项取决于运行配置选的协议版本。“现代协议�
 
 - Codex 协议、版本与历史读取的细节：[Codex 接入](codex-integration.md)
 - Session、Run、消息、验收接力和 Leader 通知的合同：[接口合同](contracts.md)
-- 这些表的约束：[存储](storage.md#迁移-054-到-068-新增的表)
+- 这些表的约束：[存储](storage.md#迁移-054-到-069-新增的表和列)
 - 服务实际部署在哪里、迁移时 Session 为什么不搬：[部署与迁移](deployment.md)

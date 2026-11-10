@@ -46,7 +46,7 @@ const legacyTables = ["project", "process_document", "document_revision", "docum
 async function legacySnapshot(): Promise<Record<string, unknown[]>> {
   const result: Record<string, unknown[]> = {};
   for (const table of legacyTables) {
-    const rows = await client.query(`SELECT ${table==='runtime_run'?"to_jsonb(t)-'execution_profile_snapshot'-'pre_turn_proof'":(table==='document_revision'?"to_jsonb(t)-'organization_review'":"to_jsonb(t)")}-'native_environment_epoch'-'observed_model'-'observed_provider'-'usage'-'cost_usd'-'runtime_provider' AS row FROM ${table} t WHERE project_id=$1`, [projectId]);
+    const rows = await client.query(`SELECT ${table==='runtime_run'?"to_jsonb(t)-'execution_profile_snapshot'-'pre_turn_proof'":(table==='document_revision'?"to_jsonb(t)-'organization_review'-'revision_number'":"to_jsonb(t)")}-'native_environment_epoch'-'observed_model'-'observed_provider'-'usage'-'cost_usd'-'runtime_provider' AS row FROM ${table} t WHERE project_id=$1`, [projectId]);
     result[table] = rows.rows.map(row => row.row).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
   }
   return result;
@@ -245,6 +245,8 @@ test("029 legacy authority survives 030-034 and recovery upgrade selects only cu
   const legacyReviewMetadata=(await client.query("SELECT count(*)::int AS total,count(*) FILTER (WHERE organization_review IS NOT NULL)::int AS invented FROM document_revision WHERE project_id=$1",[projectId])).rows[0];
   assert.ok(legacyReviewMetadata.total>0);
   assert.equal(legacyReviewMetadata.invented,0,"045 must not invent observation metadata for old Documents");
+  assert.deepEqual((await client.query("SELECT revision_number FROM document_revision WHERE project_id=$1 AND revision_id=$2",
+    [projectId,documentRevisionId])).rows,[{revision_number:1}],"069 numbers the legacy single revision without changing its other columns");
   const legacyModelObservation=(await client.query(`SELECT count(*)::int AS total,
     count(*) FILTER (WHERE observed_model IS NOT NULL OR observed_provider IS NOT NULL)::int AS invented
     FROM runtime_session WHERE project_id=$1`,[projectId])).rows[0];

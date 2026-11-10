@@ -59,23 +59,24 @@ const rowDocument = (r: Row): Document => ({ projectId: r.project_id, id: r.docu
 const rowDocumentRevisionFields = (r: Row): Omit<DocumentRevision, "body"> => ({ projectId: r.project_id, documentId: r.document_id, id: r.revision_id,
   format: r.format, mediaType: r.media_type, originalName: r.original_name ?? `${r.document_id}.md`,
   payloadRef: r.payload_ref, entrypoint: r.entrypoint, assetsManifest: r.assets_manifest ?? [],
-  contentHash: r.content_hash, author: r.author, createdAt: iso(r.created_at), previousRevisionId: r.previous_revision_id, reason: r.reason, ...(r.organization_review ? { organizationReview: r.organization_review } : {}) });
+  contentHash: r.content_hash, author: r.author, createdAt: iso(r.created_at), previousRevisionId: r.previous_revision_id, reason: r.reason, ...(r.organization_review ? { organizationReview: r.organization_review } : {}),
+  ...(r.revision_number == null ? {} : { revisionNumber: Number(r.revision_number) }) });
 const rowDocumentRevision = (r: Row): DocumentRevision => ({ ...rowDocumentRevisionFields(r), body: r.body });
 /** Every revision column except the body, so a history page never loads (or detoasts) document text. */
-const documentRevisionMetadataColumns = `r.project_id,r.document_id,r.revision_id,r.format,r.media_type,r.original_name,
-  r.payload_ref,r.entrypoint,r.assets_manifest,r.content_hash,r.author,r.created_at,r.previous_revision_id,r.reason,
-  r.organization_review`;
-interface DocumentRevisionCursor { v: 1; projectId: string; documentId: string; revisionId: string }
-const revisionCursorId = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const documentRevisionMetadataColumns = `r.project_id,r.document_id,r.revision_id,r.revision_number,r.format,r.media_type,
+  r.original_name,r.payload_ref,r.entrypoint,r.assets_manifest,r.content_hash,r.author,r.created_at,r.previous_revision_id,
+  r.reason,r.organization_review`;
+/** `before` is the stored number of the last revision already returned (migration 069), never a timestamp. */
+interface DocumentRevisionCursor { v: 1; projectId: string; documentId: string; before: number }
 function encodeDocumentRevisionCursor(value: DocumentRevisionCursor): string {
   return Buffer.from(JSON.stringify(value), "utf8").toString("base64url");
 }
-/** The cursor names the last revision already returned; it is only valid for the same project and document. */
+/** A cursor is only valid for the project and document it was issued for. */
 function decodeDocumentRevisionCursor(value: string, projectId: string, documentId: string): DocumentRevisionCursor {
   try {
     const parsed = JSON.parse(Buffer.from(value, "base64url").toString("utf8")) as Record<string, unknown>;
     if (parsed.v !== 1 || parsed.projectId !== projectId || parsed.documentId !== documentId ||
-      typeof parsed.revisionId !== "string" || !revisionCursorId.test(parsed.revisionId)) throw new Error("scope");
+      typeof parsed.before !== "number" || !Number.isSafeInteger(parsed.before) || parsed.before < 1) throw new Error("scope");
     return parsed as unknown as DocumentRevisionCursor;
   } catch {
     throw new DomainError("INVALID_CURSOR", "文档修订游标无效或不属于这份文档；请从第一页重新读取");
@@ -572,38 +573,21 @@ class PgReader implements Reader {
   async listDocumentRevisions(documentId: string, limit: number, cursor?: string): Promise<Page<DocumentRevisionMetadata> & { revisionCount: number }> {
     pageLimit(limit);
     const after = cursor === undefined ? null : decodeDocumentRevisionCursor(cursor, this.projectId, documentId);
-    if (after) {
-      const anchor = await this.client.query("SELECT 1 FROM document_revision WHERE project_id=$1 AND document_id=$2 AND revision_id=$3",
-        [this.projectId, documentId, after.revisionId]);
-      if (!anchor.rows[0]) throw new DomainError("INVALID_CURSOR", "文档修订游标无效或不属于这份文档；请从第一页重新读取");
-    }
-    // Keyset on (created_at, revision_id) served by document_revision_history_idx. The anchor row is
-    // compared inside PostgreSQL so microsecond timestamps from SQL-side inserts keep their order.
-    const scope = "r.project_id=$1 AND r.document_id=$2";
-    const below = `(r.created_at,r.revision_id) < (SELECT a.created_at,a.revision_id FROM document_revision a
-      WHERE a.project_id=$1 AND a.document_id=$2 AND a.revision_id=$3)`;
-    const pageRows = after
-      ? await this.client.query(`SELECT ${documentRevisionMetadataColumns} FROM document_revision r
-          WHERE ${scope} AND ${below} ORDER BY r.created_at DESC,r.revision_id DESC LIMIT $4`,
-        [this.projectId, documentId, after.revisionId, limit + 1])
-      : await this.client.query(`SELECT ${documentRevisionMetadataColumns} FROM document_revision r
-          WHERE ${scope} ORDER BY r.created_at DESC,r.revision_id DESC LIMIT $3`,
-        [this.projectId, documentId, limit + 1]);
-    // Numbers count revisions in ascending (created_at, revision_id) order. A page is a contiguous run of
-    // that order, so the first row's number is the count of revisions at or below it.
-    const counts = after
-      ? await this.client.query(`SELECT count(*)::int AS total, count(*) FILTER (WHERE ${below})::int AS remaining
-          FROM document_revision r WHERE ${scope}`, [this.projectId, documentId, after.revisionId])
-      : await this.client.query(`SELECT count(*)::int AS total, count(*)::int AS remaining
-          FROM document_revision r WHERE ${scope}`, [this.projectId, documentId]);
-    const remaining = Number(counts.rows[0]?.remaining ?? 0);
-    const chosen = pageRows.rows.slice(0, limit);
+    // Newest first by the stored per-document number, read backward on document_revision_number_unique.
+    // Numbers only grow and are never reused, so a revision added between pages lands above the cursor.
+    const rows = await this.client.query(`SELECT ${documentRevisionMetadataColumns} FROM document_revision r
+      WHERE r.project_id=$1 AND r.document_id=$2 AND ($3::integer IS NULL OR r.revision_number < $3::integer)
+      ORDER BY r.revision_number DESC LIMIT $4`, [this.projectId, documentId, after?.before ?? null, limit + 1]);
+    // Numbers run 1..N without gaps, so the count is the maximum (one index probe, not a scan).
+    const count = await this.client.query(`SELECT coalesce(max(revision_number), 0)::int AS total FROM document_revision
+      WHERE project_id=$1 AND document_id=$2`, [this.projectId, documentId]);
+    const chosen = rows.rows.slice(0, limit).map(row => ({ ...rowDocumentRevisionFields(row), revisionNumber: Number(row.revision_number) }));
     const last = chosen.at(-1);
     return {
-      items: chosen.map((row, index) => ({ ...rowDocumentRevisionFields(row), revisionNumber: remaining - index })),
-      nextCursor: pageRows.rows.length > limit && last
-        ? encodeDocumentRevisionCursor({ v: 1, projectId: this.projectId, documentId, revisionId: last.revision_id }) : null,
-      revisionCount: Number(counts.rows[0]?.total ?? 0),
+      items: chosen,
+      nextCursor: rows.rows.length > limit && last
+        ? encodeDocumentRevisionCursor({ v: 1, projectId: this.projectId, documentId, before: last.revisionNumber }) : null,
+      revisionCount: Number(count.rows[0]?.total ?? 0),
     };
   }
   async listLinks(taskId: string): Promise<TaskDocumentLink[]> {

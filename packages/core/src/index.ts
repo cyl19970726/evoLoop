@@ -1017,8 +1017,8 @@ export class WorkflowService {
         throw new DomainError("UNSUPPORTED_QUERY", "Document revision history is not supported by this reader");
       const page = await reader.listDocumentRevisions(documentId, boundedLimit, cursor);
       return {
-        document: { id: document.id, version: document.version, currentRevisionId: document.currentRevisionId,
-          adoptedRevisionId: document.adoptedRevisionId, status: document.status },
+        document: { id: document.id, title: document.title, kind: document.kind, version: document.version,
+          currentRevisionId: document.currentRevisionId, adoptedRevisionId: document.adoptedRevisionId, status: document.status },
         revisionCount: page.revisionCount,
         items: page.items.map(item => {
           const current = item.id === document.currentRevisionId, published = item.id === document.adoptedRevisionId;

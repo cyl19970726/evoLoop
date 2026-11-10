@@ -1,6 +1,6 @@
 # 存储逻辑：主数据、固定依据与外部引用
 
-状态：2026-10-20 **目标逻辑设计，S1a 的任务/过程 Markdown/依据/影响/操作日志/outbox 已建表、迁移并通过真实 PG 检查，其余表按切片实施。** 2026-11-09 补记迁移 054–068 新增的表，见[下文](#迁移-054-到-068-新增的表)；部署与迁移范围见[部署与迁移](deployment.md)。 用户已选定 PostgreSQL 保存 evoLoop 主数据、飞书作为 connector；本页细化逻辑约束，不宣称字段名或 SQL 已成为合同。语义以[领域合同](contracts.md)为准，权威位置见[项目数据](project-data.md)，包和运行边界见[包架构](packages.md)与[技术选型](technology-selection.md)。
+状态：2026-10-20 **目标逻辑设计，S1a 的任务/过程 Markdown/依据/影响/操作日志/outbox 已建表、迁移并通过真实 PG 检查，其余表按切片实施。** 2026-11-09 补记迁移 054–068 新增的表，2026-11-10 补记 069 给过程文档修订加的序号列，见[下文](#迁移-054-到-069-新增的表和列)；部署与迁移范围见[部署与迁移](deployment.md)。 用户已选定 PostgreSQL 保存 evoLoop 主数据、飞书作为 connector；本页细化逻辑约束，不宣称字段名或 SQL 已成为合同。语义以[领域合同](contracts.md)为准，权威位置见[项目数据](project-data.md)，包和运行边界见[包架构](packages.md)与[技术选型](technology-selection.md)。
 
 C5 的 Task 正文不再双存：头表和 TaskRevision 都固定引用主 DocumentRevision，读取联结产生 content。迁移保留旧 TaskRevision ID/状态/验收及 Run/Basis/operation；将原 goal 原字节存为对应的主正文修订，当前状态才映射为四态。不得向既有 sealed BasisSet 补写成员或改旧操作摘要。Document 追加用途 kind（可空）与 draft/published/archived；Schedule 历史 task_template JSON 保留原样，只读兼容旧 goal，新模板写 content。具体 DDL 以新增迁移 012 及非空迁移测试为准。
 
@@ -141,9 +141,9 @@ erDiagram
 
 这些记录为讨论页提供查询与交接锚点，不把聊天文本或通知送达当作判断已被消费的证据。关联到外部 Git/Wiki 的字段只能保存经权限检查的固定引用；没有外部修订可核验时显示缺项，而不是伪造本库 FK。
 
-## 迁移 054 到 068 新增的表
+## 迁移 054 到 069 新增的表和列
 
-下表按 `packages/adapter-postgres/schema/` 的实际文件逐个列出 054–068 新增的表和列。编号 053、060、061 没有使用（分支上曾占用，合入时改号），迁移仍按编号顺序执行。各表都带 `project_id` 并以同项目复合外键关联既有对象；“不可变”指有触发器拒绝更新或删除。语义以右列的合同为准。更早的 046、047（Leader 通知）见[接口合同](contracts.md#leader-通知层)。
+下表按 `packages/adapter-postgres/schema/` 的实际文件逐个列出 054–069 新增的表和列。编号 053、060、061 没有使用（分支上曾占用，合入时改号），迁移仍按编号顺序执行。各表都带 `project_id` 并以同项目复合外键关联既有对象；“不可变”指有触发器拒绝更新或删除。语义以右列的合同为准。更早的 046、047（Leader 通知）见[接口合同](contracts.md#leader-通知层)。
 
 | 迁移 | 新增的表或列 | 归属与关键约束 | 语义见 |
 | --- | --- | --- | --- |
@@ -160,8 +160,7 @@ erDiagram
 | 066 `connector_delivery_decision` | `connector_claim_attempt`、`connector_delivery_decision`、`connector_transport_attempt` | 每次外部写入前先保存首次尝试；发送前冻结请求 ID、内容和唯一尝试状态，结果未知时只按原请求查询。 | 同上 |
 | 067 `runtime_provider` | `runtime_session.runtime_provider`、`runtime_run.usage`、`runtime_run.cost_usd` | Session 的运行时只能是 `codex` 或 `claude`，写定后不可改，已有行记为 `codex`；用量与费用为空表示运行时没有报告。 | [Session 运行时](session-runtime.md#6-一个-role-只绑定一种运行时) |
 | 068 `role_runtime_profile` | `role_runtime_revision` | 只追加；第 1 个修订固定 Role 的运行时，之后只改 skill 选择，选择内容由校验函数约束；新 Session 插入时触发器拒绝与 Role 绑定不一致的运行时。迁移按已有 Session 回填首个绑定。 | 同上 |
-
-069 `document_revision_history` 不新增表和列，只给 `document_revision` 加索引 `(project_id, document_id, created_at, revision_id)`，供[文档修订列表](contracts.md#2a-documentstore-与-relationstore)按时间倒序分页和计数；主键只能定位到一份文档，不能按时间取页。
+| 069 `document_revision_history` | `document_revision.revision_number` | 每份文档内从 1 连续编号，`(project_id, document_id, revision_number)` 唯一，同时是修订列表分页的索引；插入前触发器锁住文档行，取已有最大值加 1，调用方传入的值被忽略，写入后随修订不可改。迁移沿 `previous_revision_id` 链回填；不是单链（分叉、多个根或断链）的文档改按 `created_at, revision_id` 编号。 | [DocumentStore](contracts.md#2a-documentstore-与-relationstore) |
 
 ## 事务、幂等和读取
 

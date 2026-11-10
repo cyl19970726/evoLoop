@@ -111,9 +111,16 @@ export function api(token = "", timeoutMs = 15000) {
     documentTasks: (p: string, id: string, cursor?: string, signal?: AbortSignal) => call<Page<DocumentTaskReference>>(
       `${projectPath(p)}/documents/${key(id)}/tasks?limit=50${cursor ? `&cursor=${key(cursor)}` : ""}`, { signal }),
     documentRevision: (p: string, id: string, revision: string) => call<DocumentRevision>(`${projectPath(p)}/documents/${key(id)}/revisions/${key(revision)}`),
-    /** Newest-first revision metadata without bodies; pass nextCursor back unchanged for the next page. */
-    documentRevisions: (p: string, id: string, cursor?: string, signal?: AbortSignal) => call<DocumentRevisionPage>(
-      `${projectPath(p)}/documents/${key(id)}/revisions?limit=50${cursor ? `&cursor=${key(cursor)}` : ""}`, signal ? { signal } : undefined),
+    /**
+     * Newest-first revision metadata without bodies (limit 1..100, server default 50); pass nextCursor back
+     * unchanged. Item numbers never change, but current/published are only true for the `document` head of
+     * the page that carried them: after loading another page, recompute every loaded item's state from the
+     * newest page's `document`, and when `document.version` differs from the first page, say so and offer to
+     * reload from the first page (newer revisions sit above it).
+     */
+    documentRevisions: (p: string, id: string, page: { cursor?: string; limit?: number } = {}, signal?: AbortSignal) =>
+      call<DocumentRevisionPage>(`${projectPath(p)}/documents/${key(id)}/revisions?limit=${page.limit ?? 50}${
+        page.cursor ? `&cursor=${key(page.cursor)}` : ""}`, signal ? { signal } : undefined),
     tasks: (p: string, cursor?: string, signal?: AbortSignal) => call<Page<Task>>(`${projectPath(p)}/tasks?limit=50${cursor ? `&cursor=${key(cursor)}` : ""}`, signal ? { signal } : undefined),
     workStatuses: (p: string, taskIds: string[], signal?: AbortSignal) => call<{items: WorkTaskStatus[]}>(
       `${projectPath(p)}/orchestration/work-status?taskIds=${taskIds.map(key).join(",")}`, signal ? { signal } : undefined),

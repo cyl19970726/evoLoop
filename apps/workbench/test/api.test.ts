@@ -117,6 +117,22 @@ test("task revision history uses the task-scoped read endpoint", async () => {
   });
 });
 
+test("document revision history passes limit and the opaque cursor through unchanged", async () => {
+  const seen: string[] = [];
+  await withFetch(async input => {
+    seen.push(String(input));
+    return Response.json({ items: [], nextCursor: null, revisionCount: 0,
+      document: { id: "doc 1", title: "Spec", kind: "spec", version: 1, currentRevisionId: "r", adoptedRevisionId: null, status: "draft" } });
+  }, async () => {
+    await api("token").documentRevisions("project-1", "doc 1");
+    await api("token").documentRevisions("project-1", "doc 1", { limit: 100, cursor: "eyJ2Ijox+/=" });
+  });
+  assert.deepEqual(seen, [
+    "/api/projects/project-1/documents/doc%201/revisions?limit=50",
+    "/api/projects/project-1/documents/doc%201/revisions?limit=100&cursor=eyJ2Ijox%2B%2F%3D",
+  ]);
+});
+
 test("Leader write separates operation metadata from the strict HTTP body", async () => {
   const operationId = "operation-1";
   let requestBody: Record<string, unknown> | null = null;
