@@ -38,7 +38,7 @@ import type {
 } from "@evoloop/contracts";
 import type { ConsumerObservation, Delivery, Goal, GoalRevision, Stage, StageReview, TaskJudgement, TaskProposal, StageRevision, TaskClosure } from "@evoloop/contracts";
 import type { DeliveryIntent } from "@evoloop/contracts/orchestration";
-import { DomainError, type CognitiveClosureFact, type WaitingHandoffFact, type ChildHandoffFact, type Reader, type Transaction, type UnitOfWork } from "@evoloop/contracts/ports";
+import { DomainError, PersistenceRejectedError, type CognitiveClosureFact, type WaitingHandoffFact, type ChildHandoffFact, type Reader, type Transaction, type UnitOfWork } from "@evoloop/contracts/ports";
 import type { PreTurnReviewDecision } from "@evoloop/contracts/ports";
 
 const { Pool } = pg;
@@ -700,6 +700,15 @@ class PgTransaction extends PgReader implements Transaction {
     } catch (error) {
       await this.client.query(`ROLLBACK TO SAVEPOINT ${name}`);
       await this.client.query(`RELEASE SAVEPOINT ${name}`);
+      // SQLSTATE classes 22 and 23 are statement/data or integrity rejections. Their savepoint
+      // rollback succeeded, so the write is known not to have committed and the cause is safe to
+      // expose in the command journal. Connection and transaction-state failures stay unknown.
+      if (typeof error === "object" && error !== null && "code" in error &&
+        typeof error.code === "string" && /^(22|23)[0-9A-Z]{3}$/.test(error.code)) {
+        const sql = error as { code: string; constraint?: unknown; message?: unknown };
+        throw new PersistenceRejectedError(sql.code, typeof sql.constraint === "string" ? sql.constraint : null,
+          typeof sql.message === "string" ? sql.message : "数据库约束拒绝写入");
+      }
       throw error;
     }
   }
