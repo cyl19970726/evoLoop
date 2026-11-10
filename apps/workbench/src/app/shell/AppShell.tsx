@@ -7,11 +7,12 @@ import {
   CountDot, DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger,
   Button, IconButton, Logo, Notice, PersonAvatar, Sheet, SheetClose, SheetContent, SheetDescription, SheetTitle, cn, type NoticeTone,
 } from "@evoloop/ui";
-import { href, type Route, type Section } from "../../shared/routes";
-import { currentPath, navigate } from "../../shared/navigation";
+import { href, parseRoute, type Route, type Section } from "../../shared/routes";
+import { currentPath, navigate, onAddressChange } from "../../shared/navigation";
 import { SessionNavigation, emptySessionNavigationState, type SessionNavigationState } from "../../features/sessions/SessionNavigation";
 import { ContextPanelColumn, ContextPanelProvider } from "../../shared/ui/ContextPanel";
 import { ContextRailProvider, ContextRailSlot } from "../../shared/ui/ContextRail";
+import { useMediaQuery } from "../../shared/ui/useMediaQuery";
 import {
   inboxNavigation, leafOf, projectInitial, rememberSpace, sectionLabels, spaceHref, spaceLabels, spaceOf, workNavigation, workSectionOf,
   type NavItem, type Space,
@@ -32,23 +33,15 @@ export interface AppShellProps {
 const permissionText = (permissions: readonly string[]) =>
   permissions.includes("review") ? "可读写与复核" : permissions.includes("write") ? "可读写" : "只读";
 
-function useMediaQuery(query: string): boolean {
-  const [matches, setMatches] = React.useState(() => window.matchMedia(query).matches);
-  React.useEffect(() => {
-    const list = window.matchMedia(query);
-    const onChange = () => setMatches(list.matches);
-    list.addEventListener("change", onChange);
-    return () => list.removeEventListener("change", onChange);
-  }, [query]);
-  return matches;
-}
-
 export function AppShell(props: AppShellProps) {
   const { route, projectId, actor } = props;
   const space = spaceOf(route);
   const compact = !useMediaQuery("(min-width: 760px)");
   const store = typeof window === "undefined" ? null : window.sessionStorage;
-  React.useEffect(() => { rememberSpace(store, actor, projectId, route, currentPath()); });
+  // The address including quiet rewrites (a list's filter, search or selected row), so each space is remembered as
+  // the reader left it and the space links point there.
+  const path = React.useSyncExternalStore(onAddressChange, currentPath, currentPath);
+  React.useEffect(() => { rememberSpace(store, actor, projectId, parseRoute(path), path); }, [store, actor, projectId, path]);
   const title = route.section === "sessions" || space === "agents" ? spaceLabels.agents : sectionLabels[route.section];
   React.useEffect(() => { document.title = `${title} · ${props.projectTitle || "evoLoop"}`; }, [title, props.projectTitle]);
   const [sessionStates, setSessionStates] = React.useState<Record<string, SessionNavigationState>>({});

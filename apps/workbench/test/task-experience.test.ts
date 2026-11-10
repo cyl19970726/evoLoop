@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import type { Task, TaskDetail } from "@evoloop/contracts";
 import type { LeaderWorkTask } from "@evoloop/contracts/work-index";
-import { assignmentSessionKey, currentDelivery, executionSummary, isMyCurrentWork, matchingProjection, taskListRoute, taskListView, taskRoute } from "../src/features/workflow/taskExperience.ts";
+import { assignmentSessionKey, currentDelivery, executionSummary, isMyCurrentWork, matchingProjection, narrowLayoutKey, readNarrowLayout, taskListRoute, taskListView, taskRoute } from "../src/features/workflow/taskExperience.ts";
 
 const work = (overrides: Partial<LeaderWorkTask> = {}) => ({ taskId: "task", version: 2, currentRevisionId: "rev2", taskState: "in_progress",
   assignment: { state: "accepted", targetKind: "external", targetId: "session", recipientActorId: "me" }, latestRun: null,
@@ -81,4 +81,13 @@ test("the first render after a selection change rejects the previous Task or pro
   assert.equal(matchingTaskDetail(loadedA, "project-one", "B"), null, "A body cannot appear beside the B link");
   assert.equal(matchingTaskDetail(loadedA, "project-two", "A"), null, "same Task id in a different project is not the same selection");
   assert.equal(matchingTaskDetail(null, "project-one", "B"), null);
+});
+
+test("on a phone the list is compact until the reader chooses the table there (L13)", () => {
+  const store = (value: string | null) => ({ getItem: (key: string) => key === narrowLayoutKey ? value : null });
+  assert.equal(readNarrowLayout(null), "list");
+  assert.equal(readNarrowLayout(store(null)), "list");
+  assert.equal(readNarrowLayout(store("table")), "table");
+  assert.equal(readNarrowLayout(store("columns")), "list", "an unknown value is not a choice");
+  assert.equal(readNarrowLayout({ getItem: () => { throw new Error("blocked"); } }), "list");
 });
