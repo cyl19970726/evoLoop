@@ -97,7 +97,7 @@ npm run --silent cli -- operation "$OPERATION_ID" --project "$PROJECT_ID"
 
 过程 Document 的结论合入仓库正文后，在来源修订上记下它进了哪一页、哪个提交。规则见[项目数据 §6](../architecture/project-data.md#6-工作文档怎样沉淀为仓库正式文档)；文档维护中的吸收检查见[文档维护](documentation.md#吸收检查)。
 
-1. **登记目标正文。** 用 `request reference.git-register --project PROJECT_UUID --file BODY.json`，正文含 `operationId`、`referenceId`、`repositoryId`、`path`、完整的 `commit` 和正文的 SHA-256 `contentHash`。仓库与路径须在私有配置 `repositories` 登记的只读范围内；服务读出该提交的正文并核哈希，读不到就拒绝。需要项目 `write`。
+1. **登记目标正文。** 用 `request reference.git-register --project PROJECT_UUID --file BODY.json`，正文含 `operationId`、`referenceId`、`repositoryId`、`path`、完整的 `commit` 和正文的 SHA-256 `contentHash`。仓库与路径须在私有配置 `repositories` 登记的只读范围内，这份登记只在服务启动时读，新增后要重启。服务从登记的根目录读出该提交的正文并核哈希，读不到就拒绝；根目录里的克隆不会自己更新，登记较新的提交前先在其中 `git fetch`。需要项目 `write`。
 2. **记录决定。** 用 `request reference.formal-decide --project PROJECT_UUID --file BODY.json`，正文含 `operationId`、`decisionId`、`gitReferenceId`、来源的 `documentId` 与 `documentRevisionId`、`decision` 和 `reason`。`gitReferenceId` 填第一步的 `referenceId`。回链用 `decision: "incorporated"`，表示该修订的结论已纳入这份正文；服务要求 `documentRevisionId` 是该 Document 当前采纳的修订，否则拒绝。另两个取值 `adopted`、`rejected` 记录审阅者对这份正文的其他判断，服务只核来源与正文都存在，不判断判断本身。需要项目 `review`。
 
 两条都先用 `request schema NAME` 核字段，回执不明时按原 operation ID 对账。回链只说明内容被整理进了哪一页，不证明来源里的每条主张都成立；来源原件保留不动。
