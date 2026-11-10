@@ -93,6 +93,7 @@ import { ConnectorIngressPump } from "./message-connectors/pump.js";
 import { currentConnectorBusinessActor } from "./message-connectors/business-actor.js";
 import { qualifyStandardConnectorRoute } from "./message-connectors/qualification.js";
 import { bindingOf } from "./runtime/runner.js";
+import { localProjectConfiguration } from "./project-configuration/local.js";
 
 const databaseUrl = process.env.EVOLOOP_DATABASE_URL;
 const authFile = process.env.EVOLOOP_AUTH_FILE;
@@ -865,6 +866,11 @@ const app = await buildServer({ service, credentials, canWrite: lease.canWrite, 
     git: integrations.repositories.some(repository => !principal || principal.projectIds.includes(repository.projectId)),
     wiki: !!knowledge?.enabled && knowledge.projectIds.some(projectId => !principal || principal.projectIds.includes(projectId)),
   }),
+  projectConfiguration: localProjectConfiguration({ loaded: integrations, identities: credentials,
+    current: () => loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE),
+    // `documents` is always passed to this server below.
+    facts: () => ({ runtimeAvailable: runner?.status().available === true, managedLoops: !!managed,
+      connectorIngress: !!connectorIngress, documents: true }) }),
   ...(managed ? {orchestration: managed.routes, workers: managed.workers} : {}),
   ...(runner ? { runtime: runner, readEvaluationPacket: (principal, projectId, runId) =>
     runner.readEvaluationPacket(principal, projectId, runId),

@@ -151,6 +151,14 @@ PG 在源写入的同一事务追加只含引用、状态与短预览的观察�
 
 目录／活动默认每页 50，变化最多 100；服务端限制 UTF-8 响应字节，超限显式分页或标注遗漏及详情入口。项目 attention 聚合独立于当前目录页。原生深度历史不进入页面轮询；token、费用和进程内存没有可靠采集时返回 null 与原因，不填 0。当前源码和隔离检查不代表新工作区、性能目标或真实消息已通过使用验收。
 
+### 项目配置只读：仓库、能力与成员
+
+`GET /api/projects/:projectId/repositories`、`.../capabilities` 与 `.../members` 只读本项目的配置，要求调用者有该项目的读取权限（无权 403，项目不存在 404）；读取不启动运行时、不改授权。类型在 `contracts/project-configuration`。三者都返回 `{projectId,status}`：`available` 带 `items`；服务没有相应来源（`reason: "not_provided"`）或来源读取失败（`read_failed`）时为 `unavailable`，不用空列表冒充“没有”。
+
+- **仓库**：取服务启动时载入的集成配置 `repositories` 里本项目的条目，只给 `repositoryId` 与 `allowedPaths`。服务器检出路径 `root` 不返回；配置里没有仓库网址，也不补造。登记 Git 固定来源按同一份启动配置核验。
+- **能力**：每项为 `{key,scope,state,reason}`，`state` 是 `configured`、`not_configured` 或 `unknown`。Git 来源、知识（`knowledge.projectIds`）、日程（`task-timing:` 以外的日程授权）、任务定时与每日复制、自动循环与编排（控制者身份含本项目，且有它在本项目的运行授权或本项目的委派模板）、运行时（本项目的运行授权或委派模板）、飞书（项目授权）和微信连接（本项目已启用的接收授权）都只看本项目，`scope: "project"`；文档原件与 HTML 是全服务一项设置，`scope: "service"`。`reason` 区分服务未启用、本项目未配置和运行时读取时不可用。服务启动时载入配置，部分授权在使用时重读：磁盘上的集成文件现在得出另一结论时记 `unknown` 与 `configuration_changed`，文件读不了时记 `unknown` 与 `configuration_unreadable`。只报告配置状态，不返回路径、令牌、密钥、网址或其中的凭据。
+- **成员**：本机 coordinator 从 HTTP 认证所用的身份快照（启动时读取，改后重启）列出本项目的 `actorId`、`identityKind` 与 `permissions`，`source: "local_identities"`；Hub 模式（#219）由 Hub 账户经同一注入接口提供。同一 actor 在轮换期可有多条凭据，权限取它在本项目各条凭据的交集，与 `hasCurrentStudyReviewer` 一致：不把几条不完整的授权拼成完整权限。不返回令牌或其任何派生值，不列别的项目的成员，也不列成员能访问的其他项目。项目成员能看到同项目其他成员的身份与权限，用于选择验收人。
+
 ### UnitOfWork：同库原子命令
 
 `UnitOfWork.transaction` 和 `read` 是中立事务端口，由 PostgreSQL 适配器提供一组绑定同一连接的 Task/Document/Relation/Schedule Store、操作去重记录与 outbox 访问入口；read 使用一致的只读快照。core 先核 operation ID/摘要，再在写事务内重验对象版本、当前权限和采纳状态，一并提交相应对象、关系和待发意图；不暴露 SQL 或 `pg.Client` 给 core，也不允许各 Store 单独提交。身份或命令结构校验失败可直接拒绝而不建 Journal。合法命令因旧基线或领域规则被拒时，可用事务内 savepoint 回滚业务写，再由外层事务只提交 `rejected` 与摘要，不生成 outbox；PG 提交结果不明须按 operation ID 回读，不能伪造已拒绝。事务内只处理本库状态，网络读写、模型调用和外部发布放在提交前准备或提交后执行。
