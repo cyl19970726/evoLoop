@@ -100,6 +100,22 @@ export interface DocumentRevision {
   contentHash: string; author: string; createdAt: string; previousRevisionId: string | null; reason: string;
   organizationReview?: OrganizationReview;
 }
+/**
+ * Metadata of one fixed revision in a revision listing; the body stays behind the single-revision reads.
+ * revisionNumber is the 1-based position among all revisions of this document by creation time
+ * (then revision ID); it is not Document.version, which also advances on publish and archive.
+ */
+export interface DocumentRevisionMetadata extends Omit<DocumentRevision, "body"> { revisionNumber: number }
+/** "current" wins when the current revision is also the published one; `published` then stays true. */
+export type DocumentRevisionState = "current" | "published" | "historical";
+export interface DocumentRevisionSummary extends DocumentRevisionMetadata {
+  state: DocumentRevisionState; current: boolean; published: boolean;
+}
+/** Newest first. `document` is the head the state flags were derived from in the same read snapshot. */
+export interface DocumentRevisionPage extends Page<DocumentRevisionSummary> {
+  document: Pick<Document, "id" | "version" | "currentRevisionId" | "adoptedRevisionId" | "status">;
+  revisionCount: number;
+}
 export interface DocumentDecision {
   projectId: string; id: string; documentId: string; revisionId: string;
   actorId: string; reason: string; createdAt: string;

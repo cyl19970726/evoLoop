@@ -161,6 +161,8 @@ erDiagram
 | 067 `runtime_provider` | `runtime_session.runtime_provider`、`runtime_run.usage`、`runtime_run.cost_usd` | Session 的运行时只能是 `codex` 或 `claude`，写定后不可改，已有行记为 `codex`；用量与费用为空表示运行时没有报告。 | [Session 运行时](session-runtime.md#6-一个-role-只绑定一种运行时) |
 | 068 `role_runtime_profile` | `role_runtime_revision` | 只追加；第 1 个修订固定 Role 的运行时，之后只改 skill 选择，选择内容由校验函数约束；新 Session 插入时触发器拒绝与 Role 绑定不一致的运行时。迁移按已有 Session 回填首个绑定。 | 同上 |
 
+069 `document_revision_history` 不新增表和列，只给 `document_revision` 加索引 `(project_id, document_id, created_at, revision_id)`，供[文档修订列表](contracts.md#2a-documentstore-与-relationstore)按时间倒序分页和计数；主键只能定位到一份文档，不能按时间取页。
+
 ## 事务、幂等和读取
 
 `operation_journal` 用 `(project_id, operation_id)` 唯一记录请求身份、目标、读入基线、规范化命令摘要、预期副作用及 `pending/applied/rejected/unknown`。同一 ID 与摘要一致时，经当前授权核验后返回原结果或待对账状态；摘要不同则拒绝，不能把旧结果当作新命令成功。`outbox` 用 `(project_id, event_id)` PK，`(project_id, operation_id, effect_key, target_connector, event_kind)` 去重。`effect_key` 是命令内稳定的对象/项目项键：一次操作变更多个 Task、关系或投影时各项不同，同一项重试时不变。载荷只保存目标对象 ID/版本、最少投影内容、可见范围、尝试与回读回执，不把 outbox 当长期第二正文。唯一键字段均应非空；不能假设普通 UNIQUE 将多个 NULL 视为冲突。[PostgreSQL 约束文档](https://www.postgresql.org/docs/current/ddl-constraints.html)

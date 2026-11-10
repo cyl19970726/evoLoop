@@ -33,7 +33,7 @@ import type { ScheduleDefinition } from "@evoloop/contracts/scheduling";
 import type { DocumentPayloadRevision, RegisteredDocumentBlob } from "@evoloop/contracts/process-documents";
 import type { GitSourceRef } from "@evoloop/contracts/sources";
 import type {
-  BasisDecision, BasisRetention, BasisSet, Document, DocumentDecision, DocumentRevision, DocumentTaskReference, Impact,
+  BasisDecision, BasisRetention, BasisSet, Document, DocumentDecision, DocumentRevision, DocumentRevisionMetadata, DocumentTaskReference, Impact,
   Operation, OutboxEvent, Page, Project, Task, TaskDocumentLink, TaskRevision,
 } from "@evoloop/contracts";
 import type { ConsumerObservation, Delivery, Goal, GoalRevision, Stage, StageReview, TaskJudgement, TaskProposal, StageRevision, TaskClosure } from "@evoloop/contracts";
@@ -56,10 +56,31 @@ const rowDocument = (r: Row): Document => ({ projectId: r.project_id, id: r.docu
   ...(r.organization_review ? { organizationReview: r.organization_review } : {}),
   ...(r.kind === "organization_review" && r.document_created_at ? { createdAt: iso(r.document_created_at), updatedAt: iso(r.document_updated_at) } : {}),
   origin: r.origin_task_id ? { taskId: r.origin_task_id, taskRevisionId: r.origin_task_revision_id, runId: r.origin_run_id ?? null } : null });
-const rowDocumentRevision = (r: Row): DocumentRevision => ({ projectId: r.project_id, documentId: r.document_id, id: r.revision_id,
-  body: r.body, format: r.format, mediaType: r.media_type, originalName: r.original_name ?? `${r.document_id}.md`,
+const rowDocumentRevisionFields = (r: Row): Omit<DocumentRevision, "body"> => ({ projectId: r.project_id, documentId: r.document_id, id: r.revision_id,
+  format: r.format, mediaType: r.media_type, originalName: r.original_name ?? `${r.document_id}.md`,
   payloadRef: r.payload_ref, entrypoint: r.entrypoint, assetsManifest: r.assets_manifest ?? [],
   contentHash: r.content_hash, author: r.author, createdAt: iso(r.created_at), previousRevisionId: r.previous_revision_id, reason: r.reason, ...(r.organization_review ? { organizationReview: r.organization_review } : {}) });
+const rowDocumentRevision = (r: Row): DocumentRevision => ({ ...rowDocumentRevisionFields(r), body: r.body });
+/** Every revision column except the body, so a history page never loads (or detoasts) document text. */
+const documentRevisionMetadataColumns = `r.project_id,r.document_id,r.revision_id,r.format,r.media_type,r.original_name,
+  r.payload_ref,r.entrypoint,r.assets_manifest,r.content_hash,r.author,r.created_at,r.previous_revision_id,r.reason,
+  r.organization_review`;
+interface DocumentRevisionCursor { v: 1; projectId: string; documentId: string; revisionId: string }
+const revisionCursorId = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function encodeDocumentRevisionCursor(value: DocumentRevisionCursor): string {
+  return Buffer.from(JSON.stringify(value), "utf8").toString("base64url");
+}
+/** The cursor names the last revision already returned; it is only valid for the same project and document. */
+function decodeDocumentRevisionCursor(value: string, projectId: string, documentId: string): DocumentRevisionCursor {
+  try {
+    const parsed = JSON.parse(Buffer.from(value, "base64url").toString("utf8")) as Record<string, unknown>;
+    if (parsed.v !== 1 || parsed.projectId !== projectId || parsed.documentId !== documentId ||
+      typeof parsed.revisionId !== "string" || !revisionCursorId.test(parsed.revisionId)) throw new Error("scope");
+    return parsed as unknown as DocumentRevisionCursor;
+  } catch {
+    throw new DomainError("INVALID_CURSOR", "文档修订游标无效或不属于这份文档；请从第一页重新读取");
+  }
+}
 const documentProjection = `SELECT d.*, t.task_id AS primary_task_id, current_revision.organization_review,
   current_revision.created_at AS document_updated_at,
   CASE WHEN d.kind='organization_review' THEN (SELECT min(history.created_at) FROM document_revision history
@@ -547,6 +568,43 @@ class PgReader implements Reader {
       owner: x.owner, kind: x.kind, version: x.version,
       currentRevisionId: x.current_revision_id, relations: x.relations,
     }), (x) => x.task_id);
+  }
+  async listDocumentRevisions(documentId: string, limit: number, cursor?: string): Promise<Page<DocumentRevisionMetadata> & { revisionCount: number }> {
+    pageLimit(limit);
+    const after = cursor === undefined ? null : decodeDocumentRevisionCursor(cursor, this.projectId, documentId);
+    if (after) {
+      const anchor = await this.client.query("SELECT 1 FROM document_revision WHERE project_id=$1 AND document_id=$2 AND revision_id=$3",
+        [this.projectId, documentId, after.revisionId]);
+      if (!anchor.rows[0]) throw new DomainError("INVALID_CURSOR", "文档修订游标无效或不属于这份文档；请从第一页重新读取");
+    }
+    // Keyset on (created_at, revision_id) served by document_revision_history_idx. The anchor row is
+    // compared inside PostgreSQL so microsecond timestamps from SQL-side inserts keep their order.
+    const scope = "r.project_id=$1 AND r.document_id=$2";
+    const below = `(r.created_at,r.revision_id) < (SELECT a.created_at,a.revision_id FROM document_revision a
+      WHERE a.project_id=$1 AND a.document_id=$2 AND a.revision_id=$3)`;
+    const pageRows = after
+      ? await this.client.query(`SELECT ${documentRevisionMetadataColumns} FROM document_revision r
+          WHERE ${scope} AND ${below} ORDER BY r.created_at DESC,r.revision_id DESC LIMIT $4`,
+        [this.projectId, documentId, after.revisionId, limit + 1])
+      : await this.client.query(`SELECT ${documentRevisionMetadataColumns} FROM document_revision r
+          WHERE ${scope} ORDER BY r.created_at DESC,r.revision_id DESC LIMIT $3`,
+        [this.projectId, documentId, limit + 1]);
+    // Numbers count revisions in ascending (created_at, revision_id) order. A page is a contiguous run of
+    // that order, so the first row's number is the count of revisions at or below it.
+    const counts = after
+      ? await this.client.query(`SELECT count(*)::int AS total, count(*) FILTER (WHERE ${below})::int AS remaining
+          FROM document_revision r WHERE ${scope}`, [this.projectId, documentId, after.revisionId])
+      : await this.client.query(`SELECT count(*)::int AS total, count(*)::int AS remaining
+          FROM document_revision r WHERE ${scope}`, [this.projectId, documentId]);
+    const remaining = Number(counts.rows[0]?.remaining ?? 0);
+    const chosen = pageRows.rows.slice(0, limit);
+    const last = chosen.at(-1);
+    return {
+      items: chosen.map((row, index) => ({ ...rowDocumentRevisionFields(row), revisionNumber: remaining - index })),
+      nextCursor: pageRows.rows.length > limit && last
+        ? encodeDocumentRevisionCursor({ v: 1, projectId: this.projectId, documentId, revisionId: last.revision_id }) : null,
+      revisionCount: Number(counts.rows[0]?.total ?? 0),
+    };
   }
   async listLinks(taskId: string): Promise<TaskDocumentLink[]> {
     const r = await this.client.query("SELECT * FROM task_document_link WHERE project_id=$1 AND task_id=$2 ORDER BY link_id LIMIT $3", [this.projectId, taskId, maxDetailRows + 1]);

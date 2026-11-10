@@ -663,6 +663,13 @@ export async function buildServer(options: {
   app.get("/api/projects/:projectId/tasks/:id/revisions", async request => {
     const p = params(request.params); return options.service.listTaskRevisions(who(request.principal), p.projectId!, p.id!);
   });
+  // Metadata only, newest first; bodies stay behind the fixed single-revision reads. Workers are refused by the guard.
+  app.get("/api/projects/:projectId/documents/:id/revisions", async request => {
+    const p = params(request.params);
+    const q = z.object({ limit: z.coerce.number().int().min(1).max(100).default(50),
+      cursor: z.string().min(1).max(512).optional() }).parse(request.query);
+    return options.service.listDocumentRevisions(who(request.principal), p.projectId!, p.id!, q.limit, q.cursor);
+  });
   app.get("/api/projects/:projectId/discussions", async request => {
     const p = params(request.params);
     const q = pageSchema.extend({ kind: z.enum(["allocation", "direction", "task_collaboration"]).optional() }).parse(request.query);

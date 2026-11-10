@@ -1,11 +1,12 @@
 import type {
-  Command, CommandResult, Document, DocumentDetail, DocumentRevision,
+  Command, CommandResult, Document, DocumentDetail, DocumentRevision, DocumentRevisionPage,
   Impact, Operation, Page, Principal, Project, Task, TaskDetail, TaskRevision, BasisSet, DocumentTaskReference, Goal, GoalRevision, Stage, StageRevision, StageReview,
   DiscussionRecord, DiscussionEvent,
   EvaluationRevision, EvaluationAttempt, EvaluationAssessment, EvaluationConclusion, EvaluationSourceSignature, EvaluationFixedRef,
   TaskTimingView,
 } from "@evoloop/contracts";
 export type { TaskTimingView } from "@evoloop/contracts";
+export type { DocumentRevisionPage, DocumentRevisionState, DocumentRevisionSummary } from "@evoloop/contracts";
 import type { WorkTaskStatus } from "./workStatusPresentation";
 import { reportUnauthorized, requestAuth } from "./identity";
 import { describeError } from "./errorPresentation";
@@ -110,6 +111,9 @@ export function api(token = "", timeoutMs = 15000) {
     documentTasks: (p: string, id: string, cursor?: string, signal?: AbortSignal) => call<Page<DocumentTaskReference>>(
       `${projectPath(p)}/documents/${key(id)}/tasks?limit=50${cursor ? `&cursor=${key(cursor)}` : ""}`, { signal }),
     documentRevision: (p: string, id: string, revision: string) => call<DocumentRevision>(`${projectPath(p)}/documents/${key(id)}/revisions/${key(revision)}`),
+    /** Newest-first revision metadata without bodies; pass nextCursor back unchanged for the next page. */
+    documentRevisions: (p: string, id: string, cursor?: string, signal?: AbortSignal) => call<DocumentRevisionPage>(
+      `${projectPath(p)}/documents/${key(id)}/revisions?limit=50${cursor ? `&cursor=${key(cursor)}` : ""}`, signal ? { signal } : undefined),
     tasks: (p: string, cursor?: string, signal?: AbortSignal) => call<Page<Task>>(`${projectPath(p)}/tasks?limit=50${cursor ? `&cursor=${key(cursor)}` : ""}`, signal ? { signal } : undefined),
     workStatuses: (p: string, taskIds: string[], signal?: AbortSignal) => call<{items: WorkTaskStatus[]}>(
       `${projectPath(p)}/orchestration/work-status?taskIds=${taskIds.map(key).join(",")}`, signal ? { signal } : undefined),
