@@ -61,6 +61,10 @@ export class AcceptanceRelayService {
     const client = await this.deps.pool.connect();
     try {
       await client.query("BEGIN");
+      // Project lock first, as core and Leader work writes do. The project row lock below waits on their
+      // key shares; without this, a Leader plan update holding the Task row and this arrangement holding
+      // the project row wait on each other (40P01).
+      await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))",[input.projectId]);
       await client.query("SELECT project_id FROM project WHERE project_id=$1 FOR UPDATE",[input.projectId]);
       // Serialize decisions for one Task before looking up the operation. A concurrent retry
       // must see the first commit and return its original result, even with an old version.

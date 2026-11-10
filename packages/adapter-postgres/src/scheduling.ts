@@ -22,10 +22,15 @@ export class ScheduleReservationUnknown extends Error {
 export class PgSchedulingStore implements ScheduleStore {
   constructor(private readonly pool: Pool) {}
 
-  private async transaction<T>(action: (client: PoolClient) => Promise<T>): Promise<T> {
+  private async transaction<T>(projectId: string, action: (client: PoolClient) => Promise<T>): Promise<T> {
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
+      // Same order as core and Orchestration writes: the project lock comes before any row lock.
+      // Materialization shares the target Role, Stage and Loop rows and then inserts rows whose
+      // project foreign key waits on an Orchestration transaction's project row lock; without
+      // this lock, that transaction's Loop update and this insert wait on each other (40P01).
+      await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [projectId]);
       const result = await action(client);
       await client.query("COMMIT");
       return result;
@@ -48,7 +53,7 @@ export class PgSchedulingStore implements ScheduleStore {
   }
 
   async create(definition: ScheduleDefinition): Promise<ScheduleDefinition> {
-    return this.transaction(async client => {
+    return this.transaction(definition.projectId, async client => {
       await client.query(`INSERT INTO schedule_definition(project_id,schedule_id,version,current_revision_id,state,watermark_utc) VALUES($1,$2,$3,$4,$5,$6)`,
         [definition.projectId, definition.id, definition.version, definition.currentRevisionId, definition.state, definition.watermarkUtc]);
       await this.appendRevision(client, definition);
@@ -77,7 +82,7 @@ export class PgSchedulingStore implements ScheduleStore {
   }
 
   async revise(definition: ScheduleDefinition, expectedVersion: number): Promise<ScheduleDefinition> {
-    return this.transaction(async client => {
+    return this.transaction(definition.projectId, async client => {
       const current = await this.load(client, definition.projectId, definition.id, true);
       if (!current || current.version !== expectedVersion || definition.version !== expectedVersion + 1 || new Date(definition.watermarkUtc).getTime() < new Date(current.watermarkUtc).getTime() || current.state === "stopped" && definition.state !== "stopped") throw new ScheduleStoreConflict("schedule version, state or watermark conflict");
       const changed = await client.query(`UPDATE schedule_definition SET version=$3,current_revision_id=$4,state=$5,watermark_utc=$6
@@ -107,7 +112,7 @@ export class PgSchedulingStore implements ScheduleStore {
   }
 
   async materialize(definition: ScheduleDefinition, plannedAtUtc: string, observedAtUtc: string, requestedState: Occurrence["state"], reason: string): Promise<Occurrence> {
-    return this.transaction(async client => {
+    return this.transaction(definition.projectId, async client => {
       const current = await this.load(client, definition.projectId, definition.id, true);
       if (!current || current.version !== definition.version || current.state !== "active") throw new ScheduleStoreConflict("schedule changed before occurrence reservation");
       const previous = await client.query("SELECT * FROM schedule_occurrence WHERE project_id=$1 AND schedule_id=$2 AND planned_at_utc=$3 FOR UPDATE", [definition.projectId, definition.id, plannedAtUtc]);
@@ -190,7 +195,7 @@ export class PgSchedulingStore implements ScheduleStore {
   }
 
   async advanceWatermark(projectId: string, scheduleId: string, expectedVersion: number, throughUtc: string, reason: string): Promise<void> {
-    await this.transaction(async client => {
+    await this.transaction(projectId, async client => {
       const current = await this.load(client, projectId, scheduleId, true);
       if (!current || current.version !== expectedVersion || current.state !== "active") throw new ScheduleStoreConflict("schedule changed before watermark advancement");
       if (new Date(throughUtc).getTime() <= new Date(current.watermarkUtc).getTime()) return;
