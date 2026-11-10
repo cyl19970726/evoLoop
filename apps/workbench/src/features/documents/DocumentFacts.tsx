@@ -6,6 +6,7 @@ import type { DocumentDetail, DocumentRevision, DocumentTaskReference } from "@e
 import { Notice, RefreshingIndicator, StatusTag } from "@evoloop/ui";
 import { api } from "../../shared/api";
 import { useProjectQuery } from "../../shared/query";
+import { useRevisionOrigin } from "../../shared/useRevisionOrigin";
 import { href } from "../../shared/routes";
 import { ContextPanelContent, useContextPanel } from "../../shared/ui/ContextPanel";
 import { date } from "../../shared/ui/shared";
@@ -66,6 +67,7 @@ export function DocumentFacts({ projectId, detail, revision, body, actorId }: {
   const standing = readingStanding(revision.id, detail);
   const tasks = useReferencingTasks(projectId, document.id);
   const from = actorId ? documentOrigin(projectId, document, actorId) : null;
+  const origin = useRevisionOrigin(projectId, { actorId: revision.author, reason: revision.reason });
   const openTask = (event: React.MouseEvent, reference: DocumentTaskReference) => {
     if (!panel || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
     event.preventDefault();
@@ -78,13 +80,13 @@ export function DocumentFacts({ projectId, detail, revision, body, actorId }: {
   return <ContextPanelContent><div data-ui="" aria-label="文档版本、来源与关联" role="region">
     <Block title="版本">
       <div className="flex flex-col gap-2.5">
-        <Fact label="正在读">{standing.label}<span className="block text-caption text-muted-foreground">{date(revision.createdAt)} · {revision.author}</span></Fact>
+        <Fact label="正在读">{standing.label}<span className="block text-caption text-muted-foreground">{date(revision.createdAt)} · {origin.author}</span></Fact>
         <Fact label="当前版">{revisionLink(detail.current, date(detail.current.createdAt))}</Fact>
         <Fact label="已发布版">{detail.adopted ? revisionLink(detail.adopted, date(detail.adopted.createdAt)) : "尚未发布"}</Fact>
         {revision.previousRevisionId && <Fact label="上一版"><a href={href(projectId, "document", document.id, revision.previousRevisionId)} className="text-primary hover:underline">阅读上一版</a></Fact>}
         <Fact label="状态"><span className="flex flex-wrap items-center gap-2"><StatusTag tone={lifecycleTone[document.status]} label={lifecycleLabel[document.status]} />
           <span className="text-caption text-muted-foreground">{publicationText(document)}</span></span></Fact>
-        <Fact label="这一版的修订理由"><span className="whitespace-pre-wrap [overflow-wrap:anywhere]">{revision.reason || "未写明"}</span></Fact>
+        <Fact label="这一版的修订理由"><span className="whitespace-pre-wrap [overflow-wrap:anywhere]">{revision.reason ? origin.reason : "未写明"}</span></Fact>
       </div>
       <details className="mt-3 text-caption text-muted-foreground">
         <summary className="cursor-pointer">完整标识与哈希</summary>
@@ -92,6 +94,7 @@ export function DocumentFacts({ projectId, detail, revision, body, actorId }: {
         <p className="[overflow-wrap:anywhere]">所读修订 <code className="font-mono">{revision.id}</code></p>
         <p className="[overflow-wrap:anywhere]">内容 SHA-256 <code className="font-mono">{revision.contentHash}</code></p>
         <p>原件格式 {revision.format === "html" ? "HTML" : "Markdown"} · {revision.originalName}</p>
+        {origin.identifiers.map(row => <p key={row.label} className="[overflow-wrap:anywhere]">{row.label} {row.text ? row.value : <code className="font-mono">{row.value}</code>}</p>)}
       </details>
     </Block>
     <Block title="来源">

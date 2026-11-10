@@ -11,7 +11,8 @@ import type { RuntimeRunRecord, RuntimeSessionRecord } from "@evoloop/contracts/
 import { commandSchema, type Command } from "@evoloop/contracts";
 import { AgentAvatar, Button, CollapsibleRow, Notice, Tabs, TabsContent, TabsList, TabsTrigger, cn } from "@evoloop/ui";
 import { ApiError, api, errorText, isUnconfirmed } from "../../shared/api";
-import { ActionForm, option, type MutationContext } from "../../shared/ActionForm";
+import { ActionForm, type MutationContext } from "../../shared/ActionForm";
+import { sessionProfileCommand, sessionProfileFields } from "./sessionProfilePresentation";
 import { deliveryTarget } from "../../shared/deliveryPresentation";
 import { useProjectPages, useProjectQuery } from "../../shared/query";
 import { date, href } from "../../shared/ui/shared";
@@ -22,13 +23,15 @@ import { ContextPanelContent, useContextPanel } from "../../shared/ui/ContextPan
 import { SectionBoundary } from "../../shared/ui/SectionBoundary";
 import { FactList, PanelSection, mutedText } from "../../shared/ui/PageParts";
 import { FullIdentifiers } from "../../shared/ui/FullIdentifiers";
+import { agentDisplayName, agentNameIsGenerated } from "../../shared/agentNamePresentation";
 import { currentPath, onNavigate, replaceQuietly } from "../../shared/navigation";
 import { AllocationBacklinks } from "../discussions";
 import { SessionOpenEntry } from "./SessionOpenEntry";
 import { queuePosition, queueStateLabel } from "./queuePresentation";
 import { ActivityFeed, clearActivityDetails, type ActivityFilter } from "./ActivityFeed";
 import { SessionRecoveryOverview, SessionRecoveryResources } from "./SessionRecoveryObservation";
-import { checkedRecoveryView, permissionLabel, type RecoveryRead } from "./recoveryPresentation";
+import { checkedRecoveryView, type RecoveryRead } from "./recoveryPresentation";
+import { environmentRows } from "./environmentPresentation";
 import { currentNativeRunId, currentWorkRelationLabel, idleSessionResult, latestSessionResult, agentHeaderStatus, sessionIdleSummary, sessionResultUseLabel } from "./sessionStatusPresentation";
 import { NativeSessionPanel } from "./NativeSessionPanel";
 import { SessionClosePanel } from "./SessionClosePanel";
@@ -42,6 +45,7 @@ import { observedRunTaskLink } from "./taskRunLink";
 import { sessionTaskReturn, sourceParams } from "./sessionReturn";
 import { ReturnLink } from "../../shared/ui/ReturnLink";
 import { SessionTimeline, clearSessionTimelineViews } from "./SessionTimeline";
+import { SourceLimitations } from "./SourceLimitations";
 import { clearSessionTimelineReads } from "./useSessionTimeline";
 
 /** `tab` in the address: activity and queue open 动态 in the right column, results opens 资料库. */
@@ -213,7 +217,7 @@ export function SessionWorkspace({ context, sessionKey, active, refresh, queue }
     return `${href(projectId, "sessions")}?${params}`;
   }
   function taskHref(taskId: string) {
-    const params = new URLSearchParams({ return: viewUrl(), actor: context.principal.actorId, returnTitle: snapshot?.session.title.slice(0, 80) ?? "智能体" });
+    const params = new URLSearchParams({ return: viewUrl(), actor: context.principal.actorId, returnTitle: snapshot ? agentDisplayName(snapshot.session).slice(0, 80) : "智能体" });
     return `${href(projectId, "task", taskId)}?${params}`;
   }
   const panel = useContextPanel();
@@ -275,6 +279,7 @@ export function SessionWorkspace({ context, sessionKey, active, refresh, queue }
 
   const current = snapshot;
   const session = current.session;
+  const name = agentDisplayName(session);
   const work = current.currentWork;
   const readCurrent = snapshotOk && !rereading;
   const nativeReadCurrent = readCurrent;
@@ -384,10 +389,7 @@ export function SessionWorkspace({ context, sessionKey, active, refresh, queue }
   </PanelSection>;
   const environmentSection = <PanelSection title="环境与用量">
     <FactList rows={[
-      ["运行方式", session.kind === "owned" ? "项目受管" : "外部接入"],
-      ["目标模型", configuredModel ? String(configuredModel) : recoveryRead.status === "loading" ? "正在读取" : "未读到"],
-      ["思考强度", executionProfile?.revision.reasoningEffort ?? (recoveryRead.status === "loading" ? "正在读取" : "未配置或未读到")],
-      ["执行权限", executionProfile ? permissionLabel(executionProfile.revision.sandbox, executionProfile.revision.approvalPolicy) : recoveryRead.status === "loading" ? "正在读取" : "未读到"],
+      ...environmentRows({ kind: session.kind, recovery: recoveryRead, configuredModel: current.resources.configuredModel.value }),
       ["实际运行模型", actualModel ? String(actualModel) : "没有可靠记录"],
       ["用量", observation.progress?.usage ? `输入 ${observation.progress.usage.total.inputTokens ?? "未提供"} · 输出 ${observation.progress.usage.total.outputTokens ?? "未提供"}${observation.progress.freshness === "live" && nativeReadCurrent ? "" : "（上次记录）"}` : "没有可靠记录，不按 0 计"],
     ]} />
@@ -418,7 +420,7 @@ export function SessionWorkspace({ context, sessionKey, active, refresh, queue }
       {session.kind === "owned" && session.target.kind === "owned" && <SessionExecutionFacts projectId={projectId} sessionId={session.target.sessionId} progress={observation.progress} currentRead={nativeReadCurrent && !observation.error} refreshKey={`${current.metadata.generatedAt}:${readAgain}`} />}
       {session.kind === "owned" && session.target.kind === "owned" && <NativeSessionPanel projectId={projectId} sessionId={session.target.sessionId} questions={native.questions} progress={observation.progress} progressError={observation.error} progressCurrentRead={nativeReadCurrent && !observation.error} readError={(snapshotRead.isError ? errorText(snapshotRead.error) : "") || native.error} replyBlockedReason={null} onAnswer={answerNative} taskHref={taskHref} section="diagnostics" />}
       <p className={mutedText}>工作区读于 {date(current.metadata.generatedAt)}。{current.metadata.partial || historyPages.some(page => page.metadata.partial) ? "来源只展示已读范围。" : ""}</p>
-      {limitation.length > 0 && <CollapsibleRow summary="来源限制与未确认信息"><ul className="list-disc pl-5 text-caption text-muted-foreground">{limitation.map(item => <li key={item}>{item}</li>)}</ul></CollapsibleRow>}
+      {limitation.length > 0 && <CollapsibleRow summary="来源限制与未确认信息"><SourceLimitations className="text-caption text-muted-foreground" items={limitation} /></CollapsibleRow>}
       <details ref={setActivityDetails} className="session-project-activity min-w-0" open={activitySectionOpen} onToggle={event => setActivitySectionOpen(event.currentTarget.open)}>
         <summary className="cursor-pointer text-label font-semibold">项目活动与来源记录<span className="ml-1.5 font-normal text-muted-foreground">{activity.length} 项已读</span></summary>
         <div className="mt-2 flex min-w-0 flex-col gap-2">
@@ -429,7 +431,8 @@ export function SessionWorkspace({ context, sessionKey, active, refresh, queue }
             {history.isFetching ? "读取中…" : !historyLoaded || !historyPages.length ? "读取活动历史" : "加载更早活动"}</Button>}
         </div>
       </details>
-      <FullIdentifiers rows={[{ label: "智能体标识", value: session.key }, { label: "来源", value: `${session.source.kind}:${session.source.id}` }]} />
+      <FullIdentifiers rows={[{ label: "智能体标识", value: session.key }, { label: "来源", value: `${session.source.kind}:${session.source.id}` },
+        { label: "服务生成的名称", value: agentNameIsGenerated(session) ? session.title : null, text: true }]} />
     </div>
   </details>;
   // The right column: who this agent is, what it works on (动态) and what it produced (资料库), its environment, then details.
@@ -438,7 +441,7 @@ export function SessionWorkspace({ context, sessionKey, active, refresh, queue }
       <section aria-label="智能体" className="flex min-w-0 items-start gap-3">
         <AgentAvatar seed={session.key} roleSeed={session.roles[0]?.id ?? session.title} size={44} />
         <div className="min-w-0 flex-1">
-          <p className="flex min-w-0 items-center gap-1.5 font-semibold"><SessionIdentityMark target={session.target} identity={session.identity} name={session.title} size="small" /><span className="truncate">{session.title}</span></p>
+          <p className="flex min-w-0 items-center gap-1.5 font-semibold"><SessionIdentityMark target={session.target} identity={session.identity} name={name} size="small" /><span className="truncate">{name}</span></p>
           <p className="text-small text-text-secondary">{session.roles.map(role => role.title).join("、") || "职责待核对"}</p>
           <p className="mt-1 text-caption text-muted-foreground">{session.kind === "owned" ? "项目受管" : "外部接入"} · {sessionMembership(session.membership)} · 所在机器待接入</p>
           <p className="mt-1 flex items-center gap-1.5 text-caption"><span aria-hidden="true" className={busyNow ? "size-1.5 rounded-full bg-primary" : "size-1.5 rounded-full bg-border"} />{statusLabel}</p>
@@ -473,7 +476,7 @@ export function SessionWorkspace({ context, sessionKey, active, refresh, queue }
       <div className="session-detail-heading flex min-w-0 flex-1 items-center gap-2 compact:justify-center">
         <div className="flex min-w-0 items-center gap-2 rounded-full bg-raised py-1 pl-1.5 pr-3.5 shadow-sm">
           <AgentAvatar seed={session.key} roleSeed={session.roles[0]?.id ?? session.title} size={26} />
-          <h1 className="min-w-0 truncate text-body font-semibold">{session.title}</h1>
+          <h1 className="min-w-0 truncate text-body font-semibold">{name}</h1>
           <span aria-hidden="true" className={busyNow ? "size-1.5 shrink-0 rounded-full bg-primary" : "size-1.5 shrink-0 rounded-full bg-border"} />
           <span className="session-status-badge min-w-0 truncate text-caption text-muted-foreground">{statusLabel}</span>
         </div>
@@ -528,11 +531,6 @@ function OwnedQueue({ context, sessionId, enabled, queue }: { context: MutationC
 
 function SessionProfileForm({ context, snapshot, onApplied }: { context: MutationContext; snapshot: SessionSnapshot; onApplied(): void }) {
   const profile = snapshot.session.profile;
-  return <ActionForm context={{ ...context, draftScope: `session-profile:${snapshot.session.key}`, draftBaseline: `${profile?.version ?? 0}` }} review title="设置展示信息" fields={[
-    { name: "displayName", label: "展示名称", value: profile?.displayName ?? snapshot.session.title },
-    { name: "purpose", label: "用途", kind: "textarea", optional: true, value: profile?.purpose ?? "" },
-    { name: "membership", label: "团队归属", kind: "select", value: profile?.membership ?? snapshot.session.membership, options: [option("current", "当前团队"), option("historical", "历史"), option("unclassified", "待归类")] },
-    { name: "tenure", label: "会话性质", kind: "select", value: profile?.tenure ?? "unknown", options: [option("resident", "常驻"), option("temporary", "临时"), option("unknown", "未知")] },
-    { name: "reason", label: "变更依据", kind: "textarea" },
-  ]} build={v => ({ type: "session.profile.set", target: profile?.target ?? snapshot.session.target, expectedVersion: profile?.version ?? 0, displayName: v.displayName, purpose: v.purpose, membership: v.membership, tenure: v.tenure, reason: v.reason })} onApplied={onApplied} />;
+  return <ActionForm context={{ ...context, draftScope: `session-profile:${snapshot.session.key}`, draftBaseline: `${profile?.version ?? 0}` }} review title="设置展示信息"
+    fields={sessionProfileFields(snapshot)} build={v => sessionProfileCommand(snapshot, v)} onApplied={onApplied} />;
 }

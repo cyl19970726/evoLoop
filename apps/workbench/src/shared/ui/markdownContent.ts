@@ -30,6 +30,9 @@ function markdownFor(projectId?: string) {
   return markdown;
 }
 
+/** The headings a document outline lists: those its source wrote as 二、三级标题 (`##`, `###`). */
+export const outlineSelector = '.markdown-body [data-source-level="2"], .markdown-body [data-source-level="3"]';
+
 export const maxDiagramLength = 6_000;
 const maxDiagrams = 4;
 const unsafeDiagram = /\b(?:click|href|callback|linkStyle|classDef)\b|%%\{|<[A-Za-z!/?]|javascript:|data:|https?:\/\//i;
@@ -37,7 +40,7 @@ export type MarkdownPart = { kind: "html"; value: string } | { kind: "diagram"; 
 interface ParsedTokenView { type: string; tag?: string; level?: number; content?: string; children?: ParsedTokenView[] | null }
 function escapeHtml(value: string): string { return value.replace(/[&<>"']/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]!); }
 
-export function splitMarkdown(source: string, options: { omitLeadingTitle?: string; projectId?: string } = {}): MarkdownPart[] {
+export function splitMarkdown(source: string, options: { omitLeadingTitle?: string; projectId?: string; topHeading?: number } = {}): MarkdownPart[] {
   const markdown = markdownFor(options.projectId);
   const tokens = markdown.parse(source, {});
   const TokenCtor = (MarkdownIt as unknown as {Token: new (type: string, tag: string, nesting: number) =>
@@ -96,6 +99,21 @@ export function splitMarkdown(source: string, options: { omitLeadingTitle?: stri
         return "";
       }).join("").replace(/\s+/gu, " ").trim();
       if (visibleTitle === expectedTitle) tokens.splice(headingIndex, 3);
+    }
+  }
+  // The page has its own h1; a text read inside it starts its headings at `topHeading` (2 under the page title, 3 under
+  // a section heading). The text's highest level moves there and the rest keep their distance, at most h6. Each heading
+  // keeps the level its source wrote as `data-source-level`: the document outline lists the source's 二、三级标题
+  // (outlineSelector), whatever tag they are drawn with.
+  const headings = tokens.filter(token => token.type === "heading_open" || token.type === "heading_close");
+  const levels = headings.map(token => Number(token.tag.slice(1))).filter(level => level >= 1 && level <= 6);
+  if (levels.length) {
+    const shift = Math.min(6, Math.max(2, options.topHeading ?? 2)) - Math.min(...levels);
+    for (const token of headings) {
+      const level = Number(token.tag.slice(1));
+      if (level < 1 || level > 6) continue;
+      if (token.type === "heading_open") token.attrSet("data-source-level", String(level));
+      token.tag = `h${Math.min(6, Math.max(1, level + shift))}`;
     }
   }
   const parts: MarkdownPart[] = [];

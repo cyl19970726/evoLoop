@@ -120,7 +120,6 @@ function ExternalHost({ host, roleState, current }: { host: HostLink; roleState:
   const openHref = current ? externalHostOpenHref(host, roleState) : null;
   const reason = externalHostOpenReason(host, roleState, current);
   return <div className="flex min-w-0 flex-col gap-1.5">
-    <p className="break-all text-small text-text-secondary">人工宿主引用：<code className="select-text font-mono text-caption">{ref}</code></p>
     <div className="flex flex-wrap items-center gap-2">
       {openHref && <Button asChild size="compact"><a href={openHref} target="_blank" rel="noopener noreferrer" onClick={() => setOpened(true)}>请求在 Codex Desktop 打开聊天</a></Button>}
       <Button size="compact" variant="ghost" onClick={async () => {
@@ -130,8 +129,9 @@ function ExternalHost({ host, roleState, current }: { host: HostLink; roleState:
     </div>
     {reason && <p className="text-small text-destructive">{reason}</p>}
     {copy === "copied" && <p role="status" className="text-small text-text-secondary">已复制完整引用；请在 Codex 中核对目标聊天。</p>}
-    {copy === "failed" && <p role="alert" className="text-small text-destructive">复制失败；可选中上方完整引用手工复制。</p>}
+    {copy === "failed" && <p role="alert" className="text-small text-destructive">复制失败；可展开下方“完整标识”手工复制完整引用。</p>}
     {openHref && <p className={mutedText}>{opened ? "已尝试请求打开。" : "点击会向本机 Codex Desktop 请求打开。"}如未打开，请在 Codex 中按完整引用查找或人工交接；这里不能确认已打开或已送达。</p>}
-    {!openHref && <p className={mutedText}>可选中上方完整引用手工查找或交接；不要据此推定当前宿主可承接。</p>}
+    {!openHref && <p className={mutedText}>可展开下方“完整标识”按完整引用手工查找或交接；不要据此推定当前宿主可承接。</p>}
+    <FullIdentifiers summary="完整标识" rows={[{ label: "聊天完整引用", value: ref }]} />
   </div>;
 }

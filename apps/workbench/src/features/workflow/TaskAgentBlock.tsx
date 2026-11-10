@@ -10,6 +10,7 @@ import type { MutationContext } from "../../shared/ActionForm";
 import { useProjectQuery } from "../../shared/query";
 import { sessionClient } from "../../shared/sessionClient";
 import { date } from "../../shared/ui/shared";
+import { agentDisplayName, agentNameCollisions, agentNameIsGenerated } from "../../shared/agentNamePresentation";
 import { sessionHref } from "../sessions";
 import { CommandFrame, overLimitText, useCommand } from "../../shared/command";
 import { readAgent } from "./agentRead";
@@ -42,7 +43,7 @@ export function TaskAgentBlock({ context, task, run, runtimeHref }: {
   const key = assignment ? assignmentKey(assignment) : null;
   const agentRead = useProjectQuery(projectId, ["session-names", key], signal => readAgent(projectId, key!, signal), { enabled: !!key });
   const agent = agentRead.data;
-  const agentName = agent?.profile?.displayName?.trim() || agent?.title || "";
+  const agentName = agent ? agentDisplayName(agent) : "";
   const [binding, setBinding] = React.useState(false);
   const facts = agentFacts(task, { state: assignmentState, value: assignment }, run);
   const closed = task.state === "done" || task.state === "cancelled";
@@ -84,6 +85,8 @@ export function BindAgentForm({ context, task, currentVersion, currentKey, onDon
 }) {
   const choicesRead = useProjectQuery(context.projectId, ["task", task.id, "bindable-agents", task.owner], signal => bindableAgents(context.projectId, task.owner, signal));
   const choices = choicesRead.data?.items ?? [];
+  // Agents of one role may share a shown name: the short identifier tells them apart in the list.
+  const collisions = agentNameCollisions(choices);
   const [target, setTarget] = React.useState("");
   const [recipient, setRecipient] = React.useState("");
   const [reason, setReason] = React.useState("");
@@ -119,7 +122,7 @@ export function BindAgentForm({ context, task, currentVersion, currentKey, onDon
       <Field label="承接的智能体" error={tried && !target ? "请选择承接的智能体。" : undefined}>{control => <Select {...control} required value={target} onChange={event => setTarget(event.target.value)} className="w-full">
         <option value="">请选择</option>
         {choices.map(item => <option key={item.key} value={item.key} disabled={item.key === currentKey}>
-          {(item.profile?.displayName?.trim() || item.title)}{item.kind === "external" ? " · 外部接入" : ""}{item.key === currentKey ? " · 当前" : ""}</option>)}
+          {agentDisplayName(item)}{collisions.has(item.key) ? `（标识 ${collisions.get(item.key)}）` : ""}{item.kind === "external" && !agentNameIsGenerated(item) ? " · 外部接入" : ""}{item.key === currentKey ? " · 当前" : ""}</option>)}
       </Select>}</Field>
       <Field label="指定执行者身份（可选）" hint="只填已核实的真实执行者身份；本人确认接手时按这个身份核验。" error={overLimitText(recipient, 240) ?? undefined}>{control => <Input {...control} value={recipient} onChange={event => setRecipient(event.target.value)} autoComplete="off" />}</Field>
       <Field label="分派依据" error={tried && !reason.trim() ? "请填写分派依据。" : overLimitText(reason, 4000) ?? undefined}>{control => <Textarea {...control} required value={reason} onChange={event => setReason(event.target.value)} rows={3} />}</Field>

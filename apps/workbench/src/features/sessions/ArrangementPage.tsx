@@ -20,6 +20,7 @@ import { ContextPanelContent, useContextPanel } from "../../shared/ui/ContextPan
 import { readSessionDirectoryPages } from "./useSessionDirectoryGroup";
 import { sessionHref } from "./SessionNavigation";
 import { agentStatusLabel } from "./sessionStatusPresentation";
+import { agentDisplayName } from "../../shared/agentNamePresentation";
 import {
   buildArrangement, freeCapacity, type Arrangement, type ArrangementRisk, type ArrangementRow, type QueuedWork,
 } from "./arrangementModel";
@@ -103,7 +104,7 @@ function BoardRow({ projectId, row, claimed, stale, tasks, queues, from }: {
     <div className="flex min-w-0 items-start gap-2.5">
       <AgentAvatar seed={session.key} roleSeed={session.roles[0]?.id ?? session.title} size={34} />
       <div className="min-w-0">
-        <a href={sessionHref(projectId, session.key, from)} className="block truncate font-medium text-foreground hover:underline" title={session.title}>{session.title}</a>
+        <a href={sessionHref(projectId, session.key, from)} className="block truncate font-medium text-foreground hover:underline" title={agentDisplayName(session)}>{agentDisplayName(session)}</a>
         <span className="block truncate text-caption text-text-secondary" title={roles}>{roles}</span>
         <span className="mt-0.5 flex items-center gap-1.5 text-caption text-muted-foreground">
           <span aria-hidden="true" className={cn("size-1.5 shrink-0 rounded-full", loadDot[row.load])} />{row.load === "overloaded" ? `同时做 ${row.running.length} 项` : agentStatusLabel(session)}
@@ -164,11 +165,11 @@ function ArrangementPanel({ projectId, board, reads, from }: { projectId: string
         {tasksShown && !reads.tasksComplete && board.risks.length > 0 && muted("任务较多，只核对了已读取的部分。")}
       </PanelSection>
       <PanelSection title="空闲与过载">
-        {overloaded.length > 0 && <ul className="flex flex-col gap-1.5">{overloaded.map(row => <li key={row.session.key} className="text-small"><a href={sessionHref(projectId, row.session.key, from)} className="hover:underline">{row.session.title}</a><span className="text-caption text-muted-foreground"> · 同时做 {row.running.length} 项</span></li>)}</ul>}
+        {overloaded.length > 0 && <ul className="flex flex-col gap-1.5">{overloaded.map(row => <li key={row.session.key} className="text-small"><a href={sessionHref(projectId, row.session.key, from)} className="hover:underline">{agentDisplayName(row.session)}</a><span className="text-caption text-muted-foreground"> · 同时做 {row.running.length} 项</span></li>)}</ul>}
         {unknownReason ? muted(unknownReason)
           : capacity.free.length ? <ul className="flex flex-col gap-1.5">{capacity.free.map(row => <li key={row.session.key} className="flex items-center gap-2 text-small">
             <AgentAvatar seed={row.session.key} roleSeed={row.session.roles[0]?.id ?? row.session.title} size={22} />
-            <a href={sessionHref(projectId, row.session.key, from)} className="truncate hover:underline">{row.session.title}</a><span className="shrink-0 text-caption text-muted-foreground">空闲</span>
+            <a href={sessionHref(projectId, row.session.key, from)} className="truncate hover:underline">{agentDisplayName(row.session)}</a><span className="shrink-0 text-caption text-muted-foreground">空闲</span>
           </li>)}</ul> : muted(noFreeAgentText(capacity))}
         {!unknownReason && capacity.unknown > 0 && capacity.unknown < capacity.others && muted(`另有 ${capacity.unknown} 个智能体的状态待核对，不算空闲。`)}
       </PanelSection>
