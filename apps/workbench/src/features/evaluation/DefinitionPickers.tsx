@@ -144,7 +144,8 @@ function DocumentAdder({ projectId, control, onAdd }: { projectId: string; contr
     const value = detail.data;
     const versions: DocumentRevision[] = value ? [value.current, ...value.adopted && value.adopted.id !== value.current.id ? [value.adopted] : [], ...earlier]
       .filter((item, index, all) => all.findIndex(other => other.id === item.id) === index) : [];
-    const oldest = versions.at(-1);
+    // Earlier versions follow the chain back from the current one (the adopted one may sit anywhere on it).
+    const oldest = value ? earlier.at(-1) ?? value.current : undefined;
     const readEarlier = async () => {
       if (!oldest?.previousRevisionId) return;
       setReading(true); setProblem("");
@@ -165,12 +166,12 @@ function DocumentAdder({ projectId, control, onAdd }: { projectId: string; contr
       </div>
     </div>;
   }
-  const items = (list.items ?? []).filter(document => document.projectId === projectId && document.status !== "archived");
+  const items = (list.items ?? []).filter(document => document.projectId === projectId);
   const found = query.trim() ? items.filter(document => matches(document.title, query)) : items;
   return <div className="flex min-w-0 flex-col gap-2">
     <SearchBox control={control} value={query} onChange={setQuery} placeholder="按文档名称搜索" />
     {found.length > 0 && <ul aria-label="可选的文档" className="m-0 flex list-none flex-col gap-0.5 p-0">{found.slice(0, shown).map(document =>
-      <li key={document.id}><ListRow title={document.title} meta={document.status === "draft" ? "草稿" : "已发布"} onSelect={() => setPicked(document.id)} /></li>)}</ul>}
+      <li key={document.id}><ListRow title={document.title} meta={({ draft: "草稿", published: "已发布", archived: "已归档" } as Record<string, string>)[document.status] ?? "状态未识别"} onSelect={() => setPicked(document.id)} /></li>)}</ul>}
     {found.length > shown && <p className={muted}>还有 {found.length - shown} 项匹配，请输入更多文字缩小范围。</p>}
     {list.items && !found.length && <p className={muted}>{query.trim() ? `已读的文档里没有名称包含“${query.trim()}”的文档。` : "已读的文档里没有可选的文档。"}</p>}
     <Coverage count={list.items ? list.items.length : null} noun="文档" more={list.more} reading={list.reading} loadingMore={list.loadingMore}

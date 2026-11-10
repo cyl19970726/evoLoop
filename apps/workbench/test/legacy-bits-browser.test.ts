@@ -246,7 +246,8 @@ test("rebuilt legacy parts read, write and fail as the record allows, at three w
   await go(`/p/${projectId}/schedules`);
   await pageBrowser.getByRole("heading", { name: "纽约晨检" }).waitFor();
   await pageBrowser.getByText("仅一次 · 2026/11/12 09:00:00 · 纽约（你的时间 2026/11/12 22:00:00）").first().waitFor();
-  assert.equal(await pageBrowser.getByText(/台北/).count(), 0);
+  // (The revision form's time zone choice lists 台北 among the zones; no time is said in it.)
+  assert.equal(await pageBrowser.getByText(/台北/).filter({ hasNot: pageBrowser.locator("option") }).and(pageBrowser.locator(":not(option)")).count(), 0);
   await shoot("schedule-zone");
   assert.deepEqual(errors, []);
 });
