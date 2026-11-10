@@ -525,13 +525,17 @@ export class AcceptanceRelayService {
    */
   private async write(projectId: string, action: (client: PoolClient) => Promise<void>): Promise<void> {
     const client = await this.deps.pool.connect();
+    let broken = false;
     try {
       await client.query("BEGIN");
       await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))",[projectId]);
       await action(client);
       await client.query("COMMIT");
-    } catch (error) { await client.query("ROLLBACK"); throw error; }
-    finally { client.release(); }
+    } catch (error) {
+      // A failed ROLLBACK must not replace the original error; discard that connection instead.
+      try { await client.query("ROLLBACK"); } catch { broken = true; }
+      throw error;
+    } finally { client.release(broken); }
   }
   private async note(item: AcceptanceRelayRecord, reason: string): Promise<void> {
     await this.write(item.projectId, async client => {
@@ -539,12 +543,14 @@ export class AcceptanceRelayService {
         [item.projectId,item.relayId,"pending",reason]);
     });
   }
-  private async updateState(client: PoolClient, item: AcceptanceRelayRecord, state: AcceptanceRelayRecord["state"], reason: string | null): Promise<void> {
-    await client.query("UPDATE task_acceptance_relay SET state=$3,blocked_reason=$4,version=version+1,updated_at=now() WHERE project_id=$1 AND relay_id=$2 AND state=$5",
+  /** Returns how many arrangements changed: 1, or 0 when its state moved on since it was read. */
+  private async updateState(client: PoolClient, item: AcceptanceRelayRecord, state: AcceptanceRelayRecord["state"], reason: string | null): Promise<number> {
+    const changed = await client.query("UPDATE task_acceptance_relay SET state=$3,blocked_reason=$4,version=version+1,updated_at=now() WHERE project_id=$1 AND relay_id=$2 AND state=$5",
       [item.projectId,item.relayId,state,reason,item.state]);
+    return changed.rowCount ?? 0;
   }
   private async setState(item: AcceptanceRelayRecord, state: AcceptanceRelayRecord["state"], reason: string | null): Promise<void> {
-    await this.write(item.projectId, client => this.updateState(client, item, state, reason));
+    await this.write(item.projectId, async client => { await this.updateState(client, item, state, reason); });
   }
   /** Called before native start. A stale queued handoff is retired; a started one remains immutable evidence. */
   async messageAdmission(projectId: string, messageId: string): Promise<boolean> {
@@ -573,12 +579,20 @@ export class AcceptanceRelayService {
       await this.setState(item,"superseded",`Current Delivery changed after message ${String(currentMessage.rows[0].state)}`);
       return false;
     }
-    // Cancelling the queued handoff and retiring its arrangement commit together under the project lock.
+    // The reads above ran without locks. Under the project lock, lock this arrangement and its message and
+    // judge again: retire only the arrangement exactly as read, never with an in-flight message, and cancel
+    // the queued message only when that retirement applied, so both commit together or not at all.
     await this.write(projectId, async client => {
+      const locked = (await client.query("SELECT state,version FROM task_acceptance_relay WHERE project_id=$1 AND relay_id=$2 FOR UPDATE",
+        [projectId,item.relayId])).rows[0];
+      if (locked?.state !== item.state || locked?.version !== item.version) return;
+      const message = (await client.query("SELECT state FROM session_message WHERE project_id=$1 AND message_id=$2 FOR UPDATE",
+        [projectId,messageId])).rows[0];
+      if (["processing","unknown"].includes(message?.state)) return;
+      if (await this.updateState(client,item,"superseded","Current Delivery or recipient changed") !== 1) return;
       await client.query(`UPDATE session_message SET state='cancelled',version=version+1,
         blocked_reason='Acceptance source superseded',updated_at=now() WHERE project_id=$1 AND message_id=$2 AND state='queued'`,
         [projectId,messageId]);
-      await this.updateState(client,item,"superseded","Current Delivery or recipient changed");
     });
     return false;
   }
