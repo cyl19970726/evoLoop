@@ -9,7 +9,7 @@ import { ActionForm, type MutationContext } from '../../shared/ActionForm';
 import { useProjectQuery } from '../../shared/query';
 import { sessionClient } from '../../shared/sessionClient';
 import { FullIdentifiers } from '../../shared/ui/FullIdentifiers';
-import { FactList, Legacy, mutedText } from '../../shared/ui/PageParts';
+import { FactList, mutedText } from '../../shared/ui/PageParts';
 import { recoveryActivationLabel } from './recoveryPresentation';
 
 const note = 'text-caption text-text-secondary [overflow-wrap:anywhere]';
@@ -83,7 +83,7 @@ export function SessionModelControl({context,sessionId,recovery,busy,onApplied}:
         <Select value={selectedModel} onChange={event=>setSelectedModel(event.target.value)} className="w-full font-normal">
           {models!.options.map(item=><option key={item.model} value={item.model}>{item.model}</option>)}
         </Select></label>
-      {options.length?<Legacy><ActionForm key={`${sessionId}:${runtime!.version}:${selectedModel}`} context={{...context,
+      {options.length?<ActionForm key={`${sessionId}:${runtime!.version}:${selectedModel}`} context={{...context,
         draftScope:`session-model:${sessionId}`,draftBaseline:`${runtime!.version}:${currentRevision!.revisionId}`}}
         title="保存下一轮的模型与强度" review requiredPermissions={['write','review']} embedded
         fields={[{name:'reasoningEffort',label:'思考强度',kind:'select',options:options.map(value=>({value,label:value})),
@@ -93,7 +93,7 @@ export function SessionModelControl({context,sessionId,recovery,busy,onApplied}:
         build={values=>({type:'runtime.session.executionProfile.revise',sessionId,
           expectedVersion:runtime!.version,expectedExecutionProfileRevisionId:currentRevision!.revisionId,
           model:selectedModel,reasoningEffort:values.reasoningEffort,reason:values.reason,evidenceRef:values.evidenceRef})}
-        onApplied={()=>{setEditing(false);void sessions.refetch();onApplied();}}/></Legacy>:
+        onApplied={()=>{setEditing(false);void sessions.refetch();onApplied();}}/>:
         <p className={mutedText}>该模型未提供可核对的思考强度选项，不能提交。</p>}
     </div>}
     <FullIdentifiers rows={[

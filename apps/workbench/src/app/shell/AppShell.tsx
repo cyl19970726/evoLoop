@@ -1,8 +1,6 @@
 // The workbench frame (docs/frontend/layout.md): outer rail for spaces, inner rail for project, sections and the
 // object list, and one raised work panel with the center column and the right column. The frame is built from
-// @evoloop/ui inside [data-ui]. Pages that are not rebuilt yet render in the center under `.workbench-layout`,
-// the class their old styles are written against (the old frame's own rules are deleted); the window scrolls the
-// center, as those pages expect.
+// @evoloop/ui inside [data-ui]. Pages render in the center; the window scrolls the center.
 import * as React from "react";
 import { BriefcaseBusiness, ChevronsUpDown, Inbox, LogOut, Menu, PanelLeftClose, PanelLeftOpen, Settings, Users, FolderGit2, Plug, TriangleAlert, X } from "lucide-react";
 import {
@@ -123,7 +121,7 @@ export function AppShell(props: AppShellProps) {
         </nav>
         {!railHidden && <div className="sticky top-0 hidden h-dvh compact:block"><ContextRail {...railProps} /></div>}
         <div className="flex min-w-0 bg-background compact:m-2 compact:ml-0 compact:min-h-[calc(100dvh-16px)] compact:rounded-xl compact:shadow-lg">
-          <main id="workspace-main" tabIndex={-1} className="workbench-layout min-w-0 flex-1 outline-none max-compact:pb-20">{props.notices?.map(({ key, ...notice }) => <ShellNotice key={key} {...notice} />)}{props.children}</main>
+          <main id="workspace-main" tabIndex={-1} className="min-w-0 flex-1 outline-none max-compact:pb-20">{props.notices?.map(({ key, ...notice }) => <ShellNotice key={key} {...notice} />)}{props.children}</main>
           <ContextPanelColumn />
         </div>
       </div>

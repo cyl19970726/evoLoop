@@ -1,6 +1,6 @@
 /* evoLoop design tokens: the only place where colour, type, spacing, radius, shadow and motion values are defined.
    Usage rules live in docs/frontend/foundations.md. Light ("warm paper") is the default; dark ("warm ink") applies
-   under [data-theme="dark"] and is switched on only for pages rebuilt on @evoloop/ui (old pages still hard-code light colours). */
+   under [data-theme="dark"]. No page hard-codes colours since the old global sheets were removed (#229 PR10). */
 :root {
   color-scheme: light;
 

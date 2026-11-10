@@ -77,7 +77,7 @@ export function TaskAttentionSection({ context, detail, leader }: { context: Mut
       setMore(current => ({ items: [...current?.items ?? [], ...page.items], cursor: page.nextCursor, error: "" }));
     } catch (cause) { setMore(current => ({ items: current?.items ?? [], cursor, error: `续页读取失败：${errorText(cause)}` })); }
   }
-  return <section id="task-attention" aria-label="任务当前关注" className="flex scroll-mt-20 flex-col gap-3">
+  return <section id="task-attention" aria-label="任务当前关注" className="flex min-w-0 scroll-mt-20 flex-col gap-3">
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
       <h3 className="text-small font-semibold text-foreground">当前关注</h3>
       {value && <span className="text-caption text-muted-foreground">{open.length ? `${open.length} 项已关注` : "已读范围内没有待处理的关注项"}{cursor ? "；还有未读的续页" : ""}</span>}

@@ -197,7 +197,7 @@ test("Sessions is the sole directory and renders conversation, source, reply and
   await workPage.getByLabel("访问令牌").fill("fixture-token");
   await workPage.getByRole("button", { name: "进入", exact: true }).click();
   await workPage.waitForTimeout(500);
-  assert.equal(await workPage.locator(".workbench-layout").count(), 1,
+  assert.equal(await workPage.locator("#workspace-main").count(), 1,
     `the Work route mounts the shared shell; errors=${workPageErrors.join(" | ")}; current page: ${(await workPage.locator("body").innerText()).slice(0, 500)}`);
   if (await workPage.locator("[data-shell=frame]").getAttribute("data-rail") !== "shown") await workPage.getByRole("button", { name: "展开项目导航" }).click();
   await workPage.locator("aside[aria-label=项目导航]").waitFor({ state: "visible" });

@@ -3,6 +3,7 @@
 import { Outlet, createRootRoute, createRoute, createRouter, lazyRouteComponent, useRouterState, type ErrorComponentProps } from "@tanstack/react-router";
 import { appHistory } from "../shared/navigation";
 import { App } from "./App";
+import { errorPage } from "./PageBoundary";
 import { projectPaths } from "./routePaths";
 
 function RootLayout() {
@@ -12,11 +13,11 @@ function RootLayout() {
 
 /** A page that throws while rendering: say so in the interface language and offer a reload, keeping the address. */
 function PageError({ error }: ErrorComponentProps) {
-  return <main className="content" role="alert">
-    <h1>页面出错了</h1>
-    <p className="lede">这一页在显示时遇到错误，已停止渲染。刷新会重新读取当前地址；未提交的草稿可能丢失。</p>
-    <details><summary>错误信息</summary><pre>{error instanceof Error ? error.message : String(error)}</pre></details>
-    <button type="button" className="primary" onClick={() => window.location.reload()}>刷新页面</button>
+  return <main data-ui="" className={errorPage.root} role="alert">
+    <h1 className={errorPage.title}>页面出错了</h1>
+    <p className={errorPage.lede}>这一页在显示时遇到错误，已停止渲染。刷新会重新读取当前地址；未提交的草稿可能丢失。</p>
+    <details><summary className={errorPage.summary}>错误信息</summary><pre className={errorPage.detail}>{error instanceof Error ? error.message : String(error)}</pre></details>
+    <button type="button" className={errorPage.button} onClick={() => window.location.reload()}>刷新页面</button>
   </main>;
 }
 

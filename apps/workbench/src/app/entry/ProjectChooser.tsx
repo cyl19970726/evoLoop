@@ -88,9 +88,7 @@ export function ProjectChooser({ token, principal, receipts, operationNotice, op
       {missing.map(id => <section key={id} aria-label="创建项目" className="rounded-xl bg-raised p-4 shadow-sm">
         <p className="text-small text-text-secondary">你有一个项目授权，但这里还没有读到对应的项目：可能尚未建立，也可能暂时读不到。</p>
         <FullIdentifiers className="mb-2 mt-1" summary="完整标识（用于 CLI）" rows={[{ label: "项目", value: id }]} />
-        <div data-legacy="" className="workbench-layout">
-          <ActionForm context={{ ...context, projectId: id, blocked: hasProjectReceipt(receipts, id), onChanged: () => { reread(); context.onChanged(); } }} title="创建项目" fields={[{ name: "title", label: "项目名称" }]} build={v => ({ type: "project.create", ...v })} />
-        </div>
+        <ActionForm context={{ ...context, projectId: id, blocked: hasProjectReceipt(receipts, id), onChanged: () => { reread(); context.onChanged(); } }} title="创建项目" fields={[{ name: "title", label: "项目名称" }]} build={v => ({ type: "project.create", ...v })} />
       </section>)}
     </main>
   </div>;

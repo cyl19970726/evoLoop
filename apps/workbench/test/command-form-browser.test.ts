@@ -1,6 +1,6 @@
 // Opt-in built-app regression: build workbench, then set EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE.
-// The one command form (shared/command) on a page that still holds it in an old [data-legacy] region (创建日程): it is
-// drawn as new markup, says which required fields are empty, asks before sending after its baseline moved (keep my
+// The one command form (shared/command) on the schedule page (创建日程): it is drawn on @evoloop/ui with no old global
+// rule reaching it, says which required fields are empty, asks before sending after its baseline moved (keep my
 // changes / refill / copy), and an unknown result blocks the form until it is checked by its original operation ID,
 // after which the applied draft is cleared. Screenshots at 1440, 1024 and 390 go to EVOLOOP_COMMAND_FORM_SCREENSHOT_DIR.
 import assert from "node:assert/strict";
@@ -23,7 +23,7 @@ const canonical = (value: unknown): string => Array.isArray(value) ? `[${value.m
   : value && typeof value === "object" ? `{${Object.entries(value as Record<string, unknown>).filter(([, item]) => item !== undefined).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)
     .map(([key, item]) => `${JSON.stringify(key)}:${canonical(item)}`).join(",")}}` : JSON.stringify(value);
 
-test("the command form in an old region: new markup, required fields, a moved baseline asks, an unknown result is checked by its original ID",
+test("the command form on the schedule page: @evoloop/ui markup, required fields, a moved baseline asks, an unknown result is checked by its original ID",
   { skip: !modulePath && "Set EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE" }, async t => {
     const { chromium } = (await import(pathToFileURL(modulePath!).href)).default;
     const state = { grants: [{ projectId, actorId: "reader", scopeId: "scope-dev", roleId }], commands: [] as Record<string, unknown>[],
@@ -83,7 +83,7 @@ test("the command form in an old region: new markup, required fields, a moved ba
     await page.locator("summary", { hasText: "创建日程" }).click();
     await form.waitFor();
 
-    // New markup even inside the old region: the old global button and field rules do not reach it.
+    // No old region is left around it (#229 PR10), and nothing but the components styles its button and fields.
     // (No named helpers inside evaluate: the test runner's transform would wrap them in a helper the page lacks.)
     const look = await form.evaluate(element => {
       const submit = element.querySelector<HTMLElement>("button[type=submit]")!;
@@ -91,7 +91,7 @@ test("the command form in an old region: new markup, required fields, a moved ba
       return { legacy: !!element.closest("[data-legacy]"), island: element.hasAttribute("data-ui"), submitBorder: submitStyle.borderTopWidth,
         submitRadius: parseFloat(submitStyle.borderTopLeftRadius), submitHeight: submit.getBoundingClientRect().height, inputBorder: inputStyle.borderTopWidth };
     });
-    assert.deepEqual([look.legacy, look.island], [true, true], "the page still holds this form in an old region; the form marks itself as new markup");
+    assert.deepEqual([look.legacy, look.island], [false, true], "no old region holds this form; the form marks itself as @evoloop/ui markup");
     assert.equal(look.submitBorder, "0px", JSON.stringify(look));
     assert.ok(look.submitRadius >= 15 && look.submitHeight <= 32, `the submit button is the compact pill, not the old 38px button: ${JSON.stringify(look)}`);
     assert.equal(look.inputBorder, "0px");

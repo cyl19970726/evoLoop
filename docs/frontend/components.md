@@ -2,7 +2,7 @@
 
 工作台只用一套组件。新页面先在这里找，找不到再新增，并把新组件补进本表。
 
-**目标与现状。** 目标是基础组件放在 `packages/ui`（`@evoloop/ui`），基于 shadcn/ui 和 Radix，样式只引用[设计基础](foundations.md)的 token（[DEC-036](../decisions.md#用户已确定的方向)）。这个包不依赖业务合同、不发请求，文案由调用方传入。现状：`@evoloop/ui` 已有下表的基础组件和状态组件，以及头像与 Logo，样例页在工作台的 `/ui`；对话流组件也已实现（样例页“对话流与输入框”一节可以实际输入 `/` 和 `@`），对象速览还没有实现。旧页面仍用 `apps/workbench/src/shared/components/ui` 的 `Button`、`Sheet` 和 `shared/ui/shared.tsx` 的 `Alert`、`.empty`，各页迁移时换成这里的组件。用这些组件的页面和弹层要放在 `data-ui` 作用域里，原因见[前端架构](architecture.md)。迁移由[前端改版 issue #229](https://github.com/cyl19970726/evoLoop/issues/229) 跟踪。上游组件的来源与许可登记在 `apps/workbench/THIRD_PARTY.md`。
+**目标与现状。** 目标是基础组件放在 `packages/ui`（`@evoloop/ui`），基于 shadcn/ui 和 Radix，样式只引用[设计基础](foundations.md)的 token（[DEC-036](../decisions.md#用户已确定的方向)）。这个包不依赖业务合同、不发请求，文案由调用方传入。现状：`@evoloop/ui` 已有下表的基础组件和状态组件，以及头像与 Logo，样例页在工作台的 `/ui`；对话流组件也已实现（样例页“对话流与输入框”一节可以实际输入 `/` 和 `@`），对象速览还没有实现。工作台已没有旧组件（本地的 shadcn `Button`、`Sheet` 和旧的 `Alert` 在 #229 PR10 删除），基础样式对整页生效，见[前端架构](architecture.md)。迁移由[前端改版 issue #229](https://github.com/cyl19970726/evoLoop/issues/229) 跟踪。上游组件的来源与许可登记在 `apps/workbench/THIRD_PARTY.md`。
 
 ## 基础组件
 
@@ -95,7 +95,7 @@ RightPanel 是可组合的上下文面板：由若干“面板块”（实体卡
 
 字段排布特殊、或要写到专门接口的写入（新建任务整页、过程文档上传、Git 与外部来源登记）用 `useCommand` 加 `CommandFrame`，接口和字段通过 `send`、`validate` 选项保持原样。没有用 `CommandForm` 的多行字段，按同一条规则用 `overLimitText` 核对长度。
 
-表单的根元素带 `data-ui`，所以放在旧页面的 `data-legacy` 区域里也按新组件显示（`packages/ui/src/scope.css`）。旧区域里所有带 `data-ui` 的元素都这样处理，岛里再嵌套的 `data-legacy` 仍按旧样式。规则的单测在 `use-command.test.ts` 和 `action-form.test.ts`。
+规则的单测在 `use-command.test.ts` 和 `action-form.test.ts`。
 
 ## 业务共享组件
 
