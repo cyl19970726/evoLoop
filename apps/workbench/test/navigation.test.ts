@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { appPath, isAppPath } from "../src/shared/appPath.ts";
-import { currentPath, navigate, onNavigate, replaceQuietly } from "../src/shared/navigation.ts";
+import { currentPath, navigate, onAddressChange, onNavigate, replaceQuietly } from "../src/shared/navigation.ts";
 import { href, parseRoute, type Section } from "../src/shared/routes.ts";
 import { projectPaths } from "../src/app/routePaths.ts";
 
@@ -33,7 +33,23 @@ test("every router address parses to its own section, and href writes the same p
   assert.equal(href(project, "document", id, id), `/p/${project}/documents/${id}?revision=${id}`);
   assert.deepEqual(parseRoute(`/p/${project}/sessions?session=${id}`).session, `owned:${id}`);
   assert.deepEqual(parseRoute("/"), { projectId: null, section: "overview" });
-  assert.equal(parseRoute(`/p/${project}/unknown`).section, "overview");
+  assert.equal(parseRoute(`/p/${project}`).section, "overview", "the project alone opens its overview");
+  // An address inside the project that names no page says so (L10), instead of quietly showing the overview.
+  for (const wrong of ["unknown", `task/${id}`, "tasks", `work/${id}`, `tasks/${id}/history`, `documents/${id}/extra`])
+    assert.deepEqual(parseRoute(`/p/${project}/${wrong}`), { projectId: project, section: "not-found" }, wrong);
+});
+
+test("the shell hears quiet view-state rewrites; pages do not", () => {
+  const addresses: string[] = [];
+  const pages: string[] = [];
+  const stopShell = onAddressChange(() => addresses.push(currentPath()));
+  const stopPages = onNavigate(() => pages.push(currentPath()));
+  try {
+    navigate(`/p/${project}/work`);
+    replaceQuietly(`/p/${project}/work?state=all&selected=${id}`);
+    assert.deepEqual(addresses.at(-1), `/p/${project}/work?state=all&selected=${id}`);
+    assert.ok(!pages.includes(`/p/${project}/work?state=all&selected=${id}`));
+  } finally { stopShell(); stopPages(); }
 });
 
 test("navigation is shared history: pages hear links and Back, not quiet view-state rewrites", () => {

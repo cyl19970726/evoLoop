@@ -46,6 +46,7 @@ const ArrangementPage = named(() => import("../features/sessions/ArrangementPage
 // The execution queue (features/workflow) shown in an agent's right column; passed in so the two features do not import each other.
 const ResidentQueuePanel = named(() => import("../features/workflow"), "ResidentQueuePanel");
 const ConnectorPage = named(() => import("../features/connectors/ConnectorPage"), "ConnectorPage");
+const NotFoundPage = named(() => import("./NotFoundPage"), "NotFoundPage");
 // The frame loads after login; the login gate starts fetching it while the token is typed.
 const loadShell = () => import("./shell/AppShell");
 const AppShell = named(loadShell, "AppShell");
@@ -287,6 +288,7 @@ function WorkspacePages({ route, context, refresh, operations }: { route: Route;
   }, [key, positionKey]);
   const { projectId, token } = context;
   function page(r: Route, active: boolean) {
+    if (r.section === "not-found") return <NotFoundPage projectId={projectId} path={currentPath()} />;
     if (r.section === "documents") return <DocumentIndex context={context} />;
     if (r.section === "work") return <TaskWorkspace context={context} refresh={refresh} active={active} />;
     if (r.section === "inbox") return <InboxIndex context={context} refresh={refresh} />;

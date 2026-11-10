@@ -45,6 +45,15 @@ export function onNavigate(listener: () => void): () => void {
   return appHistory().subscribe(() => { if (!quiet) listener(); });
 }
 
+/**
+ * Called after every change of the address, quiet view-state rewrites included (a list's filter, search or selected
+ * row). For what follows the address itself, such as the shell remembering where each space was left; pages that
+ * react to navigation use onNavigate.
+ */
+export function onAddressChange(listener: () => void): () => void {
+  return appHistory().subscribe(listener);
+}
+
 /** A `#/…` address (old link, pasted URL, browser-read) becomes the matching path. */
 export function redirectLegacyHash(): boolean {
   if (typeof window === "undefined" || !window.location.hash.startsWith("#/")) return false;
