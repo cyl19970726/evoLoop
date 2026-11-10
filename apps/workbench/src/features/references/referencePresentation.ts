@@ -1,6 +1,7 @@
 // Git 与外部来源登记: how recorded decisions and fixed sources are named, and which entry of each slot is its head.
 import type { EpistemicStatus, KnowledgeValidity } from "@evoloop/contracts/knowledge";
 import type { TaskExternalReferenceRecord } from "@evoloop/contracts/references";
+import { revisionLine } from "../../shared/documentRevisions";
 
 export const referenceDecisionLabel: Record<TaskExternalReferenceRecord["decision"], string> = { adopt: "采用", retain: "保留", replace: "替换" };
 export const referenceKindLabel: Record<TaskExternalReferenceRecord["kind"], string> = { git: "Git 文件", wiki: "知识页", run: "受管运行" };
@@ -78,24 +79,19 @@ export function documentChoiceLabel(document: { title: string; status?: string |
   return `${document.title.trim() || "未命名文档"}${status}`;
 }
 
-export interface RevisionFacts { id: string; createdAt: string; author: string; reason: string; previousRevisionId: string | null }
+export interface RevisionFacts {
+  id: string; revisionNumber: number; current: boolean; published: boolean; createdAt: string; author: string; reason: string;
+}
 export interface RevisionChoice { id: string; label: string }
 
 /**
- * The revisions of one document to choose from, newest first: the current one, the adopted one when it is another, then
- * the earlier ones read so far. Each is named by when, by whom and why; its identifier stays in the source layer.
+ * The revisions of one document to choose from, as the revision list gives them (newest first, the state judged by the
+ * newest head): each named by its number, how it stands, when, by whom and why; its identifier stays in the source
+ * layer. The version published before an archived document was archived is not called 已采用.
  */
-export function revisionChoices(current: RevisionFacts, adopted: RevisionFacts | null, earlier: readonly RevisionFacts[],
-  when: (iso: string) => string): RevisionChoice[] {
-  const seen = new Set<string>();
-  const choices: RevisionChoice[] = [];
-  const reason = (text: string) => { const one = text.trim().replace(/\s+/g, " "); return one.length > 24 ? `${one.slice(0, 24)}…` : one; };
-  for (const revision of [current, ...adopted ? [adopted] : [], ...earlier]) {
-    if (seen.has(revision.id)) continue;
-    seen.add(revision.id);
-    const tags = [revision.id === current.id ? "当前版" : "", revision.id === adopted?.id ? "已采用" : ""].filter(Boolean).join("，");
-    const parts = [when(revision.createdAt), revision.author, reason(revision.reason)].filter(Boolean).join(" · ");
-    choices.push({ id: revision.id, label: tags ? `${tags} · ${parts}` : parts });
-  }
-  return choices;
+export function revisionChoices(items: readonly RevisionFacts[], status: string, when: (iso: string) => string): RevisionChoice[] {
+  return items.map(revision => {
+    const tags = [revision.current ? "当前版" : "", revision.published ? status === "archived" ? "归档前发布" : "已采用" : ""].filter(Boolean).join("，");
+    return { id: revision.id, label: [`第 ${revision.revisionNumber} 版`, tags, revisionLine(revision, when, 24)].filter(Boolean).join(" · ") };
+  });
 }

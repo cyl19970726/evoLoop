@@ -1,9 +1,8 @@
-// 项目设置 and 仓库规范: the identity read again against the one read at login, when it was read, and the server's declared
-// capabilities in words; a declaration made for all of an identity's projects never claims one project.
+// 项目设置: the identity read again against the one read at login, and when it was read.
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { Principal } from "@evoloop/contracts";
-import { capabilityRows, identityChanges, identityReadText } from "../src/features/settings/settingsPresentation.ts";
+import { identityChanges, identityReadText } from "../src/features/settings/settingsPresentation.ts";
 
 const projectId = "10000000-0000-4000-8000-000000000001";
 const other = "10000000-0000-4000-8000-000000000002";
@@ -30,21 +29,3 @@ test("the identity's read time says whether what is shown is current", () => {
   assert.equal(identityReadText({ hasData: false, fetching: false, failed: true, readAt: "" }), "本次读取失败；下面是登录时读回的内容，当前待核对");
 });
 
-test("capabilities nobody reported are unknown, never 未配置", () => {
-  const rows = capabilityRows({}, [projectId], projectId);
-  assert.deepEqual(rows.map(row => [row.label, row.state]), [
-    ["Git 固定来源", "unknown"], ["外部知识库", "unknown"], ["受管智能体运行", "unknown"], ["文档原件与 HTML 报告", "unknown"]]);
-});
-
-test("a source declared for an identity's projects is this project's only when it is the only one", () => {
-  const declared = { git: false, sourceConfiguration: { git: true, wiki: false }, runtime: true, documentOriginals: false, html: true };
-  const alone = capabilityRows(declared, [projectId], projectId);
-  assert.deepEqual(alone.map(row => row.state), ["yes", "no", "yes", "no"], "sourceConfiguration and documentOriginals win over the older flags");
-  assert.equal(alone[0]!.text, "已为本项目配置。");
-  assert.match(alone[1]!.text, /没有为你能访问的任何项目接入外部知识库/);
-  const shared = capabilityRows(declared, [projectId, other], projectId);
-  assert.equal(shared[0]!.state, "unknown");
-  assert.match(shared[0]!.text, /至少有一个已配置；是否包括本项目.*无法判断/);
-  assert.equal(capabilityRows({ git: true }, [other, projectId], projectId)[0]!.state, "unknown", "the older flag reads the same way");
-  assert.equal(capabilityRows({ git: false }, [other, projectId], projectId)[0]!.state, "no", "none anywhere is none here");
-});

@@ -11,6 +11,8 @@ import {
 import { Button, Checkbox, Field, Input, Notice, Select, Textarea } from "@evoloop/ui";
 import { api, errorText } from "../../shared/api";
 import type { MutationContext } from "../../shared/ActionForm";
+import { acceptanceMemberKind } from "../../shared/memberPresentation";
+import { MemberChoice } from "../../shared/ui/MemberChoice";
 import { useProjectPages, useProjectQuery } from "../../shared/query";
 import { roleClient } from "../../shared/roleClient";
 import { runtimeClient } from "../../shared/runtimeClient";
@@ -104,7 +106,10 @@ export function TaskActionsTab({ context, detail, leader, leaderState, documents
       { name: "acceptanceMode", label: "验收方式", kind: "select", initial: acceptanceMode ?? "legacy", options: [
         ...(acceptanceMode ? [] : [{ value: "legacy", label: "保留旧任务的历史约定" }]),
         { value: "independent_agent", label: "独立的智能体验收" }, { value: "human_required", label: "必须本人验收" }] },
-      { name: "consumer", label: "指定验收身份", optional: true, initial: detail.proposal?.consumer ?? "", maxLength: 4000, hint: "本人验收必须填写本人的受信身份；独立智能体可以不预先指定。" },
+      { name: "consumer", label: "指定验收身份", optional: true, kind: "custom", initial: detail.proposal?.consumer ?? "", maxLength: 4000,
+        hint: "必须本人验收时选验收的人本人；独立智能体验收可以不预先指定。只列出能写入的成员（记录使用要写入）。",
+        render: ({ control, value, values, onChange }) => <MemberChoice projectId={projectId} control={control} value={value} onChange={onChange}
+          need="write" kind={acceptanceMemberKind(values.acceptanceMode)} optional /> },
       reasonField()]}
       build={(values, seen) => acceptanceResponsibilityCommand(detail, seen, { acceptanceMode: values.acceptanceMode ?? "legacy",
         consumer: values.consumer ?? "", reason: values.reason ?? "" })} /> });

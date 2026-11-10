@@ -5,6 +5,7 @@ import * as work from "./work.mjs";
 import * as agents from "./agents.mjs";
 import * as team from "./team.mjs";
 import * as spaces from "./spaces.mjs";
+import * as configuration from "./configuration.mjs";
 
 const ok = value => ({ status: 200, value });
 const missing = message => ({ status: 404, value: { message } });
@@ -49,6 +50,9 @@ function projectRoutes(params) {
     "/allocation-relations": team.allocationRelations(),
     "/collaboration": team.collaboration(),
     "/orchestration/loops": page([]),
+    "/repositories": configuration.repositories(),
+    "/capabilities": configuration.capabilities(),
+    "/members": configuration.members(),
   };
 }
 
@@ -102,6 +106,10 @@ export function answer(path, params) {
   if ((match = /^\/work-management\/tasks\/([^/]+)$/.exec(rest))) {
     const t = work.findTask(match[1]);
     return t ? ok(work.projection(t)) : missing("未登记");
+  }
+  if ((match = /^\/documents\/([^/]+)\/revisions$/.exec(rest))) {
+    const d = work.findDocument(match[1]);
+    return d ? ok(work.revisionPage(d)) : missing("没有这份文档");
   }
   if ((match = /^\/documents\/([^/]+)(?:\/revisions\/([^/]+)(\/original)?)?(\/tasks)?$/.exec(rest))) {
     const d = work.findDocument(match[1]);

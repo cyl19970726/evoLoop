@@ -166,7 +166,9 @@ test("评价详情 shows attempts, evidence and the conclusion, dispatches a run
       if (url.pathname === `${root}/runtime/sessions`) return { value: [agent(usedAgent), agent(freshAgent)] };
       if (url.pathname === `${root}/runtime/runs/${id(401)}/result`) return { value: { messages: ["已修复并说明原因"], source: "owned-native-history", finalPhaseConfirmed: true, observedAt: stamp } };
       if (url.pathname === `${root}/roles/${roleId}`) return { value: { projectId, id: roleId, version: 1, proposal: { title: "修复负责人" } } };
-      if (url.pathname === `${root}/documents/${protocolId}`) return { value: { document: { projectId, id: protocolId, title: "评价协议 v2" }, current: { projectId, documentId: protocolId, id: protocolRevision }, adopted: null } };
+      // The protocol is named from the head of its revision list, which carries no text.
+      if (url.pathname === `${root}/documents/${protocolId}/revisions`) return { value: { items: [], nextCursor: null, revisionCount: 1,
+        document: { id: protocolId, title: "评价协议 v2", kind: "spec", version: 1, currentRevisionId: protocolRevision, adoptedRevisionId: null, status: "published" } } };
       if (url.pathname === `${root}/documents/${protocolId}/revisions/${protocolRevision}`) return { value: { projectId, documentId: protocolId, id: protocolRevision, contentHash: hash("a") } };
       if (url.pathname === "/api/commands" && req.method === "POST") {
         const command = JSON.parse(body) as Record<string, unknown>;
@@ -423,15 +425,37 @@ test("建立冻结评价: the common task, the owner task, documents, a Wiki pag
     const root = `/api/projects/${projectId}`;
     const materialId = id(40), materialRevision = id(41), olderProtocol = id(42), otherTask = id(43);
     const documentRow = (docId: string, title: string, current: string) => ({ projectId, id: docId, title, version: 2, currentRevisionId: current, adoptedRevisionId: null, kind: "spec", status: "published" });
-    const documentRevision = (docId: string, revId: string, contentHash: string, previous: string | null, createdAt: string) =>
+    const documentRevision = (docId: string, revId: string, contentHash: string, previous: string | null, createdAt: string, revisionNumber: number) =>
       ({ projectId, documentId: docId, id: revId, body: "正文", format: "markdown", mediaType: "text/markdown", originalName: "a.md", payloadRef: null, entrypoint: null,
-        assetsManifest: [], contentHash, author: "reviewer", createdAt, previousRevisionId: previous, reason: previous ? "补充判定口径" : "首版" });
-    const protocolCurrent = documentRevision(protocolId, protocolRevision, hash("a"), olderProtocol, "2026-11-09T08:00:00.000Z");
-    const protocolOlder = documentRevision(protocolId, olderProtocol, hash("9"), null, "2026-11-01T08:00:00.000Z");
-    const materialCurrent = documentRevision(materialId, materialRevision, hash("b"), null, "2026-11-08T08:00:00.000Z");
+        assetsManifest: [], contentHash, author: "reviewer", createdAt, previousRevisionId: previous, reason: previous ? "补充判定口径" : "首版", revisionNumber });
+    const protocolCurrent = documentRevision(protocolId, protocolRevision, hash("a"), olderProtocol, "2026-11-09T08:00:00.000Z", 2);
+    const protocolOlder = documentRevision(protocolId, olderProtocol, hash("9"), null, "2026-11-01T08:00:00.000Z", 1);
+    const materialCurrent = documentRevision(materialId, materialRevision, hash("b"), null, "2026-11-08T08:00:00.000Z", 1);
     const taskRow = (rowId: string, title: string, state: string) => ({ ...task.task, id: rowId, title, state });
+    // The revision list: metadata only, with the document head of the same read. The protocol's list has two pages, and
+    // the protocol is published between them (its version moves on), so the page offers to go back to the first page.
+    const head = (row: ReturnType<typeof documentRow>, version: number, adopted: string | null) =>
+      ({ id: row.id, title: row.title, kind: row.kind, version, currentRevisionId: row.currentRevisionId, adoptedRevisionId: adopted, status: row.status });
+    const listed = (revision: ReturnType<typeof documentRevision>, document: ReturnType<typeof head>) => {
+      const { body: _body, ...metadata } = revision;
+      const current = revision.id === document.currentRevisionId, published = revision.id === document.adoptedRevisionId;
+      return { ...metadata, current, published, state: current ? "current" : published ? "published" : "historical" };
+    };
+    let protocolVersion = 2;
+    const detailReads: string[] = [];
     let wikiDelay = 0;
     const { page, errors, open } = await start(t, async (url, req, body) => {
+      if (url.pathname === `${root}/documents/${protocolId}/revisions`) {
+        const document = head(documentRow(protocolId, "评价协议 v2", protocolRevision), protocolVersion, protocolVersion > 2 ? protocolRevision : null);
+        return url.searchParams.get("cursor") === "older"
+          ? { value: { items: [listed(protocolOlder, document)], nextCursor: null, document, revisionCount: 2 } }
+          : { value: { items: [listed(protocolCurrent, document)], nextCursor: "older", document, revisionCount: 2 } };
+      }
+      if (url.pathname === `${root}/documents/${materialId}/revisions`) {
+        const document = head(documentRow(materialId, "首轮回归记录", materialRevision), 1, null);
+        return { value: { items: [listed(materialCurrent, document)], nextCursor: null, document, revisionCount: 1 } };
+      }
+      if (url.pathname === `${root}/documents/${protocolId}` || url.pathname === `${root}/documents/${materialId}`) detailReads.push(url.pathname);
       if (url.pathname === `${root}/evaluations`) return { value: { items: [], nextCursor: null } };
       if (url.pathname === `${root}/evaluations/${evaluationId}`) return { value: { revision, revisions: [revision], attempts: [], assessments: [], conclusions: [] } };
       if (url.pathname === `${root}/runtime/runs`) return { value: [] };
@@ -489,13 +513,21 @@ test("建立冻结评价: the common task, the owner task, documents, a Wiki pag
     await protocolGroup.getByRole("button", { name: "选择协议文档" }).click();
     await form.getByRole("searchbox", { name: "固定评价协议" }).fill("协议");
     await protocolGroup.getByRole("button", { name: /评价协议 v2/ }).click();
-    await protocolGroup.getByRole("button", { name: /当前版本/ }).waitFor();
-    await protocolGroup.getByRole("button", { name: "读取更早的版本" }).click();
-    await protocolGroup.getByRole("button", { name: /较早版本/ }).waitFor();
+    // The versions come from the revision list, numbered, by when, who and why; the next page on request.
+    await protocolGroup.getByRole("button", { name: /^第 2 版 · 当前版本 · .*reviewer · 补充判定口径/ }).waitFor();
+    await protocolGroup.getByText("共 2 版，已列出 1 版。").waitFor();
+    protocolVersion = 3;
+    await protocolGroup.getByRole("button", { name: "列出更早的版本" }).click();
+    await protocolGroup.getByRole("button", { name: /^第 1 版 · 较早版本 · .*首版/ }).waitFor();
+    // Published between the two pages: every loaded version is judged by the newest head, and the first page is offered.
+    await protocolGroup.getByText(/文档在读取期间有了变化，更新的版本在第一页/).waitFor();
     await shot("evaluation-create-1440-02-versions");
-    await protocolGroup.getByRole("button", { name: /当前版本/ }).click();
+    await protocolGroup.getByRole("button", { name: "回到第一页" }).click();
+    await protocolGroup.getByText("共 2 版，已列出 1 版。").waitFor();
+    assert.equal(await protocolGroup.getByText(/文档在读取期间有了变化/).count(), 0);
+    await protocolGroup.getByRole("button", { name: /^第 2 版 · 当前版本/ }).click();
     await protocolGroup.getByRole("button", { name: "移除 《评价协议 v2》" }).waitFor();
-    await protocolGroup.getByText(/^当前版本 · /).waitFor();
+    await protocolGroup.getByText(/^第 2 版 · 当前版本 · /).waitFor();
 
     // The shared material: another document's current version; and a Git source by its full identifiers.
     const materials = form.getByRole("group", { name: "两条件共用的固定材料" });
@@ -542,6 +574,7 @@ test("建立冻结评价: the common task, the owner task, documents, a Wiki pag
     await shot("evaluation-create-1440-03-filled");
     await form.getByRole("button", { name: "冻结评价定义" }).click();
     for (let i = 0; i < 100 && !commands.length; i++) await new Promise(done => setTimeout(done, 50));
+    assert.deepEqual(detailReads, [], "no document detail (which carries its text) is read to name a document or list its versions");
     const sent = commands.find(command => command.type === "evaluation.create") as { definition: typeof definition } | undefined;
     assert.ok(sent, "the definition is sent");
     const { definition: frozen } = sent;

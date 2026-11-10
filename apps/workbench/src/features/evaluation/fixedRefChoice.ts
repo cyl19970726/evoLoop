@@ -53,9 +53,14 @@ export function typedRef(line: string, allowed: readonly ChoosableKind[]): Evalu
   return refs[0]!;
 }
 
-/** How a document version is named: the current one, the adopted one, or an earlier one by its date. */
-export function documentVersionLabel(document: Pick<Document, "currentRevisionId" | "adoptedRevisionId">, revisionId: string, when: string): string {
-  if (revisionId === document.currentRevisionId) return `当前版本 · ${when}`;
-  if (revisionId === document.adoptedRevisionId) return `已采用版本 · ${when}`;
-  return `较早版本 · ${when}`;
+/**
+ * How a document version is named: its number in the document (第 N 版) when known, then the current one, the
+ * adopted one (an archived document's is the one published before archiving), or an earlier one, and its date.
+ */
+export function documentVersionLabel(document: Pick<Document, "currentRevisionId" | "adoptedRevisionId"> & { status?: Document["status"] | undefined },
+  revision: { id: string; revisionNumber?: number | undefined }, when: string): string {
+  const number = revision.revisionNumber ? `第 ${revision.revisionNumber} 版 · ` : "";
+  if (revision.id === document.currentRevisionId) return `${number}当前版本 · ${when}`;
+  if (revision.id === document.adoptedRevisionId) return `${number}${document.status === "archived" ? "归档前发布的版本" : "已采用版本"} · ${when}`;
+  return `${number}较早版本 · ${when}`;
 }

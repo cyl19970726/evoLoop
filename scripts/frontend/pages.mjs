@@ -2,7 +2,7 @@
 // that only appears once its reads are answered. `widths` (default 1440 and 390) are shot as the page opens; `drawer`
 // (true = 1024) opens the right column as a drawer first. `before` runs before the page loads (e.g. a failing read),
 // `prepare` after it is ready. Names are the file names under docs/assets/frontend-pages/ and stay fixed.
-import { actorId, agentKey, ago, id, otherProject, projectId, roles } from "./fixture/common.mjs";
+import { actorId, agentKey, ago, id, projectId, roles } from "./fixture/common.mjs";
 import { docs, tasks, workIndex } from "./fixture/work.mjs";
 import { evaluations, knowledge } from "./fixture/spaces.mjs";
 
@@ -26,10 +26,6 @@ const plainThree = [1440, 1024, 390];
 const unconfirmedReceipt = { actorId, projectId, taskId: tasks.t1.id, operationId: id(900), commandType: "task.assignment.set", createdAt: ago(12) };
 /** The pointer stays where the login button was; move it off the page so no row is drawn hovered. */
 const restPointer = page => page.mouse.move(0, 0);
-/** 仓库规范 shows what the server declared on /api/session: a Git repository and a runtime in one of the reader's two projects. */
-const declaredSession = page => page.route(/\/api\/session$/, route => route.fulfill({ contentType: "application/json", body: JSON.stringify({
-  principal: { actorId, projectIds: [projectId, otherProject.id], permissions: ["read", "write", "review"], identityKind: "human" },
-  capabilities: { git: true, wiki: false, sourceConfiguration: { git: true, wiki: false }, runtime: true, documentOriginals: true, html: true } }) }));
 
 export const scenes = [
   // Entry: login and the project list; the pages behind the account menu: 项目设置, 结果未知的操作, 仓库规范.
@@ -41,8 +37,9 @@ export const scenes = [
   { name: "operations", path: p("operations"), widths: plainThree, prepare: restPointer,
     ready: both(heading("结果未知的操作", 1), text("提交结果待核对"), text(`原操作所在：任务 · ${tasks.t1.title}`)),
     before: page => page.addInitScript(receipt => sessionStorage.setItem("evoloop.unconfirmed-operations.v1", JSON.stringify([receipt])), unconfirmedReceipt) },
-  { name: "repository", path: p("repository"), widths: plainThree, before: declaredSession, prepare: restPointer,
-    ready: both(heading("仓库规范", 1), text("登记 Git 固定来源"), text("按服务端在")) },
+  // The capabilities judged for the project (one changes after a restart) and its two repositories (fixture/configuration.mjs).
+  { name: "repository", path: p("repository"), widths: plainThree, prepare: restPointer,
+    ready: both(heading("仓库规范", 1), text("登记 Git 固定来源"), text("重启后会变为未配置"), text("design-notes")) },
   { name: "overview", path: p("overview"), drawer: true, ready: both(heading("项目总览"), text(tasks.t2.title)) },
 
   // Tasks: the table view, one task and its five other tabs, a new task.

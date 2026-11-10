@@ -1,6 +1,6 @@
-// The signed-in identity, its permissions and the server's declared capabilities, read again for this page
-// (/api/session, with the identity in shared/identity.ts). The shell keeps the identity read at login; 项目设置 and
-// 仓库规范 read it again under one project key, so both show the same answer and a write in the project rereads it.
+// The signed-in identity and its permissions, read again for 项目设置 (/api/session, with the identity in
+// shared/identity.ts). The shell keeps the identity read at login; the page reads it again under one project key, so a
+// write in the project rereads it. Capabilities come per project from GET /capabilities (仓库规范), not from here.
 import { api, type Session } from "../../shared/api";
 
 export const sessionKey = ["session"] as const;

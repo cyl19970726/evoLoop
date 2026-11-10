@@ -4,9 +4,10 @@
 // the fixed version, the source and the person's decision. Each write is the shared command form (shared/command:
 // useCommand with CommandFrame): the receipt is saved before sending, an unknown result is checked by its original
 // operation ID, and the task decision sends the task version and revision recorded when the form opened. The writes go
-// to the reference routes with the same fields as before (referenceCommands.ts). The Git fields are typed (the server
-// lists no repositories and the page cannot read a commit or hash) and say at once what is wrong with a value; the
-// formal decision chooses its document and revision by name (FormalSourceFields.tsx), identifiers in the source layer.
+// to the reference routes with the same fields as before (referenceCommands.ts). The repository is chosen from the ones
+// the service configured for the project and the path checked against its allowed paths (RepositoryChoice.tsx); the
+// commit and hash are typed (the page cannot read them) and say at once what is wrong with a value. The formal decision
+// chooses its document and revision by name (FormalSourceFields.tsx), identifiers in the source layer.
 import { useEffect, useState, type ReactNode } from "react";
 import type { CommandResult } from "@evoloop/contracts";
 import type { KnowledgeRevision, KnowledgeSummary } from "@evoloop/contracts/knowledge";
@@ -19,12 +20,14 @@ import { useProjectQuery } from "../../shared/query";
 import { FullIdentifiers } from "../../shared/ui/FullIdentifiers";
 import { mutedText } from "../../shared/ui/PageParts";
 import { date } from "../../shared/ui/shared";
+import { allowedPathProblem, allowedPathsText } from "../../shared/repositoryPresentation";
 import { FixedGitOriginalReader } from "./FixedGitOriginalReader";
 import { GitReferenceChoice, ProcessRevisionChoice, type RegisteredGit } from "./FormalSourceFields";
 import { checkReferenceCommand, formalDecisionCommand, gitReferenceCommand, referenceBody, referencePath, taskReferenceCommand } from "./referenceCommands";
 import {
-  commitProblem, epistemicLabel, formalDecisionLabel, hashProblem, pathProblem, referenceDecisionLabel, referenceLine, repositoryProblem, slotHeads, validityLabel,
+  commitProblem, epistemicLabel, formalDecisionLabel, hashProblem, pathProblem, referenceDecisionLabel, referenceLine, slotHeads, validityLabel,
 } from "./referencePresentation";
+import { RepositoryChoice, useRepositoryChoice } from "./RepositoryChoice";
 
 type FixedKnowledge = Pick<KnowledgeRevision, "knowledgeId" | "revision" | "title" | "contentHash" | "validity" | "observedValidity" | "epistemicStatus" | "sources">;
 type WriteName = "git" | "formal" | "adopt";
@@ -148,6 +151,7 @@ export function ReferencePanel({ context, taskId, taskRevisionId, taskVersion }:
   }, [fixedKnowledge?.knowledgeId, fixedKnowledge?.revision, fixedKnowledge?.contentHash]); // eslint-disable-line react-hooks/exhaustive-deps
   const heads = slotHeads(history.data ?? []);
 
+  const repositories = useRepositoryChoice(projectId, canWrite && opened.git, repositoryId);
   const gitDirty = !!(repositoryId || path || commit || contentHash);
   const formalDirty = !!(processDocumentId || processRevisionId || formalReason);
   const adoptDirty = !!(reason || actionImpact || headVersion > 0 || knowledgeId || referenceId && kind !== "wiki");
@@ -179,7 +183,12 @@ export function ReferencePanel({ context, taskId, taskRevisionId, taskVersion }:
 
   function register() {
     const values = { repositoryId, path, commit, contentHash };
-    void gitCommand.submit(() => gitReferenceCommand(values, { referenceId: crypto.randomUUID(), taskId }), result => {
+    // A path the chosen repository does not allow is said before sending; the body is the same as when it was typed.
+    const outside = allowedPathProblem(path, repositories.chosen);
+    void gitCommand.submit(() => {
+      if (outside) throw new Error(outside);
+      return gitReferenceCommand(values, { referenceId: crypto.randomUUID(), taskId });
+    }, result => {
       // The registered source fills the two forms that name it.
       setRegistered({ referenceId: result.entityId, repositoryId: values.repositoryId.trim(), path: values.path.trim(), commit: values.commit, contentHash: values.contentHash });
       setFormalGitId(result.entityId); setEditingGitReference(false); setKind("git"); setReferenceId(result.entityId);
@@ -243,11 +252,11 @@ export function ReferencePanel({ context, taskId, taskRevisionId, taskVersion }:
     {canWrite ? <WriteBlock title="登记 Git 固定来源" description="服务端按完整 commit 读取原文并核对 SHA-256，一致才登记。" open={opened.git} onToggle={toggle("git")}>
       <CommandFrame context={context} command={savedView(gitCommand, taskId && canReview ? "已保存。登记的固定引用已填入下面两张表单。"
         : canReview ? "已保存。登记的固定引用已填入下面的表单。" : "已保存。")}
-        label="登记 Git 固定来源" submitLabel="核验并登记" dirty={gitDirty} onSubmit={register} surface="plain"
+        label="登记 Git 固定来源" submitLabel="核验并登记" dirty={gitDirty} onSubmit={register} surface="plain" paused={repositories.held}
         onKeep={() => gitCommand.rebase()} onRefill={() => { gitCommand.rebase(); setRepositoryId(""); setPath(""); setCommit(""); setContentHash(""); }}>
-        <Field label="仓库标识" hint="服务端为本项目配置的仓库名（不是网址或本地路径）。工作台读不到仓库清单，请向管理员确认。" error={repositoryProblem(repositoryId)}>
-          {props => <Input {...props} value={repositoryId} autoComplete="off" spellCheck={false} onChange={event => setRepositoryId(event.target.value)} />}</Field>
-        <Field label="相对路径" hint="从仓库根目录算起，例如 docs/api.md；要在服务端允许读取的目录里。" error={pathProblem(path)}>
+        <RepositoryChoice choice={repositories} value={repositoryId} onChange={setRepositoryId} />
+        <Field label="相对路径" hint={repositories.chosen ? `从仓库根目录算起，要在 ${allowedPathsText(repositories.chosen.allowedPaths)} 之内。`
+          : "从仓库根目录算起，例如 docs/api.md；要在服务端允许读取的目录里。"} error={pathProblem(path) ?? allowedPathProblem(path, repositories.chosen)}>
           {props => <Input {...props} value={path} autoComplete="off" spellCheck={false} onChange={event => setPath(event.target.value)} />}</Field>
         <Field label="完整 commit" hint="文件所在提交的完整哈希，40 或 64 位小写十六进制；在仓库里用 git log 或 git rev-parse 查到。工作台不能替你读取。"
           error={commitProblem(commit)}>{props => <Input {...props} value={commit} autoComplete="off" spellCheck={false} className="font-mono" onChange={event => setCommit(event.target.value)} />}</Field>

@@ -17,7 +17,8 @@ export function fixedRefHref(projectId: string, value: EvaluationFixedRef): stri
 }
 
 /** The present document name is a reading aid only after the exact cited revision and hash are authorized and read. */
-export function verifiedFixedDocumentTitle(ref: EvaluationFixedRef, projectId: string, document: Document, revision: DocumentRevision): string | null {
+export function verifiedFixedDocumentTitle(ref: EvaluationFixedRef, projectId: string, document: Pick<Document, "projectId" | "id" | "title">,
+  revision: Pick<DocumentRevision, "projectId" | "documentId" | "id" | "contentHash">): string | null {
   if (ref.kind !== "document" || document.projectId !== projectId || revision.projectId !== projectId
     || document.id !== ref.id || revision.documentId !== ref.id || revision.id !== ref.revision
     || revision.contentHash.toLowerCase() !== ref.contentHash.toLowerCase()) return null;

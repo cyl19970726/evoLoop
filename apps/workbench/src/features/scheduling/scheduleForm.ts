@@ -5,8 +5,10 @@ import { createElement } from "react";
 import type { MisfirePolicy, ScheduleDefinition, ScheduleRule } from "@evoloop/contracts/scheduling";
 import type { Field } from "../../shared/ActionForm";
 import type { CustomControl } from "../../shared/command";
+import { acceptanceMemberKind } from "../../shared/memberPresentation";
 import { FullIdentifiers } from "../../shared/ui/FullIdentifiers";
 import { LocalTimeInput } from "../../shared/ui/LocalTimeInput";
+import { MemberChoice } from "../../shared/ui/MemberChoice";
 import { readerZone, timeFieldInstant, timeFieldValue, timezoneOptions } from "../../shared/zonedTime";
 import type { SchedulingGrant } from "./client";
 import { scheduleTemplate } from "./managedTarget";
@@ -99,7 +101,7 @@ export function scheduleFields(grants: SchedulingGrant[], names: ScheduleRoleNam
       { name: "acceptanceMode", label: "任务验收方式", kind: "select" as const, value: revision?.template.acceptanceMode ?? "independent_agent",
         options: [option("independent_agent", "独立智能体验收"), option("human_required", "必须本人验收")] },
       { name: "consumer", label: "指定验收人（可选）", optional: true, value: revision?.template.consumer ?? "",
-        hint: "必须本人验收时，填写验收人的登录身份；独立智能体验收可以留空。" },
+        hint: "必须本人验收时选验收的人本人；独立智能体验收可以不指定。只列出能写入的成员（记录使用要写入）。" },
     ]),
     { name: "grant", label: fresh ? "日程授权" : "上次读回的日程授权", kind: "select", value: oldGrant ? grantKey(oldGrant) : choices[0]?.value ?? "", options: choices,
       hint: fresh ? "只列出当前身份在本项目的授权；已撤回的旧授权只能用来暂停或停止。" : "当前授权尚未核对；此表单暂不可提交。",
@@ -108,6 +110,16 @@ export function scheduleFields(grants: SchedulingGrant[], names: ScheduleRoleNam
       render: time("expiresLocal", () => true) },
     { name: "reason", label: "理由与依据", kind: "textarea" },
   ];
+}
+
+/**
+ * 指定验收人 chosen by name from the project's members who can write (a person for 必须本人验收, an agent otherwise), the
+ * full identity typed when needed (shared/ui/MemberChoice.tsx). The value is the same identity string as before.
+ */
+export function withMemberChoice(fields: Field[], projectId: string): Field[] {
+  return fields.map(field => field.name !== "consumer" ? field : { ...field, kind: "custom" as const,
+    render: ({ control, value, values, onChange }: CustomControl) => createElement(MemberChoice, { projectId, control, value, onChange, need: "write",
+      kind: acceptanceMemberKind(values.acceptanceMode), optional: true }) });
 }
 
 function instantOf(values: Record<string, string>, name: string, what: string): string {

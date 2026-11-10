@@ -11,6 +11,8 @@ import {
 } from "@evoloop/ui";
 import { api } from "../../shared/api";
 import type { MutationContext } from "../../shared/ActionForm";
+import { revisionNumberText } from "../../shared/documentRevisions";
+import { useDocumentRevisions } from "../../shared/useDocumentRevisions";
 import { fixedContent, queryKeys, useProjectQuery } from "../../shared/query";
 import { href } from "../../shared/routes";
 import { useContextPanel } from "../../shared/ui/ContextPanel";
@@ -82,6 +84,9 @@ function Reader({ context, projectId, detail, revision, body, rail, back, checki
   const panel = useContextPanel();
   const { document } = detail;
   const standing = readingStanding(revision.id, detail);
+  // 共 M 版 is the revision list's count (an older document numbered by time may not end at it); the right column lists them.
+  const revisions = useDocumentRevisions(projectId, document.id);
+  const numbered = revisionNumberText(revision.revisionNumber, revisions.model?.count);
   const html = revision.format === "html";
   const from = documentOrigin(projectId, document, context.principal.actorId);
   const revise = canRevise(detail) && <DocumentRevise context={context} detail={detail} checking={checking} failed={!!failure} />;
@@ -90,7 +95,7 @@ function Reader({ context, projectId, detail, revision, body, rail, back, checki
   return <div data-ui="" className={cn("flex w-full flex-col",
     html ? "h-[calc(100dvh-48px)] px-3 pb-2 pt-2.5 compact:h-[calc(100dvh-16px)] compact:px-6 compact:pt-3" : "mx-auto max-w-[920px] px-4 py-5 compact:px-10 compact:py-7")}>
     {rail}
-    <DocumentFacts projectId={projectId} detail={detail} revision={revision} body={body} actorId={context.principal.actorId} />
+    <DocumentFacts projectId={projectId} detail={detail} revision={revision} body={body} actorId={context.principal.actorId} revisions={revisions} />
     <header className={cn("flex flex-none flex-col", html ? "gap-1 pb-2" : "gap-2 pb-5")}>
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 compact:pr-12">
         {back}
@@ -107,6 +112,7 @@ function Reader({ context, projectId, detail, revision, body, rail, back, checki
         <span>{kindText(document.kind)}</span>
         <span aria-hidden="true">·</span>
         <span>正在读 <strong className="font-medium text-foreground">{standing.label}</strong></span>
+        {numbered && <span data-revision-number="">{numbered}</span>}
         <time dateTime={revision.createdAt} className="text-muted-foreground">{date(revision.createdAt)}</time>
         {document.primaryTaskId && <a href={taskLinkFrom(projectId, document.primaryTaskId, from)} className="text-primary hover:underline">所属任务 →</a>}
       </p>
