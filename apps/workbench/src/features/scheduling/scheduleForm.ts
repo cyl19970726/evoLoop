@@ -4,8 +4,10 @@
 import { createElement } from "react";
 import type { MisfirePolicy, ScheduleDefinition, ScheduleRule } from "@evoloop/contracts/scheduling";
 import type { Field } from "../../shared/ActionForm";
+import type { CustomControl } from "../../shared/command";
 import { FullIdentifiers } from "../../shared/ui/FullIdentifiers";
-import { localInputIn, localInstant, localInstantPreview, readerZone, timezoneOptions } from "../../shared/zonedTime";
+import { LocalTimeInput } from "../../shared/ui/LocalTimeInput";
+import { readerZone, timeFieldInstant, timeFieldValue, timezoneOptions } from "../../shared/zonedTime";
 import type { SchedulingGrant } from "./client";
 import { scheduleTemplate } from "./managedTarget";
 import { nextTimeText, scheduleTime } from "./presentation";
@@ -24,9 +26,12 @@ export interface ScheduleRoleNames {
   rolesProblem: "reading" | "failed" | null;
   /** Any role's title (grants, the registered owner), or null while it is unread. */
   roleName(id: string): string | null;
+  /** The title cannot be read (the read failed, or the owner is not a role record); null means still reading. */
+  nameUnreadable?(id: string): boolean;
 }
 
-const quoted = (names: ScheduleRoleNames, roleId: string) => `“${names.roleName(roleId) ?? "名称待读取"}”`;
+const quoted = (names: ScheduleRoleNames, roleId: string) =>
+  `“${names.roleName(roleId) ?? (names.nameUnreadable?.(roleId) ? "名称暂不可读" : "名称读取中")}”`;
 
 /** "按职责“开发职责”授权", numbered when two grants name the same role. */
 export function grantLabels(grants: Pick<SchedulingGrant, "scopeId" | "roleId">[], names: ScheduleRoleNames): Map<string, string> {
@@ -64,16 +69,19 @@ export function scheduleFields(grants: SchedulingGrant[], names: ScheduleRoleNam
   const labels = grantLabels(oldGrant && !currentGrant ? [...grants, oldGrant] : grants, names);
   const choices = [...grants.map(grant => option(grantKey(grant), `${labels.get(grantKey(grant))}${fresh ? "" : "（上次读回，当前待核对）"}`)),
     ...(oldGrant && !currentGrant ? [option(grantKey(oldGrant), `${labels.get(grantKey(oldGrant))}（${fresh ? "授权已撤回，仅能暂停或停止" : "登记的旧授权，当前待核对"}）`)] : [])];
-  const at = (kind: ScheduleRule["kind"], name: string) => (values: Record<string, string>) =>
-    values.ruleKind === kind ? localInstantPreview(values[name] ?? "", values.timezone ?? "") : null;
+  // A time is typed on the schedule's clock; a value filled from the definition is sent back as stored until changed.
+  const time = (name: string, active: (values: Record<string, string>) => boolean) => ({ control, value, values, onChange }: CustomControl) =>
+    createElement(LocalTimeInput, { control, name, value, timezone: values.timezone ?? "", onChange, active: active(values) });
   return [
     { name: "state", label: "日程状态", kind: "select", value: definition?.state === "active" && !currentGrant ? "paused" : definition?.state ?? "active",
       options: [...(canActivate ? [option("active", "启用后续检查")] : []), option("paused", "暂停"), option("stopped", "停止（不能恢复）")] },
     { name: "timezone", label: "时区", kind: "select", value: timezone, options: timezoneOptions([revision?.timezone]),
       hint: "下面的日期和时间都按这个时区的当地时间填写；每天的规则也按这个时区的钟点触发。" },
     { name: "ruleKind", label: "触发方式", kind: "select", value: rule?.kind ?? "once", options: [option("once", "仅一次"), option("interval", "固定分钟间隔"), option("daily", "每天固定时刻")] },
-    { name: "atLocal", label: "仅一次：日期和时间", kind: "datetime", optional: true, value: rule?.kind === "once" ? localInputIn(rule.atUtc, timezone) : "", preview: at("once", "atLocal") },
-    { name: "anchorLocal", label: "间隔：从何时开始", kind: "datetime", optional: true, value: rule?.kind === "interval" ? localInputIn(rule.anchorUtc, timezone) : "", preview: at("interval", "anchorLocal") },
+    { name: "atLocal", label: "仅一次：日期和时间", kind: "custom", optional: true, value: rule?.kind === "once" ? timeFieldValue(rule.atUtc, timezone) : "",
+      render: time("atLocal", values => values.ruleKind === "once") },
+    { name: "anchorLocal", label: "间隔：从何时开始", kind: "custom", optional: true, value: rule?.kind === "interval" ? timeFieldValue(rule.anchorUtc, timezone) : "",
+      render: time("anchorLocal", values => values.ruleKind === "interval") },
     { name: "everyMinutes", label: "间隔：每多少分钟", optional: true, value: rule?.kind === "interval" ? String(rule.everyMinutes) : "" },
     { name: "localTime", label: "每天：当地时刻", kind: "time", optional: true, value: rule?.kind === "daily" ? rule.localTime : "",
       preview: values => values.ruleKind === "daily" && values.localTime
@@ -96,15 +104,15 @@ export function scheduleFields(grants: SchedulingGrant[], names: ScheduleRoleNam
     { name: "grant", label: fresh ? "日程授权" : "上次读回的日程授权", kind: "select", value: oldGrant ? grantKey(oldGrant) : choices[0]?.value ?? "", options: choices,
       hint: fresh ? "只列出当前身份在本项目的授权；已撤回的旧授权只能用来暂停或停止。" : "当前授权尚未核对；此表单暂不可提交。",
       preview: values => { const grant = grantOf(values.grant); return ids([{ label: "授权范围", value: grant?.scopeId }, { label: "授权职责", value: grant?.roleId }]); } },
-    { name: "expiresLocal", label: "授权到期", kind: "datetime", optional: true, value: localInputIn(revision?.authorization.expiresAtUtc, timezone),
-      preview: values => localInstantPreview(values.expiresLocal ?? "", values.timezone ?? "") },
+    { name: "expiresLocal", label: "授权到期", kind: "custom", optional: true, value: timeFieldValue(revision?.authorization.expiresAtUtc, timezone),
+      render: time("expiresLocal", () => true) },
     { name: "reason", label: "理由与依据", kind: "textarea" },
   ];
 }
 
 function instantOf(values: Record<string, string>, name: string, what: string): string {
   if (!values[name]?.trim()) throw new Error(`请选择${what}。`);
-  try { return localInstant(values[name]!, values.timezone ?? "").iso; }
+  try { return timeFieldInstant(values[name]!, values.timezone ?? ""); }
   catch (cause) { throw new Error(`${what}：${cause instanceof Error ? cause.message : "日期或时间无效。"}`); }
 }
 

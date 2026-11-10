@@ -141,7 +141,7 @@
 | 五个页签 | `TaskBasisTab.tsx`（两版对照里的非 Markdown 原件用 `apps/workbench/src/shared/ui/OriginalDocumentReader.tsx`）、`TaskDeliveryTab.tsx`、`TaskRuntimeTab.tsx`、`ResidentQueuePanel.tsx`（团队的分工与运行也用）、`apps/workbench/src/features/orchestration/`（自动循环）、`apps/workbench/src/features/references/`（Git 与外部来源登记，仓库规范也用；写入在 `referenceCommands.ts`）、`TaskHistoryTab.tsx`、`TaskActionsTab.tsx`、`EvidenceText.tsx` | `task-tabs-browser.test.ts`、`task-evidence-reading.test.ts`、`reference-commands.test.ts`、`legacy-bits-browser.test.ts`、`task-owner-presentation.test.ts`、`task-loop-browser.test.ts`、`schedule-run-session-path-browser.test.ts`、`document-original-reading-browser.test.ts` |
 | 写入 | `apps/workbench/src/shared/command/`（唯一的提交表单：基线、回执与表单）、`TaskForms.tsx`（页签部件与读取状态）、`taskCommands.ts`（各命令） | `use-command.test.ts`、`task-commands.test.ts`、`task-list-model.test.ts` |
 | 收件页与计数 | `InboxIndex.tsx`、`inboxModel.ts`（等我使用的判断、计数）、`inboxReads.ts`（三项读取，外壳计数共用）、`inboxDeliveries.ts`（逐页读工作索引） | `inbox-model.test.ts`、`inbox-browser.test.ts`、`leader-work-overview-browser.test.ts`、`legacy-bits-browser.test.ts` |
-| 执行时间与重复 | `TaskScheduleSection.tsx`、`taskTimingPresentation.ts`、`apps/workbench/src/shared/zonedTime.ts` | `task-timing-ui.test.ts`、`task-commands.test.ts`、`zoned-time.test.ts`、`task-tabs-browser.test.ts` |
+| 执行时间与重复 | `TaskScheduleSection.tsx`、`taskTimingPresentation.ts`、`apps/workbench/src/shared/zonedTime.ts`、`apps/workbench/src/shared/ui/LocalTimeInput.ts` | `task-timing-ui.test.ts`、`task-commands.test.ts`、`zoned-time.test.ts`、`task-tabs-browser.test.ts` |
 | 新建任务 | `CreateTaskPage.tsx`、`taskCreate.ts` | `task-create.test.ts`、`journey-browser.test.ts`、`work-status-recovery-browser.test.ts` |
 
 ## 相关

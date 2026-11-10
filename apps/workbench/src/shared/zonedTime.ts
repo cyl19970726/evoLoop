@@ -17,24 +17,44 @@ export const readerZone = (): string => { try { return Intl.DateTimeFormat().res
 export function zoneName(timezone: string): string { return zoneNames[timezone] ?? timezone; }
 export function zoneHasName(timezone: string): boolean { return Object.hasOwn(zoneNames, timezone); }
 
-function zoneFormat(timezone: string): Intl.DateTimeFormat {
+// One formatter per zone (a zone the runtime does not know is remembered as null): forms draw the zone list on every
+// render, and a formatter is costly to build.
+const formats = new Map<string, Intl.DateTimeFormat | null>();
+function zoneFormatOrNull(timezone: string): Intl.DateTimeFormat | null {
   const zone = timezone.trim();
-  try { if (zone) return scheduleZoneFormat(zone); } catch { /* said below */ }
-  throw new Error("时区无法识别，请重新选择时区。");
+  if (!zone) return null;
+  if (!formats.has(zone)) {
+    let format: Intl.DateTimeFormat | null = null;
+    try { format = scheduleZoneFormat(zone); } catch { format = null; }
+    formats.set(zone, format);
+  }
+  return formats.get(zone)!;
+}
+
+function zoneFormat(timezone: string): Intl.DateTimeFormat {
+  const format = zoneFormatOrNull(timezone);
+  if (!format) throw new Error("时区无法识别，请重新选择时区。");
+  return format;
 }
 
 export function knownZone(timezone: string): boolean {
-  try { zoneFormat(timezone); return true; } catch { return false; }
+  return zoneFormatOrNull(timezone) !== null;
 }
 
+type ZoneOption = { value: string; label: string };
+const zoneLabel = (zone: string) => !knownZone(zone) ? `${zone}（无法识别）` : zoneHasName(zone) && zoneName(zone) !== zone ? `${zoneName(zone)}（${zone}）` : zone;
+let commonZones: ZoneOption[] | null = null;
+
 /** The time zones offered in a form: the ones already in use first, then common ones, then every zone the browser knows. */
-export function timezoneOptions(inUse: ReadonlyArray<string | null | undefined> = []): { value: string; label: string }[] {
-  let all: string[] = [];
-  try { all = (Intl as unknown as { supportedValuesOf?: (key: string) => string[] }).supportedValuesOf?.("timeZone") ?? []; } catch { all = []; }
-  const order = [...inUse, readerZone(), ...Object.keys(zoneNames).filter(zone => zone !== "Etc/UTC"), ...all]
-    .filter((zone): zone is string => !!zone && !!zone.trim());
-  return [...new Set(order)].map(zone => ({ value: zone,
-    label: !knownZone(zone) ? `${zone}（无法识别）` : zoneHasName(zone) && zoneName(zone) !== zone ? `${zoneName(zone)}（${zone}）` : zone }));
+export function timezoneOptions(inUse: ReadonlyArray<string | null | undefined> = []): ZoneOption[] {
+  if (!commonZones) {
+    let all: string[] = [];
+    try { all = (Intl as unknown as { supportedValuesOf?: (key: string) => string[] }).supportedValuesOf?.("timeZone") ?? []; } catch { all = []; }
+    commonZones = [...new Set([readerZone(), ...Object.keys(zoneNames).filter(zone => zone !== "Etc/UTC"), ...all])]
+      .map(zone => ({ value: zone, label: zoneLabel(zone) }));
+  }
+  const first = [...new Set(inUse.filter((zone): zone is string => !!zone && !!zone.trim()))];
+  return [...first.map(zone => ({ value: zone, label: zoneLabel(zone) })), ...commonZones.filter(option => !first.includes(option.value))];
 }
 
 const pad = (value: number, width = 2) => String(value).padStart(width, "0");
@@ -100,21 +120,64 @@ export function localInputIn(value: string | null | undefined, timezone: string)
 function clock(time: number, timezone: string): string {
   return new Date(time).toLocaleString("zh-CN", { timeZone: timezone, hour12: false, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
 }
-const utcText = (iso: string) => iso.replace("T", " ").replace(/:00\.000Z$|\.000Z$|Z$/, "") + " UTC";
+export const utcText = (iso: string) => iso.replace("T", " ").replace(/:00\.000Z$|\.000Z$|Z$/, "") + " UTC";
 
-/**
- * What a typed local time becomes, said before sending: the zone's clock, the reader's clock when it differs, and the
- * instant recorded. A repeated time says which of the two is used; a value that cannot be read says why. Empty input: null.
- */
-export function localInstantPreview(local: string, timezone: string, reader = readerZone()): string | null {
+// ── A time field that was filled from a record ─────────────────────────────────────────────────────────────────────
+// The field keeps the clock reading the person sees and, when it was filled from a stored instant, that instant too
+// ("2027-11-07T01:30|2027-11-07T06:30:00.000Z"). While the reading still names that instant in the form's zone, the
+// stored instant is sent back exactly (milliseconds, and the later of two repeated readings, included); a reading the
+// person changed is worked out again. A zone the browser does not know shows the stored instant on the UTC clock.
+
+export interface TimeFieldValue { local: string; instant: string | null }
+
+export function splitTimeField(value: string): TimeFieldValue {
+  const at = value.indexOf("|");
+  if (at < 0) return { local: value, instant: null };
+  const instant = value.slice(at + 1);
+  return { local: value.slice(0, at), instant: Number.isFinite(Date.parse(instant)) ? instant : null };
+}
+
+export const joinTimeField = ({ local, instant }: TimeFieldValue): string => instant ? `${local}|${instant}` : local;
+
+/** The clock a field shows its stored instant on: the zone's own, or UTC when the browser does not know the zone. */
+export const fieldClockZone = (timezone: string): string => knownZone(timezone) ? timezone : "UTC";
+
+/** A field filled from a stored instant (or empty). */
+export function timeFieldValue(instant: string | null | undefined, timezone: string): string {
+  if (!instant || !Number.isFinite(Date.parse(instant))) return "";
+  return joinTimeField({ local: localInputIn(instant, fieldClockZone(timezone)), instant });
+}
+
+/** The instant a field stands for: the stored one while its reading is unchanged, otherwise the reading worked out in `timezone`. */
+export function timeFieldInstant(value: string, timezone: string): string {
+  const { local, instant } = splitTimeField(value);
+  if (!local.trim()) throw new Error("请选择日期和时间。");
+  if (instant && localInputIn(instant, fieldClockZone(timezone)) === local.trim()) return instant;
+  if (!knownZone(timezone)) throw new Error("浏览器不认识这个时区，改动后的时间无法换算；请先选一个能识别的时区。");
+  return localInstant(local, timezone).iso;
+}
+
+/** The two instants of a reading that happens twice (daylight saving ends), or null. */
+export function repeatedInstants(local: string, timezone: string): { earlier: string; later: string } | null {
+  try { const read = localInstant(local, timezone); return read.later ? { earlier: read.iso, later: read.later } : null; }
+  catch { return null; }
+}
+
+/** What a time field becomes, said under it: the zone's clock, the reader's, and the instant recorded. */
+export function timeFieldPreview(value: string, timezone: string, reader = readerZone()): string | null {
+  const { local, instant } = splitTimeField(value);
   if (!local.trim()) return null;
+  if (!knownZone(timezone)) {
+    return instant && localInputIn(instant, "UTC") === local.trim()
+      ? `浏览器不认识时区“${timezone}”，这里按 UTC 显示；不改就原样保留 ${utcText(instant)}。`
+      : "浏览器不认识这个时区，改动后的时间无法换算；请先选一个能识别的时区。";
+  }
   try {
-    const { iso, later } = localInstant(local, timezone);
-    const time = Date.parse(iso);
+    const at = timeFieldInstant(value, timezone);
+    const time = Date.parse(at);
     const own = clock(time, timezone);
     let mine = own;
     try { mine = clock(time, reader); } catch { /* the reader's zone is the browser's own */ }
-    return `按${zoneName(timezone)}时间 ${own}${mine !== own ? `，即你的时间 ${mine}` : ""}；记录为 ${utcText(iso)}。`
-      + (later ? `这一当地时刻在夏令时结束时出现两次，按较早的一次，与协调器的规则相同；较晚的一次是 ${utcText(later)}。` : "");
+    return `按${zoneName(timezone)}时间 ${own}${mine !== own ? `，即你的时间 ${mine}` : ""}；记录为 ${utcText(at)}。`;
   } catch (cause) { return cause instanceof Error ? cause.message : "日期或时间无效。"; }
 }

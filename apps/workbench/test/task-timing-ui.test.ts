@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { api, ApiError, type TaskTimingView } from "../src/shared/api.ts";
 import { commandSchema } from "@evoloop/contracts";
 import { dailyScheduledInstant, formatScheduled, nextTimingLabel, scheduledInstant, scheduledTimezone, timingFormPayload, timingSetPayload, timingStopPayload, timingVersion } from "../src/features/workflow/taskTimingPresentation.ts";
-import { localInputIn } from "../src/shared/zonedTime.ts";
+import { localInputIn, timeFieldValue } from "../src/shared/zonedTime.ts";
 
 const timing: TaskTimingView = {
   projectId: "project-1", taskId: "task-1", seriesId: "series-1", rootTaskId: "task-1", version: 4,
@@ -88,4 +88,8 @@ test("执行时间与重复 takes the date and time on the task zone's clock and
   assert.throws(() => timingFormPayload("task-1", 2, null, { executeAt: "2027-03-14T02:30", timezone: "America/New_York", repeat: "none", scope: "this", reason: "r" }), /夏令时/);
   assert.equal(timingFormPayload("task-1", 2, null, { executeAt: "2027-11-07T01:30", timezone: "America/New_York", repeat: "daily", scope: "this", reason: "r" }).executeAtUtc, "2027-11-07T05:30:00.000Z");
   assert.throws(() => timingFormPayload("task-1", 2, null, { executeAt: "", timezone: "Asia/Shanghai", repeat: "none", scope: "this", reason: "r" }), /请选择约定执行时间/);
+  // A stored time left alone goes back as stored, the later of a repeated reading included.
+  const laterTiming = { ...timing, executeAtUtc: "2027-11-07T06:30:00.000Z", timezone: "America/New_York" };
+  assert.equal(timingFormPayload("task-1", 2, laterTiming, { executeAt: timeFieldValue(laterTiming.executeAtUtc, laterTiming.timezone), timezone: laterTiming.timezone,
+    repeat: "daily", scope: "future", reason: "r" }).executeAtUtc, "2027-11-07T06:30:00.000Z");
 });

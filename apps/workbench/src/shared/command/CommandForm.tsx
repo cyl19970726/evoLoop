@@ -336,11 +336,13 @@ export function CommandForm<B extends Baseline | string | undefined = undefined>
 
 interface FieldProps { field: FormField; value: string; values: Record<string, string>; error?: string | undefined; hideLabel?: boolean | undefined; onChange(value: string): void }
 
+// A field with a preview always draws the same elements, whether the line is empty or not: the control is never mounted
+// again when the line appears, so it keeps its focus and the keys typed after.
 function FieldControl(props: FieldProps) {
-  const preview = props.field.preview?.(props.values);
-  if (preview === undefined || preview === null || preview === "") return <FieldInput {...props} />;
+  if (!props.field.preview) return <FieldInput {...props} />;
+  const preview = props.field.preview(props.values);
   return <div className="flex min-w-0 flex-col gap-1.5"><FieldInput {...props} />
-    <div role="status" data-field-preview={props.field.name} className="text-caption text-text-secondary [overflow-wrap:anywhere]">{preview}</div></div>;
+    <div role="status" data-field-preview={props.field.name} className="text-caption text-text-secondary empty:hidden [overflow-wrap:anywhere]">{preview ?? null}</div></div>;
 }
 
 function FieldInput({ field, value, values, error, hideLabel, onChange }: FieldProps) {

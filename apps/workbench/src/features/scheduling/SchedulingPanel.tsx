@@ -85,6 +85,8 @@ function useScheduleRoleNames(projectId: string, roleIds: string[]): ScheduleRol
     roles: roles.data ? roles.data.filter(role => role.proposal?.title?.trim()).map(role => ({ id: role.id, title: role.proposal.title.trim() })) : null,
     rolesProblem: roles.data ? null : roles.isError ? "failed" : "reading",
     roleName: id => titles.get(id) ?? null,
+    // Not named and not being read: the read failed, or the owner is not a role record that has a name to read.
+    nameUnreadable: id => !titles.has(id) && (!isRoleOwnerId(id) || !!reads[wanted.indexOf(id)]?.isError || (wanted.indexOf(id) < 0 && roles.isError)),
   };
 }
 

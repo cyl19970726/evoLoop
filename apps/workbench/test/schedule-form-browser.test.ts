@@ -87,6 +87,30 @@ test("创建日程 and 保存日程修订: role and grant by name, a local time 
     await shot("schedule-form-1440-01-empty");
 
     await form.getByLabel("时区", { exact: true }).selectOption("America/New_York");
+    // Typed key by key: the line under the field appears when the reading is complete, and the control keeps its focus
+    // and the keys after it (the minutes 30, not 03).
+    const focusedName = () => page.evaluate(() => (document.activeElement as HTMLInputElement | null)?.name ?? document.activeElement?.tagName);
+    const at = form.getByLabel(/^仅一次：日期和时间/);
+    await at.click();
+    await at.pressSequentially("2026", { delay: 40 });
+    await page.keyboard.press("ArrowRight");
+    await at.pressSequentially("11120930", { delay: 40 });
+    await form.locator("[data-field-preview=atLocal]").getByText(/记录为 2026-11-12 14:30 UTC/).waitFor();
+    assert.equal(await at.inputValue(), "2026-11-12T09:30");
+    assert.equal(await focusedName(), "atLocal", "the date-time control keeps its focus");
+    await form.getByLabel("触发方式").selectOption("daily");
+    const daily = form.getByLabel(/^每天：当地时刻/);
+    await daily.click();
+    await daily.pressSequentially("0930", { delay: 40 });
+    await form.locator("[data-field-preview=localTime]").getByText(/^下次：/).waitFor();
+    assert.equal(await daily.inputValue(), "09:30");
+    assert.equal(await focusedName(), "localTime", "the time control keeps its focus");
+    await daily.fill("");
+    await form.getByLabel("触发方式").selectOption("once");
+    await owner.focus();
+    await owner.selectOption({ label: "巡检职责" });
+    await form.locator("[data-field-preview=owner]").getByText("完整标识").waitFor();
+    assert.equal(await focusedName(), "owner", "choosing a role keeps the focus on the choice");
     // A time the zone skips (spring forward) is refused before sending, in words.
     await form.getByLabel(/^仅一次：日期和时间/).fill("2027-03-14T02:30");
     await form.getByText("所选时区没有这个时刻（夏令时调整），请换一个时间。").waitFor();
@@ -95,7 +119,6 @@ test("创建日程 and 保存日程修订: role and grant by name, a local time 
     await form.getByLabel("新提议任务的名称").fill("季度巡检");
     await form.getByLabel("新任务正文（Markdown）").fill("按清单核对");
     await form.getByLabel("新提议任务的接受条件").fill("留下报告");
-    await owner.selectOption({ label: "巡检职责" });
     await form.getByLabel("理由与依据").fill("开始季度巡检");
     for (const text of [await form.innerText()]) {
       assert.doesNotMatch(text, uuid, "no raw ID in the form");
@@ -143,5 +166,75 @@ test("创建日程 and 保存日程修订: role and grant by name, a local time 
     await page.setViewportSize({ width: 390, height: 844 });
     assert.equal(await page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1"), true, "the form fits 390px");
     await shot("schedule-form-390");
+    assert.deepEqual(errors, []);
+  });
+
+test("保存日程修订 without touching the times sends them as stored: the later of a repeated reading, milliseconds",
+  { skip: !modulePath && "Set EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE" }, async t => {
+    const { chromium } = (await import(pathToFileURL(modulePath!).href)).default;
+    const commands: Array<Record<string, any>> = [];
+    const scheduleId = id(20), revisionId = id(21);
+    const revision = { projectId, scheduleId, id: revisionId, version: 1, timezone: "America/New_York", rule: { kind: "once", atUtc: "2027-11-07T06:30:00.000Z" },
+      misfire: { kind: "latest" }, overlap: "skip", template: { title: "回拨巡检", content: "核对", acceptance: "报告", owner: roleId, acceptanceMode: "independent_agent" },
+      authorization: { scopeId: "acceptance-schedules", roleId, authorizedBy: "reader", expiresAtUtc: "2027-12-01T05:00:30.500Z" },
+      reason: "建立", actorId: "reader", createdAtUtc: stamp };
+    const schedule = { projectId, id: scheduleId, version: 1, currentRevisionId: revisionId, state: "active", watermarkUtc: stamp, revision };
+    const server = createServer(async (req, res) => {
+      const url = new URL(req.url!, "http://127.0.0.1");
+      if (url.pathname.startsWith("/api/")) {
+        const body = await new Promise<string>(done => { let text = ""; req.on("data", chunk => { text += chunk; }); req.on("end", () => done(text)); });
+        const base = `/api/projects/${projectId}`;
+        let value: unknown = { items: [], nextCursor: null };
+        if (url.pathname === "/api/session") value = { principal: { actorId: "reader", projectIds: [projectId], permissions: ["read", "write", "review"] }, capabilities: {} };
+        else if (url.pathname === base) value = { id: projectId, title: "日程表单项目", createdAt: stamp };
+        else if (url.pathname === `${base}/impacts`) value = [];
+        else if (url.pathname === `${base}/schedules`) value = [schedule];
+        else if (url.pathname === `${base}/scheduling/status`) value = { state: "idle", lastTickAt: stamp, lastError: null, lastCreated: 0,
+          grants: [{ projectId, actorId: "reader", scopeId: "acceptance-schedules", roleId }] };
+        else if (url.pathname === `${base}/roles`) value = { items: [role(roleId, "巡检职责")], nextCursor: null };
+        else if (url.pathname === `${base}/roles/${roleId}`) value = role(roleId, "巡检职责");
+        else if (url.pathname === `${base}/schedules/${scheduleId}/revisions`) value = [revision];
+        else if (url.pathname === `${base}/schedules/${scheduleId}/occurrences`) value = [];
+        else if (url.pathname === "/api/commands" && req.method === "POST") {
+          const command = JSON.parse(body) as Record<string, any>;
+          commands.push(command);
+          value = { status: "applied", operationId: command.operationId, entityId: scheduleId };
+        }
+        res.writeHead(200, { "content-type": "application/json" }); res.end(JSON.stringify(value)); return;
+      }
+      const file = join(dist, /^\/(?:$|p\/|ui$)/.test(url.pathname) ? "index.html" : url.pathname);
+      try { const data = await readFile(file); res.writeHead(200, { "content-type": ({ ".html": "text/html", ".js": "text/javascript", ".css": "text/css" } as Record<string, string>)[extname(file)] ?? "application/octet-stream" }); res.end(data); }
+      catch { res.writeHead(404); res.end(); }
+    });
+    await new Promise<void>(done => server.listen(0, "127.0.0.1", done)); t.after(() => server.close());
+    const origin = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+    const browser = await chromium.launch({ headless: true, ...(process.env.EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH ? { executablePath: process.env.EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH } : {}) });
+    t.after(() => browser.close());
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    const errors: string[] = [];
+    page.on("pageerror", (error: Error) => errors.push(error.message));
+    await page.goto(`${origin}/p/${projectId}/schedules`);
+    await page.getByLabel("访问令牌").fill("fixture-token");
+    await page.getByRole("button", { name: "进入", exact: true }).click();
+    const card = page.locator(".schedule-definition");
+    await card.getByText("回拨巡检", { exact: true }).first().waitFor();
+    await card.locator("summary", { hasText: "修订规则、暂停或恢复" }).click();
+    await card.locator("summary", { hasText: "保存日程修订" }).click();
+    const revise = card.getByRole("form", { name: "保存日程修订" });
+    await revise.waitFor();
+    // 01:30 happens twice that day; the form shows both and keeps the one recorded (the later, 06:30 UTC).
+    assert.equal(await revise.getByLabel(/^仅一次：日期和时间/).inputValue(), "2027-11-07T01:30");
+    const occurrence = revise.getByRole("radiogroup", { name: "这一当地时刻出现两次，用哪一次" });
+    assert.equal(await occurrence.getByLabel(/较晚一次（2027-11-07 06:30 UTC）/).isChecked(), true);
+    await revise.locator("[data-field-preview=atLocal]").getByText(/记录为 2027-11-07 06:30 UTC/).waitFor();
+    if (shots) await page.screenshot({ path: `${shots}/schedule-form-1440-04-repeated.png`, fullPage: true });
+    await revise.getByLabel("日程状态").selectOption("paused");
+    await revise.getByLabel("理由与依据").fill("先暂停");
+    await revise.getByRole("button", { name: "保存日程修订" }).click();
+    for (let i = 0; i < 200 && !commands.length; i++) await new Promise(done => setTimeout(done, 50));
+    const sent = commands.find(command => command.type === "schedule.revise");
+    assert.ok(sent, "the revision is sent");
+    assert.deepEqual(sent.rule, revision.rule, "the later 01:30 is not moved to the earlier one");
+    assert.equal(sent.authorization.expiresAtUtc, "2027-12-01T05:00:30.500Z", "the expiry goes back with its milliseconds");
     assert.deepEqual(errors, []);
   });

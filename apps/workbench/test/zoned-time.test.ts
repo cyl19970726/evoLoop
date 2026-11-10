@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { computeDue } from "@evoloop/core/scheduling";
 import { scheduleWallClock, scheduleZoneFormat, type ScheduleRevision } from "@evoloop/contracts/scheduling";
-import { localInputIn, localInstant, localInstantPreview, timezoneOptions } from "../src/shared/zonedTime.ts";
+import { localInputIn, localInstant, repeatedInstants, splitTimeField, timeFieldInstant, timeFieldPreview, timeFieldValue, timezoneOptions } from "../src/shared/zonedTime.ts";
 import { zonedInstant } from "../src/features/workflow/taskCreate.ts";
 
 /** The instant the scheduler fires a daily rule at `time` on `date` in `zone`, or null when it does not fire that day. */
@@ -42,11 +42,11 @@ test("a local time becomes the instant the coordinator fires the same clock read
     if (expected === null) {
       assert.throws(() => localInstant(local, zone), /夏令时/, `${local} does not exist in ${zone}`);
       assert.throws(() => zonedInstant(local, zone), /夏令时/);
-      assert.match(localInstantPreview(local, zone) ?? "", /没有这个时刻/);
+      assert.match(timeFieldPreview(local, zone) ?? "", /没有这个时刻/);
     } else {
       assert.deepEqual(localInstant(local, zone), { iso: expected, later: later ?? null }, `${local} in ${zone}`);
       assert.equal(zonedInstant(local, zone), expected, "新建任务 reads the clock the same way");
-      if (later) assert.match(localInstantPreview(local, zone) ?? "", /出现两次，按较早的一次/);
+      if (later) assert.deepEqual(repeatedInstants(local, zone), { earlier: expected, later }, "the form offers both readings");
     }
   }
 });
@@ -67,10 +67,42 @@ test("a typed value that cannot be read says why", () => {
   assert.throws(() => localInstant("2026-02-31T09:00", "UTC"), /无效/);
   assert.throws(() => localInstant("2026-11-12T09:00Z", "UTC"), /请选择日期和时间/, "UTC or an offset is not asked for");
   assert.throws(() => localInstant("2026-11-12T09:00", "Mars/Base"), /时区无法识别/);
-  assert.equal(localInstantPreview("", "UTC"), null);
-  assert.match(localInstantPreview("2026-11-12T09:30", "America/New_York", "Asia/Taipei") ?? "",
+  assert.equal(timeFieldPreview("", "UTC"), null);
+  assert.match(timeFieldPreview("2026-11-12T09:30", "America/New_York", "Asia/Taipei") ?? "",
     /^按纽约时间 2026\/11\/12 09:30，即你的时间 2026\/11\/12 22:30；记录为 2026-11-12 14:30 UTC。$/);
-  assert.match(localInstantPreview("2026-11-12T09:30", "Asia/Taipei", "Asia/Taipei") ?? "", /^按台北时间 2026\/11\/12 09:30；记录为 2026-11-12 01:30 UTC。$/);
+  assert.match(timeFieldPreview("2026-11-12T09:30", "Asia/Taipei", "Asia/Taipei") ?? "", /^按台北时间 2026\/11\/12 09:30；记录为 2026-11-12 01:30 UTC。$/);
+});
+
+test("a time filled from a record goes back exactly as stored while it is left alone: the later of two repeated readings, milliseconds", () => {
+  const cases: Array<[iso: string, zone: string, local: string]> = [
+    ["2027-11-07T06:30:00.000Z", "America/New_York", "2027-11-07T01:30"], // the later 01:30 (EST)
+    ["2027-11-07T05:30:00.000Z", "America/New_York", "2027-11-07T01:30"], // the earlier 01:30 (EDT)
+    ["2026-10-25T01:30:00.000Z", "Europe/Berlin", "2026-10-25T02:30"], // the later 02:30 (CET)
+    ["2026-11-12T14:30:00.500Z", "America/New_York", "2026-11-12T09:30"],
+    ["2026-04-04T15:15:00.000Z", "Australia/Lord_Howe", "2026-04-05T01:45"],
+  ];
+  for (const [iso, zone, local] of cases) {
+    const value = timeFieldValue(iso, zone);
+    assert.deepEqual(splitTimeField(value), { local, instant: iso });
+    assert.equal(timeFieldInstant(value, zone), iso, `${iso} in ${zone} goes back as it was`);
+  }
+  // The person picks the other one of a repeated reading, or types another time: worked out again.
+  const repeated = repeatedInstants("2027-11-07T01:30", "America/New_York")!;
+  assert.deepEqual(repeated, { earlier: "2027-11-07T05:30:00.000Z", later: "2027-11-07T06:30:00.000Z" });
+  assert.equal(timeFieldInstant(`2027-11-07T01:30|${repeated.earlier}`, "America/New_York"), repeated.earlier);
+  assert.equal(timeFieldInstant("2027-11-07T01:30", "America/New_York"), repeated.earlier, "a typed repeated reading is the earlier one, as the scheduler takes it");
+  assert.equal(timeFieldInstant("2026-11-12T09:31|2026-11-12T14:30:00.500Z", "America/New_York"), "2026-11-12T14:31:00.000Z", "a changed reading is worked out again");
+  assert.equal(timeFieldInstant("2026-11-12T09:30|2026-11-12T14:30:00.500Z", "Asia/Shanghai"), "2026-11-12T01:30:00.000Z", "another zone reads the clock again");
+  assert.match(timeFieldPreview(timeFieldValue("2027-11-07T06:30:00.000Z", "America/New_York"), "America/New_York", "UTC") ?? "", /记录为 2027-11-07 06:30 UTC/);
+  assert.equal(timeFieldValue(null, "UTC"), "");
+});
+
+test("a zone the browser does not know keeps the stored instant on the UTC clock and refuses a changed time", () => {
+  const value = timeFieldValue("2026-12-31T16:00:00.000Z", "Mars/Base");
+  assert.equal(value, "2026-12-31T16:00|2026-12-31T16:00:00.000Z");
+  assert.equal(timeFieldInstant(value, "Mars/Base"), "2026-12-31T16:00:00.000Z", "left alone, the stored instant goes back");
+  assert.match(timeFieldPreview(value, "Mars/Base") ?? "", /浏览器不认识时区“Mars\/Base”，这里按 UTC 显示；不改就原样保留 2026-12-31 16:00 UTC/);
+  assert.throws(() => timeFieldInstant("2026-12-31T17:00|2026-12-31T16:00:00.000Z", "Mars/Base"), /浏览器不认识这个时区/);
 });
 
 test("the zone choices put the zone in use first and say which cannot be read", () => {
@@ -79,4 +111,7 @@ test("the zone choices put the zone in use first and say which cannot be read", 
   assert.deepEqual(options[1], { value: "Asia/Taipei", label: "台北（Asia/Taipei）" });
   assert.equal(new Set(options.map(option => option.value)).size, options.length, "each zone once");
   assert.ok(options.some(option => option.value === "Europe/Berlin"));
+  const started = performance.now();
+  for (let i = 0; i < 20; i++) timezoneOptions(["Asia/Shanghai"]);
+  assert.ok((performance.now() - started) / 20 < 5, "the zone list is built once, not on every render");
 });

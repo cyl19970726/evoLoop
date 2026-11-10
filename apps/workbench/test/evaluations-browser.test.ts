@@ -515,6 +515,15 @@ test("建立冻结评价: the common task, the owner task, documents, a Wiki pag
     const wiki = form.getByRole("group", { name: "仅知识条件增加的固定 Wiki" });
     await wiki.getByRole("button", { name: "添加 Wiki 页" }).click();
     await form.getByRole("searchbox", { name: "仅知识条件增加的固定 Wiki" }).fill("经验");
+    // A version clicked and then given up (another page) is not added when its read comes back.
+    await wiki.getByRole("button", { name: /首轮修复经验/ }).click();
+    wikiDelay = 1200;
+    await wiki.getByRole("button", { name: /当前版本/ }).click();
+    await wiki.getByRole("button", { name: "换一个 Wiki 页" }).click();
+    await wiki.getByRole("list", { name: "可选的 Wiki 页" }).waitFor();
+    await new Promise(done => setTimeout(done, 1800));
+    assert.equal(await wiki.getByRole("button", { name: /^移除/ }).count(), 0, "the version given up is not added");
+    assert.equal(await wiki.getByText("正在读取这一版…").count(), 0);
     await wiki.getByRole("button", { name: /首轮修复经验/ }).click();
     wikiDelay = 800;
     await wiki.getByRole("button", { name: /当前版本/ }).click();

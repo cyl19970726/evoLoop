@@ -119,6 +119,16 @@ function fixedDocumentRevision(projectId: string, documentId: string, revisionId
   });
 }
 
+/**
+ * Reads that answer after the person moved on (another document or page, another version, the adder closed) are
+ * dropped: each read takes a ticket, and moving on or closing draws a new one.
+ */
+function useReadTicket() {
+  const ticket = useRef(0);
+  useEffect(() => () => { ticket.current++; }, []);
+  return { take: () => ++ticket.current, current: (mine: number) => mine === ticket.current, drop: () => { ticket.current++; } };
+}
+
 /** Choose a document, then one of its versions: the current one, the adopted one, or earlier ones read one at a time. */
 function DocumentAdder({ projectId, control, onAdd }: { projectId: string; control?: Control | undefined; onAdd(ref: EvaluationFixedRef): void }) {
   const client = useQueryClient();
@@ -127,6 +137,7 @@ function DocumentAdder({ projectId, control, onAdd }: { projectId: string; contr
   const [earlier, setEarlier] = useState<DocumentRevision[]>([]);
   const [problem, setProblem] = useState("");
   const [reading, setReading] = useState(false);
+  const ticket = useReadTicket();
   const reread = useReread(projectId, ["documents", "list", "all"]);
   const list = useProjectList(projectId, ["documents", "list", "all"], (cursor, signal) => api().documents(projectId, cursor, undefined, signal), (document: Document) => document.id);
   const detail = useProjectQuery(projectId, ["document", picked ?? "", "detail"], async (): Promise<DocumentDetail> => {
@@ -138,8 +149,9 @@ function DocumentAdder({ projectId, control, onAdd }: { projectId: string; contr
   const choose = (document: DocumentDetail["document"], revision: DocumentRevision) => {
     const ref = documentFixedRef(projectId, document, revision);
     if (!ref) { setProblem("这个版本没有可用的内容哈希，不能作为固定来源。"); return; }
-    onAdd(ref); setPicked(null); setEarlier([]); setProblem(""); setQuery("");
+    ticket.drop(); onAdd(ref); setPicked(null); setEarlier([]); setProblem(""); setReading(false); setQuery("");
   };
+  const another = () => { ticket.drop(); setPicked(null); setEarlier([]); setProblem(""); setReading(false); };
   if (picked) {
     const value = detail.data;
     const versions: DocumentRevision[] = value ? [value.current, ...value.adopted && value.adopted.id !== value.current.id ? [value.adopted] : [], ...earlier]
@@ -148,10 +160,13 @@ function DocumentAdder({ projectId, control, onAdd }: { projectId: string; contr
     const oldest = value ? earlier.at(-1) ?? value.current : undefined;
     const readEarlier = async () => {
       if (!oldest?.previousRevisionId) return;
+      const mine = ticket.take();
       setReading(true); setProblem("");
-      try { const previous = await client.fetchQuery(fixedDocumentRevision(projectId, picked, oldest.previousRevisionId)); setEarlier(current => [...current, previous]); }
-      catch (cause) { setProblem(`更早的版本没有读回：${errorText(cause)}`); }
-      finally { setReading(false); }
+      try {
+        const previous = await client.fetchQuery(fixedDocumentRevision(projectId, picked, oldest.previousRevisionId));
+        if (ticket.current(mine)) setEarlier(current => [...current, previous]);
+      } catch (cause) { if (ticket.current(mine)) setProblem(`《${value!.document.title}》更早的版本没有读回：${errorText(cause)}`); }
+      finally { if (ticket.current(mine)) setReading(false); }
     };
     return <div className="flex min-w-0 flex-col gap-2">
       <p className="m-0 text-small text-foreground">{value ? <>选择《{value.document.title}》的版本</> : detail.isError ? "文档没有读回" : "正在读取文档的版本…"}</p>
@@ -162,7 +177,7 @@ function DocumentAdder({ projectId, control, onAdd }: { projectId: string; contr
       {problem && <p className="m-0 text-caption text-destructive">{problem}</p>}
       <div className="flex flex-wrap gap-2">
         {oldest?.previousRevisionId && <Button size="compact" variant="ghost" disabled={reading} onClick={() => void readEarlier()}>{reading ? "读取中…" : "读取更早的版本"}</Button>}
-        <Button size="compact" variant="ghost" onClick={() => { setPicked(null); setEarlier([]); setProblem(""); }}>换一份文档</Button>
+        <Button size="compact" variant="ghost" onClick={another}>换一份文档</Button>
       </div>
     </div>;
   }
@@ -187,22 +202,24 @@ function WikiAdder({ projectId, control, onAdd }: { projectId: string; control?:
   const [picked, setPicked] = useState<KnowledgeSummary | null>(null);
   const [problem, setProblem] = useState("");
   const [reading, setReading] = useState("");
-  // Closed (收起) while a version was read: the version is not added behind the person's back.
-  const alive = useRef(true);
-  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
+  // Another page chosen, or the adder closed, while a version was read: that version is not added behind the person's back.
+  const ticket = useReadTicket();
   const reread = useReread(projectId, ["knowledge", "pages"]);
   const list = useProjectList(projectId, ["knowledge", "pages"], cursor => wiki.pages(cursor), (page: KnowledgeSummary) => page.knowledgeId);
   const history = useProjectQuery(projectId, ["evaluation-choice", "wiki-history", picked?.knowledgeId ?? ""], () => wiki.history(picked!.knowledgeId), { enabled: !!picked });
   const choose = async (summary: KnowledgeSummary, revision: string) => {
+    const mine = ticket.take();
     setReading(revision); setProblem("");
     try {
       const page = await client.fetchQuery(projectQueryOptions(projectId, ["knowledge", "read", summary.knowledgeId, revision], () => wiki.page(summary.knowledgeId, revision)));
+      if (!ticket.current(mine)) return;
       const ref = wikiFixedRef(projectId, summary.knowledgeId, revision, page);
       if (!ref) { setProblem("这一版与所选的 Wiki 页不符，或没有可用的内容哈希。"); return; }
-      if (alive.current) { onAdd(ref); setPicked(null); setQuery(""); }
-    } catch (cause) { if (alive.current) setProblem(`这一版没有读回：${errorText(cause)}`); }
-    finally { if (alive.current) setReading(""); }
+      onAdd(ref); setPicked(null); setQuery("");
+    } catch (cause) { if (ticket.current(mine)) setProblem(`这一版没有读回：${errorText(cause)}`); }
+    finally { if (ticket.current(mine)) setReading(""); }
   };
+  const another = () => { ticket.drop(); setPicked(null); setProblem(""); setReading(""); };
   if (picked) {
     const versions = [picked, ...(history.data?.items ?? []).filter(item => item.knowledgeId === picked.knowledgeId)]
       .filter((item, index, all) => all.findIndex(other => other.revision === item.revision) === index);
@@ -213,7 +230,7 @@ function WikiAdder({ projectId, control, onAdd }: { projectId: string; control?:
           onSelect={() => { if (!reading) void choose(picked, item.revision); }} /></li>)}</ul>
       <p className={muted}>{history.isError ? `历史版本没有读回：${errorText(history.error)}；仍可选当前版本。` : history.data ? history.data.nextCursor ? "只列出最近的历史版本。" : "" : "正在读取历史版本…"}</p>
       {problem && <p className="m-0 text-caption text-destructive">{problem}</p>}
-      <Button size="compact" variant="ghost" className="w-fit" onClick={() => { setPicked(null); setProblem(""); }}>换一个 Wiki 页</Button>
+      <Button size="compact" variant="ghost" className="w-fit" onClick={another}>换一个 Wiki 页</Button>
     </div>;
   }
   const items = list.items ?? [];

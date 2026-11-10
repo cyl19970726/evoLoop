@@ -73,8 +73,8 @@ test("the revision form opens on the definition's own times and names; saving it
   const fields = scheduleFields([grant, second], names, definition);
   const initial = Object.fromEntries(fields.map(field => [field.name, field.value ?? ""]));
   assert.equal(initial.timezone, "America/New_York");
-  assert.equal(initial.atLocal, "2027-11-07T01:30", "on the schedule's clock, not UTC");
-  assert.equal(initial.expiresLocal, "2027-12-01T00:00:30");
+  assert.equal(initial.atLocal, "2027-11-07T01:30|2027-11-07T05:30:00.000Z", "on the schedule's clock, not UTC, with the stored instant kept");
+  assert.equal(initial.expiresLocal, "2027-12-01T00:00:30|2027-12-01T05:00:30.000Z");
   const values = { ...initial, reason: "改理由" };
   const typed = { ...values, atUtc: definition.revision.rule.kind === "once" ? definition.revision.rule.atUtc : "", expiresAtUtc: definition.revision.authorization.expiresAtUtc! };
   const sent = scheduleCommandValues(values, "reader", [grant, second], definition);
@@ -82,6 +82,27 @@ test("the revision form opens on the definition's own times and names; saving it
   assert.deepEqual(sent.rule, definition.revision.rule);
   assert.equal(sent.authorization.expiresAtUtc, definition.revision.authorization.expiresAtUtc);
   assert.equal(sent.template.owner, otherRole);
+});
+
+test("a revision saved without touching its times sends them as stored: the later repeated reading, milliseconds, an unknown zone", () => {
+  const later: ScheduleDefinition = { ...definition, revision: { ...definition.revision, rule: { kind: "once", atUtc: "2027-11-07T06:30:00.000Z" },
+    authorization: { ...definition.revision.authorization, expiresAtUtc: "2027-12-01T05:00:30.500Z" } } };
+  const opened = (item: ScheduleDefinition) => Object.fromEntries(scheduleFields([grant, second], names, item).map(field => [field.name, field.value ?? ""]));
+  const paused = scheduleCommandValues({ ...opened(later), state: "paused", reason: "先暂停" }, "reader", [grant, second], later);
+  assert.deepEqual(paused.rule, later.revision.rule, "the later 01:30 stays the later one");
+  assert.equal(paused.authorization.expiresAtUtc, "2027-12-01T05:00:30.500Z", "milliseconds are kept");
+  const berlin: ScheduleDefinition = { ...definition, revision: { ...definition.revision, timezone: "Europe/Berlin", rule: { kind: "interval", anchorUtc: "2026-10-25T01:30:00.000Z", everyMinutes: 60 } } };
+  assert.deepEqual(scheduleCommandValues({ ...opened(berlin), reason: "r" }, "reader", [grant, second], berlin).rule, berlin.revision.rule);
+  // A zone the browser does not know: the expiry is kept, never dropped to “none”.
+  const unknown: ScheduleDefinition = { ...definition, revision: { ...definition.revision, timezone: "Mars/Base", rule: { kind: "daily", localTime: "09:00" },
+    authorization: { ...definition.revision.authorization, expiresAtUtc: "2026-12-31T16:00:00.000Z" } } };
+  const values = opened(unknown);
+  assert.notEqual(values.expiresLocal, "");
+  const sent = scheduleCommandValues({ ...values, state: "paused", reason: "先暂停" }, "reader", [grant, second], unknown);
+  assert.equal(sent.authorization.expiresAtUtc, "2026-12-31T16:00:00.000Z");
+  assert.equal(sent.timezone, "Mars/Base");
+  assert.throws(() => scheduleCommandValues({ ...values, expiresLocal: "2026-12-31T18:00", state: "paused", reason: "r" }, "reader", [grant, second], unknown),
+    /授权到期时间：浏览器不认识这个时区/, "a changed time in an unknown zone is refused, not guessed");
 });
 
 test("roles and grants are offered by name; their identifiers stay in the preview's 完整标识", () => {
@@ -93,13 +114,12 @@ test("roles and grants are offered by name; their identifiers stay in the previe
     assert.doesNotMatch(`${item.label} ${item.hint ?? ""} ${item.options?.map(option => option.label).join(" ") ?? ""}`, uuid, `${item.name} shows no raw ID`);
     assert.doesNotMatch(`${item.label} ${item.hint ?? ""}`, /UTC|ISO|IANA|Agent|\bID\b/, `${item.name} speaks the page's words`);
   }
-  assert.equal(field("atLocal").kind, "datetime");
+  assert.equal(field("atLocal").kind, "custom");
+  assert.equal(field("expiresLocal").kind, "custom");
   assert.equal(field("localTime").kind, "time");
   assert.equal(field("timezone").kind, "select");
   assert.ok(field("owner").preview?.({ owner: roleId }), "the chosen role's ID is one click away");
   assert.ok(field("grant").preview?.({ grant: grantKey(second) }));
-  assert.match(String(field("atLocal").preview?.({ ruleKind: "once", timezone: "Asia/Taipei", atLocal: "2026-11-12T09:30" })), /记录为 2026-11-12 01:30 UTC/);
-  assert.equal(field("atLocal").preview?.({ ruleKind: "daily", timezone: "Asia/Taipei", atLocal: "2026-11-12T09:30" }), null, "only the chosen rule previews");
 });
 
 test("a registered owner outside the choosable roles, an unread name and a revoked grant are said, not hidden", () => {
@@ -108,7 +128,9 @@ test("a registered owner outside the choosable roles, an unread name and a revok
   const field = (name: string) => fields.find(item => item.name === name)!;
   assert.deepEqual(field("owner").options, [{ value: otherRole, label: "当前登记的职责" }]);
   assert.match(field("owner").hint ?? "", /没有读回/);
-  assert.deepEqual(field("grant").options, [{ value: grantKey(definition.revision.authorization), label: "按职责“名称待读取”授权（授权已撤回，仅能暂停或停止）" }]);
+  assert.deepEqual(field("grant").options, [{ value: grantKey(definition.revision.authorization), label: "按职责“名称读取中”授权（授权已撤回，仅能暂停或停止）" }]);
+  const failed = scheduleFields([], { ...unread, nameUnreadable: () => true }, definition).find(item => item.name === "grant")!;
+  assert.match(failed.options?.[0]?.label ?? "", /^按职责“名称暂不可读”授权/, "a name whose read failed is not said to be on its way");
   assert.equal(field("state").value, "paused", "a revoked grant can only pause or stop");
   const outside = scheduleFields([grant], { ...names, roles: [{ id: roleId, title: "巡检职责" }] }, definition).find(item => item.name === "owner")!;
   assert.deepEqual(outside.options?.[0], { value: otherRole, label: "发布职责（不在可选职责中）" });

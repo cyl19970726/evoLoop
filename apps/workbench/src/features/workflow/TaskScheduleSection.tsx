@@ -13,7 +13,8 @@ import { seriesCurrentPromptCommand, seriesFuturePromptCommand, taskStateLabel }
 import { ActionRow, Fact, Fine, ReadNote, TabSection, reasonField } from "./TaskForms";
 import { formatScheduled, nextTimingLabel, repeatLabel, timingFormPayload, timingStopPayload, timingVersion, timingWaitingText } from "./taskTimingPresentation";
 import { browserTimezone } from "./taskCreate";
-import { localInputIn, localInstantPreview, timezoneOptions } from "../../shared/zonedTime";
+import { timeFieldValue, timezoneOptions } from "../../shared/zonedTime";
+import { LocalTimeInput } from "../../shared/ui/LocalTimeInput";
 
 type Scope = "this" | "this_and_future" | "future";
 // As the old forms: the shared schema checks the command, which is then sent exactly as built.
@@ -46,8 +47,9 @@ export function TaskScheduleSection({ context, detail }: { context: MutationCont
   // As 新建任务: the date and time on the clock of the task's zone (a date-time control), never UTC or an offset.
   const zone = timing?.timezone ?? browserTimezone();
   const timeFields: FormField[] = [
-    { name: "executeAt", label: "约定执行时间", kind: "datetime", initial: localInputIn(timing?.executeAtUtc, zone),
-      hint: "按下面时区的当地日期和时间填写；每天重复时，以后每天在同一当地时刻生成。", preview: values => localInstantPreview(values.executeAt ?? "", values.timezone ?? "") },
+    { name: "executeAt", label: "约定执行时间", kind: "custom", initial: timeFieldValue(timing?.executeAtUtc, zone),
+      hint: "按下面时区的当地日期和时间填写；每天重复时，以后每天在同一当地时刻生成。",
+      render: ({ control, value, values, onChange }) => <LocalTimeInput control={control} name="executeAt" value={value} timezone={values.timezone ?? ""} onChange={onChange} /> },
     { name: "timezone", label: "时区", kind: "select", initial: zone, options: timezoneOptions([timing?.timezone]) },
   ];
   const set = (repeat: "none" | "daily", scope: Scope) => (values: Record<string, string>, seen: typeof baseline) =>
