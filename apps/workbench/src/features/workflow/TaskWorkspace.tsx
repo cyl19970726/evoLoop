@@ -34,7 +34,8 @@ function detailAddress(path: string, view: TaskListView): string {
 let chosenLayout: NarrowTaskLayout | null = null;
 const layoutListeners = new Set<() => void>();
 const subscribeLayout = (listener: () => void) => { layoutListeners.add(listener); return () => { layoutListeners.delete(listener); }; };
-const layoutStore = () => typeof window === "undefined" ? null : window.localStorage;
+// Reading window.localStorage itself throws where storage is disabled; the choice then lives in this tab only.
+const layoutStore = (): Storage | null => { try { return typeof window === "undefined" ? null : window.localStorage; } catch { return null; } };
 const currentLayout = () => chosenLayout ?? readNarrowLayout(layoutStore());
 function chooseLayout(next: NarrowTaskLayout) {
   chosenLayout = next;
@@ -54,7 +55,7 @@ export function ViewSwitch({ detailHref, tableHref, current, narrow = false, lay
   const listLink = (label: string, shows: boolean, choice?: NarrowTaskLayout) =>
     <a key={label} href={tableHref} aria-current={current === "table" && shows ? "page" : undefined} onClick={choice ? () => chooseLayout(choice) : undefined}
       className={cn(item, current === "table" && shows && selected)}>{label}</a>;
-  return <nav aria-label="任务视图" className="inline-flex items-center gap-0.5 rounded-full bg-field p-[3px]">
+  return <nav aria-label="任务视图" className="inline-flex items-center gap-0.5 rounded-full bg-field p-1">
     {detailHref ? <a href={detailHref} aria-current={current === "detail" ? "page" : undefined} className={cn(item, current === "detail" && selected)}>正文</a>
       : <span aria-disabled="true" className={cn(item, "opacity-50")}>正文</span>}
     {narrow ? [listLink("列表", layout === "list", "list"), listLink("表格", layout === "table", "table")] : listLink("表格", true)}

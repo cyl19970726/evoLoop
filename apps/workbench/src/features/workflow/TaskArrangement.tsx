@@ -6,7 +6,7 @@ import React from "react";
 import type { TaskAttentionFollowUp, TaskAttentionItem, TaskDetail } from "@evoloop/contracts";
 import type { LeaderNotice } from "@evoloop/contracts/leader-notices";
 import type { LeaderWorkTask } from "@evoloop/contracts/work-index";
-import { Button, Field, Input, Notice, Select, StatusTag, Textarea } from "@evoloop/ui";
+import { Button, Checkbox, Field, Input, Notice, Select, StatusTag, Textarea } from "@evoloop/ui";
 import { api, errorText, request } from "../../shared/api";
 import type { MutationContext } from "../../shared/ActionForm";
 import { useProjectPages, useProjectQuery } from "../../shared/query";
@@ -203,7 +203,7 @@ function FollowUpForm({ context, detail, value, followUp, onReread }: {
     {input("下一检查时间", "nextCheck", { type: "datetime-local" })}
     <Field label="跟进理由" error={missing("reason", "跟进理由")}>{control => <Textarea {...control} required value={v.reason} onChange={event => set("reason")(event.target.value)} rows={3} />}</Field>
     <label className="flex items-center gap-2 text-label text-foreground">
-      <input type="checkbox" checked={handoff} disabled={!!followUp?.publication} onChange={event => set("handoff")(event.target.checked ? "1" : "")} className="accent-[var(--accent)]" />
+      <Checkbox checked={handoff} disabled={!!followUp?.publication} onCheckedChange={checked => set("handoff")(checked === true ? "1" : "")} />
       登记具备发布条件，交给维护者</label>
     {handoff && <div className="flex flex-col gap-3 pl-6">
       {input("维护者或接收方", "recipient", { required: true })}

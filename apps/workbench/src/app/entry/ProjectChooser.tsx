@@ -74,7 +74,7 @@ export function ProjectChooser({ token, principal, receipts, operationNotice, op
         const pending = receipts.filter(r => r.projectId === project.id).length;
         return <li key={project.id}>
           <a className="project-item flex items-center gap-3 rounded-xl bg-raised px-4 py-3 text-foreground shadow-sm outline-none hover:bg-selected focus-visible:shadow-[var(--focus-ring)]" href={href(project.id, "work")}>
-            <span aria-hidden="true" className="flex size-10 shrink-0 items-center justify-center rounded-[11px] bg-accent font-semibold text-accent-foreground">{projectInitial(project.title)}</span>
+            <span aria-hidden="true" className="flex size-10 shrink-0 items-center justify-center rounded-md bg-accent font-semibold text-accent-foreground">{projectInitial(project.title)}</span>
             <span className="flex min-w-0 flex-1 flex-col">
               <strong className="truncate font-semibold">{project.title}</strong>
               <span className="text-caption text-muted-foreground">建立于 {date(project.createdAt)}{pending ? ` · ${pending} 项操作待核对` : ""}</span>

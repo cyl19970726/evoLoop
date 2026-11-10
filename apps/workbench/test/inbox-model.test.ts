@@ -105,10 +105,10 @@ test("the 待我处理 count adds the three parts, and a part that failed or was
   assert.deepEqual(stale.state === "unknown" && [stale.known, /待我验收读取失败/.test(stale.text), /已读回/.test(stale.text)], [0, true, false]);
   const partial = inboxBadge([part("待我验收", 0), part("依据变化", 0), part("等我使用的交付", 2, false, true)]);
   assert.match(partial.state === "unknown" ? partial.text : "", /等我使用的交付没有读完/);
-  // The shell adds the unconfirmed operations itself: an unknown count shows no number at all.
-  assert.equal(shellInboxCount({ state: "known", count: 6 }, 2), 6);
-  assert.equal(shellInboxCount({ state: "reading" }, 2), 0);
-  assert.equal(shellInboxCount(failed, 2) + 2, 0);
+  // The shell adds the unconfirmed operations itself; an unknown count is handed over as unknown (the dot says 待核对).
+  assert.equal(shellInboxCount({ state: "known", count: 6 }), 6);
+  assert.equal(shellInboxCount({ state: "reading" }), 0);
+  assert.equal(shellInboxCount(failed), null);
 });
 
 async function withFetch(mock: (path: string) => unknown, run: () => Promise<void>) {

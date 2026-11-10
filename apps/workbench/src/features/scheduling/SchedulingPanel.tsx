@@ -240,7 +240,7 @@ function ScheduleCard({ definition, context, grants, names, status, fresh, loadi
         ["验收方式", revision.template.managedTarget ? "受管判断合同" : revision.template.acceptanceMode === "human_required" ? "必须本人验收" : "独立智能体验收"],
         ...revision.template.managedTarget ? [] : [["指定验收身份", revision.template.consumer ? "已指定，身份见下方来源" : "未指定"] as [string, ReactNode]]]} />
       <details className="text-small"><summary className="cursor-pointer text-text-secondary">阅读触发时使用的完整任务材料</summary>
-        <div className="mt-2"><SectionBoundary label="任务材料"><MarkdownBody className="text-small" source={revision.template.content} identity={`schedule-${revision.id}`} projectId={context.projectId} /></SectionBoundary></div>
+        <div className="mt-2"><SectionBoundary label="任务材料"><MarkdownBody className="text-small" source={revision.template.content} identity={`schedule-${revision.id}`} projectId={context.projectId} topHeading={4} /></SectionBoundary></div>
       </details>
       <FullIdentifiers summary="来源与完整标识（含固定目标）" rows={[
         { label: "日程", value: definition.id }, { label: "当前修订", value: definition.currentRevisionId },

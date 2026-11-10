@@ -8,7 +8,7 @@ import {
   leaderWorkDependenciesCommandSchema, leaderWorkPlanCommandSchema, leaderWorkReviewCommandSchema,
   type LeaderWorkDependenciesCommand, type LeaderWorkPlanCommand, type LeaderWorkReviewCommand, type LeaderWorkTask,
 } from "@evoloop/contracts/work-index";
-import { Button, Field, Input, Notice, Select, Textarea } from "@evoloop/ui";
+import { Button, Checkbox, Field, Input, Notice, Select, Textarea } from "@evoloop/ui";
 import { api, errorText } from "../../shared/api";
 import type { MutationContext } from "../../shared/ActionForm";
 import { useProjectPages, useProjectQuery } from "../../shared/query";
@@ -301,7 +301,7 @@ function DependenciesForm({ context, detail, leader, onReread }: { context: Muta
       <legend className="mb-1 text-label font-semibold text-foreground">前置任务</legend>
       {!chosen.length && <p className="text-label text-text-secondary">没有前置任务。</p>}
       {chosen.map(id => <label key={id} className="flex items-center gap-2 text-label text-foreground">
-        <input type="checkbox" checked onChange={() => setChosen(list => list.filter(item => item !== id))} className="accent-[var(--accent)]" />
+        <Checkbox checked onCheckedChange={() => setChosen(list => list.filter(item => item !== id))} />
         <a className="text-primary hover:underline" href={href(projectId, "task", id)}>{title(id)}</a>
         <span className="text-caption text-muted-foreground">{leader.dependencies.find(item => item.taskId === id)?.acceptanceSatisfied ? "已验收" : current.includes(id) ? "等待验收" : "新加入"}</span>
       </label>)}

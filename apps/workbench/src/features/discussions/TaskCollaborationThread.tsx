@@ -31,7 +31,7 @@ function AgentName({ projectId, sessionId }: { projectId: string; sessionId: str
 }
 
 function JumpTo({ eventId, children }: { eventId: string; children: ReactNode }) {
-  return <button type="button" className={link} onClick={() => document.getElementById(`collaboration-event-${eventId}`)?.scrollIntoView({ block: "center" })}>{children}</button>;
+  return <Button variant="link" onClick={() => document.getElementById(`collaboration-event-${eventId}`)?.scrollIntoView({ block: "center" })}>{children}</Button>;
 }
 
 export function TaskCollaborationThread({ projectId, taskId, refresh, from }: {

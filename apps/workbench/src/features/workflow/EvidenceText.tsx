@@ -14,7 +14,7 @@ export function evidencePreview(value: string): string | null {
   return prefix.slice(0, end).join("") + "…";
 }
 
-const text = "whitespace-pre-wrap text-label leading-relaxed text-foreground [overflow-wrap:anywhere]";
+const text = "whitespace-pre-wrap text-label leading-(--leading-body) text-foreground [overflow-wrap:anywhere]";
 
 export function EvidenceText({ label, value }: { label: string; value: string }): ReactNode {
   const preview = evidencePreview(value);

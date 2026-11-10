@@ -9,7 +9,7 @@ import type { SessionSnapshot } from "@evoloop/contracts/session-observation";
 import type { LeaderWorkTask } from "@evoloop/contracts/work-index";
 import type { RuntimeRunRecord, RuntimeSessionRecord } from "@evoloop/contracts/runtime";
 import { commandSchema, type Command } from "@evoloop/contracts";
-import { AgentAvatar, Button, CollapsibleRow, Notice, Tabs, TabsContent, TabsList, TabsTrigger, cn } from "@evoloop/ui";
+import { AgentAvatar, Button, CollapsibleRow, Notice, Tabs, TabsContent, TabsList, TabsTrigger } from "@evoloop/ui";
 import { ApiError, api, errorText, isUnconfirmed } from "../../shared/api";
 import { ActionForm, type MutationContext } from "../../shared/ActionForm";
 import { sessionProfileCommand, sessionProfileFields } from "./sessionProfilePresentation";
@@ -366,7 +366,7 @@ export function SessionWorkspace({ context, sessionKey, active, refresh, queue }
   </PanelSection>;
   const queueSection = <PanelSection title="执行队列" action={<a className="text-caption text-primary hover:underline" href={queueHref}>在分工与运行中查看</a>}>
     {current.queue.length ? <ol className="flex flex-col gap-1.5">{current.queue.map(item => <li key={item.entryId} className="flex min-w-0 items-start gap-2 text-small">
-      <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-field text-[11px] text-text-secondary" aria-label={`第 ${queuePosition(item.position)} 项`}>{queuePosition(item.position)}</span>
+      <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-field text-caption text-text-secondary" aria-label={`第 ${queuePosition(item.position)} 项`}>{queuePosition(item.position)}</span>
       <span className="min-w-0"><a className="text-foreground hover:underline" href={taskHref(item.taskId)}>{item.taskTitle}</a><span className="block text-caption text-muted-foreground">{queueStateLabel(item.state)}{item.holdReason && ` · ${item.holdReason}`}</span></span>
     </li>)}</ol> : <p className={mutedText}>{current.metadata.partial ? "已读范围内没有排队的任务；来源只读到部分记录。" : "没有排队的任务。"}</p>}
     {/* The project's execution queue for this agent, with its order, holds and attempts; read when opened. */}
@@ -472,7 +472,7 @@ export function SessionWorkspace({ context, sessionKey, active, refresh, queue }
   return <div ref={workspaceRef} data-ui="" className="session-workspace mx-auto flex h-[calc(100dvh-var(--session-top,0px)-0.5rem)] min-h-[420px] w-full min-w-0 max-w-[1480px] flex-col px-3 pt-3 max-compact:h-[calc(100dvh-var(--session-top,48px)-5rem)] max-compact:min-h-[360px] compact:px-6 compact:pt-4" data-view={panelTab}>
     {source && <ReturnLink projectId={projectId} href={source.href} place={source.place} label={source.label} className="mb-1 w-fit" />}
     {/* While the right column is closed its toggle sits at the top right of this area: the header leaves room for it. */}
-    <header className={cn("session-detail-header mb-2 flex min-h-11 min-w-0 shrink-0 items-center gap-2", panel && !panel.open && "compact:pr-11")}>
+    <header className="session-detail-header mb-2 flex min-h-11 min-w-0 shrink-0 items-center gap-2">
       <div className="session-detail-heading flex min-w-0 flex-1 items-center gap-2 compact:justify-center">
         <div className="flex min-w-0 items-center gap-2 rounded-full bg-raised py-1 pl-1.5 pr-3.5 shadow-sm">
           <AgentAvatar seed={session.key} roleSeed={session.roles[0]?.id ?? session.title} size={26} />

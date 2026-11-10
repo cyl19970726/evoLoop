@@ -39,6 +39,67 @@ test("colour literals appear only in packages/ui/src/tokens.css", () => {
   assert.ok(literals(join(ui, "tokens.css")) > 0, "the token file is where the colour values live");
 });
 
+// Type size, corner radius and line height are token classes (text-caption … text-title; rounded-sm/md/lg/xl/full;
+// leading-(--leading-reading|body|tight) or leading-tight), never a bracket value or Tailwind's own scale beside the
+// tokens. A literal that is truly needed goes in this list with its reason; it is empty since #229 F6.
+const typeExceptions: ReadonlyArray<{ file: string; literal: string; reason: string }> = [];
+const typeLiteralPatterns: ReadonlyArray<[RegExp, string]> = [
+  [/(?<![\w-])text-\[(?:length:)?[\d.]+[a-z%]*\]/g, "font size"],
+  [/(?<![\w-])text-(?:xs|sm|base|lg|[2-9]?xl)(?![\w-])/g, "font size outside the token scale"],
+  [/\bfontSize[=:]\s*["'{]?\d/g, "font size"],
+  [/(?<![\w-])rounded(?:-(?:t|r|b|l|s|e|tl|tr|br|bl|ss|se|es|ee))?-\[[^\]\s]*\]/g, "radius"],
+  [/(?<![\w-])rounded(?:-(?:t|r|b|l|s|e|tl|tr|br|bl|ss|se|es|ee))?(?:-(?:xs|2xl|3xl|4xl))?(?![\w[(-])/g, "radius outside the token scale"],
+  [/(?<![\w-])leading-\[[^\]\s]*\]/g, "line height"],
+  [/(?<![\w-])leading-(?:snug|normal|relaxed|loose)(?![\w-])/g, "line height outside the token scale"],
+];
+
+test("type size, radius and line height come from tokens in the workbench and @evoloop/ui", () => {
+  const found = [...files(source, /\.tsx?$/), ...files(ui, /\.tsx?$/)].flatMap(file => {
+    const text = withoutComments(readFileSync(file, "utf8"));
+    const name = relative(join(workbench, "../.."), file);
+    return typeLiteralPatterns.flatMap(([pattern, kind]) => [...text.matchAll(pattern)].map(match => ({ file: name, literal: match[0], kind })));
+  });
+  const offenders = found.filter(item => !typeExceptions.some(allowed => item.file.endsWith(allowed.file) && item.literal === allowed.literal))
+    .map(item => `${item.file}: ${item.literal} (${item.kind})`);
+  assert.deepEqual(offenders, [], "Use the token classes in docs/frontend/foundations.md; a new value needs a token in tokens.css first.");
+  for (const allowed of typeExceptions) assert.ok(allowed.reason.length > 0, `${allowed.file} ${allowed.literal} needs a reason`);
+});
+
+// Controls come from @evoloop/ui (docs/frontend/components.md): Button/IconButton, Select, Checkbox, RadioGroup and
+// ConfirmDialog (or shared/confirm.ts askConfirm before the design system has loaded). Native controls that stay are
+// listed here, each with its reason and count.
+const nativeControlExceptions: ReadonlyArray<{ file: string; control: string; count: number; reason: string }> = [
+  { file: "app/entry/AuthGate.tsx", control: "<button", count: 2,
+    reason: "The login page is the first load, which must not carry @evoloop/ui's Button (tailwind-merge and icons, bundle-budget.test.ts); its classes follow Button." },
+  { file: "app/router.tsx", control: "<button", count: 1,
+    reason: "The router's error page is in the first load and must render even when a page chunk failed; no design-system import." },
+  { file: "app/PageBoundary.tsx", control: "<button", count: 1,
+    reason: "The page error boundary wraps every page from the first load; same reason as the router's error page." },
+];
+const nativeControls: ReadonlyArray<[string, RegExp]> = [
+  ["<button", /<button\b/g],
+  ["<select", /<select\b/g],
+  ["checkbox or radio input", /type[=:]\s*["'{]*(?:checkbox|radio)\b/g],
+  ["window.confirm", /\b(?:window\.)?confirm\(/g],
+];
+
+test("native buttons, selects, checkboxes, radios and confirm() are gone from the workbench, except the listed few", () => {
+  const counts = new Map<string, number>();
+  for (const file of files(source, /\.tsx?$/)) {
+    const text = withoutComments(readFileSync(file, "utf8"));
+    for (const [control, pattern] of nativeControls) {
+      const count = text.match(pattern)?.length ?? 0;
+      if (count) counts.set(`${relative(source, file)} ${control}`, count);
+    }
+  }
+  const allowed = new Map(nativeControlExceptions.map(item => [`${item.file} ${item.control}`, item.count]));
+  const offenders = [...counts].filter(([key, count]) => count > (allowed.get(key) ?? 0)).map(([key, count]) => `${key} ×${count}`);
+  assert.deepEqual(offenders, [], "Use Button, IconButton, Select, Checkbox, RadioGroup or ConfirmDialog from @evoloop/ui.");
+  const stale = nativeControlExceptions.filter(item => (counts.get(`${item.file} ${item.control}`) ?? 0) < item.count).map(item => `${item.file} ${item.control}`);
+  assert.deepEqual(stale, [], "An exception that is no longer needed is removed from the list.");
+  for (const item of nativeControlExceptions) assert.ok(item.reason.length > 20, `${item.file} needs a reason`);
+});
+
 test("no old markup marker is left: no data-legacy region and no Legacy wrapper", () => {
   const offenders = [...files(source, /\.(css|tsx?)$/), ...files(ui, /\.(css|tsx?)$/)]
     .filter(file => /data-legacy|<Legacy\b/.test(readFileSync(file, "utf8")))

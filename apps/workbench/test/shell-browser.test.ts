@@ -1,7 +1,8 @@
 // Opt-in built-app regression for the frame (docs/frontend/layout.md): switching spaces keeps each list's filter,
 // search and selected row (M5); 在中间打开 turns the right column to 信息 (M7); closing the right drawer with Esc
 // returns focus to the button that opened it (L3); 展开右栏 never covers the page header (L4); an address that names
-// no page says so (L10); phones get a compact task list until the reader chooses the table (L13).
+// no page says so (L10); phones get a compact task list until the reader chooses the table (L13). Leaving the project
+// or signing out with a draft asks in @evoloop/ui's ConfirmDialog, Back and Forward included (#229 F6).
 // Build the workbench, then set EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE; EVOLOOP_SHELL_SCREENSHOT_DIR keeps screenshots.
 import assert from "node:assert/strict";
 import { test } from "node:test";
@@ -276,5 +277,65 @@ test("the frame keeps each space's list, turns the right column to 信息, retur
   await shot(phone, "shell-390-07-table-chosen");
   await views.getByRole("link", { name: "列表" }).click();
   await phoneMain.locator('[data-task-table="stacked"]').waitFor();
+  assert.deepEqual(errors, []);
+});
+
+test("leaving the project or signing out with a draft asks in the page's dialog; Back is asked too; staying keeps the draft", {
+  skip: !modulePath && "Set EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE",
+}, async t => {
+  const { chromium } = (await import(pathToFileURL(modulePath!).href)).default;
+  const base = await serve(t);
+  const browser = await chromium.launch({ headless: true, ...(process.env.EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH ? { executablePath: process.env.EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH } : {}) });
+  t.after(() => browser.close());
+  const errors: string[] = [];
+  const page: Page = await (await browser.newContext({ viewport: { width: 1440, height: 900 } })).newPage();
+  page.on("pageerror", error => errors.push(error.message));
+  let nativeDialogs = 0;
+  page.on("dialog", dialog => { nativeDialogs += 1; void dialog.dismiss(); });
+  await page.goto(`${base}/`);
+  await login(page);
+  await page.getByRole("heading", { name: "你的项目" }).waitFor();
+  await go(page, `/p/${projectId}/tasks/new`);
+  const title = page.getByRole("main").getByLabel("任务名称");
+  await title.fill("还没保存的任务");
+  await page.locator('[data-dirty="true"]').first().waitFor();
+  const ask = page.getByRole("alertdialog");
+
+  // 切换项目 asks; staying keeps the page and the draft. The safe answer has the focus.
+  await page.getByRole("complementary", { name: "项目导航" }).getByRole("link", { name: /切换项目/ }).click();
+  await ask.getByRole("heading", { name: "离开当前项目？" }).waitFor();
+  assert.match(await ask.innerText(), /还有未提交的草稿。离开当前项目会清除页面草稿。/);
+  assert.equal(await page.evaluate(() => document.activeElement?.textContent), "留在当前项目");
+  await shot(page, "shell-1440-08-leave-confirm");
+  await ask.getByRole("button", { name: "留在当前项目" }).click();
+  await ask.waitFor({ state: "detached" });
+  assert.equal(pathOf(page), `/p/${projectId}/tasks/new`);
+  assert.equal(await title.inputValue(), "还没保存的任务");
+
+  // Back to the project list is asked as well; Escape stays, and the address comes back to the form.
+  await page.goBack();
+  await ask.getByRole("heading", { name: "离开当前项目？" }).waitFor();
+  await page.keyboard.press("Escape");
+  await ask.waitFor({ state: "detached" });
+  await page.waitForFunction(path => `${location.pathname}${location.search}` === path, `/p/${projectId}/tasks/new`);
+  assert.equal(await title.inputValue(), "还没保存的任务");
+
+  // Signing out asks; staying keeps the draft.
+  await page.getByRole("complementary", { name: "项目导航" }).getByRole("button", { name: "设置与账号" }).click();
+  await page.getByRole("menuitem", { name: "退出" }).click();
+  await ask.getByRole("heading", { name: "退出并清除草稿？" }).waitFor();
+  await ask.getByRole("button", { name: "先不退出" }).click();
+  await ask.waitFor({ state: "detached" });
+  assert.equal(await title.inputValue(), "还没保存的任务");
+
+  // Confirming leaves: Back reaches the project list; with no draft left, signing out does not ask.
+  await page.goBack();
+  await ask.getByRole("button", { name: "离开并清除草稿" }).click();
+  await page.getByRole("heading", { name: "你的项目" }).waitFor();
+  assert.equal(pathOf(page), "/");
+  await page.getByRole("button", { name: "退出" }).click();
+  await page.getByRole("heading", { name: "进入项目工作台" }).waitFor();
+  assert.equal(await ask.count(), 0);
+  assert.equal(nativeDialogs, 0, "the browser's own confirm() is never used");
   assert.deepEqual(errors, []);
 });

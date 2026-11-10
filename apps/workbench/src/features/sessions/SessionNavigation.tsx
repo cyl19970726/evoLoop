@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { ChevronDown, LayoutDashboard, Plus, Search } from "lucide-react";
-import { AgentAvatar, IconButton, Sheet, SheetContent, SheetDescription, SheetTitle, cn } from "@evoloop/ui";
+import { AgentAvatar, Button, IconButton, Sheet, SheetContent, SheetDescription, SheetTitle, cn } from "@evoloop/ui";
 import type { ObservedSession } from "@evoloop/contracts/session-observation";
 import { href } from "../../shared/ui/shared";
 import { withReturn, type ReturnFrom } from "../../shared/returnLink";
@@ -87,12 +87,12 @@ export function SessionNavigation({ token, projectId, selectedId, onNavigate, st
     </a>;
   }
   function groupError(membership: DirectoryMembership, message: string) {
-    return <p role="alert" className="session-nav-error px-3 py-2 text-small text-destructive">智能体目录暂不可读取：{message}。<button type="button" className="ml-1 text-primary underline-offset-4 hover:underline" onClick={() => setRetries(value => ({ ...value, [membership]: value[membership] + 1 }))}>重试</button></p>;
+    return <p role="alert" className="session-nav-error px-3 py-2 text-small text-destructive">智能体目录暂不可读取：{message}。<Button variant="link" className="ml-1" onClick={() => setRetries(value => ({ ...value, [membership]: value[membership] + 1 }))}>重试</Button></p>;
   }
   const muted = (text: string) => <p className="session-nav-muted px-3 py-1.5 text-small text-muted-foreground">{text}</p>;
   const groupLabel = (text: string) => <span className="block px-3 pb-1.5 pt-4 text-caption text-muted-foreground">{text}</span>;
-  const moreButton = (busy: boolean, label: string, onClick: () => void) => <button type="button" disabled={busy} onClick={onClick}
-    className="session-nav-more mx-3 my-1 rounded-md px-2 py-1 text-small text-primary hover:bg-accent disabled:text-muted-foreground">{busy ? "加载中…" : label}</button>;
+  const moreButton = (busy: boolean, label: string, onClick: () => void) => <Button variant="ghost" disabled={busy} onClick={onClick}
+    className="session-nav-more mx-3 my-1 h-auto rounded-md px-2 py-1 text-small font-normal text-primary hover:bg-accent hover:text-primary disabled:text-muted-foreground disabled:opacity-100">{busy ? "加载中…" : label}</Button>;
   return <section ref={root} className="session-navigation flex flex-col" aria-label="智能体目录" data-ui="">
     <label className="mb-1.5 flex h-9 items-center gap-2 rounded-full bg-field px-3 text-muted-foreground">
       <Search size={14} aria-hidden="true" />
@@ -102,7 +102,7 @@ export function SessionNavigation({ token, projectId, selectedId, onNavigate, st
       <IconButton label="连接或建立智能体" icon={<Plus size={16} />} compact onClick={() => setConnectOpen(true)} />
     </label>
     <a href={href(projectId, "sessions")} onClick={onNavigate} aria-current={!selectedId ? "page" : undefined}
-      className={cn("flex items-center gap-2.5 rounded-lg px-3 py-[9px] text-text-secondary hover:bg-selected focus-visible:shadow-[var(--focus-ring)] outline-none", !selectedId && "bg-raised font-medium text-foreground shadow-sm")}>
+      className={cn("flex items-center gap-2.5 rounded-lg px-3 py-2 text-text-secondary hover:bg-selected focus-visible:shadow-[var(--focus-ring)] outline-none", !selectedId && "bg-raised font-medium text-foreground shadow-sm")}>
       <LayoutDashboard size={18} aria-hidden="true" />统筹安排
       {totals && <span className="ml-auto text-caption text-muted-foreground" title="目录里的智能体总数，含历史与待归类">共 {totals.current + totals.historical + totals.unclassified} 个智能体</span>}
     </a>
@@ -118,10 +118,10 @@ export function SessionNavigation({ token, projectId, selectedId, onNavigate, st
     </div>
     {current.hasMore && moreButton(current.moreBusy || current.loading, "加载更多当前智能体", () => void current.more())}
     <div className="session-nav-group mt-3 flex flex-col gap-0.5 border-t border-border pt-2">
-      <button type="button" onClick={() => onState(previous => ({ ...previous, historyOpen: !previous.historyOpen }))} aria-expanded={historyOpen}
-        className="session-nav-history flex items-center gap-1.5 rounded-md px-3 py-1.5 text-small text-text-secondary hover:bg-selected">
+      <Button variant="row" onClick={() => onState(previous => ({ ...previous, historyOpen: !previous.historyOpen }))} aria-expanded={historyOpen}
+        className="session-nav-history gap-1.5 px-3 py-1.5 text-small">
         <ChevronDown size={13} aria-hidden="true" className={cn("transition-transform", !historyOpen && "-rotate-90")} />历史与待归类{totals && ` · ${historicalCount}`}
-      </button>
+      </Button>
       {historyOpen && <>
         {groupLabel(`历史 · ${totals?.historical ?? 0}`)}
         {historical.error && groupError("historical", historical.error)}

@@ -2,19 +2,20 @@
 
 工作台只用一套组件。新页面先在这里找，找不到再新增，并把新组件补进本表。
 
-**目标与现状。** 目标是基础组件放在 `packages/ui`（`@evoloop/ui`），基于 shadcn/ui 和 Radix，样式只引用[设计基础](foundations.md)的 token（[DEC-036](../decisions.md#用户已确定的方向)）。这个包不依赖业务合同、不发请求，文案由调用方传入。现状：`@evoloop/ui` 已有下表的基础组件和状态组件，以及头像与 Logo，样例页在工作台的 `/ui`；对话流组件也已实现（样例页“对话流与输入框”一节可以实际输入 `/` 和 `@`），对象速览还没有实现。工作台已没有旧组件（本地的 shadcn `Button`、`Sheet` 和旧的 `Alert` 在 #229 PR10 删除），基础样式对整页生效，见[前端架构](architecture.md)。迁移由[前端改版 issue #229](https://github.com/cyl19970726/evoLoop/issues/229) 跟踪。上游组件的来源与许可登记在 `apps/workbench/THIRD_PARTY.md`。
+**目标与现状。** 目标是基础组件放在 `packages/ui`（`@evoloop/ui`），基于 shadcn/ui 和 Radix，样式只引用[设计基础](foundations.md)的 token（[DEC-036](../decisions.md#用户已确定的方向)）。这个包不依赖业务合同、不发请求，文案由调用方传入。现状：`@evoloop/ui` 已有下表的基础组件和状态组件，以及头像与 Logo，样例页在工作台的 `/ui`；对话流组件也已实现（样例页“对话流与输入框”一节可以实际输入 `/` 和 `@`），对象速览还没有实现。工作台已没有旧组件（本地的 shadcn `Button`、`Sheet` 和旧的 `Alert` 在 #229 PR10 删除），基础样式对整页生效，见[前端架构](architecture.md)。迁移由[前端改版 issue #229](https://github.com/cyl19970726/evoLoop/issues/229) 跟踪。上游组件的来源与许可登记在 `apps/workbench/THIRD_PARTY.md`。工作台源码里不写原生的 `<button>`、`<select>`、复选框、单选和 `confirm()`，由 `apps/workbench/test/style-budget.test.ts` 检查；留下的几个按钮在登录门和首屏的错误页里（首屏不带组件库），写在该测试的例外表里，各带理由。
 
 ## 基础组件
 
 | 组件 | 用途 | 规则 |
 | --- | --- | --- |
-| Button | 触发操作 | 胶囊形。变体：`primary`（墨色，每屏最多一个）、`secondary`（默认）、`ghost`（列表与工具栏）、`danger`（不可逆操作）；尺寸 `default`、`compact`。文字以动词开头，2–6 个字 |
+| Button | 触发操作 | 胶囊形。变体：`primary`（墨色，每屏最多一个）、`secondary`（默认）、`ghost`（列表与工具栏）、`danger`（不可逆操作）；尺寸 `default`、`compact`。文字以动词开头，2–6 个字。另有三种不是胶囊的变体，默认尺寸 `inline`（不带高度、内边距和字号）：`link` 是写在文字里的操作（“重试”“在右栏查看”），墨蓝字、悬停下划线；`row` 是点了会改变页面所显示内容的行或卡片（阶段、循环、目录项），用 `aria-pressed` 标出选中项；`tab` 是页签条里的一项，用 `aria-selected` |
 | IconButton | 只有图标的操作 | `label` 必填，用作可读名称和悬停提示 |
-| Field、Input、Textarea、Select | 表单输入 | 标签在上，说明和错误在下，三者都和输入框关联；错误写原因和改法。Select 是原生下拉，外观同 Input |
+| Field、Input、Textarea、Select | 表单输入 | 标签在上，说明和错误在下，三者都和输入框关联；错误写原因和改法。Select 是原生下拉，外观同 Input；`compact` 用于工具栏和左栏的筛选 |
+| Checkbox、RadioGroup | 多选、单选 | 基于 Radix。放进 `<label>` 和文字写在一起，点文字也能勾选；空格切换，单选组用方向键移动并选中；在表单里仍随表单提交值 |
 | StatusTag | 显示状态 | 只按[状态表](foundations.md#状态的视觉表达)渲染，颜色加图标加文字 |
-| Badge、CountDot | 计数、类型、短标记 | Badge 只用中性色，不表达状态；CountDot 是“待我处理”等入口上的陶土色计数，0 时不显示 |
+| Badge、CountDot | 计数、类型、短标记 | Badge 只用中性色，不表达状态；CountDot 是“待我处理”等入口上的陶土色计数，0 时不显示；数目核对不了时（`count={null}`）显示灰色问号，读作“数目待核对”，不显示可能错的数字 |
 | Notice | 页内提示 | 信息、等待、失败三种；不代替空状态 |
-| Dialog | 确认危险或低频操作 | 写清影响对象和确认后的结果；不放长表单 |
+| Dialog、ConfirmDialog | 确认危险或低频操作 | 写清影响对象和确认后的结果；不放长表单。会丢东西的一问一答（清空草稿、离开项目）用 ConfirmDialog：焦点先落在取消上，Esc 和点空白处都算取消。首屏还没有组件库时（`App.tsx` 里离开项目、退出）用 `shared/confirm.ts` 的 `askConfirm()`，由登录后加载的 `ConfirmHost` 显示同一个弹窗，浏览器前进后退也等它的答复。不用浏览器的 `confirm()` |
 | Sheet | 窄屏导航、窄屏右栏 | 从边缘滑出，Escape 关闭并回到触发位置 |
 | DropdownMenu、Tooltip | 次要操作、补充说明 | 不把主要操作藏进菜单 |
 | Tabs | 同一对象的平级视图 | 少用；优先一条连续的内容流 |
