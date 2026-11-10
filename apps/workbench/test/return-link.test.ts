@@ -77,6 +77,8 @@ test("a task page comes back to an agent, 统筹安排 or a document, and keeps 
   assert.equal(taskSessionReturn(fromAgent, project, task, "me")?.label, "返回智能体", "without a name the agent page's link names the place only");
   const fromDocument = withReturn(taskPath, { href: `${p}/documents/${other}`, actorId: "me", title: "需求总图" });
   assert.equal(taskSessionReturn(fromDocument, project, task, "me")?.label, "返回文档：需求总图");
+  const fromInbox = `${taskPath}?${new URLSearchParams({ tab: "delivery", return: `${p}/inbox`, actor: "me", returnTitle: "待我验收与判断" })}`;
+  assert.equal(taskSessionReturn(fromInbox, project, task, "me")?.label, "返回待我验收与判断", "the link 待我处理 writes (inboxModel.deliveryLink)");
   assert.equal(taskSessionReturn(withReturn(taskPath, { href: taskPath, actorId: "me" }), project, task, "me"), null, "never to itself");
   const next = new URLSearchParams(taskTabHref(fromArrangement, project, task, "runtime", "me").split("?")[1]);
   assert.equal(next.get("return"), `${p}/sessions`);
