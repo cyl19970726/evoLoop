@@ -3,6 +3,10 @@ import type { SessionTimelinePage, WorkspaceEntry, WorkspaceLiveRead, WorkspaceM
 import { ApiError, errorText } from "../../shared/api";
 import { sessionClient } from "../../shared/sessionClient";
 import { mergeWorkspaceEntries, mergeWorkspaceTurns, workspaceEntryKey } from "./workspaceTimelineModel";
+import { describeLimitation } from "./readingScopePresentation";
+
+/** A limitation for an error line, in Chinese; `fallback` when the service gave none. */
+const limitationSentence = (raw: string | null | undefined, fallback: string) => (raw && describeLimitation(raw).text) || fallback;
 
 type Read = {
   scope: string;
@@ -139,7 +143,7 @@ export function useSessionTimeline(token: string, projectId: string, actorId: st
             nativeBoundary: initializeNative || committedReset ? (page.entries[0] ? workspaceEntryKey(page.entries[0]) : null) : prior.nativeBoundary,
             messagesBoundary: !prior.loaded || committedReset ? (page.entries[0] ? workspaceEntryKey(page.entries[0]) : null) : prior.messagesBoundary,
             live: page.live, page, updatesCursor: liveCursor ?? null, reconciling: resetPending,
-            error: resetPending ? `历史尚未完成校准：${page.capabilities.reason || page.limitations[0] || "原生历史暂不可读取"}` : "", denied: false };
+            error: resetPending ? `历史尚未完成校准：${limitationSentence(page.capabilities.reason || page.limitations[0], "原生历史暂不可读取")}` : "", denied: false };
         });
       } catch (cause) { failure(cause); }
       finally { latestBusy = false; if (obsolete && authorized() && resetPending) void readLatest(true); }
@@ -204,7 +208,7 @@ export function useSessionTimeline(token: string, projectId: string, actorId: st
       }
       const source = reads[index]!.source;
       if (source === "native" && !page.capabilities.history) {
-        setState(old => authorized() && old.scope === scope ? { ...old, error: `历史尚未读完：${page.limitations[0] || page.capabilities.reason || "原生来源暂不可读取"}` } : old);
+        setState(old => authorized() && old.scope === scope ? { ...old, error: `历史尚未读完：${limitationSentence(page.limitations[0] || page.capabilities.reason, "原生来源暂不可读取")}` } : old);
         continue;
       }
       setState(old => authorized() && old.scope === scope ? { ...old,

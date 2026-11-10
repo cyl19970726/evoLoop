@@ -123,7 +123,7 @@ function CandidateDetail({ projectId, read, actions }: { projectId: string; read
     <Tabs defaultValue="rendered">
       <TabsList aria-label="阅读方式" className="mb-2"><TabsTrigger value="rendered">排版</TabsTrigger><TabsTrigger value="source">原文</TabsTrigger></TabsList>
       <TabsContent value="rendered" className={readingProse}>
-        <MarkdownBody source={candidate.body} identity={`knowledge-candidate-${candidate.candidateId}-${candidate.candidateRevision}`} omitLeadingTitle={candidate.title} projectId={projectId} />
+        <MarkdownBody source={candidate.body} identity={`knowledge-candidate-${candidate.candidateId}-${candidate.candidateRevision}`} omitLeadingTitle={candidate.title} projectId={projectId} topHeading={3} />
       </TabsContent>
       <TabsContent value="source"><pre className={readingSource}>{candidate.body}</pre></TabsContent>
     </Tabs>

@@ -25,6 +25,7 @@ import { observationResultLabel, observationsForDelivery } from "./observationPr
 import { currentDelivery, matchingProjection, matchingTaskDetail } from "./taskExperience";
 import { phaseFact, type Read, type ReadState } from "./taskFactsPresentation";
 import { taskTimestamp, taskType } from "./taskWorkspacePresentation";
+import { useRevisionOrigin } from "./useRevisionOrigin";
 
 const documentKinds: Record<string, string> = { issue: "问题", spec: "规范", discussion: "讨论", report: "报告", organization_review: "组织复盘", task: "任务正文" };
 
@@ -204,9 +205,10 @@ function DeliveryFacts({ projectId, detail, linkForTab }: { projectId: string; d
 function VersionFacts({ projectId, detail, linkForTab }: { projectId: string; detail: TaskDetail; linkForTab(tab: TaskSection): string }) {
   const { task, revision } = detail;
   const pending = detail.impacts.filter(impact => impact.state === "pending").length;
+  const origin = useRevisionOrigin(projectId, revision);
   return <div className="flex flex-col gap-2">
     <div className="flex flex-col gap-2.5">
-      <Fact label="当前版本">第 {task.version} 版 · {date(revision.createdAt)}<span className="mt-0.5 block text-caption text-muted-foreground">{revision.actorId} · {revision.reason}</span></Fact>
+      <Fact label="当前版本">第 {task.version} 版 · {date(revision.createdAt)}<span className="mt-0.5 block text-caption text-muted-foreground" data-revision-origin="">{origin.line}</span></Fact>
       <Fact label="固定依据">{detail.basis ? `${detail.basis.members.length} 份文档的固定修订` : "这个修订没有固定依据集合"}{pending > 0 && <span className="mt-0.5 block text-caption text-warning">{pending} 项依据变化待复核</span>}</Fact>
     </div>
     <div className="flex flex-wrap gap-x-3 gap-y-1 text-label">
@@ -215,7 +217,7 @@ function VersionFacts({ projectId, detail, linkForTab }: { projectId: string; de
       <a className="text-primary hover:underline" href={`${href(projectId, "evaluations")}?taskId=${encodeURIComponent(task.id)}`}>评价与后果</a>
     </div>
     <FullIdentifiers rows={[{ label: "任务", value: task.id }, { label: "任务修订", value: revision.id },
-      { label: "正文文档", value: task.contentDocumentId }, { label: "正文修订", value: task.contentRevisionId }]} />
+      { label: "正文文档", value: task.contentDocumentId }, { label: "正文修订", value: task.contentRevisionId }, ...origin.identifiers]} />
     {detail.task.legacyDecision && <Notice tone="waiting">这个任务带有旧版判断记录，请在历史里核对理由。</Notice>}
   </div>;
 }

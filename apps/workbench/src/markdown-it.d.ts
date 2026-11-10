@@ -1,5 +1,5 @@
 declare module "markdown-it" {
-  interface Token { type: string; info: string; content: string }
+  interface Token { type: string; tag: string; info: string; content: string }
   export default class MarkdownIt {
     constructor(options?: { html?: boolean; linkify?: boolean; breaks?: boolean });
     options: Record<string, unknown>;

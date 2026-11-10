@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { ChevronDown, LayoutDashboard, Plus, Search } from "lucide-react";
 import { AgentAvatar, IconButton, Sheet, SheetContent, SheetDescription, SheetTitle, cn } from "@evoloop/ui";
 import type { ObservedSession } from "@evoloop/contracts/session-observation";
-import { href } from "../../shared/ui/shared";
+import { date, href } from "../../shared/ui/shared";
+import { agentDisplayName, agentNameHint } from "../../shared/agentNamePresentation";
 import { useSessionDirectoryGroup, type DirectoryMembership } from "./useSessionDirectoryGroup";
 import { agentStatusLabel } from "./sessionStatusPresentation";
 import { groupSessionsByClass, sessionClassLabel, sessionClassReason, type SessionClass } from "./sessionDirectoryPresentation";
@@ -60,7 +61,10 @@ export function SessionNavigation({ token, projectId, selectedId, onNavigate, st
   const historicalCount = (totals?.historical ?? 0) + (totals?.unclassified ?? 0);
   function item(session: ObservedSession) {
     const roles = session.roles.map(role => role.title).join(" · ");
+    const name = agentDisplayName(session);
     const taskSignal = session.currentTask ? session.currentTask.title : null;
+    // A generated name already says the role; the last activity tells two such agents apart.
+    const hint = agentNameHint(session, session.lastProgressAt ? date(session.lastProgressAt) : null);
     const status = agentStatusLabel(session);
     const dot = session.busy === true ? "bg-primary" : session.runtimeState === "failed" ? "bg-destructive" : session.busy === false && session.runtimeState === "ready" ? "bg-border" : "bg-warning";
     const selected = selectedId === session.key;
@@ -69,8 +73,8 @@ export function SessionNavigation({ token, projectId, selectedId, onNavigate, st
         selected && "bg-raised font-medium text-foreground shadow-sm")}>
       <AgentAvatar seed={session.key} roleSeed={session.roles[0]?.id ?? session.title} size={30} />
       <span className="flex min-w-0 flex-1 flex-col">
-        <span className="truncate" title={session.title}>{session.title}</span>
-        <span className="session-nav-signal truncate text-caption font-normal text-muted-foreground">{taskSignal ?? (roles || sessionClassReason(session))}{` · ${status}`}</span>
+        <span className="truncate" title={name}>{name}</span>
+        <span className="session-nav-signal truncate text-caption font-normal text-muted-foreground">{taskSignal ?? hint ?? (roles || sessionClassReason(session))}{` · ${status}`}</span>
       </span>
       <span aria-hidden="true" className={cn("size-[7px] shrink-0 rounded-full", dot)} />
     </a>;
@@ -93,7 +97,7 @@ export function SessionNavigation({ token, projectId, selectedId, onNavigate, st
     <a href={href(projectId, "sessions")} onClick={onNavigate} aria-current={!selectedId ? "page" : undefined}
       className={cn("flex items-center gap-2.5 rounded-lg px-3 py-[9px] text-text-secondary hover:bg-selected focus-visible:shadow-[var(--focus-ring)] outline-none", !selectedId && "bg-raised font-medium text-foreground shadow-sm")}>
       <LayoutDashboard size={18} aria-hidden="true" />统筹安排
-      {totals && <span className="ml-auto text-caption text-muted-foreground">{totals.current + totals.historical + totals.unclassified} 个</span>}
+      {totals && <span className="ml-auto text-caption text-muted-foreground" title="目录里的智能体总数，含历史与待归类">共 {totals.current + totals.historical + totals.unclassified} 个智能体</span>}
     </a>
     {current.error && groupError("current", current.error)}
     {(searchPending || current.loading && !current.page) && muted("正在读取智能体目录…")}

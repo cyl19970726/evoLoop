@@ -3,6 +3,7 @@ import { ActionForm, type MutationContext } from "../../shared/ActionForm";
 import type { ObservedSession } from "@evoloop/contracts/session-observation";
 import { identityColors, identityMarks, fallbackSessionIdentity } from "@evoloop/contracts/session-identity";
 import { mutedText } from "../../shared/ui/PageParts";
+import { agentDisplayName } from "../../shared/agentNamePresentation";
 import { SessionIdentityMark, identityColorLabels } from "./SessionIdentityMark";
 const markLabels = ["菱形", "圆点", "叠层", "括号", "星形", "方格", "勾章", "代码"];
 
@@ -11,7 +12,7 @@ export function SessionIdentityControl({ context, session, onApplied }: {
 }) {
   const visual = session.identity ?? fallbackSessionIdentity(session.target);
   return <section aria-label="智能体标识设置" className="flex min-w-0 flex-col gap-2">
-    <p className="flex min-w-0 items-center gap-2 text-caption text-text-secondary"><SessionIdentityMark target={session.target} identity={session.identity} name={session.title} size="small" /><span className="min-w-0">{session.title} · 身份标记独立于运行状态、职责和模型。</span></p>
+    <p className="flex min-w-0 items-center gap-2 text-caption text-text-secondary"><SessionIdentityMark target={session.target} identity={session.identity} name={agentDisplayName(session)} size="small" /><span className="min-w-0">{agentDisplayName(session)} · 身份标记独立于运行状态、职责和模型。</span></p>
     {session.identity ? <ActionForm context={{ ...context, draftScope: `session-identity:${session.key}`,
       draftBaseline: String(session.identity.version) }} review title="调整颜色与图标" fields={[
       { name: "color", label: "身份颜色", kind: "select", value: visual.color,

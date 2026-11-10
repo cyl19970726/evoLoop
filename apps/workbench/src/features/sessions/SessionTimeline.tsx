@@ -21,6 +21,7 @@ import { FullIdentifiers } from "../../shared/ui/FullIdentifiers";
 import { MarkdownBody } from "../../shared/ui/MarkdownBody";
 import { readingProse } from "../../shared/ui/readingProse";
 import { sessionClient } from "../../shared/sessionClient";
+import { agentDisplayName } from "../../shared/agentNamePresentation";
 import { useProjectQuery } from "../../shared/query";
 import { sessionMessageEntry } from "./sessionMessageEntry";
 import { useSessionTimeline } from "./useSessionTimeline";
@@ -31,6 +32,7 @@ import {
 } from "./conversationPresentation";
 import { SessionIdentityMark } from "./SessionIdentityMark";
 import { SessionComposer } from "./SessionComposer";
+import { SourceLimitations } from "./SourceLimitations";
 import type { NativeProgressView } from "./NativeSessionPanel";
 
 const messageStates: Record<SessionMessageRecord["state"], string> = { queued: "待派发", processing: "原会话处理中", replied: "已回复", completed_without_reply: "已完成但无回复", failed: "失败", unknown: "结果未知", cancelled: "已取消", manual_pending: "待人工转交" };
@@ -53,7 +55,7 @@ function restorePosition(node: HTMLElement, prior: ReadingPosition) {
     (prior.viewportTop ?? node.getBoundingClientRect().top + prior.offset) : prior.top;
 }
 /** Agent replies read as prose: the shared reading type, at the flow's size. */
-const replyProse = cn(readingProse, "text-[15px] [&_h1]:mt-5 [&_h1]:text-body [&_h2]:mt-5 [&_h2]:text-body [&_h3]:mt-4");
+const replyProse = cn(readingProse, "text-[15px] [&_:is(h2,h3)]:mt-5 [&_:is(h2,h3)]:text-body [&_:is(h4,h5,h6)]:mt-4");
 const linkButton = "cursor-pointer border-0 bg-transparent p-0 text-caption text-primary hover:underline disabled:cursor-default disabled:text-muted-foreground";
 
 /** Ticks once a second while `active`, for the live status line's elapsed time. */
@@ -173,7 +175,7 @@ function TimelineEntry({ item, context, title, taskTitle, sessionKey, target, id
     <div className="min-w-0 flex-1">
       <header className="mb-1 flex flex-wrap items-center gap-x-2 text-caption text-muted-foreground">{provenSession && <SessionIdentityMark target={target} identity={identity} name={title} size="small" />}<strong className="font-medium text-text-secondary">{label}</strong>{time}{stale}{stateTag}</header>
       {heading && <h3 className="mb-1 text-label font-medium text-text-secondary">{heading}</h3>}
-      {body ? <AgentMessage className={cn(replyProse, item.kind !== "message" && "text-small text-text-secondary")}><MarkdownBody source={body} identity={`workspace-${item.id}`} projectId={context.projectId} /></AgentMessage>
+      {body ? <AgentMessage className={cn(replyProse, item.kind !== "message" && "text-small text-text-secondary")}><MarkdownBody source={body} identity={`workspace-${item.id}`} projectId={context.projectId} topHeading={3} /></AgentMessage>
         : <p className="text-small text-muted-foreground">{assistant && item.state === "running" ? "正在回复…" : "来源没有提供可公开的正文。"}</p>}
       {bodyError && <p role="alert" className="mt-1 text-caption text-destructive">{bodyError}</p>}
       <footer className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-caption">{actions}</footer>
@@ -214,7 +216,7 @@ function EntryInspector({ entry, context, sessionKey, mayReadOriginal }: { entry
         {value.detail.resources.length > 0 && <ul className="flex flex-col gap-0.5 font-mono text-caption">{value.detail.resources.map(resource => <li key={resource}>{resource}</li>)}</ul>}
       </> : value.detailAvailable && mayReadOriginal ? <Button size="compact" className="self-start" disabled={busy} onClick={() => void read()}>{busy ? "读取中…" : "读取原始输入与输出"}</Button>
         : <p className="text-caption text-muted-foreground">{mayReadOriginal ? toolDetailReason(value.detailReason) : "当前身份可阅读活动摘要；原始输入与输出未获授权。"}</p>}
-    </> : <div className={replyProse}><MarkdownBody source={value.body} identity={`workspace-detail-${value.id}`} projectId={context.projectId} /></div>}
+    </> : <div className={replyProse}><MarkdownBody source={value.body} identity={`workspace-detail-${value.id}`} projectId={context.projectId} topHeading={4} /></div>}
     {busy && <p role="status" className="text-caption text-muted-foreground">正在读取完整内容…</p>}
     {error && <Notice tone="error" action={<Button size="compact" disabled={busy} onClick={() => void read()}>重试详情</Button>}>{error}</Notice>}
     {value.truncated && !busy && <p className="text-caption text-muted-foreground">来源内容仍有截断，当前显示不能代表完整原件。</p>}
@@ -249,8 +251,8 @@ function MessageInspector({ id, context, snapshot, onApplied }: { id: string; co
     {read.isError && <Notice tone="error">重新读取失败：{errorText(read.error)}；下面是上次读回，当前待核对。</Notice>}
     <h3 className="text-label font-semibold">消息详情 · {messageStates[message.state]}</h3>
     <p className="text-caption text-muted-foreground">发送于 {date(message.createdAt)}{message.senderActorId === context.principal.actorId ? " · 由我发送" : ""}</p>
-    <div className={replyProse}><MarkdownBody source={message.content} identity={`message-detail-${message.id}`} projectId={context.projectId} /></div>
-    {processing?.response && <><h3 className="text-label font-semibold">回复</h3><div className={replyProse}><MarkdownBody source={processing.response} identity={`message-response-${processing.id}`} projectId={context.projectId} /></div></>}
+    <div className={replyProse}><MarkdownBody source={message.content} identity={`message-detail-${message.id}`} projectId={context.projectId} topHeading={4} /></div>
+    {processing?.response && <><h3 className="text-label font-semibold">回复</h3><div className={replyProse}><MarkdownBody source={processing.response} identity={`message-response-${processing.id}`} projectId={context.projectId} topHeading={4} /></div></>}
     {processing?.failure && <Notice tone="error">处理失败：{processing.failure}</Notice>}
     {message.blockedReason && <p className="text-text-secondary">等待原因：{message.blockedReason}</p>}
     {message.readReceipt && <p className="text-text-secondary">已读回执：{message.readReceipt.evidence} · {date(message.readReceipt.at)}</p>}
@@ -368,7 +370,7 @@ export function SessionTimeline({ context, snapshot, onApplied, taskHref, refres
       {capability.executionObservedAt && <p>执行状态读于 {date(capability.executionObservedAt)}；配置变化后请点上方“重新读取”。</p>}
       <p>{timeline.page?.capabilities.history ? "历史按来源分页读取。" : "这个智能体的原有历史暂不可读取。"}{live ? "实时活动来自现有连接。" : "当前没有可确认的实时连接。"}</p>
       {timeline.page && <p>读取于 {date(timeline.page.observedAt)}{timeline.page.partial && " · 来源仅展示已读范围"}</p>}
-      {limitations.length > 0 && <ul className="list-disc pl-5">{limitations.map(reason => <li key={reason}>{reason}</li>)}</ul>}
+      <SourceLimitations items={limitations} />
     </div>
   </details>;
   return <section className="session-conversation unified-session-timeline flex min-h-0 flex-1 flex-col gap-2 overflow-hidden" aria-label="活动与对话">
@@ -388,7 +390,7 @@ export function SessionTimeline({ context, snapshot, onApplied, taskHref, refres
       {timeline.loaded && !timeline.error && !groups.length && !children && !activeTurn && <div className="session-conversation-empty flex flex-col items-center gap-1.5 py-10 text-center text-small text-muted-foreground"><MessageCircle size={25} aria-hidden="true" /><strong className="text-body font-medium text-foreground">{timeline.page?.partial ? "当前来源尚未提供可读的活动" : "从这里开始沟通"}</strong><span>{timeline.page?.partial ? "这不代表原来没有历史记录，可在读取范围中查看原因。" : "发送消息后，这个智能体的回复与工具活动会连续显示在这里。"}</span></div>}
       {groups.map(group => group.kind === "tools"
         ? [<ToolGroup key={`tools:${group.id}`} entries={group.entries} scope={scope} context={context} sessionKey={snapshot.session.key} mayReadOriginal={mayReadOriginal} />, summaryFor(group.entries.at(-1)!.id)]
-        : [<TimelineEntry key={group.entry.id} item={group.entry} context={context} title={snapshot.session.title} taskTitle={snapshot.currentWork && group.entry.origin?.taskId === snapshot.currentWork.id ? snapshot.currentWork.title : null} sessionKey={snapshot.session.key} target={snapshot.session.target} identity={snapshot.session.identity} taskHref={taskHref} onExpanded={timeline.replaceEntry} onDetail={entry => inspect({ entry })} onMessage={messageId => inspect({ messageId })} />, summaryFor(group.entry.id)])}
+        : [<TimelineEntry key={group.entry.id} item={group.entry} context={context} title={agentDisplayName(snapshot.session)} taskTitle={snapshot.currentWork && group.entry.origin?.taskId === snapshot.currentWork.id ? snapshot.currentWork.title : null} sessionKey={snapshot.session.key} target={snapshot.session.target} identity={snapshot.session.identity} taskHref={taskHref} onExpanded={timeline.replaceEntry} onDetail={entry => inspect({ entry })} onMessage={messageId => inspect({ messageId })} />, summaryFor(group.entry.id)])}
       {activeTurn && (live
         ? <LiveStatusLine className="workspace-turn-state" avatar={<AgentAvatar seed={snapshot.session.key} roleSeed={snapshot.session.title} size={20} />}
           text={liveStatusText(currentTool, replying)} elapsed={elapsedText(activeTurn.startedAt, now) ?? undefined}>

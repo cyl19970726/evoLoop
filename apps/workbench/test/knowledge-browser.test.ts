@@ -538,6 +538,9 @@ test("知识空间 writes: request bodies, conflicts, unknown results by the ori
     assert.match(text, /这个项目还没有配置外置知识后端/);
     assert.doesNotMatch(text, /可以重试|上次读回|。。/);
     assert.equal(await unconfiguredRail.getByRole("region", { name: "知识目录" }).getByRole("button", { name: "重试", exact: true }).count(), 0);
+    // 提出候选 says at the entry that nothing can be proposed now, instead of failing later at the form's source field.
+    await unconfigured.locator("main").getByText("知识后端未配置，暂时不能提出", { exact: true }).waitFor();
+    assert.equal(await unconfigured.locator("main").getByRole("button", { name: "提出候选" }).isDisabled(), true);
     if (shots) await unconfigured.screenshot({ path: `${shots}/knowledge-unconfigured-1440.png` });
     await unconfigured.close();
     assert.deepEqual(errors, []);

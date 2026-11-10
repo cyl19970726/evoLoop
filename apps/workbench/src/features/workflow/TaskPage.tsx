@@ -267,7 +267,7 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
             {panel ? <button type="button" className="text-label text-primary hover:underline" onClick={openContent}>在右栏核对固定原件</button>
               : <a className="text-label text-primary hover:underline" href={href(projectId, "document", detail.task.contentDocumentId, detail.task.contentRevisionId)}>阅读固定原件</a>}
           </div>
-          <MarkdownBody source={detail.task.content} identity={`task-${detail.revision.id}`} projectId={projectId} />
+          <MarkdownBody source={detail.task.content} identity={`task-${detail.revision.id}`} projectId={projectId} topHeading={3} />
           <p className="text-caption text-muted-foreground">正文来自任务固定的主文档修订；修改走“任务操作”里的“更新任务内容”，不从文档页绕过任务。</p>
         </section>
         <section aria-labelledby={`${panelId("overview")}-progress`} className="flex flex-col gap-3" data-task-progress="">

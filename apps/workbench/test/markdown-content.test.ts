@@ -85,7 +85,7 @@ test("structured knowledge Markdown renders headings, paragraphs, lists, tables,
     "[固定来源](https://example.com/source)",
   ].join("\n");
   const html = splitMarkdown(source).map(part => part.kind === "html" ? part.value : "").join("");
-  assert.match(html, /<h1>固定知识标题<\/h1>/);
+  assert.match(html, /<h2>固定知识标题<\/h2>/);
   assert.match(html, /<p>正文段落，说明当前采用的判断。<\/p>/);
   assert.match(html, /<ul>[\s\S]*<li>支持证据<\/li>[\s\S]*<li>尚待核对的边界<\/li>[\s\S]*<\/ul>/);
   assert.match(html, /<table>[\s\S]*<th>版本<\/th>[\s\S]*<td>v3<\/td>[\s\S]*<\/table>/);
@@ -122,11 +122,11 @@ test("reader can omit only a matching first top-level H1 after preserved prelude
   ].join("\n");
   const html = splitMarkdown(source, { omitLeadingTitle: "固定材料 可读 & 核对" })
     .map(part => part.kind === "html" ? part.value : "").join("");
-  assert.match(html, /<blockquote>[\s\S]*<h1>引用中的标题<\/h1>/);
+  assert.match(html, /<blockquote>[\s\S]*<h2>引用中的标题<\/h2>/);
   assert.match(html, /<pre><code class="language-md"># 固定材料可读/);
   assert.match(html, /<p>正文引言保留。<\/p>/);
   assert.doesNotMatch(html, /<h1><strong>固定材料<\/strong>/);
-  assert.match(html, /<h2>后续结构<\/h2>/);
+  assert.match(html, /<h3>后续结构<\/h3>/);
   assert.match(html, /<table>[\s\S]*<td>保留<\/td>[\s\S]*<\/table>/);
   assert.match(html, /<li>后续列表项<\/li>/);
   assert.match(source, /# \*\*固定材料\*\*/);
@@ -135,13 +135,13 @@ test("reader can omit only a matching first top-level H1 after preserved prelude
 test("a different first top-level H1 prevents removal of later matching headings", () => {
   const html = splitMarkdown("# 正文自己的首标题\n\n# 外层标题", { omitLeadingTitle: "外层标题" })
     .map(part => part.kind === "html" ? part.value : "").join("");
-  assert.match(html, /<h1>正文自己的首标题<\/h1>/);
-  assert.match(html, /<h1>外层标题<\/h1>/);
+  assert.match(html, /<h2>正文自己的首标题<\/h2>/);
+  assert.match(html, /<h2>外层标题<\/h2>/);
 });
 
-test("default shared Markdown rendering keeps title headings", () => {
+test("default shared Markdown rendering keeps title headings, one level below the page h1", () => {
   const html = splitMarkdown("# 外层标题").map(part => part.kind === "html" ? part.value : "").join("");
-  assert.match(html, /<h1>外层标题<\/h1>/);
+  assert.match(html, /<h2>外层标题<\/h2>/);
 });
 
 test("candidate Markdown preview keeps sections, tables and lists after title deduplication", () => {
@@ -173,4 +173,15 @@ test("fixed Wiki links render only in the owning project, including an exact bar
     assert.doesNotMatch(html(`来源 ${invalid}`), /<a href=/);
   }
   assert.doesNotMatch(html(`[无上下文](${target})`, ""), /<a href=/);
+});
+
+test("a text's headings sit below the page's own h1, keeping their distances", () => {
+  const rendered = (source: string, options: Parameters<typeof splitMarkdown>[1] = {}) => splitMarkdown(source, options).map(part => part.value).join("");
+  const tags = (value: string) => [...value.matchAll(/<(h[1-6])>/g)].map(match => match[1]);
+  assert.deepEqual(tags(rendered("# 目标\n\n## 细节\n\n#### 深层")), ["h2", "h3", "h5"], "under the page title the top level is h2");
+  assert.deepEqual(tags(rendered("# 目标\n\n## 细节", { topHeading: 3 })), ["h3", "h4"], "under a section heading it is h3");
+  assert.deepEqual(tags(rendered("## 背景\n\n### 范围")), ["h2", "h3"], "a text that starts at h2 keeps its levels");
+  assert.deepEqual(tags(rendered("# 标题\n\n## 背景\n\n### 范围", { omitLeadingTitle: "标题" })), ["h2", "h3"], "the omitted title does not count");
+  assert.deepEqual(tags(rendered("# a\n\n###### f", { topHeading: 5 })), ["h5", "h6"], "never deeper than h6");
+  assert.ok(!rendered("# 一\n\n# 二\n\n```\n# 不是标题\n```").includes("<h1>"), "the page keeps a single h1");
 });

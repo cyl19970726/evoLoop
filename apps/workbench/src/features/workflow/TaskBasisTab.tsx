@@ -147,7 +147,7 @@ function RevisionColumn({ label, read }: { label: string; read: { data: Document
         <p className="text-caption text-muted-foreground">{date(revision.createdAt)} · {revision.author}</p>
         {revision.body !== null && revision.format === "markdown"
           ? <>
-            <MarkdownBody className="text-label" source={revision.body} identity={`impact-${revision.id}`} projectId={revision.projectId} />
+            <MarkdownBody className="text-label" source={revision.body} identity={`impact-${revision.id}`} projectId={revision.projectId} topHeading={4} />
             <details><summary className="w-fit cursor-pointer text-caption text-primary hover:underline">查看 Markdown 原文</summary>
               <pre className={`mt-2 max-h-96 ${readingSource}`}>{revision.body}</pre></details>
           </>

@@ -27,7 +27,7 @@ import { readReceipts, saveReceipts, type ExternalReceipt } from "./knowledgeRec
 import { KnowledgeReview, type ReviewActions } from "./KnowledgeReview";
 import { knowledgeHref, readKnowledgeRoute, readingOnScreen, type KnowledgeRoute } from "./knowledgeRoute";
 import {
-  capabilityFacts, emptyFilter, filterKnowledge, isFiltered, knowledgeDirectory, notConfiguredCode, publishOutcome, receiptTitle,
+  capabilityFacts, emptyFilter, filterKnowledge, isFiltered, knowledgeDirectory, notConfiguredCode, proposeEntry, publishOutcome, receiptTitle,
   reconcileOutcome, sourceDocumentId, topicMembers, type KnowledgeFilter, type ListProblem, type Outcome,
 } from "./knowledgePresentation";
 
@@ -228,7 +228,8 @@ export function KnowledgePanel({ context }: { context: MutationContext; refresh:
     publish: candidate => void externalWrite("publish", candidate.candidateId),
     retract: (source: SourceDocument) => void externalWrite("retract", source.documentId),
   };
-  const startNew = () => { if (!draft.touched) setDraft(emptyDraft); setComposing(true); };
+  const startNew = () => { if (notConfigured) return; if (!draft.touched) setDraft(emptyDraft); setComposing(true); };
+  const entry = proposeEntry({ canWrite, notConfigured, draftTouched: draft.touched });
   const startRevision = (page: KnowledgeRevision) => {
     if (draft.touched) {
       setMessage({ tone: "waiting", title: "已有没保存的候选草稿", detail: "请先继续原草稿，或清空后再基于此页编辑。" });
@@ -307,7 +308,10 @@ export function KnowledgePanel({ context }: { context: MutationContext; refresh:
       <div className="flex flex-wrap items-center gap-2">
         <Button variant="ghost" size="compact" onClick={reread}>重新读取</Button>
         <Button asChild variant="ghost" size="compact"><a href={href(projectId, "evaluations")}>评价</a></Button>
-        {canWrite && <Button variant="primary" size="compact" onClick={startNew}>{draft.touched ? "继续候选草稿" : "提出候选"}</Button>}
+        {entry.shown && <>
+          {entry.reason && <span id="knowledge-propose-reason" className="text-caption text-muted-foreground">{entry.reason}</span>}
+          <Button variant="primary" size="compact" disabled={entry.disabled} aria-describedby={entry.reason ? "knowledge-propose-reason" : undefined} onClick={startNew}>{entry.label}</Button>
+        </>}
       </div>
     </header>
     {serviceBlock}

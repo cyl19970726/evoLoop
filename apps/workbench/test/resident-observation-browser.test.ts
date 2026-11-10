@@ -245,7 +245,10 @@ test("resident observation keeps acceptance, host authority and task replies dis
   assert.equal(await pageBrowser.evaluate(() => (window as Window & {fixtureCopied?:string}).fixtureCopied),externalRef);
   await pageBrowser.evaluate(() => { (window as Window & {fixtureCopyFail?:boolean}).fixtureCopyFail=true; });
   await externalCard.getByRole("button",{name:"复制完整引用"}).click();
-  await externalCard.getByText(/复制失败；可选中上方完整引用手工复制/).waitFor();
+  await externalCard.getByText(/复制失败；可展开下方“完整标识”手工复制完整引用/).waitFor();
+  // The full reference sits in 完整标识, not in the card's text.
+  assert.doesNotMatch(await externalCard.innerText(),new RegExp(externalRef));
+  await externalCard.locator("summary",{hasText:"完整标识"}).click();
   assert.match(await externalCard.innerText(),new RegExp(externalRef));
   await fetch(`${base}/__fixture/hold-next-host-list`);
   await presenceReread.click();
