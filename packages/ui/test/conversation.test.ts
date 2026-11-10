@@ -110,3 +110,21 @@ test("todo list folds when all done; empty queue renders nothing", () => {
   assert.equal(html(h(QueuedMessages, { items: [] })), "");
   assert.match(html(h(QueuedMessages, { items: [{ id: "1", text: "补一句" }], onCancel: noop })), />撤回</);
 });
+
+test("a long queue shows three rows and folds the rest, bounded in height, with the original behind its own toggle", () => {
+  const items = Array.from({ length: 12 }, (_, index) => ({ id: String(index + 1), text: `第 ${index + 1} 条`, detail: `原文 ${index + 1}` }));
+  const folded = html(h(QueuedMessages, { items, onCancel: noop }));
+  assert.match(folded, /排队中 12 条/);
+  assert.match(folded, /data-queued-count="12"/);
+  assert.equal((folded.match(/<li /g) ?? []).length, 3, "only the first three rows show while folded");
+  assert.match(folded, /还有 9 条 · 展开/);
+  assert.match(folded, /aria-expanded="false"/);
+  assert.match(folded, /max-h-\[min\(28dvh,13rem\)\][^"]*overflow-y-auto/, "the list is bounded and scrolls inside itself");
+  assert.equal((folded.match(/原文与标识/g) ?? []).length, 3);
+  assert.equal((folded.match(/>撤回</g) ?? []).length, 3);
+  // Few rows: no fold, nothing changes from the plain list; no detail, no toggle.
+  const few = html(h(QueuedMessages, { items: items.slice(0, 3).map(item => ({ id: item.id, text: item.text })), onCancel: noop }));
+  assert.equal((few.match(/<li /g) ?? []).length, 3);
+  assert.doesNotMatch(few, /还有|原文与标识|aria-expanded/);
+  assert.equal((html(h(QueuedMessages, { items, visibleCount: 5 })).match(/<li /g) ?? []).length, 5);
+});
