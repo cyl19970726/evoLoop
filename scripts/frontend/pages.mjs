@@ -2,7 +2,7 @@
 // that only appears once its reads are answered. `widths` (default 1440 and 390) are shot as the page opens; `drawer`
 // (true = 1024) opens the right column as a drawer first. `before` runs before the page loads (e.g. a failing read),
 // `prepare` after it is ready. Names are the file names under docs/assets/frontend-pages/ and stay fixed.
-import { agentKey, projectId, roles } from "./fixture/common.mjs";
+import { actorId, agentKey, ago, id, projectId, roles } from "./fixture/common.mjs";
 import { docs, tasks } from "./fixture/work.mjs";
 import { evaluations, knowledge } from "./fixture/spaces.mjs";
 
@@ -20,11 +20,21 @@ const taskReady = both(heading(tasks.t1.title, 1), heading("完成条件"));
 const reportReady = page => page.frameLocator("iframe").first().getByText("下一步").waitFor();
 const taskTabs = [["basis", "依据与影响"], ["delivery", "交付与使用"], ["runtime", "运行与关联"], ["history", "历史"], ["actions", "任务操作"]];
 
+/** Pages without a right column: at 1024 the inner rail is folded and the page fills the panel, nothing is opened. */
+const plainThree = [1440, 1024, 390];
+/** A receipt kept in this browser session for a write whose answer never came back (app/recovery.ts). */
+const unconfirmedReceipt = { actorId, projectId, taskId: tasks.t1.id, operationId: id(900), commandType: "task.assignment.set", createdAt: ago(12) };
+/** The pointer stays where the login button was; move it off the page so no row is drawn hovered. */
+const restPointer = page => page.mouse.move(0, 0);
+
 export const scenes = [
-  // Entry: login, the project list, settings.
-  { name: "login", path: "/", login: false, ready: heading("进入项目工作台") },
-  { name: "projects", path: "/", ready: both(heading("你的项目"), text("对外说明整理")) },
-  { name: "settings", path: p("settings"), ready: both(heading("项目设置"), text("zhang-reviewer")) },
+  // Entry: login and the project list; the pages behind the account menu: 项目设置, 待核对操作, 仓库规范.
+  { name: "login", path: "/", login: false, widths: plainThree, ready: heading("进入项目工作台") },
+  { name: "projects", path: "/", widths: plainThree, ready: both(heading("你的项目"), text("对外说明整理")) },
+  { name: "settings", path: p("settings"), widths: plainThree, ready: both(heading("项目设置"), text("zhang-reviewer")) },
+  { name: "operations", path: p("operations"), widths: plainThree, ready: both(heading("待核对操作", 1), text("提交结果待核对")), prepare: restPointer,
+    before: page => page.addInitScript(receipt => sessionStorage.setItem("evoloop.unconfirmed-operations.v1", JSON.stringify([receipt])), unconfirmedReceipt) },
+  { name: "repository", path: p("repository"), widths: plainThree, ready: both(heading("仓库规范", 1), text("登记 Git 固定来源")), prepare: restPointer },
   { name: "overview", path: p("overview"), drawer: true, ready: both(heading("项目总览"), text(tasks.t2.title)) },
 
   // Tasks: the table view, one task and its five other tabs, a new task.
