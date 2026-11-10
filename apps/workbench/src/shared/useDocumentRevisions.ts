@@ -4,8 +4,7 @@ import { useCallback } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import type { DocumentRevisionPage } from "@evoloop/contracts";
 import { api } from "./api";
-import { revisionListModel, type RevisionHead } from "./documentRevisions";
-import { errorCode } from "./errorPresentation";
+import { revisionListModel, revisionPageProblem, type RevisionHead } from "./documentRevisions";
 import { queryKeys, useProjectPages } from "./query";
 
 /** The key the revision list of one document is read under (a reread of the document rereads it too). */
@@ -33,13 +32,14 @@ export function useDocumentRevisions(projectId: string, documentId: string, opti
   const query = useProjectPages<DocumentRevisionPage>(projectId, key, (cursor, signal) => readRevisionPage(projectId, documentId, cursor, signal),
     { enabled: (options.enabled ?? true) && !!documentId });
   const model = query.data ? revisionListModel(query.data.pages) : null;
-  // The cursor no longer fits (another document, another project, or one the server cannot read): start again.
-  const cursorRefused = query.pageFailed && errorCode(query.error) === "INVALID_CURSOR";
+  // The cursor no longer fits (another document, another project, or one the server cannot read): start again. A cursor
+  // seen before stops the list: what follows it was not read.
+  const problem = revisionPageProblem({ pageFailed: query.pageFailed, error: query.error, repeatedCursor: query.repeatedCursor });
   const fromFirst = useCallback(() => { void client.resetQueries({ queryKey: queryKeys.project(projectId, ...revisionListKey(documentId)) }); },
     [client, projectId, documentId]);
   return {
     model, reading: query.isPending && query.isFetching, failed: query.isError && !query.data, stale: query.stale,
-    pageFailed: query.pageFailed, cursorRefused, error: query.error, checking: query.checking,
+    pageFailed: query.pageFailed, problem, error: query.error, checking: query.checking,
     more: query.hasNextPage, loadingMore: query.isFetchingNextPage, loadMore: () => { void query.fetchNextPage({ cancelRefetch: false }); },
     fromFirst, reread: () => { void query.refetch(); },
   };

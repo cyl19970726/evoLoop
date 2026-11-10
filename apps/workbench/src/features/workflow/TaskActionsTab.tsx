@@ -11,7 +11,7 @@ import {
 import { Button, Checkbox, Field, Input, Notice, Select, Textarea } from "@evoloop/ui";
 import { api, errorText } from "../../shared/api";
 import type { MutationContext } from "../../shared/ActionForm";
-import { acceptanceMemberKind } from "../../shared/memberPresentation";
+import { acceptanceMemberKind, acceptanceMemberNeed } from "../../shared/memberPresentation";
 import { MemberChoice } from "../../shared/ui/MemberChoice";
 import { useProjectPages, useProjectQuery } from "../../shared/query";
 import { roleClient } from "../../shared/roleClient";
@@ -107,12 +107,15 @@ export function TaskActionsTab({ context, detail, leader, leaderState, documents
         ...(acceptanceMode ? [] : [{ value: "legacy", label: "保留旧任务的历史约定" }]),
         { value: "independent_agent", label: "独立的智能体验收" }, { value: "human_required", label: "必须本人验收" }] },
       { name: "consumer", label: "指定验收身份", optional: true, kind: "custom", initial: detail.proposal?.consumer ?? "", maxLength: 4000,
-        hint: "必须本人验收时选验收的人本人；独立智能体验收可以不预先指定。只列出能写入的成员（记录使用要写入）。",
+        hint: "必须本人验收时选验收的人本人，独立智能体验收可以不指定，这两种只列能写入的成员（使用记录由验收人自己登记）。保留旧约定时，人的使用记录由复核者代为登记，可以选任何成员，也可以按完整标识填写不在本项目的人。",
         render: ({ control, value, values, onChange }) => <MemberChoice projectId={projectId} control={control} value={value} onChange={onChange}
-          need="write" kind={acceptanceMemberKind(values.acceptanceMode)} optional /> },
+          need={acceptanceMemberNeed(values.acceptanceMode)} kind={acceptanceMemberKind(values.acceptanceMode)} optional={values.acceptanceMode !== "human_required"} /> },
       reasonField()]}
-      build={(values, seen) => acceptanceResponsibilityCommand(detail, seen, { acceptanceMode: values.acceptanceMode ?? "legacy",
-        consumer: values.consumer ?? "", reason: values.reason ?? "" })} /> });
+      build={(values, seen) => {
+        // The service refuses 必须本人验收 without the person; said before sending.
+        if (values.acceptanceMode === "human_required" && !values.consumer?.trim()) throw new Error("必须本人验收时，请选验收的人本人。");
+        return acceptanceResponsibilityCommand(detail, seen, { acceptanceMode: values.acceptanceMode ?? "legacy", consumer: values.consumer ?? "", reason: values.reason ?? "" });
+      }} /> });
 
   const progress: Action[] = [];
   if (task.state === "todo") progress.push({ key: "start", title: "开始任务并固定依据", needs: ["review"],

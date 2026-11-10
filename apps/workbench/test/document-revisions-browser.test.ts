@@ -22,9 +22,9 @@ const root = `/api/projects/${projectId}`;
 test("过程文档: 第 N 版 / 共 M 版 in the header and the right column, 全部版本 opens each version, the list's limits said",
   { skip: !modulePath && "Set EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE" }, async t => {
     const { chromium } = (await import(pathToFileURL(modulePath!).href)).default;
-    // 本轮需求总图 is an older document numbered by time: its current revision is 第 1 版 of 3, and it is published again
-    // between the two pages of its list. 试用反馈汇总's list cannot be read.
-    const legacy = { mapVersion: 1 };
+    // 本轮需求总图 is an older document numbered by time: its current revision is 第 1 版 of 3, and a 第 4 版 is saved
+    // between the two pages of its list. 验收排队怎样分担's list repeats a cursor. 试用反馈汇总's list cannot be read.
+    const legacy = { saved: false };
     const server = createServer(async (req, res) => {
       const url = new URL(req.url!, "http://127.0.0.1");
       const send = (status: number, value: unknown) => { res.writeHead(status, { "content-type": "application/json" }); res.end(JSON.stringify(value)); };
@@ -34,12 +34,24 @@ test("过程文档: 第 N 版 / 共 M 版 in the header and the right column, �
         if (path === `${root}/documents/${docs.report.id}/revisions`) return send(503, { message: "修订列表暂不可读" });
         if (path === `${root}/documents/${docs.map.id}/revisions`) {
           const fixture = revisionPage(docs.map);
-          const document = { ...fixture.document, version: legacy.mapVersion };
           const current = fixture.items[0]!;
           const earlier = (n: number) => ({ ...current, id: id(170 + n), revisionNumber: n + 1, current: false, published: false, state: "historical",
-            createdAt: `2026-11-0${n + 2}T01:00:00.000Z`, reason: n === 2 ? "按时间补号的较新一版" : "第二稿", previousRevisionId: null });
-          if (url.searchParams.get("cursor") === "older") { legacy.mapVersion = 2; return send(200, { items: [current], nextCursor: null, document: { ...document, version: 2 }, revisionCount: 3 }); }
-          return send(200, { items: [earlier(2), earlier(1)], nextCursor: "older", document, revisionCount: 3 });
+            createdAt: `2026-11-0${n + 2}T01:00:00.000Z`, reason: n === 3 ? "读取期间保存的新版" : n === 2 ? "按时间补号的较新一版" : "第二稿", previousRevisionId: null });
+          // Once 第 4 版 is saved it is the current revision; the published one stays.
+          const head = () => legacy.saved ? { ...fixture.document, version: 2, currentRevisionId: id(173) } : fixture.document;
+          if (url.searchParams.get("cursor") === "older") {
+            legacy.saved = true;
+            return send(200, { items: [{ ...current, current: false, state: "published" }], nextCursor: null, document: head(), revisionCount: 4 });
+          }
+          return send(200, legacy.saved ? { items: [{ ...earlier(3), current: true, state: "current" }, earlier(2)], nextCursor: "older", document: head(), revisionCount: 4 }
+            : { items: [earlier(2), earlier(1)], nextCursor: "older", document: head(), revisionCount: 3 });
+        }
+        if (path === `${root}/documents/${docs.discussion.id}/revisions`) {
+          const fixture = revisionPage(docs.discussion);
+          const current = fixture.items[0]!;
+          return send(200, url.searchParams.get("cursor") === "loop"
+            ? { ...fixture, items: [current], nextCursor: "loop", revisionCount: 2 }
+            : { ...fixture, items: [{ ...current, id: id(180), revisionNumber: 2, current: false, state: "historical", reason: "补充第二种做法" }], nextCursor: "loop", revisionCount: 2 });
         }
         const result = answer(path, url.searchParams) as { status: number; value: unknown } | undefined;
         return result ? send(result.status, result.value) : send(200, { items: [], nextCursor: null });
@@ -93,7 +105,8 @@ test("过程文档: 第 N 版 / 共 M 版 in the header and the right column, �
     await page.getByText("你在读固定的历史版本，当前版已更新。请核对任务实际采用的版本。").waitFor();
     assert.match(await all.getByRole("list", { name: "全部版本", includeHidden: true }).locator("[aria-current=page]").textContent() ?? "", /第 1 版[\s\S]*正在读/, "the version on screen is marked in the list");
 
-    // An older document numbered by time: 第 1 版 of 3, the count from the list; it changes between two pages.
+    // An older document numbered by time: 第 1 版 of 3, the count from the list. A 第 4 版 is saved between two pages:
+    // the newer one is on the first page, which is offered; the loaded ones are judged by the newest head.
     await go(`/p/${projectId}/documents/${docs.map.id}`);
     await heading(docs.map.title).waitFor();
     await numbered("第 1 版 / 共 3 版");
@@ -102,11 +115,25 @@ test("过程文档: 第 N 版 / 共 M 版 in the header and the right column, �
     await mapAll.getByText("全部版本 · 3").click();
     await mapAll.getByText("共 3 版，已列出 2 版。").waitFor();
     await mapAll.getByRole("button", { name: "列出更早的版本" }).click();
-    await mapAll.getByText(/文档在读取期间有了变化，更新的版本在第一页/).waitFor();
-    assert.match(await mapAll.getByRole("list", { name: "全部版本" }).innerText(), /第 3 版 · 历史版[\s\S]*第 2 版 · 历史版[\s\S]*第 1 版 · 当前版 · 已发布[\s\S]*正在读/);
+    await mapAll.getByText("文档在读取期间保存了新的版本，它们在第一页；上面的状态已按最新读回的文档重算。").waitFor();
+    assert.match(await mapAll.getByRole("list", { name: "全部版本" }).innerText(), /第 3 版 · 历史版[\s\S]*第 2 版 · 历史版[\s\S]*第 1 版 · 已发布[\s\S]*正在读/,
+      "第 1 版 is no longer called current: the newest head says 第 4 版 is");
+    await mapAll.getByText("共 4 版，已列出 3 版。").waitFor();
     await mapAll.getByRole("button", { name: "回到第一页" }).click();
-    await mapAll.getByText("共 3 版，已列出 2 版。").waitFor();
-    assert.equal(await mapAll.getByText(/文档在读取期间有了变化/).count(), 0);
+    await mapAll.getByText("共 4 版，已列出 2 版。").waitFor();
+    assert.match(await mapAll.getByRole("list", { name: "全部版本" }).innerText(), /^第 4 版 · 当前版/);
+    assert.equal(await mapAll.getByText(/文档在读取期间/).count(), 0);
+
+    // A list that repeats a cursor stops there and says what was not read; it never says 已读完.
+    await go(`/p/${projectId}/documents/${docs.discussion.id}`);
+    await heading(docs.discussion.title).waitFor();
+    await openPanel();
+    const loopAll = panel.locator("details").filter({ has: page.getByText(/^全部版本/) }).first();
+    await loopAll.getByText("全部版本 · 2").click();
+    await loopAll.getByRole("button", { name: "列出更早的版本" }).click();
+    await loopAll.getByText("读到重复的读取位置，后面的版本没读到。").waitFor();
+    await loopAll.getByText("共 2 版，已列出 2 版。").waitFor();
+    assert.equal(await loopAll.getByText(/已读完/).count(), 0);
 
     // A list that cannot be read: the number of the revision on screen only, never a count; the list says it failed.
     await go(`/p/${projectId}/documents/${docs.report.id}`);

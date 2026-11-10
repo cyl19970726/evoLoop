@@ -61,6 +61,8 @@ test("结果未知的操作, 仓库规范 and 项目设置: back to the object, 
         if (path === `${root}/repositories` && state.repositories === "refused") return send(200, { projectId, status: "unavailable", reason: "registration_invalid",
           items: [{ repositoryId: "workbench", allowedPaths: ["docs/"] }] });
         if (path === `${root}/repositories` && state.repositories === "not_provided") return send(200, { projectId, status: "unavailable", reason: "not_provided" });
+        if (path === `${root}/repositories` && state.repositories === "none") return send(200, { projectId, status: "available", items: [] });
+        if (path === `${root}/repositories` && state.repositories === "fail") return send(503, { message: "仓库清单暂不可读" });
         if (path === `${root}/capabilities` && state.failCapabilities) return send(503, { message: "能力配置暂不可读" });
         const result = answer(path, url.searchParams) as { status: number; value: unknown } | undefined;
         return result ? send(result.status, result.value) : send(200, { items: [], nextCursor: null });
@@ -143,7 +145,7 @@ test("结果未知的操作, 仓库规范 and 项目设置: back to the object, 
     const register = block("登记 Git 固定来源");
     await register.getByText("登记 Git 固定来源", { exact: true }).click();
     // The repository is chosen from the list; a path it does not allow is said before sending.
-    await register.getByLabel("仓库标识").selectOption("workbench");
+    await register.getByLabel("仓库标识", { exact: true }).selectOption("workbench");
     await register.getByText("允许读取：docs/ 下的文件、README.md。").waitFor();
     await register.getByLabel("相对路径").fill("src/main.ts");
     await register.getByText("仓库 workbench 只允许读取 docs/ 下的文件、README.md；这个路径不在其中，服务端会拒绝。").waitFor();
@@ -209,12 +211,28 @@ test("结果未知的操作, 仓库规范 and 项目设置: back to the object, 
     await register.getByText("服务端的仓库登记有误，现在所有项目都读不了 Git 固定来源，登记会被拒绝。").waitFor();
     assert.equal(await register.getByRole("button", { name: "核验并登记" }).isDisabled(), true);
     await shoot(repository, "repository-refused");
+    // The project has none (read just now): sending is held back. When that answer is kept after a failed reread, the
+    // identifier can still be typed under its fold and sent, since the last answer may be out of date.
+    state.repositories = "none";
+    await repositories.getByRole("button", { name: "重新读取" }).click();
+    await repositories.getByText("本项目没有配置仓库", { exact: true }).waitFor();
+    await register.getByText("本项目没有配置仓库，登记 Git 固定来源会被拒绝。").waitFor();
+    state.repositories = "fail";
+    await repositories.getByRole("button", { name: "重新读取" }).click();
+    await repositories.getByText("上次读回，当前待核对").waitFor({ timeout: 20000 });
+    assert.equal(await register.getByLabel("仓库标识", { exact: true }).isDisabled(), true, "nothing to choose from the last answer");
+    await register.getByText("按完整标识填写").click();
+    await register.getByLabel("完整的仓库标识").fill("evoLoop");
+    assert.equal(await register.getByLabel("仓库标识", { exact: true }).inputValue(), "evoLoop");
+    assert.equal(await register.getByLabel("仓库标识", { exact: true }).locator("option:checked").innerText(), "evoLoop（不在读回的仓库清单里）");
+    assert.equal(await register.getByRole("button", { name: "核验并登记" }).isDisabled(), false, "a kept answer does not hold the form back");
+    await register.getByLabel("完整的仓库标识").fill("");
     // No list from the service: the identifier is typed again, with the reason.
     state.repositories = "not_provided";
     await repositories.getByRole("button", { name: "重新读取" }).click();
     await repositories.getByText(/服务端没有提供仓库清单/).waitFor();
-    await register.getByLabel("仓库标识").fill("evoLoop");
-    assert.equal(await register.getByLabel("仓库标识").inputValue(), "evoLoop");
+    await register.getByLabel("仓库标识", { exact: true }).fill("evoLoop");
+    assert.equal(await register.getByLabel("仓库标识", { exact: true }).inputValue(), "evoLoop");
     // The capabilities cannot be read at all: said as unknown, never as none.
     state.failCapabilities = true;
     await capabilities.getByRole("button", { name: "重新读取" }).click();

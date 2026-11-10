@@ -519,12 +519,12 @@ test("建立冻结评价: the common task, the owner task, documents, a Wiki pag
     protocolVersion = 3;
     await protocolGroup.getByRole("button", { name: "列出更早的版本" }).click();
     await protocolGroup.getByRole("button", { name: /^第 1 版 · 较早版本 · .*首版/ }).waitFor();
-    // Published between the two pages: every loaded version is judged by the newest head, and the first page is offered.
-    await protocolGroup.getByText(/文档在读取期间有了变化，更新的版本在第一页/).waitFor();
+    // Published between the two pages: no revision was saved, so no newer version is claimed; every loaded version is
+    // judged again by the newest head (第 2 版 is now the current and the published one).
+    await protocolGroup.getByText("文档在读取期间有变化（例如发布或归档），没有新的版本；上面的状态已按最新读回的文档重算。").waitFor();
+    assert.equal(await protocolGroup.getByRole("button", { name: "回到第一页" }).count(), 0, "nothing newer to go back for");
+    await protocolGroup.getByText("共 2 版，已列出 2 版，已读完。").waitFor();
     await shot("evaluation-create-1440-02-versions");
-    await protocolGroup.getByRole("button", { name: "回到第一页" }).click();
-    await protocolGroup.getByText("共 2 版，已列出 1 版。").waitFor();
-    assert.equal(await protocolGroup.getByText(/文档在读取期间有了变化/).count(), 0);
     await protocolGroup.getByRole("button", { name: /^第 2 版 · 当前版本/ }).click();
     await protocolGroup.getByRole("button", { name: "移除 《评价协议 v2》" }).waitFor();
     await protocolGroup.getByText(/^第 2 版 · 当前版本 · /).waitFor();

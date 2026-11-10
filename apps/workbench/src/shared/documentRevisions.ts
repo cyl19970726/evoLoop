@@ -1,11 +1,13 @@
 // A document's revisions, newest first, as the revision list gives them (contracts.md, GET /documents/:id/revisions):
 // metadata only, numbered per document (第 N 版), with the document head of the same read. The state of a revision
 // (当前版, 已发布) holds only for the head that came with its page, so after another page is loaded every loaded item is
-// judged again by the newest page's head; when that head's version differs from the first page's, newer revisions
-// sit above the first page and the reader is offered to go back to it. Used by 过程文档 (all versions, 第 N 版 / 共 M 版),
-// 评价 (choosing a fixed document version) and 仓库规范 (choosing a process revision). Pure; the reads are in
-// useDocumentRevisions.ts.
+// judged again by the newest page's head. When the newest page counts more revisions than the first did, newer ones
+// sit above the first page and the reader is offered to go back to it; a head that changed without a new revision (it
+// was published, archived or restored) only means the states were judged again. Used by 过程文档 (all versions,
+// 第 N 版 / 共 M 版), 评价 (choosing a fixed document version) and 仓库规范 (choosing a process revision). Pure; the reads
+// are in useDocumentRevisions.ts.
 import type { DocumentRevisionPage, DocumentRevisionSummary, DocumentStatus } from "@evoloop/contracts";
+import { errorCode } from "./errorPresentation";
 import { revisionOrigin } from "./revisionPresentation";
 
 export type RevisionHead = DocumentRevisionPage["document"];
@@ -17,8 +19,21 @@ export interface RevisionListModel {
   head: RevisionHead;
   /** 共 M 版: the revision count the page read last gave. */
   count: number;
-  /** The document changed since the first page was read (another version): newer revisions are above the first page. */
-  moved: boolean;
+  /** More revisions now than when the first page was read: the newer ones are above the first page. */
+  newer: boolean;
+  /** The head changed since the first page (published, archived, restored or revised): the states were judged again. */
+  restated: boolean;
+}
+
+/**
+ * What went wrong reading further pages, if anything: the server refused the cursor (INVALID_CURSOR: start again from
+ * the first page), a cursor came back that was seen before (the list stops; what follows was not read), or the next
+ * page failed otherwise.
+ */
+export function revisionPageProblem(state: { pageFailed: boolean; error: unknown; repeatedCursor: boolean }):
+  "cursor_refused" | "repeated_cursor" | "page_failed" | null {
+  if (state.pageFailed) return errorCode(state.error) === "INVALID_CURSOR" ? "cursor_refused" : "page_failed";
+  return state.repeatedCursor ? "repeated_cursor" : null;
 }
 
 /** A revision's state against one document head. */
@@ -34,7 +49,8 @@ export function revisionListModel(pages: readonly DocumentRevisionPage[]): Revis
   const byId = new Map<string, DocumentRevisionSummary>();
   for (const page of pages) for (const item of page.items) byId.set(item.id, item);
   const items = [...byId.values()].sort((a, b) => b.revisionNumber - a.revisionNumber).map(item => judgedRevision(item, last.document));
-  return { items, head: last.document, count: last.revisionCount, moved: last.document.version !== first.document.version };
+  return { items, head: last.document, count: last.revisionCount, newer: last.revisionCount > first.revisionCount,
+    restated: last.document.version !== first.document.version };
 }
 
 /**

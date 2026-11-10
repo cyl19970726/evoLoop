@@ -5,7 +5,7 @@ import { createElement } from "react";
 import type { MisfirePolicy, ScheduleDefinition, ScheduleRule } from "@evoloop/contracts/scheduling";
 import type { Field } from "../../shared/ActionForm";
 import type { CustomControl } from "../../shared/command";
-import { acceptanceMemberKind } from "../../shared/memberPresentation";
+import { acceptanceMemberKind, acceptanceMemberNeed } from "../../shared/memberPresentation";
 import { FullIdentifiers } from "../../shared/ui/FullIdentifiers";
 import { LocalTimeInput } from "../../shared/ui/LocalTimeInput";
 import { MemberChoice } from "../../shared/ui/MemberChoice";
@@ -118,8 +118,8 @@ export function scheduleFields(grants: SchedulingGrant[], names: ScheduleRoleNam
  */
 export function withMemberChoice(fields: Field[], projectId: string): Field[] {
   return fields.map(field => field.name !== "consumer" ? field : { ...field, kind: "custom" as const,
-    render: ({ control, value, values, onChange }: CustomControl) => createElement(MemberChoice, { projectId, control, value, onChange, need: "write",
-      kind: acceptanceMemberKind(values.acceptanceMode), optional: true }) });
+    render: ({ control, value, values, onChange }: CustomControl) => createElement(MemberChoice, { projectId, control, value, onChange,
+      need: acceptanceMemberNeed(values.acceptanceMode), kind: acceptanceMemberKind(values.acceptanceMode), optional: values.acceptanceMode !== "human_required" }) });
 }
 
 function instantOf(values: Record<string, string>, name: string, what: string): string {
@@ -134,6 +134,9 @@ export function scheduleCommandValues(values: Record<string, string>, actorId: s
   const old = definition?.revision.authorization;
   const usingRevokedOldGrant = !grant && !!old && grantKey(old) === values.grant && values.state !== "active";
   if (!grant && !usingRevokedOldGrant) throw new Error("当前身份没有所选日程授权；不能创建或恢复运行。");
+  // The service refuses 必须本人验收 without the person (core scheduling commands); said before sending.
+  if (!definition?.revision.template.managedTarget && values.acceptanceMode === "human_required" && !values.consumer?.trim())
+    throw new Error("必须本人验收时，请选验收的人本人。");
   const rule: ScheduleRule = values.ruleKind === "interval" ? { kind: "interval", anchorUtc: instantOf(values, "anchorLocal", "间隔的开始时间"), everyMinutes: Number(values.everyMinutes) }
     : values.ruleKind === "daily" ? { kind: "daily", localTime: values.localTime! }
       : { kind: "once", atUtc: instantOf(values, "atLocal", "仅一次的日期和时间") };

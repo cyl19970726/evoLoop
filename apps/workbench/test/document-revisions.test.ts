@@ -1,10 +1,12 @@
 // A document's revision list (GET /documents/:id/revisions) as 过程文档, 评价 and 仓库规范 use it: pages joined newest
-// first, every loaded item judged again by the newest page's head, a changed document offered back to the first page,
-// 第 N 版 / 共 M 版 with M from the list's count, and a revision's who and why in the page's words.
+// first, every loaded item judged again by the newest page's head, newer revisions offered back on the first page (a
+// head that changed without one only restates), the problems of later pages, 第 N 版 / 共 M 版 with M from the list's
+// count, and a revision's who and why in the page's words.
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { DocumentRevisionPage, DocumentRevisionSummary } from "@evoloop/contracts";
-import { judgedRevision, revisionLine, revisionListModel, revisionNumberText, revisionStateText } from "../src/shared/documentRevisions.ts";
+import { ApiError } from "../src/shared/api.ts";
+import { judgedRevision, revisionLine, revisionListModel, revisionNumberText, revisionPageProblem, revisionStateText } from "../src/shared/documentRevisions.ts";
 
 const id = (n: number) => `7000000${n}-0000-4000-8000-00000000000${n}`;
 const documentId = id(9);
@@ -24,12 +26,30 @@ test("pages are joined newest first, and every loaded item is judged by the newe
   const model = revisionListModel([first, second])!;
   assert.deepEqual(model.items.map(item => [item.revisionNumber, item.state]), [[4, "historical"], [3, "historical"], [2, "historical"], [1, "historical"]]);
   assert.equal(model.count, 5, "共 M 版 comes from the newest page");
-  assert.equal(model.moved, true, "the document changed since the first page: offer to go back");
+  assert.deepEqual([model.newer, model.restated], [true, true], "a revision was saved since the first page: offer to go back");
   assert.equal(model.head.version, 8);
   const steady = revisionListModel([page([4, 3], head(6, 4, 3), 4, "c1"), page([2, 1], head(6, 4, 3), 4)])!;
-  assert.equal(steady.moved, false);
+  assert.deepEqual([steady.newer, steady.restated], [false, false]);
   assert.deepEqual(steady.items.map(item => item.state), ["current", "published", "historical", "historical"]);
   assert.equal(revisionListModel([]), null, "nothing read yet");
+});
+
+test("published, archived or restored between pages: states judged again, no newer revision claimed", () => {
+  // Publishing advances the document's version but saves no revision: the count stays.
+  const model = revisionListModel([page([2], head(2, 2, null), 2, "c"), page([1], head(3, 2, 2), 2)])!;
+  assert.deepEqual([model.newer, model.restated, model.count], [false, true, 2]);
+  assert.deepEqual(model.items.map(item => item.state), ["current", "historical"], "the newest head decides: 第 2 版 is current (and now published)");
+  assert.equal(model.items[0]!.published, true);
+});
+
+test("what went wrong reading further pages: a refused cursor, a repeated one, or a failed page", () => {
+  const refused = new ApiError(409, "读取位置无效", { code: "INVALID_CURSOR", message: "读取位置无效" });
+  assert.equal(revisionPageProblem({ pageFailed: true, error: refused, repeatedCursor: false }), "cursor_refused", "start again from the first page");
+  assert.equal(revisionPageProblem({ pageFailed: true, error: new ApiError(503, "暂不可用"), repeatedCursor: false }), "page_failed");
+  assert.equal(revisionPageProblem({ pageFailed: false, error: null, repeatedCursor: true }), "repeated_cursor", "the list stops: what follows was not read");
+  assert.equal(revisionPageProblem({ pageFailed: false, error: null, repeatedCursor: false }), null);
+  // A first page that failed is not a later page's problem.
+  assert.equal(revisionPageProblem({ pageFailed: false, error: refused, repeatedCursor: false }), null);
 });
 
 test("an item read on two pages appears once", () => {

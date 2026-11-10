@@ -4,9 +4,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { ProjectMember, ProjectMembersView } from "@evoloop/contracts/project-configuration";
-import { acceptanceMemberKind, memberChoices, memberPendingText } from "../src/shared/memberPresentation.ts";
+import { acceptanceMemberKind, acceptanceMemberNeed, memberChoices, memberPendingText, memberPlaceholder } from "../src/shared/memberPresentation.ts";
 import { scheduleTemplate } from "../src/features/scheduling/managedTarget.ts";
 import { acceptanceResponsibilityCommand } from "../src/features/workflow/taskCommands.ts";
+import { emptyTaskDraft, taskCreateCommand } from "../src/features/workflow/taskCreate.ts";
 
 const projectId = "p";
 const member = (actorId: string, overrides: Partial<ProjectMember> = {}): ProjectMember =>
@@ -79,14 +80,55 @@ test("the kind follows the acceptance mode", () => {
   assert.equal(acceptanceMemberKind(undefined), null);
 });
 
-test("a member chosen by name sends the same request body as the identity typed", () => {
-  // The chooser hands the form the member's identity, the very string that was typed before.
+test("a member chosen by name sends the request body the typed identity sent, field for field", () => {
+  // The chooser hands the form the member's identity as it is listed; each command is compared with the body the typed
+  // form sent before this change, written out in full.
   const [chosen] = memberChoices(view(team), "write", "human").options;
-  const detail = { task: { id: "t", version: 3 }, links: [], basis: null, proposal: { acceptanceMode: "human_required", consumer: null } } as unknown as Parameters<typeof acceptanceResponsibilityCommand>[0];
-  const byName = acceptanceResponsibilityCommand(detail, { taskVersion: 3 }, { acceptanceMode: "human_required", consumer: chosen!.value, reason: "本人验收" });
-  const typed = acceptanceResponsibilityCommand(detail, { taskVersion: 3 }, { acceptanceMode: "human_required", consumer: "zhang-reviewer", reason: "本人验收" });
-  assert.deepEqual(byName, typed);
-  assert.equal((byName as { consumer: string }).consumer, "zhang-reviewer");
-  const template = (consumer: string) => scheduleTemplate({ title: "巡检", content: "", acceptance: "a", owner: "r", acceptanceMode: "human_required", consumer });
-  assert.deepEqual(template(chosen!.value), template("zhang-reviewer"));
+  assert.equal(chosen!.value, "zhang-reviewer");
+  const detail = { task: { id: "t", version: 3, title: "巡检", content: "按清单", acceptance: "留报告", owner: "role-1", kind: null },
+    links: [{ documentId: "d1" }], basis: null, proposal: { acceptanceMode: "human_required", consumer: null } } as unknown as Parameters<typeof acceptanceResponsibilityCommand>[0];
+  assert.deepEqual(acceptanceResponsibilityCommand(detail, { taskVersion: 3 }, { acceptanceMode: "human_required", consumer: chosen!.value, reason: "本人验收" }), {
+    taskId: "t", expectedVersion: 3, type: "task.update", title: "巡检", content: "按清单", acceptance: "留报告", owner: "role-1", kind: null,
+    documentIds: ["d1"], acceptanceMode: "human_required", useRequired: true, consumer: "zhang-reviewer", reason: "本人验收" });
+  assert.deepEqual(scheduleTemplate({ title: "巡检", content: "", acceptance: "a", owner: "r", acceptanceMode: "human_required", consumer: chosen!.value }),
+    { title: "巡检", content: "", acceptance: "a", owner: "r", acceptanceMode: "human_required", consumer: "zhang-reviewer" });
+  const draft = { ...emptyTaskDraft("Asia/Shanghai"), title: "整理验收清单", why: "旧清单过时", outcome: "新清单", acceptance: "本人用过", owner: "role-1",
+    acceptanceMode: "human_required" as const, consumer: chosen!.value };
+  assert.deepEqual(taskCreateCommand(draft, "task-1"), { type: "task.create", taskId: "task-1", title: "整理验收清单", kind: null,
+    content: "旧清单过时\n\n期望结果\n新清单", acceptance: "本人用过", owner: "role-1", acceptanceMode: "human_required", useRequired: true,
+    consumer: "zhang-reviewer" });
+  // Nothing chosen for an optional identity: the field is left out, as when nothing was typed.
+  assert.equal("consumer" in taskCreateCommand({ ...draft, acceptanceMode: "independent_agent", consumer: "" }, "task-1"), false);
+});
+
+test("an old task's acceptance takes any member, or someone outside the project", () => {
+  // A reviewer records a person's use for them under the old agreement: no permission of their own is needed.
+  assert.equal(acceptanceMemberNeed("legacy"), "any");
+  assert.equal(acceptanceMemberNeed("human_required"), "write");
+  assert.equal(acceptanceMemberNeed("independent_agent"), "write");
+  const legacy = memberChoices(view(team), "any", null);
+  assert.deepEqual(legacy.options.map(option => [option.value, option.disabled]),
+    [["zhang-reviewer", false], ["li-reader", false], ["wang-unsure", false], ["verify-agent", false], ["loop-controller", false]]);
+  assert.equal(legacy.leftOut, null);
+  assert.equal(memberChoices(view(team, "unreadable"), "any", null).notice, null, "an unreadable file does not matter where no permission is needed");
+  assert.equal(memberChoices(view(team), "any", null, "outside-person").options[0]!.label, "outside-person（当前所填；不在本项目的成员清单里）");
+});
+
+test("the empty choice never says nobody when it cannot tell; a held undecided member is listed once", () => {
+  const unsure = view([member("a", { canWrite: null }), member("b", { canWrite: null })], "unreadable");
+  const choices = memberChoices(unsure, "write", "human");
+  assert.deepEqual([choices.eligible, choices.undecided], [0, 2]);
+  assert.equal(memberPlaceholder(choices, true), "暂时无法判断谁可选");
+  assert.equal(memberPlaceholder({ eligible: 0, undecided: 0 }, true), "本项目没有可选的成员");
+  assert.equal(memberPlaceholder({ eligible: 2, undecided: 0 }, true), "不指定");
+  assert.equal(memberPlaceholder({ eligible: 2, undecided: 0 }, false), "选择成员", "a place that must name someone offers no 不指定");
+  const held = memberChoices(unsure, "write", "human", "a");
+  assert.deepEqual(held.options.map(option => [option.value, option.disabled]), [["a", false], ["b", true]]);
+  assert.equal(new Set(held.options.map(option => option.value)).size, held.options.length, "no two options share a value");
+});
+
+test("an edited identity file that changes nobody here says so", () => {
+  const unchangedHere = memberChoices(view(team, "changed"), "write", null);
+  assert.deepEqual(unchangedHere.notice, { tone: "info", title: "身份文件已改动，本项目成员的权限没有变化", text: "下面按现在生效的权限列出。" });
+  assert.deepEqual(unchangedHere.pending, []);
 });

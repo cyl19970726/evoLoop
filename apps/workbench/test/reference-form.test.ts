@@ -85,7 +85,7 @@ test("the repository list is said for what it is: listed, none, refused for ever
   const refused = repositoryStanding({ projectId, status: "unavailable", reason: "registration_invalid", items: [{ repositoryId: "evoLoop", allowedPaths: ["docs/"] }] });
   assert.equal(refused.kind, "refused");
   assert.equal(refused.items.length, 1, "this project's entries are still listed, none readable");
-  assert.match(refused.text, /仓库登记有误[\s\S]*整份登记被拒，所有项目现在都读不了 Git/);
+  assert.match(refused.text, /仓库登记里有 Git 来源不接受的条目（例如绝对路径、越出仓库、重复登记、非法字符或路径段[\s\S]*整份登记被拒，所有项目现在都读不了 Git/);
   assert.doesNotMatch(refused.text, /没有配置仓库/, "a refused registration is never said as none configured");
   for (const reason of ["not_provided", "read_failed"] as const) {
     const unknown = repositoryStanding({ projectId, status: "unavailable", reason });

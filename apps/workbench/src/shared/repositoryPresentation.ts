@@ -20,7 +20,7 @@ export function repositoryStanding(view: ProjectRepositoriesView): RepositorySta
     ? { kind: "listed", items: view.items, text: `服务端为本项目配置了 ${view.items.length} 个仓库；登记 Git 固定来源时从中选择，路径要在允许读取的范围内。` }
     : { kind: "none", items: [], text: "服务端没有为本项目配置仓库，登记 Git 固定来源会被拒绝。要读仓库里的文件，请管理员在服务端登记仓库后重启服务。" };
   if (view.reason === "registration_invalid") return { kind: "refused", items: "items" in view ? view.items : [],
-    text: "服务端的仓库登记有误（某个项目的条目允许路径是绝对路径或越出仓库，或同一仓库登记了两次），整份登记被拒，所有项目现在都读不了 Git 固定来源，登记也会被拒绝。请管理员修正登记后重启服务。" };
+    text: "服务端的仓库登记里有 Git 来源不接受的条目（例如绝对路径、越出仓库、重复登记、非法字符或路径段，可能是任何一个项目的），整份登记被拒，所有项目现在都读不了 Git 固定来源，登记也会被拒绝。请管理员修正登记后重启服务。" };
   if (view.reason === "not_provided") return { kind: "unknown", items: [], code: null,
     text: "服务端没有提供仓库清单，列不出本项目配置了哪些仓库。登记时的仓库标识请向管理员确认。" };
   if (view.reason === "read_failed") return { kind: "unknown", items: [], code: null,

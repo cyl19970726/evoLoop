@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { ProjectCapability } from "@evoloop/contracts/project-configuration";
-import { capabilitiesUnavailableText, capabilityRows } from "../src/features/settings/capabilityPresentation.ts";
+import { capabilitiesUnavailableText, capabilityNotices, capabilityRows } from "../src/features/settings/capabilityPresentation.ts";
 
 const capability = (overrides: Partial<ProjectCapability> & Pick<ProjectCapability, "key">): ProjectCapability =>
   ({ scope: "project", readAt: "start", state: "configured", reason: null, pending: null, ...overrides });
@@ -23,10 +23,18 @@ test("configured for this project, or one setting for the whole service", () => 
 });
 
 test("each reason is said precisely; a refused repository registration is not 'no repository'", () => {
+  // The service refuses its whole registration for every project, whether or not this project has an entry: the row
+  // never says this project is not configured.
   const git = row(capability({ key: "gitSources", state: "not_configured", reason: "repository_registration_invalid" }));
-  assert.equal(git.tag.label, "未配置");
-  assert.match(git.text, /仓库登记有误[\s\S]*整份登记被拒，所有项目都读不了 Git 固定来源/);
+  assert.deepEqual(git.tag, { tone: "blocked", label: "整份登记被拒" });
+  assert.equal(git.text, "服务端的仓库登记里有 Git 来源不接受的条目（例如绝对路径、越出仓库、重复登记、非法字符或路径段），整份登记被拒，所有项目现在都读不了 Git 固定来源。");
+  assert.doesNotMatch(git.text, /^本项目未配置/);
   assert.doesNotMatch(git.text, /没有为.*配置仓库/);
+  assert.match(git.text, /例如/, "the reasons are examples, not a closed list");
+  assert.equal(row(capability({ key: "gitSources", state: "not_configured", reason: "repository_registration_invalid",
+    pending: { state: "configured", reason: null } })).pending, "改动要重启后才生效：重启后会变为已配置。");
+  assert.match(row(capability({ key: "gitSources", pending: { state: "not_configured", reason: "repository_registration_invalid" } })).pending!,
+    /^改动要重启后才生效：重启后会变为整份登记被拒（服务端的仓库登记里有/);
   assert.equal(row(capability({ key: "gitSources", state: "not_configured", reason: "project_not_configured" })).text,
     "本项目未配置：服务端有这项能力，但没有为本项目配置。");
   assert.equal(row(capability({ key: "wechat", state: "not_configured", reason: "gateway_not_configured" })).text, "本项目未配置：服务启动时没有配置微信网关。");
@@ -49,6 +57,12 @@ test("whether the reader can use a capability granted per actor, and why not", (
   assert.equal(caller(null), "你能否使用无法判断（身份或配置文件读不了）。");
   assert.equal(row(capability({ key: "knowledge" })).caller, null, "not granted per actor: nothing about the reader");
   assert.match(row(capability({ key: "taskTiming", callerGranted: true, callerReason: null })).caller!, /按职责给.*所属职责的授权/);
+  // Holding a grant does not make a capability that is off as a whole usable.
+  const holderOff = row(capability({ key: "scheduling", state: "not_configured", reason: "grant_holder_not_authorized", callerGranted: true, callerReason: null }));
+  assert.equal(holderOff.caller, "你这边的授权和令牌都满足，但这项能力整体没有生效，现在用不了。");
+  assert.doesNotMatch(holderOff.caller!, /你可以使用/);
+  assert.equal(row(capability({ key: "scheduling", state: "unknown", reason: "identities_unreadable", callerGranted: true, callerReason: null })).caller,
+    "你这边的授权和令牌都满足，但这项能力整体能否使用无法判断。");
 });
 
 test("what a restart would change, in one sentence", () => {
@@ -59,6 +73,30 @@ test("what a restart would change, in one sentence", () => {
   const mine = row(capability({ key: "runtime", callerGranted: true, callerReason: null,
     pending: { state: "configured", reason: null, callerGranted: false, callerReason: "caller_has_no_grant" } }));
   assert.equal(mine.pending, "改动要重启后才生效：重启后会对你来说：本项目有授权，但你没有。");
+  // A runtime that did not answer is not configuration: a restart is not said to bring it back.
+  const runtimeDown = row(capability({ key: "runtime", readAt: "start_and_use", reason: "runtime_unavailable", callerGranted: true, callerReason: null,
+    pending: { state: "configured", reason: null, callerGranted: false, callerReason: "caller_has_no_grant" } }));
+  assert.equal(runtimeDown.pending, "改动要重启后才生效：重启后会对你来说：本项目有授权，但你没有。");
+  assert.doesNotMatch(runtimeDown.pending!, /变为已配置/);
+  assert.equal(row(capability({ key: "runtime", reason: "runtime_unavailable", pending: { state: "configured", reason: null } })).pending, null);
+});
+
+test("a file that cannot be read now is said once for the page, not as a change on every row", () => {
+  const unreadableAfter = { state: "unknown" as const, reason: "configuration_unreadable" as const };
+  const items = [capability({ key: "gitSources", pending: unreadableAfter }), capability({ key: "knowledge", pending: unreadableAfter }),
+    capability({ key: "scheduling", readAt: "start_and_use", state: "unknown", reason: "configuration_unreadable", callerGranted: null, callerReason: null })];
+  const rows = capabilityRows(items);
+  assert.deepEqual(rows.map(item => item.pending), [null, null, null], "no row says a restart would make it unknown");
+  assert.equal(rows[2]!.text, "现在无法判断：集成配置文件现在读不了。", "what is in effect now is still said");
+  assert.deepEqual(capabilityNotices(items), ["集成配置文件现在读不了：依赖它的能力重启后会怎样无法判断；下面是现在生效的结论。"]);
+  const identities = [capability({ key: "feishu", callerGranted: true, callerReason: null,
+    pending: { state: "unknown", reason: "identities_unreadable", callerGranted: null, callerReason: null } })];
+  assert.equal(capabilityRows(identities)[0]!.pending, null);
+  assert.deepEqual(capabilityNotices(identities), ["身份文件现在读不了：依赖它的能力重启后会怎样无法判断；下面是现在生效的结论。"]);
+  // Only the reader's judgment cannot be made after a restart: that is the unreadable file again, not a change.
+  assert.equal(row(capability({ key: "runtime", callerGranted: true, callerReason: null,
+    pending: { state: "configured", reason: null, callerGranted: null, callerReason: null } })).pending, null);
+  assert.deepEqual(capabilityNotices([capability({ key: "knowledge" })]), []);
 });
 
 test("a code the page does not know is said in general words and kept for 完整标识", () => {

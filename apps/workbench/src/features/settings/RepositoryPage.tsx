@@ -12,7 +12,7 @@ import { FullIdentifiers } from "../../shared/ui/FullIdentifiers";
 import { date, href } from "../../shared/ui/shared";
 import { SectionBoundary } from "../../shared/ui/SectionBoundary";
 import { Facts, LinkList, SettingsPage, SettingsSection } from "../../shared/ui/SettingsParts";
-import { capabilitiesUnavailableText, capabilityRows } from "./capabilityPresentation";
+import { capabilitiesUnavailableText, capabilityNotices, capabilityRows } from "./capabilityPresentation";
 
 /** evoLoop's own docs: GitHub, main branch, the current text (not a fixed version). Not this project's repository. */
 const evoLoopDocs = "https://github.com/cyl19970726/evoLoop/blob/main";
@@ -46,6 +46,7 @@ function Capabilities({ projectId }: { projectId: string }) {
   const rows = capabilityRows(view.items);
   return <>
     {stale}
+    {capabilityNotices(view.items).map(text => <Notice key={text} tone="waiting">{text}</Notice>)}
     <Facts rows={rows.map(row => [row.label, <span key={row.key} className="flex flex-col items-start gap-1" data-capability={row.key}>
       <span className="flex flex-wrap items-center gap-2"><StatusTag tone={row.tag.tone} label={row.tag.label} /><span className={note}>{row.scope}</span></span>
       <span>{row.text}</span>
