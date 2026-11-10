@@ -108,8 +108,9 @@ export class CompactionMaintenance {
       // starts lock the Session row and only then reach the slot lock and the gate through their processing
       // insert; connector admission shares the Session row before its queued message takes the slot lock.
       // All of them now take the project lock first, as do queue claims (core transactions), so taking it
-      // here serializes compaction with each of them. Do not also take the slot lock here: holding it
-      // while waiting for the Session row formed a cycle with connector admission (40P01).
+      // here serializes compaction with each of them. Compaction once took the slot lock here and formed a
+      // cycle (40P01) with connector admission, which did not take the project lock then. Admission now
+      // does, so the slot lock would no longer cycle; it is still left out, defensively.
       await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[projectId]);
       const prior=await this.row(projectId,input.operationId,client);
       if(prior){
