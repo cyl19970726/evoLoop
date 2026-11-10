@@ -182,7 +182,7 @@ PG 在源写入的同一事务追加只含引用、状态与短预览的观察�
 
 `RoleRegistry` 记录逻辑责任的稳定 ID、目标、范围、主要输入、可写资产、交付、触发条件、与其他 Role 的交接、试行状态和修订。Role 可处于候选、试行、活跃、调整中、撤回；这描述职责约定，不是 session 运行状态。一个 Role 可有先后多个 Session，或由 Leader 按编制决定的并行实例（DEC-038）。会话换窗、上下文压缩、模型替换都不自动变成新 Role。
 
-正式 Role 的可选 `roleClass` 区分 system/business，旧未分类 Role 仍可读取；Lead、认知、分工、产品、架构、开发流程、功能开发是分类模板，不自动生成七个 Role。分类沿 Role 的不可变修订与 reviewer CAS 决定更新，模板键须与分类一致；持续新责任仍走原 `role.propose` 与试行审阅。BusinessDomain 有稳定 ID、标题、修订、Role 映射、路由选择理由和授权证据；Task 的可选 `domainId` 与 `kind` 独立并固定于 TaskRevision。只读领域路由仅对当前 trial/active Role 给出承载状态，不能凭显示名、领域或模板取得执行权。
+正式 Role 的可选 `roleClass` 区分 system/business，旧未分类 Role 仍可读取；Lead、认知、分工、产品、架构、开发流程、功能开发是分类模板，不自动生成七个 Role。分类沿 Role 的不可变修订与 reviewer CAS 决定更新，模板键须与分类一致；持续新责任仍走原 `role.propose` 与试行审阅。**修订既有职责**用 `role.revise`（`roleId`、`expectedVersion`、同 `role.propose` 的 `proposal`、可选 `reason`）：只给同一 Role 追加一条不可变修订（版本加一、新修订 ID，不新建 Role 行；旧修订、旧决定、Task owner 与 Session 都不动），要求 reviewer 权限与版本 CAS，Role 须是 candidate、trial 或 active；proposal 与 `role.propose` 一样校验分类与模板、受限的试行期和仍未完成的首 Task。新修订的状态是 candidate，须再经 `role.decide` 才回到 trial；在此之前该 Role 不能被指为新建 Task 的 owner（沿用对 candidate 的现有规则）。相同操作 ID 且正文相同的重放返回原结果，正文不同则拒绝。BusinessDomain 有稳定 ID、标题、修订、Role 映射、路由选择理由和授权证据；Task 的可选 `domainId` 与 `kind` 独立并固定于 TaskRevision。只读领域路由仅对当前 trial/active Role 给出承载状态，不能凭显示名、领域或模板取得执行权。
 
 HostLink 独立记录 Role、owned Session 或外部 Codex Desktop 引用及历史。owned 登记要求同项目、同 Role、ready、真实原生 Thread 与正式绑定；external 只可声称并经 reviewer 核实 open/read/manual-claim，核实能力、证据、观察者和时间分开保存，未核实显示未知。撤销、Role 退出或承载失效时不能沿旧验证继续派发。Desktop link 不是 RuntimeSession，也不提供 start/send/interrupt 自动控制；路由查询本身永不启动模型。本机已按该合同核回 owned/external 承载与领域登记；已建立范围与本轮证据统一见[当前基线](../roadmap.md#当前基线)。登记、已核能力、队列执行及页面展示分别取证，不能由一个链接推定 Desktop 自动控制。
 

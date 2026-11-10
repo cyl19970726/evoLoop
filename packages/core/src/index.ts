@@ -693,6 +693,7 @@ export class WorkflowService {
         return { result: { ...base, entityId: task.id, version: revision.version, revisionId, decisionId, impactIds }, effects };
       }
       case "role.propose":
+      case "role.revise":
       case "role.decide":
       case "role.review":
       case "role.handoff":

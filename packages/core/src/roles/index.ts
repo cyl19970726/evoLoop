@@ -1,6 +1,6 @@
 import type { Principal } from "@evoloop/contracts";
 import { roleCommandSchema } from "@evoloop/contracts/roles";
-import type { RoleCommand, RoleDecision, RoleHandoff, RoleHandoffEvent, RoleRecord, RoleRevision, RoleSessionBinding, RoleTransaction, RoleTrialReview } from "@evoloop/contracts/roles";
+import type { RoleCommand, RoleDecision, RoleHandoff, RoleHandoffEvent, RoleProposal, RoleRecord, RoleRevision, RoleSessionBinding, RoleTransaction, RoleTrialReview } from "@evoloop/contracts/roles";
 
 export class RoleRuleError extends Error {
   constructor(public readonly code: string, message: string, public readonly currentVersion?: number) { super(message); this.name = "RoleRuleError"; }
@@ -21,18 +21,26 @@ export async function applyRole(tx: RoleTransaction, principal: Principal, input
   if (command.type === "role.runtime.set") return fail("INVALID_COMMAND", "role runtime commands are applied by applyRoleRuntime");
 
   if (command.type === "role.propose") {
-    if (command.proposal.templateKey && !command.proposal.roleClass)
-      return fail("INVALID_CLASS", "template association requires an explicit Role class");
-    if (command.proposal.templateKey && command.proposal.roleClass &&
-      (["lead","cognition","division"].includes(command.proposal.templateKey) ? "system" : "business") !== command.proposal.roleClass)
-      return fail("INVALID_CLASS", "template class and Role class differ");
-    if (date(command.proposal.reviewAtUtc) <= date(context.nowUtc) || date(command.proposal.reviewAtUtc) > date(context.nowUtc) + command.proposal.trialDays * 86_400_000) return fail("INVALID_TRIAL", "review date must fall inside the bounded trial");
-    const first = await tx.getTask(command.proposal.firstTaskId);
-    if (!first || first.state === "done" || first.state === "cancelled") return fail("INVALID_FIRST_TASK", "first trial task must exist and remain open");
+    await checkProposal(tx, command.proposal, context.nowUtc);
     const revisionId = context.nextId();
     const record: RoleRecord = { projectId: command.projectId, id: command.roleId, version: 1, currentRevisionId: revisionId, state: "candidate", proposal: command.proposal, proposedBy: principal.actorId, createdAtUtc: context.nowUtc, trialStartedAtUtc: null, reviewAtUtc: command.proposal.reviewAtUtc, mergeTargetRoleId: null };
     await tx.createRole(record, makeRevision(record, principal.actorId, "evidence-backed proposal", context.nowUtc));
     return { entityId: record.id, version: record.version, revisionId };
+  }
+
+  if (command.type === "role.revise") {
+    // Appends one immutable revision to an existing Role: same roleId, version+1, back to candidate until role.decide.
+    // Earlier revisions, decisions, reviews, Task owners and Sessions are not touched.
+    const existing = await tx.getRole(command.roleId);
+    if (!existing) return fail("NOT_FOUND", "role not found");
+    if (existing.version !== command.expectedVersion) return fail("VERSION_CONFLICT", "role revision changed", existing.version);
+    if (existing.state !== "candidate" && existing.state !== "trial" && existing.state !== "active")
+      return fail("INVALID_STATE", `only a candidate, trial or active role can be revised (state: ${existing.state})`);
+    await checkProposal(tx, command.proposal, context.nowUtc);
+    const revised: RoleRecord = { ...existing, version: existing.version + 1, currentRevisionId: context.nextId(), state: "candidate",
+      proposal: command.proposal, reviewAtUtc: command.proposal.reviewAtUtc };
+    await tx.advanceRole(revised, existing.version, makeRevision(revised, principal.actorId, command.reason ?? "revised proposal", context.nowUtc));
+    return { entityId: revised.id, version: revised.version, revisionId: revised.currentRevisionId };
   }
 
   const previous = await tx.getRole(command.roleId);
@@ -131,6 +139,18 @@ export async function applyRole(tx: RoleTransaction, principal: Principal, input
     await tx.addSessionBinding(value);
   }
   return { entityId: next.id, version: next.version, revisionId: revision.id };
+}
+
+/** The rules a proposal must meet to enter or re-enter the decision: class/template, a bounded trial, an open first Task. */
+async function checkProposal(tx: RoleTransaction, proposal: RoleProposal, nowUtc: string): Promise<void> {
+  if (proposal.templateKey && !proposal.roleClass)
+    return fail("INVALID_CLASS", "template association requires an explicit Role class");
+  if (proposal.templateKey && proposal.roleClass &&
+    (["lead","cognition","division"].includes(proposal.templateKey) ? "system" : "business") !== proposal.roleClass)
+    return fail("INVALID_CLASS", "template class and Role class differ");
+  if (date(proposal.reviewAtUtc) <= date(nowUtc) || date(proposal.reviewAtUtc) > date(nowUtc) + proposal.trialDays * 86_400_000) return fail("INVALID_TRIAL", "review date must fall inside the bounded trial");
+  const first = await tx.getTask(proposal.firstTaskId);
+  if (!first || first.state === "done" || first.state === "cancelled") return fail("INVALID_FIRST_TASK", "first trial task must exist and remain open");
 }
 
 function makeRevision(record: RoleRecord, actorId: string, reason: string, createdAtUtc: string): RoleRevision {
