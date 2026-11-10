@@ -21,9 +21,16 @@ const options = `-c search_path=${schema} -c lock_timeout=20000`;
 const otherApplication = `el_relay_lock_other_${suffix}`;
 const pool = new pg.Pool({ connectionString: url, options });
 const otherPool = new pg.Pool({ connectionString: url, options, application_name: otherApplication });
-const relay = new AcceptanceRelayService({ pool: otherPool, workflow: {} as never, messages: {} as never,
-  principals: async () => [], canWrite: () => false, leaderSession: async () => null, qualify: async () => null,
-  capabilities: async () => [] } as unknown as ConstructorParameters<typeof AcceptanceRelayService>[0]);
+const relayOn = (relayPool: pg.Pool) => new AcceptanceRelayService({ pool: relayPool, workflow: {} as never,
+  messages: {} as never, principals: async () => [], canWrite: () => false, leaderSession: async () => null,
+  qualify: async () => null, capabilities: async () => [] } as unknown as ConstructorParameters<typeof AcceptanceRelayService>[0]);
+const relay = relayOn(otherPool);
+/** The tick's relay writes are private; call them as the tick and message admission do. */
+type RelayRecord = Awaited<ReturnType<AcceptanceRelayService["arrange"]>>;
+const tickWrites = relay as unknown as {
+  note(item: RelayRecord, reason: string): Promise<void>;
+  setState(item: RelayRecord, state: RelayRecord["state"], reason: string | null): Promise<void>;
+};
 const projectId = randomUUID(), roleId = randomUUID(), at = "2026-11-06T00:00:00.000Z";
 const reviewer: Principal = { actorId: "reviewer", projectIds: [projectId], permissions: ["read", "write", "review"] };
 const hash = (s: string) => createHash("sha256").update(s).digest("hex");
@@ -95,4 +102,29 @@ test("acceptance arrangement does not deadlock a Leader plan update on the same 
       senderActorId: null, messageId: null, messageOperationId: null, reason: "Task policy" }) });
   assert.equal(planned.status, "applied");
   assert.equal(arranged.state, "pending");
+});
+
+// A reassignment holds the project lock and the Task row and then locks the earlier relay row. A tick
+// write on that relay row fires leader_result_notice_acceptance_block, whose notice insert key-shares
+// the project row; before the tick writes took the project lock, they met the reassignment in a cycle.
+for (const [label, write] of [
+  ["note", (item: RelayRecord) => tickWrites.note(item, "PUBLICATION_PENDING")],
+  ["setState", (item: RelayRecord) => tickWrites.setState(item, "blocked", "ACCEPTANCE_MESSAGE_FAILED")],
+] as const) test(`acceptance reassignment does not deadlock the relay tick ${label} on the earlier arrangement`, async () => {
+  const { taskId, deliveryId } = await deliveredTask();
+  const base = { projectId, taskId, deliveryId, expectedTaskVersion: 1, stage: "candidate" as const, scopeKey: "human-use",
+    scopeDescription: "Use the fixed report", entrypoint: null, publicationRef: null, mode: "human" as const,
+    recipientActorId: "named-human", sessionId: null, senderActorId: null, messageId: null, messageOperationId: null,
+    reason: "Task policy" };
+  const earlier = await relayOn(pool).arrange(reviewer, { ...base, operationId: randomUUID(), relayId: randomUUID() });
+  const [reassigned] = await interleave({ connectionString: url!, options, observer: pool, otherApplication, projectId,
+    labels: ["acceptance reassignment", `relay tick ${label}`],
+    stopBefore: text => /FROM task_acceptance_relay WHERE project_id=\$1 AND relay_id=\$2 FOR UPDATE/.test(text),
+    stopped: gated => relayOn(gated).arrange(reviewer, { ...base, operationId: randomUUID(), relayId: randomUUID(),
+      supersedesRelayId: earlier.relayId, expectedRelayVersion: earlier.version }),
+    other: () => write(earlier) });
+  assert.equal(reassigned.state, "pending");
+  const states = await pool.query(`SELECT state FROM task_acceptance_relay WHERE project_id=$1 AND relay_id=$2`,
+    [projectId, earlier.relayId]);
+  assert.equal(states.rows[0].state, "superseded");
 });

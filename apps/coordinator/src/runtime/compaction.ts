@@ -104,11 +104,17 @@ export class CompactionMaintenance {
     let inserted=false;
     try{
       await client.query('BEGIN');
+      // Same order as core writes and native-start admission: project lock, then the Session slot lock,
+      // then the recovery gate, then the Session row. A direct input start holds the Session row and
+      // reaches the gate through the slot lock; locking the gate first here waited on each other (40P01).
+      // Do not move the Session row ahead of the gate: queue claims take slot lock, gate, Session row.
+      await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[projectId]);
       const prior=await this.row(projectId,input.operationId,client);
       if(prior){
         assertSame(prior,sessionId,input,principal.actorId);
         saved=prior;
       }else{
+        await client.query('SELECT session_recovery_slot_lock($1,$2)',[projectId,sessionId]);
         const gate=await client.query<{version:number;phase:string;cause_kind:string|null;cause_id:string|null}>(`SELECT version,phase,cause_kind,cause_id FROM session_recovery_gate
           WHERE project_id=$1 AND session_id=$2 FOR UPDATE`,[projectId,sessionId]);
         if(gate.rows[0]?.version!==input.expectedGateVersion||gate.rows[0]?.phase!=='blocked')
