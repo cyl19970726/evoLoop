@@ -44,6 +44,7 @@ function projectRoutes(params) {
     "/knowledge/sources/documents": spaces.knowledge.sources(),
     "/schedules": spaces.schedules.list(),
     "/scheduling/status": spaces.schedules.status(),
+    "/task-timings": page(spaces.timedTasks()),
     "/evaluations": spaces.evaluations.list(),
     "/message-connectors/routes": spaces.connectors.routes(),
     "/discussions": team.discussionList(params.get("kind")),

@@ -4,8 +4,9 @@ import type {
   DiscussionRecord, DiscussionEvent,
   EvaluationRevision, EvaluationAttempt, EvaluationAssessment, EvaluationConclusion, EvaluationSourceSignature, EvaluationFixedRef,
   TaskTimingView,
+  TaskTimingSeriesPage,
 } from "@evoloop/contracts";
-export type { TaskTimingView } from "@evoloop/contracts";
+export type { TaskTimingView, TaskTimingSeriesSummary, TaskTimingSeriesPage } from "@evoloop/contracts";
 export type { DocumentRevisionPage, DocumentRevisionState, DocumentRevisionSummary } from "@evoloop/contracts";
 import type { WorkTaskStatus } from "./workStatusPresentation";
 import { reportUnauthorized, requestAuth } from "./identity";
@@ -172,6 +173,13 @@ export function api(token = "", timeoutMs = 15000) {
         || !Array.isArray(timing.occurrences) || timing.occurrences.some(item => typeof item.taskId !== "string")))
         throw new ApiError(0, "执行时间响应与所选任务不符；请重新读取。");
       return timing;
+    },
+    /** The project's timed Tasks (one-time and daily series, stopped included), a page at a time. */
+    taskTimings: async (p: string, cursor?: string, signal?: AbortSignal) => {
+      const page = await requestJson<TaskTimingSeriesPage>(token, `${projectPath(p)}/task-timings?limit=50${cursor ? `&cursor=${key(cursor)}` : ""}`, timeoutMs, { signal });
+      if (!page || !Array.isArray(page.items) || page.items.some(item => item.projectId !== p || typeof item.seriesId !== "string" || typeof item.rootTaskId !== "string" || !item.latestTask || typeof item.latestTask.taskId !== "string"))
+        throw new ApiError(0, "定时任务响应与当前项目不符；请重新读取。");
+      return page;
     },
     taskRevisions: (p: string, id: string) => call<Array<{ revision: TaskRevision; basis: BasisSet | null }>>(`${projectPath(p)}/tasks/${key(id)}/revisions`),
     taskRevision: (p: string, id: string, revision: string) => call<{ revision: TaskRevision; basis: BasisSet | null }>(`${projectPath(p)}/tasks/${key(id)}/revisions/${key(revision)}`),

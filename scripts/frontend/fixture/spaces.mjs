@@ -1,5 +1,5 @@
 // Knowledge, schedules, evaluations and the WeChat connector of the screenshot fixture.
-import { actorId, agents, ago, hash, id, projectId, roles } from "./common.mjs";
+import { actorId, agents, ago, hash, id, later, projectId, roles } from "./common.mjs";
 import { docs, revisionIdOf, runIdOf, tasks } from "./work.mjs";
 
 // ---------- knowledge (知识空间) ----------
@@ -64,6 +64,20 @@ export const schedules = {
       operationId: id(1411), reason: "overlap skipped" },
   ],
 };
+
+// 定时任务: Tasks with their own execution time on 日程 — a one-time Task, a running daily series and a stopped one.
+// 页面截图由脚本生成 and 汇总试用反馈 have no timing of their own besides these; 右栏信息核对 has none and must not appear.
+const timedItem = (n, rootTask, latestTask, over) => ({ projectId, seriesId: id(1600 + n), rootTaskId: rootTask.id, version: 1, seriesState: "active",
+  title: latestTask.title, timezone: "Asia/Shanghai", repeat: "none", executeAtUtc: later(2), nextAtUtc: null, skippedCount: 0, occurrenceCount: 1,
+  latestTask: { taskId: latestTask.id, title: latestTask.title, state: latestTask.state, plannedAtUtc: later(2) }, ...over });
+export const timedTasks = () => [
+  timedItem(1, tasks.t5, tasks.t5, { executeAtUtc: later(2), latestTask: { taskId: tasks.t5.id, title: tasks.t5.title, state: "todo", plannedAtUtc: later(2) } }),
+  timedItem(2, tasks.t2, tasks.t6, { repeat: "daily", executeAtUtc: ago(60 * 24 * 2), nextAtUtc: later(1), occurrenceCount: 3,
+    latestTask: { taskId: tasks.t6.id, title: tasks.t6.title, state: "in_progress", plannedAtUtc: ago(60 * 2) } }),
+  timedItem(3, tasks.t7, tasks.t7, { repeat: "daily", seriesState: "stopped", executeAtUtc: ago(60 * 24 * 6), occurrenceCount: 4, skippedCount: 1,
+    latestTask: { taskId: tasks.t7.id, title: tasks.t7.title, state: "done", plannedAtUtc: ago(60 * 24 * 3) } }),
+];
+export const timedFocus = tasks.t2.id;
 
 // ---------- evaluations (评价与后果) ----------
 const evaluationId = id(1500), evaluationRevision = id(1501), caseId = id(1502), directId = id(1503), wikiId = id(1504);

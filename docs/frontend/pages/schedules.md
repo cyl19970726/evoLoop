@@ -19,7 +19,7 @@
 
 外壳与左栏见[布局](../layout.md)。
 
-现状（#229 PR9c）：日程列表在内层栏（窄屏另有下拉切换）；中间是所选日程的检查目的与任务材料、发生记录（每次的结果、原因、生成的任务）和修订表单；右栏是触发条件、下次时间（按规则推算的预览）、产生的任务、授权与协调器。创建日程是中间的单独视图。创建、修订和停用表单是共同的[提交表单](../components.md#提交表单)，修订还核对授权是否变化（#229 F3）：负责职责和日程授权按名称选择，时间用日期时间控件按日程时区填写；职责、授权范围的标识在字段下的“完整标识”里。职责按名称显示；日程、修订、操作、授权范围、授权人、指定验收身份和固定目标（工作链、阶段、所属目标）的完整标识在各处“来源与完整标识”里。
+现状（#229 PR9c）：日程列表在内层栏（窄屏另有下拉切换）；中间是所选日程的检查目的与任务材料、发生记录和修订表单，其下是“定时任务”一栏；右栏是触发条件、下次时间（按规则推算的预览）、产生的任务、授权与协调器。创建日程是中间的单独视图。创建、修订和停用表单是共同的[提交表单](../components.md#提交表单)，修订还核对授权是否变化（#229 F3）：职责和日程授权按名称选择，时间按日程时区填写；各对象的完整标识在“来源与完整标识”里。
 
 ## 内容与状态
 
@@ -33,11 +33,11 @@
 - 授权正在重读或重读失败时整块标“上次读回，当前待核对”，不写“没有授权”。时区或时间不合法时，下次时间写“无法推算”。
 - 日程自己的时刻（规则、计划时刻、核对水位、到期、下次时间）按日程修订里的时区显示并写明时区；读者本地时间不同时，后面再附“你的时间”。每日规则只写“下次是你的时间”，因为夏令时会改变以后各次在读者时区的钟点。记录与读取的时间按读者本地时间。
 - 下次时间与协调器用同一条每日规则（`@evoloop/contracts/scheduling`）推算：夏令时跳过的本地时刻当天不触发，预览直接写下一天，不显示别的钟点；回拨时重复的时刻取较早的一次。
-- 表单里填的一次时刻、间隔起点和授权到期按同一规则换算，字段下写出日程时区的钟点、读者的钟点和记录的 UTC 时刻；夏令时跳过的时刻在提交前就说明不存在，重复的时刻列出较早、较晚两次供选，新填的默认较早。从定义回填的时间不改就原样发回（较晚那次和毫秒都保留）；浏览器不认识日程时区时按 UTC 显示原值，改动会被拦下。表单发出的命令与原来手填标识和 UTC 时一样。
+- 表单里填的一次时刻、间隔起点和授权到期按同一规则换算，字段下写出日程时区、读者和 UTC 的钟点；夏令时跳过的时刻提交前就说明不存在，重复的时刻列出较早、较晚两次供选，新填默认较早。从定义回填的时间不改就原样发回；浏览器不认识日程时区时按 UTC 显示原值，改动会被拦下。发出的命令与手填标识和 UTC 时一样。
 - 长的任务正文放在可展开的材料区，不压住时间和责任。
-- 指定验收人按本项目成员名称选：必须本人验收只列能写入的人，而且必须选一人（标签不写“可选”，和新建任务一样）；独立智能体验收只列能写入的智能体，可以不指定。能否写入无法判断的成员不可选，这时不写“没有可选的成员”；身份文件改过时写明重启后的变化。列不出成员时按完整标识填写；名称相同、服务身份或成员还在读取时，也可展开后按完整标识填写。发出的命令与手填时相同。
+- 指定验收人按本项目成员名称选：必须本人验收只列能写入的人且必须选一人（标签不写“可选”）；独立智能体验收只列能写入的智能体，可不指定。能否写入无法判断的成员不可选，不写“没有可选的成员”；身份文件改过时写明重启后的变化。列不出成员，或名称相同、成员还在读取时，可展开后按完整标识填写。发出的命令与手填时相同。
 - 修改普通日程看日程授权；指定受管目标的日程还要核对目标和执行授权。授权撤回后，已有定义仍可暂停或停止。
-- Task 自己的执行时间与每日重复在任务详情里设置，不在本页（规则见[一次与每日复制](../../architecture/contracts.md#普通-task-的一次与每日复制)）。
+- “定时任务”一栏列出 Task 自己的一次执行时间或每日重复（含已停止的系列），不必逐个进任务详情找；修改仍在任务详情里做，本页不复制表单（规则见[一次与每日复制](../../architecture/contracts.md#普通-task-的一次与每日复制)）。每项写下次时间（任务的时区，读者时钟不同时附“你的时间”）、进行中 / 已停止、最近产生的 Task 及状态。点开进入 Task，页首“返回日程：<名称>”回到同一项（`?timing=<首个 Task>`）。没有执行时间的 Task 不出现；读取失败写“本次没有读到”；协调器不可用时写明不会自行复制。
 
 ## 截图
 
@@ -49,12 +49,16 @@
 
 ![日程，390](../../assets/frontend-pages/schedules-390.png)
 
+![定时任务一栏，1440](../../assets/frontend-pages/schedules-timed-1440.png)
+
+![定时任务一栏，390](../../assets/frontend-pages/schedules-timed-390.png)
+
 ## 代码与测试
 
 | 范围 | 路径 |
 | --- | --- |
-| 源码（`apps/workbench/src/`） | `features/scheduling/SchedulingPanel.tsx`（内层栏日程列表、所选日程、右栏、创建视图）、`features/scheduling/scheduleForm.ts`（创建与修订表单的字段和命令）、`shared/zonedTime.ts`（当地时间与时区换算，与协调器同一规则）、`shared/ui/LocalTimeInput.ts`（日期时间控件与较早 / 较晚的选择）、`features/scheduling/presentation.ts`（规则、下次时间、触发原因与授权用语，生成任务带“返回日程”的链接；每日规则的本地时刻用 `packages/contracts/src/scheduling.ts` 的 `dailyRuleInstant`，与 `packages/core/src/scheduling/due.ts` 共用）、`features/scheduling/managedTarget.ts`、`features/scheduling/client.ts`；指定验收人用 `shared/ui/MemberChoice.tsx`（`scheduleForm.ts` 的 `withMemberChoice`）；名称与来源层在 `shared/ui/RecordName.tsx`、`shared/ui/FullIdentifiers.tsx`；任务详情里的“执行时间与重复”是另一套机制，在 `features/workflow/TaskScheduleSection.tsx` |
-| 测试（`apps/workbench/test/`） | `schedule-form.test.ts`（命令与原表单一致）、`zoned-time.test.ts`（与 `computeDue` 对照夏令时）、`schedule-form-browser.test.ts`、`command-form-browser.test.ts`、`schedule-presentation.test.ts`、`schedule-next-instant.test.ts`、`schedule-managed-target.test.ts`、`schedule-wording-browser.test.ts`、`schedule-run-session-path-browser.test.ts`（阅读此任务再返回日程）、`legacy-bits-browser.test.ts`（另一时区的日程）、`member-presentation.test.ts`、`member-choice-browser.test.ts`（按成员选指定验收人） |
+| 源码（`apps/workbench/src/`） | `features/scheduling/SchedulingPanel.tsx`（内层栏日程列表、所选日程、右栏、创建视图）、`features/scheduling/scheduleForm.ts`（创建与修订表单的字段和命令）、`shared/zonedTime.ts`（当地时间与时区换算，与协调器同一规则）、`shared/ui/LocalTimeInput.ts`（日期时间控件与较早 / 较晚的选择）、`features/scheduling/presentation.ts`（规则、下次时间、触发原因与授权用语，生成任务带“返回日程”的链接；每日规则的本地时刻用 `packages/contracts/src/scheduling.ts` 的 `dailyRuleInstant`，与 `packages/core/src/scheduling/due.ts` 共用）、`features/scheduling/managedTarget.ts`、`features/scheduling/client.ts`；指定验收人用 `shared/ui/MemberChoice.tsx`（`scheduleForm.ts` 的 `withMemberChoice`）；名称与来源层在 `shared/ui/RecordName.tsx`、`shared/ui/FullIdentifiers.tsx`；定时任务一栏在 `features/scheduling/TimedTasksSection.tsx`（列表、状态与失败写法）和 `features/scheduling/timedTasks.ts`（下次时间用语、`?timing=` 地址与返回链接）；任务详情里的“执行时间与重复”是另一套机制，在 `features/workflow/TaskScheduleSection.tsx`，修改仍在那里 |
+| 测试（`apps/workbench/test/`） | `schedule-form.test.ts`（命令与原表单一致）、`zoned-time.test.ts`（与 `computeDue` 对照夏令时）、`schedule-form-browser.test.ts`、`command-form-browser.test.ts`、`schedule-presentation.test.ts`、`schedule-next-instant.test.ts`、`schedule-managed-target.test.ts`、`schedule-wording-browser.test.ts`、`schedule-run-session-path-browser.test.ts`（阅读此任务再返回日程）、`legacy-bits-browser.test.ts`（另一时区的日程）、`member-presentation.test.ts`、`member-choice-browser.test.ts`（按成员选指定验收人）、`timed-tasks.test.ts`（定时任务一栏：三类样本与反例、下次时间与时区、读取失败与协调器不可用的写法、返回日程原位置、列表读取合同）；后端 `packages/adapter-postgres/test/task-timing.test.ts`（项目级列表与分页） |
 
 ## 相关
 
