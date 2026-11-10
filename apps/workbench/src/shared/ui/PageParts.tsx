@@ -39,3 +39,11 @@ export function FactList({ rows, columns = false }: { rows: Array<[string, React
     </div>)}
   </dl>;
 }
+
+/**
+ * Old markup kept inside a rebuilt page until it is rebuilt too. Only the agent page (features/sessions) still uses
+ * it: around ActionForm and AllocationBacklinks, which are new markup already. Remove it with those wrappers.
+ */
+export function Legacy({ children, className }: { children: ReactNode; className?: string }) {
+  return <div data-legacy="" className={cn("workbench-layout min-w-0", className)}>{children}</div>;
+}
