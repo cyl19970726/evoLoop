@@ -8,6 +8,7 @@ import pg from "pg";
 import { migrate, PostgresUnitOfWork } from "../src/index.ts";
 import { PgTaskTimingQueries, PgTaskTimingStore, type TaskTimingTickResult } from "../src/task-timing.ts";
 import { taskTimingScopeId } from "@evoloop/contracts/task-timing";
+import { interleave as interleaveWriters } from "./lock-order-fixture.ts";
 
 const url = process.env.TEST_DATABASE_URL;
 if (!url || !/^evoloop(?:_[a-z0-9]+)*_test$/.test(decodeURIComponent(new URL(url).pathname.slice(1))))
@@ -74,35 +75,6 @@ const queries = <T>(run: (q: PgTaskTimingQueries) => Promise<T>) =>
   inTransaction(client => run(new PgTaskTimingQueries(client, projectId)));
 const daily = { executeAtUtc: first, timezone: "Asia/Taipei", repeat: "daily" as const };
 
-/** A tick pool whose connection stops before the first matching statement until resumed. */
-function gatedTickPool(stopBefore: (text: string, values: unknown[]) => boolean) {
-  const tickPool = new pg.Pool({ connectionString: url, options, max: 1 });
-  let reached!: () => void, resume!: () => void;
-  const paused = new Promise<void>(resolve => { reached = resolve; });
-  const resumed = new Promise<void>(resolve => { resume = resolve; });
-  let stopped = false;
-  const facade = {
-    connect: async () => {
-      const client = await tickPool.connect();
-      const query = client.query.bind(client) as (text: string, values?: unknown[]) => Promise<pg.QueryResult>;
-      Object.assign(client, { query: async (text: string, values?: unknown[]) => {
-        if (!stopped && stopBefore(text, values ?? [])) { stopped = true; reached(); await resumed; }
-        return query(text, values);
-      } });
-      return client;
-    },
-  };
-  return { pool: facade as unknown as pg.Pool, paused, resume, end: () => tickPool.end() };
-}
-async function coreWaitsOnLock(): Promise<void> {
-  for (let attempt = 0; attempt < 400; attempt++) {
-    const waiting = await pool.query(`SELECT 1 FROM pg_stat_activity
-      WHERE application_name=$1 AND state='active' AND wait_event_type='Lock'`, [coreApplication]);
-    if (waiting.rows.length) return;
-    await new Promise(resolve => setTimeout(resolve, 25));
-  }
-  throw new Error("core write never waited on a lock");
-}
 /** Core revision of a linked document through the real unit of work: project lock, revision, head CAS. */
 function reviseDocument(documentId: string, previousRevisionId: string): Promise<void> {
   const revisionId = randomUUID(), body = "# core revision";
@@ -117,25 +89,13 @@ function reviseDocument(documentId: string, previousRevisionId: string): Promise
 /** Stop the tick at one point, start the core write, let it block, then let the tick continue. */
 async function interleave(stopBefore: (text: string, values: unknown[]) => boolean,
   tick: (store: PgTaskTimingStore) => Promise<TaskTimingTickResult[]>, documentId: string, previousRevisionId: string) {
-  const gate = gatedTickPool(stopBefore);
-  try {
-    const ticking = tick(new PgTaskTimingStore(gate.pool));
-    ticking.catch(() => {});
-    await Promise.race([gate.paused, ticking.then(() => { throw new Error("tick finished before the interleaving point"); })]);
-    const writing = reviseDocument(documentId, previousRevisionId);
-    writing.catch(() => {});
-    await coreWaitsOnLock();
-    gate.resume();
-    const [tickOutcome, writeOutcome] = await Promise.allSettled([ticking, writing]);
-    const describe = (outcome: PromiseSettledResult<unknown>) => outcome.status === "fulfilled" ? "ok" :
-      `${(outcome.reason as { code?: string }).code ?? ""} ${String((outcome.reason as Error).message ?? outcome.reason)}`;
-    assert.equal(writeOutcome.status, "fulfilled", `core write: ${describe(writeOutcome)}`);
-    assert.equal(tickOutcome.status, "fulfilled", `tick: ${describe(tickOutcome)}`);
-    const head = await pool.query(`SELECT version FROM process_document WHERE project_id=$1 AND document_id=$2`,
-      [projectId, documentId]);
-    assert.equal(head.rows[0].version, 2, "core revision committed");
-    return (tickOutcome as PromiseFulfilledResult<TaskTimingTickResult[]>).value;
-  } finally { gate.resume(); await gate.end(); }
+  const [created] = await interleaveWriters({ connectionString: url!, options, observer: pool,
+    otherApplication: coreApplication, stopBefore, labels: ["tick", "core write"],
+    stopped: gated => tick(new PgTaskTimingStore(gated)), other: () => reviseDocument(documentId, previousRevisionId) });
+  const head = await pool.query(`SELECT version FROM process_document WHERE project_id=$1 AND document_id=$2`,
+    [projectId, documentId]);
+  assert.equal(head.rows[0].version, 2, "core revision committed");
+  return created;
 }
 
 before(async () => {
