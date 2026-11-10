@@ -166,7 +166,7 @@ function ConversationSample() {
       {running && <LiveStatusLine avatar={<Avatar agent={dev} size={20} />} text="正在运行单元测试" elapsed="1 分 04 秒" />}
       <div className="flex flex-col gap-2.5 pt-2">
         <TodoList items={sampleTodos.map(todo => ({ ...todo }))} />
-        <QueuedMessages items={queue} onCancel={id => setQueue(items => items.filter(item => item.id !== id))} onEdit={id => { const item = queue.find(entry => entry.id === id); if (item) { setDraft(item.text); setQueue(items => items.filter(entry => entry.id !== id)); } }} />
+        <QueuedMessages items={queue} onCancel={id => setQueue(items => items.filter(item => item.id !== id))} onEdit={id => { const item = queue.find(entry => entry.id === id); if (item) { setDraft(typeof item.text === "string" ? item.text : ""); setQueue(items => items.filter(entry => entry.id !== id)); } }} />
         <Composer
           value={draft}
           onChange={setDraft}

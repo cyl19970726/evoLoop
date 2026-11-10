@@ -89,3 +89,63 @@ test("proposal cannot associate a template without a matching class", async () =
       (error:unknown)=>error instanceof RoleRuleError&&error.code==="INVALID_CLASS");
   }
 });
+
+test("role.revise appends one candidate revision to the same Role and touches nothing else", async () => {
+  const writer = { ...principal, permissions: ["write"] as Principal["permissions"] };
+  let current: any = { projectId, id: roleId, version: 3, currentRevisionId: randomUUID(), state: "trial", proposal, proposedBy: "manager",
+    createdAtUtc: "2026-10-01T00:00:00.000Z", trialStartedAtUtc: "2026-10-02T00:00:00.000Z", reviewAtUtc: proposal.reviewAtUtc, mergeTargetRoleId: null };
+  const advanced: Array<{ expected: number; revision: any }> = [];
+  let created = 0;
+  const store = { getRole: async () => current, getTask: async () => ({ id: taskId, owner: "manager", version: 1, state: "in_progress" }),
+    createRole: async () => { created += 1; }, advanceRole: async (value: any, expected: number, revision: any) => { current = value; advanced.push({ expected, revision }); } } as unknown as RoleTransaction;
+  const revised: RoleProposal = { ...proposal, title: "Release stewardship v2", goal: "Own release and rollback health" };
+  const revise = (overrides: Record<string, unknown> = {}) => ({ type: "role.revise", projectId, operationId: randomUUID(), roleId, expectedVersion: 3, proposal: revised, ...overrides }) as RoleCommand;
+  const before = current;
+  // Like every Role command except role.propose, a revision needs review permission; a writer alone is refused.
+  await assert.rejects(() => applyRole(store, writer, revise(), { nowUtc, nextId: randomUUID }), (error: unknown) => error instanceof RoleRuleError && error.code === "FORBIDDEN");
+  assert.equal(advanced.length, 0);
+  const result = await applyRole(store, principal, revise({ reason: "tighten scope" }), { nowUtc, nextId: randomUUID });
+  assert.equal(created, 0, "no new Role row");
+  assert.deepEqual([result.entityId, result.version], [roleId, 4]);
+  assert.deepEqual([current.id, current.version, current.state, current.proposal.title, current.reviewAtUtc], [roleId, 4, "candidate", "Release stewardship v2", revised.reviewAtUtc]);
+  assert.equal(current.trialStartedAtUtc, before.trialStartedAtUtc, "the earlier trial start is kept");
+  assert.equal(current.createdAtUtc, before.createdAtUtc);
+  assert.equal(current.proposedBy, before.proposedBy);
+  assert.equal(advanced.length, 1);
+  assert.equal(advanced[0]!.expected, 3, "compare-and-set on the version the caller saw");
+  assert.deepEqual([advanced[0]!.revision.version, advanced[0]!.revision.state, advanced[0]!.revision.reason, advanced[0]!.revision.id === before.currentRevisionId], [4, "candidate", "tighten scope", false]);
+  assert.equal(advanced[0]!.revision.proposal.goal, "Own release and rollback health");
+  assert.equal(result.revisionId, current.currentRevisionId);
+  // Without a reason the revision says what it is.
+  current = { ...before, version: 3 };
+  await applyRole(store, principal, revise(), { nowUtc, nextId: randomUUID });
+  assert.equal(advanced[1]!.revision.reason, "revised proposal");
+});
+
+test("role.revise refuses a stale version, a missing Role, a closed Role, and a proposal that fails the propose rules", async () => {
+  const base: any = { projectId, id: roleId, version: 3, currentRevisionId: randomUUID(), state: "trial", proposal, proposedBy: "manager",
+    createdAtUtc: nowUtc, trialStartedAtUtc: nowUtc, reviewAtUtc: proposal.reviewAtUtc, mergeTargetRoleId: null };
+  let role: any = base, firstTask: any = { id: taskId, owner: "manager", version: 1, state: "todo" }, advanced = 0;
+  const store = { getRole: async () => role, getTask: async () => firstTask, advanceRole: async () => { advanced += 1; } } as unknown as RoleTransaction;
+  const revise = (overrides: Record<string, unknown> = {}) => ({ type: "role.revise", projectId, operationId: randomUUID(), roleId, expectedVersion: 3, proposal, ...overrides }) as RoleCommand;
+  const rejects = async (command: RoleCommand, code: string, version?: number) => assert.rejects(() => applyRole(store, principal, command, { nowUtc, nextId: randomUUID }),
+    (error: unknown) => error instanceof RoleRuleError && error.code === code && (version === undefined || error.currentVersion === version), code);
+  await rejects(revise({ expectedVersion: 2 }), "VERSION_CONFLICT", 3);
+  role = null; await rejects(revise(), "NOT_FOUND");
+  for (const state of ["retired", "rejected", "deferred", "retirement-pending"]) { role = { ...base, state }; await rejects(revise(), "INVALID_STATE"); }
+  role = base;
+  for (const state of ["done", "cancelled"]) { firstTask = { ...firstTask, state }; await rejects(revise(), "INVALID_FIRST_TASK"); }
+  firstTask = null; await rejects(revise(), "INVALID_FIRST_TASK");
+  firstTask = { id: taskId, owner: "manager", version: 1, state: "todo" };
+  await rejects(revise({ proposal: { ...proposal, reviewAtUtc: "2026-10-19T09:00:00.000Z" } }), "INVALID_TRIAL");
+  await rejects(revise({ proposal: { ...proposal, reviewAtUtc: "2027-01-01T09:00:00.000Z" } }), "INVALID_TRIAL");
+  await rejects(revise({ proposal: { ...proposal, templateKey: "lead" } }), "INVALID_CLASS");
+  await rejects(revise({ proposal: { ...proposal, templateKey: "lead", roleClass: "business" } }), "INVALID_CLASS");
+  await rejects(revise({ proposal: { ...proposal, evidence: [] } }), "INVALID_COMMAND");
+  await rejects(revise({ extra: true }), "INVALID_COMMAND");
+  await assert.rejects(() => applyRole(store, { ...principal, projectIds: [] }, revise(), { nowUtc, nextId: randomUUID }), (error: unknown) => error instanceof RoleRuleError && error.code === "FORBIDDEN");
+  assert.equal(advanced, 0, "nothing was written by any refused revision");
+  // A candidate, trial or active Role can be revised.
+  for (const state of ["candidate", "trial", "active"]) { role = { ...base, state }; await applyRole(store, principal, revise(), { nowUtc, nextId: randomUUID }); }
+  assert.equal(advanced, 3);
+});
