@@ -35,6 +35,23 @@ test("identity comes from configured token and is not editable by the request", 
   } finally { await app.close(); }
 });
 
+test("document list passes kind and lifecycle filters to the service", async () => {
+  const calls: unknown[][] = [];
+  const app = await buildServer({ credentials, service: { ...workManagementQueries,
+    listDocuments: async (...args: unknown[]) => { calls.push(args); return { items: [], nextCursor: null }; },
+  } as unknown as WorkflowService });
+  const headers = { authorization: `Bearer ${token}` };
+  try {
+    const response = await app.inject({ url: `/api/projects/${projectId}/documents?limit=50&kind=report&status=active`, headers });
+    assert.equal(response.statusCode, 200);
+    assert.deepEqual(calls[0]?.slice(1), [projectId, 50, undefined, "report", "active"]);
+    for (const status of ["all", "unknown"]) {
+      const invalid = await app.inject({ url: `/api/projects/${projectId}/documents?status=${status}`, headers });
+      assert.equal(invalid.statusCode, 400, status);
+    }
+  } finally { await app.close(); }
+});
+
 test("lost coordinator ownership refuses new writes before core executes", async () => {
   let calls = 0;
   const app = await buildServer({ credentials, service: { ...workManagementQueries, execute: async () => { calls++; throw Error("write reached core"); } } as unknown as WorkflowService, canWrite: () => false });
@@ -357,12 +374,21 @@ test("workbench path addresses load the page; API and unknown files keep their o
   const { tmpdir } = await import("node:os");
   const webRoot = await mkdtemp(join(tmpdir(), "evoloop-web-"));
   await writeFile(join(webRoot, "index.html"), "<!doctype html><title>workbench</title>");
+  await writeFile(join(webRoot, "favicon.svg"), "<svg xmlns=\"http://www.w3.org/2000/svg\"/>");
   const app = await buildServer({ credentials, service: workManagementQueries as unknown as WorkflowService, webRoot });
   try {
     for (const url of ["/", "/ui", `/p/${projectId}/work`, `/p/${projectId}/tasks/${projectId}?tab=runtime`]) {
       const page = await app.inject({ url });
       assert.equal(page.statusCode, 200, url);
       assert.match(page.body, /<title>workbench<\/title>/, url);
+    }
+    for (const url of ["/favicon.ico", "/apple-touch-icon.png", "/apple-touch-icon-precomposed.png"]) {
+      const icon = await app.inject({ url });
+      assert.equal(icon.statusCode, 302, url);
+      assert.equal(icon.headers.location, "/favicon.svg", url);
+      const real = await app.inject({ url: icon.headers.location! });
+      assert.equal(real.statusCode, 200, url);
+      assert.match(String(real.headers["content-type"]), /^image\/svg\+xml/, url);
     }
     assert.equal((await app.inject({ url: "/api/session" })).statusCode, 401, "API stays behind the token");
     assert.equal((await app.inject({ url: "/assets/missing.js" })).statusCode, 404, "a missing asset is not the page");

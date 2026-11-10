@@ -146,7 +146,7 @@ function DocumentAdder({ projectId, control, onAdd }: { projectId: string; contr
   const [picked, setPicked] = useState<string | null>(null);
   const [problem, setProblem] = useState("");
   const reread = useReread(projectId, ["documents", "list", "all"]);
-  const list = useProjectList(projectId, ["documents", "list", "all"], (cursor, signal) => api().documents(projectId, cursor, undefined, signal), (document: Document) => document.id);
+  const list = useProjectList(projectId, ["documents", "list", "all"], (cursor, signal) => api().documents(projectId, cursor, undefined, undefined, signal), (document: Document) => document.id);
   const revisions = useDocumentRevisions(projectId, picked ?? "", { enabled: !!picked });
   const choose = (documentId: string, revision: DocumentRevisionSummary) => {
     const ref = documentFixedRef(projectId, { id: documentId, projectId }, revision);
