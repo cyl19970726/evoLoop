@@ -99,6 +99,28 @@ export interface DocumentRevision {
   entrypoint: string | null; assetsManifest: import("./process-documents.js").DocumentAsset[];
   contentHash: string; author: string; createdAt: string; previousRevisionId: string | null; reason: string;
   organizationReview?: OrganizationReview;
+  /**
+   * Stored per-document sequence (1..N, no gaps) assigned when the revision is saved, in save order; never
+   * derived from created_at. Present on every stored revision read; absent only on a revision not yet saved.
+   * It is not Document.version, which also advances on publish and archive.
+   */
+  revisionNumber?: number;
+}
+/** Metadata of one fixed revision in a revision listing; the body stays behind the single-revision reads. */
+export interface DocumentRevisionMetadata extends Omit<DocumentRevision, "body"> { revisionNumber: number }
+/**
+ * "current" wins when the current revision is also the published one; `published` then stays true.
+ * `published` follows Document.adoptedRevisionId only; an archived document keeps that pointer, so check
+ * `document.status` before calling it the published version.
+ */
+export type DocumentRevisionState = "current" | "published" | "historical";
+export interface DocumentRevisionSummary extends DocumentRevisionMetadata {
+  state: DocumentRevisionState; current: boolean; published: boolean;
+}
+/** Newest first. `document` is the head the state flags were derived from in the same read snapshot. */
+export interface DocumentRevisionPage extends Page<DocumentRevisionSummary> {
+  document: Pick<Document, "id" | "title" | "kind" | "version" | "currentRevisionId" | "adoptedRevisionId" | "status">;
+  revisionCount: number;
 }
 export interface DocumentDecision {
   projectId: string; id: string; documentId: string; revisionId: string;
