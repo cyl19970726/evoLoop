@@ -87,7 +87,8 @@ test("managed agents in 分工与运行 keep Role names, full grants and activat
   assert.doesNotMatch(await row(0).innerText(),/40000004/);
   assert.match(await row(1).innerText(),/开发流程与规范负责人.*已关闭/s);
   assert.match(await row(2).innerText(),/acceptance-owner/);
-  assert.match(await row(3).innerText(),/职责 40000003.*未找到已登记职责/s);
+  assert.match(await row(3).innerText(),/职责（未找到）/);
+  assert.doesNotMatch(await row(3).innerText(),/40000003/);
   const initialReads:string[]=await (await fetch(`${base}/__fixture/reads`)).json();
   assert.equal(initialReads.filter(id=>id===roleId).length,1);
   assert.equal(initialReads.includes("acceptance-owner"),false);
@@ -147,9 +148,9 @@ test("managed agents in 分工与运行 keep Role names, full grants and activat
   assert.equal(await (await fetch(`${base}/__fixture/held`)).text(),"1");
   await fetch(`${base}/__fixture/fail?value=1`);
   await first.getByRole("button",{name:"读取运行状态"}).click();
-  await first.getByText(/名称暂不可核对/).first().waitFor();
+  await first.getByText(/职责（名称暂不可读）/).first().waitFor();
   assert.equal(await first.getByRole("link",{name:"开发流程与规范负责人"}).count(),0);
-  assert.match(await heading.innerText(),/职责 40000002/);
+  assert.match(await heading.innerText(),/职责（名称暂不可读）/);
   await fetch(`${base}/__fixture/release`);
   await page.waitForTimeout(100);
   assert.equal(await first.getByRole("link",{name:"开发流程与规范负责人"}).count(),0);

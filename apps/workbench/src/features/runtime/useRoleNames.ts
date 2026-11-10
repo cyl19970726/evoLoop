@@ -4,18 +4,22 @@ import { useQueries } from "@tanstack/react-query";
 import { ApiError, errorText } from "../../shared/api";
 import { isRoleOwnerId, readOwnerRole } from "../../shared/ownerRole";
 import { queryKeys } from "../../shared/query";
+import { nameText } from "../../shared/workPresentation";
 
-export interface RoleName { title?: string; fallback: string; note?: string; error?: string }
+/**
+ * A Role as the page names it: `title` once read; until then `fallback` says why in the shared wording
+ * (职责（名称待读取）, 职责（未找到）, 职责（名称暂不可读）), never the identifier's first characters.
+ */
+export interface RoleName { title?: string; fallback: string; error?: string }
 
 export function roleNameOf(roleId: string, read: { title?: string; error?: unknown; pending: boolean } | undefined): RoleName {
   if (!isRoleOwnerId(roleId)) return { fallback: roleId };
-  const fallback = `职责 ${roleId.slice(0, 8)}`;
-  if (read?.title) return { title: read.title, fallback };
+  if (read?.title) return { title: read.title, fallback: nameText("职责", { state: "named", name: read.title }) };
   if (read?.error) {
     const missing = read.error instanceof ApiError && read.error.status === 404;
-    return { fallback, note: missing ? "未找到已登记职责" : "名称暂不可核对", error: missing ? "未找到已登记职责" : `职责暂不可核对：${errorText(read.error)}` };
+    return { fallback: nameText("职责", { state: missing ? "missing" : "failed" }), error: missing ? "未找到已登记职责" : `职责暂不可核对：${errorText(read.error)}` };
   }
-  return { fallback, note: "正在核对名称" };
+  return { fallback: nameText("职责", { state: "reading" }) };
 }
 
 export function useRoleNames(projectId: string, roleIds: readonly string[]): (roleId: string) => RoleName {

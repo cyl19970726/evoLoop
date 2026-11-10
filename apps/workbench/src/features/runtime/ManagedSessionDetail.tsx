@@ -10,7 +10,7 @@ import { ActionForm, reasonField, type MutationContext } from "../../shared/Acti
 import { queueClient } from "../../shared/queueClient";
 import { useProjectQuery } from "../../shared/query";
 import { runtimeClient } from "../../shared/runtimeClient";
-import { FactList, Legacy, PageSection, mutedText } from "../../shared/ui/PageParts";
+import { FactList, PageSection, mutedText } from "../../shared/ui/PageParts";
 import { SectionBoundary } from "../../shared/ui/SectionBoundary";
 import { href } from "../../shared/ui/shared";
 import { ResidentQueuePanel } from "../workflow";
@@ -19,10 +19,12 @@ import { closeBlockers, messageKindText, needsFullAccessUpgrade, permissionsText
 import { useAgentName } from "./AgentName";
 import { nativeReadError, Receipts, RunList } from "./RunList";
 import type { RoleName } from "./useRoleNames";
+import { diagnosticOf, type Failure } from "../../shared/errorPresentation";
+import { ErrorDetails } from "../../shared/ui/ErrorDetails";
 
 export function RoleLabel({ projectId, roleId, name }: { projectId: string; roleId: string; name: RoleName }) {
   if (name.title) return <a href={`${href(projectId, "roles")}?role=${encodeURIComponent(roleId)}`} className="text-primary hover:underline">{name.title}</a>;
-  return <span>{name.fallback}{name.note && <span className={mutedText}> · {name.note}</span>}</span>;
+  return <span>{name.fallback}</span>;
 }
 
 export function ManagedSessionDetail({ context, session, name, runs, runsRead, sessions, onReread }: {
@@ -68,7 +70,7 @@ export function ManagedSessionDetail({ context, session, name, runs, runsRead, s
     </PageSection>
     {needsFullAccessUpgrade(session) && permissions.includes("write") && permissions.includes("review") && <PageSection title="登记为完整权限"
       description="填写为原智能体创建者配置的精确授权模型；服务端按原创建者、职责、工作目录及范围核验。提交后会在原智能体与原生线程上登记新配置修订，仍须核对激活；历史运行不会改写。">
-      <Legacy><ActionForm key={session.executionProfile!.revision.revisionId} context={context} review embedded title="升级原智能体执行配置"
+      <ActionForm key={session.executionProfile!.revision.revisionId} context={context} review embedded title="升级原智能体执行配置"
         baseline={{ sessionVersion: session.version, profileRevision: session.executionProfile!.revision.revisionId }} fields={[
         { name: "targetModel", label: "原创建者精确授权的目标模型" }, { name: "evidenceRef", label: "本次授权依据" }, reasonField,
       ]} build={v => {
@@ -77,7 +79,7 @@ export function ManagedSessionDetail({ context, session, name, runs, runsRead, s
         return { type: "runtime.session.executionProfile.revise", sessionId: session.id, expectedVersion: session.version,
           expectedExecutionProfileRevisionId: session.executionProfile!.revision.revisionId, model,
           sandbox: "danger-full-access", approvalPolicy: "never", evidenceRef: v.evidenceRef, reason: v.reason };
-      }} /></Legacy>
+      }} />
     </PageSection>}
     <PageSection title="队列">
       <SectionBoundary label="队列"><ResidentQueuePanel context={context} sessionId={session.id} runs={runs} sessions={sessions} /></SectionBoundary>
@@ -91,12 +93,12 @@ export function ManagedSessionDetail({ context, session, name, runs, runsRead, s
       {!queueReading && blockers.length > 0 && <Notice tone="waiting" title="当前不能请求关闭" data-close-blockers="">
         <ul className="list-disc pl-5">{blockers.map(item => <li key={item}>{item}</li>)}</ul>
       </Notice>}
-      {queues.error && <p className="text-small text-destructive">队列读取失败：{errorText(queues.error)}</p>}
+      {queues.error && <div className="text-small text-destructive">队列读取失败：{errorText(queues.error)}<ErrorDetails error={queues.error} /></div>}
       {!queueReading && blockers.length === 0 && <>
         <p className="text-small text-text-secondary">在本次读到的运行与队列中没有发现在途运行或占用。消息与具体分派的完整核对在<a className="text-primary hover:underline" href={`${sessionHref(projectId, `owned:${session.id}`)}`}>智能体空间的关闭面板</a>；提交时服务端会再次检查。</p>
-        <Legacy><ActionForm key={`${session.id}:${session.version}`} context={{ ...context, draftScope: `runtime-close:${session.id}`, draftBaseline: String(session.version) }}
+        <ActionForm key={`${session.id}:${session.version}`} context={{ ...context, draftScope: `runtime-close:${session.id}`, draftBaseline: String(session.version) }}
           review embedded title="请求关闭受管智能体" fields={[{ ...reasonField, label: "关闭理由与核对依据" }]}
-          build={v => ({ type: "runtime.session.close", sessionId: session.id, expectedVersion: session.version, reason: v.reason })} /></Legacy>
+          build={v => ({ type: "runtime.session.close", sessionId: session.id, expectedVersion: session.version, reason: v.reason })} />
       </>}
     </PageSection>
     <PageSection title="线程历史与回执">
@@ -113,12 +115,12 @@ export function ManagedSessionDetail({ context, session, name, runs, runsRead, s
 
 function ThreadHistory({ projectId, sessionId }: { projectId: string; sessionId: string }) {
   const [history, setHistory] = useState<Awaited<ReturnType<ReturnType<typeof runtimeClient>["history"]>> | null>(null);
-  const [error, setError] = useState("");
+  const [error, setError] = useState<Failure | null>(null);
   return <div className="flex flex-col gap-2">
     <Button size="compact" variant="ghost" className="w-fit" onClick={async () => {
-      try { setHistory(await runtimeClient("", projectId).history(sessionId)); setError(""); } catch (cause) { setError(nativeReadError(cause)); }
+      try { setHistory(await runtimeClient("", projectId).history(sessionId)); setError(null); } catch (cause) { setError({ text: nativeReadError(cause), detail: diagnosticOf(cause) }); }
     }}>读取所属线程历史</Button>
-    {error && <Notice tone="error">{error}</Notice>}
+    {error && <Notice tone="error">{error.text}<ErrorDetails failure={error} /></Notice>}
     {history && <>
       <p className={mutedText}>读回 {history.turns.length} 轮 · {history.observedAt} · {history.truncated ? "有更多历史未读，不代表完整" : "当前范围读取完成"}</p>
       {history.turns.map((turn, index) => <details key={turn.id} className="text-small">

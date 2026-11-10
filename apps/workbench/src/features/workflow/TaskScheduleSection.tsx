@@ -76,17 +76,17 @@ export function TaskScheduleSection({ context, detail }: { context: MutationCont
     if (timing.seriesState === "active" && editableThis) actions.push({ key: "prompt-this", title: "修改本次任务要求", description: "默认只改本次；可以选“本次及后续”。", needs: "review",
       form: <CommandForm context={context} options={timingOptions} submitLabel="保存本次任务要求" baseline={baseline} fields={[
         { name: "scope", label: "修改范围", kind: "select", initial: "this", options: [{ value: "this", label: "只改本次（默认）" }, { value: "this_and_future", label: "本次及后续" }] },
-        { name: "title", label: "任务名称", initial: task.title },
+        { name: "title", label: "任务名称", initial: task.title, maxLength: 240 },
         { name: "content", label: "任务正文", kind: "textarea", rows: 6, initial: task.content, maxLength: 65536 },
-        { name: "acceptance", label: "验收要求", kind: "textarea", initial: task.acceptance },
+        { name: "acceptance", label: "验收要求", kind: "textarea", initial: task.acceptance, maxLength: 4000 },
         reasonField("修改理由")]}
         build={(values, seen) => seriesCurrentPromptCommand(detail, seen, { scope: values.scope ?? "", title: values.title ?? "",
           content: values.content ?? "", acceptance: values.acceptance ?? "", reason: values.reason ?? "" })} /> });
     if (timing.seriesState === "active") actions.push({ key: "prompt-future", title: "只修改以后的任务要求", description: "已生成的任务和它们固定的执行依据不变。", needs: "review",
       form: <CommandForm context={context} options={timingOptions} submitLabel="保存以后的任务要求" baseline={{ ...baseline, template: timing.futureTemplate.content }} fields={[
-        { name: "title", label: "以后的任务名称", initial: timing.futureTemplate.title },
+        { name: "title", label: "以后的任务名称", initial: timing.futureTemplate.title, maxLength: 4000 },
         { name: "content", label: "以后的任务正文", kind: "textarea", rows: 6, initial: timing.futureTemplate.content, maxLength: 65536 },
-        { name: "acceptance", label: "以后的验收要求", kind: "textarea", initial: timing.futureTemplate.acceptance },
+        { name: "acceptance", label: "以后的验收要求", kind: "textarea", initial: timing.futureTemplate.acceptance, maxLength: 4000 },
         reasonField("修改理由")]}
         build={(values, seen) => seriesFuturePromptCommand(task.id, seen, timing, { title: values.title ?? "", content: values.content ?? "",
           acceptance: values.acceptance ?? "", reason: values.reason ?? "" })} /> });

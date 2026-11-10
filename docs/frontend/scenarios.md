@@ -154,7 +154,7 @@ Leader 负责组织任务组合、顺序、承接和验收。它的思考写在�
 
 **读代码发现**
 
-- 多处 Session 链接带 `tab=overview`，它不是合法页签，会退回默认页签（`features/workflow/WorkIndex.tsx`、`features/workflow/AcceptanceOverviewPanels.tsx`）。
+- 多处 Session 链接带 `tab=overview`，它不是合法页签，会退回默认页签。改版后的任务列表和验收视图已不再带这个参数。
 - 从任务进入 Session 时带了返回信息，Session 页没有读取，因此没有“返回任务”。
 - 文档的返回白名单不含总览、设置和连接器，从这几页打开的文档只能回到文档列表（`shared/ui/returnRoute.ts`）。
 - 评价、协作、收件、旅程、知识只能从深处进入，导航里找不到。

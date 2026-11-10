@@ -4,7 +4,7 @@ export type { MutationContext, RecoverableCommand } from "./context";
 export { clearCommandDrafts, commandDrafts, draftKeyFor, readableDraft, type DraftStore, type PendingOperation, type SavedDraft } from "./drafts";
 export {
   baselineChangedText, baselineText, blockedText, changedParts, commonPartLabels, conflictingFields, contentMoved, followLatest, formDirty, incompleteText, keepEdits, movedFields,
-  openingBaseline, permissionText, personMessage, prepareCommand, receiptFailedText, restoredFormState, submissionRefusal,
+  openingBaseline, overLimitText, permissionText, personMessage, prepareCommand, receiptFailedText, restoredFormState, submissionRefusal,
   unconfirmedNote, unconfirmedTitle, type Baseline, type FormState, type SubmittableCommand,
 } from "./rules";
 export { useCommand, type CommandOptions } from "./useCommand";

@@ -9,7 +9,7 @@ import { ActionForm, type MutationContext } from "../../shared/ActionForm";
 import { currentPath, onNavigate } from "../../shared/navigation";
 import { ContextPanelContent } from "../../shared/ui/ContextPanel";
 import { ContextRailContent } from "../../shared/ui/ContextRail";
-import { FactList, Legacy, PageSection, PanelSection, mutedText } from "../../shared/ui/PageParts";
+import { FactList, PageSection, PanelSection, mutedText } from "../../shared/ui/PageParts";
 import { SectionBoundary } from "../../shared/ui/SectionBoundary";
 import { href } from "../../shared/ui/shared";
 import { RoleDetail, RoleTrialFacts } from "./RoleDetail";
@@ -95,8 +95,8 @@ export function RolesView({ context, refresh }: { context: MutationContext; refr
           </div>
         </header>
         {showProposal && <PageSection title="提出有证据的职责试行" description="提案会保存观察与备选方案；审阅接受后才进入试行。首项任务需通过普通任务流程承接。">
-          <Legacy><ActionForm context={{ ...context, draftScope: "role:propose" }} embedded title="提出职责试行" fields={proposalFields}
-            build={v => ({ type: "role.propose", roleId: crypto.randomUUID(), proposal: buildProposal(v) })} onApplied={() => setProposing(false)} /></Legacy>
+          <ActionForm context={{ ...context, draftScope: "role:propose" }} embedded title="提出职责试行" fields={proposalFields}
+            build={v => ({ type: "role.propose", roleId: crypto.randomUUID(), proposal: buildProposal(v) })} onApplied={() => setProposing(false)} />
         </PageSection>}
         <SectionBoundary label="基础职责"><RoleTemplates projectId={projectId} /></SectionBoundary>
         <PageSection title="全部职责">
@@ -114,7 +114,7 @@ export function RolesView({ context, refresh }: { context: MutationContext; refr
     <ContextPanelContent>
       <div className="flex flex-col gap-4">
         {selected ? <>
-          <PanelSection title="试行与回看"><RoleTrialFacts role={selected} roleTitle={roleTitle} /></PanelSection>
+          <PanelSection title="试行与回看"><RoleTrialFacts projectId={context.projectId} role={selected} roleTitle={roleTitle} /></PanelSection>
           <SectionBoundary label="运行时与 skill"><RoleRuntime key={selected.id} context={context} roleId={selected.id} /></SectionBoundary>
         </> : <PanelSection title="职责概况">
           {list.observedAt ? <FactList rows={[

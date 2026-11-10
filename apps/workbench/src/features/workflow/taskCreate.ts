@@ -120,10 +120,32 @@ export function taskDraftProblems(draft: TaskDraft, options: { canReview: boolea
   }
   try { scheduledTimezone(draft.timezone); } catch (cause) { if (draft.executeAt.trim()) problems.timezone = cause instanceof Error ? cause.message : "时区无效。"; }
   if (draft.documentIds.length > maxLinkedDocuments) problems.documentIds = `最多关联 ${maxLinkedDocuments} 份文档。`;
+  // The contract's limits (task.create), said with the length; a text is never cut. Text fields are measured as sent.
+  const limit = (key: keyof TaskDraft, value: string, max: number, text = (length: number) => `最多 ${max} 字，现在是 ${length} 字，请删减后再提交。`) => {
+    if (!problems[key] && value.length > max) problems[key] = text(value.length);
+  };
+  limit("title", draft.title.trim(), 240);
+  limit("acceptance", draft.acceptance.trim(), 4000);
+  limit("consumer", draft.consumer.trim(), 4000);
+  limit("evidence", draft.evidence.trim(), 4000);
+  limit("stopCondition", draft.stopCondition.trim(), 4000);
+  limit("timezone", draft.timezone.trim(), 80);
+  // 为什么要做 and 期望结果 become one text (taskContent): its limit is said under both.
+  const content = taskContent(draft);
+  if (content.length > maxContent) {
+    const text = `“为什么要做”和“期望结果”合起来最多 ${maxContent} 字，现在是 ${content.length} 字，请删减后再提交。`;
+    problems.why ??= text; problems.outcome ??= text;
+  }
   // A field the person cannot see is never named as the thing to fix.
   for (const key of hiddenFields(draft)) delete problems[key];
   return problems;
 }
+
+/** The task's text as sent: why it exists, then 期望结果. */
+export function taskContent(draft: Pick<TaskDraft, "why" | "outcome">): string {
+  return `${draft.why.trim()}\n\n期望结果\n${draft.outcome.trim()}`;
+}
+const maxContent = 65536;
 
 /** The `task.create` command for a draft without problems. `taskId` stays the same for one draft. */
 export function taskCreateCommand(draft: TaskDraft, taskId: string): Record<string, unknown> {
@@ -137,7 +159,7 @@ export function taskCreateCommand(draft: TaskDraft, taskId: string): Record<stri
   const consumer = decision ? draft.owner : text(draft.consumer);
   return {
     type: "task.create", taskId, title: draft.title, kind: draft.kind || null,
-    content: `${text(draft.why)}\n\n期望结果\n${text(draft.outcome)}`, acceptance: draft.acceptance, owner: draft.owner,
+    content: taskContent(draft), acceptance: draft.acceptance, owner: draft.owner,
     // A decision-only task names no acceptance mode: the service accepts `useRequired: false` only then.
     ...(decision ? {} : { acceptanceMode: draft.acceptanceMode }), useRequired: !decision,
     ...(consumer ? { consumer } : {}),

@@ -174,8 +174,11 @@ test("rebuilt legacy parts read, write and fail as the record allows, at three w
   await register.getByLabel("完整 commit").fill(commit);
   await register.getByLabel("原文 SHA-256").fill(gitHash);
   await register.getByRole("button", { name: "核验并登记" }).click();
-  await references.getByText("已保存，并已重新读取当前记录。").waitFor();
+  // Saved is all that is known when the answer comes; nothing claims a reread that has not happened.
+  await references.getByText("已保存。登记的固定引用已填入下面两张表单。").waitFor();
+  assert.equal(await references.getByText(/已重新读取当前记录/).count(), 0);
   const registered = posts.find(item => item.path.endsWith("/references/git"))!;
+  assert.deepEqual(Object.keys(registered.body).sort(), ["commit", "contentHash", "operationId", "path", "referenceId", "repositoryId"], "the same fields as before");
   assert.deepEqual([registered.body.repositoryId, registered.body.path, registered.body.commit, registered.body.contentHash], ["evoLoop", "docs/api.md", commit, gitHash]);
   assert.match(String(registered.body.operationId), /^[0-9a-f-]{36}$/);
   const adopt = block("为当前任务修订采用外部依据");
@@ -187,7 +190,19 @@ test("rebuilt legacy parts read, write and fail as the record allows, at three w
   const adopted = posts.find(item => item.path.endsWith(`/references/tasks/${taskId}/decisions`))!;
   assert.deepEqual([adopted.body.kind, adopted.body.referenceId, adopted.body.revision, adopted.body.contentHash, adopted.body.decision, adopted.body.expectedTaskVersion, adopted.body.taskRevisionId],
     ["git", gitRef, commit, gitHash, "adopt", 3, taskId], "the decision names the Git source registered just before");
+  assert.deepEqual(Object.keys(adopted.body).sort(), ["actionImpact", "contentHash", "decision", "decisionId", "expectedHeadVersion", "expectedTaskVersion", "kind",
+    "operationId", "reason", "referenceId", "revision", "slotId", "taskRevisionId"], "the same fields as before");
+  await adopt.getByText("已保存，上面已是重新读取的登记。").waitFor();
   await shoot("task-references");
+  // 复核此依据 opens the folded decision form itself and says beside it what was loaded.
+  await adopt.getByText("为当前任务修订采用外部依据", { exact: true }).click();
+  assert.equal(await adopt.evaluate(element => (element as HTMLDetailsElement).open), false);
+  await recorded.getByRole("button", { name: "复核此依据" }).click();
+  await adopt.getByText("已载入要复核的依据").waitFor();
+  assert.equal(await adopt.evaluate(element => (element as HTMLDetailsElement).open), true, "the form is open, not only scrolled to");
+  assert.equal(await adopt.getByLabel("决定").inputValue(), "retain");
+  await adopt.getByRole("button", { name: "改为采用另一项新依据" }).click();
+  assert.equal(await adopt.getByText("已载入要复核的依据").count(), 0);
   // A list that cannot be read says so and does not claim there is nothing; reading again finds the empty list.
   await fetch(`${base}/__fixture/fail?what=references`);
   await go(`/p/${projectId}/tasks/${otherTaskId}?tab=runtime`);

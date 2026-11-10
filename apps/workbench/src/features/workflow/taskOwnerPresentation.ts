@@ -13,9 +13,11 @@ export const ownerSessionState: Record<RuntimeSessionRecord["state"], string> = 
  */
 export function boundAgents(projectId: string, owner: string, bindings: RoleSessionBinding[], sessions: RuntimeSessionRecord[]):
   { agents: RuntimeSessionRecord[]; note: string | null } {
-  if (bindings.some(item => item.projectId !== projectId || item.roleId !== owner)) throw new Error("智能体关联响应与当前项目不符");
+  // A record of another project in either answer is reported, never filtered out quietly.
+  if (bindings.some(item => item.projectId !== projectId || item.roleId !== owner) || sessions.some(item => item.projectId !== projectId))
+    throw new Error("智能体关联响应与当前项目不符");
   const bound = new Set(bindings.map(item => item.sessionId));
-  const agents = sessions.filter(item => item.projectId === projectId && bound.has(item.id) && item.roleId === owner);
+  const agents = sessions.filter(item => bound.has(item.id) && item.roleId === owner);
   if (bound.size > agents.length) return { agents, note: "部分绑定记录未能核对到同项目、同职责的智能体，未提供它们的入口。" };
   if (bound.size === 0) return { agents, note: "这项职责还没有登记绑定的智能体；任务具体由谁承接看右栏。" };
   return { agents, note: null };

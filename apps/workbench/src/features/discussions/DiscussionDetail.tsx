@@ -15,6 +15,7 @@ import { discussionCopyEnvelope } from "./commands";
 import { readDocumentHead, readVerifiedPackage, type Choices } from "./discussionClient";
 import { DecisionForm, HandoffForm, LinkForm, targetChoices } from "./DiscussionForms";
 import { decisionHistory, eventLabel, kindLabel, nameOr, statusSentence, statusTag, targetKindLabel } from "./discussionPresentation";
+import { ErrorDetails } from "../../shared/ui/ErrorDetails";
 
 const link = "text-primary underline-offset-4 hover:underline outline-none focus-visible:shadow-[var(--focus-ring)] rounded-sm";
 const code = "font-mono text-caption [overflow-wrap:anywhere]";
@@ -78,7 +79,7 @@ function PackageView({ projectId, documentId, revisionId, label, read }: { proje
       {/* A failed read wins over an older answer: the tag never says 已核对 next to a failed check. */}
       {read.isError ? <StatusTag tone="blocked" label="无法核对" /> : read.data ? <StatusTag tone="done" label="原文已核对" /> : <StatusTag tone="unknown" label="正在核对" />}
     </div>
-    {read.isError && <p className="text-caption text-destructive">原文没有核对通过：{errorText(read.error)}。现在无法判断交接包是否完整，核对通过之前不能据此登记承接或决定。</p>}
+    {read.isError && <div className="text-caption text-destructive">原文没有核对通过：{errorText(read.error)}。现在无法判断交接包是否完整，核对通过之前不能据此登记承接或决定。<ErrorDetails error={read.error} /></div>}
     {read.data && !read.isError && <>
       <div className="flex flex-wrap items-center gap-2">
         <Button size="compact" onClick={() => void copy()}>{copied === "done" ? "已复制完整交接包" : "复制完整交接包"}</Button>
@@ -132,6 +133,9 @@ export function DiscussionDetail({ context, record, events, choices, choicesLoad
   // Only a fresh, successful read counts: a failed reread or the previous version's head kept on screen while the new
   // one loads cannot decide whether the two versions differ, so nothing that depends on it can be sent.
   const headFresh = head.data && !head.isError && !head.isPlaceholderData ? head.data : undefined;
+  // The document head shown in 来源与完整标识 when it is not this version's fresh read: the previous version's answer
+  // while this one is read, or an answer whose reread failed.
+  const headStanding = !head.data ? null : head.isError ? "上次读回，当前待核对" : head.isPlaceholderData ? "上次读回，正在核对" : null;
   const currentFresh = current.data && !current.isError ? current.data : undefined;
   const mismatch = !!headFresh && headFresh.revisionId !== record.currentDocumentRevisionId;
   const verified = !!currentFresh && !!headFresh;
@@ -172,7 +176,9 @@ export function DiscussionDetail({ context, record, events, choices, choicesLoad
         <li>当前登记修订 <code className={code}>{record.currentDocumentRevisionId}</code></li>
         {!samePackage && prepared.data && <li>最初交接包 SHA-256 <code className={code}>{prepared.data.revision.contentHash}</code></li>}
         {current.data && <li>登记修订 SHA-256 <code className={code}>{current.data.revision.contentHash}</code></li>}
-        {head.data && <li>文档当前修订 <code className={code}>{head.data.revisionId}</code> · 第 {head.data.version} 版 · SHA-256 <code className={code}>{head.data.contentHash}</code></li>}
+        {head.data && <li data-head-standing={headStanding ?? "current"}>文档当前修订 <code className={code}>{head.data.revisionId}</code> · 第 {head.data.version} 版 · SHA-256 <code className={code}>{head.data.contentHash}</code>
+          {headStanding && <span className="text-foreground">（{headStanding}）</span>}</li>}
+        {!head.data && head.isError && <li>文档当前修订：暂不可读取，无法判断</li>}
       </>}
       {record.goal && <li>目标 <code className={code}>{record.goal.id}</code> · 第 {record.goal.version} 版</li>}
       {record.stage && <li>阶段 <code className={code}>{record.stage.id}</code> · 第 {record.stage.version} 版</li>}
@@ -246,7 +252,7 @@ export function DiscussionDetail({ context, record, events, choices, choicesLoad
       {links.length > 0 && <p className="text-small text-text-secondary">已链接 {links.length} 个后续对象，见右栏“关联的任务、职责与文档”。</p>}
       {head.isPending && <p className={muted}>正在读回文档当前版并核对 SHA-256…</p>}
       {head.isPlaceholderData && !head.isError && <p className={muted}>讨论已更新，正在重新核对文档当前版；核对完成前不判断两版是否一致。</p>}
-      {head.isError && <Notice tone="error" title="文档当前版没有核实">{errorText(head.error)}。现在无法判断它与讨论登记版是否一致；核实之前不能登记承接、决定或链接对象。</Notice>}
+      {head.isError && <Notice tone="error" title="文档当前版没有核实">{errorText(head.error)}。现在无法判断它与讨论登记版是否一致；核实之前不能登记承接、决定或链接对象。<ErrorDetails error={head.error} /></Notice>}
       {mismatch && headFresh && <Notice tone="waiting" title="讨论登记版与文档当前版不同">
         讨论登记的是另一份修订，文档后来又被修订到第 {headFresh.version} 版（作者 {headFresh.author}）。旧讨论原件不会被改写；只有明确确认后，才能从文档当前版接续登记决定。完整标识见右栏。
       </Notice>}

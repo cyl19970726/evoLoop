@@ -41,8 +41,8 @@ export function FactList({ rows, columns = false }: { rows: Array<[string, React
 }
 
 /**
- * Old markup kept inside a rebuilt page until it is rebuilt too: the shared command form (ActionForm) and the document
- * upload form on 职责, 分工与运行 and 过程文档, and the allocation backlinks on 职责. Remove it when they are rebuilt.
+ * Old markup kept inside a rebuilt page until it is rebuilt too. Only the agent page (features/sessions) still uses
+ * it: around ActionForm and AllocationBacklinks, which are new markup already. Remove it with those wrappers.
  */
 export function Legacy({ children, className }: { children: ReactNode; className?: string }) {
   return <div data-legacy="" className={cn("workbench-layout min-w-0", className)}>{children}</div>;

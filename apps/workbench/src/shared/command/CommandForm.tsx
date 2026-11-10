@@ -12,7 +12,7 @@ import type { SubmissionOutcome } from "../submissionOutcome";
 import type { MutationContext } from "./context";
 import { readableDraft } from "./drafts";
 import {
-  baselineChangedText, blockedText, conflictingFields, contentMoved, followLatest, formDirty, keepEdits, movedFields, permissionText, restoredFormState,
+  baselineChangedText, blockedText, conflictingFields, contentMoved, followLatest, formDirty, keepEdits, movedFields, overLimitText, permissionText, restoredFormState,
   unconfirmedNote, unconfirmedTitle, type Baseline, type FormState,
 } from "./rules";
 import { useCommand, type CommandOptions } from "./useCommand";
@@ -207,8 +207,9 @@ const chosen = (value: string): string[] => { try { const list = JSON.parse(valu
 export function missingFields(fields: readonly FormField[], values: Record<string, string>): Record<string, string> {
   return Object.fromEntries(fields.flatMap(field => {
     const value = values[field.name] ?? "";
-    if (field.maxLength !== undefined && field.kind !== "multi" && value.length > field.maxLength)
-      return [[field.name, `最多 ${field.maxLength} 字，现在是 ${value.length} 字，请删减后再提交。`]];
+    const tooLong = field.kind === "multi" ? null : overLimitText(value, field.maxLength);
+    if (tooLong)
+      return [[field.name, tooLong]];
     if (field.optional) return [];
     if (field.kind === "multi") return chosen(value).length ? [] : [[field.name, "请至少选择一项。"]];
     if (value.trim()) return [];

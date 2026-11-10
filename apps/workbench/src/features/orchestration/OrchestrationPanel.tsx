@@ -8,7 +8,7 @@ import type { TaskDetail } from "@evoloop/contracts";
 import type { RuntimeRunRecord } from "@evoloop/contracts/runtime";
 import type { OrchestrationDispatch, OrchestrationEvent, OrchestrationInbox, OrchestrationLoop, OrchestrationSourceFact, OrchestrationSubmission, OrchestrationWorkerDecision } from "@evoloop/contracts/orchestration";
 import { Button, ErrorState, LoadingState, Notice, RefreshingIndicator, StatusTag, cn, type StatusTone } from "@evoloop/ui";
-import { api, errorText } from "../../shared/api";
+import { ApiError, api, errorText } from "../../shared/api";
 import { mergePage, orchestrationClient, type LoopPart, type LoopPartItem, type OrchestrationStatus, type ResultPage, type TaskLoopContext } from "../../shared/orchestrationClient";
 import { useProjectQuery } from "../../shared/query";
 import { taskSectionHref } from "../../shared/taskNavigation";
@@ -19,7 +19,7 @@ import { date } from "../../shared/ui/shared";
 import type { WorkTaskStatus } from "../../shared/workStatusPresentation";
 import {
   decisionHeading, deliveryMeaning, dispatchStateLabel, dispositionLabel, inboxStateLabel, loopName, loopStateLabel, outcomeLabel, purposeLabel,
-  sealReasonLabel, sourceTriggerLabel, storyTitle, submissionStateLabel,
+  scopeText, scopeTitleOf, sealReasonLabel, sourceTriggerLabel, storyTitle, submissionStateLabel, taskTitleText, type ScopeTitle,
 } from "./presentation";
 import { currentChainSummary, hasTerminalIntentGap, hasUnreadChainPages, inTaskContext, orderDispatches, readableOutcome, storyNextAction } from "./summary";
 import { selectedTaskLoop, taskLoopAssociation } from "./taskLoopSelection";
@@ -31,14 +31,14 @@ const dispatchTone: Record<OrchestrationDispatch["state"], StatusTone> = {
   pending: "waiting", claimed: "waiting", dispatching: "progress", accepted: "progress", unknown: "unknown", rejected: "blocked", completed: "done",
 };
 
-async function scopeTitles(client: Client, loops: OrchestrationLoop[]): Promise<Record<string, string>> {
-  const labels: Record<string, string> = {};
+const notFound = (cause: unknown) => cause instanceof ApiError && cause.status === 404;
+
+/** Each loop's goal and stage; a read that failed is said as failed, a record that is not there as not found. */
+async function scopeTitles(client: Client, loops: OrchestrationLoop[]): Promise<Record<string, ScopeTitle>> {
+  const labels: Record<string, ScopeTitle> = {};
   await Promise.all(loops.map(async loop => {
     const [goal, stage] = await Promise.allSettled([client.goal(loop.goalId), loop.stageId ? client.stage(loop.stageId) : Promise.resolve(null)]);
-    const outcome = goal.status === "fulfilled" ? goal.value.outcome : null;
-    const deliverable = stage.status === "fulfilled" ? stage.value?.deliverable : null;
-    const title = [outcome, deliverable].filter(Boolean).join(" · ");
-    if (title) labels[loop.id] = title;
+    labels[loop.id] = scopeTitleOf(goal, loop.stageId ? stage : null, notFound);
   }));
   return labels;
 }
@@ -68,7 +68,7 @@ async function decisionsFor(client: Client, events: OrchestrationEvent[]): Promi
 }
 
 interface PanelData {
-  status: OrchestrationStatus; loops: ResultPage<OrchestrationLoop>; titles: Record<string, string>;
+  status: OrchestrationStatus; loops: ResultPage<OrchestrationLoop>; titles: Record<string, ScopeTitle>;
   contexts: ResultPage<TaskLoopContext>; workStatus: WorkTaskStatus | null;
 }
 
@@ -101,7 +101,7 @@ export function OrchestrationPanel({ projectId, refresh, taskId, verifiedRuns }:
   });
   useRefetchOn(refresh + epoch, read.refetch);
   // Further pages of loops (or of the task's loop contexts), read on request and kept across rereads.
-  const [more, setMore] = useState<{ loops: OrchestrationLoop[]; titles: Record<string, string>; contexts: TaskLoopContext[]; nextCursor: string | null } | null>(null);
+  const [more, setMore] = useState<{ loops: OrchestrationLoop[]; titles: Record<string, ScopeTitle>; contexts: TaskLoopContext[]; nextCursor: string | null } | null>(null);
   const [moreBusy, setMoreBusy] = useState(false);
   const [moreError, setMoreError] = useState("");
   useEffect(() => { setManualLoopId(null); setLastVerifiedLoopId(null); setMore(null); }, [projectId, taskId]);
@@ -177,7 +177,7 @@ export function OrchestrationPanel({ projectId, refresh, taskId, verifiedRuns }:
     {moreError && <Notice tone="error">继续读取未完成：{moreError}。已读的循环保留。</Notice>}
     {taskId && manualLoopId && selected === manualLoopId && association?.kind !== "unresolved" && manualLoopId !== association?.loopId && selectedLoop &&
       <p className={mutedText} data-manual-loop={manualLoopId}>正在手动查看历史循环（{stateText(selectedLoop.state)}）；当前运行关联的循环见上方。</p>}
-    {selectedLoop && <LoopObservation key={`${projectId}:${selectedLoop.id}`} projectId={projectId} loop={selectedLoop} title={titles[selectedLoop.id]}
+    {selectedLoop && <LoopObservation key={`${projectId}:${selectedLoop.id}`} projectId={projectId} loop={selectedLoop} scope={titles[selectedLoop.id]}
       taskId={taskId} context={contexts.find(item => item.loopId === selectedLoop.id)} refresh={refresh + epoch} />}
   </section>;
 }
@@ -216,9 +216,11 @@ function mergeLoopData(base: LoopData, extra: Extra | null): LoopData {
   return merged;
 }
 
-function LoopObservation({ projectId, loop, title, taskId, context, refresh }: {
-  projectId: string; loop: OrchestrationLoop; title?: string; taskId?: string; context?: TaskLoopContext; refresh: number;
+function LoopObservation({ projectId, loop, scope, taskId, context, refresh }: {
+  projectId: string; loop: OrchestrationLoop; scope?: ScopeTitle | undefined; taskId?: string; context?: TaskLoopContext; refresh: number;
 }) {
+  // The goal and stage as words for the stories: only names that were read.
+  const title = scope?.state === "named" ? scope.title : undefined;
   const read = useProjectQuery(projectId, ["orchestration", "loop", loop.id, "records"], async (): Promise<LoopData> => {
     const client = orchestrationClient("", projectId);
     const [inbox, dispatches, submissions, events, sources, tasks] = await Promise.all([client.part(loop.id, "inbox"), client.part(loop.id, "dispatches"),
@@ -232,6 +234,8 @@ function LoopObservation({ projectId, loop, title, taskId, context, refresh }: {
   const [extra, setExtra] = useState<Extra | null>(null);
   const [more, setMore] = useState<LoopPart | "tasks" | null>(null);
   const [moreError, setMoreError] = useState("");
+  // Reading further task pages failed: a task not among the loaded ones cannot be named until it is read.
+  const [tasksFailed, setTasksFailed] = useState(false);
   const [moreStatusError, setMoreStatusError] = useState("");
   async function loadMore(kind: LoopPart, data: LoopData) {
     const cursor = data[kind].nextCursor; if (!cursor || more) return;
@@ -257,11 +261,14 @@ function LoopObservation({ projectId, loop, title, taskId, context, refresh }: {
       const page = await orchestrationClient("", projectId).tasks(loop.id, cursor);
       setExtra(current => ({ decisions: {}, revisionIds: {}, workStatuses: {}, ...current,
         tasks: { items: [...current?.tasks?.items ?? [], ...page.items], nextCursor: page.nextCursor } }));
-    } catch (cause) { setMoreError(errorText(cause)); }
+      setTasksFailed(false);
+    } catch (cause) { setMoreError(errorText(cause)); setTasksFailed(true); }
     finally { setMore(null); }
   }
   const data = read.data ? mergeLoopData(read.data, extra) : null;
   const workStatusError = data?.workStatusError || moreStatusError;
+  const taskName = (taskId: string) => taskTitleText(data?.tasks.items.find(value => value.task.id === taskId)?.task.title,
+    { more: !!data?.tasks.nextCursor, failed: tasksFailed });
   const moreButton = (kind: LoopPart) => data?.[kind].nextCursor ? <Button size="compact" variant="ghost" className="w-fit" disabled={more !== null}
     onClick={() => void loadMore(kind, data)}>{more === kind ? "读取中…" : `继续读取（已读 ${data[kind].items.length} 条，还有更多）`}</Button> : null;
   const related = (item: OrchestrationDispatch) => !taskId || !!context && inTaskContext(item, context);
@@ -277,7 +284,7 @@ function LoopObservation({ projectId, loop, title, taskId, context, refresh }: {
     data.tasks.items.filter(item => relatedTaskIds.has(item.task.id) || item.task.id === taskId), taskId, !partial) : [];
   return <div className="flex min-w-0 flex-col gap-4 border-t border-border pt-4" data-loop-observation={loop.id}>
     <header className="flex flex-col gap-1">
-      <h3 className="text-small font-semibold text-foreground [overflow-wrap:anywhere]">{title ?? "目标与阶段待读取"} · {stateText(loop.state)}</h3>
+      <h3 className="text-small font-semibold text-foreground [overflow-wrap:anywhere]">{scopeText(scope)} · {stateText(loop.state)}</h3>
       <p className={mutedText}>判断职责 <RoleName projectId={projectId} roleId={loop.cognitiveRoleId} /> · 执行职责 {loop.allowedBusinessRoleIds.map((roleId, index) =>
         <span key={roleId}>{index ? "、" : ""}<RoleName projectId={projectId} roleId={roleId} /></span>)} · 创建 {date(loop.createdAtUtc)}</p>
       <p className={mutedText}>派发预算 {loop.dispatchCount}/{loop.maxRuns}（记录请求次数，不等于成功运行数）· 同时最多 {loop.maxConcurrent} 个 · 入站起点 {date(loop.sourceAfter.createdAtUtc)}</p>
@@ -304,7 +311,7 @@ function LoopObservation({ projectId, loop, title, taskId, context, refresh }: {
         {ordered?.ordered.length === 0 && <p className="text-label text-text-secondary">已读范围内还没有相关的派发。{data.inbox.items.some(item => relatedSource(item.sourceEventId) && item.state === "pending")
           ? "已有入站等待处理。" : "可以展开下方的来源核对入站情况。"}</p>}
         {ordered && ordered.ordered.length > 0 && <ol className="flex flex-col">{ordered.ordered.map(item => <li key={item.id}>
-          <Story projectId={projectId} item={item} data={data} later={ordered.hasLater.has(item.id)} title={title} />
+          <Story projectId={projectId} item={item} data={data} later={ordered.hasLater.has(item.id)} title={title} taskName={taskName(item.taskId)} />
         </li>)}</ol>}
         {moreButton("sources")}
         {data.tasks.nextCursor && <Button size="compact" variant="ghost" className="w-fit" disabled={more !== null} onClick={() => void loadMoreTasks(data)}>
@@ -321,7 +328,7 @@ function LoopObservation({ projectId, loop, title, taskId, context, refresh }: {
             </RecordItem>)}
           </RecordList>
           <RecordList title="派发与实际运行" count={data.dispatches.items.length} more={!!data.dispatches.nextCursor} empty="已读范围内没有派发。" button={moreButton("dispatches")}>
-            {data.dispatches.items.filter(related).map(item => <RecordItem key={item.id} title={<a className={link} href={taskSectionHref(projectId, item.taskId)}>{data.tasks.items.find(value => value.task.id === item.taskId)?.task.title ?? "任务（名称待读取）"}</a>}
+            {data.dispatches.items.filter(related).map(item => <RecordItem key={item.id} title={<a className={link} href={taskSectionHref(projectId, item.taskId)}>{taskName(item.taskId)}</a>}
               state={dispatchStateLabel[item.state]} rows={[{ label: "派发", value: item.id }, { label: "来源事件", value: item.sourceEventId }, { label: "来源入站", value: item.inboxId },
                 { label: "上游派发", value: item.parentDispatchId }, { label: "运行", value: item.runtimeRunId }, { label: "交付", value: item.deliveryId }, { label: "证据", value: item.evidenceRef, text: true }]}>
               <p>{purposeLabel(item.purpose)} · 承接职责 <RoleName projectId={projectId} roleId={item.recipientRoleId} /> · 任务第 {item.taskVersion} 版 · 请求人 {item.requestedBy}</p>
@@ -360,7 +367,9 @@ function LoopObservation({ projectId, loop, title, taskId, context, refresh }: {
   </div>;
 }
 
-function Story({ projectId, item, data, later, title }: { projectId: string; item: OrchestrationDispatch; data: LoopData; later: boolean; title?: string }) {
+function Story({ projectId, item, data, later, title, taskName }: {
+  projectId: string; item: OrchestrationDispatch; data: LoopData; later: boolean; title?: string | undefined; taskName: string;
+}) {
   const detail = data.tasks.items.find(value => value.task.id === item.taskId);
   const inbox = data.inbox.items.find(value => value.id === item.inboxId);
   const source = data.sources.items.find(value => value.id === item.sourceEventId);
@@ -379,7 +388,7 @@ function Story({ projectId, item, data, later, title }: { projectId: string; ite
   return <article className="flex min-w-0 flex-col gap-2 border-t border-border py-4 first:border-t-0" data-dispatch={item.id}>
     <div className="flex flex-wrap items-start justify-between gap-2">
       <h5 className="min-w-0 text-small font-semibold text-foreground [overflow-wrap:anywhere]"><a className="hover:underline" href={taskSectionHref(projectId, item.taskId)}>
-        {storyTitle(item, detail?.task.title, source, matchedStatus, sourceStatus, title)}</a></h5>
+        {storyTitle(item, taskName, source, matchedStatus, sourceStatus, title)}</a></h5>
       <StatusTag tone={state.tone} label={state.label} />
     </div>
     <p className={mutedText}>派发登记 {date(item.createdAtUtc)}{detail && detail.task.version !== item.taskVersion ? ` · 派发时是任务第 ${item.taskVersion} 版，现名称可展开核对` : ""}</p>

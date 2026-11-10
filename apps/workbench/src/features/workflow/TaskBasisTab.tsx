@@ -129,7 +129,7 @@ function ImpactItem({ context, detail, impact, title, canReview, defaultOpen }: 
               { name: "decision", label: "这次变化怎样影响任务", kind: "radio", initial: "adopt",
                 options: [{ value: "adopt", label: "采用新版" }, { value: "retain", label: "保留任务固定的旧版" }] },
               reasonField("理由", "说明判断依据和对任务的影响。"),
-              { name: "acceptance", label: "新的验收条件", kind: "textarea", optional: true, rows: 3,
+              { name: "acceptance", label: "新的验收条件", kind: "textarea", optional: true, rows: 3, maxLength: 4000,
                 hint: "只在采用新版时使用；留空沿用当前验收条件。" },
             ]}
             build={(values, seen) => reviewBasisCommand(detail.task.id, seen, {

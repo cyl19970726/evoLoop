@@ -24,6 +24,8 @@ import { ManagedSessionDetail, RoleLabel } from "./ManagedSessionDetail";
 import { RunList } from "./RunList";
 import { executionHref, fullGrants, permissionsText, sessionGroups, sessionStateText, sessionStateTone, sessionTargetNotice, uuidPattern } from "./executionPresentation";
 import { useRoleNames } from "./useRoleNames";
+import { failureOf, type Failure } from "../../shared/errorPresentation";
+import { ErrorDetails } from "../../shared/ui/ErrorDetails";
 
 const stamp = (value: number) => new Date(value).toLocaleString("zh-CN", { hour12: false });
 
@@ -47,7 +49,7 @@ export function ExecutionView({ context, refresh, sessionId }: { context: Mutati
   const [epoch, setEpoch] = useState(0);
   const [creating, setCreating] = useState(false);
   const [recovering, setRecovering] = useState(false);
-  const [recoverError, setRecoverError] = useState("");
+  const [recoverError, setRecoverError] = useState<Failure | null>(null);
   const sessions: RuntimeSessionRecord[] = sessionsRead.data ?? [];
   const runs: RuntimeRunRecord[] = runsRead.data ?? [];
   const nameOf = useRoleNames(projectId, [...sessions.map(item => item.roleId), ...(status.data?.grants ?? []).map(grant => grant.roleId)]);
@@ -65,9 +67,9 @@ export function ExecutionView({ context, refresh, sessionId }: { context: Mutati
     setEpoch(value => value + 1);
   };
   async function recover() {
-    setRecovering(true); setRecoverError("");
+    setRecovering(true); setRecoverError(null);
     try { await runtimeClient("", projectId).recover(); reread(); }
-    catch (cause) { setRecoverError(errorText(cause)); }
+    catch (cause) { setRecoverError(failureOf(cause)); }
     finally { setRecovering(false); }
   }
   const rootRef = useRef<HTMLDivElement>(null);
@@ -108,8 +110,8 @@ export function ExecutionView({ context, refresh, sessionId }: { context: Mutati
         </div>)}
       </nav>
     </ContextRailContent>
-    {sessionsError && <Notice tone="error" title="受管智能体未读完整">智能体列表暂不可读取：{sessionsError}。范围不能据此推断。</Notice>}
-    {runsError && <Notice tone="error" title="运行未读完整">运行列表暂不可读取：{runsError}。其他运行不能据此推断。</Notice>}
+    {sessionsError && <Notice tone="error" title="受管智能体未读完整">智能体列表暂不可读取：{sessionsError}。范围不能据此推断。<ErrorDetails error={sessionsRead.error} /></Notice>}
+    {runsError && <Notice tone="error" title="运行未读完整">运行列表暂不可读取：{runsError}。其他运行不能据此推断。<ErrorDetails error={runsRead.error} /></Notice>}
     {sessionId !== undefined && !selected && (notice => <Notice tone={notice.tone} title={notice.title} data-session-target="">{notice.text}
       <details className="mt-1 text-caption text-muted-foreground"><summary className="cursor-pointer">完整标识</summary><code className="break-all font-mono">{sessionId}</code></details>
     </Notice>)(sessionTargetNotice({ valid: validTarget, reading: sessionsRead.isPending, error: sessionsError }))}
@@ -135,9 +137,9 @@ export function ExecutionView({ context, refresh, sessionId }: { context: Mutati
             ? <p className="text-small text-text-secondary">执行服务已接通。{grants.length ? `当前身份有 ${grants.length} 项可创建智能体的完整权限授权。` : status.data.grants.length
               ? "当前没有同时允许完整本机权限、无需逐次审批和联网的精确授权；请核对项目执行配置后再创建新智能体。" : "当前身份在本项目没有执行授权，不能创建新智能体。"}</p>
             : <Notice tone="waiting" title="执行服务尚未接通">{status.data.error || "已有运行记录仍保留；不自动重发结果未知的启动。"}</Notice>)}
-          {statusError && <Notice tone="error">执行服务状态{status.data ? "本次核对失败，上面是上次读回" : "暂不可读"}：{statusError}</Notice>}
+          {statusError && <Notice tone="error">执行服务状态{status.data ? "本次核对失败，上面是上次读回" : "暂不可读"}：{statusError}<ErrorDetails error={status.error} /></Notice>}
           {status.data && !status.data.available && context.principal.permissions.includes("review") && <Button className="w-fit" disabled={recovering} onClick={() => void recover()}>{recovering ? "恢复核对中…" : "受控恢复执行连接"}</Button>}
-          {recoverError && <Notice tone="error">恢复未完成：{recoverError}。请先读取运行状态，不要重复发起。</Notice>}
+          {recoverError && <Notice tone="error">恢复未完成：{recoverError.text}。请先读取运行状态，不要重复发起。<ErrorDetails failure={recoverError} /></Notice>}
         </PageSection>
         {creating && status.data?.available && grants.length > 0 && <PageSection title="新建受管智能体">
           <ManagedSessionCreate key={epoch} context={context} grants={grants} roleName={roleId => { const name = nameOf(roleId); return name.title ?? name.fallback; }} />
@@ -150,7 +152,7 @@ export function ExecutionView({ context, refresh, sessionId }: { context: Mutati
             <ul aria-label={group.label} className="flex flex-col">{group.items.map(item => {
               const name = nameOf(item.roleId);
               return <li key={item.id} data-session-id={item.id}>
-                <ListRow href={executionHref(projectId, item.id)} title={`${name.title ?? name.fallback}${name.note ? ` · ${name.note}` : ""}`}
+                <ListRow href={executionHref(projectId, item.id)} title={name.title ?? name.fallback}
                   meta={<><AgentName projectId={projectId} sessionId={item.id} /> · {permissionsText(item.sandbox, item.approvalPolicy)} · {item.authorizationScope}</>}
                   trailing={<StatusTag tone={sessionStateTone(item.state)} label={sessionStateText[item.state]} />} />
               </li>;

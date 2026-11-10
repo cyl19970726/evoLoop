@@ -33,8 +33,8 @@ export function TaskOwner({ projectId, owner, readKey, onResolved }: {
   const confirmed = !!role.data && !role.error;
   const bindings = useProjectQuery(projectId, ["role", owner, "bindings"], signal => request<RoleSessionBinding[]>("",
     `/api/projects/${encodeURIComponent(projectId)}/roles/${encodeURIComponent(owner)}/bindings`, 15000, { signal }), { enabled: confirmed });
-  const sessions = useProjectQuery(projectId, ["runtime", "sessions"], async () =>
-    (await runtimeClient("", projectId).sessions()).filter(session => session.projectId === projectId), { enabled: confirmed });
+  // Its own key: the other readers of the agent list drop records of other projects, while this check reports them.
+  const sessions = useProjectQuery(projectId, ["runtime", "sessions", "owner-check"], () => runtimeClient("", projectId).sessions(), { enabled: confirmed });
   // “重新读取当前任务” moves readKey: the owner is checked again with the task.
   const firstKey = useRef(readKey);
   useEffect(() => {

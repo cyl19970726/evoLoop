@@ -14,6 +14,8 @@ import {
   actionRequestState, actionTypeLabel, executionStateLabel, isAnswered, messageKindLabel, readTaskCollaboration, receiptStageLabel,
   threadSummary, type CollaborationThread,
 } from "./taskCollaborationPresentation";
+import { diagnosticOf } from "../../shared/errorPresentation";
+import { ErrorDetails } from "../../shared/ui/ErrorDetails";
 
 type DocumentRef = { documentId: string; revisionId: string };
 const note = "text-caption text-muted-foreground";
@@ -54,9 +56,9 @@ export function TaskCollaborationThread({ projectId, taskId, refresh }: { projec
       <Button size="compact" variant="ghost" className="ml-auto" disabled={read.isFetching} onClick={() => void read.refetch()}>重新读取协作</Button>
     </div>
     {read.isPending && <LoadingState lines={2} label="正在读取协作" />}
-    {read.error && !data && <ErrorState title="协作暂不可读取" happened={errorText(read.error)}
+    {read.error && !data && <ErrorState title="协作暂不可读取" happened={errorText(read.error)} diagnostics={diagnosticOf(read.error)}
       next="可以重新读取；读取失败不代表这项任务没有协作或待答问题。" action={<Button size="compact" onClick={() => void read.refetch()}>重新读取</Button>} />}
-    {read.error && data && <Notice tone="waiting" title="上次读回，当前待核对">重新读取协作失败：{errorText(read.error)}。下面是上次读回的协作，不能视为当前状态。</Notice>}
+    {read.error && data && <Notice tone="waiting" title="上次读回，当前待核对">重新读取协作失败：{errorText(read.error)}。下面是上次读回的协作，不能视为当前状态。<ErrorDetails error={read.error} /></Notice>}
     {read.checking && !read.error && <RefreshingIndicator label="正在核对协作" />}
     {data?.partial && <Notice tone="waiting">协作列表已读到 20 页或 20 个关联频道的上限，结果不完整，不能据此判断没有其他问题。</Notice>}
     {data && !data.partial && data.threads.length === 0 && <p className="text-label text-text-secondary">这项任务还没有登记协作频道。</p>}

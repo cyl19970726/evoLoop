@@ -1,12 +1,16 @@
-import { useState, type FormEvent } from "react";
+// 导入过程文档 / 上传新修订: a Markdown or HTML original (an HTML package with its assets) saved as a fixed revision.
+// It is the shared command form (shared/command: useCommand with CommandFrame): the files are read and hashed in the
+// browser first, then the recovery receipt is saved before anything is sent; an unknown result blocks the form until
+// it is checked by its original operation ID; a new revision is sent against the document version recorded when the
+// form opened, and a newer version asks the reader to keep their input or start over. Files are never kept as drafts.
+import { useEffect, useRef, useState } from "react";
 import type { CommandResult } from "@evoloop/contracts";
-import type { DocumentPayloadCommand } from "@evoloop/contracts/process-documents";
-import { ApiError, errorDetail, errorText, isUnconfirmed, request } from "../../shared/api";
-import { describeFailure } from "../../shared/errorPresentation";
-import { Notice, type MutationContext } from "../../shared/ActionForm";
+import { documentPayloadCommandSchema } from "@evoloop/contracts/process-documents";
+import { Field, Input, Notice, Select, Textarea } from "@evoloop/ui";
+import { request } from "../../shared/api";
+import { CommandFrame, useCommand, type MutationContext, type SubmittableCommand } from "../../shared/command";
+import { uploadCommand, uploadProblem, type UploadFiles } from "./uploadCommand";
 
-const maxBytes = 16 * 1024 * 1024;
-const key = (value: string) => encodeURIComponent(value);
 const hex = (bytes: Uint8Array) => Array.from(bytes, byte => byte.toString(16).padStart(2, "0")).join("");
 const fileHash = async (buffer: ArrayBuffer): Promise<string> => hex(new Uint8Array(await crypto.subtle.digest("SHA-256", buffer)));
 function base64(buffer: ArrayBuffer): string {
@@ -15,109 +19,82 @@ function base64(buffer: ArrayBuffer): string {
   for (let at = 0; at < bytes.length; at += 32768) binary += String.fromCharCode(...bytes.subarray(at, at + 32768));
   return btoa(binary);
 }
-const safeName = (name: string): boolean => name.length > 0 && name.length <= 240 &&
-  !name.includes("/") && !name.includes("\\") && name !== "." && name !== ".." &&
-  !name.includes("?") && !name.includes("#") && !name.includes("\0") && !/^[a-z][a-z0-9+.-]*:/i.test(name);
-const rejected = (value: unknown): value is Extract<CommandResult, { status: "rejected" }> =>
-  !!value && typeof value === "object" && (value as { status?: unknown }).status === "rejected";
+const fileControl = "h-auto py-1.5 file:mr-3 file:cursor-pointer file:rounded-md file:border-0 file:bg-raised file:px-3 file:py-1 file:text-label file:text-foreground";
+
+type Kind = "" | "issue" | "spec" | "discussion" | "report";
 
 export function UploadDocument({ context, mode = "create", documentId, expectedVersion }: {
   context: MutationContext; mode?: "create" | "revise"; documentId?: string; expectedVersion?: number;
 }) {
   const [title, setTitle] = useState("");
-  const [kind, setKind] = useState<"" | "issue" | "spec" | "discussion" | "report">("");
+  const [kind, setKind] = useState<Kind>("");
   const [reason, setReason] = useState("");
   const [format, setFormat] = useState<"markdown" | "html">("markdown");
   const [main, setMain] = useState<File | null>(null);
   const [assets, setAssets] = useState<File[]>([]);
-  const [busy, setBusy] = useState(false);
-  const [unknown, setUnknown] = useState(false);
-  const [stale, setStale] = useState(false);
-  const [message, setMessage] = useState("");
-  // The service's original answer when the message says it in Chinese (诊断信息).
-  const [detail, setDetail] = useState<string | null>(null);
-  const canWrite = context.principal.permissions.includes("write");
-  async function submit(event: FormEvent) {
-    event.preventDefault();
-    const form = event.currentTarget as HTMLFormElement;
-    if (busy || unknown || stale || context.blocked || !canWrite) return;
-    setMessage(""); setDetail(null);
-    if (!main || !reason.trim() || mode === "create" && !title.trim() ||
-      mode === "revise" && (!documentId || !expectedVersion)) { setMessage("请填写名称、理由并选择原件。"); return; }
-    if (!safeName(main.name) || assets.some(file => !safeName(file.name)) ||
-      new Set(assets.map(file => file.name)).size !== assets.length || assets.some(file => file.name === main.name)) {
-      setMessage("文件名需唯一，且不能包含路径或特殊引用字符。"); return;
-    }
-    if (format === "markdown" && assets.length) { setMessage("配套资源目前用于 HTML 包；Markdown 请上传单个原件。"); return; }
-    const allFiles = [main, ...assets];
-    if (allFiles.some(file => !file.size) || allFiles.reduce((sum, file) => sum + file.size, 0) > maxBytes || assets.length > 50) {
-      setMessage("文件不能为空；原件与资源总大小不能超过 16 MiB，资源最多 50 个。"); return;
-    }
-    setBusy(true);
-    let attemptId: string | null = null;
+  // The file inputs are the browser's own; a new generation empties them.
+  const [generation, setGeneration] = useState(0);
+  const [reading, setReading] = useState(false);
+  const [problem, setProblem] = useState("");
+  const uploads = useRef<{ blobId: string; base64: string }[]>([]);
+  const command = useCommand(context, mode === "revise" ? { documentVersion: expectedVersion ?? 0 } : undefined, {
+    // The import route takes the document command without its `type` (that names the receipt) and the files beside it.
+    validate: candidate => { const { type: _, ...rest } = candidate; documentPayloadCommandSchema.parse(rest); },
+    send: (sent: SubmittableCommand) => {
+      const { type: _, ...rest } = sent as Record<string, unknown>;
+      return request<CommandResult>("", `/api/projects/${encodeURIComponent(context.projectId)}/documents/import`, 120000,
+        { method: "POST", body: JSON.stringify({ command: rest, uploads: uploads.current }) });
+    },
+    onStale: context.onChanged,
+  });
+  const dirty = !!(main || assets.length || title || kind || reason);
+  // A form nobody has filled follows a newer version by itself; a filled one asks (CommandFrame).
+  useEffect(() => {
+    if (!dirty && command.baselineChanged && !command.awaitingReread) command.rebase();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dirty, command.baselineChanged, command.awaitingReread]);
+  // What stopped the last attempt is about the inputs then: changing them clears it.
+  useEffect(() => { setProblem(""); }, [title, kind, reason, format, main, assets]);
+  const clear = () => { setTitle(""); setKind(""); setReason(""); setMain(null); setAssets([]); setFormat("markdown"); setProblem(""); setGeneration(value => value + 1); };
+
+  async function submit() {
+    setProblem("");
+    const files: UploadFiles = { main, assets, format };
+    const refusal = uploadProblem({ mode, title, reason, documentId, expectedVersion }, files);
+    if (refusal) { setProblem(refusal); return; }
+    const all = [main!, ...assets];
+    setReading(true);
+    let hashes: string[], blobIds: string[];
     try {
-      const operationId = crypto.randomUUID(), revisionId = crypto.randomUUID();
-      attemptId = operationId;
-      const docId = mode === "create" ? crypto.randomUUID() : documentId!;
-      const ids = allFiles.map(() => crypto.randomUUID());
-      const buffers = await Promise.all(allFiles.map(file => file.arrayBuffer()));
-      const hashes = await Promise.all(buffers.map(fileHash));
-      const uploads = buffers.map((buffer, index) => ({ blobId: ids[index]!, base64: base64(buffer) }));
-      const command: DocumentPayloadCommand = {
-        projectId: context.projectId, operationId, documentId: docId, revisionId, mode,
-        ...(mode === "create" ? { title: title.trim(), kind: kind || null } : { expectedVersion }),
-        format, mediaType: format === "html" ? "text/html" : "text/markdown",
-        originalName: main.name, author: context.principal.actorId, reason: reason.trim(),
-        source: { storage: "blob", payloadRef: ids[0]!, contentHash: hashes[0]!, size: main.size,
-          entrypoint: format === "html" ? main.name : null,
-          assets: assets.map((file, index) => ({ path: file.name, blobId: ids[index + 1]!,
-            contentHash: hashes[index + 1]!, size: file.size, mediaType: file.type || "application/octet-stream" })) },
-      };
-      if (!await context.onAttempt({ type: "document.payload", projectId: context.projectId,
-        operationId, documentId: docId })) { setMessage("浏览器不能保存恢复回执，本次尚未提交。"); return; }
-      const result = await request<CommandResult>(context.token,
-        `/api/projects/${key(context.projectId)}/documents/import`, 120000,
-        { method: "POST", body: JSON.stringify({ command, uploads }) });
-      context.onKnown(operationId);
-      if (result.status === "rejected") {
-        const refusal = describeFailure(result.message, result.code, 409);
-        setMessage(`${refusal.text}。输入已保留。`); setDetail(refusal.detail); setStale(result.code === "VERSION_CONFLICT");
-      } else {
-        setTitle(""); setKind(""); setReason(""); setMain(null); setAssets([]); setFormat("markdown"); form.reset();
-        setMessage("原件和固定修订已保存。"); context.onChanged();
-      }
-    } catch (cause) {
-      const known = cause instanceof ApiError && rejected(cause.detail) ? cause.detail : null;
-      if (!isUnconfirmed(cause) && attemptId) context.onKnown(attemptId);
-      if (known) {
-        const refusal = describeFailure(known.message, known.code, cause instanceof ApiError ? cause.status : 409);
-        setMessage(`${refusal.text}。输入已保留。`); setDetail(refusal.detail); setStale(known.code === "VERSION_CONFLICT");
-      } else {
-        setMessage(`${errorText(cause)}${isUnconfirmed(cause) ? "。请先按已保存的操作 ID 核对结果；此表单不会重新提交。" : "。输入已保留。"}`); setDetail(errorDetail(cause));
-        if (isUnconfirmed(cause)) setUnknown(true);
-      }
-    } finally { setBusy(false); }
+      const buffers = await Promise.all(all.map(file => file.arrayBuffer()));
+      hashes = await Promise.all(buffers.map(fileHash));
+      blobIds = all.map(() => crypto.randomUUID());
+      uploads.current = buffers.map((buffer, index) => ({ blobId: blobIds[index]!, base64: base64(buffer) }));
+    } catch { setProblem("浏览器没能读取所选文件，请重新选择后再提交。"); return; }
+    finally { setReading(false); }
+    const ids = { documentId: mode === "create" ? crypto.randomUUID() : documentId!, revisionId: crypto.randomUUID(), blobIds };
+    await command.submit(seen => uploadCommand({ mode, title, kind, reason, author: context.principal.actorId,
+      expectedVersion: seen && typeof seen === "object" ? seen.documentVersion : undefined }, files, hashes, ids), clear);
   }
-  return <form data-dirty={main || assets.length || title || kind || reason ? "true" : undefined} className="workflow-form panel" onSubmit={submit}>
-    <h3>{mode === "create" ? "导入过程文档" : "上传新修订"}</h3>
-    {mode === "create" && <label>标题<input required value={title} onChange={event => setTitle(event.target.value)} /></label>}
-    {mode === "create" && <label>类型（可选）<select value={kind} onChange={event => setKind(event.target.value as typeof kind)}>
+
+  const heading = mode === "create" ? "导入过程文档" : "上传新修订";
+  return <CommandFrame context={context} command={command} label={heading} submitLabel={mode === "create" ? "导入原件" : "保存新修订"} dirty={dirty}
+    onSubmit={() => void submit()} paused={reading ? "正在读取并核验文件…" : null}
+    onKeep={() => command.rebase()} onRefill={() => { command.rebase(); clear(); }}
+    keepNote="保留我的修改：所选文件和理由不变，按读回的最新版本提交；先看上方读回的新内容，确认这份原件仍然适用。">
+    <h3 className="text-small font-semibold text-foreground">{heading}</h3>
+    {mode === "create" && <Field label="标题">{control => <Input {...control} value={title} autoComplete="off" onChange={event => setTitle(event.target.value)} />}</Field>}
+    {mode === "create" && <Field label="类型（可选）">{control => <Select {...control} className="w-full" value={kind} onChange={event => setKind(event.target.value as Kind)}>
       <option value="">未分类</option><option value="issue">问题</option><option value="spec">规范</option><option value="discussion">讨论</option><option value="report">报告</option>
-    </select></label>}
-    <label>格式<select value={format} onChange={event => { setFormat(event.target.value as "markdown" | "html"); setAssets([]); }}>
-      <option value="markdown">Markdown</option><option value="html">HTML</option></select></label>
-    <label>原件<input type="file" required accept={format === "html" ? ".html,.htm,text/html" : ".md,.markdown,text/markdown,text/plain"}
-      onChange={event => setMain(event.target.files?.[0] ?? null)} /></label>
-    {format === "html" && <label>配套资源（可选，同一目录的文件）<input type="file" multiple
-      onChange={event => setAssets(Array.from(event.target.files ?? []))} /></label>}
-    <label>修订理由<textarea required value={reason} onChange={event => setReason(event.target.value)} /></label>
-    <p className="muted">原件与资源总大小上限 16 MiB。HTML 仅提供静态隔离预览；脚本不会运行。</p>
-    {!canWrite && <Notice>当前身份没有写入权限。</Notice>}
-    {context.blocked && <Notice>本项目有结果未确认的操作，请先核对回执。</Notice>}
-    {stale && <Notice error>版本已变化；输入保持原样，请先回读当前修订。</Notice>}
-    {unknown && <Notice error>结果尚未确认。请使用已保存的操作 ID 回读，不要重新上传。</Notice>}
-    {message && <Notice error={stale || unknown}>{message}{detail && <details><summary>诊断信息</summary><code>{detail}</code></details>}</Notice>}
-    <button className="primary" type="submit" disabled={busy || unknown || stale || context.blocked || !canWrite}>
-      {busy ? "正在核验并上传…" : mode === "create" ? "导入原件" : "保存新修订"}</button>
-  </form>;
+    </Select>}</Field>}
+    <Field label="格式">{control => <Select {...control} className="w-full" value={format} onChange={event => { setFormat(event.target.value as "markdown" | "html"); setAssets([]); }}>
+      <option value="markdown">Markdown</option><option value="html">HTML</option></Select>}</Field>
+    <Field label="原件">{control => <Input {...control} key={`main:${generation}`} type="file" className={fileControl}
+      accept={format === "html" ? ".html,.htm,text/html" : ".md,.markdown,text/markdown,text/plain"} onChange={event => setMain(event.target.files?.[0] ?? null)} />}</Field>
+    {format === "html" && <Field label="配套资源（可选，同一目录的文件）">{control => <Input {...control} key={`assets:${generation}`} type="file" multiple className={fileControl}
+      onChange={event => setAssets(Array.from(event.target.files ?? []))} />}</Field>}
+    <Field label="修订理由">{control => <Textarea {...control} value={reason} onChange={event => setReason(event.target.value)} />}</Field>
+    <p className="text-caption text-muted-foreground">原件与资源总大小上限 16 MiB。HTML 仅提供静态隔离预览；脚本不会运行。</p>
+    {problem && <Notice tone="error">{problem}</Notice>}
+  </CommandFrame>;
 }

@@ -121,7 +121,8 @@ test("职责 and 分工与运行 read and write in the shell layout, and old run
   await history.getByRole("button", { name: "阅读修订与交接历史" }).click();
   await history.getByText("第 3 版 · 试行中").waitFor();
   await history.getByText("未完成任务 · 待接收确认").waitFor();
-  assert.equal(await history.getByRole("link", { name: "受管智能体 35000000" }).getAttribute("href"), `/p/${projectId}/runtime?session=${id(11)}`);
+  assert.equal(await history.getByRole("link", { name: "受管智能体 · 前端甲" }).getAttribute("href"), `/p/${projectId}/runtime?session=${id(11)}`);
+  assert.doesNotMatch(await history.innerText(), /受管智能体 35000000/, "the binding names the agent, not its identifier");
   // Register an external chat (a live Role only).
   const presence = detail.getByRole("region", { name: "承载与业务领域" });
   await presence.getByText("尚无已登记的承载或业务领域。").waitFor();

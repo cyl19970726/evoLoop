@@ -1,4 +1,4 @@
-import type { Occurrence, ScheduleRule } from "@evoloop/contracts/scheduling";
+import { dailyRuleInstant, scheduleWallClock, scheduleZoneFormat, type Occurrence, type ScheduleRule } from "@evoloop/contracts/scheduling";
 export const utcInstant = (value: string): string => new Date(value).toISOString().replace("T", " ").replace(/\.000Z$/, " UTC").replace(/Z$/, " UTC");
 export function scheduleRuleLabel(rule: ScheduleRule, timezone?: string): string {
   if (rule.kind === "once") return `仅一次 · ${utcInstant(rule.atUtc)}`;
@@ -28,15 +28,18 @@ export function scheduleTime(value: string, timezone: string, reader = readerZon
   return own === mine ? `${own} · ${zoneName(timezone)}` : `${own} · ${zoneName(timezone)}（你的时间 ${mine}）`;
 }
 
-/** The rule in words, its instants in the schedule's zone; a daily rule also says what the next run is on the reader's clock. */
+/**
+ * The rule in words, its instants in the schedule's zone. A daily rule also says when its next run falls on the reader's
+ * clock: only the next one, since a daylight-saving change in either zone moves that time for later runs.
+ */
 export function scheduleRuleText(rule: ScheduleRule, timezone: string, now = Date.now(), reader = readerZone()): string {
   if (rule.kind === "once") return `仅一次 · ${scheduleTime(rule.atUtc, timezone, reader)}`;
   if (rule.kind === "interval") return `从 ${scheduleTime(rule.anchorUtc, timezone, reader)} 起，每 ${rule.everyMinutes} 分钟`;
   const next = nextRuleInstant(rule, timezone, now);
   const at = next ? new Date(next) : null;
-  const time = { hour: "2-digit", minute: "2-digit" } as const;
+  const time = { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" } as const;
   const own = at && wallTime(at, timezone, time), mine = at && wallTime(at, reader, time);
-  return `每天 ${rule.localTime}（${zoneName(timezone)}${Object.hasOwn(zoneNames, timezone) ? "" : " "}当地时间${own && mine && own !== mine ? `，你的时间 ${mine}` : ""}）`;
+  return `每天 ${rule.localTime}（${zoneName(timezone)}${Object.hasOwn(zoneNames, timezone) ? "" : " "}当地时间${own && mine && own !== mine ? `，下次是你的时间 ${mine}` : ""}）`;
 }
 export function latestOccurrence(items: Occurrence[]) {
   return [...items].sort((a,b) => Date.parse(b.observedAtUtc) - Date.parse(a.observedAtUtc))[0] ?? null;
@@ -57,8 +60,10 @@ export function scheduleReadView<T extends { scope: string; readKey: string }>(
 }
 
 /** The next instant the rule names after `now`, as a preview only: the coordinator, grants and the misfire and overlap
- * policies decide whether anything is created then. Daily rules follow the definition's IANA timezone, including
- * daylight-saving changes. Returns null when the rule has no future instant or the timezone is unknown. */
+ * policies decide whether anything is created then. Daily rules follow the definition's IANA timezone with the
+ * scheduler's own wall-clock rule (@evoloop/contracts/scheduling, used by packages/core computeDue): a local time that a
+ * daylight-saving gap skips does not fire that day, so the preview moves on to the next day instead of showing another
+ * time. Returns null when the rule has no future instant or the timezone is unknown. */
 export function nextRuleInstant(rule: ScheduleRule, timezone: string, now: number): string | null {
   if (rule.kind === "once") {
     const at = Date.parse(rule.atUtc);
@@ -73,20 +78,14 @@ export function nextRuleInstant(rule: ScheduleRule, timezone: string, now: numbe
   const match = /^(\d{2}):(\d{2})$/.exec(rule.localTime);
   if (!match || !validLocalTime(rule.localTime)) return null;
   try {
-    const format = new Intl.DateTimeFormat("en-US", { timeZone: timezone, year: "numeric", month: "2-digit", day: "2-digit",
-      hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
-    const local = (at: number) => {
-      const parts = Object.fromEntries(format.formatToParts(new Date(at)).map(part => [part.type, part.value]));
-      return { y: Number(parts.year), m: Number(parts.month), d: Number(parts.day), h: Number(parts.hour), min: Number(parts.minute) };
-    };
-    // Offset of the zone at an instant, in milliseconds (local wall clock minus UTC).
-    const offset = (at: number) => { const p = local(at); return Date.UTC(p.y, p.m - 1, p.d, p.h, p.min) - Math.floor(at / 60_000) * 60_000; };
-    const today = local(now);
+    const format = scheduleZoneFormat(timezone);
+    const today = scheduleWallClock(format, now);
+    // A gap skips at most one day; three days always hold the next instant.
     for (let add = 0; add < 3; add++) {
-      const wall = Date.UTC(today.y, today.m - 1, today.d + add, Number(match[1]), Number(match[2]));
-      const first = wall - offset(wall);
-      const at = wall - offset(first);
-      if (at > now) return new Date(at).toISOString();
+      const date = new Date(Date.UTC(today.year, today.month - 1, today.day + add));
+      const at = dailyRuleInstant(format, { year: date.getUTCFullYear(), month: date.getUTCMonth() + 1, day: date.getUTCDate() },
+        Number(match[1]), Number(match[2]));
+      if (at !== null && at > now) return new Date(at).toISOString();
     }
     return null;
   } catch { return null; }

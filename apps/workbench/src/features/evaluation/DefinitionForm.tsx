@@ -9,6 +9,7 @@ import { useProjectQuery } from "../../shared/query";
 import { EvaluationForm } from "./EvaluationForm";
 import { formatFixedRefs } from "./presentation";
 import { definitionFromForm } from "./formData";
+import { ErrorDetails } from "../../shared/ui/ErrorDetails";
 
 const muted = "m-0 text-caption text-muted-foreground";
 
@@ -57,7 +58,7 @@ export function DefinitionForm({ context, current, ownerTaskId, onApplied, hold 
         <Input {...control} value={taskId} placeholder="进行中的任务 ID" autoComplete="off" onChange={event => { setTaskId(event.target.value); setRequested(null); }} />}</Field>
       <Button onClick={read} disabled={source.isFetching || !taskId.trim()}>{source.isFetching ? "读取中…" : "读取固定来源"}</Button>
     </div>
-    {requested && source.isError && !source.isFetching && <Notice tone="error">共同任务没有读回：{errorText(source.error)}。重新读取成功之前不能冻结定义。</Notice>}
+    {requested && source.isError && !source.isFetching && <Notice tone="error">共同任务没有读回：{errorText(source.error)}。重新读取成功之前不能冻结定义。<ErrorDetails error={source.error} /></Notice>}
     {ready && <>
       <div className="flex flex-col gap-1 rounded-lg bg-accent px-4 py-3">
         <p className="m-0 text-small text-foreground"><strong className="font-semibold">《{ready.task.task.title}》</strong> · 当前进行中修订已固定 · 固定依据 {ready.sourceSignature.basis.length} 项</p>

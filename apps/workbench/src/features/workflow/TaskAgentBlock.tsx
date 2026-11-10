@@ -11,7 +11,7 @@ import { useProjectQuery } from "../../shared/query";
 import { sessionClient } from "../../shared/sessionClient";
 import { date } from "../../shared/ui/shared";
 import { sessionHref } from "../sessions";
-import { CommandFrame, useCommand } from "../../shared/command";
+import { CommandFrame, overLimitText, useCommand } from "../../shared/command";
 import { readAgent } from "./agentRead";
 import { agentFacts, assignmentKey, type Read, type ReadState } from "./taskFactsPresentation";
 import { assignmentSetCommand } from "./taskCommands";
@@ -102,7 +102,7 @@ export function BindAgentForm({ context, task, currentVersion, currentKey, onDon
   async function submit() {
     setTried(true);
     const chosen = choices.find(item => item.key === target);
-    if (!chosen || !reason.trim()) return;
+    if (!chosen || !reason.trim() || overLimitText(reason, 4000) || overLimitText(recipient, 240)) return;
     await command.submit(seen => assignmentSetCommand(task.id, seen, { target: chosen.target, recipientActorId: recipient, reason }));
   }
   return <CommandFrame context={context} command={command} label="绑定智能体" submitLabel="保存绑定" dirty={dirty} permission="review" className="p-3"
@@ -120,8 +120,8 @@ export function BindAgentForm({ context, task, currentVersion, currentKey, onDon
         {choices.map(item => <option key={item.key} value={item.key} disabled={item.key === currentKey}>
           {(item.profile?.displayName?.trim() || item.title)}{item.kind === "external" ? " · 外部接入" : ""}{item.key === currentKey ? " · 当前" : ""}</option>)}
       </Select>}</Field>
-      <Field label="指定执行者身份（可选）" hint="只填已核实的真实执行者身份；本人确认接手时按这个身份核验。">{control => <Input {...control} value={recipient} onChange={event => setRecipient(event.target.value)} autoComplete="off" />}</Field>
-      <Field label="分派依据" error={tried && !reason.trim() ? "请填写分派依据。" : undefined}>{control => <Textarea {...control} required value={reason} onChange={event => setReason(event.target.value)} rows={3} />}</Field>
+      <Field label="指定执行者身份（可选）" hint="只填已核实的真实执行者身份；本人确认接手时按这个身份核验。" error={overLimitText(recipient, 240) ?? undefined}>{control => <Input {...control} value={recipient} onChange={event => setRecipient(event.target.value)} autoComplete="off" />}</Field>
+      <Field label="分派依据" error={tried && !reason.trim() ? "请填写分派依据。" : overLimitText(reason, 4000) ?? undefined}>{control => <Textarea {...control} required value={reason} onChange={event => setReason(event.target.value)} rows={3} />}</Field>
     </>}
   </CommandFrame>;
 }

@@ -94,6 +94,24 @@ test("the draft names each missing or contradictory field before anything is sen
   assert.ok(taskDraftProblems(draft({ documentIds: Array.from({ length: 21 }, (_, n) => `41000010-0000-4000-8000-${String(n).padStart(12, "0")}`) }), { canReview: true }).documentIds);
 });
 
+test("a text over task.create's limit is named under its field with its length, never cut", () => {
+  const long = taskDraftProblems(draft({ title: "名".repeat(241), acceptance: "验".repeat(4001), evidence: "证".repeat(4001), stopCondition: "停".repeat(4001),
+    consumer: "c".repeat(4001) }), { canReview: true });
+  assert.equal(long.title, "最多 240 字，现在是 241 字，请删减后再提交。");
+  assert.match(long.acceptance ?? "", /最多 4000 字，现在是 4001 字/);
+  assert.match(long.evidence ?? "", /最多 4000 字/);
+  assert.match(long.stopCondition ?? "", /最多 4000 字/);
+  assert.match(long.consumer ?? "", /最多 4000 字/);
+  // 为什么要做 and 期望结果 are sent as one text: its limit is said under both.
+  const content = taskDraftProblems(draft({ why: "因".repeat(60000), outcome: "果".repeat(6000) }), { canReview: true });
+  assert.match(content.why ?? "", /合起来最多 65536 字/);
+  assert.equal(content.why, content.outcome);
+  // At the limit, the command the draft becomes passes the shared schema.
+  const atLimit = draft({ title: "名".repeat(240), acceptance: "验".repeat(4000) });
+  assert.deepEqual(taskDraftProblems(atLimit, { canReview: true }), {});
+  assert.doesNotThrow(() => parse(taskCreateCommand(atLimit, taskId)));
+});
+
 test("a local time in an IANA zone becomes the UTC instant the service stores", () => {
   assert.equal(zonedInstant("2026-11-07T08:00", "Asia/Taipei"), "2026-11-07T00:00:00.000Z");
   assert.equal(zonedInstant("2026-07-01T09:15", "America/New_York"), "2026-07-01T13:15:00.000Z");

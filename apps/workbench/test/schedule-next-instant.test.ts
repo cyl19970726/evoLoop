@@ -28,3 +28,21 @@ test("a daily rule follows the definition's timezone, including daylight saving"
   assert.equal(nextRuleInstant({ kind: "daily", localTime: "08:00" }, "Not/AZone", now), null);
   assert.equal(nextRuleInstant({ kind: "daily", localTime: "24:30" }, "Asia/Taipei", now), null, "an out-of-range time has no instant");
 });
+
+test("a daily time skipped by a daylight-saving gap does not fire that day, as the scheduler decides", () => {
+  // New York springs forward on 2027-03-14 at 02:00: 02:30 does not exist that day. The scheduler (packages/core
+  // computeDue) creates nothing on the 14th, so the preview is the 15th at 02:30 EDT, never 01:30 or 03:30 on the 14th.
+  const rule = { kind: "daily", localTime: "02:30" } as const;
+  assert.equal(nextRuleInstant(rule, "America/New_York", Date.parse("2027-03-14T05:00:00.000Z")), "2027-03-15T06:30:00.000Z");
+  assert.equal(nextRuleInstant(rule, "America/New_York", Date.parse("2027-03-13T08:00:00.000Z")), "2027-03-15T06:30:00.000Z",
+    "after the 13th's run the next one is the 15th");
+  assert.equal(nextRuleInstant(rule, "America/New_York", Date.parse("2027-03-13T07:00:00.000Z")), "2027-03-13T07:30:00.000Z");
+});
+
+test("a daily time that happens twice at fall-back is its earlier instant, as the scheduler decides", () => {
+  // New York falls back on 2027-11-07 at 02:00: 01:30 happens at 05:30 UTC (EDT) and again at 06:30 UTC (EST).
+  const rule = { kind: "daily", localTime: "01:30" } as const;
+  assert.equal(nextRuleInstant(rule, "America/New_York", Date.parse("2027-11-07T04:00:00.000Z")), "2027-11-07T05:30:00.000Z");
+  assert.equal(nextRuleInstant(rule, "America/New_York", Date.parse("2027-11-07T06:00:00.000Z")), "2027-11-08T06:30:00.000Z",
+    "the second 01:30 is not another run");
+});

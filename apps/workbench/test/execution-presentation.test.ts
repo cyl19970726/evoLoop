@@ -66,9 +66,10 @@ test("the execution profile and the old full-access upgrade follow the recorded 
 test("a Role name shows only after its own read succeeds; a free-text owner is shown as written", () => {
   assert.deepEqual(roleNameOf("acceptance-owner", undefined), { fallback: "acceptance-owner" });
   assert.equal(roleNameOf(roleId, { title: "开发流程", pending: false }).title, "开发流程");
-  assert.equal(roleNameOf(roleId, { pending: true }).note, "正在核对名称");
-  assert.equal(roleNameOf(roleId, { error: new ApiError(404, "x"), pending: false }).note, "未找到已登记职责");
-  assert.equal(roleNameOf(roleId, { error: new ApiError(503, "x"), pending: false }).note, "名称暂不可核对");
+  assert.equal(roleNameOf(roleId, { pending: true }).fallback, "职责（名称待读取）");
+  assert.equal(roleNameOf(roleId, { error: new ApiError(404, "x"), pending: false }).fallback, "职责（未找到）");
+  assert.equal(roleNameOf(roleId, { error: new ApiError(503, "x"), pending: false }).fallback, "职责（名称暂不可读）");
+  assert.doesNotMatch(JSON.stringify(roleNameOf(roleId, { pending: true })), /40000002/, "never the identifier's first characters");
 });
 
 test("a linked agent is located, unreadable or absent — 没有 only after the list was read back", () => {

@@ -56,15 +56,15 @@ export const draftKeys = {
 };
 
 const goalFields: FormField[] = [
-  { name: "outcome", label: "想达成的结果", kind: "textarea" },
-  { name: "constraints", label: "必须遵守的约束", kind: "textarea" },
+  { name: "outcome", label: "想达成的结果", kind: "textarea", maxLength: 4000 },
+  { name: "constraints", label: "必须遵守的约束", kind: "textarea", maxLength: 4000 },
   { name: "consumer", label: "谁会实际使用成果" },
-  { name: "authority", label: "已授权的工作与需另行取舍的边界", kind: "textarea" },
+  { name: "authority", label: "已授权的工作与需另行取舍的边界", kind: "textarea", maxLength: 4000 },
   { name: "scope", label: "可投入范围与资源" },
   { name: "owner", label: "承接责任者", hint: "写职责名称、职责标识或负责的人。" },
 ];
 export const goalFieldLabels = Object.fromEntries(goalFields.map(field => [field.name, field.label])) as Record<keyof Goal, string>;
-const reason: FormField = { name: "reason", label: "理由与依据", kind: "textarea" };
+const reason: FormField = { name: "reason", label: "理由与依据", kind: "textarea", maxLength: 4000 };
 const pick = (values: Record<string, string>, names: string[]) => Object.fromEntries(names.map(name => [name, values[name] ?? ""]));
 
 export function GoalCreateForm({ context, paused, onApplied }: { context: MutationContext; paused?: string | null; onApplied?(): void }) {
@@ -82,8 +82,8 @@ export function GoalReviseForm({ context, goal, paused }: { context: MutationCon
 
 export function StageProposeForm({ context, goal, paused }: { context: MutationContext; goal: Goal; paused?: string | null }) {
   const fields: FormField[] = [
-    { name: "deliverable", label: "阶段交付", kind: "textarea", hint: "这一阶段要交出什么。" },
-    { name: "learningQuestion", label: "学习问题", kind: "textarea", hint: "这一阶段想弄清什么。" }, reason,
+    { name: "deliverable", label: "阶段交付", kind: "textarea", maxLength: 4000, hint: "这一阶段要交出什么。" },
+    { name: "learningQuestion", label: "学习问题", kind: "textarea", maxLength: 4000, hint: "这一阶段想弄清什么。" }, reason,
   ];
   return <RecordForm context={context} label="提出阶段" submitLabel="提出阶段" permission="write" paused={paused} draftKey={draftKeys.stageNew(goal.id)}
     fields={fields} initial={{ deliverable: "", learningQuestion: "", reason: "" }}
@@ -97,11 +97,11 @@ export function StageAcceptForm({ context, stage, paused }: { context: MutationC
 }
 
 const reviewFields: FormField[] = [
-  { name: "adopted", label: "采用的认识与支持证据", kind: "textarea" },
-  { name: "rejected", label: "被推翻或仍不能成立的解释", kind: "textarea" },
-  { name: "gap", label: "目标差距与未知", kind: "textarea" },
+  { name: "adopted", label: "采用的认识与支持证据", kind: "textarea", maxLength: 4000 },
+  { name: "rejected", label: "被推翻或仍不能成立的解释", kind: "textarea", maxLength: 4000 },
+  { name: "gap", label: "目标差距与未知", kind: "textarea", maxLength: 4000 },
   { name: "nextChoice", label: "下一选择", kind: "select", options: Object.entries(nextChoiceLabel).map(([value, label]) => ({ value, label })) },
-  { name: "evidence", label: "交付、实际使用与反例证据", kind: "textarea" }, reason,
+  { name: "evidence", label: "交付、实际使用与反例证据", kind: "textarea", maxLength: 4000 }, reason,
 ];
 const reviewNames = reviewFields.map(field => field.name);
 

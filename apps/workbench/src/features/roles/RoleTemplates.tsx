@@ -6,6 +6,7 @@ import { errorText, request } from "../../shared/api";
 import { useProjectQuery } from "../../shared/query";
 import { parseRoleTemplateSummary, roleTemplateHref, type TemplateRow } from "../../shared/RoleTemplateSummary";
 import { PageSection, mutedText } from "../../shared/ui/PageParts";
+import { ErrorDetails } from "../../shared/ui/ErrorDetails";
 
 const stateTag: Record<TemplateRow["state"], { tone: StatusTone; label: string }> = {
   established: { tone: "done", label: "已建立" }, "not-established": { tone: "idle", label: "未建立" }, unknown: { tone: "unknown", label: "未知" },
@@ -23,7 +24,7 @@ export function RoleTemplates({ projectId }: { projectId: string }) {
     action={<Button size="compact" variant="ghost" disabled={read.isFetching} onClick={() => void read.refetch()}>
       <RefreshCw aria-hidden="true" className={read.isFetching ? "animate-spin" : undefined} />回读当前状态</Button>}>
     {read.isPending && <LoadingState lines={4} label="正在读取基础职责" />}
-    {error && <Notice tone="error" title="基础职责读取失败">{error}{summary ? "；保留上次观察，不能视为当前状态。" : "；尚无可信状态。"}</Notice>}
+    {error && <Notice tone="error" title="基础职责读取失败">{error}{summary ? "；保留上次观察，不能视为当前状态。" : "；尚无可信状态。"}<ErrorDetails error={read.error} /></Notice>}
     {summary && <>
       <p className={mutedText} role="status">{fresh ? "观察于" : read.isFetching ? "正在核对，下列仍是上次观察，观察于" : "上次观察于"} {stamp(read.dataUpdatedAt)}；
         {summary.nextCursor ? "职责列表尚有未读页，缺项显示未知。" : "已读本次模板投影。"}</p>

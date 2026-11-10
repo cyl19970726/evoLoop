@@ -123,15 +123,15 @@ function QueueCard({ context, queue, task, sessionId, runs, sessions, round }: {
     for (const read of [...taskReads, ...roleReads]) void read.refetch();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [round, listKey]);
-  // A name whose reread failed is not shown from before: the entry keeps its short ID (full ID in 完整标识).
+  // A name whose reread failed is not shown from before: the entry says so in words (full ID in 完整标识).
   const taskTitle = (id: string) => {
     if (id === task?.id) return task.title;
     const read = taskReads[taskIds.indexOf(id)];
-    return !read?.error && read?.data?.task?.title?.trim() || "任务（名称待读取）";
+    return !read?.error && read?.data?.task?.title?.trim() || (read?.error ? "任务（名称暂不可读）" : "任务（名称待读取）");
   };
   const roleTitle = (id: string) => {
     const read = roleReads[roleIds.indexOf(id)];
-    return !read?.error && read?.data?.proposal?.title?.trim() || `职责 ${id.slice(0, 8)}`;
+    return !read?.error && read?.data?.proposal?.title?.trim() || (read?.error ? "职责（名称暂不可读）" : "职责（名称待读取）");
   };
   const failedNames = [...taskReads, ...roleReads].some(read => read.error);
   const attempts = new Map(attemptRead.data?.map(row => [row.entryId, row.attempts]) ?? []);

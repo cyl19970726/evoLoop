@@ -1,9 +1,11 @@
 // 新建任务 (docs/frontend/pages/tasks.md 新建任务): what the work is, how it counts as done, who is responsible and which
 // stage it belongs to, with an optional agreed time and daily repeat. The same view opens from the task page
-// (`/tasks/new`) and from 目标与阶段 (`/journey?action=propose`). One `task.create` is sent through useCommand; the
+// (`/tasks/new`) and from 目标与阶段 (`/journey?action=propose`). The whole form is the shared command form
+// (shared/command: useCommand with CommandFrame): one `task.create`, the receipt saved before it is sent, an unknown
+// result checked by its original operation ID, and the chosen stage's version recorded when it was chosen. The
 // checklist, the chosen stage and the identifiers sit in the right column.
 import React from "react";
-import type { Document, Stage } from "@evoloop/contracts";
+import type { Document } from "@evoloop/contracts";
 import { ArrowLeft } from "lucide-react";
 import { Button, Field, Input, Notice, Select, Textarea, cn } from "@evoloop/ui";
 import { errorText } from "../../shared/api";
@@ -13,7 +15,7 @@ import { useProjectQuery } from "../../shared/query";
 import { ContextPanelContent, useContextPanel } from "../../shared/ui/ContextPanel";
 import { FullIdentifiers } from "../../shared/ui/FullIdentifiers";
 import { href } from "../../shared/ui/shared";
-import { baselineChangedText, OutcomeNotice, useCommand } from "../../shared/command";
+import { CommandFrame, useCommand } from "../../shared/command";
 import { journeyKey, readOwnerRoles, readPublishedDocuments, useGoals, useStages } from "./journeyRead";
 import { draftFieldLabels, draftTouched, emptyTaskDraft, maxLinkedDocuments, taskCreateCommand, taskDraftProblems, taskKinds, zonedInstant, type DraftProblems, type TaskDraft } from "./taskCreate";
 import { formatScheduled } from "./taskTimingPresentation";
@@ -83,12 +85,44 @@ export function CreateTaskView({ context, active, pathname, back, embedded = fal
   })();
   const applied = () => {
     const created = taskId;
-    setDraft({ ...fresh, stageId: draft.stageId }); setTaskId(crypto.randomUUID()); setShowProblems(false);
+    setDraft({ ...fresh, stageId: draft.stageId }); setTaskId(crypto.randomUUID()); setShowProblems(false); setTried(false); command.clear();
     navigate(href(projectId, "task", created));
   };
+  // The chosen stage's version and state as read when it was chosen (or first read): a stage that moves after that asks
+  // the person to look before the task is created in it. Applied, now or when an unknown result is read back: the
+  // draft is done with and the page moves on.
+  const stagePart = chosenStage ? `${chosenStage.version}:${chosenStage.state}` : "";
+  const partOf = (stageId: string) => { const stage = stagesRead.data?.find(item => item.id === stageId); return stage ? `${stage.version}:${stage.state}` : ""; };
+  const command = useCommand(context, { stageId: draft.stageId, stage: stagePart },
+    { onStale: context.onChanged, onApplied: () => applied(), partLabels: { stage: "所属阶段" } });
+  const recorded = command.recordedBaseline as { stageId: string; stage: string };
+  const chooseStage = (stageId: string) => { edit({ stageId }); command.adopt({ stageId, stage: partOf(stageId) }); };
+  React.useEffect(() => {
+    // A stage chosen by the address, or read only now, is taken as read.
+    if (recorded.stageId !== draft.stageId || !recorded.stage && stagePart) command.adopt({ stageId: draft.stageId, stage: stagePart });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draft.stageId, stagePart]);
+  React.useEffect(() => {
+    if (!touched && command.baselineChanged && !command.awaitingReread) command.rebase();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [touched, command.baselineChanged, command.awaitingReread]);
+  const [tried, setTried] = React.useState(false);
+  const count = Object.keys(problems).length;
+  function send() {
+    setTried(true);
+    if (count) { setShowProblems(true); return; }
+    const sent = { draft, taskId };
+    void command.submit(() => taskCreateCommand(sent.draft, sent.taskId));
+  }
+  const clear = () => { setDraft({ ...fresh, stageId: draft.stageId }); setShowProblems(false); setTried(false); };
+  const waitOwners = rolesRead.isPending ? "正在读取可用的职责，读完后才能保存。" : rolesRead.error ? "职责没有完整读回，重新读取后才能保存。"
+    : !ownersReady ? "项目里还没有可用的职责，暂时不能保存。" : null;
   const field = (key: keyof TaskDraft) => ({ error: shown[key] });
-  const form = <form aria-label="新建任务" data-dirty={touched ? "true" : undefined} noValidate className="flex flex-col gap-4"
-    onSubmit={event => event.preventDefault()}>
+  const form = <CommandFrame context={context} command={command} label="新建任务" submitLabel="保存任务" dirty={touched} onSubmit={send}
+    surface="plain" className="gap-4" paused={waitOwners} onReread={context.onChanged}
+    onKeep={() => command.rebase()} onRefill={() => { command.rebase(); clear(); }}
+    keepNote="保留我的修改：输入不变，任务建在右栏读回的最新阶段里；先确认这一阶段仍在推进、仍适合这项任务。"
+    actions={touched && <Button size="compact" variant="ghost" onClick={clear} disabled={command.busy}>清空草稿</Button>}>
     <section aria-label="要做什么" className={section}>
       <h2 className="text-label font-semibold text-foreground">要做什么</h2>
       <Field label="任务名称" {...field("title")}>{control => <Input {...control} value={draft.title} onChange={event => edit({ title: event.target.value })} autoComplete="off" />}</Field>
@@ -121,7 +155,7 @@ export function CreateTaskView({ context, active, pathname, back, embedded = fal
       {rolesRead.isSuccess && !roles.length && <p className="text-small text-text-secondary">项目里还没有在用或试行的职责，暂时不能新建任务。请先在团队里建立职责。</p>}
       <div className="grid grid-cols-1 gap-4 compact:grid-cols-2">
         <Field label="所属阶段（可选）" {...field("stageId")} hint={stagesRead.isPending ? "正在读取推进中的阶段…" : stagesRead.error ? "阶段暂不可读取，只能建不属于阶段的任务。" : undefined}>
-          {control => <Select {...control} className="w-full" value={draft.stageId} onChange={event => edit({ stageId: event.target.value })}>
+          {control => <Select {...control} className="w-full" value={draft.stageId} onChange={event => chooseStage(event.target.value)}>
             <option value="">不属于阶段</option>
             {stages.map(stage => <option key={stage.id} value={stage.id}>{stage.deliverable}</option>)}
             {draft.stageId && !stages.some(stage => stage.id === draft.stageId) && <option value={draft.stageId}>{chosenStage ? `${chosenStage.deliverable}（不在推进中）` : "所选阶段（未读到）"}</option>}
@@ -168,9 +202,8 @@ export function CreateTaskView({ context, active, pathname, back, embedded = fal
           </Select>}</Field>
       </div>
     </details>
-    <SubmitBar key={`${taskId}:${draft.stageId}`} context={context} stage={chosenStage} taskId={taskId} draft={draft} problems={problems}
-      ready={ownersReady} onInvalid={() => setShowProblems(true)} onApplied={applied} onClear={touched ? () => { setDraft({ ...fresh, stageId: draft.stageId }); setShowProblems(false); } : undefined} />
-  </form>;
+    {tried && count > 0 && <Notice tone="waiting">还有 {count} 处需要补充：{(Object.keys(problems) as (keyof TaskDraft)[]).map(key => draftFieldLabels[key]).join("、")}。说明写在各项下面。</Notice>}
+  </CommandFrame>;
   return <div data-ui="" className={cn("flex w-full flex-col gap-5", !embedded && "mx-auto max-w-[880px] px-4 py-5 compact:px-8 compact:py-7")}>
     <header className="flex flex-col gap-2">
       <a href={back.href} className="inline-flex items-center gap-1 self-start text-label font-medium text-primary hover:underline"><ArrowLeft size={15} aria-hidden="true" />{back.label}</a>
@@ -233,31 +266,4 @@ function DocumentChoices({ read, chosen, error, onChange }: {
     </li>)}</ul>}
     <p className={cn(muted, error && "text-destructive")}>{error ?? `已选 ${chosen.length} 份，最多 ${maxLinkedDocuments} 份。`}</p>
   </fieldset>;
-}
-
-/** The send step. Keyed by the draft's task and stage: the stage version seen when it was chosen is the baseline. */
-function SubmitBar({ context, stage, taskId, draft, problems, ready, onInvalid, onApplied, onClear }: {
-  context: MutationContext; stage: Stage | undefined; taskId: string; draft: TaskDraft; problems: DraftProblems; ready: boolean;
-  onInvalid(): void; onApplied(): void; onClear: (() => void) | undefined;
-}) {
-  // Applied, now or when an unknown result is read back: the draft is done with (the page moves on).
-  const command = useCommand(context, stage ? `${stage.version}:${stage.state}` : undefined, { onStale: context.onChanged, onApplied: () => onApplied() });
-  const count = Object.keys(problems).length;
-  const [tried, setTried] = React.useState(false);
-  async function send() {
-    setTried(true);
-    if (count) { onInvalid(); return; }
-    await command.submit(() => taskCreateCommand(draft, taskId));
-  }
-  return <div className="flex flex-col gap-3">
-    {tried && count > 0 && <Notice tone="waiting">还有 {count} 处需要补充：{(Object.keys(problems) as (keyof TaskDraft)[]).map(key => draftFieldLabels[key]).join("、")}。说明写在各项下面。</Notice>}
-    {context.blocked && <p className={muted}>本项目仍有结果未确认的操作，请先核对回执，再保存。</p>}
-    {command.baselineChanged && <Notice tone="waiting" title="所属阶段已被更新" action={<Button size="compact" onClick={command.rebase}>已查看，继续</Button>}>
-      {baselineChangedText}右栏“所属阶段”已是最新读回。</Notice>}
-    {command.outcome && !command.baselineChanged && <OutcomeNotice outcome={command.outcome} />}
-    <div className="flex flex-wrap items-center gap-2">
-      <Button variant="primary" onClick={() => void send()} disabled={!ready || context.blocked || command.busy || command.baselineChanged || command.unconfirmed}>{command.busy ? "保存中…" : "保存任务"}</Button>
-      {onClear && <Button variant="ghost" onClick={onClear}>清空草稿</Button>}
-    </div>
-  </div>;
 }

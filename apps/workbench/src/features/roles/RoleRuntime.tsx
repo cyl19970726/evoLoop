@@ -8,8 +8,9 @@ import { errorText } from "../../shared/api";
 import { ActionForm, type MutationContext } from "../../shared/ActionForm";
 import { useProjectQuery } from "../../shared/query";
 import { roleClient } from "../../shared/roleClient";
-import { FactList, Legacy, PanelSection, mutedText } from "../../shared/ui/PageParts";
+import { FactList, PanelSection, mutedText } from "../../shared/ui/PageParts";
 import { presentRoleRuntime, runtimeCommand, runtimeFields, savedRuntimeNotice } from "./roleRuntimePresentation";
+import { ErrorDetails } from "../../shared/ui/ErrorDetails";
 
 export function RoleRuntime({ context, roleId }: { context: MutationContext; roleId: string }) {
   const read = useProjectQuery(context.projectId, ["roles", roleId, "runtime"], async () => {
@@ -27,7 +28,7 @@ export function RoleRuntime({ context, roleId }: { context: MutationContext; rol
     <RefreshCw aria-hidden="true" className={read.isFetching ? "animate-spin" : undefined} />{read.isFetching ? "读取中…" : "重新读取"}</Button>}>
     {read.isPending && <p className={mutedText} role="status">正在读取运行时与 skill…</p>}
     {!error && notice && <p role="status" className="text-small text-text-secondary">{notice}</p>}
-    {error && <Notice tone="error" title="运行时与 skill 暂不可读">{error}{view ? "；下面是上次读回，当前待核对。" : ""}</Notice>}
+    {error && <Notice tone="error" title="运行时与 skill 暂不可读">{error}{view ? "；下面是上次读回，当前待核对。" : ""}<ErrorDetails error={read.error} /></Notice>}
     {view && shown && <>
       <FactList rows={[
         ["运行时", `${shown.provider} · ${shown.binding}`],
@@ -54,9 +55,9 @@ export function RoleRuntime({ context, roleId }: { context: MutationContext; rol
         {view.binding ? "调整 skill" : "绑定运行时并选择 skill"}</Button>
       {editing && <div role="region" aria-label={view.binding ? "调整 skill" : "绑定运行时并选择 skill"} className="flex flex-col gap-2">
         <p className={mutedText}>选择决定运行时把哪些 skill 放进模型上下文，不是安全边界；保存后下一轮生效。</p>
-        <Legacy><ActionForm key={`${view.binding?.revision ?? 0}`} context={{ ...context, draftScope: `role-runtime:${roleId}`, draftBaseline: `${view.binding?.revision ?? 0}` }}
+        <ActionForm key={`${view.binding?.revision ?? 0}`} context={{ ...context, draftScope: `role-runtime:${roleId}`, draftBaseline: `${view.binding?.revision ?? 0}` }}
           review embedded title={view.binding ? "调整职责 skill" : "绑定职责运行时"}
-          fields={runtimeFields(view)} build={values => runtimeCommand(view, values)} onApplied={() => setSaved(true)} /></Legacy>
+          fields={runtimeFields(view)} build={values => runtimeCommand(view, values)} onApplied={() => setSaved(true)} />
       </div>}
     </>}
   </PanelSection>;
