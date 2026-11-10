@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { Pool } from "pg";
+import type { Pool, PoolClient } from "pg";
 import type { Principal, RuntimeSessionRecord } from "@evoloop/contracts";
 import { DomainError } from "@evoloop/contracts/ports";
 import { type AcceptanceArrangeInput, type AcceptanceCapacityView } from "@evoloop/contracts/acceptance-relay";
@@ -61,11 +61,10 @@ export class AcceptanceRelayService {
     const client = await this.deps.pool.connect();
     try {
       await client.query("BEGIN");
-      // Project lock first, as core and Leader work writes do. The project row lock below waits on their
-      // key shares; without this, a Leader plan update holding the Task row and this arrangement holding
-      // the project row wait on each other (40P01).
+      // Project lock first, as core, Leader work and relay tick writes do. It serializes arrangements of
+      // one project, so the project row itself is not locked: a FOR UPDATE on it waited on every
+      // writer's foreign-key share and formed cycles with writers that hold the Task or relay row.
       await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))",[input.projectId]);
-      await client.query("SELECT project_id FROM project WHERE project_id=$1 FOR UPDATE",[input.projectId]);
       // Serialize decisions for one Task before looking up the operation. A concurrent retry
       // must see the first commit and return its original result, even with an old version.
       const task = required((await client.query("SELECT task_id,version,current_revision_id,state FROM task WHERE project_id=$1 AND task_id=$2 FOR UPDATE",
@@ -518,13 +517,40 @@ export class AcceptanceRelayService {
     return publication.rows[0]?.task_revision_id===item.taskRevisionId &&
       publication.rows[0]?.publication?.publicationRef===item.publicationRef;
   }
+  /**
+   * A relay update locks its row and then, through leader_result_notice_acceptance_block, inserts a
+   * notice whose foreign keys share the project row; a session message update fires its own triggers.
+   * Each such write runs in a short transaction that takes the project lock first, like core writes,
+   * so an arrangement holding the project lock and waiting on this relay row cannot meet it in a cycle.
+   */
+  private async write(projectId: string, action: (client: PoolClient) => Promise<void>): Promise<void> {
+    const client = await this.deps.pool.connect();
+    let broken = false;
+    try {
+      await client.query("BEGIN");
+      await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))",[projectId]);
+      await action(client);
+      await client.query("COMMIT");
+    } catch (error) {
+      // A failed ROLLBACK must not replace the original error; discard that connection instead.
+      try { await client.query("ROLLBACK"); } catch { broken = true; }
+      throw error;
+    } finally { client.release(broken); }
+  }
   private async note(item: AcceptanceRelayRecord, reason: string): Promise<void> {
-    await this.deps.pool.query("UPDATE task_acceptance_relay SET blocked_reason=$4,version=version+1,updated_at=now() WHERE project_id=$1 AND relay_id=$2 AND state=$3 AND blocked_reason IS DISTINCT FROM $4",
-      [item.projectId,item.relayId,"pending",reason]);
+    await this.write(item.projectId, async client => {
+      await client.query("UPDATE task_acceptance_relay SET blocked_reason=$4,version=version+1,updated_at=now() WHERE project_id=$1 AND relay_id=$2 AND state=$3 AND blocked_reason IS DISTINCT FROM $4",
+        [item.projectId,item.relayId,"pending",reason]);
+    });
+  }
+  /** Returns how many arrangements changed: 1, or 0 when its state moved on since it was read. */
+  private async updateState(client: PoolClient, item: AcceptanceRelayRecord, state: AcceptanceRelayRecord["state"], reason: string | null): Promise<number> {
+    const changed = await client.query("UPDATE task_acceptance_relay SET state=$3,blocked_reason=$4,version=version+1,updated_at=now() WHERE project_id=$1 AND relay_id=$2 AND state=$5",
+      [item.projectId,item.relayId,state,reason,item.state]);
+    return changed.rowCount ?? 0;
   }
   private async setState(item: AcceptanceRelayRecord, state: AcceptanceRelayRecord["state"], reason: string | null): Promise<void> {
-    await this.deps.pool.query("UPDATE task_acceptance_relay SET state=$3,blocked_reason=$4,version=version+1,updated_at=now() WHERE project_id=$1 AND relay_id=$2 AND state=$5",
-      [item.projectId,item.relayId,state,reason,item.state]);
+    await this.write(item.projectId, async client => { await this.updateState(client, item, state, reason); });
   }
   /** Called before native start. A stale queued handoff is retired; a started one remains immutable evidence. */
   async messageAdmission(projectId: string, messageId: string): Promise<boolean> {
@@ -553,10 +579,21 @@ export class AcceptanceRelayService {
       await this.setState(item,"superseded",`Current Delivery changed after message ${String(currentMessage.rows[0].state)}`);
       return false;
     }
-    await this.deps.pool.query(`UPDATE session_message SET state='cancelled',version=version+1,
-      blocked_reason='Acceptance source superseded',updated_at=now() WHERE project_id=$1 AND message_id=$2 AND state='queued'`,
-      [projectId,messageId]);
-    await this.setState(item,"superseded","Current Delivery or recipient changed");
+    // The reads above ran without locks. Under the project lock, lock this arrangement and its message and
+    // judge again: retire only the arrangement exactly as read, never with an in-flight message, and cancel
+    // the queued message only when that retirement applied, so both commit together or not at all.
+    await this.write(projectId, async client => {
+      const locked = (await client.query("SELECT state,version FROM task_acceptance_relay WHERE project_id=$1 AND relay_id=$2 FOR UPDATE",
+        [projectId,item.relayId])).rows[0];
+      if (locked?.state !== item.state || locked?.version !== item.version) return;
+      const message = (await client.query("SELECT state FROM session_message WHERE project_id=$1 AND message_id=$2 FOR UPDATE",
+        [projectId,messageId])).rows[0];
+      if (["processing","unknown"].includes(message?.state)) return;
+      if (await this.updateState(client,item,"superseded","Current Delivery or recipient changed") !== 1) return;
+      await client.query(`UPDATE session_message SET state='cancelled',version=version+1,
+        blocked_reason='Acceptance source superseded',updated_at=now() WHERE project_id=$1 AND message_id=$2 AND state='queued'`,
+        [projectId,messageId]);
+    });
     return false;
   }
 }
