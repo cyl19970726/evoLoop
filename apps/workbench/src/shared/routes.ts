@@ -1,19 +1,30 @@
 // Section routes of the current workbench pages and the addresses that open them.
 import { appHistory, currentPath, onNavigate } from "./navigation";
 
-export type Section = "overview" | "work" | "create-task" | "knowledge" | "sessions" | "task" | "document" | "documents" | "inbox" | "journey" | "discussions" | "reviews" | "collaboration" | "runtime" | "schedules" | "roles" | "repository" | "operations" | "evaluations" | "settings" | "connectors";
+/** `not-found` is an address inside a project that names no page (a mistyped or outdated link); it is never linked to. */
+export type Section = "overview" | "work" | "create-task" | "knowledge" | "sessions" | "task" | "document" | "documents" | "inbox" | "journey" | "discussions" | "reviews" | "collaboration" | "runtime" | "schedules" | "roles" | "repository" | "operations" | "evaluations" | "settings" | "connectors" | "not-found";
 export type Route = { projectId: string | null; section: Section; id?: string; revision?: string; action?: string; session?: string };
 
 
 /** The current address as a section route. */
 export function readRoute(): Route { return parseRoute(currentPath()); }
 
-/** `/p/{project}/{section}/…?…` → section route; anything outside a project is the project list. */
+/** Sections whose address is one segment, `/p/{project}/{section}`. */
+const singleSections = ["overview", "work", "knowledge", "sessions", "documents", "inbox", "journey", "discussions", "reviews", "collaboration", "runtime", "schedules", "roles", "repository", "operations", "settings", "connectors"];
+
+/**
+ * `/p/{project}/{section}/…?…` → section route; anything outside a project is the project list, and `/p/{project}`
+ * alone is the overview. An address inside the project that names no page is `not-found`, never quietly the overview.
+ */
 export function parseRoute(path: string): Route {
   const [pathname = "/", search = ""] = path.split("?");
   const parts = pathname.split("/").filter(Boolean);
   if (parts[0] !== "p" || !parts[1]) return { projectId: null, section: "overview" };
+  if (parts.length === 2) return { projectId: parts[1], section: "overview" };
   const section = parts[2];
+  const objectSection = section === "tasks" || section === "documents" || section === "evaluations";
+  if (parts.length > 4 || parts.length === 4 && !objectSection || !objectSection && !singleSections.includes(section ?? "") || section === "tasks" && !parts[3])
+    return { projectId: parts[1], section: "not-found" };
   const action = new URLSearchParams(search).get("action") || undefined;
   const revision = new URLSearchParams(search).get("revision") || undefined;
   const requestedSession = new URLSearchParams(search).get("session") || undefined;

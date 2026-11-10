@@ -88,6 +88,15 @@ export function taskRoute(projectId: string, taskId: string, value: TaskListView
   const query = taskListParams({ ...value, selected: "" });
   return `/p/${projectId}/tasks/${taskId}${query.size ? `?${query}` : ""}`;
 }
+/**
+ * How `/work` shows the list on a phone (below 760px): a compact list by default, where six columns would leave two
+ * in sight; the table once the reader chooses it there. A display preference for this browser.
+ */
+export type NarrowTaskLayout = "list" | "table";
+export const narrowLayoutKey = "evoloop:task-layout:narrow";
+export function readNarrowLayout(store: Pick<Storage, "getItem"> | null): NarrowTaskLayout {
+  try { return store?.getItem(narrowLayoutKey) === "table" ? "table" : "list"; } catch { return "list"; }
+}
 export function matchingProjection(task: Pick<Task, "id" | "version" | "currentRevisionId">, item?: LeaderWorkTask) {
   return item?.taskId === task.id && item.version === task.version && item.currentRevisionId === task.currentRevisionId ? item : undefined;
 }
