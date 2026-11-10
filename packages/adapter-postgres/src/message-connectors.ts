@@ -70,6 +70,8 @@ export class PgConnectorRoutes {
     const client = await this.db.connect();
     try {
       await client.query("BEGIN");
+      // Project lock first, as core writes do: the route guard then shares the target Session row.
+      await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))",[route.projectId]);
       await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 55198))",
         [`${route.projectId}:${operationId}`]);
       const prior = await client.query(`SELECT * FROM connector_route_operation
@@ -298,6 +300,10 @@ export class PgConnectorMessageLinks {
     const client = await this.db.connect();
     try {
       await client.query("BEGIN");
+      // Project lock first, as core writes do. Admission shares the target Session row and then its
+      // queued message takes the Session slot lock; a writer holding that slot lock and waiting for the
+      // Session row (profile adoption, queue claims) would otherwise meet it in a cycle (40P01).
+      await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))",[intent.projectId]);
       await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 55199))",
         [connectorSourceKey(s)]);
       const prior = await client.query(`${linkQuery} WHERE l.provider=$1 AND l.connection_id=$2
@@ -387,6 +393,8 @@ export class PgConnectorMessageLinks {
     const client = await this.db.connect();
     try {
       await client.query("BEGIN");
+      // Project lock first, as core writes do: this shares the route and Session rows before inserting.
+      await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))",[intent.projectId]);
       await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 55199))",
         [connectorSourceKey(s)]);
       const admitted = await client.query(`SELECT message_id FROM connector_message_link

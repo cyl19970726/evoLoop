@@ -19,9 +19,14 @@ const needed = (r: QueryResultRow | undefined): DirectInputRecord => {
 /** Uses the existing session row, processing slot and message budget in one PG transaction. */
 export class PgDirectInputs {
   constructor(private readonly pool: Pool) {}
-  private async transaction<T>(work:(client:PoolClient)=>Promise<T>):Promise<T>{
+  private async transaction<T>(projectId:string,work:(client:PoolClient)=>Promise<T>):Promise<T>{
     const client=await this.pool.connect();
-    try{await client.query("BEGIN");const result=await work(client);await client.query("COMMIT");return result;}
+    try{await client.query("BEGIN");
+      // Same order as core writes: project lock first. A start locks the Session row and then inserts a
+      // message whose project key share waits on queue creation's project row lock, while queue creation
+      // waits to reference that Session row (40P01) unless both queue behind this lock.
+      await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))",[projectId]);
+      const result=await work(client);await client.query("COMMIT");return result;}
     catch(error){await client.query("ROLLBACK");throw error;}
     finally{client.release();}
   }
@@ -72,7 +77,7 @@ export class PgDirectInputs {
   }
   async reserve(projectId:string,sessionId:string,actorId:string,command:DirectInputCommand,
     grant:DirectInputGrant,fingerprint:string):Promise<{record:DirectInputRecord;created:boolean}>{
-    return this.transaction(async client=>{
+    return this.transaction(projectId,async client=>{
       const prior=await client.query(`SELECT * FROM session_direct_input WHERE project_id=$1 AND
         (input_id=$2 OR operation_id=$3) FOR UPDATE`,[projectId,command.inputId,command.operationId]);
       if(prior.rows.length){
@@ -144,7 +149,7 @@ export class PgDirectInputs {
     return this.advance(projectId,inputId,"attempted","unknown",null,null,reason);
   }
   async reject(projectId:string,inputId:string,reason:string):Promise<DirectInputRecord>{
-    return this.transaction(async client=>{
+    return this.transaction(projectId,async client=>{
       const old=needed((await client.query("SELECT * FROM session_direct_input WHERE project_id=$1 AND input_id=$2 FOR UPDATE",[projectId,inputId])).rows[0]);
       if(!["pending","attempted","unknown"].includes(old.state))return old;
       if(old.mode==="start")await this.finishPrimary(client,old,"failed",null,reason);
@@ -152,7 +157,7 @@ export class PgDirectInputs {
     });
   }
   async accept(projectId:string,inputId:string,turnId:string,itemId:string|null):Promise<DirectInputRecord>{
-    return this.transaction(async client=>{
+    return this.transaction(projectId,async client=>{
       const old=needed((await client.query("SELECT * FROM session_direct_input WHERE project_id=$1 AND input_id=$2 FOR UPDATE",[projectId,inputId])).rows[0]);
       if(old.state==="accepted"){
         if(old.actualTurnId!==turnId)throw new DomainError("TURN_CONFLICT","Accepted input belongs to another Turn");
@@ -168,7 +173,7 @@ export class PgDirectInputs {
   }
   private async advance(projectId:string,inputId:string,from:string,to:DirectInputRecord["state"],
     turnId:string|null,itemId:string|null,reason:string|null):Promise<DirectInputRecord>{
-    return this.transaction(async client=>{
+    return this.transaction(projectId,async client=>{
       const old=needed((await client.query("SELECT * FROM session_direct_input WHERE project_id=$1 AND input_id=$2 FOR UPDATE",[projectId,inputId])).rows[0]);
       if(old.state!==from)throw new DomainError("INPUT_STATE","Original input attempt has already advanced");
       if(old.mode==="start"&&to==="unknown")await this.finishPrimary(client,old,"unknown",null,reason);
