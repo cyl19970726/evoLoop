@@ -6,8 +6,8 @@ import { isValidElement, type ReactNode } from "react";
 /** The page title: the same words as 待我处理 in the navigation and the narrow top bar (app/shell/spaces.ts). */
 export const operationsTitle = "结果未知的操作";
 
-/** The receipt fields this page reads. */
-export interface ReceiptFacts { projectId: string; taskId: string; operationId: string; commandType: string }
+/** The receipt fields this page reads. `actorId` is the identity that saved it, the one reading this page. */
+export interface ReceiptFacts { actorId: string; projectId: string; taskId: string; operationId: string; commandType: string }
 
 export type OriginKind = "task" | "document" | "goal" | "stage" | "discussion";
 export type OriginArea = "agents" | "runtime" | "roles" | "schedules" | "evaluations" | "repository" | "work" | "documents" | "journey" | "discussions";
@@ -71,11 +71,12 @@ const projectPath = (projectId: string) => `/p/${encodeURIComponent(projectId)}`
 export const operationsPath = (projectId: string) => `${projectPath(projectId)}/operations`;
 
 /**
- * The object's address, carrying the way back to this page (`return`). The document page reads it as 返回来源; the other
- * pages keep the browser's own back.
+ * The object's address, carrying the way back to this page with the parameters the task and agent pages read for a
+ * return (`return`, the identity it is for as `actor`, and `returnTitle`). The document page reads `return` as 返回来源;
+ * a page that does not read them keeps the browser's own back.
  */
-export function originHref(projectId: string, kind: OriginKind, id: string): string {
-  const back = new URLSearchParams({ return: operationsPath(projectId) });
+export function originHref(projectId: string, kind: OriginKind, id: string, actorId: string): string {
+  const back = new URLSearchParams({ return: operationsPath(projectId), actor: actorId, returnTitle: operationsTitle });
   const key = encodeURIComponent(id);
   switch (kind) {
     case "task": return `${projectPath(projectId)}/tasks/${key}?${back}`;
@@ -123,7 +124,7 @@ export function originLinkKind(origin: ReceiptOrigin, read: OriginRead): OriginK
 function isReceipt(value: unknown): value is ReceiptFacts {
   if (!value || typeof value !== "object") return false;
   const item = value as Partial<ReceiptFacts>;
-  return [item.projectId, item.taskId, item.operationId, item.commandType].every(field => typeof field === "string" && field.length > 0);
+  return [item.actorId, item.projectId, item.taskId, item.operationId, item.commandType].every(field => typeof field === "string" && field.length > 0);
 }
 
 /**

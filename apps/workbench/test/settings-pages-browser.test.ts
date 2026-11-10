@@ -194,8 +194,8 @@ test("结果未知的操作, 仓库规范 and 项目设置: back to the object, 
     for (const n of [960, 961, 962, 964]) assert.doesNotMatch(await row(n).innerText(), uuid, "the object's identifier stays in the full-identifier layer");
     assert.equal(await operations.getByRole("link", { name: /发给智能体的消息/ }).getAttribute("href"), `/p/${projectId}/sessions`, "the text and the link agree");
     await shoot(operations, "operations");
-    const back = encodeURIComponent(`/p/${projectId}/operations`);
-    assert.equal(await row(960).getByRole("link", { name: "打开原对象" }).getAttribute("href"), `/p/${projectId}/documents/${docs.rule.id}?return=${back}`);
+    const back = new URLSearchParams({ return: `/p/${projectId}/operations`, actor: actorId, returnTitle: "结果未知的操作" });
+    assert.equal(await row(960).getByRole("link", { name: "打开原对象" }).getAttribute("href"), `/p/${projectId}/documents/${docs.rule.id}?${back}`);
     await row(960).getByRole("link", { name: "打开原对象" }).click();
     await heading(operations, docs.rule.title).waitFor();
     await operations.getByRole("link", { name: /返回来源/ }).filter({ visible: true }).first().click();

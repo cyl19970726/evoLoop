@@ -10,7 +10,7 @@ import { inboxNavigation, sectionLabels } from "../src/app/shell/spaces.ts";
 
 const projectId = "10000000-0000-4000-8000-000000000001";
 const objectId = "20000000-0000-4000-8000-000000000002";
-const receipt = (commandType: string, taskId = objectId): ReceiptFacts => ({ projectId, taskId, operationId: "30000000-0000-4000-8000-000000000003", commandType });
+const receipt = (commandType: string, taskId = objectId): ReceiptFacts => ({ actorId: "lead", projectId, taskId, operationId: "30000000-0000-4000-8000-000000000003", commandType });
 
 test("the page title is the navigation's name for it", () => {
   assert.equal(operationsTitle, sectionLabels.operations);
@@ -42,12 +42,12 @@ test("a receipt that keeps only the project's ID names an area, or nothing", () 
 });
 
 test("the link opens the object and carries the way back to this page", () => {
-  const back = `return=${encodeURIComponent(`/p/${projectId}/operations`)}`;
-  assert.equal(originHref(projectId, "task", objectId), `/p/${projectId}/tasks/${objectId}?${back}`);
-  assert.equal(originHref(projectId, "document", objectId), `/p/${projectId}/documents/${objectId}?${back}`);
-  assert.equal(originHref(projectId, "goal", objectId), `/p/${projectId}/journey?goal=${objectId}&${back}`);
-  assert.equal(originHref(projectId, "stage", objectId), `/p/${projectId}/journey?stage=${objectId}&${back}`);
-  assert.equal(originHref(projectId, "discussion", objectId), `/p/${projectId}/discussions?discussion=${objectId}&${back}`);
+  const back = new URLSearchParams({ return: `/p/${projectId}/operations`, actor: "lead", returnTitle: "结果未知的操作" }).toString();
+  assert.equal(originHref(projectId, "task", objectId, "lead"), `/p/${projectId}/tasks/${objectId}?${back}`);
+  assert.equal(originHref(projectId, "document", objectId, "lead"), `/p/${projectId}/documents/${objectId}?${back}`);
+  assert.equal(originHref(projectId, "goal", objectId, "lead"), `/p/${projectId}/journey?goal=${objectId}&${back}`);
+  assert.equal(originHref(projectId, "stage", objectId, "lead"), `/p/${projectId}/journey?stage=${objectId}&${back}`);
+  assert.equal(originHref(projectId, "discussion", objectId, "lead"), `/p/${projectId}/discussions?discussion=${objectId}&${back}`);
 });
 
 test("what is said follows what reading the object found; a missing object gets no link", () => {

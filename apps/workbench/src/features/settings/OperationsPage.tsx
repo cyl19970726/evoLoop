@@ -66,7 +66,7 @@ function ReceiptOriginRow({ projectId, receipt }: { projectId: string; receipt: 
   const read = useOriginRead(projectId, origin);
   if (!receipt || !origin) return <p className="px-1 text-caption text-muted-foreground">这张回执没有带出原操作所在的对象，无法判断该回到哪里。</p>;
   const kind = originLinkKind(origin, read);
-  const link = origin.kind === "object" && kind ? { href: originHref(projectId, kind, origin.id), label: "打开原对象" }
+  const link = origin.kind === "object" && kind ? { href: originHref(projectId, kind, origin.id, receipt.actorId), label: "打开原对象" }
     : origin.kind === "area" && origin.area ? { href: areaHref(projectId, origin.area), label: `打开${originAreaLabel[origin.area]}` } : null;
   return <div className="flex flex-col gap-1.5 px-1" data-receipt-origin={receipt.operationId}>
     <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5">
