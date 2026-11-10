@@ -188,7 +188,7 @@ function Stat({ label, value, note, tone, onClick }: { label: string; value: num
     <span className="text-caption text-muted-foreground">{label}{note && <span className="text-text-secondary"> · {note}</span>}</span>
   </>;
   const box = "flex min-w-0 flex-col gap-0.5 rounded-xl bg-field px-4 py-3 text-left";
-  return onClick ? <button type="button" onClick={onClick} className={cn(box, "hover:bg-selected")}>{body}</button> : <div className={box}>{body}</div>;
+  return onClick ? <Button variant="row" onClick={onClick} className={cn(box, "items-stretch font-normal text-foreground hover:bg-selected hover:text-foreground")}>{body}</Button> : <div className={box}>{body}</div>;
 }
 
 /** Project-wide counts the agent directory reports, independent of how many agents were read. */

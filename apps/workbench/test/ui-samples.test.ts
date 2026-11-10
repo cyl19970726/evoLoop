@@ -11,6 +11,10 @@ test("the sample page renders all sections inside the data-ui scope", () => {
   assert.match(markup, /^<div data-ui=""/);
   for (const title of ["按钮与输入", "状态", "空、加载、失败与未知", "列表、折叠与页签", "头像与标志"]) assert.ok(markup.includes(`>${title}<`), title);
   for (const task of sampleTasks) assert.ok(markup.includes(task.title), task.title);
+  for (const row of ["文字链接", "可选中的行", "页签条", "复选与单选", "确认弹窗"]) assert.ok(markup.includes(`>${row}<`), row);
+  assert.match(markup, /role="checkbox"/);
+  assert.match(markup, /role="radiogroup"/);
+  assert.match(markup, /数目待核对/);
   assert.ok(markup.includes("返回工作台"));
 });
 

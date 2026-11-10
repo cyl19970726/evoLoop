@@ -5,7 +5,7 @@
 // until the outside result is reconciled.
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { KnowledgeCandidateRecord, KnowledgeRevision } from "@evoloop/contracts/knowledge";
-import { Button, Notice, RefreshingIndicator, cn } from "@evoloop/ui";
+import { Button, ConfirmDialog, Notice, RefreshingIndicator, cn } from "@evoloop/ui";
 import { errorCode, errorDetail, errorText, isUnconfirmed } from "../../shared/api";
 import type { MutationContext } from "../../shared/ActionForm";
 import type { SourceDocument } from "../../shared/knowledgeClient";
@@ -94,6 +94,7 @@ export function KnowledgePanel({ context }: { context: MutationContext; refresh:
   const visibleReceipts = receipts.filter(item => item.projectId === projectId && item.actorId === principal.actorId);
   const [busy, setBusy] = useState(false);
   const [draft, setDraft] = useState<Draft>(emptyDraft);
+  const [confirmClear, setConfirmClear] = useState(false);
   const updateDraft = (patch: Partial<Draft>) => setDraft(previous => ({ ...previous, ...patch }));
 
   // ---- service and list
@@ -240,7 +241,8 @@ export function KnowledgePanel({ context }: { context: MutationContext; refresh:
       sourceRevision: page.sources[0]?.originRevision ?? "" });
     setComposing(true);
   };
-  const clearDraft = () => { if (draft.touched && !window.confirm("清空没保存的知识候选草稿？")) return; setDraft(emptyDraft); };
+  // A touched draft is cleared only after the reader confirms it in a dialog.
+  const clearDraft = () => { if (draft.touched) setConfirmClear(true); else setDraft(emptyDraft); };
 
   // ---- shared pieces
   const observed = Math.max(index.capabilities.dataUpdatedAt, index.pages.observedAt);
@@ -302,7 +304,7 @@ export function KnowledgePanel({ context }: { context: MutationContext; refresh:
   else center = <>
     <header className="flex flex-wrap items-start justify-between gap-3 compact:pr-12">
       <div className="min-w-0">
-        <h1 tabIndex={-1} className="text-title font-semibold leading-[1.3] outline-none">知识空间</h1>
+        <h1 tabIndex={-1} className="text-title font-semibold leading-(--leading-tight) outline-none">知识空间</h1>
         <p className="mt-1 text-small text-text-secondary">理解当前认识，核对来源与反例，再决定是否提出修订。</p>
       </div>
       <div className="flex flex-wrap items-center gap-2">
@@ -334,5 +336,7 @@ export function KnowledgePanel({ context }: { context: MutationContext; refresh:
       selectedId={selectedId} reviewing={route.view === "review" && !composing} pendingCandidates={pendingCandidates} />
     {notices}
     {center}
+    <ConfirmDialog open={confirmClear} title="清空没保存的知识候选草稿？" description="标题、正文、来源与关系都会清空，不能恢复。"
+      confirmLabel="清空" cancelLabel="保留草稿" danger onConfirm={() => { setConfirmClear(false); setDraft(emptyDraft); }} onCancel={() => setConfirmClear(false)} />
   </div>;
 }

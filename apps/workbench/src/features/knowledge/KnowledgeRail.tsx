@@ -5,7 +5,7 @@
 import React from "react";
 import { Search } from "lucide-react";
 import type { KnowledgeSummary } from "@evoloop/contracts/knowledge";
-import { Badge, Button, Input, ListRow, RefreshingIndicator, cn } from "@evoloop/ui";
+import { Badge, Button, Input, ListRow, RefreshingIndicator, Select, cn } from "@evoloop/ui";
 import type { ListCoverage } from "../../shared/listCoverage";
 import { ContextRailContent } from "../../shared/ui/ContextRail";
 import { ReadingSpaceSwitch } from "../../shared/ui/ReadingSpaceSwitch";
@@ -14,7 +14,6 @@ import {
   coverageText, emptyKnowledgeText, label, listProblemText, pageTypeLabel, pageTypes, validityLabel, type KnowledgeFilter, type ListProblem,
 } from "./knowledgePresentation";
 
-const select = "h-8 min-w-0 rounded-md bg-field px-2 text-label text-foreground outline-none focus-visible:shadow-[var(--focus-ring)]";
 
 export function KnowledgeFilters({ filter, update, layout = "rail" }: { filter: KnowledgeFilter; update(patch: Partial<KnowledgeFilter>): void; layout?: "rail" | "toolbar" }) {
   return <div className={cn("flex flex-wrap items-center gap-2", layout === "rail" && "px-1")}>
@@ -22,14 +21,14 @@ export function KnowledgeFilters({ filter, update, layout = "rail" }: { filter: 
       <Search size={15} aria-hidden="true" className="pointer-events-none absolute left-2.5 text-muted-foreground" />
       <Input aria-label="搜索知识" placeholder="搜索知识标题" value={filter.query} onChange={event => update({ query: event.target.value })} className="h-8 pl-8 text-label" type="search" />
     </label>
-    <select aria-label="页面类型筛选" value={filter.type} onChange={event => update({ type: event.target.value as KnowledgeFilter["type"] })} className={cn(select, layout === "rail" && "flex-1")}>
+    <Select aria-label="页面类型筛选" value={filter.type} onChange={event => update({ type: event.target.value as KnowledgeFilter["type"] })} compact className={cn(layout === "rail" && "flex-1")}>
       <option value="all">全部类型</option>
       {pageTypes.map(type => <option key={type} value={type}>{pageTypeLabel[type]}</option>)}
-    </select>
-    <select aria-label="有效状态筛选" value={filter.validity} onChange={event => update({ validity: event.target.value as KnowledgeFilter["validity"] })} className={cn(select, layout === "rail" && "flex-1")}>
+    </Select>
+    <Select aria-label="有效状态筛选" value={filter.validity} onChange={event => update({ validity: event.target.value as KnowledgeFilter["validity"] })} compact className={cn(layout === "rail" && "flex-1")}>
       <option value="all">全部状态</option>
       {(Object.keys(validityLabel) as Array<keyof typeof validityLabel>).map(value => <option key={value} value={value}>{validityLabel[value]}</option>)}
-    </select>
+    </Select>
   </div>;
 }
 
@@ -46,7 +45,7 @@ export function ListProblemNote({ problem, what, onReread, onLoadMore, className
   const note = listProblemText(problem, what);
   return <div role="alert" className={cn("rounded-md bg-danger-soft px-3 py-2 text-caption text-text-secondary", problem.kind === "unconfigured" && "bg-warning-soft", className)}>
     {note.text}
-    {note.retry && <button type="button" className="ml-1 text-primary underline" onClick={problem.kind === "page" ? onLoadMore : onReread}>{note.retry}</button>}
+    {note.retry && <Button variant="link" className="ml-1 underline" onClick={problem.kind === "page" ? onLoadMore : onReread}>{note.retry}</Button>}
     {problem.detail && <details className="mt-1"><summary className="cursor-pointer">诊断信息</summary><code className="break-all font-mono">{problem.detail}</code></details>}
   </div>;
 }

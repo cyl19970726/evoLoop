@@ -6,7 +6,7 @@
 import * as React from "react";
 import type { ReactNode } from "react";
 import type { AppliedResult, Permission } from "@evoloop/contracts";
-import { Button, Field, Input, Notice, Select, Textarea, cn } from "@evoloop/ui";
+import { Button, Checkbox, Field, Input, Notice, RadioGroup, RadioGroupItem, Select, Textarea, cn } from "@evoloop/ui";
 import type { SubmissionOutcome } from "../submissionOutcome";
 import type { MutationContext } from "./context";
 import { readableDraft } from "./drafts";
@@ -78,13 +78,14 @@ export function BaselineNotice({ awaiting, onReread, onKeep, onRefill, onResolve
     {conflicts.length
       ? <span className="mt-2 flex flex-col gap-2">
         <span>这些字段你改过，打开表单后别人也改了。保留你的文字会覆盖别人的修改，请逐项选择；只有你改过的其他字段照旧保留。</span>
-        {conflicts.map(conflict => <span key={conflict.name} role="radiogroup" aria-label={`${conflict.label}用哪一版`} className="flex flex-wrap items-center gap-x-4 gap-y-1">
+        {conflicts.map(conflict => <RadioGroup key={conflict.name} aria-label={`${conflict.label}用哪一版`} name={`${name}-${conflict.name}`}
+          value={choices[conflict.name] ?? null} onValueChange={choice => setChoices(current => ({ ...current, [conflict.name]: choice as "latest" | "mine" }))}
+          className="flex-row flex-wrap items-center gap-x-4 gap-y-1">
           <span className="font-medium text-foreground">{conflict.label}</span>
           {(["latest", "mine"] as const).map(choice => <label key={choice} className="flex items-center gap-1.5">
-            <input type="radio" name={`${name}-${conflict.name}`} checked={choices[conflict.name] === choice} className="accent-[var(--accent)]"
-              onChange={() => setChoices(current => ({ ...current, [conflict.name]: choice }))} />
+            <RadioGroupItem value={choice} />
             {choice === "latest" ? "用最新内容" : "用我的版本（覆盖别人的修改）"}</label>)}
-        </span>)}</span>
+        </RadioGroup>)}</span>
       : keepNote ?? "保留我的修改：只保留你改过的部分，其余换成最新内容。"}
     {confirmNote}{manual}</Notice>;
 }
@@ -336,28 +337,34 @@ export function CommandForm<B extends Baseline | string | undefined = undefined>
 
 interface FieldProps { field: FormField; value: string; values: Record<string, string>; error?: string | undefined; hideLabel?: boolean | undefined; onChange(value: string): void }
 
+const optionRow = "flex min-w-0 items-start gap-2 text-label text-foreground";
+
 // A field with a preview always draws the same elements, whether the line is empty or not: the control is never mounted
 // again when the line appears, so it keeps its focus and the keys typed after.
 function FieldControl(props: FieldProps) {
   if (!props.field.preview) return <FieldInput {...props} />;
   const preview = props.field.preview(props.values);
-  return <div className="flex min-w-0 flex-col gap-1.5"><FieldInput {...props} />
-    <div role="status" data-field-preview={props.field.name} className="text-caption text-text-secondary empty:hidden [overflow-wrap:anywhere]">{preview ?? null}</div></div>;
+  // Spaced by a margin it drops while empty, not hidden: a status line that is display:none is not announced when it fills.
+  return <div className="flex min-w-0 flex-col"><FieldInput {...props} />
+    <div role="status" data-field-preview={props.field.name} className="mt-1.5 text-caption text-text-secondary empty:mt-0 [overflow-wrap:anywhere]">{preview ?? null}</div></div>;
 }
 
 function FieldInput({ field, value, values, error, hideLabel, onChange }: FieldProps) {
   const label = field.optional && !field.label.includes("可选") ? `${field.label}（可选）` : field.label;
   const errorId = React.useId();
+  const legendId = React.useId();
   if (field.kind === "radio" || field.kind === "multi") {
     const picked = field.kind === "multi" ? chosen(value) : [];
     return <fieldset className="flex min-w-0 flex-col gap-1.5" aria-describedby={error ? errorId : undefined}>
-      <legend className="mb-1 text-label font-semibold text-foreground">{label}</legend>
-      {field.options?.length ? field.options.map(option => <label key={option.value} className="flex min-w-0 items-start gap-2 text-label text-foreground">
-        {field.kind === "radio"
-          ? <input type="radio" name={field.name} value={option.value} checked={value === option.value} disabled={option.disabled} onChange={() => onChange(option.value)} className="mt-1 accent-[var(--accent)]" />
-          : <input type="checkbox" name={field.name} value={option.value} checked={picked.includes(option.value)} disabled={option.disabled} className="mt-1 size-4 shrink-0 accent-[var(--accent)]"
-            onChange={event => onChange(JSON.stringify(event.target.checked ? [...picked, option.value] : picked.filter(item => item !== option.value)))} />}
-        <span className="min-w-0 [overflow-wrap:anywhere]">{option.label}</span></label>)
+      <legend id={legendId} className="mb-1 text-label font-semibold text-foreground">{label}</legend>
+      {field.options?.length ? field.kind === "radio"
+        ? <RadioGroup aria-labelledby={legendId} name={field.name} value={value || null} onValueChange={onChange}>{field.options.map(option => <label key={option.value} className={optionRow}>
+          <RadioGroupItem value={option.value} disabled={option.disabled} className="mt-0.5" />
+          <span className="min-w-0 [overflow-wrap:anywhere]">{option.label}</span></label>)}</RadioGroup>
+        : field.options.map(option => <label key={option.value} className={optionRow}>
+          <Checkbox name={field.name} value={option.value} checked={picked.includes(option.value)} disabled={option.disabled} className="mt-0.5"
+            onCheckedChange={checked => onChange(JSON.stringify(checked === true ? [...picked, option.value] : picked.filter(item => item !== option.value)))} />
+          <span className="min-w-0 [overflow-wrap:anywhere]">{option.label}</span></label>)
         : <p className="text-caption text-muted-foreground">没有可选项。</p>}
       {field.hint && <p className="text-caption text-muted-foreground">{field.hint}</p>}
       {error && <p id={errorId} className="text-caption text-destructive">{error}</p>}

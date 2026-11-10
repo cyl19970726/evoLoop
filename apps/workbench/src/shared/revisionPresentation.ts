@@ -8,6 +8,7 @@
 //   `Task content updated for future occurrences`, `Runtime dispatch reserved`, `Managed dispatch <dispatch id>`.
 // A planned time is written in the schedule's (or the repetition's) own time zone, as the schedule page writes it; while
 // that zone is not read, in the reader's zone, saying so. The original author, reason and identifiers go to 完整标识.
+import { readerZone, zoneName } from "./zonedTime";
 
 export interface RevisionOriginRow { label: string; value: string; text?: boolean }
 export interface RevisionOrigin {
@@ -34,27 +35,24 @@ export interface RevisionOriginContext {
   reader?: string;
 }
 
-// The same zone names and wording as the schedule page (features/scheduling/presentation.ts scheduleTime).
-const zoneNames: Record<string, string> = {
-  "Asia/Shanghai": "上海", "Asia/Taipei": "台北", "Asia/Hong_Kong": "香港", "Asia/Singapore": "新加坡", "Asia/Tokyo": "东京",
-  "Europe/London": "伦敦", "Europe/Berlin": "柏林", "America/New_York": "纽约", "America/Los_Angeles": "洛杉矶", UTC: "UTC", "Etc/UTC": "UTC",
-};
-const zoneName = (zone: string) => zoneNames[zone] ?? zone;
-const readerZone = () => Intl.DateTimeFormat().resolvedOptions().timeZone;
+// Zone names come from shared/zonedTime.ts, as on the schedule page (features/scheduling/presentation.ts scheduleTime).
 function wallTime(at: Date, timeZone: string): string | null {
   try { return at.toLocaleString("zh-CN", { timeZone, hour12: false }); } catch { return null; }
 }
 
 /**
  * A planned instant: in `zone` as the schedule page writes it (“2026/11/10 10:28:00 · 上海”, plus the reader's clock when
- * it reads otherwise); with no zone read, in the reader's zone and saying so.
+ * it reads otherwise). With no zone read yet, in the reader's zone and saying so; with a zone the browser does not
+ * recognise, on the reader's clock in the schedule page's words (“（你的时间；日程时区无法识别）”). `whose` names the
+ * record the zone belongs to: 日程 or 每天重复.
  */
-export function plannedTime(iso: string, zone: string | null | undefined, reader = readerZone()): string {
+export function plannedTime(iso: string, zone: string | null | undefined, reader = readerZone(), whose: "日程" | "每天重复" = "日程"): string {
   const at = new Date(iso);
   if (Number.isNaN(at.getTime())) return iso;
   const mine = wallTime(at, reader) ?? at.toLocaleString("zh-CN", { hour12: false });
-  const own = zone ? wallTime(at, zone) : null;
-  if (!zone || own === null) return `${mine}（按你的时区 ${zoneName(reader)}）`;
+  if (!zone) return `${mine}（按你的时区 ${zoneName(reader)}）`;
+  const own = wallTime(at, zone);
+  if (own === null) return `${mine}（你的时间；${whose}时区无法识别）`;
   return own === mine ? `${own} · ${zoneName(zone)}` : `${own} · ${zoneName(zone)}（你的时间 ${mine}）`;
 }
 
@@ -92,7 +90,7 @@ export function revisionOrigin(revision: { actorId?: string | null; reason?: str
   }
   const series = seriesReason.exec(reason);
   if (series) {
-    const at = plannedTime(series[2]!, context.seriesZone, reader);
+    const at = plannedTime(series[2]!, context.seriesZone, reader, "每天重复");
     const author = actorId || "作者未记录";
     return { author, reason: `按每天重复自动生成，计划时间 ${at}`, line: `按每天重复生成，计划时间 ${at}`, scheduleId: null, series: true,
       identifiers: [{ label: "重复序列", value: series[1]! }, { label: "计划时间（UTC）", value: series[2]! }, ...raw(actorId, reason)] };

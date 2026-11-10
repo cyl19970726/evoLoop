@@ -15,7 +15,7 @@ function StateFrame({ icon, title, children, action, className, role }: StateFra
   return (
     <div role={role} className={cn("flex flex-col items-start gap-2 rounded-lg bg-muted px-5 py-4", className)}>
       <p className="m-0 flex items-center gap-2 text-small font-semibold text-foreground">{icon}{title}</p>
-      {children && <div className="text-label leading-[1.6] text-text-secondary">{children}</div>}
+      {children && <div className="text-label leading-(--leading-body) text-text-secondary">{children}</div>}
       {action && <div className="pt-1">{action}</div>}
     </div>
   );

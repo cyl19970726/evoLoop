@@ -15,7 +15,9 @@ test("a planned time is written in the schedule's own zone, and in the reader's 
   assert.equal(plannedTime(at, "Asia/Shanghai", reader), "2026/11/10 10:28:00 · 上海");
   assert.equal(plannedTime(at, "Asia/Tokyo", reader), "2026/11/10 11:28:00 · 东京（你的时间 2026/11/10 10:28:00）");
   assert.equal(plannedTime(at, null, reader), "2026/11/10 10:28:00（按你的时区 上海）");
-  assert.equal(plannedTime(at, "Not/AZone", reader), "2026/11/10 10:28:00（按你的时区 上海）");
+  // A zone the browser does not recognise: the reader's clock, in the schedule page's words (scheduleTime).
+  assert.equal(plannedTime(at, "Not/AZone", reader), "2026/11/10 10:28:00（你的时间；日程时区无法识别）");
+  assert.equal(plannedTime(at, "Not/AZone", reader, "每天重复"), "2026/11/10 10:28:00（你的时间；每天重复时区无法识别）");
 });
 
 test("a schedule's task is said as the run it was planned for, not as when it was made; identifiers go to 完整标识", () => {

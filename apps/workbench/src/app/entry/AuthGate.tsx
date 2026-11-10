@@ -7,7 +7,7 @@ import { authMode } from "../../shared/identity";
 // The login page is part of the first load, so it uses Tailwind classes directly instead of the @evoloop/ui
 // components (which bring tailwind-merge and icons). The classes follow Button, Input and Notice.
 const button = "inline-flex h-9 cursor-pointer items-center justify-center rounded-full bg-foreground px-4 text-small font-medium text-background outline-none transition-opacity hover:opacity-90 focus-visible:shadow-[var(--focus-ring)] disabled:pointer-events-none disabled:opacity-50";
-const noticeClass = { error: "rounded-lg bg-danger-soft px-4 py-3 text-label leading-[1.6] text-text-secondary", waiting: "rounded-lg bg-warning-soft px-4 py-3 text-label leading-[1.6] text-text-secondary" };
+const noticeClass = { error: "rounded-lg bg-danger-soft px-4 py-3 text-label leading-(--leading-body) text-text-secondary", waiting: "rounded-lg bg-warning-soft px-4 py-3 text-label leading-(--leading-body) text-text-secondary" };
 
 /** Shown on development servers so a preview is never mistaken for the released workbench. */
 export function DevelopmentBanner() {
@@ -44,7 +44,7 @@ export function AuthGate({ onSuccess, hasReceipts, notice, prefetch }: {
   return <div data-ui="" className="auth-shell flex min-h-dvh flex-col bg-background">
     <DevelopmentBanner />
     <main className="flex flex-1 items-center justify-center px-4 py-10">
-      <div className="auth-card flex w-full max-w-[400px] flex-col gap-5 rounded-2xl bg-raised p-6 shadow-sm compact:p-8">
+      <div className="auth-card flex w-full max-w-[400px] flex-col gap-5 rounded-xl bg-raised p-6 shadow-sm compact:p-8">
         <div className="flex items-center gap-3">
           <Logo size={40} />
           <div>

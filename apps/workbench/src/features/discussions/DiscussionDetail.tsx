@@ -33,7 +33,7 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
 
 function Fact({ label, children }: { label: string; children: ReactNode }) {
   return <div className="flex flex-col gap-0.5"><span className={muted}>{label}</span>
-    <div className="text-small leading-[1.6] text-foreground [overflow-wrap:anywhere]">{children}</div></div>;
+    <div className="text-small leading-(--leading-body) text-foreground [overflow-wrap:anywhere]">{children}</div></div>;
 }
 
 /** A right-column block that folds on its own (docs/frontend/layout.md 右栏). */
@@ -88,7 +88,7 @@ function PackageView({ projectId, documentId, revisionId, label, read }: { proje
       {copied === "failed" && <p className="text-caption text-destructive">剪贴板不可用，请展开下方原文手动选择复制。</p>}
       <p className={muted}>复制时会在原文前加上工作台入口和固定原件链接，方便对方定位；SHA-256 只核对原文本身。复制不代表对方已收到、读过或同意。</p>
       <CollapsibleRow summary="展开完整原文">
-        <pre className="max-h-[60vh] overflow-auto whitespace-pre-wrap rounded-md bg-raised p-3 font-mono text-caption leading-[1.6] text-foreground [overflow-wrap:anywhere]">{read.data.body}</pre>
+        <pre className="max-h-[60vh] overflow-auto whitespace-pre-wrap rounded-md bg-raised p-3 font-mono text-caption leading-(--leading-body) text-foreground [overflow-wrap:anywhere]">{read.data.body}</pre>
       </CollapsibleRow>
     </>}
   </div>;
@@ -162,9 +162,9 @@ export function DiscussionDetail({ context, record, events, choices, choicesLoad
       {record.kind !== "task_collaboration" && <StatusTag tone={status.tone} label={status.label} />}
       {checking && <RefreshingIndicator />}
     </div>
-    <h2 className="text-heading font-semibold leading-[1.35] text-foreground [overflow-wrap:anywhere]" tabIndex={-1}>{title}</h2>
+    <h2 className="text-heading font-semibold leading-(--leading-tight) text-foreground [overflow-wrap:anywhere]" tabIndex={-1}>{title}</h2>
     <p className={muted}>由 {record.actorId} 于 {date(record.createdAt)} 准备 · 最近更新 {date(record.updatedAt)} · 第 {record.version} 版</p>
-    <p className="text-small leading-[1.6] text-text-secondary">{statusSentence(record, !!latest?.supersedesDecisionEventId)}</p>
+    <p className="text-small leading-(--leading-body) text-text-secondary">{statusSentence(record, !!latest?.supersedesDecisionEventId)}</p>
   </header>;
 
   const sources = <RailBlock title="来源与完整标识" defaultOpen={false}>
@@ -257,7 +257,7 @@ export function DiscussionDetail({ context, record, events, choices, choicesLoad
         讨论登记的是另一份修订，文档后来又被修订到第 {headFresh.version} 版（作者 {headFresh.author}）。旧讨论原件不会被改写；只有明确确认后，才能从文档当前版接续登记决定。完整标识见右栏。
       </Notice>}
       {mismatch && headFresh && <CollapsibleRow summary={`对照文档当前版原文 · 第 ${headFresh.version} 版`}>
-        <pre className="max-h-[60vh] overflow-auto whitespace-pre-wrap rounded-md bg-muted p-3 font-mono text-caption leading-[1.6] text-foreground [overflow-wrap:anywhere]">{headFresh.body}</pre>
+        <pre className="max-h-[60vh] overflow-auto whitespace-pre-wrap rounded-md bg-muted p-3 font-mono text-caption leading-(--leading-body) text-foreground [overflow-wrap:anywhere]">{headFresh.body}</pre>
       </CollapsibleRow>}
       {record.status !== "prepared" && !canReview && <p className={muted}>当前身份没有审阅权限，不能登记决定或链接后续对象。</p>}
       {record.status !== "prepared" && canReview && (ordinaryReady || recoveryReady) && <div className="flex flex-wrap gap-2">

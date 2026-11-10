@@ -1,7 +1,9 @@
 // Opt-in built-app regression for the frame (docs/frontend/layout.md): switching spaces keeps each list's filter,
 // search and selected row (M5); 在中间打开 turns the right column to 信息 (M7); closing the right drawer with Esc
 // returns focus to the button that opened it (L3); 展开右栏 never covers the page header (L4); an address that names
-// no page says so (L10); phones get a compact task list until the reader chooses the table (L13).
+// no page says so (L10); phones get a compact task list until the reader chooses the table (L13). Leaving the project
+// or signing out with a draft asks in @evoloop/ui's ConfirmDialog: Back and Forward are stopped at once and asked, nothing
+// else navigates while the question is open, a lost login cancels it, and focus comes back to where it was (#229 F6).
 // Build the workbench, then set EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE; EVOLOOP_SHELL_SCREENSHOT_DIR keeps screenshots.
 import assert from "node:assert/strict";
 import { test } from "node:test";
@@ -277,4 +279,246 @@ test("the frame keeps each space's list, turns the right column to 信息, retur
   await views.getByRole("link", { name: "列表" }).click();
   await phoneMain.locator('[data-task-table="stacked"]').waitFor();
   assert.deepEqual(errors, []);
+});
+
+
+// ---- Leaving the project or signing out with a draft (#229 F6): the page's ConfirmDialog, never the browser's confirm().
+const formPath = `/p/${projectId}/tasks/new`;
+async function signedIn(t: { after: (fn: () => unknown) => void }, width = 1440, height = 900) {
+  const { chromium } = (await import(pathToFileURL(modulePath!).href)).default;
+  const base = await serve(t);
+  const browser = await chromium.launch({ headless: true, ...(process.env.EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH ? { executablePath: process.env.EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH } : {}) });
+  t.after(() => browser.close());
+  const page: Page = await (await browser.newContext({ viewport: { width, height } })).newPage();
+  const errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message));
+  const native = { count: 0 };
+  page.on("dialog", dialog => { native.count += 1; void dialog.dismiss(); });
+  await page.goto(`${base}/`);
+  await login(page);
+  await page.getByRole("heading", { name: "你的项目" }).waitFor();
+  return { page, errors, native, base };
+}
+/** The new-task form with a typed title: the page carries data-dirty. */
+async function draft(page: Page) {
+  await go(page, formPath);
+  const title = page.locator("#workspace-main").getByLabel("任务名称");
+  await title.fill("还没保存的任务");
+  await page.locator('[data-dirty="true"]').first().waitFor();
+  return title;
+}
+const question = (page: Page) => page.getByRole("alertdialog");
+const switchLink = (page: Page) => page.getByRole("complementary", { name: "项目导航" }).getByRole("link", { name: /切换项目/ });
+const atPath = (page: Page, path: string) => page.waitForFunction(target => `${location.pathname}${location.search}` === target, path, { timeout: 5000 });
+/** Waits until `target` has the focus (focus comes back after the dialog has left the page). */
+async function focusIsOn(page: Page, target: import("playwright").Locator, what: string) {
+  for (let attempt = 0; attempt < 30; attempt++) {
+    if (await target.evaluate(element => element === document.activeElement)) return;
+    await page.waitForTimeout(100);
+  }
+  assert.fail(`focus is not on ${what}: ${await page.evaluate(() => document.activeElement?.outerHTML.slice(0, 120))}`);
+}
+/** The form is still on screen at its address, with the draft (read from the DOM: an open dialog hides the page from roles). */
+async function stillOnForm(page: Page, title: import("playwright").Locator) {
+  await atPath(page, formPath);
+  assert.equal(await page.locator("#workspace-main h1").filter({ visible: true }).first().textContent(), "新建任务");
+  assert.equal(await title.inputValue(), "还没保存的任务");
+}
+
+test("leaving the project or signing out with a draft asks in the page's dialog, and focus comes back to where it was", {
+  skip: !modulePath && "Set EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE",
+}, async t => {
+  const { page, errors, native } = await signedIn(t);
+  const title = await draft(page);
+
+  // 切换项目 by keyboard asks; the safe answer has the focus; staying keeps the page and gives focus back to the link.
+  await switchLink(page).focus();
+  await page.keyboard.press("Enter");
+  await question(page).getByRole("heading", { name: "离开当前项目？" }).waitFor();
+  assert.match(await question(page).innerText(), /还有未提交的草稿。离开当前项目会清除页面草稿。/);
+  assert.equal(await page.evaluate(() => document.activeElement?.textContent), "留在当前项目");
+  await shot(page, "shell-1440-08-leave-confirm");
+  await question(page).getByRole("button", { name: "留在当前项目" }).click();
+  await question(page).waitFor({ state: "detached" });
+  await stillOnForm(page, title);
+  await focusIsOn(page, switchLink(page), "切换项目");
+
+  // A click outside the dialog does not answer it; Escape stays, and focus returns to the link.
+  await switchLink(page).click();
+  await question(page).waitFor();
+  await page.mouse.click(10, 10);
+  await page.waitForTimeout(300);
+  assert.equal(await question(page).count(), 1, "a click outside leaves the question open");
+  assert.equal(await page.evaluate(() => document.activeElement?.textContent), "留在当前项目", "and keeps the focus in the dialog");
+  await page.keyboard.press("Escape");
+  await question(page).waitFor({ state: "detached" });
+  await focusIsOn(page, switchLink(page), "切换项目 after Escape");
+
+  // Back is asked before the address moves away; Escape stays and gives focus back to the field being typed in.
+  await title.focus();
+  await page.goBack();
+  await question(page).getByRole("heading", { name: "离开当前项目？" }).waitFor();
+  await atPath(page, formPath);
+  await page.keyboard.press("Escape");
+  await question(page).waitFor({ state: "detached" });
+  await stillOnForm(page, title);
+  await focusIsOn(page, title, "任务名称");
+
+  // Signing out from the account menu asks; staying gives focus back to the button that opened the menu.
+  const account = page.getByRole("complementary", { name: "项目导航" }).getByRole("button", { name: "设置与账号" });
+  await account.click();
+  await page.getByRole("menuitem", { name: "退出" }).click();
+  await question(page).getByRole("heading", { name: "退出并清除草稿？" }).waitFor();
+  await question(page).getByRole("button", { name: "先不退出" }).click();
+  await question(page).waitFor({ state: "detached" });
+  assert.equal(await title.inputValue(), "还没保存的任务");
+  await focusIsOn(page, account, "设置与账号");
+
+  // Double-clicking 切换项目 asks once; the second click does not answer the question.
+  await switchLink(page).dblclick();
+  await question(page).waitFor();
+  await page.waitForTimeout(300);
+  assert.equal(await question(page).count(), 1);
+  assert.equal(await page.evaluate(() => document.activeElement?.textContent), "留在当前项目", "the second click does not move focus to the page body");
+  await page.keyboard.press("Escape");
+  await question(page).waitFor({ state: "detached" });
+  await focusIsOn(page, switchLink(page), "切换项目 after a double click");
+
+  // Leaving goes where Back was going; with no draft left, signing out does not ask.
+  await page.goBack();
+  await question(page).getByRole("button", { name: "离开并清除草稿" }).click();
+  await page.getByRole("heading", { name: "你的项目" }).waitFor();
+  assert.equal(pathOf(page), "/");
+  await page.getByRole("button", { name: "退出" }).click();
+  await page.getByRole("heading", { name: "进入项目工作台" }).waitFor();
+  assert.equal(await question(page).count(), 0);
+  assert.equal(native.count, 0, "the browser's own confirm() is never used");
+  assert.deepEqual(errors, []);
+});
+
+test("while the leave question is open, Back and Forward are stopped at once and the address never leaves the page", {
+  skip: !modulePath && "Set EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE",
+}, async t => {
+  const { page, errors, native } = await signedIn(t);
+  await go(page, `/p/${projectId}/work`);
+  await page.getByRole("heading", { level: 1, name: "任务" }).waitFor();
+  await go(page, "/");
+  await page.getByRole("heading", { name: "你的项目" }).waitFor();
+  // History: / → /work → / → the form.
+  const title = await draft(page);
+
+  // A: Back asks; Forward while the question is open changes nothing; staying keeps the form; the next Back asks again.
+  await page.goBack();
+  await question(page).waitFor();
+  await atPath(page, formPath);
+  await page.goForward();
+  await page.waitForTimeout(400);
+  await atPath(page, formPath);
+  assert.equal(await question(page).count(), 1);
+  await question(page).getByRole("button", { name: "留在当前项目" }).click();
+  await question(page).waitFor({ state: "detached" });
+  await stillOnForm(page, title);
+  await page.goBack();
+  await question(page).getByRole("heading", { name: "离开当前项目？" }).waitFor();
+  await atPath(page, formPath);
+
+  // B: a second Back while the question is open is stopped too, not queued; staying keeps the form.
+  await page.goBack();
+  await page.waitForTimeout(400);
+  await atPath(page, formPath);
+  assert.equal(await question(page).count(), 1, "one question, not two");
+  await question(page).getByRole("button", { name: "留在当前项目" }).click();
+  await question(page).waitFor({ state: "detached" });
+  await page.waitForTimeout(300);
+  assert.equal(await question(page).count(), 0, "no second question follows");
+  await stillOnForm(page, title);
+
+  // B, leaving: two Backs, then leave: one step back (to the project list), not two; history stays in order.
+  await page.goBack();
+  await question(page).waitFor();
+  await page.goBack();
+  await page.waitForTimeout(400);
+  await question(page).getByRole("button", { name: "离开并清除草稿" }).click();
+  await page.getByRole("heading", { name: "你的项目" }).waitFor();
+  assert.equal(pathOf(page), "/");
+  await page.goBack();
+  await page.getByRole("heading", { level: 1, name: "任务" }).waitFor();
+  assert.match(pathOf(page), new RegExp(`^/p/${projectId}/work(\\?|$)`), "the entry before the list is the task list");
+  assert.equal(native.count, 0);
+  assert.deepEqual(errors, []);
+});
+
+test("while 切换项目 is being asked, Back is stopped and the page never changes under the dialog", {
+  skip: !modulePath && "Set EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE",
+}, async t => {
+  const { page, errors } = await signedIn(t);
+  await go(page, `/p/${projectId}/work`);
+  await page.getByRole("heading", { level: 1, name: "任务" }).waitFor();
+  const title = await draft(page);
+
+  // C: Back to /work is inside the project, yet with the question open it is stopped.
+  await switchLink(page).click();
+  await question(page).waitFor();
+  await page.goBack();
+  await page.waitForTimeout(400);
+  await stillOnForm(page, title);
+  assert.equal(await question(page).count(), 1);
+  await question(page).getByRole("button", { name: "离开并清除草稿" }).click();
+  await page.getByRole("heading", { name: "你的项目" }).waitFor();
+  assert.equal(pathOf(page), "/");
+  // Back from the list reaches the form's address once, now without a draft and without asking.
+  await page.goBack();
+  await atPath(page, formPath);
+  await page.getByRole("heading", { level: 1, name: "新建任务" }).waitFor();
+  assert.equal(await question(page).count(), 0);
+  assert.deepEqual(errors, []);
+});
+
+test("a question open when the login is lost is cancelled; it does not come back after signing in again", {
+  skip: !modulePath && "Set EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE",
+}, async t => {
+  const { page, errors } = await signedIn(t);
+  await draft(page);
+  await switchLink(page).click();
+  await question(page).waitFor();
+  // Every read now answers 401; a reread on returning to the tab meets it and signs out.
+  await page.route("**/api/**", route => route.fulfill({ status: 401, contentType: "application/json", body: JSON.stringify({ message: "unauthorized" }) }));
+  await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+  await page.getByLabel("访问令牌").waitFor({ timeout: 15000 });
+  assert.equal(await question(page).count(), 0);
+  await page.unroute("**/api/**");
+  await login(page);
+  await page.getByRole("heading", { level: 1, name: "新建任务" }).waitFor();
+  await page.waitForTimeout(800);
+  assert.equal(await question(page).count(), 0, "the old question is gone");
+  assert.equal(pathOf(page), formPath);
+  // The frame still asks when there is a reason to: a new draft, a new question.
+  await page.getByRole("main").getByLabel("任务名称").fill("新的草稿");
+  await switchLink(page).click();
+  await question(page).getByRole("button", { name: "留在当前项目" }).click();
+  await question(page).waitFor({ state: "detached" });
+  assert.deepEqual(errors.filter(message => !/401|unauthorized|登录/.test(message)), []);
+});
+
+test("the /ui confirmation sample gives focus back to the button that opened it", {
+  skip: !modulePath && "Set EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE",
+}, async t => {
+  const { chromium } = (await import(pathToFileURL(modulePath!).href)).default;
+  const base = await serve(t);
+  const browser = await chromium.launch({ headless: true, ...(process.env.EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH ? { executablePath: process.env.EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH } : {}) });
+  t.after(() => browser.close());
+  const page: Page = await (await browser.newContext({ viewport: { width: 1440, height: 900 } })).newPage();
+  await page.goto(`${base}/ui`);
+  const opener = page.getByRole("button", { name: "清空草稿" });
+  await opener.focus();
+  await page.keyboard.press("Enter");
+  await question(page).waitFor();
+  assert.equal(await page.evaluate(() => document.activeElement?.textContent), "保留草稿");
+  await page.keyboard.press("Escape");
+  await question(page).waitFor({ state: "detached" });
+  await focusIsOn(page, opener, "清空草稿 after Escape");
+  await opener.click();
+  await question(page).getByRole("button", { name: "保留草稿" }).click();
+  await question(page).waitFor({ state: "detached" });
+  await focusIsOn(page, opener, "清空草稿 after 保留草稿");
 });

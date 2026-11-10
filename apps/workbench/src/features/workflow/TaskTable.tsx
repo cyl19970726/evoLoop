@@ -6,7 +6,7 @@ import React from "react";
 import { useQueries } from "@tanstack/react-query";
 import type { Task, TaskAttentionItem } from "@evoloop/contracts";
 import { ArrowUpRight, Columns3, RefreshCw } from "lucide-react";
-import { Button, EmptyState, ErrorState, IconButton, LoadingState, StatusTag, cn } from "@evoloop/ui";
+import { Button, Checkbox, EmptyState, ErrorState, IconButton, LoadingState, StatusTag, cn } from "@evoloop/ui";
 import { ApiError, api, errorText, request } from "../../shared/api";
 import { isRoleOwnerId, readOwnerRole } from "../../shared/ownerRole";
 import { queryKeys, useProjectQuery } from "../../shared/query";
@@ -106,7 +106,7 @@ export function TaskTable({ projectId, list, view, selectedId, onSelect, linkFor
         <fieldset className="absolute right-0 z-10 mt-1 flex w-44 flex-col gap-1.5 rounded-lg bg-raised p-3 shadow-md">
           <legend className="mb-1 text-caption text-muted-foreground">附加列</legend>
           {optionalColumns.map(column => <label key={column.id} className="flex items-center gap-2 text-label">
-            <input type="checkbox" className="accent-[var(--brand)]" checked={columns[column.id]} onChange={event => setColumns(current => ({ ...current, [column.id]: event.target.checked }))} />{column.label}</label>)}
+            <Checkbox checked={columns[column.id]} onCheckedChange={checked => setColumns(current => ({ ...current, [column.id]: checked === true }))} />{column.label}</label>)}
         </fieldset>
       </details>}
     </div>
@@ -179,8 +179,8 @@ function TableRow({ task, list, projectId, selected, onSelect, linkFor, columns,
     {!!timing?.error && <span title={errorText(timing.error)}>执行时间暂未读回</span>}
   </div>;
   const heading = <div className="flex items-start gap-1">
-    <button type="button" aria-pressed={selected} onClick={() => onSelect(task.id)} className="min-w-0 flex-1 text-left font-medium text-foreground hover:underline">{title}</button>
-    <a href={linkFor(task.id)} aria-label={`打开任务：${task.title}`} title="打开任务" className="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-field hover:text-foreground"><ArrowUpRight size={15} aria-hidden="true" /></a>
+    <Button variant="link" aria-pressed={selected} onClick={() => onSelect(task.id)} className="min-w-0 flex-1 justify-start whitespace-normal text-left font-medium text-foreground">{title}</Button>
+    <a href={linkFor(task.id)} aria-label={`打开任务：${task.title}`} title="打开任务" className="shrink-0 rounded-sm p-0.5 text-muted-foreground hover:bg-field hover:text-foreground"><ArrowUpRight size={15} aria-hidden="true" /></a>
   </div>;
   const rowClass = cn("border-b border-border", selected ? "bg-selected" : "hover:bg-field/50");
   // The compact list: what a phone screen needs to pick a task, in one column; the six columns stay in 表格.
