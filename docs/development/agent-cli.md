@@ -226,7 +226,7 @@ npm run --silent cli -- receipts retry "$RECEIPT_ID"
 以下是既有合同下的操作路径，不表示当前项目已登记目标 Role、配置所需授权或完成首次运行。缺少精确 grant 时保留待承接；不能套用其他职责的授权、替换原任务或绕过暂停与预算限制来启动新职责。
 
 1. **定职责和首项工作。** 现有负责人核清职责缺口、范围、替代办法、试行期限及回看条件。用 `task.create` 建 todo Task，写明真实工作、验收、首任 owner 和所需来源；已有正式 Role 时直接沿用。
-2. **接受试行并交接。** 按 `command schema role.propose` 引用未完成的首 Task 提案；有 review 权限者按 `command schema role.decide` 作 `accept-trial` 决定。回读 Role 修订；若首任 owner 不同，在 todo 状态按正式 Task 更新与交接规则转给新 Role，并回读新版本。交接记录不代替 Task owner 变更。
+2. **接受试行并交接。** 按 `command schema role.propose` 引用未完成的首 Task 提案；有 review 权限者按 `command schema role.decide` 作 `accept-trial` 决定。回读 Role 修订；修订既有 Role 用 `command schema role.revise`（有 review 权限，`expectedVersion` 取自刚读回的版本；追加的修订是 candidate，须再由 `role.decide` 决定，决定前该 Role 不能被指为新建 Task 的 owner）；若首任 owner 不同，在 todo 状态按正式 Task 更新与交接规则转给新 Role，并回读新版本。交接记录不代替 Task owner 变更。
 3. **固定任务依据和授权。** 负责人读取 Task 正文与关联原件，按 `task.start` 封存本轮依据并进入 in_progress。另落实项目、Role、actor、scope 的当前精确 runtime grant，核目录、模型和业务对象访问范围；新 Session 的 OS 执行配置固定为 `danger-full-access`、`approvalPolicy: never`、正常网络。Role 文本和其他 Role 的 grant 不授业务对象访问权。
 4. **建立并绑定承载。** 按 `command schema runtime.session.reserve` 预留 Session；schema 的新 Session 默认是 full/never，正常调用无需覆写该策略。runner 创建 owned Thread 后，只有收到 full/never 的原生权限确认并回读身份和实际目录，才将执行态标为 `active`；无确认或回执不完整保留 unknown。再按 `command schema role.bindSession` 绑定同项目、同 Role 的项目 `sessionId`；不能填 Desktop chat ID 或原生 session ID。
 5. **派发并核启动。** 按 `command schema runtime.run.reserve` 提供当前 Task 版本、ready Session 与固定工作输入，回读预留与启动状态；执行者须在 Run 仍有效时先完成第 6 步的本人提交，负责人随后核终态。Task 须 in_progress 且 owner 与 Session Role 一致，Task 和 Session 均无在途或 unknown Run；普通后续 Turn 可复用空闲 ready Session，评价尝试须另建 Session。结果不明时按[原操作恢复](#未知结果与本地回执)核对。
