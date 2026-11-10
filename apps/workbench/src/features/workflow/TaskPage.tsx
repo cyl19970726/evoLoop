@@ -279,18 +279,18 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
           {leaderTask && <TaskAttentionSection key={`${projectId}:${id}:${detail.task.currentRevisionId}`} context={taskContext} detail={detail} leader={leaderTask} />}
           {leaderTask && <details id="task-timing" className="group border-t border-border pt-3" {...(sectionOpen === "timing" ? { open: true } : {})}>
             <summary className="w-fit cursor-pointer text-label font-medium text-primary hover:underline">阶段区间、计划与来源</summary>
-            <div className="mt-3"><TaskArrangementFacts projectId={projectId} detail={detail} leader={leaderTask} actorId={context.principal.actorId}responsibleName={responsibleName} /></div>
+            <div className="mt-3"><TaskArrangementFacts projectId={projectId} detail={detail} leader={leaderTask} actorId={context.principal.actorId} responsibleName={responsibleName} /></div>
           </details>}
           <details data-task-owner="" className="border-t border-border pt-3"><summary className="w-fit cursor-pointer text-label font-medium text-primary hover:underline">负责职责与同职责的其他智能体</summary>
             <p className="mt-2 text-caption text-muted-foreground">职责是持续的分工，具体承接看右栏的绑定与接受记录；同职责的其他智能体不代表承接了本任务。</p>
-            <div className="mt-2"><TaskOwner projectId={projectId} actorId={context.principal.actorId} owner={detail.task.owner}readKey={`${refresh}:${readVersion}:${detail.revision.id}`} onResolved={setResponsibleName} /></div></details>
+            <div className="mt-2"><TaskOwner projectId={projectId} actorId={context.principal.actorId} owner={detail.task.owner} readKey={`${refresh}:${readVersion}:${detail.revision.id}`} onResolved={setResponsibleName} /></div></details>
         </section>
       </TabsContent>
       <TabsContent value="basis" forceMount hidden={tab !== "basis"} id={panelId("basis")} aria-labelledby={tabId("basis")} className="pt-5 outline-none">
         <SectionBoundary label="依据与影响"><TaskBasisTab context={taskContext} detail={detail} reads={documents.reads} canReview={canReview} /></SectionBoundary>
       </TabsContent>
       <TabsContent value="delivery" forceMount hidden={tab !== "delivery"} id={panelId("delivery")} aria-labelledby={tabId("delivery")} className="pt-5 outline-none">
-        <SectionBoundary label="交付与使用"><TaskDeliveryTab projectId={projectId} actorId={context.principal.actorId} detail={detail}active={active && tab === "delivery"} actionsHref={linkForTab("actions")} /></SectionBoundary>
+        <SectionBoundary label="交付与使用"><TaskDeliveryTab projectId={projectId} actorId={context.principal.actorId} detail={detail} active={active && tab === "delivery"} actionsHref={linkForTab("actions")} /></SectionBoundary>
       </TabsContent>
       <TabsContent value="runtime" forceMount hidden={tab !== "runtime"} id={panelId("runtime")} aria-labelledby={tabId("runtime")} className="pt-5 outline-none">
         <SectionBoundary label="运行与关联"><TaskRuntimeTab context={taskContext} detail={detail} active={active && tab === "runtime"} overviewHref={linkForTab("overview")} /></SectionBoundary>

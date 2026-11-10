@@ -1,6 +1,6 @@
 import { readReturn, type ReturnLink } from "./returnLink";
 
-export type TaskSection ="overview" | "basis" | "delivery" | "runtime" | "history" | "actions";
+export type TaskSection = "overview" | "basis" | "delivery" | "runtime" | "history" | "actions";
 const sections = new Set<TaskSection>(["overview", "basis", "delivery", "runtime", "history", "actions"]);
 
 export function taskSectionHref(projectId: string, taskId: string, target: {revisionId?: string; tab?: TaskSection} = {}): string {

@@ -279,7 +279,7 @@ export function ArrangementPage({ context, refresh }: { context: MutationContext
           </section>)}
           {tasksShown && <section aria-labelledby="arrangement-unassigned" className="flex flex-col gap-2">
             <h2 id="arrangement-unassigned" className={heading}>没有承接者的任务<span className="ml-1.5 font-normal text-muted-foreground">{board.unassigned.length}</span></h2>
-            {board.unassigned.length ? <ul className="flex flex-col gap-2 rounded-xl bg-raised px-4 py-3 shadow-sm">{board.unassigned.map(task => <TaskLine key={task.taskId} projectId={projectId} task={task} extra={staleAssignment(task) ? undefined : workNextStep(task.phase)} from={from} />)}</ul>
+            {board.unassigned.length ? <ul className="flex flex-col gap-2 rounded-xl bg-raised px-4 py-3 shadow-sm">{board.unassigned.map(task => <TaskLine key={task.taskId} projectId={projectId} task={task} extra={workNextStep(task.phase)} from={from} />)}</ul>
               : <p className="text-caption text-muted-foreground">{reads.tasksComplete ? "每项未关闭的任务都有承接者。" : "已读取的任务都有承接者。"}</p>}
             {(reads.queues === "failed" || reads.queues === "loading") && <p className="text-caption text-muted-foreground">队列还没读到：从排队中领取的任务也可能列在这里。</p>}
           </section>}
