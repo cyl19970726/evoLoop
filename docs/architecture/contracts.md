@@ -64,6 +64,12 @@ Git 文档不创建 Document 行；独立 `GitSourceRef`（或等价来源元数
 
 Document 目录列表返回 ID、标题、类型、状态、当前修订和内容格式等摘要；点行后按授权读取所选不可变 DocumentRevision 的完整载荷，不依赖 Task 描述字段或外链再取内容。修订可采用 Markdown、HTML 等格式；详情层解析 Markdown，HTML 报告可保留原件并预览。固定修订的 hash 必须在读取时核验，缺失资源或无权读取时明确显示不完整/不可达，不用旧摘要伪装完整正文。
 
+每个修订保存时得到这份文档内的序号 `revisionNumber`：从 1 起按保存顺序加 1，没有空号，写入后不变（迁移 069）。序号由数据库在插入时分配，调用方显式给出序号会被拒绝，与创建时间无关：同一毫秒保存的两次修订、或服务器时钟回拨后保存的修订，仍按实际保存先后编号。它不是 Document `version`，后者在发布、归档时也会增加。单修订读取（含文档详情里的 `current`、`adopted`，以及 `/original` 返回的 `revision`）都带这个序号。迁移前已有的修订沿 `previousRevisionId` 链补号；修订不成一条链（分叉、多个起点或断链）的旧文档改按创建时间、修订 ID 补号。按链编号的文档（069 之后新建的全部文档、成链的旧文档）当前修订的序号就是总修订数，可直接显示“第 N 版 / 共 M 版”；按时间补号的旧文档在下一次修订之前不一定如此，“共 M 版”应取修订列表的 `revisionCount`（最大序号）。
+
+`GET /api/projects/:projectId/documents/:id/revisions` 按序号倒序列出一份文档的全部修订，`limit` 默认 50、上限 100。每项只有元数据：单修订读取已公开的全部字段去掉 `body`（修订 ID、序号、作者、创建时间、理由、内容 hash、格式、媒体类型、原件名、载荷引用、入口、资源清单、上一修订、组织复盘元数据），另加状态：两个布尔值 `current`（当前修订）、`published`（文档发布指针 `adoptedRevisionId` 所指的修订）和合成的 `state`。当前修订为 `current`（同时已发布时 `published` 仍为 true），其次 `published`，其余 `historical`。归档不清除发布指针，所以归档文档的那一版仍是 `published: true`，是否还算“已发布”看文档头的 `status`。正文仍从单修订的 `body`、`original` 读取并核验 hash。
+
+返回同时带同一只读快照里的文档头 `document`（`title`、`kind`、`version`、`currentRevisionId`、`adoptedRevisionId`、`status`）和修订总数 `revisionCount`。`nextCursor` 不透明，只记本页最后一条的序号，并绑定项目和文档；换文档、换项目或无法解码的游标都返回 `INVALID_CURSOR`（409），从第一页重读。序号只增不改，翻页期间新增的修订排在已读位置之前：后续页不重复、不漏项，已读到的序号不变。状态只对该页读到的文档头成立；载入多页时，用最新一页的 `document` 重算所有已载入项的状态，`document.version` 与首页不同时提示回到首页查看新修订。权限与单修订读取相同：要本项目读取权限，文档不在本项目时返回 404；受管 worker 只能按固定修订读取，修订列表由 worker 守卫拒绝（见 [Agent CLI](../development/agent-cli.md)）。本页和总数都走 `(project_id, document_id, revision_number)` 唯一索引，不读正文，扫描量也不随翻页深度增加。
+
 不可变的是原始载荷、资源清单和形成修订时的事实；当前权限、可达性、完整性核验结果和采纳状态另记带时间的观察或决定，不回写旧正文。
 
 历史修订不能沿用过去权限绕过当前授权。补齐缺失资源或修复原件要创建新修订；原件未变而只是恢复访问，则追加核验记录。GitSourceRef 和 KnowledgeRef 固定身份/版本与当前可达、撤回、待复核观察也须分开。
@@ -372,6 +378,7 @@ Task 协作通道把 question/answer/progress/blocker/handoff/result 固定到�
 
 - **首个时点只释放原 Task。** 后续每个时点新建一条普通 todo Task，有自己的 ID、主正文修订和历史；复制的是系列当前的“未来有效要求”，不从旧副本递归取正文。分派、Run、Delivery、观察、关闭和成本都不复制，每份 Task 独立产生。
 - **复制前重核资格。** 物化在同一事务里重核授权、owner Role、Stage、消费者与验收要求、可读材料和系列版本；任一失效就保留原记录并给出原因，交 Leader 处理，不降级成无 Stage、无消费者或弱验收的 Task。
+- **与核心写入同一锁序。** 每次物化只处理一个项目，事务开头先取核心写入用的项目锁，再锁系列行、共享锁住要重核的关联对象、插入新 Task；否则它与修订同一份关联 Document 的核心写入会互相等待，出现 `40P01`。代价是物化与该项目的核心写入串行。
 - **漏时与串行。** 只补最近一个漏掉的时点并记下漏掉的数量；前一份未完成或结果未知时，新一份照常生成，但标为系列串行等待，不自动开工。
 - **停止只停未来。** 停止系列后不再生成新的时点，已生成和在途的 Task 不受影响，下一时点显示为空。
 - **授权。** 私有配置 `scheduling.taskTimingGrants` 按项目、业务 actor 和 owner Role 授权每日重复；它不能创建旧 Schedule，也不授予 Session 或 Run 的执行资格。一次性时点和停止系列不需要这项授权。
