@@ -66,6 +66,8 @@ const rowDocumentRevision = (r: Row): DocumentRevision => ({ ...rowDocumentRevis
 const documentRevisionMetadataColumns = `r.project_id,r.document_id,r.revision_id,r.revision_number,r.format,r.media_type,
   r.original_name,r.payload_ref,r.entrypoint,r.assets_manifest,r.content_hash,r.author,r.created_at,r.previous_revision_id,
   r.reason,r.organization_review`;
+/** revision_number is a PostgreSQL integer; a larger cursor value would fail in the query instead of here. */
+const maxRevisionNumber = 2_147_483_647;
 /** `before` is the stored number of the last revision already returned (migration 069), never a timestamp. */
 interface DocumentRevisionCursor { v: 1; projectId: string; documentId: string; before: number }
 function encodeDocumentRevisionCursor(value: DocumentRevisionCursor): string {
@@ -76,7 +78,8 @@ function decodeDocumentRevisionCursor(value: string, projectId: string, document
   try {
     const parsed = JSON.parse(Buffer.from(value, "base64url").toString("utf8")) as Record<string, unknown>;
     if (parsed.v !== 1 || parsed.projectId !== projectId || parsed.documentId !== documentId ||
-      typeof parsed.before !== "number" || !Number.isSafeInteger(parsed.before) || parsed.before < 1) throw new Error("scope");
+      typeof parsed.before !== "number" || !Number.isSafeInteger(parsed.before) || parsed.before < 1 ||
+      parsed.before > maxRevisionNumber) throw new Error("scope");
     return parsed as unknown as DocumentRevisionCursor;
   } catch {
     throw new DomainError("INVALID_CURSOR", "文档修订游标无效或不属于这份文档；请从第一页重新读取");

@@ -40,6 +40,8 @@ export interface DocumentPayloadRevision {
   entrypoint: string | null; assetsManifest: DocumentAsset[];
   author: string; reason: string; createdAt: string;
   organizationReview?: OrganizationReview;
+  /** Same stored per-document number as DocumentRevision.revisionNumber; absent only before the revision is saved. */
+  revisionNumber?: number;
 }
 export interface RegisteredDocumentBlob extends BlobPayload {
   documentId: string; revisionId: string; role: "main" | "asset"; relativePath: string | null;

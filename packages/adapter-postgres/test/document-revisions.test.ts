@@ -130,9 +130,11 @@ test("cursor pages cover the history once and cannot move to another document or
   const forged = (value: Record<string, unknown>) => Buffer.from(JSON.stringify({ v: 1, projectId, documentId, before: 2, ...value })).toString("base64url");
   await assert.rejects(list(projectId, documentId, 3, forged({ documentId: sibling.documentId })), { code: "INVALID_CURSOR" });
   await assert.rejects(list(projectId, documentId, 3, forged({ projectId: otherProject })), { code: "INVALID_CURSOR" });
-  for (const before of [0, -1, 1.5, "2", null])
+  for (const before of [0, -1, 1.5, "2", null, 2147483648, Number.MAX_SAFE_INTEGER])
     await assert.rejects(list(projectId, documentId, 3, forged({ before })), { code: "INVALID_CURSOR" }, String(before));
   await assert.rejects(list(projectId, documentId, 3, "not-a-cursor"), { code: "INVALID_CURSOR" });
+  assert.equal((await list(projectId, documentId, 3, forged({ before: 2147483647 }))).items.length, 3,
+    "the largest stored number is still a valid position");
   assert.deepEqual((await list(projectId, documentId, 3, forged({ before: 2 }))).items.map(item => item.id), [revisions[0]],
     "a well-formed cursor for this document can only reach this document's own revisions");
   await assert.rejects(list(projectId, documentId, 0), { code: "INVALID_PAGE" });
@@ -207,29 +209,36 @@ test("revisions added while paging land above the cursor: no repeats, no gaps, s
   assert.deepEqual(fresh.items.slice(0, 3).map(item => item.id), [...added].reverse());
 });
 
-test("storage numbers every insert, including direct SQL writers, and keeps the number immutable", async () => {
+test("storage numbers direct SQL inserts, refuses a supplied number and keeps the number immutable", async () => {
   const projectId = await project();
   const { documentId } = await documentWithHistory(projectId);
   const client = await pool.connect();
+  const columns = "project_id,document_id,revision_id,body,format,content_hash,author,created_at,previous_revision_id,reason,media_type,original_name,assets_manifest";
+  const values = "$1,$2,$3,'# direct','markdown',$4,'direct','2020-01-01T00:00:00Z',$5,'direct','text/markdown','x.md','[]'::jsonb";
   try {
-    await client.query("BEGIN");
-    const head = (await client.query("SELECT current_revision_id FROM process_document WHERE project_id=$1 AND document_id=$2", [projectId, documentId])).rows[0];
+    const head = (await client.query("SELECT current_revision_id FROM process_document WHERE project_id=$1 AND document_id=$2",
+      [projectId, documentId])).rows[0].current_revision_id;
+    // A row-by-row import must not silently lose the source host's numbering, so a supplied number is refused.
+    for (const number of [99, 5])
+      await assert.rejects(client.query(`INSERT INTO document_revision(${columns},revision_number) VALUES(${values},$6)`,
+        [projectId, documentId, randomUUID(), sha("# direct"), head, number]), { code: "23514", message: /assigned by storage/ }, String(number));
     const direct = randomUUID();
-    // Same shape as the scheduling and task-timing writers, plus a number that must be ignored.
-    await client.query(`INSERT INTO document_revision(project_id,document_id,revision_id,body,format,content_hash,author,created_at,
-      previous_revision_id,reason,media_type,original_name,assets_manifest,revision_number)
-      VALUES($1,$2,$3,'# direct','markdown',$4,'direct','2020-01-01T00:00:00Z',$5,'direct','text/markdown','x.md','[]'::jsonb,99)`,
-    [projectId, documentId, direct, sha("# direct"), head.current_revision_id]);
+    await client.query("BEGIN");
+    // Same shape as the scheduling and task-timing writers.
+    await client.query(`INSERT INTO document_revision(${columns}) VALUES(${values})`, [projectId, documentId, direct, sha("# direct"), head]);
     await client.query("UPDATE process_document SET version=version+1,current_revision_id=$3 WHERE project_id=$1 AND document_id=$2",
       [projectId, documentId, direct]);
     await client.query("COMMIT");
-    assert.equal((await client.query("SELECT revision_number FROM document_revision WHERE project_id=$1 AND revision_id=$2", [projectId, direct])).rows[0].revision_number, 5);
-    await assert.rejects(client.query("UPDATE document_revision SET revision_number=1 WHERE project_id=$1 AND revision_id=$2", [projectId, direct]),
-      { message: /immutable/ });
+    assert.equal((await client.query("SELECT revision_number FROM document_revision WHERE project_id=$1 AND revision_id=$2",
+      [projectId, direct])).rows[0].revision_number, 5);
+    await assert.rejects(client.query("UPDATE document_revision SET revision_number=1 WHERE project_id=$1 AND revision_id=$2",
+      [projectId, direct]), { message: /immutable/ });
   } finally { await client.query("ROLLBACK").catch(() => {}); client.release(); }
   const page = await list(projectId, documentId);
   assert.deepEqual(page.items.map(item => item.revisionNumber), [5, 4, 3, 2, 1]);
   assert.equal(page.items[0]!.state, "current");
+  const original = await uow.read(projectId, reader => reader.getDocumentPayloadRevision(documentId, page.items[1]!.id));
+  assert.equal(original?.revisionNumber, 4, "the fixed revision returned with /original carries the same number");
 });
 
 test("concurrent appends to one document outside the project lock serialize on the document row", async () => {

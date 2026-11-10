@@ -94,6 +94,10 @@ test("069 leaves revisions immutable and the observation journal untouched, then
     AND tgname IN ('immutable_document_revision','document_revision_allocation_observation','document_revision_number')`)).rows;
   assert.deepEqual(Object.fromEntries(triggers.map(row => [row.tgname, row.tgenabled])),
     { immutable_document_revision: "O", document_revision_allocation_observation: "O", document_revision_number: "O" });
+  const indexes = (await client.query(`SELECT indexname FROM pg_indexes WHERE schemaname=$1 AND tablename='document_revision'
+    ORDER BY indexname`, [schema])).rows.map(row => row.indexname);
+  assert.deepEqual(indexes, ["document_revision_number_unique", "document_revision_payload_unique", "document_revision_pkey"],
+    "the backfill's temporary previous-revision index is gone");
   const nullable = (await client.query(`SELECT is_nullable FROM information_schema.columns WHERE table_schema=$1
     AND table_name='document_revision' AND column_name='revision_number'`, [schema])).rows[0];
   assert.equal(nullable.is_nullable, "NO");

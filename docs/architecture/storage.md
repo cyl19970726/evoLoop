@@ -160,7 +160,7 @@ erDiagram
 | 066 `connector_delivery_decision` | `connector_claim_attempt`、`connector_delivery_decision`、`connector_transport_attempt` | 每次外部写入前先保存首次尝试；发送前冻结请求 ID、内容和唯一尝试状态，结果未知时只按原请求查询。 | 同上 |
 | 067 `runtime_provider` | `runtime_session.runtime_provider`、`runtime_run.usage`、`runtime_run.cost_usd` | Session 的运行时只能是 `codex` 或 `claude`，写定后不可改，已有行记为 `codex`；用量与费用为空表示运行时没有报告。 | [Session 运行时](session-runtime.md#6-一个-role-只绑定一种运行时) |
 | 068 `role_runtime_profile` | `role_runtime_revision` | 只追加；第 1 个修订固定 Role 的运行时，之后只改 skill 选择，选择内容由校验函数约束；新 Session 插入时触发器拒绝与 Role 绑定不一致的运行时。迁移按已有 Session 回填首个绑定。 | 同上 |
-| 069 `document_revision_history` | `document_revision.revision_number` | 每份文档内从 1 连续编号，`(project_id, document_id, revision_number)` 唯一，同时是修订列表分页的索引；插入前触发器锁住文档行，取已有最大值加 1，调用方传入的值被忽略，写入后随修订不可改。迁移沿 `previous_revision_id` 链回填；不是单链（分叉、多个根或断链）的文档改按 `created_at, revision_id` 编号。 | [DocumentStore](contracts.md#2a-documentstore-与-relationstore) |
+| 069 `document_revision_history` | `document_revision.revision_number` | 每份文档内从 1 连续编号，`(project_id, document_id, revision_number)` 唯一，同时是修订列表分页的索引；插入前触发器锁住文档行，取已有最大值加 1；调用方显式给出序号会被拒绝（`23514`），逐行导入历史（DEC-041）时不会悄悄换掉源主机的序号，导入方式须另定。完整的 `pg_dump`/`pg_restore` 不受影响：触发器在 post-data 段、表数据载入之后才创建（已用 `pg_restore --list` 核对顺序）。写入后随修订不可改。迁移沿 `previous_revision_id` 链回填（临时索引，迁移内删除）；不是单链（分叉、多个根或断链）的文档改按 `created_at, revision_id` 编号。发布前的检查与发布后的 `VACUUM` 见[发布新版本](deployment.md#2-发布新版本)。 | [DocumentStore](contracts.md#2a-documentstore-与-relationstore) |
 
 ## 事务、幂等和读取
 
