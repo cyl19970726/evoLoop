@@ -175,7 +175,7 @@ test("an assignee missing from a directory read up to its limit is 未读到, no
     .elsewhere.map(group => group.label), ["受管智能体 · 不在当前目录", "外部接入 · 不在当前目录"]);
 });
 
-test("an assignment that would stop the next dispatch is a risk to reassign; the normal flow's new revisions are not", () => {
+test("an assignment the server would refuse next is a risk to reassign; the normal flow's new revisions are not", () => {
   const old = id(900);
   const fixedTo = (state: "assigned" | "accepted" | "released", revision?: string, targetKind: "owned" | "external" = "owned") =>
     ({ state, targetKind, targetId: id(1), recipientActorId: null, ...(revision ? { taskRevisionId: revision } : {}) });
@@ -202,7 +202,18 @@ test("an assignment that would stop the next dispatch is a risk to reassign; the
   assert.equal(staleAssignment(current, read), null);
   assert.equal(staleAssignment(unknown, read), null, "a server that does not say the revision proves nothing");
   assert.equal(staleAssignment(released, read), null, "a released assignment is not waiting for anyone");
-  assert.equal(staleAssignment(external, read), null, "only an owned assignment is checked by the dispatch");
+  assert.equal(staleAssignment(external, read), null, "an accepted external assignment: evoLoop never dispatches it and nothing refuses it");
+
+  // 已分派 follows the acknowledgement rule (BASELINE_CHANGED), owned or external, in any phase.
+  const externalAssigned = task(11, { phase: "awaiting_assignment", assignment: fixedTo("assigned", old, "external") });
+  const ownedAssignedRunning = task(12, { phase: "running", assignment: fixedTo("assigned", old) });
+  assert.equal(staleAssignment(externalAssigned, read), "assigned", "an external agent can no longer take it on");
+  assert.equal(staleAssignment(externalAssigned, { read: false, claimed: false }), "assigned", "queues play no part for an external target");
+  assert.equal(staleAssignment(task(13, { phase: "ready", assignment: fixedTo("assigned", id(113), "external") }), read), null, "same revision");
+  assert.equal(staleAssignment(ownedAssignedRunning, read), "assigned", "an observed acceptance is refused once the revision moved");
+  assert.equal(staleAssignment(ownedAssignedRunning, { read: true, claimed: true }), null,
+    "a queue claim's run may be acknowledged by its owned recipient (the server's one exception)");
+  assert.equal(staleAssignment(ownedAssignedRunning, { read: false, claimed: false }), null, "unread queues: that exception cannot be ruled out");
   assert.equal(staleAssignment(ready, { read: true, claimed: true }), null, "a dispatch from a queue claim keeps its own frozen input");
   assert.equal(staleAssignment(ready, { read: false, claimed: false }), null, "unread queues: a claim cannot be ruled out");
 
@@ -218,7 +229,11 @@ test("an assignment that would stop the next dispatch is a risk to reassign; the
   assert.deepEqual(buildArrangement([agent(1, false)], tasks, [queue([{ session: 1, task: 2, position: 1, state: "claimed" }])], now, complete)
     .risks.map(risk => risk.taskIds[0]), [waiting.taskId, rework.taskId], "a claimed queue entry dispatches without the stale check");
   assert.deepEqual(buildArrangement([agent(1, false)], tasks, [], now, { ...complete, queuesRead: false }).risks
-    .filter(risk => risk.kind === "stale_assignment"), [], "without the queues nothing is concluded");
+    .filter(risk => risk.kind === "stale_assignment"), [], "without the queues nothing owned is concluded");
+  const withExternal = buildArrangement([agent(1, false)], [...tasks, externalAssigned], [], now, { ...complete, queuesRead: false });
+  assert.deepEqual(withExternal.risks.filter(risk => risk.kind === "stale_assignment").map(risk => [risk.title, risk.detail]),
+    [["「任务11」的分派属于旧修订，要重新指定", "任务修订已变化，按原来的分派确认接手会被拒绝"]]);
+  assert.equal(boardPhaseText(externalAssigned, withExternal.stale.get(externalAssigned.taskId)), "分派属于旧修订 · 要重新指定");
   assert.equal(boardPhaseText(waiting, board.stale.get(waiting.taskId)), "分派属于旧修订 · 要重新指定");
   assert.equal(boardPhaseText(ready, board.stale.get(ready.taskId)), "接手属于旧修订 · 要重新指定");
   assert.equal(boardPhaseText(delivered, board.stale.get(delivered.taskId)), "待验收");

@@ -88,21 +88,28 @@ function assignmentKey(task: LeaderWorkTask): string | null {
 const dispatchPhases = new Set<LeaderWorkTask["phase"]>(["awaiting_assignment", "ready", "rework"]);
 
 /**
- * The assignment would stop the next dispatch, so it has to be made again. Exactly the server's `ASSIGNMENT_STALE`
- * (`requireAssignedSession` in packages/core/src/session-assignments/dispatch.ts): a concrete owned assignment fixed to a
- * revision other than the task's current one, unless the dispatch comes from an established queue claim.
- * Judged only where the next step is that dispatch. Elsewhere a new revision with the assignment left behind is the normal
- * flow: `delivery.record` makes a revision (`newTaskRevision` in packages/core/src/workflow.ts), a reserved run moves only
- * an unacknowledged assignment along (packages/core/src/runtime/reserve.ts), and a queue claim keeps its own frozen input.
- * Null when the read does not say which revision the assignment is fixed to (older servers). The board passes what it
- * knows of the task's queue claim; with the queues unread a claim cannot be ruled out, so nothing is concluded.
+ * The assignment has to be made again: the server would refuse what comes next for it. Two of the server's rules, by state.
+ * - 已分派 (`assigned`), owned or external: taking it on is refused once the task has moved to another revision —
+ *   `acknowledgedRevision` in packages/core/src/session-assignments/index.ts answers `BASELINE_CHANGED` to an observed
+ *   acceptance and to any external target. Its one exception: the owned recipient may acknowledge the revision its own
+ *   reserved run froze, which happens when a queue claim dispatched the run (a queue claim skips the dispatch check below).
+ *   So an owned assignment with a queue claim, or with the queues unread, is not concluded.
+ * - 已接手 (`accepted`), owned only: the next dispatch is refused with `ASSIGNMENT_STALE` (`requireAssignedSession` in
+ *   packages/core/src/session-assignments/dispatch.ts) unless it comes from an established queue claim. Judged only where
+ *   the next step is that dispatch (待接手, 可开始, 返工). Elsewhere a new revision with the acceptance left behind is the
+ *   normal flow: `delivery.record` makes a revision (`newTaskRevision` in packages/core/src/workflow.ts) and a reserved run
+ *   moves only an unacknowledged assignment along (packages/core/src/runtime/reserve.ts). An accepted external assignment
+ *   is never dispatched by evoLoop and nothing on the server refuses it, so it is not concluded either.
+ * Null when the read does not say which revision the assignment is fixed to (older servers).
  */
 export function staleAssignment(task: Pick<LeaderWorkTask, "assignment" | "currentRevisionId" | "phase">,
   queue: { read: boolean; claimed: boolean } = { read: true, claimed: false }): "assigned" | "accepted" | null {
   const assignment = task.assignment;
-  if (!assignment || assignment.state === "released" || assignment.targetKind !== "owned" || !assignment.taskRevisionId) return null;
-  if (!dispatchPhases.has(task.phase) || !queue.read || queue.claimed) return null;
-  return assignment.taskRevisionId === task.currentRevisionId ? null : assignment.state;
+  if (!assignment || assignment.state === "released" || !assignment.taskRevisionId) return null;
+  if (assignment.taskRevisionId === task.currentRevisionId) return null;
+  const claimFree = queue.read && !queue.claimed;
+  if (assignment.state === "assigned") return assignment.targetKind === "external" || claimFree ? "assigned" : null;
+  return assignment.targetKind === "owned" && dispatchPhases.has(task.phase) && claimFree ? "accepted" : null;
 }
 
 function isOpen(task: LeaderWorkTask): boolean {
@@ -205,7 +212,7 @@ export function buildArrangement(sessions: readonly ObservedSession[], tasks: re
     if (kind) risks.push({
       kind: "stale_assignment", sessionKey: null, taskIds: [task.taskId],
       title: `${quoted(task.title)}的${kind === "accepted" ? "接手" : "分派"}属于旧修订，要重新指定`,
-      detail: "任务修订已变化，按原来的分派派发会被拒绝",
+      detail: kind === "assigned" ? "任务修订已变化，按原来的分派确认接手会被拒绝" : "任务修订已变化，按原来的接手派发会被拒绝",
     });
     // The server's own gate: a dependency counts once its current revision is accepted, not when its state says done.
     const pending = task.dependencies.filter(dependency => !dependency.acceptanceSatisfied);
