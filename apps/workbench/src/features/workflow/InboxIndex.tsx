@@ -1,20 +1,23 @@
-// 待我处理 › 待我验收与判断 (tasks.md 收件页, layout.md 待我处理): acceptance arranged for me and basis changes waiting
-// for review, each linked to its task. Reading and observing an acceptance is recorded by the person through the CLI;
-// a basis change is decided on the task's 依据与影响. Open to-do tasks are in the task table, filtered to 待办.
-// While a list is being read or cannot be read, the page never says there is nothing waiting.
+// 待我处理 › 待我验收与判断 (tasks.md 收件页, layout.md 待我处理): acceptance arranged for me, deliveries that declare me
+// as their consumer and wait for my use, and basis changes waiting for review, each linked to its task. Reading and
+// observing is recorded by the person (the CLI, or the task's 交付与使用); a basis change is decided on the task's
+// 依据与影响. Open to-do tasks are in the task table, filtered to 待办. The reads and their keys are shared with the
+// count in the shell (inboxReads.ts). While a list is being read or cannot be read, the page never says there is
+// nothing waiting.
 import type { ReactNode } from "react";
 import { RefreshCw } from "lucide-react";
 import type { AcceptanceHumanItem } from "@evoloop/contracts/acceptance-relay";
 import type { Impact } from "@evoloop/contracts";
 import { Button, ErrorState, ListRow, LoadingState, Notice, RefreshingIndicator } from "@evoloop/ui";
-import { api, errorText } from "../../shared/api";
+import { errorText } from "../../shared/api";
 import type { MutationContext } from "../../shared/ActionForm";
-import { useProjectQuery } from "../../shared/query";
 import { FullIdentifiers } from "../../shared/ui/FullIdentifiers";
 import { PageSection, mutedText } from "../../shared/ui/PageParts";
 import { useTaskName } from "../../shared/ui/RecordName";
 import { date, href } from "../../shared/ui/shared";
 import { nameOnly } from "../../shared/workPresentation";
+import { deliveryLink, lastUseText, useRequirementText, type DeliveryForMe } from "./inboxModel";
+import { useInboxReads, type DeliveriesForMe } from "./inboxReads";
 import { defaultTaskListView, taskListRoute } from "./taskExperience";
 
 type Read<T> = { data: T | undefined; error: unknown; isPending: boolean; isFetching: boolean; refetch(): unknown };
@@ -34,25 +37,16 @@ const countText = (read: Read<unknown>, count: number | undefined) => read.data 
 
 export function InboxIndex({ context }: { context: MutationContext; refresh: number }) {
   const { projectId } = context;
-  const mine = useProjectQuery(projectId, ["acceptance", "mine"], async () => {
-    const value = await api().acceptanceMine(projectId);
-    if (!Array.isArray(value?.items) || value.items.some(item => item.projectId !== projectId)) throw new Error("待验收列表响应与当前项目不符");
-    return value;
-  });
-  // Same key and answer as the count on 待我处理 in the shell (App.tsx).
+  const actorId = context.principal.actorId;
+  const { acceptance: mine, impacts, deliveries } = useInboxReads(projectId, actorId);
   const acceptance = mine.data?.items;
-  const impacts = useProjectQuery(projectId, ["impacts"], async () => {
-    const value = await api().impacts(projectId);
-    if (!Array.isArray(value)) throw new Error("依据变化响应不完整");
-    return value;
-  });
   const pending = impacts.data?.filter(item => item.state === "pending");
-  const reading = mine.isFetching || impacts.isFetching;
+  const reading = mine.isFetching || impacts.isFetching || deliveries.isFetching;
   return <div data-ui="" className="mx-auto flex w-full max-w-[880px] flex-col gap-6 px-4 py-5 compact:px-8 compact:py-7" data-inbox="">
     <header className="flex flex-wrap items-start justify-between gap-3">
       <div className="min-w-0">
         <h1 tabIndex={-1} className="text-title font-semibold text-foreground outline-none">待我验收与判断</h1>
-        <p className="mt-1 text-small text-text-secondary">分配给我的验收安排和待复核的依据变化。每项打开它的任务，在那里核对并决定下一步。</p>
+        <p className="mt-1 text-small text-text-secondary">分配给我的验收安排、等我使用的交付和待复核的依据变化。每项打开它的任务，在那里核对并决定下一步。</p>
       </div>
       <Button variant="ghost" disabled={reading} onClick={context.onChanged}><RefreshCw aria-hidden="true" className={reading ? "animate-spin" : undefined} />重新读取</Button>
     </header>
@@ -62,6 +56,11 @@ export function InboxIndex({ context }: { context: MutationContext; refresh: num
       {acceptance?.length === 0 && <p className="text-small text-text-secondary">当前没有分配给我的验收事项。</p>}
       {!!acceptance?.length && <ul aria-label="待我验收" className="flex flex-col">{acceptance.map(item => <li key={item.relayId}><AcceptanceRow projectId={projectId} item={item} /></li>)}</ul>}
     </PageSection>
+    <PageSection title="等我使用的交付" action={<span className={mutedText}>{deliveryCountText(deliveries)}</span>}
+      description="任务声明你是这次交付的使用者，你还没有记录“已使用”。打开任务的“交付与使用”读成果，并记录用过的版本和结果。">
+      <ReadState read={deliveries} what="等我使用的交付" />
+      <DeliveryList projectId={projectId} actorId={actorId} value={deliveries.data} />
+    </PageSection>
     <PageSection title="依据变化" action={<span className={mutedText}>{countText(impacts, pending?.length)}</span>}
       description="任务固定的依据出现新版。在任务的“依据与影响”里决定采用新版还是保留原依据。">
       <ReadState read={impacts} what="依据变化" />
@@ -69,6 +68,35 @@ export function InboxIndex({ context }: { context: MutationContext; refresh: num
       {!!pending?.length && <ul aria-label="依据变化" className="flex flex-col">{pending.map(item => <li key={item.id}><ImpactRow projectId={projectId} item={item} /></li>)}</ul>}
     </PageSection>
     <p className={mutedText}>待办任务在任务表格里按“待办”筛选查看。<a className="ml-1 text-primary hover:underline" href={taskListRoute(projectId, { ...defaultTaskListView, filter: "todo" })}>打开待办任务</a></p>
+  </div>;
+}
+
+/** 2 项; when not every open task was read, the found ones are a floor, never the whole. */
+function deliveryCountText(read: Read<DeliveriesForMe>): string {
+  if (read.data === undefined) return read.error ? "暂不可读取" : "正在读取";
+  return read.data.complete ? `${read.data.items.length} 项` : `至少 ${read.data.items.length} 项`;
+}
+
+function DeliveryList({ projectId, actorId, value }: { projectId: string; actorId: string; value: DeliveriesForMe | undefined }) {
+  if (!value) return null;
+  const partial = !value.complete && <p className="text-small text-text-secondary">只读了前 {value.tasksRead} 项未关闭的任务，后面的还没有读到，无法判断是否还有等你使用的交付。</p>;
+  if (!value.items.length) return partial || <p className="text-small text-text-secondary">当前没有等你使用的交付。</p>;
+  return <>
+    <ul aria-label="等我使用的交付" className="flex flex-col">{value.items.map(item => <li key={item.deliveryId}><DeliveryRow projectId={projectId} actorId={actorId} item={item} /></li>)}</ul>
+    {partial}
+  </>;
+}
+
+function DeliveryRow({ projectId, actorId, item }: { projectId: string; actorId: string; item: DeliveryForMe }) {
+  const delivered = item.deliveredAt ? `交付于 ${date(item.deliveredAt)}` : "交付时间未读回";
+  const when = [delivered, ...item.last?.at ? [`你上次记录于 ${date(item.last.at)}`] : [],
+    ...item.othersObserved ? ["这次交付最近一条观察来自别人，你的观察按任务记录核对"] : []].join(" · ");
+  // What is asked of me and where I stand lead; the time and the note on others' observations wrap below.
+  return <div className="flex flex-col gap-1 border-t border-border py-1 first:border-t-0">
+    <ListRow href={deliveryLink(projectId, item.taskId, actorId)} title={item.title}
+      meta={`${useRequirementText(item.useRequired)} · ${lastUseText(item.last)}`} trailing={<span className="text-primary">去使用</span>} />
+    <p className={`${mutedText} px-3`}>{when}</p>
+    <FullIdentifiers className="px-3" rows={[{ label: "当前交付", value: item.deliveryId }, { label: "任务修订", value: item.taskRevisionId }]} />
   </div>;
 }
 

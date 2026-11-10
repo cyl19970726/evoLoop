@@ -3,7 +3,7 @@
 // (true = 1024) opens the right column as a drawer first. `before` runs before the page loads (e.g. a failing read),
 // `prepare` after it is ready. Names are the file names under docs/assets/frontend-pages/ and stay fixed.
 import { actorId, agentKey, ago, id, otherProject, projectId, roles } from "./fixture/common.mjs";
-import { docs, tasks } from "./fixture/work.mjs";
+import { docs, tasks, workIndex } from "./fixture/work.mjs";
 import { evaluations, knowledge } from "./fixture/spaces.mjs";
 
 const p = path => `/p/${projectId}/${path}`;
@@ -63,8 +63,18 @@ export const scenes = [
     ready: both(heading(tasks.t1.title, 1), page => page.getByRole("tab", { name: new RegExp(`^${label}`), selected: true }).waitFor()),
   })),
   { name: "task-new", path: p("tasks/new"), ready: both(heading("新建任务"), text("要做什么")) },
-  // 待我处理 › 待我验收与判断: nothing arranged for the reader, one basis change waiting.
-  { name: "inbox", path: p("inbox"), ready: both(heading("待我验收与判断", 1), text("依据有新版待复核")) },
+  // 待我处理 › 待我验收与判断: nothing arranged for the reader, one delivery that waits for the reader's use, one basis
+  // change waiting. Only this scene answers the work index with the reader as the delivery's consumer.
+  { name: "inbox", path: p("inbox"), ready: both(heading("待我验收与判断", 1), text("依据有新版待复核"), text("必须使用才能关闭")),
+    before: page => page.route(/\/work-management\/index\?/, route => {
+      const query = new URL(route.request().url()).searchParams;
+      if (query.get("view") !== "tasks") return route.fallback();
+      const index = workIndex(query.get("includeClosed") === "true");
+      const mine = item => !item.delivery ? item : { ...item, delivery: { ...item.delivery, consumer: actorId },
+        timing: { ...item.timing, rounds: item.timing.rounds.map(round => ({ ...round,
+          intervals: round.intervals.map(interval => ({ ...interval, source: { kind: "delivery", id: item.delivery.deliveryId } })) })) } };
+      return route.fulfill({ contentType: "application/json", body: JSON.stringify({ ...index, items: index.items.map(mine) }) });
+    }) },
   { name: "journey", path: p("journey"), drawer: true, ready: both(heading("目标与阶段"), text("新版任务与文档页")) },
   { name: "evaluations", path: p("evaluations"), ready: both(heading("评价与后果"), text("只给需求总图")) },
   { name: "evaluation", path: p(`evaluations/${evaluations.id}`), drawer: true, ready: heading("加入固定知识页后，右栏核对是否一次通过？", 1) },
