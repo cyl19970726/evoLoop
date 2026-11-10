@@ -75,10 +75,22 @@ const queries = <T>(run: (q: PgTaskTimingQueries) => Promise<T>) =>
   inTransaction(client => run(new PgTaskTimingQueries(client, projectId)));
 const daily = { executeAtUtc: first, timezone: "Asia/Taipei", repeat: "daily" as const };
 
-/** Core revision of a linked document through the real unit of work: project lock, revision, head CAS. */
-function reviseDocument(documentId: string, previousRevisionId: string): Promise<void> {
+/**
+ * Core revision of a linked document through the real unit of work: project lock, revision, head CAS.
+ * With `leaderWorkFirst`, the same transaction first inserts an unrelated Document, so it already
+ * holds leader-work when 069's revision trigger waits on the linked Document row.
+ */
+function reviseDocument(documentId: string, previousRevisionId: string, leaderWorkFirst: boolean): Promise<void> {
   const revisionId = randomUUID(), body = "# core revision";
   return core.transaction(projectId, async tx => {
+    if (leaderWorkFirst) {
+      const otherId = randomUUID(), otherRevision = randomUUID();
+      await tx.insertDocument({ projectId, id: otherId, title: "Other", version: 1, currentRevisionId: otherRevision,
+        adoptedRevisionId: null, kind: "spec", status: "draft" });
+      await tx.insertDocumentRevision({ projectId, documentId: otherId, id: otherRevision, body: "other", format: "markdown",
+        mediaType: "text/markdown", originalName: "other.md", payloadRef: null, entrypoint: null, assetsManifest: [],
+        contentHash: hash("other"), author: "core", createdAt: second, previousRevisionId: null, reason: "other" });
+    }
     await tx.insertDocumentRevision({ projectId, documentId, id: revisionId, body, format: "markdown",
       mediaType: "text/markdown", originalName: "reference.md", payloadRef: null, entrypoint: null, assetsManifest: [],
       contentHash: hash(body), author: "core", createdAt: second, previousRevisionId, reason: "core revise" });
@@ -88,10 +100,12 @@ function reviseDocument(documentId: string, previousRevisionId: string): Promise
 }
 /** Stop the tick at one point, start the core write, let it block, then let the tick continue. */
 async function interleave(stopBefore: (text: string, values: unknown[]) => boolean,
-  tick: (store: PgTaskTimingStore) => Promise<TaskTimingTickResult[]>, documentId: string, previousRevisionId: string) {
-  const [created] = await interleaveWriters({ connectionString: url!, options, observer: pool,
+  tick: (store: PgTaskTimingStore) => Promise<TaskTimingTickResult[]>, documentId: string, previousRevisionId: string,
+  leaderWorkFirst: boolean) {
+  const [created] = await interleaveWriters({ connectionString: url!, options, observer: pool, projectId,
     otherApplication: coreApplication, stopBefore, labels: ["tick", "core write"],
-    stopped: gated => tick(new PgTaskTimingStore(gated)), other: () => reviseDocument(documentId, previousRevisionId) });
+    stopped: gated => tick(new PgTaskTimingStore(gated)),
+    other: () => reviseDocument(documentId, previousRevisionId, leaderWorkFirst) });
   const head = await pool.query(`SELECT version FROM process_document WHERE project_id=$1 AND document_id=$2`,
     [projectId, documentId]);
   assert.equal(head.rows[0].version, 2, "core revision committed");
@@ -123,45 +137,33 @@ test("tick validating a linked document before writing does not deadlock a core 
   await queries(q => q.create(root, daily, actorId, setupAt));
   const store = (s: PgTaskTimingStore, at: string) => s.tick(projectId, at, actorId, roleId, taskTimingScopeId(root));
   await store(new PgTaskTimingStore(pool), first);
-  // Stopped after FOR SHARE on the linked document, before the first trigger-locked insert.
+  // Stopped after FOR SHARE on the linked document, before the first trigger-locked insert. The core
+  // write already holds leader-work (from an unrelated Document) when it reaches the linked Document:
+  // since 069 its revision trigger locks that row first, so without leader-work held earlier the core
+  // write would block before taking it and no cycle would form.
   const created = await interleave(text => /INSERT INTO process_document/.test(text),
-    s => store(s, second), reference.documentId, reference.revisionId);
+    s => store(s, second), reference.documentId, reference.revisionId, true);
   assert.deepEqual(created.map(item => [item.plannedAtUtc, item.created]), [[second, true]]);
 });
 
 test("tick validating a linked document after writing another series does not deadlock (Y)", async () => {
-  // Until migration 069 (PR #285) lands, simulate its BEFORE INSERT trigger that locks the document
-  // row when a revision is inserted. With 069 present, rely on the real trigger.
-  const native = await pool.query(`SELECT 1 FROM pg_trigger
-    WHERE tgrelid='document_revision'::regclass AND tgname='document_revision_number'`);
-  if (!native.rows.length) await pool.query(`
-    CREATE FUNCTION test_lock_document_for_revision() RETURNS trigger LANGUAGE plpgsql AS $$
-    BEGIN
-      PERFORM 1 FROM process_document WHERE project_id=NEW.project_id AND document_id=NEW.document_id FOR NO KEY UPDATE;
-      RETURN NEW;
-    END $$;
-    CREATE TRIGGER test_lock_document_for_revision BEFORE INSERT ON document_revision
-      FOR EACH ROW EXECUTE FUNCTION test_lock_document_for_revision();`);
-  try {
-    const actorId = "lock-order-y", reference = await adoptedDocument();
-    const a = await task("Unlinked daily"), b = await task("Linked daily");
-    const sa = (await queries(q => q.set({ type: "task.timing.set", projectId, operationId: randomUUID(), taskId: a,
-      expectedTaskVersion: 1, expectedTimingVersion: 0, scope: "this", ...daily, reason: "daily" }, actorId, setupAt))).seriesId;
-    const sb = (await queries(q => q.set({ type: "task.timing.set", projectId, operationId: randomUUID(), taskId: b,
-      expectedTaskVersion: 1, expectedTimingVersion: 0, scope: "this", ...daily, reason: "daily" }, actorId, setupAt))).seriesId;
-    // The tick visits series by id; link the document to whichever series it visits second, so the
-    // first series has already inserted rows (and holds leader-work) when the linked one is validated.
-    const [, later] = sa < sb ? [a, b] : [b, a];
-    await link(later, reference.documentId);
-    await queries(q => q.updateFuture(later, { title: "Linked daily", content: "Do Linked daily", acceptance: "accept" },
-      1, actorId, "2026-11-06T01:00:00.000Z"));
-    const store = (s: PgTaskTimingStore, at: string) => s.tick(projectId, at, actorId, roleId, "task-timing:*");
-    await store(new PgTaskTimingStore(pool), first);
-    const created = await interleave((text, values) => /FROM process_document[\s\S]*FOR SHARE/.test(text) &&
-      values[1] === reference.documentId, s => store(s, second), reference.documentId, reference.revisionId);
-    assert.deepEqual(created.map(item => item.created), [true, true]);
-  } finally {
-    await pool.query(`DROP TRIGGER IF EXISTS test_lock_document_for_revision ON document_revision;
-      DROP FUNCTION IF EXISTS test_lock_document_for_revision();`);
-  }
+  // 069's BEFORE INSERT trigger on document_revision locks the Document row, so the core revision holds
+  // that row and then waits for leader-work, which the tick took for an earlier series.
+  const actorId = "lock-order-y", reference = await adoptedDocument();
+  const a = await task("Unlinked daily"), b = await task("Linked daily");
+  const sa = (await queries(q => q.set({ type: "task.timing.set", projectId, operationId: randomUUID(), taskId: a,
+    expectedTaskVersion: 1, expectedTimingVersion: 0, scope: "this", ...daily, reason: "daily" }, actorId, setupAt))).seriesId;
+  const sb = (await queries(q => q.set({ type: "task.timing.set", projectId, operationId: randomUUID(), taskId: b,
+    expectedTaskVersion: 1, expectedTimingVersion: 0, scope: "this", ...daily, reason: "daily" }, actorId, setupAt))).seriesId;
+  // The tick visits series by id; link the document to whichever series it visits second, so the
+  // first series has already inserted rows (and holds leader-work) when the linked one is validated.
+  const [, later] = sa < sb ? [a, b] : [b, a];
+  await link(later, reference.documentId);
+  await queries(q => q.updateFuture(later, { title: "Linked daily", content: "Do Linked daily", acceptance: "accept" },
+    1, actorId, "2026-11-06T01:00:00.000Z"));
+  const store = (s: PgTaskTimingStore, at: string) => s.tick(projectId, at, actorId, roleId, "task-timing:*");
+  await store(new PgTaskTimingStore(pool), first);
+  const created = await interleave((text, values) => /FROM process_document[\s\S]*FOR SHARE/.test(text) &&
+    values[1] === reference.documentId, s => store(s, second), reference.documentId, reference.revisionId, false);
+  assert.deepEqual(created.map(item => item.created), [true, true]);
 });

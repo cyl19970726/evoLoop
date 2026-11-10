@@ -83,7 +83,7 @@ test("direct input start holding the Session row does not deadlock queue creatio
   const grant = { projectId, sessionId, senderActorId: "user", receiverRoleId: roleId, receiverActorId: "agent",
     cwd: "/tmp/direct-lock", maxTurns: 2, enabled: true, canSteer: true, canStart: true };
   // Stopped after the Session row lock, before the message insert that key-shares the project row.
-  const [reserved] = await interleave({ connectionString: url!, options, observer: pool, otherApplication,
+  const [reserved] = await interleave({ connectionString: url!, options, observer: pool, otherApplication, projectId,
     labels: ["direct input reserve", "queue creation"], stopBefore: text => /INSERT INTO session_message\(/.test(text),
     stopped: gated => new PgDirectInputs(gated).reserve(projectId, sessionId, "user", command, grant, "a".repeat(64)),
     // Queue creation runs in the core transaction: project lock, project row FOR UPDATE, then entries.

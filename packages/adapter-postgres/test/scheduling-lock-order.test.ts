@@ -65,7 +65,7 @@ async function managedSchedule(): Promise<{ definition: ScheduleDefinition; stag
 const materialize = (gated: pg.Pool, definition: ScheduleDefinition) =>
   new PgSchedulingStore(gated).materialize(definition, due, due, "created", "due");
 const run = <B>(stopBefore: RegExp, definition: ScheduleDefinition, other: () => Promise<B>, label: string) =>
-  interleave({ connectionString: url!, options, observer: pool, otherApplication, labels: ["materialize", label],
+  interleave({ connectionString: url!, options, observer: pool, otherApplication, projectId, labels: ["materialize", label],
     stopBefore: text => stopBefore.test(text), stopped: gated => materialize(gated, definition), other });
 async function assertCreated(definition: ScheduleDefinition): Promise<void> {
   const occurrence = await new PgSchedulingStore(pool).getOccurrence(projectId, definition.id, due);

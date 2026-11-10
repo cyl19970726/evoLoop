@@ -85,7 +85,7 @@ test("acceptance arrangement does not deadlock a Leader plan update on the same 
   const { taskId, deliveryId } = await deliveredTask();
   // The plan writer holds the project lock and the Task row; it is stopped before the plan insert
   // whose leader-work change key-shares the project row.
-  const [planned, arranged] = await interleave({ connectionString: url!, options, observer: pool, otherApplication,
+  const [planned, arranged] = await interleave({ connectionString: url!, options, observer: pool, otherApplication, projectId,
     labels: ["Leader plan update", "acceptance arrangement"], stopBefore: text => /INSERT INTO task_work_plan/.test(text),
     stopped: gated => new PgLeaderWorkWriter(gated).setTaskPlan(reviewer, projectId, { projectId, operationId: randomUUID(),
       taskId, expectedTaskVersion: 1, expectedPlanVersion: 0, plannedStartAt: null, dueAt: null, priority: 1, reason: "plan" }),

@@ -28,12 +28,21 @@ export function gatedPool(connectionString: string, options: string, stopBefore:
   return { pool: facade as unknown as pg.Pool, paused, resume, end: () => inner.end() };
 }
 
-/** Resolves once a backend with this application name is waiting on a heavyweight lock. */
-export async function waitsOnLock(observer: pg.Pool, application: string): Promise<void> {
+export interface LockWait { waitEvent: string; projectLock: boolean }
+
+/**
+ * Resolves once a backend with this application name is waiting on a heavyweight lock, and reports
+ * which one: the wait event, and whether it is the project advisory lock
+ * (`pg_advisory_xact_lock(hashtextextended(projectId,0))`, decoded from pg_locks classid/objid).
+ */
+export async function waitsOnLock(observer: pg.Pool, application: string, projectId: string): Promise<LockWait> {
   for (let attempt = 0; attempt < 400; attempt++) {
-    const waiting = await observer.query(`SELECT 1 FROM pg_stat_activity
-      WHERE application_name=$1 AND state='active' AND wait_event_type='Lock'`, [application]);
-    if (waiting.rows.length) return;
+    const waiting = await observer.query(`SELECT a.wait_event,
+        EXISTS(SELECT 1 FROM pg_locks l WHERE l.pid=a.pid AND NOT l.granted AND l.locktype='advisory'
+          AND ((l.classid::bigint << 32) | l.objid::bigint)=hashtextextended($2,0)) AS project_lock
+      FROM pg_stat_activity a WHERE a.application_name=$1 AND a.state='active' AND a.wait_event_type='Lock'`,
+      [application, projectId]);
+    if (waiting.rows[0]) return { waitEvent: waiting.rows[0].wait_event, projectLock: waiting.rows[0].project_lock };
     await new Promise(resolve => setTimeout(resolve, 25));
   }
   throw new Error(`${application} never waited on a lock`);
@@ -45,10 +54,12 @@ export const describeOutcome = (outcome: PromiseSettledResult<unknown>): string 
 /**
  * Runs `stopped` on a gated connection until it reaches `stopBefore`, then starts `other` (whose
  * connections carry `otherApplication`), waits for `other` to block on a lock and lets `stopped`
- * continue. Asserts neither side failed, so a deadlock (40P01) on either side fails the test.
+ * continue. Asserts neither side failed, so a deadlock (40P01) on either side fails the test. Then
+ * asserts `other` was waiting on the project advisory lock: with the fix that lock is what keeps the
+ * two apart, so a wait on anything else means this interleaving no longer exercises the fix.
  */
 export async function interleave<A, B>(input: {
-  connectionString: string; options: string; observer: pg.Pool; otherApplication: string;
+  connectionString: string; options: string; observer: pg.Pool; otherApplication: string; projectId: string;
   stopBefore: Stop; stopped: (pool: pg.Pool) => Promise<A>; other: () => Promise<B>;
   labels?: [string, string];
 }): Promise<[A, B]> {
@@ -60,11 +71,13 @@ export async function interleave<A, B>(input: {
     await Promise.race([gate.paused, first.then(() => { throw new Error(`${stoppedLabel} finished before the interleaving point`); })]);
     const second = input.other();
     second.catch(() => {});
-    await waitsOnLock(input.observer, input.otherApplication);
+    const wait = await waitsOnLock(input.observer, input.otherApplication, input.projectId);
     gate.resume();
     const [a, b] = await Promise.allSettled([first, second]);
     assert.equal(b.status, "fulfilled", `${otherLabel}: ${describeOutcome(b)}`);
     assert.equal(a.status, "fulfilled", `${stoppedLabel}: ${describeOutcome(a)}`);
+    assert.ok(wait.waitEvent === "advisory" && wait.projectLock, `${otherLabel} waited on ` +
+      `${wait.waitEvent === "advisory" ? "another advisory lock" : wait.waitEvent}, expected the project lock held by ${stoppedLabel}`);
     return [(a as PromiseFulfilledResult<A>).value, (b as PromiseFulfilledResult<B>).value];
   } finally { gate.resume(); await gate.end(); }
 }
