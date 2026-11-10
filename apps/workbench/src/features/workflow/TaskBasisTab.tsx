@@ -17,6 +17,8 @@ import { DocumentLink } from "./DocumentLink";
 import { impactSeen, reviewBasisCommand } from "./taskCommands";
 import { useFixedRevision, type DocumentRead } from "./taskDocuments";
 import { ActionRow, Fine, TabSection, reasonField } from "./TaskForms";
+import { actorText } from "../../shared/actorPresentation";
+import { ActorIdentifiers } from "../../shared/ui/ActorIdentifiers";
 
 /** Where one fixed revision stands against the document's published version, as far as the read can tell. */
 export function basisStanding(revisionId: string, read: DocumentRead | undefined): { tone: "done" | "waiting" | "unknown" | "idle"; label: string; note: string } {
@@ -57,7 +59,8 @@ export function BasisList({ projectId, basis, content, reads }: {
         {retention && <details className="text-caption text-text-secondary">
           <summary className="w-fit cursor-pointer text-primary hover:underline">开始时明确保留旧版的记录</summary>
           <p className="mt-1 whitespace-pre-wrap text-label text-foreground">{retention.reason}</p>
-          <Fine>{retention.actorId} · {date(retention.createdAt)}；这个决定只覆盖当时核对的发布版，来源再改版仍要复核。</Fine>
+          <Fine>{actorText(retention.actorId)} · {date(retention.createdAt)}；这个决定只覆盖当时核对的发布版，来源再改版仍要复核。</Fine>
+          <ActorIdentifiers actors={[["保留决定者", retention.actorId]]} />
         </details>}
         <FullIdentifiers rows={[{ label: "文档", value: row.documentId }, { label: "固定修订", value: row.revisionId },
           { label: "当时核对的发布版", value: retention?.observedAdoptedRevisionId }, { label: "文档现发布版", value: read?.data?.document?.adoptedRevisionId }]} />
@@ -94,7 +97,8 @@ export function TaskBasisTab({ context, detail, reads, canReview }: {
         const title = reads[impact.documentId]?.data?.document?.title ?? "过程文档";
         return <li key={impact.id} className="flex flex-col gap-0.5">
           <p className="text-label text-foreground">{title} · {impact.state === "superseded" ? "已被更新的变化取代" : decision ? decision.decision === "adopt" ? "采用了新版" : "保留了旧版" : "已处理"}</p>
-          {decision && <Fine>{decision.actorId} · {date(decision.createdAt)} · {decision.reason}</Fine>}
+          {decision && <Fine>{actorText(decision.actorId)} · {date(decision.createdAt)} · {decision.reason}</Fine>}
+          {decision && <ActorIdentifiers actors={[["决定者", decision.actorId]]} />}
         </li>;
       })}</ul>
     </TabSection>}
@@ -147,6 +151,7 @@ function RevisionColumn({ label, read }: { label: string; read: { data: Document
     {!revision ? read.error ? <Notice tone="error">这一版暂不可读取：{errorText(read.error)}</Notice> : <LoadingState lines={5} label={`正在读取${label}`} />
       : <>
         <p className="text-caption text-muted-foreground">{date(revision.createdAt)} · {origin.author}</p>
+        <ActorIdentifiers actors={[["作者", revision.author]]} />
         {revision.body !== null && revision.format === "markdown"
           ? <>
             <MarkdownBody className="text-label" source={revision.body} identity={`impact-${revision.id}`} projectId={revision.projectId} topHeading={4} />

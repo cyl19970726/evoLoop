@@ -23,6 +23,7 @@ import {
 } from "./presentation";
 import { currentChainSummary, hasTerminalIntentGap, hasUnreadChainPages, inTaskContext, orderDispatches, readableOutcome, storyNextAction } from "./summary";
 import { selectedTaskLoop, taskLoopAssociation } from "./taskLoopSelection";
+import { actorRow, actorText } from "../../shared/actorPresentation";
 
 type Client = ReturnType<typeof orchestrationClient>;
 const link = "text-primary hover:underline";
@@ -320,16 +321,18 @@ function LoopObservation({ projectId, loop, scope, taskId, context, refresh }: {
         <div className="mt-3 grid min-w-0 gap-6 desktop:grid-cols-2">
           <RecordList title="入站与决定" count={data.inbox.items.length} more={!!data.inbox.nextCursor} empty="已读范围内没有入站。" button={moreButton("inbox")}>
             {data.inbox.items.filter(item => relatedSource(item.sourceEventId)).map(item => <RecordItem key={item.id} title={purposeLabel(item.purpose)} state={inboxStateLabel[item.state]}
-              rows={[{ label: "入站", value: item.id }, { label: "来源事件", value: item.sourceEventId }, { label: "后续派发", value: item.dispatchId }, { label: "证据", value: item.evidenceRef, text: true }]}>
-              <p>接收职责 <RoleName projectId={projectId} roleId={item.recipientRoleId} /> · {dispositionLabel(item.disposition)} · 处理人 {item.acknowledgedBy ?? "尚未署名"}</p>
+              rows={[{ label: "入站", value: item.id }, { label: "来源事件", value: item.sourceEventId }, { label: "后续派发", value: item.dispatchId }, { label: "证据", value: item.evidenceRef, text: true },
+                actorRow("处理人", item.acknowledgedBy)]}>
+              <p>接收职责 <RoleName projectId={projectId} roleId={item.recipientRoleId} /> · {dispositionLabel(item.disposition)} · 处理人 {item.acknowledgedBy ? actorText(item.acknowledgedBy) : "尚未署名"}</p>
               {item.reason && <p>处理理由：{item.reason}</p>}
             </RecordItem>)}
           </RecordList>
           <RecordList title="派发与实际运行" count={data.dispatches.items.length} more={!!data.dispatches.nextCursor} empty="已读范围内没有派发。" button={moreButton("dispatches")}>
             {data.dispatches.items.filter(related).map(item => <RecordItem key={item.id} title={<a className={link} href={taskSectionHref(projectId, item.taskId)}>{taskName(item.taskId)}</a>}
               state={dispatchStateLabel[item.state]} rows={[{ label: "派发", value: item.id }, { label: "来源事件", value: item.sourceEventId }, { label: "来源入站", value: item.inboxId },
-                { label: "上游派发", value: item.parentDispatchId }, { label: "运行", value: item.runtimeRunId }, { label: "交付", value: item.deliveryId }, { label: "证据", value: item.evidenceRef, text: true }]}>
-              <p>{purposeLabel(item.purpose)} · 承接职责 <RoleName projectId={projectId} roleId={item.recipientRoleId} /> · 任务第 {item.taskVersion} 版 · 请求人 {item.requestedBy}</p>
+                { label: "上游派发", value: item.parentDispatchId }, { label: "运行", value: item.runtimeRunId }, { label: "交付", value: item.deliveryId }, { label: "证据", value: item.evidenceRef, text: true },
+                actorRow("请求人", item.requestedBy)]}>
+              <p>{purposeLabel(item.purpose)} · 承接职责 <RoleName projectId={projectId} roleId={item.recipientRoleId} /> · 任务第 {item.taskVersion} 版 · 请求人 {actorText(item.requestedBy)}</p>
               <p>{item.runtimeRunId ? "已绑定实际运行；运行的终态在运行记录里核对。" : "还没有绑定运行。"}{item.outcome ? ` 执行方后续结果：${outcomeLabel(item.outcome)}。` : ""}</p>
               <p>原因：{item.reason}</p>
               {item.state === "unknown" && <Notice tone="error">派发结果未知；不能从这里认定外部没有执行。</Notice>}
@@ -341,9 +344,10 @@ function LoopObservation({ projectId, loop, scope, taskId, context, refresh }: {
               rows={[{ label: "提交", value: item.id }, { label: "派发", value: item.dispatchId }, { label: "运行", value: item.runId }, { label: "任务修订", value: item.taskRevisionId },
                 { label: "交付", value: item.deliveryId }, { label: "输入摘要", value: item.runInputHash }, { label: "交付操作", value: item.deliveryOperationId },
                 { label: "拟登记产物", value: `${item.deliveryIntent.artifactRef} · ${item.deliveryIntent.artifactRevision}`, text: true },
-                { label: "附带证据", value: item.evidenceRefs.join("、"), text: true }, ...(item.reason && sealReasonLabel(item.reason) === item.reason ? [] : [{ label: "封存原记录码", value: item.reason }])]}>
+                { label: "附带证据", value: item.evidenceRefs.join("、"), text: true }, ...(item.reason && sealReasonLabel(item.reason) === item.reason ? [] : [{ label: "封存原记录码", value: item.reason }]),
+                actorRow("提交人", item.submittedBy), actorRow("封存人", item.sealedBy)]}>
               <p>{deliveryMeaning(item)}</p>
-              <p>提交人 {item.submittedBy} · 封存人 {item.sealedBy ?? "尚无"}</p>
+              <p>提交人 {actorText(item.submittedBy)} · 封存人 {item.sealedBy ? actorText(item.sealedBy) : "尚无"}</p>
               <p>技术结果：{item.deliveryIntent.technicalResult} · {item.deliveryIntent.technicalEvidence}</p>
               {item.agentObservation && <p>提交时拟记录的智能体观察：{item.agentObservation}</p>}
               {item.reason && <p>封存结果：{sealReasonLabel(item.reason) === item.reason ? "原记录码见完整标识" : sealReasonLabel(item.reason)}</p>}
@@ -355,8 +359,8 @@ function LoopObservation({ projectId, loop, scope, taskId, context, refresh }: {
               item.entityType === "decision" && data.decisions[item.entityId] && relatedDispatchId(data.decisions[item.entityId]!.dispatchId)).map(item =>
               <RecordItem key={item.id} title={item.kind === "worker.decision" ? `执行方判定：${dispositionLabel(typeof item.detail.kind === "string" ? item.detail.kind : null)}` : "状态变化"}
                 state={date(item.createdAtUtc)} rows={[{ label: "事件类型", value: item.kind }, { label: "对象", value: `${item.entityType} ${item.entityId}` }, { label: "操作", value: item.operationId },
-                  { label: "事件细节", value: JSON.stringify(item.detail), text: true }]}>
-                <p>{item.actorId}</p>
+                  { label: "事件细节", value: JSON.stringify(item.detail), text: true }, actorRow("记录者", item.actorId)]}>
+                <p>记录者 {actorText(item.actorId)}</p>
               </RecordItem>)}
           </RecordList>
         </div>
@@ -382,7 +386,8 @@ function Story({ projectId, item, data, later, title, taskName }: {
   const state = later && item.outcome === "waiting" ? { tone: "history" as const, label: "当时等待 · 已有接续" }
     : intentGap ? { tone: "blocked" as const, label: "运行已结束，缺少提交" } : { tone: dispatchTone[item.state], label: dispatchStateLabel[item.state] };
   const rows: IdentifierRow[] = [{ label: "派发", value: item.id }, { label: "来源事件", value: item.sourceEventId }, { label: "入站", value: item.inboxId },
-    { label: "上游派发", value: item.parentDispatchId }, { label: "提交", value: submission?.id }, { label: "交付", value: submission?.deliveryId }, { label: "运行", value: item.runtimeRunId }];
+    { label: "上游派发", value: item.parentDispatchId }, { label: "提交", value: submission?.id }, { label: "交付", value: submission?.deliveryId }, { label: "运行", value: item.runtimeRunId },
+    actorRow("请求人", item.requestedBy), actorRow("决定者", decision?.actorId), actorRow("处理人", inbox?.acknowledgedBy)];
   return <article className="flex min-w-0 flex-col gap-2 border-t border-border py-4 first:border-t-0" data-dispatch={item.id}>
     <div className="flex flex-wrap items-start justify-between gap-2">
       <h5 className="min-w-0 text-small font-semibold text-foreground [overflow-wrap:anywhere]"><a className="hover:underline" href={taskSectionHref(projectId, item.taskId)}>
@@ -392,10 +397,10 @@ function Story({ projectId, item, data, later, title, taskName }: {
     <p className={mutedText}>派发登记 {date(item.createdAtUtc)}{detail && detail.task.version !== item.taskVersion ? ` · 派发时是任务第 ${item.taskVersion} 版，现名称可展开核对` : ""}</p>
     <FactList columns rows={[
       ["为什么做", `${sourceTriggerLabel(source)}${item.parentDispatchId ? " · 接续上游派发" : ""}`],
-      ["交给谁", <span key="to"><RoleName projectId={projectId} roleId={item.recipientRoleId} />{item.requestedBy ? ` · 由 ${item.requestedBy} 发起` : ""}</span>],
+      ["交给谁", <span key="to"><RoleName projectId={projectId} roleId={item.recipientRoleId} />{item.requestedBy ? ` · 由 ${actorText(item.requestedBy)} 发起` : ""}</span>],
       ["结果", intentGap ? "已确认运行结束，还没有署名提交或决定，不能视作交付。" : readableOutcome(item, submission, detail)],
       ["当时的下一步", later ? storyNextAction(inbox, item, submission, true) : intentGap ? "缺口已保留；原因与后续处理见关联的工作记录。" : storyNextAction(inbox, item, submission, false)],
-      [decisionHeading(!!decision), decision ? `${dispositionLabel(decision.kind)} · ${decision.actorId}` : inbox?.acknowledgedBy ? `${dispositionLabel(inbox.disposition)} · ${inbox.acknowledgedBy}` : "尚未读回派发决定"],
+      [decisionHeading(!!decision), decision ? `${dispositionLabel(decision.kind)} · ${actorText(decision.actorId)}` : inbox?.acknowledgedBy ? `${dispositionLabel(inbox.disposition)} · ${actorText(inbox.acknowledgedBy)}` : "尚未读回派发决定"],
     ]} />
     <p className="flex flex-wrap gap-x-3 gap-y-1 text-label">
       {revisionId ? <a className={link} href={taskSectionHref(projectId, item.taskId, { revisionId })}>派发请求时的任务（第 {item.taskVersion} 版）</a>

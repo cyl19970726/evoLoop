@@ -28,6 +28,8 @@ import {
   commitProblem, epistemicLabel, formalDecisionLabel, hashProblem, pathProblem, referenceDecisionLabel, referenceLine, slotHeads, validityLabel,
 } from "./referencePresentation";
 import { RepositoryChoice, useRepositoryChoice } from "./RepositoryChoice";
+import { actorText } from "../../shared/actorPresentation";
+import { ActorIdentifiers } from "../../shared/ui/ActorIdentifiers";
 
 type FixedKnowledge = Pick<KnowledgeRevision, "knowledgeId" | "revision" | "title" | "contentHash" | "validity" | "observedValidity" | "epistemicStatus" | "sources">;
 type WriteName = "git" | "formal" | "adopt";
@@ -236,7 +238,8 @@ export function ReferencePanel({ context, taskId, taskRevisionId, taskVersion }:
         return <li key={item.id} className="flex min-w-0 flex-col gap-1.5 border-t border-border py-3 first:border-t-0" data-reference-decision={item.id}>
           <p className="text-label font-medium text-foreground">{referenceLine(item)}{head ? "" : " · 已有更新的决定"}</p>
           <p className="text-label text-text-secondary [overflow-wrap:anywhere]">会改变的实际行动：{item.actionImpact}</p>
-          <p className={mutedText}>{item.actorId} · {date(item.createdAt)} · 理由：{item.reason}</p>
+          <p className={mutedText}>{actorText(item.actorId)} · {date(item.createdAt)} · 理由：{item.reason}</p>
+          <ActorIdentifiers actors={[["登记者", item.actorId]]} />
           <div className="flex flex-wrap gap-2">
             {item.kind === "git" && <Button size="compact" variant="ghost" aria-expanded={openGitDecisionId === item.id}
               onClick={() => setOpenGitDecisionId(current => current === item.id ? null : item.id)}>{openGitDecisionId === item.id ? "收起固定 Git 原文" : "阅读固定 Git 原文"}</Button>}

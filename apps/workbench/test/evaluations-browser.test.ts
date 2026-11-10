@@ -113,6 +113,7 @@ test("评价与后果 lists evaluations by task name in the rail and the middle,
         requests.push(url.search);
         return { value: { items: [listItem(1, "加入固定 Wiki 后首轮修复是否更快？", "修复首轮回归"), listItem(2, "直接材料能否独立完成？", "整理发布说明")], nextCursor: null } };
       }
+      if (url.pathname === `/api/projects/${projectId}/tasks/${taskId}`) return { value: task };
       return undefined;
     });
     await open(`/p/${projectId}/evaluations?taskId=${taskId}`);
@@ -124,7 +125,9 @@ test("评价与后果 lists evaluations by task name in the rail and the middle,
     assert.match(text, /加入固定 Wiki 后首轮修复是否更快？[\s\S]*匹配定义 v1 · 共同任务《修复首轮回归》/);
     assert.doesNotMatch(text, uuid, "the list names tasks, not IDs");
     assert.ok(requests.some(search => search.includes(`taskId=${taskId}`)), "the list is read for the source task only");
-    assert.equal(await page.getByRole("link", { name: "返回来源任务" }).getAttribute("href"), `/p/${projectId}/tasks/${taskId}`);
+    // The way back is said as every return link says it (N11): “返回任务：<名称>”.
+    assert.equal(await page.getByRole("link", { name: "返回任务：修复首轮回归" }).getAttribute("href"), `/p/${projectId}/tasks/${taskId}`);
+    assert.equal(await page.getByText("返回来源任务").count(), 0);
     const rail = page.locator("aside[aria-label=项目导航]").getByRole("navigation", { name: "评价目录" });
     assert.match(await rail.innerText(), /当前范围的评价 · 2[\s\S]*直接材料能否独立完成？[\s\S]*《整理发布说明》 · v1/);
     await page.getByText("需要时建立新的冻结评价").click();

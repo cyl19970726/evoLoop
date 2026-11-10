@@ -26,6 +26,8 @@ import {
   attemptActionLabel, canApplyIncoming, clearReceipt, connectionSummary, deliveryTag, incomingTag, mergeById, reasonText, receiptKindLabel,
   receiptSettled, receiptsFor, rememberReceipt, type Receipt, type ReceiptKind,
 } from "./collaborationPresentation";
+import { actorIdentifier, actorText } from "../../shared/actorPresentation";
+import { ActorIdentifiers } from "../../shared/ui/ActorIdentifiers";
 
 const muted = "text-caption text-muted-foreground";
 const code = "font-mono text-caption [overflow-wrap:anywhere]";
@@ -107,7 +109,8 @@ function DeliveryRow({ item, projectId, allowed, busy, read, configured, onActio
           : <ol className="flex flex-col gap-1.5">{attempts.data.map(attempt => <li key={attempt.id} className="flex flex-col gap-0.5">
             <span className="text-small text-foreground">{attemptActionLabel[attempt.action]} → {deliveryTag[attempt.outcome].label}</span>
             <Reason raw={attempt.reason} />
-            <span className={muted}>{attempt.actorId} · {date(attempt.createdAtUtc)}</span>
+            <span className={muted}>{actorText(attempt.actorId)} · {date(attempt.createdAtUtc)}</span>
+            <ActorIdentifiers actors={[["处理人", attempt.actorId]]} />
           </li>)}</ol>)}
         <ul className="flex flex-col gap-0.5 text-caption text-muted-foreground">
           <li>投影事件 <code className={code}>{item.eventId}</code></li>
@@ -136,13 +139,13 @@ function IncomingRow({ item, projectId, allowed, busy, read, onAction }: {
   return <li className="flex flex-col gap-2 border-t border-border py-3 first:border-t-0 first:pt-0">
     <div className="flex items-start justify-between gap-3">
       <div className="flex min-w-0 flex-col gap-0.5"><TaskName projectId={projectId} taskId={item.entityId} />
-        <span className={muted}>修改人 {item.actor?.verified ? item.actor.projectActorId : "身份未核实"} · 观察于 {date(item.observedAtUtc)} · 基于本地第 {item.observedLocalVersion} 版</span></div>
+        <span className={muted}>修改人 {item.actor?.verified ? actorText(item.actor.projectActorId) : "身份未核实"} · 观察于 {date(item.observedAtUtc)} · 基于本地第 {item.observedLocalVersion} 版</span></div>
       <div className="flex shrink-0 items-center gap-1.5">{item.reviewOnly && item.state === "pending" && <Badge>仅供审阅</Badge>}<StatusTag tone={tag.tone} label={tag.label} /></div>
     </div>
     <p className="text-small text-foreground">{item.patch.title ? `建议把标题改为「${item.patch.title}」` : "没有标题修改"}
       {item.patch.status && <span className="text-text-secondary">；远端状态改为「{item.patch.status}」，状态变化要走普通任务流程</span>}</p>
     <Reason raw={item.reason} />
-    {item.reviewedBy && <span className={muted}>由 {item.reviewedBy} 于 {date(item.reviewedAtUtc ?? undefined)} 处理</span>}
+    {item.reviewedBy && <span className={muted}>由 {actorText(item.reviewedBy)} 于 {date(item.reviewedAtUtc ?? undefined)} 处理</span>}
     {item.state === "unknown" && <Notice tone="waiting">任务操作的结果还不知道。按原操作回读后再决定，不要另建新操作。</Notice>}
     {reviewable && allowed && read === "stale" && <p className={muted} data-row-stale="">{staleRow}</p>}
     {reviewable && allowed && <form className="flex flex-col gap-2" onSubmit={event => event.preventDefault()}>
@@ -171,6 +174,8 @@ function IncomingRow({ item, projectId, allowed, busy, read, onAction }: {
         <li>远端记录 <code className={code}>{item.remoteRecordId}</code>{item.observedRemoteOperationId && <> · 远端操作 <code className={code}>{item.observedRemoteOperationId}</code></>}</li>
         <li>任务 <code className={code}>{item.entityId}</code> · 原操作 <code className={code}>{item.operationId}</code></li>
         <li>来源事件 <code className={code}>{item.sourceEventId}</code></li>
+        {item.actor?.verified && actorIdentifier(item.actor.projectActorId) && <li>修改人 <code className={code}>{item.actor.projectActorId}</code></li>}
+        {actorIdentifier(item.reviewedBy) && <li>处理人 <code className={code}>{item.reviewedBy}</code></li>}
         <ReasonOriginal raw={item.reason} label="限制原文" />
       </ul>
     </CollapsibleRow>

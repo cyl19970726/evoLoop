@@ -189,7 +189,11 @@ test("验收身份 by member name: who can be chosen, typed when needed, and eac
     const scheduleForm = schedules.getByRole("form", { name: "创建日程" });
     const scheduleConsumer = scheduleForm.getByLabel(/^指定验收人/);
     await scheduleForm.locator("option", { hasText: "verify-agent · 智能体" }).waitFor({ state: "attached" });
+    // Optional only for 独立智能体验收: 必须本人验收 drops “（可选）”, as 新建任务 does (N5).
+    await scheduleForm.getByText("指定验收人（可选）", { exact: true }).waitFor();
     await scheduleForm.getByLabel("任务验收方式").selectOption("human_required");
+    await scheduleForm.getByText("指定验收人", { exact: true }).waitFor();
+    assert.equal(await scheduleForm.getByText("指定验收人（可选）", { exact: true }).count(), 0);
     await scheduleForm.locator("option", { hasText: "chen-pm · 人" }).waitFor({ state: "attached" });
     assert.deepEqual(await options(scheduleConsumer), ["选择成员", `${actorId} · 人`, "chen-pm · 人"]);
     await scheduleConsumer.selectOption(actorId);

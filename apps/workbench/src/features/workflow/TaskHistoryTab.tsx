@@ -17,6 +17,8 @@ import { EvidenceText } from "./EvidenceText";
 import { Fact, Fine, ReadNote, TabSection } from "./TaskForms";
 import { useRevisionOrigin } from "../../shared/useRevisionOrigin";
 import type { RevisionOrigin } from "../../shared/revisionPresentation";
+import { actorText } from "../../shared/actorPresentation";
+import { ActorIdentifiers } from "../../shared/ui/ActorIdentifiers";
 
 /** A revision's author and reason in words (the schedule's name is read when a schedule generated it). */
 function RevisionWho({ projectId, revision, children }: { projectId: string; revision: { actorId?: string | null; reason?: string | null; taskId?: string }; children(origin: RevisionOrigin): React.ReactNode }) {
@@ -62,17 +64,19 @@ export function TaskHistoryTab({ projectId, detail, selectedRevision }: { projec
         : <ul className="flex flex-col gap-3">{detail.decisions.map(decision => <li key={decision.id} className="flex flex-col gap-1">
           <p className="text-label font-medium text-foreground">{decision.decision === "adopt" ? "采用新版" : "保留原依据"}</p>
           <EvidenceText label="理由" value={decision.reason} />
-          <Fine>{decision.actorId} · {date(decision.createdAt)} · <a className="text-primary hover:underline"
+          <Fine>{actorText(decision.actorId)} · {date(decision.createdAt)} · <a className="text-primary hover:underline"
             href={taskSectionHref(projectId, task.id, { revisionId: decision.previousTaskRevisionId })}>查看决定前的任务与依据</a></Fine>
+          <ActorIdentifiers actors={[["决定者", decision.actorId]]} />
         </li>)}</ul>}
     </TabSection>
     {proposal && <TabSection title="验收约定">
       <div className="grid grid-cols-2 gap-x-6 gap-y-3 max-compact:grid-cols-1">
         <Fact label="验收方式">{proposal.acceptanceMode === "independent_agent" ? "独立的智能体使用当前交付" : proposal.acceptanceMode === "human_required" ? "指定的人本人使用当前交付" : "历史约定"}</Fact>
-        <Fact label="指定验收身份">{proposal.consumer || "未指定；由符合验收方式的身份签收"}</Fact>
+        <Fact label="指定验收身份">{proposal.consumer ? actorText(proposal.consumer) : "未指定；由符合验收方式的身份签收"}</Fact>
         <Fact label="完成要求">{proposal.useRequired ? "要有本次交付的实际使用记录" : "按历史约定核对"}</Fact>
         <Fact label="停止条件">{proposal.stopCondition || "未写"}</Fact>
       </div>
+      <ActorIdentifiers actors={[["指定验收身份", proposal.consumer]]} />
       {proposal.evidence && <EvidenceText label="提出依据" value={proposal.evidence} />}
     </TabSection>}
     {(detail.judgements ?? []).length > 0 && <TabSection title="旧提议的判断">
@@ -80,7 +84,8 @@ export function TaskHistoryTab({ projectId, detail, selectedRevision }: { projec
         <p className="text-label font-medium text-foreground">{judgementLabel[judgement.decision] ?? "判断"}</p>
         <EvidenceText label="理由" value={judgement.reason} />
         <EvidenceText label="证据" value={judgement.evidence} />
-        <Fine>{judgement.actorId} · {date(judgement.createdAt)}</Fine>
+        <Fine>{actorText(judgement.actorId)} · {date(judgement.createdAt)}</Fine>
+        <ActorIdentifiers actors={[["判断者", judgement.actorId]]} />
       </li>)}</ul>
     </TabSection>}
   </div>;

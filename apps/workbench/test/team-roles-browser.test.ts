@@ -56,6 +56,12 @@ test("职责 and 分工与运行 read and write in the shell layout, and old run
         const sessionKey = decodeURIComponent(url.pathname.split("/").at(-2)!);
         value = { projectId, sessionKey, displayName: sessionKey === `owned:${id(11)}` ? "前端甲" : "前端乙", version: 1, updatedAt: stamp };
       }
+      // An agent is named from its directory record (agentDisplayName), with the registered name.
+      else if (url.pathname.startsWith(`${root}/session-work/`) && url.pathname.split("/").length === 6) {
+        const sessionKey = decodeURIComponent(url.pathname.split("/").at(-1)!);
+        value = { session: { key: sessionKey, kind: "owned", title: "前端", roles: [], profile: { displayName: sessionKey === `owned:${id(11)}` ? "前端甲" : "前端乙" } },
+          observationCursor: "0", currentWork: null };
+      }
       else if (url.pathname === "/api/commands" && req.method === "POST") {
         let body = ""; for await (const chunk of req) body += String(chunk);
         const command = JSON.parse(body) as Record<string, unknown>; commands.push(command);

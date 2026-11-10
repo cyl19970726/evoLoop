@@ -20,6 +20,15 @@ export const runStateLabel: Record<string, string> = {
   requested: "待派发", dispatching: "派发中", running: "运行中", completed: "运行结束", failed: "运行失败", interrupted: "已中断", unknown: "结果未知",
 };
 
+/**
+ * The run a document came from, as the reader says it: produced by one run, when it started and where it stands. The
+ * run's identifier stays in 完整标识; until the run is read back and matches, only that a run was registered is said.
+ */
+export function originRunSummary(run: { createdAt: string; state: string } | null | undefined, reading: boolean, time: (iso: string) => string): string {
+  if (!run) return `由一次登记的运行产生 · ${reading ? "正在核对" : "未能核实"}`;
+  return `由一次运行产生 · 开始于 ${time(run.createdAt)} · ${runStateLabel[run.state] ?? "状态未识别"}`;
+}
+
 export type KindFilter = "all" | DocumentKind;
 export type StatusFilter = "active" | DocumentStatus | "all";
 export const statusFilterLabel: Record<StatusFilter, string> = {

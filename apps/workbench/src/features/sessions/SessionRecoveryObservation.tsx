@@ -5,8 +5,8 @@ import { FullIdentifiers, type IdentifierRow } from "../../shared/ui/FullIdentif
 import { date } from "../../shared/ui/shared";
 import type { RecoveryRead } from "./recoveryPresentation";
 import { permissionLabel, recoveryActivationLabel, recoveryBudget, recoveryCauseLabel, recoveryNextActionLabel, recoveryPhaseLabel, recoveryReasonSummary, recoverySourceStateLabel } from "./recoveryPresentation";
+import { actorRow, actorText } from "../../shared/actorPresentation";
 
-const recordId = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const heading = "text-label font-semibold text-foreground";
 const note = "text-caption text-text-secondary [overflow-wrap:anywhere]";
 const partialNote = "rounded-md bg-warning-soft px-3 py-2 text-caption text-foreground [overflow-wrap:anywhere]";
@@ -54,8 +54,8 @@ export function SessionRecoveryOverview({ read, runtimeState, queueHref }: { rea
       {view.decisions.length ? <ol className="mt-2 flex flex-col gap-2.5">{view.decisions.slice(0, 20).map(decision => <li key={decision.id} className="flex min-w-0 flex-col gap-0.5">
         <span><strong className="font-medium text-foreground">{decision.kind === "retry_failed" ? "原失败任务重试" : "恢复接续"}</strong> · {date(decision.createdAt)}</span>
         <p className="[overflow-wrap:anywhere]">{decision.reason}</p>
-        <small className={mutedText}>登记者 {recordId.test(decision.actorId) ? "见完整标识" : decision.actorId}{decision.evidenceRef && ` · 依据 ${decision.evidenceRef}`}</small>
-        <FullIdentifiers summary="决定来源" rows={[{ label: "决定来源", value: decision.causeId }, { label: "登记者", value: recordId.test(decision.actorId) ? decision.actorId : null }]} />
+        <small className={mutedText}>登记者 {actorText(decision.actorId)}{decision.evidenceRef && ` · 依据 ${decision.evidenceRef}`}</small>
+        <FullIdentifiers summary="决定来源" rows={[{ label: "决定来源", value: decision.causeId }, actorRow("登记者", decision.actorId)]} />
       </li>)}</ol> : <p className="mt-1.5">尚无正式恢复决定；阶段变化不能当作已批准。</p>}
     </details>
   </section>;

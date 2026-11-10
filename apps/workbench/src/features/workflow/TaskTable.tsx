@@ -16,7 +16,7 @@ import { cognitionSummary, businessNextStep } from "../../shared/workStatusPrese
 import { waitingText, workItemNextStep } from "../../shared/workPresentation";
 import { href } from "../../shared/ui/shared";
 import { sessionHref } from "../sessions";
-import { PhaseCounts, ReconciliationDetails, useAgentNames } from "./TaskReconciliation";
+import { PhaseCounts, ReconciliationDetails, useAgentNames, type AgentNameState } from "./TaskReconciliation";
 import { emptyListText, TaskListNotices } from "./TaskRail";
 import { assignmentSessionKey, assignmentStatusLabel, isClosedTask, matchingProjection, type TaskListView } from "./taskExperience";
 import { legacyDecisionLabel, taskNextStep } from "./taskListPresentation";
@@ -147,7 +147,7 @@ function TableRow({ task, list, projectId, selected, onSelect, linkFor, columns,
   task: Task; list: TaskListRead; projectId: string; selected: boolean; onSelect(id: string): void; linkFor(taskId: string, tab?: string): string;
   actorId?: string | undefined;
   columns: Record<OptionalColumn, boolean>; owner: { title?: string; error?: string; pending?: boolean } | undefined;
-  agents: Record<string, { name: string | null; problem: string | null }>; attention: TaskAttentionItem[];
+  agents: Record<string, AgentNameState>; attention: TaskAttentionItem[];
   timing: { data?: Awaited<ReturnType<ReturnType<typeof api>["taskTiming"]>>; error: unknown } | undefined; stacked: boolean;
 }) {
   const status = list.statuses[task.id];
@@ -167,7 +167,11 @@ function TableRow({ task, list, projectId, selected, onSelect, linkFor, columns,
   const cell = "px-2 py-2.5 align-top";
   const kind = taskType(projection?.taskKind ?? task.kind);
   const taskStateNote = (cognition || projection && !closed && rowStatus(task.state, projection.phase).label !== taskStateStatus[task.state].label) ? `任务${taskStateStatus[task.state].label}` : null;
-  const agent = key ? <a className="text-primary hover:underline" href={sessionHref(projectId, key, actorId ? tableOrigin(projectId, actorId, undefined, { id: task.id, title }) : null)}>{agents[key]?.name ?? (agents[key]?.problem ? "未登记名称的智能体" : "正在读取名称…")}</a> : null;
+  const agent = key ? <a className="text-primary hover:underline" href={sessionHref(projectId, key, actorId ? tableOrigin(projectId, actorId, undefined, { id: task.id, title }) : null)}>{agents[key]?.name ?? (agents[key]?.problem ? "智能体（名称暂不可读）" : "正在读取名称…")}</a> : null;
+  // Two agents of the table with the same name: the short identifier tells them apart, as secondary text (as the agent
+  // directory does); an agent whose name is its own never shows one.
+  const short = key ? agents[key]?.short : undefined;
+  const shortText = short ? `标识 ${short} · ` : "";
   const unassigned = !projection ? "承接尚未读回" : closed ? "无当前分派" : "待具体承接";
   const notes = <div className="mt-0.5 flex flex-col gap-0.5 text-caption text-muted-foreground">
     {pending && <span className="text-warning">依据待复核</span>}
@@ -190,7 +194,7 @@ function TableRow({ task, list, projectId, selected, onSelect, linkFor, columns,
       <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-caption text-muted-foreground">
         <StatusTag tone={shown.tone} label={shown.label} />{taskStateNote && <span>{taskStateNote}</span>}<span>{kind}</span>
       </div>
-      <p className="mt-1 text-caption text-muted-foreground">承接 · {agent ? <>{agent} · {assignmentStatusLabel(projection!)}</>
+      <p className="mt-1 text-caption text-muted-foreground">承接 · {agent ? <>{agent} · {shortText}{assignmentStatusLabel(projection!)}</>
         : <>{unassigned} · {owner?.title ? `负责职责 · ${owner.title}` : owner?.error ?? "负责职责待核对"}</>}</p>
       <p className="mt-0.5 text-caption text-muted-foreground">最近进展 · <span className={progress.missing ? undefined : "text-foreground"}>{progress.name}</span>{(progress.time || progress.source) && <> · {progress.time || progress.source}</>}</p>
       {notes}
@@ -209,7 +213,7 @@ function TableRow({ task, list, projectId, selected, onSelect, linkFor, columns,
     </td>
     <td className={cell} data-owner-cell="">
       {agent ? <>{agent}
-        <span className="mt-0.5 block text-caption text-muted-foreground">{assignmentStatusLabel(projection!)}</span></>
+        <span className="mt-0.5 block text-caption text-muted-foreground">{shortText}{assignmentStatusLabel(projection!)}</span></>
         : <><span className="text-text-secondary">{unassigned}</span>
           <span className="mt-0.5 block text-caption text-muted-foreground">{owner?.title ? `负责职责 · ${owner.title}` : owner?.error ?? "负责职责待核对"}</span></>}
     </td>

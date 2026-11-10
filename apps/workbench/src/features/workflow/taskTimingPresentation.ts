@@ -1,5 +1,5 @@
 import type { TaskTimingView } from "../../shared/api";
-import { timeFieldInstant } from "../../shared/zonedTime";
+import { timeFieldInstant, zoneName } from "../../shared/zonedTime";
 
 export function timingVersion(timing: TaskTimingView | null): number {
   if (!timing) return 0;
@@ -36,12 +36,13 @@ export function dailyScheduledInstant(value: string): string {
   return instant;
 }
 
+/** An agreed time on the task's own clock, its zone named as the schedule page names it (zonedTime: “（上海）”). */
 export function formatScheduled(value: string | null, timezone: string): string {
   if (!value) return "尚未安排";
   const date = new Date(value);
   if (!Number.isFinite(date.getTime())) return "时间无法识别";
   try {
-    return `${new Intl.DateTimeFormat("zh-CN", { timeZone: timezone, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false }).format(date)}（${timezone}）`;
+    return `${new Intl.DateTimeFormat("zh-CN", { timeZone: timezone, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false }).format(date)}（${zoneName(timezone)}）`;
   } catch { return "时区无法识别"; }
 }
 

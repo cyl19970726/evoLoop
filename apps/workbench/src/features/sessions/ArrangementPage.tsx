@@ -25,7 +25,7 @@ import {
   buildArrangement, freeCapacity, type Arrangement, type ArrangementRisk, type ArrangementRow, type QueuedWork,
 } from "./arrangementModel";
 import {
-  boardPhaseText, capacityUnknownReason, directoryWorkCaption, noConflictText, noFreeAgentText, readStateOf,
+  boardPhaseText, capacityUnknownReason, directoryWorkCaption, freeCountStat, noConflictText, noFreeAgentText, readStateOf,
   staleLabel, type ReadState,
 } from "./arrangementPresentation";
 import { workNextStep } from "../../shared/workPresentation";
@@ -228,7 +228,7 @@ export function ArrangementPage({ context, refresh }: { context: MutationContext
   const tasksShown = reads.tasks === "ready" || reads.tasks === "stale";
   const working = board?.rows.filter(row => row.load === "busy" || row.load === "overloaded").length ?? 0;
   const capacity = board ? freeCapacity(board) : null;
-  const capacityKnown = !capacityUnknownReason(reads.tasks, reads.tasksComplete, reads.queues);
+  const free = capacity ? freeCountStat(capacity, capacityUnknownReason(reads.tasks, reads.tasksComplete, reads.queues), reads.stale) : null;
   const taskNote = reads.tasks === "stale" ? "上次读回" : tasksShown && !reads.tasksComplete ? "已读部分" : undefined;
   const stale = (state: ReadState) => state === "stale" ? "上次读回" : undefined;
   return <div data-ui="" className="arrangement-page mx-auto flex w-full max-w-[1180px] flex-col gap-6 px-4 py-5 compact:px-8 compact:py-7">
@@ -247,7 +247,7 @@ export function ArrangementPage({ context, refresh }: { context: MutationContext
         : <>
           <div className="grid grid-cols-2 gap-2 compact:grid-cols-4" aria-label="概况">
             <Stat label="个智能体在做事" value={working} note={stale(sessionRead)} />
-            <Stat label="个智能体空闲" value={capacityKnown ? capacity.free.length : "?"} note={capacityKnown && reads.stale ? "上次读回" : undefined} />
+            <Stat label={free!.label} value={free!.value} note={free!.note} />
             <Stat label="项任务没有承接者" value={tasksShown ? board.unassigned.length : "?"} note={taskNote} />
             <Stat label="个冲突与风险" value={tasksShown ? board.risks.length : "?"} note={taskNote}
               tone={tasksShown && board.risks.length ? "danger" : undefined} onClick={() => panel?.setOpen(true)} />

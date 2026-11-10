@@ -33,6 +33,9 @@ const cachedSessionResources = Object.fromEntries(["configuredModel", "actualMod
 const cachedSessionSnapshot = { session: cachedSession, observationCursor: "0", currentWork: null, assignments: [], roleTasks: [],
   queue: [], results: [], questions: [], activity: [], resources: cachedSessionResources, metadata: sessionMetadata };
 const long = "夹具范围说明".repeat(24);
+// An automatic run's worker credential (apps/coordinator/src/workers/credentials.ts): `worker-<UUID>`.
+const workerActor = "worker-66666666-1111-4222-8333-444444444444";
+const uuidText = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
 const task = { projectId, id:taskId, version:8, currentRevisionId:taskId, title:"同一任务续跑", content:"任务正文", contentDocumentId:taskId,
   contentRevisionId:taskId, kind:"validation", acceptance:"有证据", owner:"owner", state:"in_progress" };
 const context = (loopId: string, dispatchId: string) => ({ loopId, dispatchIds:[dispatchId],parentDispatchIds:[],sourceEventIds:[] });
@@ -63,7 +66,7 @@ test("built Task page selects the current Loop, preserves manual history and fit
         value = {task:currentTask,revision:{...currentTask,taskId:currentTask.id,id:currentTask.id,actorId:"owner",reason:"夹具",createdAt},basis:null,
         links:[],impacts:[],decisions:[],proposal:{stageId},judgements:[],deliveries:currentTask.id === taskId ? [{
           projectId,id:"55555555-0000-4000-8000-000000000010",taskId,taskRevisionId:taskId,runId,
-          technicalResult:"passed",technicalEvidence:"已核对",actorId:"owner",createdAt,
+          technicalResult:"passed",technicalEvidence:"已核对",actorId:workerActor,createdAt,
           artifactRef:"https://example.test/report",artifactRevision:"v1",contentHash:"a".repeat(64),
         }] : [],observations:[],closures:[]};
       }
@@ -103,6 +106,10 @@ test("built Task page selects the current Loop, preserves manual history and fit
       else if (url.pathname === `${p}/orchestration/loops/${newId}`) value = loop(newId,"active");
       else if (url.pathname === `${p}/goals/${goalId}`) value = {id:goalId,outcome:long};
       else if (url.pathname === `${p}/stages/${stageId}`) value = {id:stageId,deliverable:long};
+      // An audit event the automatic run's worker recorded on this task's dispatch.
+      else if (url.pathname === `${p}/orchestration/loops/${newId}/events`) value = page([{ projectId, id:"77777777-1111-4222-8333-444444444444", loopId:newId,
+        entityType:"dispatch", entityId:"new-dispatch", operationId:"88888888-1111-4222-8333-444444444444", kind:"dispatch.state", actorId:workerActor,
+        detail:{ dispatchId:"new-dispatch" }, createdAtUtc:createdAt }]);
       else if (url.pathname.startsWith(`${p}/orchestration/loops/`)) value = page([]);
       res.writeHead(status,{"content-type":"application/json"}); res.end(JSON.stringify(value)); return;
     }
@@ -167,6 +174,16 @@ test("built Task page selects the current Loop, preserves manual history and fit
     panel.locator(`[data-association="${kind}"][data-association-loop="${loopId}"]${runId ? `[data-association-run="${runId}"]` : ""}`);
   await association("current",newId,runId).waitFor();
   assert.equal(await shownLoop(),newId);
+  // The audit event names who recorded it in words: the worker credential is 自动执行方, its value under 完整标识.
+  const sources = panel.locator("details").filter({ has: pageBrowser.locator("summary", { hasText: "来源：入站、派发、提交与审计原记录" }) }).first();
+  await sources.locator(":scope > summary").click();
+  const audit = sources.getByRole("region",{name:"审计事件"});
+  await audit.getByText("记录者 自动执行方").waitFor();
+  assert.doesNotMatch(await audit.innerText(),uuidText,"no identifier in the audit events' text");
+  assert.doesNotMatch(await audit.innerText(),/worker-/);
+  await audit.getByText("来源与完整标识").click();
+  assert.match(await audit.innerText(),new RegExp(`记录者\\s*${workerActor}`));
+  await sources.locator(":scope > summary").click();
   assert.match(await panel.locator(`[data-loop-id="${oldId}"]`).innerText(),/创建.*2026/);
   const pickerTexts = await panel.getByRole("group",{name:"选择循环"}).getByRole("button").allInnerTexts();
   assert.equal(pickerTexts.every(text => text.length < 70),true);
@@ -214,6 +231,11 @@ test("built Task page selects the current Loop, preserves manual history and fit
   };
   const exactRunLink = currentTaskPage.getByRole("link",{name:"核对这次运行 →"});
   await exactRunLink.waitFor();
+  // The delivery tab names its recorder the same way; no identifier in its text.
+  const deliveryRecord = currentTaskPage.locator('[data-delivery="55555555-0000-4000-8000-000000000010"]');
+  assert.match(await deliveryRecord.innerText(),/登记者 自动执行方/);
+  assert.doesNotMatch(await deliveryRecord.innerText(),uuidText,"no identifier in the delivery's text");
+  assert.doesNotMatch(await deliveryRecord.innerText(),/worker-/);
   assert.equal(await exactRunLink.getAttribute("href"),`/p/${projectId}/tasks/${taskId}?tab=runtime&run=${runId}`);
   assert.equal((await currentTaskPage.getByRole("link",{name:"查看对应智能体 →"}).getAttribute("href"))?.split("&return=")[0],
     `/p/${projectId}/sessions?session=${encodeURIComponent(`owned:${taskId}`)}`);

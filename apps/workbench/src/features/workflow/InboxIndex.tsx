@@ -1,9 +1,9 @@
 // 待我处理 › 待我验收与判断 (tasks.md 收件页, layout.md 待我处理): acceptance arranged for me, deliveries that declare me
-// as their consumer and wait for my use, and basis changes waiting for review, each linked to its task. Reading and
-// observing is recorded by the person (the CLI, or the task's 交付与使用); a basis change is decided on the task's
-// 依据与影响. Open to-do tasks are in the task table, filtered to 待办. The reads and their keys are shared with the
-// count in the shell (inboxReads.ts). While a list is being read or cannot be read, the page never says there is
-// nothing waiting.
+// as their consumer and wait for my use, and basis changes waiting for review, each linked to its task with the way
+// back here (inboxTaskLink). Reading and observing is recorded by the person (the CLI, or the task's 交付与使用), said
+// in words, never as the command line; a basis change is decided on the task's 依据与影响. Open to-do tasks are in the
+// task table, filtered to 待办. The reads and their keys are shared with the count in the shell (inboxReads.ts). While
+// a list is being read or cannot be read, the page never says there is nothing waiting.
 import type { ReactNode } from "react";
 import { RefreshCw } from "lucide-react";
 import type { AcceptanceHumanItem } from "@evoloop/contracts/acceptance-relay";
@@ -14,9 +14,9 @@ import type { MutationContext } from "../../shared/ActionForm";
 import { FullIdentifiers } from "../../shared/ui/FullIdentifiers";
 import { PageSection, mutedText } from "../../shared/ui/PageParts";
 import { useTaskName } from "../../shared/ui/RecordName";
-import { date, href } from "../../shared/ui/shared";
+import { date } from "../../shared/ui/shared";
 import { nameOnly } from "../../shared/workPresentation";
-import { deliveryLink, lastUseText, useRequirementText, type DeliveryForMe } from "./inboxModel";
+import { deliveryLink, inboxTaskLink, lastUseText, useRequirementText, type DeliveryForMe } from "./inboxModel";
 import { useInboxReads, type DeliveriesForMe } from "./inboxReads";
 import { defaultTaskListView, taskListRoute } from "./taskExperience";
 
@@ -51,13 +51,13 @@ export function InboxIndex({ context }: { context: MutationContext; refresh: num
       <Button variant="ghost" disabled={reading} onClick={context.onChanged}><RefreshCw aria-hidden="true" className={reading ? "animate-spin" : undefined} />重新读取</Button>
     </header>
     <PageSection title="待我验收" action={<span className={mutedText}>{countText(mine, acceptance?.length)}</span>}
-      description="阅读与观察由本人在命令行里记录（work acceptance read / observe）；这里只列出安排与当前进度。">
+      description="读过没有、用得怎样，由验收人本人记录：在命令行里记，或在任务的“交付与使用”里记录使用。这里只列出安排与当前进度。">
       <ReadState read={mine} what="待验收事项" />
       {acceptance?.length === 0 && <p className="text-small text-text-secondary">当前没有分配给我的验收事项。</p>}
-      {!!acceptance?.length && <ul aria-label="待我验收" className="flex flex-col">{acceptance.map(item => <li key={item.relayId}><AcceptanceRow projectId={projectId} item={item} /></li>)}</ul>}
+      {!!acceptance?.length && <ul aria-label="待我验收" className="flex flex-col">{acceptance.map(item => <li key={item.relayId}><AcceptanceRow projectId={projectId} actorId={actorId} item={item} /></li>)}</ul>}
     </PageSection>
     <PageSection title="等我使用的交付" action={<span className={mutedText}>{deliveryCountText(deliveries)}</span>}
-      description="任务声明你是这次交付的使用者，你还没有记录“已使用”。打开任务的“交付与使用”读成果，并记录用过的版本和结果。">
+      description="任务声明你是这次交付的使用者，你还没有记录“已使用”。打开任务的“交付与使用”读成果，并记录用过的版本和结果。你记过“使用失败”的交付由执行者返工，不在这里列出。">
       <ReadState read={deliveries} what="等我使用的交付" />
       <DeliveryList projectId={projectId} actorId={actorId} value={deliveries.data} />
     </PageSection>
@@ -65,7 +65,7 @@ export function InboxIndex({ context }: { context: MutationContext; refresh: num
       description="任务固定的依据出现新版。在任务的“依据与影响”里决定采用新版还是保留原依据。">
       <ReadState read={impacts} what="依据变化" />
       {pending?.length === 0 && <p className="text-small text-text-secondary">当前没有待复核的依据变化。</p>}
-      {!!pending?.length && <ul aria-label="依据变化" className="flex flex-col">{pending.map(item => <li key={item.id}><ImpactRow projectId={projectId} item={item} /></li>)}</ul>}
+      {!!pending?.length && <ul aria-label="依据变化" className="flex flex-col">{pending.map(item => <li key={item.id}><ImpactRow projectId={projectId} actorId={actorId} item={item} /></li>)}</ul>}
     </PageSection>
     <p className={mutedText}>待办任务在任务表格里按“待办”筛选查看。<a className="ml-1 text-primary hover:underline" href={taskListRoute(projectId, { ...defaultTaskListView, filter: "todo" })}>打开待办任务</a></p>
   </div>;
@@ -100,11 +100,11 @@ function DeliveryRow({ projectId, actorId, item }: { projectId: string; actorId:
   </div>;
 }
 
-function AcceptanceRow({ projectId, item }: { projectId: string; item: AcceptanceHumanItem }) {
+function AcceptanceRow({ projectId, actorId, item }: { projectId: string; actorId: string; item: AcceptanceHumanItem }) {
   const task = nameOnly("任务", useTaskName(projectId, item.taskId));
   const progress = `${item.readAt ? `读于 ${date(item.readAt)}` : "尚未读取"} · ${item.observationId ? "已有使用观察" : "尚未留使用观察"}`;
   return <div className="flex flex-col gap-1 border-t border-border py-1 first:border-t-0">
-    <ListRow href={href(projectId, "task", item.taskId)} title={`${item.stage === "formal" ? "正式复验" : "候选验收"} · ${item.scopeDescription}`}
+    <ListRow href={inboxTaskLink(projectId, item.taskId, actorId)} title={`${item.stage === "formal" ? "正式复验" : "候选验收"} · ${item.scopeDescription}`}
       meta={`${task} · 第 ${item.version} 次安排 · ${progress}`} />
     <p className={`${mutedText} px-3`}>{item.entrypoint ? `入口：${item.entrypoint}` : "按当前固定交付读取"} · 安排于 {date(item.createdAt)}</p>
     <FullIdentifiers className="px-3" rows={[{ label: "验收安排", value: item.relayId }, { label: "固定交付", value: item.deliveryId },
@@ -112,10 +112,10 @@ function AcceptanceRow({ projectId, item }: { projectId: string; item: Acceptanc
   </div>;
 }
 
-function ImpactRow({ projectId, item }: { projectId: string; item: Impact }) {
+function ImpactRow({ projectId, actorId, item }: { projectId: string; actorId: string; item: Impact }) {
   const task = nameOnly("任务", useTaskName(projectId, item.taskId));
   return <div className="flex flex-col gap-1 border-t border-border py-1 first:border-t-0">
-    <ListRow href={`${href(projectId, "task", item.taskId)}?tab=basis`} title={task} meta={`依据有新版待复核 · 发现于 ${date(item.createdAt)}`}
+    <ListRow href={inboxTaskLink(projectId, item.taskId, actorId, "basis")} title={task} meta={`依据有新版待复核 · 发现于 ${date(item.createdAt)}`}
       trailing={<span className="text-primary">查看影响</span>} />
     <FullIdentifiers className="px-3" rows={[{ label: "依据文档", value: item.documentId }, { label: "固定修订", value: item.fromRevisionId },
       { label: "新采纳修订", value: item.toRevisionId }]} />

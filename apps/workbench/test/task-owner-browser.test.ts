@@ -71,6 +71,9 @@ test("Task owner resolves one real Role and only verified bound agent links at 3
       ];
       else if (url.pathname === `${p}/session-work/${encodeURIComponent(`owned:${sessionId}`)}/profile`)
         value = {projectId,sessionKey:`owned:${sessionId}`,displayName:"前端实现",version:1,updatedAt:stamp};
+      // An agent is named from its directory record (agentDisplayName), with the registered name.
+      else if (url.pathname === `${p}/session-work/${encodeURIComponent(`owned:${sessionId}`)}`)
+        value = {session:{key:`owned:${sessionId}`,kind:"owned",title:"开发流程职责",roles:[],profile:{displayName:"前端实现"}},observationCursor:"0",currentWork:null};
       else if (url.pathname.endsWith("/profile")) { status=404; value={message:"未登记"}; }
       else if (url.pathname === `${p}/runtime/runs`) value = [];
       else if (url.pathname === `${p}/runtime`) value = {available:true,error:null,allowedCwds:[],grants:[]};

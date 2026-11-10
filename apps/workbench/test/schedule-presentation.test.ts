@@ -4,7 +4,24 @@ import type { Occurrence } from "@evoloop/contracts/scheduling";
 import {
   coordinatorErrorText, grantEmptyText, nextTimeText, occurrenceReasonKnown, occurrenceReasonText, ruleIsComputable,
   scheduleRuleLabel, latestOccurrence, occurrenceLabel, scheduleReadView, scheduleRuleText, scheduleTime, utcInstant, zoneName,
+  scheduleFromPath, scheduleHref, scheduleTaskHref,
 } from "../src/features/scheduling/presentation.ts";
+import { readReturn } from "../src/shared/returnLink.ts";
+import { taskSessionReturn } from "../src/shared/taskNavigation.ts";
+
+test("a task the schedule produced opens with “返回日程：<名称>” back to that schedule (N2)", () => {
+  const projectId = "10000000-0000-4000-8000-000000000001", taskId = "20000000-0000-4000-8000-000000000002", scheduleId = "30000000-0000-4000-8000-000000000003";
+  const link = scheduleTaskHref(projectId, taskId, { id: scheduleId, title: "季度巡检" }, "lead");
+  assert.equal(link.split("?")[0], `/p/${projectId}/tasks/${taskId}`);
+  const back = taskSessionReturn(link, projectId, taskId, "lead");
+  assert.deepEqual([back?.href, back?.label], [scheduleHref(projectId, scheduleId), "返回日程：季度巡检"]);
+  assert.equal(readReturn(link, projectId, "someone-else"), null, "made for its reader only");
+  // The schedule's own address selects it again.
+  assert.equal(scheduleFromPath(scheduleHref(projectId, scheduleId), projectId), scheduleId);
+  assert.equal(scheduleFromPath(`/p/${projectId}/schedules`, projectId), null);
+  assert.equal(scheduleFromPath(`/p/other/schedules?schedule=${scheduleId}`, projectId), null);
+  assert.equal(scheduleFromPath(`/p/${projectId}/schedules?schedule=a&schedule=b`, projectId), null);
+});
 test("occurrence reasons from the scheduler read as Chinese; an unknown reason is summarised, not shown",()=>{
  // The codes written by packages/core/src/scheduling/index.ts.
  for (const reason of ["scheduled","overlap skipped","overlap queued","queued occurrence admitted"]) {

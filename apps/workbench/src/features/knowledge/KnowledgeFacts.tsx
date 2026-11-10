@@ -86,7 +86,7 @@ export function KnowledgeFacts({ projectId, reading, previous, stale = false, so
         {history ? <ul aria-label="历史版本" className="flex flex-col gap-0.5">{history.items.map((item, index) => {
           const on = item.revision === page.revision;
           return <li key={item.revision}>
-            <a href={knowledgeHref(projectId, { knowledgeId: item.knowledgeId, revision: item.revision })} aria-current={on ? "page" : undefined} title={`版本 ${item.revision.slice(0, 8)}`}
+            <a href={knowledgeHref(projectId, { knowledgeId: item.knowledgeId, revision: item.revision })} aria-current={on ? "page" : undefined}
               className={cn("flex items-baseline justify-between gap-2 rounded-md px-2 py-1 text-label outline-none hover:bg-selected focus-visible:shadow-[var(--focus-ring)]", on ? "bg-selected font-medium text-foreground" : "text-primary")}>
               <span className="min-w-0 truncate">{historyLabel(index, item.revision, current)}{on ? " · 正在读" : ""}</span>
               <span className="shrink-0 text-caption text-muted-foreground">{label(validityLabel, item.validity)}</span>

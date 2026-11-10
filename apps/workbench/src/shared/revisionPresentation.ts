@@ -8,6 +8,7 @@
 //   `Task content updated for future occurrences`, `Runtime dispatch reserved`, `Managed dispatch <dispatch id>`.
 // A planned time is written in the schedule's (or the repetition's) own time zone, as the schedule page writes it; while
 // that zone is not read, in the reader's zone, saying so. The original author, reason and identifiers go to 完整标识.
+import { actorIdentifier, actorText } from "./actorPresentation";
 import { readerZone, zoneName } from "./zonedTime";
 
 export interface RevisionOriginRow { label: string; value: string; text?: boolean }
@@ -91,14 +92,16 @@ export function revisionOrigin(revision: { actorId?: string | null; reason?: str
   const series = seriesReason.exec(reason);
   if (series) {
     const at = plannedTime(series[2]!, context.seriesZone, reader, "每天重复");
-    const author = actorId || "作者未记录";
+    const author = actorId ? actorText(actorId) : "作者未记录";
     return { author, reason: `按每天重复自动生成，计划时间 ${at}`, line: `按每天重复生成，计划时间 ${at}`, scheduleId: null, series: true,
       identifiers: [{ label: "重复序列", value: series[1]! }, { label: "计划时间（UTC）", value: series[2]! }, ...raw(actorId, reason)] };
   }
-  const author = actorId || "作者未记录";
+  // An author known only by an identifier (a UUID, an automatic run's worker) is said in words; the value is kept.
+  const author = actorId ? actorText(actorId) : "作者未记录";
+  const authorRows = actorIdentifier(actorId) ? [{ label: "原始作者", value: actorId }] : [];
   const dispatch = managedDispatch.exec(reason);
   const said = dispatch ? "自动循环派发并开始任务" : fixedReasons[reason];
   if (said) return { author, reason: said, line: `${author} · ${said}`, scheduleId: null, series: false,
-    identifiers: [...(dispatch ? [{ label: "派发记录", value: dispatch[1]! }] : []), { label: "原始理由", value: reason, text: true }] };
-  return { author, reason: reason || "理由未记录", line: `${author} · ${reason || "理由未记录"}`, scheduleId: null, series: false, identifiers: [] };
+    identifiers: [...(dispatch ? [{ label: "派发记录", value: dispatch[1]! }] : []), ...authorRows, { label: "原始理由", value: reason, text: true }] };
+  return { author, reason: reason || "理由未记录", line: `${author} · ${reason || "理由未记录"}`, scheduleId: null, series: false, identifiers: authorRows };
 }

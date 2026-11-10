@@ -47,7 +47,8 @@ export function ManagedSessionDetail({ context, session, name, runs, runsRead, s
   return <article id={`runtime-session-${session.id}`} tabIndex={-1} aria-label={`受管智能体：${agentName}`} className="flex min-w-0 scroll-mt-20 flex-col gap-6 outline-none">
     <header className="flex flex-col gap-2">
       <a href={href(projectId, "runtime")} className="flex w-fit items-center gap-1 text-small text-text-secondary hover:text-foreground"><ChevronLeft size={14} aria-hidden="true" />全部受管智能体</a>
-      <h1 className="text-title font-semibold text-foreground" tabIndex={-1}>{name.title ?? name.fallback} · {agentName}</h1>
+      {/* An agent without a registered name is named by its role (agentDisplayName): the role is not said twice. */}
+      <h1 className="text-title font-semibold text-foreground" tabIndex={-1}>{agentName === name.title ? agentName : `${name.title ?? name.fallback} · ${agentName}`}</h1>
       <div className="flex flex-wrap items-center gap-2">
         <StatusTag tone={sessionStateTone(session.state)} label={sessionStateText[session.state]} />
         <span className={mutedText}>登记版本 {session.version}</span>

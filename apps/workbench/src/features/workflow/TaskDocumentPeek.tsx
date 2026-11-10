@@ -8,6 +8,7 @@ import { useProjectQuery } from "../../shared/query";
 import { useRevisionOrigin } from "../../shared/useRevisionOrigin";
 import { MarkdownBody } from "../../shared/ui/MarkdownBody";
 import { date, href } from "../../shared/ui/shared";
+import { ActorIdentifiers } from "../../shared/ui/ActorIdentifiers";
 
 export function TaskDocumentPeek({ projectId, documentId, revisionId, relation }: {
   projectId: string; documentId: string; revisionId: string | null; relation: string;
@@ -32,6 +33,7 @@ export function TaskDocumentPeek({ projectId, documentId, revisionId, relation }
       <p className="text-caption text-muted-foreground">{relation}</p>
       <h3 className="text-body font-semibold text-foreground">{document?.title ?? (documentRead.error ? "文档暂不可读" : "正在读取文档…")}</h3>
       {revision && <p className="text-caption text-muted-foreground">{fixed ? "任务固定的修订" : "当前修订"} · {date(revision.createdAt)} · {origin.author}</p>}
+      {revision && <ActorIdentifiers actors={[["作者", revision.author]]} />}
       {moved && <p className="text-caption text-warning">文档已有新版；任务仍按这一版。<a className="text-primary hover:underline" href={href(projectId, "document", documentId)}>查看当前版</a></p>}
       {fixed && document && !moved && <p className="text-caption text-muted-foreground">这一版也是文档的当前修订。</p>}
     </header>

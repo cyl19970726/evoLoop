@@ -7,7 +7,8 @@ import type { MutationContext, RecoverableCommand } from "../shared/command/cont
 import { clearCommandDrafts } from "../shared/command/drafts";
 import { askConfirm, cancelConfirms, confirmHostFailed, currentConfirm, onConfirmUnavailable } from "../shared/confirm";
 import { addReceipt, hasProjectReceipt, readReceipts, removeReceipt, visibleReceipts as forPrincipal, writeReceipts, type OperationReceipt } from "./recovery";
-import type { OperationItem } from "../features/settings/operationsPresentation";
+import type { CheckedOrigin, OperationItem } from "../features/settings/operationsPresentation";
+import { checkedNoticeText } from "./operationNotice";
 import { clearRecoveryIntents, forgetRecoveryIntent, isSpecialOperation, rememberRecoveryIntent } from "./recoveryIntent";
 
 import { readRoute, href, type Route } from "../shared/ui/shared";
@@ -142,6 +143,8 @@ export function App() {
   const [operationNotice, setOperationNotice] = useState("");
   // The service's original refusal behind the notice, for 诊断信息 (the notice itself says it in Chinese).
   const [operationDetail, setOperationDetail] = useState<string | null>(null);
+  // Where the notice after a confirmed check leads back to (“打开原对象”): the receipt and its card are gone by then.
+  const [operationLink, setOperationLink] = useState<{ href: string; label: string } | null>(null);
   const projectId = route.projectId && session?.principal.projectIds.includes(route.projectId) ? route.projectId : null;
   const client = useMemo(() => api(token), [token]);
   const visibleReceipts = session ? forPrincipal(receipts, session.principal.actorId, session.principal.projectIds) : [];
@@ -202,7 +205,7 @@ export function App() {
   }
   // A question that could not be shown was answered "cancel": say so, so leaving or signing out is not silently ignored.
   useEffect(() => onConfirmUnavailable(() => {
-    setOperationNotice("确认框没能加载，这次离开或退出已取消，草稿还在。请刷新页面后再试。"); setOperationDetail(null);
+    setOperationNotice("确认框没能加载，这次离开或退出已取消，草稿还在。请刷新页面后再试。"); setOperationDetail(null); setOperationLink(null);
   }), []);
   const ended = useRef(endSession);
   ended.current = endSession;
@@ -220,7 +223,7 @@ export function App() {
       setSession(next);
       if (!next.principal.projectIds.includes(route.projectId!)) {
         void leaveProject(queryClient, route.projectId!);
-        setOperationNotice("你已无权访问该项目，已回到项目列表。"); setOperationDetail(null);
+        setOperationNotice("你已无权访问该项目，已回到项目列表。"); setOperationDetail(null); setOperationLink(null);
         navigate("/", { replace: true });
       }
     }).catch(() => undefined);
@@ -243,12 +246,14 @@ export function App() {
       description: "回执会留在当前浏览器会话；退出后请用同一身份登录核对。", confirmLabel: "仍要退出", cancelLabel: "先不退出" })) return;
     endSession();
   }
-  function confirmReceipt(receipt: OperationReceipt, result: Operation["result"]) {
+  /** A check confirmed the operation. `origin` is the original object as 结果未知的操作 found it (none on the project list). */
+  function confirmReceipt(receipt: OperationReceipt, result: Operation["result"], origin?: CheckedOrigin) {
     forgetRecoveryIntent(receipt.operationId);
     const scope = isSpecialOperation(receipt.commandType) ? "已核到服务端同身份、同项目、同类型及同 ID 的操作结果；浏览器未核对原提交正文摘要。" : "";
     const refusal = result.status === "applied" ? null : describeFailure(result.message, result.code, 409);
-    setOperationNotice(`${refusal ? `操作 ${receipt.operationId} 被拒绝：${refusal.text}。` : `操作 ${receipt.operationId} 已应用；正在回读当前数据。`} ${scope}`.trim());
+    setOperationNotice(checkedNoticeText({ refusal: refusal?.text ?? null, scope }, origin));
     setOperationDetail(refusal?.detail ?? null);
+    setOperationLink(origin?.link ?? null);
     replaceReceipts(removeReceipt(receiptsRef.current, receipt.operationId)); changed();
   }
   const confirmHost = <ConfirmHostBoundary><Suspense fallback={null}><ConfirmHost /></Suspense></ConfirmHostBoundary>;
@@ -256,13 +261,14 @@ export function App() {
   const projectReceipts = visibleReceipts.filter(r => r.projectId === projectId);
   // 结果未知的操作 gets each receipt with its check card. OperationCheck loads on demand; its own boundary keeps a first
   // receipt from suspending the page around it.
+  // The page lists the operation ID with the receipt's other identifiers, and hands over the object it found.
   const operationItems: OperationItem[] = projectReceipts.map(receipt => ({ receipt,
-    check: <Suspense fallback={null}><OperationCheck receipt={receipt} token={token} onConfirmed={result => confirmReceipt(receipt, result)} /></Suspense> }));
+    check: origin => <Suspense fallback={null}><OperationCheck receipt={receipt} token={token} identifiers={false} onConfirmed={result => confirmReceipt(receipt, result, origin)} /></Suspense> }));
   const notices: ShellNoticeItem[] = [
     ...route.section !== "operations" && projectReceipts.length > 0 ? [{ key: "receipts", tone: "error" as const, text: `${projectReceipts.length} 项操作结果尚未确认，提交已暂缓。`, link: { href: href(projectId, "operations"), label: "按原操作 ID 核对" } }] : [],
     ...!receiptStorageAvailable ? [{ key: "storage", tone: "error" as const, text: "浏览器未能暂存操作回执。请保留原操作 ID，并在“结果未知的操作”中查询。" }] : [],
-    ...operationNotice ? [{ key: "operation", tone: "info" as const, text: operationNotice, detail: operationDetail,
-      button: { label: "关闭", onClick: () => { setOperationNotice(""); setOperationDetail(null); }, quiet: true } }] : [],
+    ...operationNotice ? [{ key: "operation", tone: "info" as const, text: operationNotice, detail: operationDetail, ...operationLink ? { link: operationLink } : {},
+      button: { label: "关闭", onClick: () => { setOperationNotice(""); setOperationDetail(null); setOperationLink(null); }, quiet: true } }] : [],
     ...projectError ? [{ key: "project", tone: "error" as const, text: `项目暂不可读取：${projectError}`, button: { label: "重试读取项目", onClick: context.onChanged } }] : [],
     ...route.section !== "inbox" && inbox.state === "unknown" ? [{ key: "inbox", tone: "waiting" as const, text: inbox.text, link: { href: href(projectId, "inbox"), label: "去待我处理核对" } }] : [],
   ];

@@ -100,7 +100,9 @@ export function scheduleFields(grants: SchedulingGrant[], names: ScheduleRoleNam
     ...(revision?.template.managedTarget ? [] : [
       { name: "acceptanceMode", label: "任务验收方式", kind: "select" as const, value: revision?.template.acceptanceMode ?? "independent_agent",
         options: [option("independent_agent", "独立智能体验收"), option("human_required", "必须本人验收")] },
-      { name: "consumer", label: "指定验收人（可选）", optional: true, value: revision?.template.consumer ?? "",
+      // Optional for 独立智能体验收; 必须本人验收 needs the person, so the label then drops “（可选）” (as 新建任务 does).
+      { name: "consumer", label: "指定验收人", optional: true, requiredWhen: (values: Record<string, string>) => values.acceptanceMode === "human_required",
+        value: revision?.template.consumer ?? "",
         hint: "必须本人验收时选验收的人本人；独立智能体验收可以不指定。只列出能写入的成员（记录使用要写入）。" },
     ]),
     { name: "grant", label: fresh ? "日程授权" : "上次读回的日程授权", kind: "select", value: oldGrant ? grantKey(oldGrant) : choices[0]?.value ?? "", options: choices,

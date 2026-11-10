@@ -226,6 +226,8 @@ test("知识空间 reads, filters, switches pages without collapsing the right c
     assert.equal(await main.getByRole("region", { name: "来源、反例与版本" }).count(), 0, "sources are not in the center column");
     const visibleText = `${await main.innerText()}\n${await side.innerText()}`;
     assert.doesNotMatch(visibleText, new RegExp(`${id(2)}|${rid(2, 2)}|知识 ID|水位|adapter_verified|后端报告版本`), "raw IDs and internal words stay out of the reading layers");
+    // Not in the tooltips either: a version is named by its place in the history, never by its short identifier.
+    assert.deepEqual(await side.getByRole("list", { name: "历史版本" }).getByRole("link").evaluateAll(links => links.filter(link => link.hasAttribute("title")).length), 0);
     await side.getByText("完整标识").click();
     assert.match(await side.innerText(), new RegExp(id(2)));
     if (shots) await page.screenshot({ path: `${shots}/knowledge-1440.png` });

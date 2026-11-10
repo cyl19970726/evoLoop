@@ -25,10 +25,11 @@ import { agentDisplayName } from "../../shared/agentNamePresentation";
 import { useProjectQuery } from "../../shared/query";
 import { sessionMessageEntry } from "./sessionMessageEntry";
 import { useSessionTimeline } from "./useSessionTimeline";
+import { ActorIdentifiers } from "../../shared/ui/ActorIdentifiers";
 import { workspaceReadingGroups, workspaceReadingOrder } from "./workspaceTimelineModel";
 import {
   elapsedText, entryStateLabel, isFailedEntry, liveStatusText, pinnedToolIds, planExplanation, planSteps, recordLabel, toolDetailReason, toolGroupStatus, toolGroupSummary,
-  toolLabel, toolStepState, toolStepText, turnSummaries,
+  entryAuthorText, toolLabel, toolStepState, toolStepText, turnSummaries,
 } from "./conversationPresentation";
 import { SessionIdentityMark } from "./SessionIdentityMark";
 import { SessionComposer } from "./SessionComposer";
@@ -134,7 +135,7 @@ function TimelineEntry({ item, context, title, taskTitle, sessionKey, target, id
   const mine = !dispatched && item.kind === "message" && item.role === "input" && item.author.kind === "actor" && item.author.id === context.principal.actorId;
   const assistant = item.kind === "message" && item.role === "assistant";
   const provenSession = assistant && target.kind === "owned" && item.author.kind === "session" && item.author.id === target.sessionId;
-  const label = mine ? "我" : assistant ? title : item.author.label || "发送者未确认";
+  const label = mine ? "我" : assistant ? title : entryAuthorText(item.author, title, context.principal.actorId);
   const messageId = item.origin?.kind === "message" ? item.origin.id : null;
   const heading = item.kind === "message" ? null : item.kind === "tool" ? toolLabel(item.name) : recordLabel(item.label);
   const expandedBody = item.kind === "message" && fullText && item.state !== "running" && fullText.body.startsWith(item.body) ? fullText : null;
@@ -185,7 +186,7 @@ function TimelineEntry({ item, context, title, taskTitle, sessionKey, target, id
 }
 
 /** A tool's or message's source: what the summary shows, the original input and output where the reader may see them. */
-function EntryInspector({ entry, context, sessionKey, mayReadOriginal }: { entry: WorkspaceEntry; context: MutationContext; sessionKey: string; mayReadOriginal: boolean }) {
+function EntryInspector({ entry, context, sessionKey, mayReadOriginal, agentName = "这个智能体" }: { entry: WorkspaceEntry; context: MutationContext; sessionKey: string; mayReadOriginal: boolean; agentName?: string }) {
   const [value, setValue] = useState(entry);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -205,7 +206,8 @@ function EntryInspector({ entry, context, sessionKey, mayReadOriginal }: { entry
   useEffect(() => { if (entry.kind === "message" && entry.truncated) void read(); return () => { current.current = ""; }; }, [scope]);
   const block = "max-h-[42vh] overflow-auto whitespace-pre-wrap rounded-md bg-muted p-3 font-mono text-caption [overflow-wrap:anywhere]";
   return <>
-    <p className="text-caption text-muted-foreground">{value.author.label}{value.occurredAt ? ` · ${date(value.occurredAt)}` : " · 来源未提供时间"}</p>
+    <p className="text-caption text-muted-foreground">{entryAuthorText(value.author, agentName, context.principal.actorId)}{value.occurredAt ? ` · ${date(value.occurredAt)}` : " · 来源未提供时间"}</p>
+    <ActorIdentifiers actors={[["发送者", value.author.kind === "actor" ? value.author.id ?? value.author.label : null]]} />
     {value.kind === "tool" ? <>
       <p className="font-medium">{toolLabel(value.name)}</p>
       <p className="text-text-secondary">{toolStepText(value)}</p>
@@ -408,7 +410,7 @@ export function SessionTimeline({ context, snapshot, onApplied, taskHref, refres
       <DialogContent className="workspace-inspector max-h-[85dvh] w-[min(640px,calc(100vw-32px))] overflow-y-auto" aria-describedby="workspace-inspector-description" onCloseAutoFocus={event => { const trigger = inspectorTrigger.current; if (trigger?.isConnected && trigger.getClientRects().length) { event.preventDefault(); trigger.focus({ preventScroll: true }); } inspectorTrigger.current = null; }}>
         <DialogTitle>活动详情</DialogTitle>
         <DialogDescription id="workspace-inspector-description">核对所选内容、消息状态与来源。</DialogDescription>
-        {inspector && !timeline.denied && ("entry" in inspector ? <EntryInspector key={inspector.entry.id} entry={inspector.entry} context={context} sessionKey={snapshot.session.key} mayReadOriginal={mayReadOriginal} /> : <MessageInspector key={inspector.messageId} id={inspector.messageId} context={context} snapshot={snapshot} onApplied={applied} />)}
+        {inspector && !timeline.denied && ("entry" in inspector ? <EntryInspector key={inspector.entry.id} entry={inspector.entry} context={context} sessionKey={snapshot.session.key} mayReadOriginal={mayReadOriginal} agentName={agentDisplayName(snapshot.session)} /> : <MessageInspector key={inspector.messageId} id={inspector.messageId} context={context} snapshot={snapshot} onApplied={applied} />)}
       </DialogContent>
     </Dialog>
   </section>;

@@ -7,7 +7,9 @@ import { Button, EmptyState, ErrorState, LoadingState, Notice, RefreshingIndicat
 import { errorText } from "../../shared/api";
 import type { MutationContext } from "../../shared/ActionForm";
 import { navigate } from "../../shared/navigation";
+import { returnText } from "../../shared/returnLink";
 import { ContextRailContent } from "../../shared/ui/ContextRail";
+import { useTaskName } from "../../shared/ui/RecordName";
 import { SectionBoundary } from "../../shared/ui/SectionBoundary";
 import { date } from "../../shared/ui/shared";
 import { DefinitionForm } from "./DefinitionForm";
@@ -44,7 +46,7 @@ export function EvaluationPage({ context, evaluationId, selectedRevision, taskId
       </div>
       <Button onClick={() => void reread()} disabled={list.isFetching}><RefreshCw aria-hidden="true" className={list.isFetching ? "animate-spin" : undefined} />回读当前记录</Button>
     </header>
-    {taskId && <p className="m-0 text-small text-text-secondary">当前仅看此任务的评价 · <a className={linkClass} href={`/p/${context.projectId}/tasks/${taskId}`}>返回来源任务</a> · <a className={linkClass} href={evaluationHref(context.projectId)}>查看全部评价</a></p>}
+    {taskId && <p className="m-0 text-small text-text-secondary">当前仅看此任务的评价 · <a className={linkClass} href={`/p/${context.projectId}/tasks/${taskId}`}><TaskReturnText projectId={context.projectId} taskId={taskId} /></a> · <a className={linkClass} href={evaluationHref(context.projectId)}>查看全部评价</a></p>}
     {knowledgePageId && <p className="m-0 text-small text-text-secondary">当前仅看引用此知识页的评价 · <a className={linkClass} href={`/p/${context.projectId}/knowledge?knowledgeId=${encodeURIComponent(knowledgePageId)}`}>返回知识页</a> · <a className={linkClass} href={evaluationHref(context.projectId)}>查看全部评价</a></p>}
     <section aria-label="已建立的评价" aria-busy={list.isFetching} className="flex flex-col gap-2">
       <div className="flex flex-wrap items-center gap-2">
@@ -74,6 +76,12 @@ export function EvaluationPage({ context, evaluationId, selectedRevision, taskId
       </SectionBoundary></div>
     </details>
   </div>;
+}
+
+/** “返回任务：<名称>” as every return link says it (shared/returnLink.ts); “返回任务” until the name is read. */
+function TaskReturnText({ projectId, taskId }: { projectId: string; taskId: string }) {
+  const name = useTaskName(projectId, taskId);
+  return <>{returnText({ kind: "task", taskId }, name.state === "named" ? name.name : null)}</>;
 }
 
 function DetailView({ context, evaluationId, selectedRevision, onReread }: {

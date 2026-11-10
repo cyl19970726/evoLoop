@@ -36,6 +36,7 @@ import { TaskHistoryTab } from "./TaskHistoryTab";
 import { TaskActionsTab } from "./TaskActionsTab";
 import { TaskArrangementFacts, TaskAttentionSection } from "./TaskArrangement";
 import { timingSummary, useTaskTiming } from "./TaskScheduleSection";
+import { actorText } from "../../shared/actorPresentation";
 type TaskTab = "overview" | "basis" | "delivery" | "runtime" | "history" | "actions";
 const taskTabs: { id: TaskTab; label: string }[] = [
   { id: "overview", label: "当前工作" }, { id: "basis", label: "依据与影响" },
@@ -212,7 +213,7 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
     : leaderState === "failed" ? "责任暂无法判断"
       : !leaderTask ? "当前工作安排未登记"
         : <ResponsibleName projectId={projectId} item={leaderTask} />;
-  const acceptanceNote = `${detail.proposal?.acceptanceMode === "independent_agent" ? "须由不同于实际提交者的智能体使用当前交付" : detail.proposal?.acceptanceMode === "human_required" ? "须由指定的受信用户本人使用当前交付" : "按任务原有验收合同核对"}${detail.proposal?.consumer ? ` · 指定身份 ${detail.proposal.consumer}` : detail.proposal?.acceptanceMode ? " · 验收身份待实际签收" : ""}。任务状态、技术检查和实际使用分别记录。`;
+  const acceptanceNote = `${detail.proposal?.acceptanceMode === "independent_agent" ? "须由不同于实际提交者的智能体使用当前交付" : detail.proposal?.acceptanceMode === "human_required" ? "须由指定的受信用户本人使用当前交付" : "按任务原有验收合同核对"}${detail.proposal?.consumer ? ` · 指定身份 ${actorText(detail.proposal.consumer)}` : detail.proposal?.acceptanceMode ? " · 验收身份待实际签收" : ""}。任务状态、技术检查和实际使用分别记录。`;
   const state = taskStateStatus[detail.task.state];
   const sectionOpen = new URLSearchParams(currentPath().split("?")[1] ?? "").get("section");
   const heading = "text-heading font-semibold text-foreground";

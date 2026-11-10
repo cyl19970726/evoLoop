@@ -32,6 +32,7 @@
 - 文档现名称只在核对了固定修订和哈希后显示，名称取自修订列表的文档头，不为拿名称读正文；原始 ID 和哈希只在“完整标识”里展开。
 - 建立或另存定义时，共同任务（只列进行中的）和负责任务按名称搜索选择；协议、材料选文档再选版本，Wiki 选页面再选版本，修订和哈希由页面读回后填入，界面只写名称和版本。文档版本来自修订列表，逐页列出第 N 版、时间、作者、理由和状态；翻页后各版状态按最新读回的文档重算；翻页期间有了新修订才提示回到第一页，只是发布或归档时只说明状态已重算；读到重复的读取位置时说明后面没读到。列表里没有的来源（如 Git）可在“按完整标识添加”里写一行。发出的命令与原来手填标识和哈希时一样。
 - 新定义统一采用完整本机权限、无需逐次审批；旧定义保留原权限，只供回读。
+- 从任务进入时只列这项任务的评价，页首写“返回任务：<名称>”（名称读回前写“返回任务”）和“查看全部评价”。
 
 ## 截图
 
@@ -52,7 +53,7 @@
 | 范围 | 路径 |
 | --- | --- |
 | 源码（`apps/workbench/src/`） | `features/evaluation/EvaluationPage.tsx`（列表、左栏、详情外框）、`features/evaluation/EvaluationDetail.tsx`（冻结定义、条件、结论、右栏）、`features/evaluation/Attempts.tsx`（逐次尝试、判定、派发）、`features/evaluation/DefinitionForm.tsx`、`features/evaluation/DefinitionPickers.tsx`（按名称选任务、文档与 Wiki 版本）、`features/evaluation/fixedRefChoice.ts`、`features/evaluation/formData.ts`、`features/evaluation/EvaluationForm.tsx`、`features/evaluation/evaluationReads.ts`、`features/evaluation/presentation.ts`；文档版本列表在 `shared/useDocumentRevisions.ts`、`shared/documentRevisions.ts`、`shared/ui/RevisionListStatus.tsx`（过程文档、仓库规范共用） |
-| 测试（`apps/workbench/test/`） | `evaluation-presentation.test.ts`、`evaluation-definition-form.test.ts`（命令与原表单一致）、`document-revisions.test.ts`、`evaluations-browser.test.ts`（版本分页与回到第一页） |
+| 测试（`apps/workbench/test/`） | `evaluation-presentation.test.ts`、`evaluation-definition-form.test.ts`（命令与原表单一致）、`document-revisions.test.ts`、`evaluations-browser.test.ts`（版本分页与回到第一页、按任务筛选时的“返回任务：<名称>”） |
 
 ## 相关
 

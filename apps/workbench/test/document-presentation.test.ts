@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Document, DocumentDetail, DocumentRevision } from "@evoloop/contracts";
 import {
-  coverageText, documentReturnPlace, emptyListText, kindText, markdownSource, publicationText, readingStanding, referenceText,
+  coverageText, documentReturnPlace, emptyListText, kindText, markdownSource, originRunSummary, publicationText, readingStanding, referenceText,
 } from "../src/features/documents/documentPresentation.ts";
 import { returnText } from "../src/shared/returnLink.ts";
 import type { Original } from "../src/shared/ui/OriginalDocumentReader.tsx";
@@ -46,6 +46,14 @@ test("list words keep lifecycle, publication and references apart", () => {
   assert.equal(referenceText(["link"]), "已关联");
   assert.equal(kindText(null), "未分类");
   assert.equal(kindText("report"), "报告");
+});
+
+test("the source run is said in words; its identifier is not in the text", () => {
+  const time = (iso: string) => `「${iso.slice(0, 10)}」`;
+  assert.equal(originRunSummary({ createdAt: "2026-10-25T00:00:00.000Z", state: "running" }, false, time), "由一次运行产生 · 开始于 「2026-10-25」 · 运行中");
+  assert.equal(originRunSummary({ createdAt: "2026-10-25T00:00:00.000Z", state: "something_new" }, false, time), "由一次运行产生 · 开始于 「2026-10-25」 · 状态未识别");
+  assert.equal(originRunSummary(null, true, time), "由一次登记的运行产生 · 正在核对");
+  assert.equal(originRunSummary(undefined, false, time), "由一次登记的运行产生 · 未能核实");
 });
 
 test("the return link names where it goes back to", () => {

@@ -18,6 +18,8 @@ import { executionHref, pendingRun, runStateText, runStateTone, uuidPattern } fr
 import { preflightPresentation, preflightView } from "../../shared/preflightPresentation";
 import { diagnosticOf, failureOf, type Failure } from "../../shared/errorPresentation";
 import { ErrorDetails } from "../../shared/ui/ErrorDetails";
+import { actorText } from "../../shared/actorPresentation";
+import { ActorIdentifiers } from "../../shared/ui/ActorIdentifiers";
 
 const stamp = (value: string) => new Date(value).toLocaleString("zh-CN", { hour12: false });
 
@@ -123,7 +125,8 @@ export function Receipts({ label, load }: { label: string; load(): Promise<Runti
     {events && events.length > 0 && <ul className="flex flex-col gap-2">{events.map(event => <li key={event.id} className="flex min-w-0 flex-col gap-0.5">
       <span className="text-small font-medium text-foreground">{eventText[event.kind] ?? "其他回执"}</span>
       <span className="whitespace-pre-wrap break-words text-small text-text-secondary">{event.detail}</span>
-      <span className={mutedText}>{event.actorId} · {stamp(event.createdAt)}</span>
+      <span className={mutedText}>{actorText(event.actorId)} · {stamp(event.createdAt)}</span>
+      <ActorIdentifiers actors={[["记录者", event.actorId]]} />
     </li>)}</ul>}
   </div>;
 }

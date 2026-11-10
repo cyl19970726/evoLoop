@@ -4,9 +4,10 @@
 // A reason code the page does not know is said in general words, its code kept for the full-identifier layer, never
 // guessed at. Pure, so the page and its tests agree.
 //
-// Two judgments are not what they look like, and are said for what they are:
+// Three judgments are not what they look like, and are said for what they are:
 // - a repository registration the Git source refuses as a whole is the service's, for every project, whether or not
 //   this project has an entry: never “本项目未配置”;
+// - a capability switched off for the whole service (`*_disabled`, no WeChat gateway) is 全服务未开启, not 本项目未配置;
 // - a runtime that did not answer when read is not configuration: a restart is not said to bring it back (the service
 //   compares the two judgments without it too), and a file that cannot be read now makes what a restart would do
 //   unknowable for every row, which is said once above the rows instead of on each of them.
@@ -74,6 +75,16 @@ const callerText: Record<ProjectCallerReason, string> = {
   caller_not_current_writer: "你有授权，但身份文件现在不认你是写入者（每日复制要求）",
 };
 
+/**
+ * Reasons that are one switch for the whole service, whatever this project configures: said as 全服务未开启, never as
+ * 本项目未配置 (the row would then blame the project for the service's setting).
+ */
+const serviceSwitchReasons = new Set<string>(["knowledge_disabled", "scheduling_disabled", "orchestration_disabled", "runtime_disabled",
+  "feishu_disabled", "message_connectors_disabled", "session_messages_disabled", "documents_disabled", "gateway_not_configured"]);
+/** Not configured because a switch of the whole service is off. */
+const serviceSwitchedOff = (judgment: ProjectCapabilityJudgment) =>
+  judgment.state === "not_configured" && judgment.reason !== null && serviceSwitchReasons.has(judgment.reason);
+
 /** The files whose being unreadable makes a judgment unknown. */
 const unreadableReasons = new Set<string>(["configuration_unreadable", "identities_unreadable"]);
 
@@ -93,8 +104,10 @@ function judgmentText(judgment: ProjectCapabilityJudgment, scope: ProjectCapabil
     if (reason === null) return { text: scope === "service" ? "全服务已开启。" : "本项目已配置。", codes };
     return { text: why ? `${why}。` : `${where}已配置，但服务端另报了一个原因（见原因代码）。`, codes };
   }
-  if (judgment.state === "not_configured")
+  if (judgment.state === "not_configured") {
+    if (why && serviceSwitchedOff(judgment)) return { text: `全服务未开启：${why}。`, codes };
     return { text: why ? `${where}未配置：${why}。` : `${where}未配置，原因服务端用了界面不认识的代码（见原因代码）。`, codes };
+  }
   if (judgment.state === "unknown")
     return { text: why ? `现在无法判断：${why}。` : "现在无法判断，原因服务端用了界面不认识的代码（见原因代码）。", codes };
   return { text: "服务端报告了界面不认识的状态，无法判断。", codes: [...codes, { label: "状态代码", value: String(judgment.state) }] };
@@ -174,7 +187,8 @@ export function capabilityRows(items: readonly ProjectCapability[]): CapabilityR
     const named = Object.hasOwn(capabilityLabel, item.key);
     return {
       key: item.key, label: named ? capabilityLabel[item.key]! : "未识别的能力", state: item.state === "configured" ? "yes" : item.state === "not_configured" ? "no" : "unknown",
-      tag: tagOf(item), scope: item.scope === "service" ? "全服务" : "本项目", text: now.text, caller: caller?.text ?? null, pending: pending?.text ?? null,
+      // Off by the service's own switch: the setting that decides is the whole service's, whatever the capability's scope.
+      tag: tagOf(item), scope: item.scope === "service" || serviceSwitchedOff(item) ? "全服务" : "本项目", text: now.text, caller: caller?.text ?? null, pending: pending?.text ?? null,
       readAt: readAtText[item.readAt] ?? "服务端没有说明何时读取这项设置。",
       codes: [...named ? [] : [{ label: "能力代码", value: item.key }], ...now.codes, ...caller?.codes ?? [], ...pending?.codes ?? []],
     };

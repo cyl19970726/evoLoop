@@ -5,7 +5,7 @@ import { Button, EmptyState, ListRow, Notice as UiNotice, Select, cn } from "@ev
 import { ContextPanelContent } from "../../shared/ui/ContextPanel";
 import { ContextRailContent } from "../../shared/ui/ContextRail";
 import { SectionBoundary } from "../../shared/ui/SectionBoundary";
-import { date, href } from "../../shared/ui/shared";
+import { date } from "../../shared/ui/shared";
 import type { Occurrence, ScheduleDefinition, ScheduleRevision, ScheduleRule } from "@evoloop/contracts/scheduling";
 import { errorText } from "../../shared/api";
 import { ActionForm, option, reasonField, type MutationContext } from "../../shared/ActionForm";
@@ -22,8 +22,9 @@ import { RoleName } from "../../shared/ui/RecordName";
 
 import {
   coordinatorErrorText, grantEmptyText, latestOccurrence, nextTimeText, occurrenceLabel, occurrenceReasonKnown,
-  occurrenceReasonText, scheduleReadView, scheduleRuleText, scheduleTime, zoneName,
+  occurrenceReasonText, scheduleFromPath, scheduleReadView, scheduleRuleText, scheduleTaskHref, scheduleTime, zoneName,
 } from "./presentation";
+import { currentPath, onNavigate } from "../../shared/navigation";
 
 // Times of the schedule itself (rule instants, planned times, watermark, expiry) are said in the schedule's own zone,
 // with the reader's clock added when it differs; record and read times are the reader's local time, as everywhere else.
@@ -98,8 +99,13 @@ export function SchedulingPanel({ context, refresh }: { context: MutationContext
   const { value, loading, error, fresh } = scheduleReadView(snapshot, scope, readKey, readState);
   const schedules = value?.schedules ?? [];
   const status = value?.status ?? null;
-  const [selectedScheduleId, setSelectedScheduleId] = useState<string | null>(null);
+  // `?schedule=` (a link back from a task this schedule produced) selects it; other addresses never change the choice.
+  const [selectedScheduleId, setSelectedScheduleId] = useState<string | null>(() => scheduleFromPath(currentPath(), context.projectId));
   const [creating, setCreating] = useState(false);
+  useEffect(() => onNavigate(() => {
+    const named = scheduleFromPath(currentPath(), context.projectId);
+    if (named) { setSelectedScheduleId(named); setCreating(false); }
+  }), [context.projectId]);
   const [lastResults, setLastResults] = useState<Record<string, string>>({});
   const selectedSchedule = schedules.find(item => item.id === selectedScheduleId) ?? schedules[0];
   const formContext = { ...context, blocked: context.blocked || !fresh };
@@ -218,7 +224,8 @@ function ScheduleCard({ definition, context, grants, names, status, fresh, loadi
   const revision = definition.revision;
   const last = history ? latestOccurrence(history.occurrences) : null;
   const editContext = { ...context, draftScope: `schedule:${definition.id}`, draftBaseline: `${definition.version}:${definition.currentRevisionId}` };
-  const taskHref = (taskId: string) => href(context.projectId, "task", taskId);
+  // A produced task opens with “返回日程：<名称>” back to this schedule.
+  const taskHref = (taskId: string) => scheduleTaskHref(context.projectId, taskId, { id: definition.id, title: definition.revision.template.title }, context.principal.actorId);
   const created = history?.occurrences.filter(item => item.taskId) ?? [];
   // An occurrence is said in the zone of the revision that planned it.
   const zoneOf = (revisionId: string) => history?.revisions.find(item => item.id === revisionId)?.timezone ?? revision.timezone;

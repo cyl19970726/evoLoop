@@ -17,6 +17,9 @@ import {
   fixedRefLineHint, labelOf, observationResultLabels, parseCostLines, parseFixedRefLines, runCostText, runStateLabels, runStateTones, technicalResultLabels, type ReadState,
 } from "./presentation";
 import { ErrorDetails } from "../../shared/ui/ErrorDetails";
+import { actorIdentifier, actorText } from "../../shared/actorPresentation";
+/** An actor `actorText` says in words, as an IdentityDetails row (none for an account name). */
+const actorPair = (label: string, actorId: string | null | undefined): Array<[string, string]> => actorIdentifier(actorId) ? [[label, actorId!]] : [];
 
 type Deliveries = NonNullable<TaskDetail["deliveries"]>;
 type Observations = NonNullable<TaskDetail["observations"]>;
@@ -44,11 +47,11 @@ export function AttemptRecord({ context, revision, attempt, run, runsState, task
       {run ? <StatusTag tone={runStateTones[run.state] ?? "unknown"} label={labelOf(runStateLabels, run.state)} />
         : <span className={muted}>{attemptRunText(undefined, runsState)}</span>}
     </header>
-    <p className={cn(muted, "m-0")}>派发于 {date(attempt.createdAt)} · {attempt.actorId}；本次尝试不会覆盖此前失败或未知。</p>
+    <p className={cn(muted, "m-0")}>派发于 {date(attempt.createdAt)} · {actorText(attempt.actorId)}；本次尝试不会覆盖此前失败或未知。</p>
     <p className="m-0 text-small"><a className={linkClass} href={taskHref(projectId, taskId, attempt.actualTaskRevisionId)}>阅读本次实际执行修订 ↗</a>
       <span className={muted}> 由固定来源修订派生，两者不是同一版本。</span></p>
     <IdentityDetails rows={[["尝试 ID", attempt.id], ["运行 ID", attempt.runId], ["智能体 ID", attempt.sessionId],
-      ["来源任务修订", attempt.sourceTaskRevisionId], ["实际执行修订", attempt.actualTaskRevisionId]]} />
+      ["来源任务修订", attempt.sourceTaskRevisionId], ["实际执行修订", attempt.actualTaskRevisionId], ...actorPair("派发者", attempt.actorId)]} />
 
     {!run ? runsState === "read" ? <Notice tone="error">对应运行尚未读到，不能推断执行或成本。</Notice>
       : runsState === "failed" ? <Notice tone="waiting">运行记录没有读回，不能推断执行或成本。</Notice>
@@ -87,8 +90,8 @@ export function AttemptRecord({ context, revision, attempt, run, runsState, task
           ? "未读到本次交付的使用记录；智能体使用不等于真人后果。"
           : taskState === "loading" ? "正在核对本次交付有没有使用记录…" : "无法判断本次交付有没有使用记录。"}</p>}
         {observations.map(item => <div key={item.id} className="flex min-w-0 flex-col gap-0.5">
-          <p className="m-0 break-words text-small text-foreground">{labelOf(actorKindLabels, item.observerKind, "未识别的身份")} {item.observer} · {labelOf(observationResultLabels, item.result)} · {item.evidence}</p>
-          <IdentityDetails rows={[["使用记录 ID", item.id], ["交付 ID", item.deliveryId]]} />
+          <p className="m-0 break-words text-small text-foreground">{labelOf(actorKindLabels, item.observerKind, "未识别的身份")} {actorText(item.observer)} · {labelOf(observationResultLabels, item.result)} · {item.evidence}</p>
+          <IdentityDetails rows={[["使用记录 ID", item.id], ["交付 ID", item.deliveryId], ...actorPair("使用者", item.observer)]} />
         </div>)}
       </>}
     </section>
@@ -127,15 +130,15 @@ function AssessmentRecord({ item, all, projectId, deliveries, observations, task
   const pending = taskState === "loading" ? "正在读取" : taskState === "failed" ? "没有读回" : "未读到";
   const bound = (id: string | null, text: string | undefined) => !id ? "未绑定" : text ?? `已绑定（记录${pending}）`;
   return <div className={block}>
-    <p className="m-0 text-small font-medium text-foreground">{item.supersedesId ? position ? `更正第 ${position} 条判定` : "更正此前判定（原判定未读到）" : "署名判定"} · {labelOf(actorKindLabels, item.assessorKind, "未识别的身份")} {item.actorId}</p>
+    <p className="m-0 text-small font-medium text-foreground">{item.supersedesId ? position ? `更正第 ${position} 条判定` : "更正此前判定（原判定未读到）" : "署名判定"} · {labelOf(actorKindLabels, item.assessorKind, "未识别的身份")} {actorText(item.actorId)}</p>
     <p className="m-0 break-words text-small text-text-secondary">来源：{labelOf(assessmentLabels.sourceFidelity, item.values.sourceFidelity)} · 知识：{labelOf(assessmentLabels.knowledgeAdoption, item.values.knowledgeAdoption)} · 交付：{labelOf(assessmentLabels.deliveryQuality, item.values.deliveryQuality)} · 真人后果：{labelOf(assessmentLabels.humanEffect, item.values.humanEffect)}</p>
-    <p className="m-0 break-words text-small text-text-secondary">绑定交付：{bound(item.deliveryId, delivery && `${labelOf(technicalResultLabels, delivery.technicalResult, "技术检查结果未识别")} · 登记于 ${date(delivery.createdAt)}`)} · 使用记录：{bound(item.observationId, observation && `${labelOf(observationResultLabels, observation.result)} · ${observation.observer}`)}</p>
+    <p className="m-0 break-words text-small text-text-secondary">绑定交付：{bound(item.deliveryId, delivery && `${labelOf(technicalResultLabels, delivery.technicalResult, "技术检查结果未识别")} · 登记于 ${date(delivery.createdAt)}`)} · 使用记录：{bound(item.observationId, observation && `${labelOf(observationResultLabels, observation.result)} · ${actorText(observation.observer)}`)}</p>
     {!item.costs.length ? <p className="m-0 text-small text-text-secondary">成本：未记录，不视为零。</p>
       : <ul className="m-0 flex list-disc flex-col gap-0.5 pl-5 text-small text-text-secondary">{item.costs.map((cost, index) => <li key={index}>{costText(cost)}</li>)}</ul>}
     <p className="m-0 whitespace-pre-wrap break-words text-small text-foreground">{item.reason}</p>
     {item.evidence.length > 0 && <ul className="m-0 flex list-none flex-col gap-1 p-0">{item.evidence.map((ref, index) => <li key={index}><FixedRefLine value={ref} projectId={projectId} titles={titles} /></li>)}</ul>}
     <p className={cn(muted, "m-0")}>{date(item.createdAt)}</p>
-    <IdentityDetails rows={[["判定 ID", item.id], ...item.supersedesId ? [["更正的判定 ID", item.supersedesId] as [string, string]] : [],
+    <IdentityDetails rows={[["判定 ID", item.id], ...actorPair("判定者", item.actorId), ...item.supersedesId ? [["更正的判定 ID", item.supersedesId] as [string, string]] : [],
       ...item.deliveryId ? [["交付 ID", item.deliveryId] as [string, string]] : [], ...item.observationId ? [["使用记录 ID", item.observationId] as [string, string]] : [],
       ...refRows("证据", item.evidence)]} />
   </div>;
@@ -151,9 +154,9 @@ function AssessmentForm({ context, revision, attempt, assessments, deliveries, o
     : taskState === "failed" ? "共同任务重读失败；可选项来自上次读回，当前待核对。" : undefined;
   return <EvaluationForm context={{ ...context, draftScope: `evaluation-assessment:${attempt.id}`, draftBaseline: revision.id }} review hold={hold}
     title={assessments.length ? "追加更正判定" : "记录本次判定"} fields={[
-      { name: "supersedesId", label: "更正此前判定（可选）", kind: "select", optional: true, options: currentAssessments(assessments).map(item => option(item.id, `${labelOf(actorKindLabels, item.assessorKind, "未识别的身份")} ${item.actorId} · ${date(item.createdAt)}`)) },
+      { name: "supersedesId", label: "更正此前判定（可选）", kind: "select", optional: true, options: currentAssessments(assessments).map(item => option(item.id, `${labelOf(actorKindLabels, item.assessorKind, "未识别的身份")} ${actorText(item.actorId)} · ${date(item.createdAt)}`)) },
       { name: "deliveryId", label: "本次实际交付（可选）", kind: "select", optional: true, hint: unread, options: deliveries.map(item => option(item.id, `${labelOf(technicalResultLabels, item.technicalResult, "技术检查结果未识别")} · 登记于 ${date(item.createdAt)}`)) },
-      { name: "observationId", label: "本次交付的使用记录（可选）", kind: "select", optional: true, hint: unread, options: observations.map(item => option(item.id, `${labelOf(actorKindLabels, item.observerKind, "未识别的身份")} ${item.observer} · ${labelOf(observationResultLabels, item.result)}`)) },
+      { name: "observationId", label: "本次交付的使用记录（可选）", kind: "select", optional: true, hint: unread, options: observations.map(item => option(item.id, `${labelOf(actorKindLabels, item.observerKind, "未识别的身份")} ${actorText(item.observer)} · ${labelOf(observationResultLabels, item.result)}`)) },
       { name: "sourceFidelity", label: "固定来源使用", kind: "select", options: [option("qualified", "符合"), option("failed", "失败"), option("unknown", "未知"), option("needs_review", "待复核")] },
       { name: "knowledgeAdoption", label: "知识采用", kind: "select", value: direct ? "not_applicable" : "", options: direct ? [option("not_applicable", "直接条件：不适用")] : [option("correct", "正确采用"), option("misused", "误用"), option("not_used", "未采用"), option("not_observed", "未观察到"), option("needs_review", "待复核")] },
       { name: "deliveryQuality", label: "交付质量", kind: "select", options: [option("qualified", "合格"), option("failed", "失败"), option("unknown", "未知"), option("needs_review", "待复核")] },

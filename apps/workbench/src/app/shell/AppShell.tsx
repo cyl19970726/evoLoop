@@ -234,8 +234,10 @@ export interface ShellNoticeItem {
 
 /** A notice above every page in the shell: unconfirmed operations, storage problems, project read failures. */
 function ShellNotice({ tone = "info", link, button, text, detail }: Omit<ShellNoticeItem, "key">) {
-  const action = link ? <Button asChild size="compact"><a href={link.href}>{link.label}</a></Button>
-    : button ? <Button size="compact" variant={button.quiet ? "ghost" : "secondary"} onClick={button.onClick}>{button.label}</Button> : undefined;
+  const linked = link && <Button asChild size="compact"><a href={link.href}>{link.label}</a></Button>;
+  const pressed = button && <Button size="compact" variant={button.quiet ? "ghost" : "secondary"} onClick={button.onClick}>{button.label}</Button>;
+  // Both: the way to the object first, then 关闭 (the notice after a confirmed check).
+  const action = linked && pressed ? <span className="flex flex-wrap items-center gap-2">{linked}{pressed}</span> : linked || pressed || undefined;
   return <div data-ui="" className="global-alert px-4 pt-3 compact:px-8"><Notice tone={tone} action={action}>{text}
     {detail && <details className="mt-1 text-caption"><summary className="cursor-pointer">诊断信息</summary><code className="break-all font-mono">{detail}</code></details>}</Notice></div>;
 }
