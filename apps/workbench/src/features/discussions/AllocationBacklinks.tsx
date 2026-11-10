@@ -28,7 +28,7 @@ export function AllocationBacklinks({ context, filter, refresh }: { context: Mut
       <span className={muted}>{loadedBacklinkSummary(group, Boolean(traces.cursor || traces.partial))}</span>
       <CollapsibleRow summary={`展开 ${group.traces.length} 条具体关系`}>
         <p className={muted}>当前读到这条讨论的第 {group.discussion.version} 版；下面每条关系各有固定来源。</p>
-        <div className="flex flex-col">{group.traces.map(trace => <AllocationTraceCard key={trace.id} trace={trace} projectId={context.projectId} names={names} reading={key => !traces.error && reading(key)} />)}</div>
+        <div className="flex flex-col">{group.traces.map(trace => <AllocationTraceCard key={trace.id} trace={trace} projectId={context.projectId} names={names} reading={key => !traces.error && reading(key)} actorId={context.principal.actorId} />)}</div>
       </CollapsibleRow>
     </li>)}</ul>}
     {traces.cursor && <Button size="compact" variant="ghost" className="self-start" disabled={traces.moreBusy || traces.loading} onClick={() => void traces.more()}>{traces.moreBusy ? "正在读取…" : "加载更多来源"}</Button>}

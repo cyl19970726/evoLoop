@@ -4,12 +4,14 @@
 //
 // The declared consumer is an exact actorId (contracts `consumer`); the index's observation is the latest one on the
 // current delivery by anyone, so a later observation by someone else hides mine: then mine is read from the task.
+// When my latest observation of the current delivery is 使用失败, the next step is the executor's rework, not mine:
+// the delivery is not listed and not counted until a new delivery comes (未使用 stays listed).
 import type { ConsumerObservation } from "@evoloop/contracts";
 import type { LeaderWorkTask } from "@evoloop/contracts/work-index";
 
 export type UseResult = "used" | "failed" | "notUsed";
-/** An observation that does not count as use: the delivery still waits for me. */
-export type NotUsedResult = Exclude<UseResult, "used">;
+/** The observation after which the delivery still waits for me: 未使用 (使用失败 sends it back to rework). */
+export type NotUsedResult = "notUsed";
 
 /** What the work index says about one task's current delivery for this reader. */
 export type MyDeliveryJudgement =
@@ -17,6 +19,8 @@ export type MyDeliveryJudgement =
   | { kind: "none"; reason: "closed" | "no-delivery" | "old-revision" | "other-consumer" | "not-passed" }
   /** My latest observation of the current delivery is 已使用. */
   | { kind: "used" }
+  /** My latest observation of the current delivery is 使用失败: it goes back to the executor for rework, not to me. */
+  | { kind: "failed" }
   /** Declared for me and not yet 已使用 by me; `last` is my latest observation, if any. */
   | { kind: "waiting"; last: NotUsedResult | null }
   /** The latest observation is someone else's: whether I recorded 已使用 is read from the task's observations. */
@@ -33,7 +37,7 @@ export function judgeMyDelivery(item: Pick<LeaderWorkTask, "taskState" | "curren
   if (!delivery.observationActorId || !delivery.observationResult) return { kind: "waiting", last: null };
   if (delivery.observationActorId !== actorId) return { kind: "check-own" };
   const result = delivery.observationResult;
-  return result === "used" ? { kind: "used" } : { kind: "waiting", last: result };
+  return result === "used" ? { kind: "used" } : result === "failed" ? { kind: "failed" } : { kind: "waiting", last: result };
 }
 
 /** My latest observation of one delivery among a task's observations (the observer, not who typed it, is the consumer). */
@@ -66,7 +70,7 @@ export interface DeliveryForMe {
   taskRevisionId: string;
   deliveredAt: string | null;
   useRequired: boolean;
-  /** My latest observation of this delivery (never 已使用 here), or null when I have not recorded one. */
+  /** My latest observation of this delivery (only 未使用 here), or null when I have not recorded one. */
   last: { result: NotUsedResult; at: string | null } | null;
   /** Someone else observed this delivery after me or instead of me; `last` was read from the task. */
   othersObserved: boolean;
@@ -74,18 +78,24 @@ export interface DeliveryForMe {
 
 export const useRequirementText = (useRequired: boolean) => useRequired ? "必须使用才能关闭" : "只是声明的使用者";
 
-const lastResultText: Record<NotUsedResult, string> = { failed: "使用失败", notUsed: "未使用" };
+const lastResultText: Record<NotUsedResult, string> = { notUsed: "未使用" };
 
-/** 你上次：使用失败, or 尚未记录使用. */
+/** 你上次：未使用, or 尚未记录使用. */
 export function lastUseText(last: DeliveryForMe["last"]): string {
   return last ? `你上次：${lastResultText[last.result]}` : "尚未记录使用";
 }
 
-/** 待我处理 › the task's 交付与使用 tab, carrying where it came from (`return`, `actor`, `returnTitle`, as other returns do). */
-export function deliveryLink(projectId: string, taskId: string, actorId: string): string {
-  const params = new URLSearchParams({ tab: "delivery", return: `/p/${projectId}/inbox`, actor: actorId, returnTitle: "待我验收与判断" });
+/**
+ * 待我处理 › a task (its 交付与使用 or 依据与影响 tab, or its first tab), carrying where it came from (`return`, `actor`,
+ * `returnTitle`, as other returns do): every row of the page leads back to 待我验收与判断.
+ */
+export function inboxTaskLink(projectId: string, taskId: string, actorId: string, tab?: "delivery" | "basis"): string {
+  const params = new URLSearchParams({ ...tab ? { tab } : {}, return: `/p/${projectId}/inbox`, actor: actorId, returnTitle: "待我验收与判断" });
   return `/p/${projectId}/tasks/${taskId}?${params}`;
 }
+
+/** 等我使用的交付 › the task's 交付与使用 tab. */
+export const deliveryLink = (projectId: string, taskId: string, actorId: string): string => inboxTaskLink(projectId, taskId, actorId, "delivery");
 
 /** One part of the 待我处理 count: its answer, whether that answer is current, and whether it covers everything. */
 export interface InboxPart {
@@ -121,9 +131,9 @@ export function inboxBadge(parts: readonly InboxPart[]): InboxBadge {
 }
 
 /**
- * The `inboxCount` handed to the shell. The shell's dot shows inboxCount + receiptCount and has no form for 待核对, so
- * while the count is unknown the inbox part cancels the receipts and the dot shows nothing; a shell notice says why.
+ * The `inboxCount` handed to the shell: the count once every part is current and whole; null while a part cannot be
+ * counted, which the shell's dot shows as 待核对 (a shell notice says why); 0 while the parts are still being read.
  */
-export function shellInboxCount(badge: InboxBadge, receipts: number): number {
-  return badge.state === "known" ? badge.count : badge.state === "unknown" ? -receipts : 0;
+export function shellInboxCount(badge: InboxBadge): number | null {
+  return badge.state === "known" ? badge.count : badge.state === "unknown" ? null : 0;
 }

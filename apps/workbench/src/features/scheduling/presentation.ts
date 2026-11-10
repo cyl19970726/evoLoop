@@ -1,4 +1,6 @@
 import { dailyRuleInstant, scheduleWallClock, scheduleZoneFormat, type Occurrence, type ScheduleRule } from "@evoloop/contracts/scheduling";
+import { withReturn } from "../../shared/returnLink";
+import { readerZone, zoneHasName, zoneName } from "../../shared/zonedTime";
 export const utcInstant = (value: string): string => new Date(value).toISOString().replace("T", " ").replace(/\.000Z$/, " UTC").replace(/Z$/, " UTC");
 export function scheduleRuleLabel(rule: ScheduleRule, timezone?: string): string {
   if (rule.kind === "once") return `仅一次 · ${utcInstant(rule.atUtc)}`;
@@ -8,12 +10,7 @@ export function scheduleRuleLabel(rule: ScheduleRule, timezone?: string): string
 
 // A schedule's times are said in the schedule's own time zone (the revision's IANA `timezone`), named in words where the
 // page knows the zone; a reader in another zone also gets the time on their own clock.
-const zoneNames: Record<string, string> = {
-  "Asia/Shanghai": "上海", "Asia/Taipei": "台北", "Asia/Hong_Kong": "香港", "Asia/Singapore": "新加坡", "Asia/Tokyo": "东京",
-  "Europe/London": "伦敦", "Europe/Berlin": "柏林", "America/New_York": "纽约", "America/Los_Angeles": "洛杉矶", UTC: "UTC", "Etc/UTC": "UTC",
-};
-export const readerZone = (): string => Intl.DateTimeFormat().resolvedOptions().timeZone;
-export function zoneName(timezone: string): string { return zoneNames[timezone] ?? timezone; }
+export { readerZone, zoneName } from "../../shared/zonedTime";
 function wallTime(at: Date, timeZone: string, options: Intl.DateTimeFormatOptions = {}): string | null {
   try { return at.toLocaleString("zh-CN", { timeZone, hour12: false, ...options }); } catch { return null; }
 }
@@ -39,7 +36,7 @@ export function scheduleRuleText(rule: ScheduleRule, timezone: string, now = Dat
   const at = next ? new Date(next) : null;
   const time = { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" } as const;
   const own = at && wallTime(at, timezone, time), mine = at && wallTime(at, reader, time);
-  return `每天 ${rule.localTime}（${zoneName(timezone)}${Object.hasOwn(zoneNames, timezone) ? "" : " "}当地时间${own && mine && own !== mine ? `，下次是你的时间 ${mine}` : ""}）`;
+  return `每天 ${rule.localTime}（${zoneName(timezone)}${zoneHasName(timezone) ? "" : " "}当地时间${own && mine && own !== mine ? `，下次是你的时间 ${mine}` : ""}）`;
 }
 export function latestOccurrence(items: Occurrence[]) {
   return [...items].sort((a,b) => Date.parse(b.observedAtUtc) - Date.parse(a.observedAtUtc))[0] ?? null;
@@ -133,4 +130,25 @@ export const coordinatorErrorText = "最近一次检查出错，原文见来源"
 export function grantEmptyText(read: { fresh: boolean; loading: boolean }): string {
   if (read.fresh) return "没有；已有安排可阅读，已撤权的定义仍可暂停或停止";
   return read.loading ? "正在重新核对授权，暂不能判断" : "授权未能重新读取，无法判断";
+}
+
+/** The address of one schedule on 日程 (`/schedules?schedule=`), which a link back from its task leads to. */
+export function scheduleHref(projectId: string, scheduleId: string): string {
+  return `/p/${projectId}/schedules?${new URLSearchParams({ schedule: scheduleId })}`;
+}
+
+/** The schedule an address on 日程 selects, or null (another page, or none named). */
+export function scheduleFromPath(path: string, projectId: string): string | null {
+  const [pathname, query = ""] = path.split("?");
+  if (pathname !== `/p/${projectId}/schedules`) return null;
+  const params = new URLSearchParams(query);
+  return params.getAll("schedule").length === 1 ? params.get("schedule") || null : null;
+}
+
+/**
+ * A task the schedule produced, opened with the way back to this schedule (“返回日程：<名称>”, shared/returnLink.ts) for
+ * this reader.
+ */
+export function scheduleTaskHref(projectId: string, taskId: string, schedule: { id: string; title: string }, actorId: string): string {
+  return withReturn(`/p/${projectId}/tasks/${taskId}`, { href: scheduleHref(projectId, schedule.id), actorId, title: schedule.title });
 }

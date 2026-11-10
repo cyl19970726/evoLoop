@@ -255,7 +255,7 @@ test("built documents list finds a later page by search, reads Markdown in full 
   await page.getByText(/已读到 20 页或 1000 项的上限/).waitFor();
   await page.getByRole("button",{name:"关闭右栏"}).click();
   // Back to the list: the same search, range and row, with focus on the document just read.
-  await page.locator(".document-reading-backlinks").getByRole("link",{name:/返回来源/}).click();
+  await page.locator(".document-reading-backlinks").getByRole("link",{name:/^返回文档列表/}).click();
   await row.waitFor();
   assert.equal(await search.inputValue(),"中文跨页方案文档");
   await page.waitForFunction("document.activeElement?.textContent === '中文跨页方案文档'");

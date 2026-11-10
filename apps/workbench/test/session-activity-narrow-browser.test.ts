@@ -229,7 +229,7 @@ test("long Run activity and expanded source stay inside the Session page at mobi
   await page.getByRole("heading", { name: "原聊天入口" }).waitFor();
   await page.getByText("原生进度来源").click();
   await page.locator(".native-progress-card").getByRole("link", { name: "关联任务" }).click();
-  await page.getByRole("link", { name: "返回【窄屏活动测试会话】" }).click();
+  await page.getByRole("link", { name: "返回智能体：窄屏活动测试会话", exact: true }).click();
   await page.getByRole("log", { name: "消息与工具时间线" }).waitFor();
   await openAuditPanel();
   if (process.env.EVOLOOP_CAPTURE_ACTIVITY_NARROW) for (const width of [390, 1280, 1440]) {
@@ -289,8 +289,8 @@ test("long Run activity and expanded source stay inside the Session page at mobi
   assert.ok(auditScrollTop > 0, `the narrow audit scroll position advances inside its pane (scrollTop=${auditScrollTop})`);
   assert.equal(await page.evaluate(() => window.scrollY), 0, "the narrow audit pane scrolls without moving the page");
   await page.locator(".session-feed:visible").getByRole("link", { name: "查看任务" }).first().click();
-  await page.getByRole("link", { name: "返回【窄屏活动测试会话】" }).waitFor();
-  await page.getByRole("link", { name: "返回【窄屏活动测试会话】" }).click();
+  await page.getByRole("link", { name: "返回智能体：窄屏活动测试会话", exact: true }).waitFor();
+  await page.getByRole("link", { name: "返回智能体：窄屏活动测试会话", exact: true }).click();
   // Back on the agent, the reader opens the right column again; the open source item and its position come back.
   await openPanel();
   await showTool(1);
@@ -376,7 +376,7 @@ test("long Run activity and expanded source stay inside the Session page at mobi
   const question = page.getByRole("log", { name: "消息与工具时间线" }).locator(".native-question-card").first();
   await question.getByText("是否继续？").waitFor();
   await question.getByRole("link", { name: "关联任务" }).click();
-  await page.getByRole("link", { name: "返回【窄屏活动测试会话】" }).click();
+  await page.getByRole("link", { name: "返回智能体：窄屏活动测试会话", exact: true }).click();
   await openPanel();
   assert.equal(await page.getByLabel("活动范围").inputValue(), "important");
   await openAuditPanel();

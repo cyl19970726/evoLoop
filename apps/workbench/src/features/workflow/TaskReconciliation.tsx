@@ -5,9 +5,11 @@ import type { LeaderWorkPage, LeaderWorkTask } from "@evoloop/contracts/work-ind
 import type { AcceptanceOverviewView } from "@evoloop/contracts/acceptance-relay";
 import { Badge, CollapsibleRow, StatusTag } from "@evoloop/ui";
 import { api, errorText } from "../../shared/api";
-import { leaderSessionDisplayName, leaderWorkItemPresentation, loadLeaderWorkStatuses } from "../../shared/leaderWorkLoad";
+import { agentDisplayName, agentNameCollisions, agentNameIsGenerated } from "../../shared/agentNamePresentation";
+import { agentNameKey, readAgent } from "../../shared/agentRead";
+import { leaderWorkItemPresentation, loadLeaderWorkStatuses } from "../../shared/leaderWorkLoad";
 import { queryKeys, useProjectQuery } from "../../shared/query";
-import { readAgent } from "./agentRead";
+import { tableOrigin } from "./taskOrigin";
 import { phaseOrder, phaseStatus } from "../../shared/taskStatus";
 import { timingDate, timingDuration, timingStageLabel } from "../../shared/taskTiming";
 import { href } from "../../shared/ui/shared";
@@ -27,24 +29,38 @@ export function PhaseCounts({ counts, label = "对账阶段计数" }: { counts: 
   </div>;
 }
 
-/** Display names of the agents named by rows: only a registered profile name counts; failures stay visible. */
+/**
+ * The name of an agent a row names: `name` as the agent pages say it, or why it is not read; null while reading.
+ * `short` is its short identifier, given only when another agent named by these rows has the same name.
+ */
+export interface AgentNameState { name: string | null; problem: string | null; describesKind?: boolean; short?: string }
+
+/**
+ * Display names of the agents named by rows, as the agent pages say them (agentDisplayName): a registered name, or for
+ * a generated title its role and kind (`describesKind`). Agents whose names collide get their short identifier as
+ * secondary text, as the agent directory does (agentNameCollisions); otherwise it never shows. Failures stay visible.
+ */
 export function useAgentNames(projectId: string, keys: readonly string[]) {
   const unique = [...new Set(keys)];
   const reads = useQueries({ queries: unique.map(key => ({
-    queryKey: queryKeys.project(projectId, "session-names", key),
+    queryKey: queryKeys.project(projectId, ...agentNameKey(key)),
     queryFn: ({ signal }: { signal: AbortSignal }) => readAgent(projectId, key, signal),
     retry: false,
   })) });
+  const collisions = agentNameCollisions(reads.flatMap(read => read.data ? [read.data] : []));
   return Object.fromEntries(unique.map((key, index) => {
     const read = reads[index]!;
+    const short = collisions.get(key);
     return [key, read.error ? { name: null, problem: errorText(read.error) } : read.data
-      ? { name: leaderSessionDisplayName(read.data), problem: leaderSessionDisplayName(read.data) ? null : "未登记名称" } : { name: null, problem: null }];
-  })) as Record<string, { name: string | null; problem: string | null }>;
+      ? { name: agentDisplayName(read.data), problem: null, describesKind: agentNameIsGenerated(read.data), ...short ? { short } : {} }
+      : { name: null, problem: null }];
+  })) as Record<string, AgentNameState>;
 }
 
 /** The project-wide reconciliation list: every open task in phase order, with its next action. */
-export function LeaderOverview({ projectId, page, statuses, roleNames }: {
+export function LeaderOverview({ projectId, page, statuses, roleNames, actorId }: {
   projectId: string; page: LeaderWorkPage<LeaderWorkTask>; statuses: Record<string, WorkTaskStatus>; roleNames: Record<string, string | undefined>;
+  actorId?: string | undefined;
 }) {
   // Rows the ordinary list has not loaded still need their source status before their title is trusted.
   const missing = page.items.map(item => item.taskId).filter(id => !statuses[id]);
@@ -55,7 +71,7 @@ export function LeaderOverview({ projectId, page, statuses, roleNames }: {
     ? `${item.assignment?.targetKind === "external" ? "external" : "owned"}:${item.responsible.id}` : null).filter((key): key is string => !!key);
   const names = useAgentNames(projectId, keys);
   const visible = [...page.items].sort((a, b) => phaseOrder.indexOf(a.phase) - phaseOrder.indexOf(b.phase));
-  const unnamed = Object.values(names).filter(value => value.problem && value.problem !== "未登记名称").length;
+  const unnamed = Object.values(names).filter(value => value.problem).length;
   return <section aria-label="全项目统筹对账" data-leader-overview="" className="flex flex-col gap-3">
     <p className="text-caption text-muted-foreground">{page.observedAt ? `读于 ${new Date(page.observedAt).toLocaleString("zh-CN")}` : "尚未读回"} · 变更序号 {page.changeSequence}
       {page.partial ? " · 服务只返回了部分工作，结果不完整" : ""}{page.nextCursor ? ` · 只读到前 ${page.items.length} 项（共 ${page.total} 项）` : ""}</p>
@@ -68,15 +84,15 @@ export function LeaderOverview({ projectId, page, statuses, roleNames }: {
         ? `${item.assignment?.targetKind === "external" ? "external" : "owned"}:${item.responsible.id}` : null;
       const presentation = leaderWorkItemPresentation(item, allStatuses[item.taskId],
         item.responsible.kind === "role" ? roleNames[item.responsible.id ?? ""] : undefined,
-        key ? names[key]?.name ?? (names[key]?.problem === "未登记名称" ? "未登记名称" : undefined) : undefined);
+        key ? names[key]?.name ?? undefined : undefined, !!(key && names[key]?.describesKind));
       const status = phaseStatus[item.phase];
       return <li key={item.taskId} className="flex flex-col gap-1 py-2.5">
         <div className="flex flex-wrap items-center gap-2"><StatusTag tone={status.tone} label={status.label} />
           <a className="font-medium text-foreground hover:underline" href={href(projectId, "task", item.taskId)}>{presentation.title}</a>
           <span className="ml-auto text-caption text-muted-foreground">第 {item.version} 版</span></div>
         <p className="text-label text-text-secondary">{workItemNextStep(item)}</p>
-        <p className="text-caption text-muted-foreground">{presentation.responsibility}
-          {key && <> · <a className="text-primary hover:underline" href={sessionHref(projectId, key)}>打开智能体</a></>}
+        <p className="text-caption text-muted-foreground">{presentation.responsibility}{key && names[key]?.short ? ` · 标识 ${names[key]!.short}` : ""}
+          {key && <> · <a className="text-primary hover:underline" href={sessionHref(projectId, key, actorId ? tableOrigin(projectId, actorId, undefined, { id: item.taskId, title: presentation.title }) : null)}>打开智能体</a></>}
           {item.plan?.priority ? ` · P${item.plan.priority}` : ""}{item.dependencies.length ? ` · ${item.dependencies.length} 项依赖` : ""}
           {item.plan?.dueAt ? ` · 截止 ${new Date(item.plan.dueAt).toLocaleString("zh-CN")}` : " · 截止未设置"}</p>
         <p className="text-caption text-muted-foreground">创建 {timingDate(item.timing?.createdAt)} · 当前阶段 {item.timing ? timingStageLabel[item.timing.current.stage] : "未知"} · 已历时 {timingDuration(item.timing?.current.elapsedMs)}</p>
@@ -88,7 +104,9 @@ export function LeaderOverview({ projectId, page, statuses, roleNames }: {
 }
 
 /** Which agents can still take acceptance work. Idle is not the same as able to accept. */
-export function CapacitySummary({ projectId, overview, error }: { projectId: string; overview: AcceptanceOverviewView | null | undefined; error: string }) {
+export function CapacitySummary({ projectId, overview, error, actorId }: {
+  projectId: string; overview: AcceptanceOverviewView | null | undefined; error: string; actorId?: string | undefined;
+}) {
   const capacity = Array.isArray(overview?.capacity) ? overview!.capacity : [];
   const names = useAgentNames(projectId, capacity.map(item => `owned:${item.sessionId}`));
   if (error) return <p role="status" className="text-label text-muted-foreground">容量暂未读回：{error}</p>;
@@ -102,12 +120,12 @@ export function CapacitySummary({ projectId, overview, error }: { projectId: str
     <p className="text-label text-text-secondary">{capacity.length} 个智能体 · {ready} 个可接新验收 · {idle} 个已登记工作已清 · {missing} 个有能力缺项</p>
     {capacity.length ? <ul className="flex flex-col divide-y divide-border">{capacity.map(item => {
       const read = names[`owned:${item.sessionId}`];
-      // While the name is being read nothing is concluded; an agent without a registered name shows its account.
-      const nameRead: NameRead = read?.name ? { state: "named", name: read.name } : read?.problem === "未登记名称" ? { state: "unnamed" }
+      // While the name is being read nothing is concluded; a name the service generated is said by role and kind.
+      const nameRead: NameRead = read?.name ? { state: "named", name: read.name }
         : read?.problem ? { state: "failed" } : { state: "reading" };
       const name = nameOnly("智能体", nameRead);
       return <li key={item.sessionId} className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 py-2 text-label">
-        <a className="font-medium text-foreground hover:underline" href={sessionHref(projectId, `owned:${item.sessionId}`)}>{item.isLeader ? "统筹" : name}</a>
+        <a className="font-medium text-foreground hover:underline" href={sessionHref(projectId, `owned:${item.sessionId}`, actorId ? tableOrigin(projectId, actorId) : null)}>{item.isLeader ? "统筹" : name}</a>
         <span className="text-caption text-muted-foreground">{item.tenure === "temporary" ? "临时" : "常驻"} · {item.persistedWorkIdle ? "已登记工作已清" : "仍在工作"} · 验收 {item.openAcceptance} · 消息 {item.pendingMessages} · 队列 {item.queueEntries}</span>
         <span className="text-caption">{item.readyForAcceptance ? "可接验收" : item.missingCapabilities.length ? `缺：${item.missingCapabilities.join("、")}` : "不可接验收"}</span>
       </li>;
@@ -116,14 +134,15 @@ export function CapacitySummary({ projectId, overview, error }: { projectId: str
   </section>;
 }
 
-export function ReconciliationDetails({ projectId, page, statuses, roleNames, error }: {
+export function ReconciliationDetails({ projectId, page, statuses, roleNames, error, actorId }: {
   projectId: string; page: LeaderWorkPage<LeaderWorkTask> | null; statuses: Record<string, WorkTaskStatus>; roleNames: Record<string, string | undefined>; error: string;
+  actorId?: string | undefined;
 }) {
   const overview = useProjectQuery(projectId, ["tasks", "acceptance-overview"], () => api().acceptanceOverview(projectId));
   return <div className="flex flex-col gap-4">
-    <CapacitySummary projectId={projectId} overview={overview.data} error={overview.error ? errorText(overview.error) : ""} />
+    <CapacitySummary projectId={projectId} overview={overview.data} error={overview.error ? errorText(overview.error) : ""} actorId={actorId} />
     {page ? <CollapsibleRow summary={`查看全项目统筹对账 · ${page.items.length} 项未关闭工作`}>
-      <LeaderOverview projectId={projectId} page={page} statuses={statuses} roleNames={roleNames} />
+      <LeaderOverview projectId={projectId} page={page} statuses={statuses} roleNames={roleNames} actorId={actorId} />
     </CollapsibleRow> : error ? <p role="status" className="text-label text-muted-foreground">统筹对账暂未读回：{error}</p> : null}
   </div>;
 }

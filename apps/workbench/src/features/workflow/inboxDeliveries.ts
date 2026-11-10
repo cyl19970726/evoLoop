@@ -42,14 +42,15 @@ async function readOpenTasks(projectId: string, signal?: AbortSignal): Promise<{
 }
 
 /**
- * Open tasks whose current, passed delivery declares me as its consumer and that I have not recorded as 已使用.
- * When someone else observed the delivery last, my own latest observation is read from the task.
+ * Open tasks whose current, passed delivery declares me as its consumer and that I have not recorded as 已使用 or
+ * 使用失败 (that one goes back to rework). When someone else observed the delivery last, my own latest observation is
+ * read from the task.
  */
 export async function readDeliveriesForMe(projectId: string, actorId: string, signal?: AbortSignal): Promise<DeliveriesForMe> {
   const { items: tasks, complete } = await readOpenTasks(projectId, signal);
   const rows = await Promise.all(tasks.map(async (task): Promise<DeliveryForMe | null> => {
     const judgement = judgeMyDelivery(task, actorId);
-    if (judgement.kind === "none" || judgement.kind === "used") return null;
+    if (judgement.kind === "none" || judgement.kind === "used" || judgement.kind === "failed") return null;
     const delivery = task.delivery!;
     const row: DeliveryForMe = { taskId: task.taskId, title: task.title, deliveryId: delivery.deliveryId, taskRevisionId: delivery.taskRevisionId,
       deliveredAt: deliveredAt(task), useRequired: delivery.useRequired, last: null, othersObserved: false };
@@ -58,8 +59,8 @@ export async function readDeliveriesForMe(projectId: string, actorId: string, si
     if (detail?.task?.projectId !== projectId || detail.task.id !== task.taskId || !Array.isArray(detail.observations))
       throw new Error("任务的使用观察响应与所选任务不符");
     const mine = myLatestObservation(detail.observations, delivery.deliveryId, actorId);
-    if (mine?.result === "used") return null;
-    return { ...row, othersObserved: true, last: mine ? { result: mine.result, at: mine.createdAt } : null,
+    if (mine?.result === "used" || mine?.result === "failed") return null;
+    return { ...row, othersObserved: true, last: mine ? { result: "notUsed", at: mine.createdAt } : null,
       deliveredAt: row.deliveredAt ?? detail.deliveries?.find(item => item.id === delivery.deliveryId)?.createdAt ?? null };
   }));
   return { items: rows.filter((row): row is DeliveryForMe => row !== null), complete, tasksRead: tasks.length };

@@ -1,6 +1,7 @@
 // Task stage timing display, shared by the task pages and the Session workspace (which shows the current task's stage).
 import React from "react";
 import type { LeaderWorkTaskTiming, LeaderWorkTimingStage } from "@evoloop/contracts/work-index";
+import { actorText } from "./actorPresentation";
 
 export const timingStageLabel: Record<LeaderWorkTimingStage, string> = {
   unassigned: "待分派", awaiting_ack: "等待承接确认", awaiting_run: "等待运行",
@@ -32,7 +33,8 @@ export function timingDuration(value: number | null | undefined): string {
 /** A waiting party by kind; an actor name follows it, a record's raw ID does not (it belongs to 完整标识). */
 export function waitingParty(waiting: { kind: string; id?: string | null }): string {
   const kind = (waitingKindLabel as Record<string, string>)[waiting.kind] ?? "责任未知";
-  return `${kind}${waiting.id && !recordId.test(waiting.id) ? ` · ${waiting.id}` : ""}`;
+  // A bare record ID (a role, a task) is not said; a person is said as every page says them (actorText).
+  return `${kind}${waiting.id && !recordId.test(waiting.id) ? ` · ${actorText(waiting.id)}` : ""}`;
 }
 
 export function timingWaitingFor(timing: LeaderWorkTaskTiming): string {

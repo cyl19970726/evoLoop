@@ -1,11 +1,12 @@
 import type {
-  Command, CommandResult, Document, DocumentDetail, DocumentRevision,
+  Command, CommandResult, Document, DocumentDetail, DocumentRevision, DocumentRevisionPage,
   Impact, Operation, Page, Principal, Project, Task, TaskDetail, TaskRevision, BasisSet, DocumentTaskReference, Goal, GoalRevision, Stage, StageRevision, StageReview,
   DiscussionRecord, DiscussionEvent,
   EvaluationRevision, EvaluationAttempt, EvaluationAssessment, EvaluationConclusion, EvaluationSourceSignature, EvaluationFixedRef,
   TaskTimingView,
 } from "@evoloop/contracts";
 export type { TaskTimingView } from "@evoloop/contracts";
+export type { DocumentRevisionPage, DocumentRevisionState, DocumentRevisionSummary } from "@evoloop/contracts";
 import type { WorkTaskStatus } from "./workStatusPresentation";
 import { reportUnauthorized, requestAuth } from "./identity";
 import { describeError } from "./errorPresentation";
@@ -14,6 +15,10 @@ import type {
   LeaderWorkChangesPage, LeaderWorkDependenciesCommand, LeaderWorkDocument, LeaderWorkPage,
   LeaderWorkPlanCommand, LeaderWorkReviewCommand, LeaderWorkTask,
 } from "@evoloop/contracts/work-index";
+import type { ProjectCapabilitiesView, ProjectMembersView, ProjectRepositoriesView } from "@evoloop/contracts/project-configuration";
+export type {
+  ProjectCapabilitiesView, ProjectCapability, ProjectMember, ProjectMembersView, ProjectRepositoriesView, ProjectRepository,
+} from "@evoloop/contracts/project-configuration";
 
 export interface Session {
   principal: Principal;
@@ -83,6 +88,14 @@ function checkedOperation(value: unknown, operationId: string): Operation {
   return value as unknown as Operation;
 }
 
+/** A project configuration view must be about the project asked for, and say whether it is available. */
+function checkedProjectView<T extends { projectId: string; status: string }>(value: unknown, projectId: string): T {
+  if (!isRecord(value) || value.projectId !== projectId
+    || !(value.status === "available" ? Array.isArray(value.items) : value.status === "unavailable" && typeof value.reason === "string"))
+    throw new ApiError(0, "项目配置响应与所选项目不符；请重新读取。");
+  return value as T;
+}
+
 const projectPath = (projectId: string) => `/api/projects/${encodeURIComponent(projectId)}`;
 const key = (value: string) => encodeURIComponent(value);
 
@@ -97,6 +110,12 @@ export function api(token = "", timeoutMs = 15000) {
   return {
     session: () => call<Session>("/api/session"),
     project: (p: string) => call<Project>(projectPath(p)),
+    /** Repositories configured for this project; `unavailable` is not "none". */
+    projectRepositories: async (p: string) => checkedProjectView<ProjectRepositoriesView>(await call<unknown>(`${projectPath(p)}/repositories`), p),
+    /** Capabilities judged for this project, or marked as one setting for the whole service. */
+    projectCapabilities: async (p: string) => checkedProjectView<ProjectCapabilitiesView>(await call<unknown>(`${projectPath(p)}/capabilities`), p),
+    /** This project's member identities and permissions; `unavailable` when the host has no member source. */
+    projectMembers: async (p: string) => checkedProjectView<ProjectMembersView>(await call<unknown>(`${projectPath(p)}/members`), p),
     goals: (p: string, cursor?: string) => call<Page<Goal>>(`${projectPath(p)}/goals?limit=50${cursor ? `&cursor=${key(cursor)}` : ""}`),
     goalRevisions: (p: string, id: string) => call<GoalRevision[]>(`${projectPath(p)}/goals/${key(id)}/revisions`),
     stageRevisions: (p: string, id: string) => call<StageRevision[]>(`${projectPath(p)}/stages/${key(id)}/revisions`),
@@ -110,6 +129,16 @@ export function api(token = "", timeoutMs = 15000) {
     documentTasks: (p: string, id: string, cursor?: string, signal?: AbortSignal) => call<Page<DocumentTaskReference>>(
       `${projectPath(p)}/documents/${key(id)}/tasks?limit=50${cursor ? `&cursor=${key(cursor)}` : ""}`, { signal }),
     documentRevision: (p: string, id: string, revision: string) => call<DocumentRevision>(`${projectPath(p)}/documents/${key(id)}/revisions/${key(revision)}`),
+    /**
+     * Newest-first revision metadata without bodies (limit 1..100, server default 50); pass nextCursor back
+     * unchanged. Item numbers never change, but current/published are only true for the `document` head of
+     * the page that carried them: after loading another page, recompute every loaded item's state from the
+     * newest page's `document`, and when `document.version` differs from the first page, say so and offer to
+     * reload from the first page (newer revisions sit above it).
+     */
+    documentRevisions: (p: string, id: string, page: { cursor?: string; limit?: number } = {}, signal?: AbortSignal) =>
+      call<DocumentRevisionPage>(`${projectPath(p)}/documents/${key(id)}/revisions?limit=${page.limit ?? 50}${
+        page.cursor ? `&cursor=${key(page.cursor)}` : ""}`, signal ? { signal } : undefined),
     tasks: (p: string, cursor?: string, signal?: AbortSignal) => call<Page<Task>>(`${projectPath(p)}/tasks?limit=50${cursor ? `&cursor=${key(cursor)}` : ""}`, signal ? { signal } : undefined),
     workStatuses: (p: string, taskIds: string[], signal?: AbortSignal) => call<{items: WorkTaskStatus[]}>(
       `${projectPath(p)}/orchestration/work-status?taskIds=${taskIds.map(key).join(",")}`, signal ? { signal } : undefined),

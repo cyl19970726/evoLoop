@@ -36,7 +36,8 @@ const traceKind: Record<RuntimeWorkTrace["items"][number]["kind"], string> = {
   command: "命令", tool: "工具", file_change: "文件修改", message: "消息", web_search: "网页搜索", artifact: "成果",
 };
 const pre = "max-h-[42vh] overflow-auto whitespace-pre-wrap rounded-md bg-muted px-2.5 py-2 font-mono text-caption text-foreground [overflow-wrap:anywhere]";
-const linkButton = "cursor-pointer border-0 bg-transparent p-0 text-caption text-primary hover:underline disabled:cursor-default disabled:text-muted-foreground disabled:no-underline";
+/** Small text actions beside a line (重试、重读): Button variant="link" at caption size. */
+const linkButton = "text-caption disabled:no-underline";
 const sourceLayer = "min-w-0 text-caption text-muted-foreground [&>summary]:w-fit [&>summary]:cursor-pointer hover:[&>summary]:text-foreground";
 
 function TraceItem({ entry, index }: { entry: RuntimeWorkTrace["items"][number]; index: number }) {
@@ -159,16 +160,16 @@ export function ActivityFeed({ items, filter, onFilter, open, onOpen, projectId,
       const messageState = (state: string) => messageStates.has(state) ? messageStateLabel(state as SessionMessageState) : `状态待核对（${state}）`;
       return <li key={group.key} data-activity-key={group.key} className="flex min-w-0 flex-col gap-1 border-t border-border py-2.5 first:border-t-0">
         <time className={mutedText}>{date(item.occurredAt ?? item.recordedAt)}</time>
-        <button type="button" className="session-activity-toggle flex w-full min-w-0 cursor-pointer flex-col items-start gap-0.5 rounded-md border-0 bg-transparent p-0 text-left outline-none focus-visible:shadow-[var(--focus-ring)]" aria-expanded={expanded} onClick={() => {
+        <Button variant="row" className="session-activity-toggle min-w-0 flex-col items-start gap-0.5 p-0 hover:bg-transparent" aria-expanded={expanded} onClick={() => {
           onOpen(expanded ? open.filter(key => key !== group.key) : [...open, group.key]);
           if (!expanded && !detail) void load(group);
-        }}><strong className="max-w-full text-small font-medium text-foreground [overflow-wrap:anywhere]">{title}</strong><small className={`${mutedText} max-w-full [overflow-wrap:anywhere]`}>{group.items.length > 1 ? `${group.items.length} 条记录 · ` : ""}{item.source.kind === "run" ? "项目运行记录" : presented.sourceLabel}</small></button>
+        }}><strong className="max-w-full text-small font-medium text-foreground [overflow-wrap:anywhere]">{title}</strong><small className={`${mutedText} max-w-full [overflow-wrap:anywhere]`}>{group.items.length > 1 ? `${group.items.length} 条记录 · ` : ""}{item.source.kind === "run" ? "项目运行记录" : presented.sourceLabel}</small></Button>
         {expanded && <div className="flex min-w-0 flex-col gap-2 rounded-md bg-muted px-2.5 py-2 text-label text-text-secondary">
           {detail?.state === "loading" && <p className={mutedText} role="status">正在读取来源详情…</p>}
-          {detail?.state === "error" && <p className="text-caption text-destructive" role="alert">详情暂不可用：{detail.message} <button type="button" className={linkButton} onClick={() => void load(group)}>重试</button></p>}
+          {detail?.state === "error" && <p className="text-caption text-destructive" role="alert">详情暂不可用：{detail.message} <Button variant="link" className={linkButton} onClick={() => void load(group)}>重试</Button></p>}
           {sourceChanged && <p className="session-trace-stale rounded-md bg-warning-soft px-2.5 py-1.5 text-caption text-foreground" role="status">来源记录已更新；下方仍是上次读取的详情，请重读核对。</p>}
-          {detail?.state === "message" && <><p className="text-caption">消息状态：{messageState(detail.status)} · 读于 {date(detail.readAt)} <button type="button" className={linkButton} disabled={detail.refreshing} onClick={() => void load(group)}>{detail.refreshing ? "重读中…" : "重读消息"}</button></p>{detail.refreshError && <p className="text-caption text-destructive" role="alert">重读失败，保留上次内容：{detail.refreshError}</p>}<pre className={pre}>{detail.content}</pre>{detail.response && <><h4 className="text-caption font-semibold text-foreground">原会话回复</h4><pre className={pre}>{detail.response}</pre></>}{detail.failure && <p className="text-caption text-destructive" role="alert">处理失败：{detail.failure}</p>}</>}
-          {detail?.state === "trace" && <><p className="text-caption">原生执行轨迹 · {detail.pages.at(-1)?.completeness === "partial" ? "只读到部分记录" : "当前已读完整"} · 每字段最多 {detail.pages[0]?.limits.maxFieldChars} 字符 · 读于 {date(detail.readAt)} <button type="button" className={linkButton} disabled={detail.refreshing || detail.loadingMore} onClick={() => void load(group)}>{detail.refreshing ? "重读中…" : "重读执行轨迹"}</button></p>
+          {detail?.state === "message" && <><p className="text-caption">消息状态：{messageState(detail.status)} · 读于 {date(detail.readAt)} <Button variant="link" className={linkButton} disabled={detail.refreshing} onClick={() => void load(group)}>{detail.refreshing ? "重读中…" : "重读消息"}</Button></p>{detail.refreshError && <p className="text-caption text-destructive" role="alert">重读失败，保留上次内容：{detail.refreshError}</p>}<pre className={pre}>{detail.content}</pre>{detail.response && <><h4 className="text-caption font-semibold text-foreground">原会话回复</h4><pre className={pre}>{detail.response}</pre></>}{detail.failure && <p className="text-caption text-destructive" role="alert">处理失败：{detail.failure}</p>}</>}
+          {detail?.state === "trace" && <><p className="text-caption">原生执行轨迹 · {detail.pages.at(-1)?.completeness === "partial" ? "只读到部分记录" : "当前已读完整"} · 每字段最多 {detail.pages[0]?.limits.maxFieldChars} 字符 · 读于 {date(detail.readAt)} <Button variant="link" className={linkButton} disabled={detail.refreshing || detail.loadingMore} onClick={() => void load(group)}>{detail.refreshing ? "重读中…" : "重读执行轨迹"}</Button></p>
             {detail.refreshError && <p className="text-caption text-destructive" role="alert">重读失败，保留上次内容：{detail.refreshError}</p>}
             <TraceRecords pages={detail.pages} shown={visibleItems[group.key] ?? 10} onMore={() => setVisibleItems(old => ({ ...old, [group.key]: (old[group.key] ?? 10) + 10 }))} />
             {detail.pages.at(-1)?.unsupportedCount ? <p className="text-caption">另有 {detail.pages.at(-1)?.unsupportedCount} 项原生记录不支持展示。</p> : null}

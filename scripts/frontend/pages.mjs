@@ -28,13 +28,18 @@ const unconfirmedReceipt = { actorId, projectId, taskId: tasks.t1.id, operationI
 const restPointer = page => page.mouse.move(0, 0);
 
 export const scenes = [
-  // Entry: login and the project list; the pages behind the account menu: 项目设置, 待核对操作, 仓库规范.
+  // Entry: login and the project list; the pages behind the account menu: 项目设置, 结果未知的操作, 仓库规范.
   { name: "login", path: "/", login: false, widths: plainThree, ready: heading("进入项目工作台") },
   { name: "projects", path: "/", widths: plainThree, ready: both(heading("你的项目"), text("对外说明整理")) },
-  { name: "settings", path: p("settings"), widths: plainThree, ready: both(heading("项目设置"), text("zhang-reviewer")) },
-  { name: "operations", path: p("operations"), widths: plainThree, ready: both(heading("待核对操作", 1), text("提交结果待核对")), prepare: restPointer,
+  { name: "settings", path: p("settings"), widths: plainThree, prepare: restPointer,
+    ready: both(heading("项目设置"), text("zhang-reviewer"), page => page.getByText("正在读取；下面先显示").waitFor({ state: "detached" })) },
+  // The receipt names the task its operation was about; the page reads the task's name and links there.
+  { name: "operations", path: p("operations"), widths: plainThree, prepare: restPointer,
+    ready: both(heading("结果未知的操作", 1), text("提交结果待核对"), text(`原操作所在：任务 · ${tasks.t1.title}`)),
     before: page => page.addInitScript(receipt => sessionStorage.setItem("evoloop.unconfirmed-operations.v1", JSON.stringify([receipt])), unconfirmedReceipt) },
-  { name: "repository", path: p("repository"), widths: plainThree, ready: both(heading("仓库规范", 1), text("登记 Git 固定来源")), prepare: restPointer },
+  // The capabilities judged for the project (one changes after a restart) and its two repositories (fixture/configuration.mjs).
+  { name: "repository", path: p("repository"), widths: plainThree, prepare: restPointer,
+    ready: both(heading("仓库规范", 1), text("登记 Git 固定来源"), text("重启后会变为未配置"), text("design-notes")) },
   { name: "overview", path: p("overview"), drawer: true, ready: both(heading("项目总览"), text(tasks.t2.title)) },
 
   // Tasks: the table view, one task and its five other tabs, a new task.

@@ -11,6 +11,8 @@ import { deliveryTarget, verifiedDocumentTitle, type DeliveryTarget } from "../.
 import { fixedContent, queryKeys, useProjectQuery } from "../../shared/query";
 import { runtimeClient } from "../../shared/runtimeClient";
 import { taskSectionHref } from "../../shared/taskNavigation";
+import { withReturn } from "../../shared/returnLink";
+import { taskOrigin } from "./taskOrigin";
 import { relayProgress, relayRecipient, relayStageLabel, relayStateLabel } from "../../shared/workPresentation";
 import { appPath } from "../../shared/appPath";
 import { FullIdentifiers } from "../../shared/ui/FullIdentifiers";
@@ -20,6 +22,8 @@ import { DocumentLink } from "./DocumentLink";
 import { EvidenceText } from "./EvidenceText";
 import { observationResultLabel, observationsForDelivery, observerKindLabel } from "./observationPresentation";
 import { Fine, ReadNote, TabSection } from "./TaskForms";
+import { actorRow, actorText } from "../../shared/actorPresentation";
+import { ActorIdentifiers } from "../../shared/ui/ActorIdentifiers";
 
 type Delivery = NonNullable<TaskDetail["deliveries"]>[number];
 type Observation = NonNullable<TaskDetail["observations"]>[number];
@@ -44,7 +48,9 @@ function useDeliveryTitles(projectId: string, deliveries: Delivery[]) {
   return titles;
 }
 
-export function TaskDeliveryTab({ projectId, detail, active, actionsHref }: { projectId: string; detail: TaskDetail; active: boolean; actionsHref: string }) {
+export function TaskDeliveryTab({ projectId, detail, active, actionsHref, actorId }: {
+  projectId: string; detail: TaskDetail; active: boolean; actionsHref: string; actorId?: string;
+}) {
   const deliveries = detail.deliveries ?? emptyDeliveries;
   const latestId = deliveries.at(-1)?.id;
   const titles = useDeliveryTitles(projectId, deliveries);
@@ -80,7 +86,7 @@ export function TaskDeliveryTab({ projectId, detail, active, actionsHref }: { pr
       <div className="flex flex-col">
         {[...deliveries].reverse().map(delivery => <DeliveryRecord key={delivery.id} projectId={projectId} detail={detail} delivery={delivery}
           latest={delivery.id === latestId} title={titles[delivery.id]} run={delivery.runId ? runs[delivery.runId] : undefined}
-          active={active} onCheckRun={id => setRequested(current => current.includes(id) ? current : [...current, id])} />)}
+          active={active} actorId={actorId} onCheckRun={id => setRequested(current => current.includes(id) ? current : [...current, id])} />)}
       </div>
     </TabSection>
     <TabSection title="验收接力">
@@ -100,7 +106,7 @@ export function TaskDeliveryTab({ projectId, detail, active, actionsHref }: { pr
       {!(detail.closures ?? []).length ? <p className="text-label text-text-secondary">还没有验收决定；交付和使用记录不等于已验收。</p>
         : <div className="flex flex-col gap-4">{(detail.closures ?? []).map(closure => <article key={closure.id} className="flex flex-col gap-2 border-t border-border pt-3 first:border-t-0 first:pt-0">
           <h3 className="text-small font-semibold text-foreground">验收决定 · {date(closure.createdAt)}</h3>
-          <Fine>{closure.decisionId ? "依据：已结算的判断。只完成本轮判断，不代表来源业务任务完成。" : "依据：本任务的交付。"} 审阅者 {closure.actorId}</Fine>
+          <Fine>{closure.decisionId ? "依据：已结算的判断。只完成本轮判断，不代表来源业务任务完成。" : "依据：本任务的交付。"} 审阅者 {actorText(closure.actorId)}</Fine>
           <EvidenceText label="逐项验收证据" value={closure.acceptanceEvidence} />
           <EvidenceText label="理由" value={closure.reason} />
           {(closure.sourceTaskId || closure.handoffTaskId) && <p className="flex flex-wrap gap-x-3 text-label">
@@ -110,15 +116,17 @@ export function TaskDeliveryTab({ projectId, detail, active, actionsHref }: { pr
           {closure.waitingInboxId && <Fine>还有待承接的来源事项，原业务责任仍要处理。</Fine>}
           <FullIdentifiers rows={[{ label: "交付", value: closure.deliveryId }, { label: "判断", value: closure.decisionId },
             { label: "来源入站", value: closure.sourceInboxId }, { label: "来源事件", value: closure.sourceEventId },
-            { label: "待承接入站", value: closure.waitingInboxId }, { label: "正式子派发", value: closure.handoffDispatchId }, { label: "验收记录", value: closure.id }]} />
+            { label: "待承接入站", value: closure.waitingInboxId }, { label: "正式子派发", value: closure.handoffDispatchId }, { label: "验收记录", value: closure.id },
+            actorRow("审阅者", closure.actorId)]} />
         </article>)}</div>}
     </TabSection>
   </div>;
 }
 
-function DeliveryRecord({ projectId, detail, delivery, latest, title, run, active, onCheckRun }: {
+function DeliveryRecord({ projectId, detail, delivery, latest, title, run, active, onCheckRun, actorId }: {
   projectId: string; detail: TaskDetail; delivery: Delivery; latest: boolean; title?: { title: string | null; checked: boolean };
   run?: { data: RuntimeRunRecord | undefined; error: unknown; isFetching: boolean }; active: boolean; onCheckRun(id: string): void;
+  actorId?: string | undefined;
 }) {
   const observations = observationsForDelivery(detail.observations ?? [], delivery.id);
   const target = deliveryTarget(delivery, projectId);
@@ -130,7 +138,7 @@ function DeliveryRecord({ projectId, detail, delivery, latest, title, run, activ
       <StatusTag tone={delivery.technicalResult === "passed" ? "done" : "blocked"} label={delivery.technicalResult === "passed" ? "技术检查通过" : "技术检查未通过"} />
       {!current && <StatusTag tone="history" label="属于旧修订" />}
     </div>
-    <Fine>登记于 {date(delivery.createdAt)} · 登记者 {delivery.actorId}{delivery.submittedByActorId ? ` · 提交者 ${delivery.submittedByActorId}` : ""}</Fine>
+    <Fine>登记于 {date(delivery.createdAt)} · 登记者 {actorText(delivery.actorId)}{delivery.submittedByActorId ? ` · 提交者 ${actorText(delivery.submittedByActorId)}` : ""}</Fine>
     <div className="flex flex-col gap-1">
       <p className="text-caption text-muted-foreground">固定成果</p>
       {target.kind === "document"
@@ -149,7 +157,8 @@ function DeliveryRecord({ projectId, detail, delivery, latest, title, run, activ
         : run?.data ? <span className="inline-flex flex-wrap gap-x-3">
           <a className="text-primary hover:underline" href={taskSectionHref(projectId, delivery.taskId, { revisionId: run.data.taskRevisionId })}>实际执行的任务修订</a>
           <a className="text-primary hover:underline" href={deliveryRunHref(projectId, delivery.taskId, delivery.runId)}>核对这次运行 →</a>
-          <a className="text-primary hover:underline" href={`/p/${encodeURIComponent(projectId)}/sessions?session=${encodeURIComponent(`owned:${run.data.sessionId}`)}`}>查看对应智能体 →</a></span>
+          <a className="text-primary hover:underline" href={withReturn(`/p/${encodeURIComponent(projectId)}/sessions?session=${encodeURIComponent(`owned:${run.data.sessionId}`)}`,
+            actorId ? taskOrigin(projectId, detail.task, actorId) : null)}>查看对应智能体 →</a></span>
           : run?.isFetching ? "正在核对来源运行…"
             : <span>尚未核对。<Button size="compact" variant="ghost" disabled={!active} onClick={() => onCheckRun(delivery.runId!)}>核对来源运行</Button>
               {!!run?.error && <span className="text-destructive"> {errorText(run.error)}</span>}</span>}</div>
@@ -163,15 +172,17 @@ function DeliveryRecord({ projectId, detail, delivery, latest, title, run, activ
     <FullIdentifiers summary="核对完整位置、修订与摘要" rows={[{ label: "原始位置", value: delivery.artifactRef },
       ...(target.kind !== "fallback" ? [{ label: "入口固定修订", value: target.revisionId }] : []),
       { label: "产物声明版本", value: delivery.artifactRevision }, { label: "SHA-256", value: delivery.contentHash },
-      { label: "来源运行", value: delivery.runId }, { label: "登记时任务修订", value: delivery.taskRevisionId }, { label: "交付", value: delivery.id }]} />
+      { label: "来源运行", value: delivery.runId }, { label: "登记时任务修订", value: delivery.taskRevisionId }, { label: "交付", value: delivery.id },
+      actorRow("登记者", delivery.actorId), actorRow("提交者", delivery.submittedByActorId)]} />
   </article>;
 }
 
 export function ObservationRecord({ observation }: { observation: Observation }) {
   return <div className="flex flex-col gap-1.5 rounded-lg bg-muted px-4 py-3" data-observation={observation.id}>
-    <p className="text-label font-medium text-foreground">{observation.observer} · {observerKindLabel[observation.observerKind]} · {observationResultLabel[observation.result]}</p>
-    <Fine>观察登记于 {date(observation.createdAt)} · 登记者 {observation.actorId}</Fine>
+    <p className="text-label font-medium text-foreground">{actorText(observation.observer)} · {observerKindLabel[observation.observerKind]} · {observationResultLabel[observation.result]}</p>
+    <Fine>观察登记于 {date(observation.createdAt)} · 登记者 {actorText(observation.actorId)}</Fine>
     <EvidenceText label="使用证据" value={observation.evidence} />
     <EvidenceText label="记录理由" value={observation.reason} />
+    <ActorIdentifiers actors={[["使用者", observation.observer], ["登记者", observation.actorId]]} />
   </div>;
 }

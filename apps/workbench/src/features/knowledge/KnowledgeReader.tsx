@@ -7,7 +7,9 @@ import {
   Badge, Button, ErrorState, LoadingState, Notice, RefreshingIndicator, StatusTag, Tabs, TabsContent, TabsList, TabsTrigger, cn,
 } from "@evoloop/ui";
 import { errorDetail, errorText } from "../../shared/api";
+import { returnPlaceOf } from "../../shared/returnLink";
 import { useContextPanel } from "../../shared/ui/ContextPanel";
+import { ReturnLink } from "../../shared/ui/ReturnLink";
 import { MarkdownBody } from "../../shared/ui/MarkdownBody";
 import { readingProse, readingSource } from "../../shared/ui/readingProse";
 import type { KnowledgeReading } from "./knowledgeRead";
@@ -35,11 +37,12 @@ export function KnowledgeReader({ projectId, read, fixed, returnHref, pendingTit
     const active = document.activeElement;
     if (!active || active === document.body) heading.current?.focus({ preventScroll: true });
   }, [shownKey]);
+  // The page it was opened from, named (返回任务：<名称>, 返回文档列表 …; shared/returnLink.ts).
+  const source = returnHref ? returnPlaceOf(returnHref, projectId) : null;
   const back = <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-    {returnHref && <a href={returnHref} className="inline-flex items-center gap-1 text-label font-medium text-primary hover:underline">
-      <ArrowLeft size={15} aria-hidden="true" />返回来源</a>}
-    <a href={knowledgeHref(projectId)} className={cn("text-label", returnHref ? "text-muted-foreground hover:text-foreground" : "inline-flex items-center gap-1 font-medium text-primary hover:underline")}>
-      {!returnHref && <ArrowLeft size={15} aria-hidden="true" />}全部知识</a>
+    {returnHref && source && <ReturnLink projectId={projectId} href={returnHref} place={source} />}
+    <a href={knowledgeHref(projectId)} className={cn("text-label", source ? "text-muted-foreground hover:text-foreground" : "inline-flex items-center gap-1 font-medium text-primary hover:underline")}>
+      {!source && <ArrowLeft size={15} aria-hidden="true" />}全部知识</a>
   </div>;
   if (!reading) return <div className="flex flex-col gap-4">
     {back}
@@ -65,7 +68,7 @@ export function KnowledgeReader({ projectId, read, fixed, returnHref, pendingTit
             <PanelRight aria-hidden="true" />来源与反例{challenges > 0 && <Badge className="ml-0.5">{challenges}</Badge>}</Button>}
         </div>
       </div>
-      <h1 ref={heading} tabIndex={-1} className="text-title font-semibold leading-[1.3] outline-none [overflow-wrap:anywhere]">{page.title}</h1>
+      <h1 ref={heading} tabIndex={-1} className="text-title font-semibold leading-(--leading-tight) outline-none [overflow-wrap:anywhere]">{page.title}</h1>
       <p className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-label text-text-secondary">
         <StatusTag tone={validityTone[page.observedValidity] ?? "unknown"} label={label(validityLabel, page.observedValidity)} />
         <span>{label(pageTypeLabel, page.pageType)}</span>
@@ -79,7 +82,7 @@ export function KnowledgeReader({ projectId, read, fixed, returnHref, pendingTit
         : standing.note && <p className="text-caption text-muted-foreground">{standing.note}</p>}
       {page.validity !== page.observedValidity && <Notice tone="waiting" title={`这一版发布时是“${label(validityLabel, page.validity)}”，目前标为“${label(validityLabel, page.observedValidity)}”`}>使用前请复核来源。</Notice>}
       {review && <Notice tone="waiting" title={review}>来源核对见右栏“来源”。</Notice>}
-      {challenges > 0 && <p className="text-label text-text-secondary">此版登记了 {challenges} 条挑战或反例{panel && <>，<button type="button" className="text-primary underline underline-offset-2" onClick={() => panel.setOpen(true)}>在右栏查看</button></>}。</p>}
+      {challenges > 0 && <p className="text-label text-text-secondary">此版登记了 {challenges} 条挑战或反例{panel && <>，<Button variant="link" className="underline underline-offset-2" onClick={() => panel.setOpen(true)}>在右栏查看</Button></>}。</p>}
       {failed && <Notice tone="error" title="这一页这次没有读回">{errorText(read.error)}。下面是上次读回的内容，当前待核对。</Notice>}
     </header>
     <section aria-label="知识页完整正文" className={cn("transition-opacity duration-150", read.previous && "opacity-60")}>

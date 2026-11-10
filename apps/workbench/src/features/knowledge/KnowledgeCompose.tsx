@@ -4,7 +4,7 @@
 import type { FormEvent } from "react";
 import { ArrowLeft } from "lucide-react";
 import type { EpistemicStatus, KnowledgePageType, KnowledgeRelation, KnowledgeSummary } from "@evoloop/contracts/knowledge";
-import { Button, Field, Input, Notice, Textarea } from "@evoloop/ui";
+import { Button, Field, Input, Notice, Select, Textarea } from "@evoloop/ui";
 import type { SourceDocument } from "../../shared/knowledgeClient";
 import { ContextPanelContent } from "../../shared/ui/ContextPanel";
 import { Block, Fact, quiet } from "./KnowledgeFacts";
@@ -24,7 +24,6 @@ export const emptyDraft: Draft = {
   sourceId: "", sourceRevision: "", relationTarget: "", relationRevision: "", relationType: "related", touched: false, conflict: "",
 };
 
-const select = "h-9 w-full rounded-md bg-field px-3 text-small text-foreground outline-none focus-visible:shadow-[var(--focus-ring)] disabled:opacity-50";
 
 export function KnowledgeCompose({ projectId, draft, update, sources, sourcesRead, pages, canWrite, busy, blocked, onSubmit, onClear, onClose, backLabel }: {
   projectId: string; draft: Draft; update(patch: Partial<Draft>): void; sources: SourceDocument[] | undefined; sourcesRead: SourcesRead;
@@ -37,9 +36,9 @@ export function KnowledgeCompose({ projectId, draft, update, sources, sourcesRea
   const submit = (event: FormEvent) => { event.preventDefault(); onSubmit(); };
   return <section aria-label="提出知识候选" data-dirty={draft.touched ? "true" : undefined} className="flex flex-col gap-5">
     <header className="flex flex-col gap-2 compact:pr-12">
-      <button type="button" onClick={onClose} className="inline-flex items-center gap-1 self-start text-label font-medium text-primary hover:underline"><ArrowLeft size={15} aria-hidden="true" />{backLabel}</button>
+      <Button variant="link" onClick={onClose} className="gap-1 self-start text-label font-medium"><ArrowLeft size={15} aria-hidden="true" />{backLabel}</Button>
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <h1 tabIndex={-1} className="text-title font-semibold leading-[1.3] outline-none">{draft.knowledgeId ? "提出修订候选" : "提出知识候选"}</h1>
+        <h1 tabIndex={-1} className="text-title font-semibold leading-(--leading-tight) outline-none">{draft.knowledgeId ? "提出修订候选" : "提出知识候选"}</h1>
         <Button variant="ghost" size="compact" onClick={onClear}>清空草稿</Button>
       </div>
       <p className="text-small text-text-secondary">来源只能选本项目已采纳的固定文档版本。保存只是候选，仍要审阅、发布，当前认识才会改变。</p>
@@ -51,25 +50,25 @@ export function KnowledgeCompose({ projectId, draft, update, sources, sourcesRea
     <form onSubmit={submit} className="flex max-w-[720px] flex-col gap-4">
       <Field label="标题">{control => <Input {...control} required value={draft.title} onChange={event => edit({ title: event.target.value })} />}</Field>
       <div className="grid grid-cols-1 gap-4 compact:grid-cols-2">
-        <Field label="页面类型">{control => <select {...control} className={select} value={draft.pageType} onChange={event => edit({ pageType: event.target.value as KnowledgePageType })}>
-          {pageTypes.map(type => <option key={type} value={type}>{pageTypeLabel[type]}</option>)}</select>}</Field>
-        <Field label="认识性质" hint="假设要写明怎样会被证伪；解释保留依据和反例。">{control => <select {...control} className={select} value={draft.epistemic} onChange={event => edit({ epistemic: event.target.value as EpistemicStatus })}>
-          {epistemicStates.map(state => <option key={state} value={state}>{epistemicLabel[state]}</option>)}</select>}</Field>
+        <Field label="页面类型">{control => <Select {...control} className="w-full" value={draft.pageType} onChange={event => edit({ pageType: event.target.value as KnowledgePageType })}>
+          {pageTypes.map(type => <option key={type} value={type}>{pageTypeLabel[type]}</option>)}</Select>}</Field>
+        <Field label="认识性质" hint="假设要写明怎样会被证伪；解释保留依据和反例。">{control => <Select {...control} className="w-full" value={draft.epistemic} onChange={event => edit({ epistemic: event.target.value as EpistemicStatus })}>
+          {epistemicStates.map(state => <option key={state} value={state}>{epistemicLabel[state]}</option>)}</Select>}</Field>
       </div>
       <Field label="完整 Markdown 正文">{control => <Textarea {...control} required rows={12} value={draft.body} onChange={event => edit({ body: event.target.value })} className="font-mono" />}</Field>
       <Field label="已采纳的固定来源" hint={sourceHint(sources, sourcesRead)}>
-        {control => <select {...control} required className={select} value={draft.sourceId} onChange={event => {
+        {control => <Select {...control} required className="w-full" value={draft.sourceId} onChange={event => {
           const id = event.target.value;
           edit({ sourceId: id, sourceRevision: reachable.find(source => source.documentId === id)?.revisionId ?? "", conflict: "" });
-        }}><option value="">请选择</option>{reachable.map(source => <option key={source.documentId} value={source.documentId}>{source.title}</option>)}</select>}
+        }}><option value="">请选择</option>{reachable.map(source => <option key={source.documentId} value={source.documentId}>{source.title}</option>)}</Select>}
       </Field>
       <div className="grid grid-cols-1 gap-4 compact:grid-cols-2">
-        <Field label="关系目标（可选）" hint="只能选已发布的知识页。">{control => <select {...control} className={select} value={draft.relationTarget} onChange={event => {
+        <Field label="关系目标（可选）" hint="只能选已发布的知识页。">{control => <Select {...control} className="w-full" value={draft.relationTarget} onChange={event => {
           const id = event.target.value;
           edit({ relationTarget: id, relationRevision: pages.find(page => page.knowledgeId === id)?.revision ?? "", conflict: "" });
-        }}><option value="">无</option>{pages.map(page => <option key={page.knowledgeId} value={page.knowledgeId}>{page.title}</option>)}</select>}</Field>
-        {draft.relationTarget && <Field label="关系类型">{control => <select {...control} className={select} value={draft.relationType} onChange={event => edit({ relationType: event.target.value as KnowledgeRelation["type"] })}>
-          {relationTypes.map(type => <option key={type} value={type}>{relationTypeLabel[type]}</option>)}</select>}</Field>}
+        }}><option value="">无</option>{pages.map(page => <option key={page.knowledgeId} value={page.knowledgeId}>{page.title}</option>)}</Select>}</Field>
+        {draft.relationTarget && <Field label="关系类型">{control => <Select {...control} className="w-full" value={draft.relationType} onChange={event => edit({ relationType: event.target.value as KnowledgeRelation["type"] })}>
+          {relationTypes.map(type => <option key={type} value={type}>{relationTypeLabel[type]}</option>)}</Select>}</Field>}
       </div>
       <div className="flex flex-wrap items-center gap-3">
         <Button type="submit" variant="primary" disabled={!canWrite || busy || blocked || !!draft.conflict}>保存候选</Button>

@@ -198,7 +198,7 @@ PG 引擎及主数据归属已选；业务 CLI 和项目 skill 已接入共同 A
 | 对象与权威：[项目数据](project-data.md) | 一条工作关系应连谁，正文在哪里，何时固定修订 | [领域合同](contracts.md)、[存储设计](storage.md) |
 | 认识怎样回来：[知识流](knowledge-flow.md) → [Wiki 维护](wiki-maintenance.md) | 来源如何被理解，修订怎样影响旧页、任务和下一消费者 | [Wiki 集成](wiki-integration.md)的 DTO、端口与候选后端接缝 |
 | 实现怎样装配：[包架构](packages.md) → [技术选型](technology-selection.md) | 一项能力属于哪个模块/进程，为何选它、采用前缺什么 | [Codex 接入](codex-integration.md)与具体适配合同 |
-| Session 怎样运行：[Session 运行时](session-runtime.md) → [Codex 接入](codex-integration.md) | 一个 Session 从创建到关闭系统各做什么；执行中来的消息怎样处理；Codex 与 Claude 有什么不同 | [接口合同](contracts.md#4-roleregistry-与-sessionruntime)、[存储](storage.md#迁移-054-到-068-新增的表) |
+| Session 怎样运行：[Session 运行时](session-runtime.md) → [Codex 接入](codex-integration.md) | 一个 Session 从创建到关闭系统各做什么；执行中来的消息怎样处理；Codex 与 Claude 有什么不同 | [接口合同](contracts.md#4-roleregistry-与-sessionruntime)、[存储](storage.md#迁移-054-到-069-新增的表和列) |
 | 实际跑在哪：[部署与迁移](deployment.md) | 服务部署成什么样；发布怎样保护数据；换主机搬什么、不搬什么 | [存储](storage.md)、[本机运行](../development/local-run.md) |
 | 外部消息怎样进来：[消息 Connector](message-connectors.md) | 平台消息怎样路由到 Session、怎样回复与恢复 | [接口合同](contracts.md#7a-connector-与-externalbinding) |
 | 人怎样阅读与决定：[前端架构](../frontend/architecture.md) → [Wiki 工作区](wiki-workspace.md) | 用户从哪里找依据、作取舍、核对后果，哪些仅为界面视图 | [工作台产品](../product/workbench.md)、[Wiki 集成](wiki-integration.md) |

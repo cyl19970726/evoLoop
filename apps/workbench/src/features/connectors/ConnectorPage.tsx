@@ -2,11 +2,14 @@ import { Fragment, useEffect, useState, type FormEvent } from "react";
 import type { ConnectorRoute, ConnectorRouteRecord } from "@evoloop/contracts/message-connectors";
 import { ApiError, errorDiagnostic, errorText } from "../../shared/api";
 import { RefreshCw } from "lucide-react";
-import { Button, EmptyState, ErrorState, Field, Input, ListRow, LoadingState, Notice, RefreshingIndicator, StatusTag, Textarea, cn } from "@evoloop/ui";
+import { Button, EmptyState, ErrorState, Field, Input, ListRow, LoadingState, Notice, RefreshingIndicator, Select, StatusTag, Textarea, cn } from "@evoloop/ui";
 import { date, href } from "../../shared/ui/shared";
+import { FullIdentifiers } from "../../shared/ui/FullIdentifiers";
 import { SettingsPage, SettingsSection } from "../../shared/ui/SettingsParts";
 import { useProjectQuery } from "../../shared/query";
+import { hereOrigin, withReturn } from "../../shared/returnLink";
 import { sessionClient } from "../../shared/sessionClient";
+import { agentDisplayName } from "../../shared/agentNamePresentation";
 import type { MutationContext } from "../../shared/ActionForm";
 import { connectorClient, type ConnectorDeliverySummary, type ConnectorDeliveryDetail } from "./client";
 import {
@@ -27,12 +30,12 @@ async function readAgentName(projectId: string, sessionId: string, signal: Abort
   const session = (await sessionClient("", projectId).snapshot(key, signal))?.session;
   if (!session || (session.key !== key && !session.aliases?.some(alias => alias.kind === "owned" && alias.sessionId === sessionId)))
     throw new Error("智能体名称来源不匹配");
-  return session.profile?.displayName?.trim() || session.title?.trim() || null;
+  return agentDisplayName(session) || null;
 }
 
-function TargetAgent({ projectId, sessionId }: { projectId: string; sessionId: string }) {
+function TargetAgent({ projectId, sessionId, actorId }: { projectId: string; sessionId: string; actorId: string }) {
   const read = useProjectQuery(projectId, ["connectors", "agent-name", sessionId], signal => readAgentName(projectId, sessionId, signal));
-  return <a href={`${href(projectId, "sessions")}?session=${encodeURIComponent(sessionId)}`} className={cn("text-foreground underline", wrap)}>
+  return <a href={withReturn(`${href(projectId, "sessions")}?session=${encodeURIComponent(sessionId)}`, hereOrigin(actorId))} className={cn("text-foreground underline", wrap)}>
     {agentLinkText({ name: read.data, loading: read.isPending })}
   </a>;
 }
@@ -56,10 +59,14 @@ function DeliveryPeek({token,projectId,bindingId}:{token:string;projectId:string
       </li>)}</ul>)}
     {detail && <details open className={cn("rounded-lg bg-field px-3 py-2 text-caption text-text-secondary", wrap)}>
       <summary className="cursor-pointer text-foreground">投递 {detail.deliveryId} 的明细</summary>
-      {detail.messages.map(message => <p key={message.messageId}>事件 {message.eventCursor}：{messageStateLabel(message.messageState)} · {processingStateLabel(message.processingState)}
-        <span className="text-muted-foreground"> · 消息 <code className="font-mono">{message.messageId}</code>{message.nativeTurnId && <> · 一轮 <code className="font-mono">{message.nativeTurnId}</code></>}</span></p>)}
+      {detail.messages.map(message => <p key={message.messageId}>事件 {message.eventCursor}：{messageStateLabel(message.messageState)} · {processingStateLabel(message.processingState)}</p>)}
       {detail.unhandled.map(event => <p key={`unhandled-${event.eventCursor}`}>事件 {event.eventCursor}：{unhandledEventLabel(event)}，{unhandledReasonLabel(event.reason)}，原长 {event.contentLength} 字，没有转给智能体</p>)}
-      <p>出站：{decisionLabel(detail.decision)}{detail.decision?.requestId && <> · 原请求 <code className="font-mono">{detail.decision.requestId}</code></>}</p>
+      <p>出站：{decisionLabel(detail.decision)}</p>
+      {/* The project message, the agent's turn and the outbound request behind each line: identifiers, not text. */}
+      <FullIdentifiers summary="完整标识" rows={[
+        ...detail.messages.flatMap(message => [{ label: `事件 ${message.eventCursor} 的消息`, value: message.messageId },
+          { label: `事件 ${message.eventCursor} 的一轮`, value: message.nativeTurnId }]),
+        { label: "出站原请求", value: detail.decision?.requestId }]} />
     </details>}
   </div>;
 }
@@ -202,7 +209,8 @@ export function ConnectorPage({ context }: { context: MutationContext }) {
   return <SettingsPage title="微信连接" description="查看固定来源与接收智能体，按已审策略保存和停订。路由状态不代表来源消息已处理或微信收件已确认。" className="connector-page"
     action={<Button onClick={() => { setError(""); setReadAgain(value => value + 1); }} disabled={busy}><RefreshCw aria-hidden="true" />重新读取</Button>}>
     <Notice tone="waiting">标准模式使用完整权限的专用智能体。启用前要核对：群聊还是私聊、允许的发送者、收发身份、智能体的对话线程、生效中的执行配置和网关授权。受限模式还缺隔离证明，不能启用。暂停或停用后不再领取新的投递；已领取的按原策略处理完，或标为结果未知。</Notice>
-    {pending && <Notice tone="error" action={<Button size="compact" disabled={busy} onClick={() => void reconcile()}>按原 ID 查回</Button>}>有一项操作的结果还没确认，原操作 ID <code className="break-all font-mono">{pending}</code>。查回之前不再提交新的修改。</Notice>}
+    {pending && <Notice tone="error" action={<Button size="compact" disabled={busy} onClick={() => void reconcile()}>按原 ID 查回</Button>}>有一项操作的结果还没确认。查回之前不再提交新的修改。
+      <FullIdentifiers className="mt-1" summary="完整标识" rows={[{ label: "原操作", value: pending }]} /></Notice>}
     {error && <Notice tone="error">{error}</Notice>}{notice && <Notice>{notice}</Notice>}
     <SettingsSection title="当前路由">
       {list.checking && <RefreshingIndicator />}
@@ -219,7 +227,7 @@ export function ConnectorPage({ context }: { context: MutationContext }) {
             <span className={muted}>{routeModeLine(route)}</span>
           </div>
           <p className={cn("text-small text-text-secondary", wrap)}>{providerLabel(route.source.provider)} · {conversationKindLabel(route.conversationKind)} · 连接 {route.source.connectionId}</p>
-          <p className={cn("text-small text-text-secondary", wrap)}>转给 <TargetAgent projectId={projectId} sessionId={route.targetSessionId} /> · 读回更新 {date(route.updatedAt)}</p>
+          <p className={cn("text-small text-text-secondary", wrap)}>转给 <TargetAgent projectId={projectId} sessionId={route.targetSessionId} actorId={principal.actorId} /> · 读回更新 {date(route.updatedAt)}</p>
           <details className="text-small"><summary className="cursor-pointer text-text-secondary">完整标识与范围</summary>
             <dl className="mt-2 flex flex-col gap-1.5 text-caption">{([["路由 ID", route.bindingId], ["接收的智能体 ID", route.targetSessionId], ["来源会话 ID", route.source.conversationId],
               ["对话线程 ID", route.targetThreadId], ["允许的发送者", route.senderIds.join("、")], ["接收 / 发送身份", `${route.targetActorId} / ${route.senderActorId}`],
@@ -245,10 +253,9 @@ export function ConnectorPage({ context }: { context: MutationContext }) {
         <div className="grid gap-3 compact:grid-cols-2">
           {fields.map(([key, label, hint]) => <Fragment key={key}>
             <Field label={label} hint={hint}>{control => <Input {...control} required value={form[key]} onChange={event => setForm(previous => ({ ...previous, [key]: event.target.value }))} />}</Field>
-            {key === "conversationLabel" && <Field label="会话类型">{control => <select {...control} value={form.conversationKind} onChange={event => setForm(previous => ({ ...previous, conversationKind: event.target.value }))}
-              className="h-9 w-full rounded-md border-0 bg-field px-3 text-small text-foreground outline-none focus-visible:shadow-[var(--focus-ring)]">
+            {key === "conversationLabel" && <Field label="会话类型">{control => <Select {...control} value={form.conversationKind} onChange={event => setForm(previous => ({ ...previous, conversationKind: event.target.value }))} className="w-full">
               <option value="group">群聊</option><option value="private">私聊</option>
-            </select>}</Field>}
+            </Select>}</Field>}
           </Fragment>)}
         </div>
         {areas.map(([key, label, required]) => <Field key={key} label={label}>{control => <Textarea {...control} required={required} value={form[key]} onChange={event => setForm(previous => ({ ...previous, [key]: event.target.value }))} />}</Field>)}

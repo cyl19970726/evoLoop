@@ -6,7 +6,7 @@ import React from "react";
 import type { TaskAttentionFollowUp, TaskAttentionItem, TaskDetail } from "@evoloop/contracts";
 import type { LeaderNotice } from "@evoloop/contracts/leader-notices";
 import type { LeaderWorkTask } from "@evoloop/contracts/work-index";
-import { Button, Field, Input, Notice, Select, StatusTag, Textarea } from "@evoloop/ui";
+import { Button, Checkbox, Field, Input, Notice, Select, StatusTag, Textarea } from "@evoloop/ui";
 import { api, errorText, request } from "../../shared/api";
 import type { MutationContext } from "../../shared/ActionForm";
 import { useProjectPages, useProjectQuery } from "../../shared/query";
@@ -19,6 +19,10 @@ import { CommandForm, CommandFrame, conflictingFields, followLatest, formDirty, 
 import { attentionResolveCommand, followUpCommand, localInput, publicationCommand } from "./taskCommands";
 import { runStateName } from "./taskExperience";
 import { ActionRow, Fact, Fine, ReadNote, readCurrent, reasonField } from "./TaskForms";
+import { withReturn } from "../../shared/returnLink";
+import { taskOrigin } from "./taskOrigin";
+import { actorRow, actorText } from "../../shared/actorPresentation";
+import { ActorIdentifiers } from "../../shared/ui/ActorIdentifiers";
 
 type FollowUpKind = NonNullable<TaskAttentionFollowUp["waitingOn"]>["kind"];
 const followUpKinds: FollowUpKind[] = ["session", "consumer", "leader", "publisher", "user", "task", "unknown"];
@@ -105,7 +109,8 @@ export function TaskAttentionSection({ context, detail, leader }: { context: Mut
       {staleFollowUp && <Fine>已有的跟进属于任务的旧修订；核对当前任务后，按已有跟进的第 {value.followUp!.version} 版保存新的安排。</Fine>}
       {followUp ? <p className="text-label text-text-secondary [overflow-wrap:anywhere]">{decisionLabel[followUp.decision]} · {followUp.actionTaken}</p> : !staleFollowUp && <p className="text-label text-text-secondary">还没有跟进安排。</p>}
       <Fine>等待 {followUp?.waitingOn ? waitingParty(followUp.waitingOn) : "责任未知"} · 下一检查点 {followUp?.nextCheckAt ? date(followUp.nextCheckAt) : "未定"}</Fine>
-      {followUp?.releaseHandoff && <Fine>具备发布条件，等待维护者 · {date(followUp.releaseHandoff.readyForPublicationAt)} · {followUp.releaseHandoff.recipient}</Fine>}
+      {followUp?.releaseHandoff && <Fine>具备发布条件，等待维护者 · {date(followUp.releaseHandoff.readyForPublicationAt)} · {actorText(followUp.releaseHandoff.recipient)}</Fine>}
+      {followUp?.releaseHandoff && <ActorIdentifiers actors={[["发布维护者", followUp.releaseHandoff.recipient]]} />}
       <Fine>{publicationCurrent ? `已发布且有固定证据 · ${date(followUp!.publication!.publishedAt)}`
         : followUp?.publication ? "有发布记录；当前修订的发布来源还要核对" : "当前修订的发布证据未知"}</Fine>
       {canWrite && <ActionRow title="填写跟进安排" description="跟进判断、已做的事、等待谁和下一检查时间。">
@@ -201,7 +206,7 @@ function FollowUpForm({ context, detail, value, followUp, onReread }: {
     {input("下一检查时间", "nextCheck", { type: "datetime-local" })}
     <Field label="跟进理由" error={missing("reason", "跟进理由")}>{control => <Textarea {...control} required value={v.reason} onChange={event => set("reason")(event.target.value)} rows={3} />}</Field>
     <label className="flex items-center gap-2 text-label text-foreground">
-      <input type="checkbox" checked={handoff} disabled={!!followUp?.publication} onChange={event => set("handoff")(event.target.checked ? "1" : "")} className="accent-[var(--accent)]" />
+      <Checkbox checked={handoff} disabled={!!followUp?.publication} onCheckedChange={checked => set("handoff")(checked === true ? "1" : "")} />
       登记具备发布条件，交给维护者</label>
     {handoff && <div className="flex flex-col gap-3 pl-6">
       {input("维护者或接收方", "recipient", { required: true })}
@@ -214,8 +219,8 @@ function FollowUpForm({ context, detail, value, followUp, onReread }: {
 }
 
 /** 阶段区间、计划与来源: the facts of the current work behind the task's next step. */
-export function TaskArrangementFacts({ projectId, detail, leader, responsibleName }: {
-  projectId: string; detail: TaskDetail; leader: LeaderWorkTask; responsibleName?: string | null;
+export function TaskArrangementFacts({ projectId, detail, leader, responsibleName, actorId }: {
+  projectId: string; detail: TaskDetail; leader: LeaderWorkTask; responsibleName?: string | null; actorId?: string;
 }) {
   const notices = useProjectPages(projectId, ["task", detail.task.id, "leader-notices", detail.task.version], async cursor => {
     const page = await api().leaderNotices(projectId, detail.task.id, cursor);
@@ -254,16 +259,16 @@ export function TaskArrangementFacts({ projectId, detail, leader, responsibleNam
       <Fact label="来源">{leader.goal ? `目标：${leader.goal.outcome}` : "没有关联目标"}{leader.stage && <span className="block">阶段：{leader.stage.deliverable}</span>}
         <span className="block text-caption text-muted-foreground">{detail.proposal?.evidence?.trim() || (detail.proposal ? "这项任务没有另写创建依据。" : "历史任务没有新的验收约定。")}</span></Fact>
       <Fact label="当前验收与使用者">{detail.proposal?.acceptanceMode === "independent_agent" ? "独立的智能体使用当前交付" : detail.proposal?.acceptanceMode === "human_required" ? "指定的人本人使用当前交付" : "历史约定"}
-        {consumer ? ` · ${consumer}` : " · 验收身份待签收"}<span className="block text-caption text-muted-foreground">{detail.proposal?.useRequired ? "关闭前要有当前交付的实际使用证据。" : "按既有约定核对使用证据。"}
+        {consumer ? ` · ${actorText(consumer)}` : " · 验收身份待签收"}<span className="block text-caption text-muted-foreground">{detail.proposal?.useRequired ? "关闭前要有当前交付的实际使用证据。" : "按既有约定核对使用证据。"}
           {detail.proposal?.stopCondition ? ` 停止条件：${detail.proposal.stopCondition}` : ""}</span></Fact>
       <Fact label="当前执行">{leader.latestRun ? `最近一次运行：${runStateName[leader.latestRun.state] ?? "状态未识别"}` : "当前修订没有可见的运行"}
         <span className="block text-caption text-muted-foreground">队列：{leader.queueHold ? "暂不派发" : "没有登记暂停"}{leader.pendingImpactCount > 0 ? ` · ${leader.pendingImpactCount} 项依据待复核` : ""}</span></Fact>
       <Fact label="当前交付">{leader.delivery ? `技术检查${leader.delivery.technicalResult === "passed" ? "通过" : "未通过"}` : "当前修订还没有交付。"}
         {leader.delivery && <span className="block text-caption text-muted-foreground">{leader.delivery.observationResult
-          ? `使用：${leader.delivery.observationKind === "human" ? "本人" : "智能体"} ${leader.delivery.observationActorId} · ${leader.delivery.observationResult === "used" ? "已使用" : leader.delivery.observationResult === "failed" ? "使用失败" : "未使用"}`
+          ? `使用：${leader.delivery.observationKind === "human" ? "本人" : "智能体"} ${actorText(leader.delivery.observationActorId)} · ${leader.delivery.observationResult === "used" ? "已使用" : leader.delivery.observationResult === "failed" ? "使用失败" : "未使用"}`
           : "还没有这次交付的使用观察"}</span>}</Fact>
       <Fact label="统筹决定">{leader.review ? `${leader.review.decision === "acknowledged" ? "已核对" : "暂缓"} · ${leader.review.reason}` : "当前工作位置还没有统筹决定。"}
-        {leader.review && <span className="block text-caption text-muted-foreground">{leader.review.actorId} · {date(leader.review.at)}</span>}</Fact>
+        {leader.review && <span className="block text-caption text-muted-foreground">{actorText(leader.review.actorId)} · {date(leader.review.at)}</span>}</Fact>
     </div>
     <div className="flex flex-col gap-2" aria-label="结果回程">
       <div className="flex flex-wrap items-center gap-2">
@@ -274,7 +279,8 @@ export function TaskArrangementFacts({ projectId, detail, leader, responsibleNam
       {notices.data && (noticeItems.length ? <ul className="flex flex-col gap-1.5">{noticeItems.map(item => <li key={item.id} className="flex flex-col gap-0.5">
         <p className="text-label text-foreground">{noticeLabel[item.kind] ?? "通知"} · {date(item.occurredAt)}</p>
         <Fine>{noticeState(item)}{item.stale ? " · 来源属于历史修订" : ""}{item.linkedSessionId ? <> · <a className="text-primary hover:underline"
-          href={`/p/${encodeURIComponent(projectId)}/sessions?session=${encodeURIComponent(`owned:${item.linkedSessionId}`)}`}>查看收到通知的智能体</a></> : null}</Fine>
+          href={withReturn(`/p/${encodeURIComponent(projectId)}/sessions?session=${encodeURIComponent(`owned:${item.linkedSessionId}`)}`,
+            actorId ? taskOrigin(projectId, detail.task, actorId) : null)}>查看收到通知的智能体</a></> : null}</Fine>
         <FullIdentifiers rows={[{ label: "来源", value: item.sourceRef }, { label: "任务修订", value: item.taskRevisionId }, { label: "来源智能体", value: item.sourceSessionId },
           { label: "来源身份", value: item.sourceActorId }, { label: "受阻原因", value: item.blockedReason ?? item.messageBlockedReason, text: true },
           { label: "消息", value: item.messageId }, { label: "操作", value: item.operationId }, { label: "替代通知", value: item.recovery?.replacementNoticeId },
@@ -293,7 +299,8 @@ export function TaskArrangementFacts({ projectId, detail, leader, responsibleNam
       { label: "最近有效进展来源", value: timing?.latestEffectiveProgress ? `${timing.latestEffectiveProgress.kind} · ${timing.latestEffectiveProgress.sourceId}` : null },
       { label: "最近一次运行", value: leader.latestRun?.runId }, { label: "当前交付", value: leader.delivery?.deliveryId },
       { label: "承接对象", value: leader.assignment?.targetId }, { label: "队列暂停代码", value: leader.queueHold },
-      { label: "工作变化序号", value: String(leader.workChangeSequence) }]} />
+      { label: "工作变化序号", value: String(leader.workChangeSequence) }, actorRow("指定使用者", consumer),
+      actorRow("使用记录者", leader.delivery?.observationActorId), actorRow("统筹决定者", leader.review?.actorId)]} />
   </div>;
 }
 

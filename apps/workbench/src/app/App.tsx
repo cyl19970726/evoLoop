@@ -1,11 +1,14 @@
-import { Suspense, lazy, useEffect, useMemo, useRef, useState, useLayoutEffect, type ComponentType, type LazyExoticComponent, type ReactNode } from "react";
+import { Component, Suspense, lazy, useEffect, useMemo, useRef, useState, useLayoutEffect, type ComponentType, type LazyExoticComponent, type ReactNode } from "react";
 import type { Operation } from "@evoloop/contracts";
 import { ApiError, api, errorText, type Session } from "../shared/api";
 import { describeFailure } from "../shared/errorPresentation";
 import { onUnauthorized, signIn, signOut } from "../shared/identity";
 import type { MutationContext, RecoverableCommand } from "../shared/command/context";
 import { clearCommandDrafts } from "../shared/command/drafts";
+import { askConfirm, cancelConfirms, confirmHostFailed, currentConfirm, onConfirmUnavailable } from "../shared/confirm";
 import { addReceipt, hasProjectReceipt, readReceipts, removeReceipt, visibleReceipts as forPrincipal, writeReceipts, type OperationReceipt } from "./recovery";
+import type { CheckedOrigin, OperationItem } from "../features/settings/operationsPresentation";
+import { checkedNoticeText } from "./operationNotice";
 import { clearRecoveryIntents, forgetRecoveryIntent, isSpecialOperation, rememberRecoveryIntent } from "./recoveryIntent";
 
 import { readRoute, href, type Route } from "../shared/ui/shared";
@@ -46,6 +49,17 @@ const ArrangementPage = named(() => import("../features/sessions/ArrangementPage
 // The execution queue (features/workflow) shown in an agent's right column; passed in so the two features do not import each other.
 const ResidentQueuePanel = named(() => import("../features/workflow"), "ResidentQueuePanel");
 const ConnectorPage = named(() => import("../features/connectors/ConnectorPage"), "ConnectorPage");
+const NotFoundPage = named(() => import("./NotFoundPage"), "NotFoundPage");
+// The confirmation dialog (leaving a project or signing out with drafts) loads after login, with the design system.
+const ConfirmHost = named(() => import("../shared/ui/ConfirmHost"), "ConfirmHost");
+/** If the dialog's code cannot load, the questions waiting for it are cancelled (shared/confirm.ts) instead of hanging. */
+class ConfirmHostBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
+  state = { failed: false };
+  static getDerivedStateFromError() { return { failed: true }; }
+  componentDidCatch(error: unknown) { console.error("确认框没能加载", error); confirmHostFailed(); }
+  render() { return this.state.failed ? null : this.props.children; }
+}
+const historyIndex = (location: { state: unknown }) => (location.state as { __TSR_index?: unknown } | null)?.__TSR_index;
 // The frame loads after login; the login gate starts fetching it while the token is typed.
 const loadShell = () => import("./shell/AppShell");
 const AppShell = named(loadShell, "AppShell");
@@ -72,11 +86,25 @@ function useRoute(): Route {
     };
     rememberList();
     let previousPath = currentPath();
-    // Leaving the project with unsaved drafts asks first; Back and Forward are asked too.
+    // Leaving the project with unsaved drafts asks first; Back and Forward are asked too. The navigation is stopped at
+    // once (Back and Forward put the address back straight away), then the dialog asks; leaving goes to where the
+    // reader was going without asking again. While a question is open every other navigation is stopped, not queued,
+    // so the address and the page never part.
     const unblock = appHistory().block({
-      blockerFn: ({ currentLocation, nextLocation }) => projectOf(nextLocation.pathname) !== projectOf(currentLocation.pathname)
-        && !!document.querySelector('[data-dirty="true"]')
-        && !window.confirm("还有未提交的草稿。离开当前项目会清除页面草稿，确定离开？"),
+      blockerFn: ({ currentLocation, nextLocation, action }) => {
+        if (currentConfirm()) return true;
+        if (projectOf(nextLocation.pathname) === projectOf(currentLocation.pathname) || !document.querySelector('[data-dirty="true"]')) return false;
+        const from = historyIndex(currentLocation), to = historyIndex(nextLocation);
+        const steps = typeof from === "number" && typeof to === "number" ? to - from : action === "FORWARD" ? 1 : -1;
+        void askConfirm({ title: "离开当前项目？", description: "还有未提交的草稿。离开当前项目会清除页面草稿。", confirmLabel: "离开并清除草稿", cancelLabel: "留在当前项目", danger: true })
+          .then(leave => {
+            if (!leave) return;
+            if (action === "PUSH") appHistory().push(nextLocation.href, undefined, { ignoreBlocker: true });
+            else if (action === "REPLACE") appHistory().replace(nextLocation.href, undefined, { ignoreBlocker: true });
+            else appHistory().go(steps, { ignoreBlocker: true });
+          });
+        return true;
+      },
       enableBeforeUnload: false,
     });
     const stop = onNavigate(() => {
@@ -115,6 +143,8 @@ export function App() {
   const [operationNotice, setOperationNotice] = useState("");
   // The service's original refusal behind the notice, for 诊断信息 (the notice itself says it in Chinese).
   const [operationDetail, setOperationDetail] = useState<string | null>(null);
+  // Where the notice after a confirmed check leads back to (“打开原对象”): the receipt and its card are gone by then.
+  const [operationLink, setOperationLink] = useState<{ href: string; label: string } | null>(null);
   const projectId = route.projectId && session?.principal.projectIds.includes(route.projectId) ? route.projectId : null;
   const client = useMemo(() => api(token), [token]);
   const visibleReceipts = session ? forPrincipal(receipts, session.principal.actorId, session.principal.projectIds) : [];
@@ -171,8 +201,12 @@ export function App() {
   }, [projectId]);
   /** Logout or a lost login: nothing read or drafted under this identity stays in the page. Receipts stay for the same identity. */
   function endSession() {
-    clearCommandDrafts(); clearRecoveryIntents(); clearSessionSnapshots(); queryClient.clear(); signOut(); setToken(""); setSession(null);
+    cancelConfirms(); clearCommandDrafts(); clearRecoveryIntents(); clearSessionSnapshots(); queryClient.clear(); signOut(); setToken(""); setSession(null);
   }
+  // A question that could not be shown was answered "cancel": say so, so leaving or signing out is not silently ignored.
+  useEffect(() => onConfirmUnavailable(() => {
+    setOperationNotice("确认框没能加载，这次离开或退出已取消，草稿还在。请刷新页面后再试。"); setOperationDetail(null); setOperationLink(null);
+  }), []);
   const ended = useRef(endSession);
   ended.current = endSession;
   useEffect(() => onUnauthorized(() => {
@@ -189,7 +223,7 @@ export function App() {
       setSession(next);
       if (!next.principal.projectIds.includes(route.projectId!)) {
         void leaveProject(queryClient, route.projectId!);
-        setOperationNotice("你已无权访问该项目，已回到项目列表。"); setOperationDetail(null);
+        setOperationNotice("你已无权访问该项目，已回到项目列表。"); setOperationDetail(null); setOperationLink(null);
         navigate("/", { replace: true });
       }
     }).catch(() => undefined);
@@ -205,41 +239,49 @@ export function App() {
   }} />;
   const principal = session.principal;
   const context: MutationContext = { token, projectId: projectId ?? "", principal, blocked: visibleReceipts.some(r => r.projectId === projectId), onAttempt: beginAttempt, onKnown: finishKnown, onChanged: changed };
-  function logout() {
-    if (document.querySelector('[data-dirty="true"]') && !window.confirm("还有未提交的草稿。退出会清除本页草稿，确定退出？")) return;
-    if (visibleReceipts.length && !window.confirm(`仍有 ${visibleReceipts.length} 个结果未确认的操作。回执会留在当前浏览器会话；退出后请用同一身份登录核对。确定退出？`)) return;
+  async function logout() {
+    if (document.querySelector('[data-dirty="true"]') && !await askConfirm({ title: "退出并清除草稿？", description: "还有未提交的草稿。退出会清除本页草稿。",
+      confirmLabel: "退出并清除草稿", cancelLabel: "先不退出", danger: true })) return;
+    if (visibleReceipts.length && !await askConfirm({ title: `仍有 ${visibleReceipts.length} 个结果未确认的操作，确定退出？`,
+      description: "回执会留在当前浏览器会话；退出后请用同一身份登录核对。", confirmLabel: "仍要退出", cancelLabel: "先不退出" })) return;
     endSession();
   }
-  function confirmReceipt(receipt: OperationReceipt, result: Operation["result"]) {
+  /** A check confirmed the operation. `origin` is the original object as 结果未知的操作 found it (none on the project list). */
+  function confirmReceipt(receipt: OperationReceipt, result: Operation["result"], origin?: CheckedOrigin) {
     forgetRecoveryIntent(receipt.operationId);
     const scope = isSpecialOperation(receipt.commandType) ? "已核到服务端同身份、同项目、同类型及同 ID 的操作结果；浏览器未核对原提交正文摘要。" : "";
     const refusal = result.status === "applied" ? null : describeFailure(result.message, result.code, 409);
-    setOperationNotice(`${refusal ? `操作 ${receipt.operationId} 被拒绝：${refusal.text}。` : `操作 ${receipt.operationId} 已应用；正在回读当前数据。`} ${scope}`.trim());
+    setOperationNotice(checkedNoticeText({ refusal: refusal?.text ?? null, scope }, origin));
     setOperationDetail(refusal?.detail ?? null);
+    setOperationLink(origin?.link ?? null);
     replaceReceipts(removeReceipt(receiptsRef.current, receipt.operationId)); changed();
   }
-  if (!projectId) return <Suspense fallback={<p role="status" className="p-8 text-small">正在打开项目列表…</p>}><ProjectChooser context={context} token={token} principal={principal} receipts={visibleReceipts} operationNotice={operationNotice} operationDetail={operationDetail} onConfirmed={confirmReceipt} onRefreshSession={async () => setSession(await api(token).session())} logout={logout} /></Suspense>;
+  const confirmHost = <ConfirmHostBoundary><Suspense fallback={null}><ConfirmHost /></Suspense></ConfirmHostBoundary>;
+  if (!projectId) return <>{confirmHost}<Suspense fallback={<p role="status" className="p-8 text-small">正在打开项目列表…</p>}><ProjectChooser context={context} token={token} principal={principal} receipts={visibleReceipts} operationNotice={operationNotice} operationDetail={operationDetail} onConfirmed={confirmReceipt} onRefreshSession={async () => setSession(await api(token).session())} logout={logout} /></Suspense></>;
   const projectReceipts = visibleReceipts.filter(r => r.projectId === projectId);
-  // OperationCheck loads on demand; its own boundary keeps a first receipt from suspending the page around it.
-  const operationChecks = projectReceipts.map(receipt => <Suspense key={receipt.operationId} fallback={null}><OperationCheck receipt={receipt} token={token} onConfirmed={result => confirmReceipt(receipt, result)} /></Suspense>);
+  // 结果未知的操作 gets each receipt with its check card. OperationCheck loads on demand; its own boundary keeps a first
+  // receipt from suspending the page around it.
+  // The page lists the operation ID with the receipt's other identifiers, and hands over the object it found.
+  const operationItems: OperationItem[] = projectReceipts.map(receipt => ({ receipt,
+    check: origin => <Suspense fallback={null}><OperationCheck receipt={receipt} token={token} identifiers={false} onConfirmed={result => confirmReceipt(receipt, result, origin)} /></Suspense> }));
   const notices: ShellNoticeItem[] = [
     ...route.section !== "operations" && projectReceipts.length > 0 ? [{ key: "receipts", tone: "error" as const, text: `${projectReceipts.length} 项操作结果尚未确认，提交已暂缓。`, link: { href: href(projectId, "operations"), label: "按原操作 ID 核对" } }] : [],
-    ...!receiptStorageAvailable ? [{ key: "storage", tone: "error" as const, text: "浏览器未能暂存操作回执。请保留原操作 ID，并在待核对操作中查询。" }] : [],
-    ...operationNotice ? [{ key: "operation", tone: "info" as const, text: operationNotice, detail: operationDetail,
-      button: { label: "关闭", onClick: () => { setOperationNotice(""); setOperationDetail(null); }, quiet: true } }] : [],
+    ...!receiptStorageAvailable ? [{ key: "storage", tone: "error" as const, text: "浏览器未能暂存操作回执。请保留原操作 ID，并在“结果未知的操作”中查询。" }] : [],
+    ...operationNotice ? [{ key: "operation", tone: "info" as const, text: operationNotice, detail: operationDetail, ...operationLink ? { link: operationLink } : {},
+      button: { label: "关闭", onClick: () => { setOperationNotice(""); setOperationDetail(null); setOperationLink(null); }, quiet: true } }] : [],
     ...projectError ? [{ key: "project", tone: "error" as const, text: `项目暂不可读取：${projectError}`, button: { label: "重试读取项目", onClick: context.onChanged } }] : [],
     ...route.section !== "inbox" && inbox.state === "unknown" ? [{ key: "inbox", tone: "waiting" as const, text: inbox.text, link: { href: href(projectId, "inbox"), label: "去待我处理核对" } }] : [],
   ];
-  return <Suspense fallback={<p className={opening} role="status">正在打开工作台…</p>}><AppShell route={route} projectId={projectId} projectTitle={projectTitle} actor={principal.actorId} permissions={principal.permissions}
-    receiptCount={projectReceipts.length} inboxCount={shellInboxCount(inbox, projectReceipts.length)} token={token} logout={logout} notices={notices}>
-    <WorkspacePages key={`${principal.actorId}:${projectId}`} route={route} context={context} refresh={refresh} operations={operationChecks} />
-  </AppShell></Suspense>;
+  return <>{confirmHost}<Suspense fallback={<p className={opening} role="status">正在打开工作台…</p>}><AppShell route={route} projectId={projectId} projectTitle={projectTitle} actor={principal.actorId} permissions={principal.permissions}
+    receiptCount={projectReceipts.length} inboxCount={shellInboxCount(inbox)} token={token} logout={logout} notices={notices}>
+    <WorkspacePages key={`${principal.actorId}:${projectId}`} route={route} context={context} refresh={refresh} operations={operationItems} />
+  </AppShell></Suspense></>;
 }
 
 /** What the center shows while a page's code loads. Plain classes: this module is in the first load, without @evoloop/ui. */
 const opening = "px-4 py-5 text-small text-muted-foreground compact:px-8 compact:py-7";
 
-function WorkspacePages({ route, context, refresh, operations }: { route: Route; context: MutationContext; refresh: number; operations: ReactNode[] }) {
+function WorkspacePages({ route, context, refresh, operations }: { route: Route; context: MutationContext; refresh: number; operations: OperationItem[] }) {
   // Visited pages stay mounted for this authenticated project. No form text or token is persisted.
   const cache = useRef(new Map<string, Route>());
   const positions = useRef(new Map<string, number>());
@@ -287,6 +329,7 @@ function WorkspacePages({ route, context, refresh, operations }: { route: Route;
   }, [key, positionKey]);
   const { projectId, token } = context;
   function page(r: Route, active: boolean) {
+    if (r.section === "not-found") return <NotFoundPage projectId={projectId} path={currentPath()} />;
     if (r.section === "documents") return <DocumentIndex context={context} />;
     if (r.section === "work") return <TaskWorkspace context={context} refresh={refresh} active={active} />;
     if (r.section === "inbox") return <InboxIndex context={context} refresh={refresh} />;
@@ -300,7 +343,7 @@ function WorkspacePages({ route, context, refresh, operations }: { route: Route;
       return <EvaluationPage context={context} evaluationId={r.id} selectedRevision={r.revision} refresh={refresh}
         taskId={query.get("taskId") ?? undefined} knowledgePageId={query.get("knowledgePageId") ?? undefined} />;
     }
-    if (r.section === "operations") return <OperationsPage projectId={projectId} checks={operations} />;
+    if (r.section === "operations") return <OperationsPage projectId={projectId} items={operations} />;
     if (r.section === "repository") return <RepositoryPage projectId={projectId} reference={<ReferencePanel context={context} />} />;
     if (r.section === "sessions") return r.session
       ? <SessionWorkspace context={context} refresh={refresh} sessionKey={r.session} active={active} queue={queue => <ResidentQueuePanel context={context} titled={false} {...queue} />} />

@@ -194,7 +194,9 @@ test("task list sort survives opening, Back and reload; documents open beside th
   assert.equal(commands.length, 1);
   assert.deepEqual({ type: commands[0]!.type, taskId: commands[0]!.taskId, target: commands[0]!.target, reason: commands[0]!.reason },
     { type: "task.assignment.set", taskId: taskA, target: { kind: "owned", sessionId }, reason: "按职责安排开发智能体承接" });
-  assert.equal(await agent.getByRole("link", { name: "进入对话" }).getAttribute("href"), `/p/${projectId}/sessions?session=${encodeURIComponent(`owned:${sessionId}`)}`);
+  const enter = new URLSearchParams((await agent.getByRole("link", { name: "进入对话" }).getAttribute("href"))!.split("?")[1]);
+  assert.equal(enter.get("session"), `owned:${sessionId}`);
+  assert.equal(enter.get("return")?.split("?")[0], `/p/${projectId}/tasks/${taskA}`, "the agent page offers the way back to this task");
 
   // Narrow: the facts open as a drawer from the page; the page never scrolls sideways.
   await page.setViewportSize({ width: 390, height: 844 });

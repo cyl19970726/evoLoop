@@ -35,7 +35,7 @@ const runs = [{ projectId, id: id(21), taskId: id(90), taskRevisionId: id(91), b
   state: "running", version: 2, nativeTurnId: "turn", interruptRequested: false, resultSummary: null, actorId: "lead", createdAt: stamp, updatedAt: stamp }];
 const runtimeView = { projectId, roleId: id(1), binding: null, history: [], provider: "codex", providerSource: "default", availableProviders: ["codex"], providerAvailable: true,
   selection: { project: true, personal: false, builtin: true, add: [], remove: [] }, selectionSource: "default", workDirectory: { cwd: "/work/repo", source: "grant" },
-  skills: [{ name: "evoloop-workflow", source: "evoloop", selected: true, reason: "business", description: "业务流程", location: ".agents/skills/evoloop-workflow", contentHash: null, delivery: "role_context" }],
+  skills: [{ name: "evoloop-workflow", source: "evoloop", selected: true, reason: "business", description: "Use the evoLoop business CLI to take an authorized project assignment through fixed evidence.", location: ".agents/skills/evoloop-workflow", contentHash: null, delivery: "role_context" }],
   missing: [], skillsReportedBy: "files", plugins: [], mcpServers: [], notes: [], observedAtUtc: stamp };
 const grant = { projectId, actorId: "lead", roleId: id(1), authorizationScope: "前端任务", cwd: "/work/repo", sandbox: "danger-full-access", approvalPolicy: "never", networkAccess: true, models: ["gpt-6-sol"] };
 
@@ -55,6 +55,12 @@ test("职责 and 分工与运行 read and write in the shell layout, and old run
       else if (url.pathname.startsWith(`${root}/session-work/`) && url.pathname.endsWith("/profile")) {
         const sessionKey = decodeURIComponent(url.pathname.split("/").at(-2)!);
         value = { projectId, sessionKey, displayName: sessionKey === `owned:${id(11)}` ? "前端甲" : "前端乙", version: 1, updatedAt: stamp };
+      }
+      // An agent is named from its directory record (agentDisplayName), with the registered name.
+      else if (url.pathname.startsWith(`${root}/session-work/`) && url.pathname.split("/").length === 6) {
+        const sessionKey = decodeURIComponent(url.pathname.split("/").at(-1)!);
+        value = { session: { key: sessionKey, kind: "owned", title: "前端", roles: [], profile: { displayName: sessionKey === `owned:${id(11)}` ? "前端甲" : "前端乙" } },
+          observationCursor: "0", currentWork: null };
       }
       else if (url.pathname === "/api/commands" && req.method === "POST") {
         let body = ""; for await (const chunk of req) body += String(chunk);
@@ -116,6 +122,12 @@ test("职责 and 分工与运行 read and write in the shell layout, and old run
   const side = page.getByRole("complementary", { name: "右栏" });
   await side.getByRole("region", { name: "试行与回看" }).getByText("每周不超过一次").waitFor();
   await side.getByRole("region", { name: "运行时与 skill" }).getByText(/Codex · 未绑定/).waitFor();
+  // A skill says in Chinese what it is for; its SKILL.md description (English here) is folded under 原文与位置.
+  const runtime = side.getByRole("region", { name: "运行时与 skill" });
+  await runtime.getByText(/用 evoLoop 业务命令行承接已授权的工作/).waitFor();
+  assert.doesNotMatch(await runtime.innerText(), /Use the evoLoop business CLI/);
+  await runtime.locator("summary", { hasText: "原文与位置" }).first().click();
+  await runtime.getByText(/^Use the evoLoop business CLI/).waitFor();
   // History on request, with the prepared handoff's confirmation form and the binding's agent link.
   const history = detail.getByRole("region", { name: "修订与交接历史" });
   await history.getByRole("button", { name: "阅读修订与交接历史" }).click();

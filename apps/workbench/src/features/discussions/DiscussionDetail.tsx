@@ -16,6 +16,8 @@ import { readDocumentHead, readVerifiedPackage, type Choices } from "./discussio
 import { DecisionForm, HandoffForm, LinkForm, targetChoices } from "./DiscussionForms";
 import { decisionHistory, eventLabel, kindLabel, nameOr, statusSentence, statusTag, targetKindLabel } from "./discussionPresentation";
 import { ErrorDetails } from "../../shared/ui/ErrorDetails";
+import { actorText } from "../../shared/actorPresentation";
+import { ActorIdentifiers } from "../../shared/ui/ActorIdentifiers";
 
 const link = "text-primary underline-offset-4 hover:underline outline-none focus-visible:shadow-[var(--focus-ring)] rounded-sm";
 const code = "font-mono text-caption [overflow-wrap:anywhere]";
@@ -33,7 +35,7 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
 
 function Fact({ label, children }: { label: string; children: ReactNode }) {
   return <div className="flex flex-col gap-0.5"><span className={muted}>{label}</span>
-    <div className="text-small leading-[1.6] text-foreground [overflow-wrap:anywhere]">{children}</div></div>;
+    <div className="text-small leading-(--leading-body) text-foreground [overflow-wrap:anywhere]">{children}</div></div>;
 }
 
 /** A right-column block that folds on its own (docs/frontend/layout.md 右栏). */
@@ -88,7 +90,7 @@ function PackageView({ projectId, documentId, revisionId, label, read }: { proje
       {copied === "failed" && <p className="text-caption text-destructive">剪贴板不可用，请展开下方原文手动选择复制。</p>}
       <p className={muted}>复制时会在原文前加上工作台入口和固定原件链接，方便对方定位；SHA-256 只核对原文本身。复制不代表对方已收到、读过或同意。</p>
       <CollapsibleRow summary="展开完整原文">
-        <pre className="max-h-[60vh] overflow-auto whitespace-pre-wrap rounded-md bg-raised p-3 font-mono text-caption leading-[1.6] text-foreground [overflow-wrap:anywhere]">{read.data.body}</pre>
+        <pre className="max-h-[60vh] overflow-auto whitespace-pre-wrap rounded-md bg-raised p-3 font-mono text-caption leading-(--leading-body) text-foreground [overflow-wrap:anywhere]">{read.data.body}</pre>
       </CollapsibleRow>
     </>}
   </div>;
@@ -106,7 +108,8 @@ function EventEntry({ event, record, choices, projectId, corrected }: { event: D
     {event.target && <p className="text-small text-text-secondary">后续{targetKindLabel[event.target.kind]}：<TargetLink target={event.target} choices={choices} projectId={projectId} /></p>}
     {payload?.type === "message" && <a className={`${link} text-small`} href={fixedDocument(projectId, payload.body.documentId, payload.body.revisionId)}>阅读消息原文</a>}
     {event.documentRevisionId && <a className={`${link} text-caption`} href={fixedDocument(projectId, record.documentId, event.documentRevisionId)}>阅读当次的固定讨论文档</a>}
-    <span className={muted}>{event.actorId} · {date(event.createdAt)}</span>
+    <span className={muted}>{actorText(event.actorId)} · {date(event.createdAt)}</span>
+    <ActorIdentifiers actors={[["记录者", event.actorId]]} />
   </li>;
 }
 
@@ -162,9 +165,10 @@ export function DiscussionDetail({ context, record, events, choices, choicesLoad
       {record.kind !== "task_collaboration" && <StatusTag tone={status.tone} label={status.label} />}
       {checking && <RefreshingIndicator />}
     </div>
-    <h2 className="text-heading font-semibold leading-[1.35] text-foreground [overflow-wrap:anywhere]" tabIndex={-1}>{title}</h2>
-    <p className={muted}>由 {record.actorId} 于 {date(record.createdAt)} 准备 · 最近更新 {date(record.updatedAt)} · 第 {record.version} 版</p>
-    <p className="text-small leading-[1.6] text-text-secondary">{statusSentence(record, !!latest?.supersedesDecisionEventId)}</p>
+    <h2 className="text-heading font-semibold leading-(--leading-tight) text-foreground [overflow-wrap:anywhere]" tabIndex={-1}>{title}</h2>
+    <p className={muted}>由 {actorText(record.actorId)} 于 {date(record.createdAt)} 准备 · 最近更新 {date(record.updatedAt)} · 第 {record.version} 版</p>
+    <ActorIdentifiers actors={[["准备者", record.actorId]]} />
+    <p className="text-small leading-(--leading-body) text-text-secondary">{statusSentence(record, !!latest?.supersedesDecisionEventId)}</p>
   </header>;
 
   const sources = <RailBlock title="来源与完整标识" defaultOpen={false}>
@@ -187,9 +191,10 @@ export function DiscussionDetail({ context, record, events, choices, choicesLoad
       {record.collaboration && <>
         <li>运行 <code className={code}>{record.collaboration.runId}</code></li>
         <li>智能体 <code className={code}>{record.collaboration.sessionId}</code></li>
-        <li>派出者 {record.collaboration.issuerActorId} · 执行者 {record.collaboration.recipientActorId}</li>
+        <li>派出者 <code className={code}>{record.collaboration.issuerActorId}</code> · 执行者 <code className={code}>{record.collaboration.recipientActorId}</code></li>
       </>}
       {record.latestDecisionEventId && <li>当前决定事件 <code className={code}>{record.latestDecisionEventId}</code></li>}
+      {record.targetSessionRef && <li>拟交接对象的引用 <code className={code}>{record.targetSessionRef}</code></li>}
     </ul>
   </RailBlock>;
 
@@ -218,7 +223,7 @@ export function DiscussionDetail({ context, record, events, choices, choicesLoad
         <Fact label="拟交接的智能体">{record.targetSessionLabel}
           {record.targetSessionRef && (safeArtifactHref(record.targetSessionRef, projectId)
             ? <> · <a className={link} href={safeArtifactHref(record.targetSessionRef, projectId)!} target="_blank" rel="noopener noreferrer">打开引用</a></>
-            : <> · <code className={code}>{record.targetSessionRef}</code></>)}
+            : <> · 引用见“来源与完整标识”</>)}
           <span className={`${muted} block`}>记下的是拟交接对象，不表示已送达或已承接。</span></Fact>
       </div>
       <PackageView projectId={projectId} documentId={record.documentId} revisionId={record.preparedDocumentRevisionId} label="最初准备的交接包" read={prepared} />
@@ -244,7 +249,8 @@ export function DiscussionDetail({ context, record, events, choices, choicesLoad
         {latest.relookCondition && <Fact label="重看条件"><span className="whitespace-pre-wrap">{latest.relookCondition}</span></Fact>}
         {latest.evidence && <Fact label="依据"><span className="whitespace-pre-wrap">{latest.evidence}</span></Fact>}
         {latest.reason && <Fact label="理由"><span className="whitespace-pre-wrap">{latest.reason}</span></Fact>}
-        <span className={muted}>{latest.actorId} · {date(latest.createdAt)}{latest.documentRevisionId && <> · <a className={link} href={fixedDocument(projectId, record.documentId, latest.documentRevisionId)}>阅读决定时的固定文档</a></>}</span>
+        <span className={muted}>{actorText(latest.actorId)} · {date(latest.createdAt)}{latest.documentRevisionId && <> · <a className={link} href={fixedDocument(projectId, record.documentId, latest.documentRevisionId)}>阅读决定时的固定文档</a></>}</span>
+        <ActorIdentifiers actors={[["决定者", latest.actorId]]} />
       </div> : <p className="text-small text-text-secondary">{record.status === "prepared" ? "还没有决定；登记承接观察后才能登记决定。" : "还没有登记讨论决定。"}</p>}
       {earlier.length > 0 && <CollapsibleRow summary={`已纠正的决定 · ${earlier.length} 项`}>
         <ol className="flex flex-col">{earlier.map(event => <EventEntry key={event.id} event={event} record={record} choices={choices} projectId={projectId} corrected={corrected.has(event.id)} />)}</ol>
@@ -254,10 +260,11 @@ export function DiscussionDetail({ context, record, events, choices, choicesLoad
       {head.isPlaceholderData && !head.isError && <p className={muted}>讨论已更新，正在重新核对文档当前版；核对完成前不判断两版是否一致。</p>}
       {head.isError && <Notice tone="error" title="文档当前版没有核实">{errorText(head.error)}。现在无法判断它与讨论登记版是否一致；核实之前不能登记承接、决定或链接对象。<ErrorDetails error={head.error} /></Notice>}
       {mismatch && headFresh && <Notice tone="waiting" title="讨论登记版与文档当前版不同">
-        讨论登记的是另一份修订，文档后来又被修订到第 {headFresh.version} 版（作者 {headFresh.author}）。旧讨论原件不会被改写；只有明确确认后，才能从文档当前版接续登记决定。完整标识见右栏。
+        讨论登记的是另一份修订，文档后来又被修订到第 {headFresh.version} 版（作者 {actorText(headFresh.author)}）。旧讨论原件不会被改写；只有明确确认后，才能从文档当前版接续登记决定。完整标识见右栏。
       </Notice>}
+      {mismatch && headFresh && <ActorIdentifiers actors={[["文档当前版作者", headFresh.author]]} />}
       {mismatch && headFresh && <CollapsibleRow summary={`对照文档当前版原文 · 第 ${headFresh.version} 版`}>
-        <pre className="max-h-[60vh] overflow-auto whitespace-pre-wrap rounded-md bg-muted p-3 font-mono text-caption leading-[1.6] text-foreground [overflow-wrap:anywhere]">{headFresh.body}</pre>
+        <pre className="max-h-[60vh] overflow-auto whitespace-pre-wrap rounded-md bg-muted p-3 font-mono text-caption leading-(--leading-body) text-foreground [overflow-wrap:anywhere]">{headFresh.body}</pre>
       </CollapsibleRow>}
       {record.status !== "prepared" && !canReview && <p className={muted}>当前身份没有审阅权限，不能登记决定或链接后续对象。</p>}
       {record.status !== "prepared" && canReview && (ordinaryReady || recoveryReady) && <div className="flex flex-wrap gap-2">

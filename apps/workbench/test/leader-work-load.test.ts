@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { LeaderWorkDocument, LeaderWorkPage, LeaderWorkTask } from "@evoloop/contracts/work-index";
 import {
-  appendLeaderWorkPage, leaderProjectionMatchesTask, leaderSessionDisplayName, leaderWorkItemPresentation,
+  appendLeaderWorkPage, leaderProjectionMatchesTask, leaderWorkItemPresentation,
   loadLeaderDocumentsForIds, loadLeaderWorkStatuses, visibleLeaderDocuments,
 } from "../src/shared/leaderWorkLoad.ts";
 import type { WorkTaskStatus } from "../src/shared/workStatusPresentation.ts";
@@ -78,11 +78,6 @@ test("Leader row statuses are deduplicated and read within the existing 50-item 
   assert.deepEqual(result.missing, []);
 });
 
-test("a Role-generated Session title is not treated as a registered display name", () => {
-  assert.equal(leaderSessionDisplayName({ profile: { displayName: "产品文档" } as never }), "产品文档");
-  assert.equal(leaderSessionDisplayName({ profile: null }), null);
-});
-
 test("active Document enrichment never asks the default index for hidden archived rows", () => {
   const items = [
     { id: "draft", title: "Draft", kind: "spec", status: "draft" as const },
@@ -148,4 +143,12 @@ test("Leader overview maps historical cognition to readable source labels", () =
     title:"任务记录 · 来源状态待核对",
     responsibility:"智能体 · 产品文档",
   });
+  // A name made from a generated title already says its role and kind (agentDisplayName): it is not prefixed again,
+  // and the short identifier of the service's title never shows (N3).
+  const external = { ...item, title: "普通业务任务", responsible: { kind: "session" as const, id: "session-2", label: "x" },
+    assignment: { state: "assigned" as const, targetKind: "external" as const, targetId: "session-2", recipientActorId: "worker" } };
+  assert.equal(leaderWorkItemPresentation(external, { ...status, cognition: false }, undefined, "功能开发 · 外部接入的智能体", true).responsibility,
+    "功能开发 · 外部接入的智能体");
+  assert.equal(leaderWorkItemPresentation(external, { ...status, cognition: false }, undefined, "前端小王").responsibility, "外部智能体 · 前端小王");
+  assert.equal(leaderWorkItemPresentation(external, { ...status, cognition: false }).responsibility, "外部智能体 · 名称待核对");
 });

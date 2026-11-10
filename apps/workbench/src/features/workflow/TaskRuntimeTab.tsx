@@ -23,7 +23,8 @@ import { ReferencePanel } from "../references";
 import { eligibleOwnedSessions, sessionHref } from "../sessions";
 import { preflightPresentation, preflightView } from "../../shared/preflightPresentation";
 import { CommandForm, overLimitText } from "../../shared/command";
-import { readAgent } from "./agentRead";
+import { agentDisplayName } from "../../shared/agentNamePresentation";
+import { readAgent } from "../../shared/agentRead";
 import { BindAgentForm } from "./TaskAgentBlock";
 import { assignmentAcknowledgeCommand, assignmentObserveCommand, assignmentReleaseCommand, handoffRecordCommand, queueCreateCommand,
   runAbandonCommand, runInterruptCommand, runReserveCommand } from "./taskCommands";
@@ -31,6 +32,9 @@ import { runStateName } from "./taskExperience";
 import { assignmentKey } from "./taskFactsPresentation";
 import { ActionRow, Fine, ReadNote, TabSection, readCurrent, reasonField } from "./TaskForms";
 import { ResidentQueuePanel } from "./ResidentQueuePanel";
+import { taskOrigin } from "./taskOrigin";
+import { actorRow, actorText } from "../../shared/actorPresentation";
+import { ActorIdentifiers } from "../../shared/ui/ActorIdentifiers";
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const inFlight = ["requested", "dispatching", "running", "unknown"];
@@ -105,7 +109,7 @@ function AssignmentSection({ context, task, read }: { context: MutationContext; 
   const assignment = read.data ?? null;
   const key = assignment ? assignmentKey(assignment) : null;
   const agent = useProjectQuery(projectId, ["session-names", key], signal => readAgent(projectId, key!, signal), { enabled: !!key });
-  const name = agent.data?.profile?.displayName?.trim() || agent.data?.title || (agent.error ? "智能体名称暂不可读" : "正在读取名称…");
+  const name = agent.data ? agentDisplayName(agent.data) : agent.error ? "智能体名称暂不可读" : "正在读取名称…";
   const history = useProjectQuery(projectId, ["task", task.id, "assignment-history"], async signal => {
     const value = await sessionClient("", projectId).assignmentHistory(task.id, undefined, signal);
     if (!Array.isArray(value?.items)) throw new Error("分派记录响应格式不符");
@@ -131,14 +135,15 @@ function AssignmentSection({ context, task, read }: { context: MutationContext; 
         <AgentAvatar seed={key!} roleSeed={agent.data?.roles[0]?.id ?? task.owner} size={30} />
         <span className="text-small font-medium text-foreground">{name}</span>
         {state && <StatusTag tone={state.tone} label={state.label} />}
-        <a className="text-label text-primary hover:underline" href={sessionHref(projectId, key!)}>进入对话</a>
+        <a className="text-label text-primary hover:underline" href={sessionHref(projectId, key!, taskOrigin(projectId, task, context.principal.actorId))}>进入对话</a>
       </div>
-      <Fine>{assignment.target.kind === "owned" ? "项目内智能体" : "外部接入的智能体"} · 更新于 {date(assignment.updatedAt)} · 分派人 {assignment.actorId}{assignment.recipientActorId ? ` · 指定执行者 ${assignment.recipientActorId}` : ""}</Fine>
+      <Fine>{assignment.target.kind === "owned" ? "项目内智能体" : "外部接入的智能体"} · 更新于 {date(assignment.updatedAt)} · 分派人 {actorText(assignment.actorId)}{assignment.recipientActorId ? ` · 指定执行者 ${actorText(assignment.recipientActorId)}` : ""}</Fine>
       <p className="text-label text-text-secondary [overflow-wrap:anywhere]">分派依据：{assignment.reason}</p>
       {assignment.ack && <p className="text-label text-text-secondary [overflow-wrap:anywhere]">{assignment.ack.method === "direct" ? "执行者本人确认接手" : "负责人观察到接手"} · {date(assignment.ack.at)} · {assignment.ack.evidence}</p>}
       {!valid && assignment.state !== "released" && !closed && <Notice tone="waiting">任务的当前修订和分派固定的修订不同。旧的接手记录保留，但不能当作新修订已经接手。</Notice>}
       <FullIdentifiers rows={[{ label: "承接对象", value: key }, { label: "分派固定的任务修订", value: assignment.taskRevisionId },
-        { label: "确认来源", value: assignment.ack?.sourceRef }, { label: "确认人", value: assignment.ack?.actorId ?? assignment.ack?.observerActorId }]} />
+        { label: "确认来源", value: assignment.ack?.sourceRef }, { label: "确认人", value: assignment.ack?.actorId ?? assignment.ack?.observerActorId },
+        actorRow("分派人", assignment.actorId), actorRow("指定执行者", assignment.recipientActorId)]} />
     </div> : <p className="text-label text-text-secondary">还没有指定具体的智能体。负责职责仍在任务上，但不能据此推定哪个智能体已经接手。</p>)}
     {task.state === "todo" && <Fine>建议先开始任务再指定智能体：开始会产生新的固定修订，之前的分派和接手不会沿用。</Fine>}
     {ready && task.state === "in_progress" && permissions.includes("review") && (binding
@@ -163,7 +168,8 @@ function AssignmentSection({ context, task, read }: { context: MutationContext; 
     {history.data && history.data.items.length > 1 && <details>
       <summary className="w-fit cursor-pointer text-label text-primary hover:underline">分派记录（{history.data.items.length}{history.data.nextCursor ? "+" : ""}）</summary>
       <ol className="mt-2 flex flex-col gap-1">{history.data.items.map(item => <li key={`${item.version}:${item.updatedAt}`} className="text-caption text-text-secondary">
-        第 {item.version} 版 · {item.state === "accepted" ? "已接手" : item.state === "assigned" ? "已分派" : "已释放"} · {date(item.updatedAt)} · {item.actorId} · {item.reason}
+        第 {item.version} 版 · {item.state === "accepted" ? "已接手" : item.state === "assigned" ? "已分派" : "已释放"} · {date(item.updatedAt)} · {actorText(item.actorId)} · {item.reason}
+        <ActorIdentifiers actors={[["分派人", item.actorId]]} />
       </li>)}</ol>
     </details>}
   </div>;
@@ -189,7 +195,7 @@ function RunsSection({ context, detail, assignment, runs, runsRead, sessionsRead
     queryFn: ({ signal }: { signal: AbortSignal }) => readAgent(projectId, `owned:${session.id}`, signal), retry: false })) });
   const roleName = (session: RuntimeSessionRecord) => {
     const agent = names[eligible.indexOf(session)]?.data;
-    return `${agent?.profile?.displayName?.trim() || agent?.title || "智能体（名称待读取）"} · 创建于 ${date(session.createdAt)}`;
+    return `${agent ? agentDisplayName(agent) : "智能体（名称待读取）"} · 创建于 ${date(session.createdAt)}`;
   };
   const arrange = { taskVersion: task.version, revisionId: task.currentRevisionId, owner: task.owner,
     assignmentVersion: assigned?.version ?? 0, assignmentState: assigned?.state ?? "none", assignmentTarget: assigned ? assignmentKey(assigned) : "",
@@ -205,7 +211,7 @@ function RunsSection({ context, detail, assignment, runs, runsRead, sessionsRead
     {runsRead.isPending && !runsRead.error ? <ReadNote read={runsRead} what="运行记录" />
       : readCurrent(runsRead) && !runs.length && <p className="text-label text-text-secondary">这项任务还没有登记运行。</p>}
     <div className="flex flex-col">{[...runs].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt)).map(run => <RunRecord key={`${run.id}:${run.version}`}
-      context={context} run={run} anchor={`runtime-run-${task.id}-${run.id}`} readOnlyAgent={sessions.some(session => session.id === run.sessionId && session.sandbox === "read-only")} />)}</div>
+      context={context} run={run} taskTitle={run.taskId === task.id ? task.title : null} anchor={`runtime-run-${task.id}-${run.id}`} readOnlyAgent={sessions.some(session => session.id === run.sessionId && session.sandbox === "read-only")} />)}</div>
     <Fine>收到通知、读取材料、采用判断和真实效果分别留证。运行结束不会自动关闭任务。</Fine>
     {task.state === "in_progress" && <div className="flex flex-col gap-2">
       <h3 className="text-small font-semibold text-foreground">安排执行</h3>
@@ -266,7 +272,9 @@ function useRevealRun(taskId: string, projectId: string, runs: RuntimeRunRecord[
   return root;
 }
 
-function RunRecord({ context, run, anchor, readOnlyAgent }: { context: MutationContext; run: RuntimeRunRecord; anchor: string; readOnlyAgent: boolean }) {
+function RunRecord({ context, run, taskTitle, anchor, readOnlyAgent }: {
+  context: MutationContext; run: RuntimeRunRecord; taskTitle: string | null; anchor: string; readOnlyAgent: boolean;
+}) {
   const projectId = context.projectId;
   const permissions = context.principal.permissions;
   const preflight = run.resultSummary ? preflightPresentation(run.resultSummary) : null;
@@ -283,7 +291,7 @@ function RunRecord({ context, run, anchor, readOnlyAgent }: { context: MutationC
     <div className="flex flex-col gap-3 pb-4 pl-1">
       <p className="flex flex-wrap gap-x-4 text-label">
         <a className="text-primary hover:underline" href={taskSectionHref(projectId, run.taskId, { revisionId: run.taskRevisionId })}>执行时的任务修订</a>
-        {run.projectId === projectId && uuid.test(run.sessionId) && <a className="text-primary hover:underline" href={sessionHref(projectId, `owned:${run.sessionId}`)}>查看这次运行的智能体</a>}
+        {run.projectId === projectId && uuid.test(run.sessionId) && <a className="text-primary hover:underline" href={sessionHref(projectId, `owned:${run.sessionId}`, taskOrigin(projectId, { id: run.taskId, title: taskTitle }, context.principal.actorId))}>查看这次运行的智能体</a>}
       </p>
       <Fine>运行的状态不代表任务已验收，也不代表那个智能体现在仍在做这项任务。</Fine>
       {run.state === "unknown" && <Notice tone="error">派发或状态仍然未知，要沿已绑定的线程回查；不会自动再发一次。</Notice>}
@@ -309,7 +317,8 @@ function RunRecord({ context, run, anchor, readOnlyAgent }: { context: MutationC
         {events?.error && <Notice tone="error">{events.error}</Notice>}
         {events?.value && (events.value.length ? <ol className="flex flex-col gap-1.5">{events.value.map(event => <li key={event.id} className="flex flex-col">
           <span className="text-label text-foreground [overflow-wrap:anywhere]">{event.detail}</span>
-          <Fine>{event.actorId} · {date(event.createdAt)}</Fine>
+          <Fine>{actorText(event.actorId)} · {date(event.createdAt)}</Fine>
+          <ActorIdentifiers actors={[["记录者", event.actorId]]} />
         </li>)}</ol> : <p className="text-label text-text-secondary">没有回执记录。</p>)}
       </div>
       <div className="flex flex-col">

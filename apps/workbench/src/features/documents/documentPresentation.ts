@@ -3,7 +3,7 @@
 // Interface words follow docs/frontend/principles.md (界面用语): no implementation words, raw IDs only in the source layer.
 import type { Document, DocumentDetail, DocumentKind, DocumentStatus, DocumentTaskReference, TaskState } from "@evoloop/contracts";
 import type { StatusTone } from "@evoloop/ui";
-import { parseRoute, type Section } from "../../shared/routes";
+import { returnPlaceOf, type ReturnPlace } from "../../shared/returnLink";
 import type { Original } from "../../shared/ui/OriginalDocumentReader";
 
 export const kindLabel: Record<DocumentKind, string> = {
@@ -19,6 +19,15 @@ export const taskStateTone: Record<TaskState, StatusTone> = { todo: "idle", in_p
 export const runStateLabel: Record<string, string> = {
   requested: "待派发", dispatching: "派发中", running: "运行中", completed: "运行结束", failed: "运行失败", interrupted: "已中断", unknown: "结果未知",
 };
+
+/**
+ * The run a document came from, as the reader says it: produced by one run, when it started and where it stands. The
+ * run's identifier stays in 完整标识; until the run is read back and matches, only that a run was registered is said.
+ */
+export function originRunSummary(run: { createdAt: string; state: string } | null | undefined, reading: boolean, time: (iso: string) => string): string {
+  if (!run) return `由一次登记的运行产生 · ${reading ? "正在核对" : "未能核实"}`;
+  return `由一次运行产生 · 开始于 ${time(run.createdAt)} · ${runStateLabel[run.state] ?? "状态未识别"}`;
+}
 
 export type KindFilter = "all" | DocumentKind;
 export type StatusFilter = "active" | DocumentStatus | "all";
@@ -82,18 +91,13 @@ export function markdownSource(body: string | null, original: { data?: Original;
   return { state: "reading" };
 }
 
-// Address rules: `/sessions?session=` is one agent (智能体); `/runtime`, with or without a session, is 分工与运行.
-const sourceLabels: Partial<Record<Section, string>> = {
-  documents: "文档列表", document: "文档", task: "任务", work: "任务列表", "create-task": "任务", inbox: "待我验收",
-  sessions: "智能体", runtime: "分工与运行", knowledge: "知识空间", overview: "总览", schedules: "日程", evaluations: "评价",
-  journey: "目标与阶段", discussions: "分工讨论", reviews: "组织复盘", roles: "职责", repository: "仓库规范",
-};
-
-/** What the return link goes back to, named for the reader (返回来源 · 任务). */
-export function returnSourceLabel(path: string): string {
-  const route = parseRoute(path);
-  if (!route.projectId) return "项目列表";
-  return sourceLabels[route.section] ?? "上一页";
+/**
+ * Where the reader's way back goes, as a place the link names (返回任务：<名称>, 返回智能体：<名称>, 返回总览 …;
+ * shared/returnLink.ts). An address that is not a page of this project goes back to the document list.
+ */
+export function documentReturnPlace(path: string, projectId: string): { href: string; place: ReturnPlace } {
+  const place = returnPlaceOf(path, projectId);
+  return place ? { href: path, place } : { href: `/p/${projectId}/documents`, place: { kind: "page", section: "documents" } };
 }
 
 /** What the list covers, so a search or filter never reads as the whole project when pages are still unread. */

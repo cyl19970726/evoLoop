@@ -55,13 +55,14 @@
 - 字体：系统中文无衬线（`-apple-system, "PingFang SC", "Microsoft YaHei", sans-serif`）；代码、命令、技能名用等宽字体。
 - 字重三档：常规 400、中等 500（列表标题、按钮）、强调 600（页面与区块标题）。
 - 行高三档：正文阅读 1.8，界面 1.55，标题 1.3。正文行宽不超过 `reading-width`（680px）。
+- 页面只用 token 类：字号 `text-caption` 到 `text-title`；行高 `leading-(--leading-reading)`、`leading-(--leading-body)`、`leading-(--leading-tight)`。不写 `text-[11px]`、`leading-[1.6]` 这类方括号值，也不用任意属性（`[font-size:…]`）、字号上的行高修饰（`text-small/6`）、内联样式，或 Tailwind 自带、token 之外的档（`text-sm`、`leading-relaxed`、`leading-5`、`leading-tight` 等）。`packages/ui` 的样式表（`tokens.css` 之外）同样只写 `var(--…)`。
 - 数字用等宽数字（`tabular-nums`）。中文与数字、英文之间留一个空格。
 
 ## 间距、尺寸与圆角
 
 - 间距只用 4、8、12、16、24、36（`space-1` 到 `space-9`）。工作面板外留 8，内容区左右留 36。
 - 外层栏 68px，内层栏 264px；按钮高 36px，紧凑控件 30px。
-- 圆角五档：行内代码 6px，列表项与输入 10px，卡片与弹层 14px，工作面板与提问卡 18px，按钮、标签、输入框 999px（胶囊）。
+- 圆角五档：行内代码 6px，列表项与输入 10px，卡片与弹层 14px，工作面板与提问卡 18px，按钮、标签、输入框 999px（胶囊），对应 `rounded-sm`、`rounded-md`、`rounded-lg`、`rounded-xl`、`rounded-full`。不写 `rounded-[9px]` 这类方括号值，也不用 `rounded`、`rounded-2xl` 等 token 之外的档。字号、行高和圆角的字面量由 `style-budget.test.ts` 检查，确实需要的写进它的例外表并写明理由（#229 F6 之后为空）。
 
 ## 阴影与层级
 

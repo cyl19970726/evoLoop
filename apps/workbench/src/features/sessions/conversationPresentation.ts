@@ -2,7 +2,19 @@
 // for the agent (“Read file src/a.ts”, “Plan”, “Context compacted”); the page says the same thing in Chinese and
 // only claims what the entries prove. Pure functions, tested in session-conversation-presentation.test.ts.
 import type { SessionResult } from "@evoloop/contracts/session-observation";
-import type { WorkspaceEntry, WorkspaceRecord, WorkspaceState, WorkspaceTool, WorkspaceTurn } from "@evoloop/contracts/session-timeline";
+import type { WorkspaceAuthor, WorkspaceEntry, WorkspaceRecord, WorkspaceState, WorkspaceTool, WorkspaceTurn } from "@evoloop/contracts/session-timeline";
+import { actorText } from "../../shared/actorPresentation";
+
+/**
+ * Who wrote an entry, as the page says it. The service labels a person by their actor ID and an agent by its own
+ * title: a person is said as every page says who recorded something (actorText: an account name, 未登记名称的身份,
+ * 自动执行方), an agent by the name the page gives it (`agentName`, agentDisplayName), never by a generated title.
+ */
+export function entryAuthorText(author: WorkspaceAuthor, agentName: string, me?: string): string {
+  if (author.kind === "actor") return actorText(author.id ?? author.label, me);
+  if (author.kind === "session") return agentName;
+  return author.label.trim() || "发送者未确认";
+}
 
 export const entryStateLabel: Record<WorkspaceState, string> = {
   pending: "待处理", running: "进行中", completed: "已完成", failed: "失败", interrupted: "已中断", declined: "已拒绝", unknown: "状态未确认",

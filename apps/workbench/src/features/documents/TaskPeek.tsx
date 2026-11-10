@@ -4,12 +4,15 @@ import type { DocumentTaskReference } from "@evoloop/contracts";
 import { ErrorState, LoadingState, StatusTag } from "@evoloop/ui";
 import { api } from "../../shared/api";
 import { useProjectQuery } from "../../shared/query";
-import { href } from "../../shared/routes";
+import type { ReturnFrom } from "../../shared/returnLink";
+import { taskLinkFrom } from "./taskLinks";
 import { taskStateLabel, taskStateTone, referenceText } from "./documentPresentation";
 import { OwnerName } from "./OwnerName";
 import { readProblem } from "./useDocumentList";
 
-export function TaskPeek({ projectId, reference, documentTitle }: { projectId: string; reference: DocumentTaskReference; documentTitle: string }) {
+export function TaskPeek({ projectId, reference, documentTitle, from }: {
+  projectId: string; reference: DocumentTaskReference; documentTitle: string; from?: ReturnFrom | null;
+}) {
   const task = useProjectQuery(projectId, ["task", reference.id, "peek"], () => api().task(projectId, reference.id));
   const current = task.data?.task;
   const state = current?.state ?? reference.state;
@@ -29,6 +32,6 @@ export function TaskPeek({ projectId, reference, documentTitle }: { projectId: s
       <p><span className="block text-caption text-muted-foreground">完成条件</span><span className="mt-0.5 block whitespace-pre-wrap [overflow-wrap:anywhere]">{current.acceptance || "未写明"}</span></p>
       <p><span className="block text-caption text-muted-foreground">当前版本</span><span className="mt-0.5 block">第 {current.version} 版</span></p>
     </div>}
-    <a href={href(projectId, "task", reference.id)} className="text-label font-medium text-primary hover:underline">打开完整任务 →</a>
+    <a href={taskLinkFrom(projectId, reference.id, from)} className="text-label font-medium text-primary hover:underline">打开完整任务 →</a>
   </article>;
 }

@@ -1,17 +1,21 @@
 import { useEffect, useRef, useState } from "react";
 import { ChevronDown, LayoutDashboard, Plus, Search } from "lucide-react";
-import { AgentAvatar, IconButton, Sheet, SheetContent, SheetDescription, SheetTitle, cn } from "@evoloop/ui";
+import { AgentAvatar, Button, IconButton, Sheet, SheetContent, SheetDescription, SheetTitle, cn } from "@evoloop/ui";
 import type { ObservedSession } from "@evoloop/contracts/session-observation";
 import { href } from "../../shared/ui/shared";
+import { withReturn, type ReturnFrom } from "../../shared/returnLink";
+import { agentDisplayName, agentNameCollisions, agentNameHint } from "../../shared/agentNamePresentation";
 import { useSessionDirectoryGroup, type DirectoryMembership } from "./useSessionDirectoryGroup";
 import { agentStatusLabel } from "./sessionStatusPresentation";
 import { groupSessionsByClass, sessionClassLabel, sessionClassReason, type SessionClass } from "./sessionDirectoryPresentation";
 
-/** A link to one agent; `from` (a task of this project, its title and the reader) gives the agent page its way back. */
-export const sessionHref = (projectId: string, key: string, from?: { href: string; title: string; actorId: string }) =>
-  `${href(projectId, "sessions")}?${new URLSearchParams({ session: key, ...(from ? { return: from.href, actor: from.actorId, returnTitle: from.title.slice(0, 80) } : {}) })}`;
+/** A link to one agent; `from` (the page of this project it is opened from, the reader, optionally that page's name)
+ * gives the agent page its way back (shared/returnLink.ts). */
+export const sessionHref = (projectId: string, key: string, from?: ReturnFrom | null) =>
+  withReturn(`${href(projectId, "sessions")}?${new URLSearchParams({ session: key })}`, from);
 
 const classOrder: SessionClass[] = ["business", "system", "unclassified"];
+const shortTime = (iso: string) => { const at = new Date(iso); return Number.isNaN(at.getTime()) ? iso : at.toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false }); };
 export interface SessionNavigationState {
   query: string;
   historyOpen: boolean;
@@ -58,10 +62,17 @@ export function SessionNavigation({ token, projectId, selectedId, onNavigate, st
   const totals = current.page?.totals;
   const grouped = groupSessionsByClass(current.items);
   const historicalCount = (totals?.historical ?? 0) + (totals?.unclassified ?? 0);
+  // Agents that would show the same name are told apart by their short identifier, first on the second line.
+  const collisions = agentNameCollisions([...current.items, ...historical.items, ...unclassified.items]);
   function item(session: ObservedSession) {
     const roles = session.roles.map(role => role.title).join(" · ");
+    const name = agentDisplayName(session);
     const taskSignal = session.currentTask ? session.currentTask.title : null;
+    // A generated name already says the role; what the service records about the agent says the rest.
+    const hint = agentNameHint(session, shortTime);
+    const short = collisions.get(session.key);
     const status = agentStatusLabel(session);
+    const signal = `${short ? `标识 ${short} · ` : ""}${taskSignal ?? hint ?? (roles || sessionClassReason(session))} · ${status}`;
     const dot = session.busy === true ? "bg-primary" : session.runtimeState === "failed" ? "bg-destructive" : session.busy === false && session.runtimeState === "ready" ? "bg-border" : "bg-warning";
     const selected = selectedId === session.key;
     return <a key={session.key} href={sessionHref(projectId, session.key)} aria-current={selected ? "page" : undefined} onClick={onNavigate}
@@ -69,19 +80,19 @@ export function SessionNavigation({ token, projectId, selectedId, onNavigate, st
         selected && "bg-raised font-medium text-foreground shadow-sm")}>
       <AgentAvatar seed={session.key} roleSeed={session.roles[0]?.id ?? session.title} size={30} />
       <span className="flex min-w-0 flex-1 flex-col">
-        <span className="truncate" title={session.title}>{session.title}</span>
-        <span className="session-nav-signal truncate text-caption font-normal text-muted-foreground">{taskSignal ?? (roles || sessionClassReason(session))}{` · ${status}`}</span>
+        <span className="truncate" title={name}>{name}</span>
+        <span className="session-nav-signal truncate text-caption font-normal text-muted-foreground" title={signal}>{signal}</span>
       </span>
       <span aria-hidden="true" className={cn("size-[7px] shrink-0 rounded-full", dot)} />
     </a>;
   }
   function groupError(membership: DirectoryMembership, message: string) {
-    return <p role="alert" className="session-nav-error px-3 py-2 text-small text-destructive">智能体目录暂不可读取：{message}。<button type="button" className="ml-1 text-primary underline-offset-4 hover:underline" onClick={() => setRetries(value => ({ ...value, [membership]: value[membership] + 1 }))}>重试</button></p>;
+    return <p role="alert" className="session-nav-error px-3 py-2 text-small text-destructive">智能体目录暂不可读取：{message}。<Button variant="link" className="ml-1" onClick={() => setRetries(value => ({ ...value, [membership]: value[membership] + 1 }))}>重试</Button></p>;
   }
   const muted = (text: string) => <p className="session-nav-muted px-3 py-1.5 text-small text-muted-foreground">{text}</p>;
   const groupLabel = (text: string) => <span className="block px-3 pb-1.5 pt-4 text-caption text-muted-foreground">{text}</span>;
-  const moreButton = (busy: boolean, label: string, onClick: () => void) => <button type="button" disabled={busy} onClick={onClick}
-    className="session-nav-more mx-3 my-1 rounded-md px-2 py-1 text-small text-primary hover:bg-accent disabled:text-muted-foreground">{busy ? "加载中…" : label}</button>;
+  const moreButton = (busy: boolean, label: string, onClick: () => void) => <Button variant="ghost" disabled={busy} onClick={onClick}
+    className="session-nav-more mx-3 my-1 h-auto rounded-md px-2 py-1 text-small font-normal text-primary hover:bg-accent hover:text-primary disabled:text-muted-foreground disabled:opacity-100">{busy ? "加载中…" : label}</Button>;
   return <section ref={root} className="session-navigation flex flex-col" aria-label="智能体目录" data-ui="">
     <label className="mb-1.5 flex h-9 items-center gap-2 rounded-full bg-field px-3 text-muted-foreground">
       <Search size={14} aria-hidden="true" />
@@ -91,9 +102,9 @@ export function SessionNavigation({ token, projectId, selectedId, onNavigate, st
       <IconButton label="连接或建立智能体" icon={<Plus size={16} />} compact onClick={() => setConnectOpen(true)} />
     </label>
     <a href={href(projectId, "sessions")} onClick={onNavigate} aria-current={!selectedId ? "page" : undefined}
-      className={cn("flex items-center gap-2.5 rounded-lg px-3 py-[9px] text-text-secondary hover:bg-selected focus-visible:shadow-[var(--focus-ring)] outline-none", !selectedId && "bg-raised font-medium text-foreground shadow-sm")}>
+      className={cn("flex items-center gap-2.5 rounded-lg px-3 py-2 text-text-secondary hover:bg-selected focus-visible:shadow-[var(--focus-ring)] outline-none", !selectedId && "bg-raised font-medium text-foreground shadow-sm")}>
       <LayoutDashboard size={18} aria-hidden="true" />统筹安排
-      {totals && <span className="ml-auto text-caption text-muted-foreground">{totals.current + totals.historical + totals.unclassified} 个</span>}
+      {totals && <span className="ml-auto text-caption text-muted-foreground" title="目录里的智能体总数，含历史与待归类">共 {totals.current + totals.historical + totals.unclassified} 个智能体</span>}
     </a>
     {current.error && groupError("current", current.error)}
     {(searchPending || current.loading && !current.page) && muted("正在读取智能体目录…")}
@@ -107,10 +118,10 @@ export function SessionNavigation({ token, projectId, selectedId, onNavigate, st
     </div>
     {current.hasMore && moreButton(current.moreBusy || current.loading, "加载更多当前智能体", () => void current.more())}
     <div className="session-nav-group mt-3 flex flex-col gap-0.5 border-t border-border pt-2">
-      <button type="button" onClick={() => onState(previous => ({ ...previous, historyOpen: !previous.historyOpen }))} aria-expanded={historyOpen}
-        className="session-nav-history flex items-center gap-1.5 rounded-md px-3 py-1.5 text-small text-text-secondary hover:bg-selected">
+      <Button variant="row" onClick={() => onState(previous => ({ ...previous, historyOpen: !previous.historyOpen }))} aria-expanded={historyOpen}
+        className="session-nav-history gap-1.5 px-3 py-1.5 text-small">
         <ChevronDown size={13} aria-hidden="true" className={cn("transition-transform", !historyOpen && "-rotate-90")} />历史与待归类{totals && ` · ${historicalCount}`}
-      </button>
+      </Button>
       {historyOpen && <>
         {groupLabel(`历史 · ${totals?.historical ?? 0}`)}
         {historical.error && groupError("historical", historical.error)}

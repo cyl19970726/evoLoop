@@ -29,17 +29,31 @@ async function git(root: string, args: string[], limit = maxBytes + 4096): Promi
   return stdout as Buffer;
 }
 
+/** One registration on its own: identity, root and repository-relative allowed paths. */
+export function isValidRepositoryRegistration(repo: RegisteredRepository): boolean {
+  return !!repo.projectId && !!repo.repositoryId && !!repo.root && repo.allowedPaths.length > 0 &&
+    repo.allowedPaths.every((p) => safePath(p.endsWith("/") ? p.slice(0, -1) : p));
+}
+/** Why GitDocumentSource refuses this whole registration list, or null when it accepts it. */
+export function repositoryRegistrationProblem(repositories: readonly RegisteredRepository[]): "invalid" | "duplicate" | null {
+  const keys = new Set<string>();
+  for (const repo of repositories) {
+    if (!isValidRepositoryRegistration(repo)) return "invalid";
+    const key = `${repo.projectId}\0${repo.repositoryId}`;
+    if (keys.has(key)) return "duplicate";
+    keys.add(key);
+  }
+  return null;
+}
+
 /** Reads Git objects only. A caller must register repos and supply current access decisions. */
 export class GitDocumentSource implements DocumentSource {
   private readonly repos = new Map<string, RegisteredRepository>();
   constructor(repositories: readonly RegisteredRepository[], private readonly mayRead: (ref: GitSourceRef) => Promise<boolean>) {
-    for (const repo of repositories) {
-      if (!repo.projectId || !repo.repositoryId || !repo.root || repo.allowedPaths.length === 0 ||
-        repo.allowedPaths.some((p) => !safePath(p.endsWith("/") ? p.slice(0, -1) : p))) throw new Error("invalid repository registration");
-      const key = `${repo.projectId}\0${repo.repositoryId}`;
-      if (this.repos.has(key)) throw new Error("duplicate repository registration");
-      this.repos.set(key, { ...repo, allowedPaths: [...repo.allowedPaths] });
-    }
+    const problem = repositoryRegistrationProblem(repositories);
+    if (problem) throw new Error(`${problem} repository registration`);
+    for (const repo of repositories)
+      this.repos.set(`${repo.projectId}\0${repo.repositoryId}`, { ...repo, allowedPaths: [...repo.allowedPaths] });
   }
 
   async read(ref: GitSourceRef): Promise<GitSourceRead> {

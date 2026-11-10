@@ -245,13 +245,19 @@ test("resident observation keeps acceptance, host authority and task replies dis
   assert.equal(await pageBrowser.evaluate(() => (window as Window & {fixtureCopied?:string}).fixtureCopied),externalRef);
   await pageBrowser.evaluate(() => { (window as Window & {fixtureCopyFail?:boolean}).fixtureCopyFail=true; });
   await externalCard.getByRole("button",{name:"复制完整引用"}).click();
-  await externalCard.getByText(/复制失败；可选中上方完整引用手工复制/).waitFor();
+  await externalCard.getByText(/复制失败；可展开下方“完整标识”手工复制完整引用/).waitFor();
+  // The full reference sits in 完整标识, not in the card's text.
+  assert.doesNotMatch(await externalCard.innerText(),new RegExp(externalRef));
+  await externalCard.locator("summary",{hasText:"完整标识"}).click();
   assert.match(await externalCard.innerText(),new RegExp(externalRef));
   await fetch(`${base}/__fixture/hold-next-host-list`);
   await presenceReread.click();
   for (let attempt=0; attempt<20 && await (await fetch(`${base}/__fixture/held-host-list-count`)).text() !== "1"; attempt++)
     await new Promise(resolve=>setTimeout(resolve,25));
   assert.equal(await (await fetch(`${base}/__fixture/held-host-list-count`)).text(),"1");
+  // The fixture sees the request before the page has drawn the reread (TanStack Query notifies on a later task):
+  // wait for the page to say the list is a last read, then the entry must already be withdrawn.
+  await presenceRead.filter({hasText:/上次读于/}).waitFor();
   assert.equal(await externalCard.getByRole("link",{name:"请求在 Codex Desktop 打开聊天"}).count(),0);
   assert.match(await presenceRead.innerText(),/上次读于/);
   await fetch(`${base}/__fixture/fail-presence-list`);
@@ -294,7 +300,7 @@ test("resident observation keeps acceptance, host authority and task replies dis
   await fetch(`${base}/__fixture/restore-presence-list`);
   await presenceReread.click();
   await presence.getByRole("link",{name:"查看运行与队列"}).waitFor();
-  assert.equal(await presence.getByRole("link",{name:"在智能体空间打开"}).getAttribute("href"),`/p/${projectId}/sessions?session=${encodeURIComponent(`owned:${sessionId}`)}`);
+  assert.equal((await presence.getByRole("link",{name:"在智能体空间打开"}).getAttribute("href"))?.split("&return=")[0],`/p/${projectId}/sessions?session=${encodeURIComponent(`owned:${sessionId}`)}`);
   await presence.getByRole("link",{name:"查看运行与队列"}).click();
   // The owned host opens that managed agent in 分工与运行, with its queue.
   await pageBrowser.locator(`#runtime-session-${sessionId}`).waitFor();
@@ -379,9 +385,13 @@ test("resident observation keeps acceptance, host authority and task replies dis
   assert.equal(await (await fetch(`${base}/__fixture/held-priority-detail-count`)).text(),"1");
   await deepItems.nth(21).getByRole("link",{name:"历史任务 21"}).waitFor();
   assert.equal((await (await fetch(`${base}/__fixture/task-reads`)).json() as string[]).includes(taskC),false);
+  // C comes back into the named set and is read again (its name read a few seconds ago may still be on screen):
+  // wait for that read's answer, not only for the name.
+  const nameOfC = pageBrowser.waitForResponse(response => response.url().endsWith(`/tasks/${taskC}`));
   await fetch(`${base}/__fixture/release-priority-detail`);
   await pageBrowser.getByText(/后续顺位：核对下一顺位 C/).waitFor();
   await deepItems.nth(26).getByRole("link",{name:"核对下一顺位 C"}).waitFor();
+  await nameOfC;
   assert.ok((await (await fetch(`${base}/__fixture/task-reads`)).json() as string[]).includes(taskC));
   await fetch(`${base}/__fixture/restore-queue`);
   await pageBrowser.getByRole("button",{name:"重新读取队列"}).click();
@@ -404,6 +414,8 @@ test("resident observation keeps acceptance, host authority and task replies dis
   assert.match(await pageBrowser.locator("[data-queue-meta]").innerText(),/累计尝试 2/);
   await queueItems.nth(0).getByRole("link",{name:/最近一次运行/}).click();
   await pageBrowser.locator(`#runtime-run-${taskA}-${runA}[open]`).waitFor();
+  // The task's collaboration is in 当前工作 › 进展与讨论; 运行与关联 links there.
+  await pageBrowser.getByRole("link",{name:"打开进展与讨论"}).click();
   await pageBrowser.locator("[data-task-collaboration] details > summary").first().waitFor({timeout:5000}).catch(async () => {
     assert.fail(`Task collaboration missing: ${await pageBrowser.locator("body").innerText()} ${pageErrors.join(" | ")}`);
   });
@@ -424,7 +436,7 @@ test("resident observation keeps acceptance, host authority and task replies dis
   await pageBrowser.getByText(/重新读取协作失败/).waitFor();
   assert.equal(await pageBrowser.getByText(/提问 · 致 lead · 已答复/).count(),1);
   await fetch(`${base}/__fixture/long-discussions`);
-  await pageBrowser.evaluate(({projectId,taskB})=>{location.hash=`/p/${projectId}/tasks/${taskB}?tab=runtime`;},{projectId,taskB});
+  await pageBrowser.evaluate(({projectId,taskB})=>{location.hash=`/p/${projectId}/tasks/${taskB}?tab=overview`;},{projectId,taskB});
   await pageBrowser.getByText(/协作列表已读到 20 页或 20 个关联频道的上限/).waitFor();
   assert.equal(await pageBrowser.getByText("这项任务还没有登记协作频道。").count(),0);
   await pageBrowser.evaluate(({projectId})=>{location.hash=`/p/${projectId}/roles?role=javascript%3Aalert(1)`;},{projectId});

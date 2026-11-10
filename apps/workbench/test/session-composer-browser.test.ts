@@ -156,7 +156,7 @@ test("the composer sends, adds, queues, stops, lists skills and agents, and says
     await page.getByRole("heading", { name: "前端实现" }).waitFor();
     const box = page.getByRole("combobox", { name: "消息" });
     await box.waitFor();
-    assert.equal(await page.getByRole("link", { name: "← 返回【新版智能体页】" }).getAttribute("href"), taskPath);
+    assert.equal(await page.getByRole("link", { name: "返回任务：新版智能体页", exact: true }).getAttribute("href"), taskPath);
     // The running turn: its checklist and what runs now; my queued message above the composer, withdrawable.
     const todo = page.getByRole("region", { name: "待办清单" });
     await todo.getByText("重写输入框").waitFor();

@@ -10,6 +10,7 @@ import { errorText, request } from "../../shared/api";
 import { ActionForm, type MutationContext } from "../../shared/ActionForm";
 import { externalHostOpenHref, externalHostOpenReason } from "../../shared/externalHostEntry";
 import { useProjectQuery } from "../../shared/query";
+import { hereOrigin, withReturn } from "../../shared/returnLink";
 import { href } from "../../shared/ui/shared";
 import { FullIdentifiers } from "../../shared/ui/FullIdentifiers";
 import { SessionName } from "../../shared/ui/RecordName";
@@ -66,7 +67,7 @@ export function RolePresence({ context, role }: { context: MutationContext; role
       {hosts.map(host => <li key={host.id} className="flex min-w-0 flex-col gap-1.5 border-t border-border px-4 py-3 first:border-t-0">
         <strong className="text-small font-semibold text-foreground">{hostTitle(host)}</strong>
         {host.host.kind === "owned"
-          ? <OwnedHost projectId={projectId} sessionId={host.host.sessionId} current={current} />
+          ? <OwnedHost projectId={projectId} sessionId={host.host.sessionId} current={current} actorId={context.principal.actorId} />
           : <ExternalHost key={`${host.id}:${host.version}:${host.host.ref}`} host={host} roleState={role.state} current={current} />}
         <p className="text-small text-text-secondary">声称能力：{capabilitiesText(host.claimedCapabilities) || "未声明"}</p>
         <p className="text-small text-text-secondary">已核能力：{host.state === "verified" ? capabilitiesText(host.verifiedCapabilities) || "无" : "未核实"}</p>
@@ -98,12 +99,12 @@ export function RolePresence({ context, role }: { context: MutationContext; role
   </PageSection>;
 }
 
-function OwnedHost({ projectId, sessionId, current }: { projectId: string; sessionId: string; current: boolean }) {
+function OwnedHost({ projectId, sessionId, current, actorId }: { projectId: string; sessionId: string; current: boolean; actorId: string }) {
   return <>
     <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-small">
       {current ? <>
         <a className="text-primary hover:underline" href={`${href(projectId, "runtime")}?session=${key(sessionId)}`}>查看运行与队列</a>
-        <a className="text-primary hover:underline" href={`${href(projectId, "sessions")}?session=${key(`owned:${sessionId}`)}`}>在智能体空间打开</a>
+        <a className="text-primary hover:underline" href={withReturn(`${href(projectId, "sessions")}?session=${key(`owned:${sessionId}`)}`, hereOrigin(actorId))}>在智能体空间打开</a>
       </> : <span className={mutedText}>上次读回，暂不可作为当前入口</span>}
       <span className={mutedText}><SessionName projectId={projectId} sessionKey={`owned:${sessionId}`} /></span>
     </p>
@@ -119,7 +120,6 @@ function ExternalHost({ host, roleState, current }: { host: HostLink; roleState:
   const openHref = current ? externalHostOpenHref(host, roleState) : null;
   const reason = externalHostOpenReason(host, roleState, current);
   return <div className="flex min-w-0 flex-col gap-1.5">
-    <p className="break-all text-small text-text-secondary">人工宿主引用：<code className="select-text font-mono text-caption">{ref}</code></p>
     <div className="flex flex-wrap items-center gap-2">
       {openHref && <Button asChild size="compact"><a href={openHref} target="_blank" rel="noopener noreferrer" onClick={() => setOpened(true)}>请求在 Codex Desktop 打开聊天</a></Button>}
       <Button size="compact" variant="ghost" onClick={async () => {
@@ -129,8 +129,9 @@ function ExternalHost({ host, roleState, current }: { host: HostLink; roleState:
     </div>
     {reason && <p className="text-small text-destructive">{reason}</p>}
     {copy === "copied" && <p role="status" className="text-small text-text-secondary">已复制完整引用；请在 Codex 中核对目标聊天。</p>}
-    {copy === "failed" && <p role="alert" className="text-small text-destructive">复制失败；可选中上方完整引用手工复制。</p>}
+    {copy === "failed" && <p role="alert" className="text-small text-destructive">复制失败；可展开下方“完整标识”手工复制完整引用。</p>}
     {openHref && <p className={mutedText}>{opened ? "已尝试请求打开。" : "点击会向本机 Codex Desktop 请求打开。"}如未打开，请在 Codex 中按完整引用查找或人工交接；这里不能确认已打开或已送达。</p>}
-    {!openHref && <p className={mutedText}>可选中上方完整引用手工查找或交接；不要据此推定当前宿主可承接。</p>}
+    {!openHref && <p className={mutedText}>可展开下方“完整标识”按完整引用手工查找或交接；不要据此推定当前宿主可承接。</p>}
+    <FullIdentifiers summary="完整标识" rows={[{ label: "聊天完整引用", value: ref }]} />
   </div>;
 }

@@ -1,7 +1,7 @@
 import { withObservedSources } from "./knowledge/observed-repository.js";
 import { readExternalMaterials } from "./references/materials.js";
 import { createReferenceDependencies } from "./references/routes.js";
-import { GitDocumentSource } from "@evoloop/adapter-git-documents";
+import { GitDocumentSource, repositoryRegistrationProblem } from "@evoloop/adapter-git-documents";
 import { readFile, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { resolve, isAbsolute, join, sep } from "node:path";
@@ -19,7 +19,7 @@ import { PostgresUnitOfWork, PgConnectorRoutes, PgConnectorMessageLinks, PgConne
 import { disposeStalePendingTodo, disposeStaleTodoMessage, getLeaderNotice, getLeaderNoticeByMessageId, hasInFlightLeaderNoticeMessage, linkLeaderNoticeMessage,
   listLeaderNotices, listPendingLeaderNotices, markLeaderNoticeBlocked, pinLeaderNoticeRecipient,
   recoverRejectedLeaderNotice, setLeaderNoticePendingReason } from "@evoloop/adapter-postgres/leader-result-notices";
-import { authConfigSchema, hasCurrentStudyReviewer } from "./auth.js";
+import { authConfigSchema, hasCurrentStudyReviewer, isProjectWriter } from "./auth.js";
 import { buildServer } from "./server.js";
 import { acquireCoordinatorLease, leaseFencedUnitOfWork } from "./lease.js";
 import { RuntimeWorkflowService } from "@evoloop/core/runtime";
@@ -49,7 +49,7 @@ import { brokeredCliForRun } from "./runtime/brokered-cli.js";
 import { staticRecoveryAuthority } from "./runtime/recovery-authority.js";
 import { readEvaluationMaterial } from "./runtime/evaluation-sources.js";
 import { evaluationPacketMediaType } from "./runtime/evaluation-materials.js";
-import { drivenRuntimeProviders, hasExactEngineeringActionGrant, hasTaskTimingGrant, loadIntegrations, runtimeThreadConfigForSession, selectMaterialCli } from "./configuration.js";
+import { activeTaskTimingGrants, drivenRuntimeProviders, hasExactEngineeringActionGrant, hasFeishuActorGrant, hasTaskTimingGrant, knowledgeServesProject, loadIntegrations, runtimeThreadConfigForSession, schedulingGrantsFor, selectMaterialCli } from "./configuration.js";
 import { OpenVikingKnowledgeRepository } from "@evoloop/adapter-wiki-openviking";
 import { DomainError } from "@evoloop/contracts/ports";
 import type { Principal } from "@evoloop/contracts";
@@ -93,6 +93,7 @@ import { ConnectorIngressPump } from "./message-connectors/pump.js";
 import { currentConnectorBusinessActor } from "./message-connectors/business-actor.js";
 import { qualifyStandardConnectorRoute } from "./message-connectors/qualification.js";
 import { bindingOf } from "./runtime/runner.js";
+import { localProjectConfiguration } from "./project-configuration/local.js";
 
 const databaseUrl = process.env.EVOLOOP_DATABASE_URL;
 const authFile = process.env.EVOLOOP_AUTH_FILE;
@@ -111,8 +112,7 @@ const lease = await acquireCoordinatorLease(pool);
 const integrations = await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE);
 const currentIdentity = async () => authConfigSchema.parse(JSON.parse(await readFile(authFile,"utf8")));
 const currentProjectWriter = async (projectId:string,actorId:string) =>
-  (await currentIdentity()).some(p=>p.actorId===actorId&&p.projectIds.includes(projectId)&&
-    p.permissions.includes("read")&&p.permissions.includes("write"));
+  isProjectWriter(await currentIdentity(),projectId,actorId);
 const currentQueueConfiguration = async () => (await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE)).residentQueue;
 const uow = new PostgresUnitOfWork(pool, {
   input: async (reader,taskId) => {
@@ -208,7 +208,7 @@ const blobsForPrincipal = (principal: Principal) => new LocalBlobStore(blobRoot,
 const gitForPrincipal = (principal:Principal) => new GitDocumentSource(integrations.repositories, async ref => principal.projectIds.includes(ref.projectId) && principal.permissions.includes("read"));
 const knowledge = integrations.knowledge;
 const repositoryForPrincipal = (principal: Principal, projectId: string) => {
-  if (!knowledge?.enabled || !knowledge.projectIds.includes(projectId)) throw new DomainError("KNOWLEDGE_NOT_CONFIGURED", "当前项目尚未配置外置知识后端。");
+  if (!knowledge || !knowledgeServesProject(knowledge, projectId)) throw new DomainError("KNOWLEDGE_NOT_CONFIGURED", "当前项目尚未配置外置知识后端。");
   const allowed = (permission: "read" | "write" | "review") => principal.projectIds.includes(projectId) && principal.permissions.includes(permission);
   const raw = new OpenVikingKnowledgeRepository({ baseUrl: knowledge.baseUrl, manifestRoot: knowledge.manifestRoot,
     maintainerId: knowledge.maintainerId,
@@ -542,11 +542,7 @@ const scheduling = new SchedulingPump({ store: new PgSchedulingStore(pool), task
   taskTimingGrants: async () => {
     const current = (await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE)).scheduling;
     if (!current?.enabled) return [];
-    const writers = await currentIdentity();
-    return current.taskTimingGrants.filter(grant => writers.some(identity =>
-      identity.actorId === grant.actorId && identity.projectIds.includes(grant.projectId) &&
-      identity.permissions.includes("read") && identity.permissions.includes("write") &&
-      identity.permissions.includes("review")));
+    return activeTaskTimingGrants(current, await currentIdentity());
   },
   enabled: () => integrations.scheduling?.enabled ?? false,
   onError: () => console.error("Scheduling tick failed; inspect the saved schedule status before retrying."),
@@ -771,7 +767,7 @@ const ordinarySealPump = new OrdinaryRunSealPump({
 });
 const deliveryStore = new PgOutboxDeliveryStore(pool);
 const feishu = integrations.feishu;
-const hasFeishuGrant = (projectId: string, actorId: string) => !!feishu?.enabled && feishu.grants.some(g => g.projectId === projectId && g.actorId === actorId && g.scope === "project");
+const hasFeishuGrant = (projectId: string, actorId: string) => hasFeishuActorGrant(feishu, projectId, actorId);
 const collaboration = new CollaborationRunner({ store: deliveryStore, workflow: service,
   connector: feishu?.enabled ? new FeishuBitableConnector(feishu) : null, consumerId: "feishu",
   principals: credentials, canWrite: lease.canWrite, hasGrant: hasFeishuGrant,
@@ -862,9 +858,15 @@ const app = await buildServer({ service, credentials, canWrite: lease.canWrite, 
   planningSources: (principal, projectId, taskId, revisionId, loopId) =>
     readPlanningSources(pool, principal, projectId, taskId, revisionId, loopId),
   sourceConfiguration: principal => ({
-    git: integrations.repositories.some(repository => !principal || principal.projectIds.includes(repository.projectId)),
+    // gitForPrincipal refuses the whole list on one bad entry, so then no fixed Git source is readable anywhere.
+    git: !repositoryRegistrationProblem(integrations.repositories) && integrations.repositories.some(repository => !principal || principal.projectIds.includes(repository.projectId)),
     wiki: !!knowledge?.enabled && knowledge.projectIds.some(projectId => !principal || principal.projectIds.includes(projectId)),
   }),
+  // Hub mode (#219) will supply members from Hub accounts; this coordinator answers from its own identity file.
+  projectConfiguration: localProjectConfiguration({ loaded: integrations, identities: credentials,
+    current: () => loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE), currentIdentities: currentIdentity,
+    // `documents` is always passed to this server below.
+    facts: () => ({ runtimeAvailable: runner?.status().available === true, documents: true }), now: clock.now }),
   ...(managed ? {orchestration: managed.routes, workers: managed.workers} : {}),
   ...(runner ? { runtime: runner, readEvaluationPacket: (principal, projectId, runId) =>
     runner.readEvaluationPacket(principal, projectId, runId),
@@ -924,9 +926,7 @@ const app = await buildServer({ service, credentials, canWrite: lease.canWrite, 
   },
   references: {uow, gitForPrincipal, knowledgeForPrincipal: (principal, projectId) => repositoryForPrincipal(principal, projectId), runSessionAvailable},
   scheduling,
-  schedulingGrants: (projectId, actorId) => integrations.scheduling?.enabled
-    ? integrations.scheduling.grants.filter(g => g.projectId === projectId && g.actorId === actorId)
-    : [],
+  schedulingGrants: (projectId, actorId) => schedulingGrantsFor(integrations.scheduling, projectId, actorId),
   collaboration: { runner: collaboration, store: deliveryStore, consumerId: "feishu", hasGrant: hasFeishuGrant },
   documents: { uow, blobsForPrincipal },
   knowledge: { repositoryForPrincipal, blobsForPrincipal },

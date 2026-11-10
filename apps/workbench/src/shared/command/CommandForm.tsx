@@ -6,7 +6,7 @@
 import * as React from "react";
 import type { ReactNode } from "react";
 import type { AppliedResult, Permission } from "@evoloop/contracts";
-import { Button, Field, Input, Notice, Select, Textarea, cn } from "@evoloop/ui";
+import { Button, Checkbox, Field, Input, Notice, RadioGroup, RadioGroupItem, Select, Textarea, cn } from "@evoloop/ui";
 import type { SubmissionOutcome } from "../submissionOutcome";
 import type { MutationContext } from "./context";
 import { readableDraft } from "./drafts";
@@ -78,13 +78,14 @@ export function BaselineNotice({ awaiting, onReread, onKeep, onRefill, onResolve
     {conflicts.length
       ? <span className="mt-2 flex flex-col gap-2">
         <span>这些字段你改过，打开表单后别人也改了。保留你的文字会覆盖别人的修改，请逐项选择；只有你改过的其他字段照旧保留。</span>
-        {conflicts.map(conflict => <span key={conflict.name} role="radiogroup" aria-label={`${conflict.label}用哪一版`} className="flex flex-wrap items-center gap-x-4 gap-y-1">
+        {conflicts.map(conflict => <RadioGroup key={conflict.name} aria-label={`${conflict.label}用哪一版`} name={`${name}-${conflict.name}`}
+          value={choices[conflict.name] ?? null} onValueChange={choice => setChoices(current => ({ ...current, [conflict.name]: choice as "latest" | "mine" }))}
+          className="flex-row flex-wrap items-center gap-x-4 gap-y-1">
           <span className="font-medium text-foreground">{conflict.label}</span>
           {(["latest", "mine"] as const).map(choice => <label key={choice} className="flex items-center gap-1.5">
-            <input type="radio" name={`${name}-${conflict.name}`} checked={choices[conflict.name] === choice} className="accent-[var(--accent)]"
-              onChange={() => setChoices(current => ({ ...current, [conflict.name]: choice }))} />
+            <RadioGroupItem value={choice} />
             {choice === "latest" ? "用最新内容" : "用我的版本（覆盖别人的修改）"}</label>)}
-        </span>)}</span>
+        </RadioGroup>)}</span>
       : keepNote ?? "保留我的修改：只保留你改过的部分，其余换成最新内容。"}
     {confirmNote}{manual}</Notice>;
 }
@@ -179,12 +180,30 @@ export function CommandFrame({ context, command, label, submitLabel, dirty, onSu
   </form>;
 }
 
+/** What a `custom` field draws its control with; the value stays a string the form keeps, drafts and compares. */
+export interface CustomControl {
+  control: { id: string; "aria-describedby"?: string | undefined; "aria-invalid"?: boolean | undefined };
+  value: string; values: Record<string, string>; onChange(value: string): void;
+}
+
 export interface FormField {
   name: string; label: string;
-  /** `multi`: several choices, kept as a JSON array; `datetime`: a local date and time. */
-  kind?: "text" | "textarea" | "select" | "multi" | "datetime" | "radio" | undefined;
+  /**
+   * `multi`: several choices, kept as a JSON array; `datetime`: a local date and time; `time`: a clock time (HH:mm);
+   * `custom`: a control of the page's own (`render`), such as choosing a record by name.
+   */
+  kind?: "text" | "textarea" | "select" | "multi" | "datetime" | "time" | "radio" | "custom" | undefined;
+  /** The control of a `custom` field. */
+  render?: ((props: CustomControl) => ReactNode) | undefined;
+  /** A line under the field worked out from what is typed now (what a local time becomes, the identifiers chosen). */
+  preview?: ((values: Record<string, string>) => ReactNode) | undefined;
   initial?: string | undefined; options?: { value: string; label: string; disabled?: boolean | undefined }[] | undefined;
   optional?: boolean | undefined; hint?: string | undefined; rows?: number | undefined; placeholder?: string | undefined;
+  /**
+   * An `optional` field that the values now make required (指定验收人 once 必须本人验收 is chosen): its label drops
+   * “（可选）” and it must be filled before sending, as a field that is never optional.
+   */
+  requiredWhen?: ((values: Record<string, string>) => boolean) | undefined;
   /**
    * The contract's limit, checked before sending with a message (never by cutting the text: the browser's own limit
    * would cut a pasted text without saying so). No limit by default.
@@ -200,6 +219,16 @@ export function initialValues(fields: readonly FormField[]): Record<string, stri
   return Object.fromEntries(fields.map(field => [field.name, field.initial ?? (field.kind === "multi" ? "[]" : "")]));
 }
 
+/** Whether a field may be left empty with the values now: `optional`, unless `requiredWhen` needs it now. */
+export function fieldOptional(field: Pick<FormField, "optional" | "requiredWhen">, values: Record<string, string>): boolean {
+  return !!field.optional && !field.requiredWhen?.(values);
+}
+
+/** The label a field shows with the values now: “（可选）” is added only while it may be left empty. */
+export function fieldLabel(field: Pick<FormField, "label" | "optional" | "requiredWhen">, values: Record<string, string>): string {
+  return fieldOptional(field, values) && !field.label.includes("可选") ? `${field.label}（可选）` : field.label;
+}
+
 const chosen = (value: string): string[] => { try { const list = JSON.parse(value || "[]"); return Array.isArray(list) ? list.map(String) : []; } catch { return []; } };
 
 /** The fields that cannot be sent as they are (an empty required field, a text over its limit), with what to do about each. */
@@ -209,10 +238,11 @@ export function missingFields(fields: readonly FormField[], values: Record<strin
     const tooLong = field.kind === "multi" ? null : overLimitText(value, field.maxLength);
     if (tooLong)
       return [[field.name, tooLong]];
-    if (field.optional) return [];
+    if (fieldOptional(field, values)) return [];
     if (field.kind === "multi") return chosen(value).length ? [] : [[field.name, "请至少选择一项。"]];
     if (value.trim()) return [];
-    return [[field.name, field.kind === "select" || field.kind === "radio" ? `请选择${field.label}。` : `请填写${field.label}。`]];
+    const choose = field.kind === "select" || field.kind === "radio" || field.kind === "custom" || field.kind === "datetime" || field.kind === "time";
+    return [[field.name, choose ? `请选择${field.label}。` : `请填写${field.label}。`]];
   }));
 }
 
@@ -272,8 +302,14 @@ export function CommandForm<B extends Baseline | string | undefined = undefined>
     setForm(next.state);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialKey, command.baselineChanged, command.awaitingReread, dirty]);
+  // A field set later than it was rendered (a custom control that reads something before it sets its value) starts
+  // from the form as it is now, so it never puts back what was typed meanwhile.
+  const latestForm = React.useRef(form);
+  latestForm.current = form;
   const set = (name: string, value: string) => {
-    const next = { ...form, values: { ...form.values, [name]: value } };
+    const now = latestForm.current;
+    const next = { ...now, values: { ...now.values, [name]: value } };
+    latestForm.current = next;
     setSaved(false); setForm(next); command.saveDraft(next);
     if (errors[name]) setErrors(({ [name]: _, ...rest }) => rest);
   };
@@ -295,7 +331,7 @@ export function CommandForm<B extends Baseline | string | undefined = undefined>
   const fill = (values: Record<string, string>) => { const next = { ...form, values: { ...form.values, ...values } }; setForm(next); command.saveDraft(next); };
   const inline = fields.length > 0 && fields.every(field => field.autoGrow);
   const name = label ?? title ?? submitLabel;
-  const control = (field: FormField) => <FieldControl key={field.name} field={field} value={form.values[field.name] ?? ""} error={errors[field.name]}
+  const control = (field: FormField) => <FieldControl key={field.name} field={field} value={form.values[field.name] ?? ""} values={form.values} error={errors[field.name]}
     hideLabel={inline} onChange={value => set(field.name, value)} />;
   const advanced = fields.filter(field => field.advanced);
   return <CommandFrame context={context} command={command} label={name} submitLabel={submitLabel} dirty={dirty} onSubmit={submit} onKeep={() => keep()}
@@ -314,25 +350,44 @@ export function CommandForm<B extends Baseline | string | undefined = undefined>
   </CommandFrame>;
 }
 
-function FieldControl({ field, value, error, hideLabel, onChange }: { field: FormField; value: string; error?: string | undefined; hideLabel?: boolean; onChange(value: string): void }) {
-  const label = field.optional && !field.label.includes("可选") ? `${field.label}（可选）` : field.label;
+interface FieldProps { field: FormField; value: string; values: Record<string, string>; error?: string | undefined; hideLabel?: boolean | undefined; onChange(value: string): void }
+
+const optionRow = "flex min-w-0 items-start gap-2 text-label text-foreground";
+
+// A field with a preview always draws the same elements, whether the line is empty or not: the control is never mounted
+// again when the line appears, so it keeps its focus and the keys typed after.
+function FieldControl(props: FieldProps) {
+  if (!props.field.preview) return <FieldInput {...props} />;
+  const preview = props.field.preview(props.values);
+  // Spaced by a margin it drops while empty, not hidden: a status line that is display:none is not announced when it fills.
+  return <div className="flex min-w-0 flex-col"><FieldInput {...props} />
+    <div role="status" data-field-preview={props.field.name} className="mt-1.5 text-caption text-text-secondary empty:mt-0 [overflow-wrap:anywhere]">{preview ?? null}</div></div>;
+}
+
+function FieldInput({ field, value, values, error, hideLabel, onChange }: FieldProps) {
+  const label = fieldLabel(field, values);
   const errorId = React.useId();
+  const legendId = React.useId();
   if (field.kind === "radio" || field.kind === "multi") {
     const picked = field.kind === "multi" ? chosen(value) : [];
     return <fieldset className="flex min-w-0 flex-col gap-1.5" aria-describedby={error ? errorId : undefined}>
-      <legend className="mb-1 text-label font-semibold text-foreground">{label}</legend>
-      {field.options?.length ? field.options.map(option => <label key={option.value} className="flex min-w-0 items-start gap-2 text-label text-foreground">
-        {field.kind === "radio"
-          ? <input type="radio" name={field.name} value={option.value} checked={value === option.value} disabled={option.disabled} onChange={() => onChange(option.value)} className="mt-1 accent-[var(--accent)]" />
-          : <input type="checkbox" name={field.name} value={option.value} checked={picked.includes(option.value)} disabled={option.disabled} className="mt-1 size-4 shrink-0 accent-[var(--accent)]"
-            onChange={event => onChange(JSON.stringify(event.target.checked ? [...picked, option.value] : picked.filter(item => item !== option.value)))} />}
-        <span className="min-w-0 [overflow-wrap:anywhere]">{option.label}</span></label>)
+      <legend id={legendId} className="mb-1 text-label font-semibold text-foreground">{label}</legend>
+      {field.options?.length ? field.kind === "radio"
+        ? <RadioGroup aria-labelledby={legendId} name={field.name} value={value || null} onValueChange={onChange}>{field.options.map(option => <label key={option.value} className={optionRow}>
+          <RadioGroupItem value={option.value} disabled={option.disabled} className="mt-0.5" />
+          <span className="min-w-0 [overflow-wrap:anywhere]">{option.label}</span></label>)}</RadioGroup>
+        : field.options.map(option => <label key={option.value} className={optionRow}>
+          <Checkbox name={field.name} value={option.value} checked={picked.includes(option.value)} disabled={option.disabled} className="mt-0.5"
+            onCheckedChange={checked => onChange(JSON.stringify(checked === true ? [...picked, option.value] : picked.filter(item => item !== option.value)))} />
+          <span className="min-w-0 [overflow-wrap:anywhere]">{option.label}</span></label>)
         : <p className="text-caption text-muted-foreground">没有可选项。</p>}
       {field.hint && <p className="text-caption text-muted-foreground">{field.hint}</p>}
       {error && <p id={errorId} className="text-caption text-destructive">{error}</p>}
     </fieldset>;
   }
-  return <Field label={label} hint={field.hint} error={error} className={hideLabel ? "[&>label]:sr-only" : undefined}>{control => field.kind === "textarea"
+  return <Field label={label} hint={field.hint} error={error} className={hideLabel ? "[&>label]:sr-only" : undefined}>{control => field.kind === "custom"
+    ? field.render?.({ control, value, values, onChange }) ?? null
+    : field.kind === "textarea"
     ? field.autoGrow
       ? <Textarea {...control} name={field.name} value={value} required={!field.optional} rows={1} placeholder={field.placeholder}
         autoComplete="off" className="min-h-10 resize-none" onChange={event => onChange(event.target.value)}
@@ -343,6 +398,7 @@ function FieldControl({ field, value, error, hideLabel, onChange }: { field: For
       {(field.optional || !field.options?.some(option => option.value === value)) && <option value="">{field.optional ? "不设置" : "请选择"}</option>}
       {field.options?.map(option => <option key={option.value} value={option.value} disabled={option.disabled}>{option.label}</option>)}
     </Select>
-      : <Input {...control} name={field.name} type={field.kind === "datetime" ? "datetime-local" : "text"} value={value} required={!field.optional}
+      : <Input {...control} name={field.name} type={field.kind === "datetime" ? "datetime-local" : field.kind === "time" ? "time" : "text"}
+        step={field.kind === "datetime" || field.kind === "time" ? (/:\d{2}:\d{2}$/.test(value) ? 1 : 60) : undefined} value={value} required={!field.optional}
         placeholder={field.placeholder} autoComplete="off" onChange={event => onChange(event.target.value)} />}</Field>;
 }

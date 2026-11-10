@@ -3,6 +3,7 @@
 // 期望结果, acceptance mode, execution time and daily repeat, and the journey form's stage, linked documents and
 // decision-only close rule. Pure, so the page and its tests agree.
 import type { TaskKind } from "@evoloop/contracts";
+import { localInstant } from "../../shared/zonedTime";
 import { dailyScheduledInstant, scheduledInstant, scheduledTimezone } from "./taskTimingPresentation";
 
 export const taskKinds: Record<TaskKind, string> = { implementation: "实施", research: "调研", validation: "验证" };
@@ -45,30 +46,13 @@ export function draftTouched(draft: TaskDraft, base: TaskDraft): boolean {
   return (Object.keys(draft) as (keyof TaskDraft)[]).some(key => key !== "stageId" && JSON.stringify(draft[key]) !== JSON.stringify(base[key]));
 }
 
-const zoneParts = (timezone: string) => new Intl.DateTimeFormat("en-US", { timeZone: timezone, hourCycle: "h23",
-  year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" });
-
-/** The wall time an instant shows in a time zone, as if that wall time were UTC. */
-function wallAsUtc(format: Intl.DateTimeFormat, instant: number): number {
-  const part = (type: string) => Number(format.formatToParts(new Date(instant)).find(item => item.type === type)?.value);
-  return Date.UTC(part("year"), part("month") - 1, part("day"), part("hour"), part("minute"), part("second"));
-}
-
-/** A local date and time in an IANA time zone, as the UTC instant the service stores. */
+/**
+ * A local date and time in an IANA time zone, as the UTC instant the service stores. It reads the clock the way the
+ * scheduler does (shared/zonedTime): a time a daylight-saving gap skips is refused, a repeated one is its earlier instant.
+ */
 export function zonedInstant(local: string, timezone: string): string {
-  const parts = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/.exec(local.trim());
-  if (!parts) throw new Error("请选择执行的日期和时间。");
-  const [year, month, day, hour, minute, second = 0] = parts.slice(1).map(value => value === undefined ? 0 : Number(value)) as number[];
-  const lastDay = new Date(Date.UTC(year!, month!, 0)).getUTCDate();
-  if (month! < 1 || month! > 12 || day! < 1 || day! > lastDay || hour! > 23 || minute! > 59 || second! > 59) throw new Error("执行时间无效。");
-  const zone = scheduledTimezone(timezone);
-  const format = zoneParts(zone);
-  const wall = Date.UTC(year!, month! - 1, day!, hour!, minute!, second!);
-  // Two passes settle the zone's offset around a daylight-saving change.
-  let instant = wall - (wallAsUtc(format, wall) - wall);
-  instant = wall - (wallAsUtc(format, instant) - instant);
-  if (wallAsUtc(format, instant) !== wall) throw new Error("所选时区没有这个时刻（夏令时调整），请换一个时间。");
-  return new Date(instant).toISOString();
+  if (!local.trim()) throw new Error("请选择执行的日期和时间。");
+  return localInstant(local, scheduledTimezone(timezone)).iso;
 }
 
 export type DraftProblems = Partial<Record<keyof TaskDraft, string>>;

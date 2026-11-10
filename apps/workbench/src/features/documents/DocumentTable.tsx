@@ -10,6 +10,8 @@ import { loadLeaderDocumentsForIds } from "../../shared/leaderWorkLoad";
 import { useProjectQuery } from "../../shared/query";
 import { href } from "../../shared/routes";
 import { date } from "../../shared/ui/shared";
+import type { ReturnFrom } from "../../shared/returnLink";
+import { documentListOrigin, taskLinkFrom } from "./taskLinks";
 import { PageActive } from "../../shared/ui/pageActive";
 import { documentLifecycleMatches } from "./documentListModel";
 import {
@@ -41,9 +43,12 @@ function useDocumentUsage(projectId: string, documents: readonly Document[], sta
     error: usage.error ? readProblem(usage.error, "文档用途与关联工作") : "", diagnostic: usage.error ? errorDiagnostic(usage.error) : "" };
 }
 
-export function DocumentTable({ projectId, list, state, update, toolbar }: {
+export function DocumentTable({ projectId, list, state, update, toolbar, actorId }: {
   projectId: string; list: List; state: DocumentListState; update(patch: Partial<DocumentListState>): void; toolbar: React.ReactNode;
+  /** The reader, so a task opened from the list comes back to it. */
+  actorId?: string;
 }) {
+  const from = actorId ? documentListOrigin(projectId, actorId) : null;
   const usage = useDocumentUsage(projectId, list.visible, state.status);
   const active = useContext(PageActive);
   // Back from a document: the row it was opened from gets focus again, after the page restores its scroll position.
@@ -84,7 +89,7 @@ export function DocumentTable({ projectId, list, state, update, toolbar }: {
             const work = usage.matches(document);
             const [first, ...others] = work?.references ?? [];
             const owner = document.primaryTaskId && !work?.references.some(reference => reference.taskId === document.primaryTaskId)
-              ? <a href={href(projectId, "task", document.primaryTaskId)} className="text-caption text-primary hover:underline">所属任务</a> : null;
+              ? <a href={taskLinkFrom(projectId, document.primaryTaskId, from)} className="text-caption text-primary hover:underline">所属任务</a> : null;
             return <tr key={document.id} className={cn("border-t border-border align-top", state.lastOpened === document.id && "bg-selected/60")}>
               <td className="px-4 py-3">
                 <a href={href(projectId, "document", document.id)} data-document-title={document.id} onClick={() => open(document.id)}
@@ -93,9 +98,9 @@ export function DocumentTable({ projectId, list, state, update, toolbar }: {
               </td>
               <td className="px-4 py-3 text-text-secondary">
                 {work ? first ? <ul className="flex flex-col gap-1">
-                  <TaskReference projectId={projectId} taskId={first.taskId} title={first.title} relation={referenceText(first.relations)} />
+                  <TaskReference projectId={projectId} from={from} taskId={first.taskId} title={first.title} relation={referenceText(first.relations)} />
                   {others.length > 0 && <li><details><summary className="cursor-pointer text-caption text-muted-foreground">另有 {others.length} 项任务引用</summary>
-                    <ul className="mt-1 flex flex-col gap-1">{others.map(reference => <TaskReference key={reference.taskId} projectId={projectId}
+                    <ul className="mt-1 flex flex-col gap-1">{others.map(reference => <TaskReference key={reference.taskId} projectId={projectId} from={from}
                       taskId={reference.taskId} title={reference.title} relation={referenceText(reference.relations)} />)}</ul></details></li>}
                 </ul> : <span className="text-muted-foreground">{usage.stale ? "上次读回时还没有任务引用" : "还没有任务引用"}</span>
                   : <span className="text-muted-foreground">{usage.checking ? "正在核对…" : "待核对"}</span>}
@@ -119,7 +124,7 @@ export function DocumentTable({ projectId, list, state, update, toolbar }: {
   </section>;
 }
 
-function TaskReference({ projectId, taskId, title, relation }: { projectId: string; taskId: string; title: string; relation: string }) {
-  return <li className="flex flex-col"><a href={href(projectId, "task", taskId)} className="text-label text-primary [overflow-wrap:anywhere] hover:underline">{title}</a>
+function TaskReference({ projectId, taskId, title, relation, from }: { projectId: string; taskId: string; title: string; relation: string; from: ReturnFrom | null }) {
+  return <li className="flex flex-col"><a href={taskLinkFrom(projectId, taskId, from)} className="text-label text-primary [overflow-wrap:anywhere] hover:underline">{title}</a>
     <span className="text-caption text-muted-foreground">{relation}</span></li>;
 }

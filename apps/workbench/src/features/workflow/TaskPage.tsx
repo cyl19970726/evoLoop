@@ -12,6 +12,8 @@ import { TaskCollaborationThread } from "../discussions";
 import { TaskOwner } from "./TaskOwner";
 import { MarkdownBody } from "../../shared/ui/MarkdownBody";
 import { ContextPanelContent, useContextPanel } from "../../shared/ui/ContextPanel";
+import { ReturnLink } from "../../shared/ui/ReturnLink";
+import { taskOrigin } from "./taskOrigin";
 import { legacyDecisionLabel } from "./taskListPresentation";
 import { navigateTaskTab, scrollToTaskSection, taskRunFromHash, taskSectionFromHash, taskSessionReturn, type TaskSection } from "../../shared/taskNavigation";
 import { timingDuration, timingStageLabel } from "../../shared/taskTiming";
@@ -34,6 +36,7 @@ import { TaskHistoryTab } from "./TaskHistoryTab";
 import { TaskActionsTab } from "./TaskActionsTab";
 import { TaskArrangementFacts, TaskAttentionSection } from "./TaskArrangement";
 import { timingSummary, useTaskTiming } from "./TaskScheduleSection";
+import { actorText } from "../../shared/actorPresentation";
 type TaskTab = "overview" | "basis" | "delivery" | "runtime" | "history" | "actions";
 const taskTabs: { id: TaskTab; label: string }[] = [
   { id: "overview", label: "当前工作" }, { id: "basis", label: "依据与影响" },
@@ -45,7 +48,7 @@ const taskTabs: { id: TaskTab; label: string }[] = [
 function TimingLine({ projectId, taskId, onOpen }: { projectId: string; taskId: string; onOpen(): void }) {
   const read = useTaskTiming(projectId, taskId);
   if (!read.data) return read.error ? <p className="text-caption text-muted-foreground">执行时间暂不可读取：{errorText(read.error)}</p> : null;
-  return <p className="text-label text-text-secondary">约定执行：{timingSummary(read.data)} · <button type="button" className="text-primary hover:underline" onClick={onOpen}>调整执行时间与重复</button></p>;
+  return <p className="text-label text-text-secondary">约定执行：{timingSummary(read.data)} · <Button variant="link" onClick={onOpen}>调整执行时间与重复</Button></p>;
 }
 
 /** One task in the center (tasks.md 中间): goal → completion conditions → body → progress and discussion, with the
@@ -210,7 +213,7 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
     : leaderState === "failed" ? "责任暂无法判断"
       : !leaderTask ? "当前工作安排未登记"
         : <ResponsibleName projectId={projectId} item={leaderTask} />;
-  const acceptanceNote = `${detail.proposal?.acceptanceMode === "independent_agent" ? "须由不同于实际提交者的智能体使用当前交付" : detail.proposal?.acceptanceMode === "human_required" ? "须由指定的受信用户本人使用当前交付" : "按任务原有验收合同核对"}${detail.proposal?.consumer ? ` · 指定身份 ${detail.proposal.consumer}` : detail.proposal?.acceptanceMode ? " · 验收身份待实际签收" : ""}。任务状态、技术检查和实际使用分别记录。`;
+  const acceptanceNote = `${detail.proposal?.acceptanceMode === "independent_agent" ? "须由不同于实际提交者的智能体使用当前交付" : detail.proposal?.acceptanceMode === "human_required" ? "须由指定的受信用户本人使用当前交付" : "按任务原有验收合同核对"}${detail.proposal?.consumer ? ` · 指定身份 ${actorText(detail.proposal.consumer)}` : detail.proposal?.acceptanceMode ? " · 验收身份待实际签收" : ""}。任务状态、技术检查和实际使用分别记录。`;
   const state = taskStateStatus[detail.task.state];
   const sectionOpen = new URLSearchParams(currentPath().split("?")[1] ?? "").get("section");
   const heading = "text-heading font-semibold text-foreground";
@@ -221,7 +224,7 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
   });
   return <TaskWriteBlock.Provider value={writeBlock}><div data-ui="" className="mx-auto flex w-full max-w-[880px] flex-col gap-5 px-6 pb-16 pt-5 max-compact:px-4" data-task-page={id}>
     <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-      {sessionReturn && <a className="text-label text-primary hover:underline" href={sessionReturn.href}>← 返回【{sessionReturn.title}】</a>}
+      {sessionReturn && <ReturnLink projectId={projectId} href={sessionReturn.href} place={sessionReturn.place} label={sessionReturn.label} />}
       {viewSwitch}
       <span className="flex-1" />
       <span className="text-caption text-muted-foreground">{reading ? "正在核对当前任务…" : observedAt ? `读于 ${date(observedAt.toISOString())}` : "尚未读回"}</span>
@@ -232,7 +235,7 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
     {selectedRevision && <Notice title={<>正在查看固定历史修订</>}>页首是当前任务；“历史”里单独列出当时的正文、验收与依据。<a className="ml-1 text-primary hover:underline" href={href(projectId, "task", id)}>返回当前任务</a></Notice>}
     <header className="flex flex-col gap-2" data-task-header="">
       <p className="text-caption text-muted-foreground">{taskType(detail.task.kind)} · 第 {detail.task.version} 版</p>
-      <h1 tabIndex={-1} className="text-title font-semibold leading-snug text-foreground outline-none">{detail.task.title}</h1>
+      <h1 tabIndex={-1} className="text-title font-semibold leading-(--leading-tight) text-foreground outline-none">{detail.task.title}</h1>
       <div className="flex flex-wrap items-center gap-2">
         <StatusTag tone={state.tone} label={state.label} />
         {projection && (detail.task.state === "todo" || detail.task.state === "in_progress") && <StatusTag tone={phaseStatus[projection.phase].tone} label={phaseStatus[projection.phase].label} />}
@@ -253,43 +256,43 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
       <TabsContent value="overview" forceMount hidden={tab !== "overview"} id={panelId("overview")} aria-labelledby={tabId("overview")} className="flex flex-col gap-7 pt-5 outline-none">
         <section aria-labelledby={`${panelId("overview")}-goal`} className="flex flex-col gap-2">
           <h2 id={`${panelId("overview")}-goal`} className={heading}>目标</h2>
-          <p className="text-body leading-relaxed text-foreground">{goal}</p>
+          <p className="text-body leading-(--leading-body) text-foreground">{goal}</p>
         </section>
         <section aria-labelledby={`${panelId("overview")}-acceptance`} className="flex flex-col gap-2" data-task-acceptance="">
           <h2 id={`${panelId("overview")}-acceptance`} className={heading}>完成条件</h2>
-          {acceptance ? <ol className="flex list-decimal flex-col gap-1.5 pl-5 text-body leading-relaxed text-foreground marker:text-muted-foreground">{acceptance.map((point, index) => <li key={index}>{point}</li>)}</ol>
-            : <p className="whitespace-pre-wrap text-body leading-relaxed text-foreground">{detail.task.acceptance}</p>}
+          {acceptance ? <ol className="flex list-decimal flex-col gap-1.5 pl-5 text-body leading-(--leading-body) text-foreground marker:text-muted-foreground">{acceptance.map((point, index) => <li key={index}>{point}</li>)}</ol>
+            : <p className="whitespace-pre-wrap text-body leading-(--leading-body) text-foreground">{detail.task.acceptance}</p>}
           <p className="text-caption text-muted-foreground">{acceptanceNote}</p>
         </section>
         <section aria-labelledby={`${panelId("overview")}-body`} className="flex flex-col gap-2">
           <div className="flex flex-wrap items-baseline gap-3">
             <h2 id={`${panelId("overview")}-body`} className={heading}>正文</h2>
-            {panel ? <button type="button" className="text-label text-primary hover:underline" onClick={openContent}>在右栏核对固定原件</button>
+            {panel ? <Button variant="link" className="text-label" onClick={openContent}>在右栏核对固定原件</Button>
               : <a className="text-label text-primary hover:underline" href={href(projectId, "document", detail.task.contentDocumentId, detail.task.contentRevisionId)}>阅读固定原件</a>}
           </div>
-          <MarkdownBody source={detail.task.content} identity={`task-${detail.revision.id}`} projectId={projectId} />
+          <MarkdownBody source={detail.task.content} identity={`task-${detail.revision.id}`} projectId={projectId} topHeading={3} />
           <p className="text-caption text-muted-foreground">正文来自任务固定的主文档修订；修改走“任务操作”里的“更新任务内容”，不从文档页绕过任务。</p>
         </section>
         <section aria-labelledby={`${panelId("overview")}-progress`} className="flex flex-col gap-3" data-task-progress="">
           <h2 id={`${panelId("overview")}-progress`} className={heading}>进展与讨论</h2>
           {projection?.timing && <p className="text-label text-text-secondary">现在：{timingStageLabel[projection.timing.current.stage] ?? "阶段未知"} · 本阶段已历时 {timingDuration(projection.timing.current.elapsedMs)}{projection.latestProgress ? ` · 最近进展 ${progressEventName(projection.latestProgress)}（${date(projection.latestProgress.changedAt)}）` : " · 最近进展未记录"}</p>}
           <TimingLine projectId={projectId} taskId={id} onOpen={openSchedule} />
-          <TaskCollaborationThread projectId={projectId} taskId={id} refresh={refresh + readVersion} />
+          <TaskCollaborationThread projectId={projectId} taskId={id} refresh={refresh + readVersion} from={taskOrigin(projectId, detail.task, context.principal.actorId)} />
           {leaderTask && <TaskAttentionSection key={`${projectId}:${id}:${detail.task.currentRevisionId}`} context={taskContext} detail={detail} leader={leaderTask} />}
           {leaderTask && <details id="task-timing" className="group border-t border-border pt-3" {...(sectionOpen === "timing" ? { open: true } : {})}>
             <summary className="w-fit cursor-pointer text-label font-medium text-primary hover:underline">阶段区间、计划与来源</summary>
-            <div className="mt-3"><TaskArrangementFacts projectId={projectId} detail={detail} leader={leaderTask} responsibleName={responsibleName} /></div>
+            <div className="mt-3"><TaskArrangementFacts projectId={projectId} detail={detail} leader={leaderTask} actorId={context.principal.actorId} responsibleName={responsibleName} /></div>
           </details>}
           <details data-task-owner="" className="border-t border-border pt-3"><summary className="w-fit cursor-pointer text-label font-medium text-primary hover:underline">负责职责与同职责的其他智能体</summary>
             <p className="mt-2 text-caption text-muted-foreground">职责是持续的分工，具体承接看右栏的绑定与接受记录；同职责的其他智能体不代表承接了本任务。</p>
-            <div className="mt-2"><TaskOwner projectId={projectId} owner={detail.task.owner} readKey={`${refresh}:${readVersion}:${detail.revision.id}`} onResolved={setResponsibleName} /></div></details>
+            <div className="mt-2"><TaskOwner projectId={projectId} from={taskOrigin(projectId, detail.task, context.principal.actorId)} owner={detail.task.owner} readKey={`${refresh}:${readVersion}:${detail.revision.id}`} onResolved={setResponsibleName} /></div></details>
         </section>
       </TabsContent>
       <TabsContent value="basis" forceMount hidden={tab !== "basis"} id={panelId("basis")} aria-labelledby={tabId("basis")} className="pt-5 outline-none">
         <SectionBoundary label="依据与影响"><TaskBasisTab context={taskContext} detail={detail} reads={documents.reads} canReview={canReview} /></SectionBoundary>
       </TabsContent>
       <TabsContent value="delivery" forceMount hidden={tab !== "delivery"} id={panelId("delivery")} aria-labelledby={tabId("delivery")} className="pt-5 outline-none">
-        <SectionBoundary label="交付与使用"><TaskDeliveryTab projectId={projectId} detail={detail} active={active && tab === "delivery"} actionsHref={linkForTab("actions")} /></SectionBoundary>
+        <SectionBoundary label="交付与使用"><TaskDeliveryTab projectId={projectId} actorId={context.principal.actorId} detail={detail} active={active && tab === "delivery"} actionsHref={linkForTab("actions")} /></SectionBoundary>
       </TabsContent>
       <TabsContent value="runtime" forceMount hidden={tab !== "runtime"} id={panelId("runtime")} aria-labelledby={tabId("runtime")} className="pt-5 outline-none">
         <SectionBoundary label="运行与关联"><TaskRuntimeTab context={taskContext} detail={detail} active={active && tab === "runtime"} overviewHref={linkForTab("overview")} /></SectionBoundary>

@@ -4,8 +4,16 @@ import type { KnowledgeCapabilities, KnowledgeGraph, KnowledgeSummary } from "@e
 import {
   capabilityFacts, coverageText, emptyFilter, emptyKnowledgeText, filterKnowledge, graphStatusText, historyLabel, isFiltered,
   knowledgeDirectory, label, listProblemText, pageRelations, publishOutcome, readingStanding, reconcileOutcome, relationTypeLabel,
-  sourceHint, sourceReview, topicMembers, validityLabel,
+  proposeEntry, sourceHint, sourceReview, topicMembers, validityLabel,
 } from "../src/features/knowledge/knowledgePresentation.ts";
+
+test("提出候选 says at the entry that nothing can be proposed without a knowledge backend", () => {
+  assert.deepEqual(proposeEntry({ canWrite: false, notConfigured: false, draftTouched: false }), { shown: false });
+  assert.deepEqual(proposeEntry({ canWrite: true, notConfigured: true, draftTouched: true }),
+    { shown: true, label: "提出候选", disabled: true, reason: "知识后端未配置，暂时不能提出" });
+  assert.deepEqual(proposeEntry({ canWrite: true, notConfigured: false, draftTouched: false }), { shown: true, label: "提出候选", disabled: false, reason: null });
+  assert.deepEqual(proposeEntry({ canWrite: true, notConfigured: false, draftTouched: true }), { shown: true, label: "继续候选草稿", disabled: false, reason: null });
+});
 
 const latin = /[A-Za-z_]{3,}/;
 const summary = (id: string, title: string, pageType: KnowledgeSummary["pageType"] = "concept", validity: KnowledgeSummary["validity"] = "valid", revision = `${id}-r`): KnowledgeSummary =>

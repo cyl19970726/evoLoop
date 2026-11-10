@@ -5,7 +5,7 @@
 // the reader keeps their input or refills; a recovery confirmation has to be given again.
 import { useEffect, useState } from "react";
 import type { DiscussionEvent, DiscussionRecord, DiscussionTarget } from "@evoloop/contracts";
-import { Button, Field, Input, Textarea, cn } from "@evoloop/ui";
+import { Button, Checkbox, Field, Input, Textarea, cn } from "@evoloop/ui";
 import { CommandFrame, readableDraft, useCommand, type MutationContext } from "../../shared/command";
 import { SelectField, muted } from "./formParts";
 import {
@@ -123,7 +123,7 @@ export function PrepareForm({ context, choices, rereading, onPrepared, onCancel 
       <legend className="text-label font-semibold text-foreground">已采纳的过程文档（可多选，最多 20 份）</legend>
       {adopted.length === 0 ? <p className={muted}>项目里还没有已采纳的过程文档。</p>
         : <div className="flex max-h-48 flex-col gap-1 overflow-y-auto rounded-md bg-field p-2">{adopted.map(document => <label key={document.id} className="flex items-center gap-2 text-small text-foreground">
-          <input type="checkbox" checked={documentIds.includes(document.id)} onChange={() => toggleDocument(document.id)} className="size-4 accent-[var(--accent)]" />
+          <Checkbox checked={documentIds.includes(document.id)} onCheckedChange={() => toggleDocument(document.id)} />
           <span className="min-w-0 truncate">{document.title}</span></label>)}</div>}
       {documentIds.length > 20 && <span className="text-caption text-destructive">最多选 20 份，现在选了 {documentIds.length} 份。</span>}
     </fieldset>
@@ -194,7 +194,7 @@ export function DecisionForm({ context, record, latest, head, notReady, rereadin
     <TextField label="理由" multiline value={draft.values.reason} error={draft.error("reason")} onChange={value => draft.set("reason", value)} />
     {mismatch && <div className="flex flex-col gap-3 rounded-lg bg-warning-soft p-3">
       <label className="flex items-start gap-2 text-small text-foreground">
-        <input type="checkbox" checked={confirmed} disabled={recheck} onChange={event => setConfirmed(event.target.checked)} className="mt-1 size-4 accent-[var(--accent)]" />
+        <Checkbox checked={confirmed} disabled={recheck} onCheckedChange={checked => setConfirmed(checked === true)} className="mt-0.5" />
         <span>我已核对讨论登记版和文档当前版（第 {head.version} 版），确认从文档当前版接续，追加恢复记录和本次决定。</span>
       </label>
       {draft.tried && !confirmed && !recheck && <span className="text-caption text-destructive">两版不同时，需要先确认已核对。</span>}

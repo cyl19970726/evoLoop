@@ -2,7 +2,7 @@
 // "questions"); progress and finished questions sit in the right column's details (section "diagnostics"). Only what
 // the observation proves is said: a stale or unread observation is the last record, never current work.
 import { useEffect, useState } from "react";
-import { Button, StatusTag, cn, type StatusTone } from "@evoloop/ui";
+import { Button, Input, RadioGroup, RadioGroupItem, StatusTag, Textarea, cn, type StatusTone } from "@evoloop/ui";
 import { isUnconfirmed } from "../../shared/api";
 import { FullIdentifiers } from "../../shared/ui/FullIdentifiers";
 import { mutedText } from "../../shared/ui/PageParts";
@@ -57,6 +57,8 @@ export interface NativeProgressView {
 const recordId = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const warning = "native-panel-warning rounded-md bg-warning-soft px-3 py-2 text-label text-foreground [overflow-wrap:anywhere]";
 const heading = "text-label font-semibold text-foreground";
+/** The radio value of 其他回答 among a question's choices; no option the service sends carries it. */
+const otherChoice = "\u0000other";
 
 function questionState(request: NativeQuestionView, submitted: boolean, answerable: boolean): { tone: StatusTone; label: string } {
   if (request.state === "response_saved") return request.responseOutcome === "submitted" ? { tone: "waiting", label: "已发送，待结果" }
@@ -104,9 +106,8 @@ function NativeQuestionCard({ request, projectId, readHealthy, onAnswer, taskHre
   const state = questionState(request, submitted, request.canReply && readHealthy && !uncertain);
   const source = request.sourceKind === "run" ? "来源：任务运行" : request.sourceKind === "message" ? "来源：普通消息" : "暂未关联业务来源";
   const responder = request.respondedBy && !recordId.test(request.respondedBy) ? request.respondedBy : null;
-  const choice = "group flex w-full cursor-pointer items-center gap-2.5 rounded-md bg-muted px-3 py-2.5 text-left text-small text-text-secondary transition-colors duration-150 hover:bg-field has-[:checked]:bg-accent has-[:checked]:text-foreground has-[:focus-visible]:shadow-[var(--focus-ring)] has-[:disabled]:cursor-default has-[:disabled]:hover:bg-muted";
-  const letter = "flex size-[22px] shrink-0 items-center justify-center rounded-[7px] bg-field text-caption font-semibold text-text-secondary group-has-[:checked]:bg-primary group-has-[:checked]:text-primary-foreground";
-  const textField = "w-full rounded-md border-0 bg-field px-3 py-2.5 text-small text-foreground outline-none placeholder:text-muted-foreground focus-visible:shadow-[var(--focus-ring)] disabled:opacity-50";
+  const choice = "group flex w-full cursor-pointer items-center gap-2.5 rounded-md bg-muted px-3 py-2.5 text-left text-small text-text-secondary transition-colors duration-150 hover:bg-field has-[[data-state=checked]]:bg-accent has-[[data-state=checked]]:text-foreground has-[:focus-visible]:shadow-[var(--focus-ring)] has-[:disabled]:cursor-default has-[:disabled]:hover:bg-muted";
+  const letter = "flex size-[22px] shrink-0 items-center justify-center rounded-sm bg-field text-caption font-semibold text-text-secondary group-has-[[data-state=checked]]:bg-primary group-has-[[data-state=checked]]:text-primary-foreground";
   return <article className={cn("native-question-card flex min-w-0 flex-col gap-3", compact ? "border-t border-border pt-3 first:border-t-0 first:pt-0" : "rounded-xl bg-raised p-4 shadow-md")}>
     <div className="flex flex-wrap items-center justify-between gap-2">
       <h3 className={compact ? heading : "text-body font-semibold text-foreground"}>{request.state === "pending" ? "等待回答" : "原生提问记录"}</h3>
@@ -118,20 +119,22 @@ function NativeQuestionCard({ request, projectId, readHealthy, onAnswer, taskHre
     <form className="flex flex-col gap-3" onSubmit={event => void submit(event)}>{request.questions.map((item, questionIndex) => <fieldset key={item.id} disabled={locked} className="m-0 flex min-w-0 flex-col gap-2 border-0 p-0">
       <legend className="mb-1 p-0 text-label font-semibold text-text-secondary">{item.header || "需要你的回答"}</legend>
       <p className="text-small text-foreground [overflow-wrap:anywhere]">{item.prompt}</p>
-      {item.options.length ? <><div className="flex flex-col gap-1.5">{item.options.map((choiceItem, index) => <label key={choiceItem.value} className={choice}>
-        <input type="radio" className="sr-only" name={`${request.id}:${item.id}`} value={choiceItem.value} checked={!other[item.id] && answers[item.id] === choiceItem.value} onChange={() => { setOther(old => ({ ...old, [item.id]: false })); setAnswers(old => ({ ...old, [item.id]: choiceItem.value })); }} />
+      {item.options.length ? <><RadioGroup name={`${request.id}:${item.id}`} value={other[item.id] ? otherChoice : answers[item.id] || null}
+        onValueChange={next => { const isOther = next === otherChoice; setOther(old => ({ ...old, [item.id]: isOther })); setAnswers(old => ({ ...old, [item.id]: isOther ? "" : next })); }}>
+        {item.options.map((choiceItem, index) => <label key={choiceItem.value} className={choice}>
+        <RadioGroupItem value={choiceItem.value} className="sr-only" />
         <span aria-hidden="true" className={letter}>{String.fromCharCode(65 + index)}</span>
         <span className="flex min-w-0 flex-col gap-0.5"><span className="[overflow-wrap:anywhere]">{choiceItem.label}</span>{choiceItem.description && <small className={mutedText}>{choiceItem.description}</small>}</span>
       </label>)}
         {item.allowOther && <label className={choice}>
-          <input type="radio" className="sr-only" name={`${request.id}:${item.id}`} checked={!!other[item.id]} onChange={() => { setOther(old => ({ ...old, [item.id]: true })); setAnswers(old => ({ ...old, [item.id]: "" })); }} />
+          <RadioGroupItem value={otherChoice} className="sr-only" />
           <span aria-hidden="true" className={letter}>{String.fromCharCode(65 + item.options.length)}</span>其他回答
-        </label>}</div>
+        </label>}</RadioGroup>
         {item.allowOther && other[item.id] && (item.secret
-          ? <input type="password" className={cn(textField, "h-9 py-0")} aria-label={`${item.header || item.prompt}的其他回答`} autoComplete="off" value={answers[item.id] ?? ""} maxLength={4000} onChange={event => setAnswers(old => ({ ...old, [item.id]: event.target.value }))} />
-          : <textarea className={cn(textField, "min-h-16")} aria-label={`${item.header || item.prompt}的其他回答`} placeholder="直接写你的回答" value={answers[item.id] ?? ""} maxLength={4000} onChange={event => setAnswers(old => ({ ...old, [item.id]: event.target.value }))} />)}</>
-        : item.secret ? <input type="password" className={cn(textField, "h-9 py-0")} aria-label={item.header || item.prompt} autoComplete="off" value={answers[item.id] ?? ""} maxLength={4000} onChange={event => setAnswers(old => ({ ...old, [item.id]: event.target.value }))} />
-          : <textarea className={cn(textField, "min-h-16")} aria-label={item.header || item.prompt} placeholder={questionIndex === 0 ? "直接写你的回答" : undefined} value={answers[item.id] ?? ""} maxLength={4000} onChange={event => setAnswers(old => ({ ...old, [item.id]: event.target.value }))} />}
+          ? <Input type="password" aria-label={`${item.header || item.prompt}的其他回答`} autoComplete="off" value={answers[item.id] ?? ""} maxLength={4000} onChange={event => setAnswers(old => ({ ...old, [item.id]: event.target.value }))} />
+          : <Textarea className="min-h-16" aria-label={`${item.header || item.prompt}的其他回答`} placeholder="直接写你的回答" value={answers[item.id] ?? ""} maxLength={4000} onChange={event => setAnswers(old => ({ ...old, [item.id]: event.target.value }))} />)}</>
+        : item.secret ? <Input type="password" aria-label={item.header || item.prompt} autoComplete="off" value={answers[item.id] ?? ""} maxLength={4000} onChange={event => setAnswers(old => ({ ...old, [item.id]: event.target.value }))} />
+          : <Textarea className="min-h-16" aria-label={item.header || item.prompt} placeholder={questionIndex === 0 ? "直接写你的回答" : undefined} value={answers[item.id] ?? ""} maxLength={4000} onChange={event => setAnswers(old => ({ ...old, [item.id]: event.target.value }))} />}
     </fieldset>)}
       {request.unavailableReason && (request.state === "unavailable" || request.state === "resolved" || request.state === "pending" && !request.canReply) && <p className={warning}>{request.unavailableReason}</p>}
       {submitted && <p className={warning}>回答已保存；请回读原请求状态，不重复发送。</p>}

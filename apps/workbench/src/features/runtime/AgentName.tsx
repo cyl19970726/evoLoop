@@ -1,5 +1,6 @@
-// A managed agent by its registered name; until the name is read (or when none is registered) a placeholder in words,
-// never the identifier's first characters. The identifier itself stays in the full-identifier layer.
+// A managed agent by its name as the agent pages say it (agentDisplayName: its registered name, else its role); until
+// the name is read a placeholder in words, never the identifier's first characters. The identifier itself stays in the
+// full-identifier layer.
 import { useSessionName } from "../../shared/ui/RecordName";
 import { nameOnly } from "../../shared/workPresentation";
 

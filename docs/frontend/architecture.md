@@ -20,8 +20,8 @@
 | 层 | 内容 | 现状 |
 | --- | --- | --- |
 | `app/` | 外壳、路由表、身份与查询客户端装配 | `router.tsx`（路由表）与 `routePaths.ts`、`queryClient.ts`（查询缓存）、`PageBoundary.tsx`（单页出错不影响外壳）、`shell/`（外壳：`AppShell.tsx`、空间与分区模型 `spaces.ts`，登录后按需加载；页面经 `shared/ui/` 的两个入口填外壳：`ContextRailContent` 把对象列表放进内层栏，`ContextPanelContent` 把当前对象的信息放进右栏（`ContextPanel.tsx`）；只有屏上的那一页能填，`pageActive.ts` 由 `App.tsx` 按页提供）、`App.tsx`（按区域选页面并逐页懒加载）、`entry/`（登录门、项目列表、操作核对；登录门在首屏里，只从组件库按名引用不依赖 `cn` 的 `Logo`，不用其他组件，免得把 tailwind-merge 和图标带进首屏；项目列表登录后按需加载，可用组件库）、操作回执与恢复、组件样例页 `ui-samples/`。`src/` 根目录只留入口 `main.tsx`、唯一的样式入口 `main.css`（只引入 Tailwind 与 `@evoloop/ui` 的样式，不写规则）和全局类型声明，按 app 层对待 |
-| `features/<领域>/` | 页面、领域组件、该领域的查询与命令 | 16 个领域，目录名沿用旧名（任务仍叫 `workflow`，团队页是 `team`；项目设置、待核对操作、仓库规范在 `settings`） |
-| `shared/` | API 客户端、对象引用、修订标签等跨领域部件 | 地址与历史（`navigation.ts`、`appPath.ts`、`routes.ts`）、身份（`identity.ts`）、读取层（`query.ts`）、`api.ts` 与被多个领域读取的 `*Client.ts`、唯一的提交表单 `command/`（`useCommand`、`CommandForm`；`ActionForm` 是它的字段列表接口，规则见[组件](components.md#提交表单)）、业务状态映射（`workStatusPresentation`、`leaderWorkLoad`、`taskTiming`、下一动作与下一责任 `workPresentation`、职责状态 `rolePresentation`）、对象链接与名称解析（`taskNavigation`、`deliveryPresentation`、`externalHostEntry`、`ownerRole`、按名称显示职责、智能体与任务的 `ui/RecordName`）、来源与完整标识层（`ui/FullIdentifiers`）、Markdown 与 HTML 原件阅读（`ui/`）、假数据 `fixtures/` |
+| `features/<领域>/` | 页面、领域组件、该领域的查询与命令 | 16 个领域，目录名沿用旧名（任务仍叫 `workflow`，团队页是 `team`；项目设置、结果未知的操作、仓库规范在 `settings`） |
+| `shared/` | API 客户端、对象引用、修订标签等跨领域部件 | 地址与历史（`navigation.ts`、`appPath.ts`、`routes.ts`）、身份（`identity.ts`）、读取层（`query.ts`）、`api.ts` 与被多个领域读取的 `*Client.ts`、唯一的提交表单 `command/`（`useCommand`、`CommandForm`；`ActionForm` 是它的字段列表接口，规则见[组件](components.md#提交表单)）、业务状态映射（`workStatusPresentation`、`leaderWorkLoad`、`taskTiming`、下一动作与下一责任 `workPresentation`、职责状态 `rolePresentation`）、对象链接与名称解析（`taskNavigation`、`deliveryPresentation`、`externalHostEntry`、`ownerRole`、按名称显示职责、智能体与任务的 `ui/RecordName`）、来源与完整标识层（`ui/FullIdentifiers`）、项目配置的三个只读（仓库、能力、成员：`projectConfiguration`、`repositoryPresentation`，按成员选身份的 `ui/MemberChoice` 与 `memberPresentation`）、文档修订列表（`documentRevisions`、`useDocumentRevisions`、`ui/RevisionListStatus`）、Markdown 与 HTML 原件阅读（`ui/`）、假数据 `fixtures/` |
 | `@evoloop/ui`（`packages/ui`） | tokens、基于 shadcn 的基础组件、布局骨架、通用状态与对话流条目 | 见[组件](components.md) |
 
 检查的规则：
@@ -156,8 +156,8 @@ QueryService 返回 `observedAt`、对象与 revision、权限能力、分源状
 
 [页面说明](README.md#页面说明)里的截图由 `npm run docs:screenshots`（`scripts/frontend/screenshots.mjs`）生成，不手工放图：
 
-- **数据**：`scripts/frontend/fixture/` 是一个合成项目（智能体、任务、文档、目标与阶段、知识、日程、评价、微信连接等），名称、标识和时间都是编的。夹具只应答读取，写入一律拒绝。个别失败状态（如 HTML 原件读不回）由场景自己拦截那一次读取；待核对操作的回执由场景在打开页面前写进浏览器会话。截图展示的是夹具数据下的界面，不是使用证据；真实路径的证据按[前端旅程与截图](../development/documentation.md#前端旅程与截图怎样进入仓库)进实景旅程。
-- **画面**：先构建工作台，再逐页打开 `scripts/frontend/pages.mjs` 里列的地址。每页截 1440（右栏内嵌）和 390；有右栏的页面再截 1024，点“展开右栏”打开抽屉；登录、项目列表和账号菜单里的项目设置、待核对操作、仓库规范没有右栏，1024 照原样截。任务页另外五个页签等补充状态只截一个宽度。输出为 `docs/assets/frontend-pages/<页面>-<宽度>.png`，文件名固定。
+- **数据**：`scripts/frontend/fixture/` 是一个合成项目（智能体、任务、文档、目标与阶段、知识、日程、评价、微信连接等），名称、标识和时间都是编的。夹具只应答读取，写入一律拒绝。个别失败状态（如 HTML 原件读不回）由场景自己拦截那一次读取；结果未知的操作的回执由场景在打开页面前写进浏览器会话。截图展示的是夹具数据下的界面，不是使用证据；真实路径的证据按[前端旅程与截图](../development/documentation.md#前端旅程与截图怎样进入仓库)进实景旅程。
+- **画面**：先构建工作台，再逐页打开 `scripts/frontend/pages.mjs` 里列的地址。每页截 1440（右栏内嵌）和 390；有右栏的页面再截 1024，点“展开右栏”打开抽屉；登录、项目列表和账号菜单里的项目设置、结果未知的操作、仓库规范没有右栏，1024 照原样截。任务页另外五个页签等补充状态只截一个宽度。输出为 `docs/assets/frontend-pages/<页面>-<宽度>.png`，文件名固定。
 - **稳定**：浏览器时钟固定在 2026-11-10 11:00（Asia/Shanghai）、`zh-CN`、DPR 1，减少动态效果并关掉过渡、动画和光标；用软件光栅、单线程栅格化（GPU 栅格化每次抗锯齿边缘略有不同）；等读取停下、字体就绪后才截。PNG 压成 256 色索引图（`scripts/frontend/png.mjs`）。同一构建和夹具得到同样的字节，没变的图不重写。字体用本机系统字体，换操作系统重跑会整批变化。
 - **报告**：结束时列出几张变化、几张新增、目录总大小，以及页面读到而夹具没应答的接口（按空页应答）。页面报错、横向溢出或等不到内容时退出码非 0，失败画面存为 `failed-*.png`，不要提交。
 

@@ -123,12 +123,6 @@ export function revisionReasonText(reason: string): { text: string; raw?: string
   return /[\u3400-\u9fff]/.test(reason) || !reason.trim() ? { text: reason || "未写原因" } : { text: "系统记录的修订原因（未识别）", raw: reason };
 }
 
-/** A person in the record: the reader is 我, a readable account name stays, an opaque identifier is shortened. */
-export function actorText(actorId: string, me: string): string {
-  if (actorId === me) return "我";
-  return roleIdPattern.test(actorId) ? `身份 ${actorId.slice(0, 8)}` : actorId;
-}
-
 const live = new Set<RoleRecord["state"]>(["active", "trial", "retirement-pending"]);
 const order: Record<RoleRecord["state"], number> = { active: 0, trial: 1, "retirement-pending": 2, candidate: 3, deferred: 4, rejected: 5, retired: 6 };
 

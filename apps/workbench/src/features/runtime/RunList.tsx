@@ -8,6 +8,7 @@ import { ApiError, errorText } from "../../shared/api";
 import { ActionForm, option, reasonField, type MutationContext } from "../../shared/ActionForm";
 import { runtimeClient, type NativeResult } from "../../shared/runtimeClient";
 import { taskSectionHref } from "../../shared/taskNavigation";
+import { hereOrigin } from "../../shared/returnLink";
 import { FactList, mutedText } from "../../shared/ui/PageParts";
 import { useTaskName } from "../../shared/ui/RecordName";
 import { nameOnly } from "../../shared/workPresentation";
@@ -17,6 +18,8 @@ import { executionHref, pendingRun, runStateText, runStateTone, uuidPattern } fr
 import { preflightPresentation, preflightView } from "../../shared/preflightPresentation";
 import { diagnosticOf, failureOf, type Failure } from "../../shared/errorPresentation";
 import { ErrorDetails } from "../../shared/ui/ErrorDetails";
+import { actorText } from "../../shared/actorPresentation";
+import { ActorIdentifiers } from "../../shared/ui/ActorIdentifiers";
 
 const stamp = (value: string) => new Date(value).toLocaleString("zh-CN", { hour12: false });
 
@@ -57,7 +60,7 @@ function RunItem({ context, run, mayAbandon }: { context: MutationContext; run: 
       <p className="flex flex-wrap gap-x-4 gap-y-1 text-small">
         {uuidPattern.test(run.taskId) && <a className="text-primary hover:underline" href={`${taskSectionHref(context.projectId, run.taskId, { tab: "runtime" })}&run=${encodeURIComponent(run.id)}`}>在任务中查看此运行</a>}
         {linkable && <a className="text-primary hover:underline" href={executionHref(context.projectId, run.sessionId)}>承接的受管智能体</a>}
-        {linkable && <a className="text-primary hover:underline" href={sessionHref(context.projectId, `owned:${run.sessionId}`)}>在智能体空间打开</a>}
+        {linkable && <a className="text-primary hover:underline" href={sessionHref(context.projectId, `owned:${run.sessionId}`, hereOrigin(context.principal.actorId))}>在智能体空间打开</a>}
       </p>
       <p className={mutedText}>链接只定位来源；运行的状态不代表任务验收或当前接手。</p>
       {run.state === "unknown" && <Notice tone="error">派发或状态仍未知，须沿已绑定线程回查；不会自动再发一次。</Notice>}
@@ -122,7 +125,8 @@ export function Receipts({ label, load }: { label: string; load(): Promise<Runti
     {events && events.length > 0 && <ul className="flex flex-col gap-2">{events.map(event => <li key={event.id} className="flex min-w-0 flex-col gap-0.5">
       <span className="text-small font-medium text-foreground">{eventText[event.kind] ?? "其他回执"}</span>
       <span className="whitespace-pre-wrap break-words text-small text-text-secondary">{event.detail}</span>
-      <span className={mutedText}>{event.actorId} · {stamp(event.createdAt)}</span>
+      <span className={mutedText}>{actorText(event.actorId)} · {stamp(event.createdAt)}</span>
+      <ActorIdentifiers actors={[["记录者", event.actorId]]} />
     </li>)}</ul>}
   </div>;
 }

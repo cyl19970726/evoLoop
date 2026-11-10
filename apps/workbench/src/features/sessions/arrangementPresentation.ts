@@ -3,7 +3,14 @@
 // the overview). Read states decide what the page may conclude: a read that is still running or failed never becomes
 // "free", "no conflict" or a count of 0, and a failed reread that keeps the previous answer on screen says so.
 import type { ObservedTask } from "@evoloop/contracts/session-observation";
+import type { LeaderWorkTask } from "@evoloop/contracts/work-index";
+import { leaderPhaseLabel } from "../../shared/leaderWorkLoad";
 import type { FreeCapacity } from "./arrangementModel";
+
+/** A task's phase on the board. An assignment that would stop the next dispatch (`Arrangement.stale`) is not “待接手”. */
+export function boardPhaseText(task: Pick<LeaderWorkTask, "phase">, stale?: "assigned" | "accepted" | null): string {
+  return stale ? `${stale === "accepted" ? "接手" : "分派"}属于旧修订 · 要重新指定` : leaderPhaseLabel[task.phase];
+}
 
 const directoryRelations: Record<ObservedTask["relation"], string> = {
   accepted: "已接手",
@@ -36,6 +43,18 @@ export function capacityUnknownReason(tasks: ReadState, tasksComplete: boolean, 
   if (queues === "loading") return "正在读取队列，暂不能判断谁空闲。";
   if (queues === "failed") return "队列暂不可读取，无法确认谁空闲。";
   return null;
+}
+
+/**
+ * The 空闲 count at the top of 统筹安排, said as the right column says it: a number only for agents whose occupation is
+ * on record. While the records are incomplete (`unknownReason`) or every free candidate is still 待核对, it is 无法判断,
+ * never 0; agents still to be checked beside a free one are noted rather than counted.
+ */
+export function freeCountStat(capacity: FreeCapacity, unknownReason: string | null, stale: boolean): { value: number | string; label: string; note?: string } {
+  if (unknownReason || (capacity.unknown > 0 && !capacity.free.length)) return { value: "无法判断", label: "谁空闲" };
+  const notes = [...capacity.unknown > 0 ? [`另有 ${capacity.unknown} 个待核对`] : [], ...stale ? ["上次读回"] : []];
+  const label = "个智能体空闲";
+  return notes.length ? { value: capacity.free.length, label, note: notes.join(" · ") } : { value: capacity.free.length, label };
 }
 
 /** The line under 空闲与过载 when nobody is free. Only says "everyone has work" when every agent's work is on record. */

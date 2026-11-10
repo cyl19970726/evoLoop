@@ -35,7 +35,7 @@ export function DocumentIndex({ context }: { context: MutationContext }) {
     <DocumentRail projectId={projectId} scope={scope} />
     <header className="flex flex-wrap items-start justify-between gap-3 pr-12">
       <div className="min-w-0">
-        <h1 tabIndex={-1} className="text-title font-semibold leading-[1.3] outline-none">过程文档</h1>
+        <h1 tabIndex={-1} className="text-title font-semibold leading-(--leading-tight) outline-none">过程文档</h1>
         <p className="mt-1 text-small text-text-secondary">从固定原件读工作依据，核对版本与引用它的任务。点标题读完整正文。</p>
       </div>
       <div className="flex items-center gap-2">
@@ -55,7 +55,7 @@ export function DocumentIndex({ context }: { context: MutationContext }) {
         <UploadDocument context={context} />
       </div>
     </section>}
-    <DocumentTable projectId={projectId} list={list} state={state} update={update} toolbar={toolbar} />
+    <DocumentTable projectId={projectId} list={list} state={state} update={update} toolbar={toolbar} actorId={context.principal.actorId} />
   </div>;
 }
 

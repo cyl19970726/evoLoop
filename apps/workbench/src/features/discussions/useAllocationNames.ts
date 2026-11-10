@@ -4,6 +4,7 @@ import type { RoleRecord } from "@evoloop/contracts/roles";
 import type { SessionTarget } from "@evoloop/contracts/session-work";
 import { request } from "../../shared/api";
 import { sessionClient } from "../../shared/sessionClient";
+import { agentDisplayName } from "../../shared/agentNamePresentation";
 import type { AllocationTrace } from "./allocationClient";
 
 export type AllocationKnownNames = { tasks: Task[]; roles: RoleRecord[]; documents: Document[] };
@@ -93,7 +94,7 @@ export function useAllocationNameState(token: string, projectId: string, items: 
       const snapshot = await sessionClient(token, projectId).snapshot(id, controller.signal);
       if (snapshot.session.key !== id && !snapshot.session.aliases.some(alias => allocationSessionKey(alias) === id))
         throw new Error("Session 名称来源不匹配");
-      return snapshot.session.profile?.displayName?.trim() || snapshot.session.title.trim();
+      return agentDisplayName(snapshot.session);
     }
     async function worker() {
       while (active && index < queue.length) {

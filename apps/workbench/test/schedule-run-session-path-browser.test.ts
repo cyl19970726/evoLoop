@@ -1,4 +1,6 @@
 // Opt-in built-app regression: build workbench, then set EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE.
+// A schedule's produced task opens with “返回日程：<名称>” back to that schedule (N2), and its run reaches the exact
+// closed agent that ran it.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createServer } from "node:http";
@@ -103,11 +105,27 @@ test("old Schedule occurrence reaches its exact closed Run Session workspace", {
     assert.equal(await page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1"), true);
     await page.setViewportSize({ width: 1280, height: 720 });
   }
-  await page.getByRole("link", { name: "阅读此任务" }).click();
-  assert.equal((url => url.pathname + url.search)(new URL(page.url())), `/p/${projectId}/tasks/${taskId}`);
+  // 阅读此任务 carries the way back to this schedule, for this reader (N2).
+  const read = page.getByRole("link", { name: "阅读此任务" });
+  const readHref = new URL(await read.getAttribute("href") ?? "", base);
+  const scheduleHref = `/p/${projectId}/schedules?schedule=${scheduleId}`;
+  assert.deepEqual([readHref.pathname, readHref.searchParams.get("return"), readHref.searchParams.get("actor"), readHref.searchParams.get("returnTitle")],
+    [`/p/${projectId}/tasks/${taskId}`, scheduleHref, "reader", "旧日程创建的任务"]);
+  await read.click();
+  assert.equal(new URL(page.url()).pathname, `/p/${projectId}/tasks/${taskId}`);
   await page.getByRole("heading", { name: "旧日程创建的任务" }).waitFor({ timeout: 5000 }).catch(async () => {
     assert.fail(`Task did not open: ${page.url()} body=${await page.locator("body").innerHTML()} errors=${errors.join(" | ")} requests=${requests.slice(-15).join(",")}`);
   });
+  const taskPage = page.locator(`[data-task-page="${taskId}"]`);
+  const backToSchedule = taskPage.locator("[data-return-link]").filter({ hasText: "返回日程：旧日程创建的任务" });
+  await backToSchedule.waitFor();
+  // The way back opens 日程 on this schedule; a link opened from there comes back here again.
+  await backToSchedule.click();
+  assert.equal((url => url.pathname + url.search)(new URL(page.url())), scheduleHref);
+  await page.locator(".schedule-definition").getByRole("heading", { name: "旧日程创建的任务" }).waitFor();
+  assert.equal(await scheduleItem.getAttribute("aria-current"), "true");
+  await page.getByRole("link", { name: "阅读此任务" }).click();
+  await backToSchedule.waitFor();
   await page.getByRole("tab", { name: "运行与关联" }).waitFor({ timeout: 5000 }).catch(async () => {
     assert.fail(`Task tabs missing: ${page.url()} body=${await page.locator("body").innerHTML()} errors=${errors.join(" | ")} requests=${requests.slice(-15).join(",")}`);
   });
@@ -117,12 +135,17 @@ test("old Schedule occurrence reaches its exact closed Run Session workspace", {
   await card.locator(":scope > summary").click();
   // The run names the agent it ran on; the agents' own cards are on the agent's page, not the task's.
   const exact = card.getByRole("link", { name: "查看这次运行的智能体" });
-  assert.equal(await exact.getAttribute("href"), `/p/${projectId}/sessions?session=${encodeURIComponent(sessionKey)}`);
+  assert.equal((await exact.getAttribute("href"))?.split("&return=")[0], `/p/${projectId}/sessions?session=${encodeURIComponent(sessionKey)}`);
+  const runAgentBack = new URLSearchParams((await exact.getAttribute("href"))!.split("?")[1]);
+  assert.equal(runAgentBack.get("return"), `/p/${projectId}/tasks/${taskId}?tab=runtime`, "the agent page comes back to this task's 运行与关联");
+  assert.equal(runAgentBack.get("returnTitle"), "旧日程创建的任务");
+  assert.equal(runAgentBack.get("actor"), "reader");
   assert.match(await card.innerText(), /运行的状态不代表任务已验收/);
   await exact.click();
   await page.getByRole("heading", { name: "历史 Session 77500006" }).waitFor();
   assert.match(await page.locator(".session-detail-header").innerText(), /历史/);
-  assert.equal((url => url.pathname + url.search)(new URL(page.url())), `/p/${projectId}/sessions?session=${encodeURIComponent(sessionKey)}`);
+  await page.locator("[data-return-link]").filter({ hasText: "返回任务：旧日程创建的任务" }).waitFor();
+  assert.equal((url => url.pathname + url.search)(new URL(page.url())).split("&return=")[0], `/p/${projectId}/sessions?session=${encodeURIComponent(sessionKey)}`);
   assert.ok(requests.includes(`${rootPath(projectId)}/session-work/${encodeURIComponent(sessionKey)}`));
   assert.equal(requests.includes(`${rootPath(projectId)}/session-work/${encodeURIComponent(`owned:${otherSessionId}`)}`), false);
   assert.equal(errors.length, 0, errors.join(" | "));

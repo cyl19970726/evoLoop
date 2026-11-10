@@ -7,10 +7,12 @@
 import React from "react";
 import type { Document } from "@evoloop/contracts";
 import { ArrowLeft } from "lucide-react";
-import { Button, Field, Input, Notice, Select, Textarea, cn } from "@evoloop/ui";
+import { Button, Checkbox, Field, Input, Notice, Select, Textarea, cn } from "@evoloop/ui";
 import { errorText } from "../../shared/api";
 import type { MutationContext } from "../../shared/ActionForm";
+import { acceptanceMemberKind } from "../../shared/memberPresentation";
 import { currentPath, navigate, onNavigate } from "../../shared/navigation";
+import { MemberChoice } from "../../shared/ui/MemberChoice";
 import { useProjectQuery } from "../../shared/query";
 import { ContextPanelContent, useContextPanel } from "../../shared/ui/ContextPanel";
 import { FullIdentifiers } from "../../shared/ui/FullIdentifiers";
@@ -19,6 +21,7 @@ import { CommandFrame, useCommand } from "../../shared/command";
 import { journeyKey, readOwnerRoles, readPublishedDocuments, useGoals, useStages } from "./journeyRead";
 import { draftFieldLabels, draftTouched, emptyTaskDraft, maxLinkedDocuments, taskCreateCommand, taskDraftProblems, taskKinds, zonedInstant, type DraftProblems, type TaskDraft } from "./taskCreate";
 import { formatScheduled } from "./taskTimingPresentation";
+import { timezoneOptions } from "../../shared/zonedTime";
 
 const muted = "text-caption text-muted-foreground";
 const section = "flex flex-col gap-4 rounded-xl bg-raised p-4 shadow-sm compact:p-5";
@@ -140,8 +143,10 @@ export function CreateTaskView({ context, active, pathname, back, embedded = fal
         <option value="independent_agent">独立的智能体验收（默认）</option><option value="human_required">必须由本人验收</option>
       </Select>}</Field>}
       {draft.closeRule === "use" && <Field label={draft.stageId || draft.acceptanceMode === "human_required" ? "实际使用成果的身份" : "实际使用成果的身份（可选）"} {...field("consumer")}
-        hint={draft.acceptanceMode === "human_required" ? "填写验收人的受信身份；关闭时要有这个身份对本次交付的使用记录。" : "填写会实际使用成果的受信身份；不填时可以稍后由统筹确定独立验收。"}>
-        {control => <Input {...control} value={draft.consumer} onChange={event => edit({ consumer: event.target.value })} autoComplete="off" />}</Field>}
+        hint={draft.acceptanceMode === "human_required" ? "选验收的人本人；关闭时要有他对本次交付的使用记录。只列出能写入的人。"
+          : "选会实际使用成果的智能体；不选时可以稍后由统筹确定独立验收。只列出能写入的智能体。"}>
+        {control => <MemberChoice projectId={context.projectId} control={control} value={draft.consumer} onChange={consumer => edit({ consumer })}
+          need="write" kind={acceptanceMemberKind(draft.acceptanceMode)} optional={!(draft.stageId || draft.acceptanceMode === "human_required")} />}</Field>}
     </section>
     <section aria-label="责任与归属" className={section}>
       <h2 className="text-label font-semibold text-foreground">责任与归属</h2>
@@ -177,7 +182,9 @@ export function CreateTaskView({ context, active, pathname, back, embedded = fal
         <p className={muted}>约定时间只记录在任务上；到时谁来执行，仍要在任务里安排承接。</p></div>
       <div className="grid grid-cols-1 gap-4 compact:grid-cols-3">
         <Field label="执行时间" {...field("executeAt")}>{control => <Input {...control} type="datetime-local" step={60} value={draft.executeAt} onChange={event => edit({ executeAt: event.target.value })} />}</Field>
-        <Field label="时区" hint="IANA 时区，例如 Asia/Taipei。" {...field("timezone")}>{control => <Input {...control} value={draft.timezone} onChange={event => edit({ timezone: event.target.value })} autoComplete="off" />}</Field>
+        <Field label="时区" hint="执行时间按这个时区的当地时间填写。" {...field("timezone")}>{control => <Select {...control} className="w-full" value={draft.timezone} onChange={event => edit({ timezone: event.target.value })}>
+          {timezoneOptions([draft.timezone]).map(zone => <option key={zone.value} value={zone.value}>{zone.label}</option>)}
+        </Select>}</Field>
         <Field label="是否重复" {...field("repeat")}>{control => <Select {...control} className="w-full" value={draft.repeat} onChange={event => edit({ repeat: event.target.value as TaskDraft["repeat"] })}>
           <option value="none">仅本次</option>{canReview && <option value="daily">每天重复</option>}
         </Select>}</Field>
@@ -259,8 +266,8 @@ function DocumentChoices({ read, chosen, error, onChange }: {
     {documents.length > 0 && read.data && !read.data.complete && <p className={muted} data-documents-partial="">文档只读了一部分，下面没有列出的已发布文档可以保存后在任务里补充。</p>}
     {documents.length > 0 && <ul className="flex max-h-56 flex-col gap-1 overflow-y-auto rounded-md bg-muted p-2">{documents.map(document => <li key={document.id}>
       <label className="flex items-start gap-2 text-small text-foreground">
-        <input type="checkbox" className="mt-1 accent-[var(--brand)]" checked={chosen.includes(document.id)}
-          onChange={event => onChange(event.target.checked ? [...chosen, document.id] : chosen.filter(id => id !== document.id))} />
+        <Checkbox className="mt-0.5" checked={chosen.includes(document.id)}
+          onCheckedChange={checked => onChange(checked === true ? [...chosen, document.id] : chosen.filter(id => id !== document.id))} />
         <span className="min-w-0 [overflow-wrap:anywhere]">{document.title}</span>
       </label>
     </li>)}</ul>}

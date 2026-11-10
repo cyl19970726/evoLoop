@@ -188,7 +188,7 @@ export function OriginalDocumentReader({ token, projectId, revisionId, documentI
       </details> : null}
       {preview ? <iframe key={`${revisionId}:${original.revision.contentHash}`} title="HTML 静态隔离预览" sandbox="" referrerPolicy="no-referrer" srcDoc={preview.html}
         className="block min-h-[420px] w-full rounded-lg border border-border bg-raised" /> : <p role="status" className={note}>正在准备此固定修订的隔离预览…</p>}</>
-      : <MarkdownBody source={original.body} identity={original.revision.id} projectId={projectId} />}
+      : <MarkdownBody source={original.body} identity={original.revision.id} projectId={projectId} topHeading={3} />}
     {raw}{assets}
   </section>;
 }

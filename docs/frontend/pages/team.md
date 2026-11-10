@@ -15,6 +15,7 @@
 | --- | --- | --- | --- |
 | 内层栏 | 职责目录：业务、系统、提议与已关闭 | 受管智能体：就绪、准备中、需要核对、已关闭 | 讨论列表：当前分工 / 下一阶段 / 全部 |
 | 中间 | 所选职责：目标与范围、提出依据、承载与业务领域、按状态给出的下一步、修订与交接历史、相关讨论；未选时为基础职责、全部职责和提出试行 | 所选智能体：身份与权限、队列、它的运行、关闭条件、线程历史；未选时为执行服务、全部智能体、新建、编排与队列、运行记录 | 所选讨论：准备 → 交接 → 决定；`?new=1` 打开准备表单 |
+| 去智能体页 | 承载里的“在智能体空间打开”带返回，智能体页首写“返回职责” | “在智能体空间打开”、运行的智能体链接写“返回分工与运行” | 关系里的智能体链接写“返回分工讨论”（`shared/returnLink.ts`） |
 | 右栏 | 试行与回看、运行时与 skill | 所选智能体的事实、执行服务 | 讨论依据、关联的任务 / 职责 / 文档、来源与完整标识 |
 
 外壳与左栏见[布局](../layout.md)。视图由外壳“团队”导航切换（分工与运行、职责、分工讨论、组织复盘、协作回执），App 把所属分区传给页面，懒加载的页面不再从地址推断。旧地址 `/runtime?view=roles` 跳到 `/roles`，`/runtime?session=owned:…` 跳到智能体空间；`/runtime?session={ID}` 就是分工与运行里选中该智能体。分工讨论的四种写入（准备、登记承接、登记或纠正决定、链接后续对象）都在中间。协作回执是单栏页，右栏放飞书连接与待处理。组织复盘列表点开即进入原件阅读器。
@@ -35,6 +36,11 @@
 - 分工讨论列表和协作回执的“加载更多”只读下一页，游标没有前进时写“列表可能不完整”。协作回执后面的行随项目重读，失败时标“上次读回”，重读完成前不能对账、采纳或拒绝。“连接诊断”显示原文。
 - 协作回执：结果未知的投影只按稳定键对账，不重发；只有身份已核实、只改标题的远端修改能采纳，采纳和拒绝都先确认。写入结果丢失时只留项目、对象与操作 ID，按原 ID 读回。
 - 组织复盘是 `organization_review` 类型的文档；报告已保存 ≠ 建议已采纳。
+
+| 来源写的 | 页面上写 | 原文在哪 |
+| --- | --- | --- |
+| skill 的 SKILL.md 说明（常是英文） | skill 名称和一句中文用途：中文说明取第一句，项目自己的英文 skill 有固定译文，其余写“说明为英文，展开查看” | 每个 skill 下的“原文与位置”（说明原文、文件位置） |
+| 外部聊天的完整引用（Codex 聊天地址） | 正文只写“外部 Codex Desktop 聊天”和核实状态，可复制或请求打开 | 每个外部聊天下的“完整标识” |
 
 ## 截图
 
@@ -65,10 +71,10 @@
 | 范围 | 源码（`apps/workbench/src/`） | 测试（`apps/workbench/test/`） |
 | --- | --- | --- |
 | 外壳与组织复盘 | `features/team/TeamWorkspace.tsx`、`features/team/OrganizationReviewList.tsx`、`shared/routes.ts` | `team-browser.test.ts`、`team-presentation.test.ts` |
-| 职责 | `features/roles/RolesView.tsx`、`features/roles/RoleDetail.tsx`、`features/roles/RolePresence.tsx`、`features/roles/RoleRuntime.tsx`、`features/roles/RoleTemplates.tsx`、`features/roles/SourceRef.tsx`、`features/roles/rolePresentation.ts` | `role-presentation.test.ts`、`role-runtime-card.test.ts`、`role-template-summary-browser.test.ts`、`role-card-keep-open-browser.test.ts`、`resident-observation-browser.test.ts`、`team-roles-browser.test.ts` |
+| 职责 | `features/roles/RolesView.tsx`、`features/roles/RoleDetail.tsx`（历史里只有标识的记录者写“未登记名称的身份”，标识在“完整标识”）、`features/roles/RolePresence.tsx`、`features/roles/RoleRuntime.tsx`、`features/roles/RoleTemplates.tsx`、`features/roles/SourceRef.tsx`、`features/roles/rolePresentation.ts` | `role-presentation.test.ts`、`role-runtime-card.test.ts`、`role-template-summary-browser.test.ts`、`role-card-keep-open-browser.test.ts`、`resident-observation-browser.test.ts`、`team-roles-browser.test.ts` |
 | 分工与运行 | `features/runtime/ExecutionView.tsx`、`features/runtime/ManagedSessionDetail.tsx`、`features/runtime/ManagedSessionCreate.tsx`、`features/runtime/RunList.tsx`、`features/runtime/AgentName.tsx`、`features/runtime/executionPresentation.ts`、`features/orchestration/OrchestrationPanel.tsx`（编排）、`features/orchestration/presentation.ts` | `execution-presentation.test.ts`、`orchestration-observation.test.ts`、`task-loop-browser.test.ts`、`legacy-bits-browser.test.ts`、`runtime-session-role-browser.test.ts`、`runtime-model-selection-browser.test.ts`、`runtime-reconcile-browser.test.ts` |
-| 分工讨论 | `features/discussions/DiscussionPanel.tsx`、`features/discussions/DiscussionDetail.tsx`、`features/discussions/DiscussionForms.tsx`、`features/discussions/formParts.tsx`、`shared/command/CommandForm.tsx`、`features/discussions/discussionClient.ts`、`features/discussions/discussionBaseline.ts`、`features/discussions/discussionPresentation.ts`、`features/discussions/commands.ts`、`features/discussions/AllocationRelationsPanel.tsx`、`features/discussions/AllocationBacklinks.tsx`、`features/discussions/useAllocationTraces.ts` | `team-discussions-browser.test.ts`（`EVOLOOP_DISCUSSIONS_SCREENSHOT_DIR`）、`discussion-presentation.test.ts`、`discussion-panel.test.ts`、`allocation-backlink-groups.test.ts`、`allocation-names.test.ts` |
-| 协作回执 | `features/collaboration/CollaborationPanel.tsx`、`features/collaboration/collaborationPresentation.ts`、`features/collaboration/client.ts` | `team-collaboration-browser.test.ts`、`team-collaboration-paging-browser.test.ts`（都用 `EVOLOOP_COLLABORATION_SCREENSHOT_DIR`）、`collaboration-presentation.test.ts` |
+| 分工讨论 | `features/discussions/DiscussionPanel.tsx`、`features/discussions/DiscussionDetail.tsx`（拟交接对象的引用不是链接时只放进“来源与完整标识”）、`features/discussions/DiscussionForms.tsx`、`features/discussions/formParts.tsx`、`shared/command/CommandForm.tsx`、`features/discussions/discussionClient.ts`、`features/discussions/discussionBaseline.ts`、`features/discussions/discussionPresentation.ts`、`features/discussions/commands.ts`、`features/discussions/AllocationRelationsPanel.tsx`、`features/discussions/AllocationBacklinks.tsx`、`features/discussions/useAllocationTraces.ts` | `team-discussions-browser.test.ts`（`EVOLOOP_DISCUSSIONS_SCREENSHOT_DIR`）、`discussion-presentation.test.ts`、`discussion-panel.test.ts`、`allocation-backlink-groups.test.ts`、`allocation-names.test.ts` |
+| 协作回执 | `features/collaboration/CollaborationPanel.tsx`（待核对的写入只写对象名称，对象与原操作 ID 在“完整标识”）、`features/collaboration/collaborationPresentation.ts`、`features/collaboration/client.ts` | `team-collaboration-browser.test.ts`、`team-collaboration-paging-browser.test.ts`（都用 `EVOLOOP_COLLABORATION_SCREENSHOT_DIR`）、`collaboration-presentation.test.ts` |
 
 ## 相关
 

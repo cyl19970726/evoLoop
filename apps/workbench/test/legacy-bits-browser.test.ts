@@ -81,6 +81,9 @@ test("rebuilt legacy parts read, write and fail as the record allows, at three w
       else if (url.pathname === `${p}/roles/${roleId}/bindings`) value = [];
       else if (url.pathname === `${p}/session-work/${encodeURIComponent(`owned:${sessionId}`)}/profile`)
         value = { projectId, sessionKey: `owned:${sessionId}`, displayName: "文档助手", version: 1, updatedAt: stamp };
+      // An agent is named from its directory record (agentDisplayName), with the registered name.
+      else if (url.pathname === `${p}/session-work/${encodeURIComponent(`owned:${sessionId}`)}`)
+        value = { session: { key: `owned:${sessionId}`, kind: "owned", title: "文档职责", roles: [], profile: { displayName: "文档助手" } }, observationCursor: "0", currentWork: null };
       else if (url.pathname.endsWith("/profile")) { status = 404; value = { message: "未登记" }; }
       else if (url.pathname === `${p}/discussions`) { if (!refused("discussions")) value = page([discussion]); }
       else if (url.pathname === `${p}/discussions/${discussionId}`) value = discussion;
@@ -92,6 +95,7 @@ test("rebuilt legacy parts read, write and fail as the record allows, at three w
         base64: Buffer.from(gitText).toString("base64"), observedAt: stamp };
       else if (url.pathname === `${p}/runtime/sessions` || url.pathname === `${p}/runtime/runs` || url.pathname === `${p}/resident-queues`) value = [];
       else if (url.pathname === `${p}/runtime`) value = { available: true, error: null, allowedCwds: [], grants: [] };
+      else if (url.pathname === `${p}/repositories`) value = { projectId, status: "available", items: [{ repositoryId: "evoLoop", allowedPaths: ["docs/"] }] };
       else if (url.pathname === `${p}/orchestration/status`) value = { state: "disabled" };
       else if (url.pathname === `${p}/acceptance-relay/mine`) value = { items: [{ projectId, relayId: id(20), taskId, taskRevisionId: taskId, deliveryId: id(21),
         stage: "candidate", scopeKey: "doc-use", scopeDescription: "按说明改一处文档", entrypoint: null, publicationRef: null, version: 2,
@@ -147,7 +151,7 @@ test("rebuilt legacy parts read, write and fail as the record allows, at three w
   await thread.getByText(/接口说明放哪里 · 1 个问题待答 · 第 4 版/).click();
   await thread.getByText("提问 · 致 lead · 待答复").waitFor();
   await thread.getByText("工程动作请求 · 推送分支 · 已批准，未见执行回执").waitFor();
-  assert.equal(await thread.getByRole("link", { name: "文档助手" }).getAttribute("href"), `/p/${projectId}/sessions?session=${encodeURIComponent(`owned:${sessionId}`)}`);
+  assert.equal((await thread.getByRole("link", { name: "文档助手" }).getAttribute("href"))?.split("&return=")[0], `/p/${projectId}/sessions?session=${encodeURIComponent(`owned:${sessionId}`)}`);
   assert.doesNotMatch(await thread.innerText(), /29000\d{3}|Run |Session|git\.push/, "no identifiers or internal words in the reading text");
   await shoot("task-collaboration");
   await fetch(`${base}/__fixture/fail?what=discussions`);
@@ -169,7 +173,8 @@ test("rebuilt legacy parts read, write and fail as the record allows, at three w
   const block = (title: string) => references.locator("details").filter({ has: pageBrowser.getByText(title, { exact: true }) }).first();
   const register = block("登记 Git 固定来源");
   await register.getByText("登记 Git 固定来源", { exact: true }).click();
-  await register.getByLabel("仓库").fill("evoLoop");
+  await register.getByLabel("仓库标识", { exact: true }).selectOption("evoLoop");
+  await register.getByText("允许读取：docs/ 下的文件。").waitFor();
   await register.getByLabel("相对路径").fill("docs/api.md");
   await register.getByLabel("完整 commit").fill(commit);
   await register.getByLabel("原文 SHA-256").fill(gitHash);
@@ -246,7 +251,8 @@ test("rebuilt legacy parts read, write and fail as the record allows, at three w
   await go(`/p/${projectId}/schedules`);
   await pageBrowser.getByRole("heading", { name: "纽约晨检" }).waitFor();
   await pageBrowser.getByText("仅一次 · 2026/11/12 09:00:00 · 纽约（你的时间 2026/11/12 22:00:00）").first().waitFor();
-  assert.equal(await pageBrowser.getByText(/台北/).count(), 0);
+  // (The revision form's time zone choice lists 台北 among the zones; no time is said in it.)
+  assert.equal(await pageBrowser.getByText(/台北/).filter({ hasNot: pageBrowser.locator("option") }).and(pageBrowser.locator(":not(option)")).count(), 0);
   await shoot("schedule-zone");
   assert.deepEqual(errors, []);
 });

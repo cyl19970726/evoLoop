@@ -8,9 +8,11 @@ import {
   leaderWorkDependenciesCommandSchema, leaderWorkPlanCommandSchema, leaderWorkReviewCommandSchema,
   type LeaderWorkDependenciesCommand, type LeaderWorkPlanCommand, type LeaderWorkReviewCommand, type LeaderWorkTask,
 } from "@evoloop/contracts/work-index";
-import { Button, Field, Input, Notice, Select, Textarea } from "@evoloop/ui";
+import { Button, Checkbox, Field, Input, Notice, Select, Textarea } from "@evoloop/ui";
 import { api, errorText } from "../../shared/api";
 import type { MutationContext } from "../../shared/ActionForm";
+import { acceptanceMemberKind, acceptanceMemberNeed } from "../../shared/memberPresentation";
+import { MemberChoice } from "../../shared/ui/MemberChoice";
 import { useProjectPages, useProjectQuery } from "../../shared/query";
 import { roleClient } from "../../shared/roleClient";
 import { runtimeClient } from "../../shared/runtimeClient";
@@ -104,10 +106,16 @@ export function TaskActionsTab({ context, detail, leader, leaderState, documents
       { name: "acceptanceMode", label: "验收方式", kind: "select", initial: acceptanceMode ?? "legacy", options: [
         ...(acceptanceMode ? [] : [{ value: "legacy", label: "保留旧任务的历史约定" }]),
         { value: "independent_agent", label: "独立的智能体验收" }, { value: "human_required", label: "必须本人验收" }] },
-      { name: "consumer", label: "指定验收身份", optional: true, initial: detail.proposal?.consumer ?? "", maxLength: 4000, hint: "本人验收必须填写本人的受信身份；独立智能体可以不预先指定。" },
+      { name: "consumer", label: "指定验收身份", optional: true, kind: "custom", initial: detail.proposal?.consumer ?? "", maxLength: 4000,
+        hint: "必须本人验收时选验收的人本人，独立智能体验收可以不指定，这两种只列能写入的成员（使用记录由验收人自己登记）。保留旧约定时，人的使用记录由复核者代为登记，人可以选任何成员，也可以按完整标识填写不在本项目的人；智能体要自己登记使用，仍要能写入。",
+        render: ({ control, value, values, onChange }) => <MemberChoice projectId={projectId} control={control} value={value} onChange={onChange}
+          need={acceptanceMemberNeed(values.acceptanceMode)} kind={acceptanceMemberKind(values.acceptanceMode)} optional={values.acceptanceMode !== "human_required"} /> },
       reasonField()]}
-      build={(values, seen) => acceptanceResponsibilityCommand(detail, seen, { acceptanceMode: values.acceptanceMode ?? "legacy",
-        consumer: values.consumer ?? "", reason: values.reason ?? "" })} /> });
+      build={(values, seen) => {
+        // The service refuses 必须本人验收 without the person; said before sending.
+        if (values.acceptanceMode === "human_required" && !values.consumer?.trim()) throw new Error("必须本人验收时，请选验收的人本人。");
+        return acceptanceResponsibilityCommand(detail, seen, { acceptanceMode: values.acceptanceMode ?? "legacy", consumer: values.consumer ?? "", reason: values.reason ?? "" });
+      }} /> });
 
   const progress: Action[] = [];
   if (task.state === "todo") progress.push({ key: "start", title: "开始任务并固定依据", needs: ["review"],
@@ -301,7 +309,7 @@ function DependenciesForm({ context, detail, leader, onReread }: { context: Muta
       <legend className="mb-1 text-label font-semibold text-foreground">前置任务</legend>
       {!chosen.length && <p className="text-label text-text-secondary">没有前置任务。</p>}
       {chosen.map(id => <label key={id} className="flex items-center gap-2 text-label text-foreground">
-        <input type="checkbox" checked onChange={() => setChosen(list => list.filter(item => item !== id))} className="accent-[var(--accent)]" />
+        <Checkbox checked onCheckedChange={() => setChosen(list => list.filter(item => item !== id))} />
         <a className="text-primary hover:underline" href={href(projectId, "task", id)}>{title(id)}</a>
         <span className="text-caption text-muted-foreground">{leader.dependencies.find(item => item.taskId === id)?.acceptanceSatisfied ? "已验收" : current.includes(id) ? "等待验收" : "新加入"}</span>
       </label>)}

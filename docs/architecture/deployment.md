@@ -56,6 +56,21 @@ flowchart LR
 3. **迁移数据库。** 由单一步骤按编号顺序执行新增的 schema 迁移；已执行过的迁移不改。
 4. **启动新版本并核对。** 先做只读检查，再恢复写入和运行时。
 
+个别迁移在这几步之外还有要求，写在下面：
+
+- **069（文档修订序号）。** 迁移给每条过程文档修订补序号，日志里看不到它的提示，所以在第 3 步之前先用只读查询看有没有修订不成一条链的文档：
+  ```sql
+  SELECT project_id, document_id, count(*) AS revisions,
+    count(*) FILTER (WHERE previous_revision_id IS NULL) AS roots,
+    count(DISTINCT previous_revision_id) AS parents
+  FROM document_revision GROUP BY project_id, document_id
+  HAVING count(*) FILTER (WHERE previous_revision_id IS NULL) <> 1
+     OR count(DISTINCT previous_revision_id) <> count(*) - 1;
+  ```
+  - 查不出行：所有文档都沿修订链编号。
+  - 查出的文档改按创建时间编号，在发布记录里列出；它们在下一次修订之前，当前修订的序号不一定等于总修订数（[合同](contracts.md#2a-documentstore-与-relationstore)）。
+  - 迁移会重写 `document_revision` 的每一行。第 3 步完成后执行一次 `VACUUM (ANALYZE) document_revision;`，收回旧行版本并更新统计；普通 `VACUUM` 不阻塞读写，恢复写入之后再执行也可以。
+
 旧版本保留，可以把**代码**切回去；但已经写入新 schema 或新版本产生的**数据**不能靠切回旧代码撤销。数据要回到过去，只能把备份恢复到一个新的空数据库和新的空 Blob 目录，并单独列出备份之后发生的操作。
 
 ## 3. 对象按内容寻址

@@ -6,6 +6,7 @@ import type { DiscussionEvent, DiscussionRecord, TaskCollaborationPayload } from
 import { Button, ErrorState, LoadingState, Notice, RefreshingIndicator } from "@evoloop/ui";
 import { errorText } from "../../shared/api";
 import { useProjectQuery } from "../../shared/query";
+import { withReturn, type ReturnFrom } from "../../shared/returnLink";
 import { FullIdentifiers, type IdentifierRow } from "../../shared/ui/FullIdentifiers";
 import { useSessionName } from "../../shared/ui/RecordName";
 import { nameOnly } from "../../shared/workPresentation";
@@ -16,6 +17,7 @@ import {
 } from "./taskCollaborationPresentation";
 import { diagnosticOf } from "../../shared/errorPresentation";
 import { ErrorDetails } from "../../shared/ui/ErrorDetails";
+import { actorRow, actorText } from "../../shared/actorPresentation";
 
 type DocumentRef = { documentId: string; revisionId: string };
 const note = "text-caption text-muted-foreground";
@@ -30,10 +32,14 @@ function AgentName({ projectId, sessionId }: { projectId: string; sessionId: str
 }
 
 function JumpTo({ eventId, children }: { eventId: string; children: ReactNode }) {
-  return <button type="button" className={link} onClick={() => document.getElementById(`collaboration-event-${eventId}`)?.scrollIntoView({ block: "center" })}>{children}</button>;
+  return <Button variant="link" onClick={() => document.getElementById(`collaboration-event-${eventId}`)?.scrollIntoView({ block: "center" })}>{children}</Button>;
 }
 
-export function TaskCollaborationThread({ projectId, taskId, refresh }: { projectId: string; taskId: string; refresh: number }) {
+export function TaskCollaborationThread({ projectId, taskId, refresh, from }: {
+  projectId: string; taskId: string; refresh: number;
+  /** Where the link to the original agent comes back to (this task, with its name). */
+  from?: ReturnFrom | null;
+}) {
   const read = useProjectQuery(projectId, ["task", taskId, "collaboration"], () => readTaskCollaboration(projectId, taskId));
   const rootRef = useRef<HTMLElement>(null);
   // The page's “重新读取当前任务” moves `refresh`; coming back to the window rereads what is on screen.
@@ -63,12 +69,12 @@ export function TaskCollaborationThread({ projectId, taskId, refresh }: { projec
     {data?.partial && <Notice tone="waiting">协作列表已读到 20 页或 20 个关联频道的上限，结果不完整，不能据此判断没有其他问题。</Notice>}
     {data && !data.partial && data.threads.length === 0 && <p className="text-label text-text-secondary">这项任务还没有登记协作频道。</p>}
     {data && data.threads.length > 0 && <ul className="flex flex-col">
-      {data.threads.map(thread => <li key={thread.record.id}><ThreadItem projectId={projectId} thread={thread} /></li>)}
+      {data.threads.map(thread => <li key={thread.record.id}><ThreadItem projectId={projectId} thread={thread} from={from} /></li>)}
     </ul>}
   </section>;
 }
 
-function ThreadItem({ projectId, thread }: { projectId: string; thread: CollaborationThread }) {
+function ThreadItem({ projectId, thread, from }: { projectId: string; thread: CollaborationThread; from?: ReturnFrom | null | undefined }) {
   const { record, events } = thread;
   const context = record.collaboration;
   const task = record.task!;
@@ -78,15 +84,15 @@ function ThreadItem({ projectId, thread }: { projectId: string; thread: Collabor
     <div className="mt-2 flex flex-col gap-3 pl-4">
       <p className="text-label text-text-secondary [overflow-wrap:anywhere]">
         <a className={link} href={href(projectId, "task", task.id, task.revisionId)}>频道固定的任务修订</a>
-        {context && <> · 派出者 {context.issuerActorId} · 接收者 {context.recipientActorId} · 原智能体 <a className={link}
-          href={`${href(projectId, "sessions")}?session=${encodeURIComponent(`owned:${context.sessionId}`)}`}><AgentName projectId={projectId} sessionId={context.sessionId} /></a>
+        {context && <> · 派出者 {actorText(context.issuerActorId)} · 接收者 {actorText(context.recipientActorId)} · 原智能体 <a className={link}
+          href={withReturn(`${href(projectId, "sessions")}?session=${encodeURIComponent(`owned:${context.sessionId}`)}`, from)}><AgentName projectId={projectId} sessionId={context.sessionId} /></a>
           {" · "}<a className={link} href={`${href(projectId, "task", task.id)}?tab=runtime&run=${encodeURIComponent(context.runId)}`}>发起这次协作的运行</a></>}
       </p>
       {shown.length === 0 && <p className="text-label text-text-secondary">频道已登记，但还没有协作消息或回执。</p>}
       {shown.length > 0 && <ol className="flex flex-col gap-2">{shown.map(event => <li key={event.id} id={`collaboration-event-${event.id}`}
         className="flex min-w-0 scroll-mt-20 flex-col gap-1 border-l-2 border-border py-1 pl-3 text-label text-foreground [overflow-wrap:anywhere]">
         <EventContent projectId={projectId} taskId={task.id} event={event} events={events} />
-        <p className={note}>{event.actorId} · {date(event.createdAt)}</p>
+        <p className={note}>{actorText(event.actorId)} · {date(event.createdAt)}</p>
       </li>)}</ol>}
       <FullIdentifiers rows={identifiers(record, shown)} />
     </div>
@@ -95,10 +101,13 @@ function ThreadItem({ projectId, thread }: { projectId: string; thread: Collabor
 
 function identifiers(record: DiscussionRecord, events: DiscussionEvent[]): IdentifierRow[] {
   const rows: IdentifierRow[] = [{ label: "协作频道", value: record.id }, { label: "固定任务修订", value: record.task?.revisionId }];
-  if (record.collaboration) rows.push({ label: "原智能体", value: record.collaboration.sessionId }, { label: "运行", value: record.collaboration.runId });
+  if (record.collaboration) rows.push({ label: "原智能体", value: record.collaboration.sessionId }, { label: "运行", value: record.collaboration.runId },
+    actorRow("派出者", record.collaboration.issuerActorId), actorRow("接收者", record.collaboration.recipientActorId));
   for (const event of events) {
-    rows.push({ label: "事件", value: event.id });
+    rows.push({ label: "事件", value: event.id }, actorRow("事件记录者", event.actorId));
     const payload = event.collaborationPayload;
+    if (payload?.type === "message") rows.push(actorRow("消息接收者", payload.recipientActorId));
+    if (payload?.type === "action_request") rows.push(actorRow("请求执行者", payload.executorActorId));
     if (payload?.type === "action_execution") rows.push({ label: "外部操作", value: payload.externalOperationId });
     if (payload?.type === "action_request") rows.push({ label: "工作树", value: payload.scope.worktree });
   }
@@ -110,7 +119,7 @@ function EventContent({ projectId, taskId, event, events }: { projectId: string;
   const title = (text: string) => <p className="font-medium">{text}</p>;
   if (payload.type === "message") {
     const state = payload.kind === "question" ? isAnswered(event, events) ? " · 已答复" : " · 待答复" : "";
-    return <>{title(`${messageKindLabel[payload.kind]} · 致 ${payload.recipientActorId}${state}`)}
+    return <>{title(`${messageKindLabel[payload.kind]} · 致 ${actorText(payload.recipientActorId)}${state}`)}
       <p><FixedDocument projectId={projectId} reference={payload.body} label="阅读消息正文" />
         {payload.replyToEventId && <> · <JumpTo eventId={payload.replyToEventId}>跳到所回复的消息</JumpTo></>}</p></>;
   }
@@ -119,12 +128,12 @@ function EventContent({ projectId, taskId, event, events }: { projectId: string;
     {payload.stage === "adopted" && payload.continuation && <p className="text-text-secondary">已记录采用到<a className={link}
       href={`${href(projectId, "task", taskId)}?tab=runtime&run=${encodeURIComponent(payload.continuation.runId)}`}>后续运行</a>；实际运行仍需单独核对。</p>}</>;
   if (payload.type === "action_request") return <>{title(`工程动作请求 · ${actionTypeLabel[payload.actionType] ?? "其他动作"} · ${actionRequestState(event, events)}`)}
-    <p className="text-text-secondary">请求执行者 {payload.executorActorId} · 仓库 {payload.scope.repository} · 截止 {date(payload.expiresAt)}</p>
+    <p className="text-text-secondary">请求执行者 {actorText(payload.executorActorId)} · 仓库 {payload.scope.repository} · 截止 {date(payload.expiresAt)}</p>
     <p className="text-text-secondary">精确路径：{payload.scope.paths.join("、")}</p>
     <p><FixedDocument projectId={projectId} reference={payload.detail} label="阅读动作范围与理由" /></p></>;
   if (payload.type === "action_decision") return <>{title(`工程动作决定 · ${payload.decision === "approved" ? "批准" : payload.decision === "rejected" ? "拒绝" : "已过期"}`)}
-    <p>决定者 {event.actorId} · <JumpTo eventId={payload.requestEventId}>跳到对应请求</JumpTo> · <FixedDocument projectId={projectId} reference={payload.evidence} label="阅读决定依据" /></p></>;
+    <p>决定者 {actorText(event.actorId)} · <JumpTo eventId={payload.requestEventId}>跳到对应请求</JumpTo> · <FixedDocument projectId={projectId} reference={payload.evidence} label="阅读决定依据" /></p></>;
   return <>{title(`工程动作执行回执 · ${executionStateLabel[payload.state]}`)}
-    <p>实际执行者 {event.actorId} · <JumpTo eventId={payload.requestEventId}>跳到对应请求</JumpTo> · <JumpTo eventId={payload.decisionEventId}>跳到对应决定</JumpTo></p>
+    <p>实际执行者 {actorText(event.actorId)} · <JumpTo eventId={payload.requestEventId}>跳到对应请求</JumpTo> · <JumpTo eventId={payload.decisionEventId}>跳到对应决定</JumpTo></p>
     <p><FixedDocument projectId={projectId} reference={payload.artifact} label="阅读执行产物" /></p></>;
 }

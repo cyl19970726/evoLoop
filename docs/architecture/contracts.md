@@ -64,6 +64,12 @@ Git 文档不创建 Document 行；独立 `GitSourceRef`（或等价来源元数
 
 Document 目录列表返回 ID、标题、类型、状态、当前修订和内容格式等摘要；点行后按授权读取所选不可变 DocumentRevision 的完整载荷，不依赖 Task 描述字段或外链再取内容。修订可采用 Markdown、HTML 等格式；详情层解析 Markdown，HTML 报告可保留原件并预览。固定修订的 hash 必须在读取时核验，缺失资源或无权读取时明确显示不完整/不可达，不用旧摘要伪装完整正文。
 
+每个修订保存时得到这份文档内的序号 `revisionNumber`：从 1 起按保存顺序加 1，没有空号，写入后不变（迁移 069）。序号由数据库在插入时分配，调用方显式给出序号会被拒绝，与创建时间无关：同一毫秒保存的两次修订、或服务器时钟回拨后保存的修订，仍按实际保存先后编号。它不是 Document `version`，后者在发布、归档时也会增加。单修订读取（含文档详情里的 `current`、`adopted`，以及 `/original` 返回的 `revision`）都带这个序号。迁移前已有的修订沿 `previousRevisionId` 链补号；修订不成一条链（分叉、多个起点或断链）的旧文档改按创建时间、修订 ID 补号。按链编号的文档（069 之后新建的全部文档、成链的旧文档）当前修订的序号就是总修订数，可直接显示“第 N 版 / 共 M 版”；按时间补号的旧文档在下一次修订之前不一定如此，“共 M 版”应取修订列表的 `revisionCount`（最大序号）。
+
+`GET /api/projects/:projectId/documents/:id/revisions` 按序号倒序列出一份文档的全部修订，`limit` 默认 50、上限 100。每项只有元数据：单修订读取已公开的全部字段去掉 `body`（修订 ID、序号、作者、创建时间、理由、内容 hash、格式、媒体类型、原件名、载荷引用、入口、资源清单、上一修订、组织复盘元数据），另加状态：两个布尔值 `current`（当前修订）、`published`（文档发布指针 `adoptedRevisionId` 所指的修订）和合成的 `state`。当前修订为 `current`（同时已发布时 `published` 仍为 true），其次 `published`，其余 `historical`。归档不清除发布指针，所以归档文档的那一版仍是 `published: true`，是否还算“已发布”看文档头的 `status`。正文仍从单修订的 `body`、`original` 读取并核验 hash。
+
+返回同时带同一只读快照里的文档头 `document`（`title`、`kind`、`version`、`currentRevisionId`、`adoptedRevisionId`、`status`）和修订总数 `revisionCount`。`nextCursor` 不透明，只记本页最后一条的序号，并绑定项目和文档；换文档、换项目或无法解码的游标都返回 `INVALID_CURSOR`（409），从第一页重读。序号只增不改，翻页期间新增的修订排在已读位置之前：后续页不重复、不漏项，已读到的序号不变。状态只对该页读到的文档头成立；载入多页时，用最新一页的 `document` 重算所有已载入项的状态，`document.version` 与首页不同时提示回到首页查看新修订。权限与单修订读取相同：要本项目读取权限，文档不在本项目时返回 404；受管 worker 只能按固定修订读取，修订列表由 worker 守卫拒绝（见 [Agent CLI](../development/agent-cli.md)）。本页和总数都走 `(project_id, document_id, revision_number)` 唯一索引，不读正文，扫描量也不随翻页深度增加。
+
 不可变的是原始载荷、资源清单和形成修订时的事实；当前权限、可达性、完整性核验结果和采纳状态另记带时间的观察或决定，不回写旧正文。
 
 历史修订不能沿用过去权限绕过当前授权。补齐缺失资源或修复原件要创建新修订；原件未变而只是恢复访问，则追加核验记录。GitSourceRef 和 KnowledgeRef 固定身份/版本与当前可达、撤回、待复核观察也须分开。
@@ -151,6 +157,21 @@ PG 在源写入的同一事务追加只含引用、状态与短预览的观察�
 
 目录／活动默认每页 50，变化最多 100；服务端限制 UTF-8 响应字节，超限显式分页或标注遗漏及详情入口。项目 attention 聚合独立于当前目录页。原生深度历史不进入页面轮询；token、费用和进程内存没有可靠采集时返回 null 与原因，不填 0。当前源码和隔离检查不代表新工作区、性能目标或真实消息已通过使用验收。
 
+### 项目配置只读：仓库、能力与成员
+
+`GET /api/projects/:projectId/repositories`、`.../capabilities` 与 `.../members` 只读本项目的配置，要求调用者有该项目的读取权限（无权 403，项目不存在 404）；读取不启动运行时、不改授权。类型在 `contracts/project-configuration`。三者都返回 `{projectId,status}`：`available` 带 `items`；服务没有相应来源（`reason: "not_provided"`）或来源读取失败（`read_failed`）时为 `unavailable`，不用空列表冒充“没有”。
+
+每个结论都调用服务实际执行时的同一处检查，对同一份配置得出同一结论；对应关系写在 `apps/coordinator/src/project-configuration/local.ts` 各项旁，测试逐项对照服务端的函数。
+
+- **仓库**：取服务启动时载入的集成配置 `repositories` 里本项目的条目，只给 `repositoryId` 与 `allowedPaths`。Git 来源不接受的条目（允许路径是绝对路径或越出仓库，或同一仓库登记两次）不返回。任一项目有这样的条目时，Git 来源拒绝整份登记，所有项目都读不了：此时返回 `status: "unavailable"`、`reason: "registration_invalid"`，`items` 仍列出本项目的条目，但它们当前读不了；`/api/session` 的 `sourceConfiguration.git` 也按同一规则为 false。服务器检出路径 `root` 不返回；配置里没有仓库网址，也不补造。
+- **能力**：每项为 `{key,scope,readAt,state,reason,pending}`，`state` 是 `configured`、`not_configured` 或 `unknown`，`scope` 标出只看本项目（`project`）还是全服务一项设置（`service`，文档原件与 HTML）。
+  - **按哪处检查**：Git 来源要整份仓库登记被 Git 来源接受，任一条不合法则所有项目都读不了（`repository_registration_invalid`）；知识看 `knowledge.projectIds`；日程看本项目的日程授权，持有者要有写与复核权限；任务定时与每日复制只认后缀是 UUID 的 `task-timing:` 授权和每日复制授权，持有者此刻须有读、写、复核；自动循环与编排要控制者身份有读写复核、含本项目，并在本项目某个职责下恰有一条运行授权且目录被接受；运行时看本项目的运行授权（目录须被接受），或在编排启用时控制者自己的、未过期的委派模板；飞书要有持该项目授权且能读写的身份；微信只认已启用的 `standard` 接收授权，`restricted` 不能激活，不计入。
+  - **reason**：写明是哪个开关没开（`knowledge_disabled`、`scheduling_disabled`、`orchestration_disabled`、`runtime_disabled`、`feishu_disabled`、`message_connectors_disabled`、`session_messages_disabled`、`documents_disabled`、启动时没有网关 `gateway_not_configured`），或本项目未配置、授权持有者权限不够、目录不被接受、控制者不含本项目等。
+  - **调用者**：日程、任务定时、运行时、飞书按身份授权，`state` 说本项目有没有可用授权，`callerGranted` 说当前调用者能不能用。调用者既要持有授权，所用令牌也要有请求需要的权限：新建日程和预留运行会话要复核，每日复制和飞书操作要写与复核，每日复制还要身份文件此刻认它是写者。不能用时 `callerReason` 说明原因（没有授权、令牌缺写或缺复核、此刻不是写者）。任务定时的授权按职责给，`callerGranted` 不区分职责：给某个任务设每日复制，仍要有该任务所属职责的授权。
+  - **何时生效**：`readAt` 标明服务端是启动时读（`start`：仓库、知识、编排、飞书、文档原件）还是部分在启动时读、其余在使用时重读（`start_and_use`：日程、任务定时、运行时、微信）。日程的每次执行都重读集成文件，并在它启用日程时重读身份文件，读不了时整次执行失败，所以文件读不了时日程记 `unknown`。返回的是当前实际生效的结论；磁盘上的集成文件或身份文件重启后会得出另一结论时，`pending` 给出那个结论，否则为 null。文件读不了时，依赖它的部分记 `unknown`（`configuration_unreadable` 或 `identities_unreadable`）。
+  - 只报告配置状态，不返回路径、令牌、密钥、网址、其中的凭据或控制者身份。
+- **成员**：每人给出 `identityKind` 与三项结论，各按服务端对应的检查：`canRead` 是 HTTP 认证（启动时的身份快照）接受的某一条凭据有读取权限；`canWrite` 要两边都成立：写请求用的令牌来自启动时的快照，业务写者检查 `currentProjectWriter` 每次重读身份文件，两边都要有某一条凭据有读与写，只在文件里加了写权限的人在重启前仍不能写；`canReview` 是 `hasCurrentStudyReviewer`（启动时的快照，该身份在本项目的每条凭据都有读、写、复核，几条不完整的授权不拼成完整权限）。`identityFile: "changed"` 表示本项目的身份条目自启动后被改过（只比对身份、类型与权限，不比对令牌）；此时 `pending` 给出重启后的登录、写与复核结论。本机 coordinator 用本机身份文件，`source: "local_identities"`；Hub 模式（#219）由 Hub 账户经同一注入接口提供。不返回令牌或其任何派生值，不列别的项目的成员，也不列成员能访问的其他项目。项目成员能看到同项目其他成员的身份与权限，用于选择验收人。
+
 ### UnitOfWork：同库原子命令
 
 `UnitOfWork.transaction` 和 `read` 是中立事务端口，由 PostgreSQL 适配器提供一组绑定同一连接的 Task/Document/Relation/Schedule Store、操作去重记录与 outbox 访问入口；read 使用一致的只读快照。core 先核 operation ID/摘要，再在写事务内重验对象版本、当前权限和采纳状态，一并提交相应对象、关系和待发意图；不暴露 SQL 或 `pg.Client` 给 core，也不允许各 Store 单独提交。身份或命令结构校验失败可直接拒绝而不建 Journal。合法命令因旧基线或领域规则被拒时，可用事务内 savepoint 回滚业务写，再由外层事务只提交 `rejected` 与摘要，不生成 outbox；PG 提交结果不明须按 operation ID 回读，不能伪造已拒绝。事务内只处理本库状态，网络读写、模型调用和外部发布放在提交前准备或提交后执行。
@@ -209,7 +230,17 @@ Evocation 在授权范围内对照任务负荷、结果、User Session 亲用和
 
 `GET /api/projects/:projectId/work-management/index` 提供 Leader 的当前 Task 或 Document 读取，`GET .../work-management/tasks/:taskId` 以同一投影精确读取已列出的单个 Task；两者都不启动模型、创建 Task、预约 Run 或改变 assignment/queue。Task 投影保留四态，并从 assignment、当前 Run、当前修订的 Delivery/使用观察、pending impact、跨 Task dependency 与 queue hold 派生“未分派、待接手、可开始、运行中、待交付、待验收、返工、受阻、未知、已关闭或取消”；同时给出当前 Task version/revision 与该 Task 自己的 `workChangeSequence`。创建与当前业务变化分别取首个和当前 TaskRevision 时间；“最近进展”另取该 Task 直接关联的持久 `leader_work_change` 事件，返回事件类别、名称、对象、序号和发生时间，没有可靠事件时为空，不能把 `businessChangedAt` 改名冒充业务事件。实际开始取首个 `run.bound` 事件，完成只取当前 TaskRevision 的 closure 时间。闭包或正常交付推进 TaskRevision 时，当前有效 Delivery 的 `runId` 仍保留其来源 Run；重新打开后的旧 closure、Delivery 和 Run 不会挂到新轮次。可选计划开始、截止、优先级和依赖来自独立元数据，不改变 Task 四态，优先级也不冒充模型排期。依赖只有在前置 Task 的当前 revision 已 closure，或同一 revision 的队列 claim 已 accepted release 时满足。
 
-`leader_work_change` 为 Task、Document、assignment、Run、Delivery、observation、closure、impact、queue、plan、dependency 和 Leader review 的实际变化记录持久递增序号；UUID 只保留对象身份，不作为顺序或时间水位。相关写入在同一项目事务锁下分配并提交序号，后来的序号不能越过更早的未提交写入先行提交。Leader plan/dependency/review 事务按“Workflow 已有的原始 projectId 锁 → operation 锁 → `leader-work:<projectId>` → Task 行”取得资源，与 Workflow 插入 TaskRevision 时先锁项目、再取父 Task 外键锁、最后由触发器取 Leader 锁的顺序相容，避免外键隐式锁形成 `40P01`。Task 与 Document 的派生阶段/状态排序和 `LIMIT/OFFSET` 在 PostgreSQL 内完成，只返回当前页；总数和分类计数在同快照内单独聚合。分页位置绑定当前变化序号与数字偏移，期间出现新变化即 `WORK_INDEX_CHANGED`，必须从首页重读。`GET /api/projects/:projectId/work-management/changes` 以该序号继续读取变化。读取无业务副作用；后续安排仍走既有命令与稳定 operation ID。Document 列表投影分别保留 current、adopted、draft/published/archived 和来源 Task 关系，旧记录没有可核历史时间时显示未知。
+`leader_work_change` 为 Task、Document、assignment、Run、Delivery、observation、closure、impact、queue、plan、dependency 和 Leader review 的实际变化记录持久递增序号；UUID 只保留对象身份，不作为顺序或时间水位。相关写入在同一项目事务锁下分配并提交序号，后来的序号不能越过更早的未提交写入先行提交。Leader plan/dependency/review 事务按“Workflow 已有的原始 projectId 锁 → operation 锁 → `leader-work:<projectId>` → Task 行”取得资源，与 Workflow 插入 TaskRevision 时先锁项目、再取父 Task 外键锁、最后由触发器取 Leader 锁的顺序相容，避免外键隐式锁形成 `40P01`。通用规则：凡是持有一把锁再去等另一把锁的写入，都要在事务开头先取这把原始 projectId 锁，再取行锁、项目行锁、会话槽锁或 `leader-work`。修改已有行、且其触发器还要再取锁的单条语句也算：它先锁住这一行，再由触发器取 `leader-work` 或会话槽锁，或由触发器插入的行的外键对项目行等被引用行加 key share；被修改的行本身，只有改了键列才会重新检查外键。插入新行的语句严格说也算：另一事务插入相同唯一键时要等它提交或回滚，所以插入后再等别的锁的语句同样可能成环。只锁一行、不再等其他锁的单行写入不受此限。
+
+Task 定时物化、旧 Schedule 物化、直接输入、验收安排、验收 relay tick 的写入、会话压缩，以及消息连接器的路由写入、接入与未处理事件记录，都已按此执行。以下三处持有一把锁后再取另一把锁，却没有先取项目锁；已核对不成环，暂不改：
+
+- 被拒通知的恢复（`recoverRejectedLeaderNotice`）：先锁被拒的通知行，再插入带项目外键的替代通知。持项目锁的写入者都不碰通知行，项目行上的 key share 等待不会绕回它锁住的通知行。
+- 外部投递完成（`PgOutboxDeliveryStore.finish`）：先锁 `outbox_delivery`，再锁 `collaboration_binding`。持项目锁的写入者都不锁这两张表的行。
+- 验收观察关联（`linkObservation`）：先锁验收安排行，再插入引用 `consumer_observation` 的关联记录，对观察行加 key share。观察记录从不被更新或删除，这把 key share 不会等待。
+
+会话压缩在项目锁之后只取恢复闸门和 Session 行，不取会话槽锁。相关写入的实际顺序是：直接输入和核心消息开始先锁 Session 行，再经插入处理记录取槽锁和闸门；连接器接入先共享锁住 Session 行，再在插入排队消息时取槽锁；队列认领在核心事务里。这些写入现在都先取项目锁，与压缩串行。压缩曾经和当时不取项目锁的连接器接入成环：压缩持有槽锁去等 Session 行，接入持有 Session 行去等槽锁。现在连接器接入也先取项目锁，即使压缩再取槽锁也不会成环；压缩不取槽锁，作为防御。
+
+Task 与 Document 的派生阶段/状态排序和 `LIMIT/OFFSET` 在 PostgreSQL 内完成，只返回当前页；总数和分类计数在同快照内单独聚合。分页位置绑定当前变化序号与数字偏移，期间出现新变化即 `WORK_INDEX_CHANGED`，必须从首页重读。`GET /api/projects/:projectId/work-management/changes` 以该序号继续读取变化。读取无业务副作用；后续安排仍走既有命令与稳定 operation ID。Document 列表投影分别保留 current、adopted、draft/published/archived 和来源 Task 关系，旧记录没有可核历史时间时显示未知。
 
 `PUT /api/projects/:projectId/work-management/tasks/:taskId/plan`、`/dependencies` 和 `/review` 由同时具有项目写与 review 权限者更新可选组织元数据或 Leader 处理决定，分别 CAS 当前 Task version、独立 plan/dependency version 或当前 TaskRevision。依赖替换在同项目事务内拒绝不存在对象、自依赖和 cycle；计划拒绝截止早于计划开始。处理决定还携带调用者从 Leader index 实际读到的该 Task 变化序号，并在同一项目事务锁内与最新同 Task 序号比较；不匹配返回 `WORK_INDEX_CHANGED`，不能用写入时的最新值替调用者补确认。决定只记 `acknowledged` 或 `deferred`、理由、actor、operation、固定版本和该确认位置，不把暂缓写成 Task 取消；之后出现的 plan、dependency、assignment、Run、Delivery、观察、impact、queue 或 Task 修订变化会使旧决定退出当前摘要，需要重新核对。三项都写 operation journal 与单调变化记录，同 operation/actor/正文重放返回已提交结果，改变正文则冲突。该元数据不改 Task 四态、依据、Run 或验收事实，也不产生外部 outbox 投影；Task 创建和详情中的字段编辑仍须随共享 Task 合同接线。
 
@@ -357,6 +388,7 @@ Task 协作通道把 question/answer/progress/blocker/handoff/result 固定到�
 
 - **首个时点只释放原 Task。** 后续每个时点新建一条普通 todo Task，有自己的 ID、主正文修订和历史；复制的是系列当前的“未来有效要求”，不从旧副本递归取正文。分派、Run、Delivery、观察、关闭和成本都不复制，每份 Task 独立产生。
 - **复制前重核资格。** 物化在同一事务里重核授权、owner Role、Stage、消费者与验收要求、可读材料和系列版本；任一失效就保留原记录并给出原因，交 Leader 处理，不降级成无 Stage、无消费者或弱验收的 Task。
+- **与核心写入同一锁序。** 每次物化只处理一个项目，事务开头先取核心写入用的项目锁，再锁系列行、共享锁住要重核的关联对象、插入新 Task；否则它与修订同一份关联 Document 的核心写入会互相等待，出现 `40P01`。代价是物化与该项目的核心写入串行。
 - **漏时与串行。** 只补最近一个漏掉的时点并记下漏掉的数量；前一份未完成或结果未知时，新一份照常生成，但标为系列串行等待，不自动开工。
 - **停止只停未来。** 停止系列后不再生成新的时点，已生成和在途的 Task 不受影响，下一时点显示为空。
 - **授权。** 私有配置 `scheduling.taskTimingGrants` 按项目、业务 actor 和 owner Role 授权每日重复；它不能创建旧 Schedule，也不授予 Session 或 Run 的执行资格。一次性时点和停止系列不需要这项授权。

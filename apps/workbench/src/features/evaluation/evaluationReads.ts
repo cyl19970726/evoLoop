@@ -5,6 +5,7 @@ import { useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import type { EvaluationFixedRef, EvaluationRevision } from "@evoloop/contracts";
 import { api } from "../../shared/api";
+import { readRevisionHead } from "../../shared/useDocumentRevisions";
 import { readOwnerRole } from "../../shared/ownerRole";
 import { queryKeys, useProjectQuery } from "../../shared/query";
 import { runtimeClient } from "../../shared/runtimeClient";
@@ -84,8 +85,9 @@ export function useFixedTitles(projectId: string, evaluationId: string, revision
   return useProjectQuery(projectId, ["evaluation", evaluationId, "titles", revisionId], async () => {
     const rows = await Promise.all(documents.map(async (ref): Promise<[string, string | null]> => {
       try {
-        const [detail, fixed] = await Promise.all([api().document(projectId, ref.id), api().documentRevision(projectId, ref.id, ref.revision)]);
-        return [fixedTitleKey(ref), verifiedFixedDocumentTitle(ref, projectId, detail.document, fixed)];
+        // The name comes from the head of the revision list, which reads no text; the cited revision is read to check its hash.
+        const [head, fixed] = await Promise.all([readRevisionHead(projectId, ref.id), api().documentRevision(projectId, ref.id, ref.revision)]);
+        return [fixedTitleKey(ref), verifiedFixedDocumentTitle(ref, projectId, { ...head, projectId }, fixed)];
       } catch { return [fixedTitleKey(ref), null]; }
     }));
     return Object.fromEntries(rows.filter((row): row is [string, string] => !!row[1]));

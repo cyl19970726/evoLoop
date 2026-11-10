@@ -13,13 +13,18 @@ import { ApiError, request } from "../../shared/api";
 import type { MutationContext } from "../../shared/ActionForm";
 import { queryKeys, useProjectQuery } from "../../shared/query";
 import { queueClient } from "../../shared/queueClient";
+import { hereOrigin, withReturn } from "../../shared/returnLink";
+import { taskOrigin } from "./taskOrigin";
 import { FullIdentifiers } from "../../shared/ui/FullIdentifiers";
 import { date, href } from "../../shared/ui/shared";
 import { CommandForm } from "../../shared/command";
-import { readAgent } from "./agentRead";
+import { agentDisplayName } from "../../shared/agentNamePresentation";
+import { readAgent } from "../../shared/agentRead";
 import { queueAdoptCommand, queueAmendCommand, queueHoldCommand, queueReorderCommand, queueUnholdCommand } from "./taskCommands";
 import { runStateName } from "./taskExperience";
 import { ActionRow, Fine, ReadNote, reasonField } from "./TaskForms";
+import { actorText } from "../../shared/actorPresentation";
+import { ActorIdentifiers } from "../../shared/ui/ActorIdentifiers";
 
 const maxNamedEntries = 24;
 const key = encodeURIComponent;
@@ -94,19 +99,20 @@ function QueueCard({ context, queue, task, sessionId, runs, sessions, round }: {
   const ordered = shown.entries.filter(entry => !sessionId || entry.sessionId === sessionId).sort((a, b) => a.position - b.position);
   const groups = new Map<string, ResidentQueueEntry[]>();
   for (const entry of ordered) groups.set(entry.sessionId, [...groups.get(entry.sessionId) ?? [], entry]);
-  // Names are read for at most 24 entries: first what occupies each agent and what is next for it.
+  // Names are read for at most 24 entries: first what occupies each agent and what is next for it. A name that comes
+  // into this set (a reread moved the order: a new next in line) is read again, not taken from an earlier read.
   const priority = [...groups.values()].flatMap(entries => [entries.find(entry => entry.state === "claimed"), entries.find(entry => entry.state === "queued")]
     .filter((entry): entry is ResidentQueueEntry => !!entry));
   const named = [...new Map([...priority, ...ordered].map(entry => [entry.id, entry])).values()].slice(0, maxNamedEntries);
   const taskIds = [...new Set(named.map(entry => entry.taskId))].filter(id => id !== task?.id);
   const roleIds = [...new Set(named.map(entry => entry.roleId))];
-  const taskReads = useQueries({ queries: taskIds.map(id => ({ queryKey: queryKeys.project(projectId, "task", id, "detail"), enabled: opened, retry: false,
+  const taskReads = useQueries({ queries: taskIds.map(id => ({ queryKey: queryKeys.project(projectId, "task", id, "detail"), enabled: opened, retry: false, refetchOnMount: "always" as const,
     queryFn: async () => {
       const value = await request<TaskDetail>("", `/api/projects/${key(projectId)}/tasks/${key(id)}`, 15000);
       if (value.task.projectId !== projectId || value.task.id !== id) throw new Error("名称响应与当前项目或任务不符");
       return value;
     } })) });
-  const roleReads = useQueries({ queries: roleIds.map(id => ({ queryKey: queryKeys.project(projectId, "roles", id), enabled: opened, retry: false,
+  const roleReads = useQueries({ queries: roleIds.map(id => ({ queryKey: queryKeys.project(projectId, "roles", id), enabled: opened, retry: false, refetchOnMount: "always" as const,
     queryFn: async () => {
       const value = await request<RoleRecord>("", `/api/projects/${key(projectId)}/roles/${key(id)}`, 15000);
       if (value.projectId !== projectId || value.id !== id) throw new Error("名称响应与当前项目或职责不符");
@@ -186,18 +192,18 @@ function QueueCard({ context, queue, task, sessionId, runs, sessions, round }: {
 function AgentQueue({ context, queue, agentId, entries, session, runs, attempts, attemptsRead, task, taskTitle, roleTitle, canWrite }: {
   context: MutationContext; queue: ResidentQueue; agentId: string; entries: ResidentQueueEntry[]; session?: RuntimeSessionRecord | undefined;
   runs: RuntimeRunRecord[]; attempts: Map<string, import("@evoloop/contracts/queues").QueueAttempt[]>; attemptsRead: boolean;
-  task?: Pick<Task, "id"> | undefined; taskTitle(id: string): string; roleTitle(id: string): string; canWrite: boolean;
+  task?: Pick<Task, "id" | "title"> | undefined; taskTitle(id: string): string; roleTitle(id: string): string; canWrite: boolean;
 }) {
   const projectId = context.projectId;
   const agentKey = `owned:${agentId}`;
   const agent = useProjectQuery(projectId, ["session-names", agentKey], signal => readAgent(projectId, agentKey, signal));
-  const name = agent.data?.profile?.displayName?.trim() || agent.data?.title || (agent.error ? "智能体（名称暂不可读）" : "智能体（名称待读取）");
+  const name = agent.data ? agentDisplayName(agent.data) : agent.error ? "智能体（名称暂不可读）" : "智能体（名称待读取）";
   const current = entries.find(entry => entry.state === "claimed");
   const next = entries.find(entry => entry.state === "queued");
   let priorReleased = true;
   return <div className="flex min-w-0 flex-col gap-2" data-queue-agent={agentId}>
     <h4 className="flex flex-wrap items-center gap-2 text-label font-semibold text-foreground">
-      <a className="text-primary hover:underline" href={`${href(projectId, "sessions")}?session=${key(agentKey)}`}>{name}</a>
+      <a className="text-primary hover:underline" href={withReturn(`${href(projectId, "sessions")}?session=${key(agentKey)}`, task ? taskOrigin(projectId, task, context.principal.actorId) : hereOrigin(context.principal.actorId))}>{name}</a>
       <span className="text-caption font-normal text-muted-foreground">{session ? agentState[session.state] ?? "状态待核对" : "状态未在这里读到"}</span>
     </h4>
     <p className="text-label text-text-secondary">当前占用：{current ? taskTitle(current.taskId) : "没有已确认的占用"}；后续顺位：{next ? `${taskTitle(next.taskId)}（不代表可以启动）` : "没有"}</p>
@@ -217,7 +223,8 @@ function AgentQueue({ context, queue, agentId, entries, session, runs, attempts,
           <StatusTag tone={standing.tone} label={standing.label} />
           <a className="min-w-0 text-label text-primary hover:underline [overflow-wrap:anywhere]" href={entryHref}>{taskTitle(entry.taskId)}</a>
         </div>
-        <Fine>承接职责 <a className="text-primary hover:underline" href={`${href(projectId, "roles")}?role=${key(entry.roleId)}`}>{roleTitle(entry.roleId)}</a> · 验收者 {entry.consumerId} · 放行规则 {entry.releaseRule === "accepted" ? entry.useRequired ? "验收者实际使用并验收" : "验收者验收" : "有界的人工决定"}</Fine>
+        <Fine>承接职责 <a className="text-primary hover:underline" href={`${href(projectId, "roles")}?role=${key(entry.roleId)}`}>{roleTitle(entry.roleId)}</a> · 验收者 {actorText(entry.consumerId)} · 放行规则 {entry.releaseRule === "accepted" ? entry.useRequired ? "验收者实际使用并验收" : "验收者验收" : "有界的人工决定"}</Fine>
+        <ActorIdentifiers actors={[["验收者", entry.consumerId]]} />
         {dependencies.length > 0 && <Fine>要先放行：{dependencies.map(item => taskTitle(item.taskId)).join("、")}</Fine>}
         {entry.holdCode && <p className="text-caption text-warning [overflow-wrap:anywhere]">{holdLabel[entry.holdCode]}{entry.holdReason ? `：${entry.holdReason}` : ""}</p>}
         {entry.state === "claimed" && <Fine>这一项占用着这个智能体；后面的项即使有序号也不表示已经启动。</Fine>}

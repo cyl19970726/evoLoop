@@ -120,6 +120,28 @@ export function managedWorkerEvidence(options: {
   return {factsForWorker,canReadDivisionMaterial};
 }
 
+/**
+ * The managed loop controller: the first configured identity named by `controllerActorId`, and its runtime grants in
+ * the projects that identity has. Loops run in those projects only.
+ */
+export function managedLoopController<G extends {projectId: string; actorId: string}>(credentials: AuthConfig,
+  controllerActorId: string, runtimeGrants: readonly G[]) {
+  const entry = credentials.find(value => value.actorId === controllerActorId);
+  return {entry, grants: entry ? runtimeGrants.filter(value => value.actorId === entry.actorId && entry.projectIds.includes(value.projectId)) : []};
+}
+/** Without read, write and review the service does not start managed loops at all. */
+export const controllerAuthorized = (entry: AuthConfig[number]): boolean =>
+  (["read", "write", "review"] as const).every(permission => entry.permissions.includes(permission));
+/** The controller acts for a project's Role only through exactly one grant; none or several leave the Role without it. */
+export function managedControllerGrant<G extends {projectId: string; roleId: string}>(grants: readonly G[],
+  projectId: string, roleId: string): G | null {
+  const matches = grants.filter(value => value.projectId === projectId && value.roleId === roleId);
+  return matches.length === 1 ? matches[0]! : null;
+}
+/** A delegation template a dynamic binding can still use: the controller's own, and not expired. */
+export const usableDelegationTemplate = (template: {actorId: string; expiresAtUtc: string}, controllerActorId: string,
+  nowUtc: string): boolean => template.actorId === controllerActorId && Date.parse(template.expiresAtUtc) > Date.parse(nowUtc);
+
 export function setupManagedLoops(options: {
   pool: Pool; workflow: WorkflowService; runtime: RuntimeRunner | null;
   integrations: Awaited<ReturnType<typeof loadIntegrations>>; credentials: AuthConfig;
@@ -134,13 +156,12 @@ export function setupManagedLoops(options: {
   const root = resolve(config.workerRoot), checkout = resolve(options.projectRoot);
   if (!isAbsolute(config.workerRoot) || root === checkout || root.startsWith(checkout + sep))
     throw new Error("Worker credentials require an external private directory");
-  const entry = options.credentials.find(value => value.actorId === config.controllerActorId);
-  if (!entry || !["read", "write", "review"].every(permission => entry.permissions.includes(permission as "read" | "write" | "review")))
+  const {entry, grants} = managedLoopController(options.credentials, config.controllerActorId, options.integrations.runtime.grants);
+  if (!entry || !controllerAuthorized(entry))
     throw new Error("Managed loop controller requires one configured reviewer identity");
   const controllerPrincipal: Principal = {actorId: entry.actorId, projectIds: [...entry.projectIds], permissions: [...entry.permissions]};
   const currentStudyReviewer = async (projectId: string, actorId: string) =>
     hasCurrentStudyReviewer(options.credentials,projectId,actorId);
-  const grants = options.integrations.runtime.grants.filter(value => value.actorId === entry.actorId && entry.projectIds.includes(value.projectId));
   const broker = new WorkerCredentialBroker({workerRoot: root, apiUrl: options.apiUrl,
     cliMain: options.cliMain, nodeExecutable: process.execPath, ttlMs: config.credentialTtlMs,
     receiptDirectory: scope => {
@@ -153,10 +174,8 @@ export function setupManagedLoops(options: {
     workflow:options.workflow,broker,controllerPrincipal,currentStudyReviewer,
     runSessionAvailable:options.runSessionAvailable,verifyProposalMaterial:options.verifyProposalMaterial});
   const controller = async (projectId: string, roleId: string) => {
-    const matches = grants.filter(value => value.projectId === projectId && value.roleId === roleId);
-    if (matches.length !== 1) return null;
-    const grant = matches[0]!;
-    if (!await options.integrations.allowedRuntimeCwd(projectId, grant.cwd)) return null;
+    const grant = managedControllerGrant(grants, projectId, roleId);
+    if (!grant || !await options.integrations.allowedRuntimeCwd(projectId, grant.cwd)) return null;
     return {principal: controllerPrincipal, authorizationScopeId: grant.authorizationScope, cwd: grant.cwd,
       ...(grant.model ? {model: grant.model} : {}), sandbox: grant.sandbox, approvalPolicy: grant.approvalPolicy,
       skillPath: join(checkout, ".agents/skills/evoloop-workflow/SKILL.md")};
@@ -207,8 +226,8 @@ export function setupManagedLoops(options: {
           AND rd.decision='accept-trial')`, [dispatch.projectId, binding.roleId]);
       if (!loop || loop.state !== "active" || !policy || policy.bindingByRole[binding.roleId] !== binding.id ||
         !template || template.hash !== binding.template.hash || template.template.revision !== binding.template.revision ||
-        template.template.actorId !== binding.actorId || template.template.authorizationScopeId !== binding.authorizationScopeId ||
-        Date.parse(template.template.expiresAtUtc) <= Date.parse(options.now()) ||
+        !usableDelegationTemplate(template.template, binding.actorId, options.now()) ||
+        template.template.authorizationScopeId !== binding.authorizationScopeId ||
         !["trial", "active"].includes(role.rows[0]?.state)) return null;
     }
     return { principal: controllerPrincipal, authorizationScopeId: binding.authorizationScopeId,

@@ -58,7 +58,7 @@ export function KnowledgeReview({ projectId, list, candidateId, candidate, sourc
     <header className="flex flex-col gap-2 compact:pr-12">
       {toolbar}
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <h1 tabIndex={-1} className="text-title font-semibold leading-[1.3] outline-none">候选与审阅</h1>
+        <h1 tabIndex={-1} className="text-title font-semibold leading-(--leading-tight) outline-none">候选与审阅</h1>
         <Button variant="ghost" size="compact" onClick={onReread}>重新读取</Button>
       </div>
       <p className="text-small text-text-secondary">候选、审阅、发布各自独立：接受只记录决定，发布才写成新的固定版本，之后是否被用上另看使用记录。</p>
@@ -111,7 +111,7 @@ function CandidateDetail({ projectId, read, actions }: { projectId: string; read
       </div>
     </div>
     <div className="flex flex-col gap-1.5">
-      <h2 className="text-heading font-semibold leading-[1.35] [overflow-wrap:anywhere]">{candidate.title}</h2>
+      <h2 className="text-heading font-semibold leading-(--leading-tight) [overflow-wrap:anywhere]">{candidate.title}</h2>
       <p className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-label text-text-secondary">
         <StatusTag tone={candidateStatusTone[candidate.status] ?? "unknown"} label={label(candidateStatusLabel, candidate.status)} />
         <span>{label(pageTypeLabel, candidate.pageType)}</span><span aria-hidden="true">·</span>
@@ -123,7 +123,7 @@ function CandidateDetail({ projectId, read, actions }: { projectId: string; read
     <Tabs defaultValue="rendered">
       <TabsList aria-label="阅读方式" className="mb-2"><TabsTrigger value="rendered">排版</TabsTrigger><TabsTrigger value="source">原文</TabsTrigger></TabsList>
       <TabsContent value="rendered" className={readingProse}>
-        <MarkdownBody source={candidate.body} identity={`knowledge-candidate-${candidate.candidateId}-${candidate.candidateRevision}`} omitLeadingTitle={candidate.title} projectId={projectId} />
+        <MarkdownBody source={candidate.body} identity={`knowledge-candidate-${candidate.candidateId}-${candidate.candidateRevision}`} omitLeadingTitle={candidate.title} projectId={projectId} topHeading={3} />
       </TabsContent>
       <TabsContent value="source"><pre className={readingSource}>{candidate.body}</pre></TabsContent>
     </Tabs>

@@ -4,7 +4,10 @@
 // the fixed version, the source and the person's decision. Each write is the shared command form (shared/command:
 // useCommand with CommandFrame): the receipt is saved before sending, an unknown result is checked by its original
 // operation ID, and the task decision sends the task version and revision recorded when the form opened. The writes go
-// to the reference routes with the same fields as before (referenceCommands.ts).
+// to the reference routes with the same fields as before (referenceCommands.ts). The repository is chosen from the ones
+// the service configured for the project and the path checked against its allowed paths (RepositoryChoice.tsx); the
+// commit and hash are typed (the page cannot read them) and say at once what is wrong with a value. The formal decision
+// chooses its document and revision by name (FormalSourceFields.tsx), identifiers in the source layer.
 import { useEffect, useState, type ReactNode } from "react";
 import type { CommandResult } from "@evoloop/contracts";
 import type { KnowledgeRevision, KnowledgeSummary } from "@evoloop/contracts/knowledge";
@@ -17,9 +20,16 @@ import { useProjectQuery } from "../../shared/query";
 import { FullIdentifiers } from "../../shared/ui/FullIdentifiers";
 import { mutedText } from "../../shared/ui/PageParts";
 import { date } from "../../shared/ui/shared";
+import { allowedPathProblem, allowedPathsText } from "../../shared/repositoryPresentation";
 import { FixedGitOriginalReader } from "./FixedGitOriginalReader";
+import { GitReferenceChoice, ProcessRevisionChoice, type RegisteredGit } from "./FormalSourceFields";
 import { checkReferenceCommand, formalDecisionCommand, gitReferenceCommand, referenceBody, referencePath, taskReferenceCommand } from "./referenceCommands";
-import { epistemicLabel, formalDecisionLabel, referenceDecisionLabel, referenceLine, slotHeads, validityLabel } from "./referencePresentation";
+import {
+  commitProblem, epistemicLabel, formalDecisionLabel, hashProblem, pathProblem, referenceDecisionLabel, referenceLine, slotHeads, validityLabel,
+} from "./referencePresentation";
+import { RepositoryChoice, useRepositoryChoice } from "./RepositoryChoice";
+import { actorText } from "../../shared/actorPresentation";
+import { ActorIdentifiers } from "../../shared/ui/ActorIdentifiers";
 
 type FixedKnowledge = Pick<KnowledgeRevision, "knowledgeId" | "revision" | "title" | "contentHash" | "validity" | "observedValidity" | "epistemicStatus" | "sources">;
 type WriteName = "git" | "formal" | "adopt";
@@ -98,6 +108,9 @@ export function ReferencePanel({ context, taskId, taskRevisionId, taskVersion }:
   const [processRevisionId, setProcessRevisionId] = useState("");
   const [formalDecision, setFormalDecision] = useState<"adopted" | "rejected" | "incorporated">("adopted");
   const [formalReason, setFormalReason] = useState("");
+  // The Git source registered last here (named in words in the formal form), and whether its reference is being retyped.
+  const [registered, setRegistered] = useState<RegisteredGit | null>(null);
+  const [editingGitReference, setEditingGitReference] = useState(false);
   // 为当前任务修订采用外部依据
   const [openGitDecisionId, setOpenGitDecisionId] = useState<string | null>(null);
   const [referenceId, setReferenceId] = useState("");
@@ -140,6 +153,7 @@ export function ReferencePanel({ context, taskId, taskRevisionId, taskVersion }:
   }, [fixedKnowledge?.knowledgeId, fixedKnowledge?.revision, fixedKnowledge?.contentHash]); // eslint-disable-line react-hooks/exhaustive-deps
   const heads = slotHeads(history.data ?? []);
 
+  const repositories = useRepositoryChoice(projectId, canWrite && opened.git, repositoryId);
   const gitDirty = !!(repositoryId || path || commit || contentHash);
   const formalDirty = !!(processDocumentId || processRevisionId || formalReason);
   const adoptDirty = !!(reason || actionImpact || headVersion > 0 || knowledgeId || referenceId && kind !== "wiki");
@@ -171,9 +185,15 @@ export function ReferencePanel({ context, taskId, taskRevisionId, taskVersion }:
 
   function register() {
     const values = { repositoryId, path, commit, contentHash };
-    void gitCommand.submit(() => gitReferenceCommand(values, { referenceId: crypto.randomUUID(), taskId }), result => {
+    // A path the chosen repository does not allow is said before sending; the body is the same as when it was typed.
+    const outside = allowedPathProblem(path, repositories.chosen);
+    void gitCommand.submit(() => {
+      if (outside) throw new Error(outside);
+      return gitReferenceCommand(values, { referenceId: crypto.randomUUID(), taskId });
+    }, result => {
       // The registered source fills the two forms that name it.
-      setFormalGitId(result.entityId); setKind("git"); setReferenceId(result.entityId);
+      setRegistered({ referenceId: result.entityId, repositoryId: values.repositoryId.trim(), path: values.path.trim(), commit: values.commit, contentHash: values.contentHash });
+      setFormalGitId(result.entityId); setEditingGitReference(false); setKind("git"); setReferenceId(result.entityId);
       setReferenceRevision(values.commit); setReferenceHash(values.contentHash);
       if (headVersion > 0) setDecision("replace");
       setRepositoryId(""); setPath(""); setCommit(""); setContentHash("");
@@ -218,7 +238,8 @@ export function ReferencePanel({ context, taskId, taskRevisionId, taskVersion }:
         return <li key={item.id} className="flex min-w-0 flex-col gap-1.5 border-t border-border py-3 first:border-t-0" data-reference-decision={item.id}>
           <p className="text-label font-medium text-foreground">{referenceLine(item)}{head ? "" : " · 已有更新的决定"}</p>
           <p className="text-label text-text-secondary [overflow-wrap:anywhere]">会改变的实际行动：{item.actionImpact}</p>
-          <p className={mutedText}>{item.actorId} · {date(item.createdAt)} · 理由：{item.reason}</p>
+          <p className={mutedText}>{actorText(item.actorId)} · {date(item.createdAt)} · 理由：{item.reason}</p>
+          <ActorIdentifiers actors={[["登记者", item.actorId]]} />
           <div className="flex flex-wrap gap-2">
             {item.kind === "git" && <Button size="compact" variant="ghost" aria-expanded={openGitDecisionId === item.id}
               onClick={() => setOpenGitDecisionId(current => current === item.id ? null : item.id)}>{openGitDecisionId === item.id ? "收起固定 Git 原文" : "阅读固定 Git 原文"}</Button>}
@@ -234,12 +255,16 @@ export function ReferencePanel({ context, taskId, taskRevisionId, taskVersion }:
     {canWrite ? <WriteBlock title="登记 Git 固定来源" description="服务端按完整 commit 读取原文并核对 SHA-256，一致才登记。" open={opened.git} onToggle={toggle("git")}>
       <CommandFrame context={context} command={savedView(gitCommand, taskId && canReview ? "已保存。登记的固定引用已填入下面两张表单。"
         : canReview ? "已保存。登记的固定引用已填入下面的表单。" : "已保存。")}
-        label="登记 Git 固定来源" submitLabel="核验并登记" dirty={gitDirty} onSubmit={register} surface="plain"
+        label="登记 Git 固定来源" submitLabel="核验并登记" dirty={gitDirty} onSubmit={register} surface="plain" paused={repositories.held}
         onKeep={() => gitCommand.rebase()} onRefill={() => { gitCommand.rebase(); setRepositoryId(""); setPath(""); setCommit(""); setContentHash(""); }}>
-        <Field label="仓库">{props => <Input {...props} value={repositoryId} autoComplete="off" onChange={event => setRepositoryId(event.target.value)} />}</Field>
-        <Field label="相对路径">{props => <Input {...props} value={path} autoComplete="off" onChange={event => setPath(event.target.value)} />}</Field>
-        <Field label="完整 commit" hint="40 或 64 位十六进制">{props => <Input {...props} value={commit} autoComplete="off" onChange={event => setCommit(event.target.value)} />}</Field>
-        <Field label="原文 SHA-256" hint="64 位小写十六进制">{props => <Input {...props} value={contentHash} autoComplete="off" onChange={event => setContentHash(event.target.value)} />}</Field>
+        <RepositoryChoice choice={repositories} value={repositoryId} onChange={setRepositoryId} />
+        <Field label="相对路径" hint={repositories.chosen ? `从仓库根目录算起，要在 ${allowedPathsText(repositories.chosen.allowedPaths)} 之内。`
+          : "从仓库根目录算起，例如 docs/api.md；要在服务端允许读取的目录里。"} error={pathProblem(path) ?? allowedPathProblem(path, repositories.chosen)}>
+          {props => <Input {...props} value={path} autoComplete="off" spellCheck={false} onChange={event => setPath(event.target.value)} />}</Field>
+        <Field label="完整 commit" hint="文件所在提交的完整哈希，40 或 64 位小写十六进制；在仓库里用 git log 或 git rev-parse 查到。工作台不能替你读取。"
+          error={commitProblem(commit)}>{props => <Input {...props} value={commit} autoComplete="off" spellCheck={false} className="font-mono" onChange={event => setCommit(event.target.value)} />}</Field>
+        <Field label="原文 SHA-256" hint="这个提交里该文件全部字节的 SHA-256，64 位小写十六进制；可用 git show 提交:路径 | shasum -a 256 算出。服务端会按它核对原文。"
+          error={hashProblem(contentHash)}>{props => <Input {...props} value={contentHash} autoComplete="off" spellCheck={false} className="font-mono" onChange={event => setContentHash(event.target.value)} />}</Field>
       </CommandFrame>
     </WriteBlock> : <p className={mutedText}>当前身份没有写入权限，不能登记 Git 固定来源。</p>}
     {canReview ? <WriteBlock title="记录正式文档与过程文档的关系" open={opened.formal} onToggle={toggle("formal")}
@@ -247,12 +272,16 @@ export function ReferencePanel({ context, taskId, taskRevisionId, taskVersion }:
       <CommandFrame context={context} command={savedView(formalCommand, "已保存。")} label="记录正式文档与过程文档的关系" submitLabel="记录关系"
         dirty={formalDirty} onSubmit={recordFormal} surface="plain" permission="review" onKeep={() => formalCommand.rebase()}
         onRefill={() => { formalCommand.rebase(); setProcessDocumentId(""); setProcessRevisionId(""); setFormalReason(""); setFormalDecision("adopted"); }}>
-        <Field label="固定 Git 引用" hint="登记 Git 固定来源后自动填入">{props => <Input {...props} value={formalGitId} autoComplete="off" onChange={event => setFormalGitId(event.target.value)} />}</Field>
-        <Field label="过程文档">{props => <Input {...props} value={processDocumentId} autoComplete="off" onChange={event => setProcessDocumentId(event.target.value)} />}</Field>
-        <Field label="过程文档修订">{props => <Input {...props} value={processRevisionId} autoComplete="off" onChange={event => setProcessRevisionId(event.target.value)} />}</Field>
+        <GitReferenceChoice projectId={projectId} enabled={opened.formal} value={formalGitId} onChange={setFormalGitId} registered={registered}
+          editing={editingGitReference} onEditing={setEditingGitReference} />
+        <ProcessRevisionChoice projectId={projectId} enabled={opened.formal} documentId={processDocumentId} revisionId={processRevisionId}
+          onDocument={setProcessDocumentId} onRevision={setProcessRevisionId} />
         <Field label="决定">{props => <Select {...props} className={wide} value={formalDecision} onChange={event => setFormalDecision(event.target.value as typeof formalDecision)}>
           {Object.entries(formalDecisionLabel).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</Select>}</Field>
         <Field label="理由">{props => <Textarea {...props} value={formalReason} onChange={event => setFormalReason(event.target.value)} />}</Field>
+        <FullIdentifiers summary="将要记录的完整标识" rows={[{ label: "固定 Git 引用", value: formalGitId.trim() },
+          ...registered && formalGitId.trim() === registered.referenceId ? [{ label: "固定 commit", value: registered.commit }, { label: "原文 SHA-256", value: registered.contentHash }] : [],
+          { label: "过程文档", value: processDocumentId }, { label: "过程文档修订", value: processRevisionId }]} />
       </CommandFrame>
     </WriteBlock> : <p className={mutedText}>当前身份没有复核权限，不能记录正式文档关系或采用外部依据。</p>}
     {taskId && canReview && <WriteBlock id={`reference-adopt-${taskId}`} title="为当前任务修订采用外部依据" open={opened.adopt} onToggle={toggle("adopt")}

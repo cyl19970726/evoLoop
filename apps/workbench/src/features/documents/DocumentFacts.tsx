@@ -1,15 +1,20 @@
-// The right column for an open document (docs/frontend/layout.md 右栏): 版本 → 来源 → 引用它的任务 → 页内目录,
+// The right column for an open document (docs/frontend/layout.md 右栏): 版本 → 全部版本 → 来源 → 引用它的任务 → 页内目录,
 // each a block that folds on its own. Raw IDs and hashes live here, in the source layer, never in the text.
 import React, { type RefObject } from "react";
 import { ChevronRight } from "lucide-react";
 import type { DocumentDetail, DocumentRevision, DocumentTaskReference } from "@evoloop/contracts";
-import { Notice, RefreshingIndicator, StatusTag } from "@evoloop/ui";
+import { ListRow, Notice, RefreshingIndicator, StatusTag } from "@evoloop/ui";
 import { api } from "../../shared/api";
+import { revisionLine, revisionNumberText, revisionStateText } from "../../shared/documentRevisions";
+import type { DocumentRevisionList } from "../../shared/useDocumentRevisions";
+import { RevisionListStatus } from "../../shared/ui/RevisionListStatus";
 import { useProjectQuery } from "../../shared/query";
+import { useRevisionOrigin } from "../../shared/useRevisionOrigin";
 import { href } from "../../shared/routes";
 import { ContextPanelContent, useContextPanel } from "../../shared/ui/ContextPanel";
 import { date } from "../../shared/ui/shared";
 import { DocumentOrigin } from "./DocumentOrigin";
+import { documentOrigin, taskLinkFrom } from "./taskLinks";
 import { DocumentOutline } from "./DocumentOutline";
 import { OwnerName } from "./OwnerName";
 import { TaskPeek } from "./TaskPeek";
@@ -55,18 +60,40 @@ function useReferencingTasks(projectId: string, documentId: string) {
   });
 }
 
-export function DocumentFacts({ projectId, detail, revision, body }: {
+/**
+ * Every revision of the document, newest first, each opening the read-only page of that version (第 N 版, how it stands
+ * by the newest head read, when, by whom and why); more pages on request.
+ */
+function AllVersions({ projectId, documentId, reading, revisions }: { projectId: string; documentId: string; reading: string; revisions: DocumentRevisionList }) {
+  const { model } = revisions;
+  return <div className="flex flex-col gap-2">
+    {model && model.items.length > 0 && <ul aria-label="全部版本" className="flex flex-col gap-0.5">{model.items.map(item => <li key={item.id}>
+      <ListRow href={href(projectId, "document", documentId, item.id)} selected={item.id === reading}
+        title={`第 ${item.revisionNumber} 版 · ${revisionStateText(item, model.head.status)}`}
+        meta={revisionLine(item, date)} trailing={item.id === reading ? "正在读" : undefined} className="px-2" />
+    </li>)}</ul>}
+    <RevisionListStatus list={revisions} noun="版本" />
+  </div>;
+}
+
+export function DocumentFacts({ projectId, detail, revision, body, actorId, revisions }: {
   projectId: string; detail: DocumentDetail; revision: DocumentRevision; body: RefObject<HTMLElement | null>;
+  /** The reader, so a task opened from here comes back to this document. */
+  actorId?: string;
+  /** The document's revision list (read by the page, which says 第 N 版 / 共 M 版 too). */
+  revisions: DocumentRevisionList;
 }) {
   const { document } = detail;
   const panel = useContextPanel();
   const standing = readingStanding(revision.id, detail);
   const tasks = useReferencingTasks(projectId, document.id);
+  const from = actorId ? documentOrigin(projectId, document, actorId) : null;
+  const origin = useRevisionOrigin(projectId, { actorId: revision.author, reason: revision.reason });
   const openTask = (event: React.MouseEvent, reference: DocumentTaskReference) => {
     if (!panel || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
     event.preventDefault();
-    panel.openInPanel({ id: `task:${reference.id}`, title: reference.title, href: href(projectId, "task", reference.id),
-      render: () => <TaskPeek projectId={projectId} reference={reference} documentTitle={document.title} /> });
+    panel.openInPanel({ id: `task:${reference.id}`, title: reference.title, href: taskLinkFrom(projectId, reference.id, from),
+      render: () => <TaskPeek projectId={projectId} reference={reference} documentTitle={document.title} from={from} /> });
   };
   const revisionLink = (target: DocumentRevision, label: string) => target.id === revision.id
     ? <span>{label} · 正在读</span>
@@ -74,13 +101,14 @@ export function DocumentFacts({ projectId, detail, revision, body }: {
   return <ContextPanelContent><div data-ui="" aria-label="文档版本、来源与关联" role="region">
     <Block title="版本">
       <div className="flex flex-col gap-2.5">
-        <Fact label="正在读">{standing.label}<span className="block text-caption text-muted-foreground">{date(revision.createdAt)} · {revision.author}</span></Fact>
+        <Fact label="正在读">{standing.label}<span className="block text-caption text-muted-foreground">
+          {[revisionNumberText(revision.revisionNumber, revisions.model?.count), date(revision.createdAt), origin.author].filter(Boolean).join(" · ")}</span></Fact>
         <Fact label="当前版">{revisionLink(detail.current, date(detail.current.createdAt))}</Fact>
         <Fact label="已发布版">{detail.adopted ? revisionLink(detail.adopted, date(detail.adopted.createdAt)) : "尚未发布"}</Fact>
         {revision.previousRevisionId && <Fact label="上一版"><a href={href(projectId, "document", document.id, revision.previousRevisionId)} className="text-primary hover:underline">阅读上一版</a></Fact>}
         <Fact label="状态"><span className="flex flex-wrap items-center gap-2"><StatusTag tone={lifecycleTone[document.status]} label={lifecycleLabel[document.status]} />
           <span className="text-caption text-muted-foreground">{publicationText(document)}</span></span></Fact>
-        <Fact label="这一版的修订理由"><span className="whitespace-pre-wrap [overflow-wrap:anywhere]">{revision.reason || "未写明"}</span></Fact>
+        <Fact label="这一版的修订理由"><span className="whitespace-pre-wrap [overflow-wrap:anywhere]">{revision.reason ? origin.reason : "未写明"}</span></Fact>
       </div>
       <details className="mt-3 text-caption text-muted-foreground">
         <summary className="cursor-pointer">完整标识与哈希</summary>
@@ -88,12 +116,16 @@ export function DocumentFacts({ projectId, detail, revision, body }: {
         <p className="[overflow-wrap:anywhere]">所读修订 <code className="font-mono">{revision.id}</code></p>
         <p className="[overflow-wrap:anywhere]">内容 SHA-256 <code className="font-mono">{revision.contentHash}</code></p>
         <p>原件格式 {revision.format === "html" ? "HTML" : "Markdown"} · {revision.originalName}</p>
+        {origin.identifiers.map(row => <p key={row.label} className="[overflow-wrap:anywhere]">{row.label} {row.text ? row.value : <code className="font-mono">{row.value}</code>}</p>)}
       </details>
     </Block>
+    <Block title={revisions.model ? `全部版本 · ${revisions.model.count}` : "全部版本"} defaultOpen={false}>
+      <AllVersions projectId={projectId} documentId={document.id} reading={revision.id} revisions={revisions} />
+    </Block>
     <Block title="来源">
-      {document.origin ? <DocumentOrigin projectId={projectId} documentId={document.id} origin={document.origin} />
+      {document.origin ? <DocumentOrigin projectId={projectId} documentId={document.id} origin={document.origin} from={from} />
         : <p className="text-label text-text-secondary">创建时没有登记来源任务。</p>}
-      {document.primaryTaskId && <a href={href(projectId, "task", document.primaryTaskId)} className="mt-2 block text-label text-primary hover:underline">所属任务 →</a>}
+      {document.primaryTaskId && <a href={taskLinkFrom(projectId, document.primaryTaskId, from)} className="mt-2 block text-label text-primary hover:underline">所属任务 →</a>}
     </Block>
     <Block title="引用它的任务">
       {tasks.isFetching && tasks.data && <RefreshingIndicator label="正在核对引用它的任务；下面是上次读到的" className="mb-2" />}
@@ -101,7 +133,7 @@ export function DocumentFacts({ projectId, detail, revision, body }: {
       {tasks.isError && <Notice tone="error" className="mb-2">引用它的任务这次没有读完整：{readProblem(tasks.error, "引用它的任务")}。{tasks.data ? "下面是上次读到的，不能当作当前完整结果。" : ""}</Notice>}
       {tasks.data?.partial && <Notice tone="waiting" className="mb-2">已读到 {pageLimit} 页或 {itemLimit} 项的上限，下面的任务未必完整。</Notice>}
       {tasks.data && (tasks.data.tasks.length ? <ul className="flex flex-col gap-0.5">{tasks.data.tasks.map(task => <li key={task.id}>
-        <a href={href(projectId, "task", task.id)} onClick={event => openTask(event, task)}
+        <a href={taskLinkFrom(projectId, task.id, from)} onClick={event => openTask(event, task)}
           className="flex flex-col gap-1 rounded-md px-2 py-1.5 outline-none hover:bg-selected focus-visible:shadow-[var(--focus-ring)]">
           <span className="text-label font-medium text-foreground [overflow-wrap:anywhere]">{task.title}</span>
           <span className="flex flex-wrap items-center gap-1.5 text-caption text-muted-foreground">

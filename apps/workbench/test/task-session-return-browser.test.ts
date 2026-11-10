@@ -82,7 +82,7 @@ test("Task tabs and refresh retain the verified Session return; ordinary and wro
   await page.goto(`${base}${taskRoute}?${new URLSearchParams({return:returnRoute,actor:"reader",returnTitle:"临时开发 Session"})}`);
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button",{name:"进入",exact:true}).click();
-  const back=page.getByRole("link",{name:"← 返回【临时开发 Session】"});
+  const back=page.getByRole("link",{name:"返回智能体：临时开发 Session",exact:true});
   await back.waitFor({timeout:5000}).catch(async () => {
     assert.fail(`Task return missing: url=${page.url()}, body=${(await page.locator("body").innerText()).slice(0,1100)}, errors=${errors.join(" | ")}`);
   });

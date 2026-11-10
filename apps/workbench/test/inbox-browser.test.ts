@@ -1,8 +1,9 @@
 // Opt-in built-app regression for 待我处理 (docs/frontend/pages/tasks.md 收件页): signed in as a task's declared consumer,
 // 等我使用的交付 lists every current delivery that waits for my use, read across both pages of the work index, and leaves
-// out another consumer's, one I already used, an older revision's; a row opens the task's 交付与使用 with the way back.
-// The 待我处理 count adds 验收安排, 依据变化 and 等我使用; when a part cannot be read it shows no number and the shell says
-// why, and the page never says 0. At 1440, 1024 and 390 (no sideways scroll).
+// out another consumer's, one I already used, one I last recorded as 使用失败 (back to rework, not mine), an older
+// revision's; every row (等我使用, 依据变化, 待我验收) opens its task with the way back to 待我验收与判断.
+// The 待我处理 count adds 验收安排, 依据变化 and 等我使用; when a part cannot be read it shows the 待核对 mark instead of a
+// number and the shell says why, and the page never says 0. At 1440, 1024 and 390 (no sideways scroll).
 // EVOLOOP_INBOX_SCREENSHOT_DIR=<dir> saves the screenshots.
 import assert from "node:assert/strict";
 import { test } from "node:test";
@@ -28,6 +29,7 @@ const fixtures: Record<string, Fixture> = {
   observedByOther: { n: 13, title: "丁：别人后来也看过", consumer: me, useRequired: true, observer: "qa-agent", result: "used" },
   oldRevision: { n: 14, title: "戊：交付属于旧修订", consumer: me, useRequired: true, oldDelivery: true },
   declared: { n: 15, title: "己：只是声明的使用者", consumer: me, useRequired: false, observer: me, result: "notUsed" },
+  failedByMe: { n: 16, title: "庚：我记过使用失败", consumer: me, useRequired: true, observer: me, result: "failed" },
 };
 const taskId = (f: Fixture) => id(f.n), revision = (f: Fixture) => id(100 + f.n), deliveryId = (f: Fixture) => id(200 + f.n);
 const record = (f: Fixture) => ({ projectId, id: taskId(f), version: 2, currentRevisionId: revision(f), title: f.title, content: `# ${f.title}\n\n正文。`,
@@ -54,11 +56,11 @@ const detail = (f: Fixture) => ({
     acceptanceMode: "human_required", evidence: "需求会话", stopCondition: "范围变化时停止", createdAt: stamp },
   deliveries: [{ projectId, id: deliveryId(f), taskId: taskId(f), taskRevisionId: revision(f), runId: null, artifactRef: "https://git.example/pr/42", artifactRevision: "b2",
     contentHash: "b".repeat(64), technicalResult: "passed", technicalEvidence: "构建通过", reason: "交付", actorId: "worker", createdAt: at(f.n - 8) }],
-  observations: f === fixtures.observedByOther ? [observation(f, me, "failed", at(6)), observation(f, "qa-agent", "used", at(7))]
+  observations: f === fixtures.observedByOther ? [observation(f, me, "notUsed", at(6)), observation(f, "qa-agent", "used", at(7))]
     : f.observer ? [observation(f, f.observer, f.result!, at(6))] : [],
 });
 const all = Object.values(fixtures);
-const firstPage = [fixtures.mine, fixtures.others, fixtures.used], secondPage = [fixtures.observedByOther, fixtures.oldRevision, fixtures.declared];
+const firstPage = [fixtures.mine, fixtures.others, fixtures.used], secondPage = [fixtures.observedByOther, fixtures.oldRevision, fixtures.declared, fixtures.failedByMe];
 
 test("待我处理 lists what waits for my use and counts every part, or says it cannot", {
   skip: !modulePath && "Set EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE", timeout: 240_000,
@@ -137,6 +139,14 @@ test("待我处理 lists what waits for my use and counts every part, or says it
     const narrow = (page.viewportSize()?.width ?? 1440) < 760;
     return (await page.locator(`[data-shell="${narrow ? "tabs" : "rail"}"] a`, { hasText: "待我处理" }).innerText()).replace("待我处理", "").trim();
   };
+  // A count that cannot be checked shows the 待核对 mark (a question mark named 数目待核对), never a number.
+  const badgeUnknown = async (page: Awaited<ReturnType<typeof open>>) => {
+    const narrow = (page.viewportSize()?.width ?? 1440) < 760;
+    const mark = page.locator(`[data-shell="${narrow ? "tabs" : "rail"}"] a`, { hasText: "待我处理" }).locator('[data-count="unknown"]');
+    await mark.waitFor();
+    assert.equal(await mark.getAttribute("title"), "数目待核对");
+    assert.doesNotMatch(await badge(page), /\d/);
+  };
   const noSideways = async (page: Awaited<ReturnType<typeof open>>, label: string) => {
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth - innerWidth);
     assert.ok(overflow <= 1, `${label}: no sideways page scroll (${overflow}px)`);
@@ -162,14 +172,19 @@ test("待我处理 lists what waits for my use and counts every part, or says it
   assert.deepEqual(indexCursors.slice(0, 2), [null, "page-2"]);
   const text = await deliveries.innerText();
   for (const f of [fixtures.mine, fixtures.observedByOther, fixtures.declared]) assert.match(text, new RegExp(f.title));
-  for (const f of [fixtures.others, fixtures.used, fixtures.oldRevision]) assert.doesNotMatch(text, new RegExp(f.title));
+  // My latest 使用失败 sends the delivery back to the executor for rework: not listed, not counted (N9).
+  for (const f of [fixtures.others, fixtures.used, fixtures.oldRevision, fixtures.failedByMe]) assert.doesNotMatch(text, new RegExp(f.title));
   assert.match(text, /3 项/);
   const row = (f: Fixture) => list.getByRole("listitem").filter({ hasText: f.title });
   assert.match(await row(fixtures.mine).innerText(), /必须使用才能关闭 · 尚未记录使用[\s\S]*交付于 2026\/11\/9 10:00:00/);
   assert.match(await row(fixtures.declared).innerText(), /只是声明的使用者 · 你上次：未使用/);
   // Someone else observed after me: my own last observation is read from the task.
-  assert.match(await row(fixtures.observedByOther).innerText(), /你上次：使用失败[\s\S]*交付于 2026\/11\/9 13:00:00 · 你上次记录于 2026\/11\/9 14:00:00 · 这次交付最近一条观察来自别人/);
+  assert.match(await row(fixtures.observedByOther).innerText(), /你上次：未使用[\s\S]*交付于 2026\/11\/9 13:00:00 · 你上次记录于 2026\/11\/9 14:00:00 · 这次交付最近一条观察来自别人/);
   assert.doesNotMatch(await inbox.innerText(), /34000000-|Session|Run\b|consumer/);
+  // How reading and use are recorded is said in words, never as the command line (N10).
+  assert.match(await inbox.getByRole("region", { name: "待我验收" }).innerText(), /由验收人本人记录/);
+  assert.doesNotMatch(await inbox.innerText(), /work acceptance|acceptance read|\bobserve\b/);
+  assert.match(await deliveries.innerText(), /记过“使用失败”的交付由执行者返工，不在这里列出/);
   // 待我验收 1 + 依据变化 1 + 等我使用 3.
   await page.waitForFunction(() => document.querySelector('[data-shell="rail"]')?.textContent?.includes("待我处理5"));
   assert.equal(await badge(page), "5");
@@ -186,27 +201,46 @@ test("待我处理 lists what waits for my use and counts every part, or says it
   await center.getByRole("tab", { name: /^交付与使用/, selected: true }).waitFor();
   await center.getByRole("tabpanel").filter({ visible: true }).locator(`[data-delivery="${deliveryId(fixtures.mine)}"]`).getByText("技术检查通过").waitFor();
   await shoot(page, "inbox-delivery-tab", () => center.getByRole("tab", { name: /^交付与使用/, selected: true }).waitFor());
+  await center.getByRole("link", { name: "返回待我验收与判断" }).waitFor();
 
-  // A part that cannot be read again: the count shows no number, the shell says why away from 待我处理, the page says 待核对.
+  // 依据变化 and 待我验收 open their tasks with the same way back (N1).
+  await go(page, `/p/${projectId}/inbox`);
+  const back = async (href: string | null, tab: string | null, task: Fixture) => {
+    const url = new URL(href ?? "", base);
+    assert.deepEqual([url.pathname, url.searchParams.get("tab"), url.searchParams.get("return"), url.searchParams.get("actor"), url.searchParams.get("returnTitle")],
+      [`/p/${projectId}/tasks/${taskId(task)}`, tab, `/p/${projectId}/inbox`, me, "待我验收与判断"]);
+  };
+  const impactLink = inbox.getByRole("list", { name: "依据变化" }).getByRole("link").first();
+  await back(await impactLink.getAttribute("href"), "basis", fixtures.used);
+  await back(await inbox.getByRole("list", { name: "待我验收" }).getByRole("link").first().getAttribute("href"), null, fixtures.others);
+  await impactLink.click();
+  const impactTask = page.locator(`[data-task-page="${taskId(fixtures.used)}"]`);
+  await impactTask.getByRole("tab", { name: /^依据与影响/, selected: true }).waitFor();
+  await impactTask.getByRole("link", { name: "返回待我验收与判断" }).click();
+  await page.waitForURL(url => url.pathname === `/p/${projectId}/inbox`);
+  await inbox.getByRole("list", { name: "依据变化" }).waitFor();
+
+  // A part that cannot be read again: the count shows 待核对 instead of a number, the shell says why away from 待我处理, the
+  // page says 待核对.
   await go(page, `/p/${projectId}/inbox`);
   await fixture("fail?what=impacts");
   await inbox.getByRole("button", { name: "重新读取" }).first().click();
   await inbox.getByRole("region", { name: "依据变化" }).getByText("上次读回，当前待核对").waitFor({ timeout: 15000 });
   await page.waitForFunction(() => !/待我处理\d/.test(document.querySelector('[data-shell="rail"]')?.textContent ?? ""));
-  assert.equal(await badge(page), "");
+  await badgeUnknown(page);
   assert.equal(await page.getByText(/待我处理的数目暂时无法判断/).count(), 0, "the page itself says which part failed");
   await go(page, `/p/${projectId}/operations`);
   const notice = page.getByRole("status").filter({ hasText: "待我处理的数目暂时无法判断" });
   await notice.waitFor();
   assert.match(await notice.innerText(), /依据变化读取失败；已读回的 4 项不是全部/);
-  await shoot(page, "inbox-count-unknown", () => page.getByRole("heading", { level: 1, name: "待核对操作" }).waitFor());
+  await shoot(page, "inbox-count-unknown", () => page.getByRole("heading", { level: 1, name: "结果未知的操作" }).waitFor());
   await fixture("recover?what=impacts");
   await notice.getByRole("link", { name: "去待我处理核对" }).click();
   await inbox.getByRole("region", { name: "依据变化" }).getByRole("button", { name: "重新读取" }).click();
   await page.waitForFunction(() => document.querySelector('[data-shell="rail"]')?.textContent?.includes("待我处理5"));
   await page.close();
 
-  // The work index cannot be read at all: no 0 项 and no 当前没有, the count shows no number.
+  // The work index cannot be read at all: no 0 项 and no 当前没有, the count shows 待核对 instead of a number.
   await fixture("fail?what=index");
   const failed = await open(`/p/${projectId}/inbox`);
   const failedInbox = failed.locator("[data-inbox]");
@@ -216,7 +250,7 @@ test("待我处理 lists what waits for my use and counts every part, or says it
   assert.match(failedText, /暂不可读取/);
   assert.doesNotMatch(failedText, /0 项|当前没有/);
   await failedInbox.getByRole("region", { name: "依据变化" }).getByText("1 项").waitFor();
-  assert.equal(await badge(failed), "");
+  await badgeUnknown(failed);
   await shoot(failed, "inbox-index-failed", () => failedSection.getByRole("alert").getByText("等我使用的交付暂不可读取").waitFor());
   await fixture("recover?what=index");
   await failed.close();

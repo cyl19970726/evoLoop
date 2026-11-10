@@ -65,9 +65,20 @@ export function revisionRecord(d, revisionId = d.rev) {
     : { body: old ? d.oldBody : d.body, format: "markdown", mediaType: "text/markdown", originalName: `${d.title}.md`, payloadRef: null, entrypoint: null };
   return { projectId, documentId: d.id, id: revisionId, ...html, assetsManifest: [], contentHash: hash(old ? "b" : "a"),
     author: actorId, createdAt: old ? ago(60 * 24 * 3) : ago(90), previousRevisionId: !old && d.oldRev ? d.oldRev : null,
-    reason: old ? "建立对账规则" : "补充交付与验收的区分" };
+    reason: old ? "建立对账规则" : "补充交付与验收的区分", revisionNumber: old || !d.oldRev ? 1 : 2 };
 }
 export const documentList = () => docList.map(documentRecord);
+/** The revision list of a document (GET /documents/:id/revisions): newest first, metadata only, with the head and count. */
+export function revisionPage(d) {
+  const head = documentRecord(d);
+  const items = [d.rev, ...d.oldRev ? [d.oldRev] : []].map(revisionId => {
+    const { body: _body, ...metadata } = revisionRecord(d, revisionId);
+    const current = revisionId === head.currentRevisionId, published = revisionId === head.adoptedRevisionId;
+    return { ...metadata, current, published, state: current ? "current" : published ? "published" : "historical" };
+  });
+  const { id, title, kind, version, currentRevisionId, adoptedRevisionId, status } = head;
+  return { items, nextCursor: null, document: { id, title, kind, version, currentRevisionId, adoptedRevisionId, status }, revisionCount: items.length };
+}
 /** The tasks that reference a document (文档页右栏 “引用它的任务”). */
 export const documentReferences = d => references(d).map(ref => {
   const t = findTask(ref.taskId);

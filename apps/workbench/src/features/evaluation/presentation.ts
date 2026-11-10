@@ -1,4 +1,5 @@
 import type { ConsumerObservation, Delivery, Document, DocumentRevision, EvaluationAssessment, EvaluationAttempt, EvaluationCondition, EvaluationConclusion, EvaluationCost, EvaluationFixedRef, EvaluationRevision, RuntimeRunRecord, RuntimeRunState, TaskState } from "@evoloop/contracts";
+import { actorText } from "../../shared/actorPresentation";
 import type { StatusTone } from "@evoloop/ui";
 
 export const evaluationHref = (projectId: string, evaluationId?: string, revisionId?: string) =>
@@ -17,7 +18,8 @@ export function fixedRefHref(projectId: string, value: EvaluationFixedRef): stri
 }
 
 /** The present document name is a reading aid only after the exact cited revision and hash are authorized and read. */
-export function verifiedFixedDocumentTitle(ref: EvaluationFixedRef, projectId: string, document: Document, revision: DocumentRevision): string | null {
+export function verifiedFixedDocumentTitle(ref: EvaluationFixedRef, projectId: string, document: Pick<Document, "projectId" | "id" | "title">,
+  revision: Pick<DocumentRevision, "projectId" | "documentId" | "id" | "contentHash">): string | null {
   if (ref.kind !== "document" || document.projectId !== projectId || revision.projectId !== projectId
     || document.id !== ref.id || revision.documentId !== ref.id || revision.id !== ref.revision
     || revision.contentHash.toLowerCase() !== ref.contentHash.toLowerCase()) return null;
@@ -210,7 +212,7 @@ export function assessmentName(item: Pick<EvaluationAssessment, "attemptId" | "a
   const attempt = attempts.find(row => row.id === item.attemptId);
   const condition = attempt && revision.definition.conditions.find(row => row.id === attempt.conditionId);
   const place = attempt ? `${condition ? labelOf(conditionLabels, condition.kind, "未识别的条件") : "未识别的条件"} · 尝试 ${attempt.ordinal}` : "所属尝试未读到";
-  return `${place} · ${labelOf(actorKindLabels, item.assessorKind, "未识别的身份")} ${item.actorId} · ${when(item.createdAt)}`;
+  return `${place} · ${labelOf(actorKindLabels, item.assessorKind, "未识别的身份")} ${actorText(item.actorId)} · ${when(item.createdAt)}`;
 }
 
 /** Where (1-based, in record order) the assessment a correction replaces sits among the attempt's assessments. */

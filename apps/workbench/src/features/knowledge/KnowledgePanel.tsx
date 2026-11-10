@@ -5,7 +5,7 @@
 // until the outside result is reconciled.
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { KnowledgeCandidateRecord, KnowledgeRevision } from "@evoloop/contracts/knowledge";
-import { Button, Notice, RefreshingIndicator, cn } from "@evoloop/ui";
+import { Button, ConfirmDialog, Notice, RefreshingIndicator, cn } from "@evoloop/ui";
 import { errorCode, errorDetail, errorText, isUnconfirmed } from "../../shared/api";
 import type { MutationContext } from "../../shared/ActionForm";
 import type { SourceDocument } from "../../shared/knowledgeClient";
@@ -27,7 +27,7 @@ import { readReceipts, saveReceipts, type ExternalReceipt } from "./knowledgeRec
 import { KnowledgeReview, type ReviewActions } from "./KnowledgeReview";
 import { knowledgeHref, readKnowledgeRoute, readingOnScreen, type KnowledgeRoute } from "./knowledgeRoute";
 import {
-  capabilityFacts, emptyFilter, filterKnowledge, isFiltered, knowledgeDirectory, notConfiguredCode, publishOutcome, receiptTitle,
+  capabilityFacts, emptyFilter, filterKnowledge, isFiltered, knowledgeDirectory, notConfiguredCode, proposeEntry, publishOutcome, receiptTitle,
   reconcileOutcome, sourceDocumentId, topicMembers, type KnowledgeFilter, type ListProblem, type Outcome,
 } from "./knowledgePresentation";
 
@@ -94,6 +94,7 @@ export function KnowledgePanel({ context }: { context: MutationContext; refresh:
   const visibleReceipts = receipts.filter(item => item.projectId === projectId && item.actorId === principal.actorId);
   const [busy, setBusy] = useState(false);
   const [draft, setDraft] = useState<Draft>(emptyDraft);
+  const [confirmClear, setConfirmClear] = useState(false);
   const updateDraft = (patch: Partial<Draft>) => setDraft(previous => ({ ...previous, ...patch }));
 
   // ---- service and list
@@ -228,7 +229,8 @@ export function KnowledgePanel({ context }: { context: MutationContext; refresh:
     publish: candidate => void externalWrite("publish", candidate.candidateId),
     retract: (source: SourceDocument) => void externalWrite("retract", source.documentId),
   };
-  const startNew = () => { if (!draft.touched) setDraft(emptyDraft); setComposing(true); };
+  const startNew = () => { if (notConfigured) return; if (!draft.touched) setDraft(emptyDraft); setComposing(true); };
+  const entry = proposeEntry({ canWrite, notConfigured, draftTouched: draft.touched });
   const startRevision = (page: KnowledgeRevision) => {
     if (draft.touched) {
       setMessage({ tone: "waiting", title: "已有没保存的候选草稿", detail: "请先继续原草稿，或清空后再基于此页编辑。" });
@@ -239,7 +241,8 @@ export function KnowledgePanel({ context }: { context: MutationContext; refresh:
       sourceRevision: page.sources[0]?.originRevision ?? "" });
     setComposing(true);
   };
-  const clearDraft = () => { if (draft.touched && !window.confirm("清空没保存的知识候选草稿？")) return; setDraft(emptyDraft); };
+  // A touched draft is cleared only after the reader confirms it in a dialog.
+  const clearDraft = () => { if (draft.touched) setConfirmClear(true); else setDraft(emptyDraft); };
 
   // ---- shared pieces
   const observed = Math.max(index.capabilities.dataUpdatedAt, index.pages.observedAt);
@@ -301,13 +304,16 @@ export function KnowledgePanel({ context }: { context: MutationContext; refresh:
   else center = <>
     <header className="flex flex-wrap items-start justify-between gap-3 compact:pr-12">
       <div className="min-w-0">
-        <h1 tabIndex={-1} className="text-title font-semibold leading-[1.3] outline-none">知识空间</h1>
+        <h1 tabIndex={-1} className="text-title font-semibold leading-(--leading-tight) outline-none">知识空间</h1>
         <p className="mt-1 text-small text-text-secondary">理解当前认识，核对来源与反例，再决定是否提出修订。</p>
       </div>
       <div className="flex flex-wrap items-center gap-2">
         <Button variant="ghost" size="compact" onClick={reread}>重新读取</Button>
         <Button asChild variant="ghost" size="compact"><a href={href(projectId, "evaluations")}>评价</a></Button>
-        {canWrite && <Button variant="primary" size="compact" onClick={startNew}>{draft.touched ? "继续候选草稿" : "提出候选"}</Button>}
+        {entry.shown && <>
+          {entry.reason && <span id="knowledge-propose-reason" className="text-caption text-muted-foreground">{entry.reason}</span>}
+          <Button variant="primary" size="compact" disabled={entry.disabled} aria-describedby={entry.reason ? "knowledge-propose-reason" : undefined} onClick={startNew}>{entry.label}</Button>
+        </>}
       </div>
     </header>
     {serviceBlock}
@@ -330,5 +336,7 @@ export function KnowledgePanel({ context }: { context: MutationContext; refresh:
       selectedId={selectedId} reviewing={route.view === "review" && !composing} pendingCandidates={pendingCandidates} />
     {notices}
     {center}
+    <ConfirmDialog open={confirmClear} title="清空没保存的知识候选草稿？" description="标题、正文、来源与关系都会清空，不能恢复。"
+      confirmLabel="清空" cancelLabel="保留草稿" danger onConfirm={() => { setConfirmClear(false); setDraft(emptyDraft); }} onCancel={() => setConfirmClear(false)} />
   </div>;
 }

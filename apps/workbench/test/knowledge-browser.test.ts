@@ -226,6 +226,8 @@ test("知识空间 reads, filters, switches pages without collapsing the right c
     assert.equal(await main.getByRole("region", { name: "来源、反例与版本" }).count(), 0, "sources are not in the center column");
     const visibleText = `${await main.innerText()}\n${await side.innerText()}`;
     assert.doesNotMatch(visibleText, new RegExp(`${id(2)}|${rid(2, 2)}|知识 ID|水位|adapter_verified|后端报告版本`), "raw IDs and internal words stay out of the reading layers");
+    // Not in the tooltips either: a version is named by its place in the history, never by its short identifier.
+    assert.deepEqual(await side.getByRole("list", { name: "历史版本" }).getByRole("link").evaluateAll(links => links.filter(link => link.hasAttribute("title")).length), 0);
     await side.getByText("完整标识").click();
     assert.match(await side.innerText(), new RegExp(id(2)));
     if (shots) await page.screenshot({ path: `${shots}/knowledge-1440.png` });
@@ -499,6 +501,9 @@ test("知识空间 writes: request bodies, conflicts, unknown results by the ori
 
     // ---- The page moved on after its revision was started: the draft stays and nothing is sent.
     await main.getByRole("button", { name: "清空草稿" }).click();
+    // A touched draft is cleared after confirming in the page's dialog (formerly the browser's own confirm()).
+    await page.getByRole("alertdialog", { name: "清空没保存的知识候选草稿？" }).getByRole("button", { name: "清空", exact: true }).click();
+    await page.getByRole("alertdialog").waitFor({ state: "detached" });
     state.sourceRevision = id(91);
     await main.getByRole("button", { name: "返回知识空间" }).click();
     sourceReads = reads("sources");
@@ -538,6 +543,9 @@ test("知识空间 writes: request bodies, conflicts, unknown results by the ori
     assert.match(text, /这个项目还没有配置外置知识后端/);
     assert.doesNotMatch(text, /可以重试|上次读回|。。/);
     assert.equal(await unconfiguredRail.getByRole("region", { name: "知识目录" }).getByRole("button", { name: "重试", exact: true }).count(), 0);
+    // 提出候选 says at the entry that nothing can be proposed now, instead of failing later at the form's source field.
+    await unconfigured.locator("main").getByText("知识后端未配置，暂时不能提出", { exact: true }).waitFor();
+    assert.equal(await unconfigured.locator("main").getByRole("button", { name: "提出候选" }).isDisabled(), true);
     if (shots) await unconfigured.screenshot({ path: `${shots}/knowledge-unconfigured-1440.png` });
     await unconfigured.close();
     assert.deepEqual(errors, []);
