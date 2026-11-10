@@ -25,6 +25,8 @@ import {
   occurrenceReasonText, scheduleFromPath, scheduleReadView, scheduleRuleText, scheduleTaskHref, scheduleTime, zoneName,
 } from "./presentation";
 import { currentPath, onNavigate } from "../../shared/navigation";
+import { TimedTasksSection } from "./TimedTasksSection";
+import { timingFromPath } from "./timedTasks";
 
 // Times of the schedule itself (rule instants, planned times, watermark, expiry) are said in the schedule's own zone,
 // with the reader's clock added when it differs; record and read times are the reader's local time, as everywhere else.
@@ -102,9 +104,12 @@ export function SchedulingPanel({ context, refresh }: { context: MutationContext
   // `?schedule=` (a link back from a task this schedule produced) selects it; other addresses never change the choice.
   const [selectedScheduleId, setSelectedScheduleId] = useState<string | null>(() => scheduleFromPath(currentPath(), context.projectId));
   const [creating, setCreating] = useState(false);
+  // `?timing=` (a link back from a timed Task) lands on that item in 定时任务.
+  const [focusedTiming, setFocusedTiming] = useState<string | null>(() => timingFromPath(currentPath(), context.projectId));
   useEffect(() => onNavigate(() => {
     const named = scheduleFromPath(currentPath(), context.projectId);
     if (named) { setSelectedScheduleId(named); setCreating(false); }
+    setFocusedTiming(timingFromPath(currentPath(), context.projectId));
   }), [context.projectId]);
   const [lastResults, setLastResults] = useState<Record<string, string>>({});
   const selectedSchedule = schedules.find(item => item.id === selectedScheduleId) ?? schedules[0];
@@ -171,6 +176,7 @@ export function SchedulingPanel({ context, refresh }: { context: MutationContext
         {schedules.length > 0 && <Button variant="ghost" className="w-fit" onClick={() => setCreating(false)}>返回日程</Button>}
       </section>
       : selectedSchedule && <ScheduleCard key={`${readKey}:${selectedSchedule.id}:${selectedSchedule.version}`} definition={selectedSchedule} context={formContext} grants={status?.grants ?? []} names={names} status={status} fresh={fresh} loading={loading} onResult={(result) => setLastResults(previous => ({ ...previous, [`${selectedSchedule.id}:${selectedSchedule.version}`]: result }))} />}
+    <TimedTasksSection context={context} status={status} focus={focusedTiming} />
     {(showCreate || !selectedSchedule) && <ContextPanelContent><div className="flex flex-col gap-4"><PanelSection title="协调器与授权"><CoordinatorFacts status={status} fresh={fresh} loading={loading} projectId={context.projectId} /></PanelSection></div></ContextPanelContent>}
   </div>;
 }

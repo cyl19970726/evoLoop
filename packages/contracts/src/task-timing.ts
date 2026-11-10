@@ -38,8 +38,28 @@ export interface TaskTimingView extends TaskTimingInput {
   occurrences: { taskId: string; executeAtUtc: string; state: "todo" | "in_progress" | "done" | "cancelled" }[];
 }
 
+/** One timed series for the project list: a one-time Task or a daily series, active or stopped. */
+export interface TaskTimingSeriesSummary extends TaskTimingInput {
+  projectId: string;
+  seriesId: string;
+  rootTaskId: string;
+  version: number;
+  seriesState: "active" | "stopped";
+  /** The series name: its current future-template title. */
+  title: string;
+  /** Next unmaterialized daily slot; null for a one-time or stopped series. */
+  nextAtUtc: string | null;
+  skippedCount: number;
+  occurrenceCount: number;
+  /** The Task the series produced most recently (the root Task until the first copy). */
+  latestTask: { taskId: string; title: string; state: "todo" | "in_progress" | "done" | "cancelled"; plannedAtUtc: string };
+}
+export interface TaskTimingSeriesPage { items: TaskTimingSeriesSummary[]; nextCursor: string | null }
+
 export interface TaskTimingQueries {
   get(taskId: string): Promise<TaskTimingView | null>;
+  /** Series of this project, most recently changed first; a Task without timing is never listed. */
+  list(limit: number, cursor?: string): Promise<TaskTimingSeriesPage>;
   create(taskId: string, timing: TaskTimingInput, actorId: string, nowUtc: string): Promise<void>;
   set(command: Extract<TaskTimingCommand, { type: "task.timing.set" }>, actorId: string, nowUtc: string): Promise<TaskTimingView>;
   stop(command: Extract<TaskTimingCommand, { type: "task.timing.stop" }>, actorId: string, nowUtc: string): Promise<TaskTimingView>;

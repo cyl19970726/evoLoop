@@ -2,3 +2,4 @@
 export { formatScheduled, nextTimingLabel, repeatLabel } from "./taskTimingPresentation";
 export { ResidentQueuePanel } from "./ResidentQueuePanel";
 export { readOwnerRoles } from "./journeyRead";
+export { taskStateLabel } from "./taskCommands";
