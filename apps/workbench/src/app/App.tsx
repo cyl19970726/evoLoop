@@ -1,4 +1,4 @@
-import { Suspense, lazy, useEffect, useMemo, useRef, useState, useLayoutEffect, type ComponentType, type LazyExoticComponent, type ReactNode } from "react";
+import { Suspense, lazy, useEffect, useMemo, useRef, useState, useLayoutEffect, type ComponentType, type LazyExoticComponent } from "react";
 import type { Operation } from "@evoloop/contracts";
 import { ApiError, api, errorText, type Session } from "../shared/api";
 import { describeFailure } from "../shared/errorPresentation";
@@ -6,6 +6,7 @@ import { onUnauthorized, signIn, signOut } from "../shared/identity";
 import type { MutationContext, RecoverableCommand } from "../shared/command/context";
 import { clearCommandDrafts } from "../shared/command/drafts";
 import { addReceipt, hasProjectReceipt, readReceipts, removeReceipt, visibleReceipts as forPrincipal, writeReceipts, type OperationReceipt } from "./recovery";
+import type { OperationItem } from "../features/settings/operationsPresentation";
 import { clearRecoveryIntents, forgetRecoveryIntent, isSpecialOperation, rememberRecoveryIntent } from "./recoveryIntent";
 
 import { readRoute, href, type Route } from "../shared/ui/shared";
@@ -46,6 +47,7 @@ const ArrangementPage = named(() => import("../features/sessions/ArrangementPage
 // The execution queue (features/workflow) shown in an agent's right column; passed in so the two features do not import each other.
 const ResidentQueuePanel = named(() => import("../features/workflow"), "ResidentQueuePanel");
 const ConnectorPage = named(() => import("../features/connectors/ConnectorPage"), "ConnectorPage");
+const NotFoundPage = named(() => import("./NotFoundPage"), "NotFoundPage");
 // The frame loads after login; the login gate starts fetching it while the token is typed.
 const loadShell = () => import("./shell/AppShell");
 const AppShell = named(loadShell, "AppShell");
@@ -220,11 +222,13 @@ export function App() {
   }
   if (!projectId) return <Suspense fallback={<p role="status" className="p-8 text-small">正在打开项目列表…</p>}><ProjectChooser context={context} token={token} principal={principal} receipts={visibleReceipts} operationNotice={operationNotice} operationDetail={operationDetail} onConfirmed={confirmReceipt} onRefreshSession={async () => setSession(await api(token).session())} logout={logout} /></Suspense>;
   const projectReceipts = visibleReceipts.filter(r => r.projectId === projectId);
-  // OperationCheck loads on demand; its own boundary keeps a first receipt from suspending the page around it.
-  const operationChecks = projectReceipts.map(receipt => <Suspense key={receipt.operationId} fallback={null}><OperationCheck receipt={receipt} token={token} onConfirmed={result => confirmReceipt(receipt, result)} /></Suspense>);
+  // 结果未知的操作 gets each receipt with its check card. OperationCheck loads on demand; its own boundary keeps a first
+  // receipt from suspending the page around it.
+  const operationItems: OperationItem[] = projectReceipts.map(receipt => ({ receipt,
+    check: <Suspense fallback={null}><OperationCheck receipt={receipt} token={token} onConfirmed={result => confirmReceipt(receipt, result)} /></Suspense> }));
   const notices: ShellNoticeItem[] = [
     ...route.section !== "operations" && projectReceipts.length > 0 ? [{ key: "receipts", tone: "error" as const, text: `${projectReceipts.length} 项操作结果尚未确认，提交已暂缓。`, link: { href: href(projectId, "operations"), label: "按原操作 ID 核对" } }] : [],
-    ...!receiptStorageAvailable ? [{ key: "storage", tone: "error" as const, text: "浏览器未能暂存操作回执。请保留原操作 ID，并在待核对操作中查询。" }] : [],
+    ...!receiptStorageAvailable ? [{ key: "storage", tone: "error" as const, text: "浏览器未能暂存操作回执。请保留原操作 ID，并在“结果未知的操作”中查询。" }] : [],
     ...operationNotice ? [{ key: "operation", tone: "info" as const, text: operationNotice, detail: operationDetail,
       button: { label: "关闭", onClick: () => { setOperationNotice(""); setOperationDetail(null); }, quiet: true } }] : [],
     ...projectError ? [{ key: "project", tone: "error" as const, text: `项目暂不可读取：${projectError}`, button: { label: "重试读取项目", onClick: context.onChanged } }] : [],
@@ -232,14 +236,14 @@ export function App() {
   ];
   return <Suspense fallback={<p className={opening} role="status">正在打开工作台…</p>}><AppShell route={route} projectId={projectId} projectTitle={projectTitle} actor={principal.actorId} permissions={principal.permissions}
     receiptCount={projectReceipts.length} inboxCount={shellInboxCount(inbox, projectReceipts.length)} token={token} logout={logout} notices={notices}>
-    <WorkspacePages key={`${principal.actorId}:${projectId}`} route={route} context={context} refresh={refresh} operations={operationChecks} />
+    <WorkspacePages key={`${principal.actorId}:${projectId}`} route={route} context={context} refresh={refresh} operations={operationItems} />
   </AppShell></Suspense>;
 }
 
 /** What the center shows while a page's code loads. Plain classes: this module is in the first load, without @evoloop/ui. */
 const opening = "px-4 py-5 text-small text-muted-foreground compact:px-8 compact:py-7";
 
-function WorkspacePages({ route, context, refresh, operations }: { route: Route; context: MutationContext; refresh: number; operations: ReactNode[] }) {
+function WorkspacePages({ route, context, refresh, operations }: { route: Route; context: MutationContext; refresh: number; operations: OperationItem[] }) {
   // Visited pages stay mounted for this authenticated project. No form text or token is persisted.
   const cache = useRef(new Map<string, Route>());
   const positions = useRef(new Map<string, number>());
@@ -287,6 +291,7 @@ function WorkspacePages({ route, context, refresh, operations }: { route: Route;
   }, [key, positionKey]);
   const { projectId, token } = context;
   function page(r: Route, active: boolean) {
+    if (r.section === "not-found") return <NotFoundPage projectId={projectId} path={currentPath()} />;
     if (r.section === "documents") return <DocumentIndex context={context} />;
     if (r.section === "work") return <TaskWorkspace context={context} refresh={refresh} active={active} />;
     if (r.section === "inbox") return <InboxIndex context={context} refresh={refresh} />;
@@ -300,7 +305,7 @@ function WorkspacePages({ route, context, refresh, operations }: { route: Route;
       return <EvaluationPage context={context} evaluationId={r.id} selectedRevision={r.revision} refresh={refresh}
         taskId={query.get("taskId") ?? undefined} knowledgePageId={query.get("knowledgePageId") ?? undefined} />;
     }
-    if (r.section === "operations") return <OperationsPage projectId={projectId} checks={operations} />;
+    if (r.section === "operations") return <OperationsPage projectId={projectId} items={operations} />;
     if (r.section === "repository") return <RepositoryPage projectId={projectId} reference={<ReferencePanel context={context} />} />;
     if (r.section === "sessions") return r.session
       ? <SessionWorkspace context={context} refresh={refresh} sessionKey={r.session} active={active} queue={queue => <ResidentQueuePanel context={context} titled={false} {...queue} />} />

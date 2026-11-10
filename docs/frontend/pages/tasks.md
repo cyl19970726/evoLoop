@@ -14,7 +14,7 @@
 | 位置 | 放什么（目标） |
 | --- | --- |
 | 左栏 | 紧凑任务列表，每行一个标题和状态；上方是范围（全部工作 / 我的承接）、搜索、状态与类型筛选，以及排序（优先级、截止时间、最近进展、创建时间、对账阶段） |
-| 中间 | 选中任务的正文：目标 → 完成条件 → 正文 → 进展与讨论时间线。可切换到“表格视图”，用六列表格给 Leader 对账、批量扫读 |
+| 中间 | 选中任务的正文：目标 → 完成条件 → 正文 → 进展与讨论时间线。可切换到“表格视图”，用六列表格给 Leader 对账、批量扫读。手机上 `/work` 默认是紧凑列表（每行是标题、进展、类型、承接和最近进展），“任务视图”里选“表格”后，这个浏览器记住选择 |
 | 右栏 | 状态与对账阶段；承接 Session（显示并可设置绑定）；关联文档（主正文、需求总图、Leader 编排总览、固定依据、交付物）；交付与使用；版本；可收起 |
 
 现状（#229 PR7、PR7b）：三处和正文下的五个页签都已按新设计实现。`/work` 是表格视图，`/tasks/{ID}` 读一项任务；筛选与排序写在地址里。需求总图和统筹总览没有单独标记，作为关联文档列出。1440px 以下右栏默认收起，窄屏用“任务信息”打开。
@@ -24,7 +24,7 @@
 | 当前工作 | 目标、完成条件、正文、进展与讨论（约定执行、协作、当前关注、阶段区间与计划、负责职责） |
 | 依据与影响 | 开始时固定的依据和各文档现状；每项依据变化单独读两版、决定采用或保留 |
 | 交付与使用 | 每次交付的固定成果、技术检查、来源运行和这次的使用观察；验收接力；验收与关闭 |
-| 运行与关联 | 分派与确认（含分派记录）、执行队列、运行记录（可按链接定位）、自动循环、协作入口、Git 与外部来源登记（三种登记都是共同的提交表单；“复核此依据”直接展开采用表单并在表单里说明载入了什么；采用决定按打开表单时的任务版本和修订提交） |
+| 运行与关联 | 分派与确认（含分派记录）、执行队列、运行记录（可按链接定位）、自动循环、协作入口、Git 与外部来源登记（三种登记都是共同的提交表单；“复核此依据”直接展开采用表单并在表单里说明载入了什么；采用决定按打开表单时的任务版本和修订提交；记录正式关系时按标题选过程文档、按时间和作者选修订，Git 字段当场校验，见[仓库规范](repository.md)） |
 | 历史 | 状态变化、修订时间线、依据复核决定、验收约定；固定修订只读，只给“返回当前任务” |
 | 任务操作 | 当前身份在当前状态下能做的写入；执行时间与重复；做不了的只计数 |
 
@@ -100,7 +100,7 @@
 
 ![表格视图，1024：右栏以抽屉打开](../../assets/frontend-pages/tasks-1024.png)
 
-![表格视图，390](../../assets/frontend-pages/tasks-390.png)
+![表格视图，390：手机上默认的紧凑列表](../../assets/frontend-pages/tasks-390.png)
 
 ![任务正文，1440：右栏内嵌](../../assets/frontend-pages/task-1440.png)
 
@@ -136,7 +136,7 @@
 
 | 部分 | 主要源码 | 相关测试 |
 | --- | --- | --- |
-| 页面组合与左栏列表 | `TaskWorkspace.tsx`、`TaskRail.tsx`、`useTaskList.ts`、`taskListModel.ts`、`taskExperience.ts`、`apps/workbench/src/shared/taskStatus.ts` | `task-list-model.test.ts`、`task-experience.test.ts`、`task-workspace-browser.test.ts`、`work-filter-pagination-browser.test.ts`、`work-status-recovery-browser.test.ts`、`work-status-retry-pagination-browser.test.ts` |
+| 页面组合与左栏列表 | `TaskWorkspace.tsx`、`TaskRail.tsx`、`useTaskList.ts`、`taskListModel.ts`、`taskExperience.ts`、`apps/workbench/src/shared/taskStatus.ts` | `task-list-model.test.ts`、`task-experience.test.ts`、`task-workspace-browser.test.ts`、`shell-browser.test.ts`（空间切换后保留筛选、手机紧凑列表）、`work-filter-pagination-browser.test.ts`、`work-status-recovery-browser.test.ts`、`work-status-retry-pagination-browser.test.ts` |
 | 表格视图与对账 | `TaskTable.tsx`、`TaskReconciliation.tsx`、`taskWorkspacePresentation.ts`、`apps/workbench/src/shared/workStatusPresentation.ts`、`apps/workbench/src/shared/leaderWorkLoad.ts` | `task-workspace-presentation.test.ts`、`work-status.test.ts`、`leader-work-load.test.ts`、`leader-work-overview-browser.test.ts`、`task-list-owner-browser.test.ts` |
 | 右栏 | `TaskFacts.tsx`、`TaskAgentBlock.tsx`、`taskFactsPresentation.ts`、`revisionPresentation.ts`、`useRevisionOrigin.ts`（版本行的作者与理由）、`TaskDocumentPeek.tsx`、`apps/workbench/src/shared/workPresentation.ts`（下一步、责任、验收接力用语）、`apps/workbench/src/shared/ui/RecordName.tsx` | `revision-presentation.test.ts`、`task-wording-browser.test.ts`（`EVOLOOP_TASK_WORDING_SCREENSHOT_DIR`）、`task-list-model.test.ts`、`task-work-wording.test.ts`、`task-workspace-browser.test.ts`、`task-preview-current-responsibility-browser.test.ts` |
 | 任务正文与进展 | `TaskPage.tsx`、`TaskArrangement.tsx`（当前关注、阶段区间与计划）、`TaskOwner.tsx`、`taskOwnerPresentation.ts`、`apps/workbench/src/features/discussions/TaskCollaborationThread.tsx`、`apps/workbench/src/shared/ui/MarkdownBody.tsx`（标题层级在 `apps/workbench/src/shared/ui/markdownContent.ts`） | `markdown-content.test.ts`、`task-workspace-presentation.test.ts`、`legacy-bits-browser.test.ts`、`task-edit-role-recovery.test.ts`、`task-owner-browser.test.ts`、`task-list-owner-browser.test.ts`、`task-session-return-browser.test.ts`、`discovery-browser.test.ts` |

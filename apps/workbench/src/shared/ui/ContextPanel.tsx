@@ -5,8 +5,9 @@ import * as React from "react";
 import { createPortal } from "react-dom";
 import { PanelRightClose, PanelRightOpen, X, ArrowUpRight } from "lucide-react";
 import { IconButton, Sheet, SheetContent, SheetTitle, SheetDescription, cn } from "@evoloop/ui";
-import { onNavigate } from "../navigation";
+import { appPath, currentPath, onNavigate } from "../navigation";
 import { PageActive } from "./pageActive";
+import { useMediaQuery } from "./useMediaQuery";
 export { PageActive } from "./pageActive";
 /** The space the panel state belongs to (app/shell/spaces.ts); kept as a string so shared code does not depend on app. */
 type Space = string;
@@ -71,16 +72,21 @@ export function ContextPanelContent({ children }: { children: React.ReactNode })
   return pageActive && panel?.target ? createPortal(children, panel.target) : null;
 }
 
-function useMediaQuery(query: string): boolean {
-  const get = () => typeof window !== "undefined" && window.matchMedia(query).matches;
-  const [matches, setMatches] = React.useState(get);
-  React.useEffect(() => {
-    const list = window.matchMedia(query);
-    const onChange = () => setMatches(list.matches);
-    list.addEventListener("change", onChange);
-    return () => list.removeEventListener("change", onChange);
-  }, [query]);
-  return matches;
+/** Where an address points for the right column: the page and the revision it reads, without view state. */
+export function panelPlace(href: string): string {
+  const [pathname = "", query = ""] = (appPath(href) ?? href).split("#")[0]!.split("?");
+  const revision = new URLSearchParams(query).get("revision");
+  return revision ? `${pathname}?revision=${revision}` : pathname;
+}
+
+/**
+ * After the center moves to an address, a tab showing the same object would repeat the center: it closes, and the
+ * column shows 信息 (the facts of what the center now reads) when that tab was the one in front.
+ */
+export function afterCenterMoved(tabs: readonly PanelObject[], active: string, path: string): { tabs: PanelObject[]; active: string } {
+  const here = panelPlace(path);
+  const kept = tabs.filter(tab => !tab.href || panelPlace(tab.href) !== here);
+  return { tabs: kept, active: active !== "facts" && !kept.some(tab => tab.id === active) ? "facts" : active };
 }
 
 /** Panel state for one space; the shell places <ContextPanelColumn> where the column belongs. */
@@ -103,12 +109,20 @@ export function ContextPanelProvider({ space, children }: { space: Space; childr
   const register = React.useCallback(() => { setProviders(count => count + 1); return () => setProviders(count => count - 1); }, []);
   const [tabs, setTabs] = React.useState<PanelObject[]>([]);
   const [active, setActive] = React.useState<string>("facts");
+  const latest = React.useRef({ tabs, active });
+  latest.current = { tabs, active };
   // Below 1100px the panel is a modal drawer: it opens only when asked and is never restored on its own.
   const [drawerOpen, setDrawerOpen] = React.useState(false);
   React.useEffect(() => { if (inline) setDrawerOpen(false); }, [inline]);
   // Following a link (from the drawer or anywhere else) closes the drawer, so it never reopens over the next page
-  // or over this one when the reader comes back.
-  React.useEffect(() => onNavigate(() => setDrawerOpen(false)), []);
+  // or over this one when the reader comes back. 在中间打开 (or any link to an open tab's object) closes that tab:
+  // the center reads it in full now, and 信息 shows its facts.
+  React.useEffect(() => onNavigate(() => {
+    setDrawerOpen(false);
+    const next = afterCenterMoved(latest.current.tabs, latest.current.active, currentPath());
+    if (next.tabs.length !== latest.current.tabs.length) setTabs(next.tabs);
+    if (next.active !== latest.current.active) setActive(next.active);
+  }), []);
   const hasContent = providers > 0 || tabs.length > 0;
   const shown = inline ? state.open : drawerOpen;
   const setShown = (open: boolean) => inline ? update({ ...state, open }) : setDrawerOpen(open);
@@ -126,8 +140,24 @@ export function ContextPanelProvider({ space, children }: { space: Space; childr
 /** `embedded` gives the column a fixed height inside another page (the /ui samples) instead of following the viewport. */
 export function ContextPanelColumn({ embedded = false }: { embedded?: boolean } = {}) {
   const panel = React.useContext(PanelContext);
+  // The drawer opens from a page's own button (所选任务信息, 任务信息) or 展开右栏, never from a Radix trigger, so
+  // Radix would leave focus on <body> when it closes. Hand focus back to what opened it, as the navigation drawer does.
+  const opener = React.useRef<HTMLElement | null>(null);
   if (!panel) return null;
   const { state, update, inline, host, providers, tabs, active, setActive, close, hasContent } = panel;
+  const rememberOpener = () => {
+    const focused = document.activeElement;
+    opener.current = focused instanceof HTMLElement && focused !== document.body ? focused : null;
+  };
+  const returnFocus = (event: Event) => {
+    event.preventDefault();
+    const target = opener.current;
+    opener.current = null;
+    const shown = (element: HTMLElement | null) => !!element?.isConnected && element.getClientRects().length > 0;
+    // 展开右栏 is replaced while the drawer is open; its successor takes the focus.
+    const expand = document.querySelector<HTMLElement>("[data-panel-expand]");
+    (shown(target) ? target : shown(expand) ? expand : document.getElementById("workspace-main"))?.focus({ preventScroll: true });
+  };
   const activeTab = tabs.find(tab => tab.id === active);
   const showFacts = active === "facts" || !activeTab;
   const body = <div className="flex h-full min-h-0 flex-1 flex-col" data-ui="">
@@ -155,20 +185,24 @@ export function ContextPanelColumn({ embedded = false }: { embedded?: boolean } 
     const up = () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); };
     window.addEventListener("pointermove", move); window.addEventListener("pointerup", up);
   };
-  // The facts container must stay mounted for portals even while the column is hidden.
-  if (!hasContent || !state.open) return <>
-    <div hidden ref={host} />
-    {hasContent && <div data-ui="" className={embedded ? "absolute right-2 top-2" : "fixed right-2 top-1.5 z-40 compact:right-4 compact:top-3 compact:z-20"}><IconButton label="展开右栏" icon={<PanelRightOpen size={17} />} variant="secondary" onClick={() => update({ ...state, open: true })} /></div>}
-  </>;
+  // The facts container must stay mounted for portals even while the column is hidden. Collapsed, the column keeps a
+  // narrow strip in the work panel for 展开右栏, so the button never covers a page's header; on phones the button sits
+  // in the top bar, which keeps room for it. The strip stays while the drawer is open, so the page under the drawer
+  // keeps its width (the same element, so focus can come back to it).
+  const strip = hasContent && <div data-ui="" data-panel-strip="" className={embedded ? "absolute right-2 top-2"
+    : "fixed right-2 top-1.5 z-40 compact:sticky compact:right-auto compact:top-2 compact:z-auto compact:flex compact:h-[calc(100dvh-16px)] compact:w-12 compact:shrink-0 compact:justify-center compact:border-l compact:border-border compact:pt-3"}>
+    <IconButton data-panel-expand="" label="展开右栏" icon={<PanelRightOpen size={17} />} variant="secondary" onClick={() => update({ ...state, open: true })} />
+  </div>;
+  if (!hasContent || !state.open) return <><div hidden ref={host} />{strip}{null}</>;
   const bottom = typeof window !== "undefined" && !window.matchMedia("(min-width: 760px)").matches;
-  if (!inline) return <Sheet open onOpenChange={open => update({ ...state, open })}>
+  if (!inline) return <>{null}{strip}<Sheet open onOpenChange={open => update({ ...state, open })}>
     {/* The bottom quick view keeps one height (layout.md: about nine tenths of the screen) so content that grows while
         it renders, such as a diagram in a document, never moves the sheet or its tabs. */}
-    <SheetContent side={bottom ? "bottom" : "right"} className={cn("p-0", bottom && "h-[85dvh]")}>
+    <SheetContent side={bottom ? "bottom" : "right"} className={cn("p-0", bottom && "h-[85dvh]")} onOpenAutoFocus={rememberOpener} onCloseAutoFocus={returnFocus}>
       <SheetTitle className="sr-only">右栏</SheetTitle><SheetDescription className="sr-only">当前对象的信息与在旁边打开的对象</SheetDescription>
       {body}
     </SheetContent>
-  </Sheet>;
+  </Sheet></>;
   return <aside aria-label="右栏" style={{ width: state.width }} className={cn("flex shrink-0 flex-col border-l border-border", embedded ? "relative h-[440px]" : "sticky top-2 h-[calc(100dvh-16px)]")}>
     <div role="separator" aria-orientation="vertical" aria-label="调整右栏宽度" aria-valuemin={panelWidth.min} aria-valuemax={panelWidth.max} aria-valuenow={state.width} tabIndex={0}
       onPointerDown={startDrag}
