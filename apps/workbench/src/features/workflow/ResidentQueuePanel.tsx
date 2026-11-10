@@ -9,7 +9,7 @@ import type { QueueHoldCode, ResidentQueue, ResidentQueueEntry } from "@evoloop/
 import type { RoleRecord } from "@evoloop/contracts/roles";
 import type { RuntimeRunRecord, RuntimeSessionRecord } from "@evoloop/contracts/runtime";
 import { Button, StatusTag, type StatusTone } from "@evoloop/ui";
-import { request } from "../../shared/api";
+import { ApiError, request } from "../../shared/api";
 import type { MutationContext } from "../../shared/ActionForm";
 import { queryKeys, useProjectQuery } from "../../shared/query";
 import { queueClient } from "../../shared/queueClient";
@@ -123,15 +123,18 @@ function QueueCard({ context, queue, task, sessionId, runs, sessions, round }: {
     for (const read of [...taskReads, ...roleReads]) void read.refetch();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [round, listKey]);
-  // A name whose reread failed is not shown from before: the entry says so in words (full ID in 完整标识).
+  // A name whose reread failed is not shown from before: the entry says so in the shared wording (nameText), a record
+  // that is not there (404) as 未找到 (full ID in 完整标识).
+  const unnamed = (kind: string, error: unknown) => !error ? `${kind}（名称待读取）`
+    : error instanceof ApiError && error.status === 404 ? `${kind}（未找到）` : `${kind}（名称暂不可读）`;
   const taskTitle = (id: string) => {
     if (id === task?.id) return task.title;
     const read = taskReads[taskIds.indexOf(id)];
-    return !read?.error && read?.data?.task?.title?.trim() || (read?.error ? "任务（名称暂不可读）" : "任务（名称待读取）");
+    return !read?.error && read?.data?.task?.title?.trim() || unnamed("任务", read?.error);
   };
   const roleTitle = (id: string) => {
     const read = roleReads[roleIds.indexOf(id)];
-    return !read?.error && read?.data?.proposal?.title?.trim() || (read?.error ? "职责（名称暂不可读）" : "职责（名称待读取）");
+    return !read?.error && read?.data?.proposal?.title?.trim() || unnamed("职责", read?.error);
   };
   const failedNames = [...taskReads, ...roleReads].some(read => read.error);
   const attempts = new Map(attemptRead.data?.map(row => [row.entryId, row.attempts]) ?? []);

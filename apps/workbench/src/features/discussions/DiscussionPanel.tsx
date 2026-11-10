@@ -10,6 +10,7 @@ import { errorText } from "../../shared/api";
 import type { MutationContext } from "../../shared/ActionForm";
 import { currentPath, navigate, onNavigate } from "../../shared/navigation";
 import { diagnosticOf } from "../../shared/errorPresentation";
+import { listEndText } from "../../shared/listCoverage";
 import { useProjectList } from "../../shared/projectList";
 import { useProjectQuery } from "../../shared/query";
 import { ErrorDetails } from "../../shared/ui/ErrorDetails";
@@ -57,7 +58,7 @@ export function DiscussionPanel({ context, refresh }: { context: MutationContext
     <ContextRailContent>
       <nav aria-label="讨论列表" className="flex flex-col gap-0.5 pt-2">
         <div className="flex items-center justify-between gap-2 px-3 pb-1.5 pt-2">
-          <span className="text-caption text-muted-foreground">{listed ? `讨论 · ${items.length}${list.more ? "+" : ""}` : "讨论"}</span>
+          <span className="text-caption text-muted-foreground">{listed ? `讨论 · ${items.length}${list.more || list.repeatedCursor ? "+" : ""}` : "讨论"}</span>
           {canWrite(context, "write") && <a href={prepareHref(projectId)} aria-current={address.preparing ? "page" : undefined}
             className={cn("inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-caption text-text-secondary outline-none hover:bg-selected focus-visible:shadow-[var(--focus-ring)]", address.preparing && "bg-selected text-foreground")}>
             <Plus size={12} aria-hidden="true" />准备讨论</a>}
@@ -69,7 +70,8 @@ export function DiscussionPanel({ context, refresh }: { context: MutationContext
         {list.reading && <span className="px-3 py-2 text-caption text-muted-foreground">正在读取讨论…</span>}
         {list.failed && <span className="px-3 py-2 text-caption text-destructive">讨论列表没有读回，见中间说明。</span>}
         {list.stale && <span className="px-3 py-2 text-caption text-muted-foreground">上次读回，当前待核对</span>}
-        {listed && current && !items.length && <span className="px-3 py-2 text-caption text-muted-foreground">这个范围还没有讨论。</span>}
+        {listed && current && !items.length && !list.repeatedCursor && <span className="px-3 py-2 text-caption text-muted-foreground">这个范围还没有讨论。</span>}
+        {list.repeatedCursor && <span className="px-3 py-1 text-caption text-muted-foreground" data-repeated-cursor="">{listEndText(list)}</span>}
         {items.map(item => {
           const row = listRow(item, taskName(item.task?.id), scope === "all", choices.isPending);
           const selected = !address.preparing && item.id === selectedId;
@@ -101,6 +103,7 @@ export function DiscussionPanel({ context, refresh }: { context: MutationContext
 
     {list.failed && <Notice tone="error" title="讨论列表没有读回">{errorText(list.error)}。请重新读取；读回之前不能判断这个范围有没有讨论。<ErrorDetails error={list.error} /></Notice>}
     {list.stale && <Notice tone="waiting" title="上次读回，当前待核对">讨论列表重新读取失败：{errorText(list.error)}。左侧仍是上次读到的列表。<ErrorDetails error={list.error} /></Notice>}
+    {list.repeatedCursor && !list.error && <Notice tone="waiting" title={listEndText(list)!}>讨论分页返回了已经读过的位置，读取已停下；左侧只是读到的部分，不能据此判断这个范围只有这些讨论。</Notice>}
     {list.pageFailed && <Notice tone="error" title="下一页讨论没有读回" action={<Button size="compact" onClick={list.loadMore}>再读一次</Button>}>
       {errorText(list.error)}。已列出的讨论是读到的内容，后面的还没读到。<ErrorDetails error={list.error} /></Notice>}
 
@@ -115,7 +118,7 @@ export function DiscussionPanel({ context, refresh }: { context: MutationContext
         next="讨论详情或记录不可读时，不能据列表状态继续登记。请重新读取。" action={<Button size="compact" onClick={() => void detail.refetch()}>重新读取</Button>} />}
       {selectedId && detail.data && <DiscussionDetail key={detail.data.record.id} context={context} record={detail.data.record} events={detail.data.events}
         choices={choices.data} choicesLoading={choices.isPending} refresh={refresh} checking={detail.checking} />}
-      {!selectedId && listed && current && !items.length && <EmptyState title={scope === "all" ? "还没有讨论" : "这个范围还没有讨论"}
+      {!selectedId && listed && current && !items.length && !list.repeatedCursor && <EmptyState title={scope === "all" ? "还没有讨论" : "这个范围还没有讨论"}
         reason="准备讨论会固定目标版本、所读依据和要回答的问题，生成一份交接包。没有新的取舍时不必制造任务或常设职责。"
         action={scope !== "all" ? <Button size="compact" variant="ghost" onClick={() => changeScope("all")}>查看全部讨论</Button> : undefined} />}
       {!selectedId && list.reading && <LoadingState lines={4} label="正在读取讨论" />}

@@ -14,6 +14,7 @@ import {
 } from "@evoloop/ui";
 import { api, errorText, isUnconfirmed } from "../../shared/api";
 import { diagnosticOf, errorDiagnostic } from "../../shared/errorPresentation";
+import { listEndText } from "../../shared/listCoverage";
 import { useProjectList } from "../../shared/projectList";
 import { ErrorDetails } from "../../shared/ui/ErrorDetails";
 import type { MutationContext } from "../../shared/ActionForm";
@@ -130,6 +131,8 @@ function IncomingRow({ item, projectId, allowed, busy, read, onAction }: {
   const tag = incomingTag[item.state];
   const reviewable = item.state === "pending" || item.state === "review-only";
   const decide = (decision: "apply" | "reject") => { setConfirm(null); if (!stale) void onAction("review", item.id, item.operationId, () => client.review(item.id, decision, reason)); };
+  // A confirmation asked on rows that are now being read again is dropped, not kept for when the read ends.
+  useEffect(() => { if (stale) setConfirm(null); }, [stale]);
   return <li className="flex flex-col gap-2 border-t border-border py-3 first:border-t-0 first:pt-0">
     <div className="flex items-start justify-between gap-3">
       <div className="flex min-w-0 flex-col gap-0.5"><TaskName projectId={projectId} taskId={item.entityId} />
@@ -150,7 +153,7 @@ function IncomingRow({ item, projectId, allowed, busy, read, onAction }: {
       </div>
       {!canApplyIncoming(item) && <p className={muted}>只有修改人身份已核实、只改标题、不改状态的修改可以采纳；其余只能审阅后拒绝回写。</p>}
     </form>}
-    <Dialog open={confirm !== null && !stale} onOpenChange={open => { if (!open) setConfirm(null); }}>
+    <Dialog open={confirm !== null} onOpenChange={open => { if (!open) setConfirm(null); }}>
       <DialogContent>
         <DialogTitle>{confirm === "apply" ? "采纳这条远端修改？" : "拒绝这条远端修改？"}</DialogTitle>
         <DialogDescription>{confirm === "apply"
@@ -196,6 +199,8 @@ function useMore<T>(projectId: string, which: "deliveries" | "incoming", first: 
     items: shown ? list.items ?? [] : [],
     /** More rows exist than are on screen. */
     cursor: shown ? list.items === undefined || list.more : !!first,
+    /** A cursor came back that was already read: the reading stopped, and the rows may not be all of them. */
+    repeatedCursor: shown && list.repeatedCursor,
     reading: shown && (list.reading || list.loadingMore),
     checking: shown && list.checking,
     stale: shown && list.stale,
@@ -221,6 +226,8 @@ export function CollaborationPanel({ context }: { context: MutationContext; refr
   const incoming = data ? mergeById([...data.incoming.items, ...moreIncoming.items], item => item.id) : [];
   const deliveryCursor = moreDeliveries.cursor;
   const incomingCursor = moreIncoming.cursor;
+  const deliveryEnd = listEndText({ more: deliveryCursor, repeatedCursor: moreDeliveries.repeatedCursor });
+  const incomingEnd = listEndText({ more: incomingCursor, repeatedCursor: moreIncoming.repeatedCursor });
   // A row is as current as the read it came from: the overview's first page, or the later pages.
   const overviewRead: RowRead = overview.isError ? "stale" : overview.isFetching ? "checking" : "current";
   const laterRead = (more: { stale: boolean; checking: boolean }): RowRead => more.stale ? "stale" : more.checking ? "checking" : "current";
@@ -318,7 +325,7 @@ export function CollaborationPanel({ context }: { context: MutationContext; refr
 
     {data && <>
       <section aria-label="投影状态" className="flex flex-col gap-3">
-        <h2 className="text-heading font-semibold text-foreground">投影状态 <span className={muted}>· 已读 {deliveries.length} 条{deliveryCursor ? "，还有后续" : ""}</span></h2>
+        <h2 className="text-heading font-semibold text-foreground">投影状态 <span className={muted}>· 已读 {deliveries.length} 条{deliveryEnd ? `，${deliveryEnd}` : ""}</span></h2>
         {deliveries.length === 0 ? <EmptyState title="还没有任务投影记录" reason="没有记录不等于已经同步：可能没有配置连接，也可能还没有要投影的任务变化。" />
           : <ul className="flex flex-col rounded-xl bg-raised px-4 py-3 shadow-sm">{deliveries.map(item => <DeliveryRow key={item.eventId} item={item} projectId={projectId} allowed={allowed}
             busy={busy || pendingIds.has(item.eventId)} read={deliveryRead(item.eventId)} configured={data.configured} onAction={act} />)}</ul>}
@@ -327,7 +334,7 @@ export function CollaborationPanel({ context }: { context: MutationContext; refr
         {deliveryCursor && <Button size="compact" variant="ghost" className="self-start" disabled={moreDeliveries.reading || moreDeliveries.checking} onClick={moreDeliveries.loadMore}>{moreDeliveries.reading ? "正在读取…" : moreDeliveries.failed ? "再读一次" : "加载更多投影"}</Button>}
       </section>
       <section aria-label="远端修改" className="flex flex-col gap-3">
-        <h2 className="text-heading font-semibold text-foreground">远端修改 <span className={muted}>· 已读 {incoming.length} 条{incomingCursor ? "，还有后续" : ""}</span></h2>
+        <h2 className="text-heading font-semibold text-foreground">远端修改 <span className={muted}>· 已读 {incoming.length} 条{incomingEnd ? `，${incomingEnd}` : ""}</span></h2>
         {incoming.length === 0 ? <EmptyState title="还没有远端修改" reason="回读远端变化后，飞书里对任务的改动会作为候选出现在这里；没有可靠的修改人身份时只能人工审阅。" />
           : <ul className="flex flex-col rounded-xl bg-raised px-4 py-3 shadow-sm">{incoming.map(item => <IncomingRow key={item.id} item={item} projectId={projectId} allowed={allowed}
             busy={busy || pendingIds.has(item.id)} read={incomingRead(item.id)} onAction={act} />)}</ul>}
@@ -353,7 +360,7 @@ export function CollaborationPanel({ context }: { context: MutationContext; refr
       <RailBlock title="待处理">
         {data ? <ul className="flex flex-col gap-1 text-small text-text-secondary">
           <li>待审阅的远端修改：{data.incomingPending} 条</li>
-          <li>结果未知的投影：已读到 {deliveries.filter(item => item.state === "unknown").length} 条{deliveryCursor ? "（后续页未读）" : ""}</li>
+          <li>结果未知的投影：已读到 {deliveries.filter(item => item.state === "unknown").length} 条{deliveryCursor ? "（后续页未读）" : moreDeliveries.repeatedCursor ? "（后续页没有前进，可能不完整）" : ""}</li>
           <li>本机保留的待核对回执：{receipts.length} 项</li>
         </ul> : <p className="text-small text-text-secondary">{overview.isError ? "无法判断。" : "正在读取。"}</p>}
       </RailBlock>
