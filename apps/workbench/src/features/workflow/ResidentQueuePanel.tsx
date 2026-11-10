@@ -23,6 +23,8 @@ import { readAgent } from "../../shared/agentRead";
 import { queueAdoptCommand, queueAmendCommand, queueHoldCommand, queueReorderCommand, queueUnholdCommand } from "./taskCommands";
 import { runStateName } from "./taskExperience";
 import { ActionRow, Fine, ReadNote, reasonField } from "./TaskForms";
+import { actorText } from "../../shared/actorPresentation";
+import { ActorIdentifiers } from "../../shared/ui/ActorIdentifiers";
 
 const maxNamedEntries = 24;
 const key = encodeURIComponent;
@@ -221,7 +223,8 @@ function AgentQueue({ context, queue, agentId, entries, session, runs, attempts,
           <StatusTag tone={standing.tone} label={standing.label} />
           <a className="min-w-0 text-label text-primary hover:underline [overflow-wrap:anywhere]" href={entryHref}>{taskTitle(entry.taskId)}</a>
         </div>
-        <Fine>承接职责 <a className="text-primary hover:underline" href={`${href(projectId, "roles")}?role=${key(entry.roleId)}`}>{roleTitle(entry.roleId)}</a> · 验收者 {entry.consumerId} · 放行规则 {entry.releaseRule === "accepted" ? entry.useRequired ? "验收者实际使用并验收" : "验收者验收" : "有界的人工决定"}</Fine>
+        <Fine>承接职责 <a className="text-primary hover:underline" href={`${href(projectId, "roles")}?role=${key(entry.roleId)}`}>{roleTitle(entry.roleId)}</a> · 验收者 {actorText(entry.consumerId)} · 放行规则 {entry.releaseRule === "accepted" ? entry.useRequired ? "验收者实际使用并验收" : "验收者验收" : "有界的人工决定"}</Fine>
+        <ActorIdentifiers actors={[["验收者", entry.consumerId]]} />
         {dependencies.length > 0 && <Fine>要先放行：{dependencies.map(item => taskTitle(item.taskId)).join("、")}</Fine>}
         {entry.holdCode && <p className="text-caption text-warning [overflow-wrap:anywhere]">{holdLabel[entry.holdCode]}{entry.holdReason ? `：${entry.holdReason}` : ""}</p>}
         {entry.state === "claimed" && <Fine>这一项占用着这个智能体；后面的项即使有序号也不表示已经启动。</Fine>}

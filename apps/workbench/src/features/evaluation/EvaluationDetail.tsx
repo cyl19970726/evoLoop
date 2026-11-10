@@ -19,6 +19,9 @@ import {
   fixedRefLineHint, nextActionLineHint, readStateOf, sandboxLabels, taskStateLabels, unreadSources, type NextActionRef,
 } from "./presentation";
 import { ErrorDetails } from "../../shared/ui/ErrorDetails";
+import { actorIdentifier, actorText } from "../../shared/actorPresentation";
+/** An actor `actorText` says in words, as an IdentityDetails row (none for an account name). */
+const actorPair = (label: string, actorId: string | null | undefined): Array<[string, string]> => actorIdentifier(actorId) ? [[label, actorId!]] : [];
 
 const taskHref = (projectId: string, taskId: string, revisionId?: string) =>
   `/p/${projectId}/tasks/${taskId}${revisionId ? `?revision=${encodeURIComponent(revisionId)}` : ""}`;
@@ -134,7 +137,7 @@ export function EvaluationDetail({ context, read, selectedRevision, hold }: {
           <ul className="m-0 flex list-none flex-col gap-1 p-0">{[...revisions].sort((a, b) => b.version - a.version).map(item => <li key={item.id}>
             <a aria-current={item.id === revision.id ? "page" : undefined} href={evaluationHref(projectId, item.evaluationId, item.id)}
               className={cn("flex flex-col rounded-md px-2 py-1.5 text-small outline-none hover:bg-selected focus-visible:shadow-[var(--focus-ring)]", item.id === revision.id ? "bg-selected font-medium text-foreground" : "text-text-secondary")}>
-              <span>v{item.version}{item.id === latest?.id ? " · 最新" : ""}</span><span className={muted}>{date(item.createdAt)} · {item.actorId}</span>
+              <span>v{item.version}{item.id === latest?.id ? " · 最新" : ""}</span><span className={muted}>{date(item.createdAt)} · {actorText(item.actorId)}</span>
             </a></li>)}</ul>
         </PanelSection>
         <PanelSection title="完整标识">
@@ -170,8 +173,8 @@ function ConclusionRecord({ item, all, assessments, attempts, revision, projectI
     {item.affectedRefs.length > 0 && <ul className="m-0 flex list-none flex-col gap-1 p-0">{item.affectedRefs.map((ref, index) => <li key={index}><FixedRefLine value={ref} projectId={projectId} titles={titles} /></li>)}</ul>}
     {nextAction?.kind === "task" && nextActionHref(projectId, nextAction) && <a className={cn(linkClass, "text-small")} href={nextActionHref(projectId, nextAction)!}>后续任务 · 固定修订 ↗</a>}
     {nextAction && nextAction.kind !== "task" && <FixedRefLine value={nextAction} projectId={projectId} titles={titles} />}
-    <p className={cn(muted, "m-0")}>{date(item.createdAt)} · {item.actorId}</p>
-    <IdentityDetails rows={[["结论 ID", item.id], ...item.supersedesId ? [["更正的结论 ID", item.supersedesId] as [string, string]] : [],
+    <p className={cn(muted, "m-0")}>{date(item.createdAt)} · {actorText(item.actorId)}</p>
+    <IdentityDetails rows={[["结论 ID", item.id], ...actorPair("结论记录者", item.actorId), ...item.supersedesId ? [["更正的结论 ID", item.supersedesId] as [string, string]] : [],
       ...item.assessmentIds.map((id, index) => [`纳入判定 ${index + 1}`, id] as [string, string]),
       ...nextAction?.kind === "task" ? [["后续任务", `${nextAction.taskId} · 修订 ${nextAction.taskRevisionId}`] as [string, string]] : nextAction ? refRows("后续动作", [nextAction]) : [],
       ...refRows("受影响来源", item.affectedRefs)]} />
@@ -185,7 +188,7 @@ function ConclusionForm({ context, revision, assessments, attempts, conclusions,
   return <EvaluationForm context={{ ...context, draftScope: `evaluation-conclusion:${revision.id}`, draftBaseline: revision.id }} review hold={hold}
     title={conclusions.length ? "追加更正结论" : "记录评价结论"} fields={[
       { name: "assessmentIds", label: "纳入逐次判定", kind: "multi", options: assessments.map(item => option(item.id, assessmentName(item, revision, attempts, date))) },
-      { name: "supersedesId", label: "更正此前结论（可选）", kind: "select", optional: true, options: conclusions.filter(item => !replaced.has(item.id)).map(item => option(item.id, `${labelOf(comparabilityLabels, item.comparability)} · ${date(item.createdAt)} · ${item.actorId}`)) },
+      { name: "supersedesId", label: "更正此前结论（可选）", kind: "select", optional: true, options: conclusions.filter(item => !replaced.has(item.id)).map(item => option(item.id, `${labelOf(comparabilityLabels, item.comparability)} · ${date(item.createdAt)} · ${actorText(item.actorId)}`)) },
       { name: "finding", label: "实际发现", kind: "textarea" },
       { name: "limits", label: "限制与未测事项", kind: "textarea" },
       { name: "comparability", label: "可比较性", kind: "select", options: conclusionComparabilityOptions.map(item => option(item.value, item.label)) },

@@ -10,6 +10,7 @@ import { roleClient } from "../../shared/roleClient";
 import { href } from "../../shared/ui/shared";
 import { FactList, PageSection, mutedText } from "../../shared/ui/PageParts";
 import { FullIdentifiers } from "../../shared/ui/FullIdentifiers";
+import { actorRow, actorText } from "../../shared/actorPresentation";
 import { SessionName, useRoleName } from "../../shared/ui/RecordName";
 import { nameOnly, nameText } from "../../shared/workPresentation";
 import { SectionBoundary } from "../../shared/ui/SectionBoundary";
@@ -18,7 +19,7 @@ import { RolePresence } from "./RolePresence";
 import { SourceRef, SourceRefs, TaskLink } from "./SourceRef";
 import { ackHandoffForm, bindForm, decideForm, handoffForm, retireForm, reviewForm, type RoleForm } from "./roleForms";
 import {
-  actorIdentifier, actorText, alternativeKindText, evidenceKindText, handoffText, reviewDecisionText, revisionReasonText, roleActions, roleClassText, roleIdPattern,
+  alternativeKindText, evidenceKindText, handoffText, reviewDecisionText, revisionReasonText, roleActions, roleClassText, roleIdPattern,
   roleStateText, roleStateTone,
 } from "./rolePresentation";
 import { failureOf, type Failure } from "../../shared/errorPresentation";
@@ -107,7 +108,7 @@ function RoleHistory({ context, role, roleTitle }: { context: MutationContext; r
   // `actorId`: who recorded it; an opaque identifier is said in words and kept under 完整标识.
   const row = (key: string, title: ReactNode, body: ReactNode, meta: string, actorId?: string) => <li key={key} className="flex min-w-0 flex-col gap-0.5">
     <span className="text-small font-medium text-foreground">{title}</span>{body}<span className={mutedText}>{meta}</span>
-    {actorId && <FullIdentifiers summary="记录者的完整标识" rows={[{ label: "记录者", value: actorIdentifier(actorId, context.principal.actorId) }]} />}</li>;
+    {actorId && <FullIdentifiers summary="记录者的完整标识" rows={[actorRow("记录者", actorId, context.principal.actorId)]} />}</li>;
   return <PageSection title="修订与交接历史" action={<Button size="compact" variant="ghost" disabled={busy} onClick={() => void read()}>
     {busy ? "读取中…" : current ? "重新读取历史" : "阅读修订与交接历史"}</Button>}>
     {error && <Notice tone="error" title="历史未读回">{error.text}<ErrorDetails failure={error} /></Notice>}

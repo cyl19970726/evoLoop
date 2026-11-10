@@ -16,6 +16,8 @@ import { readDocumentHead, readVerifiedPackage, type Choices } from "./discussio
 import { DecisionForm, HandoffForm, LinkForm, targetChoices } from "./DiscussionForms";
 import { decisionHistory, eventLabel, kindLabel, nameOr, statusSentence, statusTag, targetKindLabel } from "./discussionPresentation";
 import { ErrorDetails } from "../../shared/ui/ErrorDetails";
+import { actorText } from "../../shared/actorPresentation";
+import { ActorIdentifiers } from "../../shared/ui/ActorIdentifiers";
 
 const link = "text-primary underline-offset-4 hover:underline outline-none focus-visible:shadow-[var(--focus-ring)] rounded-sm";
 const code = "font-mono text-caption [overflow-wrap:anywhere]";
@@ -106,7 +108,8 @@ function EventEntry({ event, record, choices, projectId, corrected }: { event: D
     {event.target && <p className="text-small text-text-secondary">后续{targetKindLabel[event.target.kind]}：<TargetLink target={event.target} choices={choices} projectId={projectId} /></p>}
     {payload?.type === "message" && <a className={`${link} text-small`} href={fixedDocument(projectId, payload.body.documentId, payload.body.revisionId)}>阅读消息原文</a>}
     {event.documentRevisionId && <a className={`${link} text-caption`} href={fixedDocument(projectId, record.documentId, event.documentRevisionId)}>阅读当次的固定讨论文档</a>}
-    <span className={muted}>{event.actorId} · {date(event.createdAt)}</span>
+    <span className={muted}>{actorText(event.actorId)} · {date(event.createdAt)}</span>
+    <ActorIdentifiers actors={[["记录者", event.actorId]]} />
   </li>;
 }
 
@@ -163,7 +166,8 @@ export function DiscussionDetail({ context, record, events, choices, choicesLoad
       {checking && <RefreshingIndicator />}
     </div>
     <h2 className="text-heading font-semibold leading-(--leading-tight) text-foreground [overflow-wrap:anywhere]" tabIndex={-1}>{title}</h2>
-    <p className={muted}>由 {record.actorId} 于 {date(record.createdAt)} 准备 · 最近更新 {date(record.updatedAt)} · 第 {record.version} 版</p>
+    <p className={muted}>由 {actorText(record.actorId)} 于 {date(record.createdAt)} 准备 · 最近更新 {date(record.updatedAt)} · 第 {record.version} 版</p>
+    <ActorIdentifiers actors={[["准备者", record.actorId]]} />
     <p className="text-small leading-(--leading-body) text-text-secondary">{statusSentence(record, !!latest?.supersedesDecisionEventId)}</p>
   </header>;
 
@@ -187,7 +191,7 @@ export function DiscussionDetail({ context, record, events, choices, choicesLoad
       {record.collaboration && <>
         <li>运行 <code className={code}>{record.collaboration.runId}</code></li>
         <li>智能体 <code className={code}>{record.collaboration.sessionId}</code></li>
-        <li>派出者 {record.collaboration.issuerActorId} · 执行者 {record.collaboration.recipientActorId}</li>
+        <li>派出者 <code className={code}>{record.collaboration.issuerActorId}</code> · 执行者 <code className={code}>{record.collaboration.recipientActorId}</code></li>
       </>}
       {record.latestDecisionEventId && <li>当前决定事件 <code className={code}>{record.latestDecisionEventId}</code></li>}
       {record.targetSessionRef && <li>拟交接对象的引用 <code className={code}>{record.targetSessionRef}</code></li>}
@@ -245,7 +249,8 @@ export function DiscussionDetail({ context, record, events, choices, choicesLoad
         {latest.relookCondition && <Fact label="重看条件"><span className="whitespace-pre-wrap">{latest.relookCondition}</span></Fact>}
         {latest.evidence && <Fact label="依据"><span className="whitespace-pre-wrap">{latest.evidence}</span></Fact>}
         {latest.reason && <Fact label="理由"><span className="whitespace-pre-wrap">{latest.reason}</span></Fact>}
-        <span className={muted}>{latest.actorId} · {date(latest.createdAt)}{latest.documentRevisionId && <> · <a className={link} href={fixedDocument(projectId, record.documentId, latest.documentRevisionId)}>阅读决定时的固定文档</a></>}</span>
+        <span className={muted}>{actorText(latest.actorId)} · {date(latest.createdAt)}{latest.documentRevisionId && <> · <a className={link} href={fixedDocument(projectId, record.documentId, latest.documentRevisionId)}>阅读决定时的固定文档</a></>}</span>
+        <ActorIdentifiers actors={[["决定者", latest.actorId]]} />
       </div> : <p className="text-small text-text-secondary">{record.status === "prepared" ? "还没有决定；登记承接观察后才能登记决定。" : "还没有登记讨论决定。"}</p>}
       {earlier.length > 0 && <CollapsibleRow summary={`已纠正的决定 · ${earlier.length} 项`}>
         <ol className="flex flex-col">{earlier.map(event => <EventEntry key={event.id} event={event} record={record} choices={choices} projectId={projectId} corrected={corrected.has(event.id)} />)}</ol>
@@ -255,8 +260,9 @@ export function DiscussionDetail({ context, record, events, choices, choicesLoad
       {head.isPlaceholderData && !head.isError && <p className={muted}>讨论已更新，正在重新核对文档当前版；核对完成前不判断两版是否一致。</p>}
       {head.isError && <Notice tone="error" title="文档当前版没有核实">{errorText(head.error)}。现在无法判断它与讨论登记版是否一致；核实之前不能登记承接、决定或链接对象。<ErrorDetails error={head.error} /></Notice>}
       {mismatch && headFresh && <Notice tone="waiting" title="讨论登记版与文档当前版不同">
-        讨论登记的是另一份修订，文档后来又被修订到第 {headFresh.version} 版（作者 {headFresh.author}）。旧讨论原件不会被改写；只有明确确认后，才能从文档当前版接续登记决定。完整标识见右栏。
+        讨论登记的是另一份修订，文档后来又被修订到第 {headFresh.version} 版（作者 {actorText(headFresh.author)}）。旧讨论原件不会被改写；只有明确确认后，才能从文档当前版接续登记决定。完整标识见右栏。
       </Notice>}
+      {mismatch && headFresh && <ActorIdentifiers actors={[["文档当前版作者", headFresh.author]]} />}
       {mismatch && headFresh && <CollapsibleRow summary={`对照文档当前版原文 · 第 ${headFresh.version} 版`}>
         <pre className="max-h-[60vh] overflow-auto whitespace-pre-wrap rounded-md bg-muted p-3 font-mono text-caption leading-(--leading-body) text-foreground [overflow-wrap:anywhere]">{headFresh.body}</pre>
       </CollapsibleRow>}

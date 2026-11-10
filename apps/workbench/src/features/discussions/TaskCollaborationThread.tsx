@@ -17,6 +17,7 @@ import {
 } from "./taskCollaborationPresentation";
 import { diagnosticOf } from "../../shared/errorPresentation";
 import { ErrorDetails } from "../../shared/ui/ErrorDetails";
+import { actorRow, actorText } from "../../shared/actorPresentation";
 
 type DocumentRef = { documentId: string; revisionId: string };
 const note = "text-caption text-muted-foreground";
@@ -83,7 +84,7 @@ function ThreadItem({ projectId, thread, from }: { projectId: string; thread: Co
     <div className="mt-2 flex flex-col gap-3 pl-4">
       <p className="text-label text-text-secondary [overflow-wrap:anywhere]">
         <a className={link} href={href(projectId, "task", task.id, task.revisionId)}>频道固定的任务修订</a>
-        {context && <> · 派出者 {context.issuerActorId} · 接收者 {context.recipientActorId} · 原智能体 <a className={link}
+        {context && <> · 派出者 {actorText(context.issuerActorId)} · 接收者 {actorText(context.recipientActorId)} · 原智能体 <a className={link}
           href={withReturn(`${href(projectId, "sessions")}?session=${encodeURIComponent(`owned:${context.sessionId}`)}`, from)}><AgentName projectId={projectId} sessionId={context.sessionId} /></a>
           {" · "}<a className={link} href={`${href(projectId, "task", task.id)}?tab=runtime&run=${encodeURIComponent(context.runId)}`}>发起这次协作的运行</a></>}
       </p>
@@ -91,7 +92,7 @@ function ThreadItem({ projectId, thread, from }: { projectId: string; thread: Co
       {shown.length > 0 && <ol className="flex flex-col gap-2">{shown.map(event => <li key={event.id} id={`collaboration-event-${event.id}`}
         className="flex min-w-0 scroll-mt-20 flex-col gap-1 border-l-2 border-border py-1 pl-3 text-label text-foreground [overflow-wrap:anywhere]">
         <EventContent projectId={projectId} taskId={task.id} event={event} events={events} />
-        <p className={note}>{event.actorId} · {date(event.createdAt)}</p>
+        <p className={note}>{actorText(event.actorId)} · {date(event.createdAt)}</p>
       </li>)}</ol>}
       <FullIdentifiers rows={identifiers(record, shown)} />
     </div>
@@ -100,10 +101,13 @@ function ThreadItem({ projectId, thread, from }: { projectId: string; thread: Co
 
 function identifiers(record: DiscussionRecord, events: DiscussionEvent[]): IdentifierRow[] {
   const rows: IdentifierRow[] = [{ label: "协作频道", value: record.id }, { label: "固定任务修订", value: record.task?.revisionId }];
-  if (record.collaboration) rows.push({ label: "原智能体", value: record.collaboration.sessionId }, { label: "运行", value: record.collaboration.runId });
+  if (record.collaboration) rows.push({ label: "原智能体", value: record.collaboration.sessionId }, { label: "运行", value: record.collaboration.runId },
+    actorRow("派出者", record.collaboration.issuerActorId), actorRow("接收者", record.collaboration.recipientActorId));
   for (const event of events) {
-    rows.push({ label: "事件", value: event.id });
+    rows.push({ label: "事件", value: event.id }, actorRow("事件记录者", event.actorId));
     const payload = event.collaborationPayload;
+    if (payload?.type === "message") rows.push(actorRow("消息接收者", payload.recipientActorId));
+    if (payload?.type === "action_request") rows.push(actorRow("请求执行者", payload.executorActorId));
     if (payload?.type === "action_execution") rows.push({ label: "外部操作", value: payload.externalOperationId });
     if (payload?.type === "action_request") rows.push({ label: "工作树", value: payload.scope.worktree });
   }
@@ -115,7 +119,7 @@ function EventContent({ projectId, taskId, event, events }: { projectId: string;
   const title = (text: string) => <p className="font-medium">{text}</p>;
   if (payload.type === "message") {
     const state = payload.kind === "question" ? isAnswered(event, events) ? " · 已答复" : " · 待答复" : "";
-    return <>{title(`${messageKindLabel[payload.kind]} · 致 ${payload.recipientActorId}${state}`)}
+    return <>{title(`${messageKindLabel[payload.kind]} · 致 ${actorText(payload.recipientActorId)}${state}`)}
       <p><FixedDocument projectId={projectId} reference={payload.body} label="阅读消息正文" />
         {payload.replyToEventId && <> · <JumpTo eventId={payload.replyToEventId}>跳到所回复的消息</JumpTo></>}</p></>;
   }
@@ -124,12 +128,12 @@ function EventContent({ projectId, taskId, event, events }: { projectId: string;
     {payload.stage === "adopted" && payload.continuation && <p className="text-text-secondary">已记录采用到<a className={link}
       href={`${href(projectId, "task", taskId)}?tab=runtime&run=${encodeURIComponent(payload.continuation.runId)}`}>后续运行</a>；实际运行仍需单独核对。</p>}</>;
   if (payload.type === "action_request") return <>{title(`工程动作请求 · ${actionTypeLabel[payload.actionType] ?? "其他动作"} · ${actionRequestState(event, events)}`)}
-    <p className="text-text-secondary">请求执行者 {payload.executorActorId} · 仓库 {payload.scope.repository} · 截止 {date(payload.expiresAt)}</p>
+    <p className="text-text-secondary">请求执行者 {actorText(payload.executorActorId)} · 仓库 {payload.scope.repository} · 截止 {date(payload.expiresAt)}</p>
     <p className="text-text-secondary">精确路径：{payload.scope.paths.join("、")}</p>
     <p><FixedDocument projectId={projectId} reference={payload.detail} label="阅读动作范围与理由" /></p></>;
   if (payload.type === "action_decision") return <>{title(`工程动作决定 · ${payload.decision === "approved" ? "批准" : payload.decision === "rejected" ? "拒绝" : "已过期"}`)}
-    <p>决定者 {event.actorId} · <JumpTo eventId={payload.requestEventId}>跳到对应请求</JumpTo> · <FixedDocument projectId={projectId} reference={payload.evidence} label="阅读决定依据" /></p></>;
+    <p>决定者 {actorText(event.actorId)} · <JumpTo eventId={payload.requestEventId}>跳到对应请求</JumpTo> · <FixedDocument projectId={projectId} reference={payload.evidence} label="阅读决定依据" /></p></>;
   return <>{title(`工程动作执行回执 · ${executionStateLabel[payload.state]}`)}
-    <p>实际执行者 {event.actorId} · <JumpTo eventId={payload.requestEventId}>跳到对应请求</JumpTo> · <JumpTo eventId={payload.decisionEventId}>跳到对应决定</JumpTo></p>
+    <p>实际执行者 {actorText(event.actorId)} · <JumpTo eventId={payload.requestEventId}>跳到对应请求</JumpTo> · <JumpTo eventId={payload.decisionEventId}>跳到对应决定</JumpTo></p>
     <p><FixedDocument projectId={projectId} reference={payload.artifact} label="阅读执行产物" /></p></>;
 }

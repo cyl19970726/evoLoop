@@ -5,7 +5,7 @@ import test from "node:test";
 import type { HostLink } from "@evoloop/contracts/resident-hosts";
 import {
   alternativeKindText, evidenceKindText, handoffText, hostTitle, reviewDecisionText, roleActions, roleClassText, roleStateText,
-  actorIdentifier, actorText, revisionReasonText, roleTarget, routeStatusText, sourceRefTaskId, targetNotice, targetState,
+  revisionReasonText, roleTarget, routeStatusText, sourceRefTaskId, targetNotice, targetState,
 } from "../src/features/roles/rolePresentation.ts";
 
 const id = "30000002-0000-4000-8000-000000000002";
@@ -70,14 +70,6 @@ test("service-written revision reasons read as Chinese; a person's text stays; a
   assert.deepEqual(revisionReasonText("职责合并; knowledge: 已归档; runtime: 无在途"), { text: "撤回：职责合并\n知识与材料的处理：已归档\n在途智能体的核对：无在途" });
   assert.deepEqual(revisionReasonText("证据充分，接受两周试行"), { text: "证据充分，接受两周试行" });
   assert.deepEqual(revisionReasonText("role reclassified by migration"), { text: "系统记录的修订原因（未识别）", raw: "role reclassified by migration" });
-  assert.equal(actorText("lead", "lead"), "我");
-  assert.equal(actorText("reviewer", "lead"), "reviewer");
-  // An opaque identifier is never shortened into the text; it is kept for 完整标识.
-  assert.equal(actorText(id, "lead"), "未登记名称的身份");
-  assert.doesNotMatch(actorText(id, "lead"), /[0-9a-f]{8}/);
-  assert.equal(actorIdentifier(id, "lead"), id);
-  assert.equal(actorIdentifier("reviewer", "lead"), null, "a readable account name needs nothing more");
-  assert.equal(actorIdentifier(id, id), null, "我");
 });
 
 test("an evidence source that names a task is read as that task, never shown as task://<id>", () => {

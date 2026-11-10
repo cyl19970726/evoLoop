@@ -1,4 +1,5 @@
 import type { SessionActivity } from "@evoloop/contracts/session-observation";
+import { actorText } from "../../shared/actorPresentation";
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -9,7 +10,8 @@ export function activityPresentation(item: SessionActivity, projectId: string): 
     : source.kind === "task" ? "关联任务记录"
       : source.evidence === "independent-use" ? "独立使用观察"
         : source.evidence === "session-statement" ? "会话陈述" : "项目记录";
-  const sourceLabel = `${evidence} · 登记者 ${item.actorId?.trim() || "未记录"}`;
+  // Who recorded it, as every page says it; an identifier-only actor's value is in the source layer (原始事件与来源).
+  const sourceLabel = `${evidence} · 登记者 ${actorText(item.actorId)}`;
   const discussionHref = source.kind === "discussion" && uuid.test(source.id)
     ? `/p/${encodeURIComponent(projectId)}/discussions?discussion=${encodeURIComponent(source.id)}` : null;
   return { sourceLabel, discussionHref };

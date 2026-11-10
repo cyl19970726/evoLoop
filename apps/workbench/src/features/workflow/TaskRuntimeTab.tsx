@@ -33,6 +33,8 @@ import { assignmentKey } from "./taskFactsPresentation";
 import { ActionRow, Fine, ReadNote, TabSection, readCurrent, reasonField } from "./TaskForms";
 import { ResidentQueuePanel } from "./ResidentQueuePanel";
 import { taskOrigin } from "./taskOrigin";
+import { actorRow, actorText } from "../../shared/actorPresentation";
+import { ActorIdentifiers } from "../../shared/ui/ActorIdentifiers";
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const inFlight = ["requested", "dispatching", "running", "unknown"];
@@ -135,12 +137,13 @@ function AssignmentSection({ context, task, read }: { context: MutationContext; 
         {state && <StatusTag tone={state.tone} label={state.label} />}
         <a className="text-label text-primary hover:underline" href={sessionHref(projectId, key!, taskOrigin(projectId, task, context.principal.actorId))}>进入对话</a>
       </div>
-      <Fine>{assignment.target.kind === "owned" ? "项目内智能体" : "外部接入的智能体"} · 更新于 {date(assignment.updatedAt)} · 分派人 {assignment.actorId}{assignment.recipientActorId ? ` · 指定执行者 ${assignment.recipientActorId}` : ""}</Fine>
+      <Fine>{assignment.target.kind === "owned" ? "项目内智能体" : "外部接入的智能体"} · 更新于 {date(assignment.updatedAt)} · 分派人 {actorText(assignment.actorId)}{assignment.recipientActorId ? ` · 指定执行者 ${actorText(assignment.recipientActorId)}` : ""}</Fine>
       <p className="text-label text-text-secondary [overflow-wrap:anywhere]">分派依据：{assignment.reason}</p>
       {assignment.ack && <p className="text-label text-text-secondary [overflow-wrap:anywhere]">{assignment.ack.method === "direct" ? "执行者本人确认接手" : "负责人观察到接手"} · {date(assignment.ack.at)} · {assignment.ack.evidence}</p>}
       {!valid && assignment.state !== "released" && !closed && <Notice tone="waiting">任务的当前修订和分派固定的修订不同。旧的接手记录保留，但不能当作新修订已经接手。</Notice>}
       <FullIdentifiers rows={[{ label: "承接对象", value: key }, { label: "分派固定的任务修订", value: assignment.taskRevisionId },
-        { label: "确认来源", value: assignment.ack?.sourceRef }, { label: "确认人", value: assignment.ack?.actorId ?? assignment.ack?.observerActorId }]} />
+        { label: "确认来源", value: assignment.ack?.sourceRef }, { label: "确认人", value: assignment.ack?.actorId ?? assignment.ack?.observerActorId },
+        actorRow("分派人", assignment.actorId), actorRow("指定执行者", assignment.recipientActorId)]} />
     </div> : <p className="text-label text-text-secondary">还没有指定具体的智能体。负责职责仍在任务上，但不能据此推定哪个智能体已经接手。</p>)}
     {task.state === "todo" && <Fine>建议先开始任务再指定智能体：开始会产生新的固定修订，之前的分派和接手不会沿用。</Fine>}
     {ready && task.state === "in_progress" && permissions.includes("review") && (binding
@@ -165,7 +168,8 @@ function AssignmentSection({ context, task, read }: { context: MutationContext; 
     {history.data && history.data.items.length > 1 && <details>
       <summary className="w-fit cursor-pointer text-label text-primary hover:underline">分派记录（{history.data.items.length}{history.data.nextCursor ? "+" : ""}）</summary>
       <ol className="mt-2 flex flex-col gap-1">{history.data.items.map(item => <li key={`${item.version}:${item.updatedAt}`} className="text-caption text-text-secondary">
-        第 {item.version} 版 · {item.state === "accepted" ? "已接手" : item.state === "assigned" ? "已分派" : "已释放"} · {date(item.updatedAt)} · {item.actorId} · {item.reason}
+        第 {item.version} 版 · {item.state === "accepted" ? "已接手" : item.state === "assigned" ? "已分派" : "已释放"} · {date(item.updatedAt)} · {actorText(item.actorId)} · {item.reason}
+        <ActorIdentifiers actors={[["分派人", item.actorId]]} />
       </li>)}</ol>
     </details>}
   </div>;
@@ -313,7 +317,8 @@ function RunRecord({ context, run, taskTitle, anchor, readOnlyAgent }: {
         {events?.error && <Notice tone="error">{events.error}</Notice>}
         {events?.value && (events.value.length ? <ol className="flex flex-col gap-1.5">{events.value.map(event => <li key={event.id} className="flex flex-col">
           <span className="text-label text-foreground [overflow-wrap:anywhere]">{event.detail}</span>
-          <Fine>{event.actorId} · {date(event.createdAt)}</Fine>
+          <Fine>{actorText(event.actorId)} · {date(event.createdAt)}</Fine>
+          <ActorIdentifiers actors={[["记录者", event.actorId]]} />
         </li>)}</ol> : <p className="text-label text-text-secondary">没有回执记录。</p>)}
       </div>
       <div className="flex flex-col">
