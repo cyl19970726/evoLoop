@@ -2,18 +2,20 @@
 // Each is read on its own (cached per project), so a list never waits on them; until a name is back the text says
 // "名称待读取", and the identifier itself belongs in the full-identifier layer, not here.
 import type { SessionProfileRecord } from "@evoloop/contracts/session-assignments";
-import { api, requestNullable } from "../api";
+import { ApiError, api, requestNullable } from "../api";
 import { isRoleOwnerId, readOwnerRole } from "../ownerRole";
 import { useProjectQuery } from "../query";
 import type { LeaderWorkTask } from "@evoloop/contracts/work-index";
 import { nameOnly, nameText, responsibleSessionKey, responsibleText, type NameRead } from "../workPresentation";
 
-function readOf<T>(query: { data?: T; isError: boolean }, name: (value: T) => string | null | undefined): NameRead {
+/** A name as read: a record that is not there (404) is said as such, any other failure as unreadable. */
+export function readOf<T>(query: { data?: T; isError: boolean; error?: unknown }, name: (value: T) => string | null | undefined): NameRead {
   if (query.data !== undefined) {
     const text = name(query.data)?.trim();
     return text ? { state: "named", name: text } : { state: "unnamed" };
   }
-  return query.isError ? { state: "failed" } : { state: "reading" };
+  if (!query.isError) return { state: "reading" };
+  return query.error instanceof ApiError && query.error.status === 404 ? { state: "missing" } : { state: "failed" };
 }
 
 /** A role's title. An owner that is not a role identifier has no title to read. */

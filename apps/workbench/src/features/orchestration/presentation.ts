@@ -62,9 +62,46 @@ export const outcomeLabel = (value: string): string =>
 export const purposeLabel = (value: string): string =>
   ({ cognitive_review: "判断复核", next_action: "下一步处理", cognition: "判断", business: "业务执行" } as Record<string, string>)[value] ?? "其他用途";
 
+/**
+ * What was read of a loop's goal and stage. `named` holds what could be said (a part that failed is said as such);
+ * `failed` and `missing` mean neither could be named: a read that failed, or records that were read and are not there.
+ * No value at all means the read has not come back yet.
+ */
+export type ScopeTitle = { state: "named"; title: string } | { state: "failed" } | { state: "missing" };
+
+type Settled<T> = { status: "fulfilled"; value: T } | { status: "rejected"; reason: unknown };
+
+/** The goal and stage of a loop from their reads; `notFound` says whether a failed read was an answer that it is not there. */
+export function scopeTitleOf(goal: Settled<{ outcome: string }>, stage: Settled<{ deliverable: string } | null> | null,
+  notFound: (cause: unknown) => boolean): ScopeTitle {
+  const part = <T>(read: Settled<T>, kind: string, text: (value: T) => string) => read.status === "fulfilled"
+    ? { known: true, missing: false, text: text(read.value).trim() || `${kind}（未写内容）` }
+    : { known: false, missing: notFound(read.reason), text: `${kind}${notFound(read.reason) ? "未找到" : "暂不可读取"}` };
+  const parts = [part(goal, "目标", value => value.outcome), ...stage ? [part(stage, "阶段", value => value?.deliverable ?? "")] : []];
+  if (parts.some(item => item.known)) return { state: "named", title: parts.map(item => item.text).join(" · ") };
+  return parts.every(item => item.missing) ? { state: "missing" } : { state: "failed" };
+}
+
+/** A loop's goal and stage in full: their names, or whether they are being read, could not be read, or are not there. */
+export function scopeText(scope: ScopeTitle | undefined): string {
+  if (!scope) return "目标与阶段待读取";
+  if (scope.state === "failed") return "目标与阶段暂不可读取";
+  if (scope.state === "missing") return "目标与阶段未找到";
+  return scope.title;
+}
+
 /** A loop's name for a picker: its goal and stage, shortened. */
-export function loopName(title: string | undefined, max = 16): string {
-  const chars = [...(title ?? "").replace(/\s+/g, " ").trim()];
-  if (!chars.length) return "目标与阶段待读取";
+export function loopName(scope: ScopeTitle | undefined, max = 16): string {
+  const chars = [...scopeText(scope).replace(/\s+/g, " ").trim()];
   return chars.length > max ? `${chars.slice(0, max).join("")}…` : chars.join("");
+}
+
+/**
+ * A dispatched task's name from the loop's task pages: its title; 待读取 while unread pages remain; 暂不可读取 when
+ * reading them failed; 未找到 when every page was read and it is not there.
+ */
+export function taskTitleText(title: string | undefined, pages: { more: boolean; failed: boolean }): string {
+  if (title) return title;
+  if (pages.failed) return "任务（名称暂不可读取）";
+  return pages.more ? "任务（名称待读取）" : "任务（未找到）";
 }

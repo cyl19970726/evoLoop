@@ -11,13 +11,17 @@ import { ActionForm, type MutationContext } from "../../shared/ActionForm";
 import { externalHostOpenHref, externalHostOpenReason } from "../../shared/externalHostEntry";
 import { useProjectQuery } from "../../shared/query";
 import { href } from "../../shared/ui/shared";
-import { Legacy, PageSection, mutedText } from "../../shared/ui/PageParts";
+import { FullIdentifiers } from "../../shared/ui/FullIdentifiers";
+import { SessionName } from "../../shared/ui/RecordName";
+import { PageSection, mutedText } from "../../shared/ui/PageParts";
 import { capabilitiesText, hostTitle, roleActions, routeStatusText } from "./rolePresentation";
 import { registerHostForm, verifyHostForm } from "./roleForms";
+import { failureOf, type Failure } from "../../shared/errorPresentation";
+import { ErrorDetails } from "../../shared/ui/ErrorDetails";
 
 const key = encodeURIComponent;
 const stamp = (value: number) => new Date(value).toLocaleString("zh-CN", { hour12: false });
-type RouteRead = { epoch: number; route?: DomainRoute; error?: string };
+type RouteRead = { epoch: number; route?: DomainRoute; error?: Failure };
 
 export function RolePresence({ context, role }: { context: MutationContext; role: RoleRecord }) {
   const { projectId } = context;
@@ -47,7 +51,7 @@ export function RolePresence({ context, role }: { context: MutationContext; role
       if (route.domain.projectId !== projectId || route.domain.id !== domainId) throw new Error("业务领域路由响应不匹配");
       setRoutes(previous => previous[domainId]?.epoch === started ? { ...previous, [domainId]: { epoch: started, route } } : previous);
     } catch (cause) {
-      setRoutes(previous => previous[domainId]?.epoch === started ? { ...previous, [domainId]: { epoch: started, error: errorText(cause) } } : previous);
+      setRoutes(previous => previous[domainId]?.epoch === started ? { ...previous, [domainId]: { epoch: started, error: failureOf(cause) } } : previous);
     }
   }
   const actions = roleActions(role.state);
@@ -56,7 +60,7 @@ export function RolePresence({ context, role }: { context: MutationContext; role
       <RefreshCw aria-hidden="true" className={read.isFetching ? "animate-spin" : undefined} />重新读取</Button>}>
     <p className={mutedText} data-presence-read="">{read.data ? `${current ? "读于" : "上次读于"} ${stamp(epoch)}` : read.isPending ? "正在读取承载与业务领域…" : "当前身份尚未读回"}</p>
     {read.isPending && <LoadingState lines={2} label="正在读取承载" />}
-    {error && <Notice tone="error" title="读取失败">读取失败：{error}；{read.data ? "所示内容是上次读回，不能视为当前状态。" : "当前身份没有已核对的承载与领域，不能沿用其他身份的入口。"}</Notice>}
+    {error && <Notice tone="error" title="读取失败">读取失败：{error}；{read.data ? "所示内容是上次读回，不能视为当前状态。" : "当前身份没有已核对的承载与领域，不能沿用其他身份的入口。"}<ErrorDetails error={read.error} /></Notice>}
     {current && hosts.length === 0 && domains.length === 0 && <p className="text-small text-text-secondary">尚无已登记的承载或业务领域。</p>}
     {(hosts.length > 0 || domains.length > 0) && <ul aria-label="承载与业务领域" className="flex flex-col overflow-hidden rounded-xl bg-raised shadow-sm">
       {hosts.map(host => <li key={host.id} className="flex min-w-0 flex-col gap-1.5 border-t border-border px-4 py-3 first:border-t-0">
@@ -69,7 +73,7 @@ export function RolePresence({ context, role }: { context: MutationContext; role
         {host.host.kind === "external" && <p className={mutedText}>外部宿主仅按已核能力人工操作；这里不宣称可自动启动或写入。</p>}
         {host.host.kind === "external" && host.state === "registered" && actions.connect && current && <details className="text-small">
           <summary className="cursor-pointer text-primary">核实人工连接能力</summary>
-          <Legacy><ActionForm context={context} review embedded {...verifyHostForm(role, host)} /></Legacy>
+          <ActionForm context={context} review embedded {...verifyHostForm(role, host)} />
         </details>}
       </li>)}
       {domains.map(domain => {
@@ -79,27 +83,32 @@ export function RolePresence({ context, role }: { context: MutationContext; role
           <strong className="text-small font-semibold text-foreground">业务领域 · {domain.title} · {domain.state === "active" ? "使用中" : "已停用"}</strong>
           <p className="text-small text-text-secondary">{domain.routingReason}</p>
           <Button size="compact" className="w-fit" disabled={!current} onClick={() => void checkRoute(domain.id)}>核对当前路由</Button>
-          {shown?.error && <p role="alert" className="text-small text-destructive">路由读取失败：{shown.error}；当前路由尚待核对。</p>}
-          {shown?.route && <p className="text-small text-foreground">路由观察：{routeStatusText(shown.route.status)}。{shown.route.session ? `受管智能体 ${shown.route.session.id.slice(0, 8)}。` : ""}{shown.route.status === "external-manual" ? "需要人工领取。" : ""}</p>}
+          {shown?.error && <div role="alert" className="text-small text-destructive">路由读取失败：{shown.error.text}；当前路由尚待核对。<ErrorDetails failure={shown.error} /></div>}
+          {shown?.route && <p className="text-small text-foreground">路由观察：{routeStatusText(shown.route.status)}。{shown.route.session
+            ? <><SessionName projectId={projectId} sessionKey={`owned:${shown.route.session.id}`} kind="受管智能体" />。</> : ""}{shown.route.status === "external-manual" ? "需要人工领取。" : ""}</p>}
+          {shown?.route?.session && <FullIdentifiers rows={[{ label: "受管智能体", value: shown.route.session.id }]} />}
         </li>;
       })}
     </ul>}
     {actions.connect && <details className="text-small">
       <summary className="cursor-pointer text-primary">登记已有 Codex 聊天</summary>
       <p className={cn(mutedText, "mt-2")}>只登记原聊天引用；实际打开、读取和人工领取须另行核实。登记不表示会自动发送或启动。</p>
-      <Legacy><ActionForm context={context} review embedded {...registerHostForm(role)} /></Legacy>
+      <ActionForm context={context} review embedded {...registerHostForm(role)} />
     </details>}
   </PageSection>;
 }
 
 function OwnedHost({ projectId, sessionId, current }: { projectId: string; sessionId: string; current: boolean }) {
-  return <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-small">
-    {current ? <>
-      <a className="text-primary hover:underline" href={`${href(projectId, "runtime")}?session=${key(sessionId)}`}>查看运行与队列</a>
-      <a className="text-primary hover:underline" href={`${href(projectId, "sessions")}?session=${key(`owned:${sessionId}`)}`}>在智能体空间打开</a>
-    </> : <span className={mutedText}>上次读回，暂不可作为当前入口</span>}
-    <span className={mutedText}>智能体 {sessionId.slice(0, 8)}</span>
-  </p>;
+  return <>
+    <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-small">
+      {current ? <>
+        <a className="text-primary hover:underline" href={`${href(projectId, "runtime")}?session=${key(sessionId)}`}>查看运行与队列</a>
+        <a className="text-primary hover:underline" href={`${href(projectId, "sessions")}?session=${key(`owned:${sessionId}`)}`}>在智能体空间打开</a>
+      </> : <span className={mutedText}>上次读回，暂不可作为当前入口</span>}
+      <span className={mutedText}><SessionName projectId={projectId} sessionKey={`owned:${sessionId}`} /></span>
+    </p>
+    <FullIdentifiers rows={[{ label: "智能体", value: sessionId }]} />
+  </>;
 }
 
 function ExternalHost({ host, roleState, current }: { host: HostLink; roleState: RoleRecord["state"]; current: boolean }) {

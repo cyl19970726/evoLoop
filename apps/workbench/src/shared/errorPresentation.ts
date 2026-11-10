@@ -87,3 +87,19 @@ export function errorDiagnostic(error: unknown): string {
   const { message, code } = parts(error);
   return original(message, code) || describeError(error).text;
 }
+
+/**
+ * 诊断信息 under a failure said in Chinese: the original answer (errorDiagnostic) when it says more than the sentence
+ * on the page, undefined when it would only repeat it.
+ */
+export function diagnosticOf(error: unknown): string | undefined {
+  if (error === null || error === undefined) return undefined;
+  const raw = errorDiagnostic(error);
+  return raw && raw !== describeError(error).text ? raw : undefined;
+}
+
+/** A failure kept as text for the page, with its 诊断信息 (for state that outlives the error object). */
+export interface Failure { text: string; detail?: string | undefined }
+export function failureOf(error: unknown): Failure {
+  return { text: describeError(error).text, detail: diagnosticOf(error) };
+}

@@ -1,4 +1,4 @@
-import type { DueSelection, ScheduleRevision } from "@evoloop/contracts/scheduling";
+import { dailyRuleInstant, scheduleWallClock, scheduleZoneFormat, type DueSelection, type ScheduleRevision } from "@evoloop/contracts/scheduling";
 
 const MINUTE = 60_000;
 const DAY = 86_400_000;
@@ -16,31 +16,8 @@ function instant(value: string): number {
 }
 
 function formatter(timezone: string): Intl.DateTimeFormat {
-  try { return new Intl.DateTimeFormat("en-CA", { timeZone: timezone, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }); }
+  try { return scheduleZoneFormat(timezone); }
   catch { throw new ScheduleRuleError("invalid IANA timezone"); }
-}
-
-function localParts(format: Intl.DateTimeFormat, time: number): Record<string, number> {
-  const parts: Record<string, number> = {};
-  for (const part of format.formatToParts(time)) if (["year", "month", "day", "hour", "minute"].includes(part.type)) parts[part.type] = Number(part.value);
-  return parts;
-}
-
-function offset(format: Intl.DateTimeFormat, time: number): number {
-  const p = localParts(format, time);
-  return Date.UTC(p.year!, p.month! - 1, p.day!, p.hour!, p.minute!) - Math.floor(time / MINUTE) * MINUTE;
-}
-
-function dailyInstant(format: Intl.DateTimeFormat, date: Date, hour: number, minute: number): number | null {
-  const target = Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate(), hour, minute);
-  const candidates = new Set<number>();
-  for (const probe of [target - DAY, target, target + DAY]) {
-    const candidate = target - offset(format, probe);
-    const p = localParts(format, candidate);
-    if (p.year === date.getUTCFullYear() && p.month === date.getUTCMonth() + 1 && p.day === date.getUTCDate() && p.hour === hour && p.minute === minute) candidates.add(candidate);
-  }
-  // At fall-back, the earlier UTC instant owns this local wall-clock slot.
-  return candidates.size ? Math.min(...candidates) : null;
 }
 
 export function validateScheduleRevision(revision: ScheduleRevision): void {
@@ -78,13 +55,15 @@ export function computeDue(revision: ScheduleRevision, watermarkUtc: string, now
     for (let index = Math.max(first, last - keep + 1); index <= last; index++) due.push(anchor + index * period);
   } else {
     const format = formatter(revision.timezone);
-    const firstLocal = localParts(format, from), lastLocal = localParts(format, now);
-    const firstDate = Date.UTC(firstLocal.year!, firstLocal.month! - 1, firstLocal.day!);
-    const lastDate = Date.UTC(lastLocal.year!, lastLocal.month! - 1, lastLocal.day!);
+    const firstLocal = scheduleWallClock(format, from), lastLocal = scheduleWallClock(format, now);
+    const firstDate = Date.UTC(firstLocal.year, firstLocal.month - 1, firstLocal.day);
+    const lastDate = Date.UTC(lastLocal.year, lastLocal.month - 1, lastLocal.day);
     if ((lastDate - firstDate) / DAY > MAX_DAILY_DAYS) throw new ScheduleRuleError("daily catch-up horizon exceeds 370 days; review required");
     const [hour, minute] = revision.rule.localTime.split(":").map(Number);
     for (let day = firstDate; day <= lastDate; day += DAY) {
-      const at = dailyInstant(format, new Date(day), hour!, minute!);
+      const date = new Date(day);
+      // The wall-clock rule shared with the workbench preview (@evoloop/contracts/scheduling).
+      const at = dailyRuleInstant(format, { year: date.getUTCFullYear(), month: date.getUTCMonth() + 1, day: date.getUTCDate() }, hour!, minute!);
       if (at !== null && at > from && at <= now) due.push(at);
     }
     total = due.length;

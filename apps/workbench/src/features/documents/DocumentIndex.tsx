@@ -5,7 +5,6 @@ import { useState } from "react";
 import { Button } from "@evoloop/ui";
 import { ActionForm, option, type MutationContext } from "../../shared/ActionForm";
 import { useContextRailShown } from "../../shared/ui/ContextRail";
-import { Legacy } from "../../shared/ui/PageParts";
 import { DocumentFilters } from "./DocumentFilters";
 import { DocumentRail } from "./DocumentRail";
 import { ReadingSpaceSwitch } from "../../shared/ui/ReadingSpaceSwitch";
@@ -46,15 +45,15 @@ export function DocumentIndex({ context }: { context: MutationContext }) {
     </header>
     {create && <section aria-label="保存过程文档" className="flex flex-col gap-3 rounded-xl bg-raised p-4 shadow-sm compact:p-5">
       <h2 className="text-heading font-semibold text-foreground">保存过程文档</h2>
-      {/* The two forms keep their old markup until the shared command form and the upload form are rebuilt. */}
-      <Legacy>
-        <ActionForm context={context} title="创建 Markdown 文档" fields={[{ name: "title", label: "文档名称" },
+      {/* Both are the shared command form: a Markdown text written here, or an original uploaded as a file. */}
+      <div className="flex min-w-0 flex-col gap-3">
+        <ActionForm context={context} title="创建 Markdown 文档" fields={[{ name: "title", label: "文档名称", maxLength: 240 },
           { name: "kind", label: "类型（可选）", kind: "select", optional: true, options: Object.entries(kindLabel)
             .filter(([key]) => key !== "task" && key !== "organization_review").map(([key, label]) => option(key, label)) },
           { name: "body", label: "完整 Markdown 正文", kind: "textarea", maxLength: 65536 }]}
           build={values => ({ type: "document.create", documentId: crypto.randomUUID(), title: values.title, body: values.body, kind: values.kind || null })} />
         <UploadDocument context={context} />
-      </Legacy>
+      </div>
     </section>}
     <DocumentTable projectId={projectId} list={list} state={state} update={update} toolbar={toolbar} />
   </div>;

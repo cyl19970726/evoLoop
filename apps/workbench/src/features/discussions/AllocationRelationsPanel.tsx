@@ -14,6 +14,7 @@ import {
 } from "./discussionPresentation";
 import { allocationSessionKey, useAllocationNameState, type AllocationKnownNames } from "./useAllocationNames";
 import { useAllocationTraces } from "./useAllocationTraces";
+import { ErrorDetails } from "../../shared/ui/ErrorDetails";
 
 const project = (projectId: string) => `/p/${encodeURIComponent(projectId)}`;
 const journeyHref = (projectId: string) => `${project(projectId)}/journey`;
@@ -79,7 +80,7 @@ export function AllocationTraceCard({ trace, projectId, names, reading = () => f
 
 /** Read state of a relation list: when it was read, whether it is complete, and what it cannot prove. */
 export function RelationReadState({ noun, traces }: { noun: "关系" | "来源"; traces: ReturnType<typeof useAllocationTraces> }) {
-  const { observedAt, loading, changesError, error, partial, limitations, items, cursor } = traces;
+  const { observedAt, loading, changesError, error, errorDetail, partial, limitations, items, cursor } = traces;
   return <>
     <div className="flex flex-wrap items-center gap-2">
       <span className={muted}>{observedAt ? `${noun}读于 ${date(observedAt)}` : loading ? `正在读取${noun}` : `${noun}尚未读回`}</span>
@@ -88,7 +89,7 @@ export function RelationReadState({ noun, traces }: { noun: "关系" | "来源";
       <Button size="compact" variant="ghost" disabled={loading} onClick={traces.reread}>重新读取{noun}</Button>
     </div>
     {changesError && <Notice tone="waiting">{changesError}</Notice>}
-    {error && <Notice tone="error">{noun}读取失败：{error}。不能据此判断没有{noun === "关系" ? "承接" : "关联"}。{observedAt ? "下面仍是上次读到的内容。" : ""}</Notice>}
+    {error && <Notice tone="error">{noun}读取失败：{error}。不能据此判断没有{noun === "关系" ? "承接" : "关联"}。{observedAt ? "下面仍是上次读到的内容。" : ""}<ErrorDetails failure={{ text: error, detail: errorDetail }} /></Notice>}
     {partial && <Notice tone="waiting">来源没有读完整，下面只是已经读到的部分。</Notice>}
     {limitations.length > 0 && <CollapsibleRow summary={`来源限制 · ${limitations.length} 项`}>
       <ul className="flex flex-col gap-1 text-caption text-text-secondary">{limitations.map(item => {

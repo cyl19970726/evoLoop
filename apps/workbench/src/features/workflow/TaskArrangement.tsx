@@ -15,7 +15,7 @@ import { responsibleText, waitingText, workItemNextStep } from "../../shared/wor
 import { FullIdentifiers } from "../../shared/ui/FullIdentifiers";
 import { ResponsibleName } from "../../shared/ui/RecordName";
 import { date, href } from "../../shared/ui/shared";
-import { CommandForm, CommandFrame, conflictingFields, followLatest, formDirty, keepEdits, useCommand, type FormState } from "../../shared/command";
+import { CommandForm, CommandFrame, conflictingFields, followLatest, formDirty, keepEdits, overLimitText, useCommand, type FormState } from "../../shared/command";
 import { attentionResolveCommand, followUpCommand, localInput, publicationCommand } from "./taskCommands";
 import { runStateName } from "./taskExperience";
 import { ActionRow, Fact, Fine, ReadNote, readCurrent, reasonField } from "./TaskForms";
@@ -169,9 +169,13 @@ function FollowUpForm({ context, detail, value, followUp, onReread }: {
   }, [latestKey, command.baselineChanged, command.awaitingReread, dirty]);
   const set = (name: string) => (next: string) => setForm(current => ({ ...current, values: { ...current.values, [name]: next } }));
   const handoff = !!v.handoff;
-  const incomplete = !v.reason?.trim() || !v.actionTaken?.trim() || handoff && (!v.recipient?.trim() || !v.artifact?.trim() || !v.note?.trim() || !v.readyAt);
+  // The contract's limits (task-attention: 500 for a label, 4000 for a text), said under the field; the text is never cut.
+  const limits: Record<string, number> = { actionTaken: 4000, reason: 4000, note: 4000, evidenceRef: 500, waitingId: 500, recipient: 500, artifact: 500 };
+  const tooLong = (name: string) => overLimitText(v[name] ?? "", limits[name]) ?? undefined;
+  const incomplete = !v.reason?.trim() || !v.actionTaken?.trim() || handoff && (!v.recipient?.trim() || !v.artifact?.trim() || !v.note?.trim() || !v.readyAt)
+    || Object.keys(limits).some(name => tooLong(name));
   const [tried, setTried] = React.useState(false);
-  const missing = (name: string, label: string) => tried && !v[name]?.trim() ? `请填写${label}。` : undefined;
+  const missing = (name: string, label: string) => tried && !v[name]?.trim() ? `请填写${label}。` : tooLong(name);
   async function submit() {
     setTried(true);
     if (incomplete) return;
@@ -182,27 +186,27 @@ function FollowUpForm({ context, detail, value, followUp, onReread }: {
   }
   const conflicts = conflictingFields(form, latest).map(name => ({ name, label: followUpLabels[name] ?? name }));
   const input = (label: string, name: string, options: { required?: boolean; type?: string; hint?: string } = {}) =>
-    <Field label={options.required ? label : `${label}（可选）`} hint={options.hint} error={options.required ? missing(name, label) : undefined}>{control => <Input {...control} type={options.type ?? "text"} value={v[name] ?? ""} required={options.required}
-      maxLength={500} onChange={event => set(name)(event.target.value)} autoComplete="off" />}</Field>;
+    <Field label={options.required ? label : `${label}（可选）`} hint={options.hint} error={options.required ? missing(name, label) : tooLong(name)}>{control => <Input {...control} type={options.type ?? "text"} value={v[name] ?? ""} required={options.required}
+      onChange={event => set(name)(event.target.value)} autoComplete="off" />}</Field>;
   return <CommandFrame context={context} command={command} label="保存跟进安排" submitLabel="保存跟进安排" dirty={dirty} onSubmit={() => void submit()} onReread={reread}
     conflicts={conflicts} onResolve={choices => { command.rebase(); setForm(keepEdits(form, latest, choices)); }}
     onKeep={() => { command.rebase(); setForm(keepEdits(form, latest)); }} onRefill={() => { command.rebase(); setForm({ base: latest, values: latest }); }}>
     <Field label="跟进判断">{control => <Select {...control} value={v.decision} onChange={event => set("decision")(event.target.value)} className="w-full">
       {Object.entries(decisionLabel).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</Select>}</Field>
-    <Field label="已做什么" error={missing("actionTaken", "已做什么")}>{control => <Textarea {...control} required value={v.actionTaken} onChange={event => set("actionTaken")(event.target.value)} rows={3} maxLength={4000} />}</Field>
+    <Field label="已做什么" error={missing("actionTaken", "已做什么")}>{control => <Textarea {...control} required value={v.actionTaken} onChange={event => set("actionTaken")(event.target.value)} rows={3} />}</Field>
     {input("依据引用", "evidenceRef")}
     <Field label="等待谁">{control => <Select {...control} value={v.waitingKind} onChange={event => set("waitingKind")(event.target.value)} className="w-full">
       {followUpKinds.map(kind => <option key={kind} value={kind}>{waitingKindLabel[kind]}</option>)}</Select>}</Field>
     {input("具体对象", "waitingId", { hint: "智能体、身份或任务的标识。" })}
     {input("下一检查时间", "nextCheck", { type: "datetime-local" })}
-    <Field label="跟进理由" error={missing("reason", "跟进理由")}>{control => <Textarea {...control} required value={v.reason} onChange={event => set("reason")(event.target.value)} rows={3} maxLength={4000} />}</Field>
+    <Field label="跟进理由" error={missing("reason", "跟进理由")}>{control => <Textarea {...control} required value={v.reason} onChange={event => set("reason")(event.target.value)} rows={3} />}</Field>
     <label className="flex items-center gap-2 text-label text-foreground">
       <input type="checkbox" checked={handoff} disabled={!!followUp?.publication} onChange={event => set("handoff")(event.target.checked ? "1" : "")} className="accent-[var(--accent)]" />
       登记具备发布条件，交给维护者</label>
     {handoff && <div className="flex flex-col gap-3 pl-6">
       {input("维护者或接收方", "recipient", { required: true })}
       {input("待发布的固定产物引用", "artifact", { required: true })}
-      <Field label="交接说明" error={missing("note", "交接说明")}>{control => <Textarea {...control} required value={v.note} onChange={event => set("note")(event.target.value)} rows={3} maxLength={4000} />}</Field>
+      <Field label="交接说明" error={missing("note", "交接说明")}>{control => <Textarea {...control} required value={v.note} onChange={event => set("note")(event.target.value)} rows={3} />}</Field>
       {input("具备发布条件的时间", "readyAt", { required: true, type: "datetime-local" })}
     </div>}
     {verify && <Notice tone="waiting">{verify}</Notice>}

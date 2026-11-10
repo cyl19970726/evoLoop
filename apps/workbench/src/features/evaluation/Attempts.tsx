@@ -16,6 +16,7 @@ import {
   actorKindLabels, assessmentLabels, attemptRunText, attemptsForCondition, correctedPosition, costText, currentAssessments, deliveriesForAttempt,
   fixedRefLineHint, labelOf, observationResultLabels, parseCostLines, parseFixedRefLines, runCostText, runStateLabels, runStateTones, technicalResultLabels, type ReadState,
 } from "./presentation";
+import { ErrorDetails } from "../../shared/ui/ErrorDetails";
 
 type Deliveries = NonNullable<TaskDetail["deliveries"]>;
 type Observations = NonNullable<TaskDetail["observations"]>;
@@ -71,7 +72,7 @@ export function AttemptRecord({ context, revision, attempt, run, runsState, task
         {native.data && <details open className="text-small"><summary className="cursor-pointer text-text-secondary">原始输出 · {native.data.finalPhaseConfirmed ? "最终阶段已确认" : "最终阶段未确认"}</summary>
           <div className="mt-2 flex flex-col gap-2">{native.data.messages.map((message, index) => <pre key={index} className={pre}>{message}</pre>)}</div></details>}
       </div>}
-    {readError && <Notice tone="error">{readError}</Notice>}
+    {readError && <Notice tone="error">{readError}<ErrorDetails error={packet.isError ? packet.error : native.error} /></Notice>}
 
     <section aria-label={`尝试 ${attempt.ordinal} 的交付与使用`} className={block}>
       <h4 className="text-label font-semibold text-foreground">本次实际交付</h4>

@@ -93,6 +93,8 @@ RightPanel 是可组合的上下文面板：由若干“面板块”（实体卡
 8. **显示诊断信息。** 失败用中文说明，服务端原文放在可展开的“诊断信息”里。
 9. **长度按合同核对，不截断。** 字段默认不限长度；合同有上限的字段写 `maxLength`，提交前超出就逐项提示字数，不用浏览器的 `maxlength`（它会悄悄截断粘贴的文字）。
 
+字段排布特殊、或要写到专门接口的写入（新建任务整页、过程文档上传、Git 与外部来源登记）用 `useCommand` 加 `CommandFrame`，接口和字段通过 `send`、`validate` 选项保持原样。没有用 `CommandForm` 的多行字段，按同一条规则用 `overLimitText` 核对长度。
+
 表单的根元素带 `data-ui`，所以放在旧页面的 `data-legacy` 区域里也按新组件显示（`packages/ui/src/scope.css`）。旧区域里所有带 `data-ui` 的元素都这样处理，岛里再嵌套的 `data-legacy` 仍按旧样式。规则的单测在 `use-command.test.ts` 和 `action-form.test.ts`。
 
 ## 业务共享组件

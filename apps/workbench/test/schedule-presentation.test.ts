@@ -73,6 +73,10 @@ test("a schedule's times are said in its own zone, with the reader's clock when 
  assert.equal(scheduleRuleText({kind:"interval",anchorUtc:at,everyMinutes:30},"UTC",0,"UTC"),"从 2026/11/10 01:00:00 · UTC 起，每 30 分钟");
  const now=Date.parse("2026-11-10T00:00:00Z");
  assert.equal(scheduleRuleText({kind:"daily",localTime:"09:00"},"Asia/Taipei",now,"Asia/Shanghai"),"每天 09:00（台北当地时间）");
- assert.equal(scheduleRuleText({kind:"daily",localTime:"09:00"},"Asia/Taipei",now,"Europe/London"),"每天 09:00（台北当地时间，你的时间 01:00）");
+ assert.equal(scheduleRuleText({kind:"daily",localTime:"09:00"},"Asia/Taipei",now,"Europe/London"),"每天 09:00（台北当地时间，下次是你的时间 11/10 01:00）");
+ // Only the next run is put on the reader clock: across a daylight-saving change the later ones fall at another hour.
+ const beforeChange=Date.parse("2026-03-27T12:00:00Z");
+ assert.equal(scheduleRuleText({kind:"daily",localTime:"09:00"},"Asia/Taipei",beforeChange,"Europe/London"),"每天 09:00（台北当地时间，下次是你的时间 03/28 01:00）");
+ assert.equal(scheduleRuleText({kind:"daily",localTime:"09:00"},"Asia/Taipei",Date.parse("2026-03-30T12:00:00Z"),"Europe/London"),"每天 09:00（台北当地时间，下次是你的时间 03/31 02:00）");
  assert.equal(scheduleRuleText({kind:"daily",localTime:"09:00"},"Not/AZone",now,"Asia/Shanghai"),"每天 09:00（Not/AZone 当地时间）");
 });

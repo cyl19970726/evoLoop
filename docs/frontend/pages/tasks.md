@@ -24,7 +24,7 @@
 | 当前工作 | 目标、完成条件、正文、进展与讨论（约定执行、协作、当前关注、阶段区间与计划、负责职责） |
 | 依据与影响 | 开始时固定的依据和各文档现状；每项依据变化单独读两版、决定采用或保留 |
 | 交付与使用 | 每次交付的固定成果、技术检查、来源运行和这次的使用观察；验收接力；验收与关闭 |
-| 运行与关联 | 分派与确认（含分派记录）、执行队列、运行记录（可按链接定位）、自动循环、协作入口、Git 与外部来源登记 |
+| 运行与关联 | 分派与确认（含分派记录）、执行队列、运行记录（可按链接定位）、自动循环、协作入口、Git 与外部来源登记（三种登记都是共同的提交表单；“复核此依据”直接展开采用表单并在表单里说明载入了什么；采用决定按打开表单时的任务版本和修订提交） |
 | 历史 | 状态变化、修订时间线、依据复核决定、验收约定；固定修订只读，只给“返回当前任务” |
 | 任务操作 | 当前身份在当前状态下能做的写入；执行时间与重复；做不了的只计数 |
 
@@ -41,7 +41,9 @@
 | 当前承接与历史承接 | 已完成或已取消的任务显示“历史承接”；Session 现在忙碌不说明这项任务仍在运行 |
 | 固定依据与新版 | 任务保留开始时固定的版本，有新版时标“待复核” |
 | 最近进展与时间 | 事件写成中文（如“任务内容或状态更新”），不显示内部事件名；时间都按全站格式显示读者本地时间 |
-| 读取中、读取失败与未登记 | 读取中写“正在读取”，失败写“无法判断”并可重新读取；只有读到回答才写“未分派”“没有运行”“未登记”。绑定按钮在分派读回前不可用 |
+| 读取中、读取失败与未登记 | 读取中写“正在读取”，失败写“无法判断”并可重新读取；只有读到回答才写“未分派”“没有运行”“未登记”。绑定按钮在分派读回前不可用。自动循环的目标、阶段和任务名称分三种写：读取中“待读取”、读取失败“暂不可读取”、读完仍没有“未找到” |
+| 保存与读回 | 写入成功先写“已保存”；登记列表重新读回后才说“已是重新读取的登记” |
+| 文字上限 | 多行字段按合同写上限（正文 65536 字，其余 4000 字，名称 240 字）；超出时在字段下写明现有字数，不截断、不提交 |
 | 下一步与下一责任 | 按阶段用工作台自己的话写下一步；受阻时写出卡住它的事实（几项依据待复核、哪项前置任务未通过验收、队列暂停原因），责任写类型和名称（如“职责 · 开发职责”）；名称未读回写“（名称待读取）”，服务端写给智能体的文字和原始 ID 只在“完整标识”里 |
 
 **列表**
@@ -75,7 +77,7 @@
 
 - 入口：任务页左栏的“＋”、表格视图的“新建任务”（`/tasks/new`）；从[目标与阶段](journey.md)进入时，所属阶段已选好。
 - 分四块填：要做什么（名称、为什么要做、期望结果）、怎样算完成（独立验收、验收方式、使用成果的身份）、责任与归属（负责职责、所属阶段、类型）、执行时间（本地时间加时区，可每日重复）。属于阶段的任务还要写来源证据和停止条件。
-- 保存发出一次 `task.create`；缺项写在各字段下，提示里列出字段名，隐藏的字段不算缺项。所属阶段在填写期间变了，先请人查看再提交。每日重复要审阅权限和任务时间授权。“只作判断记录”的任务不问验收方式和使用者（使用者就是负责职责）。
+- 整页是共同的提交表单，保存发出一次 `task.create`；缺项和超长写在各字段下，提示里列出字段名，隐藏的字段不算缺项。所选阶段之后变了，先请人查看再提交。每日重复要审阅权限和任务时间授权。“只作判断记录”的任务不问验收方式和使用者（使用者就是负责职责）。
 
 **收件页**
 
@@ -130,7 +132,7 @@
 | 表格视图与对账 | `TaskTable.tsx`、`TaskReconciliation.tsx`、`taskWorkspacePresentation.ts`、`apps/workbench/src/shared/workStatusPresentation.ts`、`apps/workbench/src/shared/leaderWorkLoad.ts` | `task-workspace-presentation.test.ts`、`work-status.test.ts`、`leader-work-load.test.ts`、`leader-work-overview-browser.test.ts`、`task-list-owner-browser.test.ts` |
 | 右栏 | `TaskFacts.tsx`、`TaskAgentBlock.tsx`、`taskFactsPresentation.ts`、`TaskDocumentPeek.tsx`、`apps/workbench/src/shared/workPresentation.ts`（下一步、责任、验收接力用语）、`apps/workbench/src/shared/ui/RecordName.tsx` | `task-list-model.test.ts`、`task-work-wording.test.ts`、`task-workspace-browser.test.ts`、`task-preview-current-responsibility-browser.test.ts` |
 | 任务正文与进展 | `TaskPage.tsx`、`TaskArrangement.tsx`（当前关注、阶段区间与计划）、`TaskOwner.tsx`、`taskOwnerPresentation.ts`、`apps/workbench/src/features/discussions/TaskCollaborationThread.tsx`、`apps/workbench/src/shared/ui/MarkdownBody.tsx` | `task-workspace-presentation.test.ts`、`legacy-bits-browser.test.ts`、`task-edit-role-recovery.test.ts`、`task-owner-browser.test.ts`、`task-list-owner-browser.test.ts`、`task-session-return-browser.test.ts`、`discovery-browser.test.ts` |
-| 五个页签 | `TaskBasisTab.tsx`、`TaskDeliveryTab.tsx`、`TaskRuntimeTab.tsx`、`ResidentQueuePanel.tsx`（团队的分工与运行也用）、`apps/workbench/src/features/orchestration/`（自动循环）、`apps/workbench/src/features/references/`（Git 与外部来源登记，仓库规范也用）、`TaskHistoryTab.tsx`、`TaskActionsTab.tsx`、`EvidenceText.tsx` | `task-tabs-browser.test.ts`、`task-evidence-reading.test.ts`、`task-loop-browser.test.ts`、`schedule-run-session-path-browser.test.ts`、`document-original-reading-browser.test.ts` |
+| 五个页签 | `TaskBasisTab.tsx`、`TaskDeliveryTab.tsx`、`TaskRuntimeTab.tsx`、`ResidentQueuePanel.tsx`（团队的分工与运行也用）、`apps/workbench/src/features/orchestration/`（自动循环）、`apps/workbench/src/features/references/`（Git 与外部来源登记，仓库规范也用；写入在 `referenceCommands.ts`）、`TaskHistoryTab.tsx`、`TaskActionsTab.tsx`、`EvidenceText.tsx` | `task-tabs-browser.test.ts`、`task-evidence-reading.test.ts`、`reference-commands.test.ts`、`legacy-bits-browser.test.ts`、`task-owner-presentation.test.ts`、`task-loop-browser.test.ts`、`schedule-run-session-path-browser.test.ts`、`document-original-reading-browser.test.ts` |
 | 写入 | `apps/workbench/src/shared/command/`（唯一的提交表单：基线、回执与表单）、`TaskForms.tsx`（页签部件与读取状态）、`taskCommands.ts`（各命令） | `use-command.test.ts`、`task-commands.test.ts`、`task-list-model.test.ts` |
 | 收件页 | `InboxIndex.tsx` | `leader-work-overview-browser.test.ts`、`legacy-bits-browser.test.ts` |
 | 执行时间与重复 | `TaskScheduleSection.tsx`、`taskTimingPresentation.ts` | `task-timing-ui.test.ts`、`task-commands.test.ts` |

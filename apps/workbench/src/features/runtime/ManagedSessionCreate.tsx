@@ -7,8 +7,9 @@ import { errorText } from "../../shared/api";
 import { ActionForm, type MutationContext } from "../../shared/ActionForm";
 import { useProjectQuery } from "../../shared/query";
 import { runtimeClient, type ExecutionGrant } from "../../shared/runtimeClient";
-import { Legacy, mutedText } from "../../shared/ui/PageParts";
+import { mutedText } from "../../shared/ui/PageParts";
 import { allowedModels } from "./executionPresentation";
+import { ErrorDetails } from "../../shared/ui/ErrorDetails";
 
 const select = "h-9 w-full rounded-md bg-field px-3 text-small text-foreground outline-none focus-visible:shadow-[var(--focus-ring)]";
 
@@ -27,7 +28,7 @@ export function ManagedSessionCreate({ context, grants, roleName }: { context: M
     <p className="text-small text-text-secondary">新智能体可以使用这台机器上的全部权限，做每一步时不再逐次请你批准。提交只是登记创建请求，不代表它已经按这个配置启动；创建后请回到这里核对它的状态和执行配置。</p>
     <p className={mutedText}>技术名：沙盒 danger-full-access，审批策略 never。</p>
     {catalog.isPending && <p role="status" className="text-small text-text-secondary">正在读取可用模型…</p>}
-    {error && <Notice tone="error">模型目录读取失败：{error}。请重读运行状态后重试。</Notice>}
+    {error && <Notice tone="error">模型目录读取失败：{error}。请重读运行状态后重试。<ErrorDetails error={catalog.error} /></Notice>}
     {!error && value?.status === "unavailable" && <Notice tone="error">模型目录暂不可用：{value.error || "执行服务未能列出模型"}。请重读运行状态后重试。</Notice>}
     {!error && value?.status === "empty" && <Notice tone="error">模型目录为空，当前无法创建智能体。</Notice>}
     {available && models.length === 0 && <Notice tone="error">模型目录没有已授权的可选模型，当前无法创建智能体。</Notice>}
@@ -44,11 +45,11 @@ export function ManagedSessionCreate({ context, grants, roleName }: { context: M
             <option value="">请选择模型</option>
             {choices.map(item => <option key={item} value={item}>{item}</option>)}
           </select>}</Field>)}
-      {grant && chosen && <Legacy><ActionForm key={`${grantIndex}:${chosen}`} context={context} review embedded title="登记并创建智能体" fields={[]} build={() => {
+      {grant && chosen && <ActionForm key={`${grantIndex}:${chosen}`} context={context} review embedded title="登记并创建智能体" fields={[]} build={() => {
         if (!allowedModels(grant, models).includes(chosen)) throw new Error("模型不在授权与目录交集内");
         return { type: "runtime.session.reserve", sessionId: crypto.randomUUID(), roleId: grant.roleId,
           authorizationScope: grant.authorizationScope, cwd: grant.cwd, sandbox: "danger-full-access", approvalPolicy: "never", model: chosen };
-      }} /></Legacy>}
+      }} />}
     </>}
   </div>;
 }

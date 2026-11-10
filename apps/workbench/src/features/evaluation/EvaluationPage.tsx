@@ -15,6 +15,8 @@ import { EvaluationDetail } from "./EvaluationDetail";
 import { useEvaluationDetail, useEvaluationList, useEvaluationReread, type EvaluationFilter } from "./evaluationReads";
 import { linkClass, muted } from "./parts";
 import { evaluationHref, evaluationListHref, evaluationRowMeta, frozenTaskTitle } from "./presentation";
+import { diagnosticOf } from "../../shared/errorPresentation";
+import { ErrorDetails } from "../../shared/ui/ErrorDetails";
 
 const page = "mx-auto flex w-full max-w-[960px] flex-col gap-5 px-4 py-5 compact:px-8 compact:py-7";
 
@@ -50,9 +52,9 @@ export function EvaluationPage({ context, evaluationId, selectedRevision, taskId
         {list.checking && <RefreshingIndicator />}
       </div>
       {loadingFirst && <><p className="m-0 text-small text-text-secondary">正在读取当前范围的评价…</p><LoadingState label="正在读取评价" /></>}
-      {list.isError && !list.data && <ErrorState title="评价列表没有读回" happened={errorText(list.error)} next="可以重试；读回之前，无法判断当前范围有没有评价。"
+      {list.isError && !list.data && <ErrorState title="评价列表没有读回" happened={errorText(list.error)} diagnostics={diagnosticOf(list.error)} next="可以重试；读回之前，无法判断当前范围有没有评价。"
         action={<Button size="compact" onClick={() => void list.refetch()}>重新读取</Button>} />}
-      {list.isError && list.data && <Notice tone="waiting">重读失败：{errorText(list.error)}。下面是上次读回的列表，当前待核对。</Notice>}
+      {list.isError && list.data && <Notice tone="waiting">重读失败：{errorText(list.error)}。下面是上次读回的列表，当前待核对。<ErrorDetails error={list.error} /></Notice>}
       {list.data && !items.length && (list.isError
         ? <p className="m-0 text-small text-text-secondary">上次读回时当前范围没有评价；当前待核对。</p>
         : <EmptyState title="还没有评价" reason="当前范围尚无评价定义。先准备进行中的共同任务与固定协议、材料和 Wiki 修订。" />)}
@@ -93,9 +95,9 @@ function DetailView({ context, evaluationId, selectedRevision, onReread }: {
       </div>
       <Button onClick={onReread} disabled={detail.isFetching}><RefreshCw aria-hidden="true" className={detail.isFetching ? "animate-spin" : undefined} />回读当前记录</Button>
     </header>
-    {hold && <Notice tone="waiting" title="上次读回，当前待核对">评价记录重读失败：{errorText(detail.error)}。写入已暂停。</Notice>}
+    {hold && <Notice tone="waiting" title="上次读回，当前待核对">评价记录重读失败：{errorText(detail.error)}。写入已暂停。<ErrorDetails error={detail.error} /></Notice>}
     {!read && (detail.isError
-      ? <ErrorState title="评价没有读回" happened={errorText(detail.error)} next="可以重试，或回到评价列表核对链接。读回之前，不能判断有没有尝试或结论。"
+      ? <ErrorState title="评价没有读回" happened={errorText(detail.error)} diagnostics={diagnosticOf(detail.error)} next="可以重试，或回到评价列表核对链接。读回之前，不能判断有没有尝试或结论。"
         action={<Button size="compact" onClick={() => void detail.refetch()}>重新读取</Button>} />
       : <><p className="m-0 text-small text-text-secondary">正在读取冻结定义与逐次记录…</p><LoadingState label="正在读取评价" lines={5} /></>)}
     {read && <SectionBoundary label="评价详情">

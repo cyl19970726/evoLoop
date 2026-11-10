@@ -1,10 +1,12 @@
 import { useEffect, useState } from "react";
 import type { Document } from "@evoloop/contracts";
-import { api, errorText } from "../../shared/api";
+import { api } from "../../shared/api";
 import { Search } from "lucide-react";
 import { Button, EmptyState, Notice, cn } from "@evoloop/ui";
 import { date, href } from "../../shared/ui/shared";
 import type { MutationContext } from "../../shared/ActionForm";
+import { failureOf, type Failure } from "../../shared/errorPresentation";
+import { ErrorDetails } from "../../shared/ui/ErrorDetails";
 
 const statusLabel = { draft: "草稿", published: "已发布", archived: "已归档" };
 export function OrganizationReviewList({ context, refresh }: { context: MutationContext; refresh: number }) {
@@ -12,14 +14,14 @@ export function OrganizationReviewList({ context, refresh }: { context: Mutation
   const scope = JSON.stringify([projectId, token]);
   const [stored, setStored] = useState<{ scope: string; items: Document[] }>({ scope, items: [] });
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const [error, setError] = useState<Failure | null>(null);
   const [query, setQuery] = useState("");
   const [readAgain, setReadAgain] = useState(0);
   const items = stored.scope === scope ? stored.items : [];
   useEffect(() => {
     let active = true;
     const controller = new AbortController();
-    setLoading(true); setError(""); setQuery(""); setStored({ scope, items: [] });
+    setLoading(true); setError(null); setQuery(""); setStored({ scope, items: [] });
     void (async () => {
       const rows = new Map<string, Document>(), cursors = new Set<string>();
       let cursor: string | undefined;
@@ -35,7 +37,7 @@ export function OrganizationReviewList({ context, refresh }: { context: Mutation
         cursor = page.nextCursor ?? undefined;
         if (cursor) cursors.add(cursor);
       } while (cursor);
-    })().catch(cause => { if (active) setError(errorText(cause)); })
+    })().catch(cause => { if (active) setError(failureOf(cause)); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; controller.abort(); };
   }, [projectId, token, scope, refresh, readAgain]);
@@ -53,7 +55,7 @@ export function OrganizationReviewList({ context, refresh }: { context: Mutation
       <a href={href(projectId, "documents")} className="text-small text-text-secondary hover:text-foreground">全部文档</a>
       <span className={cn(muted, "ml-auto")}>{loading ? "读取中…" : error ? `已读 ${items.length} 份，尚未完整` : `${items.length} 份文档`}</span>
     </div>
-    {error && <Notice tone="error">复盘文档未完整读回：{error}</Notice>}
+    {error && <Notice tone="error">复盘文档未完整读回：{error.text}<ErrorDetails failure={error} /></Notice>}
     {!loading && !error && !visible.length && (items.length
       ? <p className="text-small text-text-secondary">没有匹配的复盘文档。</p>
       : <EmptyState title="还没有组织复盘" reason="组织复盘保存为文档后会列在这里。报告已保存不等于建议已采纳。" />)}

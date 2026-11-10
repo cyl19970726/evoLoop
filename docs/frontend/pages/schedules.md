@@ -31,7 +31,8 @@
 - 错过、重叠、旧定义排队和结果未知都写理由与下一责任；结果未知按原操作回读，不重复新建。
 - 协调器写的触发原因是英文代码，按代码写成中文；最近错误只写“最近一次检查出错”，原文收进来源层。
 - 授权正在重读或重读失败时整块标“上次读回，当前待核对”，不写“没有授权”。时区或时间不合法时，下次时间写“无法推算”。
-- 日程自己的时刻（规则、计划时刻、核对水位、到期、下次时间）按日程修订里的时区显示并写明时区；读者本地时间不同时，后面再附“你的时间”。记录与读取的时间按读者本地时间。
+- 日程自己的时刻（规则、计划时刻、核对水位、到期、下次时间）按日程修订里的时区显示并写明时区；读者本地时间不同时，后面再附“你的时间”。每日规则只写“下次是你的时间”，因为夏令时会改变以后各次在读者时区的钟点。记录与读取的时间按读者本地时间。
+- 下次时间与协调器用同一条每日规则（`@evoloop/contracts/scheduling`）推算：夏令时跳过的本地时刻当天不触发，预览直接写下一天，不显示别的钟点；回拨时重复的时刻取较早的一次。
 - 长的任务正文放在可展开的材料区，不压住时间和责任。
 - 修改普通日程看日程授权；指定受管目标的日程还要核对目标和执行授权。授权撤回后，已有定义仍可暂停或停止。
 - Task 自己的执行时间与每日重复在任务详情里设置，不在本页（规则见[一次与每日复制](../../architecture/contracts.md#普通-task-的一次与每日复制)）。
@@ -50,7 +51,7 @@
 
 | 范围 | 路径 |
 | --- | --- |
-| 源码（`apps/workbench/src/`） | `features/scheduling/SchedulingPanel.tsx`（内层栏日程列表、所选日程、右栏、创建视图）、`features/scheduling/presentation.ts`（规则、下次时间、触发原因与授权用语）、`features/scheduling/managedTarget.ts`、`features/scheduling/client.ts`；名称与来源层在 `shared/ui/RecordName.tsx`、`shared/ui/FullIdentifiers.tsx`；任务详情里的“执行时间与重复”是另一套机制，在 `features/workflow/TaskScheduleSection.tsx` |
+| 源码（`apps/workbench/src/`） | `features/scheduling/SchedulingPanel.tsx`（内层栏日程列表、所选日程、右栏、创建视图）、`features/scheduling/presentation.ts`（规则、下次时间、触发原因与授权用语；每日规则的本地时刻用 `packages/contracts/src/scheduling.ts` 的 `dailyRuleInstant`，与 `packages/core/src/scheduling/due.ts` 共用）、`features/scheduling/managedTarget.ts`、`features/scheduling/client.ts`；名称与来源层在 `shared/ui/RecordName.tsx`、`shared/ui/FullIdentifiers.tsx`；任务详情里的“执行时间与重复”是另一套机制，在 `features/workflow/TaskScheduleSection.tsx` |
 | 测试（`apps/workbench/test/`） | `schedule-presentation.test.ts`、`schedule-next-instant.test.ts`、`schedule-managed-target.test.ts`、`schedule-wording-browser.test.ts`、`schedule-run-session-path-browser.test.ts`、`legacy-bits-browser.test.ts`（另一时区的日程） |
 
 ## 相关

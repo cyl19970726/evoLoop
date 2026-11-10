@@ -43,7 +43,9 @@ export function responsibleKind(responsible: Pick<Responsible, "kind" | "id">, a
 }
 
 /** The name of a role, agent or task is read separately; until it is, the text says so and never shows the ID. */
-export type NameRead = { state: "named"; name: string } | { state: "reading" } | { state: "unnamed" } | { state: "failed" };
+export type NameRead = { state: "named"; name: string } | { state: "reading" } | { state: "unnamed" } | { state: "failed" }
+  /** Read, and the record is not there (a 404 is an answer, not a failure). */
+  | { state: "missing" };
 
 /** Kinds whose name can be read back: a role's title, an agent's registered name, a task's title. */
 export function responsibleHasName(kind: Responsible["kind"]): boolean {
@@ -64,6 +66,7 @@ export function nameText(kind: string, name: NameRead): string {
     case "named": return `${kind} · ${name.name}`;
     case "reading": return `${kind}（名称待读取）`;
     case "unnamed": return `${kind}（未登记名称）`;
+    case "missing": return `${kind}（未找到）`;
     default: return `${kind}（名称暂不可读）`;
   }
 }

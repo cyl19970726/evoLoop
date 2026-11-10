@@ -1,17 +1,23 @@
 // 协作回执 (Feishu projection, docs/frontend/pages/team.md): how each task projection read back, the edits made in
 // Feishu that wait for review, and the receipts of writes whose result is not yet known. Reads and rereads go through
 // project queries; a write whose answer is lost keeps a receipt (IDs only) until it is read back by the same IDs.
-import { useState, type ReactNode } from "react";
+// Rows after the overview's first page are read one page more at a time (useProjectList) and reread with the project;
+// rows whose reread failed stay as 上次读回 and offer no write until they are read again.
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { ChevronRight, RefreshCw } from "lucide-react";
 import type { DeliveryRecord, IncomingRecord } from "@evoloop/contracts/delivery";
-import type { TaskDetail } from "@evoloop/contracts";
+import type { Page, TaskDetail } from "@evoloop/contracts";
 import {
   Badge, Button, CollapsibleRow, Dialog, DialogContent, DialogDescription, DialogFooter, DialogTitle, EmptyState, ErrorState, Field, Input,
   LoadingState, Notice, RefreshingIndicator, StatusTag,
 } from "@evoloop/ui";
 import { api, errorText, isUnconfirmed } from "../../shared/api";
+import { diagnosticOf, errorDiagnostic } from "../../shared/errorPresentation";
+import { useProjectList } from "../../shared/projectList";
+import { ErrorDetails } from "../../shared/ui/ErrorDetails";
 import type { MutationContext } from "../../shared/ActionForm";
-import { useProjectQuery } from "../../shared/query";
+import { queryKeys, useProjectQuery } from "../../shared/query";
 import { ContextPanelContent } from "../../shared/ui/ContextPanel";
 import { date, href } from "../../shared/ui/shared";
 import { collaborationClient } from "./client";
@@ -58,7 +64,15 @@ function RailBlock({ title, children }: { title: string; children: ReactNode }) 
   </details>;
 }
 
-function DeliveryRow({ item, projectId, allowed, busy, configured, onAction }: { item: DeliveryRecord; projectId: string; allowed: boolean; busy: boolean; configured: boolean; onAction: Act }) {
+/** Said on a row whose last reread failed: it may have changed, so nothing is written on it until it is read again. */
+const staleRow = "上次读回，当前待核对；重新读取成功后才能处理。";
+/** How current a row is: read, being read again (writes wait silently), or its reread failed (上次读回). */
+type RowRead = "current" | "checking" | "stale";
+
+function DeliveryRow({ item, projectId, allowed, busy, read, configured, onAction }: {
+  item: DeliveryRecord; projectId: string; allowed: boolean; busy: boolean; read: RowRead; configured: boolean; onAction: Act;
+}) {
+  const stale = read !== "current";
   const [reason, setReason] = useState("");
   const [showAttempts, setShowAttempts] = useState(false);
   const client = collaborationClient("", projectId);
@@ -72,21 +86,22 @@ function DeliveryRow({ item, projectId, allowed, busy, configured, onAction }: {
       <StatusTag tone={tag.tone} label={tag.label} />
     </div>
     <Reason raw={item.lastReason} fallback={tag.detail} />
+    {read === "stale" && actionable && configured && allowed && <p className={muted} data-row-stale="">{staleRow}</p>}
     {actionable && configured && allowed && <form className="flex flex-col gap-2" onSubmit={event => {
       event.preventDefault();
-      if (!reason.trim()) return;
+      if (!reason.trim() || stale) return;
       void onAction(item.state === "unknown" ? "reconcile" : "retry", item.eventId, item.operationId,
         () => item.state === "unknown" ? client.reconcile(item.eventId, reason) : client.retry(item.eventId, reason));
     }}>
       <Field label="处理依据" className="flex-1" hint={item.state === "unknown" ? "结果未知时只能按稳定键对账，不会重发。" : undefined}>
         {control => <Input {...control} value={reason} autoComplete="off" onChange={event => setReason(event.target.value)} />}</Field>
-      <Button type="submit" className="self-start" disabled={busy || !reason.trim()}>{item.state === "unknown" ? "按稳定键对账" : "请求重新投影"}</Button>
+      <Button type="submit" className="self-start" disabled={busy || stale || !reason.trim()}>{item.state === "unknown" ? "按稳定键对账" : "请求重新投影"}</Button>
     </form>}
     <CollapsibleRow summary="尝试记录与完整标识">
       <div className="flex flex-col gap-2">
         {!showAttempts && <Button size="compact" variant="ghost" className="self-start" onClick={() => setShowAttempts(true)}>读取尝试记录</Button>}
         {showAttempts && attempts.isPending && <LoadingState lines={2} label="正在读取尝试记录" />}
-        {attempts.isError && <p className="text-caption text-destructive">尝试记录没有读回：{errorText(attempts.error)}</p>}
+        {attempts.isError && <div className="text-caption text-destructive">尝试记录没有读回：{errorText(attempts.error)}<ErrorDetails error={attempts.error} /></div>}
         {attempts.data && (attempts.data.length === 0 ? <p className="text-small text-text-secondary">还没有尝试记录。</p>
           : <ol className="flex flex-col gap-1.5">{attempts.data.map(attempt => <li key={attempt.id} className="flex flex-col gap-0.5">
             <span className="text-small text-foreground">{attemptActionLabel[attempt.action]} → {deliveryTag[attempt.outcome].label}</span>
@@ -105,13 +120,16 @@ function DeliveryRow({ item, projectId, allowed, busy, configured, onAction }: {
   </li>;
 }
 
-function IncomingRow({ item, projectId, allowed, busy, onAction }: { item: IncomingRecord; projectId: string; allowed: boolean; busy: boolean; onAction: Act }) {
+function IncomingRow({ item, projectId, allowed, busy, read, onAction }: {
+  item: IncomingRecord; projectId: string; allowed: boolean; busy: boolean; read: RowRead; onAction: Act;
+}) {
+  const stale = read !== "current";
   const [reason, setReason] = useState("");
   const [confirm, setConfirm] = useState<"apply" | "reject" | null>(null);
   const client = collaborationClient("", projectId);
   const tag = incomingTag[item.state];
   const reviewable = item.state === "pending" || item.state === "review-only";
-  const decide = (decision: "apply" | "reject") => { setConfirm(null); void onAction("review", item.id, item.operationId, () => client.review(item.id, decision, reason)); };
+  const decide = (decision: "apply" | "reject") => { setConfirm(null); if (!stale) void onAction("review", item.id, item.operationId, () => client.review(item.id, decision, reason)); };
   return <li className="flex flex-col gap-2 border-t border-border py-3 first:border-t-0 first:pt-0">
     <div className="flex items-start justify-between gap-3">
       <div className="flex min-w-0 flex-col gap-0.5"><TaskName projectId={projectId} taskId={item.entityId} />
@@ -123,15 +141,16 @@ function IncomingRow({ item, projectId, allowed, busy, onAction }: { item: Incom
     <Reason raw={item.reason} />
     {item.reviewedBy && <span className={muted}>由 {item.reviewedBy} 于 {date(item.reviewedAtUtc ?? undefined)} 处理</span>}
     {item.state === "unknown" && <Notice tone="waiting">任务操作的结果还不知道。按原操作回读后再决定，不要另建新操作。</Notice>}
+    {reviewable && allowed && read === "stale" && <p className={muted} data-row-stale="">{staleRow}</p>}
     {reviewable && allowed && <form className="flex flex-col gap-2" onSubmit={event => event.preventDefault()}>
       <Field label="审阅理由">{control => <Input {...control} value={reason} autoComplete="off" onChange={event => setReason(event.target.value)} />}</Field>
       <div className="flex flex-wrap gap-2">
-        {canApplyIncoming(item) && <Button disabled={busy || !reason.trim()} onClick={() => setConfirm("apply")}>采纳为任务修订</Button>}
-        <Button variant="danger" disabled={busy || !reason.trim()} onClick={() => setConfirm("reject")}>拒绝回写</Button>
+        {canApplyIncoming(item) && <Button disabled={busy || stale || !reason.trim()} onClick={() => setConfirm("apply")}>采纳为任务修订</Button>}
+        <Button variant="danger" disabled={busy || stale || !reason.trim()} onClick={() => setConfirm("reject")}>拒绝回写</Button>
       </div>
       {!canApplyIncoming(item) && <p className={muted}>只有修改人身份已核实、只改标题、不改状态的修改可以采纳；其余只能审阅后拒绝回写。</p>}
     </form>}
-    <Dialog open={confirm !== null} onOpenChange={open => { if (!open) setConfirm(null); }}>
+    <Dialog open={confirm !== null && !stale} onOpenChange={open => { if (!open) setConfirm(null); }}>
       <DialogContent>
         <DialogTitle>{confirm === "apply" ? "采纳这条远端修改？" : "拒绝这条远端修改？"}</DialogTitle>
         <DialogDescription>{confirm === "apply"
@@ -155,40 +174,60 @@ function IncomingRow({ item, projectId, allowed, busy, onAction }: { item: Incom
   </li>;
 }
 
-/** Later pages after the overview's first page, read again as one answer so the rows stay consistent. */
-function useMore<T>(projectId: string, which: "deliveries" | "incoming", first: string | null | undefined, pages: number,
-  load: (cursor: string) => Promise<{ items: T[]; nextCursor: string | null }>) {
-  return useProjectQuery(projectId, ["collaboration", which, first ?? "", pages], async () => {
-    const items: T[] = [];
-    let cursor = first ?? null;
-    for (let page = 0; page < pages && cursor; page++) {
-      const answer = await load(cursor);
-      if (answer.nextCursor === cursor) throw new Error("分页没有前进，后续记录尚未读全");
-      items.push(...answer.items); cursor = answer.nextCursor;
-    }
-    return { items, nextCursor: cursor };
-  }, { enabled: !!first && pages > 0, keepPrevious: true });
+/**
+ * Rows after the overview's first page (`first` is its cursor): read on request one page more at a time under one key,
+ * reread with the project. When the overview's cursor moves (a write changed the first page), they are read again from
+ * the new cursor; a reread that fails keeps them as 上次读回 (`stale`), so their writes wait.
+ */
+function useMore<T>(projectId: string, which: "deliveries" | "incoming", first: string | null | undefined,
+  load: (cursor: string) => Promise<Page<T>>, identity: (item: T) => string) {
+  const [asked, setAsked] = useState(false);
+  const queryClient = useQueryClient();
+  const list = useProjectList(projectId, ["collaboration", which, "more"], cursor => load(cursor ?? first!), identity, { enabled: asked && !!first });
+  const lastFirst = useRef(first);
+  useEffect(() => {
+    if (lastFirst.current === first) return;
+    lastFirst.current = first;
+    if (asked && first) void queryClient.invalidateQueries({ queryKey: queryKeys.project(projectId, "collaboration", which, "more") });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [first]);
+  const shown = asked && !!first;
+  return {
+    items: shown ? list.items ?? [] : [],
+    /** More rows exist than are on screen. */
+    cursor: shown ? list.items === undefined || list.more : !!first,
+    reading: shown && (list.reading || list.loadingMore),
+    checking: shown && list.checking,
+    stale: shown && list.stale,
+    failed: shown && (list.failed || list.pageFailed),
+    error: list.error,
+    loadMore: () => { if (!asked) setAsked(true); else list.loadMore(); },
+  };
 }
 
 export function CollaborationPanel({ context }: { context: MutationContext; refresh: number }) {
   const { projectId, principal } = context;
   const client = collaborationClient("", projectId);
   const overview = useProjectQuery(projectId, ["collaboration", "overview"], () => client.overview());
-  const [deliveryPages, setDeliveryPages] = useState(0);
-  const [incomingPages, setIncomingPages] = useState(0);
-  const moreDeliveries = useMore(projectId, "deliveries", overview.data?.deliveries.nextCursor, deliveryPages, cursor => client.deliveries(cursor));
-  const moreIncoming = useMore(projectId, "incoming", overview.data?.incoming.nextCursor, incomingPages, cursor => client.incoming(cursor));
+  const moreDeliveries = useMore(projectId, "deliveries", overview.data?.deliveries.nextCursor, cursor => client.deliveries(cursor), (item: DeliveryRecord) => item.eventId);
+  const moreIncoming = useMore(projectId, "incoming", overview.data?.incoming.nextCursor, cursor => client.incoming(cursor), (item: IncomingRecord) => item.id);
   const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState<{ text: string; error: boolean } | null>(null);
+  const [message, setMessage] = useState<{ text: string; error: boolean; detail?: string | undefined } | null>(null);
   const [receipts, setReceipts] = useState<Receipt[]>(() => receiptsFor(store(), projectId, principal.actorId));
   const reloadReceipts = () => setReceipts(receiptsFor(store(), projectId, principal.actorId));
   const allowed = principal.permissions.includes("review") && principal.permissions.includes("write") && !context.blocked;
   const data = overview.data;
-  const deliveries = data ? mergeById([...data.deliveries.items, ...(moreDeliveries.data?.items ?? [])], item => item.eventId) : [];
-  const incoming = data ? mergeById([...data.incoming.items, ...(moreIncoming.data?.items ?? [])], item => item.id) : [];
-  // Until the first later page arrives, the overview's cursor still says there is more.
-  const deliveryCursor = deliveryPages && moreDeliveries.data ? moreDeliveries.data.nextCursor : data?.deliveries.nextCursor ?? null;
-  const incomingCursor = incomingPages && moreIncoming.data ? moreIncoming.data.nextCursor : data?.incoming.nextCursor ?? null;
+  const deliveries = data ? mergeById([...data.deliveries.items, ...moreDeliveries.items], item => item.eventId) : [];
+  const incoming = data ? mergeById([...data.incoming.items, ...moreIncoming.items], item => item.id) : [];
+  const deliveryCursor = moreDeliveries.cursor;
+  const incomingCursor = moreIncoming.cursor;
+  // A row is as current as the read it came from: the overview's first page, or the later pages.
+  const overviewRead: RowRead = overview.isError ? "stale" : overview.isFetching ? "checking" : "current";
+  const laterRead = (more: { stale: boolean; checking: boolean }): RowRead => more.stale ? "stale" : more.checking ? "checking" : "current";
+  const laterDeliveries = new Set(moreDeliveries.items.map(item => item.eventId));
+  const laterIncoming = new Set(moreIncoming.items.map(item => item.id));
+  const deliveryRead = (id: string) => laterDeliveries.has(id) ? laterRead(moreDeliveries) : overviewRead;
+  const incomingRead = (id: string) => laterIncoming.has(id) ? laterRead(moreIncoming) : overviewRead;
   const connection = data ? connectionSummary(data.configured, data.verifiedAtUtc, data.error) : null;
   const pendingIds = new Set(receipts.map(item => item.id));
 
@@ -207,7 +246,7 @@ export function CollaborationPanel({ context }: { context: MutationContext; refr
     } catch (cause) {
       const unconfirmed = isUnconfirmed(cause);
       if (unconfirmed) { rememberReceipt(store(), receipt); reloadReceipts(); }
-      setMessage({ text: `${errorText(cause)}${unconfirmed ? "。已保留对象与操作 ID，请按原 ID 回读，确认前不要重复提交。" : ""}`, error: true });
+      setMessage({ text: `${errorText(cause)}${unconfirmed ? "。已保留对象与操作 ID，请按原 ID 回读，确认前不要重复提交。" : ""}`, error: true, detail: diagnosticOf(cause) });
     } finally { setBusy(false); }
   };
 
@@ -230,7 +269,7 @@ export function CollaborationPanel({ context }: { context: MutationContext; refr
       else settled = receiptSettled(receipt, { delivery: await client.delivery(receipt.id) });
       if (settled) { clearReceipt(store(), receipt); reloadReceipts(); setMessage({ text: "已按原 ID 读回结果。", error: false }); context.onChanged(); }
       else setMessage({ text, error: true });
-    } catch (cause) { setMessage({ text: `核对失败：${errorText(cause)}。回执保留。`, error: true }); }
+    } catch (cause) { setMessage({ text: `核对失败：${errorText(cause)}。回执保留。`, error: true, detail: diagnosticOf(cause) }); }
     finally { setBusy(false); }
   }
 
@@ -255,9 +294,9 @@ export function CollaborationPanel({ context }: { context: MutationContext; refr
     </header>
 
     {overview.isPending && <LoadingState lines={5} label="正在读取协作状态" />}
-    {overview.isError && !data && <ErrorState title="协作状态没有读回" happened={errorText(overview.error)} next="现在无法判断投影和远端修改的情况。请重新读取。"
+    {overview.isError && !data && <ErrorState title="协作状态没有读回" happened={errorText(overview.error)} diagnostics={diagnosticOf(overview.error)} next="现在无法判断投影和远端修改的情况。请重新读取。"
       action={<Button size="compact" onClick={() => void overview.refetch()}>重新读取</Button>} />}
-    {message && <Notice tone={message.error ? "error" : "info"}>{message.text}</Notice>}
+    {message && <Notice tone={message.error ? "error" : "info"}>{message.text}<ErrorDetails failure={message} /></Notice>}
     {data && !allowed && <p className={muted}>{context.blocked ? "本项目还有结果未确认的操作，先在“结果未知的操作”里核对，再处理这里。" : "当前身份没有审阅与写入权限，只能查看。"}</p>}
 
     {receipts.length > 0 && <section aria-label="待核对的写入" className="flex flex-col gap-3">
@@ -282,17 +321,19 @@ export function CollaborationPanel({ context }: { context: MutationContext; refr
         <h2 className="text-heading font-semibold text-foreground">投影状态 <span className={muted}>· 已读 {deliveries.length} 条{deliveryCursor ? "，还有后续" : ""}</span></h2>
         {deliveries.length === 0 ? <EmptyState title="还没有任务投影记录" reason="没有记录不等于已经同步：可能没有配置连接，也可能还没有要投影的任务变化。" />
           : <ul className="flex flex-col rounded-xl bg-raised px-4 py-3 shadow-sm">{deliveries.map(item => <DeliveryRow key={item.eventId} item={item} projectId={projectId} allowed={allowed}
-            busy={busy || pendingIds.has(item.eventId)} configured={data.configured} onAction={act} />)}</ul>}
-        {moreDeliveries.isError && <p className="text-caption text-destructive">后续投影没有读回：{errorText(moreDeliveries.error)}</p>}
-        {deliveryCursor && <Button size="compact" variant="ghost" className="self-start" disabled={moreDeliveries.isFetching} onClick={() => setDeliveryPages(value => value + 1)}>{moreDeliveries.isFetching ? "正在读取…" : "加载更多投影"}</Button>}
+            busy={busy || pendingIds.has(item.eventId)} read={deliveryRead(item.eventId)} configured={data.configured} onAction={act} />)}</ul>}
+        {moreDeliveries.stale && <Notice tone="waiting" title="上次读回，当前待核对">后续投影重新读取失败：{errorText(moreDeliveries.error)}。后面这些行是上次读到的，重新读取成功前不能处理。<ErrorDetails error={moreDeliveries.error} /></Notice>}
+        {moreDeliveries.failed && <div className="text-caption text-destructive">后续投影没有读回：{errorText(moreDeliveries.error)}<ErrorDetails error={moreDeliveries.error} /></div>}
+        {deliveryCursor && <Button size="compact" variant="ghost" className="self-start" disabled={moreDeliveries.reading || moreDeliveries.checking} onClick={moreDeliveries.loadMore}>{moreDeliveries.reading ? "正在读取…" : moreDeliveries.failed ? "再读一次" : "加载更多投影"}</Button>}
       </section>
       <section aria-label="远端修改" className="flex flex-col gap-3">
         <h2 className="text-heading font-semibold text-foreground">远端修改 <span className={muted}>· 已读 {incoming.length} 条{incomingCursor ? "，还有后续" : ""}</span></h2>
         {incoming.length === 0 ? <EmptyState title="还没有远端修改" reason="回读远端变化后，飞书里对任务的改动会作为候选出现在这里；没有可靠的修改人身份时只能人工审阅。" />
           : <ul className="flex flex-col rounded-xl bg-raised px-4 py-3 shadow-sm">{incoming.map(item => <IncomingRow key={item.id} item={item} projectId={projectId} allowed={allowed}
-            busy={busy || pendingIds.has(item.id)} onAction={act} />)}</ul>}
-        {moreIncoming.isError && <p className="text-caption text-destructive">后续远端修改没有读回：{errorText(moreIncoming.error)}</p>}
-        {incomingCursor && <Button size="compact" variant="ghost" className="self-start" disabled={moreIncoming.isFetching} onClick={() => setIncomingPages(value => value + 1)}>{moreIncoming.isFetching ? "正在读取…" : "加载更多远端修改"}</Button>}
+            busy={busy || pendingIds.has(item.id)} read={incomingRead(item.id)} onAction={act} />)}</ul>}
+        {moreIncoming.stale && <Notice tone="waiting" title="上次读回，当前待核对">后续远端修改重新读取失败：{errorText(moreIncoming.error)}。后面这些行是上次读到的，重新读取成功前不能采纳或拒绝。<ErrorDetails error={moreIncoming.error} /></Notice>}
+        {moreIncoming.failed && <div className="text-caption text-destructive">后续远端修改没有读回：{errorText(moreIncoming.error)}<ErrorDetails error={moreIncoming.error} /></div>}
+        {incomingCursor && <Button size="compact" variant="ghost" className="self-start" disabled={moreIncoming.reading || moreIncoming.checking} onClick={moreIncoming.loadMore}>{moreIncoming.reading ? "正在读取…" : moreIncoming.failed ? "再读一次" : "加载更多远端修改"}</Button>}
       </section>
     </>}
 
@@ -302,8 +343,12 @@ export function CollaborationPanel({ context }: { context: MutationContext; refr
           <StatusTag tone={connection.tone} label={connection.label} className="self-start" />
           <p className="text-small text-text-secondary">{connection.sentence}</p>
           <p className={muted}>最近核实：{data?.verifiedAtUtc ? date(data.verifiedAtUtc) : "还没有核实记录"}</p>
-          {data?.error && <CollapsibleRow summary="连接诊断"><code className={`${code} text-muted-foreground`}>{data.error}</code></CollapsibleRow>}
-        </> : <p className="text-small text-text-secondary">{overview.isError ? "连接状态没有读回，无法判断。" : "正在读取连接状态。"}</p>}
+          {data?.error && <CollapsibleRow summary="连接诊断"><code className={`${code} whitespace-pre-wrap text-muted-foreground`} data-connection-diagnostic="">{data.error}</code></CollapsibleRow>}
+          {overview.isError && <CollapsibleRow summary="连接诊断（这次重读）"><code className={`${code} whitespace-pre-wrap text-muted-foreground`}>{errorDiagnostic(overview.error)}</code></CollapsibleRow>}
+        </> : <>
+          <p className="text-small text-text-secondary">{overview.isError ? "连接状态没有读回，无法判断。" : "正在读取连接状态。"}</p>
+          {overview.isError && <CollapsibleRow summary="连接诊断"><code className={`${code} whitespace-pre-wrap text-muted-foreground`} data-connection-diagnostic="">{errorDiagnostic(overview.error)}</code></CollapsibleRow>}
+        </>}
       </RailBlock>
       <RailBlock title="待处理">
         {data ? <ul className="flex flex-col gap-1 text-small text-text-secondary">

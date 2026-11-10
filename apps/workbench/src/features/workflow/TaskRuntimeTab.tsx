@@ -22,7 +22,7 @@ import { OrchestrationPanel } from "../orchestration";
 import { ReferencePanel } from "../references";
 import { eligibleOwnedSessions, sessionHref } from "../sessions";
 import { preflightPresentation, preflightView } from "../../shared/preflightPresentation";
-import { CommandForm } from "../../shared/command";
+import { CommandForm, overLimitText } from "../../shared/command";
 import { readAgent } from "./agentRead";
 import { BindAgentForm } from "./TaskAgentBlock";
 import { assignmentAcknowledgeCommand, assignmentObserveCommand, assignmentReleaseCommand, handoffRecordCommand, queueCreateCommand,
@@ -147,13 +147,13 @@ function AssignmentSection({ context, task, read }: { context: MutationContext; 
     {ready && assignment && <div className="flex flex-col">
       {assignment.state === "assigned" && valid && assignment.recipientActorId === context.principal.actorId && permissions.includes("write") &&
         <ActionRow title="本人确认接手" description="你是这次分派指定的执行者。">
-          <CommandForm context={context} submitLabel="确认接手" baseline={seen} fields={[{ name: "evidence", label: "实际接手的证据", kind: "textarea" },
-            { name: "sourceRef", label: "来源引用", optional: true }]}
+          <CommandForm context={context} submitLabel="确认接手" baseline={seen} fields={[{ name: "evidence", label: "实际接手的证据", kind: "textarea", maxLength: 4000 },
+            { name: "sourceRef", label: "来源引用", optional: true, maxLength: 4000 }]}
             build={(values, recorded) => assignmentAcknowledgeCommand(task.id, recorded, { evidence: values.evidence ?? "", sourceRef: values.sourceRef ?? "" })} /></ActionRow>}
       {assignment.state === "assigned" && valid && permissions.includes("review") &&
         <ActionRow title="记录负责人观察到接手" description="由负责人写明实际看到的接手证据。">
-          <CommandForm context={context} submitLabel="记录观察" baseline={seen} fields={[{ name: "evidence", label: "实际观察与证据", kind: "textarea" },
-            { name: "sourceRef", label: "来源引用", optional: true }]}
+          <CommandForm context={context} submitLabel="记录观察" baseline={seen} fields={[{ name: "evidence", label: "实际观察与证据", kind: "textarea", maxLength: 4000 },
+            { name: "sourceRef", label: "来源引用", optional: true, maxLength: 4000 }]}
             build={(values, recorded) => assignmentObserveCommand(task.id, recorded, { evidence: values.evidence ?? "", sourceRef: values.sourceRef ?? "" })} /></ActionRow>}
       {assignment.state !== "released" && permissions.includes("review") &&
         <ActionRow title="释放具体分派" description="释放后这项任务回到只有负责职责、没有具体承接的状态。">
@@ -226,7 +226,7 @@ function RunsSection({ context, detail, assignment, runs, runsRead, sessionsRead
       {eligible.length > 0 && status.data?.available && permissions.includes("write") && <ActionRow title="派发这一次运行" description="系统附上任务的固定依据；运行结束后还要交付和使用验收。">
         <CommandForm context={context} submitLabel="派发运行" baseline={arrange} fields={[
           { name: "sessionId", label: "承接的智能体", kind: "select", options: eligible.map(session => ({ value: session.id, label: roleName(session) })) },
-          { name: "input", label: "这一次的有界工作与停止条件", kind: "textarea", rows: 4 }]}
+          { name: "input", label: "这一次的有界工作与停止条件", kind: "textarea", rows: 4, maxLength: 4000 }]}
           build={(values, seen) => runReserveCommand(task.id, seen, { sessionId: values.sessionId ?? "", input: values.input ?? "" })} /></ActionRow>}
     </div>}
   </div>;
@@ -320,12 +320,12 @@ function RunRecord({ context, run, anchor, readOnlyAgent }: { context: MutationC
           <CommandForm context={context} submitLabel="记录" baseline={{ runVersion: run.version }} fields={[
             { name: "stage", label: "本身份的交接阶段", kind: "select", options: [{ value: "received", label: "收到材料" }, { value: "read", label: "实际阅读" },
               { value: "adopted", label: "已采用到行动" }, { value: "effect", label: "观察到实际后果" }] },
-            { name: "evidence", label: "实际路径、采用动作或后果的证据", kind: "textarea" }]}
+            { name: "evidence", label: "实际路径、采用动作或后果的证据", kind: "textarea", maxLength: 4000 }]}
             build={values => handoffRecordCommand(run.id, { stage: values.stage ?? "", evidence: values.evidence ?? "" })} /></ActionRow>}
         {readOnlyAgent && run.state === "unknown" && !run.nativeTurnId && permissions.includes("review") && <ActionRow title="复核只读派发并保留失败记录"
           description="只适用于没有绑定线程轮次的只读运行。放弃会关闭旧派发，不证明外部没有执行，也不自动重发。">
           <CommandForm context={context} submitLabel="复核并放弃" danger baseline={{ runVersion: run.version }} fields={[reasonField(),
-            { name: "evidence", label: "线程历史与失败原因的核对证据", kind: "textarea" }]}
+            { name: "evidence", label: "线程历史与失败原因的核对证据", kind: "textarea", maxLength: 4000 }]}
             build={(values, seen) => runAbandonCommand(run.id, seen, { reason: values.reason ?? "", evidence: values.evidence ?? "" })} /></ActionRow>}
         {run.nativeTurnId && terminal.includes(run.state) && permissions.includes("review") && <ActionRow title="核对已绑定运行的最终状态"
           description="只回读同一轮次；保留旧观察并登记修正，不再启动工作，也不自动关闭任务。"><ReconcileRun context={context} run={run} /></ActionRow>}
@@ -346,7 +346,7 @@ function ReconcileRun({ context, run }: { context: MutationContext; run: Runtime
   const [busy, setBusy] = React.useState(false);
   const [message, setMessage] = React.useState("");
   async function submit(event: React.FormEvent) {
-    event.preventDefault(); if (!reason.trim() || busy || attempted || context.blocked) return;
+    event.preventDefault(); if (!reason.trim() || overLimitText(reason, 4000) || busy || attempted || context.blocked) return;
     setBusy(true);
     try {
       const requestedReason = partial?.reason ?? reason.trim();
@@ -368,7 +368,7 @@ function ReconcileRun({ context, run }: { context: MutationContext; run: Runtime
     finally { setBusy(false); }
   }
   return <form onSubmit={submit} aria-label="核对已绑定运行的最终状态" className="flex flex-col gap-3 rounded-lg bg-muted p-4">
-    <Field label="复核理由">{control => <Textarea {...control} required readOnly={!!partial || attempted} value={reason} onChange={event => setReason(event.target.value)} rows={3} />}</Field>
+    <Field label="复核理由" error={overLimitText(reason, 4000) ?? undefined}>{control => <Textarea {...control} required readOnly={!!partial || attempted} value={reason} onChange={event => setReason(event.target.value)} rows={3} />}</Field>
     <div><Button type="submit" variant="primary" size="compact" disabled={busy || attempted || context.blocked || !reason.trim()}>{busy ? "正在核对…" : partial ? "继续核对" : "回读最终状态并登记观察"}</Button></div>
     {message && <Notice>{message}</Notice>}
   </form>;

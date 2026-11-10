@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import { mock, test } from "node:test";
 import { ApiError } from "../src/shared/api.ts";
 import { mergePage, orchestrationClient } from "../src/shared/orchestrationClient.ts";
-import { decisionHeading, deliveryMeaning, dispatchStateLabel, inboxStateLabel, sealReasonLabel, sourceTriggerLabel, storyTitle, submissionStateLabel } from "../src/features/orchestration/presentation.ts";
+import {
+  decisionHeading, deliveryMeaning, dispatchStateLabel, inboxStateLabel, loopName, scopeText, scopeTitleOf, sealReasonLabel, sourceTriggerLabel, storyTitle,
+  submissionStateLabel, taskTitleText,
+} from "../src/features/orchestration/presentation.ts";
 import { currentChainSummary, hasTerminalIntentGap, hasUnreadChainPages, inTaskContext, nextAction, orderDispatches, readableOutcome, storyNextAction } from "../src/features/orchestration/summary.ts";
 import { navigateTaskTab, scrollToTaskSection, taskRunFromHash, taskSectionFromHash, taskSectionHref } from "../src/shared/taskNavigation.ts";
 import type { OrchestrationDispatch, OrchestrationEvent, OrchestrationInbox, OrchestrationLoop, OrchestrationSourceFact, OrchestrationSubmission, OrchestrationWorkerDecision } from "@evoloop/contracts/orchestration";
@@ -269,4 +272,25 @@ test("loop labels read exact Goal and Stage rather than guessing from UUIDs", as
     assert.equal((await client.stage(loopId)).deliverable,"Readable Stage");
     assert.deepEqual(paths,[`/api/projects/${projectId}/goals/${loopId}`,`/api/projects/${projectId}/stages/${loopId}`]);
   } finally {fetch.mock.restore();}
+});
+
+test("a loop's goal and stage say whether they are being read, could not be read, or are not there",()=>{
+  const ok=<T>(value:T)=>({status:"fulfilled" as const,value});
+  const fail=(status:number)=>({status:"rejected" as const,reason:{status}});
+  const notFound=(cause:unknown)=>(cause as {status?:number}).status===404;
+  assert.equal(scopeText(undefined),"目标与阶段待读取");
+  assert.deepEqual(scopeTitleOf(ok({outcome:"发布说明"}),ok({deliverable:"初稿"}),notFound),{state:"named",title:"发布说明 · 初稿"});
+  assert.deepEqual(scopeTitleOf(ok({outcome:"发布说明"}),null,notFound),{state:"named",title:"发布说明"});
+  assert.deepEqual(scopeTitleOf(ok({outcome:"发布说明"}),fail(503),notFound),{state:"named",title:"发布说明 · 阶段暂不可读取"});
+  assert.equal(scopeText(scopeTitleOf(fail(503),null,notFound)),"目标与阶段暂不可读取");
+  assert.equal(scopeText(scopeTitleOf(fail(404),fail(404),notFound)),"目标与阶段未找到");
+  assert.equal(scopeText(scopeTitleOf(fail(404),fail(503),notFound)),"目标与阶段暂不可读取","one part that could not be read is not called missing");
+  assert.equal(loopName(scopeTitleOf(fail(503),null,notFound)),"目标与阶段暂不可读取");
+});
+
+test("a dispatched task is named, waits for unread pages, could not be read, or is not there",()=>{
+  assert.equal(taskTitleText("整理接口",{more:false,failed:false}),"整理接口");
+  assert.equal(taskTitleText(undefined,{more:true,failed:false}),"任务（名称待读取）");
+  assert.equal(taskTitleText(undefined,{more:true,failed:true}),"任务（名称暂不可读取）");
+  assert.equal(taskTitleText(undefined,{more:false,failed:false}),"任务（未找到）");
 });

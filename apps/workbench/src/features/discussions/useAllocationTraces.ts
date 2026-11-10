@@ -3,6 +3,7 @@
 // the last answer on screen; only a new filter or project starts empty.
 import { useEffect, useRef, useState, type RefObject } from "react";
 import { errorText } from "../../shared/api";
+import { diagnosticOf } from "../../shared/errorPresentation";
 import type { MutationContext } from "../../shared/ActionForm";
 import { allocationRelations, type AllocationFilter, type AllocationTrace } from "./allocationClient";
 import { useAllocationChanges } from "./useAllocationChanges";
@@ -14,6 +15,8 @@ export function useAllocationTraces(context: MutationContext, filter: Allocation
   const [loading, setLoading] = useState(true);
   const [moreBusy, setMoreBusy] = useState(false);
   const [error, setError] = useState("");
+  // The original answer behind `error`, for 诊断信息.
+  const [errorDetail, setErrorDetail] = useState<string | undefined>(undefined);
   const [partial, setPartial] = useState(false);
   const [limitations, setLimitations] = useState<string[]>([]);
   const [observedAt, setObservedAt] = useState<string | null>(null);
@@ -28,7 +31,7 @@ export function useAllocationTraces(context: MutationContext, filter: Allocation
     if (loadedScope.current !== scope) {
       loadedScope.current = scope; setItems([]); setCursor(null); setPartial(false); setLimitations([]); setObservedAt(null);
     }
-    setError(""); setLoading(true); setMoreBusy(false); setCursor(null);
+    setError(""); setErrorDetail(undefined); setLoading(true); setMoreBusy(false); setCursor(null);
     allocationRelations(context.token, context.projectId, filter, undefined, controller.signal)
       .then(page => {
         if (epoch.current !== current) return;
@@ -36,14 +39,14 @@ export function useAllocationTraces(context: MutationContext, filter: Allocation
         setItems(page.items); setCursor(page.nextCursor); setPartial(page.metadata.partial); setLimitations(page.metadata.limitations);
         setObservedAt(page.metadata.generatedAt);
       })
-      .catch(cause => { if (epoch.current === current) setError(errorText(cause)); })
+      .catch(cause => { if (epoch.current === current) { setError(errorText(cause)); setErrorDetail(diagnosticOf(cause)); } })
       .finally(() => { if (epoch.current === current) setLoading(false); });
     return () => { controller.abort(); if (epoch.current === current) epoch.current++; };
   }, [context.token, context.projectId, key, refresh, readAgain]); // `filter` is followed through `key`, its serialised form.
   async function more() {
     if (!cursor || moreBusy || loading) return;
     const current = epoch.current, previous = cursor;
-    setMoreBusy(true); setError("");
+    setMoreBusy(true); setError(""); setErrorDetail(undefined);
     try {
       const page = await allocationRelations(context.token, context.projectId, filter, previous);
       if (epoch.current !== current) return;
@@ -52,9 +55,9 @@ export function useAllocationTraces(context: MutationContext, filter: Allocation
       setItems(before => [...new Map([...before, ...page.items].map(item => [item.id, item])).values()]);
       setCursor(page.nextCursor); setPartial(before => before || page.metadata.partial); setObservedAt(page.metadata.generatedAt);
       setLimitations(before => [...new Set([...before, ...page.metadata.limitations])]);
-    } catch (cause) { if (epoch.current === current) setError(errorText(cause)); }
+    } catch (cause) { if (epoch.current === current) { setError(errorText(cause)); setErrorDetail(diagnosticOf(cause)); } }
     finally { if (epoch.current === current) setMoreBusy(false); }
   }
-  return { items, cursor, loading, moreBusy, error, partial, limitations, observedAt, readAgain, changesError, key,
+  return { items, cursor, loading, moreBusy, error, errorDetail, partial, limitations, observedAt, readAgain, changesError, key,
     reread: () => setReadAgain(value => value + 1), more };
 }

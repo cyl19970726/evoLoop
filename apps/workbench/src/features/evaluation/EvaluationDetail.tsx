@@ -18,6 +18,7 @@ import {
   conditionLabels, currentAssessments, evaluationHref, frozenTaskTitle, labelOf, nextActionHref, nextChoiceLabels, parseFixedRefLines, parseNextActionRef,
   fixedRefLineHint, nextActionLineHint, readStateOf, sandboxLabels, taskStateLabels, unreadSources, type NextActionRef,
 } from "./presentation";
+import { ErrorDetails } from "../../shared/ui/ErrorDetails";
 
 const taskHref = (projectId: string, taskId: string, revisionId?: string) =>
   `/p/${projectId}/tasks/${taskId}${revisionId ? `?revision=${encodeURIComponent(revisionId)}` : ""}`;
@@ -61,7 +62,7 @@ export function EvaluationDetail({ context, read, selectedRevision, hold }: {
     </section>
 
     {sideFailure && <Notice tone="error" title={`${unread}没有读回`}>
-      {errorText(sideFailure)}。既有评价事实仍可读；运行状态不能据此猜测。{sideKept && "下面保留的是上次读回的记录，当前待核对；凡是要靠这些记录判断的地方都写“无法判断”。"}</Notice>}
+      {errorText(sideFailure)}。既有评价事实仍可读；运行状态不能据此猜测。{sideKept && "下面保留的是上次读回的记录，当前待核对；凡是要靠这些记录判断的地方都写“无法判断”。"}<ErrorDetails error={sideFailure} /></Notice>}
 
     {definition.conditions.map(condition => {
       const rows = attemptsForCondition(revision, attempts, condition.id);

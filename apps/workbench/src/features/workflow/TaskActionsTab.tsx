@@ -15,7 +15,7 @@ import { useProjectPages, useProjectQuery } from "../../shared/query";
 import { roleClient } from "../../shared/roleClient";
 import { runtimeClient } from "../../shared/runtimeClient";
 import { date, href } from "../../shared/ui/shared";
-import { CommandForm, CommandFrame, useCommand } from "../../shared/command";
+import { CommandForm, CommandFrame, overLimitText, useCommand } from "../../shared/command";
 import { attributableRuns } from "./deliveryRun";
 import { runStateName } from "./taskExperience";
 import {
@@ -87,10 +87,10 @@ export function TaskActionsTab({ context, detail, leader, leaderState, documents
         职责目录暂不可完整读取：{errorText(roles.error)}。仍可保留现负责者修改内容；更换负责职责要先读全职责目录。</Notice>
         : roles.isPending ? <Fine>正在读取职责目录；读完前只能保留现负责者。</Fine> : null}
       fields={[
-        { name: "title", label: "任务名称", initial: task.title },
+        { name: "title", label: "任务名称", initial: task.title, maxLength: 240 },
         { name: "kind", label: "类型", kind: "select", optional: true, initial: task.kind ?? "", options: kindOptions },
         { name: "content", label: "任务内容", kind: "textarea", rows: 8, initial: task.content, maxLength: 65536 },
-        { name: "acceptance", label: "独立验收条件", kind: "textarea", rows: 4, initial: task.acceptance },
+        { name: "acceptance", label: "独立验收条件", kind: "textarea", rows: 4, initial: task.acceptance, maxLength: 4000 },
         { name: "owner", label: "负责职责", kind: "select", initial: task.owner, options: owners },
         reasonField(),
       ]}
@@ -104,7 +104,7 @@ export function TaskActionsTab({ context, detail, leader, leaderState, documents
       { name: "acceptanceMode", label: "验收方式", kind: "select", initial: acceptanceMode ?? "legacy", options: [
         ...(acceptanceMode ? [] : [{ value: "legacy", label: "保留旧任务的历史约定" }]),
         { value: "independent_agent", label: "独立的智能体验收" }, { value: "human_required", label: "必须本人验收" }] },
-      { name: "consumer", label: "指定验收身份", optional: true, initial: detail.proposal?.consumer ?? "", hint: "本人验收必须填写本人的受信身份；独立智能体可以不预先指定。" },
+      { name: "consumer", label: "指定验收身份", optional: true, initial: detail.proposal?.consumer ?? "", maxLength: 4000, hint: "本人验收必须填写本人的受信身份；独立智能体可以不预先指定。" },
       reasonField()]}
       build={(values, seen) => acceptanceResponsibilityCommand(detail, seen, { acceptanceMode: values.acceptanceMode ?? "legacy",
         consumer: values.consumer ?? "", reason: values.reason ?? "" })} /> });
@@ -119,7 +119,7 @@ export function TaskActionsTab({ context, detail, leader, leaderState, documents
       : <CommandForm context={context} submitLabel="开始任务" baseline={{ taskVersion: task.version, older: older.map(item => `${item.documentId}@${item.observedAdoptedRevisionId}`).join(",") }}
         notes={<Fine>主正文的固定修订会自动加入依据。已有且仍适用的保留决定会沿用；新的逐项理由和依据一起封存，上游再改版仍要复核。</Fine>}
         fields={[reasonField(),
-          ...older.map(source => ({ name: `retain_${source.documentId}`, label: `要保留《${source.title}》的旧版，写明理由`, kind: "textarea" as const, optional: true,
+          ...older.map(source => ({ name: `retain_${source.documentId}`, label: `要保留《${source.title}》的旧版，写明理由`, kind: "textarea" as const, optional: true, maxLength: 4000,
             hint: "这份文档已发布新版。先在“依据与影响”读两版；留空不等于同意使用旧版。" }))]}
         build={(values, seen) => taskStartCommand(detail, seen, older, { reason: values.reason ?? "",
           retain: Object.fromEntries(older.map(source => [source.documentId, values[`retain_${source.documentId}`] ?? ""])) })} /> });
@@ -131,18 +131,18 @@ export function TaskActionsTab({ context, detail, leader, leaderState, documents
     if (latest && !humanOnly) progress.push({ key: "observation", title: "记录本次交付的使用观察", needs: ["write"],
       description: "谁实际用了最新的交付、结果怎样。登记不自动证明长期效果。",
       element: <CommandForm context={context} submitLabel="记录使用观察" baseline={{ deliveryId: latest.id, acceptanceMode: acceptanceMode ?? "legacy" }} fields={[
-        { name: "observer", label: "实际使用者", initial: context.principal.actorId },
+        { name: "observer", label: "实际使用者", initial: context.principal.actorId, maxLength: 4000 },
         { name: "observerKind", label: "使用者类型", kind: "select", initial: acceptanceMode === "human_required" ? "human" : "agent",
           options: acceptanceMode === "independent_agent" ? [{ value: "agent", label: "智能体使用" }]
             : acceptanceMode === "human_required" ? [{ value: "human", label: "指定的人本人使用" }]
               : [{ value: "agent", label: "智能体使用" }, { value: "human", label: "人使用（需要实际证据）" }] },
         { name: "result", label: "使用结果", kind: "select", options: [{ value: "used", label: "实际使用并有结果" }, { value: "failed", label: "尝试使用但失败" }, { value: "notUsed", label: "尚未使用" }] },
-        { name: "evidence", label: "使用过程、结果与反馈证据", kind: "textarea" }, reasonField()]}
+        { name: "evidence", label: "使用过程、结果与反馈证据", kind: "textarea", maxLength: 4000 }, reasonField()]}
         build={(values, seen) => observationRecordCommand(detail, seen, { observer: values.observer ?? "", observerKind: values.observerKind ?? "",
           result: values.result ?? "", evidence: values.evidence ?? "", reason: values.reason ?? "" })} /> });
     if (latest && closable) progress.push({ key: "close", title: "核对验收并关闭任务", needs: ["review"], description: "逐项写明验收已满足的证据与限制。",
       element: <CommandForm context={context} submitLabel="关闭任务" baseline={{ taskVersion: task.version, deliveryId: latest.id }} fields={[
-        { name: "acceptanceEvidence", label: "逐项验收已满足的证据与限制", kind: "textarea", rows: 4 }, reasonField()]}
+        { name: "acceptanceEvidence", label: "逐项验收已满足的证据与限制", kind: "textarea", rows: 4, maxLength: 4000 }, reasonField()]}
         build={(values, seen) => taskCloseCommand(detail, seen, { acceptanceEvidence: values.acceptanceEvidence ?? "", reason: values.reason ?? "" })} /> });
   }
 
@@ -199,11 +199,11 @@ function DeliveryRecordForm({ context, detail }: { context: MutationContext; det
           { name: "runId", label: "来源运行", kind: "select", optional: true, options: runs.map(run => ({ value: run.id,
             label: `${runStateName[run.state] ?? "状态未识别"} · 开始于 ${date(run.createdAt)}${run.taskRevisionId === task.currentRevisionId ? "" : " · 旧修订"}` })),
             hint: "只列这项任务已结束的运行；不选就明确没有运行归属。运行结束不代表成果合格。" },
-          { name: "artifactRef", label: "成果位置", hint: "可追溯的文档、文件或合并请求地址。" },
-          { name: "artifactRevision", label: "成果的固定修订" },
+          { name: "artifactRef", label: "成果位置", hint: "可追溯的文档、文件或合并请求地址。", maxLength: 4000 },
+          { name: "artifactRevision", label: "成果的固定修订", maxLength: 4000 },
           { name: "contentHash", label: "内容 SHA-256", hint: "64 位十六进制摘要。" },
           { name: "technicalResult", label: "技术检查结果", kind: "select", options: [{ value: "passed", label: "检查通过" }, { value: "failed", label: "检查失败，不能关闭" }] },
-          { name: "technicalEvidence", label: "实际检查与结果证据", kind: "textarea" },
+          { name: "technicalEvidence", label: "实际检查与结果证据", kind: "textarea", maxLength: 4000 },
           reasonField()]}
         build={(values, seen) => deliveryRecordCommand(detail, seen, { runId: values.runId ?? "", artifactRef: values.artifactRef ?? "",
           artifactRevision: values.artifactRevision ?? "", contentHash: values.contentHash ?? "", technicalResult: values.technicalResult ?? "",
@@ -292,7 +292,7 @@ function DependenciesForm({ context, detail, leader, onReread }: { context: Muta
   const [tried, setTried] = React.useState(false);
   async function submit() {
     setTried(true);
-    if (!reason.trim()) return;
+    if (!reason.trim() || overLimitText(reason, 4000)) return;
     await command.submit(seen => dependenciesCommand(task.id, seen, { dependsOnTaskIds: chosen, reason }));
   }
   return <CommandFrame context={context} command={command} label="设置前置任务依赖" submitLabel="保存前置任务" dirty={dirty} onSubmit={() => void submit()}
@@ -319,8 +319,8 @@ function DependenciesForm({ context, detail, leader, onReread }: { context: Muta
       <Field label="按任务链接添加" hint="粘贴任务页的地址。" className="min-w-0 flex-1">{control => <Input {...control} value={pasted} onChange={event => setPasted(event.target.value)} autoComplete="off" />}</Field>
       <Button size="compact" disabled={!pastedId || pastedId === task.id || chosen.includes(pastedId)} onClick={() => { setChosen(list => [...list, pastedId!]); setPasted(""); }}>添加</Button>
     </div>
-    <Field label="理由与依据" error={tried && !reason.trim() ? "请填写理由与依据。" : undefined}>{control =>
-      <Textarea {...control} required value={reason} onChange={event => setReason(event.target.value)} rows={3} maxLength={4000} />}</Field>
+    <Field label="理由与依据" error={tried && !reason.trim() ? "请填写理由与依据。" : overLimitText(reason, 4000) ?? undefined}>{control =>
+      <Textarea {...control} required value={reason} onChange={event => setReason(event.target.value)} rows={3} />}</Field>
   </CommandFrame>;
 }
 

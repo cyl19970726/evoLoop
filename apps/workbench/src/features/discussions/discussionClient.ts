@@ -41,26 +41,21 @@ export async function readChoices(projectId: string): Promise<Choices> {
   return { goals, stages, tasks, documents, roles: roleItems };
 }
 
-export interface DiscussionList { scope: string; items: DiscussionRecord[]; nextCursor: string | null }
-
-/** The first `pages` pages of one list scope; `scope` travels with the answer so a stale scope is never shown as current. */
-export async function readDiscussions(projectId: string, kind: DiscussionRecord["kind"] | "all", pages: number, signal: AbortSignal): Promise<DiscussionList> {
-  const items = new Map<string, DiscussionRecord>(), seen = new Set<string>();
-  let cursor: string | null = null;
-  for (let page = 0; page < pages; page++) {
-    const query = new URLSearchParams({ limit: "50" });
-    if (cursor) query.set("cursor", cursor);
-    if (kind !== "all") query.set("kind", kind);
-    const answer = await get<Page<DiscussionRecord>>(`${base(projectId)}/discussions?${query}`, signal);
-    if (answer.items.some(item => item.projectId !== projectId || (kind !== "all" && item.kind !== kind)))
-      throw new Error("讨论列表返回了其他范围的记录");
-    for (const item of answer.items) items.set(item.id, item);
-    if (answer.nextCursor && (answer.nextCursor === cursor || seen.has(answer.nextCursor))) throw new Error("讨论分页没有前进，列表尚未读全");
-    cursor = answer.nextCursor;
-    if (!cursor) break;
-    seen.add(cursor);
-  }
-  return { scope: kind, items: [...items.values()], nextCursor: cursor };
+/**
+ * One page of one list scope (50 discussions). The list reads one more page at a time under one key per scope
+ * (shared/projectList.ts useProjectList), so 加载更多 never reads the earlier pages again. A record of another project
+ * or another scope fails the read.
+ */
+export async function readDiscussionPage(projectId: string, kind: DiscussionRecord["kind"] | "all", cursor: string | undefined,
+  signal: AbortSignal): Promise<Page<DiscussionRecord>> {
+  const query = new URLSearchParams({ limit: "50" });
+  if (cursor) query.set("cursor", cursor);
+  if (kind !== "all") query.set("kind", kind);
+  const answer = await get<Page<DiscussionRecord>>(`${base(projectId)}/discussions?${query}`, signal);
+  if (!answer || !Array.isArray(answer.items)) throw new Error("讨论列表响应不完整");
+  if (answer.items.some(item => item.projectId !== projectId || (kind !== "all" && item.kind !== kind)))
+    throw new Error("讨论列表返回了其他范围的记录");
+  return answer;
 }
 
 export async function readDiscussion(projectId: string, id: string, signal: AbortSignal): Promise<{ record: DiscussionRecord; events: DiscussionEvent[] }> {

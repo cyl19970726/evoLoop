@@ -14,6 +14,14 @@ export const blockedText = "本项目仍有结果未确认的操作，请先核�
 export const unconfirmedTitle = "这次提交的结果未确认";
 export const unconfirmedNote = "核对为已应用后，这份草稿会自动清除；核对为被拒绝时草稿保留。";
 
+/**
+ * A text over the contract's limit, said with its length; null when it fits. Forms check this before sending and never
+ * cut the text (the browser's own `maxLength` would cut a pasted text without saying so).
+ */
+export function overLimitText(value: string, max: number | undefined): string | null {
+  return max !== undefined && value.length > max ? `最多 ${max} 字，现在是 ${value.length} 字，请删减后再提交。` : null;
+}
+
 /** Why the identity may not send this form, or null. */
 export function permissionText(permissions: readonly Permission[], needed: readonly Permission[]): string | null {
   const missing = needed.find(permission => !permissions.includes(permission));
