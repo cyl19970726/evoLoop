@@ -96,19 +96,20 @@ function QueueCard({ context, queue, task, sessionId, runs, sessions, round }: {
   const ordered = shown.entries.filter(entry => !sessionId || entry.sessionId === sessionId).sort((a, b) => a.position - b.position);
   const groups = new Map<string, ResidentQueueEntry[]>();
   for (const entry of ordered) groups.set(entry.sessionId, [...groups.get(entry.sessionId) ?? [], entry]);
-  // Names are read for at most 24 entries: first what occupies each agent and what is next for it.
+  // Names are read for at most 24 entries: first what occupies each agent and what is next for it. A name that comes
+  // into this set (a reread moved the order: a new next in line) is read again, not taken from an earlier read.
   const priority = [...groups.values()].flatMap(entries => [entries.find(entry => entry.state === "claimed"), entries.find(entry => entry.state === "queued")]
     .filter((entry): entry is ResidentQueueEntry => !!entry));
   const named = [...new Map([...priority, ...ordered].map(entry => [entry.id, entry])).values()].slice(0, maxNamedEntries);
   const taskIds = [...new Set(named.map(entry => entry.taskId))].filter(id => id !== task?.id);
   const roleIds = [...new Set(named.map(entry => entry.roleId))];
-  const taskReads = useQueries({ queries: taskIds.map(id => ({ queryKey: queryKeys.project(projectId, "task", id, "detail"), enabled: opened, retry: false,
+  const taskReads = useQueries({ queries: taskIds.map(id => ({ queryKey: queryKeys.project(projectId, "task", id, "detail"), enabled: opened, retry: false, refetchOnMount: "always" as const,
     queryFn: async () => {
       const value = await request<TaskDetail>("", `/api/projects/${key(projectId)}/tasks/${key(id)}`, 15000);
       if (value.task.projectId !== projectId || value.task.id !== id) throw new Error("名称响应与当前项目或任务不符");
       return value;
     } })) });
-  const roleReads = useQueries({ queries: roleIds.map(id => ({ queryKey: queryKeys.project(projectId, "roles", id), enabled: opened, retry: false,
+  const roleReads = useQueries({ queries: roleIds.map(id => ({ queryKey: queryKeys.project(projectId, "roles", id), enabled: opened, retry: false, refetchOnMount: "always" as const,
     queryFn: async () => {
       const value = await request<RoleRecord>("", `/api/projects/${key(projectId)}/roles/${key(id)}`, 15000);
       if (value.projectId !== projectId || value.id !== id) throw new Error("名称响应与当前项目或职责不符");

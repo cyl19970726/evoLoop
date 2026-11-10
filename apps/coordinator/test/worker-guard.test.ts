@@ -55,6 +55,9 @@ test("worker route guard denies foreign reads and every unlisted write", async (
   assert.equal(await authorizeWorkerRequest(worker, { method: "GET", path: `/api/projects/${u()}/tasks/${taskId}` }, facts), false);
   assert.equal(await authorizeWorkerRequest(worker, { method: "POST", path: `/api/projects/${projectId}/runtime/recover` }, facts), false);
   assert.equal(await authorizeWorkerRequest(worker, { method: "GET", path: `/api/projects/${projectId}/knowledge/pages` }, facts), false);
+  // Project configuration (repositories, capabilities, member identities) is for project members, not a bound worker.
+  for (const view of ["repositories", "capabilities", "members"])
+    assert.equal(await authorizeWorkerRequest(worker, { method: "GET", path: `/api/projects/${projectId}/${view}` }, facts), false, view);
   assert.equal(await authorizeWorkerRequest(worker, { method: "GET", path: `/api/projects/${projectId}/documents/${documentId}/revisions/${revisionId}/original` }, facts), true);
   assert.equal(await authorizeWorkerRequest(worker, { method: "GET", path: `/api/projects/${projectId}/documents/${documentId}/revisions/${u()}/original` }, facts), false);
   assert.equal(await authorizeWorkerRequest(worker, { method: "GET", path: `/api/projects/${projectId}/documents/${documentId}` }, facts), false);

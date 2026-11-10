@@ -157,6 +157,21 @@ PG 在源写入的同一事务追加只含引用、状态与短预览的观察�
 
 目录／活动默认每页 50，变化最多 100；服务端限制 UTF-8 响应字节，超限显式分页或标注遗漏及详情入口。项目 attention 聚合独立于当前目录页。原生深度历史不进入页面轮询；token、费用和进程内存没有可靠采集时返回 null 与原因，不填 0。当前源码和隔离检查不代表新工作区、性能目标或真实消息已通过使用验收。
 
+### 项目配置只读：仓库、能力与成员
+
+`GET /api/projects/:projectId/repositories`、`.../capabilities` 与 `.../members` 只读本项目的配置，要求调用者有该项目的读取权限（无权 403，项目不存在 404）；读取不启动运行时、不改授权。类型在 `contracts/project-configuration`。三者都返回 `{projectId,status}`：`available` 带 `items`；服务没有相应来源（`reason: "not_provided"`）或来源读取失败（`read_failed`）时为 `unavailable`，不用空列表冒充“没有”。
+
+每个结论都调用服务实际执行时的同一处检查，对同一份配置得出同一结论；对应关系写在 `apps/coordinator/src/project-configuration/local.ts` 各项旁，测试逐项对照服务端的函数。
+
+- **仓库**：取服务启动时载入的集成配置 `repositories` 里本项目的条目，只给 `repositoryId` 与 `allowedPaths`。Git 来源不接受的条目（允许路径是绝对路径或越出仓库，或同一仓库登记两次）不返回。任一项目有这样的条目时，Git 来源拒绝整份登记，所有项目都读不了：此时返回 `status: "unavailable"`、`reason: "registration_invalid"`，`items` 仍列出本项目的条目，但它们当前读不了；`/api/session` 的 `sourceConfiguration.git` 也按同一规则为 false。服务器检出路径 `root` 不返回；配置里没有仓库网址，也不补造。
+- **能力**：每项为 `{key,scope,readAt,state,reason,pending}`，`state` 是 `configured`、`not_configured` 或 `unknown`，`scope` 标出只看本项目（`project`）还是全服务一项设置（`service`，文档原件与 HTML）。
+  - **按哪处检查**：Git 来源要整份仓库登记被 Git 来源接受，任一条不合法则所有项目都读不了（`repository_registration_invalid`）；知识看 `knowledge.projectIds`；日程看本项目的日程授权，持有者要有写与复核权限；任务定时与每日复制只认后缀是 UUID 的 `task-timing:` 授权和每日复制授权，持有者此刻须有读、写、复核；自动循环与编排要控制者身份有读写复核、含本项目，并在本项目某个职责下恰有一条运行授权且目录被接受；运行时看本项目的运行授权（目录须被接受），或在编排启用时控制者自己的、未过期的委派模板；飞书要有持该项目授权且能读写的身份；微信只认已启用的 `standard` 接收授权，`restricted` 不能激活，不计入。
+  - **reason**：写明是哪个开关没开（`knowledge_disabled`、`scheduling_disabled`、`orchestration_disabled`、`runtime_disabled`、`feishu_disabled`、`message_connectors_disabled`、`session_messages_disabled`、`documents_disabled`、启动时没有网关 `gateway_not_configured`），或本项目未配置、授权持有者权限不够、目录不被接受、控制者不含本项目等。
+  - **调用者**：日程、任务定时、运行时、飞书按身份授权，`state` 说本项目有没有可用授权，`callerGranted` 说当前调用者能不能用。调用者既要持有授权，所用令牌也要有请求需要的权限：新建日程和预留运行会话要复核，每日复制和飞书操作要写与复核，每日复制还要身份文件此刻认它是写者。不能用时 `callerReason` 说明原因（没有授权、令牌缺写或缺复核、此刻不是写者）。任务定时的授权按职责给，`callerGranted` 不区分职责：给某个任务设每日复制，仍要有该任务所属职责的授权。
+  - **何时生效**：`readAt` 标明服务端是启动时读（`start`：仓库、知识、编排、飞书、文档原件）还是部分在启动时读、其余在使用时重读（`start_and_use`：日程、任务定时、运行时、微信）。日程的每次执行都重读集成文件，并在它启用日程时重读身份文件，读不了时整次执行失败，所以文件读不了时日程记 `unknown`。返回的是当前实际生效的结论；磁盘上的集成文件或身份文件重启后会得出另一结论时，`pending` 给出那个结论，否则为 null。文件读不了时，依赖它的部分记 `unknown`（`configuration_unreadable` 或 `identities_unreadable`）。
+  - 只报告配置状态，不返回路径、令牌、密钥、网址、其中的凭据或控制者身份。
+- **成员**：每人给出 `identityKind` 与三项结论，各按服务端对应的检查：`canRead` 是 HTTP 认证（启动时的身份快照）接受的某一条凭据有读取权限；`canWrite` 要两边都成立：写请求用的令牌来自启动时的快照，业务写者检查 `currentProjectWriter` 每次重读身份文件，两边都要有某一条凭据有读与写，只在文件里加了写权限的人在重启前仍不能写；`canReview` 是 `hasCurrentStudyReviewer`（启动时的快照，该身份在本项目的每条凭据都有读、写、复核，几条不完整的授权不拼成完整权限）。`identityFile: "changed"` 表示本项目的身份条目自启动后被改过（只比对身份、类型与权限，不比对令牌）；此时 `pending` 给出重启后的登录、写与复核结论。本机 coordinator 用本机身份文件，`source: "local_identities"`；Hub 模式（#219）由 Hub 账户经同一注入接口提供。不返回令牌或其任何派生值，不列别的项目的成员，也不列成员能访问的其他项目。项目成员能看到同项目其他成员的身份与权限，用于选择验收人。
+
 ### UnitOfWork：同库原子命令
 
 `UnitOfWork.transaction` 和 `read` 是中立事务端口，由 PostgreSQL 适配器提供一组绑定同一连接的 Task/Document/Relation/Schedule Store、操作去重记录与 outbox 访问入口；read 使用一致的只读快照。core 先核 operation ID/摘要，再在写事务内重验对象版本、当前权限和采纳状态，一并提交相应对象、关系和待发意图；不暴露 SQL 或 `pg.Client` 给 core，也不允许各 Store 单独提交。身份或命令结构校验失败可直接拒绝而不建 Journal。合法命令因旧基线或领域规则被拒时，可用事务内 savepoint 回滚业务写，再由外层事务只提交 `rejected` 与摘要，不生成 outbox；PG 提交结果不明须按 operation ID 回读，不能伪造已拒绝。事务内只处理本库状态，网络读写、模型调用和外部发布放在提交前准备或提交后执行。

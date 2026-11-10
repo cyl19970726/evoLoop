@@ -6,6 +6,17 @@ type Configuration=Awaited<ReturnType<typeof loadIntegrations>>;
 type GatewayBinding={conversation_id?:string;owner?:string;epoch?:number;control?:string;
   owner_session_ref?:string|null;thread_id?:string|null};
 
+type SwitchConfiguration=Pick<Configuration,'messageConnectors'|'sessionMessages'|'runtime'>;
+/** The first switch, read again on each use, that keeps every standard receiver from qualifying; null when all are on. */
+export function standardReceiverSwitchOff(current:SwitchConfiguration):
+  'message_connectors_disabled'|'session_messages_disabled'|'runtime_disabled'|null{
+  return !current.messageConnectors?.enabled?'message_connectors_disabled':
+    !current.sessionMessages?.enabled?'session_messages_disabled':!current.runtime?.enabled?'runtime_disabled':null;
+}
+/** Receiver grants a standard route can qualify under: enabled and `standard`. A restricted one is never activated. */
+export const standardReceiverGrants=(current:SwitchConfiguration,projectId:string)=>
+  (current.sessionMessages?.connectorReceivers??[]).filter(value=>value.enabled&&value.mode==='standard'&&value.projectId===projectId);
+
 /** Shared by the HTTP activation path and the ingress pump's current qualification. */
 export async function qualifyStandardConnectorRoute(route:VersionedConnectorRoute,
   session:RuntimeSessionRecord|null,current:Configuration,deps:{
@@ -17,11 +28,9 @@ export async function qualifyStandardConnectorRoute(route:VersionedConnectorRout
     gatewayBinding(conversationId:string):Promise<GatewayBinding|null>;
   }):Promise<boolean>{
   if(route.mode!=='standard'||!session||session.projectId!==route.projectId||
-    session.id!==route.targetSessionId||!current.messageConnectors?.enabled||
-    !current.sessionMessages?.enabled||!current.runtime?.enabled)return false;
-  const grant=current.sessionMessages.connectorReceivers.find(value=>value.enabled&&
-    value.projectId===route.projectId&&value.bindingId===route.bindingId&&
-    value.sessionId===route.targetSessionId&&value.mode==='standard'&&
+    session.id!==route.targetSessionId||standardReceiverSwitchOff(current))return false;
+  const grant=standardReceiverGrants(current,route.projectId).find(value=>value.bindingId===route.bindingId&&
+    value.sessionId===route.targetSessionId&&
     value.senderActorId===route.senderActorId&&value.receiverActorId===route.targetActorId&&
     value.receiverRoleId===session.roleId&&value.cwd===session.cwd&&
     value.policyHash===route.policyHash);

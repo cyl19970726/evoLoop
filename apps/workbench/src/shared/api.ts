@@ -15,6 +15,10 @@ import type {
   LeaderWorkChangesPage, LeaderWorkDependenciesCommand, LeaderWorkDocument, LeaderWorkPage,
   LeaderWorkPlanCommand, LeaderWorkReviewCommand, LeaderWorkTask,
 } from "@evoloop/contracts/work-index";
+import type { ProjectCapabilitiesView, ProjectMembersView, ProjectRepositoriesView } from "@evoloop/contracts/project-configuration";
+export type {
+  ProjectCapabilitiesView, ProjectCapability, ProjectMember, ProjectMembersView, ProjectRepositoriesView, ProjectRepository,
+} from "@evoloop/contracts/project-configuration";
 
 export interface Session {
   principal: Principal;
@@ -84,6 +88,14 @@ function checkedOperation(value: unknown, operationId: string): Operation {
   return value as unknown as Operation;
 }
 
+/** A project configuration view must be about the project asked for, and say whether it is available. */
+function checkedProjectView<T extends { projectId: string; status: string }>(value: unknown, projectId: string): T {
+  if (!isRecord(value) || value.projectId !== projectId
+    || !(value.status === "available" ? Array.isArray(value.items) : value.status === "unavailable" && typeof value.reason === "string"))
+    throw new ApiError(0, "项目配置响应与所选项目不符；请重新读取。");
+  return value as T;
+}
+
 const projectPath = (projectId: string) => `/api/projects/${encodeURIComponent(projectId)}`;
 const key = (value: string) => encodeURIComponent(value);
 
@@ -98,6 +110,12 @@ export function api(token = "", timeoutMs = 15000) {
   return {
     session: () => call<Session>("/api/session"),
     project: (p: string) => call<Project>(projectPath(p)),
+    /** Repositories configured for this project; `unavailable` is not "none". */
+    projectRepositories: async (p: string) => checkedProjectView<ProjectRepositoriesView>(await call<unknown>(`${projectPath(p)}/repositories`), p),
+    /** Capabilities judged for this project, or marked as one setting for the whole service. */
+    projectCapabilities: async (p: string) => checkedProjectView<ProjectCapabilitiesView>(await call<unknown>(`${projectPath(p)}/capabilities`), p),
+    /** This project's member identities and permissions; `unavailable` when the host has no member source. */
+    projectMembers: async (p: string) => checkedProjectView<ProjectMembersView>(await call<unknown>(`${projectPath(p)}/members`), p),
     goals: (p: string, cursor?: string) => call<Page<Goal>>(`${projectPath(p)}/goals?limit=50${cursor ? `&cursor=${key(cursor)}` : ""}`),
     goalRevisions: (p: string, id: string) => call<GoalRevision[]>(`${projectPath(p)}/goals/${key(id)}/revisions`),
     stageRevisions: (p: string, id: string) => call<StageRevision[]>(`${projectPath(p)}/stages/${key(id)}/revisions`),

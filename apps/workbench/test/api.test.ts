@@ -176,6 +176,32 @@ test("discussion reads stay within the authorized project and expose immutable e
   ]);
 });
 
+test("project configuration reads stay on the asked project and keep unavailable apart from empty", async () => {
+  const requested: string[] = [];
+  const views: Record<string, unknown> = {
+    repositories: { projectId: "project-1", status: "available", items: [{ repositoryId: "evoloop", allowedPaths: ["docs/"] }] },
+    capabilities: { projectId: "project-1", status: "available", items: [{ key: "gitSources", scope: "project", state: "configured", reason: null }] },
+    members: { projectId: "project-1", status: "unavailable", reason: "not_provided" },
+  };
+  await withFetch(async input => {
+    requested.push(String(input));
+    return Response.json(views[String(input).split("/").at(-1)!]);
+  }, async () => {
+    const client = api("token");
+    assert.deepEqual(await client.projectRepositories("project-1"), views.repositories);
+    assert.deepEqual(await client.projectCapabilities("project-1"), views.capabilities);
+    const members = await client.projectMembers("project-1");
+    assert.equal(members.status, "unavailable");
+  });
+  assert.deepEqual(requested, ["/api/projects/project-1/repositories", "/api/projects/project-1/capabilities", "/api/projects/project-1/members"]);
+  for (const wrong of [{ ...views.repositories as object, projectId: "project-2" }, { projectId: "project-1", status: "available" },
+    { projectId: "project-1", status: "unavailable" }, null]) {
+    await withFetch(async () => Response.json(wrong), async () => {
+      await assert.rejects(api("token").projectRepositories("project-1"), cause => cause instanceof ApiError && cause.status === 0);
+    });
+  }
+});
+
 test("a confirmed business mismatch remains editable while changed versions require readback", () => {
   assert.equal(isStaleConflict(new ApiError(409, "wrong stage", { code: "BASELINE_MISMATCH" })), false);
   assert.equal(isStaleConflict(new ApiError(409, "invalid choice", { code: "INVALID_STATE" })), false);
