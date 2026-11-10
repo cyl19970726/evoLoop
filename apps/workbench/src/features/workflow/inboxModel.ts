@@ -83,7 +83,7 @@ export function lastUseText(last: DeliveryForMe["last"]): string {
 
 /** 待我处理 › the task's 交付与使用 tab, carrying where it came from (`return`, `actor`, `returnTitle`, as other returns do). */
 export function deliveryLink(projectId: string, taskId: string, actorId: string): string {
-  const params = new URLSearchParams({ tab: "delivery", return: `/p/${projectId}/inbox`, actor: actorId, returnTitle: "待我处理" });
+  const params = new URLSearchParams({ tab: "delivery", return: `/p/${projectId}/inbox`, actor: actorId, returnTitle: "待我验收与判断" });
   return `/p/${projectId}/tasks/${taskId}?${params}`;
 }
 

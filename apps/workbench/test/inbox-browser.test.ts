@@ -180,7 +180,7 @@ test("待我处理 lists what waits for my use and counts every part, or says it
   const target = new URL(await link.getAttribute("href") ?? "", base);
   assert.equal(target.pathname, `/p/${projectId}/tasks/${taskId(fixtures.mine)}`);
   assert.deepEqual([target.searchParams.get("tab"), target.searchParams.get("return"), target.searchParams.get("actor"), target.searchParams.get("returnTitle")],
-    ["delivery", `/p/${projectId}/inbox`, me, "待我处理"]);
+    ["delivery", `/p/${projectId}/inbox`, me, "待我验收与判断"]);
   await link.click();
   const center = page.locator(`[data-task-page="${taskId(fixtures.mine)}"]`);
   await center.getByRole("tab", { name: /^交付与使用/, selected: true }).waitFor();

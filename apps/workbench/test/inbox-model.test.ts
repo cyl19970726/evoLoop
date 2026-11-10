@@ -88,7 +88,7 @@ test("row wording and the link into the task's 交付与使用 with the way back
   assert.equal(link.searchParams.get("tab"), "delivery");
   assert.equal(link.searchParams.get("return"), "/p/p-1/inbox");
   assert.equal(link.searchParams.get("actor"), "人 a");
-  assert.equal(link.searchParams.get("returnTitle"), "待我处理");
+  assert.equal(link.searchParams.get("returnTitle"), "待我验收与判断");
 });
 
 test("the 待我处理 count adds the three parts, and a part that failed or was not read through is never counted short", () => {
