@@ -28,6 +28,11 @@ export interface ProjectRepository {
 }
 export type ProjectRepositoriesView =
   | { projectId: string; status: "available"; items: ProjectRepository[] }
+  /**
+   * The service's repository list as a whole is refused by its Git source (an entry of any project is invalid or
+   * registered twice), so no fixed Git source is readable now. `items` lists this project's entries, none readable.
+   */
+  | { projectId: string; status: "unavailable"; reason: "registration_invalid"; items: ProjectRepository[] }
   | ProjectConfigurationUnavailable;
 
 export const projectCapabilityKeys = [
@@ -67,14 +72,30 @@ export type ProjectCapabilityReason =
   | "grant_directory_unavailable" | "controller_not_in_project" | "controller_not_authorized"
   | "controller_grants_ambiguous" | "runtime_unavailable"
   | "configuration_unreadable" | "identities_unreadable";
+/**
+ * Why the calling identity cannot use a capability granted per actor.
+ * - `caller_has_no_grant`: its actor holds no grant here that the service accepts.
+ * - `caller_lacks_write`, `caller_lacks_review`, `caller_lacks_write_and_review`: its actor holds a grant, but the token
+ *   it signed in with lacks what the service requires of the request (scheduling and runtime need review; daily copies
+ *   and Feishu actions need write and review).
+ * - `caller_not_current_writer`: daily copies also need the actor to be a writer in the identity file as it is now.
+ */
+export type ProjectCallerReason =
+  | "caller_has_no_grant" | "caller_lacks_write" | "caller_lacks_review" | "caller_lacks_write_and_review"
+  | "caller_not_current_writer";
 export interface ProjectCapabilityJudgment {
   state: ProjectCapabilityState;
   reason: ProjectCapabilityReason | null;
   /**
-   * Only for capabilities granted per actor (scheduling, taskTiming, runtime, feishu): whether the calling identity
-   * holds a grant the service accepts in this project. `state` says whether anyone in the project does. null: unknown.
+   * Only for capabilities granted per actor (scheduling, taskTiming, runtime, feishu): whether the calling identity can
+   * use it here, by its actor's grant and the permissions of the token it signed in with. `state` says whether anyone
+   * in the project can. Daily-copy grants are given per Role; this does not tell which Role, and setting a daily copy
+   * on a Task still needs a grant for that Task's owner Role. null: unknown. In `pending`, judged with the same token
+   * permissions as now.
    */
   callerGranted?: boolean | null;
+  /** Why `callerGranted` is false; null otherwise. Present with `callerGranted`. */
+  callerReason?: ProjectCallerReason | null;
 }
 export interface ProjectCapability extends ProjectCapabilityJudgment {
   key: ProjectCapabilityKey;
@@ -97,19 +118,25 @@ export interface ProjectMemberAbilities {
   identityKind: "agent" | "human";
   /** Sign in and read: HTTP authentication accepts one credential, which must grant read here. */
   canRead: boolean;
-  /** The business writer check: one credential with read and write here. null when the identity file is unreadable. */
+  /**
+   * Write: a request writes with the token it signed in with, from the identities loaded at start, and business writer
+   * checks read the identity file again. Both must find one credential with read and write here. false when the loaded
+   * identities have none; null when they do but the identity file is unreadable.
+   */
   canWrite: boolean | null;
   /** The reviewer check: every credential of the actor here grants read, write and review; partial grants never add up. */
   canReview: boolean;
 }
 export interface ProjectMember extends ProjectMemberAbilities {
   actorId: string;
-  /** What a restart would change for this actor, when the identity file differs from what is in effect; else null. */
-  pending: Pick<ProjectMemberAbilities, "identityKind" | "canRead" | "canReview"> | null;
+  /** What this actor could do after a restart, when the identity file now says otherwise than what is in effect; else null. */
+  pending: { identityKind: "agent" | "human"; canRead: boolean; canWrite: boolean; canReview: boolean } | null;
 }
 /**
- * `unchanged`: the identity file still says what the service loaded. `changed`: it was edited since start; sign-in and
- * review follow it after a restart. `unreadable`: it cannot be read now. null: the source is not an identity file.
+ * `unchanged`: this project's identity entries are as the service loaded them at start. `changed`: this project's
+ * identity entries were edited since start (who, which kind, which permissions; never compared by token); sign-in,
+ * write and review follow them after a restart. `unreadable`: the identity file cannot be read now. null: the source
+ * is not an identity file.
  */
 export type ProjectIdentityFileState = "unchanged" | "changed" | "unreadable";
 export type ProjectMembersView =

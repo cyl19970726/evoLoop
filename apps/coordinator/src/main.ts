@@ -1,7 +1,7 @@
 import { withObservedSources } from "./knowledge/observed-repository.js";
 import { readExternalMaterials } from "./references/materials.js";
 import { createReferenceDependencies } from "./references/routes.js";
-import { GitDocumentSource } from "@evoloop/adapter-git-documents";
+import { GitDocumentSource, repositoryRegistrationProblem } from "@evoloop/adapter-git-documents";
 import { readFile, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { resolve, isAbsolute, join, sep } from "node:path";
@@ -858,7 +858,8 @@ const app = await buildServer({ service, credentials, canWrite: lease.canWrite, 
   planningSources: (principal, projectId, taskId, revisionId, loopId) =>
     readPlanningSources(pool, principal, projectId, taskId, revisionId, loopId),
   sourceConfiguration: principal => ({
-    git: integrations.repositories.some(repository => !principal || principal.projectIds.includes(repository.projectId)),
+    // gitForPrincipal refuses the whole list on one bad entry, so then no fixed Git source is readable anywhere.
+    git: !repositoryRegistrationProblem(integrations.repositories) && integrations.repositories.some(repository => !principal || principal.projectIds.includes(repository.projectId)),
     wiki: !!knowledge?.enabled && knowledge.projectIds.some(projectId => !principal || principal.projectIds.includes(projectId)),
   }),
   // Hub mode (#219) will supply members from Hub accounts; this coordinator answers from its own identity file.

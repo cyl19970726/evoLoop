@@ -15,7 +15,8 @@ import type {
  * supply members from its accounts.
  */
 export interface ProjectConfigurationSource {
-  repositories?(projectId: string): Promise<ProjectRepository[]>;
+  /** `accepted`: the Git source accepts the service's repository list as a whole, so these entries are readable. */
+  repositories?(projectId: string): Promise<{ accepted: boolean; items: ProjectRepository[] }>;
   /** Judged for this project and, for capabilities granted per actor, for the caller. */
   capabilities?(principal: Principal, projectId: string): Promise<ProjectCapability[]>;
   members?: { kind: ProjectMemberSourceKind;
@@ -23,7 +24,7 @@ export interface ProjectConfigurationSource {
 }
 
 const judgment = (value: ProjectCapabilityJudgment): ProjectCapabilityJudgment => ({ state: value.state, reason: value.reason,
-  ...(value.callerGranted === undefined ? {} : { callerGranted: value.callerGranted }) });
+  ...(value.callerGranted === undefined ? {} : { callerGranted: value.callerGranted, callerReason: value.callerReason ?? null }) });
 
 /** Every route needs the caller's read permission on this existing project, as other project reads do. */
 export function registerProjectConfigurationRoutes(app: FastifyInstance,
@@ -48,9 +49,11 @@ export function registerProjectConfigurationRoutes(app: FastifyInstance,
   app.get("/api/projects/:projectId/repositories", async request => {
     const { projectId } = await readable(request);
     const repositories = source.repositories;
-    return read(projectId, repositories && (() => repositories.call(source, projectId)), (items): ProjectRepositoriesView => ({
-      projectId, status: "available",
-      items: items.map(item => ({ repositoryId: item.repositoryId, allowedPaths: [...item.allowedPaths] })) }));
+    return read(projectId, repositories && (() => repositories.call(source, projectId)), (value): ProjectRepositoriesView => {
+      const items = value.items.map(item => ({ repositoryId: item.repositoryId, allowedPaths: [...item.allowedPaths] }));
+      return value.accepted ? { projectId, status: "available", items }
+        : { projectId, status: "unavailable", reason: "registration_invalid", items };
+    });
   });
   app.get("/api/projects/:projectId/capabilities", async request => {
     const { principal, projectId } = await readable(request);
@@ -67,6 +70,7 @@ export function registerProjectConfigurationRoutes(app: FastifyInstance,
       status: "available", source: members!.kind, identityFile: value.identityFile,
       items: value.items.map(item => ({ actorId: item.actorId, identityKind: item.identityKind, canRead: item.canRead,
         canWrite: item.canWrite, canReview: item.canReview,
-        pending: item.pending ? { identityKind: item.pending.identityKind, canRead: item.pending.canRead, canReview: item.pending.canReview } : null })) }));
+        pending: item.pending ? { identityKind: item.pending.identityKind, canRead: item.pending.canRead,
+          canWrite: item.pending.canWrite, canReview: item.pending.canReview } : null })) }));
   });
 }
