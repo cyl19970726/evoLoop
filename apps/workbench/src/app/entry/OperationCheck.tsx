@@ -1,16 +1,20 @@
 // One saved operation receipt: check it by its operation ID, or retry with the same ID and content when the
-// original command is still in this page. Never creates a new operation.
+// original command is still in this page. Never creates a new operation. The operation ID itself is only in 完整标识
+// (docs/frontend/principles.md 原始标识放在来源层): here, or on 结果未知的操作 in the receipt's own identifier block.
 import { useState } from "react";
 import { Button } from "@evoloop/ui";
 import type { Operation } from "@evoloop/contracts";
 import { api, errorText } from "../../shared/api";
+import { FullIdentifiers } from "../../shared/ui/FullIdentifiers";
 import { date } from "../../shared/ui/shared";
 import type { OperationReceipt } from "../recovery";
 import { operationNotFound, recoveryIntent, replayRecoveryIntent, verifyRecoveryOperation } from "../recoveryIntent";
 
-export function OperationCheck({ receipt, token, onConfirmed }: {
+export function OperationCheck({ receipt, token, onConfirmed, identifiers = true }: {
   receipt: OperationReceipt; token: string;
   onConfirmed: (result: Operation["result"]) => void;
+  /** Show the operation ID under 完整标识 here; false where the page lists it with the receipt's other identifiers. */
+  identifiers?: boolean;
 }) {
   const [status, setStatus] = useState("这次操作可能已提交。请按原操作 ID 核对，确认前不要重复提交。");
   const [busy, setBusy] = useState(false);
@@ -52,7 +56,8 @@ export function OperationCheck({ receipt, token, onConfirmed }: {
   return <section data-ui="" className="operation-check flex flex-col gap-2 rounded-xl bg-danger-soft px-4 py-3" role="alert" aria-label="提交结果待核对">
     <h2 className="text-label font-semibold text-foreground">提交结果待核对</h2>
     <p className="text-small text-foreground">{status}</p>
-    <p className="text-caption text-text-secondary">提交于 {date(receipt.createdAt)} · 操作 ID <code className="break-all font-mono">{receipt.operationId}</code></p>
+    <p className="text-caption text-text-secondary">提交于 {date(receipt.createdAt)}</p>
+    {identifiers && <FullIdentifiers summary="完整标识" rows={[{ label: "原操作", value: receipt.operationId }]} />}
     <div className="flex flex-wrap gap-2">
       <Button size="compact" onClick={() => void check()} disabled={busy}>{busy ? "处理中…" : "按操作 ID 核对"}</Button>
       {canReplay && <Button size="compact" variant="ghost" onClick={() => void replay()} disabled={busy}>按原 ID 和原内容重试</Button>}

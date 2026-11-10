@@ -1,7 +1,7 @@
 // 跨空间返回 (scenarios.md 跳转规则): a link into another space or page may say where it came from — `return` (a page of
 // this project), `actor` (the reader the link was made for) and `returnTitle` (that page's name, optional) — and the page
 // it opens offers “返回 <来源>” back to it. Pure, so the agent page, the task page and the document page agree on which
-// sources count and say the way back the same way: “返回任务：<名称>”, “返回智能体：<名称>”, “返回统筹安排”.
+// sources count and say the way back the same way: “返回任务：<名称>”, “返回智能体：<名称>”, “返回日程：<名称>”, “返回统筹安排”.
 import { currentPath } from "./navigation";
 import { parseRoute, type Section } from "./routes";
 
@@ -73,7 +73,8 @@ export function returnText(place: ReturnPlace, name?: string | null): string {
     case "agent": return named("智能体");
     case "arrangement": return "返回统筹安排";
     case "document": return named("文档");
-    case "page": return `返回${pageNames[place.section] ?? "上一页"}`;
+    // A schedule is one selected on 日程 (`/schedules?schedule=`): “返回日程：<名称>”.
+    case "page": return place.section === "schedules" ? named("日程") : `返回${pageNames[place.section] ?? "上一页"}`;
   }
 }
 

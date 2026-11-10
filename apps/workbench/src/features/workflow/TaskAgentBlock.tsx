@@ -13,7 +13,7 @@ import { date } from "../../shared/ui/shared";
 import { agentDisplayName, agentNameCollisions, agentNameIsGenerated } from "../../shared/agentNamePresentation";
 import { sessionHref } from "../sessions";
 import { CommandFrame, overLimitText, useCommand } from "../../shared/command";
-import { readAgent } from "./agentRead";
+import { readAgent } from "../../shared/agentRead";
 import { agentFacts, assignmentKey, type Read, type ReadState } from "./taskFactsPresentation";
 import { assignmentSetCommand } from "./taskCommands";
 import { taskOrigin } from "./taskOrigin";

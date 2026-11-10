@@ -5,7 +5,9 @@ import { test } from "node:test";
 import { scheduleCommands, type MisfirePolicy, type ScheduleDefinition, type ScheduleRule } from "@evoloop/contracts/scheduling";
 import type { SchedulingGrant } from "../src/features/scheduling/client.ts";
 import { scheduleTemplate } from "../src/features/scheduling/managedTarget.ts";
-import { grantKey, grantLabels, scheduleCommandValues, scheduleFields, type ScheduleRoleNames } from "../src/features/scheduling/scheduleForm.ts";
+import { grantKey, grantLabels, scheduleCommandValues, scheduleFields, withMemberChoice, type ScheduleRoleNames } from "../src/features/scheduling/scheduleForm.ts";
+import { toFormField } from "../src/shared/ActionForm.tsx";
+import { fieldLabel, missingFields } from "../src/shared/command/CommandForm.tsx";
 
 const id = (n: number) => `43000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const projectId = id(1), roleId = id(2), otherRole = id(3), scheduleId = id(4);
@@ -135,4 +137,13 @@ test("a registered owner outside the choosable roles, an unread name and a revok
   const outside = scheduleFields([grant], { ...names, roles: [{ id: roleId, title: "巡检职责" }] }, definition).find(item => item.name === "owner")!;
   assert.deepEqual(outside.options?.[0], { value: otherRole, label: "发布职责（不在可选职责中）" });
   assert.deepEqual([...grantLabels([grant], names).values()], ["按职责“巡检职责”授权"]);
+});
+
+test("指定验收人 is optional for 独立智能体验收 only: 必须本人验收 drops “（可选）” and needs the person, as 新建任务 does (N5)", () => {
+  const field = toFormField(withMemberChoice(scheduleFields([grant], names), projectId).find(item => item.name === "consumer")!);
+  assert.equal(fieldLabel(field, { acceptanceMode: "independent_agent" }), "指定验收人（可选）");
+  assert.equal(fieldLabel(field, { acceptanceMode: "human_required" }), "指定验收人");
+  assert.deepEqual(missingFields([field], { acceptanceMode: "independent_agent", consumer: "" }), {});
+  assert.deepEqual(missingFields([field], { acceptanceMode: "human_required", consumer: "" }), { consumer: "请选择指定验收人。" });
+  assert.deepEqual(missingFields([field], { acceptanceMode: "human_required", consumer: "acceptance-owner" }), {});
 });

@@ -45,6 +45,9 @@ test("the way back says where it goes and names it once, without nested brackets
   assert.equal(returnText({ kind: "document", documentId: task }, "需求总图"), "返回文档：需求总图");
   assert.equal(returnText({ kind: "page", section: "documents" }), "返回文档列表");
   assert.equal(returnText({ kind: "page", section: "overview" }), "返回总览");
+  // A schedule is named (N2): “返回日程：<名称>”; without its name, “返回日程”.
+  assert.equal(returnText({ kind: "page", section: "schedules" }, "季度巡检"), "返回日程：季度巡检");
+  assert.equal(returnText({ kind: "page", section: "schedules" }), "返回日程");
   assert.doesNotMatch(returnText({ kind: "task", taskId: task }, "x".repeat(200)), /x{81}/, "a long name is cut at 80 characters");
 });
 

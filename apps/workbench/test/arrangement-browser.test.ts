@@ -228,7 +228,8 @@ test("统筹安排 does not conclude from reads that are missing, failed, or kep
     await page.getByText("任务暂不可读取", { exact: true }).waitFor();
     await page.getByText("队列暂不可读取", { exact: true }).waitFor();
     const failedStats = await stats.innerText();
-    assert.match(failedStats, /\?\s*个智能体空闲/);
+    assert.match(failedStats, /无法判断\s*谁空闲/);
+    assert.doesNotMatch(failedStats, /0\s*个智能体空闲/);
     assert.match(failedStats, /\?\s*项任务没有承接者/);
     assert.match(failedStats, /\?\s*个冲突与风险/);
     assert.match(await risks.innerText(), /任务暂不可读取，无法判断冲突/);
@@ -252,7 +253,7 @@ test("统筹安排 does not conclude from reads that are missing, failed, or kep
     assert.match(await idle.innerText(), /正在读取队列，暂不能判断谁空闲|队列暂不可读取，无法确认谁空闲/);
     await idle.getByText("队列暂不可读取，无法确认谁空闲。").waitFor();
     assert.doesNotMatch(await idle.innerText(), /文档整理/);
-    assert.match(await stats.innerText(), /\?\s*个智能体空闲/);
+    assert.match(await stats.innerText(), /无法判断\s*谁空闲/);
     assert.match(await stats.innerText(), /2\s*项任务没有承接者/);
     assert.match(await page.getByRole("region", { name: /没有承接者的任务/ }).innerText(), /队列还没读到/);
     assert.doesNotMatch(await tester.innerText(), /智能体目录记录/, "with Tasks read, the directory's current work is not used");

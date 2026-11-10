@@ -5,9 +5,10 @@ import type { LeaderWorkPage, LeaderWorkTask } from "@evoloop/contracts/work-ind
 import type { AcceptanceOverviewView } from "@evoloop/contracts/acceptance-relay";
 import { Badge, CollapsibleRow, StatusTag } from "@evoloop/ui";
 import { api, errorText } from "../../shared/api";
-import { leaderSessionDisplayName, leaderWorkItemPresentation, loadLeaderWorkStatuses } from "../../shared/leaderWorkLoad";
+import { agentDisplayName, agentNameIsGenerated } from "../../shared/agentNamePresentation";
+import { agentNameKey, readAgent } from "../../shared/agentRead";
+import { leaderWorkItemPresentation, loadLeaderWorkStatuses } from "../../shared/leaderWorkLoad";
 import { queryKeys, useProjectQuery } from "../../shared/query";
-import { readAgent } from "./agentRead";
 import { tableOrigin } from "./taskOrigin";
 import { phaseOrder, phaseStatus } from "../../shared/taskStatus";
 import { timingDate, timingDuration, timingStageLabel } from "../../shared/taskTiming";
@@ -28,19 +29,25 @@ export function PhaseCounts({ counts, label = "对账阶段计数" }: { counts: 
   </div>;
 }
 
-/** Display names of the agents named by rows: only a registered profile name counts; failures stay visible. */
+/** The name of an agent a row names: `name` as the agent pages say it, or why it is not read; null while reading. */
+export interface AgentNameState { name: string | null; problem: string | null; describesKind?: boolean }
+
+/**
+ * Display names of the agents named by rows, as the agent pages say them (agentDisplayName): a registered name, or for
+ * a generated title its role and kind (`describesKind`), never its short identifier. Failures stay visible.
+ */
 export function useAgentNames(projectId: string, keys: readonly string[]) {
   const unique = [...new Set(keys)];
   const reads = useQueries({ queries: unique.map(key => ({
-    queryKey: queryKeys.project(projectId, "session-names", key),
+    queryKey: queryKeys.project(projectId, ...agentNameKey(key)),
     queryFn: ({ signal }: { signal: AbortSignal }) => readAgent(projectId, key, signal),
     retry: false,
   })) });
   return Object.fromEntries(unique.map((key, index) => {
     const read = reads[index]!;
     return [key, read.error ? { name: null, problem: errorText(read.error) } : read.data
-      ? { name: leaderSessionDisplayName(read.data), problem: leaderSessionDisplayName(read.data) ? null : "未登记名称" } : { name: null, problem: null }];
-  })) as Record<string, { name: string | null; problem: string | null }>;
+      ? { name: agentDisplayName(read.data), problem: null, describesKind: agentNameIsGenerated(read.data) } : { name: null, problem: null }];
+  })) as Record<string, AgentNameState>;
 }
 
 /** The project-wide reconciliation list: every open task in phase order, with its next action. */
@@ -57,7 +64,7 @@ export function LeaderOverview({ projectId, page, statuses, roleNames, actorId }
     ? `${item.assignment?.targetKind === "external" ? "external" : "owned"}:${item.responsible.id}` : null).filter((key): key is string => !!key);
   const names = useAgentNames(projectId, keys);
   const visible = [...page.items].sort((a, b) => phaseOrder.indexOf(a.phase) - phaseOrder.indexOf(b.phase));
-  const unnamed = Object.values(names).filter(value => value.problem && value.problem !== "未登记名称").length;
+  const unnamed = Object.values(names).filter(value => value.problem).length;
   return <section aria-label="全项目统筹对账" data-leader-overview="" className="flex flex-col gap-3">
     <p className="text-caption text-muted-foreground">{page.observedAt ? `读于 ${new Date(page.observedAt).toLocaleString("zh-CN")}` : "尚未读回"} · 变更序号 {page.changeSequence}
       {page.partial ? " · 服务只返回了部分工作，结果不完整" : ""}{page.nextCursor ? ` · 只读到前 ${page.items.length} 项（共 ${page.total} 项）` : ""}</p>
@@ -70,7 +77,7 @@ export function LeaderOverview({ projectId, page, statuses, roleNames, actorId }
         ? `${item.assignment?.targetKind === "external" ? "external" : "owned"}:${item.responsible.id}` : null;
       const presentation = leaderWorkItemPresentation(item, allStatuses[item.taskId],
         item.responsible.kind === "role" ? roleNames[item.responsible.id ?? ""] : undefined,
-        key ? names[key]?.name ?? (names[key]?.problem === "未登记名称" ? "未登记名称" : undefined) : undefined);
+        key ? names[key]?.name ?? undefined : undefined, !!(key && names[key]?.describesKind));
       const status = phaseStatus[item.phase];
       return <li key={item.taskId} className="flex flex-col gap-1 py-2.5">
         <div className="flex flex-wrap items-center gap-2"><StatusTag tone={status.tone} label={status.label} />
@@ -106,8 +113,8 @@ export function CapacitySummary({ projectId, overview, error, actorId }: {
     <p className="text-label text-text-secondary">{capacity.length} 个智能体 · {ready} 个可接新验收 · {idle} 个已登记工作已清 · {missing} 个有能力缺项</p>
     {capacity.length ? <ul className="flex flex-col divide-y divide-border">{capacity.map(item => {
       const read = names[`owned:${item.sessionId}`];
-      // While the name is being read nothing is concluded; an agent without a registered name shows its account.
-      const nameRead: NameRead = read?.name ? { state: "named", name: read.name } : read?.problem === "未登记名称" ? { state: "unnamed" }
+      // While the name is being read nothing is concluded; a name the service generated is said by role and kind.
+      const nameRead: NameRead = read?.name ? { state: "named", name: read.name }
         : read?.problem ? { state: "failed" } : { state: "reading" };
       const name = nameOnly("智能体", nameRead);
       return <li key={item.sessionId} className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 py-2 text-label">

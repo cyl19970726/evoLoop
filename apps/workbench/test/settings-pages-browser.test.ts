@@ -24,7 +24,8 @@ const uuid = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
 const stamp = "2026-11-10T02:40:00.000Z";
 const receipts = [
   { actorId, projectId, taskId: docs.rule.id, operationId: id(960), commandType: "document.revise", createdAt: stamp },
-  { actorId, projectId, taskId: tasks.t1.id, operationId: id(961), commandType: "task.assignment.set", createdAt: stamp },
+  // Saved with its command digest, so the check below can confirm it.
+  { actorId, projectId, taskId: tasks.t1.id, operationId: id(961), commandType: "task.assignment.set", createdAt: stamp, commandHash: "e".repeat(64) },
   { actorId, projectId, taskId: projectId, operationId: id(962), commandType: "session.message.interrupt", createdAt: stamp },
   { actorId, projectId, taskId: id(963), operationId: id(964), commandType: "task.create", createdAt: stamp },
 ];
@@ -57,6 +58,9 @@ test("结果未知的操作, 仓库规范 and 项目设置: back to the object, 
         if (path === `${root}/references/git/${id(952)}`) return send(200, { status: "unavailable", referenceId: id(952), reason: "commit",
           ref: { projectId, repositoryId: "evoLoop", path: "docs/guide.md", commit, contentHash }, observedAt: stamp });
         if (path.startsWith(`${root}/references/git/`)) return send(404, { message: "没有这条固定引用" });
+        // The operation behind receipt 961 was applied.
+        if (path === `${root}/operations/${id(961)}`) return send(200, { id: id(961), projectId, actorId, commandType: "task.assignment.set",
+          commandHash: "e".repeat(64), result: { status: "applied", operationId: id(961), entityId: tasks.t1.id } });
         reads.push(path);
         if (path === `${root}/repositories` && state.repositories === "refused") return send(200, { projectId, status: "unavailable", reason: "registration_invalid",
           items: [{ repositoryId: "workbench", allowedPaths: ["docs/"] }] });
@@ -133,7 +137,8 @@ test("结果未知的操作, 仓库规范 and 项目设置: back to the object, 
     const capabilityText = async (key: string) => capabilities.locator(`[data-capability="${key}"]`).innerText();
     assert.match(await capabilityText("knowledge"), /已配置[\s\S]*本项目[\s\S]*改动要重启后才生效：重启后会变为未配置（服务端没有开启外部知识库）/);
     assert.match(await capabilityText("taskTiming"), /本项目有授权，但你没有。/);
-    assert.match(await capabilityText("orchestration"), /未配置[\s\S]*本项目未配置：服务端没有开启自动循环与编排。/);
+    assert.match(await capabilityText("orchestration"), /未配置[\s\S]*全服务未开启：服务端没有开启自动循环与编排。/);
+    assert.doesNotMatch(await capabilityText("orchestration"), /本项目未配置/);
     assert.match(await capabilityText("documentOriginals"), /全服务[\s\S]*全服务已开启。/);
     // The repositories configured for the project, with what each may read.
     const repositories = repository.getByRole("region", { name: "本项目的仓库" });
@@ -251,6 +256,13 @@ test("结果未知的操作, 仓库规范 and 项目设置: back to the object, 
     await row(964).getByText(/^在本项目里读不到这个任务。如果原操作是新建，它可能还没有建立/).waitFor();
     assert.equal(await row(964).getByRole("link").count(), 0, "an object that is not there is not linked");
     for (const n of [960, 961, 962, 964]) assert.doesNotMatch(await row(n).innerText(), uuid, "the object's identifier stays in the full-identifier layer");
+    // No operation ID in the page's text (N4): each one is under its receipt's 完整标识, with the object and the type.
+    const page = operations.locator(".operations-page");
+    assert.doesNotMatch(await page.innerText(), uuid, "no operation or object identifier in the body");
+    assert.doesNotMatch(await page.innerText(), /操作 ID [0-9a-f]/);
+    await row(961).locator("summary", { hasText: "完整标识" }).click();
+    assert.match(await row(961).innerText(), new RegExp(`原操作\\s*${id(961)}[\\s\\S]*原对象\\s*${tasks.t1.id}`));
+    await row(961).locator("summary", { hasText: "完整标识" }).click();
     assert.equal(await operations.getByRole("link", { name: /发给智能体的消息/ }).getAttribute("href"), `/p/${projectId}/sessions`, "the text and the link agree");
     await shoot(operations, "operations");
     const back = new URLSearchParams({ return: `/p/${projectId}/operations`, actor: actorId, returnTitle: "结果未知的操作" });
@@ -266,5 +278,20 @@ test("结果未知的操作, 仓库规范 and 项目设置: back to the object, 
     await operations.getByRole("link", { name: "返回结果未知的操作", exact: true }).filter({ visible: true }).first().waitFor();
     await operations.goBack();
     await heading(operations, "结果未知的操作").waitFor();
+
+    // Checked by its operation ID: the receipt goes, and the notice names the object and opens it, without the ID (N4).
+    await row(961).locator("xpath=..").getByRole("button", { name: "按操作 ID 核对" }).click();
+    const checked = operations.locator(".global-alert").filter({ hasText: "已核对" });
+    await checked.waitFor();
+    assert.match(await checked.innerText(), new RegExp(`已核对：任务「${tasks.t1.title}」上的原操作已应用；正在回读当前数据。`));
+    assert.doesNotMatch(await checked.innerText(), uuid, "no operation ID in the notice");
+    await row(961).waitFor({ state: "detached" });
+    const openObject = checked.getByRole("link", { name: "打开原对象" });
+    assert.equal(await openObject.getAttribute("href"), `/p/${projectId}/tasks/${tasks.t1.id}?${back}`);
+    assert.equal(await checked.getByRole("button", { name: "关闭" }).count(), 1);
+    if (shots) await operations.screenshot({ path: `${shots}/operations-checked-1440.png` });
+    await openObject.click();
+    await heading(operations, tasks.t1.title).waitFor();
+    await operations.getByRole("link", { name: "返回结果未知的操作", exact: true }).filter({ visible: true }).first().waitFor();
     assert.deepEqual(errors, []);
   });

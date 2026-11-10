@@ -86,6 +86,9 @@ test("overview wording: next step and responsibility in words, codes mapped, ide
           proposal: { title: "开发职责" }, proposedBy: "reader", createdAtUtc: stamp, trialStartedAtUtc: stamp, reviewAtUtc: stamp, mergeTargetRoleId: null };
         else if (url.pathname === `${base}/session-work/${encodeURIComponent(sessionKey)}/profile`) value = { projectId, target: { kind: "owned", sessionId },
           version: 1, displayName: "前端智能体", purpose: null, membership: "current", tenure: "resident", actorId: "reader", reason: "夹具", updatedAt: stamp };
+        // An agent is named from its directory record (agentDisplayName), with the registered name.
+        else if (url.pathname === `${base}/session-work/${encodeURIComponent(sessionKey)}`) value = { session: { key: sessionKey, kind: "owned", title: "开发职责",
+          roles: [], profile: { displayName: "前端智能体" } }, observationCursor: "0", currentWork: null };
         res.writeHead(status, { "content-type": "application/json" }); res.end(JSON.stringify(value)); return;
       }
       const file = join(dist, /^\/(?:$|p\/|ui$)/.test(url.pathname) ? "index.html" : url.pathname);

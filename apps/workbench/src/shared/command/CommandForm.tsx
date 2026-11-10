@@ -200,6 +200,11 @@ export interface FormField {
   initial?: string | undefined; options?: { value: string; label: string; disabled?: boolean | undefined }[] | undefined;
   optional?: boolean | undefined; hint?: string | undefined; rows?: number | undefined; placeholder?: string | undefined;
   /**
+   * An `optional` field that the values now make required (指定验收人 once 必须本人验收 is chosen): its label drops
+   * “（可选）” and it must be filled before sending, as a field that is never optional.
+   */
+  requiredWhen?: ((values: Record<string, string>) => boolean) | undefined;
+  /**
    * The contract's limit, checked before sending with a message (never by cutting the text: the browser's own limit
    * would cut a pasted text without saying so). No limit by default.
    */
@@ -214,6 +219,16 @@ export function initialValues(fields: readonly FormField[]): Record<string, stri
   return Object.fromEntries(fields.map(field => [field.name, field.initial ?? (field.kind === "multi" ? "[]" : "")]));
 }
 
+/** Whether a field may be left empty with the values now: `optional`, unless `requiredWhen` needs it now. */
+export function fieldOptional(field: Pick<FormField, "optional" | "requiredWhen">, values: Record<string, string>): boolean {
+  return !!field.optional && !field.requiredWhen?.(values);
+}
+
+/** The label a field shows with the values now: “（可选）” is added only while it may be left empty. */
+export function fieldLabel(field: Pick<FormField, "label" | "optional" | "requiredWhen">, values: Record<string, string>): string {
+  return fieldOptional(field, values) && !field.label.includes("可选") ? `${field.label}（可选）` : field.label;
+}
+
 const chosen = (value: string): string[] => { try { const list = JSON.parse(value || "[]"); return Array.isArray(list) ? list.map(String) : []; } catch { return []; } };
 
 /** The fields that cannot be sent as they are (an empty required field, a text over its limit), with what to do about each. */
@@ -223,7 +238,7 @@ export function missingFields(fields: readonly FormField[], values: Record<strin
     const tooLong = field.kind === "multi" ? null : overLimitText(value, field.maxLength);
     if (tooLong)
       return [[field.name, tooLong]];
-    if (field.optional) return [];
+    if (fieldOptional(field, values)) return [];
     if (field.kind === "multi") return chosen(value).length ? [] : [[field.name, "请至少选择一项。"]];
     if (value.trim()) return [];
     const choose = field.kind === "select" || field.kind === "radio" || field.kind === "custom" || field.kind === "datetime" || field.kind === "time";
@@ -350,7 +365,7 @@ function FieldControl(props: FieldProps) {
 }
 
 function FieldInput({ field, value, values, error, hideLabel, onChange }: FieldProps) {
-  const label = field.optional && !field.label.includes("可选") ? `${field.label}（可选）` : field.label;
+  const label = fieldLabel(field, values);
   const errorId = React.useId();
   const legendId = React.useId();
   if (field.kind === "radio" || field.kind === "multi") {

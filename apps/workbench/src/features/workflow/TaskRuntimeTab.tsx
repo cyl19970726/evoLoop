@@ -23,7 +23,8 @@ import { ReferencePanel } from "../references";
 import { eligibleOwnedSessions, sessionHref } from "../sessions";
 import { preflightPresentation, preflightView } from "../../shared/preflightPresentation";
 import { CommandForm, overLimitText } from "../../shared/command";
-import { readAgent } from "./agentRead";
+import { agentDisplayName } from "../../shared/agentNamePresentation";
+import { readAgent } from "../../shared/agentRead";
 import { BindAgentForm } from "./TaskAgentBlock";
 import { assignmentAcknowledgeCommand, assignmentObserveCommand, assignmentReleaseCommand, handoffRecordCommand, queueCreateCommand,
   runAbandonCommand, runInterruptCommand, runReserveCommand } from "./taskCommands";
@@ -106,7 +107,7 @@ function AssignmentSection({ context, task, read }: { context: MutationContext; 
   const assignment = read.data ?? null;
   const key = assignment ? assignmentKey(assignment) : null;
   const agent = useProjectQuery(projectId, ["session-names", key], signal => readAgent(projectId, key!, signal), { enabled: !!key });
-  const name = agent.data?.profile?.displayName?.trim() || agent.data?.title || (agent.error ? "智能体名称暂不可读" : "正在读取名称…");
+  const name = agent.data ? agentDisplayName(agent.data) : agent.error ? "智能体名称暂不可读" : "正在读取名称…";
   const history = useProjectQuery(projectId, ["task", task.id, "assignment-history"], async signal => {
     const value = await sessionClient("", projectId).assignmentHistory(task.id, undefined, signal);
     if (!Array.isArray(value?.items)) throw new Error("分派记录响应格式不符");
@@ -190,7 +191,7 @@ function RunsSection({ context, detail, assignment, runs, runsRead, sessionsRead
     queryFn: ({ signal }: { signal: AbortSignal }) => readAgent(projectId, `owned:${session.id}`, signal), retry: false })) });
   const roleName = (session: RuntimeSessionRecord) => {
     const agent = names[eligible.indexOf(session)]?.data;
-    return `${agent?.profile?.displayName?.trim() || agent?.title || "智能体（名称待读取）"} · 创建于 ${date(session.createdAt)}`;
+    return `${agent ? agentDisplayName(agent) : "智能体（名称待读取）"} · 创建于 ${date(session.createdAt)}`;
   };
   const arrange = { taskVersion: task.version, revisionId: task.currentRevisionId, owner: task.owner,
     assignmentVersion: assigned?.version ?? 0, assignmentState: assigned?.state ?? "none", assignmentTarget: assigned ? assignmentKey(assigned) : "",

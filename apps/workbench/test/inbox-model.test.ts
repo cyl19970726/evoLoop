@@ -4,7 +4,7 @@ import { test } from "node:test";
 import type { ConsumerObservation } from "@evoloop/contracts";
 import type { LeaderWorkDeliveryFact, LeaderWorkPage, LeaderWorkTask } from "@evoloop/contracts/work-index";
 import {
-  deliveredAt, deliveryLink, inboxBadge, judgeMyDelivery, lastUseText, myLatestObservation, shellInboxCount, useRequirementText,
+  deliveredAt, deliveryLink, inboxBadge, inboxTaskLink, judgeMyDelivery, lastUseText, myLatestObservation, shellInboxCount, useRequirementText,
 } from "../src/features/workflow/inboxModel.ts";
 import { readDeliveriesForMe } from "../src/features/workflow/inboxDeliveries.ts";
 
@@ -31,7 +31,6 @@ const observation = (observer: string, result: ConsumerObservation["result"], cr
 
 test("a current delivery declared for me waits until I record 已使用", () => {
   assert.deepEqual(judgeMyDelivery(task(), me), { kind: "waiting", last: null });
-  assert.deepEqual(judgeMyDelivery(task({ observationActorId: me, observationResult: "failed" }), me), { kind: "waiting", last: "failed" });
   assert.deepEqual(judgeMyDelivery(task({ observationActorId: me, observationResult: "notUsed" }), me), { kind: "waiting", last: "notUsed" });
   // Declared but not required for closing: still mine to use.
   assert.deepEqual(judgeMyDelivery(task({ useRequired: false }), me), { kind: "waiting", last: null });
@@ -39,6 +38,13 @@ test("a current delivery declared for me waits until I record 已使用", () => 
 
 test("I already recorded 已使用 on the current delivery", () => {
   assert.deepEqual(judgeMyDelivery(task({ observationActorId: me, observationResult: "used" }), me), { kind: "used" });
+});
+
+test("my latest 使用失败 on the current delivery sends it back to rework: not mine to use, not counted (N9)", () => {
+  // The next step is the executor's rework, not mine; 未使用 still waits for me.
+  assert.deepEqual(judgeMyDelivery(task({ observationActorId: me, observationResult: "failed" }), me), { kind: "failed" });
+  assert.deepEqual(judgeMyDelivery(task({ observationActorId: me, observationResult: "failed" }, { phase: "rework" }), me), { kind: "failed" });
+  assert.deepEqual(judgeMyDelivery(task({ observationActorId: me, observationResult: "notUsed" }, { phase: "rework" }), me), { kind: "waiting", last: "notUsed" });
 });
 
 test("another consumer, no consumer, or a different spelling of me is not mine", () => {
@@ -81,7 +87,6 @@ test("row wording and the link into the task's 交付与使用 with the way back
   assert.equal(useRequirementText(true), "必须使用才能关闭");
   assert.equal(useRequirementText(false), "只是声明的使用者");
   assert.equal(lastUseText(null), "尚未记录使用");
-  assert.equal(lastUseText({ result: "failed", at: null }), "你上次：使用失败");
   assert.equal(lastUseText({ result: "notUsed", at: stamp }), "你上次：未使用");
   const link = new URL(deliveryLink("p-1", "t-1", "人 a"), "http://x");
   assert.equal(link.pathname, "/p/p-1/tasks/t-1");
@@ -89,6 +94,12 @@ test("row wording and the link into the task's 交付与使用 with the way back
   assert.equal(link.searchParams.get("return"), "/p/p-1/inbox");
   assert.equal(link.searchParams.get("actor"), "人 a");
   assert.equal(link.searchParams.get("returnTitle"), "待我验收与判断");
+  // 依据变化 and 待我验收 carry the same way back (N1): to 依据与影响, or to the task's first tab.
+  const basis = new URL(inboxTaskLink("p-1", "t-2", "人 a", "basis"), "http://x");
+  assert.deepEqual([basis.pathname, basis.searchParams.get("tab"), basis.searchParams.get("return"), basis.searchParams.get("actor"), basis.searchParams.get("returnTitle")],
+    ["/p/p-1/tasks/t-2", "basis", "/p/p-1/inbox", "人 a", "待我验收与判断"]);
+  const plain = new URL(inboxTaskLink("p-1", "t-3", "人 a"), "http://x");
+  assert.deepEqual([plain.searchParams.has("tab"), plain.searchParams.get("return"), plain.searchParams.get("returnTitle")], [false, "/p/p-1/inbox", "待我验收与判断"]);
 });
 
 test("the 待我处理 count adds the three parts, and a part that failed or was not read through is never counted short", () => {
@@ -162,9 +173,14 @@ test("someone else observed last: my own observation decides, read from the task
     assert.deepEqual((await readDeliveriesForMe("p", me)).items, []);
   });
   await withFetch(path => path.includes("/work-management/index") ? index
-    : detail([observation(me, "failed", "2026-11-09T02:00:00.000Z"), observation(other, "used", "2026-11-09T03:00:00.000Z")]), async () => {
+    : detail([observation(me, "notUsed", "2026-11-09T02:00:00.000Z"), observation(other, "used", "2026-11-09T03:00:00.000Z")]), async () => {
     const [row] = (await readDeliveriesForMe("p", me)).items;
-    assert.deepEqual([row?.othersObserved, row?.last, row?.deliveredAt], [true, { result: "failed", at: "2026-11-09T02:00:00.000Z" }, "2026-11-09T00:30:00.000Z"]);
+    assert.deepEqual([row?.othersObserved, row?.last, row?.deliveredAt], [true, { result: "notUsed", at: "2026-11-09T02:00:00.000Z" }, "2026-11-09T00:30:00.000Z"]);
+  });
+  // My own latest 使用失败, read from the task, sends it back to rework as well.
+  await withFetch(path => path.includes("/work-management/index") ? index
+    : detail([observation(me, "failed", "2026-11-09T02:00:00.000Z"), observation(other, "used", "2026-11-09T03:00:00.000Z")]), async () => {
+    assert.deepEqual((await readDeliveriesForMe("p", me)).items, []);
   });
   await withFetch(path => path.includes("/work-management/index") ? index : { task: { projectId: "p", id: "another" }, observations: [] }, async () => {
     await assert.rejects(readDeliveriesForMe("p", me), /不符/);

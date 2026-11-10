@@ -19,6 +19,8 @@ export interface Field {
   name: string; label: string; value?: string; kind?: "text" | "textarea" | "select" | "multi" | "datetime" | "time" | "custom";
   options?: { value: string; label: string }[]; optional?: boolean; hint?: string; advanced?: boolean;
   placeholder?: string; autoGrow?: boolean;
+  /** An optional field the values now make required (shared/command FormField). */
+  requiredWhen?: FormField["requiredWhen"];
   /** A `custom` field's control and a line worked out from the values (shared/command FormField). */
   render?: FormField["render"]; preview?: FormField["preview"];
   /** The contract's length limit, checked before sending (no limit by default, as before). */

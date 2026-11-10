@@ -167,7 +167,7 @@ function TableRow({ task, list, projectId, selected, onSelect, linkFor, columns,
   const cell = "px-2 py-2.5 align-top";
   const kind = taskType(projection?.taskKind ?? task.kind);
   const taskStateNote = (cognition || projection && !closed && rowStatus(task.state, projection.phase).label !== taskStateStatus[task.state].label) ? `任务${taskStateStatus[task.state].label}` : null;
-  const agent = key ? <a className="text-primary hover:underline" href={sessionHref(projectId, key, actorId ? tableOrigin(projectId, actorId, undefined, { id: task.id, title }) : null)}>{agents[key]?.name ?? (agents[key]?.problem ? "未登记名称的智能体" : "正在读取名称…")}</a> : null;
+  const agent = key ? <a className="text-primary hover:underline" href={sessionHref(projectId, key, actorId ? tableOrigin(projectId, actorId, undefined, { id: task.id, title }) : null)}>{agents[key]?.name ?? (agents[key]?.problem ? "智能体（名称暂不可读）" : "正在读取名称…")}</a> : null;
   const unassigned = !projection ? "承接尚未读回" : closed ? "无当前分派" : "待具体承接";
   const notes = <div className="mt-0.5 flex flex-col gap-0.5 text-caption text-muted-foreground">
     {pending && <span className="text-warning">依据待复核</span>}

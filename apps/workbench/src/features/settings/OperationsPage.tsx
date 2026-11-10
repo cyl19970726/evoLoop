@@ -8,8 +8,8 @@ import { FullIdentifiers } from "../../shared/ui/FullIdentifiers";
 import { href } from "../../shared/ui/shared";
 import { LinkList, SettingsPage, SettingsSection } from "../../shared/ui/SettingsParts";
 import {
-  areaHref, operationsTitle, originAreaLabel, originHref, originKindLabel, originLinkKind, originText, receiptOrigin,
-  type OperationItem, type OriginKind, type OriginRead, type ReceiptFacts, type ReceiptOrigin,
+  checkedOrigin, operationsTitle, originKindLabel, originLink, originText, receiptOrigin,
+  type OperationItem, type OriginKind, type OriginRead, type ReceiptOrigin,
 } from "./operationsPresentation";
 
 const notFound = (error: unknown) => error instanceof ApiError && error.status === 404;
@@ -59,33 +59,36 @@ function useOriginRead(projectId: string, origin: ReceiptOrigin | null): OriginR
   return { state: "reading" };
 }
 
-/** Under one receipt: where its operation was, a link there (and back), and the raw identifiers in the source layer. */
-function ReceiptOriginRow({ projectId, receipt }: { projectId: string; receipt: ReceiptFacts }) {
+/**
+ * One receipt: its check card, then where its operation was, a link there (and back), and the raw identifiers in the
+ * source layer (the operation ID only there). The card gets what was found, so the notice after a confirmed check names
+ * the object and links back to it once the receipt is gone.
+ */
+function ReceiptItem({ projectId, item }: { projectId: string; item: OperationItem }) {
+  const { receipt } = item;
   const origin = receiptOrigin(receipt);
   const read = useOriginRead(projectId, origin);
-  const kind = originLinkKind(origin, read);
-  const link = origin.kind === "object" && kind ? { href: originHref(projectId, kind, origin.id, receipt.actorId), label: "打开原对象" }
-    : origin.kind === "area" && origin.area ? { href: areaHref(projectId, origin.area), label: `打开${originAreaLabel[origin.area]}` } : null;
-  return <div className="flex flex-col gap-1.5 px-1" data-receipt-origin={receipt.operationId}>
-    <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5">
-      <p className="min-w-0 text-small text-foreground [overflow-wrap:anywhere]">{originText(origin, read)}</p>
-      {link && <Button asChild size="compact" variant="ghost"><a href={link.href}>{link.label}<ArrowUpRight aria-hidden="true" /></a></Button>}
+  const link = originLink(projectId, receipt, origin, read);
+  return <div className="flex flex-col gap-2">
+    {item.check(checkedOrigin(projectId, receipt, origin, read))}
+    <div className="flex flex-col gap-1.5 px-1" data-receipt-origin={receipt.operationId}>
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5">
+        <p className="min-w-0 text-small text-foreground [overflow-wrap:anywhere]">{originText(origin, read)}</p>
+        {link && <Button asChild size="compact" variant="ghost"><a href={link.href}>{link.label}<ArrowUpRight aria-hidden="true" /></a></Button>}
+      </div>
+      <FullIdentifiers summary="完整标识" rows={[
+        { label: "原操作", value: receipt.operationId },
+        { label: origin.kind === "object" ? "原对象" : "项目", value: receipt.taskId },
+        { label: "原操作类型", value: receipt.commandType },
+      ]} />
     </div>
-    <FullIdentifiers summary="原对象的完整标识" rows={[
-      { label: origin.kind === "object" ? "原对象" : "项目", value: receipt.taskId },
-      { label: "原操作类型", value: receipt.commandType },
-    ]} />
   </div>;
 }
 
 /** `items`: the receipts saved for this project with their check cards, as app/App.tsx keeps them. */
 export function OperationsPage({ projectId, items }: { projectId: string; items: readonly OperationItem[] }) {
   return <SettingsPage title={operationsTitle} description="查看当前身份保存的操作回执，按原操作核对结果，再回到原操作所在的对象。" className="operations-page">
-    {items.length ? <div className="flex flex-col gap-5">{items.map(({ receipt, check }) =>
-      <div key={receipt.operationId} className="flex flex-col gap-2">
-        {check}
-        <ReceiptOriginRow projectId={projectId} receipt={receipt} />
-      </div>)}</div>
+    {items.length ? <div className="flex flex-col gap-5">{items.map(item => <ReceiptItem key={item.receipt.operationId} projectId={projectId} item={item} />)}</div>
       : <EmptyState title="没有结果未知的操作" reason="这里只列当前身份在这个浏览器会话里保存的回执，不代表项目里没有结果未知的事；其他业务记录仍在各自的页面。"
         action={<Button asChild><a href={href(projectId, "work")}>返回当前工作</a></Button>} />}
     <SettingsSection title="其他操作回执">

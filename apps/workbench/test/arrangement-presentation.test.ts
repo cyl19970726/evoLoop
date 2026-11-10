@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  capacityUnknownReason, directoryWorkCaption, noConflictText, noFreeAgentText, readStateOf,
+  capacityUnknownReason, directoryWorkCaption, freeCountStat, noConflictText, noFreeAgentText, readStateOf,
 } from "../src/features/sessions/arrangementPresentation.ts";
 
 // The next step per phase moved to shared/workPresentation.ts; its tests are in work-presentation.test.ts.
@@ -36,6 +36,19 @@ test("nobody free is only 'everyone has work' when every other agent's work is o
   assert.match(noFreeAgentText({ judged: true, free: [], others: 1, unknown: 0 }), /唯一的智能体有在做/);
   assert.equal(noFreeAgentText({ judged: true, free: [], others: 3, unknown: 1 }), "没有可确认空闲的智能体。");
   assert.match(noFreeAgentText({ judged: true, free: [], others: 2, unknown: 2 }), /都待核对/);
+});
+
+test("the 空闲 count at the top is never 0 while the right column cannot say who is free (N6)", () => {
+  const row = {} as never;
+  // Records not complete enough to judge: 无法判断, not 0 and not a bare question mark.
+  assert.deepEqual(freeCountStat({ judged: false, free: [], others: 2, unknown: 0 }, "任务没有读全，无法确认谁空闲。", false), { value: "无法判断", label: "谁空闲" });
+  // Every other agent's occupation is still 待核对 (the right column: 暂不能确认谁空闲): 无法判断 as well.
+  assert.deepEqual(freeCountStat({ judged: true, free: [], others: 2, unknown: 2 }, null, false), { value: "无法判断", label: "谁空闲" });
+  assert.deepEqual(freeCountStat({ judged: true, free: [], others: 3, unknown: 1 }, null, false), { value: "无法判断", label: "谁空闲" });
+  // Known: the number, with the agents still to check noted rather than counted.
+  assert.deepEqual(freeCountStat({ judged: true, free: [row], others: 3, unknown: 1 }, null, false), { value: 1, label: "个智能体空闲", note: "另有 1 个待核对" });
+  assert.deepEqual(freeCountStat({ judged: true, free: [], others: 2, unknown: 0 }, null, false), { value: 0, label: "个智能体空闲" }, "0 only when everyone's work is on record");
+  assert.deepEqual(freeCountStat({ judged: true, free: [row, row], others: 2, unknown: 0 }, null, true), { value: 2, label: "个智能体空闲", note: "上次读回" });
 });
 
 test("no conflict is only claimed from a complete read", () => {

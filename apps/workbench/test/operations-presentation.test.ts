@@ -7,8 +7,10 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
-  areaHref, operationsTitle, originArea, originCandidates, originHref, originLinkKind, originText, receiptOrigin, type ReceiptFacts,
+  areaHref, checkedOrigin, operationsTitle, originArea, originCandidates, originHref, originLinkKind, originText, receiptOrigin,
+  type CheckedOrigin, type ReceiptFacts,
 } from "../src/features/settings/operationsPresentation.ts";
+import { checkedNoticeText } from "../src/app/operationNotice.ts";
 import { OperationsPage } from "../src/features/settings/OperationsPage.tsx";
 import { inboxNavigation, sectionLabels } from "../src/app/shell/spaces.ts";
 
@@ -69,13 +71,32 @@ test("what is said follows what reading the object found; a missing object gets 
   assert.doesNotMatch(originText(origin, { state: "found", kind: "task", name: "t" }), /[0-9a-f]{8}-/, "no identifier in the reading text");
 });
 
+test("after a check, the notice names the original object and links back to it, never the operation ID (N4)", () => {
+  const origin = receiptOrigin(receipt("task.update"));
+  const found = checkedOrigin(projectId, receipt("task.update"), origin, { state: "found", kind: "task", name: "按成员选使用者" });
+  assert.equal(found.name, "任务「按成员选使用者」");
+  assert.deepEqual(found.link, { href: originHref(projectId, "task", objectId, "lead"), label: "打开原对象" });
+  const applied = checkedNoticeText({ refusal: null, scope: "" }, found);
+  assert.equal(applied, "已核对：任务「按成员选使用者」上的原操作已应用；正在回读当前数据。");
+  assert.equal(checkedNoticeText({ refusal: "版本已变化", scope: "" }, found), "已核对：任务「按成员选使用者」上的原操作被拒绝：版本已变化。");
+  // Not read yet, or on the project list (no object handed over): no name, never the ID.
+  const reading = checkedOrigin(projectId, receipt("task.update"), origin, { state: "reading" });
+  assert.deepEqual(reading, { name: null, link: { href: originHref(projectId, "task", objectId, "lead"), label: "打开原对象" } });
+  assert.equal(checkedNoticeText({ refusal: null, scope: "" }, null), "已核对：原操作已应用；正在回读当前数据。");
+  assert.equal(checkedOrigin(projectId, receipt("task.update"), origin, { state: "missing" }).link, null, "an object not in this project has no link");
+  const area = checkedOrigin(projectId, receipt("schedule.create", projectId), receiptOrigin(receipt("schedule.create", projectId)), { state: "reading" });
+  assert.deepEqual(area, { name: null, link: { href: areaHref(projectId, "schedules"), label: "打开日程" } });
+  for (const text of [applied, checkedNoticeText({ refusal: null, scope: "已核到服务端同身份的操作结果。" }, reading)])
+    assert.doesNotMatch(text, /[0-9a-f]{8}-[0-9a-f]{4}|30000000/, "no operation or object ID in the notice");
+});
+
 test("the page shows each receipt it is handed, with that receipt's own object, beside its check card", () => {
   const documentId = "40000000-0000-4000-8000-000000000004";
+  const handed: Array<CheckedOrigin> = [];
+  const card = (name: string, text: string) => (origin: CheckedOrigin) => { handed.push(origin); return createElement("section", { "data-check": name }, text); };
   const items = [
-    { receipt: { ...receipt("document.revise", documentId), operationId: "50000000-0000-4000-8000-000000000005" },
-      check: createElement("section", { "data-check": "first" }, "第一张核对卡") },
-    { receipt: { ...receipt("session.message.interrupt", projectId), operationId: "60000000-0000-4000-8000-000000000006" },
-      check: createElement("section", { "data-check": "second" }, "第二张核对卡") },
+    { receipt: { ...receipt("document.revise", documentId), operationId: "50000000-0000-4000-8000-000000000005" }, check: card("first", "第一张核对卡") },
+    { receipt: { ...receipt("session.message.interrupt", projectId), operationId: "60000000-0000-4000-8000-000000000006" }, check: card("second", "第二张核对卡") },
   ];
   // Rendered once on the server: the object's name is not read yet, so each row says it is being read.
   const html = renderToStaticMarkup(createElement(QueryClientProvider, { client: new QueryClient() },
@@ -90,6 +111,12 @@ test("the page shows each receipt it is handed, with that receipt's own object, 
   assert.match(html, /回执只记下了项目，没有记下是哪个智能体；可以到智能体核对。/);
   assert.ok(html.includes(`href="/p/${projectId}/sessions"`));
   assert.doesNotMatch(html, /没有结果未知的操作/);
+  // Each card is drawn with what the page found about its own object, for the notice after its check.
+  assert.deepEqual(handed.map(origin => origin.link?.label), ["打开原对象", "打开智能体"]);
+  // The operation ID is only in the receipt's 完整标识 (a closed details), with the object and the type.
+  const text = html.replace(/<details[\s\S]*?<\/details>/g, "").replace(/<[^>]+>/g, " ");
+  assert.doesNotMatch(text, /50000000-0000|60000000-0000/, "no operation ID outside 完整标识");
+  assert.match(html, /<summary[^>]*>完整标识<\/summary>[\s\S]*?原操作[\s\S]*?50000000-0000-4000-8000-000000000005/);
 });
 
 test("with no receipt handed in, the page says so without claiming the project has none", () => {

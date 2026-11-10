@@ -24,7 +24,12 @@ test("stopped series keeps a generated successor without presenting it as a futu
 
 test("a scheduled local time becomes a fixed UTC instant and displays in its declared zone", () => {
   assert.equal(scheduledInstant("2026-11-07T08:00:00+08:00"), timing.executeAtUtc);
-  assert.match(formatScheduled(timing.executeAtUtc, timing.timezone), /2026.*11.*07.*08:00.*Asia\/Taipei/);
+  // The zone is named as the schedule page names it (shared/zonedTime.ts), not by its IANA identifier.
+  assert.match(formatScheduled(timing.executeAtUtc, timing.timezone), /2026.*11.*07.*08:00（台北）$/);
+  assert.match(formatScheduled("2026-11-10T01:30:00.000Z", "Asia/Shanghai"), /2026.*11.*10.*09:30（上海）$/);
+  assert.doesNotMatch(formatScheduled("2026-11-10T01:30:00.000Z", "Asia/Shanghai"), /Asia\/Shanghai/);
+  // A zone the page has no name for keeps its identifier.
+  assert.match(formatScheduled("2026-11-10T01:30:00.000Z", "America/Bogota"), /（America\/Bogota）$/);
   assert.throws(() => scheduledInstant("2026-11-07T08:00"));
   assert.throws(() => scheduledInstant("2026-02-31T08:00:00+08:00"));
   assert.throws(() => scheduledTimezone("Invalid/Zone"));

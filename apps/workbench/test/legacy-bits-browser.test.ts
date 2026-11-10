@@ -81,6 +81,9 @@ test("rebuilt legacy parts read, write and fail as the record allows, at three w
       else if (url.pathname === `${p}/roles/${roleId}/bindings`) value = [];
       else if (url.pathname === `${p}/session-work/${encodeURIComponent(`owned:${sessionId}`)}/profile`)
         value = { projectId, sessionKey: `owned:${sessionId}`, displayName: "文档助手", version: 1, updatedAt: stamp };
+      // An agent is named from its directory record (agentDisplayName), with the registered name.
+      else if (url.pathname === `${p}/session-work/${encodeURIComponent(`owned:${sessionId}`)}`)
+        value = { session: { key: `owned:${sessionId}`, kind: "owned", title: "文档职责", roles: [], profile: { displayName: "文档助手" } }, observationCursor: "0", currentWork: null };
       else if (url.pathname.endsWith("/profile")) { status = 404; value = { message: "未登记" }; }
       else if (url.pathname === `${p}/discussions`) { if (!refused("discussions")) value = page([discussion]); }
       else if (url.pathname === `${p}/discussions/${discussionId}`) value = discussion;

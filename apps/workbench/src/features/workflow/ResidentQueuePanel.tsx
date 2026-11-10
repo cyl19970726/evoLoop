@@ -18,7 +18,8 @@ import { taskOrigin } from "./taskOrigin";
 import { FullIdentifiers } from "../../shared/ui/FullIdentifiers";
 import { date, href } from "../../shared/ui/shared";
 import { CommandForm } from "../../shared/command";
-import { readAgent } from "./agentRead";
+import { agentDisplayName } from "../../shared/agentNamePresentation";
+import { readAgent } from "../../shared/agentRead";
 import { queueAdoptCommand, queueAmendCommand, queueHoldCommand, queueReorderCommand, queueUnholdCommand } from "./taskCommands";
 import { runStateName } from "./taskExperience";
 import { ActionRow, Fine, ReadNote, reasonField } from "./TaskForms";
@@ -194,7 +195,7 @@ function AgentQueue({ context, queue, agentId, entries, session, runs, attempts,
   const projectId = context.projectId;
   const agentKey = `owned:${agentId}`;
   const agent = useProjectQuery(projectId, ["session-names", agentKey], signal => readAgent(projectId, agentKey, signal));
-  const name = agent.data?.profile?.displayName?.trim() || agent.data?.title || (agent.error ? "智能体（名称暂不可读）" : "智能体（名称待读取）");
+  const name = agent.data ? agentDisplayName(agent.data) : agent.error ? "智能体（名称暂不可读）" : "智能体（名称待读取）";
   const current = entries.find(entry => entry.state === "claimed");
   const next = entries.find(entry => entry.state === "queued");
   let priorReleased = true;

@@ -1,7 +1,6 @@
 import type {
   LeaderWorkDocument, LeaderWorkPage, LeaderWorkPhase, LeaderWorkTask,
 } from "@evoloop/contracts/work-index";
-import type { ObservedSession } from "@evoloop/contracts/session-observation";
 import { cognitionSummary, type WorkTaskStatus } from "./workStatusPresentation.js";
 import { responsibleText } from "./workPresentation.js";
 
@@ -36,14 +35,18 @@ export async function loadLeaderWorkStatuses(
   return { statuses: [...found.values()], missing: ids.filter(id => !found.has(id)) };
 }
 
-/** Only an explicitly registered profile name counts as a Session display name. */
-export function leaderSessionDisplayName(session: Pick<ObservedSession, "profile">): string | null {
-  const name = session.profile?.displayName?.trim();
-  return name || null;
+/**
+ * A row's agent as “外部智能体 · 前端小王”. `name` is the agent pages' name (agentDisplayName); one made from a generated
+ * title already says its role and kind (“功能开发 · 外部接入的智能体”, `describesKind`) and stands alone.
+ */
+function sessionText(item: LeaderWorkTask, name: string | undefined, describesKind: boolean): string {
+  const shown = name?.trim();
+  if (shown && describesKind) return shown;
+  return `${item.assignment?.targetKind === "external" ? "外部智能体" : "智能体"} · ${shown || "名称待核对"}`;
 }
 
 export function leaderWorkItemPresentation(
-  item: LeaderWorkTask, status?: WorkTaskStatus, resolvedRoleTitle?: string, resolvedSessionTitle?: string,
+  item: LeaderWorkTask, status?: WorkTaskStatus, resolvedRoleTitle?: string, resolvedSessionTitle?: string, sessionNameDescribesKind = false,
 ): { title: string; responsibility: string } {
   if (status?.cognition)
     return {
@@ -53,16 +56,13 @@ export function leaderWorkItemPresentation(
   if (!status)
     return {
       title: "任务记录 · 来源状态待核对",
-      responsibility: item.responsible.kind === "session"
-        ? `${item.assignment?.targetKind === "external" ? "外部智能体" : "智能体"} · ${resolvedSessionTitle?.trim() || "名称待核对"}`
-        : "责任与来源待核对",
+      responsibility: item.responsible.kind === "session" ? sessionText(item, resolvedSessionTitle, sessionNameDescribesKind) : "责任与来源待核对",
     };
   const roleTitle = item.responsible.kind === "role" && item.responsible.id ? resolvedRoleTitle?.trim() : null;
-  const sessionTitle = item.responsible.kind === "session" ? resolvedSessionTitle?.trim() : null;
   return {
     title: item.title,
     responsibility: item.responsible.kind === "session"
-      ? `${item.assignment?.targetKind === "external" ? "外部智能体" : "智能体"} · ${sessionTitle || "名称待核对"}`
+      ? sessionText(item, resolvedSessionTitle, sessionNameDescribesKind)
       : roleTitle ? `负责 ${roleTitle}` : responsibleText(item.responsible, item.assignment, { state: "reading" }),
   };
 }

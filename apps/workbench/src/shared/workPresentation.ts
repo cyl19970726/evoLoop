@@ -42,8 +42,12 @@ export function responsibleKind(responsible: Pick<Responsible, "kind" | "id">, a
   }
 }
 
-/** The name of a role, agent or task is read separately; until it is, the text says so and never shows the ID. */
-export type NameRead = { state: "named"; name: string } | { state: "reading" } | { state: "unnamed" } | { state: "failed" }
+/**
+ * The name of a role, agent or task is read separately; until it is, the text says so and never shows the ID. An agent
+ * without a registered name is named by its role and kind (“功能开发 · 外部接入的智能体”, agentDisplayName): that name
+ * already says what kind of party it is (`describesKind`), so it is not prefixed with the kind again.
+ */
+export type NameRead = { state: "named"; name: string; describesKind?: boolean } | { state: "reading" } | { state: "unnamed" } | { state: "failed" }
   /** Read, and the record is not there (a 404 is an answer, not a failure). */
   | { state: "missing" };
 
@@ -63,7 +67,7 @@ export function responsibleText(responsible: Pick<Responsible, "kind" | "id">, a
 /** "职责 · 开发职责", or "职责（名称待读取）" until the name is back. */
 export function nameText(kind: string, name: NameRead): string {
   switch (name.state) {
-    case "named": return `${kind} · ${name.name}`;
+    case "named": return name.describesKind ? name.name : `${kind} · ${name.name}`;
     case "reading": return `${kind}（名称待读取）`;
     case "unnamed": return `${kind}（未登记名称）`;
     case "missing": return `${kind}（未找到）`;

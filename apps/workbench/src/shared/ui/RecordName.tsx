@@ -1,8 +1,11 @@
-// Names for records that are stored by identifier: a role's title, an agent's registered name, a task's title.
-// Each is read on its own (cached per project), so a list never waits on them; until a name is back the text says
-// "名称待读取", and the identifier itself belongs in the full-identifier layer, not here.
-import type { SessionProfileRecord } from "@evoloop/contracts/session-assignments";
-import { ApiError, api, requestNullable } from "../api";
+// Names for records that are stored by identifier: a role's title, an agent's name, a task's title. Each is read on
+// its own (cached per project), so a list never waits on them; until a name is back the text says "名称待读取", and
+// the identifier itself belongs in the full-identifier layer, not here. An agent is named as the agent pages name it
+// (agentDisplayName), from its directory record (the same read as the task's right column and return links).
+import type { ObservedSession } from "@evoloop/contracts/session-observation";
+import { agentDisplayName, agentNameIsGenerated } from "../agentNamePresentation";
+import { agentNameKey, readAgent } from "../agentRead";
+import { ApiError, api } from "../api";
 import { isRoleOwnerId, readOwnerRole } from "../ownerRole";
 import { useProjectQuery } from "../query";
 import type { LeaderWorkTask } from "@evoloop/contracts/work-index";
@@ -26,16 +29,19 @@ export function useRoleName(projectId: string, roleId: string | null | undefined
   return enabled ? readOf(query, role => role.proposal.title) : { state: "failed" };
 }
 
-/** An agent's registered name. Only an explicitly registered name counts; a generated title is not a name. */
+/** An agent's name as read from its directory record: agentDisplayName, marked when it already says the agent's kind. */
+export function agentNameRead(query: { data?: ObservedSession; isError: boolean; error?: unknown }): NameRead {
+  const read = readOf(query, agentDisplayName);
+  return read.state === "named" && query.data && agentNameIsGenerated(query.data) ? { ...read, describesKind: true } : read;
+}
+
+/**
+ * An agent's name, said as the agent pages say it (agentDisplayName): its registered name, or for a generated title its
+ * role and kind (“功能开发 · 外部接入的智能体”), never the short identifier of the service's generated title.
+ */
 export function useSessionName(projectId: string, sessionKey: string | null | undefined): NameRead {
-  const query = useProjectQuery(projectId, ["name", "session", sessionKey], async signal => {
-    // No registered profile is an answer (null), not a failure.
-    const profile = await requestNullable<SessionProfileRecord>("",
-      `/api/projects/${encodeURIComponent(projectId)}/session-work/${encodeURIComponent(sessionKey!)}/profile`, 15000, signal);
-    if (profile && profile.projectId !== projectId) throw new Error("智能体名称响应不属于当前项目");
-    return profile ?? null;
-  }, { enabled: !!sessionKey });
-  return sessionKey ? readOf(query, profile => profile?.displayName) : { state: "failed" };
+  const query = useProjectQuery(projectId, agentNameKey(sessionKey), signal => readAgent(projectId, sessionKey!, signal), { enabled: !!sessionKey });
+  return sessionKey ? agentNameRead(query) : { state: "failed" };
 }
 
 /** A task's current title. */
@@ -53,7 +59,7 @@ export function RoleName({ projectId, roleId }: { projectId: string; roleId: str
   return <>{nameOnly("职责", useRoleName(projectId, roleId))}</>;
 }
 
-/** "智能体 · 前端"; "智能体（未登记名称）" when no name was registered. */
+/** "智能体 · 前端"; a generated name alone (“功能开发 · 受管智能体”), since it already says the kind. */
 export function SessionName({ projectId, sessionKey, kind = "智能体" }: { projectId: string; sessionKey: string; kind?: string }) {
   return <>{nameText(kind, useSessionName(projectId, sessionKey))}</>;
 }

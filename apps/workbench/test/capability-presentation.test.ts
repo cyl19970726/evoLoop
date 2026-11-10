@@ -17,7 +17,7 @@ test("configured for this project, or one setting for the whole service", () => 
   const originals = row(capability({ key: "documentOriginals", scope: "service" }));
   assert.deepEqual([originals.scope, originals.text], ["全服务", "全服务已开启。"]);
   assert.equal(row(capability({ key: "documentOriginals", scope: "service", state: "not_configured", reason: "documents_disabled" })).text,
-    "全服务未配置：服务端没有接入文档原件存储。");
+    "全服务未开启：服务端没有接入文档原件存储。");
   assert.equal(knowledge.readAt, "服务启动时读取这项设置，改动要重启后才生效。");
   assert.equal(row(capability({ key: "scheduling", readAt: "start_and_use" })).readAt, "开关在服务启动时读取，其余每次使用时重读。");
 });
@@ -37,11 +37,28 @@ test("each reason is said precisely; a refused repository registration is not 'n
     /^改动要重启后才生效：重启后会变为整份登记被拒（服务端的仓库登记里有/);
   assert.equal(row(capability({ key: "gitSources", state: "not_configured", reason: "project_not_configured" })).text,
     "本项目未配置：服务端有这项能力，但没有为本项目配置。");
-  assert.equal(row(capability({ key: "wechat", state: "not_configured", reason: "gateway_not_configured" })).text, "本项目未配置：服务启动时没有配置微信网关。");
+  assert.equal(row(capability({ key: "wechat", state: "not_configured", reason: "gateway_not_configured" })).text, "全服务未开启：服务启动时没有配置微信网关。");
   const runtime = row(capability({ key: "runtime", reason: "runtime_unavailable" }));
   assert.deepEqual([runtime.tag, runtime.text], [{ tone: "waiting", label: "已配置，暂不可用" }, "已配置，但读取时运行时不可用。"]);
   const unreadable = row(capability({ key: "scheduling", state: "unknown", reason: "configuration_unreadable" }));
   assert.deepEqual([unreadable.state, unreadable.tag.label, unreadable.text], ["unknown", "无法判断", "现在无法判断：集成配置文件现在读不了。"]);
+});
+
+test("a switch for the whole service is said as 全服务未开启, never as this project not configured", () => {
+  // The capability is judged for this project, but the reason is the service's own switch: the row does not blame the project.
+  const reasons = ["knowledge_disabled", "scheduling_disabled", "orchestration_disabled", "runtime_disabled", "feishu_disabled",
+    "message_connectors_disabled", "session_messages_disabled", "documents_disabled", "gateway_not_configured"] as const;
+  for (const reason of reasons) {
+    const off = row(capability({ key: "scheduling", state: "not_configured", reason }));
+    assert.match(off.text, /^全服务未开启：/, reason);
+    assert.doesNotMatch(off.text, /本项目未配置/, reason);
+    assert.equal(off.scope, "全服务", `${reason}: the setting that decides is the whole service's`);
+  }
+  assert.equal(row(capability({ key: "scheduling" })).scope, "本项目", "configured for this project stays 本项目");
+  assert.equal(row(capability({ key: "scheduling", state: "not_configured", reason: "scheduling_disabled" })).text, "全服务未开启：服务端没有开启日程。");
+  // A reason about this project still says so.
+  assert.match(row(capability({ key: "scheduling", state: "not_configured", reason: "project_not_configured" })).text, /^本项目未配置：/);
+  assert.match(row(capability({ key: "runtime", state: "not_configured", reason: "grant_holder_not_authorized" })).text, /^本项目未配置：/);
 });
 
 test("whether the reader can use a capability granted per actor, and why not", () => {

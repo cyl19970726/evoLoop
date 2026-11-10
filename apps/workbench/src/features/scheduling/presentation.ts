@@ -1,4 +1,5 @@
 import { dailyRuleInstant, scheduleWallClock, scheduleZoneFormat, type Occurrence, type ScheduleRule } from "@evoloop/contracts/scheduling";
+import { withReturn } from "../../shared/returnLink";
 import { readerZone, zoneHasName, zoneName } from "../../shared/zonedTime";
 export const utcInstant = (value: string): string => new Date(value).toISOString().replace("T", " ").replace(/\.000Z$/, " UTC").replace(/Z$/, " UTC");
 export function scheduleRuleLabel(rule: ScheduleRule, timezone?: string): string {
@@ -129,4 +130,25 @@ export const coordinatorErrorText = "最近一次检查出错，原文见来源"
 export function grantEmptyText(read: { fresh: boolean; loading: boolean }): string {
   if (read.fresh) return "没有；已有安排可阅读，已撤权的定义仍可暂停或停止";
   return read.loading ? "正在重新核对授权，暂不能判断" : "授权未能重新读取，无法判断";
+}
+
+/** The address of one schedule on 日程 (`/schedules?schedule=`), which a link back from its task leads to. */
+export function scheduleHref(projectId: string, scheduleId: string): string {
+  return `/p/${projectId}/schedules?${new URLSearchParams({ schedule: scheduleId })}`;
+}
+
+/** The schedule an address on 日程 selects, or null (another page, or none named). */
+export function scheduleFromPath(path: string, projectId: string): string | null {
+  const [pathname, query = ""] = path.split("?");
+  if (pathname !== `/p/${projectId}/schedules`) return null;
+  const params = new URLSearchParams(query);
+  return params.getAll("schedule").length === 1 ? params.get("schedule") || null : null;
+}
+
+/**
+ * A task the schedule produced, opened with the way back to this schedule (“返回日程：<名称>”, shared/returnLink.ts) for
+ * this reader.
+ */
+export function scheduleTaskHref(projectId: string, taskId: string, schedule: { id: string; title: string }, actorId: string): string {
+  return withReturn(`/p/${projectId}/tasks/${taskId}`, { href: scheduleHref(projectId, schedule.id), actorId, title: schedule.title });
 }

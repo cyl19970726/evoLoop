@@ -9,8 +9,21 @@ export const operationsTitle = "结果未知的操作";
 /** The receipt fields this page reads. `actorId` is the identity that saved it, the one reading this page. */
 export interface ReceiptFacts { actorId: string; projectId: string; taskId: string; operationId: string; commandType: string }
 
-/** One saved receipt as app/App.tsx hands it to the page: the receipt itself and its check card (核对与同 ID 重试). */
-export interface OperationItem { receipt: ReceiptFacts; check: ReactNode }
+/**
+ * The original object as this page found it, handed to the check card so the notice after a confirmed check names it and
+ * links back (“打开原对象”): the card and the receipt disappear once the check is done.
+ */
+export interface CheckedOrigin {
+  /** “任务「名称」”, or null while the name is not read (or the receipt names no object). */
+  name: string | null;
+  link: { href: string; label: string } | null;
+}
+
+/**
+ * One saved receipt as app/App.tsx hands it to the page: the receipt itself and its check card (核对与同 ID 重试), drawn
+ * with what the page found about the original object.
+ */
+export interface OperationItem { receipt: ReceiptFacts; check: (origin: CheckedOrigin) => ReactNode }
 
 export type OriginKind = "task" | "document" | "goal" | "stage" | "discussion";
 export type OriginArea = "agents" | "runtime" | "roles" | "schedules" | "evaluations" | "repository" | "work" | "documents" | "journey" | "discussions";
@@ -122,4 +135,19 @@ export function originText(origin: ReceiptOrigin, read: OriginRead): string {
 export function originLinkKind(origin: ReceiptOrigin, read: OriginRead): OriginKind | null {
   if (origin.kind === "area" || read.state === "missing") return null;
   return read.state === "found" ? read.kind : origin.candidates[0] ?? null;
+}
+
+/**
+ * Where the receipt leads: “打开原对象” (with the way back to this page) for an object that may exist, “打开<区域>” when
+ * the receipt names only the project, nothing when the object is not in this project.
+ */
+export function originLink(projectId: string, receipt: ReceiptFacts, origin: ReceiptOrigin, read: OriginRead): { href: string; label: string } | null {
+  const kind = originLinkKind(origin, read);
+  if (origin.kind === "object") return kind ? { href: originHref(projectId, kind, origin.id, receipt.actorId), label: "打开原对象" } : null;
+  return origin.area ? { href: areaHref(projectId, origin.area), label: `打开${originAreaLabel[origin.area]}` } : null;
+}
+
+/** What the notice after a confirmed check says about the object: its kind and name once read, and the link. */
+export function checkedOrigin(projectId: string, receipt: ReceiptFacts, origin: ReceiptOrigin, read: OriginRead): CheckedOrigin {
+  return { name: read.state === "found" ? `${originKindLabel[read.kind]}「${read.name}」` : null, link: originLink(projectId, receipt, origin, read) };
 }

@@ -54,6 +54,11 @@ test("names stand alone where the kind is already said", () => {
   assert.equal(nameOnly("职责", { state: "named", name: "开发职责" }), "开发职责");
   assert.equal(nameOnly("职责", { state: "reading" }), "职责（名称待读取）");
   assert.equal(nameText("任务", { state: "failed" }), "任务（名称暂不可读）");
+  // An agent named by its role and kind (agentDisplayName) is not prefixed with the kind again (N3).
+  assert.equal(nameText("外部智能体", { state: "named", name: "功能开发 · 外部接入的智能体", describesKind: true }), "功能开发 · 外部接入的智能体");
+  assert.equal(responsibleText({ kind: "session", id: sessionId }, { targetKind: "external", targetId: sessionId },
+    { state: "named", name: "功能开发 · 外部接入的智能体", describesKind: true }), "功能开发 · 外部接入的智能体");
+  assert.equal(nameText("外部智能体", { state: "named", name: "前端小王" }), "外部智能体 · 前端小王");
 });
 
 test("an agent's name is read by the session key the assignment names", () => {
