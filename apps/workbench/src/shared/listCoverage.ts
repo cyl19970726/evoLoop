@@ -18,3 +18,15 @@ export function coverageText({ loaded, matched, filtered, more, coverage = "curr
   if (coverage === "checking") return `${count}${more ? " · 后续页面未读" : ""} · 正在核对`;
   return `${count}${more ? " · 后续页面未读" : " · 已读完"}`;
 }
+
+/** Said when a list's next cursor came back as one already read: the reading stopped, so the list may not be whole. */
+export const repeatedCursorText = "后续页没有前进，列表可能不完整";
+
+/**
+ * What a list says about the rows after the loaded ones: a cursor that did not move (never as if read to the end),
+ * more to read, or nothing (read to its end).
+ */
+export function listEndText(state: { more: boolean; repeatedCursor: boolean }): string | null {
+  if (state.repeatedCursor) return repeatedCursorText;
+  return state.more ? "还有后续" : null;
+}

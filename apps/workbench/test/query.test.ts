@@ -9,7 +9,7 @@ import {
   projectQueryOptions, queryKeys, readStanding, shouldRetry,
 } from "../src/shared/query.ts";
 import { pagedItems, projectListState } from "../src/shared/projectList.ts";
-import { coverageText } from "../src/shared/listCoverage.ts";
+import { coverageText, listEndText, repeatedCursorText } from "../src/shared/listCoverage.ts";
 
 /** Wait until the observer's result satisfies `done` (TanStack notifies asynchronously). */
 async function until<R>(read: () => R, done: (result: R) => boolean): Promise<R> {
@@ -251,6 +251,25 @@ test("a cursor that comes back again ends the list instead of looping", async ()
   await observer.fetchNextPage();
   assert.equal((observer.getCurrentResult() as { hasNextPage: boolean }).hasNextPage, false, "the cursor came back: no further page");
   assert.equal(projectListState(observer.getCurrentResult() as PagedObserverResult).repeatedCursor, true);
+  stop();
+  client.clear();
+});
+
+test("a list whose cursor came back says it may be incomplete, never that it was read to the end", async () => {
+  const client = createQueryClient();
+  // The second page points back at itself, as a cursor that does not move would.
+  const observer = new InfiniteQueryObserver(client, projectPagesOptions(a, ["discussions", "list", "all"], async (cursor: string | undefined) =>
+    ({ items: [cursor ?? "first"], nextCursor: cursor ? cursor : "p2" })) as never);
+  const stop = observer.subscribe(() => undefined);
+  await until(() => observer.getCurrentResult(), value => value.data !== undefined);
+  const first = projectListState(observer.getCurrentResult() as PagedObserverResult);
+  assert.equal(listEndText(first), "还有后续");
+  await observer.fetchNextPage();
+  const looped = projectListState(observer.getCurrentResult() as PagedObserverResult);
+  assert.deepEqual([looped.more, looped.repeatedCursor], [false, true]);
+  assert.equal(listEndText(looped), repeatedCursorText);
+  assert.equal(repeatedCursorText, "后续页没有前进，列表可能不完整");
+  assert.equal(listEndText({ more: false, repeatedCursor: false }), null, "only a list read to its end says nothing more");
   stop();
   client.clear();
 });

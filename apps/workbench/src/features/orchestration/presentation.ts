@@ -97,11 +97,11 @@ export function loopName(scope: ScopeTitle | undefined, max = 16): string {
 }
 
 /**
- * A dispatched task's name from the loop's task pages: its title; 待读取 while unread pages remain; 暂不可读取 when
- * reading them failed; 未找到 when every page was read and it is not there.
+ * A dispatched task's name from the loop's task pages, in the shared wording (nameText): its title; 名称待读取 while
+ * unread pages remain; 名称暂不可读 when reading them failed; 未找到 when every page was read and it is not there.
  */
 export function taskTitleText(title: string | undefined, pages: { more: boolean; failed: boolean }): string {
   if (title) return title;
-  if (pages.failed) return "任务（名称暂不可读取）";
+  if (pages.failed) return "任务（名称暂不可读）";
   return pages.more ? "任务（名称待读取）" : "任务（未找到）";
 }

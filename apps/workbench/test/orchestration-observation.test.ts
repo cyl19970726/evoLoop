@@ -291,6 +291,6 @@ test("a loop's goal and stage say whether they are being read, could not be read
 test("a dispatched task is named, waits for unread pages, could not be read, or is not there",()=>{
   assert.equal(taskTitleText("整理接口",{more:false,failed:false}),"整理接口");
   assert.equal(taskTitleText(undefined,{more:true,failed:false}),"任务（名称待读取）");
-  assert.equal(taskTitleText(undefined,{more:true,failed:true}),"任务（名称暂不可读取）");
+  assert.equal(taskTitleText(undefined,{more:true,failed:true}),"任务（名称暂不可读）","the shared wording, as nameText says it");
   assert.equal(taskTitleText(undefined,{more:false,failed:false}),"任务（未找到）");
 });

@@ -1,7 +1,8 @@
 // Opt-in built-app regression: build workbench, then set EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE.
 // 协作回执's later rows: 加载更多 reads only the next page (never the earlier ones again); the later rows are reread
 // with the project, and a reread that fails keeps them as 上次读回 with their writes held until they are read again;
-// the original answers stay in 诊断信息, and 连接诊断 shows the connection's own original text. All data is synthetic.
+// a cursor that comes back says the list may be incomplete; the original answers stay in 诊断信息, and 连接诊断 shows
+// the connection's own original text. All data is synthetic.
 // Screenshots: EVOLOOP_COLLABORATION_SCREENSHOT_DIR.
 import assert from "node:assert/strict";
 import { test } from "node:test";
@@ -50,7 +51,8 @@ test("协作回执 reads later rows one page at a time and holds their writes wh
         if (failLater) return send({ message: "collaboration store unavailable", code: "STORE_UNAVAILABLE" }, 503);
         if (cursor === "d2") return send({ items: [delivery(11, id(2), "failed")], nextCursor: "d3" });
         if (cursor === "d3") return send({ items: [delivery(12, id(3), "applied")], nextCursor: null });
-        if (cursor === "i2") return send({ items: [incoming(21, id(2))], nextCursor: null });
+        // The remote side hands back the same cursor: a page that does not move.
+        if (cursor === "i2") return send({ items: [incoming(21, id(2))], nextCursor: "i2" });
       }
       return send({ items: [], nextCursor: null });
     }
@@ -85,6 +87,11 @@ test("协作回执 reads later rows one page at a time and holds their writes wh
   await remote.getByRole("button", { name: "加载更多远端修改" }).click();
   const later = remote.locator("li").filter({ hasText: "知识空间入口（远端改名）" });
   await later.waitFor();
+  // The remote side's next cursor points back at the page just read: the list says it may be incomplete, not that it ended.
+  await remote.getByRole("button", { name: "加载更多远端修改" }).click();
+  await remote.getByRole("heading", { name: /后续页没有前进，列表可能不完整/ }).waitFor();
+  assert.equal(await remote.getByRole("button", { name: "加载更多远端修改" }).count(), 0, "the reading stops at a cursor already read");
+  assert.equal(await later.count(), 1, "the row read twice is listed once");
   await later.getByLabel("审阅理由").fill("标题更清楚");
   assert.equal(await later.getByRole("button", { name: "采纳为任务修订" }).isEnabled(), true);
 

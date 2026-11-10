@@ -129,7 +129,7 @@ flowchart TB
 
 | 工作区／包 | 对外接口与责任 | 可依赖 | 禁止承担 |
 | --- | --- | --- | --- |
-| `packages/contracts` | 当前 Zod 命令 schema、中立对象/结果类型与 `UnitOfWork`、`ScheduleStore`、`RoleReader/Transaction`、`RuntimePort`、`CollaborationConnector`、`KnowledgeRepository`、`DocumentSource`、`BlobStore` 等端口；更多独立存储端口与 JSON Schema 仍属目标范围 | Zod | 飞书列 ID、Codex 生成类型、OpenViking DTO、数据库 schema 或运行时业务判断 |
+| `packages/contracts` | 当前 Zod 命令 schema、中立对象/结果类型与 `UnitOfWork`、`ScheduleStore`、`RoleReader/Transaction`、`RuntimePort`、`CollaborationConnector`、`KnowledgeRepository`、`DocumentSource`、`BlobStore` 等端口；更多独立存储端口与 JSON Schema 仍属目标范围 | Zod | 飞书列 ID、Codex 生成类型、OpenViking DTO、数据库 schema 或运行时业务判断（例外见表下） |
 | `packages/core` | 当前 `WorkflowService` 和上述实际目录处理任务/文档、职责、执行预留、调度、投影入站审核与来源引用；认知编纂、SourceBridge、ContextQuery 等仍是目标用例 | `contracts`；纯业务规则 | 平台 SDK、HTTP/PostgreSQL 的直接调用、把模型回答视作已批准决定 |
 | `packages/connector-feishu` | `CollaborationConnector` 实现：Bitable 任务投影、绑定映射、出站与入站编辑观察；候选由协调层审核，分页与结果未知回读已在 fake HTTP 中验证 | `contracts`、HTTP | 持有 Task/Schedule 主数据、绕过 core 写库、以最后写入覆盖冲突；飞书云文档 API 不在首期 Bitable 范围 |
 | `packages/adapter-wiki-openviking` | 当前实现 `KnowledgeRepository`：OpenViking HTTP 映射、外置 manifest、固定修订读取、候选/审核/发布与能力报告；未来更完整的认知维护由目标 `core/knowledge` 用例承接 | `contracts`、HTTP/文件客户端 | 自建第二个认知执行栈、把普通写页当自动 compile、直接认定搜索摘要为原始证据 |
@@ -141,6 +141,8 @@ flowchart TB
 | `packages/agent-tools`（未建） | 可选目标：若确需 MCP，提供窄工具调用协调 API；不为与工作台平行而强制建包 | `contracts`、API 客户端、MCP SDK | 常驻自动协调进程、直接写适配器、假定独立 daemon 能调用当前桌面宿主工具或自动唤醒/监听 Desktop |
 | `apps/coordinator` | 单活进程；同源工作台静态资源、Fastify Query/Command API、身份/凭据与数据库连接装配、入站 command、到期计算循环、outbox 与周期对账、健康状态；按运行配置同时驱动一种或两种运行时，并运行 Leader 通知、普通消息与消息 Connector 的泵，以及即时输入、验收接力等入口 | `core`、`contracts`、所需边界包 | 绕过 `core` 的快速写入路径，或把飞书投影当主数据 |
 | `apps/cli` | Agent 的机器操作入口：按权限读固定依据、查询命令 schema、提交已支持请求与恢复未知回执，经同一 API 调用用例；已实现具名读写与恢复，以[实际帮助](../development/agent-cli.md)核可用范围 | `contracts`、API 客户端 | 再启动一个写入协调者、独立实现业务状态机，或让技能绕过服务端授权和版本规则 |
+
+`contracts` 不做运行时业务判断，只有一种例外：服务端和浏览器必须得出同一结果、又不依赖任何平台的纯计算，放在合同里由两边共用，免得各写一份后结论不一致。这类函数只读入参，不读时钟、存储或网络；新加的要在 `packages/contracts/test/` 里配单测。现有的有：`role-skills.ts` 的 `decideSkill`（技能是否被选中及理由）、`task-attention.ts` 的 `taskAttentionSource`（任务关注的来源），以及 `scheduling.ts` 的每日规则推算（`scheduleZoneFormat`、`scheduleWallClock`、`dailyRuleInstant`，`core` 的到期计算和工作台的“下次时间”预览共用）。新增这类函数前，先确认它确实需要两边一致，否则仍放在 `core`。
 
 ### 后来新增的三个工作区
 

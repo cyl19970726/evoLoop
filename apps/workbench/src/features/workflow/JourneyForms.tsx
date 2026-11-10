@@ -58,10 +58,10 @@ export const draftKeys = {
 const goalFields: FormField[] = [
   { name: "outcome", label: "想达成的结果", kind: "textarea", maxLength: 4000 },
   { name: "constraints", label: "必须遵守的约束", kind: "textarea", maxLength: 4000 },
-  { name: "consumer", label: "谁会实际使用成果" },
+  { name: "consumer", label: "谁会实际使用成果", maxLength: 4000 },
   { name: "authority", label: "已授权的工作与需另行取舍的边界", kind: "textarea", maxLength: 4000 },
-  { name: "scope", label: "可投入范围与资源" },
-  { name: "owner", label: "承接责任者", hint: "写职责名称、职责标识或负责的人。" },
+  { name: "scope", label: "可投入范围与资源", maxLength: 4000 },
+  { name: "owner", label: "承接责任者", hint: "写职责名称、职责标识或负责的人。", maxLength: 4000 },
 ];
 export const goalFieldLabels = Object.fromEntries(goalFields.map(field => [field.name, field.label])) as Record<keyof Goal, string>;
 const reason: FormField = { name: "reason", label: "理由与依据", kind: "textarea", maxLength: 4000 };
