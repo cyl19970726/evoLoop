@@ -1,15 +1,18 @@
 // Choosing a member of the project by name (GET /members) where a form used to take a typed sign-in identity: the 验收
 // identity of a task or a schedule. A place that needs write lists only members who can write now (canWrite true); one
-// that needs review only those who can review; one that needs neither every member; a kind (人 / 智能体) narrows it
-// further. A member whose write cannot be judged (the identity file is unreadable) is shown as 无法判断 and never
+// that needs review only those who can review; a task's old agreement any person but only agents who can write; a kind
+// (人 / 智能体) narrows it further. A member whose write cannot be judged (the identity file is unreadable) is shown as 无法判断 and never
 // offered. An edited identity file is said with what each member could do after a restart (or that nothing changes
 // for this project's members). When the service has no member list, the form falls back to typing. A member who could
 // write only after a restart is not offered: the service checks the write as it is in effect.
 // Pure, so the chooser and its tests agree.
 import type { ProjectMember, ProjectMembersView } from "@evoloop/contracts/project-configuration";
 
-/** `any`: every member may be chosen (a place whose identity needs no permission of its own here). */
-export type MemberNeed = "write" | "review" | "any";
+/**
+ * `legacy`: a task's old agreement. A reviewer records a person's use for them, so any person may be chosen (or someone
+ * outside the project, typed); an agent records its own use (core workflow `task.observe`), so it must be able to write.
+ */
+export type MemberNeed = "write" | "review" | "legacy";
 export type MemberKind = "human" | "agent" | null;
 
 export interface MemberOption { value: string; label: string; disabled: boolean }
@@ -33,11 +36,15 @@ export interface MemberChoices {
 
 export const memberKindLabel: Record<string, string> = { human: "人", agent: "智能体" };
 const kindText = (kind: string) => memberKindLabel[kind] ?? "身份类型未识别";
-const needText: Record<MemberNeed, string> = { write: "写入", review: "复核", any: "选" };
+const needText: Record<MemberNeed, string> = { write: "写入", review: "复核", legacy: "写入" };
 
-/** Whether a member can do what the place needs now: true, false, or null (cannot be judged). */
-export function memberCan(member: Pick<ProjectMember, "canWrite" | "canReview">, need: MemberNeed): boolean | null {
-  return need === "any" ? true : need === "write" ? member.canWrite : member.canReview;
+/**
+ * Whether a member can do what the place needs now: true, false, or null (cannot be judged). Under a task's old
+ * agreement a person needs nothing (a reviewer records their use), while an agent records its own use, a write.
+ */
+export function memberCan(member: Pick<ProjectMember, "identityKind" | "canWrite" | "canReview">, need: MemberNeed): boolean | null {
+  if (need === "legacy") return member.identityKind === "human" ? true : member.canWrite;
+  return need === "write" ? member.canWrite : member.canReview;
 }
 
 /** What a restart would change for one member, in words; null when nothing. */
@@ -87,12 +94,13 @@ export function memberChoices(view: ProjectMembersView, need: MemberNeed, kind: 
     return { value, label: `${value}（当前所填；${why}）`, disabled: false };
   })() : null;
   const options = [...held ? [held] : [], ...offered, ...undecided.filter(option => option.value !== held?.value)];
-  const reasons = [left.cannot ? `${left.cannot} 位不能${needText[need]}` : "", left.kind ? `${left.kind} 位不是${kindText(kind ?? "")}` : ""].filter(Boolean);
+  const reasons = [left.cannot ? `${left.cannot} 位${need === "legacy" ? "智能体" : ""}不能${needText[need]}` : "",
+    left.kind ? `${left.kind} 位不是${kindText(kind ?? "")}` : ""].filter(Boolean);
   const pending = view.items.map(memberPendingText).filter((line): line is string => !!line);
   const notice: MemberChoices["notice"] = view.identityFile === "changed"
     ? pending.length ? { tone: "waiting", title: "身份文件已改动，部分成员的权限要重启后才生效", text: "下面按现在生效的权限列出；重启后会变的成员另行写明。" }
       : { tone: "info", title: "身份文件已改动，本项目成员的权限没有变化", text: "下面按现在生效的权限列出。" }
-    : view.identityFile === "unreadable" && need !== "any"
+    : view.identityFile === "unreadable" && (need !== "legacy" || undecided.length > 0)
       ? { tone: "waiting", title: "身份文件现在读不了", text: `能否${needText[need]}要等身份文件读回后才能判断，标为“无法判断”的成员暂不可选。` } : null;
   return { mode: "listed", options, eligible: offered.length, undecided: undecided.length,
     leftOut: reasons.length ? `另有 ${reasons.join("、")}，没有列出。` : null, notice, pending, code: null };
@@ -112,8 +120,9 @@ export function acceptanceMemberKind(mode: string | undefined): MemberKind {
 /**
  * What the acceptance identity must be able to do. Under 必须本人验收 and independent agent use the chosen identity
  * records its own use, which is a write. Under a task's old agreement a reviewer records a person's use for them, so
- * the person may be any member, or not a member at all (typed in full).
+ * the person may be any member, or not a member at all (typed in full); an agent still records its own use and must
+ * be able to write.
  */
 export function acceptanceMemberNeed(mode: string | undefined): MemberNeed {
-  return mode === "human_required" || mode === "independent_agent" ? "write" : "any";
+  return mode === "human_required" || mode === "independent_agent" ? "write" : "legacy";
 }

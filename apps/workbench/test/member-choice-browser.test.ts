@@ -97,7 +97,8 @@ test("验收身份 by member name: who can be chosen, typed when needed, and eac
       await page.setViewportSize({ width: 1440, height: 900 });
     };
 
-    // 任务操作 › 修订验收责任 on a task to do. Its old agreement takes any member (a reviewer records a person's use for them).
+    // 任务操作 › 修订验收责任 on a task to do. Its old agreement takes any person (a reviewer records a person's use for
+    // them) but only agents who can write (an agent records its own use).
     const task = await open(`/p/${projectId}/tasks/${tasks.t5.id}?tab=actions`);
     await task.getByRole("heading", { name: tasks.t5.title, level: 1 }).filter({ visible: true }).first().waitFor();
     const tab = task.getByRole("tabpanel").filter({ visible: true }).first();
@@ -106,13 +107,14 @@ test("验收身份 by member name: who can be chosen, typed when needed, and eac
     const consumer = form.getByLabel("指定验收身份");
     await form.locator("option", { hasText: "li-observer · 人" }).waitFor({ state: "attached" });
     assert.deepEqual(await options(consumer), ["不指定", `${actorId} · 人`, "chen-pm · 人", "li-observer · 人", "verify-agent · 智能体", "loop-controller · 智能体"],
-      "the old agreement: every member, a read-only one too");
+      "the old agreement: every person, a read-only one too; not the read-only gateway-sender agent");
+    await form.getByText("另有 1 位智能体不能写入，没有列出。").waitFor();
     // 必须本人验收: the people who can write, and no empty choice to go back to.
     await form.getByLabel("验收方式").selectOption("human_required");
     await form.locator("option", { hasText: "chen-pm · 人" }).waitFor({ state: "attached" });
     assert.deepEqual(await options(consumer), ["选择成员", `${actorId} · 人`, "chen-pm · 人"]);
     assert.equal(await consumer.locator("option").first().isDisabled(), true, "必须本人验收 offers no 不指定");
-    await form.getByText("另有 1 位不能写入、2 位不是人，没有列出。").waitFor();
+    await form.getByText("另有 1 位不能写入、3 位不是人，没有列出。").waitFor();
     await form.getByText("身份文件已改动，部分成员的权限要重启后才生效").waitFor();
     await form.getByText("chen-pm：重启后才能复核").waitFor();
     // An independent agent: the agents who can write, and 不指定 again.

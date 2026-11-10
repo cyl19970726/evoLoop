@@ -27,4 +27,5 @@ export const members = () => ({ projectId, status: "available", source: "local_i
   member("li-observer", "human", false, false),
   member("verify-agent", "agent", true, false),
   member("loop-controller", "agent", true, true),
+  member("gateway-sender", "agent", false, false),
 ] });

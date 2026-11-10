@@ -107,7 +107,7 @@ export function TaskActionsTab({ context, detail, leader, leaderState, documents
         ...(acceptanceMode ? [] : [{ value: "legacy", label: "保留旧任务的历史约定" }]),
         { value: "independent_agent", label: "独立的智能体验收" }, { value: "human_required", label: "必须本人验收" }] },
       { name: "consumer", label: "指定验收身份", optional: true, kind: "custom", initial: detail.proposal?.consumer ?? "", maxLength: 4000,
-        hint: "必须本人验收时选验收的人本人，独立智能体验收可以不指定，这两种只列能写入的成员（使用记录由验收人自己登记）。保留旧约定时，人的使用记录由复核者代为登记，可以选任何成员，也可以按完整标识填写不在本项目的人。",
+        hint: "必须本人验收时选验收的人本人，独立智能体验收可以不指定，这两种只列能写入的成员（使用记录由验收人自己登记）。保留旧约定时，人的使用记录由复核者代为登记，人可以选任何成员，也可以按完整标识填写不在本项目的人；智能体要自己登记使用，仍要能写入。",
         render: ({ control, value, values, onChange }) => <MemberChoice projectId={projectId} control={control} value={value} onChange={onChange}
           need={acceptanceMemberNeed(values.acceptanceMode)} kind={acceptanceMemberKind(values.acceptanceMode)} optional={values.acceptanceMode !== "human_required"} /> },
       reasonField()]}

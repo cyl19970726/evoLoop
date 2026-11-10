@@ -101,17 +101,24 @@ test("a member chosen by name sends the request body the typed identity sent, fi
   assert.equal("consumer" in taskCreateCommand({ ...draft, acceptanceMode: "independent_agent", consumer: "" }, "task-1"), false);
 });
 
-test("an old task's acceptance takes any member, or someone outside the project", () => {
-  // A reviewer records a person's use for them under the old agreement: no permission of their own is needed.
-  assert.equal(acceptanceMemberNeed("legacy"), "any");
+test("an old task's acceptance takes any person, or someone outside the project, but only agents who can write", () => {
+  // A reviewer records a person's use for them under the old agreement, so a person needs no permission of their own;
+  // an agent records its own use (core workflow task.observe), which is a write.
+  assert.equal(acceptanceMemberNeed("legacy"), "legacy");
   assert.equal(acceptanceMemberNeed("human_required"), "write");
   assert.equal(acceptanceMemberNeed("independent_agent"), "write");
-  const legacy = memberChoices(view(team), "any", null);
+  const mixed = [...team, member("read-only-agent", { identityKind: "agent", canWrite: false }), member("unsure-agent", { identityKind: "agent", canWrite: null })];
+  const legacy = memberChoices(view(mixed), "legacy", null);
   assert.deepEqual(legacy.options.map(option => [option.value, option.disabled]),
-    [["zhang-reviewer", false], ["li-reader", false], ["wang-unsure", false], ["verify-agent", false], ["loop-controller", false]]);
-  assert.equal(legacy.leftOut, null);
-  assert.equal(memberChoices(view(team, "unreadable"), "any", null).notice, null, "an unreadable file does not matter where no permission is needed");
-  assert.equal(memberChoices(view(team), "any", null, "outside-person").options[0]!.label, "outside-person（当前所填；不在本项目的成员清单里）");
+    [["zhang-reviewer", false], ["li-reader", false], ["wang-unsure", false], ["verify-agent", false], ["loop-controller", false], ["unsure-agent", true]],
+    "people whatever they may write; the read-only agent is left out, the unsure one shown and not offered");
+  assert.equal(legacy.options.find(option => option.value === "unsure-agent")!.label, "unsure-agent · 能否写入无法判断（身份文件读不了）");
+  assert.equal(legacy.leftOut, "另有 1 位智能体不能写入，没有列出。");
+  assert.deepEqual([legacy.eligible, legacy.undecided], [5, 1]);
+  assert.equal(memberChoices(view(mixed), "legacy", null, "read-only-agent").options[0]!.label, "read-only-agent（当前所填；不能写入）");
+  assert.equal(memberChoices(view(team, "unreadable"), "legacy", "human").notice, null, "an unreadable file does not matter where only people are judged");
+  assert.equal(memberChoices(view(mixed, "unreadable"), "legacy", null).notice?.title, "身份文件现在读不了", "an agent it leaves undecided is said");
+  assert.equal(memberChoices(view(team), "legacy", null, "outside-person").options[0]!.label, "outside-person（当前所填；不在本项目的成员清单里）");
 });
 
 test("the empty choice never says nobody when it cannot tell; a held undecided member is listed once", () => {
