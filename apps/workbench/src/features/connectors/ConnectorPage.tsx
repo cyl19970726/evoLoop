@@ -6,6 +6,7 @@ import { Button, EmptyState, ErrorState, Field, Input, ListRow, LoadingState, No
 import { date, href } from "../../shared/ui/shared";
 import { SettingsPage, SettingsSection } from "../../shared/ui/SettingsParts";
 import { useProjectQuery } from "../../shared/query";
+import { hereOrigin, withReturn } from "../../shared/returnLink";
 import { sessionClient } from "../../shared/sessionClient";
 import type { MutationContext } from "../../shared/ActionForm";
 import { connectorClient, type ConnectorDeliverySummary, type ConnectorDeliveryDetail } from "./client";
@@ -30,9 +31,9 @@ async function readAgentName(projectId: string, sessionId: string, signal: Abort
   return session.profile?.displayName?.trim() || session.title?.trim() || null;
 }
 
-function TargetAgent({ projectId, sessionId }: { projectId: string; sessionId: string }) {
+function TargetAgent({ projectId, sessionId, actorId }: { projectId: string; sessionId: string; actorId: string }) {
   const read = useProjectQuery(projectId, ["connectors", "agent-name", sessionId], signal => readAgentName(projectId, sessionId, signal));
-  return <a href={`${href(projectId, "sessions")}?session=${encodeURIComponent(sessionId)}`} className={cn("text-foreground underline", wrap)}>
+  return <a href={withReturn(`${href(projectId, "sessions")}?session=${encodeURIComponent(sessionId)}`, hereOrigin(actorId))} className={cn("text-foreground underline", wrap)}>
     {agentLinkText({ name: read.data, loading: read.isPending })}
   </a>;
 }
@@ -219,7 +220,7 @@ export function ConnectorPage({ context }: { context: MutationContext }) {
             <span className={muted}>{routeModeLine(route)}</span>
           </div>
           <p className={cn("text-small text-text-secondary", wrap)}>{providerLabel(route.source.provider)} · {conversationKindLabel(route.conversationKind)} · 连接 {route.source.connectionId}</p>
-          <p className={cn("text-small text-text-secondary", wrap)}>转给 <TargetAgent projectId={projectId} sessionId={route.targetSessionId} /> · 读回更新 {date(route.updatedAt)}</p>
+          <p className={cn("text-small text-text-secondary", wrap)}>转给 <TargetAgent projectId={projectId} sessionId={route.targetSessionId} actorId={principal.actorId} /> · 读回更新 {date(route.updatedAt)}</p>
           <details className="text-small"><summary className="cursor-pointer text-text-secondary">完整标识与范围</summary>
             <dl className="mt-2 flex flex-col gap-1.5 text-caption">{([["路由 ID", route.bindingId], ["接收的智能体 ID", route.targetSessionId], ["来源会话 ID", route.source.conversationId],
               ["对话线程 ID", route.targetThreadId], ["允许的发送者", route.senderIds.join("、")], ["接收 / 发送身份", `${route.targetActorId} / ${route.senderActorId}`],

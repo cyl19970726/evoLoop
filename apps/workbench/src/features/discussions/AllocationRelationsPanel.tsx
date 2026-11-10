@@ -6,6 +6,7 @@ import { Button, CollapsibleRow, Notice, RefreshingIndicator, StatusTag } from "
 import { safeArtifactHref } from "../../shared/api";
 import { appPath } from "../../shared/appPath";
 import { date } from "../../shared/ui/shared";
+import { hereOrigin, withReturn } from "../../shared/returnLink";
 import type { MutationContext } from "../../shared/ActionForm";
 import type { AllocationTrace } from "./allocationClient";
 import { muted } from "./formParts";
@@ -29,7 +30,11 @@ function targetHref(projectId: string, target: Extract<AllocationTrace["relation
   return journeyHref(projectId);
 }
 
-export function AllocationTraceCard({ trace, projectId, names, reading = () => false }: { trace: AllocationTrace; projectId: string; names: Record<string, string>; reading?: (key: string) => boolean }) {
+export function AllocationTraceCard({ trace, projectId, names, reading = () => false, actorId }: {
+  trace: AllocationTrace; projectId: string; names: Record<string, string>; reading?: (key: string) => boolean;
+  /** The reader, so the link to the agent comes back to this page. */
+  actorId?: string;
+}) {
   const relation = trace.relation;
   return <article className="flex flex-col gap-1.5 border-t border-border py-3 first:border-t-0 first:pt-0" aria-label="正式关系">
     {relation.kind === "decision-target" ? <>
@@ -47,7 +52,7 @@ export function AllocationTraceCard({ trace, projectId, names, reading = () => f
     </> : <>
       <div className="flex items-start justify-between gap-2">
         <p className="min-w-0 text-small text-foreground [overflow-wrap:anywhere]">
-          <a className={link} href={`${project(projectId)}/sessions?session=${encodeURIComponent(allocationSessionKey(relation.assignment.target))}`}>
+          <a className={link} href={withReturn(`${project(projectId)}/sessions?session=${encodeURIComponent(allocationSessionKey(relation.assignment.target))}`, actorId ? hereOrigin(actorId) : null)}>
             {nameOr(names[`session:${allocationSessionKey(relation.assignment.target)}`], "智能体", reading(`session:${allocationSessionKey(relation.assignment.target)}`))}</a>
           <span className="text-text-secondary"> 接手了 </span>
           <a className={link} href={`${project(projectId)}/tasks/${encodeURIComponent(relation.task.id)}?revision=${encodeURIComponent(relation.task.revisionId)}`}>
@@ -115,7 +120,7 @@ export function AllocationRelations({ context, record, refresh, known, namesRead
   return <section ref={root} aria-label="正式关系与具体承接" className="flex flex-col gap-2">
     <p className={muted}>只列决定后正式链接的对象，以及同一任务修订的接受记录。接受不等于已经运行、交付或实际使用。</p>
     <RelationReadState noun="关系" traces={traces} />
-    {traces.items.length > 0 && <div className="flex flex-col">{traces.items.map(item => <AllocationTraceCard key={item.id} trace={item} projectId={context.projectId} names={names} reading={reading} />)}</div>}
+    {traces.items.length > 0 && <div className="flex flex-col">{traces.items.map(item => <AllocationTraceCard key={item.id} trace={item} projectId={context.projectId} names={names} reading={reading} actorId={context.principal.actorId} />)}</div>}
     {traces.cursor && <Button size="compact" variant="ghost" className="self-start" disabled={traces.moreBusy || traces.loading} onClick={() => void traces.more()}>{traces.moreBusy ? "正在读取…" : "加载更多关系"}</Button>}
   </section>;
 }

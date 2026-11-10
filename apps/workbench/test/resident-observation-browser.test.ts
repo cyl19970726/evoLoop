@@ -294,7 +294,7 @@ test("resident observation keeps acceptance, host authority and task replies dis
   await fetch(`${base}/__fixture/restore-presence-list`);
   await presenceReread.click();
   await presence.getByRole("link",{name:"查看运行与队列"}).waitFor();
-  assert.equal(await presence.getByRole("link",{name:"在智能体空间打开"}).getAttribute("href"),`/p/${projectId}/sessions?session=${encodeURIComponent(`owned:${sessionId}`)}`);
+  assert.equal((await presence.getByRole("link",{name:"在智能体空间打开"}).getAttribute("href"))?.split("&return=")[0],`/p/${projectId}/sessions?session=${encodeURIComponent(`owned:${sessionId}`)}`);
   await presence.getByRole("link",{name:"查看运行与队列"}).click();
   // The owned host opens that managed agent in 分工与运行, with its queue.
   await pageBrowser.locator(`#runtime-session-${sessionId}`).waitFor();

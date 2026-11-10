@@ -8,6 +8,7 @@ import { api, errorText } from "../../shared/api";
 import { leaderSessionDisplayName, leaderWorkItemPresentation, loadLeaderWorkStatuses } from "../../shared/leaderWorkLoad";
 import { queryKeys, useProjectQuery } from "../../shared/query";
 import { readAgent } from "./agentRead";
+import { tableOrigin } from "./taskOrigin";
 import { phaseOrder, phaseStatus } from "../../shared/taskStatus";
 import { timingDate, timingDuration, timingStageLabel } from "../../shared/taskTiming";
 import { href } from "../../shared/ui/shared";
@@ -43,9 +44,11 @@ export function useAgentNames(projectId: string, keys: readonly string[]) {
 }
 
 /** The project-wide reconciliation list: every open task in phase order, with its next action. */
-export function LeaderOverview({ projectId, page, statuses, roleNames }: {
+export function LeaderOverview({ projectId, page, statuses, roleNames, actorId }: {
   projectId: string; page: LeaderWorkPage<LeaderWorkTask>; statuses: Record<string, WorkTaskStatus>; roleNames: Record<string, string | undefined>;
+  actorId?: string | undefined;
 }) {
+  const from = actorId ? tableOrigin(projectId, actorId) : null;
   // Rows the ordinary list has not loaded still need their source status before their title is trusted.
   const missing = page.items.map(item => item.taskId).filter(id => !statuses[id]);
   const extra = useProjectQuery(projectId, ["tasks", "leader-row-status", missing.join(",")], () =>
@@ -76,7 +79,7 @@ export function LeaderOverview({ projectId, page, statuses, roleNames }: {
           <span className="ml-auto text-caption text-muted-foreground">第 {item.version} 版</span></div>
         <p className="text-label text-text-secondary">{workItemNextStep(item)}</p>
         <p className="text-caption text-muted-foreground">{presentation.responsibility}
-          {key && <> · <a className="text-primary hover:underline" href={sessionHref(projectId, key)}>打开智能体</a></>}
+          {key && <> · <a className="text-primary hover:underline" href={sessionHref(projectId, key, from)}>打开智能体</a></>}
           {item.plan?.priority ? ` · P${item.plan.priority}` : ""}{item.dependencies.length ? ` · ${item.dependencies.length} 项依赖` : ""}
           {item.plan?.dueAt ? ` · 截止 ${new Date(item.plan.dueAt).toLocaleString("zh-CN")}` : " · 截止未设置"}</p>
         <p className="text-caption text-muted-foreground">创建 {timingDate(item.timing?.createdAt)} · 当前阶段 {item.timing ? timingStageLabel[item.timing.current.stage] : "未知"} · 已历时 {timingDuration(item.timing?.current.elapsedMs)}</p>
@@ -88,7 +91,9 @@ export function LeaderOverview({ projectId, page, statuses, roleNames }: {
 }
 
 /** Which agents can still take acceptance work. Idle is not the same as able to accept. */
-export function CapacitySummary({ projectId, overview, error }: { projectId: string; overview: AcceptanceOverviewView | null | undefined; error: string }) {
+export function CapacitySummary({ projectId, overview, error, actorId }: {
+  projectId: string; overview: AcceptanceOverviewView | null | undefined; error: string; actorId?: string | undefined;
+}) {
   const capacity = Array.isArray(overview?.capacity) ? overview!.capacity : [];
   const names = useAgentNames(projectId, capacity.map(item => `owned:${item.sessionId}`));
   if (error) return <p role="status" className="text-label text-muted-foreground">容量暂未读回：{error}</p>;
@@ -107,7 +112,7 @@ export function CapacitySummary({ projectId, overview, error }: { projectId: str
         : read?.problem ? { state: "failed" } : { state: "reading" };
       const name = nameOnly("智能体", nameRead);
       return <li key={item.sessionId} className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 py-2 text-label">
-        <a className="font-medium text-foreground hover:underline" href={sessionHref(projectId, `owned:${item.sessionId}`)}>{item.isLeader ? "统筹" : name}</a>
+        <a className="font-medium text-foreground hover:underline" href={sessionHref(projectId, `owned:${item.sessionId}`, actorId ? tableOrigin(projectId, actorId) : null)}>{item.isLeader ? "统筹" : name}</a>
         <span className="text-caption text-muted-foreground">{item.tenure === "temporary" ? "临时" : "常驻"} · {item.persistedWorkIdle ? "已登记工作已清" : "仍在工作"} · 验收 {item.openAcceptance} · 消息 {item.pendingMessages} · 队列 {item.queueEntries}</span>
         <span className="text-caption">{item.readyForAcceptance ? "可接验收" : item.missingCapabilities.length ? `缺：${item.missingCapabilities.join("、")}` : "不可接验收"}</span>
       </li>;
@@ -116,14 +121,15 @@ export function CapacitySummary({ projectId, overview, error }: { projectId: str
   </section>;
 }
 
-export function ReconciliationDetails({ projectId, page, statuses, roleNames, error }: {
+export function ReconciliationDetails({ projectId, page, statuses, roleNames, error, actorId }: {
   projectId: string; page: LeaderWorkPage<LeaderWorkTask> | null; statuses: Record<string, WorkTaskStatus>; roleNames: Record<string, string | undefined>; error: string;
+  actorId?: string | undefined;
 }) {
   const overview = useProjectQuery(projectId, ["tasks", "acceptance-overview"], () => api().acceptanceOverview(projectId));
   return <div className="flex flex-col gap-4">
-    <CapacitySummary projectId={projectId} overview={overview.data} error={overview.error ? errorText(overview.error) : ""} />
+    <CapacitySummary projectId={projectId} overview={overview.data} error={overview.error ? errorText(overview.error) : ""} actorId={actorId} />
     {page ? <CollapsibleRow summary={`查看全项目统筹对账 · ${page.items.length} 项未关闭工作`}>
-      <LeaderOverview projectId={projectId} page={page} statuses={statuses} roleNames={roleNames} />
+      <LeaderOverview projectId={projectId} page={page} statuses={statuses} roleNames={roleNames} actorId={actorId} />
     </CollapsibleRow> : error ? <p role="status" className="text-label text-muted-foreground">统筹对账暂未读回：{error}</p> : null}
   </div>;
 }

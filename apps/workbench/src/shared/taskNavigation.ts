@@ -1,4 +1,6 @@
-export type TaskSection = "overview" | "basis" | "delivery" | "runtime" | "history" | "actions";
+import { readReturn, type ReturnLink } from "./returnLink";
+
+export type TaskSection ="overview" | "basis" | "delivery" | "runtime" | "history" | "actions";
 const sections = new Set<TaskSection>(["overview", "basis", "delivery", "runtime", "history", "actions"]);
 
 export function taskSectionHref(projectId: string, taskId: string, target: {revisionId?: string; tab?: TaskSection} = {}): string {
@@ -7,23 +9,14 @@ export function taskSectionHref(projectId: string, taskId: string, target: {revi
     target.tab ? `${base}?tab=${target.tab}` : base;
 }
 
-/** Only an exact Task route and the current reader's Session link can provide a return destination. */
-export function taskSessionReturn(hash: string, projectId: string, taskId: string, actorId: string):
-  { href: string; title: string } | null {
-  const [path, query, extra] = hash.split("?");
+/** The way back on an exact Task route: a page of this project the link was made from, for this reader — an agent,
+ * 统筹安排, a document or a work section (shared/returnLink.ts) — never this same task. */
+export function taskSessionReturn(hash: string, projectId: string, taskId: string, actorId: string): ReturnLink | null {
+  const [path, , extra] = hash.split("?");
   if (extra !== undefined || path !== taskSectionHref(projectId, taskId)) return null;
-  const params = new URLSearchParams(query ?? "");
-  if (params.getAll("actor").length !== 1 || params.get("actor") !== actorId ||
-    params.getAll("return").length !== 1) return null;
-  const destination = params.get("return");
-  if (!destination) return null;
-  const [returnPath, returnQuery, returnExtra] = destination.split("?");
-  const project = `/p/${encodeURIComponent(projectId)}`;
-  if (returnExtra !== undefined || !returnQuery ||
-    (returnPath !== `${project}/sessions` && returnPath !== `${project}/runtime`)) return null;
-  const session = new URLSearchParams(returnQuery).get("session");
-  if (!session?.match(/^(owned|external):[0-9a-f-]{36}$/i)) return null;
-  return { href: destination, title: params.get("returnTitle")?.slice(0, 80).trim() || "Session" };
+  const source = readReturn(hash, projectId, actorId);
+  if (!source || source.place.kind === "task" && source.place.taskId === taskId) return null;
+  return source;
 }
 
 /** A Work list backlink can carry its filter across tabs without becoming a Session identity claim. */
@@ -46,7 +39,7 @@ export function taskTabHref(path: string, projectId: string, taskId: string, sec
   if (source) {
     params.set("return", source.href);
     params.set("actor", actorId!);
-    params.set("returnTitle", source.title);
+    if (source.title) params.set("returnTitle", source.title);
   }
   const list = taskListReturn(path, projectId, taskId);
   if (list) params.set("list", list);

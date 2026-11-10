@@ -6,6 +6,15 @@ function compactContext(value: string): string {
   return chars.length > 44 ? `${chars.slice(0,44).join("")}…` : chars.join("");
 }
 
+/**
+ * The line when no loop is listed. Loops that are not configured (status 404, or a task's loops not offered by the
+ * service) are said as such — never as a record that was removed or as a task without loops.
+ */
+export function emptyLoopsText(forTask: boolean, status: { state?: string } | undefined, contextAvailable: boolean): string {
+  if (status?.state === "disabled" || forTask && !contextAvailable) return "自动循环未配置或尚未启用，没有可观察的循环。";
+  return forTask ? "没有读到这项任务关联的自动循环。" : "还没有登记自动循环。";
+}
+
 export function decisionHeading(hasWorkerDecision: boolean): string {
   return hasWorkerDecision ? "执行方署名判定" : "派发决定";
 }

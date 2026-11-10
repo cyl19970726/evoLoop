@@ -10,6 +10,7 @@ import { href } from "../../shared/routes";
 import { ContextPanelContent, useContextPanel } from "../../shared/ui/ContextPanel";
 import { date } from "../../shared/ui/shared";
 import { DocumentOrigin } from "./DocumentOrigin";
+import { documentOrigin, taskLinkFrom } from "./taskLinks";
 import { DocumentOutline } from "./DocumentOutline";
 import { OwnerName } from "./OwnerName";
 import { TaskPeek } from "./TaskPeek";
@@ -55,18 +56,21 @@ function useReferencingTasks(projectId: string, documentId: string) {
   });
 }
 
-export function DocumentFacts({ projectId, detail, revision, body }: {
+export function DocumentFacts({ projectId, detail, revision, body, actorId }: {
   projectId: string; detail: DocumentDetail; revision: DocumentRevision; body: RefObject<HTMLElement | null>;
+  /** The reader, so a task opened from here comes back to this document. */
+  actorId?: string;
 }) {
   const { document } = detail;
   const panel = useContextPanel();
   const standing = readingStanding(revision.id, detail);
   const tasks = useReferencingTasks(projectId, document.id);
+  const from = actorId ? documentOrigin(projectId, document, actorId) : null;
   const openTask = (event: React.MouseEvent, reference: DocumentTaskReference) => {
     if (!panel || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
     event.preventDefault();
-    panel.openInPanel({ id: `task:${reference.id}`, title: reference.title, href: href(projectId, "task", reference.id),
-      render: () => <TaskPeek projectId={projectId} reference={reference} documentTitle={document.title} /> });
+    panel.openInPanel({ id: `task:${reference.id}`, title: reference.title, href: taskLinkFrom(projectId, reference.id, from),
+      render: () => <TaskPeek projectId={projectId} reference={reference} documentTitle={document.title} from={from} /> });
   };
   const revisionLink = (target: DocumentRevision, label: string) => target.id === revision.id
     ? <span>{label} · 正在读</span>
@@ -91,9 +95,9 @@ export function DocumentFacts({ projectId, detail, revision, body }: {
       </details>
     </Block>
     <Block title="来源">
-      {document.origin ? <DocumentOrigin projectId={projectId} documentId={document.id} origin={document.origin} />
+      {document.origin ? <DocumentOrigin projectId={projectId} documentId={document.id} origin={document.origin} from={from} />
         : <p className="text-label text-text-secondary">创建时没有登记来源任务。</p>}
-      {document.primaryTaskId && <a href={href(projectId, "task", document.primaryTaskId)} className="mt-2 block text-label text-primary hover:underline">所属任务 →</a>}
+      {document.primaryTaskId && <a href={taskLinkFrom(projectId, document.primaryTaskId, from)} className="mt-2 block text-label text-primary hover:underline">所属任务 →</a>}
     </Block>
     <Block title="引用它的任务">
       {tasks.isFetching && tasks.data && <RefreshingIndicator label="正在核对引用它的任务；下面是上次读到的" className="mb-2" />}
@@ -101,7 +105,7 @@ export function DocumentFacts({ projectId, detail, revision, body }: {
       {tasks.isError && <Notice tone="error" className="mb-2">引用它的任务这次没有读完整：{readProblem(tasks.error, "引用它的任务")}。{tasks.data ? "下面是上次读到的，不能当作当前完整结果。" : ""}</Notice>}
       {tasks.data?.partial && <Notice tone="waiting" className="mb-2">已读到 {pageLimit} 页或 {itemLimit} 项的上限，下面的任务未必完整。</Notice>}
       {tasks.data && (tasks.data.tasks.length ? <ul className="flex flex-col gap-0.5">{tasks.data.tasks.map(task => <li key={task.id}>
-        <a href={href(projectId, "task", task.id)} onClick={event => openTask(event, task)}
+        <a href={taskLinkFrom(projectId, task.id, from)} onClick={event => openTask(event, task)}
           className="flex flex-col gap-1 rounded-md px-2 py-1.5 outline-none hover:bg-selected focus-visible:shadow-[var(--focus-ring)]">
           <span className="text-label font-medium text-foreground [overflow-wrap:anywhere]">{task.title}</span>
           <span className="flex flex-wrap items-center gap-1.5 text-caption text-muted-foreground">

@@ -30,6 +30,7 @@
 - 过程文档用表格逐行查阅，点标题读完整正文（[DEC-024](../../decisions.md)）；卡片摘要不代替列表和全文。
 - 标题支持键盘打开；行内的任务链接单独跳转。
 - 搜索、筛选和分页写明覆盖范围；从全文返回时保留原条件和位置。
+- 页首写回到哪里：“返回任务：<名称>”“返回智能体：<名称>”“返回总览”“返回文档列表”。从文档或文档列表打开任务，任务页写“返回文档：<名称>”或“返回文档列表”。
 - 载入更多只读下一页，失败只重试该页；重读失败标“上次读回”。
 - 窄屏时表格横向滚动，标题和打开入口始终可读。
 
@@ -85,7 +86,7 @@ HTML 报告的其他宽度：[390](../../assets/frontend-pages/document-html-390
 | 阅读页与右栏 | `DocumentPage.tsx`、`DocumentFacts.tsx`、`DocumentOutline.tsx`、`TaskPeek.tsx`、`documentPresentation.ts`、`apps/workbench/src/shared/ui/readingProse.ts`、`apps/workbench/src/shared/ui/MarkdownBody.tsx`、`apps/workbench/src/shared/ui/markdownContent.ts` | `document-presentation.test.ts`、`markdown-content.test.ts`、`document-original-reading-browser.test.ts` |
 | HTML 原件与资源 | `HtmlReport.tsx`、`useOriginal.ts`（HTML 与只存原件的 Markdown 共用）、`apps/workbench/src/shared/ui/OriginalDocumentReader.tsx`（静态副本，任务页也用）、`apps/workbench/src/shared/ui/imagePreview.ts` | `document-full-html-reading-browser.test.ts`、`document-image-preview.test.ts`、`document-original-reading-browser.test.ts` |
 | 读取与重读 | `apps/workbench/src/shared/ui/rereadOnReturn.ts`、`apps/workbench/src/shared/query.ts`（固定内容不随写入重读；列表逐页读取） | `query.test.ts`、`document-original-reading-browser.test.ts` |
-| 来源与返回 | `DocumentOrigin.tsx`、`originValidation.ts`、`apps/workbench/src/shared/ui/returnRoute.ts` | `document-origin.test.ts`、`document-origin-refresh-browser.test.ts`、`session-document-return-browser.test.ts` |
+| 来源与返回 | `DocumentOrigin.tsx`、`originValidation.ts`、`taskLinks.ts`（打开任务时带上返回）、`apps/workbench/src/shared/ui/returnRoute.ts`、`apps/workbench/src/shared/returnLink.ts`、`apps/workbench/src/shared/ui/ReturnLink.tsx` | `document-origin.test.ts`、`document-origin-refresh-browser.test.ts`、`session-document-return-browser.test.ts`、`return-link.test.ts`、`cross-space-return-browser.test.ts` |
 | 保存与修订 | `DocumentRevise.tsx`、`UploadDocument.tsx`、`uploadCommand.ts` | `upload-command.test.ts`、`document-upload-browser.test.ts`（`EVOLOOP_DOCUMENT_SCREENSHOT_DIR`） |
 
 ## 相关

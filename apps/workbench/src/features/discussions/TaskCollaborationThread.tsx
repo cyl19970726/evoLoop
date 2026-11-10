@@ -6,6 +6,7 @@ import type { DiscussionEvent, DiscussionRecord, TaskCollaborationPayload } from
 import { Button, ErrorState, LoadingState, Notice, RefreshingIndicator } from "@evoloop/ui";
 import { errorText } from "../../shared/api";
 import { useProjectQuery } from "../../shared/query";
+import { hereOrigin, withReturn } from "../../shared/returnLink";
 import { FullIdentifiers, type IdentifierRow } from "../../shared/ui/FullIdentifiers";
 import { useSessionName } from "../../shared/ui/RecordName";
 import { nameOnly } from "../../shared/workPresentation";
@@ -33,7 +34,11 @@ function JumpTo({ eventId, children }: { eventId: string; children: ReactNode })
   return <button type="button" className={link} onClick={() => document.getElementById(`collaboration-event-${eventId}`)?.scrollIntoView({ block: "center" })}>{children}</button>;
 }
 
-export function TaskCollaborationThread({ projectId, taskId, refresh }: { projectId: string; taskId: string; refresh: number }) {
+export function TaskCollaborationThread({ projectId, taskId, refresh, actorId }: {
+  projectId: string; taskId: string; refresh: number;
+  /** The reader, so the link to the original agent comes back to this task. */
+  actorId?: string;
+}) {
   const read = useProjectQuery(projectId, ["task", taskId, "collaboration"], () => readTaskCollaboration(projectId, taskId));
   const rootRef = useRef<HTMLElement>(null);
   // The page's “重新读取当前任务” moves `refresh`; coming back to the window rereads what is on screen.
@@ -63,12 +68,12 @@ export function TaskCollaborationThread({ projectId, taskId, refresh }: { projec
     {data?.partial && <Notice tone="waiting">协作列表已读到 20 页或 20 个关联频道的上限，结果不完整，不能据此判断没有其他问题。</Notice>}
     {data && !data.partial && data.threads.length === 0 && <p className="text-label text-text-secondary">这项任务还没有登记协作频道。</p>}
     {data && data.threads.length > 0 && <ul className="flex flex-col">
-      {data.threads.map(thread => <li key={thread.record.id}><ThreadItem projectId={projectId} thread={thread} /></li>)}
+      {data.threads.map(thread => <li key={thread.record.id}><ThreadItem projectId={projectId} thread={thread} actorId={actorId} /></li>)}
     </ul>}
   </section>;
 }
 
-function ThreadItem({ projectId, thread }: { projectId: string; thread: CollaborationThread }) {
+function ThreadItem({ projectId, thread, actorId }: { projectId: string; thread: CollaborationThread; actorId?: string | undefined }) {
   const { record, events } = thread;
   const context = record.collaboration;
   const task = record.task!;
@@ -79,7 +84,7 @@ function ThreadItem({ projectId, thread }: { projectId: string; thread: Collabor
       <p className="text-label text-text-secondary [overflow-wrap:anywhere]">
         <a className={link} href={href(projectId, "task", task.id, task.revisionId)}>频道固定的任务修订</a>
         {context && <> · 派出者 {context.issuerActorId} · 接收者 {context.recipientActorId} · 原智能体 <a className={link}
-          href={`${href(projectId, "sessions")}?session=${encodeURIComponent(`owned:${context.sessionId}`)}`}><AgentName projectId={projectId} sessionId={context.sessionId} /></a>
+          href={withReturn(`${href(projectId, "sessions")}?session=${encodeURIComponent(`owned:${context.sessionId}`)}`, actorId ? hereOrigin(actorId) : null)}><AgentName projectId={projectId} sessionId={context.sessionId} /></a>
           {" · "}<a className={link} href={`${href(projectId, "task", task.id)}?tab=runtime&run=${encodeURIComponent(context.runId)}`}>发起这次协作的运行</a></>}
       </p>
       {shown.length === 0 && <p className="text-label text-text-secondary">频道已登记，但还没有协作消息或回执。</p>}

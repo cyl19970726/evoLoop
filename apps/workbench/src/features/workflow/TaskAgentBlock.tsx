@@ -15,6 +15,7 @@ import { CommandFrame, overLimitText, useCommand } from "../../shared/command";
 import { readAgent } from "./agentRead";
 import { agentFacts, assignmentKey, type Read, type ReadState } from "./taskFactsPresentation";
 import { assignmentSetCommand } from "./taskCommands";
+import { taskOrigin } from "./taskOrigin";
 
 const directoryPageLimit = 10;
 
@@ -56,7 +57,7 @@ export function TaskAgentBlock({ context, task, run, runtimeHref }: {
           <p className="truncate font-medium text-foreground">{agentName || (agentRead.error ? "智能体名称暂不可读" : agentRead.isPending ? "正在读取名称…" : "未登记名称的智能体")}</p>
           <p className="text-caption text-muted-foreground">{closed ? "历史承接" : assignment.target.kind === "owned" ? "项目内智能体" : "外部接入的智能体"} · 更新于 {date(assignment.updatedAt)}</p>
         </div>
-        <a href={sessionHref(projectId, key!)} className="shrink-0 text-label text-primary hover:underline">进入对话</a>
+        <a href={sessionHref(projectId, key!, taskOrigin(projectId, task, context.principal.actorId))} className="shrink-0 text-label text-primary hover:underline">进入对话</a>
       </div>
       : <p className="text-label text-text-secondary">尚未绑定具体的智能体。负责职责仍在任务上，但不能据此推定哪个智能体已接手。</p>)}
     <dl className="grid grid-cols-[auto_1fr] items-center gap-x-3 gap-y-1.5">

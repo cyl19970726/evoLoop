@@ -4,8 +4,9 @@ import type { ObservedRole, ObservedSession } from "@evoloop/contracts/session-o
 import type { LeaderWorkTask } from "@evoloop/contracts/work-index";
 import type { ResidentQueue } from "@evoloop/contracts/queues";
 import {
-  buildArrangement, freeAgents, freeCapacity, dueSoonMs, type ArrangementEvidence,
+  buildArrangement, freeAgents, freeCapacity, dueSoonMs, staleAssignment, type ArrangementEvidence,
 } from "../src/features/sessions/arrangementModel.ts";
+import { boardPhaseText } from "../src/features/sessions/arrangementPresentation.ts";
 
 const stamp = "2026-11-09T00:00:00.000Z";
 const now = Date.parse(stamp);
@@ -172,4 +173,29 @@ test("an assignee missing from a directory read up to its limit is 未读到, no
     .elsewhere.map(group => group.label), ["受管智能体 · 未读到", "外部接入 · 未读到"]);
   assert.deepEqual(buildArrangement([agent(1, false)], tasks, [], now, complete)
     .elsewhere.map(group => group.label), ["受管智能体 · 不在当前目录", "外部接入 · 不在当前目录"]);
+});
+
+test("an assignment fixed to an older task revision is a risk to reassign, not 待接手", () => {
+  const old = id(900);
+  const fixedTo = (state: "assigned" | "accepted" | "released", revision?: string) =>
+    ({ state, targetKind: "owned" as const, targetId: id(1), recipientActorId: null, ...(revision ? { taskRevisionId: revision } : {}) });
+  const stale = task(1, { phase: "awaiting_assignment", assignment: fixedTo("assigned", old) });
+  const acceptedOld = task(2, { phase: "ready", assignment: fixedTo("accepted", old) });
+  const current = task(3, { phase: "awaiting_assignment", assignment: fixedTo("assigned", id(103)) });
+  const unknown = task(4, { phase: "awaiting_assignment", assignment: fixedTo("assigned") });
+  const released = task(5, { phase: "unassigned", assignment: fixedTo("released", old) });
+  assert.equal(staleAssignment(stale), "assigned");
+  assert.equal(staleAssignment(acceptedOld), "accepted");
+  assert.equal(staleAssignment(current), null);
+  assert.equal(staleAssignment(unknown), null, "a server that does not say the revision proves nothing");
+  assert.equal(staleAssignment(released), null, "a released assignment is not waiting for anyone");
+  const board = buildArrangement([agent(1, false)], [stale, acceptedOld, current, unknown, released], [], now, complete);
+  assert.deepEqual(board.risks.map(risk => [risk.kind, risk.title]), [
+    ["stale_assignment", "「任务1」的分派属于旧修订，要重新指定"],
+    ["stale_assignment", "「任务2」的接手属于旧修订，要重新指定"],
+  ]);
+  assert.deepEqual(board.rows[0]!.assigned.map(item => item.title), ["任务1", "任务2", "任务3", "任务4"], "the stale work stays on the agent's row");
+  assert.equal(boardPhaseText(stale), "分派属于旧修订 · 要重新指定");
+  assert.equal(boardPhaseText(acceptedOld), "接手属于旧修订 · 要重新指定");
+  assert.equal(boardPhaseText(current), "待接手");
 });

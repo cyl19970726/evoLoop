@@ -72,6 +72,9 @@ export interface LeaderWorkAssignment {
   targetKind: "owned" | "external";
   targetId: string;
   recipientActorId: string | null;
+  /** The Task revision the assignment is fixed to. When it is not the Task's current revision the assignment must be
+   * made again; older servers omit it, and then nothing is concluded. */
+  taskRevisionId?: string;
 }
 
 export interface LeaderWorkRunFact {

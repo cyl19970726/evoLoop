@@ -44,7 +44,7 @@ export interface ElsewhereGroup {
   tasks: LeaderWorkTask[];
 }
 
-export type RiskKind = "parallel" | "dependency" | "overdue" | "no_acceptor";
+export type RiskKind = "parallel" | "dependency" | "overdue" | "no_acceptor" | "stale_assignment";
 
 export interface ArrangementRisk {
   kind: RiskKind;
@@ -80,6 +80,16 @@ function assignmentKey(task: LeaderWorkTask): string | null {
   const assignment = task.assignment;
   if (!assignment || assignment.state === "released") return null;
   return `${assignment.targetKind}:${assignment.targetId}`;
+}
+
+/**
+ * The assignment is fixed to an older task revision (same rule as 运行与关联 “分派属于旧修订”): starting or revising the
+ * task makes a new revision, and the old assignment or acceptance does not carry over. Null when the read does not say.
+ */
+export function staleAssignment(task: Pick<LeaderWorkTask, "assignment" | "currentRevisionId">): "assigned" | "accepted" | null {
+  const assignment = task.assignment;
+  if (!assignment || assignment.state === "released" || !assignment.taskRevisionId) return null;
+  return assignment.taskRevisionId === task.currentRevisionId ? null : assignment.state;
 }
 
 function isOpen(task: LeaderWorkTask): boolean {
@@ -173,6 +183,12 @@ export function buildArrangement(sessions: readonly ObservedSession[], tasks: re
     });
   }
   for (const task of open) {
+    const stale = staleAssignment(task);
+    if (stale) risks.push({
+      kind: "stale_assignment", sessionKey: null, taskIds: [task.taskId],
+      title: `${quoted(task.title)}的${stale === "accepted" ? "接手" : "分派"}属于旧修订，要重新指定`,
+      detail: "任务修订已变化，原来的承接不算当前修订的承接",
+    });
     // The server's own gate: a dependency counts once its current revision is accepted, not when its state says done.
     const pending = task.dependencies.filter(dependency => !dependency.acceptanceSatisfied);
     if (pending.length && (startedPhases.has(task.phase) || task.dates.startedAt)) risks.push({

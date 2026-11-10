@@ -19,6 +19,7 @@ import { PhaseCounts, ReconciliationDetails, useAgentNames } from "./TaskReconci
 import { emptyListText, TaskListNotices } from "./TaskRail";
 import { assignmentSessionKey, assignmentStatusLabel, isClosedTask, matchingProjection, type TaskListView } from "./taskExperience";
 import { legacyDecisionLabel, taskNextStep } from "./taskListPresentation";
+import { tableOrigin } from "./taskOrigin";
 import { formatScheduled, nextTimingLabel, repeatLabel } from "./taskTimingPresentation";
 import { latestProgressPresentation, taskType } from "./taskWorkspacePresentation";
 import type { TaskListRead } from "./useTaskList";
@@ -53,9 +54,9 @@ async function readAttention(projectId: string) {
   return { items, complete: !cursor };
 }
 
-export function TaskTable({ projectId, list, view, selectedId, onSelect, linkFor }: {
+export function TaskTable({ projectId, list, view, selectedId, onSelect, linkFor, actorId }: {
   projectId: string; list: TaskListRead; view: TaskListView; selectedId: string | null; onSelect(taskId: string): void;
-  linkFor(taskId: string, tab?: string): string;
+  linkFor(taskId: string, tab?: string): string; actorId?: string;
 }) {
   const [columns, setColumns] = React.useState(readColumns);
   React.useEffect(() => { try { localStorage.setItem(columnsKey, JSON.stringify(columns)); } catch { /* a display preference */ } }, [columns]);
@@ -122,7 +123,7 @@ export function TaskTable({ projectId, list, view, selectedId, onSelect, linkFor
             {group.label} · {group.tasks.length} 项已载入{group.note && <span className="ml-2 font-normal">{group.note}</span>}</th></tr>}
           {group.tasks.map(task => <TableRow key={task.id} task={task} list={list} projectId={projectId}
             selected={task.id === selectedId} onSelect={onSelect} linkFor={linkFor} columns={columns} owner={ownerNames[task.owner]}
-            agents={agents} attention={attention.data?.items ?? []} timing={timings[rows.indexOf(task)]} />)}
+            agents={agents} attention={attention.data?.items ?? []} timing={timings[rows.indexOf(task)]} actorId={actorId} />)}
         </tbody>)}
       </table>
     </div>}
@@ -133,12 +134,13 @@ export function TaskTable({ projectId, list, view, selectedId, onSelect, linkFor
       {list.hasMore && <Button size="compact" disabled={list.loadingMore || list.searching} onClick={() => void list.loadMore()}>{list.loadingMore || list.searching ? "加载中…" : "加载更多"}</Button>}
     </div>}
     <ReconciliationDetails projectId={projectId} page={list.index.first ? { ...list.index.first, items: Object.values(list.index.items) } : null}
-      statuses={list.statuses} roleNames={roleNames} error={list.index.error} />
+      statuses={list.statuses} roleNames={roleNames} error={list.index.error} actorId={actorId} />
   </div>;
 }
 
-function TableRow({ task, list, projectId, selected, onSelect, linkFor, columns, owner, agents, attention, timing }: {
+function TableRow({ task, list, projectId, selected, onSelect, linkFor, columns, owner, agents, attention, timing, actorId }: {
   task: Task; list: TaskListRead; projectId: string; selected: boolean; onSelect(id: string): void; linkFor(taskId: string, tab?: string): string;
+  actorId?: string | undefined;
   columns: Record<OptionalColumn, boolean>; owner: { title?: string; error?: string; pending?: boolean } | undefined;
   agents: Record<string, { name: string | null; problem: string | null }>; attention: TaskAttentionItem[];
   timing: { data?: Awaited<ReturnType<ReturnType<typeof api>["taskTiming"]>>; error: unknown } | undefined;
@@ -181,7 +183,7 @@ function TableRow({ task, list, projectId, selected, onSelect, linkFor, columns,
       {projection?.timing && <span className="mt-0.5 block text-caption text-muted-foreground" data-stage-time="">{timingStageLabel[projection.timing.current.stage] ?? "阶段未知"} · 本阶段 {timingDuration(projection.timing.current.elapsedMs)} · {waitingText(projection.timing.current.waitingFor, projection.assignment)}</span>}
     </td>
     <td className={cell} data-owner-cell="">
-      {key ? <><a className="text-primary hover:underline" href={sessionHref(projectId, key)}>{agents[key]?.name ?? (agents[key]?.problem ? "未登记名称的智能体" : "正在读取名称…")}</a>
+      {key ? <><a className="text-primary hover:underline" href={sessionHref(projectId, key, actorId ? tableOrigin(projectId, actorId) : null)}>{agents[key]?.name ?? (agents[key]?.problem ? "未登记名称的智能体" : "正在读取名称…")}</a>
         <span className="mt-0.5 block text-caption text-muted-foreground">{assignmentStatusLabel(projection!)}</span></>
         : <><span className="text-text-secondary">{!projection ? "承接尚未读回" : closed ? "无当前分派" : "待具体承接"}</span>
           <span className="mt-0.5 block text-caption text-muted-foreground">{owner?.title ? `负责职责 · ${owner.title}` : owner?.error ?? "负责职责待核对"}</span></>}

@@ -11,6 +11,8 @@ import { deliveryTarget, verifiedDocumentTitle, type DeliveryTarget } from "../.
 import { fixedContent, queryKeys, useProjectQuery } from "../../shared/query";
 import { runtimeClient } from "../../shared/runtimeClient";
 import { taskSectionHref } from "../../shared/taskNavigation";
+import { withReturn } from "../../shared/returnLink";
+import { taskOrigin } from "./taskOrigin";
 import { relayProgress, relayRecipient, relayStageLabel, relayStateLabel } from "../../shared/workPresentation";
 import { appPath } from "../../shared/appPath";
 import { FullIdentifiers } from "../../shared/ui/FullIdentifiers";
@@ -44,7 +46,9 @@ function useDeliveryTitles(projectId: string, deliveries: Delivery[]) {
   return titles;
 }
 
-export function TaskDeliveryTab({ projectId, detail, active, actionsHref }: { projectId: string; detail: TaskDetail; active: boolean; actionsHref: string }) {
+export function TaskDeliveryTab({ projectId, detail, active, actionsHref, actorId }: {
+  projectId: string; detail: TaskDetail; active: boolean; actionsHref: string; actorId?: string;
+}) {
   const deliveries = detail.deliveries ?? emptyDeliveries;
   const latestId = deliveries.at(-1)?.id;
   const titles = useDeliveryTitles(projectId, deliveries);
@@ -80,7 +84,7 @@ export function TaskDeliveryTab({ projectId, detail, active, actionsHref }: { pr
       <div className="flex flex-col">
         {[...deliveries].reverse().map(delivery => <DeliveryRecord key={delivery.id} projectId={projectId} detail={detail} delivery={delivery}
           latest={delivery.id === latestId} title={titles[delivery.id]} run={delivery.runId ? runs[delivery.runId] : undefined}
-          active={active} onCheckRun={id => setRequested(current => current.includes(id) ? current : [...current, id])} />)}
+          active={active} actorId={actorId} onCheckRun={id => setRequested(current => current.includes(id) ? current : [...current, id])} />)}
       </div>
     </TabSection>
     <TabSection title="验收接力">
@@ -116,9 +120,10 @@ export function TaskDeliveryTab({ projectId, detail, active, actionsHref }: { pr
   </div>;
 }
 
-function DeliveryRecord({ projectId, detail, delivery, latest, title, run, active, onCheckRun }: {
+function DeliveryRecord({ projectId, detail, delivery, latest, title, run, active, onCheckRun, actorId }: {
   projectId: string; detail: TaskDetail; delivery: Delivery; latest: boolean; title?: { title: string | null; checked: boolean };
   run?: { data: RuntimeRunRecord | undefined; error: unknown; isFetching: boolean }; active: boolean; onCheckRun(id: string): void;
+  actorId?: string | undefined;
 }) {
   const observations = observationsForDelivery(detail.observations ?? [], delivery.id);
   const target = deliveryTarget(delivery, projectId);
@@ -149,7 +154,8 @@ function DeliveryRecord({ projectId, detail, delivery, latest, title, run, activ
         : run?.data ? <span className="inline-flex flex-wrap gap-x-3">
           <a className="text-primary hover:underline" href={taskSectionHref(projectId, delivery.taskId, { revisionId: run.data.taskRevisionId })}>实际执行的任务修订</a>
           <a className="text-primary hover:underline" href={deliveryRunHref(projectId, delivery.taskId, delivery.runId)}>核对这次运行 →</a>
-          <a className="text-primary hover:underline" href={`/p/${encodeURIComponent(projectId)}/sessions?session=${encodeURIComponent(`owned:${run.data.sessionId}`)}`}>查看对应智能体 →</a></span>
+          <a className="text-primary hover:underline" href={withReturn(`/p/${encodeURIComponent(projectId)}/sessions?session=${encodeURIComponent(`owned:${run.data.sessionId}`)}`,
+            actorId ? taskOrigin(projectId, detail.task, actorId) : null)}>查看对应智能体 →</a></span>
           : run?.isFetching ? "正在核对来源运行…"
             : <span>尚未核对。<Button size="compact" variant="ghost" disabled={!active} onClick={() => onCheckRun(delivery.runId!)}>核对来源运行</Button>
               {!!run?.error && <span className="text-destructive"> {errorText(run.error)}</span>}</span>}</div>

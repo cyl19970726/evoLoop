@@ -3,13 +3,15 @@ import { ChevronDown, LayoutDashboard, Plus, Search } from "lucide-react";
 import { AgentAvatar, IconButton, Sheet, SheetContent, SheetDescription, SheetTitle, cn } from "@evoloop/ui";
 import type { ObservedSession } from "@evoloop/contracts/session-observation";
 import { href } from "../../shared/ui/shared";
+import { withReturn, type ReturnFrom } from "../../shared/returnLink";
 import { useSessionDirectoryGroup, type DirectoryMembership } from "./useSessionDirectoryGroup";
 import { agentStatusLabel } from "./sessionStatusPresentation";
 import { groupSessionsByClass, sessionClassLabel, sessionClassReason, type SessionClass } from "./sessionDirectoryPresentation";
 
-/** A link to one agent; `from` (a task of this project, its title and the reader) gives the agent page its way back. */
-export const sessionHref = (projectId: string, key: string, from?: { href: string; title: string; actorId: string }) =>
-  `${href(projectId, "sessions")}?${new URLSearchParams({ session: key, ...(from ? { return: from.href, actor: from.actorId, returnTitle: from.title.slice(0, 80) } : {}) })}`;
+/** A link to one agent; `from` (the page of this project it is opened from, the reader, optionally that page's name)
+ * gives the agent page its way back (shared/returnLink.ts). */
+export const sessionHref = (projectId: string, key: string, from?: ReturnFrom | null) =>
+  withReturn(`${href(projectId, "sessions")}?${new URLSearchParams({ session: key })}`, from);
 
 const classOrder: SessionClass[] = ["business", "system", "unclassified"];
 export interface SessionNavigationState {

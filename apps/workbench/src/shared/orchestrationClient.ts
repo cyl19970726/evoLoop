@@ -56,5 +56,18 @@ export function orchestrationClient(token: string, projectId: string) {
         throw cause;
       }
     },
+    /**
+     * A task's loops. The task-context route is registered only with automatic loops configured: a 404 there means the
+     * loops are not set up (or not enabled) for this service, never that a record was removed, so it reads as none.
+     */
+    taskOverview: async (taskId: string) => {
+      const status = await client.status();
+      try { return { status, contexts: await client.taskContext(taskId), contextAvailable: true }; }
+      catch (cause) {
+        if (cause instanceof ApiError && cause.status === 404)
+          return { status, contexts: { items: [], nextCursor: null } as ResultPage<TaskLoopContext>, contextAvailable: false };
+        throw cause;
+      }
+    },
   };
 }

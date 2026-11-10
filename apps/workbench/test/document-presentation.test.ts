@@ -2,8 +2,9 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Document, DocumentDetail, DocumentRevision } from "@evoloop/contracts";
 import {
-  coverageText, emptyListText, kindText, markdownSource, publicationText, readingStanding, referenceText, returnSourceLabel,
+  coverageText, documentReturnPlace, emptyListText, kindText, markdownSource, publicationText, readingStanding, referenceText,
 } from "../src/features/documents/documentPresentation.ts";
+import { returnText } from "../src/shared/returnLink.ts";
 import type { Original } from "../src/shared/ui/OriginalDocumentReader.tsx";
 import {
   automaticItemLimit, initialListState, isFiltered, loadMoreTarget, nextListState, pageSize, pagesFor,
@@ -48,14 +49,17 @@ test("list words keep lifecycle, publication and references apart", () => {
 });
 
 test("the return link names where it goes back to", () => {
-  assert.equal(returnSourceLabel(`/p/${projectId}/documents`), "文档列表");
-  assert.equal(returnSourceLabel(`/p/${projectId}/tasks/${projectId}?tab=runtime`), "任务");
-  assert.equal(returnSourceLabel(`/p/${projectId}/sessions?session=owned:${projectId}&tab=results`), "智能体");
-  assert.equal(returnSourceLabel(`/p/${projectId}/runtime?session=owned:${projectId}`), "分工与运行", "/runtime is 分工与运行 with or without a session");
-  assert.equal(returnSourceLabel(`/p/${projectId}/runtime?session=${projectId}`), "分工与运行");
-  assert.equal(returnSourceLabel(`/p/${projectId}/runtime`), "分工与运行");
-  assert.equal(returnSourceLabel(`/p/${projectId}/work`), "任务列表");
-  assert.equal(returnSourceLabel("/"), "项目列表");
+  const label = (path: string, name?: string) => returnText(documentReturnPlace(path, projectId).place, name);
+  assert.equal(label(`/p/${projectId}/documents`), "返回文档列表");
+  assert.equal(label(`/p/${projectId}/tasks/${projectId}?tab=runtime`, "任务甲"), "返回任务：任务甲", "the task's name, read by the link");
+  assert.equal(label(`/p/${projectId}/tasks/${projectId}?tab=runtime`), "返回任务");
+  assert.equal(label(`/p/${projectId}/sessions?session=owned:${projectId}&tab=results`), "返回智能体");
+  assert.equal(label(`/p/${projectId}/runtime?session=owned:${projectId}`), "返回智能体", "an older agent link opens the conversation");
+  assert.equal(label(`/p/${projectId}/runtime?session=${projectId}`), "返回分工与运行");
+  assert.equal(label(`/p/${projectId}/runtime`), "返回分工与运行");
+  assert.equal(label(`/p/${projectId}/work`), "返回任务列表");
+  assert.equal(label(`/p/${projectId}/overview`), "返回总览");
+  assert.equal(documentReturnPlace("/", projectId).href, `/p/${projectId}/documents`, "outside the project: back to the list");
 });
 
 test("the coverage line says what was read and the empty list says why it is empty", () => {

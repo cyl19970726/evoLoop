@@ -169,7 +169,8 @@ test("统筹安排 shows who works on what, the unassigned Tasks and the proven 
       /项目里：3 条待处理消息 · 1 个待答问题 · 2 项待验收/, "the directory's project-wide counts stay visible");
     await page.getByRole("link", { name: "与统筹对话" }).waitFor();
     assert.equal(await page.getByRole("link", { name: "与统筹对话" }).getAttribute("href"),
-      `/p/${projectId}/sessions?session=${encodeURIComponent(`owned:${id(1)}`)}`);
+      `/p/${projectId}/sessions?${new URLSearchParams({ session: `owned:${id(1)}`, return: `/p/${projectId}/sessions`, actor: "reader" })}`,
+      "the agent page offers 返回统筹安排");
     await page.getByText("系统还没有标出哪份文档是当前的编排总览").waitFor();
 
     const risks = page.getByRole("region", { name: "冲突与风险" });

@@ -4,7 +4,7 @@
 // saved only as its original (an uploaded file, an import) is read from that original.
 import React, { useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, PanelRight } from "lucide-react";
+import { PanelRight } from "lucide-react";
 import type { DocumentDetail, DocumentRevision } from "@evoloop/contracts";
 import {
   Button, ErrorState, LoadingState, Notice, RefreshingIndicator, StatusTag, Tabs, TabsContent, TabsList, TabsTrigger, UnknownState, cn,
@@ -19,10 +19,12 @@ import { readingProse, readingSource } from "../../shared/ui/readingProse";
 import { useRereadOnReturn } from "../../shared/ui/rereadOnReturn";
 import { date, documentReturnHref } from "../../shared/ui/shared";
 import { DocumentFacts } from "./DocumentFacts";
+import { documentOrigin, taskLinkFrom } from "./taskLinks";
 import { DocumentRail } from "./DocumentRail";
 import { DocumentRevise, canRevise } from "./DocumentRevise";
 import { Foot, HtmlReport } from "./HtmlReport";
-import { kindText, lifecycleLabel, lifecycleTone, markdownSource, readingStanding, returnSourceLabel } from "./documentPresentation";
+import { documentReturnPlace, kindText, lifecycleLabel, lifecycleTone, markdownSource, readingStanding } from "./documentPresentation";
+import { ReturnLink } from "../../shared/ui/ReturnLink";
 import { readProblem } from "./useDocumentList";
 import { useOriginal } from "./useOriginal";
 
@@ -56,11 +58,10 @@ export function DocumentPage({ context, projectId, id, selectedRevision }: {
   const active = useRereadOnReturn(reread);
   const scope = `${context.principal.actorId}:${projectId}`;
   // Read from the address while this page is on screen: the same page can be opened from several sources.
-  const returnTo = active ? documentReturnHref(projectId) : href(projectId, "documents");
-  const back = <div className="document-reading-backlinks flex flex-wrap items-center gap-x-3 gap-y-1">
-    <a href={returnTo} className="inline-flex items-center gap-1 text-label font-medium text-primary hover:underline">
-      <ArrowLeft size={15} aria-hidden="true" />返回来源<span className="font-normal text-muted-foreground"> · {returnSourceLabel(returnTo)}</span></a>
-    {returnTo.split("?")[0] !== href(projectId, "documents") && <a href={href(projectId, "documents")} className="text-caption text-muted-foreground hover:text-foreground">全部文档</a>}
+  const returnTo = documentReturnPlace(active ? documentReturnHref(projectId) : href(projectId, "documents"), projectId);
+  const back = <div className="document-reading-backlinks flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
+    <ReturnLink projectId={projectId} href={returnTo.href} place={returnTo.place} />
+    {returnTo.href.split("?")[0] !== href(projectId, "documents") && <a href={href(projectId, "documents")} className="text-caption text-muted-foreground hover:text-foreground">全部文档</a>}
   </div>;
   const rail = <DocumentRail projectId={projectId} scope={scope} selectedId={id} />;
   const failure = detail.error ?? fixed.error;
@@ -82,13 +83,14 @@ function Reader({ context, projectId, detail, revision, body, rail, back, checki
   const { document } = detail;
   const standing = readingStanding(revision.id, detail);
   const html = revision.format === "html";
+  const from = documentOrigin(projectId, document, context.principal.actorId);
   const revise = canRevise(detail) && <DocumentRevise context={context} detail={detail} checking={checking} failed={!!failure} />;
   const review = revision.organizationReview;
   const zone = review?.timeZone;
   return <div data-ui="" className={cn("flex w-full flex-col",
     html ? "h-[calc(100dvh-48px)] px-3 pb-2 pt-2.5 compact:h-[calc(100dvh-16px)] compact:px-6 compact:pt-3" : "mx-auto max-w-[920px] px-4 py-5 compact:px-10 compact:py-7")}>
     {rail}
-    <DocumentFacts projectId={projectId} detail={detail} revision={revision} body={body} />
+    <DocumentFacts projectId={projectId} detail={detail} revision={revision} body={body} actorId={context.principal.actorId} />
     <header className={cn("flex flex-none flex-col", html ? "gap-1 pb-2" : "gap-2 pb-5")}>
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 compact:pr-12">
         {back}
@@ -106,7 +108,7 @@ function Reader({ context, projectId, detail, revision, body, rail, back, checki
         <span aria-hidden="true">·</span>
         <span>正在读 <strong className="font-medium text-foreground">{standing.label}</strong></span>
         <time dateTime={revision.createdAt} className="text-muted-foreground">{date(revision.createdAt)}</time>
-        {document.primaryTaskId && <a href={href(projectId, "task", document.primaryTaskId)} className="text-primary hover:underline">所属任务 →</a>}
+        {document.primaryTaskId && <a href={taskLinkFrom(projectId, document.primaryTaskId, from)} className="text-primary hover:underline">所属任务 →</a>}
       </p>
       {review && <p className="text-caption text-muted-foreground">观察期间：{new Date(review.observedFrom).toLocaleString("zh-CN", { timeZone: zone })} 至 {new Date(review.observedTo).toLocaleString("zh-CN", { timeZone: zone })} · {zone}
         {review.previous && <> · <a href={href(projectId, "document", review.previous.documentId, review.previous.revisionId)} className="text-primary hover:underline">上一轮复盘</a></>}</p>}
@@ -114,7 +116,7 @@ function Reader({ context, projectId, detail, revision, body, rail, back, checki
         action={<Button asChild size="compact"><a href={href(projectId, "document", document.id, detail.current.id)}>查看当前版</a></Button>} />
         : standing.note && <p className="text-caption text-muted-foreground">{standing.note}</p>}
       {document.kind === "task" && <Notice>这是任务的主文档，这里只读固定修订。要修改正文，请到{document.primaryTaskId
-        ? <a href={href(projectId, "task", document.primaryTaskId)} className="text-primary hover:underline">所属任务</a> : "所属任务"}。</Notice>}
+        ? <a href={taskLinkFrom(projectId, document.primaryTaskId, from)} className="text-primary hover:underline">所属任务</a> : "所属任务"}。</Notice>}
       {failure && <Notice tone="error" title="当前文档这次没有读回">{failure}。页面保留上次读到的内容，不能当作当前状态；草稿仍留在本页。</Notice>}
     </header>
     {html ? <section aria-label="文档完整正文" className="flex min-h-0 flex-1 flex-col">

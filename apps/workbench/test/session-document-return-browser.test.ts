@@ -107,7 +107,7 @@ test("Session results → fixed Document → return restores the exact Session r
   await page.getByRole("region", { name: "文档完整正文" }).locator(".markdown-body").getByText(fixedRevision.body, { exact: true }).waitFor();
   assert.equal(await page.getByRole("region", { name: "文档完整正文" }).locator(".markdown-body").getByText(currentRevision.body, { exact: true }).count(), 0,
     "the delivery reads its fixed revision even when the current Document is newer");
-  const back = page.locator(".document-reading-backlinks").getByRole("link", { name: "返回来源", exact: false });
+  const back = page.locator(".document-reading-backlinks").getByRole("link", { name: /^返回智能体/ });
   assert.equal(await back.getAttribute("href"), returnHash, "Document returns to the exact source Session and results tab");
   await back.click();
   await page.getByRole("heading", { name: "成果与使用" }).waitFor();
@@ -129,7 +129,7 @@ test("Session results → fixed Document → return restores the exact Session r
   await direct.getByRole("button", { name: "进入", exact: true }).click();
   await direct.getByRole("heading", { name: document.title, exact: true }).waitFor();
   await direct.getByRole("region", { name: "文档完整正文" }).locator(".markdown-body").getByText(fixedRevision.body, { exact: true }).waitFor();
-  const directBack = direct.locator(".document-reading-backlinks").getByRole("link", { name: "返回来源", exact: false });
+  const directBack = direct.locator(".document-reading-backlinks").getByRole("link", { name: /^返回智能体/ });
   assert.equal(await directBack.getAttribute("href"), returnHash);
   await directBack.click();
   // At 390px the right column is a drawer that opens only when asked; it opens on the results the link named.

@@ -112,6 +112,7 @@ function taskFactsSql(includeClosed: boolean, taskParam?: 2 | 4): string {
       closure.closed_at AS completed_at,
       assignment.state AS assignment_state,assignment.target_kind AS assignment_target_kind,
       assignment.target_id AS assignment_target_id,assignment.recipient_actor_id AS assignment_recipient_actor_id,
+      assignment.task_revision_id AS assignment_task_revision_id,
       effective_run.run_id AS latest_run_id,effective_run.state AS latest_run_state,
       effective_run.session_id AS latest_run_session_id,effective_run.native_turn_id AS latest_run_native_turn_id,
       effective_run.updated_at AS run_updated_at,
@@ -169,7 +170,7 @@ function taskFactsSql(includeClosed: boolean, taskParam?: 2 | 4): string {
       WHERE c.project_id=t.project_id AND c.task_id=t.task_id
         AND c.task_revision_id=t.current_revision_id
       ORDER BY c.created_at DESC,c.closure_id DESC LIMIT 1) closure ON true
-    LEFT JOIN LATERAL (SELECT a.state,a.target_kind,a.target_id,a.recipient_actor_id
+    LEFT JOIN LATERAL (SELECT a.state,a.target_kind,a.target_id,a.recipient_actor_id,a.task_revision_id
       FROM task_session_assignment a
       WHERE a.project_id=t.project_id AND a.task_id=t.task_id
       ORDER BY a.version DESC LIMIT 1) assignment ON true
@@ -628,6 +629,7 @@ export function leaderWorkTaskFromRow(row: QueryResultRow, observedAt: string): 
     targetKind: row.assignment_target_kind as "owned" | "external",
     targetId: row.assignment_target_id as string,
     recipientActorId: row.assignment_recipient_actor_id as string | null,
+    taskRevisionId: row.assignment_task_revision_id as string,
   } : null;
   return {
     kind: "task", taskId: row.task_id, version: int(row.version),

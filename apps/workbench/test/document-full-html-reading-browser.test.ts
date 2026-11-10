@@ -205,7 +205,7 @@ test("built HTML Document uses the available reading space and keeps fixed revis
   assert.equal(await source.isVisible(), true);
   assert.ok(reads.includes(fixedId) && reads.includes(`${fixedId}:original`) && !reads.includes(`${currentId}:original`), `fixed revision reads: ${reads.join(", ")}`);
   assert.deepEqual(errors, []);
-  const back = page.locator(".document-reading-backlinks").getByRole("link", { name: /返回来源/ });
+  const back = page.locator(".document-reading-backlinks").getByRole("link", { name: /^返回/ });
   assert.equal(await back.getAttribute("href"), returnHash);
   await back.click();
   assert.equal(await page.evaluate(() => (location.pathname + location.search)), returnHash);

@@ -55,7 +55,7 @@ export function DocumentIndex({ context }: { context: MutationContext }) {
         <UploadDocument context={context} />
       </div>
     </section>}
-    <DocumentTable projectId={projectId} list={list} state={state} update={update} toolbar={toolbar} />
+    <DocumentTable projectId={projectId} list={list} state={state} update={update} toolbar={toolbar} actorId={context.principal.actorId} />
   </div>;
 }
 

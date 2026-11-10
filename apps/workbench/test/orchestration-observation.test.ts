@@ -3,7 +3,7 @@ import { mock, test } from "node:test";
 import { ApiError } from "../src/shared/api.ts";
 import { mergePage, orchestrationClient } from "../src/shared/orchestrationClient.ts";
 import {
-  decisionHeading, deliveryMeaning, dispatchStateLabel, inboxStateLabel, loopName, scopeText, scopeTitleOf, sealReasonLabel, sourceTriggerLabel, storyTitle,
+  decisionHeading, deliveryMeaning, dispatchStateLabel, emptyLoopsText, inboxStateLabel, loopName, scopeText, scopeTitleOf, sealReasonLabel, sourceTriggerLabel, storyTitle,
   submissionStateLabel, taskTitleText,
 } from "../src/features/orchestration/presentation.ts";
 import { currentChainSummary, hasTerminalIntentGap, hasUnreadChainPages, inTaskContext, nextAction, orderDispatches, readableOutcome, storyNextAction } from "../src/features/orchestration/summary.ts";
@@ -293,4 +293,28 @@ test("a dispatched task is named, waits for unread pages, could not be read, or 
   assert.equal(taskTitleText(undefined,{more:true,failed:false}),"任务（名称待读取）");
   assert.equal(taskTitleText(undefined,{more:true,failed:true}),"任务（名称暂不可读）","the shared wording, as nameText says it");
   assert.equal(taskTitleText(undefined,{more:false,failed:false}),"任务（未找到）");
+});
+
+test("a task's loops read as not configured when the service has no task-context route (404), never as a removed record", async () => {
+  const fetch=mock.method(globalThis,"fetch",async(input:RequestInfo|URL)=>{
+    const url=new URL(String(input),"http://localhost");
+    return url.pathname.endsWith("/status") ? response({running:true}) : response({error:"not found"},404);
+  });
+  try {
+    const read=await orchestrationClient("private",projectId).taskOverview("task");
+    assert.deepEqual(read.contexts,{items:[],nextCursor:null});
+    assert.equal(read.contextAvailable,false);
+    assert.equal(emptyLoopsText(true,read.status,read.contextAvailable),"自动循环未配置或尚未启用，没有可观察的循环。");
+  } finally {fetch.mock.restore();}
+  const failing=mock.method(globalThis,"fetch",async(input:RequestInfo|URL)=>{
+    const url=new URL(String(input),"http://localhost");
+    return url.pathname.endsWith("/status") ? response({running:true}) : response({error:"boom"},500);
+  });
+  try {
+    await assert.rejects(orchestrationClient("private",projectId).taskOverview("task"),"any other failure stays a failure");
+  } finally {failing.mock.restore();}
+  assert.equal(emptyLoopsText(true,{state:"disabled"},true),"自动循环未配置或尚未启用，没有可观察的循环。");
+  assert.equal(emptyLoopsText(true,{running:true},true),"没有读到这项任务关联的自动循环。");
+  assert.equal(emptyLoopsText(false,{state:"disabled"},true),"自动循环未配置或尚未启用，没有可观察的循环。");
+  assert.equal(emptyLoopsText(false,{running:true},true),"还没有登记自动循环。");
 });

@@ -111,7 +111,7 @@ export function TaskWorkspace({ context, refresh, active, taskId, selectedRevisi
         <Button asChild variant="primary" size="compact"><a href={href(projectId, "create-task")}><Plus size={15} aria-hidden="true" />新建任务</a></Button>
       </header>
       <p className="text-label text-text-secondary">批量核对任务的进展、承接与成果。选中一行，右栏显示它的状态、承接、文档与交付；需要推进或调整时，先与相关智能体沟通，再回到这里读回。</p>
-      <TaskTable projectId={projectId} list={list} view={view} selectedId={selected || null} onSelect={id => setView({ selected: id })} linkFor={linkFor} />
+      <TaskTable projectId={projectId} list={list} view={view} selectedId={selected || null} onSelect={id => setView({ selected: id })} linkFor={linkFor} actorId={principal.actorId} />
     </div>
     {selected && <ContextPanelContent><TaskFacts key={selected} context={context} taskId={selected} heading linkForTab={tabLink(selected)}
       outsideFilter={!list.loading && !list.visible.some(task => task.id === selected)}

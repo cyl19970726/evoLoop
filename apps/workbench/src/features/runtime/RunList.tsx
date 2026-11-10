@@ -8,6 +8,7 @@ import { ApiError, errorText } from "../../shared/api";
 import { ActionForm, option, reasonField, type MutationContext } from "../../shared/ActionForm";
 import { runtimeClient, type NativeResult } from "../../shared/runtimeClient";
 import { taskSectionHref } from "../../shared/taskNavigation";
+import { hereOrigin } from "../../shared/returnLink";
 import { FactList, mutedText } from "../../shared/ui/PageParts";
 import { useTaskName } from "../../shared/ui/RecordName";
 import { nameOnly } from "../../shared/workPresentation";
@@ -57,7 +58,7 @@ function RunItem({ context, run, mayAbandon }: { context: MutationContext; run: 
       <p className="flex flex-wrap gap-x-4 gap-y-1 text-small">
         {uuidPattern.test(run.taskId) && <a className="text-primary hover:underline" href={`${taskSectionHref(context.projectId, run.taskId, { tab: "runtime" })}&run=${encodeURIComponent(run.id)}`}>在任务中查看此运行</a>}
         {linkable && <a className="text-primary hover:underline" href={executionHref(context.projectId, run.sessionId)}>承接的受管智能体</a>}
-        {linkable && <a className="text-primary hover:underline" href={sessionHref(context.projectId, `owned:${run.sessionId}`)}>在智能体空间打开</a>}
+        {linkable && <a className="text-primary hover:underline" href={sessionHref(context.projectId, `owned:${run.sessionId}`, hereOrigin(context.principal.actorId))}>在智能体空间打开</a>}
       </p>
       <p className={mutedText}>链接只定位来源；运行的状态不代表任务验收或当前接手。</p>
       {run.state === "unknown" && <Notice tone="error">派发或状态仍未知，须沿已绑定线程回查；不会自动再发一次。</Notice>}
