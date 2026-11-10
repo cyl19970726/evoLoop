@@ -1,4 +1,5 @@
 import type { TaskTimingView } from "../../shared/api";
+import { timeFieldInstant } from "../../shared/zonedTime";
 
 export function timingVersion(timing: TaskTimingView | null): number {
   if (!timing) return 0;
@@ -24,8 +25,8 @@ export function scheduledInstant(value: string): string {
 export function scheduledTimezone(value: string): string {
   const timezone = value.trim();
   try { new Intl.DateTimeFormat("zh-CN", { timeZone: timezone }); }
-  catch { throw new Error("请输入有效的 IANA 时区，例如 Asia/Taipei。"); }
-  if (!timezone) throw new Error("请输入 IANA 时区。");
+  catch { throw new Error("时区无法识别，请重新选择时区。"); }
+  if (!timezone) throw new Error("请选择时区。");
   return timezone;
 }
 
@@ -62,6 +63,18 @@ export function timingSetPayload(taskId: string, taskVersion: number, current: T
   return { type: "task.timing.set" as const, taskId, expectedTaskVersion: taskVersion,
     expectedTimingVersion: timingVersion(current), executeAtUtc: values.repeat === "daily" ? dailyScheduledInstant(values.executeAtUtc) : scheduledInstant(values.executeAtUtc),
     timezone: scheduledTimezone(values.timezone), repeat: values.repeat, scope: values.scope, reason: values.reason.trim() };
+}
+
+/**
+ * 执行时间与重复's forms: the date and time typed on the clock of `timezone` (as 新建任务 asks for it), sent as the same
+ * task.timing.set a typed ISO time with its offset gave before. A time filled from the record and left as it was is sent
+ * back exactly as stored (shared/zonedTime timeFieldInstant).
+ */
+export function timingFormPayload(taskId: string, taskVersion: number, current: TaskTimingView | null,
+  values: { executeAt: string; timezone: string; repeat: "none" | "daily"; scope: "this" | "this_and_future" | "future"; reason: string }) {
+  if (!values.executeAt.trim()) throw new Error("请选择约定执行时间。");
+  const { executeAt, ...rest } = values;
+  return timingSetPayload(taskId, taskVersion, current, { ...rest, executeAtUtc: timeFieldInstant(executeAt, values.timezone) });
 }
 
 export function timingStopPayload(taskId: string, current: TaskTimingView, reason: string) {

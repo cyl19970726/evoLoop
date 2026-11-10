@@ -11,7 +11,10 @@ import { href } from "../../shared/ui/shared";
 import { CommandForm, type FormField } from "../../shared/command";
 import { seriesCurrentPromptCommand, seriesFuturePromptCommand, taskStateLabel } from "./taskCommands";
 import { ActionRow, Fact, Fine, ReadNote, TabSection, reasonField } from "./TaskForms";
-import { formatScheduled, nextTimingLabel, repeatLabel, timingSetPayload, timingStopPayload, timingVersion, timingWaitingText } from "./taskTimingPresentation";
+import { formatScheduled, nextTimingLabel, repeatLabel, timingFormPayload, timingStopPayload, timingVersion, timingWaitingText } from "./taskTimingPresentation";
+import { browserTimezone } from "./taskCreate";
+import { timeFieldValue, timezoneOptions } from "../../shared/zonedTime";
+import { LocalTimeInput } from "../../shared/ui/LocalTimeInput";
 
 type Scope = "this" | "this_and_future" | "future";
 // As the old forms: the shared schema checks the command, which is then sent exactly as built.
@@ -41,13 +44,16 @@ export function TaskScheduleSection({ context, detail }: { context: MutationCont
   const writable = read.data !== undefined && !read.error && !versionError && version !== null;
   const baseline = { taskVersion: task.version, timingVersion: version ?? 0, executeAt: timing?.executeAtUtc ?? "", seriesState: timing?.seriesState ?? "" };
   const timingAt = (seen: typeof baseline) => timing ? { ...timing, version: seen.timingVersion } : null;
+  // As 新建任务: the date and time on the clock of the task's zone (a date-time control), never UTC or an offset.
+  const zone = timing?.timezone ?? browserTimezone();
   const timeFields: FormField[] = [
-    { name: "executeAtUtc", label: "约定执行时间", initial: timing?.executeAtUtc ?? "", placeholder: "2026-11-07T08:00:00+08:00",
-      hint: "带 Z 或时区偏移的 ISO 8601 时间。每天重复时按下面的时区换算成本地时分，秒须为 00。" },
-    { name: "timezone", label: "重复使用的时区", initial: timing?.timezone ?? (Intl.DateTimeFormat().resolvedOptions().timeZone || "Asia/Taipei"), hint: "IANA 时区，例如 Asia/Shanghai。" },
+    { name: "executeAt", label: "约定执行时间", kind: "custom", initial: timeFieldValue(timing?.executeAtUtc, zone),
+      hint: "按下面时区的当地日期和时间填写；每天重复时，以后每天在同一当地时刻生成。",
+      render: ({ control, value, values, onChange }) => <LocalTimeInput control={control} name="executeAt" value={value} timezone={values.timezone ?? ""} onChange={onChange} /> },
+    { name: "timezone", label: "时区", kind: "select", initial: zone, options: timezoneOptions([timing?.timezone]) },
   ];
   const set = (repeat: "none" | "daily", scope: Scope) => (values: Record<string, string>, seen: typeof baseline) =>
-    timingSetPayload(task.id, seen.taskVersion, timingAt(seen), { executeAtUtc: values.executeAtUtc ?? "", timezone: values.timezone ?? "",
+    timingFormPayload(task.id, seen.taskVersion, timingAt(seen), { executeAt: values.executeAt ?? "", timezone: values.timezone ?? "",
       repeat: (values.repeat as "none" | "daily" | undefined) ?? repeat, scope: (values.scope as Scope | undefined) ?? scope, reason: values.reason ?? "" });
   const actions: { key: string; title: string; description: string; needs: "write" | "review"; form: React.ReactNode }[] = [];
   if (writable && !timing && editableThis) {
