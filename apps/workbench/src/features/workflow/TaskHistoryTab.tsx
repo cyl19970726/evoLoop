@@ -15,6 +15,13 @@ import { taskStateLabel } from "./taskCommands";
 import { DocumentLink } from "./DocumentLink";
 import { EvidenceText } from "./EvidenceText";
 import { Fact, Fine, ReadNote, TabSection } from "./TaskForms";
+import { useRevisionOrigin } from "../../shared/useRevisionOrigin";
+import type { RevisionOrigin } from "../../shared/revisionPresentation";
+
+/** A revision's author and reason in words (the schedule's name is read when a schedule generated it). */
+function RevisionWho({ projectId, revision, children }: { projectId: string; revision: { actorId?: string | null; reason?: string | null; taskId?: string }; children(origin: RevisionOrigin): React.ReactNode }) {
+  return <>{children(useRevisionOrigin(projectId, revision, revision.taskId))}</>;
+}
 
 const judgementLabel = { approve: "同意", needsEvidence: "需要补充证据", defer: "暂缓", reject: "不采纳" } as const;
 
@@ -39,9 +46,11 @@ export function TaskHistoryTab({ projectId, detail, selectedRevision }: { projec
       <ReadNote read={revisions} what="修订历史" />
       {rows && (lastChange ? <div className="flex flex-col gap-1">
         <p className="text-label text-foreground">最近一次状态变化：<StatusTag tone="history" label={taskStateLabel[lastChange.state]} /></p>
-        <EvidenceText label="理由" value={lastChange.reason} />
-        <Fine>{lastChange.actorId} · {date(lastChange.createdAt)} · 第 {lastChange.version} 版 · <a className="text-primary hover:underline"
-          href={taskSectionHref(projectId, task.id, { revisionId: lastChange.id })}>打开当时的正文与依据</a></Fine>
+        <RevisionWho projectId={projectId} revision={lastChange}>{origin => <>
+          <EvidenceText label="理由" value={origin.reason} />
+          <Fine>{origin.author} · {date(lastChange.createdAt)} · 第 {lastChange.version} 版 · <a className="text-primary hover:underline"
+            href={taskSectionHref(projectId, task.id, { revisionId: lastChange.id })}>打开当时的正文与依据</a></Fine>
+        </>}</RevisionWho>
       </div> : <p className="text-label text-text-secondary">目前只有初始任务，还没有状态变化。</p>)}
     </TabSection>
     <TabSection title="修订时间线" meta={rows ? `${rows.length} 个修订` : undefined}>
@@ -86,8 +95,11 @@ function RevisionRow({ projectId, revision, basisCount, current, viewing }: { pr
       {current && <Badge>当前</Badge>}
       {viewing && <Badge>正在查看</Badge>}
     </div>
-    <Fine>{date(revision.createdAt)} · {revision.actorId} · 固定依据 {basisCount} 份</Fine>
-    <p className="text-label text-text-secondary [overflow-wrap:anywhere]">理由：{revision.reason}</p>
+    <RevisionWho projectId={projectId} revision={revision}>{origin => <>
+      <Fine>{date(revision.createdAt)} · {origin.author} · 固定依据 {basisCount} 份</Fine>
+      <p className="text-label text-text-secondary [overflow-wrap:anywhere]">理由：{origin.reason}</p>
+      <FullIdentifiers summary="原始记录" rows={origin.identifiers} />
+    </>}</RevisionWho>
     <details><summary className="w-fit cursor-pointer text-caption text-primary hover:underline">当时的正文与验收摘要</summary>
       <p className="mt-1 whitespace-pre-wrap text-label text-text-secondary [overflow-wrap:anywhere]">{preview}</p>
       <p className="mt-1 whitespace-pre-wrap text-label text-text-secondary [overflow-wrap:anywhere]">验收：{revision.acceptance}</p></details>
@@ -108,13 +120,15 @@ function FixedRevision({ projectId, taskId, revisionId }: { projectId: string; t
       next="不能把当前任务当成当时的依据；可以重新读取。" action={<Button size="compact" onClick={() => void read.refetch()}>重新读取</Button>} />
       : <LoadingState lines={6} label="正在读取指定修订与当时的完整依据" />
       : <>
-        <p className="text-label text-text-secondary">只读。第 {read.data.revision.version} 版 · {taskStateLabel[read.data.revision.state]} · {date(read.data.revision.createdAt)} · {read.data.revision.actorId}</p>
-        <h3 className="text-heading font-semibold text-foreground">{read.data.revision.title}</h3>
-        <EvidenceText label="当次理由" value={read.data.revision.reason} />
+        <RevisionWho projectId={projectId} revision={read.data.revision}>{origin => <>
+          <p className="text-label text-text-secondary">只读。第 {read.data!.revision.version} 版 · {taskStateLabel[read.data!.revision.state]} · {date(read.data!.revision.createdAt)} · {origin.author}</p>
+          <h3 className="text-heading font-semibold text-foreground">{read.data!.revision.title}</h3>
+          <EvidenceText label="当次理由" value={origin.reason} />
+        </>}</RevisionWho>
         <div className="flex flex-col gap-1">
           <p className="text-caption font-medium text-muted-foreground">当时的正文 · <DocumentLink projectId={projectId} documentId={read.data.revision.contentDocumentId}
             revisionId={read.data.revision.contentRevisionId} title="当时的正文" relation="当时的主正文 · 固定修订">阅读当时的原件</DocumentLink></p>
-          <MarkdownBody source={read.data.revision.content} identity={`history-${read.data.revision.id}`} projectId={projectId} />
+          <MarkdownBody source={read.data.revision.content} identity={`history-${read.data.revision.id}`} projectId={projectId} topHeading={4} />
         </div>
         <EvidenceText label="当时的验收" value={read.data.revision.acceptance} />
         <div className="flex flex-col gap-1">

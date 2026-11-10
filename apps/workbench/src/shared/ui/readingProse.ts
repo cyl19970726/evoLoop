@@ -3,11 +3,11 @@
 import { cn } from "@evoloop/ui";
 
 export const readingProse = cn("text-body leading-(--leading-reading) text-foreground",
-  "[&_:is(p,li,td,th,h1,h2,h3,h4,dt,dd)]:text-foreground",
+  "[&_:is(p,li,td,th,h1,h2,h3,h4,h5,h6,dt,dd)]:text-foreground",
   "[&_h1]:mb-3 [&_h1]:mt-9 [&_h1]:text-heading [&_h1]:font-semibold [&_h1]:leading-(--leading-tight)",
   "[&_h2]:mb-3 [&_h2]:mt-9 [&_h2]:text-heading [&_h2]:font-semibold [&_h2]:leading-(--leading-tight)",
   "[&_h3]:mb-2 [&_h3]:mt-7 [&_h3]:text-body [&_h3]:font-semibold",
-  "[&_h4]:mb-2 [&_h4]:mt-6 [&_h4]:font-semibold",
+  "[&_:is(h4,h5,h6)]:mb-2 [&_:is(h4,h5,h6)]:mt-6 [&_:is(h4,h5,h6)]:font-semibold",
   "[&_p]:my-3 [&_ul]:my-3 [&_ol]:my-3 [&_ul]:list-disc [&_ol]:list-decimal [&_ul]:pl-6 [&_ol]:pl-6 [&_li]:my-1",
   "[&_a]:text-primary [&_a]:underline [&_a]:underline-offset-2",
   "[&_blockquote]:my-3 [&_blockquote]:border-l-2 [&_blockquote]:border-border [&_blockquote]:pl-4 [&_blockquote_p]:text-text-secondary [&_hr]:my-6 [&_hr]:border-border",

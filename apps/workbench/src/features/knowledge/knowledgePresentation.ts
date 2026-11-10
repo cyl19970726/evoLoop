@@ -138,6 +138,17 @@ export function sourceReview(sources: readonly { state: string }[]): string | nu
 /** The source list as read: `error` when the latest read failed, `stale` when what is shown was read before that. */
 export interface SourcesRead { error: string; stale: boolean }
 
+/**
+ * The 提出候选 entry in the space's header. Only a writer sees it. While the project has no knowledge backend a
+ * candidate cannot be saved, so the entry says so where it stands and cannot be opened (not at the form's source field).
+ */
+export function proposeEntry({ canWrite, notConfigured, draftTouched }: { canWrite: boolean; notConfigured: boolean; draftTouched: boolean }):
+  { shown: false } | { shown: true; label: string; disabled: boolean; reason: string | null } {
+  if (!canWrite) return { shown: false };
+  if (notConfigured) return { shown: true, label: "提出候选", disabled: true, reason: "知识后端未配置，暂时不能提出" };
+  return { shown: true, label: draftTouched ? "继续候选草稿" : "提出候选", disabled: false, reason: null };
+}
+
 /** What the source field of 提出候选 says: reading, not read back (never "没有来源"), kept from before, or what is there. */
 export function sourceHint(sources: readonly { state: string }[] | undefined, read: SourcesRead): string {
   if (sources === undefined) return read.error ? "可选来源这次没有读回，暂时不能保存；重新读取后再选。" : "正在读取可选来源…";

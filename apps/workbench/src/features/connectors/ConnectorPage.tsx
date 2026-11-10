@@ -7,6 +7,7 @@ import { date, href } from "../../shared/ui/shared";
 import { SettingsPage, SettingsSection } from "../../shared/ui/SettingsParts";
 import { useProjectQuery } from "../../shared/query";
 import { sessionClient } from "../../shared/sessionClient";
+import { agentDisplayName } from "../../shared/agentNamePresentation";
 import type { MutationContext } from "../../shared/ActionForm";
 import { connectorClient, type ConnectorDeliverySummary, type ConnectorDeliveryDetail } from "./client";
 import {
@@ -27,7 +28,7 @@ async function readAgentName(projectId: string, sessionId: string, signal: Abort
   const session = (await sessionClient("", projectId).snapshot(key, signal))?.session;
   if (!session || (session.key !== key && !session.aliases?.some(alias => alias.kind === "owned" && alias.sessionId === sessionId)))
     throw new Error("智能体名称来源不匹配");
-  return session.profile?.displayName?.trim() || session.title?.trim() || null;
+  return agentDisplayName(session) || null;
 }
 
 function TargetAgent({ projectId, sessionId }: { projectId: string; sessionId: string }) {

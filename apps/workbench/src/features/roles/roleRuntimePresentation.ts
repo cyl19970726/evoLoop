@@ -16,8 +16,33 @@ export interface RoleRuntimePresentation {
   reportedBy: string;
   workDirectory: string;
   groups: { source: SkillSource; label: string; loaded: number; skills: { key: string; name: string; selected: boolean; detail: string;
-    description: string | null; location: string | null }[] }[];
+    /** One sentence in Chinese on what the skill is for; null when its file gives no description. */
+    purpose: string | null;
+    /** The description as its SKILL.md writes it, when `purpose` does not repeat it (shown under 原文). */
+    original: string | null;
+    location: string | null }[] }[];
   loadedCount: number;
+}
+
+// A skill's description is written in its SKILL.md for agents, often in English. The card says in one Chinese
+// sentence what the skill is for: the first sentence of a Chinese description, a known purpose for the project's own
+// English-described skills, or that the description is in English. The full description stays under 原文.
+const knownPurposes: Record<string, string> = {
+  "evoloop-workflow": "用 evoLoop 业务命令行承接已授权的工作：固定依据、更新任务或文档、交付并收集使用反馈",
+  "frontend-design": "新建或改造界面时的视觉设计指导：风格方向、字体与不落俗套的取舍",
+  "web-design-guidelines": "按通用网页界面规范检查工作台的可访问性与交互",
+};
+export const englishDescription = "说明为英文，展开查看";
+const chinese = /[㐀-鿿]/;
+
+export function skillPurpose(name: string, description: string | null): { purpose: string | null; original: string | null } {
+  const text = description?.trim() ?? "";
+  if (!text) return { purpose: null, original: null };
+  if (chinese.test(text)) {
+    const first = text.split(/(?<=[。；！？])/u)[0]!.trim().replace(/[。；！？]$/u, "");
+    return { purpose: first, original: first === text.replace(/[。；！？]$/u, "") ? null : text };
+  }
+  return { purpose: knownPurposes[name] ?? englishDescription, original: text };
 }
 
 /** What the card shows, kept apart from rendering so it can be checked without a browser. */
@@ -26,7 +51,7 @@ export function presentRoleRuntime(view: RoleRuntimeView): RoleRuntimePresentati
     const skills = view.skills.filter(skill => skill.source === source);
     return { source, label: sourceLabel[source], loaded: skills.filter(skill => skill.selected).length,
       skills: skills.map(skill => ({ key: `${skill.source}:${skill.name}`, name: skill.name, selected: skill.selected,
-        detail: `${reasonLabel[skill.reason]} · ${deliveryLabel[skill.delivery]}`, description: skill.description, location: skill.location })) };
+        detail: `${reasonLabel[skill.reason]} · ${deliveryLabel[skill.delivery]}`, ...skillPurpose(skill.name, skill.description), location: skill.location })) };
   }).filter(group => group.skills.length);
   return {
     provider: providerLabel[view.provider],

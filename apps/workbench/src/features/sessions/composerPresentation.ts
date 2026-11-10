@@ -4,6 +4,7 @@
 // note) when no ordinary message can be saved. Pure, tested in session-conversation-presentation.test.ts.
 import type { DirectInputCapability } from "@evoloop/contracts/direct-input";
 import type { ComposerSendMode } from "@evoloop/ui";
+import { agentDisplayName, agentNameCollisions, type AgentNameSource } from "../../shared/agentNamePresentation";
 
 /** `start` and `steer` go through the runtime's 即时输入; `post` saves an ordinary message that is handled in order. */
 export type ComposerAction = "start" | "steer" | "post";
@@ -90,6 +91,20 @@ export function composerPlan(facts: ComposerFacts): ComposerPlan {
 /** The message text with the chosen skill named on its first line; the runtime reads it as part of the message. */
 export function messageWithSkill(content: string, skill: { name: string; slug: string } | null): string {
   return skill ? `使用技能：${skill.name}（${skill.slug}）\n${content}` : content;
+}
+
+/**
+ * The agents @ offers, without the page's own agent, each with the name the text will carry. Agents whose names
+ * collide (two unregistered external agents of one role) carry their short identifier, so the menu, the text and the
+ * copies sent from it never confuse one with the other.
+ */
+export function mentionCandidates<T extends AgentNameSource & { key: string }>(items: readonly T[], currentKey: string): Array<{ item: T; name: string }> {
+  const others = items.filter(item => item.key !== currentKey);
+  const collisions = agentNameCollisions(others);
+  return others.map(item => {
+    const short = collisions.get(item.key);
+    return { item, name: short ? `${agentDisplayName(item)}（标识 ${short}）` : agentDisplayName(item) };
+  });
 }
 
 /** The agents named with @ that are still in the text when it is sent. */

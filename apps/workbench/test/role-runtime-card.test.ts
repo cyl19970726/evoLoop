@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { defaultRoleSkillSelection, type RoleRuntimeView } from "@evoloop/contracts/role-skills";
-import { presentRoleRuntime, runtimeCommand, runtimeFields } from "../src/features/roles/roleRuntimePresentation";
+import { englishDescription, presentRoleRuntime, runtimeCommand, runtimeFields, skillPurpose } from "../src/features/roles/roleRuntimePresentation";
 
 const projectId = "30000001-0000-4000-8000-000000000001", roleId = "30000002-0000-4000-8000-000000000002";
 const view = (overrides: Partial<RoleRuntimeView> = {}): RoleRuntimeView => ({
@@ -45,4 +45,18 @@ test("the form offers a runtime only before binding and keeps the bound one afte
   assert.equal(command.provider, "codex", "a bound Role never sends another runtime");
   assert.equal(command.expectedRevision, 2);
   assert.deepEqual(command.skills, { project: false, personal: true, builtin: true, add: [], remove: ["simplify"] });
+});
+
+test("a skill says in one Chinese sentence what it is for; an English description goes to 原文", () => {
+  assert.deepEqual(skillPurpose("evoloop-requirements", "将用户目标整理成可执行的 Task；用于需求澄清。不承担排程"),
+    { purpose: "将用户目标整理成可执行的 Task", original: "将用户目标整理成可执行的 Task；用于需求澄清。不承担排程" });
+  assert.deepEqual(skillPurpose("x", "业务流程"), { purpose: "业务流程", original: null }, "a one-sentence Chinese description is not repeated");
+  const known = skillPurpose("evoloop-workflow", "Use the evoLoop business CLI to take an authorized project assignment through fixed evidence.");
+  assert.doesNotMatch(known.purpose!.replace("evoLoop", ""), /[A-Za-z]{3,}/);
+  assert.match(known.original!, /^Use the evoLoop business CLI/);
+  assert.deepEqual(skillPurpose("simplify", "Review the changed code for reuse."), { purpose: englishDescription, original: "Review the changed code for reuse." });
+  assert.deepEqual(skillPurpose("none", null), { purpose: null, original: null });
+  const shown = presentRoleRuntime(view({ skills: [{ name: "simplify", source: "builtin", selected: false, reason: "switch_off", description: "Review the changed code.",
+    location: "/opt/skills/simplify", contentHash: null, delivery: "none" }] }));
+  assert.equal(shown.groups[0]!.skills[0]!.purpose, englishDescription);
 });

@@ -11,6 +11,7 @@ import { MarkdownBody } from "../../shared/ui/MarkdownBody";
 import { OriginalDocumentReader } from "../../shared/ui/OriginalDocumentReader";
 import { readingSource } from "../../shared/ui/readingProse";
 import { date } from "../../shared/ui/shared";
+import { useRevisionOrigin } from "../../shared/useRevisionOrigin";
 import { CommandForm } from "../../shared/command";
 import { DocumentLink } from "./DocumentLink";
 import { impactSeen, reviewBasisCommand } from "./taskCommands";
@@ -140,14 +141,15 @@ function ImpactItem({ context, detail, impact, title, canReview, defaultOpen }: 
 
 function RevisionColumn({ label, read }: { label: string; read: { data: DocumentRevision | undefined; error: unknown; isPending: boolean } }) {
   const revision = read.data;
+  const origin = useRevisionOrigin(revision?.projectId ?? "", { actorId: revision?.author, reason: revision?.reason });
   return <section aria-label={label} className="flex min-w-0 flex-col gap-2 rounded-lg bg-muted p-4">
     <h3 className="text-label font-semibold text-foreground">{label}</h3>
     {!revision ? read.error ? <Notice tone="error">这一版暂不可读取：{errorText(read.error)}</Notice> : <LoadingState lines={5} label={`正在读取${label}`} />
       : <>
-        <p className="text-caption text-muted-foreground">{date(revision.createdAt)} · {revision.author}</p>
+        <p className="text-caption text-muted-foreground">{date(revision.createdAt)} · {origin.author}</p>
         {revision.body !== null && revision.format === "markdown"
           ? <>
-            <MarkdownBody className="text-label" source={revision.body} identity={`impact-${revision.id}`} projectId={revision.projectId} />
+            <MarkdownBody className="text-label" source={revision.body} identity={`impact-${revision.id}`} projectId={revision.projectId} topHeading={4} />
             <details><summary className="w-fit cursor-pointer text-caption text-primary hover:underline">查看 Markdown 原文</summary>
               <pre className={`mt-2 max-h-96 ${readingSource}`}>{revision.body}</pre></details>
           </>

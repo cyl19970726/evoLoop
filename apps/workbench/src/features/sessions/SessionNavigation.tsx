@@ -3,6 +3,7 @@ import { ChevronDown, LayoutDashboard, Plus, Search } from "lucide-react";
 import { AgentAvatar, IconButton, Sheet, SheetContent, SheetDescription, SheetTitle, cn } from "@evoloop/ui";
 import type { ObservedSession } from "@evoloop/contracts/session-observation";
 import { href } from "../../shared/ui/shared";
+import { agentDisplayName, agentNameCollisions, agentNameHint } from "../../shared/agentNamePresentation";
 import { useSessionDirectoryGroup, type DirectoryMembership } from "./useSessionDirectoryGroup";
 import { agentStatusLabel } from "./sessionStatusPresentation";
 import { groupSessionsByClass, sessionClassLabel, sessionClassReason, type SessionClass } from "./sessionDirectoryPresentation";
@@ -12,6 +13,7 @@ export const sessionHref = (projectId: string, key: string, from?: { href: strin
   `${href(projectId, "sessions")}?${new URLSearchParams({ session: key, ...(from ? { return: from.href, actor: from.actorId, returnTitle: from.title.slice(0, 80) } : {}) })}`;
 
 const classOrder: SessionClass[] = ["business", "system", "unclassified"];
+const shortTime = (iso: string) => { const at = new Date(iso); return Number.isNaN(at.getTime()) ? iso : at.toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false }); };
 export interface SessionNavigationState {
   query: string;
   historyOpen: boolean;
@@ -58,10 +60,17 @@ export function SessionNavigation({ token, projectId, selectedId, onNavigate, st
   const totals = current.page?.totals;
   const grouped = groupSessionsByClass(current.items);
   const historicalCount = (totals?.historical ?? 0) + (totals?.unclassified ?? 0);
+  // Agents that would show the same name are told apart by their short identifier, first on the second line.
+  const collisions = agentNameCollisions([...current.items, ...historical.items, ...unclassified.items]);
   function item(session: ObservedSession) {
     const roles = session.roles.map(role => role.title).join(" · ");
+    const name = agentDisplayName(session);
     const taskSignal = session.currentTask ? session.currentTask.title : null;
+    // A generated name already says the role; what the service records about the agent says the rest.
+    const hint = agentNameHint(session, shortTime);
+    const short = collisions.get(session.key);
     const status = agentStatusLabel(session);
+    const signal = `${short ? `标识 ${short} · ` : ""}${taskSignal ?? hint ?? (roles || sessionClassReason(session))} · ${status}`;
     const dot = session.busy === true ? "bg-primary" : session.runtimeState === "failed" ? "bg-destructive" : session.busy === false && session.runtimeState === "ready" ? "bg-border" : "bg-warning";
     const selected = selectedId === session.key;
     return <a key={session.key} href={sessionHref(projectId, session.key)} aria-current={selected ? "page" : undefined} onClick={onNavigate}
@@ -69,8 +78,8 @@ export function SessionNavigation({ token, projectId, selectedId, onNavigate, st
         selected && "bg-raised font-medium text-foreground shadow-sm")}>
       <AgentAvatar seed={session.key} roleSeed={session.roles[0]?.id ?? session.title} size={30} />
       <span className="flex min-w-0 flex-1 flex-col">
-        <span className="truncate" title={session.title}>{session.title}</span>
-        <span className="session-nav-signal truncate text-caption font-normal text-muted-foreground">{taskSignal ?? (roles || sessionClassReason(session))}{` · ${status}`}</span>
+        <span className="truncate" title={name}>{name}</span>
+        <span className="session-nav-signal truncate text-caption font-normal text-muted-foreground" title={signal}>{signal}</span>
       </span>
       <span aria-hidden="true" className={cn("size-[7px] shrink-0 rounded-full", dot)} />
     </a>;
@@ -93,7 +102,7 @@ export function SessionNavigation({ token, projectId, selectedId, onNavigate, st
     <a href={href(projectId, "sessions")} onClick={onNavigate} aria-current={!selectedId ? "page" : undefined}
       className={cn("flex items-center gap-2.5 rounded-lg px-3 py-[9px] text-text-secondary hover:bg-selected focus-visible:shadow-[var(--focus-ring)] outline-none", !selectedId && "bg-raised font-medium text-foreground shadow-sm")}>
       <LayoutDashboard size={18} aria-hidden="true" />统筹安排
-      {totals && <span className="ml-auto text-caption text-muted-foreground">{totals.current + totals.historical + totals.unclassified} 个</span>}
+      {totals && <span className="ml-auto text-caption text-muted-foreground" title="目录里的智能体总数，含历史与待归类">共 {totals.current + totals.historical + totals.unclassified} 个智能体</span>}
     </a>
     {current.error && groupError("current", current.error)}
     {(searchPending || current.loading && !current.page) && muted("正在读取智能体目录…")}

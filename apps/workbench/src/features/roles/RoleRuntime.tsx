@@ -11,6 +11,7 @@ import { roleClient } from "../../shared/roleClient";
 import { FactList, PanelSection, mutedText } from "../../shared/ui/PageParts";
 import { presentRoleRuntime, runtimeCommand, runtimeFields, savedRuntimeNotice } from "./roleRuntimePresentation";
 import { ErrorDetails } from "../../shared/ui/ErrorDetails";
+import { FullIdentifiers } from "../../shared/ui/FullIdentifiers";
 
 export function RoleRuntime({ context, roleId }: { context: MutationContext; roleId: string }) {
   const read = useProjectQuery(context.projectId, ["roles", roleId, "runtime"], async () => {
@@ -43,8 +44,8 @@ export function RoleRuntime({ context, roleId }: { context: MutationContext; rol
           <span className={cn("flex flex-wrap items-center gap-2 text-small", skill.selected ? "text-foreground" : "text-muted-foreground")}>
             <strong className="font-medium">{skill.name}</strong>{skill.selected ? <Badge>加载</Badge> : <span className={mutedText}>不加载</span>}</span>
           <span className={mutedText}>{skill.detail}</span>
-          {skill.description && <span className="text-caption text-text-secondary">{skill.description}</span>}
-          {skill.location && <span className={cn(mutedText, "break-all")}>{skill.location}</span>}
+          {skill.purpose && <span className="text-caption text-text-secondary">{skill.purpose}</span>}
+          <FullIdentifiers summary="原文与位置" rows={[{ label: "说明原文", value: skill.original, text: true }, { label: "文件位置", value: skill.location }]} />
         </li>)}</ul>
       </details>)}
       {view.missing.length > 0 && <Notice tone="error">单独加入但未找到：{view.missing.join("、")}；这项职责的运行时不会有它们。</Notice>}

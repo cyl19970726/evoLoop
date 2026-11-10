@@ -5,6 +5,7 @@
 import type { LeaderWorkTask } from "@evoloop/contracts/work-index";
 import type { ObservedSession } from "@evoloop/contracts/session-observation";
 import type { ResidentQueue, QueueHoldCode } from "@evoloop/contracts/queues";
+import { agentDisplayName } from "../../shared/agentNamePresentation";
 
 export type AgentLoad = "overloaded" | "busy" | "idle" | "unknown";
 
@@ -161,7 +162,7 @@ export function buildArrangement(sessions: readonly ObservedSession[], tasks: re
   const risks: ArrangementRisk[] = [];
   for (const row of rows) if (row.running.length > 1) risks.push({
     kind: "parallel", sessionKey: row.session.key, taskIds: row.running.map(task => task.taskId),
-    title: `${row.session.title} 同时有 ${row.running.length} 项进行中的任务`,
+    title: `${agentDisplayName(row.session)} 同时有 ${row.running.length} 项进行中的任务`,
     detail: row.running.map(task => quoted(task.title)).join("、"),
   });
   for (const group of elsewhere) {
