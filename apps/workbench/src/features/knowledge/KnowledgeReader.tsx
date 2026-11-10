@@ -68,7 +68,7 @@ export function KnowledgeReader({ projectId, read, fixed, returnHref, pendingTit
             <PanelRight aria-hidden="true" />来源与反例{challenges > 0 && <Badge className="ml-0.5">{challenges}</Badge>}</Button>}
         </div>
       </div>
-      <h1 ref={heading} tabIndex={-1} className="text-title font-semibold leading-[1.3] outline-none [overflow-wrap:anywhere]">{page.title}</h1>
+      <h1 ref={heading} tabIndex={-1} className="text-title font-semibold leading-(--leading-tight) outline-none [overflow-wrap:anywhere]">{page.title}</h1>
       <p className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-label text-text-secondary">
         <StatusTag tone={validityTone[page.observedValidity] ?? "unknown"} label={label(validityLabel, page.observedValidity)} />
         <span>{label(pageTypeLabel, page.pageType)}</span>
@@ -82,7 +82,7 @@ export function KnowledgeReader({ projectId, read, fixed, returnHref, pendingTit
         : standing.note && <p className="text-caption text-muted-foreground">{standing.note}</p>}
       {page.validity !== page.observedValidity && <Notice tone="waiting" title={`这一版发布时是“${label(validityLabel, page.validity)}”，目前标为“${label(validityLabel, page.observedValidity)}”`}>使用前请复核来源。</Notice>}
       {review && <Notice tone="waiting" title={review}>来源核对见右栏“来源”。</Notice>}
-      {challenges > 0 && <p className="text-label text-text-secondary">此版登记了 {challenges} 条挑战或反例{panel && <>，<button type="button" className="text-primary underline underline-offset-2" onClick={() => panel.setOpen(true)}>在右栏查看</button></>}。</p>}
+      {challenges > 0 && <p className="text-label text-text-secondary">此版登记了 {challenges} 条挑战或反例{panel && <>，<Button variant="link" className="underline underline-offset-2" onClick={() => panel.setOpen(true)}>在右栏查看</Button></>}。</p>}
       {failed && <Notice tone="error" title="这一页这次没有读回">{errorText(read.error)}。下面是上次读回的内容，当前待核对。</Notice>}
     </header>
     <section aria-label="知识页完整正文" className={cn("transition-opacity duration-150", read.previous && "opacity-60")}>

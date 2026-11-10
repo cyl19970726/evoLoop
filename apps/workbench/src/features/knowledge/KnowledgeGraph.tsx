@@ -25,7 +25,7 @@ export function KnowledgeGraph({ projectId, graph, focusId }: { projectId: strin
         const point = positions.get(nodeKey(node.knowledgeId, node.revision))!;
         return <g key={nodeKey(node.knowledgeId, node.revision)}>
           <circle cx={point.x} cy={point.y} r="30" className={cn(node.validity === "valid" ? "fill-accent" : "fill-warning-soft", "stroke-border")} />
-          <text x={point.x} y={point.y + 4} textAnchor="middle" fontSize="11" className="fill-foreground">{node.title.slice(0, 8)}</text>
+          <text x={point.x} y={point.y + 4} textAnchor="middle" className="fill-foreground text-caption">{node.title.slice(0, 8)}</text>
         </g>;
       })}
     </svg>

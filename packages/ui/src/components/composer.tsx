@@ -1,5 +1,5 @@
 import * as React from "react";
-import { ArrowUp, FileText, ListChecks, Plus, Slash, Sparkles, X } from "lucide-react";
+import { ArrowUp, FileText, ListChecks, Plus, Slash, Sparkles, Square, X } from "lucide-react";
 import { cn } from "../lib/cn";
 
 /* The agent page composer. Enter sends; while a turn runs the message is queued (or added to the turn where the
@@ -191,18 +191,18 @@ export function Composer({
               aria-selected={selected}
               onMouseDown={event => { event.preventDefault(); pick(entry); }}
               onMouseEnter={() => setActive(index)}
-              className={cn("flex cursor-pointer items-center gap-2.5 rounded-md px-2.5 py-[7px]", selected && "bg-selected")}
+              className={cn("flex cursor-pointer items-center gap-2.5 rounded-md px-2.5 py-2", selected && "bg-selected")}
             >
               {entry.type === "command" ? (
                 <>
-                  <span aria-hidden="true" className={cn("flex size-7 shrink-0 items-center justify-center rounded-[8px]", entry.item.kind === "skill" && selected ? "bg-accent text-primary" : "bg-muted text-text-secondary")}>
+                  <span aria-hidden="true" className={cn("flex size-7 shrink-0 items-center justify-center rounded-sm", entry.item.kind === "skill" && selected ? "bg-accent text-primary" : "bg-muted text-text-secondary")}>
                     {entry.item.kind === "skill" ? <Sparkles className="size-3.5" /> : <Slash className="size-3.5" />}
                   </span>
                   <span className="flex min-w-0 flex-1 flex-col">
                     <span className="truncate font-medium text-foreground">{entry.item.name}</span>
                     {entry.item.description && <span className="truncate text-caption text-muted-foreground">{entry.item.description}</span>}
                   </span>
-                  <span className="shrink-0 font-mono text-[11px] text-muted-foreground">{entry.item.slug}</span>
+                  <span className="shrink-0 font-mono text-caption text-muted-foreground">{entry.item.slug}</span>
                 </>
               ) : (
                 <>
@@ -240,11 +240,11 @@ export function Composer({
               </>
             )}
           </ul>
-          <p className="m-0 px-2.5 pb-1 pt-1.5 text-[11px] text-muted-foreground">↑↓ 选择 · 回车确认 · Esc 关闭{menu?.kind === "mention" ? " · 可以 @ 多个" : ""}</p>
+          <p className="m-0 px-2.5 pb-1 pt-1.5 text-caption text-muted-foreground">↑↓ 选择 · 回车确认 · Esc 关闭{menu?.kind === "mention" ? " · 可以 @ 多个" : ""}</p>
         </div>
       )}
 
-      <div className={cn("flex flex-col gap-2 rounded-[22px] bg-raised px-2.5 py-2 shadow-lg transition-shadow duration-150", open && "shadow-[var(--focus-ring),var(--shadow-panel)]", disabled && "opacity-60")}>
+      <div className={cn("flex flex-col gap-2 rounded-xl bg-raised px-2.5 py-2 shadow-lg transition-shadow duration-150", open && "shadow-[var(--focus-ring),var(--shadow-panel)]", disabled && "opacity-60")}>
         {attachments.length > 0 && (
           <div className="flex flex-wrap gap-1.5 px-1 pt-0.5">
             {attachments.map(attachment => (
@@ -284,11 +284,11 @@ export function Composer({
             onKeyDown={onKeyDown}
             onBlur={() => setDismissed(value)}
             onFocus={() => setDismissed(null)}
-            className="max-h-40 min-h-[34px] min-w-0 flex-1 resize-none border-0 bg-transparent px-0.5 py-[7px] text-[15px] leading-[1.35] text-foreground outline-none placeholder:text-muted-foreground"
+            className="max-h-40 min-h-[34px] min-w-0 flex-1 resize-none border-0 bg-transparent px-0.5 py-1.5 text-body leading-(--leading-tight) text-foreground outline-none placeholder:text-muted-foreground"
           />
           {showStop ? (
             <button type="button" aria-label="停止这一轮" title="停止这一轮（Esc）" onClick={onStop} className="inline-flex size-9 shrink-0 cursor-pointer items-center justify-center rounded-full border-0 bg-foreground text-background outline-none hover:opacity-90 focus-visible:shadow-[var(--focus-ring)]">
-              <span aria-hidden="true" className="size-[11px] rounded-[3px] bg-current" />
+              <Square aria-hidden="true" className="size-3.5 fill-current" strokeWidth={0} />
             </button>
           ) : (
             <button type="button" aria-label={sendLabels[mode]} title={sendLabels[mode]} onClick={send} disabled={!value.trim() || disabled || busy} className="inline-flex size-9 shrink-0 cursor-pointer items-center justify-center rounded-full border-0 bg-foreground text-background outline-none hover:opacity-90 focus-visible:shadow-[var(--focus-ring)] disabled:cursor-default disabled:bg-field disabled:text-muted-foreground disabled:opacity-100">

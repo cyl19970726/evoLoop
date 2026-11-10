@@ -1,10 +1,11 @@
-import { Suspense, lazy, useEffect, useMemo, useRef, useState, useLayoutEffect, type ComponentType, type LazyExoticComponent } from "react";
+import { Component, Suspense, lazy, useEffect, useMemo, useRef, useState, useLayoutEffect, type ComponentType, type LazyExoticComponent, type ReactNode } from "react";
 import type { Operation } from "@evoloop/contracts";
 import { ApiError, api, errorText, type Session } from "../shared/api";
 import { describeFailure } from "../shared/errorPresentation";
 import { onUnauthorized, signIn, signOut } from "../shared/identity";
 import type { MutationContext, RecoverableCommand } from "../shared/command/context";
 import { clearCommandDrafts } from "../shared/command/drafts";
+import { askConfirm, cancelConfirms, confirmHostFailed, currentConfirm, onConfirmUnavailable } from "../shared/confirm";
 import { addReceipt, hasProjectReceipt, readReceipts, removeReceipt, visibleReceipts as forPrincipal, writeReceipts, type OperationReceipt } from "./recovery";
 import type { OperationItem } from "../features/settings/operationsPresentation";
 import { clearRecoveryIntents, forgetRecoveryIntent, isSpecialOperation, rememberRecoveryIntent } from "./recoveryIntent";
@@ -48,6 +49,16 @@ const ArrangementPage = named(() => import("../features/sessions/ArrangementPage
 const ResidentQueuePanel = named(() => import("../features/workflow"), "ResidentQueuePanel");
 const ConnectorPage = named(() => import("../features/connectors/ConnectorPage"), "ConnectorPage");
 const NotFoundPage = named(() => import("./NotFoundPage"), "NotFoundPage");
+// The confirmation dialog (leaving a project or signing out with drafts) loads after login, with the design system.
+const ConfirmHost = named(() => import("../shared/ui/ConfirmHost"), "ConfirmHost");
+/** If the dialog's code cannot load, the questions waiting for it are cancelled (shared/confirm.ts) instead of hanging. */
+class ConfirmHostBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
+  state = { failed: false };
+  static getDerivedStateFromError() { return { failed: true }; }
+  componentDidCatch(error: unknown) { console.error("确认框没能加载", error); confirmHostFailed(); }
+  render() { return this.state.failed ? null : this.props.children; }
+}
+const historyIndex = (location: { state: unknown }) => (location.state as { __TSR_index?: unknown } | null)?.__TSR_index;
 // The frame loads after login; the login gate starts fetching it while the token is typed.
 const loadShell = () => import("./shell/AppShell");
 const AppShell = named(loadShell, "AppShell");
@@ -74,11 +85,25 @@ function useRoute(): Route {
     };
     rememberList();
     let previousPath = currentPath();
-    // Leaving the project with unsaved drafts asks first; Back and Forward are asked too.
+    // Leaving the project with unsaved drafts asks first; Back and Forward are asked too. The navigation is stopped at
+    // once (Back and Forward put the address back straight away), then the dialog asks; leaving goes to where the
+    // reader was going without asking again. While a question is open every other navigation is stopped, not queued,
+    // so the address and the page never part.
     const unblock = appHistory().block({
-      blockerFn: ({ currentLocation, nextLocation }) => projectOf(nextLocation.pathname) !== projectOf(currentLocation.pathname)
-        && !!document.querySelector('[data-dirty="true"]')
-        && !window.confirm("还有未提交的草稿。离开当前项目会清除页面草稿，确定离开？"),
+      blockerFn: ({ currentLocation, nextLocation, action }) => {
+        if (currentConfirm()) return true;
+        if (projectOf(nextLocation.pathname) === projectOf(currentLocation.pathname) || !document.querySelector('[data-dirty="true"]')) return false;
+        const from = historyIndex(currentLocation), to = historyIndex(nextLocation);
+        const steps = typeof from === "number" && typeof to === "number" ? to - from : action === "FORWARD" ? 1 : -1;
+        void askConfirm({ title: "离开当前项目？", description: "还有未提交的草稿。离开当前项目会清除页面草稿。", confirmLabel: "离开并清除草稿", cancelLabel: "留在当前项目", danger: true })
+          .then(leave => {
+            if (!leave) return;
+            if (action === "PUSH") appHistory().push(nextLocation.href, undefined, { ignoreBlocker: true });
+            else if (action === "REPLACE") appHistory().replace(nextLocation.href, undefined, { ignoreBlocker: true });
+            else appHistory().go(steps, { ignoreBlocker: true });
+          });
+        return true;
+      },
       enableBeforeUnload: false,
     });
     const stop = onNavigate(() => {
@@ -173,8 +198,12 @@ export function App() {
   }, [projectId]);
   /** Logout or a lost login: nothing read or drafted under this identity stays in the page. Receipts stay for the same identity. */
   function endSession() {
-    clearCommandDrafts(); clearRecoveryIntents(); clearSessionSnapshots(); queryClient.clear(); signOut(); setToken(""); setSession(null);
+    cancelConfirms(); clearCommandDrafts(); clearRecoveryIntents(); clearSessionSnapshots(); queryClient.clear(); signOut(); setToken(""); setSession(null);
   }
+  // A question that could not be shown was answered "cancel": say so, so leaving or signing out is not silently ignored.
+  useEffect(() => onConfirmUnavailable(() => {
+    setOperationNotice("确认框没能加载，这次离开或退出已取消，草稿还在。请刷新页面后再试。"); setOperationDetail(null);
+  }), []);
   const ended = useRef(endSession);
   ended.current = endSession;
   useEffect(() => onUnauthorized(() => {
@@ -207,9 +236,11 @@ export function App() {
   }} />;
   const principal = session.principal;
   const context: MutationContext = { token, projectId: projectId ?? "", principal, blocked: visibleReceipts.some(r => r.projectId === projectId), onAttempt: beginAttempt, onKnown: finishKnown, onChanged: changed };
-  function logout() {
-    if (document.querySelector('[data-dirty="true"]') && !window.confirm("还有未提交的草稿。退出会清除本页草稿，确定退出？")) return;
-    if (visibleReceipts.length && !window.confirm(`仍有 ${visibleReceipts.length} 个结果未确认的操作。回执会留在当前浏览器会话；退出后请用同一身份登录核对。确定退出？`)) return;
+  async function logout() {
+    if (document.querySelector('[data-dirty="true"]') && !await askConfirm({ title: "退出并清除草稿？", description: "还有未提交的草稿。退出会清除本页草稿。",
+      confirmLabel: "退出并清除草稿", cancelLabel: "先不退出", danger: true })) return;
+    if (visibleReceipts.length && !await askConfirm({ title: `仍有 ${visibleReceipts.length} 个结果未确认的操作，确定退出？`,
+      description: "回执会留在当前浏览器会话；退出后请用同一身份登录核对。", confirmLabel: "仍要退出", cancelLabel: "先不退出" })) return;
     endSession();
   }
   function confirmReceipt(receipt: OperationReceipt, result: Operation["result"]) {
@@ -220,7 +251,8 @@ export function App() {
     setOperationDetail(refusal?.detail ?? null);
     replaceReceipts(removeReceipt(receiptsRef.current, receipt.operationId)); changed();
   }
-  if (!projectId) return <Suspense fallback={<p role="status" className="p-8 text-small">正在打开项目列表…</p>}><ProjectChooser context={context} token={token} principal={principal} receipts={visibleReceipts} operationNotice={operationNotice} operationDetail={operationDetail} onConfirmed={confirmReceipt} onRefreshSession={async () => setSession(await api(token).session())} logout={logout} /></Suspense>;
+  const confirmHost = <ConfirmHostBoundary><Suspense fallback={null}><ConfirmHost /></Suspense></ConfirmHostBoundary>;
+  if (!projectId) return <>{confirmHost}<Suspense fallback={<p role="status" className="p-8 text-small">正在打开项目列表…</p>}><ProjectChooser context={context} token={token} principal={principal} receipts={visibleReceipts} operationNotice={operationNotice} operationDetail={operationDetail} onConfirmed={confirmReceipt} onRefreshSession={async () => setSession(await api(token).session())} logout={logout} /></Suspense></>;
   const projectReceipts = visibleReceipts.filter(r => r.projectId === projectId);
   // 结果未知的操作 gets each receipt with its check card. OperationCheck loads on demand; its own boundary keeps a first
   // receipt from suspending the page around it.
@@ -234,10 +266,10 @@ export function App() {
     ...projectError ? [{ key: "project", tone: "error" as const, text: `项目暂不可读取：${projectError}`, button: { label: "重试读取项目", onClick: context.onChanged } }] : [],
     ...route.section !== "inbox" && inbox.state === "unknown" ? [{ key: "inbox", tone: "waiting" as const, text: inbox.text, link: { href: href(projectId, "inbox"), label: "去待我处理核对" } }] : [],
   ];
-  return <Suspense fallback={<p className={opening} role="status">正在打开工作台…</p>}><AppShell route={route} projectId={projectId} projectTitle={projectTitle} actor={principal.actorId} permissions={principal.permissions}
-    receiptCount={projectReceipts.length} inboxCount={shellInboxCount(inbox, projectReceipts.length)} token={token} logout={logout} notices={notices}>
+  return <>{confirmHost}<Suspense fallback={<p className={opening} role="status">正在打开工作台…</p>}><AppShell route={route} projectId={projectId} projectTitle={projectTitle} actor={principal.actorId} permissions={principal.permissions}
+    receiptCount={projectReceipts.length} inboxCount={shellInboxCount(inbox)} token={token} logout={logout} notices={notices}>
     <WorkspacePages key={`${principal.actorId}:${projectId}`} route={route} context={context} refresh={refresh} operations={operationItems} />
-  </AppShell></Suspense>;
+  </AppShell></Suspense></>;
 }
 
 /** What the center shows while a page's code loads. Plain classes: this module is in the first load, without @evoloop/ui. */

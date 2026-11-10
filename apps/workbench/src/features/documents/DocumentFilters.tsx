@@ -1,11 +1,10 @@
 // Search and filters for the document list. The same conditions drive the inner rail and the table.
 import React from "react";
 import { Search } from "lucide-react";
-import { Input, cn } from "@evoloop/ui";
+import { Input, Select, cn } from "@evoloop/ui";
 import { kindFilters, statusFilterLabel, type KindFilter, type StatusFilter } from "./documentPresentation";
 import type { DocumentListState } from "./documentListState";
 
-const select = "h-8 min-w-0 rounded-md bg-field px-2 text-label text-foreground outline-none focus-visible:shadow-[var(--focus-ring)]";
 
 export function DocumentFilters({ state, update, layout = "rail" }: {
   state: DocumentListState; update(patch: Partial<DocumentListState>): void; layout?: "rail" | "toolbar";
@@ -17,15 +16,15 @@ export function DocumentFilters({ state, update, layout = "rail" }: {
         <Input aria-label="搜索文档" placeholder="搜索文档标题" value={state.query} onChange={event => update({ query: event.target.value })}
           className="h-8 pl-8 text-label" type="search" />
       </label>
-      <select aria-label="文档类型筛选" value={state.kind} onChange={event => update({ kind: event.target.value as KindFilter })}
-        className={cn(select, layout === "rail" && "flex-1")}>
+      <Select aria-label="文档类型筛选" value={state.kind} onChange={event => update({ kind: event.target.value as KindFilter })} compact
+        className={cn(layout === "rail" && "flex-1")}>
         <option value="all">全部类型</option>
         {kindFilters.map(([key, label]) => <option key={key} value={key}>{label}</option>)}
-      </select>
-      <select aria-label="文档状态筛选" value={state.status} onChange={event => update({ status: event.target.value as StatusFilter })}
-        className={cn(select, layout === "rail" && "flex-1")}>
+      </Select>
+      <Select aria-label="文档状态筛选" value={state.status} onChange={event => update({ status: event.target.value as StatusFilter })} compact
+        className={cn(layout === "rail" && "flex-1")}>
         {(Object.entries(statusFilterLabel) as Array<[StatusFilter, string]>).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
-      </select>
+      </Select>
     </div>
   </React.Fragment>;
 }

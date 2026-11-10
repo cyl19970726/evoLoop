@@ -32,5 +32,20 @@ export function draftKeyFor(context: { principal: { actorId: string }; projectId
 
 /** A draft as plain text, so the person can keep a copy before refilling the form: each label with what was typed. */
 export function readableDraft(title: string, fields: ReadonlyArray<{ name: string; label: string }>, values: Record<string, string>): string {
-  return `${title}\n\n${fields.map(field => `${field.label}\n${values[field.name] ?? ""}`).join("\n\n")}`;
+  return `${title}\n\n${fields.map(field => `${field.label}\n${readableValue(values[field.name] ?? "")}`).join("\n\n")}`;
+}
+
+// A time field keeps "the clock reading|the instant it stands for" (shared/zonedTime.ts joinTimeField) and a date-time
+// control "2026-11-10T10:28". A copy says them the way a person writes them: "2026-11-10 10:28（即 2026-11-10 02:28 UTC）".
+// Written out here rather than imported, so this module stays free of the scheduling contract for the first load.
+const clockReading = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}(?::\d{2})?)$/;
+const utcInstant = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})(:\d{2})?(?:\.\d+)?Z$/;
+function readableValue(value: string): string {
+  const [local = "", instant, ...rest] = value.split("|");
+  const reading = clockReading.exec(local);
+  if (!reading || rest.length) return value;
+  const said = `${reading[1]} ${reading[2]}`;
+  if (instant === undefined) return said;
+  const utc = utcInstant.exec(instant);
+  return utc ? `${said}（即 ${utc[1]} ${utc[2]}${utc[3] && utc[3] !== ":00" ? utc[3] : ""} UTC）` : said;
 }

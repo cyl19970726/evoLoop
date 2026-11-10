@@ -499,6 +499,9 @@ test("知识空间 writes: request bodies, conflicts, unknown results by the ori
 
     // ---- The page moved on after its revision was started: the draft stays and nothing is sent.
     await main.getByRole("button", { name: "清空草稿" }).click();
+    // A touched draft is cleared after confirming in the page's dialog (formerly the browser's own confirm()).
+    await page.getByRole("alertdialog", { name: "清空没保存的知识候选草稿？" }).getByRole("button", { name: "清空", exact: true }).click();
+    await page.getByRole("alertdialog").waitFor({ state: "detached" });
     state.sourceRevision = id(91);
     await main.getByRole("button", { name: "返回知识空间" }).click();
     sourceReads = reads("sources");

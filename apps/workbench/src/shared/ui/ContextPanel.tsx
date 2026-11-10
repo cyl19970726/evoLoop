@@ -4,7 +4,7 @@
 import * as React from "react";
 import { createPortal } from "react-dom";
 import { PanelRightClose, PanelRightOpen, X, ArrowUpRight } from "lucide-react";
-import { IconButton, Sheet, SheetContent, SheetTitle, SheetDescription, cn } from "@evoloop/ui";
+import { Button, IconButton, Sheet, SheetContent, SheetTitle, SheetDescription, cn } from "@evoloop/ui";
 import { appPath, currentPath, onNavigate } from "../navigation";
 import { PageActive } from "./pageActive";
 import { useMediaQuery } from "./useMediaQuery";
@@ -163,11 +163,12 @@ export function ContextPanelColumn({ embedded = false }: { embedded?: boolean } 
   const body = <div className="flex h-full min-h-0 flex-1 flex-col" data-ui="">
     <div className="flex items-center gap-1 border-b border-border px-2 py-1.5">
       <div role="tablist" aria-label="右栏内容" className="flex min-w-0 flex-1 gap-1 overflow-x-auto">
-        {providers > 0 && <button role="tab" type="button" aria-selected={showFacts} onClick={() => setActive("facts")}
-          className={cn("shrink-0 rounded-md px-2.5 py-1 text-small text-text-secondary hover:bg-selected", showFacts && "bg-selected text-foreground")}>信息</button>}
-        {tabs.map(tab => <span key={tab.id} className={cn("flex shrink-0 items-center rounded-md text-small", active === tab.id ? "bg-selected text-foreground" : "text-text-secondary hover:bg-selected")}>
-          <button role="tab" type="button" aria-selected={active === tab.id} onClick={() => setActive(tab.id)} className="max-w-40 truncate py-1 pl-2.5 pr-1" title={tab.title}>{tab.title}</button>
-          <button type="button" aria-label={`关闭 ${tab.title}`} onClick={() => close(tab.id)} className="rounded p-1 hover:bg-field"><X size={13} aria-hidden="true" /></button>
+        {providers > 0 && <Button role="tab" variant="tab" aria-selected={showFacts} onClick={() => setActive("facts")}>信息</Button>}
+        {/* An opened object's tab and its close button share one highlight. */}
+        {tabs.map(tab => <span key={tab.id} className={cn("flex shrink-0 items-center rounded-md", active === tab.id ? "bg-selected" : "hover:bg-selected")}>
+          <Button role="tab" variant="tab" aria-selected={active === tab.id} onClick={() => setActive(tab.id)} title={tab.title}
+            className="min-w-0 max-w-40 pr-1 hover:bg-transparent aria-selected:bg-transparent"><span className="truncate">{tab.title}</span></Button>
+          <IconButton label={`关闭 ${tab.title}`} icon={<X aria-hidden="true" />} className="size-6 rounded-sm [&_svg]:size-3.5" onClick={() => close(tab.id)} />
         </span>)}
       </div>
       {activeTab?.href && <a href={activeTab.href} aria-label="在中间打开" title="在中间打开" className="flex size-8 shrink-0 items-center justify-center rounded-full text-primary hover:bg-accent focus-visible:shadow-[var(--focus-ring)] outline-none"><ArrowUpRight size={16} aria-hidden="true" /></a>}

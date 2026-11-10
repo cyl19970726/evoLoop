@@ -121,9 +121,9 @@ export function inboxBadge(parts: readonly InboxPart[]): InboxBadge {
 }
 
 /**
- * The `inboxCount` handed to the shell. The shell's dot shows inboxCount + receiptCount and has no form for 待核对, so
- * while the count is unknown the inbox part cancels the receipts and the dot shows nothing; a shell notice says why.
+ * The `inboxCount` handed to the shell: the count once every part is current and whole; null while a part cannot be
+ * counted, which the shell's dot shows as 待核对 (a shell notice says why); 0 while the parts are still being read.
  */
-export function shellInboxCount(badge: InboxBadge, receipts: number): number {
-  return badge.state === "known" ? badge.count : badge.state === "unknown" ? -receipts : 0;
+export function shellInboxCount(badge: InboxBadge): number | null {
+  return badge.state === "known" ? badge.count : badge.state === "unknown" ? null : 0;
 }

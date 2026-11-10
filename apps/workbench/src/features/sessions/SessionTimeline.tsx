@@ -54,9 +54,10 @@ function restorePosition(node: HTMLElement, prior: ReadingPosition) {
   node.scrollTop = prior.follow ? node.scrollHeight : entry ? node.scrollTop + entry.getBoundingClientRect().top -
     (prior.viewportTop ?? node.getBoundingClientRect().top + prior.offset) : prior.top;
 }
-/** Agent replies read as prose: the shared reading type, at the flow's size. */
-const replyProse = cn(readingProse, "text-[15px] [&_:is(h2,h3)]:mt-5 [&_:is(h2,h3)]:text-body [&_:is(h4,h5,h6)]:mt-4");
-const linkButton = "cursor-pointer border-0 bg-transparent p-0 text-caption text-primary hover:underline disabled:cursor-default disabled:text-muted-foreground";
+/** Agent replies read as prose: the shared reading type (body size, reading line height), as AgentMessage draws them. */
+const replyProse = cn(readingProse, "[&_:is(h2,h3)]:mt-5 [&_:is(h2,h3)]:text-body [&_:is(h4,h5,h6)]:mt-4");
+/** Small text actions under an entry (详情、消息详情、查看来源): Button variant="link" at caption size. */
+const linkButton = "text-caption";
 
 /** Ticks once a second while `active`, for the live status line's elapsed time. */
 function useNow(active: boolean): number {
@@ -95,8 +96,8 @@ function ToolGroup({ entries, scope, context, sessionKey, mayReadOriginal }: { e
         id: entry.id, text: toolStepText(entry), meta: toolStepState(entry), failed: isFailedEntry(entry),
         running: entry.state === "running" && entry.freshness === "live", pinned: pinned.has(entry.id),
         rowProps: { className: cn("workspace-tool", entry.state), "data-workspace-entry": entry.id, "data-turn-id": entry.turnId ?? undefined },
-        action: <button type="button" className={cn(linkButton, "shrink-0")} aria-label={`${selected ? "收起" : "查看"}工具详情：${label}`} aria-expanded={selected}
-          onClick={() => setSelectedId(value => value === entry.id ? null : entry.id)}>{selected ? "收起" : "详情"}</button>,
+        action: <Button variant="link" className={cn(linkButton, "shrink-0")} aria-label={`${selected ? "收起" : "查看"}工具详情：${label}`} aria-expanded={selected}
+          onClick={() => setSelectedId(value => value === entry.id ? null : entry.id)}>{selected ? "收起" : "详情"}</Button>,
         detail: selected ? <div className="workspace-tool-inline flex flex-col gap-2 rounded-md bg-raised p-3 text-small text-foreground" role="region" aria-label={`${label}详情`}>
           <EntryInspector key={entry.id} entry={entry} context={context} sessionKey={sessionKey} mayReadOriginal={mayReadOriginal} />
         </div> : undefined,
@@ -147,10 +148,10 @@ function TimelineEntry({ item, context, title, taskTitle, sessionKey, target, id
   const stateTag = item.kind === "message" && item.role === "input" && ["pending", "running", "failed", "unknown", "interrupted", "declined"].includes(item.state)
     ? <span className={cn("workspace-input-state rounded-full px-2 py-px text-caption", failedInput ? "bg-danger-soft text-destructive" : "bg-field text-text-secondary")}>{item.state === "pending" ? "排队中" : entryStateLabel[item.state]}</span> : null;
   const actions = <>
-    {(expandedBody?.truncated ?? item.truncated) && <button className={linkButton} type="button" disabled={bodyBusy} onClick={() => void expandBody()}>{bodyBusy ? "读取完整内容中…" : `读取完整${assistant ? "回复" : "内容"}`}</button>}
-    {messageId && <button type="button" className={linkButton} onClick={() => onMessage(messageId)}>消息详情</button>}
+    {(expandedBody?.truncated ?? item.truncated) && <Button variant="link" className={linkButton} disabled={bodyBusy} onClick={() => void expandBody()}>{bodyBusy ? "读取完整内容中…" : `读取完整${assistant ? "回复" : "内容"}`}</Button>}
+    {messageId && <Button variant="link" className={linkButton} onClick={() => onMessage(messageId)}>消息详情</Button>}
     {runHref && <a className="text-caption text-primary hover:underline" href={runHref}>查看来源任务</a>}
-    {!messageId && item.nativeItemId && !mine && <button type="button" className={linkButton} onClick={() => onDetail(item)}>查看来源</button>}
+    {!messageId && item.nativeItemId && !mine && <Button variant="link" className={linkButton} onClick={() => onDetail(item)}>查看来源</Button>}
   </>;
   const time = item.occurredAt ? <time dateTime={item.occurredAt}>{date(item.occurredAt)}</time> : null;
   // A plan the native source wrote as numbered steps folds into one line; the running turn's plan is also pinned above the composer.
@@ -386,7 +387,7 @@ export function SessionTimeline({ context, snapshot, onApplied, taskHref, refres
       readingPositions.delete(scope); readingPositions.set(scope, readingPosition(node, near));
       while (readingPositions.size > 2) readingPositions.delete(readingPositions.keys().next().value!);
     }}>
-      {(timeline.nextCursor || timeline.messagesCursor) && <button className="self-center rounded-full border-0 bg-transparent px-3 py-1 text-caption text-primary hover:bg-accent disabled:text-muted-foreground" type="button" disabled={timeline.moreBusy || timeline.reconciling} onClick={() => void more()}>{timeline.reconciling ? "正在校准历史…" : timeline.moreBusy ? "正在读取更早内容…" : "加载更早的消息与活动"}</button>}
+      {(timeline.nextCursor || timeline.messagesCursor) && <Button variant="ghost" size="compact" className="h-auto self-center px-3 py-1 text-caption font-normal text-primary hover:bg-accent hover:text-primary disabled:text-muted-foreground disabled:opacity-100" disabled={timeline.moreBusy || timeline.reconciling} onClick={() => void more()}>{timeline.reconciling ? "正在校准历史…" : timeline.moreBusy ? "正在读取更早内容…" : "加载更早的消息与活动"}</Button>}
       {!timeline.loaded && <p className="flex items-center gap-2 text-small text-muted-foreground" role="status"><LoaderCircle size={16} className="animate-spin motion-reduce:animate-none" aria-hidden="true" />正在读取对话…</p>}
       {timeline.loaded && !timeline.error && !groups.length && !children && !activeTurn && <div className="session-conversation-empty flex flex-col items-center gap-1.5 py-10 text-center text-small text-muted-foreground"><MessageCircle size={25} aria-hidden="true" /><strong className="text-body font-medium text-foreground">{timeline.page?.partial ? "当前来源尚未提供可读的活动" : "从这里开始沟通"}</strong><span>{timeline.page?.partial ? "这不代表原来没有历史记录，可在读取范围中查看原因。" : "发送消息后，这个智能体的回复与工具活动会连续显示在这里。"}</span></div>}
       {groups.map(group => group.kind === "tools"
@@ -400,7 +401,7 @@ export function SessionTimeline({ context, snapshot, onApplied, taskHref, refres
         : <p className="workspace-turn-state stale text-label text-muted-foreground" role="status">上次读回时这一轮在进行，当前连接状态待核对。</p>)}
       {!timeline.denied && children}
     </div>
-    {!nearBottom && items.length > 0 && <button className="absolute bottom-3 left-1/2 z-10 flex -translate-x-1/2 items-center gap-1.5 rounded-full border-0 bg-raised px-3 py-1.5 text-caption shadow-md" type="button" onClick={() => { if (scroll.current) scroll.current.scrollTo({ top: scroll.current.scrollHeight, behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" }); follow.current = true; setNearBottom(true); }}><ArrowDown size={15} aria-hidden="true" />回到最新内容</button>}
+    {!nearBottom && items.length > 0 && <Button size="compact" className="absolute bottom-3 left-1/2 z-10 h-auto -translate-x-1/2 gap-1.5 bg-raised px-3 py-1.5 text-caption font-normal shadow-md hover:bg-selected" onClick={() => { if (scroll.current) scroll.current.scrollTo({ top: scroll.current.scrollHeight, behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" }); follow.current = true; setNearBottom(true); }}><ArrowDown size={15} aria-hidden="true" />回到最新内容</Button>}
     </div>
     <SessionComposer context={context} snapshot={snapshot} entries={items} activeTurn={activeTurn} live={live} progress={progress} facts={composerFacts} readingScope={readingScope} onApplied={applied} />
     <Dialog open={inspector !== null && !timeline.denied} onOpenChange={open => { if (!open) setInspector(null); }}>

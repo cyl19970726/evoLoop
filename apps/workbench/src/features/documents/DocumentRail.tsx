@@ -31,10 +31,10 @@ function DocumentRailList({ projectId, scope, selectedId }: { projectId: string;
     <DocumentFilters state={state} update={update} />
     {list.error && <p role="alert" className="mx-1 rounded-md bg-danger-soft px-3 py-2 text-caption text-text-secondary">
       列表本次没有读回：{list.error}。{list.stale ? "下面是上次读回的列表，当前待核对。" : ""}
-      <button type="button" className="ml-1 text-primary underline" onClick={() => void list.reread()}>重试</button></p>}
+      <Button variant="link" className="ml-1 underline" onClick={() => void list.reread()}>重试</Button></p>}
     {list.pageError && <p role="alert" className="mx-1 rounded-md bg-danger-soft px-3 py-2 text-caption text-text-secondary">
       后面一页没有读回：{list.pageError}。已载入的仍可查看。
-      {list.more && <button type="button" className="ml-1 text-primary underline" onClick={list.loadMore}>重试这一页</button>}</p>}
+      {list.more && <Button variant="link" className="ml-1 underline" onClick={list.loadMore}>重试这一页</Button>}</p>}
     {list.loading && !list.error && <p role="status" className="mx-1 text-caption text-muted-foreground">正在读取文档…</p>}
     {!list.loading && !shown && !list.error && <div className="mx-1 rounded-md bg-muted px-3 py-2.5 text-caption text-text-secondary">
       <p className="font-medium text-foreground">{empty.title}</p><p className="mt-0.5">{empty.reason}</p></div>}

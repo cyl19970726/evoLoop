@@ -1,8 +1,8 @@
 // Opt-in built-app regression for 待我处理 (docs/frontend/pages/tasks.md 收件页): signed in as a task's declared consumer,
 // 等我使用的交付 lists every current delivery that waits for my use, read across both pages of the work index, and leaves
 // out another consumer's, one I already used, an older revision's; a row opens the task's 交付与使用 with the way back.
-// The 待我处理 count adds 验收安排, 依据变化 and 等我使用; when a part cannot be read it shows no number and the shell says
-// why, and the page never says 0. At 1440, 1024 and 390 (no sideways scroll).
+// The 待我处理 count adds 验收安排, 依据变化 and 等我使用; when a part cannot be read it shows the 待核对 mark instead of a
+// number and the shell says why, and the page never says 0. At 1440, 1024 and 390 (no sideways scroll).
 // EVOLOOP_INBOX_SCREENSHOT_DIR=<dir> saves the screenshots.
 import assert from "node:assert/strict";
 import { test } from "node:test";
@@ -137,6 +137,14 @@ test("待我处理 lists what waits for my use and counts every part, or says it
     const narrow = (page.viewportSize()?.width ?? 1440) < 760;
     return (await page.locator(`[data-shell="${narrow ? "tabs" : "rail"}"] a`, { hasText: "待我处理" }).innerText()).replace("待我处理", "").trim();
   };
+  // A count that cannot be checked shows the 待核对 mark (a question mark named 数目待核对), never a number.
+  const badgeUnknown = async (page: Awaited<ReturnType<typeof open>>) => {
+    const narrow = (page.viewportSize()?.width ?? 1440) < 760;
+    const mark = page.locator(`[data-shell="${narrow ? "tabs" : "rail"}"] a`, { hasText: "待我处理" }).locator('[data-count="unknown"]');
+    await mark.waitFor();
+    assert.equal(await mark.getAttribute("title"), "数目待核对");
+    assert.doesNotMatch(await badge(page), /\d/);
+  };
   const noSideways = async (page: Awaited<ReturnType<typeof open>>, label: string) => {
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth - innerWidth);
     assert.ok(overflow <= 1, `${label}: no sideways page scroll (${overflow}px)`);
@@ -187,13 +195,14 @@ test("待我处理 lists what waits for my use and counts every part, or says it
   await center.getByRole("tabpanel").filter({ visible: true }).locator(`[data-delivery="${deliveryId(fixtures.mine)}"]`).getByText("技术检查通过").waitFor();
   await shoot(page, "inbox-delivery-tab", () => center.getByRole("tab", { name: /^交付与使用/, selected: true }).waitFor());
 
-  // A part that cannot be read again: the count shows no number, the shell says why away from 待我处理, the page says 待核对.
+  // A part that cannot be read again: the count shows 待核对 instead of a number, the shell says why away from 待我处理, the
+  // page says 待核对.
   await go(page, `/p/${projectId}/inbox`);
   await fixture("fail?what=impacts");
   await inbox.getByRole("button", { name: "重新读取" }).first().click();
   await inbox.getByRole("region", { name: "依据变化" }).getByText("上次读回，当前待核对").waitFor({ timeout: 15000 });
   await page.waitForFunction(() => !/待我处理\d/.test(document.querySelector('[data-shell="rail"]')?.textContent ?? ""));
-  assert.equal(await badge(page), "");
+  await badgeUnknown(page);
   assert.equal(await page.getByText(/待我处理的数目暂时无法判断/).count(), 0, "the page itself says which part failed");
   await go(page, `/p/${projectId}/operations`);
   const notice = page.getByRole("status").filter({ hasText: "待我处理的数目暂时无法判断" });
@@ -206,7 +215,7 @@ test("待我处理 lists what waits for my use and counts every part, or says it
   await page.waitForFunction(() => document.querySelector('[data-shell="rail"]')?.textContent?.includes("待我处理5"));
   await page.close();
 
-  // The work index cannot be read at all: no 0 项 and no 当前没有, the count shows no number.
+  // The work index cannot be read at all: no 0 项 and no 当前没有, the count shows 待核对 instead of a number.
   await fixture("fail?what=index");
   const failed = await open(`/p/${projectId}/inbox`);
   const failedInbox = failed.locator("[data-inbox]");
@@ -216,7 +225,7 @@ test("待我处理 lists what waits for my use and counts every part, or says it
   assert.match(failedText, /暂不可读取/);
   assert.doesNotMatch(failedText, /0 项|当前没有/);
   await failedInbox.getByRole("region", { name: "依据变化" }).getByText("1 项").waitFor();
-  assert.equal(await badge(failed), "");
+  await badgeUnknown(failed);
   await shoot(failed, "inbox-index-failed", () => failedSection.getByRole("alert").getByText("等我使用的交付暂不可读取").waitFor());
   await fixture("recover?what=index");
   await failed.close();

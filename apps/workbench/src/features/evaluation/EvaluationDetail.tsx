@@ -2,7 +2,7 @@
 // right column the common task, the materials, the Wiki revisions, the source signature, the versions and every ID.
 import { useRef, type ReactNode } from "react";
 import type { EvaluationAssessment, EvaluationAttempt, EvaluationConclusion, EvaluationRevision } from "@evoloop/contracts";
-import { Notice, cn } from "@evoloop/ui";
+import { Button, Notice, cn } from "@evoloop/ui";
 import { errorText } from "../../shared/api";
 import { option, type MutationContext } from "../../shared/ActionForm";
 import { ContextPanelContent } from "../../shared/ui/ContextPanel";
@@ -151,9 +151,9 @@ export function EvaluationDetail({ context, read, selectedRevision, hold }: {
 }
 
 function Glance({ title, text, onClick }: { title: string; text: ReactNode; onClick(): void }) {
-  return <button type="button" onClick={onClick} className="flex min-w-0 flex-col gap-1 rounded-xl bg-raised px-4 py-3 text-left shadow-sm outline-none hover:bg-selected focus-visible:shadow-[var(--focus-ring)]">
+  return <Button variant="row" onClick={onClick} className="min-w-0 flex-col items-stretch gap-1 rounded-xl bg-raised px-4 py-3 shadow-sm hover:bg-selected">
     <strong className="text-small font-semibold text-foreground">{title}</strong><span className="break-words text-caption text-muted-foreground">{text}</span>
-  </button>;
+  </Button>;
 }
 
 function ConclusionRecord({ item, all, assessments, attempts, revision, projectId, titles }: {
