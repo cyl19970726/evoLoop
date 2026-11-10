@@ -24,7 +24,10 @@ for (const scenario of ["visible", "failure", "closed", "mine"] as const) test({
   skip: !modulePath && "Set EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE",
 }, async t => {
   const failingPage = scenario === "failure", mine = scenario === "mine", onlyClosed = scenario === "closed";
+  // Assignment projections are held until restore; the shell's 待我处理 count reads the same index, so restore answers
+  // every index read from then on instead of holding the next one.
   const heldProjections: (() => void)[] = [];
+  let holdProjections = mine;
   const { chromium } = (await import(pathToFileURL(modulePath!).href)).default;
   const closed = Array.from({ length: 50 }, (_, index) => task(index + 1, index % 2 ? "done" : "cancelled", `历史任务 ${index + 1}`));
   const current = task(51, "in_progress", "后页正在做的工作");
@@ -33,7 +36,7 @@ for (const scenario of ["visible", "failure", "closed", "mine"] as const) test({
   let fail = failingPage;
   const server = createServer(async (req, res) => {
     const url = new URL(req.url!, "http://127.0.0.1");
-    if (url.pathname === "/__fixture/restore") { fail = false; heldProjections.splice(0).forEach(release => release()); res.end("ok"); return; }
+    if (url.pathname === "/__fixture/restore") { fail = false; holdProjections = false; heldProjections.splice(0).forEach(release => release()); res.end("ok"); return; }
     if (url.pathname.startsWith("/api/")) {
       const root = `/api/projects/${projectId}`;
       let value: unknown = { items: [], nextCursor: null }, status = 200;
@@ -54,7 +57,7 @@ for (const scenario of ["visible", "failure", "closed", "mine"] as const) test({
       } else if (url.pathname === `${root}/orchestration/work-status`) value = { items: (url.searchParams.get("taskIds") ?? "").split(",").filter(Boolean).map(taskId => ({ taskId, cognition: false, hasClosure: false, readyForAcceptance: false })) };
       else if (url.pathname === `${root}/impacts`) value = [];
       else if (url.pathname === `${root}/work-management/index`) {
-        if (mine) await new Promise<void>(resolve => heldProjections.push(resolve));
+        if (holdProjections) await new Promise<void>(resolve => heldProjections.push(resolve));
         value = { items: mine ? [{ kind: "task", taskId: current.id, version: 1, currentRevisionId: current.currentRevisionId,
           title: current.title, taskState: current.state, taskKind: current.kind, phase: "ready", nextAction: "继续当前工作", workChangeSequence: 0,
           responsible: { kind: "actor", id: "reader", label: "reader" }, assignment: { state: "accepted", targetKind: "external", targetId: projectId, recipientActorId: "reader" },

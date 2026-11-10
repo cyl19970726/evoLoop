@@ -81,9 +81,15 @@
 - 分四块填：要做什么（名称、为什么要做、期望结果）、怎样算完成（独立验收、验收方式、使用成果的身份）、责任与归属（负责职责、所属阶段、类型）、执行时间（本地时间加时区，可每日重复）。属于阶段的任务还要写来源证据和停止条件。
 - 整页是共同的提交表单，保存发出一次 `task.create`；缺项和超长写在各字段下，提示里列出字段名，隐藏的字段不算缺项。所选阶段之后变了，先请人查看再提交。每日重复要审阅权限和任务时间授权。“只作判断记录”的任务不问验收方式和使用者（使用者就是负责职责）。
 
-**收件页**
+**收件页**（待我处理）
 
-- 现状（PR9k）：“待我验收与判断”分两块列出分配给我的验收安排和待复核的依据变化，每项打开它的任务；读不到时不写 0。
+| 块 | 列什么，打开哪里 |
+| --- | --- |
+| 待我验收 | 分配给我的验收安排与进度；打开任务 |
+| 等我使用的交付 | 未关闭任务的当前交付（技术检查通过）声明我是使用者，我还没记“已使用”。工作索引逐页读完；最近一条观察是别人的，按任务记录核对我的。每行写任务、交付时间、要求（必须使用才能关闭 / 只是声明的使用者）、我上次的结果；打开任务的“交付与使用”，带返回参数 |
+| 依据变化 | 待复核的依据新版；打开任务的“依据与影响” |
+
+- 外层栏计数是三块之和。任一块读不到或没读完，计数不显示数字，其他页顶部写明原因；页面上写“正在读取”“暂不可读取”，不写 0。
 - 目标：按权限内待接、跨域或重大取舍、补证、外部编辑冲突、过期基线分组；每项能回到来源，权限不足时写明交给谁、何时再看。
 
 ## 截图
@@ -137,7 +143,7 @@
 | 任务正文与进展 | `TaskPage.tsx`、`TaskArrangement.tsx`（当前关注、阶段区间与计划）、`TaskOwner.tsx`、`taskOwnerPresentation.ts`、`apps/workbench/src/features/discussions/TaskCollaborationThread.tsx`、`apps/workbench/src/shared/ui/MarkdownBody.tsx` | `task-workspace-presentation.test.ts`、`legacy-bits-browser.test.ts`、`task-edit-role-recovery.test.ts`、`task-owner-browser.test.ts`、`task-list-owner-browser.test.ts`、`task-session-return-browser.test.ts`、`discovery-browser.test.ts` |
 | 五个页签 | `TaskBasisTab.tsx`（两版对照里的非 Markdown 原件用 `apps/workbench/src/shared/ui/OriginalDocumentReader.tsx`）、`TaskDeliveryTab.tsx`、`TaskRuntimeTab.tsx`、`ResidentQueuePanel.tsx`（团队的分工与运行也用）、`apps/workbench/src/features/orchestration/`（自动循环）、`apps/workbench/src/features/references/`（Git 与外部来源登记，仓库规范也用；写入在 `referenceCommands.ts`）、`TaskHistoryTab.tsx`、`TaskActionsTab.tsx`、`EvidenceText.tsx` | `task-tabs-browser.test.ts`、`task-evidence-reading.test.ts`、`reference-commands.test.ts`、`legacy-bits-browser.test.ts`、`task-owner-presentation.test.ts`、`task-loop-browser.test.ts`、`schedule-run-session-path-browser.test.ts`、`document-original-reading-browser.test.ts` |
 | 写入 | `apps/workbench/src/shared/command/`（唯一的提交表单：基线、回执与表单）、`TaskForms.tsx`（页签部件与读取状态）、`taskCommands.ts`（各命令） | `use-command.test.ts`、`task-commands.test.ts`、`task-list-model.test.ts` |
-| 收件页 | `InboxIndex.tsx` | `leader-work-overview-browser.test.ts`、`legacy-bits-browser.test.ts` |
+| 收件页与计数 | `InboxIndex.tsx`、`inboxModel.ts`（等我使用的判断、计数）、`inboxReads.ts`（三项读取，外壳计数共用）、`inboxDeliveries.ts`（逐页读工作索引） | `inbox-model.test.ts`、`inbox-browser.test.ts`、`leader-work-overview-browser.test.ts`、`legacy-bits-browser.test.ts` |
 | 执行时间与重复 | `TaskScheduleSection.tsx`、`taskTimingPresentation.ts` | `task-timing-ui.test.ts`、`task-commands.test.ts` |
 | 新建任务 | `CreateTaskPage.tsx`、`taskCreate.ts` | `task-create.test.ts`、`journey-browser.test.ts`、`work-status-recovery-browser.test.ts` |
 

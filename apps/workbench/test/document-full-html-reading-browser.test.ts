@@ -64,6 +64,8 @@ test("built HTML Document uses the available reading space and keeps fixed revis
       else if (url.pathname === `${root}/runtime`) value = { available: false, error: null, allowedCwds: [], grants: [] };
       else if (url.pathname === `${root}/runtime/runs` || url.pathname === `${root}/runtime/sessions` || url.pathname.startsWith(`${root}/references/`)) value = [];
       else if (url.pathname === `${root}/orchestration/work-status`) value = { items: [] };
+      // The shell's 待我处理 count reads it; an unreadable answer would put a notice above the reader this test measures.
+      else if (url.pathname === `${root}/impacts`) value = [];
       res.writeHead(status, { "content-type": "application/json" }); res.end(JSON.stringify(value)); return;
     }
     const file = join(dist, /^\/(?:$|p\/|ui$)/.test(url.pathname) ? "index.html" : url.pathname);
