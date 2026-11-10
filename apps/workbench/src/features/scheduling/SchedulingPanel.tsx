@@ -1,17 +1,22 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useQueries } from "@tanstack/react-query";
 import { CalendarClock, Plus, RefreshCw } from "lucide-react";
-import { Button, EmptyState, Notice as UiNotice, cn } from "@evoloop/ui";
+import { Button, EmptyState, ListRow, Notice as UiNotice, Select, cn } from "@evoloop/ui";
 import { ContextPanelContent } from "../../shared/ui/ContextPanel";
 import { ContextRailContent } from "../../shared/ui/ContextRail";
 import { SectionBoundary } from "../../shared/ui/SectionBoundary";
 import { date, href } from "../../shared/ui/shared";
-import type { MisfirePolicy, Occurrence, ScheduleDefinition, ScheduleRevision, ScheduleRule } from "@evoloop/contracts/scheduling";
+import type { Occurrence, ScheduleDefinition, ScheduleRevision, ScheduleRule } from "@evoloop/contracts/scheduling";
 import { errorText } from "../../shared/api";
-import { ActionForm, option, reasonField, type Field, type MutationContext } from "../../shared/ActionForm";
+import { ActionForm, option, reasonField, type MutationContext } from "../../shared/ActionForm";
+import { isRoleOwnerId, readOwnerRole } from "../../shared/ownerRole";
+import { projectQueryOptions, useProjectQuery } from "../../shared/query";
+import { readOwnerRoles } from "../workflow";
 import { schedulingClient, type SchedulingGrant, type SchedulingStatus } from "./client";
 import { MarkdownBody } from "../../shared/ui/MarkdownBody";
 import { orchestrationClient } from "../../shared/orchestrationClient";
-import { managedTargetProblem, scheduleTemplate, suspendSchedule } from "./managedTarget";
+import { managedTargetProblem, suspendSchedule } from "./managedTarget";
+import { grantKey, scheduleCommandValues, scheduleFields, type ScheduleRoleNames } from "./scheduleForm";
 import { FullIdentifiers } from "../../shared/ui/FullIdentifiers";
 import { RoleName } from "../../shared/ui/RecordName";
 
@@ -23,58 +28,6 @@ import {
 // Times of the schedule itself (rule instants, planned times, watermark, expiry) are said in the schedule's own zone,
 // with the reader's clock added when it differs; record and read times are the reader's local time, as everywhere else.
 const stateLabel = { active: "已启用", paused: "已暂停", stopped: "已停止" } as const;
-const grantKey = (grant: Pick<SchedulingGrant,"scopeId"|"roleId">) => JSON.stringify([grant.scopeId,grant.roleId]);
-function fields(grants: SchedulingGrant[], definition?: ScheduleDefinition, fresh = true): Field[] {
-  const revision = definition?.revision;
-  const rule = revision?.rule;
-  const oldGrant = revision?.authorization;
-  const currentGrant = oldGrant && grants.some(grant => grantKey(grant) === grantKey(oldGrant));
-  const canActivate = grants.length > 0;
-  const choices = [...grants.map(grant => option(grantKey(grant), `${grant.scopeId} · 职责 ${grant.roleId}${fresh ? "" : "（上次读回，当前待核对）"}`)),
-    ...(oldGrant && !currentGrant ? [option(grantKey(oldGrant), `${oldGrant.scopeId} · 职责 ${oldGrant.roleId}（${fresh ? "授权已撤回，仅能暂停或停止" : "登记的旧授权，当前待核对"}）`)] : [])];
-  return [
-    { name: "state", label: "日程状态", kind: "select", value: definition?.state === "active" && !currentGrant ? "paused" : definition?.state ?? "active",
-      options: [...(canActivate ? [option("active", "启用后续检查")] : []), option("paused", "暂停"), option("stopped", "停止（不能恢复）")] },
-    { name: "timezone", label: "IANA 时区", value: revision?.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone, hint: "例如 Asia/Taipei；每日规则按当地时间，间隔规则按 UTC。" },
-    { name: "ruleKind", label: "触发方式", kind: "select", value: rule?.kind ?? "once", options: [option("once", "仅一次（UTC 时刻）"), option("interval", "固定分钟间隔"), option("daily", "每天当地时间")] },
-    { name: "atUtc", label: "仅一次：UTC 时刻（ISO 8601）", optional: true, value: rule?.kind === "once" ? rule.atUtc : "" },
-    { name: "anchorUtc", label: "间隔：UTC 起点（ISO 8601）", optional: true, value: rule?.kind === "interval" ? rule.anchorUtc : "" },
-    { name: "everyMinutes", label: "间隔：每多少分钟", optional: true, value: rule?.kind === "interval" ? String(rule.everyMinutes) : "" },
-    { name: "localTime", label: "每天：当地时间 HH:mm", optional: true, value: rule?.kind === "daily" ? rule.localTime : "" },
-    { name: "misfireKind", label: "错过时刻的处理", kind: "select", value: revision?.misfire.kind ?? "latest", options: [option("skip", "跳过"), option("latest", "只取最近一次"), option("bounded", "有限补做")] },
-    { name: "maxCatchUp", label: "有限补做的最多次数", optional: true, value: revision?.misfire.kind === "bounded" ? String(revision.misfire.maxCatchUp) : "" },
-    { name: "overlap", label: "上次任务未结束时", kind: "select", value: revision?.overlap ?? "skip", options: [option("skip", "跳过新时刻"), option("queue", "排队待核对")] },
-    { name: "title", label: "新提议任务的名称", value: revision?.template.title ?? "" },
-    { name: "content", label: "新任务正文（Markdown）", kind: "textarea", value: revision?.template.content ?? "", maxLength: 65536 },
-    { name: "acceptance", label: "新提议任务的接受条件", kind: "textarea", value: revision?.template.acceptance ?? "" },
-    { name: "owner", label: "任务责任角色 ID", value: revision?.template.owner ?? "" },
-    ...(revision?.template.managedTarget ? [] : [
-      { name: "acceptanceMode", label: "任务验收方式", kind: "select" as const, value: revision?.template.acceptanceMode ?? "independent_agent",
-        options: [option("independent_agent", "独立 Agent 验收"), option("human_required", "必须本人验收")] },
-      { name: "consumer", label: "指定验收身份（可选）", optional: true, value: revision?.template.consumer ?? "",
-        hint: "本人验收必须填写受信身份 ID；独立 Agent 可留空。" },
-    ]),
-    { name: "grant", label: fresh ? "已配置的日程授权" : "上次读回的日程授权", kind: "select", value: oldGrant ? grantKey(oldGrant) : choices[0]?.value ?? "", options: choices,
-      hint: fresh ? "仅显示当前身份在本项目的授权；已撤回的旧授权只允许暂停或停止。" : "当前授权尚未核对；此表单暂不可提交。" },
-    { name: "expiresAtUtc", label: "授权到期（ISO 8601，可留空）", optional: true, value: revision?.authorization.expiresAtUtc ?? "" },
-    reasonField,
-  ];
-}
-function fromValues(values: Record<string, string>, context: MutationContext, grants: SchedulingGrant[], definition?: ScheduleDefinition) {
-  const grant = grants.find(item => grantKey(item) === values.grant);
-  const old = definition?.revision.authorization;
-  const usingRevokedOldGrant = !grant && !!old && grantKey(old) === values.grant && values.state !== "active";
-  if (!grant && !usingRevokedOldGrant) throw new Error("当前身份没有所选日程授权；不能创建或恢复运行。");
-  const rule: ScheduleRule = values.ruleKind === "interval" ? { kind: "interval", anchorUtc: new Date(values.anchorUtc!).toISOString(), everyMinutes: Number(values.everyMinutes) }
-    : values.ruleKind === "daily" ? { kind: "daily", localTime: values.localTime! }
-      : { kind: "once", atUtc: new Date(values.atUtc!).toISOString() };
-  const misfire: MisfirePolicy = values.misfireKind === "bounded" ? { kind: "bounded", maxCatchUp: Number(values.maxCatchUp) }
-    : values.misfireKind === "skip" ? { kind: "skip" } : { kind: "latest" };
-  return { state: values.state, timezone: values.timezone, rule, misfire, overlap: values.overlap,
-    template: scheduleTemplate(values, definition),
-    authorization: { scopeId: grant?.scopeId ?? old!.scopeId, roleId: grant?.roleId ?? old!.roleId, authorizedBy: context.principal.actorId,
-      expiresAtUtc: values.expiresAtUtc ? new Date(values.expiresAtUtc).toISOString() : null }, reason: values.reason };
-}
 const ruleText = (rule: ScheduleRule, timezone: string): string => scheduleRuleText(rule, timezone);
 interface ScheduleSnapshot { scope: string; readKey: string; schedules: ScheduleDefinition[]; status: SchedulingStatus; observedAt: string }
 
@@ -117,6 +70,26 @@ function CoordinatorFacts({ status, fresh, loading, projectId }: { status: Sched
   </div>;
 }
 
+/**
+ * The names the forms speak in: the roles a task can be given to (shared with 新建任务), and each role named by a grant
+ * or a registered owner, read on its own (shared with the role names on the page).
+ */
+function useScheduleRoleNames(projectId: string, roleIds: string[]): ScheduleRoleNames {
+  const roles = useProjectQuery(projectId, ["roles", "task-owner-choices"], () => readOwnerRoles(projectId));
+  const wanted = [...new Set(roleIds.filter(isRoleOwnerId))].sort();
+  const reads = useQueries({ queries: wanted.map(id => projectQueryOptions(projectId, ["role", id, "title"], signal => readOwnerRole("", projectId, id, signal))) });
+  const titles = new Map<string, string>();
+  for (const role of roles.data ?? []) if (role.proposal?.title?.trim()) titles.set(role.id, role.proposal.title.trim());
+  wanted.forEach((id, index) => { const title = reads[index]?.data?.proposal?.title?.trim(); if (title && !titles.has(id)) titles.set(id, title); });
+  return {
+    roles: roles.data ? roles.data.filter(role => role.proposal?.title?.trim()).map(role => ({ id: role.id, title: role.proposal.title.trim() })) : null,
+    rolesProblem: roles.data ? null : roles.isError ? "failed" : "reading",
+    roleName: id => titles.get(id) ?? null,
+    // Not named and not being read: the read failed, or the owner is not a role record that has a name to read.
+    nameUnreadable: id => !titles.has(id) && (!isRoleOwnerId(id) || !!reads[wanted.indexOf(id)]?.isError || (wanted.indexOf(id) < 0 && roles.isError)),
+  };
+}
+
 export function SchedulingPanel({ context, refresh }: { context: MutationContext; refresh: number }) {
   const scope = JSON.stringify([context.token, context.projectId, context.principal.actorId]);
   const readKey = JSON.stringify([scope, refresh]);
@@ -130,6 +103,8 @@ export function SchedulingPanel({ context, refresh }: { context: MutationContext
   const [lastResults, setLastResults] = useState<Record<string, string>>({});
   const selectedSchedule = schedules.find(item => item.id === selectedScheduleId) ?? schedules[0];
   const formContext = { ...context, blocked: context.blocked || !fresh };
+  const names = useScheduleRoleNames(context.projectId, [...status?.grants.map(grant => grant.roleId) ?? [],
+    ...selectedSchedule ? [selectedSchedule.revision.template.owner, selectedSchedule.revision.authorization.roleId] : []]);
   useEffect(() => {
     let active = true; setReadState({ readKey, loading: true, error: "" }); setLastResults({});
     const client = schedulingClient(context.token, context.projectId);
@@ -150,16 +125,11 @@ export function SchedulingPanel({ context, refresh }: { context: MutationContext
   const select = (id: string) => { setSelectedScheduleId(id); setCreating(false); };
   const listItem = (schedule: ScheduleDefinition) => {
     const selected = !showCreate && selectedSchedule?.id === schedule.id;
-    return <button type="button" key={schedule.id} aria-current={selected ? "true" : undefined} onClick={() => select(schedule.id)}
-      className={cn("schedule-item flex w-full flex-col gap-0.5 rounded-lg px-3 py-2 text-left outline-none focus-visible:shadow-[var(--focus-ring)]",
-        selected ? "bg-raised shadow-sm" : "hover:bg-selected")}>
-      <span className={cn("truncate text-small", selected ? "font-medium text-foreground" : "text-foreground")}>{schedule.revision.template.title}</span>
-      <span className="truncate text-caption text-muted-foreground">{stateLabel[schedule.state]} · {ruleText(schedule.revision.rule, schedule.revision.timezone)}</span>
-      <span className="truncate text-caption text-muted-foreground">{lastResults[`${schedule.id}:${schedule.version}`] ?? "上次结果尚未读回"}</span>
-    </button>;
+    return <ListRow key={schedule.id} className="schedule-item" selected={selected} onSelect={() => select(schedule.id)} title={schedule.revision.template.title}
+      meta={<>{stateLabel[schedule.state]} · {ruleText(schedule.revision.rule, schedule.revision.timezone)}<br />{lastResults[`${schedule.id}:${schedule.version}`] ?? "上次结果尚未读回"}</>} />;
   };
   const createForm = status && status.grants.length > 0
-    ? <>{!fresh && <p className={muted}>以下为上次读回的授权；重新核对完成前不可提交。</p>}{bounded("创建日程表单", <ActionForm context={{ ...formContext, draftScope: "schedule:create", draftBaseline: JSON.stringify(status.grants.map(grant => grantKey(grant)).sort()) }} review title="创建日程" fields={fields(status.grants, undefined, fresh).filter(field => field.name !== "state")} build={v => ({ type: "schedule.create", scheduleId: crypto.randomUUID(), revisionId: crypto.randomUUID(), watermarkUtc: new Date().toISOString(), ...fromValues({...v,state:"active"}, context,status.grants), state: "active" })} />)}</>
+    ? <>{!fresh && <p className={muted}>以下为上次读回的授权；重新核对完成前不可提交。</p>}{bounded("创建日程表单", <ActionForm context={{ ...formContext, draftScope: "schedule:create", draftBaseline: JSON.stringify(status.grants.map(grant => grantKey(grant)).sort()) }} review title="创建日程" fields={scheduleFields(status.grants, names, undefined, fresh).filter(field => field.name !== "state")} build={v => ({ type: "schedule.create", scheduleId: crypto.randomUUID(), revisionId: crypto.randomUUID(), watermarkUtc: new Date().toISOString(), ...scheduleCommandValues({ ...v, state: "active" }, context.principal.actorId, status.grants), state: "active" })} />)}</>
     : <p className="text-small text-text-secondary">{loading ? "正在核对当前身份的创建授权。" : "取得本项目明确授权后才能创建日程。"}</p>;
   return <div data-ui="" className="schedule-page mx-auto flex w-full max-w-[980px] flex-col gap-5 px-4 py-5 compact:px-8 compact:py-7">
     {schedules.length > 0 && <ContextRailContent>
@@ -183,23 +153,23 @@ export function SchedulingPanel({ context, refresh }: { context: MutationContext
     {error && <UiNotice tone="error">日程与授权本次未读完整：{error}。{value ? "旧定义仅供阅读，保存与创建已暂停。" : "请重试读取。"}</UiNotice>}
     {status && ["disabled","unavailable","no-authority","error","stopped"].includes(status.state) && <UiNotice tone="error">{fresh ? "协调器状态" : "上次读回的协调器状态"}：{coordinatorLabel[status.state]}{status.lastError ? "，最近一次检查出错（原文在右栏的来源里）" : ""}。已登记的规则不会自行执行。</UiNotice>}
     {schedules.length > 1 && <label className="flex flex-col gap-1 desktop:hidden"><span className={muted}>切换日程</span>
-      <select className="h-9 rounded-md bg-field px-3 text-small text-foreground" value={showCreate ? "" : selectedSchedule?.id ?? ""} onChange={event => select(event.target.value)}>
+      <Select className="w-full" value={showCreate ? "" : selectedSchedule?.id ?? ""} onChange={event => select(event.target.value)}>
         {showCreate && <option value="">正在创建新日程</option>}
         {schedules.map(schedule => <option key={schedule.id} value={schedule.id}>{schedule.revision.template.title} · {stateLabel[schedule.state]}</option>)}
-      </select></label>}
+      </Select></label>}
     {showCreate
       ? <section aria-label="创建日程" className="flex flex-col gap-3 rounded-xl bg-raised p-4 shadow-sm compact:p-5">
         {schedules.length === 0 && !loading && !error ? <EmptyState title="还没有日程" reason="这里不会自行启动定时任务。建立日程后，协调器按规则和授权创建待办任务。" /> : <h2 className="text-heading font-semibold text-foreground">创建日程</h2>}
-        <p className={muted}>支持一次、固定间隔、每天当地时间；暂不支持任意 cron 表达式。授权范围和到期时间需与协调器实际许可一致。</p>
+        <p className={muted}>支持一次、固定分钟间隔和每天固定时刻，暂不支持更复杂的重复规则。时间按所选时区的当地时间填写；授权和到期时间需与协调器实际许可一致。</p>
         {createForm}
         {schedules.length > 0 && <Button variant="ghost" className="w-fit" onClick={() => setCreating(false)}>返回日程</Button>}
       </section>
-      : selectedSchedule && <ScheduleCard key={`${readKey}:${selectedSchedule.id}:${selectedSchedule.version}`} definition={selectedSchedule} context={formContext} grants={status?.grants ?? []} status={status} fresh={fresh} loading={loading} onResult={(result) => setLastResults(previous => ({ ...previous, [`${selectedSchedule.id}:${selectedSchedule.version}`]: result }))} />}
+      : selectedSchedule && <ScheduleCard key={`${readKey}:${selectedSchedule.id}:${selectedSchedule.version}`} definition={selectedSchedule} context={formContext} grants={status?.grants ?? []} names={names} status={status} fresh={fresh} loading={loading} onResult={(result) => setLastResults(previous => ({ ...previous, [`${selectedSchedule.id}:${selectedSchedule.version}`]: result }))} />}
     {(showCreate || !selectedSchedule) && <ContextPanelContent><div className="flex flex-col gap-4"><PanelSection title="协调器与授权"><CoordinatorFacts status={status} fresh={fresh} loading={loading} projectId={context.projectId} /></PanelSection></div></ContextPanelContent>}
   </div>;
 }
 
-function ScheduleCard({ definition, context, grants, status, fresh, loading, onResult }: { definition: ScheduleDefinition; context: MutationContext; grants: SchedulingGrant[]; status: SchedulingStatus | null; fresh: boolean; loading: boolean; onResult(result: string): void }) {
+function ScheduleCard({ definition, context, grants, names, status, fresh, loading, onResult }: { definition: ScheduleDefinition; context: MutationContext; grants: SchedulingGrant[]; names: ScheduleRoleNames; status: SchedulingStatus | null; fresh: boolean; loading: boolean; onResult(result: string): void }) {
   const historyScope = JSON.stringify([context.token, context.projectId, definition.id, definition.version]);
   const [historySnapshot, setHistorySnapshot] = useState<{ scope: string; revisions: ScheduleRevision[]; occurrences: Occurrence[] } | null>(null);
   const history = historySnapshot?.scope === historyScope ? historySnapshot : null;
@@ -308,7 +278,7 @@ function ScheduleCard({ definition, context, grants, status, fresh, loading, onR
       <summary className="cursor-pointer font-medium text-foreground">修订规则、暂停或恢复</summary>
       <p className={muted}>修订以当前版本为基线；已排队的旧修订时刻仍需单独核对，不会悄悄改写。</p>
       {targetRead.state === "verified" ? bounded("日程修订表单", <ActionForm context={editContext} review title="保存日程修订"
-        baseline={{ grants: JSON.stringify(grants.map(grant => grantKey(grant)).sort()) }} fields={fields(grants,definition,fresh)} build={v => ({ type: "schedule.revise", scheduleId: definition.id, expectedVersion: definition.version, revisionId: crypto.randomUUID(), ...fromValues(v, context,grants,definition) })} />)
+        baseline={{ grants: JSON.stringify(grants.map(grant => grantKey(grant)).sort()) }} fields={scheduleFields(grants, names, definition, fresh)} build={v => ({ type: "schedule.revise", scheduleId: definition.id, expectedVersion: definition.version, revisionId: crypto.randomUUID(), ...scheduleCommandValues(v, context.principal.actorId, grants, definition) })} />)
         : targetRead.state === "checking" ? <p className="text-text-secondary">请等候固定目标核对完成，再编辑日程。</p>
           : bounded("停用表单", <ActionForm context={editContext} review title="保持原定义并暂停或停止" fields={[
             { name: "state", label: "停用状态", kind: "select", value: definition.state === "active" ? "paused" : "stopped",

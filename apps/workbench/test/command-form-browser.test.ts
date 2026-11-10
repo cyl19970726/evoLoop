@@ -57,6 +57,8 @@ test("the command form on the schedule page: @evoloop/ui markup, required fields
           const operation = state.operations.get(operationId);
           return json(operation ?? { code: "OPERATION_NOT_FOUND", message: "没有这个操作" }, operation ? 200 : 404);
         }
+        if (url.pathname === `${base}/roles`) return json({ items: [roleId, otherRoleId].map(roleKey => ({ projectId, id: roleKey, version: 1, currentRevisionId: roleKey, state: "active",
+          proposal: { title: roleKey === roleId ? "巡检职责" : "运维职责" }, proposedBy: "reader", createdAtUtc: stamp, trialStartedAtUtc: stamp, reviewAtUtc: stamp, mergeTargetRoleId: null })), nextCursor: null });
         if (url.pathname.startsWith(`${base}/roles/`)) {
           const roleKey = url.pathname.split("/").at(-1)!;
           return json({ projectId, id: roleKey, version: 1, currentRevisionId: roleKey, state: "active", proposal: { title: roleKey === roleId ? "巡检职责" : "运维职责" },
@@ -101,11 +103,11 @@ test("the command form on the schedule page: @evoloop/ui markup, required fields
     await form.getByText("请填写新提议任务的名称。").waitFor();
     await form.getByText("请填写理由与依据。").waitFor();
     assert.equal(state.commands.length, 0);
-    await form.getByLabel("仅一次：UTC 时刻").fill("2026-11-20T01:00:00Z");
+    await form.getByLabel(/^仅一次：日期和时间/).fill("2026-11-20T09:00");
     await form.getByLabel("新提议任务的名称").fill("每周巡检");
     await form.getByLabel("新任务正文（Markdown）").fill("核对来源与漂移");
     await form.getByLabel("新提议任务的接受条件").fill("留下巡检报告");
-    await form.getByLabel("任务责任角色 ID").fill(roleId);
+    await form.getByLabel("任务负责职责").selectOption({ label: "巡检职责" });
     await form.getByLabel("理由与依据").fill("每周需要固定巡检");
     assert.equal(await form.getByText("请填写新提议任务的名称。").count(), 0, "an error goes once the field is filled");
     if (shots) await page.screenshot({ path: `${shots}/command-form-1440.png`, fullPage: true });

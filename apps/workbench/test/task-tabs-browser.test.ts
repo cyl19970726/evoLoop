@@ -335,8 +335,13 @@ test("the task page's five tabs read, write and refuse as the record allows, at 
     { expectedTaskVersion: 4, expectedDependencyVersion: 0, dependsOnTaskIds: [taskC] });
   await panel.getByText("调整执行时间与重复规则", { exact: true }).click();
   const timingForm = panel.getByRole("form", { name: "保存调整" });
-  await timingForm.getByLabel("约定执行时间").fill("2026-11-12T09:00:00+08:00");
+  // A date-time control on the task zone's clock (Asia/Shanghai), filled with the stored time; no UTC or offset typed.
+  assert.equal(await timingForm.getByLabel("约定执行时间").inputValue(), "2026-11-11T09:00");
+  assert.equal(await timingForm.getByLabel("约定执行时间").getAttribute("type"), "datetime-local");
+  await timingForm.getByLabel("约定执行时间").fill("2026-11-12T09:00");
+  await timingForm.getByText(/记录为 2026-11-12 01:00 UTC/).waitFor();
   await timingForm.getByLabel("调整理由").fill("改到早上");
+  if (shots) { await timingForm.scrollIntoViewIfNeeded(); await page.screenshot({ path: `${shots}/task-timing-adjust-1440.png` }); }
   await timingForm.getByRole("button", { name: "保存调整" }).click();
   for (let attempt = 0; attempt < 50 && !commands.some(command => command.type === "task.timing.set"); attempt++) await page.waitForTimeout(50);
   const timingWrite = commands.find(command => command.type === "task.timing.set")!;

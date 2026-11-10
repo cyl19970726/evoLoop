@@ -1,4 +1,4 @@
-import type { EvaluationDefinition, EvaluationSourceSignature } from "@evoloop/contracts";
+import type { EvaluationDefinition, EvaluationRevision, EvaluationSourceSignature } from "@evoloop/contracts";
 import { parseFixedRefLines } from "./presentation";
 
 export function definitionFromForm(values: Record<string, string>, source: { taskId: string; sourceTaskRevisionId: string; sourceSignature: EvaluationSourceSignature }, current?: EvaluationDefinition, newId: () => string = () => crypto.randomUUID()): EvaluationDefinition {
@@ -19,4 +19,13 @@ export function definitionFromForm(values: Record<string, string>, source: { tas
       { id: current?.conditions[0].id ?? newId(), kind: "direct", wikiRefs: null, model: values.model, environment },
       { id: current?.conditions[1].id ?? newId(), kind: "wiki", wikiRefs, model: values.model, environment },
     ], limits: values.limits };
+}
+
+/** 冻结评价定义 / 冻结新定义修订: the command the definition form sends (the definition first, then the new record IDs). */
+export function definitionCommand(values: Record<string, string>, source: { taskId: string; sourceTaskRevisionId: string; sourceSignature: EvaluationSourceSignature },
+  current?: Pick<EvaluationRevision, "evaluationId" | "version" | "definition">, newId: () => string = () => crypto.randomUUID()) {
+  const next = definitionFromForm(values, source, current?.definition, newId);
+  return current
+    ? { type: "evaluation.revise", evaluationId: current.evaluationId, revisionId: newId(), expectedVersion: current.version, definition: next, reason: values.reason }
+    : { type: "evaluation.create", evaluationId: newId(), revisionId: newId(), definition: next };
 }

@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { api, ApiError, type TaskTimingView } from "../src/shared/api.ts";
 import { commandSchema } from "@evoloop/contracts";
-import { dailyScheduledInstant, formatScheduled, nextTimingLabel, scheduledInstant, scheduledTimezone, timingSetPayload, timingStopPayload, timingVersion } from "../src/features/workflow/taskTimingPresentation.ts";
+import { dailyScheduledInstant, formatScheduled, nextTimingLabel, scheduledInstant, scheduledTimezone, timingFormPayload, timingSetPayload, timingStopPayload, timingVersion } from "../src/features/workflow/taskTimingPresentation.ts";
+import { localInputIn, timeFieldValue } from "../src/shared/zonedTime.ts";
 
 const timing: TaskTimingView = {
   projectId: "project-1", taskId: "task-1", seriesId: "series-1", rootTaskId: "task-1", version: 4,
@@ -72,4 +73,23 @@ test("task timing read accepts absent timing and rejects another task's or incom
     globalThis.fetch = async () => Response.json({ ...timing, version: undefined });
     await assert.rejects(api("token").taskTiming("project-1", "task-1"), cause => cause instanceof ApiError && cause.status === 0);
   } finally { globalThis.fetch = original; }
+});
+
+test("执行时间与重复 takes the date and time on the task zone's clock and sends what a typed ISO time with its offset sent", () => {
+  const typedOnce = timingSetPayload("task-1", 2, timing, { executeAtUtc: "2026-11-12T09:00:00+08:00", timezone: "Asia/Shanghai", repeat: "none", scope: "this", reason: "改到早上" });
+  assert.deepEqual(timingFormPayload("task-1", 2, timing, { executeAt: "2026-11-12T09:00", timezone: "Asia/Shanghai", repeat: "none", scope: "this", reason: "改到早上" }), typedOnce);
+  assert.equal(typedOnce.executeAtUtc, "2026-11-12T01:00:00.000Z");
+  const typedDaily = timingSetPayload("task-1", 2, timing, { executeAtUtc: "2026-11-12T08:30:00-05:00", timezone: "America/New_York", repeat: "daily", scope: "future", reason: "r" });
+  assert.deepEqual(timingFormPayload("task-1", 2, timing, { executeAt: "2026-11-12T08:30", timezone: "America/New_York", repeat: "daily", scope: "future", reason: "r" }), typedDaily);
+  // The form opens on the stored instant shown on the task zone's clock; saving it untouched sends the same instant.
+  assert.equal(localInputIn(timing.executeAtUtc, timing.timezone), "2026-11-07T08:00");
+  assert.equal(timingFormPayload("task-1", 2, timing, { executeAt: localInputIn(timing.executeAtUtc, timing.timezone), timezone: timing.timezone, repeat: "daily", scope: "future", reason: "r" }).executeAtUtc, timing.executeAtUtc);
+  // Daylight saving as the scheduler reads it: a skipped time is refused, a repeated one is the earlier instant.
+  assert.throws(() => timingFormPayload("task-1", 2, null, { executeAt: "2027-03-14T02:30", timezone: "America/New_York", repeat: "none", scope: "this", reason: "r" }), /夏令时/);
+  assert.equal(timingFormPayload("task-1", 2, null, { executeAt: "2027-11-07T01:30", timezone: "America/New_York", repeat: "daily", scope: "this", reason: "r" }).executeAtUtc, "2027-11-07T05:30:00.000Z");
+  assert.throws(() => timingFormPayload("task-1", 2, null, { executeAt: "", timezone: "Asia/Shanghai", repeat: "none", scope: "this", reason: "r" }), /请选择约定执行时间/);
+  // A stored time left alone goes back as stored, the later of a repeated reading included.
+  const laterTiming = { ...timing, executeAtUtc: "2027-11-07T06:30:00.000Z", timezone: "America/New_York" };
+  assert.equal(timingFormPayload("task-1", 2, laterTiming, { executeAt: timeFieldValue(laterTiming.executeAtUtc, laterTiming.timezone), timezone: laterTiming.timezone,
+    repeat: "daily", scope: "future", reason: "r" }).executeAtUtc, "2027-11-07T06:30:00.000Z");
 });
