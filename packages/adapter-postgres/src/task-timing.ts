@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import { computeDue } from "@evoloop/core/scheduling";
 import type { ScheduleRevision } from "@evoloop/contracts/scheduling";
-import type { TaskTimingCommand, TaskTimingInput, TaskTimingQueries, TaskTimingView } from "@evoloop/contracts/task-timing";
+import type { TaskTimingCommand, TaskTimingInput, TaskTimingQueries, TaskTimingSeriesPage, TaskTimingView } from "@evoloop/contracts/task-timing";
 import { DomainError } from "@evoloop/contracts/ports";
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -294,6 +294,38 @@ export class PgTaskTimingQueries implements TaskTimingQueries {
       waitingReason, futureTemplate: {title:row.template.title,content:row.template.content,
         acceptance:row.template.acceptance},
       occurrences: recent.rows.reverse().map(r => ({taskId:r.task_id,executeAtUtc:iso(r.planned_at_utc),state:r.state})) };
+  }
+
+  async list(limit: number, cursor?: string): Promise<TaskTimingSeriesPage> {
+    const size = Math.min(Math.max(Math.trunc(limit) || 50, 1), 100);
+    let after: { at: string; id: string } | null = null;
+    if (cursor !== undefined) {
+      try { const parsed = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")) as { at?: unknown; id?: unknown };
+        if (typeof parsed.at === "string" && typeof parsed.id === "string" && Number.isFinite(Date.parse(parsed.at))) after = { at: parsed.at, id: parsed.id }; }
+      catch { /* rejected below */ }
+      if (!after) throw new TaskTimingConflict("invalid task timing cursor", "INVALID_CURSOR");
+    }
+    const result = await this.client.query(`SELECT s.*,r.timezone,r.repeat,r.execute_at_utc,r.template,
+        lo.task_id AS latest_task_id,lo.planned_at_utc AS latest_planned,lt.state AS latest_state,lt.title AS latest_title,
+        (SELECT count(*) FROM task_timing_occurrence c WHERE c.project_id=s.project_id AND c.series_id=s.series_id) AS occurrence_count
+      FROM task_timing_series s JOIN task_timing_series_revision r
+        ON r.project_id=s.project_id AND r.series_id=s.series_id AND r.revision_id=s.current_revision_id
+      JOIN LATERAL (SELECT o.task_id,o.planned_at_utc FROM task_timing_occurrence o
+        WHERE o.project_id=s.project_id AND o.series_id=s.series_id ORDER BY o.planned_at_utc DESC LIMIT 1) lo ON true
+      JOIN task lt ON lt.project_id=s.project_id AND lt.task_id=lo.task_id
+      WHERE s.project_id=$1 AND ($2::timestamptz IS NULL OR (s.updated_at_utc,s.series_id)<($2::timestamptz,$3::uuid))
+      ORDER BY s.updated_at_utc DESC,s.series_id DESC LIMIT $4`,
+      [this.projectId, after?.at ?? null, after?.id ?? null, size + 1]);
+    const page = result.rows.slice(0, size);
+    const last = page.at(-1);
+    return {
+      items: page.map(row => ({ projectId: this.projectId, seriesId: row.series_id, rootTaskId: row.root_task_id, version: row.version,
+        seriesState: row.state, title: row.template.title, timezone: row.timezone, repeat: row.repeat, executeAtUtc: iso(row.execute_at_utc),
+        nextAtUtc: nextDaily(row as SeriesRow, iso(row.latest_planned)), skippedCount: Number(row.skipped_count),
+        occurrenceCount: Number(row.occurrence_count),
+        latestTask: { taskId: row.latest_task_id, title: row.latest_title, state: row.latest_state, plannedAtUtc: iso(row.latest_planned) } })),
+      nextCursor: result.rows.length > size && last ? Buffer.from(JSON.stringify({ at: iso(last.updated_at_utc), id: last.series_id })).toString("base64url") : null,
+    };
   }
 
   async create(taskId: string, timing: TaskTimingInput, actorId: string, nowUtc: string): Promise<void> {

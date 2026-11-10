@@ -393,6 +393,8 @@ Task 协作通道把 question/answer/progress/blocker/handoff/result 固定到�
 - **停止只停未来。** 停止系列后不再生成新的时点，已生成和在途的 Task 不受影响，下一时点显示为空。
 - **授权。** 私有配置 `scheduling.taskTimingGrants` 按项目、业务 actor 和 owner Role 授权每日重复；它不能创建旧 Schedule，也不授予 Session 或 Run 的执行资格。一次性时点和停止系列不需要这项授权。
 
+- **项目级只读列表。** `GET /api/projects/:projectId/task-timings?limit=&cursor=` 按最近变更倒序、分页返回本项目的系列摘要：系列名、一次或每日、时区、约定时点、下一未物化时点、系列状态（含已停止）、已产生份数与漏过数，以及最近产生的 Task 及其状态。没有执行时间的 Task 不在其中；它只读，不创建、修改或停止任何系列，日程页的“定时任务”一栏读它（单个 Task 仍读 `tasks/:id/timing`）。
+
 授权配置与时间读取见[运行接线手册](../development/runtime-operations.md#4-普通-task-的每日复制)；实施前逐字段的复制、重建与阻断分析见[实施前分析](../references/task-timing-copy-design.md)。
 
 ## 7a. Connector 与 ExternalBinding

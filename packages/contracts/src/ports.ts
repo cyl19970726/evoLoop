@@ -20,7 +20,7 @@ import type { DeliveryIntent } from "./orchestration.js";
 
 // Persistence ports are a separate export; browser clients never import driver or transaction types.
 export interface Reader extends ReferenceReader, RoleReader, SchedulingReader, DocumentPayloadReader, EvaluationReader, ResidentReader {
-  taskTiming?: Pick<TaskTimingQueries, "get">;
+  taskTiming?: Pick<TaskTimingQueries, "get" | "list">;
   recovery?: import('./session-recovery.js').SessionRecoveryReader;
   /** Queue capability is optional for legacy in-memory adapters; commands reject its absence. */
   queue?: QueueReader;

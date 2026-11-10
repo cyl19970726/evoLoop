@@ -38,7 +38,7 @@ const title = z.string().trim().min(1).max(240);
 const version = z.number().int().positive();
 const common = { projectId: idSchema, operationId: idSchema };
 import { taskTimingCommands, taskTimingSchema } from "./task-timing.js";
-export type { TaskTimingInput, TaskTimingView, TaskTimingCommand } from "./task-timing.js";
+export type { TaskTimingInput, TaskTimingView, TaskTimingCommand, TaskTimingSeriesSummary, TaskTimingSeriesPage } from "./task-timing.js";
 export const documentBasisSchema = z.strictObject({ documentId: idSchema, revisionId: idSchema });
 export type DocumentBasis = z.infer<typeof documentBasisSchema>;
 const basisSchema = z.array(documentBasisSchema).min(1).max(20);
