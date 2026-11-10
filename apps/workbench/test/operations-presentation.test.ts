@@ -2,11 +2,18 @@
 // while the object is read, when it is not in the project, and when the receipt names only the project.
 import assert from "node:assert/strict";
 import test from "node:test";
-import { Fragment, Suspense, createElement } from "react";
+import * as ReactModule from "react";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
-  areaHref, operationsTitle, originArea, originCandidates, originHref, originLinkKind, originText, receiptOf, receiptOrigin, type ReceiptFacts,
+  areaHref, operationsTitle, originArea, originCandidates, originHref, originLinkKind, originText, receiptOrigin, type ReceiptFacts,
 } from "../src/features/settings/operationsPresentation.ts";
+import { OperationsPage } from "../src/features/settings/OperationsPage.tsx";
 import { inboxNavigation, sectionLabels } from "../src/app/shell/spaces.ts";
+
+// Shared parts written for the automatic JSX runtime expect React in scope under this test loader.
+Object.assign(globalThis, { React: ReactModule });
 
 const projectId = "10000000-0000-4000-8000-000000000001";
 const objectId = "20000000-0000-4000-8000-000000000002";
@@ -62,12 +69,33 @@ test("what is said follows what reading the object found; a missing object gets 
   assert.doesNotMatch(originText(origin, { state: "found", kind: "task", name: "t" }), /[0-9a-f]{8}-/, "no identifier in the reading text");
 });
 
-test("the receipt is found on the check the page is handed, inside its wrapper", () => {
-  const facts = receipt("task.update");
-  const Check = (_: { receipt: ReceiptFacts }) => null;
-  assert.deepEqual(receiptOf(createElement(Suspense, { key: facts.operationId, fallback: null }, createElement(Check, { receipt: facts }))), facts);
-  assert.deepEqual(receiptOf(createElement(Check, { receipt: facts })), facts);
-  assert.deepEqual(receiptOf(createElement(Fragment, null, "text", createElement(Check, { receipt: facts }))), facts);
-  assert.equal(receiptOf(createElement(Check, { receipt: { ...facts, operationId: "" } })), null, "an incomplete receipt is not taken");
-  assert.equal(receiptOf("plain text"), null);
+test("the page shows each receipt it is handed, with that receipt's own object, beside its check card", () => {
+  const documentId = "40000000-0000-4000-8000-000000000004";
+  const items = [
+    { receipt: { ...receipt("document.revise", documentId), operationId: "50000000-0000-4000-8000-000000000005" },
+      check: createElement("section", { "data-check": "first" }, "第一张核对卡") },
+    { receipt: { ...receipt("session.message.interrupt", projectId), operationId: "60000000-0000-4000-8000-000000000006" },
+      check: createElement("section", { "data-check": "second" }, "第二张核对卡") },
+  ];
+  // Rendered once on the server: the object's name is not read yet, so each row says it is being read.
+  const html = renderToStaticMarkup(createElement(QueryClientProvider, { client: new QueryClient() },
+    createElement(OperationsPage, { projectId, items })));
+  const rows = [...html.matchAll(/data-receipt-origin="([^"]+)"/g)].map(match => match[1]);
+  assert.deepEqual(rows, items.map(item => item.receipt.operationId), "one row per receipt, in the order handed in");
+  assert.ok(html.indexOf("第一张核对卡") < html.indexOf(`data-receipt-origin="${items[0]!.receipt.operationId}"`), "the row follows its own card");
+  assert.ok(html.indexOf("第二张核对卡") < html.indexOf(`data-receipt-origin="${items[1]!.receipt.operationId}"`));
+  assert.match(html, /原操作所在：文档（名称正在读取）/);
+  const back = new URLSearchParams({ return: `/p/${projectId}/operations`, actor: "lead", returnTitle: "结果未知的操作" }).toString().replaceAll("&", "&amp;");
+  assert.ok(html.includes(`href="/p/${projectId}/documents/${documentId}?${back}"`), "the link opens the receipt's own object, for its identity");
+  assert.match(html, /回执只记下了项目，没有记下是哪个智能体；可以到智能体核对。/);
+  assert.ok(html.includes(`href="/p/${projectId}/sessions"`));
+  assert.doesNotMatch(html, /没有结果未知的操作/);
+});
+
+test("with no receipt handed in, the page says so without claiming the project has none", () => {
+  const html = renderToStaticMarkup(createElement(QueryClientProvider, { client: new QueryClient() },
+    createElement(OperationsPage, { projectId, items: [] })));
+  assert.match(html, /没有结果未知的操作/);
+  assert.match(html, /不代表项目里没有结果未知的事/);
+  assert.doesNotMatch(html, /data-receipt-origin/);
 });

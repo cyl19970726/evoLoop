@@ -1,6 +1,5 @@
 // 结果未知的操作: the receipts this identity saved for commands whose result is not confirmed yet. Each receipt says which
 // object the original operation was about and links there, with the way back to this page (layout.md 上下文页面与返回).
-import { isValidElement, type ReactNode } from "react";
 import { ArrowUpRight, BookOpen, MessageSquare, Share2 } from "lucide-react";
 import { Button, EmptyState } from "@evoloop/ui";
 import { ApiError, api, errorText } from "../../shared/api";
@@ -9,8 +8,8 @@ import { FullIdentifiers } from "../../shared/ui/FullIdentifiers";
 import { href } from "../../shared/ui/shared";
 import { LinkList, SettingsPage, SettingsSection } from "../../shared/ui/SettingsParts";
 import {
-  areaHref, operationsTitle, originAreaLabel, originHref, originKindLabel, originLinkKind, originText, receiptOf, receiptOrigin,
-  type OriginKind, type OriginRead, type ReceiptFacts, type ReceiptOrigin,
+  areaHref, operationsTitle, originAreaLabel, originHref, originKindLabel, originLinkKind, originText, receiptOrigin,
+  type OperationItem, type OriginKind, type OriginRead, type ReceiptFacts, type ReceiptOrigin,
 } from "./operationsPresentation";
 
 const notFound = (error: unknown) => error instanceof ApiError && error.status === 404;
@@ -61,10 +60,9 @@ function useOriginRead(projectId: string, origin: ReceiptOrigin | null): OriginR
 }
 
 /** Under one receipt: where its operation was, a link there (and back), and the raw identifiers in the source layer. */
-function ReceiptOriginRow({ projectId, receipt }: { projectId: string; receipt: ReceiptFacts | null }) {
-  const origin = receipt ? receiptOrigin(receipt) : null;
+function ReceiptOriginRow({ projectId, receipt }: { projectId: string; receipt: ReceiptFacts }) {
+  const origin = receiptOrigin(receipt);
   const read = useOriginRead(projectId, origin);
-  if (!receipt || !origin) return <p className="px-1 text-caption text-muted-foreground">这张回执没有带出原操作所在的对象，无法判断该回到哪里。</p>;
   const kind = originLinkKind(origin, read);
   const link = origin.kind === "object" && kind ? { href: originHref(projectId, kind, origin.id, receipt.actorId), label: "打开原对象" }
     : origin.kind === "area" && origin.area ? { href: areaHref(projectId, origin.area), label: `打开${originAreaLabel[origin.area]}` } : null;
@@ -80,12 +78,13 @@ function ReceiptOriginRow({ projectId, receipt }: { projectId: string; receipt: 
   </div>;
 }
 
-export function OperationsPage({ projectId, checks }: { projectId: string; checks: ReactNode[] }) {
+/** `items`: the receipts saved for this project with their check cards, as app/App.tsx keeps them. */
+export function OperationsPage({ projectId, items }: { projectId: string; items: readonly OperationItem[] }) {
   return <SettingsPage title={operationsTitle} description="查看当前身份保存的操作回执，按原操作核对结果，再回到原操作所在的对象。" className="operations-page">
-    {checks.length ? <div className="flex flex-col gap-5">{checks.map((check, index) =>
-      <div key={isValidElement(check) && check.key !== null ? check.key : index} className="flex flex-col gap-2">
+    {items.length ? <div className="flex flex-col gap-5">{items.map(({ receipt, check }) =>
+      <div key={receipt.operationId} className="flex flex-col gap-2">
         {check}
-        <ReceiptOriginRow projectId={projectId} receipt={receiptOf(check)} />
+        <ReceiptOriginRow projectId={projectId} receipt={receipt} />
       </div>)}</div>
       : <EmptyState title="没有结果未知的操作" reason="这里只列当前身份在这个浏览器会话里保存的回执，不代表项目里没有结果未知的事；其他业务记录仍在各自的页面。"
         action={<Button asChild><a href={href(projectId, "work")}>返回当前工作</a></Button>} />}

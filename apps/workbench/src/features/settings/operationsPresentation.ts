@@ -1,13 +1,16 @@
 // 结果未知的操作: which object the original operation was about, from its receipt alone. A receipt keeps one object ID
 // (the command's discussion, task, goal, stage or document ID, in that order, else the project ID; app/App.tsx) and the
 // command type; which kind of object the ID names follows from the type. Pure, so the page and its tests agree.
-import { isValidElement, type ReactNode } from "react";
+import type { ReactNode } from "react";
 
 /** The page title: the same words as 待我处理 in the navigation and the narrow top bar (app/shell/spaces.ts). */
 export const operationsTitle = "结果未知的操作";
 
 /** The receipt fields this page reads. `actorId` is the identity that saved it, the one reading this page. */
 export interface ReceiptFacts { actorId: string; projectId: string; taskId: string; operationId: string; commandType: string }
+
+/** One saved receipt as app/App.tsx hands it to the page: the receipt itself and its check card (核对与同 ID 重试). */
+export interface OperationItem { receipt: ReceiptFacts; check: ReactNode }
 
 export type OriginKind = "task" | "document" | "goal" | "stage" | "discussion";
 export type OriginArea = "agents" | "runtime" | "roles" | "schedules" | "evaluations" | "repository" | "work" | "documents" | "journey" | "discussions";
@@ -119,26 +122,4 @@ export function originText(origin: ReceiptOrigin, read: OriginRead): string {
 export function originLinkKind(origin: ReceiptOrigin, read: OriginRead): OriginKind | null {
   if (origin.kind === "area" || read.state === "missing") return null;
   return read.state === "found" ? read.kind : origin.candidates[0] ?? null;
-}
-
-function isReceipt(value: unknown): value is ReceiptFacts {
-  if (!value || typeof value !== "object") return false;
-  const item = value as Partial<ReceiptFacts>;
-  return [item.actorId, item.projectId, item.taskId, item.operationId, item.commandType].every(field => typeof field === "string" && field.length > 0);
-}
-
-/**
- * The receipt a rendered check stands for. The page is handed the checks as elements (app/App.tsx); each carries its
- * receipt as a prop, possibly inside a wrapper such as Suspense. Null when no receipt is found, and the page says so.
- */
-export function receiptOf(node: ReactNode, depth = 0): ReceiptFacts | null {
-  if (depth > 3 || !isValidElement(node)) return null;
-  const props = node.props as { receipt?: unknown; children?: ReactNode };
-  if (isReceipt(props.receipt)) return props.receipt;
-  const children = Array.isArray(props.children) ? props.children : [props.children];
-  for (const child of children) {
-    const found = receiptOf(child as ReactNode, depth + 1);
-    if (found) return found;
-  }
-  return null;
 }

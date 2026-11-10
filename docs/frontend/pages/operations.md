@@ -53,7 +53,7 @@
 
 | 范围 | 路径 |
 | --- | --- |
-| 源码（`apps/workbench/src/`） | `features/settings/OperationsPage.tsx`（页面、读回原对象名称与空状态）、`features/settings/operationsPresentation.ts`（按命令类型判断原对象、链接与返回参数、说明文字）、`app/entry/OperationCheck.tsx`（核对与同 ID 重试）、`app/recovery.ts`（回执存取）、`app/recoveryIntent.ts`（原命令、摘要比对与能否重试）；保存回执、暂停写入和顶部提示在 `app/App.tsx` |
+| 源码（`apps/workbench/src/`） | `features/settings/OperationsPage.tsx`（页面、读回原对象名称与空状态）、`features/settings/operationsPresentation.ts`（按命令类型判断原对象、链接与返回参数、说明文字）、`app/entry/OperationCheck.tsx`（核对与同 ID 重试）、`app/recovery.ts`（回执存取）、`app/recoveryIntent.ts`（原命令、摘要比对与能否重试）；保存回执、暂停写入和顶部提示在 `app/App.tsx`，它把本项目的每张回执连同核对卡一起交给本页 |
 | 测试（`apps/workbench/test/`） | `operations-presentation.test.ts`、`recovery.test.ts`、`recovery-intent.test.ts`、`use-command.test.ts`、`entry-pages-browser.test.ts`、`settings-pages-browser.test.ts`（打开原对象再返回） |
 
 ## 相关
