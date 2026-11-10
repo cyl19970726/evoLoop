@@ -27,6 +27,8 @@ export type RoleProposal = z.infer<typeof roleProposalSchema>;
 
 export const roleCommands = [
   z.strictObject({ ...common, type: z.literal("role.propose"), proposal: roleProposalSchema }),
+  /** Appends a new candidate revision to an existing Role (same roleId, version+1); it is decided with role.decide. */
+  z.strictObject({ ...common, type: z.literal("role.revise"), expectedVersion: z.number().int().positive(), proposal: roleProposalSchema, reason: text.optional() }),
   z.strictObject({ ...common, type: z.literal("role.decide"), expectedVersion: z.number().int().positive(), decision: z.enum(["accept-trial", "reject", "defer"]), reason: text }),
   z.strictObject({ ...common, type: z.literal("role.review"), expectedVersion: z.number().int().positive(), decision: z.enum(["continue-trial", "activate", "merge", "retire"]), effectEvidence: text, effectEvidenceRefs: z.array(text).min(1).max(20), costEvidence: text, costEvidenceRefs: z.array(text).min(1).max(20), baselineComparison: text, reason: text, nextReviewAtUtc: z.iso.datetime().optional(), mergeTargetRoleId: id.optional() }),
   z.strictObject({ ...common, type: z.literal("role.handoff"), expectedVersion: z.number().int().positive(), handoffId: id, kind: z.enum(["task", "knowledge", "session"]), sourceRef: text, targetRoleId: id, observedTaskVersion: z.number().int().positive().optional(), note: text }),
