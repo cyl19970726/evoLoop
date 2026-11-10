@@ -4,7 +4,7 @@ import { test } from "node:test";
 import { parseRoute } from "../src/shared/routes.ts";
 import { projectPaths } from "../src/app/routePaths.ts";
 import { leafOf, projectInitial, rememberSpace, sectionLabels, spaceHref, spaceOf, workNavigation, workSectionOf } from "../src/app/shell/spaces.ts";
-import { addObjectTab, clampWidth, maxObjectTabs, panelWidth, readPanelState, type PanelObject } from "../src/shared/ui/ContextPanel.tsx";
+import { addObjectTab, afterCenterMoved, clampWidth, maxObjectTabs, panelPlace, panelWidth, readPanelState, type PanelObject } from "../src/shared/ui/ContextPanel.tsx";
 
 const p = "11111111-1111-4111-8111-111111111111";
 const id = "22222222-2222-4222-8222-222222222222";
@@ -40,6 +40,28 @@ test("each space reopens where the reader left it, only inside the same project"
   assert.equal(spaceHref(store, "other", p, "work"), `/p/${p}/work`, "another identity starts fresh");
   rememberSpace(store, "reader", p, parseRoute(`/p/${id}/work`), `/p/${id}/work`);
   assert.equal(spaceHref(store, "reader", p, "work"), `/p/${p}/tasks/${id}?tab=runtime`, "another project's address is not kept here");
+  // The table's filter, search and selected row (written quietly into the address) come back with the space (M5).
+  const table = `/p/${p}/work?q=${encodeURIComponent("右栏")}&state=all&selected=${id}`;
+  rememberSpace(store, "reader", p, parseRoute(table), table);
+  assert.equal(spaceHref(store, "reader", p, "work"), table);
+  rememberSpace(store, "reader", p, parseRoute(`/p/${p}/task/${id}`), `/p/${p}/task/${id}`);
+  assert.equal(spaceHref(store, "reader", p, "work"), table, "an address that names no page is not where the space reopens");
+});
+
+test("在中间打开 closes the tab of the object the center now reads, and the column shows 信息", () => {
+  const tab = (key: string, href?: string): PanelObject => ({ id: key, title: key, ...(href ? { href } : {}), render: () => null });
+  const doc = tab("document:d@r", `/p/${p}/documents/d?revision=r`);
+  const task = tab("task:t", `/p/${p}/tasks/t`);
+  const sample = tab("sample");
+  assert.equal(panelPlace(`/p/${p}/documents/d?return=${encodeURIComponent(`/p/${p}/tasks/t`)}&revision=r`), `/p/${p}/documents/d?revision=r`);
+  assert.equal(panelPlace(`#/p/${p}/tasks/t?tab=history`), `/p/${p}/tasks/t`);
+  const opened = afterCenterMoved([doc, task, sample], doc.id, `/p/${p}/documents/d?revision=r&return=x`);
+  assert.deepEqual(opened.tabs.map(item => item.id), ["task:t", "sample"]);
+  assert.equal(opened.active, "facts");
+  const other = afterCenterMoved([doc, task], task.id, `/p/${p}/documents/d?revision=other`);
+  assert.deepEqual(other, { tabs: [doc, task], active: task.id }, "another revision of the document is another object");
+  const behind = afterCenterMoved([doc, task], task.id, `/p/${p}/documents/d?revision=r`);
+  assert.equal(behind.active, task.id, "a tab behind the one in front closes without moving the front");
 });
 
 test("the right column keeps at most five objects, reuses an open one, and stays between 280 and 560 px", () => {

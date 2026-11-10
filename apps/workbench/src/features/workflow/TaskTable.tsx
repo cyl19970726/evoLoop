@@ -1,6 +1,7 @@
 // 表格视图 (tasks.md 表格视图（Leader 对账）): the same list as the inner rail, as six columns for scanning and
 // reconciliation. Selecting a row shows its facts in the right column without leaving the table; the open link
-// goes to the task. The table scrolls sideways in its own region; the page never does.
+// goes to the task. The table scrolls sideways in its own region; the page never does. `stacked` is the compact list
+// phones get by default: one column whose rows carry the title, status, type, taker and latest progress.
 import React from "react";
 import { useQueries } from "@tanstack/react-query";
 import type { Task, TaskAttentionItem } from "@evoloop/contracts";
@@ -54,12 +55,14 @@ async function readAttention(projectId: string) {
   return { items, complete: !cursor };
 }
 
-export function TaskTable({ projectId, list, view, selectedId, onSelect, linkFor, actorId }: {
+export function TaskTable({ projectId, list, view, selectedId, onSelect, linkFor, stacked = false, actorId }: {
   projectId: string; list: TaskListRead; view: TaskListView; selectedId: string | null; onSelect(taskId: string): void;
-  linkFor(taskId: string, tab?: string): string; actorId?: string;
+  linkFor(taskId: string, tab?: string): string; stacked?: boolean; actorId?: string;
 }) {
-  const [columns, setColumns] = React.useState(readColumns);
-  React.useEffect(() => { try { localStorage.setItem(columnsKey, JSON.stringify(columns)); } catch { /* a display preference */ } }, [columns]);
+  const [chosenColumns, setColumns] = React.useState(readColumns);
+  // The compact list has one column; the added columns come back with the table.
+  const columns = stacked ? { responsibility: false, nextAction: false, delivery: false, revision: false } : chosenColumns;
+  React.useEffect(() => { try { localStorage.setItem(columnsKey, JSON.stringify(chosenColumns)); } catch { /* a display preference */ } }, [chosenColumns]);
   const rows = list.visible;
   const owners = [...new Set(rows.map(task => task.owner).filter(isRoleOwnerId))];
   const ownerReads = useQueries({ queries: owners.map(owner => ({
@@ -98,32 +101,34 @@ export function TaskTable({ projectId, list, view, selectedId, onSelect, linkFor
     <div className="flex items-center gap-2">
       <p className="flex-1 text-caption text-muted-foreground">{list.loading ? "正在核对当前列表…" : list.observedAt ? `列表读于 ${list.observedAt.toLocaleString("zh-CN")}；回到窗口时自动重读。` : "列表尚未读回。"}</p>
       <IconButton compact label="重新读取列表" icon={<RefreshCw size={15} />} onClick={list.reread} />
-      <details className="relative">
+      {!stacked && <details className="relative">
         <summary aria-label="列设置" className="flex cursor-pointer list-none items-center gap-1.5 rounded-full px-3 py-1 text-label text-text-secondary hover:bg-field [&::-webkit-details-marker]:hidden"><Columns3 size={15} aria-hidden="true" />列设置</summary>
         <fieldset className="absolute right-0 z-10 mt-1 flex w-44 flex-col gap-1.5 rounded-lg bg-raised p-3 shadow-md">
           <legend className="mb-1 text-caption text-muted-foreground">附加列</legend>
           {optionalColumns.map(column => <label key={column.id} className="flex items-center gap-2 text-label">
             <input type="checkbox" className="accent-[var(--brand)]" checked={columns[column.id]} onChange={event => setColumns(current => ({ ...current, [column.id]: event.target.checked }))} />{column.label}</label>)}
         </fieldset>
-      </details>
+      </details>}
     </div>
     {list.loading && <LoadingState lines={5} label="正在读取任务" />}
     {list.firstError && <ErrorState title="任务列表读取失败" happened={list.firstError} next="可以重新读取；读取失败不代表没有任务。" action={<Button size="compact" onClick={list.reread}>重新读取</Button>} />}
-    {!list.loading && !list.firstError && rows.length > 0 && <div role="region" tabIndex={0} aria-label="任务表格，可横向滚动查看六列和附加列"
-      className="-mx-1 overflow-x-auto px-1 outline-none focus-visible:shadow-[var(--focus-ring)]" data-task-table="">
-      <table className="w-full min-w-[960px] table-fixed text-left text-label">
-        <colgroup><col className="w-[30%]" /><col className="w-[8%]" /><col className="w-[15%]" /><col className="w-[17%]" /><col className="w-[13%]" /><col className="w-[17%]" />
-          {optionalColumns.filter(column => columns[column.id]).map(column => <col key={column.id} className="w-[14%]" />)}</colgroup>
-        <thead><tr className="border-b border-border text-caption text-muted-foreground">
-          {["任务", "工作类型", "当前进展", "承接者", "创建时间", "最近进展"].map(label => <th key={label} scope="col" className="px-2 py-2 font-medium">{label}</th>)}
-          {optionalColumns.filter(column => columns[column.id]).map(column => <th key={column.id} scope="col" className="px-2 py-2 font-medium">{column.label}</th>)}
-        </tr></thead>
+    {!list.loading && !list.firstError && rows.length > 0 && <div role="region" tabIndex={0}
+      aria-label={stacked ? "任务紧凑列表：每行是标题、进展、类型与承接" : "任务表格，可横向滚动查看六列和附加列"}
+      className="-mx-1 overflow-x-auto px-1 outline-none focus-visible:shadow-[var(--focus-ring)]" data-task-table={stacked ? "stacked" : ""}>
+      <table className={cn("w-full table-fixed text-left text-label", !stacked && "min-w-[960px]")}>
+        {stacked ? <thead className="sr-only"><tr><th scope="col">任务</th></tr></thead> : <>
+          <colgroup><col className="w-[30%]" /><col className="w-[8%]" /><col className="w-[15%]" /><col className="w-[17%]" /><col className="w-[13%]" /><col className="w-[17%]" />
+            {optionalColumns.filter(column => columns[column.id]).map(column => <col key={column.id} className="w-[14%]" />)}</colgroup>
+          <thead><tr className="border-b border-border text-caption text-muted-foreground">
+            {["任务", "工作类型", "当前进展", "承接者", "创建时间", "最近进展"].map(label => <th key={label} scope="col" className="px-2 py-2 font-medium">{label}</th>)}
+            {optionalColumns.filter(column => columns[column.id]).map(column => <th key={column.id} scope="col" className="px-2 py-2 font-medium">{column.label}</th>)}
+          </tr></thead></>}
         {groups.map(group => group.tasks.length > 0 && <tbody key={group.id} data-group={group.id}>
-          {group.label && <tr><th colSpan={6 + optionalColumns.filter(column => columns[column.id]).length} scope="colgroup" className="px-2 pb-1.5 pt-4 text-left text-caption font-medium text-muted-foreground">
+          {group.label && <tr><th colSpan={stacked ? 1 : 6 + optionalColumns.filter(column => columns[column.id]).length} scope="colgroup" className="px-2 pb-1.5 pt-4 text-left text-caption font-medium text-muted-foreground">
             {group.label} · {group.tasks.length} 项已载入{group.note && <span className="ml-2 font-normal">{group.note}</span>}</th></tr>}
           {group.tasks.map(task => <TableRow key={task.id} task={task} list={list} projectId={projectId}
             selected={task.id === selectedId} onSelect={onSelect} linkFor={linkFor} columns={columns} owner={ownerNames[task.owner]}
-            agents={agents} attention={attention.data?.items ?? []} timing={timings[rows.indexOf(task)]} actorId={actorId} />)}
+            agents={agents} attention={attention.data?.items ?? []} timing={timings[rows.indexOf(task)]} stacked={stacked} actorId={actorId} />)}
         </tbody>)}
       </table>
     </div>}
@@ -138,12 +143,12 @@ export function TaskTable({ projectId, list, view, selectedId, onSelect, linkFor
   </div>;
 }
 
-function TableRow({ task, list, projectId, selected, onSelect, linkFor, columns, owner, agents, attention, timing, actorId }: {
+function TableRow({ task, list, projectId, selected, onSelect, linkFor, columns, owner, agents, attention, timing, stacked, actorId }: {
   task: Task; list: TaskListRead; projectId: string; selected: boolean; onSelect(id: string): void; linkFor(taskId: string, tab?: string): string;
   actorId?: string | undefined;
   columns: Record<OptionalColumn, boolean>; owner: { title?: string; error?: string; pending?: boolean } | undefined;
   agents: Record<string, { name: string | null; problem: string | null }>; attention: TaskAttentionItem[];
-  timing: { data?: Awaited<ReturnType<ReturnType<typeof api>["taskTiming"]>>; error: unknown } | undefined;
+  timing: { data?: Awaited<ReturnType<ReturnType<typeof api>["taskTiming"]>>; error: unknown } | undefined; stacked: boolean;
 }) {
   const status = list.statuses[task.id];
   const cognition = status?.cognition ? cognitionSummary(status) : null;
@@ -160,32 +165,52 @@ function TableRow({ task, list, projectId, selected, onSelect, linkFor, columns,
   const latestDone = scheduled?.occurrences.slice().reverse().find(item => item.state === "done");
   const pending = task.id && (projection?.pendingImpactCount ?? 0) > 0;
   const cell = "px-2 py-2.5 align-top";
-  return <tr className={cn("border-b border-border", selected ? "bg-selected" : "hover:bg-field/50")} data-task-row={task.id}>
+  const kind = taskType(projection?.taskKind ?? task.kind);
+  const taskStateNote = (cognition || projection && !closed && rowStatus(task.state, projection.phase).label !== taskStateStatus[task.state].label) ? `任务${taskStateStatus[task.state].label}` : null;
+  const agent = key ? <a className="text-primary hover:underline" href={sessionHref(projectId, key, actorId ? tableOrigin(projectId, actorId) : null)}>{agents[key]?.name ?? (agents[key]?.problem ? "未登记名称的智能体" : "正在读取名称…")}</a> : null;
+  const unassigned = !projection ? "承接尚未读回" : closed ? "无当前分派" : "待具体承接";
+  const notes = <div className="mt-0.5 flex flex-col gap-0.5 text-caption text-muted-foreground">
+    {pending && <span className="text-warning">依据待复核</span>}
+    {cognition && <span>判断与接续记录 · <a className="text-primary hover:underline" href={href(projectId, "task", task.id)}>查看来源</a></span>}
+    {!cognition && task.legacyDecision && <span>{legacyDecisionLabel(task.legacyDecision)}</span>}
+    {attentionCount > 0 && <a className="text-primary hover:underline" href={`${linkFor(task.id, "overview")}&section=attention`}>{attentionCount} 项待关注</a>}
+    {scheduled && <span>约定执行 {formatScheduled(scheduled.executeAtUtc, scheduled.timezone)} · {repeatLabel(scheduled.repeat)} · {nextTimingLabel(scheduled)}</span>}
+    {scheduled?.repeat === "daily" && <span>同系列最近 {scheduled.occurrences.length} 份{latestSeries && <> · 最新 <a className="text-primary hover:underline" href={href(projectId, "task", latestSeries.taskId)}>{taskStateStatus[latestSeries.state].label}任务</a></>}{latestDone ? <> · <a className="text-primary hover:underline" href={href(projectId, "task", latestDone.taskId)}>最近已完成的结果</a></> : " · 尚无已完成结果"}</span>}
+    {!!timing?.error && <span title={errorText(timing.error)}>执行时间暂未读回</span>}
+  </div>;
+  const heading = <div className="flex items-start gap-1">
+    <button type="button" aria-pressed={selected} onClick={() => onSelect(task.id)} className="min-w-0 flex-1 text-left font-medium text-foreground hover:underline">{title}</button>
+    <a href={linkFor(task.id)} aria-label={`打开任务：${task.title}`} title="打开任务" className="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-field hover:text-foreground"><ArrowUpRight size={15} aria-hidden="true" /></a>
+  </div>;
+  const rowClass = cn("border-b border-border", selected ? "bg-selected" : "hover:bg-field/50");
+  // The compact list: what a phone screen needs to pick a task, in one column; the six columns stay in 表格.
+  if (stacked) return <tr className={rowClass} data-task-row={task.id}>
     <td className={cell}>
-      <div className="flex items-start gap-1">
-        <button type="button" aria-pressed={selected} onClick={() => onSelect(task.id)} className="min-w-0 flex-1 text-left font-medium text-foreground hover:underline">{title}</button>
-        <a href={linkFor(task.id)} aria-label={`打开任务：${task.title}`} title="打开任务" className="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-field hover:text-foreground"><ArrowUpRight size={15} aria-hidden="true" /></a>
+      {heading}
+      <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-caption text-muted-foreground">
+        <StatusTag tone={shown.tone} label={shown.label} />{taskStateNote && <span>{taskStateNote}</span>}<span>{kind}</span>
       </div>
-      <div className="mt-0.5 flex flex-col gap-0.5 text-caption text-muted-foreground">
-        {pending && <span className="text-warning">依据待复核</span>}
-        {cognition && <span>判断与接续记录 · <a className="text-primary hover:underline" href={href(projectId, "task", task.id)}>查看来源</a></span>}
-        {!cognition && task.legacyDecision && <span>{legacyDecisionLabel(task.legacyDecision)}</span>}
-        {attentionCount > 0 && <a className="text-primary hover:underline" href={`${linkFor(task.id, "overview")}&section=attention`}>{attentionCount} 项待关注</a>}
-        {scheduled && <span>约定执行 {formatScheduled(scheduled.executeAtUtc, scheduled.timezone)} · {repeatLabel(scheduled.repeat)} · {nextTimingLabel(scheduled)}</span>}
-        {scheduled?.repeat === "daily" && <span>同系列最近 {scheduled.occurrences.length} 份{latestSeries && <> · 最新 <a className="text-primary hover:underline" href={href(projectId, "task", latestSeries.taskId)}>{taskStateStatus[latestSeries.state].label}任务</a></>}{latestDone ? <> · <a className="text-primary hover:underline" href={href(projectId, "task", latestDone.taskId)}>最近已完成的结果</a></> : " · 尚无已完成结果"}</span>}
-        {!!timing?.error && <span title={errorText(timing.error)}>执行时间暂未读回</span>}
-      </div>
+      <p className="mt-1 text-caption text-muted-foreground">承接 · {agent ? <>{agent} · {assignmentStatusLabel(projection!)}</>
+        : <>{unassigned} · {owner?.title ? `负责职责 · ${owner.title}` : owner?.error ?? "负责职责待核对"}</>}</p>
+      <p className="mt-0.5 text-caption text-muted-foreground">最近进展 · <span className={progress.missing ? undefined : "text-foreground"}>{progress.name}</span>{(progress.time || progress.source) && <> · {progress.time || progress.source}</>}</p>
+      {notes}
     </td>
-    <td className={cell}>{taskType(projection?.taskKind ?? task.kind)}</td>
+  </tr>;
+  return <tr className={rowClass} data-task-row={task.id}>
+    <td className={cell}>
+      {heading}
+      {notes}
+    </td>
+    <td className={cell}>{kind}</td>
     <td className={cell}>
       <StatusTag tone={shown.tone} label={shown.label} />
-      {(cognition || projection && !closed && rowStatus(task.state, projection.phase).label !== taskStateStatus[task.state].label) && <span className="mt-1 block text-caption text-muted-foreground">任务{taskStateStatus[task.state].label}</span>}
+      {taskStateNote && <span className="mt-1 block text-caption text-muted-foreground">{taskStateNote}</span>}
       {projection?.timing && <span className="mt-0.5 block text-caption text-muted-foreground" data-stage-time="">{timingStageLabel[projection.timing.current.stage] ?? "阶段未知"} · 本阶段 {timingDuration(projection.timing.current.elapsedMs)} · {waitingText(projection.timing.current.waitingFor, projection.assignment)}</span>}
     </td>
     <td className={cell} data-owner-cell="">
-      {key ? <><a className="text-primary hover:underline" href={sessionHref(projectId, key, actorId ? tableOrigin(projectId, actorId) : null)}>{agents[key]?.name ?? (agents[key]?.problem ? "未登记名称的智能体" : "正在读取名称…")}</a>
+      {agent ? <>{agent}
         <span className="mt-0.5 block text-caption text-muted-foreground">{assignmentStatusLabel(projection!)}</span></>
-        : <><span className="text-text-secondary">{!projection ? "承接尚未读回" : closed ? "无当前分派" : "待具体承接"}</span>
+        : <><span className="text-text-secondary">{unassigned}</span>
           <span className="mt-0.5 block text-caption text-muted-foreground">{owner?.title ? `负责职责 · ${owner.title}` : owner?.error ?? "负责职责待核对"}</span></>}
     </td>
     <td className={cell}>{projection ? <><time dateTime={projection.timing?.createdAt ?? undefined}>{timingDate(projection.timing?.createdAt)}</time><span className="block text-caption text-muted-foreground">首次任务修订</span></> : <span className="text-muted-foreground">创建时间尚未读回</span>}</td>

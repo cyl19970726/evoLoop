@@ -14,7 +14,7 @@
 | 位置 | 放什么（目标） |
 | --- | --- |
 | 左栏 | 紧凑任务列表，每行一个标题和状态；上方是范围（全部工作 / 我的承接）、搜索、状态与类型筛选，以及排序（优先级、截止时间、最近进展、创建时间、对账阶段） |
-| 中间 | 选中任务的正文：目标 → 完成条件 → 正文 → 进展与讨论时间线。可切换到“表格视图”，用六列表格给 Leader 对账、批量扫读 |
+| 中间 | 选中任务的正文：目标 → 完成条件 → 正文 → 进展与讨论时间线。可切换到“表格视图”，用六列表格给 Leader 对账、批量扫读。手机上 `/work` 默认是紧凑列表（每行是标题、进展、类型、承接和最近进展），“任务视图”里选“表格”后，这个浏览器记住选择 |
 | 右栏 | 状态与对账阶段；承接 Session（显示并可设置绑定）；关联文档（主正文、需求总图、Leader 编排总览、固定依据、交付物）；交付与使用；版本；可收起 |
 
 现状（#229 PR7、PR7b）：三处和正文下的五个页签都已按新设计实现。`/work` 是表格视图，`/tasks/{ID}` 读一项任务；筛选与排序写在地址里。需求总图和统筹总览没有单独标记，作为关联文档列出。1440px 以下右栏默认收起，窄屏用“任务信息”打开。
@@ -100,7 +100,7 @@
 
 ![表格视图，1024：右栏以抽屉打开](../../assets/frontend-pages/tasks-1024.png)
 
-![表格视图，390](../../assets/frontend-pages/tasks-390.png)
+![表格视图，390：手机上默认的紧凑列表](../../assets/frontend-pages/tasks-390.png)
 
 ![任务正文，1440：右栏内嵌](../../assets/frontend-pages/task-1440.png)
 
@@ -136,7 +136,7 @@
 
 | 部分 | 主要源码 | 相关测试 |
 | --- | --- | --- |
-| 页面组合与左栏列表 | `TaskWorkspace.tsx`、`TaskRail.tsx`、`useTaskList.ts`、`taskListModel.ts`、`taskExperience.ts`、`apps/workbench/src/shared/taskStatus.ts` | `task-list-model.test.ts`、`task-experience.test.ts`、`task-workspace-browser.test.ts`、`work-filter-pagination-browser.test.ts`、`work-status-recovery-browser.test.ts`、`work-status-retry-pagination-browser.test.ts` |
+| 页面组合与左栏列表 | `TaskWorkspace.tsx`、`TaskRail.tsx`、`useTaskList.ts`、`taskListModel.ts`、`taskExperience.ts`、`apps/workbench/src/shared/taskStatus.ts` | `task-list-model.test.ts`、`task-experience.test.ts`、`task-workspace-browser.test.ts`、`shell-browser.test.ts`（空间切换后保留筛选、手机紧凑列表）、`work-filter-pagination-browser.test.ts`、`work-status-recovery-browser.test.ts`、`work-status-retry-pagination-browser.test.ts` |
 | 表格视图与对账 | `TaskTable.tsx`、`TaskReconciliation.tsx`、`taskWorkspacePresentation.ts`、`apps/workbench/src/shared/workStatusPresentation.ts`、`apps/workbench/src/shared/leaderWorkLoad.ts` | `task-workspace-presentation.test.ts`、`work-status.test.ts`、`leader-work-load.test.ts`、`leader-work-overview-browser.test.ts`、`task-list-owner-browser.test.ts` |
 | 右栏 | `TaskFacts.tsx`、`TaskAgentBlock.tsx`、`taskFactsPresentation.ts`、`TaskDocumentPeek.tsx`、`apps/workbench/src/shared/workPresentation.ts`（下一步、责任、验收接力用语）、`apps/workbench/src/shared/ui/RecordName.tsx` | `task-list-model.test.ts`、`task-work-wording.test.ts`、`task-workspace-browser.test.ts`、`task-preview-current-responsibility-browser.test.ts` |
 | 跨空间返回 | `taskOrigin.ts`（链接从哪个页签或表格行出发）、`apps/workbench/src/shared/returnLink.ts`（哪些页面可返回、怎样称呼）、`apps/workbench/src/shared/ui/ReturnLink.tsx`、`apps/workbench/src/shared/taskNavigation.ts` | `return-link.test.ts`、`cross-space-return-browser.test.ts`（`EVOLOOP_RETURNS_SCREENSHOT_DIR` 存三个宽度的截图）、`task-session-return-browser.test.ts` |
