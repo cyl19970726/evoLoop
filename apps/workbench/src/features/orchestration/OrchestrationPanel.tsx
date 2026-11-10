@@ -165,11 +165,10 @@ export function OrchestrationPanel({ projectId, refresh, taskId, verifiedRuns }:
     {loops.length > 0 && <div role="group" aria-label="选择循环" className="flex min-w-0 flex-wrap gap-2">
       {loops.map(loop => {
         const marker = taskId && association && association.kind !== "unresolved" && association.loopId === loop.id ? association.kind === "current" ? "当前运行 · " : "最近派发 · " : "";
-        return <button key={loop.id} type="button" data-loop-id={loop.id} aria-pressed={selected === loop.id} onClick={() => setManualLoopId(loop.id)}
-          className={cn("max-w-full rounded-full px-3 py-1 text-left text-label outline-none focus-visible:shadow-[var(--focus-ring)] [overflow-wrap:anywhere]",
-            selected === loop.id ? "bg-selected font-medium text-foreground" : "bg-field text-text-secondary hover:text-foreground")}>
+        return <Button variant="row" key={loop.id} data-loop-id={loop.id} aria-pressed={selected === loop.id} onClick={() => setManualLoopId(loop.id)}
+          className="w-auto max-w-full rounded-full bg-field px-3 py-1 text-label [overflow-wrap:anywhere] hover:bg-field">
           {marker}{loopName(titles[loop.id])} · {stateText(loop.state)} · 创建 {date(loop.createdAtUtc)}
-        </button>;
+        </Button>;
       })}
     </div>}
     {nextCursor && <Button size="compact" variant="ghost" className="w-fit" disabled={moreBusy} onClick={() => void loadMore()}>{moreBusy ? "读取中…" : `继续读取关联循环（已读 ${loops.length} 个，还有更多）`}</Button>}

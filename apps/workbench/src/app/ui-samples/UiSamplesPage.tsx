@@ -4,10 +4,10 @@ import * as React from "react";
 import { ContextPanelColumn, ContextPanelContent, ContextPanelProvider, useContextPanel } from "../../shared/ui/ContextPanel";
 import { Bell, Copy, MoreHorizontal, Pencil, Plus, Settings, Trash2 } from "lucide-react";
 import {
-  AgentAvatar, Badge, Button, CollapsibleRow, CountDot, Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogTitle, DialogTrigger,
+  AgentAvatar, Badge, Button, Checkbox, CollapsibleRow, ConfirmDialog, CountDot, Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogTitle, DialogTrigger,
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger, EmptyState, ErrorState, Field,
   HoverCard, HoverCardContent, HoverCardTrigger, IconButton, Input, ListRow, LoadingState, Logo, Notice, PersonAvatar, RefreshingIndicator, Sheet,
-  SheetContent, SheetDescription, SheetTitle, SheetTrigger, StatusTag, Tabs, TabsContent, TabsList, TabsTrigger, Textarea, Tooltip, TooltipContent,
+  RadioGroup, RadioGroupItem, SheetContent, SheetDescription, SheetTitle, SheetTrigger, StatusTag, Tabs, TabsContent, TabsList, TabsTrigger, Textarea, Tooltip, TooltipContent,
   TooltipProvider, TooltipTrigger, UnknownState, systemLooks, type StatusTone,
   AgentMessage, Composer, LiveStatusLine, Mention, MessageBubble, NestedActivity, QuestionCard, QueuedMessages, TodoList, ToolSummary, TurnSummary,
   type ComposerAgent, type ComposerAttachment, type ComposerCommand, type QueuedMessage,
@@ -24,7 +24,7 @@ function Section({ title, note, children }: { title: string; note?: string; chil
   return (
     <section className="flex flex-col gap-4 rounded-xl bg-background p-6 shadow-lg">
       <div className="flex flex-wrap items-baseline gap-3">
-        <h2 className="m-0 text-heading font-semibold leading-[1.3]">{title}</h2>
+        <h2 className="m-0 text-heading font-semibold leading-(--leading-tight)">{title}</h2>
         {note && <span className="text-label text-muted-foreground">{note}</span>}
       </div>
       {children}
@@ -72,8 +72,56 @@ function PanelOpeners() {
     render: () => <div className="text-small"><p className="mb-2 font-medium">{title}</p><p className="text-text-secondary">右栏里打开的对象，可以关闭，或点“在中间打开”切过去。</p></div> });
   return <ul className="flex flex-col gap-1.5">
     {["需求总图", "编排总览", "交付说明 第 3 版", "依据：接口约定", "测试报告", "复盘记录"].map((title, index) =>
-      <li key={title}><button type="button" className="text-primary underline-offset-4 hover:underline" onClick={() => open(`doc-${index}`, title)}>{title}</button></li>)}
+      <li key={title}><Button variant="link" onClick={() => open(`doc-${index}`, title)}>{title}</Button></li>)}
   </ul>;
+}
+
+/** Actions written as links, rows and tabs that pick what is shown, checkboxes, radios and the confirmation dialog. */
+function ChoiceSample() {
+  const [stage, setStage] = React.useState("s1");
+  const [tab, setTab] = React.useState("facts");
+  const [columns, setColumns] = React.useState({ owner: true, due: false });
+  const [version, setVersion] = React.useState("latest");
+  const [confirming, setConfirming] = React.useState(false);
+  const [cleared, setCleared] = React.useState(false);
+  const stages = [["s1", "阶段一 · 接入新外壳"], ["s2", "阶段二 · 右栏与抽屉"], ["s3", "阶段三 · 组件收口"]] as const;
+  const tabs = [["facts", "信息"], ["doc", "对账规则"], ["task", "右栏信息核对"]] as const;
+  return <>
+    <Row label="文字链接">
+      <span className="text-label text-text-secondary">后面一页没有读回。<Button variant="link" className="underline">重试这一页</Button></span>
+      <Button variant="link" className="text-label">在右栏核对固定原件</Button>
+      <Button variant="link" disabled className="text-label">读取中…</Button>
+    </Row>
+    <Row label="可选中的行">
+      <div className="flex w-full max-w-xs flex-col gap-0.5 rounded-lg bg-sunken p-2">
+        {stages.map(([id, label]) => <Button key={id} variant="row" aria-pressed={stage === id} className="px-3 py-2 text-small" onClick={() => setStage(id)}>{label}</Button>)}
+      </div>
+    </Row>
+    <Row label="页签条">
+      <div role="tablist" aria-label="右栏内容（样例）" className="flex gap-1">
+        {tabs.map(([id, label]) => <Button key={id} role="tab" variant="tab" aria-selected={tab === id} onClick={() => setTab(id)}>{label}</Button>)}
+      </div>
+    </Row>
+    <Row label="复选与单选">
+      <fieldset className="flex flex-col gap-1.5">
+        <legend className="mb-1 text-caption text-muted-foreground">附加列</legend>
+        <label className="flex items-center gap-2 text-label"><Checkbox checked={columns.owner} onCheckedChange={checked => setColumns(value => ({ ...value, owner: checked === true }))} />承接智能体</label>
+        <label className="flex items-center gap-2 text-label"><Checkbox checked={columns.due} onCheckedChange={checked => setColumns(value => ({ ...value, due: checked === true }))} />截止时间</label>
+        <label className="flex items-center gap-2 text-label text-muted-foreground"><Checkbox checked disabled />任务名称（总是显示）</label>
+      </fieldset>
+      <RadioGroup aria-label="完整正文用哪一版" value={version} onValueChange={setVersion}>
+        <span className="text-caption text-muted-foreground">完整正文用哪一版</span>
+        <label className="flex items-center gap-2 text-label"><RadioGroupItem value="latest" />用最新内容</label>
+        <label className="flex items-center gap-2 text-label"><RadioGroupItem value="mine" />用我的版本（覆盖别人的修改）</label>
+      </RadioGroup>
+    </Row>
+    <Row label="确认弹窗">
+      <Button size="compact" variant="ghost" onClick={() => setConfirming(true)}>清空草稿</Button>
+      {cleared && <span className="text-caption text-muted-foreground">草稿已清空（样例，不保存任何内容）</span>}
+      <ConfirmDialog open={confirming} title="清空没保存的知识候选草稿？" description="标题、正文、来源与关系都会清空，不能恢复。" confirmLabel="清空"
+        cancelLabel="保留草稿" danger onConfirm={() => { setConfirming(false); setCleared(true); }} onCancel={() => setConfirming(false)} />
+    </Row>
+  </>;
 }
 
 function ConversationSample() {
@@ -91,7 +139,7 @@ function ConversationSample() {
   const commands: ComposerCommand[] = sampleCommands.map(command => ({ ...command }));
 
   return (
-    <div className="mx-auto flex w-full max-w-[680px] flex-col gap-[18px]">
+    <div className="mx-auto flex w-full max-w-[680px] flex-col gap-4">
       <span className="self-center text-caption text-muted-foreground">今天 14:52</span>
       <MessageBubble>先把时间线接上 Claude 运行时，子智能体的内容要能缩进显示。</MessageBubble>
       <AgentMessage><p>好的。我先看适配器现在记录了哪些条目，再决定合同里的父子字段怎么加。</p></AgentMessage>
@@ -152,7 +200,7 @@ export default function UiSamplesPage() {
 
   return (
     <TooltipProvider delayDuration={300}>
-      <div data-ui="" className="min-h-screen bg-sunken font-sans text-small leading-[1.55] text-foreground">
+      <div data-ui="" className="min-h-screen bg-sunken font-sans text-small leading-(--leading-body) text-foreground">
         <header className="sticky top-0 z-10 flex items-center gap-3 bg-sunken/90 px-4 py-3 backdrop-blur md:px-8">
           <Logo size={32} />
           <div className="flex min-w-0 flex-col">
@@ -169,7 +217,7 @@ export default function UiSamplesPage() {
         </header>
 
         <main className="mx-auto flex max-w-[1080px] flex-col gap-4 px-4 pb-16 pt-2 md:px-8">
-          <Section title="按钮与输入" note="主按钮每屏最多一个；按钮是胶囊形">
+          <Section title="按钮与输入" note="主按钮每屏最多一个；按钮是胶囊形，文字链接、可选中的行和页签不是">
             <Row label="按钮">
               <Button variant="primary">通过验收</Button>
               <Button>退回返工</Button>
@@ -192,6 +240,7 @@ export default function UiSamplesPage() {
               <Field label="完成条件" error="还没写完成条件：写清做到什么程度算完。">{props => <Input defaultValue="" placeholder="完成条件" {...props} />}</Field>
               <Field label="你用过之后的结论" hint="会记为一条使用记录，智能体返工时会读到。" className="md:col-span-2">{props => <Textarea placeholder="说说实际用起来怎样" {...props} />}</Field>
             </div>
+            <ChoiceSample />
           </Section>
 
           <Section title="状态" note="颜色加图标加文字，不靠颜色单独表达">
@@ -199,6 +248,7 @@ export default function UiSamplesPage() {
             <Row label="计数">
               <Badge>8</Badge><Badge>12</Badge>
               <span className="inline-flex items-center gap-1.5 text-label text-text-secondary">待我处理 <CountDot count={5} /></span>
+              <span className="inline-flex items-center gap-1.5 text-label text-text-secondary">数目无法判断时 <CountDot count={null} /></span>
               <RefreshingIndicator />
             </Row>
             <div className="grid gap-3 md:grid-cols-3">
@@ -283,7 +333,7 @@ export default function UiSamplesPage() {
                     <SheetContent side="bottom" aria-describedby={undefined}>
                       <SheetTitle>对账规则</SheetTitle>
                       <SheetDescription>任务固定第 1 版 · 当前第 2 版</SheetDescription>
-                      <p className="m-0 text-body leading-[1.8]">一、每项工作写清下一责任。二、运行结束不等于已验收。</p>
+                      <p className="m-0 text-body leading-(--leading-reading)">一、每项工作写清下一责任。二、运行结束不等于已验收。</p>
                     </SheetContent>
                   </Sheet>
                   <Sheet>

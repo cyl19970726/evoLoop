@@ -6,8 +6,8 @@ import { test } from "node:test";
 import { createElement as h } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import {
-  AgentAvatar, AgentMark, Badge, Button, CountDot, EmptyState, ErrorState, Field, IconButton, Input, ListRow, LoadingState, Logo, Notice, PersonAvatar,
-  StatusTag, UnknownState, agentMarkColors, avatarLook, avatarRoleBackgrounds, systemLooks, type StatusTone,
+  AgentAvatar, AgentMark, Badge, Button, Checkbox, ConfirmDialog, CountDot, EmptyState, ErrorState, Field, IconButton, Input, ListRow, LoadingState, Logo,
+  Notice, PersonAvatar, RadioGroup, RadioGroupItem, StatusTag, UnknownState, agentMarkColors, avatarLook, avatarRoleBackgrounds, systemLooks, type StatusTone,
 } from "../src/index.ts";
 
 const html = (node: Parameters<typeof renderToStaticMarkup>[0]) => renderToStaticMarkup(node);
@@ -20,6 +20,24 @@ test("Button defaults to a secondary, typed button and renders the primary varia
   assert.match(primary, /bg-foreground/);
   assert.match(primary, /text-background/);
   assert.match(primary, /text-small/);
+});
+
+test("link, row and tab buttons keep the button element and carry no pill size of their own", () => {
+  const link = html(h(Button, { variant: "link", disabled: true }, "重试"));
+  assert.match(link, /^<button type="button"[^>]*disabled=""/);
+  assert.match(link, /text-primary/);
+  assert.match(link, /hover:underline/);
+  assert.doesNotMatch(link, /\bh-9\b|\bpx-4\b|text-small|rounded-full/, "a link is sized by the text around it");
+  const row = html(h(Button, { variant: "row", "aria-pressed": true }, "阶段一"));
+  assert.match(row, /aria-pressed="true"/);
+  assert.match(row, /aria-pressed:bg-selected/);
+  assert.match(row, /w-full/);
+  assert.match(row, /justify-start/);
+  const tab = html(h(Button, { variant: "tab", role: "tab", "aria-selected": true }, "信息"));
+  assert.match(tab, /role="tab"/);
+  assert.match(tab, /aria-selected="true"/);
+  assert.match(tab, /aria-selected:bg-selected/);
+  assert.match(html(h(Button, { variant: "link", size: "compact" }, "加载更多")), /h-\(--control-height-compact\)/, "a size given still applies");
 });
 
 test("IconButton always carries a readable name", () => {
@@ -47,10 +65,33 @@ test("StatusTag shows text for every tone, and an icon for every tone that the s
   assert.match(html(h(StatusTag, { tone: "blocked", label: "受阻", detail: "依据待复核" })), /受阻 · 依据待复核/);
 });
 
-test("counts are neutral and hidden at zero", () => {
+test("counts are neutral and hidden at zero; a count that cannot be checked says so instead of a number", () => {
   assert.match(html(h(Badge, null, 8)), /bg-field/);
   assert.equal(html(h(CountDot, { count: 0 })), "");
   assert.match(html(h(CountDot, { count: 120 })), />99\+</);
+  const unknown = html(h(CountDot, { count: null }));
+  assert.match(unknown, /title="数目待核对"/);
+  assert.match(unknown, /<span aria-hidden="true">\?<\/span><span class="sr-only">数目待核对<\/span>/);
+  assert.match(unknown, /text-muted-foreground/);
+  assert.doesNotMatch(unknown, /bg-brand|>\d/, "no number while the count is unknown");
+});
+
+test("Checkbox and RadioGroup are checkbox and radio roles, checked in the accent colour, and keep form values", () => {
+  const box = html(h("form", null, h("label", null, h(Checkbox, { checked: true, name: "columns", value: "owner" }), "承接")));
+  assert.match(box, /<button type="button" role="checkbox" aria-checked="true"[^>]*data-state="checked"/);
+  assert.match(box, /data-\[state=checked\]:bg-primary/);
+  assert.match(box, /<input type="checkbox" aria-hidden="true"[^>]*name="columns"[^>]*value="owner"/, "inside a form the value is still submitted");
+  assert.match(html(h(Checkbox, { checked: false, disabled: true })), /aria-checked="false"[^>]*disabled=""/);
+  const group = html(h(RadioGroup, { "aria-label": "用哪一版", value: "mine" },
+    h("label", null, h(RadioGroupItem, { value: "latest" }), "用最新内容"), h("label", null, h(RadioGroupItem, { value: "mine" }), "用我的版本")));
+  assert.match(group, /role="radiogroup"[^>]*aria-label="用哪一版"/);
+  assert.match(group, /role="radio" aria-checked="false"[^>]*value="latest"/);
+  assert.match(group, /role="radio" aria-checked="true"[^>]*value="mine"/);
+  assert.match(group, /rounded-full/);
+});
+
+test("ConfirmDialog renders nothing while closed", () => {
+  assert.equal(html(h(ConfirmDialog, { open: false, title: "离开当前项目？", confirmLabel: "离开", onConfirm: () => undefined, onCancel: () => undefined })), "");
 });
 
 test("notices announce errors and state changes differently", () => {

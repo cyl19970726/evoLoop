@@ -22,7 +22,7 @@ export interface MessageBubbleProps {
 export function MessageBubble({ children, footer, className }: MessageBubbleProps) {
   return (
     <div className={cn("flex max-w-[86%] flex-col items-end gap-1.5 self-end", className)}>
-      <div className="max-w-full whitespace-pre-wrap break-words rounded-[20px_20px_6px_20px] bg-user-bubble px-4 py-[11px] text-small leading-[1.65] text-on-user-bubble">{children}</div>
+      <div className="max-w-full whitespace-pre-wrap break-words rounded-xl rounded-br-sm bg-user-bubble px-4 py-3 text-small leading-(--leading-body) text-on-user-bubble">{children}</div>
       {footer && <div className="flex items-center gap-1.5 text-caption text-muted-foreground">{footer}</div>}
     </div>
   );
@@ -30,7 +30,7 @@ export function MessageBubble({ children, footer, className }: MessageBubbleProp
 
 /** What an agent wrote: plain prose, no bubble. Pass rendered Markdown as children. */
 export function AgentMessage({ children, className }: { children: React.ReactNode; className?: string | undefined }) {
-  return <div className={cn("text-[15px] leading-[1.8] text-foreground [&_code]:rounded-sm [&_code]:bg-muted [&_code]:px-1.5 [&_code]:py-0.5 [&_code]:font-mono [&_code]:text-[13px] [&_p+p]:mt-3", className)}>{children}</div>;
+  return <div className={cn("text-body leading-(--leading-reading) text-foreground [&_code]:rounded-sm [&_code]:bg-muted [&_code]:px-1.5 [&_code]:py-0.5 [&_code]:font-mono [&_code]:text-label [&_p+p]:mt-3", className)}>{children}</div>;
 }
 
 export interface ToolStep {
@@ -86,7 +86,7 @@ function StepRow({ step }: { step: ToolStep }) {
   );
 }
 
-const stepList = "m-0 flex list-none flex-col gap-[7px] rounded-md bg-muted px-3.5 py-2.5 text-label text-text-secondary";
+const stepList = "m-0 flex list-none flex-col gap-2 rounded-md bg-muted px-3.5 py-2.5 text-label text-text-secondary";
 
 /** Tool calls folded into one muted line; failures are counted in the summary and marked in the steps. Pinned steps
  *  stay in sight while the list is folded. */
@@ -206,7 +206,7 @@ export function QuestionCard({ question, options, note, answer, onSubmit, classN
                 selected ? "bg-accent text-foreground" : "bg-muted text-text-secondary hover:bg-field",
               )}
             >
-              <span aria-hidden="true" className={cn("flex size-[22px] shrink-0 items-center justify-center rounded-[7px] text-caption font-semibold", selected ? "bg-primary text-primary-foreground" : "bg-field text-text-secondary")}>
+              <span aria-hidden="true" className={cn("flex size-[22px] shrink-0 items-center justify-center rounded-sm text-caption font-semibold", selected ? "bg-primary text-primary-foreground" : "bg-field text-text-secondary")}>
                 {option.key === otherKey ? String.fromCharCode(65 + index) : option.key}
               </span>
               {option.label}
@@ -242,7 +242,7 @@ export interface TodoItem {
 export function TodoList({ items, note, className }: { items: TodoItem[]; note?: React.ReactNode | undefined; className?: string | undefined }) {
   const done = items.filter(item => item.status === "done").length;
   const list = (
-    <ol className="m-0 flex list-none flex-col gap-[7px] p-0">
+    <ol className="m-0 flex list-none flex-col gap-2 p-0">
       {items.map((item, index) => (
         <li key={index} className={cn("flex items-center gap-2.5", item.status === "done" ? "text-muted-foreground" : item.status === "active" ? "text-foreground" : "text-text-secondary")}>
           <span
@@ -265,7 +265,7 @@ export function TodoList({ items, note, className }: { items: TodoItem[]; note?:
     </ol>
   );
   return (
-    <section aria-label="待办清单" className={cn("rounded-[16px] bg-muted px-4 py-3 text-label", className)}>
+    <section aria-label="待办清单" className={cn("rounded-lg bg-muted px-4 py-3 text-label", className)}>
       {note && <p className="m-0 mb-2 text-caption text-muted-foreground">{note}</p>}
       {done === items.length && items.length > 0
         ? <CollapsibleRow summary={`待办 ${done} / ${items.length} 已完成`}>{list}</CollapsibleRow>
@@ -292,12 +292,12 @@ export interface QueuedMessagesProps {
 export function QueuedMessages({ items, note = "这一轮结束后按顺序送达", onEdit, onCancel, className }: QueuedMessagesProps) {
   if (items.length === 0) return null;
   return (
-    <section aria-label="排队消息" className={cn("flex flex-col gap-2 rounded-[16px] bg-muted px-3.5 py-3", className)}>
+    <section aria-label="排队消息" className={cn("flex flex-col gap-2 rounded-lg bg-muted px-3.5 py-3", className)}>
       <span className="text-caption text-muted-foreground">排队中 · {note}</span>
       <ol className="m-0 flex list-none flex-col gap-1.5 p-0">
         {items.map((item, index) => (
           <li key={item.id} className="flex items-start gap-2.5 text-small">
-            <span aria-hidden="true" className="flex size-5 shrink-0 items-center justify-center rounded-full bg-field text-[11px] text-text-secondary">{index + 1}</span>
+            <span aria-hidden="true" className="flex size-5 shrink-0 items-center justify-center rounded-full bg-field text-caption text-text-secondary">{index + 1}</span>
             <span className="min-w-0 flex-1 break-words">{item.text}</span>
             {onEdit && <button type="button" onClick={() => onEdit(item.id)} className="cursor-pointer border-0 bg-transparent p-0 text-caption text-muted-foreground hover:text-foreground">编辑</button>}
             {onCancel && <button type="button" onClick={() => onCancel(item.id)} className="cursor-pointer border-0 bg-transparent p-0 text-caption text-muted-foreground hover:text-destructive">撤回</button>}

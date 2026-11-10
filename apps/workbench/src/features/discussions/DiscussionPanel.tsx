@@ -5,7 +5,7 @@
 import { useEffect, useState } from "react";
 import type { DiscussionRecord } from "@evoloop/contracts";
 import { Plus, RefreshCw } from "lucide-react";
-import { Button, EmptyState, ErrorState, LoadingState, Notice, cn } from "@evoloop/ui";
+import { Button, EmptyState, ErrorState, LoadingState, Notice, Select, cn } from "@evoloop/ui";
 import { errorText } from "../../shared/api";
 import type { MutationContext } from "../../shared/ActionForm";
 import { currentPath, navigate, onNavigate } from "../../shared/navigation";
@@ -16,7 +16,7 @@ import { useProjectQuery } from "../../shared/query";
 import { ErrorDetails } from "../../shared/ui/ErrorDetails";
 import { ContextRailContent } from "../../shared/ui/ContextRail";
 import { href } from "../../shared/ui/shared";
-import { canWrite, control, muted } from "./formParts";
+import { canWrite, muted } from "./formParts";
 import { readChoices, readDiscussion, readDiscussionPage, type Choices } from "./discussionClient";
 import { DiscussionDetail } from "./DiscussionDetail";
 import { PrepareForm } from "./DiscussionForms";
@@ -64,9 +64,9 @@ export function DiscussionPanel({ context, refresh }: { context: MutationContext
             <Plus size={12} aria-hidden="true" />准备讨论</a>}
         </div>
         <label className="px-3 pb-2"><span className="sr-only">讨论范围</span>
-          <select value={scope} onChange={event => changeScope(event.target.value as ListScope)} className={cn(control, "h-8 text-label")}>
+          <Select value={scope} onChange={event => changeScope(event.target.value as ListScope)} compact className="w-full">
             {scopeOptions.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}
-          </select></label>
+          </Select></label>
         {list.reading && <span className="px-3 py-2 text-caption text-muted-foreground">正在读取讨论…</span>}
         {list.failed && <span className="px-3 py-2 text-caption text-destructive">讨论列表没有读回，见中间说明。</span>}
         {list.stale && <span className="px-3 py-2 text-caption text-muted-foreground">上次读回，当前待核对</span>}
@@ -82,13 +82,13 @@ export function DiscussionPanel({ context, refresh }: { context: MutationContext
           </a>;
         })}
         {list.pageFailed && <span className="px-3 py-1 text-caption text-destructive">下一页没有读回，可以再试一次。</span>}
-        {list.more && <button type="button" disabled={list.loadingMore || list.checking} onClick={list.loadMore}
-          className="mx-3 my-1 self-start rounded-full px-2 py-0.5 text-caption text-text-secondary hover:bg-selected disabled:opacity-50">{list.loadingMore ? "正在读取…" : list.pageFailed ? "再读一次下一页" : "加载更多讨论"}</button>}
+        {list.more && <Button variant="ghost" disabled={list.loadingMore || list.checking} onClick={list.loadMore}
+          className="mx-3 my-1 h-auto self-start px-2 py-0.5 text-caption font-normal hover:bg-selected">{list.loadingMore ? "正在读取…" : list.pageFailed ? "再读一次下一页" : "加载更多讨论"}</Button>}
       </nav>
     </ContextRailContent>
 
     <div className="flex flex-wrap items-center justify-between gap-3">
-      <p className="min-w-0 max-w-[620px] flex-[1_1_320px] text-small leading-[1.6] text-text-secondary">从固定材料理解问题、取舍和后续关系。准备、交接、决定和实际接手各有独立记录，没有新的取舍时不必制造讨论。</p>
+      <p className="min-w-0 max-w-[620px] flex-[1_1_320px] text-small leading-(--leading-body) text-text-secondary">从固定材料理解问题、取舍和后续关系。准备、交接、决定和实际接手各有独立记录，没有新的取舍时不必制造讨论。</p>
       <div className="flex shrink-0 items-center gap-2">
         {canWrite(context, "write") && !address.preparing && <Button asChild><a href={prepareHref(projectId)}><Plus aria-hidden="true" />准备讨论</a></Button>}
         <Button variant="ghost" disabled={list.reading || list.checking || detail.isFetching} onClick={context.onChanged}><RefreshCw aria-hidden="true" className={list.reading || list.checking || detail.isFetching ? "animate-spin motion-reduce:animate-none" : undefined} />重新读取</Button>
@@ -96,10 +96,10 @@ export function DiscussionPanel({ context, refresh }: { context: MutationContext
     </div>
 
     {items.length > 1 && <label className="flex flex-col gap-1 desktop:hidden"><span className={muted}>切换讨论</span>
-      <select className={cn(control, "h-9")} value={address.preparing ? "" : selectedId} onChange={event => navigate(event.target.value ? discussionHref(projectId, event.target.value) : prepareHref(projectId))}>
+      <Select className="w-full" value={address.preparing ? "" : selectedId} onChange={event => navigate(event.target.value ? discussionHref(projectId, event.target.value) : prepareHref(projectId))}>
         {address.preparing && <option value="">正在准备新的讨论</option>}
         {items.map(item => <option key={item.id} value={item.id}>{listRow(item, taskName(item.task?.id), scope === "all", choices.isPending).title}</option>)}
-      </select></label>}
+      </Select></label>}
 
     {list.failed && <Notice tone="error" title="讨论列表没有读回">{errorText(list.error)}。请重新读取；读回之前不能判断这个范围有没有讨论。<ErrorDetails error={list.error} /></Notice>}
     {list.stale && <Notice tone="waiting" title="上次读回，当前待核对">讨论列表重新读取失败：{errorText(list.error)}。左侧仍是上次读到的列表。<ErrorDetails error={list.error} /></Notice>}

@@ -141,7 +141,7 @@ test("a field both the person and someone else changed is decided field by field
     fields: [{ ...fields[0]!, value: "第二段（v4 别人改的）" }, fields[1]!] });
   assert.match(html, /变化的是：版本、完整正文。/, "the notice names what moved");
   assert.match(html, /这些字段你改过，打开表单后别人也改了/);
-  assert.match(html, /role="radiogroup" aria-label="完整正文用哪一版"/);
+  assert.match(html, /role="radiogroup"[^>]*aria-label="完整正文用哪一版"/);
   assert.match(html, /用最新内容/);
   assert.match(html, /用我的版本（覆盖别人的修改）/);
   assert.doesNotMatch(html, />保留我的修改</, "no one-click keep while a field conflicts");
@@ -195,4 +195,18 @@ test("the copyable draft includes every current field and preserves user text, w
   assert.match(draft, /任务\n任务B/);
   assert.match(draft, /备选做法\n方案一\n方案二/);
   assert.doesNotMatch(draft, /token|operationId|\(stage\)|\(options\)/);
+});
+
+test("the copyable draft says times as a person writes them, never the field's internal reading|instant form", () => {
+  const fields = [{ name: "atLocal", label: "仅一次：日期和时间" }, { name: "expiresLocal", label: "授权到期" },
+    { name: "nextCheck", label: "下一检查时间" }, { name: "note", label: "说明" }];
+  const draft = readableDraft("修订日程", fields, {
+    atLocal: "2026-11-10T10:28|2026-11-10T02:28:00.000Z", expiresLocal: "2026-11-01T01:30:15|2026-10-31T17:30:15.000Z",
+    nextCheck: "2026-11-12T09:00", note: "保留 a|b 原样",
+  });
+  assert.match(draft, /仅一次：日期和时间\n2026-11-10 10:28（即 2026-11-10 02:28 UTC）/);
+  assert.match(draft, /授权到期\n2026-11-01 01:30:15（即 2026-10-31 17:30:15 UTC）/);
+  assert.match(draft, /下一检查时间\n2026-11-12 09:00\n/);
+  assert.match(draft, /说明\n保留 a\|b 原样/);
+  assert.doesNotMatch(draft, /\|2026|T\d{2}:\d{2}/);
 });

@@ -47,7 +47,7 @@ const taskTabs: { id: TaskTab; label: string }[] = [
 function TimingLine({ projectId, taskId, onOpen }: { projectId: string; taskId: string; onOpen(): void }) {
   const read = useTaskTiming(projectId, taskId);
   if (!read.data) return read.error ? <p className="text-caption text-muted-foreground">执行时间暂不可读取：{errorText(read.error)}</p> : null;
-  return <p className="text-label text-text-secondary">约定执行：{timingSummary(read.data)} · <button type="button" className="text-primary hover:underline" onClick={onOpen}>调整执行时间与重复</button></p>;
+  return <p className="text-label text-text-secondary">约定执行：{timingSummary(read.data)} · <Button variant="link" onClick={onOpen}>调整执行时间与重复</Button></p>;
 }
 
 /** One task in the center (tasks.md 中间): goal → completion conditions → body → progress and discussion, with the
@@ -234,7 +234,7 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
     {selectedRevision && <Notice title={<>正在查看固定历史修订</>}>页首是当前任务；“历史”里单独列出当时的正文、验收与依据。<a className="ml-1 text-primary hover:underline" href={href(projectId, "task", id)}>返回当前任务</a></Notice>}
     <header className="flex flex-col gap-2" data-task-header="">
       <p className="text-caption text-muted-foreground">{taskType(detail.task.kind)} · 第 {detail.task.version} 版</p>
-      <h1 tabIndex={-1} className="text-title font-semibold leading-snug text-foreground outline-none">{detail.task.title}</h1>
+      <h1 tabIndex={-1} className="text-title font-semibold leading-(--leading-tight) text-foreground outline-none">{detail.task.title}</h1>
       <div className="flex flex-wrap items-center gap-2">
         <StatusTag tone={state.tone} label={state.label} />
         {projection && (detail.task.state === "todo" || detail.task.state === "in_progress") && <StatusTag tone={phaseStatus[projection.phase].tone} label={phaseStatus[projection.phase].label} />}
@@ -255,18 +255,18 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
       <TabsContent value="overview" forceMount hidden={tab !== "overview"} id={panelId("overview")} aria-labelledby={tabId("overview")} className="flex flex-col gap-7 pt-5 outline-none">
         <section aria-labelledby={`${panelId("overview")}-goal`} className="flex flex-col gap-2">
           <h2 id={`${panelId("overview")}-goal`} className={heading}>目标</h2>
-          <p className="text-body leading-relaxed text-foreground">{goal}</p>
+          <p className="text-body leading-(--leading-body) text-foreground">{goal}</p>
         </section>
         <section aria-labelledby={`${panelId("overview")}-acceptance`} className="flex flex-col gap-2" data-task-acceptance="">
           <h2 id={`${panelId("overview")}-acceptance`} className={heading}>完成条件</h2>
-          {acceptance ? <ol className="flex list-decimal flex-col gap-1.5 pl-5 text-body leading-relaxed text-foreground marker:text-muted-foreground">{acceptance.map((point, index) => <li key={index}>{point}</li>)}</ol>
-            : <p className="whitespace-pre-wrap text-body leading-relaxed text-foreground">{detail.task.acceptance}</p>}
+          {acceptance ? <ol className="flex list-decimal flex-col gap-1.5 pl-5 text-body leading-(--leading-body) text-foreground marker:text-muted-foreground">{acceptance.map((point, index) => <li key={index}>{point}</li>)}</ol>
+            : <p className="whitespace-pre-wrap text-body leading-(--leading-body) text-foreground">{detail.task.acceptance}</p>}
           <p className="text-caption text-muted-foreground">{acceptanceNote}</p>
         </section>
         <section aria-labelledby={`${panelId("overview")}-body`} className="flex flex-col gap-2">
           <div className="flex flex-wrap items-baseline gap-3">
             <h2 id={`${panelId("overview")}-body`} className={heading}>正文</h2>
-            {panel ? <button type="button" className="text-label text-primary hover:underline" onClick={openContent}>在右栏核对固定原件</button>
+            {panel ? <Button variant="link" className="text-label" onClick={openContent}>在右栏核对固定原件</Button>
               : <a className="text-label text-primary hover:underline" href={href(projectId, "document", detail.task.contentDocumentId, detail.task.contentRevisionId)}>阅读固定原件</a>}
           </div>
           <MarkdownBody source={detail.task.content} identity={`task-${detail.revision.id}`} projectId={projectId} topHeading={3} />

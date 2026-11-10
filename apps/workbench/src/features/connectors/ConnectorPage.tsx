@@ -2,7 +2,7 @@ import { Fragment, useEffect, useState, type FormEvent } from "react";
 import type { ConnectorRoute, ConnectorRouteRecord } from "@evoloop/contracts/message-connectors";
 import { ApiError, errorDiagnostic, errorText } from "../../shared/api";
 import { RefreshCw } from "lucide-react";
-import { Button, EmptyState, ErrorState, Field, Input, ListRow, LoadingState, Notice, RefreshingIndicator, StatusTag, Textarea, cn } from "@evoloop/ui";
+import { Button, EmptyState, ErrorState, Field, Input, ListRow, LoadingState, Notice, RefreshingIndicator, Select, StatusTag, Textarea, cn } from "@evoloop/ui";
 import { date, href } from "../../shared/ui/shared";
 import { SettingsPage, SettingsSection } from "../../shared/ui/SettingsParts";
 import { useProjectQuery } from "../../shared/query";
@@ -247,10 +247,9 @@ export function ConnectorPage({ context }: { context: MutationContext }) {
         <div className="grid gap-3 compact:grid-cols-2">
           {fields.map(([key, label, hint]) => <Fragment key={key}>
             <Field label={label} hint={hint}>{control => <Input {...control} required value={form[key]} onChange={event => setForm(previous => ({ ...previous, [key]: event.target.value }))} />}</Field>
-            {key === "conversationLabel" && <Field label="会话类型">{control => <select {...control} value={form.conversationKind} onChange={event => setForm(previous => ({ ...previous, conversationKind: event.target.value }))}
-              className="h-9 w-full rounded-md border-0 bg-field px-3 text-small text-foreground outline-none focus-visible:shadow-[var(--focus-ring)]">
+            {key === "conversationLabel" && <Field label="会话类型">{control => <Select {...control} value={form.conversationKind} onChange={event => setForm(previous => ({ ...previous, conversationKind: event.target.value }))} className="w-full">
               <option value="group">群聊</option><option value="private">私聊</option>
-            </select>}</Field>}
+            </Select>}</Field>}
           </Fragment>)}
         </div>
         {areas.map(([key, label, required]) => <Field key={key} label={label}>{control => <Textarea {...control} required={required} value={form[key]} onChange={event => setForm(previous => ({ ...previous, [key]: event.target.value }))} />}</Field>)}

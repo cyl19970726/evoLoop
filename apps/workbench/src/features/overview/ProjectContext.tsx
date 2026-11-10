@@ -1,6 +1,6 @@
 import * as React from "react";
 import { useEffect, useState } from "react";
-import { cn } from "@evoloop/ui";
+import { Button, Select, cn } from "@evoloop/ui";
 import { ContextRailContent } from "../../shared/ui/ContextRail";
 import type { Goal, Stage } from "@evoloop/contracts";
 import type { LeaderWorkPage, LeaderWorkTask } from "@evoloop/contracts/work-index";
@@ -124,11 +124,10 @@ export function ProjectContext({ token, projectId, refresh, active }: { token: s
     <span aria-hidden="true" className="[&_svg]:size-4">{icon}</span><h2 className="text-label font-semibold text-foreground">{text}</h2>{link}
   </div>;
   const choose = (id: string) => setSelection({ scope, id });
-  const stageButton = (item: Stage) => <button type="button" key={item.id} aria-pressed={stage?.id === item.id} onClick={() => choose(item.id)}
-    className={cn("w-full rounded-lg px-3 py-2 text-left text-small outline-none focus-visible:shadow-[var(--focus-ring)]",
-      stage?.id === item.id ? "bg-raised font-medium text-foreground shadow-sm" : "text-text-secondary hover:bg-selected")}>
+  const stageButton = (item: Stage) => <Button variant="row" key={item.id} aria-pressed={stage?.id === item.id} onClick={() => choose(item.id)}
+    className="rounded-lg px-3 py-2 text-small aria-pressed:bg-raised aria-pressed:shadow-sm">
     <span className="line-clamp-2">{item.deliverable}</span>
-  </button>;
+  </Button>;
   return <section data-ui="" className="project-context flex flex-col gap-3" aria-label="目标、当前取舍与使用反馈" aria-busy={reading}>
     {stages.length > 1 && <ContextRailContent>
       <nav aria-label="正在推进的阶段" className="flex flex-col gap-0.5 pt-2">
@@ -143,10 +142,9 @@ export function ProjectContext({ token, projectId, refresh, active }: { token: s
       {!stage && stages.length > 1 && <div className="flex flex-col gap-1"><p className={muted}>选一个阶段阅读：</p>{stages.map(item => <div key={item.id} className="rounded-lg bg-field">{stageButton(item)}<span className="block px-3 pb-2 text-caption text-muted-foreground">{value?.goals.find(entry => entry.id === item.goalId)?.outcome ?? "目标名称尚未核对"}</span></div>)}</div>}
       {stage && stages.length > 1 && <label className="flex flex-col gap-1">
         <span className={muted}>切换阶段 · 共 {stages.length} 个正在推进</span>
-        <select className="h-9 w-full min-w-0 rounded-md bg-field px-3 text-small text-foreground outline-none focus-visible:shadow-[var(--focus-ring)]"
-          value={stage.id} onChange={event => choose(event.target.value)}>
+        <Select className="w-full" value={stage.id} onChange={event => choose(event.target.value)}>
           {stages.map(item => <option key={item.id} value={item.id}>{item.deliverable}</option>)}
-        </select>
+        </Select>
       </label>}
       {stage ? <dl className="grid gap-3 compact:grid-cols-2">
         <div><dt className={muted}>阶段交付</dt><dd className="m-0 text-small text-foreground">{stage.deliverable}</dd></div>

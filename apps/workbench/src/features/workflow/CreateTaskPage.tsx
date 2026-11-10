@@ -7,7 +7,7 @@
 import React from "react";
 import type { Document } from "@evoloop/contracts";
 import { ArrowLeft } from "lucide-react";
-import { Button, Field, Input, Notice, Select, Textarea, cn } from "@evoloop/ui";
+import { Button, Checkbox, Field, Input, Notice, Select, Textarea, cn } from "@evoloop/ui";
 import { errorText } from "../../shared/api";
 import type { MutationContext } from "../../shared/ActionForm";
 import { currentPath, navigate, onNavigate } from "../../shared/navigation";
@@ -262,8 +262,8 @@ function DocumentChoices({ read, chosen, error, onChange }: {
     {documents.length > 0 && read.data && !read.data.complete && <p className={muted} data-documents-partial="">文档只读了一部分，下面没有列出的已发布文档可以保存后在任务里补充。</p>}
     {documents.length > 0 && <ul className="flex max-h-56 flex-col gap-1 overflow-y-auto rounded-md bg-muted p-2">{documents.map(document => <li key={document.id}>
       <label className="flex items-start gap-2 text-small text-foreground">
-        <input type="checkbox" className="mt-1 accent-[var(--brand)]" checked={chosen.includes(document.id)}
-          onChange={event => onChange(event.target.checked ? [...chosen, document.id] : chosen.filter(id => id !== document.id))} />
+        <Checkbox className="mt-0.5" checked={chosen.includes(document.id)}
+          onCheckedChange={checked => onChange(checked === true ? [...chosen, document.id] : chosen.filter(id => id !== document.id))} />
         <span className="min-w-0 [overflow-wrap:anywhere]">{document.title}</span>
       </label>
     </li>)}</ul>}

@@ -76,7 +76,7 @@ export function TaskFacts({ context, taskId, detail: given, leader: givenLeader,
     {outside}
     {heading && <header className="mb-2 flex flex-col gap-1">
       <p className="text-caption text-muted-foreground">{taskType(detail.task.kind)} · 第 {detail.task.version} 版</p>
-      <h2 className="text-body font-semibold leading-snug text-foreground">{detail.task.title}</h2>
+      <h2 className="text-body font-semibold leading-(--leading-tight) text-foreground">{detail.task.title}</h2>
       <a href={linkForTab("overview")} className="self-start text-label text-primary hover:underline">打开任务</a>
     </header>}
     <FactsSection title="状态与对账阶段"><StatusFacts context={context} detail={detail} read={phaseRead} linkForTab={linkForTab} /></FactsSection>
@@ -173,10 +173,10 @@ function DeliveryFacts({ projectId, detail, linkForTab }: { projectId: string; d
   return <div className="flex flex-col gap-2.5">
     {latest && target ? <div className="flex flex-col gap-2.5">
       <Fact label="固定成果">{target.kind === "document"
-        ? panel ? <button type="button" className="text-left text-primary hover:underline" onClick={() => panel.openInPanel({
+        ? panel ? <Button variant="link" className="whitespace-normal text-left" onClick={() => panel.openInPanel({
           id: `document:${target.documentId}@${target.revisionId}`, title: "交付物", href: target.href,
           render: () => <PeekBoundary><TaskDocumentPeek projectId={projectId} documentId={target.documentId} revisionId={target.revisionId} relation="交付物 · 本次交付的固定修订" /></PeekBoundary>,
-        })}>阅读本次交付的文档</button> : <a className="text-primary hover:underline" href={target.href}>阅读本次交付的文档</a>
+        })}>阅读本次交付的文档</Button> : <a className="text-primary hover:underline" href={target.href}>阅读本次交付的文档</a>
         : target.href ? <a className="text-primary hover:underline" href={target.href} target={target.href.startsWith("/") ? undefined : "_blank"} rel="noopener noreferrer">{target.kind === "fallback" ? target.label : target.label}</a>
           : <span>{target.kind === "fallback" ? target.label : "成果入口不可打开"}</span>}
         <span className="mt-0.5 block text-caption text-muted-foreground">登记于 {date(latest.createdAt)}</span></Fact>

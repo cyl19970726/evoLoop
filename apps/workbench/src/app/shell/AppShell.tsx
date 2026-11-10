@@ -25,7 +25,9 @@ registerErrorCodes(serviceErrorCodes);
 
 export interface AppShellProps {
   route: Route; projectId: string; projectTitle: string; actor: string; permissions: readonly string[];
-  receiptCount: number; inboxCount: number; token: string; logout(): void; children: React.ReactNode;
+  receiptCount: number;
+  /** What waits for me, or null while it cannot be counted (the dot then shows 待核对 instead of a number). */
+  inboxCount: number | null; token: string; logout(): void; children: React.ReactNode;
   /** Notices above every page: unconfirmed operations, storage problems, project read failures. */
   notices?: ShellNoticeItem[];
 }
@@ -77,6 +79,8 @@ export function AppShell(props: AppShellProps) {
     document.getElementById("workspace-main")?.focus({ preventScroll: true });
   };
   const spaceLink = (target: Space) => spaceHref(store, actor, projectId, target);
+  // The 待我处理 dot: what waits for me plus the unconfirmed operations, or 待核对 when the first cannot be counted.
+  const inboxDot = props.inboxCount === null ? null : props.inboxCount + props.receiptCount;
   // One object-list slot at a time: the wide rail, or the drawer on narrow screens.
   const railProps = { ...props, space, sessionState, onSessionState: updateSessionState, onNavigate: afterNavigate, compact };
 
@@ -108,7 +112,7 @@ export function AppShell(props: AppShellProps) {
           <RailLink href={spaceLink("work")} label="工作" selected={space === "work"} icon={<BriefcaseBusiness size={20} />} />
           <RailLink href={spaceLink("agents")} label="智能体" selected={space === "agents"} icon={<Users size={20} />} />
           <div className="mt-auto flex flex-col items-center gap-2">
-            <RailLink href={spaceLink("inbox")} label="待我处理" selected={space === "inbox"} icon={<Inbox size={20} />} count={props.inboxCount + props.receiptCount} />
+            <RailLink href={spaceLink("inbox")} label="待我处理" selected={space === "inbox"} icon={<Inbox size={20} />} count={inboxDot} />
             <IconButton label={railHidden ? "展开项目导航" : "收起项目导航"} aria-expanded={!railHidden} icon={railHidden ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />} onClick={toggleRail} />
           </div>
         </nav>
@@ -121,27 +125,27 @@ export function AppShell(props: AppShellProps) {
       <nav data-ui="" data-shell="tabs" aria-label="空间" className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-4 border-t border-border bg-raised pb-[env(safe-area-inset-bottom)] compact:hidden">
         <TabLink href={spaceLink("work")} label="工作" selected={space === "work"} icon={<BriefcaseBusiness size={20} />} />
         <TabLink href={spaceLink("agents")} label="智能体" selected={space === "agents"} icon={<Users size={20} />} />
-        <TabLink href={spaceLink("inbox")} label="待我处理" selected={space === "inbox"} icon={<Inbox size={20} />} count={props.inboxCount + props.receiptCount} />
-        <AccountMenu {...props} trigger={<button type="button" aria-label="我的：账号与设置" className="flex flex-col items-center gap-0.5 py-2 text-caption text-muted-foreground"><PersonAvatar name={actor} size={22} />我的</button>} />
+        <TabLink href={spaceLink("inbox")} label="待我处理" selected={space === "inbox"} icon={<Inbox size={20} />} count={inboxDot} />
+        <AccountMenu {...props} trigger={<Button variant="ghost" size="inline" aria-label="我的：账号与设置" className="flex-col gap-0.5 rounded-none py-2 text-caption font-normal text-muted-foreground hover:bg-transparent"><PersonAvatar name={actor} size={22} />我的</Button>} />
       </nav>
     </div>
   </ContextPanelProvider></ContextRailProvider>;
 }
 
-function RailLink({ href: target, label, selected, icon, count = 0 }: { href: string; label: string; selected: boolean; icon: React.ReactNode; count?: number }) {
+function RailLink({ href: target, label, selected, icon, count = 0 }: { href: string; label: string; selected: boolean; icon: React.ReactNode; count?: number | null }) {
   return <a href={target} aria-current={selected ? "page" : undefined}
-    className={cn("relative flex w-[52px] flex-col items-center gap-1 rounded-lg pb-[7px] pt-[9px] text-[11px] text-muted-foreground hover:bg-selected hover:text-foreground focus-visible:shadow-[var(--focus-ring)] outline-none",
+    className={cn("relative flex w-[52px] flex-col items-center gap-1 rounded-lg py-2 text-caption text-muted-foreground hover:bg-selected hover:text-foreground focus-visible:shadow-[var(--focus-ring)] outline-none",
       selected && "bg-selected font-medium text-foreground")}>
     {icon}{label}
-    {count > 0 && <CountDot count={count} className="absolute right-[7px] top-[3px]" />}
+    {count !== 0 && <CountDot count={count} className="absolute right-2 top-1" />}
   </a>;
 }
 
-function TabLink({ href: target, label, selected, icon, count = 0 }: { href: string; label: string; selected: boolean; icon: React.ReactNode; count?: number }) {
+function TabLink({ href: target, label, selected, icon, count = 0 }: { href: string; label: string; selected: boolean; icon: React.ReactNode; count?: number | null }) {
   return <a href={target} aria-current={selected ? "page" : undefined}
     className={cn("relative flex flex-col items-center gap-0.5 py-2 text-caption text-muted-foreground", selected && "font-medium text-foreground")}>
     {icon}{label}
-    {count > 0 && <CountDot count={count} className="absolute right-[22%] top-1" />}
+    {count !== 0 && <CountDot count={count} className="absolute right-[22%] top-1" />}
   </a>;
 }
 
@@ -153,7 +157,7 @@ function ContextRail(props: AppShellProps & { space: Space; sessionState: Sessio
   return <aside aria-label="项目导航" className={cn("flex flex-col gap-0.5 pb-3 pl-1 pr-3 pt-3.5", inDrawer ? "min-h-full pl-3" : "h-full")}>
     <div data-ui="">
       <a href="/" onClick={props.onNavigate} className="mb-3 flex items-center gap-2.5 rounded-lg bg-raised px-3 py-2.5 shadow-sm hover:shadow-md focus-visible:shadow-[var(--focus-ring)] outline-none">
-        <span aria-hidden="true" className="flex size-[30px] shrink-0 items-center justify-center rounded-[9px] bg-accent font-semibold text-accent-foreground">{projectInitial(props.projectTitle)}</span>
+        <span aria-hidden="true" className="flex size-[30px] shrink-0 items-center justify-center rounded-md bg-accent font-semibold text-accent-foreground">{projectInitial(props.projectTitle)}</span>
         <span className="flex min-w-0 flex-1 flex-col">
           <span className="truncate font-semibold" title={props.projectTitle}>{props.projectTitle || "正在读取项目…"}</span>
           <span className="text-caption text-muted-foreground">切换项目</span>
@@ -189,7 +193,7 @@ function SectionList({ items, route, projectId, onNavigate }: { items: readonly 
       const current = item.section === owner;
       return <li key={item.section}>
         <a href={href(projectId, item.section)} onClick={onNavigate} aria-current={current && (!item.children || leaf === item.section) ? "page" : undefined}
-          className={cn("flex items-center rounded-md px-3 py-[9px] text-text-secondary hover:bg-selected hover:text-foreground focus-visible:shadow-[var(--focus-ring)] outline-none",
+          className={cn("flex items-center rounded-md px-3 py-2 text-text-secondary hover:bg-selected hover:text-foreground focus-visible:shadow-[var(--focus-ring)] outline-none",
             current && "bg-selected font-medium text-foreground")}>{item.label}</a>
         {current && item.children && <ul className="mb-1 ml-3 mt-0.5 flex flex-col gap-0.5 border-l border-border pl-2">
           {item.children.map(child => <li key={child.section}>
