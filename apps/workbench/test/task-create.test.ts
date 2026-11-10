@@ -90,7 +90,7 @@ test("the draft names each missing or contradictory field before anything is sen
   const decision = taskDraftProblems(draft({ closeRule: "decision" }), { canReview: true });
   assert.ok(decision.stageId && decision.kind);
   assert.match(taskDraftProblems(draft({ executeAt: "2026-02-31T09:00" }), { canReview: true }).executeAt ?? "", /无效/);
-  assert.match(taskDraftProblems(draft({ executeAt: "2026-11-12T09:00", timezone: "Mars/Base" }), { canReview: true }).executeAt ?? "", /IANA/);
+  assert.match(taskDraftProblems(draft({ executeAt: "2026-11-12T09:00", timezone: "Mars/Base" }), { canReview: true }).executeAt ?? "", /时区无法识别/);
   assert.ok(taskDraftProblems(draft({ documentIds: Array.from({ length: 21 }, (_, n) => `41000010-0000-4000-8000-${String(n).padStart(12, "0")}`) }), { canReview: true }).documentIds);
 });
 

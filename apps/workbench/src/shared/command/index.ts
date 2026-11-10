@@ -10,5 +10,5 @@ export {
 export { useCommand, type CommandOptions } from "./useCommand";
 export {
   BaselineNotice, CommandBlock, CommandForm, CommandFrame, OutcomeNotice, initialValues, missingFields,
-  type CommandFormProps, type CommandFrameProps, type CommandView, type ConflictChoices, type FieldConflict, type FormField, type FormHandle,
+  type CommandFormProps, type CommandFrameProps, type CommandView, type ConflictChoices, type CustomControl, type FieldConflict, type FormField, type FormHandle,
 } from "./CommandForm";
