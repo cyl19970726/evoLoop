@@ -459,6 +459,11 @@ export class PgTaskTimingStore {
     const failures: {seriesId:string;reason:string}[] = [];
     try {
       await client.query("BEGIN");
+      // Same order as core writes (PostgresUnitOfWork): the project lock comes before any row lock
+      // or the trigger-held leader-work lock. Without it, FOR SHARE on a linked document and the
+      // leader-work lock can interleave with a core revision of that document into a deadlock.
+      // One tick covers one project, so this is the only project lock it takes.
+      await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))",[projectId]);
       const matching = await client.query(`SELECT series_id FROM task_timing_series
         WHERE project_id=$1 AND authorized_actor_id=$2 AND authorized_role_id=$3 AND state='active'
           AND ($4 = 'task-timing:*' OR $4 = 'task-timing:' || root_task_id::text)
