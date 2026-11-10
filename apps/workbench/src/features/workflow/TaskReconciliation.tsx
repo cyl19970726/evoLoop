@@ -48,7 +48,6 @@ export function LeaderOverview({ projectId, page, statuses, roleNames, actorId }
   projectId: string; page: LeaderWorkPage<LeaderWorkTask>; statuses: Record<string, WorkTaskStatus>; roleNames: Record<string, string | undefined>;
   actorId?: string | undefined;
 }) {
-  const from = actorId ? tableOrigin(projectId, actorId) : null;
   // Rows the ordinary list has not loaded still need their source status before their title is trusted.
   const missing = page.items.map(item => item.taskId).filter(id => !statuses[id]);
   const extra = useProjectQuery(projectId, ["tasks", "leader-row-status", missing.join(",")], () =>
@@ -79,7 +78,7 @@ export function LeaderOverview({ projectId, page, statuses, roleNames, actorId }
           <span className="ml-auto text-caption text-muted-foreground">第 {item.version} 版</span></div>
         <p className="text-label text-text-secondary">{workItemNextStep(item)}</p>
         <p className="text-caption text-muted-foreground">{presentation.responsibility}
-          {key && <> · <a className="text-primary hover:underline" href={sessionHref(projectId, key, from)}>打开智能体</a></>}
+          {key && <> · <a className="text-primary hover:underline" href={sessionHref(projectId, key, actorId ? tableOrigin(projectId, actorId, undefined, { id: item.taskId, title: presentation.title }) : null)}>打开智能体</a></>}
           {item.plan?.priority ? ` · P${item.plan.priority}` : ""}{item.dependencies.length ? ` · ${item.dependencies.length} 项依赖` : ""}
           {item.plan?.dueAt ? ` · 截止 ${new Date(item.plan.dueAt).toLocaleString("zh-CN")}` : " · 截止未设置"}</p>
         <p className="text-caption text-muted-foreground">创建 {timingDate(item.timing?.createdAt)} · 当前阶段 {item.timing ? timingStageLabel[item.timing.current.stage] : "未知"} · 已历时 {timingDuration(item.timing?.current.elapsedMs)}</p>

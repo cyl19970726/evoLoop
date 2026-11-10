@@ -10,7 +10,15 @@ export function taskOrigin(projectId: string, task: { id: string; title?: string
   return { href: here ? path : href(projectId, "task", task.id), title: task.title ?? null, actorId };
 }
 
-/** From a row of the task table: back to the table as it is on screen; the selected row names it. */
-export function tableOrigin(projectId: string, actorId: string, path = currentPath()): ReturnFrom {
-  return { href: path.split("?")[0] === href(projectId, "work") ? path : href(projectId, "work"), actorId };
+/**
+ * From the task table: back to the table as it is on screen. A link in a task's row comes back with that row selected
+ * and is named after it (“返回任务：<那一行>”); a link that belongs to no row names the list only, never the row that
+ * happens to be selected.
+ */
+export function tableOrigin(projectId: string, actorId: string, path = currentPath(), row?: { id: string; title: string } | null): ReturnFrom {
+  const table = href(projectId, "work");
+  const [pathname, query = ""] = path.split("?");
+  const params = new URLSearchParams(pathname === table ? query : "");
+  if (row) params.set("selected", row.id);
+  return { href: params.size ? `${table}?${params}` : table, title: row?.title ?? null, actorId };
 }

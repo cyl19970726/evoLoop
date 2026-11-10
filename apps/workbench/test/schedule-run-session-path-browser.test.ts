@@ -118,10 +118,15 @@ test("old Schedule occurrence reaches its exact closed Run Session workspace", {
   // The run names the agent it ran on; the agents' own cards are on the agent's page, not the task's.
   const exact = card.getByRole("link", { name: "查看这次运行的智能体" });
   assert.equal((await exact.getAttribute("href"))?.split("&return=")[0], `/p/${projectId}/sessions?session=${encodeURIComponent(sessionKey)}`);
+  const runAgentBack = new URLSearchParams((await exact.getAttribute("href"))!.split("?")[1]);
+  assert.equal(runAgentBack.get("return"), `/p/${projectId}/tasks/${taskId}?tab=runtime`, "the agent page comes back to this task's 运行与关联");
+  assert.equal(runAgentBack.get("returnTitle"), "旧日程创建的任务");
+  assert.equal(runAgentBack.get("actor"), "reader");
   assert.match(await card.innerText(), /运行的状态不代表任务已验收/);
   await exact.click();
   await page.getByRole("heading", { name: "历史 Session 77500006" }).waitFor();
   assert.match(await page.locator(".session-detail-header").innerText(), /历史/);
+  await page.locator("[data-return-link]").filter({ hasText: "返回任务：旧日程创建的任务" }).waitFor();
   assert.equal((url => url.pathname + url.search)(new URL(page.url())).split("&return=")[0], `/p/${projectId}/sessions?session=${encodeURIComponent(sessionKey)}`);
   assert.ok(requests.includes(`${rootPath(projectId)}/session-work/${encodeURIComponent(sessionKey)}`));
   assert.equal(requests.includes(`${rootPath(projectId)}/session-work/${encodeURIComponent(`owned:${otherSessionId}`)}`), false);

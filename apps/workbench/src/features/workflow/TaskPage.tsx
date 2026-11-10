@@ -13,6 +13,7 @@ import { TaskOwner } from "./TaskOwner";
 import { MarkdownBody } from "../../shared/ui/MarkdownBody";
 import { ContextPanelContent, useContextPanel } from "../../shared/ui/ContextPanel";
 import { ReturnLink } from "../../shared/ui/ReturnLink";
+import { taskOrigin } from "./taskOrigin";
 import { legacyDecisionLabel } from "./taskListPresentation";
 import { navigateTaskTab, scrollToTaskSection, taskRunFromHash, taskSectionFromHash, taskSessionReturn, type TaskSection } from "../../shared/taskNavigation";
 import { timingDuration, timingStageLabel } from "../../shared/taskTiming";
@@ -222,7 +223,7 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
   });
   return <TaskWriteBlock.Provider value={writeBlock}><div data-ui="" className="mx-auto flex w-full max-w-[880px] flex-col gap-5 px-6 pb-16 pt-5 max-compact:px-4" data-task-page={id}>
     <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-      {sessionReturn && <ReturnLink projectId={projectId} href={sessionReturn.href} place={sessionReturn.place} title={sessionReturn.title} />}
+      {sessionReturn && <ReturnLink projectId={projectId} href={sessionReturn.href} place={sessionReturn.place} label={sessionReturn.label} />}
       {viewSwitch}
       <span className="flex-1" />
       <span className="text-caption text-muted-foreground">{reading ? "正在核对当前任务…" : observedAt ? `读于 ${date(observedAt.toISOString())}` : "尚未读回"}</span>
@@ -275,7 +276,7 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
           <h2 id={`${panelId("overview")}-progress`} className={heading}>进展与讨论</h2>
           {projection?.timing && <p className="text-label text-text-secondary">现在：{timingStageLabel[projection.timing.current.stage] ?? "阶段未知"} · 本阶段已历时 {timingDuration(projection.timing.current.elapsedMs)}{projection.latestProgress ? ` · 最近进展 ${progressEventName(projection.latestProgress)}（${date(projection.latestProgress.changedAt)}）` : " · 最近进展未记录"}</p>}
           <TimingLine projectId={projectId} taskId={id} onOpen={openSchedule} />
-          <TaskCollaborationThread projectId={projectId} taskId={id} refresh={refresh + readVersion} actorId={context.principal.actorId} />
+          <TaskCollaborationThread projectId={projectId} taskId={id} refresh={refresh + readVersion} from={taskOrigin(projectId, detail.task, context.principal.actorId)} />
           {leaderTask && <TaskAttentionSection key={`${projectId}:${id}:${detail.task.currentRevisionId}`} context={taskContext} detail={detail} leader={leaderTask} />}
           {leaderTask && <details id="task-timing" className="group border-t border-border pt-3" {...(sectionOpen === "timing" ? { open: true } : {})}>
             <summary className="w-fit cursor-pointer text-label font-medium text-primary hover:underline">阶段区间、计划与来源</summary>
@@ -283,7 +284,7 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
           </details>}
           <details data-task-owner="" className="border-t border-border pt-3"><summary className="w-fit cursor-pointer text-label font-medium text-primary hover:underline">负责职责与同职责的其他智能体</summary>
             <p className="mt-2 text-caption text-muted-foreground">职责是持续的分工，具体承接看右栏的绑定与接受记录；同职责的其他智能体不代表承接了本任务。</p>
-            <div className="mt-2"><TaskOwner projectId={projectId} actorId={context.principal.actorId} owner={detail.task.owner} readKey={`${refresh}:${readVersion}:${detail.revision.id}`} onResolved={setResponsibleName} /></div></details>
+            <div className="mt-2"><TaskOwner projectId={projectId} from={taskOrigin(projectId, detail.task, context.principal.actorId)} owner={detail.task.owner} readKey={`${refresh}:${readVersion}:${detail.revision.id}`} onResolved={setResponsibleName} /></div></details>
         </section>
       </TabsContent>
       <TabsContent value="basis" forceMount hidden={tab !== "basis"} id={panelId("basis")} aria-labelledby={tabId("basis")} className="pt-5 outline-none">

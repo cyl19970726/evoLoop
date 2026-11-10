@@ -8,7 +8,7 @@ import { errorText, request } from "../../shared/api";
 import { isRoleOwnerId, readOwnerRole } from "../../shared/ownerRole";
 import { useProjectQuery } from "../../shared/query";
 import { runtimeClient } from "../../shared/runtimeClient";
-import { hereOrigin, withReturn } from "../../shared/returnLink";
+import { withReturn, type ReturnFrom } from "../../shared/returnLink";
 import { FullIdentifiers } from "../../shared/ui/FullIdentifiers";
 import { useSessionName } from "../../shared/ui/RecordName";
 import { href } from "../../shared/ui/shared";
@@ -18,17 +18,17 @@ import { boundAgents, ownerRoleProblem, ownerSessionState } from "./taskOwnerPre
 const note = "text-caption text-muted-foreground";
 const link = "text-primary hover:underline";
 
-function AgentLink({ projectId, session, actorId }: { projectId: string; session: RuntimeSessionRecord; actorId?: string | undefined }) {
+function AgentLink({ projectId, session, from }: { projectId: string; session: RuntimeSessionRecord; from?: ReturnFrom | null | undefined }) {
   const key = `owned:${session.id}`;
   const name = nameOnly("智能体", useSessionName(projectId, key));
-  return <a className={link} href={withReturn(`${href(projectId, "sessions")}?session=${encodeURIComponent(key)}`, actorId ? hereOrigin(actorId) : null)}>{name}（{ownerSessionState[session.state]}）</a>;
+  return <a className={link} href={withReturn(`${href(projectId, "sessions")}?session=${encodeURIComponent(key)}`, from)}>{name}（{ownerSessionState[session.state]}）</a>;
 }
 
-export function TaskOwner({ projectId, owner, readKey, onResolved, actorId }: {
+export function TaskOwner({ projectId, owner, readKey, onResolved, from }: {
   projectId: string; owner: string; readKey: string;
   onResolved?: (title: string | null) => void;
-  /** The reader, so a link to one of the agents comes back here. */
-  actorId?: string;
+  /** Where a link to one of the agents comes back to (this task, with its name). */
+  from?: ReturnFrom | null;
 }) {
   const isRole = isRoleOwnerId(owner);
   // Same key and value as the role names elsewhere (useRoleName), so they share one read.
@@ -65,7 +65,7 @@ export function TaskOwner({ projectId, owner, readKey, onResolved, actorId }: {
       {agentProblem ? <p className={note} role="status">{agentProblem}</p>
         : !agents ? <p className={note}>正在核对绑定的智能体…</p>
           : <>
-            {agents.agents.length > 0 && <ul className="flex flex-wrap gap-x-4 gap-y-1">{agents.agents.map(session => <li key={session.id}><AgentLink projectId={projectId} session={session} actorId={actorId} /></li>)}</ul>}
+            {agents.agents.length > 0 && <ul className="flex flex-wrap gap-x-4 gap-y-1">{agents.agents.map(session => <li key={session.id}><AgentLink projectId={projectId} session={session} from={from} /></li>)}</ul>}
             {agents.note && <p className={note}>{agents.note}</p>}
             {agents.agents.length > 0 && <p className={note}>职责绑定不表示此任务正由该智能体运行。</p>}
           </>}

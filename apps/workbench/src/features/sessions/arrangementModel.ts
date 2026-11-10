@@ -66,6 +66,8 @@ export interface Arrangement {
   leader: ObservedSession | null;
   /** Tasks placed under an agent because a resident-queue entry claimed them, not through an assignment. */
   claimed: ReadonlySet<string>;
+  /** Open Tasks whose assignment would stop their next dispatch (`staleAssignment`), by what is stale. */
+  stale: ReadonlyMap<string, "assigned" | "accepted">;
   evidence: ArrangementEvidence;
 }
 
@@ -82,13 +84,24 @@ function assignmentKey(task: LeaderWorkTask): string | null {
   return `${assignment.targetKind}:${assignment.targetId}`;
 }
 
+/** Phases whose next step is a dispatch: 待接手, 可开始, 返工. */
+const dispatchPhases = new Set<LeaderWorkTask["phase"]>(["awaiting_assignment", "ready", "rework"]);
+
 /**
- * The assignment is fixed to an older task revision (same rule as 运行与关联 “分派属于旧修订”): starting or revising the
- * task makes a new revision, and the old assignment or acceptance does not carry over. Null when the read does not say.
+ * The assignment would stop the next dispatch, so it has to be made again. Exactly the server's `ASSIGNMENT_STALE`
+ * (`requireAssignedSession` in packages/core/src/session-assignments/dispatch.ts): a concrete owned assignment fixed to a
+ * revision other than the task's current one, unless the dispatch comes from an established queue claim.
+ * Judged only where the next step is that dispatch. Elsewhere a new revision with the assignment left behind is the normal
+ * flow: `delivery.record` makes a revision (`newTaskRevision` in packages/core/src/workflow.ts), a reserved run moves only
+ * an unacknowledged assignment along (packages/core/src/runtime/reserve.ts), and a queue claim keeps its own frozen input.
+ * Null when the read does not say which revision the assignment is fixed to (older servers). The board passes what it
+ * knows of the task's queue claim; with the queues unread a claim cannot be ruled out, so nothing is concluded.
  */
-export function staleAssignment(task: Pick<LeaderWorkTask, "assignment" | "currentRevisionId">): "assigned" | "accepted" | null {
+export function staleAssignment(task: Pick<LeaderWorkTask, "assignment" | "currentRevisionId" | "phase">,
+  queue: { read: boolean; claimed: boolean } = { read: true, claimed: false }): "assigned" | "accepted" | null {
   const assignment = task.assignment;
-  if (!assignment || assignment.state === "released" || !assignment.taskRevisionId) return null;
+  if (!assignment || assignment.state === "released" || assignment.targetKind !== "owned" || !assignment.taskRevisionId) return null;
+  if (!dispatchPhases.has(task.phase) || !queue.read || queue.claimed) return null;
   return assignment.taskRevisionId === task.currentRevisionId ? null : assignment.state;
 }
 
@@ -182,12 +195,17 @@ export function buildArrangement(sessions: readonly ObservedSession[], tasks: re
       detail: running.map(task => quoted(task.title)).join("、"),
     });
   }
+  const stale = new Map<string, "assigned" | "accepted">();
   for (const task of open) {
-    const stale = staleAssignment(task);
-    if (stale) risks.push({
+    const kind = staleAssignment(task, { read: evidence.queuesRead, claimed: claimedBy.has(task.taskId) });
+    if (kind) stale.set(task.taskId, kind);
+  }
+  for (const task of open) {
+    const kind = stale.get(task.taskId);
+    if (kind) risks.push({
       kind: "stale_assignment", sessionKey: null, taskIds: [task.taskId],
-      title: `${quoted(task.title)}的${stale === "accepted" ? "接手" : "分派"}属于旧修订，要重新指定`,
-      detail: "任务修订已变化，原来的承接不算当前修订的承接",
+      title: `${quoted(task.title)}的${kind === "accepted" ? "接手" : "分派"}属于旧修订，要重新指定`,
+      detail: "任务修订已变化，按原来的分派派发会被拒绝",
     });
     // The server's own gate: a dependency counts once its current revision is accepted, not when its state says done.
     const pending = task.dependencies.filter(dependency => !dependency.acceptanceSatisfied);
@@ -216,7 +234,7 @@ export function buildArrangement(sessions: readonly ObservedSession[], tasks: re
   const ordered = rows.map((row, index) => ({ row, index }))
     .sort((a, b) => withWork(a.row) - withWork(b.row) || rank[a.row.load] - rank[b.row.load] || a.index - b.index)
     .map(item => item.row);
-  return { rows: ordered, elsewhere, unassigned, risks, dueSoon, leader: sessions.find(isLeaderSession) ?? null, claimed, evidence };
+  return { rows: ordered, elsewhere, unassigned, risks, dueSoon, leader: sessions.find(isLeaderSession) ?? null, claimed, stale, evidence };
 }
 
 /** Free capacity: no work in flight and nothing assigned or queued. Unknown occupation is never free. */

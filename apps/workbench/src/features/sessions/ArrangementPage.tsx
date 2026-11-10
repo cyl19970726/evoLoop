@@ -21,7 +21,7 @@ import { readSessionDirectoryPages } from "./useSessionDirectoryGroup";
 import { sessionHref } from "./SessionNavigation";
 import { agentStatusLabel } from "./sessionStatusPresentation";
 import {
-  buildArrangement, freeCapacity, staleAssignment, type Arrangement, type ArrangementRisk, type ArrangementRow, type QueuedWork,
+  buildArrangement, freeCapacity, type Arrangement, type ArrangementRisk, type ArrangementRow, type QueuedWork,
 } from "./arrangementModel";
 import {
   boardPhaseText, capacityUnknownReason, directoryWorkCaption, noConflictText, noFreeAgentText, readStateOf,
@@ -52,13 +52,15 @@ const shortDate = (value: string) => {
 /** Links out of 统筹安排 come back to it (“返回统筹安排”). */
 const taskHref = (projectId: string, taskId: string, from: ReturnFrom) => withReturn(href(projectId, "task", taskId), from);
 
-function TaskLine({ projectId, task, extra, from }: { projectId: string; task: LeaderWorkTask; extra?: string | undefined; from: ReturnFrom }) {
+function TaskLine({ projectId, task, extra, from, stale }: {
+  projectId: string; task: LeaderWorkTask; extra?: string | undefined; from: ReturnFrom; stale: Arrangement["stale"];
+}) {
   const due = task.plan?.dueAt;
-  const stale = !!staleAssignment(task);
-  return <li className="min-w-0" data-stale-assignment={stale ? "" : undefined}>
+  const staleKind = stale.get(task.taskId) ?? null;
+  return <li className="min-w-0" data-stale-assignment={staleKind ? "" : undefined}>
     <a href={taskHref(projectId, task.taskId, from)} className="block truncate text-small text-foreground hover:underline" title={task.title}>{task.title}</a>
-    <span className={cn("block text-caption", stale ? "text-warning" : "text-muted-foreground")}>
-      {boardPhaseText(task)}{task.plan?.priority ? ` · P${task.plan.priority}` : ""}{due ? ` · 截止 ${shortDate(due)}` : ""}{extra ? ` · ${extra}` : ""}
+    <span className={cn("block text-caption", staleKind ? "text-warning" : "text-muted-foreground")}>
+      {boardPhaseText(task, staleKind)}{task.plan?.priority ? ` · P${task.plan.priority}` : ""}{due ? ` · 截止 ${shortDate(due)}` : ""}{extra ? ` · ${extra}` : ""}
     </span>
   </li>;
 }
@@ -83,8 +85,8 @@ const loadDot: Record<ArrangementRow["load"], string> = {
 
 const unreadText = (state: ReadState, what: string) => state === "loading" ? "正在读取" : state === "failed" ? `${what}未读取` : "—";
 
-function BoardRow({ projectId, row, claimed, tasks, queues, from }: {
-  projectId: string; row: ArrangementRow; claimed: ReadonlySet<string>; tasks: ReadState; queues: ReadState; from: ReturnFrom;
+function BoardRow({ projectId, row, claimed, stale, tasks, queues, from }: {
+  projectId: string; row: ArrangementRow; claimed: ReadonlySet<string>; stale: Arrangement["stale"]; tasks: ReadState; queues: ReadState; from: ReturnFrom;
 }) {
   const { session } = row;
   const roles = session.roles.map(role => role.title).join("、") || "职责待核对";
@@ -92,7 +94,7 @@ function BoardRow({ projectId, row, claimed, tasks, queues, from }: {
   // It stands in only while Tasks cannot be read, under 已分派 and with its source.
   const fallback = tasks === "failed" ? session.currentTask : null;
   const line = (task: LeaderWorkTask) =>
-    <TaskLine key={task.taskId} projectId={projectId} task={task} extra={claimed.has(task.taskId) ? "从排队中领取" : undefined} from={from} />;
+    <TaskLine key={task.taskId} projectId={projectId} task={task} extra={claimed.has(task.taskId) ? "从排队中领取" : undefined} from={from} stale={stale} />;
   const nothing = !row.running.length && !fallback && !row.assigned.length && !row.queued.length;
   const nothingText = tasks === "loading" ? "正在读取任务" : tasks === "failed" ? "任务未读取"
     : queues === "ready" || queues === "stale" ? "没有在做、分派或排队的工作"
@@ -171,7 +173,7 @@ function ArrangementPanel({ projectId, board, reads, from }: { projectId: string
         {!unknownReason && capacity.unknown > 0 && capacity.unknown < capacity.others && muted(`另有 ${capacity.unknown} 个智能体的状态待核对，不算空闲。`)}
       </PanelSection>
       <PanelSection title="截止临近" count={tasksShown ? board.dueSoon.length : undefined}>
-        {tasksShown && board.dueSoon.length ? <ul className="flex flex-col gap-2">{board.dueSoon.map(task => <TaskLine key={task.taskId} projectId={projectId} task={task} from={from} />)}</ul>
+        {tasksShown && board.dueSoon.length ? <ul className="flex flex-col gap-2">{board.dueSoon.map(task => <TaskLine key={task.taskId} projectId={projectId} task={task} from={from} stale={board.stale} />)}</ul>
           : muted(reads.tasks === "loading" ? "正在读取任务。" : reads.tasks === "failed" ? "任务暂不可读取。"
             : reads.tasksComplete ? "三天内没有到期的任务。" : "已读取的任务里三天内没有到期的。")}
       </PanelSection>
@@ -269,17 +271,17 @@ export function ArrangementPage({ context, refresh }: { context: MutationContext
               <div aria-hidden="true" className="hidden grid-cols-[minmax(200px,1.1fr)_repeat(3,minmax(0,1fr))] gap-4 border-b border-border py-2 text-caption text-muted-foreground @2xl:grid">
                 <span>智能体</span><span>正在做</span><span>已分派</span><span>排队</span>
               </div>
-              <ul aria-label="各智能体的安排">{board.rows.map(row => <BoardRow key={row.session.key} projectId={projectId} row={row} claimed={board.claimed} tasks={reads.tasks} queues={reads.queues} from={from} />)}</ul>
+              <ul aria-label="各智能体的安排">{board.rows.map(row => <BoardRow key={row.session.key} projectId={projectId} row={row} claimed={board.claimed} stale={board.stale} tasks={reads.tasks} queues={reads.queues} from={from} />)}</ul>
             </div> : <EmptyState title="还没有智能体" reason="项目里还没有当前的智能体。可以在左侧目录里连接或建立一个。" />}
             {moreAgents && <p className="text-caption text-muted-foreground">智能体较多，看板只包含前 {agents.length} 个；其余智能体承接的任务列在“未读到”的分组里。</p>}
           </section>
           {board.elsewhere.map(group => <section key={group.target} aria-label={group.label} className="flex flex-col gap-2">
             <h2 className={heading}>{group.label}<span className="ml-1.5 font-normal text-muted-foreground">{group.tasks.length}</span></h2>
-            <ul className="flex flex-col gap-2 rounded-xl bg-raised px-4 py-3 shadow-sm">{group.tasks.map(task => <TaskLine key={task.taskId} projectId={projectId} task={task} from={from} />)}</ul>
+            <ul className="flex flex-col gap-2 rounded-xl bg-raised px-4 py-3 shadow-sm">{group.tasks.map(task => <TaskLine key={task.taskId} projectId={projectId} task={task} from={from} stale={board.stale} />)}</ul>
           </section>)}
           {tasksShown && <section aria-labelledby="arrangement-unassigned" className="flex flex-col gap-2">
             <h2 id="arrangement-unassigned" className={heading}>没有承接者的任务<span className="ml-1.5 font-normal text-muted-foreground">{board.unassigned.length}</span></h2>
-            {board.unassigned.length ? <ul className="flex flex-col gap-2 rounded-xl bg-raised px-4 py-3 shadow-sm">{board.unassigned.map(task => <TaskLine key={task.taskId} projectId={projectId} task={task} extra={workNextStep(task.phase)} from={from} />)}</ul>
+            {board.unassigned.length ? <ul className="flex flex-col gap-2 rounded-xl bg-raised px-4 py-3 shadow-sm">{board.unassigned.map(task => <TaskLine key={task.taskId} projectId={projectId} task={task} extra={workNextStep(task.phase)} from={from} stale={board.stale} />)}</ul>
               : <p className="text-caption text-muted-foreground">{reads.tasksComplete ? "每项未关闭的任务都有承接者。" : "已读取的任务都有承接者。"}</p>}
             {(reads.queues === "failed" || reads.queues === "loading") && <p className="text-caption text-muted-foreground">队列还没读到：从排队中领取的任务也可能列在这里。</p>}
           </section>}

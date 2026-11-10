@@ -175,27 +175,52 @@ test("an assignee missing from a directory read up to its limit is 未读到, no
     .elsewhere.map(group => group.label), ["受管智能体 · 不在当前目录", "外部接入 · 不在当前目录"]);
 });
 
-test("an assignment fixed to an older task revision is a risk to reassign, not 待接手", () => {
+test("an assignment that would stop the next dispatch is a risk to reassign; the normal flow's new revisions are not", () => {
   const old = id(900);
-  const fixedTo = (state: "assigned" | "accepted" | "released", revision?: string) =>
-    ({ state, targetKind: "owned" as const, targetId: id(1), recipientActorId: null, ...(revision ? { taskRevisionId: revision } : {}) });
-  const stale = task(1, { phase: "awaiting_assignment", assignment: fixedTo("assigned", old) });
-  const acceptedOld = task(2, { phase: "ready", assignment: fixedTo("accepted", old) });
-  const current = task(3, { phase: "awaiting_assignment", assignment: fixedTo("assigned", id(103)) });
-  const unknown = task(4, { phase: "awaiting_assignment", assignment: fixedTo("assigned") });
-  const released = task(5, { phase: "unassigned", assignment: fixedTo("released", old) });
-  assert.equal(staleAssignment(stale), "assigned");
-  assert.equal(staleAssignment(acceptedOld), "accepted");
-  assert.equal(staleAssignment(current), null);
-  assert.equal(staleAssignment(unknown), null, "a server that does not say the revision proves nothing");
-  assert.equal(staleAssignment(released), null, "a released assignment is not waiting for anyone");
-  const board = buildArrangement([agent(1, false)], [stale, acceptedOld, current, unknown, released], [], now, complete);
+  const fixedTo = (state: "assigned" | "accepted" | "released", revision?: string, targetKind: "owned" | "external" = "owned") =>
+    ({ state, targetKind, targetId: id(1), recipientActorId: null, ...(revision ? { taskRevisionId: revision } : {}) });
+  const read = { read: true, claimed: false };
+  // Next step is a dispatch, and the server would answer ASSIGNMENT_STALE.
+  const waiting = task(1, { phase: "awaiting_assignment", assignment: fixedTo("assigned", old) });
+  const ready = task(2, { phase: "ready", assignment: fixedTo("accepted", old) });
+  const rework = task(3, { phase: "rework", assignment: fixedTo("accepted", old) });
+  // The normal flow: delivery.record made a revision; a run was dispatched after acceptance; both leave the assignment behind.
+  const delivered = task(4, { phase: "awaiting_acceptance", assignment: fixedTo("accepted", old) });
+  const running = task(5, { phase: "running", assignment: fixedTo("accepted", old) });
+  const awaitingDelivery = task(6, { phase: "awaiting_delivery", assignment: fixedTo("accepted", old) });
+  // Not provable or not the server's rule.
+  const current = task(7, { phase: "awaiting_assignment", assignment: fixedTo("assigned", id(107)) });
+  const unknown = task(8, { phase: "awaiting_assignment", assignment: fixedTo("assigned") });
+  const released = task(9, { phase: "unassigned", assignment: fixedTo("released", old) });
+  const external = task(10, { phase: "ready", assignment: fixedTo("accepted", old, "external") });
+  assert.equal(staleAssignment(waiting, read), "assigned");
+  assert.equal(staleAssignment(ready, read), "accepted");
+  assert.equal(staleAssignment(rework, read), "accepted", "返工: the next dispatch would be refused");
+  assert.equal(staleAssignment(delivered, read), null, "a delivery makes a new revision; waiting for acceptance is not stale");
+  assert.equal(staleAssignment(running, read), null, "accepted, then dispatched: the run carries on");
+  assert.equal(staleAssignment(awaitingDelivery, read), null);
+  assert.equal(staleAssignment(current, read), null);
+  assert.equal(staleAssignment(unknown, read), null, "a server that does not say the revision proves nothing");
+  assert.equal(staleAssignment(released, read), null, "a released assignment is not waiting for anyone");
+  assert.equal(staleAssignment(external, read), null, "only an owned assignment is checked by the dispatch");
+  assert.equal(staleAssignment(ready, { read: true, claimed: true }), null, "a dispatch from a queue claim keeps its own frozen input");
+  assert.equal(staleAssignment(ready, { read: false, claimed: false }), null, "unread queues: a claim cannot be ruled out");
+
+  const tasks = [waiting, ready, rework, delivered, running, awaitingDelivery, current, unknown, released];
+  const board = buildArrangement([agent(1, false)], tasks, [], now, complete);
   assert.deepEqual(board.risks.map(risk => [risk.kind, risk.title]), [
     ["stale_assignment", "「任务1」的分派属于旧修订，要重新指定"],
     ["stale_assignment", "「任务2」的接手属于旧修订，要重新指定"],
+    ["stale_assignment", "「任务3」的接手属于旧修订，要重新指定"],
   ]);
-  assert.deepEqual(board.rows[0]!.assigned.map(item => item.title), ["任务1", "任务2", "任务3", "任务4"], "the stale work stays on the agent's row");
-  assert.equal(boardPhaseText(stale), "分派属于旧修订 · 要重新指定");
-  assert.equal(boardPhaseText(acceptedOld), "接手属于旧修订 · 要重新指定");
-  assert.equal(boardPhaseText(current), "待接手");
+  assert.deepEqual([...board.stale.keys()], [waiting.taskId, ready.taskId, rework.taskId]);
+  assert.ok(board.rows[0]!.assigned.some(item => item.title === "任务1"), "the stale work stays on the agent's row");
+  assert.deepEqual(buildArrangement([agent(1, false)], tasks, [queue([{ session: 1, task: 2, position: 1, state: "claimed" }])], now, complete)
+    .risks.map(risk => risk.taskIds[0]), [waiting.taskId, rework.taskId], "a claimed queue entry dispatches without the stale check");
+  assert.deepEqual(buildArrangement([agent(1, false)], tasks, [], now, { ...complete, queuesRead: false }).risks
+    .filter(risk => risk.kind === "stale_assignment"), [], "without the queues nothing is concluded");
+  assert.equal(boardPhaseText(waiting, board.stale.get(waiting.taskId)), "分派属于旧修订 · 要重新指定");
+  assert.equal(boardPhaseText(ready, board.stale.get(ready.taskId)), "接手属于旧修订 · 要重新指定");
+  assert.equal(boardPhaseText(delivered, board.stale.get(delivered.taskId)), "待验收");
+  assert.equal(boardPhaseText(current, board.stale.get(current.taskId)), "待接手");
 });

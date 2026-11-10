@@ -18,7 +18,7 @@ const projectId = id(1);
 const roleId = id(2);
 const sessionId = id(3);
 const sessionKey = `owned:${sessionId}`;
-const [taskA, taskB, taskC] = [id(10), id(11), id(12)];
+const [taskA, taskB, taskC, taskD] = [id(10), id(11), id(12), id(13)];
 const [docA, revA] = [id(20), id(30)];
 const oldRevision = id(40);
 const stamp = "2026-11-10T00:00:00.000Z";
@@ -26,13 +26,14 @@ const metadata = { generatedAt: stamp, sourceObservedAt: stamp, partial: false, 
 const titleA = "【合成示例】右栏信息核对";
 const titleB = "【合成示例】旧修订上的分派";
 const titleC = "【合成示例】没人承接的任务";
+const titleD = "【合成示例】已交付待验收";
 const agentTitle = "【合成示例】开发智能体";
 
 const task = (taskId: string, title: string, state = "in_progress") => ({
   projectId, id: taskId, version: 2, currentRevisionId: `${taskId.slice(0, 30)}999999`, title, content: `# 目标\n${title}的正文。`,
   contentDocumentId: docA, contentRevisionId: revA, kind: "implementation", acceptance: "1. 返回链接带名称。", owner: roleId, state,
 });
-const tasks = [task(taskA, titleA), task(taskB, titleB), task(taskC, titleC, "todo")];
+const tasks = [task(taskA, titleA), task(taskB, titleB), task(taskC, titleC, "todo"), task(taskD, titleD)];
 const fixedTo = (item: ReturnType<typeof task>, state: string, revision: string) =>
   ({ state, targetKind: "owned", targetId: sessionId, recipientActorId: null, taskRevisionId: revision });
 const projection = (item: ReturnType<typeof task>, phase: string, assignment: unknown) => ({
@@ -47,6 +48,8 @@ const indexed = [
   // Assigned before the task was revised: the server still calls it 待接手; the board must not.
   projection(tasks[1]!, "awaiting_assignment", fixedTo(tasks[1]!, "assigned", oldRevision)),
   projection(tasks[2]!, "unassigned", null),
+  // Delivered: delivery.record made a new revision and left the accepted assignment behind. That is the normal flow.
+  projection(tasks[3]!, "awaiting_acceptance", fixedTo(tasks[3]!, "accepted", oldRevision)),
 ];
 const assignmentOf = (taskId: string) => {
   const found = indexed.find(item => item.taskId === taskId)!;
@@ -198,6 +201,15 @@ test("跨空间返回: task → agent → task (same tab), table → agent, 统�
   await backToTask.click();
   await page.getByRole("heading", { level: 1, name: "任务" }).waitFor();
   assert.equal(await here(), tableAddress, "the table with the same filter and row");
+  // Another row's agent, while row A stays selected: named after that row, and back with that row selected.
+  await page.locator("tr", { hasText: titleB }).locator("[data-owner-cell] a").click();
+  const backToRowB = returnLink(`返回任务：${titleB}`);
+  await backToRowB.waitFor({ timeout: 8000 }).catch(() => fail("an agent from row B is not named after row B"));
+  assert.equal(await page.locator("[data-return-link]:visible").filter({ hasText: `返回任务：${titleA}` }).count(), 0, "never named after the selected row");
+  await backToRowB.click();
+  await page.getByRole("heading", { level: 1, name: "任务" }).waitFor();
+  assert.match(await here(), new RegExp(`selected=${taskB}`));
+  assert.match(await here(), /state=all/, "the filter stays");
 
   // 5. 统筹安排: an assignment on an older revision is a risk; a task opened from the board comes back to it.
   await page.goto(`${base}/p/${projectId}/sessions`);
@@ -209,6 +221,8 @@ test("跨空间返回: task → agent → task (same tab), table → agent, 统�
   await staleLine.waitFor({ timeout: 8000 }).catch(() => fail("stale assignment not marked on the board"));
   assert.match(await staleLine.innerText(), new RegExp(`${titleB}[\\s\\S]*分派属于旧修订 · 要重新指定`));
   assert.doesNotMatch(await staleLine.innerText(), /待接手/);
+  assert.equal(await staleLine.count(), 1, "only the assignment that would stop the next dispatch");
+  assert.match(await board.locator("li", { hasText: titleD }).last().innerText(), /待验收/, "a delivered task waiting for acceptance is not stale");
   const risks = page.getByRole("region", { name: "冲突与风险" });
   await risks.getByRole("link", { name: `「${titleB}」的分派属于旧修订，要重新指定` }).waitFor();
   assert.match(await page.getByLabel("概况").innerText(), /1\s*个冲突与风险/);

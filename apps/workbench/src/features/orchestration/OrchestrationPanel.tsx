@@ -70,8 +70,6 @@ async function decisionsFor(client: Client, events: OrchestrationEvent[]): Promi
 interface PanelData {
   status: OrchestrationStatus; loops: ResultPage<OrchestrationLoop>; titles: Record<string, ScopeTitle>;
   contexts: ResultPage<TaskLoopContext>; workStatus: WorkTaskStatus | null;
-  /** False when the service does not offer a task's loops (automatic loops not configured or not enabled). */
-  contextAvailable: boolean;
 }
 
 /** Rereads when `refresh` moves (the page's own polling or a reread button), keeping the answer on screen meanwhile. */
@@ -94,12 +92,12 @@ export function OrchestrationPanel({ projectId, refresh, taskId, verifiedRuns }:
     const client = orchestrationClient("", projectId);
     if (!taskId) {
       const { status, loops } = await client.overview();
-      return { status, loops, titles: await scopeTitles(client, loops.items), contexts: { items: [], nextCursor: null }, workStatus: null, contextAvailable: true };
+      return { status, loops, titles: await scopeTitles(client, loops.items), contexts: { items: [], nextCursor: null }, workStatus: null };
     }
-    const [{ status, contexts, contextAvailable }, work] = await Promise.all([client.taskOverview(taskId), api().workStatuses(projectId, [taskId])]);
+    const [{ status, contexts }, work] = await Promise.all([client.taskOverview(taskId), api().workStatuses(projectId, [taskId])]);
     const related = await Promise.all(contexts.items.map(item => client.loop(item.loopId)));
     return { status, loops: { items: related, nextCursor: null }, titles: await scopeTitles(client, related), contexts,
-      workStatus: work.items.find(item => item.taskId === taskId) ?? null, contextAvailable };
+      workStatus: work.items.find(item => item.taskId === taskId) ?? null };
   });
   useRefetchOn(refresh + epoch, read.refetch);
   // Further pages of loops (or of the task's loop contexts), read on request and kept across rereads.
@@ -159,7 +157,7 @@ export function OrchestrationPanel({ projectId, refresh, taskId, verifiedRuns }:
       next="可以重新读取；读取失败不代表没有循环或后续处理。" action={<Button size="compact" onClick={() => setEpoch(value => value + 1)}>重新读取</Button>} />}
     {problem && data && <Notice tone="error">自动循环读取未完成：{problem}。下面保留上次读回的循环供核对，当前关联未确认。</Notice>}
     {status && <StatusLine status={status} />}
-    {data && !problem && !read.isFetching && loops.length === 0 && <p className="text-label text-text-secondary">{emptyLoopsText(!!taskId, status, data.contextAvailable)}</p>}
+    {data && !problem && !read.isFetching && loops.length === 0 && <p className="text-label text-text-secondary">{emptyLoopsText(!!taskId, status)}</p>}
     {taskId && loops.length > 0 && <p className="rounded-md bg-muted px-3 py-2 text-label text-foreground [overflow-wrap:anywhere]" role="status"
       data-association={read.isFetching ? "checking" : association?.kind ?? "unresolved"} data-association-loop={association && association.kind !== "unresolved" ? association.loopId : undefined}
       data-association-run={association && association.kind !== "unresolved" ? association.runId ?? undefined : undefined}

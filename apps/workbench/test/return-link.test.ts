@@ -1,6 +1,12 @@
 // 跨空间返回: which pages a link may come back to, how the way back is named, and that it survives tab changes.
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import * as ReactModule from "react";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { ReturnLink } from "../src/shared/ui/ReturnLink.tsx";
+import { originHref } from "../src/features/settings/operationsPresentation.ts";
 import { hereOrigin, readReturn, returnPlaceOf, returnSource, returnText, withReturn } from "../src/shared/returnLink.ts";
 import { taskSessionReturn, taskTabHref } from "../src/shared/taskNavigation.ts";
 import { sessionTaskReturn } from "../src/features/sessions/sessionReturn.ts";
@@ -91,6 +97,41 @@ test("links out of a task come back to the address on screen: its tab, or the ta
   assert.deepEqual(taskOrigin(project, { id: task, title: "任务甲" }, "me", `/p/${project}/work?selected=${task}`).href, `/p/${project}/work?selected=${task}`);
   assert.equal(taskOrigin(project, { id: task }, "me", `/p/${project}/overview`).href, `/p/${project}/tasks/${task}`, "another page on screen: the task itself");
   assert.equal(tableOrigin(project, "me", `/p/${project}/work?state=all`).href, `/p/${project}/work?state=all`);
+});
+
+test("a link in a table row is named after that row, never after the row that happens to be selected", () => {
+  const agentLink = (from: ReturnType<typeof tableOrigin>) => withReturn(`${p}/sessions?session=${encodeURIComponent(agent)}`, from);
+  const onScreen = `${p}/work?state=all&selected=${task}`;
+  // Row B's agent while row A is selected: back to the table with B selected, named B.
+  const rowB = readReturn(agentLink(tableOrigin(project, "me", onScreen, { id: other, title: "任务乙" })), project, "me")!;
+  assert.equal(rowB.label, "返回任务：任务乙");
+  assert.equal(rowB.href, `${p}/work?state=all&selected=${other}`, "the filter stays, the row comes along");
+  // A link that belongs to no row (an agent in 阶段与验收容量): the list, not the selected row.
+  const noRow = readReturn(agentLink(tableOrigin(project, "me", onScreen)), project, "me")!;
+  assert.equal(noRow.label, "返回任务列表");
+  assert.equal(noRow.href, onScreen);
+});
+
+test("the return link on screen says exactly what readReturn says for the same link", () => {
+  Object.assign(globalThis, { React: ReactModule });
+  const links = [
+    withReturn(`${p}/sessions?session=${encodeURIComponent(agent)}`, tableOrigin(project, "me", `${p}/work?selected=${task}`, { id: other, title: "任务乙" })),
+    withReturn(`${p}/sessions?session=${encodeURIComponent(agent)}`, tableOrigin(project, "me", `${p}/work?selected=${task}`)),
+    withReturn(`${p}/sessions?session=${encodeURIComponent(agent)}`, { href: `${p}/tasks/${task}`, actorId: "me" }),
+    withReturn(`${p}/tasks/${task}`, { href: `${p}/sessions`, actorId: "me" }),
+  ];
+  for (const link of links) {
+    const source = readReturn(link, project, "me")!;
+    const html = renderToStaticMarkup(createElement(QueryClientProvider, { client: new QueryClient() },
+      createElement(ReturnLink, { projectId: project, href: source.href, place: source.place, label: source.label })));
+    assert.equal(html.replace(/<[^>]+>/g, ""), source.label, link);
+  }
+});
+
+test("“结果未知的操作” opens a task with its way back, and the task page names it", () => {
+  const link = originHref(project, "task", task, "me");
+  assert.equal(taskSessionReturn(link, project, task, "me")?.label, "返回结果未知的操作");
+  assert.equal(taskSessionReturn(link, project, task, "me")?.href, `${p}/operations`);
 });
 
 test("the document page names where its way back goes, and falls back to the list", () => {

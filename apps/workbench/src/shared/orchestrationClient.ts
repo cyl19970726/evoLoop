@@ -57,15 +57,16 @@ export function orchestrationClient(token: string, projectId: string) {
       }
     },
     /**
-     * A task's loops. The task-context route is registered only with automatic loops configured: a 404 there means the
-     * loops are not set up (or not enabled) for this service, never that a record was removed, so it reads as none.
+     * A task's loops. Same rule as `overview`: only when the status itself says the loops are not configured (its route
+     * answers 404, so `disabled`) does a 404 from the task-context route read as “no loops”. With loops configured a 404
+     * is a real answer — the task is not found (apps/coordinator/src/orchestration/setup.ts) — and is reported as such.
      */
     taskOverview: async (taskId: string) => {
       const status = await client.status();
-      try { return { status, contexts: await client.taskContext(taskId), contextAvailable: true }; }
+      try { return { status, contexts: await client.taskContext(taskId) }; }
       catch (cause) {
-        if (cause instanceof ApiError && cause.status === 404)
-          return { status, contexts: { items: [], nextCursor: null } as ResultPage<TaskLoopContext>, contextAvailable: false };
+        if (status.state === "disabled" && cause instanceof ApiError && cause.status === 404)
+          return { status, contexts: { items: [], nextCursor: null } as ResultPage<TaskLoopContext> };
         throw cause;
       }
     },

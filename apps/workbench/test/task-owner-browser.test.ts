@@ -127,6 +127,9 @@ test("Task owner resolves one real Role and only verified bound agent links at 3
   assert.equal((await owner.getByRole("link",{name:/^前端实现（就绪）$/}).getAttribute("href"))?.split("&return=")[0],
     `/p/${projectId}/sessions?session=${encodeURIComponent(`owned:${sessionId}`)}`,
     "the verified owned Session opens through the sole Sessions directory route");
+  const ownerAgentBack = new URLSearchParams((await owner.getByRole("link",{name:/^前端实现（就绪）$/}).getAttribute("href"))!.split("?")[1]);
+  assert.equal(ownerAgentBack.get("return")?.split("?")[0],`/p/${projectId}/tasks/${taskId}`,"the agent page comes back to this task");
+  assert.equal(ownerAgentBack.get("returnTitle"),"负责人可读");
   await pageBrowser.evaluate(({projectId,taskId})=>{location.hash=`/p/${projectId}/tasks/${taskId}`;},{projectId,taskId});
   await owner.getByRole("link",{name:"开发流程职责"}).waitFor();
   const exactReadsBeforeFailure = (await (await fetch(`${base}/__fixture/reads`)).json()).roleReads as number;

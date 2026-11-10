@@ -217,6 +217,10 @@ test("built Task page selects the current Loop, preserves manual history and fit
   assert.equal(await exactRunLink.getAttribute("href"),`/p/${projectId}/tasks/${taskId}?tab=runtime&run=${runId}`);
   assert.equal((await currentTaskPage.getByRole("link",{name:"查看对应智能体 →"}).getAttribute("href"))?.split("&return=")[0],
     `/p/${projectId}/sessions?session=${encodeURIComponent(`owned:${taskId}`)}`);
+  const deliveryAgentBack = new URLSearchParams((await currentTaskPage.getByRole("link",{name:"查看对应智能体 →"}).getAttribute("href"))!.split("?")[1]);
+  assert.equal(deliveryAgentBack.get("return")?.split("?")[0],`/p/${projectId}/tasks/${taskId}`,"the agent page comes back to this task");
+  assert.equal(new URLSearchParams(deliveryAgentBack.get("return")!.split("?")[1]).get("tab"),"delivery","…on its 交付与使用 tab");
+  assert.equal(deliveryAgentBack.get("returnTitle"),"同一任务续跑");
   await exactRunLink.focus();
   await exactRunLink.press("Enter");
   await currentOpenRun.waitFor();
