@@ -95,6 +95,8 @@ test("managed agents in 分工与运行 keep Role names, full grants and activat
   const [rowScroll,rowClient]=await row(0).evaluate(el=>[el.scrollWidth,el.clientWidth]);
   assert.ok(rowScroll!<=rowClient!+1,`the agent row overflows at 390px: ${rowScroll} > ${rowClient}`);
   await page.getByRole("button",{name:"新建受管智能体"}).click();
+  // The grant list appears once the model catalog has answered (正在读取可用模型… until then).
+  await page.getByLabel("已配置的完整权限授权").waitFor();
   const grantOptions=await page.getByLabel("已配置的完整权限授权").locator("option").allTextContents();
   assert.equal(grantOptions.some(text=>text.includes("旧授权")),false);
   assert.equal(grantOptions.some(text=>text.includes("gpt-6-sol")),true);
