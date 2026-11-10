@@ -2,8 +2,7 @@
 // fields: why it cannot send now, the baseline that moved (keep the fields the person changed, or refill from the
 // latest content), an unknown result and its check by the original operation ID, the outcome with 诊断信息, and the
 // submit button. CommandForm is a frame with a list of fields; a form with its own field layout (分工讨论) uses the
-// frame with useCommand directly. The form root is marked [data-ui], so it renders as new markup even inside an old
-// [data-legacy] region (packages/ui/src/scope.css).
+// frame with useCommand directly.
 import * as React from "react";
 import type { ReactNode } from "react";
 import type { AppliedResult, Permission } from "@evoloop/contracts";

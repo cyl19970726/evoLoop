@@ -38,18 +38,20 @@ export function waitingParty(waiting: { kind: string; id?: string | null }): str
 export function timingWaitingFor(timing: LeaderWorkTaskTiming): string {
   return waitingParty(timing.current.waitingFor);
 }
+/** Label beside value from the compact width up, label above value below it. */
+const facts = "flex flex-col gap-2 [&>div]:grid [&>div]:gap-x-3 [&>div]:gap-y-0.5 compact:[&>div]:grid-cols-[108px_minmax(0,1fr)] [&_dt]:text-muted-foreground [&_dd]:min-w-0 [&_dd]:text-foreground [&_dd]:[overflow-wrap:anywhere]";
 export function TaskTiming({ timing, detailed = false }: { timing?: LeaderWorkTaskTiming | null; detailed?: boolean }) {
-  if (!timing) return <p className="task-timing-unavailable">阶段时间尚未读回；请重新读取本任务。</p>;
+  if (!timing) return <p className="text-label text-muted-foreground">阶段时间尚未读回；请重新读取本任务。</p>;
   const current = timing.current;
-  return <section className={`task-timing${detailed ? " task-timing-detailed" : ""}`} aria-label="任务阶段时间">
-    <div className="task-timing-current">
-      <strong>{timingStageLabel[current.stage] ?? "阶段未知"}</strong>
+  return <section className="flex min-w-0 flex-col gap-3 text-label text-text-secondary" aria-label="任务阶段时间">
+    <div className="flex min-w-0 flex-col gap-0.5 [overflow-wrap:anywhere]">
+      <strong className="text-small text-foreground">{timingStageLabel[current.stage] ?? "阶段未知"}</strong>
       <span>本阶段 {timingDate(current.startedAt)} 至 {current.endedAt ? timingDate(current.endedAt) : "不适用（当前阶段）"}</span>
       <span>已历时 {timingDuration(current.elapsedMs)}</span>
       <span>等待 {timingWaitingFor(timing)}</span>
     </div>
     {detailed && <React.Fragment>
-      <dl className="task-timing-facts">
+      <dl className={facts}>
         <div><dt>任务创建</dt><dd>{timingDate(timing.createdAt)}</dd></div>
         <div><dt>发布证据</dt><dd>{timing.publication.source === "explicit" && timing.publication.at
           ? `已发布 · ${timingDate(timing.publication.at)}`
@@ -62,11 +64,11 @@ export function TaskTiming({ timing, detailed = false }: { timing?: LeaderWorkTa
           ? `${timing.executionActivity.kind} · ${timingDate(timing.executionActivity.at)} · ${timing.executionActivity.freshness === "live" ? "新近观察" : timing.executionActivity.freshness === "stale" ? "观察已过期" : "新鲜度未知"}`
           : "未知；没有可归属此 Task 的活动"}</dd></div>
       </dl>
-      {timing.rounds.length > 0 && <details className="task-timing-rounds"><summary>查看 {timing.rounds.length} 轮阶段区间</summary>
-        <ol>{timing.rounds.map(round => <li key={round.number}><strong>第 {round.number} 轮</strong> · {timingDate(round.startedAt)} 至 {round.endedAt ? timingDate(round.endedAt) : "不适用（进行中）"} · {timingDuration(round.elapsedMs)}
-          <ul>{round.intervals.map((interval, index) => <li key={`${round.number}:${index}`}>{timingStageLabel[interval.stage] ?? "阶段未知"} · {timingDate(interval.startedAt)} 至 {interval.endedAt ? timingDate(interval.endedAt) : "不适用（进行中）"} · {interval.source ? `${interval.source.kind} ${interval.source.id}` : "来源未知"}</li>)}</ul>
+      {timing.rounds.length > 0 && <details className="[overflow-wrap:anywhere]"><summary className="w-fit cursor-pointer text-primary hover:underline">查看 {timing.rounds.length} 轮阶段区间</summary>
+        <ol className="mt-2 flex list-decimal flex-col gap-1 pl-6">{timing.rounds.map(round => <li key={round.number}><strong>第 {round.number} 轮</strong> · {timingDate(round.startedAt)} 至 {round.endedAt ? timingDate(round.endedAt) : "不适用（进行中）"} · {timingDuration(round.elapsedMs)}
+          <ul className="list-disc pl-5">{round.intervals.map((interval, index) => <li key={`${round.number}:${index}`}>{timingStageLabel[interval.stage] ?? "阶段未知"} · {timingDate(interval.startedAt)} 至 {interval.endedAt ? timingDate(interval.endedAt) : "不适用（进行中）"} · {interval.source ? `${interval.source.kind} ${interval.source.id}` : "来源未知"}</li>)}</ul>
         </li>)}</ol></details>}
-      <small>观察于 {timingDate(timing.observedAt)}；未知时间不计为零。</small>
+      <small className="text-caption text-muted-foreground">观察于 {timingDate(timing.observedAt)}；未知时间不计为零。</small>
     </React.Fragment>}
   </section>;
 }

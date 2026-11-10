@@ -18,7 +18,6 @@ import { errorText } from "../../shared/api";
 import { ActionForm, type MutationContext } from "../../shared/ActionForm";
 import { date } from "../../shared/ui/shared";
 import { FullIdentifiers } from "../../shared/ui/FullIdentifiers";
-import { Legacy } from "../../shared/ui/PageParts";
 import { MarkdownBody } from "../../shared/ui/MarkdownBody";
 import { readingProse } from "../../shared/ui/readingProse";
 import { sessionClient } from "../../shared/sessionClient";
@@ -255,8 +254,8 @@ function MessageInspector({ id, context, snapshot, onApplied }: { id: string; co
     {processing?.failure && <Notice tone="error">处理失败：{processing.failure}</Notice>}
     {message.blockedReason && <p className="text-text-secondary">等待原因：{message.blockedReason}</p>}
     {message.readReceipt && <p className="text-text-secondary">已读回执：{message.readReceipt.evidence} · {date(message.readReceipt.at)}</p>}
-    {canRead && <Legacy><ActionForm context={{ ...context, draftScope: `message-read:${message.id}` }} title="记录本人已读原消息" fields={[{ name: "evidence", label: "阅读证据", kind: "textarea" }]} build={v => ({ type: "session.message.receipt", messageId: message.id, stage: "read", evidence: v.evidence })} onApplied={applied} /></Legacy>}
-    {(["queued", "manual_pending"].includes(message.state)) && message.senderActorId === context.principal.actorId && <Legacy><ActionForm context={{ ...context, draftScope: `message-cancel:${message.id}`, draftBaseline: String(message.version) }} title="取消待处理消息" fields={[{ name: "reason", label: "取消原因", kind: "textarea" }]} build={v => ({ type: "session.message.cancel", messageId: message.id, expectedVersion: message.version, reason: v.reason })} onApplied={applied} /></Legacy>}
+    {canRead && <ActionForm context={{ ...context, draftScope: `message-read:${message.id}` }} title="记录本人已读原消息" fields={[{ name: "evidence", label: "阅读证据", kind: "textarea" }]} build={v => ({ type: "session.message.receipt", messageId: message.id, stage: "read", evidence: v.evidence })} onApplied={applied} />}
+    {(["queued", "manual_pending"].includes(message.state)) && message.senderActorId === context.principal.actorId && <ActionForm context={{ ...context, draftScope: `message-cancel:${message.id}`, draftBaseline: String(message.version) }} title="取消待处理消息" fields={[{ name: "reason", label: "取消原因", kind: "textarea" }]} build={v => ({ type: "session.message.cancel", messageId: message.id, expectedVersion: message.version, reason: v.reason })} onApplied={applied} />}
     {message.state === "manual_pending" && <p className="text-caption text-muted-foreground">外部消息仍待人工转交；保存不代表已送达或已读。</p>}
     <FullIdentifiers rows={[{ label: "消息 ID", value: message.id }, { label: "发送者", value: message.senderActorId }, { label: "处理记录 ID", value: processing?.id }, { label: "原轮次 ID", value: processing?.nativeTurnId }]} />
   </div>;

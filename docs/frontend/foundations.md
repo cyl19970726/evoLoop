@@ -2,7 +2,7 @@
 
 本页定义工作台共用的设计 token、Logo 和状态的视觉表达。数值只在 `packages/ui/src/tokens.css` 维护一份，文档只说明用途和规则。
 
-**目标与现状。** 视觉已定稿（[DEC-037](../decisions.md#用户已确定的方向)）：暖纸底、墨蓝强调、陶土品牌色，浅色为默认，另有一套深色。token 在 `packages/ui/src/tokens.css`，Tailwind 主题在 `packages/ui/src/theme.css`；工作台旧的变量名（`--primary`、`--ink-muted` 等）暂由 `apps/workbench/src/legacy-tokens.css` 指向新 token，逐页迁移后删除。旧页面 CSS 里仍有约 1600 处写死的颜色值，所以旧页面只会跟着 token 变成暖纸浅色，**深色只对用 `packages/ui` 重做过的页面开启**。`apps/workbench/test/style-budget.test.ts` 保证写死的颜色只减不增，且 token 只能在 `packages/ui` 定义。迁移由[前端改版 issue #229](https://github.com/cyl19970726/evoLoop/issues/229) 跟踪。
+**目标与现状。** 视觉已定稿（[DEC-037](../decisions.md#用户已确定的方向)）：暖纸底、墨蓝强调、陶土品牌色，浅色为默认，另有一套深色。token 在 `packages/ui/src/tokens.css`，Tailwind 主题在 `packages/ui/src/theme.css`，元素的默认样式（正文字体与行高、文字颜色、等宽数字、键盘焦点框、选中底色、减少动效）在 `packages/ui/src/base.css`，也只引用 token。旧的全局 CSS 和旧变量名已在 #229 PR10 删除，工作台只有一个样式入口 `apps/workbench/src/main.css`，不写规则，页面用 Tailwind 工具类引用 token。`apps/workbench/test/style-budget.test.ts` 固定这几条：颜色字面量只出现在 `tokens.css`（头像插画的配色在 `avatar.tsx`，见下文），工作台不写 CSS 规则，源码里不再有 `data-legacy`。迁移由[前端改版 issue #229](https://github.com/cyl19970726/evoLoop/issues/229) 跟踪。
 
 ## 颜色
 

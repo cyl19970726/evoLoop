@@ -1,4 +1,3 @@
-import type { ReactNode } from "react";
 import { isProjectRoute } from "./returnRoute";
 export { href, parseRoute, readRoute, type Route, type Section } from "../routes";
 import { href } from "../routes";
@@ -8,14 +7,6 @@ export function date(value?: string): string {
   if (!value) return "—";
   const d = new Date(value);
   return Number.isNaN(d.getTime()) ? value : d.toLocaleString("zh-CN");
-}
-
-export function ShortId({ value }: { value: string }) {
-  return <code title={value}>{value.slice(0, 8)}</code>;
-}
-
-export function Alert({ children, kind = "info" }: { children: ReactNode; kind?: "info" | "error" | "success" }) {
-  return <div className={`notice ${kind}`} role={kind === "error" ? "alert" : "status"}>{children}</div>;
 }
 
 export function documentReturnHref(projectId: string): string {

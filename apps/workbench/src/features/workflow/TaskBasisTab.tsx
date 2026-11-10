@@ -151,7 +151,7 @@ function RevisionColumn({ label, read }: { label: string; read: { data: Document
             <details><summary className="w-fit cursor-pointer text-caption text-primary hover:underline">查看 Markdown 原文</summary>
               <pre className={`mt-2 max-h-96 ${readingSource}`}>{revision.body}</pre></details>
           </>
-          : <div data-legacy=""><OriginalDocumentReader token="" projectId={revision.projectId} documentId={revision.documentId} revisionId={revision.id} /></div>}
+          : <OriginalDocumentReader token="" projectId={revision.projectId} documentId={revision.documentId} revisionId={revision.id} />}
         <FullIdentifiers rows={[{ label: "修订", value: revision.id }, { label: "内容摘要", value: revision.contentHash }]} />
       </>}
   </section>;

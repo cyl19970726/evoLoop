@@ -6,16 +6,7 @@ import { router } from "./app/router";
 import { queryClient } from "./app/queryClient";
 import { installLinkNavigation, redirectLegacyHash } from "./shared/navigation";
 import { installLegacyTeamRedirect } from "./shared/routes";
-import "@evoloop/ui/tokens.css";
-import "./legacy-tokens.css";
-import "./style.css";
-import "./workbench.css";
-import "./editorial.css";
-import "./reading-pages.css";
-import "./team-pages.css";
-import "./completion.css";
-import "./task-production.css";
-import "@evoloop/ui/scope.css";
+import "./main.css";
 import faviconUrl from "@evoloop/ui/logo-small.svg";
 
 // The favicon comes from @evoloop/ui so the logo has one source; Vite resolves this import in dev and build alike.

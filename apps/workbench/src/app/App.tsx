@@ -227,11 +227,14 @@ export function App() {
       button: { label: "关闭", onClick: () => { setOperationNotice(""); setOperationDetail(null); }, quiet: true } }] : [],
     ...projectError ? [{ key: "project", tone: "error" as const, text: `项目暂不可读取：${projectError}`, button: { label: "重试读取项目", onClick: context.onChanged } }] : [],
   ];
-  return <Suspense fallback={<p className="content" role="status">正在打开工作台…</p>}><AppShell route={route} projectId={projectId} projectTitle={projectTitle} actor={principal.actorId} permissions={principal.permissions}
+  return <Suspense fallback={<p className={opening} role="status">正在打开工作台…</p>}><AppShell route={route} projectId={projectId} projectTitle={projectTitle} actor={principal.actorId} permissions={principal.permissions}
     receiptCount={projectReceipts.length} inboxCount={acceptanceCount} token={token} logout={logout} notices={notices}>
     <WorkspacePages key={`${principal.actorId}:${projectId}`} route={route} context={context} refresh={refresh} operations={operationChecks} />
   </AppShell></Suspense>;
 }
+
+/** What the center shows while a page's code loads. Plain classes: this module is in the first load, without @evoloop/ui. */
+const opening = "px-4 py-5 text-small text-muted-foreground compact:px-8 compact:py-7";
 
 function WorkspacePages({ route, context, refresh, operations }: { route: Route; context: MutationContext; refresh: number; operations: ReactNode[] }) {
   // Visited pages stay mounted for this authenticated project. No form text or token is persisted.
@@ -306,8 +309,9 @@ function WorkspacePages({ route, context, refresh, operations }: { route: Route;
     if (r.section === "collaboration") return <CollaborationPanel context={context} refresh={refresh} />;
     const components = { reviews: <TeamWorkspace context={context} refresh={refresh} section="reviews" />, discussions: <TeamWorkspace context={context} refresh={refresh} section="discussions" />, runtime: r.session?.includes(":") ? <SessionWorkspace context={context} refresh={refresh} sessionKey={r.session} active={active} queue={queue => <ResidentQueuePanel context={context} titled={false} {...queue} />} /> : <TeamWorkspace context={context} refresh={refresh} section="runtime" sessionId={r.session} />, roles: <TeamWorkspace context={context} refresh={refresh} section="roles" />, collaboration: <CollaborationPanel context={context} refresh={refresh} /> };
     if (r.section === "runtime" || r.section === "discussions" || r.section === "reviews" || r.section === "roles") return components[r.section];
-    return <div className="content"><h1 tabIndex={-1}>{sectionLabels[r.section]}</h1>{components[r.section as keyof typeof components]}</div>;
+    return <div data-ui="" className="mx-auto flex w-full max-w-[980px] flex-col gap-5 px-4 py-5 compact:px-8 compact:py-7">
+      <h1 tabIndex={-1} className="text-title font-semibold text-foreground outline-none">{sectionLabels[r.section]}</h1>{components[r.section as keyof typeof components]}</div>;
   }
   return <>{Array.from(cache.current.entries()).map(([pageKey, r]) => <div key={pageKey} data-page-key={pageKey} hidden={pageKey !== key}>
-    <PageActive.Provider value={pageKey === key}><PageBoundary><Suspense fallback={<p className="content" role="status">正在打开页面…</p>}>{page(r, pageKey === key)}</Suspense></PageBoundary></PageActive.Provider></div>)}</>;
+    <PageActive.Provider value={pageKey === key}><PageBoundary><Suspense fallback={<p className={opening} role="status">正在打开页面…</p>}>{page(r, pageKey === key)}</Suspense></PageBoundary></PageActive.Provider></div>)}</>;
 }

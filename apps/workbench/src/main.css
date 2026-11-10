@@ -1,0 +1,11 @@
+/* The workbench's one stylesheet: the Tailwind entry. It holds no rules of its own. Tokens, the element base and the
+   Tailwind theme come from @evoloop/ui; pages style themselves with utilities on those tokens.
+   apps/workbench/test/style-budget.test.ts keeps it that way. */
+@layer theme, base, components, utilities;
+@import "@evoloop/ui/tokens.css";
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities);
+@import "tw-animate-css";
+@import "@evoloop/ui/theme.css";
+@import "@evoloop/ui/base.css";
+@source "../../../packages/ui/src";

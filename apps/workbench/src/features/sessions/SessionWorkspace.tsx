@@ -20,7 +20,7 @@ import { sessionClient } from "../../shared/sessionClient";
 import { timingDuration, timingStageLabel, timingWaitingFor } from "../../shared/taskTiming";
 import { ContextPanelContent, useContextPanel } from "../../shared/ui/ContextPanel";
 import { SectionBoundary } from "../../shared/ui/SectionBoundary";
-import { FactList, Legacy, PanelSection, mutedText } from "../../shared/ui/PageParts";
+import { FactList, PanelSection, mutedText } from "../../shared/ui/PageParts";
 import { FullIdentifiers } from "../../shared/ui/FullIdentifiers";
 import { currentPath, onNavigate, replaceQuietly } from "../../shared/navigation";
 import { AllocationBacklinks } from "../discussions";
@@ -403,7 +403,7 @@ export function SessionWorkspace({ context, sessionKey, active, refresh, queue }
         <p className="text-small text-text-secondary">{session.profile?.purpose || "用途尚未登记"}</p>
         {session.roles.map(role => <p key={role.id} className="text-small"><a className="text-primary hover:underline" href={href(projectId, "roles")}>{role.title}</a><span className="text-text-secondary"> · {role.responsibility}</span></p>)}
         <CollapsibleRow summary={`职责范围内的任务 · ${current.roleTasks.length} 项`}><p className={mutedText}>职责负责这些任务，不表示这个智能体已接手。</p><ul className="flex flex-col gap-0.5 text-small">{current.roleTasks.map(task => <li key={task.id}><a className="hover:underline" href={taskHref(task.id)}>{task.title}</a></li>)}</ul></CollapsibleRow>
-        {active && informationOpen && <Legacy><AllocationBacklinks context={context} filter={{ sessionKey }} refresh={refresh + readAgain} /></Legacy>}
+        {active && informationOpen && <AllocationBacklinks context={context} filter={{ sessionKey }} refresh={refresh + readAgain} />}
         <SessionProfileForm context={context} snapshot={current} onApplied={() => void snapshotRead.refetch()} />
       </section>
       <section aria-label="资源观察" className="flex min-w-0 flex-col gap-2">
@@ -527,11 +527,11 @@ function OwnedQueue({ context, sessionId, enabled, queue }: { context: MutationC
 
 function SessionProfileForm({ context, snapshot, onApplied }: { context: MutationContext; snapshot: SessionSnapshot; onApplied(): void }) {
   const profile = snapshot.session.profile;
-  return <Legacy><ActionForm context={{ ...context, draftScope: `session-profile:${snapshot.session.key}`, draftBaseline: `${profile?.version ?? 0}` }} review title="设置展示信息" fields={[
+  return <ActionForm context={{ ...context, draftScope: `session-profile:${snapshot.session.key}`, draftBaseline: `${profile?.version ?? 0}` }} review title="设置展示信息" fields={[
     { name: "displayName", label: "展示名称", value: profile?.displayName ?? snapshot.session.title },
     { name: "purpose", label: "用途", kind: "textarea", optional: true, value: profile?.purpose ?? "" },
     { name: "membership", label: "团队归属", kind: "select", value: profile?.membership ?? snapshot.session.membership, options: [option("current", "当前团队"), option("historical", "历史"), option("unclassified", "待归类")] },
     { name: "tenure", label: "会话性质", kind: "select", value: profile?.tenure ?? "unknown", options: [option("resident", "常驻"), option("temporary", "临时"), option("unknown", "未知")] },
     { name: "reason", label: "变更依据", kind: "textarea" },
-  ]} build={v => ({ type: "session.profile.set", target: profile?.target ?? snapshot.session.target, expectedVersion: profile?.version ?? 0, displayName: v.displayName, purpose: v.purpose, membership: v.membership, tenure: v.tenure, reason: v.reason })} onApplied={onApplied} /></Legacy>;
+  ]} build={v => ({ type: "session.profile.set", target: profile?.target ?? snapshot.session.target, expectedVersion: profile?.version ?? 0, displayName: v.displayName, purpose: v.purpose, membership: v.membership, tenure: v.tenure, reason: v.reason })} onApplied={onApplied} />;
 }

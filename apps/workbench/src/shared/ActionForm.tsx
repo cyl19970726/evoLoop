@@ -23,11 +23,6 @@ export interface Field {
   maxLength?: number;
 }
 
-/** The old page notice (`.notice`) for pages that still draw old markup; forms use @evoloop/ui's Notice. */
-export function Notice({ children, error = false }: { children: ReactNode; error?: boolean }) {
-  return <div className={`notice ${error ? "error" : "info"}`} role={error ? "alert" : "status"}>{children}</div>;
-}
-
 /** What a form opened on: its `baseline`, `context.draftBaseline`, or both (the string as `draftBaseline`). */
 export type ActionBaseline = Baseline | string | undefined;
 export function actionBaseline(baseline: Baseline | undefined, draftBaseline: string | undefined): ActionBaseline {

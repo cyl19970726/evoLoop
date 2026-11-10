@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
 import type { DocumentPayloadRevision } from "@evoloop/contracts/process-documents";
+import { Button, Notice } from "@evoloop/ui";
 import { errorText, request } from "../api";
 import { MarkdownBody } from "./MarkdownBody";
 import { legacyWorkbenchRoute } from "./legacyWorkbenchLink";
 import { imagePreview } from "./imagePreview";
+import { readingSource } from "./readingProse";
 
 export interface AvailableOriginal {
   status: "available"; revision: DocumentPayloadRevision; body: string;
@@ -115,6 +117,11 @@ export function download(name: string, data: Blob): void {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
+const reader = "flex min-w-0 flex-col gap-3 text-small text-foreground";
+const note = "text-caption text-muted-foreground";
+const disclosure = "w-fit cursor-pointer text-caption text-primary hover:underline";
+
+/** One fixed revision's original read in place (the task page's revision comparison): HTML in a sandboxed frame. */
 export function OriginalDocumentReader({ token, projectId, revisionId, documentId }: {
   token: string; projectId: string; revisionId: string; documentId: string;
 }) {
@@ -146,40 +153,41 @@ export function OriginalDocumentReader({ token, projectId, revisionId, documentI
       return () => rendered.urls.forEach(URL.revokeObjectURL);
     } catch { setError("配套资源无法安全构造预览。"); return; }
   }, [original]);
-  if (error) return <section className="panel"><p role="alert">原件读取失败：{error}</p><button onClick={() => setRefresh(v => v + 1)}>重试读取</button></section>;
-  if (!original) return <section className="panel"><p>正在核对原件及其资源…</p></section>;
-  if (original.status === "unavailable") return <section className="panel"><h3>原件暂不可完整读取</h3>
-    <p role="alert">资源不可用或未通过校验（{original.reason}）。请检查存储与登记状态。</p>
-    <button onClick={() => setRefresh(v => v + 1)}>重新核对</button></section>;
+  const retry = <Button size="compact" className="self-start" onClick={() => setRefresh(v => v + 1)}>{error ? "重试读取" : "重新核对"}</Button>;
+  if (error) return <section className={reader}><Notice tone="error">原件读取失败：{error}</Notice>{retry}</section>;
+  if (!original) return <section className={reader}><p role="status" className={note}>正在核对原件及其资源…</p></section>;
+  if (original.status === "unavailable") return <section className={reader}><h3 className="text-label font-semibold">原件暂不可完整读取</h3>
+    <p role="alert" className="text-small text-text-secondary">资源不可用或未通过校验（{original.reason}）。请检查存储与登记状态。</p>
+    {retry}</section>;
   const mime = original.revision.mediaType;
-  const integrity = <><p>固定修订 <code>{original.revision.id}</code></p><p>SHA-256 <code>{original.revision.contentHash}</code></p></>;
-  const raw = <details className="revision-body"><summary>查看完整原文</summary><pre>{original.body}</pre></details>;
-  // The asset list sits in old pages (the task page's revision comparison), so its layout is written on tokens here.
-  // A preview takes the row's full width, scrolls inside its own height limit and wraps long lines instead of
-  // widening the page.
-  const assets = original.assets.length > 0 && <div><h3>配套资源 · {original.assets.length} 项</h3><ul className="m-0 list-none p-0">{original.assets.map(asset => { const image = imagePreview(asset.mediaType, asset.base64); return <li key={asset.path}
+  const integrity = <div className="mt-1 flex flex-col gap-0.5 [overflow-wrap:anywhere]"><p>固定修订 <code>{original.revision.id}</code></p><p>SHA-256 <code>{original.revision.contentHash}</code></p></div>;
+  const raw = <details><summary className={disclosure}>查看完整原文</summary><pre className={`mt-2 max-h-96 ${readingSource}`}>{original.body}</pre></details>;
+  // The asset list sits in the task page's revision comparison. A preview takes the row's full width, scrolls inside
+  // its own height limit and wraps long lines instead of widening the page.
+  const assets = original.assets.length > 0 && <div><h3 className="text-label font-semibold">配套资源 · {original.assets.length} 项</h3><ul className="m-0 list-none p-0">{original.assets.map(asset => { const image = imagePreview(asset.mediaType, asset.base64); return <li key={asset.path}
       className="flex min-w-0 flex-wrap items-center justify-between gap-3 border-t border-border py-4">
-      <span className="min-w-0 [overflow-wrap:anywhere]">{asset.path}<small className="mt-1 block [overflow-wrap:anywhere]">{asset.mediaType} · SHA-256 <code>{original.revision.assetsManifest.find(item=>item.path===asset.path)?.contentHash}</code></small></span>
-      <span className="actions"><button onClick={() => { setAssetError(null); setAssetPreview(value => value === asset.path ? null : asset.path); }}
-        aria-expanded={assetPreview === asset.path}> {assetPreview === asset.path ? "收起预览" : "预览"}</button>
-      <button onClick={() => download(asset.path.split("/").at(-1) ?? "resource",
-        new Blob([blobBytes(asset.base64)], { type: asset.mediaType }))}>下载</button></span>
-      {assetPreview === asset.path && <div data-asset-preview="" className="max-h-[440px] min-w-0 shrink-0 grow basis-full overflow-auto rounded-md border border-border bg-muted p-3">
+      <span className="min-w-0 text-small [overflow-wrap:anywhere]">{asset.path}<small className="mt-1 block text-caption text-muted-foreground [overflow-wrap:anywhere]">{asset.mediaType} · SHA-256 <code>{original.revision.assetsManifest.find(item=>item.path===asset.path)?.contentHash}</code></small></span>
+      <span className="flex gap-1"><Button size="compact" variant="ghost" onClick={() => { setAssetError(null); setAssetPreview(value => value === asset.path ? null : asset.path); }}
+        aria-expanded={assetPreview === asset.path}>{assetPreview === asset.path ? "收起预览" : "预览"}</Button>
+      <Button size="compact" variant="ghost" onClick={() => download(asset.path.split("/").at(-1) ?? "resource",
+        new Blob([blobBytes(asset.base64)], { type: asset.mediaType }))}>下载</Button></span>
+      {assetPreview === asset.path && <div data-asset-preview="" className="max-h-[440px] min-w-0 shrink-0 grow basis-full overflow-auto rounded-md border border-border bg-muted p-3 text-small">
         {image && assetError !== asset.path ? <>{image.mismatch && <p>资源声明为 {asset.mediaType}，图片字节识别为 {image.mediaType}。预览按图片解码，下载保留原字节。</p>}<img alt={`资源 ${asset.path} 的静态预览`} src={`data:${image.mediaType};base64,${asset.base64}`} onError={() => setAssetError(asset.path)} className="h-auto max-w-full" /></>
           : asset.mediaType === "text/css" ? <pre className="m-0 max-w-full whitespace-pre-wrap [overflow-wrap:anywhere]">{new TextDecoder().decode(bytes(asset.base64))}</pre>
           : <p>{assetError === asset.path ? "图片未能解码，请下载原件核对。" : "此资源格式暂不支持页面预览，可下载原件查看。"}</p>}
       </div>}
     </li>; })}</ul></div>;
-  return <section className="panel reading doc-original-reader"><div className="panel-head"><h2>完整原件</h2>
-    <button onClick={() => download(original.revision.originalName,
-      new Blob([original.body], { type: `${mime};charset=utf-8` }))}>下载原件</button></div>
-    <details className="doc-original-integrity"><summary>原件标识与校验</summary>{integrity}</details>
-    {original.revision.format === "html" ? <><p>静态隔离预览，脚本未运行。下方保留完整 HTML 原文。</p>
-      {preview?.internalLinks.length ? <details className="doc-internal-links"><summary>报告中的站内链接 · {preview.internalLinks.length}</summary>
-        <p>打开后可用浏览器返回此报告。</p><ul>{preview.internalLinks.map(link => <li key={link.href}><a href={link.href}>{link.label}</a></li>)}</ul>
+  return <section className={reader}><div className="flex flex-wrap items-center justify-between gap-2"><h2 className="text-label font-semibold">完整原件</h2>
+    <Button size="compact" onClick={() => download(original.revision.originalName,
+      new Blob([original.body], { type: `${mime};charset=utf-8` }))}>下载原件</Button></div>
+    <details className="text-caption text-text-secondary"><summary className="w-fit cursor-pointer">原件标识与校验</summary>{integrity}</details>
+    {original.revision.format === "html" ? <><p className={note}>静态隔离预览，脚本未运行。下方保留完整 HTML 原文。</p>
+      {preview?.internalLinks.length ? <details className="rounded-md border border-border bg-raised"><summary className="cursor-pointer px-3 py-1.5 text-label font-medium text-text-secondary">报告中的站内链接 · {preview.internalLinks.length}</summary>
+        <div className="border-t border-border px-3 py-2"><p className={note}>打开后可用浏览器返回此报告。</p>
+          <ul className="mt-1 flex flex-col gap-1">{preview.internalLinks.map(link => <li key={link.href}><a href={link.href} className="text-label text-primary hover:underline [overflow-wrap:anywhere]">{link.label}</a></li>)}</ul></div>
       </details> : null}
-      {preview ? <iframe className="doc-html-frame" key={`${revisionId}:${original.revision.contentHash}`} title="HTML 静态隔离预览" sandbox="" referrerPolicy="no-referrer" srcDoc={preview.html}
-        style={{ width: "100%", minHeight: 420, border: "1px solid #d8dfec", borderRadius: 8 }} /> : <p role="status">正在准备此固定修订的隔离预览…</p>}</>
+      {preview ? <iframe key={`${revisionId}:${original.revision.contentHash}`} title="HTML 静态隔离预览" sandbox="" referrerPolicy="no-referrer" srcDoc={preview.html}
+        className="block min-h-[420px] w-full rounded-lg border border-border bg-raised" /> : <p role="status" className={note}>正在准备此固定修订的隔离预览…</p>}</>
       : <MarkdownBody source={original.body} identity={original.revision.id} projectId={projectId} />}
     {raw}{assets}
   </section>;

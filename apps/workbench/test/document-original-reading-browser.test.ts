@@ -271,12 +271,13 @@ test("focus returns to the row opened from the table or the inner rail, and its 
   assert.equal(await background("上传的 Markdown 方案"), highlighted, "hover keeps the token highlight");
   await row("上传的 HTML 报告").hover();
   assert.equal(await background("上传的 HTML 报告"), "rgba(0, 0, 0, 0)", "the old hover colour stays out of the new table");
-  // Outside [data-ui] the old rules still apply: an old-style table and fact list keep their look.
-  await page.evaluate(() => document.body.insertAdjacentHTML("beforeend", `<div id="legacy-probe"><table><tbody><tr><td>旧表格</td></tr></tbody></table>
-    <dl><div><dt>旧事实</dt><dd>值</dd></div></dl></div><div data-ui="" id="ui-probe"><dl><div class="grid gap-1"><dt>新事实</dt><dd>值</dd></div></dl></div>`));
-  await page.locator("#legacy-probe td").hover();
-  assert.equal(await page.locator("#legacy-probe tr").evaluate(el => getComputedStyle(el).backgroundColor), "rgb(250, 251, 249)");
-  assert.match(await page.locator("#legacy-probe dl > div").evaluate(el => getComputedStyle(el).gridTemplateColumns), /^170px /);
+  // The old global sheets are gone (#229 PR10): bare markup anywhere on the page gets the element base only, without the
+  // old row hover colour or the old 170px fact grid; a fact row's own classes decide its layout.
+  await page.evaluate(() => document.body.insertAdjacentHTML("beforeend", `<div id="bare-probe"><table><tbody><tr><td>表格</td></tr></tbody></table>
+    <dl><div><dt>事实</dt><dd>值</dd></div></dl></div><div data-ui="" id="ui-probe"><dl><div class="grid gap-1"><dt>新事实</dt><dd>值</dd></div></dl></div>`));
+  await page.locator("#bare-probe td").hover();
+  assert.equal(await page.locator("#bare-probe tr").evaluate(el => getComputedStyle(el).backgroundColor), "rgba(0, 0, 0, 0)");
+  assert.equal(await page.locator("#bare-probe dl > div").evaluate(el => getComputedStyle(el).display), "block");
   const fact = await page.locator("#ui-probe dl > div").evaluate(el => ({ columns: getComputedStyle(el).gridTemplateColumns, gap: getComputedStyle(el).rowGap }));
   assert.ok(!fact.columns.startsWith("170px") && fact.gap === "4px", `a fact row inside [data-ui] keeps its own grid: ${JSON.stringify(fact)}`);
   assert.deepEqual(errors, []);
@@ -297,6 +298,7 @@ test("the task page's revision comparison lists assets on tokens, and a long CSS
   const layout = await item.evaluate(el => ({ display: getComputedStyle(el).display, wrap: getComputedStyle(el).flexWrap,
     border: getComputedStyle(el).borderTopWidth, list: getComputedStyle(el.parentElement!).listStyleType }));
   assert.deepEqual(layout, { display: "flex", wrap: "wrap", border: "1px", list: "none" });
+  if (shots) await compare.first().screenshot({ path: `${shots}/task-revision-compare-1440.png` });
   await item.getByRole("button", { name: "预览" }).click();
   const preview = item.locator("[data-asset-preview]");
   await preview.waitFor();
