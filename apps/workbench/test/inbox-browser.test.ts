@@ -199,7 +199,7 @@ test("待我处理 lists what waits for my use and counts every part, or says it
   const notice = page.getByRole("status").filter({ hasText: "待我处理的数目暂时无法判断" });
   await notice.waitFor();
   assert.match(await notice.innerText(), /依据变化读取失败；已读回的 4 项不是全部/);
-  await shoot(page, "inbox-count-unknown", () => page.getByRole("heading", { level: 1, name: "待核对操作" }).waitFor());
+  await shoot(page, "inbox-count-unknown", () => page.getByRole("heading", { level: 1, name: "结果未知的操作" }).waitFor());
   await fixture("recover?what=impacts");
   await notice.getByRole("link", { name: "去待我处理核对" }).click();
   await inbox.getByRole("region", { name: "依据变化" }).getByRole("button", { name: "重新读取" }).click();
