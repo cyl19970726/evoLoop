@@ -148,3 +148,10 @@ test('a real failure still blocks: native rejection after dispatch, and an unkno
   });
   assert.deepEqual(await gate(started.sessionId),{phase:'blocked',cause_id:started.runId});
 });
+
+test('migration 083 patches the recovery function in place: the preflight clause sits beside the earlier stopped-Run clause',async()=>{
+  const def=(await pool.query("SELECT pg_get_functiondef('session_recovery_run_outcome()'::regprocedure) AS d")).rows[0].d as string;
+  assert.match(def,/OLD\.state='requested' AND NEW\.state='failed' AND NEW\.native_turn_id IS NULL/,'083 preflight clause');
+  assert.match(def,/NEW\.stop_requested_at IS NOT NULL AND NEW\.state IN \('failed','interrupted'\) AND gate\.phase='open'/,'078 stopped-Run clause kept');
+  assert.ok(def.indexOf('stop_requested_at')<def.indexOf("IF gate.phase='open' THEN\n    SELECT m.message_id"),'both run before the blocking path');
+});
