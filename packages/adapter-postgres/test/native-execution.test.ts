@@ -89,7 +89,8 @@ test('036 retires 035 cold admission without rewriting historical epoch or bypas
     'SELECT to_jsonb(p) AS row FROM session_message_processing p WHERE processing_id=$1',
     [oldProcessing])).rows[0]?.row;
   const { pre_turn_proof, role_context, interrupt_actor_id, interrupt_attempted_at, interrupt_operation_id,
-    interrupt_reason, interrupt_requested_at, ...historicalProcessing } = processingAfterMigration;
+    interrupt_reason, interrupt_requested_at, failure_category, ...historicalProcessing } = processingAfterMigration;
+  assert.equal(failure_category, null, 'legacy processing receives no inferred failure category');
   assert.equal(pre_turn_proof, null, 'legacy processing receives no inferred writer refusal');
   assert.equal(role_context, null, 'legacy processing receives no inferred Role context');
   assert.deepEqual(historicalProcessing, before.processing,

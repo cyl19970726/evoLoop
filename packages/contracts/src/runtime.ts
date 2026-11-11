@@ -237,10 +237,21 @@ export interface RuntimeUsage {
   cacheCreationInputTokens?: number | null;
 }
 
+/**
+ * The four classes a person acts on. Quota/auth needs the account owner (top up or re-authorize), a long context is
+ * compacted by the runtime itself, a lost connection usually clears by itself, and the rest needs a look at the original error.
+ */
+export type NativeFailureClass = "quota_or_auth" | "context_too_long" | "connection" | "other";
+export const nativeFailureClass = (category: string | null | undefined): NativeFailureClass | null =>
+  !category ? null
+    : category === "quota_exhausted" || category === "authentication_failed" ? "quota_or_auth"
+    : category === "context_window_exceeded" ? "context_too_long"
+    : category === "connection_lost" || category === "provider_unavailable" ? "connection" : "other";
+
 export interface RuntimeTurnFailure {
   /** context_window_exceeded: the same Session may be retried; the native runtime compacts before its next Turn. */
   category: "unsupported_model" | "rate_limited" | "provider_rejected" | "provider_unavailable" |
-    "context_window_exceeded" | "budget_exceeded" | "authentication_failed" | "native_failure";
+    "context_window_exceeded" | "budget_exceeded" | "authentication_failed" | "quota_exhausted" | "connection_lost" | "native_failure";
   providerCode: string | null;
   httpStatus: number | null;
   summary: string;

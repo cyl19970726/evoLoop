@@ -46,7 +46,10 @@ export interface SessionMessageProcessing {
   projectId: string; id: string; messageId: string; sessionId: string; operationId: string;
   state: SessionMessageProcessingState; nativeTurnId: string | null; response: string | null;
   /** Legacy field name retained for immutable processing records; new values identify the full Session admission profile. */
-  failure: string | null; readOnlyPolicyFingerprint?: string | null; receiverActorId?: string | null;
+  failure: string | null;
+  /** Native failure category (RuntimeTurnFailure.category) when the Turn failed with a classified native error. */
+  failureCategory?: string | null;
+  readOnlyPolicyFingerprint?: string | null; receiverActorId?: string | null;
   /** Fixed Role/Skill read instructions captured before the first native start. */
   roleContext?: string | null;
   /** Fixed by the same transaction as the original processing's native-start permit. */

@@ -8,7 +8,8 @@ const iso=(value:Date|string):string=>new Date(value).toISOString();
 const gateOf=(r:QueryResultRow):SessionRecoveryGate=>({projectId:r.project_id,sessionId:r.session_id,
   version:r.version,phase:r.phase,causeKind:r.cause_kind,causeId:r.cause_id,causeState:r.cause_state,
   reason:r.reason,queueId:r.queue_id,claimId:r.claim_id,retryRunId:r.retry_run_id,
-  resumeMessageId:r.resume_message_id,decisionOperationId:r.decision_operation_id,updatedAt:iso(r.updated_at)});
+  resumeMessageId:r.resume_message_id,decisionOperationId:r.decision_operation_id,updatedAt:iso(r.updated_at),
+  failureCategory:r.failure_category??null});
 const revisionOf=(r:QueryResultRow):ExecutionProfileRevision=>({projectId:r.project_id,sessionId:r.session_id,
   revisionId:r.revision_id,version:r.version,previousRevisionId:r.previous_revision_id,
   model:r.model,...(r.reasoning_effort?{reasoningEffort:r.reasoning_effort}:{}),sandbox:r.sandbox,approvalPolicy:r.approval_policy,cwd:r.cwd,
@@ -41,7 +42,10 @@ export class PgSessionRecovery implements SessionRecoveryTransaction {
     return result.rows.some(row=>dynamicSessionId(row.dispatch_id as string)===sessionId);
   }
   async getRecoveryGate(sessionId:string):Promise<SessionRecoveryGate|null>{
-    const r=await this.client.query('SELECT * FROM session_recovery_gate WHERE project_id=$1 AND session_id=$2',[this.projectId,sessionId]);
+    const r=await this.client.query(`SELECT g.*,(SELECT p.failure_category FROM session_message_processing p
+      WHERE g.cause_kind='message' AND p.project_id=g.project_id AND p.message_id=g.cause_id
+      ORDER BY p.updated_at DESC LIMIT 1) AS failure_category
+      FROM session_recovery_gate g WHERE g.project_id=$1 AND g.session_id=$2`,[this.projectId,sessionId]);
     return r.rows[0]?gateOf(r.rows[0]):null;
   }
   async lockRecoveryGate(sessionId:string):Promise<SessionRecoveryGate>{

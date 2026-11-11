@@ -890,3 +890,20 @@ test('049 migration preserves preexisting ordinary message and processing rows',
     try{await cleanup.query(`DROP SCHEMA "${legacySchema}" CASCADE`);}finally{await cleanup.end();}
   }
 });
+
+test('a failed Turn keeps its native error category on the processing record and on the gate it closes',async()=>{
+  const roomy=new SessionMessageService({uow,clock:{now:()=>new Date().toISOString()},ids:{next:randomUUID},
+    grantFor:async()=>({...grant,maxTurns:1000})});
+  const m=item();await uow.transaction(projectId,tx=>tx.sessionMessages!.insertSessionMessage(m));
+  await roomy.beginDispatch(projectId,m.id,randomUUID(),randomUUID(),qualified);
+  await roomy.bindTurn(projectId,m.id,{id:'quota-turn-'+m.id,status:'inProgress'});
+  await roomy.settle(projectId,m.id,{id:'quota-turn-'+m.id,status:'failed',completedAtUtc:now,
+    error:{category:'quota_exhausted',providerCode:null,httpStatus:402,summary:'Model provider quota or balance exhausted (HTTP 402); the account owner must top up'}},null);
+  const stored=(await pool.query('SELECT failure,failure_category FROM session_message_processing WHERE project_id=$1 AND message_id=$2',[projectId,m.id])).rows[0];
+  assert.equal(stored.failure_category,'quota_exhausted');
+  assert.match(stored.failure,/top up/);
+  const gate=await uow.read(projectId,r=>r.recovery!.getRecoveryGate(sessionId));
+  assert.equal(gate?.phase,'blocked');
+  assert.equal(gate?.causeKind,'message');
+  assert.equal(gate?.failureCategory,'quota_exhausted','the gate says why it is closed, not only that it is');
+});

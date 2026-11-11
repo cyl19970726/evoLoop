@@ -31,6 +31,8 @@ const SUMMARY: Record<RuntimeTurnFailure["category"], string> = {
   context_window_exceeded: "Claude context window exceeded",
   budget_exceeded: "Claude Turn stopped at the configured turn or cost limit",
   authentication_failed: "Claude authentication failed",
+  quota_exhausted: "Claude account quota or balance exhausted",
+  connection_lost: "Connection to Claude was lost",
   native_failure: "Claude Turn failed",
 };
 
@@ -52,7 +54,8 @@ function assistantCategory(error: string): RuntimeTurnFailure["category"] {
     case "rate_limit": return "rate_limited";
     case "overloaded": case "server_error": return "provider_unavailable";
     case "model_not_found": return "unsupported_model";
-    case "invalid_request": case "billing_error": return "provider_rejected";
+    case "billing_error": return "quota_exhausted";
+    case "invalid_request": return "provider_rejected";
     default: return "native_failure";
   }
 }

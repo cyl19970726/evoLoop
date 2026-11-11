@@ -357,7 +357,8 @@ export class SessionMessageService {
       if(['completed','failed'].includes(p.state))return;
       const now=this.deps.clock.now();const ok=turn.status==='completed';const visible=!!response?.trim();
       await store.updateSessionMessageProcessing({...p,state:ok?'completed':'failed',response:ok&&visible?response!.slice(0,65536):null,
-        failure:ok?null:(turn.error?.summary??`Native Turn ${turn.status}`).slice(0,4000),version:p.version+1,updatedAt:now},p.version);
+        failure:ok?null:(turn.error?.summary??`Native Turn ${turn.status}`).slice(0,4000),
+        failureCategory:ok?null:turn.error?.category??null,version:p.version+1,updatedAt:now},p.version);
       const m=required(await store.getSessionMessage(messageId),'message');
       await store.updateSessionMessage({...m,state:ok?(visible?'replied':'completed_without_reply'):'failed',version:m.version+1,updatedAt:now},m.version);
       await store.markSessionMessageSettled(p.sessionId,messageId,now);

@@ -22,7 +22,7 @@ test("results classify into the neutral Turn outcomes", () => {
     [[{ subtype: "success", is_error: true }, { assistantError: "rate_limit", interruptRequested: false }], "rate_limited", "rate_limit"],
     [[{ subtype: "success", is_error: true }, { assistantError: "overloaded", interruptRequested: false }], "provider_unavailable", "overloaded"],
     [[{ subtype: "success", is_error: true }, { assistantError: "model_not_found", interruptRequested: false }], "unsupported_model", "model_not_found"],
-    [[{ subtype: "success", is_error: true }, { assistantError: "billing_error", interruptRequested: false }], "provider_rejected", "billing_error"],
+    [[{ subtype: "success", is_error: true }, { assistantError: "billing_error", interruptRequested: false }], "quota_exhausted", "billing_error"],
     [[{ subtype: "success", is_error: true }, { assistantError: "oauth_org_not_allowed", interruptRequested: false }], "authentication_failed", "oauth_org_not_allowed"],
     [[{ subtype: "error_during_execution", terminal_reason: "budget_exhausted" }, plain], "budget_exceeded", "budget_exhausted"],
     [[{ subtype: "error_during_execution", terminal_reason: "Some Text!" }, plain], "native_failure", null],

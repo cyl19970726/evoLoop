@@ -37,6 +37,8 @@ export interface SessionRecoveryGate {
   reason:string;queueId:string|null;claimId:string|null;retryRunId:string|null;
   /** Chosen under the failure's Session lock; a later message cannot replace this one. */
   resumeMessageId:string|null;decisionOperationId:string|null;updatedAt:string;
+  /** Native error category of the failed message that closed the gate, when it was classified (RuntimeTurnFailure.category). */
+  failureCategory?:string|null;
 }
 export interface SessionRecoveryDecision {
   projectId:string;id:string;sessionId:string;kind:'retry_failed'|'resume';

@@ -3,6 +3,7 @@
 // (failures and the running step stay in sight), a finished turn closes with one line of what it produced, and a live
 // status line ends the flow while a turn runs. The composer stays at the bottom. Reading position, history paging
 // and the long poll come from useSessionTimeline and are kept as they were.
+import { nativeFailureLine } from "./nativeFailurePresentation";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ArrowDown, FileText, Info, LoaderCircle, MessageCircle, Users } from "lucide-react";
 import type { SessionSnapshot } from "@evoloop/contracts/session-observation";
@@ -256,7 +257,7 @@ function MessageInspector({ id, context, snapshot, onApplied }: { id: string; co
     <p className="text-caption text-muted-foreground">发送于 {date(message.createdAt)}{message.senderActorId === context.principal.actorId ? " · 由我发送" : ""}</p>
     <div className={replyProse}><MarkdownBody source={message.content} identity={`message-detail-${message.id}`} projectId={context.projectId} topHeading={4} /></div>
     {processing?.response && <><h3 className="text-label font-semibold">回复</h3><div className={replyProse}><MarkdownBody source={processing.response} identity={`message-response-${processing.id}`} projectId={context.projectId} topHeading={4} /></div></>}
-    {processing?.failure && <Notice tone="error">处理失败：{processing.failure}</Notice>}
+    {processing?.failure && <Notice tone="error">{nativeFailureLine(processing.failureCategory)}处理失败：{processing.failure}</Notice>}
     {message.blockedReason && <p className="text-text-secondary">等待原因：{message.blockedReason}</p>}
     {message.readReceipt && <p className="text-text-secondary">已读回执：{message.readReceipt.evidence} · {date(message.readReceipt.at)}</p>}
     {canRead && <ActionForm context={{ ...context, draftScope: `message-read:${message.id}` }} title="记录本人已读原消息" fields={[{ name: "evidence", label: "阅读证据", kind: "textarea" }]} build={v => ({ type: "session.message.receipt", messageId: message.id, stage: "read", evidence: v.evidence })} onApplied={applied} />}
