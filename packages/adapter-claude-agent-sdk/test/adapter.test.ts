@@ -145,7 +145,15 @@ test("an interrupt reaches the running Turn and the result settles it as interru
     const turn = await settled(h.adapter, binding, started.id);
     assert.equal(turn.status, "interrupted");
     assert.equal(turn.error, undefined);
-    await assert.rejects(h.adapter.interruptTurn(binding, started.id), /not running/);
+    // The ledger settles the Turn before the adapter releases the exited process. While it is still
+    // held, interrupting a settled Turn is a deliberate no-op, so wait (bounded) for the release.
+    const released = Date.now() + 5_000;
+    for (;;) {
+      const outcome = await h.adapter.interruptTurn(binding, started.id).then(() => "accepted", error => error);
+      if (outcome !== "accepted") { assert.match(String((outcome as Error).message), /not running/); break; }
+      assert.ok(Date.now() < released, "the settled Turn was never released by the adapter");
+      await new Promise(resolveWait => setTimeout(resolveWait, 25));
+    }
   } finally { await h.cleanup(); }
 });
 
