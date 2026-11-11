@@ -896,8 +896,11 @@ const app = await buildServer({ service, credentials, canWrite: lease.canWrite, 
     const current=await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE);
     const cli=current.runtime?.enabled ? selectMaterialCli(current.runtime.materialCli,input.projectId,
       input.sessionId,input.sessionActorId,undefined,input.roleId) : null;
-    const roleActor=current.residentQueue?.enabled ? current.residentQueue.roleActors.find(value=>
-      value.projectId===input.projectId&&value.roleId===input.roleId) : null;
+    // The Role's entry as configured, whether or not it can be used: `session prepare` says which of the three reasons applies.
+    const configuredRoleActor=current.residentQueue?.roleActors.find(value=>
+      value.projectId===input.projectId&&value.roleId===input.roleId)??null;
+    const roleActor=current.residentQueue?.enabled ? configuredRoleActor : null;
+    const roleActorWriter=!!roleActor&&await currentProjectWriter(input.projectId,roleActor.actorId);
     const configured=current.runtime?.roleSkills.find(value=>value.projectId===input.projectId&&value.roleId===input.roleId);
     const paths=configured?.paths??[".agents/skills/evoloop-workflow/SKILL.md"];
     const skills=await roleSkillReferences(skillSourceRoot,paths).catch(()=>[]);
@@ -908,7 +911,10 @@ const app = await buildServer({ service, credentials, canWrite: lease.canWrite, 
       cwdReady:await current.allowedRuntimeCwd(input.projectId,input.cwd),
       materialCli:cli?{actorId:cli.cliActorId,command:cli.command,
         ready:await supportsFixedHandoff(cli.command,cli.cliActorId,input.projectId)}:null,
-      roleActorId:roleActor&&await currentProjectWriter(input.projectId,roleActor.actorId)?roleActor.actorId:null,
+      roleActorId:roleActor&&roleActorWriter?roleActor.actorId:null,
+      roleActorState:(!current.residentQueue?.enabled?"queue_disabled":!roleActor?"no_entry":roleActorWriter?"ready":"actor_not_project_writer") as
+        "ready"|"queue_disabled"|"no_entry"|"actor_not_project_writer",
+      roleActorConfiguredId:configuredRoleActor?.actorId??null,
       skills:skills.map(value=>({...value,readSubcommand:`get '/api/projects/${input.projectId}/roles/${input.roleId}/skills/${value.path.split("/")[2]}?commit=${value.commit}&hash=${value.contentHash}'`}))};
   },
   readRoleSkill: async (projectId,roleId,name,commit,hash) => {
