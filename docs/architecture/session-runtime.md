@@ -13,7 +13,7 @@
 | 原生会话 | Codex 的 Thread，或 Claude Code 的 session。对话历史在这里。 | 运行时自己；Claude 另有适配器账本 |
 | Turn | 原生会话里的一次执行。每个 Turn 只有一个**主来源**：一个业务 Run，或一条普通消息的处理记录。 | 运行时执行；PostgreSQL 保存 Run 或消息处理，以及对应的 Turn ID |
 
-协调服务不直接调用某个运行时的协议，而是经过中立端口 `RuntimePort`（`packages/contracts/src/runtime.ts`）。每个适配器用 `capabilities()` 声明自己能做什么，协调服务按声明决定是否提供某项操作；没有声明的能力就是不支持，不用别的办法模拟。有一处例外要先说明：Codex 的执行中补入不看这份声明，而由适配器按协议版本单独检查（见[第 3 节](#3-即时输入执行中收到的消息怎样处理)）。
+协调服务不直接调用某个运行时的协议，而是经过中立端口 `RuntimePort`（`packages/contracts/src/runtime.ts`）。每个适配器用 `capabilities()` 声明自己能做什么，协调服务按声明决定是否提供某项操作；没有声明的能力就是不支持，不用别的办法模拟。路由运行时按 Session 实际绑定的 provider 返回 `capabilitiesFor(binding)`，即时输入能力查询因此会核对当前运行时的版本，而不是只看服务默认运行时。
 
 本页常用的几个词：
 
@@ -105,15 +105,14 @@ flowchart TD
   G -->|否| Q["只提供普通消息入口<br/>输入排队等待"]
   G -->|是| S{"Session 当前状态"}
   S -->|"主来源已有绑定的运行中 Turn"| R{"运行时支持补入？"}
-  R -->|"Codex 固定 0.166.0-alpha.6"| ST["补入当前 Turn（turn/steer）<br/>不新建 Turn，不计额度"]
-  R -->|"Claude，或其他 Codex 版本"| NO["不能补入<br/>提交得到拒绝或未知回执<br/>不会自动转成排队消息"]
+  R -->|"Codex alpha.6 或 0.167"| ST["补入当前 Turn（turn/steer）<br/>不新建 Turn，不计额度"]
+  R -->|"Claude，或其他 Codex 版本"| NO["能力查询明确回答不能补入<br/>普通消息入口排队"]
+  ST -->|"压缩/评审等不可补入回合"| NQ["明确拒绝 direct input<br/>同一内容转为普通排队消息"]
   S -->|"确切空闲"| START["在原会话开一个新 Turn<br/>记为一条普通消息，计一次 Turn"]
   S -->|"占用中：刚派发、尚无 Turn 或结果未知"| BUSY["不提供即时发送<br/>只能走普通消息排队"]
 ```
 
-即时发送是否可用，由能力查询（`direct-input-capability`）按同一组授权和槽位检查实时回答；只有回答 `steer` 或 `start` 时工作台才显示即时发送，否则保留普通消息入口，用户的输入作为普通消息排队。“占用中”指 Session 已有主来源但还没有可以附着的运行中 Turn，例如刚派发还没拿到 Turn ID，或上一次结果未知。
-
-当前实现有一处已知缺口：能力查询只核对授权和槽位，不核对运行时是否支持补入，所以对 Claude 或非 alpha.6 的 Codex 也可能回答 `steer`。这时提交才发现不能补入：Codex 适配器明确拒绝，记为拒绝；Claude 一侧由运行时路由层报“不支持”，没有被归为原生的明确拒绝，目前记为未知。两种情况都不会自动转成排队消息。
+即时发送是否可用，由能力查询（`direct-input-capability`）按同一组授权、槽位和 Session 当前运行时能力实时回答；只有回答 `steer` 或 `start` 时工作台才显示即时发送，否则保留普通消息入口，用户的输入作为普通消息排队。“占用中”指 Session 已有主来源但还没有可以附着的运行中 Turn，例如刚派发还没拿到 Turn ID，或上一次结果未知。运行时分别声明 `delivery.midTurnInput`（能否补入）与 `delivery.idleTurnStart`（能否空闲直启）；Codex 的声明来自实际绑定的协议版本，Claude 两项均为否。
 
 规则如下：
 
@@ -122,18 +121,20 @@ flowchart TD
 - **空闲直启沿用普通消息授权。** 它保存一条普通消息和唯一一条处理记录，再在原会话启动 Turn，计一次 Turn。补入不另外计数。
 - **结果未知不重发。** 先持久化原意图再调用运行时；回执丢失就记 `unknown` 并保留槽位，只能按原 `inputId` 只读核对。
 - **授权。** 默认关闭（`directInputs`）。启用时要有一条指向同一 Session 的即时输入授权，同时要有对应的普通消息授权；客户端自报的身份不能替代授权。
+- **每 Session 一把短锁。** 业务 Run 或普通消息开新一轮、用户即时输入和后续通知包送入共用同一把进程内锁，只覆盖准入与原生发送，不覆盖整个 Turn。锁前撞车返回可重试的 `SESSION_INPUT_BUSY`，没有持久化本次意图；若已持久化的意图在适配器自身的在途检查处被拒，则证明没有写入原生传输，保留原输入编号与操作编号供同一意图重试。两种情况都不把恢复门写成拒绝或未知；业务 Run 遇到本地撞车保持 `requested`，下一轮再试，普通消息保持待处理原因而不判失败。
+- **不可补入的回合转排队。** 只有原生结构化字段 `codexErrorInfo.activeTurnNotSteerable`（例如 `turnKind: "review"` 或 `"compact"`），或 0.167 的精确文字 `cannot steer a review/compact turn`，才表示这一回合不能补入；direct input 记为 `rejected`，同一内容同时写成一条普通排队消息。`TurnError.misalignment.steer` 是失败回合附带的继续指令，不是 `turn/steer` 的拒绝。送入已被接受、这一轮随后失败且没有物化对应输入 Item 时，该输入保持未读（没有 `nativeItemId`），不会因为送达回执而被当成已读。
 
 不同来源的消息分开处理：
 
 | 消息来源 | Session 正在执行时 |
 | --- | --- |
-| 用户从工作台即时输入 | Codex（固定 0.166.0-alpha.6）补入当前 Turn；Claude 和其他 Codex 版本不能补入，用户改走普通消息 |
+| 用户从工作台即时输入 | Codex `0.166.0-alpha.6` 或 `0.167.0-alpha.3.2` 补入当前 Turn；Claude 和其他 Codex 版本不能补入，用户改走普通消息 |
 | 普通消息：Agent 或人经 `session.message.post` 发出的消息、Leader 通知、消息 Connector 写入的外部平台消息 | 排队，等当前 Turn 结束、恢复门开放后，在原会话开新 Turn |
 | 业务 Task 队列的下一项 | 不进消息队列；队列控制者在 Session 空闲、上一项按释放规则放行后，才领取并启动新 Run |
 
-普通消息和业务 Run 共用同一个 Session 槽位，轮流启动；即时输入不借用这两条排队路径，它们也不借用即时输入。
+普通消息和业务 Run 共用同一个 Session 槽位，轮流启动；即时输入不借用这两条排队路径，它们也不借用即时输入。协调服务另用一把短锁串行化“开新一轮”和“送入当前轮”的原生发送，避免同一 Session 同时出现两个准入。
 
-**两种运行时的差别。** 能力声明里的 `delivery.midTurnInput` 两者目前都是 `false`。对 Codex 来说，这项声明还没有跟上实现：补入由适配器的 `steerTurn` 按协议特性表单独检查，只有固定 `0.166.0-alpha.6` 同时具备 `turn/steer` 与 `thread/settings/update`（`packages/adapter-codex-app-server/src/protocol-surface.ts`）；默认的 `0.166.0-alpha.5.1` 不能补入。Claude 适配器没有补入方法。两种运行时都实现了空闲直启所用的普通消息启动。
+**两种运行时的差别。** Codex 的 `delivery.midTurnInput` 按协议特性表开启：`0.166.0-alpha.6` 与 `0.167.0-alpha.3.2` 为是，早期版本和默认的 `0.166.0-alpha.5.1` 为否；`delivery.idleTurnStart` 在所有现代协议为是。`thread/settings/update` 只控制执行配置切换，不再与补入共用开关，因此只有 alpha.6 声明执行配置切换。Claude 适配器没有补入方法，两项即时能力均为否。两种运行时都实现了空闲直启所用的普通消息启动。
 
 工作台入口与核对按钮的设计见[Sessions 页面](../frontend/pages/sessions.md)，配置、入口、对账与检查清单见[运行接线手册](../development/runtime-operations.md#2-即时输入)。
 
@@ -184,7 +185,7 @@ Codex 的 Thread 和 Claude 的 session 是两种不同的原生对象，一个 
 
 以代码为准：Codex 见 `packages/adapter-codex-app-server/src/index.ts` 的 `capabilities()`（约第 376–390 行）与 `src/protocol-surface.ts` 的协议特性表；Claude 见 `packages/adapter-claude-agent-sdk/src/index.ts` 的 `capabilities()`（约第 186–198 行）。
 
-Codex 一列有几项取决于运行配置选的协议版本。“现代协议”指除 `0.154.0` 以外的 4 个已核版本：`0.164.0-alpha.11.1`、`0.166.0-alpha.5.1`、`0.166.0-alpha.6`、`0.167.0-alpha.3.2`；标“仅 alpha.6”的两项只在固定 `0.166.0-alpha.6` 时可用，默认的 `0.166.0-alpha.5.1` 下都不可用。各版本的完整特性见[Codex 接入](codex-integration.md#协议版本与可选能力)；当前实例选的是哪个版本，见[阶段路线](../roadmap.md#当前基线)。
+Codex 一列有几项取决于运行配置选的协议版本。“现代协议”指除 `0.154.0` 以外的 4 个已核版本：`0.164.0-alpha.11.1`、`0.166.0-alpha.5.1`、`0.166.0-alpha.6`、`0.167.0-alpha.3.2`；托管压缩与执行配置切换标“仅 alpha.6”，运行中补入标“alpha.6 或 0.167”，默认的 `0.166.0-alpha.5.1` 下都不可用但空闲直启可用。各版本的完整特性见[Codex 接入](codex-integration.md#协议版本与可选能力)；当前实例选的是哪个版本，见[阶段路线](../roadmap.md#当前基线)。
 
 | 能力 | Codex（默认协议 `0.166.0-alpha.5.1`） | Claude |
 | --- | --- | --- |
@@ -192,14 +193,14 @@ Codex 一列有几项取决于运行配置选的协议版本。“现代协议�
 | 原生会话 ID | 由运行时分配 Thread ID | 由适配器预先生成（`callerAssignedSessionId: true`） |
 | 执行配置 | 完全访问＋不需审批，创建和续接都要原生回执确认 | 完全访问＋不需审批，每个 Turn 以 `bypassPermissions` 启动；没有原生回执可核，续接只核本地绑定 |
 | 普通消息与空闲直启 | 支持 | 支持（PR #224） |
-| 执行中补入 | 仅 alpha.6；默认版本不支持 | 不支持 |
+| 执行中补入 | alpha.6 或 0.167；默认版本不支持 | 不支持 |
 | 自动压缩 | 运行时自己压缩 | 运行时自己压缩 |
 | 托管压缩 | 仅 alpha.6；默认版本不支持 | 不支持 |
 | Turn 历史 | 原生 `thread/turns/list`、`thread/items/list` | 适配器账本，在进程启动前先记账 |
 | 工作轨迹与连续工作区 | 支持轨迹；工作区历史需另开实验开关 | 都不支持 |
 | 会话命名 | 现代协议支持 | 不支持 |
 | 归档 | 原生 `thread/archive` | 适配器账本登记，拒绝后续 Turn |
-| 模型与思考强度修订 | 现代协议支持 | 不支持，沿用创建时的模型 |
+| 模型与思考强度修订 | 仅 alpha.6；需精确读回 | 不支持，沿用创建时的模型 |
 | 原生提问桥（`request_user_input`） | 默认关闭，可按配置打开 | 不支持；提问工具被禁用 |
 | 明确拒绝的启动结果 | 能区分“未发送”“被拒绝” | 只能区分“未发送”，其余为未知 |
 | 逐 Turn 用量与费用 | 不写入 Run；Token 读数只在原生观察里 | 写入 Run 的 `usage` 与 `cost_usd`（schema 067） |
