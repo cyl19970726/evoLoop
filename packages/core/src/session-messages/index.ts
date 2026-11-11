@@ -4,6 +4,7 @@ import { preTurnProofSchema, type PreTurnProof, type RuntimeTurn, type RuntimeSe
 import type { Clock, IdFactory, Reader, Transaction, UnitOfWork } from "@evoloop/contracts/ports";
 import { DomainError } from "@evoloop/contracts/ports";
 import { priorReviewDecision, reviewIntentJson } from "../runtime/pre-turn-review.js";
+import { describeTurnEffort } from "../runtime/service.js";
 
 const required = <T>(value:T|null,label:string):T => {if(value===null)throw new DomainError('NOT_FOUND',`${label} not found`);return value;};
 const sameTarget = (a:SessionMessageRecord['target'],b:SessionMessageRecord['target']) =>
@@ -240,7 +241,7 @@ export class SessionMessageService {
       return processing;
     });
   }
-  async bindTurn(projectId:string,messageId:string,turn:RuntimeTurn):Promise<void>{
+  async bindTurn(projectId:string,messageId:string,turn:RuntimeTurn,requestedEffort:string|null=null):Promise<void>{
     await this.deps.uow.transaction(projectId,async tx=>{
       const store=tx.sessionMessages!;const p=required(await store.getSessionMessageProcessing(messageId),'processing');
       if(!['dispatching','unknown'].includes(p.state)||!turn.id)throw new DomainError('PROCESSING_STATE','message cannot bind Turn');
@@ -250,6 +251,10 @@ export class SessionMessageService {
         version:p.version+1,updatedAt:this.deps.clock.now()},p.version);
       const m=required(await store.getSessionMessage(messageId),'message');
       if(m.state==='unknown')await store.updateSessionMessage({...m,state:'processing',version:m.version+1,updatedAt:this.deps.clock.now()},m.version);
+      // The Turn started with an effort: say what was asked and what the Thread then reported for this very Turn.
+      const note=describeTurnEffort(requestedEffort,turn);
+      if(note)await tx.appendRuntimeEvent({projectId,id:this.deps.ids.next(),runId:null,sessionId:p.sessionId,kind:'turn.effortObserved',
+        detail:`message ${messageId}${note}`,nativeTurnId:turn.id,cursor:null,itemsDigest:null,actorId:'session-message-pump',createdAt:this.deps.clock.now()});
     });
   }
   async markUnknown(projectId:string,messageId:string,reason:string,

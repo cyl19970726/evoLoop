@@ -83,6 +83,10 @@ const sameBinding = (a: RuntimeBinding, b: RuntimeBinding): boolean =>
   (["sessionId", "roleId", "projectId", "nativeThreadId", "nativeSessionId", "cwd", "authorizationScope", "owner"] as const).every(key => a[key] === b[key]) &&
   (["actorId","model","reasoningEffort","sandbox","approvalPolicy","executionProfileRevisionId"] as const).every(key =>
     (a.resumeProfile?.[key] ?? null) === (b.resumeProfile?.[key] ?? null));
+/** Same Thread, scope and profile except the effort and the execution profile revision that carries it. */
+const effortRevisionOnly = (a: RuntimeBinding, b: RuntimeBinding): boolean =>
+  (["sessionId", "roleId", "projectId", "nativeThreadId", "nativeSessionId", "cwd", "authorizationScope", "owner"] as const).every(key => a[key] === b[key]) &&
+  (["actorId", "model", "sandbox", "approvalPolicy"] as const).every(key => (a.resumeProfile?.[key] ?? null) === (b.resumeProfile?.[key] ?? null));
 const nonempty = (value: unknown): value is string => typeof value === "string" && value.length > 0;
 const safeModelIdentity = (value:unknown):string|null => typeof value==="string"&&
   /^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$/.test(value)?value:null;
@@ -1026,12 +1030,14 @@ export class CodexAppServerAdapter implements RuntimePort {
   async registerBinding(binding: RuntimeBinding): Promise<void> {
     this.validateBinding(binding);
     if (!this.options.verifyBinding || !await this.options.verifyBinding(binding)) throw new RuntimeProtocolError("binding provenance not verified");
-    this.rememberBinding(binding);
+    // The trusted store has confirmed this binding. Where effort rides on each turn/start (no thread/settings/update), a revision that
+    // changed only the effort replaces the registered one; any other difference is still a conflict.
+    this.rememberBinding(binding, true);
   }
 
   /** Exact, unused thread/start proof on this owner connection; no native Turn has been attempted. */
   /** Without thread/settings/update (Codex 0.167 and others) effort cannot change on a live Thread; it rides on each turn/start. */
-  appliesEffortWithNextTurn(_binding: RuntimeBinding): boolean { return !this.features.directInput; }
+  appliesEffortWithNextTurn(_binding: RuntimeBinding): boolean { return !this.features.executionProfileSwitch; }
   hasFreshStartProof(binding: RuntimeBinding): boolean {
     this.owned(binding);
     const fresh=this.freshThreads.get(binding.nativeThreadId);
@@ -1047,10 +1053,12 @@ export class CodexAppServerAdapter implements RuntimePort {
       throw new RuntimeProtocolError('connector receiver binding requires the pinned restricted native profile');
   }
 
-  private rememberBinding(binding: RuntimeBinding): void {
+  private rememberBinding(binding: RuntimeBinding, replaceEffortRevision = false): void {
     this.validateBinding(binding);
     const existing = this.bindings.get(binding.nativeThreadId);
-    if (existing && !sameBinding(existing, binding)) throw new RuntimeProtocolError("conflicting runtime binding");
+    if (existing && !sameBinding(existing, binding) &&
+      !(replaceEffortRevision && !this.features.executionProfileSwitch && effortRevisionOnly(existing, binding)))
+      throw new RuntimeProtocolError("conflicting runtime binding");
     this.bindings.set(binding.nativeThreadId, binding);
   }
 
@@ -1472,7 +1480,7 @@ export class CodexAppServerAdapter implements RuntimePort {
       const turn=runtimeTurn(started?.turn);
       if(!turn||turn.status!=='inProgress'||turn.completedAtUtc!==null)
         throw new RuntimeUnknownError('turn/start',null,'invalid full conversation acknowledgement; Turn may have started');
-      return turn;
+      return profile.reasoningEffort?await this.withObservedEffort(binding,turn):turn;
     }finally{
       // A changed readback must not leave an implicit admission for another start.
       this.conversationQualifications.delete(threadId);
@@ -1829,15 +1837,23 @@ export class CodexAppServerAdapter implements RuntimePort {
     }
     const turn = runtimeTurn(result?.turn);
     if (!turn) throw new RuntimeUnknownError("turn/start", null, "invalid acknowledgement; turn may have started");
-    // Read back the effort the Thread reports now, as confirmation of what turn/start carried. Best effort: the Turn already started.
-    if (executionProfile?.reasoningEffort) {
-      try {
-        const readback = object(await this.request("thread/read", { threadId: binding.nativeThreadId, includeTurns: false }));
-        const observed = object(readback?.thread)?.reasoningEffort;
-        return { ...turn, observedReasoningEffort: typeof observed === "string" ? observed : null };
-      } catch { return { ...turn, observedReasoningEffort: null }; }
-    }
-    return turn;
+    return executionProfile?.reasoningEffort ? await this.withObservedEffort(binding, turn) : turn;
+  }
+
+  /**
+   * The effort the Thread reports right after turn/start, counted only when this very Turn is the Thread's latest one, so the value is the
+   * one in effect for it and not an older Turn's. Anything else (a failed read, another Turn first) is "unread", never "consistent".
+   * Best effort: the Turn has already started.
+   */
+  private async withObservedEffort(binding: RuntimeBinding, turn: RuntimeTurn): Promise<RuntimeTurn> {
+    try {
+      const latest = object(await this.request("thread/turns/list", { threadId: binding.nativeThreadId, limit: 1, sortDirection: "desc", ...(this.features.modern ? { itemsView: "notLoaded" } : {}) }));
+      const first = Array.isArray(latest?.data) ? object(latest.data[0]) : null;
+      if (first?.id !== turn.id) return { ...turn, observedReasoningEffort: null };
+      const readback = object(await this.request("thread/read", { threadId: binding.nativeThreadId, includeTurns: false }));
+      const observed = object(readback?.thread)?.reasoningEffort;
+      return { ...turn, observedReasoningEffort: typeof observed === "string" ? observed : null };
+    } catch { return { ...turn, observedReasoningEffort: null }; }
   }
 
   async interruptTurn(binding: RuntimeBinding, turnId: string): Promise<void> {

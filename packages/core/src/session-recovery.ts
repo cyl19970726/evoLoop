@@ -7,6 +7,8 @@ export interface RecoveryAuthority {
   /** The runtime has no native way to change effort on a live Thread (no thread/settings/update): effort then travels with each turn/start. */
   effortAppliesNextTurn?(session:RuntimeSessionRecord):boolean;
 }
+/** Every effort value the supported runtimes know (Codex's levels, the gateway's max, Claude's xhigh). Anything else is a typo. */
+export const KNOWN_REASONING_EFFORTS: ReadonlySet<string> = new Set(['none','minimal','low','medium','high','xhigh','max']);
 const need=<T>(value:T|null|undefined,label:string):T=>{if(value==null)throw new DomainError('NOT_FOUND',label+' unavailable');return value;};
 const active=new Set(['requested','dispatching','running','unknown']);
 export async function applySessionRecovery(tx:Transaction,principal:Principal,command:SessionRecoveryCommand,
@@ -51,6 +53,8 @@ export async function applySessionRecovery(tx:Transaction,principal:Principal,co
       throw new DomainError('EXECUTION_PROFILE_CONFLICT','Execution profile changed');
     if(profile.revision.reasoningEffort&&!command.reasoningEffort)
       throw new DomainError('REASONING_EFFORT_REQUIRED','A configured reasoning effort cannot be cleared by a legacy profile command');
+    if(command.reasoningEffort&&!KNOWN_REASONING_EFFORTS.has(command.reasoningEffort))
+      throw new DomainError('REASONING_EFFORT_UNKNOWN',`Unknown reasoning effort "${command.reasoningEffort}"; use one of ${[...KNOWN_REASONING_EFFORTS].join(', ')}`);
     if(['attempting','unknown'].includes(profile.activationState))
       throw new DomainError('PROFILE_ACTIVATION_UNRESOLVED','Reconcile the original activation before changing its target');
     if(command.sandbox!=='danger-full-access'||command.approvalPolicy!=='never')
@@ -70,9 +74,14 @@ export async function applySessionRecovery(tx:Transaction,principal:Principal,co
       provenance:'revised',operationId:command.operationId,actorId:principal.actorId,
       reason:command.reason,evidenceRef:command.evidenceRef,createdAt:now};
     // Only the effort changes and the runtime cannot activate it natively: no activation, the next turn/start carries it.
-    const appliesNextTurn=!!command.reasoningEffort&&profile.revision.model===command.model&&
-      profile.revision.sandbox===command.sandbox&&profile.revision.approvalPolicy===command.approvalPolicy&&
-      authority.effortAppliesNextTurn?.(session)===true;
+    const effortOnly=!!command.reasoningEffort&&profile.revision.model===command.model&&
+      profile.revision.sandbox===command.sandbox&&profile.revision.approvalPolicy===command.approvalPolicy;
+    const nextTurnRuntime=authority.effortAppliesNextTurn?.(session)===true;
+    // The shortcut is only for a change against the confirmed profile: while the head is still pending or was rejected (a model change not
+    // yet confirmed), an effort-only request would make that unconfirmed model count as in force.
+    if(effortOnly&&nextTurnRuntime&&profile.activationState!=='active'&&profile.activeRevisionId!==profile.revision.revisionId)
+      throw new DomainError('PROFILE_NOT_ACTIVE','Reconcile and confirm the registered execution profile before changing only the effort');
+    const appliesNextTurn=effortOnly&&nextTurnRuntime;
     await recovery.adoptExecutionProfile(revision,session.version,appliesNextTurn?{appliesNextTurn:true}:undefined);
     return {result:{status:'applied' as const,operationId:command.operationId,entityId:session.id,version:session.version+1,revisionId:revision.revisionId},
       effects:[{kind:command.type,entityId:session.id,version:session.version+1}]};

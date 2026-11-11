@@ -194,7 +194,8 @@ async function dispatch(args: Args, env: Environment, io: IO): Promise<unknown> 
       const revision=record(profile?.revision);
       if(!current||!revision||typeof current.version!=='number'||typeof revision.revisionId!=='string')
         throw new UsageError('Current managed Session profile is unavailable; use session profile show.');
-      const model=option(args,"model")??(typeof revision.model==='string'?revision.model:undefined);
+      // Without --model the model in force is kept: the confirmed one, not a pending head that was never activated.
+      const model=option(args,"model")??(typeof profile?.activeModel==='string'?profile.activeModel:typeof revision.model==='string'?revision.model:undefined);
       if(!model)throw new UsageError('The Session has no recorded model; pass --model.');
       const operationId=option(args,"operation")?uuid(option(args,"operation"),"Operation"):randomUUID();
       const command=commandSchema.parse({type:'runtime.session.executionProfile.revise',projectId,sessionId,

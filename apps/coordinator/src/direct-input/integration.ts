@@ -1,4 +1,6 @@
+import { randomUUID } from "node:crypto";
 import type { Pool } from "pg";
+import { describeTurnEffort } from "@evoloop/core";
 import type { Principal } from "@evoloop/contracts";
 import type { RuntimeSessionRecord } from "@evoloop/contracts/runtime";
 import type { UnitOfWork } from "@evoloop/contracts/ports";
@@ -37,6 +39,12 @@ export function createDirectInputService(deps:{
     store:new PgDirectInputs(deps.pool),runtime:deps.runtime,canWrite:deps.canWrite,
     ...(deps.lock?{lock:deps.lock}:{}),
     bindingFor:async(projectId,sessionId)=>bindingOf(await session(projectId,sessionId)),
+    observeEffort:async(projectId,sessionId,inputId,turn,requested)=>{
+      const note=describeTurnEffort(requested,turn);
+      if(!note)return;
+      await deps.uow.transaction(projectId,tx=>tx.appendRuntimeEvent({projectId,id:randomUUID(),runId:null,sessionId,kind:"turn.effortObserved",
+        detail:`direct input ${inputId}${note}`,nativeTurnId:turn.id,cursor:null,itemsDigest:null,actorId:"direct-input",createdAt:new Date().toISOString()}));
+    },
     admission:async(principal:Principal,projectId,sessionId)=>{
       if(!principal.projectIds.includes(projectId)||!principal.permissions.includes("read")||
         !principal.permissions.includes("write"))throw new DomainError("FORBIDDEN","Project writer required");

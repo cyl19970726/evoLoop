@@ -285,9 +285,14 @@ export class RuntimeRunner {
     if(!await this.authorized({...session,model:command.model,sandbox:command.sandbox,approvalPolicy:command.approvalPolicy})||
       !await this.deps.allowedCwd(session.projectId,session.cwd))
       throw new DomainError("FORBIDDEN","原 Session 的目标配置或目录没有当前精确授权。");
-    // Only the effort changes and this runtime applies it with each turn/start: there is nothing to activate or read back first.
-    if(session.executionProfile.revision.model===command.model&&session.executionProfile.revision.sandbox===command.sandbox&&
-      session.executionProfile.revision.approvalPolicy===command.approvalPolicy&&this.effortAppliesNextTurn(session))return;
+    const head=session.executionProfile.revision;
+    if(this.effortAppliesNextTurn(session)){
+      // Only the effort changes and this runtime applies it with each turn/start: there is nothing to activate or read back first.
+      if(head.model===command.model&&head.sandbox===command.sandbox&&head.approvalPolicy===command.approvalPolicy)return;
+      // A model change and an effort change together would need the native in-place switch this runtime does not have.
+      if(head.model!==command.model&&(head.reasoningEffort??null)!==(command.reasoningEffort??null))
+        throw new DomainError("EXECUTION_PROFILE_SPLIT_REQUIRED","此运行时不能同时改模型和思考强度：请分两步，先只改模型并等其确认生效，再只改强度。未保存新配置。");
+    }
     if(!this.runtime.isReady())throw new DomainError("RUNTIME_READ_UNAVAILABLE","原生执行服务不可读，未保存新配置；请恢复连接后重试。");
     try {
       const binding=bindingOf(session);

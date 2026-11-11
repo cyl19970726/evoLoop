@@ -130,7 +130,7 @@ test(`coordinator preflight preserves first-start proof for ${mode}`,async t=>{
   f.session.executionProfile!.activeReasoningEffort=null;
   const adapter=new CodexAppServerAdapter({executable:process.execPath,
     spawnArgs:[resolve(import.meta.dirname,"../../../packages/adapter-codex-app-server/test/fixture.mjs"),mode],
-    expectedVersion:"codex-cli 0.166.0-alpha.5.1",verifyBinding:async()=>true,initializationTimeoutMs:5000});
+    expectedVersion:"codex-cli 0.166.0-alpha.6",verifyBinding:async()=>true,initializationTimeoutMs:5000});
   t.after(()=>adapter.close());await adapter.open();
   const spec:RuntimeSessionSpec={actorId:f.session.actorId,sessionId:f.session.id,roleId:f.session.roleId,
     projectId:f.session.projectId,cwd:f.session.cwd,authorizationScope:f.session.authorizationScope,
@@ -209,10 +209,16 @@ test("an effort-only change on a runtime that applies effort with each turn/star
       assert.equal(unsupported.statusCode,409,unsupported.body);
       assert.equal(unsupported.json().code,"REASONING_EFFORT_UNSUPPORTED");
     } finally {await listed.close();}
-    // A model change still goes through the native checks.
+    // A model and an effort change together would need the in-place switch this runtime lacks: refused up front, with the two-step advice.
     f.calls.length=0;
-    const modelChange=await app.inject({method:"POST",url:"/api/commands",headers:{authorization:`Bearer ${token}`},payload:{...f.command,operationId:randomUUID(),expectedVersion:f.session.version}});
-    assert.equal(modelChange.statusCode,409,modelChange.body);
+    const both=await app.inject({method:"POST",url:"/api/commands",headers:{authorization:`Bearer ${token}`},payload:{...f.command,operationId:randomUUID(),expectedVersion:f.session.version}});
+    assert.equal(both.statusCode,409,both.body);
+    assert.equal(both.json().code,"EXECUTION_PROFILE_SPLIT_REQUIRED");
+    assert.deepEqual(f.calls,[],"nothing was read or written");
+    // A model change alone (same effort) still goes through the native checks.
+    const modelOnly=await app.inject({method:"POST",url:"/api/commands",headers:{authorization:`Bearer ${token}`},
+      payload:{...f.command,operationId:randomUUID(),expectedVersion:f.session.version,reasoningEffort:f.session.executionProfile!.revision.reasoningEffort}});
+    assert.equal(modelOnly.statusCode,409,modelOnly.body);
     assert.deepEqual(f.calls,["register","inspect","listTurns"]);
   } finally {await app.close();}
 });

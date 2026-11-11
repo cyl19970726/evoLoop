@@ -1665,10 +1665,11 @@ test('effort rides on turn/start where the runtime cannot update a live Thread, 
   const internals = adapter as unknown as Record<string, unknown>;
   const sent: Array<{ method: string; params: Record<string, unknown> }> = [];
   internals.owned = () => {};
-  let reported: string | undefined = 'max';
+  let reported: string | undefined = 'max', latest = 'turn-1';
   internals.request = async (method: string, params: Record<string, unknown>) => {
     sent.push({ method, params });
     if (method === 'turn/start') return { turn: { id: 'turn-1', status: 'inProgress', completedAt: null, items: [] } };
+    if (method === 'thread/turns/list') return { data: [{ id: latest, status: 'inProgress' }], nextCursor: null };
     if (method === 'thread/read') return { thread: { id: 'thread', reasoningEffort: reported } };
     assert.fail(method);
   };
@@ -1681,6 +1682,10 @@ test('effort rides on turn/start where the runtime cannot update a live Thread, 
   const start = sent.find(call => call.method === 'turn/start')!;
   assert.equal(start.params.effort, 'max', 'turn/start carries the configured effort');
   assert.equal(turn.observedReasoningEffort, 'max', 'and the Thread reports it back');
+  // The Thread's latest Turn is another one: the reported value is not proof for this Turn, so it is not claimed.
+  latest = 'someone-elses-turn';
+  const foreign = await adapter.startTurn(binding, 'business', 'op-foreign', profile);
+  assert.equal(foreign.observedReasoningEffort, null);
   // A readback that fails or reports nothing never fails the Turn that already started.
   internals.request = async (method: string) => {
     if (method === 'turn/start') return { turn: { id: 'turn-2', status: 'inProgress', completedAt: null, items: [] } };
@@ -1689,3 +1694,27 @@ test('effort rides on turn/start where the runtime cannot update a live Thread, 
   const second = await adapter.startTurn(binding, 'business', 'op-2', profile);
   assert.equal(second.id, 'turn-2'); assert.equal(second.observedReasoningEffort, null);
 });
+
+for (const [expectedVersion, replaces] of [["codex-cli 0.167.0-alpha.3.2", true], ["codex-cli 0.166.0-alpha.6", false]] as const) {
+  test(`${expectedVersion}: an effort-only revision ${replaces ? "re-registers on the real adapter and starts a Turn" : "still conflicts, because it is activated natively"}`, async t => {
+    const adapter = testAdapter({ executable: process.execPath, spawnArgs: [fixture, 'full-normal'], expectedVersion, verifyBinding: async () => true });
+    t.after(() => adapter.close()); await adapter.open();
+    const created = await adapter.create(fullSpec);
+    const withProfile = (b: RuntimeBinding, effort: string, revisionId: string): RuntimeBinding =>
+      ({ ...b, resumeProfile: { ...b.resumeProfile!, reasoningEffort: effort, executionProfileRevisionId: revisionId } });
+    const first = withProfile(created, 'high', 'rev-1'), second = withProfile(created, 'low', 'rev-2');
+    if (!replaces) {
+      await assert.rejects(() => adapter.registerBinding(first), /conflicting runtime binding/);
+      return;
+    }
+    await adapter.registerBinding(first);
+    // The coordinator re-registers after the revision became active; no stubbed ownership check.
+    await adapter.registerBinding(second);
+    const profile = { revisionId: 'rev-2', version: 2, model: second.resumeProfile!.model, reasoningEffort: 'low', sandbox: 'danger-full-access', approvalPolicy: 'never',
+      cwd: second.cwd, authorizationScope: second.authorizationScope, provenance: 'revised' } as Parameters<typeof adapter.startTurn>[3];
+    assert.equal((await adapter.startTurn(second, 'business', 'op-effort', profile)).status !== undefined, true);
+    // The old registration is gone and a different model is still a conflict.
+    await assert.rejects(() => adapter.startTurn(first, 'again', 'op-old', { ...profile, revisionId: 'rev-1', reasoningEffort: 'high' } as typeof profile), /not registered to this adapter and scope/);
+    await assert.rejects(() => adapter.registerBinding({ ...second, resumeProfile: { ...second.resumeProfile!, model: 'another-model' } }), /conflicting runtime binding/);
+  });
+}

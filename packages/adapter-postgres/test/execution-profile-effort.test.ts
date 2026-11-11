@@ -121,3 +121,28 @@ test("a model change, or a runtime that can update the live Thread, keeps the na
   assert.equal((await profileOf(effortOnly)).executionProfile!.activationState, "pending", "a runtime with thread/settings/update activates natively as before");
   nextTurnRuntime = true;
 });
+
+test("the shortcut compares with the profile in force: a pending model change blocks it; an unknown effort is refused", async () => {
+  nextTurnRuntime = true;
+  const sessionId = await newSession();
+  await revise(sessionId, "deepseek/deepseek-v4-pro", "high");           // model change: pending, not yet confirmed natively
+  assert.equal((await profileOf(sessionId)).executionProfile!.activationState, "pending");
+  const s = await profileOf(sessionId);
+  const effortOnlyOnPending = await workflow.execute(lead, { type: "runtime.session.executionProfile.revise", projectId: p, operationId: randomUUID(), sessionId,
+    expectedVersion: s.version, expectedExecutionProfileRevisionId: s.executionProfile!.revision.revisionId, model: "deepseek/deepseek-v4-pro", reasoningEffort: "max",
+    sandbox: "danger-full-access", approvalPolicy: "never", evidenceRef: "fixture://grant", reason: "effort on an unconfirmed model" } as never);
+  assert.equal(effortOnlyOnPending.status, "rejected", JSON.stringify(effortOnlyOnPending));
+  assert.equal((effortOnlyOnPending as { code: string }).code, "PROFILE_NOT_ACTIVE");
+  assert.equal((await profileOf(sessionId)).executionProfile!.activationState, "pending", "the unconfirmed profile was not made active");
+  // Effort strings: only the known levels, exactly spelled.
+  const fresh = await newSession();
+  for (const bad of ["MAX", "Hihg", "maximum", ""]) {
+    const f = await profileOf(fresh);
+    const refused = await workflow.execute(lead, { type: "runtime.session.executionProfile.revise", projectId: p, operationId: randomUUID(), sessionId: fresh,
+      expectedVersion: f.version, expectedExecutionProfileRevisionId: f.executionProfile!.revision.revisionId, model: "deepseek/deepseek-flash", reasoningEffort: bad,
+      sandbox: "danger-full-access", approvalPolicy: "never", evidenceRef: "fixture://grant", reason: "typo" } as never).catch(error => ({ status: "rejected", code: (error as { code: string }).code }));
+    assert.equal(refused.status, "rejected", `${bad} is refused`);
+  }
+  await revise(fresh, "deepseek/deepseek-flash", "low");                  // a spelled level is accepted
+  assert.equal((await profileOf(fresh)).executionProfile!.revision.reasoningEffort, "low");
+});

@@ -349,7 +349,9 @@ test('message persists separately, unknown retains exact operation, receipt requ
   assert.equal((await service.processing(projectId,message.id))?.operationId,operationId);
   assert.equal((await service.get(projectId,message.id)).state,'unknown');
   await assert.rejects(()=>uow.transaction(projectId,tx=>tx.sessionMessages!.assertSessionVacant(sessionId)),/active or unresolved/);
-  await service.bindTurn(projectId,message.id,{id:'native-turn-1',status:'inProgress'});
+  await service.bindTurn(projectId,message.id,{id:'native-turn-1',status:'inProgress',observedReasoningEffort:'low'},'low');
+  const effortEvent=await pool.query("SELECT detail FROM runtime_record_event WHERE project_id=$1 AND session_id=$2 AND kind='turn.effortObserved' AND native_turn_id='native-turn-1'",[projectId,sessionId]);
+  assert.match(effortEvent.rows[0]?.detail??'',/effort requested=low observed=low/,'a message Turn records the requested and the reported effort');
   await service.settle(projectId,message.id,{id:'native-turn-1',status:'completed',completedAtUtc:now},null);
   assert.equal((await service.get(projectId,message.id)).state,'completed_without_reply');
   const detail=await service.detail(projectId,message.id);

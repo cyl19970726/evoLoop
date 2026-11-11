@@ -101,7 +101,7 @@ export interface RuntimeRecordEvent {
   projectId: string; id: string; runId: string | null; sessionId: string | null;
   kind: "session.reserved" | "session.creating" | "session.bound" | "session.unknown" | "session.closeRequested" | "session.archiveAttempted" | "session.closed" |
     "run.requested" | "run.dispatching" | "run.dispatchWithdrawn" | "run.preflightRejected" | "run.dispatchRejected" | "run.bound" | "run.status" | "run.unknown" |
-    "run.reviewed" | "message.preTurnReviewed" | "run.reconciled" | "run.interruptRequested" | "run.interruptResult" | "run.stopRequested" |
+    "turn.effortObserved" | "run.reviewed" | "message.preTurnReviewed" | "run.reconciled" | "run.interruptRequested" | "run.interruptResult" | "run.stopRequested" |
     "session.executionProfile.activationStarted" | "session.executionProfile.active" |
     "session.executionProfile.unknown" | "session.executionProfile.rejected" |
     "runtime.approvalDeclined" | "native.childDiagnostic" | "handoff.received" | "handoff.read" | "handoff.adopted" | "handoff.effect";
