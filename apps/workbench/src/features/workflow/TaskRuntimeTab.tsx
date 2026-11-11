@@ -286,7 +286,7 @@ function RunRecord({ context, run, taskTitle, anchor, readOnlyAgent }: {
     <summary className="flex cursor-pointer list-none flex-wrap items-center gap-2 py-3 outline-none focus-visible:shadow-[var(--focus-ring)] [&::-webkit-details-marker]:hidden">
       <span className="text-small font-medium text-foreground">运行 · 开始于 {date(run.createdAt)}</span>
       <StatusTag tone={tone} label={runStateName[run.state] ?? "状态未识别"} />
-      {run.interruptRequested && <StatusTag tone="waiting" label="已请求中断" />}
+      {run.stopRequestedAt ? <StatusTag tone="waiting" label="已请求停止" /> : run.interruptRequested && <StatusTag tone="waiting" label="已请求中断" />}
     </summary>
     <div className="flex flex-col gap-3 pb-4 pl-1">
       <p className="flex flex-wrap gap-x-4 text-label">

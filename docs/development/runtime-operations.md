@@ -273,6 +273,10 @@ node --import tsx tests/manual/session-compaction-e1.ts
 
 门槛只要求核查，不代表 Run 失败；关注项不会自动取消、重试或关闭 Run，也不重置预算。隔离候选页面的截图见[桌面 1280×900](../assets/task-stage-attention/desktop-1280.png) 和[窄窗 390×844](../assets/task-stage-attention/narrow-390.png)，两张都来自合成的测试项目，不代表正式通知已送达或已读。
 
+## 叫停执行中的 Run
+
+业务 Run 的范围变了就叫停，不要等它做完再返工：`command schema runtime.run.stop` 取结构，带 Run 的当前版本和理由，用 `command run FILE` 提交；身份要有 review 权限并持有该 Session 的精确执行授权，原生运行时离线时也能提交（未派发的 Run 在数据库里直接判失败，运行中的由 runner 在运行时恢复后中断）。提交后回读 Run：`stopRequestedAt` 已有、`interruptRequested` 为真表示等运行时中断；终态（`interrupted` 或 `failed`）由运行时观察确认，在此之前仍算未结束，Task 上不能再派新的 Run。用这个 Run 再提交会得到 `RUN_STOPPED`，叫停前已签的意图作废，不会产生交付。停止不会关恢复门，也没有失败通知，只有一条 `run.stopRequested` 运行事件。结果未知的 Run 不属于这条路径，仍按“未知”章节对账。
+
 ## 已知缺口
 
 - **导入通知没有正式命令。** 迁移导入的 Leader 通知只能由维护者直接标记，没有权限检查和操作回执（见[迁移之后先处理导入的通知](#迁移之后先处理导入的通知)）。

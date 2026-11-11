@@ -130,3 +130,23 @@ test("worker compatibility references still reject compound locations", () => {
     assert.throws(() => parseArtifactReference(ref,"v1",projectId,false),
       { code: "ARTIFACT_REF_INVALID" });
 });
+
+test("a stopped Run takes no submission, and a submission voided by the stop answers every later attempt with the same refusal", async () => {
+  const f = fixture();
+  (f.run as RuntimeRunRecord).stopRequestedAt = "2026-10-29T00:00:00.000Z";
+  (f.run as RuntimeRunRecord).stopReason = "Scope changed";
+  await assert.rejects(submit(f.store, actor("worker"), command()), { code: "RUN_STOPPED", message: /Scope changed/ });
+  assert.equal(f.records.size, 0, "nothing is saved for a stopped Run");
+  // A signed intent that the stop voided (state rejected, reason RUN_STOPPED): the original operation and a new one both get the refusal.
+  const voided = fixture();
+  const original = await submit(voided.store, actor("worker"), command());
+  voided.records.set(runId, { ...original, state: "rejected", reason: "RUN_STOPPED" });
+  await assert.rejects(submit(voided.store, actor("worker"), command()), { code: "RUN_STOPPED" }, "replay with the old operation ID");
+  await assert.rejects(submit(voided.store, actor("worker"), { ...command(), operationId: "99999999-9999-4999-8999-999999999999",
+    submissionId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", deliveryOperationId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb" }), { code: "RUN_STOPPED" }, "a new operation");
+  // Any other rejection keeps its own meaning.
+  const other = fixture();
+  const first = await submit(other.store, actor("worker"), command());
+  other.records.set(runId, { ...first, state: "rejected", reason: "WORKFLOW_REJECTED" });
+  assert.deepEqual(await submit(other.store, actor("worker"), command()), { ...first, state: "rejected", reason: "WORKFLOW_REJECTED" });
+});
