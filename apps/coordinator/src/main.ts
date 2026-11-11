@@ -799,7 +799,7 @@ const residentQueue = new ResidentQueuePump({workflow:service,canWrite:lease.can
   messageBusy: (projectId, sessionId) => messageService.isBusy(projectId, sessionId),
   credentials:currentIdentity,enabled:async()=>!!(await currentQueueConfiguration())?.enabled,
   pollIntervalMs:integrations.residentQueue?.pollIntervalMs??2000,
-  onError:()=>console.error("Resident queue tick failed; inspect persisted queue and Run state before retrying.")});
+  onError:(()=>{const log=throttledLog(line=>console.error(line));return(error:unknown)=>log(`Resident queue tick failed: ${error instanceof Error?error.message.slice(0,200):"unknown"}; inspect persisted queue and Run state before retrying.`);})()});
 const sessionLinePump = new SessionLinePump({workflow:service,canWrite:lease.canWrite,
   messageBusy:(projectId,sessionId)=>messageService.isBusy(projectId,sessionId),credentials:currentIdentity,
   enabled:async()=>!!(await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE)).runtime?.enabled,

@@ -126,3 +126,31 @@ test('bounded recovery observation marks the 21st decision as partial and never 
   const view=await service.getSessionRecovery(f.principal as any,f.projectId,f.sessionId);
   assert.equal(observedLimit,21);assert.equal(view.decisions.length,20);assert.equal(view.partial,true);
 });
+
+test("a provider hold refusal is thrown and never journalled, so the same operation ID is evaluated afresh after the release", async () => {
+  const projectId = "00000000-0000-4000-8000-0000000000a1", operationId = "00000000-0000-4000-8000-0000000000a2";
+  const reviewer = { actorId: "lead", projectIds: [projectId], permissions: ["read", "write", "review"] as Array<"read" | "write" | "review"> };
+  const journal = new Map<string, unknown>();
+  const { DomainError } = await import("../src/index.ts");
+  let refusal = new DomainError("PROVIDER_HELD", "provider paused");
+  const tx = new Proxy({
+    getProject: async () => ({ id: projectId, title: "t" }),
+    getOperation: async (id: string) => journal.get(id) ?? null,
+    insertOperation: async (operation: { id: string }) => { journal.set(operation.id, operation); },
+    savepoint: async <T>(work: () => Promise<T>) => work(),
+    appendOutbox: async () => {}, insertOutbox: async () => {},
+    recovery: { getActiveProviderHold: async () => { throw refusal; } },
+  } as never, { get: (target: Record<string, unknown>, key: string) => key in target ? target[key] : async () => { throw new Error(`unexpected ${key}`); } });
+  const uow = { transaction: async (_project: string, work: (tx: never) => Promise<unknown>) => work(tx), read: async () => { throw new Error("unused"); } };
+  const { WorkflowService } = await import("../src/index.ts");
+  const service = new WorkflowService({ uow: uow as never, clock: { now: () => new Date().toISOString() }, ids: { next: () => crypto.randomUUID() },
+    hasher: { hash: (value: string) => value.length.toString(16).padStart(64, "0") } });
+  const command = { type: "runtime.providerHold.release", projectId, operationId, provider: "codex", expectedVersion: 1, evidenceRef: "ops://x", reason: "balance restored" } as never;
+  await assert.rejects(service.execute(reviewer, command), { code: "PROVIDER_HELD" });
+  assert.equal(journal.size, 0, "the refusal is not a saved decision about this operation");
+  // Any other domain refusal is still journalled and replayed, as before.
+  refusal = new DomainError("PROVIDER_NOT_HELD", "no hold");
+  const first = await service.execute(reviewer, command);
+  assert.equal(first.status, "rejected"); assert.equal(journal.size, 1);
+  assert.deepEqual(await service.execute(reviewer, command), first);
+});

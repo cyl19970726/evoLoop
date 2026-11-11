@@ -180,6 +180,9 @@ export class WorkflowService {
         result = outcome.result;
         effects = outcome.effects;
       } catch (error) {
+        // A provider hold is a temporary state, not a decision about this command: nothing is journalled, so the same operation
+        // ID is evaluated afresh once the hold is released instead of replaying the refusal forever.
+        if (error instanceof DomainError && error.code === "PROVIDER_HELD") throw error;
         if (error instanceof DomainError) {
           result = {
             status: "rejected", operationId: command.operationId, code: error.code,
