@@ -177,3 +177,14 @@ test("a Delivery with the right writer but wrong signed author cannot be sealed"
     sourceRunVersion: run.version, createdAt: run.updatedAt });
   assert.equal((await g.seal(projectId, runId)).reason, "DELIVERY_MISMATCH");
 });
+
+test("a stopped Run is never sealed: the intent is rejected as RUN_STOPPED even when the Run completed", async () => {
+  const f = fixture();
+  f.setRun({ stopRequestedAt: "2026-10-29T00:30:00Z", stopReason: "Scope changed", stopRequestedBy: "reviewer", state: "completed" });
+  const result = await f.seal(projectId, runId);
+  assert.deepEqual([result.status, result.reason], ["rejected", "RUN_STOPPED"]);
+  assert.equal(f.record?.state, "rejected");
+  assert.equal(f.record?.reason, "RUN_STOPPED");
+  assert.equal(f.calls.length, 0, "no Delivery command is ever issued");
+  assert.equal((await f.seal(projectId, runId)).reason, "RUN_STOPPED", "and it stays rejected on every later look");
+});

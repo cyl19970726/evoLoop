@@ -368,3 +368,34 @@ test("workbench path addresses load the page; API and unknown files keep their o
     assert.equal((await app.inject({ url: "/assets/missing.js" })).statusCode, 404, "a missing asset is not the page");
   } finally { await app.close(); await rm(webRoot, { recursive: true, force: true }); }
 });
+
+test("runtime.run.stop needs review permission and the Session's exact execution grant, needs no live runtime, and a replay survives grant drift", async () => {
+  const sessionId="00000000-0000-4000-8000-000000000041",runId="00000000-0000-4000-8000-000000000042";
+  let writes=0,granted=true,journalled=false;
+  const readerToken="r".repeat(40);
+  const identities=authConfigSchema.parse([...credentials,{token:readerToken,actorId:"writer",projectIds:[projectId],permissions:["read","write"]}]);
+  const app=await buildServer({credentials:identities,service:{...workManagementQueries,
+    getRuntimeRun:async()=>({id:runId,projectId,sessionId}),
+    getRuntimeSession:async()=>({id:sessionId,roleId:"approved-role",authorizationScope:"task:approved",cwd:"/tmp/approved",sandbox:"danger-full-access",approvalPolicy:"never",model:"approved-model",state:"ready"}),
+    getOperation:async()=>journalled?{id:"x"}:null,
+    execute:async(_principal:unknown,command:{operationId:string})=>{writes++;return{status:"applied",operationId:command.operationId,entityId:runId,version:2};},
+  } as unknown as WorkflowService,
+  runtime:{status:()=>({available:false,error:"offline",faults:[]})} as unknown as Parameters<typeof buildServer>[0]['runtime'],
+  hasRuntimeGrant:()=>granted});
+  try{
+    const post=(operationId:string,tokenValue=token)=>app.inject({method:"POST",url:"/api/commands",headers:{authorization:`Bearer ${tokenValue}`},
+      payload:{type:"runtime.run.stop",projectId,operationId,runId,expectedVersion:1,reason:"Scope changed"}});
+    const op="00000000-0000-4000-8000-000000000043";
+    assert.equal((await post(op,readerToken)).statusCode,403,"a writer without review is refused");
+    granted=false;
+    const noGrant=await post(op);
+    assert.equal(noGrant.statusCode,403,noGrant.body);
+    assert.equal(writes,0,"nothing is written without the exact grant");
+    granted=true;
+    const ok=await post(op);
+    assert.equal(ok.statusCode,200,ok.body);
+    assert.equal(writes,1,"the stop goes through although the native runtime is offline");
+    granted=false;journalled=true;
+    assert.equal((await post(op)).statusCode,200,"the journalled stop can be replayed after the grant changed");
+  }finally{await app.close();}
+});
