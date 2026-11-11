@@ -175,7 +175,8 @@ test("Sessions is the sole directory and renders conversation, source, reply and
   const base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
   const browser = await chromium.launch({ headless: true, ...(process.env.EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH
     ? { executablePath: process.env.EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH } : {}) }); t.after(() => browser.close());
-  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, permissions: ["clipboard-read", "clipboard-write"] });
+  const page = await context.newPage();
   await page.goto(`${base}/p/${projectId}/sessions`);
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button", { name: "进入", exact: true }).click();
@@ -258,7 +259,23 @@ test("Sessions is the sole directory and renders conversation, source, reply and
   await inlineTool.getByText("来源标识与读取范围", { exact: true }).waitFor();
   await tools.getByRole("button", { name: "收起工具详情：核对图片" }).click();
   assert.equal(await inlineTool.count(), 0, "the selected tool detail collapses in place without leaving the timeline");
+  const clipboardSentinel = "会话详情不应改写剪贴板";
+  await page.evaluate(`(async () => {
+    await navigator.clipboard.writeText(${JSON.stringify(clipboardSentinel)});
+    window.fixtureClipboardWrites = [];
+    window.fixtureCopyEvents = 0;
+    const writeText = navigator.clipboard.writeText.bind(navigator.clipboard);
+    Object.defineProperty(navigator.clipboard, "writeText", { configurable: true,
+      value: async value => { window.fixtureClipboardWrites.push(value); return writeText(value); } });
+    document.addEventListener("copy", () => { window.fixtureCopyEvents += 1; });
+  })()`);
   await page.getByRole("button", { name: "会话详情" }).click();
+  assert.equal(await page.evaluate(() => navigator.clipboard.readText()), clipboardSentinel,
+    "opening Session details leaves the system clipboard unchanged");
+  assert.deepEqual(await page.evaluate(() => (window as Window & { fixtureClipboardWrites: string[] }).fixtureClipboardWrites), [],
+    "opening Session details does not call clipboard.writeText");
+  assert.equal(await page.evaluate(() => (window as Window & { fixtureCopyEvents: number }).fixtureCopyEvents), 0,
+    "opening Session details does not fire a copy event");
   const informationPanel = page.locator(".session-information");
   assert.equal(await informationPanel.evaluate(element => (element as HTMLDetailsElement).open), true);
   assert.equal(await informationPanel.locator(".session-project-activity").count(), 1,

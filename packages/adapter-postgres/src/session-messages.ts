@@ -156,6 +156,10 @@ export class PgSessionMessages implements SessionMessageTransaction {
       AND m.state IN ('queued','processing','unknown')
       -- A message a Run stop superseded waits for its sender (cancel or confirm); it is not delivered and does not hold the line.
       AND (m.superseded_at IS NULL OR m.superseded_confirmed_at IS NOT NULL OR m.state<>'queued')
+      -- Fair with the Session line: a line entry appended before this message goes first (its own confirmation request is exempt).
+      AND (m.state<>'queued' OR EXISTS(SELECT 1 FROM session_line_entry own WHERE own.project_id=m.project_id AND own.message_id=m.message_id)
+        OR NOT EXISTS(SELECT 1 FROM session_line_entry e WHERE e.project_id=m.project_id AND e.session_id=m.session_id
+          AND e.state IN ('queued','starting') AND e.appended_at<m.created_at))
       AND (m.state<>'queued' OR (NOT EXISTS(SELECT 1 FROM session_message_processing busy
           WHERE busy.project_id=m.project_id AND busy.session_id=m.session_id AND busy.state IN ('dispatching','running','unknown'))
         AND NOT EXISTS(SELECT 1 FROM session_message older WHERE older.project_id=m.project_id

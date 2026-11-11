@@ -26,7 +26,7 @@ export function OrganizationReviewList({ context, refresh }: { context: Mutation
       const rows = new Map<string, Document>(), cursors = new Set<string>();
       let cursor: string | undefined;
       do {
-        const page = await api(token).documents(projectId, cursor, "organization_review", controller.signal);
+        const page = await api(token).documents(projectId, cursor, "organization_review", undefined, controller.signal);
         if (!active) return;
         if (page.items.some(item => item.projectId !== projectId || item.kind !== "organization_review"))
           throw new Error("复盘列表返回了其他范围的文档");

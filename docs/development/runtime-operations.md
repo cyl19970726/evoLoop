@@ -130,6 +130,29 @@ Leader 读到交付后，按 Task 声明的验收方式，用 `acceptance.assign
 }
 ```
 
+即时输入授权只增加“可送入 / 可空闲直启”，准入还要求一条同 sender、同 Session 的普通消息授权。普通消息授权里的 `receiverActorId` 写该 Session 的**业务身份**（`runtime.materialCli` 的 `cliActorId`，或 `residentQueue.roleActors` 里该 Role 的 `actorId`），不是预约或创建 Session 的 `runtime_session.actor_id`；准入按普通消息路径的业务身份绑定核对它，不再要求它与预约身份相等。
+
+```json
+{
+  "sessionMessages": {
+    "enabled": true,
+    "grants": [
+      {
+        "projectId": "PROJECT_UUID",
+        "sessionId": "OWNED_SESSION_UUID",
+        "senderActorId": "USER_ACTOR",
+        "receiverActorId": "SESSION_BUSINESS_ACTOR",
+        "receiverRoleId": "ROLE_UUID",
+        "cwd": "/absolute/session/cwd",
+        "enabled": true
+      }
+    ]
+  }
+}
+```
+
+**验收前置。** 即时输入的验收除“发布并重启（加载新特性表）”外，还要求私有配置里已启用 `runtime`、写好 `directInputs` 和同 Session 的 `sessionMessages.grants`，且 `receiverActorId` 与该 Session 的当前业务身份一致；缺任一项时能力查询只会回答不可用，不能据此判定实现通过。
+
 服务每次请求都会重读这份配置；但只有服务启动时已启用运行时，即时输入入口才存在。
 
 ### 入口
@@ -166,6 +189,7 @@ Leader 读到交付后，按 Task 声明的验收方式，用 `acceptance.assign
 | 检查 | 覆盖什么 |
 | --- | --- |
 | `apps/workbench/test/direct-input-client.test.ts` | 能力响应；503 之后 404 时保留原输入；400、409 等预占前明确拒绝的区分；`SESSION_INPUT_BUSY` 可重试 |
+| `apps/coordinator/test/direct-input-admission.test.ts` | 准入把普通消息授权的 `receiverActorId` 解析为 Session 业务身份；A 预约、业务身份 B、授权写 B 时通过，授权仍写预约身份时拒绝 |
 | `apps/coordinator/test/direct-input-service.test.ts` | 按实际运行时能力回答；共享送入锁的撞车、重试与无持久写入；不可补入回合转为普通排队消息 |
 | `packages/adapter-postgres/test/direct-input.test.ts` | 在独立 PostgreSQL schema 里检查双启动唯一槽位、Run 与消息两种主来源、同一 Turn 的两条补入、TaskRevision 与输入哈希不变、额度、撤权、未知和终态 CAS |
 | `apps/coordinator/test/direct-input-native-live.mts` | 用 `LIVE_CODEX_VERSION` 固定的真实二进制在隔离的 HTTP、PostgreSQL 和 Thread 中执行一次直启和两条补入，回读三个精确的 client ID 和 Item；W3 用 0.167.0-alpha.3.2 记录 |
@@ -288,7 +312,22 @@ node --import tsx tests/manual/session-compaction-e1.ts
 
 ## 6. 受管 Session 编制所需配置
 
-给一个 Role 新建受管 Session，要同时配好：业务身份（身份文件里对本项目有 read 与 write）、`runtime.grants`（含工作区 `cwd`）、Role 级 `runtime.materialCli`、**`residentQueue.roleActors`** 与 `residentQueue.enabled`、需要时的 `sessionMessages.grants`，以及 `runtime.enabled`。完整清单、每项的格式和生效时机见 [Agent CLI：编制所需私有配置清单](agent-cli.md#编制所需私有配置清单session-prepare-缺项时)。
+给一个 Role 新建受管 Session，要同时配好：业务身份（身份文件里对本项目有 read 与 write）、`runtime.grants`（含工作区 `cwd`）、Role 级 `runtime.materialCli`、**`residentQueue.roleActors`** 与 `residentQueue.enabled`、**成对配置的 `sessionMessages.grants`**，以及 `runtime.enabled`。完整清单、每项的格式和生效时机见 [Agent CLI：编制所需私有配置清单](agent-cli.md#编制所需私有配置清单session-prepare-缺项时)。
+
+**双向消息授权是必配。** 不能因为新 Session“暂时不用消息”而省略，也不能只配一个方向。`sessionMessages.enabled` 须为 `true`，并同时有：
+
+- **新业务身份 → Leader Session。** `sessionId` 指 Leader Session，`senderActorId` 是新业务身份，`receiverActorId`、`receiverRoleId` 与 `cwd` 取 Leader 的，`enabled` 为 `true`。
+- **Leader → 新 Session。** `sessionId` 指新 Session，`senderActorId` 是 Leader，`receiverActorId`、`receiverRoleId` 与 `cwd` 取新 Session 的，`enabled` 为 `true`。
+
+发送普通消息时，服务逐次按接收 Session 核对对应方向的那一条；缺项以 `MESSAGE_GRANT_MISSING` 拒绝，消息不保存。`session prepare` 不检查这两条，所以准备结果不能代替实际发送。
+
+**“可报告为就绪”的判据。** `session prepare` 成功、配置缺项为空、`runtime_session.state=ready` 或原生 Thread 可读，只证明编制和原生绑定完成，可能仍早于模型成功运行。对外报告新 Session“就绪”前，必须完成一次真实消息往返：
+
+1. 用 Leader 身份按 `command schema session.message.post` 发一条带唯一标记的约定测试消息，保留返回的 `messageId`。
+2. 新 Session 实际处理后，按同一命令和反向授权发回原标记，并带原消息的 `replyToMessageId`。
+3. 用 `work message MESSAGE_ID` 和 `work status owned:SESSION_ID --message MESSAGE_ID` 分别读回两个方向的已保存消息、processing 与原生 Turn；目标 Session 一侧还要核到已有回复。
+
+只有两个方向都成功发送并处理、原生 Turn 可核、回复中的标记一致，才报告就绪，并保留两条消息 ID 与读回结果作对照记录。只有配置检查通过、发送返回 `applied`、状态显示 `ready`、消息已保存或没有回复，都不算就绪。
 
 - **缺项怎么看。** `session prepare` 返回 `status=blocked`，`missing` 是代码，`missingDetails` 写明要设的配置项、可复制的修法和是否需重启；`role_actor` 就是缺 `residentQueue.roleActors`（或它没启用、或该身份无写权限）。
 - **哪些要重启。** 按代码核对，`session prepare` 每次调用都重读 integrations 与身份文件，补 `residentQueue.roleActors`、`runtime.materialCli`、`runtime.grants` 不需要重启；只有 `runtime.enabled`（运行时只在启动时建立）和新增 HTTP 令牌要重启。
@@ -330,3 +369,7 @@ node --import tsx tests/manual/session-compaction-e1.ts
 - **即时输入的能力查询不核运行时。** 对 Claude 或非 alpha.6 的 Codex 也可能回答 `steer`，提交时才被拒绝或记为未知（见 [Session 运行时 §3](../architecture/session-runtime.md#3-即时输入执行中收到的消息怎样处理)）。
 - **托管压缩只在 alpha.6 可用。** 隔离测试只用替身，不验证有认证的模型压缩。
 - **上下文交接仍由维护者执行。** 服务会暂停普通通知并生成摘要，但不会自动创建新原生线程、迁移 Leader 目标或替使用者确认接手；这套操作尚未在正式实例做长期运行验收。
+
+## Session 队伍调度程序
+
+协调器在运行时启用（`runtime.enabled`）后运行队伍调度程序（轮询间隔沿用 `residentQueue.pollIntervalMs`，默认 2 秒）。它只推进由 Leader 凭据控制的队伍，每一步都是普通命令，操作 ID 由队伍项和尝试次数决定，重启后重放不会重复开 Run。队伍项、事件和 `QUEUED_IN_SESSION_LINE` 的含义见 [Session 运行时](../architecture/session-runtime.md#session-队伍dec-045-q1)。迁移 087 新增 `session_line`、`session_line_entry`、`session_line_event`、`task_assignment_confirmation`；不需要改私有配置，但 Session 的业务身份要在 `residentQueue.roleActors` 里有映射，否则该 Session 的队伍项会挂起。

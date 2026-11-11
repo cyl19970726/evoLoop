@@ -6,7 +6,7 @@ import { taskTimingScopeId } from "@evoloop/contracts/task-timing";
 export { assessTaskAttention, trialAttentionThreshold, trialAttentionThresholdMs } from "./task-attention.js";
 import type {
   AppliedResult, BasisDecision, BasisSet, Command, CommandInput, CommandResult, Document, DocumentDecision,
-  DocumentDetail, DocumentRevision, DocumentRevisionPage, DocumentTaskReference, Impact, Operation, OutboxEvent, Page, Principal, Project,
+  DocumentDetail, DocumentRevision, DocumentRevisionPage, DocumentStatusFilter, DocumentTaskReference, Impact, Operation, OutboxEvent, Page, Principal, Project,
   Task, TaskDetail, TaskDocumentLink, TaskRevision, RuntimeRunRecord,
 } from "@evoloop/contracts";
 import { parseQueueHandoff, type QueueHandoff } from "@evoloop/contracts/runtime-handoff";
@@ -24,6 +24,7 @@ import { applyNativeInputReply } from "./native-input/index.js";
 export { NativeInputService } from "./native-input/index.js";
 import type { SessionMessageCommand } from "@evoloop/contracts/session-messages";
 import { applySessionAssignment } from "./session-assignments/index.js";
+import { applySessionLine } from "./session-line/index.js";
 import type { SessionAssignmentCommand } from "@evoloop/contracts/session-assignments";
 import type { DomainRoute, HostLink } from "@evoloop/contracts/resident-hosts";
 import { applySchedule } from "./scheduling/commands.js";
@@ -211,7 +212,7 @@ export class WorkflowService {
       command.type==='runtime.providerHold.release'||command.type==='session.message.reconcile'||command.type==='session.message.interrupt'||
       command.type==='session.message.manualStop')return 'review';
     if (command.type === "session.profile.set" || command.type === "session.identity.set" || command.type.startsWith("task.assignment.") && command.type !== "task.assignment.acknowledge") return "review";
-    if (command.type.startsWith("queue.")) return "review";
+    if (command.type.startsWith("queue.") || command.type.startsWith("line.")) return "review";
     if (command.type.startsWith("evaluation.") || command.type.startsWith("domain.") || command.type.startsWith("host.")) return "review";
     return command.type === "document.adopt" || command.type === "document.publish" || command.type === "document.archive" || command.type === "document.restore" || command.type === "task.start" || command.type === "task.reviewBasis" || command.type === "task.close" || command.type === "task.cancel" || command.type === "task.reopen" || command.type === "stage.accept" || command.type === "stage.review" || command.type === "stage.review.correct" || command.type === "runtime.session.reserve" || command.type === "runtime.session.close" || command.type === "runtime.run.reserve" || (command.type === "runtime.run.interrupt" || command.type === "runtime.run.stop" || command.type === "runtime.run.abandonReadOnly") || command.type.startsWith("schedule.") || command.type.startsWith("role.") && command.type !== "role.propose" || command.type === "discussion.decision.record" || command.type === "discussion.action.link"
       ? "review" : "write";
@@ -225,6 +226,8 @@ export class WorkflowService {
       return applyProviderHoldRelease(tx,principal,command,now,()=>this.deps.ids.next());
     if(command.type==='runtime.session.executionProfile.revise'||command.type==='runtime.session.recovery.resume')
       return applySessionRecovery(tx,principal,command,now,()=>this.deps.ids.next(),this.deps.recoveryAuthority);
+    if (command.type.startsWith("line."))
+      return applySessionLine(tx, principal, command as import("@evoloop/contracts/session-line").SessionLineCommand, now, () => this.deps.ids.next());
     if (command.type.startsWith("session.message."))
       return applySessionMessage(tx, principal, command as SessionMessageCommand, now);
     if (command.type === "session.input.reply")
@@ -262,7 +265,10 @@ export class WorkflowService {
       if (priorTask && priorTask.owner !== command.owner) await requireRealTaskOwner(tx, command.owner);
       else await requireAssignableOwner(tx, command.owner);
     }
-    if (command.type === "task.start") await requireAssignableOwner(tx, required(await tx.getTask(command.taskId), "Task").owner);
+    if (command.type === "task.start") {
+      await tx.sessionLines?.assertNotQueuedInLine(command.taskId, command.operationId);
+      await requireAssignableOwner(tx, required(await tx.getTask(command.taskId), "Task").owner);
+    }
     if (command.type === "runtime.session.reserve") await requireAssignableOwner(tx, command.roleId);
     if (command.type === "schedule.create") await requireRealTaskOwner(tx, command.template.owner);
     if (command.type === "schedule.revise") {
@@ -1020,8 +1026,9 @@ export class WorkflowService {
   listTasks(principal: Principal, projectId: string, limit?: number, cursor?: string): Promise<Page<Task>> {
     return this.read(principal, projectId, (reader) => reader.listTasks(pageLimit(limit), cursor));
   }
-  listDocuments(principal: Principal, projectId: string, limit?: number, cursor?: string, kind?: Document["kind"]): Promise<Page<Document>> {
-    return this.read(principal, projectId, (reader) => reader.listDocuments(pageLimit(limit), cursor, kind));
+  listDocuments(principal: Principal, projectId: string, limit?: number, cursor?: string, kind?: Document["kind"],
+    status?: DocumentStatusFilter): Promise<Page<Document>> {
+    return this.read(principal, projectId, (reader) => reader.listDocuments(pageLimit(limit), cursor, kind, status));
   }
   listDocumentTaskReferences(principal: Principal, projectId: string, documentId: string, limit?: number, cursor?: string): Promise<Page<DocumentTaskReference>> {
     return this.read(principal, projectId, async reader => {
@@ -1116,6 +1123,28 @@ export class WorkflowService {
   }
   listRuntimeSessions(principal: Principal, projectId: string) { return this.read(principal, projectId, reader => reader.listRuntimeSessions()); }
   getRuntimeRun(principal: Principal, projectId: string, runId: string) { return this.read(principal, projectId, async reader => required(await reader.getRuntimeRun(runId), "Runtime run")); }
+  listSessionLines(principal: Principal, projectId: string) { return this.read(principal, projectId, reader => reader.sessionLines?.listSessionLines() ?? Promise.resolve([])); }
+  listSessionLineEntries(principal: Principal, projectId: string, sessionId: string, includeEnded = false) {
+    return this.read(principal, projectId, reader => reader.sessionLines?.listSessionLineEntries(sessionId, includeEnded) ?? Promise.resolve([]));
+  }
+  listSessionLineEvents(principal: Principal, projectId: string, afterSeq: number, limit: number, sessionId?: string) {
+    return this.read(principal, projectId, reader => reader.sessionLines?.listSessionLineEvents(afterSeq, limit, sessionId) ?? Promise.resolve([]));
+  }
+  sessionHasLiveRun(principal: Principal, projectId: string, sessionId: string) {
+    return this.read(principal, projectId, reader => reader.sessionLines?.sessionHasLiveRun(sessionId) ?? Promise.resolve(false));
+  }
+  hasOlderQueuedMessage(principal: Principal, projectId: string, sessionId: string, before: string) {
+    return this.read(principal, projectId, reader => reader.sessionLines?.hasOlderQueuedMessage(sessionId, before) ?? Promise.resolve(false));
+  }
+  getSessionMessageRecord(principal: Principal, projectId: string, messageId: string) {
+    return this.read(principal, projectId, reader => reader.sessionMessages?.getSessionMessage(messageId) ?? Promise.resolve(null));
+  }
+  getTaskAssignment(principal: Principal, projectId: string, taskId: string) {
+    return this.read(principal, projectId, reader => reader.sessionAssignments?.getTaskSessionAssignment(taskId) ?? Promise.resolve(null));
+  }
+  getAssignmentConfirmation(principal: Principal, projectId: string, taskId: string, assignmentVersion: number) {
+    return this.read(principal, projectId, reader => reader.sessionAssignments?.getAssignmentConfirmation(taskId, assignmentVersion) ?? Promise.resolve(null));
+  }
   listRuntimeRuns(principal: Principal, projectId: string, taskId?: string) { return this.read(principal, projectId, reader => reader.listRuntimeRuns(taskId)); }
   listRuntimeEvents(principal: Principal, projectId: string, runId: string) { return this.read(principal, projectId, async reader => { required(await reader.getRuntimeRun(runId), "Runtime run"); return reader.listRuntimeEvents(runId); }); }
   listRuntimeSessionEvents(principal: Principal, projectId: string, sessionId: string) { return this.read(principal, projectId, async reader => { required(await reader.getRuntimeSession(sessionId), "Runtime session"); return reader.listRuntimeSessionEvents(sessionId); }); }
