@@ -249,6 +249,7 @@ export class RuntimeWorkflowService {
     return this.deps.uow.transaction(projectId, async tx => {
       const current = required(await tx.getRuntimeRun(runId), "runtime run");
       if (current.state !== "requested") throw new DomainError("RUN_NOT_REQUESTED", "turn start was already attempted");
+      if (current.stopRequestedAt) throw new DomainError("RUN_STOPPED", "the Run was stopped on request and cannot be dispatched");
       if (current.evaluationBinding && !current.evaluationPacket)
         throw new DomainError("EVALUATION_PACKET_MISSING", "a verified fixed-input packet is required before evaluation dispatch");
       const session = required(await tx.getRuntimeSession(current.sessionId), "runtime session");
@@ -345,8 +346,16 @@ export class RuntimeWorkflowService {
       const current = required(await tx.getRuntimeRun(runId), "runtime run");
       if (current.state !== "dispatching" || current.nativeTurnId !== null || current.preTurnProof)
         throw new DomainError("RUN_NOT_DISPATCHING", "only an unstarted dispatching Run can be withdrawn");
-      const next: RuntimeRunRecord = { ...current, state: "requested", version: current.version + 1, updatedAt: this.deps.clock.now() };
+      // A stopped Run never goes back to being dispatchable: the native start was not sent, so it ends here as failed.
+      const stopped = !!current.stopRequestedAt;
+      const next: RuntimeRunRecord = { ...current, state: stopped ? "failed" : "requested", version: current.version + 1, updatedAt: this.deps.clock.now(),
+        ...(stopped ? { resultSummary: `Stopped on request before the native start was sent: ${current.stopReason ?? ""}`.slice(0, 4000) } : {}) };
       await tx.updateRuntimeRun(next, current.version);
+      if (stopped) {
+        await this.emit(tx, runId, current.sessionId, "run.dispatchWithdrawn",
+          `Native start was not sent and the Run was stopped on request; it ends as failed, not requested; ${detail}`, null, projectId);
+        return next;
+      }
       await this.emit(tx, runId, current.sessionId, "run.dispatchWithdrawn",
         `Native start was not sent; Run returns to requested for a later dispatch; ${detail}`, null, projectId);
       return next;
@@ -453,7 +462,7 @@ export class RuntimeWorkflowService {
   async claimPreTurnContinuation(projectId:string,runId:string):Promise<RuntimeRunRecord|null>{
     return this.deps.uow.transaction(projectId,async tx=>{
       const run=required(await tx.getRuntimeRun(runId),"runtime run");
-      if(run.state!=="unknown"||run.preTurnProof?.status!=="approved"||run.nativeTurnId)return null;
+      if(run.state!=="unknown"||run.preTurnProof?.status!=="approved"||run.nativeTurnId||run.stopRequestedAt)return null;
       const session=required(await tx.getRuntimeSession(run.sessionId),"runtime session");
       const gate=required(await tx.recovery?.lockRecoveryGate(run.sessionId)??null,"recovery gate");
       if(gate.phase!=="blocked"||gate.causeKind!=="run"||gate.causeId!==run.id||
