@@ -2,8 +2,15 @@ import { z } from "zod";
 
 const id = z.uuid();
 const text = z.string().trim().min(1).max(4000);
+/** The one stored form of a Task's planned instant; also the example every rejection shows. */
+export const canonicalUtcExample = "2026-11-12T04:00:00.000Z";
+// A UTC instant without milliseconds ("…:00Z") means the same moment, so it is accepted and stored in the canonical form.
+const withoutMillis = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?Z$/;
+export const executeAtUtcSchema = z.preprocess(
+  value => typeof value === "string" && withoutMillis.test(value) && !Number.isNaN(Date.parse(value)) ? new Date(value).toISOString() : value,
+  z.iso.datetime({ error: `executeAtUtc 必须是以 Z 结尾的 UTC 时间，例如 ${canonicalUtcExample}（毫秒可省略，会按规范形式保存）` }));
 export const taskTimingSchema = z.strictObject({
-  executeAtUtc: z.iso.datetime(),
+  executeAtUtc: executeAtUtcSchema,
   timezone: z.string().trim().min(1).max(80),
   repeat: z.enum(["none", "daily"]),
 });

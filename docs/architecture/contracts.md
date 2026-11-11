@@ -378,6 +378,8 @@ Task 协作通道把 question/answer/progress/blocker/handoff/result 固定到�
 
 用户可以直接给一条普通 Task 设一个执行时点，并可选每天重复（PR #202、#212，schema 057）。它复用 Schedule 的时区计算与去重算法，但系列本身有自己的单一权威，Task 详情和总览都读它，不要求用户另外维护一份 Schedule 模板。
 
+`executeAtUtc` 是以 Z 结尾的 UTC 时间；不带毫秒的写法（如 `2026-11-12T04:00:00Z`）在命令入口被接受并按规范形式 `2026-11-12T04:00:00.000Z` 保存，`task.create` 的 `timing` 与 `task.timing.set` 同一规则。格式或时区、重复规则不合法时返回 `INVALID_TASK_TIMING`（不是冲突），信息给出示例。
+
 | 记录 | 回答什么 |
 | --- | --- |
 | `task_timing_series` 与 `task_timing_series_revision` | 一个系列以首个 Task 为根；修订保存时区、`none`／`daily`、执行时点、未来有效的要求模板、启停状态与修订理由。同一系列只有一个当前修订。 |
