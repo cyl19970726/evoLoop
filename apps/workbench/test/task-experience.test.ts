@@ -25,6 +25,15 @@ test("accepted and assigned are distinct from running; external absence of Run i
   assert.equal(executionSummary(work({ assignment: { ...work().assignment!, targetKind: "owned", state: "assigned" } })), "待接受，尚无当前 Run");
   assert.equal(executionSummary(work({ latestRun: { runId: "run", state: "unknown" } })), "Run · 结果未知");
 });
+test("a started Run without an acknowledgement is described as one coherent fact", async () => {
+  const { assignmentStatusLabel } = await import("../src/features/workflow/taskExperience.ts");
+  const assigned = work({ assignment: { ...work().assignment!, state: "assigned" } });
+  assert.equal(assignmentStatusLabel(assigned), "已分派，仍待接受（分派回执）");
+  assert.equal(assignmentStatusLabel({ ...assigned, latestRun: { runId: "run", state: "running" } }),
+    "已开始执行，接手回执未到");
+  assert.equal(assignmentStatusLabel({ ...assigned, latestRun: { runId: "run", state: "requested" } }),
+    "已派发，等待启动；接手回执未到");
+});
 test("old successful delivery cannot stand in for the current revision", () => {
   const detail = { task: { currentRevisionId: "rev2" }, deliveries: [
     { id: "old-passed", taskRevisionId: "rev1" }, { id: "current-failed", taskRevisionId: "rev2" },

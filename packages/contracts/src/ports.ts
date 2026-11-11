@@ -189,3 +189,14 @@ export class DomainError extends Error {
     super(message); this.name = "DomainError";
   }
 }
+/**
+ * A database statement rejected the write and the enclosing savepoint was rolled back.
+ * Unlike a lost connection, this outcome is known not to have committed.
+ */
+export class PersistenceRejectedError extends Error {
+  constructor(public readonly sqlState: string, public readonly constraint: string | null,
+    public readonly sourceMessage: string) {
+    super(`数据库拒绝了这次写入，事务未提交（SQLSTATE ${sqlState}${constraint ? `，约束 ${constraint}` : ""}）：${sourceMessage}`);
+    this.name = "PersistenceRejectedError";
+  }
+}

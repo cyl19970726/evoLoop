@@ -759,3 +759,18 @@ test('after compaction a Turn with no saved business source keeps the plain unve
   assert.equal(input?.origin,null);
   h.service.close();
 });
+
+test('a queued message blocked for a missing grant carries its reason to the page; one not blocked carries none',async()=>{
+  const h=harness();
+  try{
+    h.messages[1]!.blockedReason='MESSAGE_GRANT_MISSING: 没有发送这条消息的授权：没有 other-agent → 这个 Session 的授权。';
+    const page=await h.service.page(reader,project,key,{limit:25});
+    const queued=page.pending.find(entry=>entry.id===`message:${id(11)}`);
+    assert.ok(queued&&queued.kind==='message');
+    assert.equal(queued.state,'pending');
+    assert.match(String(queued.blockedReason),/^MESSAGE_GRANT_MISSING: /);
+    h.messages[1]!.blockedReason=null;
+    const clear=await h.service.page(reader,project,key,{limit:25});
+    assert.equal('blockedReason' in clear.pending.find(entry=>entry.id===`message:${id(11)}`)!,false,'nothing is added when nothing blocks');
+  }finally{h.service.close()}
+});

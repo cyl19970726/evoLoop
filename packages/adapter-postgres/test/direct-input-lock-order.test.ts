@@ -2,6 +2,8 @@
 // writes. The reservation locks the Session row and then inserts a message whose project foreign
 // key waits on a project row lock; queue creation holds that project row and then references the
 // same Session.
+// Refuses a live or shared PostgreSQL server before this file opens TEST_DATABASE_URL (scripts/lib/database-target.mjs).
+import "../../../scripts/test-database-guard.mjs";
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import { after, before, test } from "node:test";

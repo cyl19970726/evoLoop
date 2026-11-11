@@ -133,6 +133,21 @@ test("document revision history passes limit and the opaque cursor through uncha
   ]);
 });
 
+test("work change probes keep the cursor opaque and may ask for only the head sequence", async () => {
+  const seen: string[] = [];
+  await withFetch(async input => {
+    seen.push(String(input));
+    return Response.json({ items: [], nextCursor: null, changeSequence: 12, observedAt: "2026-11-10T12:00:00.000Z" });
+  }, async () => {
+    assert.equal((await api("token").leaderWorkChanges("project-1", undefined, 1)).changeSequence, 12);
+    await api("token").leaderWorkChanges("project-1", "eyJ2Ijox+/=");
+  });
+  assert.deepEqual(seen, [
+    "/api/projects/project-1/work-management/changes?limit=1",
+    "/api/projects/project-1/work-management/changes?limit=100&cursor=eyJ2Ijox%2B%2F%3D",
+  ]);
+});
+
 test("Leader write separates operation metadata from the strict HTTP body", async () => {
   const operationId = "operation-1";
   let requestBody: Record<string, unknown> | null = null;

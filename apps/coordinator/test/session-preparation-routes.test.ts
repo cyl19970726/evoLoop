@@ -168,3 +168,45 @@ test("ordinary Role skill HTTP read includes metadata for a large fixed child",a
     } finally {await app.close();}
   } finally {await rm(root,{recursive:true,force:true});}
 });
+
+test("a missing Role→actor mapping is named as residentQueue.roleActors, with the entry to add and no restart needed",async()=>{
+  const role={id:roleId,version:2,currentRevisionId:revisionId,state:"active",proposal:{goal:"Goal",independentResponsibility:"Responsibility",
+    workflow:"Workflow",handoffBoundary:"Boundary"}};
+  const empty=async()=>[];
+  const service={getProject:async()=>({id:projectId}),roleRuntimeProvider:async()=>"codex" as const,getRole:async()=>role,getRuntimeSession:async()=>{
+    throw new DomainError("NOT_FOUND","missing");
+  },listRoleSessionBindings:empty,listRoleRevisions:empty,listRoleReviews:empty,listRoleHandoffs:empty,
+  listSchedules:empty,listScheduleRevisions:empty,listScheduleOccurrences:empty,
+  listRoles:async()=>({items:[],nextCursor:null})} as unknown as WorkflowService;
+  let state:"no_entry"|"queue_disabled"|"actor_not_project_writer"="no_entry";
+  const app=await buildServer({service,credentials:[{token,actorId:"lead",projectIds:[projectId],permissions:["read","write","review"]}],
+    sessionPreparation:async()=>({runtimeAvailable:true,grantReady:true,cwdReady:true,
+      materialCli:{actorId:"recipient",command:"/private/cli",ready:true},roleActorId:null,roleActorState:state,
+      roleActorConfiguredId:state==="actor_not_project_writer"?"recipient":null,
+      skills:[{path:".agents/skills/evoloop-workflow/SKILL.md",commit:"a".repeat(40),contentHash:"b".repeat(64),readSubcommand:"get /fixed"}]})});
+  const path=`/api/projects/${projectId}/session-preparation/${sessionId}?roleId=${roleId}&cwd=%2Fprivate%2Fproject&authorizationScope=project&model=m1`;
+  const read=async()=>{
+    const response=await app.inject({url:path,headers:{authorization:`Bearer ${token}`}});
+    assert.equal(response.statusCode,200);
+    return response.json() as {missing:string[];missingDetails:Array<{code:string;setting:string|null;problem:string;fix:string;reread:string;example?:Record<string,any>}>};
+  };
+  try {
+    const body=await read();
+    assert.ok(body.missing.includes("role_actor"),"the code is still there for callers that read codes");
+    const detail=body.missingDetails.find(item=>item.code==="role_actor")!;
+    assert.equal(detail.setting,"residentQueue.roleActors");
+    assert.match(detail.fix,/residentQueue\.roleActors/);
+    assert.match(detail.fix,/不需要重启/);
+    assert.deepEqual(detail.example?.residentQueue.roleActors[0],{projectId,roleId,actorId:"<该 Role 的业务身份 actorId>"});
+    assert.equal(detail.reread,"per_call");
+    assert.deepEqual(body.missingDetails.map(item=>item.code),body.missing,"one detail per missing code, in order");
+    state="queue_disabled";
+    const disabled=(await read()).missingDetails.find(item=>item.code==="role_actor")!;
+    assert.equal(disabled.setting,"residentQueue.enabled");
+    assert.match(disabled.problem,/未启用/);
+    state="actor_not_project_writer";
+    const notWriter=(await read()).missingDetails.find(item=>item.code==="role_actor")!;
+    assert.match(notWriter.problem,/actorId=recipient/);
+    assert.match(notWriter.fix,/read 与 write/);
+  } finally {await app.close();}
+});

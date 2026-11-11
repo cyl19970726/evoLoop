@@ -320,7 +320,7 @@ Task 协作通道把 question/answer/progress/blocker/handoff/result 固定到�
 - **三种验收方式。** Task 的 `acceptance_target` 声明为人、Task 明确允许的 Leader，或 Leader 指派的独立业务 Session；收件人还须与 Task 声明的消费者和验收模式一致。作者 Session 与安排者不能充当独立验收（DEC-038），只有 Task 明确允许时 Leader 才能验收。代码层面：选 Leader 方式时，收件 Session 必须是项目当前的 Leader Session；选业务 Session 方式时，它不能是 Leader Session，也不能是当前 Delivery 的作者 Run 所在的 Session；安排者须有项目 review 权限，并且就是那条验收消息的发送者。
 - **接力记录。** Leader 用 `task_acceptance_relay` 安排验收：固定 Task 修订、当前 Delivery、阶段（候选 `candidate` 或正式 `formal`）、验收范围、入口与收件人。非人工方式同时固定一条发给收件 Session 的消息。同一 Delivery、阶段和范围同时只有一条现行安排；改派以原安排和版本为前提，旧安排保留为 `superseded` 或 `released`。
 - **开始前再核。** 验收消息真正开始处理前，触发器再次核对 Task 未结束、当前修订和最新 Delivery 仍是安排时那一份；不符就拒绝开始，避免验收旧版本。
-- **验收证据。** 人的阅读记入 `task_acceptance_human_read`；验收者本人的 Observation 经 `task_acceptance_observation_link` 关联到安排，并标明证据级别。存在现行安排时，Task 关闭要求指定收件人对该 Delivery 有已关联的 `used` 观察。候选阶段通过不等于正式通过。安排无法开始时生成 `acceptance_blocked` 通知交给 Leader。
+- **验收证据。** 人的阅读记入 `task_acceptance_human_read`；验收者本人的 Observation 经 `task_acceptance_observation_link` 关联到安排，并标明证据级别。存在现行安排时，Task 关闭要求指定收件人对该 Delivery 有已关联的 `used` 观察。候选阶段通过不等于正式通过：同一 Delivery 的候选与正式安排可以并存，但存在现行正式安排时，关闭只按正式安排核对；候选安排保留为历史证据，不因没有关联观察而阻塞正式收口。安排无法开始时生成 `acceptance_blocked` 通知交给 Leader。
 - **临时 Session 退役。** 标为临时的 Session 进入 `closing` 前，必须有一条匹配的 `session_retirement_decision`（理由、交接证据、所见版本、Role 与原 Thread）；它名下若还有未释放的未结束 Task 分派或未结束的验收安排，数据库拒绝关闭。Leader 核业务责任，引擎核运行状态。
 - **容量视图。** 只读的容量视图按 Session 汇总在途 Run、排队消息、队列条目、未结束分派和验收安排，是 Leader 做编制判断的输入；它只反映数据库里的持久占用，不证明原生写入权。
 
@@ -377,6 +377,8 @@ Task 协作通道把 question/answer/progress/blocker/handoff/result 固定到�
 ### 普通 Task 的一次与每日复制
 
 用户可以直接给一条普通 Task 设一个执行时点，并可选每天重复（PR #202、#212，schema 057）。它复用 Schedule 的时区计算与去重算法，但系列本身有自己的单一权威，Task 详情和总览都读它，不要求用户另外维护一份 Schedule 模板。
+
+`executeAtUtc` 是以 Z 结尾的 UTC 时间；不带毫秒的写法（如 `2026-11-12T04:00:00Z`）在命令入口被接受并按规范形式 `2026-11-12T04:00:00.000Z` 保存，`task.create` 的 `timing` 与 `task.timing.set` 同一规则。格式或时区、重复规则不合法时返回 `INVALID_TASK_TIMING`（不是冲突），信息给出示例。
 
 | 记录 | 回答什么 |
 | --- | --- |
