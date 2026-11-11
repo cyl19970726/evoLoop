@@ -26,6 +26,8 @@ node .agents/skills/evoloop-evocation/scripts/review-cli.mjs submit /path/report
 
 后续周期可省略from，程序沿上一份报告的观察截止点接续；to仍是本次观察截止时刻。CLI_CONFIG只给正常项目CLI的argv、projectId和可选timeZone，认证沿原CLI，不把令牌写入报告或网页。
 
+上一份报告若经选择性迁移等方式进入当前实例，它的固定修订可能没有原生观察期，服务不接受这样的修订作为previous。此时从该报告正文读出观察截止点，用--from明确给出：脚本保存本轮但不写原生链接，并在回执的unlinkedPrevious记下本轮承接的报告；正文写明上一份报告和这处缺口。没有--from，或用--previous显式指向这样的修订时，脚本停止且不写入。
+
 脚本复用原生 Document 创建／原件导入，设置 kind=organization_review；观察时段和上一轮固定引用存入 DocumentRevision.organizationReview，标题、作者、时间和版本沿用 Document。报告原件字节不插入分类注释或协议头，列表无需下载并解释正文。Evo不需要把自由正文拆成一套数据库字段，也不用为了保存报告制造Task、Discussion或Role。
 
 返回固定报告地址、修订和回执后，核原件与受审文件一致，从组织复盘列表打开并检查正文、图、资源与来源链接。正文QA与存储/显示分别留证；受审之后实质改写须复核受影响部分。待QA材料可保存为草稿，但不能宣称完整复盘已验收。提交不等于建议已采纳，也不证明方法已经有效。

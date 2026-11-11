@@ -41,7 +41,7 @@
   - **站内跳转**：`shared/navigation.ts` 是唯一入口：`navigate()`、`currentPath()`、`onNavigate()`；只改地址栏、不通知页面的视图状态（筛选、展开项）用 `replaceQuietly()`。站内 `<a href="/p/…">` 的点击统一转成历史导航，不整页刷新，所以内存里的登录不丢；带修饰键、新标签页、下载和外站链接不拦。
   - **离开项目**：有未提交草稿时先确认，前进后退同样拦截。
   - **拆包**：每个页面是单独的 chunk，首屏只带登录门与共用代码，外壳（`app/shell/`）登录后再加载。首屏 JS 预算以 `apps/workbench/bundle-budget.json` 为准（现为 gzip 170 KB；拆包前单包 392 KB，历次调整写在该文件的 `note` 里），由 `bundle-budget.test.ts` 对构建产物检查。
-  - **服务**：coordinator 对 `/p/*` 和 `/ui` 返回 `index.html`，`/api` 与静态资源不受影响；Vite 开发服务默认同样回退。
+  - **服务**：coordinator 对 `/p/*` 和 `/ui` 返回 `index.html`，`/api` 与静态资源不受影响；Vite 开发服务默认同样回退。页面声明 `/favicon.svg`；Safari 还会探测 `/favicon.ico`、`/apple-touch-icon.png` 和 `/apple-touch-icon-precomposed.png`，这三条统一重定向到同一图标，避免每个页面留下三个静默 404。
 - **目标**：页面改为路由组件（布局路由承载外壳），筛选与排序用路由的 search 校验写进地址栏。以后要服务端渲染，可在同一套路由上换 TanStack Start。
 
 **读取。** 列表返回有界游标页，不首次加载全项目 Wiki 或全部 trace。搜索按任务、文档、知识分组，各给来源与修订，不把不同后端的分数合并排名。
