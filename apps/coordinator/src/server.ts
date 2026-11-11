@@ -3,6 +3,7 @@ import Fastify from "fastify";
 import staticPlugin from "@fastify/static";
 import { commandSchema, capabilities, idSchema, documentKindSchema, type Command, type Principal, type RuntimeSessionRecord } from "@evoloop/contracts";
 import { DomainError } from "@evoloop/contracts/ports";
+import { sessionPreparationHints } from "@evoloop/contracts/session-preparation";
 import type { WorkflowService } from "@evoloop/core";
 import { authenticate, authConfigSchema, type AuthConfig } from "./auth.js";
 import { z } from "zod";
@@ -98,6 +99,7 @@ export async function buildServer(options: {
   sessionPreparation?: (input:{projectId:string;sessionId:string;roleId:string;sessionActorId:string;
     cwd:string;authorizationScope:string;model:string|null}) => Promise<{runtimeAvailable:boolean;grantReady:boolean;
     cwdReady:boolean;materialCli:{actorId:string;command:string;ready:boolean}|null;roleActorId:string|null;
+    roleActorState?:import("@evoloop/contracts/session-preparation").RoleActorState;roleActorConfiguredId?:string|null;
     skills:Array<{path:string;commit:string;contentHash:string;readSubcommand:string}>}>;
   readRoleSkill?: (projectId:string,roleId:string,name:string,commit:string,hash:string) =>
     Promise<{path:string;commit:string;contentHash:string;body:string;
@@ -388,7 +390,13 @@ export async function buildServer(options: {
         operationId:session.operationId}:null,
       profile:profile?{version:profile.version,displayName:profile.displayName,purpose:profile.purpose}:null,
       bound,config,modelCatalog:{status:modelCatalog.status,error:modelCatalog.error,observedAtUtc:modelCatalog.observedAtUtc},
-      missing,recovery:recovery?{gate:recovery.gate,partial:recovery.partial,nextAction:recovery.nextAction}:null,
+      missing,
+      /** For each code in `missing`: the private-configuration key, a fix to copy, and whether a restart is needed. */
+      missingDetails:sessionPreparationHints(missing,{projectId:p.projectId,roleId:q.roleId,sessionActorId:principal.actorId,
+        authorizationScope,cwd,model:selectedModel,roleActorState:config.roleActorState??(config.roleActorId?"ready":"no_entry"),
+        roleActorConfiguredId:config.roleActorConfiguredId??config.roleActorId,materialCliActorId:config.materialCli?.actorId??null,
+        roleActorId:config.roleActorId}),
+      recovery:recovery?{gate:recovery.gate,partial:recovery.partial,nextAction:recovery.nextAction}:null,
       executionProfile:executionProfile?{revision:executionProfile.revision,activationState:executionProfile.activationState,
         activeRevisionId:executionProfile.activeRevisionId,activationOperationId:executionProfile.activationOperationId}:null,
       readyForTasks:!!session&&session.state==="ready"&&bound&&!!profile?.displayName?.trim()&&missing.length===0,
