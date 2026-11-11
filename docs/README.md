@@ -35,7 +35,7 @@ evoLoop 面向一个人与多个 Agent 持续推进的软件项目。[两张产�
 | Agent 接手实际项目工作，读取固定依据并受控执行 | [日常接力](product/daily-loop.md#人和-agent-怎样在两类入口间接力) → [业务技能与 CLI](development/agent-cli.md) | 使用项目内 `evoloop-workflow`，按当前状态与服务权限工作；无需通过 GUI。能力/命令以 CLI 帮助和实际回读为准。 |
 | 发现缺陷或提出小功能，准备接受与执行 | [提议怎样成为任务](product/daily-loop.md#一条提议怎样变成可做的任务) → [当前贡献流程](../CONTRIBUTING.md#提出与完成变更) | 跨目标、争议或超出授权再找适当判断者；常规领域修复可直接负责完成。 |
 | 收到需求纠正，或把技术讨论结论纳入正式文档 | [纠正处理步骤](product/daily-loop.md#需求纠正怎样处理) → [P11 的结果与验收](product/definition.md#p11--工作文档驱动任务并把成立结论沉淀为正式文档) | 需要精确版本/旧任务影响查[项目数据 §4](architecture/project-data.md#4-文档表怎样设计)；整理到 Git 查[§6](architecture/project-data.md#6-工作文档怎样沉淀为仓库正式文档)。 |
-| 调整编制或安排验收 | [当前组织](roadmap.md#当前组织) → [决定记录 DEC-038](decisions.md) | 同一 Role 加不加人由 Leader 按每日评估决定，一次只增减一个 Session；验收按 Task 约定由人、Task 允许的 Leader 或 Leader 指派的业务 Session 承担，作者与安排者除外。要新增长期 Role，才进入[分工诊断与试行](product/agent-loop.md#②-动态多-session先诊断再改变分工)。 |
+| 调整编制或安排验收 | [当前组织](roadmap.md#当前组织) → [决定记录 DEC-038](decisions.md) | 同一 Role 加不加人由 Leader 按每日评估决定，一次只增减一个 Session；验收按 Task 约定：常规交 Leader 指派的独立业务 Session，难验收由需求 Session 以消费者身份直接验收、不经接力，使用者亲用时写人，Leader 只在使用者明确要求时验收；作者与安排者除外。要新增长期 Role，才进入[分工诊断与试行](product/agent-loop.md#②-动态多-session先诊断再改变分工)。 |
 | 设计页面，或验证 Wiki 是否影响行动 | [工作台](product/workbench.md#工作台要帮助人完成什么) / [Wiki 评价](product/wiki-evaluation.md#evaluator-要回答的问题) | 实现时再查下方架构合同与固定研究；页面模拟、独立 Agent 消费和真人效果分别记录。 |
 
 本机业务服务已能承接部分真实工作，实际范围见[当前基线](roadmap.md#当前基线)。对尚未接入服务的仓库开发或隔离工作，在当前任务或 PR 保留目标、依据、范围、责任和验收，沿[贡献指南](../CONTRIBUTING.md#提出与完成变更)交付；不必为一次修复先建任务平台或外置 Wiki，也不另建需长期同步的任务状态表。
