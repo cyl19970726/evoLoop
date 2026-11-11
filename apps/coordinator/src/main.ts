@@ -101,7 +101,7 @@ const authFile = process.env.EVOLOOP_AUTH_FILE;
 if (!databaseUrl || !authFile) throw new Error("Set EVOLOOP_DATABASE_URL and EVOLOOP_AUTH_FILE. Run migrations separately before starting.");
 let credentials: ReturnType<typeof authConfigSchema.parse>;
 try { credentials = authConfigSchema.parse(JSON.parse(await readFile(authFile, "utf8"))); }
-catch { throw new Error("Invalid identity file: check its JSON and credential schema; values are not logged."); }
+catch { throw new Error("Invalid identity file: check its JSON and credential schema (extraCommands may only list document.archive and document.restore); values are not logged."); }
 const currentStudyReviewer = async (projectId: string, actorId: string) =>
   hasCurrentStudyReviewer(credentials,projectId,actorId);
 const port = Number(process.env.EVOLOOP_PORT ?? "4318");

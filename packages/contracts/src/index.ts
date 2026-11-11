@@ -80,7 +80,13 @@ export type Command = z.infer<typeof commandSchema>;
 export type CommandInput = z.input<typeof commandSchema>;
 export type LeaderWorkRequestType = "work.plan.set" | "work.dependencies.set" | "work.review.set";
 export type Permission = "read" | "write" | "review";
-export interface Principal { actorId: string; projectIds: string[]; permissions: Permission[]; identityKind?: "agent" | "human" | undefined }
+/**
+ * Commands an identity may run beyond its permissions, kept apart from `permissions` so no review check is widened by accident.
+ * Only these commands may appear in an identity file; anything else is refused when the file is read.
+ */
+export const extraCommandNames = ["document.archive", "document.restore"] as const;
+export type ExtraCommand = (typeof extraCommandNames)[number];
+export interface Principal { actorId: string; projectIds: string[]; permissions: Permission[]; extraCommands?: ExtraCommand[] | undefined; identityKind?: "agent" | "human" | undefined }
 export interface Project { id: string; title: string; createdAt: string }
 export interface Document {
   projectId: string; id: string; title: string; version: number;
