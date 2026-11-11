@@ -130,6 +130,29 @@ Leader 读到交付后，按 Task 声明的验收方式，用 `acceptance.assign
 }
 ```
 
+即时输入授权只增加“可送入 / 可空闲直启”，准入还要求一条同 sender、同 Session 的普通消息授权。普通消息授权里的 `receiverActorId` 写该 Session 的**业务身份**（`runtime.materialCli` 的 `cliActorId`，或 `residentQueue.roleActors` 里该 Role 的 `actorId`），不是预约或创建 Session 的 `runtime_session.actor_id`；准入按普通消息路径的业务身份绑定核对它，不再要求它与预约身份相等。
+
+```json
+{
+  "sessionMessages": {
+    "enabled": true,
+    "grants": [
+      {
+        "projectId": "PROJECT_UUID",
+        "sessionId": "OWNED_SESSION_UUID",
+        "senderActorId": "USER_ACTOR",
+        "receiverActorId": "SESSION_BUSINESS_ACTOR",
+        "receiverRoleId": "ROLE_UUID",
+        "cwd": "/absolute/session/cwd",
+        "enabled": true
+      }
+    ]
+  }
+}
+```
+
+**验收前置。** 即时输入的验收除“发布并重启（加载新特性表）”外，还要求私有配置里已启用 `runtime`、写好 `directInputs` 和同 Session 的 `sessionMessages.grants`，且 `receiverActorId` 与该 Session 的当前业务身份一致；缺任一项时能力查询只会回答不可用，不能据此判定实现通过。
+
 服务每次请求都会重读这份配置；但只有服务启动时已启用运行时，即时输入入口才存在。
 
 ### 入口
@@ -166,6 +189,7 @@ Leader 读到交付后，按 Task 声明的验收方式，用 `acceptance.assign
 | 检查 | 覆盖什么 |
 | --- | --- |
 | `apps/workbench/test/direct-input-client.test.ts` | 能力响应；503 之后 404 时保留原输入；400、409 等预占前明确拒绝的区分；`SESSION_INPUT_BUSY` 可重试 |
+| `apps/coordinator/test/direct-input-admission.test.ts` | 准入把普通消息授权的 `receiverActorId` 解析为 Session 业务身份；A 预约、业务身份 B、授权写 B 时通过，授权仍写预约身份时拒绝 |
 | `apps/coordinator/test/direct-input-service.test.ts` | 按实际运行时能力回答；共享送入锁的撞车、重试与无持久写入；不可补入回合转为普通排队消息 |
 | `packages/adapter-postgres/test/direct-input.test.ts` | 在独立 PostgreSQL schema 里检查双启动唯一槽位、Run 与消息两种主来源、同一 Turn 的两条补入、TaskRevision 与输入哈希不变、额度、撤权、未知和终态 CAS |
 | `apps/coordinator/test/direct-input-native-live.mts` | 用 `LIVE_CODEX_VERSION` 固定的真实二进制在隔离的 HTTP、PostgreSQL 和 Thread 中执行一次直启和两条补入，回读三个精确的 client ID 和 Item；W3 用 0.167.0-alpha.3.2 记录 |
