@@ -101,7 +101,7 @@ const help = {
     "request leader.notice.recover --project UUID --id BLOCKED_NOTICE_UUID --file BODY.json --receipt LOCAL_UUID (explicit new intent after confirmed post rejection; read original notice before any retry)",
     "session prepare --file PRIVATE_JSON (prepare or reuse one authorized owned Session; never assigns a Task)",
     "session profile show SESSION_UUID --project UUID (configured target, last confirmed profile and recovery state)",
-    "session profile set SESSION_UUID --project UUID --model SLUG --effort LEVEL --reason TEXT --evidence-ref REF [--operation UUID] (save next-Turn target)",
+    "session profile set SESSION_UUID --project UUID [--model SLUG] --effort LEVEL --reason TEXT --evidence-ref REF [--operation UUID] (save next-Turn target)",
     "session identity show owned:UUID|external:UUID --project UUID",
     "session identity set owned:UUID|external:UUID --project UUID --color TOKEN --mark TOKEN --reason TEXT [--operation UUID] (read current version, save and read back)",
     "models --project UUID (read authorized, currently available App Server models before session prepare)",
@@ -184,16 +184,17 @@ async function dispatch(args: Args, env: Environment, io: IO): Promise<unknown> 
     }
     if(mode==='set'){
       check(args,4,["project","model","effort","reason","evidence-ref","operation"]);
-      const model=option(args,"model"),reasoningEffort=option(args,"effort"),
-        reason=option(args,"reason"),evidenceRef=option(args,"evidence-ref");
-      if(!model||!reasoningEffort||!reason||!evidenceRef)
-        throw new UsageError('profile set requires --model, --effort, --reason and --evidence-ref.');
+      const reasoningEffort=option(args,"effort"),reason=option(args,"reason"),evidenceRef=option(args,"evidence-ref");
+      if(!reasoningEffort||!reason||!evidenceRef)
+        throw new UsageError('profile set requires --effort, --reason and --evidence-ref (--model defaults to the Session\'s current model).');
       const sessions=await client.get(`/api/projects/${projectId}/runtime/sessions`);
       const current=Array.isArray(sessions)?record(sessions.find(value=>record(value)?.id===sessionId)):null;
       const profile=record(current?.executionProfile);
       const revision=record(profile?.revision);
       if(!current||!revision||typeof current.version!=='number'||typeof revision.revisionId!=='string')
         throw new UsageError('Current managed Session profile is unavailable; use session profile show.');
+      const model=option(args,"model")??(typeof revision.model==='string'?revision.model:undefined);
+      if(!model)throw new UsageError('The Session has no recorded model; pass --model.');
       const operationId=option(args,"operation")?uuid(option(args,"operation"),"Operation"):randomUUID();
       const command=commandSchema.parse({type:'runtime.session.executionProfile.revise',projectId,sessionId,
         operationId,expectedVersion:current.version,expectedExecutionProfileRevisionId:revision.revisionId,

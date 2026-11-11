@@ -166,6 +166,8 @@ export interface RuntimeTurn {
   error?: RuntimeTurnFailure;
   /** Provider-reported usage for this Turn when the provider reports it per Turn. */
   usage?: RuntimeUsage | null;
+  /** Effort the Thread reported right after turn/start, when the Run carried one; null when it could not be read back. */
+  observedReasoningEffort?: string | null;
   /** Provider-reported cost in USD for this Turn; absent when the provider reports none. */
   costUsd?: number | null;
   /** What the native runtime reported loading for this Turn; absent when the adapter observes none. */

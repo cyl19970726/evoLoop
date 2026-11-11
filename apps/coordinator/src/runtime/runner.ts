@@ -63,6 +63,8 @@ export type ManagedRuntime = RuntimePort & { open(): Promise<void>; registerBind
   onChildDiagnostic?(listener:(diagnostic:NativeChildDiagnostic)=>void|Promise<void>):()=>void;
   flushChildDiagnostics?():Promise<void>;
   hasFreshStartProof?(binding:RuntimeBinding):boolean;
+  /** True when this runtime cannot change effort on a live Thread, so effort travels with each turn/start. */
+  appliesEffortWithNextTurn?(binding:RuntimeBinding):boolean;
   startConversationTurn?(binding:RuntimeBinding,input:string,operationId:string):Promise<RuntimeTurn>;
   qualifyConversationThread?(binding:RuntimeBinding):Promise<{available:boolean;reason:string;fingerprint:string|null}>;
   activateExecutionProfile?(current:RuntimeBinding,target:RuntimeSessionSpec,revisionId:string,operationId:string):Promise<RuntimeBinding>;
@@ -256,6 +258,11 @@ export class RuntimeRunner {
     return this.runtime.nativeInputConnectionId?.()??null;
   }
   /** Read-only capability check, never a replacement for execute's transactional authorization/version checks. */
+  /** Whether an effort-only revision of this Session needs no native activation. */
+  effortAppliesNextTurn(session:RuntimeSessionRecord):boolean {
+    if(!session.nativeThreadId||!session.nativeSessionId)return false;
+    try{return this.runtime.appliesEffortWithNextTurn?.(bindingOf(session))===true;}catch{return false;}
+  }
   async preflightExecutionProfileRevision(principal:Principal,
     command:Extract<Command,{type:"runtime.session.executionProfile.revise"}>):Promise<void> {
     // Legacy model/policy-only activation uses a different native path.
@@ -275,6 +282,9 @@ export class RuntimeRunner {
     if(!await this.authorized({...session,model:command.model,sandbox:command.sandbox,approvalPolicy:command.approvalPolicy})||
       !await this.deps.allowedCwd(session.projectId,session.cwd))
       throw new DomainError("FORBIDDEN","原 Session 的目标配置或目录没有当前精确授权。");
+    // Only the effort changes and this runtime applies it with each turn/start: there is nothing to activate or read back first.
+    if(session.executionProfile.revision.model===command.model&&session.executionProfile.revision.sandbox===command.sandbox&&
+      session.executionProfile.revision.approvalPolicy===command.approvalPolicy&&this.effortAppliesNextTurn(session))return;
     if(!this.runtime.isReady())throw new DomainError("RUNTIME_READ_UNAVAILABLE","原生执行服务不可读，未保存新配置；请恢复连接后重试。");
     try {
       const binding=bindingOf(session);

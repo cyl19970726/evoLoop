@@ -1021,6 +1021,8 @@ export class CodexAppServerAdapter implements RuntimePort {
   }
 
   /** Exact, unused thread/start proof on this owner connection; no native Turn has been attempted. */
+  /** Without thread/settings/update (Codex 0.167 and others) effort cannot change on a live Thread; it rides on each turn/start. */
+  appliesEffortWithNextTurn(_binding: RuntimeBinding): boolean { return !this.features.directInput; }
   hasFreshStartProof(binding: RuntimeBinding): boolean {
     this.owned(binding);
     const fresh=this.freshThreads.get(binding.nativeThreadId);
@@ -1818,6 +1820,14 @@ export class CodexAppServerAdapter implements RuntimePort {
     }
     const turn = runtimeTurn(result?.turn);
     if (!turn) throw new RuntimeUnknownError("turn/start", null, "invalid acknowledgement; turn may have started");
+    // Read back the effort the Thread reports now, as confirmation of what turn/start carried. Best effort: the Turn already started.
+    if (executionProfile?.reasoningEffort) {
+      try {
+        const readback = object(await this.request("thread/read", { threadId: binding.nativeThreadId, includeTurns: false }));
+        const observed = object(readback?.thread)?.reasoningEffort;
+        return { ...turn, observedReasoningEffort: typeof observed === "string" ? observed : null };
+      } catch { return { ...turn, observedReasoningEffort: null }; }
+    }
     return turn;
   }
 

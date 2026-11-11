@@ -167,6 +167,7 @@ export class ProviderRoutedRuntime implements ManagedRuntime {
   startTurn(...args: Parameters<ManagedRuntime["startTurn"]>) { return this.forBinding(args[0]).startTurn(...args); }
   interruptTurn(binding: RuntimeBinding, turnId: string) { return this.forBinding(binding).interruptTurn(binding, turnId); }
   registerBinding(binding: RuntimeBinding) { return this.forBinding(binding).registerBinding(binding); }
+  appliesEffortWithNextTurn(binding: RuntimeBinding): boolean { return this.forBinding(binding).appliesEffortWithNextTurn?.(binding) ?? false; }
   hasFreshStartProof(binding: RuntimeBinding): boolean { return this.forBinding(binding).hasFreshStartProof?.(binding) ?? false; }
 
   async open(): Promise<void> {

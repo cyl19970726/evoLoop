@@ -4,6 +4,8 @@ import type { ExecutionProfileRevision, SessionRecoveryCommand } from '@evoloop/
 
 export interface RecoveryAuthority {
   canRevise(principal:Principal,session:RuntimeSessionRecord,target:{model:string;sandbox:'danger-full-access';approvalPolicy:'never'}):Promise<boolean>;
+  /** The runtime has no native way to change effort on a live Thread (no thread/settings/update): effort then travels with each turn/start. */
+  effortAppliesNextTurn?(session:RuntimeSessionRecord):boolean;
 }
 const need=<T>(value:T|null|undefined,label:string):T=>{if(value==null)throw new DomainError('NOT_FOUND',label+' unavailable');return value;};
 const active=new Set(['requested','dispatching','running','unknown']);
@@ -67,7 +69,11 @@ export async function applySessionRecovery(tx:Transaction,principal:Principal,co
       model:command.model,reasoningEffort:command.reasoningEffort??null,sandbox:command.sandbox,approvalPolicy:command.approvalPolicy,
       provenance:'revised',operationId:command.operationId,actorId:principal.actorId,
       reason:command.reason,evidenceRef:command.evidenceRef,createdAt:now};
-    await recovery.adoptExecutionProfile(revision,session.version);
+    // Only the effort changes and the runtime cannot activate it natively: no activation, the next turn/start carries it.
+    const appliesNextTurn=!!command.reasoningEffort&&profile.revision.model===command.model&&
+      profile.revision.sandbox===command.sandbox&&profile.revision.approvalPolicy===command.approvalPolicy&&
+      authority.effortAppliesNextTurn?.(session)===true;
+    await recovery.adoptExecutionProfile(revision,session.version,appliesNextTurn?{appliesNextTurn:true}:undefined);
     return {result:{status:'applied' as const,operationId:command.operationId,entityId:session.id,version:session.version+1,revisionId:revision.revisionId},
       effects:[{kind:command.type,entityId:session.id,version:session.version+1}]};
   }

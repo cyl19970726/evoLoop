@@ -150,6 +150,8 @@ const uow = new PostgresUnitOfWork(pool, {
 const clock = { now: () => new Date().toISOString() };
 const ids = { next: randomUUID };
 const hasher = { hash: (value: string) => createHash("sha256").update(value, "utf8").digest("hex") };
+// The runner is built after the service; the recovery authority asks it, once it exists, how effort reaches the runtime.
+const lateRunner: { current: { effortAppliesNextTurn(session: RuntimeSessionRecord): boolean } | null } = { current: null };
 const service = new WorkflowService({
   uow, clock, ids,
   hasher,
@@ -161,8 +163,9 @@ const service = new WorkflowService({
     return hasTaskTimingGrant(current, projectId, actorId, roleId, scopeId) &&
       await currentProjectWriter(projectId, actorId);
   },
-  recoveryAuthority: staticRecoveryAuthority(
+  recoveryAuthority: { ...staticRecoveryAuthority(
     () => loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE), currentIdentity),
+    effortAppliesNextTurn: (session: RuntimeSessionRecord) => lateRunner.current?.effortAppliesNextTurn(session) === true },
   collaborationAuthority: {
     actorForRole: async (projectId,roleId) => {
       const config=await currentQueueConfiguration();
@@ -538,6 +541,7 @@ const runner = runtimeFactory ? new RuntimeRunner({ runtimeFactory, workflow: se
   canSettleOwned: (session,run) => dynamicAdmission?.canSettleOwned(session,run) ?? Promise.resolve(false),
   ownedCwd: async (_projectId,cwd) => { try { return await realpath(cwd) === cwd; } catch { return false; } },
   }) : null;
+lateRunner.current = runner;
 const scheduling = new SchedulingPump({ store: new PgSchedulingStore(pool), taskTiming: new PgTaskTimingStore(pool), canWrite: lease.canWrite,
   credentials: () => credentials, grants: () => integrations.scheduling?.grants ?? [],
   taskTimingGrants: async () => {

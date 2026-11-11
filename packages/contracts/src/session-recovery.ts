@@ -63,7 +63,8 @@ export interface SessionRecoveryReader {
 export interface SessionRecoveryTransaction extends SessionRecoveryReader {
   lockRecoveryGate(sessionId:string):Promise<SessionRecoveryGate>;
   /** All callers are inside the existing project transaction; persistence rechecks CAS and native vacancy. */
-  adoptExecutionProfile(revision:ExecutionProfileRevision,expectedSessionVersion:number):Promise<void>;
+  /** `appliesNextTurn`: an effort-only revision the runtime cannot activate natively; it is active at once and rides on each later turn/start. */
+  adoptExecutionProfile(revision:ExecutionProfileRevision,expectedSessionVersion:number,options?:{appliesNextTurn?:boolean}):Promise<void>;
   beginExecutionProfileActivation(sessionId:string,revisionId:string,operationId:string):Promise<boolean>;
   settleExecutionProfileActivation(sessionId:string,revisionId:string,state:'active'|'unknown'|'rejected',evidence:string):Promise<void>;
   saveRecoveryDecision(decision:SessionRecoveryDecision,next:SessionRecoveryGate,expectedVersion:number):Promise<void>;

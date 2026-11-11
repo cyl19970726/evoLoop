@@ -1653,3 +1653,39 @@ test('turn listing waits out the brief -32601 history attach window after turn/s
   await assert.rejects(()=>adapter.listTurns(binding),RuntimeServerError);
   assert.equal(calls,1,'other rejections, such as a missing rollout, are never retried');
 });
+
+test('effort rides on turn/start where the runtime cannot update a live Thread, and the Thread reports it back', async () => {
+  const bare = new CodexAppServerAdapter({expectedVersion:'codex-cli 0.167.0-alpha.3.2'});
+  const withUpdate = new CodexAppServerAdapter({expectedVersion:'codex-cli 0.166.0-alpha.6'});
+  const anyBinding = {} as Parameters<typeof bare.appliesEffortWithNextTurn>[0];
+  assert.equal(bare.appliesEffortWithNextTurn(anyBinding), true, '0.167 has no thread/settings/update');
+  assert.equal(withUpdate.appliesEffortWithNextTurn(anyBinding), false, 'a runtime with thread/settings/update activates natively');
+
+  const adapter = bare;
+  const internals = adapter as unknown as Record<string, unknown>;
+  const sent: Array<{ method: string; params: Record<string, unknown> }> = [];
+  internals.owned = () => {};
+  let reported: string | undefined = 'max';
+  internals.request = async (method: string, params: Record<string, unknown>) => {
+    sent.push({ method, params });
+    if (method === 'turn/start') return { turn: { id: 'turn-1', status: 'inProgress', completedAt: null, items: [] } };
+    if (method === 'thread/read') return { thread: { id: 'thread', reasoningEffort: reported } };
+    assert.fail(method);
+  };
+  const binding = { sessionId: 's', roleId: 'r', projectId: 'p', nativeThreadId: 'thread', nativeSessionId: 'thread', cwd: '/tmp/e', authorizationScope: 'project',
+    owner: 'evoloop-codex-app-server', resumeProfile: { actorId: 'a', model: 'deepseek/deepseek-flash', reasoningEffort: 'max', sandbox: 'danger-full-access',
+      approvalPolicy: 'never', executionProfileRevisionId: 'rev-1' } } as Parameters<typeof adapter.startTurn>[0];
+  const profile = { revisionId: 'rev-1', version: 2, model: 'deepseek/deepseek-flash', reasoningEffort: 'max', sandbox: 'danger-full-access', approvalPolicy: 'never',
+    cwd: '/tmp/e', authorizationScope: 'project', provenance: 'revised' } as Parameters<typeof adapter.startTurn>[3];
+  const turn = await adapter.startTurn(binding, 'business', 'op-1', profile);
+  const start = sent.find(call => call.method === 'turn/start')!;
+  assert.equal(start.params.effort, 'max', 'turn/start carries the configured effort');
+  assert.equal(turn.observedReasoningEffort, 'max', 'and the Thread reports it back');
+  // A readback that fails or reports nothing never fails the Turn that already started.
+  internals.request = async (method: string) => {
+    if (method === 'turn/start') return { turn: { id: 'turn-2', status: 'inProgress', completedAt: null, items: [] } };
+    throw new RuntimeServerError('thread/read', -32000, 'unavailable', 'server_error');
+  };
+  const second = await adapter.startTurn(binding, 'business', 'op-2', profile);
+  assert.equal(second.id, 'turn-2'); assert.equal(second.observedReasoningEffort, null);
+});
