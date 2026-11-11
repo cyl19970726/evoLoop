@@ -106,6 +106,10 @@ Blob 身份使用稳定 ID，附内容 hash、大小、媒体类型和资源 man
 
 发布批准绑定不可变候选修订/hash 与所读知识基线；outbox 实际执行或重新写入前再核批准、权限、来源有效性与独占资格。已发出但结果未知的操作先对账，批准后来撤销不代表先前写入未发生。审阅结案可以是拒绝、归并或无需修改；只有接受并确需改正文的项才要求另有发布回执，结案和发布保持分离。具体时序见[Wiki 集成](wiki-integration.md#4-命令发布和纠正)。
 
+### 请求停止一个 Run
+
+`runtime.run.stop`（`runId`、`expectedVersion`、`reason`）：review 权限，加上该 Session 精确的执行授权（与普通消息恢复同一检查；重放已入账的原操作不再核对授权）；不要求原生运行时在线。结果是 Run 上的停止标记（`stopRequestedAt`、`stopReason`、`stopRequestedBy`，不可改、不可撤，**没有新的 Run 状态**）。拒绝码：`VERSION_CONFLICT`、`STOP_ALREADY_REQUESTED`、`RUN_TERMINAL`（已结束的 Run 不能再停）。停止之后 `ordinary.submit` 对该 Run 返回 `RUN_STOPPED`，已签未封存的意图变为 `rejected`（原因 `RUN_STOPPED`）；数据库拒绝引用该 Run 的 Delivery。细节见[Session 运行时](session-runtime.md)。
+
 ### 知识后端可替换合同
 
 `KnowledgeRepository` 是业务需要的端口，不能直接照抄 OpenViking HTTP 方法。下面按使用者分组，仍属于同一知识边界，不增加服务或要求所有能力第一天实现。浏览器只取得共同 API 的公开 DTO，发布和迁移端口不从浏览器出口暴露。
@@ -317,12 +321,14 @@ Task 协作通道把 question/answer/progress/blocker/handoff/result 固定到�
 
 验收由谁做，由 Task 声明，不默认交给 Leader（DEC-038；PR #217，schema 062）。
 
-- **三种验收方式。** Task 的 `acceptance_target` 声明为人、Task 明确允许的 Leader，或 Leader 指派的独立业务 Session；收件人还须与 Task 声明的消费者和验收模式一致。作者 Session 与安排者不能充当独立验收（DEC-038），只有 Task 明确允许时 Leader 才能验收。代码层面：选 Leader 方式时，收件 Session 必须是项目当前的 Leader Session；选业务 Session 方式时，它不能是 Leader Session，也不能是当前 Delivery 的作者 Run 所在的 Session；安排者须有项目 review 权限，并且就是那条验收消息的发送者。
+- **验收方式与 `acceptance_target`。** Task 的 `acceptance_target` 仍声明为人、Leader 或独立业务 Session 之一；`leader` 值保留，但只在使用者为某项 Task 明确要求时使用，不是常规验收选项（DEC-042）。常规验收交 Leader 指派的独立业务 Session；难验收由需求 Session 以消费者身份直接验收，不经验收接力。收件人还须与 Task 声明的消费者和验收模式一致。作者 Session 与安排者不能充当独立验收，执行者自检、CI 与 Run 终态是交付证据，不是验收。代码层面：选 Leader 方式时，收件 Session 必须是项目当前的 Leader Session；选业务 Session 方式时，它不能是 Leader Session，也不能是当前 Delivery 的作者 Run 所在的 Session；安排者须有项目 review 权限，并且就是那条验收消息的发送者。
 - **接力记录。** Leader 用 `task_acceptance_relay` 安排验收：固定 Task 修订、当前 Delivery、阶段（候选 `candidate` 或正式 `formal`）、验收范围、入口与收件人。非人工方式同时固定一条发给收件 Session 的消息。同一 Delivery、阶段和范围同时只有一条现行安排；改派以原安排和版本为前提，旧安排保留为 `superseded` 或 `released`。
 - **开始前再核。** 验收消息真正开始处理前，触发器再次核对 Task 未结束、当前修订和最新 Delivery 仍是安排时那一份；不符就拒绝开始，避免验收旧版本。
-- **验收证据。** 人的阅读记入 `task_acceptance_human_read`；验收者本人的 Observation 经 `task_acceptance_observation_link` 关联到安排，并标明证据级别。存在现行安排时，Task 关闭要求指定收件人对该 Delivery 有已关联的 `used` 观察。候选阶段通过不等于正式通过。安排无法开始时生成 `acceptance_blocked` 通知交给 Leader。
+- **验收证据。** 人的阅读记入 `task_acceptance_human_read`；验收者本人的 Observation 经 `task_acceptance_observation_link` 关联到安排，并标明证据级别。存在现行安排时，Task 关闭要求指定收件人对该 Delivery 有已关联的 `used` 观察。候选阶段通过不等于正式通过：同一 Delivery 的候选与正式安排可以并存，但存在现行正式安排时，关闭只按正式安排核对；候选安排保留为历史证据，不因没有关联观察而阻塞正式收口。安排无法开始时生成 `acceptance_blocked` 通知交给 Leader。
 - **临时 Session 退役。** 标为临时的 Session 进入 `closing` 前，必须有一条匹配的 `session_retirement_decision`（理由、交接证据、所见版本、Role 与原 Thread）；它名下若还有未释放的未结束 Task 分派或未结束的验收安排，数据库拒绝关闭。Leader 核业务责任，引擎核运行状态。
 - **容量视图。** 只读的容量视图按 Session 汇总在途 Run、排队消息、队列条目、未结束分派和验收安排，是 Leader 做编制判断的输入；它只反映数据库里的持久占用，不证明原生写入权。
+
+**“直接验收”的过渡。** 专门字段与目标值尚未实现（Task `4acdd4d2`）。当前做法是在 Task 正文把需求 Session 的业务身份写成消费者，并注明不经验收接力；验收仍由现有观察记录承载，字段与合同枚举在实现前不变。
 
 ## 6. StageReview：从交付到下一阶段
 
@@ -377,6 +383,8 @@ Task 协作通道把 question/answer/progress/blocker/handoff/result 固定到�
 ### 普通 Task 的一次与每日复制
 
 用户可以直接给一条普通 Task 设一个执行时点，并可选每天重复（PR #202、#212，schema 057）。它复用 Schedule 的时区计算与去重算法，但系列本身有自己的单一权威，Task 详情和总览都读它，不要求用户另外维护一份 Schedule 模板。
+
+`executeAtUtc` 是以 Z 结尾的 UTC 时间；不带毫秒的写法（如 `2026-11-12T04:00:00Z`）在命令入口被接受并按规范形式 `2026-11-12T04:00:00.000Z` 保存，`task.create` 的 `timing` 与 `task.timing.set` 同一规则。格式或时区、重复规则不合法时返回 `INVALID_TASK_TIMING`（不是冲突），信息给出示例。
 
 | 记录 | 回答什么 |
 | --- | --- |

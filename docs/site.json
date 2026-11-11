@@ -498,6 +498,16 @@
       "group": "开发与维护"
     },
     {
+      "path": "docs/development/scheduling-metrics.md",
+      "title": "调度质量指标",
+      "group": "开发与维护"
+    },
+    {
+      "path": "docs/development/database-isolation.md",
+      "title": "开发与测试用哪个数据库",
+      "group": "开发与维护"
+    },
+    {
       "path": "docs/development/wechat-standard-connector.md",
       "title": "微信 Connector 标准模式接入",
       "group": "开发与维护"

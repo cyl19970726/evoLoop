@@ -4,6 +4,7 @@ import { availableParallelism } from "node:os";
 import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
 import pg from "pg";
+import { assertDevelopmentDatabase } from "./lib/database-target.mjs";
 
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const input = process.env.TEST_DATABASE_URL;
@@ -15,6 +16,8 @@ const baseName = decodeURIComponent(base.pathname.slice(1));
 if (!/^evoloop(?:_[a-z0-9]+)*_test$/.test(baseName) || !["postgres:", "postgresql:"].includes(base.protocol)) {
   throw new Error("TEST_DATABASE_URL must use PostgreSQL and a dedicated evoloop_*_test database name");
 }
+// The runner creates databases: it must never do so on the live server, whatever the database name says.
+await assertDevelopmentDatabase(input);
 const requestedConcurrency = process.env.EVOLOOP_INTEGRATION_CONCURRENCY;
 const concurrency = requestedConcurrency === undefined ? Math.min(4, availableParallelism()) : Number(requestedConcurrency);
 if (!Number.isInteger(concurrency) || concurrency < 1) {

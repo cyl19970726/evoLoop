@@ -1,6 +1,12 @@
 # 日程：何时检查，上次产生的工作怎样
 
-日程页让人看懂一项安排为什么检查、下次何时触发、上次产生了什么工作，再追到生成的任务和实际承接者。
+日程页说明安排为何检查、下次何时触发、上次产生什么，追到任务与承接者。**已决定、未实施：** 到点分发、队伍、调度板。
+
+| 变化 | 内容 | 实施 Task / 状态 |
+| --- | --- | --- |
+| 定时分发（Q1、S1） | 到点生成 Task 后默认交 Leader；直接分发在 Leader 名单中先选空闲、没有空闲再选队伍最短的，追加到队尾；到点只分发、不立即开始；忙就排队，引擎不新建 Session。旧的批量常驻队列原样保留，不充当新队伍。 | Q1 `1ce3444c-a8c1-4484-b073-32c256772467`、S1 `0f624669-f11e-4efa-9881-f12fe46524c7`；未实施 |
+| 调度板（Q2） | 第一阶段提供 `work board` 快照与调度事件流；页面等第一阶段检验通过后由原生 Session 设计实现。 | Q2 `5c1760f7-4c94-4b56-81f4-433314972e69`；未实施 |
+| 测量（M0） | M0 基线已测出并复算采用；工具已合并，未发布。 | M0 `58d1974c-7e44-4649-8a83-7fa96afe4aea`；工具已合并，未发布 |
 
 ## 这一页回答什么
 
@@ -19,7 +25,7 @@
 
 外壳与左栏见[布局](../layout.md)。
 
-现状（#229 PR9c）：日程列表在内层栏（窄屏另有下拉切换）；中间是所选日程的检查目的与任务材料、发生记录和修订表单，其下是“定时任务”一栏；右栏是触发条件、下次时间（按规则推算的预览）、产生的任务、授权与协调器。创建日程是中间的单独视图。创建、修订和停用表单是共同的[提交表单](../components.md#提交表单)，修订还核对授权是否变化（#229 F3）：职责和日程授权按名称选择，时间按日程时区填写；各对象的完整标识在“来源与完整标识”里。
+现状（#229 PR9c）：日程列表在内层栏（窄屏另有下拉）；中间是所选日程的检查目的与任务材料、发生记录和修订表单，其下是“定时任务”一栏；右栏是触发条件、下次时间（按规则推算的预览）、产生的任务、授权与协调器。创建日程是中间的单独视图。创建、修订和停用表单是共同的[提交表单](../components.md#提交表单)，修订还核对授权是否变化（#229 F3）：职责和日程授权按名称选择，时间按日程时区填写；完整标识在“来源与完整标识”里。
 
 ## 内容与状态
 
@@ -58,7 +64,7 @@
 | 范围 | 路径 |
 | --- | --- |
 | 源码（`apps/workbench/src/`） | `features/scheduling/SchedulingPanel.tsx`（内层栏日程列表、所选日程、右栏、创建视图）、`features/scheduling/scheduleForm.ts`（创建与修订表单的字段和命令）、`shared/zonedTime.ts`（当地时间与时区换算，与协调器同一规则）、`shared/ui/LocalTimeInput.ts`（日期时间控件与较早 / 较晚的选择）、`features/scheduling/presentation.ts`（规则、下次时间、触发原因与授权用语，生成任务带“返回日程”的链接；每日规则的本地时刻用 `packages/contracts/src/scheduling.ts` 的 `dailyRuleInstant`，与 `packages/core/src/scheduling/due.ts` 共用）、`features/scheduling/managedTarget.ts`、`features/scheduling/client.ts`；指定验收人用 `shared/ui/MemberChoice.tsx`（`scheduleForm.ts` 的 `withMemberChoice`）；名称与来源层在 `shared/ui/RecordName.tsx`、`shared/ui/FullIdentifiers.tsx`；定时任务一栏在 `features/scheduling/TimedTasksSection.tsx`（列表、状态与失败写法）和 `features/scheduling/timedTasks.ts`（下次时间用语、`?timing=` 地址与返回链接）；任务详情里的“执行时间与重复”是另一套机制，在 `features/workflow/TaskScheduleSection.tsx`，修改仍在那里 |
-| 测试（`apps/workbench/test/`） | `schedule-form.test.ts`（命令与原表单一致）、`zoned-time.test.ts`（与 `computeDue` 对照夏令时）、`schedule-form-browser.test.ts`、`command-form-browser.test.ts`、`schedule-presentation.test.ts`、`schedule-next-instant.test.ts`、`schedule-managed-target.test.ts`、`schedule-wording-browser.test.ts`、`schedule-run-session-path-browser.test.ts`（阅读此任务再返回日程）、`legacy-bits-browser.test.ts`（另一时区的日程）、`member-presentation.test.ts`、`member-choice-browser.test.ts`（按成员选指定验收人）、`timed-tasks.test.ts`（定时任务一栏：三类样本与反例、下次时间与时区、读取失败与协调器不可用的写法、返回日程原位置、列表读取合同）；后端 `packages/adapter-postgres/test/task-timing.test.ts`（项目级列表与分页） |
+| 测试（`apps/workbench/test/`） | `schedule-form.test.ts`（命令与原表单一致）、`zoned-time.test.ts`（与 `computeDue` 对照夏令时）、`schedule-form-browser.test.ts`、`command-form-browser.test.ts`、`schedule-presentation.test.ts`、`schedule-next-instant.test.ts`、`schedule-managed-target.test.ts`、`schedule-wording-browser.test.ts`、`schedule-run-session-path-browser.test.ts`（阅读此任务再返回日程）、`legacy-bits-browser.test.ts`（另一时区的日程）、`member-presentation.test.ts`、`member-choice-browser.test.ts`（按成员选指定验收人）、`timed-tasks.test.ts`（定时任务一栏：三类样本与反例、下次时间（含每日首份未到点）与时区、读取失败与协调器不可用的写法、返回日程原位置、列表读取合同）；后端 `packages/adapter-postgres/test/task-timing.test.ts`（项目级列表与分页） |
 
 ## 相关
 

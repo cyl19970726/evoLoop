@@ -10,7 +10,7 @@ import type {
   Task, TaskDetail, TaskDocumentLink, TaskRevision, RuntimeRunRecord,
 } from "@evoloop/contracts";
 import { parseQueueHandoff, type QueueHandoff } from "@evoloop/contracts/runtime-handoff";
-import { DomainError } from "@evoloop/contracts/ports";
+import { DomainError, PersistenceRejectedError } from "@evoloop/contracts/ports";
 import { applyWorkflow } from "./workflow.js";
 import { reserveRuntime } from "./runtime/reserve.js";
 import { currentRetentions, validateDispatchBasis, validateReselectedOriginals, validateSelectedExternalBasis } from "./runtime/basis.js";
@@ -168,11 +168,17 @@ export class WorkflowService {
         result = outcome.result;
         effects = outcome.effects;
       } catch (error) {
-        if (!(error instanceof DomainError)) throw error;
-        result = {
-          status: "rejected", operationId: command.operationId, code: error.code,
-          message: error.message, ...(error.currentVersion === undefined ? {} : { currentVersion: error.currentVersion }),
-        };
+        if (error instanceof DomainError) {
+          result = {
+            status: "rejected", operationId: command.operationId, code: error.code,
+            message: error.message, ...(error.currentVersion === undefined ? {} : { currentVersion: error.currentVersion }),
+          };
+        } else if (error instanceof PersistenceRejectedError) {
+          // The savepoint rolled back, so this is a known rejection rather than an unknown commit.
+          result = { status: "rejected", operationId: command.operationId, code: "STORAGE_REJECTED", message: error.message };
+        } else {
+          throw error;
+        }
       }
       const operation: Operation = {
         projectId: command.projectId, id: command.operationId, actorId: principal.actorId,
@@ -199,7 +205,7 @@ export class WorkflowService {
     if (command.type === "session.profile.set" || command.type === "session.identity.set" || command.type.startsWith("task.assignment.") && command.type !== "task.assignment.acknowledge") return "review";
     if (command.type.startsWith("queue.")) return "review";
     if (command.type.startsWith("evaluation.") || command.type.startsWith("domain.") || command.type.startsWith("host.")) return "review";
-    return command.type === "document.adopt" || command.type === "document.publish" || command.type === "document.archive" || command.type === "document.restore" || command.type === "task.start" || command.type === "task.reviewBasis" || command.type === "task.close" || command.type === "task.cancel" || command.type === "task.reopen" || command.type === "stage.accept" || command.type === "stage.review" || command.type === "stage.review.correct" || command.type === "runtime.session.reserve" || command.type === "runtime.session.close" || command.type === "runtime.run.reserve" || (command.type === "runtime.run.interrupt" || command.type === "runtime.run.abandonReadOnly") || command.type.startsWith("schedule.") || command.type.startsWith("role.") && command.type !== "role.propose" || command.type === "discussion.decision.record" || command.type === "discussion.action.link"
+    return command.type === "document.adopt" || command.type === "document.publish" || command.type === "document.archive" || command.type === "document.restore" || command.type === "task.start" || command.type === "task.reviewBasis" || command.type === "task.close" || command.type === "task.cancel" || command.type === "task.reopen" || command.type === "stage.accept" || command.type === "stage.review" || command.type === "stage.review.correct" || command.type === "runtime.session.reserve" || command.type === "runtime.session.close" || command.type === "runtime.run.reserve" || (command.type === "runtime.run.interrupt" || command.type === "runtime.run.stop" || command.type === "runtime.run.abandonReadOnly") || command.type.startsWith("schedule.") || command.type.startsWith("role.") && command.type !== "role.propose" || command.type === "discussion.decision.record" || command.type === "discussion.action.link"
       ? "review" : "write";
   }
 
@@ -849,7 +855,7 @@ export class WorkflowService {
         if (command.type === "schedule.create" || command.type === "schedule.revise") {
           return applySchedule(tx, principal, command as ScheduleCommand, now);
         }
-        if (command.type === "runtime.session.reserve" || command.type === "runtime.session.close" || command.type === "runtime.run.reserve" || command.type === "runtime.handoff.record" || (command.type === "runtime.run.interrupt" || command.type === "runtime.run.abandonReadOnly")) {
+        if (command.type === "runtime.session.reserve" || command.type === "runtime.session.close" || command.type === "runtime.run.reserve" || command.type === "runtime.handoff.record" || (command.type === "runtime.run.interrupt" || command.type === "runtime.run.stop" || command.type === "runtime.run.abandonReadOnly")) {
           if (command.type === "runtime.run.reserve") await requireTaskTimingReady(tx, command.taskId, now);
           return reserveRuntime({ tx, command, principal, now, nextId: () => this.deps.ids.next(), hash: value => this.deps.hasher.hash(value),
             ...(this.deps.runtimeProvider ? { runtimeProvider: this.deps.runtimeProvider } : {}), runtimeProviders: this.runtimeProviders() });

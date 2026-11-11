@@ -10,7 +10,7 @@ import { canonicalTaskInputJson, taskInputSignature } from "../task-input.js";
 import { sessionRuntimeProvider } from "../roles/runtime.js";
 import { RoleRuleError } from "../roles/index.js";
 
-type ReserveCommand = Extract<Command, { type: "runtime.session.reserve" | "runtime.session.close" | "runtime.run.reserve" | "runtime.run.interrupt" | "runtime.run.abandonReadOnly" | "runtime.handoff.record" }>;
+type ReserveCommand = Extract<Command, { type: "runtime.session.reserve" | "runtime.session.close" | "runtime.run.reserve" | "runtime.run.interrupt" | "runtime.run.stop" | "runtime.run.abandonReadOnly" | "runtime.handoff.record" }>;
 type Effect = { kind: string; entityId: string; version: number };
 export interface ReserveContext {
   tx: Transaction;
@@ -66,6 +66,33 @@ export async function reserveRuntime({ tx, command, principal, now, nextId, hash
     await tx.updateRuntimeRun({ ...run, version: run.version + 1, interruptRequested: true, updatedAt: now }, run.version);
     await tx.appendRuntimeEvent(event(command.projectId, nextId(), run.id, run.sessionId, "run.interruptRequested", command.reason, run.nativeTurnId, principal.actorId, now));
     return { result: applied(command.operationId, run.id, run.version + 1), effects: [{ kind: "runtime.run.interruptRequested", entityId: run.id, version: run.version + 1 }] };
+  }
+  if (command.type === "runtime.run.stop") {
+    const run = required(await tx.getRuntimeRun(command.runId), "runtime run");
+    if (run.version !== command.expectedVersion) throw new DomainError("VERSION_CONFLICT", "run changed", run.version);
+    if (run.stopRequestedAt) throw new DomainError("STOP_ALREADY_REQUESTED", "this Run already has a stop request");
+    if (!(["requested", "dispatching", "running", "unknown"] as string[]).includes(run.state))
+      throw new DomainError("RUN_TERMINAL", "only a Run that has not ended can be stopped");
+    // One marker on the existing Run; the submission, delivery, gate and notice rules key off it (migration 078).
+    const marked = { ...run, version: run.version + 1, stopRequestedAt: now, stopReason: command.reason, stopRequestedBy: principal.actorId, updatedAt: now };
+    let next: typeof run;
+    let detail: string;
+    if (run.state === "requested") {
+      // Never dispatched: it cannot start any more.
+      next = { ...marked, state: "failed", resultSummary: `Stopped before dispatch on request: ${command.reason}`.slice(0, 4000) };
+      detail = `Stopped before dispatch: ${command.reason}`;
+    } else if (run.nativeTurnId) {
+      // A known Turn: the existing interrupt path (runner -> adapter) ends it; the terminal state is what the runtime observes.
+      next = { ...marked, interruptRequested: true };
+      detail = `Stop requested; interrupting the running Turn: ${command.reason}`;
+    } else {
+      // Dispatching with no Turn yet: a native start may be in flight, so do not call it failed; the Turn is interrupted when it binds.
+      next = marked;
+      detail = `Stop requested while dispatching; the Turn is interrupted as soon as it binds: ${command.reason}`;
+    }
+    await tx.updateRuntimeRun(next, run.version);
+    await tx.appendRuntimeEvent(event(command.projectId, nextId(), run.id, run.sessionId, "run.stopRequested", detail, run.nativeTurnId, principal.actorId, now));
+    return { result: applied(command.operationId, run.id, next.version), effects: [{ kind: "runtime.run.stopRequested", entityId: run.id, version: next.version }] };
   }
   if (command.type === "runtime.session.reserve") {
     if (command.sandbox !== "danger-full-access" || command.approvalPolicy !== "never")
@@ -128,7 +155,7 @@ export async function reserveRuntime({ tx, command, principal, now, nextId, hash
   catch { throw new DomainError("QUEUE_OCCUPIED", "Task or Session has an unreleased queue claim"); }
   if(queueClaim && (queueClaim.runId!==command.runId||queueClaim.operationId!==command.operationId||queueClaim.taskId!==task.id||queueClaim.sessionId!==session.id))
     throw new DomainError("QUEUE_CLAIM_MISMATCH", "queue reservation does not match its active claim");
-  if (task.version !== command.expectedVersion) throw new DomainError("VERSION_CONFLICT", "task changed since dispatch was requested", task.version);
+  if (task.version !== command.expectedVersion) throw new DomainError("VERSION_CONFLICT", `Task version mismatch: expectedVersion must be the Task's current version (now ${task.version}), not a Session version; or the Task changed since dispatch was requested`, task.version);
   if (task.state !== "in_progress") {
     throw new DomainError("TASK_NOT_READY", "only explicitly started in-progress tasks may dispatch");
   }

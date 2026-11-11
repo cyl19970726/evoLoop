@@ -3,6 +3,7 @@ import Fastify from "fastify";
 import staticPlugin from "@fastify/static";
 import { commandSchema, capabilities, idSchema, documentKindSchema, type Command, type Principal, type RuntimeSessionRecord } from "@evoloop/contracts";
 import { DomainError } from "@evoloop/contracts/ports";
+import { sessionPreparationHints } from "@evoloop/contracts/session-preparation";
 import type { WorkflowService } from "@evoloop/core";
 import { authenticate, authConfigSchema, type AuthConfig } from "./auth.js";
 import { z } from "zod";
@@ -79,6 +80,8 @@ export async function buildServer(options: {
   isDynamicSession?: (projectId: string, sessionId: string) => Promise<boolean>;
   authorizeDynamicSession?: (principal: Principal, command: Extract<Command,{type:"runtime.session.reserve"}>) => Promise<boolean>;
   authorizeDynamicRun?: (principal: Principal, command: Extract<Command,{type:"runtime.run.reserve"}>, session: RuntimeSessionRecord) => Promise<boolean>;
+  /** Refuses a Run reservation whose fixed recipient the preflight would reject later; must not write. */
+  requireRunRecipient?: (principal: Principal, command: Extract<Command,{type:"runtime.run.reserve"}>, session: RuntimeSessionRecord) => Promise<void>;
   authorizeDynamicMessageRecovery?: (principal: Principal, session: RuntimeSessionRecord) => Promise<boolean>;
   manualStop?: {
     execute(principal:Principal,command:Extract<Command,{type:"session.message.manualStop"}>):ReturnType<WorkflowService["execute"]>;
@@ -93,9 +96,12 @@ export async function buildServer(options: {
   listRuntimeModels?: (provider?: import("@evoloop/contracts/runtime").RuntimeProvider) => Promise<{status:"available"|"empty"|"unavailable";models:string[];
     options?:Array<{model:string;supportedReasoningEfforts:string[];defaultReasoningEffort:string|null}>;
     error:string|null;observedAtUtc:string}>;
+  /** Send-time check of the ordinary-message grant for a post to this owned Session; null when the sender may send. */
+  messageSendAuthority?: (principal: Principal, projectId: string, sessionId: string) => Promise<{ code: "MESSAGE_GRANT_MISSING"; message: string } | null>;
   sessionPreparation?: (input:{projectId:string;sessionId:string;roleId:string;sessionActorId:string;
     cwd:string;authorizationScope:string;model:string|null}) => Promise<{runtimeAvailable:boolean;grantReady:boolean;
     cwdReady:boolean;materialCli:{actorId:string;command:string;ready:boolean}|null;roleActorId:string|null;
+    roleActorState?:import("@evoloop/contracts/session-preparation").RoleActorState;roleActorConfiguredId?:string|null;
     skills:Array<{path:string;commit:string;contentHash:string;readSubcommand:string}>}>;
   readRoleSkill?: (projectId:string,roleId:string,name:string,commit:string,hash:string) =>
     Promise<{path:string;commit:string;contentHash:string;body:string;
@@ -152,7 +158,10 @@ export async function buildServer(options: {
   });
   app.setErrorHandler((error, request, reply) => {
     if (error instanceof z.ZodError) {
-      return reply.code(400).send({ code: "INVALID_INPUT", message: "输入不符合当前接口合同。", issues: error.issues.map(x => ({ path: x.path, code: x.code })) });
+      // The field's own message carries the accepted form and an example (e.g. executeAtUtc); without it the caller cannot fix the input.
+      const first = error.issues.slice(0, 3).map(x => `${x.path.join(".") || "(根)"}：${x.message}`).join("；");
+      return reply.code(400).send({ code: "INVALID_INPUT", message: `输入不符合当前接口合同。${first}`,
+        issues: error.issues.map(x => ({ path: x.path, code: x.code, message: x.message })) });
     }
     if (error instanceof DomainError) return reply.code(errorStatus(error.code)).send({ code: error.code, message: error.message, ...(error.currentVersion === undefined ? {} : { currentVersion: error.currentVersion }) });
     if (error instanceof OrchestrationError) return reply.code(errorStatus(error.code)).send({ code: error.code, message: error.message, ...(error.currentVersion === undefined ? {} : { currentVersion: error.currentVersion }) });
@@ -213,6 +222,14 @@ export async function buildServer(options: {
         return reply.code(result.status === "applied" ? 200 : errorStatus(result.code)).send(result);
       }
     }
+    if (command.type === "session.message.post" && command.target.kind === "owned" && options.messageSendAuthority) {
+      const principal = who(request.principal);
+      // A replay of an operation already journaled goes through execute's own actor/hash check.
+      if (!await options.service.getOperation(principal, command.projectId, command.operationId)) {
+        const problem = await options.messageSendAuthority(principal, command.projectId, command.target.sessionId);
+        if (problem) throw new DomainError(problem.code, problem.message);
+      }
+    }
     if (command.type === "session.input.reply") {
       const principal = who(request.principal);
       // Exact same-ID recovery still goes through execute's actor/hash journal check, even after RPC cleanup.
@@ -246,11 +263,20 @@ export async function buildServer(options: {
     }
     if (command.type.startsWith("runtime.")) {
       if (command.type !== "runtime.handoff.record" && command.type !== "runtime.run.abandonReadOnly" &&
-        command.type !== "runtime.session.executionProfile.revise" && command.type !== "runtime.session.recovery.resume" &&
+        command.type !== "runtime.session.executionProfile.revise" && command.type !== "runtime.session.recovery.resume" && command.type !== "runtime.run.stop" &&
         !options.runtime?.status().available) throw new DomainError("RUNTIME_UNAVAILABLE", "Codex 执行服务尚未配置或当前不可用；本次未登记派发。");
       const principal = who(request.principal);
       if (!principal.projectIds.includes(command.projectId) || (command.type === "runtime.handoff.record" ? !principal.permissions.includes("write") : !principal.permissions.includes("review"))) {
         throw new DomainError("FORBIDDEN", "执行操作需要本项目复核权限。");
+      }
+      if (command.type === "runtime.run.stop") {
+        // review permission (checked above) plus this Session's exact execution grant, as for message recovery. A stop needs no live
+        // runtime: a Run that never dispatched is stopped in the database, and a running one is interrupted by the runner afterwards.
+        // A replay of the original journalled stop stays readable after grant drift; a new stop must match the current grant.
+        if (!await options.service.getOperation(principal, command.projectId, command.operationId)) {
+          const run = await options.service.getRuntimeRun(principal, command.projectId, command.runId);
+          await messageRecoverySession(principal, command.projectId, run.sessionId, true);
+        }
       }
       if (command.type === "runtime.session.reserve") {
         const dynamic = await options.isDynamicSession?.(command.projectId,command.sessionId);
@@ -293,6 +319,7 @@ export async function buildServer(options: {
           throw new DomainError("FORBIDDEN", "当前请求者未获该职责和范围的执行授权。");
         }
         if(!dynamic)await requireActiveModel(session.executionProfile?.revision.model??session.model,sessionProvider(session));
+        await options.requireRunRecipient?.(principal, command, session);
       }
     }
     if (command.type === "schedule.create" || (command.type === "schedule.revise" && command.state === "active")) {
@@ -378,7 +405,13 @@ export async function buildServer(options: {
         operationId:session.operationId}:null,
       profile:profile?{version:profile.version,displayName:profile.displayName,purpose:profile.purpose}:null,
       bound,config,modelCatalog:{status:modelCatalog.status,error:modelCatalog.error,observedAtUtc:modelCatalog.observedAtUtc},
-      missing,recovery:recovery?{gate:recovery.gate,partial:recovery.partial,nextAction:recovery.nextAction}:null,
+      missing,
+      /** For each code in `missing`: the private-configuration key, a fix to copy, and whether a restart is needed. */
+      missingDetails:sessionPreparationHints(missing,{projectId:p.projectId,roleId:q.roleId,sessionActorId:principal.actorId,
+        authorizationScope,cwd,model:selectedModel,roleActorState:config.roleActorState??(config.roleActorId?"ready":"no_entry"),
+        roleActorConfiguredId:config.roleActorConfiguredId??config.roleActorId,materialCliActorId:config.materialCli?.actorId??null,
+        roleActorId:config.roleActorId}),
+      recovery:recovery?{gate:recovery.gate,partial:recovery.partial,nextAction:recovery.nextAction}:null,
       executionProfile:executionProfile?{revision:executionProfile.revision,activationState:executionProfile.activationState,
         activeRevisionId:executionProfile.activeRevisionId,activationOperationId:executionProfile.activationOperationId}:null,
       readyForTasks:!!session&&session.state==="ready"&&bound&&!!profile?.displayName?.trim()&&missing.length===0,

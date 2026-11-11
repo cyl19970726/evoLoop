@@ -172,6 +172,55 @@ test("runtime Run reservation requires a grant for the Session's current model",
   }finally{await app.close();}
 });
 
+test("a malformed executeAtUtc answers 400 INVALID_INPUT with the accepted form and an example, on task.create and task.timing.set alike", async () => {
+  let calls = 0;
+  const app = await buildServer({ credentials, service: { ...workManagementQueries, execute: async () => { calls++; throw Error("must not reach core"); } } as unknown as WorkflowService });
+  try {
+    const id = (n: number) => `40000004-0000-4000-8000-${String(n).padStart(12, "0")}`;
+    const timing = { executeAtUtc: "tomorrow 9am", timezone: "Asia/Shanghai", repeat: "none" };
+    const commands = [
+      { type: "task.create", projectId, operationId: id(1), taskId: id(2), title: "t", content: "c", acceptance: "a", owner: "o", timing },
+      { type: "task.timing.set", projectId, operationId: id(3), taskId: id(2), expectedTaskVersion: 1, expectedTimingVersion: 0, ...timing, scope: "this", reason: "r" },
+    ];
+    for (const payload of commands) {
+      const response = await app.inject({ method: "POST", url: "/api/commands", headers: { authorization: `Bearer ${token}` }, payload });
+      assert.equal(response.statusCode, 400, response.body);
+      const body = response.json() as { code: string; message: string; issues: { path: unknown[]; message: string }[] };
+      assert.equal(body.code, "INVALID_INPUT");
+      assert.match(body.message, /2026-11-12T04:00:00\.000Z/, "the user-visible message shows the example");
+      assert.ok(body.issues.some(issue => issue.path.includes("executeAtUtc") && /2026-11-12T04:00:00\.000Z/.test(issue.message)));
+    }
+    assert.equal(calls, 0);
+  } finally { await app.close(); }
+});
+
+test("a Run reservation the recipient check refuses is rejected before the command is executed", async () => {
+  const sessionId="00000000-0000-4000-8000-000000000031",taskId="00000000-0000-4000-8000-000000000032";
+  let writes=0,refuse=true;
+  const app=await buildServer({credentials,service:{...workManagementQueries,
+    getRuntimeSession:async()=>({id:sessionId,roleId:"approved-role",authorizationScope:"task:approved",
+      cwd:"/tmp/approved",sandbox:"read-only",approvalPolicy:"on-request",model:"approved-model"}),
+    execute:async(_principal:unknown,command:{operationId:string})=>{writes++;
+      return{status:"applied",operationId:command.operationId,entityId:sessionId,version:1};},
+  } as unknown as WorkflowService,
+  runtime:{status:()=>({available:true,error:null,faults:[]})} as unknown as Parameters<typeof buildServer>[0]['runtime'],
+  listRuntimeModels:async()=>({status:"available",models:["approved-model"],error:null,observedAtUtc:new Date().toISOString()}),
+  hasRuntimeGrant:()=>true,
+  requireRunRecipient:async()=>{ if(refuse) throw new DomainError("RECIPIENT_UNBOUND","分派没有固定执行接收者；未创建 Run。"); }});
+  try{
+    const payload={type:"runtime.run.reserve",projectId,operationId:"00000000-0000-4000-8000-000000000033",
+      runId:"00000000-0000-4000-8000-000000000034",taskId,sessionId,expectedVersion:1,input:"fixed input"};
+    const url="/api/commands",headers={authorization:`Bearer ${token}`};
+    const denied=await app.inject({method:"POST",url,headers,payload});
+    assert.notEqual(denied.statusCode,200,denied.body);
+    assert.match(denied.body,/RECIPIENT_UNBOUND/);
+    assert.equal(writes,0,"no Run is reserved");
+    refuse=false;
+    assert.equal((await app.inject({method:"POST",url,headers,payload})).statusCode,200);
+    assert.equal(writes,1);
+  }finally{await app.close();}
+});
+
 test("schedule status scopes grants to the caller and active commands require an exact current grant", async () => {
   const otherProject = "00000000-0000-4000-8000-000000000099";
   const otherToken = "b".repeat(40);
@@ -318,4 +367,35 @@ test("workbench path addresses load the page; API and unknown files keep their o
     assert.equal((await app.inject({ url: "/api/session" })).statusCode, 401, "API stays behind the token");
     assert.equal((await app.inject({ url: "/assets/missing.js" })).statusCode, 404, "a missing asset is not the page");
   } finally { await app.close(); await rm(webRoot, { recursive: true, force: true }); }
+});
+
+test("runtime.run.stop needs review permission and the Session's exact execution grant, needs no live runtime, and a replay survives grant drift", async () => {
+  const sessionId="00000000-0000-4000-8000-000000000041",runId="00000000-0000-4000-8000-000000000042";
+  let writes=0,granted=true,journalled=false;
+  const readerToken="r".repeat(40);
+  const identities=authConfigSchema.parse([...credentials,{token:readerToken,actorId:"writer",projectIds:[projectId],permissions:["read","write"]}]);
+  const app=await buildServer({credentials:identities,service:{...workManagementQueries,
+    getRuntimeRun:async()=>({id:runId,projectId,sessionId}),
+    getRuntimeSession:async()=>({id:sessionId,roleId:"approved-role",authorizationScope:"task:approved",cwd:"/tmp/approved",sandbox:"danger-full-access",approvalPolicy:"never",model:"approved-model",state:"ready"}),
+    getOperation:async()=>journalled?{id:"x"}:null,
+    execute:async(_principal:unknown,command:{operationId:string})=>{writes++;return{status:"applied",operationId:command.operationId,entityId:runId,version:2};},
+  } as unknown as WorkflowService,
+  runtime:{status:()=>({available:false,error:"offline",faults:[]})} as unknown as Parameters<typeof buildServer>[0]['runtime'],
+  hasRuntimeGrant:()=>granted});
+  try{
+    const post=(operationId:string,tokenValue=token)=>app.inject({method:"POST",url:"/api/commands",headers:{authorization:`Bearer ${tokenValue}`},
+      payload:{type:"runtime.run.stop",projectId,operationId,runId,expectedVersion:1,reason:"Scope changed"}});
+    const op="00000000-0000-4000-8000-000000000043";
+    assert.equal((await post(op,readerToken)).statusCode,403,"a writer without review is refused");
+    granted=false;
+    const noGrant=await post(op);
+    assert.equal(noGrant.statusCode,403,noGrant.body);
+    assert.equal(writes,0,"nothing is written without the exact grant");
+    granted=true;
+    const ok=await post(op);
+    assert.equal(ok.statusCode,200,ok.body);
+    assert.equal(writes,1,"the stop goes through although the native runtime is offline");
+    granted=false;journalled=true;
+    assert.equal((await post(op)).statusCode,200,"the journalled stop can be replayed after the grant changed");
+  }finally{await app.close();}
 });
