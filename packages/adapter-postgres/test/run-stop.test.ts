@@ -7,6 +7,7 @@ import { submitOrdinaryRun } from '@evoloop/core/ordinary-run-submission';
 import { migrate, PostgresUnitOfWork } from '../src/index.ts';
 import { PgOrdinaryRunSubmissionStore } from '../src/ordinary-run-submission.ts';
 import { PgSessionMessages } from '../src/session-messages.ts';
+import { SessionMessageService } from '../../core/src/session-messages/index.ts';
 import { readLeaderWorkTask } from '../src/work-index.ts';
 
 const url = process.env.TEST_DATABASE_URL;
@@ -33,17 +34,17 @@ after(async () => {
   try { await c.query(`DROP SCHEMA "${schema}" CASCADE`); } finally { await c.end(); }
 });
 
-interface Fixture { runId: string; sessionId: string; taskId: string; revisionId: string; operationId: string }
+interface Fixture { runId: string; sessionId: string; taskId: string; revisionId: string; operationId: string; threadId: string }
 async function fixture(state: 'requested' | 'dispatching' | 'running', withMessage = false): Promise<Fixture> {
   const sessionId = randomUUID(), runId = randomUUID(), operationId = randomUUID(), taskId = randomUUID(), revisionId = randomUUID(),
-    basisId = randomUUID(), documentId = randomUUID(), docRevisionId = randomUUID(), now = new Date().toISOString();
+    basisId = randomUUID(), documentId = randomUUID(), docRevisionId = randomUUID(), now = new Date().toISOString(), threadId = randomUUID();
   const c = await pool.connect();
   try {
     await c.query('BEGIN');
     await c.query(`INSERT INTO runtime_session(project_id,session_id,role_id,cwd,authorization_scope,sandbox,approval_policy,state,version,
       native_thread_id,native_session_id,operation_id,actor_id,created_at,updated_at)
       VALUES($1,$2,$3,'/tmp/run-stop','project','danger-full-access','never','ready',1,$4,$4,$5,'worker',$6,$6)`,
-      [project, sessionId, role, `native-${sessionId}`, randomUUID(), now]);
+      [project, sessionId, role, threadId, randomUUID(), now]);
     await c.query("INSERT INTO process_document(project_id,document_id,title,version,current_revision_id,kind,status) VALUES($1,$2,'Fixed Task',1,$3,'task','draft')", [project, documentId, docRevisionId]);
     await c.query("INSERT INTO document_revision(project_id,document_id,revision_id,body,format,content_hash,author,created_at,reason) VALUES($1,$2,$3,'Fixed task','markdown',$4,'lead',$5,'fixture')", [project, documentId, docRevisionId, 'a'.repeat(64), now]);
     await c.query(`INSERT INTO task(project_id,task_id,version,current_revision_id,title,acceptance,owner,state,content_document_id,content_revision_id)
@@ -63,7 +64,7 @@ async function fixture(state: 'requested' | 'dispatching' | 'running', withMessa
       state,version,created_at,updated_at) VALUES($1,$2,$3,'owned',$4,'lead','Please also check X',$5,$6,'queued',1,$7,$7)`, [project, randomUUID(), randomUUID(), sessionId, taskId, revisionId, now]);
     await c.query('COMMIT');
   } catch (error) { await c.query('ROLLBACK'); throw error; } finally { c.release(); }
-  return { runId, sessionId, taskId, revisionId, operationId };
+  return { runId, sessionId, taskId, revisionId, operationId, threadId };
 }
 async function fixtureRunOn(f: Fixture, state: string): Promise<string> {
   const id = randomUUID(), now = new Date().toISOString();
@@ -248,7 +249,8 @@ test('F5: the work index reports a stopped Run as stopped on request, not as rew
 test('F8: a blocked signed intent is voided and runtime.run.reserve can dispatch the Task again after a stop', async () => {
   const f = await fixture('running');
   const signed = await signedIntent(f);
-  await pool.query("UPDATE ordinary_run_submission SET state='blocked',reason='waiting' WHERE submission_id=$1", [signed.submissionId]).catch(() => undefined);
+  await pool.query("UPDATE ordinary_run_submission SET state='blocked',reason='waiting',version=version+1,updated_at_utc=now() WHERE submission_id=$1", [signed.submissionId]);
+  assert.equal((await pool.query('SELECT state FROM ordinary_run_submission WHERE submission_id=$1', [signed.submissionId])).rows[0].state, 'blocked', 'the intent is blocked before the stop');
   assert.equal((await stop(f)).status, 'applied');
   assert.deepEqual((await pool.query('SELECT state,reason FROM ordinary_run_submission WHERE submission_id=$1', [signed.submissionId])).rows[0], { state: 'rejected', reason: 'RUN_STOPPED' });
   await runtime.recordTurn(project, f.runId, `turn-${f.runId}`, 'interrupted', 'Interrupted', { completedAtUtc: new Date().toISOString() });
@@ -258,16 +260,15 @@ test('F8: a blocked signed intent is voided and runtime.run.reserve can dispatch
   assert.equal(await gatePhase(f), 'open', 'the Session takes the new Run at once');
 });
 
-test('F8: stopping a Run that holds a queue claim keeps the gate protection the queue needs', async () => {
-  const f = await fixture('running');
+async function withQueueClaim(f: Fixture) {
   const queue = randomUUID(), entry = randomUUID(), claim = randomUUID(), revision = randomUUID();
   const c = await pool.connect();
   try {
     await c.query('BEGIN');
     await c.query(`INSERT INTO role_definition(project_id,role_id,version,current_revision_id,state,proposed_by,created_at_utc,review_at_utc,trial_started_at_utc)
-      VALUES($1,$2,1,$3,'trial','lead',now(),now()+interval '1 day',now())`, [project, role, revision]);
+      VALUES($1,$2,1,$3,'trial','lead',now(),now()+interval '1 day',now()) ON CONFLICT DO NOTHING`, [project, role, revision]);
     await c.query(`INSERT INTO role_revision(project_id,role_id,revision_id,version,state,proposal,actor_id,reason,created_at_utc,review_at_utc)
-      VALUES($1,$2,$3,1,'trial','{}'::jsonb,'lead','fixture',now(),now()+interval '1 day')`, [project, role, revision]);
+      VALUES($1,$2,$3,1,'trial','{}'::jsonb,'lead','fixture',now(),now()+interval '1 day') ON CONFLICT DO NOTHING`, [project, role, revision]);
     await c.query(`INSERT INTO resident_queue(project_id,queue_id,version,adopted_version,max_runs,adopted_by,adopted_at,reason,actor_id)
       VALUES($1,$2,1,1,3,'lead',now(),'stop with claim','lead')`, [project, queue]);
     await c.query(`INSERT INTO resident_queue_entry(project_id,queue_id,entry_id,task_id,task_revision_id,source_input_json,session_id,role_id,position,consumer_id,use_required,release_rule,state,claim_id)
@@ -276,8 +277,88 @@ test('F8: stopping a Run that holds a queue claim keeps the gate protection the 
     await c.query('INSERT INTO resident_queue_attempt(project_id,claim_id,sequence,run_id,operation_id,task_revision_id) VALUES($1,$2,1,$3,$4,$5)', [project, claim, f.runId, f.operationId, f.revisionId]);
     await c.query('COMMIT');
   } catch (error) { await c.query('ROLLBACK'); throw error; } finally { c.release(); }
+}
+
+test('F8: stopping a Run that holds a queue claim keeps the gate protection the queue needs', async () => {
+  const f = await fixture('running');
+  await withQueueClaim(f);
   assert.equal((await stop(f)).status, 'applied');
   await runtime.markRunUnknown(project, f.runId, 'runner lost the Turn');
   await runtime.recordTurn(project, f.runId, `turn-${f.runId}`, 'interrupted', 'verified', { completedAtUtc: new Date().toISOString() });
   assert.notEqual(await gatePhase(f), 'open', 'a Run inside a queue claim keeps its gate: the queue decides the retry, the stop does not skip it');
+});
+
+test('F8: a stopped Run inside a queue claim that ends directly closes the gate for the queue to decide', async () => {
+  const f = await fixture('running');
+  await withQueueClaim(f);
+  assert.equal((await stop(f)).status, 'applied');
+  await runtime.recordTurn(project, f.runId, `turn-${f.runId}`, 'interrupted', 'Interrupted on request', { completedAtUtc: new Date().toISOString() });
+  assert.equal(await gatePhase(f), 'blocked', 'the claim keeps the closing: only the queue (or a reviewer) reopens it');
+});
+
+test('review 1: a superseded message cannot leave the gate pointing at it, through unknown or after a cancel', async () => {
+  // Through unknown: the stop supersedes the queued message first, so the gate must not wait on it.
+  const f = await fixture('running', true);
+  assert.equal((await stop(f)).status, 'applied');
+  await runtime.markRunUnknown(project, f.runId, 'runner lost the Turn');
+  const blocked = (await pool.query('SELECT phase,resume_message_id FROM session_recovery_gate WHERE session_id=$1', [f.sessionId])).rows[0];
+  assert.equal(blocked.phase, 'blocked'); assert.equal(blocked.resume_message_id, null, 'the superseded message is not chosen as the next one');
+  await runtime.recordTurn(project, f.runId, `turn-${f.runId}`, 'interrupted', 'verified', { completedAtUtc: new Date().toISOString() });
+  assert.equal(await gatePhase(f), 'open', 'the Session can take a new Run');
+  // A gate that already points at the message (as before the fix): reopened straight to open, not message_pending.
+  const g = await fixture('running', true);
+  const messageId = (await pool.query('SELECT message_id FROM session_message WHERE session_id=$1', [g.sessionId])).rows[0].message_id;
+  await runtime.markRunUnknown(project, g.runId, 'runner lost the Turn');
+  await pool.query("UPDATE session_recovery_gate SET resume_message_id=$2,version=version+1 WHERE session_id=$1", [g.sessionId, messageId]);
+  assert.equal((await stop(g, 2)).status, 'applied');
+  await runtime.recordTurn(project, g.runId, `turn-${g.runId}`, 'interrupted', 'verified', { completedAtUtc: new Date().toISOString() });
+  assert.equal(await gatePhase(g), 'open', 'a superseded pointer is dropped, not waited on');
+  // Cancelling the message a message_pending gate waits on releases the gate.
+  const h = await fixture('running', true);
+  const waiting = (await pool.query('SELECT message_id,version FROM session_message WHERE session_id=$1', [h.sessionId])).rows[0];
+  await pool.query("UPDATE session_recovery_gate SET phase='message_pending',resume_message_id=$2,cause_kind='run',cause_id=$3,cause_state='failed',version=version+1 WHERE session_id=$1", [h.sessionId, waiting.message_id, h.runId]);
+  const cancelled = await workflow.execute(reviewer, { type: 'session.message.cancel', projectId: project, operationId: randomUUID(), messageId: waiting.message_id, expectedVersion: waiting.version, reason: 'no longer wanted' } as never);
+  assert.equal(cancelled.status, 'applied', JSON.stringify(cancelled));
+  assert.equal(await gatePhase(h), 'open', 'cancelling the awaited message frees the Session');
+});
+
+test('review 2: a stopped unknown Run with an approved but never-sent start ends failed and reopens the gate; it cannot be approved', async () => {
+  const f = await fixture('dispatching');
+  assert.equal((await stop(f)).status, 'applied');
+  const proof = { threadId: f.threadId, operationId: f.operationId, requestId: 1, code: -32600 as const, inputHash: null };
+  const unknown = await runtime.markRunUnknown(project, f.runId, 'pre-turn refused', proof);
+  assert.equal(unknown.state, 'unknown'); assert.equal(unknown.preTurnProof?.status, 'observed'); assert.equal(unknown.nativeTurnId, null);
+  assert.equal(await gatePhase(f), 'blocked');
+  const gateVersion = (await pool.query('SELECT version FROM session_recovery_gate WHERE session_id=$1', [f.sessionId])).rows[0].version;
+  await assert.rejects(runtime.approvePreTurnContinuation(project, f.runId, reviewer, { operationId: randomUUID(), sessionId: f.sessionId,
+    originalOperationId: f.operationId, expectedVersion: unknown.version, expectedGateVersion: gateVersion, evidenceRef: 'e', reason: 'r' }), { code: 'RUN_STOPPED' });
+  assert.equal(await runtime.claimPreTurnContinuation(project, f.runId), null, 'unreviewed evidence leaves the Run alone');
+  assert.equal((await run(f))!.state, 'unknown');
+  // An approval granted before the stop (the review path itself is covered by the pre-turn tests) is not carried out either.
+  await pool.query('ALTER TABLE runtime_run DISABLE TRIGGER runtime_run_pre_turn_guard');
+  try {
+    await pool.query(`UPDATE runtime_run SET pre_turn_proof=jsonb_set(jsonb_set(pre_turn_proof,'{status}','"approved"'),'{gateVersionAtApproval}',$2::text::jsonb),version=version+1
+      WHERE run_id=$1`, [f.runId, String(gateVersion)]);
+  } finally { await pool.query('ALTER TABLE runtime_run ENABLE TRIGGER runtime_run_pre_turn_guard'); }
+  assert.equal(await runtime.claimPreTurnContinuation(project, f.runId), null, 'the claim never hands a stopped Run a start permit');
+  const ended = (await run(f))!;
+  assert.equal(ended.state, 'failed', 'it is ended instead of retried every round');
+  assert.equal(await gatePhase(f), 'open', 'the gate it closed opens again');
+});
+
+test('review 4: the pre-dispatch check refuses a superseded message; the migration clauses are in the function bodies', async () => {
+  const f = await fixture('running', true);
+  assert.equal((await stop(f)).status, 'applied');
+  const messageId = (await pool.query('SELECT message_id FROM session_message WHERE session_id=$1', [f.sessionId])).rows[0].message_id;
+  const service = new SessionMessageService({ uow, clock: { now: () => new Date().toISOString() }, ids: { next: randomUUID },
+    grantFor: async () => ({ projectId: project, sessionId: f.sessionId, senderActorId: 'lead', receiverRoleId: role, receiverActorId: 'worker', cwd: '/tmp/run-stop', maxTurns: 3, enabled: true }) } as never);
+  await assert.rejects(service.preflightDispatch(project, messageId), { code: 'MESSAGE_SUPERSEDED' });
+  const defs = Object.fromEntries((await pool.query(`SELECT proname, pg_get_functiondef(oid) AS def FROM pg_proc WHERE pronamespace=current_schema()::regnamespace
+    AND proname IN ('session_recovery_run_outcome','session_recovery_message_outcome','session_recovery_message_cancelled','session_recovery_resume_usable')`)).rows.map(r => [r.proname, r.def]));
+  assert.match(defs.session_recovery_run_outcome, /stop_requested_at/, '078 clause');
+  assert.match(defs.session_recovery_run_outcome, /claim\.claim_id IS NULL THEN RETURN NEW/, '079 queue-claim clause');
+  assert.match(defs.session_recovery_run_outcome, /Stopped Run reconciled/, '079 reconcile clause');
+  assert.match(defs.session_recovery_run_outcome, /superseded_confirmed_at IS NOT NULL/, '079 superseded selection');
+  assert.match(defs.session_recovery_message_outcome, /superseded_confirmed_at IS NOT NULL/, '079 superseded selection in the message trigger');
+  assert.ok(defs.session_recovery_message_cancelled && defs.session_recovery_resume_usable, '079 functions exist');
 });

@@ -23,6 +23,32 @@ BEGIN
   RETURN NEW;
 END $$;
 
+-- The message a recovery gate waits to resume must still be one the Session will take: queued, and not held back as superseded.
+CREATE FUNCTION session_recovery_resume_usable(p_project uuid,p_message uuid) RETURNS boolean LANGUAGE sql STABLE AS $$
+  SELECT EXISTS(SELECT 1 FROM session_message m WHERE m.project_id=p_project AND m.message_id=p_message AND m.state='queued'
+    AND (m.superseded_at IS NULL OR m.superseded_confirmed_at IS NOT NULL))
+$$;
+
+-- Cancelling the message a message_pending gate waits on releases the gate, so a
+-- superseded message cancelled by its sender cannot leave the Session stuck.
+CREATE FUNCTION session_recovery_message_cancelled() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE gate record;
+BEGIN
+  IF NEW.target_kind<>'owned' THEN RETURN NEW; END IF;
+  PERFORM session_recovery_slot_lock(NEW.project_id,NEW.session_id);
+  SELECT * INTO gate FROM session_recovery_gate WHERE project_id=NEW.project_id AND session_id=NEW.session_id FOR UPDATE;
+  IF NOT FOUND OR gate.resume_message_id IS DISTINCT FROM NEW.message_id THEN RETURN NEW; END IF;
+  IF gate.phase='message_pending' THEN
+    UPDATE session_recovery_gate SET phase=CASE WHEN claim_id IS NULL THEN 'open' ELSE 'awaiting_acceptance' END,
+      cause_kind=CASE WHEN claim_id IS NULL THEN NULL ELSE cause_kind END,cause_id=CASE WHEN claim_id IS NULL THEN NULL ELSE cause_id END,
+      resume_message_id=NULL,version=version+1,updated_at=now()
+      WHERE project_id=NEW.project_id AND session_id=NEW.session_id;
+  END IF; -- a blocked gate keeps its pointer: the recovery decision names and clears a cancelled pin (session-messages tests)
+  RETURN NEW;
+END $$;
+CREATE TRIGGER session_message_recovery_cancelled AFTER UPDATE OF state ON session_message
+  FOR EACH ROW WHEN (NEW.state='cancelled' AND OLD.state<>'cancelled') EXECUTE FUNCTION session_recovery_message_cancelled();
+
 -- F3 and the queue-claim guard: patch the recovery-gate function in place (as 078 did), on top of whatever earlier or parallel
 -- migrations put in it; a missing anchor fails the migration.
 DO $$
@@ -40,13 +66,22 @@ BEGIN
     E'  SELECT * INTO gate FROM session_recovery_gate WHERE project_id=NEW.project_id AND session_id=NEW.session_id FOR UPDATE;\n' ||
     E'  IF TG_OP=''UPDATE'' AND OLD.state=''unknown'' AND NEW.stop_requested_at IS NOT NULL AND NEW.state IN (''failed'',''interrupted'',''completed'')\n' ||
     E'     AND gate.phase=''blocked'' AND gate.cause_kind=''run'' AND gate.cause_id=NEW.run_id AND gate.claim_id IS NULL THEN\n' ||
-    E'    UPDATE session_recovery_gate SET phase=CASE WHEN resume_message_id IS NOT NULL THEN ''message_pending'' ELSE ''open'' END,\n' ||
-    E'      cause_kind=CASE WHEN resume_message_id IS NOT NULL THEN cause_kind END,cause_id=CASE WHEN resume_message_id IS NOT NULL THEN cause_id END,\n' ||
-    E'      cause_state=CASE WHEN resume_message_id IS NOT NULL THEN cause_state END,\n' ||
+    E'    UPDATE session_recovery_gate SET phase=CASE WHEN session_recovery_resume_usable(project_id,resume_message_id) THEN ''message_pending'' ELSE ''open'' END,\n' ||
+    E'      cause_kind=CASE WHEN session_recovery_resume_usable(project_id,resume_message_id) THEN cause_kind END,cause_id=CASE WHEN session_recovery_resume_usable(project_id,resume_message_id) THEN cause_id END,\n' ||
+    E'      cause_state=CASE WHEN session_recovery_resume_usable(project_id,resume_message_id) THEN cause_state END,\n' ||
+    E'      resume_message_id=CASE WHEN session_recovery_resume_usable(project_id,resume_message_id) THEN resume_message_id END,\n' ||
     E'      reason=''Stopped Run reconciled'',decision_operation_id=NULL,retry_run_id=NULL,version=version+1,updated_at=now()\n' ||
     E'      WHERE project_id=NEW.project_id AND session_id=NEW.session_id AND version=gate.version;\n' ||
     E'    RETURN NEW;\n' ||
     E'  END IF;\n');
   IF patched = def THEN RAISE EXCEPTION 'session_recovery_run_outcome has no gate-lock anchor to patch'; END IF;
+  def := patched;
+  -- The message a closing gate waits on is never one held back as superseded (it would not be selected again).
+  patched := replace(def, 'AND m.state=''queued''', 'AND m.state=''queued'' AND (m.superseded_at IS NULL OR m.superseded_confirmed_at IS NOT NULL)');
+  IF patched = def THEN RAISE EXCEPTION 'session_recovery_run_outcome has no queued-message selection to patch'; END IF;
+  EXECUTE patched;
+  def := pg_get_functiondef('session_recovery_message_outcome()'::regprocedure);
+  patched := replace(def, 'AND m.state=''queued''', 'AND m.state=''queued'' AND (m.superseded_at IS NULL OR m.superseded_confirmed_at IS NOT NULL)');
+  IF patched = def THEN RAISE EXCEPTION 'session_recovery_message_outcome has no queued-message selection to patch'; END IF;
   EXECUTE patched;
 END $$;

@@ -426,6 +426,8 @@ export class RuntimeWorkflowService {
       const run=required(await tx.getRuntimeRun(runId),"runtime run");
       const session=required(await tx.getRuntimeSession(run.sessionId),"runtime session");
       const gate=required(await tx.recovery?.lockRecoveryGate(run.sessionId)??null,"recovery gate");
+      // A stopped Run is never continued: its approved start would only run work somebody asked to stop.
+      if(run.stopRequestedAt)throw new DomainError("RUN_STOPPED","a Run stopped on request cannot be continued");
       const proof=run.preTurnProof;
       if(run.version!==command.expectedVersion||run.sessionId!==command.sessionId||
         run.operationId!==command.originalOperationId||run.state!=="unknown"||run.nativeTurnId||
@@ -462,7 +464,15 @@ export class RuntimeWorkflowService {
   async claimPreTurnContinuation(projectId:string,runId:string):Promise<RuntimeRunRecord|null>{
     return this.deps.uow.transaction(projectId,async tx=>{
       const run=required(await tx.getRuntimeRun(runId),"runtime run");
-      if(run.state!=="unknown"||run.preTurnProof?.status!=="approved"||run.nativeTurnId||run.stopRequestedAt)return null;
+      if(run.state!=="unknown"||run.preTurnProof?.status!=="approved"||run.nativeTurnId)return null;
+      if(run.stopRequestedAt){
+        // The approved start was never sent and nobody will send it now: the stopped Run ends failed, which reopens the gate it closed.
+        const ended={...run,state:"failed" as const,version:run.version+1,updatedAt:this.deps.clock.now(),
+          resultSummary:"Stopped on request; the approved native start was never sent"};
+        await tx.updateRuntimeRun(ended,run.version);
+        await this.emit(tx,runId,run.sessionId,"run.status",ended.resultSummary!,null,projectId);
+        return null;
+      }
       const session=required(await tx.getRuntimeSession(run.sessionId),"runtime session");
       const gate=required(await tx.recovery?.lockRecoveryGate(run.sessionId)??null,"recovery gate");
       if(gate.phase!=="blocked"||gate.causeKind!=="run"||gate.causeId!==run.id||
