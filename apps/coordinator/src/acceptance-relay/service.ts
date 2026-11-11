@@ -1,6 +1,7 @@
 import { judgeMyDelivery } from "@evoloop/contracts/delivery-for-me";
 import type { LeaderWorkTask } from "@evoloop/contracts/work-index";
 import { readLeaderWorkTasks } from "@evoloop/adapter-postgres/work-index";
+import { observationLinkProblem } from "./observation-link.js";
 import { createHash } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import type { Principal, RuntimeSessionRecord } from "@evoloop/contracts";
@@ -54,6 +55,8 @@ export class AcceptanceRelayService {
     qualify(input: { projectId: string; session: RuntimeSessionRecord; senderActorId: string; receiverActorId: string }): Promise<string | null>;
     /** Capability gaps for one exact Session and sender. Read-only; no grant is created here. */
     capabilities(input: { projectId: string; session: RuntimeSessionRecord; senderActorId: string; receiverActorId: string }): Promise<string[]>;
+    /** The business CLI identity this Session signs as: who an arrangement would name as recipient. Null when none is bound. */
+    boundRecipient?(projectId: string, session: RuntimeSessionRecord): Promise<string | null>;
   }) {}
 
   async arrange(principal: Principal, input: AcceptanceArrangeInput): Promise<AcceptanceRelayRecord> {
@@ -291,8 +294,11 @@ export class AcceptanceRelayService {
       if (r.state === "ready" && r.native_thread_id) {
         try {
           const session = await this.deps.workflow.getRuntimeSession(principal, projectId, r.session_id);
+          // An arrangement names the Session's CLI-bound identity, not the Session creator (runtime_session.actor_id);
+          // with no binding the creator is kept, so RECIPIENT_BINDING_MISSING is still reported for real.
+          const receiverActorId = await this.deps.boundRecipient?.(projectId, session) ?? r.actor_id;
           missingCapabilities = await this.deps.capabilities({ projectId, session,
-            senderActorId: principal.actorId, receiverActorId: r.actor_id });
+            senderActorId: principal.actorId, receiverActorId });
         } catch {
           missingCapabilities = ["SESSION_READBACK_FAILED"];
         }
@@ -375,15 +381,15 @@ export class AcceptanceRelayService {
           if(principal.identityKind==="human"||observation.observer_kind!=="agent")
             throw new DomainError("AGENT_OBSERVER_REQUIRED","Agent recipient credential required");
           const process=(await client.query(`SELECT p.state,p.native_turn_id,p.session_id,
-            rr.actor_id,o.created_at>=p.updated_at AS after_completion,
-            o.created_at>=rr.recorded_at AS after_read FROM session_message_processing p
+            rr.actor_id,o.created_at>=rr.recorded_at AS after_read
+            FROM session_message_processing p
             LEFT JOIN session_message_read_receipt rr ON rr.project_id=p.project_id AND rr.message_id=p.message_id
               AND rr.actor_id=$3 JOIN consumer_observation o ON o.project_id=p.project_id AND o.observation_id=$4
             WHERE p.project_id=$1 AND p.message_id=$2`,
             [projectId,item.message_id,principal.actorId,observationId])).rows[0];
-          if(process?.state!=="completed"||!process.native_turn_id||!process.actor_id||
-            process.session_id!==item.session_id||!process.after_completion||!process.after_read)
-            throw new DomainError("ACCEPTANCE_NOT_USED","Recipient message, native Turn and read receipt must be observed");
+          const problem=observationLinkProblem(process?{state:process.state,nativeTurnId:process.native_turn_id,
+            sessionId:process.session_id,readReceiptActorId:process.actor_id,afterRead:!!process.after_read}:undefined,item.session_id);
+          if(problem)throw problem;
         }
         await client.query(`INSERT INTO task_acceptance_observation_link(project_id,relay_id,observation_id,
           operation_id,actor_id,evidence_level,linked_at) VALUES($1,$2,$3,$4,$5,$6,now())`,

@@ -60,6 +60,8 @@ Document 增加可空用途 kind 与 draft/published/archived；发布指针沿�
 
 `DocumentRevision` 是 PostgreSQL 中不可变的过程文档正文修订，含作者、创建时间、内容校验、格式、创建时的权限范围与所读基线；新增修订须按预期基线提交，旧基线冲突须显式返回。Task 与 Document 可多对多建立普通导航链接，只指向稳定 documentId；任务开始或执行时，再由 TaskBasis 固定实际采用的其他 DocumentRevision。任务引用某需求不意味着其他关联任务自动采用它。
 
+**身份的额外命令。** 身份文件的每条凭据除 `permissions` 外可有 `extraCommands`，只能写 `document.archive` 与 `document.restore`，写别的命令则服务启动读文件时即拒绝。清单与 `permissions` 分开存放，不改变任何 `review` 判断：持有清单项的身份在本项目有 `write` 时，只对清单里那一条命令免去 `review` 要求，每条命令各自生效（归档不含恢复），`task.start`、`task.close`、`document.publish` 等仍要 `review`。身份文件在服务启动时读取，改了要重启服务才生效。
+
 Git 文档不创建 Document 行；独立 `GitSourceRef`（或等价来源元数据）保存稳定仓库身份、repo/path/commit、原始字节 hash、读取校验和可达状态。Git 正文及 commit 仍由对应仓库维护，发布 HTML 是只读派生视图。
 
 Document 目录列表返回 ID、标题、类型、状态、当前修订和内容格式等摘要；点行后按授权读取所选不可变 DocumentRevision 的完整载荷，不依赖 Task 描述字段或外链再取内容。修订可采用 Markdown、HTML 等格式；详情层解析 Markdown，HTML 报告可保留原件并预览。固定修订的 hash 必须在读取时核验，缺失资源或无权读取时明确显示不完整/不可达，不用旧摘要伪装完整正文。

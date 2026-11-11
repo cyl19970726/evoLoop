@@ -80,6 +80,8 @@ export interface LeaderWorkAssignment {
 export interface LeaderWorkRunFact {
   runId: string;
   state: "requested" | "dispatching" | "running" | "unknown" | "completed" | "failed" | "interrupted";
+  /** The Run was stopped on request (runtime.run.stop); its failed/interrupted end is not work to redo. */
+  stopped?: { at: string; reason: string | null };
 }
 
 export interface LeaderWorkDeliveryFact {
