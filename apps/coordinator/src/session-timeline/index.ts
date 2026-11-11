@@ -72,14 +72,15 @@ const exactInput=(raw:WorkspaceEntry,source:NativeInputSource|null):raw is Works
   if(raw.clientId!==null)return raw.clientId===source.operationId&&(!marker||markerMatches);
   return markerMatches;
 };
-const nativeInputNotice=(raw:WorkspaceMessage,reason:'unassociated'|'duplicate'|'conflict'='unassociated'):WorkspaceEntry=>({
+type InputNoticeReason='unassociated'|'duplicate'|'conflict'|'compacted';
+const nativeInputNotice=(raw:WorkspaceMessage,reason:InputNoticeReason='unassociated'):WorkspaceEntry=>({
   id:raw.id,turnId:raw.turnId,nativeItemId:raw.nativeItemId,nativeKind:raw.nativeKind,
   author:{kind:'native',id:null,label:'原生输入'},origin:null,occurredAt:raw.occurredAt,
   observedAt:raw.observedAt,freshness:raw.freshness,truncated:false,
   ...(raw.order?{order:raw.order}:{}),kind:'notice',
-  label:reason==='duplicate'?'重复的原生输入':reason==='conflict'?'标识冲突的原生输入':'未关联的原生输入',
+  label:reason==='duplicate'?'重复的原生输入':reason==='conflict'?'标识冲突的原生输入':reason==='compacted'?'压缩后无法对应的原生输入':'未关联的原生输入',
   body:reason==='duplicate'?'此原生输入重复指向同一业务来源；其独立身份未核实。':
-    reason==='conflict'?'原生输入的标识互相冲突，无法核实发送者。':'未能核实此原生输入的业务发送者。',
+    reason==='conflict'?'原生输入的标识互相冲突，无法核实发送者。':reason==='compacted'?'上下文压缩后，此原生输入的业务标记已不在，无法对应到业务发送者；这不表示来源不明，业务消息仍可独立读取。':'未能核实此原生输入的业务发送者。',
   state:raw.state,
 });
 const inputNoticeReason=(raw:WorkspaceMessage,source:NativeInputSource|null,duplicate=false):'unassociated'|'duplicate'|'conflict'=>{
@@ -88,6 +89,19 @@ const inputNoticeReason=(raw:WorkspaceMessage,source:NativeInputSource|null,dupl
       (raw.clientId!==source.operationId||raw.inputReference.source!==source.kind||
         raw.inputReference.operationId!==source.operationId))return 'conflict';
   return 'unassociated';
+};
+/** What one Turn's visible entries say about itself: whether native context compaction ran in it, and how many inputs it holds. */
+interface TurnContext{compacted:boolean;inputs:number}
+const turnContexts=(entries:readonly WorkspaceEntry[]):Map<string,TurnContext>=>{
+  const contexts=new Map<string,TurnContext>();
+  for(const entry of entries){
+    if(!entry.turnId)continue;
+    const context=contexts.get(entry.turnId)??{compacted:false,inputs:0};
+    if(entry.nativeKind==='contextCompaction')context.compacted=true;
+    if(entry.kind==='message'&&entry.role==='input')context.inputs+=1;
+    contexts.set(entry.turnId,context);
+  }
+  return contexts;
 };
 const runInput=(raw:WorkspaceMessage,source:Extract<NativeInputSource,{kind:'run'}>):WorkspaceMessage=>{
   const {inputReference:_,...publicInput}=raw;
@@ -288,6 +302,7 @@ export class SessionTimelineService {
     const associations=await this.sources(scope.projectId,scope.sessionId,turns);
     const bindings=await this.inputBindings(principal,scope,live.entries,associations.found,read);
     const direct=await this.directBindings(principal,scope,live.entries,read);
+    const contexts=turnContexts(live.entries);
     const entries=live.entries.map(raw=>{
       const source=raw.turnId?associations.found.get(raw.turnId)??null:null;
       const origin=originOf(source);
@@ -295,7 +310,7 @@ export class SessionTimelineService {
         const steer=this.projectDirectInput(principal,scope,raw,source,direct.get(raw.clientId??''));
         if(steer)return steer;
         return this.projectInput(raw,source,source?.kind==='message'?associations.messages.get(source.messageId):undefined,
-          raw.turnId?bindings.get(raw.turnId):undefined);
+          raw.turnId?bindings.get(raw.turnId):undefined,raw.turnId?contexts.get(raw.turnId):undefined);
       }
       return {...publicEntry(raw,principal),origin,...(raw.kind==='message'&&raw.role==='assistant'?{
         author:{kind:'session' as const,id:scope.sessionId,label:scope.title}}:{})};
@@ -364,6 +379,7 @@ export class SessionTimelineService {
     const displayed=new Set<string>();
     let entries:WorkspaceEntry[]=[],turns:WorkspaceTurn[]=[];
     if(native){
+      const contexts=turnContexts(native.entries);
       entries=native.entries.flatMap((raw):WorkspaceEntry[]=>{
         const source=raw.turnId?associations.found.get(raw.turnId)??null:null;
         const origin=originOf(source);
@@ -372,7 +388,7 @@ export class SessionTimelineService {
           if(steer)return [steer];
           const projected=this.projectInput(raw,source,
             source?.kind==='message'?associations.messages.get(source.messageId):undefined,
-            raw.turnId?bindings.get(raw.turnId):undefined);
+            raw.turnId?bindings.get(raw.turnId):undefined,raw.turnId?contexts.get(raw.turnId):undefined);
           if(projected.kind==='message'&&source?.kind==='message')displayed.add(source.messageId);
           return [projected];
         }
@@ -508,8 +524,26 @@ export class SessionTimelineService {
       truncated:readable&&record.content.length>16000};
   }
   private projectInput(raw:WorkspaceMessage,source:NativeInputSource|null,message:SessionMessageRecord|undefined,
-    binding:InputBinding|undefined):WorkspaceEntry{
-    if(!source||!exactInput(raw,source))return nativeInputNotice(raw,inputNoticeReason(raw,source));
+    binding:InputBinding|undefined,context?:TurnContext):WorkspaceEntry{
+    if(!source||!exactInput(raw,source)){
+      const reason=inputNoticeReason(raw,source);
+      // Without a saved business source the Turn has no message to point to, so the sender really is unverified:
+      // keep the plain wording instead of implying a business message exists.
+      if(!context?.compacted||!source||reason==='conflict')return nativeInputNotice(raw,reason);
+      // Context compaction rewrites native input, so the operation marker may be gone. The Turn itself is still the one
+      // the saved business record started: when it holds exactly one input and that input carries no other identity,
+      // that input is the business input. Anything less certain says so instead of implying an unknown sender.
+      const otherIdentity=raw.clientId!==null&&raw.clientId!==source.operationId||
+        !!raw.inputReference&&(raw.inputReference.source!==source.kind||raw.inputReference.operationId!==source.operationId);
+      if(context.inputs===1&&!otherIdentity){
+        if(source.kind==='run')return runInput(raw,source);
+        if(message&&message.id===source.messageId)
+          return {...messageEntry(message,raw.turnId),nativeItemId:raw.nativeItemId,nativeKind:raw.nativeKind,
+            occurredAt:raw.occurredAt??message.createdAt,observedAt:raw.observedAt,freshness:raw.freshness,
+            ...(raw.order?{order:raw.order}:{})};
+      }
+      return nativeInputNotice(raw,'compacted');
+    }
     if(!binding?.itemId||binding.itemId!==raw.nativeItemId)
       return nativeInputNotice(raw,binding?.ambiguous||binding?.itemId?'duplicate':'unassociated');
     if(source.kind==='run')return runInput(raw,source);

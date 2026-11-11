@@ -153,6 +153,11 @@ test("the Codex adapter declares a shared process and its outcome classes", () =
   assert.equal(capabilities.provider, "codex");
   assert.equal(capabilities.process, "shared");
   assert.deepEqual(capabilities.errors, { notSent: true, rejected: true });
+  assert.equal(capabilities.delivery.midTurnInput, true);
+  assert.equal(capabilities.delivery.idleTurnStart, true);
+  assert.equal(capabilities.executionProfileActivation, false);
   assert.equal(capabilities.compaction.autoCompacts, true);
   assert.equal(new CodexAppServerAdapter().capabilities().compaction.mode, "unavailable");
+  assert.equal(new CodexAppServerAdapter({ expectedVersion: "codex-cli 0.166.0-alpha.6" })
+    .capabilities().delivery.midTurnInput, true);
 });

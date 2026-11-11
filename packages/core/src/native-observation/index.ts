@@ -122,7 +122,9 @@ export function reduceNativeObservation(previous: NativeObservationRecord | null
 }
 
 export class NativeObservationService {
-  constructor(private readonly deps: { uow: UnitOfWork; clock: Clock }) {}
+  constructor(private readonly deps: { uow: UnitOfWork; clock: Clock;
+    /** Local day for the usage ledger; absent keeps canonical UTC. */
+    usageDay?: (at: string) => string }) {}
   get(projectId: string, sessionId: string): Promise<NativeObservationRecord | null> {
     return this.deps.uow.read(projectId, r => r.nativeObservation?.get(projectId, sessionId) ?? Promise.resolve(null));
   }
@@ -136,6 +138,9 @@ export class NativeObservationService {
       if (old?.freshness === 'live' && old.connectionId !== value.connectionId) throw new DomainError('OBSERVATION_CONNECTION','A newer live connection owns this Session');
       const source = value.currentTurn ? await tx.nativeInputs?.findSource(value.projectId,value.sessionId,value.currentTurn.id) ?? null : null;
       const record = bounded({ ...value, currentTurn: value.currentTurn ? { ...value.currentTurn, source } : null, version: (old?.version ?? 0) + 1 });
+      const delta = usageDelta(old, value);
+      if (delta && tx.usage) await tx.usage.addUsage(value.projectId, value.sessionId,
+        this.deps.usageDay?.(value.observedAt) ?? value.observedAt.slice(0, 10), delta);
       await store.upsert(record, old?.version ?? null); return record;
     });
   }
@@ -155,4 +160,19 @@ export class NativeObservationService {
       await store!.upsert(next, old.version); return next;
     });
   }
+}
+
+function usageDelta(previous: NativeObservationRecord | null,
+  next: NativeObservationProjection): import("@evoloop/contracts").UsageDelta | null {
+  if (!next.usage) return null;
+  const after = next.usage.total;
+  if (after.inputTokens === null || after.outputTokens === null) return null;
+  // A replacement thread starts from zero: its first cumulative observation is a real delta, not a skip.
+  const sameThread = previous?.threadId === next.threadId;
+  const before = sameThread ? previous?.usage?.total ?? null : null;
+  const inputTokens = after.inputTokens - (before?.inputTokens ?? 0);
+  const outputTokens = after.outputTokens - (before?.outputTokens ?? 0);
+  const cachedInputTokens = Math.max(0, (after.cachedInputTokens ?? 0) - (before?.cachedInputTokens ?? 0));
+  if (inputTokens < 0 || outputTokens < 0 || inputTokens + outputTokens + cachedInputTokens === 0) return null;
+  return { inputTokens, outputTokens, cachedInputTokens, costUsd: 0, costReported: false };
 }

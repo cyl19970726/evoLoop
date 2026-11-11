@@ -155,7 +155,9 @@ flowchart LR
 
 ### 受控 Session 恢复与执行配置
 
-本次实现合同为每个 owned Session 维护持久 recovery gate，并把 Run 与普通消息启动都纳入同一 Session 槽位检查。Run 或消息失败、interrupted／unknown 会保留其来源、原因和原 claim；unknown 必须先按原 ID 对账，失败事实不会被重写为成功，门槛也不会因回读而自动清除。仍有未释放 Task claim 的已知失败 Run 只能由登记队列控制者显式 `queue.retryFailed`；普通 `runtime.session.recovery.resume` 不能绕过该要求。恢复决定核原 gate version、原因 ID、原 claim、当前 Task/Session 和精确授权，并保留故障时已排队的最早普通消息，后到消息不能替换它。普通消息与业务 Run 共用完全相同的 Session 执行档案，不存在消息专用权限恢复阶段。
+本次实现合同为每个 owned Session 维护持久 recovery gate，并把 Run 与普通消息启动都纳入同一 Session 槽位检查。Run 或消息失败（Run 在派发前的预检失败除外，见下）、interrupted／unknown 会保留其来源、原因和原 claim；unknown 必须先按原 ID 对账，失败事实不会被重写为成功，门槛也不会因回读而自动清除。仍有未释放 Task claim 的已知失败 Run 只能由登记队列控制者显式 `queue.retryFailed`；普通 `runtime.session.recovery.resume` 不能绕过该要求。恢复决定核原 gate version、原因 ID、原 claim、当前 Task/Session 和精确授权，并保留故障时已排队的最早普通消息，后到消息不能替换它。普通消息与业务 Run 共用完全相同的 Session 执行档案，不存在消息专用权限恢复阶段。
+
+**预检失败不关门（迁移 083）。** Run 从 `requested` 直接 `failed`、没有原生 Turn（`run.preflightRejected`）时，模型从未启动，没有未决结果，不关恢复门：门原本是 `open` 且该 Run 不在登记队列 claim 内，就保持 `open`，排队消息照常继续，不需要人工 `runtime.session.recovery.resume`。以下仍照旧关门：派发后原生拒绝（`dispatchRejected`）、unknown、interrupted、已有原生 Turn 的失败、属于队列 claim 的 Run（队列靠门槛避免对同一失败无限重派），以及门已不是 `open` 的情形。取舍：预检失败的原因只留在 Run 的结果摘要与 `run.preflightRejected` 事件，不再由门显示，由调用方读 Run 终态。
 
 `queue.retryFailed` 只允许原 claim 最新且终态明确为 `failed` 或 `interrupted` 的 Run；保留来源 Run 原状态，不把 `interrupted` 改写成 `failed`，并禁止 `unknown` 或 `completed`。每次都由控制者显式复核影响、固定业务输入与原 claim，核对 Run version/inputHash、Task 固定修订和完整业务输入签名、Session 空闲、当前绑定及精确 grant，并消耗队列同一累计预算。新 Run 固定来源 Run/inputHash，但开新 Task 沟通通道并使用新的执行封套，所以新 Run 的实际输入 hash 会独立计算；业务输入完全不变不等于两个完整输入字节相同。明确 retry 决定只许可这一个新 Run，不自动清除门槛或启动下一项。A retry 确认完成后才可启动原来 pin 的 M 一次；M 完成后进入等待验收，必须核通过交付、真实消费者使用（如要求）、Task close 与原 claim accepted release，才重新开放 Session 并允许 B。retry 或 M 再失败／未知则重新阻断。没有自动无限重试，也不靠新队列重置历史额度。
 
@@ -171,7 +173,7 @@ flowchart LR
 | `resume(sessionId)` | 从映射取 `threadId`，按当前完整执行 profile 调用 `thread/resume(excludeTurns: true)` | 不因续窗或恢复生成新 Role；核 actor、现行授权、绑定、配置降权与已知在途 Turn；只读历史可达不代表可恢复写入。 |
 | `inspect(sessionId)` | `thread/read`、分页 `thread/turns/list` 与 `thread/items/list` | 授权读范围、历史锚点、去重 ID；若后端不支持分页或历史不可达，返回 `unsupported`／`unknown`。 |
 | `run(sessionId, taskId, brief, operationId)` | `turn/start` 返回初始 `turn.id`；通知 `item/*`、`turn/completed` | 派发意图与唯一操作 ID、任务和知识基线、请求 ID／时间、返回的 Turn ID、实际终态；重复请求无强幂等保证。 |
-| 即时输入（DEC-039，PR #216） | 运行中补入：`turn/steer(expectedTurnId)`；原 Thread 空闲：普通消息的 `turn/start` | 补入只针对数据库与原生都确认仍在运行的那个 Turn，不新建 Turn，不改原 Run 的固定输入；保存每条输入的 `inputId`、期望与实际 Turn 和状态（schema 059），回执丢失记 `unknown` 并只读核对。补入只在固定 `0.166.0-alpha.6` 可用，见下文协议特性表；设计与两种运行时的差别见[Session 运行时](session-runtime.md#3-即时输入执行中收到的消息怎样处理)。 |
+| 即时输入（DEC-039，PR #216） | 运行中补入：`turn/steer(expectedTurnId)`；原 Thread 空闲：普通消息的 `turn/start` | 补入只针对数据库与原生都确认仍在运行的那个 Turn，不新建 Turn，不改原 Run 的固定输入；保存每条输入的 `inputId`、期望与实际 Turn 和状态（schema 059），回执丢失记 `unknown` 并只读核对。运行中补入与 `thread/settings/update` 是两个独立特性：`0.166.0-alpha.6` 与 `0.167.0-alpha.3.2` 支持补入，前者还支持执行配置切换。非补入回合明确拒绝后，内容转为一条普通排队消息。设计与两种运行时的差别见[Session 运行时](session-runtime.md#3-即时输入执行中收到的消息怎样处理)。 |
 | `interrupt(sessionId, runId)` | 适配器把项目运行映射到原生 `threadId`／`turnId`，调用 `turn/interrupt` 并继续等最终 `turn/completed` | “请求已收”与“实际停止”分开；仍须核对已发生副作用。 |
 | `observe`／`reconcile` | 消费通知；断线后分页回读 | 运行记录、水位、未知结果与下次对账时间；不能把通知当完整持久事件流。 |
 
@@ -181,15 +183,15 @@ flowchart LR
 
 各版本可用的可选能力由协议特性表固定（`packages/adapter-codex-app-server/src/protocol-surface.ts`）；一项能力只在其全部方法都存在时开启：
 
-| 版本 | 现代协议（命名、当前时间、模型修订） | 工作区历史 | 托管压缩 | 即时输入补入 | 能力列表 |
-| --- | --- | --- | --- | --- | --- |
-| `0.154.0` | 否 | 否 | 否 | 否 | 否 |
-| `0.164.0-alpha.11.1` | 是 | 否 | 否 | 否 | 否 |
-| `0.166.0-alpha.5.1`（默认） | 是 | 是 | 否 | 否 | 是 |
-| `0.166.0-alpha.6` | 是 | 是 | 是 | 是 | 是 |
-| `0.167.0-alpha.3.2` | 是 | 是 | 否 | 否 | 是 |
+| 版本 | 现代协议（命名、当前时间） | 工作区历史 | 托管压缩 | 运行中补入 | 空闲直启 | 执行配置切换 | 能力列表 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `0.154.0` | 否 | 否 | 否 | 否 | 否 | 否 | 否 |
+| `0.164.0-alpha.11.1` | 是 | 否 | 否 | 否 | 是 | 否 | 否 |
+| `0.166.0-alpha.5.1`（默认） | 是 | 是 | 否 | 否 | 是 | 否 | 是 |
+| `0.166.0-alpha.6` | 是 | 是 | 是 | 是 | 是 | 是 | 是 |
+| `0.167.0-alpha.3.2` | 是 | 是 | 否 | 是 | 是 | 否 | 是 |
 
-也就是说，托管压缩与即时输入的运行中补入只在 `0.166.0-alpha.6` 可用；选择其他版本时这两项按“不支持”处理，空闲直启与普通消息不受影响。0.167 在 `turn/start` 刚返回时会短暂拒绝 `thread/turns/list`，适配器对此做有界重试（PR #213）。
+托管压缩与执行配置切换仍只在 `0.166.0-alpha.6` 可用；`0.164.0-alpha.11.1`、`0.166.0-alpha.5.1` 与 `0.167.0-alpha.3.2` 的 `executionProfileActivation` 都是 `false`，只有 alpha.6 为 `true`。运行中补入在 alpha.6 与 `0.167.0-alpha.3.2` 可用。0.167 的 v2 schema 有 `turn/steer`，但没有 `thread/settings/update`，因此不能再把两个方法绑在同一个开关上；它的 `CodexErrorInfo.activeTurnNotSteerable` 序列化为 `{"activeTurnNotSteerable":{"turnKind":"review"|"compact"}}`，适配器只按这个结构或精确文字判断不可补入，不按泛化的 `review`／`compaction` 文字匹配。0.167 在 `turn/start` 刚返回时会短暂拒绝 `thread/turns/list`，适配器对此做有界重试（PR #213）。
 
 各版本的标准/实验指纹登记在 `packages/adapter-codex-app-server/src/index.ts` 的 `PINNED_PROTOCOLS`。例如 alpha.5.1 为 `3164e5e1b190371566a3c163f6f4e56ee75552b5652ece246149e028cbabf23d` 和 `ab788279bb5212b13701b505f7d8f119a71705d91f46e6e09c1e893e98c4a541`；alpha.6 为 `e025e54fb11354eb82767ea040b40efa17b34dfc706c9433a6115b5f4771c465` 和 `f72bb03a3f519cd19b37a030b42453128ff5b88abaad8c1264cf1ca197dbbed0`；0.167.0-alpha.3.2 为 `f2576ca5d46be4cfb159906264fbc173efcfcc917ea8fdc38323770e7b657b5a` 和 `b1e5d17224b9d9732b5976012438ba78e2cf7e418b67f8f8a5f5cffe301b875d`。以下只是可选运行配置片段，不代表安装路径或凭据：
 
@@ -197,7 +199,7 @@ flowchart LR
 {"runtime":{"enabled":true,"protocolVersion":"0.166.0-alpha.5.1"}}
 ```
 
-现代协议提供 `currentTime/read`，适配器只对注册表中精确绑定的 owned Thread 响应当前 Unix 秒数；缺少绑定、Thread 不符或使用 0.154 时拒绝。它只是只读时间能力，不授予 Thread／Turn 控制，也不改变权限或启动策略。`model/list` 显示模型仅代表协议可列出该选项，不能证明特定模型会被 Turn 接受或是实际运行模型；新模型仍须由 Lead 核实，实际结果以后续受控 Turn 证据为准。官方 [App Server 方法说明](https://learn.chatgpt.com/docs/app-server#api-overview)和[Turn 生命周期](https://learn.chatgpt.com/docs/app-server#turns)是外部合同；每次 CLI 升级仍须重新读取 schema 并核对所选功能对应的标准／实验指纹。
+现代协议提供 `currentTime/read`，适配器只对注册表中精确绑定的 owned Thread 响应当前 Unix 秒数；缺少绑定、Thread 不符或使用 0.154 时拒绝。它只是只读时间能力，不授予 Thread／Turn 控制，也不改变权限或启动策略。`capabilitiesFor` 只回答 owner 为 `evoloop-codex-app-server` 的绑定；其他运行时的绑定不会被它描述。`model/list` 显示模型仅代表协议可列出该选项，不能证明特定模型会被 Turn 接受或是实际运行模型；新模型仍须由 Lead 核实，实际结果以后续受控 Turn 证据为准。官方 [App Server 方法说明](https://learn.chatgpt.com/docs/app-server#api-overview)和[Turn 生命周期](https://learn.chatgpt.com/docs/app-server#turns)是外部合同；每次 CLI 升级仍须重新读取 schema 并核对所选功能对应的标准／实验指纹。
 
 ### 关闭与轨迹读取
 

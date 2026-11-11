@@ -175,6 +175,31 @@ const integrationSchema = z.strictObject({
      * native runtime's own automatic behaviour and disables the maintenance endpoints.
      */
     compaction: z.strictObject({ owned: z.boolean().default(true) }).default({ owned: true }),
+    /**
+     * Daily admission guard for ordinary message Turns and Leader result notices. It never blocks
+     * a business Task Run. Absent or disabled means unlimited; a maintainer sets the private limits.
+     */
+    dailyBudget: z.strictObject({
+      enabled: z.boolean().default(false),
+      maxInputTokens: z.number().int().positive().max(1_000_000_000_000).optional(),
+      maxCostUsd: z.number().positive().max(1_000_000).optional(),
+      warningRatio: z.number().min(0.1).max(0.99).default(0.8),
+      pauseOrdinaryTurns: z.boolean().default(true),
+      timeZone: z.string().min(1).max(100).refine(value => {
+        try { new Intl.DateTimeFormat("en-CA", { timeZone: value }); return true; } catch { return false; }
+      }, "dailyBudget.timeZone must be an IANA time zone").default("UTC"),
+    }).refine(value => !value.enabled || value.maxInputTokens !== undefined || value.maxCostUsd !== undefined,
+      "Enabled dailyBudget requires maxInputTokens or maxCostUsd").optional(),
+    /**
+     * Context admission for long-lived Sessions. At the ceiling an ordinary result notice is left for a
+     * maintainer to hand off to a new thread; a business Task Run is never blocked by this guard.
+     */
+    contextBudget: z.strictObject({
+      enabled: z.boolean().default(false),
+      maxInputTokens: z.number().int().positive().max(10_000_000).default(150_000),
+      warningRatio: z.number().min(0.1).max(0.99).default(0.8),
+      pauseOrdinaryTurns: z.boolean().default(true),
+    }).optional(),
     /** Claude Agent SDK runtime; required when this coordinator drives claude. No credential is stored here. */
     claude: z.strictObject({
       /** Claude Code executable; absent uses the one bundled with the pinned SDK. */

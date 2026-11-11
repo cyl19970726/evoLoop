@@ -7,8 +7,9 @@ import type { NativeObservationRecord } from '@evoloop/contracts/native-observat
 import type { SessionMessageRecord } from '@evoloop/contracts/session-messages';
 import type { SessionMessageService } from '@evoloop/core/session-messages';
 import { DomainError } from '@evoloop/contracts/ports';
-import { RuntimeProtocolError, RuntimeServerError } from '@evoloop/adapter-codex-app-server';
+import { RuntimeLocalBusyError, RuntimeProtocolError, RuntimeServerError } from '@evoloop/adapter-codex-app-server';
 import { SessionMessagePump } from '../src/session-messages/pump.ts';
+import { SessionSteerLock } from '../src/runtime/session-steer-lock.ts';
 
 const projectId=randomUUID();
 const session=(id:string):RuntimeSessionRecord=>({projectId,id,roleId:'role',cwd:'/tmp/message-pump',authorizationScope:'project',
@@ -81,6 +82,60 @@ test('an explicit native pre-turn rejection is terminal rather than an uncertain
   const pump=new SessionMessagePump({service,runtime:()=>runtime,projects:async()=>[projectId],canStart:async()=>true,
     canWrite:()=>true,pollIntervalMs:1000,onError:e=>{throw e;}});
   await pump.tick();assert.equal(failed,1);assert.equal(unknown,0);
+});
+
+test('an ordinary message yields to the shared Session steer lock without closing recovery',async()=>{
+  const target=randomUUID(),m=message(randomUUID(),target,'queued'),lock=new SessionSteerLock();
+  let dispatches=0,starts=0,unknown=0,failed=0;
+  const service={pending:async()=>[m],session:async()=>session(target),processing:async()=>null,
+    preflightDispatch:async()=>{},beginDispatch:async()=>{dispatches++;return{operationId:randomUUID()};},
+    bindTurn:async()=>{},markUnknown:async()=>{unknown++;},failBeforeStart:async()=>{failed++;}} as unknown as SessionMessageService;
+  const runtime={isReady:()=>true,registerBinding:async()=>{},
+    qualifyConversationThread:async()=>({available:true,reason:'ready',fingerprint:'a'.repeat(64)}),
+    startConversationTurn:async()=>{starts++;return{id:'turn-lock',status:'inProgress',completedAtUtc:null};},
+    listTurns:async()=>({data:[],nextCursor:null}),listItems:async()=>({data:[],nextCursor:null})};
+  const pump=new SessionMessagePump({service,runtime:()=>runtime,projects:async()=>[projectId],
+    lock,canStart:async()=>true,canWrite:()=>true,pollIntervalMs:1000,onError:e=>{throw e;}});
+  const release=lock.acquire(projectId,target);
+  await pump.tick();
+  assert.deepEqual([dispatches,starts,unknown,failed],[0,0,0,0]);
+  release();
+  await pump.tick();
+  assert.deepEqual([dispatches,starts,unknown,failed],[1,1,0,0]);
+});
+
+test('an adapter in-flight refusal stays queued and retries the exact operation without failing recovery',async()=>{
+  const target=randomUUID(),m=message(randomUUID(),target,'queued');
+  let dispatches=0,starts=0,unknown=0,failed=0;
+  const blocked:string[]=[];
+  let dispatched=false;
+  const processRecord={operationId:randomUUID(),nativeTurnId:null as string|null,state:'dispatching',
+    readOnlyPolicyFingerprint:'a'.repeat(64),roleContext:null};
+  const service={pending:async()=>[m],session:async()=>session(target),
+    processing:async()=>dispatched?processRecord:null,
+    preflightDispatch:async()=>{},beginDispatch:async()=>{dispatches++;dispatched=true;m.state='processing';
+      processRecord.operationId=randomUUID();return processRecord;},
+    bindTurn:async()=>{processRecord.state='running';processRecord.nativeTurnId='turn-retried';m.state='processing';},
+    noteBlocked:async(_p:string,_id:string,reason:string|null)=>{blocked.push(reason??'');m.blockedReason=reason;},
+    markUnknown:async()=>{unknown++;},failBeforeStart:async()=>{failed++;}} as unknown as SessionMessageService;
+  const runtime={isReady:()=>true,registerBinding:async()=>{},
+    qualifyConversationThread:async()=>({available:true,reason:'ready',fingerprint:'a'.repeat(64)}),
+    startConversationTurn:async(_binding:unknown,_input:string,operationId:string)=>{
+      starts++;assert.equal(operationId,processRecord.operationId);
+      if(starts===1)throw new RuntimeLocalBusyError('turn/start','another send owns this Thread');
+      return{id:'turn-retried',status:'inProgress',completedAtUtc:null};},
+    listTurns:async()=>({data:[],nextCursor:null}),listItems:async()=>({data:[],nextCursor:null})};
+  const pump=new SessionMessagePump({service,runtime:()=>runtime,projects:async()=>[projectId],canStart:async()=>true,
+    canWrite:()=>true,pollIntervalMs:1000,onError:e=>{throw e;}});
+  await pump.tick();
+  assert.deepEqual([dispatches,starts,unknown,failed],[1,1,0,0]);
+  assert.match(blocked.at(-1)??'',/SESSION_INPUT_BUSY/);
+  assert.equal(processRecord.state,'dispatching','a local refusal does not fail or advance the native attempt');
+  await pump.tick();
+  assert.deepEqual([dispatches,starts,unknown,failed],[1,2,0,0]);
+  assert.equal(blocked.at(-1),'','the retry clears the transient block');
+  assert.equal(processRecord.state,'running');
+  assert.equal(processRecord.nativeTurnId,'turn-retried');
 });
 
 test('a Session whose runtime lacks ordinary messages is blocked once instead of failing every poll',async()=>{
