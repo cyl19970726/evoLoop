@@ -104,6 +104,11 @@ export class LeaderResultNoticePump {
     return (await this.messageAdmission(message)).allowed;
   }
 
+  /** Whether this exact queued message came from a durable Leader result notice. */
+  async isNoticeMessage(projectId: string, messageId: string): Promise<boolean> {
+    return !!(await this.deps.store.getByMessageId(projectId, messageId));
+  }
+
   /** Separate a superseded source from a changed Leader target. A linked
    * message is retired only by the store's transactional native-start guard. */
   async messageAdmission(message:SessionMessageRecord):Promise<{allowed:boolean;reason:string|null}> {

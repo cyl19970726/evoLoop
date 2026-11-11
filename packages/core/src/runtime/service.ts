@@ -8,7 +8,9 @@ import { event } from "./reserve.js";
 import { validateDispatchBasis } from "./basis.js";
 import { priorReviewDecision, reviewIntentJson } from "./pre-turn-review.js";
 
-export interface RuntimeWorkflowDependencies { uow: UnitOfWork; clock: Clock; ids: IdFactory }
+export interface RuntimeWorkflowDependencies { uow: UnitOfWork; clock: Clock; ids: IdFactory;
+  /** Local day used by the usage ledger; absent keeps canonical UTC. */
+  usageDay?: (at: string) => string; }
 const internalActor = "runtime-coordinator";
 const required = <T>(value: T | null, kind: string): T => {
   if (value === null) throw new DomainError("NOT_FOUND", `${kind} not found`);
@@ -257,6 +259,7 @@ export class RuntimeWorkflowService {
     return this.deps.uow.transaction(projectId, async tx => {
       const current = required(await tx.getRuntimeRun(runId), "runtime run");
       if (current.state !== "requested") throw new DomainError("RUN_NOT_REQUESTED", "turn start was already attempted");
+      if (current.stopRequestedAt) throw new DomainError("RUN_STOPPED", "the Run was stopped on request and cannot be dispatched");
       if (current.evaluationBinding && !current.evaluationPacket)
         throw new DomainError("EVALUATION_PACKET_MISSING", "a verified fixed-input packet is required before evaluation dispatch");
       const session = required(await tx.getRuntimeSession(current.sessionId), "runtime session");
@@ -353,8 +356,16 @@ export class RuntimeWorkflowService {
       const current = required(await tx.getRuntimeRun(runId), "runtime run");
       if (current.state !== "dispatching" || current.nativeTurnId !== null || current.preTurnProof)
         throw new DomainError("RUN_NOT_DISPATCHING", "only an unstarted dispatching Run can be withdrawn");
-      const next: RuntimeRunRecord = { ...current, state: "requested", version: current.version + 1, updatedAt: this.deps.clock.now() };
+      // A stopped Run never goes back to being dispatchable: the native start was not sent, so it ends here as failed.
+      const stopped = !!current.stopRequestedAt;
+      const next: RuntimeRunRecord = { ...current, state: stopped ? "failed" : "requested", version: current.version + 1, updatedAt: this.deps.clock.now(),
+        ...(stopped ? { resultSummary: `Stopped on request before the native start was sent: ${current.stopReason ?? ""}`.slice(0, 4000) } : {}) };
       await tx.updateRuntimeRun(next, current.version);
+      if (stopped) {
+        await this.emit(tx, runId, current.sessionId, "run.dispatchWithdrawn",
+          `Native start was not sent and the Run was stopped on request; it ends as failed, not requested; ${detail}`, null, projectId);
+        return next;
+      }
       await this.emit(tx, runId, current.sessionId, "run.dispatchWithdrawn",
         `Native start was not sent; Run returns to requested for a later dispatch; ${detail}`, null, projectId);
       return next;
@@ -425,6 +436,8 @@ export class RuntimeWorkflowService {
       const run=required(await tx.getRuntimeRun(runId),"runtime run");
       const session=required(await tx.getRuntimeSession(run.sessionId),"runtime session");
       const gate=required(await tx.recovery?.lockRecoveryGate(run.sessionId)??null,"recovery gate");
+      // A stopped Run is never continued: its approved start would only run work somebody asked to stop.
+      if(run.stopRequestedAt)throw new DomainError("RUN_STOPPED","a Run stopped on request cannot be continued");
       const proof=run.preTurnProof;
       if(run.version!==command.expectedVersion||run.sessionId!==command.sessionId||
         run.operationId!==command.originalOperationId||run.state!=="unknown"||run.nativeTurnId||
@@ -462,6 +475,14 @@ export class RuntimeWorkflowService {
     return this.deps.uow.transaction(projectId,async tx=>{
       const run=required(await tx.getRuntimeRun(runId),"runtime run");
       if(run.state!=="unknown"||run.preTurnProof?.status!=="approved"||run.nativeTurnId)return null;
+      if(run.stopRequestedAt){
+        // The approved start was never sent and nobody will send it now: the stopped Run ends failed, which reopens the gate it closed.
+        const ended={...run,state:"failed" as const,version:run.version+1,updatedAt:this.deps.clock.now(),
+          resultSummary:"Stopped on request; the approved native start was never sent"};
+        await tx.updateRuntimeRun(ended,run.version);
+        await this.emit(tx,runId,run.sessionId,"run.status",ended.resultSummary!,null,projectId);
+        return null;
+      }
       const session=required(await tx.getRuntimeSession(run.sessionId),"runtime session");
       const gate=required(await tx.recovery?.lockRecoveryGate(run.sessionId)??null,"recovery gate");
       if(gate.phase!=="blocked"||gate.causeKind!=="run"||gate.causeId!==run.id||
@@ -503,6 +524,24 @@ export class RuntimeWorkflowService {
         ...(terminal && checkpoint.costUsd != null ? { costUsd: checkpoint.costUsd } : {}),
         updatedAt: this.deps.clock.now() };
       await tx.updateRuntimeRun(next, current.version);
+      if (terminal && checkpoint.usage && tx.usage) {
+        // Codex reports cumulative thread usage through native observations; that source already counts
+        // this Run. Recording both would double the Session-day bucket. Runtimes without cumulative
+        // native observations (for example Claude) fall back to the Run checkpoint.
+        const session = await tx.getRuntimeSession(current.sessionId);
+        const cumulativeNative = (session?.runtimeProvider ?? "codex") === "codex";
+        if (!cumulativeNative) {
+          const at = next.updatedAt;
+          await tx.usage.addUsage(projectId, current.sessionId,
+            this.deps.usageDay?.(at) ?? at.slice(0, 10), {
+              inputTokens: checkpoint.usage.inputTokens ?? 0,
+              outputTokens: checkpoint.usage.outputTokens ?? 0,
+              cachedInputTokens: checkpoint.usage.cacheReadInputTokens ?? 0,
+              costUsd: checkpoint.costUsd != null && checkpoint.costUsd > 0 ? checkpoint.costUsd : 0,
+              costReported: checkpoint.costUsd != null,
+            });
+        }
+      }
       const detail = `${status}${checkpoint.completedAtUtc ? `; completedAtUtc=${checkpoint.completedAtUtc}` : ""}${summary ? `: ${summary}` : ""}`;
       await this.emit(tx, runId, current.sessionId, "run.status", detail, turnId, projectId,
         checkpoint.cursor ?? null, checkpoint.itemsDigest ?? null);

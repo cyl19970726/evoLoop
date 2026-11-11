@@ -1,4 +1,5 @@
 import type { RuntimeRecordEvent, RuntimeReconcilePartial, RuntimeRunRecord, RuntimeSessionRecord } from "@evoloop/contracts/runtime";
+import type { UsageOverview } from "@evoloop/contracts";
 import { request } from "./api";
 export interface ExecutionGrant { projectId: string; actorId: string; roleId: string; authorizationScope: string; cwd: string;
   sandbox: "read-only" | "workspace-write" | "danger-full-access"; model?: string | null; models?: string[];
@@ -13,6 +14,7 @@ export function runtimeClient(token: string, projectId: string) {
   const get = <T>(path: string) => request<T>(token, base + path, 15000);
   return {
     status: () => get<RuntimeStatus>(""), models: () => get<RuntimeModels>("/models"), sessions: () => get<RuntimeSessionRecord[]>("/sessions"),
+    usage: (from: string, to: string) => get<UsageOverview>(`/usage?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`),
     runs: (taskId?: string) => get<RuntimeRunRecord[]>(`/runs${taskId ? `?taskId=${encodeURIComponent(taskId)}` : ""}`),
     run: (runId: string) => get<RuntimeRunRecord>(`/runs/${encodeURIComponent(runId)}`),
     events: (runId: string) => get<RuntimeRecordEvent[]>(`/runs/${encodeURIComponent(runId)}/events`),

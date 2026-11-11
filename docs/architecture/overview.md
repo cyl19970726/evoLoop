@@ -62,8 +62,8 @@ flowchart TB
   DB[("PostgreSQL")]
   API --> DB
   MC -->|"入站成为目标 Session 的普通消息"| DB
-  DB -->|"结果、问题、阻塞<br/>由触发器登记为通知"| LN
-  LN -->|"作为普通消息投给 Leader Session"| DB
+  DB -->|"结果、问题、阻塞<br/>由触发器登记为通知项"| LN
+  LN -->|"按通知包投给 Leader Session"| DB
   DB --> MP
   MP -->|"按 Session 的运行时启动 Turn"| RT
   subgraph RT["运行时：每个 Session 固定一种"]
@@ -72,11 +72,65 @@ flowchart TB
   end
 ```
 
-三条路径最后都落到同一处：一条带授权的普通 Session 消息，再由消息泵在目标 Session 的原会话里启动 Turn。
+外部消息仍写成目标 Session 的普通消息；Leader 通知则按通知包投递，一个包可含多条通知；Leader 空闲时开一轮，忙时把包送入当前一轮。两者都受同一套授权和消息泵约束。
 
 - **外部消息。** 消息 Connector 按精确的会话路由把平台消息写成目标 Session 的普通消息；外部来源不冒充用户或内部 Agent 获得权限（DEC-040）。合同见[消息 Connector](message-connectors.md)。
-- **Leader 通知。** 交付、独立使用、问题、阻塞等需要 Leader 处理的事实，在写入的同一事务里由数据库触发器登记为通知，再由服务端的通知泵投给配置好的 Leader Session；不依赖插件或 Stop Hook（DEC-038）。合同见[Leader 通知层](contracts.md#leader-通知层)。
+- **Leader 通知。** 交付、独立使用、问题、阻塞等需要 Leader 处理的事实，在写入的同一事务里由数据库触发器登记为通知，再由服务端的通知泵投给配置好的 Leader Session；不依赖插件或 Stop Hook（DEC-038）。已决定、未实施（W1 `3043c5a8-a1b5-4f92-9ffe-cb1ec317392d`、W2 `16752f15-f605-475c-91fa-4fcf3e0fbac1`、W3 `157fb531-76fc-4029-bd72-dd5ecea3a2b4`、W5 `e4a2acb7-bb63-40ef-89ab-359b55277b2a`）：通知按包投递，包内逐项记录待发、已送入、已看到、已处理、已撤回、未知；空闲时等 60 秒合成一包开一轮，忙时送入当前一轮；失败、中断或结果未知时退回待发，恢复门打开后重送；每包最多 20 项、8 KB，每轮最多 5 包；系统通知不送进业务 Run。分级为立即、汇总、只记录，预算与上下文告警发给使用者而不是 Leader。当前实例仍按原路径逐条投递，合同见[Leader 通知层](contracts.md#leader-通知层)。
+- **调度与队伍。** 已决定、未实施（Q1 `1ce3444c-a8c1-4484-b073-32c256772467`、Q2 `5c1760f7-4c94-4b56-81f4-433314972e69`、S1 `0f624669-f11e-4efa-9881-f12fe46524c7`）：每个常驻业务 Session 一条队伍，按派发顺序做完一个接下一个；Leader 用调度板看正在做的与排队中的，随时重排、插队、撤下；日程到点生成 Task 后默认交 Leader 安排，也可按 Leader 指定的直派名单追加到队伍，先选空闲、再选队伍最短的，到点只分发、不立即开始。衡量以进队等待、Session 空转、新情况纳入、可见与可调为主；测量工具与基线 M0 `58d1974c-7e44-4649-8a83-7fa96afe4aea` 已合并并复算采用，未发布。
 - **两种运行时。** 每个 Role 只绑定 Codex 或 Claude 之一，Session 在创建时固定运行时；即时输入、托管压缩等能力因运行时而异。见[Session 运行时](session-runtime.md)。
+
+### 调度：现在与目标（DEC-045，未实施）
+
+两张图取自 DEC-045 设计第 2、3 节。第一张是当前调度；第二张是目标，紫色标出本 Task 的文档同步位置。目标中的 Session 队伍、调度板、持续送入和定时分发都还是已决定、未实施，不能当作当前实例已具备的能力。
+
+**现在**
+
+```mermaid
+flowchart TB
+  U["你：工作台消息"] --> Q
+  R["需求 Session"] --> Q
+  S["每日评估日程"] --> Q
+  Q["消息与通知：按条排队<br/>一天 223 轮，中位数等 23 分钟"]:::problem --> L
+  L["Leader：每轮重读全局再安排<br/>还自己读代码、PR、git"] --> D["开发 Session<br/>忙就拒绝，没有队伍"]:::problem
+  L --> A["文档与架构 Session<br/>下一步只在 Leader 心里"]:::problem
+  L --> V["验收 Session<br/>接力消息逐条处理"]
+  D --> O["交付、验收观察、Run 结束未提交<br/>引擎写成通知；Session 空出来不通知"]
+  A --> O
+  V --> O
+  O -. 通知 .-> Q
+  classDef problem fill:#FAECE7,stroke:#993C1D,color:#712B13
+```
+
+**目标**
+
+```mermaid
+flowchart TB
+  U["你：决定与消息"]
+  R["需求 Session：新 Task"]
+  G["新 Task 先确认可执行"]
+  T["定时任务：到点分发"]
+  L["Leader：持续接收，随时重排"]
+  B["调度板：快照与事件流"]
+  QD["开发队伍"]
+  QV["验收队伍"]
+  QW["文档队伍"]
+  X["交付 → 验收 → 关闭"]
+  N["通知包"]
+  U --> L
+  R --> G --> L
+  T -->|交 Leader| L
+  B --- L
+  L --> QD
+  L --> QV
+  L --> QW
+  T -.->|直接分发| QW
+  QD --> X
+  QV --> X
+  QW --> X
+  X -.->|分级通知| N -.-> L
+  classDef focus fill:#EEEDFE,stroke:#534AB7,stroke-width:2px,color:#26215C
+  class L,B,QD,QV,QW,N focus
+```
 
 ## 3. 沿一轮工作理解系统
 
@@ -96,7 +150,9 @@ flowchart TB
 
 ### 从任务到执行与交付
 
-协调机制读取已接受任务、当前授权和责任约定，准备固定版本的上下文，选择承载 session 并记录派发意图。**Run** 表示这次实际运行；一个 Task 可以因续做或返工经历多次 Run，旧运行仍保留当时的依据。
+协调机制读取已接受任务、当前授权和责任约定，准备固定版本的上下文，选择承载 session。当前直接记录派发并开始；DEC-045 的目标是先把任务追加到该 Session 的队伍，等轮到再开始（Q1，未实施）。**Run** 表示这次实际运行；一个 Task 可以因续做或返工经历多次 Run，旧运行仍保留当时的依据。
+
+已决定、未实施的请求停止（W11 `bcce4633-6abf-4dfa-83fb-4f9031375ae8`）建在现有中断上：停止标记不新增 Run 状态，同一事务作废已签未封存的提交并拒绝其后的提交与交付，核实后自动打开恢复门，只记录“Run 已按请求停止”。该能力的代码已随 PR #330 合并，尚未发布和验收；此前停止仍按当前中断路径处理，不能把停止显示成普通失败。
 
 领域 session 提交具体成果和技术检查；受管普通执行者可在活跃 Run 内本人署名结果意图，协调层待原生终态确定后才封存固定交付。消费者另行完成使用核验；消息已送达、Turn 已结束、产物存在都只是各自的观察。任务的验收若要求接续方实际读取并核对成果，就需要相应消费证据才能完成。
 
@@ -198,7 +254,7 @@ PG 引擎及主数据归属已选；业务 CLI 和项目 skill 已接入共同 A
 | 对象与权威：[项目数据](project-data.md) | 一条工作关系应连谁，正文在哪里，何时固定修订 | [领域合同](contracts.md)、[存储设计](storage.md) |
 | 认识怎样回来：[知识流](knowledge-flow.md) → [Wiki 维护](wiki-maintenance.md) | 来源如何被理解，修订怎样影响旧页、任务和下一消费者 | [Wiki 集成](wiki-integration.md)的 DTO、端口与候选后端接缝 |
 | 实现怎样装配：[包架构](packages.md) → [技术选型](technology-selection.md) | 一项能力属于哪个模块/进程，为何选它、采用前缺什么 | [Codex 接入](codex-integration.md)与具体适配合同 |
-| Session 怎样运行：[Session 运行时](session-runtime.md) → [Codex 接入](codex-integration.md) | 一个 Session 从创建到关闭系统各做什么；执行中来的消息怎样处理；Codex 与 Claude 有什么不同 | [接口合同](contracts.md#4-roleregistry-与-sessionruntime)、[存储](storage.md#迁移-054-到-070-新增的表和列) |
+| Session 怎样运行：[Session 运行时](session-runtime.md) → [Codex 接入](codex-integration.md) | 一个 Session 从创建到关闭系统各做什么；执行中来的消息怎样处理；Codex 与 Claude 有什么不同 | [接口合同](contracts.md#4-roleregistry-与-sessionruntime)、[存储](storage.md#迁移-054-到-081-新增的表和列) |
 | 实际跑在哪：[部署与迁移](deployment.md) | 服务部署成什么样；发布怎样保护数据；换主机搬什么、不搬什么 | [存储](storage.md)、[本机运行](../development/local-run.md) |
 | 外部消息怎样进来：[消息 Connector](message-connectors.md) | 平台消息怎样路由到 Session、怎样回复与恢复 | [接口合同](contracts.md#7a-connector-与-externalbinding) |
 | 人怎样阅读与决定：[前端架构](../frontend/architecture.md) → [Wiki 工作区](wiki-workspace.md) | 用户从哪里找依据、作取舍、核对后果，哪些仅为界面视图 | [工作台产品](../product/workbench.md)、[Wiki 集成](wiki-integration.md) |

@@ -7,6 +7,7 @@ import { RuntimeNotSentError, type RuntimeBinding, type RuntimePage, type Runtim
   type RuntimeSessionSpec, type RuntimeTurn } from "@evoloop/contracts/runtime";
 import type { RuntimeRunRecord, RuntimeSessionRecord } from "@evoloop/contracts";
 import { RuntimeRunner } from "../src/runtime/runner.js";
+import { SessionSteerLock } from "../src/runtime/session-steer-lock.js";
 
 const projectId = randomUUID();
 const actorId = "reviewer";
@@ -46,7 +47,7 @@ class ProviderRuntime {
   }
 }
 
-function harness(native: ProviderRuntime, session: RuntimeSessionRecord, run: RuntimeRunRecord) {
+function harness(native: ProviderRuntime, session: RuntimeSessionRecord, run: RuntimeRunRecord, steerLock?: SessionSteerLock) {
   const calls = { permits: 0, withdrawn: [] as string[], unknown: 0, bound: 0 };
   const workflow = { getProject: async () => ({ id: projectId }), listRuntimeSessions: async () => [session],
     listRuntimeRuns: async () => [run], getRuntimeSession: async () => session } as unknown as WorkflowService;
@@ -62,11 +63,30 @@ function harness(native: ProviderRuntime, session: RuntimeSessionRecord, run: Ru
   } as unknown as RuntimeWorkflowService;
   const runner = new RuntimeRunner({ runtimeFactory: () => native as unknown as RuntimePort & ProviderRuntime,
     workflow, trusted, principals: [{ actorId, projectIds: [projectId], permissions: ["read", "write", "review"] }],
-    canWrite: () => true, allowedCwd: async () => true, hasGrant: () => true });
+    canWrite: () => true, allowedCwd: async () => true, hasGrant: () => true,
+    ...(steerLock ? { steerLock } : {}) });
   (runner as unknown as { lightweightInput: () => Promise<unknown> }).lightweightInput = async () =>
     ({ input: "fixed Task input", protocol: "evoloop-lightweight-v1", contentHash: "a".repeat(64), byteLength: 16 });
   return { runner, calls };
 }
+
+test("a business Turn waits for the Session admission lock without consuming its only start attempt", async () => {
+  const session = { ...baseSession }, run = requestedRun(session), native = new ProviderRuntime("codex");
+  const lock = new SessionSteerLock(), { runner, calls } = harness(native, session, run, lock);
+  const release = lock.acquire(projectId, session.id);
+  try {
+    await runner.start();
+    assert.deepEqual([calls.permits, native.starts, native.resumed.length, calls.bound], [0, 0, 0, 0]);
+    assert.equal(run.state, "requested");
+    assert.equal(calls.unknown, 0);
+    assert.deepEqual(runner.status(projectId).faults, []);
+  } finally { release(); }
+  try {
+    await runner.pump();
+    assert.deepEqual([calls.permits, native.starts, calls.unknown, calls.bound], [1, 1, 0, 1]);
+    assert.equal(run.state, "running");
+  } finally { await runner.stop(); }
+});
 
 test("a start proven unsent returns the Run to requested and the next pump dispatches it once more", async () => {
   const session = { ...baseSession }, run = requestedRun(session);

@@ -19,6 +19,7 @@ const message = (r: QueryResultRow): SessionMessageRecord => ({
   context:r.context_task_id?{taskId:r.context_task_id,taskRevisionId:r.context_task_revision_id}:null,
   replyToMessageId:r.reply_to_message_id,state:r.state,version:r.version,
   blockedReason:r.blocked_reason??null,
+  ...(r.superseded_at?{supersededAt:iso(r.superseded_at),supersededConfirmedAt:r.superseded_confirmed_at?iso(r.superseded_confirmed_at):null}:{}),
   readReceipt:r.receipt_actor_id?{actorId:r.receipt_actor_id,evidence:r.receipt_evidence,at:iso(r.receipt_recorded_at)}:null,
   createdAt:iso(r.created_at),updatedAt:iso(r.updated_at),
 });
@@ -153,6 +154,8 @@ export class PgSessionMessages implements SessionMessageTransaction {
     if(!Number.isSafeInteger(offset)||offset<0)throw new RangeError('message offset must be a nonnegative safe integer');
     const r=await this.client.query(`${SELECT_MESSAGE} WHERE m.project_id=$1 AND m.target_kind='owned'
       AND m.state IN ('queued','processing','unknown')
+      -- A message a Run stop superseded waits for its sender (cancel or confirm); it is not delivered and does not hold the line.
+      AND (m.superseded_at IS NULL OR m.superseded_confirmed_at IS NOT NULL OR m.state<>'queued')
       AND (m.state<>'queued' OR (NOT EXISTS(SELECT 1 FROM session_message_processing busy
           WHERE busy.project_id=m.project_id AND busy.session_id=m.session_id AND busy.state IN ('dispatching','running','unknown'))
         AND NOT EXISTS(SELECT 1 FROM session_message older WHERE older.project_id=m.project_id
@@ -160,6 +163,7 @@ export class PgSessionMessages implements SessionMessageTransaction {
           -- A message blocked for want of its sender's grant cannot be delivered however long it waits, and another
           -- sender's messages are not behind it; it stays queued (and visible) but does not hold the line.
           AND (older.blocked_reason IS NULL OR older.blocked_reason NOT LIKE 'MESSAGE_GRANT_MISSING:%')
+          AND (older.superseded_at IS NULL OR older.superseded_confirmed_at IS NOT NULL)
           AND (older.created_at,older.message_id)<(m.created_at,m.message_id))))
       ORDER BY CASE WHEN m.state IN ('processing','unknown') THEN 0 ELSE 1 END,
         CASE WHEN m.blocked_reason IS NULL THEN 0 ELSE 1 END,m.created_at,m.message_id LIMIT $2 OFFSET $3`,[this.projectId,limit,offset]);
@@ -267,7 +271,11 @@ export class PgSessionMessages implements SessionMessageTransaction {
       VALUES($1,$2,$3,$4,$5)`,[this.projectId,messageId,actorId,evidence,at]);
   }
   async setSessionMessageBlockedReason(messageId:string,reason:string|null):Promise<void>{
-    await this.client.query("UPDATE session_message SET blocked_reason=$3,version=version+1,updated_at=now() WHERE project_id=$1 AND message_id=$2 AND state='queued' AND blocked_reason IS DISTINCT FROM $3",[this.projectId,messageId,reason?.slice(0,4000)??null]);
+    await this.client.query("UPDATE session_message SET blocked_reason=$3,version=version+1,updated_at=now() WHERE project_id=$1 AND message_id=$2 AND state='queued' AND blocked_reason IS DISTINCT FROM $3 AND (superseded_at IS NULL OR superseded_confirmed_at IS NOT NULL)",[this.projectId,messageId,reason?.slice(0,4000)??null]);
+  }
+  async confirmSessionMessageSuperseded(messageId:string,actorId:string,at:string):Promise<void>{
+    const r=await this.client.query("UPDATE session_message SET superseded_confirmed_at=$3,superseded_confirmed_by=$4,blocked_reason=NULL,version=version+1,updated_at=$3 WHERE project_id=$1 AND message_id=$2 AND state='queued' AND superseded_at IS NOT NULL AND superseded_confirmed_at IS NULL",[this.projectId,messageId,at,actorId]);
+    if(!r.rowCount)throw new DomainError('NOT_SUPERSEDED','the message is not a queued, unconfirmed superseded message');
   }
   async markSessionMessageSettled(sessionId:string,messageId:string,at:string):Promise<void>{
     await this.client.query(`INSERT INTO session_message_schedule(project_id,session_id,must_yield_business,last_message_id,updated_at)
