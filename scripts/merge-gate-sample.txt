@@ -1,0 +1,1 @@
+sample: intentionally has no acceptance record; do not merge
