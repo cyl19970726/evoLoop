@@ -118,6 +118,8 @@ const integrationSchema = z.strictObject({
   }).optional(),
   leaderResultNotices: z.strictObject({
     enabled: z.boolean(), pollIntervalMs: z.number().int().min(500).max(60000).default(2000),
+    /** DEC-045 W1: notices created from now on travel in Leader notice packets. Default off: new notices keep the one-notice-one-message path. */
+    packets: z.boolean().default(false),
     targets: z.array(z.strictObject({
       projectId: z.uuid(), sessionId: z.uuid(), receiverRoleId: z.uuid(),
       receiverActorId: z.string().trim().min(1).max(100), senderActorId: z.string().trim().min(1).max(100),
@@ -211,6 +213,12 @@ const integrationSchema = z.strictObject({
       configRoot: absolute,
       maxTurns: z.number().int().positive().max(1000).optional(),
       maxBudgetUsd: z.number().positive().max(1000).optional(),
+      /**
+       * How many Claude Turns run at once across all Sessions (adapter default 4); each is one Claude Code process.
+       * A Turn past the limit waits: its message stays queued, its Run stays requested. Size it to the Sessions that
+       * should work at the same time and to the host's memory.
+       */
+      maxConcurrentTurns: z.number().int().min(1).max(64).optional(),
       /**
        * true: each Turn loads the skills the Role's selection picks (its evoLoop business skills, and project,
        * personal and built-in skills by switch) and turns the rest off. false: the CLI's own discovery.

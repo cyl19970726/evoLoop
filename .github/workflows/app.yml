@@ -8,32 +8,56 @@ on:
 permissions:
   contents: read
 
+# Some unit tests also open a dedicated PostgreSQL test database, so both jobs start the test PostgreSQL.
+# The `app` job below is the only required-check name; it summarises the parallel jobs,
+# so splitting work here never changes what branch protection waits for.
 jobs:
-  app:
+  unit:
     runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:18.6
-        env:
-          POSTGRES_USER: evoloop
-          POSTGRES_PASSWORD: test-only-password
-          POSTGRES_DB: evoloop_ci_test
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U evoloop -d evoloop_ci_test"
-          --health-interval 5s --health-timeout 5s --health-retries 10
+    timeout-minutes: 15
     env:
       TEST_DATABASE_URL: postgres://evoloop:test-only-password@127.0.0.1:5432/evoloop_ci_test
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - uses: ./.github/actions/test-postgres
       - uses: actions/setup-node@v4
         with:
           node-version: 24
           cache: npm
       - run: npm ci
+      # The PR is checked out merged into main, so a migration number main already holds shows up here, before any build.
+      - run: npm run check:migrations
       - run: npm run build
       - run: npm run test:unit
+
+  integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      TEST_DATABASE_URL: postgres://evoloop:test-only-password@127.0.0.1:5432/evoloop_ci_test
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/test-postgres
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run build:packages
       - run: npm run test:integration
+
+  app:
+    if: ${{ always() }}
+    needs: [unit, integration]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every parallel job to succeed
+        env:
+          RESULTS: ${{ needs.unit.result }} ${{ needs.integration.result }}
+        run: |
+          echo "unit/integration: $RESULTS"
+          [ "$RESULTS" = "success success" ]

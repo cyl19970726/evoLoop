@@ -133,14 +133,14 @@ function FixedRevision({ projectId, taskId, revisionId }: { projectId: string; t
           <EvidenceText label="当次理由" value={origin.reason} />
         </>}</RevisionWho>
         <div className="flex flex-col gap-1">
-          <p className="text-caption font-medium text-muted-foreground">当时的正文 · <DocumentLink projectId={projectId} documentId={read.data.revision.contentDocumentId}
+          <p className="text-caption font-medium text-muted-foreground">当时的正文 · <DocumentLink projectId={projectId} taskId={taskId} documentId={read.data.revision.contentDocumentId}
             revisionId={read.data.revision.contentRevisionId} title="当时的正文" relation="当时的主正文 · 固定修订">阅读当时的原件</DocumentLink></p>
           <MarkdownBody source={read.data.revision.content} identity={`history-${read.data.revision.id}`} projectId={projectId} topHeading={4} />
         </div>
         <EvidenceText label="当时的验收" value={read.data.revision.acceptance} />
         <div className="flex flex-col gap-1">
           <p className="text-caption font-medium text-muted-foreground">当时的固定依据</p>
-          <BasisList projectId={projectId} basis={read.data.basis} content={{ documentId: read.data.revision.contentDocumentId, revisionId: read.data.revision.contentRevisionId }} />
+          <BasisList projectId={projectId} taskId={taskId} basis={read.data.basis} content={{ documentId: read.data.revision.contentDocumentId, revisionId: read.data.revision.contentRevisionId }} />
         </div>
         <FullIdentifiers rows={[{ label: "任务修订", value: read.data.revision.id }, { label: "依据集合", value: read.data.revision.basisSetId }]} />
       </>}

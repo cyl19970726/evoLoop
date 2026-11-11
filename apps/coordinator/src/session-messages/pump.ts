@@ -30,6 +30,20 @@ async function collect<T>(load:(cursor?:string)=>Promise<RuntimePage<T>>,maxPage
     seen.add(page.nextCursor);cursor=page.nextCursor;}
   throw new Error('native history exceeds bounded recovery window');
 }
+/**
+ * The reply of a Turn that has already ended. The Turn is final, so this read happens once; a very long Turn (a Leader Turn
+ * once made 625 tool calls, 1715 items) must still settle instead of failing on every tick and holding the Session forever.
+ * Past the bound the reply is recorded as unread, never as the last message of a partial read.
+ */
+export const SETTLE_REPLY_MAX_PAGES=50;
+export async function settledReply(load:(cursor?:string)=>Promise<RuntimePage<unknown>>,maxPages=SETTLE_REPLY_MAX_PAGES):Promise<string|null>{
+  const items:unknown[]=[];let cursor:string|undefined;const seen=new Set<string>();
+  for(let i=0;i<maxPages;i++){const page=await load(cursor);items.push(...page.data);
+    if(!page.nextCursor)return finalMessages(items).join('\n\n')||null;
+    if(seen.has(page.nextCursor))throw new Error('native history cursor repeated');
+    seen.add(page.nextCursor);cursor=page.nextCursor;}
+  return `（本轮已结束，但它的原生记录超过 ${maxPages} 页，回复没有在有界读取内读出；完整回复见该 Session 的原生会话记录。）`;
+}
 export interface SessionMessagePumpDeps {
   service:SessionMessageService;runtime():MessageRuntime;projects():Promise<string[]>;
   /** Current in-process native notification state for one exact Session, if available. */
@@ -138,7 +152,7 @@ export class SessionMessagePump {
             await this.deps.service.beginDispatch(message.projectId,message.id,randomUUID(),randomUUID(),qualification.fingerprint,roleContext);
         }
         catch(error){
-          if(error instanceof DomainError&&['SESSION_BUSY','MESSAGE_GRANT_MISSING','MESSAGE_BUDGET_EXHAUSTED','SESSION_NOT_READY','MESSAGE_NOT_QUEUED','TODO_SOURCE_SUPERSEDED','ATTENTION_SOURCE_UNKNOWN','ATTENTION_SOURCE_EXPIRED','ACCEPTANCE_SOURCE_SUPERSEDED'].includes(error.code)){
+          if(error instanceof DomainError&&['SESSION_BUSY','PROVIDER_HELD','MESSAGE_GRANT_MISSING','MESSAGE_BUDGET_EXHAUSTED','SESSION_NOT_READY','MESSAGE_NOT_QUEUED','TODO_SOURCE_SUPERSEDED','ATTENTION_SOURCE_UNKNOWN','ATTENTION_SOURCE_EXPIRED','ACCEPTANCE_SOURCE_SUPERSEDED'].includes(error.code)){
             await this.deps.service.noteBlocked(message.projectId,message.id,error.code==='MESSAGE_GRANT_MISSING'?`MESSAGE_GRANT_MISSING: ${error.message}`:error.message);return;
           }
           throw error;
@@ -210,8 +224,8 @@ export class SessionMessagePump {
         if(!latest&&refreshed.nextCursor)
           latest=(await runtime.listTurns(binding,refreshed.nextCursor)).data.find(t=>t.id===turn.id);
         if(latest?.completedAtUtc&&['completed','failed','interrupted'].includes(latest.status)){
-          const items=await collect(cursor=>runtime.listItems(binding,latest!.id,cursor),10);
-          await this.deps.service.settle(message.projectId,message.id,latest,finalMessages(items).join('\n\n')||null);
+          await this.deps.service.settle(message.projectId,message.id,latest,
+            await settledReply(cursor=>runtime.listItems(binding,latest!.id,cursor)));
           return;
         }
         if(latest?.status!=='inProgress'){
@@ -230,8 +244,7 @@ export class SessionMessagePump {
       }
       return;
     }
-    const items=await collect(cursor=>runtime.listItems(binding,turn.id,cursor),10);
-    await this.deps.service.settle(message.projectId,message.id,turn,finalMessages(items).join('\n\n')||null);
+    await this.deps.service.settle(message.projectId,message.id,turn,await settledReply(cursor=>runtime.listItems(binding,turn.id,cursor)));
   }
   private async mayDeferMissingBoundTurn(projectId:string,sessionId:string,binding:RuntimeBinding,nativeTurnId:string):Promise<boolean>{
     const observed=this.deps.nativeTurn?.(projectId,sessionId);

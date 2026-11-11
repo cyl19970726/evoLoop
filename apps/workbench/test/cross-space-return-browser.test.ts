@@ -20,6 +20,7 @@ const sessionId = id(3);
 const sessionKey = `owned:${sessionId}`;
 const [taskA, taskB, taskC, taskD] = [id(10), id(11), id(12), id(13)];
 const [docA, revA] = [id(20), id(30)];
+const [docB, revB] = [id(21), id(31)];
 const oldRevision = id(40);
 const stamp = "2026-11-10T00:00:00.000Z";
 const metadata = { generatedAt: stamp, sourceObservedAt: stamp, partial: false, limitations: [] };
@@ -29,11 +30,11 @@ const titleC = "【合成示例】没人承接的任务";
 const titleD = "【合成示例】已交付待验收";
 const agentTitle = "【合成示例】开发智能体";
 
-const task = (taskId: string, title: string, state = "in_progress") => ({
+const task = (taskId: string, title: string, state = "in_progress", contentDocumentId = docA, contentRevisionId = revA) => ({
   projectId, id: taskId, version: 2, currentRevisionId: `${taskId.slice(0, 30)}999999`, title, content: `# 目标\n${title}的正文。`,
-  contentDocumentId: docA, contentRevisionId: revA, kind: "implementation", acceptance: "1. 返回链接带名称。", owner: roleId, state,
+  contentDocumentId, contentRevisionId, kind: "implementation", acceptance: "1. 返回链接带名称。", owner: roleId, state,
 });
-const tasks = [task(taskA, titleA), task(taskB, titleB), task(taskC, titleC, "todo"), task(taskD, titleD)];
+const tasks = [task(taskA, titleA), task(taskB, titleB, "in_progress", docB, revB), task(taskC, titleC, "todo"), task(taskD, titleD)];
 const fixedTo = (item: ReturnType<typeof task>, state: string, revision: string) =>
   ({ state, targetKind: "owned", targetId: sessionId, recipientActorId: null, taskRevisionId: revision });
 const projection = (item: ReturnType<typeof task>, phase: string, assignment: unknown) => ({
@@ -103,12 +104,17 @@ test("跨空间返回: task → agent → task (same tab), table → agent, 统�
         else value = { task: found, revision: { ...found, taskId: found.id, id: found.currentRevisionId, actorId: "reader", reason: "夹具修订", createdAt: stamp, basisSetId: null },
           basis: null, links: [], impacts: [], decisions: [], deliveries: [], observations: [], closures: [] };
       }
-      else if (path.startsWith(`${root}/documents/${docA}`)) {
-        const revision = { projectId, documentId: docA, id: revA, body: "# 主正文\n主正文的内容。", format: "markdown", mediaType: "text/markdown",
+      else if (path.startsWith(`${root}/documents/${docA}`) || path.startsWith(`${root}/documents/${docB}`)) {
+        const documentId = path.startsWith(`${root}/documents/${docA}`) ? docA : docB;
+        const revisionId = documentId === docA ? revA : revB;
+        const revision = { projectId, documentId, id: revisionId, body: documentId === docA ? "# 主正文\n甲任务的固定正文。" : "# 主正文\n乙任务的固定正文。",
+          format: "markdown", mediaType: "text/markdown",
           originalName: "doc.md", payloadRef: null, entrypoint: null, assetsManifest: [], contentHash: "a".repeat(64), author: "reader", createdAt: stamp,
           previousRevisionId: null, reason: "夹具" };
-        value = path.includes("/revisions/") ? revision : path === `${root}/documents/${docA}` ? { document: { projectId, id: docA, title: "右栏信息核对的主正文",
-          version: 1, currentRevisionId: revA, adoptedRevisionId: revA, kind: "task", status: "published", primaryTaskId: taskA }, current: revision, adopted: revision }
+        value = path.includes("/revisions/") ? revision : path === `${root}/documents/${documentId}` ? { document: { projectId, id: documentId,
+          title: documentId === docA ? "右栏信息核对的主正文" : "另一任务的主正文",
+          version: 1, currentRevisionId: revisionId, adoptedRevisionId: revisionId, kind: "task", status: "published",
+          primaryTaskId: documentId === docA ? taskA : taskB }, current: revision, adopted: revision }
           : { items: [], nextCursor: null };
       }
       else if (path === `${root}/session-work`) value = { items: [session], nextCursor: null, observationCursor: "0", metadata,
@@ -186,6 +192,29 @@ test("跨空间返回: task → agent → task (same tab), table → agent, 统�
   await shoot("document-from-task-1440");
   await documentBack.click();
   await page.getByRole("heading", { level: 1, name: titleA }).waitFor();
+
+  // 3b. A's main text must not stay on screen as B's unqualified reading. Entering and returning from the agent
+  // preserves the current task's own objects, but another Task's object is removed when that Task becomes current.
+  await page.getByRole("button", { name: "在右栏核对固定原件" }).click();
+  const rightPane = page.getByRole("complementary", { name: "右栏" });
+  await rightPane.getByRole("tab", { name: "主正文" }).waitFor();
+  await rightPane.getByText("甲任务的固定正文。").waitFor();
+  await page.getByRole("region", { name: "任务列表" }).getByRole("link", { name: titleB }).click();
+  await page.getByRole("heading", { level: 1, name: titleB }).waitFor();
+  assert.equal(await rightPane.getByRole("tab", { name: "主正文" }).count(), 0, "A's opened object is not shown as B's");
+  assert.equal(await rightPane.getByText("甲任务的固定正文。").count(), 0);
+  const taskBFacts = rightPane.locator(`[data-task-facts="${taskB}"]`);
+  await taskBFacts.getByText("状态与对账阶段").waitFor();
+  assert.equal(await rightPane.getByRole("tab", { name: "信息" }).getAttribute("aria-selected"), "true", "B starts at its own information");
+  await shoot("task-switch-clears-old-right-pane-1440");
+  await taskBFacts.getByRole("link", { name: "进入对话" }).click();
+  await page.getByRole("heading", { name: agentTitle }).waitFor();
+  await returnLink(`返回任务：${titleB}`).click();
+  await page.getByRole("heading", { level: 1, name: titleB }).waitFor();
+  assert.equal(await rightPane.getByRole("tab", { name: "主正文" }).count(), 0, "the return does not resurrect A's object");
+  assert.equal(await rightPane.getByText("甲任务的固定正文。").count(), 0);
+  await taskBFacts.waitFor();
+  assert.equal(await rightPane.getByRole("tab", { name: "信息" }).getAttribute("aria-selected"), "true");
 
   // 4. The task table's right column → agent → back to the table with the same row.
   const table = `/p/${projectId}/work?state=all&selected=${taskA}`;

@@ -148,6 +148,21 @@ test("work change probes keep the cursor opaque and may ask for only the head se
   ]);
 });
 
+test("document list sends kind and lifecycle filters with the page", async () => {
+  const seen: string[] = [];
+  await withFetch(async input => {
+    seen.push(String(input));
+    return Response.json({ items: [], nextCursor: null });
+  }, async () => {
+    await api("token").documents("project 1", "page/+", "report", "active");
+    await api("token").documents("project 1");
+  });
+  assert.deepEqual(seen, [
+    "/api/projects/project%201/documents?limit=50&cursor=page%2F%2B&kind=report&status=active",
+    "/api/projects/project%201/documents?limit=50",
+  ]);
+});
+
 test("Leader write separates operation metadata from the strict HTTP body", async () => {
   const operationId = "operation-1";
   let requestBody: Record<string, unknown> | null = null;
