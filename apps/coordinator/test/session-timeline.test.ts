@@ -746,3 +746,16 @@ test('compaction never overrides a conflicting identity on the input',async()=>{
   assert.equal(input?.origin,null);
   h.service.close();
 });
+
+test('after compaction a Turn with no saved business source keeps the plain unverified wording',async()=>{
+  const h=compactedHarness(inputs=>[{...inputs[0]!,clientId:null},compaction('turn-message'),agent('answer-1','turn-message')]);
+  h.unlink();
+  const page=await h.service.page(reader,project,key,{limit:1});
+  const input=page.entries.find(e=>e.nativeItemId==='input-1') as {kind:string;label:string;body:string;origin:unknown}|undefined;
+  assert.equal(input?.kind,'notice');
+  assert.equal(input?.label,'未关联的原生输入','no business message exists, so the sender is genuinely unverified');
+  assert.match(input!.body,/未能核实此原生输入的业务发送者/);
+  assert.doesNotMatch(input!.body,/不表示来源不明|业务消息仍可独立读取/);
+  assert.equal(input?.origin,null);
+  h.service.close();
+});

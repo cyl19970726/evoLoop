@@ -526,13 +526,15 @@ export class SessionTimelineService {
     binding:InputBinding|undefined,context?:TurnContext):WorkspaceEntry{
     if(!source||!exactInput(raw,source)){
       const reason=inputNoticeReason(raw,source);
-      if(!context?.compacted||reason==='conflict')return nativeInputNotice(raw,reason);
+      // Without a saved business source the Turn has no message to point to, so the sender really is unverified:
+      // keep the plain wording instead of implying a business message exists.
+      if(!context?.compacted||!source||reason==='conflict')return nativeInputNotice(raw,reason);
       // Context compaction rewrites native input, so the operation marker may be gone. The Turn itself is still the one
       // the saved business record started: when it holds exactly one input and that input carries no other identity,
       // that input is the business input. Anything less certain says so instead of implying an unknown sender.
-      const otherIdentity=raw.clientId!==null&&raw.clientId!==source?.operationId||
-        !!raw.inputReference&&(raw.inputReference.source!==source?.kind||raw.inputReference.operationId!==source?.operationId);
-      if(source&&context.inputs===1&&!otherIdentity){
+      const otherIdentity=raw.clientId!==null&&raw.clientId!==source.operationId||
+        !!raw.inputReference&&(raw.inputReference.source!==source.kind||raw.inputReference.operationId!==source.operationId);
+      if(context.inputs===1&&!otherIdentity){
         if(source.kind==='run')return runInput(raw,source);
         if(message&&message.id===source.messageId)
           return {...messageEntry(message,raw.turnId),nativeItemId:raw.nativeItemId,nativeKind:raw.nativeKind,
