@@ -1,4 +1,5 @@
 import type { SessionRecoveryView } from "@evoloop/contracts/session-recovery";
+import { nativeFailureLine } from "./nativeFailurePresentation";
 export type { SessionRecoveryView } from "@evoloop/contracts/session-recovery";
 
 export type RecoveryRead =
@@ -56,7 +57,7 @@ export function recoveryReasonSummary(gate: RecoveryGate): string {
   }
   if (gate.causeKind === "message") {
     if (gate.causeState === "unknown") return "原消息处理结果尚未确认";
-    if (gate.causeState === "failed") return "原消息处理已记录为失败";
+    if (gate.causeState === "failed") return `${nativeFailureLine(gate.failureCategory) ?? ""}原消息处理已记录为失败`;
   }
   if (gate.causeKind === "execution_profile") {
     if (gate.causeState === "unknown") return "执行配置激活结果尚未确认";
