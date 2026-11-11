@@ -226,6 +226,15 @@ test("runtime reservations freeze task basis and recover uncertain native starts
   };
   assert.equal((await workflow.getRuntimeRun(principal,projectId,runId)).state,'completed');
   await resumeKnown(runId);
+  // rejectDispatch from `requested` is a preflight rejection: no native Turn, the model never started, so the gate stays open
+  // and the next Run needs no explicit resume. A started or uncertain Turn still blocks (resumeKnown above, and the unknown case below).
+  const assertPreflightLeavesGateOpen=async(failedRunId:string)=>{
+    const gate=(await workflow.getSessionRecovery(principal,projectId,sessionId)).gate!;
+    assert.equal(gate.phase,'open','a preflight failure does not close the recovery gate');
+    assert.notEqual(gate.causeId,failedRunId,'the preflight-failed Run is not recorded as the gate cause');
+    assert.ok((await workflow.listRuntimeRuns(principal,projectId)).filter(r=>r.sessionId===sessionId)
+      .every(r=>['completed','failed','interrupted'].includes(r.state)));
+  };
   const followupId = randomUUID();
   const followup = applied(await issue({ ...reserveRun, runId: followupId,
     expectedVersion: ready.version! + 1, input: "Inspect the first native result and continue this accepted task" }));
@@ -249,7 +258,7 @@ test("runtime reservations freeze task basis and recover uncertain native starts
   assert.equal(failed.nativeTurnId, null);
   await assert.rejects(runtime.beginDispatch(projectId, preflightRunId), /already attempted/);
   assert.equal((await workflow.getTask(principal, projectId, otherTaskId)).task.state, "in_progress");
-  await resumeKnown(preflightRunId);
+  await assertPreflightLeavesGateOpen(preflightRunId);
 
   const readyTask = async (title: string) => {
     const id = randomUUID();
@@ -270,7 +279,7 @@ test("runtime reservations freeze task basis and recover uncertain native starts
   applied(await issue({ type: "document.adopt", documentId, expectedVersion: 3, revisionId: updatedDocument.revisionId, reason: "New adopted basis" }));
   await assert.rejects(runtime.beginDispatch(projectId, reserved.entityId), /review pending basis impacts before dispatch/);
   assert.equal((await runtime.rejectDispatch(projectId, reserved.entityId, "Source changed after task freeze")).state, "failed");
-  await resumeKnown(reserved.entityId);
+  await assertPreflightLeavesGateOpen(reserved.entityId);
 
   const manuallyStartedTaskId = randomUUID();
   applied(await issue({ type: "task.create", taskId: manuallyStartedTaskId, title: "Manual start", content: "# Try a Turn",
@@ -310,7 +319,7 @@ test("runtime reservations freeze task basis and recover uncertain native starts
   } catch (error) { await recipientClient.query("ROLLBACK"); throw error; }
   finally { recipientClient.release(); }
   assert.equal((await runtime.rejectDispatch(projectId, manualRunId, "No external Turn started")).state, "failed");
-  await resumeKnown(manualRunId);
+  await assertPreflightLeavesGateOpen(manualRunId);
 
   const unresolvedTaskId = randomUUID();
   applied(await issue({ type: "task.create", taskId: unresolvedTaskId, title: "Uncertain dispatch", content: "# Try one Turn",

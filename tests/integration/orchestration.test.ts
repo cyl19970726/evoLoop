@@ -362,20 +362,15 @@ test("PG orchestration enrolls only new sources, deduplicates inbox and preserve
   const lateClaim=randomUUID();
   await issue(actor,{type:"dispatch.claim",dispatchId:lateDispatch.entityId,claimToken:lateClaim,leaseUntilUtc:new Date(Date.now()+60_000).toISOString()});
   await issue(actor,{type:"dispatch.start",dispatchId:lateDispatch.entityId,claimToken:lateClaim});
-  const blockedCognition=await workflow.getSessionRecovery(principal(actor),projectId,cognitiveSession);
-  assert.equal(blockedCognition.gate?.phase,"blocked");
-  assert.equal(blockedCognition.gate?.causeId,cognitiveRun);
-  assert.equal(blockedCognition.gate?.causeState,"failed");
+  // The cognition Run was ended by rejectDispatch from `requested` (a preflight rejection, no native Turn), so the model
+  // never started and the recovery gate stays open; no explicit resume is needed. Real failures stay blocked (dispatch-rejection.test.ts).
+  const openCognition=await workflow.getSessionRecovery(principal(actor),projectId,cognitiveSession);
+  assert.equal(openCognition.gate?.phase,"open");
+  assert.equal(openCognition.gate?.causeId,null);
   const knownCognitionRuns=(await workflow.listRuntimeRuns(principal(actor),projectId)).filter(run=>run.sessionId===cognitiveSession);
   assert.ok(knownCognitionRuns.length>0&&knownCognitionRuns.every(run=>["completed","failed","interrupted"].includes(run.state)),
-    "explicit recovery is allowed only after every Session Run has a known terminal state");
+    "the next Run starts only when every Session Run has a known terminal state");
   assert.equal((await workflow.getRuntimeRun(principal(actor),projectId,cognitiveRun)).state,"failed");
-  const resumedCognition=await workflow.execute(principal(actor),{type:"runtime.session.recovery.resume",projectId,
-    operationId:randomUUID(),sessionId:cognitiveSession,expectedVersion:blockedCognition.gate!.version,
-    expectedCauseId:blockedCognition.gate!.causeId!,resumeMessageId:blockedCognition.gate!.resumeMessageId,
-    evidenceRef:"fixture://verified-terminal-cognition-run",reason:"Explicitly resume after reviewing the failed cognition Run"});
-  assert.equal(resumedCognition.status,"applied",JSON.stringify(resumedCognition));
-  assert.equal((await workflow.getSessionRecovery(principal(actor),projectId,cognitiveSession)).gate?.phase,"open");
   const lateRun=await workflow.execute(principal(actor),{type:"runtime.run.reserve",projectId,operationId:randomUUID(),runId:lateRunId,
     taskId:lateTaskId,sessionId:cognitiveSession,expectedVersion:2,input:"Reject late first submission"});
   assert.equal(lateRun.status,"applied");
@@ -433,20 +428,14 @@ test("PG orchestration enrolls only new sources, deduplicates inbox and preserve
   await issue(actor,{type:"dispatch.claim",dispatchId:recoveryDispatch.entityId,claimToken:recoveryClaim,
     leaseUntilUtc:new Date(Date.now()+60_000).toISOString()});
   await issue(actor,{type:"dispatch.start",dispatchId:recoveryDispatch.entityId,claimToken:recoveryClaim});
-  const blockedAfterLateRun=await workflow.getSessionRecovery(principal(actor),projectId,cognitiveSession);
-  assert.equal(blockedAfterLateRun.gate?.phase,"blocked");
-  assert.equal(blockedAfterLateRun.gate?.causeId,lateRunId);
-  assert.equal(blockedAfterLateRun.gate?.causeState,"failed");
+  // The late Run also ended by rejectDispatch from `requested` (preflight rejection, no native Turn): the gate stays open.
+  const openAfterLateRun=await workflow.getSessionRecovery(principal(actor),projectId,cognitiveSession);
+  assert.equal(openAfterLateRun.gate?.phase,"open");
+  assert.equal(openAfterLateRun.gate?.causeId,null);
   const knownRunsAfterLate=(await workflow.listRuntimeRuns(principal(actor),projectId)).filter(run=>run.sessionId===cognitiveSession);
   assert.ok(knownRunsAfterLate.length>0&&knownRunsAfterLate.every(run=>["completed","failed","interrupted"].includes(run.state)),
-    "explicit recovery is allowed only after every Session Run has a known terminal state");
+    "the next Run starts only when every Session Run has a known terminal state");
   assert.equal((await workflow.getRuntimeRun(principal(actor),projectId,lateRunId)).state,"failed");
-  const resumedAfterLate=await workflow.execute(principal(actor),{type:"runtime.session.recovery.resume",projectId,
-    operationId:randomUUID(),sessionId:cognitiveSession,expectedVersion:blockedAfterLateRun.gate!.version,
-    expectedCauseId:blockedAfterLateRun.gate!.causeId!,resumeMessageId:blockedAfterLateRun.gate!.resumeMessageId,
-    evidenceRef:"fixture://verified-terminal-late-run",reason:"Explicitly resume after reviewing the late failed cognition Run"});
-  assert.equal(resumedAfterLate.status,"applied",JSON.stringify(resumedAfterLate));
-  assert.equal((await workflow.getSessionRecovery(principal(actor),projectId,cognitiveSession)).gate?.phase,"open");
   const recoveryRun=await workflow.execute(principal(actor),{type:"runtime.run.reserve",projectId,operationId:randomUUID(),
     runId:recoveryRunId,taskId:recoveryTaskId,sessionId:cognitiveSession,expectedVersion:2,input:"Record bounded division intent"});
   assert.equal(recoveryRun.status,"applied",JSON.stringify(recoveryRun));
