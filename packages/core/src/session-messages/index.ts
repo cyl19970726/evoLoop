@@ -127,6 +127,8 @@ export async function applySessionMessage(tx:Transaction,principal:Principal,com
 
 export interface SessionMessageServiceDeps {uow:UnitOfWork;clock:Clock;ids:IdFactory;
   grantFor(message:SessionMessageRecord,session:RuntimeSessionRecord):Promise<SessionMessageDispatchGrant|null>;
+  /** Local day for a Turn ledger owned by a runtime without cumulative native observations. */
+  usageDay?(at:string):string;
 }
 /** Trusted coordinator path. No public command can claim a native turn or change processing evidence. */
 export class SessionMessageService {
@@ -361,6 +363,13 @@ export class SessionMessageService {
       const m=required(await store.getSessionMessage(messageId),'message');
       await store.updateSessionMessage({...m,state:ok?(visible?'replied':'completed_without_reply'):'failed',version:m.version+1,updatedAt:now},m.version);
       await store.markSessionMessageSettled(p.sessionId,messageId,now);
+      // Codex's cumulative native observation already counts this Turn; only a runtime without that
+      // source writes the bound Turn's provider accounting here.
+      const session=await tx.getRuntimeSession(p.sessionId);
+      if(turn.usage&&tx.usage&&(session?.runtimeProvider??'codex')!=='codex')
+        await tx.usage.addUsage(projectId,p.sessionId,this.deps.usageDay?.(now)??now.slice(0,10),{
+          inputTokens:turn.usage.inputTokens??0,outputTokens:turn.usage.outputTokens??0,
+          cachedInputTokens:turn.usage.cacheReadInputTokens??0,costUsd:0,costReported:false});
     });
   }
 }
