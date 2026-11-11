@@ -378,3 +378,22 @@ test('role runtime CLI binds once from the live view, then changes only skills a
     assert.equal(submitted.length,2);
   }finally{fetch.mock.restore();await rm(directory,{recursive:true,force:true});}
 });
+
+test("command run shows the failing field and its accepted form when executeAtUtc is malformed", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "evoloop-cli-timing-"));
+  try {
+    const id = (n: number) => `40000005-0000-4000-8000-${String(n).padStart(12, "0")}`;
+    const timing = { executeAtUtc: "tomorrow 9am", timezone: "Asia/Shanghai", repeat: "none" };
+    const files = { create: { type: "task.create", projectId: id(1), operationId: id(2), taskId: id(3), title: "t", content: "c", acceptance: "a", owner: "o", timing },
+      set: { type: "task.timing.set", projectId: id(1), operationId: id(4), taskId: id(3), expectedTaskVersion: 1, expectedTimingVersion: 0, ...timing, scope: "this", reason: "r" } };
+    for (const [name, body] of Object.entries(files)) {
+      const file = join(dir, `${name}.json`);
+      await (await import("node:fs/promises")).writeFile(file, JSON.stringify(body));
+      const result = await run(["command", "run", file], { EVOLOOP_API_URL: "http://127.0.0.1:9", EVOLOOP_TOKEN: "t".repeat(40), EVOLOOP_STATE_DIR: dir });
+      assert.equal(result.code, 2, result.stderr);
+      const message = JSON.parse(result.stderr).error.message as string;
+      assert.match(message, /executeAtUtc/, name);
+      assert.match(message, /2026-11-12T04:00:00\.000Z/, `${name}: the CLI message carries the example`);
+    }
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});

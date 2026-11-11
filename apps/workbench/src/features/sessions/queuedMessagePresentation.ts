@@ -34,3 +34,27 @@ export function queuedMessageSummary(body: string, originTaskId?: string | null)
   const preview = first.length > previewLimit ? `${first.slice(0, previewLimit)}…` : first;
   return { label: kind?.[1] ?? null, occurredAt: kind && at && !Number.isNaN(Date.parse(at)) ? at : null, taskId: kind ? task : null, preview: preview || "（没有可公开的正文）" };
 }
+
+const grantBlockPrefix = "MESSAGE_GRANT_MISSING:";
+/** The message's own words for what is missing, without the code the queue uses to skip it. */
+export function grantBlockText(blockedReason: string | null | undefined): string | null {
+  return blockedReason?.startsWith(grantBlockPrefix) ? blockedReason.slice(grantBlockPrefix.length).trim() : null;
+}
+
+export interface GrantBlockedNotice {
+  count: number;
+  /** The senders whose messages wait for a grant, in order of first appearance. */
+  senders: string[];
+  /** What the first blocked message says is missing. */
+  reason: string;
+}
+/**
+ * Saved messages that wait only because their sender has no message grant. They do not hold the queue, so the page says
+ * so: they are not delivered until the grant exists, and the messages behind them are handled as usual.
+ */
+export function grantBlockedNotice(entries: ReadonlyArray<{ kind: string; role?: string; state?: string; blockedReason?: string | null; author?: { id: string | null; label: string } }>): GrantBlockedNotice | null {
+  const blocked = entries.filter(entry => entry.kind === "message" && entry.role === "input" && entry.state === "pending" && grantBlockText(entry.blockedReason) !== null);
+  if (!blocked.length) return null;
+  const senders = [...new Set(blocked.map(entry => entry.author?.label ?? entry.author?.id ?? "未知发送者"))];
+  return { count: blocked.length, senders, reason: grantBlockText(blocked[0]!.blockedReason)! };
+}

@@ -14,6 +14,8 @@ export interface AgentNameSource {
   kind: "owned" | "external";
   profile?: { displayName?: string | null } | null;
   roles?: ReadonlyArray<{ title: string }>;
+  /** A project-run agent's runtime and model (absent for an external agent and from an older service). */
+  runtime?: { provider: "codex" | "claude"; model: string | null } | null;
   /** A project-run agent's latest business run; the service gives none for an external agent. */
   lastProgressAt?: string | null;
   /** For an external agent, when its connection record was last written (registered or verified). */
@@ -41,11 +43,20 @@ export function agentNameIsGenerated(source: AgentNameSource): boolean {
 /** The name to show: the registered name, the title, or for a generated one its role and kind. */
 export function agentDisplayName(source: AgentNameSource): string {
   const title = source.profile?.displayName?.trim() || source.title?.trim() || "";
+  // Nobody registered a name: two agents of one role would both read as the role's title. Say which runtime this one is on,
+  // so a Codex and a Claude agent of one role (a developer and a reviewer, say) are told apart at a glance.
+  if (!source.profile?.displayName?.trim() && source.kind === "owned" && source.runtime && !agentNameIsGenerated(source)) return `${title} · ${runtimeName(source.runtime.provider)}`;
   if (!agentNameIsGenerated(source)) return title;
   const role = roleOf(source, generatedExternal.exec(title)?.[1]);
   const kind = source.kind === "external" ? "外部接入的智能体" : "受管智能体";
   // The role first: a narrow list that cuts the name still shows which role it is.
   return role ? `${role} · ${kind}` : kind;
+}
+
+export const runtimeName = (provider: "codex" | "claude"): string => provider === "claude" ? "Claude" : "Codex";
+/** “Claude · sonnet” or “Codex · 默认模型”: what a project-run agent runs on; null when the service did not say. */
+export function agentRuntimeLabel(source: Pick<AgentNameSource, "runtime">): string | null {
+  return source.runtime ? `${runtimeName(source.runtime.provider)} · ${source.runtime.model?.trim() || "默认模型"}` : null;
 }
 
 /** The first eight characters of the agent's identifier, as the service's generated title writes them. */

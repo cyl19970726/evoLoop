@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import { computeDue } from "@evoloop/core/scheduling";
 import type { ScheduleRevision } from "@evoloop/contracts/scheduling";
+import { canonicalUtcExample } from "@evoloop/contracts/task-timing";
 import type { TaskTimingCommand, TaskTimingInput, TaskTimingQueries, TaskTimingSeriesPage, TaskTimingView } from "@evoloop/contracts/task-timing";
 import { DomainError } from "@evoloop/contracts/ports";
 
@@ -36,14 +37,17 @@ interface SeriesRow {
   template: Template;
 }
 
+/** A malformed timing is a bad request, not a conflict with existing state; every message carries the accepted form. */
+const invalidTiming = (message: string): TaskTimingConflict =>
+  new TaskTimingConflict(`${message}（executeAtUtc 例：${canonicalUtcExample}；timezone 为 IANA 名称，如 Asia/Shanghai；repeat 为 none 或 daily）`, "INVALID_TASK_TIMING");
 function validateTiming(timing: TaskTimingInput): void {
-  if (iso(timing.executeAtUtc) !== timing.executeAtUtc) throw new TaskTimingConflict("executeAtUtc must be canonical UTC ISO");
-  if (!timing.timezone || timing.timezone.length > 80) throw new TaskTimingConflict("invalid timezone");
+  if (iso(timing.executeAtUtc) !== timing.executeAtUtc) throw invalidTiming("executeAtUtc 必须是规范的 UTC 时间");
+  if (!timing.timezone || timing.timezone.length > 80) throw invalidTiming("timezone 无效");
   try { new Intl.DateTimeFormat("en-CA", { timeZone: timing.timezone }); }
-  catch { throw new TaskTimingConflict("invalid IANA timezone"); }
-  if (timing.repeat !== "none" && timing.repeat !== "daily") throw new TaskTimingConflict("invalid repeat rule");
+  catch { throw invalidTiming("timezone 不是有效的 IANA 时区"); }
+  if (timing.repeat !== "none" && timing.repeat !== "daily") throw invalidTiming("repeat 无效");
   if (timing.repeat === "daily" && !timing.executeAtUtc.endsWith(":00.000Z"))
-    throw new TaskTimingConflict("daily anchor must be on an exact minute");
+    throw invalidTiming("每日重复的起点必须落在整分钟（秒和毫秒为 0）");
 }
 function localTime(executeAtUtc: string, timezone: string): string {
   const parts = new Intl.DateTimeFormat("en-GB", { timeZone: timezone, hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(new Date(executeAtUtc));

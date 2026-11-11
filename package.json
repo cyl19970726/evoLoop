@@ -16,7 +16,7 @@
     "test": "npm run test:docs && npm run test:unit",
     "test:pilot-storage": "node --test scripts/pilot-storage-check.test.mjs",
     "test:docs": "node --test scripts/docs/*.test.js scripts/architecture-map/*.test.js",
-    "test:unit": "npm run build:packages && node --import tsx --test packages/contracts/test/*.test.ts packages/core/test/*.test.ts apps/coordinator/test/*.test.ts apps/workbench/test/*.test.ts packages/ui/test/*.test.ts apps/cli/test/*.test.ts packages/adapter-codex-app-server/test/*.test.ts packages/adapter-claude-agent-sdk/test/*.test.ts packages/adapter-git-documents/test/*.test.ts packages/adapter-local-blobs/test/*.test.ts packages/connector-feishu/test/*.test.ts packages/connector-wechat/test/*.test.ts packages/adapter-wiki-openviking/test/*.test.ts scripts/pilot-storage-check.test.mjs scripts/codex-conformance.test.mjs .agents/skills/evoloop-evocation/scripts/*.test.mjs",
+    "test:unit": "npm run build:packages && node --import tsx --test packages/contracts/test/*.test.ts packages/core/test/*.test.ts apps/coordinator/test/*.test.ts apps/workbench/test/*.test.ts packages/ui/test/*.test.ts apps/cli/test/*.test.ts packages/adapter-codex-app-server/test/*.test.ts packages/adapter-claude-agent-sdk/test/*.test.ts packages/adapter-git-documents/test/*.test.ts packages/adapter-local-blobs/test/*.test.ts packages/connector-feishu/test/*.test.ts packages/connector-wechat/test/*.test.ts packages/adapter-wiki-openviking/test/*.test.ts scripts/pilot-storage-check.test.mjs scripts/database-target.test.mjs scripts/codex-conformance.test.mjs .agents/skills/evoloop-evocation/scripts/*.test.mjs",
     "test:integration": "node scripts/test-integration.mjs",
     "build:packages": "tsc -b packages/contracts packages/core packages/adapter-postgres packages/adapter-codex-app-server packages/adapter-claude-agent-sdk packages/adapter-git-documents packages/adapter-local-blobs packages/adapter-wiki-openviking packages/connector-feishu packages/connector-wechat apps/coordinator apps/cli",
     "build": "npm run build:packages && npm run build --workspace @evoloop/workbench",
@@ -26,7 +26,8 @@
     "db:migrate": "node apps/coordinator/dist/migrate.js",
     "pilot:storage:check": "node scripts/pilot-storage-check.mjs",
     "architecture:build": "node scripts/architecture-map/build.mjs",
-    "codex:conformance": "node scripts/codex-conformance.mjs"
+    "codex:conformance": "node scripts/codex-conformance.mjs",
+    "test:db": "node --import ./scripts/test-database-guard.mjs --import tsx --test"
   },
   "dependencies": {
     "esbuild": "0.28.2",
