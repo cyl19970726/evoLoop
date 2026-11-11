@@ -8,7 +8,9 @@ import { event } from "./reserve.js";
 import { validateDispatchBasis } from "./basis.js";
 import { priorReviewDecision, reviewIntentJson } from "./pre-turn-review.js";
 
-export interface RuntimeWorkflowDependencies { uow: UnitOfWork; clock: Clock; ids: IdFactory }
+export interface RuntimeWorkflowDependencies { uow: UnitOfWork; clock: Clock; ids: IdFactory;
+  /** Local day used by the usage ledger; absent keeps canonical UTC. */
+  usageDay?: (at: string) => string; }
 const internalActor = "runtime-coordinator";
 const required = <T>(value: T | null, kind: string): T => {
   if (value === null) throw new DomainError("NOT_FOUND", `${kind} not found`);
@@ -514,6 +516,24 @@ export class RuntimeWorkflowService {
         ...(terminal && checkpoint.costUsd != null ? { costUsd: checkpoint.costUsd } : {}),
         updatedAt: this.deps.clock.now() };
       await tx.updateRuntimeRun(next, current.version);
+      if (terminal && checkpoint.usage && tx.usage) {
+        // Codex reports cumulative thread usage through native observations; that source already counts
+        // this Run. Recording both would double the Session-day bucket. Runtimes without cumulative
+        // native observations (for example Claude) fall back to the Run checkpoint.
+        const session = await tx.getRuntimeSession(current.sessionId);
+        const cumulativeNative = (session?.runtimeProvider ?? "codex") === "codex";
+        if (!cumulativeNative) {
+          const at = next.updatedAt;
+          await tx.usage.addUsage(projectId, current.sessionId,
+            this.deps.usageDay?.(at) ?? at.slice(0, 10), {
+              inputTokens: checkpoint.usage.inputTokens ?? 0,
+              outputTokens: checkpoint.usage.outputTokens ?? 0,
+              cachedInputTokens: checkpoint.usage.cacheReadInputTokens ?? 0,
+              costUsd: checkpoint.costUsd != null && checkpoint.costUsd > 0 ? checkpoint.costUsd : 0,
+              costReported: checkpoint.costUsd != null,
+            });
+        }
+      }
       const detail = `${status}${checkpoint.completedAtUtc ? `; completedAtUtc=${checkpoint.completedAtUtc}` : ""}${summary ? `: ${summary}` : ""}`;
       await this.emit(tx, runId, current.sessionId, "run.status", detail, turnId, projectId,
         checkpoint.cursor ?? null, checkpoint.itemsDigest ?? null);

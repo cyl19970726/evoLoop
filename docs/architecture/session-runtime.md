@@ -161,6 +161,17 @@ DEC-045 在现有即时输入之外增加三类输入，并把“接下来做什
 
 托管压缩只在 Codex 固定 `0.166.0-alpha.6` 时可用（协议特性表里只有该版本具备 `thread/compact/start`），Claude 的声明是 `compaction.mode: "unavailable"`。私有配置 `runtime.compaction.owned` 默认 `true`；设为 `false` 时关闭这组维护入口，压缩完全交给运行时自己。命令与核对步骤见[运行接线手册](../development/runtime-operations.md#3-托管压缩)。
 
+### 长会话的上下文交接与每日用量上限
+
+原生运行时的自动压缩会在上下文快满时发生，但压缩只缩短保留窗口；之后每轮工具输出与通知正文会继续把窗口填回去。2026-11-11 对一个正式 Leader 线程的只读测量是 148 轮、17 次压缩、按轮最大输入的均值 218,162、中位数 229,557、p90 267,289 个词元，线程累计输入 381,888,271，其中 136 轮达到或超过 150,000。因此把自动压缩当成唯一治理手段不够，服务另加两道可配置的普通 Turn 准入：
+
+- **上下文交接。** `runtime.contextBudget`（默认关闭；打开后 `maxInputTokens` 默认 150,000，`warningRatio` 默认 0.8）比较该 Session 最新原生观察的当前上下文。达到 `warning` 只提示；达到 `handoff_required` 时，普通 Leader 结果通知保留在队列中并写明 `CONTEXT_HANDOFF_REQUIRED`，不再启动新 Turn。业务 Task Run 与使用者自己发的消息不受这道门影响。维护者用同一职责开启新 Session／新线程，把原 Session、原生 Thread、固定 Task 和未处理通知作为第一责任写进交接摘要；`contextHandoffSummary()` 生成一段只引用固定标识、不含原生对话正文的摘要。新线程接手前，旧线程的 Task、交付、验收和通知仍各按原记录判断，不能因为交接而视为已读或已接受。
+- **每日总额。** `runtime.dailyBudget`（默认关闭；`maxInputTokens` 与 `maxCostUsd` 至少设一个，`warningRatio` 默认 0.8，`pauseOrdinaryTurns` 默认 `true`）按项目配置的 IANA 时区聚合 `session_usage_daily`。`warning` 只提示，`exhausted` 时同样只暂停普通结果通知；业务 Task Run 不受影响，消息保留可恢复的阻断原因。费用只累加运行时实际报告的成本；有任何一笔记账没有成本时，费用上限判为 `unknown`，不会把未报告当成 0。
+
+按 Session、按天的用量与费用由 `GET /api/projects/:projectId/runtime/usage?from=YYYY-MM-DD&to=YYYY-MM-DD` 读取；工作台智能体页右栏“环境与用量”显示该 Session 今日用量、上下文压力、项目每日上限与最近几天汇总。用量来源按运行时分开：Codex 的累计原生观察是权威来源，Runtime Run 的终态账本只用于没有累计原生观察的运行时（例如 Claude），避免同一 Turn 重复记账。原生观察缺失时显示“未知”，不按 0 计。
+
+基线对比方法：`node scripts/context-baseline.mjs <Codex rollout.jsonl>` 只读原生记录，报告每轮最大输入、均值／中位数／p90、累计用量、压缩次数和各记录类型的字节占比。改动前后各取同一 Leader 线程或同职责新线程的前 N 轮，按同一口径比较；通知正文不是主要来源，工具输出与保留历史才是。
+
 ## 5. 普通消息默认不限轮数
 
 普通 Session 消息默认不限累计轮数（DEC-039，修订 DEC-033 的预算部分；PR #195、#207）：
@@ -250,6 +261,7 @@ Codex 一列有几项取决于运行配置选的协议版本。“现代协议�
 | 停止、预检与原 Thread 接续 | PR #184、#185；schema 048–050 | 随运行时启用 |
 | 宿主失联与写者冲突恢复 | PR #199、#200；schema 055、056 | 随运行时启用 |
 | 托管压缩 | PR #210、#215、#218、#222；schema 058 | `runtime.compaction.owned: true`；需 Codex `0.166.0-alpha.6` |
+| 上下文交接与每日用量上限 | 本次；schema 081 | `runtime.contextBudget`／`runtime.dailyBudget` 均默认关闭 |
 | 即时输入 | PR #216；schema 059 | `directInputs` 关闭 |
 | 普通消息不限轮数 | PR #195、#207 | `maxTurns` 省略即不限 |
 | Claude 运行时、双运行时与 Role 绑定 | PR #224、#226、#230；schema 067、068 | `runtime.provider: "codex"`；Claude 需显式列入 `providers` 并配置 `runtime.claude` |
@@ -260,5 +272,5 @@ Codex 一列有几项取决于运行配置选的协议版本。“现代协议�
 
 - Codex 协议、版本与历史读取的细节：[Codex 接入](codex-integration.md)
 - Session、Run、消息、验收接力和 Leader 通知的合同：[接口合同](contracts.md)
-- 这些表的约束：[存储](storage.md#迁移-054-到-070-新增的表和列)
+- 这些表的约束：[存储](storage.md#迁移-054-到-081-新增的表和列)
 - 服务实际部署在哪里、迁移时 Session 为什么不搬：[部署与迁移](deployment.md)

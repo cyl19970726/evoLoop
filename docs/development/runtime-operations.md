@@ -18,6 +18,7 @@
 | [普通 Task 的每日复制](#4-普通-task-的每日复制) | `scheduling.taskTimingGrants` | 空 | 每次创建、改时和物化时重读 | [一次与每日复制](../architecture/contracts.md#普通-task-的一次与每日复制) |
 | [受管 Session 编制](#6-受管-session-编制所需配置) | `residentQueue.roleActors`、`runtime.materialCli`、`runtime.grants` 等 | 无（逐项见该节） | `session prepare` 每次重读；只有 `runtime.enabled` 与新增 HTTP 令牌要重启 | [准备或复用受管 Session](agent-cli.md#准备或复用受管-session) |
 | [阶段关注](#5-阶段关注) | 没有开关，门槛用命令修订 | 服务运行就评估，每 30 秒一次 | 不适用 | [阶段等待由事实推导](../architecture/contracts.md#阶段等待由事实推导) |
+| [用量上限与上下文交接](#7-用量上限与上下文交接) | `runtime.dailyBudget`、`runtime.contextBudget` | 都不限 | 上限与开关在每个普通结果通知前重读；账本时区在启动时读 | [长会话的上下文交接](../architecture/session-runtime.md#长会话的上下文交接与每日用量上限) |
 
 ## 1. Leader 结果通知
 
@@ -294,3 +295,38 @@ node --import tsx tests/manual/session-compaction-e1.ts
 
 - **身份的额外命令（`extraCommands`）。** 给文档与架构这类只有 read、write 的身份开放归档与恢复时，在身份文件里该凭据上加 `"extraCommands": ["document.archive", "document.restore"]`，不要给它 `review`（那样它还能开始、关闭、分派 Task）。清单只接受这两个值，别的命令写进去则服务启动时读身份文件失败；每条命令各自生效。**身份文件在服务启动时读取，改了要重启服务才生效**（`session prepare` 重读身份文件只用于其编制检查，不改变 HTTP 认证用的启动快照）。
 - **同一个事实写两处。** `runtime.materialCli` 的 `cliActorId` 与 `residentQueue.roleActors` 的 `actorId` 在 Role 级必须一致，不一致时报 `material_cli_actor_mismatch`；为什么暂不合并见 Agent CLI 那一节。
+
+## 7. 用量上限与上下文交接
+
+这两项都只拦普通 Leader 结果通知，不拦业务 Task Run，也不拦使用者自己发的消息。默认都不配置，因此升级本身不改变行为。
+
+```json
+"runtime": {
+  "dailyBudget": {
+    "enabled": true,
+    "maxInputTokens": 50000000,
+    "maxCostUsd": 25,
+    "warningRatio": 0.8,
+    "pauseOrdinaryTurns": true,
+    "timeZone": "Asia/Tashkent"
+  },
+  "contextBudget": {
+    "enabled": true,
+    "maxInputTokens": 150000,
+    "warningRatio": 0.8,
+    "pauseOrdinaryTurns": true
+  }
+}
+```
+
+- **读回用量。** `GET /api/projects/PROJECT_ID/runtime/usage?from=YYYY-MM-DD&to=YYYY-MM-DD` 按 Session 和按天返回输入、输出、缓存输入、费用与上下文压力；工作台智能体页右栏“环境与用量”用同一个读取。费用缺失写“未报告”，不当 0。
+- **警告与暂停。** 达到 `warningRatio` 只显示提示；达到上限后，结果通知消息以 `DAILY_BUDGET_EXHAUSTED` 或 `CONTEXT_HANDOFF_REQUIRED` 留在队列并写阻断原因。业务 Task Run、验收和人工消息仍可执行。要恢复，先处理交接或调整上限，再按原消息记录重试；不要另建一条消息冒充原通知。
+- **交接到新线程。** 用同一 Role 开启新 Session，把原 Session、原生 Thread、固定 Task 与未处理通知写进接手说明；新线程读取固定 Task 和当前工作变化后再决定下一步。`contextHandoffSummary()` 的格式可直接作为交接摘要；它不复制原生对话正文。
+- **基线。** `node scripts/context-baseline.mjs <rollout.jsonl>` 只读 Codex 原生记录，报告每轮最大输入、均值／中位数／p90、累计用量、压缩次数和字节占比。改动前后用同一口径比较，不以单轮或通知数量代替。
+
+## 已知缺口
+
+- **导入通知没有正式命令。** 迁移导入的 Leader 通知只能由维护者直接标记，没有权限检查和操作回执（见[迁移之后先处理导入的通知](#迁移之后先处理导入的通知)）。
+- **即时输入的能力查询不核运行时。** 对 Claude 或非 alpha.6 的 Codex 也可能回答 `steer`，提交时才被拒绝或记为未知（见 [Session 运行时 §3](../architecture/session-runtime.md#3-即时输入执行中收到的消息怎样处理)）。
+- **托管压缩只在 alpha.6 可用。** 隔离测试只用替身，不验证有认证的模型压缩。
+- **上下文交接仍由维护者执行。** 服务会暂停普通通知并生成摘要，但不会自动创建新原生线程、迁移 Leader 目标或替使用者确认接手；这套操作尚未在正式实例做长期运行验收。
