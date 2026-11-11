@@ -238,7 +238,7 @@ npm run --silent cli -- session input show "$SESSION_UUID" "$INPUT_UUID" --proje
 
 - `--mode insert`：先读这个身份对该 Session 的能力。Session 正在执行时把消息送入**当前这一轮**；空闲时在原会话开一轮。请求正文沿用即时输入合同（`inputId`、`operationId`、`content`、`expectedTurnId`，见 `packages/contracts/src/direct-input.ts`）。需要**即时输入授权**（送入，以及空闲时开一轮）和**普通消息授权**；缺哪一项，命令在发出前拒绝并写明（`INSERT_NOT_AVAILABLE`），同时提示可改用 `--mode queue`。
 - `--mode queue`：保存为一条普通排队消息（`session.message.post`，消息 ID 即输入 ID），这一轮结束后按顺序处理；只需要普通消息授权。
-- `--input` 与 `--operation` 可指定输入 ID 和操作 ID；不给则生成，并在发送前把它们写到标准错误。结果未知（`INPUT_OUTCOME_UNKNOWN`）时不要换 ID 重发，用 `session input show` 读回，或带同样的 `--input`、`--operation` 重复该命令。
+- `--input` 与 `--operation` 可指定输入 ID 和操作 ID；不给则生成，并在发送前把它们写到标准错误。结果未知时命令以退出码 3 结束（`RESULT_UNCONFIRMED`），不要换 ID 重发：用 `session input show` 读回，或带同样的 `--input`、`--operation` 重复该命令。带 `--input` 的重复命令**先读该 ID 已保存的结果并照它回答**（输出里 `repeated: true`），不再读能力、不再发送；已是未被拒绝的即时输入的 ID 不能再用 `--mode queue` 发（`INPUT_ID_IS_DIRECT_INPUT`）。`--file` 按严格 UTF-8 读取。`session input show` 对运行时已接收但没记录原生条目的输入，会先按原输入对账一次（只读，不重发），输出里 `reconciled` 与 `receipt.nativeItemId` 给出结果。
 - 读回的 `outcome`：`inserted`（已插入当前这一轮）、`started`（空闲，已开新一轮）、`queued`（已排队）、`queued_after_change`（插入时那一轮已经换了，自动转成一条排队消息，原因在 `reason`，仍只有一条）、`rejected`（运行时明确拒绝，什么也没送入）、`unknown`。`inserted` 与 `started` 只表示运行时接收，不表示智能体已阅读或采用。
 
 ### 叫停执行中的 Run

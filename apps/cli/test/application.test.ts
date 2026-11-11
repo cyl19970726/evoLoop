@@ -567,7 +567,7 @@ test('session input CLI inserts into the running Turn, queues, names a missing g
   const directory = await mkdtemp(join(tmpdir(), 'evoloop-input-cli-'));
   const base = `/api/projects/${projectId}`;
   let capability: Record<string, unknown> = { available: true, mode: 'steer', expectedTurnId: 'turn-7', reasonCode: 'READY_TO_STEER' };
-  let submitted: Record<string, unknown> | null = null, posted: Record<string, unknown> | null = null, direct: Record<string, unknown> | null = null;
+  let submitted: Record<string, unknown> | null = null, posted: Record<string, unknown> | null = null, direct: Record<string, unknown> | null = null, queued_posted = false;
   const fetch = mock.method(globalThis, 'fetch', async (url: string | URL | Request, init?: RequestInit) => {
     const path = new URL(String(url)).pathname;
     if (path === '/api/session') return new Response(JSON.stringify({ principal: { actorId: 'requirements', projectIds: [projectId] } }));
@@ -581,8 +581,9 @@ test('session input CLI inserts into the running Turn, queues, names a missing g
       const found = path.endsWith(inputId) && direct;
       return new Response(JSON.stringify(found || { code: 'NOT_FOUND' }), { status: found ? 200 : 404 });
     }
-    if (path === '/api/commands') { posted = JSON.parse(String(init?.body)); return new Response(JSON.stringify({ status: 'applied', operationId: queueOperation, entityId: queueId, version: 1 })); }
-    if (path === `${base}/session-messages/${queueId}`) return new Response(JSON.stringify({ message: { id: queueId, state: 'queued' } }));
+    if (path === '/api/commands') { posted = JSON.parse(String(init?.body)); queued_posted = true; return new Response(JSON.stringify({ status: 'applied', operationId: queueOperation, entityId: queueId, version: 1 })); }
+    if (path === `${base}/session-messages/${queueId}`) return new Response(JSON.stringify({ message: { id: queueId, state: 'queued' } }), { status: queued_posted ? 200 : 404 });
+    if (path.startsWith(`${base}/session-messages/`)) return new Response(JSON.stringify({ code: 'NOT_FOUND' }), { status: 404 });
     throw new Error(`Unexpected ${init?.method ?? 'GET'} ${path}`);
   });
   const env = { EVOLOOP_TOKEN: 'fixture', EVOLOOP_STATE_DIR: directory };
@@ -625,4 +626,57 @@ test('direct input outcomes read in the workbench words, including a steer queue
   assert.equal(changed.outcome, 'queued_after_change'); assert.match(changed.summary, /same ID/); assert.match(changed.reason!, /TURN_CHANGED/);
   assert.equal(directInputOutcome({ state: 'rejected', mode: 'steer', queuedMessageId: null, reason: 'no' }).outcome, 'rejected');
   assert.equal(directInputOutcome({ state: 'unknown', mode: 'steer' }).outcome, 'unknown');
+});
+
+test('session input CLI: a repeat with a known ID answers from what was saved, never inserts and queues the same text, reconciles a missing native Item, and exits 3 on an unknown outcome', async () => {
+  const projectId = '00000000-0000-4000-8000-000000000031', sessionId = '00000000-0000-4000-8000-000000000032';
+  const sent = '00000000-0000-4000-8000-000000000033', converted = '00000000-0000-4000-8000-000000000034', lost = '00000000-0000-4000-8000-000000000035';
+  const directory = await mkdtemp(join(tmpdir(), 'evoloop-input-retry-'));
+  const base = `/api/projects/${projectId}`;
+  const calls: string[] = [];
+  let reconciled = false, capabilityCalls = 0, postMode: 'down' | 'ok' = 'ok';
+  const accepted = (inputId: string, item: string | null) => ({ inputId, operationId: inputId, mode: 'steer', state: 'accepted', actualTurnId: 'turn-7', nativeItemId: item, reason: null });
+  const fetch = mock.method(globalThis, 'fetch', async (url: string | URL | Request, init?: RequestInit) => {
+    const path = new URL(String(url)).pathname; calls.push(`${init?.method ?? 'GET'} ${path}`);
+    const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status });
+    if (path === '/api/session') return json({ principal: { actorId: 'requirements', projectIds: [projectId] } });
+    if (path === `${base}/sessions/${sessionId}/direct-input-capability`) { capabilityCalls++; return json({ available: true, mode: 'start', expectedTurnId: null, reasonCode: 'READY_TO_START' }); }
+    if (path === `${base}/sessions/${sessionId}/direct-inputs/${sent}/reconcile`) { reconciled = true; return json(accepted(sent, 'item-9')); }
+    if (path === `${base}/sessions/${sessionId}/direct-inputs/${sent}`) return json(accepted(sent, reconciled ? 'item-9' : null));
+    if (path === `${base}/sessions/${sessionId}/direct-inputs/${converted}`) return json({ inputId: converted, operationId: converted, mode: 'steer', state: 'rejected', reason: 'TURN_CHANGED: the Turn changed before the input was added; saved as a queued ordinary message', queuedMessageId: converted });
+    if (path.startsWith(`${base}/sessions/${sessionId}/direct-inputs/`)) return json({ code: 'NOT_FOUND' }, 404);
+    if (path === `${base}/session-messages/${converted}`) return json({ message: { id: converted, state: 'queued' } });
+    if (path.startsWith(`${base}/session-messages/`)) return json({ code: 'NOT_FOUND' }, 404);
+    if (path === `${base}/sessions/${sessionId}/direct-inputs` && init?.method === 'POST') { if (postMode === 'down') return json({ message: 'down' }, 503); return json(accepted(lost, 'x')); }
+    if (path === '/api/commands') return json({ status: 'applied', operationId: converted, entityId: converted, version: 1 });
+    throw new Error(`Unexpected ${init?.method ?? 'GET'} ${path}`);
+  });
+  const env = { EVOLOOP_TOKEN: 'fixture', EVOLOOP_STATE_DIR: directory };
+  const send = (mode: string, input: string) => run(['session', 'input', 'send', sessionId, '--project', projectId, '--mode', mode, '--content', 'Also check X', '--input', input, '--operation', input], env);
+  try {
+    // 1. The reply to an insert was lost; the repeat finds the saved input and answers it, without reading the capability or sending again.
+    const again = await send('insert', sent);
+    assert.equal(again.code, 0, again.stderr);
+    assert.equal(JSON.parse(again.stdout).outcome, 'inserted'); assert.equal(JSON.parse(again.stdout).repeated, true);
+    assert.equal(capabilityCalls, 0); assert.equal(calls.some(call => call === `POST ${base}/sessions/${sessionId}/direct-inputs`), false);
+    // 2. The same ID asked to queue: refused, nothing is posted.
+    const queueAgain = await send('queue', sent);
+    assert.notEqual(queueAgain.code, 0); assert.match(queueAgain.stderr, /INPUT_ID_IS_DIRECT_INPUT/);
+    assert.equal(calls.some(call => call === 'POST /api/commands'), false, 'the text is not queued a second time');
+    // 3. An input already turned into a queued message answers "queued after the Turn changed", for either way of asking.
+    for (const mode of ['insert', 'queue']) {
+      const result = await send(mode, converted);
+      assert.equal(result.code, 0, result.stderr);
+      const body = JSON.parse(result.stdout);
+      assert.equal(body.outcome, 'queued_after_change'); assert.equal(body.receipt.queuedMessageId, converted);
+    }
+    assert.equal(calls.some(call => call === 'POST /api/commands'), false, 'no second message');
+    // 4. show: an accepted input without a native Item is checked once against the original and then names the Item.
+    const shown = JSON.parse((await run(['session', 'input', 'show', sessionId, sent, '--project', projectId], env)).stdout);
+    assert.equal(shown.reconciled, true); assert.equal(shown.receipt.nativeItemId, 'item-9'); assert.equal(shown.outcome, 'inserted');
+    // 5. An answer lost on a fresh insert exits 3 like every unconfirmed mutation and points at the same ID.
+    postMode = 'down';
+    const unknown = await run(['session', 'input', 'send', sessionId, '--project', projectId, '--mode', 'insert', '--content', 'new text', '--input', lost, '--operation', lost], env);
+    assert.equal(unknown.code, 3, unknown.stderr); assert.match(unknown.stderr, /RESULT_UNCONFIRMED/); assert.match(unknown.stderr, new RegExp(lost));
+  } finally { fetch.mock.restore(); await rm(directory, { recursive: true, force: true }); }
 });
