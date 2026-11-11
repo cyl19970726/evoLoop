@@ -172,6 +172,28 @@ test("runtime Run reservation requires a grant for the Session's current model",
   }finally{await app.close();}
 });
 
+test("a malformed executeAtUtc answers 400 INVALID_INPUT with the accepted form and an example, on task.create and task.timing.set alike", async () => {
+  let calls = 0;
+  const app = await buildServer({ credentials, service: { ...workManagementQueries, execute: async () => { calls++; throw Error("must not reach core"); } } as unknown as WorkflowService });
+  try {
+    const id = (n: number) => `40000004-0000-4000-8000-${String(n).padStart(12, "0")}`;
+    const timing = { executeAtUtc: "tomorrow 9am", timezone: "Asia/Shanghai", repeat: "none" };
+    const commands = [
+      { type: "task.create", projectId, operationId: id(1), taskId: id(2), title: "t", content: "c", acceptance: "a", owner: "o", timing },
+      { type: "task.timing.set", projectId, operationId: id(3), taskId: id(2), expectedTaskVersion: 1, expectedTimingVersion: 0, ...timing, scope: "this", reason: "r" },
+    ];
+    for (const payload of commands) {
+      const response = await app.inject({ method: "POST", url: "/api/commands", headers: { authorization: `Bearer ${token}` }, payload });
+      assert.equal(response.statusCode, 400, response.body);
+      const body = response.json() as { code: string; message: string; issues: { path: unknown[]; message: string }[] };
+      assert.equal(body.code, "INVALID_INPUT");
+      assert.match(body.message, /2026-11-12T04:00:00\.000Z/, "the user-visible message shows the example");
+      assert.ok(body.issues.some(issue => issue.path.includes("executeAtUtc") && /2026-11-12T04:00:00\.000Z/.test(issue.message)));
+    }
+    assert.equal(calls, 0);
+  } finally { await app.close(); }
+});
+
 test("schedule status scopes grants to the caller and active commands require an exact current grant", async () => {
   const otherProject = "00000000-0000-4000-8000-000000000099";
   const otherToken = "b".repeat(40);

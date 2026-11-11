@@ -152,7 +152,10 @@ export async function buildServer(options: {
   });
   app.setErrorHandler((error, request, reply) => {
     if (error instanceof z.ZodError) {
-      return reply.code(400).send({ code: "INVALID_INPUT", message: "输入不符合当前接口合同。", issues: error.issues.map(x => ({ path: x.path, code: x.code })) });
+      // The field's own message carries the accepted form and an example (e.g. executeAtUtc); without it the caller cannot fix the input.
+      const first = error.issues.slice(0, 3).map(x => `${x.path.join(".") || "(根)"}：${x.message}`).join("；");
+      return reply.code(400).send({ code: "INVALID_INPUT", message: `输入不符合当前接口合同。${first}`,
+        issues: error.issues.map(x => ({ path: x.path, code: x.code, message: x.message })) });
     }
     if (error instanceof DomainError) return reply.code(errorStatus(error.code)).send({ code: error.code, message: error.message, ...(error.currentVersion === undefined ? {} : { currentVersion: error.currentVersion }) });
     if (error instanceof OrchestrationError) return reply.code(errorStatus(error.code)).send({ code: error.code, message: error.message, ...(error.currentVersion === undefined ? {} : { currentVersion: error.currentVersion }) });
