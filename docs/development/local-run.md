@@ -224,6 +224,28 @@ node scripts/restore.mjs --from /absolute/private-backups/evoloop-20261020 \
 
 随后按后端流程导入 Wiki，核对修订、来源、Blob 原文哈希、Task/操作回执及待对账运行。全部核实前不要开启 Wiki 或 runtime 写入。跨数据库与文件目录的恢复并非单个事务；若数据库已恢复而文件改名失败，保留现场，用新的空库重做，不在半恢复库上盲目重试。脚本拒绝非空数据库、已有目标目录和仓库内正文路径。
 
+### 发布脚本
+
+`npm run release -- plan --id ID --ref GIT_REF` 只打印计划；`run ... --execute` 才执行；`rollback --id ID --execute` 把代码切回上一个版本。`--from STEP` 续跑要求该发布记录里前面的步骤都已成功且没有被撤销，`--only A,B` 只跑所列步骤，步骤名拼错直接报错。`--allow-no-previous` 仅用于第一次发布：当前链接不存在时没有可恢复的旧版本，没有该参数一律拒绝。`--allow-off-main` 仅用于演练：发布提交必须已在远端主分支（默认 `origin/main`，可用配置 `remote`、`baseBranch` 改）上，预检会取远端核对，不在就拒绝。不带 `--from` 重跑时，`prepare` 遇到已存在的版本目录，只在它正好是要发布的提交时复用，否则报错。
+
+配置文件放在仓库外，由 `EVOLOOP_RELEASE_CONFIG` 指向，JSON 字段：`releaseRoot`、`currentLink`、`stateDir`（均为绝对路径）、`backup.out`、`backup.blobRoot`（可选 `wikiSnapshot`、`integrations`）、`database.name`（必填，可加 `host`、`port`）、`skipTests`，以及 `hooks`（各为命令参数数组）。执行前把环境变量 `EVOLOOP_DATABASE_URL` 与 `database` 比对，库名、主机或端口不一致即拒绝，任何步骤都不会运行。不跳过测试时还须设 `EVOLOOP_RELEASE_TEST_DATABASE_URL` 指向独立的 `evoloop_*_test` 库，且不能等于线上库。命令运行时可读 `EVOLOOP_RELEASE_ID`、`EVOLOOP_RELEASE_DIR`、`EVOLOOP_RELEASE_PREVIOUS`（绝对路径）、`EVOLOOP_RELEASE_CURRENT_LINK`。
+
+**钩子必须做到什么**（都不得回显密钥，失败时以非零退出；每个都要能重复执行而不出错）：
+
+| 钩子 | 必须做到 | 失败时 |
+| --- | --- | --- |
+| `wait-idle`（必填） | 没有在途或结果未知的 Run 和消息 Turn 时才退出 0；有排空模式时在这里开启并等到空闲 | 尚未停服，什么都没改 |
+| `stop`（必填） | 协调服务已停止、其他写者已暂停后才退出 0；**退出前**对外端口已释放、协调服务持有的数据库租约（advisory lock）已释放，可以重试到超时再失败；已经停了再调用也要退出 0。自动恢复和回滚也先调用它，以停掉可能还在跑的新版本 | 服务状态不明，自动恢复旧版本 |
+| `repoint-cli`（可选） | 把**每个身份**的 CLI 包装指向 `EVOLOOP_RELEASE_CURRENT_LINK`，退出 0 前逐个调用一次只读命令确认可用 | 自动恢复旧版本 |
+| `start`（必填） | 启动 `EVOLOOP_RELEASE_CURRENT_LINK` 指向的版本，**端口开始监听且协调服务拿到租约**后才退出 0；回滚和恢复时用来启动旧版本 | 自动恢复旧版本 |
+| `post-check`（必填） | 只读核对，至少覆盖：版本与构建提交、登录、读写路径、数据库租约、**每个身份的 CLI 都能连上新版本**、**页面静态资源与构建产物一致**（例如逐个比对哈希）；通过才退出 0 | 自动恢复旧版本 |
+| `post-migrate`（可选） | 迁移之后、切换之前（服务仍停着）运行的项目专项核对，例如 069 迁移的修订链查询与 `VACUUM`；约定先写在这里，由私有钩子实现 | 视为迁移步骤失败，自动恢复旧版本 |
+| `data-counts`（可选） | 向标准输出打印稳定的数据计数文本（相同数据输出相同文本）；**在服务停止期间**取：停服完成后一次，迁移完成后一次，两次文本相同记为 `countsEqual`。服务运行时取的计数会混入正常写入，不能用 | 只记录，不触发任何恢复或回滚 |
+
+**失败分流。** 停服之前（准备、构建、测试、预检、等空闲）失败不改任何东西，修好后用 `--from` 续跑。停服及之后失败，脚本先停掉可能还在运行的新版本，再把链接指回旧版本、重指 CLI、启动旧版本并执行发布后检查，结果写入 `recovery`（`restored` 或 `failed`；停不掉新版本时不会去启动旧版本，直接记 `failed`）。恢复成功后，`wait-idle`、停服及其后的步骤在记录里标为 `undone`：系统已经回到旧版本，这些步骤不再成立，**只能从 `--from wait-idle` 重新开始**（会重新备份，备份目录每次尝试不同，形如 `ID-1`、`ID-2`），从 `migrate` 等中间步骤续跑会被拒绝。恢复失败时服务可能没有运行：先人工恢复，再加 `--acknowledge-manual-recovery --from wait-idle`。迁移步骤及之后的失败还会记 `dataMayBeChanged`：数据库可能已迁移，核对后才能信任旧版本。成功续跑后清掉 `failedAt`、`recovery`，历史留在 `failures`。
+
+**发布记录**写在状态目录的 `release-ID.json`：每步起止与结果（含 `undone`）、`previous`（绝对路径）、`releaseDir`、`commit`（发布提交、远端主分支提交、是否在远端主分支上、是否正好等于它）、`backup`（目录、尝试序号、清单哈希、文件数）、`acceptance.stopCompletedAt`、`downtimeSeconds`、`postCheck`、`postMigrateCheck`、`migrationsBefore`/`migrationsAfter`/`migrationsApplied`（本次实际应用的迁移）、`countsBefore`、`countsAfter`、`countsEqual`（取不到时是 `countsBeforeError`/`countsAfterError`）、`dataMayBeChanged`、`recovery`、`failures`，回滚另记 `rollbacks`。它对应验收方案的停服时间、数据计数一致、发布后检查和回滚演练。**回滚**先核对：当前链接必须指向本次发布（已回滚或被后一次发布替换的拒绝）、上一版本目录必须还在，然后才停服；它只切回代码，不撤销已写入新 schema 的数据，也不改记录里的步骤。回滚演练须在非线上环境或经发布负责人同意后单独执行并保留记录。发布步骤和边界见[发布新版本](../architecture/deployment.md#2-发布新版本)。
+
 ## 验证边界
 
 ```bash
