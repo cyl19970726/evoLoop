@@ -346,7 +346,7 @@ export class WorkflowService {
         requireBody(command.body);
         const organizationReview = reviewMetadata(document.kind, command.organizationReview, previous.organizationReview);
         await validatePreviousReview(organizationReview, command.projectId, document.id,
-          id => tx.getDocument(id), (id, revision) => tx.getDocumentRevision(id, revision));
+          id => tx.getDocument(id), (id, revision) => tx.getDocumentRevision(id, revision), previous.organizationReview);
         const revisionId = this.deps.ids.next();
         const revision: DocumentRevision = {
           projectId: command.projectId, documentId: document.id, id: revisionId, body: command.body,
