@@ -142,7 +142,7 @@ function DeliveryRecord({ projectId, detail, delivery, latest, title, run, activ
     <div className="flex flex-col gap-1">
       <p className="text-caption text-muted-foreground">固定成果</p>
       {target.kind === "document"
-        ? <DocumentLink projectId={projectId} documentId={target.documentId} revisionId={target.revisionId} title={title?.title ?? "交付物"} relation="交付物 · 本次交付的固定修订"
+        ? <DocumentLink projectId={projectId} taskId={detail.task.id} documentId={target.documentId} revisionId={target.revisionId} title={title?.title ?? "交付物"} relation="交付物 · 本次交付的固定修订"
           className="text-small font-medium">{title?.title || "交付的文档（标题未核实）"}</DocumentLink>
         : target.href ? <a className="text-small font-medium text-primary hover:underline [overflow-wrap:anywhere]" href={target.href}
           target={appPath(target.href) ? undefined : "_blank"} rel={appPath(target.href) ? undefined : "noopener noreferrer"}>{target.label}</a>
