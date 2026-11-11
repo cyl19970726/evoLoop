@@ -322,7 +322,7 @@ test('review 1: a superseded message cannot leave the gate pointing at it, throu
   assert.equal(await gatePhase(h), 'open', 'cancelling the awaited message frees the Session');
 });
 
-test('review 2: a stopped unknown Run with an approved but never-sent start ends failed and reopens the gate; it cannot be approved', async () => {
+async function stoppedUnknownWithProof() {
   const f = await fixture('dispatching');
   assert.equal((await stop(f)).status, 'applied');
   const proof = { threadId: f.threadId, operationId: f.operationId, requestId: 1, code: -32600 as const, inputHash: null };
@@ -330,8 +330,15 @@ test('review 2: a stopped unknown Run with an approved but never-sent start ends
   assert.equal(unknown.state, 'unknown'); assert.equal(unknown.preTurnProof?.status, 'observed'); assert.equal(unknown.nativeTurnId, null);
   assert.equal(await gatePhase(f), 'blocked');
   const gateVersion = (await pool.query('SELECT version FROM session_recovery_gate WHERE session_id=$1', [f.sessionId])).rows[0].version;
-  await assert.rejects(runtime.approvePreTurnContinuation(project, f.runId, reviewer, { operationId: randomUUID(), sessionId: f.sessionId,
-    originalOperationId: f.operationId, expectedVersion: unknown.version, expectedGateVersion: gateVersion, evidenceRef: 'e', reason: 'r' }), { code: 'RUN_STOPPED' });
+  return { f, unknown, gateVersion };
+}
+const approve = (f: Fixture, unknown: { version: number }, gateVersion: number, operationId = randomUUID(), who = reviewer) =>
+  runtime.approvePreTurnContinuation(project, f.runId, who, { operationId, sessionId: f.sessionId,
+    originalOperationId: f.operationId, expectedVersion: unknown.version, expectedGateVersion: gateVersion, evidenceRef: 'e', reason: 'r' });
+const nativeStarts = async (f: Fixture) => (await pool.query("SELECT count(*)::int AS n FROM runtime_record_event WHERE run_id=$1 AND kind IN ('run.dispatching','run.running')", [f.runId])).rows[0].n;
+
+test('review 2: a stopped unknown Run with an approved but never-sent start ends failed and reopens the gate', async () => {
+  const { f, unknown, gateVersion } = await stoppedUnknownWithProof();
   assert.equal(await runtime.claimPreTurnContinuation(project, f.runId), null, 'unreviewed evidence leaves the Run alone');
   assert.equal((await run(f))!.state, 'unknown');
   // An approval granted before the stop (the review path itself is covered by the pre-turn tests) is not carried out either.
@@ -344,6 +351,34 @@ test('review 2: a stopped unknown Run with an approved but never-sent start ends
   const ended = (await run(f))!;
   assert.equal(ended.state, 'failed', 'it is ended instead of retried every round');
   assert.equal(await gatePhase(f), 'open', 'the gate it closed opens again');
+  void unknown;
+});
+
+test('stopped-unknown review: approval ends the Run failed, opens the gate, lets the Session open a new Run, and never dispatches again', async () => {
+  const { f, unknown, gateVersion } = await stoppedUnknownWithProof();
+  assert.equal(await runtime.claimPreTurnContinuation(project, f.runId), null, 'before review the Run is left alone');
+  assert.equal((await run(f))!.state, 'unknown', 'unreviewed evidence does not end it');
+  assert.equal(await gatePhase(f), 'blocked');
+  const starts = await nativeStarts(f);
+  await assert.rejects(approve(f, unknown, gateVersion, randomUUID(), writer), { code: 'FORBIDDEN' });
+  await assert.rejects(approve(f, { version: unknown.version + 5 }, gateVersion), { code: 'PRE_TURN_CONTINUATION_CHANGED' }, 'a stale version is refused');
+  assert.equal((await run(f))!.state, 'unknown');
+  const operationId = randomUUID();
+  const ended = await approve(f, unknown, gateVersion, operationId);
+  assert.equal(ended.state, 'failed'); assert.equal(ended.nativeTurnId, null);
+  assert.equal(ended.preTurnProof?.reviewerActorId, 'lead'); assert.equal(ended.preTurnProof?.evidenceRef, 'e');
+  assert.equal((await run(f))!.state, 'failed');
+  assert.equal(await gatePhase(f), 'open', 'the recovery gate is open again');
+  assert.equal(await notices(f), 0);
+  // The same decision replays to the same result.
+  assert.equal((await approve(f, unknown, gateVersion, operationId)).state, 'failed');
+  // The Run is not dispatched again: no permit, no new native start.
+  assert.equal(await runtime.claimPreTurnContinuation(project, f.runId), null);
+  await assert.rejects(runtime.beginDispatch(project, f.runId));
+  assert.equal(await nativeStarts(f), starts, 'no new native start');
+  // The Session takes a new Run.
+  const next = await fixtureRunOn(f, 'requested');
+  assert.equal((await runtime.beginDispatch(project, next)).state, 'dispatching', 'a new Run can be dispatched on the Session');
 });
 
 test('review 4: the pre-dispatch check refuses a superseded message; the migration clauses are in the function bodies', async () => {
