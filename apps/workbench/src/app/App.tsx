@@ -9,6 +9,7 @@ import { askConfirm, cancelConfirms, confirmHostFailed, currentConfirm, onConfir
 import { addReceipt, hasProjectReceipt, readReceipts, removeReceipt, visibleReceipts as forPrincipal, writeReceipts, type OperationReceipt } from "./recovery";
 import type { CheckedOrigin, OperationItem } from "../features/settings/operationsPresentation";
 import { checkedNoticeText } from "./operationNotice";
+import { providerHoldNotices } from "./providerHoldNotice";
 import { clearRecoveryIntents, forgetRecoveryIntent, isSpecialOperation, rememberRecoveryIntent } from "./recoveryIntent";
 
 import { readRoute, href, type Route } from "../shared/ui/shared";
@@ -190,6 +191,7 @@ export function App() {
   }, []);
   const projectRead = useProjectQuery(projectId ?? "", ["project"], () => client.project(projectId!), { enabled: !!session });
   const projectTitle = projectRead.data?.title ?? "";
+  const holdsRead = useProjectQuery(projectId ?? "", ["provider-holds"], () => client.providerHolds(projectId!), { enabled: !!session && !!projectId, refetchInterval: 30_000 });
   // 待我处理 counts 验收安排, 依据变化 and 等我使用的交付 under the page's own keys; an unknown part is never counted as 0.
   const inbox = useInboxCount(projectId ?? "", session?.principal.actorId ?? "", !!session);
   const projectError = projectRead.error ? errorText(projectRead.error) : "";
@@ -269,6 +271,7 @@ export function App() {
     ...!receiptStorageAvailable ? [{ key: "storage", tone: "error" as const, text: "浏览器未能暂存操作回执。请保留原操作 ID，并在“结果未知的操作”中查询。" }] : [],
     ...operationNotice ? [{ key: "operation", tone: "info" as const, text: operationNotice, detail: operationDetail, ...operationLink ? { link: operationLink } : {},
       button: { label: "关闭", onClick: () => { setOperationNotice(""); setOperationDetail(null); setOperationLink(null); }, quiet: true } }] : [],
+    ...projectId ? providerHoldNotices(holdsRead.data, href(projectId, "sessions")) : [],
     ...projectError ? [{ key: "project", tone: "error" as const, text: `项目暂不可读取：${projectError}`, button: { label: "重试读取项目", onClick: context.onChanged } }] : [],
     ...route.section !== "inbox" && inbox.state === "unknown" ? [{ key: "inbox", tone: "waiting" as const, text: inbox.text, link: { href: href(projectId, "inbox"), label: "去待我处理核对" } }] : [],
   ];

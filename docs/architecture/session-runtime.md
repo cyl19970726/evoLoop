@@ -20,6 +20,8 @@
 - **主来源**：让一个 Turn 开始的那件事，只能是一个业务 Run 或一条普通消息的处理记录。
 - **槽位**：每个 Session 同一时刻只允许一个主来源占用；占用记录在 PostgreSQL 里，原生会话看起来空闲也不能越过它。
 - **恢复门**：每个 Session 一份的持久闸门。Turn 失败或结果未知时关上，有权者显式决定后才重新打开。
+- **原生失败类别**：Turn 失败时，适配器把原生错误归为 `quota_exhausted`（额度/余额，HTTP 402）、`authentication_failed`、`context_window_exceeded`、`connection_lost`、`provider_unavailable`、`rate_limited` 等，保存在消息处理记录（`failure_category`，迁移 084）并随恢复门读出；工作台把它们归为四类显示：额度/鉴权（运行受阻，需账户使用者充值或重新授权）、上下文超长、连接中断、其他。类别只说明原因，不改变单个恢复门的决定规则。
+- **提供方暂停（迁移 085）**：消息 Turn 以 `quota_exhausted` 或 `authentication_failed` 失败时，同一提供方（Codex / Claude）开一条 `runtime_provider_hold`（每个提供方至多一条生效），因为该提供方的每个 Session 都会以同样原因失败。暂停期间该提供方的新 Run 预留与新消息启动一律在启动检查处被拒（`PROVIDER_HELD`）：消息保持排队、写明阻塞原因，不失败、不逐个关恢复门；其他提供方与其他错误类别（上下文超长、连接断开、其他）不受影响。额度恢复后，复核者提交一次 `runtime.providerHold.release`：解除暂停，并把被该类失败关闭的各 Session 的恢复门逐个经审计过的恢复路径放行（每个 Session 各留一条恢复决定），做不到的 Session 记入 `release_summary.skipped` 并保持关闭，不拖累其他。读取：`GET /api/projects/:id/runtime/provider-holds`。只由消息路径的失败触发；Run 路径的失败暂不触发暂停。
 - **队列控制者**：登记为某个常驻队列负责人的身份，只有它能对队列里失败的 Run 发起重试。
 - **工作轨迹**：一次 Run 在原生会话里的工具调用和输出记录；**连续工作区**：按时间顺序阅读一个 Session 全部历史的视图。
 

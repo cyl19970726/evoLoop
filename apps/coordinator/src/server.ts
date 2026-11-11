@@ -268,7 +268,7 @@ export async function buildServer(options: {
     }
     if (command.type.startsWith("runtime.")) {
       if (command.type !== "runtime.handoff.record" && command.type !== "runtime.run.abandonReadOnly" &&
-        command.type !== "runtime.session.executionProfile.revise" && command.type !== "runtime.session.recovery.resume" && command.type !== "runtime.run.stop" &&
+        command.type !== "runtime.session.executionProfile.revise" && command.type !== "runtime.session.recovery.resume" && command.type !== "runtime.run.stop" && command.type !== "runtime.providerHold.release" &&
         !options.runtime?.status().available) throw new DomainError("RUNTIME_UNAVAILABLE", "Codex 执行服务尚未配置或当前不可用；本次未登记派发。");
       const principal = who(request.principal);
       if (!principal.projectIds.includes(command.projectId) || (command.type === "runtime.handoff.record" ? !principal.permissions.includes("write") : !principal.permissions.includes("review"))) {
@@ -496,6 +496,8 @@ export async function buildServer(options: {
         cwd:g.cwd,configuredModel:g.model??null,models:current.status==="available"?
           current.models.filter(model=>grantAllowsModel(g,model)):[]}))};
   });
+  app.get("/api/projects/:projectId/runtime/provider-holds", async request =>
+    options.service.listProviderHolds(who(request.principal), params(request.params).projectId!));
   app.get("/api/projects/:projectId/runtime/sessions", async request => options.service.listRuntimeSessions(who(request.principal), params(request.params).projectId!));
   app.get("/api/projects/:projectId/runtime/usage", async request => {
     const p = params(request.params);

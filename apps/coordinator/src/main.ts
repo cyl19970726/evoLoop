@@ -87,6 +87,7 @@ import { SessionTimelineService } from "./session-timeline/index.js";
 import { OrdinaryRunSubmissionService, leaseCheckedUnitOfWork } from "./ordinary-run-submission/service.js";
 import { createOrdinaryRunSealer } from "./ordinary-run-submission/seal.js";
 import { OrdinaryRunSealPump } from "./ordinary-run-submission/pump.js";
+import { throttledLog } from "./log-throttle.js";
 import { materialCliRecipientMatches, requireOrdinaryRecipient, requireReservableRecipient } from "./runtime/recipient-preflight.js";
 import { createMessageExecutionReader } from "./session-messages/execution-capability.js";
 import { sessionMessageCanStart } from "./session-messages/scheduling.js";
@@ -101,6 +102,7 @@ import { bindingOf } from "./runtime/runner.js";
 import { SessionSteerLock } from "./runtime/session-steer-lock.js";
 import { localProjectConfiguration } from "./project-configuration/local.js";
 
+const reconciliationLog = throttledLog(line => console.error(line));
 const databaseUrl = process.env.EVOLOOP_DATABASE_URL;
 const authFile = process.env.EVOLOOP_AUTH_FILE;
 if (!databaseUrl || !authFile) throw new Error("Set EVOLOOP_DATABASE_URL and EVOLOOP_AUTH_FILE. Run migrations separately before starting.");
@@ -669,7 +671,7 @@ const leaderResultNoticePump = new LeaderResultNoticePump({
   }),
   canWrite: lease.canWrite, canStartNative: () => !!runner?.nativeStartsAvailable(),
   pollIntervalMs: integrations.leaderResultNotices?.pollIntervalMs??2000,
-  onError: () => console.error("Leader result notice needs reconciliation; inspect its fixed notice and message operation."),
+  onError: () => reconciliationLog("Leader result notice needs reconciliation; inspect its fixed notice and message operation."),
   onDiagnostic: (projectId, noticeId, reason) => console.error(`Leader result notice ${noticeId} in project ${projectId} waits: ${reason}`),
 });
 const taskAttentionPump = new TaskAttentionPump({pool,canWrite:lease.canWrite,now:clock.now,
@@ -745,7 +747,7 @@ const messagePump = runner ? new SessionMessagePump({ service: messageService, r
       }
     }
     return businessBeforeMessage(message);
-  }, onError: () => console.error("Session message needs reconciliation; inspect its original saved processing record.") }) : null;
+  }, onError: () => reconciliationLog("Session message needs reconciliation; inspect its original saved processing record.") }) : null;
 const connectorGateway = integrations.messageConnectors ? new WechatGatewayClient({
     executable: integrations.messageConnectors.gateway.executable,
     configPath: integrations.messageConnectors.gateway.configPath,
@@ -782,7 +784,7 @@ const connectorIngress = runner && connectorGateway && integrations.messageConne
   enabled: async () => (await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE)).messageConnectors?.enabled === true,
   qualifyReceiver: qualifyConnectorRoute,
   pollIntervalMs: integrations.messageConnectors.pollIntervalMs,
-  onError: () => console.error("Connector ingress needs reconciliation; inspect the original wx delivery and saved source link."),
+  onError: () => reconciliationLog("Connector ingress needs reconciliation; inspect the original wx delivery and saved source link."),
 }) : null;
 const residentQueue = new ResidentQueuePump({workflow:service,canWrite:lease.canWrite,
   messageBusy: (projectId, sessionId) => messageService.isBusy(projectId, sessionId),

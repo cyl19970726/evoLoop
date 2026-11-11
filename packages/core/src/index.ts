@@ -37,7 +37,10 @@ import type { TaskCollaborationPayload } from "@evoloop/contracts/discussions";
 import { applyEvaluation, taskSignature } from "./evaluation/index.js";
 import type { ScheduleCommand } from "@evoloop/contracts/scheduling";
 export { RuntimeWorkflowService } from "./runtime/service.js";
+export { applyProviderHoldRelease } from "./provider-hold.js";
 import type { Clock, ContentHasher, IdFactory, Reader, Transaction, UnitOfWork } from "@evoloop/contracts/ports";
+import { applyProviderHoldRelease } from "./provider-hold.js";
+import type { ProviderHoldListing, ProviderHoldView } from "@evoloop/contracts/provider-hold";
 import { applySessionRecovery, type RecoveryAuthority } from './session-recovery.js';
 import type { SessionRecoveryView } from '@evoloop/contracts/session-recovery';
 
@@ -206,7 +209,7 @@ export class WorkflowService {
   private commandPermission(command: Command): "write" | "review" {
     if (command.type.startsWith("task.attention.")) return "review";
     if(command.type==='runtime.session.executionProfile.revise'||command.type==='runtime.session.recovery.resume'||
-      command.type==='session.message.reconcile'||command.type==='session.message.interrupt'||
+      command.type==='runtime.providerHold.release'||command.type==='session.message.reconcile'||command.type==='session.message.interrupt'||
       command.type==='session.message.manualStop')return 'review';
     if (command.type === "session.profile.set" || command.type === "session.identity.set" || command.type.startsWith("task.assignment.") && command.type !== "task.assignment.acknowledge") return "review";
     if (command.type.startsWith("queue.") || command.type.startsWith("line.")) return "review";
@@ -219,6 +222,8 @@ export class WorkflowService {
     if (command.type.startsWith("task.attention."))
       return applyTaskAttention(tx, command as import("@evoloop/contracts").TaskAttentionCommand,
         principal.actorId, now);
+    if(command.type==='runtime.providerHold.release')
+      return applyProviderHoldRelease(tx,principal,command,now,()=>this.deps.ids.next());
     if(command.type==='runtime.session.executionProfile.revise'||command.type==='runtime.session.recovery.resume')
       return applySessionRecovery(tx,principal,command,now,()=>this.deps.ids.next(),this.deps.recoveryAuthority);
     if (command.type.startsWith("line."))
@@ -1072,6 +1077,19 @@ export class WorkflowService {
   listStageRevisions(principal: Principal, projectId: string, stageId: string) { return this.read(principal, projectId, async reader => { required(await reader.getStage(stageId),"Stage"); return reader.listStageRevisions(stageId); }); }
   listStageReviews(principal: Principal, projectId: string, stageId: string) { return this.read(principal, projectId, async reader => { required(await reader.getStage(stageId),"Stage"); return reader.listStageReviews(stageId); }); }
   getRuntimeSession(principal: Principal, projectId: string, sessionId: string) { return this.read(principal, projectId, async reader => required(await reader.getRuntimeSession(sessionId), "Runtime session")); }
+  /** Provider holds with what each still affects; read-only, any project reader. */
+  listProviderHolds(principal:Principal,projectId:string):Promise<ProviderHoldListing>{
+    return this.read(principal,projectId,async reader=>{
+      if(!reader.recovery)throw new DomainError('RECOVERY_UNAVAILABLE','Session recovery reads are not configured');
+      const holds=await reader.recovery.listProviderHolds(20);
+      const items:ProviderHoldView[]=[];
+      for(const hold of holds){
+        const impact=hold.state==='held'?await reader.recovery.providerHoldImpact(hold.provider):[];
+        items.push({...hold,impact,queuedMessages:impact.reduce((n,i)=>n+i.queuedMessages,0)});
+      }
+      return {items,observedAtUtc:this.deps.clock.now()};
+    });
+  }
   getSessionRecovery(principal:Principal,projectId:string,sessionId:string):Promise<SessionRecoveryView>{
     return this.read(principal,projectId,async reader=>{
       const session=required(await reader.getRuntimeSession(sessionId),'Runtime session');

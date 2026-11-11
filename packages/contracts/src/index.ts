@@ -14,6 +14,7 @@ import { sessionMessageCommands } from "./session-messages.js";
 import { sessionAssignmentCommands } from "./session-assignments.js";
 import { sessionLineCommands } from "./session-line.js";
 import { sessionRecoveryCommands } from "./session-recovery.js";
+import { providerHoldCommands } from "./provider-hold.js";
 import { nativeInputReplyCommand } from "./native-input.js";
 import { taskAttentionCommands } from "./task-attention.js";
 export { taskAttentionThresholdsSetSchema, taskAttentionFollowUpSetSchema,
@@ -72,6 +73,7 @@ export const commandSchema = z.discriminatedUnion("type", [
   ...sessionAssignmentCommands,
   ...sessionLineCommands,
   ...sessionRecoveryCommands,
+  ...providerHoldCommands,
   nativeInputReplyCommand,
   ...scheduleCommands,
   ...taskTimingCommands,
