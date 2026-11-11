@@ -13,6 +13,9 @@ export const sessionMessageCommands = [
     context: z.strictObject({ taskId: id, taskRevisionId: id }).optional(), replyToMessageId: id.optional() }),
   z.strictObject({ ...base, type: z.literal("session.message.cancel"), messageId: id,
     expectedVersion: z.number().int().positive(), reason: note }),
+  /** The sender keeps a message that a Run stop marked superseded: it becomes deliverable again. (Cancelling it is session.message.cancel.) */
+  z.strictObject({ ...base, type: z.literal("session.message.confirmSuperseded"), messageId: id,
+    expectedVersion: z.number().int().positive(), reason: note }),
   z.strictObject({ ...base, type: z.literal("session.message.receipt"), messageId: id,
     stage: z.literal("read"), evidence: note }),
   z.strictObject({ ...base, type: z.literal("session.message.reconcile"), messageId: id,
@@ -37,6 +40,8 @@ export interface SessionMessageRecord {
   projectId: string; id: string; operationId: string; target: SessionTarget; senderActorId: string;
   content: string; context: { taskId: string; taskRevisionId: string } | null;
   replyToMessageId: string | null; state: SessionMessageState; version: number;
+  /** Set when a Run stop made this queued message superseded; it is not delivered until its sender confirms it (or cancels it). */
+  supersededAt?: string | null; supersededConfirmedAt?: string | null;
   blockedReason: string | null;
   readReceipt: { actorId: string; evidence: string; at: string } | null;
   createdAt: string; updatedAt: string;
@@ -120,6 +125,8 @@ export interface SessionMessageTransaction extends SessionMessageReader {
   markSessionMessageInterruptAttempted(messageId: string, operationId: string, expectedVersion: number, at: string): Promise<boolean>;
   insertSessionMessageReadReceipt(messageId: string, actorId: string, evidence: string, at: string): Promise<void>;
   setSessionMessageBlockedReason(messageId:string,reason:string|null):Promise<void>;
+  /** The sender lifts the superseded mark of its queued message; the mark and who lifted it stay on the row. */
+  confirmSessionMessageSuperseded(messageId:string,actorId:string,at:string):Promise<void>;
   markSessionMessageSettled(sessionId:string,messageId:string,at:string):Promise<void>;
   /** Includes unresolved Task Runs and ordinary processing; close also checks queued messages. */
   assertSessionVacant(sessionId: string, includeQueued?: boolean): Promise<void>;
