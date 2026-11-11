@@ -193,7 +193,11 @@ export interface TaskProposal {
   /** Null is the historical contract; new Tasks always set an explicit mode. */
   acceptanceMode?: AcceptanceMode | null;
   /** Explicitly permits Leader acceptance; historical null requires a concrete arrangement decision. */
-  acceptanceTarget?: "human" | "leader" | "business_session" | null;
+  /** `named_agent`: the declared consumer (a business identity, not a managed Session) accepts directly; no relay is arranged. */
+  acceptanceTarget?: "human" | "leader" | "business_session" | "named_agent" | null;
+  /** What the Task delivers, and what must happen before it can be checked at its real entrance. Null: not declared. */
+  deliveryForm?: "research" | "document" | "code" | "config" | "operation" | null;
+  acceptancePrecondition?: "none" | "refresh" | "release" | "migration" | "config_restart" | null;
   evidence: string;
   stopCondition: string;
   createdAt: string;

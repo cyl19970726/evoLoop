@@ -1,6 +1,7 @@
 // 历史 (tasks.md 正文与右栏): the task's revisions in order with each state change and its reason, the basis
 // decisions, and the acceptance contract. A fixed historical revision opens read only, with the text, acceptance and
 // basis of that time and one way back: “返回当前任务” (no shortcut to today's delivery).
+import { acceptanceConventionFacts } from "./acceptanceConventionPresentation";
 import React from "react";
 import type { TaskDetail, TaskRevision } from "@evoloop/contracts";
 import { Badge, Button, ErrorState, LoadingState, StatusTag } from "@evoloop/ui";
@@ -74,6 +75,7 @@ export function TaskHistoryTab({ projectId, detail, selectedRevision }: { projec
         <Fact label="验收方式">{proposal.acceptanceMode === "independent_agent" ? "独立的智能体使用当前交付" : proposal.acceptanceMode === "human_required" ? "指定的人本人使用当前交付" : "历史约定"}</Fact>
         <Fact label="指定验收身份">{proposal.consumer ? actorText(proposal.consumer) : "未指定；由符合验收方式的身份签收"}</Fact>
         <Fact label="完成要求">{proposal.useRequired ? "要有本次交付的实际使用记录" : "按历史约定核对"}</Fact>
+        {acceptanceConventionFacts(proposal).map(fact => <Fact key={fact.label} label={fact.label}>{fact.value}</Fact>)}
         <Fact label="停止条件">{proposal.stopCondition || "未写"}</Fact>
       </div>
       <ActorIdentifiers actors={[["指定验收身份", proposal.consumer]]} />

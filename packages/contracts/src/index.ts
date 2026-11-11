@@ -13,6 +13,7 @@ import { residentCommands } from "./resident-hosts.js";
 import { sessionMessageCommands } from "./session-messages.js";
 import { sessionAssignmentCommands } from "./session-assignments.js";
 import { sessionRecoveryCommands } from "./session-recovery.js";
+import { acceptanceConventionCommands, acceptancePreconditionSchema, deliveryFormSchema } from "./acceptance-convention.js";
 import { nativeInputReplyCommand } from "./native-input.js";
 import { taskAttentionCommands } from "./task-attention.js";
 export { taskAttentionThresholdsSetSchema, taskAttentionFollowUpSetSchema,
@@ -33,7 +34,12 @@ const text = z.string().trim().min(1).max(4000);
 const declaredConsumer = text.optional().describe("Exact-match declared consumer identifier. For an Agent, use the actual principal.actorId that will personally sign the observation; do not use a roleId, display name, or explanation. Put explanation in evidence or reason.");
 const consumerUseRequired = z.boolean().optional().describe("When true, also declare consumer. Task.close requires the latest observation by the declared consumer for the current Delivery to have result=used. Worker completion, a Delivery alone, or use by another actor does not satisfy this.");
 const acceptanceMode = z.enum(["independent_agent", "human_required"]).optional();
-const acceptanceTarget = z.enum(["human", "leader", "business_session"]).optional();
+const acceptanceTargetValues = ["human", "leader", "business_session", "named_agent"] as const;
+const acceptanceTarget = z.enum(acceptanceTargetValues).optional();
+/** On update, null clears the declared target. */
+const acceptanceTargetUpdate = z.enum(acceptanceTargetValues).nullable().optional();
+const deliveryForm = deliveryFormSchema.nullable().optional();
+const acceptancePrecondition = acceptancePreconditionSchema.nullable().optional();
 const title = z.string().trim().min(1).max(240);
 const version = z.number().int().positive();
 const common = { projectId: idSchema, operationId: idSchema };
@@ -54,8 +60,8 @@ export const commandSchema = z.discriminatedUnion("type", [
   z.strictObject({ ...common, type: z.literal("document.publish"), documentId: idSchema, expectedVersion: version, revisionId: idSchema, reason: text }),
   z.strictObject({ ...common, type: z.literal("document.archive"), documentId: idSchema, expectedVersion: version, reason: text }),
   z.strictObject({ ...common, type: z.literal("document.restore"), documentId: idSchema, expectedVersion: version, reason: text }),
-  z.strictObject({ ...common, type: z.literal("task.create"), taskId: idSchema, title, content: z.string().min(1).max(65536), acceptance: text, owner: text, kind: taskKindSchema.nullable().optional(), domainId: idSchema.nullable().optional(), documentIds: z.array(idSchema).max(20).optional(), stageId: idSchema.optional(), consumer: declaredConsumer, useRequired: consumerUseRequired, acceptanceMode, acceptanceTarget, evidence: text.optional(), stopCondition: text.optional(), timing: taskTimingSchema.optional() }),
-  z.strictObject({ ...common, type: z.literal("task.update"), taskId: idSchema, expectedVersion: version, title, content: z.string().min(1).max(65536), acceptance: text, owner: text, kind: taskKindSchema.nullable().optional(), domainId: idSchema.nullable().optional(), documentIds: z.array(idSchema).max(20).optional(), stageId: idSchema.nullable().optional(), consumer: declaredConsumer.nullable(), useRequired: consumerUseRequired, acceptanceMode, acceptanceTarget, evidence: text.optional(), stopCondition: text.optional(), reason: text, repeatScope: z.enum(["this", "this_and_future"]).optional(), expectedTimingVersion: z.number().int().positive().optional(),
+  z.strictObject({ ...common, type: z.literal("task.create"), taskId: idSchema, title, content: z.string().min(1).max(65536), acceptance: text, owner: text, kind: taskKindSchema.nullable().optional(), domainId: idSchema.nullable().optional(), documentIds: z.array(idSchema).max(20).optional(), stageId: idSchema.optional(), consumer: declaredConsumer, useRequired: consumerUseRequired, acceptanceMode, acceptanceTarget, deliveryForm, acceptancePrecondition, evidence: text.optional(), stopCondition: text.optional(), timing: taskTimingSchema.optional() }),
+  z.strictObject({ ...common, type: z.literal("task.update"), taskId: idSchema, expectedVersion: version, title, content: z.string().min(1).max(65536), acceptance: text, owner: text, kind: taskKindSchema.nullable().optional(), domainId: idSchema.nullable().optional(), documentIds: z.array(idSchema).max(20).optional(), stageId: idSchema.nullable().optional(), consumer: declaredConsumer.nullable(), useRequired: consumerUseRequired, acceptanceMode, acceptanceTarget: acceptanceTargetUpdate, deliveryForm, acceptancePrecondition, evidence: text.optional(), stopCondition: text.optional(), reason: text, repeatScope: z.enum(["this", "this_and_future"]).optional(), expectedTimingVersion: z.number().int().positive().optional(),
     basis: z.array(z.strictObject({ documentId: idSchema, revisionId: idSchema })).max(19).optional(),
     retentions: z.array(z.strictObject({ documentId: idSchema, revisionId: idSchema,
       observedAdoptedRevisionId: idSchema, reason: text })).max(19).optional() }),
@@ -67,6 +73,7 @@ export const commandSchema = z.discriminatedUnion("type", [
   ...sessionMessageCommands,
   ...sessionAssignmentCommands,
   ...sessionRecoveryCommands,
+  ...acceptanceConventionCommands,
   nativeInputReplyCommand,
   ...scheduleCommands,
   ...taskTimingCommands,

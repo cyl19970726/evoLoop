@@ -1,3 +1,4 @@
+import { acceptanceReadiness } from "@evoloop/contracts/acceptance-convention";
 import { createHash } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import type { Principal, RuntimeSessionRecord } from "@evoloop/contracts";
@@ -91,6 +92,9 @@ export class AcceptanceRelayService {
           AND r.revision_id=p.task_revision_id
         WHERE p.project_id=$1 AND p.task_id=$2 ORDER BY r.version DESC LIMIT 1`,
         [input.projectId, input.taskId])).rows[0];
+      if (proposal?.acceptance_target === "named_agent")
+        throw new DomainError("ACCEPTANCE_NAMED_AGENT",
+          `该 Task 由声明的业务身份 ${proposal.consumer || "（未写明）"} 直接验收，不经验收接力；不要安排接力，由该身份用 consumer observation 直接签署。`);
       if (!proposal?.consumer || proposal.consumer !== input.recipientActorId ||
         proposal.acceptance_mode !== (input.mode === "human" ? "human_required" : "independent_agent"))
         throw new DomainError("CONSUMER_MISMATCH", "Recipient must match the Task's current declared consumer and mode");
@@ -203,6 +207,34 @@ export class AcceptanceRelayService {
       scopeDescription:r.scope_description,entrypoint:r.entrypoint,publicationRef:r.publication_ref,version:r.version,
       createdAt:new Date(r.created_at).toISOString(),readAt:r.read_at ? new Date(r.read_at).toISOString() : null,
       observationId:r.observation_id ?? null}));
+  }
+
+  /**
+   * Deliveries this identity is the declared consumer of, that have arrived and that it has not yet signed `used`. Read for any
+   * identity, an Agent included: it is the list a consumer that is not woken automatically has to look at. `readiness` says
+   * whether the declared acceptance precondition (release, migration, ...) is marked met for the current delivery.
+   */
+  async mineDirect(principal: Principal, projectId: string): Promise<unknown[]> {
+    if (!principal.projectIds.includes(projectId) || !principal.permissions.includes("read"))
+      throw new DomainError("FORBIDDEN", "Project read authority required");
+    const result = await this.deps.pool.query(`SELECT t.task_id,t.title,t.state,p.acceptance_target,p.delivery_form,
+        p.acceptance_precondition,d.delivery_id,d.created_at AS delivered_at,d.artifact_ref,m.mark_id,m.evidence AS mark_evidence
+      FROM task t
+      JOIN LATERAL (SELECT p.* FROM task_proposal p JOIN task_revision r ON r.project_id=p.project_id AND r.task_id=p.task_id
+          AND r.revision_id=p.task_revision_id WHERE p.project_id=t.project_id AND p.task_id=t.task_id
+          ORDER BY r.version DESC LIMIT 1) p ON true
+      JOIN LATERAL (SELECT * FROM delivery WHERE project_id=t.project_id AND task_id=t.task_id
+          ORDER BY created_at DESC,delivery_id DESC LIMIT 1) d ON true
+      LEFT JOIN task_acceptance_precondition_mark m ON m.project_id=t.project_id AND m.delivery_id=d.delivery_id
+      WHERE t.project_id=$1 AND t.state NOT IN ('done','cancelled') AND p.use_required AND p.consumer=$2
+        AND NOT EXISTS (SELECT 1 FROM consumer_observation o WHERE o.project_id=t.project_id AND o.delivery_id=d.delivery_id
+          AND o.observer=$2 AND o.result='used')
+      ORDER BY d.created_at DESC,d.delivery_id DESC LIMIT 100`,[projectId,principal.actorId]);
+    return result.rows.map(r => ({ projectId, taskId: r.task_id, title: r.title, taskState: r.state, deliveryId: r.delivery_id,
+      deliveredAt: new Date(r.delivered_at).toISOString(), artifactRef: r.artifact_ref, acceptanceTarget: r.acceptance_target ?? null,
+      deliveryForm: r.delivery_form ?? null, acceptancePrecondition: r.acceptance_precondition ?? null,
+      readiness: acceptanceReadiness(r.acceptance_precondition, !!r.mark_id),
+      preconditionMark: r.mark_id ? { markId: r.mark_id, evidence: r.mark_evidence } : null }));
   }
 
   /** Capacity is a snapshot of persisted obligations. It does not claim native writer ownership. */

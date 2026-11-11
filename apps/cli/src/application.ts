@@ -85,7 +85,7 @@ const help = {
     "work task TASK_UUID --project UUID (one Task's current stage, timing and responsibility)",
     "work acceptance --project UUID [--limit 1..100 --cursor CURSOR] (Leader stage and persisted Session capacity)",
     "work acceptance TASK_UUID --project UUID (exact acceptance arrangements and dispatch outcomes)",
-    "work acceptance mine --project UUID (human recipient's acceptance inbox)",
+    "work acceptance mine --project UUID (the caller's pending acceptance: human relays in items; deliveries it is the declared consumer of and has not signed, with precondition readiness, in direct)",
     "work acceptance read RELAY_UUID --project UUID --task TASK_UUID --file BODY.json (named human records reading an arrangement)",
     "work acceptance observe RELAY_UUID --project UUID --task TASK_UUID --file BODY.json (recipient links their existing observation)",
     "work retirement SESSION_UUID --project UUID (temporary Session blockers, decision and archive readback)",
