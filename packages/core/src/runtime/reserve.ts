@@ -128,7 +128,7 @@ export async function reserveRuntime({ tx, command, principal, now, nextId, hash
   catch { throw new DomainError("QUEUE_OCCUPIED", "Task or Session has an unreleased queue claim"); }
   if(queueClaim && (queueClaim.runId!==command.runId||queueClaim.operationId!==command.operationId||queueClaim.taskId!==task.id||queueClaim.sessionId!==session.id))
     throw new DomainError("QUEUE_CLAIM_MISMATCH", "queue reservation does not match its active claim");
-  if (task.version !== command.expectedVersion) throw new DomainError("VERSION_CONFLICT", "task changed since dispatch was requested", task.version);
+  if (task.version !== command.expectedVersion) throw new DomainError("VERSION_CONFLICT", `Task version mismatch: expectedVersion must be the Task's current version (now ${task.version}), not a Session version; or the Task changed since dispatch was requested`, task.version);
   if (task.state !== "in_progress") {
     throw new DomainError("TASK_NOT_READY", "only explicitly started in-progress tasks may dispatch");
   }

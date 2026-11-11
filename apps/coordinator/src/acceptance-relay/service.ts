@@ -440,7 +440,8 @@ export class AcceptanceRelayService {
         FROM task_acceptance_relay a LEFT JOIN session_message m
           ON m.project_id=a.project_id AND m.message_id=a.message_id
         WHERE a.project_id=$1 AND (a.state='pending' OR
-          (a.state='linked' AND m.state IN ('failed','cancelled')))
+          (a.state='linked' AND m.state IN ('failed','cancelled')) OR
+          (a.state='blocked' AND a.blocked_reason='MESSAGE_BINDING_CHANGED'))
         ORDER BY a.created_at,a.relay_id LIMIT 30`, [projectId]);
       let firstError: unknown = null;
       for (const value of active.rows) {
@@ -464,16 +465,20 @@ export class AcceptanceRelayService {
 
   private async dispatch(item: AcceptanceRelayRecord): Promise<void> {
     if (item.mode === "human" || !item.sessionId || !item.senderActorId || !item.messageId || !item.messageOperationId) return;
+    // A relay blocked only by MESSAGE_BINDING_CHANGED is looked at again (the rule changed); while it still cannot link
+    // it stays exactly as it is — no new reason, no version bump on every tick.
+    const retry = item.state === "blocked";
+    const hold = (reason: string) => retry ? Promise.resolve() : this.note(item,reason);
     const current = await this.current(item);
     if (!current) { await this.setState(item,"superseded","Current Delivery or Session binding changed"); return; }
-    if(!await this.publicationReady(item)){await this.note(item,"PUBLICATION_PENDING");return;}
+    if(!await this.publicationReady(item)){await hold("PUBLICATION_PENDING");return;}
     const principals = await this.deps.principals();
     const sender = principals.find(p => p.actorId === item.senderActorId && p.projectIds.includes(item.projectId) &&
       p.permissions.includes("read") && p.permissions.includes("write"));
-    if (!sender) { await this.note(item,"SENDER_UNAVAILABLE"); return; }
+    if (!sender) { await hold("SENDER_UNAVAILABLE"); return; }
     const session = await this.deps.workflow.getRuntimeSession(sender,item.projectId,item.sessionId);
     const problem = await this.deps.qualify({projectId:item.projectId,session,senderActorId:item.senderActorId,receiverActorId:item.recipientActorId});
-    if (problem) { await this.note(item,problem); return; }
+    if (problem) { await hold(problem); return; }
     const command = {type:"session.message.post" as const,projectId:item.projectId,operationId:item.messageOperationId,
       messageId:item.messageId,target:{kind:"owned" as const,sessionId:item.sessionId},
       context:{taskId:item.taskId,taskRevisionId:item.taskRevisionId},
@@ -483,20 +488,24 @@ export class AcceptanceRelayService {
       try { await this.deps.workflow.execute(sender,command); } catch { /* Preserve the original ID until journal readback. */ }
       operation = await this.deps.workflow.getOperation(sender,item.projectId,item.messageOperationId);
     }
-    if (!operation) { await this.note(item,"MESSAGE_POST_UNCONFIRMED"); return; }
+    if (!operation) { await hold("MESSAGE_POST_UNCONFIRMED"); return; }
     if (operation.result.status !== "applied" || operation.result.entityId !== item.messageId) {
-      await this.setState(item,"blocked",`MESSAGE_POST_${operation.result.status}`); return;
+      if (!retry) await this.setState(item,"blocked",`MESSAGE_POST_${operation.result.status}`);
+      return;
     }
     const message = await this.deps.messages.get(item.projectId,item.messageId);
     if (message.state === "failed" || message.state === "cancelled") {
       await this.setState(item,"blocked",`ACCEPTANCE_MESSAGE_${message.state.toUpperCase()}`);
       return;
     }
+    // The arrangement reserves the message ID and operation ID. What binds the saved message to it is who sent it, to
+    // which Session, about which Task revision — not its wording. A message the arranging reviewer wrote with the
+    // reserved IDs (for example a more detailed handoff than the template) is accepted and checked as saved; it is
+    // never rewritten (the saved message itself is the record of what was said).
     if (message.operationId !== item.messageOperationId || message.senderActorId !== item.senderActorId ||
       message.target.kind !== "owned" || message.target.sessionId !== item.sessionId ||
-      message.context?.taskId !== item.taskId || message.context?.taskRevisionId !== item.taskRevisionId ||
-      message.content !== command.content)
-      { await this.setState(item,"blocked","MESSAGE_BINDING_CHANGED"); return; }
+      message.context?.taskId !== item.taskId || message.context?.taskRevisionId !== item.taskRevisionId)
+      { if (!retry) await this.setState(item,"blocked","MESSAGE_BINDING_CHANGED"); return; }
     await this.setState(item,"linked",null);
   }
 
@@ -569,7 +578,7 @@ export class AcceptanceRelayService {
       }
       if(m.rows[0]?.operation_id===item.messageOperationId && m.rows[0]?.sender_actor_id===item.senderActorId &&
         m.rows[0]?.session_id===item.sessionId && m.rows[0]?.context_task_id===item.taskId &&
-        m.rows[0]?.context_task_revision_id===item.taskRevisionId && m.rows[0]?.content===messageContent(item))return true;
+        m.rows[0]?.context_task_revision_id===item.taskRevisionId)return true;
     }
     const currentMessage=await this.deps.pool.query("SELECT state FROM session_message WHERE project_id=$1 AND message_id=$2",
       [projectId,messageId]);

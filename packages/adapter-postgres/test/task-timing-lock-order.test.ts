@@ -1,6 +1,8 @@
 // Lock order between the task-timing tick and a core write on the same project. The core write
 // takes the project advisory lock first, then row locks and the trigger-held leader-work lock;
 // the tick must take the same project lock first, or the two interleave into a deadlock (40P01).
+// Refuses a live or shared PostgreSQL server before this file opens TEST_DATABASE_URL (scripts/lib/database-target.mjs).
+import "../../../scripts/test-database-guard.mjs";
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import { after, before, test } from "node:test";

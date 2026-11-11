@@ -170,6 +170,21 @@ export function useTaskList(projectId: string, view: TaskListView, actorId: stri
     window.addEventListener("focus", onFocus);
     return () => window.removeEventListener("focus", onFocus);
   }, [active, client, projectId]);
+  // Returning from another page checks the same monotonic work stream that sealed this list. If it moved, reread
+  // every Task read behind the rail, table and counts; if the check itself fails, reread rather than keep a stale list.
+  const wasActive = useRef(active);
+  useEffect(() => {
+    const returning = active && !wasActive.current;
+    wasActive.current = active;
+    const observedSequence = index.first?.changeSequence;
+    if (!returning || observedSequence === undefined) return;
+    let live = true;
+    const reread = () => client.invalidateQueries({ queryKey: queryKeys.project(projectId, "tasks") });
+    void api().leaderWorkChanges(projectId, undefined, 1).then(changes => {
+      if (live && changes.changeSequence > observedSequence) void reread();
+    }).catch(() => { if (live) void reread(); });
+    return () => { live = false; };
+  }, [active, client, index.first?.changeSequence, projectId]);
 
   return {
     tasks, visible, groups, statuses, projections, index, mineCount,
