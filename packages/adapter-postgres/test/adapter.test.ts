@@ -412,6 +412,35 @@ test("document pagination returns a stable cursor without dropping rows", async 
   assert.ok([...first.items, ...second.items].every((d) => d.primaryTaskId === null));
 });
 
+test("document list filters kind and lifecycle before paging", async () => {
+  const p = project();
+  const activeReport = document(p.id);
+  activeReport.head.kind = "report";
+  activeReport.head.status = "draft";
+  const publishedReport = document(p.id);
+  publishedReport.head.kind = "report";
+  publishedReport.head.status = "published";
+  const archivedReport = document(p.id);
+  archivedReport.head.kind = "report";
+  archivedReport.head.status = "archived";
+  const activeSpec = document(p.id);
+  activeSpec.head.kind = "spec";
+  activeSpec.head.status = "draft";
+  await uow.transaction(p.id, async (tx) => {
+    await tx.insertProject(p);
+    for (const d of [activeReport, publishedReport, archivedReport, activeSpec]) {
+      await tx.insertDocument(d.head);
+      await tx.insertDocumentRevision(d.revision);
+    }
+  });
+  const active = await uow.read(p.id, (reader) => reader.listDocuments(50, undefined, "report", "active"));
+  assert.deepEqual(new Set(active.items.map((d) => d.id)), new Set([activeReport.head.id, publishedReport.head.id]));
+  const published = await uow.read(p.id, (reader) => reader.listDocuments(50, undefined, "report", "published"));
+  assert.deepEqual(published.items.map((d) => d.id), [publishedReport.head.id]);
+  const archived = await uow.read(p.id, (reader) => reader.listDocuments(50, undefined, undefined, "archived"));
+  assert.deepEqual(archived.items.map((d) => d.id), [archivedReport.head.id]);
+});
+
 test("task pagination returns every task once", async () => {
   const p = project();
   const tasks = Array.from({ length: 3 }, () => {
