@@ -139,19 +139,15 @@ test("old dispatch.gap event without run or task version recovers from immutable
   await managed({type:"dispatch.claim",dispatchId:recoveryDispatch.entityId,claimToken:recoveryClaim,
     leaseUntilUtc:new Date(Date.now()+60_000).toISOString()});
   await managed({type:"dispatch.start",dispatchId:recoveryDispatch.entityId,claimToken:recoveryClaim});
-  const blockedSession=await workflow.getSessionRecovery(principal,projectId,sessionId);
-  assert.equal(blockedSession.gate?.phase,"blocked");
-  assert.equal(blockedSession.gate?.causeId,runId);
-  assert.equal(blockedSession.gate?.causeState,"failed");
+  // The Run ended by rejectDispatch from `requested` (a preflight rejection, no native Turn): the model never started, so the
+  // gate stays open and no explicit resume is needed. Real failures stay blocked (dispatch-rejection.test.ts).
+  const openSession=await workflow.getSessionRecovery(principal,projectId,sessionId);
+  assert.equal(openSession.gate?.phase,"open");
+  assert.equal(openSession.gate?.causeId,null);
   const knownSessionRuns=(await workflow.listRuntimeRuns(principal,projectId)).filter(run=>run.sessionId===sessionId);
   assert.ok(knownSessionRuns.length>0&&knownSessionRuns.every(run=>["completed","failed","interrupted"].includes(run.state)),
-    "explicit recovery is allowed only after every Session Run has a known terminal state");
+    "the next Run starts only when every Session Run has a known terminal state");
   assert.equal((await workflow.getRuntimeRun(principal,projectId,runId)).state,"failed");
-  const resume=await official({type:"runtime.session.recovery.resume",sessionId,expectedVersion:blockedSession.gate!.version,
-    expectedCauseId:blockedSession.gate!.causeId!,resumeMessageId:blockedSession.gate!.resumeMessageId,
-    evidenceRef:"fixture://verified-terminal-run",reason:"Explicitly resume after reviewing the failed cognition Run"});
-  assert.equal(resume.status,"applied",JSON.stringify(resume));
-  assert.equal((await workflow.getSessionRecovery(principal,projectId,sessionId)).gate?.phase,"open");
   await official({type:"runtime.run.reserve",runId:recoveryRunId,taskId:recoveryTaskId,sessionId,expectedVersion:2,
     input:"Inspect the first terminal gap"});
   await managed({type:"dispatch.resolve",dispatchId:recoveryDispatch.entityId,claimToken:recoveryClaim,

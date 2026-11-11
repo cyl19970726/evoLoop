@@ -155,7 +155,9 @@ flowchart LR
 
 ### 受控 Session 恢复与执行配置
 
-本次实现合同为每个 owned Session 维护持久 recovery gate，并把 Run 与普通消息启动都纳入同一 Session 槽位检查。Run 或消息失败、interrupted／unknown 会保留其来源、原因和原 claim；unknown 必须先按原 ID 对账，失败事实不会被重写为成功，门槛也不会因回读而自动清除。仍有未释放 Task claim 的已知失败 Run 只能由登记队列控制者显式 `queue.retryFailed`；普通 `runtime.session.recovery.resume` 不能绕过该要求。恢复决定核原 gate version、原因 ID、原 claim、当前 Task/Session 和精确授权，并保留故障时已排队的最早普通消息，后到消息不能替换它。普通消息与业务 Run 共用完全相同的 Session 执行档案，不存在消息专用权限恢复阶段。
+本次实现合同为每个 owned Session 维护持久 recovery gate，并把 Run 与普通消息启动都纳入同一 Session 槽位检查。Run 或消息失败（Run 在派发前的预检失败除外，见下）、interrupted／unknown 会保留其来源、原因和原 claim；unknown 必须先按原 ID 对账，失败事实不会被重写为成功，门槛也不会因回读而自动清除。仍有未释放 Task claim 的已知失败 Run 只能由登记队列控制者显式 `queue.retryFailed`；普通 `runtime.session.recovery.resume` 不能绕过该要求。恢复决定核原 gate version、原因 ID、原 claim、当前 Task/Session 和精确授权，并保留故障时已排队的最早普通消息，后到消息不能替换它。普通消息与业务 Run 共用完全相同的 Session 执行档案，不存在消息专用权限恢复阶段。
+
+**预检失败不关门（迁移 083）。** Run 从 `requested` 直接 `failed`、没有原生 Turn（`run.preflightRejected`）时，模型从未启动，没有未决结果，不关恢复门：门原本是 `open` 且该 Run 不在登记队列 claim 内，就保持 `open`，排队消息照常继续，不需要人工 `runtime.session.recovery.resume`。以下仍照旧关门：派发后原生拒绝（`dispatchRejected`）、unknown、interrupted、已有原生 Turn 的失败、属于队列 claim 的 Run（队列靠门槛避免对同一失败无限重派），以及门已不是 `open` 的情形。取舍：预检失败的原因只留在 Run 的结果摘要与 `run.preflightRejected` 事件，不再由门显示，由调用方读 Run 终态。
 
 `queue.retryFailed` 只允许原 claim 最新且终态明确为 `failed` 或 `interrupted` 的 Run；保留来源 Run 原状态，不把 `interrupted` 改写成 `failed`，并禁止 `unknown` 或 `completed`。每次都由控制者显式复核影响、固定业务输入与原 claim，核对 Run version/inputHash、Task 固定修订和完整业务输入签名、Session 空闲、当前绑定及精确 grant，并消耗队列同一累计预算。新 Run 固定来源 Run/inputHash，但开新 Task 沟通通道并使用新的执行封套，所以新 Run 的实际输入 hash 会独立计算；业务输入完全不变不等于两个完整输入字节相同。明确 retry 决定只许可这一个新 Run，不自动清除门槛或启动下一项。A retry 确认完成后才可启动原来 pin 的 M 一次；M 完成后进入等待验收，必须核通过交付、真实消费者使用（如要求）、Task close 与原 claim accepted release，才重新开放 Session 并允许 B。retry 或 M 再失败／未知则重新阻断。没有自动无限重试，也不靠新队列重置历史额度。
 
