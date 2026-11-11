@@ -226,6 +226,8 @@ Evocation 在授权范围内对照任务负荷、结果、User Session 亲用和
 
 建议先完成 `task.start` 固定依据再分派。开始、范围变化或其他修订使旧分派过时后，旧 ack 保持原修订，不自动沿用。新队列和直接 Run 必须匹配当前具体 owned 分派；external 人工任务不能被任意同 Role ready 会话抢走。没有显式分派的旧工作维持原授权规则；已建立的合法 queue claim 按其独立封存的业务输入接续，真实 claim／Run 与旧人工 ack 分别显示。
 
+**执行确认与 Session 队伍。** `task.assignment.acknowledge` 可带 `verdict`：`confirm`（要 `plan` 与 `expectedRevisionId`）或 `return`（要至少一条 `missing`）。`expectedRevisionId` 必须是 Task 当前修订，否则 `BASELINE_CHANGED`。确认另记在 `task_assignment_confirmation`（按分派版本，不可改）：`confirm` 同时照常把分派记为已确认，`return` 把分派置为已释放。不带 `verdict` 的签收行为不变。Session 队伍（[Session 运行时](session-runtime.md#session-队伍dec-045-q1)）用它做“轮到时”的执行确认：命令 `line.append/move/remove/resume` 由 Leader 发出；排队中的 Task 在 `task.start`、`runtime.run.reserve`、`task.assignment.set/release` 被拒为 `QUEUED_IN_SESSION_LINE`（队伍自己登记的操作 ID 例外）；同一 Task 重复排队为 `TASK_ALREADY_QUEUED`。
+
 ## 5. Coordinator：派发、交接与恢复
 
 首期仍用单活协调者串行派发，租约、并发条件和失去独占后的停写行为在 PostgreSQL 上验证；不再把飞书记录字段当独占锁。数据库条件更新能约束内部抢占，却不提供跨 Codex、飞书和 Wiki 的恰好一次副作用。
