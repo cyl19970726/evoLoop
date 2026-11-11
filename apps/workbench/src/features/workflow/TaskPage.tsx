@@ -219,6 +219,7 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
   const heading = "text-heading font-semibold text-foreground";
   const openContent = () => panel?.openInPanel({
     id: `document:${detail.task.contentDocumentId}@${detail.task.contentRevisionId}`, title: "主正文",
+    ownerTaskId: id,
     href: href(projectId, "document", detail.task.contentDocumentId, detail.task.contentRevisionId),
     render: () => <PeekBoundary><TaskDocumentPeek projectId={projectId} documentId={detail.task.contentDocumentId} revisionId={detail.task.contentRevisionId} relation="主正文 · 任务固定的修订" /></PeekBoundary>,
   });
