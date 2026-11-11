@@ -1,6 +1,6 @@
 # 存储逻辑：主数据、固定依据与外部引用
 
-状态：2026-10-20 **目标逻辑设计，S1a 的任务/过程 Markdown/依据/影响/操作日志/outbox 已建表、迁移并通过真实 PG 检查，其余表按切片实施。** 2026-11-09 补记迁移 054–068 新增的表，2026-11-10 补记 069 给过程文档修订加的序号列，见[下文](#迁移-054-到-069-新增的表和列)；部署与迁移范围见[部署与迁移](deployment.md)。 用户已选定 PostgreSQL 保存 evoLoop 主数据、飞书作为 connector；本页细化逻辑约束，不宣称字段名或 SQL 已成为合同。语义以[领域合同](contracts.md)为准，权威位置见[项目数据](project-data.md)，包和运行边界见[包架构](packages.md)与[技术选型](technology-selection.md)。
+状态：2026-10-20 **目标逻辑设计，S1a 的任务/过程 Markdown/依据/影响/操作日志/outbox 已建表、迁移并通过真实 PG 检查，其余表按切片实施。** 2026-11-09 补记迁移 054–068 新增的表，2026-11-10 补记 069 给过程文档修订加的序号列，2026-11-11 补记 070 的验收阶段收口规则，见[下文](#迁移-054-到-070-新增的表和列)；部署与迁移范围见[部署与迁移](deployment.md)。 用户已选定 PostgreSQL 保存 evoLoop 主数据、飞书作为 connector；本页细化逻辑约束，不宣称字段名或 SQL 已成为合同。语义以[领域合同](contracts.md)为准，权威位置见[项目数据](project-data.md)，包和运行边界见[包架构](packages.md)与[技术选型](technology-selection.md)。
 
 C5 的 Task 正文不再双存：头表和 TaskRevision 都固定引用主 DocumentRevision，读取联结产生 content。迁移保留旧 TaskRevision ID/状态/验收及 Run/Basis/operation；将原 goal 原字节存为对应的主正文修订，当前状态才映射为四态。不得向既有 sealed BasisSet 补写成员或改旧操作摘要。Document 追加用途 kind（可空）与 draft/published/archived；Schedule 历史 task_template JSON 保留原样，只读兼容旧 goal，新模板写 content。具体 DDL 以新增迁移 012 及非空迁移测试为准。
 
@@ -141,9 +141,9 @@ erDiagram
 
 这些记录为讨论页提供查询与交接锚点，不把聊天文本或通知送达当作判断已被消费的证据。关联到外部 Git/Wiki 的字段只能保存经权限检查的固定引用；没有外部修订可核验时显示缺项，而不是伪造本库 FK。
 
-## 迁移 054 到 069 新增的表和列
+## 迁移 054 到 070 新增的表和列
 
-下表按 `packages/adapter-postgres/schema/` 的实际文件逐个列出 054–069 新增的表和列。编号 053、060、061 没有使用（分支上曾占用，合入时改号），迁移仍按编号顺序执行。各表都带 `project_id` 并以同项目复合外键关联既有对象；“不可变”指有触发器拒绝更新或删除。语义以右列的合同为准。更早的 046、047（Leader 通知）见[接口合同](contracts.md#leader-通知层)。
+下表按 `packages/adapter-postgres/schema/` 的实际文件逐个列出 054–070 新增的表和列。编号 053、060、061 没有使用（分支上曾占用，合入时改号），迁移仍按编号顺序执行。各表都带 `project_id` 并以同项目复合外键关联既有对象；“不可变”指有触发器拒绝更新或删除。语义以右列的合同为准。更早的 046、047（Leader 通知）见[接口合同](contracts.md#leader-通知层)。
 
 | 迁移 | 新增的表或列 | 归属与关键约束 | 语义见 |
 | --- | --- | --- | --- |
@@ -161,12 +161,13 @@ erDiagram
 | 067 `runtime_provider` | `runtime_session.runtime_provider`、`runtime_run.usage`、`runtime_run.cost_usd` | Session 的运行时只能是 `codex` 或 `claude`，写定后不可改，已有行记为 `codex`；用量与费用为空表示运行时没有报告。 | [Session 运行时](session-runtime.md#6-一个-role-只绑定一种运行时) |
 | 068 `role_runtime_profile` | `role_runtime_revision` | 只追加；第 1 个修订固定 Role 的运行时，之后只改 skill 选择，选择内容由校验函数约束；新 Session 插入时触发器拒绝与 Role 绑定不一致的运行时。迁移按已有 Session 回填首个绑定。 | 同上 |
 | 069 `document_revision_history` | `document_revision.revision_number` | 每份文档内从 1 连续编号，`(project_id, document_id, revision_number)` 唯一，同时是修订列表分页的索引；插入前触发器锁住文档行，取已有最大值加 1；调用方显式给出序号会被拒绝（`23514`），逐行导入历史（DEC-041）时不会悄悄换掉源主机的序号，导入方式须另定。完整的 `pg_dump`/`pg_restore` 不受影响：触发器在 post-data 段、表数据载入之后才创建（已用 `pg_restore --list` 核对顺序）。写入后随修订不可改。迁移沿 `previous_revision_id` 链回填（临时索引，迁移内删除）；不是单链（分叉、多个根或断链）的文档改按 `created_at, revision_id` 编号。发布前的检查与发布后的 `VACUUM` 见[发布新版本](deployment.md#2-发布新版本)。 | [DocumentStore](contracts.md#2a-documentstore-与-relationstore) |
+| 070 `acceptance_relay_stage_closure` | 无新增表或列；替换 `guard_acceptance_relay_closure()` | 同一 Delivery 有现行正式安排时，关闭只要求每条现行正式安排有指定收件人对该 Delivery 的已关联 `used` 观察；候选安排保留历史，不阻塞正式收口。没有正式安排时仍逐条核对现行候选安排，不能用一条已关联观察掩盖另一条未满足的安排。 | [验收接力与退役](contracts.md#验收接力与临时-session-退役) |
 
 ## 事务、幂等和读取
 
 `operation_journal` 用 `(project_id, operation_id)` 唯一记录请求身份、目标、读入基线、规范化命令摘要、预期副作用及 `pending/applied/rejected/unknown`。同一 ID 与摘要一致时，经当前授权核验后返回原结果或待对账状态；摘要不同则拒绝，不能把旧结果当作新命令成功。`outbox` 用 `(project_id, event_id)` PK，`(project_id, operation_id, effect_key, target_connector, event_kind)` 去重。`effect_key` 是命令内稳定的对象/项目项键：一次操作变更多个 Task、关系或投影时各项不同，同一项重试时不变。载荷只保存目标对象 ID/版本、最少投影内容、可见范围、尝试与回读回执，不把 outbox 当长期第二正文。唯一键字段均应非空；不能假设普通 UNIQUE 将多个 NULL 视为冲突。[PostgreSQL 约束文档](https://www.postgresql.org/docs/current/ddl-constraints.html)
 
-一次主数据变更在 `UnitOfWork` 里用同一数据库事务/连接：校验身份/项目及命令结构 → 查询或占用 operation ID 并核摘要 → 重验当前授权/读入版本 → 条件更新 Task/Document/Relation → 写 Journal/outbox → 提交。旧版本或领域规则冲突不产生投影。若要持久记录合法命令的领域拒绝，可在同一外层事务用 savepoint 包住业务写入，回滚该 savepoint 后只提交 `rejected` 与摘要，不留下对象变更或 outbox；身份或结构校验失败可直接拒绝而不建 Journal。PG 提交结果不明时不得伪造 `rejected`，先按 operation ID 回读。提交后才向飞书、Codex 或 Wiki 发网络请求。PG 能原子提交本库对象和 outbox，不能跨服务保证恰好一次；外部回执丢失时记 `unknown` 并按 operation/binding/远端回读对账。首期只有一个活动协调者，失去独占资格停止新写入与 outbox 重试。
+一次主数据变更在 `UnitOfWork` 里用同一数据库事务/连接：校验身份/项目及命令结构 → 查询或占用 operation ID 并核摘要 → 重验当前授权/读入版本 → 条件更新 Task/Document/Relation → 写 Journal/outbox → 提交。旧版本或领域规则冲突不产生投影。若要持久记录合法命令的领域拒绝，可在同一外层事务用 savepoint 包住业务写入，回滚该 savepoint 后只提交 `rejected` 与摘要，不留下对象变更或 outbox；身份或结构校验失败可直接拒绝而不建 Journal。savepoint 内由数据库完整性/数据约束拒绝的写入（SQLSTATE 22/23）也属于已知回滚，记作 `STORAGE_REJECTED`，不能伪装成未知提交或 503；连接、事务状态或提交回执不明时不得伪造 `rejected`，先按 operation ID 回读。提交后才向飞书、Codex 或 Wiki 发网络请求。PG 能原子提交本库对象和 outbox，不能跨服务保证恰好一次；外部回执丢失时记 `unknown` 并按 operation/binding/远端回读对账。首期只有一个活动协调者，失去独占资格停止新写入与 outbox 重试。
 
 下面的时序图放大**本库事务与外部副作用之间的断点**。它解释操作记录为何需要 `pending/unknown` 和回读，通用恢复选择见[总览](overview.md#派发结果未知先对账再决定)。
 

@@ -284,7 +284,14 @@ async function dispatch(args: Args, env: Environment, io: IO): Promise<unknown> 
     if (!file) throw new UsageError("command run requires a JSON file.");
     const source = JSON.parse(await readFile(file, "utf8"));
     const business = commandSchema.safeParse(source), orchestration = business.success ? null : orchestrationCommandSchema.safeParse(source);
-    if (!business.success && !orchestration?.success) throw new UsageError("Input does not match a business or orchestration command schema; use command schema TYPE.");
+    if (!business.success && !orchestration?.success) {
+      // Name the failing fields and the schema's own message (it carries accepted formats and examples) rather than only pointing at the schema.
+      const type = record(source)?.type;
+      const known = typeof type === "string" && commandSchema.options.some(option => option.shape.type.value === type);
+      const issues = (known ? business.error : orchestration!.error).issues.slice(0, 3)
+        .map(issue => `${issue.path.join(".") || "(root)"}: ${issue.message}`).join("; ");
+      throw new UsageError(`Input does not match a business or orchestration command schema; use command schema TYPE. ${issues}`);
+    }
     const command = business.success ? business.data : orchestration?.success ? orchestration.data : null;
     if (!command) throw new UsageError("Input does not match a command schema.");
     const orchestrationRoute = !business.success;

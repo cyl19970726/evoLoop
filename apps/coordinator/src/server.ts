@@ -80,6 +80,8 @@ export async function buildServer(options: {
   isDynamicSession?: (projectId: string, sessionId: string) => Promise<boolean>;
   authorizeDynamicSession?: (principal: Principal, command: Extract<Command,{type:"runtime.session.reserve"}>) => Promise<boolean>;
   authorizeDynamicRun?: (principal: Principal, command: Extract<Command,{type:"runtime.run.reserve"}>, session: RuntimeSessionRecord) => Promise<boolean>;
+  /** Refuses a Run reservation whose fixed recipient the preflight would reject later; must not write. */
+  requireRunRecipient?: (principal: Principal, command: Extract<Command,{type:"runtime.run.reserve"}>, session: RuntimeSessionRecord) => Promise<void>;
   authorizeDynamicMessageRecovery?: (principal: Principal, session: RuntimeSessionRecord) => Promise<boolean>;
   manualStop?: {
     execute(principal:Principal,command:Extract<Command,{type:"session.message.manualStop"}>):ReturnType<WorkflowService["execute"]>;
@@ -156,7 +158,10 @@ export async function buildServer(options: {
   });
   app.setErrorHandler((error, request, reply) => {
     if (error instanceof z.ZodError) {
-      return reply.code(400).send({ code: "INVALID_INPUT", message: "输入不符合当前接口合同。", issues: error.issues.map(x => ({ path: x.path, code: x.code })) });
+      // The field's own message carries the accepted form and an example (e.g. executeAtUtc); without it the caller cannot fix the input.
+      const first = error.issues.slice(0, 3).map(x => `${x.path.join(".") || "(根)"}：${x.message}`).join("；");
+      return reply.code(400).send({ code: "INVALID_INPUT", message: `输入不符合当前接口合同。${first}`,
+        issues: error.issues.map(x => ({ path: x.path, code: x.code, message: x.message })) });
     }
     if (error instanceof DomainError) return reply.code(errorStatus(error.code)).send({ code: error.code, message: error.message, ...(error.currentVersion === undefined ? {} : { currentVersion: error.currentVersion }) });
     if (error instanceof OrchestrationError) return reply.code(errorStatus(error.code)).send({ code: error.code, message: error.message, ...(error.currentVersion === undefined ? {} : { currentVersion: error.currentVersion }) });
@@ -305,6 +310,7 @@ export async function buildServer(options: {
           throw new DomainError("FORBIDDEN", "当前请求者未获该职责和范围的执行授权。");
         }
         if(!dynamic)await requireActiveModel(session.executionProfile?.revision.model??session.model,sessionProvider(session));
+        await options.requireRunRecipient?.(principal, command, session);
       }
     }
     if (command.type === "schedule.create" || (command.type === "schedule.revise" && command.state === "active")) {

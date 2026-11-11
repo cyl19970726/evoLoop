@@ -84,7 +84,7 @@ import { OrdinaryRunSubmissionService, leaseCheckedUnitOfWork } from "./ordinary
 import { createOrdinaryRunSealer } from "./ordinary-run-submission/seal.js";
 import { OrdinaryRunSealPump } from "./ordinary-run-submission/pump.js";
 import { throttledLog } from "./log-throttle.js";
-import { materialCliRecipientMatches, requireOrdinaryRecipient } from "./runtime/recipient-preflight.js";
+import { materialCliRecipientMatches, requireOrdinaryRecipient, requireReservableRecipient } from "./runtime/recipient-preflight.js";
 import { createMessageExecutionReader } from "./session-messages/execution-capability.js";
 import { sessionMessageCanStart } from "./session-messages/scheduling.js";
 import { LeaderResultNoticePump } from "./leader-results/pump.js";
@@ -885,6 +885,22 @@ const app = await buildServer({ service, credentials, canWrite: lease.canWrite, 
       approvalPolicy:command.approvalPolicy}) === true,
   authorizeDynamicRun: async (principal,command,session) => principal.permissions.includes("review") &&
     principal.actorId === session.actorId && await dynamicAdmission?.canReserveRun(session,command.runId,command.taskId) === true,
+  requireRunRecipient: async (_principal,command,session) => {
+    const facts = await uow.read(command.projectId, async reader => {
+      const task = await reader.getTask(command.taskId);
+      if (!task) return null;
+      const proposal = await reader.getTaskProposal(task.id, task.currentRevisionId);
+      const assignment = await reader.sessionAssignments?.getTaskSessionAssignment(task.id) ?? null;
+      return { acceptanceMode: proposal?.acceptanceMode, taskRevisionId: task.currentRevisionId, assignment: assignment
+        ? { state: assignment.state, taskRevisionId: assignment.taskRevisionId, recipientActorId: assignment.recipientActorId } : null };
+    });
+    if (!facts) return;
+    // A brokered (dynamic) Session gets its CLI identity when the Run starts, so only a configured one can be compared now.
+    const current = await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE);
+    const entry = current.runtime?.enabled ? selectMaterialCli(current.runtime.materialCli, command.projectId,
+      session.id, session.actorId, command.taskId, session.roleId) : null;
+    requireReservableRecipient({ ...facts, cliActorId: entry?.cliActorId ?? null });
+  },
   authorizeDynamicMessageRecovery: async (principal,session) => principal.permissions.includes("review") &&
     await dynamicAdmission?.canStartConversation(session) === true,
   runtimeGrants: (projectId, actorId) => runtimeConfig?.enabled ? runtimeConfig.grants.filter(g => g.projectId === projectId && g.actorId === actorId) : [],
