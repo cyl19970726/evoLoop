@@ -8,6 +8,11 @@
 
 项目审阅者可在私有 JSON 文件中指定 `projectId`、`sessionId`、`operationId`、`roleId` 和 `mode`（`create` 或 `reuse`），调用 `session prepare --file /PRIVATE/PATH.json`。新建还须写 `cwd`、`authorizationScope`、`displayName` 和从 `models --project` 查到的精确 `model` slug；`purpose` 可选。未配置 `model` 或 `models` 的旧授权环境须先配置精确授权，不能用原生默认模型创建新会话；复用既有 Session 可省略 `model`。升级前已冻结的无 `model` 创建意图只按原准备文件、回执及 operation ID 对账：已记录的同 ID 操作须核 actor/命令 hash 后回读；原 operation 未找到时保持 pending/unknown，由项目审阅者核原操作与 Session，不自动重放或补模型改写原正文。先用 `session` 核本人身份。此入口依次使用现有 `runtime.session.reserve`、`session.profile.set`、`role.bindSession`，返回真实 Session 状态、配置缺项、固定职责和 skill 引用；它不分配 Task，也不生成新的执行授权或凭据。完整准备规格在首次调用时以私有文件固定到该 `operationId`，包括模式、名称和用途；改动输入须用新操作 ID，旧操作未知仍先按原回执恢复。`waiting_for_native_thread` 表示预留已保存、原生 Thread 仍待核；`recovery_required` 表示原操作或 Session 状态未知，须按原回执对账。不可改用新 Session ID 绕过未知。显示资料已保存不证明原生 Thread 名称同步完成。
 
+**编制时用哪条路径建 Session。** 两条都有效，进智能体目录的结果一样：
+- **推荐：`session prepare`。** 一次完成预留、命名（`displayName`、`purpose`）和 `role.bindSession`，并核对配置缺项；之后在目录里就是有名字的“业务智能体”或“系统智能体”。
+- **`runtime.session.reserve` + `role.bindSession`。** 也可以。目录按**职责绑定**归类：Session 一旦绑定到某个职责，就归入该职责的类别（业务或系统），**不会**因为没有显示资料而落进“待归类”；没有绑定的 ready Session 仍不被猜测，留在“待归类”。区别只在名字：没人命名时，目录显示“<职责> · Claude/Codex”，同名的再加“标识 <8 位>”，并在第二行写运行时和模型（例如“Claude · sonnet”“Codex · 默认模型”）。想要“功能开发 · 验收”这样的名字，用 `session profile set`（显示名）补上；这是命名，不是归类的前提。
+- 归类规则在服务端的目录读取里（`packages/adapter-postgres/src/session-observation.ts`），不是给某个 Session 补显示资料；有测试：`session-directory-binding.test.ts`。
+
 配置中的 `runtime.materialCli` 可按原 `sessionId` 精确绑定，或为同一项目、Role 和 Session 发起者设置 `roleId` 备用绑定；精确 Task/Session 绑定优先。`runtime.roleSkills` 按项目和 Role 列出 `.agents/skills/<name>/SKILL.md`，未列时默认项目业务 skill。受管首包给出职责修订和 skill 的服务源码 commit/hash 固定读取入口；首次承接、版本变化或上下文不可用时读取，普通接续只核引用，不重复加载全文。准备状态会报告当前服务是否有对应 grant、可信 CLI、Role actor、项目工作目录及 skill。新增 grant 或 CLI 绑定仍须按[本机运行](local-run.md)部署配置，旧的 Session 专用绑定继续有效。原生联系 Lead 的能力须在实际宿主验证；Task discussion 可留问题，保存消息不证明 Lead 已收到。
 
 #### 编制所需私有配置清单（`session prepare` 缺项时）

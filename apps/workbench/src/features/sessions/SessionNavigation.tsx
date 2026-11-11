@@ -4,7 +4,7 @@ import { AgentAvatar, Button, IconButton, Sheet, SheetContent, SheetDescription,
 import type { ObservedSession } from "@evoloop/contracts/session-observation";
 import { href } from "../../shared/ui/shared";
 import { withReturn, type ReturnFrom } from "../../shared/returnLink";
-import { agentDisplayName, agentNameCollisions, agentNameHint } from "../../shared/agentNamePresentation";
+import { agentDisplayName, agentNameCollisions, agentNameHint, agentRuntimeLabel } from "../../shared/agentNamePresentation";
 import { useSessionDirectoryGroup, type DirectoryMembership } from "./useSessionDirectoryGroup";
 import { agentStatusLabel } from "./sessionStatusPresentation";
 import { groupSessionsByClass, sessionClassLabel, sessionClassReason, type SessionClass } from "./sessionDirectoryPresentation";
@@ -72,7 +72,8 @@ export function SessionNavigation({ token, projectId, selectedId, onNavigate, st
     const hint = agentNameHint(session, shortTime);
     const short = collisions.get(session.key);
     const status = agentStatusLabel(session);
-    const signal = `${short ? `标识 ${short} · ` : ""}${taskSignal ?? hint ?? (roles || sessionClassReason(session))} · ${status}`;
+    const runtime = agentRuntimeLabel(session);
+    const signal = `${short ? `标识 ${short} · ` : ""}${runtime ? `${runtime} · ` : ""}${taskSignal ?? hint ?? (roles || sessionClassReason(session))} · ${status}`;
     const dot = session.busy === true ? "bg-primary" : session.runtimeState === "failed" ? "bg-destructive" : session.busy === false && session.runtimeState === "ready" ? "bg-border" : "bg-warning";
     const selected = selectedId === session.key;
     return <a key={session.key} href={sessionHref(projectId, session.key)} aria-current={selected ? "page" : undefined} onClick={onNavigate}

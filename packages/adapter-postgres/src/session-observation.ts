@@ -62,17 +62,20 @@ const catalog = `WITH hosts AS (
     EXISTS(SELECT 1 FROM hosts h WHERE h.host->>'kind'='owned' AND h.host->>'sessionId'=s.session_id::text AND h.state='verified') AS verified,
     EXISTS(SELECT 1 FROM hosts h WHERE h.host->>'kind'='owned' AND h.host->>'sessionId'=s.session_id::text
       AND h.state='verified' AND h.verified_capabilities ? 'open') AS can_open,
+    -- A Role binding (role.bindSession, which session prepare also makes) is a project record that the Session belongs to
+    -- that Role's team; membership does not depend on how the Session was set up (display profile or not).
+    EXISTS(SELECT 1 FROM role_session_binding b WHERE b.project_id=$1 AND b.session_id=s.session_id) AS bound,
     s.state='closed' AS historical,s.updated_at AS observed_at,
     CASE WHEN s.native_thread_id ~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
       THEN s.native_thread_id END AS external_ref,1::bigint AS alias_count
   FROM runtime_session s WHERE s.project_id=$1
   UNION ALL
-  SELECT 'external:'||h.identity::text,'external',h.identity,h.aliases,h.all_aliases,h.role_ids,NULL::jsonb,h.verified,h.can_open,h.revoked,h.observed_at,
+  SELECT 'external:'||h.identity::text,'external',h.identity,h.aliases,h.all_aliases,h.role_ids,NULL::jsonb,h.verified,h.can_open,false,h.revoked,h.observed_at,
     h.external_ref,h.alias_count FROM grouped_hosts h
 ), described AS (
   SELECT i.*,to_jsonb(p) AS profile,to_jsonb(v) AS visual_profile,
     CASE WHEN p.membership IS NOT NULL THEN p.membership WHEN i.historical THEN 'historical'
-      WHEN i.verified THEN 'current' ELSE 'unclassified' END AS membership,
+      WHEN i.verified OR i.bound THEN 'current' ELSE 'unclassified' END AS membership,
     COALESCE(p.display_name,CASE WHEN i.kind='owned' THEN COALESCE(r.proposal->>'title',i.runtime->>'role_id')
       ELSE COALESCE(r.proposal->>'title','外部会话')||' · 外部 '||left(i.identity::text,8) END) AS title
   FROM identities i
@@ -204,7 +207,9 @@ export class PgSessionObservation implements SessionObservationReader {
     const canOpen = !!row.can_open && !!row.external_ref && !row.historical;
     return { key: row.key, target, aliases: row.aliases.map((id: string) => row.kind === "owned" ? { kind: "owned", sessionId: id } : { kind: "external", linkId: id }),
       title: profile?.displayName ?? clip(row.title, 240), profile, identity: selectedIdentity(row), kind: row.kind, roles,
-      membership: row.membership, membershipReason: profile?.membership ? "Lead 明确维护的项目会话归类。" : row.historical ? "来源记录已结束或接入已撤销。" : row.verified ? "项目中已验证的实际接入。" : "尚无明确当前团队归类，不能用 ready 状态推断。",
+      membership: row.membership, membershipReason: profile?.membership ? "Lead 明确维护的项目会话归类。" : row.historical ? "来源记录已结束或接入已撤销。" : row.verified ? "项目中已验证的实际接入。" : row.bound ? "已按项目记录绑定到职责，归入该职责的团队。" : "尚无明确当前团队归类，不能用 ready 状态推断。",
+      runtime: row.kind === "owned" && row.runtime ? { provider: row.runtime.runtime_provider === "claude" ? "claude" : "codex",
+        model: (row.runtime.model ?? row.runtime.observed_model ?? null) as string | null } : null,
       runtimeState: row.runtime?.state ?? null, busy: row.kind === "owned" ? !!inFlight.rows[0]?.busy : null,
       currentTask: current ? this.task(current, current.relation) : null,
       latestBusinessRun: run ? { id: run.run_id, taskId: run.task_id, state: run.state, updatedAt: iso(run.updated_at)!, source: this.source("run", run.run_id) } : null,
