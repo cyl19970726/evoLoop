@@ -15,6 +15,7 @@ import type { SessionMessageReader, SessionMessageTransaction } from "./session-
 import type { SessionAssignmentReader, SessionAssignmentTransaction } from "./session-assignments.js";
 import type { LeaderNoticePacketReader, LeaderNoticePacketTransaction } from "./leader-notice-packets.js";
 import type { SessionLineReader, SessionLineTransaction } from "./session-line.js";
+import type { DecisionRequestTransaction } from "./decision-requests.js";
 import type { SessionObservationReader } from "./session-observation.js";
 import type { NativeInputReader, NativeInputTransaction } from "./native-input.js";
 import type { NativeObservationReader, NativeObservationTransaction } from "./native-observation.js";
@@ -153,6 +154,7 @@ export interface Transaction extends Reader, Omit<RoleTransaction, "getTask" | "
   sessionAssignments?: SessionAssignmentTransaction;
   leaderNoticePackets?: LeaderNoticePacketTransaction;
   sessionLines?: SessionLineTransaction;
+  decisionRequests?: DecisionRequestTransaction;
   insertDiscussion(value: DiscussionRecord, event: DiscussionEvent): Promise<void>;
   updateDiscussion(value: DiscussionRecord, expectedVersion: number, event: DiscussionEvent): Promise<void>;
   insertRuntimeSession(session: RuntimeSessionRecord): Promise<void>;

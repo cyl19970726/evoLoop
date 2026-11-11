@@ -7,6 +7,7 @@
 // When my latest observation of the current delivery is 使用失败, the next step is the executor's rework, not mine:
 // the delivery is not listed and not counted until a new delivery comes (未使用 stays listed).
 import type { LeaderWorkTask } from "@evoloop/contracts/work-index";
+import type { DecisionItem } from "@evoloop/contracts/decision-requests";
 
 export { judgeMyDelivery, myLatestObservation, type MyDeliveryJudgement, type NotUsedResult, type UseResult } from "@evoloop/contracts/delivery-for-me";
 import type { NotUsedResult } from "@evoloop/contracts/delivery-for-me";
@@ -97,4 +98,18 @@ export function inboxBadge(parts: readonly InboxPart[]): InboxBadge {
  */
 export function shellInboxCount(badge: InboxBadge): number | null {
   return badge.state === "known" ? badge.count : badge.state === "unknown" ? null : 0;
+}
+
+/** 待我决定: what each kind of item is called, and the page that decides it (a request is answered right in the row). */
+export const decisionKindText: Record<DecisionItem["kind"], string> = {
+  role_proposal: "职责提案", stage_proposal: "阶段提案", task_question: "任务讨论里的问题", decision_request: "请你确认",
+};
+/** Where to decide one item: the Roles page, the Goals and stages page, or the task the question was asked in; null when it is answered in the list. */
+export function decisionLink(projectId: string, item: DecisionItem, actorId: string): string | null {
+  switch (item.kind) {
+    case "role_proposal": return `/p/${projectId}/roles?return=${encodeURIComponent(`/p/${projectId}/inbox`)}&returnTitle=${encodeURIComponent("待我验收与判断")}`;
+    case "stage_proposal": return `/p/${projectId}/journey?return=${encodeURIComponent(`/p/${projectId}/inbox`)}&returnTitle=${encodeURIComponent("待我验收与判断")}`;
+    case "task_question": return inboxTaskLink(projectId, item.taskId, actorId);
+    case "decision_request": return item.taskId ? inboxTaskLink(projectId, item.taskId, actorId) : null;
+  }
 }
