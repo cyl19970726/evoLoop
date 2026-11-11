@@ -64,6 +64,11 @@ export function createOrdinaryRunSealer(deps: OrdinaryRunSealerDependencies) {
     if (!run || run.id !== s.runId || run.projectId !== s.projectId || run.taskId !== s.taskId ||
       run.sessionId !== s.sessionId || run.taskRevisionId !== s.taskRevisionId || run.inputHash !== s.runInputHash)
       return blocked(s, "SUBMISSION_BINDING_MISMATCH");
+    // A stopped Run never produces a Delivery, whatever its intent says (the database refuses the Delivery as well).
+    if (run.stopRequestedAt && s.state !== "sealed") {
+      if (s.state !== "rejected" && !await save(s, { state: "rejected", reason: "RUN_STOPPED" })) return { status: "unknown", reason: "SUBMISSION_VERSION_CONFLICT" };
+      return { status: "rejected", reason: "RUN_STOPPED" };
+    }
     if (!terminal(run)) return { status: "pending", reason: "TERMINAL_RUN_REQUIRED" };
     if (s.state === "sealed") {
       if (!s.deliveryId) return { status: "rejected", reason: "SEALED_WITHOUT_DELIVERY" };
