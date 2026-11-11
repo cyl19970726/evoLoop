@@ -28,10 +28,15 @@
 | `runtime.materialCli` | Role 级 CLI 绑定：`{projectId, roleId, sessionActorId, cliActorId, command}`；`sessionActorId` 是调用 `session prepare` 的身份，`command` 是该业务身份 CLI 包装脚本的绝对路径 | `material_cli`、`material_cli_incompatible` | 每次重读 |
 | `residentQueue.roleActors` | Role → 业务身份映射：`{projectId, roleId, actorId}`；`actorId` 必须等于上一行的 `cliActorId` | **`role_actor`**（没有这一项）、`material_cli_actor_mismatch`（两处不一致） | 每次重读，**不需要重启** |
 | `residentQueue.enabled` | 为 `true`，上一行才被采用 | `role_actor` | 每次重读 |
-| `sessionMessages.grants` | 消息授权：发送者、接收者 Session、工作目录与次数 | 不在 prepare 检查；别人给该 Session 发普通消息时才用 | 每次重读 |
+| `sessionMessages.grants`（新业务身份 → Leader） | **必配**：`sessionId` 指 Leader Session，`senderActorId` 是新业务身份，`receiverActorId`、`receiverRoleId` 与 `cwd` 取 Leader 的，`enabled` 为 `true` | 不在 prepare 检查；漏配时发送当场报 `MESSAGE_GRANT_MISSING`，消息不保存 | 每次重读 |
+| `sessionMessages.grants`（Leader → 新业务身份） | **必配**：`sessionId` 指新 Session，`senderActorId` 是 Leader，`receiverActorId`、`receiverRoleId` 与 `cwd` 取新 Session 的，`enabled` 为 `true`；`sessionMessages.enabled` 也须为 `true` | 同上 | 每次重读 |
 | `runtime.roleSkills` | Role 的业务 skill 路径；缺省为项目业务 skill | `role_skill` | 每次重读 |
 
 `role_actor` 一个代码对应三种情形，`missingDetails` 会说清是哪一种：`residentQueue` 未启用；已启用但没有这个 Role 的映射（要加 `{"projectId":"<项目>","roleId":"<Role>","actorId":"<业务身份>"}`）；有映射但该 `actorId` 在身份文件里对本项目没有 read 与 write。以上“每次重读”按代码核对（`apps/coordinator/src/main.ts` 的 `sessionPreparation` 每次调用都重读 integrations 与身份文件），未在运行中的实例上逐项验证；仍以所连服务的实际回读为准。
+
+**双向消息授权是编制必配，不是“需要时”。** 上表两个方向都要有；只配别人给新 Session 发消息、或只配新 Session 给 Leader 发消息，都会让另一端在真实对话时被拒绝。`session prepare` 不检查这些 grant，所以准备成功不代表消息通路可用。
+
+**“就绪”不能只看准备检查。** 新 Session 必须成功处理过一条真实消息，并通过反向授权把约定的唯一标记回给 Leader；两个方向都用 `work message` 与 `work status ... --message` 读回 processing、原生 Turn 和回复后才可报告。准备检查通过、配置缺项为空、`runtime_session.state=ready`、发送返回 `applied` 或消息已保存都不算。最小演练步骤见[运行接线手册](runtime-operations.md#6-受管-session-编制所需配置)。
 
 身份文件里凭据的 `extraCommands` 只用来开放 `document.archive` 与 `document.restore`，与 `permissions` 分开：有它的身份在本项目有 write 即可对应归档或恢复，不能 `task.start`、`task.close`。改身份文件后须重启服务。
 
