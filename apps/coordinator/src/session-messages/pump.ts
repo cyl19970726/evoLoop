@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { RuntimeBinding, RuntimePage, RuntimeTurn } from '@evoloop/contracts/runtime';
 import type { NativeObservationRecord } from '@evoloop/contracts/native-observation';
-import type { SessionMessageRecord } from '@evoloop/contracts/session-messages';
+import type { SessionMessageRecord, SessionMessageResponseKind } from '@evoloop/contracts/session-messages';
 import { SessionMessageService } from '@evoloop/core/session-messages';
 import { DomainError } from '@evoloop/contracts/ports';
 import { RuntimeLocalBusyError, RuntimeProtocolError, RuntimeServerError, RuntimeUnknownError } from '@evoloop/adapter-codex-app-server';
@@ -36,13 +36,15 @@ async function collect<T>(load:(cursor?:string)=>Promise<RuntimePage<T>>,maxPage
  * Past the bound the reply is recorded as unread, never as the last message of a partial read.
  */
 export const SETTLE_REPLY_MAX_PAGES=50;
-export async function settledReply(load:(cursor?:string)=>Promise<RuntimePage<unknown>>,maxPages=SETTLE_REPLY_MAX_PAGES):Promise<string|null>{
+export type SettledReply={text:string|null;kind:SessionMessageResponseKind};
+export async function settledReply(load:(cursor?:string)=>Promise<RuntimePage<unknown>>,maxPages=SETTLE_REPLY_MAX_PAGES):Promise<SettledReply>{
   const items:unknown[]=[];let cursor:string|undefined;const seen=new Set<string>();
   for(let i=0;i<maxPages;i++){const page=await load(cursor);items.push(...page.data);
-    if(!page.nextCursor)return finalMessages(items).join('\n\n')||null;
+    if(!page.nextCursor)return {text:finalMessages(items).join('\n\n')||null,kind:'native'};
     if(seen.has(page.nextCursor))throw new Error('native history cursor repeated');
     seen.add(page.nextCursor);cursor=page.nextCursor;}
-  return `（本轮已结束，但它的原生记录超过 ${maxPages} 页，回复没有在有界读取内读出；完整回复见该 Session 的原生会话记录。）`;
+  return {kind:'bounded_unread',
+    text:`（本轮已结束，但它的原生记录超过 ${maxPages} 页，回复没有在有界读取内读出；完整回复见该 Session 的原生会话记录。）`};
 }
 export interface SessionMessagePumpDeps {
   service:SessionMessageService;runtime():MessageRuntime;projects():Promise<string[]>;
@@ -224,8 +226,8 @@ export class SessionMessagePump {
         if(!latest&&refreshed.nextCursor)
           latest=(await runtime.listTurns(binding,refreshed.nextCursor)).data.find(t=>t.id===turn.id);
         if(latest?.completedAtUtc&&['completed','failed','interrupted'].includes(latest.status)){
-          await this.deps.service.settle(message.projectId,message.id,latest,
-            await settledReply(cursor=>runtime.listItems(binding,latest!.id,cursor)));
+          const reply=await settledReply(cursor=>runtime.listItems(binding,latest!.id,cursor));
+          await this.deps.service.settle(message.projectId,message.id,latest,reply.text,reply.kind);
           return;
         }
         if(latest?.status!=='inProgress'){
@@ -244,7 +246,8 @@ export class SessionMessagePump {
       }
       return;
     }
-    await this.deps.service.settle(message.projectId,message.id,turn,await settledReply(cursor=>runtime.listItems(binding,turn.id,cursor)));
+    const reply=await settledReply(cursor=>runtime.listItems(binding,turn.id,cursor));
+    await this.deps.service.settle(message.projectId,message.id,turn,reply.text,reply.kind);
   }
   private async mayDeferMissingBoundTurn(projectId:string,sessionId:string,binding:RuntimeBinding,nativeTurnId:string):Promise<boolean>{
     const observed=this.deps.nativeTurn?.(projectId,sessionId);
