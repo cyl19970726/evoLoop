@@ -37,6 +37,8 @@ export interface ObservedSession {
   roles: ObservedRole[];
   membership: "current" | "historical" | "unclassified";
   membershipReason: string;
+  /** The runtime a project-run Session is bound to and its configured (else last observed) model; null for an external agent. */
+  runtime?: { provider: "codex" | "claude"; model: string | null } | null;
   runtimeState: string | null;
   /** Unknown external status is null, never a fabricated idle/ready state. */
   busy: boolean | null;

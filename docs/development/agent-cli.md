@@ -8,7 +8,32 @@
 
 项目审阅者可在私有 JSON 文件中指定 `projectId`、`sessionId`、`operationId`、`roleId` 和 `mode`（`create` 或 `reuse`），调用 `session prepare --file /PRIVATE/PATH.json`。新建还须写 `cwd`、`authorizationScope`、`displayName` 和从 `models --project` 查到的精确 `model` slug；`purpose` 可选。未配置 `model` 或 `models` 的旧授权环境须先配置精确授权，不能用原生默认模型创建新会话；复用既有 Session 可省略 `model`。升级前已冻结的无 `model` 创建意图只按原准备文件、回执及 operation ID 对账：已记录的同 ID 操作须核 actor/命令 hash 后回读；原 operation 未找到时保持 pending/unknown，由项目审阅者核原操作与 Session，不自动重放或补模型改写原正文。先用 `session` 核本人身份。此入口依次使用现有 `runtime.session.reserve`、`session.profile.set`、`role.bindSession`，返回真实 Session 状态、配置缺项、固定职责和 skill 引用；它不分配 Task，也不生成新的执行授权或凭据。完整准备规格在首次调用时以私有文件固定到该 `operationId`，包括模式、名称和用途；改动输入须用新操作 ID，旧操作未知仍先按原回执恢复。`waiting_for_native_thread` 表示预留已保存、原生 Thread 仍待核；`recovery_required` 表示原操作或 Session 状态未知，须按原回执对账。不可改用新 Session ID 绕过未知。显示资料已保存不证明原生 Thread 名称同步完成。
 
+**编制时用哪条路径建 Session。** 两条都有效，进智能体目录的结果一样：
+- **推荐：`session prepare`。** 一次完成预留、命名（`displayName`、`purpose`）和 `role.bindSession`，并核对配置缺项；之后在目录里就是有名字的“业务智能体”或“系统智能体”。
+- **`runtime.session.reserve` + `role.bindSession`。** 也可以。目录按**职责绑定**归类：Session 一旦绑定到某个职责，就归入该职责的类别（业务或系统），**不会**因为没有显示资料而落进“待归类”；没有绑定的 ready Session 仍不被猜测，留在“待归类”。区别只在名字：没人命名时，目录显示“<职责> · Claude/Codex”，同名的再加“标识 <8 位>”，并在第二行写运行时和模型（例如“Claude · sonnet”“Codex · 默认模型”）。想要“功能开发 · 验收”这样的名字，用 `session profile set`（显示名）补上；这是命名，不是归类的前提。
+- 归类规则在服务端的目录读取里（`packages/adapter-postgres/src/session-observation.ts`），不是给某个 Session 补显示资料；有测试：`session-directory-binding.test.ts`。
+
 配置中的 `runtime.materialCli` 可按原 `sessionId` 精确绑定，或为同一项目、Role 和 Session 发起者设置 `roleId` 备用绑定；精确 Task/Session 绑定优先。`runtime.roleSkills` 按项目和 Role 列出 `.agents/skills/<name>/SKILL.md`，未列时默认项目业务 skill。受管首包给出职责修订和 skill 的服务源码 commit/hash 固定读取入口；首次承接、版本变化或上下文不可用时读取，普通接续只核引用，不重复加载全文。准备状态会报告当前服务是否有对应 grant、可信 CLI、Role actor、项目工作目录及 skill。新增 grant 或 CLI 绑定仍须按[本机运行](local-run.md)部署配置，旧的 Session 专用绑定继续有效。原生联系 Lead 的能力须在实际宿主验证；Task discussion 可留问题，保存消息不证明 Lead 已收到。
+
+#### 编制所需私有配置清单（`session prepare` 缺项时）
+
+给一个 Role 新建受管 Session，除了 Role 已接受试行，还要这些私有配置同时到位。缺哪一项，`session prepare` 返回 `status=blocked`，`missing` 里是代码，**`missingDetails` 逐项写明要设的配置项、可复制的修法和何时生效**（旧服务只给代码时，CLI 用同一份提示在本地补出）。
+
+| 配置项（私有 integrations 文件，除注明外） | 作用 | `missing` 里的代码 | 改动何时生效 |
+| --- | --- | --- | --- |
+| auth 身份文件 | 该 Role 的业务身份存在，并对本项目有 read 与 write | `role_actor`（身份无写权限时） | `session prepare` 每次重读；新增 HTTP 令牌仍须重启才被服务认可 |
+| `runtime.enabled` | 服务启动时已启用运行时 | `runtime_unavailable` | 只在服务启动时读，改后重启 |
+| `runtime.grants` | 该 Session 的执行授权：项目、Session 身份、Role、授权范围、工作目录；全权限、never | `runtime_grant`、`model_not_authorized` | `session prepare` 每次重读 |
+| `runtime.grants[].cwd` | 工作区：须是规范绝对路径（与 realpath 一致），请求的 cwd 与之相同 | `cwd` | 每次重读 |
+| `runtime.materialCli` | Role 级 CLI 绑定：`{projectId, roleId, sessionActorId, cliActorId, command}`；`sessionActorId` 是调用 `session prepare` 的身份，`command` 是该业务身份 CLI 包装脚本的绝对路径 | `material_cli`、`material_cli_incompatible` | 每次重读 |
+| `residentQueue.roleActors` | Role → 业务身份映射：`{projectId, roleId, actorId}`；`actorId` 必须等于上一行的 `cliActorId` | **`role_actor`**（没有这一项）、`material_cli_actor_mismatch`（两处不一致） | 每次重读，**不需要重启** |
+| `residentQueue.enabled` | 为 `true`，上一行才被采用 | `role_actor` | 每次重读 |
+| `sessionMessages.grants` | 消息授权：发送者、接收者 Session、工作目录与次数 | 不在 prepare 检查；别人给该 Session 发普通消息时才用 | 每次重读 |
+| `runtime.roleSkills` | Role 的业务 skill 路径；缺省为项目业务 skill | `role_skill` | 每次重读 |
+
+`role_actor` 一个代码对应三种情形，`missingDetails` 会说清是哪一种：`residentQueue` 未启用；已启用但没有这个 Role 的映射（要加 `{"projectId":"<项目>","roleId":"<Role>","actorId":"<业务身份>"}`）；有映射但该 `actorId` 在身份文件里对本项目没有 read 与 write。以上“每次重读”按代码核对（`apps/coordinator/src/main.ts` 的 `sessionPreparation` 每次调用都重读 integrations 与身份文件），未在运行中的实例上逐项验证；仍以所连服务的实际回读为准。
+
+**为什么 `runtime.materialCli` 与 `residentQueue.roleActors` 都要写。** 评估结论：现在不合并。两处不是同一个取值：`roleActors` 是“项目 × Role → 业务身份”，常驻队列、协作授权、消息连接器和队列绑定都读它；`materialCli` 是“项目 ×（Session 或 Role）× Session 身份 → CLI 身份 + 命令路径”，可细到 Session 或 Task，只有启用运行时才有意义。Role 级条目里二者的身份必须相同，服务用 `material_cli_actor_mismatch` 检查，所以重复的是书写成本，不是两个可以不同的事实。合并的风险：要迁移私有配置；Session/Task 级覆盖会丢；只走队列、没有 `materialCli` 的 Role 仍需要 `roleActors`；由一处推导另一处，会让“谁能以这个 Role 行事”的授权隐含进 CLI 配置。较小的后续做法（本轮未做）：加载配置时二者不一致就一次性报错，或 Role 级 `materialCli.cliActorId` 缺省取 `roleActors` 的 `actorId`（向后兼容）。
 
 Role 的运行时与 skill 用 `role runtime show ROLE_UUID --project UUID` 实时读取。结果包括绑定修订（未绑定时为将采用的默认运行时）、按来源分组的 skill 与是否加载、加载方式（运行时原生、Role 上下文或不加载）、单独加入却没找到的名称、插件、MCP，以及这些内容由运行时列出、最近一次 Claude Turn 报告还是按文件推断。项目审阅者用 `role runtime set ROLE_UUID --project UUID --reason TEXT` 修改，可选 `--provider codex|claude`（只在首次绑定时有意义）、`--project-skills on|off`、`--personal on|off`、`--builtin on|off`、`--add NAMES|none` 与 `--remove NAMES|none`；未给的项沿用当前值。CLI 先读当前修订，以带回执的 `role.runtime.set` CAS 命令提交，再返回回读；冲突时重新读取，结果未知时按原 operation 对账。Role 首次绑定后不能换成另一种运行时；另一运行时仍有未关闭 Session 时不能绑定。未绑定的 Role 在首个 Session 预留时按服务默认运行时自动绑定。选择在下一个 Turn 生效，只决定模型上下文，不是安全边界。配置与发现规则见[本机运行](local-run.md)。
 
