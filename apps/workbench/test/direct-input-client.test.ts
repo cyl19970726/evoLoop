@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { test } from "node:test";
 import { ApiError } from "../src/shared/api";
-import { directInputClient, explicitlyUnaccepted } from "../src/features/sessions/directInputClient";
+import { directInputClient, explicitlyUnaccepted, retryableInputBusy } from "../src/features/sessions/directInputClient";
 
 test("direct input distinguishes a missing receipt after 503 from an explicit pre-reservation rejection", async t => {
   let submitStatus = 503;
@@ -48,5 +48,12 @@ test("direct input distinguishes a missing receipt after 503 from an explicit pr
   submitMessage = "exact direct grant is unavailable";
   try { await client.submit(command); } catch (error) { cause = error; }
   assert.equal(explicitlyUnaccepted(cause), true, "a pre-reservation direct grant denial is an explicit rejection");
-  assert.equal(paths.filter(path => path.includes("/direct-inputs") && path.startsWith("POST")).length, 3);
+  assert.equal(retryableInputBusy(cause), false);
+  submitStatus = 409;
+  submitCode = "SESSION_INPUT_BUSY";
+  submitMessage = "another input owns the Session lock";
+  try { await client.submit(command); } catch (error) { cause = error; }
+  assert.equal(retryableInputBusy(cause), true, "a local lock conflict is retryable and did not reserve this input");
+  assert.equal(explicitlyUnaccepted(cause), false);
+  assert.equal(paths.filter(path => path.includes("/direct-inputs") && path.startsWith("POST")).length, 4);
 });

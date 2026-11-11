@@ -8,7 +8,7 @@ import { Button, Notice } from "@evoloop/ui";
 import { ApiError, errorText } from "../../shared/api";
 import { useProjectQuery } from "../../shared/query";
 import { FullIdentifiers } from "../../shared/ui/FullIdentifiers";
-import { directInputClient, explicitlyUnaccepted } from "./directInputClient";
+import { directInputClient, explicitlyUnaccepted, retryableInputBusy } from "./directInputClient";
 
 const stateLabel: Record<DirectInputReceipt["state"], string> = {
   pending: "准备发送", attempted: "发送中，等待原操作回执", accepted: "运行时已接收；不代表智能体已阅读或采用",
@@ -94,13 +94,21 @@ export function useDirectInput({ projectId, sessionId, actorId, active, onAccept
   const current = capability.isError ? null : capability.data;
   async function send(content: string): Promise<DirectSendResult> {
     if (!current?.available || !current.mode || busy || pendingId || !content.trim()) return "skipped";
-    const inputId = crypto.randomUUID(), operationId = crypto.randomUUID();
+    // A local busy refusal proves nothing was reserved; reuse the exact IDs the caller already saw.
+    const inputId = storage.get(storageKey) ?? crypto.randomUUID();
+    const operationId = storage.get(operationStorageKey) ?? crypto.randomUUID();
     storage.set(storageKey, inputId); storage.set(operationStorageKey, operationId); storage.remove(auditStorageKey);
     setAudit(null); setPendingId(inputId); setReceipt(null); setError(""); setBusy(true);
     try {
       return finish(await client.submit({ inputId, operationId, content: content.trim(),
         expectedTurnId: current.mode === "steer" ? current.expectedTurnId : null }), inputId);
     } catch (cause) {
+      if (retryableInputBusy(cause)) {
+        // Keep both IDs: the next send retries this exact input instead of creating a second intent.
+        setAudit(null); setPendingId(null); setReceipt(null);
+        setError("这个智能体正在开始另一轮或接收另一条输入，稍后再试；原输入编号已保留，可重试");
+        return "rejected";
+      }
       // Read the original intent even after a clear HTTP error: the server may have reserved it.
       try { return finish(await client.read(inputId), inputId); }
       catch (readError) {

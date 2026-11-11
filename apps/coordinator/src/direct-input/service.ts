@@ -1,13 +1,16 @@
 import type { Principal } from "@evoloop/contracts";
 import type { DirectInputCommand, DirectInputGrant, DirectInputReceipt, DirectInputRecord, DirectInputCapability } from "@evoloop/contracts/direct-input";
 import { publicDirectInput } from "@evoloop/contracts/direct-input";
-import type { RuntimeBinding, RuntimePage, RuntimeTurn } from "@evoloop/contracts/runtime";
+import type { RuntimeBinding, RuntimeCapabilities, RuntimePage, RuntimeTurn } from "@evoloop/contracts/runtime";
 import { DomainError } from "@evoloop/contracts/ports";
-import { RuntimeProtocolError, RuntimeServerError, RuntimeUnknownError } from "@evoloop/adapter-codex-app-server";
+import { RuntimeLocalBusyError, RuntimeProtocolError, RuntimeServerError, RuntimeUnknownError } from "@evoloop/adapter-codex-app-server";
 import type { PgDirectInputs } from "@evoloop/adapter-postgres/direct-input";
+import { SessionSteerLock } from "../runtime/session-steer-lock.js";
 
 type Native = {
   isReady():boolean;
+  capabilities?():RuntimeCapabilities;
+  capabilitiesFor?(binding:RuntimeBinding):RuntimeCapabilities;
   registerBinding(binding:RuntimeBinding):Promise<void>;
   qualifyConversationThread(binding:RuntimeBinding):Promise<{available:boolean;reason:string;fingerprint:string|null}>;
   startConversationTurn(binding:RuntimeBinding,input:string,operationId:string):Promise<RuntimeTurn>;
@@ -19,6 +22,7 @@ type Native = {
 export function requireDirectInputRuntime(value:unknown):Native{
   const native=value as Partial<Native>|null;
   if(!native||typeof native.isReady!=="function"||typeof native.registerBinding!=="function"||
+    typeof native.capabilities!=="function"&&typeof native.capabilitiesFor!=="function"||
     typeof native.qualifyConversationThread!=="function"||typeof native.startConversationTurn!=="function"||
     typeof native.steerTurn!=="function"||typeof native.listTurns!=="function"||
     typeof native.listItems!=="function")
@@ -33,6 +37,8 @@ const textOf=(item:unknown):string=>{
 };
 export interface DirectInputServiceDeps {
   store:PgDirectInputs; runtime():Native; canWrite():boolean;
+  /** Shared with the ordinary-message pump; omitted only by isolated callers and tests. */
+  lock?:SessionSteerLock;
   /** Re-reads the current direct grant, writer identities and Session execution authority. */
   admission(principal:Principal,projectId:string,sessionId:string):Promise<{grant:DirectInputGrant;binding:RuntimeBinding}>;
   /** Existing owned binding for read-only reconciliation; a revoked sender grant cannot erase prior evidence. */
@@ -41,7 +47,12 @@ export interface DirectInputServiceDeps {
 
 /** The HTTP caller never controls the native binding, source or mode. */
 export class DirectInputService {
-  constructor(private readonly deps:DirectInputServiceDeps){}
+  private readonly lock:SessionSteerLock;
+  /** Inputs the adapter proved were never handed to the transport; the same ID may be sent again. */
+  private readonly provedUnsent = new Set<string>();
+  constructor(private readonly deps:DirectInputServiceDeps){
+    this.lock=deps.lock??new SessionSteerLock();
+  }
   async capability(principal:Principal,projectId:string,sessionId:string):Promise<DirectInputCapability>{
     const result=(available:boolean,mode:DirectInputCapability["mode"],expectedTurnId:string|null,reasonCode:string):DirectInputCapability=>
       ({available,mode,expectedTurnId,reasonCode,observedAt:new Date().toISOString()});
@@ -54,10 +65,14 @@ export class DirectInputService {
     let grant:DirectInputGrant,binding:RuntimeBinding;
     try{({grant,binding}=await this.deps.admission(principal,projectId,sessionId));}
     catch{return result(false,null,null,"DIRECT_GRANT_MISSING");}
+    if(this.lock.isBusy(projectId,sessionId))return result(false,null,null,"SESSION_INPUT_BUSY");
+    const capabilities=runtime.capabilitiesFor?.(binding)??runtime.capabilities?.();
+    if(!capabilities)return result(false,null,null,"NATIVE_CAPABILITY_UNKNOWN");
     const state=await this.deps.store.inspect(projectId,sessionId,principal.actorId);
     if(state.state==="busy")return result(false,null,null,"SESSION_BUSY");
     if(state.state==="running"){
       if(!grant.canSteer)return result(false,null,null,"DIRECT_STEER_DISABLED");
+      if(!capabilities.delivery.midTurnInput)return result(false,null,null,"NATIVE_STEER_UNAVAILABLE");
       try{
         await runtime.registerBinding(binding);
         const turn=await this.findTurn(runtime,binding,state.turnId!);
@@ -66,6 +81,7 @@ export class DirectInputService {
       }catch{return result(false,null,null,"NATIVE_TURN_UNKNOWN");}
     }
     if(!grant.canStart)return result(false,null,null,"DIRECT_START_DISABLED");
+    if(!capabilities.delivery.idleTurnStart)return result(false,null,null,"NATIVE_IDLE_START_UNAVAILABLE");
     if(grant.maxTurns!==undefined&&state.used>=grant.maxTurns)
       return result(false,null,null,"MESSAGE_BUDGET_EXHAUSTED");
     try{
@@ -92,12 +108,23 @@ export class DirectInputService {
     if(!principal.projectIds.includes(projectId)||!principal.permissions.includes("write")||
       !principal.permissions.includes("read")||!this.deps.canWrite())
       throw new DomainError("FORBIDDEN","Current project writer is unavailable");
+    const key=`${projectId}\u0000${command.inputId}`;
     const prior=await this.deps.store.get(projectId,command.inputId);
-    if(prior){this.requireSameIntent(principal,sessionId,command,prior);return publicDirectInput(prior);}
+    const retrying=!!prior&&prior.state==="attempted"&&this.provedUnsent.has(key);
+    if(prior){
+      this.requireSameIntent(principal,sessionId,command,prior);
+      // A later request may reuse the exact intent only after a local admission refusal proved no send.
+      if(!retrying)return publicDirectInput(prior);
+    }
     const {grant,binding}=await this.deps.admission(principal,projectId,sessionId);
     const runtime=this.deps.runtime();
     if(!runtime.isReady())throw new DomainError("NATIVE_UNAVAILABLE","Owned native connection is unavailable");
     await runtime.registerBinding(binding);
+    const capabilities=runtime.capabilitiesFor?.(binding)??runtime.capabilities?.();
+    if(!capabilities)throw new DomainError("NATIVE_CAPABILITY_UNKNOWN","Session runtime capabilities are unavailable");
+    const release=this.lock.acquire(projectId,sessionId);
+    let provedBusy=false;
+    try{
     // Qualification must precede reservation for an idle start. The PG lock chooses the final mode.
     let fingerprint="";
     if(!await this.deps.store.hasPrimary(projectId,sessionId)){
@@ -109,16 +136,23 @@ export class DirectInputService {
     const reserved=await this.deps.store.reserve(projectId,sessionId,principal.actorId,command,grant,fingerprint);
     const record=reserved.record;
     this.requireSameIntent(principal,sessionId,command,record);
-    if(!reserved.created)return publicDirectInput(record); // Never replay an uncertain native attempt.
+    // Never replay an uncertain native attempt. The only exception is an identical intent the adapter
+    // refused before writing; it still carries the same operation ID and has no native attempt.
+    if(!reserved.created&&!retrying)return publicDirectInput(record);
+    if(record.mode==="steer"&&!capabilities.delivery.midTurnInput)
+      return publicDirectInput(await this.deps.store.reject(projectId,record.inputId,
+        "This runtime cannot add input to an active Turn"));
+    if(record.mode==="start"&&!capabilities.delivery.idleTurnStart)
+      return publicDirectInput(await this.deps.store.reject(projectId,record.inputId,
+        "This runtime cannot start an idle Turn directly"));
     // A revoked grant between reservation and transport rejects this original intent.
     try{await this.deps.admission(principal,projectId,sessionId);}
     catch(error){return publicDirectInput(await this.deps.store.reject(projectId,record.inputId,"Authorization changed before native send"));}
     try{
       if(record.mode==="steer"){
         const turnId=record.expectedTurnId!;
-        const turn=await this.findTurn(runtime,binding,turnId);
-        if(turn?.status!=="inProgress")
-          return publicDirectInput(await this.deps.store.reject(projectId,record.inputId,"Expected native Turn is no longer in progress"));
+        // The native runtime validates expectedTurnId. A review/start Turn and its execution child
+        // can have different IDs in history, so a local history lookup cannot decide steerability.
         const receipt=await runtime.steerTurn(binding,turnId,record.content,record.inputId);
         return publicDirectInput(await this.deps.store.accept(projectId,record.inputId,receipt.turnId,receipt.itemId));
       }
@@ -126,11 +160,20 @@ export class DirectInputService {
       const turn=await runtime.startConversationTurn(binding,input,record.inputId);
       return publicDirectInput(await this.deps.store.accept(projectId,record.inputId,turn.id,null));
     }catch(error){
+      if(error instanceof RuntimeLocalBusyError){
+        // Adapter-level in-flight admission refused before writing; keep the durable intent retryable.
+        provedBusy=true;this.provedUnsent.add(key);
+        throw new DomainError("SESSION_INPUT_BUSY","该会话正在开始另一轮或接收另一条输入；稍后用同一输入编号重试");
+      }
+      if(error instanceof RuntimeServerError&&error.steerRejection==="non_steerable_turn"&&record.mode==="steer")
+        return publicDirectInput(await this.deps.store.rejectSteerAndQueue(projectId,record.inputId,
+          "Native Turn kind cannot accept input; saved as a queued ordinary message"));
       if(error instanceof RuntimeProtocolError&&!(error instanceof RuntimeUnknownError)&&
         !(error instanceof RuntimeServerError&&error.preTurnWriterConflict))
         return publicDirectInput(await this.deps.store.reject(projectId,record.inputId,"Native request was explicitly rejected"));
       return publicDirectInput(await this.deps.store.unknown(projectId,record.inputId,"Native acknowledgement unavailable; reconcile original input"));
     }
+    }finally{release();if(!provedBusy)this.provedUnsent.delete(key);}
   }
   /** Read only: a crash or lost reply never causes a second native send. */
   async reconcile(principal:Principal,projectId:string,inputId:string):Promise<DirectInputReceipt>{
