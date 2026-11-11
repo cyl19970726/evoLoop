@@ -128,7 +128,10 @@ export class WorkflowService {
     if (!parsed.success) throw new DomainError("INVALID_COMMAND", parsed.error.message);
     const command = parsed.data;
     const permission = this.commandPermission(command);
-    requirePermission(principal, command.projectId, permission);
+    // An identity's extra command (archive/restore) replaces the review requirement for that command only; write is still needed.
+    const extra = permission === "review" && (command.type === "document.archive" || command.type === "document.restore") &&
+      principal.extraCommands?.includes(command.type) === true;
+    requirePermission(principal, command.projectId, extra ? "write" : permission);
     if (command.type === "task.create" && command.timing?.repeat === "daily" ||
       command.type === "task.timing.set" && (command.repeat === "daily" || command.scope !== "this") ||
       command.type === "task.timing.stop" ||
