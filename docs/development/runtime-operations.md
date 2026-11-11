@@ -274,6 +274,14 @@ node --import tsx tests/manual/session-compaction-e1.ts
 
 门槛只要求核查，不代表 Run 失败；关注项不会自动取消、重试或关闭 Run，也不重置预算。隔离候选页面的截图见[桌面 1280×900](../assets/task-stage-attention/desktop-1280.png) 和[窄窗 390×844](../assets/task-stage-attention/narrow-390.png)，两张都来自合成的测试项目，不代表正式通知已送达或已读。
 
+## 6. 受管 Session 编制所需配置
+
+给一个 Role 新建受管 Session，要同时配好：业务身份（身份文件里对本项目有 read 与 write）、`runtime.grants`（含工作区 `cwd`）、Role 级 `runtime.materialCli`、**`residentQueue.roleActors`** 与 `residentQueue.enabled`、需要时的 `sessionMessages.grants`，以及 `runtime.enabled`。完整清单、每项的格式和生效时机见 [Agent CLI：编制所需私有配置清单](agent-cli.md#编制所需私有配置清单session-prepare-缺项时)。
+
+- **缺项怎么看。** `session prepare` 返回 `status=blocked`，`missing` 是代码，`missingDetails` 写明要设的配置项、可复制的修法和是否需重启；`role_actor` 就是缺 `residentQueue.roleActors`（或它没启用、或该身份无写权限）。
+- **哪些要重启。** 按代码核对，`session prepare` 每次调用都重读 integrations 与身份文件，补 `residentQueue.roleActors`、`runtime.materialCli`、`runtime.grants` 不需要重启；只有 `runtime.enabled`（运行时只在启动时建立）和新增 HTTP 令牌要重启。
+- **同一个事实写两处。** `runtime.materialCli` 的 `cliActorId` 与 `residentQueue.roleActors` 的 `actorId` 在 Role 级必须一致，不一致时报 `material_cli_actor_mismatch`；为什么暂不合并见 Agent CLI 那一节。
+
 ## 7. 用量上限与上下文交接
 
 这两项都只拦普通 Leader 结果通知，不拦业务 Task Run，也不拦使用者自己发的消息。默认都不配置，因此升级本身不改变行为。
@@ -308,11 +316,3 @@ node --import tsx tests/manual/session-compaction-e1.ts
 - **即时输入的能力查询不核运行时。** 对 Claude 或非 alpha.6 的 Codex 也可能回答 `steer`，提交时才被拒绝或记为未知（见 [Session 运行时 §3](../architecture/session-runtime.md#3-即时输入执行中收到的消息怎样处理)）。
 - **托管压缩只在 alpha.6 可用。** 隔离测试只用替身，不验证有认证的模型压缩。
 - **上下文交接仍由维护者执行。** 服务会暂停普通通知并生成摘要，但不会自动创建新原生线程、迁移 Leader 目标或替使用者确认接手；这套操作尚未在正式实例做长期运行验收。
-
-## 6. 受管 Session 编制所需配置
-
-给一个 Role 新建受管 Session，要同时配好：业务身份（身份文件里对本项目有 read 与 write）、`runtime.grants`（含工作区 `cwd`）、Role 级 `runtime.materialCli`、**`residentQueue.roleActors`** 与 `residentQueue.enabled`、需要时的 `sessionMessages.grants`，以及 `runtime.enabled`。完整清单、每项的格式和生效时机见 [Agent CLI：编制所需私有配置清单](agent-cli.md#编制所需私有配置清单session-prepare-缺项时)。
-
-- **缺项怎么看。** `session prepare` 返回 `status=blocked`，`missing` 是代码，`missingDetails` 写明要设的配置项、可复制的修法和是否需重启；`role_actor` 就是缺 `residentQueue.roleActors`（或它没启用、或该身份无写权限）。
-- **哪些要重启。** 按代码核对，`session prepare` 每次调用都重读 integrations 与身份文件，补 `residentQueue.roleActors`、`runtime.materialCli`、`runtime.grants` 不需要重启；只有 `runtime.enabled`（运行时只在启动时建立）和新增 HTTP 令牌要重启。
-- **同一个事实写两处。** `runtime.materialCli` 的 `cliActorId` 与 `residentQueue.roleActors` 的 `actorId` 在 Role 级必须一致，不一致时报 `material_cli_actor_mismatch`；为什么暂不合并见 Agent CLI 那一节。
