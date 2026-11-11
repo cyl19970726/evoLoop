@@ -131,7 +131,10 @@ export class WorkflowService {
     if (!parsed.success) throw new DomainError("INVALID_COMMAND", parsed.error.message);
     const command = parsed.data;
     const permission = this.commandPermission(command);
-    requirePermission(principal, command.projectId, permission);
+    // An identity's extra command (archive/restore) replaces the review requirement for that command only; write is still needed.
+    const extra = permission === "review" && (command.type === "document.archive" || command.type === "document.restore") &&
+      principal.extraCommands?.includes(command.type) === true;
+    requirePermission(principal, command.projectId, extra ? "write" : permission);
     if (command.type === "task.create" && command.timing?.repeat === "daily" ||
       command.type === "task.timing.set" && (command.repeat === "daily" || command.scope !== "this") ||
       command.type === "task.timing.stop" ||
@@ -208,7 +211,7 @@ export class WorkflowService {
     if (command.type === "session.profile.set" || command.type === "session.identity.set" || command.type.startsWith("task.assignment.") && command.type !== "task.assignment.acknowledge") return "review";
     if (command.type.startsWith("queue.")) return "review";
     if (command.type.startsWith("evaluation.") || command.type.startsWith("domain.") || command.type.startsWith("host.")) return "review";
-    return command.type === "document.adopt" || command.type === "document.publish" || command.type === "document.archive" || command.type === "document.restore" || command.type === "task.start" || command.type === "task.reviewBasis" || command.type === "task.close" || command.type === "task.cancel" || command.type === "task.reopen" || command.type === "stage.accept" || command.type === "stage.review" || command.type === "stage.review.correct" || command.type === "runtime.session.reserve" || command.type === "runtime.session.close" || command.type === "runtime.run.reserve" || (command.type === "runtime.run.interrupt" || command.type === "runtime.run.abandonReadOnly") || command.type.startsWith("schedule.") || command.type.startsWith("role.") && command.type !== "role.propose" || command.type === "discussion.decision.record" || command.type === "discussion.action.link"
+    return command.type === "document.adopt" || command.type === "document.publish" || command.type === "document.archive" || command.type === "document.restore" || command.type === "task.start" || command.type === "task.reviewBasis" || command.type === "task.close" || command.type === "task.cancel" || command.type === "task.reopen" || command.type === "stage.accept" || command.type === "stage.review" || command.type === "stage.review.correct" || command.type === "runtime.session.reserve" || command.type === "runtime.session.close" || command.type === "runtime.run.reserve" || (command.type === "runtime.run.interrupt" || command.type === "runtime.run.stop" || command.type === "runtime.run.abandonReadOnly") || command.type.startsWith("schedule.") || command.type.startsWith("role.") && command.type !== "role.propose" || command.type === "discussion.decision.record" || command.type === "discussion.action.link"
       ? "review" : "write";
   }
 
@@ -860,7 +863,7 @@ export class WorkflowService {
         if (command.type === "schedule.create" || command.type === "schedule.revise") {
           return applySchedule(tx, principal, command as ScheduleCommand, now);
         }
-        if (command.type === "runtime.session.reserve" || command.type === "runtime.session.close" || command.type === "runtime.run.reserve" || command.type === "runtime.handoff.record" || (command.type === "runtime.run.interrupt" || command.type === "runtime.run.abandonReadOnly")) {
+        if (command.type === "runtime.session.reserve" || command.type === "runtime.session.close" || command.type === "runtime.run.reserve" || command.type === "runtime.handoff.record" || (command.type === "runtime.run.interrupt" || command.type === "runtime.run.stop" || command.type === "runtime.run.abandonReadOnly")) {
           if (command.type === "runtime.run.reserve") await requireTaskTimingReady(tx, command.taskId, now);
           return reserveRuntime({ tx, command, principal, now, nextId: () => this.deps.ids.next(), hash: value => this.deps.hasher.hash(value),
             ...(this.deps.runtimeProvider ? { runtimeProvider: this.deps.runtimeProvider } : {}), runtimeProviders: this.runtimeProviders() });

@@ -1,12 +1,14 @@
 import { timingSafeEqual } from "node:crypto";
 import { z } from "zod";
-import type { Principal } from "@evoloop/contracts";
+import { extraCommandNames, type Principal } from "@evoloop/contracts";
 
 export const authConfigSchema = z.array(z.strictObject({
   token: z.string().min(32),
   actorId: z.string().min(1).max(100),
   projectIds: z.array(z.uuid()).min(1),
   permissions: z.array(z.enum(["read", "write", "review"])).min(1),
+  // Read when the service starts: a change to the identity file takes effect after a restart.
+  extraCommands: z.array(z.enum(extraCommandNames)).optional(),
   identityKind: z.enum(["agent", "human"]).optional(),
 })).min(1).refine(items => new Set(items.map(x => x.token)).size === items.length, "Tokens must be unique")
   .refine(items => {
@@ -44,7 +46,7 @@ export function authenticate(header: string | undefined, credentials: AuthConfig
   for (const entry of credentials) {
     const expected = Buffer.from(entry.token);
     if (token.length === expected.length && timingSafeEqual(token, expected)) {
-      return { actorId: entry.actorId, projectIds: [...entry.projectIds], permissions: [...entry.permissions], identityKind: entry.identityKind ?? "agent" };
+      return { actorId: entry.actorId, projectIds: [...entry.projectIds], permissions: [...entry.permissions], ...(entry.extraCommands ? { extraCommands: [...entry.extraCommands] } : {}), identityKind: entry.identityKind ?? "agent" };
     }
   }
   return null;

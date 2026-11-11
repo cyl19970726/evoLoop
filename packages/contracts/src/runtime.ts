@@ -42,6 +42,8 @@ export const runtimeCommands = [
     evaluation: z.strictObject({ evaluationId: id, revisionId: id, caseId: id, conditionId: id }).optional() }),
   z.strictObject({ ...common, type: z.literal("runtime.run.abandonReadOnly"), runId: id, expectedVersion: z.number().int().positive(), reason: text, evidence: text }),
   z.strictObject({ ...common, type: z.literal("runtime.run.interrupt"), runId: id, reason: text }),
+  /** Stop a Run that is no longer wanted (DEC-043): marks it, voids its unsealed signed intent, interrupts it if it runs. */
+  z.strictObject({ ...common, type: z.literal("runtime.run.stop"), runId: id, expectedVersion: z.number().int().positive(), reason: text }),
 ];
 
 export type RuntimeSessionState = "reserved" | "creating" | "ready" | "closing" | "unknown" | "closed";
@@ -66,6 +68,8 @@ export interface RuntimeRunRecord {
   sessionId: string; operationId: string; input: string; inputHash: string;
   state: RuntimeRunState; version: number; nativeTurnId: string | null;
   interruptRequested: boolean; resultSummary: string | null; actorId: string; createdAt: string; updatedAt: string;
+  /** Set by runtime.run.stop; no new Run state: a stopped Run still moves through the existing states to a terminal one. */
+  stopRequestedAt?: string | null; stopReason?: string | null; stopRequestedBy?: string | null;
   /** Immutable native environment used for this original dispatch, never inferred from the current child. */
   nativeEnvironmentEpoch?: number | null;
   evaluationBinding?: { evaluationId: string; revisionId: string; caseId: string; conditionId: string;
@@ -97,7 +101,7 @@ export interface RuntimeRecordEvent {
   projectId: string; id: string; runId: string | null; sessionId: string | null;
   kind: "session.reserved" | "session.creating" | "session.bound" | "session.unknown" | "session.closeRequested" | "session.archiveAttempted" | "session.closed" |
     "run.requested" | "run.dispatching" | "run.dispatchWithdrawn" | "run.preflightRejected" | "run.dispatchRejected" | "run.bound" | "run.status" | "run.unknown" |
-    "run.reviewed" | "message.preTurnReviewed" | "run.reconciled" | "run.interruptRequested" | "run.interruptResult" |
+    "run.reviewed" | "message.preTurnReviewed" | "run.reconciled" | "run.interruptRequested" | "run.interruptResult" | "run.stopRequested" |
     "session.executionProfile.activationStarted" | "session.executionProfile.active" |
     "session.executionProfile.unknown" | "session.executionProfile.rejected" |
     "runtime.approvalDeclined" | "native.childDiagnostic" | "handoff.received" | "handoff.read" | "handoff.adopted" | "handoff.effect";
