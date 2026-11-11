@@ -189,7 +189,7 @@ flowchart LR
 | `0.166.0-alpha.6` | 是 | 是 | 是 | 是 | 是 | 是 | 是 |
 | `0.167.0-alpha.3.2` | 是 | 是 | 否 | 是 | 是 | 否 | 是 |
 
-托管压缩与执行配置切换仍只在 `0.166.0-alpha.6` 可用；运行中补入在 alpha.6 与 `0.167.0-alpha.3.2` 可用。0.167 的 v2 schema 有 `turn/steer`，但没有 `thread/settings/update`，因此不能再把两个方法绑在同一个开关上。0.167 在 `turn/start` 刚返回时会短暂拒绝 `thread/turns/list`，适配器对此做有界重试（PR #213）。
+托管压缩与执行配置切换仍只在 `0.166.0-alpha.6` 可用；`0.164.0-alpha.11.1`、`0.166.0-alpha.5.1` 与 `0.167.0-alpha.3.2` 的 `executionProfileActivation` 都是 `false`，只有 alpha.6 为 `true`。运行中补入在 alpha.6 与 `0.167.0-alpha.3.2` 可用。0.167 的 v2 schema 有 `turn/steer`，但没有 `thread/settings/update`，因此不能再把两个方法绑在同一个开关上；它的 `CodexErrorInfo.activeTurnNotSteerable` 序列化为 `{"activeTurnNotSteerable":{"turnKind":"review"|"compact"}}`，适配器只按这个结构或精确文字判断不可补入，不按泛化的 `review`／`compaction` 文字匹配。0.167 在 `turn/start` 刚返回时会短暂拒绝 `thread/turns/list`，适配器对此做有界重试（PR #213）。
 
 各版本的标准/实验指纹登记在 `packages/adapter-codex-app-server/src/index.ts` 的 `PINNED_PROTOCOLS`。例如 alpha.5.1 为 `3164e5e1b190371566a3c163f6f4e56ee75552b5652ece246149e028cbabf23d` 和 `ab788279bb5212b13701b505f7d8f119a71705d91f46e6e09c1e893e98c4a541`；alpha.6 为 `e025e54fb11354eb82767ea040b40efa17b34dfc706c9433a6115b5f4771c465` 和 `f72bb03a3f519cd19b37a030b42453128ff5b88abaad8c1264cf1ca197dbbed0`；0.167.0-alpha.3.2 为 `f2576ca5d46be4cfb159906264fbc173efcfcc917ea8fdc38323770e7b657b5a` 和 `b1e5d17224b9d9732b5976012438ba78e2cf7e418b67f8f8a5f5cffe301b875d`。以下只是可选运行配置片段，不代表安装路径或凭据：
 
@@ -197,7 +197,7 @@ flowchart LR
 {"runtime":{"enabled":true,"protocolVersion":"0.166.0-alpha.5.1"}}
 ```
 
-现代协议提供 `currentTime/read`，适配器只对注册表中精确绑定的 owned Thread 响应当前 Unix 秒数；缺少绑定、Thread 不符或使用 0.154 时拒绝。它只是只读时间能力，不授予 Thread／Turn 控制，也不改变权限或启动策略。`model/list` 显示模型仅代表协议可列出该选项，不能证明特定模型会被 Turn 接受或是实际运行模型；新模型仍须由 Lead 核实，实际结果以后续受控 Turn 证据为准。官方 [App Server 方法说明](https://learn.chatgpt.com/docs/app-server#api-overview)和[Turn 生命周期](https://learn.chatgpt.com/docs/app-server#turns)是外部合同；每次 CLI 升级仍须重新读取 schema 并核对所选功能对应的标准／实验指纹。
+现代协议提供 `currentTime/read`，适配器只对注册表中精确绑定的 owned Thread 响应当前 Unix 秒数；缺少绑定、Thread 不符或使用 0.154 时拒绝。它只是只读时间能力，不授予 Thread／Turn 控制，也不改变权限或启动策略。`capabilitiesFor` 只回答 owner 为 `evoloop-codex-app-server` 的绑定；其他运行时的绑定不会被它描述。`model/list` 显示模型仅代表协议可列出该选项，不能证明特定模型会被 Turn 接受或是实际运行模型；新模型仍须由 Lead 核实，实际结果以后续受控 Turn 证据为准。官方 [App Server 方法说明](https://learn.chatgpt.com/docs/app-server#api-overview)和[Turn 生命周期](https://learn.chatgpt.com/docs/app-server#turns)是外部合同；每次 CLI 升级仍须重新读取 schema 并核对所选功能对应的标准／实验指纹。
 
 ### 关闭与轨迹读取
 

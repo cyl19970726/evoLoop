@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { isAbsolute, resolve } from "node:path";
 import { promisify } from "node:util";
 import type { RuntimeApprovalRequest, RuntimeBinding, RuntimeCapabilities, RuntimeCapabilityListing, RuntimeCompactionObservation, RuntimeEvent, RuntimeModelList, RuntimePage, RuntimePort, RuntimeSessionSpec, RuntimeTurn, RuntimeTurnFailure, RuntimeWorkPage } from "@evoloop/contracts/runtime";
-import { ownerOf, RuntimeNotSentError, RuntimeProtocolError, RuntimeServerError, RuntimeUnknownError } from "@evoloop/contracts/runtime";
+import { ownerOf, RuntimeLocalBusyError, RuntimeNotSentError, RuntimeProtocolError, RuntimeServerError, RuntimeUnknownError } from "@evoloop/contracts/runtime";
 import type { ExecutionProfileSnapshot } from "@evoloop/contracts/session-recovery";
 import type { NativeInputCapture, NativeInputEvent, NativeInputQuestion } from "@evoloop/contracts/native-input";
 import type { NativeWorkspacePage, NativeWorkspaceReadOptions, WorkspaceRuntimeUpdate } from "@evoloop/contracts/session-timeline";
@@ -125,7 +125,7 @@ function runtimeTurn(value: unknown): RuntimeTurn | null {
 }
 
 // Provider-neutral outcome errors live in contracts; re-exported for existing importers.
-export { RuntimeNotSentError, RuntimeProtocolError, RuntimeServerError, RuntimeUnknownError };
+export { RuntimeLocalBusyError, RuntimeNotSentError, RuntimeProtocolError, RuntimeServerError, RuntimeUnknownError };
 export type { RuntimeServerErrorCategory } from "@evoloop/contracts/runtime";
 
 export type RuntimeCompactionPreflightStage = "request_validation" | "owner_resume" | "thread_read" | "history" | "send_connection";
@@ -386,8 +386,12 @@ export class CodexAppServerAdapter implements RuntimePort {
       modelList: true, usage: "unavailable", cost: false,
     };
   }
-  /** This adapter serves one pinned protocol, so every binding has the same declaration. */
-  capabilitiesFor(_binding: RuntimeBinding): RuntimeCapabilities { return this.capabilities(); }
+  /** This adapter serves one pinned protocol; a binding owned by another runtime is not its to describe. */
+  capabilitiesFor(binding: RuntimeBinding): RuntimeCapabilities {
+    if (binding.owner !== ownerOf("codex"))
+      throw new RuntimeProtocolError("binding owner is not the Codex App Server runtime");
+    return this.capabilities();
+  }
   isReady(): boolean { return this.ready && !!this.child; }
   hasProcessHandle():boolean{return this.ownedProcess!==null;}
   /** Last loss of the owned native connection, retained after close or a later open. */
@@ -805,7 +809,8 @@ export class CodexAppServerAdapter implements RuntimePort {
       const error = object(message.error);
       const code = typeof error?.code === "number" && Number.isInteger(error.code) ? error.code : -32000;
       const nativeMessage = typeof error?.message === "string" ? error.message : "";
-      pending.reject(new RuntimeServerError(pending.method, message.id, code, nativeMessage, pending.threadId ?? undefined));
+      pending.reject(new RuntimeServerError(pending.method, message.id, code, nativeMessage,
+        pending.threadId ?? undefined, error?.data));
     }
     else if ("result" in message) pending.resolve(message.result);
     else { pending.reject(new RuntimeProtocolError(`${pending.method}: response lacks result`)); this.disconnect("malformed response"); }
@@ -1416,7 +1421,7 @@ export class CodexAppServerAdapter implements RuntimePort {
       throw new RuntimeProtocolError('ordinary Turn requires fresh owned full-profile admission');
     const threadId=binding.nativeThreadId;
     if(this.conversationTurnInFlight.has(threadId))
-      throw new RuntimeProtocolError('ordinary Turn start is already in flight on this Thread');
+      throw new RuntimeLocalBusyError('turn/start','ordinary Turn start is already in flight on this Thread');
     if(this.fullTurnAttempts.get(threadId)?.has(operationId))
       throw new RuntimeProtocolError('original ordinary Turn operation cannot be replayed');
     this.conversationTurnInFlight.add(threadId);
@@ -1501,7 +1506,7 @@ export class CodexAppServerAdapter implements RuntimePort {
       throw new RuntimeProtocolError('input, expected Turn ID and durable client message ID required');
     const threadId=binding.nativeThreadId;
     if(this.conversationTurnInFlight.has(threadId))
-      throw new RuntimeProtocolError('direct input is already in flight on this Thread');
+      throw new RuntimeLocalBusyError('turn/steer','direct input is already in flight on this Thread');
     if(this.fullTurnAttempts.get(threadId)?.has(inputId))
       throw new RuntimeProtocolError('original direct input operation cannot be replayed');
     this.conversationTurnInFlight.add(threadId);
@@ -1514,9 +1519,9 @@ export class CodexAppServerAdapter implements RuntimePort {
         throw new RuntimeProtocolError('owned Thread has no active Turn to steer');
       if(binding.resumeProfile.model!=null&&thread.model!==binding.resumeProfile.model)
         throw new RuntimeProtocolError('active Thread model differs from fixed profile');
-      const latest=(await this.listTurns(binding)).data[0];
-      if(latest?.id!==expectedTurnId||latest.status!=='inProgress'||latest.completedAtUtc!==null)
-        throw new RuntimeProtocolError('expected Turn is not the current active Turn');
+      // `expectedTurnId` is the authority the native runtime checks. A review/start Turn and its
+      // execution child are not reported with the same ID in turns/list, so a local list comparison
+      // would refuse a valid refusal probe. Send once and let the native error classify the Turn.
       this.owned(binding);
       const attempts=this.fullTurnAttempts.get(threadId)??new Set<string>();
       if(attempts.has(inputId))

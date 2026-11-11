@@ -4,7 +4,7 @@ import test from "node:test";
 import type { DirectInputCommand, DirectInputRecord } from "@evoloop/contracts/direct-input";
 import type { RuntimeBinding, RuntimeCapabilities } from "@evoloop/contracts/runtime";
 import { DomainError } from "@evoloop/contracts/ports";
-import { RuntimeServerError } from "@evoloop/adapter-codex-app-server";
+import { RuntimeLocalBusyError, RuntimeServerError } from "@evoloop/adapter-codex-app-server";
 import { DirectInputService } from "../src/direct-input/service.js";
 import { SessionSteerLock } from "../src/runtime/session-steer-lock.js";
 
@@ -104,11 +104,99 @@ test("a non-steerable Turn rejects direct input and atomically queues its conten
     isReady: () => true, capabilitiesFor: () => capabilities(true, true), registerBinding: async () => {},
     listTurns: async () => ({ data: [{ id: turnId, status: "inProgress", completedAtUtc: null }], nextCursor: null }),
     steerTurn: async () => { throw new RuntimeServerError("turn/steer", 7, -32602,
-      "NonSteerableTurnKind(compaction)"); },
+      "cannot steer a review turn", undefined,
+      { codexErrorInfo: { activeTurnNotSteerable: { turnKind: "review" } } }); },
   } as never;
   const service = new DirectInputService({ store, runtime: () => runtime, canWrite: () => true,
     admission: async () => ({ grant, binding }), bindingFor: async () => binding });
   const receipt = await service.submit(principal, projectId, sessionId, value);
   assert.equal(receipt.state, "rejected");
   assert.deepEqual(queued, [value.inputId]);
+});
+
+test("a review ancestor Turn stays steerable enough to receive the native refusal and queue its content", async () => {
+  const value = { ...command(), expectedTurnId: turnId };
+  const queued: string[] = [];
+  const store = {
+    get: async () => null, hasPrimary: async () => true,
+    reserve: async () => ({ record: record(value, "steer"), created: true }),
+    rejectSteerAndQueue: async (_project: string, id: string) => {
+      queued.push(id); return { ...record(value, "steer"), state: "rejected" as const };
+    },
+  } as never;
+  const runtime = {
+    isReady: () => true, capabilitiesFor: () => capabilities(true, true), registerBinding: async () => {},
+    listTurns: async () => ({ data: [
+      { id: "review-child", status: "inProgress", completedAtUtc: null },
+      { id: turnId, status: "completed", completedAtUtc: new Date().toISOString() },
+    ], nextCursor: null }),
+    steerTurn: async () => { throw new RuntimeServerError("turn/steer", 7, -32600,
+      "cannot steer a review turn", undefined,
+      { codexErrorInfo: { activeTurnNotSteerable: { turnKind: "review" } } }); },
+  } as never;
+  const service = new DirectInputService({ store, runtime: () => runtime, canWrite: () => true,
+    admission: async () => ({ grant, binding }), bindingFor: async () => binding });
+  const receipt = await service.submit(principal, projectId, sessionId, value);
+  assert.equal(receipt.state, "rejected");
+  assert.deepEqual(queued, [value.inputId]);
+});
+
+test("a locally refused in-flight steer is retryable with the same input and has no native replay", async () => {
+  const value = { ...command(), expectedTurnId: turnId };
+  let saved = record(value, "steer");
+  let reserved = false;
+  const writes: string[] = [];
+  const store = {
+    get: async () => reserved ? saved : null,
+    hasPrimary: async () => true,
+    reserve: async () => { const created = !reserved; reserved = true; return { record: saved, created }; },
+    accept: async (_project: string, id: string, turn: string) => {
+      saved = { ...saved, inputId: id, state: "accepted" as const, actualTurnId: turn };
+      return saved;
+    },
+    rejectSteerAndQueue: async () => { throw new Error("must not queue a local busy"); },
+    reject: async () => { throw new Error("must not reject a local busy"); },
+    unknown: async () => { throw new Error("must not mark a local busy unknown"); },
+  } as never;
+  const runtime = {
+    isReady: () => true, capabilitiesFor: () => capabilities(true, true), registerBinding: async () => {},
+    listTurns: async () => ({ data: [{ id: turnId, status: "inProgress", completedAtUtc: null }], nextCursor: null }),
+    steerTurn: async (_binding: RuntimeBinding, _turn: string, _content: string, id: string) => {
+      writes.push(id);
+      if (writes.length === 1) throw new RuntimeLocalBusyError("turn/steer", "another send owns this Thread");
+      return { turnId, itemId: "item-1" };
+    },
+  } as never;
+  const service = new DirectInputService({ store, runtime: () => runtime, canWrite: () => true,
+    admission: async () => ({ grant, binding }), bindingFor: async () => binding });
+  await assert.rejects(() => service.submit(principal, projectId, sessionId, value),
+    error => error instanceof DomainError && error.code === "SESSION_INPUT_BUSY");
+  assert.equal(saved.state, "attempted", "the durable intent survives the local refusal");
+  const retried = await service.submit(principal, projectId, sessionId, value);
+  assert.equal(retried.state, "accepted");
+  assert.deepEqual(writes, [value.inputId, value.inputId], "both attempts carry the original input ID");
+});
+
+test("an accepted steer whose Turn later fails stays unread without a native Item", async () => {
+  const value = { ...command(), expectedTurnId: turnId };
+  const accepted: DirectInputRecord = { ...record(value, "steer"), state: "accepted",
+    actualTurnId: turnId, nativeItemId: null, version: 2 };
+  let acceptedWrites = 0;
+  const store = {
+    get: async () => accepted,
+    accept: async () => { acceptedWrites++; return accepted; },
+  } as never;
+  const runtime = {
+    isReady: () => true, registerBinding: async () => {},
+    listTurns: async () => ({ data: [{ id: turnId, status: "failed", completedAtUtc: new Date().toISOString() }],
+      nextCursor: null }),
+    listItems: async () => ({ data: [], nextCursor: null }),
+  } as never;
+  const service = new DirectInputService({ store, runtime: () => runtime, canWrite: () => true,
+    admission: async () => ({ grant, binding }), bindingFor: async () => binding });
+  const receipt = await service.reconcile({ ...principal, permissions: ["read", "write"] },
+    projectId, value.inputId);
+  assert.equal(receipt.state, "accepted", "the native acknowledgement is still a delivery fact");
+  assert.equal(receipt.nativeItemId, null, "no matching Item means the input is unread, not consumed");
+  assert.equal(acceptedWrites, 0);
 });

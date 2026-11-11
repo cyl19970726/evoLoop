@@ -27,8 +27,16 @@ for await(const line of createInterface({input:process.stdin})){
       status:{type:mode==='idle'||!started&&mode.startsWith('start')?'idle':'active',activeFlags:[]}}}});continue;
   }
   if(method==='thread/turns/list'){
+    const failedAfterSteer=mode==='failed-after-steer'&&steerCount>0;
+    if(mode==='review-ancestor'){
+      send({id,result:{data:[{id:'review-child',status:'inProgress',completedAt:null},
+        {id:'review-turn',status:'completed',completedAt:1792498484}],nextCursor:null}});continue;
+    }
     send({id,result:{data:started||mode!=='start'?[{id:mode==='wrong-turn'?'other-turn':'turn-1',
-      status:mode==='settled'?'completed':'inProgress',completedAt:mode==='settled'?1792498484:null}]:[],nextCursor:null}});continue;
+      status:mode==='settled'?'completed':failedAfterSteer?'failed':'inProgress',
+      completedAt:mode==='settled'||failedAfterSteer?1792498484:null,
+      ...(failedAfterSteer?{error:{message:'Turn failed after the steer was accepted',
+        misalignment:{steer:{message:'Continue from the last known state'}}}}:{})}]:[],nextCursor:null}});continue;
   }
   if(method==='thread/items/list'){
     const items=[];
@@ -53,7 +61,8 @@ for await(const line of createInterface({input:process.stdin})){
   }
   if(method==='turn/steer'){
     steerCount++;
-    if(params.threadId!==thread.id||params.expectedTurnId!=='turn-1'||
+    if(params.threadId!==thread.id||
+      params.expectedTurnId!=='turn-1'&&!(mode==='review-ancestor'&&params.expectedTurnId==='review-turn')||
       params.clientUserMessageId!=='steer-id'||params.input?.length!==1||
       params.input[0]?.type!=='text'||params.input[0]?.text!=='follow up'||
       Object.keys(params).sort().join(',')!=='clientUserMessageId,expectedTurnId,input,threadId'){
@@ -64,14 +73,25 @@ for await(const line of createInterface({input:process.stdin})){
     if(mode==='steer-reject'){
       send({id,error:{code:-32602,message:'private error text'}});continue;
     }
+    if(mode==='wrong-turn'||mode==='settled'){
+      send({id,error:{code:-32600,message:mode==='wrong-turn'
+        ?'expected active turn id turn-1 but found other-turn'
+        :'expected active turn id turn-1 but found none'}});continue;
+    }
     if(mode==='non-steerable'){
-      send({id,error:{code:-32602,message:'turn cannot be steered: NonSteerableTurnKind(compaction)'}});continue;
+      send({id,error:{code:-32602,message:'cannot steer a review turn',
+        data:{codexErrorInfo:{activeTurnNotSteerable:{turnKind:'review'}}}}});continue;
     }
     if(mode==='misalignment'){
       send({id,error:{code:-32602,message:'MisalignmentSteer: expected turn differs from active turn'}});continue;
     }
+    if(mode==='review-ancestor'&&params.expectedTurnId==='review-turn'){
+      send({id,error:{code:-32600,message:'cannot steer a review turn',
+        data:{codexErrorInfo:{activeTurnNotSteerable:{turnKind:'review'}}}}});continue;
+    }
     lastSteerId=params.clientUserMessageId;
     lastSteerText=params.input[0].text;
+    if(mode==='slow-steer')await new Promise(resolve=>setTimeout(resolve,300));
     send({id,result:{turnId:mode==='steer-bad-ack'?'other-turn':'turn-1'}});
     send({method:'item/started',params:{threadId:thread.id,turnId:'turn-1',item:{id:'input-2',type:'userMessage'}}});
     send({method:'item/started',params:{threadId:'foreign-thread',turnId:'turn-1',item:{id:'foreign',type:'userMessage'}}});

@@ -94,7 +94,9 @@ export function useDirectInput({ projectId, sessionId, actorId, active, onAccept
   const current = capability.isError ? null : capability.data;
   async function send(content: string): Promise<DirectSendResult> {
     if (!current?.available || !current.mode || busy || pendingId || !content.trim()) return "skipped";
-    const inputId = crypto.randomUUID(), operationId = crypto.randomUUID();
+    // A local busy refusal proves nothing was reserved; reuse the exact IDs the caller already saw.
+    const inputId = storage.get(storageKey) ?? crypto.randomUUID();
+    const operationId = storage.get(operationStorageKey) ?? crypto.randomUUID();
     storage.set(storageKey, inputId); storage.set(operationStorageKey, operationId); storage.remove(auditStorageKey);
     setAudit(null); setPendingId(inputId); setReceipt(null); setError(""); setBusy(true);
     try {
@@ -102,9 +104,9 @@ export function useDirectInput({ projectId, sessionId, actorId, active, onAccept
         expectedTurnId: current.mode === "steer" ? current.expectedTurnId : null }), inputId);
     } catch (cause) {
       if (retryableInputBusy(cause)) {
-        storage.remove(storageKey); storage.remove(operationStorageKey); storage.remove(auditStorageKey);
+        // Keep both IDs: the next send retries this exact input instead of creating a second intent.
         setAudit(null); setPendingId(null); setReceipt(null);
-        setError("这个智能体正在开始另一轮或接收另一条输入；这条输入没有送出，可以稍后用原内容重试。");
+        setError("这个智能体正在开始另一轮或接收另一条输入，稍后再试；原输入编号已保留，可重试");
         return "rejected";
       }
       // Read the original intent even after a clear HTTP error: the server may have reserved it.

@@ -146,7 +146,7 @@ Leader 读到交付后，按 Task 声明的验收方式，用 `acceptance.assign
 
 **运行时限制。** Codex 的 `0.166.0-alpha.6` 与 `0.167.0-alpha.3.2` 支持运行中补入；所有现代 Codex 协议支持空闲直启。Claude 不支持即时输入。`thread/settings/update` 只属于执行配置切换，alpha.6 支持，0.167 不支持；不要再把补入与配置切换绑成一个开关。
 
-**并发与不可补入回合。** 业务 Run 或普通消息开新一轮、用户即时输入和后续通知包送入共用每 Session 一把短锁。撞车返回 409 `SESSION_INPUT_BUSY`，这次没有预占输入，也没有关闭恢复门；业务 Run 保持 `requested` 等下一轮，工作台保留草稿可用原内容重试。原生明确拒绝压缩或评审等 `NonSteerableTurnKind` 回合时，direct input 记为 `rejected`，同一内容同时写成一条普通排队消息；`MisalignmentSteer` 仍是明确拒绝，不自动换 Turn。
+**并发与不可补入回合。** 业务 Run 或普通消息开新一轮、用户即时输入和后续通知包送入共用每 Session 一把短锁。锁前撞车返回 409 `SESSION_INPUT_BUSY`，没有预占输入；适配器在途检查在已持久化意图后拒绝时，也证明没有写入原生传输，服务保留同一输入编号与操作编号供重试。两种情况都不关闭恢复门；业务 Run 保持 `requested` 等下一轮，普通消息留下待处理原因后下一轮重试同一操作，工作台保留草稿和原输入编号。只有结构化 `codexErrorInfo.activeTurnNotSteerable`（`turnKind` 为 `review` 或 `compact`）或 0.167 的精确文字才把 direct input 记为 `rejected`，并把同一内容写成一条普通排队消息；`TurnError.misalignment.steer` 是失败回合的继续指令，不是补入拒绝。补入已被接受、回合随后失败且没有对应输入 Item 时，该输入保持未读，不因送达回执算作已读。
 
 ### 占用、未知与恢复
 

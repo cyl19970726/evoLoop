@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import {resolve} from 'node:path';
 import test from 'node:test';
 import type {RuntimeBinding,RuntimeSessionSpec} from '@evoloop/contracts/runtime';
-import {CodexAppServerAdapter,RuntimeProtocolError,RuntimeServerError,RuntimeUnknownError} from '../src/index.js';
+import {CodexAppServerAdapter,RuntimeLocalBusyError,RuntimeProtocolError,RuntimeServerError,RuntimeUnknownError} from '../src/index.js';
 
 const fixture=resolve(import.meta.dirname,'direct-input-fixture.mjs');
 const spec:RuntimeSessionSpec={actorId:'actor',sessionId:'session-1',roleId:'role-1',projectId:'project-1',
@@ -62,14 +62,25 @@ test('steer immediately before a materializing final answer still targets the ac
   assert.equal(items.some(item=>item.type==='userMessage'&&item.clientId==='steer-id'),true);
 });
 
-for(const mode of ['idle','wrong-turn','settled','wrong-model','foreign-read'] as const)
+for(const mode of ['idle','wrong-model','foreign-read'] as const)
   test(`steer rejects ${mode} before any native write`,async t=>{
     const {adapter,binding}=await open(mode);t.after(()=>adapter.close());
     await assert.rejects(()=>adapter.steerTurn(binding,'turn-1','follow up','steer-id'),error=>
       error instanceof RuntimeProtocolError&&!(error instanceof RuntimeServerError));
-    await assert.rejects(()=>adapter.steerTurn({...binding,nativeThreadId:'foreign'},'turn-1','follow up','steer-id'),error=>
-      error instanceof RuntimeProtocolError&&!(error instanceof RuntimeServerError));
   });
+
+for(const mode of ['wrong-turn','settled'] as const)
+  test(`steer lets the native runtime reject ${mode}`,async t=>{
+    const {adapter,binding}=await open(mode);t.after(()=>adapter.close());
+    await assert.rejects(()=>adapter.steerTurn(binding,'turn-1','follow up','steer-id'),error=>
+      error instanceof RuntimeServerError&&error.code===-32600&&error.steerRejection===null);
+  });
+
+test('steer refuses a binding the adapter does not own before any native write',async t=>{
+  const {adapter,binding}=await open('normal');t.after(()=>adapter.close());
+  await assert.rejects(()=>adapter.steerTurn({...binding,nativeThreadId:'foreign'},'turn-1','follow up','steer-id'),
+    error=>error instanceof RuntimeProtocolError&&!(error instanceof RuntimeServerError));
+});
 
 for(const [mode,method,invoke] of [
   ['steer-lost','turn/steer',(a:CodexAppServerAdapter,b:RuntimeBinding)=>a.steerTurn(b,'turn-1','follow up','steer-id')],
@@ -90,12 +101,42 @@ test('explicit native steer rejection retains category and hides private text',a
     error instanceof RuntimeServerError&&error.category==='invalid_params'&&!error.message.includes('private'));
 });
 
-test('non-steerable Turn and MisalignmentSteer remain explicit native rejections',async t=>{
-  for(const [mode,rejection] of [['non-steerable','non_steerable_turn'],['misalignment','misaligned_turn']] as const){
+test('only structured activeTurnNotSteerable is a steer refusal; MisalignmentSteer is not',async t=>{
+  for(const [mode,rejection] of [['non-steerable','non_steerable_turn'],['misalignment',null]] as const){
     const {adapter,binding}=await open(mode);
     try{
       await assert.rejects(()=>adapter.steerTurn(binding,'turn-1','follow up','steer-id'),error=>
         error instanceof RuntimeServerError&&error.steerRejection===rejection);
     }finally{await adapter.close();}
   }
+});
+
+test('a second direct send while one is in flight is a retryable local busy, not a native rejection',async t=>{
+  const {adapter,binding}=await open('slow-steer',2000);t.after(()=>adapter.close());
+  const first=adapter.steerTurn(binding,'turn-1','follow up','steer-id');
+  await assert.rejects(()=>adapter.steerTurn(binding,'turn-1','follow up','steer-2'),error=>
+    error instanceof RuntimeLocalBusyError&&error.method==='turn/steer'&&error.notSent===true);
+  assert.deepEqual(await first,{turnId:'turn-1',itemId:null});
+});
+
+test('capabilitiesFor refuses a binding owned by another runtime',async t=>{
+  const {adapter,binding}=await open('normal');t.after(()=>adapter.close());
+  assert.throws(()=>adapter.capabilitiesFor({...binding,owner:'evoloop-claude-agent-sdk'} as typeof binding),
+    RuntimeProtocolError);
+  assert.equal(adapter.capabilitiesFor(binding).delivery.midTurnInput,true);
+});
+
+test('a steer accepted before its Turn fails stays a delivery fact, and the failed Turn is not a steer refusal',async t=>{
+  const {adapter,binding}=await open('failed-after-steer');t.after(()=>adapter.close());
+  assert.deepEqual(await adapter.steerTurn(binding,'turn-1','follow up','steer-id'),
+    {turnId:'turn-1',itemId:null},'an acknowledgement without a materialized Item is still accepted');
+  const turn=(await adapter.listTurns(binding)).data.find(value=>value.id==='turn-1');
+  assert.equal(turn?.status,'failed');
+  assert.equal(turn?.error?.category,'native_failure','MisalignmentSteer belongs to the failed Turn, not to the steer request');
+});
+
+test('a review ancestor Turn is sent to the native check and classified as non-steerable',async t=>{
+  const {adapter,binding}=await open('review-ancestor');t.after(()=>adapter.close());
+  await assert.rejects(()=>adapter.steerTurn(binding,'review-turn','follow up','steer-id'),error=>
+    error instanceof RuntimeServerError&&error.steerRejection==='non_steerable_turn'&&error.code===-32600);
 });

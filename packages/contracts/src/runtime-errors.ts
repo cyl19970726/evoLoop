@@ -33,9 +33,33 @@ export class RuntimeNotSentError extends RuntimeProtocolError {
   }
 }
 
+/**
+ * The adapter's own in-flight admission refused a second write on one Thread. Nothing reached the
+ * native transport, so the caller may retry the same durable intent once the first send settles.
+ */
+export class RuntimeLocalBusyError extends RuntimeNotSentError {
+  constructor(method: string, reason: string) {
+    super(method, reason); this.name = "RuntimeLocalBusyError";
+  }
+}
+
 export type RuntimeServerErrorCategory = "rollout_not_found" | "thread_unavailable" | "writer_conflict" | "invalid_params" |
   "method_not_found" | "permission_denied" | "server_rejected";
-export type RuntimeSteerRejection = "non_steerable_turn" | "misaligned_turn";
+export type RuntimeSteerRejection = "non_steerable_turn";
+
+const objectOf = (value: unknown): Record<string, unknown> | null =>
+  value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
+
+/**
+ * The pinned App Server attaches `codexErrorInfo` to a Turn or RPC error. 0.167 serializes the
+ * activeTurnNotSteerable variant as `{"activeTurnNotSteerable":{"turnKind":...}}`; a `type` tag is
+ * accepted only as a defensive alternative. No free-text match decides this.
+ */
+function nonSteerableErrorInfo(data: unknown): boolean {
+  const info = objectOf(objectOf(data)?.codexErrorInfo);
+  if (!info) return false;
+  return Object.hasOwn(info, "activeTurnNotSteerable") || info.type === "activeTurnNotSteerable";
+}
 
 const serverErrorCategory = (method: string, code: number, message: string): RuntimeServerErrorCategory => {
   // The pinned Codex writer-lock rejection occurs before this resume can start a Turn.
@@ -57,7 +81,8 @@ export class RuntimeServerError extends RuntimeProtocolError {
   readonly rejectedThreadId: string | null;
   /** A classified steer refusal only; never used as a generic retry signal. */
   readonly steerRejection: RuntimeSteerRejection | null;
-  constructor(public readonly method: string, public readonly requestId: number, public readonly code: number, nativeMessage: string, requestedThreadId?: string) {
+  constructor(public readonly method: string, public readonly requestId: number, public readonly code: number,
+    nativeMessage: string, requestedThreadId?: string, nativeData?: unknown) {
     const category = serverErrorCategory(method, code, nativeMessage);
     super(`${method}: native runtime rejected request (${category}, code ${code})`);
     this.name = "RuntimeServerError";
@@ -65,10 +90,11 @@ export class RuntimeServerError extends RuntimeProtocolError {
     const rejectedThreadId = category === "writer_conflict" ? nativeMessage.match(/^thread ([0-9a-f-]{36}) already has an active writer$/)?.[1] ?? null : null;
     this.rejectedThreadId = rejectedThreadId ?? null;
     this.preTurnWriterConflict = category === "writer_conflict" && rejectedThreadId === requestedThreadId;
+    // Only the structured refusal, or 0.167's exact review/compaction wording, means the Turn kind
+    // cannot take input. MisalignmentSteer is a continuation hint on a failed Turn, not a steer refusal.
     this.steerRejection = method !== "turn/steer" ? null :
-      /NonSteerableTurnKind|non[- ]?steerable|not steerable|cannot steer|compaction|review/i.test(nativeMessage)
-        ? "non_steerable_turn"
-        : /MisalignmentSteer|misalign/i.test(nativeMessage) ? "misaligned_turn" : null;
+      nonSteerableErrorInfo(nativeData) || /cannot steer (a )?(review|compact(ion)?) turn/i.test(nativeMessage)
+        ? "non_steerable_turn" : null;
   }
 }
 
