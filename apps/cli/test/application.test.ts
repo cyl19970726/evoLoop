@@ -510,6 +510,34 @@ test('role runtime CLI binds once from the live view, then changes only skills a
   }finally{fetch.mock.restore();await rm(directory,{recursive:true,force:true});}
 });
 
+test("drain CLI reads the instance state and history, starts and releases with a recorded reason, and refuses a missing reason before any request", async () => {
+  const calls: Array<{ method: string; path: string; body: unknown }> = [];
+  const fetch = mock.method(globalThis, "fetch", async (url: string | URL | Request, init?: RequestInit) => {
+    calls.push({ method: init?.method ?? "GET", path: new URL(String(url)).pathname, body: init?.body ? JSON.parse(String(init.body)) : null });
+    return new Response(JSON.stringify({ state: "draining" }), { status: 200 });
+  });
+  const env = { EVOLOOP_TOKEN: "fixture" };
+  try {
+    for (const command of [["drain", "status"], ["drain", "history"], ["drain", "start", "--reason", "发布 0dd0baa"], ["drain", "release", "--reason", "发布完成"]]) {
+      const result = await run(command, env);
+      assert.equal(result.code, 0, `${command.join(" ")}: ${result.stderr}`);
+    }
+    assert.deepEqual(calls, [
+      { method: "GET", path: "/api/instance/drain", body: null },
+      { method: "GET", path: "/api/instance/drain/history", body: null },
+      { method: "POST", path: "/api/instance/drain", body: { action: "start", reason: "发布 0dd0baa" } },
+      { method: "POST", path: "/api/instance/drain", body: { action: "release", reason: "发布完成" } },
+    ]);
+    calls.length = 0;
+    const noReason = await run(["drain", "start"], env);
+    assert.notEqual(noReason.code, 0);
+    assert.match(noReason.stderr, /requires --reason/);
+    assert.notEqual((await run(["drain", "pause"], env)).code, 0);
+    assert.equal(calls.length, 0, "nothing was sent");
+    assert.match((await run(["help"], env)).stdout, /drain start\|release --reason TEXT/);
+  } finally { fetch.mock.restore(); }
+});
+
 test("command run shows the failing field and its accepted form when executeAtUtc is malformed", async () => {
   const dir = await mkdtemp(join(tmpdir(), "evoloop-cli-timing-"));
   try {

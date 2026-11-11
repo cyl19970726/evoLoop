@@ -796,6 +796,39 @@ test("requested Run waits without native start or state mutation, then uses its 
   } finally { await runner.stop(); }
 });
 
+test("drain mode: a requested Run is not started while held (queued untouched) and starts once released", async () => {
+  const requested = { ...run, state: "requested" as const, nativeTurnId: null };
+  const runtime = new FakeRuntime();
+  let held = true, beginCalls = 0, bindCalls = 0;
+  const seenOperations: string[] = [];
+  runtime.startTurn = async (_binding: RuntimeBinding, _input: string, operationId: string) => {
+    runtime.starts++; seenOperations.push(operationId); return { id: "turn-managed", status: "inProgress" };
+  };
+  runtime.listTurns = async () => ({ data: [{ id: "turn-managed", status: "inProgress" }], nextCursor: null });
+  const workflow = { getProject: async () => ({ id: projectId }), listRuntimeSessions: async () => [session],
+    listRuntimeRuns: async () => [requested], getRuntimeSession: async () => session } as unknown as WorkflowService;
+  const trusted = { recoverDispatching: async () => ({ sessions: [], runs: [] }),
+    beginDispatch: async () => { beginCalls++; },
+    bindTurn: async () => { bindCalls++; return { ...requested, state: "running", nativeTurnId: "turn-managed" }; } } as unknown as RuntimeWorkflowService;
+  const runner = new RuntimeRunner({ runtimeFactory: () => runtime as unknown as RuntimePort & FakeRuntime,
+    workflow, trusted, principals: [{ actorId, projectIds: [projectId], permissions: ["read", "write", "review"] }],
+    canWrite: () => true, allowedCwd: async () => true, hasGrant: () => true,
+    mayDispatchRun: async () => !held /* the composition in main.ts: drain.holdNewStarts() */ });
+  (runner as unknown as { lightweightInput: () => Promise<{ input: string; protocol: string; contentHash: string; byteLength: number }> }).lightweightInput = async () => ({ input: "fixed task input", protocol: "evoloop-lightweight-v1", contentHash: "a".repeat(64), byteLength: 16 });
+  try {
+    await runner.start();
+    assert.equal(runtime.starts, 0);
+    assert.equal(beginCalls, 0);
+    assert.equal(requested.state, "requested", "queued untouched, not failed or dropped");
+    held = false;
+    await runner.pump();
+    assert.equal(runtime.starts, 1);
+    assert.equal(beginCalls, 1);
+    assert.equal(bindCalls, 1);
+    assert.deepEqual(seenOperations, [requested.operationId]);
+  } finally { await runner.stop(); }
+});
+
 test("lost execution profile resume needs original Thread readback and a separate recovery decision", async () => {
   const oldRevisionId=randomUUID(),revisionId=randomUUID(),profileOperationId=randomUUID();
   const oldRevision={projectId,sessionId:session.id,revisionId:oldRevisionId,version:1,model:"old-model",

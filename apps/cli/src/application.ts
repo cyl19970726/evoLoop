@@ -128,7 +128,7 @@ const help = {
     "command types", "command schema TYPE", "command run JSON_FILE", "command JSON_FILE (legacy)", "request types", "request schema NAME",
     "request schema reference.task-decide (reviewed Run: kind=run, referenceId=Run ID, revision=source TaskRevision ID, contentHash=Run inputHash; read run ID --trace for native evidence)",
     "request NAME --project UUID --file JSON_FILE [--id UUID] [--receipt UUID for endpoints without server operation IDs]",
-    "receipts list", "receipts show UUID", "receipts reconcile UUID", "receipts retry UUID (explicit same-ID transactional command replay after readback; never seal/external dispatch)", "get /api/... (legacy read-only)"],
+    "drain status|history (instance-wide: state, who/when/why, queued work and what is still in flight)", "drain start|release --reason TEXT (instance maintainers only; start stops NEW Runs and message Turns from beginning while everything is still saved and queued and work in flight finishes; release lets queued work continue in order)", "receipts list", "receipts show UUID", "receipts reconcile UUID", "receipts retry UUID (explicit same-ID transactional command replay after readback; never seal/external dispatch)", "get /api/... (legacy read-only)"],
   readModes: reads,
   environment: { EVOLOOP_API_URL: "coordinator HTTP(S) origin, default http://127.0.0.1:4318", EVOLOOP_TOKEN: "private bearer credential",
     EVOLOOP_PROJECT: "optional default project UUID", EVOLOOP_STATE_DIR: "private local receipt directory", EVOLOOP_TIMEOUT_MS: "request+body deadline, default 15000; max 300000" },
@@ -172,6 +172,18 @@ async function dispatch(args: Args, env: Environment, io: IO): Promise<unknown> 
       throw new ReceiptError("INVALID_SESSION", "Cannot bind intent to a server-verified identity.");
     return { actorId: principal.actorId, projectIds: principal.projectIds as string[] };
   };
+  if (action === "drain") {
+    // Instance drain (docs/architecture/deployment.md §2): maintainers only for start and release; not project scoped.
+    const mode = args.words[1];
+    if (mode === "status" || mode === "history") { check(args, 2); return client.get(mode === "status" ? "/api/instance/drain" : "/api/instance/drain/history"); }
+    if (mode === "start" || mode === "release") {
+      check(args, 2, ["reason"]);
+      const reason = option(args, "reason");
+      if (!reason?.trim()) throw new UsageError(`drain ${mode} requires --reason TEXT (it is recorded with your identity and the time).`);
+      return client.post("/api/instance/drain", { action: mode, reason });
+    }
+    throw new UsageError("Use drain status | history | start --reason TEXT | release --reason TEXT.");
+  }
   if(action==="session"&&args.words[1]==="prepare"){
     check(args,2,["file"]);
     const file=option(args,"file");if(!file)throw new UsageError("session prepare requires --file PRIVATE_JSON");
