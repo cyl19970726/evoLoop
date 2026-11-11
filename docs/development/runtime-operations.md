@@ -275,7 +275,7 @@ node --import tsx tests/manual/session-compaction-e1.ts
 
 ## 叫停执行中的 Run
 
-业务 Run 的范围变了就叫停，不要等它做完再返工：`command schema runtime.run.stop` 取结构，带 Run 的当前版本和理由，用 `command run FILE` 提交；身份要有 review 权限并持有该 Session 的精确执行授权，原生运行时离线时也能提交（未派发的 Run 在数据库里直接判失败，运行中的由 runner 在运行时恢复后中断）。提交后回读 Run：`stopRequestedAt` 已有、`interruptRequested` 为真表示等运行时中断；终态（`interrupted` 或 `failed`）由运行时观察确认，在此之前仍算未结束，Task 上不能再派新的 Run。用这个 Run 再提交会得到 `RUN_STOPPED`，叫停前已签的意图作废，不会产生交付。停止不会关恢复门，也没有失败通知，只有一条 `run.stopRequested` 运行事件。结果未知的 Run 不属于这条路径，仍按“未知”章节对账。
+业务 Run 的范围变了就叫停，不要等它做完再返工：`command schema runtime.run.stop` 取结构，带 Run 的当前版本和理由，用 `command run FILE` 提交；身份要有 review 权限并持有该 Session 的精确执行授权，原生运行时离线时也能提交（未派发的 Run 在数据库里直接判失败，运行中的由 runner 在运行时恢复后中断）。提交后回读 Run：`stopRequestedAt` 已有、`interruptRequested` 为真表示等运行时中断；终态（`interrupted` 或 `failed`）由运行时观察确认，在此之前仍算未结束，Task 上不能再派新的 Run。用这个 Run 再提交会得到 `RUN_STOPPED`，叫停前已签的意图作废，不会产生交付。停止不会关恢复门，也没有失败通知，只有一条 `run.stopRequested` 运行事件。结果未知的 Run 也可以叫停：标记立即生效，有已知 Turn 的会被中断，Run 仍是 `unknown`，直到读回终态；读回终态后，被它关闭的恢复门自动打开（队列认领持有的门除外）。被叫停作废的排队消息带持久的“被取代”标记，选取与准入都排除，发送人取消或 `session.message.confirmSuperseded` 确认后才重新投递。
 
 ## 已知缺口
 

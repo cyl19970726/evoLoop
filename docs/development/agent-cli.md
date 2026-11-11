@@ -217,7 +217,7 @@ Task 或 Document 列表使用不可伪造业务含义的 base64url 位置；它
 
 ### 叫停执行中的 Run
 
-`command schema runtime.run.stop`，字段 `runId`、`expectedVersion`（先 `read run RUN` 取当前版本）、`reason`；`command run FILE` 提交，回读 Run 的 `stopRequestedAt`。它不新增 Run 状态；已签未封存的提交意图作废为 `RUN_STOPPED`，之后该 Run 的提交和交付都被拒绝。需要 review 权限和该 Session 的精确执行授权。不要用它处理“结果未知”的 Run（先对账），也不要用普通消息去叫停业务 Run。
+`command schema runtime.run.stop`，字段 `runId`、`expectedVersion`（先 `read run RUN` 取当前版本）、`reason`；`command run FILE` 提交，回读 Run 的 `stopRequestedAt`。它不新增 Run 状态；已签未封存的提交意图作废为 `RUN_STOPPED`，之后该 Run 的提交和交付都被拒绝。需要 review 权限和该 Session 的精确执行授权。结果未知（`unknown`）的 Run 也可以叫停：停止标记立即生效（意图作废、之后的提交与交付被拒），有已知 Turn 的会被中断，但 Run 仍是 `unknown`，直到运行时读回它的终态（`interrupted`、`failed` 或 `completed`）；读回之后，被这个 Run 关闭的恢复门自动打开（队列认领持有的门除外，仍走队列的重试决定）。不要用普通消息去叫停业务 Run。被叫停而作废的排队消息带“被取代”标记，不会被送出，由发送人 `session.message.cancel` 取消，或用 `command schema session.message.confirmSuperseded` 确认后才重新可投递。
 
 ### 普通消息的精确核对与受控中断
 

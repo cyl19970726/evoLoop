@@ -84,7 +84,7 @@ function taskPhase(row: QueryResultRow): LeaderWorkPhase {
   if (row.latest_run_state === "unknown") return "unknown";
   if (["requested", "dispatching", "running"].includes(row.latest_run_state ?? "")) return "running";
   if (int(row.pending_impact_count) > 0) return "blocked";
-  if (row.latest_run_state === "failed" || row.latest_run_state === "interrupted") return "rework";
+  if ((row.latest_run_state === "failed" || row.latest_run_state === "interrupted") && !row.latest_run_stopped_at) return "rework";
   if ((row.dependency_facts ?? []).some((dependency: { acceptanceSatisfied: boolean }) => !dependency.acceptanceSatisfied)) return "blocked";
   if (row.queue_hold && row.queue_hold !== "awaiting_acceptance") return "blocked";
   if (row.state === "in_progress" && row.latest_run_state === "completed" &&
@@ -114,6 +114,7 @@ function taskFactsSql(includeClosed: boolean, taskParam?: 2 | 4): string {
       assignment.target_id AS assignment_target_id,assignment.recipient_actor_id AS assignment_recipient_actor_id,
       assignment.task_revision_id AS assignment_task_revision_id,
       effective_run.run_id AS latest_run_id,effective_run.state AS latest_run_state,
+      effective_run.stop_requested_at AS latest_run_stopped_at,effective_run.stop_reason AS latest_run_stop_reason,
       effective_run.session_id AS latest_run_session_id,effective_run.native_turn_id AS latest_run_native_turn_id,
       effective_run.updated_at AS run_updated_at,
       effective_delivery.delivery_id,effective_delivery.task_revision_id AS delivery_task_revision_id,
@@ -139,7 +140,8 @@ function taskFactsSql(includeClosed: boolean, taskParam?: 2 | 4): string {
         WHEN effective_run.state='unknown' THEN 'unknown'
         WHEN effective_run.state IN ('requested','dispatching','running') THEN 'running'
         WHEN pending_impact.pending_impact_count>0 THEN 'blocked'
-        WHEN effective_run.state IN ('failed','interrupted') THEN 'rework'
+        -- A Run stopped on request is not failed work: nothing is owed back to the executor, the Task waits for its next Run.
+        WHEN effective_run.state IN ('failed','interrupted') AND effective_run.stop_requested_at IS NULL THEN 'rework'
         WHEN dependency_gate.blocked THEN 'blocked'
         WHEN queue_gate.hold_code IS NOT NULL AND queue_gate.hold_code<>'awaiting_acceptance' THEN 'blocked'
         WHEN t.state='in_progress' AND effective_run.state='completed' AND
@@ -180,7 +182,7 @@ function taskFactsSql(includeClosed: boolean, taskParam?: 2 | 4): string {
         ((closure.delivery_id IS NOT NULL AND d.delivery_id=closure.delivery_id) OR
          (closure.delivery_id IS NULL AND d.task_revision_id=t.current_revision_id))
       ORDER BY d.created_at DESC,d.delivery_id DESC LIMIT 1) effective_delivery ON true
-    LEFT JOIN LATERAL (SELECT r.run_id,r.session_id,r.native_turn_id,r.state,r.created_at,r.updated_at FROM runtime_run r
+    LEFT JOIN LATERAL (SELECT r.run_id,r.session_id,r.native_turn_id,r.state,r.created_at,r.updated_at,r.stop_requested_at,r.stop_reason FROM runtime_run r
       WHERE r.project_id=t.project_id AND r.task_id=t.task_id AND
         (r.task_revision_id=t.current_revision_id OR r.run_id=effective_delivery.run_id OR
          (effective_delivery.delivery_id IS NOT NULL AND r.created_at<=effective_delivery.created_at
@@ -285,6 +287,11 @@ function taskAction(phase: LeaderWorkPhase): string {
   }
 }
 
+/** The latest Run ended because someone stopped it: say so in the next step instead of reading it as failed work to redo. */
+function stoppedRunAction(row: QueryResultRow, phase: LeaderWorkPhase, base: string): string {
+  if (!row.latest_run_stopped_at || phase === "running" || phase === "unknown") return base;
+  return `上一个 Run 已按请求停止（${String(row.latest_run_stop_reason ?? "未写理由").slice(0, 120)}），不是待返工；${base}`;
+}
 function taskResponsibility(row: QueryResultRow, phase: LeaderWorkPhase,
   timing: LeaderWorkTaskTiming): LeaderWorkTask["responsible"] {
   if (phase === "awaiting_acceptance") {
@@ -335,7 +342,7 @@ function latestProgressEventName(row: QueryResultRow): string {
 }
 
 interface TimingEvent {
-  kind: string; id: string; at: string; state?: string | null;
+  kind: string; id: string; at: string; state?: string | null; stopped?: boolean;
   targetId?: string | null; runId?: string | null; deliveryId?: string | null;
   reservationRunId?: string | null;
   taskRevisionId?: string | null; sequence?: number | null; taskVersion?: number | null;
@@ -498,7 +505,8 @@ function taskTiming(row: QueryResultRow, observedAt: string): LeaderWorkTaskTimi
     } else if (event.kind === "run_terminal") {
       if (supersededRuns.has(event.id) || activeRun && event.id !== activeRun.id) continue;
       if (event.state === "completed" && submittedRuns.has(event.id)) continue;
-      begin(event.state === "completed" ? "awaiting_submission" : event.state === "unknown" ? "unknown" : "rework",
+      // A stopped Run that ended is not rework: the Task waits for a new Run.
+      begin(event.state === "completed" ? "awaiting_submission" : event.state === "unknown" ? "unknown" : event.stopped ? "awaiting_run" : "rework",
         event.at, { kind: "run", id: event.id });
       progress(event);
     } else if (event.kind === "submission") {
@@ -635,8 +643,9 @@ export function leaderWorkTaskFromRow(row: QueryResultRow, observedAt: string): 
     kind: "task", taskId: row.task_id, version: int(row.version),
     currentRevisionId: row.current_revision_id, workChangeSequence: int(row.work_change_sequence ?? 0),
     title: row.title, taskKind: row.kind, taskState: row.state,
-    phase, nextAction: taskAction(phase), responsible: taskResponsibility(row, phase, timing), assignment,
-    latestRun: row.latest_run_id ? { runId: row.latest_run_id, state: row.latest_run_state } : null,
+    phase, nextAction: stoppedRunAction(row, phase, taskAction(phase)), responsible: taskResponsibility(row, phase, timing), assignment,
+    latestRun: row.latest_run_id ? { runId: row.latest_run_id, state: row.latest_run_state,
+      ...(row.latest_run_stopped_at ? { stopped: { at: iso(row.latest_run_stopped_at), reason: row.latest_run_stop_reason ?? null } } : {}) } : null,
     delivery: row.delivery_id ? {
       deliveryId: row.delivery_id, taskRevisionId: row.delivery_task_revision_id,
       technicalResult: row.delivery_result, consumer: row.consumer ?? null,
@@ -714,14 +723,14 @@ async function readTimingEvents(db: Database, projectId: string, taskIds: string
         'state',CASE WHEN e.kind='run.unknown' THEN 'unknown'
           WHEN e.detail LIKE 'completed%' THEN 'completed'
           WHEN e.detail LIKE 'failed%' THEN 'failed' ELSE 'interrupted' END,
-        'taskRevisionId',r.task_revision_id)
+        'taskRevisionId',r.task_revision_id,'stopped',r.stop_requested_at IS NOT NULL)
         FROM runtime_record_event e JOIN runtime_run r ON r.project_id=e.project_id AND r.run_id=e.run_id
         WHERE e.project_id=$1 AND r.task_id=ANY($2::uuid[]) AND
           (e.kind='run.unknown' OR e.kind='run.status' AND
             (e.detail LIKE 'completed%' OR e.detail LIKE 'failed%' OR e.detail LIKE 'interrupted%'))
       UNION ALL
       SELECT r.task_id,jsonb_build_object('kind','run_terminal','id',r.run_id,'at',r.updated_at,
-        'state',r.state,'taskRevisionId',r.task_revision_id)
+        'state',r.state,'taskRevisionId',r.task_revision_id,'stopped',r.stop_requested_at IS NOT NULL)
         FROM runtime_run r WHERE r.project_id=$1 AND r.task_id=ANY($2::uuid[])
           AND r.state IN ('completed','failed','interrupted','unknown')
           AND NOT EXISTS (SELECT 1 FROM runtime_record_event e WHERE e.project_id=r.project_id

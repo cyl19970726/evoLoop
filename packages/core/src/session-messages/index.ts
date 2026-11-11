@@ -40,6 +40,12 @@ export async function applySessionMessage(tx:Transaction,principal:Principal,com
     return{result:applied(command.operationId,item.id,1),effects:[{kind:'session.message',entityId:item.id,version:1}]};
   }
   const item=required(await store.getSessionMessage(command.messageId),'message');
+  if(command.type==='session.message.confirmSuperseded'){
+    if(item.senderActorId!==principal.actorId)throw new DomainError('MESSAGE_SENDER','only the sender may confirm a superseded message');
+    if(item.version!==command.expectedVersion)throw new DomainError('VERSION_CONFLICT','message changed',item.version);
+    await store.confirmSessionMessageSuperseded(item.id,principal.actorId,now);
+    return{result:applied(command.operationId,item.id,item.version+1),effects:[{kind:'session.message',entityId:item.id,version:item.version+1}]};
+  }
   if(command.type==='session.message.cancel'){
     if(item.senderActorId!==principal.actorId)throw new DomainError('MESSAGE_SENDER','only the sender may cancel a pending message');
     if(item.version!==command.expectedVersion)throw new DomainError('VERSION_CONFLICT','message changed',item.version);
@@ -140,6 +146,8 @@ export class SessionMessageService {
     if(!store)throw new DomainError('SESSION_MESSAGES_UNAVAILABLE','message persistence is not configured');
     const item=required(await store.getSessionMessage(messageId),'message');
     if(item.state!=='queued'||item.target.kind!=='owned')throw new DomainError('MESSAGE_NOT_QUEUED','only an owned queued message may dispatch');
+    if(item.supersededAt&&!item.supersededConfirmedAt)
+      throw new DomainError('MESSAGE_SUPERSEDED','its Task Run was stopped on request; the sender must confirm the message before it can be delivered, or cancel it');
     const session=required(await reader.getRuntimeSession(item.target.sessionId),'Session');
     if(session.state!=='ready'||!session.nativeThreadId||!session.nativeSessionId)
       throw new DomainError('SESSION_NOT_READY','recipient is unavailable');
