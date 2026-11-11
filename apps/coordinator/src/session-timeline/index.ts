@@ -57,6 +57,7 @@ const messageEntry=(m:SessionMessageRecord,turnId:string|null=null):WorkspaceMes
   origin:{kind:'message',id:m.id,taskId:m.context?.taskId??null,taskRevisionId:m.context?.taskRevisionId??null,
     initiatingActorId:m.senderActorId},occurredAt:m.createdAt,observedAt:m.updatedAt,freshness:'persisted',truncated:false,
   order:{kind:'saved-message',key:`message:${m.id}`,position:null,generation:null},
+  ...(m.state==='queued'&&m.blockedReason?{blockedReason:m.blockedReason.slice(0,600)}:{}),
 });
 const originOf=(source:NativeInputSource|null):WorkspaceOrigin|null=>source?.kind==='run'?{
   kind:'run',id:source.runId,taskId:source.taskId,taskRevisionId:source.taskRevisionId,initiatingActorId:source.actorId

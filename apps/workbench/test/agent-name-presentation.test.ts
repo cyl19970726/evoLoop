@@ -75,3 +75,22 @@ test("设置展示信息 starts from the service's name and, when only 团队归
   assert.equal(Object.fromEntries(sessionProfileFields(registered).map(field => [field.name, field.value]))["displayName"], "前端评审");
   assert.equal(sessionProfileCommand(registered, { displayName: "前端评审", membership: "current" }).expectedVersion, 3);
 });
+
+test("an unnamed project-run agent says which runtime it is on, so a developer and a reviewer of one role read differently", async () => {
+  const { agentDisplayName, agentNameCollisions, agentRuntimeLabel } = await import("../src/shared/agentNamePresentation.ts");
+  const owned = (key: string, provider: "codex" | "claude", model: string | null, displayName: string | null = null) => ({
+    key, kind: "owned" as const, title: "功能开发", profile: displayName ? { displayName } : null, runtime: { provider, model } });
+  const developer = owned("owned:8cf291f4-0000-4000-8000-000000000001", "claude", "sonnet"), reviewer = owned("owned:11111111-0000-4000-8000-000000000002", "codex", null);
+  assert.equal(agentDisplayName(developer), "功能开发 · Claude");
+  assert.equal(agentDisplayName(reviewer), "功能开发 · Codex");
+  assert.equal(agentRuntimeLabel(developer), "Claude · sonnet");
+  assert.equal(agentRuntimeLabel(reviewer), "Codex · 默认模型", "no configured model is said as the default, not left blank");
+  // A registered name is used as written; an older service (no runtime) and an external agent are unchanged.
+  assert.equal(agentDisplayName(owned("owned:3", "claude", "sonnet", "功能开发 · 验收")), "功能开发 · 验收");
+  assert.equal(agentDisplayName({ key: "owned:4", kind: "owned", title: "功能开发" }), "功能开发");
+  assert.equal(agentRuntimeLabel({}), null);
+  assert.equal(agentDisplayName({ key: "external:5", kind: "external", title: "功能开发 · 外部 0aba35cb", runtime: null }), "功能开发 · 外部接入的智能体");
+  // Two unnamed agents on the same runtime still collide in a list, and then the short identifier tells them apart.
+  const second = owned("owned:22222222-0000-4000-8000-000000000003", "claude", "sonnet");
+  assert.deepEqual([...agentNameCollisions([developer, reviewer, second])].sort(), [["owned:22222222-0000-4000-8000-000000000003", "22222222"], ["owned:8cf291f4-0000-4000-8000-000000000001", "8cf291f4"]]);
+});

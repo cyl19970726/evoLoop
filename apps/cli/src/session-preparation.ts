@@ -3,6 +3,7 @@ import { link, mkdir, open, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 import { commandSchema } from "@evoloop/contracts";
+import { sessionPreparationHints } from "@evoloop/contracts/session-preparation";
 import { ApiClient } from "./client.js";
 import { dispatchMutation, reconcileReceipt, record, ReceiptError, ReceiptStore, type VerifiedActor } from "./receipts.js";
 
@@ -115,7 +116,14 @@ export async function prepareSession(input:unknown,client:ApiClient,store:Receip
     return {status:"recovery_required",reason:"legacy_reservation_session_missing",operationId:spec.operationId,
       nextAction:"review_original_operation_and_session",snapshot};
   const missing=(snapshot.missing as string[]).filter(code=>!["role_binding","display_profile","session_unknown"].includes(code));
-  if(missing.length)return {status:"blocked",reason:"configuration_or_state",missing,snapshot};
+  if(missing.length){
+    // Say what to fix, not only a code: the service's own details when it sent them, else the same hints made here
+    // (an older service answers with codes alone).
+    const served=Array.isArray(snapshot.missingDetails)?(snapshot.missingDetails as Array<Record<string,unknown>>).filter(item=>missing.includes(String(item.code))):[];
+    const missingDetails=served.length===missing.length?served:sessionPreparationHints(missing,{projectId:spec.projectId,roleId:spec.roleId,
+      ...(spec.cwd?{cwd:spec.cwd}:{}),...(spec.authorizationScope?{authorizationScope:spec.authorizationScope}:{}),...(spec.model?{model:spec.model}:{})});
+    return {status:"blocked",reason:"configuration_or_state",missing,missingDetails,snapshot};
+  }
   if(!session){
     await mutate({type:"runtime.session.reserve",projectId:spec.projectId,operationId:spec.operationId,
       sessionId:spec.sessionId,roleId:spec.roleId,cwd:spec.cwd,authorizationScope:spec.authorizationScope,

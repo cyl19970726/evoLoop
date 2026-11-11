@@ -172,6 +172,33 @@ test("runtime Run reservation requires a grant for the Session's current model",
   }finally{await app.close();}
 });
 
+test("a Run reservation the recipient check refuses is rejected before the command is executed", async () => {
+  const sessionId="00000000-0000-4000-8000-000000000031",taskId="00000000-0000-4000-8000-000000000032";
+  let writes=0,refuse=true;
+  const app=await buildServer({credentials,service:{...workManagementQueries,
+    getRuntimeSession:async()=>({id:sessionId,roleId:"approved-role",authorizationScope:"task:approved",
+      cwd:"/tmp/approved",sandbox:"read-only",approvalPolicy:"on-request",model:"approved-model"}),
+    execute:async(_principal:unknown,command:{operationId:string})=>{writes++;
+      return{status:"applied",operationId:command.operationId,entityId:sessionId,version:1};},
+  } as unknown as WorkflowService,
+  runtime:{status:()=>({available:true,error:null,faults:[]})} as unknown as Parameters<typeof buildServer>[0]['runtime'],
+  listRuntimeModels:async()=>({status:"available",models:["approved-model"],error:null,observedAtUtc:new Date().toISOString()}),
+  hasRuntimeGrant:()=>true,
+  requireRunRecipient:async()=>{ if(refuse) throw new DomainError("RECIPIENT_UNBOUND","分派没有固定执行接收者；未创建 Run。"); }});
+  try{
+    const payload={type:"runtime.run.reserve",projectId,operationId:"00000000-0000-4000-8000-000000000033",
+      runId:"00000000-0000-4000-8000-000000000034",taskId,sessionId,expectedVersion:1,input:"fixed input"};
+    const url="/api/commands",headers={authorization:`Bearer ${token}`};
+    const denied=await app.inject({method:"POST",url,headers,payload});
+    assert.notEqual(denied.statusCode,200,denied.body);
+    assert.match(denied.body,/RECIPIENT_UNBOUND/);
+    assert.equal(writes,0,"no Run is reserved");
+    refuse=false;
+    assert.equal((await app.inject({method:"POST",url,headers,payload})).statusCode,200);
+    assert.equal(writes,1);
+  }finally{await app.close();}
+});
+
 test("schedule status scopes grants to the caller and active commands require an exact current grant", async () => {
   const otherProject = "00000000-0000-4000-8000-000000000099";
   const otherToken = "b".repeat(40);
