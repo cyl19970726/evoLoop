@@ -110,7 +110,7 @@ Blob 身份使用稳定 ID，附内容 hash、大小、媒体类型和资源 man
 
 ### 请求停止一个 Run
 
-`runtime.run.stop`（`runId`、`expectedVersion`、`reason`）：review 权限，加上该 Session 精确的执行授权（与普通消息恢复同一检查；重放已入账的原操作不再核对授权）；不要求原生运行时在线。结果是 Run 上的停止标记（`stopRequestedAt`、`stopReason`、`stopRequestedBy`，不可改、不可撤，**没有新的 Run 状态**）。拒绝码：`VERSION_CONFLICT`、`STOP_ALREADY_REQUESTED`、`RUN_TERMINAL`（已结束的 Run 不能再停）。停止之后 `ordinary.submit` 对该 Run 返回 `RUN_STOPPED`，已签未封存的意图变为 `rejected`（原因 `RUN_STOPPED`）；数据库拒绝引用该 Run 的 Delivery。细节见[Session 运行时](session-runtime.md)。
+`runtime.run.stop`（`runId`、`expectedVersion`、`reason`）：review 权限，加上该 Session 精确的执行授权（与普通消息恢复同一检查；重放已入账的原操作不再核对授权）；不要求原生运行时在线。结果是 Run 上的停止标记（`stopRequestedAt`、`stopReason`、`stopRequestedBy`，不可改、不可撤，**没有新的 Run 状态**）。拒绝码：`VERSION_CONFLICT`、`STOP_ALREADY_REQUESTED`、`RUN_TERMINAL`（已结束的 Run 不能再停）。停止之后 `ordinary.submit` 对该 Run 返回 `RUN_STOPPED`，已签未封存的意图变为 `rejected`（原因 `RUN_STOPPED`）；数据库拒绝引用该 Run 的 Delivery。已停止且停在 `unknown`、预检证明未审的 Run 不会自动结束；审阅者沿用预检续接的批准命令，对已停止的 Run 其含义是“证据属实，Run 以 `failed` 结束”，不继续执行，被它关闭的恢复门随之打开。细节见[Session 运行时](session-runtime.md)。
 
 ### 知识后端可替换合同
 

@@ -6,7 +6,7 @@ import { taskTimingScopeId } from "@evoloop/contracts/task-timing";
 export { assessTaskAttention, trialAttentionThreshold, trialAttentionThresholdMs } from "./task-attention.js";
 import type {
   AppliedResult, BasisDecision, BasisSet, Command, CommandInput, CommandResult, Document, DocumentDecision,
-  DocumentDetail, DocumentRevision, DocumentRevisionPage, DocumentTaskReference, Impact, Operation, OutboxEvent, Page, Principal, Project,
+  DocumentDetail, DocumentRevision, DocumentRevisionPage, DocumentStatusFilter, DocumentTaskReference, Impact, Operation, OutboxEvent, Page, Principal, Project,
   Task, TaskDetail, TaskDocumentLink, TaskRevision, RuntimeRunRecord,
 } from "@evoloop/contracts";
 import { parseQueueHandoff, type QueueHandoff } from "@evoloop/contracts/runtime-handoff";
@@ -1015,8 +1015,9 @@ export class WorkflowService {
   listTasks(principal: Principal, projectId: string, limit?: number, cursor?: string): Promise<Page<Task>> {
     return this.read(principal, projectId, (reader) => reader.listTasks(pageLimit(limit), cursor));
   }
-  listDocuments(principal: Principal, projectId: string, limit?: number, cursor?: string, kind?: Document["kind"]): Promise<Page<Document>> {
-    return this.read(principal, projectId, (reader) => reader.listDocuments(pageLimit(limit), cursor, kind));
+  listDocuments(principal: Principal, projectId: string, limit?: number, cursor?: string, kind?: Document["kind"],
+    status?: DocumentStatusFilter): Promise<Page<Document>> {
+    return this.read(principal, projectId, (reader) => reader.listDocuments(pageLimit(limit), cursor, kind, status));
   }
   listDocumentTaskReferences(principal: Principal, projectId: string, documentId: string, limit?: number, cursor?: string): Promise<Page<DocumentTaskReference>> {
     return this.read(principal, projectId, async reader => {
