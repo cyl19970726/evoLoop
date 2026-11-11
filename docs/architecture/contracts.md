@@ -60,6 +60,8 @@ Document 增加可空用途 kind 与 draft/published/archived；发布指针沿�
 
 `DocumentRevision` 是 PostgreSQL 中不可变的过程文档正文修订，含作者、创建时间、内容校验、格式、创建时的权限范围与所读基线；新增修订须按预期基线提交，旧基线冲突须显式返回。Task 与 Document 可多对多建立普通导航链接，只指向稳定 documentId；任务开始或执行时，再由 TaskBasis 固定实际采用的其他 DocumentRevision。任务引用某需求不意味着其他关联任务自动采用它。
 
+**身份的额外命令。** 身份文件的每条凭据除 `permissions` 外可有 `extraCommands`，只能写 `document.archive` 与 `document.restore`，写别的命令则服务启动读文件时即拒绝。清单与 `permissions` 分开存放，不改变任何 `review` 判断：持有清单项的身份在本项目有 `write` 时，只对清单里那一条命令免去 `review` 要求，每条命令各自生效（归档不含恢复），`task.start`、`task.close`、`document.publish` 等仍要 `review`。身份文件在服务启动时读取，改了要重启服务才生效。
+
 Git 文档不创建 Document 行；独立 `GitSourceRef`（或等价来源元数据）保存稳定仓库身份、repo/path/commit、原始字节 hash、读取校验和可达状态。Git 正文及 commit 仍由对应仓库维护，发布 HTML 是只读派生视图。
 
 Document 目录列表返回 ID、标题、类型、状态、当前修订和内容格式等摘要；点行后按授权读取所选不可变 DocumentRevision 的完整载荷，不依赖 Task 描述字段或外链再取内容。修订可采用 Markdown、HTML 等格式；详情层解析 Markdown，HTML 报告可保留原件并预览。固定修订的 hash 必须在读取时核验，缺失资源或无权读取时明确显示不完整/不可达，不用旧摘要伪装完整正文。
@@ -105,6 +107,10 @@ Blob 身份使用稳定 ID，附内容 hash、大小、媒体类型和资源 man
 较大 Markdown/HTML 报告和资源 bundle 沿用同一 BlobStore；原始小型 Markdown 或小型自包含 HTML 可内联存 PG。blob 先 prepare、校验 hash 与完整 assets manifest，再由 PG 事务登记不可变 DocumentRevision 及唯一 canonical payloadRef；只有 PG 提交成功后修订才可读。未准备完成的 blob 不可见，资源不全的修订最多标记 incomplete，不能标为完整可读。`body` 与 `payloadRef` 必须互斥且恰有一个；payloadRef 指向该 revision 唯一的不可变载荷，不是另一份可编辑正文。读写都再次核权限、有效性与 hash；撤回或权限收紧时停止新读取，保留历史状态及缺项记录。
 
 发布批准绑定不可变候选修订/hash 与所读知识基线；outbox 实际执行或重新写入前再核批准、权限、来源有效性与独占资格。已发出但结果未知的操作先对账，批准后来撤销不代表先前写入未发生。审阅结案可以是拒绝、归并或无需修改；只有接受并确需改正文的项才要求另有发布回执，结案和发布保持分离。具体时序见[Wiki 集成](wiki-integration.md#4-命令发布和纠正)。
+
+### 请求停止一个 Run
+
+`runtime.run.stop`（`runId`、`expectedVersion`、`reason`）：review 权限，加上该 Session 精确的执行授权（与普通消息恢复同一检查；重放已入账的原操作不再核对授权）；不要求原生运行时在线。结果是 Run 上的停止标记（`stopRequestedAt`、`stopReason`、`stopRequestedBy`，不可改、不可撤，**没有新的 Run 状态**）。拒绝码：`VERSION_CONFLICT`、`STOP_ALREADY_REQUESTED`、`RUN_TERMINAL`（已结束的 Run 不能再停）。停止之后 `ordinary.submit` 对该 Run 返回 `RUN_STOPPED`，已签未封存的意图变为 `rejected`（原因 `RUN_STOPPED`）；数据库拒绝引用该 Run 的 Delivery。细节见[Session 运行时](session-runtime.md)。
 
 ### 知识后端可替换合同
 
@@ -317,12 +323,14 @@ Task 协作通道把 question/answer/progress/blocker/handoff/result 固定到�
 
 验收由谁做，由 Task 声明，不默认交给 Leader（DEC-038；PR #217，schema 062）。
 
-- **三种验收方式。** Task 的 `acceptance_target` 声明为人、Task 明确允许的 Leader，或 Leader 指派的独立业务 Session；收件人还须与 Task 声明的消费者和验收模式一致。作者 Session 与安排者不能充当独立验收（DEC-038），只有 Task 明确允许时 Leader 才能验收。代码层面：选 Leader 方式时，收件 Session 必须是项目当前的 Leader Session；选业务 Session 方式时，它不能是 Leader Session，也不能是当前 Delivery 的作者 Run 所在的 Session；安排者须有项目 review 权限，并且就是那条验收消息的发送者。
+- **验收方式与 `acceptance_target`。** Task 的 `acceptance_target` 仍声明为人、Leader 或独立业务 Session 之一；`leader` 值保留，但只在使用者为某项 Task 明确要求时使用，不是常规验收选项（DEC-042）。常规验收交 Leader 指派的独立业务 Session；难验收由需求 Session 以消费者身份直接验收，不经验收接力。收件人还须与 Task 声明的消费者和验收模式一致。作者 Session 与安排者不能充当独立验收，执行者自检、CI 与 Run 终态是交付证据，不是验收。代码层面：选 Leader 方式时，收件 Session 必须是项目当前的 Leader Session；选业务 Session 方式时，它不能是 Leader Session，也不能是当前 Delivery 的作者 Run 所在的 Session；安排者须有项目 review 权限，并且就是那条验收消息的发送者。
 - **接力记录。** Leader 用 `task_acceptance_relay` 安排验收：固定 Task 修订、当前 Delivery、阶段（候选 `candidate` 或正式 `formal`）、验收范围、入口与收件人。非人工方式同时固定一条发给收件 Session 的消息。同一 Delivery、阶段和范围同时只有一条现行安排；改派以原安排和版本为前提，旧安排保留为 `superseded` 或 `released`。
 - **开始前再核。** 验收消息真正开始处理前，触发器再次核对 Task 未结束、当前修订和最新 Delivery 仍是安排时那一份；不符就拒绝开始，避免验收旧版本。
 - **验收证据。** 人的阅读记入 `task_acceptance_human_read`；验收者本人的 Observation 经 `task_acceptance_observation_link` 关联到安排，并标明证据级别。存在现行安排时，Task 关闭要求指定收件人对该 Delivery 有已关联的 `used` 观察。候选阶段通过不等于正式通过：同一 Delivery 的候选与正式安排可以并存，但存在现行正式安排时，关闭只按正式安排核对；候选安排保留为历史证据，不因没有关联观察而阻塞正式收口。安排无法开始时生成 `acceptance_blocked` 通知交给 Leader。
 - **临时 Session 退役。** 标为临时的 Session 进入 `closing` 前，必须有一条匹配的 `session_retirement_decision`（理由、交接证据、所见版本、Role 与原 Thread）；它名下若还有未释放的未结束 Task 分派或未结束的验收安排，数据库拒绝关闭。Leader 核业务责任，引擎核运行状态。
 - **容量视图。** 只读的容量视图按 Session 汇总在途 Run、排队消息、队列条目、未结束分派和验收安排，是 Leader 做编制判断的输入；它只反映数据库里的持久占用，不证明原生写入权。
+
+**“直接验收”的过渡。** 专门字段与目标值尚未实现（Task `4acdd4d2`）。当前做法是在 Task 正文把需求 Session 的业务身份写成消费者，并注明不经验收接力；验收仍由现有观察记录承载，字段与合同枚举在实现前不变。
 
 ## 6. StageReview：从交付到下一阶段
 

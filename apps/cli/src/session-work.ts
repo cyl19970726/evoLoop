@@ -26,7 +26,7 @@ export function sessionWorkPath(words: string[], options: Map<string, string | b
       allowed = options.has("history") ? ["history", "limit", "cursor"] : ["history"]; break;
     case "assignment": path = `/tasks/${id()}/assignment${options.has("history") ? "/history" : ""}`;
       allowed = options.has("history") ? ["history", "limit", "cursor"] : ["history"]; break;
-    case "task": path = `/work-management/tasks/${id()}`; allowed = []; break;
+    case "task": path = `/work-management/tasks/${id()}`; allowed = ["brief"]; break;
     case "connectors": path = "/message-connectors/routes"; allowed = ["limit", "cursor"]; break;
     case "connector": path = `/message-connectors/routes/${id()}`; allowed = []; break;
     case "connector-deliveries": {
@@ -61,7 +61,8 @@ export function sessionWorkPath(words: string[], options: Map<string, string | b
         allowed = ["limit", "cursor", "task"];
       } else {
         path = "/work-management/index";
-        allowed = ["limit", "cursor", "documents", "closed"];
+        allowed = ["limit", "cursor", "documents", "closed", "brief"];
+        if (options.has("brief") && options.has("documents")) throw new Error("--brief applies to the tasks view of work leader, not --documents.");
         query.set("view", options.has("documents") ? "documents" : "tasks");
         if (options.has("closed")) query.set("includeClosed", "true");
       }
@@ -76,7 +77,7 @@ export function sessionWorkPath(words: string[], options: Map<string, string | b
   for (const [name, value] of options) {
     if (name === "project") continue;
     if (!allowed.includes(name)) throw new Error(`--${name} does not apply to work ${kind}.`);
-    if (name === "history" || name === "documents" || name === "closed") continue;
+    if (name === "history" || name === "documents" || name === "closed" || name === "brief") continue;
     if (typeof value !== "string") throw new Error(`--${name} requires a value.`);
     if (name === "limit") query.set(name, String(z.coerce.number().int().min(1).max(kind === "changes" || kind === "leader" || kind === "attention" ? 100 : 50).parse(value)));
     else if (name === "task") query.set("taskId", z.uuid().parse(value));
