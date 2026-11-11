@@ -53,7 +53,12 @@ export interface AcceptanceCapacityView {
   sessionId:string; roleId:string; sessionActorId:string; cwd:string; state:string;
   nativeThreadId:string|null; tenure:"resident"|"temporary"|"unknown";
   isLeader:boolean; activeRuns:number; pendingMessages:number; queueEntries:number;
-  openAssignments:number; openAcceptance:number; persistedWorkIdle:boolean;
+  openAssignments:number; openAcceptance:number;
+  /** Session line entries waiting (queued or suspended): queued work, not busy, so they do not make the Session unavailable. */
+  lineQueued:number;
+  /** A line entry being started (assigned, awaiting confirmation, or starting): the Session is occupied. */
+  lineStarting:number;
+  persistedWorkIdle:boolean;
   missingCapabilities:string[]; readyForAcceptance:boolean;
 }
 

@@ -1,7 +1,7 @@
 import { registerReferenceRoutes, type ReferenceRouteOptions } from "./references/routes.js";
 import Fastify from "fastify";
 import staticPlugin from "@fastify/static";
-import { commandSchema, capabilities, idSchema, documentKindSchema, type Command, type Principal, type RuntimeSessionRecord } from "@evoloop/contracts";
+import { commandSchema, capabilities, idSchema, documentKindSchema, documentStatusSchema, type Command, type Principal, type RuntimeSessionRecord } from "@evoloop/contracts";
 import { DomainError } from "@evoloop/contracts/ports";
 import { sessionPreparationHints } from "@evoloop/contracts/session-preparation";
 import type { WorkflowService } from "@evoloop/core";
@@ -268,7 +268,7 @@ export async function buildServer(options: {
     }
     if (command.type.startsWith("runtime.")) {
       if (command.type !== "runtime.handoff.record" && command.type !== "runtime.run.abandonReadOnly" &&
-        command.type !== "runtime.session.executionProfile.revise" && command.type !== "runtime.session.recovery.resume" && command.type !== "runtime.run.stop" &&
+        command.type !== "runtime.session.executionProfile.revise" && command.type !== "runtime.session.recovery.resume" && command.type !== "runtime.run.stop" && command.type !== "runtime.providerHold.release" &&
         !options.runtime?.status().available) throw new DomainError("RUNTIME_UNAVAILABLE", "Codex 执行服务尚未配置或当前不可用；本次未登记派发。");
       const principal = who(request.principal);
       if (!principal.projectIds.includes(command.projectId) || (command.type === "runtime.handoff.record" ? !principal.permissions.includes("write") : !principal.permissions.includes("review"))) {
@@ -341,6 +341,22 @@ export async function buildServer(options: {
     return reply.code(result.status === "applied" ? 200 : errorStatus(result.code)).send(result);
   });
   app.get("/api/projects/:projectId", async request => options.service.getProject(who(request.principal), params(request.params).projectId!));
+  // Session lines (DEC-045 Q1): each line with its waiting entries, and the ordered line events for the scheduling board.
+  app.get("/api/projects/:projectId/session-lines", async request => {
+    const p = z.strictObject({ projectId: idSchema }).parse(request.params);
+    const q = z.strictObject({ includeEnded: z.enum(["true", "false"]).optional() }).parse(request.query);
+    const principal = who(request.principal);
+    const lines = await options.service.listSessionLines(principal, p.projectId);
+    return { lines: await Promise.all(lines.map(async line => ({ ...line,
+      entries: await options.service.listSessionLineEntries(principal, p.projectId, line.sessionId, q.includeEnded === "true") }))) };
+  });
+  app.get("/api/projects/:projectId/session-lines/events", async request => {
+    const p = z.strictObject({ projectId: idSchema }).parse(request.params);
+    const q = z.strictObject({ after: z.coerce.number().int().nonnegative().default(0), limit: z.coerce.number().int().min(1).max(500).default(100),
+      sessionId: idSchema.optional() }).parse(request.query);
+    const events = await options.service.listSessionLineEvents(who(request.principal), p.projectId, q.after, q.limit, q.sessionId);
+    return { events, nextAfter: events.at(-1)?.seq ?? q.after };
+  });
   app.get("/api/projects/:projectId/session-preparation/:sessionId", async request => {
     const p=z.strictObject({projectId:z.uuid(),sessionId:z.uuid()}).parse(request.params);
     const q=z.strictObject({roleId:z.uuid(),cwd:z.string().optional(),authorizationScope:z.string().optional(),
@@ -480,6 +496,8 @@ export async function buildServer(options: {
         cwd:g.cwd,configuredModel:g.model??null,models:current.status==="available"?
           current.models.filter(model=>grantAllowsModel(g,model)):[]}))};
   });
+  app.get("/api/projects/:projectId/runtime/provider-holds", async request =>
+    options.service.listProviderHolds(who(request.principal), params(request.params).projectId!));
   app.get("/api/projects/:projectId/runtime/sessions", async request => options.service.listRuntimeSessions(who(request.principal), params(request.params).projectId!));
   app.get("/api/projects/:projectId/runtime/usage", async request => {
     const p = params(request.params);
@@ -735,8 +753,13 @@ export async function buildServer(options: {
   for (const entity of ["documents", "tasks"] as const) {
     app.get(`/api/projects/:projectId/${entity}`, async request => {
       const p = params(request.params); const q = pageSchema.parse(request.query);
-      const kind = entity === "documents" ? z.object({ kind: documentKindSchema.optional() }).parse(request.query).kind : undefined;
-      return entity === "documents" ? options.service.listDocuments(who(request.principal), p.projectId!, q.limit, q.cursor, kind) : options.service.listTasks(who(request.principal), p.projectId!, q.limit, q.cursor);
+      const filter = entity === "documents" ? z.object({
+        kind: documentKindSchema.optional(),
+        status: z.union([documentStatusSchema, z.literal("active")]).optional(),
+      }).parse(request.query) : null;
+      return entity === "documents"
+        ? options.service.listDocuments(who(request.principal), p.projectId!, q.limit, q.cursor, filter!.kind, filter!.status)
+        : options.service.listTasks(who(request.principal), p.projectId!, q.limit, q.cursor);
     });
     app.get(`/api/projects/:projectId/${entity}/:id`, async request => {
       const p = params(request.params);
@@ -774,6 +797,10 @@ export async function buildServer(options: {
   }
   if (options.webRoot) {
     await app.register(staticPlugin, { root: options.webRoot, index: "index.html", wildcard: true, cacheControl: false });
+    // Safari probes these paths even when the page declares an icon; send its probes to the one real icon instead
+    // of leaving three 404s on every Session and Task page.
+    for (const path of ["/favicon.ico", "/apple-touch-icon.png", "/apple-touch-icon-precomposed.png"])
+      app.get(path, (_request, reply) => reply.redirect("/favicon.svg"));
     // The workbench uses path addresses (/p/{project}/…, /ui); each loads the same page, which routes in the browser.
     const workbenchPage = (_request: unknown, reply: { sendFile(name: string): unknown }) => reply.sendFile("index.html");
     app.get("/p/*", workbenchPage);

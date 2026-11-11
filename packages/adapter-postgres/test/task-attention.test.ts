@@ -175,6 +175,60 @@ test("repeated evaluation deduplicates and same-revision phase change expires th
     WHERE project_id=$1 AND notice_id=$2`,[projectId,item.noticeId]);
   assert.deepEqual(stale.rows[0],{state:"blocked",blocked_reason:"ATTENTION_SOURCE_EXPIRED"});
 });
+test("manual resolve writes the execution time and reason, retires the notice, and rejects replay",async t=>{
+  const resolveTaskId=randomUUID(),resolveRevisionId=randomUUID(),resolveDocumentId=randomUUID(),
+    resolveDocumentRevisionId=randomUUID(),itemId=randomUUID(),noticeId=randomUUID(),
+    reason="Resolved from the Task page";
+  const setup=await pool.connect();
+  try{
+    await setup.query("BEGIN");
+    await setup.query(`INSERT INTO process_document(project_id,document_id,title,version,current_revision_id,kind,status)
+      VALUES($1,$2,'Resolve fixture',1,$3,'task','draft')`,
+      [projectId,resolveDocumentId,resolveDocumentRevisionId]);
+    await setup.query(`INSERT INTO document_revision(project_id,document_id,revision_id,body,format,
+      content_hash,author,created_at,reason,media_type,original_name,assets_manifest)
+      VALUES($1,$2,$3,'# Resolve fixture','markdown',$4,'lead',$5,'fixed','text/markdown','resolve.md','[]'::jsonb)`,
+      [projectId,resolveDocumentId,resolveDocumentRevisionId,hash,now]);
+    await setup.query(`INSERT INTO task(project_id,task_id,version,current_revision_id,title,acceptance,
+      owner,state,kind,content_document_id,content_revision_id)
+      VALUES($1,$2,1,$3,'Resolve fixture','check','worker','todo',NULL,$4,$5)`,
+      [projectId,resolveTaskId,resolveRevisionId,resolveDocumentId,resolveDocumentRevisionId]);
+    await setup.query(`INSERT INTO task_revision(project_id,task_id,revision_id,version,title,acceptance,
+      owner,state,basis_set_id,actor_id,reason,created_at,kind,content_document_id,content_revision_id)
+      VALUES($1,$2,$3,1,'Resolve fixture','check','worker','todo',NULL,'lead','fixed',$4,NULL,$5,$6)`,
+      [projectId,resolveTaskId,resolveRevisionId,now,resolveDocumentId,resolveDocumentRevisionId]);
+    await setup.query(`INSERT INTO leader_result_notice(project_id,notice_id,kind,source_event_id,task_id,
+      task_revision_id,source_ref,occurred_at) VALUES($1,$2,'task_attention',$3,$4,$5,$6,$7)`,
+      [projectId,noticeId,randomUUID(),resolveTaskId,resolveRevisionId,`task-attention:${itemId}@1`,now]);
+    await setup.query(`INSERT INTO task_attention_item(project_id,item_id,task_id,task_revision_id,
+      phase,signal,source_kind,source_id,state,severity,version,first_detected_at,last_detected_at,
+      source_observed_at,reason,evidence,notice_id)
+      VALUES($1,$2,$3,$4,'awaiting_run','stage_overdue','task_revision',$5,'open','watch',1,
+        $6,$6,$6,'THRESHOLD_REACHED','{}'::jsonb,$7)`,
+      [projectId,itemId,resolveTaskId,resolveRevisionId,resolveRevisionId,now,noticeId]);
+    await setup.query("COMMIT");
+  }catch(error){await setup.query("ROLLBACK");throw error;}finally{setup.release();}
+  const command={type:"task.attention.resolve" as const,projectId,itemId,expectedVersion:1,
+    disposition:"resolved" as const,reason,operationId:randomUUID()};
+  const applied=await service().execute(lead,command);
+  assert.equal(applied.status,"applied",JSON.stringify(applied));
+  const store=new PgTaskAttention(pool,projectId),resolved=await store.getItem(itemId);
+  assert.ok(resolved);
+  assert.deepEqual([resolved?.state,resolved?.version,resolved?.resolvedAt,resolved?.resolutionReason],
+    ["resolved",2,now,reason]);
+  const notice=await pool.query(`SELECT state,blocked_reason FROM leader_result_notice
+    WHERE project_id=$1 AND notice_id=$2`,[projectId,noticeId]);
+  assert.deepEqual(notice.rows[0],{state:"blocked",blocked_reason:"ATTENTION_SOURCE_EXPIRED"});
+  const event=await pool.query(`SELECT kind,actor_id,reason FROM task_attention_item_event
+    WHERE project_id=$1 AND item_id=$2 AND item_version=2`,[projectId,itemId]);
+  assert.deepEqual(event.rows[0],{kind:"resolved",actor_id:"lead",reason});
+  const replay=await service().execute(lead,{...command,operationId:randomUUID()});
+  assert.equal(replay.status,"rejected");
+  assert.equal((replay as {code?:string}).code,"VERSION_CONFLICT");
+  t.diagnostic(JSON.stringify({taskId:resolveTaskId,itemId,noticeId,resolvedAt:resolved?.resolvedAt,
+    resolutionReason:resolved?.resolutionReason,noticeState:notice.rows[0]?.state,
+    replayCode:(replay as {code?:string}).code}));
+});
 test("one running Run keeps its watch notice and queued message through unknown observation, then retires on clear",async t=>{
   const attentionTaskId=randomUUID(),attentionRevisionId=randomUUID(),attentionBasisId=randomUUID();
   const attentionDocumentId=randomUUID(),attentionDocumentRevisionId=randomUUID();

@@ -16,7 +16,10 @@ export const sessionAssignmentCommands = [
     target: sessionTargetSchema, recipientActorId: z.string().trim().min(1).max(240).nullable(), expectedVersion: version, reason: note }),
   z.strictObject({ ...base, type: z.literal("task.assignment.acknowledge"), taskId: id,
     expectedVersion: z.number().int().positive(), expectedTaskVersion: z.number().int().positive(),
-    evidence: note, sourceRef: z.string().trim().min(1).max(4000).nullable().optional() }),
+    evidence: note, sourceRef: z.string().trim().min(1).max(4000).nullable().optional(),
+    // Execution confirmation (DEC-045 Q1, lifecycle IT-2): confirm with a short plan, or return naming what is missing.
+    verdict: z.enum(["confirm", "return"]).optional(), plan: z.string().trim().min(1).max(4000).optional(),
+    missing: z.array(z.string().trim().min(1).max(1000)).max(20).optional(), expectedRevisionId: z.uuid().optional() }),
   z.strictObject({ ...base, type: z.literal("task.assignment.observeAcceptance"), taskId: id,
     expectedVersion: z.number().int().positive(), expectedTaskVersion: z.number().int().positive(),
     evidence: note, sourceRef: z.string().trim().min(1).max(4000).nullable().optional() }),
@@ -37,6 +40,10 @@ export interface TaskSessionAssignment {
     evidence: string; sourceRef: string | null; at: string } | null;
   actorId: string; reason: string; updatedAt: string;
 }
+export interface AssignmentConfirmation {
+  projectId: string; taskId: string; assignmentVersion: number; verdict: "confirm" | "return"; plan: string | null;
+  missing: string[]; expectedRevisionId: string; actorId: string; at: string;
+}
 export interface SessionAssignmentPage<T> { items: T[]; nextCursor: string | null }
 export interface SessionAssignmentReader {
   getSessionIdentity(target: SessionTarget): Promise<SessionIdentity | null>;
@@ -45,6 +52,7 @@ export interface SessionAssignmentReader {
   getTaskSessionAssignment(taskId: string): Promise<TaskSessionAssignment | null>;
   listTaskSessionAssignments(target: SessionTarget, limit: number, cursor?: string): Promise<SessionAssignmentPage<TaskSessionAssignment>>;
   listTaskSessionAssignmentHistory(taskId: string, limit: number, cursor?: string): Promise<SessionAssignmentPage<TaskSessionAssignment>>;
+  getAssignmentConfirmation(taskId: string, assignmentVersion: number): Promise<AssignmentConfirmation | null>;
 }
 export interface SessionAssignmentTransaction extends SessionAssignmentReader {
   saveSessionIdentity(value: SessionIdentity, expectedVersion: number): Promise<void>;
@@ -52,4 +60,5 @@ export interface SessionAssignmentTransaction extends SessionAssignmentReader {
   saveTaskSessionAssignment(value: TaskSessionAssignment, expectedVersion: number): Promise<void>;
   /** Refuse reassignment/release while an unresolved Run or active queue claim owns the Task. */
   assertTaskAssignmentMovable(taskId: string): Promise<void>;
+  saveAssignmentConfirmation(value: AssignmentConfirmation): Promise<void>;
 }

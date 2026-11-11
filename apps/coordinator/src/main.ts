@@ -73,6 +73,7 @@ import { RuntimeNotSentError, type RuntimeBinding, type RuntimeSessionRecord, ty
 import { loopIntentId } from "./orchestration/runner.js";
 import { pgLeaderPacketPorts } from "./leader-results/packet-ports.js";
 import { ResidentQueuePump } from "./resident-queue/pump.js";
+import { SessionLinePump } from "./session-line/pump.js";
 import { SessionObservationService } from "@evoloop/core/session-observation";
 import { AllocationRelationsService } from "@evoloop/core/allocation-relations";
 import { SessionMessageService } from "@evoloop/core/session-messages";
@@ -87,6 +88,7 @@ import { SessionTimelineService } from "./session-timeline/index.js";
 import { OrdinaryRunSubmissionService, leaseCheckedUnitOfWork } from "./ordinary-run-submission/service.js";
 import { createOrdinaryRunSealer } from "./ordinary-run-submission/seal.js";
 import { OrdinaryRunSealPump } from "./ordinary-run-submission/pump.js";
+import { throttledLog } from "./log-throttle.js";
 import { materialCliRecipientMatches, requireOrdinaryRecipient, requireReservableRecipient } from "./runtime/recipient-preflight.js";
 import { createMessageExecutionReader } from "./session-messages/execution-capability.js";
 import { sessionMessageCanStart } from "./session-messages/scheduling.js";
@@ -101,6 +103,7 @@ import { bindingOf } from "./runtime/runner.js";
 import { SessionSteerLock } from "./runtime/session-steer-lock.js";
 import { localProjectConfiguration } from "./project-configuration/local.js";
 
+const reconciliationLog = throttledLog(line => console.error(line));
 const databaseUrl = process.env.EVOLOOP_DATABASE_URL;
 const authFile = process.env.EVOLOOP_AUTH_FILE;
 if (!databaseUrl || !authFile) throw new Error("Set EVOLOOP_DATABASE_URL and EVOLOOP_AUTH_FILE. Run migrations separately before starting.");
@@ -676,7 +679,7 @@ const leaderResultNoticePump = new LeaderResultNoticePump({
   }),
   canWrite: lease.canWrite, canStartNative: () => !!runner?.nativeStartsAvailable(),
   pollIntervalMs: integrations.leaderResultNotices?.pollIntervalMs??2000,
-  onError: () => console.error("Leader result notice needs reconciliation; inspect its fixed notice and message operation."),
+  onError: () => reconciliationLog("Leader result notice needs reconciliation; inspect its fixed notice and message operation."),
   onDiagnostic: (projectId, noticeId, reason) => console.error(`Leader result notice ${noticeId} in project ${projectId} waits: ${reason}`),
 });
 const taskAttentionPump = new TaskAttentionPump({pool,canWrite:lease.canWrite,now:clock.now,
@@ -752,7 +755,7 @@ const messagePump = runner ? new SessionMessagePump({ service: messageService, r
       }
     }
     return businessBeforeMessage(message);
-  }, onError: () => console.error("Session message needs reconciliation; inspect its original saved processing record.") }) : null;
+  }, onError: () => reconciliationLog("Session message needs reconciliation; inspect its original saved processing record.") }) : null;
 const connectorGateway = integrations.messageConnectors ? new WechatGatewayClient({
     executable: integrations.messageConnectors.gateway.executable,
     configPath: integrations.messageConnectors.gateway.configPath,
@@ -789,13 +792,23 @@ const connectorIngress = runner && connectorGateway && integrations.messageConne
   enabled: async () => (await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE)).messageConnectors?.enabled === true,
   qualifyReceiver: qualifyConnectorRoute,
   pollIntervalMs: integrations.messageConnectors.pollIntervalMs,
-  onError: () => console.error("Connector ingress needs reconciliation; inspect the original wx delivery and saved source link."),
+  onError: () => reconciliationLog("Connector ingress needs reconciliation; inspect the original wx delivery and saved source link."),
 }) : null;
 const residentQueue = new ResidentQueuePump({workflow:service,canWrite:lease.canWrite,
   messageBusy: (projectId, sessionId) => messageService.isBusy(projectId, sessionId),
   credentials:currentIdentity,enabled:async()=>!!(await currentQueueConfiguration())?.enabled,
   pollIntervalMs:integrations.residentQueue?.pollIntervalMs??2000,
   onError:()=>console.error("Resident queue tick failed; inspect persisted queue and Run state before retrying.")});
+const sessionLinePump = new SessionLinePump({workflow:service,canWrite:lease.canWrite,
+  messageBusy:(projectId,sessionId)=>messageService.isBusy(projectId,sessionId),credentials:currentIdentity,
+  enabled:async()=>!!(await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE)).runtime?.enabled,
+  pollIntervalMs:integrations.residentQueue?.pollIntervalMs??2000,
+  recipientActorId:async(projectId,sessionId)=>{
+    const role=(await pool.query("SELECT role_id FROM runtime_session WHERE project_id=$1 AND session_id=$2",[projectId,sessionId])).rows[0]?.role_id;
+    const binding=role&&(await currentQueueConfiguration())?.roleActors.find(x=>x.projectId===projectId&&x.roleId===role);
+    return binding&&await currentProjectWriter(projectId,binding.actorId)?binding.actorId:null;
+  },
+  onError:()=>console.error("Session line tick failed; inspect the persisted line entry and its Run before retrying.")});
 const ordinarySealPump = new OrdinaryRunSealPump({
   canWrite: lease.canWrite,
   listProjects: () => ordinarySubmissions.listUnsettledProjects(),
@@ -1027,7 +1040,7 @@ let shuttingDown = false;
 async function shutdown() {
   if (shuttingDown) return; shuttingDown = true;
   try { clearInterval(acceptanceTimer); connectorIngress?.stop(); taskAttentionPump.stop(); leaderResultNoticePump.stop();
-    messagePump?.stop(); residentQueue.stop(); ordinarySealPump.stop(); await managed?.stop();
+    messagePump?.stop(); residentQueue.stop(); sessionLinePump.stop(); ordinarySealPump.stop(); await managed?.stop();
     await collaboration.stop(); await scheduling.stop(); await app.close(); sessionTimeline.close(); }
   finally {
     // Keep the coordinator lease while a native child may still be alive.
@@ -1038,5 +1051,5 @@ async function shutdown() {
 }
 process.once("SIGINT", () => void shutdown());
 process.once("SIGTERM", () => void shutdown());
-try { await app.listen({ host: "127.0.0.1", port }); managed?.start(); ordinarySealPump.start(); residentQueue.start(); messagePump?.start(); connectorIngress?.start(); leaderResultNoticePump.start(); taskAttentionPump.start(); console.log(`evoLoop local workbench: http://127.0.0.1:${port}`); }
+try { await app.listen({ host: "127.0.0.1", port }); managed?.start(); ordinarySealPump.start(); residentQueue.start(); sessionLinePump.start(); messagePump?.start(); connectorIngress?.start(); leaderResultNoticePump.start(); taskAttentionPump.start(); console.log(`evoLoop local workbench: http://127.0.0.1:${port}`); }
 catch (error) { await shutdown(); throw error; }

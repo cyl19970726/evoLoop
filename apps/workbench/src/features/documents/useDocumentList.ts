@@ -16,11 +16,12 @@ export const readProblem = (cause: unknown, subject = "该项目的文档"): str
   cause instanceof ApiError && (cause.status === 401 || cause.status === 403) ? `当前身份无权读取${subject}` : errorText(cause);
 
 export function useDocumentList(projectId: string, state: DocumentListState, update: (patch: Partial<DocumentListState>) => void) {
-  const { kind } = state;
+  const { kind, status } = state;
   const maxPages = pagesFor(state);
   const client = useQueryClient();
-  const list = useProjectList(projectId, ["documents", "list", kind], async (cursor, signal) => {
-    const page: Page<Document> = await api().documents(projectId, cursor, kind === "all" ? undefined : kind, signal);
+  const list = useProjectList(projectId, ["documents", "list", kind, status], async (cursor, signal) => {
+    const page: Page<Document> = await api().documents(projectId, cursor, kind === "all" ? undefined : kind,
+      status === "all" ? undefined : status, signal);
     validDocumentPage(page, projectId, cursor);
     return page;
   }, (document: Document) => document.id, { target: state.target, maxPages });
