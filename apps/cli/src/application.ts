@@ -7,6 +7,7 @@ import { exportOriginal, readOriginal, readTaskContext, MaterialError } from "./
 import { ReceiptError, ReceiptStore, dispatchMutation, reconcileReceipt, retryReceipt, record, type VerifiedActor } from "./receipts.js";
 import { prepareRequest, requestTypes, requestSchema, RequestInputError } from "./requests.js";
 import { sessionWorkPath } from "./session-work.js";
+import { briefAcceptanceOverview, briefIndex, briefRelays, briefTaskWithRelays } from "./brief.js";
 import { sessionStatus } from "./session-status.js";
 import { allocationRelationsPath } from "./allocation-relations.js";
 import { fixedHash, materialAsset, materialBody, materialCatalog, materialHandoff, materialRunInput } from "./lightweight-materials.js";
@@ -17,7 +18,7 @@ interface IO { stdout(text: string): void; stderr(text: string): void }
 class UsageError extends Error { readonly code = "INVALID_INPUT"; }
 interface Args { words: string[]; options: Map<string, string | true> }
 const values = new Set(["project", "revision", "limit", "cursor", "turn-cursor", "messages-cursor", "source", "turn-id", "after", "wait-ms", "out", "file", "id", "receipt", "attempt", "task", "state", "phase", "signal", "waiting-on-kind", "waiting-on-id", "stage", "knowledge", "loop", "search", "membership", "importance", "role", "session", "discussion", "message", "kind", "hash", "asset-hash", "model", "effort", "color", "mark", "reason", "evidence-ref", "operation", "provider", "project-skills", "personal", "builtin", "add", "remove"]);
-const switches = ["help", "history", "graph", "events", "revisions", "result", "trace", "occurrences", "reviews", "handoffs", "bindings", "route", "hosts", "attempts", "recovery", "inputs", "observation", "documents", "closed"];
+const switches = ["help", "history", "graph", "events", "revisions", "result", "trace", "occurrences", "reviews", "handoffs", "bindings", "route", "hosts", "attempts", "recovery", "inputs", "observation", "documents", "closed", "brief"];
 function uuid(value: string | undefined, label: string): string {
   if (!idSchema.safeParse(value).success) throw new UsageError(`${label} must be a UUID.`);
   return value!;
@@ -81,10 +82,10 @@ const help = {
     "work item KEY ITEM_ID --project UUID --turn-id TURN_ID (selected public message or authorized tool detail)",
     "work updates KEY --project UUID [--after LIVE_CURSOR] [--wait-ms 0..10000] (default 0; follow resetRequired)",
     "work changes [OWNED_OR_EXTERNAL_KEY] --project UUID --cursor CURSOR [--limit 1..100]",
-    "work leader --project UUID [--documents] [--closed] [--limit 1..100 --cursor CURSOR]",
-    "work task TASK_UUID --project UUID (one Task's current stage, timing and responsibility)",
-    "work acceptance --project UUID [--limit 1..100 --cursor CURSOR] (Leader stage and persisted Session capacity)",
-    "work acceptance TASK_UUID --project UUID (exact acceptance arrangements and dispatch outcomes)",
+    "work leader --project UUID [--documents] [--closed] [--brief] [--limit 1..100 --cursor CURSOR] (--brief: tasks view only; arranging fields per Task, about a tenth of the bytes)",
+    "work task TASK_UUID --project UUID [--brief] (one Task's current stage, timing and responsibility; --brief adds its current acceptance arrangements and drops the timing history)",
+    "work acceptance --project UUID [--brief] [--limit 1..100 --cursor CURSOR] (Leader stage and persisted Session capacity)",
+    "work acceptance TASK_UUID --project UUID [--brief] (exact acceptance arrangements and dispatch outcomes; --brief drops the long prose)",
     "work acceptance mine --project UUID (human recipient's acceptance inbox)",
     "work acceptance read RELAY_UUID --project UUID --task TASK_UUID --file BODY.json (named human records reading an arrangement)",
     "work acceptance observe RELAY_UUID --project UUID --task TASK_UUID --file BODY.json (recipient links their existing observation)",
@@ -329,11 +330,19 @@ async function dispatch(args: Args, env: Environment, io: IO): Promise<unknown> 
         const intent=prepareRequest(`acceptance.${args.words[2]}`,project(),raw,args.words[3]);
         return dispatchMutation(client,store,origin,token,intent,value=>io.stderr(JSON.stringify(value)+"\n"),await verifiedActor());
       }
-      check(args,args.words[2]?3:2,["project","limit","cursor"]);
-      if(args.words[2] === "mine")return client.get(`${prefix}/acceptance-relay/mine`);
-      if(args.words[2])return client.get(`${prefix}/tasks/${uuid(args.words[2],"Task")}/acceptance-relay`);
+      check(args,args.words[2]?3:2,["project","limit","cursor","brief"]);
+      const brief=args.options.has("brief");
+      if(args.words[2] === "mine"){
+        if(brief)throw new UsageError("--brief does not apply to work acceptance mine; it is already a short list.");
+        return client.get(`${prefix}/acceptance-relay/mine`);
+      }
+      if(args.words[2]){
+        const relays=await client.get(`${prefix}/tasks/${uuid(args.words[2],"Task")}/acceptance-relay`);
+        return brief?briefRelays(relays as Record<string,any>):relays;
+      }
       const limit=option(args,"limit")??"50",cursor=option(args,"cursor");
-      return client.get(`${prefix}/acceptance-relay/overview?limit=${encodeURIComponent(limit)}${cursor?`&cursor=${encodeURIComponent(cursor)}`:""}`);
+      const overview=await client.get(`${prefix}/acceptance-relay/overview?limit=${encodeURIComponent(limit)}${cursor?`&cursor=${encodeURIComponent(cursor)}`:""}`);
+      return brief?briefAcceptanceOverview(overview as Record<string,any>):overview;
     }
     if (args.words[1] === "retirement") {
       check(args,3,["project"]);
@@ -359,7 +368,12 @@ async function dispatch(args: Args, env: Environment, io: IO): Promise<unknown> 
     let path: string;
     try { path = sessionWorkPath(args.words.slice(1), args.options); }
     catch (error) { throw new UsageError(error instanceof Error ? error.message : "Invalid Session work read parameters."); }
-    return client.get(`${prefix}${path}`);
+    const read = await client.get(`${prefix}${path}`);
+    if (!args.options.has("brief")) return read;
+    if (args.words[1] === "leader") return briefIndex(read as Record<string, any>);
+    // work task: the Task, plus the arrangements that are current for it (a second small read; its failure leaves the Task brief intact).
+    const relays = await client.get(`${prefix}/tasks/${args.words[2]}/acceptance-relay`).catch(() => null);
+    return briefTaskWithRelays(read as Record<string, any>, relays as Record<string, any> | null);
   }
   if (action === "allocations") {
     check(args, 1, ["project", "role", "session", "discussion", "limit", "cursor"]);
