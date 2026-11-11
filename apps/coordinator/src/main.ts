@@ -94,6 +94,7 @@ import { ConnectorIngressPump } from "./message-connectors/pump.js";
 import { currentConnectorBusinessActor } from "./message-connectors/business-actor.js";
 import { qualifyStandardConnectorRoute } from "./message-connectors/qualification.js";
 import { bindingOf } from "./runtime/runner.js";
+import { SessionSteerLock } from "./runtime/session-steer-lock.js";
 import { localProjectConfiguration } from "./project-configuration/local.js";
 
 const databaseUrl = process.env.EVOLOOP_DATABASE_URL;
@@ -433,7 +434,9 @@ const runtimeFactory = runtimeConfig?.enabled ? (): ManagedRuntime => {
   return children.size === 1 ? [...children.values()][0]! : new ProviderRoutedRuntime(children, runtimeConfig.provider, build);
 } : null;
 let managedCliBroker: WorkerCredentialBroker | null = null;
+const sessionSteerLock = new SessionSteerLock();
 const runner = runtimeFactory ? new RuntimeRunner({ runtimeFactory, workflow: service, trusted: trustedRuntime, nativeInputs, nativeObservation,
+  steerLock: sessionSteerLock,
   profileForSession: (_principal, session) => uow.read(session.projectId, async reader => {
     if (!reader.sessionAssignments) throw new Error("Session profile storage unavailable");
     return reader.sessionAssignments.getSessionProfile({ kind: "owned", sessionId: session.id });
@@ -662,6 +665,7 @@ const taskAttentionPump = new TaskAttentionPump({pool,canWrite:lease.canWrite,no
 const businessBeforeMessage = sessionMessageCanStart({ workflow: service, service: messageService, principals: currentIdentity,
   onError: () => console.error("Task answer continuation requires review; inspect the saved queue and message reason.") });
 const messagePump = runner ? new SessionMessagePump({ service: messageService, runtime: () => runner.nativeAdapter(),
+  lock: sessionSteerLock,
   roleContext: async message => {
     if(message.target.kind!=="owned")return null;
     const session=await messageService.session(message.projectId,message.target.sessionId);
@@ -798,6 +802,7 @@ const sessionTimeline = new SessionTimelineService({uow,observation:sessionWork,
   directInputs:new PgDirectInputs(pool),...(runner?{runner}:{})});
 const directInput = runner && integrations.runtime?.enabled ? createDirectInputService({
   pool, uow,
+  lock: sessionSteerLock,
   runtime: () => requireDirectInputRuntime(runner.nativeAdapter()),
   canWrite: () => lease.canWrite() && runner.nativeStartsAvailable(),
   configuration: () => loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE),

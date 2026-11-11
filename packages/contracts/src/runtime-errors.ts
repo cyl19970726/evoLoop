@@ -35,6 +35,7 @@ export class RuntimeNotSentError extends RuntimeProtocolError {
 
 export type RuntimeServerErrorCategory = "rollout_not_found" | "thread_unavailable" | "writer_conflict" | "invalid_params" |
   "method_not_found" | "permission_denied" | "server_rejected";
+export type RuntimeSteerRejection = "non_steerable_turn" | "misaligned_turn";
 
 const serverErrorCategory = (method: string, code: number, message: string): RuntimeServerErrorCategory => {
   // The pinned Codex writer-lock rejection occurs before this resume can start a Turn.
@@ -54,6 +55,8 @@ export class RuntimeServerError extends RuntimeProtocolError {
   readonly category: RuntimeServerErrorCategory;
   readonly preTurnWriterConflict: boolean;
   readonly rejectedThreadId: string | null;
+  /** A classified steer refusal only; never used as a generic retry signal. */
+  readonly steerRejection: RuntimeSteerRejection | null;
   constructor(public readonly method: string, public readonly requestId: number, public readonly code: number, nativeMessage: string, requestedThreadId?: string) {
     const category = serverErrorCategory(method, code, nativeMessage);
     super(`${method}: native runtime rejected request (${category}, code ${code})`);
@@ -62,6 +65,10 @@ export class RuntimeServerError extends RuntimeProtocolError {
     const rejectedThreadId = category === "writer_conflict" ? nativeMessage.match(/^thread ([0-9a-f-]{36}) already has an active writer$/)?.[1] ?? null : null;
     this.rejectedThreadId = rejectedThreadId ?? null;
     this.preTurnWriterConflict = category === "writer_conflict" && rejectedThreadId === requestedThreadId;
+    this.steerRejection = method !== "turn/steer" ? null :
+      /NonSteerableTurnKind|non[- ]?steerable|not steerable|cannot steer|compaction|review/i.test(nativeMessage)
+        ? "non_steerable_turn"
+        : /MisalignmentSteer|misalign/i.test(nativeMessage) ? "misaligned_turn" : null;
   }
 }
 

@@ -8,9 +8,9 @@ const fixture=resolve(import.meta.dirname,'direct-input-fixture.mjs');
 const spec:RuntimeSessionSpec={actorId:'actor',sessionId:'session-1',roleId:'role-1',projectId:'project-1',
   cwd:'/tmp/evoloop-fixture',authorizationScope:'task:109',model:'gpt-6-sol',
   sandbox:'danger-full-access',approvalPolicy:'never'};
-async function open(mode:string,timeout=250){
+async function open(mode:string,timeout=250,expectedVersion='codex-cli 0.166.0-alpha.6'){
   const adapter=new CodexAppServerAdapter({executable:process.execPath,spawnArgs:[fixture,mode],
-    expectedVersion:'codex-cli 0.166.0-alpha.6',requestTimeoutMs:timeout,initializationTimeoutMs:5000});
+    expectedVersion,requestTimeoutMs:timeout,initializationTimeoutMs:5000});
   await adapter.open();
   const binding=await adapter.create(spec);
   return {adapter,binding};
@@ -42,6 +42,26 @@ test('steer sends the exact alpha.6 shape and accepts only the expected Turn ack
   assert.deepEqual(events,[{method:'item/started',projectId:'project-1',sessionId:'session-1',turnId:'turn-1'}]);
 });
 
+for(const expectedVersion of ['codex-cli 0.166.0-alpha.6','codex-cli 0.167.0-alpha.3.2'] as const)
+  test(`steer and clientId readback work on ${expectedVersion}`,async t=>{
+    const {adapter,binding}=await open('normal',250,expectedVersion);t.after(()=>adapter.close());
+    assert.equal(adapter.capabilities().delivery.midTurnInput,true);
+    assert.equal(adapter.capabilities().delivery.idleTurnStart,true);
+    assert.deepEqual(await adapter.steerTurn(binding,'turn-1','follow up','steer-id'),
+      {turnId:'turn-1',itemId:null});
+    const items=(await adapter.listItems(binding,'turn-1')).data as Array<Record<string,unknown>>;
+    assert.equal(items.some(item=>item.type==='userMessage'&&item.clientId==='steer-id'),true);
+  });
+
+test('steer immediately before a materializing final answer still targets the active Turn',async t=>{
+  const {adapter,binding}=await open('before-final');t.after(()=>adapter.close());
+  assert.deepEqual(await adapter.steerTurn(binding,'turn-1','follow up','steer-id'),
+    {turnId:'turn-1',itemId:null});
+  const items=(await adapter.listItems(binding,'turn-1')).data as Array<Record<string,unknown>>;
+  assert.equal(items.some(item=>item.type==='agentMessage'&&item.phase==='final_answer'),true);
+  assert.equal(items.some(item=>item.type==='userMessage'&&item.clientId==='steer-id'),true);
+});
+
 for(const mode of ['idle','wrong-turn','settled','wrong-model','foreign-read'] as const)
   test(`steer rejects ${mode} before any native write`,async t=>{
     const {adapter,binding}=await open(mode);t.after(()=>adapter.close());
@@ -68,4 +88,14 @@ test('explicit native steer rejection retains category and hides private text',a
   const {adapter,binding}=await open('steer-reject');t.after(()=>adapter.close());
   await assert.rejects(()=>adapter.steerTurn(binding,'turn-1','follow up','steer-id'),error=>
     error instanceof RuntimeServerError&&error.category==='invalid_params'&&!error.message.includes('private'));
+});
+
+test('non-steerable Turn and MisalignmentSteer remain explicit native rejections',async t=>{
+  for(const [mode,rejection] of [['non-steerable','non_steerable_turn'],['misalignment','misaligned_turn']] as const){
+    const {adapter,binding}=await open(mode);
+    try{
+      await assert.rejects(()=>adapter.steerTurn(binding,'turn-1','follow up','steer-id'),error=>
+        error instanceof RuntimeServerError&&error.steerRejection===rejection);
+    }finally{await adapter.close();}
+  }
 });

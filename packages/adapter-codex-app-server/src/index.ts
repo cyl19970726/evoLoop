@@ -376,14 +376,18 @@ export class CodexAppServerAdapter implements RuntimePort {
     const modern = this.features.modern;
     return {
       provider: "codex", process: "shared",
-      delivery: { midTurnInput: false, callerAssignedTurnKey: false, callerAssignedSessionId: false },
+      delivery: { midTurnInput: this.features.midTurnInput, idleTurnStart: modern,
+        callerAssignedTurnKey: false, callerAssignedSessionId: false },
       errors: { notSent: true, rejected: true },
       compaction: { autoCompacts: true, mode: this.features.compaction ? "owned_request" : "unavailable" },
       history: { workTrace: true, workspace: this.options.workspaceExperimental === true && this.features.workspace },
       naming: modern, archive: "native", nativeInput: this.options.nativeUserInput === true && modern,
-      executionProfileActivation: modern, modelList: true, usage: "unavailable", cost: false,
+      executionProfileActivation: modern && this.features.executionProfileSwitch,
+      modelList: true, usage: "unavailable", cost: false,
     };
   }
+  /** This adapter serves one pinned protocol, so every binding has the same declaration. */
+  capabilitiesFor(_binding: RuntimeBinding): RuntimeCapabilities { return this.capabilities(); }
   isReady(): boolean { return this.ready && !!this.child; }
   hasProcessHandle():boolean{return this.ownedProcess!==null;}
   /** Last loss of the owned native connection, retained after close or a later open. */
@@ -1471,8 +1475,8 @@ export class CodexAppServerAdapter implements RuntimePort {
 
   /** Direct input on an idle owned Session. The caller persists the message ID before invoking this method. */
   async startOwnedIdleTurn(binding:RuntimeBinding,input:string,clientUserMessageId:string):Promise<RuntimeTurn>{
-    if(!this.features.directInput)
-      throw new RuntimeProtocolError('direct input requires the pinned alpha.6 protocol');
+    if(!this.features.modern)
+      throw new RuntimeProtocolError('idle direct input requires a pinned modern protocol');
     this.owned(binding);
     if(!nonempty(input)||!input.trim()||!nonempty(clientUserMessageId))
       throw new RuntimeProtocolError('input and durable client message ID required');
@@ -1488,8 +1492,8 @@ export class CodexAppServerAdapter implements RuntimePort {
   async steerTurn(binding:RuntimeBinding,expectedTurnId:string,content:string,
     inputId:string):Promise<{turnId:string;itemId:string|null}>{
     this.owned(binding);
-    if(!this.features.directInput)
-      throw new RuntimeProtocolError('direct input requires the pinned alpha.6 protocol');
+    if(!this.features.midTurnInput)
+      throw new RuntimeProtocolError('mid-Turn input requires turn/steer in the pinned protocol');
     if(!binding.resumeProfile||!fullProfile(binding.resumeProfile)||
       this.profileTransitionThreads.has(binding.nativeThreadId))
       throw new RuntimeProtocolError('direct input requires an active full Session profile');

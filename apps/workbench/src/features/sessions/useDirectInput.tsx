@@ -8,7 +8,7 @@ import { Button, Notice } from "@evoloop/ui";
 import { ApiError, errorText } from "../../shared/api";
 import { useProjectQuery } from "../../shared/query";
 import { FullIdentifiers } from "../../shared/ui/FullIdentifiers";
-import { directInputClient, explicitlyUnaccepted } from "./directInputClient";
+import { directInputClient, explicitlyUnaccepted, retryableInputBusy } from "./directInputClient";
 
 const stateLabel: Record<DirectInputReceipt["state"], string> = {
   pending: "准备发送", attempted: "发送中，等待原操作回执", accepted: "运行时已接收；不代表智能体已阅读或采用",
@@ -101,6 +101,12 @@ export function useDirectInput({ projectId, sessionId, actorId, active, onAccept
       return finish(await client.submit({ inputId, operationId, content: content.trim(),
         expectedTurnId: current.mode === "steer" ? current.expectedTurnId : null }), inputId);
     } catch (cause) {
+      if (retryableInputBusy(cause)) {
+        storage.remove(storageKey); storage.remove(operationStorageKey); storage.remove(auditStorageKey);
+        setAudit(null); setPendingId(null); setReceipt(null);
+        setError("这个智能体正在开始另一轮或接收另一条输入；这条输入没有送出，可以稍后用原内容重试。");
+        return "rejected";
+      }
       // Read the original intent even after a clear HTTP error: the server may have reserved it.
       try { return finish(await client.read(inputId), inputId); }
       catch (readError) {

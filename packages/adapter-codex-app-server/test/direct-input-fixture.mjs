@@ -6,6 +6,8 @@ const thread={id:'direct-owned',sessionId:'direct-owned',cwd:'/tmp/evoloop-fixtu
 let started=false;
 let steerCount=0;
 let startCount=0;
+let lastSteerId=null;
+let lastSteerText=null;
 for await(const line of createInterface({input:process.stdin})){
   const {id,method,params}=JSON.parse(line);
   if(method==='initialized')continue;
@@ -27,6 +29,14 @@ for await(const line of createInterface({input:process.stdin})){
   if(method==='thread/turns/list'){
     send({id,result:{data:started||mode!=='start'?[{id:mode==='wrong-turn'?'other-turn':'turn-1',
       status:mode==='settled'?'completed':'inProgress',completedAt:mode==='settled'?1792498484:null}]:[],nextCursor:null}});continue;
+  }
+  if(method==='thread/items/list'){
+    const items=[];
+    if(mode==='before-final')items.push({turnId:'turn-1',item:{id:'final-before-steer',type:'agentMessage',
+      phase:'final_answer',text:'A final answer was materializing'}});
+    if(lastSteerId)items.push({turnId:'turn-1',item:{id:`item-${lastSteerId}`,type:'userMessage',clientId:lastSteerId,
+      content:[{type:'text',text:lastSteerText}]}});
+    send({id,result:{data:items,nextCursor:null}});continue;
   }
   if(method==='turn/start'){
     startCount++;
@@ -54,6 +64,14 @@ for await(const line of createInterface({input:process.stdin})){
     if(mode==='steer-reject'){
       send({id,error:{code:-32602,message:'private error text'}});continue;
     }
+    if(mode==='non-steerable'){
+      send({id,error:{code:-32602,message:'turn cannot be steered: NonSteerableTurnKind(compaction)'}});continue;
+    }
+    if(mode==='misalignment'){
+      send({id,error:{code:-32602,message:'MisalignmentSteer: expected turn differs from active turn'}});continue;
+    }
+    lastSteerId=params.clientUserMessageId;
+    lastSteerText=params.input[0].text;
     send({id,result:{turnId:mode==='steer-bad-ack'?'other-turn':'turn-1'}});
     send({method:'item/started',params:{threadId:thread.id,turnId:'turn-1',item:{id:'input-2',type:'userMessage'}}});
     send({method:'item/started',params:{threadId:'foreign-thread',turnId:'turn-1',item:{id:'foreign',type:'userMessage'}}});
