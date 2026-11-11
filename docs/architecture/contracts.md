@@ -42,7 +42,7 @@
 
 ### 正文、执行与验收责任
 
-`task.create` 接收 title/content/acceptance/owner 和按需元数据，一次创建 Task 与主 DocumentRevision。Task/TaskRevision 的 content 是固定主正文的读取投影，不另存正文。Task.kind 可为空或 implementation/research/validation/defect/documentation/operation（迁移 082 扩到六种，旧数据不变）；所有类型共用 todo/in_progress/done/cancelled。项目 Goal 与 Role.goal 不改变含义，Schedule 的新 TaskTemplate 使用 content，旧模板仅在读取时兼容。
+`task.create` 接收 title/content/acceptance/owner 和按需元数据，一次创建 Task 与主 DocumentRevision。Task/TaskRevision 的 content 是固定主正文的读取投影，不另存正文。Task.kind 可为空或 implementation/research/validation/defect/documentation/operation（迁移 088 扩到六种，旧数据不变）；所有类型共用 todo/in_progress/done/cancelled。项目 Goal 与 Role.goal 不改变含义，Schedule 的新 TaskTemplate 使用 content，旧模板仅在读取时兼容。
 
 开始时校验当前版本、实际授权和固定原件，原子发布主正文、封存 BasisSet 并进入 in_progress；外部材料可显式加入，主正文会自动加入，无需独立创建/采纳其他 Document。`task.start` 保留明确的 review 权限核验；状态简化不把旧提议自动变成已获准运行。Runtime 只从已开始的 in_progress Task 派发。
 
