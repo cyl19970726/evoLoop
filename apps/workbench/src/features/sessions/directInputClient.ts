@@ -23,6 +23,12 @@ export function explicitlyUnaccepted(error: unknown): boolean {
     (error.status === 409 && code === "DIRECT_GRANT_MISSING");
 }
 
+/** A local per-Session admission conflict: nothing was reserved, so retrying the same draft is safe. */
+export function retryableInputBusy(error: unknown): boolean {
+  return error instanceof ApiError && error.status === 409 && error.detail !== null &&
+    typeof error.detail === "object" && (error.detail as { code?: unknown }).code === "SESSION_INPUT_BUSY";
+}
+
 /** UI keeps the original IDs across an unknown response; it never resends automatically. */
 export function directInputClient(token:string,projectId:string,sessionId:string){
   const part=encodeURIComponent;

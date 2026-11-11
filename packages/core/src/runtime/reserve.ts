@@ -84,11 +84,15 @@ export async function reserveRuntime({ tx, command, principal, now, nextId, hash
     } else if (run.nativeTurnId) {
       // A known Turn: the existing interrupt path (runner -> adapter) ends it; the terminal state is what the runtime observes.
       next = { ...marked, interruptRequested: true };
-      detail = `Stop requested; interrupting the running Turn: ${command.reason}`;
+      detail = run.state === "unknown"
+        ? `Stop requested on an unknown Run with a known Turn; the Turn is interrupted and the end read back, then its gate opens: ${command.reason}`
+        : `Stop requested; interrupting the running Turn: ${command.reason}`;
     } else {
       // Dispatching with no Turn yet: a native start may be in flight, so do not call it failed; the Turn is interrupted when it binds.
       next = marked;
-      detail = `Stop requested while dispatching; the Turn is interrupted as soon as it binds: ${command.reason}`;
+      detail = run.state === "unknown"
+        ? `Stop requested on an unknown Run with no known Turn; it stays unknown until its end is read back, and its gate opens then: ${command.reason}`
+        : `Stop requested while dispatching; the Turn is interrupted as soon as it binds: ${command.reason}`;
     }
     await tx.updateRuntimeRun(next, run.version);
     await tx.appendRuntimeEvent(event(command.projectId, nextId(), run.id, run.sessionId, "run.stopRequested", detail, run.nativeTurnId, principal.actorId, now));

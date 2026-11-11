@@ -97,6 +97,7 @@ import { ConnectorIngressPump } from "./message-connectors/pump.js";
 import { currentConnectorBusinessActor } from "./message-connectors/business-actor.js";
 import { qualifyStandardConnectorRoute } from "./message-connectors/qualification.js";
 import { bindingOf } from "./runtime/runner.js";
+import { SessionSteerLock } from "./runtime/session-steer-lock.js";
 import { localProjectConfiguration } from "./project-configuration/local.js";
 
 const databaseUrl = process.env.EVOLOOP_DATABASE_URL;
@@ -104,7 +105,7 @@ const authFile = process.env.EVOLOOP_AUTH_FILE;
 if (!databaseUrl || !authFile) throw new Error("Set EVOLOOP_DATABASE_URL and EVOLOOP_AUTH_FILE. Run migrations separately before starting.");
 let credentials: ReturnType<typeof authConfigSchema.parse>;
 try { credentials = authConfigSchema.parse(JSON.parse(await readFile(authFile, "utf8"))); }
-catch { throw new Error("Invalid identity file: check its JSON and credential schema; values are not logged."); }
+catch { throw new Error("Invalid identity file: check its JSON and credential schema (extraCommands may only list document.archive and document.restore); values are not logged."); }
 const currentStudyReviewer = async (projectId: string, actorId: string) =>
   hasCurrentStudyReviewer(credentials,projectId,actorId);
 const port = Number(process.env.EVOLOOP_PORT ?? "4318");
@@ -440,7 +441,9 @@ const runtimeFactory = runtimeConfig?.enabled ? (): ManagedRuntime => {
   return children.size === 1 ? [...children.values()][0]! : new ProviderRoutedRuntime(children, runtimeConfig.provider, build);
 } : null;
 let managedCliBroker: WorkerCredentialBroker | null = null;
+const sessionSteerLock = new SessionSteerLock();
 const runner = runtimeFactory ? new RuntimeRunner({ runtimeFactory, workflow: service, trusted: trustedRuntime, nativeInputs, nativeObservation,
+  steerLock: sessionSteerLock,
   profileForSession: (_principal, session) => uow.read(session.projectId, async reader => {
     if (!reader.sessionAssignments) throw new Error("Session profile storage unavailable");
     return reader.sessionAssignments.getSessionProfile({ kind: "owned", sessionId: session.id });
@@ -610,7 +613,12 @@ const acceptanceRelay = new AcceptanceRelayService({pool,workflow:service,messag
   leaderSession:async projectId => (await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE)).leaderResultNotices?.targets
     .find(x=>x.projectId===projectId)?.sessionId??null,
   qualify:async input => (await acceptanceCapabilityProblems(input))[0]??null,
-  capabilities:acceptanceCapabilityProblems});
+  capabilities:acceptanceCapabilityProblems,
+  boundRecipient:async (projectId,session)=>{
+    const current=await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE);
+    return (current.runtime?.enabled ? selectMaterialCli(current.runtime.materialCli,projectId,session.id,session.actorId,
+      undefined,session.roleId) : null)?.cliActorId??null;
+  }});
 let acceptanceTickBusy=false;
 const acceptanceTimer=setInterval(()=>{
   if(acceptanceTickBusy||!lease.canWrite())return;
@@ -670,6 +678,7 @@ const taskAttentionPump = new TaskAttentionPump({pool,canWrite:lease.canWrite,no
 const businessBeforeMessage = sessionMessageCanStart({ workflow: service, service: messageService, principals: currentIdentity,
   onError: () => console.error("Task answer continuation requires review; inspect the saved queue and message reason.") });
 const messagePump = runner ? new SessionMessagePump({ service: messageService, runtime: () => runner.nativeAdapter(),
+  lock: sessionSteerLock,
   roleContext: async message => {
     if(message.target.kind!=="owned")return null;
     const session=await messageService.session(message.projectId,message.target.sessionId);
@@ -827,6 +836,7 @@ const sessionTimeline = new SessionTimelineService({uow,observation:sessionWork,
   directInputs:new PgDirectInputs(pool),...(runner?{runner}:{})});
 const directInput = runner && integrations.runtime?.enabled ? createDirectInputService({
   pool, uow,
+  lock: sessionSteerLock,
   runtime: () => requireDirectInputRuntime(runner.nativeAdapter()),
   canWrite: () => lease.canWrite() && runner.nativeStartsAvailable(),
   configuration: () => loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE),

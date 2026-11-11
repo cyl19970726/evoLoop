@@ -143,9 +143,11 @@ Leader 读到交付后，按 Task 声明的验收方式，用 `acceptance.assign
 
 所有读取都按当前项目、actor 和 review 权限重新授权。客户端自报的 `human`、`direct` 或角色名不能替代授权。
 
-能力查询和提交使用同一组检查：当前 writer、Session 执行授权、普通消息授权、即时输入授权、cwd 和原生资格。只有查询明确返回 `steer` 或 `start` 时，工作台才显示即时发送；否则只保留普通消息入口。
+能力查询和提交使用同一组检查：当前 writer、Session 执行授权、普通消息授权、即时输入授权、cwd、原生资格，以及 Session 实际绑定的运行时能力。只有查询明确返回 `steer` 或 `start` 时，工作台才显示即时发送；否则只保留普通消息入口。`steer` 需要 `delivery.midTurnInput`，`start` 需要 `delivery.idleTurnStart`。
 
-**运行时限制。** 补入只在 Codex 固定 `0.166.0-alpha.6` 上可用；Claude 和其他 Codex 版本只能空闲直启。能力查询目前不核对运行时是否支持补入，这个已知缺口见 [Session 运行时 §3](../architecture/session-runtime.md#3-即时输入执行中收到的消息怎样处理)。
+**运行时限制。** Codex 的 `0.166.0-alpha.6` 与 `0.167.0-alpha.3.2` 支持运行中补入；所有现代 Codex 协议支持空闲直启。Claude 不支持即时输入。`thread/settings/update` 只属于执行配置切换，alpha.6 支持，0.167 不支持；不要再把补入与配置切换绑成一个开关。
+
+**并发与不可补入回合。** 业务 Run 或普通消息开新一轮、用户即时输入和后续通知包送入共用每 Session 一把短锁。锁前撞车返回 409 `SESSION_INPUT_BUSY`，没有预占输入；适配器在途检查在已持久化意图后拒绝时，也证明没有写入原生传输，服务保留同一输入编号与操作编号供重试。两种情况都不关闭恢复门；业务 Run 保持 `requested` 等下一轮，普通消息留下待处理原因后下一轮重试同一操作，工作台保留草稿和原输入编号。只有结构化 `codexErrorInfo.activeTurnNotSteerable`（`turnKind` 为 `review` 或 `compact`）或 0.167 的精确文字才把 direct input 记为 `rejected`，并把同一内容写成一条普通排队消息；`TurnError.misalignment.steer` 是失败回合的继续指令，不是补入拒绝。补入已被接受、回合随后失败且没有对应输入 Item 时，该输入保持未读，不因送达回执算作已读。
 
 ### 占用、未知与恢复
 
@@ -163,9 +165,10 @@ Leader 读到交付后，按 Task 声明的验收方式，用 `acceptance.assign
 
 | 检查 | 覆盖什么 |
 | --- | --- |
-| `apps/workbench/test/direct-input-client.test.ts` | 能力响应；503 之后 404 时保留原输入；400、409 等预占前明确拒绝的区分 |
+| `apps/workbench/test/direct-input-client.test.ts` | 能力响应；503 之后 404 时保留原输入；400、409 等预占前明确拒绝的区分；`SESSION_INPUT_BUSY` 可重试 |
+| `apps/coordinator/test/direct-input-service.test.ts` | 按实际运行时能力回答；共享送入锁的撞车、重试与无持久写入；不可补入回合转为普通排队消息 |
 | `packages/adapter-postgres/test/direct-input.test.ts` | 在独立 PostgreSQL schema 里检查双启动唯一槽位、Run 与消息两种主来源、同一 Turn 的两条补入、TaskRevision 与输入哈希不变、额度、撤权、未知和终态 CAS |
-| `apps/coordinator/test/direct-input-native-live.mts` | 用固定 alpha.6 二进制在隔离的 HTTP、PostgreSQL 和 Thread 中执行一次直启和两条补入，回读三个精确的 client ID 和 Item |
+| `apps/coordinator/test/direct-input-native-live.mts` | 用 `LIVE_CODEX_VERSION` 固定的真实二进制在隔离的 HTTP、PostgreSQL 和 Thread 中执行一次直启和两条补入，回读三个精确的 client ID 和 Item；W3 用 0.167.0-alpha.3.2 记录 |
 | `apps/coordinator/test/direct-input-native-sources-live.mts` | 同一隔离边界里，分别对已有业务 Run 和普通消息处理各补入两条；前者核对固定 Run 输入未变，后者由现有泵完成终态结算 |
 
 浏览器回归要看：普通 owned 入口、长历史、unknown 卡、409 明确拒绝与刷新后的审计和不恢复策略、390 宽与正常宽与短窗、减少动态效果、工具详情授权、Task 往返和滚动锚点。390 宽用真实的 CSS 宽高、DPR 和 `visualViewport.scale` 验收，不靠缩字、放大视口或隐藏 unknown 通过。页面本身的设计见 [Sessions 页面](../frontend/pages/sessions.md)。
@@ -276,12 +279,11 @@ node --import tsx tests/manual/session-compaction-e1.ts
 
 ## 叫停执行中的 Run
 
-业务 Run 的范围变了就叫停，不要等它做完再返工：`command schema runtime.run.stop` 取结构，带 Run 的当前版本和理由，用 `command run FILE` 提交；身份要有 review 权限并持有该 Session 的精确执行授权，原生运行时离线时也能提交（未派发的 Run 在数据库里直接判失败，运行中的由 runner 在运行时恢复后中断）。提交后回读 Run：`stopRequestedAt` 已有、`interruptRequested` 为真表示等运行时中断；终态（`interrupted` 或 `failed`）由运行时观察确认，在此之前仍算未结束，Task 上不能再派新的 Run。用这个 Run 再提交会得到 `RUN_STOPPED`，叫停前已签的意图作废，不会产生交付。停止不会关恢复门，也没有失败通知，只有一条 `run.stopRequested` 运行事件。结果未知的 Run 不属于这条路径，仍按“未知”章节对账。
+业务 Run 的范围变了就叫停，不要等它做完再返工：`command schema runtime.run.stop` 取结构，带 Run 的当前版本和理由，用 `command run FILE` 提交；身份要有 review 权限并持有该 Session 的精确执行授权，原生运行时离线时也能提交（未派发的 Run 在数据库里直接判失败，运行中的由 runner 在运行时恢复后中断）。提交后回读 Run：`stopRequestedAt` 已有、`interruptRequested` 为真表示等运行时中断；终态（`interrupted` 或 `failed`）由运行时观察确认，在此之前仍算未结束，Task 上不能再派新的 Run。用这个 Run 再提交会得到 `RUN_STOPPED`，叫停前已签的意图作废，不会产生交付。停止不会关恢复门，也没有失败通知，只有一条 `run.stopRequested` 运行事件。结果未知的 Run 也可以叫停：标记立即生效，有已知 Turn 的会被中断，Run 仍是 `unknown`，直到读回终态；读回终态后，被它关闭的恢复门自动打开（队列认领持有的门除外）。被叫停作废的排队消息带持久的“被取代”标记，选取与准入都排除，发送人取消或 `session.message.confirmSuperseded` 确认后才重新投递。
 
 ## 已知缺口
 
 - **导入通知没有正式命令。** 迁移导入的 Leader 通知只能由维护者直接标记，没有权限检查和操作回执（见[迁移之后先处理导入的通知](#迁移之后先处理导入的通知)）。
-- **即时输入的能力查询不核运行时。** 对 Claude 或非 alpha.6 的 Codex 也可能回答 `steer`，提交时才被拒绝或记为未知（见 [Session 运行时 §3](../architecture/session-runtime.md#3-即时输入执行中收到的消息怎样处理)）。
 - **托管压缩只在 alpha.6 可用。** 隔离测试只用替身，不验证有认证的模型压缩。
 
 ## 6. 受管 Session 编制所需配置
@@ -290,6 +292,8 @@ node --import tsx tests/manual/session-compaction-e1.ts
 
 - **缺项怎么看。** `session prepare` 返回 `status=blocked`，`missing` 是代码，`missingDetails` 写明要设的配置项、可复制的修法和是否需重启；`role_actor` 就是缺 `residentQueue.roleActors`（或它没启用、或该身份无写权限）。
 - **哪些要重启。** 按代码核对，`session prepare` 每次调用都重读 integrations 与身份文件，补 `residentQueue.roleActors`、`runtime.materialCli`、`runtime.grants` 不需要重启；只有 `runtime.enabled`（运行时只在启动时建立）和新增 HTTP 令牌要重启。
+
+- **身份的额外命令（`extraCommands`）。** 给文档与架构这类只有 read、write 的身份开放归档与恢复时，在身份文件里该凭据上加 `"extraCommands": ["document.archive", "document.restore"]`，不要给它 `review`（那样它还能开始、关闭、分派 Task）。清单只接受这两个值，别的命令写进去则服务启动时读身份文件失败；每条命令各自生效。**身份文件在服务启动时读取，改了要重启服务才生效**（`session prepare` 重读身份文件只用于其编制检查，不改变 HTTP 认证用的启动快照）。
 - **同一个事实写两处。** `runtime.materialCli` 的 `cliActorId` 与 `residentQueue.roleActors` 的 `actorId` 在 Role 级必须一致，不一致时报 `material_cli_actor_mismatch`；为什么暂不合并见 Agent CLI 那一节。
 
 ## 7. 用量上限与上下文交接
