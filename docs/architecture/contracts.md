@@ -194,6 +194,8 @@ HostLink 独立记录 Role、owned Session 或外部 Codex Desktop 引用及历�
 
 `SessionRuntime` 合同不绑定具体运行时。协调服务只经中立的 `RuntimePort`（`packages/contracts/src/runtime.ts`）调用运行时：创建/继续、查询状态、发送已授权任务、读取回复/产物、请求停止、恢复关联。每个适配器用 `capabilities()` 逐项声明进程模型、执行中补入、压缩、历史、命名、归档、模型修订、用量与费用等能力；未声明的能力返回 unsupported，不由协调服务模拟。当前有 Codex App Server 与 Claude Agent SDK 两个适配器，一个协调服务可同时驱动两者；Role 第一次预留 Session 时绑定一种运行时，之后不能更换，Session 在预留时固定运行时（DEC-035，schema 067、068）。两者的生命周期与能力差别见[Session 运行时](session-runtime.md)。
 
+**发给 owned Session 的输入（即时输入，`packages/contracts/src/direct-input.ts`）。** 请求 `{ inputId, operationId, content, expectedTurnId }`；`expectedTurnId` 为当前 Turn 表示插入（steer），为 `null` 表示 Session 空闲时开一轮（start）。回执 `DirectInputReceipt` 带 `state`（`accepted`、`rejected`、`attempted`、`unknown`）、`mode`、`reason`，以及**新增的可选字段 `queuedMessageId`**：非空表示这条输入没有送入运行时，而是存成了一条普通排队消息，其 ID 等于输入 ID；`state` 此时为 `rejected`，`reason` 说明原因（以 `TURN_CHANGED:` 开头表示人看到的 Turn 在提交时已换，或不可补入的回合）。能力响应 `DirectInputCapability` 新增可选 `detail`，在授权缺失时写出缺哪一项。排队这条路的请求就是 `session.message.post`（`messageId` 即输入 ID），没有新的命令类型。CLI 为两条路提供 `session input send|show`。
+
 发送消息或唤醒并不等于接收、执行、完成。不能凭“创建请求已发出”就登记为已运行。运行时身份映射保留 `roleId ↔ sessionId ↔ taskId` 的时间范围和来源；同一任务因续做换 session 时保留交接链。
 
 运行时专有的版本锁定由适配器负责，不进入共同合同。Codex 的 App Server 协议版本由运行配置显式固定，服务按选中版本精确核对二进制与 schema 指纹，不自动升级或放宽协议锁；`model/list` 返回某模型也不能证明新 Turn 会被接受或其实际运行模型。版本与可选能力见[Codex 接入](codex-integration.md#协议版本与可选能力)。

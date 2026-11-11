@@ -92,12 +92,17 @@ export interface ComposerProps {
   className?: string | undefined;
   /** Which skills the menu lists, for the heading, for example 功能开发可用. */
   skillScope?: string | undefined;
+  /**
+   * Two named send buttons instead of the one arrow: the first runs `onSend` (Enter), the second `onQueue` (Cmd/Ctrl+Enter).
+   * Used where the person must see which of two ways the message goes; the keys stay as they are.
+   */
+  splitSend?: { sendLabel: string; queueLabel: string } | undefined;
 }
 
 type MenuItem = { type: "command"; item: ComposerCommand } | { type: "agent"; item: ComposerAgent };
 
 export function Composer({
-  value, onChange, onSend, onQueue, onQueueUnavailable, sendMode, busy, label = "消息", maxLength, onStop, running, placeholder = "发消息，/ 调用技能，@ 转给其他智能体",
+  value, onChange, onSend, onQueue, onQueueUnavailable, sendMode, splitSend, busy, label = "消息", maxLength, onStop, running, placeholder = "发消息，/ 调用技能，@ 转给其他智能体",
   attachments = [], onRemoveAttachment, onAttach, commands = [], onPickCommand, agents = [], onPickAgent, meta, disabled, className, skillScope,
 }: ComposerProps) {
   const mode: ComposerSendMode = sendMode ?? (running ? "queue" : "send");
@@ -286,11 +291,15 @@ export function Composer({
             onFocus={() => setDismissed(null)}
             className="max-h-40 min-h-[34px] min-w-0 flex-1 resize-none border-0 bg-transparent px-0.5 py-1.5 text-body leading-(--leading-tight) text-foreground outline-none placeholder:text-muted-foreground"
           />
-          {showStop ? (
-            <button type="button" aria-label="停止这一轮" title="停止这一轮（Esc）" onClick={onStop} className="inline-flex size-9 shrink-0 cursor-pointer items-center justify-center rounded-full border-0 bg-foreground text-background outline-none hover:opacity-90 focus-visible:shadow-[var(--focus-ring)]">
+          {showStop && <button type="button" aria-label="停止这一轮" title="停止这一轮（Esc）" onClick={onStop} className="inline-flex size-9 shrink-0 cursor-pointer items-center justify-center rounded-full border-0 bg-foreground text-background outline-none hover:opacity-90 focus-visible:shadow-[var(--focus-ring)]">
               <Square aria-hidden="true" className="size-3.5 fill-current" strokeWidth={0} />
-            </button>
-          ) : (
+            </button>}
+          {splitSend && onQueue ? (
+            <div role="group" aria-label="发送方式" className="flex shrink-0 items-center gap-1.5">
+              <button type="button" data-send-way="insert" onClick={send} disabled={!value.trim() || disabled || busy} className="inline-flex h-9 cursor-pointer items-center justify-center whitespace-nowrap rounded-full border-0 bg-foreground px-3.5 text-small font-medium text-background outline-none hover:opacity-90 focus-visible:shadow-[var(--focus-ring)] disabled:cursor-default disabled:bg-field disabled:text-muted-foreground disabled:opacity-100">{splitSend.sendLabel}</button>
+              <button type="button" data-send-way="queue" onClick={queue} disabled={!value.trim() || disabled || busy} className="inline-flex h-9 cursor-pointer items-center justify-center whitespace-nowrap rounded-full border border-border bg-transparent px-3.5 text-small font-medium text-foreground outline-none hover:bg-field focus-visible:shadow-[var(--focus-ring)] disabled:cursor-default disabled:text-muted-foreground disabled:opacity-100">{splitSend.queueLabel}</button>
+            </div>
+          ) : !showStop && (
             <button type="button" aria-label={sendLabels[mode]} title={sendLabels[mode]} onClick={send} disabled={!value.trim() || disabled || busy} className="inline-flex size-9 shrink-0 cursor-pointer items-center justify-center rounded-full border-0 bg-foreground text-background outline-none hover:opacity-90 focus-visible:shadow-[var(--focus-ring)] disabled:cursor-default disabled:bg-field disabled:text-muted-foreground disabled:opacity-100">
               <ArrowUp aria-hidden="true" className="size-4" strokeWidth={2.4} />
             </button>
