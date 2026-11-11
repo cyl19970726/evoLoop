@@ -110,7 +110,7 @@ Blob 身份使用稳定 ID，附内容 hash、大小、媒体类型和资源 man
 
 ### 请求停止一个 Run
 
-`runtime.run.stop`（`runId`、`expectedVersion`、`reason`）：review 权限，加上该 Session 精确的执行授权（与普通消息恢复同一检查；重放已入账的原操作不再核对授权）；不要求原生运行时在线。结果是 Run 上的停止标记（`stopRequestedAt`、`stopReason`、`stopRequestedBy`，不可改、不可撤，**没有新的 Run 状态**）。拒绝码：`VERSION_CONFLICT`、`STOP_ALREADY_REQUESTED`、`RUN_TERMINAL`（已结束的 Run 不能再停）。停止之后 `ordinary.submit` 对该 Run 返回 `RUN_STOPPED`，已签未封存的意图变为 `rejected`（原因 `RUN_STOPPED`）；数据库拒绝引用该 Run 的 Delivery。细节见[Session 运行时](session-runtime.md)。
+`runtime.run.stop`（`runId`、`expectedVersion`、`reason`）：review 权限，加上该 Session 精确的执行授权（与普通消息恢复同一检查；重放已入账的原操作不再核对授权）；不要求原生运行时在线。结果是 Run 上的停止标记（`stopRequestedAt`、`stopReason`、`stopRequestedBy`，不可改、不可撤，**没有新的 Run 状态**）。拒绝码：`VERSION_CONFLICT`、`STOP_ALREADY_REQUESTED`、`RUN_TERMINAL`（已结束的 Run 不能再停）。停止之后 `ordinary.submit` 对该 Run 返回 `RUN_STOPPED`，已签未封存的意图变为 `rejected`（原因 `RUN_STOPPED`）；数据库拒绝引用该 Run 的 Delivery。已停止且停在 `unknown`、预检证明未审的 Run 不会自动结束；审阅者沿用预检续接的批准命令，对已停止的 Run 其含义是“证据属实，Run 以 `failed` 结束”，不继续执行，被它关闭的恢复门随之打开。细节见[Session 运行时](session-runtime.md)。
 
 ### 知识后端可替换合同
 
@@ -225,6 +225,8 @@ Evocation 在授权范围内对照任务负荷、结果、User Session 亲用和
 `TaskSessionAssignment` 固定 Task 修订、具体 owned Session／external HostLink、指定接手 actor 和版本；reviewer 通过 `task.assignment.set/release` 安排与交接，不自动创建 Run。接手由指定 actor 用 `acknowledge` 亲签；Lead 只有人工通信观察时使用 `observeAcceptance`，记录 observer、来源及 `lead-observed`，实际接手 actor 留空，不能冒称执行者签名或原生送达。人工承接窗口只用于筛选关联任务记录；其中的交付仍保留原登记者和产物来源，不据时间窗口推定该会话独立制作了成果。
 
 建议先完成 `task.start` 固定依据再分派。开始、范围变化或其他修订使旧分派过时后，旧 ack 保持原修订，不自动沿用。新队列和直接 Run 必须匹配当前具体 owned 分派；external 人工任务不能被任意同 Role ready 会话抢走。没有显式分派的旧工作维持原授权规则；已建立的合法 queue claim 按其独立封存的业务输入接续，真实 claim／Run 与旧人工 ack 分别显示。
+
+**执行确认与 Session 队伍。** `task.assignment.acknowledge` 可带 `verdict`：`confirm`（要 `plan` 与 `expectedRevisionId`）或 `return`（要至少一条 `missing`）。`expectedRevisionId` 必须是 Task 当前修订，否则 `BASELINE_CHANGED`。确认另记在 `task_assignment_confirmation`（按分派版本，不可改）：`confirm` 同时照常把分派记为已确认，`return` 把分派置为已释放。不带 `verdict` 的签收行为不变。Session 队伍（[Session 运行时](session-runtime.md#session-队伍dec-045-q1)）用它做“轮到时”的执行确认：命令 `line.append/move/remove/resume` 由 Leader 发出；排队中的 Task 在 `task.start`、`runtime.run.reserve`、`task.assignment.set/release` 被拒为 `QUEUED_IN_SESSION_LINE`（队伍自己登记的操作 ID 例外）；同一 Task 重复排队为 `TASK_ALREADY_QUEUED`。
 
 ## 5. Coordinator：派发、交接与恢复
 

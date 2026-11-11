@@ -224,6 +224,28 @@ node scripts/restore.mjs --from /absolute/private-backups/evoloop-20261020 \
 
 随后按后端流程导入 Wiki，核对修订、来源、Blob 原文哈希、Task/操作回执及待对账运行。全部核实前不要开启 Wiki 或 runtime 写入。跨数据库与文件目录的恢复并非单个事务；若数据库已恢复而文件改名失败，保留现场，用新的空库重做，不在半恢复库上盲目重试。脚本拒绝非空数据库、已有目标目录和仓库内正文路径。
 
+### 发布脚本
+
+`npm run release -- plan --id ID --ref GIT_REF` 只打印计划；`run ... --execute` 才执行；`rollback --id ID --execute` 把代码切回上一个版本。`--from STEP` 续跑要求该发布记录里前面的步骤都已成功且没有被撤销，`--only A,B` 只跑所列步骤，步骤名拼错直接报错。`--allow-no-previous` 仅用于第一次发布：当前链接不存在时没有可恢复的旧版本，没有该参数一律拒绝。`--allow-off-main` 仅用于演练：发布提交必须已在远端主分支（默认 `origin/main`，可用配置 `remote`、`baseBranch` 改）上，预检会取远端核对，不在就拒绝。不带 `--from` 重跑时，`prepare` 遇到已存在的版本目录，只在它正好是要发布的提交时复用，否则报错。
+
+配置文件放在仓库外，由 `EVOLOOP_RELEASE_CONFIG` 指向，JSON 字段：`releaseRoot`、`currentLink`、`stateDir`（均为绝对路径）、`backup.out`、`backup.blobRoot`（可选 `wikiSnapshot`、`integrations`）、`database.name`（必填，可加 `host`、`port`）、`skipTests`，以及 `hooks`（各为命令参数数组）。执行前把环境变量 `EVOLOOP_DATABASE_URL` 与 `database` 比对，库名、主机或端口不一致即拒绝，任何步骤都不会运行。不跳过测试时还须设 `EVOLOOP_RELEASE_TEST_DATABASE_URL` 指向独立的 `evoloop_*_test` 库，且不能等于线上库。命令运行时可读 `EVOLOOP_RELEASE_ID`、`EVOLOOP_RELEASE_DIR`、`EVOLOOP_RELEASE_PREVIOUS`（绝对路径）、`EVOLOOP_RELEASE_CURRENT_LINK`。
+
+**钩子必须做到什么**（都不得回显密钥，失败时以非零退出；每个都要能重复执行而不出错）：
+
+| 钩子 | 必须做到 | 失败时 |
+| --- | --- | --- |
+| `wait-idle`（必填） | 没有在途或结果未知的 Run 和消息 Turn 时才退出 0；有排空模式时在这里开启并等到空闲 | 尚未停服，什么都没改 |
+| `stop`（必填） | 协调服务已停止、其他写者已暂停后才退出 0；**退出前**对外端口已释放、协调服务持有的数据库租约（advisory lock）已释放，可以重试到超时再失败；已经停了再调用也要退出 0。自动恢复和回滚也先调用它，以停掉可能还在跑的新版本 | 服务状态不明，自动恢复旧版本 |
+| `repoint-cli`（可选） | 把**每个身份**的 CLI 包装指向 `EVOLOOP_RELEASE_CURRENT_LINK`，退出 0 前逐个调用一次只读命令确认可用 | 自动恢复旧版本 |
+| `start`（必填） | 启动 `EVOLOOP_RELEASE_CURRENT_LINK` 指向的版本，**端口开始监听且协调服务拿到租约**后才退出 0；回滚和恢复时用来启动旧版本 | 自动恢复旧版本 |
+| `post-check`（必填） | 只读核对，至少覆盖：版本与构建提交、登录、读写路径、数据库租约、**每个身份的 CLI 都能连上新版本**、**页面静态资源与构建产物一致**（例如逐个比对哈希）；通过才退出 0 | 自动恢复旧版本 |
+| `post-migrate`（可选） | 迁移之后、切换之前（服务仍停着）运行的项目专项核对，例如 069 迁移的修订链查询与 `VACUUM`；约定先写在这里，由私有钩子实现 | 视为迁移步骤失败，自动恢复旧版本 |
+| `data-counts`（可选） | 向标准输出打印稳定的数据计数文本（相同数据输出相同文本）；**在服务停止期间**取：停服完成后一次，迁移完成后一次，两次文本相同记为 `countsEqual`。服务运行时取的计数会混入正常写入，不能用 | 只记录，不触发任何恢复或回滚 |
+
+**失败分流。** 停服之前（准备、构建、测试、预检、等空闲）失败不改任何东西，修好后用 `--from` 续跑。停服及之后失败，脚本先停掉可能还在运行的新版本，再把链接指回旧版本、重指 CLI、启动旧版本并执行发布后检查，结果写入 `recovery`（`restored` 或 `failed`；停不掉新版本时不会去启动旧版本，直接记 `failed`）。恢复成功后，`wait-idle`、停服及其后的步骤在记录里标为 `undone`：系统已经回到旧版本，这些步骤不再成立，**只能从 `--from wait-idle` 重新开始**（会重新备份，备份目录每次尝试不同，形如 `ID-1`、`ID-2`），从 `migrate` 等中间步骤续跑会被拒绝。恢复失败时服务可能没有运行：先人工恢复，再加 `--acknowledge-manual-recovery --from wait-idle`。迁移步骤及之后的失败还会记 `dataMayBeChanged`：数据库可能已迁移，核对后才能信任旧版本。成功续跑后清掉 `failedAt`、`recovery`，历史留在 `failures`。
+
+**发布记录**写在状态目录的 `release-ID.json`：每步起止与结果（含 `undone`）、`previous`（绝对路径）、`releaseDir`、`commit`（发布提交、远端主分支提交、是否在远端主分支上、是否正好等于它）、`backup`（目录、尝试序号、清单哈希、文件数）、`acceptance.stopCompletedAt`、`downtimeSeconds`、`postCheck`、`postMigrateCheck`、`migrationsBefore`/`migrationsAfter`/`migrationsApplied`（本次实际应用的迁移）、`countsBefore`、`countsAfter`、`countsEqual`（取不到时是 `countsBeforeError`/`countsAfterError`）、`dataMayBeChanged`、`recovery`、`failures`，回滚另记 `rollbacks`。它对应验收方案的停服时间、数据计数一致、发布后检查和回滚演练。**回滚**先核对：当前链接必须指向本次发布（已回滚或被后一次发布替换的拒绝）、上一版本目录必须还在，然后才停服；它只切回代码，不撤销已写入新 schema 的数据，也不改记录里的步骤。回滚演练须在非线上环境或经发布负责人同意后单独执行并保留记录。发布步骤和边界见[发布新版本](../architecture/deployment.md#2-发布新版本)。
+
 ## 验证边界
 
 ```bash
@@ -235,7 +257,42 @@ npm run docs:build
 git diff --check
 ```
 
-**开发和测试只用独立的 PostgreSQL 实例，不连线上实例**：怎样确认、怎样自己起一个、仓库里的保护和维护者隔离步骤见[开发与测试用哪个数据库](database-isolation.md)；测试库名对但服务器上还有 `evoloop` 等非 `evoloop_*` 库时，测试和 `test:integration` 会直接拒绝。持久化检查用独立 PostgreSQL 18 测试库；例如 `TEST_DATABASE_URL='postgres://USER:PASSWORD@127.0.0.1:5432/evoloop_local_test' npm run test:integration`。入口从该连接串取得主机和端口，为固定库名测试创建缺失的专用 `evoloop_*_test` 库；同一个库的文件逐个运行，不同库分组并行（默认最多 4 组，`EVOLOOP_INTEGRATION_CONCURRENCY=1` 恢复全部串行）；测试库不会自动删除，因此执行账号需要 `CREATEDB` 或预先建库。测试有故障注入，绝不能指向正在用的开发库。备份还应在新空库和外部目录做隔离恢复演练。测试入口以 `package.json` 与 CI 工作流为准；最近验收的提交、数量和范围见[当前基线](../roadmap.md#当前基线)。旧轮次的固定结果见相应 PR/实测报告，不作为当前最低通过数量。构建、合成测试和隔离备份不等于生产 OpenViking、飞书双向协作或真人亲用已经验收；当前边界见[阶段路线](../roadmap.md)，S1a 历史证据见[首片实测](../research/design-review-20261020.md)。
+**开发和测试只用独立的 PostgreSQL 实例，不连线上实例**：怎样确认、怎样自己起一个、仓库里的保护和维护者隔离步骤见[开发与测试用哪个数据库](database-isolation.md)；测试库名对但服务器上还有 `evoloop` 等非 `evoloop_*` 库时，测试和 `test:integration` 会直接拒绝。持久化检查用独立 PostgreSQL 18 测试库；例如 `TEST_DATABASE_URL='postgres://USER:PASSWORD@127.0.0.1:5432/evoloop_local_test' npm run test:integration`。入口从该连接串取得主机和端口，为固定库名测试创建缺失的专用 `evoloop_*_test` 库；同一个库的文件逐个运行，不同库分组并行（默认最多 4 组，`EVOLOOP_INTEGRATION_CONCURRENCY=1` 恢复全部串行）；两个文件最多的大组按每库最多 4 个文件拆成 `evoloop_*_shard_X_test` 额外库并行（`EVOLOOP_INTEGRATION_SHARD_SIZE` 调整，设很大即不拆；本次运行新建的分库在全部通过后自动删除，失败时保留以便检查，`EVOLOOP_INTEGRATION_KEEP_SHARDS=1` 保留以加快重跑）；CI 的单元与集成测试是并行任务，必需检查名仍是汇总任务 `app`；`npm run metrics:ci -- --limit 20 --event pull_request --success-only` 只读取 GitHub Actions 的步骤耗时、排队与重跑（自动翻页：`--before` 之后即使有 100 次以上更新的运行也会继续翻到够数；`--before`/`--after` 窗口里取不满 `--limit` 一律报错，不返回短样本；失败率按同窗口全部已完成运行计算），用于前后对比；测试库不会自动删除，因此执行账号需要 `CREATEDB` 或预先建库。测试有故障注入，绝不能指向正在用的开发库。备份还应在新空库和外部目录做隔离恢复演练。测试入口以 `package.json` 与 CI 工作流为准；最近验收的提交、数量和范围见[当前基线](../roadmap.md#当前基线)。旧轮次的固定结果见相应 PR/实测报告，不作为当前最低通过数量。构建、合成测试和隔离备份不等于生产 OpenViking、飞书双向协作或真人亲用已经验收；当前边界见[阶段路线](../roadmap.md)，S1a 历史证据见[首片实测](../research/design-review-20261020.md)。
+
+### 脚本测试要接进 CI 会执行的那组
+
+`scripts/` 下的每个 `*.test.mjs` 必须被某个 CI 工作流会运行的 npm 脚本（通常是 `test:unit`）点名或用通配符覆盖，否则它只会在手动运行时才执行，`app` 全绿也说明不了它。`scripts/ci-test-coverage.test.mjs` 沿工作流里的 `npm run` 逐层展开，找出没人运行的测试并失败；确实无法在 CI 运行的（例如 `scripts/backup.test.mjs` 需要专用的 `evoloop_backup_test` 库和 PostgreSQL 18 客户端工具）要在该文件的 `MANUAL_ONLY` 里写明理由，条目失效时检查也会失败。
+
+### 集成测试与 PostgreSQL 锁表
+
+**现象。** CI 的 `app` 检查偶尔报 `out of shared memory`，提示调大 `max_locks_per_transaction`（#347 一次，#339 一次；#347 重跑通过，#339 的失败当时有 4 个文件同时挂）。
+
+**根因（实测）。** PostgreSQL 在事务结束前一直持有它拿到的每一个锁，所有连接共用一张大小为 `max_locks_per_transaction × (max_connections + max_prepared_transactions)` 的锁表，默认 64×100=6400。集成测试每个文件在自己的库里建一个测试 schema、结束时 `DROP SCHEMA … CASCADE`，几个文件同时进行（默认并发 4）时锁都落在这同一张表里。用 `pg_locks` 按 5–20 毫秒采样，在 `postgres:18.6` 默认配置上：
+
+| 操作 | 持有的锁行数 | 说明 |
+| --- | --- | --- |
+| 迁移一个测试 schema（单事务，71 个迁移） | 约 2.2k | 各自独立库并发 N 个：N=4 峰值 8.7k，N=8 峰值 17.3k 仍成功，N=12 峰值 21.8k 起报错 |
+| `DROP SCHEMA … CASCADE`（已迁移的测试 schema） | 约 4.7k | 713 个关系锁加约 3.96k 个依赖对象锁 |
+| 整套集成测试，默认并发 4 | 峰值 10–14k | 峰值时同时有 2–3 个连接各持有约 4.7k（都在删 schema） |
+
+名义容量 6400 实际能承载约 17.3k–21.8k 行（共享内存有余量，下限按名义容量的 2.7 倍估计）。默认并发 4 时同时删 4 个 schema 就要约 19k，再叠一个迁移或一个同时持有多个 schema 的文件就越过上限，所以只是偶发。#347 的失败日志里三个连接在同一毫秒因 `CREATE TABLE`（迁移）报错，时间点与这一机制一致；失败那一刻各连接的锁数没有被记录，不能事后还原，这一点没有证实。
+
+**可复现实验。** 同一提交、同一镜像 `postgres:18.6`，只改锁表大小（本机 colima，`scripts/test-integration.mjs`）：
+
+| 服务器 | 并发 | 结果 |
+| --- | --- | --- |
+| `max_locks_per_transaction=24`（名义 2400） | 自动限流 | 并发 1 仍有 22 个文件失败、41 次 `out of shared memory`：单个文件自己的迁移加删 schema 就超了，这个值太小不能用 |
+| `max_locks_per_transaction=40`（名义 4000） | 强制 4 | 16 个文件失败、17 次 `out of shared memory`，随后有测试进程挂住不结束 |
+| `max_locks_per_transaction=40`（名义 4000） | 自动限流到 1 | 前 50 个文件 0 次 `out of shared memory`（未等整套跑完） |
+| `max_locks_per_transaction=256`（名义 25600），CI 使用的配置 | 4 | 97–99 个文件通过，0 次，墙钟 96–99 秒，锁峰值 13.7k，客户端连接峰值 13 |
+
+本机另有 2–4 个文件（如 `session-conversation-queue`）在这个 colima 容器里失败，错误是触发器的状态检查，与锁无关，同一提交在 GitHub CI 上通过；原因没有查清，不影响上面的结论。
+
+**处理。**
+- **隔离（运行器）。** `scripts/test-integration.mjs` 启动时读取服务器的 `max_locks_per_transaction`、`max_connections`、`max_prepared_transactions`，在没有显式设置 `EVOLOOP_INTEGRATION_CONCURRENCY` 时，把并发限制为 `⌊2.7 × 名义容量 ÷ 7050⌋`（每个并发文件按一次删 schema 的 4.7k 行再留 1.5 倍余量，至少 1）；默认配置的服务器得到 2，并打印原因。公式与常数在 `scripts/lib/lock-budget.mjs`，有单元测试。
+- **取值（CI）。** `.github/actions/test-postgres` 用 `max_locks_per_transaction=256`、连接数保持默认 100：名义容量 25600，公式允许并发 9，按实测上限约为并发 4 同时删 schema 所需 19k 的 4 倍；多占共享内存约 10 MB（`pg_shmem_allocations` 对比 64→256：149.8→160.1 MB），客户端连接峰值只有 13，无需调大连接数。不是只调大：服务器参数被改小或换了服务器，运行器仍按容量限流，不会再随机失败。
+- **挂住。** 内存不足后曾有测试进程不再结束，会拖到整个作业超时。运行器给每个文件设单文件超时（`EVOLOOP_INTEGRATION_FILE_TIMEOUT_SECONDS`，默认 600 秒，最大的文件约 60 秒），超时即杀掉并计为失败；两个测试作业另设 `timeout-minutes`。
+- **范围外。** 没有改 90 个测试文件的清理方式（例如按库删除代替删 schema）：能把每个文件的占用降到接近零，但要逐个动夹具，留作建议。
 
 ## 原生文字与选项提问
 

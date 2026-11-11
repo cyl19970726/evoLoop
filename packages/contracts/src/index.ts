@@ -12,7 +12,9 @@ import { evaluationCommands } from "./evaluation.js";
 import { residentCommands } from "./resident-hosts.js";
 import { sessionMessageCommands } from "./session-messages.js";
 import { sessionAssignmentCommands } from "./session-assignments.js";
+import { sessionLineCommands } from "./session-line.js";
 import { sessionRecoveryCommands } from "./session-recovery.js";
+import { providerHoldCommands } from "./provider-hold.js";
 import { nativeInputReplyCommand } from "./native-input.js";
 import { taskAttentionCommands } from "./task-attention.js";
 export { taskAttentionThresholdsSetSchema, taskAttentionFollowUpSetSchema,
@@ -46,6 +48,7 @@ export type DocumentBasis = z.infer<typeof documentBasisSchema>;
 const basisSchema = z.array(documentBasisSchema).min(1).max(20);
 export const taskKindSchema = z.enum(["implementation", "research", "validation"]);
 export const documentKindSchema = z.enum(["task", "issue", "spec", "discussion", "report", "organization_review"]);
+export const documentStatusSchema = z.enum(["draft", "published", "archived"]);
 export const documentOriginSchema = z.strictObject({ taskId: idSchema, runId: idSchema.optional() });
 // Only the implemented command surface is exported; a missing integration is not a no-op command.
 export const commandSchema = z.discriminatedUnion("type", [
@@ -68,7 +71,9 @@ export const commandSchema = z.discriminatedUnion("type", [
   ...residentCommands,
   ...sessionMessageCommands,
   ...sessionAssignmentCommands,
+  ...sessionLineCommands,
   ...sessionRecoveryCommands,
+  ...providerHoldCommands,
   nativeInputReplyCommand,
   ...scheduleCommands,
   ...taskTimingCommands,
@@ -100,7 +105,9 @@ export interface Document {
   origin?: { taskId: string; runId: string | null; taskRevisionId: string } | null;
 }
 export type DocumentKind = "task" | "issue" | "spec" | "discussion" | "report" | "organization_review";
-export type DocumentStatus = "draft" | "published" | "archived";
+export type DocumentStatus = z.infer<typeof documentStatusSchema>;
+/** A list's lifecycle filter: one stored status, or every status that is not archived. */
+export type DocumentStatusFilter = DocumentStatus | "active";
 export interface DocumentRevision {
   projectId: string; documentId: string; id: string; body: string | null; format: "markdown" | "html";
   mediaType: "text/markdown" | "text/html"; originalName: string; payloadRef: string | null;

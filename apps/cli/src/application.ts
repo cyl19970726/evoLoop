@@ -12,13 +12,14 @@ import { sessionStatus } from "./session-status.js";
 import { allocationRelationsPath } from "./allocation-relations.js";
 import { fixedHash, materialAsset, materialBody, materialCatalog, materialHandoff, materialRunInput } from "./lightweight-materials.js";
 import { prepareSession } from "./session-preparation.js";
+import { MessageBodyError, parseSessionTarget, readMessageBody } from "./message-send.js";
 
 type Environment = Record<string, string | undefined>;
-interface IO { stdout(text: string): void; stderr(text: string): void }
+interface IO { stdout(text: string): void; stderr(text: string): void; stdin?(): AsyncIterable<Uint8Array> }
 class UsageError extends Error { readonly code = "INVALID_INPUT"; }
 interface Args { words: string[]; options: Map<string, string | true> }
-const values = new Set(["project", "revision", "limit", "cursor", "turn-cursor", "messages-cursor", "source", "turn-id", "after", "wait-ms", "out", "file", "id", "receipt", "attempt", "task", "state", "phase", "signal", "waiting-on-kind", "waiting-on-id", "stage", "knowledge", "loop", "search", "membership", "importance", "role", "session", "discussion", "message", "kind", "hash", "asset-hash", "model", "effort", "color", "mark", "reason", "evidence-ref", "operation", "provider", "project-skills", "personal", "builtin", "add", "remove"]);
-const switches = ["help", "history", "graph", "events", "revisions", "result", "trace", "occurrences", "reviews", "handoffs", "bindings", "route", "hosts", "attempts", "recovery", "inputs", "observation", "documents", "closed", "brief"];
+const values = new Set(["project", "revision", "limit", "cursor", "turn-cursor", "messages-cursor", "source", "turn-id", "after", "wait-ms", "out", "file", "id", "receipt", "attempt", "task", "state", "phase", "signal", "waiting-on-kind", "waiting-on-id", "stage", "knowledge", "loop", "search", "membership", "importance", "role", "session", "discussion", "message", "kind", "hash", "asset-hash", "model", "effort", "color", "mark", "reason", "evidence-ref", "operation", "provider", "project-skills", "personal", "builtin", "add", "remove", "context-task", "context-revision", "reply-to", "message-id"]);
+const switches = ["help", "history", "graph", "events", "revisions", "result", "trace", "occurrences", "reviews", "handoffs", "bindings", "route", "hosts", "attempts", "recovery", "inputs", "observation", "documents", "closed", "brief", "stdin"];
 function uuid(value: string | undefined, label: string): string {
   if (!idSchema.safeParse(value).success) throw new UsageError(`${label} must be a UUID.`);
   return value!;
@@ -82,6 +83,7 @@ const help = {
     "work item KEY ITEM_ID --project UUID --turn-id TURN_ID (selected public message or authorized tool detail)",
     "work updates KEY --project UUID [--after LIVE_CURSOR] [--wait-ms 0..10000] (default 0; follow resetRequired)",
     "work changes [OWNED_OR_EXTERNAL_KEY] --project UUID --cursor CURSOR [--limit 1..100]",
+    "work send OWNED_OR_EXTERNAL_KEY --project UUID (--file BODY.txt | --stdin) [--context-task UUID --context-revision UUID] [--reply-to UUID] [--operation UUID] [--message-id UUID] (UTF-8 text; exact server readback required)",
     "work leader --project UUID [--documents] [--closed] [--brief] [--limit 1..100 --cursor CURSOR] (--brief: tasks view only; arranging fields per Task, about a tenth of the bytes)",
     "work task TASK_UUID --project UUID [--brief] (one Task's current stage, timing and responsibility; --brief adds its current acceptance arrangements and drops the timing history)",
     "work acceptance --project UUID [--brief] [--limit 1..100 --cursor CURSOR] (Leader stage and persisted Session capacity)",
@@ -320,6 +322,40 @@ async function dispatch(args: Args, env: Environment, io: IO): Promise<unknown> 
   }
   const projectId = project(), prefix = `/api/projects/${projectId}`;
   if (action === "work") {
+    if (args.words[1] === "send") {
+      check(args, 3, ["project", "file", "stdin", "context-task", "context-revision", "reply-to", "operation", "message-id"]);
+      const source = mode(args, ["file", "stdin"]);
+      if (!source) throw new UsageError("work send requires --file BODY.txt or --stdin.");
+      const target = parseSessionTarget(args.words[2]!);
+      const contextTask = option(args, "context-task"), contextRevision = option(args, "context-revision");
+      if (!!contextTask !== !!contextRevision)
+        throw new UsageError("work send requires --context-task and --context-revision together.");
+      const content = await readMessageBody(option(args, "file"), io.stdin?.() ?? process.stdin);
+      const operationId = option(args, "operation") ? uuid(option(args, "operation"), "Operation") : randomUUID();
+      const messageId = option(args, "message-id") ? uuid(option(args, "message-id"), "Message") : randomUUID();
+      const command = commandSchema.parse({
+        type: "session.message.post", projectId, operationId, messageId, target, content,
+        ...(contextTask ? { context: { taskId: uuid(contextTask, "Context Task"), taskRevisionId: uuid(contextRevision, "Context revision") } } : {}),
+        ...(option(args, "reply-to") ? { replyToMessageId: uuid(option(args, "reply-to"), "Reply target") } : {}),
+      });
+      const result = await dispatchMutation(client, store, origin, token, { id: operationId, operationId, projectId,
+        kind: command.type, path: "/api/commands", body: command, confirmation: "command",
+        recovery: { kind: "core", path: `${prefix}/operations/${operationId}` } },
+        value => io.stderr(JSON.stringify(value) + "\n"), await verifiedActor());
+      let detail: unknown;
+      try { detail = await client.get(`${prefix}/session-messages/${messageId}`); }
+      catch (error) {
+        throw new ReceiptError("MESSAGE_READBACK_FAILED", "The message was saved but its exact content could not be read back.",
+          { messageId, operationId, result, cause: error instanceof Error ? error.message : "unknown" });
+      }
+      const message = record(record(detail)?.message);
+      if (!message || message.content !== content)
+        throw new ReceiptError("MESSAGE_CONTENT_MISMATCH", "Server readback does not match the UTF-8 body that was sent.",
+          { messageId, operationId, sentCharacters: content.length, sentUtf8Bytes: Buffer.byteLength(content, "utf8"),
+            readbackCharacters: typeof message?.content === "string" ? message.content.length : null });
+      return { result, message, readbackVerified: true,
+        content: { characters: content.length, utf8Bytes: Buffer.byteLength(content, "utf8") } };
+    }
     if (args.words[1] === "acceptance") {
       if (args.words[2] === "read" || args.words[2] === "observe") {
         check(args,4,["project","task","file"]);
@@ -501,12 +537,12 @@ async function dispatch(args: Args, env: Environment, io: IO): Promise<unknown> 
 export async function runCli(args: string[], env: Environment = process.env, io: IO = { stdout: text => process.stdout.write(text), stderr: text => process.stderr.write(text) }): Promise<number> {
   try { const result = await dispatch(parse(args), env, io); io.stdout(JSON.stringify(result) + "\n"); return record(result)?.status === "partial" ? 4 : 0; }
   catch (error) {
-    const invalid = error instanceof UsageError || error instanceof RequestInputError || record(error)?.name === "ZodError" || error instanceof SyntaxError || error instanceof TypeError ||
+    const invalid = error instanceof UsageError || error instanceof RequestInputError || error instanceof MessageBodyError || record(error)?.name === "ZodError" || error instanceof SyntaxError || error instanceof TypeError ||
       error instanceof CliApiError && error.status === 0 && !error.unconfirmed && error.code.startsWith("INVALID_");
     const code = invalid ? "INVALID_INPUT" : error instanceof CliApiError || error instanceof ReceiptError || error instanceof MaterialError ? error.code : "LOCAL_IO_ERROR";
     const payload = error instanceof CliApiError ? { code, status: error.status, message: error.message, data: error.data }
       : error instanceof ReceiptError ? { code, message: error.message, data: error.data }
-      : error instanceof MaterialError ? { code, message: error.message }
+      : error instanceof MaterialError || error instanceof MessageBodyError ? { code, message: error.message }
       : { code, message: invalid ? error instanceof UsageError || error instanceof RequestInputError ? error.message : "Input does not match CLI/schema; use help or command schema TYPE."
         : record(error)?.code === "ENOENT" ? "The input file or export parent directory is missing; preserve the requested path and create the parent before exporting."
         : "Local operation failed; preserve input and inspect the requested file/state path." };

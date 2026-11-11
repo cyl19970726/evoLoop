@@ -88,6 +88,8 @@ export async function applySessionAssignment({ tx, command, principal, now }: Se
   const previous = await store.getTaskSessionAssignment(task.id);
   ensureVersion(previous?.version ?? 0, command.expectedVersion, "Task assignment");
   if (command.type !== "task.assignment.release") ensureVersion(task.version, command.expectedTaskVersion, "Task");
+  if (command.type === "task.assignment.set" || command.type === "task.assignment.release")
+    await tx.sessionLines?.assertNotQueuedInLine(task.id, command.operationId);
   if (command.type === "task.assignment.set") {
     if (!principal.permissions.includes("review")) fail("FORBIDDEN", "Assignment requires review authority");
     const roleId = await targetRole(tx, command.projectId, command.target);
@@ -120,6 +122,30 @@ export async function applySessionAssignment({ tx, command, principal, now }: Se
   } else if (!principal.permissions.includes("review")) {
     fail("FORBIDDEN", "Observed acceptance requires review authority");
   }
+  if (command.type === "task.assignment.acknowledge" && command.verdict === undefined) {
+    // While a Session line waits for this Task's execution confirmation, a plain acknowledgement says nothing it can act on.
+    const waiting = await tx.sessionLines?.getLiveSessionLineEntryForTask(task.id);
+    if (waiting?.state === "starting" && waiting.step === "confirm")
+      fail("CONFIRMATION_VERDICT_REQUIRED", "This Task waits for your execution confirmation: acknowledge with verdict confirm (plan) or return (missing)");
+  }
+  const confirming = command.type === "task.assignment.acknowledge" && command.verdict !== undefined;
+  if (confirming) {
+    const verdict = command.verdict;
+    if (!command.expectedRevisionId) fail("EXPECTED_REVISION_REQUIRED", "A confirmation names the Task revision it read");
+    if (command.expectedRevisionId !== task.currentRevisionId || previous.taskRevisionId !== task.currentRevisionId)
+      throw new DomainError("BASELINE_CHANGED", "Task revision changed; read it again before confirming", task.version);
+    if (verdict === "confirm" && !command.plan) fail("PLAN_REQUIRED", "Confirming execution needs a short plan");
+    if (verdict === "return" && !(command.missing?.length)) fail("MISSING_REQUIRED", "Returning a Task needs what is missing");
+    if (verdict === "return") {
+      const released: TaskSessionAssignment = { ...previous, version: previous.version + 1, state: "released",
+        actorId: principal.actorId, reason: `Returned by the Session: ${command.missing!.join("; ")}`.slice(0, 4000), updatedAt: now };
+      await store.saveTaskSessionAssignment(released, previous.version);
+      await store.saveAssignmentConfirmation({ projectId: command.projectId, taskId: task.id, assignmentVersion: released.version,
+        verdict: "return", plan: command.plan ?? null, missing: command.missing!, expectedRevisionId: command.expectedRevisionId,
+        actorId: principal.actorId, at: now });
+      return result(command, task.id, released.version);
+    }
+  }
   const taskRevisionId = await acknowledgedRevision(tx, task, previous, command.type === "task.assignment.acknowledge");
   const record: TaskSessionAssignment = { ...previous, version: previous.version + 1, taskRevisionId, state: "accepted",
     ack: { method: command.type === "task.assignment.acknowledge" ? "direct" : "lead-observed",
@@ -127,5 +153,9 @@ export async function applySessionAssignment({ tx, command, principal, now }: Se
       observerActorId: principal.actorId, evidence: command.evidence, sourceRef: command.sourceRef ?? null, at: now },
     actorId: principal.actorId, reason: command.evidence, updatedAt: now };
   await store.saveTaskSessionAssignment(record, previous.version);
+  if (confirming && command.type === "task.assignment.acknowledge")
+    await store.saveAssignmentConfirmation({ projectId: command.projectId, taskId: task.id, assignmentVersion: record.version,
+      verdict: "confirm", plan: command.plan!, missing: [], expectedRevisionId: command.expectedRevisionId!,
+      actorId: principal.actorId, at: now });
   return result(command, task.id, record.version);
 }

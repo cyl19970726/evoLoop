@@ -56,7 +56,7 @@ export function ProcessRevisionChoice({ projectId, enabled, documentId, revision
 }) {
   const client = useQueryClient();
   const documents = useProjectList(projectId, ["references", "documents"], async (cursor, signal) => {
-    const page: Page<Document> = await api().documents(projectId, cursor, undefined, signal);
+    const page: Page<Document> = await api().documents(projectId, cursor, undefined, undefined, signal);
     if (!Array.isArray(page?.items) || page.items.some(item => item.projectId !== projectId)) throw new Error("文档列表与当前项目不符");
     return page;
   }, (item: Document) => item.id, { enabled });

@@ -1,5 +1,5 @@
 import type { ReferenceReader, ReferenceTransaction } from "./references.js";
-import type { BasisDecision, BasisSet, Document, DocumentDecision, DocumentRevision, DocumentRevisionMetadata, DocumentTaskReference, Impact, Operation, OutboxEvent, Page, Project, Task, TaskDocumentLink, TaskRevision } from "./index.js";
+import type { BasisDecision, BasisSet, Document, DocumentDecision, DocumentRevision, DocumentRevisionMetadata, DocumentStatusFilter, DocumentTaskReference, Impact, Operation, OutboxEvent, Page, Project, Task, TaskDocumentLink, TaskRevision } from "./index.js";
 import type { ConsumerObservation, Delivery, Goal, GoalRevision, Stage, StageRevision, StageReview, TaskClosure, TaskJudgement, TaskProposal } from "./workflow.js";
 import type { RuntimeRecordEvent, RuntimeRunRecord, RuntimeSessionRecord } from "./runtime.js";
 import type { RoleReader, RoleTransaction } from "./roles.js";
@@ -13,6 +13,7 @@ import type { ResidentReader, ResidentTransaction } from "./resident-hosts.js";
 import type { QueueReader, QueueTransaction } from "./queues.js";
 import type { SessionMessageReader, SessionMessageTransaction } from "./session-messages.js";
 import type { SessionAssignmentReader, SessionAssignmentTransaction } from "./session-assignments.js";
+import type { SessionLineReader, SessionLineTransaction } from "./session-line.js";
 import type { SessionObservationReader } from "./session-observation.js";
 import type { NativeInputReader, NativeInputTransaction } from "./native-input.js";
 import type { NativeObservationReader, NativeObservationTransaction } from "./native-observation.js";
@@ -31,6 +32,7 @@ export interface Reader extends ReferenceReader, RoleReader, SchedulingReader, D
   nativeObservation?: NativeObservationReader;
   usage?: UsageReader;
   sessionAssignments?: SessionAssignmentReader;
+  sessionLines?: SessionLineReader;
   sessionObservation?(scope: string): SessionObservationReader;
   allocationRelations?(scope: string): AllocationRelationsReader;
   /** Project-scoped, verified cognition decision and terminal outcome for explicit Task acceptance. */
@@ -77,7 +79,8 @@ export interface Reader extends ReferenceReader, RoleReader, SchedulingReader, D
   getDocumentRevision(documentId: string, revisionId: string): Promise<DocumentRevision | null>;
   /** Whether this fixed revision was ever published by an immutable adoption decision. */
   hasDocumentAdoption(documentId: string, revisionId: string): Promise<boolean>;
-  listDocuments(limit: number, cursor?: string, kind?: Document["kind"]): Promise<Page<Document>>;
+  listDocuments(limit: number, cursor?: string, kind?: Document["kind"],
+    status?: DocumentStatusFilter): Promise<Page<Document>>;
   getTask(id: string): Promise<Task | null>;
   getTaskRevision(taskId: string, revisionId: string): Promise<TaskRevision | null>;
   listTaskRevisions(taskId: string): Promise<TaskRevision[]>;
@@ -144,6 +147,7 @@ export interface Transaction extends Reader, Omit<RoleTransaction, "getTask" | "
   nativeObservation?: NativeObservationTransaction;
   usage?: UsageTransaction;
   sessionAssignments?: SessionAssignmentTransaction;
+  sessionLines?: SessionLineTransaction;
   insertDiscussion(value: DiscussionRecord, event: DiscussionEvent): Promise<void>;
   updateDiscussion(value: DiscussionRecord, expectedVersion: number, event: DiscussionEvent): Promise<void>;
   insertRuntimeSession(session: RuntimeSessionRecord): Promise<void>;

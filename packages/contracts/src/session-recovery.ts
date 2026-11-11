@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { ProviderHold, ProviderHoldImpact } from './provider-hold.js';
 
 const id=z.uuid(), text=z.string().trim().min(1).max(4000), version=z.number().int().positive();
 const base={projectId:id,operationId:id};
@@ -37,6 +38,8 @@ export interface SessionRecoveryGate {
   reason:string;queueId:string|null;claimId:string|null;retryRunId:string|null;
   /** Chosen under the failure's Session lock; a later message cannot replace this one. */
   resumeMessageId:string|null;decisionOperationId:string|null;updatedAt:string;
+  /** Native error category of the failed message that closed the gate, when it was classified (RuntimeTurnFailure.category). */
+  failureCategory?:string|null;
 }
 export interface SessionRecoveryDecision {
   projectId:string;id:string;sessionId:string;kind:'retry_failed'|'resume';
@@ -59,6 +62,10 @@ export interface SessionRecoveryReader {
   getRecoveryGate(sessionId:string):Promise<SessionRecoveryGate|null>;
   getExecutionProfileRevision(sessionId:string,revisionId:string):Promise<ExecutionProfileRevision|null>;
   listRecoveryDecisions(sessionId:string,limit?:number):Promise<SessionRecoveryDecision[]>;
+  /** The held provider decision that currently stops new Turns, or null. */
+  getActiveProviderHold(provider:'codex'|'claude'):Promise<ProviderHold|null>;
+  listProviderHolds(limit:number):Promise<ProviderHold[]>;
+  providerHoldImpact(provider:'codex'|'claude'):Promise<ProviderHoldImpact[]>;
 }
 export interface SessionRecoveryTransaction extends SessionRecoveryReader {
   lockRecoveryGate(sessionId:string):Promise<SessionRecoveryGate>;
@@ -73,4 +80,7 @@ export interface SessionRecoveryTransaction extends SessionRecoveryReader {
     sourceRunVersion:number,expectedGateVersion:number,newRunId:string,operationId:string,
     actorId:string,reason:string,evidenceRef:string,nowUtc:string):Promise<void>;
   assertStartupAllowed(sessionId:string,kind:'run'|'message',id:string):Promise<void>;
+  /** Idempotent per provider: an active hold is kept, never replaced. Returns true when this call opened it. */
+  openProviderHold(hold:Pick<ProviderHold,'id'|'provider'|'category'|'causeSessionId'|'causeMessageId'|'reason'>,nowUtc:string):Promise<boolean>;
+  releaseProviderHold(holdId:string,expectedVersion:number,actorId:string,reason:string,summary:NonNullable<ProviderHold['releaseSummary']>,nowUtc:string):Promise<void>;
 }

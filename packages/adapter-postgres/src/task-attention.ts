@@ -205,7 +205,7 @@ export class PgTaskAttention {
       throw new DomainError("VERSION_CONFLICT","Attention item changed",item.version);
     const next=item.version+1;
     await this.db.query(`UPDATE task_attention_item SET state='resolved',version=$3,resolved_at=$4,
-      resolution_reason=$5 WHERE project_id=$1 AND item_id=$2`,[this.projectId,command.itemId,next,command.reason,now]);
+      resolution_reason=$5 WHERE project_id=$1 AND item_id=$2`,[this.projectId,command.itemId,next,now,command.reason]);
     await this.db.query(`INSERT INTO task_attention_item_event(project_id,item_id,item_version,kind,severity,
       evidence,actor_id,reason,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
       [this.projectId,command.itemId,next,command.disposition,item.severity,item.evidence,actorId,command.reason,now]);
