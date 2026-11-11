@@ -155,6 +155,8 @@ npm run --silent cli -- work changes "$SESSION_KEY" --project "$PROJECT_ID" --cu
 npm run --silent cli -- work assignment "$TASK_ID" --project "$PROJECT_ID" --history
 npm run --silent cli -- work messages "$SESSION_KEY" --project "$PROJECT_ID" --limit 20
 npm run --silent cli -- work message "$MESSAGE_ID" --project "$PROJECT_ID"
+npm run --silent cli -- work send "$SESSION_KEY" --project "$PROJECT_ID" --file "$PRIVATE_UTF8_BODY"
+npm run --silent cli -- work send "$SESSION_KEY" --project "$PROJECT_ID" --stdin < "$PRIVATE_UTF8_BODY"
 npm run --silent cli -- work leader --project "$PROJECT_ID" --limit 50
 npm run --silent cli -- work leader --project "$PROJECT_ID" --limit 50 --brief
 npm run --silent cli -- work leader --project "$PROJECT_ID" --documents
@@ -174,7 +176,9 @@ npm run --silent cli -- request work.dependencies.set --project "$PROJECT_ID" --
 npm run --silent cli -- request work.review.set --project "$PROJECT_ID" --id "$TASK_ID" --file "$PRIVATE_REVIEW_JSON"
 ```
 
-这些都是只读查询，不唤醒模型。目录、变化、活动和版本历史的游标不可混用；改变身份、项目或筛选后重建读取位置。消息列表是正文／阻塞／回执预览，完整内容和处理答复从消息详情读取。部分结果、来源未同步和缺失资源指标须原样表达，不把 null 改成 0 或把 roleTasks 当每个会话的当前任务。
+除 `work send` 外，这些都是只读查询，不唤醒模型。目录、变化、活动和版本历史的游标不可混用；改变身份、项目或筛选后重建读取位置。消息列表是正文／阻塞／回执预览，完整内容和处理答复从消息详情读取。部分结果、来源未同步和缺失资源指标须原样表达，不把 null 改成 0 或把 roleTasks 当每个会话的当前任务。
+
+Agent 间发送含中文、引号或换行的正文时，用 `work send` 从私有 UTF-8 文件或 stdin 读取，不把正文拼进 shell 参数，也不要用界面自动键入转交正文。CLI 按字节严格解码 UTF-8，按服务端同样规则去掉首尾空白，拒绝空正文、无效 UTF-8、替换字符、超过 16000 字符或没有字母／数字的疑似截断正文，再提交 `session.message.post`。提交后必须回读该消息；只有响应中的 `readbackVerified: true` 且 `message.content` 与发送正文逐字一致才算本命令成功。回读失败或内容不一致分别报 `MESSAGE_READBACK_FAILED`／`MESSAGE_CONTENT_MISMATCH`，保留原 `messageId`、`operationId` 和回执，不能按聊天末句推断已送达。保存仍不等于接收方处理或已读，后续按原消息 ID 核 processing、Turn 和本人 read。
 
 `work timeline` 读取与工作台同一条受权 Session 时间线；`--source` 可选 `both`（默认）、`native` 或 `messages`。响应的 `nextCursor` 与 `messagesCursor` 分别续读原生历史和已保存消息；仅传回实际返回的游标，不把两者合为一个位置。`partial`、`limitations`、`unsupportedKinds`、每条记录的时间与来源都原样保留。`work item` 用返回的 `nativeItemId` 和 `turnId` 选择单条原生记录；公开 Agent 正文和工具原始证据由服务分别按现行权限判断，CLI 不另开原生连接。`work updates` 的 `--after` 使用本服务返回的 `live.cursor`；默认带 `waitMs=0` 即时读取，可用 `--wait-ms 0..10000` 有界等待新更新，默认 CLI 请求期限 15 秒可覆盖最多 10 秒的服务等待与回包。`resetRequired` 表示应重新读时间线，更新流不是跨进程可重放的完整历史。服务拒绝或不可用时，CLI 将其错误正文放在 stderr 的 `error.data`，不改写为“空历史”。
 

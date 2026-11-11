@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "node:http";
@@ -77,6 +77,7 @@ test("connector status CLI reads the fixed route and bounded page without creati
 test("an unauthenticated fresh Agent can discover help, IDs, exact command schemas and named routes", async () => {
   const help = await run(["help"]); assert.equal(help.code, 0); assert.ok(JSON.parse(help.stdout).commands.some((value: string) => value.startsWith("context ")));
   assert.ok(JSON.parse(help.stdout).commands.some((value: string) => value.startsWith("receipts retry ")));
+  assert.ok(JSON.parse(help.stdout).commands.some((value: string) => value.startsWith("work send ")));
   const schema = await run(["command", "schema", "task.create"]); assert.equal(schema.code, 0);
   const create = JSON.parse(schema.stdout);
   assert.ok(create.required.includes("content"));
@@ -230,6 +231,136 @@ test("specialist request mistakes stay actionable local input errors before any 
   assert.match(JSON.parse(result.stderr).error.message, /request types/);
   const config = await run(["session"], { EVOLOOP_TOKEN: "dummy", EVOLOOP_API_URL: "https://user:secret@example.test" });
   assert.equal(config.code, 2); assert.ok(!config.stderr.includes("secret"));
+});
+
+test("work send posts a UTF-8 file body exactly and requires server readback", async () => {
+  const project = "00000000-0000-4000-8000-000000000041";
+  const session = "00000000-0000-4000-8000-000000000042";
+  const task = "00000000-0000-4000-8000-000000000043";
+  const revision = "00000000-0000-4000-8000-000000000044";
+  const operation = "00000000-0000-4000-8000-000000000045";
+  const messageId = "00000000-0000-4000-8000-000000000046";
+  const directory = await mkdtemp(join(tmpdir(), "evoloop-message-send-"));
+  const bodyPath = join(directory, "body.txt");
+  const body = "第一行：请核对“原样”与 'quotes'。\n第二行：中文、换行和符号都要保留。";
+  let submitted: Record<string, unknown> | null = null;
+  const paths: string[] = [];
+  const fetch = mock.method(globalThis, "fetch", async (url: string | URL | Request, init?: RequestInit) => {
+    const path = new URL(String(url)).pathname; paths.push(path);
+    if (path === "/api/session") return new Response(JSON.stringify({ principal: { actorId: "sender", projectIds: [project] } }));
+    if (path === "/api/commands") {
+      submitted = JSON.parse(String(init?.body));
+      return new Response(JSON.stringify({ status: "applied", operationId: operation, entityId: messageId, version: 1 }));
+    }
+    if (path === `/api/projects/${project}/session-messages/${messageId}`)
+      return new Response(JSON.stringify({ message: { id: messageId, content: body, state: "queued" } }));
+    throw new Error(`Unexpected path ${path}`);
+  });
+  try {
+    await writeFile(bodyPath, body, "utf8");
+    const result = await run(["work", "send", `owned:${session}`, "--project", project, "--file", bodyPath,
+      "--context-task", task, "--context-revision", revision, "--operation", operation, "--message-id", messageId],
+      { EVOLOOP_TOKEN: "fixture", EVOLOOP_STATE_DIR: directory });
+    assert.equal(result.code, 0, result.stderr);
+    assert.equal(submitted?.type, "session.message.post");
+    assert.equal(submitted?.content, body);
+    assert.deepEqual(submitted?.target, { kind: "owned", sessionId: session });
+    assert.deepEqual(submitted?.context, { taskId: task, taskRevisionId: revision });
+    const output = JSON.parse(result.stdout);
+    assert.equal(output.readbackVerified, true);
+    assert.equal(output.message.content, body);
+    assert.equal(output.content.characters, body.length);
+    assert.equal(output.content.utf8Bytes, Buffer.byteLength(body, "utf8"));
+    assert.deepEqual(paths, ["/api/session", "/api/commands", `/api/projects/${project}/session-messages/${messageId}`]);
+  } finally { fetch.mock.restore(); await rm(directory, { recursive: true, force: true }); }
+});
+
+test("work send rejects punctuation-only and invalid UTF-8 bodies before any API request", async () => {
+  const project = "00000000-0000-4000-8000-000000000051";
+  const session = "00000000-0000-4000-8000-000000000052";
+  const directory = await mkdtemp(join(tmpdir(), "evoloop-message-guard-"));
+  let calls = 0;
+  const fetch = mock.method(globalThis, "fetch", async () => {
+    calls++;
+    return new Response(JSON.stringify({ principal: { actorId: "sender", projectIds: [project] } }));
+  });
+  try {
+    const emptyQuotes = join(directory, "quotes.txt"), invalid = join(directory, "invalid.txt");
+    await writeFile(emptyQuotes, "“”", "utf8");
+    await writeFile(invalid, Buffer.from([0xff, 0xfe, 0xfd]));
+    for (const [file, message] of [[emptyQuotes, /no letters or numbers/], [invalid, /not valid UTF-8/]] as const) {
+      const result = await run(["work", "send", `owned:${session}`, "--project", project, "--file", file],
+        { EVOLOOP_TOKEN: "fixture", EVOLOOP_STATE_DIR: directory });
+      assert.equal(result.code, 2, result.stderr);
+      assert.equal(JSON.parse(result.stderr).error.code, "INVALID_INPUT");
+      assert.match(JSON.parse(result.stderr).error.message, message);
+    }
+    assert.equal(calls, 0, "invalid bodies must not reach the API");
+  } finally { fetch.mock.restore(); await rm(directory, { recursive: true, force: true }); }
+});
+
+test("work send reports a content mismatch instead of claiming success", async () => {
+  const project = "00000000-0000-4000-8000-000000000061";
+  const session = "00000000-0000-4000-8000-000000000062";
+  const operation = "00000000-0000-4000-8000-000000000063";
+  const messageId = "00000000-0000-4000-8000-000000000064";
+  const directory = await mkdtemp(join(tmpdir(), "evoloop-message-mismatch-"));
+  const bodyPath = join(directory, "body.txt");
+  const body = "请只回复“收到”。";
+  const fetch = mock.method(globalThis, "fetch", async (url: string | URL | Request) => {
+    const path = new URL(String(url)).pathname;
+    if (path === "/api/session") return new Response(JSON.stringify({ principal: { actorId: "sender", projectIds: [project] } }));
+    if (path === "/api/commands")
+      return new Response(JSON.stringify({ status: "applied", operationId: operation, entityId: messageId, version: 1 }));
+    if (path === `/api/projects/${project}/session-messages/${messageId}`)
+      return new Response(JSON.stringify({ message: { id: messageId, content: "UI “” Task", state: "queued" } }));
+    throw new Error(`Unexpected path ${path}`);
+  });
+  try {
+    await writeFile(bodyPath, body, "utf8");
+    const result = await run(["work", "send", `owned:${session}`, "--project", project, "--file", bodyPath,
+      "--operation", operation, "--message-id", messageId],
+      { EVOLOOP_TOKEN: "fixture", EVOLOOP_STATE_DIR: directory });
+    assert.equal(result.code, 1);
+    assert.equal(result.stdout, "");
+    const error = JSON.parse(result.stderr.trim().split("\n").at(-1)!);
+    assert.equal(error.error.code, "MESSAGE_CONTENT_MISMATCH");
+    assert.equal(error.error.data.messageId, messageId);
+  } finally { fetch.mock.restore(); await rm(directory, { recursive: true, force: true }); }
+});
+
+test("work send accepts a UTF-8 body from stdin", async () => {
+  const project = "00000000-0000-4000-8000-000000000071";
+  const session = "00000000-0000-4000-8000-000000000072";
+  const operation = "00000000-0000-4000-8000-000000000073";
+  const messageId = "00000000-0000-4000-8000-000000000074";
+  const directory = await mkdtemp(join(tmpdir(), "evoloop-message-stdin-"));
+  const body = "从 stdin 发送：“保留中文”。\n第二行也保留。";
+  let submitted: Record<string, unknown> | null = null;
+  const fetch = mock.method(globalThis, "fetch", async (url: string | URL | Request, init?: RequestInit) => {
+    const path = new URL(String(url)).pathname;
+    if (path === "/api/session") return new Response(JSON.stringify({ principal: { actorId: "sender", projectIds: [project] } }));
+    if (path === "/api/commands") {
+      submitted = JSON.parse(String(init?.body));
+      return new Response(JSON.stringify({ status: "applied", operationId: operation, entityId: messageId, version: 1 }));
+    }
+    if (path === `/api/projects/${project}/session-messages/${messageId}`)
+      return new Response(JSON.stringify({ message: { id: messageId, content: body, state: "queued" } }));
+    throw new Error(`Unexpected path ${path}`);
+  });
+  try {
+    let stdout = "", stderr = "";
+    const code = await runCli(["work", "send", `external:${session}`, "--project", project, "--stdin",
+      "--operation", operation, "--message-id", messageId],
+      { EVOLOOP_TOKEN: "fixture", EVOLOOP_STATE_DIR: directory }, {
+        stdout: text => { stdout += text; }, stderr: text => { stderr += text; },
+        stdin: async function* () { yield Buffer.from(body, "utf8"); },
+      });
+    assert.equal(code, 0, stderr);
+    assert.equal(submitted?.content, body);
+    assert.deepEqual(submitted?.target, { kind: "external", linkId: session });
+    assert.equal(JSON.parse(stdout).message.content, body);
+  } finally { fetch.mock.restore(); await rm(directory, { recursive: true, force: true }); }
 });
 test("input mistakes and missing auth return structured failures without stack traces", async () => {
   for (const args of [["task", "bad", "--token", "secret"], ["id", "extra"], ["command", "schema", "not-real"], ["list", "tasks"]]) {
