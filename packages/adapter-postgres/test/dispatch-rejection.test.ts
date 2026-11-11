@@ -120,3 +120,29 @@ test('native rejection proof cannot rewrite an unknown or already running Run',a
   assert.equal((await uow.read(project,reader=>reader.getRuntimeRun(unknown.runId)))?.state,'unknown');
   assert.equal((await uow.read(project,reader=>reader.getRuntimeRun(running.runId)))?.state,'running');
 });
+
+const gate=async(sessionId:string)=>(await pool.query('SELECT phase,cause_id FROM session_recovery_gate WHERE project_id=$1 AND session_id=$2',[project,sessionId])).rows[0];
+
+test('a preflight failure (requested -> failed, no native Turn) leaves an open Session open; the next Run may start',async()=>{
+  const f=await fixture();
+  assert.equal((await gate(f.sessionId))?.phase,'open');
+  assert.equal((await runtime.rejectDispatch(project,f.runId,'Preflight failed')).state,'failed');
+  assert.deepEqual(await gate(f.sessionId),{phase:'open',cause_id:null});
+  await uow.transaction(project,async tx=>{await tx.recovery?.assertStartupAllowed(f.sessionId,'run',randomUUID());});
+});
+
+test('a real failure still blocks: native rejection after dispatch, and an unknown outcome',async()=>{
+  const rejected=await fixture();await runtime.beginDispatch(project,rejected.runId);
+  await runtime.rejectDispatch(project,rejected.runId,'x',proof(rejected.operationId));
+  assert.deepEqual(await gate(rejected.sessionId),{phase:'blocked',cause_id:rejected.runId});
+  const unknown=await fixture();await runtime.beginDispatch(project,unknown.runId);
+  await runtime.markRunUnknown(project,unknown.runId,'Lost start reply');
+  assert.deepEqual(await gate(unknown.sessionId),{phase:'blocked',cause_id:unknown.runId});
+  const started=await fixture();await runtime.beginDispatch(project,started.runId);
+  await runtime.bindTurn(project,started.runId,{id:`turn-${started.runId}`,status:'running'},{kind:'startReply',operationId:started.operationId});
+  await uow.transaction(project,async tx=>{
+    const current=(await tx.getRuntimeRun(started.runId))!;
+    await tx.updateRuntimeRun({...current,state:'failed',version:current.version+1,updatedAt:new Date().toISOString()},current.version);
+  });
+  assert.deepEqual(await gate(started.sessionId),{phase:'blocked',cause_id:started.runId});
+});
