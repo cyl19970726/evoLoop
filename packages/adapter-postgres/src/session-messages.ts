@@ -26,7 +26,7 @@ const message = (r: QueryResultRow): SessionMessageRecord => ({
 const processing = (r: QueryResultRow): SessionMessageProcessing => ({
   projectId:r.project_id,id:r.processing_id,messageId:r.message_id,sessionId:r.session_id,
   operationId:r.operation_id,state:r.state,nativeTurnId:r.native_turn_id,response:r.response,
-  failure:r.failure,readOnlyPolicyFingerprint:r.read_only_policy_fingerprint,receiverActorId:r.receiver_actor_id,
+  failure:r.failure,failureCategory:r.failure_category??null,readOnlyPolicyFingerprint:r.read_only_policy_fingerprint,receiverActorId:r.receiver_actor_id,
   roleContext:r.role_context??null,
   nativeEnvironmentEpoch:nativeEpoch(r.native_environment_epoch),
   preTurnProof:r.pre_turn_proof==null?null:preTurnProofSchema.parse(r.pre_turn_proof),
@@ -156,6 +156,10 @@ export class PgSessionMessages implements SessionMessageTransaction {
       AND m.state IN ('queued','processing','unknown')
       -- A message a Run stop superseded waits for its sender (cancel or confirm); it is not delivered and does not hold the line.
       AND (m.superseded_at IS NULL OR m.superseded_confirmed_at IS NOT NULL OR m.state<>'queued')
+      -- Fair with the Session line: a line entry appended before this message goes first (its own confirmation request is exempt).
+      AND (m.state<>'queued' OR EXISTS(SELECT 1 FROM session_line_entry own WHERE own.project_id=m.project_id AND own.message_id=m.message_id)
+        OR NOT EXISTS(SELECT 1 FROM session_line_entry e WHERE e.project_id=m.project_id AND e.session_id=m.session_id
+          AND e.state IN ('queued','starting') AND e.appended_at<m.created_at))
       AND (m.state<>'queued' OR (NOT EXISTS(SELECT 1 FROM session_message_processing busy
           WHERE busy.project_id=m.project_id AND busy.session_id=m.session_id AND busy.state IN ('dispatching','running','unknown'))
         AND NOT EXISTS(SELECT 1 FROM session_message older WHERE older.project_id=m.project_id
@@ -239,10 +243,10 @@ export class PgSessionMessages implements SessionMessageTransaction {
   }
   async updateSessionMessageProcessing(v:SessionMessageProcessing,expectedVersion:number):Promise<void>{
     this.scope(v.projectId);const r=await this.client.query(`UPDATE session_message_processing SET state=$3,native_turn_id=$4,response=$5,failure=$6,version=$7,updated_at=$8,
-      interrupt_operation_id=$10,interrupt_actor_id=$11,interrupt_reason=$12,interrupt_requested_at=$13,pre_turn_proof=$14::jsonb
+      interrupt_operation_id=$10,interrupt_actor_id=$11,interrupt_reason=$12,interrupt_requested_at=$13,pre_turn_proof=$14::jsonb,failure_category=$15
       WHERE project_id=$1 AND processing_id=$2 AND version=$9`,[v.projectId,v.id,v.state,v.nativeTurnId,v.response,v.failure,v.version,v.updatedAt,expectedVersion,
       v.interruptOperationId??null,v.interruptActorId??null,v.interruptReason??null,v.interruptRequestedAt??null,
-      v.preTurnProof?JSON.stringify(preTurnProofSchema.parse(v.preTurnProof)):null]);
+      v.preTurnProof?JSON.stringify(preTurnProofSchema.parse(v.preTurnProof)):null,v.failureCategory??null]);
     if(!r.rowCount)throw new DomainError('VERSION_CONFLICT','message processing changed');
   }
   async insertSessionMessageManualStopEvidence(v:SessionMessageManualStopEvidence):Promise<void>{
