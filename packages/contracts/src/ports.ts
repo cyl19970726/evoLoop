@@ -1,5 +1,5 @@
 import type { ReferenceReader, ReferenceTransaction } from "./references.js";
-import type { BasisDecision, BasisSet, Document, DocumentDecision, DocumentRevision, DocumentRevisionMetadata, DocumentTaskReference, Impact, Operation, OutboxEvent, Page, Project, Task, TaskDocumentLink, TaskRevision } from "./index.js";
+import type { BasisDecision, BasisSet, Document, DocumentDecision, DocumentRevision, DocumentRevisionMetadata, DocumentStatusFilter, DocumentTaskReference, Impact, Operation, OutboxEvent, Page, Project, Task, TaskDocumentLink, TaskRevision } from "./index.js";
 import type { ConsumerObservation, Delivery, Goal, GoalRevision, Stage, StageRevision, StageReview, TaskClosure, TaskJudgement, TaskProposal } from "./workflow.js";
 import type { RuntimeRecordEvent, RuntimeRunRecord, RuntimeSessionRecord } from "./runtime.js";
 import type { RoleReader, RoleTransaction } from "./roles.js";
@@ -77,7 +77,8 @@ export interface Reader extends ReferenceReader, RoleReader, SchedulingReader, D
   getDocumentRevision(documentId: string, revisionId: string): Promise<DocumentRevision | null>;
   /** Whether this fixed revision was ever published by an immutable adoption decision. */
   hasDocumentAdoption(documentId: string, revisionId: string): Promise<boolean>;
-  listDocuments(limit: number, cursor?: string, kind?: Document["kind"]): Promise<Page<Document>>;
+  listDocuments(limit: number, cursor?: string, kind?: Document["kind"],
+    status?: DocumentStatusFilter): Promise<Page<Document>>;
   getTask(id: string): Promise<Task | null>;
   getTaskRevision(taskId: string, revisionId: string): Promise<TaskRevision | null>;
   listTaskRevisions(taskId: string): Promise<TaskRevision[]>;
