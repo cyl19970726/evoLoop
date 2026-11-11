@@ -42,6 +42,8 @@ BEGIN
   RETURN NEW;
 END $$;
 
+-- NOTE: this function is patched in place by later migrations (078 request stop, 079 stop rework, and any preflight-failure
+-- migration): read the stored definition (pg_get_functiondef) rather than this file for what runs today.
 CREATE OR REPLACE FUNCTION session_recovery_run_outcome() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE gate record; claim record; original_message uuid;
 BEGIN

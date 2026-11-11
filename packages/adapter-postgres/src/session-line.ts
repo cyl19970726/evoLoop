@@ -106,7 +106,7 @@ export class PgSessionLine implements SessionLineTransaction {
       JSON.stringify(value.detail), value.actorId, value.at]);
   }
   private lineTable: boolean | null = null;
-  /** The upgrade tests replay commands against schemas that predate migration 080; no line can exist there. One transaction runs one
+  /** The upgrade tests replay commands against schemas that predate migration 087; no line can exist there. One transaction runs one
    *  command, so the catalog lookup is made once per instance. */
   private async hasLineTable(): Promise<boolean> {
     this.lineTable ??= !!(await this.client.query("SELECT to_regclass('session_line_entry') AS t")).rows[0]?.t;

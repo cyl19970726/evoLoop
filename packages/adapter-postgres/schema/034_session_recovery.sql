@@ -306,6 +306,7 @@ END $$;
 CREATE TRIGGER session_message_recovery_queue_lock BEFORE INSERT ON session_message
   FOR EACH ROW EXECUTE FUNCTION session_recovery_message_queue_lock();
 
+-- NOTE: redefined by 039 and patched in place by 078/079; the stored definition is authoritative.
 CREATE FUNCTION session_recovery_run_outcome() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE gate record; claim record; original_message uuid;
 BEGIN

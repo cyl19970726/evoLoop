@@ -13,7 +13,7 @@
 | 原生会话 | Codex 的 Thread，或 Claude Code 的 session。对话历史在这里。 | 运行时自己；Claude 另有适配器账本 |
 | Turn | 原生会话里的一次执行。每个 Turn 只有一个**主来源**：一个业务 Run，或一条普通消息的处理记录。 | 运行时执行；PostgreSQL 保存 Run 或消息处理，以及对应的 Turn ID |
 
-协调服务不直接调用某个运行时的协议，而是经过中立端口 `RuntimePort`（`packages/contracts/src/runtime.ts`）。每个适配器用 `capabilities()` 声明自己能做什么，协调服务按声明决定是否提供某项操作；没有声明的能力就是不支持，不用别的办法模拟。有一处例外要先说明：Codex 的执行中补入不看这份声明，而由适配器按协议版本单独检查（见[第 3 节](#3-即时输入执行中收到的消息怎样处理)）。
+协调服务不直接调用某个运行时的协议，而是经过中立端口 `RuntimePort`（`packages/contracts/src/runtime.ts`）。每个适配器用 `capabilities()` 声明自己能做什么，协调服务按声明决定是否提供某项操作；没有声明的能力就是不支持，不用别的办法模拟。路由运行时按 Session 实际绑定的 provider 返回 `capabilitiesFor(binding)`，即时输入能力查询因此会核对当前运行时的版本，而不是只看服务默认运行时。
 
 本页常用的几个词：
 
@@ -60,7 +60,7 @@ stateDiagram-v2
 
 ### Session 队伍（DEC-045 Q1）
 
-每个常驻业务 Session 可有一条**队伍**（`session_line`、`session_line_entry`，迁移 080），按 Leader 派发的先后顺序，做完一个再接下一个。它是新的小机制，现有的批量常驻队列（027）原样不动。
+每个常驻业务 Session 可有一条**队伍**（`session_line`、`session_line_entry`，迁移 087），按 Leader 派发的先后顺序，做完一个再接下一个。它是新的小机制，现有的批量常驻队列（027）原样不动。
 
 - **项的状态**：排队中、挂起、启动中、已开始、已撤下。进行中的三种状态在 `(project_id, task_id)` 上有部分唯一索引，同一个 Task 不能同时排在两处；已开始的项不占索引，返工可以再排。
 - **命令**（都要 review 权限）：`line.append` 追加到队尾；`line.move` 只前移或后移一步，不提交整列顺序；`line.remove` 撤下；`line.resume` 把挂起的项放回排队。`line.begin`、`line.advance`、`line.started`、`line.suspend`、`line.withdrawReturned` 记录队伍调度程序的每一步。
@@ -78,7 +78,9 @@ stateDiagram-v2
 
 停止请求和实际停止是两件事。Codex 调用 `turn/interrupt` 后继续等最终的 `turn/completed`；Claude 向本 Turn 的进程发中断，10 秒内没有回应就终止它。停止请求已收到，不等于工作已经停下，也不等于副作用没有发生。PR #184 增加了消息的中断、人工停止与启动前预检（schema 048–050）。
 
-**请求停止一个 Run（DEC-043，迁移 078）。** 业务 Run 的范围变了、不再需要时，有 review 权限且持有该 Session 精确执行授权的身份提交 `runtime.run.stop`（带 Run 的当前版本和理由）。它只在 Run 上记一个**停止标记**（时间、理由、请求人，写入后不能改也不能撤），**不新增 Run 状态**。按 Run 当时的状态处理：还是“已请求”的直接判失败、不再派发；已有 Turn 的沿用现有中断路径，由 runner 调适配器中断，终态仍以运行时观察为准；正处于“派发中”、还没有 Turn 的不判失败（原生启动可能已经发出），标记保留，等 Turn 绑定时立刻中断。同一事务里：已签但未封存（`submitted`、`blocked`）的提交意图作废为 `rejected: RUN_STOPPED`；该 Session 里与这个 Task 相关、还在排队的消息的阻塞原因标成“被取代”（消息本身仍由发送人决定取消或重发）。此后，数据库触发器拒绝任何引用该 Run 的新提交和交付，也拒绝在这个 Task 上还有未结束的已停止 Run 时不带 Run 的交付；已作废的意图对原操作 ID 重放和新操作 ID 都返回同一个 `RUN_STOPPED`；封存者遇到已停止的 Run 一律不封存。已停止 Run 的失败或中断**不会关闭恢复门**（门原本开着就保持开着），也不产生“结束未提交”“提交受阻”这两类 Leader 通知，只留一条 `run.stopRequested` 运行事件；Run 终态之后，同一个 Session 立刻能接新的 Run，Task 也可以重开、修订、重新派发。结果未知（未核实）的终态仍按原规则关门。
+**请求停止一个 Run（DEC-043，迁移 078）。** 业务 Run 的范围变了、不再需要时，有 review 权限且持有该 Session 精确执行授权的身份提交 `runtime.run.stop`（带 Run 的当前版本和理由）。它只在 Run 上记一个**停止标记**（时间、理由、请求人，写入后不能改也不能撤），**不新增 Run 状态**。按 Run 当时的状态处理：还是“已请求”的直接判失败、不再派发；已有 Turn 的沿用现有中断路径，由 runner 调适配器中断，终态仍以运行时观察为准；正处于“派发中”、还没有 Turn 的不判失败（原生启动可能已经发出），标记保留，等 Turn 绑定时立刻中断。同一事务里：已签但未封存（`submitted`、`blocked`）的提交意图作废为 `rejected: RUN_STOPPED`；该 Session 里与这个 Task 相关、还在排队的消息的阻塞原因标成“被取代”（消息本身仍由发送人决定取消或重发）。此后，数据库触发器拒绝任何引用该 Run 的新提交和交付，也拒绝在这个 Task 上还有未结束的已停止 Run 时不带 Run 的交付；已作废的意图对原操作 ID 重放和新操作 ID 都返回同一个 `RUN_STOPPED`；封存者遇到已停止的 Run 一律不封存。已停止 Run 的失败或中断**不会关闭恢复门**（门原本开着就保持开着），也不产生“结束未提交”“提交受阻”这两类 Leader 通知，只留一条 `run.stopRequested` 运行事件；Run 终态之后，同一个 Session 立刻能接新的 Run，Task 也可以重开、修订、重新派发。**已停止的 Run 先成为 `unknown`、之后读回为 `interrupted`、`failed` 或 `completed` 时**，被它关闭的恢复门自动打开（参照 059 对已核实直接输入的做法，只开这一个 gate，队列认领持有的门不动）。已停止的 Run 若持有队列认领，失败/中断照常关门，由队列的重试决定处理。被取代的消息有持久标记（`superseded_at`，迁移 079），选取与准入都排除，发送人取消或确认后才重新可投递；`runtime.run.stop` 之后撤回的派发直接判为失败，不再回到 `requested`，`beginDispatch` 与预检续接也拒绝已停止的 Run。工作索引不再把已按请求停止的 Run 显示成待返工（阶段回到等待下一个 Run，Run 带 `stopped`）。
+
+**停止后的恢复门（迁移 079 的补充）。** 恢复门等待的下一条消息不会是被取代而未确认的消息：Run 变 unknown 时选下一条会跳过它；叫停核实后若门仍指向这样的消息，直接完全打开而不是进入 `message_pending`；门（`message_pending`）所等的消息被发送者取消时，门释放为 `open`（持有队列认领的门回到 `awaiting_acceptance`）；仍为 `blocked` 的门保留指向，由恢复决定点名并清掉已取消的那条。已停止、处于 unknown、从未发出 turn/start 的 Run：`approvePreTurnContinuation` 拒绝（`RUN_STOPPED`），`claimPreTurnContinuation` 把它判为 failed（由核实后重开门的规则打开门），不再每轮重试。
 
 ### 失败、恢复门与恢复
 
@@ -119,15 +121,14 @@ flowchart TD
   G -->|否| Q["只提供普通消息入口<br/>输入排队等待"]
   G -->|是| S{"Session 当前状态"}
   S -->|"主来源已有绑定的运行中 Turn"| R{"运行时支持补入？"}
-  R -->|"Codex 固定 0.166.0-alpha.6"| ST["补入当前 Turn（turn/steer）<br/>不新建 Turn，不计额度"]
-  R -->|"Claude，或其他 Codex 版本"| NO["不能补入<br/>提交得到拒绝或未知回执<br/>不会自动转成排队消息"]
+  R -->|"Codex alpha.6 或 0.167"| ST["补入当前 Turn（turn/steer）<br/>不新建 Turn，不计额度"]
+  R -->|"Claude，或其他 Codex 版本"| NO["能力查询明确回答不能补入<br/>普通消息入口排队"]
+  ST -->|"压缩/评审等不可补入回合"| NQ["明确拒绝 direct input<br/>同一内容转为普通排队消息"]
   S -->|"确切空闲"| START["在原会话开一个新 Turn<br/>记为一条普通消息，计一次 Turn"]
   S -->|"占用中：刚派发、尚无 Turn 或结果未知"| BUSY["不提供即时发送<br/>只能走普通消息排队"]
 ```
 
-即时发送是否可用，由能力查询（`direct-input-capability`）按同一组授权和槽位检查实时回答；只有回答 `steer` 或 `start` 时工作台才显示即时发送，否则保留普通消息入口，用户的输入作为普通消息排队。“占用中”指 Session 已有主来源但还没有可以附着的运行中 Turn，例如刚派发还没拿到 Turn ID，或上一次结果未知。
-
-当前实现有一处已知缺口：能力查询只核对授权和槽位，不核对运行时是否支持补入，所以对 Claude 或非 alpha.6 的 Codex 也可能回答 `steer`。这时提交才发现不能补入：Codex 适配器明确拒绝，记为拒绝；Claude 一侧由运行时路由层报“不支持”，没有被归为原生的明确拒绝，目前记为未知。两种情况都不会自动转成排队消息。
+即时发送是否可用，由能力查询（`direct-input-capability`）按同一组授权、槽位和 Session 当前运行时能力实时回答；只有回答 `steer` 或 `start` 时工作台才显示即时发送，否则保留普通消息入口，用户的输入作为普通消息排队。“占用中”指 Session 已有主来源但还没有可以附着的运行中 Turn，例如刚派发还没拿到 Turn ID，或上一次结果未知。运行时分别声明 `delivery.midTurnInput`（能否补入）与 `delivery.idleTurnStart`（能否空闲直启）；Codex 的声明来自实际绑定的协议版本，Claude 两项均为否。
 
 规则如下：
 
@@ -136,20 +137,33 @@ flowchart TD
 - **空闲直启沿用普通消息授权。** 它保存一条普通消息和唯一一条处理记录，再在原会话启动 Turn，计一次 Turn。补入不另外计数。
 - **结果未知不重发。** 先持久化原意图再调用运行时；回执丢失就记 `unknown` 并保留槽位，只能按原 `inputId` 只读核对。
 - **授权。** 默认关闭（`directInputs`）。启用时要有一条指向同一 Session 的即时输入授权，同时要有对应的普通消息授权；客户端自报的身份不能替代授权。
+- **每 Session 一把短锁。** 业务 Run 或普通消息开新一轮、用户即时输入和后续通知包送入共用同一把进程内锁，只覆盖准入与原生发送，不覆盖整个 Turn。锁前撞车返回可重试的 `SESSION_INPUT_BUSY`，没有持久化本次意图；若已持久化的意图在适配器自身的在途检查处被拒，则证明没有写入原生传输，保留原输入编号与操作编号供同一意图重试。两种情况都不把恢复门写成拒绝或未知；业务 Run 遇到本地撞车保持 `requested`，下一轮再试，普通消息保持待处理原因而不判失败。
+- **不可补入的回合转排队。** 只有原生结构化字段 `codexErrorInfo.activeTurnNotSteerable`（例如 `turnKind: "review"` 或 `"compact"`），或 0.167 的精确文字 `cannot steer a review/compact turn`，才表示这一回合不能补入；direct input 记为 `rejected`，同一内容同时写成一条普通排队消息。`TurnError.misalignment.steer` 是失败回合附带的继续指令，不是 `turn/steer` 的拒绝。送入已被接受、这一轮随后失败且没有物化对应输入 Item 时，该输入保持未读（没有 `nativeItemId`），不会因为送达回执而被当成已读。
 
 不同来源的消息分开处理：
 
 | 消息来源 | Session 正在执行时 |
 | --- | --- |
-| 用户从工作台即时输入 | Codex（固定 0.166.0-alpha.6）补入当前 Turn；Claude 和其他 Codex 版本不能补入，用户改走普通消息 |
+| 用户从工作台即时输入 | Codex `0.166.0-alpha.6` 或 `0.167.0-alpha.3.2` 补入当前 Turn；Claude 和其他 Codex 版本不能补入，用户改走普通消息 |
 | 普通消息：Agent 或人经 `session.message.post` 发出的消息、Leader 通知、消息 Connector 写入的外部平台消息 | 排队，等当前 Turn 结束、恢复门开放后，在原会话开新 Turn |
 | 业务 Task 队列的下一项 | 不进消息队列；队列控制者在 Session 空闲、上一项按释放规则放行后，才领取并启动新 Run |
 
-普通消息和业务 Run 共用同一个 Session 槽位，轮流启动；即时输入不借用这两条排队路径，它们也不借用即时输入。
+普通消息和业务 Run 共用同一个 Session 槽位，轮流启动；即时输入不借用这两条排队路径，它们也不借用即时输入。协调服务另用一把短锁串行化“开新一轮”和“送入当前轮”的原生发送，避免同一 Session 同时出现两个准入。
 
-**两种运行时的差别。** 能力声明里的 `delivery.midTurnInput` 两者目前都是 `false`。对 Codex 来说，这项声明还没有跟上实现：补入由适配器的 `steerTurn` 按协议特性表单独检查，只有固定 `0.166.0-alpha.6` 同时具备 `turn/steer` 与 `thread/settings/update`（`packages/adapter-codex-app-server/src/protocol-surface.ts`）；默认的 `0.166.0-alpha.5.1` 不能补入。Claude 适配器没有补入方法。两种运行时都实现了空闲直启所用的普通消息启动。
+**两种运行时的差别。** Codex 的 `delivery.midTurnInput` 按协议特性表开启：`0.166.0-alpha.6` 与 `0.167.0-alpha.3.2` 为是，早期版本和默认的 `0.166.0-alpha.5.1` 为否；`delivery.idleTurnStart` 在所有现代协议为是。`thread/settings/update` 只控制执行配置切换，不再与补入共用开关，因此只有 alpha.6 声明执行配置切换。Claude 适配器没有补入方法，两项即时能力均为否。两种运行时都实现了空闲直启所用的普通消息启动。
 
 工作台入口与核对按钮的设计见[Sessions 页面](../frontend/pages/sessions.md)，配置、入口、对账与检查清单见[运行接线手册](../development/runtime-operations.md#2-即时输入)。
+
+### 调度架构的目标变化（DEC-045，已决定、未实施）
+
+DEC-045 在现有即时输入之外增加三类输入，并把“接下来做什么”从 Leader 的上下文搬到每个 Session 的队伍：
+
+- **Leader 通知包作为单独输入。** 通知包不继承人的即时输入授权，使用独立的服务身份与准入，计入 Leader 的通知预算；Leader 空闲时开一轮，忙时在下一个工具间隙送入当前这一轮，任何一轮都可送入，包括使用者或需求 Session 发起的一轮。每次送入都要有原生“读到”证据（送入回执与条目 ID 对齐），逐项状态为待发、已送入、已看到、已处理、已撤回、未知；只有 Leader 明确处置或延后才算已处理。每包最多 20 项、8 KB，超出只送摘要与 ID；每轮最多 5 包；一轮超过 30 分钟或上下文达到阈值时停止送入，攒下的通知开下一轮；系统通知永远不送进业务 Run。对应 W1、W2、W3、W5；W3 还要在 0.167 上审定送入能力并补夹具，W2 还要加送入锁、账本和“至少送达一次”的对账。
+- **人发的消息可选插入或排队。** 使用者从工作台、需求 Session 从 CLI 选择“插入当前一轮”或“排队”；插入时如果这一轮刚好换了（`TURN_CHANGED`），自动转为排队。空闲时人的插入先于等待中的通知包。对应 W2。
+- **每个常驻业务 Session 一条队伍。** 新工作追加到队尾，Leader 可相对前移、后移或撤下；轮到一项时，先由执行者做轻量执行确认，高风险 Task 先过方案审阅，再依次开始、分派、预留 Run，三步用由队伍项和第几次尝试决定的固定操作 ID，可安全重放。依据待复核、阶段无效、定时未到、依赖未满足或授权缺失时挂起并给 Leader 立即级通知，后面的项照常往前走；Run 结束就放行下一项。验收安排仍走消息队列，一项一轮；Session 空闲时，队伍项与排队消息按到达先后轮流处理。对应 Q1；调度板 `work board` 的快照与事件流对应 Q2。
+- **日程到点分发。** 生成 Task 后默认交 Leader 安排，也可按 Leader 的直派名单直接追加到队伍：先选空闲 Session，没有空闲就选队伍最短的，再按名单顺序；只分发，不立即开始；忙就排队，引擎不新建 Session。对应 S1；测量工具与基线对应 M0。
+
+当前实现仍是旧路径：任务详情里的“驻留 Session 队列”是旧的批量常驻队列，不充当新的 Session 队伍；`session_direct_input` 只记录人的即时输入，还没有通知包送入；Codex 0.167 的送入能力与 Claude 一侧的补入都还要按 W3/W4 审定。上述能力上线前，页面和正文都不能把它们写成已具备；工作台调度板页面要等第一阶段检验通过后，由另行安排的原生 Session 设计并实现。
 
 ## 4. 托管压缩
 
@@ -162,6 +176,17 @@ flowchart TD
 5. **沿用 Thread 默认思考强度。** `thread/compact/start` 没有强度参数，压缩用 Thread 当前的默认值；之后的业务 Turn 仍逐 Turn 传执行配置里的强度（PR #222）。
 
 托管压缩只在 Codex 固定 `0.166.0-alpha.6` 时可用（协议特性表里只有该版本具备 `thread/compact/start`），Claude 的声明是 `compaction.mode: "unavailable"`。私有配置 `runtime.compaction.owned` 默认 `true`；设为 `false` 时关闭这组维护入口，压缩完全交给运行时自己。命令与核对步骤见[运行接线手册](../development/runtime-operations.md#3-托管压缩)。
+
+### 长会话的上下文交接与每日用量上限
+
+原生运行时的自动压缩会在上下文快满时发生，但压缩只缩短保留窗口；之后每轮工具输出与通知正文会继续把窗口填回去。2026-11-11 对一个正式 Leader 线程的只读测量是 148 轮、17 次压缩、按轮最大输入的均值 218,162、中位数 229,557、p90 267,289 个词元，线程累计输入 381,888,271，其中 136 轮达到或超过 150,000。因此把自动压缩当成唯一治理手段不够，服务另加两道可配置的普通 Turn 准入：
+
+- **上下文交接。** `runtime.contextBudget`（默认关闭；打开后 `maxInputTokens` 默认 150,000，`warningRatio` 默认 0.8）比较该 Session 最新原生观察的当前上下文。达到 `warning` 只提示；达到 `handoff_required` 时，普通 Leader 结果通知保留在队列中并写明 `CONTEXT_HANDOFF_REQUIRED`，不再启动新 Turn。业务 Task Run 与使用者自己发的消息不受这道门影响。维护者用同一职责开启新 Session／新线程，把原 Session、原生 Thread、固定 Task 和未处理通知作为第一责任写进交接摘要；`contextHandoffSummary()` 生成一段只引用固定标识、不含原生对话正文的摘要。新线程接手前，旧线程的 Task、交付、验收和通知仍各按原记录判断，不能因为交接而视为已读或已接受。
+- **每日总额。** `runtime.dailyBudget`（默认关闭；`maxInputTokens` 与 `maxCostUsd` 至少设一个，`warningRatio` 默认 0.8，`pauseOrdinaryTurns` 默认 `true`）按项目配置的 IANA 时区聚合 `session_usage_daily`。`warning` 只提示，`exhausted` 时同样只暂停普通结果通知；业务 Task Run 不受影响，消息保留可恢复的阻断原因。费用只累加运行时实际报告的成本；有任何一笔记账没有成本时，费用上限判为 `unknown`，不会把未报告当成 0。
+
+按 Session、按天的用量与费用由 `GET /api/projects/:projectId/runtime/usage?from=YYYY-MM-DD&to=YYYY-MM-DD` 读取；工作台智能体页右栏“环境与用量”显示该 Session 今日用量、上下文压力、项目每日上限与最近几天汇总。用量来源按运行时分开：Codex 的累计原生观察是权威来源，Runtime Run 的终态账本只用于没有累计原生观察的运行时（例如 Claude），避免同一 Turn 重复记账。原生观察缺失时显示“未知”，不按 0 计。
+
+基线对比方法：`node scripts/context-baseline.mjs <Codex rollout.jsonl>` 只读原生记录，报告每轮最大输入、均值／中位数／p90、累计用量、压缩次数和各记录类型的字节占比。改动前后各取同一 Leader 线程或同职责新线程的前 N 轮，按同一口径比较；通知正文不是主要来源，工具输出与保留历史才是。
 
 ## 5. 普通消息默认不限轮数
 
@@ -187,7 +212,7 @@ Codex 的 Thread 和 Claude 的 session 是两种不同的原生对象，一个 
 
 以代码为准：Codex 见 `packages/adapter-codex-app-server/src/index.ts` 的 `capabilities()`（约第 376–390 行）与 `src/protocol-surface.ts` 的协议特性表；Claude 见 `packages/adapter-claude-agent-sdk/src/index.ts` 的 `capabilities()`（约第 186–198 行）。
 
-Codex 一列有几项取决于运行配置选的协议版本。“现代协议”指除 `0.154.0` 以外的 4 个已核版本：`0.164.0-alpha.11.1`、`0.166.0-alpha.5.1`、`0.166.0-alpha.6`、`0.167.0-alpha.3.2`；标“仅 alpha.6”的两项只在固定 `0.166.0-alpha.6` 时可用，默认的 `0.166.0-alpha.5.1` 下都不可用。各版本的完整特性见[Codex 接入](codex-integration.md#协议版本与可选能力)；当前实例选的是哪个版本，见[阶段路线](../roadmap.md#当前基线)。
+Codex 一列有几项取决于运行配置选的协议版本。“现代协议”指除 `0.154.0` 以外的 4 个已核版本：`0.164.0-alpha.11.1`、`0.166.0-alpha.5.1`、`0.166.0-alpha.6`、`0.167.0-alpha.3.2`；托管压缩与执行配置切换标“仅 alpha.6”，运行中补入标“alpha.6 或 0.167”，默认的 `0.166.0-alpha.5.1` 下都不可用但空闲直启可用。各版本的完整特性见[Codex 接入](codex-integration.md#协议版本与可选能力)；当前实例选的是哪个版本，见[阶段路线](../roadmap.md#当前基线)。
 
 | 能力 | Codex（默认协议 `0.166.0-alpha.5.1`） | Claude |
 | --- | --- | --- |
@@ -195,14 +220,14 @@ Codex 一列有几项取决于运行配置选的协议版本。“现代协议�
 | 原生会话 ID | 由运行时分配 Thread ID | 由适配器预先生成（`callerAssignedSessionId: true`） |
 | 执行配置 | 完全访问＋不需审批，创建和续接都要原生回执确认 | 完全访问＋不需审批，每个 Turn 以 `bypassPermissions` 启动；没有原生回执可核，续接只核本地绑定 |
 | 普通消息与空闲直启 | 支持 | 支持（PR #224） |
-| 执行中补入 | 仅 alpha.6；默认版本不支持 | 不支持 |
+| 执行中补入 | alpha.6 或 0.167；默认版本不支持 | 不支持 |
 | 自动压缩 | 运行时自己压缩 | 运行时自己压缩 |
 | 托管压缩 | 仅 alpha.6；默认版本不支持 | 不支持 |
 | Turn 历史 | 原生 `thread/turns/list`、`thread/items/list` | 适配器账本，在进程启动前先记账 |
 | 工作轨迹与连续工作区 | 支持轨迹；工作区历史需另开实验开关 | 都不支持 |
 | 会话命名 | 现代协议支持 | 不支持 |
 | 归档 | 原生 `thread/archive` | 适配器账本登记，拒绝后续 Turn |
-| 模型与思考强度修订 | 现代协议支持 | 不支持，沿用创建时的模型 |
+| 模型与思考强度修订 | 仅 alpha.6；需精确读回 | 不支持，沿用创建时的模型 |
 | 原生提问桥（`request_user_input`） | 默认关闭，可按配置打开 | 不支持；提问工具被禁用 |
 | 明确拒绝的启动结果 | 能区分“未发送”“被拒绝” | 只能区分“未发送”，其余为未知 |
 | 逐 Turn 用量与费用 | 不写入 Run；Token 读数只在原生观察里 | 写入 Run 的 `usage` 与 `cost_usd`（schema 067） |
@@ -252,6 +277,7 @@ Codex 一列有几项取决于运行配置选的协议版本。“现代协议�
 | 停止、预检与原 Thread 接续 | PR #184、#185；schema 048–050 | 随运行时启用 |
 | 宿主失联与写者冲突恢复 | PR #199、#200；schema 055、056 | 随运行时启用 |
 | 托管压缩 | PR #210、#215、#218、#222；schema 058 | `runtime.compaction.owned: true`；需 Codex `0.166.0-alpha.6` |
+| 上下文交接与每日用量上限 | 本次；schema 081 | `runtime.contextBudget`／`runtime.dailyBudget` 均默认关闭 |
 | 即时输入 | PR #216；schema 059 | `directInputs` 关闭 |
 | 普通消息不限轮数 | PR #195、#207 | `maxTurns` 省略即不限 |
 | Claude 运行时、双运行时与 Role 绑定 | PR #224、#226、#230；schema 067、068 | `runtime.provider: "codex"`；Claude 需显式列入 `providers` 并配置 `runtime.claude` |
@@ -262,5 +288,5 @@ Codex 一列有几项取决于运行配置选的协议版本。“现代协议�
 
 - Codex 协议、版本与历史读取的细节：[Codex 接入](codex-integration.md)
 - Session、Run、消息、验收接力和 Leader 通知的合同：[接口合同](contracts.md)
-- 这些表的约束：[存储](storage.md#迁移-054-到-070-新增的表和列)
+- 这些表的约束：[存储](storage.md#迁移-054-到-081-新增的表和列)
 - 服务实际部署在哪里、迁移时 Session 为什么不搬：[部署与迁移](deployment.md)

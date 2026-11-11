@@ -8,6 +8,7 @@ import { PgSessionRecovery } from "./session-recovery.js";
 import { PgSessionMessages } from "./session-messages.js";
 import { PgNativeInputs } from "./native-input.js";
 import { PgNativeObservation } from "./native-observation.js";
+import { PgUsage } from "./usage.js";
 import { PgSessionAssignments } from "./session-assignments.js";
 import { PgSessionLine } from "./session-line.js";
 import { PgSessionObservation } from "./session-observation.js";
@@ -152,6 +153,7 @@ class PgReader implements Reader {
   readonly sessionMessages: PgSessionMessages;
   readonly nativeInputs: PgNativeInputs;
   readonly nativeObservation: PgNativeObservation;
+  readonly usage: PgUsage;
   readonly recovery: PgSessionRecovery;
   readonly sessionAssignments: PgSessionAssignments;
   readonly sessionLines: PgSessionLine;
@@ -172,6 +174,7 @@ class PgReader implements Reader {
     this.sessionMessages = new PgSessionMessages(client, projectId);
     this.nativeInputs = new PgNativeInputs(client, projectId);
     this.nativeObservation = new PgNativeObservation(client, projectId);
+    this.usage = new PgUsage(client, projectId);
     this.sessionAssignments = new PgSessionAssignments(client, projectId);
     this.sessionLines = new PgSessionLine(client, projectId);
     this.roles = new PgRoleQueries(client, projectId);

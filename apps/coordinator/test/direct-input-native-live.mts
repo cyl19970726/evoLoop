@@ -1,4 +1,4 @@
-/** Opt-in candidate exercise: real HTTP, dedicated PG and a private alpha.6 native Thread.
+/** Opt-in candidate exercise: real HTTP, dedicated PG and a private pinned native Thread.
  * Run only with an evoloop_*_test database and an explicit LIVE_CODEX_BIN.
  */
 import assert from "node:assert/strict";
@@ -15,12 +15,14 @@ import { SessionMessageService } from "@evoloop/core/session-messages";
 import { DirectInputService } from "../src/direct-input/service.js";
 import { registerDirectInputRoutes } from "../src/direct-input/routes.js";
 import { SessionMessagePump } from "../src/session-messages/pump.js";
+import { SessionSteerLock } from "../src/runtime/session-steer-lock.js";
 import type {} from "../src/server.js";
 
 const url = process.env.TEST_DATABASE_URL;
 const executable = process.env.LIVE_CODEX_BIN;
 const actorId = process.env.LIVE_DIRECT_ACTOR ?? "candidate-consumer";
 const model = process.env.LIVE_DIRECT_MODEL ?? "gpt-6-sol";
+const expectedVersion = process.env.LIVE_CODEX_VERSION ?? "codex-cli 0.166.0-alpha.6";
 if (!url || !/^evoloop(?:_[a-z0-9]+)*_test$/.test(new URL(url).pathname.slice(1)) || !executable)
   throw new Error("Dedicated evoloop_*_test database and LIVE_CODEX_BIN are required");
 const schema = `el_live_${randomUUID().replaceAll("-", "").slice(0, 16)}`;
@@ -33,7 +35,7 @@ const rows = Array.from({length:36}, (_, i) => {
 });
 await writeFile(join(cwd,"cases.csv"),`id,group,amount,status\n${rows.join("\n")}\n`);
 const pool = new pg.Pool({connectionString:url,options:`-c search_path=${schema}`});
-const native = new CodexAppServerAdapter({executable,expectedVersion:"codex-cli 0.166.0-alpha.6",
+const native = new CodexAppServerAdapter({executable,expectedVersion,
   workspaceExperimental:true,requestTimeoutMs:30000,initializationTimeoutMs:30000,
   verifyBinding:async candidate=>{
     const result=await pool.query(`SELECT 1 FROM runtime_session WHERE project_id=$1 AND session_id=$2
@@ -66,7 +68,8 @@ try {
   const grant={projectId,sessionId,senderActorId:actorId,receiverRoleId:roleId,receiverActorId:"isolated-agent",
     cwd,maxTurns:1,enabled:true,canStart:true,canSteer:true};
   const store=new PgDirectInputs(pool);
-  const service=new DirectInputService({store,runtime:()=>native,canWrite:()=>true,
+  const lock=new SessionSteerLock();
+  const service=new DirectInputService({store,runtime:()=>native,canWrite:()=>true,lock,
     admission:async principal=>{
       if(principal.actorId!==actorId)throw new Error("isolated actor mismatch");
       return {grant,binding};
@@ -75,7 +78,7 @@ try {
     clock:{now:()=>new Date().toISOString()},ids:{next:randomUUID},grantFor:async()=>grant});
   const pumpErrors:unknown[]=[];
   const pump=new SessionMessagePump({service:messageService,runtime:()=>native,projects:async()=>[projectId],
-    canWrite:()=>true,canStart:async()=>false,pollIntervalMs:1000,onError:error=>pumpErrors.push(error)});
+    lock,canWrite:()=>true,canStart:async()=>false,pollIntervalMs:1000,onError:error=>pumpErrors.push(error)});
   app.decorateRequest("principal",null);
   app.addHook("onRequest",async request=>{
     if(request.headers.authorization===`Bearer ${token}`)

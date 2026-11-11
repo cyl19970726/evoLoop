@@ -11,6 +11,8 @@ import type { RuntimeRunner } from "./runtime/runner.js";
 import { runInputPage } from "./runtime/input-read.js";
 import type { NativeInputBridge } from "./runtime/native-input.js";
 import { publicNativeObservationView, type NativeObservationBridge } from "./runtime/native-observation.js";
+import type { UsageService } from "@evoloop/core/usage";
+import type { ContextBudgetConfig, UsageBudgetConfig } from "@evoloop/contracts";
 import type { SessionObservationService } from "@evoloop/core/session-observation";
 import type { ObservedSession } from "@evoloop/contracts/session-observation";
 import type { OrdinaryMessageExecutionCapability } from "@evoloop/contracts/session-work";
@@ -73,6 +75,9 @@ export async function buildServer(options: {
   sessionTimeline?: SessionTimelineService;
   nativeInputs?: NativeInputBridge;
   nativeObservation?: NativeObservationBridge;
+  usage?: UsageService;
+  usageBudget?: () => Promise<UsageBudgetConfig | null>;
+  contextBudget?: () => Promise<ContextBudgetConfig | null>;
   /** Read-only, snapshot-only projection. Must not initialize native processes or perform dispatch. */
   messageExecution?: (principal: Principal, projectId: string, session: ObservedSession) => Promise<OrdinaryMessageExecutionCapability>;
   allowedRuntimeCwd?: (projectId: string, cwd: string) => Promise<boolean>;
@@ -492,6 +497,16 @@ export async function buildServer(options: {
           current.models.filter(model=>grantAllowsModel(g,model)):[]}))};
   });
   app.get("/api/projects/:projectId/runtime/sessions", async request => options.service.listRuntimeSessions(who(request.principal), params(request.params).projectId!));
+  app.get("/api/projects/:projectId/runtime/usage", async request => {
+    const p = params(request.params);
+    const query = z.strictObject({ from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+      to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/) }).parse(request.query);
+    if (!options.usage) throw new DomainError("USAGE_UNAVAILABLE", "Usage accounting is unavailable");
+    const config = await options.usageBudget?.() ?? null;
+    const contextConfig = await options.contextBudget?.() ?? null;
+    return options.usage.overview(who(request.principal), p.projectId!, query.from, query.to,
+      config?.timeZone ?? "UTC", config, contextConfig);
+  });
   app.get("/api/projects/:projectId/runtime/sessions/:id/recovery", async request => {
     const p=params(request.params);
     return options.service.getSessionRecovery(who(request.principal),p.projectId!,p.id!);

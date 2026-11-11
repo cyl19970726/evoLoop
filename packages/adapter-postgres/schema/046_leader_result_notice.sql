@@ -144,6 +144,7 @@ CREATE FUNCTION leader_submission_notice_event(p_submission uuid,p_version integ
   SELECT md5(p_submission::text||':'||p_version::text)::uuid
 $$;
 
+-- NOTE: patched in place by migration 078 (a Run stopped on request produces no notice); see pg_get_functiondef for today's body.
 CREATE FUNCTION leader_result_notice_from_terminal_run() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE submission ordinary_run_submission%ROWTYPE;
 BEGIN
@@ -174,6 +175,7 @@ END $$;
 CREATE TRIGGER leader_result_notice_terminal_run AFTER INSERT OR UPDATE OF state ON runtime_run
   FOR EACH ROW EXECUTE FUNCTION leader_result_notice_from_terminal_run();
 
+-- NOTE: patched in place by migration 078 (no notice for a stopped Run's voided submission); see pg_get_functiondef for today's body.
 CREATE FUNCTION leader_result_notice_from_submission() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE source_run runtime_run%ROWTYPE;
 BEGIN

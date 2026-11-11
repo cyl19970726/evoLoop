@@ -60,6 +60,8 @@ Document 增加可空用途 kind 与 draft/published/archived；发布指针沿�
 
 `DocumentRevision` 是 PostgreSQL 中不可变的过程文档正文修订，含作者、创建时间、内容校验、格式、创建时的权限范围与所读基线；新增修订须按预期基线提交，旧基线冲突须显式返回。Task 与 Document 可多对多建立普通导航链接，只指向稳定 documentId；任务开始或执行时，再由 TaskBasis 固定实际采用的其他 DocumentRevision。任务引用某需求不意味着其他关联任务自动采用它。
 
+**身份的额外命令。** 身份文件的每条凭据除 `permissions` 外可有 `extraCommands`，只能写 `document.archive` 与 `document.restore`，写别的命令则服务启动读文件时即拒绝。清单与 `permissions` 分开存放，不改变任何 `review` 判断：持有清单项的身份在本项目有 `write` 时，只对清单里那一条命令免去 `review` 要求，每条命令各自生效（归档不含恢复），`task.start`、`task.close`、`document.publish` 等仍要 `review`。身份文件在服务启动时读取，改了要重启服务才生效。
+
 Git 文档不创建 Document 行；独立 `GitSourceRef`（或等价来源元数据）保存稳定仓库身份、repo/path/commit、原始字节 hash、读取校验和可达状态。Git 正文及 commit 仍由对应仓库维护，发布 HTML 是只读派生视图。
 
 Document 目录列表返回 ID、标题、类型、状态、当前修订和内容格式等摘要；点行后按授权读取所选不可变 DocumentRevision 的完整载荷，不依赖 Task 描述字段或外链再取内容。修订可采用 Markdown、HTML 等格式；详情层解析 Markdown，HTML 报告可保留原件并预览。固定修订的 hash 必须在读取时核验，缺失资源或无权读取时明确显示不完整/不可达，不用旧摘要伪装完整正文。
@@ -200,7 +202,7 @@ HostLink 独立记录 Role、owned Session 或外部 Codex Desktop 引用及历�
 
 已完成 retry 且原 claim 仍等待验收时，独立复核可要求同 Task 返工。若依据是业务输入变更，控制者先修订并重新封存 Task 业务输入、amend 并 readopt 队列；若依据是合法问答，则固定前一 Task 通道的真实问答。随后以 `queue.continue.rework` 固定 gate 版本、最近 completed Run 的 ID/version/inputHash、active 执行配置及依据。项目事务只为此原 claim 的一个新 Run 进入 `reworking`，PG 启动栅栏和 attempt 追加只认该 Run；旧失败来源、retry 决定、消息 pin 和累计预算不变。完成后回 `awaiting_acceptance`，失败或未知重回 `blocked`；其他 Task、claim、Run 或普通消息均不因返工许可开放。若业务输入未改且无合法问答，或来源、身份、权限、预算、配置、采纳版本不符，事务拒绝且不留下许可。
 
-`runtime.session.executionProfile.revise` 只登记新的不可变执行配置修订，本次可改已授权的 model；它不是运行时观测到的实际模型，也不直接调用原生宿主或解除恢复门槛。每个 Run 固定其启动时的配置修订快照，旧 Run 不随 Session 后续换模改写。重试还必须明确匹配受审的 `expectedExecutionProfileRevisionId`，不能在读入后悄悄换用另一配置。新配置需要在同一原生 Thread 以显式配置恢复并取得肯定回读后才可启动；激活回执未知时只对原 Thread 只读对账，不重复调用激活。即使只读对账确认配置已 active，有权者仍须显式作 `runtime.session.recovery.resume`，不会因回读成功自动启动后续工作。显示配置、激活状态与逐 Turn 实际模型时必须区分；没有可靠原生实际模型遥测时仍为未知。 已确认完整权限的 Session 可在新修订固定原生目录所列的模型和思考强度；已确认运行的旧 Turn 继续使用原不可变快照，目标修订 pending 时不启动新业务。激活用原 Thread 的模型与强度读回证明配置，后续 `turn/start` 仍同时显式携带固定的两个参数；原生请求入队回包和启动回包均不能证明 provider 真实执行参数。模型与思考强度修订依赖运行时声明的 `executionProfileActivation`：Codex 现代协议支持，Claude 适配器不支持，Claude Session 沿用创建时的模型。
+`runtime.session.executionProfile.revise` 只登记新的不可变执行配置修订，本次可改已授权的 model；它不是运行时观测到的实际模型，也不直接调用原生宿主或解除恢复门槛。每个 Run 固定其启动时的配置修订快照，旧 Run 不随 Session 后续换模改写。重试还必须明确匹配受审的 `expectedExecutionProfileRevisionId`，不能在读入后悄悄换用另一配置。新配置需要在同一原生 Thread 以显式配置恢复并取得肯定回读后才可启动；激活回执未知时只对原 Thread 只读对账，不重复调用激活。即使只读对账确认配置已 active，有权者仍须显式作 `runtime.session.recovery.resume`，不会因回读成功自动启动后续工作。显示配置、激活状态与逐 Turn 实际模型时必须区分；没有可靠原生实际模型遥测时仍为未知。 已确认完整权限的 Session 可在新修订固定原生目录所列的模型和思考强度；已确认运行的旧 Turn 继续使用原不可变快照，目标修订 pending 时不启动新业务。激活用原 Thread 的模型与强度读回证明配置，后续 `turn/start` 仍同时显式携带固定的两个参数；原生请求入队回包和启动回包均不能证明 provider 真实执行参数。模型与思考强度修订依赖运行时声明的 `executionProfileActivation`：Codex 仅在有 `thread/settings/update` 的协议（当前为 `0.166.0-alpha.6`）声明支持，`0.167.0-alpha.3.2` 与其他版本不支持；Claude 适配器不支持，Claude Session 沿用创建时的模型。
 
 **同职责容量归 Leader（DEC-038）。** 同一 Role 增减 Session 实例是 Leader 的编制决定，不另设审批，也不由 Evocation 提出。Leader 在工作周期里主动读取项目全部未完成、未分派、阻塞、待验收和待发布的工作，结合依赖与各 Session 的能力、占用、健康和预算，每次判断给出“补人”“先拆开”“必须等”之一，并写明哪些工作可以并行、当前合适的最大并行度；过度并行算风险，不是目标。编制按天调整，一次只增减一个：上一次增加的实例有被接受的交付后，才考虑下一个。增加实例时划清它的工作树、文件与整合责任；负担下降或任务结束时决定复用、释放或退役（Leader 核业务责任，引擎核运行状态，见[验收接力与临时 Session 退役](#验收接力与临时-session-退役)）。
 

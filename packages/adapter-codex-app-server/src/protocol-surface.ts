@@ -19,8 +19,10 @@ export interface ProtocolFeatures {
   workspace: boolean;
   /** Owner-requested compaction and its observation. */
   compaction: boolean;
-  /** Direct input on an idle or active owned Session. */
-  directInput: boolean;
+  /** Add input to the currently active Turn. */
+  midTurnInput: boolean;
+  /** Switch the loaded Thread's model and reasoning-effort settings. */
+  executionProfileSwitch: boolean;
   /** Read-only skill, plugin and MCP server lists for a work directory. */
   capabilityLists: boolean;
 }
@@ -51,16 +53,22 @@ export const FEATURE_METHODS: Readonly<Record<keyof ProtocolFeatures, readonly s
   modern: ["thread/name/set", "currentTime/read"],
   workspace: ["thread/timeline/list"],
   compaction: ["thread/compact/start"],
-  directInput: ["turn/steer", "thread/settings/update"],
+  midTurnInput: ["turn/steer"],
+  executionProfileSwitch: ["thread/settings/update"],
   capabilityLists: ["skills/list", "plugin/list", "mcpServerStatus/list"],
 };
 
 const PINNED_FEATURES: Readonly<Record<string, ProtocolFeatures>> = {
-  "codex-cli 0.154.0": { modern: false, workspace: false, compaction: false, directInput: false, capabilityLists: false },
-  "codex-cli 0.164.0-alpha.11.1": { modern: true, workspace: false, compaction: false, directInput: false, capabilityLists: false },
-  "codex-cli 0.166.0-alpha.5.1": { modern: true, workspace: true, compaction: false, directInput: false, capabilityLists: true },
-  "codex-cli 0.166.0-alpha.6": { modern: true, workspace: true, compaction: true, directInput: true, capabilityLists: true },
-  "codex-cli 0.167.0-alpha.3.2": { modern: true, workspace: true, compaction: false, directInput: false, capabilityLists: true },
+  "codex-cli 0.154.0": { modern: false, workspace: false, compaction: false, midTurnInput: false,
+    executionProfileSwitch: false, capabilityLists: false },
+  "codex-cli 0.164.0-alpha.11.1": { modern: true, workspace: false, compaction: false, midTurnInput: false,
+    executionProfileSwitch: false, capabilityLists: false },
+  "codex-cli 0.166.0-alpha.5.1": { modern: true, workspace: true, compaction: false, midTurnInput: false,
+    executionProfileSwitch: false, capabilityLists: true },
+  "codex-cli 0.166.0-alpha.6": { modern: true, workspace: true, compaction: true, midTurnInput: true,
+    executionProfileSwitch: true, capabilityLists: true },
+  "codex-cli 0.167.0-alpha.3.2": { modern: true, workspace: true, compaction: false, midTurnInput: true,
+    executionProfileSwitch: false, capabilityLists: true },
 };
 
 /** Reviewed feature table for exact pinning. */

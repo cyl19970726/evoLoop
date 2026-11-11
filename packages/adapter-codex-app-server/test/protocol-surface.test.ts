@@ -29,7 +29,8 @@ function schema(options: { drop?: string[]; require?: Record<string, string[]>; 
 test("the used surface passes when every sent method and notification is present", () => {
   const report = checkUsedSurface(schema());
   assert.deepEqual(report.problems, []);
-  assert.deepEqual(report.features, { modern: false, workspace: false, compaction: false, directInput: false, capabilityLists: false });
+  assert.deepEqual(report.features, { modern: false, workspace: false, compaction: false,
+    midTurnInput: false, executionProfileSwitch: false, capabilityLists: false });
 });
 
 test("a missing method, notification or newly required parameter is a problem", () => {
@@ -42,10 +43,12 @@ test("a missing method, notification or newly required parameter is a problem", 
 
 test("optional features are enabled only when all of their methods are present", () => {
   const all = Object.values(FEATURE_METHODS).flat();
-  assert.deepEqual(checkUsedSurface(schema({ features: all })).features, { modern: true, workspace: true, compaction: true, directInput: true, capabilityLists: true });
+  assert.deepEqual(checkUsedSurface(schema({ features: all })).features, { modern: true, workspace: true,
+    compaction: true, midTurnInput: true, executionProfileSwitch: true, capabilityLists: true });
   const partial = checkUsedSurface(schema({ features: ["thread/compact/start", "turn/steer"] })).features;
   assert.equal(partial.compaction, true);
-  assert.equal(partial.directInput, false, "direct input needs both turn/steer and thread/settings/update");
+  assert.equal(partial.midTurnInput, true, "mid-Turn input does not require thread/settings/update");
+  assert.equal(partial.executionProfileSwitch, false);
 });
 
 test("Codex CLI versions compare by semantic version including prereleases", () => {
@@ -63,7 +66,11 @@ test("Codex CLI versions compare by semantic version including prereleases", () 
 test("the reviewed feature table matches each pinned protocol", () => {
   assert.equal(pinnedFeatures("codex-cli 0.154.0")?.modern, false);
   assert.equal(pinnedFeatures("codex-cli 0.166.0-alpha.6")?.compaction, true);
+  assert.equal(pinnedFeatures("codex-cli 0.166.0-alpha.6")?.midTurnInput, true);
+  assert.equal(pinnedFeatures("codex-cli 0.166.0-alpha.6")?.executionProfileSwitch, true);
   assert.equal(pinnedFeatures("codex-cli 0.167.0-alpha.3.2")?.compaction, false);
+  assert.equal(pinnedFeatures("codex-cli 0.167.0-alpha.3.2")?.midTurnInput, true);
+  assert.equal(pinnedFeatures("codex-cli 0.167.0-alpha.3.2")?.executionProfileSwitch, false);
   assert.equal(pinnedFeatures("codex-cli 9.9.9"), null);
   assert.equal(new CodexAppServerAdapter({ expectedVersion: "codex-cli 0.166.0-alpha.6" }).capabilities().compaction.mode, "owned_request");
   assert.equal(new CodexAppServerAdapter({ expectedVersion: "codex-cli 0.167.0-alpha.3.2" }).capabilities().compaction.mode, "unavailable");

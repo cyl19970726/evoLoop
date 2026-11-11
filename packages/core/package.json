@@ -18,6 +18,8 @@
     "./session-messages": "./dist/session-messages/index.js",
     "./native-input": "./dist/native-input/index.js",
     "./native-observation": "./dist/native-observation/index.js",
+    "./usage": "./dist/usage.js",
+    "./context-budget": "./dist/context-budget.js",
     "./session-observation": "./dist/session-observation/index.js",
     "./allocation-relations": "./dist/allocation-relations/index.js"
   },
