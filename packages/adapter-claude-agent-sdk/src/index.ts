@@ -5,7 +5,7 @@ import { isAbsolute, join, resolve } from "node:path";
 import { query, type Options, type Query, type SDKAssistantMessage, type SDKResultMessage, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import type { RuntimeApprovalRequest, RuntimeBinding, RuntimeCapabilities, RuntimeEvent, RuntimeHistoryItem,
   RuntimeModelList, RuntimePage, RuntimePort, RuntimeSessionSpec, RuntimeSkillPlan, RuntimeTurn } from "@evoloop/contracts/runtime";
-import { ownerOf, RuntimeNotSentError, RuntimeProtocolError, RuntimeUnknownError } from "@evoloop/contracts/runtime";
+import { ownerOf, RuntimeLocalBusyError, RuntimeNotSentError, RuntimeProtocolError, RuntimeUnknownError } from "@evoloop/contracts/runtime";
 import type { ExecutionProfileSnapshot } from "@evoloop/contracts/session-recovery";
 import { classifyResult, failure, turnCost, usageOf, usd, type ObservedResult } from "./classify.js";
 import { observeInit, planSkillsOf, readInstructions, skillSettingsOf, verifySkillPlan, type ContextMode, type TurnContext } from "./context.js";
@@ -73,6 +73,10 @@ export interface ClaudeAgentSdkAdapterOptions {
    * sends SIGTERM to its process group (the CLI then stops its own tool shells), and SIGKILL after the same bound again.
    */
   exitGraceMs?: number;
+  /**
+   * How many Turns this adapter runs at once across all Sessions (default 4); each Turn is one Claude Code process.
+   * A start past the limit is refused as locally busy, so the caller retries it instead of failing it.
+   */
   maxConcurrentTurns?: number;
   /**
    * The Role's skill plan, resolved before each Turn. Its plugins are loaded as local plugins (MCP discovery off)
@@ -480,8 +484,11 @@ export class ClaudeAgentSdkAdapter implements RuntimePort {
       // Re-checked after the wait, in the same synchronous step that registers this start.
       if (this.attempted.has(attempt)) throw new RuntimeProtocolError("this Turn operation was already attempted; reconcile its original result");
     }
-    if (this.live.has(key)) throw new RuntimeNotSentError("turn/start", "another Turn is running on this Session");
-    if (this.live.size >= (this.options.maxConcurrentTurns ?? 4)) throw new RuntimeNotSentError("turn/start", "concurrent Turn limit reached");
+    // Both refusals are transient and happen before this start is registered or anything is written, so the caller
+    // keeps its durable intent and retries once a slot frees: a queued message stays queued with its recovery gate
+    // open, a Run returns to requested. Raising a plain "not sent" here made an ordinary message fail for good.
+    if (this.live.has(key)) throw new RuntimeLocalBusyError("turn/start", "another Turn is running on this Session");
+    if (this.live.size >= (this.options.maxConcurrentTurns ?? 4)) throw new RuntimeLocalBusyError("turn/start", "concurrent Turn limit reached");
     let release!: () => void;
     const released = new Promise<void>(resolveRelease => { release = resolveRelease; });
     const live: LiveTurn = { projectId: binding.projectId, nativeSessionId: binding.nativeSessionId, turnId: randomUUID(),

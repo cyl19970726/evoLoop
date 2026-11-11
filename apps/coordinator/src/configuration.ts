@@ -212,6 +212,12 @@ const integrationSchema = z.strictObject({
       maxTurns: z.number().int().positive().max(1000).optional(),
       maxBudgetUsd: z.number().positive().max(1000).optional(),
       /**
+       * How many Claude Turns run at once across all Sessions (adapter default 4); each is one Claude Code process.
+       * A Turn past the limit waits: its message stays queued, its Run stays requested. Size it to the Sessions that
+       * should work at the same time and to the host's memory.
+       */
+      maxConcurrentTurns: z.number().int().min(1).max(64).optional(),
+      /**
        * true: each Turn loads the skills the Role's selection picks (its evoLoop business skills, and project,
        * personal and built-in skills by switch) and turns the rest off. false: the CLI's own discovery.
        */

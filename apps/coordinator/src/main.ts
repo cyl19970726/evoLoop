@@ -392,6 +392,7 @@ const createClaudeRuntime = (runtimeConfig: NonNullable<typeof integrations.runt
       ...(claude.executable ? { executable: claude.executable } : {}),
       ...(claude.maxTurns ? { maxTurns: claude.maxTurns } : {}),
       ...(claude.maxBudgetUsd ? { maxBudgetUsd: claude.maxBudgetUsd } : {}),
+      ...(claude.maxConcurrentTurns ? { maxConcurrentTurns: claude.maxConcurrentTurns } : {}),
       contextMode: claude.contextMode,
       ...(claude.skillBundle ? { skillPlan: (binding: RuntimeBinding) => roleSkillPlan(binding, pluginRoot, claude.contextMode) } : {}),
       verifyBinding: verifyRuntimeBinding,
