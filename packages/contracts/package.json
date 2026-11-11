@@ -32,6 +32,7 @@
     "./session-observation": "./dist/session-observation.js",
     "./session-preparation": "./dist/session-preparation.js",
     "./session-assignments": "./dist/session-assignments.js",
+    "./leader-notice-packets": "./dist/leader-notice-packets.js",
     "./session-identity": "./dist/session-identity.js",
     "./session-messages": "./dist/session-messages.js",
     "./direct-input": "./dist/direct-input.js",

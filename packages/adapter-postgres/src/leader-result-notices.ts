@@ -89,7 +89,7 @@ async function page(pool: Pool, projectId: string, options: LeaderNoticeListOpti
   const result = await pool.query(`SELECT ${noticeFrom}
     WHERE n.project_id=$1 AND ($2::uuid IS NULL OR n.task_id=$2::uuid)
       AND ($3::timestamptz IS NULL OR (n.occurred_at,n.notice_id)${compare}($3::timestamptz,$4::uuid))
-      AND ($5::text='all' OR (n.state=$5::text AND
+      AND ($5::text='all' OR (NOT n.via_packet AND n.state=$5::text AND
         ($5::text='pending' OR n.kind<>'task_todo' OR t.current_revision_id=n.task_revision_id)))
     ORDER BY n.occurred_at ${direction},n.notice_id ${direction} LIMIT $6`,
   [projectId, taskId, after?.occurredAt ?? null, after?.id ?? null, state, limit + 1]);

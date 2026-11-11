@@ -6,6 +6,9 @@ import { leaderNoticePostCommand } from "@evoloop/contracts/leader-notices";
 import type { WorkflowService } from "@evoloop/core";
 import { canonicalJson } from "@evoloop/core";
 import type { SessionMessageService } from "@evoloop/core/session-messages";
+import { randomUUID } from "node:crypto";
+import type { LeaderNoticeCandidate } from "@evoloop/contracts/leader-notice-packets";
+import type { LeaderPacketPorts } from "./packet-ports.js";
 
 export interface LeaderResultRecipient {
   sessionId: string;
@@ -70,6 +73,30 @@ export interface LeaderResultNoticePumpDeps {
   pollIntervalMs: number;
   onError(error: unknown): void;
   onDiagnostic?(projectId: string, noticeId: string, reason: string): void;
+  /** Packet delivery (DEC-045 W1). Absent: notices keep the one-notice-one-message path only. */
+  packets?: LeaderPacketPorts;
+  /** The earliest waiting notice must have waited this long (database time) before a packet is built. */
+  packetDebounceSeconds?: number;
+}
+
+const noticeLabel: Record<string,string> = {task_todo:"新 Task 待分诊",delivery:"已记录固定交付",observation:"已记录独立使用观察",
+  task_question:"Task 接收者提了问题",task_blocker:"Task 接收者报告阻塞",run_without_submission:"终态 Run 没有已签提交",
+  run_submission_blocked:"已签提交无法封存",task_attention:"Task 关注项需要 Leader 跟进",acceptance_blocked:"验收交接受阻"};
+/** Items beyond this byte budget are listed by id only. */
+const PACKET_BYTE_BUDGET = 8192, PACKET_ITEMS = 20, FULL_LINE_BUDGET = 6800;
+export function packetContent(projectId:string, packetId:string, items:Array<LeaderNoticeCandidate & {readBefore:boolean}>):string{
+  const head=`Leader 通知包 ${packetId}（${items.length} 项）。每一项是一条历史来源事件，可能已被后续情况取代：先读当前 Task、固定来源和已有安排，再给出下一步决定。`+
+    `\n处理方式：读 get /api/projects/${projectId}/leader-notice-packets/${packetId} 取得每项的版本，再用 command run 提交 leader.notice.handle（noticeId、expectedVersion、disposition=handled 或 deferred，deferred 要写 notBefore）。读到这包的这一轮正常结束只算“已看到”，用这条命令处置或延后后才算“已处理”。`;
+  let bytes=Buffer.byteLength(head,"utf8");
+  const lines:string[]=[];
+  items.forEach((item,index)=>{
+    const full=`${index+1}. [${noticeLabel[item.kind]??item.kind}] 通知 ${item.noticeId}${item.readBefore?"（上一轮已读到过）":""}\n   Task ${item.taskId}@${item.taskRevisionId}；来源 ${item.sourceRef}；事件 ${item.sourceEventId}，发生于 ${item.occurredAt}；操作者 ${item.sourceActorId??"未核实"}`;
+    const short=`${index+1}. ${item.kind} 通知 ${item.noticeId} Task ${item.taskId}（摘要，详情读通知）`;
+    const line=bytes+Buffer.byteLength(full,"utf8")<=FULL_LINE_BUDGET?full:short;
+    bytes+=Buffer.byteLength(line,"utf8")+1;lines.push(line);
+  });
+  const text=`${head}\n${lines.join("\n")}`;
+  return text;
 }
 
 type Eligibility={recipient:LeaderResultRecipient;reason:null}|{recipient:null;reason:string};
@@ -104,16 +131,25 @@ export class LeaderResultNoticePump {
     return (await this.messageAdmission(message)).allowed;
   }
 
-  /** Whether this exact queued message came from a durable Leader result notice. */
+  /** Whether this exact queued message came from a durable Leader result notice, one by one or in a packet. */
   async isNoticeMessage(projectId: string, messageId: string): Promise<boolean> {
-    return !!(await this.deps.store.getByMessageId(projectId, messageId));
+    return !!(await this.deps.store.getByMessageId(projectId, messageId)) ||
+      !!(await this.deps.packets?.packetByMessage(projectId, messageId));
   }
 
   /** Separate a superseded source from a changed Leader target. A linked
    * message is retired only by the store's transactional native-start guard. */
   async messageAdmission(message:SessionMessageRecord):Promise<{allowed:boolean;reason:string|null}> {
     const notice=await this.deps.store.getByMessageId(message.projectId,message.id);
-    if(!notice)return {allowed:true,reason:null};
+    if(!notice){
+      // A packet message: a person's message that is waiting goes first, so the packet does not start (the pump then withdraws it).
+      const packet=await this.deps.packets?.packetByMessage(message.projectId,message.id);
+      if(packet&&message.target.kind==="owned"){
+        const state=await this.deps.packets!.leaderState(message.projectId,message.target.sessionId,message.id);
+        if(state.humanMessageQueued)return {allowed:false,reason:"HUMAN_MESSAGE_FIRST"};
+      }
+      return {allowed:true,reason:null};
+    }
     if(notice.state==="blocked"||!notice.recipient||notice.messageId!==message.id||
       message.target.kind!=="owned"||message.target.sessionId!==notice.recipient.sessionId||
       message.senderActorId!==notice.recipient.senderActorId)
@@ -148,6 +184,114 @@ export class LeaderResultNoticePump {
     if(await this.deps.store.hasInFlightOnOtherSession(message.projectId,notice.recipient.sessionId))
       return {allowed:false,reason:"OLD_LEADER_NOTICE_IN_FLIGHT"};
     return {allowed:true,reason:null};
+  }
+
+  /**
+   * Packets (DEC-045 W1). Open packets are reconciled with what their message did; when the Leader is idle, no person's message waits, the
+   * recovery gate is open and the earliest waiting notice has waited out the debounce, the waiting notices become one packet and one message.
+   */
+  private async packetCycle(projectId: string, config: LeaderResultNoticeConfig, principals: Principal[]): Promise<void> {
+    const ports=this.deps.packets;
+    if(!ports||!this.deps.canWrite()||!this.deps.canStartNative())return;
+    const eligibility=await this.eligibleRecipient(projectId,config,principals);
+    if(!eligibility.recipient)return;
+    const recipient=eligibility.recipient;
+    const target=config.targets.find(value=>value.projectId===projectId)!;
+    const receiver=principals.find(p=>p.actorId===target.receiverActorId&&p.projectIds.includes(projectId)&&p.permissions.includes("review"));
+    const sender=this.sender(principals,projectId,recipient.senderActorId);
+    if(!receiver||!sender)return;
+    for(const packet of await ports.openPackets(projectId,recipient.sessionId))await this.reconcilePacket(projectId,packet,receiver,sender,recipient);
+    if((await ports.openPackets(projectId,recipient.sessionId)).length)return;
+    const state=await ports.leaderState(projectId,recipient.sessionId);
+    if(state.busy||state.humanMessageQueued||!state.gateOpen)return;
+    const { items, earliestWaitSeconds } = await ports.candidates(projectId);
+    const debounce=this.deps.packetDebounceSeconds??60;
+    if(!items.length||earliestWaitSeconds===null||earliestWaitSeconds<debounce)return;
+    const chosen:LeaderNoticeCandidate[]=[], withdraw:Array<{noticeId:string;reason:string}>=[];
+    for(const item of items){
+      if(chosen.length>=PACKET_ITEMS)break;
+      const reason=await this.staleReason(projectId,item);
+      if(reason==="unknown")continue;
+      if(reason)withdraw.push({noticeId:item.noticeId,reason});else chosen.push(item);
+    }
+    if(!chosen.length&&!withdraw.length)return;
+    const packetId=randomUUID(),messageId=randomUUID(),operationId=randomUUID();
+    if(!chosen.length){return;}
+    const content=packetContent(projectId,packetId,chosen);
+    const built=await this.deps.workflow.execute(receiver,{type:"leader.noticePacket.build",projectId,operationId:randomUUID(),sessionId:recipient.sessionId,
+      packetId,messageId,messageOperationId:operationId,content,
+      recipient:{receiverRoleId:recipient.receiverRoleId,receiverActorId:recipient.receiverActorId,senderActorId:recipient.senderActorId},
+      noticeIds:chosen.map(item=>item.noticeId),debounceSeconds:debounce,withdraw} as never);
+    if(built.status==="rejected"){
+      if(!["PACKET_NOT_DUE","PACKET_IN_FLIGHT","NOTICE_NOT_PENDING"].includes(built.code))this.deps.onError(new Error(`leader packet build ${built.code}: ${built.message}`));
+      return;
+    }
+    await this.postPacket(projectId,packetId,receiver,sender,recipient);
+  }
+
+  /** Why a waiting notice no longer needs to be read ("unknown": decide later), or null when it is still current. */
+  private async staleReason(projectId:string,item:LeaderNoticeCandidate):Promise<string|null|"unknown">{
+    if(item.kind==="task_attention"){
+      const state=await this.deps.store.attentionSourceCurrent(projectId,item.noticeId);
+      return state==="current"?null:state==="expired"?"ATTENTION_SOURCE_EXPIRED":"unknown";
+    }
+    const task=await this.deps.readTaskFacts(projectId,item.taskId);
+    if(!task)return "unknown";
+    if(item.kind==="task_todo"&&(task.currentRevisionId!==item.taskRevisionId||task.state!=="todo"||task.assigned))return "TODO_SOURCE_SUPERSEDED";
+    return null;
+  }
+
+  /** Post the packet's message (the same text and ids every time) and record that it was sent. */
+  private async postPacket(projectId:string,packetId:string,receiver:Principal,sender:Principal,recipient:LeaderResultRecipient):Promise<void>{
+    const ports=this.deps.packets!;
+    const packet=(await ports.openPackets(projectId,recipient.sessionId)).find(p=>p.id===packetId);
+    if(!packet)return;
+    const posted=await this.deps.workflow.execute(sender,{type:"session.message.post",projectId,operationId:packet.messageOperationId,messageId:packet.messageId,
+      target:{kind:"owned",sessionId:recipient.sessionId},content:packet.content});
+    if(posted.status==="rejected"){
+      // The post was refused: nothing was read, the items wait for the next packet.
+      await this.deps.workflow.execute(receiver,{type:"leader.noticePacket.observe",projectId,operationId:randomUUID(),packetId,outcome:"withdrawn",evidence:`MESSAGE_POST_REJECTED:${posted.code}`});
+      return;
+    }
+    await this.deps.workflow.execute(receiver,{type:"leader.noticePacket.sent",projectId,operationId:randomUUID(),packetId});
+  }
+
+  private async reconcilePacket(projectId:string,packet:{id:string;state:string;sessionId:string},receiver:Principal,sender:Principal,
+    recipient:LeaderResultRecipient):Promise<void>{
+    const ports=this.deps.packets!;
+    const observe=(outcome:"delivered"|"seen"|"failed"|"unknown"|"withdrawn",extra:Record<string,unknown>={})=>this.deps.workflow.execute(receiver,
+      {type:"leader.noticePacket.observe",projectId,operationId:randomUUID(),packetId:packet.id,outcome,...extra} as never);
+    if(packet.state==="building"){
+      // The build committed but the post (or its record) did not: repeat the post with the same ids.
+      await this.postPacket(projectId,packet.id,receiver,sender,recipient);return;
+    }
+    const attempt=await ports.attempt(projectId,packet.id);
+    if(!attempt?.messageId)return;
+    const message=await ports.message(projectId,attempt.messageId);
+    if(!message)return;
+    const leader=await ports.leaderState(projectId,recipient.sessionId,attempt.messageId);
+    switch(message.state){
+      case "queued":
+        // A person's message goes first: the unstarted packet is withdrawn and its items wait for the next one.
+        if(leader.humanMessageQueued){
+          await this.deps.workflow.execute(sender,{type:"session.message.cancel",projectId,operationId:randomUUID(),messageId:message.id,
+            expectedVersion:message.version,reason:"A person's message goes before a notice packet"});
+          await observe("withdrawn",{evidence:"HUMAN_MESSAGE_FIRST"});
+        }
+        return;
+      case "processing":
+        if(message.nativeTurnId&&packet.state!=="delivered")await observe("delivered",{turnId:message.nativeTurnId});
+        return;
+      case "replied": case "completed_without_reply":
+        await observe("seen",message.nativeTurnId?{turnId:message.nativeTurnId}:{});return;
+      case "failed": case "cancelled":
+        await observe("failed",{turnStarted:!!message.nativeTurnId,gateBlocked:leader.gateBlocked,evidence:`MESSAGE_${message.state.toUpperCase()}`,
+          ...(message.nativeTurnId?{turnId:message.nativeTurnId}:{})});return;
+      case "unknown": case "manual_pending":
+        // Never resent: the packet waits for the message to settle, and a read-only look decides.
+        if(packet.state!=="unknown")await observe("unknown",{evidence:"MESSAGE_RESULT_UNKNOWN"});
+        return;
+    }
   }
 
   private async roles(principal: Principal, projectId: string): Promise<RoleRecord[]> {
@@ -208,6 +352,8 @@ export class LeaderResultNoticePump {
         try { await this.process(notice,config,principals); }
         catch(error){this.deps.onError(error);}
       }
+      try { await this.packetCycle(projectId,config,principals); }
+      catch(error){this.deps.onError(error);}
     }
   }
 

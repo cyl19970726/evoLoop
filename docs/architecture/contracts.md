@@ -313,6 +313,12 @@ Task 协作通道把 question/answer/progress/blocker/handoff/result 固定到�
 
 需要 Leader 处理的业务事实，由服务端引擎送到受管 Leader Session，不依赖插件、Stop Hook 或 Agent 自己记得去查（DEC-038；schema 046、047）。
 
+**通知包（DEC-045 W1，迁移 089）。** 迁移之后新产生的 Leader 通知改走通知包，迁移前已有的通知仍走一条通知一条消息的旧路径直到处理完（`leader_result_notice.via_packet`）。一个包把等待中的通知合成一条消息：最早一项等满 60 秒（数据库时间）、Leader 空闲（没有 Run 或消息回合在进行）、没有人发的消息在排队、恢复门打开时，通知泵在派发事务内逐项复核——过时的项记为“已撤回”并写明原因——每包最多 20 项、8 KB（超出的只列摘要和 ID），再发一条消息开新一轮。Leader 正在执行时通知先攒着，执行中送入归 W2。人发的消息先于通知包：包的消息还没开始而有人的消息在等，则撤回这个包（取消消息，项回到下一包）。每包送出前的阈值与预算沿用 #321 对通知消息的开始前检查，达到阈值就不开始，交接后再继续。
+
+表：`leader_notice_packet`（目标 Session、项数与字节数、内容哈希、内容、状态与各时间点）、`leader_notice_packet_attempt`（每次送达一行：方式 `new_turn` 或 `steer`，消息 ID 与补入账本的输入 ID 恰有其一）、`leader_notice_packet_item`（逐项状态与版本）。逐项状态：待发 `pending`、已送入 `delivered`（读到这包的那一轮已开始）、已看到 `seen`（那一轮正常结束，只算看到）、已处理 `handled`、已撤回 `withdrawn`、未知 `unknown`。Leader 用 `leader.notice.handle`（带通知 ID、当前版本、`handled` 或 `deferred` 与原因；延后要写“不早于”时间）处置，处理后才算“已处理”；版本过期被拒，同一操作 ID 重放不重复生效；延后的项到时间后进下一包。读包和各项版本：`get /api/projects/PROJECT/leader-notice-packets/PACKET`。
+
+至少送达一次：读到包的那一轮失败时，项回到待发并标“上一轮已读到过”；恢复门关闭时该包标为 `blocked`，项保持原位、不自动重试，由 `leader.noticePacket.recover`（复核权限、写明原因）解除，之后用新的包和新的 ID 重送；结果未知的只读对账，不重发。旧的 `leader.notice.recover`（按通知恢复被拒绝的消息）保持不变。
+
 1. **在源事务里入库。** 数据库触发器在源写入的同一事务里，把事实登记进 `leader_result_notice`：待编排的 Task（`task_todo`）、封存的 Delivery、独立使用 Observation、Task 通道里的问题与阻塞、终态却缺少本人提交的 Run、提交被封存阻断的 Run，以及后来加入的阶段关注（`task_attention`，054）和验收安排受阻（`acceptance_blocked`，062）。普通进度、阅读、审阅和计划变化不进入。每条通知固定来源事件、Task 修订和预先分配的消息与操作 ID；同一来源只登记一次。
 2. **按配置投递。** 协调服务的通知泵（私有配置 `leaderResultNotices`，每个项目至多一个目标）把待投递通知作为一条普通 Session 消息发给 Leader。投递前逐次核对：目标已配置；技术通知者与 Leader 接收者是不同 actor，前者有项目读写、后者另有 review；项目里恰有一个试行或活跃的 system Lead Role 且与配置一致；该 Role 恰有一个就绪 Session 且与配置一致；Session 执行授权与精确消息授权都在。任一不满足时通知保持 `pending` 并记下原因，不改投别处。
 3. **状态只说明到哪一步。** `linked` 只表示已保存一条受管 Session 消息；原生 Turn、Leader 是否读到、后续安排和 Task 关闭各看自己的记录。收件人一旦固定就不自动改投；原消息操作被明确拒绝时转为 `blocked`，不以原 ID 自动重试。有权者核对后用 `leader.notice.recover` 建立带全新 ID 的新通知，并关联原通知与原拒绝（047）。

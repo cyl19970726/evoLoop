@@ -393,3 +393,7 @@ npm run --silent cli -- allocations --project PROJECT_UUID --discussion DISCUSSI
 普通消息 grant 省略 `maxTurns` 表示不限累计次数；显式正整数仍为上限。历史 `used` 继续累计。Session snapshot 的 `ordinaryExecution.messageBudget` 在精确 grant 和计数核实后给出 `used`、`limit`、`remaining`；无限时后两项为 `null`，未核计数时该字段缺失。账户模型额度、Task 和队列尝试上限须分别核对。
 
 Root 可在私有静默维护窗口以 `node scripts/prepare-unlimited-message-grants.mjs PRIVATE_CONFIG PRIVATE_SELECTIONS NEW_PRIVATE_CANDIDATE` 生成权限 0600 的新候选。选择文件是精确 `{projectId,sessionId,senderActorId,receiverActorId,receiverRoleId,cwd,expectedMaxTurns}` 数组。脚本要求旧 grant 启用、限额匹配、输出文件不存在，只移除指定 grant 的 `maxTurns`。发布前后读回原 Session/Thread、grant、累计计数、原消息和处理状态；回退保留的旧私有配置并按正常发布流程执行，不清计数或重放 unknown。
+
+## Leader 通知包
+
+Leader 收到的是“Leader 通知包”消息：先 `get /api/projects/PROJECT/leader-notice-packets/PACKET` 读每一项的状态与版本，读当前 Task 和固定来源，再用 `command run` 提交 `leader.notice.handle`（`command schema leader.notice.handle` 取结构）：`noticeId`、`expectedVersion`、`disposition`（`handled` 或 `deferred`）、`reason`，延后要写 `notBefore`。重复提交同一操作安全；版本过期（`VERSION_CONFLICT`）要重新读。只读到这包不算处理，一轮正常结束只记“已看到”。被阻塞的包（读到后那一轮失败且恢复门关闭）由复核者 `leader.noticePacket.recover`（`packetId`、`reason`）解除，不会自动重发。

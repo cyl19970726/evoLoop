@@ -330,3 +330,7 @@ node --import tsx tests/manual/session-compaction-e1.ts
 - **即时输入的能力查询不核运行时。** 对 Claude 或非 alpha.6 的 Codex 也可能回答 `steer`，提交时才被拒绝或记为未知（见 [Session 运行时 §3](../architecture/session-runtime.md#3-即时输入执行中收到的消息怎样处理)）。
 - **托管压缩只在 alpha.6 可用。** 隔离测试只用替身，不验证有认证的模型压缩。
 - **上下文交接仍由维护者执行。** 服务会暂停普通通知并生成摘要，但不会自动创建新原生线程、迁移 Leader 目标或替使用者确认接手；这套操作尚未在正式实例做长期运行验收。
+
+## Leader 通知包
+
+Leader 通知泵（原有的 `leaderResultNotices` 配置，不需要新配置）在发现等待中的新通知时按包送达：最早一项等满 60 秒、Leader 空闲、没有人发的消息排队、恢复门打开才合成一包并发一条消息，用同一个通知发送身份和复核身份（接收者）；逐项状态、`leader.notice.handle`、`leader.noticePacket.recover` 见[接口合同](../architecture/contracts.md#leader-通知层)。迁移 089 之后新产生的通知走包，迁移前已有的仍一条一消息。

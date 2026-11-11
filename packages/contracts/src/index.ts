@@ -12,6 +12,7 @@ import { evaluationCommands } from "./evaluation.js";
 import { residentCommands } from "./resident-hosts.js";
 import { sessionMessageCommands } from "./session-messages.js";
 import { sessionAssignmentCommands } from "./session-assignments.js";
+import { leaderNoticePacketCommands } from "./leader-notice-packets.js";
 import { sessionRecoveryCommands } from "./session-recovery.js";
 import { nativeInputReplyCommand } from "./native-input.js";
 import { taskAttentionCommands } from "./task-attention.js";
@@ -68,6 +69,7 @@ export const commandSchema = z.discriminatedUnion("type", [
   ...residentCommands,
   ...sessionMessageCommands,
   ...sessionAssignmentCommands,
+  ...leaderNoticePacketCommands,
   ...sessionRecoveryCommands,
   nativeInputReplyCommand,
   ...scheduleCommands,

@@ -71,6 +71,7 @@ import type { BrowserReadScope } from "./runtime/browser-read.js";
 import type { DynamicToolCall } from "@evoloop/adapter-codex-app-server";
 import { RuntimeNotSentError, type RuntimeBinding, type RuntimeSessionRecord, type RuntimeSessionSpec } from "@evoloop/contracts/runtime";
 import { loopIntentId } from "./orchestration/runner.js";
+import { pgLeaderPacketPorts } from "./leader-results/packet-ports.js";
 import { ResidentQueuePump } from "./resident-queue/pump.js";
 import { SessionObservationService } from "@evoloop/core/session-observation";
 import { AllocationRelationsService } from "@evoloop/core/allocation-relations";
@@ -628,7 +629,9 @@ const acceptanceTimer=setInterval(()=>{
     .finally(()=>{acceptanceTickBusy=false;});
 },2000);
 acceptanceTimer.unref();
+const leaderPacketPorts = pgLeaderPacketPorts(pool, uow);
 const leaderResultNoticePump = new LeaderResultNoticePump({
+  packets: leaderPacketPorts,
   store: {
     listPending: (projectId, query) => listPendingLeaderNotices(pool, projectId, query),
     getByMessageId: (projectId, messageId) => getLeaderNoticeByMessageId(pool, projectId, messageId),
@@ -860,6 +863,15 @@ const app = await buildServer({ service, credentials, canWrite: lease.canWrite, 
   workStatuses: (principal, projectId, taskIds) => readWorkStatuses(pool, service, principal, projectId, taskIds),
   workIndex: createLeaderWorkIndexReader(pool),
   leaderNotices: {
+    packet: async (projectId, packetId) => {
+      const result = await uow.read(projectId, async reader => {
+        const store = reader.leaderNoticePackets;
+        const packet = await store?.getLeaderNoticePacket(packetId) ?? null;
+        return packet ? { packet, attempts: await store!.listLeaderNoticePacketAttempts(packetId), items: await store!.listLeaderNoticePacketItems(packetId) } : null;
+      });
+      if (!result) throw new DomainError("NOT_FOUND", "Leader notice packet was not found");
+      return result;
+    },
     list: (projectId, query) => listLeaderNotices(pool, projectId, query),
     get: (projectId, noticeId) => getLeaderNotice(pool, projectId, noticeId),
     recover: async (projectId, noticeId, input, actorId) => {

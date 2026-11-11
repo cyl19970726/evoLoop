@@ -7,6 +7,8 @@ import { leaderNoticeRecoverySchema } from "@evoloop/contracts/leader-notices";
 export interface LeaderNoticeReader {
   list(projectId: string, query: { taskId?: string; limit: number; cursor?: string }): Promise<unknown>;
   get?(projectId: string, noticeId: string): Promise<unknown>;
+  /** One packet with its attempts and every item's state and version (the version a decision must name). */
+  packet?(projectId: string, packetId: string): Promise<unknown>;
   recover?(projectId: string, noticeId: string, input: z.infer<typeof leaderNoticeRecoverySchema>, actorId: string): Promise<unknown>;
 }
 
@@ -29,6 +31,12 @@ export function registerLeaderNoticeRoutes(app: FastifyInstance,
     const {projectId,noticeId}=z.strictObject({projectId:z.uuid(),noticeId:z.uuid()}).parse(request.params);
     await service.getProject(request.principal,projectId);
     return notices.get!(projectId,noticeId);
+  });
+  if (notices.packet) app.get("/api/projects/:projectId/leader-notice-packets/:packetId", async request => {
+    if (!request.principal) throw new DomainError("FORBIDDEN", "Authentication required");
+    const { projectId, packetId } = z.strictObject({ projectId: z.uuid(), packetId: z.uuid() }).parse(request.params);
+    await service.getProject(request.principal, projectId);
+    return notices.packet!(projectId, packetId);
   });
   if (notices.recover) app.post("/api/projects/:projectId/work-management/notices/:noticeId/recover", async request => {
     if (!request.principal) throw new DomainError("FORBIDDEN", "Authentication required");
