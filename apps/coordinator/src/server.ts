@@ -94,6 +94,8 @@ export async function buildServer(options: {
   listRuntimeModels?: (provider?: import("@evoloop/contracts/runtime").RuntimeProvider) => Promise<{status:"available"|"empty"|"unavailable";models:string[];
     options?:Array<{model:string;supportedReasoningEfforts:string[];defaultReasoningEffort:string|null}>;
     error:string|null;observedAtUtc:string}>;
+  /** Send-time check of the ordinary-message grant for a post to this owned Session; null when the sender may send. */
+  messageSendAuthority?: (principal: Principal, projectId: string, sessionId: string) => Promise<{ code: "MESSAGE_GRANT_MISSING"; message: string } | null>;
   sessionPreparation?: (input:{projectId:string;sessionId:string;roleId:string;sessionActorId:string;
     cwd:string;authorizationScope:string;model:string|null}) => Promise<{runtimeAvailable:boolean;grantReady:boolean;
     cwdReady:boolean;materialCli:{actorId:string;command:string;ready:boolean}|null;roleActorId:string|null;
@@ -213,6 +215,14 @@ export async function buildServer(options: {
       if (await options.service.getOperation(principal, command.projectId, command.operationId)) {
         const result = await options.service.execute(principal, command);
         return reply.code(result.status === "applied" ? 200 : errorStatus(result.code)).send(result);
+      }
+    }
+    if (command.type === "session.message.post" && command.target.kind === "owned" && options.messageSendAuthority) {
+      const principal = who(request.principal);
+      // A replay of an operation already journaled goes through execute's own actor/hash check.
+      if (!await options.service.getOperation(principal, command.projectId, command.operationId)) {
+        const problem = await options.messageSendAuthority(principal, command.projectId, command.target.sessionId);
+        if (problem) throw new DomainError(problem.code, problem.message);
       }
     }
     if (command.type === "session.input.reply") {

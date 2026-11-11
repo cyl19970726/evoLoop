@@ -157,6 +157,9 @@ export class PgSessionMessages implements SessionMessageTransaction {
           WHERE busy.project_id=m.project_id AND busy.session_id=m.session_id AND busy.state IN ('dispatching','running','unknown'))
         AND NOT EXISTS(SELECT 1 FROM session_message older WHERE older.project_id=m.project_id
           AND older.session_id=m.session_id AND older.state='queued'
+          -- A message blocked for want of its sender's grant cannot be delivered however long it waits, and another
+          -- sender's messages are not behind it; it stays queued (and visible) but does not hold the line.
+          AND (older.blocked_reason IS NULL OR older.blocked_reason NOT LIKE 'MESSAGE_GRANT_MISSING:%')
           AND (older.created_at,older.message_id)<(m.created_at,m.message_id))))
       ORDER BY CASE WHEN m.state IN ('processing','unknown') THEN 0 ELSE 1 END,
         CASE WHEN m.blocked_reason IS NULL THEN 0 ELSE 1 END,m.created_at,m.message_id LIMIT $2 OFFSET $3`,[this.projectId,limit,offset]);

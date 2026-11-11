@@ -52,6 +52,7 @@ import { evaluationPacketMediaType } from "./runtime/evaluation-materials.js";
 import { activeTaskTimingGrants, drivenRuntimeProviders, hasExactEngineeringActionGrant, hasFeishuActorGrant, hasTaskTimingGrant, knowledgeServesProject, loadIntegrations, runtimeThreadConfigForSession, schedulingGrantsFor, selectMaterialCli } from "./configuration.js";
 import { OpenVikingKnowledgeRepository } from "@evoloop/adapter-wiki-openviking";
 import { DomainError } from "@evoloop/contracts/ports";
+import { ordinaryMessageGrantProblem } from "./session-messages/send-authority.js";
 import type { Principal } from "@evoloop/contracts";
 import { LocalBlobStore } from "@evoloop/adapter-local-blobs";
 import { setupManagedLoops } from "./orchestration/setup.js";
@@ -892,6 +893,12 @@ const app = await buildServer({ service, credentials, canWrite: lease.canWrite, 
       g.actorId === actorId && g.roleId === role).map(g => g.cwd) : [],
     skillRoots: async (project, role) => ({ businessRoot: skillSourceRoot, businessPaths: await roleBusinessSkillPaths(project, role) }),
     claudeContextMode: runtimeConfig?.claude?.contextMode ?? null }, principal, projectId, roleId),
+  messageSendAuthority: async (principal, projectId, sessionId) => {
+    const session = await service.getRuntimeSession(principal, projectId, sessionId);
+    return ordinaryMessageGrantProblem({ projectId, senderActorId: principal.actorId, session,
+      sessionMessages: (await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE)).sessionMessages,
+      isProjectWriter: actorId => currentProjectWriter(projectId, actorId) });
+  },
   sessionPreparation: async input => {
     const current=await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE);
     const cli=current.runtime?.enabled ? selectMaterialCli(current.runtime.materialCli,input.projectId,

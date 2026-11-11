@@ -27,7 +27,7 @@
 
 - **一条受管 Leader Session。** 它所在的 Role 是项目里唯一 active 或 trial 的 system Lead。核对实际接收 actor、项目写权限、原生 Thread、执行授权、工作目录和 CLI 身份。业务 Session 不能作为 Leader 目标。
 - **两个不同的 actor。** `senderActorId` 是配置里明确授权的技术通知者，`receiverActorId` 是实际的 Leader，二者都要是项目 writer。Leader 还要有 `review` 权限，才能保存计划和复核。
-- **消息授权。** `sessionMessages` 已启用，并有针对这个 sender、Leader Session、receiver actor、Role 和 cwd 的**精确授权**，额度可用。
+- **消息授权。** `sessionMessages` 已启用，并有针对这个 sender、Leader Session、receiver actor、Role 和 cwd 的**精确授权**，额度可用。 经 HTTP/CLI 发普通消息时，这项授权在**发送时**就核对：缺了当场拒绝（`MESSAGE_GRANT_MISSING`），并写明缺 `sessionMessages.grants` 里的哪一项和可复制的条目，消息不保存。服务内部自动发的消息（通知、验收接力）仍按各自的投递规则处理。已经入队、后来才因授权撤销而受阻的消息，原因以 `MESSAGE_GRANT_MISSING:` 开头，**不占用同一 Session 的队列**：它保持 queued、会话页可见，补上授权后按原顺序记录继续，后面的消息不再等它。
 
 在私有 integrations 文件中增加：
 

@@ -87,7 +87,9 @@ export class SessionMessagePump {
       if(this.deps.beforePreflight&&!await this.deps.beforePreflight(message))return;
       try{if(!continuation)await this.deps.service.preflightDispatch(message.projectId,message.id);}
       catch(error){
-        if(error instanceof DomainError){await this.deps.service.noteBlocked(message.projectId,message.id,error.message);return;}
+        if(error instanceof DomainError){
+          // The code leads the saved reason for a missing grant: the queue skips such a message (see listPendingSessionMessages).
+          await this.deps.service.noteBlocked(message.projectId,message.id,error.code==='MESSAGE_GRANT_MISSING'?`MESSAGE_GRANT_MISSING: ${error.message}`:error.message);return;}
         throw error;
       }
       if(!await this.deps.canStart(message))return;
@@ -121,7 +123,7 @@ export class SessionMessagePump {
       }
       catch(error){
         if(error instanceof DomainError&&['SESSION_BUSY','PROVIDER_HELD','MESSAGE_GRANT_MISSING','MESSAGE_BUDGET_EXHAUSTED','SESSION_NOT_READY','MESSAGE_NOT_QUEUED','TODO_SOURCE_SUPERSEDED','ATTENTION_SOURCE_UNKNOWN','ATTENTION_SOURCE_EXPIRED','ACCEPTANCE_SOURCE_SUPERSEDED'].includes(error.code)){
-          await this.deps.service.noteBlocked(message.projectId,message.id,error.message);return;
+          await this.deps.service.noteBlocked(message.projectId,message.id,error.code==='MESSAGE_GRANT_MISSING'?`MESSAGE_GRANT_MISSING: ${error.message}`:error.message);return;
         }
         throw error;
       }
