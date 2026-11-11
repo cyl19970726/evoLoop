@@ -49,7 +49,11 @@ const steerReasons: Record<string, string> = {
   NATIVE_UNAVAILABLE: "运行时连接暂不可用，不能补充到这一轮",
   DIRECT_GRANT_MISSING: "这个智能体没有即时输入的授权，不能补充到这一轮",
   SESSION_BUSY: "这一轮正在做的工作不接受补充",
+  SESSION_INPUT_BUSY: "这个智能体正在开始另一轮或接收另一条输入，稍后再试",
   DIRECT_STEER_DISABLED: "这个智能体的运行时或授权不支持补充到这一轮",
+  NATIVE_STEER_UNAVAILABLE: "当前运行时版本不支持补充到这一轮",
+  NATIVE_IDLE_START_UNAVAILABLE: "当前运行时版本不支持空闲时直接开始一轮",
+  NATIVE_CAPABILITY_UNKNOWN: "运行时版本能力暂无法核对，暂不发送",
   NATIVE_TURN_NOT_ACTIVE: "运行时里这一轮已经不在进行，不能补充",
   NATIVE_TURN_UNKNOWN: "运行时里这一轮的状态无法判断，暂不补充",
 };

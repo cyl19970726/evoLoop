@@ -25,6 +25,8 @@ export type { NativeInputCapture, NativeInputEvent, NativeInputQuestion, NativeI
 export type { ExecutionProfileSnapshot, ExecutionProfileRevision, SessionExecutionProfile, SessionRecoveryGate, SessionRecoveryDecision, SessionRecoveryView } from "./session-recovery.js";
 export type { EvaluationRevision, EvaluationAttempt, EvaluationAssessment, EvaluationConclusion, EvaluationDefinition, EvaluationFixedRef, EvaluationNextActionRef, EvaluationSourceSignature, EvaluationCondition, EvaluationCase, EvaluationCost } from "./evaluation.js";
 export type { RuntimeSessionRecord, RuntimeRunRecord, RuntimeRecordEvent, RuntimeRunState, RuntimeSessionState } from "./runtime.js";
+export type { UsageTotals, UsageDay, SessionUsage, UsageBudget, UsageOverview, UsageBudgetConfig, UsageBucketRow, UsageContextRow, UsageDelta } from "./usage.js";
+export type { ContextPressureState, ContextBudgetConfig, ContextObservation, ContextPressure, ContextHandoffSummaryInput } from "./context-budget.js";
 export type { Goal, GoalRevision, Stage, StageRevision, StageReview, TaskProposal, TaskJudgement, Delivery, ConsumerObservation, TaskClosure, AcceptanceMode } from "./workflow.js";
 export type { DiscussionRecord, DiscussionEvent, DiscussionTarget, DiscussionStatus } from "./discussions.js";
 export type { ResidentQueue, ResidentQueueEntry, QueueClaim, QueueAttempt } from "./queues.js";

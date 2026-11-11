@@ -12,6 +12,8 @@ import type {
 import { parseQueueHandoff, type QueueHandoff } from "@evoloop/contracts/runtime-handoff";
 import { DomainError, PersistenceRejectedError } from "@evoloop/contracts/ports";
 import { applyWorkflow } from "./workflow.js";
+export * from "./usage.js";
+export * from "./context-budget.js";
 import { reserveRuntime } from "./runtime/reserve.js";
 import { currentRetentions, validateDispatchBasis, validateReselectedOriginals, validateSelectedExternalBasis } from "./runtime/basis.js";
 import { applyRole, RoleRuleError } from "./roles/index.js";

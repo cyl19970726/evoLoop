@@ -388,6 +388,8 @@ export interface RuntimeCapabilities {
   delivery: {
     /** Input can be added to an active Turn. */
     midTurnInput: boolean;
+    /** An idle owned Turn can be started without waiting for the ordinary message queue. */
+    idleTurnStart: boolean;
     /** The caller's operation key is echoed in native history, so Turn correlation needs no text marker. */
     callerAssignedTurnKey: boolean;
     /** The caller can choose the native Session ID before creation. */

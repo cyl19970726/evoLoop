@@ -156,6 +156,25 @@ export class PgDirectInputs {
       return this.update(client,old,"rejected",null,null,reason);
     });
   }
+  /** A steer kind refusal is terminal for direct input, but its content is not lost: queue it as one ordinary message. */
+  async rejectSteerAndQueue(projectId:string,inputId:string,reason:string):Promise<DirectInputRecord>{
+    return this.transaction(projectId,async client=>{
+      const old=needed((await client.query("SELECT * FROM session_direct_input WHERE project_id=$1 AND input_id=$2 FOR UPDATE",
+        [projectId,inputId])).rows[0]);
+      if(old.mode!=="steer")throw new DomainError("INPUT_STATE","Only a steer can become a queued ordinary message");
+      if(old.state==="rejected")return old;
+      // Queue only after an explicit pre-send refusal. An unknown steer may already have reached the Turn,
+      // so turning it into a second ordinary message would duplicate the person's input.
+      if(!["pending","attempted"].includes(old.state))
+        throw new DomainError("INPUT_STATE","Original input attempt has already advanced");
+      await client.query(`INSERT INTO session_message(project_id,message_id,operation_id,target_kind,session_id,
+        sender_actor_id,content,state,version,created_at,updated_at)
+        VALUES($1,$2,$3,'owned',$4,$5,$6,'queued',1,now(),now())
+        ON CONFLICT (project_id,message_id) DO NOTHING`,
+        [projectId,old.inputId,old.operationId,old.sessionId,old.actorId,old.content]);
+      return this.update(client,old,"rejected",null,null,reason);
+    });
+  }
   async accept(projectId:string,inputId:string,turnId:string,itemId:string|null):Promise<DirectInputRecord>{
     return this.transaction(projectId,async client=>{
       const old=needed((await client.query("SELECT * FROM session_direct_input WHERE project_id=$1 AND input_id=$2 FOR UPDATE",[projectId,inputId])).rows[0]);

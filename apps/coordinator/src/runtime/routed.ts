@@ -152,6 +152,12 @@ export class ProviderRoutedRuntime implements ManagedRuntime {
     if (!declared) throw new Error("Routed runtimes must declare capabilities");
     return declared;
   }
+  /** The actual provider and pinned version serving this binding, not the coordinator default. */
+  capabilitiesFor(binding: Pick<RuntimeBinding, "owner">): RuntimeCapabilities {
+    const declared = this.forBinding(binding).capabilities?.();
+    if (!declared) throw new DomainError("CAPABILITY_UNAVAILABLE", "Session runtime does not declare capabilities");
+    return declared;
+  }
   listModels(): Promise<RuntimeModelList> { return this.listModelsFor(this.defaultProvider); }
   async listModelsFor(provider: RuntimeProvider): Promise<RuntimeModelList> {
     const child = this.forProvider(provider);

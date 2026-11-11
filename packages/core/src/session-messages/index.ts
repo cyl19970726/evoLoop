@@ -41,6 +41,12 @@ export async function applySessionMessage(tx:Transaction,principal:Principal,com
     return{result:applied(command.operationId,item.id,1),effects:[{kind:'session.message',entityId:item.id,version:1}]};
   }
   const item=required(await store.getSessionMessage(command.messageId),'message');
+  if(command.type==='session.message.confirmSuperseded'){
+    if(item.senderActorId!==principal.actorId)throw new DomainError('MESSAGE_SENDER','only the sender may confirm a superseded message');
+    if(item.version!==command.expectedVersion)throw new DomainError('VERSION_CONFLICT','message changed',item.version);
+    await store.confirmSessionMessageSuperseded(item.id,principal.actorId,now);
+    return{result:applied(command.operationId,item.id,item.version+1),effects:[{kind:'session.message',entityId:item.id,version:item.version+1}]};
+  }
   if(command.type==='session.message.cancel'){
     if(item.senderActorId!==principal.actorId)throw new DomainError('MESSAGE_SENDER','only the sender may cancel a pending message');
     if(item.version!==command.expectedVersion)throw new DomainError('VERSION_CONFLICT','message changed',item.version);
@@ -128,6 +134,8 @@ export async function applySessionMessage(tx:Transaction,principal:Principal,com
 
 export interface SessionMessageServiceDeps {uow:UnitOfWork;clock:Clock;ids:IdFactory;
   grantFor(message:SessionMessageRecord,session:RuntimeSessionRecord):Promise<SessionMessageDispatchGrant|null>;
+  /** Local day for a Turn ledger owned by a runtime without cumulative native observations. */
+  usageDay?(at:string):string;
 }
 /** Trusted coordinator path. No public command can claim a native turn or change processing evidence. */
 export class SessionMessageService {
@@ -141,6 +149,8 @@ export class SessionMessageService {
     if(!store)throw new DomainError('SESSION_MESSAGES_UNAVAILABLE','message persistence is not configured');
     const item=required(await store.getSessionMessage(messageId),'message');
     if(item.state!=='queued'||item.target.kind!=='owned')throw new DomainError('MESSAGE_NOT_QUEUED','only an owned queued message may dispatch');
+    if(item.supersededAt&&!item.supersededConfirmedAt)
+      throw new DomainError('MESSAGE_SUPERSEDED','its Task Run was stopped on request; the sender must confirm the message before it can be delivered, or cancel it');
     const session=required(await reader.getRuntimeSession(item.target.sessionId),'Session');
     if(session.state!=='ready'||!session.nativeThreadId||!session.nativeSessionId)
       throw new DomainError('SESSION_NOT_READY','recipient is unavailable');
@@ -366,9 +376,15 @@ export class SessionMessageService {
       const m=required(await store.getSessionMessage(messageId),'message');
       await store.updateSessionMessage({...m,state:ok?(visible?'replied':'completed_without_reply'):'failed',version:m.version+1,updatedAt:now},m.version);
       await store.markSessionMessageSettled(p.sessionId,messageId,now);
+      // Codex's cumulative native observation already counts this Turn; only a runtime without that
+      // source writes the bound Turn's provider accounting here.
+      const session=await tx.getRuntimeSession(p.sessionId);
+      if(turn.usage&&tx.usage&&(session?.runtimeProvider??'codex')!=='codex')
+        await tx.usage.addUsage(projectId,p.sessionId,this.deps.usageDay?.(now)??now.slice(0,10),{
+          inputTokens:turn.usage.inputTokens??0,outputTokens:turn.usage.outputTokens??0,
+          cachedInputTokens:turn.usage.cacheReadInputTokens??0,costUsd:0,costReported:false});
       // The first quota/authentication failure pauses the whole provider: every Session of it would fail the same way.
       if(!ok&&holdsProvider(turn.error?.category)){
-        const session=await tx.getRuntimeSession(p.sessionId);
         await tx.recovery?.openProviderHold({id:this.deps.ids.next(),provider:session?.runtimeProvider??'codex',
           category:turn.error!.category,causeSessionId:p.sessionId,causeMessageId:messageId,
           reason:(turn.error?.summary??'quota or authentication failure').slice(0,1000)},now);

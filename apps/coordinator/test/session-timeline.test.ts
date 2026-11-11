@@ -692,6 +692,74 @@ test('live projection keeps an unsupported original-detail reason instead of inv
   assert.equal(item.detail,undefined);h.service.close();
 });
 
+const compaction=(turnId:string):WorkspaceEntry=>({id:`native:${thread}:${turnId}:compaction-1`,kind:'notice',turnId,nativeItemId:'compaction-1',
+  nativeKind:'contextCompaction',author:{kind:'session',id:sessionId,label:'Agent'},origin:null,occurredAt:null,observedAt:now,
+  freshness:'persisted',truncated:false,label:'Context compacted',body:'',state:'unknown'});
+/** The saved message started `turn-message`; native history is reshaped to what the runtime kept after compaction. */
+function compactedHarness(shape:(inputs:WorkspaceMessage[])=>WorkspaceEntry[]){
+  const h=harness();h.withoutProof();
+  const original=h.runner.workspaceHistory.bind(h.runner);
+  h.runner.workspaceHistory=async(principal,projectId,session,query)=>{
+    const page=await original(principal,projectId,session,query);
+    if(query.itemId)return page;
+    const inputs=page.entries.filter((e):e is WorkspaceMessage=>e.kind==='message'&&e.role==='input'&&e.turnId==='turn-message');
+    return {...page,entries:[...shape(inputs),...page.entries.filter(e=>e.turnId!=='turn-message')]};
+  };
+  return h;
+}
+
+test('after context compaction a Turn started by a saved message still attributes its single input to that message',async()=>{
+  const h=compactedHarness(inputs=>[{...inputs[0]!,clientId:null},compaction('turn-message'),agent('answer-1','turn-message')]);
+  const page=await h.service.page(reader,project,key,{limit:1});
+  const input=page.entries.find(e=>e.nativeItemId==='input-1');
+  assert.equal(input?.kind,'message','a compacted Turn is not shown as an unknown input');
+  assert.equal(input?.origin?.id,id(10));
+  assert.equal(input?.author.id,'human-a');
+  assert.doesNotMatch(JSON.stringify(input),/未关联|未能核实|private dispatch credential/);
+  h.service.close();
+});
+
+test('without compaction the same unmarked input stays unverified, and ambiguity after compaction says so instead of guessing',async()=>{
+  const plain=harness();plain.withoutProof();
+  const plainPage=await plain.service.page(reader,project,key,{limit:1});
+  assert.equal(plainPage.entries[0]?.kind,'notice');
+  assert.match((plainPage.entries[0] as {body:string}).body,/未能核实此原生输入的业务发送者/,'no compaction: the old wording and rule stay');
+  plain.service.close();
+  // Compaction ran, but the Turn holds two inputs: which one is the business input cannot be told.
+  const two=compactedHarness(inputs=>[{...inputs[0]!,clientId:null},nativeInput('input-other','turn-message'),compaction('turn-message')]);
+  const twoPage=await two.service.page(reader,project,key,{limit:1});
+  const notices=twoPage.entries.filter(e=>e.kind==='notice'&&e.nativeKind==='userMessage') as {label:string;body:string}[];
+  assert.equal(notices.length,2);
+  for(const notice of notices){
+    assert.equal(notice.label,'压缩后无法对应的原生输入');
+    assert.match(notice.body,/上下文压缩后/);
+    assert.match(notice.body,/不表示来源不明/);
+  }
+  two.service.close();
+});
+
+test('compaction never overrides a conflicting identity on the input',async()=>{
+  const h=compactedHarness(inputs=>[{...inputs[0]!,clientId:id(999)},compaction('turn-message')]);
+  const page=await h.service.page(reader,project,key,{limit:1});
+  const input=page.entries.find(e=>e.nativeItemId==='input-1');
+  assert.equal(input?.kind,'notice');
+  assert.equal(input?.origin,null);
+  h.service.close();
+});
+
+test('after compaction a Turn with no saved business source keeps the plain unverified wording',async()=>{
+  const h=compactedHarness(inputs=>[{...inputs[0]!,clientId:null},compaction('turn-message'),agent('answer-1','turn-message')]);
+  h.unlink();
+  const page=await h.service.page(reader,project,key,{limit:1});
+  const input=page.entries.find(e=>e.nativeItemId==='input-1') as {kind:string;label:string;body:string;origin:unknown}|undefined;
+  assert.equal(input?.kind,'notice');
+  assert.equal(input?.label,'未关联的原生输入','no business message exists, so the sender is genuinely unverified');
+  assert.match(input!.body,/未能核实此原生输入的业务发送者/);
+  assert.doesNotMatch(input!.body,/不表示来源不明|业务消息仍可独立读取/);
+  assert.equal(input?.origin,null);
+  h.service.close();
+});
+
 test('a queued message blocked for a missing grant carries its reason to the page; one not blocked carries none',async()=>{
   const h=harness();
   try{
