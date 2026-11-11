@@ -118,6 +118,8 @@ const integrationSchema = z.strictObject({
   }).optional(),
   leaderResultNotices: z.strictObject({
     enabled: z.boolean(), pollIntervalMs: z.number().int().min(500).max(60000).default(2000),
+    /** DEC-045 W1: notices created from now on travel in Leader notice packets. Default off: new notices keep the one-notice-one-message path. */
+    packets: z.boolean().default(false),
     targets: z.array(z.strictObject({
       projectId: z.uuid(), sessionId: z.uuid(), receiverRoleId: z.uuid(),
       receiverActorId: z.string().trim().min(1).max(100), senderActorId: z.string().trim().min(1).max(100),

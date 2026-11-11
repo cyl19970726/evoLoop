@@ -396,4 +396,7 @@ Root 可在私有静默维护窗口以 `node scripts/prepare-unlimited-message-g
 
 ## Leader 通知包
 
-Leader 收到的是“Leader 通知包”消息：先 `get /api/projects/PROJECT/leader-notice-packets/PACKET` 读每一项的状态与版本，读当前 Task 和固定来源，再用 `command run` 提交 `leader.notice.handle`（`command schema leader.notice.handle` 取结构）：`noticeId`、`expectedVersion`、`disposition`（`handled` 或 `deferred`）、`reason`，延后要写 `notBefore`。重复提交同一操作安全；版本过期（`VERSION_CONFLICT`）要重新读。只读到这包不算处理，一轮正常结束只记“已看到”。被阻塞的包（读到后那一轮失败且恢复门关闭）由复核者 `leader.noticePacket.recover`（`packetId`、`reason`）解除，不会自动重发。
+Leader 收到的是“Leader 通知包”消息：先 `get /api/projects/PROJECT/leader-notice-packets/PACKET` 读每一项的状态与版本，读当前 Task 和固定来源，再用 `command run` 提交 `leader.notice.handle`（`command schema leader.notice.handle` 取结构）：`noticeId`、`expectedVersion`、`disposition`（`handled` 或 `deferred`）、`reason`，延后要写 `notBefore`。重复提交同一操作安全；版本过期（`VERSION_CONFLICT`）要重新读。只读到这包不算处理，一轮正常结束只记“已看到”。
+
+被阻塞的包（读到后那一轮失败且恢复门关闭）不会自动重发，它出现在 `work` 的 Leader 索引（`blockedNoticePackets`，带包编号和提示）。先按 Session 恢复流程恢复恢复门，再用 `request leader.notice.recover --project UUID --id 包编号 --file BODY.json --receipt UUID`（body 只写 `{"reason":"..."}`，需要 review 权限）恢复这一包，其中的项进入下一包。`leader.notice.recover` 带 `expectedOperationId` 等四个 ID 的旧形式仍用于迁移前已有的、消息被拒绝的通知。包的步骤（打包、已送、观察）只由配置里的通知发送身份运行，不是 Agent 的命令。
+

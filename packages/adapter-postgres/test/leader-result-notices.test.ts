@@ -20,8 +20,6 @@ const pool = new pg.Pool({ connectionString: url, options: `-c search_path=${sch
 const projectId = randomUUID(), now = "2026-11-02T00:00:00.000Z", hash = "a".repeat(64);
 before(async () => {
   await migrate(url!, schema);
-  // These tests exercise the one-notice-one-message path of notices that predate packets (migration 089): in this schema new notices stay on it.
-  await pool.query('ALTER TABLE leader_result_notice ALTER COLUMN via_packet SET DEFAULT false');
   await pool.query("INSERT INTO project(project_id,title,created_at) VALUES($1,'Notice test',$2)", [projectId, now]);
 });
 after(async () => {

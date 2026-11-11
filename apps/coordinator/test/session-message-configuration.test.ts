@@ -98,6 +98,10 @@ test("Leader result notices require one explicit managed target per project and 
     await writeFile(path,JSON.stringify({leaderResultNotices:{enabled:true,targets:[target]}}));
     const loaded=await loadIntegrations(path);
     assert.equal(loaded.leaderResultNotices?.pollIntervalMs,2000);
+    assert.equal(loaded.leaderResultNotices?.packets,false,"the packet switch is off unless the private configuration turns it on");
+    await writeFile(path,JSON.stringify({leaderResultNotices:{enabled:true,packets:true,targets:[target]}}));
+    assert.equal((await loadIntegrations(path)).leaderResultNotices?.packets,true);
+    await writeFile(path,JSON.stringify({leaderResultNotices:{enabled:true,targets:[target]}}));
     assert.deepEqual(loaded.leaderResultNotices?.targets,[target]);
     await writeFile(path,JSON.stringify({leaderResultNotices:{enabled:true,targets:[target,{...target,sessionId:"00000000-0000-4000-8000-000000000004"}]}}));
     await assert.rejects(loadIntegrations(path),/Invalid integration configuration/);

@@ -5,10 +5,14 @@ import { createHash, randomUUID } from "node:crypto";
 import { after, before, test } from "node:test";
 import pg from "pg";
 import { RuntimeWorkflowService, WorkflowService } from "@evoloop/core";
+import { SessionMessageService } from "@evoloop/core/session-messages";
 import type { Principal } from "@evoloop/contracts";
 import { migrate, PostgresUnitOfWork } from "../src/index.ts";
-import { LeaderResultNoticePump } from "../../../apps/coordinator/src/leader-results/pump.ts";
+import { getLeaderNotice } from "../src/leader-result-notices.ts";
+import { LeaderResultNoticePump, type LeaderResultNoticeConfig } from "../../../apps/coordinator/src/leader-results/pump.ts";
 import { pgLeaderPacketPorts, type LeaderPacketPorts } from "../../../apps/coordinator/src/leader-results/packet-ports.ts";
+import { SessionMessagePump } from "../../../apps/coordinator/src/session-messages/pump.ts";
+import { createLeaderWorkIndexReader } from "../../../apps/coordinator/src/work-management/work-index.ts";
 
 const url = process.env.TEST_DATABASE_URL;
 if (!url || !/^\/evoloop(?:_[a-z0-9]+)*_test$/i.test(new URL(url).pathname)) throw new Error("dedicated evoloop_*_test database required");
@@ -16,14 +20,17 @@ const schema = `el_packet_${randomUUID().replaceAll("-", "").slice(0, 16)}`;
 const pool = new pg.Pool({ connectionString: url, options: `-c search_path=${schema}` });
 const uow = new PostgresUnitOfWork(pool);
 const hash = (text: string) => createHash("sha256").update(text).digest("hex");
-const deps = { uow, clock: { now: () => new Date().toISOString() }, ids: { next: randomUUID }, hasher: { hash } };
-const workflow = new WorkflowService(deps);
-const runtime = new RuntimeWorkflowService(deps);
-const p = randomUUID(), role = randomUUID(), roleRev = randomUUID(), session = randomUUID();
+const p = randomUUID(), role = randomUUID(), roleRev = randomUUID(), sessionA = randomUUID(), sessionB = randomUUID();
 const receiver: Principal = { actorId: "leader-actor", projectIds: [p], permissions: ["read", "write", "review"] };
 const sender: Principal = { actorId: "notice-sender", projectIds: [p], permissions: ["read", "write"] };
 const author: Principal = { actorId: "author", projectIds: [p], permissions: ["read", "write", "review"] };
-const target = { projectId: p, sessionId: session, receiverRoleId: role, receiverActorId: receiver.actorId, senderActorId: sender.actorId };
+const human: Principal = { actorId: "human-actor", projectIds: [p], permissions: ["read", "write"] };
+// Only the configured notice sender may run the packet's own steps.
+const deps = { uow, clock: { now: () => new Date().toISOString() }, ids: { next: randomUUID }, hasher: { hash }, leaderNoticeServiceActor: async () => sender.actorId };
+const workflow = new WorkflowService(deps);
+const runtime = new RuntimeWorkflowService(deps);
+const sessionTarget = (sessionId: string) => ({ projectId: p, sessionId, receiverRoleId: role, receiverActorId: receiver.actorId, senderActorId: sender.actorId });
+let config: LeaderResultNoticeConfig = { enabled: true, packets: true, targets: [sessionTarget(sessionA)] };
 
 before(async () => {
   await migrate(url!, schema);
@@ -37,12 +44,16 @@ before(async () => {
       VALUES($1,$2,$3,1,'trial','{}'::jsonb,'lead','trial',now(),now()+interval '1 day')`, [p, role, roleRev]);
     await c.query("COMMIT");
   } catch (error) { await c.query("ROLLBACK"); throw error; } finally { c.release(); }
-  await apply(author, { type: "runtime.session.reserve", sessionId: session, roleId: role, cwd: "/tmp/packets", authorizationScope: "project", sandbox: "danger-full-access", approvalPolicy: "never" });
-  await runtime.beginSessionCreate(p, session);
-  const saved = (await uow.read(p, r => r.getRuntimeSession(session)))!;
-  await runtime.bindSession(p, session, { owner: "evoloop-codex-app-server", projectId: p, sessionId: session, roleId: role, cwd: "/tmp/packets", authorizationScope: "project",
-    nativeThreadId: `thread-${session}`, nativeSessionId: `native-${session}`, resumeProfile: { actorId: saved.actorId, model: saved.model, sandbox: saved.sandbox, approvalPolicy: saved.approvalPolicy,
-      executionProfileRevisionId: saved.executionProfile!.revision.revisionId } });
+  for (const session of [sessionA, sessionB]) {
+    await apply(author, { type: "runtime.session.reserve", sessionId: session, roleId: role, cwd: "/tmp/packets", authorizationScope: "project", sandbox: "danger-full-access", approvalPolicy: "never" });
+    await runtime.beginSessionCreate(p, session);
+    const saved = (await uow.read(p, r => r.getRuntimeSession(session)))!;
+    await runtime.bindSession(p, session, { owner: "evoloop-codex-app-server", projectId: p, sessionId: session, roleId: role, cwd: "/tmp/packets", authorizationScope: "project",
+      nativeThreadId: `thread-${session}`, nativeSessionId: `native-${session}`, resumeProfile: { actorId: saved.actorId, model: saved.model, sandbox: saved.sandbox, approvalPolicy: saved.approvalPolicy,
+        executionProfileRevisionId: saved.executionProfile!.revision.revisionId } });
+  }
+  // The packet switch is on for this project: new notices travel in packets.
+  await pool.query("INSERT INTO leader_notice_packet_mode(project_id,enabled) VALUES($1,true)", [p]);
 });
 after(async () => {
   await pool.end();
@@ -60,155 +71,483 @@ const newTask = async (title: string) => {
   await apply(author, { type: "task.create", taskId, title, content: `# ${title}`, acceptance: "ok", owner: role });
   return taskId;
 };
-// The Leader's recipient checks are not under test: the pump gets the configured target, and a ready lead Session.
-const leaderSession = { projectId: p, id: session, roleId: role, state: "ready", nativeThreadId: "t", nativeSessionId: "n" } as never;
-const leaderRole = { id: role, state: "active", proposal: { templateKey: "lead", roleClass: "system" } } as never;
+const noticeOf = async (taskId: string) => String((await pool.query("SELECT notice_id FROM leader_result_notice WHERE project_id=$1 AND task_id=$2 ORDER BY occurred_at DESC LIMIT 1", [p, taskId])).rows[0].notice_id);
+
+// ---- the real session message pump over the real message service, with a scripted native runtime ----
+const messageService = new SessionMessageService({ uow, clock: { now: () => new Date().toISOString() }, ids: { next: randomUUID },
+  grantFor: async (message, session) => ({ enabled: true, projectId: p, sessionId: session.id, senderActorId: message.senderActorId, receiverActorId: receiver.actorId,
+    receiverRoleId: session.roleId, cwd: session.cwd, maxTurns: 1000 }) as never });
+const turns = new Map<string, { id: string; status: string; completedAtUtc: string | null }>();
+const started: string[] = [];
+const fakeRuntime = {
+  isReady: () => true, registerBinding: async () => undefined, markReadOnlyThread: () => undefined,
+  qualifyConversationThread: async () => ({ available: true, reason: "ok", fingerprint: "a".repeat(64) }),
+  startConversationTurn: async (_binding: unknown, input: string) => { const id = `turn-${turns.size + 1}`; turns.set(id, { id, status: "inProgress", completedAtUtc: null }); started.push(input); return turns.get(id)!; },
+  listTurns: async () => ({ data: [...turns.values()].reverse(), nextCursor: null }),
+  listItems: async (_binding: unknown, turnId: string) => ({ data: turns.get(turnId)?.completedAtUtc ? [{ id: `a-${turnId}`, type: "agentMessage", phase: "final_answer", text: "done" }] : [], nextCursor: null }),
+};
+const finishTurn = (id: string, status = "completed") => { const t = turns.get(id)!; t.status = status; t.completedAtUtc = new Date().toISOString(); };
+const errors: unknown[] = [];
 let overrides: Partial<LeaderPacketPorts> = {};
 const realPorts = pgLeaderPacketPorts(pool, uow);
 const ports: LeaderPacketPorts = new Proxy(realPorts, { get: (t, k) => (overrides as Record<string | symbol, unknown>)[k] ?? (t as never)[k] }) as LeaderPacketPorts;
-const errors: unknown[] = [];
+let beforeExecute: ((command: Record<string, unknown>) => Promise<void>) | null = null;
+const currentSession = () => config.targets[0]!.sessionId;
+const leaderSessionRecord = (id: string) => ({ projectId: p, id, roleId: role, state: "ready", nativeThreadId: "t", nativeSessionId: "n" }) as never;
+const leaderRole = { id: role, state: "active", proposal: { templateKey: "lead", roleClass: "system" } } as never;
+const principals = [sender, receiver];
 const makePump = (debounce: number) => new LeaderResultNoticePump({
   store: { listPending: async () => ({ items: [], nextCursor: null }), getByMessageId: async () => null, disposeStalePendingTodo: async () => "current", disposeStaleTodo: async () => "current",
     attentionSourceCurrent: async () => "current", disposeStaleAttention: async () => "current", hasInFlightOnOtherSession: async () => false, notePendingReason: async () => undefined,
     block: async () => undefined, pinRecipient: async () => null, markPosted: async () => undefined } as never,
-  workflow: { listRoles: async () => ({ items: [leaderRole], nextCursor: null }), listRuntimeSessions: async () => [leaderSession],
-    execute: (who: Principal, command: never) => workflow.execute(who, command), getOperation: (who: Principal, project: string, id: string) => workflow.getOperation(who, project, id) } as never,
+  workflow: { listRoles: async () => ({ items: [leaderRole], nextCursor: null }), listRuntimeSessions: async () => [leaderSessionRecord(currentSession())],
+    execute: async (who: Principal, command: never) => { await beforeExecute?.(command as Record<string, unknown>); return workflow.execute(who, command); },
+    getOperation: (who: Principal, project: string, id: string) => workflow.getOperation(who, project, id) } as never,
   messages: { get: async () => { throw new Error("not used"); } } as never,
-  configuration: async () => ({ enabled: true, targets: [target] }), principals: async () => [sender, receiver], canExecuteSession: async () => true, hasMessageGrant: async () => true,
+  configuration: async () => config, principals: async () => principals, canExecuteSession: async () => true, hasMessageGrant: async () => true,
   readTaskFacts: async (project: string, taskId: string) => uow.read(project, async r => { const t = await r.getTask(taskId); return t ? { currentRevisionId: t.currentRevisionId, state: t.state, assigned: false } : null; }),
   canWrite: () => true, canStartNative: () => true, pollIntervalMs: 1000, onError: error => errors.push(error), packets: ports, packetDebounceSeconds: debounce });
-const packets = async () => (await pool.query("SELECT * FROM leader_notice_packet WHERE project_id=$1 ORDER BY created_at", [p])).rows;
+const noticePump = makePump(0);
+// The same wiring main.ts gives the message pump: the notice pump decides whether a queued message may start.
+const messagePump = new SessionMessagePump({ service: messageService, runtime: () => fakeRuntime as never, projects: async () => [p],
+  beforePreflight: async message => { const a = await noticePump.messageAdmission(message); if (!a.allowed && a.reason) await messageService.noteBlocked(message.projectId, message.id, a.reason); return a.allowed; },
+  canStart: async message => { const a = await noticePump.messageAdmission(message); if (!a.allowed && a.reason) await messageService.noteBlocked(message.projectId, message.id, a.reason); return a.allowed; },
+  canWrite: () => true, pollIntervalMs: 1000, onError: error => errors.push(error) });
+const settleAndPump = async () => { await messagePump.tick(); await noticePump.tick(); };
+
+const packets = async () => (await pool.query("SELECT * FROM leader_notice_packet WHERE project_id=$1 ORDER BY created_at, packet_id", [p])).rows;
+const lastPacket = async () => (await packets()).at(-1)!;
+const packetRow = async (id: string) => (await pool.query("SELECT * FROM leader_notice_packet WHERE packet_id=$1", [id])).rows[0];
 const items = async (packetId: string) => (await pool.query("SELECT * FROM leader_notice_packet_item WHERE project_id=$1 AND packet_id=$2 ORDER BY position", [p, packetId])).rows;
-const messageState = (state: string, nativeTurnId: string | null = null, processingState: string | null = null) => async (_project: string, messageId: string) =>
-  ({ id: messageId, version: 1, state, nativeTurnId, processingState });
-const settleAll = async () => { await pool.query("UPDATE leader_notice_packet SET state='seen' WHERE project_id=$1 AND state IN ('building','sent','delivered','unknown')", [p]); };
-const clearNotices = async () => {   // notices from other steps are handled so each step starts from its own set
-  await pool.query("UPDATE leader_result_notice SET blocked_reason='test cleanup',state=CASE WHEN state='pending' THEN 'blocked' ELSE state END,linked_session_id=NULL WHERE project_id=$1 AND state='pending'", [p]).catch(() => undefined);
+const attemptMessage = async (packetId: string) => String((await pool.query("SELECT message_id FROM leader_notice_packet_attempt WHERE packet_id=$1", [packetId])).rows[0].message_id);
+const messageRow = async (id: string) => (await pool.query("SELECT state,blocked_reason,version FROM session_message WHERE message_id=$1", [id])).rows[0];
+const humanPost = async (text: string, sessionId = currentSession()) => {
+  const messageId = randomUUID();
+  await apply(human, { type: "session.message.post", messageId, target: { kind: "owned", sessionId }, content: text });
+  return messageId;
+};
+/** Every step starts from an empty line: open packets settled, notices handled, queued messages cancelled, the Leader idle. */
+const reset = async () => {
+  config = { enabled: true, packets: true, targets: [sessionTarget(sessionA)] };
+  overrides = {}; beforeExecute = null; errors.length = 0;
+  await pool.query("UPDATE leader_notice_packet SET state='seen',ended_at=COALESCE(ended_at,now()) WHERE project_id=$1 AND state IN ('building','sent','delivered','unknown','blocked')", [p]);
+  await pool.query(`UPDATE leader_notice_packet_item SET state='handled',disposition='handled',handled_by='reset',version=version+1 WHERE project_id=$1 AND state IN ('pending','delivered','seen','unknown')`, [p]);
+  await pool.query("UPDATE leader_result_notice SET state='blocked',blocked_reason='reset' WHERE project_id=$1 AND state='pending'", [p]);
+  await pool.query("ALTER TABLE session_message DISABLE TRIGGER USER");
+  await pool.query("UPDATE session_message SET state='cancelled',version=version+1 WHERE project_id=$1 AND state='queued'", [p]);
+  await pool.query("ALTER TABLE session_message ENABLE TRIGGER USER");
+  await pool.query("UPDATE session_message_processing SET state='completed' WHERE project_id=$1 AND state IN ('dispatching','running','unknown')", [p]);
+  await pool.query("DELETE FROM session_recovery_gate WHERE project_id=$1", [p]).catch(() => undefined);
+  await pool.query("INSERT INTO session_recovery_gate(project_id,session_id,version,phase,updated_at) SELECT $1,session_id,1,'open',now() FROM runtime_session WHERE project_id=$1 ON CONFLICT DO NOTHING", [p]).catch(() => undefined);
 };
 
-test("notices wait for the debounce, then travel as one packet of per-item rows with one message; a person's message and an open packet hold the next one", async () => {
+test("notices wait for the debounce; a running Leader Turn collects them; then one packet with per-item rows and one message; the real message pump starts it and the item states follow", async () => {
+  await reset();
   const a = await newTask("Packet A"), b = await newTask("Packet B"), c = await newTask("Packet C");
   void a; void b; void c;
   const tooSoon = makePump(3600);
   await tooSoon.tick();
   assert.equal((await packets()).length, 0, "nothing is built before the earliest notice has waited");
-  // A person's message waiting: no packet.
-  overrides = { leaderState: async () => ({ busy: false, humanMessageQueued: true, gateOpen: true, gateBlocked: false }) };
-  await makePump(0).tick();
-  assert.equal((await packets()).length, 0, "a person's message goes before the packet");
-  // The Leader is busy: the notices are kept until the Turn ends.
-  overrides = { leaderState: async () => ({ busy: true, humanMessageQueued: false, gateOpen: true, gateBlocked: false }) };
-  await makePump(0).tick();
+  // The Leader is busy with a person's message (a real Turn the real pump started): the notices are collected until it ends.
+  const h1 = await humanPost("Leader, a question");
+  await messagePump.tick();
+  assert.equal(started.length, 1, "the person's message started a Turn");
+  assert.equal((await messageRow(h1)).state, "processing");
+  await noticePump.tick();
   assert.equal((await packets()).length, 0, "a running Turn collects, it does not receive");
   // Recovery gate closed: nothing is sent.
   overrides = { leaderState: async () => ({ busy: false, humanMessageQueued: false, gateOpen: false, gateBlocked: true }) };
-  await makePump(0).tick();
+  await noticePump.tick();
   assert.equal((await packets()).length, 0);
   overrides = {};
-  await makePump(0).tick();
-  const [packet] = await packets();
-  assert.ok(packet, "one packet " + JSON.stringify(errors.map(String)));
+  finishTurn("turn-1");
+  await messagePump.tick();
+  assert.equal((await messageRow(h1)).state, "replied");
+  await noticePump.tick();
+  const packet = await lastPacket();
   assert.equal(packet.state, "sent"); assert.equal(packet.item_count, 3);
-  const rows = await items(packet.packet_id);
-  assert.deepEqual(rows.map(r => r.state), ["pending", "pending", "pending"], "each item has its own state");
-  const attempt = (await pool.query("SELECT * FROM leader_notice_packet_attempt WHERE packet_id=$1", [packet.packet_id])).rows;
-  assert.equal(attempt.length, 1); assert.equal(attempt[0].method, "new_turn"); assert.ok(attempt[0].message_id && !attempt[0].direct_input_id);
-  const message = (await pool.query("SELECT content,state FROM session_message WHERE message_id=$1", [attempt[0].message_id])).rows[0];
+  assert.deepEqual((await items(packet.packet_id)).map(r => r.state), ["pending", "pending", "pending"], "each item has its own state");
+  const attempts = (await pool.query("SELECT * FROM leader_notice_packet_attempt WHERE packet_id=$1", [packet.packet_id])).rows;
+  assert.equal(attempts.length, 1); assert.equal(attempts[0].method, "new_turn"); assert.ok(attempts[0].message_id && !attempts[0].direct_input_id);
+  const message = (await pool.query("SELECT content,state FROM session_message WHERE message_id=$1", [attempts[0].message_id])).rows[0];
   assert.equal(message.state, "queued"); assert.match(message.content, /Leader 通知包/);
+  assert.ok(Buffer.byteLength(message.content, "utf8") <= 8192);
   assert.equal(Buffer.byteLength(message.content, "utf8"), packet.byte_count);
-  // The Session takes one packet at a time.
-  await makePump(0).tick();
-  assert.equal((await packets()).length, 1);
-  assert.deepEqual(errors, []);
-  await settleAll();
-});
-
-test("a stale item is withdrawn while packing; a read packet is seen, not handled, until the Leader decides with a version; a deferral comes back", async () => {
-  await pool.query("UPDATE leader_notice_packet_item SET state='handled',disposition='handled',version=version+1 WHERE project_id=$1", [p]);
-  const stale = await newTask("Stale one"), fresh = await newTask("Fresh one");
-  // The first Task is started before packing: its "new Task" notice is out of date.
-  await apply(author, { type: "task.start", taskId: stale, expectedVersion: 1, reason: "started elsewhere" });
-  overrides = {};
-  await makePump(0).tick();
-  const all = await packets();
-  const packet = all.at(-1)!;
-  const rows = await items(packet.packet_id);
-  const byNotice = Object.fromEntries((await pool.query("SELECT notice_id,task_id FROM leader_result_notice WHERE project_id=$1 AND task_id = ANY($2)", [p, [stale, fresh]])).rows.map(r => [r.task_id, r.notice_id]));
-  const staleItem = rows.find(r => r.notice_id === byNotice[stale]);
-  assert.equal(staleItem?.state, "withdrawn"); assert.match(staleItem!.withdrawn_reason, /SUPERSEDED/);
-  assert.equal(rows.find(r => r.notice_id === byNotice[fresh])?.state, "pending");
-  assert.equal(packet.item_count, 1, "only the current item is read");
-  const messageId = (await pool.query("SELECT message_id FROM leader_notice_packet_attempt WHERE packet_id=$1", [packet.packet_id])).rows[0].message_id;
-  // The Turn that reads it starts, then ends normally.
-  overrides = { message: messageState("processing", "turn-1", "running") };
-  await makePump(0).tick();
-  assert.equal((await items(packet.packet_id)).find(r => r.notice_id === byNotice[fresh])?.state, "delivered");
-  overrides = { message: messageState("replied", "turn-1", "completed") };
-  await makePump(0).tick();
-  const seen = (await items(packet.packet_id)).find(r => r.notice_id === byNotice[fresh])!;
-  assert.equal(seen.state, "seen", "a Turn that ended normally only means seen");
-  assert.equal((await pool.query("SELECT state FROM leader_notice_packet WHERE packet_id=$1", [packet.packet_id])).rows[0].state, "seen");
-  // The Leader decides, naming the version; a stale version is refused; the same operation repeated changes nothing.
-  const operationId = randomUUID();
-  const decide = (who: Principal, command: Record<string, unknown>) => workflow.execute(who, { projectId: p, ...command } as never);
-  const stale1 = await decide(receiver, { type: "leader.notice.handle", operationId: randomUUID(), noticeId: byNotice[fresh], expectedVersion: seen.version - 1, disposition: "handled", reason: "old view" });
-  assert.equal(stale1.status, "rejected"); assert.equal((stale1 as { code: string }).code, "VERSION_CONFLICT");
-  const notBefore = new Date(Date.now() + 1500).toISOString();
-  const deferred = await decide(receiver, { type: "leader.notice.handle", operationId, noticeId: byNotice[fresh], expectedVersion: seen.version, disposition: "deferred",
-    reason: "after the release", notBefore });
-  assert.equal(deferred.status, "applied", JSON.stringify(deferred));
-  const again = await decide(receiver, { type: "leader.notice.handle", operationId, noticeId: byNotice[fresh], expectedVersion: seen.version, disposition: "deferred",
-    reason: "after the release", notBefore });
-  assert.equal(again.status, "applied", "a repeat of the same decision is harmless");
-  const after = (await items(packet.packet_id)).find(r => r.notice_id === byNotice[fresh])!;
-  assert.equal(after.state, "handled"); assert.equal(after.version, seen.version + 1, "the decision took effect once");
-  overrides = {};
-  await makePump(0).tick();
-  assert.equal((await packets()).length, all.length, "deferred: not before its time");
-  await new Promise(resolve => setTimeout(resolve, 1700));
-  await makePump(0).tick();
-  assert.equal((await packets()).length, all.length + 1, "after the time it is sent again");
-  void messageId;
-  await settleAll();
+  await noticePump.tick();
+  assert.equal((await packets()).length, 1, "the Session takes one packet at a time");
+  // The real pump starts the packet message; the Turn that reads it is "delivered", its normal end is only "seen".
+  await messagePump.tick();
+  assert.equal(started.length, 2);
+  await noticePump.tick();
+  assert.deepEqual((await items(packet.packet_id)).map(r => r.state), ["delivered", "delivered", "delivered"]);
+  finishTurn("turn-2");
+  await settleAndPump();
+  assert.deepEqual((await items(packet.packet_id)).map(r => r.state), ["seen", "seen", "seen"], "a Turn that ended normally only means seen");
+  assert.equal((await packetRow(packet.packet_id)).state, "seen");
   assert.deepEqual(errors, []);
 });
 
-test("a failed read behind a closed gate blocks the packet and holds its items until recover; a person's message withdraws an unstarted packet", async () => {
-  const t = await newTask("Fails once");
-  overrides = {};
-  await makePump(0).tick();
-  const packet = (await packets()).at(-1)!;
+test("a person's message goes first: the real pump will not start the packet message, the packet pump cancels it for real and withdraws the packet; the person's message then starts", async () => {
+  await reset();
+  const t = await newTask("Gives way");
+  await noticePump.tick();
+  const packet = await lastPacket();
   assert.equal(packet.state, "sent");
-  const noticeId = (await items(packet.packet_id))[0]!.notice_id;
-  overrides = { message: messageState("failed", "turn-9", "failed"), leaderState: async () => ({ busy: false, humanMessageQueued: false, gateOpen: false, gateBlocked: true }) };
+  const messageId = await attemptMessage(packet.packet_id);
+  const h = await humanPost("A person writes after the packet message was queued");
+  const before = started.length;
+  await messagePump.tick();
+  assert.equal(started.length, before, "the packet message waits for the person's message, and the person's message waits behind it in the queue");
+  assert.equal((await messageRow(messageId)).state, "queued");
+  await noticePump.tick();
+  assert.equal((await messageRow(messageId)).state, "cancelled", "the packet message was really cancelled");
+  assert.equal((await packetRow(packet.packet_id)).state, "withdrawn");
+  const rows = await items(packet.packet_id);
+  assert.equal(rows[0]!.state, "unknown"); assert.equal(rows[0]!.requeue, true); assert.equal(rows[0]!.read_before, false, "nothing was read");
+  await messagePump.tick();
+  assert.equal(started.length, before + 1, "the person's message now starts");
+  assert.equal((await messageRow(h)).state, "processing");
+  finishTurn(`turn-${turns.size}`);
+  await settleAndPump();
+  // The withdrawn item comes back in the next packet.
+  const next = await lastPacket();
+  assert.notEqual(next.packet_id, packet.packet_id);
+  assert.ok((await items(next.packet_id)).some(r => r.notice_id === rows[0]!.notice_id), "the withdrawn notice travels in the next packet");
+  assert.deepEqual(errors, [], "no error was filtered out");
+  void t;
+});
+
+test("a refused cancel does not withdraw the packet: the message's own state decides, and a packet whose message really started keeps its read mark", async () => {
+  await reset();
+  await newTask("Cancel race");
+  await noticePump.tick();
+  const packet = await lastPacket();
+  const messageId = await attemptMessage(packet.packet_id);
+  const h = await humanPost("A person writes");
+  // Between the pump's read and its cancel the message starts (the person's message is gone), so the cancel is refused for real.
+  beforeExecute = async command => {
+    if (command.type !== "session.message.cancel") return;
+    beforeExecute = null;
+    await workflow.execute(human, { type: "session.message.cancel", projectId: p, operationId: randomUUID(), messageId: h, expectedVersion: (await messageRow(h)).version, reason: "the person withdrew it" } as never);
+    await messagePump.tick();
+  };
+  await noticePump.tick();
+  assert.notEqual((await packetRow(packet.packet_id)).state, "withdrawn", "a refused cancel is not a withdrawal");
+  assert.equal((await messageRow(messageId)).state, "processing");
+  assert.deepEqual((await items(packet.packet_id)).map(r => r.state), ["pending"]);
+  await noticePump.tick();
+  assert.deepEqual((await items(packet.packet_id)).map(r => r.state), ["delivered"], "the actual state of the message decides");
+  // Its Turn fails: the item may have been read.
+  finishTurn(`turn-${turns.size}`, "failed");
+  await settleAndPump();
+  const row = (await items(packet.packet_id))[0]!;
+  assert.equal(row.state, "unknown"); assert.equal(row.read_before, true);
+  assert.deepEqual(errors.filter(e => !/cancel|MESSAGE_NOT_PENDING|VERSION_CONFLICT/i.test(String(e))), []);
+});
+
+test("20 items at most and 8 KB at most: more candidates wait for the next packet; stale items in front never hide later ones; all stale ones are withdrawn", async () => {
+  await reset();
+  const stale: string[] = [], fresh: string[] = [];
+  for (let i = 0; i < 55; i++) stale.push(await newTask(`Stale ${i}`));
+  for (let i = 0; i < 25; i++) fresh.push(await newTask(`Fresh ${i}`));
+  for (const taskId of stale) await apply(author, { type: "task.start", taskId, expectedVersion: 1, reason: "started elsewhere" });
+  await noticePump.tick();
+  const withdrawn = (await pool.query(`SELECT count(*)::int AS n FROM leader_notice_packet_item i JOIN leader_result_notice n ON n.project_id=i.project_id AND n.notice_id=i.notice_id
+    WHERE i.project_id=$1 AND i.state='withdrawn' AND n.task_id = ANY($2)`, [p, stale])).rows[0].n;
+  assert.equal(withdrawn, 55, "stale notices in front of the line were all withdrawn, even though more than one page of them came first");
+  const packet = (await packets()).filter(x => x.state === "sent").at(-1)!;
+  assert.equal(packet.item_count, 20, "at most 20 items");
+  assert.ok(packet.byte_count <= 8192, `at most 8 KB: ${packet.byte_count}`);
+  const content = String(packet.content);
+  for (const row of await items(packet.packet_id)) assert.ok(content.includes(row.notice_id), "every item is named at least by its id");
+  // The other five go in the next packet.
+  await pool.query("UPDATE leader_notice_packet SET state='seen',ended_at=now() WHERE packet_id=$1", [packet.packet_id]);
+  await pool.query("UPDATE leader_notice_packet_item SET state='handled',disposition='handled',handled_by='t',version=version+1 WHERE packet_id=$1", [packet.packet_id]);
+  await pool.query("ALTER TABLE session_message DISABLE TRIGGER USER");
+  await pool.query("UPDATE session_message SET state='cancelled',version=version+1 WHERE project_id=$1 AND state='queued'", [p]);
+  await pool.query("ALTER TABLE session_message ENABLE TRIGGER USER");
+  await noticePump.tick();
+  const next = (await packets()).filter(x => x.state === "sent").at(-1)!;
+  assert.equal(next.item_count, 5);
+  assert.equal(new Set([...(await items(packet.packet_id)), ...(await items(next.packet_id))].map(r => r.notice_id)).size, 25);
+  assert.deepEqual(errors, []);
+});
+
+test("a todo withdrawn as out of date is replaced by a notice for the current revision, which then travels in a packet", async () => {
+  await reset();
+  const taskId = await newTask("Revised before it is read");
+  const first = await noticeOf(taskId);
+  await apply(author, { type: "task.update", taskId, expectedVersion: 1, title: "Revised", content: "# Revised", acceptance: "ok", owner: role, reason: "clarified" });
+  await noticePump.tick();
+  const old = (await pool.query("SELECT * FROM leader_notice_packet_item WHERE project_id=$1 AND notice_id=$2", [p, first])).rows[0];
+  assert.equal(old.state, "withdrawn"); assert.match(old.withdrawn_reason, /SUPERSEDED_REFRESHED/);
+  const second = await noticeOf(taskId);
+  assert.notEqual(second, first, "a notice for the current revision was queued");
+  assert.equal((await pool.query("SELECT via_packet FROM leader_result_notice WHERE notice_id=$1", [second])).rows[0].via_packet, true);
+  await noticePump.tick();
+  const packet = await lastPacket();
+  assert.ok((await items(packet.packet_id)).some(r => r.notice_id === second && r.state === "pending"), "the current notice is sent");
+  assert.deepEqual(errors, []);
+});
+
+test("one that cannot start never stops the packets: a message blocked for want of its sender's grant, or superseded and unconfirmed, is not waiting", async () => {
+  await reset();
+  await newTask("Not held back");
+  const grantless = await humanPost("No grant for this sender");
+  await pool.query("UPDATE session_message SET blocked_reason='MESSAGE_GRANT_MISSING: exact grant unavailable',version=version+1 WHERE message_id=$1", [grantless]);
+  const superseded = await humanPost("Superseded by a Run stop");
+  await pool.query("UPDATE session_message SET superseded_at=now(),superseded_by_run=$2,blocked_reason='SUPERSEDED: stopped',version=version+1 WHERE message_id=$1", [superseded, randomUUID()]);
+  assert.equal((await realPorts.leaderState(p, sessionA)).humanMessageQueued, false, "both are skipped by the message pump, so neither is waiting");
+  await noticePump.tick();
+  assert.equal((await lastPacket()).state, "sent", "the packet was built");
+  // A person's message that can start does hold it back.
+  await reset();
+  await newTask("Held back");
+  await humanPost("This one can start");
+  const count = (await packets()).length;
+  await noticePump.tick();
+  assert.equal((await packets()).length, count);
+  assert.deepEqual(errors, []);
+});
+
+test("restart in the middle: a built packet whose message was never posted is posted once with the same ids; a posted one whose record is missing is only recorded", async () => {
+  await reset();
+  await newTask("Crash before post");
+  beforeExecute = async command => { if (command.type === "session.message.post") { beforeExecute = null; throw new Error("crash before the post"); } };
+  await noticePump.tick();
+  const building = await lastPacket();
+  assert.equal(building.state, "building");
+  assert.equal((await pool.query("SELECT 1 FROM session_message WHERE message_id=$1", [building.message_id])).rowCount, 0);
+  errors.length = 0;
   await makePump(0).tick();
-  const blocked = (await packets()).find(x => x.packet_id === packet.packet_id)!;
-  assert.equal(blocked.state, "blocked");
-  const held = (await items(packet.packet_id)).find(r => r.notice_id === noticeId)!;
+  assert.equal((await packetRow(building.packet_id)).state, "sent", "the fresh pump finished the post");
+  assert.equal((await pool.query("SELECT count(*)::int AS n FROM session_message WHERE message_id=$1", [building.message_id])).rows[0].n, 1);
+  assert.equal((await pool.query("SELECT count(*)::int AS n FROM leader_notice_packet_attempt WHERE packet_id=$1", [building.packet_id])).rows[0].n, 1);
+  await reset();
+  await newTask("Crash after post");
+  beforeExecute = async command => { if (command.type === "leader.noticePacket.sent") { beforeExecute = null; throw new Error("crash before the record"); } };
+  await noticePump.tick();
+  const half = await lastPacket();
+  assert.equal(half.state, "building");
+  assert.equal((await pool.query("SELECT count(*)::int AS n FROM session_message WHERE message_id=$1", [half.message_id])).rows[0].n, 1, "the message exists");
+  errors.length = 0;
+  await makePump(0).tick();
+  assert.equal((await packetRow(half.packet_id)).state, "sent");
+  assert.equal((await pool.query("SELECT count(*)::int AS n FROM session_message WHERE message_id=$1", [half.message_id])).rows[0].n, 1, "not posted twice");
+  assert.deepEqual(errors, []);
+});
+
+test("a result that is unknown is only read back: the packet waits, its items stay, and nothing is resent", async () => {
+  await reset();
+  await newTask("Unknown result");
+  await noticePump.tick();
+  const packet = await lastPacket();
+  const messageId = await attemptMessage(packet.packet_id);
+  await pool.query("ALTER TABLE session_message DISABLE TRIGGER USER");
+  await pool.query("UPDATE session_message SET state='unknown',version=version+1 WHERE message_id=$1", [messageId]);
+  await pool.query("ALTER TABLE session_message ENABLE TRIGGER USER");
+  const messagesBefore = (await pool.query("SELECT count(*)::int AS n FROM session_message WHERE project_id=$1", [p])).rows[0].n;
+  const packetsBefore = (await packets()).length;
+  await noticePump.tick(); await noticePump.tick();
+  assert.equal((await packetRow(packet.packet_id)).state, "unknown");
+  assert.deepEqual((await items(packet.packet_id)).map(r => r.state), ["pending"], "items are not returned on an unknown result");
+  assert.equal((await packets()).length, packetsBefore, "no further packet");
+  assert.equal((await pool.query("SELECT count(*)::int AS n FROM session_message WHERE project_id=$1", [p])).rows[0].n, messagesBefore, "no message was resent");
+  assert.deepEqual(errors, []);
+});
+
+test("a failed read behind a closed gate blocks the packet until it is recovered; once the gate is open the items are resent with the read mark and the Leader's decision counts once", async () => {
+  await reset();
+  await newTask("Fails once");
+  await noticePump.tick();
+  const packet = await lastPacket();
+  await messagePump.tick();
+  await noticePump.tick();
+  assert.equal((await packetRow(packet.packet_id)).state, "delivered");
+  finishTurn(`turn-${turns.size}`, "failed");
+  await messagePump.tick();
+  assert.equal((await pool.query("SELECT phase FROM session_recovery_gate WHERE session_id=$1", [sessionA])).rows[0].phase, "blocked", "the failed Turn closed the recovery gate");
+  await noticePump.tick();
+  assert.equal((await packetRow(packet.packet_id)).state, "blocked");
+  const held = (await items(packet.packet_id))[0]!;
   assert.equal(held.state, "unknown"); assert.equal(held.read_before, true, "a Turn had started: it may already have been read");
-  overrides = {};
-  await makePump(0).tick();
-  assert.equal((await packets()).length, (await packets()).length);
-  const countBefore = (await packets()).length;
-  await makePump(0).tick();
-  assert.equal((await packets()).length, countBefore, "a blocked packet is not retried by itself");
-  // Recover (a reviewer), then the item is sent again, marked as possibly read before.
+  const count = (await packets()).length;
+  await noticePump.tick();
+  assert.equal((await packets()).length, count, "a blocked packet is not retried by itself");
+  // It is visible to the Leader, with what to do.
+  const blocked = await createLeaderWorkIndexReader(pool).blockedNoticePackets!(p);
+  assert.deepEqual(blocked.map(x => x.packetId), [packet.packet_id]);
+  assert.match(blocked[0]!.hint, /leader\.notice\.recover/);
+  // The gate is open again and the packet is recovered (a reviewer): the item goes out again, marked as possibly read before.
+  await pool.query("UPDATE session_recovery_gate SET phase='open',cause_kind=NULL,cause_id=NULL,cause_state=NULL,version=version+1 WHERE session_id=$1", [sessionA]);
   const recovered = await workflow.execute(receiver, { type: "leader.noticePacket.recover", projectId: p, operationId: randomUUID(), packetId: packet.packet_id, reason: "gate reviewed" } as never);
   assert.equal(recovered.status, "applied", JSON.stringify(recovered));
-  await makePump(0).tick();
-  const next = (await packets()).at(-1)!;
-  assert.notEqual(next.packet_id, packet.packet_id, "fresh ids for the retry");
+  assert.deepEqual((await createLeaderWorkIndexReader(pool).blockedNoticePackets!(p)), []);
+  await noticePump.tick();
+  const next = await lastPacket();
+  assert.notEqual(next.packet_id, packet.packet_id, "fresh ids for the resend");
   assert.match(next.content, /上一轮已读到过/);
-  // A person's message arrives before the new packet starts: it is withdrawn and the message cancelled.
-  overrides = { message: messageState("queued"), leaderState: async () => ({ busy: false, humanMessageQueued: true, gateOpen: true, gateBlocked: false }) };
+  assert.equal((await items(next.packet_id))[0]!.read_before, true);
+  // Delivered and seen again; then the Leader decides, naming the version.
+  await messagePump.tick(); await noticePump.tick();
+  finishTurn(`turn-${turns.size}`);
+  await settleAndPump();
+  const seen = (await items(next.packet_id))[0]!;
+  assert.equal(seen.state, "seen");
+  const decide = (who: Principal, command: Record<string, unknown>) => workflow.execute(who, { projectId: p, ...command } as never);
+  const old = await decide(receiver, { type: "leader.notice.handle", operationId: randomUUID(), noticeId: seen.notice_id, expectedVersion: seen.version - 1, disposition: "handled", reason: "old view" });
+  assert.equal(old.status, "rejected"); assert.equal((old as { code: string }).code, "VERSION_CONFLICT");
+  const operationId = randomUUID();
+  const notBefore = new Date(Date.now() + 1500).toISOString();
+  const first = await decide(receiver, { type: "leader.notice.handle", operationId, noticeId: seen.notice_id, expectedVersion: seen.version, disposition: "deferred", reason: "after the release", notBefore });
+  assert.equal(first.status, "applied", JSON.stringify(first));
+  const again = await decide(receiver, { type: "leader.notice.handle", operationId, noticeId: seen.notice_id, expectedVersion: seen.version, disposition: "deferred", reason: "after the release", notBefore });
+  assert.equal(again.status, "applied", "a repeat of the same decision is harmless");
+  const other = await decide(receiver, { type: "leader.notice.handle", operationId: randomUUID(), noticeId: seen.notice_id, expectedVersion: seen.version, disposition: "handled", reason: "second thought" });
+  assert.equal(other.status, "rejected", "a second decision on the old version is refused");
+  const done = (await items(next.packet_id))[0]!;
+  assert.equal(done.state, "handled"); assert.equal(done.version, seen.version + 1, "the decision took effect once");
+  const packetsNow = (await packets()).length;
+  await noticePump.tick();
+  assert.equal((await packets()).length, packetsNow, "deferred: not before its time");
+  await new Promise(resolve => setTimeout(resolve, 1700));
+  await noticePump.tick();
+  assert.equal((await packets()).length, packetsNow + 1, "after the time it is sent again");
+});
+
+test("when the Leader's Session changes, open packets of the old Session are reconciled: an unstarted one is withdrawn, one whose Turn failed returns its items with the read mark", async () => {
+  await reset();
+  await newTask("Moves house, unstarted");
+  await noticePump.tick();
+  const unstarted = await lastPacket();
+  const unstartedMessage = await attemptMessage(unstarted.packet_id);
+  config = { enabled: true, packets: true, targets: [sessionTarget(sessionB)] };
+  await messagePump.tick();
+  assert.equal((await messageRow(unstartedMessage)).state, "queued", "the old Session's packet message is not started for a Leader that moved");
+  await noticePump.tick();
+  assert.equal((await messageRow(unstartedMessage)).state, "cancelled");
+  assert.equal((await packetRow(unstarted.packet_id)).state, "withdrawn");
+  const moved = (await items(unstarted.packet_id))[0]!;
+  assert.equal(moved.state, "unknown"); assert.equal(moved.read_before, false);
+  await noticePump.tick();
+  const onB = await lastPacket();
+  assert.equal(onB.session_id, sessionB, "the item came back and goes to the new Leader Session");
+  assert.ok((await items(onB.packet_id)).some(r => r.notice_id === moved.notice_id));
+  // A packet on the old Session whose Turn had started and failed after the move.
+  await reset();
+  await newTask("Moves house, read");
+  await noticePump.tick();
+  const read = await lastPacket();
+  await messagePump.tick(); await noticePump.tick();
+  assert.equal((await packetRow(read.packet_id)).state, "delivered");
+  config = { enabled: true, packets: true, targets: [sessionTarget(sessionB)] };
+  finishTurn(`turn-${turns.size}`, "failed");
+  await messagePump.tick();
+  await noticePump.tick();
+  assert.equal((await packetRow(read.packet_id)).state, "returned");
+  assert.equal((await items(read.packet_id))[0]!.read_before, true);
+  await noticePump.tick();
+  const again = await lastPacket();
+  assert.equal(again.session_id, sessionB);
+  assert.match(again.content, /上一轮已读到过/);
+  assert.deepEqual(errors, []);
+});
+
+test("notices switched off, or a recipient that is no longer usable, withdraw an unstarted packet so it does not hold the line behind a person's message", async () => {
+  await reset();
+  await newTask("Switched off");
+  await noticePump.tick();
+  const packet = await lastPacket();
+  const messageId = await attemptMessage(packet.packet_id);
+  const h = await humanPost("Behind the packet message");
+  config = { enabled: false, packets: true, targets: [sessionTarget(sessionA)] };
+  await noticePump.tick();
+  assert.equal((await messageRow(messageId)).state, "cancelled");
+  assert.equal((await packetRow(packet.packet_id)).state, "withdrawn");
+  await messagePump.tick();
+  assert.equal((await messageRow(h)).state, "processing", "the person's message started");
+  finishTurn(`turn-${turns.size}`);
+  await messagePump.tick();
+  // The target is lost for good (no usable Session): the same.
+  await reset();
+  await newTask("Recipient lost");
+  await noticePump.tick();
+  const second = await lastPacket();
+  const secondMessage = await attemptMessage(second.packet_id);
+  const original = config.targets[0]!;
+  config = { enabled: true, packets: true, targets: [{ ...original, receiverRoleId: randomUUID() }] };
+  await noticePump.tick();
+  assert.equal((await messageRow(secondMessage)).state, "cancelled");
+  assert.equal((await packetRow(second.packet_id)).state, "withdrawn");
+  assert.deepEqual(errors, []);
+});
+
+test("the switch: with it off new notices keep the one-notice-one-message path, and notices no packet has touched return to it; on, new notices go by packet", async () => {
+  await reset();
+  config = { enabled: true, packets: false, targets: [sessionTarget(sessionA)] };
   await makePump(0).tick();
-  assert.equal((await packets()).find(x => x.packet_id === next.packet_id)!.state, "withdrawn");
-  assert.equal((await items(next.packet_id))[0]!.state, "unknown");
-  void t;
-  assert.deepEqual(errors.filter(e => !/cancel/i.test(String(e))), []);
+  const off = await newTask("Created with the switch off");
+  assert.equal((await pool.query("SELECT via_packet FROM leader_result_notice WHERE notice_id=$1", [await noticeOf(off)])).rows[0].via_packet, false);
+  config = { enabled: true, packets: true, targets: [sessionTarget(sessionA)] };
+  await makePump(3600).tick();
+  const on = await newTask("Created with the switch on");
+  assert.equal((await pool.query("SELECT via_packet FROM leader_result_notice WHERE notice_id=$1", [await noticeOf(on)])).rows[0].via_packet, true);
+  // Rolled back: the untouched packet notice returns to the old path; an off switch builds no new packet for it.
+  config = { enabled: true, packets: false, targets: [sessionTarget(sessionA)] };
+  const count = (await packets()).length;
+  await makePump(0).tick();
+  assert.equal((await pool.query("SELECT via_packet FROM leader_result_notice WHERE notice_id=$1", [await noticeOf(on)])).rows[0].via_packet, false);
+  assert.equal((await packets()).length, count);
+  await pool.query("UPDATE leader_notice_packet_mode SET enabled=true WHERE project_id=$1", [p]);
+  assert.deepEqual(errors, []);
+});
+
+test("only the configured notice sender runs the packet's own steps: not the Leader, not another reviewer, and nobody when none is configured", async () => {
+  await reset();
+  await newTask("Identity");
+  // A missing permission throws; a refused identity comes back as a rejection. Both mean "not allowed".
+  const run = async (who: Principal, command: Record<string, unknown>, service = workflow): Promise<{ status: string; code?: string }> => {
+    try { return await service.execute(who, { projectId: p, operationId: randomUUID(), ...command } as never) as never; }
+    catch (error) { return { status: "rejected", code: (error as { code?: string }).code ?? "ERROR" }; }
+  };
+  const build = { type: "leader.noticePacket.build", sessionId: sessionA, packetId: randomUUID(), messageId: randomUUID(), messageOperationId: randomUUID(), content: "x",
+    recipient: { receiverRoleId: role, receiverActorId: receiver.actorId, senderActorId: sender.actorId }, noticeIds: [], debounceSeconds: 0, withdraw: [] };
+  const packetId = randomUUID();
+  for (const who of [receiver, author]) {
+    for (const command of [{ ...build, noticeIds: [randomUUID()] }, { type: "leader.noticePacket.sent", packetId }, { type: "leader.noticePacket.observe", packetId, outcome: "seen" }]) {
+      const result = await run(who, command);
+      assert.equal(result.status, "rejected", `${who.actorId} ${command.type}`); assert.equal(result.code, "FORBIDDEN");
+    }
+  }
+  const noService = new WorkflowService({ ...deps, leaderNoticeServiceActor: async () => null });
+  const none = await run(sender, { type: "leader.noticePacket.sent", packetId }, noService);
+  assert.equal(none.status, "rejected"); assert.equal(none.code, "FORBIDDEN");
+  // The sender passes the identity check (and is then refused for what is wrong with this packet id, not for who it is).
+  const known = await run(sender, { type: "leader.noticePacket.sent", packetId });
+  assert.notEqual(known.code, "FORBIDDEN");
+  // The Leader's own decision and recovery need review; the notice sender has none.
+  const decision = await run(sender, { type: "leader.notice.handle", noticeId: randomUUID(), expectedVersion: 1, disposition: "handled", reason: "x" });
+  assert.equal(decision.status, "rejected");
+});
+
+test("the notice shows where it is in its packet, for a packet notice and a withdrawn one", async () => {
+  await reset();
+  const taskId = await newTask("Readable status");
+  const noticeId = await noticeOf(taskId);
+  assert.equal((await getLeaderNotice(pool, p, noticeId)).packet, null, "not packed yet");
+  assert.equal((await getLeaderNotice(pool, p, noticeId)).viaPacket, true);
+  await noticePump.tick();
+  const sent = await getLeaderNotice(pool, p, noticeId);
+  assert.equal(sent.packet?.itemState, "pending"); assert.equal(sent.packet?.packetState, "sent");
+  await apply(author, { type: "task.start", taskId: await newTask("To be stale"), expectedVersion: 1, reason: "started elsewhere" });
+  await noticePump.tick();
+  const stale = (await pool.query("SELECT notice_id FROM leader_notice_packet_item WHERE project_id=$1 AND state='withdrawn' ORDER BY created_at DESC LIMIT 1", [p])).rows[0];
+  const withdrawn = await getLeaderNotice(pool, p, stale.notice_id);
+  assert.equal(withdrawn.packet?.itemState, "withdrawn"); assert.match(withdrawn.packet?.withdrawnReason ?? "", /TODO_SOURCE/);
 });
 
 test("notices that existed before the migration keep the one-notice-one-message path", async () => {
+  await reset();
   const taskId = await newTask("Legacy");
   await pool.query("UPDATE leader_result_notice SET via_packet=false WHERE project_id=$1 AND task_id=$2", [p, taskId]);
   const candidates = await pool.connect();
@@ -219,5 +558,4 @@ test("notices that existed before the migration keep the one-notice-one-message 
   } finally { candidates.release(); }
   const pending = await pool.query("SELECT 1 FROM leader_result_notice WHERE project_id=$1 AND task_id=$2 AND NOT via_packet AND state='pending'", [p, taskId]);
   assert.equal(pending.rowCount, 1);
-  void clearNotices;
 });

@@ -56,6 +56,8 @@ export interface LeaderResultNoticeStore {
 
 export interface LeaderResultNoticeConfig {
   enabled: boolean;
+  /** Notices created from now on travel in packets (private configuration, default off). */
+  packets?: boolean;
   targets: Array<{projectId:string;sessionId:string;receiverRoleId:string;receiverActorId:string;senderActorId:string}>;
 }
 
@@ -82,21 +84,28 @@ export interface LeaderResultNoticePumpDeps {
 const noticeLabel: Record<string,string> = {task_todo:"新 Task 待分诊",delivery:"已记录固定交付",observation:"已记录独立使用观察",
   task_question:"Task 接收者提了问题",task_blocker:"Task 接收者报告阻塞",run_without_submission:"终态 Run 没有已签提交",
   run_submission_blocked:"已签提交无法封存",task_attention:"Task 关注项需要 Leader 跟进",acceptance_blocked:"验收交接受阻"};
-/** Items beyond this byte budget are listed by id only. */
-const PACKET_BYTE_BUDGET = 8192, PACKET_ITEMS = 20, FULL_LINE_BUDGET = 6800;
+/** One packet message carries at most this many bytes (design: 8 KB) and this many items. */
+const PACKET_BYTE_BUDGET = 8192, PACKET_ITEMS = 20, SCAN_PAGE = 50, SCAN_PAGES = 10;
 export function packetContent(projectId:string, packetId:string, items:Array<LeaderNoticeCandidate & {readBefore:boolean}>):string{
   const head=`Leader 通知包 ${packetId}（${items.length} 项）。每一项是一条历史来源事件，可能已被后续情况取代：先读当前 Task、固定来源和已有安排，再给出下一步决定。`+
     `\n处理方式：读 get /api/projects/${projectId}/leader-notice-packets/${packetId} 取得每项的版本，再用 command run 提交 leader.notice.handle（noticeId、expectedVersion、disposition=handled 或 deferred，deferred 要写 notBefore）。读到这包的这一轮正常结束只算“已看到”，用这条命令处置或延后后才算“已处理”。`;
-  let bytes=Buffer.byteLength(head,"utf8");
-  const lines:string[]=[];
-  items.forEach((item,index)=>{
-    const full=`${index+1}. [${noticeLabel[item.kind]??item.kind}] 通知 ${item.noticeId}${item.readBefore?"（上一轮已读到过）":""}\n   Task ${item.taskId}@${item.taskRevisionId}；来源 ${item.sourceRef}；事件 ${item.sourceEventId}，发生于 ${item.occurredAt}；操作者 ${item.sourceActorId??"未核实"}`;
-    const short=`${index+1}. ${item.kind} 通知 ${item.noticeId} Task ${item.taskId}（摘要，详情读通知）`;
-    const line=bytes+Buffer.byteLength(full,"utf8")<=FULL_LINE_BUDGET?full:short;
-    bytes+=Buffer.byteLength(line,"utf8")+1;lines.push(line);
+  const mark=(item:{readBefore:boolean})=>item.readBefore?"（上一轮已读到过）":"";
+  // Three renderings of one item, richest first: full, a summary line, and the id alone. Every item has at least its id; the "read before" mark is never dropped.
+  const forms=items.map((item,index)=>[
+    `${index+1}. [${noticeLabel[item.kind]??item.kind}] 通知 ${item.noticeId}${mark(item)}\n   Task ${item.taskId}@${item.taskRevisionId}；来源 ${item.sourceRef}；事件 ${item.sourceEventId}，发生于 ${item.occurredAt}；操作者 ${item.sourceActorId??"未核实"}`,
+    `${index+1}. ${item.kind} 通知 ${item.noticeId}${mark(item)} Task ${item.taskId}（摘要，详情读通知）`,
+    `${index+1}. 通知 ${item.noticeId}${mark(item)}（仅编号，详情读通知）`]);
+  const size=(text:string)=>Buffer.byteLength(text,"utf8")+1;
+  const chosen=forms.map(form=>form[2]!);
+  let bytes=Buffer.byteLength(head,"utf8")+chosen.reduce((sum,line)=>sum+size(line),0);
+  // Upgrade items in order while the whole text still fits the budget.
+  forms.forEach((form,index)=>{
+    for(const candidate of [form[0]!,form[1]!]){
+      const next=bytes-size(chosen[index]!)+size(candidate);
+      if(next<=PACKET_BYTE_BUDGET){chosen[index]=candidate;bytes=next;break;}
+    }
   });
-  const text=`${head}\n${lines.join("\n")}`;
-  return text;
+  return `${head}\n${chosen.join("\n")}`;
 }
 
 type Eligibility={recipient:LeaderResultRecipient;reason:null}|{recipient:null;reason:string};
@@ -142,10 +151,17 @@ export class LeaderResultNoticePump {
   async messageAdmission(message:SessionMessageRecord):Promise<{allowed:boolean;reason:string|null}> {
     const notice=await this.deps.store.getByMessageId(message.projectId,message.id);
     if(!notice){
-      // A packet message: a person's message that is waiting goes first, so the packet does not start (the pump then withdraws it).
+      // A packet message. The message pump asks the same questions the packet pump does: is this still the Leader's Session, are notices on and
+      // the target usable, and is no person's message waiting (that goes first; the packet pump then withdraws the unstarted packet).
       const packet=await this.deps.packets?.packetByMessage(message.projectId,message.id);
-      if(packet&&message.target.kind==="owned"){
-        const state=await this.deps.packets!.leaderState(message.projectId,message.target.sessionId,message.id);
+      if(packet){
+        if(message.target.kind!=="owned"||message.target.sessionId!==packet.sessionId)return {allowed:false,reason:"PACKET_IDENTITY_CHANGED"};
+        const config=await this.deps.configuration();
+        if(!config?.enabled)return {allowed:false,reason:"LEADER_NOTICES_DISABLED"};
+        const current=await this.eligibleRecipient(message.projectId,config,await this.deps.principals());
+        if(!current.recipient)return {allowed:false,reason:current.reason};
+        if(current.recipient.sessionId!==packet.sessionId)return {allowed:false,reason:"LEADER_TARGET_CHANGED"};
+        const state=await this.deps.packets!.leaderState(message.projectId,packet.sessionId,message.id);
         if(state.humanMessageQueued)return {allowed:false,reason:"HUMAN_MESSAGE_FIRST"};
       }
       return {allowed:true,reason:null};
@@ -187,46 +203,70 @@ export class LeaderResultNoticePump {
   }
 
   /**
-   * Packets (DEC-045 W1). Open packets are reconciled with what their message did; when the Leader is idle, no person's message waits, the
-   * recovery gate is open and the earliest waiting notice has waited out the debounce, the waiting notices become one packet and one message.
+   * Packets (DEC-045 W1). Every open packet of the project is reconciled with what its message did (also after a Leader Session change, a
+   * disabled switch or a lost recipient). Stale notices are withdrawn whatever the Leader is doing. When the Leader is idle, no person's
+   * message waits, the recovery gate is open and the earliest waiting notice has waited out the debounce, the waiting notices become one packet.
    */
-  private async packetCycle(projectId: string, config: LeaderResultNoticeConfig, principals: Principal[]): Promise<void> {
+  private async packetCycle(projectId: string, config: LeaderResultNoticeConfig | undefined, principals: Principal[]): Promise<void> {
     const ports=this.deps.packets;
-    if(!ports||!this.deps.canWrite()||!this.deps.canStartNative())return;
-    const eligibility=await this.eligibleRecipient(projectId,config,principals);
-    if(!eligibility.recipient)return;
+    if(!ports||!this.deps.canWrite())return;
+    const enabled=!!config?.enabled;
+    await ports.syncMode(projectId,enabled&&config!.packets===true);
+    const eligibility:Eligibility=enabled?await this.eligibleRecipient(projectId,config!,principals):{recipient:null,reason:"LEADER_NOTICES_DISABLED"};
+    const target=config?.targets.find(value=>value.projectId===projectId);
+    const service=target?this.sender(principals,projectId,target.senderActorId):null;
+    for(const packet of await ports.openPackets(projectId)){
+      try{await this.reconcilePacket(projectId,packet,principals,eligibility,service);}
+      catch(error){this.deps.onError(error);}
+    }
+    if(!eligibility.recipient||!service)return;
     const recipient=eligibility.recipient;
-    const target=config.targets.find(value=>value.projectId===projectId)!;
-    const receiver=principals.find(p=>p.actorId===target.receiverActorId&&p.projectIds.includes(projectId)&&p.permissions.includes("review"));
-    const sender=this.sender(principals,projectId,recipient.senderActorId);
-    if(!receiver||!sender)return;
-    for(const packet of await ports.openPackets(projectId,recipient.sessionId))await this.reconcilePacket(projectId,packet,receiver,sender,recipient);
-    if((await ports.openPackets(projectId,recipient.sessionId)).length)return;
+    const { chosen, withdraw } = await this.scanCandidates(projectId);
+    // Stale items are withdrawn (recorded, never read) whether or not a packet can be sent now; each batch is judged again in its transaction.
+    for(let at=0;at<withdraw.length&&at<5*PACKET_ITEMS;at+=PACKET_ITEMS){
+      const packetId=randomUUID();
+      const built=await this.deps.workflow.execute(service,{type:"leader.noticePacket.build",projectId,operationId:randomUUID(),sessionId:recipient.sessionId,
+        packetId,messageId:randomUUID(),messageOperationId:randomUUID(),content:`Leader 通知包 ${packetId}：${Math.min(PACKET_ITEMS,withdraw.length-at)} 项通知已过时，已撤回，未送达。`,
+        recipient:{receiverRoleId:recipient.receiverRoleId,receiverActorId:recipient.receiverActorId,senderActorId:recipient.senderActorId},
+        noticeIds:[],debounceSeconds:0,withdraw:withdraw.slice(at,at+PACKET_ITEMS)} as never);
+      if(built.status==="rejected"){this.noteBuildRejection(built);break;}
+    }
+    if(!chosen.length||!this.deps.canStartNative())return;
+    if((await ports.openPackets(projectId)).length)return;
     const state=await ports.leaderState(projectId,recipient.sessionId);
     if(state.busy||state.humanMessageQueued||!state.gateOpen)return;
-    const { items, earliestWaitSeconds } = await ports.candidates(projectId);
     const debounce=this.deps.packetDebounceSeconds??60;
-    if(!items.length||earliestWaitSeconds===null||earliestWaitSeconds<debounce)return;
-    const chosen:LeaderNoticeCandidate[]=[], withdraw:Array<{noticeId:string;reason:string}>=[];
-    for(const item of items){
-      if(chosen.length>=PACKET_ITEMS)break;
-      const reason=await this.staleReason(projectId,item);
-      if(reason==="unknown")continue;
-      if(reason)withdraw.push({noticeId:item.noticeId,reason});else chosen.push(item);
-    }
-    if(!chosen.length&&!withdraw.length)return;
+    if(Math.max(...chosen.map(item=>item.waitedSeconds))<debounce)return;
     const packetId=randomUUID(),messageId=randomUUID(),operationId=randomUUID();
-    if(!chosen.length){return;}
     const content=packetContent(projectId,packetId,chosen);
-    const built=await this.deps.workflow.execute(receiver,{type:"leader.noticePacket.build",projectId,operationId:randomUUID(),sessionId:recipient.sessionId,
+    const built=await this.deps.workflow.execute(service,{type:"leader.noticePacket.build",projectId,operationId:randomUUID(),sessionId:recipient.sessionId,
       packetId,messageId,messageOperationId:operationId,content,
       recipient:{receiverRoleId:recipient.receiverRoleId,receiverActorId:recipient.receiverActorId,senderActorId:recipient.senderActorId},
-      noticeIds:chosen.map(item=>item.noticeId),debounceSeconds:debounce,withdraw} as never);
-    if(built.status==="rejected"){
-      if(!["PACKET_NOT_DUE","PACKET_IN_FLIGHT","NOTICE_NOT_PENDING"].includes(built.code))this.deps.onError(new Error(`leader packet build ${built.code}: ${built.message}`));
-      return;
+      noticeIds:chosen.map(item=>item.noticeId),debounceSeconds:debounce,withdraw:[]} as never);
+    if(built.status==="rejected"){this.noteBuildRejection(built);return;}
+    await this.postPacket(projectId,packetId,principals,service,recipient);
+  }
+
+  private noteBuildRejection(built:{code:string;message:string}):void{
+    // Expected races (another step won, a notice changed): the next cycle looks again.
+    if(!["PACKET_NOT_DUE","PACKET_IN_FLIGHT","NOTICE_NOT_PENDING","NOTICE_STALE","NOTICE_CURRENT"].includes(built.code))
+      this.deps.onError(new Error(`leader packet build ${built.code}: ${built.message}`));
+  }
+
+  /** Read waiting notices page by page (stale or undecidable ones in front never hide the later ones) until a packet is full. */
+  private async scanCandidates(projectId:string):Promise<{chosen:Array<LeaderNoticeCandidate>;withdraw:Array<{noticeId:string;reason:string}>}>{
+    const chosen:LeaderNoticeCandidate[]=[], withdraw:Array<{noticeId:string;reason:string}>=[];
+    for(let page=0;page<SCAN_PAGES&&chosen.length<PACKET_ITEMS;page++){
+      const { items } = await this.deps.packets!.candidates(projectId,{limit:SCAN_PAGE,offset:page*SCAN_PAGE});
+      for(const item of items){
+        if(chosen.length>=PACKET_ITEMS)break;
+        const reason=await this.staleReason(projectId,item);
+        if(reason==="unknown")continue;
+        if(reason)withdraw.push({noticeId:item.noticeId,reason});else chosen.push(item);
+      }
+      if(items.length<SCAN_PAGE)break;
     }
-    await this.postPacket(projectId,packetId,receiver,sender,recipient);
+    return {chosen,withdraw};
   }
 
   /** Why a waiting notice no longer needs to be read ("unknown": decide later), or null when it is still current. */
@@ -242,54 +282,73 @@ export class LeaderResultNoticePump {
   }
 
   /** Post the packet's message (the same text and ids every time) and record that it was sent. */
-  private async postPacket(projectId:string,packetId:string,receiver:Principal,sender:Principal,recipient:LeaderResultRecipient):Promise<void>{
+  private async postPacket(projectId:string,packetId:string,principals:Principal[],service:Principal,recipient:LeaderResultRecipient):Promise<void>{
     const ports=this.deps.packets!;
     const packet=(await ports.openPackets(projectId,recipient.sessionId)).find(p=>p.id===packetId);
     if(!packet)return;
+    const sender=this.sender(principals,projectId,recipient.senderActorId);
+    if(!sender)return;
     const posted=await this.deps.workflow.execute(sender,{type:"session.message.post",projectId,operationId:packet.messageOperationId,messageId:packet.messageId,
       target:{kind:"owned",sessionId:recipient.sessionId},content:packet.content});
     if(posted.status==="rejected"){
       // The post was refused: nothing was read, the items wait for the next packet.
-      await this.deps.workflow.execute(receiver,{type:"leader.noticePacket.observe",projectId,operationId:randomUUID(),packetId,outcome:"withdrawn",evidence:`MESSAGE_POST_REJECTED:${posted.code}`});
+      await this.deps.workflow.execute(service,{type:"leader.noticePacket.observe",projectId,operationId:randomUUID(),packetId,outcome:"withdrawn",evidence:`MESSAGE_POST_REJECTED:${posted.code}`});
       return;
     }
-    await this.deps.workflow.execute(receiver,{type:"leader.noticePacket.sent",projectId,operationId:randomUUID(),packetId});
+    await this.deps.workflow.execute(service,{type:"leader.noticePacket.sent",projectId,operationId:randomUUID(),packetId});
   }
 
-  private async reconcilePacket(projectId:string,packet:{id:string;state:string;sessionId:string},receiver:Principal,sender:Principal,
-    recipient:LeaderResultRecipient):Promise<void>{
+  private async reconcilePacket(projectId:string,packet:{id:string;state:string;sessionId:string;messageId:string},principals:Principal[],
+    eligibility:Eligibility,service:Principal|null):Promise<void>{
     const ports=this.deps.packets!;
-    const observe=(outcome:"delivered"|"seen"|"failed"|"unknown"|"withdrawn",extra:Record<string,unknown>={})=>this.deps.workflow.execute(receiver,
+    const observe=(outcome:"delivered"|"seen"|"failed"|"unknown"|"withdrawn",extra:Record<string,unknown>={})=>this.deps.workflow.execute(service!,
       {type:"leader.noticePacket.observe",projectId,operationId:randomUUID(),packetId:packet.id,outcome,...extra} as never);
+    const recipient=eligibility.recipient;
+    const here=!!recipient&&recipient.sessionId===packet.sessionId;
     if(packet.state==="building"){
-      // The build committed but the post (or its record) did not: repeat the post with the same ids.
-      await this.postPacket(projectId,packet.id,receiver,sender,recipient);return;
+      // The build committed but the post (or its record) did not.
+      const existing=await ports.message(projectId,packet.messageId);
+      if(!existing){
+        if(here&&service)await this.postPacket(projectId,packet.id,principals,service,recipient!);
+        else if(service)await observe("withdrawn",{evidence:here?"LEADER_NOTICES_UNAVAILABLE":(recipient?"LEADER_SESSION_CHANGED":eligibility.reason!)});
+        return;
+      }
+      // The message exists: only the record of it is missing.
+      if(!service)return;
+      await this.deps.workflow.execute(service,{type:"leader.noticePacket.sent",projectId,operationId:randomUUID(),packetId:packet.id});
     }
     const attempt=await ports.attempt(projectId,packet.id);
     if(!attempt?.messageId)return;
     const message=await ports.message(projectId,attempt.messageId);
     if(!message)return;
-    const leader=await ports.leaderState(projectId,recipient.sessionId,attempt.messageId);
+    const leader=await ports.leaderState(projectId,packet.sessionId,attempt.messageId);
     switch(message.state){
-      case "queued":
-        // A person's message goes first: the unstarted packet is withdrawn and its items wait for the next one.
-        if(leader.humanMessageQueued){
-          await this.deps.workflow.execute(sender,{type:"session.message.cancel",projectId,operationId:randomUUID(),messageId:message.id,
-            expectedVersion:message.version,reason:"A person's message goes before a notice packet"});
-          await observe("withdrawn",{evidence:"HUMAN_MESSAGE_FIRST"});
-        }
+      case "queued": {
+        // An unstarted packet gives way: to a person's message, to a different Leader Session, to notices being switched off or the
+        // recipient becoming unusable. It is withdrawn only when the message was really cancelled; otherwise the message's own state decides next cycle.
+        const reason=leader.humanMessageQueued?"HUMAN_MESSAGE_FIRST":!recipient?eligibility.reason!:!here?"LEADER_SESSION_CHANGED":null;
+        if(!reason)return;
+        const poster=this.sender(principals,projectId,message.senderActorId);
+        if(!poster)return;
+        const cancelled=await this.deps.workflow.execute(poster,{type:"session.message.cancel",projectId,operationId:randomUUID(),messageId:message.id,
+          expectedVersion:message.version,reason:`A notice packet gives way: ${reason}`});
+        if(cancelled.status!=="applied")return;
+        if(service)await observe("withdrawn",{evidence:reason});
         return;
+      }
       case "processing":
+        if(!service)return;
         if(message.nativeTurnId&&packet.state!=="delivered")await observe("delivered",{turnId:message.nativeTurnId});
         return;
       case "replied": case "completed_without_reply":
-        await observe("seen",message.nativeTurnId?{turnId:message.nativeTurnId}:{});return;
+        if(service)await observe("seen",message.nativeTurnId?{turnId:message.nativeTurnId}:{});return;
       case "failed": case "cancelled":
-        await observe("failed",{turnStarted:!!message.nativeTurnId,gateBlocked:leader.gateBlocked,evidence:`MESSAGE_${message.state.toUpperCase()}`,
+        // The recovery gate that holds a packet is the one of the Session it was sent to; after a Leader Session change it no longer guards anything.
+        if(service)await observe("failed",{turnStarted:!!message.nativeTurnId,gateBlocked:here&&leader.gateBlocked,evidence:`MESSAGE_${message.state.toUpperCase()}`,
           ...(message.nativeTurnId?{turnId:message.nativeTurnId}:{})});return;
       case "unknown": case "manual_pending":
         // Never resent: the packet waits for the message to settle, and a read-only look decides.
-        if(packet.state!=="unknown")await observe("unknown",{evidence:"MESSAGE_RESULT_UNKNOWN"});
+        if(service&&packet.state!=="unknown")await observe("unknown",{evidence:"MESSAGE_RESULT_UNKNOWN"});
         return;
     }
   }
@@ -336,22 +395,24 @@ export class LeaderResultNoticePump {
   private async cycle(): Promise<void> {
     if(!this.deps.canWrite())return;
     const config=await this.deps.configuration();
-    if(!config?.enabled)return;
     const principals=await this.deps.principals();
     for(const projectId of new Set(principals.flatMap(principal=>principal.projectIds))){
       if(!this.deps.canWrite())return;
-      let page=await this.deps.store.listPending(projectId,{limit:50,...(this.cursors.has(projectId)?{cursor:this.cursors.get(projectId)!}:{})});
-      if(!page.items.length&&this.cursors.has(projectId)){
-        this.cursors.delete(projectId);
-        page=await this.deps.store.listPending(projectId,{limit:50});
+      if(config?.enabled){
+        let page=await this.deps.store.listPending(projectId,{limit:50,...(this.cursors.has(projectId)?{cursor:this.cursors.get(projectId)!}:{})});
+        if(!page.items.length&&this.cursors.has(projectId)){
+          this.cursors.delete(projectId);
+          page=await this.deps.store.listPending(projectId,{limit:50});
+        }
+        if(page.nextCursor)this.cursors.set(projectId,page.nextCursor);
+        else this.cursors.delete(projectId);
+        for(const notice of page.items){
+          if(!this.deps.canWrite())return;
+          try { await this.process(notice,config,principals); }
+          catch(error){this.deps.onError(error);}
+        }
       }
-      if(page.nextCursor)this.cursors.set(projectId,page.nextCursor);
-      else this.cursors.delete(projectId);
-      for(const notice of page.items){
-        if(!this.deps.canWrite())return;
-        try { await this.process(notice,config,principals); }
-        catch(error){this.deps.onError(error);}
-      }
+      // Also with notices disabled: open packets still have to settle and the switch is copied.
       try { await this.packetCycle(projectId,config,principals); }
       catch(error){this.deps.onError(error);}
     }

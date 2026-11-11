@@ -304,7 +304,25 @@ export function TaskArrangementFacts({ projectId, detail, leader, responsibleNam
   </div>;
 }
 
-function noticeState(item: LeaderNotice): string {
+/** A notice that travels in a packet: where its own item is, not the (unused) one-notice message. */
+function packetNoticeState(item: LeaderNotice): string {
+  const packet = item.packet;
+  if (!packet) return item.stale ? "来源属于历史修订，要核对当前任务" : "等待并入通知包（最早一项等满约 60 秒后合并送达）";
+  const before = packet.readBefore ? "（上一轮可能已读到过）" : "";
+  switch (packet.itemState) {
+    case "withdrawn": return `已撤回，没有送达：${packet.withdrawnReason === "HUMAN_MESSAGE_FIRST" ? "有人的消息先送" : "来源已过时或不再需要"}${packet.withdrawnReason ? ` · ${packet.withdrawnReason}` : ""}`;
+    case "pending": return packet.packetState === "building" ? "正在并入通知包，消息还没有发出" : `已并入通知包，等 Leader 开始这一轮${before}`;
+    case "delivered": return `Leader 这一轮已开始读这包，尚未结束${before}`;
+    case "seen": return "这一轮已正常结束（已看到）；还没有处置";
+    case "handled": return packet.disposition === "deferred" ? `Leader 已延后${packet.deferUntil ? `到 ${date(packet.deferUntil)}` : ""}，到点再次送达` : "Leader 已处理";
+    case "unknown": return packet.packetState === "blocked" ? `这包受阻（恢复门关闭），等 Leader 恢复这一包${before}`
+      : packet.packetState === "unknown" ? "这一轮结果未知，只读核对，不会重发" : `这一轮没有读完，进入下一包重送${before}`;
+    default: return "状态待核对";
+  }
+}
+
+export function noticeState(item: LeaderNotice): string {
+  if (item.viaPacket) return packetNoticeState(item);
   if (item.messageState === "failed" || item.messageState === "cancelled") return `原通知${item.messageState === "failed" ? "失败" : "已取消"}；要核对原消息和任务，再作新的安排`;
   if (item.blockedReason?.startsWith("MESSAGE_POST_REJECTED") || item.blockedReason === "PINNED_RECIPIENT_CHANGED") return "原消息被拒绝或接收者已变；核对原操作后另作安排";
   if (item.state === "linked") return item.readAt ? `统筹已记录收阅 · ${date(item.readAt)}；下一步另行核对` : item.messageBlockedReason ? "消息待恢复" : item.nativeTurnId ? "这一轮已关联；收阅与下一步另行核对" : "已保存给统筹的消息，还没有核到接收";

@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { PoolClient, QueryResultRow } from "pg";
 import { DomainError } from "@evoloop/contracts/ports";
+import { judgeTodoNoticeInTransaction } from "./leader-result-notices.js";
 import type { LeaderNoticeCandidate, LeaderNoticePacket, LeaderNoticePacketAttempt, LeaderNoticePacketItem, LeaderNoticePacketTransaction } from "@evoloop/contracts/leader-notice-packets";
 
 type Row = QueryResultRow;
@@ -12,6 +13,8 @@ const itemOf = (r: Row): LeaderNoticePacketItem => ({ projectId: r.project_id, p
   state: r.state, readBefore: r.read_before, requeue: r.requeue, disposition: r.disposition, deferUntil: iso(r.defer_until),
   handledBy: r.handled_by, handledReason: r.handled_reason, withdrawnReason: r.withdrawn_reason, expectedTurnId: r.expected_turn_id,
   actualTurnId: r.actual_turn_id, evidence: r.evidence, version: r.version, createdAt: iso(r.created_at)!, updatedAt: iso(r.updated_at)! });
+/** What one packet message may carry (design: 8 KB); the database holds the same limit. */
+export const PACKET_BYTE_LIMIT = 8192;
 const sha = (text: string) => createHash("sha256").update(text).digest("hex");
 
 /** Candidates: a notice never packaged, a returned item (unknown, requeue), or a deferred one whose time has come. */
@@ -32,8 +35,8 @@ const CANDIDATES = `
 
 export class PgLeaderNoticePackets implements LeaderNoticePacketTransaction {
   constructor(private readonly client: PoolClient, private readonly projectId: string) {}
-  async listLeaderNoticeCandidates(limit: number): Promise<LeaderNoticeCandidate[]> {
-    const r = await this.client.query(`${CANDIDATES} ORDER BY COALESCE(i.eligible_at,n.occurred_at), n.notice_id LIMIT $2`, [this.projectId, limit]);
+  async listLeaderNoticeCandidates(limit: number, offset = 0): Promise<LeaderNoticeCandidate[]> {
+    const r = await this.client.query(`${CANDIDATES} ORDER BY COALESCE(i.eligible_at,n.occurred_at), n.notice_id LIMIT $2 OFFSET $3`, [this.projectId, limit, offset]);
     return r.rows.map(row => ({ noticeId: row.notice_id, kind: row.kind, sourceEventId: row.source_event_id, taskId: row.task_id,
       taskRevisionId: row.task_revision_id, sourceRef: row.source_ref, occurredAt: iso(row.occurred_at)!, sourceActorId: row.source_actor_id,
       sourceSessionId: row.source_session_id, state: row.state, readBefore: row.item_read_before === true, version: row.item_version ?? 0,
@@ -58,6 +61,20 @@ export class PgLeaderNoticePackets implements LeaderNoticePacketTransaction {
       AND ($2::uuid IS NULL OR session_id=$2) ORDER BY created_at`, [this.projectId, sessionId ?? null]);
     return r.rows.map(packetOf);
   }
+  async listBlockedLeaderNoticePackets(): Promise<LeaderNoticePacket[]> {
+    return (await this.client.query("SELECT * FROM leader_notice_packet WHERE project_id=$1 AND state='blocked' ORDER BY created_at", [this.projectId])).rows.map(packetOf);
+  }
+  /** Copy the private-configuration switch: whether notices created from now on go by packet. */
+  async setPacketMode(enabled: boolean): Promise<void> {
+    await this.client.query(`INSERT INTO leader_notice_packet_mode(project_id,enabled) VALUES($1,$2)
+      ON CONFLICT(project_id) DO UPDATE SET enabled=EXCLUDED.enabled,updated_at=now() WHERE leader_notice_packet_mode.enabled IS DISTINCT FROM EXCLUDED.enabled`, [this.projectId, enabled]);
+  }
+  /** With the switch off, notices that no packet has touched yet go back to the one-notice-one-message path. */
+  async revertUnpackedNotices(): Promise<number> {
+    const r = await this.client.query(`UPDATE leader_result_notice n SET via_packet=false WHERE n.project_id=$1 AND n.via_packet AND n.state='pending' AND n.linked_session_id IS NULL
+      AND NOT EXISTS(SELECT 1 FROM leader_notice_packet_item x WHERE x.project_id=n.project_id AND x.notice_id=n.notice_id)`, [this.projectId]);
+    return r.rowCount ?? 0;
+  }
   async listLeaderNoticePacketItems(packetId: string): Promise<LeaderNoticePacketItem[]> {
     return (await this.client.query("SELECT * FROM leader_notice_packet_item WHERE project_id=$1 AND packet_id=$2 ORDER BY position", [this.projectId, packetId])).rows.map(itemOf);
   }
@@ -72,21 +89,42 @@ export class PgLeaderNoticePackets implements LeaderNoticePacketTransaction {
 
   async buildLeaderNoticePacket(input: Parameters<LeaderNoticePacketTransaction["buildLeaderNoticePacket"]>[0]): Promise<LeaderNoticePacket> {
     await this.client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [`leader-notice-packet:${this.projectId}:${input.sessionId}`]);
+    const withdrawOnly = input.noticeIds.length === 0;
     const bytes = Buffer.byteLength(input.content, "utf8");
-    if (bytes > 16000) throw new DomainError("PACKET_TOO_LARGE", "A packet carries at most 16000 bytes");
-    // The Session takes one packet at a time: the earlier one has to be read or returned first.
-    if ((await this.listOpenLeaderNoticePackets(input.sessionId)).length) throw new DomainError("PACKET_IN_FLIGHT", "An earlier packet for this Leader Session has not been settled");
+    if (bytes > PACKET_BYTE_LIMIT) throw new DomainError("PACKET_TOO_LARGE", `A packet carries at most ${PACKET_BYTE_LIMIT} bytes`);
+    if (withdrawOnly && input.withdraw.length > 20) throw new DomainError("PACKET_TOO_LARGE", "At most 20 stale items are recorded at a time");
+    // The Session takes one packet at a time: the earlier one has to be read or returned first. Withdrawing stale items builds no message, so it is not held.
+    if (!withdrawOnly && (await this.listOpenLeaderNoticePackets(input.sessionId)).length) throw new DomainError("PACKET_IN_FLIGHT", "An earlier packet for this Leader Session has not been settled");
     const candidates = new Map((await this.client.query(`${CANDIDATES}`, [this.projectId])).rows.map(r => [r.notice_id as string, r]));
     const wanted = new Set(input.noticeIds), gone = new Set(input.withdraw.map(w => w.noticeId));
     for (const noticeId of [...wanted, ...gone]) if (!candidates.has(noticeId)) throw new DomainError("NOTICE_NOT_PENDING", "A notice is no longer waiting to be sent");
     if (input.noticeIds.some(id => gone.has(id))) throw new DomainError("NOTICE_CONFLICT", "A notice cannot be both sent and withdrawn");
-    // The earliest item has waited long enough (database time); a packet is not built early.
-    const due = await this.client.query(`SELECT bool_or(now() >= COALESCE(eligible_at,occurred_at) + make_interval(secs => $2)) AS due
-      FROM (${CANDIDATES}) c WHERE c.notice_id = ANY($3::uuid[])`, [this.projectId, input.debounceSeconds, input.noticeIds]);
-    if (due.rows[0]?.due !== true) throw new DomainError("PACKET_NOT_DUE", "The earliest notice has not waited long enough");
-    await this.client.query(`INSERT INTO leader_notice_packet(project_id,packet_id,session_id,item_count,byte_count,content_hash,content,message_id,message_operation_id,state,created_at)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'building',$10)`, [this.projectId, input.packetId, input.sessionId, input.noticeIds.length, bytes, sha(input.content), input.content,
-      input.messageId, input.operationId, input.at]);
+    // Staleness is judged here, in the transaction that decides: an item sent has to be current now; a todo withdrawn has to be out of date
+    // now (and then the notice for the Task's current revision is queued, as on the one-notice-one-message path).
+    for (const noticeId of input.noticeIds) {
+      const row = candidates.get(noticeId)!;
+      if (row.kind === "task_todo" && await judgeTodoNoticeInTransaction(this.client, this.projectId, row.task_id, row.task_revision_id, false))
+        throw new DomainError("NOTICE_STALE", "A todo notice went out of date while the packet was built");
+    }
+    const withdraw: Array<{ noticeId: string; reason: string }> = [];
+    for (const w of input.withdraw) {
+      const row = candidates.get(w.noticeId)!;
+      if (row.kind === "task_todo") {
+        const reason = await judgeTodoNoticeInTransaction(this.client, this.projectId, row.task_id, row.task_revision_id, true);
+        if (!reason) throw new DomainError("NOTICE_CURRENT", "A todo notice that is still current cannot be withdrawn");
+        withdraw.push({ noticeId: w.noticeId, reason });
+      } else withdraw.push(w);
+    }
+    if (!withdrawOnly) {
+      // The earliest item has waited long enough (database time); a packet is not built early.
+      const due = await this.client.query(`SELECT bool_or(now() >= COALESCE(eligible_at,occurred_at) + make_interval(secs => $2)) AS due
+        FROM (${CANDIDATES}) c WHERE c.notice_id = ANY($3::uuid[])`, [this.projectId, input.debounceSeconds, input.noticeIds]);
+      if (due.rows[0]?.due !== true) throw new DomainError("PACKET_NOT_DUE", "The earliest notice has not waited long enough");
+    }
+    // A packet of withdrawals only records the withdrawn items; no message exists, so it is born ended.
+    await this.client.query(`INSERT INTO leader_notice_packet(project_id,packet_id,session_id,item_count,byte_count,content_hash,content,message_id,message_operation_id,state,created_at,ended_at)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`, [this.projectId, input.packetId, input.sessionId, withdrawOnly ? withdraw.length : input.noticeIds.length, bytes, sha(input.content), input.content,
+      input.messageId, input.operationId, withdrawOnly ? "withdrawn" : "building", input.at, withdrawOnly ? input.at : null]);
     let position = 0;
     const link = async (noticeId: string) => {
       const row = candidates.get(noticeId)!;
@@ -103,10 +141,10 @@ export class PgLeaderNoticePackets implements LeaderNoticePacketTransaction {
         VALUES($1,$2,$3,$4,'pending',$5,$6,$6)`, [this.projectId, input.packetId, noticeId, position++, candidates.get(noticeId)!.item_read_before === true, input.at]);
     }
     // Items found stale while packing never reach the Leader: they are recorded as withdrawn with the reason.
-    for (const w of input.withdraw) {
+    for (const w of withdraw) {
       await link(w.noticeId);
-      await this.client.query(`INSERT INTO leader_notice_packet_item(project_id,packet_id,notice_id,position,state,withdrawn_reason,created_at,updated_at)
-        VALUES($1,$2,$3,$4,'withdrawn',$5,$6,$6)`, [this.projectId, input.packetId, w.noticeId, position++, w.reason, input.at]);
+      await this.client.query(`INSERT INTO leader_notice_packet_item(project_id,packet_id,notice_id,position,state,read_before,withdrawn_reason,created_at,updated_at)
+        VALUES($1,$2,$3,$4,'withdrawn',$5,$6,$7,$7)`, [this.projectId, input.packetId, w.noticeId, position++, candidates.get(w.noticeId)!.item_read_before === true, w.reason, input.at]);
     }
     return (await this.getLeaderNoticePacket(input.packetId))!;
   }
@@ -143,8 +181,9 @@ export class PgLeaderNoticePackets implements LeaderNoticePacketTransaction {
       case "unknown":
         return setPacket("unknown", false);     // never resent: a read-only look at the Turn decides later
       case "withdrawn":
-        // The message never started a Turn (a person's message went first): the items wait for the next packet, nothing was read.
-        await this.client.query(`UPDATE leader_notice_packet_item SET state='unknown',requeue=true,version=version+1,updated_at=$3,evidence=COALESCE($4,evidence)
+        // The message was withdrawn (a person's message went first, the Leader Session changed, notices were switched off): the items wait for the next
+        // packet; one whose Turn had already started may have been read.
+        await this.client.query(`UPDATE leader_notice_packet_item SET state='unknown',requeue=true,read_before=(read_before OR state='delivered'),version=version+1,updated_at=$3,evidence=COALESCE($4,evidence)
           WHERE project_id=$1 AND packet_id=$2 AND state IN ('pending','delivered')`, [this.projectId, input.packetId, input.at, input.evidence]);
         return setPacket("withdrawn", true);
       case "failed": {

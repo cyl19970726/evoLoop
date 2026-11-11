@@ -1,12 +1,24 @@
 -- Leader notice packets (DEC-045 W1): several pending notices travel to the Leader in one message, each with its own state.
--- Notices created from now on go by packet; those that already exist keep the one-notice-one-message path to its end.
+-- Whether a new notice goes by packet follows a per-project switch (private configuration `leaderResultNotices.packets`, default off).
+-- The coordinator copies the switch into leader_notice_packet_mode each cycle; with no row or enabled=false a new notice keeps the
+-- one-notice-one-message path exactly as before. Notices that already exist keep the path they were created on.
 ALTER TABLE leader_result_notice ADD COLUMN via_packet boolean NOT NULL DEFAULT false;
-ALTER TABLE leader_result_notice ALTER COLUMN via_packet SET DEFAULT true;
+CREATE TABLE leader_notice_packet_mode (
+  project_id uuid PRIMARY KEY, enabled boolean NOT NULL, updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE FUNCTION leader_result_notice_via_packet() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  -- A recovery replacement of a legacy notice keeps the one-notice-one-message path it was recovered on.
+  NEW.via_packet := NEW.recovery_parent_notice_id IS NULL AND COALESCE((SELECT m.enabled FROM leader_notice_packet_mode m WHERE m.project_id=NEW.project_id), false);
+  RETURN NEW;
+END $$;
+CREATE TRIGGER leader_result_notice_via_packet BEFORE INSERT ON leader_result_notice
+  FOR EACH ROW EXECUTE FUNCTION leader_result_notice_via_packet();
 
 CREATE TABLE leader_notice_packet (
   project_id uuid NOT NULL, packet_id uuid NOT NULL, session_id uuid NOT NULL,
   item_count integer NOT NULL CHECK(item_count BETWEEN 1 AND 20),
-  byte_count integer NOT NULL CHECK(byte_count BETWEEN 1 AND 16000),
+  byte_count integer NOT NULL CHECK(byte_count BETWEEN 1 AND 8192),
   content_hash text NOT NULL CHECK(content_hash ~ '^[a-f0-9]{64}$'),
   content text NOT NULL,                           -- the exact message text, kept so a lost post can be repeated unchanged
   message_id uuid NOT NULL, message_operation_id uuid NOT NULL,   -- the ids the first post uses (the attempt row is written once the message exists)

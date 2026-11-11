@@ -8,10 +8,11 @@ const base = { projectId: id, operationId: id };
 export const leaderNoticePacketCommands = [
   // Built by the notice pump once the earliest item has waited: members are re-checked here, in the dispatch transaction.
   z.strictObject({ ...base, type: z.literal("leader.noticePacket.build"), sessionId: id, packetId: id, messageId: id, messageOperationId: id,
-    content: z.string().min(1).max(16000),
+    content: z.string().min(1).max(8192),
     recipient: z.strictObject({ receiverRoleId: z.string().trim().min(1).max(240), receiverActorId: z.string().trim().min(1).max(240), senderActorId: z.string().trim().min(1).max(240) }),
-    noticeIds: z.array(id).min(1).max(20), debounceSeconds: z.number().int().min(0).max(3600).default(60),
-    withdraw: z.array(z.strictObject({ noticeId: id, reason: note })).max(100).default([]) }),
+    // With no noticeIds only the stale items are withdrawn (no packet is built); content and message ids are then unused.
+    noticeIds: z.array(id).max(20), debounceSeconds: z.number().int().min(0).max(3600).default(60),
+    withdraw: z.array(z.strictObject({ noticeId: id, reason: note })).max(100).default([]) }).refine(value => value.noticeIds.length + value.withdraw.length > 0, "Nothing to build or withdraw"),
   z.strictObject({ ...base, type: z.literal("leader.noticePacket.sent"), packetId: id }),
   z.strictObject({ ...base, type: z.literal("leader.noticePacket.observe"), packetId: id,
     outcome: z.enum(["delivered", "seen", "failed", "unknown", "withdrawn"]), turnId: z.string().trim().min(1).max(256).optional(),
@@ -21,6 +22,8 @@ export const leaderNoticePacketCommands = [
     disposition: z.enum(["handled", "deferred"]), reason: note, notBefore: z.iso.datetime({ offset: true }).optional() }),
   z.strictObject({ ...base, type: z.literal("leader.noticePacket.recover"), packetId: id, reason: note }),
 ] as const;
+/** Recovery of one blocked packet by the Leader (`leader.notice.recover` for a packet id); the packet's items then wait for the next packet. */
+export const leaderNoticePacketRecoverySchema = z.strictObject({ reason: note });
 export type LeaderNoticePacketCommand = z.infer<(typeof leaderNoticePacketCommands)[number]>;
 
 export type LeaderNoticePacketState = "building" | "sent" | "delivered" | "seen" | "blocked" | "unknown" | "returned" | "withdrawn" | "recovered";
@@ -45,9 +48,12 @@ export interface LeaderNoticeCandidate {
 }
 
 export interface LeaderNoticePacketReader {
-  listLeaderNoticeCandidates(limit: number): Promise<LeaderNoticeCandidate[]>;
+  listLeaderNoticeCandidates(limit: number, offset?: number): Promise<LeaderNoticeCandidate[]>;
+  /** Packets that stopped behind a closed recovery gate (the Leader recovers them by packet id). */
+  listBlockedLeaderNoticePackets(): Promise<LeaderNoticePacket[]>;
   getLeaderNoticePacket(packetId: string): Promise<LeaderNoticePacket | null>;
   getLeaderNoticePacketByMessage(messageId: string): Promise<LeaderNoticePacket | null>;
+  /** Open packets of the project; with a Session id only that Session's. */
   listOpenLeaderNoticePackets(sessionId?: string): Promise<LeaderNoticePacket[]>;
   listLeaderNoticePacketItems(packetId: string): Promise<LeaderNoticePacketItem[]>;
   listLeaderNoticePacketAttempts(packetId: string): Promise<LeaderNoticePacketAttempt[]>;

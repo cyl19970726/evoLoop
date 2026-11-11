@@ -28,9 +28,11 @@ export function registerLeaderWorkRoutes(app: FastifyInstance, service: LeaderPr
       includeClosed: z.enum(["true", "false"]).default("false"),
     }).parse(request.query);
     await service.getProject(who, p.projectId);
-    return workIndex.index(who, p.projectId, {
+    const page = await workIndex.index(who, p.projectId, {
       view: q.view, limit: q.limit, ...(q.cursor ? { cursor: q.cursor } : {}), includeClosed: q.includeClosed === "true",
     });
+    // The Leader's index also shows notice packets that wait for recovery, with what to do about them.
+    return q.view === "tasks" && workIndex.blockedNoticePackets ? { ...(page as object), blockedNoticePackets: await workIndex.blockedNoticePackets(p.projectId) } : page;
   });
 
   app.get("/api/projects/:projectId/work-management/changes", async request => {

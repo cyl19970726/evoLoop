@@ -170,6 +170,11 @@ const service = new WorkflowService({
   },
   recoveryAuthority: staticRecoveryAuthority(
     () => loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE), currentIdentity),
+  // The notice packet's own steps (build, sent, observe) belong to the configured notice sender, not to the Leader or any reviewer.
+  leaderNoticeServiceActor: async projectId => {
+    const target = (await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE)).leaderResultNotices?.targets.find(value => value.projectId === projectId);
+    return target && await currentProjectWriter(projectId, target.senderActorId) ? target.senderActorId : null;
+  },
   collaborationAuthority: {
     actorForRole: async (projectId,roleId) => {
       const config=await currentQueueConfiguration();
@@ -871,6 +876,11 @@ const app = await buildServer({ service, credentials, canWrite: lease.canWrite, 
       });
       if (!result) throw new DomainError("NOT_FOUND", "Leader notice packet was not found");
       return result;
+    },
+    recoverPacket: async (principal, projectId, packetId, reason) => {
+      const result = await service.execute(principal, { type: "leader.noticePacket.recover", projectId, operationId: randomUUID(), packetId, reason } as never);
+      if (result.status === "rejected") throw new DomainError(result.code, result.message);
+      return { status: "recorded" as const, packetId, state: "recovered" as const };
     },
     list: (projectId, query) => listLeaderNotices(pool, projectId, query),
     get: (projectId, noticeId) => getLeaderNotice(pool, projectId, noticeId),

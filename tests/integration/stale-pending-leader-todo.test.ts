@@ -18,8 +18,6 @@ test("stale pending todos refresh once after plan metadata, retire when no longe
   const schema=`el_stale_pending_${randomUUID().replaceAll("-","").slice(0,12)}`;
   await migrate(database,schema);
   const pool=new pg.Pool({connectionString:database,options:`-c search_path=${schema}`});
-  // This test exercises the one-notice-one-message path of notices that predate packets (migration 089).
-  await pool.query('ALTER TABLE leader_result_notice ALTER COLUMN via_packet SET DEFAULT false');
   t.after(async()=>{
     await pool.end();
     const admin=new pg.Client({connectionString:database});

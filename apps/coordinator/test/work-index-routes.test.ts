@@ -125,3 +125,46 @@ test("only a project reviewer can create a fresh intent for a rejected notice",a
   assert.equal((await app.inject({method:"GET",url:url.slice(0,-"/recover".length)})).statusCode,200);
   assert.equal((await app.inject({method:"POST",url,payload:{...input,newMessageId:input.newNoticeId}})).statusCode,400);
 });
+
+test("a blocked notice packet is recovered by its id with review authority and a reason",async t=>{
+  const projectId=randomUUID(),packetId=randomUUID();
+  let principal={actorId:"lead",projectIds:[projectId],permissions:["read","write","review"] as string[]};
+  const calls:unknown[]=[];
+  const app=Fastify();t.after(()=>app.close());
+  app.decorateRequest("principal",null);
+  app.addHook("onRequest",async request=>{request.principal=principal as typeof request.principal;});
+  app.setErrorHandler((error,_request,reply)=>{
+    if(error instanceof DomainError)return reply.code(403).send({code:error.code});
+    if(error.name==="ZodError")return reply.code(400).send({code:"INVALID_INPUT"});
+    throw error;
+  });
+  registerLeaderNoticeRoutes(app,{getProject:async (_who,p)=>{
+    if(p!==projectId)throw new DomainError("FORBIDDEN","project");return {id:p};
+  }},{list:async()=>({items:[],nextCursor:null}),
+    recoverPacket:async(who,p,id,reason)=>{calls.push({who:who.actorId,p,id,reason});return {status:"recorded",packetId:id,state:"recovered"};}});
+  const url=`/api/projects/${projectId}/leader-notice-packets/${packetId}/recover`;
+  const response=await app.inject({method:"POST",url,payload:{reason:"gate reviewed"}});
+  assert.equal(response.statusCode,200);
+  assert.deepEqual(response.json(),{status:"recorded",packetId,state:"recovered"});
+  assert.deepEqual(calls,[{who:"lead",p:projectId,id:packetId,reason:"gate reviewed"}]);
+  assert.equal((await app.inject({method:"POST",url,payload:{}})).statusCode,400,"a reason is required");
+  assert.equal((await app.inject({method:"POST",url,payload:{reason:"x",extra:1}})).statusCode,400);
+  principal={...principal,permissions:["read","write"]};
+  assert.equal((await app.inject({method:"POST",url,payload:{reason:"gate reviewed"}})).statusCode,403,"review authority is required");
+  assert.equal(calls.length,1);
+});
+
+test("the Leader's task index lists blocked notice packets with what to do about them",async t=>{
+  const projectId=randomUUID();
+  const app=Fastify();t.after(()=>app.close());
+  app.decorateRequest("principal",null);
+  app.addHook("onRequest",async request=>{request.principal={actorId:"lead",projectIds:[projectId],permissions:["read","write","review"]} as typeof request.principal;});
+  const blocked=[{packetId:randomUUID(),sessionId:randomUUID(),itemCount:3,blockedAt:null,hint:"leader.notice.recover"}];
+  const reader={index:async()=>({items:[],total:0}),blockedNoticePackets:async()=>blocked} as unknown as LeaderWorkIndexReader;
+  registerLeaderWorkRoutes(app,{getProject:async()=>({})} as never,reader);
+  const tasks=await app.inject({method:"GET",url:`/api/projects/${projectId}/work-management/index?view=tasks`});
+  assert.equal(tasks.statusCode,200);
+  assert.deepEqual(tasks.json().blockedNoticePackets,blocked);
+  const documents=await app.inject({method:"GET",url:`/api/projects/${projectId}/work-management/index?view=documents`});
+  assert.equal(documents.json().blockedNoticePackets,undefined);
+});
