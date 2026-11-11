@@ -33,6 +33,8 @@
 
 `role_actor` 一个代码对应三种情形，`missingDetails` 会说清是哪一种：`residentQueue` 未启用；已启用但没有这个 Role 的映射（要加 `{"projectId":"<项目>","roleId":"<Role>","actorId":"<业务身份>"}`）；有映射但该 `actorId` 在身份文件里对本项目没有 read 与 write。以上“每次重读”按代码核对（`apps/coordinator/src/main.ts` 的 `sessionPreparation` 每次调用都重读 integrations 与身份文件），未在运行中的实例上逐项验证；仍以所连服务的实际回读为准。
 
+身份文件里凭据的 `extraCommands` 只用来开放 `document.archive` 与 `document.restore`，与 `permissions` 分开：有它的身份在本项目有 write 即可对应归档或恢复，不能 `task.start`、`task.close`。改身份文件后须重启服务。
+
 **为什么 `runtime.materialCli` 与 `residentQueue.roleActors` 都要写。** 评估结论：现在不合并。两处不是同一个取值：`roleActors` 是“项目 × Role → 业务身份”，常驻队列、协作授权、消息连接器和队列绑定都读它；`materialCli` 是“项目 ×（Session 或 Role）× Session 身份 → CLI 身份 + 命令路径”，可细到 Session 或 Task，只有启用运行时才有意义。Role 级条目里二者的身份必须相同，服务用 `material_cli_actor_mismatch` 检查，所以重复的是书写成本，不是两个可以不同的事实。合并的风险：要迁移私有配置；Session/Task 级覆盖会丢；只走队列、没有 `materialCli` 的 Role 仍需要 `roleActors`；由一处推导另一处，会让“谁能以这个 Role 行事”的授权隐含进 CLI 配置。较小的后续做法（本轮未做）：加载配置时二者不一致就一次性报错，或 Role 级 `materialCli.cliActorId` 缺省取 `roleActors` 的 `actorId`（向后兼容）。
 
 Role 的运行时与 skill 用 `role runtime show ROLE_UUID --project UUID` 实时读取。结果包括绑定修订（未绑定时为将采用的默认运行时）、按来源分组的 skill 与是否加载、加载方式（运行时原生、Role 上下文或不加载）、单独加入却没找到的名称、插件、MCP，以及这些内容由运行时列出、最近一次 Claude Turn 报告还是按文件推断。项目审阅者用 `role runtime set ROLE_UUID --project UUID --reason TEXT` 修改，可选 `--provider codex|claude`（只在首次绑定时有意义）、`--project-skills on|off`、`--personal on|off`、`--builtin on|off`、`--add NAMES|none` 与 `--remove NAMES|none`；未给的项沿用当前值。CLI 先读当前修订，以带回执的 `role.runtime.set` CAS 命令提交，再返回回读；冲突时重新读取，结果未知时按原 operation 对账。Role 首次绑定后不能换成另一种运行时；另一运行时仍有未关闭 Session 时不能绑定。未绑定的 Role 在首个 Session 预留时按服务默认运行时自动绑定。选择在下一个 Turn 生效，只决定模型上下文，不是安全边界。配置与发现规则见[本机运行](local-run.md)。
@@ -154,6 +156,7 @@ npm run --silent cli -- work assignment "$TASK_ID" --project "$PROJECT_ID" --his
 npm run --silent cli -- work messages "$SESSION_KEY" --project "$PROJECT_ID" --limit 20
 npm run --silent cli -- work message "$MESSAGE_ID" --project "$PROJECT_ID"
 npm run --silent cli -- work leader --project "$PROJECT_ID" --limit 50
+npm run --silent cli -- work leader --project "$PROJECT_ID" --limit 50 --brief
 npm run --silent cli -- work leader --project "$PROJECT_ID" --documents
 npm run --silent cli -- work leader changes --project "$PROJECT_ID"
 npm run --silent cli -- work leader changes --project "$PROJECT_ID" --cursor "$WORK_CHANGE_CURSOR"
@@ -176,6 +179,9 @@ npm run --silent cli -- request work.review.set --project "$PROJECT_ID" --id "$T
 `work timeline` 读取与工作台同一条受权 Session 时间线；`--source` 可选 `both`（默认）、`native` 或 `messages`。响应的 `nextCursor` 与 `messagesCursor` 分别续读原生历史和已保存消息；仅传回实际返回的游标，不把两者合为一个位置。`partial`、`limitations`、`unsupportedKinds`、每条记录的时间与来源都原样保留。`work item` 用返回的 `nativeItemId` 和 `turnId` 选择单条原生记录；公开 Agent 正文和工具原始证据由服务分别按现行权限判断，CLI 不另开原生连接。`work updates` 的 `--after` 使用本服务返回的 `live.cursor`；默认带 `waitMs=0` 即时读取，可用 `--wait-ms 0..10000` 有界等待新更新，默认 CLI 请求期限 15 秒可覆盖最多 10 秒的服务等待与回包。`resetRequired` 表示应重新读时间线，更新流不是跨进程可重放的完整历史。服务拒绝或不可用时，CLI 将其错误正文放在 stderr 的 `error.data`，不改写为“空历史”。
 
 `work leader` 是 Leader 的当前工作入口。它从 Task 四态、assignment、最近 Run、当前 TaskRevision 的 Delivery、声明消费者的使用观察、待复核依据、依赖和队列 hold 派生阶段与下一责任；返回值含当前 Task version/revision、创建／业务变化／实际开始／完成时间和可选的计划开始、截止、优先级。依赖只在其前置 Task 的当前修订有 Task closure 或同修订 accepted release 时视为满足，Run 结束不能替代。计划字段不决定实际排序，结果按风险阶段、截止、显式优先级和稳定对象次序读取。
+
+**简要输出 `--brief`。** `work leader`（任务视图）、`work task TASK`、`work acceptance` 和 `work acceptance TASK` 都接受 `--brief`：服务的答案不变，CLI 只保留安排所需的字段再输出，不带 `--brief` 时输出与以前逐字节相同。一条 Task 简要保留：`taskId`、`version`、`revisionId`、`title`、`kind`、`state`、`phase`、`nextAction`、`actionKey`、`responsible`、`assignment`、`run`（最近 Run 的 ID 与状态）、`delivery`（交付 ID、技术结果、声明的消费者与最新观察）、`waiting`（当前阶段、在等谁、从何时起）、`queueHold`、`pendingImpacts`、`blockedBy`（未满足的前置 Task）、`plan` 与 `acceptance`（验收目标、前置、`readiness`）；丢掉的是每个 Task 的计时历史（占大头）、日期、最近进展与依赖的完整记录。分页字段（`total`、`counts`、`changeSequence`、`nextCursor`、`partial`、`observedAt`）原样保留，输出里带 `"brief": true`。`work task --brief` 另读一次该 Task 的验收安排，只列仍有效的（未被取代、未释放）安排的 `relayId`、阶段、方式、状态、收件人、交付与观察结果，那次读取失败时 `acceptanceRelays` 为 `null` 而不是空数组。`work acceptance TASK --brief` 的每条安排保留 ID、版本、阶段、范围键、收件人、Session、交付、投递与处理状态、观察结果，去掉长说明。`work acceptance --brief` 的 Session 占用只留 ID、角色、状态、各项占用计数、`missingCapabilities` 与 `readyForAcceptance`。不适用的读取（`--documents`、`work acceptance mine`、`work leader changes|notices` 等）带 `--brief` 会在发请求前被拒绝。用简要输出定位要处理的 Task，要写命令或核对原件时再读不带 `--brief` 的完整输出或固定原件。
+
 
 `work task` 给一项 Task 的时间投影：创建、各轮阶段起止、当前阶段停留、最新有据业务进展、仅属于当前 Task/Run 的原生活动和观测时间。缺失来源是未知，不把 Session 正在做另一项 Task 算作本项进展。`work attention` 列持久关注项，支持 `--task`、`--phase`、`--signal`、`--waiting-on-kind`、`--waiting-on-id`、`--state` 和有界续页；`work attention task` 读该 Task 的跟进/发布交接历史，`work attention item` 读一项关注的事件，`work attention thresholds` 读项目试行门槛及覆盖。时间门槛只要求核查，不代表 Run 失败，也不会自动取消、重试、封存或签消息已读。保存、原生送达、本人 read 和实际跟进分别核。来源口径与可调初值见[接口合同](../architecture/contracts.md#阶段等待由事实推导)。
 
@@ -208,6 +214,10 @@ Task 或 Document 列表使用不可伪造业务含义的 base64url 位置；它
 `work snapshot owned:SESSION_ID --project PROJECT_ID` 的 `nativeObservation` 与 `read session SESSION_ID --observation --project PROJECT_ID` 返回同一有界观察。`null` 表示尚无该投影，不能推断从未运行。先核 `freshness`、`lastEventAt`、精确 Turn 和来源，再读工具／计划／diff 预览；旧连接或不可用 Session 的 `stale` 事实只供核对。该只读入口不唤醒模型，也不凭通知改变 Run、Task 或交付验收。
 
 `work status` 将服务 Session 状态、原生连接／Turn 状态、最近原生活动和持久消息状态分列。`--message` 另读原消息与 processing；目标必须属于所选 Session 或已登记别名。两次只读查询不是原子快照，操作前仍须回读当前版本。缺少状态或时间时保持 null。`freshness: live` 只说明连接与绑定在观察时有效，`inProgress` 是宿主报告；两者均不证明最近仍有模型进展。状态冲突时保留各自来源与时间，不按耗时判终态。
+
+### 叫停执行中的 Run
+
+`command schema runtime.run.stop`，字段 `runId`、`expectedVersion`（先 `read run RUN` 取当前版本）、`reason`；`command run FILE` 提交，回读 Run 的 `stopRequestedAt`。它不新增 Run 状态；已签未封存的提交意图作废为 `RUN_STOPPED`，之后该 Run 的提交和交付都被拒绝。需要 review 权限和该 Session 的精确执行授权。不要用它处理“结果未知”的 Run（先对账），也不要用普通消息去叫停业务 Run。
 
 ### 普通消息的精确核对与受控中断
 

@@ -39,6 +39,9 @@ export async function submitOrdinaryRun(
     throw new DomainError("OPERATION_REUSED", "Operation ID was used for another submission");
   const prior = await store.get(command.runId);
   if (prior) {
+    // A submission voided by a stop request answers every later attempt on the Run, replay or new, with that same refusal.
+    if (prior.state === "rejected" && prior.reason === "RUN_STOPPED")
+      throw new DomainError("RUN_STOPPED", "The Run was stopped on request; its signed result intent was voided and no Delivery will be made from it");
     if (prior.operationId !== command.operationId || prior.commandHash !== commandHash ||
       prior.submittedBy !== principal.actorId)
       throw new DomainError("SUBMISSION_EXISTS", "Run already has a different signed result intent");
@@ -51,6 +54,8 @@ export async function submitOrdinaryRun(
     run.sessionId !== command.sessionId || run.taskRevisionId !== command.taskRevisionId ||
     run.inputHash !== command.runInputHash)
     throw new DomainError("RUN_MISMATCH", "Submission does not match the fixed Run input");
+  if (run.stopRequestedAt)
+    throw new DomainError("RUN_STOPPED", `The Run was stopped on request (${run.stopReason ?? "no reason recorded"}); it cannot take a submission`);
   if (!(["requested", "dispatching", "running"] as string[]).includes(run.state))
     throw new DomainError("RUN_NOT_ACTIVE", "First submission must be saved before terminal or unknown Run state");
   if (await store.hasManagedDispatch(run.id))

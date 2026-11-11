@@ -52,6 +52,8 @@ export class AcceptanceRelayService {
     qualify(input: { projectId: string; session: RuntimeSessionRecord; senderActorId: string; receiverActorId: string }): Promise<string | null>;
     /** Capability gaps for one exact Session and sender. Read-only; no grant is created here. */
     capabilities(input: { projectId: string; session: RuntimeSessionRecord; senderActorId: string; receiverActorId: string }): Promise<string[]>;
+    /** The business CLI identity this Session signs as: who an arrangement would name as recipient. Null when none is bound. */
+    boundRecipient?(projectId: string, session: RuntimeSessionRecord): Promise<string | null>;
   }) {}
 
   async arrange(principal: Principal, input: AcceptanceArrangeInput): Promise<AcceptanceRelayRecord> {
@@ -241,8 +243,11 @@ export class AcceptanceRelayService {
       if (r.state === "ready" && r.native_thread_id) {
         try {
           const session = await this.deps.workflow.getRuntimeSession(principal, projectId, r.session_id);
+          // An arrangement names the Session's CLI-bound identity, not the Session creator (runtime_session.actor_id);
+          // with no binding the creator is kept, so RECIPIENT_BINDING_MISSING is still reported for real.
+          const receiverActorId = await this.deps.boundRecipient?.(projectId, session) ?? r.actor_id;
           missingCapabilities = await this.deps.capabilities({ projectId, session,
-            senderActorId: principal.actorId, receiverActorId: r.actor_id });
+            senderActorId: principal.actorId, receiverActorId });
         } catch {
           missingCapabilities = ["SESSION_READBACK_FAILED"];
         }
