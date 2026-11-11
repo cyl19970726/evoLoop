@@ -43,6 +43,8 @@ export interface WorkspaceMessage extends WorkspaceEntryBase {
   body: string;
   clientId: string | null;
   state: WorkspaceState;
+  /** Why a saved, still pending message is waiting (for example a missing message grant); absent when nothing blocks it. */
+  blockedReason?: string | null;
   /** Explicit dispatch marker, retained without exposing the generated input envelope. */
   inputReference?: { kind: 'operation-marker'; source: 'run' | 'message'; operationId: string };
 }

@@ -1,6 +1,8 @@
 // Lock order between legacy Schedule materialization (PgSchedulingStore.materialize, its own
 // transaction) and project writers. Materialization shares the Role, Stage and Loop rows it
 // re-checks, then inserts rows whose project foreign key and leader-work trigger lock the project.
+// Refuses a live or shared PostgreSQL server before this file opens TEST_DATABASE_URL (scripts/lib/database-target.mjs).
+import "../../../scripts/test-database-guard.mjs";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { after, before, test } from "node:test";
