@@ -213,6 +213,10 @@ Task 或 Document 列表使用不可伪造业务含义的 base64url 位置；它
 
 `work status` 将服务 Session 状态、原生连接／Turn 状态、最近原生活动和持久消息状态分列。`--message` 另读原消息与 processing；目标必须属于所选 Session 或已登记别名。两次只读查询不是原子快照，操作前仍须回读当前版本。缺少状态或时间时保持 null。`freshness: live` 只说明连接与绑定在观察时有效，`inProgress` 是宿主报告；两者均不证明最近仍有模型进展。状态冲突时保留各自来源与时间，不按耗时判终态。
 
+### 叫停执行中的 Run
+
+`command schema runtime.run.stop`，字段 `runId`、`expectedVersion`（先 `read run RUN` 取当前版本）、`reason`；`command run FILE` 提交，回读 Run 的 `stopRequestedAt`。它不新增 Run 状态；已签未封存的提交意图作废为 `RUN_STOPPED`，之后该 Run 的提交和交付都被拒绝。需要 review 权限和该 Session 的精确执行授权。不要用它处理“结果未知”的 Run（先对账），也不要用普通消息去叫停业务 Run。
+
 ### 普通消息的精确核对与受控中断
 
 项目复核者先核本人身份及当前精确 Session 执行授权，再读 `work status owned:SESSION_ID --project PROJECT_ID --message MESSAGE_ID`、`work message MESSAGE_ID`、`read session SESSION_ID --observation` 和原 Turn 历史。核对消息、processing、Session、Thread、Turn 的绑定，当前消息与 processing 版本、已执行操作及排队消息。使用当前构建的 `command schema session.message.reconcile`／`session.message.interrupt`。两者均以 `command run PRIVATE_JSON` 提交，固定 `operationId`、`projectId`、`messageId`、`sessionId`、`processingId`、`nativeTurnId`、`expectedMessageVersion`、`expectedProcessingVersion` 和 `reason`。保存原正文和操作 ID；回包不明时用 `operation`／`receipts reconcile` 按原 ID 核对。
