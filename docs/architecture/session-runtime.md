@@ -247,7 +247,7 @@ Codex 一列有几项取决于运行配置选的协议版本。“现代协议�
 | 停止、预检与原 Thread 接续 | PR #184、#185；schema 048–050 | 随运行时启用 |
 | 宿主失联与写者冲突恢复 | PR #199、#200；schema 055、056 | 随运行时启用 |
 | 托管压缩 | PR #210、#215、#218、#222；schema 058 | `runtime.compaction.owned: true`；需 Codex `0.166.0-alpha.6` |
-| 上下文交接与每日用量上限 | 本次；schema 074 | `runtime.contextBudget`／`runtime.dailyBudget` 均默认关闭 |
+| 上下文交接与每日用量上限 | 本次；schema 081 | `runtime.contextBudget`／`runtime.dailyBudget` 均默认关闭 |
 | 即时输入 | PR #216；schema 059 | `directInputs` 关闭 |
 | 普通消息不限轮数 | PR #195、#207 | `maxTurns` 省略即不限 |
 | Claude 运行时、双运行时与 Role 绑定 | PR #224、#226、#230；schema 067、068 | `runtime.provider: "codex"`；Claude 需显式列入 `providers` 并配置 `runtime.claude` |
@@ -258,5 +258,5 @@ Codex 一列有几项取决于运行配置选的协议版本。“现代协议�
 
 - Codex 协议、版本与历史读取的细节：[Codex 接入](codex-integration.md)
 - Session、Run、消息、验收接力和 Leader 通知的合同：[接口合同](contracts.md)
-- 这些表的约束：[存储](storage.md#迁移-054-到-074-新增的表和列)
+- 这些表的约束：[存储](storage.md#迁移-054-到-081-新增的表和列)
 - 服务实际部署在哪里、迁移时 Session 为什么不搬：[部署与迁移](deployment.md)
