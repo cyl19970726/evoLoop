@@ -113,7 +113,7 @@ GUI 只读限制由独立浏览器上下文与网络/动作白名单落实；Ses
 
 来源按精确 Turn 关联 Run 或普通消息，绑定回执未到时保持未绑定。旧 Turn 的 Item、计划及 diff 不替换当前 Turn；Item 完成不因晚到 started 倒退。有原生 `Turn.startedAt` 证据时拒绝更早 Turn 抢占当前观察，时间缺失或相同时不推测先后。投影不是可重放的全量事件审计；断线、重启或 Session 不可用时保留最后读数并标过期，等待新连接的实际事实。
 
-Token `total` 是 Thread 累计绝对快照，重复通知直接覆盖，不能累加；`last` 保留原生提供的范围，不能用自行计算的相邻快照差值冒充。逐 Turn 用量单独记为 `turnUsage`：该 Turn 首个用量通知的 `total − last`（这一轮第一次请求之前的累计）与该 Turn 最新 `total`，两者之差才是这一轮的输出与推理 token；任一侧缺失或倒退即为未知。只覆盖协调器在线观察到的 Turn，不回填更早历史。cached input 已包含在 input，reasoning output 已包含在 output；不再相加。缺失指标为未知，配置模型不当作实际逐 Turn 用模，没有原生费用时不推测货币成本。Session snapshot 与 CLI 读取相同当前投影和时间；5 秒前端查询与 runner 周期内合并不是实时推送或延迟保证。变化游标只触发刷新，进度刷新不刷进业务活动历史，也不增加 `runtime_record_event` 或修改 Run／Task 终态。
+Token `total` 是 Thread 累计绝对快照，重复通知直接覆盖，不能累加；`last` 保留原生提供的范围，不能用自行计算的相邻快照差值冒充。逐 Turn 用量单独记为 `turnUsage`：该 Turn 首个用量通知的 `total − last`（这一轮第一次请求之前的累计）与该 Turn 最新 `total`，两者之差才是这一轮的输出与推理 token；任一侧缺失或倒退即为未知。`total − last` 只有在同一连接先观察到该 Turn 的 `turn/started` 时才能证明是“这一轮第一次请求之前”的累计（同一连接上的通知有序），否则起点记为未知、整轮读数标为不完整。投影超限时先丢旧 Turn 的 `turnUsage`，再丢当前 Turn 的条目预览。只覆盖协调器在线观察到的 Turn，不回填更早历史。cached input 已包含在 input，reasoning output 已包含在 output；不再相加。缺失指标为未知，配置模型不当作实际逐 Turn 用模，没有原生费用时不推测货币成本。Session snapshot 与 CLI 读取相同当前投影和时间；5 秒前端查询与 runner 周期内合并不是实时推送或延迟保证。变化游标只触发刷新，进度刷新不刷进业务活动历史，也不增加 `runtime_record_event` 或修改 Run／Task 终态。
 
 ### Session 工作区的历史与实时读取
 

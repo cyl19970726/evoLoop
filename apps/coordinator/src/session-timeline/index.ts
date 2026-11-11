@@ -151,7 +151,8 @@ const withUsage=(turn:WorkspaceTurn,observation:NativeObservationRecord|null):Wo
   const recorded=observation?.turnUsage?.find(entry=>entry.turnId===turn.id);
   if(!recorded)return turn;
   const usage=turnUsageOf(recorded);
-  return {...turn,usage:{outputTokens:usage.outputTokens,reasoningOutputTokens:usage.reasoningOutputTokens,source:'codex-token-usage'}};
+  return {...turn,usage:{outputTokens:usage.outputTokens,reasoningOutputTokens:usage.reasoningOutputTokens,source:'codex-token-usage',
+    complete:recorded.base!==null}};
 };
 
 /** Project reads and exact owned binding checks occur on every request; the buffer grants no authority. */

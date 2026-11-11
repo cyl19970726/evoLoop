@@ -59,7 +59,7 @@ test('project readers see reasoning bodies in native order with per-Turn native 
     assert.equal(shown[2]!.truncated,true,'a bounded body says it was cut');
     assert.equal(shown[1]!.kind==='reasoning'&&shown[1].unavailableReason,'encrypted');
     const turns=new Map(read.turns.map(turn=>[turn.id,turn.usage]));
-    assert.deepEqual(turns.get('turn-a'),{outputTokens:80,reasoningOutputTokens:30,source:'codex-token-usage'});
+    assert.deepEqual(turns.get('turn-a'),{outputTokens:80,reasoningOutputTokens:30,source:'codex-token-usage',complete:true});
     assert.deepEqual(turns.get('turn-b'),{outputTokens:9,reasoningOutputTokens:4,source:'claude-result'},'adapter usage is kept as reported');
     await assert.rejects(()=>timeline.page(outsider,project,key,{limit:50}),/scope/);
   }finally{timeline.close();}

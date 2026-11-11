@@ -48,24 +48,44 @@ function before(total: NativeUsageBreakdown, last: NativeUsageBreakdown): Native
   for (const key of usageKeys) { const a = total[key], b = last[key]; out[key] = a !== null && b !== null && a >= b ? a - b : null; }
   return out;
 }
-/** One Turn's own usage from its recorded Thread totals; null fields were not provable. */
+/** One Turn's own usage from its recorded Thread totals; null fields were not provable (no observed start, unknown or regressed totals). */
 export function turnUsageOf(entry: NativeTurnUsage): NativeUsageBreakdown {
   const out = {} as NativeUsageBreakdown;
-  for (const key of usageKeys) { const a = entry.total[key], b = entry.base[key]; out[key] = a !== null && b !== null && a >= b ? a - b : null; }
+  for (const key of usageKeys) {
+    const a = entry.total?.[key] ?? null, b = entry.base?.[key] ?? null;
+    out[key] = a !== null && b !== null && a >= b ? a - b : null;
+  }
   return out;
 }
-function recordTurnUsage(list: NativeTurnUsage[] | undefined, turnId: string, total: NativeUsageBreakdown, last: NativeUsageBreakdown, at: string): NativeTurnUsage[] {
+/**
+ * A Turn's base (the Thread total before its first request) is provable only when this same connection saw the Turn's
+ * `turn/started` and then its first usage notification: notifications on one connection arrive in order. A Turn whose
+ * start was not seen here (restart or reconnect mid-Turn) keeps an unknown base, so its usage stays unknown rather than
+ * a smaller, confident number.
+ */
+function markTurnStart(list: NativeTurnUsage[] | undefined, turnId: string, connectionId: string, at: string): NativeTurnUsage[] {
+  const next = [...(list ?? [])];
+  if (!next.some(entry => entry.turnId === turnId)) next.push({ turnId, base: null, total: null, startConnectionId: connectionId, observedAt: at });
+  while (next.length > TURN_USAGE_LIMIT) next.shift();
+  return next;
+}
+function recordTurnUsage(list: NativeTurnUsage[] | undefined, turnId: string, total: NativeUsageBreakdown, last: NativeUsageBreakdown,
+  connectionId: string, at: string): NativeTurnUsage[] {
   const next = [...(list ?? [])];
   const index = next.findIndex(entry => entry.turnId === turnId);
-  if (index >= 0) next[index] = { ...next[index]!, total, observedAt: at };
-  else next.push({ turnId, base: before(total, last), total, observedAt: at });
+  const entry = index >= 0 ? next[index]! : null;
+  if (!entry) next.push({ turnId, base: null, total, startConnectionId: null, observedAt: at });
+  else if (entry.total === null && entry.base === null && entry.startConnectionId === connectionId)
+    next[index] = { ...entry, base: before(total, last), total, observedAt: at };
+  else next[index] = { ...entry, total, observedAt: at };
   while (next.length > TURN_USAGE_LIMIT) next.shift();
   return next;
 }
 function bounded(value: NativeObservationRecord): NativeObservationRecord {
   // Fields are individually bounded; this guard handles long multibyte identifiers and future additions.
+  // Older Turns' usage goes first, down to none: it never displaces the current Turn's item preview.
+  while (bytes(JSON.stringify(value)) > 24576 && (value.turnUsage?.length ?? 0) > 0) value.turnUsage!.shift();
   while (bytes(JSON.stringify(value)) > 24576 && value.items.length) value.items.shift();
-  while (bytes(JSON.stringify(value)) > 24576 && (value.turnUsage?.length ?? 0) > 1) value.turnUsage!.shift();
   if (bytes(JSON.stringify(value)) > 24576 && value.diff) { value.diff = { ...value.diff, ...{ text: '', truncated: true } }; }
   if (bytes(JSON.stringify(value)) > 24576) throw new DomainError('OBSERVATION_TOO_LARGE','Native observation exceeds storage limit');
   return value;
@@ -99,7 +119,8 @@ export function reduceNativeObservation(previous: NativeObservationRecord | null
   }
   switch (event.method) {
     case 'thread/status/changed': { const s = status(object(params.status)?.type); if (!s) return null; next.status = s; break; }
-    case 'turn/started': if (next.currentTurn?.status === 'unknown') next.currentTurn.status = turnStatus(object(params.turn)?.status);
+    case 'turn/started': next.turnUsage = markTurnStart(previous?.turnUsage, turnId!, event.connectionId, event.observedAt);
+      if (next.currentTurn?.status === 'unknown') next.currentTurn.status = turnStatus(object(params.turn)?.status);
       if (next.currentTurn && next.currentTurn.startedAt === null) next.currentTurn.startedAt = metric(object(params.turn)?.startedAt); break;
     case 'turn/completed': {
       const s = turnStatus(object(params.turn)?.status); if (s === 'unknown') return null;
@@ -138,7 +159,7 @@ export function reduceNativeObservation(previous: NativeObservationRecord | null
       const v = object(params.tokenUsage); if (!v) return null;
       next.usage = { turnId: turnId!, total: usageBreakdown(v.total), last: usageBreakdown(v.last),
         modelContextWindow: metric(v.modelContextWindow), observedAt: event.observedAt };
-      if (turnId) next.turnUsage = recordTurnUsage(previous?.turnUsage, turnId, next.usage.total, next.usage.last, event.observedAt);
+      if (turnId) next.turnUsage = recordTurnUsage(previous?.turnUsage, turnId, next.usage.total, next.usage.last, event.connectionId, event.observedAt);
       break;
     }
   }

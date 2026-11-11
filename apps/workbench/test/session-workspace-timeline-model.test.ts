@@ -219,4 +219,6 @@ test("each Turn's reasoning folds into one group at its first entry, in native o
   assert.equal(turnReasoningTokensText({ outputTokens: 1200, reasoningOutputTokens: 300, source: "codex-token-usage" }), "推理 token 300 / 输出 1,200（Codex 用量事件）");
   assert.equal(turnReasoningTokensText({ outputTokens: null, reasoningOutputTokens: null, source: "claude-result" }), "推理 token 原生未报告（Claude 结果用量）");
   assert.match(turnLabel("019a2b3c-dead-beef", null), /^回合 019a2b3c$/);
+  assert.equal(turnReasoningTokensText({ outputTokens: null, reasoningOutputTokens: null, source: "codex-token-usage", complete: false }),
+    "推理 token 未知（没有观察到这一轮的起点，读数不完整）");
 });

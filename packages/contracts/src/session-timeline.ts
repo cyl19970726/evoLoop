@@ -89,6 +89,8 @@ export interface WorkspaceTurnUsage {
   reasoningOutputTokens: number | null;
   /** Where the numbers come from, so a reader can check them against the native record. */
   source: 'codex-token-usage' | 'claude-result';
+  /** False when the numbers cannot be proved for the whole Turn (for example its start was not observed); they are then null. */
+  complete?: boolean;
 }
 export interface WorkspaceTurn {
   id: string;

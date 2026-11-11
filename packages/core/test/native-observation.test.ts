@@ -115,6 +115,8 @@ test('the usage ledger records cumulative deltas and starts a replacement thread
     [{inputTokens:50,outputTokens:10,cachedInputTokens:0,costUsd:0,costReported:false}],
     [{inputTokens:200,outputTokens:40,cachedInputTokens:0,costUsd:0,costReported:false}],
   ]);
+});
+
 test('per-Turn usage is the Thread total difference from before the Turn\'s first request',()=>{
   const u=(input:number,output:number,reasoning:number)=>({inputTokens:input,cachedInputTokens:0,outputTokens:output,reasoningOutputTokens:reasoning,totalTokens:input+output});
   let row=reduce(null,'turn/started',started('one'))!;
@@ -131,4 +133,43 @@ test('per-Turn usage is the Thread total difference from before the Turn\'s firs
   assert.equal(turnUsageOf(row.turnUsage!.at(-1)!).reasoningOutputTokens,null);
   for(let i=0;i<40;i++)row=reduce(reduce(row,'turn/started',started(`t${i}`))!,'thread/tokenUsage/updated',{threadId:'thread',turnId:`t${i}`,tokenUsage:{total:u(2000+i,400+i,100+i),last:u(1,1,1)}})!;
   assert.equal(row.turnUsage!.length,24);assert.equal(row.turnUsage!.at(-1)!.turnId,'t39');
+});
+
+test('M1: a Turn whose start this connection did not see keeps unknown usage, never a smaller confident number',()=>{
+  const u=(input:number,output:number,reasoning:number)=>({inputTokens:input,cachedInputTokens:0,outputTokens:output,reasoningOutputTokens:reasoning,totalTokens:input+output});
+  // Restart mid-Turn: the first usage seen is the Turn's third request, with no turn/started on this observer.
+  let row=reduce(null,'thread/tokenUsage/updated',{threadId:'thread',turnId:'mid',tokenUsage:{total:u(1500,300,90),last:u(100,20,5)}})!;
+  row=reduce(row,'thread/tokenUsage/updated',{threadId:'thread',turnId:'mid',tokenUsage:{total:u(1700,340,100),last:u(200,40,10)}})!;
+  const mid=row.turnUsage!.find(entry=>entry.turnId==='mid')!;
+  assert.equal(mid.base,null);
+  assert.deepEqual(turnUsageOf(mid),{inputTokens:null,cachedInputTokens:null,outputTokens:null,reasoningOutputTokens:null,totalTokens:null});
+  // Start seen on one connection, first usage only after a reconnect: still unknown.
+  let other=reduce(null,'turn/started',started('re'))!;
+  other={...other,freshness:'stale'};
+  other=reduce(other,'thread/tokenUsage/updated',{threadId:'thread',turnId:'re',tokenUsage:{total:u(900,100,30),last:u(50,10,2)}},{connectionId:'connection-2'})!;
+  assert.equal(other.connectionId,'connection-2');
+  assert.equal(turnUsageOf(other.turnUsage!.find(entry=>entry.turnId==='re')!).reasoningOutputTokens,null);
+  // The next Turn, started and measured on the same connection, is exact again.
+  other=reduce(other,'turn/started',started('next'),{connectionId:'connection-2'})!;
+  other=reduce(other,'thread/tokenUsage/updated',{threadId:'thread',turnId:'next',tokenUsage:{total:u(1000,130,40),last:u(100,30,10)}},{connectionId:'connection-2'})!;
+  assert.equal(turnUsageOf(other.turnUsage!.find(entry=>entry.turnId==='next')!).reasoningOutputTokens,10);
+});
+
+test('M2: older Turns\' usage is trimmed before the current Turn\'s item preview',()=>{
+  const u=(n:number)=>({inputTokens:n,cachedInputTokens:n,outputTokens:n,reasoningOutputTokens:n,totalTokens:n});
+  const long=(prefix:string)=>prefix+'x'.repeat(1000);
+  let row=reduce(null,'turn/started',started(long('old-0')))!;
+  for(let i=0;i<24;i++){
+    if(i)row=reduce(row,'turn/started',started(long(`old-${i}`)))!;
+    row=reduce(row,'thread/tokenUsage/updated',{threadId:'thread',turnId:long(`old-${i}`),tokenUsage:{total:u(1000+i),last:u(1)}})!;
+  }
+  const current=long('current');
+  row=reduce(row,'turn/started',started(current))!;
+  for(let i=0;i<10;i++)row=reduce(row,'item/completed',{threadId:'thread',turnId:current,item:{id:long(`item-${i}`),type:'mcpToolCall',tool:'t'.repeat(240),status:'completed'}})!;
+  row=reduce(row,'turn/diff/updated',{threadId:'thread',turnId:current,diff:'d'.repeat(5000)})!;
+  assert.equal(row.items.length,10,'the full preview is present before usage arrives');
+  row=reduce(row,'thread/tokenUsage/updated',{threadId:'thread',turnId:current,tokenUsage:{total:u(5000),last:u(10)}})!;
+  assert.equal(row.items.length,10,'adding per-Turn usage never drops current items');
+  assert.ok(Buffer.byteLength(JSON.stringify(row))<=24576);
+  assert.ok(row.turnUsage!.length<25,'older Turn usage was trimmed instead');
 });

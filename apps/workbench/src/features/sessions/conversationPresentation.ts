@@ -195,6 +195,7 @@ const tokenCount = (value: number | null | undefined): string | null => typeof v
 /** One Turn's reasoning tokens as the native source reported them. */
 export function turnReasoningTokensText(usage: WorkspaceTurn["usage"]): string {
   if (!usage) return "推理 token：原生未报告";
+  if (usage.complete === false) return "推理 token 未知（没有观察到这一轮的起点，读数不完整）";
   const reasoning = tokenCount(usage.reasoningOutputTokens), output = tokenCount(usage.outputTokens);
   const source = usage.source === "claude-result" ? "Claude 结果用量" : "Codex 用量事件";
   return `推理 token ${reasoning ?? "原生未报告"}${output ? ` / 输出 ${output}` : ""}（${source}）`;

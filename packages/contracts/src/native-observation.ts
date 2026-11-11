@@ -36,7 +36,16 @@ export interface NativeObservationRecord {
    */
   turnUsage?: NativeTurnUsage[];
 }
-export interface NativeTurnUsage { turnId: string; base: NativeUsageBreakdown; total: NativeUsageBreakdown; observedAt: string }
+export interface NativeTurnUsage {
+  turnId: string;
+  /** Thread total before the Turn's first request; null when this observer did not see the Turn start on the same connection. */
+  base: NativeUsageBreakdown | null;
+  /** Latest Thread total in the Turn; null before its first usage notification. */
+  total: NativeUsageBreakdown | null;
+  /** Connection that observed `turn/started`; null when the start was not observed. */
+  startConnectionId?: string | null;
+  observedAt: string;
+}
 export type NativeObservationProjection = Omit<NativeObservationRecord, 'version'>;
 export interface NativeObservationEvent {
   projectId: string; sessionId: string; threadId: string; connectionId: string;

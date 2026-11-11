@@ -215,9 +215,11 @@ Codex 一列有几项取决于运行配置选的协议版本。“现代协议�
 | 模型与思考强度修订 | 仅 alpha.6；需精确读回 | 不支持，沿用创建时的模型 |
 | 原生提问桥（`request_user_input`） | 默认关闭，可按配置打开 | 不支持；提问工具被禁用 |
 | 明确拒绝的启动结果 | 能区分“未发送”“被拒绝” | 只能区分“未发送”，其余为未知 |
-| 逐 Turn 用量与费用 | 不写入 Run；Token 读数只在原生观察里，最近 24 个 Turn 的推理与输出 token 由 Thread 累计读数相减，显示在时间线 | 写入 Run 的 `usage` 与 `cost_usd`（schema 067）；每轮思考 token 取 SDK `modelUsage.thinkingTokens` 的累计差，旧 CLI 不报时为未知 |
+| 逐 Turn 用量与费用 | 不写入 Run；Token 读数只在原生观察里，最近 24 个 Turn 的推理与输出 token 由 Thread 累计读数相减，显示在时间线。只有同一连接先看到该 Turn 的 `turn/started`、再看到它的第一个用量通知时才算确定读数；中途重启或重连看不到起点的 Turn 标“未知（读数不完整）”，不显示偏小的数字。投影超过 24 KiB 时先丢旧 Turn 的读数，再丢当前 Turn 的条目预览 | 写入 Run 的 `usage` 与 `cost_usd`（schema 067）；每轮思考 token 取 SDK `modelUsage.thinkingTokens` 的累计差，旧 CLI 不报时为未知 |
 | 浏览器只读桥 | 实验性，需单独配置 `browserRead` | 不支持 |
 | 进程故障的影响范围 | 共用子进程断开会影响所有在途 Turn | 只影响出问题的那个 Turn |
+
+**Claude 适配器账本里的思考内容。** 从 PR #341 起，适配器账本（专用 Claude 配置目录下 `evoloop-ledger/<project>/<native-session>.jsonl`，本机私有运行材料，不进 Git）除输入、回复与工具调用名外，还保存每个 thinking 块的可读文字，即 Claude 以 `--thinking-display summarized` 返回的摘要原文。thinking 块的签名、`redacted_thinking` 的密文都不保存，空块和加密块只记“不可读”；工具的输入与输出仍不保存。账本只追加、适配器不删除，所以这些思考文字的保留期与账本相同：随该 Session 的专用配置目录一直保留，直到运维按本机运行材料的方式清理。读取只有一条路：协调服务的会话时间线（`work timeline`、工作台智能体页），每次请求都核对读者对该项目有读取权限；思考内容不进入 Run 结果、Run 轨迹、普通消息回复、Leader 通知或通知包。原生 Claude 转录（`projects/*.jsonl`）由 Claude Code 自己保存，不在此范围内。
 
 ## 8. 与原生桌面客户端的差别
 
