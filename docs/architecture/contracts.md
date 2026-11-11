@@ -106,6 +106,10 @@ Blob 身份使用稳定 ID，附内容 hash、大小、媒体类型和资源 man
 
 发布批准绑定不可变候选修订/hash 与所读知识基线；outbox 实际执行或重新写入前再核批准、权限、来源有效性与独占资格。已发出但结果未知的操作先对账，批准后来撤销不代表先前写入未发生。审阅结案可以是拒绝、归并或无需修改；只有接受并确需改正文的项才要求另有发布回执，结案和发布保持分离。具体时序见[Wiki 集成](wiki-integration.md#4-命令发布和纠正)。
 
+### 请求停止一个 Run
+
+`runtime.run.stop`（`runId`、`expectedVersion`、`reason`）：review 权限，加上该 Session 精确的执行授权（与普通消息恢复同一检查；重放已入账的原操作不再核对授权）；不要求原生运行时在线。结果是 Run 上的停止标记（`stopRequestedAt`、`stopReason`、`stopRequestedBy`，不可改、不可撤，**没有新的 Run 状态**）。拒绝码：`VERSION_CONFLICT`、`STOP_ALREADY_REQUESTED`、`RUN_TERMINAL`（已结束的 Run 不能再停）。停止之后 `ordinary.submit` 对该 Run 返回 `RUN_STOPPED`，已签未封存的意图变为 `rejected`（原因 `RUN_STOPPED`）；数据库拒绝引用该 Run 的 Delivery。细节见[Session 运行时](session-runtime.md)。
+
 ### 知识后端可替换合同
 
 `KnowledgeRepository` 是业务需要的端口，不能直接照抄 OpenViking HTTP 方法。下面按使用者分组，仍属于同一知识边界，不增加服务或要求所有能力第一天实现。浏览器只取得共同 API 的公开 DTO，发布和迁移端口不从浏览器出口暴露。
