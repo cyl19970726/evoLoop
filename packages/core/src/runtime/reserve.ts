@@ -150,6 +150,7 @@ export async function reserveRuntime({ tx, command, principal, now, nextId, hash
     throw new DomainError("FULL_EXECUTION_REQUIRED", "Upgrade the Session execution profile before starting new work");
   await tx.recovery?.assertStartupAllowed(session.id,'run',command.runId);
   const task = required(await tx.getTask(command.taskId), "task");
+  await tx.sessionLines?.assertNotQueuedInLine(task.id, command.operationId);
   await requireAssignedSession(tx, task, command.sessionId, !!queueClaim);
   try { await tx.queue?.assertQueueVacant(task.id,session.id,queueClaim?.claimId,queueClaim?.runId,queueClaim?.operationId); }
   catch { throw new DomainError("QUEUE_OCCUPIED", "Task or Session has an unreleased queue claim"); }

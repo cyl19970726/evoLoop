@@ -70,6 +70,7 @@ import type { DynamicToolCall } from "@evoloop/adapter-codex-app-server";
 import { RuntimeNotSentError, type RuntimeBinding, type RuntimeSessionRecord, type RuntimeSessionSpec } from "@evoloop/contracts/runtime";
 import { loopIntentId } from "./orchestration/runner.js";
 import { ResidentQueuePump } from "./resident-queue/pump.js";
+import { SessionLinePump } from "./session-line/pump.js";
 import { SessionObservationService } from "@evoloop/core/session-observation";
 import { AllocationRelationsService } from "@evoloop/core/allocation-relations";
 import { SessionMessageService } from "@evoloop/core/session-messages";
@@ -750,6 +751,19 @@ const residentQueue = new ResidentQueuePump({workflow:service,canWrite:lease.can
   credentials:currentIdentity,enabled:async()=>!!(await currentQueueConfiguration())?.enabled,
   pollIntervalMs:integrations.residentQueue?.pollIntervalMs??2000,
   onError:()=>console.error("Resident queue tick failed; inspect persisted queue and Run state before retrying.")});
+const sessionLinePump = new SessionLinePump({workflow:service,canWrite:lease.canWrite,
+  messageBusy:(projectId,sessionId)=>messageService.isBusy(projectId,sessionId),credentials:currentIdentity,
+  enabled:async()=>!!(await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE)).runtime?.enabled,
+  pollIntervalMs:integrations.residentQueue?.pollIntervalMs??2000,
+  olderMessageWaiting:async(projectId,sessionId,appendedAt)=>!!(await pool.query(
+    `SELECT 1 FROM session_message WHERE project_id=$1 AND session_id=$2 AND target_kind='owned' AND state='queued'
+       AND blocked_reason IS NULL AND created_at<$3 LIMIT 1`,[projectId,sessionId,appendedAt])).rowCount,
+  recipientActorId:async(projectId,sessionId)=>{
+    const role=(await pool.query("SELECT role_id FROM runtime_session WHERE project_id=$1 AND session_id=$2",[projectId,sessionId])).rows[0]?.role_id;
+    const binding=role&&(await currentQueueConfiguration())?.roleActors.find(x=>x.projectId===projectId&&x.roleId===role);
+    return binding&&await currentProjectWriter(projectId,binding.actorId)?binding.actorId:null;
+  },
+  onError:()=>console.error("Session line tick failed; inspect the persisted line entry and its Run before retrying.")});
 const ordinarySealPump = new OrdinaryRunSealPump({
   canWrite: lease.canWrite,
   listProjects: () => ordinarySubmissions.listUnsettledProjects(),
@@ -964,7 +978,7 @@ let shuttingDown = false;
 async function shutdown() {
   if (shuttingDown) return; shuttingDown = true;
   try { clearInterval(acceptanceTimer); connectorIngress?.stop(); taskAttentionPump.stop(); leaderResultNoticePump.stop();
-    messagePump?.stop(); residentQueue.stop(); ordinarySealPump.stop(); await managed?.stop();
+    messagePump?.stop(); residentQueue.stop(); sessionLinePump.stop(); ordinarySealPump.stop(); await managed?.stop();
     await collaboration.stop(); await scheduling.stop(); await app.close(); sessionTimeline.close(); }
   finally {
     // Keep the coordinator lease while a native child may still be alive.
@@ -975,5 +989,5 @@ async function shutdown() {
 }
 process.once("SIGINT", () => void shutdown());
 process.once("SIGTERM", () => void shutdown());
-try { await app.listen({ host: "127.0.0.1", port }); managed?.start(); ordinarySealPump.start(); residentQueue.start(); messagePump?.start(); connectorIngress?.start(); leaderResultNoticePump.start(); taskAttentionPump.start(); console.log(`evoLoop local workbench: http://127.0.0.1:${port}`); }
+try { await app.listen({ host: "127.0.0.1", port }); managed?.start(); ordinarySealPump.start(); residentQueue.start(); sessionLinePump.start(); messagePump?.start(); connectorIngress?.start(); leaderResultNoticePump.start(); taskAttentionPump.start(); console.log(`evoLoop local workbench: http://127.0.0.1:${port}`); }
 catch (error) { await shutdown(); throw error; }

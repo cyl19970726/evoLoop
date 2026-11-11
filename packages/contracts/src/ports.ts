@@ -13,6 +13,7 @@ import type { ResidentReader, ResidentTransaction } from "./resident-hosts.js";
 import type { QueueReader, QueueTransaction } from "./queues.js";
 import type { SessionMessageReader, SessionMessageTransaction } from "./session-messages.js";
 import type { SessionAssignmentReader, SessionAssignmentTransaction } from "./session-assignments.js";
+import type { SessionLineReader, SessionLineTransaction } from "./session-line.js";
 import type { SessionObservationReader } from "./session-observation.js";
 import type { NativeInputReader, NativeInputTransaction } from "./native-input.js";
 import type { NativeObservationReader, NativeObservationTransaction } from "./native-observation.js";
@@ -28,6 +29,7 @@ export interface Reader extends ReferenceReader, RoleReader, SchedulingReader, D
   nativeInputs?: NativeInputReader;
   nativeObservation?: NativeObservationReader;
   sessionAssignments?: SessionAssignmentReader;
+  sessionLines?: SessionLineReader;
   sessionObservation?(scope: string): SessionObservationReader;
   allocationRelations?(scope: string): AllocationRelationsReader;
   /** Project-scoped, verified cognition decision and terminal outcome for explicit Task acceptance. */
@@ -140,6 +142,7 @@ export interface Transaction extends Reader, Omit<RoleTransaction, "getTask" | "
   nativeInputs?: NativeInputTransaction;
   nativeObservation?: NativeObservationTransaction;
   sessionAssignments?: SessionAssignmentTransaction;
+  sessionLines?: SessionLineTransaction;
   insertDiscussion(value: DiscussionRecord, event: DiscussionEvent): Promise<void>;
   updateDiscussion(value: DiscussionRecord, expectedVersion: number, event: DiscussionEvent): Promise<void>;
   insertRuntimeSession(session: RuntimeSessionRecord): Promise<void>;

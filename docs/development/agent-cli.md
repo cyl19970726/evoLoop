@@ -387,3 +387,9 @@ npm run --silent cli -- allocations --project PROJECT_UUID --discussion DISCUSSI
 普通消息 grant 省略 `maxTurns` 表示不限累计次数；显式正整数仍为上限。历史 `used` 继续累计。Session snapshot 的 `ordinaryExecution.messageBudget` 在精确 grant 和计数核实后给出 `used`、`limit`、`remaining`；无限时后两项为 `null`，未核计数时该字段缺失。账户模型额度、Task 和队列尝试上限须分别核对。
 
 Root 可在私有静默维护窗口以 `node scripts/prepare-unlimited-message-grants.mjs PRIVATE_CONFIG PRIVATE_SELECTIONS NEW_PRIVATE_CANDIDATE` 生成权限 0600 的新候选。选择文件是精确 `{projectId,sessionId,senderActorId,receiverActorId,receiverRoleId,cwd,expectedMaxTurns}` 数组。脚本要求旧 grant 启用、限额匹配、输出文件不存在，只移除指定 grant 的 `maxTurns`。发布前后读回原 Session/Thread、grant、累计计数、原消息和处理状态；回退保留的旧私有配置并按正常发布流程执行，不清计数或重放 unknown。
+
+## Session 队伍
+
+Leader 用 `evoloop command run` 提交 `line.append`（sessionId、taskId、expectedTaskVersion、reason）、`line.move`（entryId、expectedVersion、direction=forward|back）、`line.remove`、`line.resume`。读取：`evoloop get /api/projects/PROJECT/session-lines` 与 `/session-lines/events`。排队中的 Task 不能直接 `task.start`、`runtime.run.reserve` 或改派（`QUEUED_IN_SESSION_LINE`），先 `line.remove`。
+
+业务 Session 收到“执行确认请求”消息后，只做确认，不开始改文件：读固定 Task 修订，然后提交 `task.assignment.acknowledge`，`verdict=confirm`（`plan` 简短计划、`expectedRevisionId`）或 `verdict=return`（`missing` 列出缺什么）。确认后系统自动开 Run；退回的 Task 退出队伍、保持未开始。需要的私有配置：队伍调度程序随运行时启用而运行，Session 的业务身份取自 `residentQueue.roleActors`（没有则该项挂起为 `RECIPIENT_UNAVAILABLE`）。
