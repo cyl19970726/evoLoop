@@ -3,6 +3,7 @@ import Fastify from "fastify";
 import staticPlugin from "@fastify/static";
 import { commandSchema, capabilities, idSchema, documentKindSchema, type Command, type Principal, type RuntimeSessionRecord } from "@evoloop/contracts";
 import { DomainError } from "@evoloop/contracts/ports";
+import { sessionPreparationHints } from "@evoloop/contracts/session-preparation";
 import type { WorkflowService } from "@evoloop/core";
 import { authenticate, authConfigSchema, type AuthConfig } from "./auth.js";
 import { z } from "zod";
@@ -79,6 +80,8 @@ export async function buildServer(options: {
   isDynamicSession?: (projectId: string, sessionId: string) => Promise<boolean>;
   authorizeDynamicSession?: (principal: Principal, command: Extract<Command,{type:"runtime.session.reserve"}>) => Promise<boolean>;
   authorizeDynamicRun?: (principal: Principal, command: Extract<Command,{type:"runtime.run.reserve"}>, session: RuntimeSessionRecord) => Promise<boolean>;
+  /** Refuses a Run reservation whose fixed recipient the preflight would reject later; must not write. */
+  requireRunRecipient?: (principal: Principal, command: Extract<Command,{type:"runtime.run.reserve"}>, session: RuntimeSessionRecord) => Promise<void>;
   authorizeDynamicMessageRecovery?: (principal: Principal, session: RuntimeSessionRecord) => Promise<boolean>;
   manualStop?: {
     execute(principal:Principal,command:Extract<Command,{type:"session.message.manualStop"}>):ReturnType<WorkflowService["execute"]>;
@@ -93,9 +96,12 @@ export async function buildServer(options: {
   listRuntimeModels?: (provider?: import("@evoloop/contracts/runtime").RuntimeProvider) => Promise<{status:"available"|"empty"|"unavailable";models:string[];
     options?:Array<{model:string;supportedReasoningEfforts:string[];defaultReasoningEffort:string|null}>;
     error:string|null;observedAtUtc:string}>;
+  /** Send-time check of the ordinary-message grant for a post to this owned Session; null when the sender may send. */
+  messageSendAuthority?: (principal: Principal, projectId: string, sessionId: string) => Promise<{ code: "MESSAGE_GRANT_MISSING"; message: string } | null>;
   sessionPreparation?: (input:{projectId:string;sessionId:string;roleId:string;sessionActorId:string;
     cwd:string;authorizationScope:string;model:string|null}) => Promise<{runtimeAvailable:boolean;grantReady:boolean;
     cwdReady:boolean;materialCli:{actorId:string;command:string;ready:boolean}|null;roleActorId:string|null;
+    roleActorState?:import("@evoloop/contracts/session-preparation").RoleActorState;roleActorConfiguredId?:string|null;
     skills:Array<{path:string;commit:string;contentHash:string;readSubcommand:string}>}>;
   readRoleSkill?: (projectId:string,roleId:string,name:string,commit:string,hash:string) =>
     Promise<{path:string;commit:string;contentHash:string;body:string;
@@ -216,6 +222,14 @@ export async function buildServer(options: {
         return reply.code(result.status === "applied" ? 200 : errorStatus(result.code)).send(result);
       }
     }
+    if (command.type === "session.message.post" && command.target.kind === "owned" && options.messageSendAuthority) {
+      const principal = who(request.principal);
+      // A replay of an operation already journaled goes through execute's own actor/hash check.
+      if (!await options.service.getOperation(principal, command.projectId, command.operationId)) {
+        const problem = await options.messageSendAuthority(principal, command.projectId, command.target.sessionId);
+        if (problem) throw new DomainError(problem.code, problem.message);
+      }
+    }
     if (command.type === "session.input.reply") {
       const principal = who(request.principal);
       // Exact same-ID recovery still goes through execute's actor/hash journal check, even after RPC cleanup.
@@ -296,6 +310,7 @@ export async function buildServer(options: {
           throw new DomainError("FORBIDDEN", "当前请求者未获该职责和范围的执行授权。");
         }
         if(!dynamic)await requireActiveModel(session.executionProfile?.revision.model??session.model,sessionProvider(session));
+        await options.requireRunRecipient?.(principal, command, session);
       }
     }
     if (command.type === "schedule.create" || (command.type === "schedule.revise" && command.state === "active")) {
@@ -381,7 +396,13 @@ export async function buildServer(options: {
         operationId:session.operationId}:null,
       profile:profile?{version:profile.version,displayName:profile.displayName,purpose:profile.purpose}:null,
       bound,config,modelCatalog:{status:modelCatalog.status,error:modelCatalog.error,observedAtUtc:modelCatalog.observedAtUtc},
-      missing,recovery:recovery?{gate:recovery.gate,partial:recovery.partial,nextAction:recovery.nextAction}:null,
+      missing,
+      /** For each code in `missing`: the private-configuration key, a fix to copy, and whether a restart is needed. */
+      missingDetails:sessionPreparationHints(missing,{projectId:p.projectId,roleId:q.roleId,sessionActorId:principal.actorId,
+        authorizationScope,cwd,model:selectedModel,roleActorState:config.roleActorState??(config.roleActorId?"ready":"no_entry"),
+        roleActorConfiguredId:config.roleActorConfiguredId??config.roleActorId,materialCliActorId:config.materialCli?.actorId??null,
+        roleActorId:config.roleActorId}),
+      recovery:recovery?{gate:recovery.gate,partial:recovery.partial,nextAction:recovery.nextAction}:null,
       executionProfile:executionProfile?{revision:executionProfile.revision,activationState:executionProfile.activationState,
         activeRevisionId:executionProfile.activeRevisionId,activationOperationId:executionProfile.activationOperationId}:null,
       readyForTasks:!!session&&session.state==="ready"&&bound&&!!profile?.displayName?.trim()&&missing.length===0,

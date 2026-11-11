@@ -2,6 +2,8 @@
 // transaction) and project writers. Arrangement locks the project row FOR UPDATE and then the Task
 // row; a Leader plan update holds the Task row and then key-shares the project row through the
 // leader-work change it records.
+// Refuses a live or shared PostgreSQL server before this file opens TEST_DATABASE_URL (scripts/lib/database-target.mjs).
+import "../../../scripts/test-database-guard.mjs";
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import { after, before, test } from "node:test";

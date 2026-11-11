@@ -33,6 +33,7 @@ import {
 } from "./conversationPresentation";
 import { SessionIdentityMark } from "./SessionIdentityMark";
 import { SessionComposer } from "./SessionComposer";
+import { grantBlockText, grantBlockedNotice } from "./queuedMessagePresentation";
 import { SourceLimitations } from "./SourceLimitations";
 import type { NativeProgressView } from "./NativeSessionPanel";
 
@@ -147,7 +148,7 @@ function TimelineEntry({ item, context, title, taskTitle, sessionKey, target, id
   </article>;
   const failedInput = item.kind === "message" && item.role === "input" && ["failed", "unknown", "interrupted", "declined"].includes(item.state);
   const stateTag = item.kind === "message" && item.role === "input" && ["pending", "running", "failed", "unknown", "interrupted", "declined"].includes(item.state)
-    ? <span className={cn("workspace-input-state rounded-full px-2 py-px text-caption", failedInput ? "bg-danger-soft text-destructive" : "bg-field text-text-secondary")}>{item.state === "pending" ? "排队中" : entryStateLabel[item.state]}</span> : null;
+    ? <span className={cn("workspace-input-state rounded-full px-2 py-px text-caption", failedInput ? "bg-danger-soft text-destructive" : "bg-field text-text-secondary")}>{item.state === "pending" ? (item.kind === "message" && grantBlockText(item.blockedReason) !== null ? "受阻：缺少消息授权" : "排队中") : entryStateLabel[item.state]}</span> : null;
   const actions = <>
     {(expandedBody?.truncated ?? item.truncated) && <Button variant="link" className={linkButton} disabled={bodyBusy} onClick={() => void expandBody()}>{bodyBusy ? "读取完整内容中…" : `读取完整${assistant ? "回复" : "内容"}`}</Button>}
     {messageId && <Button variant="link" className={linkButton} onClick={() => onMessage(messageId)}>消息详情</Button>}
@@ -273,6 +274,7 @@ export function SessionTimeline({ context, snapshot, onApplied, taskHref, refres
   const timeline = useSessionTimeline(context.token, context.projectId, context.principal.actorId, snapshot.session.key, refresh, reauthorizeVersion);
   const capability = sessionMessageEntry(snapshot.session.kind, snapshot.session.capabilities);
   const items = useMemo(() => workspaceReadingOrder(timeline.entries, timeline.pending), [timeline.entries, timeline.pending]);
+  const grantNotice = useMemo(() => grantBlockedNotice(items), [items]);
   const groups = useMemo(() => workspaceReadingGroups(items), [items]);
   const summaries = useMemo(() => turnSummaries(items, timeline.turns, snapshot.results, waitingTurnIds), [items, timeline.turns, snapshot.results, waitingTurnIds]);
   const [inspector, setInspector] = useState<{ entry: WorkspaceEntry } | { messageId: string } | null>(null);
@@ -380,6 +382,7 @@ export function SessionTimeline({ context, snapshot, onApplied, taskHref, refres
     {snapshot.session.kind === "external" && <p className="flex items-center gap-1.5 text-caption text-muted-foreground"><Info size={13} aria-hidden="true" />外部智能体 · 这里只显示已同步的内容，消息保存后需人工转交。</p>}
     {timeline.error && <Notice tone="error" action={<Button size="compact" onClick={timeline.reread}>重新读取活动</Button>}>活动暂不可读取：{timeline.error}
       {timeline.errorOriginal && <details className="mt-1 text-caption text-muted-foreground"><summary className="w-fit cursor-pointer">原文</summary><p lang="en" className="mt-1 font-mono [overflow-wrap:anywhere]">{timeline.errorOriginal}</p></details>}</Notice>}
+    {grantNotice && <Notice tone="waiting"><span role="status" data-grant-blocked-notice="">有 {grantNotice.count} 条来自 {grantNotice.senders.join("、")} 的消息因缺少消息授权而受阻：补上授权前不会送达，它们没有占用队列，后面的消息照常处理。{grantNotice.reason}</span></Notice>}
     <div className="relative flex min-h-0 flex-1 flex-col">
     <div ref={scroll} className="session-conversation-scroll workspace-timeline-scroll flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-1 py-3 outline-none [&>:first-child]:mt-auto" role="log" tabIndex={0} aria-label="消息与工具时间线" aria-live="off" aria-busy={!timeline.loaded} onScroll={event => {
       const node = event.currentTarget;
