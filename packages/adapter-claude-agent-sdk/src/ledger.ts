@@ -20,6 +20,10 @@ export interface TurnSettlement {
   costUsd: number | null;
   /** The provider's cumulative session total after this Turn, kept to derive the next Turn's cost. */
   cumulativeCostUsd: number | null;
+  /** Thinking tokens of this Turn alone (already inside output tokens); null or absent when not provable. */
+  thinkingTokens?: number | null;
+  /** The provider's cumulative session thinking tokens after this Turn, kept to derive the next Turn's. */
+  cumulativeThinkingTokens?: number | null;
   error?: RuntimeTurnFailure;
   /** result: the SDK result message; process_exit: the Turn process ended without one; orphan: observed after a restart. */
   source: "result" | "process_exit" | "orphan";

@@ -7,7 +7,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode }
 import { ArrowDown, FileText, Info, LoaderCircle, MessageCircle, Users } from "lucide-react";
 import type { SessionSnapshot } from "@evoloop/contracts/session-observation";
 import type { SessionMessageProcessing, SessionMessageRecord } from "@evoloop/contracts/session-messages";
-import type { WorkspaceEntry, WorkspaceTool } from "@evoloop/contracts/session-timeline";
+import type { WorkspaceEntry, WorkspaceReasoning, WorkspaceTool, WorkspaceTurn } from "@evoloop/contracts/session-timeline";
 import type { SessionIdentity } from "@evoloop/contracts/session-identity";
 import type { SessionTarget } from "@evoloop/contracts/session-work";
 import {
@@ -29,7 +29,7 @@ import { ActorIdentifiers } from "../../shared/ui/ActorIdentifiers";
 import { workspaceReadingGroups, workspaceReadingOrder } from "./workspaceTimelineModel";
 import {
   elapsedText, entryStateLabel, isFailedEntry, liveStatusText, pinnedToolIds, planExplanation, planSteps, recordLabel, toolDetailReason, toolGroupStatus, toolGroupSummary,
-  entryAuthorText, toolLabel, toolStepState, toolStepText, turnSummaries,
+  entryAuthorText, reasoningSourceLabel, toolLabel, toolStepState, toolStepText, turnLabel, turnReasoningTokensText, turnSummaries,
 } from "./conversationPresentation";
 import { SessionIdentityMark } from "./SessionIdentityMark";
 import { SessionComposer } from "./SessionComposer";
@@ -71,6 +71,28 @@ function useNow(active: boolean): number {
     return () => window.clearInterval(timer);
   }, [active]);
   return now;
+}
+
+/**
+ * One Turn's reasoning, folded by default. Entries keep native order and are numbered within the Turn. Unreadable
+ * reasoning says so with its reason; nothing is filled in from the answer.
+ */
+function ReasoningGroup({ entries, turn, context }: { entries: WorkspaceReasoning[]; turn: WorkspaceTurn | undefined; context: MutationContext }) {
+  const readable = entries.filter(entry => entry.readable).length;
+  const running = entries.some(entry => entry.state === "running" && entry.freshness === "live");
+  return <article aria-label="思考过程" className="workspace-reasoning min-w-0 pl-[38px] text-small" data-workspace-entry={entries[0]!.id} data-turn-id={entries[0]!.turnId ?? undefined}>
+    <CollapsibleRow summary={<span>思考过程 · {turnLabel(entries[0]!.turnId, turn?.startedAt)} · {entries.length} 条{readable < entries.length ? `（${entries.length - readable} 条不可显示）` : ""} · {turnReasoningTokensText(turn?.usage)}{running ? " · 进行中" : ""}</span>}>
+      <ol className="flex flex-col gap-3">
+        {entries.map((entry, index) => <li key={entry.id} className="flex flex-col gap-1" data-workspace-entry={entry.id} data-reasoning-item={entry.nativeItemId ?? undefined}>
+          <p className="text-caption text-muted-foreground">条目 {index + 1} / {entries.length} · {entry.readable ? reasoningSourceLabel[entry.source] : entry.state === "running" ? "进行中" : "不可显示"}{entry.truncated ? " · 已截断" : ""}</p>
+          {entry.readable
+            ? <div className={cn(replyProse, "text-small text-text-secondary")}><MarkdownBody source={entry.body} identity={`workspace-reasoning-${entry.id}`} projectId={context.projectId} topHeading={4} /></div>
+            : entry.state === "running" ? <p className="text-caption text-muted-foreground">思考尚未结束。</p>
+              : <p className="text-caption text-muted-foreground">不可显示：{entry.unavailableReason ?? "原生记录没有可读的推理内容。"}</p>}
+        </li>)}
+      </ol>
+    </CollapsibleRow>
+  </article>;
 }
 
 function ToolGroup({ entries, scope, context, sessionKey, mayReadOriginal }: { entries: WorkspaceTool[]; scope: string; context: MutationContext; sessionKey: string; mayReadOriginal: boolean }) {
@@ -138,7 +160,7 @@ function TimelineEntry({ item, context, title, taskTitle, sessionKey, target, id
   const provenSession = assistant && target.kind === "owned" && item.author.kind === "session" && item.author.id === target.sessionId;
   const label = mine ? "我" : assistant ? title : entryAuthorText(item.author, title, context.principal.actorId);
   const messageId = item.origin?.kind === "message" ? item.origin.id : null;
-  const heading = item.kind === "message" ? null : item.kind === "tool" ? toolLabel(item.name) : recordLabel(item.label);
+  const heading = item.kind === "message" ? null : item.kind === "tool" ? toolLabel(item.name) : item.kind === "reasoning" ? "思考过程" : recordLabel(item.label);
   const expandedBody = item.kind === "message" && fullText && item.state !== "running" && fullText.body.startsWith(item.body) ? fullText : null;
   const body = expandedBody?.body ?? (item.kind === "tool" ? toolStepText(item) : item.body);
   const runHref = item.origin?.kind === "run" && item.origin.taskId ? `${taskHref(item.origin.taskId)}${taskHref(item.origin.taskId).includes("?") ? "&" : "?"}run=${encodeURIComponent(item.origin.id)}` : null;
@@ -395,7 +417,9 @@ export function SessionTimeline({ context, snapshot, onApplied, taskHref, refres
       {(timeline.nextCursor || timeline.messagesCursor) && <Button variant="ghost" size="compact" className="h-auto self-center px-3 py-1 text-caption font-normal text-primary hover:bg-accent hover:text-primary disabled:text-muted-foreground disabled:opacity-100" disabled={timeline.moreBusy || timeline.reconciling} onClick={() => void more()}>{timeline.reconciling ? "正在校准历史…" : timeline.moreBusy ? "正在读取更早内容…" : "加载更早的消息与活动"}</Button>}
       {!timeline.loaded && <p className="flex items-center gap-2 text-small text-muted-foreground" role="status"><LoaderCircle size={16} className="animate-spin motion-reduce:animate-none" aria-hidden="true" />正在读取对话…</p>}
       {timeline.loaded && !timeline.error && !groups.length && !children && !activeTurn && <div className="session-conversation-empty flex flex-col items-center gap-1.5 py-10 text-center text-small text-muted-foreground"><MessageCircle size={25} aria-hidden="true" /><strong className="text-body font-medium text-foreground">{timeline.page?.partial ? "当前来源尚未提供可读的活动" : "从这里开始沟通"}</strong><span>{timeline.page?.partial ? "这不代表原来没有历史记录，可在读取范围中查看原因。" : "发送消息后，这个智能体的回复与工具活动会连续显示在这里。"}</span></div>}
-      {groups.map(group => group.kind === "tools"
+      {groups.map(group => group.kind === "reasoning"
+        ? [<ReasoningGroup key={`reasoning:${group.id}`} entries={group.entries} turn={timeline.turns.find(turn => turn.id === group.turnId)} context={context} />, summaryFor(group.entries.at(-1)!.id)]
+        : group.kind === "tools"
         ? [<ToolGroup key={`tools:${group.id}`} entries={group.entries} scope={scope} context={context} sessionKey={snapshot.session.key} mayReadOriginal={mayReadOriginal} />, summaryFor(group.entries.at(-1)!.id)]
         : [<TimelineEntry key={group.entry.id} item={group.entry} context={context} title={agentDisplayName(snapshot.session)} taskTitle={snapshot.currentWork && group.entry.origin?.taskId === snapshot.currentWork.id ? snapshot.currentWork.title : null} sessionKey={snapshot.session.key} target={snapshot.session.target} identity={snapshot.session.identity} taskHref={taskHref} onExpanded={timeline.replaceEntry} onDetail={entry => inspect({ entry })} onMessage={messageId => inspect({ messageId })} />, summaryFor(group.entry.id)])}
       {activeTurn && (live

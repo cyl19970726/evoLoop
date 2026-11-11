@@ -3,16 +3,18 @@ import { createHash, randomUUID } from "node:crypto";
 import { access, mkdir, readdir } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 import { query, type Options, type Query, type SDKAssistantMessage, type SDKResultMessage, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
+import type { NativeWorkspacePage, NativeWorkspaceReadOptions } from "@evoloop/contracts/session-timeline";
 import type { RuntimeApprovalRequest, RuntimeBinding, RuntimeCapabilities, RuntimeEvent, RuntimeHistoryItem,
   RuntimeModelList, RuntimePage, RuntimePort, RuntimeSessionSpec, RuntimeSkillPlan, RuntimeTurn } from "@evoloop/contracts/runtime";
 import { ownerOf, RuntimeNotSentError, RuntimeProtocolError, RuntimeUnknownError } from "@evoloop/contracts/runtime";
 import type { ExecutionProfileSnapshot } from "@evoloop/contracts/session-recovery";
-import { classifyResult, failure, turnCost, usageOf, usd, type ObservedResult } from "./classify.js";
+import { classifyResult, failure, thinkingTokensOf, turnCost, turnThinking, usageOf, usd, type ObservedResult } from "./classify.js";
+import { readLedgerWorkspace } from "./workspace.js";
 import { observeInit, planSkillsOf, readInstructions, skillSettingsOf, verifySkillPlan, type ContextMode, type TurnContext } from "./context.js";
 import { TurnLedger, type LedgerTurn, type LedgerView, type TurnSettlement } from "./ledger.js";
 import { signalGroup, spawnClaudeProcess } from "./process.js";
 
-export { classifyResult, turnCost, usageOf } from "./classify.js";
+export { classifyResult, thinkingTokensOf, turnCost, turnThinking, usageOf } from "./classify.js";
 export { CLAUDE_BUILTIN_PLUGIN_SKILLS, MAX_INSTRUCTION_BYTES, planSkillsOf, skillPlanHash, skillPluginManifest, skillSettingsOf,
   validSkillPlan, verifySkillPlan, type ContextMode } from "./context.js";
 export { TurnLedger } from "./ledger.js";
@@ -107,6 +109,7 @@ interface LiveTurn {
   observed: boolean;
   assistantError: string | null;
   previousCumulative: number | null;
+  previousThinking: number | null;
   settled: boolean;
   release: () => void;
   done: Promise<void>;
@@ -193,7 +196,7 @@ export class ClaudeAgentSdkAdapter implements RuntimePort {
         callerAssignedSessionId: true },
       errors: { notSent: true, rejected: false },
       compaction: { autoCompacts: true, mode: "unavailable" },
-      history: { workTrace: false, workspace: false },
+      history: { workTrace: false, workspace: true },
       naming: false, archive: "adapter_ledger", nativeInput: false, executionProfileActivation: false,
       modelList: true, usage: "per_turn", cost: true,
     };
@@ -355,6 +358,15 @@ export class ClaudeAgentSdkAdapter implements RuntimePort {
     return { data: items.slice(offset, offset + PAGE), nextCursor: offset + PAGE < items.length ? String(offset + PAGE) : null };
   }
 
+  /** Timeline history from the adapter ledger: inputs, replies, tool calls and thinking per Turn, with per-Turn usage. */
+  async readWorkspaceHistory(binding: RuntimeBinding, options: NativeWorkspaceReadOptions = {}): Promise<NativeWorkspacePage> {
+    this.owned(binding);
+    const view = await this.view(binding);
+    const live = this.live.get(this.key(binding));
+    return readLedgerWorkspace(binding, this.visible(binding, view), options, this.now(),
+      turnId => live?.turnId === turnId && !live.settled);
+  }
+
   private offset(cursor?: string): number {
     if (cursor === undefined) return 0;
     if (!/^[1-9][0-9]{0,8}$/.test(cursor)) throw new RuntimeProtocolError("invalid history cursor");
@@ -486,7 +498,7 @@ export class ClaudeAgentSdkAdapter implements RuntimePort {
     const released = new Promise<void>(resolveRelease => { release = resolveRelease; });
     const live: LiveTurn = { projectId: binding.projectId, nativeSessionId: binding.nativeSessionId, turnId: randomUUID(),
       controller: new AbortController(), query: null, child: null, sent: false, blocked: false, onSent: null,
-      interruptRequested: false, closing: false, assistantError: null, previousCumulative: null, settled: false,
+      interruptRequested: false, closing: false, assistantError: null, previousCumulative: null, previousThinking: null, settled: false,
       context: { mode: this.options.contextMode ?? "project", plan: null, allowedSkills: null, instructions: null }, observed: false,
       release, done: Promise.resolve() };
     // Registered before any await so a concurrent read never mistakes this start for an orphan.
@@ -515,6 +527,7 @@ export class ClaudeAgentSdkAdapter implements RuntimePort {
         catch { throw new RuntimeNotSentError("turn/start", "Claude transcript directory could not be read"); }
       }
       live.previousCumulative = resume ? prior.at(-1)?.settled?.cumulativeCostUsd ?? null : 0;
+      live.previousThinking = resume ? prior.at(-1)?.settled?.cumulativeThinkingTokens ?? null : 0;
       try {
         await this.ledger.append(binding.projectId, binding.nativeSessionId, { kind: "turn.started", at: this.now(),
           turnId: live.turnId, operationId, input, resume });
@@ -620,6 +633,9 @@ export class ClaudeAgentSdkAdapter implements RuntimePort {
       disallowedTools: [...(this.options.disallowedTools ?? DEFAULT_DISALLOWED_TOOLS)],
       ...(model ? { model } : {}),
       ...(effort ? { effort: effort as NonNullable<Options["effort"]> } : {}),
+      // Readable thinking: the CLI's default display can omit thinking text. This only selects the summarized text the
+      // API returns; it does not turn thinking on or change its budget, so billed thinking tokens are unchanged.
+      extraArgs: { "thinking-display": "summarized" },
       ...(this.options.maxTurns ? { maxTurns: this.options.maxTurns } : {}),
       ...(this.options.maxBudgetUsd ? { maxBudgetUsd: this.options.maxBudgetUsd } : {}),
     };
@@ -704,8 +720,13 @@ export class ClaudeAgentSdkAdapter implements RuntimePort {
     const content: unknown[] = Array.isArray(message.message?.content) ? message.message.content : [];
     const items: RuntimeHistoryItem[] = [];
     content.forEach((block, index) => {
-      const value = block as { type?: unknown; text?: unknown; id?: unknown; name?: unknown };
-      if (value.type === "text" && nonempty(value.text)) items.push({ id: `${message.uuid}:${index}`, type: "agentMessage", text: value.text, phase: "commentary" });
+      const value = block as { type?: unknown; text?: unknown; id?: unknown; name?: unknown; thinking?: unknown };
+      // Thinking text exactly as Claude returned it. Omitted (empty) or redacted thinking is recorded as unreadable,
+      // never filled in; the signature and redacted data are not stored.
+      if (value.type === "thinking" || value.type === "redacted_thinking") items.push({ id: `${message.uuid}:${index}`, type: "reasoning",
+        source: "thinking", text: value.type === "thinking" && typeof value.thinking === "string" && value.thinking.trim() ? value.thinking : null,
+        redacted: value.type === "redacted_thinking" });
+      else if (value.type === "text" && nonempty(value.text)) items.push({ id: `${message.uuid}:${index}`, type: "agentMessage", text: value.text, phase: "commentary" });
       // Tool input can carry file contents or secrets; only the call identity is kept.
       else if (value.type === "tool_use" && nonempty(value.id)) items.push({ id: value.id, type: "toolCall", name: nonempty(value.name) ? value.name : null });
     });
@@ -722,8 +743,10 @@ export class ClaudeAgentSdkAdapter implements RuntimePort {
         error: failure("native_failure", "session_mismatch", null, "Claude answered under a different session") };
     const classified = classifyResult(result, { assistantError: live.assistantError, interruptRequested: live.interruptRequested });
     const cumulative = usd(result.total_cost_usd);
+    const thinking = thinkingTokensOf(result.modelUsage);
     return { status: classified.status, completedAtUtc, usage: usageOf(result.usage),
-      costUsd: turnCost(cumulative, live.previousCumulative), cumulativeCostUsd: cumulative, source: "result",
+      costUsd: turnCost(cumulative, live.previousCumulative), cumulativeCostUsd: cumulative,
+      thinkingTokens: turnThinking(thinking, live.previousThinking), cumulativeThinkingTokens: thinking, source: "result",
       ...(classified.status === "failed" ? { error: classified.error } : {}) };
   }
 

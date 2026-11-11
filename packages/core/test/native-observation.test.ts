@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { reduceNativeObservation } from '../src/native-observation/index.ts';
-import { NativeObservationService } from '../src/native-observation/index.ts';
+import { NativeObservationService, reduceNativeObservation, turnUsageOf } from '../src/native-observation/index.ts';
 import type { NativeObservationRecord, NativeObservationEvent } from '@evoloop/contracts/native-observation';
 const identity = {projectId:'project',sessionId:'session',threadId:'thread',connectionId:'connection',observedAt:'2026-10-27T00:00:00.000Z'};
 const event = (method:string,params:unknown,extra:Partial<NativeObservationEvent>={}):NativeObservationEvent=>({...identity,method,params,...extra});
@@ -116,4 +115,20 @@ test('the usage ledger records cumulative deltas and starts a replacement thread
     [{inputTokens:50,outputTokens:10,cachedInputTokens:0,costUsd:0,costReported:false}],
     [{inputTokens:200,outputTokens:40,cachedInputTokens:0,costUsd:0,costReported:false}],
   ]);
+test('per-Turn usage is the Thread total difference from before the Turn\'s first request',()=>{
+  const u=(input:number,output:number,reasoning:number)=>({inputTokens:input,cachedInputTokens:0,outputTokens:output,reasoningOutputTokens:reasoning,totalTokens:input+output});
+  let row=reduce(null,'turn/started',started('one'))!;
+  // Thread already used 1000/200/50 before this observer; the first request of Turn one used 100/30/10.
+  row=reduce(row,'thread/tokenUsage/updated',{threadId:'thread',turnId:'one',tokenUsage:{total:u(1100,230,60),last:u(100,30,10)}})!;
+  row=reduce(row,'thread/tokenUsage/updated',{threadId:'thread',turnId:'one',tokenUsage:{total:u(1300,280,75),last:u(200,50,15)}})!;
+  row=reduce(row,'turn/started',started('two'))!;
+  row=reduce(row,'thread/tokenUsage/updated',{threadId:'thread',turnId:'two',tokenUsage:{total:u(1400,300,80),last:u(100,20,5)}})!;
+  assert.deepEqual(row.turnUsage!.map(entry=>[entry.turnId,turnUsageOf(entry).outputTokens,turnUsageOf(entry).reasoningOutputTokens]),
+    [['one',80,25],['two',20,5]]);
+  // An unreported field stays unknown, never zero.
+  row=reduce(row,'turn/started',started('three'))!;
+  row=reduce(row,'thread/tokenUsage/updated',{threadId:'thread',turnId:'three',tokenUsage:{total:{...u(1500,320,90),reasoningOutputTokens:null},last:u(100,20,10)}})!;
+  assert.equal(turnUsageOf(row.turnUsage!.at(-1)!).reasoningOutputTokens,null);
+  for(let i=0;i<40;i++)row=reduce(reduce(row,'turn/started',started(`t${i}`))!,'thread/tokenUsage/updated',{threadId:'thread',turnId:`t${i}`,tokenUsage:{total:u(2000+i,400+i,100+i),last:u(1,1,1)}})!;
+  assert.equal(row.turnUsage!.length,24);assert.equal(row.turnUsage!.at(-1)!.turnId,'t39');
 });

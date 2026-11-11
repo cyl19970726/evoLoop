@@ -10,6 +10,7 @@ export interface ObservedResult {
   terminal_reason?: unknown;
   api_error_status?: unknown;
   session_id?: unknown;
+  modelUsage?: unknown;
 }
 
 export interface TurnObservation {
@@ -102,4 +103,26 @@ export const usd = (value: unknown): number | null =>
 export function turnCost(cumulative: number | null, previous: number | null): number | null {
   if (cumulative === null || previous === null || cumulative < previous) return null;
   return Math.round((cumulative - previous) * 1e10) / 1e10;
+}
+
+/**
+ * Cumulative session thinking tokens from the SDK's per-model usage. Every model entry must report the field;
+ * an older CLI that omits it leaves the total unknown rather than zero.
+ */
+export function thinkingTokensOf(modelUsage: unknown): number | null {
+  if (!modelUsage || typeof modelUsage !== "object" || Array.isArray(modelUsage)) return null;
+  const entries = Object.values(modelUsage as Record<string, unknown>);
+  if (!entries.length) return null;
+  let total = 0;
+  for (const entry of entries) {
+    const value = entry && typeof entry === "object" ? count((entry as Record<string, unknown>).thinkingTokens) : null;
+    if (value === null) return null;
+    total += value;
+  }
+  return total;
+}
+
+/** A Turn's own thinking tokens from cumulative totals, as for cost; unproven when either is unknown or it went back. */
+export function turnThinking(cumulative: number | null, previous: number | null): number | null {
+  return cumulative === null || previous === null || cumulative < previous ? null : cumulative - previous;
 }

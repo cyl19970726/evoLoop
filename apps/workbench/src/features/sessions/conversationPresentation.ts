@@ -189,3 +189,22 @@ export function turnSummaries(entries: readonly WorkspaceEntry[], turns: readonl
   }
   return lines;
 }
+
+/** Token count for display; null stays unknown, never zero. */
+const tokenCount = (value: number | null | undefined): string | null => typeof value === "number" ? value.toLocaleString("zh-CN") : null;
+/** One Turn's reasoning tokens as the native source reported them. */
+export function turnReasoningTokensText(usage: WorkspaceTurn["usage"]): string {
+  if (!usage) return "推理 token：原生未报告";
+  const reasoning = tokenCount(usage.reasoningOutputTokens), output = tokenCount(usage.outputTokens);
+  const source = usage.source === "claude-result" ? "Claude 结果用量" : "Codex 用量事件";
+  return `推理 token ${reasoning ?? "原生未报告"}${output ? ` / 输出 ${output}` : ""}（${source}）`;
+}
+/** A short, stable label for the Turn a reasoning group belongs to. */
+export function turnLabel(turnId: string | null, startedAt: string | null | undefined): string {
+  if (!turnId) return "回合未标明";
+  const time = startedAt ? new Date(startedAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" }) : null;
+  return `回合 ${turnId.slice(0, 8)}${time ? ` · ${time} 开始` : ""}`;
+}
+export const reasoningSourceLabel: Record<"summary" | "raw" | "thinking" | "none", string> = {
+  summary: "推理摘要", raw: "原生推理文字", thinking: "思考内容", none: "不可显示",
+};

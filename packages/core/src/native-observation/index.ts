@@ -1,4 +1,4 @@
-import type { NativeObservationEvent, NativeObservationProjection, NativeObservationRecord, NativeUsageBreakdown, NativeItemStatus, NativeTurnStatus, NativeStatus } from '@evoloop/contracts/native-observation';
+import type { NativeObservationEvent, NativeObservationProjection, NativeObservationRecord, NativeTurnUsage, NativeUsageBreakdown, NativeItemStatus, NativeTurnStatus, NativeStatus } from '@evoloop/contracts/native-observation';
 import type { Clock, UnitOfWork } from '@evoloop/contracts/ports';
 import { DomainError } from '@evoloop/contracts/ports';
 
@@ -40,9 +40,32 @@ function turnIdFor(method: string, params: Record<string, unknown>): string | nu
   if (method === 'turn/started' || method === 'turn/completed') return id(object(params.turn)?.id) ? object(params.turn)!.id as string : null;
   return id(params.turnId) ? params.turnId : null;
 }
+const TURN_USAGE_LIMIT = 24;
+const usageKeys = ['inputTokens','cachedInputTokens','outputTokens','reasoningOutputTokens','totalTokens'] as const;
+/** total - last, per field; null when either side is unknown or the difference is negative. */
+function before(total: NativeUsageBreakdown, last: NativeUsageBreakdown): NativeUsageBreakdown {
+  const out = {} as NativeUsageBreakdown;
+  for (const key of usageKeys) { const a = total[key], b = last[key]; out[key] = a !== null && b !== null && a >= b ? a - b : null; }
+  return out;
+}
+/** One Turn's own usage from its recorded Thread totals; null fields were not provable. */
+export function turnUsageOf(entry: NativeTurnUsage): NativeUsageBreakdown {
+  const out = {} as NativeUsageBreakdown;
+  for (const key of usageKeys) { const a = entry.total[key], b = entry.base[key]; out[key] = a !== null && b !== null && a >= b ? a - b : null; }
+  return out;
+}
+function recordTurnUsage(list: NativeTurnUsage[] | undefined, turnId: string, total: NativeUsageBreakdown, last: NativeUsageBreakdown, at: string): NativeTurnUsage[] {
+  const next = [...(list ?? [])];
+  const index = next.findIndex(entry => entry.turnId === turnId);
+  if (index >= 0) next[index] = { ...next[index]!, total, observedAt: at };
+  else next.push({ turnId, base: before(total, last), total, observedAt: at });
+  while (next.length > TURN_USAGE_LIMIT) next.shift();
+  return next;
+}
 function bounded(value: NativeObservationRecord): NativeObservationRecord {
   // Fields are individually bounded; this guard handles long multibyte identifiers and future additions.
   while (bytes(JSON.stringify(value)) > 24576 && value.items.length) value.items.shift();
+  while (bytes(JSON.stringify(value)) > 24576 && (value.turnUsage?.length ?? 0) > 1) value.turnUsage!.shift();
   if (bytes(JSON.stringify(value)) > 24576 && value.diff) { value.diff = { ...value.diff, ...{ text: '', truncated: true } }; }
   if (bytes(JSON.stringify(value)) > 24576) throw new DomainError('OBSERVATION_TOO_LARGE','Native observation exceeds storage limit');
   return value;
@@ -114,7 +137,9 @@ export function reduceNativeObservation(previous: NativeObservationRecord | null
     case 'thread/tokenUsage/updated': {
       const v = object(params.tokenUsage); if (!v) return null;
       next.usage = { turnId: turnId!, total: usageBreakdown(v.total), last: usageBreakdown(v.last),
-        modelContextWindow: metric(v.modelContextWindow), observedAt: event.observedAt }; break;
+        modelContextWindow: metric(v.modelContextWindow), observedAt: event.observedAt };
+      if (turnId) next.turnUsage = recordTurnUsage(previous?.turnUsage, turnId, next.usage.total, next.usage.last, event.observedAt);
+      break;
     }
   }
   next.lastEventAt = event.observedAt; next.observedAt = event.observedAt; next.freshness = 'live'; next.staleReason = null;

@@ -155,6 +155,11 @@ function signalProcessGroup(child: ChildProcess, signal: NodeJS.Signals): void {
 }
 const DEFAULT_MAX_LINE_BYTES = 64 * 1024 * 1024;
 const MAX_SEEN_TOOL_CALLS = 10_000;
+/**
+ * Reasoning summaries for business Turns. `auto` lets Codex pick the most detailed summary the model supports and
+ * sends nothing to a model whose catalog entry does not support summaries; `none` (the catalog default) hid them.
+ */
+const REASONING_SUMMARY='auto';
 // Bounded wait for the post-turn/start history attach window of thread/turns/list (about 1.5 s in total).
 const TURN_LIST_ATTACH_RETRIES = 5;
 const TURN_LIST_ATTACH_DELAY_MS = 100;
@@ -1459,7 +1464,7 @@ export class CodexAppServerAdapter implements RuntimePort {
           threadId,input:[{type:'text',text:input}],clientUserMessageId:operationId,
           cwd:binding.cwd,...(prior.model!=null?{model:prior.model}:{}),
           ...(profile.reasoningEffort?{effort:profile.reasoningEffort}:{}),
-          sandboxPolicy:FULL_POLICY,approvalPolicy:'never',
+          summary:REASONING_SUMMARY,sandboxPolicy:FULL_POLICY,approvalPolicy:'never',
         }));
       }catch(error){
         if(error instanceof RuntimeProtocolError&&!(error instanceof RuntimeServerError)&&
@@ -1819,7 +1824,7 @@ export class CodexAppServerAdapter implements RuntimePort {
       result = object(await this.request("turn/start", { threadId: binding.nativeThreadId, input: [{ type: "text", text: input }], clientUserMessageId: operationId,
         ...(binding.resumeProfile?.model?{model:binding.resumeProfile.model}:{}),
         ...(executionProfile?.reasoningEffort?{effort:executionProfile.reasoningEffort}:{}),
-        cwd:binding.cwd,sandboxPolicy:FULL_POLICY,approvalPolicy:'never' }));
+        summary:REASONING_SUMMARY,cwd:binding.cwd,sandboxPolicy:FULL_POLICY,approvalPolicy:'never' }));
     } catch (error) {
       // Nothing was written, so the caller may withdraw its intent and dispatch this operation again.
       if (error instanceof RuntimeNotSentError) fullAttempts.delete(operationId);

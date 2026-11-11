@@ -208,13 +208,14 @@ Codex 一列有几项取决于运行配置选的协议版本。“现代协议�
 | 自动压缩 | 运行时自己压缩 | 运行时自己压缩 |
 | 托管压缩 | 仅 alpha.6；默认版本不支持 | 不支持 |
 | Turn 历史 | 原生 `thread/turns/list`、`thread/items/list` | 适配器账本，在进程启动前先记账 |
-| 工作轨迹与连续工作区 | 支持轨迹；工作区历史需另开实验开关 | 都不支持 |
+| 工作轨迹与连续工作区 | 支持轨迹；工作区历史需另开实验开关 | 不支持轨迹；时间线历史读适配器账本（输入、回复、工具调用名、思考块），没有实时推送 |
+| 时间线思考过程 | `reasoning` Item：有摘要显示摘要，否则显示可读原生推理文字，都没有标“不可显示”；业务 Turn 以 `summary: auto` 请求摘要 | thinking 块原文；以 `--thinking-display summarized` 取得可读摘要，不改思考开关与预算；空块与 `redacted_thinking` 标“不可显示” |
 | 会话命名 | 现代协议支持 | 不支持 |
 | 归档 | 原生 `thread/archive` | 适配器账本登记，拒绝后续 Turn |
 | 模型与思考强度修订 | 仅 alpha.6；需精确读回 | 不支持，沿用创建时的模型 |
 | 原生提问桥（`request_user_input`） | 默认关闭，可按配置打开 | 不支持；提问工具被禁用 |
 | 明确拒绝的启动结果 | 能区分“未发送”“被拒绝” | 只能区分“未发送”，其余为未知 |
-| 逐 Turn 用量与费用 | 不写入 Run；Token 读数只在原生观察里 | 写入 Run 的 `usage` 与 `cost_usd`（schema 067） |
+| 逐 Turn 用量与费用 | 不写入 Run；Token 读数只在原生观察里，最近 24 个 Turn 的推理与输出 token 由 Thread 累计读数相减，显示在时间线 | 写入 Run 的 `usage` 与 `cost_usd`（schema 067）；每轮思考 token 取 SDK `modelUsage.thinkingTokens` 的累计差，旧 CLI 不报时为未知 |
 | 浏览器只读桥 | 实验性，需单独配置 `browserRead` | 不支持 |
 | 进程故障的影响范围 | 共用子进程断开会影响所有在途 Turn | 只影响出问题的那个 Turn |
 
