@@ -189,7 +189,8 @@ export class ClaudeAgentSdkAdapter implements RuntimePort {
   capabilities(): RuntimeCapabilities {
     return {
       provider: "claude", process: "per_turn",
-      delivery: { midTurnInput: false, callerAssignedTurnKey: false, callerAssignedSessionId: true },
+      delivery: { midTurnInput: false, idleTurnStart: false, callerAssignedTurnKey: false,
+        callerAssignedSessionId: true },
       errors: { notSent: true, rejected: false },
       compaction: { autoCompacts: true, mode: "unavailable" },
       history: { workTrace: false, workspace: false },

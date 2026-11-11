@@ -37,6 +37,7 @@ import { NativeSessionPanel } from "./NativeSessionPanel";
 import { SessionClosePanel } from "./SessionClosePanel";
 import { SessionExecutionFacts } from "./SessionExecutionFacts";
 import { SessionModelControl } from "./SessionModelControl";
+import { UsageBudgetPanel } from "./UsageBudgetPanel";
 import { SessionIdentityMark } from "./SessionIdentityMark";
 import { SessionIdentityControl } from "./SessionIdentityControl";
 import { nativeInputPresentation } from "./nativeInputPresentation";
@@ -393,6 +394,8 @@ export function SessionWorkspace({ context, sessionKey, active, refresh, queue }
       ["实际运行模型", actualModel ? String(actualModel) : "没有可靠记录"],
       ["用量", observation.progress?.usage ? `输入 ${observation.progress.usage.total.inputTokens ?? "未提供"} · 输出 ${observation.progress.usage.total.outputTokens ?? "未提供"}${observation.progress.freshness === "live" && nativeReadCurrent ? "" : "（上次记录）"}` : "没有可靠记录，不按 0 计"],
     ]} />
+    {session.kind === "owned" && session.target.kind === "owned" && <UsageBudgetPanel
+      projectId={projectId} token={context.token} sessionId={session.target.sessionId} />}
     {session.kind === "external" ? <p className={mutedText}>外部智能体的实时状态、模型与工具没有同步到这里。</p>
       : session.target.kind === "owned" && <SessionModelControl context={context} sessionId={session.target.sessionId} recovery={recoveryRead.status === "ready" ? recoveryRead.view : null} busy={busyNow} onApplied={() => void snapshotRead.refetch()} />}
   </PanelSection>;

@@ -44,6 +44,8 @@ import { parseQueueHandoff } from "@evoloop/contracts/runtime-handoff";
 import { NativeInputBridge } from "./runtime/native-input.js";
 import { NativeInputService } from "@evoloop/core/native-input";
 import { NativeObservationService } from "@evoloop/core/native-observation";
+import { UsageService, usageDay } from "@evoloop/core/usage";
+import { contextPressure } from "@evoloop/core/context-budget";
 import { NativeObservationBridge } from "./runtime/native-observation.js";
 import { brokeredCliForRun } from "./runtime/brokered-cli.js";
 import { staticRecoveryAuthority } from "./runtime/recovery-authority.js";
@@ -75,6 +77,7 @@ import { AllocationRelationsService } from "@evoloop/core/allocation-relations";
 import { SessionMessageService } from "@evoloop/core/session-messages";
 import type { SessionMessageManualStopPreflight } from "@evoloop/contracts/session-messages";
 import { SessionMessagePump } from "./session-messages/pump.js";
+import { ordinaryTurnAdmission } from "./session-messages/ordinary-turn-admission.js";
 import { PgDirectInputs } from "@evoloop/adapter-postgres/direct-input";
 import { createDirectInputService } from "./direct-input/integration.js";
 import { requireDirectInputRuntime } from "./direct-input/service.js";
@@ -94,6 +97,7 @@ import { ConnectorIngressPump } from "./message-connectors/pump.js";
 import { currentConnectorBusinessActor } from "./message-connectors/business-actor.js";
 import { qualifyStandardConnectorRoute } from "./message-connectors/qualification.js";
 import { bindingOf } from "./runtime/runner.js";
+import { SessionSteerLock } from "./runtime/session-steer-lock.js";
 import { localProjectConfiguration } from "./project-configuration/local.js";
 
 const databaseUrl = process.env.EVOLOOP_DATABASE_URL;
@@ -111,6 +115,7 @@ const skillSourceRoot = fileURLToPath(new URL("../../../", import.meta.url));
 pool.on("error", () => { /* Requests receive explicit unavailable responses; credentials are never logged. */ });
 const lease = await acquireCoordinatorLease(pool);
 const integrations = await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE);
+const configuredUsageTimeZone = integrations.runtime?.dailyBudget?.timeZone ?? "UTC";
 const currentIdentity = async () => authConfigSchema.parse(JSON.parse(await readFile(authFile,"utf8")));
 const currentProjectWriter = async (projectId:string,actorId:string) =>
   isProjectWriter(await currentIdentity(),projectId,actorId);
@@ -150,6 +155,7 @@ const uow = new PostgresUnitOfWork(pool, {
 const clock = { now: () => new Date().toISOString() };
 const ids = { next: randomUUID };
 const hasher = { hash: (value: string) => createHash("sha256").update(value, "utf8").digest("hex") };
+const usage = new UsageService({ uow, clock });
 const service = new WorkflowService({
   uow, clock, ids,
   hasher,
@@ -188,7 +194,8 @@ const service = new WorkflowService({
 const ordinarySubmissions = new OrdinaryRunSubmissionService(pool, uow, lease.canWrite);
 const ordinarySealWorkflow = new WorkflowService({uow:leaseCheckedUnitOfWork(uow, lease.canWrite),clock,ids,hasher});
 const manualStopWorkflow = new WorkflowService({uow:leaseFencedUnitOfWork(uow,lease),clock,ids,hasher});
-const trustedRuntime = new RuntimeWorkflowService({ uow, clock, ids });
+const trustedRuntime = new RuntimeWorkflowService({ uow, clock, ids,
+  usageDay: at => usageDay(at, configuredUsageTimeZone) });
 const configuredBlobRoot = process.env.EVOLOOP_BLOB_ROOT;
 if (configuredBlobRoot && !isAbsolute(configuredBlobRoot)) throw new Error("EVOLOOP_BLOB_ROOT must be an absolute external data directory.");
 const blobRoot = resolve(configuredBlobRoot ?? `${homedir()}/.local/share/evoloop-pilot/blobs`);
@@ -331,7 +338,8 @@ const currentSessionExecutionAuthority = async (session:RuntimeSessionRecord) =>
     dynamicAdmission?()=>dynamicAdmission.canStartConversation(session):undefined);
 };
 const nativeInputService = new NativeInputService({ uow, clock, ids });
-const nativeObservation = new NativeObservationBridge({ service: new NativeObservationService({ uow, clock }),
+const nativeObservation = new NativeObservationBridge({ service: new NativeObservationService({ uow, clock,
+  usageDay: at => usageDay(at, configuredUsageTimeZone) }),
   canWrite: lease.canWrite, now: clock.now,
   session: (projectId, sessionId) => uow.read(projectId, reader => reader.getRuntimeSession(sessionId)),
   projects: async () => [...new Set((await currentIdentity()).flatMap(p => p.projectIds))],
@@ -433,7 +441,9 @@ const runtimeFactory = runtimeConfig?.enabled ? (): ManagedRuntime => {
   return children.size === 1 ? [...children.values()][0]! : new ProviderRoutedRuntime(children, runtimeConfig.provider, build);
 } : null;
 let managedCliBroker: WorkerCredentialBroker | null = null;
+const sessionSteerLock = new SessionSteerLock();
 const runner = runtimeFactory ? new RuntimeRunner({ runtimeFactory, workflow: service, trusted: trustedRuntime, nativeInputs, nativeObservation,
+  steerLock: sessionSteerLock,
   profileForSession: (_principal, session) => uow.read(session.projectId, async reader => {
     if (!reader.sessionAssignments) throw new Error("Session profile storage unavailable");
     return reader.sessionAssignments.getSessionProfile({ kind: "owned", sessionId: session.id });
@@ -552,7 +562,8 @@ try { await scheduling.start(); } catch { console.error("Scheduling startup chec
 const connectorLinks = new PgConnectorMessageLinks(pool);
 const connectorRoutes = new PgConnectorRoutes(pool);
 const connectorDecisions = new PgConnectorDeliveryDecisions(pool);
-const messageService = new SessionMessageService({ uow, clock, ids, grantFor: async (message, session) => {
+const messageService = new SessionMessageService({ uow, clock, ids,
+  usageDay: at => usageDay(at, configuredUsageTimeZone), grantFor: async (message, session) => {
   const configured=await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE);
   const current = configured.sessionMessages;
   if (!current?.enabled || !await currentProjectWriter(message.projectId, message.senderActorId)) return null;
@@ -667,6 +678,7 @@ const taskAttentionPump = new TaskAttentionPump({pool,canWrite:lease.canWrite,no
 const businessBeforeMessage = sessionMessageCanStart({ workflow: service, service: messageService, principals: currentIdentity,
   onError: () => console.error("Task answer continuation requires review; inspect the saved queue and message reason.") });
 const messagePump = runner ? new SessionMessagePump({ service: messageService, runtime: () => runner.nativeAdapter(),
+  lock: sessionSteerLock,
   roleContext: async message => {
     if(message.target.kind!=="owned")return null;
     const session=await messageService.session(message.projectId,message.target.sessionId);
@@ -709,6 +721,27 @@ const messagePump = runner ? new SessionMessagePump({ service: messageService, r
     if(!noticeAdmission.allowed){
       if(noticeAdmission.reason)await messageService.noteBlocked(message.projectId,message.id,noticeAdmission.reason);
       return false;
+    }
+    const currentIntegrations=await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE);
+    const budgetConfig=currentIntegrations.runtime?.dailyBudget??null;
+    const contextConfig=currentIntegrations.runtime?.contextBudget??null;
+    if(await leaderResultNoticePump.isNoticeMessage(message.projectId,message.id)&&
+      (budgetConfig?.enabled||contextConfig?.enabled)){
+      const reader=(await currentIdentity()).find(p=>p.projectIds.includes(message.projectId)&&p.permissions.includes("read"));
+      if(reader){
+        const zone=budgetConfig?.timeZone??configuredUsageTimeZone;
+        const day=usageDay(clock.now(),zone);
+        const overview=await usage.overview(reader,message.projectId,day,day,zone,
+          budgetConfig,contextConfig);
+        const targetSessionId=message.target.kind==="owned"?message.target.sessionId:null;
+        const target=targetSessionId?overview.sessions.find(item=>item.sessionId===targetSessionId):undefined;
+        const admission=ordinaryTurnAdmission({isNotice:true,budget:overview.budget,
+          context:target?.context??contextPressure(contextConfig,null)});
+        if(!admission.allowed&&admission.reason){
+          await messageService.noteBlocked(message.projectId,message.id,admission.reason);
+          return false;
+        }
+      }
     }
     return businessBeforeMessage(message);
   }, onError: () => console.error("Session message needs reconciliation; inspect its original saved processing record.") }) : null;
@@ -803,6 +836,7 @@ const sessionTimeline = new SessionTimelineService({uow,observation:sessionWork,
   directInputs:new PgDirectInputs(pool),...(runner?{runner}:{})});
 const directInput = runner && integrations.runtime?.enabled ? createDirectInputService({
   pool, uow,
+  lock: sessionSteerLock,
   runtime: () => requireDirectInputRuntime(runner.nativeAdapter()),
   canWrite: () => lease.canWrite() && runner.nativeStartsAvailable(),
   configuration: () => loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE),
@@ -839,6 +873,8 @@ const app = await buildServer({ service, credentials, canWrite: lease.canWrite, 
   sessionWork, sessionTimeline, ...(directInput ? {directInput} : {}),
   allocationRelations: new AllocationRelationsService({ uow }),
   sessionMessages: messageService, nativeInputs, nativeObservation,
+  usage, usageBudget: async () => (await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE)).runtime?.dailyBudget ?? null,
+  contextBudget: async () => (await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE)).runtime?.contextBudget ?? null,
   ...(runner ? {manualStop: {
     execute: (principal:Principal,command:Extract<import("@evoloop/contracts").Command,{type:"session.message.manualStop"}>) =>
       manualStopWorkflow.execute(principal,command),
