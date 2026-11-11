@@ -602,7 +602,12 @@ const acceptanceRelay = new AcceptanceRelayService({pool,workflow:service,messag
   leaderSession:async projectId => (await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE)).leaderResultNotices?.targets
     .find(x=>x.projectId===projectId)?.sessionId??null,
   qualify:async input => (await acceptanceCapabilityProblems(input))[0]??null,
-  capabilities:acceptanceCapabilityProblems});
+  capabilities:acceptanceCapabilityProblems,
+  boundRecipient:async (projectId,session)=>{
+    const current=await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE);
+    return (current.runtime?.enabled ? selectMaterialCli(current.runtime.materialCli,projectId,session.id,session.actorId,
+      undefined,session.roleId) : null)?.cliActorId??null;
+  }});
 let acceptanceTickBusy=false;
 const acceptanceTimer=setInterval(()=>{
   if(acceptanceTickBusy||!lease.canWrite())return;
