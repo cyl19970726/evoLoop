@@ -80,7 +80,7 @@ stateDiagram-v2
 
 **请求停止一个 Run（DEC-043，迁移 078）。** 业务 Run 的范围变了、不再需要时，有 review 权限且持有该 Session 精确执行授权的身份提交 `runtime.run.stop`（带 Run 的当前版本和理由）。它只在 Run 上记一个**停止标记**（时间、理由、请求人，写入后不能改也不能撤），**不新增 Run 状态**。按 Run 当时的状态处理：还是“已请求”的直接判失败、不再派发；已有 Turn 的沿用现有中断路径，由 runner 调适配器中断，终态仍以运行时观察为准；正处于“派发中”、还没有 Turn 的不判失败（原生启动可能已经发出），标记保留，等 Turn 绑定时立刻中断。同一事务里：已签但未封存（`submitted`、`blocked`）的提交意图作废为 `rejected: RUN_STOPPED`；该 Session 里与这个 Task 相关、还在排队的消息的阻塞原因标成“被取代”（消息本身仍由发送人决定取消或重发）。此后，数据库触发器拒绝任何引用该 Run 的新提交和交付，也拒绝在这个 Task 上还有未结束的已停止 Run 时不带 Run 的交付；已作废的意图对原操作 ID 重放和新操作 ID 都返回同一个 `RUN_STOPPED`；封存者遇到已停止的 Run 一律不封存。已停止 Run 的失败或中断**不会关闭恢复门**（门原本开着就保持开着），也不产生“结束未提交”“提交受阻”这两类 Leader 通知，只留一条 `run.stopRequested` 运行事件；Run 终态之后，同一个 Session 立刻能接新的 Run，Task 也可以重开、修订、重新派发。**已停止的 Run 先成为 `unknown`、之后读回为 `interrupted`、`failed` 或 `completed` 时**，被它关闭的恢复门自动打开（参照 059 对已核实直接输入的做法，只开这一个 gate，队列认领持有的门不动）。已停止的 Run 若持有队列认领，失败/中断照常关门，由队列的重试决定处理。被取代的消息有持久标记（`superseded_at`，迁移 079），选取与准入都排除，发送人取消或确认后才重新可投递；`runtime.run.stop` 之后撤回的派发直接判为失败，不再回到 `requested`，`beginDispatch` 与预检续接也拒绝已停止的 Run。工作索引不再把已按请求停止的 Run 显示成待返工（阶段回到等待下一个 Run，Run 带 `stopped`）。
 
-**停止后的恢复门（迁移 079 的补充）。** 恢复门等待的下一条消息不会是被取代而未确认的消息：Run 变 unknown 时选下一条会跳过它；叫停核实后若门仍指向这样的消息，直接完全打开而不是进入 `message_pending`；门（`message_pending`）所等的消息被发送者取消时，门释放为 `open`（持有队列认领的门回到 `awaiting_acceptance`）；仍为 `blocked` 的门保留指向，由恢复决定点名并清掉已取消的那条。已停止、处于 unknown、从未发出 turn/start 的 Run：`approvePreTurnContinuation` 拒绝（`RUN_STOPPED`），`claimPreTurnContinuation` 把它判为 failed（由核实后重开门的规则打开门），不再每轮重试。
+**停止后的恢复门（迁移 079 的补充）。** 恢复门等待的下一条消息不会是被取代而未确认的消息：Run 变 unknown 时选下一条会跳过它；叫停核实后若门仍指向这样的消息，直接完全打开而不是进入 `message_pending`；门（`message_pending`）所等的消息被发送者取消时，门释放为 `open`（持有队列认领的门回到 `awaiting_acceptance`）；仍为 `blocked` 的门保留指向，由恢复决定点名并清掉已取消的那条。已停止、处于 unknown、从未发出 turn/start 的 Run：预检证明未审时保持 unknown（证据没审过，不能断定回合没有开始），门保持关闭。审阅者用现有的 `approvePreTurnContinuation` 给出结论时，对已停止的 Run 它的含义是“证据属实、回合从未开始、Run 结束”而不是“继续”：同一事务先记审阅（证明变 approved，事件 `run.reviewed`），再把 Run 判为 failed，由核实后重开门的规则打开门，Session 可以接新的 Run；原生启动不会再发出。校验的是原操作、版本、证明与关闭中的门，不再要求 Session 配置仍可继续。证明已被批准但启动未发出的已停止 Run，`claimPreTurnContinuation` 同样把它判为 failed，不再每轮重试。未停止 Run 的批准与续接不变。
 
 ### 失败、恢复门与恢复
 
@@ -136,7 +136,7 @@ flowchart TD
 - **补入只证明入队。** 原生回执说明输入已排进当前 Turn，不说明 Agent 已读、采用或已回复。
 - **空闲直启沿用普通消息授权。** 它保存一条普通消息和唯一一条处理记录，再在原会话启动 Turn，计一次 Turn。补入不另外计数。
 - **结果未知不重发。** 先持久化原意图再调用运行时；回执丢失就记 `unknown` 并保留槽位，只能按原 `inputId` 只读核对。
-- **授权。** 默认关闭（`directInputs`）。启用时要有一条指向同一 Session 的即时输入授权，同时要有对应的普通消息授权；客户端自报的身份不能替代授权。
+- **授权。** 默认关闭（`directInputs`）。启用时要有一条指向同一 Session 的即时输入授权，同时要有对应的普通消息授权；普通消息授权的 `receiverActorId` 是 Session 的业务身份（`runtime.materialCli` 的 `cliActorId` 或 `residentQueue.roleActors` 的绑定），不是预约该 Session 的 `runtime_session.actor_id`，准入按与普通消息相同的业务身份绑定核对；客户端自报的身份不能替代授权。
 - **每 Session 一把短锁。** 业务 Run 或普通消息开新一轮、用户即时输入和后续通知包送入共用同一把进程内锁，只覆盖准入与原生发送，不覆盖整个 Turn。锁前撞车返回可重试的 `SESSION_INPUT_BUSY`，没有持久化本次意图；若已持久化的意图在适配器自身的在途检查处被拒，则证明没有写入原生传输，保留原输入编号与操作编号供同一意图重试。两种情况都不把恢复门写成拒绝或未知；业务 Run 遇到本地撞车保持 `requested`，下一轮再试，普通消息保持待处理原因而不判失败。
 - **不可补入的回合转排队。** 只有原生结构化字段 `codexErrorInfo.activeTurnNotSteerable`（例如 `turnKind: "review"` 或 `"compact"`），或 0.167 的精确文字 `cannot steer a review/compact turn`，才表示这一回合不能补入；direct input 记为 `rejected`，同一内容同时写成一条普通排队消息。`TurnError.misalignment.steer` 是失败回合附带的继续指令，不是 `turn/steer` 的拒绝。送入已被接受、这一轮随后失败且没有物化对应输入 Item 时，该输入保持未读（没有 `nativeItemId`），不会因为送达回执而被当成已读。
 

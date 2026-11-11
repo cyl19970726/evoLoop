@@ -35,7 +35,7 @@ import type { ScheduleDefinition } from "@evoloop/contracts/scheduling";
 import type { DocumentPayloadRevision, RegisteredDocumentBlob } from "@evoloop/contracts/process-documents";
 import type { GitSourceRef } from "@evoloop/contracts/sources";
 import type {
-  BasisDecision, BasisRetention, BasisSet, Document, DocumentDecision, DocumentRevision, DocumentRevisionMetadata, DocumentTaskReference, Impact,
+  BasisDecision, BasisRetention, BasisSet, Document, DocumentDecision, DocumentRevision, DocumentRevisionMetadata, DocumentStatusFilter, DocumentTaskReference, Impact,
   Operation, OutboxEvent, Page, Project, Task, TaskDocumentLink, TaskRevision,
 } from "@evoloop/contracts";
 import type { ConsumerObservation, Delivery, Goal, GoalRevision, Stage, StageReview, TaskJudgement, TaskProposal, StageRevision, TaskClosure } from "@evoloop/contracts";
@@ -498,12 +498,14 @@ class PgReader implements Reader {
       [this.projectId, documentId, revisionId]);
     return r.rows[0]?.adopted === true;
   }
-  async listDocuments(limit: number, cursor?: string, kind?: Document["kind"]): Promise<Page<Document>> {
+  async listDocuments(limit: number, cursor?: string, kind?: Document["kind"],
+    status?: DocumentStatusFilter): Promise<Page<Document>> {
     pageLimit(limit);
     const r = await this.client.query(`${documentProjection}
       WHERE d.project_id=$1 AND ($2::uuid IS NULL OR d.document_id>$2::uuid)
         AND ($4::text IS NULL OR d.kind=$4::text)
-      ORDER BY d.document_id LIMIT $3`, [this.projectId, cursor ?? null, limit + 1, kind ?? null]);
+        AND ($5::text IS NULL OR ($5::text='active' AND d.status<>'archived') OR d.status=$5::text)
+      ORDER BY d.document_id LIMIT $3`, [this.projectId, cursor ?? null, limit + 1, kind ?? null, status ?? null]);
     return page(r.rows, limit, rowDocument, (x) => x.document_id);
   }
   async getTask(id: string): Promise<Task | null> {

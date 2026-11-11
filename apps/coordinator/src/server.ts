@@ -1,7 +1,7 @@
 import { registerReferenceRoutes, type ReferenceRouteOptions } from "./references/routes.js";
 import Fastify from "fastify";
 import staticPlugin from "@fastify/static";
-import { commandSchema, capabilities, idSchema, documentKindSchema, type Command, type Principal, type RuntimeSessionRecord } from "@evoloop/contracts";
+import { commandSchema, capabilities, idSchema, documentKindSchema, documentStatusSchema, type Command, type Principal, type RuntimeSessionRecord } from "@evoloop/contracts";
 import { DomainError } from "@evoloop/contracts/ports";
 import { sessionPreparationHints } from "@evoloop/contracts/session-preparation";
 import type { WorkflowService } from "@evoloop/core";
@@ -751,8 +751,13 @@ export async function buildServer(options: {
   for (const entity of ["documents", "tasks"] as const) {
     app.get(`/api/projects/:projectId/${entity}`, async request => {
       const p = params(request.params); const q = pageSchema.parse(request.query);
-      const kind = entity === "documents" ? z.object({ kind: documentKindSchema.optional() }).parse(request.query).kind : undefined;
-      return entity === "documents" ? options.service.listDocuments(who(request.principal), p.projectId!, q.limit, q.cursor, kind) : options.service.listTasks(who(request.principal), p.projectId!, q.limit, q.cursor);
+      const filter = entity === "documents" ? z.object({
+        kind: documentKindSchema.optional(),
+        status: z.union([documentStatusSchema, z.literal("active")]).optional(),
+      }).parse(request.query) : null;
+      return entity === "documents"
+        ? options.service.listDocuments(who(request.principal), p.projectId!, q.limit, q.cursor, filter!.kind, filter!.status)
+        : options.service.listTasks(who(request.principal), p.projectId!, q.limit, q.cursor);
     });
     app.get(`/api/projects/:projectId/${entity}/:id`, async request => {
       const p = params(request.params);
@@ -790,6 +795,10 @@ export async function buildServer(options: {
   }
   if (options.webRoot) {
     await app.register(staticPlugin, { root: options.webRoot, index: "index.html", wildcard: true, cacheControl: false });
+    // Safari probes these paths even when the page declares an icon; send its probes to the one real icon instead
+    // of leaving three 404s on every Session and Task page.
+    for (const path of ["/favicon.ico", "/apple-touch-icon.png", "/apple-touch-icon-precomposed.png"])
+      app.get(path, (_request, reply) => reply.redirect("/favicon.svg"));
     // The workbench uses path addresses (/p/{project}/…, /ui); each loads the same page, which routes in the browser.
     const workbenchPage = (_request: unknown, reply: { sendFile(name: string): unknown }) => reply.sendFile("index.html");
     app.get("/p/*", workbenchPage);

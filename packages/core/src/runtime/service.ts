@@ -428,9 +428,33 @@ export class RuntimeWorkflowService {
       const run=required(await tx.getRuntimeRun(runId),"runtime run");
       const session=required(await tx.getRuntimeSession(run.sessionId),"runtime session");
       const gate=required(await tx.recovery?.lockRecoveryGate(run.sessionId)??null,"recovery gate");
-      // A stopped Run is never continued: its approved start would only run work somebody asked to stop.
-      if(run.stopRequestedAt)throw new DomainError("RUN_STOPPED","a Run stopped on request cannot be continued");
       const proof=run.preTurnProof;
+      if(run.stopRequestedAt){
+        // A stopped Run is never continued: its approved start would only run work somebody asked to stop. Here approval means
+        // "the observed refusal is true, so the Turn never began": the Run ends failed, which reopens the gate it closed (079).
+        if(run.version!==command.expectedVersion||run.sessionId!==command.sessionId||
+          run.operationId!==command.originalOperationId||run.state!=="unknown"||run.nativeTurnId||
+          !proof||proof.status!=="observed"||proof.operationId!==run.operationId||
+          gate.version!==command.expectedGateVersion||gate.phase!=="blocked"||gate.causeKind!=="run"||gate.causeId!==run.id)
+          throw new DomainError("PRE_TURN_CONTINUATION_CHANGED","original refusal or recovery gate changed");
+        const reviewed={...run,version:run.version+1,updatedAt:this.deps.clock.now(),
+          preTurnProof:preTurnProofSchema.parse({...proof,status:"approved",decisionOperationId:command.operationId,
+            reviewerActorId:principal.actorId,evidenceRef:command.evidenceRef,
+            decisionReason:safeDetail(command.reason),gateVersionAtApproval:gate.version})};
+        await tx.appendRuntimeEvent(event(projectId,this.deps.ids.next(),run.id,run.sessionId,'run.reviewed',
+          JSON.stringify({decisionOperationId:command.operationId,originalOperationId:run.operationId,
+            requestId:proof.requestId,observedAtUtc:proof.observedAtUtc,
+            evidenceRef:command.evidenceRef,reason:command.reason}),null,principal.actorId,this.deps.clock.now()));
+        // The proof guard (055) only allows observed -> approved on an unknown Run; the end is a second step in the same transaction.
+        await tx.updateRuntimeRun(reviewed,run.version);
+        const ended={...reviewed,state:"failed" as const,version:reviewed.version+1,updatedAt:this.deps.clock.now(),
+          resultSummary:"Stopped on request; the reviewed pre-turn refusal shows the native Turn never began"};
+        await tx.updateRuntimeRun(ended,reviewed.version);
+        await this.emit(tx,runId,run.sessionId,"run.status",ended.resultSummary!,null,projectId);
+        await tx.insertPreTurnReviewDecision({operationId:command.operationId,actorId:principal.actorId,
+          kind:'run',subjectId:runId,intentJson,result:ended});
+        return ended;
+      }
       if(run.version!==command.expectedVersion||run.sessionId!==command.sessionId||
         run.operationId!==command.originalOperationId||run.state!=="unknown"||run.nativeTurnId||
         !proof||proof.status!=="observed"||proof.operationId!==run.operationId||
