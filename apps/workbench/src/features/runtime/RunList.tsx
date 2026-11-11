@@ -66,7 +66,8 @@ function RunItem({ context, run, mayAbandon }: { context: MutationContext; run: 
       {run.state === "unknown" && <Notice tone="error">派发或状态仍未知，须沿已绑定线程回查；不会自动再发一次。</Notice>}
       {preflight && <Notice tone="error" title={`派发前检查没通过：${preflight.title}`} data-preflight="">模型尚未开始。{[preflight.source, preflight.size].filter(Boolean).join("，")}{preflight.source || preflight.size ? "。" : ""}下一步：{preflight.next}</Notice>}
       {run.resultSummary && !preflight && <p className="whitespace-pre-wrap break-words text-small text-text-secondary" data-run-summary="">已保存的结果摘要（可能截断，不能代替原生全文）：{run.resultSummary}</p>}
-      {run.interruptRequested && <Notice>已登记中断请求；是否停止以原生运行终态为准。</Notice>}
+      {run.stopRequestedAt && <Notice>已按请求停止（{run.stopReason ?? "未写理由"}）：它的已签结果被作废，之后不再接收提交或交付；运行是否已结束以原生终态为准。</Notice>}
+      {run.interruptRequested && !run.stopRequestedAt && <Notice>已登记中断请求；是否停止以原生运行终态为准。</Notice>}
       <div className="flex flex-wrap gap-2">
         {run.nativeTurnId && <Button size="compact" onClick={async () => {
           try { setNative(await client.result(run.id)); setNativeError(null); } catch (cause) { setNativeError({ text: nativeReadError(cause), detail: diagnosticOf(cause) }); }
@@ -107,7 +108,7 @@ const eventText: Record<RuntimeRecordEvent["kind"], string> = {
   "session.closeRequested": "已请求关闭", "session.archiveAttempted": "已尝试归档", "session.closed": "已核实关闭",
   "run.requested": "已请求运行", "run.dispatching": "派发中", "run.dispatchWithdrawn": "派发已撤回", "run.preflightRejected": "派发前检查未通过",
   "run.dispatchRejected": "派发被拒绝", "run.bound": "已绑定一轮", "run.status": "状态更新", "run.unknown": "运行结果未知", "run.reviewed": "已复核",
-  "message.preTurnReviewed": "消息派发前已复核", "run.reconciled": "终态已核对", "run.interruptRequested": "已请求中断", "run.interruptResult": "中断结果",
+  "message.preTurnReviewed": "消息派发前已复核", "run.reconciled": "终态已核对", "run.interruptRequested": "已请求中断", "run.stopRequested": "已请求停止", "run.interruptResult": "中断结果",
   "session.executionProfile.activationStarted": "执行配置开始激活", "session.executionProfile.active": "执行配置已激活",
   "session.executionProfile.unknown": "执行配置激活结果未知", "session.executionProfile.rejected": "执行配置激活被拒绝",
   "runtime.approvalDeclined": "审批被拒绝", "native.childDiagnostic": "原生进程诊断", "handoff.received": "交接：收到材料",
