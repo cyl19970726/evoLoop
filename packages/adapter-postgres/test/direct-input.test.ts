@@ -69,6 +69,7 @@ test("unlimited direct start preserves prior usage while an explicit cap still b
   const service=new DirectInputService({store,canWrite:()=>true,
     admission:async()=>({grant:current,binding}),bindingFor:async()=>binding,
     runtime:()=>({isReady:()=>true,registerBinding:async()=>{},
+      capabilities:()=>({delivery:{midTurnInput:true,idleTurnStart:true}} as never),
       qualifyConversationThread:async()=>({available:true,reason:'',fingerprint:hash}),
       startConversationTurn:async()=>{throw Error('unused')},steerTurn:async()=>{throw Error('unused')},
       listTurns:async()=>({data:[],nextCursor:null}),listItems:async()=>({data:[],nextCursor:null})})});
@@ -135,6 +136,7 @@ test("lost native start acknowledgement keeps original slot and reconciles witho
     resumeProfile:{actorId:"agent",model:null,sandbox:"danger-full-access" as const,approvalPolicy:"never" as const}};
   const command=input();let starts=0;
   const runtime={isReady:()=>true,registerBinding:async()=>{},qualifyConversationThread:async()=>({available:true,reason:"",fingerprint:hash}),
+    capabilities:()=>({delivery:{midTurnInput:true,idleTurnStart:true}} as never),
     startConversationTurn:async()=>{starts++;throw new Error("lost ack");},
     steerTurn:async()=>{throw new Error("unexpected steer");},
     listTurns:async()=>({data:[{id:"recovered-turn",status:"inProgress",completedAtUtc:null}],nextCursor:null}),
@@ -158,6 +160,7 @@ test("HTTP keeps exact input and actor receipts while repeated steer uses the sa
   const turn={id:"http-turn",status:"inProgress" as const,completedAtUtc:null};
   const writes:string[]=[];
   const runtime={isReady:()=>true,registerBinding:async()=>{},qualifyConversationThread:async()=>({available:true,reason:"",fingerprint:hash}),
+    capabilities:()=>({delivery:{midTurnInput:true,idleTurnStart:true}} as never),
     startConversationTurn:async(_binding:unknown,_content:string,id:string)=>{writes.push(`start:${id}`);return turn;},
     steerTurn:async(_binding:unknown,_turnId:string,_content:string,id:string)=>{writes.push(`steer:${id}`);return {turnId:turn.id,itemId:null};},
     listTurns:async()=>({data:[turn],nextCursor:null}),listItems:async()=>({data:[],nextCursor:null})};
