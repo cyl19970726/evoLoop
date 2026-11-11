@@ -90,7 +90,7 @@ const safeProviderCode = (value: unknown): string | null => typeof value === "st
 /** Native classification first: the App Server reports overflow as a typed codexErrorInfo, not an HTTP status. */
 const contextWindowExceeded = (info: unknown): boolean =>
   info === "contextWindowExceeded" || (!!object(info) && Object.hasOwn(object(info)!, "contextWindowExceeded"));
-function turnFailure(value: unknown): RuntimeTurnFailure | undefined {
+export function turnFailure(value: unknown): RuntimeTurnFailure | undefined {
   const native = object(value);
   if (!native) return undefined;
   if (contextWindowExceeded(native.codexErrorInfo))
@@ -104,12 +104,24 @@ function turnFailure(value: unknown): RuntimeTurnFailure | undefined {
   const status = typeof parsed?.status === "number" && Number.isInteger(parsed.status) && parsed.status >= 100 && parsed.status <= 599 ? parsed.status : null;
   const providerCode = safeProviderCode(provider?.type);
   const unsupportedModel = /model is not supported.{0,100}ChatGPT account/i.test(providerMessage);
-  const category: RuntimeTurnFailure["category"] = unsupportedModel ? "unsupported_model" : status === 429 ? "rate_limited"
-    : status !== null && status >= 500 ? "provider_unavailable" : status !== null && status >= 400 ? "provider_rejected" : "native_failure";
+  // Native errors are not always the JSON envelope: the real 402 arrived as "402 Payment Required: … Insufficient Balance".
+  const text = `${raw} ${providerMessage}`;
+  const textStatus = status ?? (/(?:^|\D)(402|401)(?:\D|$)/.exec(text)?.[1] ? Number(/(?:^|\D)(402|401)(?:\D|$)/.exec(text)![1]) : null);
+  const quota = textStatus === 402 || /payment required|insufficient[\s_-]?(?:balance|quota|funds|credits?)|quota (?:exceeded|exhausted)|out of credits?|billing[\s_-]?(?:hard[\s_-]?limit|error)/i.test(text) ||
+    providerCode === "insufficient_quota";
+  const authentication = textStatus === 401 || /invalid[\s_-]?api[\s_-]?key|unauthori[sz]ed|authentication (?:failed|error)/i.test(text);
+  const connection = /connection (?:closed|reset|refused|lost|error)|ECONNRESET|ECONNREFUSED|ETIMEDOUT|stream (?:closed|disconnected|ended)|socket hang up|network (?:error|unreachable)/i.test(text);
+  const category: RuntimeTurnFailure["category"] = unsupportedModel ? "unsupported_model" : quota ? "quota_exhausted"
+    : authentication ? "authentication_failed" : status === 429 ? "rate_limited"
+    : status !== null && status >= 500 ? "provider_unavailable" : status !== null && status >= 400 ? "provider_rejected"
+    : connection ? "connection_lost" : "native_failure";
   const summary = category === "unsupported_model" ? "Configured model is not supported with this Codex ChatGPT account"
+    : category === "quota_exhausted" ? "Model provider quota or balance exhausted (HTTP 402); the account owner must top up"
+    : category === "authentication_failed" ? "Model provider authentication failed; the account owner must re-authorize"
+    : category === "connection_lost" ? "Connection to the model provider was lost"
     : category === "rate_limited" ? "Model provider rate limit" : category === "provider_unavailable" ? "Model provider unavailable"
     : category === "provider_rejected" ? "Model provider rejected the request" : "Native turn failed";
-  return { category, providerCode, httpStatus: status, summary };
+  return { category, providerCode, httpStatus: category === "quota_exhausted" && textStatus === 402 ? 402 : status, summary };
 }
 function runtimeTurn(value: unknown): RuntimeTurn | null {
   const turn = object(value);

@@ -151,6 +151,7 @@ function DocumentFacts({ projectId, detail }: { projectId: string; detail: TaskD
           const relation = `${group}${row.revisionId ? " · 任务固定的修订" : ""}`;
           const open = () => panel?.openInPanel({
             id: `document:${row.documentId}@${row.revisionId ?? "current"}`, title: document?.title ?? "文档",
+            ownerTaskId: task.id,
             href: href(projectId, "document", row.documentId, row.revisionId ?? undefined),
             render: () => <PeekBoundary><TaskDocumentPeek projectId={projectId} documentId={row.documentId} revisionId={row.revisionId} relation={relation} /></PeekBoundary>,
           });
@@ -174,7 +175,7 @@ function DeliveryFacts({ projectId, detail, linkForTab }: { projectId: string; d
     {latest && target ? <div className="flex flex-col gap-2.5">
       <Fact label="固定成果">{target.kind === "document"
         ? panel ? <Button variant="link" className="whitespace-normal text-left" onClick={() => panel.openInPanel({
-          id: `document:${target.documentId}@${target.revisionId}`, title: "交付物", href: target.href,
+          id: `document:${target.documentId}@${target.revisionId}`, title: "交付物", ownerTaskId: detail.task.id, href: target.href,
           render: () => <PeekBoundary><TaskDocumentPeek projectId={projectId} documentId={target.documentId} revisionId={target.revisionId} relation="交付物 · 本次交付的固定修订" /></PeekBoundary>,
         })}>阅读本次交付的文档</Button> : <a className="text-primary hover:underline" href={target.href}>阅读本次交付的文档</a>
         : target.href ? <a className="text-primary hover:underline" href={target.href} target={target.href.startsWith("/") ? undefined : "_blank"} rel="noopener noreferrer">{target.kind === "fallback" ? target.label : target.label}</a>

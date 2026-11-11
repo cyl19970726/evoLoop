@@ -223,7 +223,14 @@ export class AcceptanceRelayService {
         AND e.state<>'released') AS queue_entries,
       (SELECT count(*)::int FROM task_session_assignment a JOIN task t ON t.project_id=a.project_id AND t.task_id=a.task_id
         WHERE a.project_id=s.project_id AND a.target_kind='owned' AND a.target_id=s.session_id
-          AND a.state<>'released' AND t.state NOT IN ('done','cancelled')) AS open_assignments,
+          AND a.state<>'released' AND t.state NOT IN ('done','cancelled')
+          -- An assignment the Session line wrote before the Task started is the line's, not an unfinished arrangement.
+          AND NOT EXISTS(SELECT 1 FROM session_line_entry le WHERE le.project_id=a.project_id AND le.task_id=a.task_id
+            AND le.state IN ('queued','suspended','starting'))) AS open_assignments,
+      (SELECT count(*)::int FROM session_line_entry le WHERE le.project_id=s.project_id AND le.session_id=s.session_id
+        AND le.state IN ('queued','suspended')) AS line_queued,
+      (SELECT count(*)::int FROM session_line_entry le WHERE le.project_id=s.project_id AND le.session_id=s.session_id
+        AND le.state='starting') AS line_starting,
       (SELECT count(*)::int FROM task_acceptance_relay a WHERE a.project_id=s.project_id AND a.session_id=s.session_id
         AND a.state NOT IN ('superseded','released') AND NOT EXISTS (
           SELECT 1 FROM task_acceptance_observation_link l WHERE l.project_id=a.project_id AND l.relay_id=a.relay_id
@@ -237,7 +244,7 @@ export class AcceptanceRelayService {
     const capacity: AcceptanceCapacityView[] = [];
     for (const r of result.rows) {
       const persistedWorkIdle = r.state === "ready" && !!r.native_thread_id &&
-        [r.active_runs,r.pending_messages,r.queue_entries,r.open_assignments,r.open_acceptance]
+        [r.active_runs,r.pending_messages,r.queue_entries,r.open_assignments,r.open_acceptance,r.line_starting]
           .every((n:number) => n === 0);
       let missingCapabilities: string[] = [];
       if (r.state === "ready" && r.native_thread_id) {
@@ -259,6 +266,7 @@ export class AcceptanceRelayService {
         isLeader:r.session_id === leaderSession,
         activeRuns:r.active_runs, pendingMessages:r.pending_messages, queueEntries:r.queue_entries,
         openAssignments:r.open_assignments, openAcceptance:r.open_acceptance,
+        lineQueued:r.line_queued, lineStarting:r.line_starting,
         persistedWorkIdle, missingCapabilities,
         readyForAcceptance:persistedWorkIdle && missingCapabilities.length === 0 });
     }
