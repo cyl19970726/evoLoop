@@ -199,7 +199,7 @@ DEC-045 在现有即时输入之外增加三类输入，并把“接下来做什
 - 历史上已用的轮数、Session、Thread、失败记录，以及 Task 和队列的尝试上限，全部保留，不因这条规则重置。
 - 空闲直启计一次 Turn；补入不计。
 
-这里的“轮数”是 evoLoop 按授权累计的 Turn 数。Claude 运行配置里还有 `runtime.claude.maxTurns` 和 `maxBudgetUsd`，它们限制的是**一个 Turn 内** Claude Code 的步数和花费，与消息授权无关；消息 Connector 的接收授权另有必填的有限 `maxTurns`。
+这里的“轮数”是 evoLoop 按授权累计的 Turn 数。Claude 运行配置里还有 `runtime.claude.maxTurns` 和 `maxBudgetUsd`，它们限制的是**一个 Turn 内** Claude Code 的步数和花费，与消息授权无关；`runtime.claude.maxConcurrentTurns` 限制的是所有 Claude Session 同时进行的 Turn 数，达到上限时新的 Turn 按“本地忙”等待重试（消息保持排队、Run 退回 `requested`），不判失败、不关闭恢复门；消息 Connector 的接收授权另有必填的有限 `maxTurns`。
 
 ## 6. 一个 Role 只绑定一种运行时
 
