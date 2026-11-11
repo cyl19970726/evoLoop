@@ -108,6 +108,7 @@ evoLoop 面向一个人与多个 Agent 持续推进的软件项目。[两张产�
 | [Agent skill 与 CLI](development/agent-cli.md) | Agent 根据人类沟通读取固定依据、执行业务变更、恢复并核对共同状态 | 使用 evoLoop 推进实际工作的 Agent；人类从工作台观察结果 |
 | [运行接线手册](development/runtime-operations.md) | Leader 结果通知、即时输入、托管压缩、普通 Task 每日复制和阶段关注怎样配置、打开、核对和回退 | 运行服务的维护者 |
 | [开发与测试用哪个数据库](development/database-isolation.md) | 开发和测试连哪个 PostgreSQL 实例，怎样确认不是线上，仓库的保护与维护者隔离步骤 | 运行服务的维护者与开发者 |
+| [调度质量指标](development/scheduling-metrics.md) | 怎样用只读脚本按日窗口统计 Leader 回合、通知等待、就绪到 Run、Session 空转与防护线，并复算基线 | 调度与运行维护者 |
 | [文档维护](development/documentation.md) | 文档如何保持一致、生成 HTML 并发布 | 修改正文或构建工具的贡献者 |
 
 这里的维护责任是工作分配，不要求项目第一天就建立同名常设角色。专门产品、架构或开发规范 session 是否出现，由实际任务与职责演进决定。
