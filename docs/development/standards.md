@@ -83,6 +83,8 @@ PR 的审阅材料简要列目标和来源、改变的用户路径、head/base c
 | 日程触发与在途运行 | 可控时钟核时区、重复触发、定义修订、重叠、漏触发及暂停；隔离宿主故障测试核写成后丢回执不重复派发。分别检查停日程与停在途运行，未知操作持续对账。 | [包架构](../architecture/packages.md)和[接口合同](../architecture/contracts.md)；触发器、宿主或恢复策略变化时。 |
 | 首条跨系统工作闭环 | 用同一需求串起 Document 修订、Task、Wiki 反例、成果与实际接入的投影；分别核核心接受、同步、任务验收及下一 session 采用。任务要求飞书体验时才把真实飞书使用纳入该次验收。 | [日常闭环](../product/daily-loop.md)与[知识关联](../architecture/knowledge-flow.md)；扩大接入范围或产品目标改变时。 |
 
+**数据库迁移编号。** 迁移文件放在 `packages/adapter-postgres/migrations/`，使用 `NNN_<snake_case>.mjs`，并在 `packages/adapter-postgres/schema/` 放同名 `.sql`；编号是三位十进制，按实际合并顺序递增，允许因分支占用而跳号，不重复使用。派发会新增迁移的 Task 时，Leader 先读 `origin/main` 与所有 open PR，分配一个在两者中都未使用的编号；作者提 PR 前按同一集合复核，不能只看自己的分支；合并前发布者再按当时的 `origin/main` 与 open PR 复核唯一性，发现重复不合并，回原 Task 返工。不要用合并后改文件名或改历史迁移来消除冲突，已经执行的迁移不可编辑。Task `1aacbd24-a0f7-4540-a04b-938984d9ace1` 增加的 CI 检查在 main 与 PR 合并结果中验证唯一性，冲突时失败并列出冲突文件；它是最后一道门，不替代上述分配与复核。
+
 **高影响状态或存储变更。** 状态收敛、持久字段迁移、不可变修订、固定依据或恢复协议改变时，在 PR 中列受影响的旧对象路径，并用真实旧模式样本和专用数据库核“迁移后能继续工作或被明确拒绝”，不只核迁移成功。按实际影响选择下列检查；[PR #16](https://github.com/cyl19970726/evoLoop/pull/16) 的 012 迁移及 [PR #17](https://github.com/cyl19970726/evoLoop/pull/17)/[PR #18](https://github.com/cyl19970726/evoLoop/pull/18) 的后续修复已发生，不把它们重列为待实现功能。
 
 | 旧对象路径 | 对应验收与保留项 |
