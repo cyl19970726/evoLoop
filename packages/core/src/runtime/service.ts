@@ -367,7 +367,9 @@ export class RuntimeWorkflowService {
       }
       if (!["dispatching", "unknown"].includes(current.state)) throw new DomainError("RUN_NOT_DISPATCHING", "run cannot bind a new turn");
       if (current.nativeTurnId && current.nativeTurnId !== turn.id) throw new DomainError("FOREIGN_TURN", "run already has a different native turn");
+      // A stop that arrived while the start was in flight: the Turn that binds now is interrupted at once.
       const next = { ...current, state: "running" as const, version: current.version + 1,
+        ...(current.stopRequestedAt ? { interruptRequested: true } : {}),
         preTurnProof: current.preTurnProof ? { ...current.preTurnProof, status: "consumed" as const } : null,
         nativeTurnId: turn.id, updatedAt: this.deps.clock.now() };
       await tx.updateRuntimeRun(next, current.version);

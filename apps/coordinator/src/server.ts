@@ -268,11 +268,20 @@ export async function buildServer(options: {
     }
     if (command.type.startsWith("runtime.")) {
       if (command.type !== "runtime.handoff.record" && command.type !== "runtime.run.abandonReadOnly" &&
-        command.type !== "runtime.session.executionProfile.revise" && command.type !== "runtime.session.recovery.resume" &&
+        command.type !== "runtime.session.executionProfile.revise" && command.type !== "runtime.session.recovery.resume" && command.type !== "runtime.run.stop" &&
         !options.runtime?.status().available) throw new DomainError("RUNTIME_UNAVAILABLE", "Codex 执行服务尚未配置或当前不可用；本次未登记派发。");
       const principal = who(request.principal);
       if (!principal.projectIds.includes(command.projectId) || (command.type === "runtime.handoff.record" ? !principal.permissions.includes("write") : !principal.permissions.includes("review"))) {
         throw new DomainError("FORBIDDEN", "执行操作需要本项目复核权限。");
+      }
+      if (command.type === "runtime.run.stop") {
+        // review permission (checked above) plus this Session's exact execution grant, as for message recovery. A stop needs no live
+        // runtime: a Run that never dispatched is stopped in the database, and a running one is interrupted by the runner afterwards.
+        // A replay of the original journalled stop stays readable after grant drift; a new stop must match the current grant.
+        if (!await options.service.getOperation(principal, command.projectId, command.operationId)) {
+          const run = await options.service.getRuntimeRun(principal, command.projectId, command.runId);
+          await messageRecoverySession(principal, command.projectId, run.sessionId, true);
+        }
       }
       if (command.type === "runtime.session.reserve") {
         const dynamic = await options.isDynamicSession?.(command.projectId,command.sessionId);

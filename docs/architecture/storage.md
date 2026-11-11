@@ -163,6 +163,7 @@ erDiagram
 | 069 `document_revision_history` | `document_revision.revision_number` | 每份文档内从 1 连续编号，`(project_id, document_id, revision_number)` 唯一，同时是修订列表分页的索引；插入前触发器锁住文档行，取已有最大值加 1；调用方显式给出序号会被拒绝（`23514`），逐行导入历史（DEC-041）时不会悄悄换掉源主机的序号，导入方式须另定。完整的 `pg_dump`/`pg_restore` 不受影响：触发器在 post-data 段、表数据载入之后才创建（已用 `pg_restore --list` 核对顺序）。写入后随修订不可改。迁移沿 `previous_revision_id` 链回填（临时索引，迁移内删除）；不是单链（分叉、多个根或断链）的文档改按 `created_at, revision_id` 编号。发布前的检查与发布后的 `VACUUM` 见[发布新版本](deployment.md#2-发布新版本)。 | [DocumentStore](contracts.md#2a-documentstore-与-relationstore) |
 | 070 `acceptance_relay_stage_closure` | 无新增表或列；替换 `guard_acceptance_relay_closure()` | 同一 Delivery 有现行正式安排时，关闭只要求每条现行正式安排有指定收件人对该 Delivery 的已关联 `used` 观察；候选安排保留历史，不阻塞正式收口。没有正式安排时仍逐条核对现行候选安排，不能用一条已关联观察掩盖另一条未满足的安排。 | [验收接力与退役](contracts.md#验收接力与临时-session-退役) |
 | 074 `session_usage_daily` | `session_usage_daily` | 每个 `(project_id, session_id, day)` 一行，只累加运行时报告的输入、输出、缓存输入与成本；`cost_reported=false` 表示至少有一笔记账未报告费用，读取时不能把该日成本显示为 0。`day` 是项目配置时区下的日历日；行随新观察增量更新，不存原生正文。 | [上下文交接与每日用量上限](session-runtime.md#长会话的上下文交接与每日用量上限) |
+| 078 `run_stop_request` | `runtime_run.stop_requested_at`、`stop_reason`、`stop_requested_by`（三者要么全空要么全有，写入后不可改） | 请求停止一个 Run 的标记，不新增 Run 状态。同一事务里把 Run 已签但未封存的提交意图（`submitted`、`blocked`）改为 `rejected: RUN_STOPPED`，并把该 Session 里同一 Task 的排队消息阻塞原因标为被取代；触发器拒绝引用已停止 Run 的新提交与交付，以及 Task 上有未结束的已停止 Run 时不带 Run 的交付。就地补丁恢复门触发器（已停止 Run 的失败或中断不关开着的门）和两个 Leader 通知触发器（不为已停止 Run 发通知）。 | [Session 运行时](session-runtime.md) |
 
 ## 事务、幂等和读取
 
