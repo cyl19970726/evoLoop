@@ -71,6 +71,7 @@ import type { BrowserReadScope } from "./runtime/browser-read.js";
 import type { DynamicToolCall } from "@evoloop/adapter-codex-app-server";
 import { RuntimeNotSentError, type RuntimeBinding, type RuntimeSessionRecord, type RuntimeSessionSpec } from "@evoloop/contracts/runtime";
 import { loopIntentId } from "./orchestration/runner.js";
+import { pgLeaderPacketPorts } from "./leader-results/packet-ports.js";
 import { ResidentQueuePump } from "./resident-queue/pump.js";
 import { SessionLinePump } from "./session-line/pump.js";
 import { SessionObservationService } from "@evoloop/core/session-observation";
@@ -172,6 +173,11 @@ const service = new WorkflowService({
   },
   recoveryAuthority: staticRecoveryAuthority(
     () => loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE), currentIdentity),
+  // The notice packet's own steps (build, sent, observe) belong to the configured notice sender, not to the Leader or any reviewer.
+  leaderNoticeServiceActor: async projectId => {
+    const target = (await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE)).leaderResultNotices?.targets.find(value => value.projectId === projectId);
+    return target && await currentProjectWriter(projectId, target.senderActorId) ? target.senderActorId : null;
+  },
   collaborationAuthority: {
     actorForRole: async (projectId,roleId) => {
       const config=await currentQueueConfiguration();
@@ -632,7 +638,9 @@ const acceptanceTimer=setInterval(()=>{
     .finally(()=>{acceptanceTickBusy=false;});
 },2000);
 acceptanceTimer.unref();
+const leaderPacketPorts = pgLeaderPacketPorts(pool, uow);
 const leaderResultNoticePump = new LeaderResultNoticePump({
+  packets: leaderPacketPorts,
   store: {
     listPending: (projectId, query) => listPendingLeaderNotices(pool, projectId, query),
     getByMessageId: (projectId, messageId) => getLeaderNoticeByMessageId(pool, projectId, messageId),
@@ -874,6 +882,20 @@ const app = await buildServer({ service, credentials, canWrite: lease.canWrite, 
   workStatuses: (principal, projectId, taskIds) => readWorkStatuses(pool, service, principal, projectId, taskIds),
   workIndex: createLeaderWorkIndexReader(pool),
   leaderNotices: {
+    packet: async (projectId, packetId) => {
+      const result = await uow.read(projectId, async reader => {
+        const store = reader.leaderNoticePackets;
+        const packet = await store?.getLeaderNoticePacket(packetId) ?? null;
+        return packet ? { packet, attempts: await store!.listLeaderNoticePacketAttempts(packetId), items: await store!.listLeaderNoticePacketItems(packetId) } : null;
+      });
+      if (!result) throw new DomainError("NOT_FOUND", "Leader notice packet was not found");
+      return result;
+    },
+    recoverPacket: async (principal, projectId, packetId, reason) => {
+      const result = await service.execute(principal, { type: "leader.noticePacket.recover", projectId, operationId: randomUUID(), packetId, reason } as never);
+      if (result.status === "rejected") throw new DomainError(result.code, result.message);
+      return { status: "recorded" as const, packetId, state: "recovered" as const };
+    },
     list: (projectId, query) => listLeaderNotices(pool, projectId, query),
     get: (projectId, noticeId) => getLeaderNotice(pool, projectId, noticeId),
     recover: async (projectId, noticeId, input, actorId) => {
