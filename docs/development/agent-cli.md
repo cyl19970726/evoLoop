@@ -154,6 +154,7 @@ npm run --silent cli -- work assignment "$TASK_ID" --project "$PROJECT_ID" --his
 npm run --silent cli -- work messages "$SESSION_KEY" --project "$PROJECT_ID" --limit 20
 npm run --silent cli -- work message "$MESSAGE_ID" --project "$PROJECT_ID"
 npm run --silent cli -- work leader --project "$PROJECT_ID" --limit 50
+npm run --silent cli -- work leader --project "$PROJECT_ID" --limit 50 --brief
 npm run --silent cli -- work leader --project "$PROJECT_ID" --documents
 npm run --silent cli -- work leader changes --project "$PROJECT_ID"
 npm run --silent cli -- work leader changes --project "$PROJECT_ID" --cursor "$WORK_CHANGE_CURSOR"
@@ -176,6 +177,9 @@ npm run --silent cli -- request work.review.set --project "$PROJECT_ID" --id "$T
 `work timeline` 读取与工作台同一条受权 Session 时间线；`--source` 可选 `both`（默认）、`native` 或 `messages`。响应的 `nextCursor` 与 `messagesCursor` 分别续读原生历史和已保存消息；仅传回实际返回的游标，不把两者合为一个位置。`partial`、`limitations`、`unsupportedKinds`、每条记录的时间与来源都原样保留。`work item` 用返回的 `nativeItemId` 和 `turnId` 选择单条原生记录；公开 Agent 正文和工具原始证据由服务分别按现行权限判断，CLI 不另开原生连接。`work updates` 的 `--after` 使用本服务返回的 `live.cursor`；默认带 `waitMs=0` 即时读取，可用 `--wait-ms 0..10000` 有界等待新更新，默认 CLI 请求期限 15 秒可覆盖最多 10 秒的服务等待与回包。`resetRequired` 表示应重新读时间线，更新流不是跨进程可重放的完整历史。服务拒绝或不可用时，CLI 将其错误正文放在 stderr 的 `error.data`，不改写为“空历史”。
 
 `work leader` 是 Leader 的当前工作入口。它从 Task 四态、assignment、最近 Run、当前 TaskRevision 的 Delivery、声明消费者的使用观察、待复核依据、依赖和队列 hold 派生阶段与下一责任；返回值含当前 Task version/revision、创建／业务变化／实际开始／完成时间和可选的计划开始、截止、优先级。依赖只在其前置 Task 的当前修订有 Task closure 或同修订 accepted release 时视为满足，Run 结束不能替代。计划字段不决定实际排序，结果按风险阶段、截止、显式优先级和稳定对象次序读取。
+
+**简要输出 `--brief`。** `work leader`（任务视图）、`work task TASK`、`work acceptance` 和 `work acceptance TASK` 都接受 `--brief`：服务的答案不变，CLI 只保留安排所需的字段再输出，不带 `--brief` 时输出与以前逐字节相同。一条 Task 简要保留：`taskId`、`version`、`revisionId`、`title`、`kind`、`state`、`phase`、`nextAction`、`actionKey`、`responsible`、`assignment`、`run`（最近 Run 的 ID 与状态）、`delivery`（交付 ID、技术结果、声明的消费者与最新观察）、`waiting`（当前阶段、在等谁、从何时起）、`queueHold`、`pendingImpacts`、`blockedBy`（未满足的前置 Task）、`plan` 与 `acceptance`（验收目标、前置、`readiness`）；丢掉的是每个 Task 的计时历史（占大头）、日期、最近进展与依赖的完整记录。分页字段（`total`、`counts`、`changeSequence`、`nextCursor`、`partial`、`observedAt`）原样保留，输出里带 `"brief": true`。`work task --brief` 另读一次该 Task 的验收安排，只列仍有效的（未被取代、未释放）安排的 `relayId`、阶段、方式、状态、收件人、交付与观察结果，那次读取失败时 `acceptanceRelays` 为 `null` 而不是空数组。`work acceptance TASK --brief` 的每条安排保留 ID、版本、阶段、范围键、收件人、Session、交付、投递与处理状态、观察结果，去掉长说明。`work acceptance --brief` 的 Session 占用只留 ID、角色、状态、各项占用计数、`missingCapabilities` 与 `readyForAcceptance`。不适用的读取（`--documents`、`work acceptance mine`、`work leader changes|notices` 等）带 `--brief` 会在发请求前被拒绝。用简要输出定位要处理的 Task，要写命令或核对原件时再读不带 `--brief` 的完整输出或固定原件。
+
 
 `work task` 给一项 Task 的时间投影：创建、各轮阶段起止、当前阶段停留、最新有据业务进展、仅属于当前 Task/Run 的原生活动和观测时间。缺失来源是未知，不把 Session 正在做另一项 Task 算作本项进展。`work attention` 列持久关注项，支持 `--task`、`--phase`、`--signal`、`--waiting-on-kind`、`--waiting-on-id`、`--state` 和有界续页；`work attention task` 读该 Task 的跟进/发布交接历史，`work attention item` 读一项关注的事件，`work attention thresholds` 读项目试行门槛及覆盖。时间门槛只要求核查，不代表 Run 失败，也不会自动取消、重试、封存或签消息已读。保存、原生送达、本人 read 和实际跟进分别核。来源口径与可调初值见[接口合同](../architecture/contracts.md#阶段等待由事实推导)。
 
