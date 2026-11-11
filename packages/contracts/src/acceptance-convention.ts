@@ -1,10 +1,7 @@
 import { z } from "zod";
 
-/** What the Task delivers: decides how and where the result can be checked. */
-export const deliveryFormSchema = z.enum(["research", "document", "code", "config", "operation"]);
 /** What must happen before the delivery can be checked at its real entrance. `none` means it can be checked as delivered. */
 export const acceptancePreconditionSchema = z.enum(["none", "refresh", "release", "migration", "config_restart"]);
-export type DeliveryForm = z.infer<typeof deliveryFormSchema>;
 export type AcceptancePrecondition = z.infer<typeof acceptancePreconditionSchema>;
 
 export const preconditionText: Record<Exclude<AcceptancePrecondition, "none">, string> = {

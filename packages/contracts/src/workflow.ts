@@ -195,8 +195,7 @@ export interface TaskProposal {
   /** Explicitly permits Leader acceptance; historical null requires a concrete arrangement decision. */
   /** `named_agent`: the declared consumer (a business identity, not a managed Session) accepts directly; no relay is arranged. */
   acceptanceTarget?: "human" | "leader" | "business_session" | "named_agent" | null;
-  /** What the Task delivers, and what must happen before it can be checked at its real entrance. Null: not declared. */
-  deliveryForm?: "research" | "document" | "code" | "config" | "operation" | null;
+  /** What must happen before the delivery can be checked at its real entrance. Null: not declared. */
   acceptancePrecondition?: "none" | "refresh" | "release" | "migration" | "config_restart" | null;
   evidence: string;
   stopCondition: string;

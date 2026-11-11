@@ -1,7 +1,23 @@
--- Task acceptance convention (DEC-042): what the Task delivers, what must happen before the delivery can be checked, and a
--- declared-business-identity acceptance target that needs no relay. All columns are optional: older Tasks declare nothing.
-ALTER TABLE task_proposal ADD COLUMN delivery_form text
-  CHECK (delivery_form IS NULL OR delivery_form IN ('research','document','code','config','operation'));
+-- Task acceptance convention (DEC-042): what must happen before a delivery can be checked, a declared-business-identity
+-- acceptance target that needs no relay, and three more work types. Older Tasks declare nothing new: every change widens a
+-- constraint or adds an optional column, so no existing row changes.
+
+-- Work types: add defect, documentation and operation next to implementation, research and validation.
+DO $$
+DECLARE c record;
+BEGIN
+  FOR c IN SELECT conrelid::regclass AS tbl, conname FROM pg_constraint
+    WHERE contype='c' AND conrelid IN ('task'::regclass,'task_revision'::regclass)
+      AND pg_get_constraintdef(oid) LIKE '%kind%' AND pg_get_constraintdef(oid) LIKE '%implementation%'
+  LOOP
+    EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I', c.tbl, c.conname);
+  END LOOP;
+END $$;
+ALTER TABLE task ADD CONSTRAINT task_kind_check
+  CHECK (kind IN ('implementation','research','validation','defect','documentation','operation'));
+ALTER TABLE task_revision ADD CONSTRAINT task_revision_kind_check
+  CHECK (kind IN ('implementation','research','validation','defect','documentation','operation'));
+
 ALTER TABLE task_proposal ADD COLUMN acceptance_precondition text
   CHECK (acceptance_precondition IS NULL OR acceptance_precondition IN ('none','refresh','release','migration','config_restart'));
 ALTER TABLE task_proposal DROP CONSTRAINT task_proposal_acceptance_target_check;

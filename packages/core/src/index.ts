@@ -439,7 +439,7 @@ export class WorkflowService {
           stageId: command.stageId ?? null, consumer: command.consumer ?? "", useRequired: !decisionOnly,
           acceptanceMode: decisionOnly ? null : command.acceptanceMode ?? "independent_agent",
           acceptanceTarget: decisionOnly ? null : command.acceptanceTarget ?? null,
-          deliveryForm: command.deliveryForm ?? null, acceptancePrecondition: command.acceptancePrecondition ?? null,
+          acceptancePrecondition: command.acceptancePrecondition ?? null,
           evidence: command.evidence ?? "", stopCondition: command.stopCondition ?? "", createdAt: now });
         for (const linkedId of documentIds) await tx.insertLink({ projectId: command.projectId, id: this.deps.ids.next(),
           taskId: task.id, documentId: linkedId, actorId, createdAt: now });
@@ -478,7 +478,6 @@ export class WorkflowService {
         const acceptanceMode = command.acceptanceMode ?? priorProposal?.acceptanceMode ?? null;
         // undefined keeps the declared target; null clears it.
         const acceptanceTarget = command.acceptanceTarget !== undefined ? command.acceptanceTarget : priorProposal?.acceptanceTarget ?? null;
-        const deliveryForm = command.deliveryForm !== undefined ? command.deliveryForm : priorProposal?.deliveryForm ?? null;
         const acceptancePrecondition = command.acceptancePrecondition !== undefined ? command.acceptancePrecondition : priorProposal?.acceptancePrecondition ?? null;
         if (acceptanceTarget && (acceptanceTarget === "human") !== (acceptanceMode === "human_required"))
           throw new DomainError("ACCEPTANCE_POLICY", "acceptance target and mode disagree");
@@ -487,11 +486,10 @@ export class WorkflowService {
           throw new DomainError("ACCEPTANCE_POLICY", "named_agent acceptance needs the declared consumer: the business identity that accepts directly");
         // The acceptance convention changes under the same rule as the other acceptance fields: review permission, Task still todo.
         const conventionChanged = command.acceptanceTarget !== undefined && command.acceptanceTarget !== (priorProposal?.acceptanceTarget ?? null) ||
-          command.deliveryForm !== undefined && command.deliveryForm !== (priorProposal?.deliveryForm ?? null) ||
           command.acceptancePrecondition !== undefined && command.acceptancePrecondition !== (priorProposal?.acceptancePrecondition ?? null);
         if (conventionChanged) {
-          if (!principal.permissions.includes("review")) throw new DomainError("FORBIDDEN", "acceptance target, delivery form and acceptance precondition changes require review permission");
-          if (task.state !== "todo") throw new DomainError("REOPEN_REQUIRED", "reopen the Task before changing its acceptance target, delivery form or acceptance precondition");
+          if (!principal.permissions.includes("review")) throw new DomainError("FORBIDDEN", "acceptance target and acceptance precondition changes require review permission");
+          if (task.state !== "todo") throw new DomainError("REOPEN_REQUIRED", "reopen the Task before changing its acceptance target or acceptance precondition");
         }
         if (priorProposal?.acceptanceMode === "human_required" &&
           (acceptanceMode !== "human_required" || command.consumer !== undefined && command.consumer !== priorProposal.consumer) &&
@@ -582,12 +580,12 @@ export class WorkflowService {
         await tx.updateTask({ ...task, version: revision.version, currentRevisionId: revisionId,
           title: revision.title, content: revision.content, contentRevisionId, kind, domainId, acceptance: revision.acceptance,
           owner: revision.owner }, task.version);
-        if (priorProposal || stageChanged || command.consumer || command.evidence || command.stopCondition || command.useRequired !== undefined || command.acceptanceMode !== undefined || command.acceptanceTarget !== undefined || command.deliveryForm !== undefined || command.acceptancePrecondition !== undefined) {
+        if (priorProposal || stageChanged || command.consumer || command.evidence || command.stopCondition || command.useRequired !== undefined || command.acceptanceMode !== undefined || command.acceptanceTarget !== undefined || command.acceptancePrecondition !== undefined) {
           await tx.insertTaskProposal({ projectId: task.projectId, taskId: task.id, taskRevisionId: revisionId,
             stageId, consumer,
             useRequired: acceptanceMode ? true : command.useRequired ?? priorProposal?.useRequired ?? false,
             acceptanceMode,
-            acceptanceTarget, deliveryForm, acceptancePrecondition,
+            acceptanceTarget, acceptancePrecondition,
             evidence, stopCondition, createdAt: now });
         }
         for (const id of documentIds.filter(id => !linked.includes(id))) await tx.insertLink({ projectId: task.projectId,

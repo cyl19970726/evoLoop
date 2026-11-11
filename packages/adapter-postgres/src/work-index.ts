@@ -288,8 +288,8 @@ function taskAction(phase: LeaderWorkPhase): string {
 
 /** What the Task declared about acceptance, with whether the delivery can be checked yet. Null when it declared nothing. */
 function acceptanceConvention(row: QueryResultRow): NonNullable<LeaderWorkTask["acceptanceConvention"]> | null {
-  if (!row.acceptance_target && !row.delivery_form && !row.acceptance_precondition) return null;
-  return { acceptanceTarget: row.acceptance_target ?? null, deliveryForm: row.delivery_form ?? null,
+  if (!row.acceptance_target && !row.acceptance_precondition) return null;
+  return { acceptanceTarget: row.acceptance_target ?? null,
     acceptancePrecondition: row.acceptance_precondition ?? null,
     readiness: row.delivery_id ? acceptanceReadiness(row.acceptance_precondition, row.precondition_marked === true) : null,
     namedAgent: row.acceptance_target === "named_agent" ? String(row.consumer ?? "") || null : null };
@@ -867,7 +867,7 @@ export async function readLeaderWorkTasks(db: Database, projectId: string, query
     if (offset > total) throw new DomainError("INVALID_CURSOR", "待处理工作分页位置超出当前快照");
     const pageResult = await snapshot.query(`${taskFactsSql(query.includeClosed === true, query.taskId ? 4 : undefined)}
       SELECT facts.*,proposal.consumer,proposal.use_required,
-        proposal.acceptance_target,proposal.delivery_form,proposal.acceptance_precondition,
+        proposal.acceptance_target,proposal.acceptance_precondition,
         EXISTS(SELECT 1 FROM task_acceptance_precondition_mark pm WHERE pm.project_id=facts.project_id
           AND pm.delivery_id=facts.delivery_id) AS precondition_marked,
         stage.stage_id,stage.deliverable AS stage_deliverable,
@@ -885,7 +885,7 @@ export async function readLeaderWorkTasks(db: Database, projectId: string, query
         follow_up.updated_at AS follow_up_updated_at,
         follow_up.version AS follow_up_version
       FROM facts
-      LEFT JOIN LATERAL (SELECT p.consumer,p.use_required,p.stage_id,p.acceptance_target,p.delivery_form,p.acceptance_precondition FROM task_proposal p
+      LEFT JOIN LATERAL (SELECT p.consumer,p.use_required,p.stage_id,p.acceptance_target,p.acceptance_precondition FROM task_proposal p
         JOIN task_revision r ON r.project_id=p.project_id AND r.task_id=p.task_id
           AND r.revision_id=p.task_revision_id
         WHERE p.project_id=facts.project_id AND p.task_id=facts.task_id

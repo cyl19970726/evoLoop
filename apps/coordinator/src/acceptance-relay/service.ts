@@ -1,4 +1,6 @@
-import { acceptanceReadiness } from "@evoloop/contracts/acceptance-convention";
+import { judgeMyDelivery } from "@evoloop/contracts/delivery-for-me";
+import type { LeaderWorkTask } from "@evoloop/contracts/work-index";
+import { readLeaderWorkTasks } from "@evoloop/adapter-postgres/work-index";
 import { createHash } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import type { Principal, RuntimeSessionRecord } from "@evoloop/contracts";
@@ -210,31 +212,48 @@ export class AcceptanceRelayService {
   }
 
   /**
-   * Deliveries this identity is the declared consumer of, that have arrived and that it has not yet signed `used`. Read for any
-   * identity, an Agent included: it is the list a consumer that is not woken automatically has to look at. `readiness` says
-   * whether the declared acceptance precondition (release, migration, ...) is marked met for the current delivery.
+   * Deliveries this identity is the declared consumer of and still has to use: the same list, by the same rule
+   * (`judgeMyDelivery`, over the same work index), as the workbench's 待我处理 › 等我使用的交付. Read for any identity, an
+   * Agent included: a consumer that is not woken automatically has to be able to ask. `readiness` says whether the declared
+   * acceptance precondition (release, migration, ...) is marked met for the current delivery.
    */
-  async mineDirect(principal: Principal, projectId: string): Promise<unknown[]> {
+  async mineDirect(principal: Principal, projectId: string): Promise<{ items: unknown[]; complete: boolean; tasksRead: number }> {
     if (!principal.projectIds.includes(projectId) || !principal.permissions.includes("read"))
       throw new DomainError("FORBIDDEN", "Project read authority required");
-    const result = await this.deps.pool.query(`SELECT t.task_id,t.title,t.state,p.acceptance_target,p.delivery_form,
-        p.acceptance_precondition,d.delivery_id,d.created_at AS delivered_at,d.artifact_ref,m.mark_id,m.evidence AS mark_evidence
-      FROM task t
-      JOIN LATERAL (SELECT p.* FROM task_proposal p JOIN task_revision r ON r.project_id=p.project_id AND r.task_id=p.task_id
-          AND r.revision_id=p.task_revision_id WHERE p.project_id=t.project_id AND p.task_id=t.task_id
-          ORDER BY r.version DESC LIMIT 1) p ON true
-      JOIN LATERAL (SELECT * FROM delivery WHERE project_id=t.project_id AND task_id=t.task_id
-          ORDER BY created_at DESC,delivery_id DESC LIMIT 1) d ON true
-      LEFT JOIN task_acceptance_precondition_mark m ON m.project_id=t.project_id AND m.delivery_id=d.delivery_id
-      WHERE t.project_id=$1 AND t.state NOT IN ('done','cancelled') AND p.use_required AND p.consumer=$2
-        AND NOT EXISTS (SELECT 1 FROM consumer_observation o WHERE o.project_id=t.project_id AND o.delivery_id=d.delivery_id
-          AND o.observer=$2 AND o.result='used')
-      ORDER BY d.created_at DESC,d.delivery_id DESC LIMIT 100`,[projectId,principal.actorId]);
-    return result.rows.map(r => ({ projectId, taskId: r.task_id, title: r.title, taskState: r.state, deliveryId: r.delivery_id,
-      deliveredAt: new Date(r.delivered_at).toISOString(), artifactRef: r.artifact_ref, acceptanceTarget: r.acceptance_target ?? null,
-      deliveryForm: r.delivery_form ?? null, acceptancePrecondition: r.acceptance_precondition ?? null,
-      readiness: acceptanceReadiness(r.acceptance_precondition, !!r.mark_id),
-      preconditionMark: r.mark_id ? { markId: r.mark_id, evidence: r.mark_evidence } : null }));
+    const maxPages = 40;
+    let tasks: LeaderWorkTask[] = [], complete = false;
+    // A write between two pages changes the snapshot; read again from the first page once, as the workbench does.
+    for (let attempt = 0; attempt < 2 && !complete; attempt++) {
+      tasks = []; let cursor: string | undefined, sequence: number | null = null, changed = false;
+      for (let pages = 0; pages < maxPages; pages++) {
+        const page = await readLeaderWorkTasks(this.deps.pool, projectId, { view: "tasks", limit: 50, includeClosed: false, ...(cursor ? { cursor } : {}) });
+        if (sequence !== null && page.changeSequence !== sequence) { changed = true; break; }
+        sequence = page.changeSequence; tasks.push(...page.items.filter(item => item.kind === "task"));
+        if (!page.nextCursor) { complete = page.partial !== true; break; }
+        cursor = page.nextCursor;
+      }
+      if (!changed) break;
+    }
+    const items: unknown[] = [];
+    for (const task of tasks) {
+      const judgement = judgeMyDelivery(task, principal.actorId);
+      if (judgement.kind === "none" || judgement.kind === "used" || judgement.kind === "failed") continue;
+      const delivery = task.delivery!;
+      let last: string | null = judgement.kind === "waiting" ? judgement.last : null, othersObserved = false;
+      if (judgement.kind === "check-own") {
+        // Someone else observed last: my own latest observation of this delivery decides.
+        const mine = (await this.deps.pool.query(`SELECT result FROM consumer_observation WHERE project_id=$1 AND delivery_id=$2
+          AND observer=$3 ORDER BY created_at DESC,sequence DESC LIMIT 1`, [projectId, delivery.deliveryId, principal.actorId])).rows[0];
+        if (mine?.result === "used" || mine?.result === "failed") continue;
+        othersObserved = true; last = mine ? "notUsed" : null;
+      }
+      const convention = task.acceptanceConvention ?? null;
+      items.push({ projectId, taskId: task.taskId, title: task.title, taskKind: task.taskKind, taskState: task.taskState,
+        deliveryId: delivery.deliveryId, taskRevisionId: delivery.taskRevisionId, useRequired: delivery.useRequired,
+        acceptanceTarget: convention?.acceptanceTarget ?? null, acceptancePrecondition: convention?.acceptancePrecondition ?? null,
+        readiness: convention?.readiness ?? "ready", last, othersObserved });
+    }
+    return { items, complete, tasksRead: tasks.length };
   }
 
   /** Capacity is a snapshot of persisted obligations. It does not claim native writer ownership. */

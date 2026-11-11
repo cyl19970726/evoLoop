@@ -39,6 +39,7 @@
     "./allocation-relations": "./dist/allocation-relations.js",
     "./session-recovery": "./dist/session-recovery.js",
     "./acceptance-convention": "./dist/acceptance-convention.js",
+    "./delivery-for-me": "./dist/delivery-for-me.js",
     "./native-input": "./dist/native-input.js",
     "./native-observation": "./dist/native-observation.js",
     "./work-index": "./dist/work-index.js",

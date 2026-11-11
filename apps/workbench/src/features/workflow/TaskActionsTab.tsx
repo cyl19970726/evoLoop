@@ -27,12 +27,13 @@ import {
 } from "./taskCommands";
 import { ActionRow, Fine, TabSection, reasonField } from "./TaskForms";
 import { TaskScheduleSection } from "./TaskScheduleSection";
+import { taskTypeLabel } from "./taskWorkspacePresentation";
 import type { ReadState } from "./taskFactsPresentation";
 
 type Permission = "write" | "review";
 interface Action { key: string; title: string; description?: React.ReactNode; needs: Permission[]; element: React.ReactNode }
 
-const kindOptions = [{ value: "implementation", label: "实施" }, { value: "research", label: "调研" }, { value: "validation", label: "验证" }];
+const kindOptions = Object.entries(taskTypeLabel).map(([value, label]) => ({ value, label }));
 
 /** Every Role of the project, read in pages; a partial list is never offered as complete. */
 async function readRoles(projectId: string): Promise<RoleRecord[]> {

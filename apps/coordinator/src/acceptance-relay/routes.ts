@@ -26,7 +26,7 @@ export function registerAcceptanceRelayRoutes(app: FastifyInstance, workflow: Wo
     const p=z.strictObject({projectId:z.uuid()}).parse(request.params);
     if(!request.principal)throw new DomainError("FORBIDDEN","Authentication required");
     await workflow.getProject(request.principal,p.projectId);
-    return {items:await relay.mine(request.principal,p.projectId),direct:await relay.mineDirect(request.principal,p.projectId)};
+    return {items:await relay.mine(request.principal,p.projectId),...await relay.mineDirect(request.principal,p.projectId).then(direct=>({direct:direct.items,directComplete:direct.complete,directTasksRead:direct.tasksRead}))};
   });
   app.get("/api/projects/:projectId/tasks/:taskId/acceptance-relay", async request => {
     const p = params.parse(request.params);

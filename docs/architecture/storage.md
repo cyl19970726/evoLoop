@@ -162,7 +162,7 @@ erDiagram
 | 068 `role_runtime_profile` | `role_runtime_revision` | 只追加；第 1 个修订固定 Role 的运行时，之后只改 skill 选择，选择内容由校验函数约束；新 Session 插入时触发器拒绝与 Role 绑定不一致的运行时。迁移按已有 Session 回填首个绑定。 | 同上 |
 | 069 `document_revision_history` | `document_revision.revision_number` | 每份文档内从 1 连续编号，`(project_id, document_id, revision_number)` 唯一，同时是修订列表分页的索引；插入前触发器锁住文档行，取已有最大值加 1；调用方显式给出序号会被拒绝（`23514`），逐行导入历史（DEC-041）时不会悄悄换掉源主机的序号，导入方式须另定。完整的 `pg_dump`/`pg_restore` 不受影响：触发器在 post-data 段、表数据载入之后才创建（已用 `pg_restore --list` 核对顺序）。写入后随修订不可改。迁移沿 `previous_revision_id` 链回填（临时索引，迁移内删除）；不是单链（分叉、多个根或断链）的文档改按 `created_at, revision_id` 编号。发布前的检查与发布后的 `VACUUM` 见[发布新版本](deployment.md#2-发布新版本)。 | [DocumentStore](contracts.md#2a-documentstore-与-relationstore) |
 | 070 `acceptance_relay_stage_closure` | 无新增表或列；替换 `guard_acceptance_relay_closure()` | 同一 Delivery 有现行正式安排时，关闭只要求每条现行正式安排有指定收件人对该 Delivery 的已关联 `used` 观察；候选安排保留历史，不阻塞正式收口。没有正式安排时仍逐条核对现行候选安排，不能用一条已关联观察掩盖另一条未满足的安排。 | [验收接力与退役](contracts.md#验收接力与临时-session-退役) |
-| 077 `acceptance_convention` | `task_proposal.delivery_form`、`task_proposal.acceptance_precondition`；`task_acceptance_precondition_mark` | 两个可选列写明 Task 交付什么、验收前要满足什么；`acceptance_target` 增加 `named_agent`（由声明的业务身份直接验收，不经接力）。标记表每个交付至多一条、不可变：复核者显式声明该交付的前置（发布、迁移、重启等）已满足，没有标记时投影显示等待而非可验收。 | [验收接力](contracts.md#验收接力与临时-session-退役) |
+| 077 `acceptance_convention` | `task_proposal.acceptance_precondition`；`task_acceptance_precondition_mark`；`task` / `task_revision` 的 `kind` 检查 | 可选列 `acceptance_precondition` 写明验收前要满足什么；`kind` 的检查加 `defect`、`documentation`、`operation`（原有三种和旧数据不变）；`acceptance_target` 增加 `named_agent`（由声明的业务身份直接验收，不经接力）。标记表每个交付至多一条、不可变：复核者显式声明该交付的前置（发布、迁移、重启等）已满足，没有标记时投影显示等待而非可验收。 | [验收接力](contracts.md#验收接力与临时-session-退役) |
 
 ## 事务、幂等和读取
 
