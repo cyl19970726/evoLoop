@@ -288,7 +288,22 @@ node --import tsx tests/manual/session-compaction-e1.ts
 
 ## 6. 受管 Session 编制所需配置
 
-给一个 Role 新建受管 Session，要同时配好：业务身份（身份文件里对本项目有 read 与 write）、`runtime.grants`（含工作区 `cwd`）、Role 级 `runtime.materialCli`、**`residentQueue.roleActors`** 与 `residentQueue.enabled`、需要时的 `sessionMessages.grants`，以及 `runtime.enabled`。完整清单、每项的格式和生效时机见 [Agent CLI：编制所需私有配置清单](agent-cli.md#编制所需私有配置清单session-prepare-缺项时)。
+给一个 Role 新建受管 Session，要同时配好：业务身份（身份文件里对本项目有 read 与 write）、`runtime.grants`（含工作区 `cwd`）、Role 级 `runtime.materialCli`、**`residentQueue.roleActors`** 与 `residentQueue.enabled`、**成对配置的 `sessionMessages.grants`**，以及 `runtime.enabled`。完整清单、每项的格式和生效时机见 [Agent CLI：编制所需私有配置清单](agent-cli.md#编制所需私有配置清单session-prepare-缺项时)。
+
+**双向消息授权是必配。** 不能因为新 Session“暂时不用消息”而省略，也不能只配一个方向。`sessionMessages.enabled` 须为 `true`，并同时有：
+
+- **新业务身份 → Leader Session。** `sessionId` 指 Leader Session，`senderActorId` 是新业务身份，`receiverActorId`、`receiverRoleId` 与 `cwd` 取 Leader 的，`enabled` 为 `true`。
+- **Leader → 新 Session。** `sessionId` 指新 Session，`senderActorId` 是 Leader，`receiverActorId`、`receiverRoleId` 与 `cwd` 取新 Session 的，`enabled` 为 `true`。
+
+发送普通消息时，服务逐次按接收 Session 核对对应方向的那一条；缺项以 `MESSAGE_GRANT_MISSING` 拒绝，消息不保存。`session prepare` 不检查这两条，所以准备结果不能代替实际发送。
+
+**“可报告为就绪”的判据。** `session prepare` 成功、配置缺项为空、`runtime_session.state=ready` 或原生 Thread 可读，只证明编制和原生绑定完成，可能仍早于模型成功运行。对外报告新 Session“就绪”前，必须完成一次真实消息往返：
+
+1. 用 Leader 身份按 `command schema session.message.post` 发一条带唯一标记的约定测试消息，保留返回的 `messageId`。
+2. 新 Session 实际处理后，按同一命令和反向授权发回原标记，并带原消息的 `replyToMessageId`。
+3. 用 `work message MESSAGE_ID` 和 `work status owned:SESSION_ID --message MESSAGE_ID` 分别读回两个方向的已保存消息、processing 与原生 Turn；目标 Session 一侧还要核到已有回复。
+
+只有两个方向都成功发送并处理、原生 Turn 可核、回复中的标记一致，才报告就绪，并保留两条消息 ID 与读回结果作对照记录。只有配置检查通过、发送返回 `applied`、状态显示 `ready`、消息已保存或没有回复，都不算就绪。
 
 - **缺项怎么看。** `session prepare` 返回 `status=blocked`，`missing` 是代码，`missingDetails` 写明要设的配置项、可复制的修法和是否需重启；`role_actor` 就是缺 `residentQueue.roleActors`（或它没启用、或该身份无写权限）。
 - **哪些要重启。** 按代码核对，`session prepare` 每次调用都重读 integrations 与身份文件，补 `residentQueue.roleActors`、`runtime.materialCli`、`runtime.grants` 不需要重启；只有 `runtime.enabled`（运行时只在启动时建立）和新增 HTTP 令牌要重启。
