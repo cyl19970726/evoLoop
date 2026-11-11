@@ -1,6 +1,6 @@
 import type { PoolClient, QueryResultRow } from "pg";
 import { DomainError } from "@evoloop/contracts/ports";
-import type { SessionAssignmentPage, SessionAssignmentTransaction, SessionProfileRecord, TaskSessionAssignment } from "@evoloop/contracts/session-assignments";
+import type { AssignmentConfirmation, SessionAssignmentPage, SessionAssignmentTransaction, SessionProfileRecord, TaskSessionAssignment } from "@evoloop/contracts/session-assignments";
 import type { SessionTarget } from "@evoloop/contracts/session-work";
 import type { SessionIdentity } from "@evoloop/contracts/session-identity";
 import { fallbackSessionIdentity } from "@evoloop/contracts/session-identity";
@@ -112,6 +112,19 @@ export class PgSessionAssignments implements SessionAssignmentTransaction {
     await this.client.query(`INSERT INTO task_session_assignment_revision(project_id,task_id,version,task_revision_id,target_kind,target_id,
       recipient_actor_id,state,ack_method,ack_actor_id,ack_observer_actor_id,ack_evidence,ack_source_ref,ack_at,actor_id,reason,updated_at)
       VALUES(${Array.from({ length: 17 }, (_, i) => `$${i + 1}`).join(",")})`, values);
+  }
+  async getAssignmentConfirmation(taskId: string, assignmentVersion: number): Promise<AssignmentConfirmation | null> {
+    const r = await this.client.query("SELECT * FROM task_assignment_confirmation WHERE project_id=$1 AND task_id=$2 AND assignment_version=$3",
+      [this.projectId, taskId, assignmentVersion]);
+    const row = r.rows[0];
+    return row ? { projectId: row.project_id, taskId: row.task_id, assignmentVersion: row.assignment_version, verdict: row.verdict,
+      plan: row.plan, missing: row.missing, expectedRevisionId: row.expected_revision_id, actorId: row.actor_id, at: iso(row.at) } : null;
+  }
+  async saveAssignmentConfirmation(value: AssignmentConfirmation): Promise<void> {
+    if (value.projectId !== this.projectId) throw new DomainError("PROJECT_SCOPE", "Confirmation belongs to another project");
+    await this.client.query(`INSERT INTO task_assignment_confirmation(project_id,task_id,assignment_version,verdict,plan,missing,expected_revision_id,actor_id,at)
+      VALUES($1,$2,$3,$4,$5,$6::jsonb,$7,$8,$9)`, [value.projectId, value.taskId, value.assignmentVersion, value.verdict, value.plan,
+      JSON.stringify(value.missing), value.expectedRevisionId, value.actorId, value.at]);
   }
   async assertTaskAssignmentMovable(taskId: string): Promise<void> {
     const busy = await this.client.query(`SELECT 1 FROM runtime_run WHERE project_id=$1 AND task_id=$2

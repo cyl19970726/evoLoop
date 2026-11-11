@@ -341,6 +341,22 @@ export async function buildServer(options: {
     return reply.code(result.status === "applied" ? 200 : errorStatus(result.code)).send(result);
   });
   app.get("/api/projects/:projectId", async request => options.service.getProject(who(request.principal), params(request.params).projectId!));
+  // Session lines (DEC-045 Q1): each line with its waiting entries, and the ordered line events for the scheduling board.
+  app.get("/api/projects/:projectId/session-lines", async request => {
+    const p = z.strictObject({ projectId: idSchema }).parse(request.params);
+    const q = z.strictObject({ includeEnded: z.enum(["true", "false"]).optional() }).parse(request.query);
+    const principal = who(request.principal);
+    const lines = await options.service.listSessionLines(principal, p.projectId);
+    return { lines: await Promise.all(lines.map(async line => ({ ...line,
+      entries: await options.service.listSessionLineEntries(principal, p.projectId, line.sessionId, q.includeEnded === "true") }))) };
+  });
+  app.get("/api/projects/:projectId/session-lines/events", async request => {
+    const p = z.strictObject({ projectId: idSchema }).parse(request.params);
+    const q = z.strictObject({ after: z.coerce.number().int().nonnegative().default(0), limit: z.coerce.number().int().min(1).max(500).default(100),
+      sessionId: idSchema.optional() }).parse(request.query);
+    const events = await options.service.listSessionLineEvents(who(request.principal), p.projectId, q.after, q.limit, q.sessionId);
+    return { events, nextAfter: events.at(-1)?.seq ?? q.after };
+  });
   app.get("/api/projects/:projectId/session-preparation/:sessionId", async request => {
     const p=z.strictObject({projectId:z.uuid(),sessionId:z.uuid()}).parse(request.params);
     const q=z.strictObject({roleId:z.uuid(),cwd:z.string().optional(),authorizationScope:z.string().optional(),

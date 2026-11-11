@@ -6,7 +6,7 @@ import { AcceptanceRelayService } from "../src/acceptance-relay/service.js";
 const projectId = "40000006-0000-4000-8000-000000000001";
 const principal = { actorId: "reviewer", projectIds: [projectId], permissions: ["read", "review"] } as unknown as Principal;
 const row = (id: string, actor: string) => ({ session_id: id, role_id: "role", actor_id: actor, cwd: "/work", state: "ready", native_thread_id: "t",
-  tenure: "resident", active_runs: 0, pending_messages: 0, queue_entries: 0, open_assignments: 0, open_acceptance: 0 });
+  tenure: "resident", active_runs: 0, pending_messages: 0, queue_entries: 0, open_assignments: 0, open_acceptance: 0, line_queued: 0, line_starting: 0 });
 
 /** Grants are keyed by receiver actor, as in main.ts: a missing grant is reported only for the identity actually named. */
 function service(rows: ReturnType<typeof row>[], bound: Record<string, string | null>, granted: Set<string>) {
