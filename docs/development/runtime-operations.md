@@ -98,7 +98,7 @@
 
 ### 安排验收
 
-Leader 读到交付后，按 Task 声明的验收方式，用 `acceptance.assign` 安排验收（命令见 [Agent CLI](agent-cli.md#观察会话具体接手与普通消息)）。验收人可以是人、Task 允许的 Leader，或 Leader 指派的业务 Session；交付作者和安排者都不能验收。安排受阻会留下一条 `acceptance_blocked` 通知；验收结果仍以观察通知回到 Leader。
+Leader 读到交付后，按 Task 声明的验收方式，用 `acceptance.assign` 安排验收（命令见 [Agent CLI](agent-cli.md#观察会话具体接手与普通消息)）。常规验收由 Leader 指派独立业务 Session；难验收由需求 Session 以消费者身份直接验收，不经验收接力；使用者亲用时写人；Leader 只在使用者为某项 Task 明确要求时验收。交付作者和安排者都不能验收；执行者自检、CI 与 Run 终态是交付证据，不是验收。安排受阻会留下一条 `acceptance_blocked` 通知；验收结果仍以观察通知回到 Leader。
 
 ### 关闭与回退
 
