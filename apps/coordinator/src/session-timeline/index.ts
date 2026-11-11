@@ -64,12 +64,21 @@ const originOf=(source:NativeInputSource|null):WorkspaceOrigin|null=>source?.kin
 }:source?.kind==='message'?{kind:'message',id:source.messageId,taskId:null,taskRevisionId:null,
   initiatingActorId:source.actorId}:null;
 const toolDetailDenied='原始工具详情需要本项目读取与复核权限。';
+/**
+ * The client ID a native input carries for its business source. An ordinary message or Run sends its operation ID. A direct
+ * idle start (the workbench's "send to an idle Session") saves a message whose ID is the direct input ID and sends that ID as the
+ * client ID, while the text marker names the operation: both belong to the same source, so the input is exact only when the
+ * client ID is the source's message ID AND the marker names the source's operation.
+ */
+const clientIdMatches=(raw:WorkspaceMessage,source:NativeInputSource,markerMatches:boolean):boolean=>
+  raw.clientId===source.operationId||
+  source.kind==='message'&&raw.clientId===source.messageId&&markerMatches;
 const exactInput=(raw:WorkspaceEntry,source:NativeInputSource|null):raw is WorkspaceMessage=>{
   if(raw.kind!=='message'||raw.role!=='input'||!source)return false;
   const marker=raw.inputReference;
   const markerMatches=!!marker&&marker.kind==='operation-marker'&&marker.source===source.kind&&
     marker.operationId===source.operationId;
-  if(raw.clientId!==null)return raw.clientId===source.operationId&&(!marker||markerMatches);
+  if(raw.clientId!==null)return clientIdMatches(raw,source,markerMatches)&&(!marker||markerMatches);
   return markerMatches;
 };
 type InputNoticeReason='unassociated'|'duplicate'|'conflict'|'compacted';
@@ -86,7 +95,8 @@ const nativeInputNotice=(raw:WorkspaceMessage,reason:InputNoticeReason='unassoci
 const inputNoticeReason=(raw:WorkspaceMessage,source:NativeInputSource|null,duplicate=false):'unassociated'|'duplicate'|'conflict'=>{
   if(duplicate)return 'duplicate';
   if(raw.clientId!==null&&raw.inputReference&&source&&
-      (raw.clientId!==source.operationId||raw.inputReference.source!==source.kind||
+      (!clientIdMatches(raw,source,raw.inputReference.kind==='operation-marker'&&raw.inputReference.source===source.kind&&
+        raw.inputReference.operationId===source.operationId)||raw.inputReference.source!==source.kind||
         raw.inputReference.operationId!==source.operationId))return 'conflict';
   return 'unassociated';
 };
@@ -533,7 +543,8 @@ export class SessionTimelineService {
       // Context compaction rewrites native input, so the operation marker may be gone. The Turn itself is still the one
       // the saved business record started: when it holds exactly one input and that input carries no other identity,
       // that input is the business input. Anything less certain says so instead of implying an unknown sender.
-      const otherIdentity=raw.clientId!==null&&raw.clientId!==source.operationId||
+      const otherIdentity=raw.clientId!==null&&!clientIdMatches(raw,source,!!raw.inputReference&&raw.inputReference.source===source.kind&&
+          raw.inputReference.operationId===source.operationId)||
         !!raw.inputReference&&(raw.inputReference.source!==source.kind||raw.inputReference.operationId!==source.operationId);
       if(context.inputs===1&&!otherIdentity){
         if(source.kind==='run')return runInput(raw,source);

@@ -187,28 +187,9 @@ export class DirectInputService {
     const binding=await this.deps.bindingFor(projectId,record.sessionId);
     const runtime=this.deps.runtime();
     await runtime.registerBinding(binding);
-    const matches:{turnId:string;itemId:string|null}[]=[];
-    try{
-      const turns=(record.actualTurnId??record.expectedTurnId)?
-        [await this.findTurn(runtime,binding,(record.actualTurnId??record.expectedTurnId)!)].filter(Boolean) as RuntimeTurn[]:
-        (await runtime.listTurns(binding)).data.slice(0,20);
-      for(const turn of turns){
-        let cursor:string|undefined;
-        for(let page=0;page<10;page++){
-          const items=await runtime.listItems(binding,turn.id,cursor);
-          for(const item of items.data){
-            const x=object(item);
-            if(x?.type!=="userMessage")continue;
-            // Materialized alpha.6 Items use clientId for clientUserMessageId.
-            const clientId=x.clientUserMessageId??x.client_user_message_id??x.clientId;
-            if(clientId===record.inputId||record.mode==="start"&&textOf(item).startsWith(marker(record.operationId)))
-              matches.push({turnId:turn.id,itemId:typeof x.id==="string"?x.id:null});
-          }
-          if(!items.nextCursor)break;
-          cursor=items.nextCursor;
-        }
-      }
-    }catch(error){
+    let matches:{turnId:string;itemId:string|null}[];
+    try{matches=await this.matchOriginal(runtime,binding,record);}
+    catch(error){
       // Zero-Turn history can be unmaterialized; other native history reads may be unsupported.
       // Neither condition proves that the original send was rejected.
       if(error instanceof RuntimeServerError&&
@@ -221,6 +202,55 @@ export class DirectInputService {
     if(matches.length===1)return publicDirectInput(await this.deps.store.accept(projectId,inputId,matches[0]!.turnId,matches[0]!.itemId));
     if(record.state==="attempted")return publicDirectInput(await this.deps.store.unknown(projectId,inputId,"No unique original input in bounded native history"));
     return publicDirectInput(record);
+  }
+  /** The Items of the bounded native history that are this input: by exact client ID, or for a start by its operation marker. */
+  private async matchOriginal(runtime:Native,binding:RuntimeBinding,record:DirectInputRecord):Promise<{turnId:string;itemId:string|null}[]>{
+    const matches:{turnId:string;itemId:string|null}[]=[];
+    const turns=(record.actualTurnId??record.expectedTurnId)?
+      [await this.findTurn(runtime,binding,(record.actualTurnId??record.expectedTurnId)!)].filter(Boolean) as RuntimeTurn[]:
+      (await runtime.listTurns(binding)).data.slice(0,20);
+    for(const turn of turns){
+      let cursor:string|undefined;
+      for(let page=0;page<10;page++){
+        const items=await runtime.listItems(binding,turn.id,cursor);
+        for(const item of items.data){
+          const x=object(item);
+          if(x?.type!=="userMessage")continue;
+          // Materialized alpha.6 Items use clientId for clientUserMessageId.
+          const clientId=x.clientUserMessageId??x.client_user_message_id??x.clientId;
+          if(clientId===record.inputId||record.mode==="start"&&textOf(item).startsWith(marker(record.operationId)))
+            matches.push({turnId:turn.id,itemId:typeof x.id==="string"?x.id:null});
+        }
+        if(!items.nextCursor)break;
+        cursor=items.nextCursor;
+      }
+    }
+    return matches;
+  }
+  /**
+   * After a Turn has ended, read its history once (read only, never a send) and record the native Item of every accepted input that
+   * does not have one yet. A start learns its Item only this way; a steer whose acknowledgement carried none does too. Nothing here
+   * claims the agent read or adopted the input: it records which native Item the runtime holds for it.
+   */
+  async backfillItems(limit=20):Promise<number>{
+    if(!this.deps.canWrite())return 0;
+    const runtime=this.deps.runtime();
+    if(!runtime.isReady())return 0;
+    let recorded=0;
+    for(const record of await this.deps.store.unboundAccepted(limit)){
+      try{
+        const binding=await this.deps.bindingFor(record.projectId,record.sessionId);
+        await runtime.registerBinding(binding);
+        const turn=await this.findTurn(runtime,binding,record.actualTurnId!);
+        // Only a finished Turn has a settled history; an unfinished one is looked at again later.
+        if(!turn||turn.completedAtUtc==null||!["completed","failed","interrupted"].includes(turn.status))continue;
+        const matches=await this.matchOriginal(runtime,binding,record);
+        if(matches.length===1&&matches[0]!.itemId&&matches[0]!.turnId===record.actualTurnId){
+          await this.deps.store.accept(record.projectId,record.inputId,matches[0]!.turnId,matches[0]!.itemId);recorded++;
+        }
+      }catch{ /* a read that fails is tried again next time; it proves nothing */ }
+    }
+    return recorded;
   }
   private async findTurn(runtime:Native,binding:RuntimeBinding,id:string):Promise<RuntimeTurn|null>{
     const first=await runtime.listTurns(binding);

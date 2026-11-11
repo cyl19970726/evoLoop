@@ -312,3 +312,22 @@ test("requested business Run blocks start, then two steers retain one original s
   assert.equal(run.task_revision_id,revisionId);assert.equal(run.input_hash,hash);assert.equal(run.state,"running");
   assert.equal((await store.list(projectId,otherSessionId,10)).items.length,2);
 });
+
+test("an accepted start has no native Item until it is read back; the unbound list holds it, and recording the Item removes it",async()=>{
+  const id=randomUUID(),turnId=`turn-${randomUUID()}`;
+  await pool.query(`INSERT INTO runtime_session(project_id,session_id,role_id,cwd,authorization_scope,
+    sandbox,approval_policy,state,version,native_thread_id,native_session_id,operation_id,actor_id,created_at,updated_at)
+    VALUES($1,$2,$3,'/tmp/direct-test','project','danger-full-access','never','ready',1,$4,$5,$6,
+    'agent',now(),now())`,[projectId,id,roleId,`thread-${id}`,`native-${id}`,randomUUID()]);
+  const command=input();
+  await store.reserve(projectId,id,"user",command,grant(id,5),hash);
+  assert.ok(!(await store.unboundAccepted(50)).some(r=>r.inputId===command.inputId),"not accepted yet");
+  const accepted=await store.accept(projectId,command.inputId,turnId,null);
+  assert.equal(accepted.state,"accepted");assert.equal(accepted.nativeItemId,null);
+  assert.ok((await store.unboundAccepted(50)).some(r=>r.inputId===command.inputId),"an accepted start without an Item is listed");
+  const recorded=await store.accept(projectId,command.inputId,turnId,"item-1");
+  assert.equal(recorded.nativeItemId,"item-1");
+  assert.ok(!(await store.unboundAccepted(50)).some(r=>r.inputId===command.inputId),"once the Item is recorded it is not listed again");
+  await assert.rejects(()=>store.accept(projectId,command.inputId,"another-turn","item-2"),/another Turn/);
+  assert.equal((await store.get(projectId,command.inputId))!.nativeItemId,"item-1","the recorded Item is never replaced");
+});

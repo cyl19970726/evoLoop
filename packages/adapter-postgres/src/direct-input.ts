@@ -42,6 +42,13 @@ export class PgDirectInputs {
       AND actual_turn_id IS NOT NULL`,[projectId,sessionId,inputIds]);
     return r.rows.map(map);
   }
+  /** Accepted inputs whose Turn is known but whose native Item was never recorded (a start learns it only by reading history). */
+  async unboundAccepted(limit:number):Promise<DirectInputRecord[]>{
+    if(!Number.isInteger(limit)||limit<1||limit>100)throw new RangeError("limit must be 1..100");
+    const r=await this.pool.query(`SELECT * FROM session_direct_input WHERE state='accepted' AND native_item_id IS NULL
+      AND actual_turn_id IS NOT NULL ORDER BY updated_at,input_id LIMIT $1`,[limit]);
+    return r.rows.map(map);
+  }
   async hasPrimary(projectId:string,sessionId:string):Promise<boolean>{
     const r=await this.pool.query(`SELECT EXISTS(SELECT 1 FROM runtime_run WHERE project_id=$1 AND session_id=$2
       AND state IN ('requested','dispatching','running','unknown')) OR EXISTS(
