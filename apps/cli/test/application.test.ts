@@ -560,3 +560,69 @@ test("session profile set keeps the model in force: without --model it takes the
     assert.equal(submitted?.model, "deepseek/deepseek-v4-pro");
   } finally { fetch.mock.restore(); await rm(directory, { recursive: true, force: true }); }
 });
+test('session input CLI inserts into the running Turn, queues, names a missing grant, and reads back by the same input ID', async () => {
+  const projectId = '00000000-0000-4000-8000-000000000021', sessionId = '00000000-0000-4000-8000-000000000022';
+  const inputId = '00000000-0000-4000-8000-000000000023', operationId = '00000000-0000-4000-8000-000000000024';
+  const queueId = '00000000-0000-4000-8000-000000000025', queueOperation = '00000000-0000-4000-8000-000000000026';
+  const directory = await mkdtemp(join(tmpdir(), 'evoloop-input-cli-'));
+  const base = `/api/projects/${projectId}`;
+  let capability: Record<string, unknown> = { available: true, mode: 'steer', expectedTurnId: 'turn-7', reasonCode: 'READY_TO_STEER' };
+  let submitted: Record<string, unknown> | null = null, posted: Record<string, unknown> | null = null, direct: Record<string, unknown> | null = null;
+  const fetch = mock.method(globalThis, 'fetch', async (url: string | URL | Request, init?: RequestInit) => {
+    const path = new URL(String(url)).pathname;
+    if (path === '/api/session') return new Response(JSON.stringify({ principal: { actorId: 'requirements', projectIds: [projectId] } }));
+    if (path === `${base}/sessions/${sessionId}/direct-input-capability`) return new Response(JSON.stringify(capability));
+    if (path === `${base}/sessions/${sessionId}/direct-inputs` && init?.method === 'POST') {
+      submitted = JSON.parse(String(init.body));
+      direct = { inputId, operationId, mode: 'steer', state: 'accepted', actualTurnId: 'turn-7', reason: null };
+      return new Response(JSON.stringify(direct));
+    }
+    if (path.startsWith(`${base}/sessions/${sessionId}/direct-inputs/`)) {
+      const found = path.endsWith(inputId) && direct;
+      return new Response(JSON.stringify(found || { code: 'NOT_FOUND' }), { status: found ? 200 : 404 });
+    }
+    if (path === '/api/commands') { posted = JSON.parse(String(init?.body)); return new Response(JSON.stringify({ status: 'applied', operationId: queueOperation, entityId: queueId, version: 1 })); }
+    if (path === `${base}/session-messages/${queueId}`) return new Response(JSON.stringify({ message: { id: queueId, state: 'queued' } }));
+    throw new Error(`Unexpected ${init?.method ?? 'GET'} ${path}`);
+  });
+  const env = { EVOLOOP_TOKEN: 'fixture', EVOLOOP_STATE_DIR: directory };
+  try {
+    // insert while the Leader runs: the current Turn ID from the capability is the expected Turn
+    const inserted = await run(['session', 'input', 'send', sessionId, '--project', projectId, '--mode', 'insert', '--content', 'Also check X', '--input', inputId, '--operation', operationId], env);
+    assert.equal(inserted.code, 0, inserted.stderr);
+    assert.deepEqual(submitted, { inputId, operationId, content: 'Also check X', expectedTurnId: 'turn-7' });
+    const insertedBody = JSON.parse(inserted.stdout);
+    assert.equal(insertedBody.outcome, 'inserted'); assert.equal(insertedBody.inputId, inputId);
+    assert.match(inserted.stderr, new RegExp(inputId), 'the IDs are printed before the send, so a lost answer can be read back');
+    // the same input ID reads back
+    const shown = JSON.parse((await run(['session', 'input', 'show', sessionId, inputId, '--project', projectId], env)).stdout);
+    assert.equal(shown.outcome, 'inserted'); assert.equal(shown.via, 'direct-input');
+    // queue: an ordinary message with the same ID, read back as queued
+    const queued = await run(['session', 'input', 'send', sessionId, '--project', projectId, '--mode', 'queue', '--content', 'After this Turn', '--input', queueId, '--operation', queueOperation], env);
+    assert.equal(queued.code, 0, queued.stderr);
+    assert.equal(posted?.type, 'session.message.post'); assert.equal(posted?.messageId, queueId); assert.equal(posted?.operationId, queueOperation);
+    assert.equal(JSON.parse(queued.stdout).outcome, 'queued');
+    const shownQueue = JSON.parse((await run(['session', 'input', 'show', sessionId, queueId, '--project', projectId], env)).stdout);
+    assert.equal(shownQueue.outcome, 'queued'); assert.equal(shownQueue.via, 'message');
+    // no direct input grant: refused before anything is sent, saying which item is missing
+    capability = { available: false, mode: null, expectedTurnId: null, reasonCode: 'DIRECT_GRANT_MISSING',
+      detail: 'Direct input refused; missing: direct input grant (steer or start) for this sender and Session' };
+    submitted = null;
+    const refused = await run(['session', 'input', 'send', sessionId, '--project', projectId, '--mode', 'insert', '--content', 'Hello'], env);
+    assert.notEqual(refused.code, 0); assert.equal(submitted, null, 'nothing was sent');
+    assert.match(refused.stderr, /missing: direct input grant/); assert.match(refused.stderr, /--mode queue/);
+    // usage errors
+    assert.equal((await run(['session', 'input', 'send', sessionId, '--project', projectId, '--mode', 'later', '--content', 'x'], env)).code, 2);
+    assert.equal((await run(['session', 'input', 'send', sessionId, '--project', projectId, '--mode', 'queue'], env)).code, 2);
+  } finally { fetch.mock.restore(); await rm(directory, { recursive: true, force: true }); }
+});
+
+test('direct input outcomes read in the workbench words, including a steer queued after the Turn changed', async () => {
+  const { directInputOutcome } = await import('../src/session-input.ts');
+  assert.equal(directInputOutcome({ state: 'accepted', mode: 'steer' }).outcome, 'inserted');
+  assert.equal(directInputOutcome({ state: 'accepted', mode: 'start' }).outcome, 'started');
+  const changed = directInputOutcome({ state: 'rejected', mode: 'steer', queuedMessageId: 'm', reason: 'TURN_CHANGED: the Turn changed' });
+  assert.equal(changed.outcome, 'queued_after_change'); assert.match(changed.summary, /same ID/); assert.match(changed.reason!, /TURN_CHANGED/);
+  assert.equal(directInputOutcome({ state: 'rejected', mode: 'steer', queuedMessageId: null, reason: 'no' }).outcome, 'rejected');
+  assert.equal(directInputOutcome({ state: 'unknown', mode: 'steer' }).outcome, 'unknown');
+});

@@ -226,6 +226,21 @@ Task 或 Document 列表使用不可伪造业务含义的 base64url 位置；它
 
 `work status` 将服务 Session 状态、原生连接／Turn 状态、最近原生活动和持久消息状态分列。`--message` 另读原消息与 processing；目标必须属于所选 Session 或已登记别名。两次只读查询不是原子快照，操作前仍须回读当前版本。缺少状态或时间时保持 null。`freshness: live` 只说明连接与绑定在观察时有效，`inProgress` 是宿主报告；两者均不证明最近仍有模型进展。状态冲突时保留各自来源与时间，不按耗时判终态。
 
+### 发给 owned Session：插入当前这一轮，或排队
+
+需求 Session 等智能体给 Leader 发消息时选一条路，两条路用同一个输入 ID：
+
+```sh
+npm run --silent cli -- session input send "$SESSION_UUID" --project "$PROJECT_ID" --mode insert --content "补充：先看 PR 346"
+npm run --silent cli -- session input send "$SESSION_UUID" --project "$PROJECT_ID" --mode queue --file ./note.txt
+npm run --silent cli -- session input show "$SESSION_UUID" "$INPUT_UUID" --project "$PROJECT_ID"
+```
+
+- `--mode insert`：先读这个身份对该 Session 的能力。Session 正在执行时把消息送入**当前这一轮**；空闲时在原会话开一轮。请求正文沿用即时输入合同（`inputId`、`operationId`、`content`、`expectedTurnId`，见 `packages/contracts/src/direct-input.ts`）。需要**即时输入授权**（送入，以及空闲时开一轮）和**普通消息授权**；缺哪一项，命令在发出前拒绝并写明（`INSERT_NOT_AVAILABLE`），同时提示可改用 `--mode queue`。
+- `--mode queue`：保存为一条普通排队消息（`session.message.post`，消息 ID 即输入 ID），这一轮结束后按顺序处理；只需要普通消息授权。
+- `--input` 与 `--operation` 可指定输入 ID 和操作 ID；不给则生成，并在发送前把它们写到标准错误。结果未知（`INPUT_OUTCOME_UNKNOWN`）时不要换 ID 重发，用 `session input show` 读回，或带同样的 `--input`、`--operation` 重复该命令。
+- 读回的 `outcome`：`inserted`（已插入当前这一轮）、`started`（空闲，已开新一轮）、`queued`（已排队）、`queued_after_change`（插入时那一轮已经换了，自动转成一条排队消息，原因在 `reason`，仍只有一条）、`rejected`（运行时明确拒绝，什么也没送入）、`unknown`。`inserted` 与 `started` 只表示运行时接收，不表示智能体已阅读或采用。
+
 ### 叫停执行中的 Run
 
 `command schema runtime.run.stop`，字段 `runId`、`expectedVersion`（先 `read run RUN` 取当前版本）、`reason`；`command run FILE` 提交，回读 Run 的 `stopRequestedAt`。它不新增 Run 状态；已签未封存的提交意图作废为 `RUN_STOPPED`，之后该 Run 的提交和交付都被拒绝。需要 review 权限和该 Session 的精确执行授权。结果未知（`unknown`）的 Run 也可以叫停：停止标记立即生效（意图作废、之后的提交与交付被拒），有已知 Turn 的会被中断，但 Run 仍是 `unknown`，直到运行时读回它的终态（`interrupted`、`failed` 或 `completed`）；读回之后，被这个 Run 关闭的恢复门自动打开（队列认领持有的门除外，仍走队列的重试决定）。不要用普通消息去叫停业务 Run。被叫停而作废的排队消息带“被取代”标记，不会被送出，由发送人 `session.message.cancel` 取消，或用 `command schema session.message.confirmSuperseded` 确认后才重新可投递。
