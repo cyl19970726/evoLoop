@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import test from "node:test";
 import { canonicalJson } from "@evoloop/core";
 import type { Principal, RuntimeSessionRecord } from "@evoloop/contracts";
 import type { RoleRecord } from "@evoloop/contracts/roles";
 import type { SessionMessageRecord } from "@evoloop/contracts/session-messages";
-import { LeaderResultNoticePump, type LeaderResultNotice, type LeaderResultNoticeConfig,
+import { packetContent, LeaderResultNoticePump, type LeaderResultNotice, type LeaderResultNoticeConfig,
   type LeaderResultRecipient } from "../src/leader-results/pump.ts";
 
 const projectId="00000000-0000-4000-8000-000000000001";
@@ -463,4 +463,23 @@ test("the original linked queued todo from a changed Task is retired once, freei
   assert.equal(f.refreshes,0);
   assert.equal(await f.pump.canStartMessage(f.message!),false);
   assert.equal(f.dispositions,1,"a repeated pump must not retire or dispatch twice");
+});
+
+test("a packet message stays within 8 KB however long its items are, names every item and keeps the read-before mark in every form",()=>{
+  const item=(index:number,readBefore:boolean)=>({noticeId:randomUUID(),kind:"delivery",sourceEventId:randomUUID(),taskId:randomUUID(),taskRevisionId:randomUUID(),
+    sourceRef:`delivery:${"x".repeat(400)}:${index}`,occurredAt:"2026-11-11T00:00:00.000Z",sourceActorId:"a".repeat(100),sourceSessionId:null,state:"pending" as const,
+    readBefore,waitedSeconds:90,version:0});
+  const items=Array.from({length:20},(_unused,index)=>item(index,index%2===0));
+  const text=packetContent(randomUUID(),randomUUID(),items);
+  assert.ok(Buffer.byteLength(text,"utf8")<=8192,`bytes ${Buffer.byteLength(text,"utf8")}`);
+  const lines=text.split("\n");
+  for(const [index,entry] of items.entries()){
+    const line=lines.find(value=>value.includes(entry.noticeId));
+    assert.ok(line,"every item is named");
+    assert.equal(line!.includes("上一轮已读到过"),entry.readBefore,`item ${index}: the mark follows the item in whatever form it is listed`);
+  }
+  assert.ok(/摘要|仅编号/.test(text),"items beyond the byte budget are listed in short form");
+  // Short items all fit in full form.
+  const small=packetContent(randomUUID(),randomUUID(),[{...item(0,false),sourceRef:"s",sourceActorId:"a"}]);
+  assert.ok(!/摘要|仅编号/.test(small));
 });

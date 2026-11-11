@@ -412,3 +412,10 @@ Root 可在私有静默维护窗口以 `node scripts/prepare-unlimited-message-g
 Leader 用 `evoloop command run` 提交 `line.append`（sessionId、taskId、expectedTaskVersion、reason）、`line.move`（entryId、expectedVersion、direction=forward|back）、`line.remove`、`line.resume`。读取：`evoloop get /api/projects/PROJECT/session-lines` 与 `/session-lines/events`。排队中的 Task 不能直接 `task.start`、`runtime.run.reserve` 或改派（`QUEUED_IN_SESSION_LINE`），先 `line.remove`。
 
 业务 Session 收到“执行确认请求”消息后，只做确认，不开始改文件：读固定 Task 修订，然后提交 `task.assignment.acknowledge`，`verdict=confirm`（`plan` 简短计划、`expectedRevisionId`）或 `verdict=return`（`missing` 列出缺什么）。确认后系统自动开 Run；退回的 Task 退出队伍、保持未开始。需要的私有配置：队伍调度程序随运行时启用而运行，Session 的业务身份取自 `residentQueue.roleActors`（没有则该项挂起为 `RECIPIENT_UNAVAILABLE`）。
+
+## Leader 通知包
+
+Leader 收到的是“Leader 通知包”消息：先 `get /api/projects/PROJECT/leader-notice-packets/PACKET` 读每一项的状态与版本，读当前 Task 和固定来源，再用 `command run` 提交 `leader.notice.handle`（`command schema leader.notice.handle` 取结构）：`noticeId`、`expectedVersion`、`disposition`（`handled` 或 `deferred`）、`reason`，延后要写 `notBefore`。重复提交同一操作安全；版本过期（`VERSION_CONFLICT`）要重新读。只读到这包不算处理，一轮正常结束只记“已看到”。
+
+被阻塞的包（读到后那一轮失败且恢复门关闭）不会自动重发，它出现在 `work` 的 Leader 索引（`blockedNoticePackets`，带包编号和提示）。先按 Session 恢复流程恢复恢复门，再用 `request leader.notice.recover --project UUID --id 包编号 --file BODY.json --receipt UUID`（body 只写 `{"reason":"..."}`，需要 review 权限）恢复这一包，其中的项进入下一包。`leader.notice.recover` 带 `expectedOperationId` 等四个 ID 的旧形式仍用于迁移前已有的、消息被拒绝的通知。包的步骤（打包、已送、观察）只由配置里的通知发送身份运行，不是 Agent 的命令。
+

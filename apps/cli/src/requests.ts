@@ -3,7 +3,8 @@ import { documentImportSchema } from "@evoloop/contracts/process-documents";
 import { z, knowledgeCandidateInputSchema, knowledgeOperationInputSchema, knowledgeReviewInputSchema } from "@evoloop/contracts/knowledge";
 import { runtimeReconcileSchema, runtimeCompactionIntentSchema } from "@evoloop/contracts/runtime";
 import { ordinaryRunSubmissionSchema } from "@evoloop/contracts/ordinary-run-submission";
-import { leaderNoticeRecoverySchema } from "@evoloop/contracts/leader-notices";
+import { leaderNoticeRecoverySchema, leaderNoticeRecoveryRequestSchema } from "@evoloop/contracts/leader-notices";
+import { leaderNoticePacketRecoverySchema } from "@evoloop/contracts/leader-notice-packets";
 import { acceptanceArrangeSchema, acceptanceObserveSchema, acceptanceReadSchema,
   retirementApprovalSchema } from "@evoloop/contracts/acceptance-relay";
 import { ArtifactReferenceError, parseArtifactReference } from "@evoloop/contracts/artifact-reference";
@@ -44,7 +45,7 @@ const help: readonly RequestHelp[] = [
   { name: "work.plan.set", requiredBodyKeys: ["operationId", "expectedTaskVersion", "expectedPlanVersion", "plannedStartAt", "dueAt", "priority", "reason"], targetId: "taskId", operationId: "body", recovery: "core" },
   { name: "work.dependencies.set", requiredBodyKeys: ["operationId", "expectedTaskVersion", "expectedDependencyVersion", "dependsOnTaskIds", "reason"], targetId: "taskId", operationId: "body", recovery: "core" },
   { name: "work.review.set", requiredBodyKeys: ["operationId", "expectedTaskVersion", "expectedTaskRevisionId", "expectedWorkChangeSequence", "decision", "reason"], targetId: "taskId", operationId: "body", recovery: "core" },
-  { name: "leader.notice.recover", requiredBodyKeys: ["expectedOperationId", "newNoticeId", "newMessageId", "newOperationId", "reason"], targetId: "original noticeId", operationId: "localReceipt", recovery: "manual" },
+  { name: "leader.notice.recover", requiredBodyKeys: ["reason"], targetId: "blocked packet id (a notice from before packets: its original noticeId, with expectedOperationId, newNoticeId, newMessageId, newOperationId)", operationId: "localReceipt", recovery: "manual" },
   { name: "acceptance.assign", requiredBodyKeys: ["projectId","taskId","operationId","relayId","expectedTaskVersion","deliveryId","stage","scopeKey","mode","recipientActorId"], targetId: "taskId", operationId: "body", recovery: "manual" },
   { name: "acceptance.read", requiredBodyKeys: ["projectId","taskId","relayId","operationId","expectedVersion","evidence"], targetId: "relayId", operationId: "body", recovery: "manual" },
   { name: "acceptance.observe", requiredBodyKeys: ["projectId","taskId","relayId","operationId","expectedVersion","observationId"], targetId: "relayId", operationId: "body", recovery: "manual" },
@@ -100,7 +101,7 @@ function bodySchema(name: string) {
     case "work.plan.set": return workPlanBody;
     case "work.dependencies.set": return workDependenciesBody;
     case "work.review.set": return workReviewBody;
-    case "leader.notice.recover": return leaderNoticeRecoverySchema;
+    case "leader.notice.recover": return leaderNoticeRecoveryRequestSchema;
     case "acceptance.assign": return acceptanceArrangeSchema;
     case "acceptance.read": return acceptanceReadSchema;
     case "acceptance.observe": return acceptanceObserveSchema;
@@ -114,7 +115,10 @@ function bodySchema(name: string) {
 export function requestSchema(name: string): unknown { return z.toJSONSchema(bodySchema(name)); }
 
 function validateBody(name: string, value: unknown): void {
-  const checked = bodySchema(name).safeParse(value);
+  // The two recovery forms report their own problems (a notice's fresh IDs must be distinct; a packet only needs a reason).
+  const schema = name === "leader.notice.recover" && value && typeof value === "object" && "expectedOperationId" in value
+    ? leaderNoticeRecoverySchema : name === "leader.notice.recover" ? leaderNoticePacketRecoverySchema : bodySchema(name);
+  const checked = schema.safeParse(value);
   if (!checked.success) {
     const issue = checked.error.issues[0];
     const field = issue?.path.length ? issue.path.join(".") : "body";
@@ -179,6 +183,7 @@ export function prepareRequest(name: string, projectIdInput: string, bodyInput: 
     throw new RequestInputError("Body taskId differs from route taskId");
   if (name === "acceptance.assign" && body.taskId !== id)
     throw new RequestInputError("Body taskId differs from route taskId");
+  const packetRecovery = name === "leader.notice.recover" && !("expectedOperationId" in body);
   requireKeys(body, spec.requiredBodyKeys, name);
   if (spec.operationId === "body" && localReceiptId !== undefined) throw new RequestInputError("This request uses body.operationId, not --receipt");
   if (spec.operationId === "localReceipt") noServerOperation(body);
@@ -261,9 +266,10 @@ export function prepareRequest(name: string, projectIdInput: string, bodyInput: 
       break;
     }
     case "leader.notice.recover": {
-      path = `${base}/work-management/notices/${id}/recover`;
-      recovery = { kind: "manual", path: `${base}/work-management/notices/${id}` };
-      confirmation = "leader-notice-recovery";
+      // By packet: the id is the blocked packet's; the body only gives the reason. A notice from before packets keeps its own form.
+      path = packetRecovery ? `${base}/leader-notice-packets/${id}/recover` : `${base}/work-management/notices/${id}/recover`;
+      recovery = { kind: "manual", path: packetRecovery ? `${base}/leader-notice-packets/${id}` : `${base}/work-management/notices/${id}` };
+      confirmation = packetRecovery ? "leader-packet-recovery" : "leader-notice-recovery";
       break;
     }
     case "acceptance.assign": {
@@ -327,7 +333,7 @@ export function prepareRequest(name: string, projectIdInput: string, bodyInput: 
   }
   // The receipt and write must carry the same normalized bytes for safe same-ID recovery.
   let savedBody: unknown = bodyInput;
-  if (name === "leader.notice.recover") savedBody = leaderNoticeRecoverySchema.parse(body);
+  if (name === "leader.notice.recover") savedBody = leaderNoticeRecoveryRequestSchema.parse(body);
   if (name === "ordinary.submit") {
     const parsed = ordinaryRunSubmissionSchema.parse(body);
     try {

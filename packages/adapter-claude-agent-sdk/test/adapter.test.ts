@@ -6,7 +6,7 @@ import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { RuntimeNotSentError, RuntimeProtocolError, type RuntimeBinding, type RuntimeSessionSpec, type RuntimeSkillPlan,
+import { RuntimeLocalBusyError, RuntimeNotSentError, RuntimeProtocolError, type RuntimeBinding, type RuntimeSessionSpec, type RuntimeSkillPlan,
   type RuntimeTurn } from "@evoloop/contracts/runtime";
 import { CLAUDE_BUILTIN_PLUGIN_SKILLS, ClaudeAgentSdkAdapter, TurnLedger, skillPlanHash, skillPluginManifest,
   type ClaudeAgentSdkAdapterOptions } from "../src/index.js";
@@ -154,6 +154,39 @@ test("an interrupt reaches the running Turn and the result settles it as interru
       assert.ok(Date.now() < released, "the settled Turn was never released by the adapter");
       await new Promise(resolveWait => setTimeout(resolveWait, 25));
     }
+  } finally { await h.cleanup(); }
+});
+
+test("a start past the concurrent Turn limit is refused as locally busy and the same operation starts once a slot frees", async () => {
+  const h = await setup("hang", { maxConcurrentTurns: 1 });
+  try {
+    const first = await h.adapter.create(h.spec);
+    const second = await h.adapter.create({ ...h.spec, sessionId: randomUUID() });
+    const firstOperation = randomUUID(), waiting = randomUUID();
+    const started = await h.adapter.startTurn(first, `${marker(firstOperation)}\nLong task`, firstOperation);
+    // Another Session's Turn: nothing is written and no attempt is recorded, so the caller may retry the same operation.
+    for (let attempt = 0; attempt < 2; attempt += 1)
+      await assert.rejects(h.adapter.startTurn(second, `${marker(waiting)}\nWaiting task`, waiting),
+        (error: Error) => error instanceof RuntimeLocalBusyError && error instanceof RuntimeNotSentError && /concurrent Turn limit/.test(error.message));
+    assert.equal((await h.adapter.listTurns(second)).data.length, 0);
+    // The busy Session's own second Turn is the same kind of refusal.
+    const other = randomUUID();
+    await assert.rejects(h.adapter.startTurn(first, `${marker(other)}\nSecond`, other), RuntimeLocalBusyError);
+    await h.adapter.interruptTurn(first, started.id);
+    await settled(h.adapter, first, started.id);
+    const deadline = Date.now() + 10_000;
+    let retried: RuntimeTurn | null = null;
+    while (!retried) {
+      try { retried = await h.adapter.startTurn(second, `${marker(waiting)}\nWaiting task`, waiting); }
+      catch (error) {
+        assert.ok(error instanceof RuntimeLocalBusyError, `only a busy refusal may precede the retry: ${String(error)}`);
+        assert.ok(Date.now() < deadline, "the slot was never released");
+        await new Promise(resolveWait => setTimeout(resolveWait, 25));
+      }
+    }
+    assert.equal((await h.adapter.listTurns(second)).data[0]!.id, retried.id);
+    await h.adapter.interruptTurn(second, retried.id);
+    await settled(h.adapter, second, retried.id);
   } finally { await h.cleanup(); }
 });
 

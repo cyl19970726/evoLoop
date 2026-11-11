@@ -43,6 +43,10 @@ const notice = (row: Row): LeaderResultNotice => ({
     receiverRoleId: String(row.receiver_role_id), receiverActorId: String(row.receiver_actor_id),
     senderActorId: String(row.sender_actor_id) } : null,
   recovery: recoveryLink(row),
+  viaPacket: row.via_packet === true,
+  packet: row.pk_packet_id ? { packetId: String(row.pk_packet_id), packetState: String(row.pk_packet_state), itemState: String(row.pk_item_state),
+    readBefore: row.pk_read_before === true, disposition: (row.pk_disposition ?? null) as "handled" | "deferred" | null, deferUntil: row.pk_defer_until ? iso(row.pk_defer_until) : null,
+    withdrawnReason: row.pk_withdrawn_reason === null ? null : String(row.pk_withdrawn_reason), itemVersion: Number(row.pk_item_version) } : null,
 });
 
 const recoveryLink = (row: Row): LeaderNoticeRecoveryLink => ({
@@ -64,7 +68,9 @@ function position(cursor: string | undefined, projectId: string, taskId: string 
   } catch { throw new DomainError("INVALID_CURSOR", "Leader notice cursor does not match this project and Task"); }
 }
 
-const noticeFrom = `n.*,t.current_revision_id IS DISTINCT FROM n.task_revision_id AS stale,
+const noticeFrom = `n.*,pk.packet_id AS pk_packet_id,pk.packet_state AS pk_packet_state,pk.item_state AS pk_item_state,pk.read_before AS pk_read_before,
+  pk.disposition AS pk_disposition,pk.defer_until AS pk_defer_until,pk.withdrawn_reason AS pk_withdrawn_reason,pk.item_version AS pk_item_version,
+  t.current_revision_id IS DISTINCT FROM n.task_revision_id AS stale,
   m.state AS message_state,m.blocked_reason AS message_blocked_reason,
   p.state AS processing_state,p.native_turn_id,rr.recorded_at AS read_at
   FROM leader_result_notice n
@@ -73,7 +79,10 @@ const noticeFrom = `n.*,t.current_revision_id IS DISTINCT FROM n.task_revision_i
   LEFT JOIN session_message_processing p ON p.project_id=m.project_id AND p.message_id=m.message_id
   LEFT JOIN LATERAL (SELECT recorded_at FROM session_message_read_receipt r
     WHERE r.project_id=m.project_id AND r.message_id=m.message_id
-    ORDER BY recorded_at DESC LIMIT 1) rr ON true`;
+    ORDER BY recorded_at DESC LIMIT 1) rr ON true
+  LEFT JOIN LATERAL (SELECT x.packet_id,p2.state AS packet_state,x.state AS item_state,x.read_before,x.disposition,x.defer_until,x.withdrawn_reason,x.version AS item_version
+    FROM leader_notice_packet_item x JOIN leader_notice_packet p2 ON p2.project_id=x.project_id AND p2.packet_id=x.packet_id
+    WHERE x.project_id=n.project_id AND x.notice_id=n.notice_id ORDER BY x.created_at DESC,x.packet_id DESC LIMIT 1) pk ON n.via_packet`;
 function bounded(limit: number): number {
   if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new DomainError("INVALID_PAGE", "Leader notice limit must be 1..100");
   return limit;
@@ -89,7 +98,7 @@ async function page(pool: Pool, projectId: string, options: LeaderNoticeListOpti
   const result = await pool.query(`SELECT ${noticeFrom}
     WHERE n.project_id=$1 AND ($2::uuid IS NULL OR n.task_id=$2::uuid)
       AND ($3::timestamptz IS NULL OR (n.occurred_at,n.notice_id)${compare}($3::timestamptz,$4::uuid))
-      AND ($5::text='all' OR (n.state=$5::text AND
+      AND ($5::text='all' OR (NOT n.via_packet AND n.state=$5::text AND
         ($5::text='pending' OR n.kind<>'task_todo' OR t.current_revision_id=n.task_revision_id)))
     ORDER BY n.occurred_at ${direction},n.notice_id ${direction} LIMIT $6`,
   [projectId, taskId, after?.occurredAt ?? null, after?.id ?? null, state, limit + 1]);
@@ -331,11 +340,7 @@ export async function disposeStalePendingTodo(pool: Pool, projectId: string,
     if(t.state==="todo"&&currentRevision===notice.task_revision_id&&!arranged){
       await client.query("COMMIT");return "current";
     }
-    const refresh=t.state==="todo"&&currentRevision!==notice.task_revision_id&&!arranged&&
-      !await hasCurrentTodoReview(client,projectId,origin.rows[0].task_id,currentRevision);
-    if(refresh)await enqueueCurrentTodo(client,projectId,origin.rows[0].task_id,currentRevision,t);
-    const reason=t.state!=="todo"?"TODO_SOURCE_NOT_TODO":
-      arranged?"TODO_SOURCE_ASSIGNED":refresh?"TODO_SOURCE_SUPERSEDED_REFRESHED":"TODO_SOURCE_SUPERSEDED_HANDLED";
+    const reason=await retireStaleTodoSource(client,projectId,origin.rows[0].task_id,notice.task_revision_id,t,arranged,true);
     await client.query(`UPDATE leader_result_notice SET state='blocked',blocked_reason=$3,updated_at=now()
       WHERE project_id=$1 AND notice_id=$2 AND state='pending'`,[projectId,noticeId,reason]);
     await client.query("COMMIT");
@@ -344,6 +349,34 @@ export async function disposeStalePendingTodo(pool: Pool, projectId: string,
     await client.query("ROLLBACK");
     throw error;
   } finally { client.release(); }
+}
+
+/** Why a todo notice for `noticeRevisionId` no longer needs to be read. With `refresh`, a Task that only moved to a newer
+ * revision gets one notice for the current revision (unless that revision was already reviewed). The caller holds the Task row lock. */
+async function retireStaleTodoSource(client: import("pg").PoolClient, projectId:string, taskId:string, noticeRevisionId:string,
+  task:{state:string;current_revision_id:string;actor_id:string;created_at:Date}, arranged:boolean, refresh:boolean):Promise<string>{
+  const currentRevision=String(task.current_revision_id);
+  const refreshed=task.state==="todo"&&currentRevision!==noticeRevisionId&&!arranged&&
+    !await hasCurrentTodoReview(client,projectId,taskId,currentRevision);
+  if(refreshed&&refresh)await enqueueCurrentTodo(client,projectId,taskId,currentRevision,task);
+  return task.state!=="todo"?"TODO_SOURCE_NOT_TODO":
+    arranged?"TODO_SOURCE_ASSIGNED":refreshed?"TODO_SOURCE_SUPERSEDED_REFRESHED":"TODO_SOURCE_SUPERSEDED_HANDLED";
+}
+
+/** For packets: re-judge a todo notice under the Task row lock, in the caller's transaction. `null` means it is still current;
+ * otherwise the reason it was retired (and, when `retire`, the current revision's notice was queued). */
+export async function judgeTodoNoticeInTransaction(client: import("pg").PoolClient, projectId:string, taskId:string,
+  noticeRevisionId:string, retire:boolean):Promise<string|null>{
+  const task=await client.query(`SELECT t.state,t.current_revision_id,r.actor_id,r.created_at
+    FROM task t JOIN task_revision r ON r.project_id=t.project_id AND r.task_id=t.task_id AND r.revision_id=t.current_revision_id
+    WHERE t.project_id=$1 AND t.task_id=$2 FOR UPDATE OF t`,[projectId,taskId]);
+  if(!task.rows[0])throw new DomainError("TASK_UNAVAILABLE","Todo source Task is unavailable");
+  const t=task.rows[0];
+  const arranged=(await client.query(`SELECT EXISTS(SELECT 1 FROM task_session_assignment
+    WHERE project_id=$1 AND task_id=$2 AND task_revision_id=$3 AND state<>'released') AS assigned`,
+    [projectId,taskId,String(t.current_revision_id)])).rows[0]?.assigned===true;
+  if(t.state==="todo"&&String(t.current_revision_id)===noticeRevisionId&&!arranged)return null;
+  return retireStaleTodoSource(client,projectId,taskId,noticeRevisionId,t,arranged,retire);
 }
 
 async function hasCurrentTodoReview(client: import("pg").PoolClient, projectId:string,

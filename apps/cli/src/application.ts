@@ -101,7 +101,7 @@ const help = {
     "work attention thresholds --project UUID [--stage STAGE_UUID --phase PHASE]",
     "work leader changes --project UUID [--cursor CURSOR --limit 1..100] (monotonic Task/Document change feed)",
     "work leader notices --project UUID [--task TASK_UUID --cursor CURSOR --limit 1..100] (durable result notices and dispatch status)",
-    "request leader.notice.recover --project UUID --id BLOCKED_NOTICE_UUID --file BODY.json --receipt LOCAL_UUID (explicit new intent after confirmed post rejection; read original notice before any retry)",
+    "request leader.notice.recover --project UUID --id BLOCKED_PACKET_UUID --file BODY.json --receipt LOCAL_UUID (body {\"reason\":...}: recover a notice packet that stopped behind a closed recovery gate, after the Session itself was recovered; its items return to the next packet. A notice from before packets keeps the old body: BLOCKED_NOTICE_UUID with expectedOperationId, newNoticeId, newMessageId, newOperationId, reason)",
     "session prepare --file PRIVATE_JSON (prepare or reuse one authorized owned Session; never assigns a Task)",
     "session profile show SESSION_UUID --project UUID (configured target, last confirmed profile and recovery state)",
     "session profile set SESSION_UUID --project UUID [--model SLUG] --effort LEVEL --reason TEXT --evidence-ref REF [--operation UUID] (save next-Turn target)",

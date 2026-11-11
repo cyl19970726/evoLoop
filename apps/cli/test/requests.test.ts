@@ -66,6 +66,17 @@ test("rejected Leader notice recovery requires fresh fixed IDs and manual readba
   assert.throws(()=>prepareRequest("leader.notice.recover",project,{...body,newMessageId:revision},target,receipt),/distinct/);
 });
 
+test("leader.notice.recover recovers a blocked packet by its id with only a reason; the notice form is unchanged", () => {
+  const body={reason:"Recovery gate reviewed; the Leader Session is usable again"};
+  const prepared=prepareRequest("leader.notice.recover",project,body,target,receipt);
+  assert.equal(prepared.path,`/api/projects/${project}/leader-notice-packets/${target}/recover`);
+  assert.equal(prepared.confirmation,"leader-packet-recovery");
+  assert.deepEqual(prepared.recovery,{kind:"manual",path:`/api/projects/${project}/leader-notice-packets/${target}`});
+  assert.throws(()=>prepareRequest("leader.notice.recover",project,body,target),/--receipt/);
+  assert.throws(()=>prepareRequest("leader.notice.recover",project,{reason:body.reason,newNoticeId:revision},target,receipt));
+  assert.throws(()=>prepareRequest("leader.notice.recover",project,{},target,receipt),/reason/);
+});
+
 test("request schema exposes exact enums and nested required fields from shared contracts", () => {
   const candidate = requestSchema("knowledge.propose") as any;
   assert.ok(candidate.required.includes("sources"));
