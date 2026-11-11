@@ -13,14 +13,22 @@ function checkedCapability(value: DirectInputCapability): DirectInputCapability 
   return value;
 }
 
-/** Only route parsing and authorization errors precede every possible input reservation. */
+/**
+ * Refusals the service raises before it reserves anything: the input has no record, the text is still in the box, and the
+ * person may choose insert or queue again. A 5xx or a lost answer is not here: that outcome is unknown.
+ */
+const beforeReservation = new Set([
+  "DIRECT_GRANT_MISSING", "SESSION_NOT_READY", "SESSION_BUSY", "SOURCE_AMBIGUOUS", "TURN_CHANGED", "MESSAGE_BUDGET_EXHAUSTED",
+  "NATIVE_ADMISSION_MISSING", "NATIVE_UNAVAILABLE", "NATIVE_CAPABILITY_UNKNOWN", "DIRECT_RUNTIME_UNAVAILABLE",
+]);
 export function explicitlyUnaccepted(error: unknown): boolean {
   if (!(error instanceof ApiError) || !error.detail || typeof error.detail !== "object") return false;
   const code = (error.detail as { code?: unknown }).code;
   return (error.status === 400 && code === "INVALID_INPUT") ||
     (error.status === 413 && code === "TOO_LARGE") ||
     (error.status === 403 && code === "FORBIDDEN") ||
-    (error.status === 409 && code === "DIRECT_GRANT_MISSING");
+    (error.status >= 400 && error.status < 500 && typeof code === "string" && beforeReservation.has(code)) ||
+    (error.status === 503 && (code === "NATIVE_UNAVAILABLE" || code === "DIRECT_RUNTIME_UNAVAILABLE"));
 }
 
 /** A local per-Session admission conflict: nothing was reserved, so retrying the same draft is safe. */

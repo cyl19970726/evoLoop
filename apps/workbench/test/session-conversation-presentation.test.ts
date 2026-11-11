@@ -172,6 +172,13 @@ test("the Leader's page shows two named ways only while it works and both are op
   assert.equal(composerPlan(facts({ leader: false, running: true, direct: capability("steer") })).split, null, "a business agent's page is unchanged");
 });
 
+test("by default (no Leader fact) the composer keeps its one send button and the keys, so every other page is unchanged", () => {
+  const plain = composerPlan(facts({ running: true, direct: capability("steer") }));
+  assert.equal(plain.split, null); assert.equal(plain.enter, "steer"); assert.equal(plain.modEnter, "post");
+  assert.equal(composerPlan(facts({ running: false, direct: capability("start") })).split, null);
+  assert.equal(composerPlan(facts({ running: true, direct: capability(null) })).split, null);
+});
+
 test("every way a message went out is told in its own words, and a changed Turn says why and that it is one queued message", () => {
   assert.match(sentResultText({ kind: "inserted" }), /已插入当前这一轮/);
   assert.match(sentResultText({ kind: "queued" }), /已排队/);
@@ -179,5 +186,6 @@ test("every way a message went out is told in its own words, and a changed Turn 
   const converted = sentResultText({ kind: "converted", reason: "TURN_CHANGED: the Turn changed before the input was added; saved as a queued ordinary message" });
   assert.match(converted, /没有插入，已转排队/); assert.match(converted, /那一轮已经换了/); assert.match(converted, /只有一条/);
   assert.match(sentResultText({ kind: "converted", reason: "Native Turn kind cannot accept input" }), /评审、压缩/);
+  assert.match(sentResultText({ kind: "converted", reason: "NOT_BOUND: the primary Turn is not bound and running yet; saved as a queued ordinary message" }), /还没准备好接收补充/);
   for (const kind of ["inserted", "started", "queued", "converted"] as const) assert.doesNotMatch(sentResultText({ kind }), /已阅读。|已经阅读/, "never claims the agent read it");
 });

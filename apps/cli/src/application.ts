@@ -213,19 +213,40 @@ async function dispatch(args: Args, env: Environment, io: IO): Promise<unknown> 
   }
   if(action==="session"&&args.words[1]==="input"){
     // Send to an owned Session: insert into the running Turn (or start one when idle), or queue as an ordinary message.
+    // One input ID is one intent: a repeat answers from what the service saved for that ID before it decides anything else.
     const kind=args.words[2],sessionId=uuid(args.words[3],"Session"),projectId=project();
     const base=`/api/projects/${projectId}`;
+    const notFound=(error:unknown)=>error instanceof CliApiError&&error.status===404;
+    /** What the service saved under this input ID: a direct input receipt, an ordinary message, or nothing. */
+    const saved=async(inputId:string)=>{
+      try{return {via:"direct-input" as const,value:await client.get(`${base}/sessions/${sessionId}/direct-inputs/${inputId}`)};}
+      catch(error){if(!notFound(error))throw error;}
+      try{return {via:"message" as const,value:await client.get(`${base}/session-messages/${inputId}`)};}
+      catch(error){if(!notFound(error))throw error;}
+      return null;
+    };
+    const answer=(found:NonNullable<Awaited<ReturnType<typeof saved>>>,inputId:string,extra:Record<string,unknown>={})=>
+      found.via==="direct-input"?{inputId,via:"direct-input",...directInputOutcome(found.value),receipt:found.value,...extra}
+        :{inputId,via:"message",...queuedMessageOutcome(found.value),detail:found.value,...extra};
     if(kind==="show"){
       check(args,5,["project"]);
       const inputId=uuid(args.words[4],"Input");
-      try{
-        const receipt=await client.get(`${base}/sessions/${sessionId}/direct-inputs/${inputId}`);
-        return {inputId,via:"direct-input",...directInputOutcome(receipt),receipt};
-      }catch(error){
-        if(!(error instanceof CliApiError)||error.status!==404)throw error;
+      const found=await saved(inputId);
+      if(!found)throw new ReceiptError("INPUT_NOT_FOUND","No input or message with this ID in this Session.",{inputId});
+      if(found.via==="direct-input"){
+        const receipt=record(found.value);
+        // An input the runtime took (or may have taken) but whose native Item is not recorded: check the original once, read only.
+        if(receipt&&(["attempted","unknown"].includes(String(receipt.state))||receipt.state==="accepted"&&!receipt.nativeItemId)){
+          try{
+            const reconciled=await client.post(`${base}/sessions/${sessionId}/direct-inputs/${inputId}/reconcile`,{});
+            return answer({via:"direct-input",value:reconciled},inputId,{reconciled:true});
+          }catch(error){
+            if(!(error instanceof CliApiError))throw error;
+            return answer(found,inputId,{reconciled:false,reconcileError:{code:error.code,status:error.status,data:error.data}});
+          }
+        }
       }
-      const detail=await client.get(`${base}/session-messages/${inputId}`);
-      return {inputId,via:"message",...queuedMessageOutcome(detail),detail};
+      return answer(found,inputId);
     }
     if(kind!=="send")throw new UsageError("Use session input send SESSION_UUID --mode insert|queue ... or session input show SESSION_UUID INPUT_UUID.");
     check(args,4,["project","mode","content","file","input","operation"]);
@@ -233,11 +254,24 @@ async function dispatch(args: Args, env: Environment, io: IO): Promise<unknown> 
     if(how!=="insert"&&how!=="queue")throw new UsageError("--mode must be insert or queue.");
     const file=option(args,"file"),inline=option(args,"content");
     if(!!file===!!inline)throw new UsageError("Give the text with exactly one of --content TEXT or --file TEXT_FILE.");
-    const content=(file?await readFile(file,"utf8"):inline!).trim();
+    let content:string;
+    try{content=file?await readMessageBody(file,io.stdin?.()??process.stdin):inline!.trim();}
+    catch(error){if(error instanceof MessageBodyError)throw new UsageError(error.message);throw error;}
     if(!content||content.length>16000)throw new UsageError("The text must be 1..16000 characters.");
-    const inputId=option(args,"input")?uuid(option(args,"input"),"Input"):randomUUID();
+    const given=option(args,"input")?uuid(option(args,"input"),"Input"):null;
+    const inputId=given??randomUUID();
     const operationId=option(args,"operation")?uuid(option(args,"operation"),"Operation"):randomUUID();
     const identity={inputId,operationId};
+    if(given){
+      const found=await saved(inputId);
+      if(found){
+        const told=answer(found,inputId) as {outcome?:string};
+        // Same ID, saved result: answer with it, whichever way the repeat asked. A direct input that was not refused is never queued again.
+        if(how==="queue"&&found.via==="direct-input"&&told.outcome!=="queued_after_change"&&told.outcome!=="rejected")
+          throw new ReceiptError("INPUT_ID_IS_DIRECT_INPUT",`This input ID is already a direct input (${told.outcome}); read it with session input show instead of queueing the text again.`,told);
+        if(!(how==="queue"&&found.via==="message"))return {mode:how,...identity,repeated:true,...told};
+      }
+    }
     if(how==="queue"){
       const command=commandSchema.parse({type:"session.message.post",projectId,operationId,messageId:inputId,
         target:{kind:"owned",sessionId},content});
@@ -258,8 +292,9 @@ async function dispatch(args: Args, env: Environment, io: IO): Promise<unknown> 
       const receipt=await client.post(`${base}/sessions/${sessionId}/direct-inputs`,body);
       return {mode:"insert",...identity,via:"direct-input",...directInputOutcome(receipt),receipt};
     }catch(error){
+      // Exit code 3 like every unconfirmed mutation: the original input is saved or not, only its ID can tell.
       if(error instanceof CliApiError&&error.unconfirmed)
-        throw new ReceiptError("INPUT_OUTCOME_UNKNOWN",`The result is unknown. Run: session input show ${sessionId} ${inputId} --project ${projectId}; do not send the text again under another ID.`,identity);
+        throw new ReceiptError("RESULT_UNCONFIRMED",`The result is unknown. Run: session input show ${sessionId} ${inputId} --project ${projectId}; do not send the text again under another ID.`,identity);
       throw error;
     }
   }

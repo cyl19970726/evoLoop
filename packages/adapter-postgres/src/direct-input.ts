@@ -30,14 +30,17 @@ export class PgDirectInputs {
     catch(error){await client.query("ROLLBACK");throw error;}
     finally{client.release();}
   }
-  /** A refused steer is "queued" exactly when its text exists as an ordinary message under the same ID (a steer never owns one). */
+  /**
+   * A refused input is "queued" exactly when its text exists as an ordinary message under the same ID and the input never
+   * had a processing slot of its own (a refused start that owned a slot has processing_id; a plain refusal has no message).
+   */
   private async withQueued(items:DirectInputRecord[],run:Pick<Pool,"query">=this.pool):Promise<DirectInputRecord[]>{
-    const refused=items.filter(x=>x.mode==="steer"&&x.state==="rejected");
+    const refused=items.filter(x=>x.state==="rejected"&&x.source.processingId===null);
     if(!refused.length)return items.map(x=>({...x,queuedMessageId:null}));
     const found=await run.query(`SELECT message_id FROM session_message WHERE project_id=$1 AND message_id=ANY($2::uuid[])`,
       [refused[0]!.projectId,refused.map(x=>x.inputId)]);
     const ids=new Set<string>(found.rows.map(row=>row.message_id));
-    return items.map(x=>({...x,queuedMessageId:ids.has(x.inputId)&&x.mode==="steer"&&x.state==="rejected"?x.inputId:null}));
+    return items.map(x=>({...x,queuedMessageId:refused.includes(x)&&ids.has(x.inputId)?x.inputId:null}));
   }
   async get(projectId:string,inputId:string):Promise<DirectInputRecord|null>{
     const r=await this.pool.query("SELECT * FROM session_direct_input WHERE project_id=$1 AND input_id=$2",[projectId,inputId]);
@@ -95,7 +98,7 @@ export class PgDirectInputs {
           old.actorId!==actorId||old.sessionId!==sessionId||old.content!==command.content||
           old.expectedTurnId!==command.expectedTurnId)
           throw new DomainError("INPUT_ID_CONFLICT","Original input intent differs; read the saved input");
-        return {record:old,created:false};
+        return {record:(await this.withQueued([old],client))[0]!,created:false};
       }
       const session=(await client.query(`SELECT * FROM runtime_session WHERE project_id=$1 AND session_id=$2 FOR UPDATE`,
         [projectId,sessionId])).rows[0];
@@ -117,17 +120,17 @@ export class PgDirectInputs {
       let mode:"steer"|"start";
       let source:{kind:"run"|"message";id:string;processingId:string|null};
       if(active){
-        if(active.state!=="running"||!turn)throw new DomainError("SESSION_BUSY","Primary Turn is not bound and running");
-        if(command.expectedTurnId!==turn&&command.expectedTurnId===null)
-          throw new DomainError("TURN_CHANGED","Expected Turn differs from the current primary Turn");
-        if(command.expectedTurnId!==turn)return this.queueChangedTurn(client,projectId,sessionId,actorId,command,
+        // Everything below is refused before any native request: it is saved as one queued message instead of failing the person.
+        if(active.state!=="running"||!turn)return this.queueRefused(client,projectId,sessionId,actorId,command,
+          "NOT_BOUND: the primary Turn is not bound and running yet; saved as a queued ordinary message");
+        if(command.expectedTurnId!==turn)return this.queueRefused(client,projectId,sessionId,actorId,command,
           "TURN_CHANGED: the Turn changed before the input was added; saved as a queued ordinary message");
         mode="steer";
         if(!grant.canSteer)throw new DomainError("DIRECT_GRANT_MISSING","Direct steer is not authorized");
         source=runs.length?{kind:"run",id:active.run_id,processingId:null}:
           {kind:"message",id:active.message_id,processingId:active.processing_id};
       }else{
-        if(command.expectedTurnId!==null)return this.queueChangedTurn(client,projectId,sessionId,actorId,command,
+        if(command.expectedTurnId!==null)return this.queueRefused(client,projectId,sessionId,actorId,command,
           "TURN_CHANGED: the Turn ended before the input was added; saved as a queued ordinary message");
         if(!grant.canStart)throw new DomainError("DIRECT_GRANT_MISSING","Direct start is not authorized");
         const count=(await client.query(`SELECT count(*)::integer AS n FROM session_message_processing p
@@ -156,20 +159,22 @@ export class PgDirectInputs {
     });
   }
   /**
-   * The Turn the person saw is not the current one. The same input becomes one queued ordinary message with the same
-   * ID and operation ID, and the receipt says so; a repeat finds this receipt and adds nothing. Run inside the
-   * reservation transaction, after the Session and the ordinary-message grant were checked.
+   * The input is provably unsent (the Turn the person saw changed or ended, or the primary Turn is not bound yet): the same
+   * input becomes one queued ordinary message with the same ID and operation ID, and the receipt says so. A repeat finds this
+   * receipt and adds nothing. Runs inside the reservation transaction, after the Session and the ordinary-message grant were
+   * checked. Unknown outcomes are never converted: they never reach this point.
    */
-  private async queueChangedTurn(client:PoolClient,projectId:string,sessionId:string,actorId:string,
+  private async queueRefused(client:PoolClient,projectId:string,sessionId:string,actorId:string,
     command:DirectInputCommand,reason:string):Promise<{record:DirectInputRecord;created:boolean}>{
     await client.query(`INSERT INTO session_message(project_id,message_id,operation_id,target_kind,session_id,
       sender_actor_id,content,state,version,created_at,updated_at)
       VALUES($1,$2,$3,'owned',$4,$5,$6,'queued',1,now(),now())`,
       [projectId,command.inputId,command.operationId,sessionId,actorId,command.content]);
+    const mode=command.expectedTurnId===null?"start":"steer";
     const inserted=await client.query(`INSERT INTO session_direct_input(project_id,session_id,input_id,operation_id,
       actor_id,content,mode,source_kind,source_id,processing_id,expected_turn_id,state,reason,version,created_at,updated_at)
-      VALUES($1,$2,$3,$4,$5,$6,'steer','message',$3,NULL,$7,'rejected',$8,1,now(),now()) RETURNING *`,
-      [projectId,sessionId,command.inputId,command.operationId,actorId,command.content,command.expectedTurnId,reason]);
+      VALUES($1,$2,$3,$4,$5,$6,$7,'message',$3,NULL,$8,'rejected',$9,1,now(),now()) RETURNING *`,
+      [projectId,sessionId,command.inputId,command.operationId,actorId,command.content,mode,command.expectedTurnId,reason]);
     return {record:{...needed(inserted.rows[0]),queuedMessageId:command.inputId},created:true};
   }
   async attempt(projectId:string,inputId:string):Promise<DirectInputRecord>{

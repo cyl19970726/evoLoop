@@ -113,6 +113,7 @@ export function sentResultText(result: SentResult): string {
 function convertedReason(reason: string | null | undefined): string {
   if (!reason) return "";
   if (/^TURN_CHANGED/.test(reason)) return "你看到的那一轮已经换了或已结束；";
+  if (/^NOT_BOUND/.test(reason)) return "这一轮刚开始、还没准备好接收补充；";
   if (/Native Turn kind/.test(reason)) return "这一轮的类型不接受补充（评审、压缩等）；";
   return "运行时说明见完整标识；";
 }
