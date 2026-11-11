@@ -101,7 +101,8 @@ test("a code PR without a Task is refused even with --no-task-reason", () => {
 
 test("draft, closed, wrong base and failing checks are refused even when accepted", () => {
   for (const [over, pattern] of [[{ isDraft: true }, /草稿/], [{ state: "MERGED" }, /不是打开状态/], [{ baseRefName: "dev" }, /目标分支/],
-    [{ statusCheckRollup: [{ name: "app", conclusion: "FAILURE" }] }, /app: failure/], [{ statusCheckRollup: [{ name: "app", status: "IN_PROGRESS" }] }, /app: in_progress/]]) {
+    [{ statusCheckRollup: [{ name: "app", conclusion: "FAILURE" }] }, /app: failure/], [{ statusCheckRollup: [{ name: "app", status: "IN_PROGRESS" }] }, /app: in_progress/],
+    [{ statusCheckRollup: [{ name: "app", status: "IN_PROGRESS", conclusion: "" }, { context: "ci/x", state: "PENDING" }] }, /app: in_progress.*ci\/x: pending/]]) {
     const result = evaluate({ pr: pr(over) });
     assert.equal(result.verdict, "refuse");
     assert.match(result.reasons.join("\n"), pattern);

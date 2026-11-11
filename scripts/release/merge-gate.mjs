@@ -51,11 +51,10 @@ const docsOnly = files => files.length > 0 && files.every(file => file.startsWit
 const nonDocs = files => files.filter(file => !(file.startsWith("docs/") || /\.md$/i.test(file)));
 
 export function checksProblem(rollup = []) {
-  const bad = rollup.filter(check => {
-    const state = (check.conclusion ?? check.state ?? check.status ?? "").toUpperCase();
-    return !["SUCCESS", "SKIPPED", "NEUTRAL"].includes(state);
-  });
-  return bad.map(check => `${check.name ?? check.context}: ${(check.conclusion ?? check.state ?? check.status ?? "unknown").toLowerCase()}`);
+  // A running CheckRun has conclusion "" and a status; a StatusContext has only a state.
+  const stateOf = check => (check.conclusion || check.state || check.status || "unknown").toUpperCase();
+  return rollup.filter(check => !["SUCCESS", "SKIPPED", "NEUTRAL"].includes(stateOf(check)))
+    .map(check => `${check.name ?? check.context}: ${stateOf(check).toLowerCase()}`);
 }
 
 /**
