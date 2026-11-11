@@ -10,7 +10,7 @@ import type {
   Task, TaskDetail, TaskDocumentLink, TaskRevision, RuntimeRunRecord,
 } from "@evoloop/contracts";
 import { parseQueueHandoff, type QueueHandoff } from "@evoloop/contracts/runtime-handoff";
-import { DomainError } from "@evoloop/contracts/ports";
+import { DomainError, PersistenceRejectedError } from "@evoloop/contracts/ports";
 import { applyWorkflow } from "./workflow.js";
 import { reserveRuntime } from "./runtime/reserve.js";
 import { currentRetentions, validateDispatchBasis, validateReselectedOriginals, validateSelectedExternalBasis } from "./runtime/basis.js";
@@ -168,11 +168,17 @@ export class WorkflowService {
         result = outcome.result;
         effects = outcome.effects;
       } catch (error) {
-        if (!(error instanceof DomainError)) throw error;
-        result = {
-          status: "rejected", operationId: command.operationId, code: error.code,
-          message: error.message, ...(error.currentVersion === undefined ? {} : { currentVersion: error.currentVersion }),
-        };
+        if (error instanceof DomainError) {
+          result = {
+            status: "rejected", operationId: command.operationId, code: error.code,
+            message: error.message, ...(error.currentVersion === undefined ? {} : { currentVersion: error.currentVersion }),
+          };
+        } else if (error instanceof PersistenceRejectedError) {
+          // The savepoint rolled back, so this is a known rejection rather than an unknown commit.
+          result = { status: "rejected", operationId: command.operationId, code: "STORAGE_REJECTED", message: error.message };
+        } else {
+          throw error;
+        }
       }
       const operation: Operation = {
         projectId: command.projectId, id: command.operationId, actorId: principal.actorId,
