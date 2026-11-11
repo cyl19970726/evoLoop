@@ -5,7 +5,8 @@ import * as React from "react";
 import { createPortal } from "react-dom";
 import { PanelRightClose, PanelRightOpen, X, ArrowUpRight } from "lucide-react";
 import { Button, IconButton, Sheet, SheetContent, SheetTitle, SheetDescription, cn } from "@evoloop/ui";
-import { appPath, currentPath, onNavigate } from "../navigation";
+import { appPath, currentPath, onAddressChange, onNavigate } from "../navigation";
+import { parseRoute } from "../routes";
 import { PageActive } from "./pageActive";
 import { useMediaQuery } from "./useMediaQuery";
 export { PageActive } from "./pageActive";
@@ -19,6 +20,8 @@ export interface PanelObject {
   /** Stable identity such as `document:{id}@{revision}`; opening it again selects the existing tab. */
   id: string;
   title: string;
+  /** The task page that opened this object. Changing to another task closes it instead of showing it out of context. */
+  ownerTaskId?: string;
   /** Address of the same object in the center column. */
   href?: string;
   render: () => React.ReactNode;
@@ -89,6 +92,23 @@ export function afterCenterMoved(tabs: readonly PanelObject[], active: string, p
   return { tabs: kept, active: active !== "facts" && !kept.some(tab => tab.id === active) ? "facts" : active };
 }
 
+/** The task whose page or selected table row supplies the right column's default facts. */
+export function currentTaskId(path: string): string | null {
+  const route = parseRoute(path);
+  if (route.section === "task") return route.id ?? null;
+  if (route.section !== "work") return null;
+  return new URLSearchParams(path.split("?")[1] ?? "").get("selected") || null;
+}
+
+/** A task's opened objects stay while that task remains current; another task starts from its own 信息, not stale text. */
+export function afterTaskChanged(tabs: PanelObject[], active: string, path: string): { tabs: PanelObject[]; active: string } {
+  const taskId = currentTaskId(path);
+  if (!taskId) return { tabs, active };
+  const kept = tabs.filter(tab => !tab.ownerTaskId || tab.ownerTaskId === taskId);
+  if (kept.length === tabs.length) return { tabs, active };
+  return { tabs: kept, active: active !== "facts" && !kept.some(tab => tab.id === active) ? "facts" : active };
+}
+
 /** Panel state for one space; the shell places <ContextPanelColumn> where the column belongs. */
 export function ContextPanelProvider({ space, children }: { space: Space; children: React.ReactNode }) {
   const wide = useMediaQuery("(min-width: 1440px)");
@@ -119,8 +139,15 @@ export function ContextPanelProvider({ space, children }: { space: Space; childr
   // the center reads it in full now, and 信息 shows its facts.
   React.useEffect(() => onNavigate(() => {
     setDrawerOpen(false);
-    const next = afterCenterMoved(latest.current.tabs, latest.current.active, currentPath());
-    if (next.tabs.length !== latest.current.tabs.length) setTabs(next.tabs);
+    const moved = afterCenterMoved(latest.current.tabs, latest.current.active, currentPath());
+    const next = afterTaskChanged(moved.tabs, moved.active, currentPath());
+    if (next.tabs !== latest.current.tabs) setTabs(next.tabs);
+    if (next.active !== latest.current.active) setActive(next.active);
+  }), []);
+  // Table row selection changes the current task with a quiet address rewrite rather than navigation.
+  React.useEffect(() => onAddressChange(() => {
+    const next = afterTaskChanged(latest.current.tabs, latest.current.active, currentPath());
+    if (next.tabs !== latest.current.tabs) setTabs(next.tabs);
     if (next.active !== latest.current.active) setActive(next.active);
   }), []);
   const hasContent = providers > 0 || tabs.length > 0;

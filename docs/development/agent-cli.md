@@ -196,6 +196,8 @@ Agent 间发送含中文、引号或换行的正文时，用 `work send` 从私�
 
 `work acceptance --project PROJECT [--limit N --cursor CURSOR]` 同屏返回现有 `work leader` 的分页阶段投影和各 Session 的持久占用。`persistedWorkIdle` 只说明数据库中的 Run、消息、队列、assignment 和未观察验收已清；`missingCapabilities` 给出当前执行配置、材料 CLI、业务身份或消息授权的具体缺项，`readyForAcceptance` 要求占用已清且缺项为空。仍须核原生 writer 和实际能力，缺项由有权的配置责任者补齐，模型不能自授权限。`work acceptance TASK --project PROJECT` 读每次安排、消息 processing/Turn、接收读取和本人观察；`work acceptance mine` 是具名人类的待验收列表，工作台收件页同源显示。以 `request schema acceptance.assign` 读取完整私有请求字段，再用 `request acceptance.assign --project PROJECT --id TASK --file BODY.json` 保存当前 Delivery 的一个固定范围；Agent 分支的 `senderActorId` 必须是当前安排者的业务 actor。HTTP 成功回执含原 operation ID；回执不明时按原 ID 读取 `work acceptance TASK`，不另造消息 ID。Agent 分支的投递沿普通消息泵，记作使用要求：消息 processing 已完成并保存原生 Turn，本人已用 `session.message.receipt` 记录已读，且本人的观察晚于该已读回执——观察可以在被安排的这一轮内记录，processing 完成后再关联；早于已读回执的观察不能关联。拒绝时 `ACCEPTANCE_NOT_USED` 的信息指出缺哪一项。安排受阻会留下一次 Leader 通知；结果仍由现有观察通知回传。人类本人读取及观察分别用 `work acceptance read RELAY --project PROJECT --task TASK --file BODY.json` 和 `work acceptance observe RELAY --project PROJECT --task TASK --file BODY.json`，Agent 凭据不能冒充人类。
 
+模型服务额度或鉴权失败会暂停同一提供方的新 Turn（排队消息保留，不失败）：用 `get /api/projects/PROJECT/runtime/provider-holds` 读取暂停中的提供方、受影响 Session 与排队消息数，工作台在所有页面顶部显示“运行受阻”。账户使用者处理后，复核者用 `command schema runtime.providerHold.release` 取结构，以读到的 `version` 提交 `command run FILE`，一次放行该提供方并恢复被它关闭的各 Session 恢复门。
+
 `work retirement SESSION --project PROJECT` 给临时实例的关闭阻塞项及原生归档读回。`request schema session.retirement.approve` 给出审阅决定所需字段；`request session.retirement.approve --project PROJECT --id SESSION --file BODY.json` 保存决定，`decisionId` 与 `operationId` 相同，`closeOperationId` 固定给后续 `runtime.session.close`。必须先核业务交接及所有阻塞，关闭后读回 `closed`、`closeVerifiedAt` 和精确 native archive；`closing` 或未知回执不能当完成。
 
 有项目 `write` 和 `review` 权限的负责人可先读 `command schema task.attention.thresholds.set`、`task.attention.followUp.set`、`task.attention.publication.record`、`task.attention.resolve`，再用 `command run PRIVATE_JSON` 提交。跟进固定当前 Task version/revision 与跟进版本；发布准备的交接需写明责任方和固定产物，真正发布另记时间与来源。跟进动作 `checked`、`waiting`、`acted` 均保留审计历史，重复检查不刷新业务进展。响应不明时核原 operation 与同一正文，不换 ID 猜测执行结果。
@@ -402,3 +404,9 @@ npm run --silent cli -- allocations --project PROJECT_UUID --discussion DISCUSSI
 普通消息 grant 省略 `maxTurns` 表示不限累计次数；显式正整数仍为上限。历史 `used` 继续累计。Session snapshot 的 `ordinaryExecution.messageBudget` 在精确 grant 和计数核实后给出 `used`、`limit`、`remaining`；无限时后两项为 `null`，未核计数时该字段缺失。账户模型额度、Task 和队列尝试上限须分别核对。
 
 Root 可在私有静默维护窗口以 `node scripts/prepare-unlimited-message-grants.mjs PRIVATE_CONFIG PRIVATE_SELECTIONS NEW_PRIVATE_CANDIDATE` 生成权限 0600 的新候选。选择文件是精确 `{projectId,sessionId,senderActorId,receiverActorId,receiverRoleId,cwd,expectedMaxTurns}` 数组。脚本要求旧 grant 启用、限额匹配、输出文件不存在，只移除指定 grant 的 `maxTurns`。发布前后读回原 Session/Thread、grant、累计计数、原消息和处理状态；回退保留的旧私有配置并按正常发布流程执行，不清计数或重放 unknown。
+
+## Session 队伍
+
+Leader 用 `evoloop command run` 提交 `line.append`（sessionId、taskId、expectedTaskVersion、reason）、`line.move`（entryId、expectedVersion、direction=forward|back）、`line.remove`、`line.resume`。读取：`evoloop get /api/projects/PROJECT/session-lines` 与 `/session-lines/events`。排队中的 Task 不能直接 `task.start`、`runtime.run.reserve` 或改派（`QUEUED_IN_SESSION_LINE`），先 `line.remove`。
+
+业务 Session 收到“执行确认请求”消息后，只做确认，不开始改文件：读固定 Task 修订，然后提交 `task.assignment.acknowledge`，`verdict=confirm`（`plan` 简短计划、`expectedRevisionId`）或 `verdict=return`（`missing` 列出缺什么）。确认后系统自动开 Run；退回的 Task 退出队伍、保持未开始。需要的私有配置：队伍调度程序随运行时启用而运行，Session 的业务身份取自 `residentQueue.roleActors`（没有则该项挂起为 `RECIPIENT_UNAVAILABLE`）。

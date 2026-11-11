@@ -32,8 +32,8 @@ export function basisStanding(revisionId: string, read: DocumentRead | undefined
 }
 
 /** The fixed basis of one task revision. `reads` (the documents' current state) is left out for history. */
-export function BasisList({ projectId, basis, content, reads }: {
-  projectId: string; basis: BasisSet | null; content?: { documentId: string; revisionId: string };
+export function BasisList({ projectId, taskId, basis, content, reads }: {
+  projectId: string; taskId: string; basis: BasisSet | null; content?: { documentId: string; revisionId: string };
   reads?: Record<string, DocumentRead>;
 }) {
   const rows = [
@@ -51,7 +51,7 @@ export function BasisList({ projectId, basis, content, reads }: {
       return <li key={row.key} className="flex flex-col gap-1 border-t border-border py-3 first:border-t-0 first:pt-0" data-basis-document={row.documentId}>
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
           <Badge>{row.group}</Badge>
-          <DocumentLink projectId={projectId} documentId={row.documentId} revisionId={row.revisionId} title={title}
+          <DocumentLink projectId={projectId} taskId={taskId} documentId={row.documentId} revisionId={row.revisionId} title={title}
             relation={`${row.group} · 任务固定的修订`} className="text-small font-medium">{title}</DocumentLink>
           {standing && <StatusTag tone={standing.tone} label={standing.label} />}
         </div>
@@ -78,7 +78,7 @@ export function TaskBasisTab({ context, detail, reads, canReview }: {
   return <div className="flex flex-col gap-8">
     <TabSection title="任务固定的依据" meta={`第 ${detail.task.version} 版 · 开始时固定`}>
       <Fine>点文档在右栏打开任务固定的那一版。文档以后发布新版，不会自动改写这项任务的依据。</Fine>
-      <BasisList projectId={projectId} basis={detail.basis} content={{ documentId: detail.task.contentDocumentId, revisionId: detail.task.contentRevisionId }} reads={reads} />
+      <BasisList projectId={projectId} taskId={detail.task.id} basis={detail.basis} content={{ documentId: detail.task.contentDocumentId, revisionId: detail.task.contentRevisionId }} reads={reads} />
     </TabSection>
     <TabSection title="待复核的依据变化" meta={`${pending.length} 项`}>
       {pending.length === 0 ? <p className="text-label text-text-secondary">当前没有待复核的依据变化。</p>

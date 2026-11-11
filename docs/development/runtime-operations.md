@@ -369,3 +369,7 @@ node --import tsx tests/manual/session-compaction-e1.ts
 - **即时输入的能力查询不核运行时。** 对 Claude 或非 alpha.6 的 Codex 也可能回答 `steer`，提交时才被拒绝或记为未知（见 [Session 运行时 §3](../architecture/session-runtime.md#3-即时输入执行中收到的消息怎样处理)）。
 - **托管压缩只在 alpha.6 可用。** 隔离测试只用替身，不验证有认证的模型压缩。
 - **上下文交接仍由维护者执行。** 服务会暂停普通通知并生成摘要，但不会自动创建新原生线程、迁移 Leader 目标或替使用者确认接手；这套操作尚未在正式实例做长期运行验收。
+
+## Session 队伍调度程序
+
+协调器在运行时启用（`runtime.enabled`）后运行队伍调度程序（轮询间隔沿用 `residentQueue.pollIntervalMs`，默认 2 秒）。它只推进由 Leader 凭据控制的队伍，每一步都是普通命令，操作 ID 由队伍项和尝试次数决定，重启后重放不会重复开 Run。队伍项、事件和 `QUEUED_IN_SESSION_LINE` 的含义见 [Session 运行时](../architecture/session-runtime.md#session-队伍dec-045-q1)。迁移 087 新增 `session_line`、`session_line_entry`、`session_line_event`、`task_assignment_confirmation`；不需要改私有配置，但 Session 的业务身份要在 `residentQueue.roleActors` 里有映射，否则该 Session 的队伍项会挂起。

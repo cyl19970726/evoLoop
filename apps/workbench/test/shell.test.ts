@@ -4,7 +4,7 @@ import { test } from "node:test";
 import { parseRoute } from "../src/shared/routes.ts";
 import { projectPaths } from "../src/app/routePaths.ts";
 import { leafOf, projectInitial, rememberSpace, sectionLabels, spaceHref, spaceOf, workNavigation, workSectionOf } from "../src/app/shell/spaces.ts";
-import { addObjectTab, afterCenterMoved, clampWidth, maxObjectTabs, panelPlace, panelWidth, readPanelState, type PanelObject } from "../src/shared/ui/ContextPanel.tsx";
+import { addObjectTab, afterCenterMoved, afterTaskChanged, clampWidth, maxObjectTabs, panelPlace, panelWidth, readPanelState, type PanelObject } from "../src/shared/ui/ContextPanel.tsx";
 
 const p = "11111111-1111-4111-8111-111111111111";
 const id = "22222222-2222-4222-8222-222222222222";
@@ -62,6 +62,23 @@ test("在中间打开 closes the tab of the object the center now reads, and the
   assert.deepEqual(other, { tabs: [doc, task], active: task.id }, "another revision of the document is another object");
   const behind = afterCenterMoved([doc, task], task.id, `/p/${p}/documents/d?revision=r`);
   assert.equal(behind.active, task.id, "a tab behind the one in front closes without moving the front");
+});
+
+test("a task only keeps the objects it opened in the right column", () => {
+  const tab = (key: string, ownerTaskId?: string): PanelObject => ({ id: key, title: key, ...(ownerTaskId ? { ownerTaskId } : {}), render: () => null });
+  const fromA = tab("document:a", "a");
+  const fromB = tab("document:b", "b");
+  const sample = tab("sample");
+  const changed = afterTaskChanged([fromA, fromB, sample], fromA.id, `/p/${p}/tasks/b?tab=runtime`);
+  assert.deepEqual(changed.tabs.map(item => item.id), ["document:b", "sample"]);
+  assert.equal(changed.active, "facts", "closing the front tab returns to the current task's information");
+  const same = afterTaskChanged([fromA, sample], sample.id, `/p/${p}/tasks/a`);
+  assert.deepEqual(same, { tabs: [fromA, sample], active: sample.id }, "the same task keeps its tab");
+  const outside = afterTaskChanged([fromA], fromA.id, `/p/${p}/sessions?session=owned:${id}`);
+  assert.deepEqual(outside, { tabs: [fromA], active: fromA.id }, "leaving the task page does not discard it");
+  const selected = afterTaskChanged([fromA, sample], fromA.id, `/p/${p}/work?state=all&selected=b`);
+  assert.deepEqual(selected.tabs.map(item => item.id), ["sample"], "the table's selected task is a task change too");
+  assert.equal(selected.active, "facts");
 });
 
 test("the right column keeps at most five objects, reuses an open one, and stays between 280 and 560 px", () => {
