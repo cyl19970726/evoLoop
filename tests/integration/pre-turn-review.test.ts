@@ -1,3 +1,5 @@
+// Refuses a live or shared PostgreSQL server before this file opens TEST_DATABASE_URL (scripts/lib/database-target.mjs).
+import "../../scripts/test-database-guard.mjs";
 import {randomUUID} from 'node:crypto';
 import {readdirSync} from 'node:fs';
 import {fileURLToPath} from 'node:url';

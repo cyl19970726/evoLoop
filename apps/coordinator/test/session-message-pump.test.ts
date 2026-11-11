@@ -335,7 +335,8 @@ test('admission denial stops scheduling and native qualification before any proc
     await pump.tick();
     assert.equal(scheduled,0,reason);assert.equal(registered,0,reason);
     assert.equal(qualified,0,reason);assert.equal(dispatched,0,reason);
-    assert.equal(blocked,'ordinary admission denied');
+    // A missing grant leads with its code, which is how the queue knows not to wait behind it.
+    assert.equal(blocked,reason==='MESSAGE_GRANT_MISSING'?'MESSAGE_GRANT_MISSING: ordinary admission denied':'ordinary admission denied');
   }
 });
 
