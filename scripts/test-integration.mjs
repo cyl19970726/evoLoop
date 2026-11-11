@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
 import pg from "pg";
 import { assertDevelopmentDatabase } from "./lib/database-target.mjs";
+import { lockSafeConcurrency, nominalLockSlots } from "./lib/lock-budget.mjs";
 
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const input = process.env.TEST_DATABASE_URL;
@@ -19,10 +20,13 @@ if (!/^evoloop(?:_[a-z0-9]+)*_test$/.test(baseName) || !["postgres:", "postgresq
 // The runner creates databases: it must never do so on the live server, whatever the database name says.
 await assertDevelopmentDatabase(input);
 const requestedConcurrency = process.env.EVOLOOP_INTEGRATION_CONCURRENCY;
-const concurrency = requestedConcurrency === undefined ? Math.min(4, availableParallelism()) : Number(requestedConcurrency);
+let concurrency = requestedConcurrency === undefined ? Math.min(4, availableParallelism()) : Number(requestedConcurrency);
 if (!Number.isInteger(concurrency) || concurrency < 1) {
   throw new Error("EVOLOOP_INTEGRATION_CONCURRENCY must be a positive integer");
 }
+
+const fileTimeoutSeconds = Number(process.env.EVOLOOP_INTEGRATION_FILE_TIMEOUT_SECONDS ?? 600);
+if (!Number.isFinite(fileTimeoutSeconds) || fileTimeoutSeconds < 1) throw new Error("EVOLOOP_INTEGRATION_FILE_TIMEOUT_SECONDS must be a positive number");
 
 const requiredDatabase = new Map([
   ["document-payloads.test.ts", "evoloop_document_test"],
@@ -46,19 +50,47 @@ const urlFor = name => {
   url.pathname = `/${name}`;
   return url.toString();
 };
-const files = [
+const discovered = [
   ...(await readdir(resolve(root, "packages/adapter-postgres/test"))).filter(name => name.endsWith(".test.ts")).sort()
     .map(name => ({ path: `packages/adapter-postgres/test/${name}`, database: baseName })),
   ...(await readdir(resolve(root, "tests/integration"))).filter(name => name.endsWith(".test.ts")).sort()
     .map(name => ({ path: `tests/integration/${name}`, database: requiredDatabase.get(name) ?? generalDatabase })),
 ];
+// A long serial group is the critical path, so large groups are spread over extra databases of
+// at most `shardSize` files each. Only the two bulk groups are split; named databases stay as configured.
+const shardSize = Number(process.env.EVOLOOP_INTEGRATION_SHARD_SIZE ?? 4);
+if (!Number.isInteger(shardSize) || shardSize < 1) throw new Error("EVOLOOP_INTEGRATION_SHARD_SIZE must be a positive integer");
+const bulkDatabases = new Set([baseName, generalDatabase]);
+const shardLetters = "abcdefghijklmnopqrstuvwxyz";
+const files = [];
+for (const database of new Set(discovered.map(file => file.database))) {
+  const group = discovered.filter(file => file.database === database);
+  const shards = bulkDatabases.has(database) ? Math.min(shardLetters.length, Math.ceil(group.length / shardSize)) : 1;
+  group.forEach((file, index) => {
+    const shard = index % shards;
+    // Shard 0 keeps the original name so a single-shard run behaves exactly as before.
+    files.push({ ...file, database: shard === 0 ? database : database.replace(/_test$/, `_shard_${shardLetters[shard]}_test`) });
+  });
+}
 if (!files.length) throw new Error("No integration tests found");
 
 const adminUrl = new URL(base);
 adminUrl.pathname = "/postgres";
 const admin = new pg.Client({ connectionString: adminUrl.toString() });
+const createdShards = [];
 try {
   await admin.connect();
+  // Unless the caller chose a number, keep concurrency within what the server's lock table can carry.
+  if (requestedConcurrency === undefined) {
+    const setting = async name => Number((await admin.query(`SELECT current_setting('${name}') AS value`)).rows[0].value);
+    const settings = { maxLocksPerTransaction: await setting("max_locks_per_transaction"), maxConnections: await setting("max_connections"),
+      maxPreparedTransactions: await setting("max_prepared_transactions") };
+    const safe = lockSafeConcurrency(settings);
+    if (safe < concurrency) {
+      process.stdout.write(`PostgreSQL lock table ${nominalLockSlots(settings)} slots (max_locks_per_transaction ${settings.maxLocksPerTransaction} x ${settings.maxConnections + settings.maxPreparedTransactions} connections) carries ${safe} concurrent test files, not ${concurrency}; running ${safe}. Raise max_locks_per_transaction or set EVOLOOP_INTEGRATION_CONCURRENCY to override.\n`);
+      concurrency = safe;
+    }
+  }
   for (const name of new Set(files.map(file => file.database))) {
     const existing = await admin.query("SELECT 1 FROM pg_database WHERE datname=$1", [name]);
     if (existing.rowCount) continue;
@@ -68,6 +100,7 @@ try {
       if (!/^evoloop(?:_[a-z0-9]+)*_test$/.test(name)) throw new Error("Unsafe test database name");
       await admin.query(`CREATE DATABASE "${name}"`);
       process.stdout.write(`Created isolated test database ${name}\n`);
+      if (name.includes("_shard_")) createdShards.push(name);
     } catch (error) {
       if (error?.code === "42P04") continue; // another test launcher created it
       throw new Error(`Cannot create test database ${name}; grant CREATEDB to the configured PostgreSQL role or create it explicitly. PostgreSQL code: ${error?.code ?? "unknown"}`);
@@ -97,6 +130,10 @@ const runFile = file => new Promise(resolvePromise => {
   const child = spawn(process.execPath, ["--import", "tsx", "--test", file.path], {
     cwd: root, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, TEST_DATABASE_URL: urlFor(file.database) },
   });
+  // A test whose database call failed can wait forever (seen when the server ran out of lock space);
+  // a file that outlives the limit is killed and counted as failed instead of stalling the whole job.
+  const timer = setTimeout(() => { output.push(Buffer.from(`\nKilled after ${fileTimeoutSeconds}s without finishing\n`)); child.kill("SIGKILL"); }, fileTimeoutSeconds * 1000);
+  child.on("close", () => clearTimeout(timer));
   child.stdout.on("data", chunk => output.push(chunk));
   child.stderr.on("data", chunk => output.push(chunk));
   child.on("error", error => { output.push(Buffer.from(`${error?.stack ?? error}\n`)); finish(null); });
@@ -126,4 +163,20 @@ for (const { database, files: count, seconds } of durations.sort((a, b) => b.sec
 if (failed.length) {
   process.stderr.write(`\nIntegration test failures: ${failed.join(", ")}\n`);
   process.exitCode = 1;
+}
+
+// Shard databases exist only to spread one run; drop the ones this run created once everything passed.
+// After a failure they stay for inspection. EVOLOOP_INTEGRATION_KEEP_SHARDS=1 keeps them for faster reruns.
+if (!failed.length && process.env.EVOLOOP_INTEGRATION_KEEP_SHARDS !== "1" && createdShards.length) {
+  const cleaner = new pg.Client({ connectionString: adminUrl.toString() });
+  try {
+    await cleaner.connect();
+    for (const name of createdShards) {
+      if (!/^evoloop(?:_[a-z0-9]+)*_shard_[a-z]_test$/.test(name)) continue;
+      await cleaner.query(`DROP DATABASE IF EXISTS "${name}" WITH (FORCE)`);
+    }
+    process.stdout.write(`Dropped ${createdShards.length} shard databases created by this run\n`);
+  } catch (error) {
+    process.stderr.write(`Could not drop shard databases: ${error?.message ?? error}\n`);
+  } finally { await cleaner.end(); }
 }
