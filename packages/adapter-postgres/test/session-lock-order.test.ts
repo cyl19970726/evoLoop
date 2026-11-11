@@ -1,6 +1,8 @@
 // Lock order around one Session: owner compaction (coordinator CompactionMaintenance.start), direct input
 // starts, connector admission and execution profile adoption. Each opens its own transaction or runs in a
 // core transaction; all now take the project lock first.
+// Refuses a live or shared PostgreSQL server before this file opens TEST_DATABASE_URL (scripts/lib/database-target.mjs).
+import "../../../scripts/test-database-guard.mjs";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { after, before, test } from "node:test";

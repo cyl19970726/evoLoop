@@ -99,7 +99,7 @@ export function TaskTable({ projectId, list, view, selectedId, onSelect, linkFor
     {attention.error && <p role="status" className="text-caption text-muted-foreground">关注项暂不可读：{errorText(attention.error)}</p>}
     {attention.data && !attention.data.complete && <p role="status" className="text-caption text-muted-foreground">关注项超过当前已读范围；未显示的任务仍需打开核对。</p>}
     <div className="flex items-center gap-2">
-      <p className="flex-1 text-caption text-muted-foreground">{list.loading ? "正在核对当前列表…" : list.observedAt ? `列表读于 ${list.observedAt.toLocaleString("zh-CN")}；回到窗口时自动重读。` : "列表尚未读回。"}</p>
+      <p className="flex-1 text-caption text-muted-foreground">{list.loading ? "正在核对当前列表…" : list.observedAt ? `列表读于 ${list.observedAt.toLocaleString("zh-CN")}；回到页面或窗口时自动重读。` : "列表尚未读回。"}</p>
       <IconButton compact label="重新读取列表" icon={<RefreshCw size={15} />} onClick={list.reread} />
       {!stacked && <details className="relative">
         <summary aria-label="列设置" className="flex cursor-pointer list-none items-center gap-1.5 rounded-full px-3 py-1 text-label text-text-secondary hover:bg-field [&::-webkit-details-marker]:hidden"><Columns3 size={15} aria-hidden="true" />列设置</summary>

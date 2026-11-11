@@ -52,6 +52,7 @@ import { evaluationPacketMediaType } from "./runtime/evaluation-materials.js";
 import { activeTaskTimingGrants, drivenRuntimeProviders, hasExactEngineeringActionGrant, hasFeishuActorGrant, hasTaskTimingGrant, knowledgeServesProject, loadIntegrations, runtimeThreadConfigForSession, schedulingGrantsFor, selectMaterialCli } from "./configuration.js";
 import { OpenVikingKnowledgeRepository } from "@evoloop/adapter-wiki-openviking";
 import { DomainError } from "@evoloop/contracts/ports";
+import { ordinaryMessageGrantProblem } from "./session-messages/send-authority.js";
 import type { Principal } from "@evoloop/contracts";
 import { LocalBlobStore } from "@evoloop/adapter-local-blobs";
 import { setupManagedLoops } from "./orchestration/setup.js";
@@ -82,7 +83,7 @@ import { SessionTimelineService } from "./session-timeline/index.js";
 import { OrdinaryRunSubmissionService, leaseCheckedUnitOfWork } from "./ordinary-run-submission/service.js";
 import { createOrdinaryRunSealer } from "./ordinary-run-submission/seal.js";
 import { OrdinaryRunSealPump } from "./ordinary-run-submission/pump.js";
-import { materialCliRecipientMatches, requireOrdinaryRecipient } from "./runtime/recipient-preflight.js";
+import { materialCliRecipientMatches, requireOrdinaryRecipient, requireReservableRecipient } from "./runtime/recipient-preflight.js";
 import { createMessageExecutionReader } from "./session-messages/execution-capability.js";
 import { sessionMessageCanStart } from "./session-messages/scheduling.js";
 import { LeaderResultNoticePump } from "./leader-results/pump.js";
@@ -887,6 +888,22 @@ const app = await buildServer({ service, credentials, canWrite: lease.canWrite, 
       approvalPolicy:command.approvalPolicy}) === true,
   authorizeDynamicRun: async (principal,command,session) => principal.permissions.includes("review") &&
     principal.actorId === session.actorId && await dynamicAdmission?.canReserveRun(session,command.runId,command.taskId) === true,
+  requireRunRecipient: async (_principal,command,session) => {
+    const facts = await uow.read(command.projectId, async reader => {
+      const task = await reader.getTask(command.taskId);
+      if (!task) return null;
+      const proposal = await reader.getTaskProposal(task.id, task.currentRevisionId);
+      const assignment = await reader.sessionAssignments?.getTaskSessionAssignment(task.id) ?? null;
+      return { acceptanceMode: proposal?.acceptanceMode, taskRevisionId: task.currentRevisionId, assignment: assignment
+        ? { state: assignment.state, taskRevisionId: assignment.taskRevisionId, recipientActorId: assignment.recipientActorId } : null };
+    });
+    if (!facts) return;
+    // A brokered (dynamic) Session gets its CLI identity when the Run starts, so only a configured one can be compared now.
+    const current = await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE);
+    const entry = current.runtime?.enabled ? selectMaterialCli(current.runtime.materialCli, command.projectId,
+      session.id, session.actorId, command.taskId, session.roleId) : null;
+    requireReservableRecipient({ ...facts, cliActorId: entry?.cliActorId ?? null });
+  },
   authorizeDynamicMessageRecovery: async (principal,session) => principal.permissions.includes("review") &&
     await dynamicAdmission?.canStartConversation(session) === true,
   runtimeGrants: (projectId, actorId) => runtimeConfig?.enabled ? runtimeConfig.grants.filter(g => g.projectId === projectId && g.actorId === actorId) : [],
@@ -895,12 +912,21 @@ const app = await buildServer({ service, credentials, canWrite: lease.canWrite, 
       g.actorId === actorId && g.roleId === role).map(g => g.cwd) : [],
     skillRoots: async (project, role) => ({ businessRoot: skillSourceRoot, businessPaths: await roleBusinessSkillPaths(project, role) }),
     claudeContextMode: runtimeConfig?.claude?.contextMode ?? null }, principal, projectId, roleId),
+  messageSendAuthority: async (principal, projectId, sessionId) => {
+    const session = await service.getRuntimeSession(principal, projectId, sessionId);
+    return ordinaryMessageGrantProblem({ projectId, senderActorId: principal.actorId, session,
+      sessionMessages: (await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE)).sessionMessages,
+      isProjectWriter: actorId => currentProjectWriter(projectId, actorId) });
+  },
   sessionPreparation: async input => {
     const current=await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE);
     const cli=current.runtime?.enabled ? selectMaterialCli(current.runtime.materialCli,input.projectId,
       input.sessionId,input.sessionActorId,undefined,input.roleId) : null;
-    const roleActor=current.residentQueue?.enabled ? current.residentQueue.roleActors.find(value=>
-      value.projectId===input.projectId&&value.roleId===input.roleId) : null;
+    // The Role's entry as configured, whether or not it can be used: `session prepare` says which of the three reasons applies.
+    const configuredRoleActor=current.residentQueue?.roleActors.find(value=>
+      value.projectId===input.projectId&&value.roleId===input.roleId)??null;
+    const roleActor=current.residentQueue?.enabled ? configuredRoleActor : null;
+    const roleActorWriter=!!roleActor&&await currentProjectWriter(input.projectId,roleActor.actorId);
     const configured=current.runtime?.roleSkills.find(value=>value.projectId===input.projectId&&value.roleId===input.roleId);
     const paths=configured?.paths??[".agents/skills/evoloop-workflow/SKILL.md"];
     const skills=await roleSkillReferences(skillSourceRoot,paths).catch(()=>[]);
@@ -911,7 +937,10 @@ const app = await buildServer({ service, credentials, canWrite: lease.canWrite, 
       cwdReady:await current.allowedRuntimeCwd(input.projectId,input.cwd),
       materialCli:cli?{actorId:cli.cliActorId,command:cli.command,
         ready:await supportsFixedHandoff(cli.command,cli.cliActorId,input.projectId)}:null,
-      roleActorId:roleActor&&await currentProjectWriter(input.projectId,roleActor.actorId)?roleActor.actorId:null,
+      roleActorId:roleActor&&roleActorWriter?roleActor.actorId:null,
+      roleActorState:(!current.residentQueue?.enabled?"queue_disabled":!roleActor?"no_entry":roleActorWriter?"ready":"actor_not_project_writer") as
+        "ready"|"queue_disabled"|"no_entry"|"actor_not_project_writer",
+      roleActorConfiguredId:configuredRoleActor?.actorId??null,
       skills:skills.map(value=>({...value,readSubcommand:`get '/api/projects/${input.projectId}/roles/${input.roleId}/skills/${value.path.split("/")[2]}?commit=${value.commit}&hash=${value.contentHash}'`}))};
   },
   readRoleSkill: async (projectId,roleId,name,commit,hash) => {

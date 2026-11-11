@@ -1,3 +1,5 @@
+// Refuses a live or shared PostgreSQL server before this file opens TEST_DATABASE_URL (scripts/lib/database-target.mjs).
+import "../../../scripts/test-database-guard.mjs";
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import { after, before, test } from "node:test";
@@ -288,4 +290,17 @@ test("the project list shows one-time, daily and stopped series with their lates
   const e=byTitle["LIST ended"]!;
   assert.deepEqual([e.seriesState,e.nextAtUtc,e.occurrenceCount],["stopped",null,2]);
   await assert.rejects(queries(q=>q.list(10,"not-a-cursor")),/invalid task timing cursor/);
+});
+
+test("a timing the store cannot accept is INVALID_TASK_TIMING with the accepted form, never a conflict",async()=>{
+  const a=await task("Bad timing","Needs a canonical time",3);
+  const bad=[{...timing(first),executeAtUtc:"2026-11-12T04:00:00Z"},{...timing(first),timezone:"Mars/Base"},
+    {...timing(first),repeat:"daily" as const,executeAtUtc:"2026-11-12T04:00:30.000Z"}];
+  for(const value of bad){
+    const rejected=async(run:Promise<unknown>)=>assert.rejects(run,(error:{code:string;message:string})=>
+      error.code==="INVALID_TASK_TIMING"&&/2026-11-12T04:00:00\.000Z/.test(error.message));
+    await rejected(queries(q=>q.create(a,value,actorId,"2026-11-06T00:00:00.000Z")));
+    await rejected(queries(q=>q.set({type:"task.timing.set",projectId,operationId:randomUUID(),taskId:a,expectedTaskVersion:1,
+      expectedTimingVersion:0,scope:"this",...value,reason:"bad"},actorId,"2026-11-06T00:00:00.000Z")));
+  }
 });
