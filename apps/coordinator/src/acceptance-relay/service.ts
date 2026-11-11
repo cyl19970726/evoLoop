@@ -1,3 +1,4 @@
+import { observationLinkProblem } from "./observation-link.js";
 import { createHash } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import type { Principal, RuntimeSessionRecord } from "@evoloop/contracts";
@@ -324,15 +325,15 @@ export class AcceptanceRelayService {
           if(principal.identityKind==="human"||observation.observer_kind!=="agent")
             throw new DomainError("AGENT_OBSERVER_REQUIRED","Agent recipient credential required");
           const process=(await client.query(`SELECT p.state,p.native_turn_id,p.session_id,
-            rr.actor_id,o.created_at>=p.updated_at AS after_completion,
-            o.created_at>=rr.recorded_at AS after_read FROM session_message_processing p
+            rr.actor_id,o.created_at>=rr.recorded_at AS after_read
+            FROM session_message_processing p
             LEFT JOIN session_message_read_receipt rr ON rr.project_id=p.project_id AND rr.message_id=p.message_id
               AND rr.actor_id=$3 JOIN consumer_observation o ON o.project_id=p.project_id AND o.observation_id=$4
             WHERE p.project_id=$1 AND p.message_id=$2`,
             [projectId,item.message_id,principal.actorId,observationId])).rows[0];
-          if(process?.state!=="completed"||!process.native_turn_id||!process.actor_id||
-            process.session_id!==item.session_id||!process.after_completion||!process.after_read)
-            throw new DomainError("ACCEPTANCE_NOT_USED","Recipient message, native Turn and read receipt must be observed");
+          const problem=observationLinkProblem(process?{state:process.state,nativeTurnId:process.native_turn_id,
+            sessionId:process.session_id,readReceiptActorId:process.actor_id,afterRead:!!process.after_read}:undefined,item.session_id);
+          if(problem)throw problem;
         }
         await client.query(`INSERT INTO task_acceptance_observation_link(project_id,relay_id,observation_id,
           operation_id,actor_id,evidence_level,linked_at) VALUES($1,$2,$3,$4,$5,$6,now())`,
