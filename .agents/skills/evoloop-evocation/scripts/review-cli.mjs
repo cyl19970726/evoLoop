@@ -80,9 +80,17 @@ async function main(){
   const to=flags.to??bundle.organizationReview?.observedTo??bundle.period?.to;
   let previous=bundle.organizationReview?.previous??retained?.previous;
   if(flags.previous){const [id,revisionId]=flags.previous.split('@');previous={documentId:id,revisionId};}
-  if(!documentId&&!request&&!previous){const list=await listReviews(cli,projectId);const last=list.items.find(d=>d.id!==documentId&&d.status!=='archived');if(last)previous={documentId:last.id,revisionId:last.currentRevisionId};}
+  let discovered=false,unlinkedPrevious;
+  if(!documentId&&!request&&!previous){const list=await listReviews(cli,projectId);const last=list.items.find(d=>d.id!==documentId&&d.status!=='archived');if(last){previous={documentId:last.id,revisionId:last.currentRevisionId};discovered=true;}}
   let previousPeriod;
-  if(previous){const fixed=await cli('get',`/api/projects/${projectId}/documents/${previous.documentId}/revisions/${previous.revisionId}`);previousPeriod=fixed.organizationReview;if(!previousPeriod)throw new Error('Previous fixed review has no native observation period');}
+  if(previous){const fixed=await cli('get',`/api/projects/${projectId}/documents/${previous.documentId}/revisions/${previous.revisionId}`);previousPeriod=fixed.organizationReview;
+    if(!previousPeriod){
+      // A review carried over without its native period (for example by a selective migration) cannot be linked:
+      // the service refuses it as `previous`. Save this round unlinked only when the start is stated explicitly.
+      if(!discovered||!from)throw new Error('Previous fixed review has no native observation period; read its cutoff from the report and pass --from to save this round without the native link');
+      unlinkedPrevious=previous;previous=undefined;
+    }
+  }
   const organizationReview=observationPeriod({observedFrom:from??retained?.observedFrom??previousPeriod?.observedTo,observedTo:to??retained?.observedTo,timeZone:flags.timezone??bundle.organizationReview?.timeZone??bundle.period?.timeZone??retained?.timeZone??config.timeZone??'UTC',previous});
   const assetFiles=await assetsIn(join(dirname(filename),'assets'));
   if(format==='markdown'&&assetFiles.length)throw new Error('Use a complete HTML report for external resources; the current Markdown reader supports its native text and diagram format');
@@ -117,7 +125,9 @@ async function main(){
   const fixed=await cli('get',`/api/projects/${projectId}/documents/${core.documentId}/revisions/${revisionId}`);
   if(!isDeepStrictEqual(fixed.organizationReview,organizationReview))throw new Error('Saved Document period differs');
   const web=(config.webUrl??'http://127.0.0.1:55431').replace(/\/$/,'');
-  const receipt={status:'saved-and-read-back',projectId,documentId:core.documentId,revisionId,operationId:core.operationId,kind:reviewDocumentKind,organizationReview,format,author:fixed.author,bodySha256:digest(body),documentHref:`${web}/#/p/${projectId}/documents/${core.documentId}?revision=${revisionId}`,listHref:`${web}/#/p/${projectId}/reviews`};
+  // A repeated run re-reads the saved request and no longer discovers the unlinked report; keep what the first run recorded.
+  unlinkedPrevious??=await readFile(join(outPath,'receipt.json'),'utf8').then(text=>JSON.parse(text).unlinkedPrevious,()=>undefined);
+  const receipt={status:'saved-and-read-back',projectId,documentId:core.documentId,revisionId,operationId:core.operationId,kind:reviewDocumentKind,organizationReview,format,author:fixed.author,bodySha256:digest(body),documentHref:`${web}/#/p/${projectId}/documents/${core.documentId}?revision=${revisionId}`,listHref:`${web}/#/p/${projectId}/reviews`,...(unlinkedPrevious?{unlinkedPrevious}:{})};
   await writeFile(join(outPath,'receipt.json'),JSON.stringify(receipt,null,2)+'\n');console.log(JSON.stringify(receipt,null,2));
 }
 if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url))main().catch(error=>{console.error(error.message);process.exitCode=1});
