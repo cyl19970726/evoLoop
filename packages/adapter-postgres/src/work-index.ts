@@ -298,13 +298,17 @@ function acceptanceConvention(row: QueryResultRow): NonNullable<LeaderWorkTask["
 }
 /** A delivery that is waiting for its precondition is not "ready to accept"; a named-agent Task needs no arrangement. */
 function conventionAction(row: QueryResultRow, phase: LeaderWorkPhase, base: string): string {
-  if (phase !== "awaiting_acceptance") return base;
+  if (phase !== "awaiting_acceptance" || consumerAnswered(row)) return base;
   const waiting = row.acceptance_precondition && row.acceptance_precondition !== "none" && row.precondition_marked !== true;
   const who = row.acceptance_target === "named_agent" ? `由声明的业务身份 ${row.consumer || "（未写明）"} 直接验收，不经验收接力，不要安排接力` : base;
   return waiting ? `等待${preconditionText[row.acceptance_precondition as keyof typeof preconditionText]}后才可验收（尚未标记已满足）；${who}` : who;
 }
+/** The declared consumer has already signed "used" or "failed" for the current delivery: the direct-acceptance wording no longer applies. */
+function consumerAnswered(row: QueryResultRow): boolean {
+  return row.consumer_own_result === "used" || row.consumer_own_result === "failed";
+}
 function conventionResponsible(row: QueryResultRow, phase: LeaderWorkPhase, base: LeaderWorkTask["responsible"]): LeaderWorkTask["responsible"] {
-  return phase === "awaiting_acceptance" && row.acceptance_target === "named_agent" && row.consumer
+  return phase === "awaiting_acceptance" && !consumerAnswered(row) && row.acceptance_target === "named_agent" && row.consumer
     ? { kind: "consumer", id: String(row.consumer), label: `验收者 ${row.consumer}（直接验收）` } : base;
 }
 
@@ -879,6 +883,8 @@ export async function readLeaderWorkTasks(db: Database, projectId: string, query
         proposal.acceptance_target,proposal.acceptance_precondition,
         EXISTS(SELECT 1 FROM task_acceptance_precondition_mark pm WHERE pm.project_id=facts.project_id
           AND pm.delivery_id=facts.delivery_id) AS precondition_marked,
+        (SELECT o.result FROM consumer_observation o WHERE o.project_id=facts.project_id AND o.delivery_id=facts.delivery_id
+          AND o.observer=proposal.consumer ORDER BY o.sequence DESC LIMIT 1) AS consumer_own_result,
         stage.stage_id,stage.deliverable AS stage_deliverable,
         goal.goal_id,goal.outcome AS goal_outcome,
         COALESCE(dependencies.items,'[]'::jsonb) AS dependency_facts,

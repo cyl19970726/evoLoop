@@ -42,7 +42,7 @@
 
 ### 正文、执行与验收责任
 
-`task.create` 接收 title/content/acceptance/owner 和按需元数据，一次创建 Task 与主 DocumentRevision。Task/TaskRevision 的 content 是固定主正文的读取投影，不另存正文。Task.kind 可为空或 implementation/research/validation；所有类型共用 todo/in_progress/done/cancelled。项目 Goal 与 Role.goal 不改变含义，Schedule 的新 TaskTemplate 使用 content，旧模板仅在读取时兼容。
+`task.create` 接收 title/content/acceptance/owner 和按需元数据，一次创建 Task 与主 DocumentRevision。Task/TaskRevision 的 content 是固定主正文的读取投影，不另存正文。Task.kind 可为空或 implementation/research/validation/defect/documentation/operation（迁移 082 扩到六种，旧数据不变）；所有类型共用 todo/in_progress/done/cancelled。项目 Goal 与 Role.goal 不改变含义，Schedule 的新 TaskTemplate 使用 content，旧模板仅在读取时兼容。
 
 开始时校验当前版本、实际授权和固定原件，原子发布主正文、封存 BasisSet 并进入 in_progress；外部材料可显式加入，主正文会自动加入，无需独立创建/采纳其他 Document。`task.start` 保留明确的 review 权限核验；状态简化不把旧提议自动变成已获准运行。Runtime 只从已开始的 in_progress Task 派发。
 
@@ -323,7 +323,7 @@ Task 协作通道把 question/answer/progress/blocker/handoff/result 固定到�
 
 验收由谁做，由 Task 声明，不默认交给 Leader（DEC-038；PR #217，schema 062）。
 
-- **验收目标与 `acceptance_target`（DEC-042）。** Task 的 `acceptance_target` 声明为人、Leader、Leader 指派的独立业务 Session，或 `named_agent`（由声明的 `consumer` 业务身份直接验收，不经验收接力；难验收由需求 Session 以此方式验收）。`leader` 值保留，但只在使用者为某项 Task 明确要求时使用，不是常规验收选项；常规验收交 Leader 指派的独立业务 Session。`named_agent` 下 `acceptance.assign` 以 `ACCEPTANCE_NAMED_AGENT` 明确拒绝；`task.update` 可把目标改成它或用 `null` 清空。Task 还可写 `acceptancePrecondition`；前置不是 `none` 时，复核者用 `task.acceptancePrecondition.mark` 按交付显式标记已满足，标记前投影的 `acceptanceConvention.readiness` 为 `waiting_precondition`（不从部署版本推断：仓库还没有可核的只读部署版本）。以下按接力说明前三种：收件人还须与 Task 声明的消费者和验收模式一致。作者 Session 与安排者不能充当独立验收（DEC-038），执行者自检、CI 与 Run 终态是交付证据，不是验收。代码层面：选 Leader 方式时，收件 Session 必须是项目当前的 Leader Session；选业务 Session 方式时，它不能是 Leader Session，也不能是当前 Delivery 的作者 Run 所在的 Session；安排者须有项目 review 权限，并且就是那条验收消息的发送者。
+- **验收目标与 `acceptance_target`（DEC-042）。** Task 的 `acceptance_target` 声明为人、Leader、Leader 指派的独立业务 Session，或 `named_agent`（由声明的 `consumer` 业务身份直接验收，不经验收接力；必须同时是 `independent_agent` 方式，否则创建与更新都拒绝；`task.timing.set` 与每日复制保留该目标和验收前置；难验收由需求 Session 以此方式验收）。`leader` 值保留，但只在使用者为某项 Task 明确要求时使用，不是常规验收选项；常规验收交 Leader 指派的独立业务 Session。`named_agent` 下 `acceptance.assign` 以 `ACCEPTANCE_NAMED_AGENT` 明确拒绝；`task.update` 可把目标改成它或用 `null` 清空。Task 还可写 `acceptancePrecondition`；前置不是 `none` 时，复核者用 `task.acceptancePrecondition.mark` 按交付显式标记已满足，标记前投影的 `acceptanceConvention.readiness` 为 `waiting_precondition`（不从部署版本推断：仓库还没有可核的只读部署版本）。以下按接力说明前三种：收件人还须与 Task 声明的消费者和验收模式一致。作者 Session 与安排者不能充当独立验收（DEC-038），执行者自检、CI 与 Run 终态是交付证据，不是验收。代码层面：选 Leader 方式时，收件 Session 必须是项目当前的 Leader Session；选业务 Session 方式时，它不能是 Leader Session，也不能是当前 Delivery 的作者 Run 所在的 Session；安排者须有项目 review 权限，并且就是那条验收消息的发送者。
 - **接力记录。** Leader 用 `task_acceptance_relay` 安排验收：固定 Task 修订、当前 Delivery、阶段（候选 `candidate` 或正式 `formal`）、验收范围、入口与收件人。非人工方式同时固定一条发给收件 Session 的消息。同一 Delivery、阶段和范围同时只有一条现行安排；改派以原安排和版本为前提，旧安排保留为 `superseded` 或 `released`。
 - **开始前再核。** 验收消息真正开始处理前，触发器再次核对 Task 未结束、当前修订和最新 Delivery 仍是安排时那一份；不符就拒绝开始，避免验收旧版本。
 - **验收证据。** 人的阅读记入 `task_acceptance_human_read`；验收者本人的 Observation 经 `task_acceptance_observation_link` 关联到安排，并标明证据级别。存在现行安排时，Task 关闭要求指定收件人对该 Delivery 有已关联的 `used` 观察。候选阶段通过不等于正式通过：同一 Delivery 的候选与正式安排可以并存，但存在现行正式安排时，关闭只按正式安排核对；候选安排保留为历史证据，不因没有关联观察而阻塞正式收口。安排无法开始时生成 `acceptance_blocked` 通知交给 Leader。

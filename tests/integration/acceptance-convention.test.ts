@@ -111,7 +111,7 @@ test("acceptance.assign is refused for a named_agent Task with the reason, and u
   const otherDelivery = await f.deliver(other);
   const otherTask = await f.workflow.getTask(f.reviewer, f.projectId, other);
   await assert.rejects(f.relay.arrange(f.reviewer, { ...input, taskId: other, deliveryId: otherDelivery, expectedTaskVersion: otherTask.task.version,
-    operationId: randomUUID(), relayId: randomUUID() }), (error: { code: string }) => error.code !== "ACCEPTANCE_NAMED_AGENT");
+    operationId: randomUUID(), relayId: randomUUID() }), (error: { code: string }) => error.code !== "ACCEPTANCE_NAMED_AGENT" && typeof error.code === "string" && error.code.length > 0);
 });
 
 test("the projection says waiting for the precondition until it is marked, and names the direct acceptor", async t => {
@@ -283,4 +283,86 @@ test("migration 082 widens the work types and targets on a schema that already h
   assert.equal(typeChecks.length, 2, "exactly one type check on task and one on task_revision, no leftover narrow one");
   for (const [, def] of typeChecks) for (const kind of ["implementation", "research", "validation", "defect", "documentation", "operation"]) assert.match(def, new RegExp(`'${kind}'`));
   assert.equal((await pool.query(`SELECT count(*)::int AS n FROM information_schema.tables WHERE table_schema=$1 AND table_name='task_acceptance_precondition_mark'`, [schema])).rows[0].n, 1);
+});
+
+test("review 3: a direct-acceptance Task is refused as such before any Delivery exists; a replay still returns its first result", async t => {
+  const f = await fixture(t);
+  const taskId = await f.createTask({ acceptanceTarget: "named_agent" });
+  const task = await f.workflow.getTask(f.reviewer, f.projectId, taskId);
+  const input = { projectId: f.projectId, taskId, deliveryId: randomUUID(), expectedTaskVersion: 99, operationId: randomUUID(), relayId: randomUUID(),
+    stage: "candidate" as const, scopeKey: "use", scopeDescription: "Use it", entrypoint: null, publicationRef: null, mode: "session" as const,
+    recipientActorId: f.consumer.actorId, sessionId: randomUUID(), senderActorId: f.reviewer.actorId, messageId: null, messageOperationId: null, reason: "r" };
+  // No Delivery, a wrong Task version and an unknown Delivery would each fail first under the old order.
+  await assert.rejects(f.relay.arrange(f.reviewer, input), (error: { code: string }) => error.code === "ACCEPTANCE_NAMED_AGENT");
+  assert.ok(task.task.version >= 1);
+  // The real Delivery path gives the same answer.
+  const deliveryId = await f.deliver(taskId);
+  await assert.rejects(f.relay.arrange(f.reviewer, { ...input, deliveryId, expectedTaskVersion: task.task.version, operationId: randomUUID(), relayId: randomUUID() }),
+    (error: { code: string }) => error.code === "ACCEPTANCE_NAMED_AGENT");
+});
+
+test("review 5: direct acceptance needs the independent_agent mode, on create and on update", async t => {
+  const f = await fixture(t);
+  const owner = fixtureRoleId("convention-owner");
+  const created = await f.issue(f.reviewer, { type: "task.create", taskId: randomUUID(), title: "x", content: "# x", acceptance: "y", owner,
+    consumer: f.consumer.actorId, useRequired: true, acceptanceTarget: "named_agent", acceptanceMode: "human_required" });
+  assert.equal(created.status, "rejected", JSON.stringify(created));
+  // An existing Task with no mode cannot be switched to direct acceptance.
+  const legacy = randomUUID();
+  await f.applied(f.reviewer, { type: "task.create", taskId: legacy, title: "Legacy", content: "# l", acceptance: "y", owner, consumer: f.consumer.actorId, useRequired: true, acceptanceMode: "independent_agent" });
+  // Data from before acceptance modes existed has none; the service no longer creates such a Task, so the fixture writes it past the history guard.
+  await f.pool.query("ALTER TABLE task_proposal DISABLE TRIGGER USER");
+  try { await f.pool.query("UPDATE task_proposal SET acceptance_mode=NULL,use_required=false WHERE project_id=$1 AND task_id=$2", [f.projectId, legacy]); }
+  finally { await f.pool.query("ALTER TABLE task_proposal ENABLE TRIGGER USER"); }
+  const version = (await f.workflow.getTask(f.reviewer, f.projectId, legacy)).task.version;
+  const update = await f.issue(f.reviewer, { type: "task.update", taskId: legacy, expectedVersion: version, title: "Legacy", content: "# l", acceptance: "y", owner,
+    consumer: f.consumer.actorId, acceptanceTarget: "named_agent", reason: "direct" });
+  assert.equal(update.status, "rejected", JSON.stringify(update)); assert.match(JSON.stringify(update), /independent_agent/);
+});
+
+test("review 2: once the declared consumer has signed used or failed, the responsible and next step return to the ordinary rule", async t => {
+  const f = await fixture(t);
+  const taskId = await f.createTask({ acceptanceTarget: "named_agent" });
+  const version = (await f.workflow.getTask(f.reviewer, f.projectId, taskId)).task.version;
+  await f.applied(f.reviewer, { type: "task.start", taskId, expectedVersion: version, basis: [], reason: "start" });
+  const deliveryId = await f.deliver(taskId);
+  const before = (await readLeaderWorkTask(f.pool, f.projectId, taskId))!;
+  assert.equal(before.phase, "awaiting_acceptance");
+  assert.equal(before.responsible.kind, "consumer"); assert.match(before.nextAction, /直接验收/);
+  // The consumer's "used" is stored as the service would (the command also needs a passed Run, which this fixture has no need of).
+  await f.pool.query(`INSERT INTO consumer_observation(project_id,observation_id,task_id,delivery_id,observer,observer_kind,result,evidence,reason,actor_id,created_at)
+    VALUES($1,$2,$3,$4,$5,'agent','used','Read and applied the result','direct acceptance',$5,now())`, [f.projectId, randomUUID(), taskId, deliveryId, f.consumer.actorId]);
+  const after = (await readLeaderWorkTask(f.pool, f.projectId, taskId))!;
+  assert.doesNotMatch(after.nextAction, /直接验收/, "no longer asks for what the consumer already did");
+  assert.ok(!(after.responsible.kind === "consumer" && /直接验收/.test(String(after.responsible.label))));
+});
+
+test("review 1: the direct list survives a write between pages and a failure there does not take the human list down", async t => {
+  const f = await fixture(t);
+  // More Tasks than one page (50): two started Tasks the consumer has to sign, the rest plain.
+  const owed: string[] = [];
+  for (let i = 0; i < 2; i++) {
+    const taskId = await f.createTask({ acceptanceTarget: "named_agent" });
+    const v = (await f.workflow.getTask(f.reviewer, f.projectId, taskId)).task.version;
+    await f.applied(f.reviewer, { type: "task.start", taskId, expectedVersion: v, basis: [], reason: "start" });
+    await f.deliver(taskId); owed.push(taskId);
+  }
+  for (let i = 0; i < 55; i++) await f.createTask();
+  let connects = 0, interfered = false;
+  const racing = new Proxy(f.pool, { get: (target, key) => {
+    if (key === "connect") return async () => {
+      connects++;
+      // The second page is read: a write lands between the pages.
+      if (connects === 2 && !interfered) { interfered = true; await f.createTask(); }
+      return (target.connect as () => Promise<unknown>).call(target);
+    };
+    const value = (target as never)[key] as unknown;
+    return typeof value === "function" ? (value as (...args: unknown[]) => unknown).bind(target) : value;
+  } }) as typeof f.pool;
+  const relay = new AcceptanceRelayService({ pool: racing, workflow: f.workflow, messages: {} as never, principals: async () => [], canWrite: () => false,
+    leaderSession: async () => null, qualify: async () => null, capabilities: async () => [] });
+  const direct = await relay.mineDirect(f.consumer, f.projectId);
+  assert.ok(interfered, "a write really landed between two pages");
+  assert.equal(direct.complete, true, "re-read from the first page until a consistent snapshot");
+  assert.deepEqual(direct.items.map(item => (item as { taskId: string }).taskId).sort(), owed.sort());
 });

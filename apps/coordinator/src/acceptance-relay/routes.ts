@@ -26,7 +26,17 @@ export function registerAcceptanceRelayRoutes(app: FastifyInstance, workflow: Wo
     const p=z.strictObject({projectId:z.uuid()}).parse(request.params);
     if(!request.principal)throw new DomainError("FORBIDDEN","Authentication required");
     await workflow.getProject(request.principal,p.projectId);
-    return {items:await relay.mine(request.principal,p.projectId),...await relay.mineDirect(request.principal,p.projectId).then(direct=>({direct:direct.items,directComplete:direct.complete,directTasksRead:direct.tasksRead}))};
+    // The deliveries the caller is a declared consumer of are read only on request (they scan the whole work index), and a failure
+    // there never takes the human relay list down with it.
+    const q=z.strictObject({direct:z.enum(["1","true"]).optional()}).parse(request.query);
+    const items=await relay.mine(request.principal,p.projectId);
+    if(!q.direct)return {items};
+    try{
+      const direct=await relay.mineDirect(request.principal,p.projectId);
+      return {items,direct:direct.items,directComplete:direct.complete,directTasksRead:direct.tasksRead};
+    }catch(error){
+      return {items,direct:[],directComplete:false,directTasksRead:0,directError:(error as {code?:string}).code??"DIRECT_UNAVAILABLE"};
+    }
   });
   app.get("/api/projects/:projectId/tasks/:taskId/acceptance-relay", async request => {
     const p = params.parse(request.params);

@@ -334,7 +334,7 @@ async function dispatch(args: Args, env: Environment, io: IO): Promise<unknown> 
       const brief=args.options.has("brief");
       if(args.words[2] === "mine"){
         if(brief)throw new UsageError("--brief does not apply to work acceptance mine; it is already a short list.");
-        return client.get(`${prefix}/acceptance-relay/mine`);
+        return client.get(`${prefix}/acceptance-relay/mine?direct=1`);
       }
       if(args.words[2]){
         const relays=await client.get(`${prefix}/tasks/${uuid(args.words[2],"Task")}/acceptance-relay`);

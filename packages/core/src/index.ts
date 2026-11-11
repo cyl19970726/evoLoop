@@ -438,6 +438,8 @@ export class WorkflowService {
           throw new DomainError("ACCEPTANCE_POLICY", "acceptance target and mode disagree");
         if (command.acceptanceTarget === "named_agent" && !command.consumer)
           throw new DomainError("ACCEPTANCE_POLICY", "named_agent acceptance needs the declared consumer: the business identity that accepts directly");
+        if (command.acceptanceTarget === "named_agent" && command.acceptanceMode !== "independent_agent")
+          throw new DomainError("ACCEPTANCE_POLICY", "named_agent acceptance needs the independent_agent mode: the consumer must not be the author");
         await tx.insertTaskProposal({ projectId: command.projectId, taskId: task.id, taskRevisionId: revisionId,
           stageId: command.stageId ?? null, consumer: command.consumer ?? "", useRequired: !decisionOnly,
           acceptanceMode: decisionOnly ? null : command.acceptanceMode ?? "independent_agent",
@@ -487,6 +489,8 @@ export class WorkflowService {
         const effectiveConsumer = command.consumer !== undefined ? command.consumer : priorProposal?.consumer ?? null;
         if (acceptanceTarget === "named_agent" && !effectiveConsumer)
           throw new DomainError("ACCEPTANCE_POLICY", "named_agent acceptance needs the declared consumer: the business identity that accepts directly");
+        if (acceptanceTarget === "named_agent" && acceptanceMode !== "independent_agent")
+          throw new DomainError("ACCEPTANCE_POLICY", "named_agent acceptance needs the independent_agent mode: the consumer must not be the author");
         // The acceptance convention changes under the same rule as the other acceptance fields: review permission, Task still todo.
         const conventionChanged = command.acceptanceTarget !== undefined && command.acceptanceTarget !== (priorProposal?.acceptanceTarget ?? null) ||
           command.acceptancePrecondition !== undefined && command.acceptancePrecondition !== (priorProposal?.acceptancePrecondition ?? null);
