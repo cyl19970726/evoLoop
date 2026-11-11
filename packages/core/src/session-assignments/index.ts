@@ -122,6 +122,12 @@ export async function applySessionAssignment({ tx, command, principal, now }: Se
   } else if (!principal.permissions.includes("review")) {
     fail("FORBIDDEN", "Observed acceptance requires review authority");
   }
+  if (command.type === "task.assignment.acknowledge" && command.verdict === undefined) {
+    // While a Session line waits for this Task's execution confirmation, a plain acknowledgement says nothing it can act on.
+    const waiting = await tx.sessionLines?.getLiveSessionLineEntryForTask(task.id);
+    if (waiting?.state === "starting" && waiting.step === "confirm")
+      fail("CONFIRMATION_VERDICT_REQUIRED", "This Task waits for your execution confirmation: acknowledge with verdict confirm (plan) or return (missing)");
+  }
   const confirming = command.type === "task.assignment.acknowledge" && command.verdict !== undefined;
   if (confirming) {
     const verdict = command.verdict;

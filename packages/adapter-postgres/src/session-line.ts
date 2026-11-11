@@ -7,10 +7,10 @@ const iso = (value: Date | string): string => value instanceof Date ? value.toIS
 const lineOf = (r: Row): SessionLine => ({ projectId: r.project_id, sessionId: r.session_id, controllerActorId: r.controller_actor_id,
   version: r.version, createdAt: iso(r.created_at), updatedAt: iso(r.updated_at) });
 const entryOf = (r: Row): SessionLineEntry => ({ projectId: r.project_id, id: r.entry_id, sessionId: r.session_id, taskId: r.task_id,
-  position: Number(r.position), state: r.state, step: r.step, attempt: r.attempt, assignOperationId: r.assign_operation_id,
+  position: Number(r.position), state: r.state, step: r.step, attempt: r.attempt, stepTry: r.step_try, assignOperationId: r.assign_operation_id,
   startOperationId: r.start_operation_id, reassignOperationId: r.reassign_operation_id, reserveOperationId: r.reserve_operation_id, messageId: r.message_id,
   suspendReason: r.suspend_reason, withdrawnReason: r.withdrawn_reason, source: r.source, sourceActorId: r.source_actor_id,
-  scheduleId: r.schedule_id, releaseRule: r.release_rule, runId: r.run_id, version: r.version,
+  scheduleId: r.schedule_id, releaseRule: r.release_rule, runId: r.run_id, runEndedAt: r.run_ended_at ? iso(r.run_ended_at) : null, version: r.version,
   appendedAt: iso(r.appended_at), updatedAt: iso(r.updated_at) });
 const eventOf = (r: Row): SessionLineEvent => ({ projectId: r.project_id, seq: Number(r.event_seq), sessionId: r.session_id,
   entryId: r.entry_id, taskId: r.task_id, kind: r.kind, detail: r.detail, actorId: r.actor_id, at: iso(r.at) });
@@ -20,6 +20,16 @@ export class PgSessionLine implements SessionLineTransaction {
   async getSessionLine(sessionId: string): Promise<SessionLine | null> {
     const r = await this.client.query("SELECT * FROM session_line WHERE project_id=$1 AND session_id=$2", [this.projectId, sessionId]);
     return r.rows[0] ? lineOf(r.rows[0]) : null;
+  }
+  async sessionHasLiveRun(sessionId: string): Promise<boolean> {
+    return !!(await this.client.query(`SELECT 1 FROM runtime_run WHERE project_id=$1 AND session_id=$2
+      AND state IN ('requested','dispatching','running','unknown') LIMIT 1`, [this.projectId, sessionId])).rowCount;
+  }
+  async hasOlderQueuedMessage(sessionId: string, before: string): Promise<boolean> {
+    return !!(await this.client.query(`SELECT 1 FROM session_message m WHERE m.project_id=$1 AND m.session_id=$2 AND m.target_kind='owned'
+      AND m.state='queued' AND m.blocked_reason IS NULL AND m.created_at<$3
+      AND NOT EXISTS(SELECT 1 FROM session_line_entry e WHERE e.project_id=m.project_id AND e.message_id=m.message_id) LIMIT 1`,
+    [this.projectId, sessionId, before])).rowCount;
   }
   async listSessionLines(): Promise<SessionLine[]> {
     return (await this.client.query("SELECT * FROM session_line WHERE project_id=$1 ORDER BY session_id", [this.projectId])).rows.map(lineOf);
@@ -34,6 +44,7 @@ export class PgSessionLine implements SessionLineTransaction {
     return r.rows[0] ? entryOf(r.rows[0]) : null;
   }
   async getLiveSessionLineEntryForTask(taskId: string): Promise<SessionLineEntry | null> {
+    if (!await this.hasLineTable()) return null;
     const r = await this.client.query(`SELECT * FROM session_line_entry WHERE project_id=$1 AND task_id=$2
       AND state IN ('queued','suspended','starting')`, [this.projectId, taskId]);
     return r.rows[0] ? entryOf(r.rows[0]) : null;
@@ -69,10 +80,11 @@ export class PgSessionLine implements SessionLineTransaction {
   }
   async updateSessionLineEntry(value: SessionLineEntry, expectedVersion: number): Promise<void> {
     const r = await this.client.query(`UPDATE session_line_entry SET state=$4,step=$5,attempt=$6,assign_operation_id=$7,start_operation_id=$8,
-      reserve_operation_id=$9,message_id=$10,suspend_reason=$11,withdrawn_reason=$12,run_id=$13,version=$14,updated_at=$15,reassign_operation_id=$16
+      reserve_operation_id=$9,message_id=$10,suspend_reason=$11,withdrawn_reason=$12,run_id=$13,version=$14,updated_at=$15,reassign_operation_id=$16,
+      step_try=$17,run_ended_at=$18
       WHERE project_id=$1 AND entry_id=$2 AND version=$3`, [this.projectId, value.id, expectedVersion, value.state, value.step,
       value.attempt, value.assignOperationId, value.startOperationId, value.reserveOperationId, value.messageId, value.suspendReason,
-      value.withdrawnReason, value.runId, value.version, value.updatedAt, value.reassignOperationId]);
+      value.withdrawnReason, value.runId, value.version, value.updatedAt, value.reassignOperationId, value.stepTry, value.runEndedAt]);
     if (!r.rowCount) throw new DomainError("VERSION_CONFLICT", "Session line entry changed");
   }
   async swapSessionLineEntry(entryId: string, direction: "forward" | "back", at: string): Promise<boolean> {
@@ -80,7 +92,7 @@ export class PgSessionLine implements SessionLineTransaction {
       [this.projectId, entryId])).rows[0];
     if (!own) return false;
     const neighbour = (await this.client.query(`SELECT entry_id,position FROM session_line_entry WHERE project_id=$1 AND session_id=$2
-      AND state IN ('queued','suspended','starting') AND ${direction === "forward" ? "position<$3 ORDER BY position DESC" : "position>$3 ORDER BY position ASC"} LIMIT 1 FOR UPDATE`,
+      AND state IN ('queued','suspended') AND ${direction === "forward" ? "position<$3 ORDER BY position DESC" : "position>$3 ORDER BY position ASC"} LIMIT 1 FOR UPDATE`,
     [this.projectId, own.session_id, own.position])).rows[0];
     if (!neighbour) return false;
     await this.client.query(`UPDATE session_line_entry SET position=CASE entry_id WHEN $2 THEN $4::bigint WHEN $3 THEN $5::bigint END,
@@ -93,12 +105,28 @@ export class PgSessionLine implements SessionLineTransaction {
       VALUES($1,$2,$3,$4,$5,$6::jsonb,$7,$8)`, [this.projectId, value.sessionId, value.entryId, value.taskId, value.kind,
       JSON.stringify(value.detail), value.actorId, value.at]);
   }
+  private lineTable: boolean | null = null;
+  /** The upgrade tests replay commands against schemas that predate migration 080; no line can exist there. One transaction runs one
+   *  command, so the catalog lookup is made once per instance. */
+  private async hasLineTable(): Promise<boolean> {
+    this.lineTable ??= !!(await this.client.query("SELECT to_regclass('session_line_entry') AS t")).rows[0]?.t;
+    return this.lineTable;
+  }
   async assertNotQueuedInLine(taskId: string, operationId: string): Promise<void> {
-    // The upgrade tests replay commands against schemas that predate migration 080; no line can exist there.
-    if (!(await this.client.query("SELECT to_regclass('session_line_entry') AS t")).rows[0]?.t) return;
     const entry = await this.getLiveSessionLineEntryForTask(taskId);
     if (!entry) return;
-    if (entry.state === "starting" && [entry.assignOperationId, entry.startOperationId, entry.reassignOperationId, entry.reserveOperationId].includes(operationId)) return;
-    throw new DomainError("QUEUED_IN_SESSION_LINE", "This Task waits in a Session line; remove it from the line before arranging it another way");
+    // An exemption is valid only at the step that owns the operation.
+    const own = entry.state === "starting" && (
+      (entry.step === "assign" && operationId === entry.assignOperationId) ||
+      (entry.step === "start" && [entry.startOperationId, entry.reassignOperationId, entry.reserveOperationId].includes(operationId)));
+    if (!own) throw new DomainError("QUEUED_IN_SESSION_LINE", "This Task waits in a Session line; remove it from the line before arranging it another way");
+    // Starting the Task needs the Session's confirmation of exactly the revision the Task has now.
+    if (operationId === entry.startOperationId) {
+      const confirmed = await this.client.query(`SELECT 1 FROM task t JOIN task_session_assignment a ON a.project_id=t.project_id AND a.task_id=t.task_id
+        JOIN task_assignment_confirmation c ON c.project_id=a.project_id AND c.task_id=a.task_id AND c.assignment_version=a.version
+        WHERE t.project_id=$1 AND t.task_id=$2 AND a.state='accepted' AND c.verdict='confirm' AND c.expected_revision_id=t.current_revision_id`,
+      [this.projectId, taskId]);
+      if (!confirmed.rowCount) throw new DomainError("LINE_CONFIRMATION_STALE", "The Session's confirmation does not match the Task's current revision; confirm again");
+    }
   }
 }

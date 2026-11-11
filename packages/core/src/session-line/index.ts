@@ -27,9 +27,15 @@ export async function applySessionLine(tx: Transaction, principal: Principal, co
     if (entry.version !== expectedVersion) throw new DomainError("VERSION_CONFLICT", "Session line entry changed", entry.version);
     return entry;
   };
+  // The line's own version follows every change to its entries.
+  const touch = async (sessionId: string) => {
+    const line = await lines.getSessionLine(sessionId);
+    if (line) await lines.touchSessionLine(sessionId, line.version, now);
+  };
   const save = async (entry: SessionLineEntry, patch: Partial<SessionLineEntry>): Promise<SessionLineEntry> => {
     const next = { ...entry, ...patch, version: entry.version + 1, updatedAt: now };
     await lines.updateSessionLineEntry(next, entry.version);
+    await touch(entry.sessionId);
     return next;
   };
 
@@ -43,12 +49,13 @@ export async function applySessionLine(tx: Transaction, principal: Principal, co
     if ((await tx.listRuntimeRuns(task.id)).some(run => !TERMINAL_RUN.has(run.state))) fail("TASK_BUSY", "resolve the Task's current Run before queueing it");
     if (command.source === "schedule" && !command.scheduleId) fail("SCHEDULE_REQUIRED", "a scheduled entry names its schedule");
     if (await lines.getLiveSessionLineEntryForTask(task.id)) fail("TASK_ALREADY_QUEUED", "This Task is already waiting in a Session line");
-    if (!await lines.getSessionLine(session.id))
+    if (await lines.getSessionLine(session.id)) await touch(session.id);
+    else
       await lines.insertSessionLine({ projectId: command.projectId, sessionId: session.id, controllerActorId: actorId, version: 1, createdAt: now, updatedAt: now });
     const entry = await lines.insertSessionLineEntry({ projectId: command.projectId, id: nextId(), sessionId: session.id, taskId: task.id,
-      state: "queued", step: null, attempt: 0, assignOperationId: null, startOperationId: null, reassignOperationId: null,
+      state: "queued", step: null, attempt: 0, stepTry: 0, assignOperationId: null, startOperationId: null, reassignOperationId: null,
       reserveOperationId: null, messageId: null, suspendReason: null, withdrawnReason: null, source: command.source, sourceActorId: actorId,
-      scheduleId: command.scheduleId ?? null, releaseRule: "run_end", runId: null, version: 1, appendedAt: now, updatedAt: now });
+      scheduleId: command.scheduleId ?? null, releaseRule: "run_end", runId: null, runEndedAt: null, version: 1, appendedAt: now, updatedAt: now });
     await event(session.id, entry, "entry.appended", { source: command.source, scheduleId: command.scheduleId ?? null, position: entry.position, reason: command.reason });
     return { result: ok(command, entry.id, entry.version), effects: [effect(entry)] };
   }
@@ -61,16 +68,20 @@ export async function applySessionLine(tx: Transaction, principal: Principal, co
     if (entry.state !== "queued" && entry.state !== "suspended") fail("ENTRY_STARTING", "only a waiting entry can move");
     const moved = await lines.swapSessionLineEntry(entry.id, command.direction, now);
     if (!moved) fail("LINE_END", command.direction === "forward" ? "the entry is already first" : "the entry is already last");
+    await touch(entry.sessionId);
     const after = await lines.getSessionLineEntry(entry.id) ?? entry;
     await event(entry.sessionId, after, "entry.moved", { direction: command.direction, position: after.position });
     return { result: ok(command, entry.id, after.version), effects: [effect(after)] };
   }
   if (command.type === "line.remove") {
-    if (entry.state === "started" || entry.state === "withdrawn" || entry.state === "starting" && entry.step === "start")
-      fail("ENTRY_NOT_REMOVABLE", "the entry has already started or ended");
+    if (entry.state === "started" || entry.state === "withdrawn") fail("ENTRY_NOT_REMOVABLE", "the entry has already started or ended");
+    // At the start step the entry can still leave, as long as no Run was reserved for it: otherwise it would hold the line for good.
+    if (entry.state === "starting" && entry.step === "start" &&
+      (await tx.listRuntimeRuns(entry.taskId)).some(run => run.createdAt >= entry.appendedAt))
+      fail("ENTRY_NOT_REMOVABLE", "a Run was already reserved for this entry");
     // An assignment the line made for the confirmation request is released with it, so the Task can be arranged another way.
     const assignment = await tx.sessionAssignments?.getTaskSessionAssignment(entry.taskId);
-    if (entry.state === "starting" && assignment && assignment.state === "assigned" && assignment.target.kind === "owned" &&
+    if (entry.state === "starting" && assignment && assignment.state !== "released" && assignment.target.kind === "owned" &&
       assignment.target.sessionId === entry.sessionId)
       await tx.sessionAssignments!.saveTaskSessionAssignment({ ...assignment, version: assignment.version + 1, state: "released",
         actorId, reason: `Removed from the Session line: ${command.reason}`, updatedAt: now }, assignment.version);
@@ -90,11 +101,26 @@ export async function applySessionLine(tx: Transaction, principal: Principal, co
     const head = waiting.find(item => item.state === "queued");
     if (waiting.some(item => item.state === "starting")) fail("LINE_BUSY", "another entry of this line is starting");
     if (head?.id !== entry.id) fail("NOT_AT_HEAD", "only the first waiting entry begins");
-    if ((await tx.listRuntimeRuns()).some(run => run.sessionId === entry.sessionId && !TERMINAL_RUN.has(run.state))) fail("SESSION_BUSY", "the Session is still busy");
+    if (await lines.sessionHasLiveRun(entry.sessionId)) fail("SESSION_BUSY", "the Session is still busy");
     const next = await save(entry, { state: "starting", step: "assign", attempt: entry.attempt + 1,
       assignOperationId: command.assignOperationId, startOperationId: command.startOperationId, reassignOperationId: command.reassignOperationId,
       reserveOperationId: command.reserveOperationId, messageId: command.messageId });
     await event(entry.sessionId, next, "entry.starting", { attempt: next.attempt });
+    return { result: ok(command, entry.id, next.version), effects: [effect(next)] };
+  }
+  if (command.type === "line.retry") {
+    if (entry.state !== "starting") fail("ENTRY_NOT_STARTING", "only a starting entry retries a step");
+    const next = await save(entry, { stepTry: entry.stepTry + 1, assignOperationId: command.assignOperationId, startOperationId: command.startOperationId,
+      reassignOperationId: command.reassignOperationId, reserveOperationId: command.reserveOperationId });
+    await event(entry.sessionId, next, "entry.retried", { step: entry.step, stepTry: next.stepTry });
+    return { result: ok(command, entry.id, next.version), effects: [effect(next)] };
+  }
+  if (command.type === "line.runEnded") {
+    if (entry.state !== "started" || entry.runEndedAt) fail("STEP_MISMATCH", "the entry's Run end is not pending");
+    const ended = await tx.getRuntimeRun(entry.runId!);
+    if (!ended || !TERMINAL_RUN.has(ended.state) || ended.state !== command.runState) fail("RUN_NOT_ENDED", "the entry's Run has not ended with that result");
+    const next = await save(entry, { runEndedAt: now });
+    await event(entry.sessionId, next, "entry.runEnded", { runId: ended.id, runState: ended.state });
     return { result: ok(command, entry.id, next.version), effects: [effect(next)] };
   }
   if (command.type === "line.advance") {

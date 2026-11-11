@@ -1106,6 +1106,15 @@ export class WorkflowService {
   listSessionLineEvents(principal: Principal, projectId: string, afterSeq: number, limit: number, sessionId?: string) {
     return this.read(principal, projectId, reader => reader.sessionLines?.listSessionLineEvents(afterSeq, limit, sessionId) ?? Promise.resolve([]));
   }
+  sessionHasLiveRun(principal: Principal, projectId: string, sessionId: string) {
+    return this.read(principal, projectId, reader => reader.sessionLines?.sessionHasLiveRun(sessionId) ?? Promise.resolve(false));
+  }
+  hasOlderQueuedMessage(principal: Principal, projectId: string, sessionId: string, before: string) {
+    return this.read(principal, projectId, reader => reader.sessionLines?.hasOlderQueuedMessage(sessionId, before) ?? Promise.resolve(false));
+  }
+  getSessionMessageRecord(principal: Principal, projectId: string, messageId: string) {
+    return this.read(principal, projectId, reader => reader.sessionMessages?.getSessionMessage(messageId) ?? Promise.resolve(null));
+  }
   getTaskAssignment(principal: Principal, projectId: string, taskId: string) {
     return this.read(principal, projectId, reader => reader.sessionAssignments?.getTaskSessionAssignment(taskId) ?? Promise.resolve(null));
   }

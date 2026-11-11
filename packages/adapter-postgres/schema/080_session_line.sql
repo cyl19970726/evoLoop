@@ -14,19 +14,21 @@ CREATE TABLE session_line_entry (
   -- (confirmed; Task start, assignment on the started revision, Run reserve).
   step text CHECK(step IN ('assign','confirm','start')),
   attempt integer NOT NULL DEFAULT 0 CHECK(attempt>=0),
+  -- A refused step that is only waiting retries under fresh operation ids (a refusal is journalled and would replay forever).
+  step_try integer NOT NULL DEFAULT 0 CHECK(step_try>=0),
   assign_operation_id uuid, start_operation_id uuid, reassign_operation_id uuid, reserve_operation_id uuid, message_id uuid,
   suspend_reason text, withdrawn_reason text,
   source text NOT NULL CHECK(source IN ('leader','schedule')),
   source_actor_id text NOT NULL CHECK(length(btrim(source_actor_id))>0), schedule_id uuid,
   release_rule text NOT NULL DEFAULT 'run_end' CHECK(release_rule='run_end'),
-  run_id uuid, version integer NOT NULL CHECK(version>0),
+  run_id uuid, run_ended_at timestamptz, version integer NOT NULL CHECK(version>0),
   appended_at timestamptz NOT NULL, updated_at timestamptz NOT NULL,
   PRIMARY KEY(project_id,entry_id),
   FOREIGN KEY(project_id,session_id) REFERENCES session_line(project_id,session_id),
   FOREIGN KEY(project_id,task_id) REFERENCES task(project_id,task_id),
   CHECK(state<>'starting' OR step IS NOT NULL), CHECK(state='starting' OR step IS NULL),
   CHECK(state<>'suspended' OR suspend_reason IS NOT NULL), CHECK(state<>'withdrawn' OR withdrawn_reason IS NOT NULL),
-  CHECK(state<>'started' OR run_id IS NOT NULL), CHECK(source<>'schedule' OR schedule_id IS NOT NULL)
+  CHECK(state<>'started' OR run_id IS NOT NULL), CHECK(run_ended_at IS NULL OR state='started'), CHECK(source<>'schedule' OR schedule_id IS NOT NULL)
 );
 -- The same Task cannot wait in two lines (or twice in one) while its entry is still in progress.
 CREATE UNIQUE INDEX session_line_entry_task_live ON session_line_entry(project_id,task_id) WHERE state IN ('queued','suspended','starting');

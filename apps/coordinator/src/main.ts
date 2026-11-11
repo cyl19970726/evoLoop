@@ -755,9 +755,6 @@ const sessionLinePump = new SessionLinePump({workflow:service,canWrite:lease.can
   messageBusy:(projectId,sessionId)=>messageService.isBusy(projectId,sessionId),credentials:currentIdentity,
   enabled:async()=>!!(await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE)).runtime?.enabled,
   pollIntervalMs:integrations.residentQueue?.pollIntervalMs??2000,
-  olderMessageWaiting:async(projectId,sessionId,appendedAt)=>!!(await pool.query(
-    `SELECT 1 FROM session_message WHERE project_id=$1 AND session_id=$2 AND target_kind='owned' AND state='queued'
-       AND blocked_reason IS NULL AND created_at<$3 LIMIT 1`,[projectId,sessionId,appendedAt])).rowCount,
   recipientActorId:async(projectId,sessionId)=>{
     const role=(await pool.query("SELECT role_id FROM runtime_session WHERE project_id=$1 AND session_id=$2",[projectId,sessionId])).rows[0]?.role_id;
     const binding=role&&(await currentQueueConfiguration())?.roleActors.find(x=>x.projectId===projectId&&x.roleId===role);

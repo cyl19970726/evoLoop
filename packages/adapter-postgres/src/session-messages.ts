@@ -153,6 +153,10 @@ export class PgSessionMessages implements SessionMessageTransaction {
     if(!Number.isSafeInteger(offset)||offset<0)throw new RangeError('message offset must be a nonnegative safe integer');
     const r=await this.client.query(`${SELECT_MESSAGE} WHERE m.project_id=$1 AND m.target_kind='owned'
       AND m.state IN ('queued','processing','unknown')
+      -- Fair with the Session line: a line entry appended before this message goes first (its own confirmation request is exempt).
+      AND (m.state<>'queued' OR EXISTS(SELECT 1 FROM session_line_entry own WHERE own.project_id=m.project_id AND own.message_id=m.message_id)
+        OR NOT EXISTS(SELECT 1 FROM session_line_entry e WHERE e.project_id=m.project_id AND e.session_id=m.session_id
+          AND e.state IN ('queued','starting') AND e.appended_at<m.created_at))
       AND (m.state<>'queued' OR (NOT EXISTS(SELECT 1 FROM session_message_processing busy
           WHERE busy.project_id=m.project_id AND busy.session_id=m.session_id AND busy.state IN ('dispatching','running','unknown'))
         AND NOT EXISTS(SELECT 1 FROM session_message older WHERE older.project_id=m.project_id

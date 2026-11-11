@@ -18,6 +18,10 @@ export const sessionLineCommands = [
   // The pump's steps for the entry at the head. Operation ids are fixed by the entry and the attempt so every step replays safely.
   z.strictObject({ ...base, type: z.literal("line.begin"), entryId: id, expectedVersion: version,
     assignOperationId: id, startOperationId: id, reassignOperationId: id, reserveOperationId: id, messageId: id }),
+  // A refusal that only meant "wait" is journalled under its operation id: retrying registers fresh ids for the same step.
+  z.strictObject({ ...base, type: z.literal("line.retry"), entryId: id, expectedVersion: version,
+    assignOperationId: id, startOperationId: id, reassignOperationId: id, reserveOperationId: id }),
+  z.strictObject({ ...base, type: z.literal("line.runEnded"), entryId: id, expectedVersion: version, runState: z.enum(["completed", "failed", "interrupted"]) }),
   z.strictObject({ ...base, type: z.literal("line.advance"), entryId: id, expectedVersion: version, to: z.enum(["confirm", "start"]) }),
   z.strictObject({ ...base, type: z.literal("line.started"), entryId: id, expectedVersion: version, runId: id }),
   z.strictObject({ ...base, type: z.literal("line.suspend"), entryId: id, expectedVersion: version,
@@ -31,11 +35,11 @@ export type SessionLineStep = "assign" | "confirm" | "start";
 export interface SessionLine { projectId: string; sessionId: string; controllerActorId: string; version: number; createdAt: string; updatedAt: string }
 export interface SessionLineEntry {
   projectId: string; id: string; sessionId: string; taskId: string; position: number; state: SessionLineEntryState;
-  step: SessionLineStep | null; attempt: number;
+  step: SessionLineStep | null; attempt: number; stepTry: number;
   assignOperationId: string | null; startOperationId: string | null; reassignOperationId: string | null; reserveOperationId: string | null; messageId: string | null;
   suspendReason: string | null; withdrawnReason: string | null;
   source: "leader" | "schedule"; sourceActorId: string; scheduleId: string | null; releaseRule: "run_end";
-  runId: string | null; version: number; appendedAt: string; updatedAt: string;
+  runId: string | null; runEndedAt: string | null; version: number; appendedAt: string; updatedAt: string;
 }
 export interface SessionLineEvent {
   projectId: string; seq: number; sessionId: string; entryId: string | null; taskId: string | null; kind: string;
@@ -46,6 +50,10 @@ export interface SessionLineReader {
   listSessionLineEntries(sessionId: string, includeEnded?: boolean): Promise<SessionLineEntry[]>;
   getSessionLineEntry(entryId: string): Promise<SessionLineEntry | null>;
   listSessionLines(): Promise<SessionLine[]>;
+  /** The Session has a Run that has not ended (requested, dispatching, running or unknown). */
+  sessionHasLiveRun(sessionId: string): Promise<boolean>;
+  /** A message queued for the Session, not held back, was created before this time. */
+  hasOlderQueuedMessage(sessionId: string, before: string): Promise<boolean>;
   listSessionLineEvents(afterSeq: number, limit: number, sessionId?: string): Promise<SessionLineEvent[]>;
   /** The live entry (queued, suspended or starting) holding this Task, if any. */
   getLiveSessionLineEntryForTask(taskId: string): Promise<SessionLineEntry | null>;
