@@ -971,8 +971,13 @@ test('a quota failure pauses the provider: other Sessions of it stay queued with
   const listing=await workflow.listProviderHolds(reviewer,projectId);
   assert.equal(listing.items[0]?.state,'held');assert.equal(listing.items[0]?.impact.filter(i=>[a2,a3].includes(i.sessionId)).reduce((n,i)=>n+i.queuedMessages,0),2);
   assert.ok(listing.items[0]!.queuedMessages>=2);
+  // The release names the hold that was read: another hold's ID is refused before anything is released.
+  const wrongHold=await workflow.execute(reviewer,{type:'runtime.providerHold.release',projectId,operationId:randomUUID(),provider:'codex',
+    holdId:randomUUID(),expectedVersion:1,evidenceRef:'ops://wrong',reason:'wrong hold'});
+  assert.equal(wrongHold.status,'rejected');assert.equal((wrongHold as {code:string}).code,'PROVIDER_HOLD_CHANGED');
+  assert.equal((await holds('codex')).filter(h=>h.state==='held').length,1,'nothing was released');
   const release=await workflow.execute(reviewer,{type:'runtime.providerHold.release',projectId,operationId:randomUUID(),provider:'codex',
-    expectedVersion:1,evidenceRef:'ops://balance-topped-up',reason:'Account balance restored'});
+    holdId:hold.hold_id,expectedVersion:1,evidenceRef:'ops://balance-topped-up',reason:'Account balance restored'});
   assert.equal(release.status,'applied',JSON.stringify(release));
   const released=(await holds('codex')).find(h=>h.released_by==='lead')!;
   assert.equal(released.state,'released');assert.equal(released.released_by,'lead');
@@ -986,7 +991,7 @@ test('a quota failure pauses the provider: other Sessions of it stay queued with
     assert.ok(await svc.beginDispatch(projectId,m.id,randomUUID(),randomUUID(),qualified));
   }
   const again=await workflow.execute(reviewer,{type:'runtime.providerHold.release',projectId,operationId:randomUUID(),provider:'codex',
-    expectedVersion:1,evidenceRef:'ops://again',reason:'again'});
+    holdId:hold.hold_id,expectedVersion:1,evidenceRef:'ops://again',reason:'again'});
   assert.equal(again.status,'rejected');assert.equal((again as {code:string}).code,'PROVIDER_NOT_HELD','a second release finds nothing held');
 });
 

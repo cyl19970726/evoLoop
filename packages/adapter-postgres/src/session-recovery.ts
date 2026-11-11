@@ -47,9 +47,10 @@ export class PgSessionRecovery implements SessionRecoveryTransaction {
     return result.rows.some(row=>dynamicSessionId(row.dispatch_id as string)===sessionId);
   }
   async getRecoveryGate(sessionId:string):Promise<SessionRecoveryGate|null>{
-    const r=await this.client.query(`SELECT g.*,(SELECT p.failure_category FROM session_message_processing p
+    const r=await this.client.query(`SELECT g.*,COALESCE((SELECT p.failure_category FROM session_message_processing p
       WHERE g.cause_kind='message' AND p.project_id=g.project_id AND p.message_id=g.cause_id
-      ORDER BY p.updated_at DESC LIMIT 1) AS failure_category
+      ORDER BY p.updated_at DESC LIMIT 1),(SELECT r.failure_category FROM runtime_run r
+      WHERE g.cause_kind='run' AND r.project_id=g.project_id AND r.run_id=g.cause_id)) AS failure_category
       FROM session_recovery_gate g WHERE g.project_id=$1 AND g.session_id=$2`,[this.projectId,sessionId]);
     return r.rows[0]?gateOf(r.rows[0]):null;
   }
@@ -329,7 +330,10 @@ export class PgSessionRecovery implements SessionRecoveryTransaction {
     const r=await this.client.query(`SELECT s.session_id,g.phase,
         (g.phase='blocked' AND g.cause_kind='message' AND EXISTS (SELECT 1 FROM session_message_processing p
           WHERE p.project_id=g.project_id AND p.message_id=g.cause_id
-            AND p.failure_category IN ('quota_exhausted','authentication_failed'))) AS blocked_by_quota,
+            AND p.failure_category IN ('quota_exhausted','authentication_failed'))
+          OR g.phase='blocked' AND g.cause_kind='run' AND EXISTS (SELECT 1 FROM runtime_run r
+          WHERE r.project_id=g.project_id AND r.run_id=g.cause_id
+            AND r.failure_category IN ('quota_exhausted','authentication_failed'))) AS blocked_by_quota,
         (SELECT count(*)::int FROM session_message m WHERE m.project_id=s.project_id AND m.target_kind='owned'
           AND m.session_id=s.session_id AND m.state='queued') AS queued
       FROM runtime_session s LEFT JOIN session_recovery_gate g ON g.project_id=s.project_id AND g.session_id=s.session_id

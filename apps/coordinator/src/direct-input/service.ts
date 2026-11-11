@@ -54,8 +54,8 @@ export class DirectInputService {
     this.lock=deps.lock??new SessionSteerLock();
   }
   async capability(principal:Principal,projectId:string,sessionId:string):Promise<DirectInputCapability>{
-    const result=(available:boolean,mode:DirectInputCapability["mode"],expectedTurnId:string|null,reasonCode:string):DirectInputCapability=>
-      ({available,mode,expectedTurnId,reasonCode,observedAt:new Date().toISOString()});
+    const result=(available:boolean,mode:DirectInputCapability["mode"],expectedTurnId:string|null,reasonCode:string,detail?:string):DirectInputCapability=>
+      ({available,mode,expectedTurnId,reasonCode,observedAt:new Date().toISOString(),...(detail?{detail}:{})});
     if(!principal.projectIds.includes(projectId)||!principal.permissions.includes("read")||
       !principal.permissions.includes("write"))return result(false,null,null,"FORBIDDEN");
     let runtime:Native;
@@ -80,6 +80,8 @@ export class DirectInputService {
           result(false,null,null,"NATIVE_TURN_NOT_ACTIVE");
       }catch{return result(false,null,null,"NATIVE_TURN_UNKNOWN");}
     }
+    if(await this.deps.store.providerHeld(projectId,sessionId))return result(false,null,null,"PROVIDER_HELD",
+      "the model provider is paused for quota or authentication; messages are saved queued and go out with the release");
     if(!grant.canStart)return result(false,null,null,"DIRECT_START_DISABLED");
     if(!capabilities.delivery.idleTurnStart)return result(false,null,null,"NATIVE_IDLE_START_UNAVAILABLE");
     if(grant.maxTurns!==undefined&&state.used>=grant.maxTurns)
