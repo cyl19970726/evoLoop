@@ -18,7 +18,7 @@ const pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`}
 const store=new PgDirectInputs(pool);
 const projectId=randomUUID(),sessionId=randomUUID(),otherSessionId=randomUUID(),httpSessionId=randomUUID(),
   recoverySessionId=randomUUID(),noticeSessionId=randomUUID(),raceSessionId=randomUUID(),
-  contentionSessionId=randomUUID(),roleId=randomUUID();
+  contentionSessionId=randomUUID(),queueSessionId=randomUUID(),roleId=randomUUID();
 const grant=(id=sessionId,maxTurns=2)=>({projectId,sessionId:id,senderActorId:"user",receiverRoleId:roleId,
   receiverActorId:"agent",cwd:"/tmp/direct-test",maxTurns,enabled:true,canSteer:true,canStart:true});
 const input=(expectedTurnId:string|null=null)=>({inputId:randomUUID(),operationId:randomUUID(),content:"Additional authorized detail",expectedTurnId});
@@ -27,7 +27,7 @@ const hash="a".repeat(64);
 before(async()=>{
   await migrate(url!,schema);
   await pool.query("INSERT INTO project(project_id,title,created_at) VALUES($1,'Direct test',now())",[projectId]);
-  for(const id of [sessionId,otherSessionId,httpSessionId,recoverySessionId,noticeSessionId,raceSessionId,contentionSessionId])await pool.query(`INSERT INTO runtime_session(project_id,session_id,role_id,cwd,
+  for(const id of [sessionId,otherSessionId,httpSessionId,recoverySessionId,noticeSessionId,raceSessionId,contentionSessionId,queueSessionId])await pool.query(`INSERT INTO runtime_session(project_id,session_id,role_id,cwd,
     authorization_scope,sandbox,approval_policy,state,version,native_thread_id,native_session_id,operation_id,actor_id,
     created_at,updated_at) VALUES($1,$2,$3,'/tmp/direct-test','project','danger-full-access','never',
     'ready',1,$4,$5,$6,'agent',now(),now())`,[projectId,id,roleId,`thread-${id}`,`native-${id}`,randomUUID()]);
@@ -69,6 +69,7 @@ test("unlimited direct start preserves prior usage while an explicit cap still b
   const service=new DirectInputService({store,canWrite:()=>true,
     admission:async()=>({grant:current,binding}),bindingFor:async()=>binding,
     runtime:()=>({isReady:()=>true,registerBinding:async()=>{},
+      capabilities:()=>({delivery:{midTurnInput:true,idleTurnStart:true}} as never),
       qualifyConversationThread:async()=>({available:true,reason:'',fingerprint:hash}),
       startConversationTurn:async()=>{throw Error('unused')},steerTurn:async()=>{throw Error('unused')},
       listTurns:async()=>({data:[],nextCursor:null}),listItems:async()=>({data:[],nextCursor:null})})});
@@ -114,6 +115,35 @@ test("automatic message processing remains the only source for two attached inpu
     WHERE project_id=$1 AND session_id=$2`,[projectId,noticeSessionId])).rows[0].n,1);
 });
 
+test("a non-steerable steer is rejected and its exact content becomes one queued ordinary message",async()=>{
+  const primaryMessageId=randomUUID(),primaryProcessingId=randomUUID();
+  await pool.query(`INSERT INTO session_message(project_id,message_id,operation_id,target_kind,session_id,
+    sender_actor_id,content,state,version,created_at,updated_at)
+    VALUES($1,$2,$3,'owned',$4,'sender','Primary turn','processing',1,now(),now())`,
+    [projectId,primaryMessageId,randomUUID(),queueSessionId]);
+  await pool.query(`INSERT INTO session_message_processing(project_id,processing_id,message_id,session_id,
+    operation_id,receiver_actor_id,state,native_turn_id,read_only_policy_fingerprint,version,started_at,updated_at)
+    VALUES($1,$2,$3,$4,$5,'agent','running','queue-turn',$6,1,now(),now())`,
+    [projectId,primaryProcessingId,primaryMessageId,queueSessionId,randomUUID(),hash]);
+  const command=input("queue-turn");
+  const reserved=await store.reserve(projectId,queueSessionId,"user",command,grant(queueSessionId,1),"");
+  assert.equal(reserved.record.mode,"steer");
+  const queued=await store.rejectSteerAndQueue(projectId,command.inputId,"cannot steer a review turn");
+  assert.equal(queued.state,"rejected");
+  assert.equal(queued.nativeItemId,null);
+  const rows=(await pool.query(`SELECT message_id,operation_id,target_kind,session_id,sender_actor_id,content,state
+    FROM session_message WHERE project_id=$1 AND message_id=$2`,[projectId,command.inputId])).rows;
+  assert.equal(rows.length,1);
+  assert.deepEqual({...rows[0]},{
+    message_id:command.inputId,operation_id:command.operationId,target_kind:"owned",session_id:queueSessionId,
+    sender_actor_id:"user",content:command.content,state:"queued",
+  },"the queued message reuses the original operation ID only in session_message, a separate table");
+  assert.equal((await store.rejectSteerAndQueue(projectId,command.inputId,"repeat")).state,"rejected");
+  assert.equal((await pool.query(`SELECT count(*)::integer AS n FROM session_message
+    WHERE project_id=$1 AND operation_id=$2`,[projectId,command.operationId])).rows[0].n,1,
+  "a repeated rejection cannot duplicate the queued message");
+});
+
 test("terminal commit overtaking direct receipt binds original Turn without releasing a newer slot",async()=>{
   const command=input();
   await store.reserve(projectId,raceSessionId,"user",command,grant(raceSessionId),hash);
@@ -135,6 +165,7 @@ test("lost native start acknowledgement keeps original slot and reconciles witho
     resumeProfile:{actorId:"agent",model:null,sandbox:"danger-full-access" as const,approvalPolicy:"never" as const}};
   const command=input();let starts=0;
   const runtime={isReady:()=>true,registerBinding:async()=>{},qualifyConversationThread:async()=>({available:true,reason:"",fingerprint:hash}),
+    capabilities:()=>({delivery:{midTurnInput:true,idleTurnStart:true}} as never),
     startConversationTurn:async()=>{starts++;throw new Error("lost ack");},
     steerTurn:async()=>{throw new Error("unexpected steer");},
     listTurns:async()=>({data:[{id:"recovered-turn",status:"inProgress",completedAtUtc:null}],nextCursor:null}),
@@ -158,6 +189,7 @@ test("HTTP keeps exact input and actor receipts while repeated steer uses the sa
   const turn={id:"http-turn",status:"inProgress" as const,completedAtUtc:null};
   const writes:string[]=[];
   const runtime={isReady:()=>true,registerBinding:async()=>{},qualifyConversationThread:async()=>({available:true,reason:"",fingerprint:hash}),
+    capabilities:()=>({delivery:{midTurnInput:true,idleTurnStart:true}} as never),
     startConversationTurn:async(_binding:unknown,_content:string,id:string)=>{writes.push(`start:${id}`);return turn;},
     steerTurn:async(_binding:unknown,_turnId:string,_content:string,id:string)=>{writes.push(`steer:${id}`);return {turnId:turn.id,itemId:null};},
     listTurns:async()=>({data:[turn],nextCursor:null}),listItems:async()=>({data:[],nextCursor:null})};

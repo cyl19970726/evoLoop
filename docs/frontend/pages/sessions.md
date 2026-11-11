@@ -25,7 +25,7 @@ Session 页说明一个具体实例此刻在做什么、做出了什么；“Lea
 - **详情**（PR6d 起全部用 `@evoloop/ui`）：
   - 中间：对话流按目标体验实现；原生的英文说明改写成中文。
   - 输入框：Enter 只在运行时声明可补充时补充，否则排到下一轮并写明原因。
-  - 右栏：实体卡与标识、动态（当前任务、分派、执行队列）、资料库（成果）、环境与用量（含调整模型）、详情与来源。
+  - 右栏：标识、动态（当前任务、分派、执行队列）、资料库、环境与用量（含模型、用量、上下文、上限）、详情与来源。
   - “关闭受管智能体”在右栏列出阻断原因；窄屏下右栏只在点开时出现。
 - **还没做的**：
   - 编排总览文档（合同缺“当前总览”标记）。
@@ -46,7 +46,7 @@ Session 页说明一个具体实例此刻在做什么、做出了什么；“Lea
 - 活动流按真实顺序和发送者显示，唯一有据的 Task 关系才给任务入口（[历史与实时读取](../../architecture/codex-integration.md#session-工作区的历史与实时读取)）。失败、待答和阻断不折叠。
 - 加载更早内容时保持阅读位置，新进展不抢走阅读位置。
 - 待答卡片区分待答、已保存、已发入原生连接、已清理（[原生提问](../../architecture/codex-integration.md#原生提问与业务问答)）。实时状态断线后标过期，Token 与费用无证据写未知（[原生观察](../../architecture/codex-integration.md#有界原生观察)）。
-- 结果未知的输入保留原文（[即时输入](../../architecture/session-runtime.md#3-即时输入执行中收到的消息怎样处理)）。模型的配置、生效回执和实际运行分开写；外部 Desktop 会话只显示已核实的能力。
+- 结果未知的输入保留原文；并发送入与不可补入回合见[即时输入](../../architecture/session-runtime.md#3-即时输入执行中收到的消息怎样处理)。模型配置、回执与实际运行分开写；外部会话只显示已核实能力。
 - 关闭入口列出阻断原因：未完 Task、队列、Run、消息、待答问题、Session 忙碌；来源没读全时不按旧内容关闭。
 - 从 Task 进来再返回，恢复页签和阅读位置；切换项目、身份或 Session 时清掉旧数据。
 - Leader 安排：只写记录能证明的冲突，总览文档另写的以文档为准；任务或队列没读全时，空闲、冲突、无承接者写“?”或“无法判断”，重读失败标“上次读回，当前待核对”；调整安排找 Leader。
@@ -70,7 +70,7 @@ Session 页说明一个具体实例此刻在做什么、做出了什么；“Lea
 | 输入框信息 | 输入框下方一行：当前模型、权限或执行配置、上下文用量 | Session 执行配置与用量部分已有 |
 | 实时状态行 | 流末一行，前面是 Session 的身份标记：“正在运行测试 · 1 分 04 秒 ›”，点开看当前工具 | 已实现（头像、当前工具、耗时、关联任务）；连接过期时只写“上次读回” |
 | 待办清单 | 固定在输入框上方，每步显示已完成、进行中、待做，随 Agent 更新；全部完成后折叠成一行 | 已实现：从 Codex 计划条目的分步文字和原生进度里的计划读出；合同仍宜保留结构化步骤。Claude 的 TodoWrite 尚未接入 |
-| 发消息 | Enter 发送；运行中按 Enter 补充到当前这一轮（运行时支持时），Cmd/Ctrl+Enter 排到下一轮；已排队的消息显示在输入框上方，可取消：最多先显示 3 条，其余折叠成“还有 N 条”，展开后在区内滚动，所以排得再多也不会挤掉时间线或输入框；每条写中文摘要（通知类型 · 关联任务标题 · 时间），原文和标识在“原文与标识”里；发送者没有“发给这个 Session”的普通消息授权时，发送当场被拒并写明缺什么，消息不保存；已入队却因缺授权受阻的消息不占队列（后面的消息照常处理），页面上标“受阻：缺少消息授权”，并在上方写出缺哪条授权；停止按钮中断当前这一轮 | 已实现：补充只在即时输入能力为 steer 时提供；停止按这一轮的来源发消息中断或运行中断，需要复核权限 |
+| 发消息 | Enter 发送；运行中按 Enter 补充到当前这一轮（运行时支持时），Cmd/Ctrl+Enter 排到下一轮；已排队的消息显示在输入框上方，可取消：最多先显示 3 条，其余折叠成“还有 N 条”，展开后在区内滚动，所以排得再多也不会挤掉时间线或输入框；每条写中文摘要（通知类型 · 关联任务标题 · 时间），原文和标识在“原文与标识”里；发送者没有“发给这个 Session”的普通消息授权时，发送当场被拒并写明缺什么，消息不保存；已入队却因缺授权受阻的消息不占队列（后面的消息照常处理），页面上标“受阻：缺少消息授权”，并在上方写出缺哪条授权；停止按钮中断当前这一轮 | 已实现：补充只在当前 Session 的即时输入能力为 steer 时提供；`SESSION_INPUT_BUSY` 可重试，不清草稿并保留原输入编号，下一次发送重试同一意图；停止按这一轮的来源发消息中断或运行中断，需要复核权限 |
 | `/` 与 `@` | 输入 `/` 弹出当前职责可用的技能和命令（停止这一轮、撤回排队消息、关联任务或文档）；输入 `@` 选择其他智能体，这条消息另发一份给对方，两边时间线各留一条记录（见[组件清单](../components.md#对话流组件)） | 已实现：技能来自职责的运行时视图；`@` 另存一条普通消息给对方；技能的执行语义与关联文档仍待定 |
 | 头像与称呼 | 界面上 Session 叫“智能体”、Leader 叫“统筹”（[界面用语](../principles.md#界面用语)）；每个智能体有按职责取底色的卡通头像，出现在目录、标题、状态行和 `@` 菜单里 | 头像由职责和实例推出，不需要新数据 |
 | 每轮小结 | 一轮结束时，最后一条回复后跟一行本轮产出：改了什么、交付了什么、下一步等谁 | 已实现：只写记录能证明的（工具计数、本轮开始后关联任务的交付、失败或待答） |
@@ -112,6 +112,7 @@ Session 页说明一个具体实例此刻在做什么、做出了什么；“Lea
 | 外壳 | `app/shell/AppShell.tsx` | `shell.test.ts`、`shell-browser.test.ts`（切换空间后保留各空间的地址与智能体目录搜索）、`session-directory-groups-browser.test.ts` |
 | 智能体目录（内层栏） | `features/sessions/SessionNavigation.tsx`（新目录）、`features/sessions/sessionDirectoryPresentation.ts`、`features/sessions/useSessionDirectoryGroup.ts` | `session-directory-presentation.test.ts`、`session-directory-groups.test.ts`、`session-directory-groups-browser.test.ts` |
 | 智能体详情 | `features/sessions/SessionWorkspace.tsx`（页首、右栏；执行队列由 `app/App.tsx` 传入 `features/workflow` 的面板）、`features/sessions/environmentPresentation.ts`（环境与用量的三种状态）、`features/sessions/SessionTimeline.tsx`（对话流）、`features/sessions/readingScopePresentation.ts` 与 `features/sessions/SourceLimitations.tsx`（读取限制的中文与原文）、`shared/agentNamePresentation.ts`（没登记名称时怎样称呼）、`features/sessions/conversationPresentation.ts`（工具、计划、状态行与每轮小结的用语）、`features/sessions/workspaceTimelineModel.ts`、`features/sessions/NativeSessionPanel.tsx`、`features/sessions/SessionModelControl.tsx`、`features/sessions/SessionClosePanel.tsx` | `session-wording-presentation.test.ts`、`agent-name-presentation.test.ts`、`session-external-wording-browser.test.ts`（`EVOLOOP_AGENT_WORDING_SCREENSHOT_DIR`）、`session-workspace-redesign-browser.test.ts`、`session-timeline-browser.test.ts`、`session-workspace-timeline-model.test.ts`、`session-conversation-presentation.test.ts`、`session-native-input-browser.test.ts`、`session-native-progress-browser.test.ts`、`session-close-entry-browser.test.ts`、`session-activity-narrow-browser.test.ts`、`task-session-return-browser.test.ts` |
+| 用量与预算 | `features/sessions/UsageBudgetPanel.tsx`、`features/sessions/usagePresentation.ts` | `usage-presentation.test.ts` |
 | 输入框 | `features/sessions/SessionComposer.tsx`（待办、排队、`/`、`@`、停止）、`features/sessions/queuedMessagePresentation.ts`（排队项的中文摘要、授权受阻提示）、`packages/ui` 的 `QueuedMessages`（限高与折叠）、`features/sessions/composerPresentation.ts`（Enter 与 Cmd/Ctrl+Enter 做什么）、`features/sessions/useDirectInput.tsx`（即时输入与回执）、`features/sessions/sessionCommand.ts` | `session-grant-blocked-browser.test.ts`（授权受阻的消息可见且页面可用）、`session-queue-area-browser.test.ts`（12 条排队时 1195 与 390 宽：时间线可滚、输入框在屏内、折叠展开、摘要与原文、撤回；无排队不变）、`queued-message-summary.test.ts`、`session-composer-browser.test.ts`（三个宽度，`EVOLOOP_AGENT_SCREENSHOT_DIR` 存截图）、`session-direct-input-layout-browser.test.ts`、`session-message-entry-browser.test.ts`、`session-conversation-presentation.test.ts` |
 | 统筹安排 | `features/sessions/ArrangementPage.tsx`（页面与右栏）、`features/sessions/arrangementModel.ts`（看板、空闲与风险规则，含分派属于旧修订）、`features/sessions/arrangementPresentation.ts`（读取状态、页首空闲数与看板阶段用语；按阶段的下一步与总览共用，在 `shared/workPresentation.ts`） | `arrangement-model.test.ts`、`arrangement-presentation.test.ts`、`work-presentation.test.ts`、`arrangement-browser.test.ts`、`cross-space-return-browser.test.ts` |
 | 返回来处 | `features/sessions/sessionReturn.ts`（智能体页认哪些来处）、`shared/returnLink.ts`、`shared/ui/ReturnLink.tsx` | `return-link.test.ts`、`session-conversation-presentation.test.ts`、`cross-space-return-browser.test.ts` |

@@ -5,6 +5,7 @@ import type { UnitOfWork } from "@evoloop/contracts/ports";
 import { DomainError } from "@evoloop/contracts/ports";
 import { PgDirectInputs } from "@evoloop/adapter-postgres/direct-input";
 import { bindingOf } from "../runtime/runner.js";
+import type { SessionSteerLock } from "../runtime/session-steer-lock.js";
 import type { loadIntegrations } from "../configuration.js";
 import type { DirectInputConfiguration } from "./configuration.js";
 import { DirectInputService } from "./service.js";
@@ -17,6 +18,7 @@ type CurrentConfiguration=Pick<Awaited<ReturnType<typeof loadIntegrations>>,"ses
 export function createDirectInputService(deps:{
   pool:Pool;uow:UnitOfWork;
   runtime:ConstructorParameters<typeof DirectInputService>[0]["runtime"];
+  lock?:SessionSteerLock;
   canWrite():boolean;
   configuration():Promise<CurrentConfiguration>;
   currentProjectWriter(projectId:string,actorId:string):Promise<boolean>;
@@ -33,6 +35,7 @@ export function createDirectInputService(deps:{
   };
   return new DirectInputService({
     store:new PgDirectInputs(deps.pool),runtime:deps.runtime,canWrite:deps.canWrite,
+    ...(deps.lock?{lock:deps.lock}:{}),
     bindingFor:async(projectId,sessionId)=>bindingOf(await session(projectId,sessionId)),
     admission:async(principal:Principal,projectId,sessionId)=>{
       if(!principal.projectIds.includes(projectId)||!principal.permissions.includes("read")||

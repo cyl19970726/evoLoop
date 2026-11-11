@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { reduceNativeObservation } from '../src/native-observation/index.ts';
+import { NativeObservationService } from '../src/native-observation/index.ts';
 import type { NativeObservationRecord, NativeObservationEvent } from '@evoloop/contracts/native-observation';
 const identity = {projectId:'project',sessionId:'session',threadId:'thread',connectionId:'connection',observedAt:'2026-10-27T00:00:00.000Z'};
 const event = (method:string,params:unknown,extra:Partial<NativeObservationEvent>={}):NativeObservationEvent=>({...identity,method,params,...extra});
@@ -80,4 +81,39 @@ test('native startedAt rejects an older late Turn start when both timestamps are
   const newer=reduce(current,'turn/started',{threadId:'thread',turn:{id:'newer',status:'inProgress',startedAt:201,items:[]}})!;
   assert.equal(newer.currentTurn?.id,'newer');
   assert.equal(newer.items.length,0);
+});
+
+test('the usage ledger records cumulative deltas and starts a replacement thread from zero',async()=>{
+  const projectId='project',sessionId='session';
+  let previous:NativeObservationRecord|null=null;
+  let sessionThread='thread-one';
+  const added:unknown[][]=[];
+  const tx={
+    nativeObservation:{
+      get:async()=>previous,
+      upsert:async(record:NativeObservationRecord)=>{previous=record;},
+    },
+    getRuntimeSession:async()=>({projectId,id:sessionId,state:'ready',
+      nativeThreadId:sessionThread,nativeSessionId:'native-one'}),
+    usage:{addUsage:async(...args:unknown[])=>{added.push(args);}},
+  };
+  const service=new NativeObservationService({uow:{
+    transaction:async(_project:string,action:(value:unknown)=>Promise<unknown>)=>action(tx),
+    read:async()=>null,
+  } as never,clock:{now:()=>'2026-11-10T00:00:00.000Z'}});
+  const base={projectId,sessionId,threadId:'thread-one',connectionId:'c1',observedAt:'2026-11-10T00:00:00.000Z',
+    lastEventAt:'2026-11-10T00:00:00.000Z',freshness:'live' as const,staleReason:null,status:'active' as const,
+    currentTurn:null,items:[],plan:null,diff:null};
+  const usage=(inputTokens:number,outputTokens:number)=>({turnId:'t',total:{inputTokens,cachedInputTokens:0,
+    outputTokens,reasoningOutputTokens:0,totalTokens:inputTokens+outputTokens},last:{inputTokens,cachedInputTokens:0,
+    outputTokens,reasoningOutputTokens:0,totalTokens:inputTokens+outputTokens},modelContextWindow:null,observedAt:base.observedAt});
+  await service.apply({...base,usage:usage(100,20)});
+  await service.apply({...base,observedAt:'2026-11-10T00:01:00.000Z',usage:usage(150,30)});
+  sessionThread='thread-two';
+  await service.apply({...base,threadId:'thread-two',observedAt:'2026-11-10T00:02:00.000Z',usage:usage(200,40)});
+  assert.deepEqual(added.map(value=>value.slice(3)),[
+    [{inputTokens:100,outputTokens:20,cachedInputTokens:0,costUsd:0,costReported:false}],
+    [{inputTokens:50,outputTokens:10,cachedInputTokens:0,costUsd:0,costReported:false}],
+    [{inputTokens:200,outputTokens:40,cachedInputTokens:0,costUsd:0,costReported:false}],
+  ]);
 });

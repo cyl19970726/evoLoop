@@ -14,6 +14,7 @@ import type { RuntimeGrant } from "../configuration.js";
 import type { WorkerIdentity } from "../workers/types.js";
 import { fixedDocumentMaterial, fixedDocumentSummary } from "./materials.js";
 import { buildLightweightInput, type CliBootstrap, type RoleContextReference } from "./lightweight-input.js";
+import type { SessionSteerLock } from "./session-steer-lock.js";
 import { PreflightError, safePreflightReport } from "./preflight-report.js";
 import type { NativeInputBridge } from "./native-input.js";
 import type { NativeObservationBridge } from "./native-observation.js";
@@ -167,6 +168,8 @@ export class RuntimeRunner {
     profileForSession?(principal: Principal, session: RuntimeSessionRecord): Promise<SessionProfileRecord | null>;
     readEvaluationMaterial?: ReadEvaluationMaterial;
     blobsForPrincipal?: (principal: Principal) => BlobStore | Promise<BlobStore>;
+    /** Shared with direct input and the ordinary-message pump; a busy Session defers this Run to its next poll. */
+    steerLock?: SessionSteerLock;
   }) { this.runtime = deps.runtimeFactory(); }
   /**
    * The coordinator's runtime; with a binding, the runtime that drives that Session. A routed composite answers for
@@ -1032,65 +1035,71 @@ export class RuntimeRunner {
       }
       // Recheck after preflight, immediately before recording the external-start intent.
       if (!run.nativeTurnId && this.deps.mayDispatchRun && !await this.deps.mayDispatchRun(run)) return false;
-      if(continuation){
-        const claimed=await this.deps.trusted.claimPreTurnContinuation(run.projectId,run.id);
-        if(!claimed)return false;
-        run=claimed;
-      }else await this.deps.trusted.beginDispatch(run.projectId, run.id, inputReceipt);
-      let startBinding: RuntimeBinding;
-      try {
-        // Persist the original intent before resuming the same full-permission Thread
-        // and starting its Turn. An uncertain resume is never retried.
-        startBinding = await this.resumeForRun(session);
-      } catch (error) {
-        if (error instanceof RuntimeServerError && error.method === "thread/resume") {
-          if (error.preTurnWriterConflict) {
-            await this.deps.trusted.markRunUnknown(run.projectId, run.id,
-              `Original Task turn/start was not called: native writer conflict on thread/resume; preserve operation ${run.operationId} for exact reconciliation and authorized handoff`,
-              {threadId:error.rejectedThreadId!,operationId:run.operationId,requestId:error.requestId,
-                code:-32600,inputHash:inputReceipt?.contentHash??null});
-            this.recordFault(run.projectId,"business_profile_restore",error,run.sessionId,run.id,"unavailable");
+      // One admission for starting a Turn: a direct idle start or a later notification steer must not interleave
+      // between dispatch and the native turn/start. A local conflict changes nothing durable; the next poll retries.
+      const release=this.deps.steerLock?.tryAcquire(run.projectId,run.sessionId);
+      if(this.deps.steerLock&&!release)return false;
+      try{
+        if(continuation){
+          const claimed=await this.deps.trusted.claimPreTurnContinuation(run.projectId,run.id);
+          if(!claimed)return false;
+          run=claimed;
+        }else await this.deps.trusted.beginDispatch(run.projectId, run.id, inputReceipt);
+        let startBinding: RuntimeBinding;
+        try {
+          // Persist the original intent before resuming the same full-permission Thread
+          // and starting its Turn. An uncertain resume is never retried.
+          startBinding = await this.resumeForRun(session);
+        } catch (error) {
+          if (error instanceof RuntimeServerError && error.method === "thread/resume") {
+            if (error.preTurnWriterConflict) {
+              await this.deps.trusted.markRunUnknown(run.projectId, run.id,
+                `Original Task turn/start was not called: native writer conflict on thread/resume; preserve operation ${run.operationId} for exact reconciliation and authorized handoff`,
+                {threadId:error.rejectedThreadId!,operationId:run.operationId,requestId:error.requestId,
+                  code:-32600,inputHash:inputReceipt?.contentHash??null});
+              this.recordFault(run.projectId,"business_profile_restore",error,run.sessionId,run.id,"unavailable");
+            } else {
+              if(continuation)await this.deps.trusted.markRunUnknown(run.projectId,run.id,
+                "Reviewed continuation received a different native resume rejection; no turn/start was called");
+              else await this.deps.trusted.rejectDispatch(run.projectId, run.id,
+                "Native business-profile resume was explicitly rejected before Task turn/start", {
+                  kind: "native_resume_rejected", operationId: run.operationId, code: error.code,
+                  category:error.category==='writer_conflict'?'server_rejected':error.category,
+                });
+              this.recordFault(run.projectId,"business_profile_restore",error,run.sessionId,run.id);
+            }
           } else {
-            if(continuation)await this.deps.trusted.markRunUnknown(run.projectId,run.id,
-              "Reviewed continuation received a different native resume rejection; no turn/start was called");
-            else await this.deps.trusted.rejectDispatch(run.projectId, run.id,
-              "Native business-profile resume was explicitly rejected before Task turn/start", {
-                kind: "native_resume_rejected", operationId: run.operationId, code: error.code,
-                category:error.category==='writer_conflict'?'server_rejected':error.category,
-              });
-            this.recordFault(run.projectId,"business_profile_restore",error,run.sessionId,run.id);
+            await this.deps.trusted.markRunUnknown(run.projectId, run.id,
+              `Business profile restoration was not confirmed; this coordinator did not call Task turn/start; ${dispatchFailureDetail(error)}; reconcile the original operation without replay`);
+            this.recordFault(run.projectId,"business_profile_restore",error,run.sessionId,run.id,"unknown_outcome");
           }
-        } else {
-          await this.deps.trusted.markRunUnknown(run.projectId, run.id,
-            `Business profile restoration was not confirmed; this coordinator did not call Task turn/start; ${dispatchFailureDetail(error)}; reconcile the original operation without replay`);
-          this.recordFault(run.projectId,"business_profile_restore",error,run.sessionId,run.id,"unknown_outcome");
-        }
-        return false;
-      }
-      let turn: RuntimeTurn;
-      try {
-        turn = await this.runtime.startTurn(startBinding, input, run.operationId,run.executionProfile);
-      } catch (error) {
-        // Only an adapter-proven unsent start may return to requested. A reviewed continuation has
-        // already consumed its one attempt grant, so it stays on the unknown path.
-        if (error instanceof RuntimeNotSentError && !continuation) {
-          await this.deps.trusted.withdrawDispatch(run.projectId, run.id, dispatchFailureDetail(error));
-          this.recordFault(run.projectId,"run_start",error,run.sessionId,run.id,"unavailable");
           return false;
         }
-        await this.deps.trusted.markRunUnknown(run.projectId, run.id,
-          `Task turn/start outcome was not confirmed; ${dispatchFailureDetail(error)}; reconcile owned history before any retry`);
-        this.recordFault(run.projectId,"run_start",error,run.sessionId,run.id,"unknown_outcome");
-        return false;
-      }
-      try {
-        run = await this.deps.trusted.bindTurn(run.projectId, run.id, turn, { kind: "startReply", operationId: run.operationId, inputReceipt });
-      } catch (error) {
-        await this.deps.trusted.markRunUnknown(run.projectId, run.id,
-          "Task turn/start returned a Turn but its binding receipt was not saved; reconcile the original operation without starting another Turn");
-        this.recordFault(run.projectId,"run_bind",error,run.sessionId,run.id,"unknown_outcome");
-        return false;
-      }
+        let turn: RuntimeTurn;
+        try {
+          turn = await this.runtime.startTurn(startBinding, input, run.operationId,run.executionProfile);
+        } catch (error) {
+          // Only an adapter-proven unsent start may return to requested. A reviewed continuation has
+          // already consumed its one attempt grant, so it stays on the unknown path.
+          if (error instanceof RuntimeNotSentError && !continuation) {
+            await this.deps.trusted.withdrawDispatch(run.projectId, run.id, dispatchFailureDetail(error));
+            this.recordFault(run.projectId,"run_start",error,run.sessionId,run.id,"unavailable");
+            return false;
+          }
+          await this.deps.trusted.markRunUnknown(run.projectId, run.id,
+            `Task turn/start outcome was not confirmed; ${dispatchFailureDetail(error)}; reconcile owned history before any retry`);
+          this.recordFault(run.projectId,"run_start",error,run.sessionId,run.id,"unknown_outcome");
+          return false;
+        }
+        try {
+          run = await this.deps.trusted.bindTurn(run.projectId, run.id, turn, { kind: "startReply", operationId: run.operationId, inputReceipt });
+        } catch (error) {
+          await this.deps.trusted.markRunUnknown(run.projectId, run.id,
+            "Task turn/start returned a Turn but its binding receipt was not saved; reconcile the original operation without starting another Turn");
+          this.recordFault(run.projectId,"run_bind",error,run.sessionId,run.id,"unknown_outcome");
+          return false;
+        }
+      }finally{release?.();}
     }
     const turns = run.nativeTurnId ? [] : (await this.runtime.listTurns(binding)).data.slice(0, 20);
     if (!run.nativeTurnId) {
