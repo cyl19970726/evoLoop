@@ -16,6 +16,7 @@ import type {
   LeaderWorkChangesPage, LeaderWorkDependenciesCommand, LeaderWorkDocument, LeaderWorkPage,
   LeaderWorkPlanCommand, LeaderWorkReviewCommand, LeaderWorkTask,
 } from "@evoloop/contracts/work-index";
+import type { ProviderHoldListing } from "@evoloop/contracts/provider-hold";
 import type { ProjectCapabilitiesView, ProjectMembersView, ProjectRepositoriesView } from "@evoloop/contracts/project-configuration";
 export type {
   ProjectCapabilitiesView, ProjectCapability, ProjectMember, ProjectMembersView, ProjectRepositoriesView, ProjectRepository,
@@ -111,6 +112,7 @@ export function api(token = "", timeoutMs = 15000) {
   return {
     session: () => call<Session>("/api/session"),
     project: (p: string) => call<Project>(projectPath(p)),
+    providerHolds: (p: string) => call<ProviderHoldListing>(`${projectPath(p)}/runtime/provider-holds`),
     /** Repositories configured for this project; `unavailable` is not "none". */
     projectRepositories: async (p: string) => checkedProjectView<ProjectRepositoriesView>(await call<unknown>(`${projectPath(p)}/repositories`), p),
     /** Capabilities judged for this project, or marked as one setting for the whole service. */

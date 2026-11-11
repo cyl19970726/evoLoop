@@ -120,7 +120,7 @@ export class SessionMessagePump {
           await this.deps.service.beginDispatch(message.projectId,message.id,randomUUID(),randomUUID(),qualification.fingerprint,roleContext);
       }
       catch(error){
-        if(error instanceof DomainError&&['SESSION_BUSY','MESSAGE_GRANT_MISSING','MESSAGE_BUDGET_EXHAUSTED','SESSION_NOT_READY','MESSAGE_NOT_QUEUED','TODO_SOURCE_SUPERSEDED','ATTENTION_SOURCE_UNKNOWN','ATTENTION_SOURCE_EXPIRED','ACCEPTANCE_SOURCE_SUPERSEDED'].includes(error.code)){
+        if(error instanceof DomainError&&['SESSION_BUSY','PROVIDER_HELD','MESSAGE_GRANT_MISSING','MESSAGE_BUDGET_EXHAUSTED','SESSION_NOT_READY','MESSAGE_NOT_QUEUED','TODO_SOURCE_SUPERSEDED','ATTENTION_SOURCE_UNKNOWN','ATTENTION_SOURCE_EXPIRED','ACCEPTANCE_SOURCE_SUPERSEDED'].includes(error.code)){
           await this.deps.service.noteBlocked(message.projectId,message.id,error.message);return;
         }
         throw error;

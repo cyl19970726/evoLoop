@@ -907,3 +907,96 @@ test('a failed Turn keeps its native error category on the processing record and
   assert.equal(gate?.causeKind,'message');
   assert.equal(gate?.failureCategory,'quota_exhausted','the gate says why it is closed, not only that it is');
 });
+
+async function seedProviderSession(id:string,provider:'codex'|'claude'):Promise<void>{
+  await pool.query(`INSERT INTO runtime_session(project_id,session_id,role_id,cwd,authorization_scope,sandbox,approval_policy,
+    state,version,native_thread_id,native_session_id,operation_id,actor_id,created_at,updated_at,runtime_provider)
+    VALUES($1,$2,$3,$4,'project','danger-full-access','never','ready',1,$5,$6,$7,'receiver',$8,$8,$9)`,
+    [projectId,id,roleId,grant.cwd,`thread-${id}`,'native-'+id,randomUUID(),now,provider]);
+}
+const failTurn=async(svc:SessionMessageService,session:string,category:string|null,turnId:string)=>{
+  const m=item();m.target={kind:'owned',sessionId:session};
+  await uow.transaction(projectId,tx=>tx.sessionMessages!.insertSessionMessage(m));
+  await svc.beginDispatch(projectId,m.id,randomUUID(),randomUUID(),qualified);
+  await svc.bindTurn(projectId,m.id,{id:turnId,status:'inProgress'});
+  await svc.settle(projectId,m.id,{id:turnId,status:'failed',completedAtUtc:now,
+    ...(category?{error:{category:category as never,providerCode:null,httpStatus:category==='quota_exhausted'?402:null,summary:'native failure'}}:{})},null);
+  return m;
+};
+const holds=async(provider:string)=>(await pool.query('SELECT * FROM runtime_provider_hold WHERE project_id=$1 AND provider=$2 ORDER BY opened_at',[projectId,provider])).rows;
+
+test('a quota failure pauses the provider: other Sessions of it stay queued without failing, another provider runs, one release frees all',async()=>{
+  // An earlier test in this file already opened a codex hold; start from a free provider.
+  await pool.query("UPDATE runtime_provider_hold SET state='released',released_at=now(),released_by='test-setup' WHERE project_id=$1 AND state='held'",[projectId]);
+  const [a1,a2,a3,c1]=[randomUUID(),randomUUID(),randomUUID(),randomUUID()];
+  await seedProviderSession(a1,'codex');await seedProviderSession(a2,'codex');await seedProviderSession(a3,'codex');await seedProviderSession(c1,'claude');
+  const svc=new SessionMessageService({uow,clock:{now:()=>new Date().toISOString()},ids:{next:randomUUID},
+    grantFor:async(_item,session)=>({...grant,sessionId:session.id,maxTurns:1000})});
+  const workflow=new WorkflowService({uow,clock:{now:()=>new Date().toISOString()},ids:{next:randomUUID},
+    hasher:{hash:value=>createHash('sha256').update(value).digest('hex')}});
+  const reviewer={actorId:'lead',projectIds:[projectId],permissions:['read' as const,'write' as const,'review' as const]};
+
+  // 1. The first 402 closes that Session's gate and opens one hold for the provider.
+  const first=await failTurn(svc,a1,'quota_exhausted','quota-1');
+  const hold=(await holds('codex')).find(h=>h.state==='held')!;
+  assert.equal(hold.state,'held');assert.equal(hold.category,'quota_exhausted');
+  assert.equal(hold.cause_session_id,a1);assert.equal(hold.cause_message_id,first.id);
+  assert.equal((await uow.read(projectId,r=>r.recovery!.getRecoveryGate(a1)))?.phase,'blocked');
+
+  // 2. Later messages to other Sessions of that provider are held, not failed; no gate closes.
+  const queued=[a2,a3].map(session=>{const m=item();m.target={kind:'owned',sessionId:session};return m;});
+  for(const m of queued)await uow.transaction(projectId,tx=>tx.sessionMessages!.insertSessionMessage(m));
+  for(const m of queued){
+    await assert.rejects(()=>svc.preflightDispatch(projectId,m.id),{code:'PROVIDER_HELD',message:/额度不足.*新消息照常保存排队/});
+    await assert.rejects(()=>svc.beginDispatch(projectId,m.id,randomUUID(),randomUUID(),qualified),{code:'PROVIDER_HELD'});
+    assert.equal((await svc.get(projectId,m.id)).state,'queued','the message waits, it does not fail');
+  }
+  for(const session of [a2,a3])assert.equal((await uow.read(projectId,r=>r.recovery!.getRecoveryGate(session)))?.phase,'open','no gate closes one by one');
+  await assert.rejects(()=>uow.transaction(projectId,tx=>tx.recovery!.assertStartupAllowed(a2,'run',randomUUID())),{code:'PROVIDER_HELD'},'a Run reservation is held by the same fence');
+  assert.equal((await holds('codex')).filter(h=>h.state==='held').length,1,'one hold, however many Sessions are affected');
+  const impact=await uow.read(projectId,r=>r.recovery!.providerHoldImpact('codex'));
+  assert.deepEqual(impact.filter(i=>i.sessionId===a1).map(i=>i.blockedByQuotaFailure),[true]);
+  assert.deepEqual(impact.filter(i=>[a2,a3].includes(i.sessionId)).map(i=>i.queuedMessages),[1,1]);
+
+  // 3. Another provider is not paused.
+  const other=item();other.target={kind:'owned',sessionId:c1};
+  await uow.transaction(projectId,tx=>tx.sessionMessages!.insertSessionMessage(other));
+  await svc.preflightDispatch(projectId,other.id);
+  assert.ok(await svc.beginDispatch(projectId,other.id,randomUUID(),randomUUID(),qualified),'a claude Session still starts');
+  assert.equal((await holds('claude')).length,0);
+
+  // 5. The list shows what is paused and what waits; release frees the provider and resumes the blocked Session in one decision.
+  const listing=await workflow.listProviderHolds(reviewer,projectId);
+  assert.equal(listing.items[0]?.state,'held');assert.equal(listing.items[0]?.impact.filter(i=>[a2,a3].includes(i.sessionId)).reduce((n,i)=>n+i.queuedMessages,0),2);
+  assert.ok(listing.items[0]!.queuedMessages>=2);
+  const release=await workflow.execute(reviewer,{type:'runtime.providerHold.release',projectId,operationId:randomUUID(),provider:'codex',
+    expectedVersion:1,evidenceRef:'ops://balance-topped-up',reason:'Account balance restored'});
+  assert.equal(release.status,'applied',JSON.stringify(release));
+  const released=(await holds('codex')).find(h=>h.released_by==='lead')!;
+  assert.equal(released.state,'released');assert.equal(released.released_by,'lead');
+  assert.ok(released.release_summary.resumed.includes(a1),'the Session closed by the 402 is resumed');
+  assert.ok(!released.release_summary.resumed.some((id:string)=>[a2,a3,c1].includes(id)),'Sessions whose gate the hold did not close are untouched');assert.deepEqual(released.release_summary.skipped,[]);
+  assert.notEqual((await uow.read(projectId,r=>r.recovery!.getRecoveryGate(a1)))?.phase,'blocked');
+  assert.equal((await uow.read(projectId,r=>r.recovery!.listRecoveryDecisions(a1)))?.length,1,'the Session keeps its own recovery decision record');
+  // 6. After release the held messages start normally.
+  for(const m of queued){
+    await svc.preflightDispatch(projectId,m.id);
+    assert.ok(await svc.beginDispatch(projectId,m.id,randomUUID(),randomUUID(),qualified));
+  }
+  const again=await workflow.execute(reviewer,{type:'runtime.providerHold.release',projectId,operationId:randomUUID(),provider:'codex',
+    expectedVersion:1,evidenceRef:'ops://again',reason:'again'});
+  assert.equal(again.status,'rejected');assert.equal((again as {code:string}).code,'PROVIDER_NOT_HELD','a second release finds nothing held');
+});
+
+test('only quota and authentication failures hold a provider',async()=>{
+  const [k1,k2,k3]=[randomUUID(),randomUUID(),randomUUID()];
+  await seedProviderSession(k1,'claude');await seedProviderSession(k2,'claude');await seedProviderSession(k3,'claude');
+  const svc=new SessionMessageService({uow,clock:{now:()=>new Date().toISOString()},ids:{next:randomUUID},
+    grantFor:async(_item,session)=>({...grant,sessionId:session.id,maxTurns:1000})});
+  await failTurn(svc,k1,'connection_lost','conn-1');
+  await failTurn(svc,k2,null,'plain-1');
+  assert.equal((await holds('claude')).length,0,'a lost connection or an unclassified failure holds nothing');
+  await failTurn(svc,k3,'authentication_failed','auth-1');
+  const [hold]=await holds('claude');
+  assert.equal(hold.category,'authentication_failed');
+});

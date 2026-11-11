@@ -37,6 +37,7 @@
     "./message-connectors": "./dist/message-connectors.js",
     "./allocation-relations": "./dist/allocation-relations.js",
     "./session-recovery": "./dist/session-recovery.js",
+    "./provider-hold": "./dist/provider-hold.js",
     "./native-input": "./dist/native-input.js",
     "./native-observation": "./dist/native-observation.js",
     "./work-index": "./dist/work-index.js",

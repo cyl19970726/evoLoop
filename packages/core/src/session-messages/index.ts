@@ -1,3 +1,4 @@
+import { holdsProvider, providerHeldMessage } from '@evoloop/contracts/provider-hold';
 import type { AppliedResult, Principal } from "@evoloop/contracts";
 import type { SessionMessageCommand, SessionMessageDispatchGrant, SessionMessageManualStopEvidence, SessionMessageManualStopPreflight, SessionMessageProcessing, SessionMessageRecord } from "@evoloop/contracts/session-messages";
 import { preTurnProofSchema, type PreTurnProof, type RuntimeTurn, type RuntimeSessionRecord } from "@evoloop/contracts/runtime";
@@ -143,6 +144,9 @@ export class SessionMessageService {
     const session=required(await reader.getRuntimeSession(item.target.sessionId),'Session');
     if(session.state!=='ready'||!session.nativeThreadId||!session.nativeSessionId)
       throw new DomainError('SESSION_NOT_READY','recipient is unavailable');
+    // A held provider starts no new Turn; the message stays queued with this reason instead of failing.
+    const hold=await reader.recovery?.getActiveProviderHold(session.runtimeProvider??'codex');
+    if(hold)throw new DomainError('PROVIDER_HELD',providerHeldMessage(hold.provider,hold.category));
     const grant=await this.deps.grantFor(item,session);
     if(!grant||!grant.enabled||grant.projectId!==projectId||grant.sessionId!==session.id||
       grant.senderActorId!==item.senderActorId||grant.receiverRoleId!==session.roleId||grant.cwd!==session.cwd||
@@ -362,6 +366,13 @@ export class SessionMessageService {
       const m=required(await store.getSessionMessage(messageId),'message');
       await store.updateSessionMessage({...m,state:ok?(visible?'replied':'completed_without_reply'):'failed',version:m.version+1,updatedAt:now},m.version);
       await store.markSessionMessageSettled(p.sessionId,messageId,now);
+      // The first quota/authentication failure pauses the whole provider: every Session of it would fail the same way.
+      if(!ok&&holdsProvider(turn.error?.category)){
+        const session=await tx.getRuntimeSession(p.sessionId);
+        await tx.recovery?.openProviderHold({id:this.deps.ids.next(),provider:session?.runtimeProvider??'codex',
+          category:turn.error!.category,causeSessionId:p.sessionId,causeMessageId:messageId,
+          reason:(turn.error?.summary??'quota or authentication failure').slice(0,1000)},now);
+      }
     });
   }
 }
