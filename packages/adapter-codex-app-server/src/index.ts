@@ -149,6 +149,7 @@ export type RuntimeCompactionPreflightStage = "request_validation" | "owner_resu
  * A known failure before `thread/compact/start` was sent. The stage and safe
  * cause distinguish this from a lost compaction acknowledgement.
  */
+const CODEX_REASONING_EFFORTS: readonly string[] = ["minimal", "low", "medium", "high", "xhigh", "max"];
 export class RuntimeCompactionPreflightError extends RuntimeProtocolError {
   readonly code: string;
   constructor(readonly stage: RuntimeCompactionPreflightStage, cause: unknown) {
@@ -1050,6 +1051,8 @@ export class CodexAppServerAdapter implements RuntimePort {
   /** Exact, unused thread/start proof on this owner connection; no native Turn has been attempted. */
   /** Without thread/settings/update (Codex 0.167 and others) effort cannot change on a live Thread; it rides on each turn/start. */
   appliesEffortWithNextTurn(_binding: RuntimeBinding): boolean { return !this.features.executionProfileSwitch; }
+  /** Codex levels plus the gateway's `max` (not `none`: the profile table cannot store it); what a model really lists is checked against the model catalog. */
+  allowedReasoningEfforts(_binding: RuntimeBinding): readonly string[] { return CODEX_REASONING_EFFORTS; }
   hasFreshStartProof(binding: RuntimeBinding): boolean {
     this.owned(binding);
     const fresh=this.freshThreads.get(binding.nativeThreadId);
@@ -1750,23 +1753,28 @@ export class CodexAppServerAdapter implements RuntimePort {
     throw new RuntimeProtocolError("archived thread listing exceeds bounded recovery window");
   }
 
+  /**
+   * thread/turns/list with the bounded retry every caller needs: the pinned schemas declare the method, yet 0.167 answers -32601 for a
+   * short window right after turn/start while the Thread's history store attaches (observed about 50 ms on 0.167.0-alpha.3.2). A read has
+   * no side effect, so a bounded retry settles that window instead of reporting a fault. Listing and the per-turn effort readback share it.
+   */
+  private async requestTurnsList(params: Record<string, unknown>): Promise<Record<string, unknown> | null> {
+    for (let attempt = 0; ; attempt++) {
+      try { return object(await this.request("thread/turns/list", params)); }
+      catch (error) {
+        if (!(error instanceof RuntimeServerError && error.code === -32601) || attempt >= TURN_LIST_ATTACH_RETRIES) throw error;
+        await new Promise(resolveDelay => setTimeout(resolveDelay, TURN_LIST_ATTACH_DELAY_MS * (attempt + 1)));
+      }
+    }
+  }
+
   async listTurns(binding: RuntimeBinding, cursor?: string): Promise<RuntimePage<RuntimeTurn>> {
     this.owned(binding);
     // Metadata-only listing is supported by the pinned modern protocols; 0.154 has no itemsView.
     const params = { threadId: binding.nativeThreadId, limit: 100,
       sortDirection:'desc', ...(this.features.modern ? { itemsView: "notLoaded" } : {}),
       ...(cursor ? { cursor } : {}) };
-    // The pinned schemas declare this method, yet 0.167 answers -32601 for a short window right after
-    // turn/start while the Thread's history store attaches (observed about 50 ms on 0.167.0-alpha.3.2).
-    // A read has no side effect, so a bounded retry settles that window instead of reporting a fault.
-    let result: Record<string, unknown> | null = null;
-    for (let attempt = 0; ; attempt++) {
-      try { result = object(await this.request("thread/turns/list", params)); break; }
-      catch (error) {
-        if (!(error instanceof RuntimeServerError && error.code === -32601) || attempt >= TURN_LIST_ATTACH_RETRIES) throw error;
-        await new Promise(resolveDelay => setTimeout(resolveDelay, TURN_LIST_ATTACH_DELAY_MS * (attempt + 1)));
-      }
-    }
+    const result = await this.requestTurnsList(params);
     const turns = Array.isArray(result?.data) ? result.data.map(runtimeTurn) : null;
     if (!turns || turns.some(turn => !turn)) throw new RuntimeProtocolError("invalid turns page");
     if (this.features.modern &&
@@ -1859,7 +1867,7 @@ export class CodexAppServerAdapter implements RuntimePort {
    */
   private async withObservedEffort(binding: RuntimeBinding, turn: RuntimeTurn): Promise<RuntimeTurn> {
     try {
-      const latest = object(await this.request("thread/turns/list", { threadId: binding.nativeThreadId, limit: 1, sortDirection: "desc", ...(this.features.modern ? { itemsView: "notLoaded" } : {}) }));
+      const latest = await this.requestTurnsList({ threadId: binding.nativeThreadId, limit: 1, sortDirection: "desc", ...(this.features.modern ? { itemsView: "notLoaded" } : {}) });
       const first = Array.isArray(latest?.data) ? object(latest.data[0]) : null;
       if (first?.id !== turn.id) return { ...turn, observedReasoningEffort: null };
       const readback = object(await this.request("thread/read", { threadId: binding.nativeThreadId, includeTurns: false }));

@@ -245,6 +245,8 @@ export class ClaudeAgentSdkAdapter implements RuntimePort {
   }
   /** Claude takes the effort with every query, so an effort-only revision needs no native activation: it applies from the next Turn. */
   appliesEffortWithNextTurn(_binding: RuntimeBinding): boolean { return true; }
+  /** The effort levels Claude takes: its own set, which has no `none` or `minimal`. */
+  allowedReasoningEfforts(_binding: RuntimeBinding): readonly string[] { return [...EFFORTS]; }
 
   /** Records the Session in the ledger. Claude creates its native session with the first Turn, under this ID. */
   async create(spec: RuntimeSessionSpec): Promise<RuntimeBinding> {

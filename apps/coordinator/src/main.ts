@@ -160,7 +160,7 @@ const ids = { next: randomUUID };
 const hasher = { hash: (value: string) => createHash("sha256").update(value, "utf8").digest("hex") };
 const usage = new UsageService({ uow, clock });
 // The runner is built after the service; the recovery authority asks it, once it exists, how effort reaches the runtime.
-const lateRunner: { current: { effortAppliesNextTurn(session: RuntimeSessionRecord): boolean } | null } = { current: null };
+const lateRunner: { current: { effortAppliesNextTurn(session: RuntimeSessionRecord): boolean; allowedReasoningEfforts(session: RuntimeSessionRecord): readonly string[] | null } | null } = { current: null };
 const service = new WorkflowService({
   uow, clock, ids,
   hasher,
@@ -174,7 +174,8 @@ const service = new WorkflowService({
   },
   recoveryAuthority: { ...staticRecoveryAuthority(
     () => loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE), currentIdentity),
-    effortAppliesNextTurn: (session: RuntimeSessionRecord) => lateRunner.current?.effortAppliesNextTurn(session) === true },
+    effortAppliesNextTurn: (session: RuntimeSessionRecord) => lateRunner.current?.effortAppliesNextTurn(session) === true,
+    allowedEfforts: (session: RuntimeSessionRecord) => lateRunner.current?.allowedReasoningEfforts(session) ?? null },
   collaborationAuthority: {
     actorForRole: async (projectId,roleId) => {
       const config=await currentQueueConfiguration();

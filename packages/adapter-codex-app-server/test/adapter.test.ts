@@ -1660,6 +1660,7 @@ test('effort rides on turn/start where the runtime cannot update a live Thread, 
   const anyBinding = {} as Parameters<typeof bare.appliesEffortWithNextTurn>[0];
   assert.equal(bare.appliesEffortWithNextTurn(anyBinding), true, '0.167 has no thread/settings/update');
   assert.equal(withUpdate.appliesEffortWithNextTurn(anyBinding), false, 'a runtime with thread/settings/update activates natively');
+  assert.ok(bare.allowedReasoningEfforts(anyBinding).includes('max') && !bare.allowedReasoningEfforts(anyBinding).includes('none'), "Codex's set has the gateway's max; the profile table cannot store none");
 
   const adapter = bare;
   const internals = adapter as unknown as Record<string, unknown>;
@@ -1693,6 +1694,48 @@ test('effort rides on turn/start where the runtime cannot update a live Thread, 
   };
   const second = await adapter.startTurn(binding, 'business', 'op-2', profile);
   assert.equal(second.id, 'turn-2'); assert.equal(second.observedReasoningEffort, null);
+});
+
+test('the per-turn effort readback waits out the same -32601 attach window as turn listing, for Run, message and direct-input starts alike', async () => {
+  const adapter = new CodexAppServerAdapter({expectedVersion:'codex-cli 0.167.0-alpha.3.2'});
+  const internals = adapter as unknown as Record<string, unknown>;
+  internals.owned = () => {};
+  let listCalls = 0, rejections = 2;
+  internals.request = async (method: string) => {
+    if (method === 'turn/start') return { turn: { id: 'turn-1', status: 'inProgress', completedAt: null, items: [] } };
+    if (method === 'thread/turns/list') {
+      listCalls++;
+      if (rejections-- > 0) throw new RuntimeServerError(method, listCalls, -32601, 'list_turns is not supported yet');
+      return { data: [{ id: 'turn-1', status: 'inProgress' }], nextCursor: null };
+    }
+    if (method === 'thread/read') return { thread: { id: 'thread', reasoningEffort: 'max' } };
+    assert.fail(method);
+  };
+  const binding = { sessionId: 's', roleId: 'r', projectId: 'p', nativeThreadId: 'thread', nativeSessionId: 'thread', cwd: '/tmp/e', authorizationScope: 'project',
+    owner: 'evoloop-codex-app-server', resumeProfile: { actorId: 'a', model: 'deepseek/deepseek-flash', reasoningEffort: 'max', sandbox: 'danger-full-access',
+      approvalPolicy: 'never', executionProfileRevisionId: 'rev-1' } } as Parameters<typeof adapter.startTurn>[0];
+  const profile = { revisionId: 'rev-1', version: 2, model: 'deepseek/deepseek-flash', reasoningEffort: 'max', sandbox: 'danger-full-access', approvalPolicy: 'never',
+    cwd: '/tmp/e', authorizationScope: 'project', provenance: 'revised' } as Parameters<typeof adapter.startTurn>[3];
+  // Run start.
+  const run = await adapter.startTurn(binding, 'business', 'op-run', profile);
+  assert.equal(listCalls, 3, 'two transient rejections, then the page');
+  assert.equal(run.observedReasoningEffort, 'max', 'the readback is read, not reported unread');
+  // Message / direct-input start (the conversation path both use).
+  listCalls = 0; rejections = 2;
+  // Admission, resume and idle checks are not under test here: only what happens after turn/start is.
+  (internals.conversationQualifications as Map<string, unknown>).set('thread', { observedAt: Date.now(), fingerprint: 'f'.repeat(64), model: 'deepseek/deepseek-flash' });
+  internals.qualifyConversationThread = async () => ({ available: true, reason: 'ok', fingerprint: 'f'.repeat(64) });
+  internals.resumeBinding = async () => ({ usedStartProof: false });
+  internals.nativeThreadIdle = async () => true;
+  const conversation = await (adapter as unknown as { startConversationTurn(b: unknown, i: string, o: string): Promise<{ observedReasoningEffort?: string | null }> })
+    .startConversationTurn(binding, 'hello', 'op-message');
+  assert.equal(listCalls, 3, 'the conversation start retries the same way');
+  assert.equal(conversation.observedReasoningEffort, 'max');
+  // Persistent rejection: bounded, then honestly unread; the Turn that already started is never failed.
+  listCalls = 0; rejections = Infinity;
+  const unread = await adapter.startTurn(binding, 'business', 'op-late', profile);
+  assert.equal(listCalls, 6, 'the wait is bounded');
+  assert.equal(unread.observedReasoningEffort, null);
 });
 
 for (const [expectedVersion, replaces] of [["codex-cli 0.167.0-alpha.3.2", true], ["codex-cli 0.166.0-alpha.6", false]] as const) {

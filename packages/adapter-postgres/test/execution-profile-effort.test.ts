@@ -17,7 +17,8 @@ const hash = (text: string) => createHash("sha256").update(text).digest("hex");
 const base = { uow, clock: { now: () => new Date().toISOString() }, ids: { next: randomUUID }, hasher: { hash } };
 let nextTurnRuntime = true;
 // One authority whose runtime capability can be switched: Codex 0.167 has no thread/settings/update, 0.166-alpha.6 has.
-const workflow = new WorkflowService({ ...base, recoveryAuthority: { canRevise: async () => true, effortAppliesNextTurn: () => nextTurnRuntime } });
+let allowedEfforts: readonly string[] | null = null;
+const workflow = new WorkflowService({ ...base, recoveryAuthority: { canRevise: async () => true, effortAppliesNextTurn: () => nextTurnRuntime, allowedEfforts: () => allowedEfforts } });
 const runtime = new RuntimeWorkflowService(base);
 const p = randomUUID(), role = randomUUID(), roleRev = randomUUID();
 const lead: Principal = { actorId: "lead", projectIds: [p], permissions: ["read", "write", "review"] };
@@ -110,22 +111,70 @@ test("a mismatch between requested and reported effort is flagged in the Run's e
   assert.ok((await workflow.listRuntimeEvents(lead, p, runId)).some(e => e.kind === "run.bound" && /requested=max observed=high MISMATCH/.test(e.detail)));
 });
 
-test("a model change, or a runtime that can update the live Thread, keeps the native activation path", async () => {
+test("a model change that carries an effort is refused and nothing is saved where the runtime cannot switch in place; a runtime that can keeps the native activation path", async () => {
   nextTurnRuntime = true;
   const modelChange = await newSession();
-  await revise(modelChange, "deepseek/deepseek-v4-pro", "max");
-  assert.equal((await profileOf(modelChange)).executionProfile!.activationState, "pending", "a model change is still activated natively");
+  const before = await profileOf(modelChange);
+  const refused = await workflow.execute(lead, { type: "runtime.session.executionProfile.revise", projectId: p, operationId: randomUUID(), sessionId: modelChange,
+    expectedVersion: before.version, expectedExecutionProfileRevisionId: before.executionProfile!.revision.revisionId, model: "deepseek/deepseek-v4-pro",
+    reasoningEffort: before.executionProfile!.revision.reasoningEffort ?? "high", sandbox: "danger-full-access", approvalPolicy: "never", evidenceRef: "fixture://grant", reason: "model only" } as never)
+    .catch(error => ({ status: "rejected", code: (error as { code: string }).code }));
+  assert.equal(refused.status, "rejected"); assert.equal((refused as { code: string }).code, "EXECUTION_PROFILE_MODEL_CHANGE_UNSUPPORTED");
+  const after = await profileOf(modelChange);
+  assert.equal(after.executionProfile!.revision.revisionId, before.executionProfile!.revision.revisionId, "no revision was saved");
+  assert.equal(after.version, before.version);
+  assert.equal(await gate(modelChange), "open", "the recovery gate stays open");
+  // Model and effort together: the same refusal.
+  const both = await workflow.execute(lead, { type: "runtime.session.executionProfile.revise", projectId: p, operationId: randomUUID(), sessionId: modelChange,
+    expectedVersion: before.version, expectedExecutionProfileRevisionId: before.executionProfile!.revision.revisionId, model: "deepseek/deepseek-v4-pro", reasoningEffort: "max",
+    sandbox: "danger-full-access", approvalPolicy: "never", evidenceRef: "fixture://grant", reason: "both" } as never).catch(error => ({ status: "rejected", code: (error as { code: string }).code }));
+  assert.equal((both as { code: string }).code, "EXECUTION_PROFILE_MODEL_CHANGE_UNSUPPORTED");
   nextTurnRuntime = false;
+  const native = await newSession();
+  await revise(native, "deepseek/deepseek-v4-pro", "max");
+  assert.equal((await profileOf(native)).executionProfile!.activationState, "pending", "a runtime with thread/settings/update activates a model change natively");
   const effortOnly = await newSession();
   await revise(effortOnly, "deepseek/deepseek-flash", "max");
-  assert.equal((await profileOf(effortOnly)).executionProfile!.activationState, "pending", "a runtime with thread/settings/update activates natively as before");
+  assert.equal((await profileOf(effortOnly)).executionProfile!.activationState, "pending", "and an effort change too");
   nextTurnRuntime = true;
+});
+
+test("effort is checked against the Session's own runtime: a Claude Session never stores none or minimal, a Codex Session may", async () => {
+  nextTurnRuntime = true;
+  const claude = await newSession();
+  allowedEfforts = ["low", "medium", "high", "xhigh", "max"];
+  for (const bad of ["minimal"]) {
+    const s = await profileOf(claude);
+    const refused = await workflow.execute(lead, { type: "runtime.session.executionProfile.revise", projectId: p, operationId: randomUUID(), sessionId: claude,
+      expectedVersion: s.version, expectedExecutionProfileRevisionId: s.executionProfile!.revision.revisionId, model: s.executionProfile!.revision.model ?? "deepseek/deepseek-flash",
+      reasoningEffort: bad, sandbox: "danger-full-access", approvalPolicy: "never", evidenceRef: "fixture://grant", reason: "not a Claude level" } as never)
+      .catch(error => ({ status: "rejected", code: (error as { code: string }).code }));
+    assert.equal(refused.status, "rejected"); assert.equal((refused as { code: string }).code, "REASONING_EFFORT_UNSUPPORTED", bad);
+    assert.equal((await profileOf(claude)).executionProfile!.revision.revisionId, s.executionProfile!.revision.revisionId, "nothing was saved");
+  }
+  const s = await profileOf(claude);
+  await revise(claude, s.executionProfile!.revision.model ?? "deepseek/deepseek-flash", "xhigh");
+  assert.equal((await profileOf(claude)).executionProfile!.revision.reasoningEffort, "xhigh");
+  // `none` is not storable at all (the profile table has no such level), so it is an unknown level everywhere, not a storage error.
+  const n = await profileOf(claude);
+  const none = await workflow.execute(lead, { type: "runtime.session.executionProfile.revise", projectId: p, operationId: randomUUID(), sessionId: claude,
+    expectedVersion: n.version, expectedExecutionProfileRevisionId: n.executionProfile!.revision.revisionId, model: n.executionProfile!.revision.model ?? "deepseek/deepseek-flash",
+    reasoningEffort: "none", sandbox: "danger-full-access", approvalPolicy: "never", evidenceRef: "fixture://grant", reason: "none" } as never).catch(error => ({ status: "rejected", code: (error as { code: string }).code }));
+  assert.equal((none as { code: string }).code, "REASONING_EFFORT_UNKNOWN");
+  allowedEfforts = ["minimal", "low", "medium", "high", "xhigh", "max"];
+  const codex = await newSession();
+  const c = await profileOf(codex);
+  await revise(codex, c.executionProfile!.revision.model ?? "deepseek/deepseek-flash", "minimal");
+  assert.equal((await profileOf(codex)).executionProfile!.revision.reasoningEffort, "minimal");
+  allowedEfforts = null;
 });
 
 test("the shortcut compares with the profile in force: a pending model change blocks it; an unknown effort is refused", async () => {
   nextTurnRuntime = true;
   const sessionId = await newSession();
+  nextTurnRuntime = false;
   await revise(sessionId, "deepseek/deepseek-v4-pro", "high");           // model change: pending, not yet confirmed natively
+  nextTurnRuntime = true;
   assert.equal((await profileOf(sessionId)).executionProfile!.activationState, "pending");
   const s = await profileOf(sessionId);
   const effortOnlyOnPending = await workflow.execute(lead, { type: "runtime.session.executionProfile.revise", projectId: p, operationId: randomUUID(), sessionId,
@@ -142,6 +191,7 @@ test("the shortcut compares with the profile in force: a pending model change bl
       expectedVersion: f.version, expectedExecutionProfileRevisionId: f.executionProfile!.revision.revisionId, model: "deepseek/deepseek-flash", reasoningEffort: bad,
       sandbox: "danger-full-access", approvalPolicy: "never", evidenceRef: "fixture://grant", reason: "typo" } as never).catch(error => ({ status: "rejected", code: (error as { code: string }).code }));
     assert.equal(refused.status, "rejected", `${bad} is refused`);
+    assert.equal((refused as { code: string }).code, bad === "" ? "INVALID_COMMAND" : "REASONING_EFFORT_UNKNOWN", `${JSON.stringify(bad)} is refused as an unknown level, not for some other reason`);
   }
   await revise(fresh, "deepseek/deepseek-flash", "low");                  // a spelled level is accepted
   assert.equal((await profileOf(fresh)).executionProfile!.revision.reasoningEffort, "low");

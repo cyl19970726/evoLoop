@@ -209,16 +209,20 @@ test("an effort-only change on a runtime that applies effort with each turn/star
       assert.equal(unsupported.statusCode,409,unsupported.body);
       assert.equal(unsupported.json().code,"REASONING_EFFORT_UNSUPPORTED");
     } finally {await listed.close();}
-    // A model and an effort change together would need the in-place switch this runtime lacks: refused up front, with the two-step advice.
+    // Any model change that carries an effort would need the in-place switch this runtime lacks: refused up front and nothing is saved.
     f.calls.length=0;
     const both=await app.inject({method:"POST",url:"/api/commands",headers:{authorization:`Bearer ${token}`},payload:{...f.command,operationId:randomUUID(),expectedVersion:f.session.version}});
     assert.equal(both.statusCode,409,both.body);
-    assert.equal(both.json().code,"EXECUTION_PROFILE_SPLIT_REQUIRED");
+    assert.equal(both.json().code,"EXECUTION_PROFILE_MODEL_CHANGE_UNSUPPORTED");
+    assert.doesNotMatch(both.json().message??"",/先只改模型/,"the advice no longer points to a two-step route that cannot work");
+    assert.match(both.json().message??"",/新建 Session/);
     assert.deepEqual(f.calls,[],"nothing was read or written");
-    // A model change alone (same effort) still goes through the native checks.
+    // A model change alone that keeps the Session's effort is the same thing: it was once saved as a model revision nothing could activate.
+    f.calls.length=0;
     const modelOnly=await app.inject({method:"POST",url:"/api/commands",headers:{authorization:`Bearer ${token}`},
       payload:{...f.command,operationId:randomUUID(),expectedVersion:f.session.version,reasoningEffort:f.session.executionProfile!.revision.reasoningEffort}});
     assert.equal(modelOnly.statusCode,409,modelOnly.body);
-    assert.deepEqual(f.calls,["register","inspect","listTurns"]);
+    assert.equal(modelOnly.json().code,"EXECUTION_PROFILE_MODEL_CHANGE_UNSUPPORTED");
+    assert.deepEqual(f.calls,[],"refused before any native read, and nothing was saved");
   } finally {await app.close();}
 });

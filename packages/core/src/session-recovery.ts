@@ -6,9 +6,13 @@ export interface RecoveryAuthority {
   canRevise(principal:Principal,session:RuntimeSessionRecord,target:{model:string;sandbox:'danger-full-access';approvalPolicy:'never'}):Promise<boolean>;
   /** The runtime has no native way to change effort on a live Thread (no thread/settings/update): effort then travels with each turn/start. */
   effortAppliesNextTurn?(session:RuntimeSessionRecord):boolean;
+  /** The effort levels this Session's runtime accepts (Claude has no none/minimal); absent or null: only the shared list is checked. */
+  allowedEfforts?(session:RuntimeSessionRecord):readonly string[]|null;
 }
-/** Every effort value the supported runtimes know (Codex's levels, the gateway's max, Claude's xhigh). Anything else is a typo. */
-export const KNOWN_REASONING_EFFORTS: ReadonlySet<string> = new Set(['none','minimal','low','medium','high','xhigh','max']);
+/** A runtime without an in-place settings switch cannot change the model of a Session that has an effort; a new Session is the way. */
+export const MODEL_CHANGE_UNSUPPORTED_MESSAGE='此运行时不能在已有的 Thread 上原生切换模型（没有 thread/settings/update），所以带思考强度的 Session 不能改模型，未保存新配置。要换模型，请按目标模型新建 Session（session prepare）；只改思考强度是可以的。';
+/** Every effort value the supported runtimes know and the profile table can hold (migration 051: no `none`, which a gateway may list but nothing can store). Anything else is a typo. */
+export const KNOWN_REASONING_EFFORTS: ReadonlySet<string> = new Set(['minimal','low','medium','high','xhigh','max']);
 const need=<T>(value:T|null|undefined,label:string):T=>{if(value==null)throw new DomainError('NOT_FOUND',label+' unavailable');return value;};
 const active=new Set(['requested','dispatching','running','unknown']);
 export async function applySessionRecovery(tx:Transaction,principal:Principal,command:SessionRecoveryCommand,
@@ -55,6 +59,10 @@ export async function applySessionRecovery(tx:Transaction,principal:Principal,co
       throw new DomainError('REASONING_EFFORT_REQUIRED','A configured reasoning effort cannot be cleared by a legacy profile command');
     if(command.reasoningEffort&&!KNOWN_REASONING_EFFORTS.has(command.reasoningEffort))
       throw new DomainError('REASONING_EFFORT_UNKNOWN',`Unknown reasoning effort "${command.reasoningEffort}"; use one of ${[...KNOWN_REASONING_EFFORTS].join(', ')}`);
+    // The Session's own runtime decides what it takes: a Claude Session never stores none or minimal, even when its catalog lacks the model.
+    const runtimeEfforts=command.reasoningEffort?authority?.allowedEfforts?.(session)??null:null;
+    if(command.reasoningEffort&&runtimeEfforts&&!runtimeEfforts.includes(command.reasoningEffort))
+      throw new DomainError('REASONING_EFFORT_UNSUPPORTED',`This Session's runtime does not take reasoning effort "${command.reasoningEffort}"; use one of ${runtimeEfforts.join(', ')}. Nothing was saved.`);
     if(['attempting','unknown'].includes(profile.activationState))
       throw new DomainError('PROFILE_ACTIVATION_UNRESOLVED','Reconcile the original activation before changing its target');
     if(command.sandbox!=='danger-full-access'||command.approvalPolicy!=='never')
@@ -77,6 +85,9 @@ export async function applySessionRecovery(tx:Transaction,principal:Principal,co
     const effortOnly=!!command.reasoningEffort&&profile.revision.model===command.model&&
       profile.revision.sandbox===command.sandbox&&profile.revision.approvalPolicy===command.approvalPolicy;
     const nextTurnRuntime=authority.effortAppliesNextTurn?.(session)===true;
+    // Without a native in-place switch a model change that carries an effort could never be activated: refuse it, save nothing.
+    if(nextTurnRuntime&&command.reasoningEffort&&profile.revision.model!==command.model)
+      throw new DomainError('EXECUTION_PROFILE_MODEL_CHANGE_UNSUPPORTED',MODEL_CHANGE_UNSUPPORTED_MESSAGE);
     // The shortcut is only for a change against the confirmed profile: while the head is still pending or was rejected (a model change not
     // yet confirmed), an effort-only request would make that unconfirmed model count as in force.
     if(effortOnly&&nextTurnRuntime&&profile.activationState!=='active'&&profile.activeRevisionId!==profile.revision.revisionId)

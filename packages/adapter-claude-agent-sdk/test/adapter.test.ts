@@ -402,6 +402,7 @@ test("an effort-only revision applies from the next Turn: the adapter says so an
     const revision1 = randomUUID(), revision2 = randomUUID();
     const base = await h.adapter.create({ ...h.spec, executionProfileRevisionId: revision1 });
     assert.equal(h.adapter.appliesEffortWithNextTurn(base), true, "effort travels with each query, there is nothing to activate");
+    assert.deepEqual([...h.adapter.allowedReasoningEfforts(base)].sort(), ["high", "low", "max", "medium", "xhigh"], "Claude's own set: no none, no minimal");
     const withEffort = (effort: string, revisionId: string): RuntimeBinding => ({ ...base, resumeProfile: { ...base.resumeProfile!, reasoningEffort: effort, executionProfileRevisionId: revisionId } });
     const first = withEffort("high", revision1), second = withEffort("low", revision2);
     await h.adapter.registerBinding(first);

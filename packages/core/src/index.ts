@@ -42,6 +42,7 @@ import type { Clock, ContentHasher, IdFactory, Reader, Transaction, UnitOfWork }
 import { applyProviderHoldRelease } from "./provider-hold.js";
 import type { ProviderHoldListing, ProviderHoldView } from "@evoloop/contracts/provider-hold";
 import { applySessionRecovery, type RecoveryAuthority } from './session-recovery.js';
+export { MODEL_CHANGE_UNSUPPORTED_MESSAGE } from './session-recovery.js';
 import type { SessionRecoveryView } from '@evoloop/contracts/session-recovery';
 
 export { DomainError } from "@evoloop/contracts/ports";

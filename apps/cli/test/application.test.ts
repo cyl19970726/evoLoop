@@ -528,3 +528,35 @@ test("command run shows the failing field and its accepted form when executeAtUt
     }
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
+
+test("session profile set keeps the model in force: without --model it takes the confirmed active model, not a pending head that was never activated", async () => {
+  const project = "00000000-0000-4000-8000-000000000051";
+  const session = "00000000-0000-4000-8000-000000000052";
+  const revision = "00000000-0000-4000-8000-000000000053";
+  const operation = "00000000-0000-4000-8000-000000000054";
+  const directory = await mkdtemp(join(tmpdir(), "evoloop-profile-set-"));
+  let submitted: Record<string, unknown> | null = null;
+  const fetch = mock.method(globalThis, "fetch", async (url: string | URL | Request, init?: RequestInit) => {
+    const path = new URL(String(url)).pathname;
+    if (path === "/api/session") return new Response(JSON.stringify({ principal: { actorId: "reviewer", projectIds: [project] } }));
+    if (path === `/api/projects/${project}/runtime/sessions`)
+      return new Response(JSON.stringify([{ id: session, version: 7, executionProfile: { activeModel: "deepseek/deepseek-flash",
+        revision: { revisionId: revision, model: "deepseek/deepseek-v4-pro", reasoningEffort: "high" } } }]));
+    if (path === "/api/commands") { submitted = JSON.parse(String(init?.body)); return new Response(JSON.stringify({ status: "applied", operationId: operation, entityId: session, version: 8 })); }
+    if (path === `/api/projects/${project}/operations/${operation}`) return new Response(JSON.stringify({ result: { status: "applied", operationId: operation, entityId: session, version: 8 } }));
+    throw new Error(`Unexpected path ${path}`);
+  });
+  try {
+    const result = await run(["session", "profile", "set", session, "--project", project, "--effort", "max", "--reason", "think harder", "--evidence-ref", "fixture://grant",
+      "--operation", operation], { EVOLOOP_TOKEN: "fixture", EVOLOOP_STATE_DIR: directory });
+    assert.equal(result.code, 0, result.stderr);
+    assert.equal(submitted?.model, "deepseek/deepseek-flash", "the model in force, not the pending head's");
+    assert.equal(submitted?.reasoningEffort, "max");
+    assert.equal(submitted?.expectedExecutionProfileRevisionId, revision);
+    // An explicit --model still wins.
+    submitted = null;
+    await run(["session", "profile", "set", session, "--project", project, "--model", "deepseek/deepseek-v4-pro", "--effort", "max", "--reason", "x", "--evidence-ref", "fixture://grant",
+      "--operation", "00000000-0000-4000-8000-000000000055"], { EVOLOOP_TOKEN: "fixture", EVOLOOP_STATE_DIR: directory });
+    assert.equal(submitted?.model, "deepseek/deepseek-v4-pro");
+  } finally { fetch.mock.restore(); await rm(directory, { recursive: true, force: true }); }
+});

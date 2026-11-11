@@ -8,6 +8,7 @@ import { DomainError } from "@evoloop/contracts/ports";
 import { nativeChildDiagnosticSchema, ownerOf, providerOfOwner, sessionProvider, RuntimeNotSentError, RuntimeProtocolError, RuntimeServerError, RuntimeUnknownError,
   type NativeChildDiagnosticRecord as NativeChildDiagnostic, type RuntimeProvider } from "@evoloop/contracts/runtime";
 import type { WorkflowService } from "@evoloop/core";
+import { MODEL_CHANGE_UNSUPPORTED_MESSAGE } from "@evoloop/core";
 import type { SessionProfileRecord } from "@evoloop/contracts/session-assignments";
 import type { RuntimeWorkflowService } from "@evoloop/core/runtime";
 import type { RuntimeGrant } from "../configuration.js";
@@ -66,6 +67,8 @@ export type ManagedRuntime = RuntimePort & { open(): Promise<void>; registerBind
   hasFreshStartProof?(binding:RuntimeBinding):boolean;
   /** True when this runtime cannot change effort on a live Thread, so effort travels with each turn/start. */
   appliesEffortWithNextTurn?(binding:RuntimeBinding):boolean;
+  /** The effort levels this runtime accepts at all (a model's own list is narrower and checked separately). */
+  allowedReasoningEfforts?(binding:RuntimeBinding):readonly string[]|null;
   startConversationTurn?(binding:RuntimeBinding,input:string,operationId:string):Promise<RuntimeTurn>;
   qualifyConversationThread?(binding:RuntimeBinding):Promise<{available:boolean;reason:string;fingerprint:string|null}>;
   activateExecutionProfile?(current:RuntimeBinding,target:RuntimeSessionSpec,revisionId:string,operationId:string):Promise<RuntimeBinding>;
@@ -266,6 +269,11 @@ export class RuntimeRunner {
     if(!session.nativeThreadId||!session.nativeSessionId)return false;
     try{return this.runtime.appliesEffortWithNextTurn?.(bindingOf(session))===true;}catch{return false;}
   }
+  /** The effort levels this Session's runtime accepts; null when it cannot say. */
+  allowedReasoningEfforts(session:RuntimeSessionRecord):readonly string[]|null {
+    if(!session.nativeThreadId||!session.nativeSessionId)return null;
+    try{return this.runtime.allowedReasoningEfforts?.(bindingOf(session))??null;}catch{return null;}
+  }
   async preflightExecutionProfileRevision(principal:Principal,
     command:Extract<Command,{type:"runtime.session.executionProfile.revise"}>):Promise<void> {
     // Legacy model/policy-only activation uses a different native path.
@@ -289,9 +297,9 @@ export class RuntimeRunner {
     if(this.effortAppliesNextTurn(session)){
       // Only the effort changes and this runtime applies it with each turn/start: there is nothing to activate or read back first.
       if(head.model===command.model&&head.sandbox===command.sandbox&&head.approvalPolicy===command.approvalPolicy)return;
-      // A model change and an effort change together would need the native in-place switch this runtime does not have.
-      if(head.model!==command.model&&(head.reasoningEffort??null)!==(command.reasoningEffort??null))
-        throw new DomainError("EXECUTION_PROFILE_SPLIT_REQUIRED","此运行时不能同时改模型和思考强度：请分两步，先只改模型并等其确认生效，再只改强度。未保存新配置。");
+      // Any model change that carries an effort needs the native in-place switch this runtime does not have: refused here, nothing saved.
+      if(head.model!==command.model)
+        throw new DomainError("EXECUTION_PROFILE_MODEL_CHANGE_UNSUPPORTED",MODEL_CHANGE_UNSUPPORTED_MESSAGE);
     }
     if(!this.runtime.isReady())throw new DomainError("RUNTIME_READ_UNAVAILABLE","原生执行服务不可读，未保存新配置；请恢复连接后重试。");
     try {
