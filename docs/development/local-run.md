@@ -235,7 +235,42 @@ npm run docs:build
 git diff --check
 ```
 
-**开发和测试只用独立的 PostgreSQL 实例，不连线上实例**：怎样确认、怎样自己起一个、仓库里的保护和维护者隔离步骤见[开发与测试用哪个数据库](database-isolation.md)；测试库名对但服务器上还有 `evoloop` 等非 `evoloop_*` 库时，测试和 `test:integration` 会直接拒绝。持久化检查用独立 PostgreSQL 18 测试库；例如 `TEST_DATABASE_URL='postgres://USER:PASSWORD@127.0.0.1:5432/evoloop_local_test' npm run test:integration`。入口从该连接串取得主机和端口，为固定库名测试创建缺失的专用 `evoloop_*_test` 库；同一个库的文件逐个运行，不同库分组并行（默认最多 4 组，`EVOLOOP_INTEGRATION_CONCURRENCY=1` 恢复全部串行）；测试库不会自动删除，因此执行账号需要 `CREATEDB` 或预先建库。测试有故障注入，绝不能指向正在用的开发库。备份还应在新空库和外部目录做隔离恢复演练。测试入口以 `package.json` 与 CI 工作流为准；最近验收的提交、数量和范围见[当前基线](../roadmap.md#当前基线)。旧轮次的固定结果见相应 PR/实测报告，不作为当前最低通过数量。构建、合成测试和隔离备份不等于生产 OpenViking、飞书双向协作或真人亲用已经验收；当前边界见[阶段路线](../roadmap.md)，S1a 历史证据见[首片实测](../research/design-review-20261020.md)。
+**开发和测试只用独立的 PostgreSQL 实例，不连线上实例**：怎样确认、怎样自己起一个、仓库里的保护和维护者隔离步骤见[开发与测试用哪个数据库](database-isolation.md)；测试库名对但服务器上还有 `evoloop` 等非 `evoloop_*` 库时，测试和 `test:integration` 会直接拒绝。持久化检查用独立 PostgreSQL 18 测试库；例如 `TEST_DATABASE_URL='postgres://USER:PASSWORD@127.0.0.1:5432/evoloop_local_test' npm run test:integration`。入口从该连接串取得主机和端口，为固定库名测试创建缺失的专用 `evoloop_*_test` 库；同一个库的文件逐个运行，不同库分组并行（默认最多 4 组，`EVOLOOP_INTEGRATION_CONCURRENCY=1` 恢复全部串行）；两个文件最多的大组按每库最多 4 个文件拆成 `evoloop_*_shard_X_test` 额外库并行（`EVOLOOP_INTEGRATION_SHARD_SIZE` 调整，设很大即不拆；本次运行新建的分库在全部通过后自动删除，失败时保留以便检查，`EVOLOOP_INTEGRATION_KEEP_SHARDS=1` 保留以加快重跑）；CI 的单元与集成测试是并行任务，必需检查名仍是汇总任务 `app`；`npm run metrics:ci -- --limit 20 --event pull_request --success-only` 只读取 GitHub Actions 的步骤耗时、排队与重跑（自动翻页：`--before` 之后即使有 100 次以上更新的运行也会继续翻到够数；`--before`/`--after` 窗口里取不满 `--limit` 一律报错，不返回短样本；失败率按同窗口全部已完成运行计算），用于前后对比；测试库不会自动删除，因此执行账号需要 `CREATEDB` 或预先建库。测试有故障注入，绝不能指向正在用的开发库。备份还应在新空库和外部目录做隔离恢复演练。测试入口以 `package.json` 与 CI 工作流为准；最近验收的提交、数量和范围见[当前基线](../roadmap.md#当前基线)。旧轮次的固定结果见相应 PR/实测报告，不作为当前最低通过数量。构建、合成测试和隔离备份不等于生产 OpenViking、飞书双向协作或真人亲用已经验收；当前边界见[阶段路线](../roadmap.md)，S1a 历史证据见[首片实测](../research/design-review-20261020.md)。
+
+### 脚本测试要接进 CI 会执行的那组
+
+`scripts/` 下的每个 `*.test.mjs` 必须被某个 CI 工作流会运行的 npm 脚本（通常是 `test:unit`）点名或用通配符覆盖，否则它只会在手动运行时才执行，`app` 全绿也说明不了它。`scripts/ci-test-coverage.test.mjs` 沿工作流里的 `npm run` 逐层展开，找出没人运行的测试并失败；确实无法在 CI 运行的（例如 `scripts/backup.test.mjs` 需要专用的 `evoloop_backup_test` 库和 PostgreSQL 18 客户端工具）要在该文件的 `MANUAL_ONLY` 里写明理由，条目失效时检查也会失败。
+
+### 集成测试与 PostgreSQL 锁表
+
+**现象。** CI 的 `app` 检查偶尔报 `out of shared memory`，提示调大 `max_locks_per_transaction`（#347 一次，#339 一次；#347 重跑通过，#339 的失败当时有 4 个文件同时挂）。
+
+**根因（实测）。** PostgreSQL 在事务结束前一直持有它拿到的每一个锁，所有连接共用一张大小为 `max_locks_per_transaction × (max_connections + max_prepared_transactions)` 的锁表，默认 64×100=6400。集成测试每个文件在自己的库里建一个测试 schema、结束时 `DROP SCHEMA … CASCADE`，几个文件同时进行（默认并发 4）时锁都落在这同一张表里。用 `pg_locks` 按 5–20 毫秒采样，在 `postgres:18.6` 默认配置上：
+
+| 操作 | 持有的锁行数 | 说明 |
+| --- | --- | --- |
+| 迁移一个测试 schema（单事务，71 个迁移） | 约 2.2k | 各自独立库并发 N 个：N=4 峰值 8.7k，N=8 峰值 17.3k 仍成功，N=12 峰值 21.8k 起报错 |
+| `DROP SCHEMA … CASCADE`（已迁移的测试 schema） | 约 4.7k | 713 个关系锁加约 3.96k 个依赖对象锁 |
+| 整套集成测试，默认并发 4 | 峰值 10–14k | 峰值时同时有 2–3 个连接各持有约 4.7k（都在删 schema） |
+
+名义容量 6400 实际能承载约 17.3k–21.8k 行（共享内存有余量，下限按名义容量的 2.7 倍估计）。默认并发 4 时同时删 4 个 schema 就要约 19k，再叠一个迁移或一个同时持有多个 schema 的文件就越过上限，所以只是偶发。#347 的失败日志里三个连接在同一毫秒因 `CREATE TABLE`（迁移）报错，时间点与这一机制一致；失败那一刻各连接的锁数没有被记录，不能事后还原，这一点没有证实。
+
+**可复现实验。** 同一提交、同一镜像 `postgres:18.6`，只改锁表大小（本机 colima，`scripts/test-integration.mjs`）：
+
+| 服务器 | 并发 | 结果 |
+| --- | --- | --- |
+| `max_locks_per_transaction=24`（名义 2400） | 自动限流 | 并发 1 仍有 22 个文件失败、41 次 `out of shared memory`：单个文件自己的迁移加删 schema 就超了，这个值太小不能用 |
+| `max_locks_per_transaction=40`（名义 4000） | 强制 4 | 16 个文件失败、17 次 `out of shared memory`，随后有测试进程挂住不结束 |
+| `max_locks_per_transaction=40`（名义 4000） | 自动限流到 1 | 前 50 个文件 0 次 `out of shared memory`（未等整套跑完） |
+| `max_locks_per_transaction=256`（名义 25600），CI 使用的配置 | 4 | 97–99 个文件通过，0 次，墙钟 96–99 秒，锁峰值 13.7k，客户端连接峰值 13 |
+
+本机另有 2–4 个文件（如 `session-conversation-queue`）在这个 colima 容器里失败，错误是触发器的状态检查，与锁无关，同一提交在 GitHub CI 上通过；原因没有查清，不影响上面的结论。
+
+**处理。**
+- **隔离（运行器）。** `scripts/test-integration.mjs` 启动时读取服务器的 `max_locks_per_transaction`、`max_connections`、`max_prepared_transactions`，在没有显式设置 `EVOLOOP_INTEGRATION_CONCURRENCY` 时，把并发限制为 `⌊2.7 × 名义容量 ÷ 7050⌋`（每个并发文件按一次删 schema 的 4.7k 行再留 1.5 倍余量，至少 1）；默认配置的服务器得到 2，并打印原因。公式与常数在 `scripts/lib/lock-budget.mjs`，有单元测试。
+- **取值（CI）。** `.github/actions/test-postgres` 用 `max_locks_per_transaction=256`、连接数保持默认 100：名义容量 25600，公式允许并发 9，按实测上限约为并发 4 同时删 schema 所需 19k 的 4 倍；多占共享内存约 10 MB（`pg_shmem_allocations` 对比 64→256：149.8→160.1 MB），客户端连接峰值只有 13，无需调大连接数。不是只调大：服务器参数被改小或换了服务器，运行器仍按容量限流，不会再随机失败。
+- **挂住。** 内存不足后曾有测试进程不再结束，会拖到整个作业超时。运行器给每个文件设单文件超时（`EVOLOOP_INTEGRATION_FILE_TIMEOUT_SECONDS`，默认 600 秒，最大的文件约 60 秒），超时即杀掉并计为失败；两个测试作业另设 `timeout-minutes`。
+- **范围外。** 没有改 90 个测试文件的清理方式（例如按库删除代替删 schema）：能把每个文件的占用降到接近零，但要逐个动夹具，留作建议。
 
 ## 原生文字与选项提问
 

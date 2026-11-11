@@ -1,0 +1,27 @@
+name: Disposable test PostgreSQL
+description: Starts a throwaway PostgreSQL 18 on 127.0.0.1:5432 tuned for tests (no fsync, RAM-backed data, a larger lock table).
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        # Test data is disposable: durability settings are off and the data directory lives in memory.
+        # max_locks_per_transaction: the integration suite runs 4 test files at once; dropping one migrated
+        # test schema takes ~4.7k lock rows and the server's table is shared (measurements and the formula in
+        # docs/development/local-run.md#集成测试与-postgresql-锁表). 256 x 100 connections = 25.6k slots, about 4x
+        # the ~19k rows that 4 simultaneous drops need, for ~10 MB of shared memory. The RAM disk is capped at 4 GB; a full run used about 1.7 GB. The default 64 x 100
+        # had less than 2x headroom and failed intermittently with "out of shared memory".
+        docker run -d --name evoloop-test-pg -p 127.0.0.1:5432:5432 \
+          -e POSTGRES_USER=evoloop -e POSTGRES_PASSWORD=test-only-password -e POSTGRES_DB=evoloop_ci_test \
+          --tmpfs /var/lib/postgresql:rw,size=4g \
+          postgres:18.6 \
+          -c fsync=off -c synchronous_commit=off -c full_page_writes=off \
+          -c wal_level=minimal -c max_wal_senders=0 \
+          -c max_locks_per_transaction=256
+        for attempt in $(seq 1 60); do
+          # TCP check: the image's first-start initialisation only listens on a socket.
+          if docker exec evoloop-test-pg pg_isready -h 127.0.0.1 -U evoloop -d evoloop_ci_test; then exit 0; fi
+          sleep 1
+        done
+        docker logs evoloop-test-pg
+        exit 1
