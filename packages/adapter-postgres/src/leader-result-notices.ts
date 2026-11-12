@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { DomainError } from "@evoloop/contracts/ports";
 import type { LeaderNotice, LeaderNoticeKind, LeaderNoticePage, LeaderNoticeState,
   LeaderNoticeRecoveryLink } from "@evoloop/contracts/leader-notices";
-import { leaderNoticePostCommand } from "@evoloop/contracts/leader-notices";
+import { leaderNoticePostCommand, noticeLevelOf } from "@evoloop/contracts/leader-notices";
 
 export interface LeaderNoticeListOptions { taskId?: string; limit: number; cursor?: string }
 export interface LeaderNoticeRecipient {
@@ -25,7 +25,7 @@ function canonical(value: unknown): string {
   return encoded;
 }
 const notice = (row: Row): LeaderResultNotice => ({
-  id: String(row.notice_id), projectId: String(row.project_id), kind: row.kind as LeaderNoticeKind,
+  id: String(row.notice_id), projectId: String(row.project_id), kind: row.kind as LeaderNoticeKind, level: noticeLevelOf(row.kind as LeaderNoticeKind),
   sourceEventId: String(row.source_event_id), taskId: String(row.task_id), taskRevisionId: String(row.task_revision_id),
   sourceSessionId: row.source_session_id ? String(row.source_session_id) : null,
   sourceActorId: row.source_actor_id === null ? null : String(row.source_actor_id),

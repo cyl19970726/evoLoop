@@ -4,7 +4,7 @@ import { test } from "node:test";
 import type { ConsumerObservation } from "@evoloop/contracts";
 import type { LeaderWorkDeliveryFact, LeaderWorkPage, LeaderWorkTask } from "@evoloop/contracts/work-index";
 import {
-  decisionKindText, decisionLink, decisionLinkProblem, deliveredAt, deliveryLink, inboxBadge, inboxTaskLink, judgeMyDelivery, lastUseText, myLatestObservation, shellInboxCount, useRequirementText,
+  decisionKindText, decisionLink, decisionLinkProblem, deliveredAt, usageAlerts, deliveryLink, inboxBadge, inboxTaskLink, judgeMyDelivery, lastUseText, myLatestObservation, shellInboxCount, useRequirementText,
 } from "../src/features/workflow/inboxModel.ts";
 import type { DecisionItem } from "@evoloop/contracts/decision-requests";
 import { readDeliveriesForMe } from "../src/features/workflow/inboxDeliveries.ts";
@@ -254,4 +254,21 @@ test("待我决定 with a missing id has no link and says why: it never falls ba
   assert.equal(decisionLinkProblem(decision("decision_request")), null, "a request is answered in the row");
   // The empty list needs no link at all.
   assert.equal(([] as DecisionItem[]).map(item => decisionLink("p1", item, me)).length, 0);
+});
+
+// W5: budget and context alerts go to the person (待我处理), never to the Leader.
+const budget = (state: string, reason: string | null = null) => ({ configured: true, state, limitKind: "input_tokens", limit: 100, used: 90, ratio: 0.9, warningRatio: 0.8, pauseOrdinaryTurns: true, costComplete: true, reason });
+const sessionUsage = (sessionId: string, state: string) => ({ sessionId, roleId: "r", context: { configured: true, state, inputTokens: 90, limit: 100, ratio: 0.9, warningRatio: 0.8, pauseOrdinaryTurns: true, observedAt: null, reason: null } });
+test("budget and context alerts are listed for the person: nothing for ok, unconfigured or unknown, a line each for warning, exhausted and a Session that must hand off", () => {
+  assert.deepEqual(usageAlerts(null), [], "nothing was read");
+  assert.deepEqual(usageAlerts({ budget: budget("ok") as never, sessions: [sessionUsage("s1", "ok") as never, sessionUsage("s2", "unknown") as never, sessionUsage("s3", "unconfigured") as never] }), []);
+  const warning = usageAlerts({ budget: budget("warning", "今日用量已达到上限的 90%，请留意。") as never, sessions: [] });
+  assert.deepEqual(warning.map(item => [item.kind, item.severity]), [["budget", "warning"]]);
+  assert.match(warning[0]!.text, /90%/);
+  const exhausted = usageAlerts({ budget: budget("exhausted", "今日用量已达到上限；普通结果通知和消息轮次暂停。") as never, sessions: [] });
+  assert.deepEqual(exhausted.map(item => [item.kind, item.severity]), [["budget", "limit"]]);
+  const context = usageAlerts({ budget: budget("ok") as never, sessions: [sessionUsage("11111111-1111-4111-8111-111111111111", "warning") as never, sessionUsage("22222222-2222-4222-8222-222222222222", "handoff_required") as never] });
+  assert.deepEqual(context.map(item => [item.kind, item.severity, item.sessionId]), [["context", "warning", "11111111-1111-4111-8111-111111111111"], ["context", "limit", "22222222-2222-4222-8222-222222222222"]]);
+  assert.match(context[1]!.text, /交接/);
+  assert.equal(usageAlerts({ budget: { ...budget("warning"), configured: false } as never, sessions: [] }).length, 0, "an unconfigured budget has no alert");
 });

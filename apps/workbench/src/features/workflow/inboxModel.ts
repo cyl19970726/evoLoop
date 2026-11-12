@@ -7,6 +7,7 @@
 // When my latest observation of the current delivery is 使用失败, the next step is the executor's rework, not mine:
 // the delivery is not listed and not counted until a new delivery comes (未使用 stays listed).
 import type { LeaderWorkTask } from "@evoloop/contracts/work-index";
+import type { UsageBudget, SessionUsage } from "@evoloop/contracts";
 import type { DecisionItem } from "@evoloop/contracts/decision-requests";
 
 export { judgeMyDelivery, myLatestObservation, type MyDeliveryJudgement, type NotUsedResult, type UseResult } from "@evoloop/contracts/delivery-for-me";
@@ -136,4 +137,25 @@ export function decisionLink(projectId: string, item: DecisionItem, actorId: str
       ...back, actor: actorId })}`;
     case "decision_request": return item.taskId ? inboxTaskLink(projectId, item.taskId, actorId) : null;
   }
+}
+
+/** One budget or context alert for the person (W5: these never go to the Leader). `limit` means ordinary Turns are held or a hand-off is needed. */
+export interface UsageAlert { kind: "budget" | "context"; severity: "warning" | "limit"; text: string; sessionId?: string }
+/**
+ * The alerts in a usage overview: the day's budget when it is at its warning line or used up, and each Session whose context is near its limit or
+ * must be handed off. Nothing is listed for ok, unknown or unconfigured, and nothing when the overview was not read.
+ */
+export function usageAlerts(overview: { budget: UsageBudget; sessions: SessionUsage[] } | null | undefined): UsageAlert[] {
+  if (!overview) return [];
+  const alerts: UsageAlert[] = [];
+  const { budget } = overview;
+  if (budget.configured && (budget.state === "warning" || budget.state === "exhausted"))
+    alerts.push({ kind: "budget", severity: budget.state === "exhausted" ? "limit" : "warning",
+      text: budget.reason ?? (budget.state === "exhausted" ? "今日用量已达到上限。" : "今日用量接近上限。") });
+  for (const session of overview.sessions) {
+    const state = session.context?.state;
+    if (state === "warning") alerts.push({ kind: "context", severity: "warning", sessionId: session.sessionId, text: session.context.reason ?? "这个智能体的上下文接近上限，请留意。" });
+    if (state === "handoff_required") alerts.push({ kind: "context", severity: "limit", sessionId: session.sessionId, text: session.context.reason ?? "这个智能体的上下文已满，需要交接后才能继续普通消息。" });
+  }
+  return alerts;
 }

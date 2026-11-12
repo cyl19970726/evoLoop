@@ -559,3 +559,100 @@ test("notices that existed before the migration keep the one-notice-one-message 
   const pending = await pool.query("SELECT 1 FROM leader_result_notice WHERE project_id=$1 AND task_id=$2 AND NOT via_packet AND state='pending'", [p, taskId]);
   assert.equal(pending.rowCount, 1);
 });
+
+// ---- W5: levels. An immediate notice does not wait out the debounce and is first in line; it is still held by a busy Leader, a closed gate and
+// the packet's own limits (20 items, 8 KB), and a backlog of digest notices never holds it back. ----
+const raise = async (kind: string, taskId: string, label: string) => {
+  const revision = (await pool.query("SELECT current_revision_id FROM task WHERE project_id=$1 AND task_id=$2", [p, taskId])).rows[0].current_revision_id;
+  await pool.query("SELECT enqueue_leader_result_notice($1,$2,$3,$4,$5,NULL,'worker',$6,now())", [p, kind, randomUUID(), taskId, revision, `test:${label}`]);
+  return String((await pool.query("SELECT notice_id FROM leader_result_notice WHERE project_id=$1 AND task_id=$2 AND kind=$3 ORDER BY occurred_at DESC LIMIT 1", [p, taskId, kind])).rows[0].notice_id);
+};
+const settlePacket = async (packetId: string) => {
+  await pool.query("UPDATE leader_notice_packet SET state='seen',ended_at=now() WHERE packet_id=$1", [packetId]);
+  await pool.query("UPDATE leader_notice_packet_item SET state='handled',disposition='handled',handled_by='t',version=version+1 WHERE packet_id=$1", [packetId]);
+  await pool.query("ALTER TABLE session_message DISABLE TRIGGER USER");
+  await pool.query("UPDATE session_message SET state='cancelled',version=version+1 WHERE project_id=$1 AND state='queued'", [p]);
+  await pool.query("ALTER TABLE session_message ENABLE TRIGGER USER");
+};
+
+test("W5: digest notices wait for the debounce, an immediate one does not, and it takes the waiting digest notices along", async () => {
+  await reset();
+  const slow = makePump(3600);
+  const before = (await packets()).length;
+  await newTask("Digest one"); await newTask("Digest two");
+  await slow.tick();
+  assert.equal((await packets()).length, before, "digest notices alone wait for the debounce");
+  const blocked = await newTask("Blocked");
+  const immediate = await raise("task_blocker", blocked, "blocked");
+  await slow.tick();
+  const packet = await lastPacket();
+  assert.equal(packet.state, "sent", "the immediate notice was sent at once, without waiting 3600 seconds");
+  const rows = await items(packet.packet_id);
+  assert.equal(rows[0]!.notice_id, immediate, "the immediate notice is first in line");
+  assert.ok(rows.length >= 3, "the digest notices waiting at that moment travel with it");
+  assert.deepEqual(errors, []);
+});
+
+test("W5: an immediate notice is still held by a Leader that is busy or behind a closed recovery gate, and goes at the next moment it can be delivered", async () => {
+  await reset();
+  const slow = makePump(3600);
+  const before = (await packets()).length;
+  await raise("task_question", await newTask("Asked"), "asked");
+  overrides = { leaderState: async () => ({ busy: true, humanMessageQueued: false, gateOpen: true, gateBlocked: false }) };
+  await slow.tick();
+  assert.equal((await packets()).length, before, "a busy Leader is not interrupted");
+  overrides = { leaderState: async () => ({ busy: false, humanMessageQueued: false, gateOpen: false, gateBlocked: true }) };
+  await slow.tick();
+  assert.equal((await packets()).length, before, "a closed recovery gate holds it");
+  overrides = { leaderState: async () => ({ busy: false, humanMessageQueued: true, gateOpen: true, gateBlocked: false }) };
+  await slow.tick();
+  assert.equal((await packets()).length, before, "a person's message goes first");
+  overrides = {};
+  await slow.tick();
+  assert.equal((await lastPacket()).state, "sent", "at the next deliverable moment it goes, with no debounce");
+  assert.deepEqual(errors, []);
+});
+
+test("W5: a backlog of digest notices never holds an immediate one back, and more immediate notices than a packet holds go in packets one after another", async () => {
+  await reset();
+  const slow = makePump(3600);
+  for (let i = 0; i < 25; i++) await newTask(`Backlog ${i}`);
+  const urgent = await raise("run_submission_blocked", await newTask("Urgent"), "urgent");
+  await slow.tick();
+  const first = await lastPacket();
+  const firstRows = await items(first.packet_id);
+  assert.equal(first.item_count, 20, "the packet limit still applies");
+  assert.equal(firstRows[0]!.notice_id, urgent, "yet the newest immediate notice is ahead of 25 digest notices that were queued before it");
+  await settlePacket(first.packet_id);
+  await reset();
+  const many: string[] = [];
+  for (let i = 0; i < 22; i++) many.push(await raise("acceptance_blocked", await newTask(`Blocked acceptance ${i}`), `many-${i}`));
+  await slow.tick();
+  const one = await lastPacket();
+  assert.equal(one.item_count, 20);
+  await settlePacket(one.packet_id);
+  await slow.tick();
+  const two = await lastPacket();
+  assert.notEqual(two.packet_id, one.packet_id);
+  const sent = new Set([...(await items(one.packet_id)), ...(await items(two.packet_id))].map(row => row.notice_id));
+  for (const id of many) assert.ok(sent.has(id), "every immediate notice went out, in the next packet when the first was full");
+  assert.deepEqual(errors, []);
+});
+
+test("W5: a withdrawn notice is a record: it wakes no one, and the record view lists it with its reason", async () => {
+  await reset();
+  const stale = await newTask("Withdrawn in the record");
+  const noticeId = await noticeOf(stale);
+  await apply(author, { type: "task.start", taskId: stale, expectedVersion: 1, reason: "started elsewhere" });
+  await noticePump.tick();
+  const { listLeaderEventRecords } = await import("../src/leader-event-records.ts");
+  const records = (await listLeaderEventRecords(pool, p, { taskId: stale, limit: 10 })).items;
+  assert.deepEqual(records.map(row => row.kind), ["notice_withdrawn"]);
+  assert.match(records[0]!.sourceRef, new RegExp(`^notice:${noticeId}:TODO_SOURCE`));
+  assert.equal((await pool.query("SELECT 1 FROM leader_result_notice WHERE project_id=$1 AND task_id=$2 AND state='linked' AND level='immediate'", [p, stale])).rowCount, 0, "it never became an immediate notice");
+  const page = await listLeaderEventRecords(pool, p, { kind: "notice_withdrawn", limit: 1 });
+  assert.equal(page.items.length, 1);
+  const rest = await listLeaderEventRecords(pool, p, { kind: "notice_withdrawn", limit: 5, ...(page.nextCursor ? { cursor: page.nextCursor } : {}) });
+  assert.ok(!rest.items.some(row => row.sourceEventId === page.items[0]!.sourceEventId), "a cursor continues after the last record read");
+  assert.deepEqual(errors, []);
+});
