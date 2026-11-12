@@ -159,15 +159,18 @@ test("an incoming sender outside the reviewed allowlist is recorded and denied",
     [["unapproved-person","sender_not_allowed"]]);
 });
 
-test("standard delivery reserves one Turn, sends one saved reply, and post-finish readback never replays it", async()=>{
+type ConnectorReplyKind='native'|'bounded_unread';
+function standardDeliveryFixture(sendOutcome:'ok'|'unknown'='ok'){
   const standard={...route,mode:'standard' as const,sessionRef:'standard-session',
     sendTargets:[conversationId],capabilities:{...route.capabilities,sendText:true}};
-  let currentRoute=standard;
-  const calls:string[]=[];let claimed=false,turnState:string|null=null,decisionStatus:string|null=null;
-  let messageState='queued',processingState:string|null=null,nativeTurnId:string|null=null,response:string|null=null;
-  let savedDecision:Record<string,unknown>|null=null;let sends=0,resultCalls=0;
+  let currentRoute=standard,claimed=false,turnState:string|null=null,decisionStatus:string|null=null;
+  let messageState='queued',processingState:string|null=null,nativeTurnId:string|null=null;
+  let response:string|null=null,responseKind:ConnectorReplyKind|null=null;
+  let savedDecision:Record<string,unknown>|null=null,resultCalls=0;
+  let sentText:string|null=null,completeParams:Record<string,unknown>|null=null;
   let transportAttempt:{routeVersion:number;recordTurnId:string|null;finishStatus:string|null}|null=null;
   let claimAttempt:{routeVersion:number;observed:boolean}|null=null;
+  const calls:string[]=[],errors:unknown[]=[],admitted=new Map<number,ConnectorMessageLink>();
   const result=(method:string,value:Record<string,unknown>)=>({state:'ok' as const,method,
     businessRequestId:null,correlationId:'fixture',result:value});
   const gateway={call:async(method:string,params:Record<string,unknown>)=>{
@@ -196,17 +199,22 @@ test("standard delivery reserves one Turn, sends one saved reply, and post-finis
     if(method==='record_turn'){assert.equal(params.turn_id,'native-turn');turnState='recorded';
       return result(method,{delivery_id:12,turn_state:'recorded',thread_id:'thread',turn_id:'native-turn'});}
     if(method==='finish_turn'){turnState='completed';return result(method,{delivery_id:12,turn_state:'completed'});}
-    if(method==='send_text'){sends++;return{state:'unknown' as const,method,businessRequestId:params.request_id,
-      correlationId:null,reason:'response_unknown' as const};}
+    if(method==='send_text'){
+      sentText=String(params.text);
+      if(sendOutcome==='unknown')return{state:'unknown' as const,method,businessRequestId:params.request_id,
+        correlationId:null,reason:'response_unknown' as const};
+      return result(method,{status:'ui_observed'});
+    }
     if(method==='result')return result(method,{application_id:'app',conversation_id:conversationId,
       request_id:`app.${params.request_id}`,status:resultCalls++===0?'pending':'ui_observed',attempt_number:1});
     if(method==='complete'){assert.equal(savedDecision?.state,'complete_attempted');
-      decisionStatus='replied';return result(method,{delivery_id:12,status:'replied'});}
+      completeParams=params;
+      decisionStatus=params.decision==='reply'?'replied':params.decision==='defer'?'deferred':'skipped';
+      return result(method,{delivery_id:12,status:decisionStatus});}
     throw new Error(`unexpected ${method}`);
   }};
-  const decisions={messages:async()=>messageState==='queued'?[{eventCursor:2,messageId:id(9),
-    messageState,processingState,nativeTurnId,response}]:[{eventCursor:2,messageId:id(9),
-    messageState,processingState,nativeTurnId,response}],
+  const decisions={messages:async()=>[{eventCursor:2,messageId:id(9),messageState,processingState,
+    nativeTurnId,response,responseKind}],
     claim:async()=>claimAttempt,
     markClaimAttempted:async(_project:string,_binding:string,_delivery:number,routeVersion:number)=>{
       if(claimAttempt)return false;claimAttempt={routeVersion,observed:false};return true;},
@@ -234,8 +242,6 @@ test("standard delivery reserves one Turn, sends one saved reply, and post-finis
         savedDecision?.cursorStart!==terminal.cursorStart||savedDecision?.cursorEnd!==terminal.cursorEnd)
         return false;
       savedDecision={...savedDecision,state:'completed'};return true;}};
-  const errors:unknown[]=[];
-  const admitted=new Map<number,ConnectorMessageLink>();
   const pump=new ConnectorIngressPump({gateway:gateway as unknown as ConnectorIngressPumpDeps['gateway'],
     projects:async()=>[route.projectId],routes:{list:async()=>({items:[currentRoute],nextCursor:null}),
       get:async()=>currentRoute},
@@ -246,16 +252,65 @@ test("standard delivery reserves one Turn, sends one saved reply, and post-finis
     decisions:decisions as unknown as NonNullable<ConnectorIngressPumpDeps['decisions']>,
     canWrite:()=>true,enabled:async()=>true,qualifyReceiver:async()=>true,pollIntervalMs:1000,
     onError:error=>errors.push(error)});
-  await pump.tick();assert.equal(calls.filter(value=>value==='reserve_turn').length,1);
-  currentRoute={...standard,state:'paused',version:4};
-  messageState='replied';processingState='completed';nativeTurnId='native-turn';response='answer';
-  for(let index=0;index<6;index++)await pump.tick();
-  assert.equal(errors.length,1);assert.equal(sends,1,'unknown send is reconciled by original result, never replayed');
-  assert.equal(calls.filter(value=>value==='record_turn').length,1);
-  assert.equal(calls.filter(value=>value==='finish_turn').length,1);
-  assert.ok(calls.filter(value=>value==='result').length>=2,"pending is polled by the original key");
-  assert.equal(calls.filter(value=>value==='complete').length,1);
-  assert.equal(savedDecision?.state,'completed');
+  return {pump,calls,errors,
+    finishReply:(text:string|null,kind:ConnectorReplyKind)=>{
+      currentRoute={...standard,state:'paused',version:4};
+      messageState='replied';processingState='completed';nativeTurnId='native-turn';
+      response=text;responseKind=kind;},
+    response:()=>response,savedDecision:()=>savedDecision,sentText:()=>sentText,
+    sends:()=>calls.filter(value=>value==='send_text').length,completeParams:()=>completeParams};
+}
+
+test("standard delivery reserves one Turn, sends one saved reply, and post-finish readback never replays it", async()=>{
+  const f=standardDeliveryFixture('unknown');
+  await f.pump.tick();assert.equal(f.calls.filter(value=>value==='reserve_turn').length,1);
+  f.finishReply('answer','native');
+  for(let index=0;index<6;index++)await f.pump.tick();
+  assert.equal(f.errors.length,1);assert.equal(f.sends(),1,'unknown send is reconciled by original result, never replayed');
+  assert.equal(f.calls.filter(value=>value==='record_turn').length,1);
+  assert.equal(f.calls.filter(value=>value==='finish_turn').length,1);
+  assert.ok(f.calls.filter(value=>value==='result').length>=2,"pending is polled by the original key");
+  assert.equal(f.calls.filter(value=>value==='complete').length,1);
+  assert.equal(f.savedDecision()?.state,'completed');
+});
+
+test("a bounded-unread system note is deferred and never sent",async()=>{
+  const f=standardDeliveryFixture();
+  await f.pump.tick();
+  const note='（本轮已结束，但它的原生记录超过 50 页，回复没有在有界读取内读出；完整回复见该 Session 的原生会话记录。）';
+  f.finishReply(note,'bounded_unread');
+  for(let index=0;index<6;index++)await f.pump.tick();
+  assert.equal(f.sends(),0);
+  assert.equal(f.savedDecision()?.decision,'defer');
+  assert.equal(f.savedDecision()?.content,null);
+  assert.equal(f.completeParams()?.decision,'defer');
+  assert.match(String(f.completeParams()?.reason),/bounded read/);
+  assert.equal(f.response(),note,'the original system note remains available for audit');
+  assert.deepEqual(f.errors,[]);
+});
+
+test("a normal reply within the bounded read is still sent unchanged",async()=>{
+  const f=standardDeliveryFixture();
+  await f.pump.tick();
+  f.finishReply('the result of 5000 records','native');
+  for(let index=0;index<6;index++)await f.pump.tick();
+  assert.equal(f.sends(),1);
+  assert.equal(f.sentText(),'the result of 5000 records');
+  assert.equal(f.savedDecision()?.decision,'reply');
+  assert.equal(f.completeParams()?.decision,'reply');
+  assert.deepEqual(f.errors,[]);
+});
+
+test("similar user text is not mistaken for the bounded-unread system note",async()=>{
+  const f=standardDeliveryFixture();
+  await f.pump.tick();
+  const userText='我读到了“回复没有在有界读取内读出”这句话。这是用户自己的正常答复。';
+  f.finishReply(userText,'native');
+  for(let index=0;index<6;index++)await f.pump.tick();
+  assert.equal(f.sends(),1);
+  assert.equal(f.sentText(),userText);
+  assert.equal(f.savedDecision()?.decision,'reply');
+  assert.deepEqual(f.errors,[]);
 });
 
 test("disabled route, unavailable qualifier, and lost coordinator lease block wx ingress", async () => {
