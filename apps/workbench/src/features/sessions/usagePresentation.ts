@@ -65,9 +65,13 @@ export function contextGauge(context: ContextPressure | null | undefined): Conte
   return { ratio, tone: "done", status: "正常", detail, handoff: false };
 }
 
-/** Today's use in four small figures; null when nothing was recorded today (never shown as 0). */
-export function todayTiles(session: { recorded: boolean; today: UsageDay } | null | undefined): Array<{ label: string; value: string }> | null {
+/**
+ * Today's use in four small figures; null when nothing was recorded today (never shown as 0). The service fills
+ * `today` with zeros when there is no ledger row for it, so “recorded today” is whether `days` holds today's day.
+ */
+export function todayTiles(session: { recorded: boolean; today: UsageDay; days?: readonly UsageDay[] } | null | undefined): Array<{ label: string; value: string }> | null {
   if (!session?.recorded) return null;
+  if (session.days && !session.days.some(day => day.day === session.today.day)) return null;
   const day = session.today;
   return [
     { label: "输入", value: tokenText(day.inputTokens) },
@@ -87,8 +91,13 @@ export function budgetReminder(budget: UsageBudget | null | undefined): { tone: 
 }
 
 /** 项目用量 on 统筹安排: today's project use against the daily limit, drawn as the same bar as an agent's context. */
-export function projectBudgetGauge(budget: UsageBudget): ContextGauge {
+export function projectBudgetGauge(budget: UsageBudget, todayRecorded: boolean | null = null): ContextGauge {
   if (!budget.configured) return { ratio: null, tone: "idle", status: "未设上限", detail: "未配置每日上限，只记录用量", handoff: false };
+  // The service counts a day without ledger rows as 0 used; that is not a recorded 0, so no bar and no 0% is drawn.
+  if (todayRecorded === false) {
+    const limit = budget.limitKind === "cost_usd" ? `$${(budget.limit ?? 0).toFixed(2)}` : tokenText(budget.limit);
+    return { ratio: null, tone: "idle", status: "今日没有记录", detail: `今日没有记录，不按 0 计 · 每日上限 ${limit}`, handoff: false };
+  }
   if (budget.state === "unknown" || budget.ratio === null || budget.limit === null)
     return { ratio: null, tone: "unknown", status: "无法判定",
       detail: budget.costComplete ? "今日用量暂时无法判定" : "有的记录没有报告费用，费用上限暂时无法判定", handoff: false };

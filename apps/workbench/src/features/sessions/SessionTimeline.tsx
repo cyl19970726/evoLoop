@@ -409,7 +409,7 @@ export function SessionTimeline({ context, snapshot, onApplied, taskHref, refres
       {timeline.errorOriginal && <details className="mt-1 text-caption text-muted-foreground"><summary className="w-fit cursor-pointer">原文</summary><p lang="en" className="mt-1 font-mono [overflow-wrap:anywhere]">{timeline.errorOriginal}</p></details>}</Notice>}
     {grantNotice && <Notice tone="waiting"><span role="status" data-grant-blocked-notice="">有 {grantNotice.count} 条来自 {grantNotice.senders.join("、")} 的消息因缺少消息授权而受阻：补上授权前不会送达，它们没有占用队列，后面的消息照常处理。{grantNotice.reason}</span></Notice>}
     <div className="relative flex min-h-0 flex-1 flex-col">
-    <div ref={scroll} className="session-conversation-scroll workspace-timeline-scroll flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-1 py-3 outline-none [&>:first-child]:mt-auto" role="log" tabIndex={0} aria-label="消息与工具时间线" aria-live="off" aria-busy={!timeline.loaded} onScroll={event => {
+    <div ref={scroll} className="session-conversation-scroll workspace-timeline-scroll flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-1 py-3 outline-none focus-visible:shadow-[var(--focus-ring)] [&>:first-child]:mt-auto" role="log" tabIndex={0} aria-label="消息与工具时间线" aria-live="off" aria-busy={!timeline.loaded} onScroll={event => {
       const node = event.currentTarget;
       if (!node.clientHeight || timeline.denied || cacheGeneration.current !== viewCacheGeneration) return;
       const near = node.scrollHeight - node.scrollTop - node.clientHeight < 90;

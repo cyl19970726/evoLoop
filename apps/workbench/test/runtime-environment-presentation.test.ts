@@ -127,3 +127,26 @@ test("项目用量 on 统筹安排: today against the daily limit with the same 
   assert.equal(projectToday("2026-11-10T17:30:00.000Z", "Not/AZone"), null);
   assert.equal(projectToday("not a time", "UTC"), null);
 });
+
+test("a day with no ledger row is never shown as 0: not in today's figures, not in the project's limit bar", () => {
+  const zero = { day: "2026-11-12", inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, costUsd: null, costReported: false };
+  const yesterday = { ...zero, day: "2026-11-11", inputTokens: 120_000 };
+  // The service fills today with zeros when there is no row for it; only `days` tells whether it was recorded.
+  assert.equal(todayTiles({ recorded: true, today: zero, days: [yesterday] }), null, "recorded yesterday, nothing today: no figures");
+  assert.deepEqual(todayTiles({ recorded: true, today: zero, days: [yesterday, zero] })!.map(tile => tile.value), ["0", "0", "0", "未报告"], "a recorded 0 is 0");
+  const budget: UsageBudget = { configured: true, state: "ok", limitKind: "input_tokens", limit: 400_000, used: 0, ratio: 0, warningRatio: 0.8,
+    pauseOrdinaryTurns: true, costComplete: true, reason: null };
+  assert.deepEqual(projectBudgetGauge(budget, false), { ratio: null, tone: "idle", status: "今日没有记录", detail: "今日没有记录，不按 0 计 · 每日上限 40 万", handoff: false });
+  assert.deepEqual(projectBudgetGauge(budget, true).detail, "输入 0 / 40 万（0%）", "recorded as 0: the bar and 0% are right");
+  assert.equal(projectBudgetGauge({ ...budget, limitKind: "cost_usd", limit: 20 }, false).detail, "今日没有记录，不按 0 计 · 每日上限 $20.00");
+  assert.equal(projectBudgetGauge({ ...budget, configured: false, state: "unconfigured", limit: null, ratio: null }, false).status, "未设上限");
+});
+
+test("while a new target waits, a strength or model nobody confirmed is said so, never the new target's", () => {
+  const waiting = (extra: Record<string, unknown>): RecoveryRead => ({ status: "ready", view: { executionProfile: {
+    revision, activationState: "pending", activeRevisionId: "r1", activeModel: "gpt-6-sol", activeReasoningEffort: null, ...extra } } } as never);
+  const noEffort = runtimeEnvironment({ ...owned, recovery: waiting({}), actualModel: null });
+  assert.deepEqual([noEffort.model, noEffort.effort], [{ text: "gpt-6-sol", source: "confirmed" }, { text: "强度未确认", source: null }]);
+  assert.deepEqual(runtimeEnvironment({ ...owned, recovery: waiting({ activeModel: null }), actualModel: null }).model, { text: "模型未确认", source: null });
+  assert.deepEqual(noEffort.change, { tone: "waiting", label: "下一轮改为 gpt-6-astra / max" });
+});

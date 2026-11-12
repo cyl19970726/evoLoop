@@ -29,8 +29,10 @@ export function ProjectUsageSection({ projectId, token }: { projectId: string; t
 
 /** The block's body for one usage read: reading, failed, or the limit, the days and the time zone. */
 export function ProjectUsageView({ usage, error = null, stale = false }: { usage: UsageOverview | null; error?: string | null; stale?: boolean }) {
-  const gauge = usage ? projectBudgetGauge(usage.budget) : null;
-  const days = usage ? recentProjectDays(usage.daily, projectToday(usage.observedAt, usage.timeZone)) : [];
+  const today = usage ? projectToday(usage.observedAt, usage.timeZone) : null;
+  // Today counts as recorded only when the service lists a ledger row for it; without a usable today, as before.
+  const gauge = usage ? projectBudgetGauge(usage.budget, today ? usage.daily.some(day => day.day === today) : null) : null;
+  const days = usage ? recentProjectDays(usage.daily, today) : [];
   return <div className="flex min-w-0 flex-col gap-3 rounded-xl bg-raised px-4 py-3 shadow-sm">
       {error ? <Notice tone="error">项目用量暂不可读取：{error}。每日上限和近几天用量暂时无法判断。</Notice>
         : !usage || !gauge ? <p role="status" className={mutedText}>正在读取项目用量…</p>

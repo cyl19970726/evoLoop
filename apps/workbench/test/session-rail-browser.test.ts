@@ -141,11 +141,33 @@ test("the agent's right column shows what it does now and next on its first scre
     assert.match(await skills.getAttribute("href") ?? "", new RegExp(`/p/${projectId}/roles\\?role=`));
     await skills.focus(); await page.keyboard.press("Shift+Tab"); await page.keyboard.press("Tab");
     assert.equal(await skills.evaluate(element => element === document.activeElement && element.matches(":focus-visible")), true);
-    // An opaque accent ring (#2f4bb3) outside a surface-coloured gap: plain on the soft card (WCAG 2.4.7).
-    await page.waitForFunction(element => /rgb\(47, 75, 179\) 0px 0px 0px 4px/.test(getComputedStyle(element!).boxShadow), await skills.elementHandle(), { timeout: 3000 })
+    // An opaque accent edge (#2f4bb3) drawn inside the chip, with a surface-coloured band within it (WCAG 2.4.7).
+    await page.waitForFunction(element => /rgb\(47, 75, 179\) 0px 0px 0px 2px inset/.test(getComputedStyle(element!).boxShadow), await skills.elementHandle(), { timeout: 3000 })
       .catch(() => undefined);
-    assert.match(await skills.evaluate(element => getComputedStyle(element).boxShadow), /rgb\(47, 75, 179\) 0px 0px 0px 4px/);
+    assert.match(await skills.evaluate(element => getComputedStyle(element).boxShadow), /rgb\(47, 75, 179\) 0px 0px 0px 2px inset/);
     await page.context().close();
+  }
+
+  // A day without ledger rows is not 0: nothing recorded today (only yesterday) shows no figures and no 0% limit bar.
+  {
+    const noToday = usageFixture();
+    noToday.daily = noToday.daily.filter((day: { day: string }) => day.day !== "2026-11-10");
+    noToday.sessions = noToday.sessions.map((session: { days: Array<{ day: string }>; today: object }) => ({ ...session,
+      days: session.days.filter(day => day.day !== "2026-11-10").concat([{ ...session.today, day: "2026-11-09" }]),
+      today: { day: "2026-11-10", inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, costUsd: null, costReported: false } }));
+    noToday.budget = { ...noToday.budget, used: 0, ratio: 0 };
+    const quiet = await open("dev", 1440, 900, page => page.route(/\/runtime\/usage\?/, route => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(noToday) })));
+    const card = quiet.panel.locator("section[aria-label=上下文与用量]");
+    await card.getByText("今日没有用量记录，不按 0 计").waitFor();
+    assert.equal(await card.locator(".session-usage-today dl").count(), 0, "no figure tiles");
+    await quiet.page.goto(`${fixture.base}/p/${projectId}/sessions#project-usage`);
+    await quiet.page.getByLabel("访问令牌").fill(token); await quiet.page.getByRole("button", { name: "进入", exact: true }).click();
+    const block = quiet.page.locator("#project-usage");
+    await block.getByText("今日没有记录，不按 0 计 · 每日上限 150 万").waitFor();
+    assert.equal(await block.getByRole("progressbar").count(), 0);
+    assert.doesNotMatch(await block.innerText(), /0 \/ 150 万|（0%）/);
+    assert.match(await block.locator("tbody tr", { hasText: "11-10" }).innerText(), /11-10\s*没有记录/);
+    await quiet.page.context().close();
   }
 
   // The rarely used 标识设置 is not on the first screen; it opens from 详情与来源.

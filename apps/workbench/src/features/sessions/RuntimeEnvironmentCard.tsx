@@ -41,7 +41,7 @@ function OwnedRuntimeEnvironment(props: Props & { sessionId: string }) {
 
 const value = (item: EnvironmentValue | null, mark: boolean) => item && <span className="inline-flex min-w-0 items-center gap-1">
   <span className="min-w-0 [overflow-wrap:anywhere]">{item.text}</span>
-  {mark && <Badge className="h-4 px-1.5">{item.source === "actual" ? "实际" : item.source === "confirmed" ? "已确认" : "目标"}</Badge>}
+  {mark && item.source && <Badge className="h-4 px-1.5">{item.source === "actual" ? "实际" : item.source === "confirmed" ? "已确认" : "目标"}</Badge>}
 </span>;
 
 function RuntimeEnvironmentView({ context, session, recovery, configuredModel, actualModel, modelLabelOf, control }: Props & { control: ModelControl | null }) {

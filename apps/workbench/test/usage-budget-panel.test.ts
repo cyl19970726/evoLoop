@@ -86,3 +86,19 @@ test("项目用量 on 统筹安排 shows the daily limit as a bar, the days in �
   assert.match(empty, /近 7 天没有用量记录，不按 0 计/);
   assert.equal(empty.includes(">0<"), false, "no day without a record is shown as 0");
 });
+
+test("today without a ledger row: no 0 figures on the agent's card and no 0% bar in 项目用量", () => {
+  // The fixture's read is at 2026-11-11 10:00 in Asia/Shanghai; keep only the day before, as the service would list it.
+  const yesterdayOnly = { ...overview, daily: overview.daily.filter(day => day.day !== "2026-11-11"),
+    sessions: overview.sessions.map(session => ({ ...session, days: session.days.filter(day => day.day !== "2026-11-11").concat([{ ...session.today, day: "2026-11-10" }]),
+      today: { day: "2026-11-11", inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, costUsd: null, costReported: false } })),
+    budget: { ...overview.budget, state: "ok" as const, used: 0, ratio: 0 } };
+  const agent = renderToStaticMarkup(createElement(SessionUsageView, { usage: yesterdayOnly, sessionId: "session", projectId: "project" }));
+  assert.match(agent, /今日没有用量记录，不按 0 计/);
+  assert.equal(/<dt[^>]*>输入<\/dt>/.test(agent), false, "no figure tiles");
+  const project = renderToStaticMarkup(createElement(ProjectUsageView, { usage: yesterdayOnly }));
+  assert.match(project, /今日没有记录/);
+  assert.match(project, /今日没有记录，不按 0 计 · 每日上限 50 万/);
+  assert.equal(project.includes("role=\"progressbar\""), false, "no bar for a day nothing was recorded on");
+  assert.equal(/0 \/ 50 万|（0%）/.test(project), false);
+});
