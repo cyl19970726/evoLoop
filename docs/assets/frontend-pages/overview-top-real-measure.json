@@ -37,5 +37,31 @@
   "attentionTop": 706,
   "phaseCount": 6,
   "pastRightEdge": 0
+ },
+ {
+  "label": "multi-active 1440x900",
+  "viewport": "1440x900",
+  "scrollWidth": 1440,
+  "clientWidth": 1440,
+  "goalBottom": 333,
+  "versionBottom": 615,
+  "milestonesBottom": 615,
+  "lastPhaseBottom": 595,
+  "attentionTop": 627,
+  "phaseCount": 6,
+  "pastRightEdge": 0
+ },
+ {
+  "label": "multi-active 390x844",
+  "viewport": "390x844",
+  "scrollWidth": 390,
+  "clientWidth": 390,
+  "goalBottom": 337,
+  "versionBottom": 493,
+  "milestonesBottom": 775,
+  "lastPhaseBottom": 763,
+  "attentionTop": 787,
+  "phaseCount": 6,
+  "pastRightEdge": 0
  }
 ]

@@ -25,7 +25,7 @@ const phases = [
 test("overview top: goal, version, six phases with one current, the three blocks below; measured at 1440x900 and 390x844",
   { skip: !modulePath && "Set EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE" }, async t => {
     const { chromium } = (await import(pathToFileURL(modulePath!).href)).default;
-    let mode: "linked" | "day1" | "unread" = "linked";
+    let mode: "linked" | "day1" | "unread" | "multi" = "linked";
     const server = createServer(async (req, res) => {
       const url = new URL(req.url!, "http://127.0.0.1");
       if (url.pathname === "/__fixture") { mode = (url.searchParams.get("mode") as typeof mode) ?? mode; res.end("ok"); return; }
@@ -41,12 +41,13 @@ test("overview top: goal, version, six phases with one current, the three blocks
         else if (url.pathname === `${base}/impacts` || url.pathname === `${base}/resident-queues`) value = [];
         else if (url.pathname === `${base}/goals`) value = { items: mode === "day1" ? [] : [{ projectId, id: goalId, version: 1, outcome: "让使用者一眼看清项目要去哪里", constraints: "数据来自服务", consumer: "使用者",
           authority: "负责人", scope: "总览", owner: "o", createdAt: stamp, actorId: "reader" }], nextCursor: null };
-        else if (url.pathname === `${base}/stages`) value = mode === "day1" ? [] : [{ projectId, id: stageId, goalId, version: 2, state: "active", deliverable: "总览顶部", learningQuestion: "看得清吗", createdAt: stamp, actorId: "reader" }];
+        else if (url.pathname === `${base}/stages`) value = mode === "day1" ? [] : mode === "multi" ? phases.slice(0, 5).map(([key, title, deliver, exit], index) => ({ projectId, id: `4200001${index}-0000-4000-8000-00000000001${index}`, goalId, version: 2, state: "active",
+          deliverable: `${key} ${title}：${deliver}；${exit}`, learningQuestion: `${key} 要弄清：${exit}，并且这一段文字故意写得很长，用来证明多个进行中的阶段不会把版本和里程碑挤出首屏`, createdAt: stamp, actorId: "reader" })) : [{ projectId, id: stageId, goalId, version: 2, state: "active", deliverable: "总览顶部", learningQuestion: "看得清吗", createdAt: stamp, actorId: "reader" }];
         else if (url.pathname === `${base}/milestones`) {
-          const linked = mode === "linked";
-          value = { source: { commit: "9a4020a5886be01b2d74fe850687ca7355b2d226", roadmap: "read" }, currentPhaseId: linked ? "M1" : null, currentNote: linked ? null : "当前阶段未登记",
+          const linked = mode === "linked", multi = mode === "multi";
+          value = { source: { commit: "9a4020a5886be01b2d74fe850687ca7355b2d226", roadmap: "read" }, currentPhaseId: linked ? "M1" : null, currentNote: linked ? null : multi ? "有多个进行中的阶段，不猜哪个是当前" : "当前阶段未登记",
             phases: phases.map(([id, title, deliver, exit]) => {
-              const status = !linked ? null : id === "M0" ? "partial" : id === "M0.5" ? "exited" : id === "M1" ? "in_progress" : "not_started";
+              const status = multi ? "in_progress" : !linked ? null : id === "M0" ? "partial" : id === "M0.5" ? "exited" : id === "M1" ? "in_progress" : "not_started";
               const label = { partial: "部分成立", exited: "已退出", in_progress: "进行中", not_started: "未开始" } as Record<string, string>;
               return { id, title, deliver, exit, status, statusLabel: status ? label[status] : null, stage: status ? { id: stageId, goalId } : null, linkedStages: status ? 1 : 0,
                 reviewedAt: linked && (id === "M0" || id === "M0.5") ? "2026-11-10T09:00:00.000Z" : null };
@@ -123,6 +124,26 @@ test("overview top: goal, version, six phases with one current, the three blocks
     await measure(day1, "day1 390x844");
     if (shots) await day1.screenshot({ path: `${shots}/overview-top-390-day1.png` });
     await day1.close();
+    // The real project's case: five stages all active (M0-M4). Nothing is guessed as current, the stage list folds, and the first screen still holds
+    // the goal, the version and all six phases at both sizes.
+    for (const [width, height] of [[1440, 900], [390, 844]] as const) {
+      const multi = await open(width, height, "multi");
+      assert.equal(await multi.locator("[data-overview-milestones] [data-current='true']").count(), 0, "no guess at a current phase");
+      assert.equal(await multi.locator("[data-current-note]").innerText(), "有多个进行中的阶段，不猜哪个是当前");
+      const picker = multi.locator("[data-stage-picker]");
+      assert.equal(await picker.count(), 1, "the stage list is one folded block");
+      assert.equal(await picker.evaluate(node => (node as HTMLDetailsElement).open), false, "folded until opened");
+      const m = await measure(multi, `multi-active ${width}x${height}`);
+      if (shots) await multi.screenshot({ path: `${shots}/overview-top-${width}-multi-active.png` });
+      assert.equal(m.scrollWidth <= m.clientWidth, true, `no horizontal overflow at ${width}`);
+      assert.equal(m.pastRightEdge, 0);
+      assert.equal(m.phaseCount, 6);
+      assert.ok(m.versionBottom! <= height - (width >= 1000 ? 0 : 64), `the version is on the first screen at ${width}x${height} (bottom ${m.versionBottom})`);
+      assert.ok(m.lastPhaseBottom <= height - (width >= 1000 ? 0 : 64), `all six phases are on the first screen at ${width}x${height} (last bottom ${m.lastPhaseBottom})`);
+      await picker.locator("summary").click();
+      assert.equal(await picker.locator("button").count(), 5, "opening the list shows all five stages");
+      await multi.close();
+    }
     // The version could not be read: never an old value.
     const unread = await open(1440, 900, "unread");
     const version = await unread.locator("[data-overview-version]").innerText();
