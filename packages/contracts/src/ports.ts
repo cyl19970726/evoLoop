@@ -74,6 +74,8 @@ export interface Reader extends ReferenceReader, RoleReader, SchedulingReader, D
   listTaskJudgements(taskId: string): Promise<TaskJudgement[]>;
   getDelivery(id: string): Promise<Delivery | null>;
   listDeliveries(taskId: string): Promise<Delivery[]>;
+  /** The explicit mark that a delivery's acceptance precondition is met; null while nobody has stated it. */
+  getPreconditionMark(deliveryId: string): Promise<{ markId: string; actorId: string; evidence: string; createdAt: string } | null>;
   listObservations(taskId: string): Promise<ConsumerObservation[]>;
   listTaskClosures(taskId: string): Promise<TaskClosure[]>;
   getProject(): Promise<Project | null>;
@@ -167,6 +169,7 @@ export interface Transaction extends Reader, Omit<RoleTransaction, "getTask" | "
   insertTaskProposal(proposal: TaskProposal): Promise<void>;
   insertTaskJudgement(judgement: TaskJudgement): Promise<void>;
   insertDelivery(delivery: Delivery): Promise<void>;
+  insertPreconditionMark(mark: { projectId: string; markId: string; taskId: string; deliveryId: string; actorId: string; evidence: string; createdAt: string }): Promise<void>;
   insertObservation(observation: ConsumerObservation): Promise<void>;
   insertTaskClosure(closure: TaskClosure): Promise<void>;
   savepoint<T>(action: () => Promise<T>): Promise<T>;

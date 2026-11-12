@@ -60,3 +60,38 @@ test("unavailable native Item or zero-Turn history preserves the original intent
   assert.equal((await service.reconcile(principal, projectId, id)).state, "unknown");
   assert.equal(unknownCount, 2);
 });
+
+test("after a Turn ends, the native Item of an accepted start and of an accepted supplement is read back and recorded; an unfinished Turn, an ambiguous history or a failed read records nothing", async () => {
+  const start = "97000010-0000-4000-8000-000000000010", steer = "97000011-0000-4000-8000-000000000011", startOp = "97000012-0000-4000-8000-000000000012";
+  const accepted = (id: string, mode: "start" | "steer", operationId: string): DirectInputRecord =>
+    ({ ...input(id, "message", "accepted"), operationId, mode, actualTurnId: turnId, expectedTurnId: mode === "steer" ? turnId : null });
+  const records = [accepted(start, "start", startOp), accepted(steer, "steer", steer)];
+  const recorded: Array<[string, string, string | null]> = [];
+  const store = { unboundAccepted: async () => records,
+    accept: async (_project: string, id: string, turn: string, item: string | null) => { recorded.push([id, turn, item]); return records[0]!; } };
+  let turnStatus = "completed", completedAtUtc: string | null = "2026-11-11T00:00:00.000Z", items: unknown[] = [], failRead = false;
+  const runtime = { isReady: () => true, registerBinding: async () => {},
+    listTurns: async () => ({ data: [{ id: turnId, status: turnStatus, completedAtUtc }], nextCursor: null }),
+    listItems: async () => { if (failRead) throw new Error("history unavailable"); return { data: items, nextCursor: null }; } };
+  let writer = true;
+  const service = new DirectInputService({ store: store as never, runtime: () => runtime as never, canWrite: () => writer,
+    admission: async () => { throw Error("unused"); }, bindingFor: async () => binding });
+  const startItem = { id: "item-start", type: "userMessage", clientId: start, content: [{ type: "text", text: `[evoloop-message-operation:${startOp}]\nhello` }] };
+  const steerItem = { id: "item-steer", type: "userMessage", clientId: steer, content: [{ type: "text", text: "more" }] };
+  // The Turn has not finished: nothing is read into the record yet.
+  turnStatus = "inProgress"; completedAtUtc = null; items = [startItem, steerItem];
+  assert.equal(await service.backfillItems(), 0); assert.deepEqual(recorded, []);
+  // Finished: both Items are recorded. The start is found by its marker, the supplement by its client ID.
+  turnStatus = "completed"; completedAtUtc = "2026-11-11T00:00:00.000Z";
+  assert.equal(await service.backfillItems(), 2);
+  assert.deepEqual(recorded, [[start, turnId, "item-start"], [steer, turnId, "item-steer"]]);
+  // Two Items that both claim the same input: no guess.
+  recorded.length = 0; items = [startItem, { ...startItem, id: "item-start-2" }, steerItem];
+  assert.equal(await service.backfillItems(), 1); assert.deepEqual(recorded, [[steer, turnId, "item-steer"]]);
+  // A read that fails proves nothing and never throws.
+  recorded.length = 0; failRead = true;
+  assert.equal(await service.backfillItems(), 0); assert.deepEqual(recorded, []);
+  // Not the current writer: no reads, no writes.
+  failRead = false; items = [startItem, steerItem]; writer = false;
+  assert.equal(await service.backfillItems(), 0); assert.deepEqual(recorded, []);
+});

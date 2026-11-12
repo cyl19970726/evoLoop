@@ -874,6 +874,16 @@ const directInput = runner && integrations.runtime?.enabled ? createDirectInputS
     catch { return false; }
   },
 }) : undefined;
+// After a Turn ends, record the native Item of each accepted direct input that has none yet (read only; never a send).
+if (directInput) {
+  let itemBackfillBusy = false;
+  const itemBackfill = setInterval(() => {
+    if (itemBackfillBusy) return;
+    itemBackfillBusy = true;
+    void directInput.backfillItems().catch(() => undefined).finally(() => { itemBackfillBusy = false; });
+  }, 5000);
+  itemBackfill.unref();
+}
 if (runner) {
   try { await runner.start(); }
   catch { console.error(`${runtimeConfig?.provider === "claude" ? "Claude" : "Codex"} runtime is unavailable; check the configured CLI, its settings and project directories. No new dispatch was enabled.`); }
