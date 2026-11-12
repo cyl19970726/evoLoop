@@ -91,3 +91,16 @@ export function configuredCliActorId(load: () => Promise<{ runtime?: { enabled: 
     return (current.runtime?.enabled ? selectMaterialCli(current.runtime.materialCli, command.projectId, session.id, session.actorId, command.taskId, session.roleId) : null)?.cliActorId ?? null;
   };
 }
+
+/**
+ * The `requireRunRecipient` callback the coordinator passes to buildServer, assembled from the two real dependencies main.ts owns: the
+ * PostgreSQL unit of work and the private-configuration loader. main.ts calls this and nothing else, so the real-entry test runs the same code.
+ */
+export function createReserveRecipientCheck(deps: {
+  uow: { read<T>(projectId: string, fn: (reader: any) => Promise<T>): Promise<T> };
+  loadIntegrations: Parameters<typeof configuredCliActorId>[0];
+}) {
+  const guard = createRunRecipientGuard({ read: (projectId, fn) => deps.uow.read(projectId, reader => fn(reader as never)),
+    cliActorId: configuredCliActorId(deps.loadIntegrations) });
+  return async (_principal: unknown, command: { projectId: string; taskId: string }, session: { id: string; actorId: string; roleId: string }): Promise<void> => guard(command, session);
+}

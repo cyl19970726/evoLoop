@@ -8,7 +8,7 @@ import { RuntimeWorkflowService, WorkflowService } from "@evoloop/core";
 import { migrate, PostgresUnitOfWork } from "@evoloop/adapter-postgres";
 import type { Principal } from "@evoloop/contracts";
 import { buildServer } from "../../apps/coordinator/src/server.js";
-import { configuredCliActorId, createRunRecipientGuard } from "../../apps/coordinator/src/runtime/recipient-preflight.js";
+import { createReserveRecipientCheck } from "../../apps/coordinator/src/runtime/recipient-preflight.js";
 
 const database = process.env.TEST_DATABASE_URL;
 if (!database || !/^evoloop(?:_[a-z0-9]+)*_test$/.test(decodeURIComponent(new URL(database).pathname.slice(1))))
@@ -16,7 +16,7 @@ if (!database || !/^evoloop(?:_[a-z0-9]+)*_test$/.test(decodeURIComponent(new UR
 
 /**
  * The real entry a Leader uses: HTTP POST /api/commands with a bearer token, the coordinator's own authorization and model checks, the
- * real guard factory the coordinator wires into the route (createRunRecipientGuard, fed by the real PostgreSQL unit of work and the real
+ * the production assembly main.ts wires into the route (createReserveRecipientCheck, fed by the real PostgreSQL unit of work and the real
  * material-CLI selection), and the real command path to the database. Only the two lookups that read the machine's private files
  * (the runtime grants and the model list) are fixed.
  */
@@ -58,11 +58,11 @@ async function setup(t: import("node:test").TestContext, cliActorId: string | nu
   // The private configuration's material-CLI entry for this Session, when the case has one (a brokered Session has none before its Run starts).
   const materialCli = cliActorId ? [{ projectId, sessionId, sessionActorId: saved.actorId, cliActorId }] : [];
   let guarded = 0;
-  const guard = createRunRecipientGuard({ read: (project, fn) => uow.read(project, reader => fn(reader as never)),
-    cliActorId: configuredCliActorId(async () => ({ runtime: { enabled: true, materialCli: materialCli as never } })) });
+  // The same assembly main.ts hands to buildServer: createReserveRecipientCheck over the unit of work and the private-configuration loader.
+  const check = createReserveRecipientCheck({ uow, loadIntegrations: async () => ({ runtime: { enabled: true, materialCli: materialCli as never } }) });
   const app = await buildServer({ service, credentials: [{ token, ...lead }], runtime: { status: () => ({ available: true, error: null, faults: [] }) } as never,
     listRuntimeModels: async () => ({ status: "available", models: model ? [model] : [], error: null, observedAtUtc: new Date().toISOString() }) as never,
-    hasRuntimeGrant: () => runtimeGrant, requireRunRecipient: async (_principal, command, session) => { guarded++; return guard(command, session); } } as never);
+    hasRuntimeGrant: () => runtimeGrant, requireRunRecipient: async (principal, command, session) => { guarded++; return check(principal, command, session); } } as never);
   t.after(() => app.close());
   const headers = { authorization: `Bearer ${token}` };
   const reserve = async (taskId: string, expectedVersion: number) => {
@@ -155,4 +155,12 @@ test("a caller without the runtime execution grant is stopped by authorization f
   assert.match(attempt.body, /FORBIDDEN/);
   assert.equal(rig.guardCalls(), 0, "the recipient check runs after authorization, never instead of it");
   assert.equal(await rig.runRows(), before);
+});
+
+test("main.ts hands buildServer the production assembly, not an inline copy", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const source = await readFile(new URL("../../apps/coordinator/src/main.ts", import.meta.url), "utf8");
+  const wired = source.match(/requireRunRecipient:\s*createReserveRecipientCheck\(\{\s*uow,\s*loadIntegrations:\s*\(\)\s*=>\s*loadIntegrations\(process\.env\.EVOLOOP_INTEGRATIONS_FILE\)\s*\}\)/g) ?? [];
+  assert.equal(wired.length, 1, "buildServer's requireRunRecipient is createReserveRecipientCheck over the real unit of work and configuration loader");
+  assert.equal((source.match(/requireRunRecipient/g) ?? []).length, 1, "no second, inline recipient check is wired");
 });

@@ -91,7 +91,7 @@ import { createOrdinaryRunSealer } from "./ordinary-run-submission/seal.js";
 import { OrdinaryRunSealPump } from "./ordinary-run-submission/pump.js";
 import { resolveLineRecipient } from "./session-line/recipient.js";
 import { throttledLog } from "./log-throttle.js";
-import { materialCliRecipientMatches, configuredCliActorId, createRunRecipientGuard, requireOrdinaryRecipient } from "./runtime/recipient-preflight.js";
+import { materialCliRecipientMatches, createReserveRecipientCheck, requireOrdinaryRecipient } from "./runtime/recipient-preflight.js";
 import { createMessageExecutionReader } from "./session-messages/execution-capability.js";
 import { sessionMessageCanStart } from "./session-messages/scheduling.js";
 import { LeaderResultNoticePump } from "./leader-results/pump.js";
@@ -988,11 +988,7 @@ const app = await buildServer({ service, credentials, canWrite: lease.canWrite, 
       approvalPolicy:command.approvalPolicy}) === true,
   authorizeDynamicRun: async (principal,command,session) => principal.permissions.includes("review") &&
     principal.actorId === session.actorId && await dynamicAdmission?.canReserveRun(session,command.runId,command.taskId) === true,
-  requireRunRecipient: (() => {
-    const guard = createRunRecipientGuard({ read: (projectId, fn) => uow.read(projectId, reader => fn(reader as never)),
-      cliActorId: configuredCliActorId(() => loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE)) });
-    return async (_principal, command, session) => guard(command, session);
-  })(),
+  requireRunRecipient: createReserveRecipientCheck({ uow, loadIntegrations: () => loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE) }),
   authorizeDynamicMessageRecovery: async (principal,session) => principal.permissions.includes("review") &&
     await dynamicAdmission?.canStartConversation(session) === true,
   runtimeGrants: (projectId, actorId) => runtimeConfig?.enabled ? runtimeConfig.grants.filter(g => g.projectId === projectId && g.actorId === actorId) : [],
