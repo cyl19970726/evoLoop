@@ -224,11 +224,23 @@ node scripts/restore.mjs --from /absolute/private-backups/evoloop-20261020 \
 
 随后按后端流程导入 Wiki，核对修订、来源、Blob 原文哈希、Task/操作回执及待对账运行。全部核实前不要开启 Wiki 或 runtime 写入。跨数据库与文件目录的恢复并非单个事务；若数据库已恢复而文件改名失败，保留现场，用新的空库重做，不在半恢复库上盲目重试。脚本拒绝非空数据库、已有目标目录和仓库内正文路径。
 
+### 线上版本：`/api/version` 与 `build-info.json`
+
+总览顶部的“线上当前版本”读公开只读的 `GET /api/version`（与 `/health` 一样不需要令牌），只返回 `{commit, builtAt, startedAt}`：
+
+- `commit`、`builtAt` 由服务端读**已部署目录根部的 `build-info.json`**（`{"commit": "<7–40 位十六进制>", "builtAt": "<ISO 时间>"}`）。文件缺失、不是合法 JSON 或字段不合规时，两者都是 `null`，页面写“版本未读到”，不回退旧值。
+- `startedAt` 是服务进程启动时间，页面叫“启动时间”，不是发布时间。
+- 发布脚本写 `build-info.json` 不在这次改动里：在发布流程写入之前，线上页面如实显示“版本未读到”。
+- `/milestones` 读已部署的 `docs/roadmap.md` 阶段表；阶段与路线图阶段的关联存在 `stage_phase_key`（迁移 101），用 `stage.phaseKey.set`（review 权限）设置；未关联显示“未登记”。
+
 ### 发布脚本
 
 `npm run release -- plan --id ID --ref GIT_REF` 只打印计划；`run ... --execute` 才执行；`rollback --id ID --execute` 把代码切回上一个版本。`--from STEP` 续跑要求该发布记录里前面的步骤都已成功且没有被撤销，`--only A,B` 只跑所列步骤，步骤名拼错直接报错。`--allow-no-previous` 仅用于第一次发布：当前链接不存在时没有可恢复的旧版本，没有该参数一律拒绝。`--allow-off-main` 仅用于演练：发布提交必须已在远端主分支（默认 `origin/main`，可用配置 `remote`、`baseBranch` 改）上，预检会取远端核对，不在就拒绝。不带 `--from` 重跑时，`prepare` 遇到已存在的版本目录，只在它正好是要发布的提交时复用，否则报错。
 
 配置文件放在仓库外，由 `EVOLOOP_RELEASE_CONFIG` 指向，JSON 字段：`releaseRoot`、`currentLink`、`stateDir`（均为绝对路径）、`backup.out`、`backup.blobRoot`（可选 `wikiSnapshot`、`integrations`）、`database.name`（必填，可加 `host`、`port`）、`skipTests`、可选 `sourceSubdir`（版本目录里放源码的子目录；默认空，即版本目录本身就是检出的源码。主机上若是 `<版本目录>/source` 加 `runtime`、`artifacts` 等同级目录的布局，就写 `source`：构建、预检、备份、迁移都在这个子目录里运行，钩子从 `EVOLOOP_RELEASE_SOURCE` 读到源码路径，`EVOLOOP_RELEASE_DIR` 仍是版本目录），以及 `hooks`（各为命令参数数组）。执行前把环境变量 `EVOLOOP_DATABASE_URL` 与 `database` 比对，库名、主机或端口不一致即拒绝，任何步骤都不会运行。不跳过测试时还须设 `EVOLOOP_RELEASE_TEST_DATABASE_URL` 指向独立的 `evoloop_*_test` 库，且不能等于线上库。命令运行时可读 `EVOLOOP_RELEASE_ID`、`EVOLOOP_RELEASE_DIR`、`EVOLOOP_RELEASE_SOURCE`、`EVOLOOP_RELEASE_PREVIOUS`（绝对路径）、`EVOLOOP_RELEASE_CURRENT_LINK`。
+
+**带上上一版的工作台分块。** 工作台的页面是按需加载的分块文件，文件名带内容哈希（如 `assets/ArrangementPage-BFkRO_z-.js`），每次发布都会换名。令牌只存在页面内存里，刷新就要重新输入，所以发布前打开的标签页会一直开着；它之后再打开没打开过的页面，会去取旧名字的文件，旧版本不在了就报 `Failed to fetch dynamically imported module`（2026-11-12 线上“统筹安排”即此）。因此 `build` 步骤结束后，发布脚本（`scripts/release/carry-assets.mjs`）把上一版 `apps/workbench/dist/assets/` 里**新版本没有的文件**复制进新版本的同名目录，只补缺、绝不覆盖（同名即同内容哈希，新版本的文件原样保留）；这一步在停服务之前，失败即中止发布，什么都没动。上一版没有该目录（首次发布）时只记一行日志。配置 `carryAssets` 可选：`false` 关闭；`{ "keep": N, "assetsDir": "…" }` 调整，默认 `keep` 为 3、`assetsDir` 为 `apps/workbench/dist/assets`（相对源码目录，随 `sourceSubdir`）。
+**保留策略：** 每次发布算一代；带过来的文件记下它被构建出来的那一代（新版本目录里的 `apps/workbench/dist/assets-carry.json`），到第 `keep` 代之后不再带，所以目录不会无限增长。默认保留最近 3 个版本（新版本加前两版）：覆盖“发布前打开、几天不关的标签页”，而按本机演练，三版合计约 10–12 MB（单版约 7.6 MB），代价可忽略；`keep` 越大旧标签页能撑越久、占用越多，需要更长时可调大。超出保留的标签页仍会在打开新页面时失败，刷新即恢复。发布状态文件的 `acceptance.carriedAssets` 记录这次复制、过期和同名的文件数及字节数。这一步只补静态文件，不让旧标签页的接口调用与新服务兼容，接口不兼容的改动仍须靠刷新。
 
 **钩子必须做到什么**（都不得回显密钥，失败时以非零退出；每个都要能重复执行而不出错）：
 

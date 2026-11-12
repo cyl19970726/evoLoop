@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readlink, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readdir, readlink, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative } from "node:path";
 import test from "node:test";
@@ -374,4 +374,36 @@ test("with sourceSubdir the restore after a failure hands the previous release's
   const restoreStart = seen.filter(item => item.name === "start").at(-1);
   assert.equal(restoreStart.dir, join(root, "rel", "old"));
   assert.equal(restoreStart.source, join(root, "rel", "old", "source"));
+});
+
+test("the build step carries the previous version's chunk files into the new build and records it", async () => {
+  const root = await fresh();
+  const assets = release => join(root, "rel", release, "apps", "workbench", "dist", "assets");
+  await mkdir(assets("old"), { recursive: true });
+  await writeFile(join(assets("old"), "ArrangementPage-OLD.js"), "old page");
+  await writeFile(join(assets("old"), "vendor-1.js"), "old vendor");
+  const { log, runner: base } = sim();
+  // The fake build writes what the real one would: new hashed names, and one name that is the same in both versions.
+  const runner = async (argv, options) => {
+    if (argv[0] === "sh") { await mkdir(assets("r1"), { recursive: true }); await writeFile(join(assets("r1"), "ArrangementPage-NEW.js"), "new page"); await writeFile(join(assets("r1"), "vendor-1.js"), "new vendor"); }
+    return base(argv, options);
+  };
+  await go(root, { runner });
+  assert.deepEqual((await readdir(assets("r1"))).sort(), ["ArrangementPage-NEW.js", "ArrangementPage-OLD.js", "vendor-1.js"]);
+  assert.equal(await readFile(join(assets("r1"), "vendor-1.js"), "utf8"), "new vendor", "a same-named file is not overwritten");
+  assert.deepEqual((await stateOf(root, "r1")).acceptance.carriedAssets, { generation: 1, copied: 1, expired: 0, unchanged: 1, bytes: "old page".length });
+  order(log, "sh", "stop"); // carried before anything is stopped
+});
+
+test("carryAssets can be switched off and is validated in the config", async () => {
+  const root = await fresh();
+  const assets = release => join(root, "rel", release, "apps", "workbench", "dist", "assets");
+  await mkdir(assets("old"), { recursive: true }); await writeFile(join(assets("old"), "A-OLD.js"), "x");
+  const { runner: inner } = sim();
+  const runner = async (argv, options) => { if (argv[0] === "sh") { await mkdir(assets("r1"), { recursive: true }); await writeFile(join(assets("r1"), "A-NEW.js"), "y"); } return inner(argv, options); };
+  await run({ config: { ...base(root), carryAssets: false }, id: "r1", execute: true, env: ENV, log: quiet, runner });
+  assert.deepEqual(await readdir(assets("r1")), ["A-NEW.js"]);
+  for (const bad of [{ keep: 0 }, { keep: 1.5 }, { assetsDir: "/abs" }, { assetsDir: "../x" }, "yes"])
+    assert.throws(() => loadConfig(JSON.stringify({ ...base("/srv/x"), carryAssets: bad }), "/etc/r.json"), /carryAssets/);
+  assert.ok(loadConfig(JSON.stringify({ ...base("/srv/x"), carryAssets: { keep: 5, assetsDir: "web/dist/assets" } }), "/etc/r.json"));
 });

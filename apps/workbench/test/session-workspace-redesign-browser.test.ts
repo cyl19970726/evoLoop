@@ -209,6 +209,10 @@ test("Sessions is the sole directory and renders conversation, source, reply and
   // The saved colour mark sits beside the name in the right column; the header shows the role avatar.
   if (await page.getByRole("button", { name: "展开右栏" }).count()) await page.getByRole("button", { name: "展开右栏" }).click();
   await page.locator(".session-panel section[aria-label=智能体] .session-identity-violet").waitFor();
+  // 标识设置 is a rarely used setting: it lives in 详情与来源, out of the right column's first screen.
+  const information = page.locator(".session-information");
+  assert.equal(await page.locator(".session-panel > .session-identity-settings, .session-panel > div > .session-identity-settings").count(), 0);
+  await information.locator(":scope > summary").click();
   const identitySettings = page.locator(".session-identity-settings");
   await identitySettings.locator("summary").first().click();
   await identitySettings.locator("summary", { hasText: "调整颜色与图标" }).click();
@@ -223,6 +227,8 @@ test("Sessions is the sole directory and renders conversation, source, reply and
   const identityCommand = posted.find(command => command.type === "session.identity.set");
   assert.deepEqual([identityCommand?.target, identityCommand?.expectedVersion, identityCommand?.color, identityCommand?.mark],
     [{ kind: "owned", sessionId }, 1, "teal", "grid"]);
+  await information.locator(":scope > summary").click();
+  await page.waitForURL(url => !url.search.includes("panel=information"));
   await page.reload();
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button", { name: "进入", exact: true }).click();
