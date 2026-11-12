@@ -181,6 +181,9 @@ export class WorkflowService {
         result = outcome.result;
         effects = outcome.effects;
       } catch (error) {
+        // A provider hold is a temporary state, not a decision about this command: nothing is journalled, so the same operation
+        // ID is evaluated afresh once the hold is released instead of replaying the refusal forever.
+        if (error instanceof DomainError && error.code === "PROVIDER_HELD") throw error;
         if (error instanceof DomainError) {
           result = {
             status: "rejected", operationId: command.operationId, code: error.code,
@@ -347,7 +350,7 @@ export class WorkflowService {
         requireBody(command.body);
         const organizationReview = reviewMetadata(document.kind, command.organizationReview, previous.organizationReview);
         await validatePreviousReview(organizationReview, command.projectId, document.id,
-          id => tx.getDocument(id), (id, revision) => tx.getDocumentRevision(id, revision));
+          id => tx.getDocument(id), (id, revision) => tx.getDocumentRevision(id, revision), previous.organizationReview);
         const revisionId = this.deps.ids.next();
         const revision: DocumentRevision = {
           projectId: command.projectId, documentId: document.id, id: revisionId, body: command.body,

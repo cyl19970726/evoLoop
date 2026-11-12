@@ -312,3 +312,28 @@ test("requested business Run blocks start, then two steers retain one original s
   assert.equal(run.task_revision_id,revisionId);assert.equal(run.input_hash,hash);assert.equal(run.state,"running");
   assert.equal((await store.list(projectId,otherSessionId,10)).items.length,2);
 });
+
+test("a held provider: an idle start is refused before anything is reserved, adding to a running Turn still goes through", async () => {
+  const idle = randomUUID(), running = randomUUID();
+  for (const id of [idle, running]) await pool.query(`INSERT INTO runtime_session(project_id,session_id,role_id,cwd,authorization_scope,sandbox,approval_policy,state,version,
+    native_thread_id,native_session_id,operation_id,actor_id,created_at,updated_at) VALUES($1,$2,$3,'/tmp/direct-test','project','danger-full-access','never','ready',1,$4,$5,$6,'agent',now(),now())`,
+    [projectId, id, roleId, `thread-${id}`, `native-${id}`, randomUUID()]);
+  const primary = randomUUID();
+  await pool.query(`INSERT INTO session_message(project_id,message_id,operation_id,target_kind,session_id,sender_actor_id,content,state,version,created_at,updated_at)
+    VALUES($1,$2,$3,'owned',$4,'sender','Primary','processing',1,now(),now())`, [projectId, primary, randomUUID(), running]);
+  await pool.query(`INSERT INTO session_message_processing(project_id,processing_id,message_id,session_id,operation_id,receiver_actor_id,state,native_turn_id,
+    read_only_policy_fingerprint,version,started_at,updated_at) VALUES($1,$2,$3,$4,$5,'agent','running','turn-live',$6,1,now(),now())`, [projectId, randomUUID(), primary, running, randomUUID(), hash]);
+  const provider = (await pool.query("SELECT runtime_provider FROM runtime_session WHERE session_id=$1", [idle])).rows[0].runtime_provider;
+  await pool.query(`INSERT INTO runtime_provider_hold(project_id,hold_id,provider,state,category,reason,version,opened_at) VALUES($1,$2,$3,'held','quota_exhausted','balance',1,now())`,
+    [projectId, randomUUID(), provider]);
+  try {
+    assert.equal(await store.providerHeld(projectId, idle), true);
+    const start = input();
+    await assert.rejects(store.reserve(projectId, idle, "user", start, grant(idle, 5), hash), { code: "PROVIDER_HELD" });
+    assert.equal(await store.get(projectId, start.inputId), null, "nothing was reserved: no input record, no message");
+    assert.equal((await pool.query("SELECT count(*)::int n FROM session_message WHERE message_id=$1", [start.inputId])).rows[0].n, 0);
+    assert.equal((await pool.query("SELECT count(*)::int n FROM session_message_processing WHERE session_id=$1", [idle])).rows[0].n, 0, "no new Turn was begun");
+    const steer = await store.reserve(projectId, running, "user", input("turn-live"), grant(running, 5), "");
+    assert.equal(steer.record.mode, "steer"); assert.equal(steer.record.state, "attempted", "adding to the running Turn is not a new start");
+  } finally { await pool.query("UPDATE runtime_provider_hold SET state='released',released_at=now(),released_by='test',version=version+1 WHERE project_id=$1 AND state='held'", [projectId]); }
+});

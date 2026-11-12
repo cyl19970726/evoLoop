@@ -53,6 +53,7 @@ const run = (r: QueryResultRow): RuntimeRunRecord => ({
   nativeTurnId: r.native_turn_id, interruptRequested: r.interrupt_requested,
   ...(r.stop_requested_at ? { stopRequestedAt: iso(r.stop_requested_at), stopReason: r.stop_reason, stopRequestedBy: r.stop_requested_by } : {}),
   nativeEnvironmentEpoch: nativeEpoch(r.native_environment_epoch),
+  ...(r.failure_category ? { failureCategory: r.failure_category } : {}),
   resultSummary: r.result_summary, actorId: r.actor_id,
   createdAt: iso(r.created_at), updatedAt: iso(r.updated_at),
   ...(r.usage ? { usage: r.usage } : {}),
@@ -162,13 +163,13 @@ export class PgRuntimeStore {
   async updateRuntimeRun(item: RuntimeRunRecord, expectedVersion: number): Promise<void> {
     this.scope(item.projectId);
     const result = await this.client.query(`UPDATE runtime_run SET state=$3,version=$4,native_turn_id=$5,interrupt_requested=$6,result_summary=$7,updated_at=$8,evaluation_packet=$9::jsonb,pre_turn_proof=$11::jsonb,
-      usage=$12::jsonb,cost_usd=$13,stop_requested_at=$14,stop_reason=$15,stop_requested_by=$16
+      usage=$12::jsonb,cost_usd=$13,stop_requested_at=$14,stop_reason=$15,stop_requested_by=$16,failure_category=$17
       WHERE project_id=$1 AND run_id=$2 AND version=$10`,
       [item.projectId,item.id,item.state,item.version,item.nativeTurnId,item.interruptRequested,item.resultSummary,item.updatedAt,
         item.evaluationPacket ? JSON.stringify(item.evaluationPacket) : null,expectedVersion,
         item.preTurnProof ? JSON.stringify(preTurnProofSchema.parse(item.preTurnProof)) : null,
         item.usage ? JSON.stringify(item.usage) : null, item.costUsd ?? null,
-        item.stopRequestedAt ?? null, item.stopReason ?? null, item.stopRequestedBy ?? null]);
+        item.stopRequestedAt ?? null, item.stopReason ?? null, item.stopRequestedBy ?? null, item.failureCategory ?? null]);
     if (!result.rowCount) throw new DomainError("VERSION_CONFLICT", "runtime run version changed", (await this.getRuntimeRun(item.id))?.version);
   }
   async appendRuntimeEvent(item: RuntimeRecordEvent): Promise<void> {

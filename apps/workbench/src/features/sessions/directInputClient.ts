@@ -20,7 +20,7 @@ export function explicitlyUnaccepted(error: unknown): boolean {
   return (error.status === 400 && code === "INVALID_INPUT") ||
     (error.status === 413 && code === "TOO_LARGE") ||
     (error.status === 403 && code === "FORBIDDEN") ||
-    (error.status === 409 && code === "DIRECT_GRANT_MISSING");
+    (error.status === 409 && (code === "DIRECT_GRANT_MISSING" || code === "PROVIDER_HELD"));
 }
 
 /** A local per-Session admission conflict: nothing was reserved, so retrying the same draft is safe. */
