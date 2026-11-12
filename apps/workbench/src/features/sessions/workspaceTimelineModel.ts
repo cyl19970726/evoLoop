@@ -68,6 +68,8 @@ export function mergeWorkspaceTurns(previous: WorkspaceTurn[], incoming: Workspa
     const terminal = prior && ["completed", "failed", "interrupted", "declined"].includes(prior.state);
     next.set(turn.id, prior ? { ...prior, ...turn, startedAt: turn.startedAt ?? prior.startedAt,
       completedAt: turn.completedAt ?? prior.completedAt,
+      // A later read without usage never erases usage already reported for this Turn.
+      usage: turn.usage ?? prior.usage ?? null,
       state: terminal && ["running", "pending", "unknown"].includes(turn.state) ? prior.state : turn.state,
     } : turn);
   }
@@ -93,10 +95,24 @@ export function workspaceReadingOrder(entries: WorkspaceEntry[], pending: Worksp
   return result;
 }
 
-export type WorkspaceReadingGroup = { kind: "entry"; entry: WorkspaceEntry } | { kind: "tools"; id: string; entries: Extract<WorkspaceEntry, { kind: "tool" }>[] };
+export type WorkspaceReadingGroup = { kind: "entry"; entry: WorkspaceEntry } | { kind: "tools"; id: string; entries: Extract<WorkspaceEntry, { kind: "tool" }>[] }
+  | { kind: "reasoning"; id: string; turnId: string | null; entries: Extract<WorkspaceEntry, { kind: "reasoning" }>[] };
+/**
+ * Reading groups in record order. A Turn's reasoning entries fold into one group at the place of its first entry and
+ * keep their native order inside it; reasoning never joins another Turn's group.
+ */
 export function workspaceReadingGroups(entries: WorkspaceEntry[]): WorkspaceReadingGroup[] {
   const groups: WorkspaceReadingGroup[] = [];
+  const reasoning = new Map<string, Extract<WorkspaceReadingGroup, { kind: "reasoning" }>>();
   for (const entry of entries) {
+    if (entry.kind === "reasoning") {
+      const existing = entry.turnId !== null ? reasoning.get(entry.turnId) : undefined;
+      if (existing) { existing.entries.push(entry); continue; }
+      const group = { kind: "reasoning" as const, id: entry.id, turnId: entry.turnId, entries: [entry] };
+      if (entry.turnId !== null) reasoning.set(entry.turnId, group);
+      groups.push(group);
+      continue;
+    }
     const last = groups.at(-1);
     if (entry.kind === "tool") {
       if (last?.kind === "tools" && entry.turnId !== null && last.entries.at(-1)!.turnId === entry.turnId) last.entries.push(entry);

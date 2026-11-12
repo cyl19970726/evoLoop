@@ -65,7 +65,33 @@ export interface WorkspaceRecord extends WorkspaceEntryBase {
   body: string;
   state: WorkspaceState;
 }
-export type WorkspaceEntry = WorkspaceMessage | WorkspaceTool | WorkspaceRecord;
+/**
+ * One native reasoning record of a Turn: a Codex `reasoning` Item or one Claude thinking block, in native order.
+ * The body is only what the native record holds in readable form. Encrypted, redacted or omitted reasoning stays
+ * `readable: false` with an empty body; nothing is inferred from the answer. Readers need project read access, and
+ * these entries never enter Leader notices or notice packages.
+ */
+export interface WorkspaceReasoning extends WorkspaceEntryBase {
+  kind: 'reasoning';
+  /** summary: provider reasoning summary; raw: readable native reasoning text; thinking: Claude thinking text; none: nothing readable. */
+  source: 'summary' | 'raw' | 'thinking' | 'none';
+  readable: boolean;
+  body: string;
+  /** Why nothing readable is shown, for example encrypted or omitted reasoning. Null when readable. */
+  unavailableReason: string | null;
+  state: WorkspaceState;
+}
+export type WorkspaceEntry = WorkspaceMessage | WorkspaceTool | WorkspaceRecord | WorkspaceReasoning;
+/** Tokens the native source reported for one Turn. Null fields were not reported, never zero by inference. */
+export interface WorkspaceTurnUsage {
+  outputTokens: number | null;
+  /** Reasoning or thinking tokens, already counted inside outputTokens. */
+  reasoningOutputTokens: number | null;
+  /** Where the numbers come from, so a reader can check them against the native record. */
+  source: 'codex-token-usage' | 'claude-result';
+  /** False when the numbers cannot be proved for the whole Turn (for example its start was not observed); they are then null. */
+  complete?: boolean;
+}
 export interface WorkspaceTurn {
   id: string;
   state: WorkspaceState;
@@ -73,6 +99,8 @@ export interface WorkspaceTurn {
   completedAt: string | null;
   origin: WorkspaceOrigin | null;
   order?: WorkspaceOrderAnchor;
+  /** Per-Turn native token usage when the source reported it; absent or null when unknown. */
+  usage?: WorkspaceTurnUsage | null;
 }
 export interface NativeWorkspacePage {
   entries: WorkspaceEntry[];
