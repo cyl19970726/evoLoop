@@ -48,10 +48,12 @@ export function describeTurnEffort(requested: string | null, turn: RuntimeTurn):
  * Returns the prior value untouched when the observation says nothing about model, effort or subagents.
  */
 export function mergeRunActual(prior: RunActual | null | undefined,
-  seen: { model?: string | null | undefined; reasoningEffort?: string | null | undefined; subagentModels?: string[] | null | undefined }): RunActual | null {
+  seen: { model?: string | null | undefined; reasoningEffort?: string | null | undefined; subagentModels?: string[] | null | undefined; effortRequested?: boolean | undefined }): RunActual | null {
   if (seen.model === undefined && seen.reasoningEffort === undefined && seen.subagentModels === undefined) return prior ?? null;
+  const requested = seen.effortRequested ?? prior?.effortRequested;
   return { model: seen.model ?? prior?.model ?? null, reasoningEffort: seen.reasoningEffort ?? prior?.reasoningEffort ?? null,
-    subagentModels: seen.subagentModels?.length ? [...new Set(seen.subagentModels)].sort() : prior?.subagentModels ?? [] };
+    subagentModels: seen.subagentModels?.length ? [...new Set(seen.subagentModels)].sort() : prior?.subagentModels ?? [],
+    ...(requested === undefined ? {} : { effortRequested: requested }) };
 }
 
 export class RuntimeWorkflowService {
@@ -401,7 +403,9 @@ export class RuntimeWorkflowService {
       if (!["dispatching", "unknown"].includes(current.state)) throw new DomainError("RUN_NOT_DISPATCHING", "run cannot bind a new turn");
       if (current.nativeTurnId && current.nativeTurnId !== turn.id) throw new DomainError("FOREIGN_TURN", "run already has a different native turn");
       // A stop that arrived while the start was in flight: the Turn that binds now is interrupted at once.
-      const actual = mergeRunActual(current.actual, { model: turn.observedModel, reasoningEffort: turn.observedReasoningEffort, subagentModels: turn.subagentModels });
+      const actual = mergeRunActual(current.actual, { model: turn.observedModel, reasoningEffort: turn.observedReasoningEffort, subagentModels: turn.subagentModels,
+        // Asked or left to the default is the Run's configuration; it only describes how to read the reported value, never replaces it.
+        ...(turn.observedReasoningEffort !== undefined ? { effortRequested: !!current.executionProfile?.reasoningEffort } : {}) });
       const next = { ...current, state: "running" as const, version: current.version + 1,
         ...(actual ? { actual } : {}),
         ...(current.stopRequestedAt ? { interruptRequested: true } : {}),

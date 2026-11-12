@@ -1525,7 +1525,7 @@ export class CodexAppServerAdapter implements RuntimePort {
       const turn=runtimeTurn(started?.turn);
       if(!turn||turn.status!=='inProgress'||turn.completedAtUtc!==null)
         throw new RuntimeUnknownError('turn/start',null,'invalid full conversation acknowledgement; Turn may have started');
-      return await this.withObservedEffort(binding,turn,!!profile.reasoningEffort);
+      return await this.withObservedEffort(binding,turn);
     }finally{
       // A changed readback must not leave an implicit admission for another start.
       this.conversationQualifications.delete(threadId);
@@ -1887,7 +1887,7 @@ export class CodexAppServerAdapter implements RuntimePort {
     }
     const turn = runtimeTurn(result?.turn);
     if (!turn) throw new RuntimeUnknownError("turn/start", null, "invalid acknowledgement; turn may have started");
-    return await this.withObservedEffort(binding, turn, !!executionProfile?.reasoningEffort);
+    return await this.withObservedEffort(binding, turn);
   }
 
   /**
@@ -1895,10 +1895,12 @@ export class CodexAppServerAdapter implements RuntimePort {
    * one in effect for it and not an older Turn's. Anything else (a failed read, another Turn first) is "unread", never "consistent".
    * Best effort: the Turn has already started.
    */
-  private async withObservedEffort(binding: RuntimeBinding, turn: RuntimeTurn, effortRequested = true): Promise<RuntimeTurn> {
+  private async withObservedEffort(binding: RuntimeBinding, turn: RuntimeTurn): Promise<RuntimeTurn> {
     // The model is read from the same Thread readback, under the same rule: only when this Turn is the Thread's latest. A value that cannot be
     // read is null ("not recorded"), never the configured model. `observedReasoningEffort` stays absent when no effort was requested.
-    const unread = { ...turn, ...(effortRequested ? { observedReasoningEffort: null } : {}), observedModel: null };
+    // The effort the Thread reports is read whether or not one was requested (an unconfigured Session runs at the runtime's own default, and
+    // that value is the Turn's real effort). Whether it was requested is the Run's configuration, kept apart by the caller (`effortRequested`).
+    const unread = { ...turn, observedReasoningEffort: null, observedModel: null };
     try {
       const latest = await this.requestTurnsList({ threadId: binding.nativeThreadId, limit: 1, sortDirection: "desc", ...(this.features.modern ? { itemsView: "notLoaded" } : {}) });
       const first = Array.isArray(latest?.data) ? object(latest.data[0]) : null;
@@ -1906,7 +1908,7 @@ export class CodexAppServerAdapter implements RuntimePort {
       const readback = object(await this.request("thread/read", { threadId: binding.nativeThreadId, includeTurns: false }));
       const thread = object(readback?.thread);
       const effort = thread?.reasoningEffort, model = thread?.model;
-      return { ...turn, ...(effortRequested ? { observedReasoningEffort: typeof effort === "string" ? effort : null } : {}),
+      return { ...turn, observedReasoningEffort: typeof effort === "string" && effort ? effort : null,
         observedModel: typeof model === "string" && model ? model : null };
     } catch { return unread; }
   }

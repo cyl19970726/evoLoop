@@ -72,7 +72,7 @@ test("a Claude-style Run learns its exact model only at the terminal Turn; the c
   await runtime.bindTurn(p, f.runId, { id: `turn-${f.runId}`, status: "inProgress" }, { kind: "startReply", operationId: f.operationId });
   let run = await runOf(f.runId);
   assert.equal(run.actual ?? null, null, "bound, nothing observed yet");
-  assert.deepEqual(describeRunActual(run), { model: "未记录", reasoningEffort: "未记录", subagentModels: [], configuredModel: "opus", configuredEffort: null, recorded: false });
+  assert.deepEqual(describeRunActual(run), { model: "未记录", reasoningEffort: "未记录", effortRequested: null, subagentModels: [], configuredModel: "opus", configuredEffort: null, recorded: false });
   assert.equal((await sessionOf(f.sessionId)).actualModel ?? null, null, "the Session has no actual model either");
   await runtime.recordTurn(p, f.runId, `turn-${f.runId}`, "completed", "done", { completedAtUtc: new Date().toISOString(),
     observedModel: "claude-opus-5-5", subagentModels: ["claude-haiku-4-5", "claude-haiku-4-5"] });
@@ -92,7 +92,7 @@ test("a Codex-style Run records the model and effort the Thread reported at the 
   await runtime.bindTurn(p, f.runId, { id: `turn-${f.runId}`, status: "inProgress", observedModel: "deepseek/deepseek-flash-0610", observedReasoningEffort: "max" },
     { kind: "startReply", operationId: f.operationId });
   let run = await runOf(f.runId);
-  assert.deepEqual(run.actual, { model: "deepseek/deepseek-flash-0610", reasoningEffort: "max", subagentModels: [] });
+  assert.deepEqual(run.actual, { model: "deepseek/deepseek-flash-0610", reasoningEffort: "max", subagentModels: [], effortRequested: false });
   // The terminal record says nothing about the model (Codex reports it at the start): what was recorded stays.
   await runtime.recordTurn(p, f.runId, `turn-${f.runId}`, "completed", "done", { completedAtUtc: new Date().toISOString() });
   run = await runOf(f.runId);
@@ -102,10 +102,29 @@ test("a Codex-style Run records the model and effort the Thread reported at the 
   await runtime.beginDispatch(p, g.runId);
   await runtime.bindTurn(p, g.runId, { id: `turn-${g.runId}`, status: "inProgress", observedModel: null, observedReasoningEffort: null }, { kind: "startReply", operationId: g.operationId });
   const unread = await runOf(g.runId);
-  assert.deepEqual(unread.actual, { model: null, reasoningEffort: null, subagentModels: [] });
+  assert.deepEqual(unread.actual, { model: null, reasoningEffort: null, subagentModels: [], effortRequested: false });
   assert.equal(describeRunActual(unread).recorded, false);
   assert.equal(describeRunActual(unread).model, "未记录");
   assert.equal((await sessionOf(g.sessionId)).actualModel ?? null, null);
+});
+
+test("no effort configured but the Thread reads back max: the Run records max and says it was not explicitly requested; a configured effort is marked requested", async () => {
+  // The fixture's profile has no reasoningEffort: the runtime ran at its own default.
+  const f = await fixture("deepseek/deepseek-flash");
+  assert.equal((await runOf(f.runId)).executionProfile?.reasoningEffort ?? null, null, "nothing was configured");
+  await runtime.beginDispatch(p, f.runId);
+  await runtime.bindTurn(p, f.runId, { id: `turn-${f.runId}`, status: "inProgress", observedModel: "deepseek/deepseek-flash", observedReasoningEffort: "max" },
+    { kind: "startReply", operationId: f.operationId });
+  const run = await runOf(f.runId);
+  assert.deepEqual(run.actual, { model: "deepseek/deepseek-flash", reasoningEffort: "max", subagentModels: [], effortRequested: false });
+  const view = describeRunActual(run);
+  assert.equal(view.reasoningEffort, "max", "the reported effort, not 未记录"); assert.equal(view.effortRequested, false); assert.equal(view.configuredEffort, null, "and not the configuration");
+  // The runtime read nothing back: only then 未记录, still without borrowing a configured value.
+  const g = await fixture("deepseek/deepseek-flash");
+  await runtime.beginDispatch(p, g.runId);
+  await runtime.bindTurn(p, g.runId, { id: `turn-${g.runId}`, status: "inProgress", observedModel: null, observedReasoningEffort: null }, { kind: "startReply", operationId: g.operationId });
+  const unread = describeRunActual(await runOf(g.runId));
+  assert.equal(unread.reasoningEffort, "未记录"); assert.equal(unread.effortRequested, false);
 });
 
 test("mergeRunActual: a reported value replaces, an unreported or unread one keeps the record, nothing comes from elsewhere", () => {

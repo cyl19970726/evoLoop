@@ -22,11 +22,17 @@ test("a Run says what its Turn reported and, apart, what was configured; nothing
   const seen = Object.fromEntries(runActualRows({ executionProfile: configured, actual: { model: "claude-opus-5-5", reasoningEffort: null, subagentModels: ["claude-haiku-4-5"] } }));
   assert.equal(seen["本轮实际模型"], "claude-opus-5-5"); assert.equal(seen["本轮实际思考强度"], "未记录", "an effort nobody reported is not filled from the configuration");
   assert.equal(seen["子代理模型"], "claude-haiku-4-5"); assert.equal(seen["配置的模型（不是实际值）"], "opus");
+  // Task f9e0fd58 v7: no effort configured, the runtime read max back: shown as reported and marked as not explicitly requested; a configured one is marked requested.
+  const defaulted = Object.fromEntries(runActualRows({ executionProfile: { model: "m", reasoningEffort: null }, actual: { model: "m", reasoningEffort: "max", subagentModels: [], effortRequested: false } }));
+  assert.equal(defaulted["本轮实际思考强度"], "max（原生读回；没有显式请求，是运行时的默认）"); assert.equal(defaulted["配置的思考强度（不是实际值）"], "未指定");
+  const asked = Object.fromEntries(runActualRows({ executionProfile: { model: "m", reasoningEffort: "high" }, actual: { model: "m", reasoningEffort: "max", subagentModels: [], effortRequested: true } }));
+  assert.equal(asked["本轮实际思考强度"], "max（原生读回；配置里显式请求过强度）"); assert.equal(asked["配置的思考强度（不是实际值）"], "high", "the reported value is not the configured one");
+  assert.equal(Object.fromEntries(runActualRows({ actual: { model: "m", reasoningEffort: null, subagentModels: [], effortRequested: false } }))["本轮实际思考强度"], "未记录", "only a missing read-back reads 未记录");
   // A Run with no profile at all.
   assert.equal(Object.fromEntries(runActualRows({}))["配置的模型（不是实际值）"], "未指定");
   // Codex: the catalog's display name comes in front of the exact IDs.
   const codex = Object.fromEntries(runActualRows({ executionProfile: { model: "deepseek/deepseek-flash", reasoningEffort: "max" }, actual: { model: "deepseek/deepseek-flash", reasoningEffort: "max", subagentModels: [] } }, catalog));
-  assert.equal(codex["本轮实际模型"], "DeepSeek Flash · deepseek/deepseek-flash"); assert.equal(codex["本轮实际思考强度"], "max");
+  assert.equal(codex["本轮实际模型"], "DeepSeek Flash · deepseek/deepseek-flash"); assert.equal(codex["本轮实际思考强度"], "max（原生读回；是否显式请求未记录）");
 });
 
 test("the agent's environment names the configured model with its display name when the catalog has one", () => {

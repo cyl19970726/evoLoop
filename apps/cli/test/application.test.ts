@@ -576,7 +576,7 @@ test('read run carries what the Turn actually reported next to the configured pr
   const env = { EVOLOOP_TOKEN: 'fixture', EVOLOOP_STATE_DIR: directory };
   try {
     const seen = JSON.parse((await run(['read', 'run', runId, '--project', projectId], env)).stdout);
-    assert.deepEqual(seen.actualView, { model: 'claude-opus-5-5', reasoningEffort: '未记录', subagentModels: ['claude-haiku-4-5'], configuredModel: 'opus', configuredEffort: 'high', recorded: true });
+    assert.deepEqual(seen.actualView, { model: 'claude-opus-5-5', reasoningEffort: '未记录', effortRequested: null, subagentModels: ['claude-haiku-4-5'], configuredModel: 'opus', configuredEffort: 'high', recorded: true });
     const unseen = JSON.parse((await run(['read', 'run', other, '--project', projectId], env)).stdout);
     assert.equal(unseen.actualView.model, '未记录'); assert.equal(unseen.actualView.recorded, false); assert.equal(unseen.actualView.configuredModel, 'opus');
     assert.equal(unseen.state, 'completed', 'the Run itself is passed through unchanged');

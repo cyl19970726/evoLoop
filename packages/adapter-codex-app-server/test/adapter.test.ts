@@ -1684,10 +1684,12 @@ test('effort rides on turn/start where the runtime cannot update a live Thread, 
   assert.equal(start.params.effort, 'max', 'turn/start carries the configured effort');
   assert.equal(turn.observedReasoningEffort, 'max', 'and the Thread reports it back');
   assert.equal(turn.observedModel, 'deepseek/deepseek-flash-0610', 'the model the Thread reports, not the configured one');
-  // No effort requested: the model is still read; the effort stays absent rather than claiming a value.
+  // No effort requested: model and effort are still read back from the Thread.
   const plain = await adapter.startTurn({ ...binding, resumeProfile: { ...binding.resumeProfile!, reasoningEffort: null } } as never, 'business', 'op-plain',
     { ...profile, reasoningEffort: null } as never);
-  assert.equal(plain.observedModel, 'deepseek/deepseek-flash-0610'); assert.equal('observedReasoningEffort' in plain, false);
+  assert.equal(plain.observedModel, 'deepseek/deepseek-flash-0610');
+  // Task f9e0fd58 v7: no effort requested, and the runtime still reports one (its own default): that is the Turn's real effort and is recorded.
+  assert.equal(plain.observedReasoningEffort, 'max', 'the Thread reports max although no effort was configured');
   // The Thread's latest Turn is another one: the reported value is not proof for this Turn, so it is not claimed.
   latest = 'someone-elses-turn';
   const foreign = await adapter.startTurn(binding, 'business', 'op-foreign', profile);

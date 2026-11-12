@@ -6,6 +6,8 @@ export interface RunActualView {
   model: string;
   /** The effort the runtime reported, or "未记录". */
   reasoningEffort: string;
+  /** How the effort came about: asked for by the Run's configuration (true), left to the runtime's default (false), unknown (null). */
+  effortRequested: boolean | null;
   /** Subagent models; empty when none were observed. */
   subagentModels: string[];
   /** The configured profile's values, labelled as configured (null when the Run has no profile or none was set). */
@@ -22,6 +24,7 @@ export function describeRunActual(run: { actual?: RunActual | null; executionPro
   return {
     model: actual?.model ?? NOT_RECORDED,
     reasoningEffort: actual?.reasoningEffort ?? NOT_RECORDED,
+    effortRequested: actual?.effortRequested ?? null,
     subagentModels: actual?.subagentModels ?? [],
     configuredModel: run.executionProfile?.model ?? null,
     configuredEffort: run.executionProfile?.reasoningEffort ?? null,

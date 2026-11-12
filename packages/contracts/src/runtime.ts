@@ -94,8 +94,12 @@ export interface RuntimeRunRecord {
 /** The observed side of a Run's Turn, kept beside the configured executionProfile. */
 export interface RunActual {
   model: string | null;
+  /** The effort the runtime reported for the Turn (Codex: the Thread's readback), whether or not one was requested; null when not read. */
   reasoningEffort: string | null;
   subagentModels: string[];
+  /** Whether the Run's configured profile asked for an effort (true), left it to the runtime's default (false), or this was not recorded (null/absent).
+   *  Kept apart from the reported value: a configured effort is never the reported one. */
+  effortRequested?: boolean | null;
 }
 /** Trusted caller proof that thread/resume explicitly failed before any turn/start call. */
 export interface NativeResumeRejection {
