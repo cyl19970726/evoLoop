@@ -39,7 +39,7 @@ const session = (provider: RuntimeProvider, cwd: string, updatedAt: string, stat
   createdAt: updatedAt, updatedAt, runtimeProvider: provider }) as RuntimeSessionRecord;
 
 function deps(l: Awaited<ReturnType<typeof layout>>, input: { history?: RoleRuntimeRevision[]; sessions?: RuntimeSessionRecord[];
-  available?: RuntimeProvider[]; grantCwds?: string[]; runtime?: RoleRuntimeViewDeps["runtime"] }): RoleRuntimeViewDeps {
+  available?: RuntimeProvider[]; grantCwds?: string[]; grants?: Array<{ actorId: string; cwd: string }>; runtime?: RoleRuntimeViewDeps["runtime"] }): RoleRuntimeViewDeps {
   return {
     service: {
       getRole: async (_p: Principal, project: string, role: string) => {
@@ -51,7 +51,7 @@ function deps(l: Awaited<ReturnType<typeof layout>>, input: { history?: RoleRunt
       listRuntimeSessions: async () => input.sessions ?? [],
     } as unknown as RoleRuntimeViewDeps["service"],
     runtime: input.runtime,
-    grantCwds: () => input.grantCwds ?? [],
+    roleGrants: () => input.grants ?? (input.grantCwds ?? []).map(cwd => ({ actorId: "lead", cwd })),
     skillRoots: async () => ({ businessRoot: l.business, businessPaths }),
     claudeContextMode: "project",
     home: l.home,
@@ -66,7 +66,7 @@ test("an unbound Role reads the default runtime and its files from a granted dir
     assert.equal(view.provider, "codex");
     assert.equal(view.providerSource, "default");
     assert.equal(view.selectionSource, "default");
-    assert.deepEqual(view.workDirectory, { cwd: l.repo, source: "grant" });
+    assert.deepEqual(view.workDirectory, { cwd: l.repo, source: "grant", grantCount: 1 });
     assert.equal(view.skillsReportedBy, "files");
     assert.deepEqual(view.skills.map(item => [item.source, item.name, item.selected, item.reason, item.delivery]), [
       ["evoloop", "evoloop-workflow", true, "business", "role_context"],
@@ -181,4 +181,39 @@ test("the Role runtime route reads the live view for project readers and says wh
     const unavailable = await bare.inject({ url, headers: { authorization: `Bearer ${token}` } });
     assert.equal(unavailable.json().code, "CAPABILITY_UNAVAILABLE");
   } finally { await app.close(); await bare.close(); await l.cleanup(); }
+});
+
+test("a Role without a Session starts in its own grant's directory whoever is looking; the skills show to every reader, the path only to a reviewer or a holder of the grant (#fa93783c)", async () => {
+  const l = await layout();
+  try {
+    const reader: Principal = { actorId: "plain-reader", projectIds: [projectId], permissions: ["read"] };
+    const holder: Principal = { actorId: "grant-holder", projectIds: [projectId], permissions: ["read", "write"] };
+    const grants = [{ actorId: "grant-holder", cwd: l.repo }];
+    // 1. A project reader with no grant: the project skill is listed, the directory is "configured" and its path is not sent.
+    const seen = await roleRuntimeView(deps(l, { grants }), reader, projectId, roleId);
+    assert.deepEqual(seen.workDirectory, { cwd: null, source: "grant", grantCount: 1, hidden: true });
+    assert.ok(seen.skills.some(item => item.source === "project" && item.name === "repo-agents"), "the project skill's name shows to every reader");
+    assert.ok(!JSON.stringify(seen).includes(l.repo), "the machine's path is nowhere in what the reader gets");
+    assert.ok(!seen.notes.some(note => note.includes("还没有会话")), "not the old 'no Session or directory' note");
+    // 2. A reviewer, and the holder of a grant of this Role: the path, as before.
+    assert.deepEqual((await roleRuntimeView(deps(l, { grants }), principal, projectId, roleId)).workDirectory, { cwd: l.repo, source: "grant", grantCount: 1 });
+    assert.deepEqual((await roleRuntimeView(deps(l, { grants }), holder, projectId, roleId)).workDirectory, { cwd: l.repo, source: "grant", grantCount: 1 });
+    // The holder of a grant of ANOTHER Role's directory is not a holder of this one: the grants are this Role's.
+    assert.equal((await roleRuntimeView(deps(l, { grants: [{ actorId: "someone-else", cwd: l.repo }] }), holder, projectId, roleId)).workDirectory?.hidden, true);
+    // Several directories: the first, and how many there are.
+    const many = await roleRuntimeView(deps(l, { grants: [{ actorId: "grant-holder", cwd: l.repo }, { actorId: "other", cwd: join(l.root, "zzz") }] }), reader, projectId, roleId);
+    assert.deepEqual(many.workDirectory, { cwd: null, source: "grant", grantCount: 2, hidden: true });
+    const manyShown = await roleRuntimeView(deps(l, { grants: [{ actorId: "grant-holder", cwd: l.repo }, { actorId: "other", cwd: join(l.root, "zzz") }] }), principal, projectId, roleId);
+    assert.equal(manyShown.workDirectory?.cwd, l.repo, "the first of the sorted directories");
+    assert.equal(manyShown.workDirectory?.grantCount, 2);
+    // 3. A Role with no runtime grant at all: a clear reason, not blank, for every reader.
+    for (const who of [reader, principal]) {
+      const none = await roleRuntimeView(deps(l, { grants: [] }), who, projectId, roleId);
+      assert.equal(none.workDirectory, null);
+      assert.ok(none.notes.some(note => note.includes("没有任何运行授权")), "says why there is no directory and no project skill");
+    }
+    // A Role that already has a Session keeps its rule: the Session's directory, whoever is looking.
+    const withSession = await roleRuntimeView(deps(l, { grants, sessions: [session("codex", l.repo, "2026-11-09T00:30:00.000Z")] }), reader, projectId, roleId);
+    assert.deepEqual(withSession.workDirectory, { cwd: l.repo, source: "session" });
+  } finally { await l.cleanup(); }
 });

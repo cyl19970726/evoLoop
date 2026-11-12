@@ -237,3 +237,34 @@ test("capability: a running Session whose runtime has no mid-turn input says so,
   // Idle: nothing to add to, so a missing grant is still a missing grant.
   assert.equal(await reasonFor({ midTurnInput: false, admission: "missing", state: "idle" }), "DIRECT_GRANT_MISSING");
 });
+
+test("a steer whose Turn changed is queued by the store and nothing is sent to the runtime", async () => {
+  const value = { ...command(), expectedTurnId: "turn-seen" };
+  let steers = 0, starts = 0;
+  const runtime = {
+    isReady: () => true, capabilitiesFor: () => capabilities(true, true), registerBinding: async () => {},
+    steerTurn: async () => { steers++; return { turnId: "x", itemId: null }; },
+    startConversationTurn: async () => { starts++; throw new Error("never"); },
+  } as never;
+  const queued = { ...record(value, "steer"), expectedTurnId: "turn-seen", state: "rejected" as const,
+    reason: "TURN_CHANGED: the Turn changed before the input was added; saved as a queued ordinary message", queuedMessageId: value.inputId };
+  const store = { get: async () => null, hasPrimary: async () => true, reserve: async () => ({ record: queued, created: true }) } as never;
+  const service = new DirectInputService({ store, runtime: () => runtime, canWrite: () => true,
+    admission: async () => ({ grant, binding }), bindingFor: async () => binding });
+  const receipt = await service.submit(principal, projectId, sessionId, value);
+  assert.equal(receipt.state, "rejected"); assert.equal(receipt.queuedMessageId, value.inputId);
+  assert.match(receipt.reason!, /^TURN_CHANGED/);
+  assert.deepEqual({ steers, starts }, { steers: 0, starts: 0 }, "the changed Turn is not steered and no other Turn is started");
+  assert.equal("content" in receipt, false);
+});
+
+test("a missing grant is refused with the missing item named, in the capability and the submission", async () => {
+  const refuse = async () => { throw new DomainError("DIRECT_GRANT_MISSING", "Direct input refused; missing: direct input grant (steer or start) for this sender and Session"); };
+  const runtime = { isReady: () => true } as never;
+  const service = new DirectInputService({ store: { get: async () => null } as never, runtime: () => runtime, canWrite: () => true,
+    admission: refuse, bindingFor: async () => binding });
+  const capability = await service.capability(principal, projectId, sessionId);
+  assert.equal(capability.available, false); assert.equal(capability.reasonCode, "DIRECT_GRANT_MISSING");
+  assert.match(capability.detail!, /missing: direct input grant/);
+  await assert.rejects(service.submit(principal, projectId, sessionId, command()), { code: "DIRECT_GRANT_MISSING", message: /missing: direct input grant/ });
+});

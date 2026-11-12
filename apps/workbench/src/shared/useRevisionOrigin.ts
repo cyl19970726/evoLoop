@@ -17,7 +17,21 @@ export function useRevisionOrigin(projectId: string, revision: { actorId?: strin
   const timing = useProjectQuery(projectId, ["tasks", "timing", taskId], () => api().taskTiming(projectId, taskId!),
     { enabled: first.series && !!taskId, retry: false });
   const found = scheduleId && Array.isArray(schedules.data) ? schedules.data.find(item => item.id === scheduleId && item.projectId === projectId) : undefined;
-  const seriesZone = first.series ? timing.data?.timezone ?? null : null;
+  // Pages that show a revision without a task (a document's page, the side peek, the two-version comparison) cannot ask the task's timing: the
+  // series the reason names is looked up in the project's timed tasks instead, which carry their own time zone.
+  const byTask = !!taskId;
+  const listed = useProjectQuery(projectId, ["task-timings", "zone", first.seriesId], async signal => {
+    let cursor: string | undefined;
+    for (let page = 0; page < 5; page++) {
+      const read = await api().taskTimings(projectId, cursor, signal);
+      const hit = read.items.find(item => item.seriesId === first.seriesId);
+      if (hit) return hit.timezone ?? null;
+      if (!read.nextCursor) return null;
+      cursor = read.nextCursor;
+    }
+    return null;
+  }, { enabled: first.series && !byTask && !!first.seriesId, retry: false });
+  const seriesZone = first.series ? (byTask ? timing.data?.timezone : listed.data) ?? null : null;
   if (!found && !seriesZone) return first;
   return revisionOrigin(revision, { schedule: found ? { title: found.revision.template.title, timezone: found.revision.timezone } : null, seriesZone });
 }

@@ -108,7 +108,11 @@ export interface RoleRuntimeView {
   providerAvailable: boolean;
   selection: RoleSkillSelection;
   selectionSource: "binding" | "default";
-  workDirectory: { cwd: string; source: "session" | "grant" } | null;
+  /**
+   * `session`: the latest Session's directory. `grant`: a Role without a Session starts in its own first granted directory (`grantCount` of them);
+   * `hidden`: the reader may not see the path (not a reviewer and no grant of this Role), so `cwd` is null and the card says it is configured.
+   */
+  workDirectory: { cwd: string | null; source: "session" | "grant"; grantCount?: number; hidden?: boolean } | null;
   skills: RoleRuntimeSkill[];
   missing: string[];
   /** codex.list: read from the running Codex now; claude.init: the latest Turn's report; files: read from disk only. */

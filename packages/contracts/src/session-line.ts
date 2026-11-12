@@ -48,6 +48,8 @@ export interface SessionLineEvent {
 export interface SessionLineReader {
   getSessionLine(sessionId: string): Promise<SessionLine | null>;
   listSessionLineEntries(sessionId: string, includeEnded?: boolean): Promise<SessionLineEntry[]>;
+  /** Only what the pump still has to act on: queued, suspended and starting entries, plus started ones whose Run end is not yet recorded. */
+  listUnfinishedSessionLineEntries(sessionId: string): Promise<SessionLineEntry[]>;
   getSessionLineEntry(entryId: string): Promise<SessionLineEntry | null>;
   listSessionLines(): Promise<SessionLine[]>;
   /** The Session has a Run that has not ended (requested, dispatching, running or unknown). */
