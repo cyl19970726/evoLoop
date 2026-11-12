@@ -27,10 +27,11 @@ test("Task workspace labels use the current work type and explicit fallback", ()
   assert.equal(taskType(null), "未分类");
 });
 
-test("Task goal prefers the real stage goal and otherwise reads the Task body", () => {
-  assert.equal(taskGoal(item, { content: "# Heading\n\nFallback goal" }), "让读者判断下一步");
-  assert.equal(taskGoal({ ...item, goal: null }, { content: "# Heading\n\nFallback **goal**" }), "Fallback goal");
-  assert.equal(taskGoal(null, { content: "# Heading only" }), "目标见任务正文");
+test("Task goal is the explicit stage goal only; the body is never quoted back as a goal", () => {
+  assert.equal(taskGoal(item), "让读者判断下一步");
+  assert.equal(taskGoal({ ...item, goal: { ...item.goal!, outcome: "  改 `apps/x.ts` 里的显示  " } }), "改 `apps/x.ts` 里的显示", "inline code is kept for rendering");
+  assert.equal(taskGoal({ ...item, goal: null }), null, "no stage goal: no goal section, so the first body paragraph is not repeated");
+  assert.equal(taskGoal(null), null);
 });
 
 test("latest progress distinguishes a real business event from unavailable or missing data", () => {

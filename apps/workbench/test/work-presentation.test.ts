@@ -50,6 +50,17 @@ test("the next responsibility is a kind and a name, never the server label or th
   assert.equal(responsibleKind({ kind: "publisher", id: "x" }, null), "发布维护者");
 });
 
+test("the owner a migration left behind is unassigned work for the Leader, not an unreadable name", () => {
+  const placeholder = { kind: "role" as const, id: "migration-unassigned" };
+  const expected = "尚未分派到职责（迁移遗留），请由 Leader 分派";
+  for (const state of [{ state: "failed" }, { state: "reading" }, { state: "unassigned" }] as const)
+    assert.equal(responsibleText(placeholder, null, state), expected);
+  assert.equal(nameText("职责", { state: "unassigned" }), expected);
+  assert.equal(nameOnly("职责", { state: "unassigned" }), expected);
+  assert.doesNotMatch(expected, /名称暂不可读|migration-unassigned/);
+  assert.equal(responsibleText({ kind: "role", id: roleId }, null, { state: "failed" }), "职责（名称暂不可读）", "a real Role that cannot be read still says so");
+});
+
 test("names stand alone where the kind is already said", () => {
   assert.equal(nameOnly("职责", { state: "named", name: "开发职责" }), "开发职责");
   assert.equal(nameOnly("职责", { state: "reading" }), "职责（名称待读取）");
