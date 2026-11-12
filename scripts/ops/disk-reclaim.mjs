@@ -240,11 +240,18 @@ export async function reclaim({ adapter, config, execute = false, onlyBranch = n
     catch (error) { failed.push({ kind: "worktree", path: item.path, error: error.message.split("\n")[0] }); }
   }
   for (const item of surveyed.instances) {
-    // With --branch the run is scoped to that worktree: only instances whose owner marker points at it are in scope.
+    // With --branch the run is scoped to that branch's worktree: an instance is in scope when its owner marker points at that
+    // worktree, or when the worktree is already gone and the marker names this branch. The second case is the order "first
+    // --branch run reclaimed the worktree but skipped the instance because a client was connected; the client left; run again":
+    // without it the instance stays an orphan until the next unscoped run. Everything else about the instance is unchanged,
+    // so it still has to pass every protection (roots, protected paths and ports, no connections, idle, not just started).
     if (onlyBranch) {
-      const owner = item.facts.marker?.worktree ? real(item.facts.marker.worktree) : null;
+      const marker = item.facts.marker;
+      const owner = marker?.worktree ? real(marker.worktree) : null;
       const target = surveyed.worktrees.find(w => w.branch === onlyBranch);
-      if (!owner || !target || owner !== real(target.path)) continue;
+      const ownedByTarget = Boolean(owner && target && owner === real(target.path));
+      const orphanOfBranch = Boolean(marker?.branch === onlyBranch && marker?.worktree && !existsSync(marker.worktree));
+      if (!ownedByTarget && !orphanOfBranch) continue;
     }
     const reasons = instanceSkipReasons(item.facts, config, { reclaimedWorktrees: execute ? reclaimedWorktrees : planned });
     if (reasons.length || !item.dir) { skipped.push({ kind: "instance", path: item.dataDir, port: item.port, bytes: item.bytes, reasons: reasons.length ? reasons : ["无法确定实例目录"] }); continue; }

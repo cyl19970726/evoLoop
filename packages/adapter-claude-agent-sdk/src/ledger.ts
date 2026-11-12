@@ -38,6 +38,9 @@ export interface TurnSettlement {
   /** The provider's cumulative session thinking tokens after this Turn, kept to derive the next Turn's. */
   cumulativeThinkingTokens?: number | null;
   error?: RuntimeTurnFailure;
+  /** The exact model ID of the Turn's main-thread answers (null when no assistant message carried one) and of its subagents' answers. */
+  observedModel?: string | null;
+  subagentModels?: string[];
   /** result: the SDK result message; process_exit: the Turn process ended without one; orphan: observed after a restart. */
   source: "result" | "process_exit" | "orphan";
 }

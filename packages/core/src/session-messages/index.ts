@@ -255,6 +255,7 @@ export class SessionMessageService {
         version:p.version+1,updatedAt:this.deps.clock.now()},p.version);
       const m=required(await store.getSessionMessage(messageId),'message');
       if(m.state==='unknown')await store.updateSessionMessage({...m,state:'processing',version:m.version+1,updatedAt:this.deps.clock.now()},m.version);
+      if(turn.observedModel)await tx.recordSessionActualModel?.(p.sessionId,turn.observedModel,this.deps.clock.now());
       // The Turn started with an effort: say what was asked and what the Thread then reported for this very Turn.
       const note=describeTurnEffort(requestedEffort,turn);
       if(note)await tx.appendRuntimeEvent({projectId,id:this.deps.ids.next(),runId:null,sessionId:p.sessionId,kind:'turn.effortObserved',
@@ -386,6 +387,8 @@ export class SessionMessageService {
       // Codex's cumulative native observation already counts this Turn; only a runtime without that
       // source writes the bound Turn's provider accounting here.
       const session=await tx.getRuntimeSession(p.sessionId);
+      // Claude learns the exact model only from the settled Turn's own messages.
+      if(turn.observedModel)await tx.recordSessionActualModel?.(p.sessionId,turn.observedModel,now);
       if(turn.usage&&tx.usage&&(session?.runtimeProvider??'codex')!=='codex')
         await tx.usage.addUsage(projectId,p.sessionId,this.deps.usageDay?.(now)??now.slice(0,10),{
           inputTokens:turn.usage.inputTokens??0,outputTokens:turn.usage.outputTokens??0,
