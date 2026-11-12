@@ -318,3 +318,78 @@ test("--branch scopes instances too: only the one owned by that worktree goes, n
   assert.ok(stopped[0].endsWith("/owned/data"));
   assert.ok(!existsSync(wtPath));
 });
+
+// ---- --branch after the worktree is gone: the orphan-instance order (Task f7e3153a) ----
+
+const scopedAdapter = (w, instances, { connections, stopped, idleMs = 5 * 3600_000 }) => ({
+  prFor: prs({ scoped: merged(1) }), pgProcesses: () => instances.filter(inst => !stopped.includes(`rm ${inst.dir}`)).map((inst, index) => procFor(inst, index + 1)), // a removed instance is no longer running
+  pgInfo: () => ({ port: 1, socketDir: "/tmp", startedAt: 0 }), pgConnections: ({ port }) => (typeof connections === "function" ? connections(port) : connections),
+  pgLastWriteMs: () => Date.now() - idleMs, stopPg: ({ dataDir }) => stopped.push(dataDir), removeDir: dir => stopped.push(`rm ${dir}`),
+});
+
+test("ORDER: --branch skips the instance while a client is connected and reclaims the worktree; after the client leaves, the second --branch run reclaims the orphaned instance", async () => {
+  const w = world();
+  const wt = w.worktree("scoped");
+  const inst = pgFixture(w, "scoped-pg", { marker: { name: "scoped-pg", worktree: wt, branch: "scoped" } });
+  const stopped = []; let connected = 2;
+  const adapter = scopedAdapter(w, [inst], { connections: () => connected, stopped });
+  const first = await run(w, adapter, { execute: true, onlyBranch: "scoped" });
+  assert.deepEqual(first.reclaimed.map(item => item.kind), ["worktree"]);
+  assert.ok(!existsSync(wt), "the worktree was reclaimed");
+  assert.deepEqual(stopped, [], "the connected instance was not stopped");
+  assert.match(reasonsFor(first, inst.dataDir), /有 2 个客户端连接/);
+  connected = 0; // the client disconnects
+  const second = await run(w, adapter, { execute: true, onlyBranch: "scoped" });
+  assert.equal(stopped.length, 2, JSON.stringify(stopped)); // stopPg + removeDir
+  assert.ok(stopped[0].endsWith("/scoped-pg/data"));
+  assert.deepEqual(second.reclaimed.map(item => item.kind), ["instance"]);
+  assert.ok(!second.skipped.some(item => item.kind === "instance"));
+  // a third run finds nothing left to do
+  assert.deepEqual((await run(w, adapter, { execute: true, onlyBranch: "scoped" })).reclaimed, []);
+});
+
+test("ORDER (dry run): the report of a scoped run lists the orphaned instance as reclaimable without touching it", async () => {
+  const w = world();
+  const inst = pgFixture(w, "scoped-pg", { marker: { name: "scoped-pg", worktree: join(w.ws, "already-gone"), branch: "scoped" } });
+  const stopped = [];
+  const report = await run(w, scopedAdapter(w, [inst], { connections: 0, stopped }), { onlyBranch: "scoped" });
+  assert.deepEqual(report.reclaimed.map(item => [item.kind, item.dryRun]), [["instance", true]]);
+  assert.deepEqual(stopped, []);
+});
+
+test("ORDER counterexamples: the orphan match never widens what a scoped run may touch", async () => {
+  const w = world();
+  const gone = join(w.ws, "already-gone");
+  const prod = join(w.ws, "prod-db", "postgres", "data"); mkdirSync(prod, { recursive: true });
+  const foreign = join(w.root, "somebody-elses-pg"); mkdirSync(foreign);
+  const live = w.worktree("other-live", { merged: false });
+  const fixtures = {
+    ok: pgFixture(w, "ok", { marker: { name: "ok", worktree: gone, branch: "scoped" } }),
+    otherBranch: pgFixture(w, "idle", { marker: { name: "idle", worktree: gone, branch: "another-branch" } }),
+    noBranch: pgFixture(w, "busy", { marker: { name: "busy", worktree: gone } }),                              // a marker written before branches were recorded
+    pathStillThere: pgFixture(w, "unknown", { marker: { name: "unknown", worktree: live, branch: "scoped" } }),  // same branch name, but that worktree still exists
+    legacy: pgFixture(w, "young"),                                                                               // no marker at all
+    protectedPort: pgFixture(w, "port-protected", { marker: { name: "port-protected", worktree: gone, branch: "scoped" } }),
+    recentWrite: pgFixture(w, "racy", { marker: { name: "racy", worktree: gone, branch: "scoped" } }),
+  };
+  w.config.legacyPgNames = [/.*/];
+  const stopped = [];
+  const instances = [...Object.values(fixtures)];
+  const procs = [...instances.map((inst, index) => procFor(inst, index === 5 ? 55432 : index + 1)),
+    { pid: 8001, binary: "/pg/bin/postgres", dataDir: prod, port: 55500 }, { pid: 8002, binary: "/pg/bin/postgres", dataDir: foreign, port: 55600 }];
+  const adapter = { prFor: prs({}), pgProcesses: () => procs, pgInfo: () => ({ port: 1, socketDir: "/tmp", startedAt: 0 }), pgConnections: () => 0,
+    pgLastWriteMs: dataDir => (dataDir.includes("/racy/") ? Date.now() - 60_000 : Date.now() - 5 * 3600_000), stopPg: ({ dataDir }) => stopped.push(dataDir), removeDir: () => {} };
+  // markers for the protected production data dir and the foreign directory also claim the branch with the worktree gone
+  writeFileSync(join(prod, "..", MARKER), JSON.stringify({ name: "p", worktree: gone, branch: "scoped" }));
+  writeFileSync(join(foreign, MARKER), JSON.stringify({ name: "f", worktree: gone, branch: "scoped" }));
+  const report = await run(w, adapter, { execute: true, onlyBranch: "scoped" });
+  assert.equal(stopped.length, 1, JSON.stringify(stopped)); // exactly the one clean orphan
+  assert.ok(stopped[0].endsWith("/ok/data"));
+  const skipped = path => reasonsFor(report, path);
+  assert.match(skipped(fixtures.protectedPort.dataDir), /受保护/);
+  assert.match(skipped(fixtures.recentWrite.dataDir), /还有写入/);
+  // out of scope for this branch: not reported, not touched. That includes the production data directory and the directory outside
+  // the test roots even though their markers name this branch: only instances under a test root are ever matched.
+  for (const path of [prod, foreign, fixtures.otherBranch.dataDir, fixtures.noBranch.dataDir, fixtures.pathStillThere.dataDir, fixtures.legacy.dataDir]) assert.equal(skipped(path), "", path);
+  assert.ok(!stopped.some(path => path.includes("prod-db") || path.includes("somebody-elses")));
+});

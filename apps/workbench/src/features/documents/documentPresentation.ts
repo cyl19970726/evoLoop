@@ -12,7 +12,7 @@ export const kindLabel: Record<DocumentKind, string> = {
 export const lifecycleLabel: Record<DocumentStatus, string> = { draft: "草稿", published: "已发布", archived: "已归档" };
 export const lifecycleTone: Record<DocumentStatus, StatusTone> = { draft: "idle", published: "done", archived: "history" };
 export const relationLabel: Record<DocumentTaskReference["relations"][number], string> = {
-  content: "任务正文", link: "已关联", basis: "固定依据",
+  content: "任务正文", link: "已关联", basis: "固定依据", delivery: "交付物", origin: "产出的文档",
 };
 export const taskStateLabel: Record<TaskState, string> = { todo: "待办", in_progress: "进行中", done: "已完成", cancelled: "已取消" };
 export const taskStateTone: Record<TaskState, StatusTone> = { todo: "idle", in_progress: "progress", done: "done", cancelled: "history" };
@@ -47,7 +47,8 @@ export function publicationText(document: Pick<Document, "status" | "currentRevi
 
 /** The strongest reference a task holds on this document, said as a short label. */
 export function referenceText(relations: readonly DocumentTaskReference["relations"][number][]): string {
-  return relations.includes("basis") ? relationLabel.basis : relations.includes("content") ? relationLabel.content : relationLabel.link;
+  for (const relation of ["delivery", "origin", "basis", "content"] as const) if (relations.includes(relation)) return relationLabel[relation];
+  return relationLabel.link;
 }
 
 export interface ReadingStanding {

@@ -43,6 +43,9 @@ test("list words keep lifecycle, publication and references apart", () => {
   assert.equal(publicationText(document({ adoptedRevisionId: "r1" })), "有未发布的修订");
   assert.equal(referenceText(["link", "basis"]), "固定依据");
   assert.equal(referenceText(["content"]), "任务正文");
+  assert.equal(referenceText(["delivery", "origin"]), "交付物", "the Task that delivered a report shows as its deliverer, not \"no Task references it\"");
+  assert.equal(referenceText(["origin"]), "产出的文档");
+  assert.equal(referenceText(["basis", "delivery"]), "交付物");
   assert.equal(referenceText(["link"]), "已关联");
   assert.equal(kindText(null), "未分类");
   assert.equal(kindText("report"), "报告");

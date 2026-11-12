@@ -51,11 +51,19 @@ export function createDirectInputAdmission(deps:DirectInputAdmissionDeps){
     const ordinary=configured.sessionMessages?.enabled?configured.sessionMessages.grants.find(g=>g.enabled&&
       g.projectId===projectId&&g.sessionId===sessionId&&g.senderActorId===principal.actorId&&
       g.receiverRoleId===owner.roleId&&g.cwd===owner.cwd):null;
-    if(!directGrant||!ordinary||!await deps.currentProjectWriter(projectId,principal.actorId)||
-      !await currentConnectorBusinessActor(owner,ordinary.receiverActorId,configured,deps.pool,deps.currentProjectWriter)||
-      !await deps.currentSessionExecutionAuthority(owner)||!await deps.allowedCwd(projectId,owner.cwd))
-      throw new DomainError("DIRECT_GRANT_MISSING","Exact direct and ordinary Session grants are unavailable");
-    return {grant:{...ordinary,canSteer:directGrant.canSteer,canStart:directGrant.canStart},binding:bindingOf(owner)};
+    // Name what is missing, so a refused sender knows which authorization to ask for (no grant values are echoed).
+    const missing:string[]=[];
+    if(!directGrant)missing.push("direct input grant (steer or start) for this sender and Session");
+    if(!ordinary)missing.push("ordinary message grant for this sender and Session");
+    if(directGrant&&ordinary){
+      if(!await deps.currentProjectWriter(projectId,principal.actorId))missing.push("current project writer identity for the sender");
+      if(!await currentConnectorBusinessActor(owner,ordinary.receiverActorId,configured,deps.pool,deps.currentProjectWriter))
+        missing.push("current project writer identity for the receiving Session's business actor");
+      if(!await deps.currentSessionExecutionAuthority(owner))missing.push("current execution authority of the receiving Session");
+      if(!await deps.allowedCwd(projectId,owner.cwd))missing.push("allowed working directory for the receiving Session");
+    }
+    if(missing.length)throw new DomainError("DIRECT_GRANT_MISSING",`Direct input refused; missing: ${missing.join("; ")}`);
+    return {grant:{...ordinary!,canSteer:directGrant!.canSteer,canStart:directGrant!.canStart},binding:bindingOf(owner)};
   };
   return {session,admission};
 }

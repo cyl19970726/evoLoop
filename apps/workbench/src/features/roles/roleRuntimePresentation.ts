@@ -35,6 +35,14 @@ const knownPurposes: Record<string, string> = {
 export const englishDescription = "说明为英文，展开查看";
 const chinese = /[㐀-鿿]/;
 
+/** The work directory as the card says it: the path, or "已配置" when the reader may not see the machine's path; how many directories a Role's grants name. */
+export function workDirectoryText(directory: RoleRuntimeView["workDirectory"]): string {
+  if (!directory) return "尚无会话，也没有运行授权";
+  const many = directory.source === "grant" && (directory.grantCount ?? 1) > 1 ? `共 ${directory.grantCount} 个授权目录，取第一个` : "";
+  if (directory.cwd === null) return `已配置${many ? `（${many}）` : ""}；路径只对有复核权限或本人持有该角色运行授权的人显示`;
+  return `${directory.cwd}（${directory.source === "session" ? "最近会话" : `授权目录${many ? `，${many}` : ""}`}）`;
+}
+
 export function skillPurpose(name: string, description: string | null): { purpose: string | null; original: string | null } {
   const text = description?.trim() ?? "";
   if (!text) return { purpose: null, original: null };
@@ -58,7 +66,7 @@ export function presentRoleRuntime(view: RoleRuntimeView): RoleRuntimePresentati
     binding: view.binding ? `已绑定 · 第 ${view.binding.revision} 次修订；运行时不可更换，模型可在会话配置中修改`
       : `未绑定：首个会话将使用默认的 ${providerLabel[view.provider]} 并就此绑定`,
     reportedBy: reportedLabel[view.skillsReportedBy],
-    workDirectory: view.workDirectory ? `${view.workDirectory.cwd}（${view.workDirectory.source === "session" ? "最近会话" : "授权目录"}）` : "尚无会话或授权目录",
+    workDirectory: workDirectoryText(view.workDirectory),
     groups,
     loadedCount: view.skills.filter(skill => skill.selected).length,
   };

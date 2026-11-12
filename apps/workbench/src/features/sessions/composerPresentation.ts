@@ -23,12 +23,16 @@ export interface ComposerFacts {
   canWrite: boolean;
   /** The project has an operation of unknown outcome. */
   blocked: boolean;
+  /** The Leader's page: while it works, "插入当前这一轮" and "排队" are two named buttons. Other agents keep Enter and ⌘/Ctrl+Enter. */
+  leader?: boolean;
 }
 
 export interface ComposerPlan {
   enter: ComposerAction | null;
   modEnter: "post" | null;
   sendMode: ComposerSendMode;
+  /** Both ways are open at once and shown as two named buttons (the Leader's page, running, insert and queue both possible). */
+  split: { sendLabel: string; queueLabel: string } | null;
   running: boolean;
   /** Set when nothing can be sent; the composer is disabled and says why. */
   disabledReason: string | null;
@@ -50,8 +54,8 @@ const steerReasons: Record<string, string> = {
   DIRECT_GRANT_MISSING: "这个智能体没有即时输入的授权，不能补充到这一轮",
   SESSION_BUSY: "这一轮正在做的工作不接受补充",
   SESSION_INPUT_BUSY: "这个智能体正在开始另一轮或接收另一条输入，稍后再试",
-  DIRECT_STEER_DISABLED: "这个智能体的运行时或授权不支持补充到这一轮",
-  NATIVE_STEER_UNAVAILABLE: "当前运行时版本不支持补充到这一轮",
+  DIRECT_STEER_DISABLED: "这个智能体的即时输入授权不包含补入这一轮，需要在私有配置里为它开启补入",
+  NATIVE_STEER_UNAVAILABLE: "当前运行时不支持补入正在进行的一轮，消息可以排到下一轮",
   NATIVE_IDLE_START_UNAVAILABLE: "当前运行时版本不支持空闲时直接开始一轮",
   NATIVE_CAPABILITY_UNKNOWN: "运行时版本能力暂无法核对，暂不发送",
   NATIVE_TURN_NOT_ACTIVE: "运行时里这一轮已经不在进行，不能补充",
@@ -68,7 +72,7 @@ export function steerNote(direct: DirectInputCapability | null | undefined, pend
 export function composerPlan(facts: ComposerFacts): ComposerPlan {
   const direct = facts.direct && facts.direct.available && !facts.directPending ? facts.direct : null;
   const running = facts.running || facts.direct?.mode === "steer";
-  const base = { running, steerNote: null, queueNote: null, placeholder: defaultPlaceholder };
+  const base = { running, split: null, steerNote: null, queueNote: null, placeholder: defaultPlaceholder };
   const queueNote = facts.canSave ? null : `现在不能排到下一轮：${facts.saveReason || "这个智能体不能保存普通消息"}`;
   const off = (reason: string): ComposerPlan => ({ ...base, enter: null, modEnter: null, sendMode: running ? "queue" : "send", disabledReason: reason, hint: "" });
   if (!facts.canWrite) return off("当前身份只有读取权限，不能发消息。");
@@ -81,6 +85,7 @@ export function composerPlan(facts: ComposerFacts): ComposerPlan {
   const post = facts.canSave ? "post" as const : null;
   if (running) {
     if (direct?.mode === "steer") return { ...base, enter: "steer", modEnter: post, sendMode: "steer", disabledReason: null, queueNote,
+      split: facts.leader && post ? { sendLabel: "插入当前这一轮", queueLabel: "排队" } : null,
       hint: post ? "Enter 补充到这一轮 · ⌘/Ctrl+Enter 排到下一轮" : "Enter 补充到这一轮", placeholder: "补充到这一轮…" };
     const note = steerNote(facts.direct, facts.directPending);
     if (!post) return { ...off(facts.saveReason || "当前不能保存消息。"), steerNote: note };
@@ -91,6 +96,27 @@ export function composerPlan(facts: ComposerFacts): ComposerPlan {
     hint: post ? "Enter 立即开始一轮 · ⌘/Ctrl+Enter 保存为排队消息" : "Enter 立即开始一轮" };
   if (!post) return off(facts.saveReason || "当前不能保存消息。");
   return { ...base, enter: "post", modEnter: "post", sendMode: "send", disabledReason: null, hint: "Enter 保存并按顺序处理" };
+}
+
+/**
+ * What the person is told after a message went out, in the words of the two ways: 已插入当前这一轮, 已转排队 (with the
+ * reason the Turn could not take it), 已排队, or 已开始新的一轮. Never says the agent has read it.
+ */
+export type SentResult = { kind: "inserted" | "started" | "queued" | "converted"; reason?: string | null };
+export function sentResultText(result: SentResult): string {
+  switch (result.kind) {
+    case "inserted": return "已插入当前这一轮：运行时已接收，不代表智能体已阅读或采用。";
+    case "started": return "已开始新的一轮：运行时已接收，不代表智能体已阅读或采用。";
+    case "queued": return "已排队：这一轮结束后按顺序处理，输入框上方可撤回。";
+    case "converted": return `没有插入，已转排队：${convertedReason(result.reason)}这条消息已按排队保存，只有一条，输入框上方可撤回。`;
+  }
+}
+function convertedReason(reason: string | null | undefined): string {
+  if (!reason) return "";
+  if (/^TURN_CHANGED/.test(reason)) return "你看到的那一轮已经换了或已结束；";
+  if (/^NOT_BOUND/.test(reason)) return "这一轮刚开始、还没准备好接收补充；";
+  if (/Native Turn kind/.test(reason)) return "这一轮的类型不接受补充（评审、压缩等）；";
+  return "运行时说明见完整标识；";
 }
 
 /** The message text with the chosen skill named on its first line; the runtime reads it as part of the message. */

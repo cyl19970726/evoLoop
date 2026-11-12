@@ -65,3 +65,29 @@ test("a grant still written with the booking identity is refused", async()=>{
       error instanceof DomainError&&error.code==="DIRECT_GRANT_MISSING");
   }finally{await cleanup();}
 });
+
+test("a refusal names the item that is missing, and a grant written for the business identity is never reported as a missing ordinary grant", async()=>{
+  const refusal=async(value:ReturnType<typeof configuration>)=>{
+    const {result,cleanup}=await admissionFor(value);
+    try{
+      const error=await result.admission(principal,projectId,sessionId).then(()=>null,(cause:unknown)=>cause);
+      assert.ok(error instanceof DomainError&&error.code==="DIRECT_GRANT_MISSING",String(error));
+      return error.message;
+    }finally{await cleanup();}
+  };
+  const noOrdinary=configuration(businessActor);
+  noOrdinary.sessionMessages={enabled:true,grants:[]};
+  const missingOrdinary=await refusal(noOrdinary);
+  assert.match(missingOrdinary,/missing: ordinary message grant/); assert.doesNotMatch(missingOrdinary,/direct input grant/);
+  const noDirect=configuration(businessActor);
+  noDirect.directInputs={enabled:true,grants:[]};
+  const missingDirect=await refusal(noDirect);
+  assert.match(missingDirect,/missing: direct input grant/); assert.doesNotMatch(missingDirect,/ordinary message grant/);
+  const bookingIdentity=await refusal(configuration(bookingActor));
+  assert.match(bookingIdentity,/business actor/); assert.doesNotMatch(bookingIdentity,/ordinary message grant/,
+    "an ordinary grant exists; only the identity it names is not a current writer");
+  const none=configuration(businessActor);
+  none.sessionMessages={enabled:true,grants:[]}; none.directInputs={enabled:true,grants:[]};
+  const both=await refusal(none);
+  assert.match(both,/direct input grant[\s\S]*ordinary message grant/, "both are named when both are missing");
+});

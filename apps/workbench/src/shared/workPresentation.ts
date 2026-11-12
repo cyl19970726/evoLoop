@@ -48,8 +48,13 @@ export function responsibleKind(responsible: Pick<Responsible, "kind" | "id">, a
  * already says what kind of party it is (`describesKind`), so it is not prefixed with the kind again.
  */
 export type NameRead = { state: "named"; name: string; describesKind?: boolean } | { state: "reading" } | { state: "unnamed" } | { state: "failed" }
+  /** The owner is the placeholder a migration left behind: no Role was ever chosen, so there is no name to read. */
+  | { state: "unassigned" }
   /** Read, and the record is not there (a 404 is an answer, not a failure). */
   | { state: "missing" };
+
+/** The owner value migrations wrote for Tasks that never had a Role: it is not a Role, so its name is never "unreadable". */
+export const MIGRATION_PLACEHOLDER_OWNER = "migration-unassigned";
 
 /** Kinds whose name can be read back: a role's title, an agent's registered name, a task's title. */
 export function responsibleHasName(kind: Responsible["kind"]): boolean {
@@ -60,6 +65,7 @@ export function responsibleHasName(kind: Responsible["kind"]): boolean {
 export function responsibleText(responsible: Pick<Responsible, "kind" | "id">, assignment: Assignment, name: NameRead): string {
   if (!responsible.id || responsible.kind === "unknown") return "下一责任未登记";
   const kind = responsibleKind(responsible, assignment);
+  if (responsible.kind === "role" && responsible.id === MIGRATION_PLACEHOLDER_OWNER) return nameText(kind, { state: "unassigned" });
   if (!responsibleHasName(responsible.kind)) return kind;
   return nameText(kind, name);
 }
@@ -71,6 +77,7 @@ export function nameText(kind: string, name: NameRead): string {
     case "reading": return `${kind}（名称待读取）`;
     case "unnamed": return `${kind}（未登记名称）`;
     case "missing": return `${kind}（未找到）`;
+    case "unassigned": return `尚未分派到${kind}（迁移遗留），请由 Leader 分派`;
     default: return `${kind}（名称暂不可读）`;
   }
 }
