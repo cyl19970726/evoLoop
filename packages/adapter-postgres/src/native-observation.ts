@@ -16,7 +16,8 @@ export class PgNativeObservation implements NativeObservationTransaction {
   }
   async upsert(value: NativeObservationRecord, expectedVersion: number | null): Promise<void> {
     this.assert(value.projectId);
-    const projection = { status:value.status,currentTurn:value.currentTurn,items:value.items,plan:value.plan,diff:value.diff,usage:value.usage };
+    const projection = { status:value.status,currentTurn:value.currentTurn,items:value.items,plan:value.plan,diff:value.diff,usage:value.usage,
+      ...(value.turnUsage?{turnUsage:value.turnUsage}:{}) };
     const r = expectedVersion === null
       ? await this.client.query(`INSERT INTO session_native_observation(project_id,session_id,thread_id,connection_id,version,observed_at,last_event_at,freshness,stale_reason,projection)
           VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb) ON CONFLICT DO NOTHING RETURNING version`,

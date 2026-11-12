@@ -171,7 +171,7 @@ async function applyDocumentPayload(
   const previous = current ? await tx.getDocumentPayloadRevision(current.id, current.currentRevisionId) : null;
   const organizationReview = reviewMetadata(kind, command.organizationReview, previous?.organizationReview);
   await validatePreviousReview(organizationReview, command.projectId, command.documentId,
-    id => tx.getDocument(id), (id, revision) => tx.getDocumentPayloadRevision(id, revision));
+    id => tx.getDocument(id), (id, revision) => tx.getDocumentPayloadRevision(id, revision), previous?.organizationReview);
   const source = command.source;
   const revision: DocumentPayloadRevision = {
     projectId: command.projectId, documentId: command.documentId, id: command.revisionId,

@@ -44,7 +44,7 @@ test("the composer sends, adds, queues, stops, lists skills and agents, and says
   const { chromium } = (await import(pathToFileURL(modulePath!).href)).default;
   const commands: Array<Record<string, unknown>> = [];
   const directInputs: Array<Record<string, unknown>> = [];
-  let steer = true, canSave = true, loseCopy = false;
+  let steer = true, canSave = true, loseCopy = false, itemRecorded = false;
   const currentTask = { id: taskId, title: "新版智能体页", state: "in_progress", revisionId: id(9), owner: "前端实现", relation: "accepted",
     source: { kind: "task", id: taskId, revision: null, evidence: "project-record", href: "" } };
   const self = { ...agent(2, "前端实现", [role(20, "前端实现", "business")], true), currentTask };
@@ -96,13 +96,13 @@ test("the composer sends, adds, queues, stops, lists skills and agents, and says
       else if (url.pathname === `${root}/sessions/${sessionId}/direct-inputs` && req.method === "POST") {
         const input = await body(); directInputs.push(input);
         value = { projectId, sessionId, inputId: input.inputId, operationId: input.operationId, actorId: "reader", mode: "steer",
-          source: { kind: "message", id: runningMessageId, processingId }, expectedTurnId: input.expectedTurnId, actualTurnId: "turn-2", nativeItemId: "n",
+          source: { kind: "message", id: runningMessageId, processingId }, expectedTurnId: input.expectedTurnId, actualTurnId: "turn-2", nativeItemId: null,   // the acknowledgement of a supplement carries no Item yet
           state: "accepted", reason: null, version: 2, createdAt: stamp, updatedAt: stamp };
       } else if (url.pathname.startsWith(`${root}/sessions/${sessionId}/direct-inputs/`)) {
         const input = directInputs.find(item => url.pathname.endsWith(String(item.inputId)));
         if (!input) { status = 404; value = { message: "Not found" }; }
         else value = { projectId, sessionId, inputId: input.inputId, operationId: input.operationId, actorId: "reader", mode: "steer",
-          source: { kind: "message", id: runningMessageId, processingId }, expectedTurnId: input.expectedTurnId, actualTurnId: "turn-2", nativeItemId: "n",
+          source: { kind: "message", id: runningMessageId, processingId }, expectedTurnId: input.expectedTurnId, actualTurnId: "turn-2", nativeItemId: itemRecorded ? "n" : null,   // the Item is recorded only after the Turn ends
           state: "accepted", reason: null, version: 2, createdAt: stamp, updatedAt: stamp };
       } else if (url.pathname === `${root}/session-work`) value = { items: directory, nextCursor: null, observationCursor: "1", metadata,
         totals: { current: directory.length, historical: 0, unclassified: 0 }, attention: { unansweredQuestions: 0, pendingMessages: 0, pendingAcceptance: null, unclassifiedSessions: 0 } };
@@ -200,6 +200,7 @@ test("the composer sends, adds, queues, stops, lists skills and agents, and says
     assert.doesNotMatch(await page.locator(".unified-session-timeline").innerText(), internalWords, `${viewport.width}: no internal words in the flow`);
 
     // Enter while a turn runs and the runtime takes additions: the text goes into this turn.
+    itemRecorded = false;   // each width starts with a supplement whose Item is not recorded yet
     const before = { direct: directInputs.length, posts: posted("session.message.post").length };
     await box.fill("把颜色改成 token");
     await page.getByRole("button", { name: "补充到这一轮" }).waitFor();
@@ -208,6 +209,10 @@ test("the composer sends, adds, queues, stops, lists skills and agents, and says
     assert.equal(directInputs.length, before.direct + 1, "Enter adds to the running turn");
     assert.deepEqual([directInputs.at(-1)!.content, directInputs.at(-1)!.expectedTurnId], ["把颜色改成 token", "turn-2"]);
     await page.locator(".session-direct-receipt").getByText("运行时已接收；不代表智能体已阅读或采用").waitFor();
+    itemRecorded = true;
+    // The turn ends and the service reads the Item back: the page looks again and now says it was read (never "adopted").
+    await page.locator(".session-direct-receipt").getByText("已读到：运行时已记录这条输入的原生条目；不代表智能体已采用").waitFor({ timeout: 20_000 });
+    assert.doesNotMatch(await page.locator(".session-direct-receipt").innerText(), /(?<!不代表智能体)已采用/, "never claims adoption");
     // Cmd/Ctrl+Enter: an ordinary message for the next turn, tied to the current task.
     await box.fill("下一轮再处理窄屏");
     await box.press(process.platform === "darwin" ? "Meta+Enter" : "Control+Enter");
@@ -450,7 +455,7 @@ test("a send whose answer was lost, once checked as received or applied, clears 
   assert.equal(await page.getByRole("button", { name: "发送", exact: true }).isDisabled(), true);
   // Checked by its original input: received, so the box and its kept draft are cleared.
   await page.getByRole("button", { name: "核对结果（不会重发）" }).click();
-  await page.getByText("运行时已接收；不代表智能体已阅读或采用").waitFor();
+  await page.getByText("已读到：运行时已记录这条输入的原生条目；不代表智能体已采用").waitFor();   // the checked receipt carries its Item
   await page.waitForFunction(() => document.querySelector<HTMLTextAreaElement>("[aria-label='消息']")?.value === "");
   await box.press("Enter");
   await page.getByRole("link", { name: "统筹安排" }).first().click();
