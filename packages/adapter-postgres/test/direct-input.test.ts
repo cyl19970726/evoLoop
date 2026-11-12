@@ -144,10 +144,22 @@ test("a non-steerable steer is rejected and its exact content becomes one queued
     message_id:command.inputId,operation_id:command.operationId,target_kind:"owned",session_id:queueSessionId,
     sender_actor_id:"user",content:command.content,state:"queued",
   },"the queued message reuses the original operation ID only in session_message, a separate table");
-  assert.equal((await store.rejectSteerAndQueue(projectId,command.inputId,"repeat")).state,"rejected");
+  assert.equal(queued.queuedMessageId,command.inputId);
+  const repeated=await store.rejectSteerAndQueue(projectId,command.inputId,"repeat");
+  assert.equal(repeated.state,"rejected");
+  assert.equal(repeated.queuedMessageId,command.inputId,"a repeated answer still names the queued message");
   assert.equal((await pool.query(`SELECT count(*)::integer AS n FROM session_message
     WHERE project_id=$1 AND operation_id=$2`,[projectId,command.operationId])).rows[0].n,1,
   "a repeated rejection cannot duplicate the queued message");
+  // The steer was inserted into a message Turn, so its record carries that Turn's processing_id. A later read
+  // (lost receipt, page refresh, CLI show, history) must still say "queued", or the person resends and the Leader gets it twice.
+  assert.equal(reserved.record.source.processingId,primaryProcessingId);
+  assert.equal((await store.get(projectId,command.inputId))?.queuedMessageId,command.inputId);
+  const listed=(await store.list(projectId,queueSessionId,50)).items.find(x=>x.inputId===command.inputId);
+  assert.equal(listed?.queuedMessageId,command.inputId);
+  const replayed=await store.reserve(projectId,queueSessionId,"user",command,grant(queueSessionId,1),"");
+  assert.equal(replayed.created,false);
+  assert.equal(replayed.record.queuedMessageId,command.inputId,"a same-ID replay answers with the queued message");
 });
 
 test("terminal commit overtaking direct receipt binds original Turn without releasing a newer slot",async()=>{
