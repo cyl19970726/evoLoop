@@ -1,3 +1,6 @@
+import { judgeMyDelivery } from "@evoloop/contracts/delivery-for-me";
+import type { LeaderWorkTask } from "@evoloop/contracts/work-index";
+import { readLeaderWorkTasks } from "@evoloop/adapter-postgres/work-index";
 import { observationLinkProblem } from "./observation-link.js";
 import { createHash } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
@@ -77,6 +80,17 @@ export class AcceptanceRelayService {
         if (prior.rows[0].request_hash !== hash([principal.actorId, input])) throw new DomainError("OPERATION_REUSED", "Acceptance operation changed");
         await client.query("COMMIT"); return row(prior.rows[0]);
       }
+      // The declared acceptance policy is read right after the replay check, so a direct-acceptance Task is refused for what it is
+      // (not as a missing Delivery or a stale version).
+      // Execution/basis revisions inherit the most recent declared policy; they do not insert a new proposal row.
+      const proposal = (await client.query(`SELECT p.consumer,p.acceptance_mode,p.acceptance_target
+        FROM task_proposal p JOIN task_revision r ON r.project_id=p.project_id AND r.task_id=p.task_id
+          AND r.revision_id=p.task_revision_id
+        WHERE p.project_id=$1 AND p.task_id=$2 ORDER BY r.version DESC LIMIT 1`,
+        [input.projectId, input.taskId])).rows[0];
+      if (proposal?.acceptance_target === "named_agent")
+        throw new DomainError("ACCEPTANCE_NAMED_AGENT",
+          `该 Task 由声明的业务身份 ${proposal.consumer || "（未写明）"} 直接验收，不经验收接力；不要安排接力，由该身份用 consumer observation 直接签署。`);
       if (task.version !== input.expectedTaskVersion) throw new DomainError("VERSION_CONFLICT", "Task changed", task.version);
       if (task.state === "done" || task.state === "cancelled") throw new DomainError("TASK_NOT_ACTIVE", "Task no longer accepts arrangements");
       const latest = required((await client.query("SELECT delivery_id,task_revision_id,run_id FROM delivery WHERE project_id=$1 AND task_id=$2 ORDER BY created_at DESC,delivery_id DESC LIMIT 1",
@@ -88,12 +102,6 @@ export class AcceptanceRelayService {
           AND state NOT IN ('superseded','released') LIMIT 1`,
         [input.projectId,input.deliveryId,input.stage,input.scopeKey])).rows[0])
         throw new DomainError("ACCEPTANCE_ALREADY_ASSIGNED", "This Delivery and acceptance scope already have a current arrangement");
-      // Execution/basis revisions inherit the most recent declared policy; they do not insert a new proposal row.
-      const proposal = (await client.query(`SELECT p.consumer,p.acceptance_mode,p.acceptance_target
-        FROM task_proposal p JOIN task_revision r ON r.project_id=p.project_id AND r.task_id=p.task_id
-          AND r.revision_id=p.task_revision_id
-        WHERE p.project_id=$1 AND p.task_id=$2 ORDER BY r.version DESC LIMIT 1`,
-        [input.projectId, input.taskId])).rows[0];
       if (!proposal?.consumer || proposal.consumer !== input.recipientActorId ||
         proposal.acceptance_mode !== (input.mode === "human" ? "human_required" : "independent_agent"))
         throw new DomainError("CONSUMER_MISMATCH", "Recipient must match the Task's current declared consumer and mode");
@@ -206,6 +214,57 @@ export class AcceptanceRelayService {
       scopeDescription:r.scope_description,entrypoint:r.entrypoint,publicationRef:r.publication_ref,version:r.version,
       createdAt:new Date(r.created_at).toISOString(),readAt:r.read_at ? new Date(r.read_at).toISOString() : null,
       observationId:r.observation_id ?? null}));
+  }
+
+  /**
+   * Deliveries this identity is the declared consumer of and still has to use: the same list, by the same rule
+   * (`judgeMyDelivery`, over the same work index), as the workbench's 待我处理 › 等我使用的交付. Read for any identity, an
+   * Agent included: a consumer that is not woken automatically has to be able to ask. `readiness` says whether the declared
+   * acceptance precondition (release, migration, ...) is marked met for the current delivery.
+   */
+  async mineDirect(principal: Principal, projectId: string): Promise<{ items: unknown[]; complete: boolean; tasksRead: number }> {
+    if (!principal.projectIds.includes(projectId) || !principal.permissions.includes("read"))
+      throw new DomainError("FORBIDDEN", "Project read authority required");
+    const maxPages = 40;
+    let tasks: LeaderWorkTask[] = [], complete = false;
+    // A write between two pages changes the snapshot; read again from the first page once, as the workbench does.
+    for (let attempt = 0; attempt < 3 && !complete; attempt++) {
+      tasks = []; let cursor: string | undefined, sequence: number | null = null, changed = false;
+      for (let pages = 0; pages < maxPages; pages++) {
+        // A write between two pages makes the index refuse the cursor (WORK_INDEX_CHANGED): read again from the first page.
+        let page: Awaited<ReturnType<typeof readLeaderWorkTasks>>;
+        try { page = await readLeaderWorkTasks(this.deps.pool, projectId, { view: "tasks", limit: 50, includeClosed: false, ...(cursor ? { cursor } : {}) }); }
+        catch (error) {
+          if ((error as { code?: string }).code === "WORK_INDEX_CHANGED" && cursor) { changed = true; break; }
+          throw error;
+        }
+        if (sequence !== null && page.changeSequence !== sequence) { changed = true; break; }
+        sequence = page.changeSequence; tasks.push(...page.items.filter(item => item.kind === "task"));
+        if (!page.nextCursor) { complete = page.partial !== true; break; }
+        cursor = page.nextCursor;
+      }
+      if (!changed) break;
+    }
+    const items: unknown[] = [];
+    for (const task of tasks) {
+      const judgement = judgeMyDelivery(task, principal.actorId);
+      if (judgement.kind === "none" || judgement.kind === "used" || judgement.kind === "failed") continue;
+      const delivery = task.delivery!;
+      let last: string | null = judgement.kind === "waiting" ? judgement.last : null, othersObserved = false;
+      if (judgement.kind === "check-own") {
+        // Someone else observed last: my own latest observation of this delivery decides.
+        const mine = (await this.deps.pool.query(`SELECT result FROM consumer_observation WHERE project_id=$1 AND delivery_id=$2
+          AND observer=$3 ORDER BY created_at DESC,sequence DESC LIMIT 1`, [projectId, delivery.deliveryId, principal.actorId])).rows[0];
+        if (mine?.result === "used" || mine?.result === "failed") continue;
+        othersObserved = true; last = mine ? "notUsed" : null;
+      }
+      const convention = task.acceptanceConvention ?? null;
+      items.push({ projectId, taskId: task.taskId, title: task.title, taskKind: task.taskKind, taskState: task.taskState,
+        deliveryId: delivery.deliveryId, taskRevisionId: delivery.taskRevisionId, useRequired: delivery.useRequired,
+        acceptanceTarget: convention?.acceptanceTarget ?? null, acceptancePrecondition: convention?.acceptancePrecondition ?? null,
+        readiness: convention?.readiness ?? "ready", last, othersObserved });
+    }
+    return { items, complete, tasksRead: tasks.length };
   }
 
   /** Capacity is a snapshot of persisted obligations. It does not claim native writer ownership. */
