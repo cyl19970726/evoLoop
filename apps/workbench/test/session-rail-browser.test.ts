@@ -59,9 +59,21 @@ test("the agent's right column shows what it does now and next on its first scre
     for (const pattern of item.next) assert.match(await next.innerText(), pattern, `${item.name} ${width}: 接下来`);
     assert.ok(await bottom(now) <= height && await bottom(next) <= height, `${item.name} ${width}: 正在做 and 接下来 are on the first screen`);
     if (width === 1440) {
-      const config = panel.locator("section[aria-label=执行配置]");
-      assert.ok((await config.boundingBox())!.y < height - 60, `${item.name}: 执行配置 starts on the first screen, not at the bottom`);
-      assert.match(await config.innerText(), /运行时\s*Codex[\s\S]*目标模型\s*gpt-6-sol[\s\S]*思考强度\s*high[\s\S]*执行权限/);
+      const config = panel.locator("section[aria-label=运行环境]");
+      assert.ok((await config.boundingBox())!.y < height - 60, `${item.name}: 运行环境 starts on the first screen, not at the bottom`);
+      // One line: runtime · model · effort, each said once with where it comes from; the record stays folded.
+      assert.match(await config.innerText(), item.name === "dev" ? /Codex\s*·\s*gpt-6-sol\s*实际\s*·\s*high\s*目标/ : /Codex\s*·\s*gpt-6-sol\s*·\s*high\s*目标，尚无实际报告/);
+      assert.equal(await config.locator(".session-config-record").evaluate(element => (element as HTMLDetailsElement).open), false);
+      assert.match(await panel.locator("section[aria-label=上下文与用量]").innerText(), /^上下文与用量\s*上下文[\s\S]*今日/, "the card is titled 上下文与用量: context first, then today");
+      // The adjust button is off for 文档整理 and 设计走查 (not full access): one line at the card's foot, with where to fix it.
+      const blocked = config.locator(".session-adjust-blocked");
+      if (item.name === "dev") assert.equal(await blocked.count(), 0, "a full-access agent can adjust: no reason shown");
+      else {
+        assert.equal((await blocked.innerText()).trim(), "不能调整：不是完整权限 · 去分工与运行");
+        assert.match(await blocked.getByRole("link", { name: "去分工与运行" }).getAttribute("href") ?? "", /\/runtime$/);
+        const box = (await blocked.boundingBox())!;
+        assert.ok(box.height < 24, `${item.name}: the reason is one line (${box.height}px)`);
+      }
     }
     assert.ok(await sideways(page) <= 1, `${item.name} ${width}: no sideways scroll`);
     assert.deepEqual(await panel.evaluate(root => [...root.querySelectorAll("*")].filter(element => element.getBoundingClientRect().right > root.getBoundingClientRect().right + 1 && element.getClientRects().length).map(element => element.className).slice(0, 3)), [],
@@ -70,6 +82,49 @@ test("the agent's right column shows what it does now and next on its first scre
     const link = next.locator("ol a").first();
     if (item.name !== "design") assert.match(await link.getAttribute("href") ?? "", new RegExp(`/p/${projectId}/tasks/[^?]+\\?return=`));
     assert.deepEqual(errors, []);
+    await page.context().close();
+  }
+
+  // 上下文与用量: the context bar comes first with its state; today is small figures; project-wide facts are not here.
+  for (const [name, width, height] of [["verify", 1440, 900], ["lead", 390, 844], ["design", 390, 844]] as const) {
+    const { page, panel, errors } = await open(name, width, height);
+    const usage = panel.locator("section[aria-label=上下文与用量]");
+    await usage.locator(".session-context").waitFor();
+    const text = await usage.innerText();
+    if (name === "verify") {
+      assert.match(text, /上下文\s*接近交接[\s\S]*17\.2 万 \/ 20 万（86%）[\s\S]*今日\s*输入\s*8\.8 万\s*输出\s*9200\s*缓存输入\s*4\.4 万\s*费用\s*未报告/, text);
+      assert.equal(await usage.getByRole("progressbar").getAttribute("aria-valuenow"), "86");
+      // A new target waits: the line keeps what is in effect and the tag says what comes next.
+      assert.match(await panel.locator("section[aria-label=运行环境]").innerText(), /gpt-6-sol\s*实际\s*·\s*high\s*已确认[\s\S]*下一轮改为 gpt-6-astra \/ max/);
+    }
+    if (name === "lead") {
+      assert.match(text, /需交接新线程[\s\S]*21\.2 万 \/ 20 万（106%）[\s\S]*请交接新线程/, text);
+      assert.match(await usage.getByRole("link", { name: "去分工与运行" }).getAttribute("href") ?? "", /\/runtime$/);
+    }
+    if (name === "design") assert.match(text, /上下文\s*没有记录[\s\S]*这个智能体还没有用量记录，不按 0 计/, text);
+    for (const projectWide of ["每日上限", "用量时区", "项目用量", "Asia/Shanghai"]) assert.equal(text.includes(projectWide), false, `${name}: ${projectWide}`);
+    assert.ok(await sideways(page) <= 1, `${name} ${width}: no sideways scroll`);
+    assert.deepEqual(errors, []);
+    await page.context().close();
+  }
+  // Only a project close to its daily limit is said here, in one line that leads to 统筹安排.
+  const { usage: usageFixture } = await import(pathToFileURL(`${fixtureDir}/agents.mjs`).href);
+  const nearLimit = usageFixture();
+  nearLimit.budget = { ...nearLimit.budget, configured: true, state: "warning", limitKind: "input_tokens", limit: 1_000_000, used: 860_000, ratio: 0.86 };
+  const budgeted = await open("dev", 1440, 900, page => page.route(/\/runtime\/usage\?/, route => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(nearLimit) })));
+  const reminder = budgeted.panel.locator("section[aria-label=上下文与用量]").getByText(/项目今日用量接近每日上限（86%）/);
+  await reminder.waitFor();
+  assert.match(await budgeted.panel.getByRole("link", { name: "去统筹安排" }).getAttribute("href") ?? "", new RegExp(`/p/${projectId}/sessions$`));
+  await budgeted.page.context().close();
+
+  // The skills chip is a link to the agent's Role, reachable and visibly focused from the keyboard.
+  {
+    const { page, panel } = await open("docs", 1440, 900);
+    const skills = panel.getByRole("link", { name: "技能随职责“文档整理”" });
+    assert.match(await skills.getAttribute("href") ?? "", new RegExp(`/p/${projectId}/roles\\?role=`));
+    await skills.focus(); await page.keyboard.press("Shift+Tab"); await page.keyboard.press("Tab");
+    assert.equal(await skills.evaluate(element => element === document.activeElement && element.matches(":focus-visible")), true);
+    assert.notEqual(await skills.evaluate(element => getComputedStyle(element).boxShadow), "none", "a focus ring is drawn");
     await page.context().close();
   }
 
