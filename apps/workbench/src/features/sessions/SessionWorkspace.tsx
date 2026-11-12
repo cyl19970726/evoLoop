@@ -288,7 +288,6 @@ export function SessionWorkspace({ context, sessionKey, active, refresh, queue }
 
   // Every hook runs before the early return below (a hook after it changes the hook count once the snapshot arrives).
   // The catalog's display names (Codex) in front of the exact IDs; a catalog that cannot be read leaves the IDs as they are.
-  const modelCatalog = useProjectQuery(projectId, ["runtime", "models", "catalog"], signal => sessionClient("", projectId).models(signal), { enabled: active && owned, retry: false }).data?.options ?? null;
   // An explicit reread holds answers and closing until it is back; background polls do not interrupt a form being filled.
   const [rereading, setRereading] = useState(false);
   const reread = () => {
@@ -304,6 +303,7 @@ export function SessionWorkspace({ context, sessionKey, active, refresh, queue }
       : <p role="status" className="text-small text-muted-foreground">正在读取智能体…</p>}
   </div>;
 
+  const modelCatalog = useProjectQuery(projectId, ["runtime", "models", "catalog"], signal => sessionClient("", projectId).models(signal), { enabled: active && owned, retry: false }).data?.options ?? null;
   const current = snapshot;
   const session = current.session;
   const name = agentDisplayName(session);
