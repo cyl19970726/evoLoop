@@ -14,13 +14,15 @@ function range(): { from: string; to: string } {
 }
 
 /** Per-Session and per-day usage, the Session's context pressure, and the project's daily budget. */
-export function UsageBudgetView({ usage, sessionId, stale = false }: {
+export function UsageBudgetView({ usage, sessionId, stale = false, inline = false }: {
   usage: UsageOverview; sessionId: string; stale?: boolean;
+  /** Label beside value, as in the agent's right column. */
+  inline?: boolean;
 }) {
   const session = usage.sessions.find(item => item.sessionId === sessionId);
   const days: UsageDay[] = usage.daily.slice(-7).reverse();
   return <div className="flex min-w-0 flex-col gap-2" aria-label="用量与预算">
-    <FactList rows={[
+    <FactList inline={inline} rows={[
       ["今日（本智能体）", session ? session.recorded ? usageDayText(session.today) : "今日没有记账记录；不按 0 计"
         : "今日没有记录；不按 0 计"],
       ["上下文管理", session ? contextText(session.context) : "本智能体没有用量记录"],
@@ -46,13 +48,13 @@ export function UsageBudgetView({ usage, sessionId, stale = false }: {
   </div>;
 }
 
-export function UsageBudgetPanel({ projectId, token, sessionId }: {
-  projectId: string; token: string; sessionId: string;
+export function UsageBudgetPanel({ projectId, token, sessionId, inline = false }: {
+  projectId: string; token: string; sessionId: string; inline?: boolean;
 }) {
   const { from, to } = range();
   const read = useProjectQuery(projectId, ["runtime", "usage", from, to],
     () => runtimeClient(token, projectId).usage(from, to), { refetchInterval: 60_000 });
   if (read.isError && !read.data) return <Notice tone="error">用量暂不可读取：{read.error instanceof Error ? read.error.message : "读取失败"}</Notice>;
   if (!read.data) return <p className={mutedText}>正在读取用量与预算…</p>;
-  return <UsageBudgetView usage={read.data} sessionId={sessionId} stale={read.stale} />;
+  return <UsageBudgetView usage={read.data} sessionId={sessionId} stale={read.stale} inline={inline} />;
 }

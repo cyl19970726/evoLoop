@@ -63,10 +63,14 @@ test("completed assignments remain historical while active stale assignments sti
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button", { name: "进入", exact: true }).click();
   await page.getByRole("heading", { name: "终态分派测试会话" }).waitFor();
-  const items = page.locator(".session-task-summary p").filter({ has: page.locator('a') });
-  await items.nth(0).getByRole("link", { name: "任务 1" }).waitFor();
-  assert.match(await items.nth(0).innerText(), /任务已完成 · 历史分派（曾直接确认接手）/);
-  assert.doesNotMatch(await items.nth(0).innerText(), /需重新确认/);
-  assert.match(await items.nth(1).innerText(), /任务修订已变化，需重新确认/);
-  assert.match(await items.nth(2).innerText(), /任务已取消 · 历史分派（已释放）/);
+  // The open Task whose revision changed is still next and says it needs confirming again; finished ones are history, folded.
+  const next = page.locator(".session-panel .session-task-summary li");
+  await next.first().getByRole("link", { name: "任务 2" }).waitFor();
+  assert.equal(await next.count(), 1);
+  assert.match(await next.first().innerText(), /需重新确认[\s\S]*任务修订已变化/);
+  await page.locator(".session-panel").getByText("已交出或已结束的分派 · 2 项").click();
+  const ended = page.locator(".session-panel .session-ended-assignments p");
+  assert.match(await ended.nth(0).innerText(), /任务 1 · 任务已完成 · 历史分派（曾直接确认接手）/);
+  assert.doesNotMatch(await ended.nth(0).innerText(), /需重新确认/);
+  assert.match(await ended.nth(1).innerText(), /任务 3 · 任务已取消 · 历史分派（已释放）/);
 });
