@@ -273,9 +273,6 @@ export function SessionWorkspace({ context, sessionKey, active, refresh, queue }
     void snapshotRead.refetch().finally(() => setRereading(false));
     if (currentTaskId) void timing.refetch();
   };
-  // The catalog's display names (Codex) in front of the exact IDs; a catalog that cannot be read leaves the IDs as they are.
-  // Hooks stay above the early return below: a hook after it changes the hook order once the snapshot arrives (React #310).
-  const modelCatalog = useProjectQuery(projectId, ["runtime", "models", "catalog"], signal => sessionClient("", projectId).models(signal), { enabled: active && owned, retry: false }).data?.options ?? null;
   if (!snapshot) return <div ref={workspaceRef} data-ui="" className="flex flex-col gap-3 p-4 compact:p-6">
     <h1 className="text-title font-semibold">智能体</h1>
     {snapshotRead.isError ? <Notice tone="error" title="智能体暂不可读取" action={<Button size="compact" onClick={() => void snapshotRead.refetch()}>重试</Button>}>{errorText(snapshotRead.error)}。</Notice>
@@ -339,6 +336,8 @@ export function SessionWorkspace({ context, sessionKey, active, refresh, queue }
   const executionProfile = recoveryRead.status === "ready" ? recoveryRead.view.executionProfile : null;
   const configuredModel = executionProfile?.revision.model ?? current.resources.configuredModel.value;
   const actualModel = current.resources.actualModel.value;
+  // The catalog's display names (Codex) in front of the exact IDs; a catalog that cannot be read leaves the IDs as they are.
+  const modelCatalog = useProjectQuery(projectId, ["runtime", "models", "catalog"], signal => sessionClient("", projectId).models(signal), { enabled: active && owned, retry: false }).data?.options ?? null;
   const busyNow = session.busy === true;
   const waitingTurnIds = new Set(native.questions.filter(question => question.state === "pending" && question.turnId).map(question => question.turnId!));
   const activity = [...historyPages.flatMap(page => page.items), ...current.activity].filter((item, index, all) => all.findIndex(other => other.id === item.id) === index)
