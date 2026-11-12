@@ -21,6 +21,8 @@ export interface DirectInputRecord {
   source: DirectInputSource; expectedTurnId: string | null; actualTurnId: string | null;
   nativeItemId: string | null; state: DirectInputState; reason: string | null;
   version: number; createdAt: string; updatedAt: string;
+  /** Set on a refused steer whose text was saved as one queued ordinary message: that message has the same ID as the input. */
+  queuedMessageId?: string | null;
 }
 /** Public receipt never contains native tool output or private model reasoning. */
 export type DirectInputReceipt = Omit<DirectInputRecord, "content">;
