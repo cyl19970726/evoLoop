@@ -67,9 +67,13 @@ export function SessionUsageView({ usage, sessionId, projectId, nativeUsage = nu
     </div>
     <div className="session-usage-today flex min-w-0 flex-col gap-1">
       <h3 className="text-label font-semibold text-foreground">今日</h3>
-      {tiles ? <dl className="grid min-w-0 grid-cols-4 gap-1.5">{tiles.map(tile => <div key={tile.label} className="flex min-w-0 flex-col gap-0.5 rounded-md bg-raised px-1.5 py-1.5">
+      {/* Two by two: at four across a real day's figures (hundreds of millions of tokens) were cut to "2313…" with no unit. The figure
+          wraps instead of being cut, and a rounded one carries its exact value as a tooltip and for screen readers. */}
+      {tiles ? <dl className="grid min-w-0 grid-cols-2 gap-1.5">{tiles.map(tile => <div key={tile.label} className="flex min-w-0 flex-col gap-0.5 rounded-md bg-raised px-2 py-1.5">
         <dt className="text-caption text-muted-foreground">{tile.label}</dt>
-        <dd className="m-0 truncate text-small font-medium text-foreground tabular-nums">{tile.value}</dd>
+        <dd className="m-0 min-w-0 text-small font-medium text-foreground tabular-nums [overflow-wrap:anywhere]" {...(tile.full ? { title: tile.full } : {})}>
+          {tile.value}{tile.full && <span className="sr-only">（完整值 {tile.full}）</span>}
+        </dd>
       </div>)}</dl> : <p className="text-small text-text-secondary">{session ? "今日没有用量记录，不按 0 计" : "这个智能体还没有用量记录，不按 0 计"}</p>}
     </div>
     {reminder && <p className={cn("text-caption [overflow-wrap:anywhere]", reminder.tone === "blocked" ? "text-destructive" : "text-warning")}>

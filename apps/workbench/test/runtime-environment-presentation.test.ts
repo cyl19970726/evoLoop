@@ -65,7 +65,8 @@ test("上下文 is a bar against the hand-off threshold with a state; without a 
 test("today is four small figures in 万; nothing recorded is said, not 0; a missing cost is 未报告", () => {
   const day = { day: "2026-11-12", inputTokens: 182_400, outputTokens: 9_200, cachedInputTokens: 91_200, costUsd: null, costReported: false };
   assert.deepEqual(todayTiles({ recorded: true, today: day }),
-    [{ label: "输入", value: "18.2 万" }, { label: "输出", value: "9200" }, { label: "缓存输入", value: "9.1 万" }, { label: "费用", value: "未报告" }]);
+    [{ label: "输入", value: "18.2 万", full: "182,400 个令牌" }, { label: "输出", value: "9200", full: null },
+      { label: "缓存输入", value: "9.1 万", full: "91,200 个令牌" }, { label: "费用", value: "未报告", full: null }]);
   assert.equal(todayTiles({ recorded: true, today: { ...day, costUsd: 0.0123, costReported: true } })![3]!.value, "$0.0123");
   assert.equal(todayTiles({ recorded: false, today: day }), null);
   assert.equal(todayTiles(null), null);

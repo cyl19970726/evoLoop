@@ -5,8 +5,16 @@ import type { ContextPressure, UsageBudget, UsageDay } from "@evoloop/contracts"
 export function tokenText(value: number | null | undefined): string {
   if (value === null || value === undefined || !Number.isFinite(value)) return "未知";
   if (value < 10_000) return String(Math.trunc(value));
+  // From 一亿 up the 万 figure has seven or more digits and the unit is lost on a narrow card; 亿 keeps the figure short and the unit in view.
+  if (value >= 100_000_000) return `${Number((value / 100_000_000).toFixed(1))} 亿`;
   const wan = value / 10_000;
   return `${Number(wan.toFixed(1))} 万`;
+}
+
+/** The exact count for a reader who needs it (a tooltip, a screen reader): digits grouped by thousands, never rounded. */
+export function tokenFullText(value: number | null | undefined): string | null {
+  if (value === null || value === undefined || !Number.isFinite(value)) return null;
+  return `${Math.trunc(value).toLocaleString("en-US")} 个令牌`;
 }
 
 export function costText(value: Pick<UsageDay, "costUsd" | "costReported"> | null | undefined): string {
@@ -68,16 +76,21 @@ export function contextGauge(context: ContextPressure | null | undefined): Conte
 /**
  * Today's use in four small figures; null when nothing was recorded today (never shown as 0). The service fills
  * `today` with zeros when there is no ledger row for it, so “recorded today” is whether `days` holds today's day.
+ * `full` is the exact figure when `value` is a rounded one (otherwise null); it is offered as a tooltip and to screen readers.
  */
-export function todayTiles(session: { recorded: boolean; today: UsageDay; days?: readonly UsageDay[] } | null | undefined): Array<{ label: string; value: string }> | null {
+export function todayTiles(session: { recorded: boolean; today: UsageDay; days?: readonly UsageDay[] } | null | undefined): Array<{ label: string; value: string; full: string | null }> | null {
   if (!session?.recorded) return null;
   if (session.days && !session.days.some(day => day.day === session.today.day)) return null;
   const day = session.today;
+  const tokens = (label: string, count: number | null | undefined) => {
+    const value = tokenText(count), full = tokenFullText(count);
+    return { label, value, full: full !== null && String(Math.trunc(count as number)) !== value ? full : null };
+  };
   return [
-    { label: "输入", value: tokenText(day.inputTokens) },
-    { label: "输出", value: tokenText(day.outputTokens) },
-    { label: "缓存输入", value: tokenText(day.cachedInputTokens) },
-    { label: "费用", value: costText(day) },
+    tokens("输入", day.inputTokens),
+    tokens("输出", day.outputTokens),
+    tokens("缓存输入", day.cachedInputTokens),
+    { label: "费用", value: costText(day), full: null },
   ];
 }
 
