@@ -19,6 +19,7 @@
 
 - **主来源**：让一个 Turn 开始的那件事，只能是一个业务 Run 或一条普通消息的处理记录。
 - **槽位**：每个 Session 同一时刻只允许一个主来源占用；占用记录在 PostgreSQL 里，原生会话看起来空闲也不能越过它。
+- **配置的模型与实际的模型分开（迁移 099）**：Run 的 `executionProfile` 是配置值；运行时在这一轮里报告的值记在 `runtime_run.actual`：`{model, reasoningEffort, subagentModels}`，没有观察到的字段是 null，不用配置值代替，历史 Run 没有这一列的值。Claude 的精确模型来自这一轮主线程助手消息自带的 `message.model`（配置里的别名如 `opus` 在这里解析成 `claude-opus-5-5` 这样的精确 ID），子代理的模型来自它自己的消息；这一轮结算时才知道，随 `recordTurn` 写入。Codex 的模型和思考强度来自 `turn/start` 后对本线程的读回（只在这一轮是线程最新一轮时才算数，读不到记 null）；**不论配置里有没有设思考强度都读**——没有配置时运行时用它自己的默认（例如 `max`），那个读回值就是这一轮真实的强度，照实记录。`actual.effortRequested` 另记配置里是否显式请求过强度（`true` 请求过、`false` 交给运行时默认、缺省未记录），只用来说明怎么读这个值，从不替代它；只有原生也没有读回时才写“未记录”。各 Session 最近一轮报告的精确模型另存 `runtime_session_actual_model`（`runtime_session` 的行只能带版本变更，遥测不占用它），会话快照的“实际运行模型”读它，没有则写“未记录”。模型目录的显示名（`displayName`）来自运行时的模型列表，工作台把它放在精确 ID 前面。`read run` 在 Run 记录旁给出 `actualView`（与工作台同样的字，没记录写“未记录”）。
 - **恢复门**：每个 Session 一份的持久闸门。Turn 失败或结果未知时关上，有权者显式决定后才重新打开。
 - **预检失败不关门（迁移 083）**：Run 在发出前就失败（`requested → failed`，没有原生 Turn、没有队列认领、门是 open），模型从未启动，没有未决的事，所以门保持 open，排队的消息照常启动、下一个 Run 照常预留，不需要 `runtime.session.recovery.resume`。原生拒绝（发出之后）、结果未知、已有原生 Turn 的失败、已在认领中的 Run 仍然关门，须显式 resume。可重复的受控验收路径：对一次性 PostgreSQL（做法见[磁盘回收与测试实例约定](../development/local-run.md#磁盘回收与测试实例约定)）运行 `TEST_DATABASE_URL=… node --import tsx scripts/ops/preflight-gate-acceptance.ts [--out FILE]`，它用真实服务、迁移和消息泵（只有原生运行时是脚本化的）依次构造“预检失败后排队消息自动继续”和“真实失败仍关门、显式 resume 后继续”，输出 Run、消息、恢复门的前后版本和各命令回执；它不接触正式实例，也不需要在生产里加测试后门。
 - **原生失败类别**：Turn 失败时，适配器把原生错误归为 `quota_exhausted`（额度/余额，HTTP 402）、`authentication_failed`、`context_window_exceeded`、`connection_lost`、`provider_unavailable`、`rate_limited` 等，保存在消息处理记录（`failure_category`，迁移 084）并随恢复门读出；工作台把它们归为四类显示：额度/鉴权（运行受阻，需账户使用者充值或重新授权）、上下文超长、连接中断、其他。类别只说明原因，不改变单个恢复门的决定规则。**分类只认结构化事实**：Codex 的 `codexErrorInfo` 变体（`usageLimitExceeded`、`unauthorized`、各变体带的 `httpStatusCode`）、JSON 包里的 `status` 与错误 `type`/`code`（如 `insufficient_quota`），以及**单独成行**的 “402 Payment Required” “401 Unauthorized” 这类状态行；Claude 一侧用 SDK 的错误类和 `api_error_status`（数字）。文字里任何位置出现的 “401”“402” 不算状态（例如限流提示里的 “Requested 401.”、请求编号里的 402）。429 先于额度关键词判断，只有提供方用 `insufficient_quota` 之类的代码明说余额用尽才算额度；403 是“请求被拒绝”，不触发暂停。
@@ -249,6 +250,8 @@ Codex 一列有几项取决于运行配置选的协议版本。“现代协议�
 | 进程故障的影响范围 | 共用子进程断开会影响所有在途 Turn | 只影响出问题的那个 Turn |
 
 **Claude 适配器账本里的思考内容。** 从 PR #341 起，适配器账本（专用 Claude 配置目录下 `evoloop-ledger/<project>/<native-session>.jsonl`，本机私有运行材料，不进 Git）除输入、回复与工具调用名外，还保存每个 thinking 块的可读文字，即 Claude 以 `--thinking-display summarized` 返回的摘要原文。thinking 块的签名、`redacted_thinking` 的密文都不保存，空块和加密块只记“不可读”；工具的输入与输出仍不保存。账本只追加、适配器不删除，所以这些思考文字的保留期与账本相同：随该 Session 的专用配置目录一直保留，直到运维按本机运行材料的方式清理。读取只有一条路：协调服务的会话时间线（`work timeline`、工作台智能体页），每次请求都核对读者对该项目有读取权限；思考内容不进入 Run 结果、Run 轨迹、普通消息回复、Leader 通知或通知包。原生 Claude 转录（`projects/*.jsonl`）由 Claude Code 自己保存，不在此范围内。
+
+**一轮的回复只记一次。** Claude 先把收尾的回答作为助手文字块流式发出，随后又在结果里重复同一段文字；适配器把前者记为过程文字（commentary），后者记为最终回复（final_answer）。读取账本时，紧挨在最终回复之前、正文完全相同的那条过程文字并入最终回复，所以时间线和工作台里同一轮的回复只出现一次；这条规则在读取时生效，修复前写下的账本也按同样方式读出。正文不同或中间隔着工具调用的过程文字照常保留。
 
 ## 8. 与原生桌面客户端的差别
 

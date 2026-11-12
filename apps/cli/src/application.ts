@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { describeRunActual } from "@evoloop/contracts/run-actual";
 import { readFile } from "node:fs/promises";
 import { commandSchema, idSchema } from "@evoloop/contracts";
 import { orchestrationCommandSchema } from "@evoloop/contracts/orchestration";
@@ -631,7 +632,10 @@ async function dispatch(args: Args, env: Environment, io: IO): Promise<unknown> 
     const query = new URLSearchParams();
     if (option(args, "cursor")) query.set("cursor", option(args, "cursor")!);
     if (option(args, "turn-cursor")) query.set("turnCursor", option(args, "turn-cursor")!);
-    return client.get(`${prefix}/${definition.path}/${objectId}${selected ? `/${selected}` : ""}${query.size ? `?${query}` : ""}`);
+    const read = await client.get(`${prefix}/${definition.path}/${objectId}${selected ? `/${selected}` : ""}${query.size ? `?${query}` : ""}`);
+    // A Run read carries what its Turn actually reported next to the configured profile, in the same words the workbench uses ("未记录" when nothing was observed).
+    if (kind === "run" && !selected && record(read)) return { ...record(read)!, actualView: describeRunActual(record(read) as never) };
+    return read;
   }
   throw new UsageError("Unknown command; use help.");
 }

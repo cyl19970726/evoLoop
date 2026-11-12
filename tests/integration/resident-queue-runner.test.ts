@@ -423,8 +423,10 @@ for(const scenario of ['normal','lost','rework-completed','rework-failed','rewor
           }
           assert.equal(waiting,true,'submission write must be waiting on the project lock');
           submissionLease=false;
+          // Assert on the rejection before releasing the lock: the waiter can reject before COMMIT's acknowledgement arrives.
+          const rejection=assert.rejects(pending,{code:'LEASE_LOST'});
           await admissionLock.query('COMMIT');
-          await assert.rejects(pending,{code:'LEASE_LOST'});
+          await rejection;
           assert.equal((await ordinary.readSubmission(projectId,runBefore.id))?.state,'submitted');
         }finally{admissionLock.release();}
         let signerAuthorized=true, dropCommittedRead=true;
@@ -482,8 +484,10 @@ for(const scenario of ['normal','lost','rework-completed','rework-failed','rewor
           }
           assert.equal(waiting,true,'Delivery transaction must be waiting on the project lock before lease loss');
           leaseHeld=false;
+          // Assert on the rejection before releasing the lock: the waiter can reject before COMMIT's acknowledgement arrives.
+          const rejection=assert.rejects(pending,{code:'LEASE_LOST'});
           await hold.query('COMMIT');locked=false;
-          await assert.rejects(pending,{code:'LEASE_LOST'});
+          await rejection;
           assert.equal(await uow.read(projectId,reader=>reader.getOperation(blockedOperation)),null);
           assert.equal(await uow.read(projectId,reader=>reader.getDocument(blockedDocument)),null);
         }finally{if(locked)await hold.query('ROLLBACK');hold.release();}

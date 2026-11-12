@@ -127,6 +127,8 @@ npm run --silent cli -- operation "$OPERATION_ID" --project "$PROJECT_ID"
 
 通过当前 Task 协作通道提交 `discussion.action.request` 时，`inputHash` 逐字取该通道原 Run 的 `inputHash`；补丁、正文或产物的 hash 应固定在 `detail` 报告中，不能替代 Run 输入 hash。先回读 Run、通道、报告的固定修订和 `command schema discussion.action.request`；JSON 形状通过只说明结构有效，仍须核 Run 状态、参与者、版本和来源语义。原 Run 确认终态后，若仍需工程动作，先形成新的真实 Run 与自己的通道、Run 输入 hash 和同 Run 来源的报告，再在新答复指导下形成新意图；保留旧拒绝，不由 Lead 代造 worker 签名。具体命令和动作回执仍按本节的正式工程入口处理。
 
+`read run RUN_UUID --project UUID` 在 Run 记录旁给出 `actualView`：这一轮运行时实际报告的模型（`model`）、思考强度（`reasoningEffort`）和子代理模型（`subagentModels`），以及配置的 `configuredModel`、`configuredEffort`；没有观察到的写“未记录”，配置值不会冒充实际值。
+
 工程回执让下一位可以复核：问题与实际改动、Task/Run/Session 及固定输入版本、commit/PR/merge commit、当前 head 的检查和失败项、固定产物链接与修订/hash、各动作真实执行者、部署状态与使用入口、已知限制及下一责任。没有发生的 PR、合并、部署或使用写为待办/未验，不能填占位符充完成。普通静态及队列 Run 的执行者按下文在运行中签 `ordinary.submit`，系统核终态后封存匹配 Delivery；broker worker 仍走下文的独立提交路径。独立消费者沿实际入口使用当前 Delivery，要求 `useRequired` 时由声明消费者亲签观察；失败保留原观察并回原 Task 修复、重新交付和复测，新发现的独立问题才另建有来源 Task。Run 终态、Delivery、合并、部署、消费者使用和 Task close 是不同证据。同一 owned Session 的受限常驻队列见[Lead 分派、返工与再次承接](#lead-分派返工与再次承接)；本节的 `runtime.run.reserve` 是显式手动路径。以所连服务、CLI schema、现行授权和队列读回核可用范围；任意 Desktop 自动唤醒仍未验证。
 
 ### 回链：过程文档纳入了哪一页

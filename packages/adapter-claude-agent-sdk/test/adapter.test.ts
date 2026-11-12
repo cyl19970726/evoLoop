@@ -636,6 +636,28 @@ test("a plan that cannot be prepared or whose plugins no longer match it stops t
   } finally { await h.cleanup(); }
 });
 
+test("a Turn records the exact model the native messages carried, and a subagent's model apart; a Turn with no answer records none", async () => {
+  const h = await setup("ok", { environment: { PATH: process.env.PATH, HOME: process.env.HOME, FAKE_CLAUDE_MODE: "ok", FAKE_CLAUDE_SUBAGENT: "1" } as never,
+    envPassthrough: ["FAKE_CLAUDE_MODE", "FAKE_CLAUDE_LOG", "FAKE_CLAUDE_SUBAGENT"] });
+  try {
+    const binding = await h.adapter.create({ ...h.spec, model: "opus" } as never);
+    const operation = randomUUID();
+    const started = await h.adapter.startTurn(binding, `${marker(operation)}\nDo the task`, operation);
+    const turn = await settled(h.adapter, binding, started.id);
+    assert.equal(turn.observedModel, "claude-fake-1", "the native record's model ID, not the configured alias");
+    assert.deepEqual(turn.subagentModels, ["claude-haiku-fake-1"]);
+    assert.notEqual(turn.observedModel, "opus");
+  } finally { await h.cleanup(); }
+  // Nothing answered (the process was lost before any assistant message): no model is claimed.
+  const lost = await setup("crash");
+  try {
+    const binding = await lost.adapter.create(lost.spec);
+    const operation = randomUUID();
+    const started = await lost.adapter.startTurn(binding, `${marker(operation)}\nDo the task`, operation);
+    const turn = await settled(lost.adapter, binding, started.id);
+    assert.equal(turn.status, "failed"); assert.equal(turn.observedModel ?? null, null);
+  } finally { await lost.cleanup(); }
+});
 test("thinking blocks reach the timeline in native order, unreadable ones are marked, and Turn thinking tokens are per Turn", async () => {
   const h = await setup("thinking");
   try {

@@ -157,6 +157,8 @@ export interface Transaction extends Reader, Omit<RoleTransaction, "getTask" | "
   updateDiscussion(value: DiscussionRecord, expectedVersion: number, event: DiscussionEvent): Promise<void>;
   insertRuntimeSession(session: RuntimeSessionRecord): Promise<void>;
   updateRuntimeSession(session: RuntimeSessionRecord, expectedVersion: number): Promise<void>;
+  /** Telemetry: the exact model a Turn of this Session reported. Updates in place without a version bump; never configuration. */
+  recordSessionActualModel?(sessionId: string, model: string, at: string): Promise<void>;
   insertRuntimeRun(run: RuntimeRunRecord): Promise<void>;
   updateRuntimeRun(run: RuntimeRunRecord, expectedVersion: number): Promise<void>;
   appendRuntimeEvent(event: RuntimeRecordEvent): Promise<void>;

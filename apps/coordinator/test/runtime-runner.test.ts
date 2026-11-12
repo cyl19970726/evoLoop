@@ -677,6 +677,29 @@ test("only an exact running Turn readback clears a transient reconcile fault bef
   }finally{await runner.stop();}
 });
 
+test("a settled Turn's observed model and subagent models reach the Run record; an unobserved model is not passed on",async()=>{
+  for(const observed of [{observedModel:"claude-opus-5-5",subagentModels:["claude-haiku-4-5"]},{}]){
+    const active={...run,id:randomUUID(),state:"running" as RuntimeRunRecord["state"],nativeTurnId:"owned-turn"};
+    const native=new FakeRuntime();
+    native.listTurns=async()=>({data:[{id:"owned-turn",status:"completed",completedAtUtc:new Date().toISOString(),...observed}],nextCursor:null});
+    let checkpoint:Record<string,unknown>|null=null;
+    const workflow={getProject:async()=>({id:projectId}),listRuntimeSessions:async()=>[session],
+      listRuntimeRuns:async()=>[active],getRuntimeSession:async()=>session} as unknown as WorkflowService;
+    const trusted={recoverDispatching:async()=>({sessions:[],runs:[]}),
+      recordTurn:async(_p:string,_id:string,_turn:string,_status:string,_summary:string,given:Record<string,unknown>)=>{checkpoint=given;active.state="completed";return active;}} as unknown as RuntimeWorkflowService;
+    const runner=new RuntimeRunner({runtimeFactory:()=>native as unknown as RuntimePort & FakeRuntime,
+      workflow,trusted,principals:[{actorId,projectIds:[projectId],permissions:["read","write","review"]}],
+      canWrite:()=>true,allowedCwd:async()=>true,hasGrant:()=>true});
+    try{
+      await runner.start();await runner.pump();
+      assert.ok(checkpoint,"the Turn was settled");
+      assert.equal(checkpoint!.observedModel,observed.observedModel,"the model the runtime reported, only when it reported one");
+      assert.deepEqual(checkpoint!.subagentModels,observed.subagentModels);
+      assert.equal("observedModel" in checkpoint!,"observedModel" in observed);
+    }finally{await runner.stop();}
+  }
+});
+
 test("close uses the original actor and exact grant, refusing missing authority or cwd without native writes", async t => {
   const originalGrant = { projectId, actorId, roleId: session.roleId, authorizationScope: session.authorizationScope,
     cwd: session.cwd, sandbox: session.sandbox, model: session.model, approvalPolicy: session.approvalPolicy };

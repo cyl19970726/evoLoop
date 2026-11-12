@@ -695,6 +695,7 @@ class PgTransaction extends PgReader implements Transaction {
   insertGitSourceRef(id: string, ref: GitSourceRef, state: "reachable" | "unavailable" | "withdrawn", observedAt: string) { return this.payloads.insertGitSourceRef(id, ref, state, observedAt); }
   insertRuntimeSession(item: import("@evoloop/contracts").RuntimeSessionRecord) { return this.runtime.insertRuntimeSession(item); }
   updateRuntimeSession(item: import("@evoloop/contracts").RuntimeSessionRecord, expectedVersion: number) { return this.runtime.updateRuntimeSession(item, expectedVersion); }
+  recordSessionActualModel(sessionId: string, model: string, at: string) { return this.runtime.recordSessionActualModel(sessionId, model, at); }
   insertRuntimeRun(item: import("@evoloop/contracts").RuntimeRunRecord) { return this.runtime.insertRuntimeRun(item); }
   updateRuntimeRun(item: import("@evoloop/contracts").RuntimeRunRecord, expectedVersion: number) { return this.runtime.updateRuntimeRun(item, expectedVersion); }
   appendRuntimeEvent(item: import("@evoloop/contracts").RuntimeRecordEvent) { return this.runtime.appendRuntimeEvent(item); }
