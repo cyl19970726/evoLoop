@@ -130,6 +130,8 @@ test("the agent's right column shows what it does now and next on its first scre
   const blockText = await block.innerText();
   assert.match(blockText, /接近上限[\s\S]*输入 86 万 \/ 100 万（86%）[\s\S]*近 7 天[\s\S]*11-10[\s\S]*11-04[\s\S]*按 Asia\/Shanghai 计日/, blockText);
   assert.equal(await block.locator("tbody tr").count(), 7);
+  // 11-08 has no ledger rows: the row says so instead of showing 0.
+  assert.match(await block.locator("tbody tr", { hasText: "11-08" }).innerText(), /11-08\s*没有记录/);
   await budgeted.page.context().close();
 
   // The skills chip is a link to the agent's Role, reachable and visibly focused from the keyboard.

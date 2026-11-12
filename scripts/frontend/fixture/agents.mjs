@@ -172,9 +172,10 @@ export const usage = () => {
     sessions: order.filter(name => samples[name]).map(name => ({ sessionId: agents[name].sessionId, roleId: roles[agents[name].role].id,
       nativeThreadId: `thread-${name}`, recorded: true, days: [samples[name].today], today: samples[name].today, total: samples[name].total,
       contextInputTokens: samples[name].context.inputTokens, observedAt: ago(3), context: samples[name].context })),
-    // 项目用量 on 统筹安排: seven days, and today at a third of a configured daily input limit (no reminder on the agents).
+    // 项目用量 on 统筹安排: the service lists only days with ledger rows, so 11-08 (nothing recorded) is absent and reads
+    // 没有记录; today is at a third of a configured daily input limit (no reminder on the agents).
     daily: [day("2026-11-04", 288000, 30100), day("2026-11-05", 352400, 41000), day("2026-11-06", 198000, 22400), day("2026-11-07", 61200, 7300),
-      day("2026-11-08", 0, 0), day("2026-11-09", 401200, 51800), day("2026-11-10", 523000, 52150)],
+      day("2026-11-09", 401200, 51800), day("2026-11-10", 523000, 52150)],
     budget: { configured: true, state: "ok", limitKind: "input_tokens", limit: 1500000, used: 523000, ratio: 523000 / 1500000, warningRatio: 0.8,
       pauseOrdinaryTurns: false, costComplete: true, reason: null } };
 };

@@ -102,9 +102,32 @@ export function projectBudgetGauge(budget: UsageBudget): ContextGauge {
   return { ratio, tone: "done", status: "正常", detail, handoff: false };
 }
 
-/** The project's latest days, newest first, one row each in 万; a missing cost is 未报告. */
-export function recentProjectDays(daily: readonly UsageDay[], count = 7): Array<{ day: string; input: string; output: string; cached: string; cost: string }> {
-  return [...daily].sort((a, b) => b.day.localeCompare(a.day)).slice(0, count).map(day => ({
-    day: day.day, input: tokenText(day.inputTokens), output: tokenText(day.outputTokens), cached: tokenText(day.cachedInputTokens), cost: costText(day),
-  }));
+export type ProjectDayRow =
+  | { day: string; recorded: true; input: string; output: string; cached: string; cost: string }
+  | { day: string; recorded: false };
+
+/** The project's “today” (`YYYY-MM-DD`) in its usage time zone at the time of the read; null when the zone is unusable. */
+export function projectToday(observedAt: string, timeZone: string): string | null {
+  const at = new Date(observedAt);
+  if (!Number.isFinite(at.getTime())) return null;
+  try { return new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).format(at); }
+  catch { return null; }
+}
+
+/**
+ * The project's last `count` calendar days ending today, newest first, one row each in 万; a missing cost is 未报告.
+ * The service lists only days that have ledger rows, so a day it does not list had no record: it says so and is never
+ * shown as 0 (a day recorded as 0 still shows 0). Without a usable today, only the recorded days are listed.
+ */
+export function recentProjectDays(daily: readonly UsageDay[], today: string | null, count = 7): ProjectDayRow[] {
+  const row = (day: UsageDay): ProjectDayRow => ({ day: day.day, recorded: true, input: tokenText(day.inputTokens),
+    output: tokenText(day.outputTokens), cached: tokenText(day.cachedInputTokens), cost: costText(day) });
+  if (!today || !/^\d{4}-\d{2}-\d{2}$/.test(today)) return [...daily].sort((a, b) => b.day.localeCompare(a.day)).slice(0, count).map(row);
+  const byDay = new Map(daily.map(day => [day.day, day]));
+  const end = Date.UTC(Number(today.slice(0, 4)), Number(today.slice(5, 7)) - 1, Number(today.slice(8, 10)));
+  return Array.from({ length: count }, (_, back) => {
+    const day = new Date(end - back * 86_400_000).toISOString().slice(0, 10);
+    const found = byDay.get(day);
+    return found ? row(found) : { day, recorded: false };
+  });
 }

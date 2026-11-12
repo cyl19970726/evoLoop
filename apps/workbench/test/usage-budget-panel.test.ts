@@ -73,11 +73,16 @@ test("项目用量 on 统筹安排 shows the daily limit as a bar, the days in �
   assert.match(html, /输入 30\.6 万 \/ 50 万（61%）/);
   assert.match(html, /近 7 天/);
   assert.ok(html.indexOf(">11-11<") < html.indexOf(">11-10<"), "newest day first");
+  // Seven calendar days ending on the project's today (11-11 in Asia/Shanghai); the five the service lists no rows for say so.
+  assert.equal((html.match(/<tr/g) ?? []).length, 8, "a header and seven days");
+  assert.equal((html.match(/没有记录/g) ?? []).length, 5);
+  assert.ok(html.indexOf(">11-09<") > html.indexOf(">11-10<") && html.indexOf(">11-05<") > 0);
   assert.match(html, /18\.6 万/); assert.match(html, /未报告/); assert.match(html, /\$0\.0200/);
   assert.equal(html.includes("$0.0000"), false, "an unreported cost is never $0");
   assert.match(html, /按 Asia\/Shanghai 计日/);
   const failed = renderToStaticMarkup(createElement(ProjectUsageView, { usage: null, error: "连接中断" }));
   assert.match(failed, /项目用量暂不可读取：连接中断。每日上限和近几天用量暂时无法判断/);
   const empty = renderToStaticMarkup(createElement(ProjectUsageView, { usage: { ...overview, daily: [] } }));
-  assert.match(empty, /近几天没有用量记录，不按 0 计/);
+  assert.match(empty, /近 7 天没有用量记录，不按 0 计/);
+  assert.equal(empty.includes(">0<"), false, "no day without a record is shown as 0");
 });

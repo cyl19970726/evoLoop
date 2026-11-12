@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { ContextPressure, UsageBudget } from "@evoloop/contracts";
 import { adjustBlocked, runtimeEnvironment } from "../src/features/sessions/environmentPresentation.ts";
-import { budgetReminder, contextGauge, projectBudgetGauge, recentProjectDays, todayTiles } from "../src/features/sessions/usagePresentation.ts";
+import { budgetReminder, contextGauge, projectBudgetGauge, projectToday, recentProjectDays, todayTiles } from "../src/features/sessions/usagePresentation.ts";
 import type { RecoveryRead } from "../src/features/sessions/recoveryPresentation.ts";
 
 const revision = { revisionId: "r2", version: 2, model: "gpt-6-astra", reasoningEffort: "max", sandbox: "danger-full-access", approvalPolicy: "never" };
@@ -107,9 +107,23 @@ test("项目用量 on 统筹安排: today against the daily limit with the same 
   assert.deepEqual(projectBudgetGauge(budget({ configured: false, state: "unconfigured", limit: null, ratio: null })),
     { ratio: null, tone: "idle", status: "未设上限", detail: "未配置每日上限，只记录用量", handoff: false });
   assert.equal(projectBudgetGauge(budget({ state: "unknown", ratio: null, costComplete: false })).detail, "有的记录没有报告费用，费用上限暂时无法判定");
-  const day = (d: string, input: number) => ({ day: d, inputTokens: input, outputTokens: 7_300, cachedInputTokens: 31_000, costUsd: null, costReported: false });
-  const days = recentProjectDays(["01", "02", "03", "04", "05", "06", "07", "08"].map((d, i) => day(`2026-11-${d}`, 61_200 * (i + 1))));
-  assert.equal(days.length, 7, "seven days");
-  assert.deepEqual(days[0], { day: "2026-11-08", input: "49 万", output: "7300", cached: "3.1 万", cost: "未报告" });
-  assert.equal(days.at(-1)!.day, "2026-11-02", "newest first; the oldest of eight is left out");
+  const day = (d: string, input: number) => ({ day: d, inputTokens: input, outputTokens: input ? 7_300 : 0, cachedInputTokens: input ? 31_000 : 0, costUsd: null, costReported: false });
+  // The service lists only days with ledger rows: 11-08 and 11-05 had none; 11-07 was recorded as 0.
+  const daily = [day("2026-11-03", 90_000), day("2026-11-04", 120_000), day("2026-11-06", 61_200), day("2026-11-07", 0), day("2026-11-09", 401_200), day("2026-11-10", 523_000)];
+  const days = recentProjectDays(daily, "2026-11-10");
+  assert.deepEqual(days.map(row => row.day), ["2026-11-10", "2026-11-09", "2026-11-08", "2026-11-07", "2026-11-06", "2026-11-05", "2026-11-04"],
+    "seven calendar days ending today, newest first; 11-03 is outside them");
+  assert.deepEqual(days[0], { day: "2026-11-10", recorded: true, input: "52.3 万", output: "7300", cached: "3.1 万", cost: "未报告" });
+  assert.deepEqual(days[2], { day: "2026-11-08", recorded: false }, "a day with no record is said to have none, never 0");
+  assert.deepEqual(days[3], { day: "2026-11-07", recorded: true, input: "0", output: "0", cached: "0", cost: "未报告" }, "a day recorded as 0 shows 0");
+  assert.deepEqual(days[5], { day: "2026-11-05", recorded: false });
+  // A month boundary, and no usable today: then only the recorded days, newest first.
+  assert.deepEqual(recentProjectDays([], "2026-12-02").map(row => row.day).slice(0, 3), ["2026-12-02", "2026-12-01", "2026-11-30"]);
+  assert.deepEqual(recentProjectDays(daily, null).map(row => row.day)[0], "2026-11-10");
+  assert.equal(recentProjectDays(daily, null).every(row => row.recorded), true);
+  // Today is the project's own calendar day at the time of the read.
+  assert.equal(projectToday("2026-11-10T17:30:00.000Z", "Asia/Shanghai"), "2026-11-11");
+  assert.equal(projectToday("2026-11-10T17:30:00.000Z", "UTC"), "2026-11-10");
+  assert.equal(projectToday("2026-11-10T17:30:00.000Z", "Not/AZone"), null);
+  assert.equal(projectToday("not a time", "UTC"), null);
 });

@@ -9,7 +9,7 @@ import { errorText } from "../../shared/api";
 import { mutedText } from "../../shared/ui/PageParts";
 import { date } from "../../shared/ui/shared";
 import { UsageBar, projectUsageAnchor, useUsageRead } from "./UsageBudgetPanel";
-import { projectBudgetGauge, recentProjectDays } from "./usagePresentation";
+import { projectBudgetGauge, projectToday, recentProjectDays } from "./usagePresentation";
 
 const heading = "text-label font-semibold text-foreground";
 const cell = "px-2 py-1.5 text-right tabular-nums first:pl-0 first:text-left last:pr-0";
@@ -30,7 +30,7 @@ export function ProjectUsageSection({ projectId, token }: { projectId: string; t
 /** The block's body for one usage read: reading, failed, or the limit, the days and the time zone. */
 export function ProjectUsageView({ usage, error = null, stale = false }: { usage: UsageOverview | null; error?: string | null; stale?: boolean }) {
   const gauge = usage ? projectBudgetGauge(usage.budget) : null;
-  const days = usage ? recentProjectDays(usage.daily) : [];
+  const days = usage ? recentProjectDays(usage.daily, projectToday(usage.observedAt, usage.timeZone)) : [];
   return <div className="flex min-w-0 flex-col gap-3 rounded-xl bg-raised px-4 py-3 shadow-sm">
       {error ? <Notice tone="error">项目用量暂不可读取：{error}。每日上限和近几天用量暂时无法判断。</Notice>
         : !usage || !gauge ? <p role="status" className={mutedText}>正在读取项目用量…</p>
@@ -45,7 +45,7 @@ export function ProjectUsageView({ usage, error = null, stale = false }: { usage
             </div>
             <div className="flex min-w-0 flex-col gap-1">
               <h3 className={heading}>近 7 天</h3>
-              {days.length ? <div className="min-w-0 overflow-x-auto">
+              {days.some(day => day.recorded) ? <div className="min-w-0 overflow-x-auto">
                 <table className="w-full min-w-[300px] text-small">
                   <thead><tr className="border-b border-border text-caption text-muted-foreground">
                     <th scope="col" className={`${cell} font-normal`}>日期</th><th scope="col" className={`${cell} font-normal`}>输入</th>
@@ -54,10 +54,12 @@ export function ProjectUsageView({ usage, error = null, stale = false }: { usage
                   </tr></thead>
                   <tbody>{days.map(day => <tr key={day.day} className="border-b border-border last:border-b-0">
                     <th scope="row" className={`${cell} font-normal text-text-secondary`}>{day.day.slice(5)}</th>
-                    <td className={cell}>{day.input}</td><td className={cell}>{day.output}</td><td className={cell}>{day.cached}</td><td className={cell}>{day.cost}</td>
+                    {/* A day the service lists no ledger rows for had no record: said, never shown as 0. */}
+                    {day.recorded ? <><td className={cell}>{day.input}</td><td className={cell}>{day.output}</td><td className={cell}>{day.cached}</td><td className={cell}>{day.cost}</td></>
+                      : <td colSpan={4} className={`${cell} text-muted-foreground`}>没有记录</td>}
                   </tr>)}</tbody>
                 </table>
-              </div> : <p className="text-small text-text-secondary">近几天没有用量记录，不按 0 计。</p>}
+              </div> : <p className="text-small text-text-secondary">近 7 天没有用量记录，不按 0 计。</p>}
             </div>
             <p className={mutedText}>按 {usage.timeZone} 计日 · 读于 {date(usage.observedAt)}{stale ? " · 上次读回，当前待核对" : ""}</p>
           </>}
