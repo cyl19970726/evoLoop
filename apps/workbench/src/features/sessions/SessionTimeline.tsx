@@ -227,7 +227,9 @@ function EntryInspector({ entry, context, sessionKey, mayReadOriginal, agentName
     } catch (cause) { if (current.current === scope) setError(errorText(cause)); }
     finally { if (current.current === scope) setBusy(false); }
   };
-  useEffect(() => { if (entry.kind === "message" && entry.truncated) void read(); return () => { current.current = ""; }; }, [scope]);
+  // A "not checked" input: opening its source asks the service to check this one Item with its own budget; what comes back replaces the notice.
+  const unchecked = entry.kind === "notice" && entry.nativeKind === "userMessage" && entry.label === "未核对的原生输入";
+  useEffect(() => { if (entry.kind === "message" && entry.truncated || unchecked) void read(); return () => { current.current = ""; }; }, [scope]);
   const block = "max-h-[42vh] overflow-auto whitespace-pre-wrap rounded-md bg-muted p-3 font-mono text-caption [overflow-wrap:anywhere]";
   return <>
     <p className="text-caption text-muted-foreground">{entryAuthorText(value.author, agentName, context.principal.actorId)}{value.occurredAt ? ` · ${date(value.occurredAt)}` : " · 来源未提供时间"}</p>
