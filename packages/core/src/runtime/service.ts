@@ -30,6 +30,17 @@ const canonicalUtc = (value: string): boolean => {
 };
 
 /** Trusted coordinator entry. Never expose these result-recording methods as public HTTP commands. */
+/** Requested effort (from the Run's frozen profile) beside the effort the Thread reported after turn/start. */
+function effortNote(run: RuntimeRunRecord, turn: RuntimeTurn): string {
+  return describeTurnEffort(run.executionProfile?.reasoningEffort ?? null, turn);
+}
+/** "; effort requested=… observed=…" for a started Turn, empty when no effort was involved. An unread value is never shown as consistent. */
+export function describeTurnEffort(requested: string | null, turn: RuntimeTurn): string {
+  if (!requested && turn.observedReasoningEffort === undefined) return "";
+  const observed = turn.observedReasoningEffort ?? null;
+  return `; effort requested=${requested ?? "none"} observed=${observed ?? "unread"}${requested && observed && requested !== observed ? " MISMATCH" : ""}`;
+}
+
 export class RuntimeWorkflowService {
   constructor(private readonly deps: RuntimeWorkflowDependencies) {}
 
@@ -384,8 +395,8 @@ export class RuntimeWorkflowService {
       await tx.updateRuntimeRun(next, current.version);
       await this.emit(tx, runId, current.sessionId, "run.bound",
         proof.inputReceipt && proof.kind === "startReply" ?
-          `Turn bound from startReply; sent input ${proof.inputReceipt.protocol} SHA256 ${proof.inputReceipt.contentHash} bytes ${proof.inputReceipt.byteLength}` :
-          `Turn bound from ${proof.kind}`, turn.id, projectId);
+          `Turn bound from startReply; sent input ${proof.inputReceipt.protocol} SHA256 ${proof.inputReceipt.contentHash} bytes ${proof.inputReceipt.byteLength}${effortNote(current, turn)}` :
+          `Turn bound from ${proof.kind}${effortNote(current, turn)}`, turn.id, projectId);
       return next;
     });
   }

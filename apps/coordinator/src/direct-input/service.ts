@@ -43,6 +43,8 @@ export interface DirectInputServiceDeps {
   admission(principal:Principal,projectId:string,sessionId:string):Promise<{grant:DirectInputGrant;binding:RuntimeBinding}>;
   /** Existing owned binding for read-only reconciliation; a revoked sender grant cannot erase prior evidence. */
   bindingFor(projectId:string,sessionId:string):Promise<RuntimeBinding>;
+  /** Records the requested effort beside the one the Thread reported for the started Turn. Best effort. */
+  observeEffort?(projectId:string,sessionId:string,inputId:string,turn:RuntimeTurn,requested:string|null):Promise<void>;
 }
 
 /** The HTTP caller never controls the native binding, source or mode. */
@@ -158,7 +160,9 @@ export class DirectInputService {
       }
       const input=`${marker(record.operationId)}\nOrdinary Session conversation using this Session's normal tools and full execution permissions. Act within the user's request and project identity. A reply does not itself record Task delivery or acceptance.\n${record.content}`;
       const turn=await runtime.startConversationTurn(binding,input,record.inputId);
-      return publicDirectInput(await this.deps.store.accept(projectId,record.inputId,turn.id,null));
+      const accepted=publicDirectInput(await this.deps.store.accept(projectId,record.inputId,turn.id,null));
+      await this.deps.observeEffort?.(projectId,record.sessionId,record.inputId,turn,binding.resumeProfile?.reasoningEffort??null).catch(()=>undefined);
+      return accepted;
     }catch(error){
       if(error instanceof RuntimeLocalBusyError){
         // Adapter-level in-flight admission refused before writing; keep the durable intent retryable.

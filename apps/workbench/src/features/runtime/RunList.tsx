@@ -107,7 +107,7 @@ const eventText: Record<RuntimeRecordEvent["kind"], string> = {
   "session.reserved": "已预留", "session.creating": "创建中", "session.bound": "已绑定原生线程", "session.unknown": "创建结果未知",
   "session.closeRequested": "已请求关闭", "session.archiveAttempted": "已尝试归档", "session.closed": "已核实关闭",
   "run.requested": "已请求运行", "run.dispatching": "派发中", "run.dispatchWithdrawn": "派发已撤回", "run.preflightRejected": "派发前检查未通过",
-  "run.dispatchRejected": "派发被拒绝", "run.bound": "已绑定一轮", "run.status": "状态更新", "run.unknown": "运行结果未知", "run.reviewed": "已复核",
+  "run.dispatchRejected": "派发被拒绝", "run.bound": "已绑定一轮", "turn.effortObserved": "思考强度读回", "run.status": "状态更新", "run.unknown": "运行结果未知", "run.reviewed": "已复核",
   "message.preTurnReviewed": "消息派发前已复核", "run.reconciled": "终态已核对", "run.interruptRequested": "已请求中断", "run.stopRequested": "已请求停止", "run.interruptResult": "中断结果",
   "session.executionProfile.activationStarted": "执行配置开始激活", "session.executionProfile.active": "执行配置已激活",
   "session.executionProfile.unknown": "执行配置激活结果未知", "session.executionProfile.rejected": "执行配置激活被拒绝",
