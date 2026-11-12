@@ -2,7 +2,8 @@
 // The convention for a developer's test PostgreSQL instance, so it can be found and reclaimed instead of guessed at:
 //   location  EVOLOOP_TEST_PG_ROOT/<name>/        (one directory per instance; the root is a private path)
 //   name      the worktree directory's name (lowercase letters, digits, - and _), e.g. wt-effort
-//   marker    <dir>/.evoloop-test-pg.json  { name, worktree, port, createdAt } — written at start; the reclaim job reads it
+//   marker    <dir>/.evoloop-test-pg.json  { name, worktree, branch, port, createdAt } — written at start; the reclaim job reads it.
+//             `branch` lets `disk-reclaim --branch NAME` still find the instance after its worktree has been reclaimed.
 //   database  evoloop_<name with _ for ->_test    (matches the integration-test guard)
 //   stop      `test-pg.mjs stop --name NAME`; the reclaim job also stops it once its worktree is merged and gone
 // Binaries come from EVOLOOP_PG_BIN_DIR (a PostgreSQL 18 bin directory), as in the backup documentation.
@@ -33,7 +34,13 @@ export function instancePath(root, name) {
 
 const freePort = () => new Promise((resolvePort, reject) => { const server = createServer(); server.listen(0, "127.0.0.1", () => { const { port } = server.address(); server.close(() => resolvePort(port)); }); server.on("error", reject); });
 
-export async function start({ root, name, worktree, binDir, exec = execFileSync }) {
+/** The branch checked out in `worktree`, or null (detached HEAD, not a git worktree, git missing). */
+export function currentBranch(worktree, exec = execFileSync) {
+  if (!worktree) return null;
+  try { const name = String(exec("git", ["-C", worktree, "rev-parse", "--abbrev-ref", "HEAD"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] })).trim(); return name && name !== "HEAD" ? name : null; } catch { return null; }
+}
+
+export async function start({ root, name, worktree, branch, binDir, exec = execFileSync }) {
   const dir = instancePath(root, name);
   const bin = file => join(binDir, file);
   mkdirSync(dir, { recursive: true });
@@ -43,7 +50,7 @@ export async function start({ root, name, worktree, binDir, exec = execFileSync 
   exec(bin("pg_ctl"), ["-D", data, "-o", `-p ${port} -k ${dir} -c listen_addresses=127.0.0.1 -c fsync=off`, "-l", join(dir, "log"), "start", "-w"], { stdio: "ignore" });
   const database = databaseName(name);
   exec(bin("psql"), ["-h", "127.0.0.1", "-p", String(port), "-U", "evoloop", "-d", "postgres", "-c", `CREATE DATABASE ${database}`], { stdio: "ignore" });
-  writeFileSync(join(dir, MARKER), JSON.stringify({ name: instanceName(name), worktree: worktree ? resolve(worktree) : null, port, createdAt: new Date().toISOString() }, null, 2));
+  writeFileSync(join(dir, MARKER), JSON.stringify({ name: instanceName(name), worktree: worktree ? resolve(worktree) : null, branch: branch ?? currentBranch(worktree, exec), port, createdAt: new Date().toISOString() }, null, 2));
   return { dir, port, url: `postgres://evoloop@127.0.0.1:${port}/${database}` };
 }
 
@@ -63,7 +70,7 @@ export function list(root) {
 
 const isMainModule = () => { try { return realpathSync(fileURLToPath(import.meta.url)) === realpathSync(process.argv[1]); } catch { return false; } };
 if (isMainModule()) {
-  const { values, positionals } = parseArgs({ allowPositionals: true, options: { name: { type: "string" }, worktree: { type: "string" } } });
+  const { values, positionals } = parseArgs({ allowPositionals: true, options: { name: { type: "string" }, worktree: { type: "string" }, branch: { type: "string" } } });
   const root = process.env.EVOLOOP_TEST_PG_ROOT, binDir = process.env.EVOLOOP_PG_BIN_DIR;
   const command = positionals[0];
   try {
@@ -71,8 +78,8 @@ if (isMainModule()) {
     else if (command === "start" || command === "stop") {
       if (!binDir) throw new Error("EVOLOOP_PG_BIN_DIR must point at a PostgreSQL 18 bin directory");
       const name = values.name ?? basename(values.worktree ?? process.cwd());
-      if (command === "start") { const result = await start({ root, name, worktree: values.worktree ?? process.cwd(), binDir }); console.log(`export TEST_DATABASE_URL=${result.url}   # ${result.dir}`); }
+      if (command === "start") { const result = await start({ root, name, worktree: values.worktree ?? process.cwd(), branch: values.branch, binDir }); console.log(`export TEST_DATABASE_URL=${result.url}   # ${result.dir}`); }
       else console.log(`stopped and removed ${stop({ root, name, binDir })}`);
-    } else { console.error("usage: test-pg.mjs start|stop [--name NAME] [--worktree PATH] | list\nenv: EVOLOOP_TEST_PG_ROOT (private absolute path), EVOLOOP_PG_BIN_DIR"); process.exit(2); }
+    } else { console.error("usage: test-pg.mjs start|stop [--name NAME] [--worktree PATH] [--branch NAME] | list\nenv: EVOLOOP_TEST_PG_ROOT (private absolute path), EVOLOOP_PG_BIN_DIR"); process.exit(2); }
   } catch (error) { console.error(error.message); process.exit(1); }
 }

@@ -14,6 +14,7 @@ import {
   composerMenu, type ComposerAgent, type ComposerAttachment, type ComposerCommand,
 } from "@evoloop/ui";
 import { commandDrafts, useCommand, type MutationContext } from "../../shared/command";
+import { ErrorDetails } from "../../shared/ui/ErrorDetails";
 import { errorText } from "../../shared/api";
 import { useProjectQuery } from "../../shared/query";
 import { roleClient } from "../../shared/roleClient";
@@ -221,7 +222,9 @@ export function SessionComposer({ context, snapshot, entries, activeTurn, live, 
       onCancel={context.blocked ? undefined : id => void withdraw(id)} />}
     {direct.receipt}
     {plan.disabledReason && <p role="status" className="text-caption text-muted-foreground">{plan.disabledReason}</p>}
-    {command.outcome && <p role={command.outcome.failed ? "alert" : "status"} className={command.outcome.failed ? "text-caption text-destructive" : "text-caption text-muted-foreground"}>{command.outcome.message}</p>}
+    {command.outcome && <p role={command.outcome.failed ? "alert" : "status"} className={command.outcome.failed ? "text-caption text-destructive" : "text-caption text-muted-foreground"}>{command.outcome.message}
+      {/* The service's original answer, folded: for a missing message grant that is only the code (no configuration text, no local path). */}
+      {command.outcome.detail && <ErrorDetails failure={{ text: command.outcome.message, detail: command.outcome.detail }} />}</p>}
     {delivered && <p role="status" data-sent-result={delivered.kind} className="text-caption text-muted-foreground">{sentResultText(delivered)}</p>}
     {outcome && <p role={outcome.failed ? "alert" : "status"} className={outcome.failed ? "text-caption text-destructive" : "text-caption text-muted-foreground"}>{outcome.text}</p>}
     <Composer
