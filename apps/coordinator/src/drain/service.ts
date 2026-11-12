@@ -30,7 +30,7 @@ export class DrainControl {
 
   async status(): Promise<DrainStatus> {
     const row = (await this.pool.query("SELECT state,version,actor_id,reason,changed_at FROM instance_drain WHERE singleton")).rows[0];
-    if (!row) throw new DomainError("DRAIN_UNAVAILABLE", "Drain state is not initialised (migration 093)");
+    if (!row) throw new DomainError("DRAIN_UNAVAILABLE", "Drain state is not initialised (migration 097)");
     const runs = await this.pool.query(`SELECT project_id,run_id,task_id,session_id,state,updated_at,count(*) OVER () AS total FROM runtime_run
       WHERE state IN ('dispatching','running','unknown') ORDER BY updated_at,run_id LIMIT ${listLimit}`);
     const turns = await this.pool.query(`SELECT p.project_id,p.message_id,p.session_id,p.state,p.updated_at,count(*) OVER () AS total FROM session_message_processing p
@@ -61,7 +61,7 @@ export class DrainControl {
     try {
       await client.query("BEGIN");
       const row = (await client.query("SELECT state,version FROM instance_drain WHERE singleton FOR UPDATE")).rows[0];
-      if (!row) throw new DomainError("DRAIN_UNAVAILABLE", "Drain state is not initialised (migration 093)");
+      if (!row) throw new DomainError("DRAIN_UNAVAILABLE", "Drain state is not initialised (migration 097)");
       const target = action === "start" ? "draining" : "active";
       if (row.state !== target) {
         const version = Number(row.version) + 1;
