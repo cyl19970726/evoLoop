@@ -255,7 +255,7 @@ test('unsettled or bounded incomplete Turn reads never select an input from the 
   }
 });
 
-test('input proof read failure remains unassociated and native permission denial propagates',async()=>{
+test('a failed separate proof read leaves the input "not checked" (never an unverified sender) where the page does not hold the Turn, and native permission denial propagates',async()=>{
   const h=inputProofHarness('message',{unique:true});
   const history=h.runner.workspaceHistory.bind(h.runner);
   let forbidden=false;
@@ -264,14 +264,23 @@ test('input proof read failure remains unassociated and native permission denial
     return history(principal,projectId,sessionId,query);
   };
   try{
-    const page=await h.service.page(reader,project,key,{limit:2,source:'native'});
-    assert.ok(page.entries.every(entry=>entry.kind==='notice'));
-    assert.equal(page.pending[0]?.body,'Message 10 from human-a');
-    assert.equal(page.partial,true);
-    assert.ok(page.limitations.length>0);
-    assert.equal((await h.service.item(reader,project,key,h.turnId,'proof-a')).kind,'notice');
+    // The page lists the whole Turn (both Items, no continuation): it proves the Turn without the separate read that fails here.
+    const whole=await h.service.page(reader,project,key,{limit:2,source:'native'});
+    assert.equal(whole.entries.find(entry=>entry.nativeItemId==='proof-a')?.kind,'message');
+    // A request for one Item cannot lean on a page: its own proof read fails, so the input is "not checked", not "unverified".
+    const item=await h.service.item(reader,project,key,h.turnId,'proof-a');
+    assert.equal(item.kind,'notice');
+    assert.equal((item as {label:string}).label,'未核对的原生输入');
+    assert.match((item as {body:string}).body,/本次未核对，可展开核对/);
+    assert.doesNotMatch((item as {body:string}).body,/未能核实/);
+    // A page that continues past the Turn cannot prove it either: the Turn is at its edge.
+    const edge=await h.service.page(reader,project,key,{limit:1,source:'native'});
+    assert.equal(edge.pending[0]?.body,'Message 10 from human-a');
+    assert.equal(edge.partial,true);
     h.emit({projectId:project,sessionId,threadId:thread,turnId:h.turnId,observedAt:now,kind:'entry',entry:h.a});
-    assert.equal((await h.service.updates(reader,project,key)).entries[0]?.kind,'notice');
+    const live=(await h.service.updates(reader,project,key)).entries[0];
+    assert.equal(live?.kind,'notice');
+    assert.equal((live as {label:string}).label,'未核对的原生输入');
     forbidden=true;
     const denied=(error:unknown)=>error instanceof DomainError&&error.code==='FORBIDDEN';
     await assert.rejects(h.service.page(reader,project,key,{limit:2,source:'native'}),denied);
