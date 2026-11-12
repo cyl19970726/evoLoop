@@ -48,6 +48,11 @@
       "group": "前端文档"
     },
     {
+      "path": "docs/frontend/overview-top-design.md",
+      "title": "总览顶部重做设计（待确认）",
+      "group": "前端文档"
+    },
+    {
       "path": "docs/frontend/foundations.md",
       "title": "设计基础",
       "group": "前端文档"
