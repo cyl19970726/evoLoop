@@ -155,6 +155,8 @@ export interface LeaderWorkTask {
     readiness: "ready" | "waiting_precondition" | null;
     /** Set for `named_agent`: the business identity that accepts directly. */
     namedAgent: string | null;
+    /** Who marked the current delivery's precondition met, on what evidence and when; null when not marked (or no delivery yet). */
+    preconditionMark: { actorId: string; evidence: string; markedAt: string } | null;
   } | null;
   latestRun: LeaderWorkRunFact | null;
   delivery: LeaderWorkDeliveryFact | null;

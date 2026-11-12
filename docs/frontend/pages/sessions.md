@@ -15,9 +15,21 @@ Session 页说明一个具体实例此刻在做什么、做出了什么；“Lea
 | --- | --- | --- |
 | 内层栏（对象列表） | 顶部固定“Leader 安排”，下面是 Session 目录：搜索，分业务 / System / 待归类，历史可展开。已绑定职责的 Session（无论经 `session prepare` 还是 reserve + bind 建立）按职责类别归入业务或 System，不进待归类；每行写运行时与模型，没人命名的同职责 Session 写成“<职责> · Claude/Codex”，重名再加“标识 <8 位>” | 同左 |
 | 中间 | 对话与 Agent 活动流（见下方“目标体验”），输入框固定在底部；从别处进来时页首写“返回任务：<名称>”“返回统筹安排”“返回文档：<名称>”等，点回原页面和页签 | 上半部分是当前的编排总览文档，下半部分是安排看板：每个 Session 一行，写职责、当前任务、排队任务和状态；没有承接者的任务单独一组。下一步是派发（待接手、可开始、返工）而分派固定在任务旧修订上的，写“分派（接手）属于旧修订 · 要重新指定”，不写“待接手”；规则同服务端派发时的 `ASSIGNMENT_STALE`，交付、运行中、待验收换了修订是正常流程，不算。从看板点进的任务和智能体页首写“返回统筹安排” |
-| 右栏（可收起） | 角色、运行时（读 Session 自己的绑定与执行配置）、所在机器（#219 之前显示“未知”）、当前任务、队列、成果 | 数据能证明的冲突与风险：同一 Session 有多项进行中任务、依赖未通过验收就已开始、截止已过、待验收却未登记下一责任、下一步是派发而分派或接手属于旧修订（要重新指定；任务索引带回分派固定的修订、队列也读回、没有队列领取时才判断）；再下面是空闲与过载、截止临近 |
+| 右栏（可收起） | 按下表“右栏信息层级”：实体卡 → 正在做 → 接下来（“动态”页签；“资料库”页签是成果）→ 运行环境 → 上下文与用量 → 详情与来源（收起）；所在机器 #219 之前写“待接入” | 数据能证明的冲突与风险：同一 Session 有多项进行中任务、依赖未通过验收就已开始、截止已过、待验收却未登记下一责任、下一步是派发而分派或接手属于旧修订（要重新指定；任务索引带回分派固定的修订、队列也读回、没有队列领取时才判断）；再下面是空闲与过载、截止临近 |
 
 外壳与左栏见[布局](../layout.md)，场景见[场景 3](../scenarios.md#十个场景)与[场景 11](../scenarios.md#场景-11看清-leader-怎样安排-session)。
+
+### 右栏信息层级
+
+| 顺序 | 块 | 回答 | 数据来源 | 载体与理由 |
+| --- | --- | --- | --- | --- |
+| 1 | 实体卡 | 这是谁，现在怎样 | 名称、职责、受管或外部、归类、状态（与页首同一判断） | 不加框：头像和名字已能认出对象，页首胶囊也在说状态 |
+| 2 | 正在做（“动态”页签） | 现在在做哪项任务 | 当前任务：执行队列的领取优先，其次是任务当前修订上的分派；没有时看未结束的 Run（含已预留）；状态取统筹索引的任务阶段，未读回时取 Run 状态 | 柔底色块（[事实卡片](../foundations.md#表面从后往前)）：标题、阶段、接手方式、用时是同一对象的事实，要读成一个单位；它是首屏的主答案。状态用 StatusTag |
+| 3 | 接下来（“动态”页签） | 接下来做哪项，按什么顺序 | 先列智能体队伍（[DEC-045](../../decisions.md#用户已确定的方向) 的 session line，按位置），再列执行队列里未领取的项，最后列不在两者里的分派；分派按统筹索引的阶段分：待验收算已交出 | 同一种色块，块内一行一项，用细线分隔；序号是在自己队伍或执行队列里的位置，分派没有序号。超过 3 项折叠；已交出或已结束的分派另起一行折叠 |
+| 4 | 运行环境 | 它在用什么跑 | 运行时；模型（最近一轮原生报告的实际模型，没有时用目标）；思考强度（没有逐轮记录，总是配置值）；有新目标待应用时改用最后确认的配置，并标出下一轮改成什么；执行权限（Session 执行配置）；技能（随职责，链到职责页）。修订、最后确认、应用状态、操作标识在“配置记录”里 | 和“正在做”同一种色块：一张卡片回答一个问题。主行一句“运行时 · 模型 · 强度”，每个值标“实际 / 目标 / 已确认”，都是目标时只写一次“目标，尚无实际报告”。目标还没生效时给状态标签。权限是小标签，技能标签可点，链到该职责页。“调整模型与强度”在右上角，不能用时在卡片底部写一行“不能调整：原因 · 去处”，去处是链接（例如“不是完整权限 · 去分工与运行”）。其余收进“配置记录”，说明只在相关时出现 |
+| 5 | 上下文与用量 | 还能用多久；今天用了多少 | 用量读取里这个智能体的一项：上下文压力（当前大小 / 交接阈值）、今日与本会话累计；原生观察回报的这条线程用量 | 同一种色块，标题“上下文与用量”，里面先“上下文”、后“今日”。上下文用进度条加百分比和状态色（正常、接近交接、需交接新线程），需交接时直接给出处理说明和“去分工与运行”。“今日”是四个小数字格（输入、输出、缓存输入用“万”，费用没报告写“未报告”）。累计收进“本会话累计”。每日上限、近几天项目用量、用量时区属于项目，不放这里；只有项目用量接近或达到每日上限时写一行提醒，链到统筹安排（目前没有项目用量页） |
+| 6 | 资料库（页签） | 交出了什么 | 关联的交付与使用观察 | 列表行加细线 |
+| 7 | 详情与来源（收起） | 来源、诊断和低频设置 | 标识设置、原聊天入口、职责与分派、资源观察、恢复、活动与来源记录、完整标识 | 收起；标识设置是低频操作，从首屏移到这里 |
 
 现状（#229 PR6a–PR6d）：
 - **目录**：搜索、“统筹安排”、业务 / 系统分组，每项有头像、当前任务或职责、状态。
@@ -25,7 +37,7 @@ Session 页说明一个具体实例此刻在做什么、做出了什么；“Lea
 - **详情**（PR6d 起全部用 `@evoloop/ui`）：
   - 中间：对话流按目标体验实现；原生的英文说明改写成中文。
   - 输入框：Enter 只在运行时声明可补充时补充，否则排到下一轮并写明原因。
-  - 右栏：标识、动态（当前任务、分派、执行队列）、资料库、环境与用量（含模型、用量、上下文、上限）、详情与来源。
+  - 右栏：按上面的层级实现。
   - “关闭受管智能体”在右栏列出阻断原因；窄屏下右栏只在点开时出现。
 - **还没做的**：
   - 编排总览文档（合同缺“当前总览”标记）。
@@ -51,6 +63,25 @@ Session 页说明一个具体实例此刻在做什么、做出了什么；“Lea
 - 从 Task 进来再返回，恢复页签和阅读位置；切换项目、身份或 Session 时清掉旧数据。
 - Leader 安排：只写记录能证明的冲突，总览文档另写的以文档为准；任务或队列没读全时，空闲、冲突、无承接者写“?”或“无法判断”，重读失败标“上次读回，当前待核对”；调整安排找 Leader。
 
+| 运行环境与上下文 | 页面上写 |
+| --- | --- |
+| 运行配置正在读取、读取失败或没有登记 | 主行写“正在读取运行配置…”“运行配置暂不可读取”或“未登记执行配置”，不显示空值 |
+| 外部接入 | 主行写“外部接入”和外部宿主报过的模型；没有时写“模型与强度由外部宿主决定，没有同步到这里”；“配置记录”里目标模型、思考强度、执行权限写“外部接入不提供” |
+| 没有交接阈值 | 标签“未设阈值”，写当前上下文大小，不画进度条 |
+| 没有任何用量记录 | 上下文标“没有记录”；今日写“这个智能体还没有用量记录，不按 0 计” |
+| 用量读取失败 | 写失败原因，并说明上下文和今日用量暂时无法判断 |
+
+| 正在做与接下来 | 页面上写 |
+| --- | --- |
+| 有当前任务 | 任务链接；阶段（统筹索引未读回时用 Run 状态）；接手方式；已历时与等谁；有待答问题时另起一行 |
+| 没有任务，原生回报正在回复消息 | “回复消息”；原生这一轮是消息时，不被仍标为运行中的旧 Run 记录盖过 |
+| 没有任务，有未结束的 Run | Run 的任务和 Run 状态，并写“没有找到分派或领取，待核对” |
+| 受管且没有在途工作 | “空闲”，附最近一次交付；技术结果与使用分开写 |
+| 占用未知、外部接入、未就绪或已关闭 | “待核对”“外部接入”或生命周期，不写“空闲” |
+| 队伍正在读取或读取失败 | 写“正在读取”或失败原因与“重试”；已读到的执行队列和分派照列，不写“没有排队的任务”；分派只写“已分派”，读回队伍后才写“未排进队伍” |
+| 队伍里暂停的任务 | “已暂停”后接一句原因：服务端已知的暂停代码写成中文，纯中文原样；代码和英文原文放进可展开的“暂停代码与原文”，不出现在行上 |
+| 都读到了，确实没有 | “没有排队的任务”；快照只读到部分时写“已读范围内没有…”；外部智能体写“没有队伍” |
+
 | 服务端写的或没有的 | 页面上写 | 原文在哪 |
 | --- | --- | --- |
 | 读取范围的限制（`Native history is unsupported for this Session`、`Manual handoff records do not prove native delivery or reading`、`Live native updates unavailable` 等） | 已知的逐条写成中文，包括服务端带实现词的中文（“原生 Item / Turn”“原输入 ID”）；纯中文原样保留；不认识的英文和中英混写写“来源还说明了一项读取限制（原文未翻译，可展开“原文”查看）”；对话读取失败的错误行也一样 | “消息怎样处理与读取范围”、“来源限制与未确认信息”和读取失败提示下的“原文” |
@@ -74,7 +105,7 @@ Session 页说明一个具体实例此刻在做什么、做出了什么；“Lea
 | `/` 与 `@` | 输入 `/` 弹出当前职责可用的技能和命令（停止这一轮、撤回排队消息、关联任务或文档）；输入 `@` 选择其他智能体，这条消息另发一份给对方，两边时间线各留一条记录（见[组件清单](../components.md#对话流组件)） | 已实现：技能来自职责的运行时视图；`/` 一定有回应：没有技能（Codex 职责常见）或读不到时仍列出三条命令，不能用的写明原因，并说明技能的情况，输入无匹配也会说明；`@` 另存一条普通消息给对方；技能的执行语义与关联文档仍待定 |
 | 头像与称呼 | 界面上 Session 叫“智能体”、Leader 叫“统筹”（[界面用语](../principles.md#界面用语)）；每个智能体有按职责取底色的卡通头像，出现在目录、标题、状态行和 `@` 菜单里 | 头像由职责和实例推出，不需要新数据 |
 | 每轮小结 | 一轮结束时，最后一条回复后跟一行本轮产出：改了什么、交付了什么、下一步等谁 | 已实现：只写记录能证明的（工具计数、本轮开始后关联任务的交付、失败或待答） |
-| 右栏 | 顶部是实体卡：身份标记、名称、职责、所在机器与状态（在线 / 空闲 / 休眠）；下面两个页签，“动态”看当前任务、队列和最近活动，“资料库”看本 Session 的产出、交付和关联文档；再往下是环境（工作目录、执行配置）和上下文用量 | 工作目录与用量部分已有；机器等 #219 |
+| 右栏 | 顶部是实体卡：身份标记、名称、职责、所在机器与状态；“动态”页签先答正在做和接下来，“资料库”看产出与交付；再往下是运行环境（含模型与强度）、上下文与用量 | 已实现，见“右栏信息层级”；工作目录未显示，机器等 #219 |
 
 **两种运行时的现状差异**
 
@@ -104,6 +135,10 @@ Session 页说明一个具体实例此刻在做什么、做出了什么；“Lea
 
 ![智能体页，390](../../assets/frontend-pages/agent-390.png)
 
+![智能体页，空闲而队伍里有两项，1440](../../assets/frontend-pages/agent-queued-1440.png)
+
+![智能体页，空闲而队伍里有两项，390：右栏从底部升起](../../assets/frontend-pages/agent-queued-390.png)
+
 改版前真实使用的截图见[实景旅程](../journeys/current-work.md#3-从任务核对具体承接者)。
 
 ## 代码与测试
@@ -112,8 +147,8 @@ Session 页说明一个具体实例此刻在做什么、做出了什么；“Lea
 | --- | --- | --- |
 | 外壳 | `app/shell/AppShell.tsx` | `shell.test.ts`、`shell-browser.test.ts`（切换空间后保留各空间的地址与智能体目录搜索）、`session-directory-groups-browser.test.ts` |
 | 智能体目录（内层栏） | `features/sessions/SessionNavigation.tsx`（新目录）、`features/sessions/sessionDirectoryPresentation.ts`、`features/sessions/useSessionDirectoryGroup.ts` | `session-directory-presentation.test.ts`、`session-directory-groups.test.ts`、`session-directory-groups-browser.test.ts` |
-| 智能体详情 | `features/sessions/SessionWorkspace.tsx`（页首、右栏；执行队列由 `app/App.tsx` 传入 `features/workflow` 的面板）、`features/sessions/environmentPresentation.ts`（环境与用量的三种状态）、`features/sessions/SessionTimeline.tsx`（对话流）、`features/sessions/readingScopePresentation.ts` 与 `features/sessions/SourceLimitations.tsx`（读取限制的中文与原文）、`shared/agentNamePresentation.ts`（没登记名称时怎样称呼）、`features/sessions/conversationPresentation.ts`（工具、计划、状态行与每轮小结的用语）、`features/sessions/workspaceTimelineModel.ts`、`features/sessions/NativeSessionPanel.tsx`、`features/sessions/SessionModelControl.tsx`、`features/sessions/SessionClosePanel.tsx` | `session-wording-presentation.test.ts`、`agent-name-presentation.test.ts`、`session-external-wording-browser.test.ts`（`EVOLOOP_AGENT_WORDING_SCREENSHOT_DIR`）、`session-workspace-redesign-browser.test.ts`、`session-timeline-browser.test.ts`、`session-workspace-timeline-model.test.ts`、`session-conversation-presentation.test.ts`、`session-native-input-browser.test.ts`、`session-native-progress-browser.test.ts`、`session-close-entry-browser.test.ts`、`session-activity-narrow-browser.test.ts`、`task-session-return-browser.test.ts` |
-| 用量与预算 | `features/sessions/UsageBudgetPanel.tsx`、`features/sessions/usagePresentation.ts` | `usage-presentation.test.ts` |
+| 智能体详情 | `features/sessions/SessionWorkspace.tsx`（页首、右栏；执行队列由 `app/App.tsx` 传入 `features/workflow` 的面板）、`features/sessions/sessionWorkPresentation.ts`（正在做与接下来的判定与用语）、`features/sessions/RuntimeEnvironmentCard.tsx`（运行环境卡片）、`features/sessions/environmentPresentation.ts`（环境与用量的三种状态）、`features/sessions/SessionTimeline.tsx`（对话流）、`features/sessions/readingScopePresentation.ts` 与 `features/sessions/SourceLimitations.tsx`（读取限制的中文与原文）、`shared/agentNamePresentation.ts`（没登记名称时怎样称呼）、`features/sessions/conversationPresentation.ts`（工具、计划、状态行与每轮小结的用语）、`features/sessions/workspaceTimelineModel.ts`、`features/sessions/NativeSessionPanel.tsx`、`features/sessions/SessionModelControl.tsx`、`features/sessions/SessionClosePanel.tsx` | `session-work-presentation.test.ts`、`session-rail-browser.test.ts`（三类智能体在 1440 与 390 宽的首屏、溢出、队伍读取失败）、`session-wording-presentation.test.ts`、`agent-name-presentation.test.ts`、`session-external-wording-browser.test.ts`（`EVOLOOP_AGENT_WORDING_SCREENSHOT_DIR`）、`session-workspace-redesign-browser.test.ts`、`session-timeline-browser.test.ts`、`session-workspace-timeline-model.test.ts`、`session-conversation-presentation.test.ts`、`session-native-input-browser.test.ts`、`session-native-progress-browser.test.ts`、`session-close-entry-browser.test.ts`、`session-activity-narrow-browser.test.ts`、`task-session-return-browser.test.ts` |
+| 上下文与用量 | `features/sessions/UsageBudgetPanel.tsx`（上下文与用量卡片）、`features/sessions/usagePresentation.ts`（进度、今日、项目上限提醒） | `usage-presentation.test.ts`、`usage-budget-panel.test.ts`、`runtime-environment-presentation.test.ts`（运行环境主行与上下文、今日、提醒的说法） |
 | 输入框 | `features/sessions/SessionComposer.tsx`（待办、排队、`/`、`@`、停止）、`features/sessions/queuedMessagePresentation.ts`（排队项的中文摘要、授权受阻提示）、`packages/ui` 的 `QueuedMessages`（限高与折叠）、`features/sessions/composerPresentation.ts`（Enter 与 Cmd/Ctrl+Enter 做什么）、`features/sessions/useDirectInput.tsx`（即时输入与回执）、`features/sessions/sessionCommand.ts` | `session-grant-blocked-browser.test.ts`（授权受阻的消息可见且页面可用）、`session-queue-area-browser.test.ts`（12 条排队时 1195 与 390 宽：时间线可滚、输入框在屏内、折叠展开、摘要与原文、撤回；无排队不变）、`queued-message-summary.test.ts`、`session-composer-browser.test.ts`（三个宽度，`EVOLOOP_AGENT_SCREENSHOT_DIR` 存截图）、`session-direct-input-layout-browser.test.ts`、`session-message-entry-browser.test.ts`、`session-conversation-presentation.test.ts`、`leader-insert-queue-browser.test.ts`（统筹页面两个发送按钮与结果，1440 与 390 宽） |
 | 统筹安排 | `features/sessions/ArrangementPage.tsx`（页面与右栏）、`features/sessions/arrangementModel.ts`（看板、空闲与风险规则，含分派属于旧修订）、`features/sessions/arrangementPresentation.ts`（读取状态、页首空闲数与看板阶段用语；按阶段的下一步与总览共用，在 `shared/workPresentation.ts`） | `arrangement-model.test.ts`、`arrangement-presentation.test.ts`、`work-presentation.test.ts`、`arrangement-browser.test.ts`、`cross-space-return-browser.test.ts` |
 | 返回来处 | `features/sessions/sessionReturn.ts`（智能体页认哪些来处）、`shared/returnLink.ts`、`shared/ui/ReturnLink.tsx` | `return-link.test.ts`、`session-conversation-presentation.test.ts`、`cross-space-return-browser.test.ts` |

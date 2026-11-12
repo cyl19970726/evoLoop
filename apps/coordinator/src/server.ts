@@ -42,6 +42,7 @@ import type { ScheduleGrant, SchedulingPump } from "./scheduling/pump.js";
 import { registerKnowledgeRoutes, type KnowledgeRouteOptions } from "./knowledge/routes.js";
 import { registerWorkManagementRoutes } from "./work-management/routes.js";
 import { registerAcceptanceRelayRoutes } from "./acceptance-relay/routes.js";
+import { registerMilestoneRoutes } from "./milestones/index.js";
 import { registerDrainRoutes } from "./drain/routes.js";
 import type { DrainControl } from "./drain/service.js";
 import type { AcceptanceRelayService } from "./acceptance-relay/service.js";
@@ -128,9 +129,13 @@ export async function buildServer(options: {
   workStatuses?: WorkStatusesReader;
   workIndex?: LeaderWorkIndexReader;
   acceptanceRelay?: AcceptanceRelayService;
+  /** The deployed checkout: serves GET /api/version (public) and GET /api/projects/:id/milestones from its build-info.json and docs/roadmap.md. */
+  milestones?: { repoRoot: string; startedAt?: string };
   /** Drain mode (docs/architecture/deployment.md §2): the control and who counts as an instance maintainer. */
   drain?: { control: DrainControl; isMaintainer(principal: Principal): Promise<boolean> };
   leaderNotices?: LeaderNoticeReader;
+  /** 待我决定: what waits for the caller to decide (Role and stage proposals, named questions, decision requests addressed to them). */
+  decisionsForMe?: (projectId: string, actorId: string, canDecide: boolean) => Promise<unknown>;
   taskAttentionPool?: Pool;
   planningSources?: PlanningSourcesReader;
   workers?: { authenticate(header: string | undefined): Promise<WorkerIdentity | null>; facts(identity: WorkerIdentity): WorkerGuardFacts };
@@ -149,6 +154,8 @@ export async function buildServer(options: {
     reply.header("Referrer-Policy", "no-referrer");
     reply.header("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' blob:; connect-src 'self'; img-src 'self' data: blob:; font-src 'self' data:; media-src 'self' data:; frame-src 'self' blob:; object-src 'none'; frame-ancestors 'none'; base-uri 'none'");
     if (!request.url.startsWith("/api/")) return;
+    // The version is as public as /health: the commit, the build time and the start time only.
+    if (options.milestones && request.method === "GET" && request.url.split("?")[0] === "/api/version") return;
     request.principal = authenticate(request.headers.authorization, credentials);
     if (!request.principal && options.workers) {
       request.workerIdentity = await options.workers.authenticate(request.headers.authorization);
@@ -362,6 +369,12 @@ export async function buildServer(options: {
       sessionId: idSchema.optional() }).parse(request.query);
     const events = await options.service.listSessionLineEvents(who(request.principal), p.projectId, q.after, q.limit, q.sessionId);
     return { events, nextAfter: events.at(-1)?.seq ?? q.after };
+  });
+  if (options.decisionsForMe) app.get("/api/projects/:projectId/decisions-for-me", async request => {
+    const p = z.strictObject({ projectId: idSchema }).parse(request.params);
+    const principal = who(request.principal);
+    await options.service.getProject(principal, p.projectId);
+    return options.decisionsForMe!(p.projectId, principal.actorId, principal.permissions.includes("review"));
   });
   app.get("/api/projects/:projectId/session-preparation/:sessionId", async request => {
     const p=z.strictObject({projectId:z.uuid(),sessionId:z.uuid()}).parse(request.params);
@@ -792,6 +805,7 @@ export async function buildServer(options: {
   await registerWorkManagementRoutes(app, options.service, options.workIndex);
   if (options.drain) registerDrainRoutes(app, options.drain);
   if (options.acceptanceRelay) registerAcceptanceRelayRoutes(app, options.service, options.acceptanceRelay, options.workIndex);
+  if (options.milestones) registerMilestoneRoutes(app, { service: options.service, ...options.milestones });
   if (options.leaderNotices) registerLeaderNoticeRoutes(app, options.service, options.leaderNotices);
   if (options.taskAttentionPool) registerTaskAttentionRoutes(app, options.service, options.taskAttentionPool);
   registerEvaluationRoutes(app, options.service, options.readEvaluationPacket);

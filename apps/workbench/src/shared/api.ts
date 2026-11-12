@@ -123,6 +123,10 @@ export function api(token = "", timeoutMs = 15000) {
     goalRevisions: (p: string, id: string) => call<GoalRevision[]>(`${projectPath(p)}/goals/${key(id)}/revisions`),
     stageRevisions: (p: string, id: string) => call<StageRevision[]>(`${projectPath(p)}/stages/${key(id)}/revisions`),
     stages: (p: string) => call<Stage[]>(`${projectPath(p)}/stages`),
+    /** The deployed version (public: no login): commit, build time and process start time. */
+    version: (signal?: AbortSignal) => call<import("@evoloop/contracts/milestones").VersionInfo>("/api/version", { signal }),
+    /** The roadmap phases with the status and date of the stage linked to each. */
+    milestones: (p: string, signal?: AbortSignal) => call<import("@evoloop/contracts/milestones").MilestonesView>(`${projectPath(p)}/milestones`, { signal }),
     stageReviews: (p: string, id: string) => call<StageReview[]>(`${projectPath(p)}/stages/${key(id)}/reviews`),
     discussions: (p: string, cursor?: string, kind?: DiscussionRecord["kind"]) => call<Page<DiscussionRecord>>(`${projectPath(p)}/discussions?limit=50${cursor ? `&cursor=${key(cursor)}` : ""}${kind ? `&kind=${key(kind)}` : ""}`),
     discussion: (p: string, id: string) => call<DiscussionRecord>(`${projectPath(p)}/discussions/${key(id)}`),
@@ -193,6 +197,7 @@ export function api(token = "", timeoutMs = 15000) {
     evaluationSourceTask: (p: string, taskId: string) => call<{ sourceTaskRevisionId: string; sourceSignature: EvaluationSourceSignature }>(`${projectPath(p)}/evaluations/source-task/${key(taskId)}`),
     evaluationPacket: (p: string, id: string, revisionId: string, attemptId: string) => call<{ content: string; contentHash: string; manifestHash: string; builderVersion: string; sources: EvaluationFixedRef[] }>(`${projectPath(p)}/evaluations/${key(id)}/attempts/${key(attemptId)}/packet?revision=${key(revisionId)}`),
     impacts: (p: string) => call<Impact[]>(`${projectPath(p)}/impacts`),
+    decisionsForMe: (p: string) => call<import("@evoloop/contracts/decision-requests").DecisionsForMe>(`${projectPath(p)}/decisions-for-me`),
     operation: async (p: string, id: string) => checkedOperation(await call<unknown>(`${projectPath(p)}/operations/${key(id)}`), id),
     command: async (command: Command) => checkedCommandResult(await call<unknown>("/api/commands", { method: "POST", body: JSON.stringify(command) }), command.operationId),
   };

@@ -82,6 +82,10 @@ const persist = () => {
   appendFileSync(transcript, JSON.stringify({ type: "fake-transcript-entry" }) + "\n");
 };
 
+// FAKE_CLAUDE_ANSWER_BLOCK=1: like the real CLI, the closing answer is first streamed as an assistant text block and then
+// repeated as the result text.
+const answerBlock = answer => { if (process.env.FAKE_CLAUDE_ANSWER_BLOCK === "1") assistant([{ type: "text", text: answer }]); };
+
 function turn(message) {
   const text = typeof message.message?.content === "string" ? message.message.content : "";
   if (!initialized) {
@@ -119,6 +123,7 @@ function turn(message) {
     total += 0.01;
     persist();
     const thinkingTokens = Math.round(total * 100) * 40;
+    answerBlock(`done: ${text.slice(0, 60)}`);
     result({ subtype: "success", is_error: false, result: `done: ${text.slice(0, 60)}`, terminal_reason: "completed",
       modelUsage: { "claude-fake-1": { inputTokens: 10, outputTokens: 5 + thinkingTokens, thinkingTokens, cacheReadInputTokens: 0,
         cacheCreationInputTokens: 0, webSearchRequests: 0, costUSD: total, contextWindow: 200000, maxOutputTokens: 32000 } } });
@@ -133,6 +138,7 @@ function turn(message) {
         stop_reason: null, stop_sequence: null, usage: { input_tokens: 1, output_tokens: 1 } } });
   total += 0.01;
   persist();
+  answerBlock(`done: ${text.slice(0, 60)}`);
   result({ subtype: "success", is_error: false, result: `done: ${text.slice(0, 60)}`, terminal_reason: "completed" });
 }
 

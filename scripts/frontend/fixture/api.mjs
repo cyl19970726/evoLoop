@@ -10,6 +10,15 @@ import * as configuration from "./configuration.mjs";
 const ok = value => ({ status: 200, value });
 const missing = message => ({ status: 404, value: { message } });
 
+const phase = (id, title, status, statusLabel, stage) => ({ id, title, deliver: "（夹具）本阶段交付", exit: "（夹具）退出条件", status, statusLabel, stage,
+  linkedStages: stage ? 1 : 0, reviewedAt: null });
+function milestones() {
+  return { source: { commit: "0000000000000000000000000000000000000000", roadmap: "read" }, currentPhaseId: "M2", currentNote: null, phases: [
+    phase("M0", "最小闭环", null, null, null), phase("M1", "可用工作台", null, null, null),
+    phase("M2", "团队协作", "in_progress", "进行中", { id: "70000009-0000-4000-8000-000000000002", goalId: "70000008-0000-4000-8000-000000000001" }),
+    phase("M3", "自动化", null, null, null)] };
+}
+
 /** Exact paths under the project. */
 function projectRoutes(params) {
   const includeClosed = params.get("includeClosed") === "true";
@@ -26,6 +35,9 @@ function projectRoutes(params) {
     "/session-work": agents.directory(params.get("search") ?? ""),
     "/session-work/changes": { items: [], nextCursor: "12", hasMore: false, resetRequired: false, metadata: agents.directory().metadata },
     "/resident-queues": agents.residentQueues(),
+    "/session-lines": agents.sessionLines(),
+    "/runtime/usage": agents.usage(),
+    "/runtime/provider-holds": { items: [], observedAtUtc: ago(1) },
     "/runtime/sessions": agents.runtimeSessions(),
     "/runtime/models": agents.runtimeModels,
     "/runtime": team.runtime(),
@@ -54,6 +66,8 @@ function projectRoutes(params) {
     "/repositories": configuration.repositories(),
     "/capabilities": configuration.capabilities(),
     "/members": configuration.members(),
+    // The roadmap block on 总览: synthetic phases, one linked stage that is active, the others not registered.
+    "/milestones": milestones(),
   };
 }
 
@@ -61,6 +75,8 @@ export function answer(path, params) {
   if (path === "/api/session") return ok({ principal: { actorId, projectIds: [projectId, otherProject.id], permissions: ["read", "write", "review"],
     identityKind: "human" }, capabilities: {} });
   if (path === "/api/projects") return ok([project, otherProject]);
+  // The running version shown at the top of 总览 (made up: no commit of this repository).
+  if (path === "/api/version") return ok({ commit: "0000000000000000000000000000000000000000", builtAt: ago(60 * 24), startedAt: ago(60 * 3) });
   if (path === `/api/projects/${otherProject.id}`) return ok(otherProject);
   if (!path.startsWith(root)) return undefined;
   const rest = path.slice(root.length);

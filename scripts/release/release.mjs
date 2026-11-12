@@ -2,6 +2,7 @@
 // Reusable release runner. It contains only generic steps; every host, path, service name and
 // identity file comes from a private config file outside the repository (EVOLOOP_RELEASE_CONFIG).
 // Default is a dry run that prints the plan. Nothing is executed without --execute.
+import { carryAssets, DEFAULT_KEEP } from "./carry-assets.mjs";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, rename, stat, symlink, readlink, rm, writeFile } from "node:fs/promises";
@@ -33,6 +34,11 @@ export function loadConfig(text, path) {
     if (!Array.isArray(argv) || !argv.length || argv.some(part => typeof part !== "string")) throw new Error(`hooks.${name} must be a non-empty argv array`);
   }
   for (const name of HOOKS) if (!OPTIONAL_HOOKS.has(name) && !config.hooks?.[name]) throw new Error(`config.hooks.${name} is required`);
+  if (config.carryAssets !== undefined && config.carryAssets !== false) {
+    const { assetsDir, keep } = config.carryAssets ?? {};
+    if (typeof config.carryAssets !== "object" || (keep !== undefined && (!Number.isInteger(keep) || keep < 1))) throw new Error("config.carryAssets must be false or { keep (whole number >= 1), assetsDir }");
+    if (assetsDir !== undefined && (typeof assetsDir !== "string" || isAbsolute(assetsDir) || assetsDir.split(/[\\/]/).includes(".."))) throw new Error("config.carryAssets.assetsDir must be a relative path inside the source directory");
+  }
   if (!config.backup?.out || !isAbsolute(config.backup.out) || !config.backup.blobRoot) throw new Error("config.backup.out (absolute) and config.backup.blobRoot are required");
   // Where the source tree sits inside a release directory: "" (default) = the release directory itself is the checkout;
   // "source" = a layout of <release>/source plus sibling directories (runtime, artifacts) that hooks fill in.
@@ -67,7 +73,7 @@ const testDatabaseEnv = env => {
 export function commandFor(step, config, ctx) {
   if (HOOKS.has(step)) return config.hooks?.[step] ?? null;
   switch (step) {
-    case "build": return ["sh", "-c", "npm ci && npm run build"];
+    case "build": return ["sh", "-c", "npm ci && npm run build"]; // then carryAssets (built in, see run())
     case "test": return config.skipTests ? null : ["npm", "run", "test:unit"];
     case "preflight": return ["node", "scripts/release/preflight.mjs", "--backup-out", ctx.backupDir];
     case "backup": return ["node", "scripts/backup.mjs", "--out", ctx.backupDir, "--blob-root", config.backup.blobRoot,
@@ -185,6 +191,18 @@ export async function run({ config, id, ref = "HEAD", execute = false, from = nu
       } else if (step === "switch") await switchLink(config.currentLink, releaseDir);
       else if (step === "backup") { state.backupAttempts = attempt; await save(); await runner(argv, { cwd: sourceDir, env }); }
       else if (argv) await runner(argv, { cwd: sourceDir, env: { ...env, ...(step === "test" ? testDatabaseEnv(processEnv) : {}) } });
+      if (step === "build" && config.carryAssets !== false) {
+        // The previous version's chunk files the new build lacks, so tabs opened before this release keep working.
+        const settings = config.carryAssets ?? {};
+        const assetsDir = settings.assetsDir ?? "apps/workbench/dist/assets";
+        if (!previous) log("carry-assets: no previous release, nothing to carry");
+        else {
+          const previousSource = config.sourceSubdir ? join(previous, config.sourceSubdir) : previous;
+          const carried = await carryAssets({ previousAssets: join(previousSource, assetsDir), newAssets: join(sourceDir, assetsDir), keep: settings.keep ?? DEFAULT_KEEP });
+          acceptance.carriedAssets = { generation: carried.generation, copied: carried.copied.length, expired: carried.expired.length, unchanged: carried.unchanged.length, bytes: carried.bytes, ...(carried.skipped ? { skipped: carried.skipped } : {}) };
+          log(`carry-assets: copied ${carried.copied.length} (${carried.bytes} bytes), expired ${carried.expired.length}, same name ${carried.unchanged.length}${carried.skipped ? `; ${carried.skipped}` : ""}`);
+        }
+      }
       if (step === "preflight") {
         // Record what is being released and how it relates to the remote main; an unmerged commit is refused unless allowed.
         state.commit = await gitFacts({ runner, env, releaseDir: sourceDir, ref, remote: config.remote ?? "origin", branch: config.baseBranch ?? "main" });

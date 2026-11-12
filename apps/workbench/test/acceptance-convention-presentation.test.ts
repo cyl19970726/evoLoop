@@ -41,3 +41,18 @@ test("the type filter selects defects and leaves the other types out", () => {
   assert.equal(matchesFilters(task(null), view("defect")), false);
   assert.equal(matchesFilters(task("defect"), view("all")), true);
 });
+
+import { preconditionStatus } from "../src/features/workflow/acceptanceConventionPresentation.ts";
+
+test("the precondition line reads 未满足 until a mark exists, then 已满足 with who and when, and says nothing when there is nothing to wait for", () => {
+  const fmt = (value: string) => `<${value.slice(0, 10)}>`;
+  const waiting = preconditionStatus({ acceptancePrecondition: "release", readiness: "waiting_precondition", preconditionMark: null }, fmt);
+  assert.deepEqual(waiting, { waiting: true, text: "前置：未满足（等待发布，尚未标记已满足）", evidence: null });
+  const met = preconditionStatus({ acceptancePrecondition: "migration", readiness: "ready",
+    preconditionMark: { actorId: "release-owner", evidence: "ran 096", markedAt: "2026-11-12T03:00:00.000Z" } }, fmt, id => `「${id}」`);
+  assert.deepEqual(met, { waiting: false, text: "前置：已满足（「release-owner」，<2026-11-12>）", evidence: "ran 096" });
+  assert.equal(preconditionStatus({ acceptancePrecondition: "release", readiness: null }, fmt), null, "no delivery yet");
+  assert.equal(preconditionStatus({ acceptancePrecondition: "none", readiness: "ready" }, fmt), null);
+  assert.equal(preconditionStatus({ acceptancePrecondition: null, readiness: "ready" }, fmt), null);
+  assert.equal(preconditionStatus(null, fmt), null);
+});
