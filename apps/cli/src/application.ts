@@ -106,7 +106,8 @@ const help = {
     "request leader.notice.recover --project UUID --id BLOCKED_PACKET_UUID --file BODY.json --receipt LOCAL_UUID (body {\"reason\":...}: recover a notice packet that stopped behind a closed recovery gate, after the Session itself was recovered; its items return to the next packet. A notice from before packets keeps the old body: BLOCKED_NOTICE_UUID with expectedOperationId, newNoticeId, newMessageId, newOperationId, reason)",
     "session prepare --file PRIVATE_JSON (prepare or reuse one authorized owned Session; never assigns a Task)",
     "session input send OWNED_SESSION_UUID --project UUID --mode insert|queue (--content TEXT | --file TEXT_FILE) [--input UUID --operation UUID] (insert: into the running Turn, or open one when idle; queue: ordinary message handled after the current Turn; a missing grant is named)",
-    "session input show OWNED_SESSION_UUID INPUT_UUID --project UUID (read back one input by its ID: inserted, started, queued, queued after a Turn change, refused or unknown)",
+    "session input show OWNED_SESSION_UUID INPUT_UUID --project UUID (read only: read back one input by its ID: inserted, started, queued, queued after a Turn change, refused or unknown)",
+    "session input reconcile OWNED_SESSION_UUID INPUT_UUID --project UUID (explicit: look for the original input once in the bounded native history; never sends the text again)",
     "session profile show SESSION_UUID --project UUID (configured target, last confirmed profile and recovery state)",
     "session profile set SESSION_UUID --project UUID [--model SLUG] --effort LEVEL --reason TEXT --evidence-ref REF [--operation UUID] (save next-Turn target)",
     "session identity show owned:UUID|external:UUID --project UUID",
@@ -244,26 +245,36 @@ async function dispatch(args: Args, env: Environment, io: IO): Promise<unknown> 
       found.via==="direct-input"?{inputId,via:"direct-input",...directInputOutcome(found.value),receipt:found.value,...extra}
         :{inputId,via:"message",...queuedMessageOutcome(found.value),detail:found.value,...extra};
     if(kind==="show"){
+      // Read only. Checking the original against the native history can change the saved state (an input nothing matched becomes
+      // unknown), and a lost reply tells the person to run show at once: that must never move a request still in flight.
       check(args,5,["project"]);
       const inputId=uuid(args.words[4],"Input");
       const found=await saved(inputId);
       if(!found)throw new ReceiptError("INPUT_NOT_FOUND","No input or message with this ID in this Session.",{inputId});
       if(found.via==="direct-input"){
         const receipt=record(found.value);
-        // An input the runtime took (or may have taken) but whose native Item is not recorded: check the original once, read only.
-        if(receipt&&(["attempted","unknown"].includes(String(receipt.state))||receipt.state==="accepted"&&!receipt.nativeItemId)){
-          try{
-            const reconciled=await client.post(`${base}/sessions/${sessionId}/direct-inputs/${inputId}/reconcile`,{});
-            return answer({via:"direct-input",value:reconciled},inputId,{reconciled:true});
-          }catch(error){
-            if(!(error instanceof CliApiError))throw error;
-            return answer(found,inputId,{reconciled:false,reconcileError:{code:error.code,status:error.status,data:error.data}});
-          }
-        }
+        if(receipt&&(["attempted","unknown"].includes(String(receipt.state))||receipt.state==="accepted"&&!receipt.nativeItemId))
+          return answer(found,inputId,{reconciled:false,
+            next:`Not checked against the native history (show only reads). If it stays unclear, run: session input reconcile ${sessionId} ${inputId} --project ${projectId} (never sends the text again).`});
       }
       return answer(found,inputId);
     }
-    if(kind!=="send")throw new UsageError("Use session input send SESSION_UUID --mode insert|queue ... or session input show SESSION_UUID INPUT_UUID.");
+    if(kind==="reconcile"){
+      // The explicit check: the original input is looked for once in the bounded native history (read only on the runtime; it can mark
+      // an input nothing matched as unknown). It never sends the text again.
+      check(args,5,["project"]);
+      const inputId=uuid(args.words[4],"Input");
+      const found=await saved(inputId);
+      if(!found||found.via!=="direct-input")throw new ReceiptError("INPUT_NOT_FOUND","No direct input with this ID in this Session (a queued message is read with session input show).",{inputId});
+      try{
+        const reconciled=await client.post(`${base}/sessions/${sessionId}/direct-inputs/${inputId}/reconcile`,{});
+        return answer({via:"direct-input",value:reconciled},inputId,{reconciled:true});
+      }catch(error){
+        if(!(error instanceof CliApiError))throw error;
+        return answer(found,inputId,{reconciled:false,reconcileError:{code:error.code,status:error.status,data:error.data}});
+      }
+    }
+    if(kind!=="send")throw new UsageError("Use session input send SESSION_UUID --mode insert|queue ..., session input show SESSION_UUID INPUT_UUID, or session input reconcile SESSION_UUID INPUT_UUID.");
     check(args,4,["project","mode","content","file","input","operation"]);
     const how=option(args,"mode");
     if(how!=="insert"&&how!=="queue")throw new UsageError("--mode must be insert or queue.");
@@ -284,7 +295,10 @@ async function dispatch(args: Args, env: Environment, io: IO): Promise<unknown> 
         // Same ID, saved result: answer with it, whichever way the repeat asked. A direct input that was not refused is never queued again.
         if(how==="queue"&&found.via==="direct-input"&&told.outcome!=="queued_after_change"&&told.outcome!=="rejected")
           throw new ReceiptError("INPUT_ID_IS_DIRECT_INPUT",`This input ID is already a direct input (${told.outcome}); read it with session input show instead of queueing the text again.`,told);
-        if(!(how==="queue"&&found.via==="message"))return {mode:how,...identity,repeated:true,...told};
+        // An input the runtime plainly refused (nothing was sent, no message saved) may be queued under the same ID: the service allows
+        // an ordinary message under the ID of a refused input and still refuses one under an input that was not refused.
+        const refusedPlainly=how==="queue"&&found.via==="direct-input"&&told.outcome==="rejected";
+        if(!refusedPlainly&&!(how==="queue"&&found.via==="message"))return {mode:how,...identity,repeated:true,...told};
       }
     }
     if(how==="queue"){
@@ -298,10 +312,13 @@ async function dispatch(args: Args, env: Environment, io: IO): Promise<unknown> 
     }
     // Insert: the service reads this sender's authorization and the Session's Turn; a missing grant is named, not guessed.
     const capability=await client.get(`${base}/sessions/${sessionId}/direct-input-capability`);
-    const missing=missingForInsert(capability);
+    // Two readings only mean the Turn is in the middle of changing (it just ended, or is not bound yet): not a missing authorization. The
+    // service decides under its lock and saves the text as one queued message under this ID, so the person is not sent back to --mode queue.
+    const timing=["NATIVE_TURN_NOT_ACTIVE","SESSION_BUSY"].includes(String(record(capability)?.reasonCode));
+    const missing=timing?null:missingForInsert(capability);
     if(missing)throw new ReceiptError("INSERT_NOT_AVAILABLE",`Cannot insert into this Session: ${missing}. Use --mode queue to save an ordinary message instead.`,capability);
     const cap=record(capability)!;
-    const body={inputId,operationId,content,expectedTurnId:cap.mode==="steer"?cap.expectedTurnId:null};
+    const body={inputId,operationId,content,expectedTurnId:cap.mode==="steer"&&!timing?cap.expectedTurnId:null};
     io.stderr(JSON.stringify({inputId,operationId,note:"keep these IDs: if the outcome is unknown, read them with session input show, or repeat this command with --input and --operation"})+"\n");
     try{
       const receipt=await client.post(`${base}/sessions/${sessionId}/direct-inputs`,body);
@@ -309,7 +326,7 @@ async function dispatch(args: Args, env: Environment, io: IO): Promise<unknown> 
     }catch(error){
       // Exit code 3 like every unconfirmed mutation: the original input is saved or not, only its ID can tell.
       if(error instanceof CliApiError&&error.unconfirmed)
-        throw new ReceiptError("RESULT_UNCONFIRMED",`The result is unknown. Run: session input show ${sessionId} ${inputId} --project ${projectId}; do not send the text again under another ID.`,identity);
+        throw new ReceiptError("RESULT_UNCONFIRMED",`The result is unknown. Run: session input show ${sessionId} ${inputId} --project ${projectId} (read only; session input reconcile checks the native history if it stays unclear); do not send the text again under another ID.`,identity);
       throw error;
     }
   }
