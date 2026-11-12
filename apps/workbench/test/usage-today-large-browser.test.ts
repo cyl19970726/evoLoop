@@ -81,6 +81,16 @@ test("the 今日 figures stay readable with their unit at billion-scale token co
     const text = await block.innerText();
     assert.match(text, /输入 33 亿 \/ 40 亿（83%）/, `${width}: the limit line reads in 亿 with its unit: ${text}`);
     assert.match(text, /2142\.6 亿/, `${width}: the day rows read in 亿`);
+    // The limit line shows 33 亿 / 40 亿; the exact used amount and limit are observable on the line (tooltip, screen-reader text) and on the bar.
+    const exact = "已用 3,300,000,000 / 上限 4,000,000,000 个令牌";
+    const line = block.locator("[data-project-limit-line]");
+    assert.equal(await line.getAttribute("title"), exact, `${width}: the limit line's tooltip is the exact used amount and limit`);
+    assert.ok((await line.evaluate((node: Element) => node.textContent ?? "")).includes(`（${exact}）`), `${width}: the exact amounts are in the line's text for a screen reader`);
+    const bar = block.getByRole("progressbar");
+    assert.equal(await bar.getAttribute("aria-valuenow"), "83");
+    assert.match(await bar.getAttribute("aria-valuetext") ?? "", new RegExp(`83%，${exact}`), `${width}: the bar says more than aria-valuenow`);
+    const lineBox = await line.evaluate((node: Element) => ({ clipped: node.scrollWidth > node.clientWidth + 1 }));
+    assert.equal(lineBox.clipped, false, `${width}: the limit line is not cut`);
     const cells = await block.locator("tbody tr").first().locator("td").evaluateAll((nodes: Element[]) => nodes.map(node => ({ text: node.textContent!.trim(), title: node.getAttribute("title"), clipped: node.scrollWidth > node.clientWidth + 1 })));
     assert.ok(cells.slice(0, 3).every(cell => /亿/.test(cell.text) && cell.title && /个令牌$/.test(cell.title)), `${width}: unit and exact value on every token cell: ${JSON.stringify(cells)}`);
     assert.ok(cells.every(cell => !cell.clipped), `${width}: no cell is cut`);

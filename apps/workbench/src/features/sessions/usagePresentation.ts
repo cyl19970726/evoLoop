@@ -104,7 +104,23 @@ export function budgetReminder(budget: UsageBudget | null | undefined): { tone: 
 }
 
 /** 项目用量 on 统筹安排: today's project use against the daily limit, drawn as the same bar as an agent's context. */
-export function projectBudgetGauge(budget: UsageBudget, todayRecorded: boolean | null = null): ContextGauge {
+export function projectBudgetGauge(budget: UsageBudget, todayRecorded: boolean | null = null): ContextGauge & { exact: string | null } {
+  const gauge = projectGauge(budget, todayRecorded);
+  return { ...gauge, exact: projectExactText(budget, gauge) };
+}
+
+/**
+ * The exact used amount and limit behind a limit line that shows them rounded (33 亿 / 40 亿): for a screen reader and a tooltip.
+ * Only where a used amount against a limit is shown; a token count is written in full, a cost limit is already exact to the cent.
+ */
+function projectExactText(budget: UsageBudget, gauge: ContextGauge): string | null {
+  if (!budget.configured || gauge.ratio === null || budget.used === null || budget.limit === null) return null;
+  if (budget.limitKind === "cost_usd") return `已用 $${budget.used.toFixed(2)} / 上限 $${budget.limit.toFixed(2)}`;
+  const used = tokenFullText(budget.used), limit = tokenFullText(budget.limit);
+  return used !== null && limit !== null ? `已用 ${used.replace(" 个令牌", "")} / 上限 ${limit}` : null;
+}
+
+function projectGauge(budget: UsageBudget, todayRecorded: boolean | null = null): ContextGauge {
   if (!budget.configured) return { ratio: null, tone: "idle", status: "未设上限", detail: "未配置每日上限，只记录用量", handoff: false };
   // The service counts a day without ledger rows as 0 used; that is not a recorded 0, so no bar and no 0% is drawn.
   if (todayRecorded === false) {

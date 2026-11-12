@@ -34,8 +34,8 @@ export function useUsageRead(projectId: string, token: string) {
 }
 
 /** A bar for a share of a threshold (an agent's context, the project's daily limit), coloured by its state. */
-export function UsageBar({ ratio, tone, label }: { ratio: number; tone: string; label: string }) {
-  return <div role="progressbar" aria-label={label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(ratio * 100)}
+export function UsageBar({ ratio, tone, label, valueText }: { ratio: number; tone: string; label: string; valueText?: string | null }) {
+  return <div role="progressbar" aria-label={label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(ratio * 100)} {...(valueText ? { "aria-valuetext": valueText } : {})}
     className="h-1.5 w-full overflow-hidden rounded-full bg-field">
     <div className={cn("h-full rounded-full", bar[tone] ?? "bg-primary")} style={{ width: `${Math.max(2, Math.round(ratio * 100))}%` }} />
   </div>;

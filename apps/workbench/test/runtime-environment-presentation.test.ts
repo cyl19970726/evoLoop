@@ -100,13 +100,15 @@ test("why the model cannot be adjusted is one short reason, with where to fix it
 test("项目用量 on 统筹安排: today against the daily limit with the same states, and seven days newest first in 万", () => {
   const budget = (overrides: Partial<UsageBudget>): UsageBudget => ({ configured: true, state: "ok", limitKind: "input_tokens", limit: 1_500_000, used: 523_000,
     ratio: 523_000 / 1_500_000, warningRatio: 0.8, pauseOrdinaryTurns: true, costComplete: true, reason: null, ...overrides });
-  assert.deepEqual(projectBudgetGauge(budget({})), { ratio: 523_000 / 1_500_000, tone: "done", status: "正常", detail: "输入 52.3 万 / 150 万（35%）", handoff: false });
+  assert.deepEqual(projectBudgetGauge(budget({})), { ratio: 523_000 / 1_500_000, tone: "done", status: "正常", detail: "输入 52.3 万 / 150 万（35%）", handoff: false,
+    exact: "已用 523,000 / 上限 1,500,000 个令牌" });
   assert.deepEqual(projectBudgetGauge(budget({ state: "warning", used: 1_290_000, ratio: 0.86 })).status, "接近上限");
   assert.deepEqual(projectBudgetGauge(budget({ state: "exhausted", used: 1_530_000, ratio: 1.02 })),
-    { ratio: 1, tone: "blocked", status: "已达上限", detail: "输入 153 万 / 150 万（102%） · 普通结果通知已暂停", handoff: false });
+    { ratio: 1, tone: "blocked", status: "已达上限", detail: "输入 153 万 / 150 万（102%） · 普通结果通知已暂停", handoff: false,
+      exact: "已用 1,530,000 / 上限 1,500,000 个令牌" });
   assert.equal(projectBudgetGauge(budget({ limitKind: "cost_usd", limit: 20, used: 4.5, ratio: 0.225 })).detail, "费用 $4.50 / $20.00（23%）");
   assert.deepEqual(projectBudgetGauge(budget({ configured: false, state: "unconfigured", limit: null, ratio: null })),
-    { ratio: null, tone: "idle", status: "未设上限", detail: "未配置每日上限，只记录用量", handoff: false });
+    { ratio: null, tone: "idle", status: "未设上限", detail: "未配置每日上限，只记录用量", handoff: false, exact: null });
   assert.equal(projectBudgetGauge(budget({ state: "unknown", ratio: null, costComplete: false })).detail, "有的记录没有报告费用，费用上限暂时无法判定");
   const day = (d: string, input: number) => ({ day: d, inputTokens: input, outputTokens: input ? 7_300 : 0, cachedInputTokens: input ? 31_000 : 0, costUsd: null, costReported: false });
   // The service lists only days with ledger rows: 11-08 and 11-05 had none; 11-07 was recorded as 0.
@@ -140,7 +142,7 @@ test("a day with no ledger row is never shown as 0: not in today's figures, not 
   assert.deepEqual(todayTiles({ recorded: true, today: zero, days: [yesterday, zero] })!.map(tile => tile.value), ["0", "0", "0", "未报告"], "a recorded 0 is 0");
   const budget: UsageBudget = { configured: true, state: "ok", limitKind: "input_tokens", limit: 400_000, used: 0, ratio: 0, warningRatio: 0.8,
     pauseOrdinaryTurns: true, costComplete: true, reason: null };
-  assert.deepEqual(projectBudgetGauge(budget, false), { ratio: null, tone: "idle", status: "今日没有记录", detail: "今日没有记录，不按 0 计 · 每日上限 40 万", handoff: false });
+  assert.deepEqual(projectBudgetGauge(budget, false), { ratio: null, tone: "idle", status: "今日没有记录", detail: "今日没有记录，不按 0 计 · 每日上限 40 万", handoff: false, exact: null });
   assert.deepEqual(projectBudgetGauge(budget, true).detail, "输入 0 / 40 万（0%）", "recorded as 0: the bar and 0% are right");
   assert.equal(projectBudgetGauge({ ...budget, limitKind: "cost_usd", limit: 20 }, false).detail, "今日没有记录，不按 0 计 · 每日上限 $20.00");
   assert.equal(projectBudgetGauge({ ...budget, configured: false, state: "unconfigured", limit: null, ratio: null }, false).status, "未设上限");

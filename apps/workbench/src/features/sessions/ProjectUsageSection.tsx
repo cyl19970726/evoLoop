@@ -42,8 +42,11 @@ export function ProjectUsageView({ usage, error = null, stale = false }: { usage
                 <h3 className={heading}>今日与每日上限</h3>
                 <StatusTag tone={gauge.tone} label={gauge.status} />
               </div>
-              {gauge.ratio !== null && <UsageBar ratio={gauge.ratio} tone={gauge.tone} label="项目今日用量占每日上限" />}
-              <p className="text-caption text-text-secondary tabular-nums">{gauge.detail}</p>
+              {gauge.ratio !== null && <UsageBar ratio={gauge.ratio} tone={gauge.tone} label="项目今日用量占每日上限" valueText={gauge.exact ? `${Math.round(gauge.ratio * 100)}%，${gauge.exact}` : null} />}
+              {/* The line shows the amounts rounded (33 亿 / 40 亿); the exact used amount and limit are its tooltip and its screen-reader text. */}
+              <p className="text-caption text-text-secondary tabular-nums" data-project-limit-line="" {...(gauge.exact ? { title: gauge.exact } : {})}>
+                {gauge.detail}{gauge.exact && <span className="sr-only">（{gauge.exact}）</span>}
+              </p>
             </div>
             <div className="flex min-w-0 flex-col gap-1">
               <h3 className={heading}>近 7 天</h3>

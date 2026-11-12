@@ -61,3 +61,16 @@ test("after #402: no record today is not 0, a recorded 0 is, and both keep worki
   assert.equal(first!.input, "2313.9 亿"); assert.equal(first!.inputFull, "231,390,851,234 个令牌");
   assert.equal(second!.input, "9999 万", "below 亿 the earlier form is unchanged"); assert.equal(third!.recorded, false, "a day without a row says so, never 0");
 });
+
+test("the project limit line carries its exact used amount and limit; a cost limit is exact already; nothing is invented without a figure", async () => {
+  const { projectBudgetGauge } = await import("../src/features/sessions/usagePresentation");
+  const tokens = { configured: true, state: "ok", limitKind: "input_tokens", limit: 300_000_000_000, used: 2_142_579_630, ratio: 2_142_579_630 / 300_000_000_000,
+    warningRatio: 0.8, pauseOrdinaryTurns: true, costComplete: true, reason: null } as never;
+  const gauge = projectBudgetGauge(tokens, true);
+  assert.equal(gauge.detail, "输入 21.4 亿 / 3000 亿（1%）", "the line is rounded, as the reviewer saw it");
+  assert.equal(gauge.exact, "已用 2,142,579,630 / 上限 300,000,000,000 个令牌", "the exact amounts are available");
+  assert.equal(projectBudgetGauge({ ...(tokens as object), limitKind: "cost_usd", limit: 20, used: 4.5, ratio: 0.225 } as never, true).exact, "已用 $4.50 / 上限 $20.00");
+  assert.equal(projectBudgetGauge({ ...(tokens as object), used: null, ratio: null, state: "unknown" } as never, true).exact, null, "no used amount: nothing to state");
+  assert.equal(projectBudgetGauge({ ...(tokens as object), configured: false } as never, true).exact, null);
+  assert.equal(projectBudgetGauge(tokens, false).exact, null, "no record today: no bar and no amounts");
+});
