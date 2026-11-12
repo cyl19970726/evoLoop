@@ -2,6 +2,7 @@
 import "../../../scripts/test-database-guard.mjs";
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
+import os from "node:os";
 import { after, before, test } from "node:test";
 import pg from "pg";
 import { WorkflowService } from "@evoloop/core";
@@ -1210,7 +1211,9 @@ test("the Leader index can page beyond the former 5000-row ceiling", async () =>
   }
   let cursor: string | undefined, pages = 0;
   const ids = new Set<string>();
+  const pageMs: number[] = [], startedPaging = Date.now();
   do {
+    const startedPage = Date.now();
     const page = await readLeaderWorkTasks(pool, projectId,
       { view: "tasks", limit: 100, ...(cursor ? { cursor } : {}) });
     assert.equal(page.partial, false);
@@ -1220,10 +1223,33 @@ test("the Leader index can page beyond the former 5000-row ceiling", async () =>
     for (const item of page.items) ids.add(item.taskId);
     cursor = page.nextCursor ?? undefined;
     pages++;
+    pageMs.push(Date.now() - startedPage);
   } while (cursor);
   assert.equal(ids.size, count);
   assert.equal(pages, 51);
+  await explainSlowPaging(Date.now() - startedPaging, pageMs);
 });
+
+// This test takes 20-50 s on most CI runs and 295-374 s on about one run in six (Task 207cb6d6 measurements); the cause is not
+// known. When it is slow, say what was different — per-page times (uniformly slow = plan or CPU, a few spikes = waits), machine load,
+// planner statistics and other active backends — so the next slow run explains itself. Silent when the paging is fast.
+const SLOW_PAGING_MS = 20_000;
+async function explainSlowPaging(totalMs: number, pageMs: number[]): Promise<void> {
+  if (totalMs < SLOW_PAGING_MS) return;
+  const sorted = [...pageMs].sort((a, b) => a - b);
+  const stats = await pool.query(
+    `SELECT relname, n_live_tup, n_mod_since_analyze, last_analyze IS NOT NULL AS analyzed, last_autoanalyze IS NOT NULL AS autoanalyzed
+       FROM pg_stat_user_tables WHERE schemaname = $1 ORDER BY relname`, [schema]);
+  const settings = await pool.query("SELECT name, setting FROM pg_settings WHERE name IN ('jit','jit_above_cost','work_mem','shared_buffers','max_parallel_workers_per_gather','random_page_cost')");
+  const active = await pool.query("SELECT count(*)::int AS n FROM pg_stat_activity WHERE state = 'active' AND pid <> pg_backend_pid()");
+  const cpus = os.cpus().length, load = os.loadavg().map(value => Number(value.toFixed(2)));
+  console.error(`SLOW-PAGING total=${totalMs}ms pages=${pageMs.length} median=${sorted[sorted.length >> 1]}ms p90=${sorted[Math.floor(sorted.length * 0.9)]}ms max=${sorted.at(-1)}ms `
+    + `slowestPages=${pageMs.map((ms, index) => [index, ms] as const).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([index, ms]) => `#${index}:${ms}ms`).join(",")} `
+    + `cpus=${cpus} loadavg=${load.join("/")} otherActiveBackends=${active.rows[0].n}`);
+  console.error(`SLOW-PAGING settings ${settings.rows.map(row => `${row.name}=${row.setting}`).join(" ")}`);
+  console.error(`SLOW-PAGING tables ${stats.rows.filter(row => ["task", "task_revision", "process_document", "document_revision"].includes(row.relname))
+    .map(row => `${row.relname}(live=${row.n_live_tup},modSinceAnalyze=${row.n_mod_since_analyze},analyzed=${row.analyzed},autoanalyzed=${row.autoanalyzed})`).join(" ")}`);
+}
 
 test("change sequence allocation waits for the earlier uncommitted project writer", async () => {
   const fixture = await seedProject();
