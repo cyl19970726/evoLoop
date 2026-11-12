@@ -340,3 +340,38 @@ test("the test step needs a dedicated test database that is not the live one", a
 test("duplicate migration numbers are reported with their files", () => {
   assert.deepEqual(duplicateMigrationNumbers(["078_a.mjs", "078_b.mjs", "079_c.mjs"]), [{ number: "078", files: ["078_a.mjs", "078_b.mjs"] }]);
 });
+
+test("sourceSubdir puts the checkout in <release>/source: every build step runs there, hooks still see the release directory and the source path", async () => {
+  const root = await fresh();
+  await mkdir(join(root, "rel", "old", "source"), { recursive: true });
+  const seen = [];
+  const inner = sim().runner;
+  const runner = async (argv, options) => { seen.push({ name: argv[0] === "node" ? argv[1] : argv[0], cwd: options.cwd, source: options.env?.EVOLOOP_RELEASE_SOURCE, dir: options.env?.EVOLOOP_RELEASE_DIR, argv }); return inner(argv, options); };
+  const config = { ...base(root), sourceSubdir: "source" };
+  await run({ config, id: "r1", execute: true, env: ENV, log: quiet, runner });
+  const release = join(root, "rel", "r1");
+  const at = name => seen.find(item => item.name === name);
+  assert.ok(at("git").argv.includes(join(release, "source")), "the working tree is created at <release>/source");
+  assert.ok(!at("git").argv.includes(release), "not at the release directory itself");
+  for (const name of ["sh", "scripts/release/preflight.mjs", "scripts/backup.mjs", "npm"]) assert.equal(at(name).cwd, join(release, "source"), name);
+  for (const name of ["wait", "stop", "start", "check"]) { assert.equal(at(name).dir, release, name); assert.equal(at(name).source, join(release, "source"), name); }
+  assert.equal(await readlink(join(root, "current")), release); // the link still points at the release directory, not at source
+  assert.equal((await stateOf(root, "r1")).releaseDir, release);
+});
+
+test("sourceSubdir is a relative path without ..; the default keeps the release directory as the checkout", () => {
+  for (const bad of ["/abs", "../up", "a/../b"]) assert.throws(() => loadConfig(JSON.stringify({ ...base("/srv/x"), sourceSubdir: bad }), "/etc/r.json"), /sourceSubdir/);
+  assert.ok(loadConfig(JSON.stringify({ ...base("/srv/x"), sourceSubdir: "source" }), "/etc/r.json"));
+  assert.ok(loadConfig(JSON.stringify(base("/srv/x")), "/etc/r.json"));
+});
+
+test("with sourceSubdir the restore after a failure hands the previous release's own source path to the hooks", async () => {
+  const root = await fresh();
+  const seen = [];
+  const inner = sim({ fail: { check: 1 } }).runner;
+  const runner = async (argv, options) => { seen.push({ name: argv[0], source: options.env?.EVOLOOP_RELEASE_SOURCE, dir: options.env?.EVOLOOP_RELEASE_DIR }); return inner(argv, options); };
+  await assert.rejects(run({ config: { ...base(root), sourceSubdir: "source" }, id: "r1", execute: true, env: ENV, log: quiet, runner }));
+  const restoreStart = seen.filter(item => item.name === "start").at(-1);
+  assert.equal(restoreStart.dir, join(root, "rel", "old"));
+  assert.equal(restoreStart.source, join(root, "rel", "old", "source"));
+});

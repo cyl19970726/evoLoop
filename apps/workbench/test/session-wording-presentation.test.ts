@@ -44,6 +44,9 @@ test("plain Chinese stays as written; Chinese with implementation words and unkn
     assert.doesNotMatch(text, english, raw);
     assert.equal(original, raw.replace(/。$/, ""));
   }
+  // The service's current wording for inputs it did not check this time is plain Chinese and is shown as written.
+  assert.deepEqual(describeLimitation("本次读取没能确认部分输入的绑定（这一轮未结束、核对次数用尽或历史读取受限）；它们写作“未核对”，展开可单独核对，业务消息仍可独立读取。"),
+    { text: "本次读取没能确认部分输入的绑定（这一轮未结束、核对次数用尽或历史读取受限）；它们写作“未核对”，展开可单独核对，业务消息仍可独立读取", original: null });
   // Chinese mixed with English words is not kept just because it has Chinese.
   assert.deepEqual(describeLimitation("新的 Thread 尚未绑定"), { text: unknownLimitation, original: "新的 Thread 尚未绑定" });
   assert.deepEqual(describeLimitation("workspace history: invalid items page"), { text: unknownLimitation, original: "workspace history: invalid items page" });

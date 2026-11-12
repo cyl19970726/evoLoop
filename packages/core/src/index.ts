@@ -1170,6 +1170,9 @@ export class WorkflowService {
   listRuntimeSessions(principal: Principal, projectId: string) { return this.read(principal, projectId, reader => reader.listRuntimeSessions()); }
   getRuntimeRun(principal: Principal, projectId: string, runId: string) { return this.read(principal, projectId, async reader => required(await reader.getRuntimeRun(runId), "Runtime run")); }
   listSessionLines(principal: Principal, projectId: string) { return this.read(principal, projectId, reader => reader.sessionLines?.listSessionLines() ?? Promise.resolve([])); }
+  listUnfinishedSessionLineEntries(principal: Principal, projectId: string, sessionId: string) {
+    return this.read(principal, projectId, reader => reader.sessionLines?.listUnfinishedSessionLineEntries(sessionId) ?? Promise.resolve([]));
+  }
   listSessionLineEntries(principal: Principal, projectId: string, sessionId: string, includeEnded = false) {
     return this.read(principal, projectId, reader => reader.sessionLines?.listSessionLineEntries(sessionId, includeEnded) ?? Promise.resolve([]));
   }

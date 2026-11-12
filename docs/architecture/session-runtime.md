@@ -69,6 +69,7 @@ stateDiagram-v2
 - **命令**（都要 review 权限）：`line.append` 追加到队尾；`line.move` 只前移或后移一步，不提交整列顺序；`line.remove` 撤下；`line.resume` 把挂起的项放回排队。`line.begin`、`line.advance`、`line.started`、`line.suspend`、`line.withdrawReturned` 记录队伍调度程序的每一步。
 - **防止绕过**：排队、挂起或启动中的 Task，在 `task.start`、`runtime.run.reserve`、`task.assignment.set` 与 `task.assignment.release` 上被拒（`QUEUED_IN_SESSION_LINE`）。例外只有这一项自己登记的操作 ID：开始前的分派、开始 Task、开始后的分派、预留 Run，且仅在“启动中”时有效。要另行安排，先撤下。
 - **轮到时**：Session 没有未结束的 Run、没有处理中的消息、也没有比这一项更早排队的未处理消息（谁先到谁先）时，队伍调度程序对排头一项依次做：①`task.assignment.set` 把 Task 分派给这个 Session 的业务身份，并发一条带固定 Task 修订的执行确认请求消息；②等 Session 用扩展后的 `task.assignment.acknowledge` 确认（`verdict=confirm`、`plan`、`expectedRevisionId`）或退回（`verdict=return`、`missing`）；③确认后 `task.start`、在开始后的修订上再次 `task.assignment.set`、普通的 `runtime.run.reserve`，记下 Run。每一步的操作 ID 由“队伍项 + 第几次尝试 + 重试次数”决定，重放安全。消息一侧同样让位：比某个排队或启动中的队伍项更晚到的消息，消息泵暂不处理（该项自己的确认请求除外），两边都不饿死。容量视图（`work acceptance`）把 `lineQueued`（排队中、挂起的项）与 `lineStarting`（正在启动，占用 Session）分开：排队项不会让 Session 判为没空，队伍在开始前写的分派也不算未完成分派。
+- **重试封顶与临时受阻**：“还在忙”类拒绝（Session 忙、消息忙、版本冲突）按退避重试（默认 2 秒起每次加倍、上限 1 分钟），同一步最多重试 5 次，超过即挂起（`RETRY_LIMIT`，写明最后一次拒绝的原因，`entry.suspended`，`level: immediate`），不会每次轮询都写一条 `entry.retried`；恢复闸门被拦（`RECOVERY_BLOCKED`）自己不会放开，不重试，直接挂起。等待确认时，确认请求消息的 `blockedReason` 以 `SESSION_INPUT_BUSY` 开头表示被另一次原生送入暂挂，会自行放开，队伍项继续等；其他原因仍按 `MESSAGE_UNDELIVERED` 挂起。开 Run 前对已开始（`in_progress`）和未开始的 Task 同样复核“确认的修订等于当前修订”，队伍自己的 `task.start` 产生的新修订不算改动；不一致按 `CONFIRMATION_STALE` 挂起且不开 Run。调度程序每轮只读未结束的项（排队、挂起、进行中，以及已开始但还没记 Run 结束的项），历史项不再每 2 秒全部读一遍。
 - **受阻与退回**：任何一步被拒且不是“还在忙”（如依据待复核、授权缺失、没有业务身份），这一项挂起并写明原因，写一条 `entry.suspended` 事件（`level: immediate`），后面的项照常往前走。被退回的项撤出队伍，Task 保持未开始、回到作者那里，写 `entry.returned` 事件（`level: summary`）。事件进入有序的 `session_line_event`，供调度板（Q2）读取；通知分级（W5）上线前，这些事件还没有被送成通知。
 - **重试与重放**：被拒的结果会记进操作记录，同一操作 ID 重放只会拿回同一个拒绝。所以只表示“还在忙”的拒绝（`SESSION_BUSY`、`SESSION_MESSAGE_BUSY`、`VERSION_CONFLICT`、`RECOVERY_BLOCKED`）由 `line.retry` 登记一组新的操作 ID（由项、尝试次数和重试次数决定）后再试；其他拒绝挂起。动手前先查已发生的事实：分派已是当前修订就不再分派，确认请求消息已在就不再发，确定的 Run ID 已存在就只补记 `line.started`，所以崩溃或丢回复后不会开第二个 Run。
 - **确认的等待**：等待确认时，不带结论的普通 `task.assignment.acknowledge` 被拒（`CONFIRMATION_VERDICT_REQUIRED`）；确认请求消息失败、被取消或受阻，挂起为 `MESSAGE_UNDELIVERED`；超过确认期限（默认 1 小时）挂起为 `CONFIRMATION_TIMEOUT`。`task.start` 前要求确认记录的 `expectedRevisionId` 等于 Task 当前修订，否则不开始、挂起为 `CONFIRMATION_STALE`（数据库守卫同样拒绝，`LINE_CONFIRMATION_STALE`）。各项登记的操作 ID 只在自己的步骤里豁免。
@@ -132,6 +133,14 @@ flowchart TD
 ```
 
 即时发送是否可用，由能力查询（`direct-input-capability`）按同一组授权、槽位和 Session 当前运行时能力实时回答；只有回答 `steer` 或 `start` 时工作台才显示即时发送，否则保留普通消息入口，用户的输入作为普通消息排队。“占用中”指 Session 已有主来源但还没有可以附着的运行中 Turn，例如刚派发还没拿到 Turn ID，或上一次结果未知。运行时分别声明 `delivery.midTurnInput`（能否补入）与 `delivery.idleTurnStart`（能否空闲直启）；Codex 的声明来自实际绑定的协议版本，Claude 两项均为否。
+
+**两条明确的路（W2b）。** 发给 Leader 等 owned Session 的消息有两种去处，结果都能按同一个输入 ID 读回：**插入当前这一轮**（即时输入，`steer`；Session 空闲时则开一轮，`start`）和**排队**（普通消息，消息 ID 就是输入 ID，这一轮结束后按顺序处理）。工作台在 Leader 页面、Leader 正在执行且两条路都开放时显示两个按钮“插入当前这一轮”和“排队”，快捷键不变；Leader 空闲时只有一个“发送”。发送后写明结果：已插入、已开始新的一轮、已排队、已转排队（写明原因）。CLI 给智能体同样的两个选择（`session input send --mode insert|queue`，见[CLI 指南](../development/agent-cli.md)）。缺授权时在发出前被拒绝，并说出缺哪一项（即时输入授权、普通消息授权、写入身份、执行授权、工作目录）。
+
+**可证明没有送入原生的拒绝，统一转排队。** 在预占时，人的输入遇到下面三种情况：人看到的那一轮已经结束或换成别的一轮（`TURN_CHANGED`），主回合已派发但还没绑定 Turn（`NOT_BOUND`），或人以为空闲、提交时 Session 已有运行中的 Turn（`TURN_CHANGED`）。存储层在**同一个事务**里把这条输入存成一条排队的普通消息（沿用原输入 ID 和操作 ID，只有一条），并把输入记为 `rejected`、原因以 `TURN_CHANGED:` 或 `NOT_BOUND:` 开头，回执的 `queuedMessageId` 等于输入 ID；没有向运行时发送任何东西。这三种转排队在 `PgDirectInputs.reserve` 内由 `queueRefused` 完成，不经过 `rejectSteerAndQueue`；原生返回“不可补入回合”（评审、压缩）时才由 `rejectSteerAndQueue` 在发送之后转排队，回执同样带 `queuedMessageId`。**结果未知的输入不转**：它们在预占之后，从不走这两条路径。空闲直启被转排队时，回执行的形状是“`mode=start`、`rejected`、没有处理槽位”（迁移 096 放宽了该表的约束）。
+
+**同一个输入 ID 只表示一个意图。** 重复提交（包括补回执丢失后的重试）先读该 ID 已保存的结果并照它回答：已转排队的返回同一份“已排队”回执，不会再发成第二条消息；已被运行时接收、结果未知的输入保持原结果。普通消息入口（`session.message.post`）拒绝“消息 ID 已是一条未被拒绝的即时输入”的提交（`INPUT_ID_IS_DIRECT_INPUT`），所以同一段文字不会既插入又排队。工作台把预占之前的明确拒绝（授权缺失、`TURN_CHANGED`、`SESSION_BUSY` 等）当作没有保存任何输入：文字保留，按钮解锁，可以重新选择插入或排队；5xx 和丢失的回答才算结果未知。
+
+**人的插入先于等待中的通知包。** Session 空闲时，人的插入在预占时同步占用唯一的处理槽位；已排队等待的通知（包括今后的通知包）不会与它并排启动，等这一轮结束后按顺序再处理。顺序由存储层的单槽位保证，并有测试覆盖（`direct-input.test.ts`）；通知包本身（W2）尚未上线。
 
 规则如下：
 

@@ -102,7 +102,7 @@ export async function applySessionLine(tx: Transaction, principal: Principal, co
     if (waiting.some(item => item.state === "starting")) fail("LINE_BUSY", "another entry of this line is starting");
     if (head?.id !== entry.id) fail("NOT_AT_HEAD", "only the first waiting entry begins");
     if (await lines.sessionHasLiveRun(entry.sessionId)) fail("SESSION_BUSY", "the Session is still busy");
-    const next = await save(entry, { state: "starting", step: "assign", attempt: entry.attempt + 1,
+    const next = await save(entry, { state: "starting", step: "assign", attempt: entry.attempt + 1, stepTry: 0,
       assignOperationId: command.assignOperationId, startOperationId: command.startOperationId, reassignOperationId: command.reassignOperationId,
       reserveOperationId: command.reserveOperationId, messageId: command.messageId });
     await event(entry.sessionId, next, "entry.starting", { attempt: next.attempt });

@@ -284,7 +284,7 @@ test("the frame keeps each space's list, turns the right column to 信息, retur
 
 // ---- Leaving the project or signing out with a draft (#229 F6): the page's ConfirmDialog, never the browser's confirm().
 const formPath = `/p/${projectId}/tasks/new`;
-async function signedIn(t: { after: (fn: () => unknown) => void }, width = 1440, height = 900) {
+async function signedIn(t: { after: (fn: () => unknown) => void }, width = 1440, height = 900, before?: (page: Page) => Promise<void>) {
   const { chromium } = (await import(pathToFileURL(modulePath!).href)).default;
   const base = await serve(t);
   const browser = await chromium.launch({ headless: true, ...(process.env.EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH ? { executablePath: process.env.EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH } : {}) });
@@ -294,6 +294,7 @@ async function signedIn(t: { after: (fn: () => unknown) => void }, width = 1440,
   page.on("pageerror", error => errors.push(error.message));
   const native = { count: 0 };
   page.on("dialog", dialog => { native.count += 1; void dialog.dismiss(); });
+  await before?.(page);
   await page.goto(`${base}/`);
   await login(page);
   await page.getByRole("heading", { name: "你的项目" }).waitFor();
@@ -521,4 +522,25 @@ test("the /ui confirmation sample gives focus back to the button that opened it"
   await question(page).getByRole("button", { name: "保留草稿" }).click();
   await question(page).waitFor({ state: "detached" });
   await focusIsOn(page, opener, "清空草稿 after 保留草稿");
+});
+
+test("#295 item 6: when the dialog's code failed to load, asking to leave or sign out with a draft loads it again and shows the question, instead of staying cancelled until a refresh", {
+  skip: !modulePath && "Set EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE",
+}, async t => {
+  let failures = 0;
+  const { page } = await signedIn(t, 1440, 900, async page => {
+    // The first request for the dialog's chunk fails, as a dropped connection would.
+    await page.route(/ConfirmHost-[^/]*\.js/, route => { if (failures++ === 0) return route.abort("failed"); return route.continue(); });
+  });
+  // The dialog's code failed to load when the app opened (the first request above); there is a draft. Asking to leave is another chance: the code
+  // is requested again and the question is shown, instead of being cancelled until the page is refreshed.
+  const title = await draft(page);
+  assert.equal(failures, 1, "the first request failed");
+  await switchLink(page).focus();
+  await page.keyboard.press("Enter");
+  await question(page).getByRole("heading", { name: "离开当前项目？" }).waitFor({ timeout: 20_000 });
+  assert.ok(failures >= 2, `the chunk was requested again (${failures} requests)`);
+  assert.equal(await page.getByText("确认框没能加载").count(), 0, "no 'could not load' notice: the question was shown");
+  await question(page).getByRole("button", { name: "留在当前项目" }).click();
+  await stillOnForm(page, title);
 });
