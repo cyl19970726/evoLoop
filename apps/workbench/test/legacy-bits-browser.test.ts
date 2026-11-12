@@ -160,6 +160,20 @@ test("rebuilt legacy parts read, write and fail as the record allows, at three w
   assert.equal(await thread.getByText("提问 · 致 lead · 待答复").count(), 1, "the last answer stays, marked");
   await fetch(`${base}/__fixture/heal?what=discussions`);
 
+  await thread.getByRole("button", { name: "重新读取协作" }).click();
+  await thread.getByText("上次读回，当前待核对").waitFor({ state: "detached", timeout: 15000 });
+
+  // 待我决定 deep link: the task opens on its collaboration with that question's thread open and the question marked; an unknown question is said, not guessed.
+  await go(`/p/${projectId}/tasks/${taskId}?section=collaboration&discussion=${discussionId}&question=${id(41)}&return=${encodeURIComponent(`/p/${projectId}/inbox`)}`);
+  const marked = taskPage.locator("[data-task-collaboration] [data-target-question]");
+  await marked.waitFor({ timeout: 15000 });
+  assert.match(await marked.innerText(), /提问/, "the marked event is the question");
+  assert.equal(await marked.evaluate(element => !!element.closest("details")?.open), true, "its thread is open without a click");
+  assert.equal(await taskPage.getByText("没有找到指名的问题").count(), 0);
+  await go(`/p/${projectId}/tasks/${taskId}?section=collaboration&discussion=${discussionId}&question=${id(99)}`);
+  await taskPage.getByText("没有找到指名的问题").waitFor({ timeout: 15000 });
+  assert.equal(await taskPage.locator("[data-task-collaboration] [data-target-question]").count(), 0, "nothing else is marked in its place");
+
   // 运行与关联 › Git 与外部来源登记: the recorded decision, its fixed original checked by hash, and two writes.
   await taskPage.getByRole("tab", { name: "运行与关联" }).click();
   const references = taskPage.locator("[data-reference-panel]");

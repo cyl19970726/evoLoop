@@ -16,7 +16,7 @@ import { PageSection, mutedText } from "../../shared/ui/PageParts";
 import { useTaskName } from "../../shared/ui/RecordName";
 import { date } from "../../shared/ui/shared";
 import { nameOnly } from "../../shared/workPresentation";
-import { decisionKindText, decisionLink, deliveryLink, inboxTaskLink, lastUseText, useRequirementText, type DeliveryForMe } from "./inboxModel";
+import { decisionKindText, decisionLink, decisionLinkProblem, deliveryLink, inboxTaskLink, lastUseText, useRequirementText, type DeliveryForMe } from "./inboxModel";
 import type { DecisionItem } from "@evoloop/contracts/decision-requests";
 import { ActionForm, option } from "../../shared/ActionForm";
 import { useInboxReads, type DeliveriesForMe } from "./inboxReads";
@@ -133,10 +133,12 @@ function ImpactRow({ projectId, actorId, item }: { projectId: string; actorId: s
 
 function DecisionRow({ context, item }: { context: MutationContext; item: DecisionItem }) {
   const link = decisionLink(context.projectId, item, context.principal.actorId);
+  const problem = decisionLinkProblem(item);
   const meta = `${decisionKindText[item.kind]} · ${item.proposedBy} 提出 · ${date(item.at)}`;
   return <div className="flex flex-col gap-1 border-t border-border py-1 first:border-t-0">
     {link ? <ListRow href={link} title={item.title} meta={meta} trailing={<span className="text-primary">去决定</span>} />
       : <div className="px-3 py-2"><p className="text-body font-medium text-foreground">{item.title}</p><p className={mutedText}>{meta}</p></div>}
+    {problem && <p className={`${mutedText} px-3`} role="status" data-decision-link-problem="">{problem}</p>}
     <p className={`${mutedText} px-3`}>{item.detail}</p>
     {item.kind === "decision_request" && <div className="px-3">
       <ActionForm context={context} embedded title="答复" fields={[
