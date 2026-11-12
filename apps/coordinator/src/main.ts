@@ -73,6 +73,7 @@ import type { DynamicToolCall } from "@evoloop/adapter-codex-app-server";
 import { RuntimeNotSentError, type RuntimeBinding, type RuntimeSessionRecord, type RuntimeSessionSpec } from "@evoloop/contracts/runtime";
 import { loopIntentId } from "./orchestration/runner.js";
 import { pgLeaderPacketPorts } from "./leader-results/packet-ports.js";
+import { readDecisionsForMe } from "@evoloop/adapter-postgres/decisions-for-me";
 import { ResidentQueuePump } from "./resident-queue/pump.js";
 import { SessionLinePump } from "./session-line/pump.js";
 import { SessionObservationService } from "@evoloop/core/session-observation";
@@ -910,6 +911,7 @@ const app = await buildServer({ service, credentials, canWrite: lease.canWrite, 
   taskAttentionPool: pool,
   workStatuses: (principal, projectId, taskIds) => readWorkStatuses(pool, service, principal, projectId, taskIds),
   workIndex: createLeaderWorkIndexReader(pool),
+  decisionsForMe: (projectId, actorId, canDecide) => readDecisionsForMe(pool, projectId, actorId, canDecide),
   leaderNotices: {
     packet: async (projectId, packetId) => {
       const result = await uow.read(projectId, async reader => {

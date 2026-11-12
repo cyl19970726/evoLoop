@@ -32,13 +32,12 @@ import { nextWork, nowWork, type LineRead, type NextItem, type NowTiming } from 
 import { ActivityFeed, clearActivityDetails, type ActivityFilter } from "./ActivityFeed";
 import { SessionRecoveryOverview, SessionRecoveryResources } from "./SessionRecoveryObservation";
 import { checkedRecoveryView, type RecoveryRead } from "./recoveryPresentation";
-import { environmentRows } from "./environmentPresentation";
 import { currentNativeRunId, currentWorkRelationLabel, idleSessionResult, latestSessionResult, agentHeaderStatus, sessionResultUseLabel } from "./sessionStatusPresentation";
 import { NativeSessionPanel } from "./NativeSessionPanel";
 import { SessionClosePanel } from "./SessionClosePanel";
 import { SessionExecutionFacts } from "./SessionExecutionFacts";
-import { SessionModelControl } from "./SessionModelControl";
-import { UsageBudgetPanel } from "./UsageBudgetPanel";
+import { RuntimeEnvironmentCard } from "./RuntimeEnvironmentCard";
+import { SessionUsagePanel } from "./UsageBudgetPanel";
 import { SessionIdentityMark } from "./SessionIdentityMark";
 import { SessionIdentityControl } from "./SessionIdentityControl";
 import { nativeInputPresentation } from "./nativeInputPresentation";
@@ -438,26 +437,19 @@ export function SessionWorkspace({ context, sessionKey, active, refresh, queue }
     })}</ul> : <p className={mutedText}>{current.metadata.partial ? "已读范围内没有交付记录；来源只读到部分记录。" : "还没有交付记录。"}</p>}
     {recentResult && <p className={mutedText}>最近一次交付：{recentResult.taskTitle} · {sessionResultUseLabel(recentResult)} · {date(recentResult.submittedAt)}</p>}
   </PanelSection>;
-  // 执行配置 comes right after the work: what the agent runs on, then the target's application and adjustment (SessionModelControl).
-  const roleOfAgent = session.roles[0];
-  const executionSection = <PanelSection title="执行配置">
-    <FactList inline rows={[
-      ["运行时", session.kind === "external" ? "外部接入不提供" : session.runtime?.provider === "claude" ? "Claude" : session.runtime?.provider === "codex" ? "Codex" : "未记录"],
-      ...environmentRows({ kind: session.kind, recovery: recoveryRead, configuredModel: current.resources.configuredModel.value, modelLabelOf: model => modelLabel(model, modelCatalog) }),
-      ["实际运行模型（最近一轮原生报告）", actualModel ? modelLabel(String(actualModel), modelCatalog) : "未记录（还没有任何一轮报告过实际模型，不用配置值代替）"],
-      ["技能", session.kind === "external" ? "外部接入不提供" : roleOfAgent
-        ? <>随职责“{roleOfAgent.title}”配置 · <a className="text-primary hover:underline" href={`${href(projectId, "roles")}?role=${encodeURIComponent(roleOfAgent.id)}`}>查看</a></> : "没有可核对的职责"],
-    ]} />
-    {session.kind === "external" ? <p className={mutedText}>外部智能体的实时状态、模型与工具没有同步到这里。</p>
-      : session.target.kind === "owned" && <SessionModelControl context={context} sessionId={session.target.sessionId} recovery={recoveryRead.status === "ready" ? recoveryRead.view : null} busy={busyNow} onApplied={() => void snapshotRead.refetch()} />}
-  </PanelSection>;
-  const usageSection = <PanelSection title="用量与上下文">
-    <FactList inline rows={[
-      ["用量", observation.progress?.usage ? `输入 ${observation.progress.usage.total.inputTokens ?? "未提供"} · 输出 ${observation.progress.usage.total.outputTokens ?? "未提供"}${observation.progress.freshness === "live" && nativeReadCurrent ? "" : "（上次记录）"}` : "没有可靠记录，不按 0 计"],
-    ]} />
-    {session.kind === "owned" && session.target.kind === "owned" && <UsageBudgetPanel
-      projectId={projectId} token={context.token} sessionId={session.target.sessionId} inline />}
-  </PanelSection>;
+  // 运行环境 and 上下文与用量 come right after the work (docs/frontend/pages/sessions.md 右栏): what the agent runs on, then how
+  // much room it has left and what it used today. Only the presentation lives here; the reads are the same as before.
+  const environmentCard = <RuntimeEnvironmentCard context={context} session={session} recovery={recoveryRead}
+    configuredModel={current.resources.configuredModel.value} actualModel={actualModel} modelLabelOf={model => modelLabel(model, modelCatalog)}
+    busy={busyNow} onApplied={() => void snapshotRead.refetch()} />;
+  const nativeUsage = observation.progress?.usage ? { inputTokens: observation.progress.usage.total.inputTokens ?? null,
+    outputTokens: observation.progress.usage.total.outputTokens ?? null, current: observation.progress.freshness === "live" && nativeReadCurrent } : null;
+  const usageCard = session.kind === "owned" && session.target.kind === "owned"
+    ? <SessionUsagePanel projectId={projectId} token={context.token} sessionId={session.target.sessionId} nativeUsage={nativeUsage} />
+    : <section aria-label="上下文与用量" className="session-usage flex min-w-0 flex-col gap-1 rounded-lg bg-muted px-3 py-2.5">
+      <h2 className="text-label font-semibold text-foreground">上下文与用量</h2>
+      <p className="text-small text-text-secondary">外部接入的智能体没有同步上下文和用量，不按 0 计。</p>
+    </section>;
   const details = <details ref={undefined} className="session-information group min-w-0 border-t border-border pt-4" id="session-information-panel" open={informationOpen}
     onToggle={event => { if (event.currentTarget.open !== informationOpen) showInformation(event.currentTarget.open); }}>
     <summary className="cursor-pointer text-label font-semibold text-foreground">详情与来源</summary>
@@ -524,8 +516,10 @@ export function SessionWorkspace({ context, sessionKey, active, refresh, queue }
           <SectionBoundary label="成果与使用">{resultsSection}</SectionBoundary>
         </TabsContent>
       </Tabs>
-      <SectionBoundary label="执行配置">{executionSection}</SectionBoundary>
-      <SectionBoundary label="用量与上下文">{usageSection}</SectionBoundary>
+      <div className="flex min-w-0 flex-col gap-2.5">
+        <SectionBoundary label="运行环境">{environmentCard}</SectionBoundary>
+        <SectionBoundary label="上下文与用量">{usageCard}</SectionBoundary>
+      </div>
       {closeOpen && <div id="session-close-panel" className="border-t border-border pt-4"><SectionBoundary label="结束会话"><SessionClosePanel context={context} snapshot={current} currentRead={active && readCurrent} onReadAgain={() => void snapshotRead.refetch()} /></SectionBoundary></div>}
       <SectionBoundary label="详情与来源">{details}</SectionBoundary>
     </div>

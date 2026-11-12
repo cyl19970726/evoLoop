@@ -14,6 +14,7 @@ import { sessionMessageCommands } from "./session-messages.js";
 import { sessionAssignmentCommands } from "./session-assignments.js";
 import { leaderNoticePacketCommands } from "./leader-notice-packets.js";
 import { sessionLineCommands } from "./session-line.js";
+import { decisionRequestCommands } from "./decision-requests.js";
 import { sessionRecoveryCommands } from "./session-recovery.js";
 import { acceptanceConventionCommands, acceptancePreconditionSchema } from "./acceptance-convention.js";
 import { providerHoldCommands } from "./provider-hold.js";
@@ -79,6 +80,7 @@ export const commandSchema = z.discriminatedUnion("type", [
   ...sessionAssignmentCommands,
   ...leaderNoticePacketCommands,
   ...sessionLineCommands,
+  ...decisionRequestCommands,
   ...sessionRecoveryCommands,
   ...acceptanceConventionCommands,
   ...providerHoldCommands,
