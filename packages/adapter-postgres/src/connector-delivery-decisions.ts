@@ -3,7 +3,7 @@ import { DomainError } from '@evoloop/contracts/ports';
 
 export type DeliveryMessage = {
   eventCursor:number; messageId:string; messageState:string; processingState:string|null;
-  nativeTurnId:string|null; response:string|null;
+  nativeTurnId:string|null; response:string|null; responseKind:'native'|'bounded_unread'|null;
 };
 export type DeliveryDecision = {
   projectId:string; bindingId:string; deliveryId:number; routeVersion:number;
@@ -140,7 +140,7 @@ export class PgConnectorDeliveryDecisions {
   }
   async messages(projectId:string,bindingId:string,deliveryId:number):Promise<DeliveryMessage[]>{
     const result=await this.db.query(`SELECT l.event_cursor,l.message_id,m.state AS message_state,
-      p.state AS processing_state,p.native_turn_id,p.response
+      p.state AS processing_state,p.native_turn_id,p.response,p.response_kind
       FROM connector_message_link l JOIN session_message m
         ON m.project_id=l.project_id AND m.message_id=l.message_id
       LEFT JOIN session_message_processing p
@@ -149,7 +149,7 @@ export class PgConnectorDeliveryDecisions {
       ORDER BY l.event_cursor`,[projectId,bindingId,deliveryId]);
     return result.rows.map(row=>({eventCursor:Number(row.event_cursor),messageId:row.message_id,
       messageState:row.message_state,processingState:row.processing_state,
-      nativeTurnId:row.native_turn_id,response:row.response}));
+      nativeTurnId:row.native_turn_id,response:row.response,responseKind:row.response_kind??null}));
   }
   async get(projectId:string,bindingId:string,deliveryId:number):Promise<DeliveryDecision|null>{
     const result=await this.db.query(`SELECT * FROM connector_delivery_decision

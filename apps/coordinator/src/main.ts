@@ -71,6 +71,7 @@ import type { BrowserReadScope } from "./runtime/browser-read.js";
 import type { DynamicToolCall } from "@evoloop/adapter-codex-app-server";
 import { RuntimeNotSentError, type RuntimeBinding, type RuntimeSessionRecord, type RuntimeSessionSpec } from "@evoloop/contracts/runtime";
 import { loopIntentId } from "./orchestration/runner.js";
+import { pgLeaderPacketPorts } from "./leader-results/packet-ports.js";
 import { ResidentQueuePump } from "./resident-queue/pump.js";
 import { SessionLinePump } from "./session-line/pump.js";
 import { SessionObservationService } from "@evoloop/core/session-observation";
@@ -159,6 +160,8 @@ const clock = { now: () => new Date().toISOString() };
 const ids = { next: randomUUID };
 const hasher = { hash: (value: string) => createHash("sha256").update(value, "utf8").digest("hex") };
 const usage = new UsageService({ uow, clock });
+// The runner is built after the service; the recovery authority asks it, once it exists, how effort reaches the runtime.
+const lateRunner: { current: { effortAppliesNextTurn(session: RuntimeSessionRecord): boolean; allowedReasoningEfforts(session: RuntimeSessionRecord): readonly string[] | null } | null } = { current: null };
 const service = new WorkflowService({
   uow, clock, ids,
   hasher,
@@ -170,8 +173,15 @@ const service = new WorkflowService({
     return hasTaskTimingGrant(current, projectId, actorId, roleId, scopeId) &&
       await currentProjectWriter(projectId, actorId);
   },
-  recoveryAuthority: staticRecoveryAuthority(
+  recoveryAuthority: { ...staticRecoveryAuthority(
     () => loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE), currentIdentity),
+    effortAppliesNextTurn: (session: RuntimeSessionRecord) => lateRunner.current?.effortAppliesNextTurn(session) === true,
+    allowedEfforts: (session: RuntimeSessionRecord) => lateRunner.current?.allowedReasoningEfforts(session) ?? null },
+  // The notice packet's own steps (build, sent, observe) belong to the configured notice sender, not to the Leader or any reviewer.
+  leaderNoticeServiceActor: async projectId => {
+    const target = (await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE)).leaderResultNotices?.targets.find(value => value.projectId === projectId);
+    return target && await currentProjectWriter(projectId, target.senderActorId) ? target.senderActorId : null;
+  },
   collaborationAuthority: {
     actorForRole: async (projectId,roleId) => {
       const config=await currentQueueConfiguration();
@@ -552,6 +562,7 @@ const runner = runtimeFactory ? new RuntimeRunner({ runtimeFactory, workflow: se
   canSettleOwned: (session,run) => dynamicAdmission?.canSettleOwned(session,run) ?? Promise.resolve(false),
   ownedCwd: async (_projectId,cwd) => { try { return await realpath(cwd) === cwd; } catch { return false; } },
   }) : null;
+lateRunner.current = runner;
 const scheduling = new SchedulingPump({ store: new PgSchedulingStore(pool), taskTiming: new PgTaskTimingStore(pool), canWrite: lease.canWrite,
   credentials: () => credentials, grants: () => integrations.scheduling?.grants ?? [],
   taskTimingGrants: async () => {
@@ -632,7 +643,9 @@ const acceptanceTimer=setInterval(()=>{
     .finally(()=>{acceptanceTickBusy=false;});
 },2000);
 acceptanceTimer.unref();
+const leaderPacketPorts = pgLeaderPacketPorts(pool, uow);
 const leaderResultNoticePump = new LeaderResultNoticePump({
+  packets: leaderPacketPorts,
   store: {
     listPending: (projectId, query) => listPendingLeaderNotices(pool, projectId, query),
     getByMessageId: (projectId, messageId) => getLeaderNoticeByMessageId(pool, projectId, messageId),
@@ -791,7 +804,7 @@ const residentQueue = new ResidentQueuePump({workflow:service,canWrite:lease.can
   messageBusy: (projectId, sessionId) => messageService.isBusy(projectId, sessionId),
   credentials:currentIdentity,enabled:async()=>!!(await currentQueueConfiguration())?.enabled,
   pollIntervalMs:integrations.residentQueue?.pollIntervalMs??2000,
-  onError:()=>console.error("Resident queue tick failed; inspect persisted queue and Run state before retrying.")});
+  onError:(()=>{const log=throttledLog(line=>console.error(line));return(error:unknown)=>log(`Resident queue tick failed: ${error instanceof Error?error.message.slice(0,200):"unknown"}; inspect persisted queue and Run state before retrying.`);})()});
 const sessionLinePump = new SessionLinePump({workflow:service,canWrite:lease.canWrite,
   messageBusy:(projectId,sessionId)=>messageService.isBusy(projectId,sessionId),credentials:currentIdentity,
   enabled:async()=>!!(await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE)).runtime?.enabled,
@@ -874,6 +887,20 @@ const app = await buildServer({ service, credentials, canWrite: lease.canWrite, 
   workStatuses: (principal, projectId, taskIds) => readWorkStatuses(pool, service, principal, projectId, taskIds),
   workIndex: createLeaderWorkIndexReader(pool),
   leaderNotices: {
+    packet: async (projectId, packetId) => {
+      const result = await uow.read(projectId, async reader => {
+        const store = reader.leaderNoticePackets;
+        const packet = await store?.getLeaderNoticePacket(packetId) ?? null;
+        return packet ? { packet, attempts: await store!.listLeaderNoticePacketAttempts(packetId), items: await store!.listLeaderNoticePacketItems(packetId) } : null;
+      });
+      if (!result) throw new DomainError("NOT_FOUND", "Leader notice packet was not found");
+      return result;
+    },
+    recoverPacket: async (principal, projectId, packetId, reason) => {
+      const result = await service.execute(principal, { type: "leader.noticePacket.recover", projectId, operationId: randomUUID(), packetId, reason } as never);
+      if (result.status === "rejected") throw new DomainError(result.code, result.message);
+      return { status: "recorded" as const, packetId, state: "recovered" as const };
+    },
     list: (projectId, query) => listLeaderNotices(pool, projectId, query),
     get: (projectId, noticeId) => getLeaderNotice(pool, projectId, noticeId),
     recover: async (projectId, noticeId, input, actorId) => {

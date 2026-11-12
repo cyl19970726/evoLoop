@@ -315,6 +315,22 @@ Task 协作通道把 question/answer/progress/blocker/handoff/result 固定到�
 
 需要 Leader 处理的业务事实，由服务端引擎送到受管 Leader Session，不依赖插件、Stop Hook 或 Agent 自己记得去查（DEC-038；schema 046、047）。
 
+**通知包（DEC-045 W1，迁移 089）。** 通知包由私有配置 `leaderResultNotices.packets` 控制，**默认关闭**：关闭时新通知与现在完全一致，仍是一条通知一条消息（`leader_result_notice.via_packet` 为 false）。打开后，之后新产生的通知走通知包（`via_packet` 为 true；通知泵每轮把开关抄进 `leader_notice_packet_mode`，由插入触发器给新通知打标，迁移前已有的通知和旧通知的恢复替换件永远走旧路径）。再关闭时，还没有进过任何包的通知回到旧路径；已经进过包的项仍按包处理完。这样发布前后可对照，出问题时改配置即可退回，不必重新发布。
+
+一个包把等待中的通知合成一条消息：最早一项等满 60 秒（数据库时间）、Leader 空闲（没有 Run 或消息回合在进行）、没有“可以开始”的人的消息在排队、恢复门打开时才合成。判断“有人的消息在等”与消息泵用同一个条件：缺发送者授权而受阻的消息、被 Run 停止取代而未确认的消息，消息泵自己会跳过，不算在等。每包最多 20 项、**8 KB**（`PACKET_BYTE_BUDGET`，数据库也限 8192 字节；先尽量写完整行，放不下的降为摘要行，再放不下只写通知 ID，“上一轮已读到过”标记在各种写法里都保留）。Leader 正在执行时通知先攒着，执行中送入归 W2。每包送出前的阈值与预算沿用 #321 对通知消息的开始前检查，达到阈值就不开始，交接后再继续。
+
+**过时判断在打包事务里做。** 待办通知：选入的项在 `leader.noticePacket.build` 的事务内按 Task 行锁重新判断，已过时则整次打包被拒、下一轮重来；被撤回的待办必须真的已过时，并在同一事务里为 Task 的当前修订补一条新通知（与旧路径一致）。过时项即使这一批没有可送的也会撤回（只记“已撤回”，不建消息）；读候选时分页向后读，排在前面的过时或来源不明的项不会挡住后面的新通知。
+
+**人的消息先于通知包，让路要真的取消。** 包的消息还没开始而有人的消息在等，或 Leader Session 已换、通知被关闭、接收者失去资格时，通知泵用消息发送者的身份取消这条包消息；**只有取消成功才把包记为“已撤回”**，项回到下一包。取消被拒绝（消息版本变了、已经开始）时不记撤回，下一轮按消息的实际状态对账：已开始则记为已送入，之后失败则项带“已读到过”标记。消息泵在启动包消息前问同样的问题（Leader Session 仍是目标、通知仍开着、没有人的消息在等），所以包消息与人的消息不会互相等住。
+
+**对账覆盖项目所有未结束的包。** Leader 换 Session 后，旧 Session 上的包按它自己的消息状态收尾：没开始的取消并撤回，项回到候选；已读到的一轮失败则带“已读到过”标记回到候选（旧 Session 的恢复门不再拦这些项）。
+
+表：`leader_notice_packet`（目标 Session、项数与字节数、内容哈希、内容、状态与各时间点）、`leader_notice_packet_attempt`（每次送达一行：方式 `new_turn` 或 `steer`，消息 ID 与补入账本的输入 ID 恰有其一）、`leader_notice_packet_item`（逐项状态与版本）、`leader_notice_packet_mode`（每项目的开关）。逐项状态：待发 `pending`、已送入 `delivered`（读到这包的那一轮已开始）、已看到 `seen`（那一轮正常结束，只算看到）、已处理 `handled`、已撤回 `withdrawn`、未知 `unknown`。Leader 用 `leader.notice.handle`（带通知 ID、当前版本、`handled` 或 `deferred` 与原因；延后要写“不早于”时间）处置，处理后才算“已处理”；版本过期被拒，同一操作 ID 重放不重复生效；延后的项到时间后进下一包。读包和各项版本：`get /api/projects/PROJECT/leader-notice-packets/PACKET`；通知读回（`work leader notices`）里每条包通知带 `viaPacket` 与 `packet`（包状态、项状态、是否读到过、处置、版本）。
+
+**谁能运行包自己的步骤。** `leader.noticePacket.build`、`.sent`、`.observe` 只允许配置里的通知发送身份（`targets[].senderActorId`，且仍是项目写权限者）运行；Leader 自己、其他有 review 权限的身份和没配置时都被拒绝（`FORBIDDEN`），不能不经回合就把项改成已送达或已看到。Leader 的处置 `leader.notice.handle` 和恢复需要 review 权限。
+
+至少送达一次：读到包的那一轮失败时，项回到待发并标“上一轮已读到过”；恢复门关闭时该包标为 `blocked`，项保持原位、不自动重试。受阻的包出现在 Leader 工作索引（`work-management/index?view=tasks` 的 `blockedNoticePackets`，含包编号和该做什么）。恢复要两步：先按 Session 恢复流程恢复恢复门，再用 **`leader.notice.recover` 按包恢复**（`request leader.notice.recover --id 包编号`，body 只写 `reason`，需要 review 权限）；之后其中的项进下一包，用新的包和新的 ID 重送并带“上一轮已读到过”标记。结果未知的只读对账，不重发。`leader.notice.recover` 的旧形式（body 带 `expectedOperationId` 等四个 ID，按通知恢复被拒绝的一条一消息的旧通知）保持不变，供迁移前已有的通知使用。
+
 1. **在源事务里入库。** 数据库触发器在源写入的同一事务里，把事实登记进 `leader_result_notice`：待编排的 Task（`task_todo`）、封存的 Delivery、独立使用 Observation、Task 通道里的问题与阻塞、终态却缺少本人提交的 Run、提交被封存阻断的 Run，以及后来加入的阶段关注（`task_attention`，054）和验收安排受阻（`acceptance_blocked`，062）。普通进度、阅读、审阅和计划变化不进入。每条通知固定来源事件、Task 修订和预先分配的消息与操作 ID；同一来源只登记一次。
 2. **按配置投递。** 协调服务的通知泵（私有配置 `leaderResultNotices`，每个项目至多一个目标）把待投递通知作为一条普通 Session 消息发给 Leader。投递前逐次核对：目标已配置；技术通知者与 Leader 接收者是不同 actor，前者有项目读写、后者另有 review；项目里恰有一个试行或活跃的 system Lead Role 且与配置一致；该 Role 恰有一个就绪 Session 且与配置一致；Session 执行授权与精确消息授权都在。任一不满足时通知保持 `pending` 并记下原因，不改投别处。
 3. **状态只说明到哪一步。** `linked` 只表示已保存一条受管 Session 消息；原生 Turn、Leader 是否读到、后续安排和 Task 关闭各看自己的记录。收件人一旦固定就不自动改投；原消息操作被明确拒绝时转为 `blocked`，不以原 ID 自动重试。有权者核对后用 `leader.notice.recover` 建立带全新 ID 的新通知，并关联原通知与原拒绝（047）。
@@ -323,16 +339,16 @@ Task 协作通道把 question/answer/progress/blocker/handoff/result 固定到�
 
 ### 验收接力与临时 Session 退役
 
-验收由谁做，由 Task 声明，不默认交给 Leader（DEC-038；PR #217，schema 062）。
+验收由谁做，由 Task 声明，不默认交给 Leader（DEC-038、DEC-042、DEC-046；PR #217，schema 062）。
 
-- **验收方式与 `acceptance_target`。** Task 的 `acceptance_target` 仍声明为人、Leader 或独立业务 Session 之一；`leader` 值保留，但只在使用者为某项 Task 明确要求时使用，不是常规验收选项（DEC-042）。常规验收交 Leader 指派的独立业务 Session；难验收由需求 Session 以消费者身份直接验收，不经验收接力。收件人还须与 Task 声明的消费者和验收模式一致。作者 Session 与安排者不能充当独立验收，执行者自检、CI 与 Run 终态是交付证据，不是验收。代码层面：选 Leader 方式时，收件 Session 必须是项目当前的 Leader Session；选业务 Session 方式时，它不能是 Leader Session，也不能是当前 Delivery 的作者 Run 所在的 Session；安排者须有项目 review 权限，并且就是那条验收消息的发送者。
+- **验收方式与 `acceptance_target`。** Task 的 `acceptance_target` 仍声明为人、Leader 或独立业务 Session 之一；`leader` 值保留，但只在使用者为某项 Task 明确要求时使用，不是常规验收选项（DEC-042）。常规验收交 Leader 指派的受管验收 Session；较难的交承担难验收的那个验收身份，样本、反例和判据在 Task 正文中先设计好。消费者写受管验收身份；需求 Session 不做验收者，只照验收结论合并与发布，并事后抽查（DEC-046，试行）。收件人还须与 Task 声明的消费者和验收模式一致。作者 Session 与安排者不能充当独立验收，执行者自检、CI 与 Run 终态是交付证据，不是验收。代码层面：选 Leader 方式时，收件 Session 必须是项目当前的 Leader Session；选业务 Session 方式时，它不能是 Leader Session，也不能是当前 Delivery 的作者 Run 所在的 Session；安排者须有项目 review 权限，并且就是那条验收消息的发送者。
 - **接力记录。** Leader 用 `task_acceptance_relay` 安排验收：固定 Task 修订、当前 Delivery、阶段（候选 `candidate` 或正式 `formal`）、验收范围、入口与收件人。非人工方式同时固定一条发给收件 Session 的消息。同一 Delivery、阶段和范围同时只有一条现行安排；改派以原安排和版本为前提，旧安排保留为 `superseded` 或 `released`。
 - **开始前再核。** 验收消息真正开始处理前，触发器再次核对 Task 未结束、当前修订和最新 Delivery 仍是安排时那一份；不符就拒绝开始，避免验收旧版本。
 - **验收证据。** 人的阅读记入 `task_acceptance_human_read`；验收者本人的 Observation 经 `task_acceptance_observation_link` 关联到安排，并标明证据级别。存在现行安排时，Task 关闭要求指定收件人对该 Delivery 有已关联的 `used` 观察。候选阶段通过不等于正式通过：同一 Delivery 的候选与正式安排可以并存，但存在现行正式安排时，关闭只按正式安排核对；候选安排保留为历史证据，不因没有关联观察而阻塞正式收口。安排无法开始时生成 `acceptance_blocked` 通知交给 Leader。
 - **临时 Session 退役。** 标为临时的 Session 进入 `closing` 前，必须有一条匹配的 `session_retirement_decision`（理由、交接证据、所见版本、Role 与原 Thread）；它名下若还有未释放的未结束 Task 分派或未结束的验收安排，数据库拒绝关闭。Leader 核业务责任，引擎核运行状态。
 - **容量视图。** 只读的容量视图按 Session 汇总在途 Run、排队消息、队列条目、未结束分派和验收安排，是 Leader 做编制判断的输入；它只反映数据库里的持久占用，不证明原生写入权。
 
-**“直接验收”的过渡。** 专门字段与目标值尚未实现（Task `4acdd4d2`）。当前做法是在 Task 正文把需求 Session 的业务身份写成消费者，并注明不经验收接力；验收仍由现有观察记录承载，字段与合同枚举在实现前不变。
+**“直接验收”的过渡。** 专门字段与目标值尚未实现（Task `4acdd4d2`）。该过渡值只保留给使用者指定验收身份的个别 Task；新建 Task 不再把需求 Session 写成默认消费者，常规和难验收都写受管验收身份并由 Leader 安排接力。消费者一时改不了的在途 Task，以及需求 Session 自己的 PR，由 Leader 另建“合并前验收”或“正式验证”Task 交验收 Session 完成，需求 Session 只照报告结论签字（DEC-046，试行）。验收仍由现有观察记录承载，字段与合同枚举在实现前不变。
 
 ## 6. StageReview：从交付到下一阶段
 

@@ -50,7 +50,7 @@ function fixture() {
   const runner=new RuntimeRunner({runtimeFactory:()=>native as unknown as ReturnType<RuntimeRunner["nativeAdapter"]>,
     workflow,trusted:{} as never,principals:[principal],canWrite:()=>true,allowedCwd:async()=>true,hasGrant:()=>grant});
   runner.status=()=>({available:true,error:null,faults:[]});
-  return {principal,session,command,runner,workflow,calls,get writes(){return writes;},
+  return {principal,session,command,runner,workflow,calls,native:native as Record<string,unknown>,get writes(){return writes;},
     setEmpty:()=>{empty=true;},setStatus:(s:string)=>{status=s;},setFailure:(e:Error|null)=>{failure=e;},setGrant:(g:boolean)=>{grant=g;},
     setPrior:()=>{prior=true;},setConflict:()=>{conflict=true;}};
 }
@@ -130,7 +130,7 @@ test(`coordinator preflight preserves first-start proof for ${mode}`,async t=>{
   f.session.executionProfile!.activeReasoningEffort=null;
   const adapter=new CodexAppServerAdapter({executable:process.execPath,
     spawnArgs:[resolve(import.meta.dirname,"../../../packages/adapter-codex-app-server/test/fixture.mjs"),mode],
-    expectedVersion:"codex-cli 0.166.0-alpha.5.1",verifyBinding:async()=>true,initializationTimeoutMs:5000});
+    expectedVersion:"codex-cli 0.166.0-alpha.6",verifyBinding:async()=>true,initializationTimeoutMs:5000});
   t.after(()=>adapter.close());await adapter.open();
   const spec:RuntimeSessionSpec={actorId:f.session.actorId,sessionId:f.session.id,roleId:f.session.roleId,
     projectId:f.session.projectId,cwd:f.session.cwd,authorizationScope:f.session.authorizationScope,
@@ -185,4 +185,44 @@ for(const denied of [false,true])test(`HTTP historical notLoaded Thread reaches 
     assert.equal(result.statusCode,denied?403:200,result.body);assert.equal(f.writes,denied?0:1);
     assert.equal(f.session.executionProfile!.activationState,denied?"active":"pending");
   }finally{await app.close();}
+});
+
+test("an effort-only change on a runtime that applies effort with each turn/start needs no native inspection",async()=>{
+  const f=fixture(),token="a".repeat(40);
+  f.native.appliesEffortWithNextTurn=()=>true;
+  const app=await buildServer({service:f.workflow,credentials:[{token,...f.principal}],runtime:f.runner});
+  try {
+    // Zero-Turn and unloaded: the native checks would refuse, but there is nothing to activate.
+    const effortOnly={...f.command,model:"old-model",reasoningEffort:"max"};
+    const result=await app.inject({method:"POST",url:"/api/commands",headers:{authorization:`Bearer ${token}`},payload:effortOnly});
+    assert.equal(result.statusCode,200,result.body);
+    assert.deepEqual(f.calls,["execute"],"no registration, inspection or history read");
+    assert.equal(f.runner.effortAppliesNextTurn(f.session),true);
+    // A catalog that lists the model is binding; one that is empty or lacks it did not block the change above.
+    const listed=await buildServer({service:f.workflow,credentials:[{token,...f.principal}],runtime:f.runner,
+      listRuntimeModels:async()=>({status:"available",models:["old-model"],options:[{model:"old-model",supportedReasoningEfforts:["low","high"],
+        defaultReasoningEffort:"high"}],error:null,observedAtUtc:new Date().toISOString()})});
+    try {
+      f.calls.length=0;
+      const unsupported=await listed.inject({method:"POST",url:"/api/commands",headers:{authorization:`Bearer ${token}`},
+        payload:{...effortOnly,operationId:randomUUID(),expectedVersion:f.session.version}});
+      assert.equal(unsupported.statusCode,409,unsupported.body);
+      assert.equal(unsupported.json().code,"REASONING_EFFORT_UNSUPPORTED");
+    } finally {await listed.close();}
+    // Any model change that carries an effort would need the in-place switch this runtime lacks: refused up front and nothing is saved.
+    f.calls.length=0;
+    const both=await app.inject({method:"POST",url:"/api/commands",headers:{authorization:`Bearer ${token}`},payload:{...f.command,operationId:randomUUID(),expectedVersion:f.session.version}});
+    assert.equal(both.statusCode,409,both.body);
+    assert.equal(both.json().code,"EXECUTION_PROFILE_MODEL_CHANGE_UNSUPPORTED");
+    assert.doesNotMatch(both.json().message??"",/先只改模型/,"the advice no longer points to a two-step route that cannot work");
+    assert.match(both.json().message??"",/新建 Session/);
+    assert.deepEqual(f.calls,[],"nothing was read or written");
+    // A model change alone that keeps the Session's effort is the same thing: it was once saved as a model revision nothing could activate.
+    f.calls.length=0;
+    const modelOnly=await app.inject({method:"POST",url:"/api/commands",headers:{authorization:`Bearer ${token}`},
+      payload:{...f.command,operationId:randomUUID(),expectedVersion:f.session.version,reasoningEffort:f.session.executionProfile!.revision.reasoningEffort}});
+    assert.equal(modelOnly.statusCode,409,modelOnly.body);
+    assert.equal(modelOnly.json().code,"EXECUTION_PROFILE_MODEL_CHANGE_UNSUPPORTED");
+    assert.deepEqual(f.calls,[],"refused before any native read, and nothing was saved");
+  } finally {await app.close();}
 });

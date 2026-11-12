@@ -36,6 +36,7 @@
 "leaderResultNotices": {
   "enabled": false,
   "pollIntervalMs": 2000,
+  "packets": false,
   "targets": [{
     "projectId": "PROJECT_UUID",
     "sessionId": "MANAGED_LEADER_SESSION_UUID",
@@ -46,7 +47,7 @@
 }
 ```
 
-同一项目只配一个目标。通知只引用 Task 和结果的固定入口，Leader 不能凭通知摘要自动签验收。
+`packets`（默认 `false`）控制通知包，见[下文](#leader-通知包)。同一项目只配一个目标。通知只引用 Task 和结果的固定入口，Leader 不能凭通知摘要自动签验收。
 
 ### 打开
 
@@ -99,7 +100,7 @@
 
 ### 安排验收
 
-Leader 读到交付后，按 Task 声明的验收方式，用 `acceptance.assign` 安排验收（命令见 [Agent CLI](agent-cli.md#观察会话具体接手与普通消息)）。常规验收由 Leader 指派独立业务 Session；难验收由需求 Session 以消费者身份直接验收，不经验收接力；使用者亲用时写人；Leader 只在使用者为某项 Task 明确要求时验收。交付作者和安排者都不能验收；执行者自检、CI 与 Run 终态是交付证据，不是验收。安排受阻会留下一条 `acceptance_blocked` 通知；验收结果仍以观察通知回到 Leader。
+Leader 读到交付后，按 Task 声明的验收方式，用 `acceptance.assign` 安排验收（命令见 [Agent CLI](agent-cli.md#观察会话具体接手与普通消息)）。常规验收由 Leader 指派受管验收 Session；较难的交承担难验收的那个验收身份，样本、反例和判据在 Task 正文中先设计好。消费者写受管验收身份；需求 Session 不做验收者，只照验收结论合并与发布并事后抽查（DEC-046，试行）。消费者一时改不了的在途 Task，以及需求 Session 自己的 PR，由 Leader 另建“合并前验收”或“正式验证”Task 交验收 Session 完成。使用者亲用时写人；Leader 只在使用者为某项 Task 明确要求时验收。交付作者和安排者都不能验收；执行者自检、CI 与 Run 终态是交付证据，不是验收。安排受阻会留下一条 `acceptance_blocked` 通知；验收结果仍以观察通知回到 Leader。
 
 ### 关闭与回退
 
@@ -373,3 +374,12 @@ node --import tsx tests/manual/session-compaction-e1.ts
 ## Session 队伍调度程序
 
 协调器在运行时启用（`runtime.enabled`）后运行队伍调度程序（轮询间隔沿用 `residentQueue.pollIntervalMs`，默认 2 秒）。它只推进由 Leader 凭据控制的队伍，每一步都是普通命令，操作 ID 由队伍项和尝试次数决定，重启后重放不会重复开 Run。队伍项、事件和 `QUEUED_IN_SESSION_LINE` 的含义见 [Session 运行时](../architecture/session-runtime.md#session-队伍dec-045-q1)。迁移 087 新增 `session_line`、`session_line_entry`、`session_line_event`、`task_assignment_confirmation`；不需要改私有配置，但 Session 的业务身份要在 `residentQueue.roleActors` 里有映射，否则该 Session 的队伍项会挂起。
+
+## Leader 通知包
+
+**开关（默认关闭）。** 在 `leaderResultNotices` 里加 `"packets": true`：之后新产生的通知走通知包；不写或 `false` 时，新通知仍是一条通知一条消息，与未发布这个功能时一致（迁移 089 本身只加一列和一张开关表，不改变既有行为）。通知泵每轮重读配置并把开关抄进数据库，不需要重启。`enabled:false` 时不投递新通知，但已发出的包仍会收尾（对账、取消没开始的包消息）。回退：把 `packets` 改回 `false`——没进过包的通知回到旧路径，进过包的项由包处理完。上线要先看发布顺序：089 不得早于 084–088 进入正式库。
+
+通知泵在发现等待中的新通知时按包送达：最早一项等满 60 秒、Leader 空闲、没有可以开始的人的消息排队、恢复门打开才合成一包并发一条消息。包的步骤（`leader.noticePacket.build`、`.sent`、`.observe`）只由配置里的通知发送身份（`senderActorId`）运行，Leader 和其他复核身份不能运行；它们的处置命令 `leader.notice.handle` 需要 review 权限。逐项状态、各步骤和恢复见[接口合同](../architecture/contracts.md#leader-通知层)。
+
+**受阻的包。** 读到包的那一轮失败而恢复门关闭时包为 `blocked`，出现在 Leader 工作索引的 `blockedNoticePackets`。先恢复恢复门，再 `request leader.notice.recover --id 包编号 --file BODY.json --receipt UUID`（body `{"reason":"..."}`）恢复这一包。
+
