@@ -10,6 +10,8 @@ import type { NativeWorkspacePage, SessionTimelinePage, WorkspaceEntry, Workspac
 import type { RuntimeBinding, RuntimePort } from '@evoloop/contracts/runtime';
 import type { DirectInputRecord } from '@evoloop/contracts/direct-input';
 import type { SessionObservationService } from '@evoloop/core/session-observation';
+import { turnUsageOf } from '@evoloop/core/native-observation';
+import type { NativeObservationRecord } from '@evoloop/contracts/native-observation';
 
 /** A started runner or a separately opened read-only adapter can own these exact reads. */
 export interface WorkspaceHistoryOwner {
@@ -117,6 +119,9 @@ const safeEntry=(entry:WorkspaceEntry,allowDetail:boolean):WorkspaceEntry=>{
       detailReason:allowDetail?entry.detailReason:toolDetailDenied,
       ...(allowDetail&&originalDetail?{detail:originalDetail}:{})};
   }
+  // Readable reasoning is shown only through project-read timeline reads; it never enters notices or notice packages.
+  if(entry.kind==='reasoning')return {...entry,origin:null,body:entry.readable?bounded(entry.body):'',
+    truncated:entry.truncated||entry.readable&&entry.body.length>16000};
   if(entry.kind==='message')return entry.role==='assistant'
     ? {...entry,origin:null,body:bounded(entry.body),truncated:entry.truncated||entry.body.length>16000}
     : nativeInputNotice(entry);
@@ -139,6 +144,16 @@ const bufferEntry=(entry:WorkspaceEntry):WorkspaceEntry=>{
     ? {...projected,detailAvailable:entry.detailAvailable,detailReason:entry.detailReason}:projected;
 };
 const liveKey=(p:string,s:string,t:string)=>`${p}:${s}:${t}`;
+/** Codex reports usage per Thread; its observed per-Turn difference is attached to the matching Turn. An adapter's own
+ * per-Turn usage (Claude) is kept as reported. */
+const withUsage=(turn:WorkspaceTurn,observation:NativeObservationRecord|null):WorkspaceTurn=>{
+  if(turn.usage)return turn;
+  const recorded=observation?.turnUsage?.find(entry=>entry.turnId===turn.id);
+  if(!recorded)return turn;
+  const usage=turnUsageOf(recorded);
+  return {...turn,usage:{outputTokens:usage.outputTokens,reasoningOutputTokens:usage.reasoningOutputTokens,source:'codex-token-usage',
+    complete:recorded.base!==null}};
+};
 
 /** Project reads and exact owned binding checks occur on every request; the buffer grants no authority. */
 export class SessionTimelineService {
@@ -315,8 +330,15 @@ export class SessionTimelineService {
       return {...publicEntry(raw,principal),origin,...(raw.kind==='message'&&raw.role==='assistant'?{
         author:{kind:'session' as const,id:scope.sessionId,label:scope.title}}:{})};
     });
-    return {...live,entries,turns:live.turns.map(turn=>({...turn,origin:originOf(associations.found.get(turn.id)??null)})),
+    const observation=await this.turnObservation(scope);
+    return {...live,entries,turns:live.turns.map(turn=>withUsage({...turn,origin:originOf(associations.found.get(turn.id)??null)},observation)),
       limitations:[...live.limitations,...read.limitations]};
+  }
+  /** The Session's saved native observation, read only for its per-Turn usage. */
+  private async turnObservation(scope:Scope):Promise<NativeObservationRecord|null>{
+    if(!scope.sessionId)return null;
+    const record=await this.deps.uow.read(scope.projectId,r=>r.nativeObservation?.get(scope.projectId,scope.sessionId!)??Promise.resolve(null));
+    return record&&record.threadId===scope.threadId?record:null;
   }
   private async sources(projectId:string,sessionId:string,turnIds:string[]){
     return this.deps.uow.read(projectId,async r=>{
@@ -397,7 +419,8 @@ export class SessionTimelineService {
           origin,...(entry.kind==='message'&&entry.role==='assistant'?{
             author:{kind:'session' as const,id:scope.sessionId,label:scope.title}}:{})}];
       });
-      turns=native.turns.map(turn=>({...turn,origin:originOf(associations.found.get(turn.id)??null)}));
+      const observation=await this.turnObservation(scope);
+      turns=native.turns.map(turn=>withUsage({...turn,origin:originOf(associations.found.get(turn.id)??null)},observation));
     }else if(readMessages&&(readNative||!scope.threadId||!this.deps.runner?.status(projectId).available||
       !support.history||historyKey&&this.historyAvailability.get(historyKey)===false))
       for(const m of [...page.messages.items].reverse()){

@@ -47,10 +47,23 @@ const toolDetail=(item:Record<string,unknown>):{input:string|null;output:string|
     default:return {input:null,output:null,error:null,resources:[]};
   }
 };
+const texts=(v:unknown):string[]=>Array.isArray(v)?v.filter((x):x is string=>typeof x==='string'&&x.trim().length>0):[];
+/**
+ * A Codex reasoning Item: its summary when the model returned one, else readable native reasoning text. Encrypted
+ * reasoning has neither, so it stays unreadable with an empty body; nothing is derived from the answer.
+ */
+function mapReasoning(item:Record<string,unknown>,b:ReturnType<typeof base>,detail:boolean):WorkspaceEntry{
+  const summary=texts(item.summary),raw=texts(item.content);
+  const source=summary.length?'summary':raw.length?'raw':'none';
+  const body=clipped((summary.length?summary:raw).join('\n\n'),detail?1_000_000:16000);
+  return {...b,kind:'reasoning',source,readable:source!=='none',body:body.value,truncated:body.truncated,state:'completed',
+    unavailableReason:source==='none'?'原生记录没有可读的推理内容（未返回摘要，原始推理已加密或未提供）。':null};
+}
 export function mapWorkspaceItem(value:unknown,turnId:string,binding:RuntimeBinding,observedAt:string,at?:unknown,detail=false):WorkspaceEntry|null{
   const item=obj(value);if(!item||typeof item.id!=='string'||!item.id||typeof item.type!=='string'||!turnId)return null;
   const b=base(item,turnId,binding,observedAt,at);
-  if(item.type==='reasoning'||item.type==='hookPrompt')return null;
+  if(item.type==='hookPrompt')return null;
+  if(item.type==='reasoning')return mapReasoning(item,b,detail);
   if(item.type==='userMessage'){
     const reference=inputReference(item.content);
     return {...b,kind:'message',role:'input',phase:'unknown',body:'',clientId:str(item.clientId),state:'completed',
@@ -135,7 +148,9 @@ export function mapWorkspaceEvent(method:string,params:unknown,binding:RuntimeBi
     const entry=mapWorkspaceItem(p.item,turnId,binding,observedAt,p.startedAtMs??p.completedAtMs);
     if(entry){
       entry.freshness='live';entry.order={kind:'live-item',key:entry.id,position:null,generation};
-      if(method==='item/started'&&(entry.kind==='tool'||entry.kind==='plan'||entry.kind==='message'&&entry.role==='assistant'))entry.state='running';
+      if(method==='item/started'&&(entry.kind==='tool'||entry.kind==='plan'||entry.kind==='reasoning'||entry.kind==='message'&&entry.role==='assistant'))entry.state='running';
+      // A started reasoning Item has no text yet; only its completion says whether anything is readable.
+      if(method==='item/started'&&entry.kind==='reasoning'&&!entry.readable)entry.unavailableReason=null;
       return {...envelope,kind:'entry',entry};
     }
   }

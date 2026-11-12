@@ -1111,6 +1111,10 @@ test("handoff reads terminal answers while preserving phase-unknown legacy outpu
   const {finalMessages}=await import("../src/runtime/runner.js");
   assert.deepEqual(finalMessages([{type:"agentMessage",phase:"commentary",text:"I will investigate"},{type:"agentMessage",phase:"final_answer",text:"Observed actual failure"}]),["Observed actual failure"]);
   assert.deepEqual(finalMessages([{type:"agentMessage",text:"Legacy final"}]),["Legacy final"]);
+  // Reasoning and thinking Items never become the answer that results and notices carry.
+  assert.deepEqual(finalMessages([{type:"reasoning",summary:["private plan"],content:["raw chain"]},{type:"reasoning",source:"thinking",text:"Claude thought"},
+    {type:"agentMessage",phase:"final_answer",text:"Answer"}]),["Answer"]);
+  assert.deepEqual(finalMessages([{type:"reasoning",text:"only thinking"}]),[]);
   assert.deepEqual(finalMessages([{type:"agentMessage",phase:"commentary",text:"No final yet"}]),[]);
 });
 

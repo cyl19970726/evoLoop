@@ -488,6 +488,11 @@
       "group": "开发与维护"
     },
     {
+      "path": "docs/development/organization-review-period-repair.md",
+      "title": "组织复盘观察期修复",
+      "group": "开发与维护"
+    },
+    {
       "path": "docs/development/agent-cli.md",
       "title": "Agent skill 与 CLI",
       "group": "开发与维护"
