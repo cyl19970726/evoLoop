@@ -104,12 +104,36 @@ export function shellInboxCount(badge: InboxBadge): number | null {
 export const decisionKindText: Record<DecisionItem["kind"], string> = {
   role_proposal: "职责提案", stage_proposal: "阶段提案", task_question: "任务讨论里的问题", decision_request: "请你确认",
 };
-/** Where to decide one item: the Roles page, the Goals and stages page, or the task the question was asked in; null when it is answered in the list. */
-export function decisionLink(projectId: string, item: DecisionItem, actorId: string): string | null {
+const blank = (value: string | null | undefined) => !value || !value.trim();
+/**
+ * Why one item cannot be opened at its own place, or null when it can: the id that locates it is missing. The row then says so and offers
+ * no link, rather than sending the reader to a list and letting that pass for the item.
+ */
+export function decisionLinkProblem(item: DecisionItem): string | null {
   switch (item.kind) {
-    case "role_proposal": return `/p/${projectId}/roles?return=${encodeURIComponent(`/p/${projectId}/inbox`)}&returnTitle=${encodeURIComponent("待我验收与判断")}`;
-    case "stage_proposal": return `/p/${projectId}/journey?return=${encodeURIComponent(`/p/${projectId}/inbox`)}&returnTitle=${encodeURIComponent("待我验收与判断")}`;
-    case "task_question": return inboxTaskLink(projectId, item.taskId, actorId);
+    case "role_proposal": return blank(item.roleId) ? "这条职责提案没有带职责编号，无法直接打开；请到职责页按标题查找。" : null;
+    case "stage_proposal": return blank(item.stageId) ? "这条阶段提案没有带阶段编号，无法直接打开；请到目标与阶段页按标题查找。" : null;
+    case "task_question":
+      return blank(item.taskId) ? "这个问题没有带任务编号，无法直接打开。"
+        : blank(item.discussionId) ? "这个问题没有带讨论编号，无法定位到那条讨论；请到该任务的协作里查找。"
+          : blank(item.eventId) ? "这个问题没有带问题编号，无法定位到具体问题；请到该任务的协作里查找。" : null;
+    case "decision_request": return null;
+  }
+}
+
+/**
+ * Where to decide one item, at the item itself: the Roles page on that role (`?role=`), the Goals and stages page on that stage (`?stage=`),
+ * or the task page on its collaboration section at that discussion and question. Null when the item is answered in the list, or when its
+ * id is missing (see {@link decisionLinkProblem}).
+ */
+export function decisionLink(projectId: string, item: DecisionItem, actorId: string): string | null {
+  if (decisionLinkProblem(item)) return null;
+  const back = { return: `/p/${projectId}/inbox`, returnTitle: "待我验收与判断" };
+  switch (item.kind) {
+    case "role_proposal": return `/p/${projectId}/roles?${new URLSearchParams({ role: item.roleId, ...back })}`;
+    case "stage_proposal": return `/p/${projectId}/journey?${new URLSearchParams({ stage: item.stageId, ...back })}`;
+    case "task_question": return `/p/${projectId}/tasks/${item.taskId}?${new URLSearchParams({ section: "collaboration", discussion: item.discussionId, question: item.eventId,
+      ...back, actor: actorId })}`;
     case "decision_request": return item.taskId ? inboxTaskLink(projectId, item.taskId, actorId) : null;
   }
 }

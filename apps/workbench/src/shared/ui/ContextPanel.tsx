@@ -235,7 +235,7 @@ export function ContextPanelColumn({ embedded = false }: { embedded?: boolean } 
     <div role="separator" aria-orientation="vertical" aria-label="调整右栏宽度" aria-valuemin={panelWidth.min} aria-valuemax={panelWidth.max} aria-valuenow={state.width} tabIndex={0}
       onPointerDown={startDrag}
       onKeyDown={event => { if (event.key === "ArrowLeft") update({ ...state, width: clampWidth(state.width + 16) }); if (event.key === "ArrowRight") update({ ...state, width: clampWidth(state.width - 16) }); }}
-      className="absolute inset-y-0 -left-1 z-10 w-2 cursor-col-resize outline-none focus-visible:bg-primary/30" />
+      className="absolute inset-y-0 -left-1 z-10 w-2 cursor-col-resize outline-none focus-visible:bg-primary/30 focus-visible:shadow-[var(--focus-ring)]" />
     {body}
   </aside>;
 }

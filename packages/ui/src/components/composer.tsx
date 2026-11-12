@@ -262,7 +262,7 @@ export function Composer({
         </div>
       )}
 
-      <div className={cn("flex flex-col gap-2 rounded-xl bg-raised px-2.5 py-2 shadow-lg transition-shadow duration-150", open && "shadow-[var(--focus-ring),var(--shadow-panel)]", disabled && "opacity-60")}>
+      <div className={cn("flex flex-col gap-2 rounded-xl bg-raised px-2.5 py-2 shadow-lg transition-shadow duration-150 has-[textarea:focus-visible]:outline-solid has-[textarea:focus-visible]:outline-2 has-[textarea:focus-visible]:-outline-offset-2 has-[textarea:focus-visible]:outline-primary", open && "shadow-[var(--focus-ring),var(--shadow-panel)]", disabled && "opacity-60")}>
         {attachments.length > 0 && (
           <div className="flex flex-wrap gap-1.5 px-1 pt-0.5">
             {attachments.map(attachment => (

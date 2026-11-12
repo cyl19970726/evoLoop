@@ -361,7 +361,7 @@ node --import tsx tests/manual/session-compaction-e1.ts
 }
 ```
 
-- **读回用量。** `GET /api/projects/PROJECT_ID/runtime/usage?from=YYYY-MM-DD&to=YYYY-MM-DD` 按 Session 和按天返回输入、输出、缓存输入、费用与上下文压力；工作台智能体页右栏“上下文与用量”用同一个读取。费用缺失写“未报告”，不当 0。
+- **读回用量。** `GET /api/projects/PROJECT_ID/runtime/usage?from=YYYY-MM-DD&to=YYYY-MM-DD` 按 Session 和按天返回输入、输出、缓存输入、费用与上下文压力；工作台智能体页右栏“上下文与用量”（这个 Session 的上下文与今日用量）和统筹安排的“项目用量”（每日上限、近 7 天、计日时区）用同一个读取。费用缺失写“未报告”，不当 0。
 - **警告与暂停。** 达到 `warningRatio` 只显示提示；达到上限后，结果通知消息以 `DAILY_BUDGET_EXHAUSTED` 或 `CONTEXT_HANDOFF_REQUIRED` 留在队列并写阻断原因。业务 Task Run、验收和人工消息仍可执行。要恢复，先处理交接或调整上限，再按原消息记录重试；不要另建一条消息冒充原通知。
 - **交接到新线程。** 用同一 Role 开启新 Session，把原 Session、原生 Thread、固定 Task 与未处理通知写进接手说明；新线程读取固定 Task 和当前工作变化后再决定下一步。`contextHandoffSummary()` 的格式可直接作为交接摘要；它不复制原生对话正文。
 - **基线。** `node scripts/context-baseline.mjs <rollout.jsonl>` 只读 Codex 原生记录，报告每轮最大输入、均值／中位数／p90、累计用量、压缩次数和字节占比。改动前后用同一口径比较，不以单轮或通知数量代替。

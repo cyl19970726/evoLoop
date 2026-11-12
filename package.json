@@ -24,7 +24,7 @@
     "test:unit": "npm run build:packages && files=$(node scripts/lib/script-tests.mjs) && [ -n \"$files\" ] && node --import tsx --test packages/contracts/test/*.test.ts packages/core/test/*.test.ts apps/coordinator/test/*.test.ts apps/workbench/test/*.test.ts packages/ui/test/*.test.ts apps/cli/test/*.test.ts packages/adapter-codex-app-server/test/*.test.ts packages/adapter-claude-agent-sdk/test/*.test.ts packages/adapter-git-documents/test/*.test.ts packages/adapter-local-blobs/test/*.test.ts packages/connector-feishu/test/*.test.ts packages/connector-wechat/test/*.test.ts packages/adapter-wiki-openviking/test/*.test.ts $files .agents/skills/evoloop-evocation/scripts/*.test.mjs",
     "test:integration": "node scripts/test-integration.mjs",
     "lint:hooks": "oxlint -c .oxlintrc.json apps/workbench/src packages/ui/src",
-    "test:browser": "node --import tsx --test apps/workbench/test/key-pages-ci-browser.test.ts",
+    "test:browser": "node --import tsx --test apps/workbench/test/key-pages-ci-browser.test.ts apps/workbench/test/focus-ring-ci-browser.test.ts",
     "build:packages": "tsc -b packages/contracts packages/core packages/adapter-postgres packages/adapter-codex-app-server packages/adapter-claude-agent-sdk packages/adapter-git-documents packages/adapter-local-blobs packages/adapter-wiki-openviking packages/connector-feishu packages/connector-wechat apps/coordinator apps/cli",
     "build": "npm run build:packages && npm run build --workspace @evoloop/workbench",
     "typecheck": "npm run build:packages && npm run typecheck --workspace @evoloop/workbench",
