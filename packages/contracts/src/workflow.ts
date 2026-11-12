@@ -41,6 +41,14 @@ export const workflowCommands = [
   }),
   z.strictObject({
     ...common,
+    type: z.literal("stage.phaseKey.set"),
+    stageId: id,
+    // Links the stage to a roadmap phase (M1, M0.5, …) for the overview's milestones; null clears the link. Review permission.
+    phaseKey: z.string().regex(/^M[0-9]+(?:\.[0-9]+)?$/).nullable(),
+    reason: text,
+  }),
+  z.strictObject({
+    ...common,
     type: z.literal("stage.accept"),
     stageId: id,
     expectedVersion: version,

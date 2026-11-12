@@ -895,7 +895,8 @@ if (runner) {
   catch { console.error(`${runtimeConfig?.provider === "claude" ? "Claude" : "Codex"} runtime is unavailable; check the configured CLI, its settings and project directories. No new dispatch was enabled.`); }
 }
 const app = await buildServer({ service, credentials, canWrite: lease.canWrite, ordinarySubmissions,
-  acceptanceRelay, drain: { control: drain, isMaintainer: principal => isInstanceMaintainer(pool, principal) },
+  acceptanceRelay, milestones: { repoRoot: resolve(fileURLToPath(new URL("../../..", import.meta.url))), startedAt: new Date().toISOString() },
+  drain: { control: drain, isMaintainer: principal => isInstanceMaintainer(pool, principal) },
   ...(runner ? {compaction:new CompactionMaintenance(pool,runner,{owned:()=>runtimeConfig?.compaction.owned!==false})} : {}),
   connectorRoutes, connectorDeliveries: connectorDecisions, connectorSources: connectorLinks,
   canActivateConnectorRoute: qualifyConnectorRoute,

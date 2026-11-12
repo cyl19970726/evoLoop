@@ -1,6 +1,6 @@
-# 总览顶部重做：设计（待确认）
+# 总览顶部重做：设计（已确认）
 
-Task `e5af6765`（2026-11-12 返工）。使用者要从总览一眼看清三件事：目标是什么、线上版本是什么、重要里程碑做到哪。本文是实现前的设计，**由受管验收 Session `acceptance-claude-agent` 确认后才实现**；确认前页面、`/api/version` 和发布脚本都没有改动。图中带“〔…〕”的文字是占位，状态与日期只是示意。
+Task `e5af6765`（2026-11-12 返工）。使用者要从总览一眼看清三件事：目标是什么、线上版本是什么、重要里程碑做到哪。本文是实现前的设计，需求 Session 已于 2026-11-12 确认（见 PR #377 评论）；发布脚本写 `build-info.json` 不在本 PR。图中带“〔…〕”的文字是占位，状态与日期只是示意。
 
 ## 设计图
 
@@ -82,3 +82,7 @@ Task `e5af6765`（2026-11-12 返工）。使用者要从总览一眼看清三件
 ## 实现范围（确认后另开 Run）
 
 `/api/version` 与 `build-info.json`；`/milestones` 投影与阶段的可选 `phaseKey`；总览顶部三块和测试夹具；两种宽度截图；总览页文档更新。最终验收仍由 `acceptance-claude-agent` 在正式实例上做。
+
+## 真实页面实测（实现后）
+
+真实页面截图与量到的数据：[1440 首屏](../assets/frontend-pages/overview-top-1440.png)、[1440 整页](../assets/frontend-pages/overview-top-1440-full.png)、[390 整页](../assets/frontend-pages/overview-top-390-full.png)、[390 第一天](../assets/frontend-pages/overview-top-390-day1.png)、[实测数据](../assets/frontend-pages/overview-top-real-measure.json)。1440×900：目标、版本和 6 个阶段都在首屏（最后一个阶段底边 781），无水平溢出。**与设计的差异**：390×844 里真实页面自带的页头、标题和目标卡片比设计图大（目标卡底边 533，设计图 136），版本在首屏，6 个阶段在第二屏内（最后一行底边 1089），没有做到“全部在首屏”；手机上只有当前阶段展开“交付/退出证据”。

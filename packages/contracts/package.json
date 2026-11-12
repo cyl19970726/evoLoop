@@ -7,6 +7,7 @@
     ".": "./dist/index.js",
     "./ports": "./dist/ports.js",
     "./runtime": "./dist/runtime.js",
+    "./milestones": "./dist/milestones.js",
     "./run-actual": "./dist/run-actual.js",
     "./runtime-handoff": "./dist/runtime-handoff.js",
     "./sources": "./dist/sources.js",

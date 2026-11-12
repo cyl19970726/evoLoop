@@ -14,6 +14,7 @@ import { isRoleOwnerId } from "../../shared/ownerRole";
 import { FullIdentifiers } from "../../shared/ui/FullIdentifiers";
 import { ResponsibleName, RoleName } from "../../shared/ui/RecordName";
 import { readOutcome, selectAttention, type ProjectOutcome } from "./contextPresentation";
+import { MilestonesBlock } from "./MilestonesBlock";
 
 interface ContextSnapshot {
   scope: string; goals: Goal[]; stages: Stage[]; goalProblem: string; workProblem: string;
@@ -155,6 +156,7 @@ export function ProjectContext({ token, projectId, refresh, active }: { token: s
       {value?.retainedGoals && <p className={problem}>保留上次目标与阶段，读于 {value.goalObservedAt ? date(value.goalObservedAt) : "上次读取"}，本次未能确认最新状态。</p>}
       {value && !value.goalsComplete && <p className={muted}>目标列表仅覆盖已读部分。</p>}
     </section>
+    <MilestonesBlock projectId={projectId} active={active} />
     <div className="@container">
       <div className="grid gap-3 @2xl:grid-cols-2">
         <section className={cn(card, "overview-attention")} aria-label="本次优先核对">
