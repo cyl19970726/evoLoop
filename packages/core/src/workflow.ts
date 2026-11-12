@@ -27,6 +27,7 @@ type WorkflowCommand = Extract<
       | "goal.revise"
       | "stage.propose"
       | "stage.accept"
+      | "stage.phaseKey.set"
       | "stage.review"
       | "stage.review.correct"
       | "task.cancel"
@@ -217,6 +218,12 @@ export async function applyWorkflow({
       };
       await tx.insertStage(stage, revision);
       return result(c.operationId, stage.id, revision.id, 1);
+    }
+    case "stage.phaseKey.set": {
+      found(await tx.getStage(c.stageId), "stage");
+      if (!tx.setStagePhaseKey) throw new DomainError("PHASE_KEY_UNAVAILABLE", "stage phase links are not available in this store");
+      await tx.setStagePhaseKey({ stageId: c.stageId, phaseKey: c.phaseKey, actorId, reason: c.reason, at: now });
+      return result(c.operationId, c.stageId);
     }
     case "stage.accept": {
       const stage = found(await tx.getStage(c.stageId), "stage");

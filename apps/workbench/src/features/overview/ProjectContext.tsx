@@ -14,6 +14,7 @@ import { isRoleOwnerId } from "../../shared/ownerRole";
 import { FullIdentifiers } from "../../shared/ui/FullIdentifiers";
 import { ResponsibleName, RoleName } from "../../shared/ui/RecordName";
 import { readOutcome, selectAttention, type ProjectOutcome } from "./contextPresentation";
+import { MilestonesBlock } from "./MilestonesBlock";
 
 interface ContextSnapshot {
   scope: string; goals: Goal[]; stages: Stage[]; goalProblem: string; workProblem: string;
@@ -146,15 +147,16 @@ export function ProjectContext({ token, projectId, refresh, active }: { token: s
           {stages.map(item => <option key={item.id} value={item.id}>{item.deliverable}</option>)}
         </Select>
       </label>}
-      {stage ? <dl className="grid gap-3 compact:grid-cols-2">
-        <div><dt className={muted}>阶段交付</dt><dd className="m-0 text-small text-foreground">{stage.deliverable}</dd></div>
-        <div><dt className={muted}>要弄清的问题</dt><dd className="m-0 text-small text-foreground">{stage.learningQuestion}</dd></div>
+      {stage ? <dl className="grid grid-cols-2 gap-x-3 gap-y-1 compact:gap-3">
+        <div><dt className={muted}>阶段交付</dt><dd className="m-0 line-clamp-2 text-small text-foreground compact:line-clamp-none">{stage.deliverable}</dd></div>
+        <div><dt className={muted}>要弄清的问题</dt><dd className="m-0 line-clamp-2 text-small text-foreground compact:line-clamp-none">{stage.learningQuestion}</dd></div>
       </dl> : <p className={muted}>{value && !value.goalProblem && stages.length === 0 ? "没有读到正在推进的阶段。可与现有责任智能体明确首项工作、消费者和需要补的证据。" : "按真实阶段关系阅读，不从最近任务或队列推定项目目标。"}</p>}
       {goal && <details className="text-small"><summary className="cursor-pointer text-text-secondary">目标的消费者、约束与范围</summary><div className="mt-2 flex flex-col gap-1 text-text-secondary"><p>消费者：{goal.consumer} · 责任：{isRoleOwnerId(goal.owner) ? <RoleName projectId={projectId} roleId={goal.owner} /> : goal.owner}</p><p>{goal.constraints}</p><p>{goal.scope}</p></div></details>}
       {value?.goalProblem && <div className={problem} role="status">目标与阶段读取未完成，已读工作仍可查看。<details><summary className="cursor-pointer">读取原因</summary>{value.goalProblem}</details></div>}
       {value?.retainedGoals && <p className={problem}>保留上次目标与阶段，读于 {value.goalObservedAt ? date(value.goalObservedAt) : "上次读取"}，本次未能确认最新状态。</p>}
       {value && !value.goalsComplete && <p className={muted}>目标列表仅覆盖已读部分。</p>}
     </section>
+    <MilestonesBlock projectId={projectId} active={active} />
     <div className="@container">
       <div className="grid gap-3 @2xl:grid-cols-2">
         <section className={cn(card, "overview-attention")} aria-label="本次优先核对">
