@@ -349,7 +349,9 @@ test('message persists separately, unknown retains exact operation, receipt requ
   assert.equal((await service.processing(projectId,message.id))?.operationId,operationId);
   assert.equal((await service.get(projectId,message.id)).state,'unknown');
   await assert.rejects(()=>uow.transaction(projectId,tx=>tx.sessionMessages!.assertSessionVacant(sessionId)),/active or unresolved/);
-  await service.bindTurn(projectId,message.id,{id:'native-turn-1',status:'inProgress'});
+  await service.bindTurn(projectId,message.id,{id:'native-turn-1',status:'inProgress',observedReasoningEffort:'low'},'low');
+  const effortEvent=await pool.query("SELECT detail FROM runtime_record_event WHERE project_id=$1 AND session_id=$2 AND kind='turn.effortObserved' AND native_turn_id='native-turn-1'",[projectId,sessionId]);
+  assert.match(effortEvent.rows[0]?.detail??'',/effort requested=low observed=low/,'a message Turn records the requested and the reported effort');
   await service.settle(projectId,message.id,{id:'native-turn-1',status:'completed',completedAtUtc:now},null);
   assert.equal((await service.get(projectId,message.id)).state,'completed_without_reply');
   const detail=await service.detail(projectId,message.id);
@@ -375,6 +377,27 @@ test('message persists separately, unknown retains exact operation, receipt requ
   assert.equal((await uow.read(projectId,r=>r.recovery!.getRecoveryGate(sessionId)))?.phase,'blocked',
     'known original outcome does not silently clear an unknown recovery gate');
   await reviewBlockedMessage(message.id);
+});
+
+test('settlement persists whether response text is a native reply or a bounded-unread system note',async()=>{
+  for(const responseKind of ['native','bounded_unread'] as const){
+    const targetSessionId=randomUUID();
+    await seedFullSession(targetSessionId);
+    const m={...item(),target:{kind:'owned' as const,sessionId:targetSessionId}};
+    await uow.transaction(projectId,tx=>tx.sessionMessages!.insertSessionMessage(m));
+    const local=new SessionMessageService({uow,clock:{now:()=>now},ids:{next:randomUUID},
+      grantFor:async()=>({...grant,sessionId:targetSessionId})});
+    await local.beginDispatch(projectId,m.id,randomUUID(),randomUUID(),qualified);
+    const turnId=`response-kind-${responseKind}`;
+    await local.bindTurn(projectId,m.id,{id:turnId,status:'inProgress'});
+    await local.settle(projectId,m.id,{id:turnId,status:'completed',completedAtUtc:now},
+      responseKind==='native'?'Normal answer':'Reply was not read within the bound',responseKind);
+    const detail=await local.detail(projectId,m.id);
+    assert.equal(detail.processing?.responseKind,responseKind);
+    assert.equal(detail.processing?.response,
+      responseKind==='native'?'Normal answer':'Reply was not read within the bound');
+    assert.equal(detail.message.state,'replied');
+  }
 });
 
 test('preflight is side-effect-free for missing or exhausted grants and dispatch rechecks revocation',async()=>{
@@ -893,6 +916,45 @@ test('049 migration preserves preexisting ordinary message and processing rows',
   }
 });
 
+test('090 marks only the exact preexisting bounded-unread note and leaves similar reply text native',async()=>{
+  const legacySchema=`el_msg_kind_${randomUUID().replaceAll('-','').slice(0,12)}`;
+  const migrations=fileURLToPath(new URL('../migrations/',import.meta.url));
+  const legacy=new pg.Client({connectionString:url,options:`-c search_path=${legacySchema}`});
+  try{
+    await runner({databaseUrl:url!,dir:migrations,migrationsTable:'pgmigrations',schema:legacySchema,
+      createSchema:true,createMigrationsSchema:true,direction:'up',singleTransaction:true,count:75,log:()=>{}});
+    await legacy.connect();
+    const p=randomUUID(),s=randomUUID();
+    await legacy.query("INSERT INTO project(project_id,title,created_at) VALUES($1,'Legacy response kinds',$2)",[p,now]);
+    await legacy.query(`INSERT INTO runtime_session(project_id,session_id,role_id,cwd,authorization_scope,sandbox,approval_policy,
+      state,version,native_thread_id,native_session_id,operation_id,actor_id,created_at,updated_at)
+      VALUES($1,$2,$3,'/tmp','project','danger-full-access','never','ready',1,$4,$5,$6,'receiver',$7,$7)`,
+      [p,s,randomUUID(),'thread-'+s,'native-'+s,randomUUID(),now]);
+    const process=async(response:string)=>{
+      const m=randomUUID();
+      await legacy.query(`INSERT INTO session_message(project_id,message_id,operation_id,target_kind,session_id,sender_actor_id,
+        content,state,version,created_at,updated_at)
+        VALUES($1,$2,$3,'owned',$4,'sender','Legacy content','failed',2,$5,$5)`,[p,m,randomUUID(),s,now]);
+      await legacy.query(`INSERT INTO session_message_processing(project_id,processing_id,message_id,session_id,operation_id,
+        receiver_actor_id,state,response,failure,read_only_policy_fingerprint,version,started_at,updated_at)
+        VALUES($1,$2,$3,$4,$5,'receiver','failed',$6,$7,$8,2,$9,$9)`,
+        [p,randomUUID(),m,s,randomUUID(),response,'Legacy failure',qualified,now]);
+      return m;
+    };
+    const exact=await process('（本轮已结束，但它的原生记录超过 50 页，回复没有在有界读取内读出；完整回复见该 Session 的原生会话记录。）');
+    const similar=await process('我读过“回复没有在有界读取内读出”这句话，但这是用户的真实答复。');
+    await migrate(url!,legacySchema);
+    const kinds=(await legacy.query(`SELECT message_id,response_kind FROM session_message_processing
+      WHERE project_id=$1 ORDER BY message_id`,[p])).rows;
+    assert.equal(kinds.find(row=>row.message_id===exact)?.response_kind,'bounded_unread');
+    assert.equal(kinds.find(row=>row.message_id===similar)?.response_kind,'native');
+  }finally{
+    await legacy.end().catch(()=>{});
+    const cleanup=new pg.Client({connectionString:url});await cleanup.connect();
+    try{await cleanup.query(`DROP SCHEMA "${legacySchema}" CASCADE`);}finally{await cleanup.end();}
+  }
+});
+
 test('a failed Turn keeps its native error category on the processing record and on the gate it closes',async()=>{
   const roomy=new SessionMessageService({uow,clock:{now:()=>new Date().toISOString()},ids:{next:randomUUID},
     grantFor:async()=>({...grant,maxTurns:1000})});
@@ -971,8 +1033,13 @@ test('a quota failure pauses the provider: other Sessions of it stay queued with
   const listing=await workflow.listProviderHolds(reviewer,projectId);
   assert.equal(listing.items[0]?.state,'held');assert.equal(listing.items[0]?.impact.filter(i=>[a2,a3].includes(i.sessionId)).reduce((n,i)=>n+i.queuedMessages,0),2);
   assert.ok(listing.items[0]!.queuedMessages>=2);
+  // The release names the hold that was read: another hold's ID is refused before anything is released.
+  const wrongHold=await workflow.execute(reviewer,{type:'runtime.providerHold.release',projectId,operationId:randomUUID(),provider:'codex',
+    holdId:randomUUID(),expectedVersion:1,evidenceRef:'ops://wrong',reason:'wrong hold'});
+  assert.equal(wrongHold.status,'rejected');assert.equal((wrongHold as {code:string}).code,'PROVIDER_HOLD_CHANGED');
+  assert.equal((await holds('codex')).filter(h=>h.state==='held').length,1,'nothing was released');
   const release=await workflow.execute(reviewer,{type:'runtime.providerHold.release',projectId,operationId:randomUUID(),provider:'codex',
-    expectedVersion:1,evidenceRef:'ops://balance-topped-up',reason:'Account balance restored'});
+    holdId:hold.hold_id,expectedVersion:1,evidenceRef:'ops://balance-topped-up',reason:'Account balance restored'});
   assert.equal(release.status,'applied',JSON.stringify(release));
   const released=(await holds('codex')).find(h=>h.released_by==='lead')!;
   assert.equal(released.state,'released');assert.equal(released.released_by,'lead');
@@ -986,7 +1053,7 @@ test('a quota failure pauses the provider: other Sessions of it stay queued with
     assert.ok(await svc.beginDispatch(projectId,m.id,randomUUID(),randomUUID(),qualified));
   }
   const again=await workflow.execute(reviewer,{type:'runtime.providerHold.release',projectId,operationId:randomUUID(),provider:'codex',
-    expectedVersion:1,evidenceRef:'ops://again',reason:'again'});
+    holdId:hold.hold_id,expectedVersion:1,evidenceRef:'ops://again',reason:'again'});
   assert.equal(again.status,'rejected');assert.equal((again as {code:string}).code,'PROVIDER_NOT_HELD','a second release finds nothing held');
 });
 

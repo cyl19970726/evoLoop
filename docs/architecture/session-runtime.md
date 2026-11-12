@@ -20,8 +20,8 @@
 - **主来源**：让一个 Turn 开始的那件事，只能是一个业务 Run 或一条普通消息的处理记录。
 - **槽位**：每个 Session 同一时刻只允许一个主来源占用；占用记录在 PostgreSQL 里，原生会话看起来空闲也不能越过它。
 - **恢复门**：每个 Session 一份的持久闸门。Turn 失败或结果未知时关上，有权者显式决定后才重新打开。
-- **原生失败类别**：Turn 失败时，适配器把原生错误归为 `quota_exhausted`（额度/余额，HTTP 402）、`authentication_failed`、`context_window_exceeded`、`connection_lost`、`provider_unavailable`、`rate_limited` 等，保存在消息处理记录（`failure_category`，迁移 084）并随恢复门读出；工作台把它们归为四类显示：额度/鉴权（运行受阻，需账户使用者充值或重新授权）、上下文超长、连接中断、其他。类别只说明原因，不改变单个恢复门的决定规则。
-- **提供方暂停（迁移 085）**：消息 Turn 以 `quota_exhausted` 或 `authentication_failed` 失败时，同一提供方（Codex / Claude）开一条 `runtime_provider_hold`（每个提供方至多一条生效），因为该提供方的每个 Session 都会以同样原因失败。暂停期间该提供方的新 Run 预留与新消息启动一律在启动检查处被拒（`PROVIDER_HELD`）：消息保持排队、写明阻塞原因，不失败、不逐个关恢复门；其他提供方与其他错误类别（上下文超长、连接断开、其他）不受影响。额度恢复后，复核者提交一次 `runtime.providerHold.release`：解除暂停，并把被该类失败关闭的各 Session 的恢复门逐个经审计过的恢复路径放行（每个 Session 各留一条恢复决定），做不到的 Session 记入 `release_summary.skipped` 并保持关闭，不拖累其他。读取：`GET /api/projects/:id/runtime/provider-holds`。只由消息路径的失败触发；Run 路径的失败暂不触发暂停。
+- **原生失败类别**：Turn 失败时，适配器把原生错误归为 `quota_exhausted`（额度/余额，HTTP 402）、`authentication_failed`、`context_window_exceeded`、`connection_lost`、`provider_unavailable`、`rate_limited` 等，保存在消息处理记录（`failure_category`，迁移 084）并随恢复门读出；工作台把它们归为四类显示：额度/鉴权（运行受阻，需账户使用者充值或重新授权）、上下文超长、连接中断、其他。类别只说明原因，不改变单个恢复门的决定规则。**分类只认结构化事实**：Codex 的 `codexErrorInfo` 变体（`usageLimitExceeded`、`unauthorized`、各变体带的 `httpStatusCode`）、JSON 包里的 `status` 与错误 `type`/`code`（如 `insufficient_quota`），以及**单独成行**的 “402 Payment Required” “401 Unauthorized” 这类状态行；Claude 一侧用 SDK 的错误类和 `api_error_status`（数字）。文字里任何位置出现的 “401”“402” 不算状态（例如限流提示里的 “Requested 401.”、请求编号里的 402）。429 先于额度关键词判断，只有提供方用 `insufficient_quota` 之类的代码明说余额用尽才算额度；403 是“请求被拒绝”，不触发暂停。
+- **提供方暂停（迁移 085）**：消息 Turn 以 `quota_exhausted` 或 `authentication_failed` 失败时，同一提供方（Codex / Claude）开一条 `runtime_provider_hold`（每个提供方至多一条生效），因为该提供方的每个 Session 都会以同样原因失败。暂停期间该提供方的新 Run 预留与新消息启动一律在启动检查处被拒（`PROVIDER_HELD`）：消息保持排队、写明阻塞原因，不失败、不逐个关恢复门；**被暂停拒绝的命令不写入操作日志**（`WorkflowService.execute` 直接抛出 `PROVIDER_HELD`，不保存为“已拒绝”的结果），所以带固定操作编号的常驻队列认领、编排派发和 Session 队伍的步骤在放行后用同一个编号重新判定，而不是永远重放那次拒绝；这些泵在暂停期间只是等待，不记日志、不挂起条目；其他提供方与其他错误类别（上下文超长、连接断开、其他）不受影响。额度恢复后，复核者提交一次 `runtime.providerHold.release`：解除暂停，并把被该类失败关闭的各 Session 的恢复门逐个经审计过的恢复路径放行（每个 Session 各留一条恢复决定），做不到的 Session 记入 `release_summary.skipped` 并保持关闭，不拖累其他。读取：`GET /api/projects/:id/runtime/provider-holds`。消息路径和 **Task Run 路径**的失败都会触发：Run 以 `quota_exhausted` 或 `authentication_failed` 失败时，类别记在 `runtime_run.failure_category`（迁移 094），同一提供方开暂停；暂停期间其他 Run 保持 `requested`（`beginDispatch` 被拒后什么也不保存），不失败、不逐个关恢复门；放行时因 Run 失败而关闭的恢复门同样经审计过的恢复路径放行（带未释放队列认领、必须显式重试的 Run 记入 `skipped`，由各自的决定处理）。恢复面板对 Run 失败也显示四类说明。**放行命令必须带暂停编号 `holdId`**：暂停被放行后又新开的暂停编号不同，旧命令被拒绝（`PROVIDER_HOLD_CHANGED`），不会放掉没人看过的新暂停。放行时每个 Session 的恢复在各自的保存点里执行，任何错误（含数据库错误）只记入该 Session 的 `skipped`，不让整次放行回滚；列表读取之后才被该类失败关闭的门，在放行前再读一次（最多三轮）补上。**即时输入**：暂停期间 Session 空闲时不能直启（能力查询答 `PROVIDER_HELD`，提交被拒），文字改存为普通排队消息，放行后按顺序处理；补入正在运行的 Turn 不受影响。工作台的“运行受阻”横幅列出受影响的会话；读不到暂停列表时写“暂时读不到，这不表示没有暂停”，并把服务端 5xx 与连接中断分开说明。
 - **队列控制者**：登记为某个常驻队列负责人的身份，只有它能对队列里失败的 Run 发起重试。
 - **工作轨迹**：一次 Run 在原生会话里的工具调用和输出记录；**连续工作区**：按时间顺序阅读一个 Session 全部历史的视图。
 
@@ -165,7 +165,7 @@ DEC-045 在现有即时输入之外增加三类输入，并把“接下来做什
 - **每个常驻业务 Session 一条队伍。** 新工作追加到队尾，Leader 可相对前移、后移或撤下；轮到一项时，先由执行者做轻量执行确认，高风险 Task 先过方案审阅，再依次开始、分派、预留 Run，三步用由队伍项和第几次尝试决定的固定操作 ID，可安全重放。依据待复核、阶段无效、定时未到、依赖未满足或授权缺失时挂起并给 Leader 立即级通知，后面的项照常往前走；Run 结束就放行下一项。验收安排仍走消息队列，一项一轮；Session 空闲时，队伍项与排队消息按到达先后轮流处理。对应 Q1；调度板 `work board` 的快照与事件流对应 Q2。
 - **日程到点分发。** 生成 Task 后默认交 Leader 安排，也可按 Leader 的直派名单直接追加到队伍：先选空闲 Session，没有空闲就选队伍最短的，再按名单顺序；只分发，不立即开始；忙就排队，引擎不新建 Session。对应 S1；测量工具与基线对应 M0。
 
-当前实现仍是旧路径：任务详情里的“驻留 Session 队列”是旧的批量常驻队列，不充当新的 Session 队伍；`session_direct_input` 只记录人的即时输入，还没有通知包送入；Codex 0.167 的送入能力与 Claude 一侧的补入都还要按 W3/W4 审定。上述能力上线前，页面和正文都不能把它们写成已具备；工作台调度板页面要等第一阶段检验通过后，由另行安排的原生 Session 设计并实现。
+当前实现（W1，迁移 089）已让 Leader 通知可以走通知包（私有配置 `leaderResultNotices.packets`，默认关闭）：逐项状态、人的消息先于通知包（真取消后才撤回）、读到后失败的至少送达一次与按包恢复；包的步骤只由通知发送身份运行；W2 的执行中送入、W5 的分级仍未做。其余仍是旧路径：任务详情里的“驻留 Session 队列”是旧的批量常驻队列，不充当新的 Session 队伍；`session_direct_input` 只记录人的即时输入，还没有通知包送入（通知包现在只开新一轮）；Codex 0.167 的送入能力与 Claude 一侧的补入都还要按 W3/W4 审定。上述能力上线前，页面和正文都不能把它们写成已具备；工作台调度板页面要等第一阶段检验通过后，由另行安排的原生 Session 设计并实现。
 
 ## 4. 托管压缩
 
@@ -229,7 +229,7 @@ Codex 一列有几项取决于运行配置选的协议版本。“现代协议�
 | 工作轨迹与连续工作区 | 支持轨迹；工作区历史需另开实验开关 | 都不支持 |
 | 会话命名 | 现代协议支持 | 不支持 |
 | 归档 | 原生 `thread/archive` | 适配器账本登记，拒绝后续 Turn |
-| 模型与思考强度修订 | 仅 alpha.6；需精确读回 | 不支持，沿用创建时的模型 |
+| 模型与思考强度修订 | 仅 alpha.6 做原生激活，需精确读回；没有 `thread/settings/update` 的版本（0.167）只改强度时立即生效、随每轮 `turn/start` 传入；带强度的任何模型修改都不支持（预检拒绝、不保存，换模型须新建 Session） | 只改强度随下一轮生效（每轮传 SDK 的 effort 选项）；换模型不支持（带强度的模型修改同样预检拒绝），沿用创建时的模型 |
 | 原生提问桥（`request_user_input`） | 默认关闭，可按配置打开 | 不支持；提问工具被禁用 |
 | 明确拒绝的启动结果 | 能区分“未发送”“被拒绝” | 只能区分“未发送”，其余为未知 |
 | 逐 Turn 用量与费用 | 不写入 Run；Token 读数只在原生观察里 | 写入 Run 的 `usage` 与 `cost_usd`（schema 067） |

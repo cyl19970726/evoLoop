@@ -43,6 +43,8 @@ export interface DirectInputServiceDeps {
   admission(principal:Principal,projectId:string,sessionId:string):Promise<{grant:DirectInputGrant;binding:RuntimeBinding}>;
   /** Existing owned binding for read-only reconciliation; a revoked sender grant cannot erase prior evidence. */
   bindingFor(projectId:string,sessionId:string):Promise<RuntimeBinding>;
+  /** Records the requested effort beside the one the Thread reported for the started Turn. Best effort. */
+  observeEffort?(projectId:string,sessionId:string,inputId:string,turn:RuntimeTurn,requested:string|null):Promise<void>;
 }
 
 /** The HTTP caller never controls the native binding, source or mode. */
@@ -54,8 +56,8 @@ export class DirectInputService {
     this.lock=deps.lock??new SessionSteerLock();
   }
   async capability(principal:Principal,projectId:string,sessionId:string):Promise<DirectInputCapability>{
-    const result=(available:boolean,mode:DirectInputCapability["mode"],expectedTurnId:string|null,reasonCode:string):DirectInputCapability=>
-      ({available,mode,expectedTurnId,reasonCode,observedAt:new Date().toISOString()});
+    const result=(available:boolean,mode:DirectInputCapability["mode"],expectedTurnId:string|null,reasonCode:string,detail?:string):DirectInputCapability=>
+      ({available,mode,expectedTurnId,reasonCode,observedAt:new Date().toISOString(),...(detail?{detail}:{})});
     if(!principal.projectIds.includes(projectId)||!principal.permissions.includes("read")||
       !principal.permissions.includes("write"))return result(false,null,null,"FORBIDDEN");
     let runtime:Native;
@@ -80,6 +82,8 @@ export class DirectInputService {
           result(false,null,null,"NATIVE_TURN_NOT_ACTIVE");
       }catch{return result(false,null,null,"NATIVE_TURN_UNKNOWN");}
     }
+    if(await this.deps.store.providerHeld(projectId,sessionId))return result(false,null,null,"PROVIDER_HELD",
+      "the model provider is paused for quota or authentication; messages are saved queued and go out with the release");
     if(!grant.canStart)return result(false,null,null,"DIRECT_START_DISABLED");
     if(!capabilities.delivery.idleTurnStart)return result(false,null,null,"NATIVE_IDLE_START_UNAVAILABLE");
     if(grant.maxTurns!==undefined&&state.used>=grant.maxTurns)
@@ -158,7 +162,9 @@ export class DirectInputService {
       }
       const input=`${marker(record.operationId)}\nOrdinary Session conversation using this Session's normal tools and full execution permissions. Act within the user's request and project identity. A reply does not itself record Task delivery or acceptance.\n${record.content}`;
       const turn=await runtime.startConversationTurn(binding,input,record.inputId);
-      return publicDirectInput(await this.deps.store.accept(projectId,record.inputId,turn.id,null));
+      const accepted=publicDirectInput(await this.deps.store.accept(projectId,record.inputId,turn.id,null));
+      await this.deps.observeEffort?.(projectId,record.sessionId,record.inputId,turn,binding.resumeProfile?.reasoningEffort??null).catch(()=>undefined);
+      return accepted;
     }catch(error){
       if(error instanceof RuntimeLocalBusyError){
         // Adapter-level in-flight admission refused before writing; keep the durable intent retryable.

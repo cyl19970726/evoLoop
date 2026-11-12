@@ -24,6 +24,7 @@ import { applyNativeInputReply } from "./native-input/index.js";
 export { NativeInputService } from "./native-input/index.js";
 import type { SessionMessageCommand } from "@evoloop/contracts/session-messages";
 import { applySessionAssignment } from "./session-assignments/index.js";
+import { applyLeaderNoticePacket } from "./leader-notice-packets/index.js";
 import { applySessionLine } from "./session-line/index.js";
 import type { SessionAssignmentCommand } from "@evoloop/contracts/session-assignments";
 import type { DomainRoute, HostLink } from "@evoloop/contracts/resident-hosts";
@@ -36,12 +37,13 @@ import { canonicalTaskInputJson, taskInputSignature } from "./task-input.js";
 import type { TaskCollaborationPayload } from "@evoloop/contracts/discussions";
 import { applyEvaluation, taskSignature } from "./evaluation/index.js";
 import type { ScheduleCommand } from "@evoloop/contracts/scheduling";
-export { RuntimeWorkflowService } from "./runtime/service.js";
+export { RuntimeWorkflowService, describeTurnEffort } from "./runtime/service.js";
 export { applyProviderHoldRelease } from "./provider-hold.js";
 import type { Clock, ContentHasher, IdFactory, Reader, Transaction, UnitOfWork } from "@evoloop/contracts/ports";
 import { applyProviderHoldRelease } from "./provider-hold.js";
 import type { ProviderHoldListing, ProviderHoldView } from "@evoloop/contracts/provider-hold";
 import { applySessionRecovery, type RecoveryAuthority } from './session-recovery.js';
+export { MODEL_CHANGE_UNSUPPORTED_MESSAGE } from './session-recovery.js';
 import type { SessionRecoveryView } from '@evoloop/contracts/session-recovery';
 
 export { DomainError } from "@evoloop/contracts/ports";
@@ -53,6 +55,8 @@ export interface WorkflowDependencies { uow: UnitOfWork; clock: Clock; ids: IdFa
   runtimeProviders?: readonly import("@evoloop/contracts/runtime").RuntimeProvider[];
   taskTimingAuthority?: (projectId: string, actorId: string, roleId: string, scopeId: string) => Promise<boolean>;
   recoveryAuthority?: RecoveryAuthority;
+  /** The one identity that runs the notice packet's own steps (build, sent, observe) for a project: the configured notice sender. Absent: none may. */
+  leaderNoticeServiceActor?: (projectId: string) => Promise<string | null>;
   collaborationAuthority?: {
     actorForRole(projectId:string,roleId:string):Promise<string|null>;
     isAuthorizedRoleActor(projectId:string,actorId:string,roleId:string):Promise<boolean>;
@@ -177,6 +181,9 @@ export class WorkflowService {
         result = outcome.result;
         effects = outcome.effects;
       } catch (error) {
+        // A provider hold is a temporary state, not a decision about this command: nothing is journalled, so the same operation
+        // ID is evaluated afresh once the hold is released instead of replaying the refusal forever.
+        if (error instanceof DomainError && error.code === "PROVIDER_HELD") throw error;
         if (error instanceof DomainError) {
           result = {
             status: "rejected", operationId: command.operationId, code: error.code,
@@ -212,7 +219,9 @@ export class WorkflowService {
       command.type==='runtime.providerHold.release'||command.type==='session.message.reconcile'||command.type==='session.message.interrupt'||
       command.type==='session.message.manualStop')return 'review';
     if (command.type === "session.profile.set" || command.type === "session.identity.set" || command.type.startsWith("task.assignment.") && command.type !== "task.assignment.acknowledge") return "review";
-    if (command.type.startsWith("queue.") || command.type.startsWith("line.")) return "review";
+    // The packet's own steps belong to the notice service identity (checked in apply); the Leader's decision and recovery need review.
+    if (command.type === "leader.noticePacket.build" || command.type === "leader.noticePacket.sent" || command.type === "leader.noticePacket.observe") return "write";
+    if (command.type.startsWith("queue.") || command.type.startsWith("line.") || command.type.startsWith("leader.notice")) return "review";
     if (command.type.startsWith("evaluation.") || command.type.startsWith("domain.") || command.type.startsWith("host.")) return "review";
     return command.type === "document.adopt" || command.type === "document.publish" || command.type === "document.archive" || command.type === "document.restore" || command.type === "task.start" || command.type === "task.reviewBasis" || command.type === "task.close" || command.type === "task.cancel" || command.type === "task.reopen" || command.type === "stage.accept" || command.type === "stage.review" || command.type === "stage.review.correct" || command.type === "runtime.session.reserve" || command.type === "runtime.session.close" || command.type === "runtime.run.reserve" || (command.type === "runtime.run.interrupt" || command.type === "runtime.run.stop" || command.type === "runtime.run.abandonReadOnly") || command.type.startsWith("schedule.") || command.type.startsWith("role.") && command.type !== "role.propose" || command.type === "discussion.decision.record" || command.type === "discussion.action.link"
       ? "review" : "write";
@@ -226,6 +235,13 @@ export class WorkflowService {
       return applyProviderHoldRelease(tx,principal,command,now,()=>this.deps.ids.next());
     if(command.type==='runtime.session.executionProfile.revise'||command.type==='runtime.session.recovery.resume')
       return applySessionRecovery(tx,principal,command,now,()=>this.deps.ids.next(),this.deps.recoveryAuthority);
+    if (command.type.startsWith("leader.notice")) {
+      if (command.type === "leader.noticePacket.build" || command.type === "leader.noticePacket.sent" || command.type === "leader.noticePacket.observe") {
+        const service = await this.deps.leaderNoticeServiceActor?.(command.projectId);
+        if (!service || service !== principal.actorId) throw new DomainError("FORBIDDEN", "Only the Leader notice service identity may run notice packet steps");
+      }
+      return applyLeaderNoticePacket(tx, principal, command as import("@evoloop/contracts/leader-notice-packets").LeaderNoticePacketCommand, now);
+    }
     if (command.type.startsWith("line."))
       return applySessionLine(tx, principal, command as import("@evoloop/contracts/session-line").SessionLineCommand, now, () => this.deps.ids.next());
     if (command.type.startsWith("session.message."))

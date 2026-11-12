@@ -26,7 +26,7 @@ export interface Recovery { kind: "core" | "orchestration" | "ordinary" | "candi
 export interface Intent {
   projectId: string; id: string; operationId: string | null; kind: string; path: string; body: unknown; recovery: Recovery;
   method?: "PUT"; // Absence preserves the POST method of existing receipts.
-  confirmation: "command" | "candidate" | "publish" | "ack" | "review" | "publish-reconcile" | "runtime-reconcile" | "runtime-recover" | "leader-notice-recovery" | "compaction-start" | "compaction-reconcile";
+  confirmation: "command" | "candidate" | "publish" | "ack" | "review" | "publish-reconcile" | "runtime-reconcile" | "runtime-recover" | "leader-notice-recovery" | "leader-packet-recovery" | "compaction-start" | "compaction-reconcile";
   targetId?: string;
 }
 export interface Receipt extends Intent {
@@ -152,6 +152,7 @@ function confirmed(receipt: Receipt, result: unknown): boolean {
     return value.status === "recorded" && !!decision && decision.candidateId === receipt.targetId && typeof decision.reviewerId === "string" &&
       ["candidateRevision", "contentHash", "expectedRevision", "decision", "reason"].every(key => decision[key] === body?.[key]);
   }
+  if (receipt.confirmation === "leader-packet-recovery") return value.status === "recorded" && value.packetId === receipt.targetId && value.state === "recovered";
   if (receipt.confirmation === "leader-notice-recovery") return value.status === "recorded" &&
     value.originalNoticeId === receipt.targetId && value.newNoticeId === body?.newNoticeId &&
     value.newMessageId === body?.newMessageId && value.newOperationId === body?.newOperationId;
@@ -288,6 +289,16 @@ export async function reconcileReceipt(client: ApiClient, store: ReceiptStore, a
     const details = error instanceof CliApiError ? { code: error.code, status: error.status } : { code: "READ_UNAVAILABLE" };
     await store.update(receipt, { lastError: details });
     throw pending(receipt, details);
+  }
+  if (receipt.confirmation === "leader-packet-recovery") {
+    const packet=record(record(observed)?.packet);
+    if (packet?.id === receipt.targetId && packet?.projectId === receipt.projectId && packet?.state === "recovered") {
+      const result={status:"recorded",packetId:receipt.targetId,state:"recovered"};
+      await store.update(receipt,{state:"confirmed",result});
+      return store.get(receipt.id);
+    }
+    await store.update(receipt,{lastError:{code:"RECOVERY_NOT_CONFIRMED",observation:observed}});
+    throw pending(receipt,observed);
   }
   if (receipt.confirmation === "leader-notice-recovery") {
     const original=record(observed), disposition=record(original?.recovery), body=record(receipt.body);

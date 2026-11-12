@@ -429,6 +429,26 @@ test("bindings and execution profiles are checked before any process starts", as
   } finally { await h.cleanup(); }
 });
 
+test("an effort-only revision applies from the next Turn: the adapter says so and re-registers the verified binding", async () => {
+  const h = await setup();
+  try {
+    const revision1 = randomUUID(), revision2 = randomUUID();
+    const base = await h.adapter.create({ ...h.spec, executionProfileRevisionId: revision1 });
+    assert.equal(h.adapter.appliesEffortWithNextTurn(base), true, "effort travels with each query, there is nothing to activate");
+    assert.deepEqual([...h.adapter.allowedReasoningEfforts(base)].sort(), ["high", "low", "max", "medium", "xhigh"], "Claude's own set: no none, no minimal");
+    const withEffort = (effort: string, revisionId: string): RuntimeBinding => ({ ...base, resumeProfile: { ...base.resumeProfile!, reasoningEffort: effort, executionProfileRevisionId: revisionId } });
+    const first = withEffort("high", revision1), second = withEffort("low", revision2);
+    await h.adapter.registerBinding(first);
+    await h.adapter.registerBinding(second);             // the revision became active in the store: no "conflicting runtime binding"
+    const profile = { revisionId: revision2, version: 2, model: second.resumeProfile!.model ?? null, reasoningEffort: "low", sandbox: "danger-full-access", approvalPolicy: "never",
+      cwd: second.cwd, authorizationScope: second.authorizationScope, provenance: "revised" } as Parameters<typeof h.adapter.startTurn>[3];
+    const operationId = randomUUID();
+    const started = await h.adapter.startTurn(second, `${marker(operationId)}\nTask`, operationId, profile);
+    assert.ok(started.id);
+    await assert.rejects(h.adapter.registerBinding({ ...second, resumeProfile: { ...second.resumeProfile!, model: "another-model" } }), /conflicting runtime binding/);
+  } finally { await h.cleanup(); }
+});
+
 test("model list comes from the CLI initialize response without sending a prompt", async () => {
   const h = await setup();
   try {

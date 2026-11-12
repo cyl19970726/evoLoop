@@ -3,10 +3,15 @@ import type { Principal } from "@evoloop/contracts";
 import { DomainError } from "@evoloop/contracts/ports";
 import { z } from "zod";
 import { leaderNoticeRecoverySchema } from "@evoloop/contracts/leader-notices";
+import { leaderNoticePacketRecoverySchema } from "@evoloop/contracts/leader-notice-packets";
 
 export interface LeaderNoticeReader {
   list(projectId: string, query: { taskId?: string; limit: number; cursor?: string }): Promise<unknown>;
   get?(projectId: string, noticeId: string): Promise<unknown>;
+  /** One packet with its attempts and every item's state and version (the version a decision must name). */
+  packet?(projectId: string, packetId: string): Promise<unknown>;
+  /** Recover one blocked packet (the Leader's decision, needs review authority); its items return to the next packet. */
+  recoverPacket?(principal: Principal, projectId: string, packetId: string, reason: string): Promise<unknown>;
   recover?(projectId: string, noticeId: string, input: z.infer<typeof leaderNoticeRecoverySchema>, actorId: string): Promise<unknown>;
 }
 
@@ -29,6 +34,21 @@ export function registerLeaderNoticeRoutes(app: FastifyInstance,
     const {projectId,noticeId}=z.strictObject({projectId:z.uuid(),noticeId:z.uuid()}).parse(request.params);
     await service.getProject(request.principal,projectId);
     return notices.get!(projectId,noticeId);
+  });
+  if (notices.packet) app.get("/api/projects/:projectId/leader-notice-packets/:packetId", async request => {
+    if (!request.principal) throw new DomainError("FORBIDDEN", "Authentication required");
+    const { projectId, packetId } = z.strictObject({ projectId: z.uuid(), packetId: z.uuid() }).parse(request.params);
+    await service.getProject(request.principal, projectId);
+    return notices.packet!(projectId, packetId);
+  });
+  if (notices.recoverPacket) app.post("/api/projects/:projectId/leader-notice-packets/:packetId/recover", async request => {
+    if (!request.principal) throw new DomainError("FORBIDDEN", "Authentication required");
+    const { projectId, packetId } = z.strictObject({ projectId: z.uuid(), packetId: z.uuid() }).parse(request.params);
+    const who = request.principal;
+    if (!who.permissions.includes("write") || !who.permissions.includes("review"))
+      throw new DomainError("FORBIDDEN", "Project review permission is required for Leader notice packet recovery");
+    await service.getProject(who, projectId);
+    return notices.recoverPacket!(who, projectId, packetId, leaderNoticePacketRecoverySchema.parse(request.body).reason);
   });
   if (notices.recover) app.post("/api/projects/:projectId/work-management/notices/:noticeId/recover", async request => {
     if (!request.principal) throw new DomainError("FORBIDDEN", "Authentication required");

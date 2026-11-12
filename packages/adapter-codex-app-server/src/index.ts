@@ -83,45 +83,73 @@ const sameBinding = (a: RuntimeBinding, b: RuntimeBinding): boolean =>
   (["sessionId", "roleId", "projectId", "nativeThreadId", "nativeSessionId", "cwd", "authorizationScope", "owner"] as const).every(key => a[key] === b[key]) &&
   (["actorId","model","reasoningEffort","sandbox","approvalPolicy","executionProfileRevisionId"] as const).every(key =>
     (a.resumeProfile?.[key] ?? null) === (b.resumeProfile?.[key] ?? null));
+/** Same Thread, scope and profile except the effort and the execution profile revision that carries it. */
+const effortRevisionOnly = (a: RuntimeBinding, b: RuntimeBinding): boolean =>
+  (["sessionId", "roleId", "projectId", "nativeThreadId", "nativeSessionId", "cwd", "authorizationScope", "owner"] as const).every(key => a[key] === b[key]) &&
+  (["actorId", "model", "sandbox", "approvalPolicy"] as const).every(key => (a.resumeProfile?.[key] ?? null) === (b.resumeProfile?.[key] ?? null));
 const nonempty = (value: unknown): value is string => typeof value === "string" && value.length > 0;
 const safeModelIdentity = (value:unknown):string|null => typeof value==="string"&&
   /^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$/.test(value)?value:null;
 const safeProviderCode = (value: unknown): string | null => typeof value === "string" && /^[a-z][a-z0-9_]{0,63}$/.test(value) ? value : null;
-/** Native classification first: the App Server reports overflow as a typed codexErrorInfo, not an HTTP status. */
+/** Native classification first: the App Server reports typed errors in codexErrorInfo, not as an HTTP status in the text. */
 const contextWindowExceeded = (info: unknown): boolean =>
   info === "contextWindowExceeded" || (!!object(info) && Object.hasOwn(object(info)!, "contextWindowExceeded"));
+/** The variant name of a typed codexErrorInfo (a bare string or a one-key object) and the HTTP status it carries, if any. */
+function nativeInfo(info: unknown): { kind: string | null; status: number | null } {
+  const validStatus = (value: unknown) => typeof value === "number" && Number.isInteger(value) && value >= 100 && value <= 599 ? value : null;
+  if (typeof info === "string") return { kind: info, status: null };
+  const entry = object(info) ? Object.entries(object(info)!)[0] : undefined;
+  if (!entry) return { kind: null, status: null };
+  return { kind: entry[0], status: validStatus(object(entry[1])?.httpStatusCode) };
+}
+/**
+ * An HTTP status stated as a line of its own ("402 Payment Required: …"), never a number found anywhere in the text: a
+ * request ID, a hex string or "Requested 401." in a rate-limit message is not a status.
+ */
+function leadingStatus(text: string): number | null {
+  const found = /^\s*(?:HTTP\/?\d*(?:\.\d)?\s+)?(402\s+Payment Required|401\s+Unauthorized|403\s+Forbidden|429\s+Too Many Requests)\b/im.exec(text);
+  return found ? Number(found[1]!.slice(0, 3)) : null;
+}
 export function turnFailure(value: unknown): RuntimeTurnFailure | undefined {
   const native = object(value);
   if (!native) return undefined;
   if (contextWindowExceeded(native.codexErrorInfo))
     return { category: "context_window_exceeded", providerCode: null, httpStatus: null,
       summary: "Context exceeded the model window; retry on the same Session after native compaction" };
+  const info = nativeInfo(native.codexErrorInfo);
   const raw = typeof native.message === "string" ? native.message : "";
   let parsed: Record<string, unknown> | null = null;
   try { parsed = object(JSON.parse(raw)); } catch { /* Native error text is not necessarily JSON. */ }
   const provider = object(parsed?.error);
   const providerMessage = typeof provider?.message === "string" ? provider.message : "";
-  const status = typeof parsed?.status === "number" && Number.isInteger(parsed.status) && parsed.status >= 100 && parsed.status <= 599 ? parsed.status : null;
-  const providerCode = safeProviderCode(provider?.type);
+  const envelopeStatus = typeof parsed?.status === "number" && Number.isInteger(parsed.status) && parsed.status >= 100 && parsed.status <= 599 ? parsed.status : null;
+  const providerCode = safeProviderCode(provider?.type) ?? safeProviderCode(provider?.code);
   const unsupportedModel = /model is not supported.{0,100}ChatGPT account/i.test(providerMessage);
-  // Native errors are not always the JSON envelope: the real 402 arrived as "402 Payment Required: … Insufficient Balance".
   const text = `${raw} ${providerMessage}`;
-  const textStatus = status ?? (/(?:^|\D)(402|401)(?:\D|$)/.exec(text)?.[1] ? Number(/(?:^|\D)(402|401)(?:\D|$)/.exec(text)![1]) : null);
-  const quota = textStatus === 402 || /payment required|insufficient[\s_-]?(?:balance|quota|funds|credits?)|quota (?:exceeded|exhausted)|out of credits?|billing[\s_-]?(?:hard[\s_-]?limit|error)/i.test(text) ||
-    providerCode === "insufficient_quota";
-  const authentication = textStatus === 401 || /invalid[\s_-]?api[\s_-]?key|unauthori[sz]ed|authentication (?:failed|error)/i.test(text);
-  const connection = /connection (?:closed|reset|refused|lost|error)|ECONNRESET|ECONNREFUSED|ETIMEDOUT|stream (?:closed|disconnected|ended)|socket hang up|network (?:error|unreachable)/i.test(text);
+  // Structured evidence first (typed variant, its httpStatusCode, the JSON envelope), then only an explicit status line.
+  const status = info.status ?? envelopeStatus ?? leadingStatus(raw);
+  const insufficientQuota = providerCode === "insufficient_quota" || info.kind === "usageLimitExceeded";
+  const authenticationFacts = info.kind === "unauthorized" || status === 401 ||
+    providerCode === "invalid_api_key" || providerCode === "authentication_error" || /invalid[\s_-]?api[\s_-]?key/i.test(providerMessage || raw);
+  // A rate limit (429) is never a balance problem unless the provider says so by code: "quota exceeded" in a per-minute limit
+  // would otherwise become a provider-wide pause that only a person can lift.
+  const rateLimited = status === 429 && !insufficientQuota;
+  const quota = insufficientQuota || (!rateLimited && (status === 402 ||
+    /payment required|insufficient[\s_-]?(?:balance|quota|funds|credits?)|out of credits?|billing[\s_-]?hard[\s_-]?limit/i.test(providerMessage || raw)));
+  const connection = /connection (?:closed|reset|refused|lost|error)|ECONNRESET|ECONNREFUSED|ETIMEDOUT|stream (?:closed|disconnected|ended)|socket hang up|network (?:error|unreachable)/i.test(text) ||
+    info.kind === "responseStreamDisconnected" || info.kind === "httpConnectionFailed" || info.kind === "responseStreamConnectionFailed";
   const category: RuntimeTurnFailure["category"] = unsupportedModel ? "unsupported_model" : quota ? "quota_exhausted"
-    : authentication ? "authentication_failed" : status === 429 ? "rate_limited"
-    : status !== null && status >= 500 ? "provider_unavailable" : status !== null && status >= 400 ? "provider_rejected"
+    : authenticationFacts ? "authentication_failed" : rateLimited ? "rate_limited"
+    : info.kind === "serverOverloaded" || (status !== null && status >= 500) ? "provider_unavailable"
+    : status !== null && status >= 400 ? "provider_rejected"
     : connection ? "connection_lost" : "native_failure";
   const summary = category === "unsupported_model" ? "Configured model is not supported with this Codex ChatGPT account"
-    : category === "quota_exhausted" ? "Model provider quota or balance exhausted (HTTP 402); the account owner must top up"
+    : category === "quota_exhausted" ? "Model provider quota or balance exhausted; the account owner must top up"
     : category === "authentication_failed" ? "Model provider authentication failed; the account owner must re-authorize"
     : category === "connection_lost" ? "Connection to the model provider was lost"
     : category === "rate_limited" ? "Model provider rate limit" : category === "provider_unavailable" ? "Model provider unavailable"
     : category === "provider_rejected" ? "Model provider rejected the request" : "Native turn failed";
-  return { category, providerCode, httpStatus: category === "quota_exhausted" && textStatus === 402 ? 402 : status, summary };
+  return { category, providerCode, httpStatus: status, summary };
 }
 function runtimeTurn(value: unknown): RuntimeTurn | null {
   const turn = object(value);
@@ -145,6 +173,7 @@ export type RuntimeCompactionPreflightStage = "request_validation" | "owner_resu
  * A known failure before `thread/compact/start` was sent. The stage and safe
  * cause distinguish this from a lost compaction acknowledgement.
  */
+const CODEX_REASONING_EFFORTS: readonly string[] = ["minimal", "low", "medium", "high", "xhigh", "max"];
 export class RuntimeCompactionPreflightError extends RuntimeProtocolError {
   readonly code: string;
   constructor(readonly stage: RuntimeCompactionPreflightStage, cause: unknown) {
@@ -1038,10 +1067,16 @@ export class CodexAppServerAdapter implements RuntimePort {
   async registerBinding(binding: RuntimeBinding): Promise<void> {
     this.validateBinding(binding);
     if (!this.options.verifyBinding || !await this.options.verifyBinding(binding)) throw new RuntimeProtocolError("binding provenance not verified");
-    this.rememberBinding(binding);
+    // The trusted store has confirmed this binding. Where effort rides on each turn/start (no thread/settings/update), a revision that
+    // changed only the effort replaces the registered one; any other difference is still a conflict.
+    this.rememberBinding(binding, true);
   }
 
   /** Exact, unused thread/start proof on this owner connection; no native Turn has been attempted. */
+  /** Without thread/settings/update (Codex 0.167 and others) effort cannot change on a live Thread; it rides on each turn/start. */
+  appliesEffortWithNextTurn(_binding: RuntimeBinding): boolean { return !this.features.executionProfileSwitch; }
+  /** Codex levels plus the gateway's `max` (not `none`: the profile table cannot store it); what a model really lists is checked against the model catalog. */
+  allowedReasoningEfforts(_binding: RuntimeBinding): readonly string[] { return CODEX_REASONING_EFFORTS; }
   hasFreshStartProof(binding: RuntimeBinding): boolean {
     this.owned(binding);
     const fresh=this.freshThreads.get(binding.nativeThreadId);
@@ -1057,10 +1092,12 @@ export class CodexAppServerAdapter implements RuntimePort {
       throw new RuntimeProtocolError('connector receiver binding requires the pinned restricted native profile');
   }
 
-  private rememberBinding(binding: RuntimeBinding): void {
+  private rememberBinding(binding: RuntimeBinding, replaceEffortRevision = false): void {
     this.validateBinding(binding);
     const existing = this.bindings.get(binding.nativeThreadId);
-    if (existing && !sameBinding(existing, binding)) throw new RuntimeProtocolError("conflicting runtime binding");
+    if (existing && !sameBinding(existing, binding) &&
+      !(replaceEffortRevision && !this.features.executionProfileSwitch && effortRevisionOnly(existing, binding)))
+      throw new RuntimeProtocolError("conflicting runtime binding");
     this.bindings.set(binding.nativeThreadId, binding);
   }
 
@@ -1482,7 +1519,7 @@ export class CodexAppServerAdapter implements RuntimePort {
       const turn=runtimeTurn(started?.turn);
       if(!turn||turn.status!=='inProgress'||turn.completedAtUtc!==null)
         throw new RuntimeUnknownError('turn/start',null,'invalid full conversation acknowledgement; Turn may have started');
-      return turn;
+      return profile.reasoningEffort?await this.withObservedEffort(binding,turn):turn;
     }finally{
       // A changed readback must not leave an implicit admission for another start.
       this.conversationQualifications.delete(threadId);
@@ -1740,23 +1777,28 @@ export class CodexAppServerAdapter implements RuntimePort {
     throw new RuntimeProtocolError("archived thread listing exceeds bounded recovery window");
   }
 
+  /**
+   * thread/turns/list with the bounded retry every caller needs: the pinned schemas declare the method, yet 0.167 answers -32601 for a
+   * short window right after turn/start while the Thread's history store attaches (observed about 50 ms on 0.167.0-alpha.3.2). A read has
+   * no side effect, so a bounded retry settles that window instead of reporting a fault. Listing and the per-turn effort readback share it.
+   */
+  private async requestTurnsList(params: Record<string, unknown>): Promise<Record<string, unknown> | null> {
+    for (let attempt = 0; ; attempt++) {
+      try { return object(await this.request("thread/turns/list", params)); }
+      catch (error) {
+        if (!(error instanceof RuntimeServerError && error.code === -32601) || attempt >= TURN_LIST_ATTACH_RETRIES) throw error;
+        await new Promise(resolveDelay => setTimeout(resolveDelay, TURN_LIST_ATTACH_DELAY_MS * (attempt + 1)));
+      }
+    }
+  }
+
   async listTurns(binding: RuntimeBinding, cursor?: string): Promise<RuntimePage<RuntimeTurn>> {
     this.owned(binding);
     // Metadata-only listing is supported by the pinned modern protocols; 0.154 has no itemsView.
     const params = { threadId: binding.nativeThreadId, limit: 100,
       sortDirection:'desc', ...(this.features.modern ? { itemsView: "notLoaded" } : {}),
       ...(cursor ? { cursor } : {}) };
-    // The pinned schemas declare this method, yet 0.167 answers -32601 for a short window right after
-    // turn/start while the Thread's history store attaches (observed about 50 ms on 0.167.0-alpha.3.2).
-    // A read has no side effect, so a bounded retry settles that window instead of reporting a fault.
-    let result: Record<string, unknown> | null = null;
-    for (let attempt = 0; ; attempt++) {
-      try { result = object(await this.request("thread/turns/list", params)); break; }
-      catch (error) {
-        if (!(error instanceof RuntimeServerError && error.code === -32601) || attempt >= TURN_LIST_ATTACH_RETRIES) throw error;
-        await new Promise(resolveDelay => setTimeout(resolveDelay, TURN_LIST_ATTACH_DELAY_MS * (attempt + 1)));
-      }
-    }
+    const result = await this.requestTurnsList(params);
     const turns = Array.isArray(result?.data) ? result.data.map(runtimeTurn) : null;
     if (!turns || turns.some(turn => !turn)) throw new RuntimeProtocolError("invalid turns page");
     if (this.features.modern &&
@@ -1839,7 +1881,23 @@ export class CodexAppServerAdapter implements RuntimePort {
     }
     const turn = runtimeTurn(result?.turn);
     if (!turn) throw new RuntimeUnknownError("turn/start", null, "invalid acknowledgement; turn may have started");
-    return turn;
+    return executionProfile?.reasoningEffort ? await this.withObservedEffort(binding, turn) : turn;
+  }
+
+  /**
+   * The effort the Thread reports right after turn/start, counted only when this very Turn is the Thread's latest one, so the value is the
+   * one in effect for it and not an older Turn's. Anything else (a failed read, another Turn first) is "unread", never "consistent".
+   * Best effort: the Turn has already started.
+   */
+  private async withObservedEffort(binding: RuntimeBinding, turn: RuntimeTurn): Promise<RuntimeTurn> {
+    try {
+      const latest = await this.requestTurnsList({ threadId: binding.nativeThreadId, limit: 1, sortDirection: "desc", ...(this.features.modern ? { itemsView: "notLoaded" } : {}) });
+      const first = Array.isArray(latest?.data) ? object(latest.data[0]) : null;
+      if (first?.id !== turn.id) return { ...turn, observedReasoningEffort: null };
+      const readback = object(await this.request("thread/read", { threadId: binding.nativeThreadId, includeTurns: false }));
+      const observed = object(readback?.thread)?.reasoningEffort;
+      return { ...turn, observedReasoningEffort: typeof observed === "string" ? observed : null };
+    } catch { return { ...turn, observedReasoningEffort: null }; }
   }
 
   async interruptTurn(binding: RuntimeBinding, turnId: string): Promise<void> {
