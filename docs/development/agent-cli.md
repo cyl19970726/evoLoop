@@ -25,7 +25,7 @@
 | `runtime.enabled` | 服务启动时已启用运行时 | `runtime_unavailable` | 只在服务启动时读，改后重启 |
 | `runtime.grants` | 该 Session 的执行授权：项目、Session 身份、Role、授权范围、工作目录；全权限、never | `runtime_grant`、`model_not_authorized` | `session prepare` 每次重读 |
 | `runtime.grants[].cwd` | 工作区：须是规范绝对路径（与 realpath 一致），请求的 cwd 与之相同 | `cwd` | 每次重读 |
-| `runtime.materialCli` | Role 级 CLI 绑定：`{projectId, roleId, sessionActorId, cliActorId, command}`；`sessionActorId` 是调用 `session prepare` 的身份，`command` 是该业务身份 CLI 包装脚本的绝对路径 | `material_cli`、`material_cli_incompatible` | 每次重读 |
+| `runtime.materialCli` | Role 级 CLI 绑定：`{projectId, roleId, sessionActorId, cliActorId, command}`；`sessionActorId` 是调用 `session prepare` 的身份，`command` 是该业务身份 CLI 包装脚本的绝对路径，**只能含字母、数字和 `_ . / -`**（可再带一个以空格分隔的绝对路径参数）；含 `@`、`+`、空格等其他字符的路径会在预检里被直接判为不可用（`material_cli_incompatible`，不会去运行它），看起来像“CLI 太旧”，换到符合的路径即可 | `material_cli`、`material_cli_incompatible` | 每次重读 |
 | `residentQueue.roleActors` | Role → 业务身份映射：`{projectId, roleId, actorId}`；`actorId` 必须等于上一行的 `cliActorId` | **`role_actor`**（没有这一项）、`material_cli_actor_mismatch`（两处不一致） | 每次重读，**不需要重启** |
 | `residentQueue.enabled` | 为 `true`，上一行才被采用 | `role_actor` | 每次重读 |
 | `sessionMessages.grants`（新业务身份 → Leader） | **必配**：`sessionId` 指 Leader Session，`senderActorId` 是新业务身份，`receiverActorId`、`receiverRoleId` 与 `cwd` 取 Leader 的，`enabled` 为 `true` | 不在 prepare 检查；漏配时发送当场报 `MESSAGE_GRANT_MISSING`，消息不保存 | 每次重读 |
