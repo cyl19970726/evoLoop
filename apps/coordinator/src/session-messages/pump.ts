@@ -176,7 +176,7 @@ export class SessionMessagePump {
         try{const turn=connectorBindingId
           ? await runtime.startConnectorTurn!(binding,input,record.operationId,connectorBindingId,qualification.fingerprint)
           : await runtime.startConversationTurn!(binding,input,record.operationId);
-          await this.deps.service.bindTurn(message.projectId,message.id,turn);}
+          await this.deps.service.bindTurn(message.projectId,message.id,turn,binding.resumeProfile?.reasoningEffort??null);}
         catch(error){
           if(error instanceof RuntimeLocalBusyError)
             // The adapter refused before writing; the message stays queued and the gate stays open.

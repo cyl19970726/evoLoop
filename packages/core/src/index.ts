@@ -37,12 +37,13 @@ import { canonicalTaskInputJson, taskInputSignature } from "./task-input.js";
 import type { TaskCollaborationPayload } from "@evoloop/contracts/discussions";
 import { applyEvaluation, taskSignature } from "./evaluation/index.js";
 import type { ScheduleCommand } from "@evoloop/contracts/scheduling";
-export { RuntimeWorkflowService } from "./runtime/service.js";
+export { RuntimeWorkflowService, describeTurnEffort } from "./runtime/service.js";
 export { applyProviderHoldRelease } from "./provider-hold.js";
 import type { Clock, ContentHasher, IdFactory, Reader, Transaction, UnitOfWork } from "@evoloop/contracts/ports";
 import { applyProviderHoldRelease } from "./provider-hold.js";
 import type { ProviderHoldListing, ProviderHoldView } from "@evoloop/contracts/provider-hold";
 import { applySessionRecovery, type RecoveryAuthority } from './session-recovery.js';
+export { MODEL_CHANGE_UNSUPPORTED_MESSAGE } from './session-recovery.js';
 import type { SessionRecoveryView } from '@evoloop/contracts/session-recovery';
 
 export { DomainError } from "@evoloop/contracts/ports";
@@ -180,6 +181,9 @@ export class WorkflowService {
         result = outcome.result;
         effects = outcome.effects;
       } catch (error) {
+        // A provider hold is a temporary state, not a decision about this command: nothing is journalled, so the same operation
+        // ID is evaluated afresh once the hold is released instead of replaying the refusal forever.
+        if (error instanceof DomainError && error.code === "PROVIDER_HELD") throw error;
         if (error instanceof DomainError) {
           result = {
             status: "rejected", operationId: command.operationId, code: error.code,
