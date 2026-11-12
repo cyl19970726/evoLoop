@@ -133,6 +133,11 @@
       "group": "前端文档"
     },
     {
+      "path": "docs/frontend/pages/flow-view.md",
+      "title": "动态",
+      "group": "前端文档"
+    },
+    {
       "path": "docs/frontend/pages/repository.md",
       "title": "仓库规范",
       "group": "前端文档"

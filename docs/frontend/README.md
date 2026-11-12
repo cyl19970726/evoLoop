@@ -26,6 +26,7 @@
 | [日程](pages/schedules.md) | 为什么检查，下次何时，上次产生的工作怎样？ |
 | [评价与后果](pages/evaluations.md) | 同一任务两种条件，每次真实运行交付、使用、成本与判断怎样，结论和下一步是什么？ |
 | [Sessions](pages/sessions.md) | 哪个 Session 在做什么、做到哪一步，需不需要我；Leader 怎样安排这些 Session？ |
+| [动态](pages/flow-view.md) | 调度此刻卡在哪里，消息、任务和交付是怎样传递、状态怎样变化的？（统筹安排的动态页；设计与夹具已做，未接真实数据） |
 | [团队](pages/team.md) | 哪些持续职责由谁承担，用什么运行时与 skill？ |
 | [微信连接](pages/connectors.md) | 哪个微信会话转给哪个智能体，最近的投递处理得怎样？ |
 | [登录与项目列表](pages/entry.md) | 用哪个身份登录，能进哪些项目，进入前有没有要先核对的操作？ |
