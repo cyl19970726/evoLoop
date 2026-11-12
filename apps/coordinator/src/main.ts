@@ -54,6 +54,7 @@ import { evaluationPacketMediaType } from "./runtime/evaluation-materials.js";
 import { activeTaskTimingGrants, drivenRuntimeProviders, hasExactEngineeringActionGrant, hasFeishuActorGrant, hasTaskTimingGrant, knowledgeServesProject, loadIntegrations, runtimeThreadConfigForSession, schedulingGrantsFor, selectMaterialCli } from "./configuration.js";
 import { OpenVikingKnowledgeRepository } from "@evoloop/adapter-wiki-openviking";
 import { DomainError } from "@evoloop/contracts/ports";
+import { DrainControl, isInstanceMaintainer } from "./drain/service.js";
 import { ordinaryMessageGrantProblem } from "./session-messages/send-authority.js";
 import type { Principal } from "@evoloop/contracts";
 import { LocalBlobStore } from "@evoloop/adapter-local-blobs";
@@ -118,6 +119,8 @@ const pool = new pg.Pool({ connectionString: databaseUrl, max: 8, connectionTime
 const skillSourceRoot = fileURLToPath(new URL("../../../", import.meta.url));
 pool.on("error", () => { /* Requests receive explicit unavailable responses; credentials are never logged. */ });
 const lease = await acquireCoordinatorLease(pool);
+// Drain mode: while held, no new Run or message Turn begins (docs/architecture/deployment.md §2).
+const drain = new DrainControl(pool);
 const integrations = await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE);
 const configuredUsageTimeZone = integrations.runtime?.dailyBudget?.timeZone ?? "UTC";
 const currentIdentity = async () => authConfigSchema.parse(JSON.parse(await readFile(authFile,"utf8")));
@@ -528,6 +531,7 @@ const runner = runtimeFactory ? new RuntimeRunner({ runtimeFactory, workflow: se
       dynamicAdmission ? () => dynamicAdmission.canCreateSession(session) : undefined);
   },
   mayDispatchRun: async run => {
+    if (await drain.holdNewStarts()) return false;
     if (!await mayStartManaged(run.projectId, "run", run.id)) return false;
     const current=await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE);
     if(!hasCurrentStudyReviewer(await currentIdentity(),run.projectId,run.actorId))return false;
@@ -727,6 +731,7 @@ const messagePump = runner ? new SessionMessagePump({ service: messageService, r
       await messageService.noteBlocked(message.projectId,message.id,admission.reason);
     return admission.allowed;
   },
+  holdNewStarts: () => drain.holdNewStarts(),
   canStart: async message => {
     if(!await acceptanceRelay.messageAdmission(message.projectId,message.id))return false;
     const current = (await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE)).sessionMessages;
@@ -867,6 +872,7 @@ const directInput = runner && integrations.runtime?.enabled ? createDirectInputS
   runtime: () => requireDirectInputRuntime(runner.nativeAdapter()),
   canWrite: () => lease.canWrite() && runner.nativeStartsAvailable(),
   configuration: () => loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE),
+  holdNewStarts: () => drain.holdNewStarts(),
   currentProjectWriter, currentSessionExecutionAuthority,
   allowedCwd: async (projectId,cwd) => {
     const current = await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE);
@@ -889,7 +895,7 @@ if (runner) {
   catch { console.error(`${runtimeConfig?.provider === "claude" ? "Claude" : "Codex"} runtime is unavailable; check the configured CLI, its settings and project directories. No new dispatch was enabled.`); }
 }
 const app = await buildServer({ service, credentials, canWrite: lease.canWrite, ordinarySubmissions,
-  acceptanceRelay,
+  acceptanceRelay, drain: { control: drain, isMaintainer: principal => isInstanceMaintainer(pool, principal) },
   ...(runner ? {compaction:new CompactionMaintenance(pool,runner,{owned:()=>runtimeConfig?.compaction.owned!==false})} : {}),
   connectorRoutes, connectorDeliveries: connectorDecisions, connectorSources: connectorLinks,
   canActivateConnectorRoute: qualifyConnectorRoute,

@@ -510,6 +510,34 @@ test('role runtime CLI binds once from the live view, then changes only skills a
   }finally{fetch.mock.restore();await rm(directory,{recursive:true,force:true});}
 });
 
+test("drain CLI reads the instance state and history, starts and releases with a recorded reason, and refuses a missing reason before any request", async () => {
+  const calls: Array<{ method: string; path: string; body: unknown }> = [];
+  const fetch = mock.method(globalThis, "fetch", async (url: string | URL | Request, init?: RequestInit) => {
+    calls.push({ method: init?.method ?? "GET", path: new URL(String(url)).pathname, body: init?.body ? JSON.parse(String(init.body)) : null });
+    return new Response(JSON.stringify({ state: "draining" }), { status: 200 });
+  });
+  const env = { EVOLOOP_TOKEN: "fixture" };
+  try {
+    for (const command of [["drain", "status"], ["drain", "history"], ["drain", "start", "--reason", "发布 0dd0baa"], ["drain", "release", "--reason", "发布完成"]]) {
+      const result = await run(command, env);
+      assert.equal(result.code, 0, `${command.join(" ")}: ${result.stderr}`);
+    }
+    assert.deepEqual(calls, [
+      { method: "GET", path: "/api/instance/drain", body: null },
+      { method: "GET", path: "/api/instance/drain/history", body: null },
+      { method: "POST", path: "/api/instance/drain", body: { action: "start", reason: "发布 0dd0baa" } },
+      { method: "POST", path: "/api/instance/drain", body: { action: "release", reason: "发布完成" } },
+    ]);
+    calls.length = 0;
+    const noReason = await run(["drain", "start"], env);
+    assert.notEqual(noReason.code, 0);
+    assert.match(noReason.stderr, /requires --reason/);
+    assert.notEqual((await run(["drain", "pause"], env)).code, 0);
+    assert.equal(calls.length, 0, "nothing was sent");
+    assert.match((await run(["help"], env)).stdout, /drain start\|release --reason TEXT/);
+  } finally { fetch.mock.restore(); }
+});
+
 test("command run shows the failing field and its accepted form when executeAtUtc is malformed", async () => {
   const dir = await mkdtemp(join(tmpdir(), "evoloop-cli-timing-"));
   try {
@@ -560,6 +588,29 @@ test("session profile set keeps the model in force: without --model it takes the
     assert.equal(submitted?.model, "deepseek/deepseek-v4-pro");
   } finally { fetch.mock.restore(); await rm(directory, { recursive: true, force: true }); }
 });
+
+test('read run carries what the Turn actually reported next to the configured profile, 未记录 when nothing was observed', async () => {
+  const projectId = '00000000-0000-4000-8000-0000000000e1', runId = '00000000-0000-4000-8000-0000000000e2', other = '00000000-0000-4000-8000-0000000000e3';
+  const directory = await mkdtemp(join(tmpdir(), 'evoloop-read-run-'));
+  const base = `/api/projects/${projectId}/runtime/runs`;
+  const fetch = mock.method(globalThis, 'fetch', async (url: string | URL | Request) => {
+    const path = new URL(String(url)).pathname;
+    if (path === '/api/session') return new Response(JSON.stringify({ principal: { actorId: 'reader', projectIds: [projectId] } }));
+    if (path === `${base}/${runId}`) return new Response(JSON.stringify({ id: runId, state: 'completed', executionProfile: { model: 'opus', reasoningEffort: 'high' },
+      actual: { model: 'claude-opus-5-5', reasoningEffort: null, subagentModels: ['claude-haiku-4-5'] } }));
+    if (path === `${base}/${other}`) return new Response(JSON.stringify({ id: other, state: 'completed', executionProfile: { model: 'opus', reasoningEffort: 'high' } }));
+    throw new Error(`Unexpected ${path}`);
+  });
+  const env = { EVOLOOP_TOKEN: 'fixture', EVOLOOP_STATE_DIR: directory };
+  try {
+    const seen = JSON.parse((await run(['read', 'run', runId, '--project', projectId], env)).stdout);
+    assert.deepEqual(seen.actualView, { model: 'claude-opus-5-5', reasoningEffort: '未记录', effortRequested: null, subagentModels: ['claude-haiku-4-5'], configuredModel: 'opus', configuredEffort: 'high', recorded: true });
+    const unseen = JSON.parse((await run(['read', 'run', other, '--project', projectId], env)).stdout);
+    assert.equal(unseen.actualView.model, '未记录'); assert.equal(unseen.actualView.recorded, false); assert.equal(unseen.actualView.configuredModel, 'opus');
+    assert.equal(unseen.state, 'completed', 'the Run itself is passed through unchanged');
+  } finally { fetch.mock.restore(); await rm(directory, { recursive: true, force: true }); }
+});
+
 test('session input CLI inserts into the running Turn, queues, names a missing grant, and reads back by the same input ID', async () => {
   const projectId = '00000000-0000-4000-8000-000000000021', sessionId = '00000000-0000-4000-8000-000000000022';
   const inputId = '00000000-0000-4000-8000-000000000023', operationId = '00000000-0000-4000-8000-000000000024';

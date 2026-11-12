@@ -4,6 +4,19 @@ import { RuntimeProtocolError, type RuntimeHistoryItem, type RuntimeObservedCapa
   type RuntimeUsage } from "@evoloop/contracts/runtime";
 
 /**
+ * The SDK streams the closing answer as an assistant text block (recorded as commentary) and then repeats it in the result,
+ * which the adapter records as the Turn's final answer. One answer is shown once: a final answer replaces the commentary item
+ * right before it when the text is the same. Applied when reading, so ledgers written before this rule read the same way.
+ */
+function addItem(items: RuntimeHistoryItem[], item: RuntimeHistoryItem): void {
+  if (item.type === "agentMessage" && item.phase === "final_answer") {
+    const previous = items[items.length - 1];
+    if (previous?.type === "agentMessage" && previous.phase === "commentary" && previous.text === item.text) items.pop();
+  }
+  items.push(item);
+}
+
+/**
  * Adapter-owned, append-only Turn ledger.
  *
  * Claude Code keeps its own transcript, but the transcript format and the in-process readers are tied to
@@ -25,6 +38,9 @@ export interface TurnSettlement {
   /** The provider's cumulative session thinking tokens after this Turn, kept to derive the next Turn's. */
   cumulativeThinkingTokens?: number | null;
   error?: RuntimeTurnFailure;
+  /** The exact model ID of the Turn's main-thread answers (null when no assistant message carried one) and of its subagents' answers. */
+  observedModel?: string | null;
+  subagentModels?: string[];
   /** result: the SDK result message; process_exit: the Turn process ended without one; orphan: observed after a restart. */
   source: "result" | "process_exit" | "orphan";
 }
@@ -139,7 +155,7 @@ export class TurnLedger {
         case "turn.process": turn.pid = record.pid; break;
         case "turn.sent": turn.sent = true; break;
         case "turn.withdrawn": turn.withdrawn = true; break;
-        case "item": turn.items.push(record.item); break;
+        case "item": addItem(turn.items, record.item); break;
         case "turn.capabilities": turn.capabilities ??= record.observed; break;
         case "turn.settled": {
           // The first settlement is authoritative; a later observation never rewrites a terminal Turn.

@@ -58,7 +58,8 @@ const catalog = `WITH hosts AS (
 ), identities AS (
   SELECT 'owned:'||s.session_id::text AS key,'owned'::text AS kind,s.session_id AS identity,
     ARRAY[s.session_id]::uuid[] AS aliases,ARRAY[s.session_id]::uuid[] AS all_aliases,
-    ARRAY[s.role_id]::text[] AS role_ids,to_jsonb(s) AS runtime,
+    ARRAY[s.role_id]::text[] AS role_ids,to_jsonb(s) || COALESCE((SELECT jsonb_build_object('actual_model',a.model,'actual_model_at',a.observed_at)
+      FROM runtime_session_actual_model a WHERE a.project_id=s.project_id AND a.session_id=s.session_id),'{}'::jsonb) AS runtime,
     EXISTS(SELECT 1 FROM hosts h WHERE h.host->>'kind'='owned' AND h.host->>'sessionId'=s.session_id::text AND h.state='verified') AS verified,
     EXISTS(SELECT 1 FROM hosts h WHERE h.host->>'kind'='owned' AND h.host->>'sessionId'=s.session_id::text
       AND h.state='verified' AND h.verified_capabilities ? 'open') AS can_open,
@@ -454,7 +455,9 @@ export class PgSessionObservation implements SessionObservationReader {
       activity: history?.items ?? [], resources: {
         configuredModel: { ...unavailable("model", "来源未登记配置模型。"), value: row.runtime?.model ?? null, source: row.runtime ? "runtime_session.model" : null,
           observedAt: row.runtime ? iso(row.observed_at) : null, unavailableReason: row.runtime?.model ? null : "配置模型未知，不能猜实际用模。" },
-        actualModel: unavailable("model", "尚未持久采集实际执行模型。"), inputTokens: unavailable("tokens", "尚未持久采集输入 token。"),
+        actualModel: row.runtime?.actual_model
+          ? { value: row.runtime.actual_model, unit: "model", source: "runtime_session.actual_model", scope: "session", observedAt: new Date(String(row.runtime.actual_model_at)).toISOString(), interval: null, unavailableReason: null }
+          : unavailable("model", "还没有任何一轮报告过实际模型；不用配置值代替。"), inputTokens: unavailable("tokens", "尚未持久采集输入 token。"),
         outputTokens: unavailable("tokens", "尚未持久采集输出 token。"), cost: unavailable("currency", "未采集宿主账单，不作估价。"),
         processMemory: { ...unavailable("bytes", "没有可靠进程映射，共享进程不均摊到会话。"), scope: "runtime-process" } },
       metadata: { ...this.meta(session.metadata.sourceObservedAt,
