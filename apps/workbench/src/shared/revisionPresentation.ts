@@ -23,6 +23,8 @@ export interface RevisionOrigin {
   scheduleId: string | null;
   /** Whether a daily repetition generated the revision (its zone is read from the task's timing). */
   series: boolean;
+  /** The repetition's series ID the reason names, so its zone can be found without knowing the task (document pages). */
+  seriesId?: string | null;
   /** The original author, reason and identifiers, for 完整标识; empty when nothing was replaced. */
   identifiers: RevisionOriginRow[];
 }
@@ -93,7 +95,7 @@ export function revisionOrigin(revision: { actorId?: string | null; reason?: str
   if (series) {
     const at = plannedTime(series[2]!, context.seriesZone, reader, "每天重复");
     const author = actorId ? actorText(actorId) : "作者未记录";
-    return { author, reason: `按每天重复自动生成，计划时间 ${at}`, line: `按每天重复生成，计划时间 ${at}`, scheduleId: null, series: true,
+    return { author, reason: `按每天重复自动生成，计划时间 ${at}`, line: `按每天重复生成，计划时间 ${at}`, scheduleId: null, series: true, seriesId: series[1]!,
       identifiers: [{ label: "重复序列", value: series[1]! }, { label: "计划时间（UTC）", value: series[2]! }, ...raw(actorId, reason)] };
   }
   // An author known only by an identifier (a UUID, an automatic run's worker) is said in words; the value is kept.
