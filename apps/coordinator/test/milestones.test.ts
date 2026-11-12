@@ -29,6 +29,11 @@ test("exited needs something adopted and neither a gap nor a rejection; only a r
   assert.equal(milestoneStatus(reviewed, review("", "refused", "")), "reviewed", "only a rejection and nothing adopted is not an exit either");
   assert.equal(milestoneStatus(reviewed, review("  ", "", "")), "reviewed");
   assert.equal(milestoneStatus(reviewed, null), "reviewed");
+  // The commands require text in all three fields, so "nothing" is written as a word: those count as empty, and nothing else does.
+  for (const none of ["无", "没有", "暂无", "无。", " 无缺口 ", "None", "n/a", "N/A", "—", "-"]) assert.equal(milestoneStatus(reviewed, review("it works", none, none)), "exited", `"${none}" means none`);
+  assert.equal(milestoneStatus(reviewed, review("it works", "无", "没有完全解决，剩下一项")), "partial", "a sentence that merely starts with 没有 is a gap");
+  assert.equal(milestoneStatus(reviewed, review("it works", "Nothing refused", "None left")), "partial", "only the bare marker counts, not a sentence");
+  assert.equal(milestoneStatus(reviewed, review("无", "无", "无")), "reviewed", "nothing adopted is only 已回看");
   assert.equal(milestoneStatus({ state: "active" }, review("a", "", "")), "in_progress");
   assert.equal(milestoneStatus({ state: "proposed" }, null), "not_started");
 });

@@ -48,6 +48,21 @@ test("a stage is linked to a roadmap phase by review permission only; the link i
   const m1 = links.find(item => item.phaseKey === "M1")!;
   assert.equal(m1.state, "reviewed"); assert.equal(m1.review?.adopted, "The deliverable works"); assert.ok(m1.review?.createdAt);
   assert.equal(milestoneStatus(m1, m1.review), "partial", "an adopted result with a gap is partial");
+  // Reachable through the real commands: a correction that says nothing is refused and no gap is left reads 已退出; reviews are append-only.
+  const [original] = await workflow.listStageReviews(reviewer, projectId, first);
+  const stageNow = await workflow.getStage(reviewer, projectId, first);
+  await applied(reviewer, { type: "stage.review.correct", stageId: first, expectedVersion: stageNow.version, supersedesReviewId: original!.id, adopted: "The deliverable works",
+    rejected: "无", gap: "没有", nextChoice: "continue", evidence: "e", reason: "the gap was closed" });
+  const corrected = (await workflow.listStagePhaseLinks(reviewer, projectId)).find(item => item.phaseKey === "M1")!;
+  assert.equal(corrected.review?.gap, "没有");
+  assert.equal(milestoneStatus(corrected, corrected.review), "exited", "a real stage.review.correct that names no rejection and no gap reaches 已退出");
+  assert.equal((await workflow.listStageReviews(reviewer, projectId, first)).length, 2, "the original review is kept");
+  // The reverse: a real review that adopted nothing ("无") reads 已回看.
+  await applied(reviewer, { type: "stage.review.correct", stageId: first, expectedVersion: (await workflow.getStage(reviewer, projectId, first)).version,
+    supersedesReviewId: (await workflow.listStageReviews(reviewer, projectId, first)).find(r => r.supersedesReviewId)!.id, adopted: "无", rejected: "Refused it", gap: "A gap",
+    nextChoice: "stop", evidence: "e", reason: "nothing was adopted" });
+  const reread = (await workflow.listStagePhaseLinks(reviewer, projectId)).find(item => item.phaseKey === "M1")!;
+  assert.equal(milestoneStatus(reread, reread.review), "reviewed", "a real review that adopted nothing is only 已回看");
   // Re-linking changes the phase of the same stage; null clears it; the stage itself is untouched.
   await applied(reviewer, { type: "stage.phaseKey.set", stageId: first, phaseKey: "M2", reason: "remap" });
   assert.deepEqual((await workflow.listStagePhaseLinks(reviewer, projectId)).map(item => item.phaseKey), ["M0.5", "M2"]);

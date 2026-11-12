@@ -36,7 +36,7 @@ Task `e5af6765`（2026-11-12 返工）。使用者要从总览一眼看清三件
 | 节点日期 | 关联阶段最近一次回看的日期（写作“回看于 日期”） | “未登记”；不从路线图的文字里推日期 |
 | 当前阶段 | 恰有一个关联阶段是 `active` 时，它对应的那一行 | 没有或有多个：不突出，页眉写“当前阶段未登记”，不猜 |
 
-**状态映射**（与目标与阶段页同一份数据，同一套词）：`proposed` → 未开始；`active` → 进行中；`reviewed` 且最近回看里 `adopted` 非空、`gap` 或 `rejected` 非空 → 部分成立；`reviewed` 且 `gap` 为空 → 已退出；其余 `reviewed` → 已回看（结论见阶段页）。“部分成立”只在回看记录真的写了采纳和缺口时才出现。
+**状态映射**（与目标与阶段页同一份数据，同一套词；需求 Session 已确认）：`proposed` → 未开始；`active` → 进行中；`reviewed` 且最近回看 `adopted` 非空、`gap` 与 `rejected` 都为空 → 已退出；`adopted` 非空且 `gap` 或 `rejected` 非空 → 部分成立；其余 `reviewed` → 已回看（结论见阶段页）。没有关联的阶段、或有多个进行中的阶段，一律写“未登记”，不猜。命令要求三项都有文字，“空”如何写见文末“‘已退出/已回看’如何经真实命令到达”。
 
 **新增只读投影** `GET /api/projects/:projectId/milestones`（项目读权限）：返回 `{ source: { commit }, phases: [{ id, title, deliver, exit, stage: { id, state, review: { adopted, gap, createdAt } } | null }] }`。路线图由服务启动时读取已部署目录里的 `docs/roadmap.md`（与版本接口同一提交），不放进文档表，也不在前端写死；页面和“目标与阶段”页读同一份阶段，所以两页不会各算一遍。
 
@@ -85,4 +85,11 @@ Task `e5af6765`（2026-11-12 返工）。使用者要从总览一眼看清三件
 
 ## 真实页面实测（实现后）
 
-真实页面截图与量到的数据：[1440 首屏](../assets/frontend-pages/overview-top-1440.png)、[1440 整页](../assets/frontend-pages/overview-top-1440-full.png)、[390 整页](../assets/frontend-pages/overview-top-390-full.png)、[390 第一天](../assets/frontend-pages/overview-top-390-day1.png)、[实测数据](../assets/frontend-pages/overview-top-real-measure.json)。1440×900：目标、版本和 6 个阶段都在首屏（最后一个阶段底边 781），无水平溢出。**与设计的差异**：390×844 里真实页面自带的页头、标题和目标卡片比设计图大（目标卡底边 533，设计图 136），版本在首屏，6 个阶段在第二屏内（最后一行底边 1089），没有做到“全部在首屏”；手机上只有当前阶段展开“交付/退出证据”。
+真实页面截图与量到的数据：[1440 首屏](../assets/frontend-pages/overview-top-1440.png)、[1440 整页](../assets/frontend-pages/overview-top-1440-full.png)、[390 首屏](../assets/frontend-pages/overview-top-390.png)、[390 整页](../assets/frontend-pages/overview-top-390-full.png)、[390 第一天](../assets/frontend-pages/overview-top-390-day1.png)、[实测数据](../assets/frontend-pages/overview-top-real-measure.json)。
+
+- 1440×900：目标、版本、6 个阶段都在首屏（最后阶段底边 624），无水平溢出。
+- 390×844：目标、版本、6 个阶段都在底部标签栏（约 64px）之上（最后阶段底边 752），无水平溢出。为此在手机宽度下：页面副标题收起；目标卡里“阶段交付/要弄清的问题”并排、各最多两行；版本块三行标签对齐；阶段行只留一行（阶段名与状态），只有当前阶段展开“交付/退出证据”，节点日期在放得下时才显示。
+
+## “已退出/已回看”如何经真实命令到达
+
+`stage.review` / `stage.review.correct` 要求采纳、拒绝、缺口三项都有文字，所以“没有拒绝、没有缺口”只能写成一个词。判定时，某项**整段**是“无 / 没有 / 暂无 / 无缺口 / 无拒绝 / 无遗漏 / none / nil / n/a / - / —”（忽略首尾空格和结尾句号）就当作空；含这些词的整句话（如“没有完全解决，剩下一项”）不算空。于是：采纳有内容、拒绝与缺口都写“无” → 已退出；采纳有内容、拒绝或缺口之一有内容 → 部分成立；采纳写“无” → 已回看。回看记录仍只追加；`stage.review.correct` 追加一条即可让阶段从部分成立变为已退出。真实 PG 测试 `tests/integration/stage-phase-key.test.ts` 用这两条真实命令覆盖。**这是对需求 Session 已确认的 3 条规则的补充解释，待需求 Session 确认。**

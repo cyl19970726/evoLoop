@@ -12,6 +12,16 @@ export const milestoneStatusLabel: Record<MilestoneStatus, string> = {
 export interface MilestoneReview { adopted: string; rejected: string; gap: string; createdAt: string }
 
 /**
+ * `stage.review` / `stage.correct` require text in adopted, rejected and gap, so "nothing" can only be written as a word. A field that is just
+ * one of these markers (alone, ignoring spaces and a closing full stop) counts as empty; a sentence that merely contains one does not.
+ */
+const NONE_MARKERS = new Set(["无", "没有", "暂无", "无缺口", "无拒绝", "无遗漏", "none", "nil", "n/a", "na", "-", "—", "–"]);
+export function isNoneMarker(value: string): boolean {
+  const text = value.trim().replace(/[。.]+$/, "").trim().toLowerCase();
+  return text.length === 0 || NONE_MARKERS.has(text);
+}
+
+/**
  * A linked stage's milestone status, from the same fields the goals-and-stages page shows (its state and latest review).
  * `exited`: reviewed, something adopted, and neither a gap nor a rejection left. `partial`: something adopted and a gap or a rejection
  * remains. Any other reviewed stage is only 已回看: the conclusion is on the stage page, nothing is inferred from it.
@@ -19,7 +29,7 @@ export interface MilestoneReview { adopted: string; rejected: string; gap: strin
 export function milestoneStatus(stage: { state: "proposed" | "active" | "reviewed" }, review: MilestoneReview | null): MilestoneStatus {
   if (stage.state === "proposed") return "not_started";
   if (stage.state === "active") return "in_progress";
-  const filled = (value: string | undefined) => !!value && value.trim().length > 0;
+  const filled = (value: string | undefined) => !!value && !isNoneMarker(value);
   if (review && filled(review.adopted)) return filled(review.gap) || filled(review.rejected) ? "partial" : "exited";
   return "reviewed";
 }

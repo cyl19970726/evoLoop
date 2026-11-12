@@ -38,7 +38,7 @@ test("overview top: goal, version, six phases with one current, the three blocks
           else value = { commit: "9a4020a5886be01b2d74fe850687ca7355b2d226", builtAt: "2026-11-12T03:10:00.000Z", startedAt: stamp };
         }
         else if (url.pathname === base) value = { id: projectId, title: "总览顶部项目", createdAt: stamp };
-        else if (url.pathname === `${base}/impacts`) value = [];
+        else if (url.pathname === `${base}/impacts` || url.pathname === `${base}/resident-queues`) value = [];
         else if (url.pathname === `${base}/goals`) value = { items: mode === "day1" ? [] : [{ projectId, id: goalId, version: 1, outcome: "让使用者一眼看清项目要去哪里", constraints: "数据来自服务", consumer: "使用者",
           authority: "负责人", scope: "总览", owner: "o", createdAt: stamp, actorId: "reader" }], nextCursor: null };
         else if (url.pathname === `${base}/stages`) value = mode === "day1" ? [] : [{ projectId, id: stageId, goalId, version: 2, state: "active", deliverable: "总览顶部", learningQuestion: "看得清吗", createdAt: stamp, actorId: "reader" }];
@@ -102,15 +102,13 @@ test("overview top: goal, version, six phases with one current, the three blocks
       const links = await page.locator("[data-overview-version] a").evaluateAll(items => items.map(item => item.getAttribute("href")));
       assert.deepEqual(links, ["https://github.com/cyl19970726/evoLoop/commit/9a4020a5886be01b2d74fe850687ca7355b2d226", "https://github.com/cyl19970726/evoLoop/blob/main/docs/roadmap.md#当前基线", "https://github.com/cyl19970726/evoLoop/blob/main/docs/development/local-run.md"]);
       assert.ok((await page.locator("[data-phase][data-current]").innerText()).includes("退出证据"), "the current phase shows its exit evidence");
-      for (const word of ["部分成立", "已退出", "进行中", "未开始", "回看于 2026-11-10", "未登记"]) assert.ok(text.includes(word), word);
+      for (const word of ["部分成立", "已退出", "进行中", "未开始", ...(width >= 1000 ? ["回看于 2026-11-10", "未登记"] : [])]) assert.ok(text.includes(word), word);
       if (shots) { await page.screenshot({ path: `${shots}/overview-top-${width}.png` }); await page.screenshot({ path: `${shots}/overview-top-${width}-full.png`, fullPage: true }); }
       const m = await measure(page, `linked ${width}x${height}`);
       assert.equal(m.scrollWidth <= m.clientWidth, true, `no horizontal overflow at ${width}`);
       assert.equal(m.pastRightEdge, 0, "nothing past the right edge");
-      // 1440x900: everything through the last phase is on the first screen. 390x844: the page's own header, the goal card and the version fill the screen
-      // (the design drew them smaller than the real page: docs/frontend/overview-top-design.md), so the milestones start below the fold and all six rows fit in one more screen.
-      if (width >= 1000) assert.ok(m.lastPhaseBottom <= height, `all six phases are on the first screen at ${width}x${height} (last bottom ${m.lastPhaseBottom})`);
-      else { assert.ok(m.versionBottom! <= height, "the goal and version are on the first screen on a phone"); assert.ok(m.lastPhaseBottom <= height * 2, "the six phases fit in the second screen"); }
+            // The phone's bottom tab bar (about 64px) covers the lower edge of the screen, so "on the first screen" means above it.
+      assert.ok(m.lastPhaseBottom <= height - (width >= 1000 ? 0 : 64), `all six phases are on the first screen at ${width}x${height} (last bottom ${m.lastPhaseBottom})`);
       assert.ok(m.goalBottom! < m.versionBottom! + 1, "the goal is above the version and milestones");
       assert.ok(m.attentionTop >= m.milestonesBottom!, "the three blocks sit below the milestones");
       for (const label of ["本次优先核对", "最近使用反馈"]) assert.ok(await page.getByLabel(label).count() === 1, label);
@@ -120,7 +118,7 @@ test("overview top: goal, version, six phases with one current, the three blocks
     const day1 = await open(390, 844, "day1");
     assert.equal(await day1.locator("[data-overview-milestones] [data-current='true']").count(), 0, "no guess at a current phase");
     assert.equal(await day1.locator("[data-current-note]").innerText(), "当前阶段未登记");
-    assert.equal((await day1.locator("[data-overview-milestones]").innerText()).match(/未登记/g)!.length >= 12, true, "status and date of all six phases say 未登记");
+    assert.equal((await day1.locator("[data-overview-milestones]").innerText()).match(/未登记/g)!.length >= 6, true, "the status of all six phases says 未登记");
     assert.doesNotMatch(await day1.locator("[data-overview-milestones]").innerText(), /部分成立|已退出|进行中|回看于/);
     await measure(day1, "day1 390x844");
     if (shots) await day1.screenshot({ path: `${shots}/overview-top-390-day1.png` });
