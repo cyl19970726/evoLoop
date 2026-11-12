@@ -378,6 +378,22 @@ node --import tsx tests/manual/session-compaction-e1.ts
 
 协调器在运行时启用（`runtime.enabled`）后运行队伍调度程序（轮询间隔沿用 `residentQueue.pollIntervalMs`，默认 2 秒）。它只推进由 Leader 凭据控制的队伍，每一步都是普通命令，操作 ID 由队伍项和尝试次数决定，重启后重放不会重复开 Run。队伍项、事件和 `QUEUED_IN_SESSION_LINE` 的含义见 [Session 运行时](../architecture/session-runtime.md#session-队伍dec-045-q1)。迁移 087 新增 `session_line`、`session_line_entry`、`session_line_event`、`task_assignment_confirmation`；不需要改私有配置，**接收者解析规则（队伍写 assignment 的对象）**：队伍项的接收者必须是该 Session 实际签署交付的业务身份，不再按 Role 猜。顺序是：①该 Session 自己的 `runtime.materialCli` 条目（`sessionId` 与它的原生 actor `sessionActorId` 都匹配，条目的 `cliActorId` 就是接收者）；②只有当这个 Role 恰好只有一个未关闭的 Session 时，才用 Role 级 `materialCli` 条目或 `residentQueue.roleActors`（单 Session 的旧配置照常工作）；③否则**在写任何 assignment、确认请求或 Run 之前**把这一项挂起（`RECIPIENT_UNAVAILABLE`），原因点名该 Session 并写明要补的配置（该 Session 的 `materialCli` 条目）。结果还必须是当前项目 writer。同一 Role 下有开发、验收、验收 2 等多个身份不同的 Session 时，每个 Session 都要有自己的 `materialCli` 条目；缺了不会改用别人的身份，也不会产生 `RECIPIENT_UNBOUND` 预检失败的 Run。测试：`apps/coordinator/test/session-line-recipient.test.ts`、`packages/adapter-postgres/test/session-line.test.ts`。
 
+## 调度板与调度事件流（Q2，迁移 105）
+
+**数据从哪来。** 迁移 105 建 `sched_event` 表，并在既有表上挂 AFTER 触发器：事件与引起它的状态变化在同一个事务里写一小行，应用代码的写入路径没有改动，也没有第二次写入。触发器取与 `leader_work_change` 相同的项目锁，所以同一项目里序号不会乱序提交。上线要先看发布顺序：105 不得早于 104（通知分级）等更小的号进入正式库；迁移只加表、函数和触发器，不改既有行为。回退：删除 `sched_event_*` 触发器即停止写入，表和已有事件可留。
+
+**保留期。** 协调器每 6 小时调用 `purge_sched_event(30, 5000)` 直到没有可删的行（只在持有写租约的实例上）。被清理的最高序号按项目记在 `sched_event_floor`；游标低于它的读取返回 `resetRequired:true`。
+
+**推送。** `GET /api/projects/P/work-board/stream`（SSE）和 `GET .../work-board/events?after=N&wait=S`（长轮询）都经进程内一个共享读取者：每个项目一个循环，只在至少有一个订阅者时才存在，每秒先读一次最新序号，只有变了才读新事件并分发给所有订阅者；没人打开页面时没有定时器，也没有查询。
+
+**性能预算怎样读回。**
+- 写入：`packages/adapter-postgres/test/leader-notice-packets.test.ts` 里的写入对比用例在同一连接上插入 200 条消息，分别开着和关掉事件触发器，打印每条的耗时（本机一次：0.40 ms 对 0.31 ms；用例要求差距小于 5 ms）。正式实例上可对同一张表临时 `ALTER TABLE ... DISABLE TRIGGER sched_event_message_ins` 在测试库复测，不要在正式库上关。
+- 尾部读取和快照：对正式实例各执行 20 次 `work events --after 当前序号` 和 `work board`，取 p95 并与 100 毫秒预算对比；一次读取的耗时可用 `time` 包住 CLI 得到（含 CLI 启动，只作上限）。
+- 没有订阅者时没有额外读取：不开任何页面或长轮询，在数据库里看 `pg_stat_statements`（或 `pg_stat_activity` 抽样）中不应出现 `FROM sched_event` 的周期查询。
+- 简要输出字节数：`work board --brief` 与 `work board` 各一次，比较字节数（要求不超过 6144，且不超过完整输出的一半）。
+
+**事件量。** 事件表只写元数据，按每天 5 千到 1 万行、5 MB 以内估计，保留 30 天约 150 MB 以内；用 `SELECT pg_total_relation_size('sched_event')` 核对，超出预期时先查哪一类事件最多（`SELECT kind, count(*) FROM sched_event GROUP BY 1 ORDER BY 2 DESC`）。
+
 ## Leader 通知包
 
 **开关（默认关闭）。** 在 `leaderResultNotices` 里加 `"packets": true`：之后新产生的通知走通知包；不写或 `false` 时，新通知仍是一条通知一条消息，与未发布这个功能时一致（迁移 089 本身只加一列和一张开关表，不改变既有行为）。通知泵每轮重读配置并把开关抄进数据库，不需要重启。`enabled:false` 时不投递新通知，但已发出的包仍会收尾（对账、取消没开始的包消息）。回退：把 `packets` 改回 `false`——没进过包的通知回到旧路径，进过包的项由包处理完。上线要先看发布顺序：089 不得早于 084–088 进入正式库。

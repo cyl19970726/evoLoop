@@ -798,3 +798,16 @@ test('two concurrent creators cannot both take the 200th project queue slot',asy
     (SELECT count(*)::int FROM runtime_run WHERE project_id=$1) AS runs`,[p]);
   assert.deepEqual(counts.rows[0],{queues:200,attempts:0,runs:0});
 });
+
+test('Q2: the Task, queue, Run, Delivery and acceptance flows above each left their event, in order, as metadata only',async()=>{
+  const rows=(await pool.query("SELECT seq,category,kind,subject_kind,from_ref,session_id,task_id FROM sched_event ORDER BY seq")).rows;
+  const kinds=new Set<string>(rows.map(r=>r.kind));
+  console.log('Q2 kinds seen in the queue flows:',[...kinds].sort().join(', '));
+  for(const kind of ['task.created','task.queued','task.turn','task.run_requested','task.run_started','task.run_ended','task.delivered','acceptance.observed','task.released'])
+    assert.ok(kinds.has(kind),`${kind} was recorded`);
+  assert.ok(rows.every((r,i)=>i===0||Number(r.seq)>Number(rows[i-1].seq)),'strictly increasing');
+  const queued=rows.find(r=>r.kind==='task.queued');
+  assert.equal(queued.category,'task');assert.equal(queued.subject_kind,'queue_entry');assert.ok(queued.from_ref,'the queue entry names who added it');assert.ok(queued.session_id);
+  const columns=(await pool.query("SELECT column_name FROM information_schema.columns WHERE table_name='sched_event'")).rows.map(r=>r.column_name);
+  assert.ok(!columns.some(c=>/content|body|text|message$/.test(c)),'no text column exists in the event table');
+});
