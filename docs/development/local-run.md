@@ -263,7 +263,7 @@ git diff --check
 
 `scripts/` 下的每个 `*.test.mjs` 都由 `npm run test:unit` 自动发现并运行：命令里先 `files=$(node scripts/lib/script-tests.mjs)` 再把 `$files` 交给 `node --test`，发现脚本递归找出 `scripts/**` 下的测试文件，**新增脚本测试只需把文件放进 `scripts/` 的任何子目录，不要改 `package.json`**。以前是在 `test:unit` 的同一行里逐个列文件，两个 PR 各加一个测试就在这一行冲突，每次都要作者变基、验收者再核“只有变基”。不要把文件重新逐个列回那一行（`ci-test-coverage` 会检查）。
 
-**发现失败会让 `test:unit` 失败。** 发现脚本在找不到任何测试、输出不是 `scripts/…test.mjs` 路径、有重复项或崩溃时，先不输出任何东西并以非零退出；`files=$(…) &&` 让整条命令随之停止，而不是少跑脚本测试还显示通过。
+**发现失败会让 `test:unit` 失败。** 发现脚本在找不到任何测试、输出不是 `scripts/…test.mjs` 路径、有重复项或崩溃时，先不输出任何东西并以非零退出；命令里的 `files=$(…) && [ -n "$files" ] &&` 让整条命令随之停止（发现脚本被改坏而“退出 0 却什么也不输出”时，`[ -n "$files" ]` 也会拦住），而不是少跑脚本测试还显示通过。
 
 **排除与分组。** 发现脚本只跳过另有归属的目录：`scripts/docs`、`scripts/architecture-map`（它们的 `.js` 套件属 `test:docs`）和 `scripts/research`（研究代码）。但**覆盖检查的全集不套用这份跳过表**，只排除 `node_modules`：在这些目录里放一个 `.test.mjs`，既没有 `test:unit` 发现它，`test:docs` 也只匹配 `*.test.js`，覆盖检查会失败——把它移出这些目录、改成 `.test.js` 让 `test:docs` 跑，或登记到 `MANUAL_ONLY` 并写明理由。确实无法在 CI 运行的测试登记在 `scripts/lib/script-tests.mjs` 的 `MANUAL_ONLY` 里，这是唯一的排除办法，发现脚本据此跳过（目前只有 `scripts/backup.test.mjs`：它需要专用的 `evoloop_backup_test` 库和 PostgreSQL 18 客户端工具，CI 里没有，按本页的备份章节手动运行）。`scripts/ci-test-coverage.test.mjs` 沿工作流里的 `npm run` 逐层展开，找出没人运行、也不在 `MANUAL_ONLY` 里的测试并失败；`MANUAL_ONLY` 里的条目失效（文件不在了，或 CI 开始运行它）时也失败，免得清单悄悄过期。
 

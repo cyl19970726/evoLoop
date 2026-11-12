@@ -154,16 +154,20 @@ test("a failing, empty or garbled discovery stops test:unit instead of letting i
   assert.deepEqual(assertValidList(["scripts/a.test.mjs"]), ["scripts/a.test.mjs"]);
   // the wiring in package.json: the discovery is captured first with `&&`, so a failure short-circuits the whole script
   const unit = JSON.parse(readFileSync(join(realRoot, "package.json"), "utf8")).scripts["test:unit"];
-  assert.ok(unit.includes(`files=$(node ${DISCOVERY}) && node --import tsx --test`), "test:unit must capture the discovery with files=$(…) && before node --test");
+  assert.ok(unit.includes(`files=$(node ${DISCOVERY}) && [ -n "$files" ] && node --import tsx --test`), "test:unit must capture the discovery with files=$(…), require it non-empty, and only then run node --test");
   assert.ok(/\$files\b/.test(unit));
   // and that shape really stops: a failing discovery means the test command never runs (the same sh construct as test:unit)
-  const shape = discovery => `files=$(${discovery}) && echo RAN $files`;
+  const shape = discovery => `files=$(${discovery}) && [ -n "$files" ] && echo RAN $files`;
   const failed = spawnSync("sh", ["-c", shape("node -e 'process.exit(3)'")], { encoding: "utf8" });
   assert.notEqual(failed.status, 0);
   assert.ok(!failed.stdout.includes("RAN"));
   const crashed = spawnSync("sh", ["-c", shape(`node ${join(realRoot, DISCOVERY)} --root ${empty}`)], { encoding: "utf8" });
   assert.notEqual(crashed.status, 0);
   assert.ok(!crashed.stdout.includes("RAN"));
+  // a discovery that exits 0 but prints nothing (a broken script) is also stopped by the non-empty check
+  const silent = spawnSync("sh", ["-c", shape("node -e ''")], { encoding: "utf8" });
+  assert.notEqual(silent.status, 0);
+  assert.ok(!silent.stdout.includes("RAN"));
   // contrast: the bare `$(…)` form that was used before ran anyway with an empty list
   const bare = spawnSync("sh", ["-c", "echo RAN $(node -e 'process.exit(3)')"], { encoding: "utf8" });
   assert.equal(bare.status, 0);
