@@ -200,11 +200,11 @@ export function ProjectSummary({ token, projectId, refresh, active }: { token: s
   const read = current ? `观察于 ${date(current.observedAt)}${stale ? " · 上次读回，当前状态待核对" : ""}` : pending ? "正在读取项目摘要…" : "尚未读回项目摘要";
   const empty = (text: string) => <p className={muted}>{text}</p>;
   const card = "flex min-w-0 flex-col rounded-xl bg-raised px-4 py-3 shadow-sm compact:px-5";
-  return <div data-ui="" className="project-overview mx-auto flex w-full max-w-[980px] flex-col gap-5 px-4 py-5 compact:px-8 compact:py-7">
-    <header className="flex flex-wrap items-start justify-between gap-3">
+  return <div data-ui="" className="project-overview mx-auto flex w-full max-w-[980px] flex-col gap-3 px-4 py-3 compact:gap-5 compact:px-8 compact:py-7">
+    <header className="flex items-start justify-between gap-3 compact:flex-wrap">
       <div className="min-w-0">
         <h1 className="text-title font-semibold text-foreground" tabIndex={-1}>项目总览</h1>
-        <p className="mt-1 text-small text-text-secondary">从目标差距、实际使用和当前责任判断下一步。</p>
+        <p className="mt-1 hidden text-small text-text-secondary compact:block">从目标差距、实际使用和当前责任判断下一步。</p>
         <p className={cn(muted, "mt-1")}>{read}</p>
       </div>
       <Button onClick={() => setReread(value => value + 1)} disabled={pending}><RefreshCw aria-hidden="true" className={pending ? "animate-spin" : undefined} />重新读取</Button>
