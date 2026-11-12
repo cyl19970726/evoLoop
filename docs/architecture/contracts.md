@@ -317,7 +317,7 @@ Task 协作通道把 question/answer/progress/blocker/handoff/result 固定到�
 
 `GET /api/projects/:projectId/decisions-for-me` 读出等当前身份决定的事项：职责提案（`role_definition` 为 candidate）、阶段提案（`project_stage` 为 proposed）——这两类只对有 review 权限的身份列出——、Task 讨论里 `recipientActorId` 指名当前身份的 `question` 消息（当前身份的回复或“已采纳/已解决”回执前一直在）、以及发给当前身份的未答复决定请求。每项有类型、标题、说明、提出者、时间和决定位置所需的 ID。
 
-“Leader 请你确认”没有结构化来源，所以新增 `decision_request`（迁移 098）：`decision.request.create`（review 权限；`requestedFrom` 是被请求的身份，可带 `taskId` 与至多 10 个选项）、`decision.request.answer`（只有被请求的身份，选项非空时答案必须是其中之一，带版本）、`decision.request.withdraw`（只有提出者）。已答复或撤回的请求离开列表；答复保留在 `decision_request` 行里。
+“Leader 请你确认”没有结构化来源，所以新增 `decision_request`（迁移 102）：`decision.request.create`（review 权限；`requestedFrom` 是被请求的身份，可带 `taskId` 与至多 10 个选项）、`decision.request.answer`（只有被请求的身份，选项非空时答案必须是其中之一，带版本）、`decision.request.withdraw`（只有提出者）。已答复或撤回的请求离开列表；答复保留在 `decision_request` 行里。
 
 ### Leader 通知层
 

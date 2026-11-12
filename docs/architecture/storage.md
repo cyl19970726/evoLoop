@@ -170,7 +170,7 @@ erDiagram
 | 094 `run_failure_category` | `runtime_run.failure_category`（可空文本） | Task Run 失败时适配器报告的类别（额度、鉴权、上下文超长等）；额度/鉴权类失败据此开提供方暂停，并让该 Run 关闭的恢复门随放行一起恢复 |
 | 095 `acceptance_convention` | `task_proposal.acceptance_precondition`；`task_acceptance_precondition_mark`；`task` / `task_revision` 的 `kind` 检查 | 可选列 `acceptance_precondition` 写明验收前要满足什么；`kind` 的检查加 `defect`、`documentation`、`operation`（原有三种和旧数据不变）；`acceptance_target` 增加 `named_agent`（由声明的业务身份直接验收，不经接力）。标记表每个交付至多一条、不可变：复核者显式声明该交付的前置（发布、迁移、重启等）已满足，没有标记时投影显示等待而非可验收。 | [验收接力](contracts.md#验收接力与临时-session-退役) |
 | 096 `direct_input_queued_start` | 无新表；放宽 `session_direct_input` 的检查约束 | 允许一行 `mode=start`、`rejected`、没有处理槽位、来源是同 ID 的排队消息：直启在预占时被可证明未送入的原因拒绝（主回合未绑定、已有运行中的 Turn），文字存成一条排队消息 |
-| 098 `decision_request` | 新表 `decision_request`（请求人、被请求身份、可选 Task、主题、问题、选项、状态 open/answered/withdrawn、答复与理由、版本） | 待我决定里“请你确认”的结构化来源；只有被请求的身份能答复。语义见[接口合同](contracts.md#待我决定与决定请求)。 |
+| 102 `decision_request` | 新表 `decision_request`（请求人、被请求身份、可选 Task、主题、问题、选项、状态 open/answered/withdrawn、答复与理由、版本） | 待我决定里“请你确认”的结构化来源；只有被请求的身份能答复。语义见[接口合同](contracts.md#待我决定与决定请求)。 |
 
 ## 事务、幂等和读取
 
