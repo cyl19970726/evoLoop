@@ -4,6 +4,10 @@
 
 ## 先发现能力，再读任务
 
+### 排空模式（发布前）
+
+`drain status` 读实例状态：`active`、`draining`（还有在途）或 `drained`（可以停服），谁、何时、为什么开启，已排队的消息与 Run 数，以及仍在途的 Run 和消息 Turn（清单只给实例维护者，其他人只看到数量）。`drain start --reason TEXT` / `drain release --reason TEXT` 开启或解除，只有实例维护者（在本实例每个项目都有 read、write、review 的凭据）能用，普通业务 Session 会被拒绝；`drain history` 列出每次开启与解除的操作者、时间和原因。排空期间新消息、新 Run 照常保存排队，只是**不再启动**新的 Run 和消息 Turn，已经开始的照常完成；解除后排队工作按原顺序继续。发布步骤见[部署](../architecture/deployment.md#2-发布新版本)。
+
 ### 准备或复用受管 Session
 
 项目审阅者可在私有 JSON 文件中指定 `projectId`、`sessionId`、`operationId`、`roleId` 和 `mode`（`create` 或 `reuse`），调用 `session prepare --file /PRIVATE/PATH.json`。新建还须写 `cwd`、`authorizationScope`、`displayName` 和从 `models --project` 查到的精确 `model` slug；`purpose` 可选。未配置 `model` 或 `models` 的旧授权环境须先配置精确授权，不能用原生默认模型创建新会话；复用既有 Session 可省略 `model`。升级前已冻结的无 `model` 创建意图只按原准备文件、回执及 operation ID 对账：已记录的同 ID 操作须核 actor/命令 hash 后回读；原 operation 未找到时保持 pending/unknown，由项目审阅者核原操作与 Session，不自动重放或补模型改写原正文。先用 `session` 核本人身份。此入口依次使用现有 `runtime.session.reserve`、`session.profile.set`、`role.bindSession`，返回真实 Session 状态、配置缺项、固定职责和 skill 引用；它不分配 Task，也不生成新的执行授权或凭据。完整准备规格在首次调用时以私有文件固定到该 `operationId`，包括模式、名称和用途；改动输入须用新操作 ID，旧操作未知仍先按原回执恢复。`waiting_for_native_thread` 表示预留已保存、原生 Thread 仍待核；`recovery_required` 表示原操作或 Session 状态未知，须按原回执对账。不可改用新 Session ID 绕过未知。显示资料已保存不证明原生 Thread 名称同步完成。
