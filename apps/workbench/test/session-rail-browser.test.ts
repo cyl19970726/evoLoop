@@ -89,6 +89,24 @@ test("the agent's right column shows what it does now and next on its first scre
   await failedNext.getByText(/智能体队伍暂不可读取/).waitFor();
   assert.match(await failedNext.innerText(), /整理旧文档/, "the assignment the snapshot carries still shows");
   assert.doesNotMatch(await failedNext.innerText(), /没有排队的任务/);
+  // Unread, the line may hold that Task: the row says only 已分派, never 未排进队伍.
+  assert.match(await failedNext.innerText(), /整理旧文档\s*已分派 · 任务待开始/);
+  assert.doesNotMatch(await failedNext.innerText(), /未排进队伍/);
   await failedNext.getByRole("button", { name: "重试" }).waitFor();
   await failed.page.context().close();
+
+  // A pause the pump wrote as `CODE: English` reads as a sentence; the code and the original open from 暂停代码与原文.
+  const raw = "RECIPIENT_UNAVAILABLE: Session 70000024 shares its Role with 1 other live Session(s) and has no runtime.materialCli entry of its own";
+  const { sessionLines } = await import(pathToFileURL(`${fixtureDir}/agents.mjs`).href);
+  const coded = sessionLines();
+  coded.lines[0].entries[1].suspendReason = raw;
+  const paused = await open("docs", 390, 844, page => page.route(/\/session-lines$/, route => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(coded) })));
+  const pausedNext = paused.panel.locator(".session-next-work");
+  await pausedNext.getByText("已暂停").waitFor();
+  assert.match(await pausedNext.innerText(), /业务身份/);
+  assert.doesNotMatch(await pausedNext.innerText(), /RECIPIENT_UNAVAILABLE|materialCli/, "no code or English on the row itself");
+  await pausedNext.getByText("暂停代码与原文").click();
+  assert.match(await pausedNext.innerText(), /代码\s*RECIPIENT_UNAVAILABLE[\s\S]*原文\s*RECIPIENT_UNAVAILABLE: Session 70000024/);
+  assert.ok(await sideways(paused.page) <= 1, "the opened original wraps inside the column at 390");
+  await paused.page.context().close();
 });

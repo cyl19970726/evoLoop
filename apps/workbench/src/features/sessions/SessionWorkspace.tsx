@@ -403,6 +403,8 @@ export function SessionWorkspace({ context, sessionKey, active, refresh, queue }
       {taskTitle(item.taskId, item.title)}
       <span className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 text-caption text-muted-foreground [overflow-wrap:anywhere]">{item.caption}
         {item.flag && <StatusTag tone={item.flag.tone} label={item.flag.label} />}{item.flag?.detail && <span className="min-w-0">{item.flag.detail}</span>}</span>
+      {/* The server's code and wording behind a paused entry's reason (原始标识放在来源层). */}
+      {item.flag?.source && <FullIdentifiers summary="暂停代码与原文" rows={[{ label: "代码", value: item.flag.source.code }, { label: "原文", value: item.flag.source.original, text: true }]} />}
     </span>
   </li>;
   // 接下来: the agent's line in order, then the execution queue, then assignments nothing has ordered yet.
