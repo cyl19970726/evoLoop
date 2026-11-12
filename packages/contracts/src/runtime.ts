@@ -70,6 +70,8 @@ export interface RuntimeRunRecord {
   interruptRequested: boolean; resultSummary: string | null; actorId: string; createdAt: string; updatedAt: string;
   /** Set by runtime.run.stop; no new Run state: a stopped Run still moves through the existing states to a terminal one. */
   stopRequestedAt?: string | null; stopReason?: string | null; stopRequestedBy?: string | null;
+  /** The adapter's failure category when the Run failed (quota_exhausted, authentication_failed, …); null otherwise. */
+  failureCategory?: string | null;
   /** Immutable native environment used for this original dispatch, never inferred from the current child. */
   nativeEnvironmentEpoch?: number | null;
   evaluationBinding?: { evaluationId: string; revisionId: string; caseId: string; conditionId: string;

@@ -42,6 +42,12 @@ export class PgDirectInputs {
       AND actual_turn_id IS NOT NULL`,[projectId,sessionId,inputIds]);
     return r.rows.map(map);
   }
+  /** A held provider starts nothing new for any of its Sessions; adding to a Turn already running is not a new start. */
+  async providerHeld(projectId:string,sessionId:string,run:Pick<Pool,"query">=this.pool):Promise<boolean>{
+    const r=await run.query(`SELECT EXISTS(SELECT 1 FROM runtime_provider_hold h JOIN runtime_session s ON s.project_id=h.project_id
+      AND s.runtime_provider=h.provider WHERE h.project_id=$1 AND h.state='held' AND s.session_id=$2) AS held`,[projectId,sessionId]);
+    return r.rows[0]?.held===true;
+  }
   async hasPrimary(projectId:string,sessionId:string):Promise<boolean>{
     const r=await this.pool.query(`SELECT EXISTS(SELECT 1 FROM runtime_run WHERE project_id=$1 AND session_id=$2
       AND state IN ('requested','dispatching','running','unknown')) OR EXISTS(
@@ -116,6 +122,10 @@ export class PgDirectInputs {
           {kind:"message",id:active.message_id,processingId:active.processing_id};
       }else{
         if(command.expectedTurnId!==null)throw new DomainError("TURN_CHANGED","Expected Turn is no longer active");
+        // An idle start would begin a new Turn on a held provider and fail the same way, closing the gate again. Refused before
+        // anything is reserved; the caller saves the text as a queued message, which goes out with the release.
+        if(await this.providerHeld(projectId,sessionId,client))
+          throw new DomainError("PROVIDER_HELD","the model provider is paused (quota or authentication); queue the message instead, it goes out with the release");
         if(!grant.canStart)throw new DomainError("DIRECT_GRANT_MISSING","Direct start is not authorized");
         const count=(await client.query(`SELECT count(*)::integer AS n FROM session_message_processing p
           JOIN session_message m ON m.project_id=p.project_id AND m.message_id=p.message_id

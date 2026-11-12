@@ -9,7 +9,7 @@ import { askConfirm, cancelConfirms, confirmHostFailed, currentConfirm, onConfir
 import { addReceipt, hasProjectReceipt, readReceipts, removeReceipt, visibleReceipts as forPrincipal, writeReceipts, type OperationReceipt } from "./recovery";
 import type { CheckedOrigin, OperationItem } from "../features/settings/operationsPresentation";
 import { checkedNoticeText } from "./operationNotice";
-import { providerHoldNotices } from "./providerHoldNotice";
+import { providerHoldNotices, providerHoldReadFailure } from "./providerHoldNotice";
 import { clearRecoveryIntents, forgetRecoveryIntent, isSpecialOperation, rememberRecoveryIntent } from "./recoveryIntent";
 
 import { readRoute, href, type Route } from "../shared/ui/shared";
@@ -272,6 +272,7 @@ export function App() {
     ...operationNotice ? [{ key: "operation", tone: "info" as const, text: operationNotice, detail: operationDetail, ...operationLink ? { link: operationLink } : {},
       button: { label: "关闭", onClick: () => { setOperationNotice(""); setOperationDetail(null); setOperationLink(null); }, quiet: true } }] : [],
     ...projectId ? providerHoldNotices(holdsRead.data, href(projectId, "sessions")) : [],
+    ...projectId && holdsRead.isError ? [providerHoldReadFailure(holdsRead.error, href(projectId, "sessions"))] : [],
     ...projectError ? [{ key: "project", tone: "error" as const, text: `项目暂不可读取：${projectError}`, button: { label: "重试读取项目", onClick: context.onChanged } }] : [],
     ...route.section !== "inbox" && inbox.state === "unknown" ? [{ key: "inbox", tone: "waiting" as const, text: inbox.text, link: { href: href(projectId, "inbox"), label: "去待我处理核对" } }] : [],
   ];

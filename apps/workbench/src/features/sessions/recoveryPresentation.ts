@@ -52,7 +52,7 @@ export function recoveryReasonSummary(gate: RecoveryGate): string {
   if (gate.phase === "awaiting_acceptance") return "等待交付与验收放行";
   if (gate.causeKind === "run") {
     if (gate.causeState === "unknown") return "本次运行结果尚未确认";
-    if (gate.causeState === "failed") return "本次运行已记录为失败";
+    if (gate.causeState === "failed") return `${nativeFailureLine(gate.failureCategory) ?? ""}本次运行已记录为失败`;
     if (gate.causeState === "interrupted") return "本次运行已记录为中断";
   }
   if (gate.causeKind === "message") {

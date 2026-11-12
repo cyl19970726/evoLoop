@@ -145,7 +145,7 @@ test("a provider hold refusal is thrown and never journalled, so the same operat
   const { WorkflowService } = await import("../src/index.ts");
   const service = new WorkflowService({ uow: uow as never, clock: { now: () => new Date().toISOString() }, ids: { next: () => crypto.randomUUID() },
     hasher: { hash: (value: string) => value.length.toString(16).padStart(64, "0") } });
-  const command = { type: "runtime.providerHold.release", projectId, operationId, provider: "codex", expectedVersion: 1, evidenceRef: "ops://x", reason: "balance restored" } as never;
+  const command = { type: "runtime.providerHold.release", projectId, operationId, provider: "codex", holdId: "00000000-0000-4000-8000-0000000000b1", expectedVersion: 1, evidenceRef: "ops://x", reason: "balance restored" } as never;
   await assert.rejects(service.execute(reviewer, command), { code: "PROVIDER_HELD" });
   assert.equal(journal.size, 0, "the refusal is not a saved decision about this operation");
   // Any other domain refusal is still journalled and replayed, as before.
@@ -153,4 +153,42 @@ test("a provider hold refusal is thrown and never journalled, so the same operat
   const first = await service.execute(reviewer, command);
   assert.equal(first.status, "rejected"); assert.equal(journal.size, 1);
   assert.deepEqual(await service.execute(reviewer, command), first);
+});
+
+test("a release names its hold, and one Session's failure (domain or not) never rolls back the others; gates closed while reading are picked up", async () => {
+  const projectId = "00000000-0000-4000-8000-0000000000c1";
+  const reviewer = { actorId: "lead", projectIds: [projectId], permissions: ["read", "write", "review"] as Array<"read" | "write" | "review"> };
+  const { WorkflowService, DomainError } = await import("../src/index.ts");
+  const hold = { id: "00000000-0000-4000-8000-0000000000c2", version: 4, provider: "codex" as const };
+  const sessions = ["s1", "s2", "s3"];
+  let reads = 0; let released: { holdId: string; summary: { resumed: string[]; skipped: { sessionId: string; code: string }[] } } | null = null;
+  const journal = new Map<string, unknown>();
+  const tx = new Proxy({
+    getProject: async () => ({ id: projectId, title: "t" }), getOperation: async (id: string) => journal.get(id) ?? null,
+    insertOperation: async (operation: { id: string }) => { journal.set(operation.id, operation); }, appendOutbox: async () => {},
+    savepoint: async <T>(work: () => Promise<T>) => work(),
+    recovery: {
+      getActiveProviderHold: async () => hold,
+      // s1 and s2 are blocked when first read; s3's gate closes while the release is being prepared.
+      providerHoldImpact: async () => { reads++; return (reads === 1 ? sessions.slice(0, 2) : sessions).map(sessionId => ({ sessionId, gatePhase: "blocked", blockedByQuotaFailure: true, queuedMessages: 0 })); },
+      getRecoveryGate: async (sessionId: string) => ({ sessionId, phase: "blocked", version: 1, causeId: `cause-${sessionId}`, resumeMessageId: null }),
+      releaseProviderHold: async (holdId: string, _version: number, _actor: string, _reason: string, summary: never) => { released = { holdId, summary }; },
+    },
+  } as never, { get: (target: Record<string, unknown>, key: string) => key in target ? target[key] : async () => { throw new Error(`database refused ${key}`); } });
+  const uow = { transaction: async (_p: string, work: (tx: never) => Promise<unknown>) => work(tx), read: async () => { throw new Error("unused"); } };
+  const service = new WorkflowService({ uow: uow as never, clock: { now: () => new Date().toISOString() }, ids: { next: () => crypto.randomUUID() },
+    hasher: { hash: (value: string) => value.length.toString(16).padStart(64, "0") } });
+  const command = (holdId: string) => ({ type: "runtime.providerHold.release", projectId, operationId: crypto.randomUUID(), provider: "codex", holdId,
+    expectedVersion: 4, evidenceRef: "ops://x", reason: "balance restored" }) as never;
+  // 1. Another hold's ID is refused and nothing is released.
+  const wrong = await service.execute(reviewer, command("00000000-0000-4000-8000-0000000000c3"));
+  assert.equal(wrong.status, "rejected"); assert.equal((wrong as { code: string }).code, "PROVIDER_HOLD_CHANGED"); assert.equal(released, null);
+  // 2. Every resume here fails (a plain database error each); the hold is still released and each Session is reported, including s3, found on the second read.
+  const done = await service.execute(reviewer, command(hold.id));
+  assert.equal(done.status, "applied", JSON.stringify(done));
+  assert.equal(released!.holdId, hold.id);
+  assert.deepEqual(released!.summary.skipped.map(entry => entry.sessionId).sort(), ["s1", "s2", "s3"]);
+  assert.ok(released!.summary.skipped.every(entry => typeof entry.code === "string" && entry.code.length > 0));
+  assert.ok(reads >= 2, "the impact was read again for gates closed in between");
+  void DomainError;
 });
