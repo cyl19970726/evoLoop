@@ -17,6 +17,7 @@ import { relayProgress, relayRecipient, relayStageLabel, relayStateLabel } from 
 import { appPath } from "../../shared/appPath";
 import { FullIdentifiers } from "../../shared/ui/FullIdentifiers";
 import { date, href } from "../../shared/ui/shared";
+import { preconditionStatus } from "./acceptanceConventionPresentation";
 import { deliveryRunHref, recentDeliveryRunIds, verifiedDeliveryRun } from "./deliveryRun";
 import { DocumentLink } from "./DocumentLink";
 import { EvidenceText } from "./EvidenceText";
@@ -48,8 +49,10 @@ function useDeliveryTitles(projectId: string, deliveries: Delivery[]) {
   return titles;
 }
 
-export function TaskDeliveryTab({ projectId, detail, active, actionsHref, actorId }: {
+export function TaskDeliveryTab({ projectId, detail, active, actionsHref, actorId, convention }: {
   projectId: string; detail: TaskDetail; active: boolean; actionsHref: string; actorId?: string;
+  /** The work index's acceptance convention for this Task, when read: gives the precondition line. */
+  convention?: Parameters<typeof preconditionStatus>[0];
 }) {
   const deliveries = detail.deliveries ?? emptyDeliveries;
   const latestId = deliveries.at(-1)?.id;
@@ -78,9 +81,13 @@ export function TaskDeliveryTab({ projectId, detail, active, actionsHref, actorI
   // The right column reads the same key without checking the answer's shape; only a list counts here.
   const relayItems = Array.isArray(relays.data?.items) ? relays.data!.items : null;
   const open = detail.task.state === "in_progress";
+  const precondition = preconditionStatus(convention, date, actorText);
   return <div className="flex flex-col gap-8">
     <TabSection title="交付记录" meta={deliveries.length ? `${deliveries.length} 次交付` : undefined}
-      action={open ? <a href={actionsHref} className="text-label text-primary hover:underline">登记交付或使用观察</a> : undefined}>
+      action={open ? <a href={actionsHref} className="text-label text-primary hover:underline">{precondition?.waiting ? "登记交付" : "登记交付或使用观察"}</a> : undefined}>
+      {precondition && <p className={`text-label ${precondition.waiting ? "text-warning" : "text-text-secondary"}`} data-precondition={precondition.waiting ? "waiting" : "met"}>
+        {precondition.text}{precondition.waiting ? "；满足并标记之前不能验收" : ""}</p>}
+      {precondition?.evidence && <Fine>标记依据：{precondition.evidence}</Fine>}
       {active && deliveries.length > 5 && <Fine>只自动核对最近 5 次交付的来源运行；更早的可以逐条核对。</Fine>}
       {!deliveries.length && <p className="text-label text-text-secondary">还没有交付。任务状态和运行结束都不代替成果与使用记录。</p>}
       <div className="flex flex-col">

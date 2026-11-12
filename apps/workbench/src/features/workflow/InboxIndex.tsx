@@ -16,7 +16,9 @@ import { PageSection, mutedText } from "../../shared/ui/PageParts";
 import { useTaskName } from "../../shared/ui/RecordName";
 import { date } from "../../shared/ui/shared";
 import { nameOnly } from "../../shared/workPresentation";
-import { deliveryLink, inboxTaskLink, lastUseText, useRequirementText, type DeliveryForMe } from "./inboxModel";
+import { decisionKindText, decisionLink, deliveryLink, inboxTaskLink, lastUseText, useRequirementText, type DeliveryForMe } from "./inboxModel";
+import type { DecisionItem } from "@evoloop/contracts/decision-requests";
+import { ActionForm, option } from "../../shared/ActionForm";
 import { useInboxReads, type DeliveriesForMe } from "./inboxReads";
 import { defaultTaskListView, taskListRoute } from "./taskExperience";
 
@@ -38,10 +40,11 @@ const countText = (read: Read<unknown>, count: number | undefined) => read.data 
 export function InboxIndex({ context }: { context: MutationContext; refresh: number }) {
   const { projectId } = context;
   const actorId = context.principal.actorId;
-  const { acceptance: mine, impacts, deliveries } = useInboxReads(projectId, actorId);
+  const { acceptance: mine, impacts, deliveries, decisions } = useInboxReads(projectId, actorId);
   const acceptance = mine.data?.items;
   const pending = impacts.data?.filter(item => item.state === "pending");
-  const reading = mine.isFetching || impacts.isFetching || deliveries.isFetching;
+  const reading = mine.isFetching || impacts.isFetching || deliveries.isFetching || decisions.isFetching;
+  const decide = decisions.data?.items;
   return <div data-ui="" className="mx-auto flex w-full max-w-[880px] flex-col gap-6 px-4 py-5 compact:px-8 compact:py-7" data-inbox="">
     <header className="flex flex-wrap items-start justify-between gap-3">
       <div className="min-w-0">
@@ -60,6 +63,12 @@ export function InboxIndex({ context }: { context: MutationContext; refresh: num
       description="任务声明你是这次交付的使用者，你还没有记录“已使用”。打开任务的“交付与使用”读成果，并记录用过的版本和结果。你记过“使用失败”的交付由执行者返工，不在这里列出。">
       <ReadState read={deliveries} what="等我使用的交付" />
       <DeliveryList projectId={projectId} actorId={actorId} value={deliveries.data} />
+    </PageSection>
+    <PageSection title="待我决定" action={<span className={mutedText}>{countText(decisions, decide?.length)}</span>}
+      description="等你决定的事：职责提案、阶段提案、任务讨论里指名问你的问题，以及被明确请你确认的事项。每项写明是什么、谁提的、什么时候；打开它的决定位置，或直接在这里答复，决定后从这里消失。">
+      <ReadState read={decisions} what="待我决定" />
+      {decide?.length === 0 && <p className="text-small text-text-secondary">当前没有等你决定的事项。</p>}
+      {!!decide?.length && <ul aria-label="待我决定" className="flex flex-col">{decide.map(item => <li key={`${item.kind}:${item.id}`}><DecisionRow context={context} item={item} /></li>)}</ul>}
     </PageSection>
     <PageSection title="依据变化" action={<span className={mutedText}>{countText(impacts, pending?.length)}</span>}
       description="任务固定的依据出现新版。在任务的“依据与影响”里决定采用新版还是保留原依据。">
@@ -119,5 +128,22 @@ function ImpactRow({ projectId, actorId, item }: { projectId: string; actorId: s
       trailing={<span className="text-primary">查看影响</span>} />
     <FullIdentifiers className="px-3" rows={[{ label: "依据文档", value: item.documentId }, { label: "固定修订", value: item.fromRevisionId },
       { label: "新采纳修订", value: item.toRevisionId }]} />
+  </div>;
+}
+
+function DecisionRow({ context, item }: { context: MutationContext; item: DecisionItem }) {
+  const link = decisionLink(context.projectId, item, context.principal.actorId);
+  const meta = `${decisionKindText[item.kind]} · ${item.proposedBy} 提出 · ${date(item.at)}`;
+  return <div className="flex flex-col gap-1 border-t border-border py-1 first:border-t-0">
+    {link ? <ListRow href={link} title={item.title} meta={meta} trailing={<span className="text-primary">去决定</span>} />
+      : <div className="px-3 py-2"><p className="text-body font-medium text-foreground">{item.title}</p><p className={mutedText}>{meta}</p></div>}
+    <p className={`${mutedText} px-3`}>{item.detail}</p>
+    {item.kind === "decision_request" && <div className="px-3">
+      <ActionForm context={context} embedded title="答复" fields={[
+        item.options.length ? { name: "answer", label: "你的决定", kind: "select" as const, options: item.options.map(value => option(value, value)) } : { name: "answer", label: "你的决定", kind: "textarea" as const },
+        { name: "reason", label: "理由", kind: "textarea" as const }]}
+        build={values => ({ type: "decision.request.answer", requestId: item.id, expectedVersion: item.version, answer: values.answer, reason: values.reason })} />
+    </div>}
+    <FullIdentifiers className="px-3" rows={[{ label: item.kind === "task_question" ? "问题事件" : "编号", value: item.id }]} />
   </div>;
 }

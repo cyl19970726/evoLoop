@@ -134,6 +134,8 @@ export async function buildServer(options: {
   /** Drain mode (docs/architecture/deployment.md §2): the control and who counts as an instance maintainer. */
   drain?: { control: DrainControl; isMaintainer(principal: Principal): Promise<boolean> };
   leaderNotices?: LeaderNoticeReader;
+  /** 待我决定: what waits for the caller to decide (Role and stage proposals, named questions, decision requests addressed to them). */
+  decisionsForMe?: (projectId: string, actorId: string, canDecide: boolean) => Promise<unknown>;
   taskAttentionPool?: Pool;
   planningSources?: PlanningSourcesReader;
   workers?: { authenticate(header: string | undefined): Promise<WorkerIdentity | null>; facts(identity: WorkerIdentity): WorkerGuardFacts };
@@ -367,6 +369,12 @@ export async function buildServer(options: {
       sessionId: idSchema.optional() }).parse(request.query);
     const events = await options.service.listSessionLineEvents(who(request.principal), p.projectId, q.after, q.limit, q.sessionId);
     return { events, nextAfter: events.at(-1)?.seq ?? q.after };
+  });
+  if (options.decisionsForMe) app.get("/api/projects/:projectId/decisions-for-me", async request => {
+    const p = z.strictObject({ projectId: idSchema }).parse(request.params);
+    const principal = who(request.principal);
+    await options.service.getProject(principal, p.projectId);
+    return options.decisionsForMe!(p.projectId, principal.actorId, principal.permissions.includes("review"));
   });
   app.get("/api/projects/:projectId/session-preparation/:sessionId", async request => {
     const p=z.strictObject({projectId:z.uuid(),sessionId:z.uuid()}).parse(request.params);

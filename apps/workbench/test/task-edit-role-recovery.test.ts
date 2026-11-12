@@ -121,3 +121,33 @@ test("Task detail exposes current plan, responsibility, consumer, source and nex
   assert.match(html, /来自需求会话的固定依据/);
   assert.match(html, /仍在等待真实验收/);
 });
+
+// ---- Task 486acdf2: the delivery's precondition decides whether acceptance can be entered ----------------------------------------
+const waitingLeader = (convention: Record<string, unknown>) => ({
+  kind: "task", taskId: task.id, version: 3, currentRevisionId: task.currentRevisionId, workChangeSequence: 20, title: task.title, taskKind: "implementation",
+  taskState: "in_progress", phase: "awaiting_acceptance", nextAction: "等待发布", responsible: { kind: "consumer", id: "agent", label: "验收者" },
+  assignment: null, latestRun: null, delivery: null, pendingImpactCount: 0, queueHold: null, goal: null, stage: null,
+  plan: { plannedStartAt: null, dueAt: null, priority: null, version: 0, actorId: null, updatedAt: null }, dependencies: [], dependencyVersion: 0, review: null,
+  dates: { createdAt: "2026-10-29T00:00:00Z", businessChangedAt: "2026-10-29T00:00:00Z", startedAt: null, completedAt: null, observedAt: "2026-10-29T00:00:00Z" },
+  actionKey: "task:fixture", acceptanceConvention: convention }) as unknown as LeaderWorkTask;
+const deliveredDetail = { ...detail, task: { ...task, state: "in_progress", version: 3 }, proposal: { acceptanceMode: "independent_agent", consumer: "agent", useRequired: true },
+  deliveries: [{ id: "10000005-0000-4000-8000-000000000005", taskId: task.id, taskRevisionId: task.currentRevisionId, artifactRef: "pr", artifactRevision: "r1", contentHash: "a".repeat(64),
+    technicalResult: "passed", technicalEvidence: "ok", reason: "deliver", actorId: "author", createdAt: "2026-11-01T00:00:00Z" }] } as unknown as TaskDetail;
+
+test("while the precondition is not marked the page says so and offers no use-observation or close entrance; once marked both return", () => {
+  const writer = { ...context, principal: { ...context.principal, permissions: ["read", "write", "review"] } } as MutationContext;
+  const waiting = waitingLeader({ acceptanceTarget: "named_agent", acceptancePrecondition: "release", readiness: "waiting_precondition", namedAgent: "agent", preconditionMark: null });
+  const blocked = render(actions({ context: writer, detail: deliveredDetail, leader: waiting, open: "observation" }));
+  assert.match(blocked, /前置：未满足（等待发布，尚未标记已满足）/);
+  assert.match(blocked, /data-precondition="waiting"/);
+  assert.doesNotMatch(blocked, /记录使用观察|记录本次交付的使用观察/, "no use-observation entrance while waiting");
+  assert.doesNotMatch(render(actions({ context: writer, detail: deliveredDetail, leader: waiting, open: "close" })), /核对验收并关闭任务/, "nor a close entrance");
+  const marked = waitingLeader({ acceptanceTarget: "named_agent", acceptancePrecondition: "release", readiness: "ready", namedAgent: "agent",
+    preconditionMark: { actorId: "release-owner", evidence: "released in build 9a4020a5", markedAt: "2026-11-12T03:00:00.000Z" } });
+  const open = render(actions({ context: writer, detail: deliveredDetail, leader: marked, open: "observation" }));
+  assert.doesNotMatch(open, /data-precondition="waiting"/);
+  assert.match(open, /记录使用观察/, "the entrance returns once the precondition is marked");
+  // A Task that declares no precondition is not held back.
+  const plain = waitingLeader({ acceptanceTarget: null, acceptancePrecondition: null, readiness: "ready", namedAgent: null, preconditionMark: null });
+  assert.match(render(actions({ context: writer, detail: deliveredDetail, leader: plain, open: "observation" })), /记录使用观察/);
+});

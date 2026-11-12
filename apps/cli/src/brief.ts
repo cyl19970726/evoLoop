@@ -34,7 +34,7 @@ export function briefTask(item: Obj): Obj {
     ...(item.plan ? { plan: pick(obj(item.plan), ["dueAt", "plannedStartAt", "priority"]) } : {}),
     acceptanceConvention: convention ? { acceptanceTarget: convention.acceptanceTarget ?? null, acceptancePrecondition: convention.acceptancePrecondition ?? null,
       readiness: convention.readiness ?? null, namedAgent: convention.namedAgent ?? null } : null,
-    ...(convention ? { acceptance: pick(convention, ["acceptanceTarget", "acceptancePrecondition", "readiness", "namedAgent"]) } : {}),
+    ...(convention ? { acceptance: pick(convention, ["acceptanceTarget", "acceptancePrecondition", "readiness", "namedAgent", "preconditionMark"]) } : {}),
   };
 }
 

@@ -26,6 +26,7 @@ import type { SessionMessageCommand } from "@evoloop/contracts/session-messages"
 import { applySessionAssignment } from "./session-assignments/index.js";
 import { applyLeaderNoticePacket } from "./leader-notice-packets/index.js";
 import { applySessionLine } from "./session-line/index.js";
+import { applyDecisionRequest } from "./decision-requests/index.js";
 import type { SessionAssignmentCommand } from "@evoloop/contracts/session-assignments";
 import type { DomainRoute, HostLink } from "@evoloop/contracts/resident-hosts";
 import { applySchedule } from "./scheduling/commands.js";
@@ -223,6 +224,7 @@ export class WorkflowService {
     if (command.type === "leader.noticePacket.build" || command.type === "leader.noticePacket.sent" || command.type === "leader.noticePacket.observe") return "write";
     if (command.type === "stage.phaseKey.set") return "review";
     if (command.type.startsWith("queue.") || command.type.startsWith("line.") || command.type.startsWith("leader.notice")) return "review";
+    if (command.type === "decision.request.create" || command.type === "decision.request.withdraw") return "review";
     if (command.type.startsWith("evaluation.") || command.type.startsWith("domain.") || command.type.startsWith("host.")) return "review";
     return command.type === "document.adopt" || command.type === "document.publish" || command.type === "document.archive" || command.type === "document.restore" || command.type === "task.start" || command.type === "task.acceptancePrecondition.mark" || command.type === "task.reviewBasis" || command.type === "task.close" || command.type === "task.cancel" || command.type === "task.reopen" || command.type === "stage.accept" || command.type === "stage.review" || command.type === "stage.review.correct" || command.type === "runtime.session.reserve" || command.type === "runtime.session.close" || command.type === "runtime.run.reserve" || (command.type === "runtime.run.interrupt" || command.type === "runtime.run.stop" || command.type === "runtime.run.abandonReadOnly") || command.type.startsWith("schedule.") || command.type.startsWith("role.") && command.type !== "role.propose" || command.type === "discussion.decision.record" || command.type === "discussion.action.link"
       ? "review" : "write";
@@ -245,6 +247,8 @@ export class WorkflowService {
     }
     if (command.type.startsWith("line."))
       return applySessionLine(tx, principal, command as import("@evoloop/contracts/session-line").SessionLineCommand, now, () => this.deps.ids.next());
+    if (command.type.startsWith("decision.request."))
+      return applyDecisionRequest(tx, principal, command as import("@evoloop/contracts/decision-requests").DecisionRequestCommand, now);
     if (command.type.startsWith("session.message."))
       return applySessionMessage(tx, principal, command as SessionMessageCommand, now);
     if (command.type === "session.input.reply")
@@ -462,13 +466,16 @@ export class WorkflowService {
           ownerRole?.proposal?.templateKey === "cognition" && principal.permissions.includes("review");
         if (command.useRequired === false && !decisionOnly)
           throw new DomainError("ACCEPTANCE_POLICY", "new business Tasks require current delivery use under their acceptance mode");
+        // Omitted means independent_agent (it is what is stored below), so the rules are judged on that value: only a mode written explicitly
+        // as something else is refused. A decision-only Task stores no mode and is not judged on one.
+        const createdMode = decisionOnly ? command.acceptanceMode : command.acceptanceMode ?? "independent_agent";
         if (command.acceptanceMode === "human_required" && !command.consumer)
           throw new DomainError("ACCEPTANCE_POLICY", "human-required Tasks need the exact human consumer actor");
-        if (command.acceptanceTarget && (command.acceptanceTarget === "human") !== (command.acceptanceMode === "human_required"))
+        if (command.acceptanceTarget && (command.acceptanceTarget === "human") !== (createdMode === "human_required"))
           throw new DomainError("ACCEPTANCE_POLICY", "acceptance target and mode disagree");
         if (command.acceptanceTarget === "named_agent" && !command.consumer)
           throw new DomainError("ACCEPTANCE_POLICY", "named_agent acceptance needs the declared consumer: the business identity that accepts directly");
-        if (command.acceptanceTarget === "named_agent" && command.acceptanceMode !== "independent_agent")
+        if (command.acceptanceTarget === "named_agent" && createdMode !== "independent_agent")
           throw new DomainError("ACCEPTANCE_POLICY", "named_agent acceptance needs the independent_agent mode: the consumer must not be the author");
         await tx.insertTaskProposal({ projectId: command.projectId, taskId: task.id, taskRevisionId: revisionId,
           stageId: command.stageId ?? null, consumer: command.consumer ?? "", useRequired: !decisionOnly,

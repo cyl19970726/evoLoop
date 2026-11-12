@@ -28,14 +28,20 @@ export function registerAcceptanceRelayRoutes(app: FastifyInstance, workflow: Wo
     await workflow.getProject(request.principal,p.projectId);
     // The deliveries the caller is a declared consumer of are read only on request (they scan the whole work index), and a failure
     // there never takes the human relay list down with it.
-    const q=z.strictObject({direct:z.enum(["1","true"]).optional()}).parse(request.query);
+    // direct=1 or true asks for it; 0, false or no flag does not. Parameters this route does not know are ignored (a cache-busting or tracking
+    // parameter must not turn a read into a 400).
+    const q=z.looseObject({direct:z.enum(["1","true","0","false"]).optional()}).parse(request.query);
     const items=await relay.mine(request.principal,p.projectId);
-    if(!q.direct)return {items};
+    if(q.direct!=="1"&&q.direct!=="true")return {items};
     try{
       const direct=await relay.mineDirect(request.principal,p.projectId);
       return {items,direct:direct.items,directComplete:direct.complete,directTasksRead:direct.tasksRead};
     }catch(error){
-      return {items,direct:[],directComplete:false,directTasksRead:0,directError:(error as {code?:string}).code??"DIRECT_UNAVAILABLE"};
+      const code=(error as {code?:string}).code??"DIRECT_UNAVAILABLE";
+      // The failure is not swallowed: it is logged, and the answer says the owed list is incomplete (an empty list here is not "nothing owed").
+      request.log.error({err:error,projectId:p.projectId,code},"acceptance-relay mine: the direct list could not be read");
+      return {items,direct:[],directComplete:false,directTasksRead:0,directError:code,
+        directMessage:`待本人验收的列表没有读完整（${code}）：这里的空列表不代表没有待验收的交付，请稍后重读。`};
     }
   });
   app.get("/api/projects/:projectId/tasks/:taskId/acceptance-relay", async request => {

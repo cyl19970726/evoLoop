@@ -293,7 +293,7 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
         <SectionBoundary label="依据与影响"><TaskBasisTab context={taskContext} detail={detail} reads={documents.reads} canReview={canReview} /></SectionBoundary>
       </TabsContent>
       <TabsContent value="delivery" forceMount hidden={tab !== "delivery"} id={panelId("delivery")} aria-labelledby={tabId("delivery")} className="pt-5 outline-none">
-        <SectionBoundary label="交付与使用"><TaskDeliveryTab projectId={projectId} actorId={context.principal.actorId} detail={detail} active={active && tab === "delivery"} actionsHref={linkForTab("actions")} /></SectionBoundary>
+        <SectionBoundary label="交付与使用"><TaskDeliveryTab projectId={projectId} actorId={context.principal.actorId} detail={detail} active={active && tab === "delivery"} actionsHref={linkForTab("actions")} convention={leaderTask?.acceptanceConvention ?? null} /></SectionBoundary>
       </TabsContent>
       <TabsContent value="runtime" forceMount hidden={tab !== "runtime"} id={panelId("runtime")} aria-labelledby={tabId("runtime")} className="pt-5 outline-none">
         <SectionBoundary label="运行与关联"><TaskRuntimeTab context={taskContext} detail={detail} active={active && tab === "runtime"} overviewHref={linkForTab("overview")} /></SectionBoundary>

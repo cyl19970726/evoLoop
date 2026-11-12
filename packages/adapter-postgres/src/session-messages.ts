@@ -221,9 +221,14 @@ export class PgSessionMessages implements SessionMessageTransaction {
     }
     // The ordinary entry never reuses the ID of a direct input that was not refused: that input is already inserted, started or
     // of unknown outcome, and a message under the same ID would send the same text a second time.
-    const direct=await this.client.query(`SELECT state FROM session_direct_input WHERE project_id=$1 AND input_id=$2`,[v.projectId,v.id]);
-    if(direct.rows[0]&&direct.rows[0].state!=='rejected')
-      throw new DomainError('INPUT_ID_IS_DIRECT_INPUT',`this ID is already a direct input (state ${direct.rows[0].state}); read it by its input ID instead of queueing the text again`);
+    // One operation ID is one intent too (the direct-input reserve compares it the same way): a message under another ID but the operation of a
+    // live direct input is the same text entering the Leader a second time.
+    const direct=await this.client.query(`SELECT input_id,state FROM session_direct_input WHERE project_id=$1 AND (input_id=$2 OR operation_id=$3)`,[v.projectId,v.id,v.operationId]);
+    const live=direct.rows.find(row=>row.state!=='rejected');
+    if(live)
+      throw new DomainError('INPUT_ID_IS_DIRECT_INPUT',live.input_id===v.id
+        ?`this ID is already a direct input (state ${live.state}); read it by its input ID instead of queueing the text again`
+        :`this operation ID already belongs to a direct input (${live.input_id}, state ${live.state}); read that input instead of queueing the same text again under another message ID`);
     await this.client.query(`INSERT INTO session_message(project_id,message_id,operation_id,target_kind,session_id,link_id,sender_actor_id,content,context_task_id,context_task_revision_id,reply_to_message_id,state,version,created_at,updated_at)
       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
       [v.projectId,v.id,v.operationId,v.target.kind,v.target.kind==='owned'?v.target.sessionId:null,v.target.kind==='external'?v.target.linkId:null,v.senderActorId,v.content,v.context?.taskId??null,v.context?.taskRevisionId??null,v.replyToMessageId,v.state,v.version,v.createdAt,v.updatedAt]);

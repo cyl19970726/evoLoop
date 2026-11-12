@@ -58,6 +58,12 @@ test("a delivery observation, an acceptance convention and queue holds survive w
   assert.equal(rich.queueHold, "awaiting_acceptance");
   assert.equal(rich.pendingImpacts, 2);
   assert.deepEqual(rich.acceptance, { acceptanceTarget: "named_agent", acceptancePrecondition: "release", readiness: "waiting_precondition", namedAgent: "req" });
+  // Who marked the precondition, on what evidence and when survives --brief (Task 486acdf2); an unmarked delivery has no such field in the brief.
+  const mark = { actorId: "release-owner", evidence: "released in build 9a4020a5", markedAt: "2026-11-12T03:00:00.000Z" };
+  const marked = briefTask(indexTask(2, { acceptanceConvention: { acceptanceTarget: "named_agent", acceptancePrecondition: "release", readiness: "ready", namedAgent: "req", preconditionMark: mark } })) as Record<string, any>;
+  assert.deepEqual(marked.acceptance.preconditionMark, mark);
+  const unmarked = briefTask(indexTask(2, { acceptanceConvention: { acceptanceTarget: "named_agent", acceptancePrecondition: "release", readiness: "waiting_precondition", namedAgent: "req", preconditionMark: null } })) as Record<string, any>;
+  assert.equal("preconditionMark" in unmarked.acceptance, false, "brief leaves a null field out, like the others: absent means not marked");
   const bare = briefTask(indexTask(3, { assignment: null, latestRun: null, delivery: null, plan: null, dependencies: [], timing: null })) as Record<string, any>;
   for (const absent of ["assignment", "run", "delivery", "plan", "blockedBy", "queueHold", "pendingImpacts", "acceptance"]) assert.equal(absent in bare, false, absent);
   assert.equal(bare.acceptanceConvention, null, "a Task that declared nothing says so, as the full view does");

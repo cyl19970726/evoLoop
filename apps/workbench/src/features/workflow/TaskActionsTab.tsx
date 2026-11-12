@@ -17,6 +17,8 @@ import { useProjectPages, useProjectQuery } from "../../shared/query";
 import { roleClient } from "../../shared/roleClient";
 import { runtimeClient } from "../../shared/runtimeClient";
 import { date, href } from "../../shared/ui/shared";
+import { actorText } from "../../shared/actorPresentation";
+import { preconditionStatus } from "./acceptanceConventionPresentation";
 import { CommandForm, CommandFrame, overLimitText, useCommand } from "../../shared/command";
 import { attributableRuns } from "./deliveryRun";
 import { runStateName } from "./taskExperience";
@@ -81,6 +83,9 @@ export function TaskActionsTab({ context, detail, leader, leaderState, documents
   const lastLeader = React.useRef<LeaderWorkTask | null>(null);
   if (leaderState === "ready") lastLeader.current = leader;
   const shownLeader = leaderState === "ready" ? leader : leaderState === "failed" ? null : lastLeader.current;
+  // While the delivery's precondition is not marked met, nothing can be accepted: no use observation and no close entrance is offered.
+  const precondition = preconditionStatus(shownLeader?.acceptanceConvention, date, actorText);
+  const waitingPrecondition = precondition?.waiting === true;
 
   const content: Action[] = [];
   if (task.state === "todo" || task.state === "in_progress") content.push({ key: "update", title: "更新任务内容", needs: ["write"],
@@ -137,7 +142,7 @@ export function TaskActionsTab({ context, detail, leader, leaderState, documents
       description: latest ? "旧交付的记录保留；新交付要重新检查和使用。" : "成果的位置、固定修订、内容摘要和技术检查结果。",
       element: <DeliveryRecordForm context={context} detail={detail} /> });
     const humanOnly = acceptanceMode === "human_required" && context.principal.identityKind !== "human";
-    if (latest && !humanOnly) progress.push({ key: "observation", title: "记录本次交付的使用观察", needs: ["write"],
+    if (latest && !humanOnly && !waitingPrecondition) progress.push({ key: "observation", title: "记录本次交付的使用观察", needs: ["write"],
       description: "谁实际用了最新的交付、结果怎样。登记不自动证明长期效果。",
       element: <CommandForm context={context} submitLabel="记录使用观察" baseline={{ deliveryId: latest.id, acceptanceMode: acceptanceMode ?? "legacy" }} fields={[
         { name: "observer", label: "实际使用者", initial: context.principal.actorId, maxLength: 4000 },
@@ -149,7 +154,7 @@ export function TaskActionsTab({ context, detail, leader, leaderState, documents
         { name: "evidence", label: "使用过程、结果与反馈证据", kind: "textarea", maxLength: 4000 }, reasonField()]}
         build={(values, seen) => observationRecordCommand(detail, seen, { observer: values.observer ?? "", observerKind: values.observerKind ?? "",
           result: values.result ?? "", evidence: values.evidence ?? "", reason: values.reason ?? "" })} /> });
-    if (latest && closable) progress.push({ key: "close", title: "核对验收并关闭任务", needs: ["review"], description: "逐项写明验收已满足的证据与限制。",
+    if (latest && closable && !waitingPrecondition) progress.push({ key: "close", title: "核对验收并关闭任务", needs: ["review"], description: "逐项写明验收已满足的证据与限制。",
       element: <CommandForm context={context} submitLabel="关闭任务" baseline={{ taskVersion: task.version, deliveryId: latest.id }} fields={[
         { name: "acceptanceEvidence", label: "逐项验收已满足的证据与限制", kind: "textarea", rows: 4, maxLength: 4000 }, reasonField()]}
         build={(values, seen) => taskCloseCommand(detail, seen, { acceptanceEvidence: values.acceptanceEvidence ?? "", reason: values.reason ?? "" })} /> });
@@ -172,6 +177,7 @@ export function TaskActionsTab({ context, detail, leader, leaderState, documents
   const visible = (actions: Action[]) => actions.filter(action => may(action.needs));
   return <div className="flex flex-col gap-8" data-task-actions="">
     <Fine>提交时按打开表单时看到的版本核对；结果未知时保留原操作 ID，先核对，不重复发送。</Fine>
+    {waitingPrecondition && <Notice tone="waiting" title={precondition!.text} data-precondition="waiting">满足并标记之后，才能登记使用观察、核对验收或关闭任务；现在不提供这些入口。</Notice>}
     {groups.slice(0, 2).map(group => visible(group.actions).length > 0 && <TabSection key={group.title} title={group.title}>
       <div className="flex flex-col">{visible(group.actions).map(action => <ActionRow key={action.key} title={action.title} description={action.description} defaultOpen={action.key === open}>{action.element}</ActionRow>)}</div>
       {group.title === "推进与交付" && task.state === "in_progress" && latest && !closable && may(["review"]) && <Fine>当前修订还需要技术检查通过的交付{detail.proposal?.useRequired ? "，以及约定的使用者对这次交付的实际使用记录" : ""}，满足后才能关闭。</Fine>}
