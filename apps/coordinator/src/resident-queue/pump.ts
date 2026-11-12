@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { Principal, ResidentQueue, ResidentQueueEntry } from "@evoloop/contracts";
 import type { WorkflowService } from "@evoloop/core";
+import { DomainError } from "@evoloop/contracts/ports";
 
 const terminal=new Set(["completed","failed","interrupted"]);
 export function queueIntentId(...parts:string[]):string {
@@ -57,7 +58,12 @@ export class ResidentQueuePump {
       try{result=await this.deps.workflow.execute(lead,{type:"queue.claim",projectId:queue.projectId,
         queueId:queue.id,entryId:entry.id,expectedVersion:queue.version,claimId,runId,
         runOperationId:operationId,operationId});}
-      catch(error){if(error instanceof Error&&error.message==='SESSION_MESSAGE_BUSY')return;throw error;}
+      catch(error){
+        if(error instanceof Error&&error.message==='SESSION_MESSAGE_BUSY')return;
+        // A held provider starts nothing: the entry stays queued with no saved result and is claimed afresh after the release.
+        if(error instanceof DomainError&&error.code==='PROVIDER_HELD')return;
+        throw error;
+      }
       if(result.status==="rejected"&&!["QUEUE_NOT_ADOPTED","VERSION_CONFLICT","ENTRY_UNAVAILABLE"].includes(result.code))
         this.deps.onError(new Error(`queue claim ${result.code}`));
       // The next item must observe the committed claim on a fresh queue read.

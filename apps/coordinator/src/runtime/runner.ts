@@ -8,6 +8,7 @@ import { DomainError } from "@evoloop/contracts/ports";
 import { nativeChildDiagnosticSchema, ownerOf, providerOfOwner, sessionProvider, RuntimeNotSentError, RuntimeProtocolError, RuntimeServerError, RuntimeUnknownError,
   type NativeChildDiagnosticRecord as NativeChildDiagnostic, type RuntimeProvider } from "@evoloop/contracts/runtime";
 import type { WorkflowService } from "@evoloop/core";
+import { MODEL_CHANGE_UNSUPPORTED_MESSAGE } from "@evoloop/core";
 import type { SessionProfileRecord } from "@evoloop/contracts/session-assignments";
 import type { RuntimeWorkflowService } from "@evoloop/core/runtime";
 import type { RuntimeGrant } from "../configuration.js";
@@ -64,6 +65,10 @@ export type ManagedRuntime = RuntimePort & { open(): Promise<void>; registerBind
   onChildDiagnostic?(listener:(diagnostic:NativeChildDiagnostic)=>void|Promise<void>):()=>void;
   flushChildDiagnostics?():Promise<void>;
   hasFreshStartProof?(binding:RuntimeBinding):boolean;
+  /** True when this runtime cannot change effort on a live Thread, so effort travels with each turn/start. */
+  appliesEffortWithNextTurn?(binding:RuntimeBinding):boolean;
+  /** The effort levels this runtime accepts at all (a model's own list is narrower and checked separately). */
+  allowedReasoningEfforts?(binding:RuntimeBinding):readonly string[]|null;
   startConversationTurn?(binding:RuntimeBinding,input:string,operationId:string):Promise<RuntimeTurn>;
   qualifyConversationThread?(binding:RuntimeBinding):Promise<{available:boolean;reason:string;fingerprint:string|null}>;
   activateExecutionProfile?(current:RuntimeBinding,target:RuntimeSessionSpec,revisionId:string,operationId:string):Promise<RuntimeBinding>;
@@ -259,6 +264,16 @@ export class RuntimeRunner {
     return this.runtime.nativeInputConnectionId?.()??null;
   }
   /** Read-only capability check, never a replacement for execute's transactional authorization/version checks. */
+  /** Whether an effort-only revision of this Session needs no native activation. */
+  effortAppliesNextTurn(session:RuntimeSessionRecord):boolean {
+    if(!session.nativeThreadId||!session.nativeSessionId)return false;
+    try{return this.runtime.appliesEffortWithNextTurn?.(bindingOf(session))===true;}catch{return false;}
+  }
+  /** The effort levels this Session's runtime accepts; null when it cannot say. */
+  allowedReasoningEfforts(session:RuntimeSessionRecord):readonly string[]|null {
+    if(!session.nativeThreadId||!session.nativeSessionId)return null;
+    try{return this.runtime.allowedReasoningEfforts?.(bindingOf(session))??null;}catch{return null;}
+  }
   async preflightExecutionProfileRevision(principal:Principal,
     command:Extract<Command,{type:"runtime.session.executionProfile.revise"}>):Promise<void> {
     // Legacy model/policy-only activation uses a different native path.
@@ -278,6 +293,14 @@ export class RuntimeRunner {
     if(!await this.authorized({...session,model:command.model,sandbox:command.sandbox,approvalPolicy:command.approvalPolicy})||
       !await this.deps.allowedCwd(session.projectId,session.cwd))
       throw new DomainError("FORBIDDEN","原 Session 的目标配置或目录没有当前精确授权。");
+    const head=session.executionProfile.revision;
+    if(this.effortAppliesNextTurn(session)){
+      // Only the effort changes and this runtime applies it with each turn/start: there is nothing to activate or read back first.
+      if(head.model===command.model&&head.sandbox===command.sandbox&&head.approvalPolicy===command.approvalPolicy)return;
+      // Any model change that carries an effort needs the native in-place switch this runtime does not have: refused here, nothing saved.
+      if(head.model!==command.model)
+        throw new DomainError("EXECUTION_PROFILE_MODEL_CHANGE_UNSUPPORTED",MODEL_CHANGE_UNSUPPORTED_MESSAGE);
+    }
     if(!this.runtime.isReady())throw new DomainError("RUNTIME_READ_UNAVAILABLE","原生执行服务不可读，未保存新配置；请恢复连接后重试。");
     try {
       const binding=bindingOf(session);
@@ -1044,7 +1067,14 @@ export class RuntimeRunner {
           const claimed=await this.deps.trusted.claimPreTurnContinuation(run.projectId,run.id);
           if(!claimed)return false;
           run=claimed;
-        }else await this.deps.trusted.beginDispatch(run.projectId, run.id, inputReceipt);
+        }else{
+          try{await this.deps.trusted.beginDispatch(run.projectId, run.id, inputReceipt);}
+          catch(error){
+            // A held provider starts nothing: the Run stays requested with nothing saved against it and is dispatched after the release.
+            if(error instanceof DomainError&&error.code==="PROVIDER_HELD")return false;
+            throw error;
+          }
+        }
         let startBinding: RuntimeBinding;
         try {
           // Persist the original intent before resuming the same full-permission Thread
@@ -1147,7 +1177,8 @@ export class RuntimeRunner {
     if (turn.error) messages.push(`Native failure: ${turn.error.summary}; category=${turn.error.category}; HTTP=${turn.error.httpStatus ?? "unknown"}; providerCode=${turn.error.providerCode ?? "unknown"}`);
     await this.deps.trusted.recordTurn(run.projectId, run.id, turn.id, turn.status as "completed" | "failed" | "interrupted",
       messages.join("\n\n"), { itemsDigest: digest(JSON.stringify(items)), completedAtUtc: turn.completedAtUtc,
-        ...(turn.usage ? { usage: turn.usage } : {}), ...(turn.costUsd != null ? { costUsd: turn.costUsd } : {}) });
+        ...(turn.usage ? { usage: turn.usage } : {}), ...(turn.costUsd != null ? { costUsd: turn.costUsd } : {}),
+        ...(turn.error?.category ? { failureCategory: turn.error.category } : {}) });
     return true;
   }
   private async flushApprovals(target?: typeof this.approvalQueue[number]): Promise<void> {

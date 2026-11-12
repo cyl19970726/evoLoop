@@ -308,8 +308,10 @@ export async function buildServer(options: {
         if(!options.runtime)throw new DomainError("RUNTIME_READ_UNAVAILABLE","原生执行服务不可读，未保存新配置；请恢复连接后重试。");
         await options.runtime.preflightExecutionProfileRevision(principal,command);
         const current=await catalog(sessionProvider(await options.service.getRuntimeSession(principal,command.projectId,command.sessionId)));
-        if(current.status!=="available")throw new DomainError("MODEL_CATALOG_UNAVAILABLE","原生模型目录不可用，未保存新配置。");
-        if(!current.options?.find(option=>option.model===command.model)?.supportedReasoningEfforts.includes(command.reasoningEffort??""))
+        // A catalog that is empty, unreadable or does not list the model cannot say what the model supports, so it does not block the
+        // change (the requester names the effort the model declares). A catalog that does list the model is binding.
+        const listed=current.status==="available"?current.options?.find(option=>option.model===command.model):undefined;
+        if(listed&&listed.supportedReasoningEfforts.length&&!listed.supportedReasoningEfforts.includes(command.reasoningEffort??""))
           throw new DomainError("REASONING_EFFORT_UNSUPPORTED","该模型当前未列出所选思考强度，未保存新配置。");
       }
       if (command.type === "runtime.run.reserve") {
