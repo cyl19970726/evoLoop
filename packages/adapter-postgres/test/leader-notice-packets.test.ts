@@ -656,3 +656,83 @@ test("W5: a withdrawn notice is a record: it wakes no one, and the record view l
   assert.ok(!rest.items.some(row => row.sourceEventId === page.items[0]!.sourceEventId), "a cursor continues after the last record read");
   assert.deepEqual(errors, []);
 });
+
+// ---- Q2: the scheduling event stream and the work board, over the real flows above ----
+test("Q2: the stream records a packet's whole way in order (notice, built, packed, sent by a new Turn, delivered, seen) and the metrics follow from it", async () => {
+  await reset();
+  const { readSchedEvents, readWorkBoard } = await import("../src/work-board.ts");
+  const { computeBoardMetrics } = await import("../../../apps/coordinator/src/work-board/metrics.ts");
+  const startSeq = (await readSchedEvents(pool, p, { limit: 1 })).head;
+  await humanPost("Leader, a question");
+  await messagePump.tick();
+  const first = `turn-${turns.size}`;
+  await newTask("Stream A");
+  await noticePump.tick();                       // the Leader is busy: the notice only waits
+  finishTurn(first);
+  await messagePump.tick(); await noticePump.tick();   // the packet message is posted
+  await messagePump.tick();                      // and started: its Turn runs
+  await noticePump.tick();
+  const during = await readWorkBoard(pool, p);
+  const leader = during.sessions.find(s => s.sessionId === sessionA)!;
+  assert.equal(leader.current?.kind, "message", "the Leader's running Turn is a message");
+  assert.ok(leader.current!.elapsedSeconds! >= 0);
+  assert.ok(during.awaitingLeader.some(i => i.kind === "notice" && i.state === "delivered"), "a delivered notice waits for the Leader's decision");
+  assert.ok(during.eventSeq > startSeq);
+  assert.ok(during.graph.nodes.some(n => n.kind === "leader") && during.graph.nodes.some(n => n.id === sessionA));
+  assert.ok(during.graph.inFlight.some(f => f.kind === "packet"));
+  finishTurn(`turn-${turns.size}`); await settleAndPump();
+  const page = await readSchedEvents(pool, p, { after: startSeq, limit: 500 });
+  const kinds = page.items.map(e => e.kind);
+  const order = ["message.queued", "message.processing", "notice.created", "notice.packet_built", "notice.packed", "notice.sent", "notice.delivered", "notice.seen"];
+  let at = -1;
+  for (const kind of order) { const next = kinds.indexOf(kind, at + 1); assert.ok(next > at, `${kind} after ${order[order.indexOf(kind) - 1] ?? "start"} in ${kinds.join(",")}`); at = next; }
+  const sent = page.items.find(e => e.kind === "notice.sent")!;
+  assert.equal(sent.next, "new_turn"); assert.equal(sent.subject.kind, "packet");
+  const packed = page.items.find(e => e.kind === "notice.packed")!;
+  assert.equal(packed.to, sent.subject.id, "a notice names its packet");
+  assert.ok(page.items.every((e, i) => i === 0 || e.seq > page.items[i - 1]!.seq), "strictly increasing");
+  assert.ok(page.items.every(e => !("content" in e)), "metadata only");
+  const m = computeBoardMetrics(page.items, page.items[0]!.at, new Date(Date.now() + 1000).toISOString());
+  assert.ok(m.noticeIntake.count >= 1 && m.noticeIntake.medianSeconds !== null);
+  // The time read returns the same events as the cursor read.
+  const timed = await readSchedEvents(pool, p, { from: page.items[0]!.at, to: new Date(Date.now() + 1000).toISOString(), limit: 500 });
+  assert.deepEqual(timed.items.filter(e => e.seq > startSeq).map(e => e.seq), page.items.map(e => e.seq));
+});
+
+test("Q2: retention removes only what is older than the window, a cursor behind it is told resetRequired, and one ahead of the head too", async () => {
+  const { readSchedEvents, purgeSchedEvents, headSeq } = await import("../src/work-board.ts");
+  await reset();
+  await newTask("Retention");
+  const head = await headSeq(pool, p);
+  const old = (await pool.query(`INSERT INTO sched_event(project_id,at,category,kind,subject_kind,subject_id) SELECT $1,now()-interval '31 days','task','task.created','task',$2 RETURNING seq`, [p, randomUUID()])).rows[0].seq as number;
+  const kept = (await pool.query(`INSERT INTO sched_event(project_id,at,category,kind,subject_kind,subject_id) SELECT $1,now()-interval '29 days','task','task.created','task',$2 RETURNING seq`, [p, randomUUID()])).rows[0].seq as number;
+  assert.ok(Number(old) > head);
+  const before = await readSchedEvents(pool, p, { after: head, limit: 10 });
+  assert.equal(before.resetRequired, false);
+  assert.equal(await purgeSchedEvents(pool, 30, 1), 1, "batches of one: the loop continues until nothing is left to purge");
+  assert.equal((await pool.query("SELECT 1 FROM sched_event WHERE seq=$1", [kept])).rowCount, 1);
+  assert.equal((await pool.query("SELECT 1 FROM sched_event WHERE seq=$1", [old])).rowCount, 0);
+  const behind = await readSchedEvents(pool, p, { after: Number(old) - 1, limit: 10 });
+  assert.equal(behind.resetRequired, true, "events the cursor had not seen are gone");
+  const at = await readSchedEvents(pool, p, { after: Number(old), limit: 10 });
+  assert.equal(at.resetRequired, false); assert.ok(at.items.some(e => e.seq === Number(kept)));
+  assert.equal((await readSchedEvents(pool, p, { after: Number(kept) + 100000, limit: 10 })).resetRequired, true);
+  assert.equal(await purgeSchedEvents(pool, 30), 0, "nothing more to purge");
+});
+
+test("Q2: the triggers add little to a write: a message insert with and without its event trigger", async () => {
+  await reset();
+  const n = 200;
+  const run = async () => {
+    const started = process.hrtime.bigint();
+    for (let i = 0; i < n; i++) await pool.query(`INSERT INTO session_message(project_id,message_id,operation_id,target_kind,session_id,sender_actor_id,content,state,version,created_at,updated_at)
+      VALUES($1,$2,$3,'owned',$4,'perf','x','cancelled',1,now(),now())`, [p, randomUUID(), randomUUID(), sessionB]);
+    return Number(process.hrtime.bigint() - started) / 1e6 / n;
+  };
+  const withTrigger = await run();
+  await pool.query("ALTER TABLE session_message DISABLE TRIGGER sched_event_message_ins");
+  const without = await run();
+  await pool.query("ALTER TABLE session_message ENABLE TRIGGER sched_event_message_ins");
+  console.log(`Q2 write cost per message insert: ${withTrigger.toFixed(2)} ms with the event trigger, ${without.toFixed(2)} ms without (${n} rows, one connection)`);
+  assert.ok(withTrigger - without < 5, `the trigger adds ${(withTrigger - without).toFixed(2)} ms per insert`);
+});
