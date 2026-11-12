@@ -560,3 +560,25 @@ test("session profile set keeps the model in force: without --model it takes the
     assert.equal(submitted?.model, "deepseek/deepseek-v4-pro");
   } finally { fetch.mock.restore(); await rm(directory, { recursive: true, force: true }); }
 });
+
+test('read run carries what the Turn actually reported next to the configured profile, 未记录 when nothing was observed', async () => {
+  const projectId = '00000000-0000-4000-8000-0000000000e1', runId = '00000000-0000-4000-8000-0000000000e2', other = '00000000-0000-4000-8000-0000000000e3';
+  const directory = await mkdtemp(join(tmpdir(), 'evoloop-read-run-'));
+  const base = `/api/projects/${projectId}/runtime/runs`;
+  const fetch = mock.method(globalThis, 'fetch', async (url: string | URL | Request) => {
+    const path = new URL(String(url)).pathname;
+    if (path === '/api/session') return new Response(JSON.stringify({ principal: { actorId: 'reader', projectIds: [projectId] } }));
+    if (path === `${base}/${runId}`) return new Response(JSON.stringify({ id: runId, state: 'completed', executionProfile: { model: 'opus', reasoningEffort: 'high' },
+      actual: { model: 'claude-opus-5-5', reasoningEffort: null, subagentModels: ['claude-haiku-4-5'] } }));
+    if (path === `${base}/${other}`) return new Response(JSON.stringify({ id: other, state: 'completed', executionProfile: { model: 'opus', reasoningEffort: 'high' } }));
+    throw new Error(`Unexpected ${path}`);
+  });
+  const env = { EVOLOOP_TOKEN: 'fixture', EVOLOOP_STATE_DIR: directory };
+  try {
+    const seen = JSON.parse((await run(['read', 'run', runId, '--project', projectId], env)).stdout);
+    assert.deepEqual(seen.actualView, { model: 'claude-opus-5-5', reasoningEffort: '未记录', subagentModels: ['claude-haiku-4-5'], configuredModel: 'opus', configuredEffort: 'high', recorded: true });
+    const unseen = JSON.parse((await run(['read', 'run', other, '--project', projectId], env)).stdout);
+    assert.equal(unseen.actualView.model, '未记录'); assert.equal(unseen.actualView.recorded, false); assert.equal(unseen.actualView.configuredModel, 'opus');
+    assert.equal(unseen.state, 'completed', 'the Run itself is passed through unchanged');
+  } finally { fetch.mock.restore(); await rm(directory, { recursive: true, force: true }); }
+});

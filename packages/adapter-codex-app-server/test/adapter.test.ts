@@ -1671,7 +1671,7 @@ test('effort rides on turn/start where the runtime cannot update a live Thread, 
     sent.push({ method, params });
     if (method === 'turn/start') return { turn: { id: 'turn-1', status: 'inProgress', completedAt: null, items: [] } };
     if (method === 'thread/turns/list') return { data: [{ id: latest, status: 'inProgress' }], nextCursor: null };
-    if (method === 'thread/read') return { thread: { id: 'thread', reasoningEffort: reported } };
+    if (method === 'thread/read') return { thread: { id: 'thread', reasoningEffort: reported, model: 'deepseek/deepseek-flash-0610' } };
     assert.fail(method);
   };
   const binding = { sessionId: 's', roleId: 'r', projectId: 'p', nativeThreadId: 'thread', nativeSessionId: 'thread', cwd: '/tmp/e', authorizationScope: 'project',
@@ -1683,17 +1683,22 @@ test('effort rides on turn/start where the runtime cannot update a live Thread, 
   const start = sent.find(call => call.method === 'turn/start')!;
   assert.equal(start.params.effort, 'max', 'turn/start carries the configured effort');
   assert.equal(turn.observedReasoningEffort, 'max', 'and the Thread reports it back');
+  assert.equal(turn.observedModel, 'deepseek/deepseek-flash-0610', 'the model the Thread reports, not the configured one');
+  // No effort requested: the model is still read; the effort stays absent rather than claiming a value.
+  const plain = await adapter.startTurn({ ...binding, resumeProfile: { ...binding.resumeProfile!, reasoningEffort: null } } as never, 'business', 'op-plain',
+    { ...profile, reasoningEffort: null } as never);
+  assert.equal(plain.observedModel, 'deepseek/deepseek-flash-0610'); assert.equal('observedReasoningEffort' in plain, false);
   // The Thread's latest Turn is another one: the reported value is not proof for this Turn, so it is not claimed.
   latest = 'someone-elses-turn';
   const foreign = await adapter.startTurn(binding, 'business', 'op-foreign', profile);
-  assert.equal(foreign.observedReasoningEffort, null);
+  assert.equal(foreign.observedReasoningEffort, null); assert.equal(foreign.observedModel, null, "another Turn's Thread value is not claimed");
   // A readback that fails or reports nothing never fails the Turn that already started.
   internals.request = async (method: string) => {
     if (method === 'turn/start') return { turn: { id: 'turn-2', status: 'inProgress', completedAt: null, items: [] } };
     throw new RuntimeServerError('thread/read', -32000, 'unavailable', 'server_error');
   };
   const second = await adapter.startTurn(binding, 'business', 'op-2', profile);
-  assert.equal(second.id, 'turn-2'); assert.equal(second.observedReasoningEffort, null);
+  assert.equal(second.id, 'turn-2'); assert.equal(second.observedReasoningEffort, null); assert.equal(second.observedModel, null);
 });
 
 test('the per-turn effort readback waits out the same -32601 attach window as turn listing, for Run, message and direct-input starts alike', async () => {

@@ -585,7 +585,8 @@ export class CodexAppServerAdapter implements RuntimePort {
               typeof value==='string'&&/^(minimal|low|medium|high|xhigh|max|ultra)$/.test(value));
             const defaultEffort=typeof source.defaultReasoningEffort==='string'?source.defaultReasoningEffort:null;
             if(!seenModels.has(model)){seenModels.add(model);models.push(model);
-              options.push({model,supportedReasoningEfforts:[...new Set(efforts)],defaultReasoningEffort:defaultEffort});}
+              options.push({model,supportedReasoningEfforts:[...new Set(efforts)],defaultReasoningEffort:defaultEffort,
+                ...(typeof source.displayName==='string'&&source.displayName.trim()&&source.displayName.length<=120?{displayName:source.displayName.trim()}:{})});}
           }
           if(result.nextCursor==null){
             return {status:models.length?'available':'empty',models,options,error:null,observedAtUtc:new Date().toISOString()};
@@ -1524,7 +1525,7 @@ export class CodexAppServerAdapter implements RuntimePort {
       const turn=runtimeTurn(started?.turn);
       if(!turn||turn.status!=='inProgress'||turn.completedAtUtc!==null)
         throw new RuntimeUnknownError('turn/start',null,'invalid full conversation acknowledgement; Turn may have started');
-      return profile.reasoningEffort?await this.withObservedEffort(binding,turn):turn;
+      return await this.withObservedEffort(binding,turn,!!profile.reasoningEffort);
     }finally{
       // A changed readback must not leave an implicit admission for another start.
       this.conversationQualifications.delete(threadId);
@@ -1886,7 +1887,7 @@ export class CodexAppServerAdapter implements RuntimePort {
     }
     const turn = runtimeTurn(result?.turn);
     if (!turn) throw new RuntimeUnknownError("turn/start", null, "invalid acknowledgement; turn may have started");
-    return executionProfile?.reasoningEffort ? await this.withObservedEffort(binding, turn) : turn;
+    return await this.withObservedEffort(binding, turn, !!executionProfile?.reasoningEffort);
   }
 
   /**
@@ -1894,15 +1895,20 @@ export class CodexAppServerAdapter implements RuntimePort {
    * one in effect for it and not an older Turn's. Anything else (a failed read, another Turn first) is "unread", never "consistent".
    * Best effort: the Turn has already started.
    */
-  private async withObservedEffort(binding: RuntimeBinding, turn: RuntimeTurn): Promise<RuntimeTurn> {
+  private async withObservedEffort(binding: RuntimeBinding, turn: RuntimeTurn, effortRequested = true): Promise<RuntimeTurn> {
+    // The model is read from the same Thread readback, under the same rule: only when this Turn is the Thread's latest. A value that cannot be
+    // read is null ("not recorded"), never the configured model. `observedReasoningEffort` stays absent when no effort was requested.
+    const unread = { ...turn, ...(effortRequested ? { observedReasoningEffort: null } : {}), observedModel: null };
     try {
       const latest = await this.requestTurnsList({ threadId: binding.nativeThreadId, limit: 1, sortDirection: "desc", ...(this.features.modern ? { itemsView: "notLoaded" } : {}) });
       const first = Array.isArray(latest?.data) ? object(latest.data[0]) : null;
-      if (first?.id !== turn.id) return { ...turn, observedReasoningEffort: null };
+      if (first?.id !== turn.id) return unread;
       const readback = object(await this.request("thread/read", { threadId: binding.nativeThreadId, includeTurns: false }));
-      const observed = object(readback?.thread)?.reasoningEffort;
-      return { ...turn, observedReasoningEffort: typeof observed === "string" ? observed : null };
-    } catch { return { ...turn, observedReasoningEffort: null }; }
+      const thread = object(readback?.thread);
+      const effort = thread?.reasoningEffort, model = thread?.model;
+      return { ...turn, ...(effortRequested ? { observedReasoningEffort: typeof effort === "string" ? effort : null } : {}),
+        observedModel: typeof model === "string" && model ? model : null };
+    } catch { return unread; }
   }
 
   async interruptTurn(binding: RuntimeBinding, turnId: string): Promise<void> {

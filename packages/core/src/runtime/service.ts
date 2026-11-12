@@ -1,6 +1,6 @@
 import type { Principal, RuntimeRecordEvent, RuntimeRunRecord, RuntimeSessionRecord } from "@evoloop/contracts";
 import { bindingMatchesSession, sessionProvider, type RuntimeProvider, nativeChildDiagnosticSchema, preTurnProofSchema, type PreTurnProof, type EvaluationPacketBinding, type NativeChildDiagnosticRecord,
-  type NativeResumeRejection, type RuntimeBinding, type RuntimeSessionSpec, type RuntimeTurn, type RuntimeUsage } from "@evoloop/contracts/runtime";
+  type NativeResumeRejection, type RunActual, type RuntimeBinding, type RuntimeSessionSpec, type RuntimeTurn, type RuntimeUsage } from "@evoloop/contracts/runtime";
 import type { ExecutionProfileRevision } from "@evoloop/contracts/session-recovery";
 import { DomainError } from "@evoloop/contracts/ports";
 import { holdsProvider } from "@evoloop/contracts/provider-hold";
@@ -40,6 +40,18 @@ export function describeTurnEffort(requested: string | null, turn: RuntimeTurn):
   if (!requested && turn.observedReasoningEffort === undefined) return "";
   const observed = turn.observedReasoningEffort ?? null;
   return `; effort requested=${requested ?? "none"} observed=${observed ?? "unread"}${requested && observed && requested !== observed ? " MISMATCH" : ""}`;
+}
+
+/**
+ * The observed side of a Run's Turn after a new observation. A value the runtime reported replaces an earlier one; a field it did not
+ * report (undefined) or could not read (null) keeps what was recorded, else stays null. Nothing here comes from the configured profile.
+ * Returns the prior value untouched when the observation says nothing about model, effort or subagents.
+ */
+export function mergeRunActual(prior: RunActual | null | undefined,
+  seen: { model?: string | null | undefined; reasoningEffort?: string | null | undefined; subagentModels?: string[] | null | undefined }): RunActual | null {
+  if (seen.model === undefined && seen.reasoningEffort === undefined && seen.subagentModels === undefined) return prior ?? null;
+  return { model: seen.model ?? prior?.model ?? null, reasoningEffort: seen.reasoningEffort ?? prior?.reasoningEffort ?? null,
+    subagentModels: seen.subagentModels?.length ? [...new Set(seen.subagentModels)].sort() : prior?.subagentModels ?? [] };
 }
 
 export class RuntimeWorkflowService {
@@ -389,11 +401,14 @@ export class RuntimeWorkflowService {
       if (!["dispatching", "unknown"].includes(current.state)) throw new DomainError("RUN_NOT_DISPATCHING", "run cannot bind a new turn");
       if (current.nativeTurnId && current.nativeTurnId !== turn.id) throw new DomainError("FOREIGN_TURN", "run already has a different native turn");
       // A stop that arrived while the start was in flight: the Turn that binds now is interrupted at once.
+      const actual = mergeRunActual(current.actual, { model: turn.observedModel, reasoningEffort: turn.observedReasoningEffort, subagentModels: turn.subagentModels });
       const next = { ...current, state: "running" as const, version: current.version + 1,
+        ...(actual ? { actual } : {}),
         ...(current.stopRequestedAt ? { interruptRequested: true } : {}),
         preTurnProof: current.preTurnProof ? { ...current.preTurnProof, status: "consumed" as const } : null,
         nativeTurnId: turn.id, updatedAt: this.deps.clock.now() };
       await tx.updateRuntimeRun(next, current.version);
+      if (turn.observedModel) await tx.recordSessionActualModel?.(current.sessionId, turn.observedModel, this.deps.clock.now());
       await this.emit(tx, runId, current.sessionId, "run.bound",
         proof.inputReceipt && proof.kind === "startReply" ?
           `Turn bound from startReply; sent input ${proof.inputReceipt.protocol} SHA256 ${proof.inputReceipt.contentHash} bytes ${proof.inputReceipt.byteLength}${effortNote(current, turn)}` :
@@ -528,7 +543,9 @@ export class RuntimeWorkflowService {
   async recordTurn(projectId: string, runId: string, turnId: string,
     status: "running" | "completed" | "failed" | "interrupted", summary: string | null = null,
     checkpoint: { cursor?: string; itemsDigest?: string; completedAtUtc?: string;
-      usage?: RuntimeUsage | null; costUsd?: number | null; failureCategory?: string | null } = {}): Promise<RuntimeRunRecord> {
+      usage?: RuntimeUsage | null; costUsd?: number | null; failureCategory?: string | null;
+      /** What the settled Turn reported (Claude learns its model only from the Turn's own messages). Absent when nothing was observed. */
+      observedModel?: string | null; subagentModels?: string[] } = {}): Promise<RuntimeRunRecord> {
     if (checkpoint.completedAtUtc && !canonicalUtc(checkpoint.completedAtUtc)) {
       throw new DomainError("INVALID_OBSERVATION", "native completion time must be canonical UTC");
     }
@@ -545,7 +562,9 @@ export class RuntimeWorkflowService {
       }
       if (status === "running" && current.state === "running" && !checkpoint.cursor && !checkpoint.itemsDigest) return current;
       const terminal = status !== "running";
+      const actual = terminal ? mergeRunActual(current.actual, { model: checkpoint.observedModel, subagentModels: checkpoint.subagentModels }) : current.actual ?? null;
       const next: RuntimeRunRecord = { ...current, state: status, version: current.version + 1,
+        ...(actual ? { actual } : {}),
         resultSummary: summary ? safeDetail(summary) : current.resultSummary,
         // Provider-reported accounting of the bound Turn; never estimated or carried from another Turn.
         ...(terminal && checkpoint.usage ? { usage: { ...checkpoint.usage } } : {}),
@@ -553,6 +572,7 @@ export class RuntimeWorkflowService {
         ...(status === "failed" && checkpoint.failureCategory ? { failureCategory: checkpoint.failureCategory } : {}),
         updatedAt: this.deps.clock.now() };
       await tx.updateRuntimeRun(next, current.version);
+      if (terminal && checkpoint.observedModel) await tx.recordSessionActualModel?.(current.sessionId, checkpoint.observedModel, this.deps.clock.now());
       // A Run that fails on the account pauses the whole provider, exactly as a message does: the next Turn of any Session of it
       // would fail the same way and close its gate. The first one opens the hold; later ones find it already there.
       if (status === "failed" && holdsProvider(checkpoint.failureCategory)) {

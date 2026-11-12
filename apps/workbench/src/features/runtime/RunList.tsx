@@ -10,6 +10,9 @@ import { runtimeClient, type NativeResult } from "../../shared/runtimeClient";
 import { taskSectionHref } from "../../shared/taskNavigation";
 import { hereOrigin } from "../../shared/returnLink";
 import { FactList, mutedText } from "../../shared/ui/PageParts";
+import { runActualRows } from "../../shared/modelPresentation";
+import { sessionClient } from "../../shared/sessionClient";
+import { useProjectQuery } from "../../shared/query";
 import { useTaskName } from "../../shared/ui/RecordName";
 import { nameOnly } from "../../shared/workPresentation";
 import { sessionHref } from "../sessions";
@@ -50,6 +53,7 @@ function RunItem({ context, run, mayAbandon }: { context: MutationContext; run: 
   // A run has no name of its own: it is named by the task it ran and the agent that ran it; the run's ID stays in 来源与完整标识.
   const taskName = nameOnly("任务", useTaskName(context.projectId, uuidPattern.test(run.taskId) ? run.taskId : null));
   const agentName = useAgentName(context.projectId, run.sessionId);
+  const modelCatalog = useProjectQuery(context.projectId, ["runtime", "models", "catalog"], signal => sessionClient("", context.projectId).models(signal), { retry: false }).data?.options ?? null;
   return <details aria-label={`运行：${taskName} · ${agentName}`} data-run-id={run.id} className="group min-w-0 px-4 py-3">
     <summary className="flex cursor-pointer flex-wrap items-center gap-x-3 gap-y-1 text-small text-foreground">
       <span className="min-w-0 font-medium [overflow-wrap:anywhere]">{taskName}<span className="font-normal text-text-secondary"> · {agentName}</span></span>
@@ -63,6 +67,7 @@ function RunItem({ context, run, mayAbandon }: { context: MutationContext; run: 
         {linkable && <a className="text-primary hover:underline" href={sessionHref(context.projectId, `owned:${run.sessionId}`, hereOrigin(context.principal.actorId))}>在智能体空间打开</a>}
       </p>
       <p className={mutedText}>链接只定位来源；运行的状态不代表任务验收或当前接手。</p>
+      <FactList rows={runActualRows(run, modelCatalog)} />
       {run.state === "unknown" && <Notice tone="error">派发或状态仍未知，须沿已绑定线程回查；不会自动再发一次。</Notice>}
       {preflight && <Notice tone="error" title={`派发前检查没通过：${preflight.title}`} data-preflight="">模型尚未开始。{[preflight.source, preflight.size].filter(Boolean).join("，")}{preflight.source || preflight.size ? "。" : ""}下一步：{preflight.next}</Notice>}
       {run.resultSummary && !preflight && <p className="whitespace-pre-wrap break-words text-small text-text-secondary" data-run-summary="">已保存的结果摘要（可能截断，不能代替原生全文）：{run.resultSummary}</p>}

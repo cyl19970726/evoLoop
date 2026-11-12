@@ -1178,6 +1178,7 @@ export class RuntimeRunner {
     await this.deps.trusted.recordTurn(run.projectId, run.id, turn.id, turn.status as "completed" | "failed" | "interrupted",
       messages.join("\n\n"), { itemsDigest: digest(JSON.stringify(items)), completedAtUtc: turn.completedAtUtc,
         ...(turn.usage ? { usage: turn.usage } : {}), ...(turn.costUsd != null ? { costUsd: turn.costUsd } : {}),
+        ...(turn.observedModel !== undefined ? { observedModel: turn.observedModel } : {}), ...(turn.subagentModels?.length ? { subagentModels: turn.subagentModels } : {}),
         ...(turn.error?.category ? { failureCategory: turn.error.category } : {}) });
     return true;
   }
