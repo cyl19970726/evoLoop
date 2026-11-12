@@ -157,8 +157,8 @@ const lineSuspendCodes: Record<string, string> = {
 };
 const chinese = /[㐀-鿿]/;
 const latinWord = /[A-Za-z]{2,}/;
-/** Said for a pause reason the page cannot put in its own words. */
-export const untranslatedSuspendReason = "暂停原因是服务端的说明，未翻译（可展开“暂停代码与原文”查看）";
+/** Said for a pause reason the page has no words of its own for; the code and the original are right below it. */
+export const unexplainedSuspendReason = "暂停原因暂无说明，见下方“暂停代码与原文”";
 
 /** A pause reason in words; `code` and `original` are what it replaced (null when the reason was already plain Chinese). */
 export function lineSuspendReason(raw: string | null | undefined): { text: string; code: string | null; original: string | null } {
@@ -168,7 +168,7 @@ export function lineSuspendReason(raw: string | null | undefined): { text: strin
   const code = coded?.[1] ?? null, rest = (coded?.[2] ?? value).trim();
   if (code && lineSuspendCodes[code]) return { text: lineSuspendCodes[code], code, original: value };
   if (chinese.test(rest) && !latinWord.test(rest)) return { text: rest, code, original: code ? value : null };
-  return { text: untranslatedSuspendReason, code, original: value };
+  return { text: unexplainedSuspendReason, code, original: value };
 }
 
 /** One Session line entry in words: its place and state, with a tag only for a paused or starting entry. */

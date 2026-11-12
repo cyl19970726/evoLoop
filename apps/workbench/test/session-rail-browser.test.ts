@@ -109,4 +109,13 @@ test("the agent's right column shows what it does now and next on its first scre
   assert.match(await pausedNext.innerText(), /代码\s*RECIPIENT_UNAVAILABLE[\s\S]*原文\s*RECIPIENT_UNAVAILABLE: Session 70000024/);
   assert.ok(await sideways(paused.page) <= 1, "the opened original wraps inside the column at 390");
   await paused.page.context().close();
+
+  // A code the page has no words for still reads as a plain sentence pointing at the original below.
+  const unknown = sessionLines();
+  unknown.lines[0].entries[1].suspendReason = "FORBIDDEN: actor lacks review on project";
+  const other = await open("docs", 1440, 900, page => page.route(/\/session-lines$/, route => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(unknown) })));
+  const otherNext = other.panel.locator(".session-next-work");
+  await otherNext.getByText("暂停原因暂无说明，见下方“暂停代码与原文”").waitFor();
+  assert.doesNotMatch(await otherNext.innerText(), /翻译|FORBIDDEN|actor lacks/);
+  await other.page.context().close();
 });

@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { SessionLineEntry } from "@evoloop/contracts/session-line";
 import type { SessionQueueItem, SessionResult, SessionSnapshot } from "@evoloop/contracts/session-observation";
-import { assignmentLabel, lineEntryCaption, lineSuspendReason, nextWork, nowWork, untranslatedSuspendReason, type LineRead } from "../src/features/sessions/sessionWorkPresentation.ts";
+import { assignmentLabel, lineEntryCaption, lineSuspendReason, nextWork, nowWork, unexplainedSuspendReason, type LineRead } from "../src/features/sessions/sessionWorkPresentation.ts";
 
 type Assignment = SessionSnapshot["assignments"][number];
 const source = { kind: "task", id: "t", revision: null, evidence: "project-record", href: "" } as never;
@@ -130,10 +130,13 @@ test("a pause reason reads as a sentence; the server's code and wording stay beh
   assert.deepEqual(lineSuspendReason("TASK_NOT_READY: 依赖的任务还没有通过验收"),
     { text: "依赖的任务还没有通过验收", code: "TASK_NOT_READY", original: "TASK_NOT_READY: 依赖的任务还没有通过验收" });
   assert.deepEqual(lineSuspendReason("FORBIDDEN: actor lacks review on project"),
-    { text: untranslatedSuspendReason, code: "FORBIDDEN", original: "FORBIDDEN: actor lacks review on project" });
+    { text: unexplainedSuspendReason, code: "FORBIDDEN", original: "FORBIDDEN: actor lacks review on project" });
+  // The fallback is a plain sentence: it neither shows English nor talks about translating.
+  assert.equal(unexplainedSuspendReason, "暂停原因暂无说明，见下方“暂停代码与原文”");
+  assert.doesNotMatch(unexplainedSuspendReason, /翻译|[A-Za-z]{2,}/);
   // Plain Chinese with no code is the reason itself; English without a code is not shown as the sentence.
   assert.deepEqual(lineSuspendReason("等页面说明的模板定稿"), { text: "等页面说明的模板定稿", code: null, original: null });
-  assert.deepEqual(lineSuspendReason("waiting for the template"), { text: untranslatedSuspendReason, code: null, original: "waiting for the template" });
+  assert.deepEqual(lineSuspendReason("waiting for the template"), { text: unexplainedSuspendReason, code: null, original: "waiting for the template" });
   assert.deepEqual(lineSuspendReason(null), { text: "原因未记录", code: null, original: null });
   // The row carries the sentence as its detail and the source for the expandable part.
   const flag = lineEntryCaption({ state: "suspended", step: null, suspendReason: raw }, 2).flag!;
