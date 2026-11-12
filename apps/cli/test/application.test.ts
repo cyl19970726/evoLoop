@@ -580,6 +580,8 @@ test('read run carries what the Turn actually reported next to the configured pr
     const unseen = JSON.parse((await run(['read', 'run', other, '--project', projectId], env)).stdout);
     assert.equal(unseen.actualView.model, '未记录'); assert.equal(unseen.actualView.recorded, false); assert.equal(unseen.actualView.configuredModel, 'opus');
     assert.equal(unseen.state, 'completed', 'the Run itself is passed through unchanged');
+  } finally { fetch.mock.restore(); await rm(directory, { recursive: true, force: true }); }
+});
 
 test('session input CLI inserts into the running Turn, queues, names a missing grant, and reads back by the same input ID', async () => {
   const projectId = '00000000-0000-4000-8000-000000000021', sessionId = '00000000-0000-4000-8000-000000000022';
