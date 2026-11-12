@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync } from "
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { MARKER, databaseName, instanceName, instancePath, list, start, stop } from "./test-pg.mjs";
+import { MARKER, currentBranch, databaseName, instanceName, instancePath, list, start, stop } from "./test-pg.mjs";
 import { repoRoot } from "./disk-reclaim.mjs";
 
 test("instance names map to the worktree and to a database name the integration guard accepts", () => {
@@ -36,4 +36,18 @@ test("start writes the owner marker and returns the URL; stop and list work on t
   assert.equal(stop({ root, name: "wt-a", binDir: "/pg/bin", exec }), result.dir);
   assert.ok(!existsSync(result.dir));
   assert.ok(calls[0].startsWith("initdb") && calls.some(call => call.startsWith("pg_ctl")));
+});
+
+test("the owner marker records the branch of the worktree, or an explicit one, so a scoped reclaim can find the instance after the worktree is gone", async () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "tp-")));
+  const exec = (file, args) => (file === "git" ? "feat/some-branch\n" : "");
+  const detected = await start({ root, name: "wt-b", worktree: "/work/wt-b", binDir: "/pg/bin", exec });
+  assert.equal(JSON.parse(readFileSync(join(detected.dir, MARKER), "utf8")).branch, "feat/some-branch");
+  const explicit = await start({ root, name: "wt-c", worktree: "/work/wt-c", branch: "explicit", binDir: "/pg/bin", exec });
+  assert.equal(JSON.parse(readFileSync(join(explicit.dir, MARKER), "utf8")).branch, "explicit");
+  // detached HEAD, no worktree, or git failing give null rather than a made-up name
+  assert.equal(currentBranch("/work/x", () => "HEAD\n"), null);
+  assert.equal(currentBranch(null, () => "x"), null);
+  assert.equal(currentBranch("/work/x", () => { throw new Error("not a repo"); }), null);
+  assert.equal(currentBranch("/work/x", () => "main\n"), "main");
 });
