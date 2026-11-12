@@ -81,6 +81,9 @@ async function finishRun(runId: string) {
 }
 const pump = new SessionLinePump({ workflow, credentials: async () => [lead, worker], enabled: async () => true, canWrite: () => true, pollIntervalMs: 1000,
   onError: error => { throw error; }, recipientActorId: async () => "worker", retryBackoffMs: () => 0 });
+// W5 follow-up: what a line event does to the Leader. Only some become notices; the rest are records that wake no one.
+const lineNotices = async (taskId: string) => (await pool.query(`SELECT kind, level, source_session_id FROM leader_result_notice WHERE project_id=$1 AND task_id=$2 AND kind LIKE 'line\\_%' ORDER BY occurred_at, kind`, [p, taskId])).rows;
+const lineRecords = async (taskId: string) => (await pool.query(`SELECT kind, source_ref FROM leader_event_record WHERE project_id=$1 AND task_id=$2 AND kind LIKE 'line\\_%' ORDER BY occurred_at, source_ref`, [p, taskId])).rows;
 const settle = async () => { for (let i = 0; i < 4; i++) await pump.tick(); };
 
 test("entries keep their order, move one step, and a queued Task cannot be started, reserved or reassigned another way", async () => {
@@ -163,6 +166,12 @@ test("a busy Session makes entries wait; on its Run's end the first entry is con
   assert.ok(events.some(e => e.kind === "entry.runEnded" && e.taskId === a && e.detail.runState === "completed"), "one item's Run end is written once");
   assert.equal(events.filter(e => e.kind === "entry.runEnded" && e.taskId === a).length, 1);
   assert.ok(events.every((e, i) => i === 0 || e.seq > events[i - 1]!.seq), "events are ordered");
+  // W5 follow-up: appended, started and ended are records (no notice); a returned confirmation is a digest notice for the Leader.
+  assert.deepEqual(await lineNotices(a), [], "appending, starting and ending raise no notice");
+  assert.deepEqual((await lineRecords(a)).map(row => row.kind), ["line_entry_appended", "line_entry_started", "line_entry_ended"], "they are recorded, in order");
+  assert.deepEqual((await lineNotices(b)).map(row => [row.kind, row.level, String(row.source_session_id)]), [["line_confirmation_returned", "digest", session]],
+    "the returned execution confirmation is a digest notice");
+  assert.deepEqual((await lineRecords(b)).map(row => row.kind), ["line_entry_appended"]);
 });
 
 test("an unresolved business identity suspends the entry before any assignment or Run, with a reason that names the Session", async () => {
@@ -196,6 +205,9 @@ test("an entry that cannot start is suspended with its reason and an immediate e
   assert.equal((await task(x)).state, "todo", "the suspended Task was not started");
   const events = await workflow.listSessionLineEvents(lead, p, 0, 500, session);
   assert.ok(events.some(e => e.kind === "entry.suspended" && e.detail.level === "immediate" && e.entryId === suspended.id));
+  // W5 follow-up: a suspended entry is an immediate notice for the Leader, once; the entry behind it raised none.
+  assert.deepEqual((await lineNotices(x)).map(row => [row.kind, row.level]), [["line_entry_suspended", "immediate"]]);
+  assert.deepEqual(await lineNotices(y), []);
   assert.equal(await reject({ type: "line.move", projectId: p, operationId: randomUUID(), entryId: (await entryOf(y)).id, expectedVersion: (await entryOf(y)).version, direction: "back" }), "ENTRY_STARTING");
   const again = await entryOf(x);
   await apply({ type: "line.resume", projectId: p, operationId: randomUUID(), entryId: again.id, expectedVersion: again.version, reason: "recipient configured" });

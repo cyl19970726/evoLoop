@@ -79,6 +79,7 @@ test("待我处理 lists what waits for my use and counts every part, or says it
 }, async t => {
   const { chromium } = (await import(pathToFileURL(modulePath!).href)).default;
   const failing = new Set<string>();
+  const usageQueries: string[][] = [];
   const indexCursors: Array<string | null> = [];
   const server = createServer(async (req, res) => {
     const url = new URL(req.url!, "http://127.0.0.1");
@@ -108,7 +109,7 @@ test("待我处理 lists what waits for my use and counts every part, or says it
     else if (path === `${root}/impacts`) { if (!fail("impacts")) value = [{ projectId, id: id(31), taskId: taskId(fixtures.used), taskRevisionId: revision(fixtures.used),
       documentId: id(32), fromRevisionId: id(33), toRevisionId: id(34), state: "pending", decisionId: null, createdAt: stamp }]; }
     else if (path === `${root}/decisions-for-me`) { if (!fail("decisions")) value = { items: failing.has("decisionItems") ? decisionItems : [], observedAt: stamp }; }
-    else if (path === `${root}/runtime/usage`) { if (failing.has("usageAlerts")) value = usageOverview; }
+    else if (path === `${root}/runtime/usage`) { usageQueries.push([url.searchParams.get("from") ?? "", url.searchParams.get("to") ?? ""]); if (failing.has("usageAlerts")) value = usageOverview; }
     else if (path === `${root}/work-management/index`) {
       const cursor = url.searchParams.get("cursor");
       indexCursors.push(cursor);
@@ -301,6 +302,10 @@ test("待我处理 lists what waits for my use and counts every part, or says it
   assert.equal(new URL((await alertList.getByRole("link", { name: "打开这个智能体" }).getAttribute("href"))!, "http://x").searchParams.get("session"), `owned:${id(721)}`);
   await alerted.getByText("2 项").first().waitFor();
   assert.ok(Number(await badge(alerted)) >= 2, "the 待我处理 count includes the two alerts");
+  // The day asked for is a window around today, not the UTC day alone: the project's own calendar day is inside it at any offset.
+  const [from, to] = usageQueries.at(-1)!;
+  const nowDay = Date.now();
+  assert.ok(from < new Date(nowDay).toISOString().slice(0, 10) && new Date(nowDay).toISOString().slice(0, 10) < to, `window ${from}..${to} brackets the UTC day`);
   await fixture("recover?what=usageAlerts");
   await alerted.close();
 

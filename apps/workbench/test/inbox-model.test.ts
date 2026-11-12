@@ -4,7 +4,7 @@ import { test } from "node:test";
 import type { ConsumerObservation } from "@evoloop/contracts";
 import type { LeaderWorkDeliveryFact, LeaderWorkPage, LeaderWorkTask } from "@evoloop/contracts/work-index";
 import {
-  decisionKindText, decisionLink, decisionLinkProblem, deliveredAt, usageAlerts, deliveryLink, inboxBadge, inboxTaskLink, judgeMyDelivery, lastUseText, myLatestObservation, shellInboxCount, useRequirementText,
+  decisionKindText, decisionLink, decisionLinkProblem, deliveredAt, usageAlerts, usageWindow, deliveryLink, inboxBadge, inboxTaskLink, judgeMyDelivery, lastUseText, myLatestObservation, shellInboxCount, useRequirementText,
 } from "../src/features/workflow/inboxModel.ts";
 import type { DecisionItem } from "@evoloop/contracts/decision-requests";
 import { readDeliveriesForMe } from "../src/features/workflow/inboxDeliveries.ts";
@@ -271,4 +271,18 @@ test("budget and context alerts are listed for the person: nothing for ok, uncon
   assert.deepEqual(context.map(item => [item.kind, item.severity, item.sessionId]), [["context", "warning", "11111111-1111-4111-8111-111111111111"], ["context", "limit", "22222222-2222-4222-8222-222222222222"]]);
   assert.match(context[1]!.text, /交接/);
   assert.equal(usageAlerts({ budget: { ...budget("warning"), configured: false } as never, sessions: [] }).length, 0, "an unconfigured budget has no alert");
+});
+
+// The day a budget alert counts is the project's, not UTC's: the window asked for has to contain it whatever the offset (UTC-12 .. UTC+14).
+test("the usage window around now contains the project's calendar day at every UTC offset, at the moments the calendars disagree", () => {
+  const dayAt = (instant: string, offsetHours: number) => new Date(Date.parse(instant) + offsetHours * 3_600_000).toISOString().slice(0, 10);
+  for (const instant of ["2026-11-12T20:00:00.000Z", "2026-11-12T23:59:00.000Z", "2026-11-13T00:01:00.000Z", "2026-11-13T02:00:00.000Z", "2026-12-31T23:30:00.000Z"]) {
+    const { from, to } = usageWindow(instant);
+    for (let offset = -12; offset <= 14; offset++) {
+      const projectDay = dayAt(instant, offset);
+      assert.ok(from <= projectDay && projectDay <= to, `${instant} at UTC${offset >= 0 ? "+" : ""}${offset}: ${projectDay} is in ${from}..${to}`);
+    }
+  }
+  assert.deepEqual(usageWindow("2026-11-12T20:00:00.000Z"), { from: "2026-11-11", to: "2026-11-13" });
+  assert.deepEqual(usageWindow("2026-01-01T00:30:00.000Z"), { from: "2025-12-31", to: "2026-01-02" }, "across a year end");
 });

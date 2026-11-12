@@ -159,3 +159,12 @@ export function usageAlerts(overview: { budget: UsageBudget; sessions: SessionUs
   }
   return alerts;
 }
+
+/**
+ * The days to ask the usage overview for. The server counts "today" in the project's time zone and finds today's usage inside the asked window, so the
+ * window must contain the project's day whatever its offset: UTC-12 to UTC+14 are never more than one calendar day from the UTC day.
+ */
+export function usageWindow(nowIso: string): { from: string; to: string } {
+  const day = (offset: number) => new Date(Date.parse(nowIso) + offset * 86_400_000).toISOString().slice(0, 10);
+  return { from: day(-1), to: day(1) };
+}

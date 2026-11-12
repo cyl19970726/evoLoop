@@ -101,3 +101,22 @@ test("UsageService aggregates Session-day buckets and exposes context pressure w
   assert.deepEqual(added[0], [projectId, "session-a", "2026-11-11",
     { inputTokens: 50, outputTokens: 5, cachedInputTokens: 0, costUsd: 0, costReported: false }]);
 });
+
+// The budget alert is "today" in the project's time zone. UsageService already counts it there; what a reader must do is ask for a window that
+// contains that day, which is not always the UTC day. Both directions of the offset are covered, at the moments the two calendars disagree.
+test("the budget's today is the project's calendar day: a window of only the UTC day misses it when the time zone is ahead or behind UTC", async () => {
+  const budget: UsageBudgetConfig = { enabled: true, maxInputTokens: 100_000, warningRatio: 0.8, pauseOrdinaryTurns: true, timeZone: "UTC" };
+  const read = (day: string) => async (_project: string, action: (reader: unknown) => Promise<unknown>) => action({
+    usage: { listUsage: async (_p: string, from: string, to: string) => (day >= from && day <= to
+      ? [{ sessionId: "s", roleId: "r", nativeThreadId: null, day, inputTokens: 120_000, outputTokens: 0, cachedInputTokens: 0, costUsd: 0, costReported: false }] : []),
+    listUsageContext: async () => [] } });
+  const overview = (now: string, timeZone: string, day: string, from: string, to: string) =>
+    new UsageService({ uow: { read: read(day) } as never, clock: { now: () => now } })
+      .overview(principal, projectId, from, to, timeZone, { ...budget, timeZone });
+  // Ahead of UTC (+5): UTC is still 2026-11-12 at 20:00, the project is already on 2026-11-13.
+  assert.equal((await overview("2026-11-12T20:00:00.000Z", "Asia/Tashkent", "2026-11-13", "2026-11-12", "2026-11-12")).budget.state, "ok", "the UTC day alone does not contain the project's today");
+  assert.equal((await overview("2026-11-12T20:00:00.000Z", "Asia/Tashkent", "2026-11-13", "2026-11-11", "2026-11-13")).budget.state, "exhausted", "a window around the UTC day does");
+  // Behind UTC (-5, no daylight saving in November here): UTC is already 2026-11-13 at 02:00, the project is still on 2026-11-12.
+  assert.equal((await overview("2026-11-13T02:00:00.000Z", "America/Bogota", "2026-11-12", "2026-11-13", "2026-11-13")).budget.state, "ok");
+  assert.equal((await overview("2026-11-13T02:00:00.000Z", "America/Bogota", "2026-11-12", "2026-11-12", "2026-11-14")).budget.state, "exhausted");
+});

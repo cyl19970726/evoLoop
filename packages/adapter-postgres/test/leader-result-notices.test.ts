@@ -440,8 +440,8 @@ test("the level of a notice is a function of its kind, and the TypeScript table 
     seen[kind] = row.level;
   }
   const levelOf = (kind: string) => seen[kind];
-  for (const kind of ["acceptance_blocked", "run_submission_blocked", "run_without_submission", "task_question", "task_blocker", "observation_failed"]) assert.equal(levelOf(kind), "immediate", kind);
-  for (const kind of ["delivery", "observation_used", "observation", "task_todo", "task_attention"]) assert.equal(levelOf(kind), "digest", kind);
+  for (const kind of ["acceptance_blocked", "run_submission_blocked", "run_without_submission", "task_question", "task_blocker", "observation_failed", "line_entry_suspended"]) assert.equal(levelOf(kind), "immediate", kind);
+  for (const kind of ["delivery", "observation_used", "observation", "task_todo", "task_attention", "line_confirmation_returned"]) assert.equal(levelOf(kind), "digest", kind);
 });
 
 test("a Run stopped on request wakes no one and is a record: no notice, but readable from the record view", async () => {

@@ -6,7 +6,7 @@ import type { Impact } from "@evoloop/contracts";
 import type { DecisionsForMe } from "@evoloop/contracts/decision-requests";
 import { api, ApiError } from "../../shared/api";
 import { useProjectQuery } from "../../shared/query";
-import { inboxBadge, usageAlerts, type InboxBadge, type UsageAlert } from "./inboxModel";
+import { inboxBadge, usageAlerts, usageWindow, type InboxBadge, type UsageAlert } from "./inboxModel";
 import type { DeliveriesForMe } from "./inboxDeliveries";
 
 export type { DeliveriesForMe } from "./inboxDeliveries";
@@ -43,7 +43,8 @@ export async function readDecisions(projectId: string): Promise<DecisionsForMe> 
  */
 export async function readUsageAlerts(projectId: string): Promise<UsageAlert[]> {
   try {
-    const overview = await api().usageOverview(projectId, new Date().toISOString().slice(0, 10));
+    const { from, to } = usageWindow(new Date().toISOString());
+    const overview = await api().usageOverview(projectId, from, to);
     return overview && typeof overview === "object" && "budget" in overview && Array.isArray(overview.sessions) ? usageAlerts(overview) : [];
   } catch (error) {
     if (error instanceof ApiError && [404, 501, 503].includes(error.status) || /USAGE_UNAVAILABLE|Usage accounting is unavailable/.test(error instanceof Error ? error.message : "")) return [];

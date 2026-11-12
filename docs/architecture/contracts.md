@@ -333,15 +333,17 @@ Task 协作通道把 question/answer/progress/blocker/handoff/result 固定到�
 
 | 级别 | 送达 | 种类 |
 | --- | --- | --- |
-| 立即 | Leader 下一个能接收的时点就送，不等 60 秒，排在汇总项前面，同一包里也带上此刻在等的汇总项 | `acceptance_blocked`（验收安排受阻）、`run_submission_blocked`（提交受阻）、`run_without_submission`（Run 结束未提交，被叫停的 Run 除外）、`task_question`、`task_blocker`、`observation_failed`（验收观察记了失败，也包括“未使用”） |
-| 汇总 | 等满 60 秒进下一包 | `delivery`、`observation_used`（验收观察记了使用）、`task_todo`、`task_attention`，以及迁移前的旧种类 `observation` |
+| 立即 | Leader 下一个能接收的时点就送，不等 60 秒，排在汇总项前面，同一包里也带上此刻在等的汇总项 | `acceptance_blocked`（验收安排受阻）、`run_submission_blocked`（提交受阻）、`run_without_submission`（Run 结束未提交，被叫停的 Run 除外）、`task_question`、`task_blocker`、`observation_failed`（验收观察记了失败，也包括“未使用”）、`line_entry_suspended`（Session 队伍项挂起，来自 `entry.suspended`） |
+| 汇总 | 等满 60 秒进下一包 | `delivery`、`observation_used`（验收观察记了使用）、`task_todo`、`task_attention`、`line_confirmation_returned`（Session 退回执行确认，来自 `entry.returned`），以及迁移前的旧种类 `observation` |
 | 只记录 | 不是通知，不唤醒 Leader | 见下“只记录事件” |
 
 立即级仍受恢复门、“人的消息在排队”、Leader 正在执行（不打断）、每包 20 项与 8 KB 的约束；多于一包的立即通知排在前面、连续成包，汇总项的积压不会挡住它们。验收观察按结论拆开：`used` 是 `observation_used`，其余结论（`failed`、`notUsed`）是 `observation_failed`。包里的立即项在行首标“立即·”。
 
-**只记录事件。** Run 已按请求停止、关注项已解决、通知撤回不产生通知，从只读视图 `leader_event_record`（无新存储，每行都是别的表里不可改的事实）读取：`GET /api/projects/:projectId/leader-records?taskId=&kind=run_stopped|attention_resolved|notice_withdrawn&limit=&cursor=`，按时间从旧到新续页，项目读权限即可。Run 停止同时仍出现在 `work changes` 的 run 变更里；调度板（Q2）与每日评估读这个接口。
+**只记录事件。** Run 已按请求停止、关注项已解决、通知撤回，以及 Session 队伍的追加、开始、结束（`line_entry_appended`、`line_entry_started`、`line_entry_ended`，来自 `entry.appended`、`entry.started`、`entry.runEnded`）不产生通知，从只读视图 `leader_event_record` 读取（无新存储，每行都是别的表里不可改的事实）：`GET /api/projects/:projectId/leader-records?taskId=&kind=&limit=&cursor=`，`kind` 取以上任一种，按时间从旧到新续页，项目读权限即可。Run 停止同时仍出现在 `work changes` 的 run 变更里；调度板（Q2）与每日评估读这个接口。
 
-**尚未接入的种类。** 设计表里还有来源在代码里尚不存在的种类：直派受阻、队伍项挂起（立即）、连续跳过、执行确认被退回（汇总）、队伍项追加、开始与结束、直派本次跳过（只记录）。Session 队伍（Q1）、定时直派（S1）和可执行确认闸门尚未实现，所以没有触发器；这些来源上线时按上面的级别接入，不在本迁移里预建没有来源的种类。
+**Session 队伍事件（迁移 106）。** 队伍（迁移 087）的每一步都已写不可改的 `session_line_event`；触发器把其中两种变成通知：挂起（立即）、执行确认被退回（汇总），通知的来源编号是由项目和事件序号算出的稳定 uuid，来源写成 `line:<序号>:<事件种类>`。**连续跳过**与直派相关的事件（直派受阻、直派本次跳过）属于定时直派（S1），不在这里，随 S1 接入；执行确认闸门自己的“退回”就是上面的 `entry.returned`。
+
+**用量告警按项目时区计日。** 预算的“今天”由服务按私有配置里的项目时区算（`UsageService`），读用量概览的窗口必须包含这一天；UTC 与项目时区最多差一个日历日，所以待我处理读“UTC 日前一天到后一天”（`usageWindow`），告警本身取服务回答的预算状态，不在页面里再按 UTC 日期自己算。
 
 **过时判断在打包事务里做。** 待办通知：选入的项在 `leader.noticePacket.build` 的事务内按 Task 行锁重新判断，已过时则整次打包被拒、下一轮重来；被撤回的待办必须真的已过时，并在同一事务里为 Task 的当前修订补一条新通知（与旧路径一致）。过时项即使这一批没有可送的也会撤回（只记“已撤回”，不建消息）；读候选时分页向后读，排在前面的过时或来源不明的项不会挡住后面的新通知。
 
