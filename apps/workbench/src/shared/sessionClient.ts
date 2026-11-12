@@ -6,6 +6,7 @@ import type { RuntimeWorkTrace } from "@evoloop/contracts/runtime";
 import type { RuntimeSessionRecord } from "@evoloop/contracts/runtime";
 import type { SessionTimelinePage, WorkspaceEntry, WorkspaceLiveRead } from "@evoloop/contracts/session-timeline";
 import type { SessionRecoveryView } from "@evoloop/contracts/session-recovery";
+import type { SessionLine, SessionLineEntry } from "@evoloop/contracts/session-line";
 import { request, requestNullable } from "./api";
 
 const part = encodeURIComponent;
@@ -38,6 +39,8 @@ export function sessionClient(token: string, projectId: string) {
       get<SessionActivityPage>(`${base}/session-work/${part(key)}/activities?${query({ limit: 50, cursor, importance: "all" })}`, signal),
     profile: (key: string, signal?: AbortSignal) => get<SessionProfileRecord | null>(`${base}/session-work/${part(key)}/profile`, signal),
     assignment: (taskId: string, signal?: AbortSignal) => requestNullable<TaskSessionAssignment>(token, `${base}/tasks/${part(taskId)}/assignment`, 15000, signal),
+    /** Every Session line of the project (DEC-045) with the entries still waiting or starting, in line order. */
+    sessionLines: (signal?: AbortSignal) => get<{ lines: Array<SessionLine & { entries: SessionLineEntry[] }> }>(`${base}/session-lines`, signal),
     assignmentHistory: (taskId: string, cursor?: string, signal?: AbortSignal) =>
       get<SessionAssignmentPage<TaskSessionAssignment>>(`${base}/tasks/${part(taskId)}/assignment/history?${query({ limit: 50, cursor })}`, signal),
     messages: (key: string, cursor?: string, signal?: AbortSignal) =>
