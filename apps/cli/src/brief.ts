@@ -41,7 +41,7 @@ export function briefIndex(page: Obj): Obj {
 }
 
 const CAPACITY_KEYS = ["sessionId", "roleId", "state", "tenure", "isLeader", "activeRuns", "pendingMessages", "queueEntries", "openAssignments",
-  "openAcceptance", "persistedWorkIdle", "missingCapabilities", "readyForAcceptance"];
+  "openAcceptance", "lineQueued", "lineStarting", "persistedWorkIdle", "missingCapabilities", "readyForAcceptance"];
 /** `work acceptance`: the briefed work index and each Session's occupation and missing capabilities. */
 export function briefAcceptanceOverview(body: Obj): Obj {
   return { brief: true, work: obj(body.work) ? briefIndex(body.work) : body.work ?? null,

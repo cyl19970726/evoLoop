@@ -5,7 +5,7 @@ import { describeFailure } from "../shared/errorPresentation";
 import { onUnauthorized, signIn, signOut } from "../shared/identity";
 import type { MutationContext, RecoverableCommand } from "../shared/command/context";
 import { clearCommandDrafts } from "../shared/command/drafts";
-import { askConfirm, cancelConfirms, confirmHostFailed, currentConfirm, onConfirmUnavailable } from "../shared/confirm";
+import { askConfirm, cancelConfirms, confirmHostFailed, currentConfirm, onConfirmRetry, onConfirmUnavailable } from "../shared/confirm";
 import { addReceipt, hasProjectReceipt, readReceipts, removeReceipt, visibleReceipts as forPrincipal, writeReceipts, type OperationReceipt } from "./recovery";
 import type { CheckedOrigin, OperationItem } from "../features/settings/operationsPresentation";
 import { checkedNoticeText } from "./operationNotice";
@@ -52,13 +52,23 @@ const ResidentQueuePanel = named(() => import("../features/workflow"), "Resident
 const ConnectorPage = named(() => import("../features/connectors/ConnectorPage"), "ConnectorPage");
 const NotFoundPage = named(() => import("./NotFoundPage"), "NotFoundPage");
 // The confirmation dialog (leaving a project or signing out with drafts) loads after login, with the design system.
-const ConfirmHost = named(() => import("../shared/ui/ConfirmHost"), "ConfirmHost");
+const loadConfirmHost = () => named(() => import("../shared/ui/ConfirmHost"), "ConfirmHost");
 /** If the dialog's code cannot load, the questions waiting for it are cancelled (shared/confirm.ts) instead of hanging. */
 class ConfirmHostBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
   state = { failed: false };
   static getDerivedStateFromError() { return { failed: true }; }
   componentDidCatch(error: unknown) { console.error("确认框没能加载", error); confirmHostFailed(); }
   render() { return this.state.failed ? null : this.props.children; }
+}
+/**
+ * The dialog and its fallback. When the code failed to load, the next question asks for another try (onConfirmRetry): a new lazy component and a
+ * fresh boundary, so leaving a project or signing out with a draft is not locked until the page is refreshed.
+ */
+function ConfirmHostSlot() {
+  const [attempt, setAttempt] = useState(0);
+  useEffect(() => onConfirmRetry(() => setAttempt(count => count + 1)), []);
+  const Host = useMemo(() => loadConfirmHost(), [attempt]);
+  return <ConfirmHostBoundary key={attempt}><Suspense fallback={null}><Host /></Suspense></ConfirmHostBoundary>;
 }
 const historyIndex = (location: { state: unknown }) => (location.state as { __TSR_index?: unknown } | null)?.__TSR_index;
 // The frame loads after login; the login gate starts fetching it while the token is typed.
@@ -258,7 +268,7 @@ export function App() {
     setOperationLink(origin?.link ?? null);
     replaceReceipts(removeReceipt(receiptsRef.current, receipt.operationId)); changed();
   }
-  const confirmHost = <ConfirmHostBoundary><Suspense fallback={null}><ConfirmHost /></Suspense></ConfirmHostBoundary>;
+  const confirmHost = <ConfirmHostSlot />;
   if (!projectId) return <>{confirmHost}<Suspense fallback={<p role="status" className="p-8 text-small">正在打开项目列表…</p>}><ProjectChooser context={context} token={token} principal={principal} receipts={visibleReceipts} operationNotice={operationNotice} operationDetail={operationDetail} onConfirmed={confirmReceipt} onRefreshSession={async () => setSession(await api(token).session())} logout={logout} /></Suspense></>;
   const projectReceipts = visibleReceipts.filter(r => r.projectId === projectId);
   // 结果未知的操作 gets each receipt with its check card. OperationCheck loads on demand; its own boundary keeps a first
