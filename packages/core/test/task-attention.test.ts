@@ -71,3 +71,37 @@ test("a fixed follow-up supplies the checkpoint source for a blocked stage witho
     releaseHandoff:null,publication:null,actorId:"lead",reason:"Waiting",updatedAt:now};
   assert.equal(assessTaskAttention(source,null,now,followUp)[0]?.reason,"NEXT_CHECKPOINT_DUE");
 });
+
+// A ready Task nobody dispatched: todo with no assignment ("unassigned"), or sent back for rework. Before this policy only the later phases had a trial
+// threshold, so six Tasks waited seven hours without one notice. Dependencies not yet met is "blocked", which has no trial threshold and never fires here.
+const hour=60*60*1000;
+const waitingSince=(stage:"unassigned"|"rework"|"blocked",agoMs:number,at=now):TaskAttentionTimedTask=>{
+  const source=task();
+  source.latestRun=null as never;source.timing.executionActivity=null;
+  source.timing.current={stage,startedAt:new Date(Date.parse(at)-agoMs).toISOString(),endedAt:null,source:{kind:"task_revision",id:source.currentRevisionId},waitingFor:null,elapsedMs:agoMs};
+  return source;
+};
+const stageOverdue=(source:TaskAttentionTimedTask,at=now,followUp:TaskAttentionFollowUp|null=null)=>
+  assessTaskAttention(source,trialAttentionThreshold(source.timing.current.stage),at,followUp).find(x=>x.signal==="stage_overdue")!;
+test("a ready Task with no assignment gets a 2 hour trial threshold, and so does rework",()=>{
+  assert.equal(trialAttentionThreshold("unassigned")?.stageOverdueMs,2*hour);
+  assert.equal(trialAttentionThreshold("rework")?.stageOverdueMs,2*hour);
+  for(const stage of ["unassigned","rework"] as const){
+    assert.deepEqual([stageOverdue(waitingSince(stage,2*hour+60_000)).status,stageOverdue(waitingSince(stage,2*hour+60_000)).reason],["triggered","THRESHOLD_REACHED"],`${stage} past 2 hours`);
+    assert.deepEqual([stageOverdue(waitingSince(stage,2*hour-60_000)).status,stageOverdue(waitingSince(stage,2*hour-60_000)).reason],["clear","BELOW_THRESHOLD"],`${stage} just ready`);
+  }
+  assert.equal(stageOverdue(waitingSince("unassigned",4*hour+60_000)).severity,"urgent","twice the threshold escalates");
+});
+test("the same Task at night reminds the same way: no time of day is consulted",()=>{
+  const night="2026-11-04T03:10:00.000Z";
+  assert.equal(stageOverdue(waitingSince("unassigned",3*hour,night),night).status,"triggered");
+});
+test("a Task marked as waiting for something, or waiting on its dependencies, is not reminded",()=>{
+  const source=waitingSince("unassigned",3*hour);
+  const followUp={taskId:source.taskId,taskRevisionId:source.currentRevisionId,version:1,waitingOn:{kind:"user" as const,id:"the consumer"},decision:"waiting" as const,
+    actionTaken:"Waiting for the user to be free",evidenceRef:null,nextCheckAt:"2026-11-04T18:00:00.000Z",releaseHandoff:null,publication:null,actorId:"lead",reason:"explicit wait",updatedAt:now} satisfies TaskAttentionFollowUp;
+  assert.equal(stageOverdue(source,now,followUp).reason,"WAITING_FOR_NEXT_CHECKPOINT");
+  assert.equal(stageOverdue(source,"2026-11-04T18:00:00.000Z",followUp).reason,"NEXT_CHECKPOINT_DUE","and again once the checkpoint passes");
+  const blocked=waitingSince("blocked",10*hour);
+  assert.notEqual(stageOverdue(blocked).status,"triggered","unmet dependencies are blocked, not ready");
+});
