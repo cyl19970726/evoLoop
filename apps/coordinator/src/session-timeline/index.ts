@@ -83,14 +83,14 @@ const exactInput=(raw:WorkspaceEntry,source:NativeInputSource|null):raw is Works
   if(raw.clientId!==null)return clientIdMatches(raw,source,markerMatches)&&(!marker||markerMatches);
   return markerMatches;
 };
-type InputNoticeReason='unassociated'|'duplicate'|'conflict'|'compacted';
+type InputNoticeReason='unassociated'|'duplicate'|'conflict'|'compacted'|'unchecked';
 const nativeInputNotice=(raw:WorkspaceMessage,reason:InputNoticeReason='unassociated'):WorkspaceEntry=>({
   id:raw.id,turnId:raw.turnId,nativeItemId:raw.nativeItemId,nativeKind:raw.nativeKind,
   author:{kind:'native',id:null,label:'原生输入'},origin:null,occurredAt:raw.occurredAt,
   observedAt:raw.observedAt,freshness:raw.freshness,truncated:false,
   ...(raw.order?{order:raw.order}:{}),kind:'notice',
-  label:reason==='duplicate'?'重复的原生输入':reason==='conflict'?'标识冲突的原生输入':reason==='compacted'?'压缩后无法对应的原生输入':'未关联的原生输入',
-  body:reason==='duplicate'?'此原生输入重复指向同一业务来源；其独立身份未核实。':
+  label:reason==='unchecked'?'未核对的原生输入':reason==='duplicate'?'重复的原生输入':reason==='conflict'?'标识冲突的原生输入':reason==='compacted'?'压缩后无法对应的原生输入':'未关联的原生输入',
+  body:reason==='unchecked'?'这条输入的绑定本次未核对，可展开核对。它的来源标记与处理记录一致，这不表示来源不明。':reason==='duplicate'?'此原生输入重复指向同一业务来源；其独立身份未核实。':
     reason==='conflict'?'原生输入的标识互相冲突，无法核实发送者。':reason==='compacted'?'上下文压缩后，此原生输入的业务标记已不在，无法对应到业务发送者；这不表示来源不明，业务消息仍可独立读取。':'未能核实此原生输入的业务发送者。',
   state:raw.state,
 });
@@ -398,7 +398,8 @@ export class SessionTimelineService {
     const turnIds=[...new Set([...(native?.turns.map(t=>t.id)??[]),...(native?.entries.flatMap(e=>e.turnId?[e.turnId]:[])??[])])];
     const associations=scope.sessionId?await this.sources(projectId,scope.sessionId,turnIds):
       {found:new Map<string,NativeInputSource>(),messages:new Map<string,SessionMessageRecord>()};
-    const bindings=await this.inputBindings(principal,scope,native?.entries??[],associations.found,inputReading);
+    const batch=this.batchBindings(native,nativeCursor!==undefined,!!(query.turnId||query.itemId),associations.found);
+    const bindings=await this.inputBindings(principal,scope,native?.entries??[],associations.found,inputReading,batch);
     const direct=await this.directBindings(principal,scope,native?.entries??[],inputReading);
     const page=readMessages?await this.deps.uow.read(projectId,async r=>{
       if(!r.sessionMessages)throw new DomainError('CAPABILITY_UNAVAILABLE','Session message storage unavailable');
@@ -578,8 +579,11 @@ export class SessionTimelineService {
       }
       return nativeInputNotice(raw,'compacted');
     }
+    // The marker and the saved record agree (exactInput held above); what is missing is the proof that this is the Turn's only such Item.
+    // That is "not checked this time" (budget spent, Turn still running, history unreadable), not an unverified sender; only a second
+    // Item claiming the same source is a duplicate. A missing or contradicting marker never gets here.
     if(!binding?.itemId||binding.itemId!==raw.nativeItemId)
-      return nativeInputNotice(raw,binding?.ambiguous||binding?.itemId?'duplicate':'unassociated');
+      return nativeInputNotice(raw,binding?.ambiguous||binding?.itemId?'duplicate':'unchecked');
     if(source.kind==='run')return runInput(raw,source);
     if(!message||message.id!==source.messageId)
       throw new DomainError('INPUT_SOURCE_INVALID','Native message source does not match its saved message');
@@ -588,14 +592,55 @@ export class SessionTimelineService {
       ...(raw.order?{order:raw.order}:{})};
   }
   private async inputBindings(principal:Principal,scope:Scope,entries:WorkspaceEntry[],
-    sources:ReadonlyMap<string,NativeInputSource>,read:InputRead):Promise<Map<string,InputBinding>>{
+    sources:ReadonlyMap<string,NativeInputSource>,read:InputRead,
+    batch:ReadonlyMap<string,InputBinding>=new Map()):Promise<Map<string,InputBinding>>{
     const bindings=new Map<string,InputBinding>();
     for(const raw of entries){
       const source=raw.turnId?sources.get(raw.turnId):undefined;
-      if(raw.turnId&&raw.nativeItemId&&source&&exactInput(raw,source)&&!bindings.has(raw.turnId))
-        bindings.set(raw.turnId,await this.inputBinding(principal,scope,raw.turnId,source,read));
+      if(raw.turnId&&raw.nativeItemId&&source&&exactInput(raw,source)&&!bindings.has(raw.turnId)){
+        // A Turn the page itself holds completely is proven from the page already read; only the rest costs a read each.
+        const known=batch.get(raw.turnId);
+        bindings.set(raw.turnId,known??await this.inputBinding(principal,scope,raw.turnId,source,read));
+      }
     }
     return bindings;
+  }
+  /**
+   * Proofs from the history page already read, so a page full of Turns does not cost one native read per Turn. The page is the thread's
+   * Items in canonical order, one Turn's Items contiguous. A Turn is held completely when it is not at an edge the page continues past:
+   * the oldest Turn continues when a next cursor exists, the newest when this page was reached by a cursor. Such a Turn that has ended
+   * and whose Items were fully listed is proven exactly as a read of that Turn alone would prove it (one exact input, or several). Edge
+   * Turns and anything unclear are left to the per-Turn proof (and its budget).
+   */
+  private batchBindings(native:NativeWorkspacePage|null,reachedByCursor:boolean,targeted:boolean,
+    sources:ReadonlyMap<string,NativeInputSource>):Map<string,InputBinding>{
+    const result=new Map<string,InputBinding>();
+    if(!native||targeted||native.method!=='items'||native.historyMode!=='paginated'||native.limitations.length||
+      native.unsupportedKinds.length||!native.entries.length)return result;
+    // The last page must say its enumeration is complete, exactly as a read of one Turn must (explicitly incomplete, or partial without
+    // evidence, proves nothing); a page that continues is judged by what it holds in full.
+    if(!native.nextCursor&&!(native.itemEnumerationComplete??!native.partial))return result;
+    const groups:Array<{turnId:string;entries:WorkspaceEntry[]}>=[];
+    const seen=new Set<string>();
+    for(const entry of native.entries){
+      if(!entry.turnId)return result;
+      const last=groups.at(-1);
+      if(last&&last.turnId===entry.turnId){last.entries.push(entry);continue}
+      if(seen.has(entry.turnId))return result;      // not contiguous: the order cannot be trusted for completeness
+      seen.add(entry.turnId);groups.push({turnId:entry.turnId,entries:[entry]});
+    }
+    groups.forEach((group,index)=>{
+      if(index===0&&native.nextCursor)return;                  // the oldest Turn may continue on the next page
+      if(index===groups.length-1&&reachedByCursor)return;       // the newest Turn may have started on an earlier page
+      const source=sources.get(group.turnId);
+      const turns=native.turns.filter(turn=>turn.id===group.turnId),turn=turns[0];
+      if(!source||turns.length!==1||!turn?.completedAt||!['completed','failed','interrupted'].includes(turn.state))return;
+      const exact=group.entries.filter(entry=>exactInput(entry,source));
+      if(!exact.length||exact.some(entry=>!entry.nativeItemId))return;
+      const ids=new Set(exact.map(entry=>entry.nativeItemId));
+      result.set(group.turnId,ids.size>1?{itemId:null,ambiguous:true}:{itemId:[...ids][0]!,ambiguous:false});
+    });
+    return result;
   }
   private async inputBinding(principal:Principal,scope:Scope,turnId:string,source:NativeInputSource,
     read:InputRead):Promise<InputBinding>{
@@ -605,7 +650,7 @@ export class SessionTimelineService {
     read.proofs.set(key,proof);
     if(!proof.itemId)read.limitations.add(proof.ambiguous?
       '同一原生 Turn 有多个精确匹配的输入 Item，无法核实唯一发送者绑定。':
-      '未能在有界的完整已终结 Turn 中核实唯一输入 Item；业务消息仍可独立读取。');
+      '本次读取没能确认部分输入的绑定（这一轮未结束、核对次数用尽或历史读取受限）；它们写作“未核对”，展开可单独核对，业务消息仍可独立读取。');
     return proof;
   }
   private async proveInputBinding(principal:Principal,scope:Scope,turnId:string,source:NativeInputSource,

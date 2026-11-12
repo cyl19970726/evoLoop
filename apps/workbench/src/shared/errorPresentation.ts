@@ -62,8 +62,25 @@ function original(message: string, code: string | null): string {
   return text ? `${text}${code && code !== text ? `（${code}）` : ""}` : code ?? "";
 }
 
+export const GRANT_REFUSAL_CODE = "MESSAGE_GRANT_MISSING";
+/**
+ * The refusal of a message for want of a send grant, in one reader's sentence. The service answers agents with the fix
+ * (a JSON example of the private-configuration entry, with this machine's working directory); the page says what is missing and
+ * who sets it up, and shows neither the configuration text nor a local path. The code stays as the detail.
+ */
+export function grantRefusalText(message: string): string {
+  const raw = message.replace(/^MESSAGE_GRANT_MISSING:\s*/, "");
+  // The cause is what comes before the how-to-fix half (everything from the grants entry or the first "{" on).
+  const cut = raw.search(/在 sessionMessages\.grants 加一项|\{/);
+  let cause = (cut >= 0 ? raw.slice(0, cut) : raw).replace(/（[^）]*\s\/[^）]*）/g, "").replace(/(^|[\s（(])\/[^\s，。；、）)]+/g, "$1").trim();
+  cause = sentence(cause);
+  if (!cause || !chinese.test(cause)) cause = "没有发送这条消息的授权";
+  return `${cause}。这个智能体还没有给你发消息的授权，需要有权修改服务私有配置的维护者在 sessionMessages.grants 里为你开启（写法见运行接线手册）`;
+}
+
 /** A failed answer described for the reader: Chinese text, plus the original kept as detail. */
 export function describeFailure(message: string, code: string | null, status: number | null): ErrorDescription {
+  if (code === GRANT_REFUSAL_CODE) return { text: grantRefusalText(message), detail: GRANT_REFUSAL_CODE, code, status };
   const said = sentence(message);
   if (said && chinese.test(said)) return { text: said, detail: null, code, status };
   const raw = original(message, code) || null;

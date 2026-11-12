@@ -42,6 +42,8 @@ import type { ScheduleGrant, SchedulingPump } from "./scheduling/pump.js";
 import { registerKnowledgeRoutes, type KnowledgeRouteOptions } from "./knowledge/routes.js";
 import { registerWorkManagementRoutes } from "./work-management/routes.js";
 import { registerAcceptanceRelayRoutes } from "./acceptance-relay/routes.js";
+import { registerDrainRoutes } from "./drain/routes.js";
+import type { DrainControl } from "./drain/service.js";
 import type { AcceptanceRelayService } from "./acceptance-relay/service.js";
 import type { LeaderWorkIndexReader } from "./work-management/work-index.js";
 import { registerLeaderNoticeRoutes, type LeaderNoticeReader } from "./work-management/leader-notice-routes.js";
@@ -126,6 +128,8 @@ export async function buildServer(options: {
   workStatuses?: WorkStatusesReader;
   workIndex?: LeaderWorkIndexReader;
   acceptanceRelay?: AcceptanceRelayService;
+  /** Drain mode (docs/architecture/deployment.md §2): the control and who counts as an instance maintainer. */
+  drain?: { control: DrainControl; isMaintainer(principal: Principal): Promise<boolean> };
   leaderNotices?: LeaderNoticeReader;
   taskAttentionPool?: Pool;
   planningSources?: PlanningSourcesReader;
@@ -786,6 +790,7 @@ export async function buildServer(options: {
   if (options.planningSources) registerPlanningSourcesRoute(app, options.planningSources);
   if (options.collaboration) registerCollaborationRoutes(app, { ...options.collaboration, workflow: options.service });
   await registerWorkManagementRoutes(app, options.service, options.workIndex);
+  if (options.drain) registerDrainRoutes(app, options.drain);
   if (options.acceptanceRelay) registerAcceptanceRelayRoutes(app, options.service, options.acceptanceRelay, options.workIndex);
   if (options.leaderNotices) registerLeaderNoticeRoutes(app, options.service, options.leaderNotices);
   if (options.taskAttentionPool) registerTaskAttentionRoutes(app, options.service, options.taskAttentionPool);

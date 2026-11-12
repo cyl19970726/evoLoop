@@ -212,7 +212,8 @@ export interface OutboxEvent {
 }
 export interface Page<T> { items: T[]; nextCursor: string | null }
 export interface DocumentTaskReference extends Pick<Task, "projectId" | "id" | "title" | "state" | "owner" | "kind" | "version" | "currentRevisionId"> {
-  relations: Array<"content" | "link" | "basis">;
+  /** content/link/basis: the Task's own text, a link, a fixed basis. delivery: a Delivery of the Task names this Document as its artifact. origin: the Document was created by this Task's Run. */
+  relations: Array<"content" | "link" | "basis" | "delivery" | "origin">;
 }
 export interface TaskDetail { task: Task; revision: TaskRevision; basis: BasisSet | null; links: TaskDocumentLink[]; impacts: Impact[]; decisions: BasisDecision[]; proposal?: import("./workflow.js").TaskProposal | null; judgements?: import("./workflow.js").TaskJudgement[]; deliveries?: import("./workflow.js").Delivery[]; observations?: import("./workflow.js").ConsumerObservation[]; closures?: import("./workflow.js").TaskClosure[] }
 export interface DocumentDetail { document: Document; current: DocumentRevision; adopted: DocumentRevision | null }

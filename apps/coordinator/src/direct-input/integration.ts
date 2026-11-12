@@ -78,6 +78,9 @@ export function createDirectInputService(deps:{
   currentProjectWriter(projectId:string,actorId:string):Promise<boolean>;
   currentSessionExecutionAuthority(session:RuntimeSessionRecord):Promise<boolean>;
   allowedCwd(projectId:string,cwd:string):Promise<boolean>;
+  /** Drain mode: true while no new Turn may begin. An idle Session then cannot be started by direct input (the message is
+   *  saved as an ordinary queued one); adding to a Turn already running is unaffected. */
+  holdNewStarts?():Promise<boolean>;
 }):DirectInputService{
   const {session,admission}=createDirectInputAdmission(deps);
   return new DirectInputService({
@@ -90,6 +93,11 @@ export function createDirectInputService(deps:{
       await deps.uow.transaction(projectId,tx=>tx.appendRuntimeEvent({projectId,id:randomUUID(),runId:null,sessionId,kind:"turn.effortObserved",
         detail:`direct input ${inputId}${note}`,nativeTurnId:turn.id,cursor:null,itemsDigest:null,actorId:"direct-input",createdAt:new Date().toISOString()}));
     },
-    admission,
+    // Drain mode: while new Turns are held, an idle Session cannot be started by direct input (it is saved as a queued message);
+    // adding to a Turn already running is unaffected.
+    admission:async(principal,projectId,sessionId)=>{
+      const admitted=await admission(principal,projectId,sessionId);
+      return {...admitted,grant:{...admitted.grant,canStart:admitted.grant.canStart&&!(await deps.holdNewStarts?.())}};
+    },
   });
 }

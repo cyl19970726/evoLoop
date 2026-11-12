@@ -197,7 +197,7 @@ EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE='/absolute/path/to/playwright/index.js' \
 
 ## 停写备份与空目标恢复
 
-在保存真实不可重建材料前，先定备份周期、保留和恢复目标。脚本覆盖 **PostgreSQL + evoLoop 外部 Blob + 显式提供的 Wiki 外部快照**，不声称三者有原子快照。先停止 coordinator，并暂停 OpenViking/其他 Wiki 写者；按 Wiki 后端真实存储方式生成包含正文、修订、来源及 evoLoop `manifestRoot` 的完整外部导出。脚本持有与 coordinator 相同的 PostgreSQL advisory lock，拒绝仍在运行的 coordinator，但不能阻止旁路 SQL 或远端 Wiki 写者。`pg_dump` 给数据库自身一致快照；跨存储一致性依赖停写和后续核对。
+在保存真实不可重建材料前，先定备份周期、保留和恢复目标。脚本覆盖 **PostgreSQL + evoLoop 外部 Blob + 显式提供的 Wiki 外部快照**，不声称三者有原子快照。先排空（`node scripts/release-drain.mjs start --reason …`，见[部署](../architecture/deployment.md#2-发布新版本)）并停止 coordinator，等它的数据库咨询锁真正释放（`node scripts/release-drain.mjs wait-stopped`），再备份；并暂停 OpenViking/其他 Wiki 写者；按 Wiki 后端真实存储方式生成包含正文、修订、来源及 evoLoop `manifestRoot` 的完整外部导出。脚本持有与 coordinator 相同的 PostgreSQL advisory lock，拒绝仍在运行的 coordinator，但不能阻止旁路 SQL 或远端 Wiki 写者。`pg_dump` 给数据库自身一致快照；跨存储一致性依赖停写和后续核对。
 
 确保 `EVOLOOP_PG_BIN_DIR` 指向 PostgreSQL 18 工具目录，或 18.x 工具已排在 `PATH` 前面。备份位置、Blob 根目录和 Wiki 导出均须为仓库外的绝对路径，互不嵌套，父目录已存在；备份目标不能预先存在。Wiki 未启用时明确用 `--wiki-disabled`；启用时改用 `--wiki-snapshot`：
 
@@ -228,7 +228,7 @@ node scripts/restore.mjs --from /absolute/private-backups/evoloop-20261020 \
 
 `npm run release -- plan --id ID --ref GIT_REF` 只打印计划；`run ... --execute` 才执行；`rollback --id ID --execute` 把代码切回上一个版本。`--from STEP` 续跑要求该发布记录里前面的步骤都已成功且没有被撤销，`--only A,B` 只跑所列步骤，步骤名拼错直接报错。`--allow-no-previous` 仅用于第一次发布：当前链接不存在时没有可恢复的旧版本，没有该参数一律拒绝。`--allow-off-main` 仅用于演练：发布提交必须已在远端主分支（默认 `origin/main`，可用配置 `remote`、`baseBranch` 改）上，预检会取远端核对，不在就拒绝。不带 `--from` 重跑时，`prepare` 遇到已存在的版本目录，只在它正好是要发布的提交时复用，否则报错。
 
-配置文件放在仓库外，由 `EVOLOOP_RELEASE_CONFIG` 指向，JSON 字段：`releaseRoot`、`currentLink`、`stateDir`（均为绝对路径）、`backup.out`、`backup.blobRoot`（可选 `wikiSnapshot`、`integrations`）、`database.name`（必填，可加 `host`、`port`）、`skipTests`，以及 `hooks`（各为命令参数数组）。执行前把环境变量 `EVOLOOP_DATABASE_URL` 与 `database` 比对，库名、主机或端口不一致即拒绝，任何步骤都不会运行。不跳过测试时还须设 `EVOLOOP_RELEASE_TEST_DATABASE_URL` 指向独立的 `evoloop_*_test` 库，且不能等于线上库。命令运行时可读 `EVOLOOP_RELEASE_ID`、`EVOLOOP_RELEASE_DIR`、`EVOLOOP_RELEASE_PREVIOUS`（绝对路径）、`EVOLOOP_RELEASE_CURRENT_LINK`。
+配置文件放在仓库外，由 `EVOLOOP_RELEASE_CONFIG` 指向，JSON 字段：`releaseRoot`、`currentLink`、`stateDir`（均为绝对路径）、`backup.out`、`backup.blobRoot`（可选 `wikiSnapshot`、`integrations`）、`database.name`（必填，可加 `host`、`port`）、`skipTests`、可选 `sourceSubdir`（版本目录里放源码的子目录；默认空，即版本目录本身就是检出的源码。主机上若是 `<版本目录>/source` 加 `runtime`、`artifacts` 等同级目录的布局，就写 `source`：构建、预检、备份、迁移都在这个子目录里运行，钩子从 `EVOLOOP_RELEASE_SOURCE` 读到源码路径，`EVOLOOP_RELEASE_DIR` 仍是版本目录），以及 `hooks`（各为命令参数数组）。执行前把环境变量 `EVOLOOP_DATABASE_URL` 与 `database` 比对，库名、主机或端口不一致即拒绝，任何步骤都不会运行。不跳过测试时还须设 `EVOLOOP_RELEASE_TEST_DATABASE_URL` 指向独立的 `evoloop_*_test` 库，且不能等于线上库。命令运行时可读 `EVOLOOP_RELEASE_ID`、`EVOLOOP_RELEASE_DIR`、`EVOLOOP_RELEASE_SOURCE`、`EVOLOOP_RELEASE_PREVIOUS`（绝对路径）、`EVOLOOP_RELEASE_CURRENT_LINK`。
 
 **钩子必须做到什么**（都不得回显密钥，失败时以非零退出；每个都要能重复执行而不出错）：
 
@@ -305,7 +305,7 @@ git diff --check
 **怎样用。** 私有路径放在仓库外的配置里，由 `EVOLOOP_DISK_CONFIG` 指向，JSON 字段：`repos`（各克隆的绝对路径，用来列出它们的工作树）、`workspaceRoots`（只在其下回收）、`protectedPaths`（正式数据库目录、发布目录等，**永不触碰**）、可选 `protectedPorts`、`testPgRoots`（测试实例所在的根目录）、`legacyPgNames`（旧实例的目录名正则）、`minFreeGB`（默认 20）、`pgMinAgeMinutes`（默认 30）、`pgIdleMinutes`（默认 120）、`baseBranch`、`remote`、`repo`。
 
 - `npm run disk:reclaim -- report`：预演，不删任何东西；输出剩余空间、工作树数量与总大小、运行中的测试实例数、将回收和跳过的清单（每项写明原因）；`--json` 给机器读。
-- `npm run disk:reclaim -- run --execute`：真正回收；`--branch NAME` 只处理一个分支的工作树及归属标记指向它的测试实例（不碰别的实例），用于刚合并完一个 PR 之后（合并者或作者的收尾步骤）。
+- `npm run disk:reclaim -- run --execute`：真正回收；`--branch NAME` 只处理一个分支的工作树，以及归属标记指向它的测试实例，或标记里的工作树已不存在、分支等于 NAME 的测试实例（不碰别的实例；顺序是：第一次运行时实例因有客户端连接被跳过、工作树已回收，客户端离开后再带 `--branch NAME` 运行就能回收这个实例，不必等下一次不带 `--branch` 的例行运行），用于刚合并完一个 PR 之后（合并者或作者的收尾步骤）。
 - 剩余空间低于 `minFreeGB` 时，报告第一行是“⚠ 剩余空间 … 需要 Leader 处理”，退出码为 3，调度器能看到；回收之后仍不够属于 Leader 的事项（加盘、清理其他项目的缓存），不在本脚本范围内。
 - 谁来触发：CI/CD 每 12 小时的例行任务运行 `run --execute` 并把 `report` 的输出写进报告开头；这与作者 Session 是否还在无关。也可以由主机上的定时器运行同一条命令（macOS 的 launchd 或 cron，安装属于全局设置，需要使用者授权，仓库不替人安装）。
 
@@ -316,7 +316,7 @@ git diff --check
 **测试实例的约定**（`scripts/ops/test-pg.mjs`，现有位置有四种、名字对不上工作树，回收只能靠猜）：
 - 位置：`EVOLOOP_TEST_PG_ROOT/<名字>/`（私有的绝对路径，不在仓库内），一个实例一个目录，数据在 `data/`。
 - 名字：工作树目录的名字（小写字母、数字、`-`、`_`），数据库名 `evoloop_<名字，- 换成 _>_test`，符合集成测试的保护检查。
-- 归属标记：`<目录>/.evoloop-test-pg.json`，记录名字、工作树路径、端口；回收脚本据此把实例和工作树对上。
+- 归属标记：`<目录>/.evoloop-test-pg.json`，记录名字、工作树路径、分支、端口；回收脚本据此把实例和工作树对上。分支取启动时工作树检出的分支（也可 `--branch` 指定；游离 HEAD 记为空）。**这次改动之前启动的实例，标记里没有分支**，工作树回收后不能靠 `--branch` 找到，要等不带 `--branch` 的例行运行回收。
 - 启动 `node scripts/ops/test-pg.mjs start`（在工作树里运行，输出 `TEST_DATABASE_URL`），停用 `stop`，列出 `list`；需要 `EVOLOOP_PG_BIN_DIR`。用完请 `stop`，忘了也会在工作树被回收时一并回收。
 
 **新工作树不再各带一份依赖。** 用 `node scripts/ops/new-worktree.mjs --path 绝对路径 --branch 名字 --seed 装好依赖的克隆`（`--seed` 默认读 `EVOLOOP_DEPS_SEED`）：seed 的 `package-lock.json` 与新工作树一致时，把它的 `node_modules` 用 APFS 写时复制克隆过来（`cp -c`，共享磁盘块，文件被改时才各占各的），否则回退 `npm ci`；不在 macOS 上、克隆失败也回退。本机实测（APFS）：普通复制 `node_modules` 约占用 960 MB，克隆约 40 MB；克隆出的工作树 `npm run build:packages` 与测试可正常运行。依赖在工作树里被 `npm install` 改过之后，被改的文件才会额外占用空间。

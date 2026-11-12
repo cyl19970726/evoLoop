@@ -571,6 +571,18 @@ class PgReader implements Reader {
       JOIN basis_member bm ON bm.project_id=bs.project_id AND bm.task_id=bs.task_id
         AND bm.task_revision_id=bs.task_revision_id AND bm.basis_set_id=bs.basis_set_id
       WHERE t.project_id=$1 AND bm.document_id=$2
+      UNION
+      -- A Delivery names its artifact as stored by the service: the workbench path "#/p/<project>/documents/<id>?revision=<rev>"
+      -- (what "document:<id>@<revision>" is saved as), or the short form itself. The Task that delivered this Document references it.
+      SELECT t.task_id, 'delivery'::text AS relation
+      FROM delivery d JOIN task t ON t.project_id=d.project_id AND t.task_id=d.task_id
+      WHERE d.project_id=$1 AND (starts_with(d.artifact_ref, 'document:' || $2::text || '@')
+        OR starts_with(d.artifact_ref, '#/p/' || $1::text || '/documents/' || $2::text || '?revision='))
+      UNION
+      -- A report or issue created under a Task's Run records that Task as its origin.
+      SELECT t.task_id, 'origin'::text AS relation
+      FROM process_document pd JOIN task t ON t.project_id=pd.project_id AND t.task_id=pd.origin_task_id
+      WHERE pd.project_id=$1 AND pd.document_id=$2
     ), grouped AS (
       SELECT task_id, array_agg(DISTINCT relation ORDER BY relation) AS relations
       FROM matching GROUP BY task_id
@@ -683,6 +695,7 @@ class PgTransaction extends PgReader implements Transaction {
   insertGitSourceRef(id: string, ref: GitSourceRef, state: "reachable" | "unavailable" | "withdrawn", observedAt: string) { return this.payloads.insertGitSourceRef(id, ref, state, observedAt); }
   insertRuntimeSession(item: import("@evoloop/contracts").RuntimeSessionRecord) { return this.runtime.insertRuntimeSession(item); }
   updateRuntimeSession(item: import("@evoloop/contracts").RuntimeSessionRecord, expectedVersion: number) { return this.runtime.updateRuntimeSession(item, expectedVersion); }
+  recordSessionActualModel(sessionId: string, model: string, at: string) { return this.runtime.recordSessionActualModel(sessionId, model, at); }
   insertRuntimeRun(item: import("@evoloop/contracts").RuntimeRunRecord) { return this.runtime.insertRuntimeRun(item); }
   updateRuntimeRun(item: import("@evoloop/contracts").RuntimeRunRecord, expectedVersion: number) { return this.runtime.updateRuntimeRun(item, expectedVersion); }
   appendRuntimeEvent(item: import("@evoloop/contracts").RuntimeRecordEvent) { return this.runtime.appendRuntimeEvent(item); }
