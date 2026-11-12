@@ -302,7 +302,9 @@ test("Sessions is the sole directory and renders conversation, source, reply and
   const postedMessage = posted.find(command => command.type === "session.message.post");
   assert.equal(posted.filter(command => command.type === "session.message.post").length, 1);
   assert.deepEqual(postedMessage?.context, { taskId, taskRevisionId: currentTask.revisionId });
+  // 运行环境: the adjust button at the card's top right; the target, last confirmed and applied state sit in 配置记录.
   const modelControl = page.locator(".session-model-control");
+  await modelControl.locator(".session-config-record > summary").click();
   await modelControl.getByText("gpt-6-sol / high", { exact: false }).first().waitFor();
   await modelControl.getByRole("button", { name: "调整模型与强度" }).click();
   const editor = modelControl.locator(".session-model-editor");
@@ -357,7 +359,8 @@ test("Sessions is the sole directory and renders conversation, source, reply and
   currentProfile = { ...currentProfile, activationState: "unknown" };
   try {
     await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
-    await modelControl.getByText("激活结果未知，需核对", { exact: false }).waitFor({ timeout: 12000 });
+    // Said on the card (its tag) and in 配置记录 (应用状态).
+    await modelControl.getByText("激活结果未知，需核对", { exact: false }).first().waitFor({ timeout: 12000 });
     assert.equal(await modelControl.getByRole("button", { name: "调整模型与强度" }).isDisabled(), true);
     assert.ok(releaseRuntimeRead, "runtime reread is still waiting while recovery already blocks editing");
   } finally {
