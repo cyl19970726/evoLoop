@@ -496,3 +496,88 @@ test("the ordinary message entry refuses an ID that is already a direct input an
   await post(refused.inputId);
   assert.equal(await messageCount(refused.inputId,"00000000-0000-4000-8000-000000000000"),1,"a refused input's ID may become a message");
 });
+
+// ---- Task e0bcde26 (follow-up to #350) ---------------------------------------------------------------------------------------
+const freshSession=async()=>{
+  const id=randomUUID();
+  await pool.query(`INSERT INTO runtime_session(project_id,session_id,role_id,cwd,authorization_scope,sandbox,approval_policy,state,version,
+    native_thread_id,native_session_id,operation_id,actor_id,created_at,updated_at) VALUES($1,$2,$3,'/tmp/direct-test','project',
+    'danger-full-access','never','ready',1,$4,$5,$6,'agent',now(),now())`,[projectId,id,roleId,`thread-${id}`,`native-${id}`,randomUUID()]);
+  return id;
+};
+const postMessage=async(sessionId:string,messageId:string,operationId=randomUUID(),content="queued text")=>{
+  const c=await pool.connect();
+  try{
+    await c.query("BEGIN");
+    await c.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))",[projectId]);
+    await new PgSessionMessages(c,projectId).insertSessionMessage({id:messageId,projectId,operationId,target:{kind:"owned",sessionId},senderActorId:"user",
+      content,context:null,replyToMessageId:null,state:"queued",version:1,createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),blockedReason:null} as never);
+    await c.query("COMMIT");
+  }catch(error){await c.query("ROLLBACK");throw error;}finally{c.release();}
+};
+const directRows=async(inputId:string)=>Number((await pool.query("SELECT count(*)::integer AS n FROM session_direct_input WHERE project_id=$1 AND input_id=$2",[projectId,inputId])).rows[0].n);
+
+test("item 3: an ID that is already a queued ordinary message is refused by the store for an insert, so the text goes to the Leader once",async()=>{
+  const id=await freshSession();
+  await running(id,"turn-x");
+  const queued=input("turn-x");
+  await postMessage(id,queued.inputId,queued.operationId,queued.content);
+  // Queue first, then insert under the same ID (a lost queue receipt, then --mode insert --input SAME): refused at the store, nothing recorded.
+  await assert.rejects(store.reserve(projectId,id,"user",queued,grant(id,5),""),{code:"INPUT_ID_IS_MESSAGE"});
+  assert.equal(await directRows(queued.inputId),0,"no direct input was recorded");
+  assert.equal(await messageCount(queued.inputId,queued.operationId),1,"still exactly one message");
+  // The same operation ID under another input ID is the same intent: refused too.
+  const other={...input("turn-x"),operationId:queued.operationId};
+  await assert.rejects(store.reserve(projectId,id,"user",other,grant(id,5),""),{code:"INPUT_ID_IS_MESSAGE"});
+  // An idle Session (an insert would start a Turn) is refused the same way.
+  const idle=await freshSession();
+  const idleQueued=input();
+  await postMessage(idle,idleQueued.inputId,idleQueued.operationId,idleQueued.content);
+  await assert.rejects(store.reserve(projectId,idle,"user",idleQueued,grant(idle,5),hash),{code:"INPUT_ID_IS_MESSAGE"});
+  assert.equal(await directRows(idleQueued.inputId),0);
+});
+
+test("item 3: a queue and an insert racing on one ID never both take effect",async()=>{
+  for(let round=0;round<5;round++){
+    const id=await freshSession();
+    const turn=`turn-race-${randomUUID()}`;
+    await running(id,turn);
+    const command=input(turn);
+    const settled=await Promise.allSettled([postMessage(id,command.inputId,command.operationId,command.content),
+      store.reserve(projectId,id,"user",command,grant(id,5),"")]);
+    const messages=await messageCount(command.inputId,command.operationId);
+    const direct=await directRows(command.inputId);
+    const directLive=direct===1&&(await store.get(projectId,command.inputId))!.state!=="rejected";
+    assert.ok(!(messages>=1&&directLive),`round ${round}: a message and a live direct input both exist (${JSON.stringify(settled.map(x=>x.status))})`);
+    assert.equal(settled.filter(x=>x.status==="fulfilled").length,1,`round ${round}: exactly one side wins`);
+  }
+});
+
+test("item 4: a refusal that arrives after a concurrent reconcile flipped the input to unknown still queues it once; a retry without that proof does not",async()=>{
+  const id=await freshSession();
+  await running(id,"turn-reconcile");
+  const command=input("turn-reconcile");
+  const binding={projectId,sessionId:id,roleId,nativeThreadId:`thread-${id}`,nativeSessionId:`native-${id}`,cwd:"/tmp/direct-test",authorizationScope:"project",owner:"evoloop-codex-app-server"} as never;
+  const { RuntimeServerError }=await import("@evoloop/contracts/runtime");
+  const runtime={isReady:()=>true,registerBinding:async()=>undefined,
+    capabilitiesFor:()=>({delivery:{midTurnInput:true,idleTurnStart:true}}),
+    // While the steer is on the wire, someone runs reconcile (or show, before it was read only): nothing matched, so the input became unknown.
+    steerTurn:async()=>{
+      await store.unknown(projectId,command.inputId,"No unique original input in bounded native history");
+      throw new RuntimeServerError("turn/steer",7,-32600,"no active turn to steer");
+    }} as never;
+  const service=new DirectInputService({store,runtime:()=>runtime,canWrite:()=>true,admission:async()=>({grant:grant(id,5),binding}),bindingFor:async()=>binding});
+  const principal={actorId:"user",projectIds:[projectId],permissions:["read","write"] as Array<"read"|"write">};
+  const receipt=await service.submit(principal,projectId,id,command);
+  assert.equal(receipt.state,"rejected","the runtime's own refusal is proof the steer was not applied");
+  assert.equal(receipt.queuedMessageId,command.inputId,"so the text was saved as one queued message, not lost between 'unknown' and 'rejected'");
+  assert.equal(await messageCount(command.inputId,command.operationId),1);
+  // Without that proof an unknown steer is never turned into a message (it may already have reached the Turn).
+  const other=await freshSession();
+  await running(other,"turn-o");
+  const maybe=input("turn-o");
+  await store.reserve(projectId,other,"user",maybe,grant(other,5),"");
+  await store.unknown(projectId,maybe.inputId,"lost reply");
+  await assert.rejects(store.rejectSteerAndQueue(projectId,maybe.inputId,"later retry without proof"),{code:"INPUT_STATE"});
+  assert.equal(await messageCount(maybe.inputId,maybe.operationId),0,"no message was made");
+});

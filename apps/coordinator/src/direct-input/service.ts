@@ -175,7 +175,12 @@ export class DirectInputService {
       }
       if(error instanceof RuntimeServerError&&error.steerRejection==="non_steerable_turn"&&record.mode==="steer")
         return publicDirectInput(await this.deps.store.rejectSteerAndQueue(projectId,record.inputId,
-          "Native Turn kind cannot accept input; saved as a queued ordinary message"));
+          "Native Turn kind cannot accept input; saved as a queued ordinary message",{provedUnsent:true}));
+      // The runtime answered the steer with an error of its own (-32600: no active Turn, or another one): the Turn ended or changed in the
+      // window before the database knew. The answer proves the steer was not applied, so the text is saved as one queued message.
+      if(error instanceof RuntimeServerError&&error.method==="turn/steer"&&record.mode==="steer")
+        return publicDirectInput(await this.deps.store.rejectSteerAndQueue(projectId,record.inputId,
+          "TURN_CHANGED: the runtime refused the input because the Turn is no longer current; saved as a queued ordinary message",{provedUnsent:true}));
       if(error instanceof RuntimeProtocolError&&!(error instanceof RuntimeUnknownError)&&
         !(error instanceof RuntimeServerError&&error.preTurnWriterConflict))
         return publicDirectInput(await this.deps.store.reject(projectId,record.inputId,"Native request was explicitly rejected"));

@@ -115,6 +115,13 @@ export class PgDirectInputs {
           throw new DomainError("INPUT_ID_CONFLICT","Original input intent differs; read the saved input");
         return {record:(await this.withQueued([old],client))[0]!,created:false};
       }
+      // One ID is one intent, whichever entry saw it first. A message already saved under this input ID (or this operation ID) is that
+      // text queued: inserting it as well would send it to the Leader twice (a queue request whose receipt was lost, then an insert
+      // with the same ID). The ordinary entry refuses the other order (insertSessionMessage); both run under the project lock.
+      const taken=await client.query(`SELECT message_id FROM session_message WHERE project_id=$1 AND (message_id=$2 OR operation_id=$3) LIMIT 1`,
+        [projectId,command.inputId,command.operationId]);
+      if(taken.rows.length)throw new DomainError("INPUT_ID_IS_MESSAGE",
+        "this ID is already an ordinary queued message; read it by its ID instead of inserting the text again");
       const session=(await client.query(`SELECT * FROM runtime_session WHERE project_id=$1 AND session_id=$2 FOR UPDATE`,
         [projectId,sessionId])).rows[0];
       if(!session||session.state!=="ready"||!session.native_thread_id||!session.native_session_id||
@@ -211,15 +218,17 @@ export class PgDirectInputs {
     });
   }
   /** A steer kind refusal is terminal for direct input, but its content is not lost: queue it as one ordinary message. */
-  async rejectSteerAndQueue(projectId:string,inputId:string,reason:string):Promise<DirectInputRecord>{
+  async rejectSteerAndQueue(projectId:string,inputId:string,reason:string,options:{provedUnsent?:boolean}={}):Promise<DirectInputRecord>{
     return this.transaction(projectId,async client=>{
       const old=needed((await client.query("SELECT * FROM session_direct_input WHERE project_id=$1 AND input_id=$2 FOR UPDATE",
         [projectId,inputId])).rows[0]);
       if(old.mode!=="steer")throw new DomainError("INPUT_STATE","Only a steer can become a queued ordinary message");
       if(old.state==="rejected")return (await this.withQueued([old],client))[0]!;
-      // Queue only after an explicit pre-send refusal. An unknown steer may already have reached the Turn,
-      // so turning it into a second ordinary message would duplicate the person's input.
-      if(!["pending","attempted"].includes(old.state))
+      // Queue only after an explicit pre-send refusal. An unknown steer may already have reached the Turn, so a later retry without
+      // proof must not turn it into a second ordinary message. The one exception is the refusal answering this very request
+      // (`provedUnsent`): the runtime itself said the steer was not applied, so it cannot have reached the Turn, even if a
+      // reconcile that found nothing marked the input unknown while the request was on the wire.
+      if(!["pending","attempted"].includes(old.state)&&!(options.provedUnsent&&old.state==="unknown"))
         throw new DomainError("INPUT_STATE","Original input attempt has already advanced");
       await client.query(`INSERT INTO session_message(project_id,message_id,operation_id,target_kind,session_id,
         sender_actor_id,content,state,version,created_at,updated_at)

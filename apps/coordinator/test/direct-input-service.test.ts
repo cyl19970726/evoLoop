@@ -4,7 +4,7 @@ import test from "node:test";
 import type { DirectInputCommand, DirectInputRecord } from "@evoloop/contracts/direct-input";
 import type { RuntimeBinding, RuntimeCapabilities } from "@evoloop/contracts/runtime";
 import { DomainError } from "@evoloop/contracts/ports";
-import { RuntimeLocalBusyError, RuntimeServerError } from "@evoloop/adapter-codex-app-server";
+import { RuntimeLocalBusyError, RuntimeServerError, RuntimeUnknownError } from "@evoloop/adapter-codex-app-server";
 import { DirectInputService } from "../src/direct-input/service.js";
 import { SessionSteerLock } from "../src/runtime/session-steer-lock.js";
 
@@ -242,4 +242,42 @@ test("a missing grant is refused with the missing item named, in the capability 
   assert.equal(capability.available, false); assert.equal(capability.reasonCode, "DIRECT_GRANT_MISSING");
   assert.match(capability.detail!, /missing: direct input grant/);
   await assert.rejects(service.submit(principal, projectId, sessionId, command()), { code: "DIRECT_GRANT_MISSING", message: /missing: direct input grant/ });
+});
+
+// ---- Task e0bcde26 (follow-up to #350) ---------------------------------------------------------------------------------------
+const steerFixture = (thrown: unknown) => {
+  const value = { ...command(), expectedTurnId: turnId };
+  const calls: string[] = [];
+  const stored = { ...record(value, "steer") };
+  const store = {
+    get: async () => null, hasPrimary: async () => true,
+    reserve: async () => ({ record: stored, created: true }),
+    reject: async () => { calls.push("reject"); return { ...stored, state: "rejected" as const, reason: "Native request was explicitly rejected" }; },
+    rejectSteerAndQueue: async () => { calls.push("queue"); return { ...stored, state: "rejected" as const, queuedMessageId: value.inputId }; },
+    unknown: async () => { calls.push("unknown"); return { ...stored, state: "unknown" as const }; },
+  } as never;
+  const runtime = { isReady: () => true, capabilitiesFor: () => capabilities(true, true), registerBinding: async () => {},
+    steerTurn: async () => { throw thrown; } } as never;
+  const service = new DirectInputService({ store, runtime: () => runtime, canWrite: () => true, admission: async () => ({ grant, binding }), bindingFor: async () => binding });
+  return { service, value, calls };
+};
+
+test("item 1: the native runtime refusing a steer because the Turn just ended (-32600, no steer classification) saves it as one queued message, not a red error", async () => {
+  // The window: the Turn has ended natively while the database still says running; the runtime answers -32600 and no steerRejection.
+  const ended = new RuntimeServerError("turn/steer", 9, -32600, "no active turn to steer");
+  assert.equal(ended.steerRejection, null);
+  const { service, value, calls } = steerFixture(ended);
+  const receipt = await service.submit(principal, projectId, sessionId, value);
+  assert.deepEqual(calls, ["queue"], "queued once, not rejected");
+  assert.equal(receipt.state, "rejected"); assert.equal(receipt.queuedMessageId, value.inputId);
+  // A different expected Turn answered the same way is the same window.
+  const mismatch = steerFixture(new RuntimeServerError("turn/steer", 10, -32600, "expected turn id does not match the active turn"));
+  await mismatch.service.submit(principal, projectId, sessionId, mismatch.value);
+  assert.deepEqual(mismatch.calls, ["queue"]);
+});
+
+test("item 1: only a provable refusal of the steer is queued; an unclear outcome stays unknown (never a second message)", async () => {
+  const lost = steerFixture(new RuntimeUnknownError("turn/steer", 11, "no reply"));
+  await lost.service.submit(principal, projectId, sessionId, lost.value);
+  assert.deepEqual(lost.calls, ["unknown"], "a lost reply may have reached the Turn: not queued");
 });

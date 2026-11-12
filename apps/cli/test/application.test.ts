@@ -671,12 +671,109 @@ test('session input CLI: a repeat with a known ID answers from what was saved, n
       assert.equal(body.outcome, 'queued_after_change'); assert.equal(body.receipt.queuedMessageId, converted);
     }
     assert.equal(calls.some(call => call === 'POST /api/commands'), false, 'no second message');
-    // 4. show: an accepted input without a native Item is checked once against the original and then names the Item.
+    // 4. show only reads (an accepted input without a native Item is reported as it is, with the explicit command to check it); reconcile is the
+    //    explicit check that looks for the original once and then names the Item.
     const shown = JSON.parse((await run(['session', 'input', 'show', sessionId, sent, '--project', projectId], env)).stdout);
-    assert.equal(shown.reconciled, true); assert.equal(shown.receipt.nativeItemId, 'item-9'); assert.equal(shown.outcome, 'inserted');
+    assert.equal(shown.reconciled, false); assert.equal(shown.receipt.nativeItemId, null); assert.equal(shown.outcome, 'inserted'); assert.match(shown.next, /session input reconcile/);
+    assert.equal(reconciled, false, 'show did not call reconcile');
+    const checked = JSON.parse((await run(['session', 'input', 'reconcile', sessionId, sent, '--project', projectId], env)).stdout);
+    assert.equal(checked.reconciled, true); assert.equal(checked.receipt.nativeItemId, 'item-9'); assert.equal(checked.outcome, 'inserted');
     // 5. An answer lost on a fresh insert exits 3 like every unconfirmed mutation and points at the same ID.
     postMode = 'down';
     const unknown = await run(['session', 'input', 'send', sessionId, '--project', projectId, '--mode', 'insert', '--content', 'new text', '--input', lost, '--operation', lost], env);
     assert.equal(unknown.code, 3, unknown.stderr); assert.match(unknown.stderr, /RESULT_UNCONFIRMED/); assert.match(unknown.stderr, new RegExp(lost));
+  } finally { fetch.mock.restore(); await rm(directory, { recursive: true, force: true }); }
+});
+
+// ---- Task e0bcde26 (follow-up to #350): session input ----------------------------------------------------------------------
+type InputFake = { direct: Record<string, Record<string, unknown>>; messages: Set<string>; capability: Record<string, unknown>; calls: string[]; bodies: Record<string, unknown>[] };
+const inputWorld = (projectId: string, sessionId: string, init: Partial<InputFake> = {}) => {
+  const world: InputFake = { direct: {}, messages: new Set(), capability: { available: true, mode: 'start', expectedTurnId: null, reasonCode: 'READY_TO_START' }, calls: [], bodies: [], ...init };
+  const base = `/api/projects/${projectId}`;
+  const fetch = mock.method(globalThis, 'fetch', async (url: string | URL | Request, req?: RequestInit) => {
+    const path = new URL(String(url)).pathname, method = req?.method ?? 'GET';
+    world.calls.push(`${method} ${path}`);
+    const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status });
+    if (path === '/api/session') return json({ principal: { actorId: 'requirements', projectIds: [projectId] } });
+    if (path === `${base}/sessions/${sessionId}/direct-input-capability`) return json(world.capability);
+    const reconcile = new RegExp(`^${base}/sessions/${sessionId}/direct-inputs/([0-9a-f-]{36})/reconcile$`).exec(path);
+    if (reconcile && method === 'POST') return json({ ...world.direct[reconcile[1]!]!, state: 'unknown', reason: 'reconciled by the test' });
+    const one = new RegExp(`^${base}/sessions/${sessionId}/direct-inputs/([0-9a-f-]{36})$`).exec(path);
+    if (one) return world.direct[one[1]!] ? json(world.direct[one[1]!]) : json({ code: 'NOT_FOUND' }, 404);
+    if (path === `${base}/sessions/${sessionId}/direct-inputs` && method === 'POST') {
+      const body = JSON.parse(String(req!.body)); world.bodies.push(body);
+      // The service decides under its lock: a refused-by-state steer comes back saved as one queued message.
+      world.direct[body.inputId] = { inputId: body.inputId, operationId: body.operationId, mode: 'steer', state: 'rejected', queuedMessageId: body.inputId, reason: 'TURN_CHANGED: saved as a queued ordinary message' };
+      world.messages.add(body.inputId);
+      return json(world.direct[body.inputId]);
+    }
+    const message = new RegExp(`^${base}/session-messages/([0-9a-f-]{36})$`).exec(path);
+    if (message) return world.messages.has(message[1]!) ? json({ message: { id: message[1], state: 'queued' } }) : json({ code: 'NOT_FOUND' }, 404);
+    if (path === '/api/commands') { const body = JSON.parse(String(req!.body)); world.bodies.push(body); world.messages.add(body.messageId);
+      if (world.direct[body.messageId]) world.direct[body.messageId] = { ...world.direct[body.messageId]!, queuedMessageId: body.messageId };
+      return json({ status: 'applied', operationId: body.operationId, entityId: body.messageId, version: 1 }); }
+    throw new Error(`Unexpected ${method} ${path}`);
+  });
+  return { world, fetch, base };
+};
+const inputIds = { project: '00000000-0000-4000-8000-0000000000a1', session: '00000000-0000-4000-8000-0000000000a2' };
+const cliInput = (...words: string[]) => run(['session', 'input', ...words], { EVOLOOP_TOKEN: 'fixture', EVOLOOP_STATE_DIR: '' });
+
+test('item 1 (CLI): when the Turn has just ended the insert is still sent, and the service saves it as one queued message instead of the CLI refusing', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'evoloop-input-window-'));
+  for (const reasonCode of ['NATIVE_TURN_NOT_ACTIVE', 'SESSION_BUSY']) {
+    const { world, fetch } = inputWorld(inputIds.project, inputIds.session, { capability: { available: false, mode: null, expectedTurnId: null, reasonCode } });
+    const id = reasonCode === 'SESSION_BUSY' ? '00000000-0000-4000-8000-0000000000b2' : '00000000-0000-4000-8000-0000000000b1';
+    try {
+      const result = await run(['session', 'input', 'send', inputIds.session, '--project', inputIds.project, '--mode', 'insert', '--content', 'Just after the Turn ended', '--input', id, '--operation', id],
+        { EVOLOOP_TOKEN: 'fixture', EVOLOOP_STATE_DIR: directory });
+      assert.equal(result.code, 0, `${reasonCode}: ${result.stderr}`);
+      assert.equal(world.bodies.length, 1, 'the input was sent to the service once');
+      assert.equal(world.bodies[0]!.expectedTurnId, null);
+      assert.equal(JSON.parse(result.stdout).outcome, 'queued_after_change', 'told as saved-queued, with the same ID');
+    } finally { fetch.mock.restore(); }
+  }
+  // A missing authorization is still refused before anything is sent (only the two timing readings go through).
+  const { world, fetch } = inputWorld(inputIds.project, inputIds.session, { capability: { available: false, mode: null, expectedTurnId: null, reasonCode: 'DIRECT_GRANT_MISSING' } });
+  try {
+    const refused = await run(['session', 'input', 'send', inputIds.session, '--project', inputIds.project, '--mode', 'insert', '--content', 'x'], { EVOLOOP_TOKEN: 'fixture', EVOLOOP_STATE_DIR: directory });
+    assert.notEqual(refused.code, 0); assert.equal(world.bodies.length, 0);
+  } finally { fetch.mock.restore(); await rm(directory, { recursive: true, force: true }); }
+});
+
+test('item 2 (CLI): the same ID whose insert was plainly refused can be queued, and the text then goes in once', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'evoloop-input-requeue-'));
+  const id = '00000000-0000-4000-8000-0000000000c1';
+  const { world, fetch } = inputWorld(inputIds.project, inputIds.session, { direct: { [id]: { inputId: id, operationId: id, mode: 'steer', state: 'rejected', queuedMessageId: null, reason: 'Native request was explicitly rejected' } } });
+  const env = { EVOLOOP_TOKEN: 'fixture', EVOLOOP_STATE_DIR: directory };
+  try {
+    const queued = await run(['session', 'input', 'send', inputIds.session, '--project', inputIds.project, '--mode', 'queue', '--content', 'Refused earlier', '--input', id], env);
+    assert.equal(queued.code, 0, queued.stderr);
+    const post = world.bodies.find(body => body.type === 'session.message.post');
+    assert.ok(post, 'an ordinary message was posted'); assert.equal(post!.messageId, id, 'under the same ID');
+    assert.equal(JSON.parse(queued.stdout).outcome, 'queued');
+    // Repeating the queue request (a lost answer) does not post a second message; asking to insert returns the saved result.
+    const before = world.bodies.length;
+    const repeat = await run(['session', 'input', 'send', inputIds.session, '--project', inputIds.project, '--mode', 'queue', '--content', 'Refused earlier', '--input', id], env);
+    assert.equal(repeat.code, 0, repeat.stderr); assert.equal(world.bodies.length, before, 'no second message');
+    const insertAgain = await run(['session', 'input', 'send', inputIds.session, '--project', inputIds.project, '--mode', 'insert', '--content', 'Refused earlier', '--input', id], env);
+    assert.equal(insertAgain.code, 0, insertAgain.stderr); assert.equal(world.bodies.length, before, 'insert under a saved ID sends nothing');
+  } finally { fetch.mock.restore(); await rm(directory, { recursive: true, force: true }); }
+});
+
+test('item 4 (CLI): show only reads; reconciling is its own explicit command', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'evoloop-input-show-'));
+  const id = '00000000-0000-4000-8000-0000000000d1';
+  const { world, fetch } = inputWorld(inputIds.project, inputIds.session, { direct: { [id]: { inputId: id, operationId: id, mode: 'steer', state: 'attempted', actualTurnId: null, nativeItemId: null, reason: null } } });
+  const env = { EVOLOOP_TOKEN: 'fixture', EVOLOOP_STATE_DIR: directory };
+  try {
+    const shown = await run(['session', 'input', 'show', inputIds.session, id, '--project', inputIds.project], env);
+    assert.equal(shown.code, 0, shown.stderr);
+    assert.equal(world.calls.some(call => call.startsWith('POST') && call.endsWith('/reconcile')), false, 'show did not reconcile');
+    assert.equal(world.direct[id]!.state, 'attempted', 'the saved state is untouched');
+    assert.equal(JSON.parse(shown.stdout).outcome, 'unknown'); assert.match(shown.stdout, /session input reconcile/);
+    const reconciled = await run(['session', 'input', 'reconcile', inputIds.session, id, '--project', inputIds.project], env);
+    assert.equal(reconciled.code, 0, reconciled.stderr);
+    assert.equal(world.calls.filter(call => call.startsWith('POST') && call.endsWith('/reconcile')).length, 1, 'the explicit command reconciles once');
   } finally { fetch.mock.restore(); await rm(directory, { recursive: true, force: true }); }
 });
