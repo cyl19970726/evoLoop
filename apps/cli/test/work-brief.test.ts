@@ -71,12 +71,13 @@ test("the index, the acceptance overview and the relays shrink to well under hal
   assert.deepEqual(brief.counts, index.counts);
   assert.equal(brief.items.length, 20);
   const capacity = { sessionId: "s", roleId: "r", sessionActorId: "x", cwd: "/work/long/path", state: "ready", nativeThreadId: "t", tenure: "resident", isLeader: true,
-    activeRuns: 0, pendingMessages: 7, queueEntries: 0, openAssignments: 0, openAcceptance: 0, persistedWorkIdle: false, missingCapabilities: ["MESSAGE_GRANT_MISSING"], readyForAcceptance: false };
+    activeRuns: 0, pendingMessages: 7, queueEntries: 0, openAssignments: 0, openAcceptance: 0, lineQueued: 3, lineStarting: 1, persistedWorkIdle: false, missingCapabilities: ["MESSAGE_GRANT_MISSING"], readyForAcceptance: false };
   const overview = { work: index, capacity: [capacity], observedAt: "2026-11-11T08:00:00.000Z" };
   const briefOverview = briefAcceptanceOverview(overview) as Record<string, any>;
   assert.ok(bytes(briefOverview) < bytes(overview) / 2);
   assert.deepEqual(briefOverview.capacity[0].missingCapabilities, ["MESSAGE_GRANT_MISSING"]);
   assert.equal("cwd" in briefOverview.capacity[0], false);
+  assert.deepEqual([briefOverview.capacity[0].lineQueued, briefOverview.capacity[0].lineStarting], [3, 1], "the Session line's capacity fields survive --brief");
   const relays = { items: [relay(), relay({ relayId: "relay-2", state: "linked", observationResult: "used" })] };
   const briefList = briefRelays(relays) as Record<string, any>;
   assert.ok(bytes(briefList) < bytes(relays) / 2);

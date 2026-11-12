@@ -50,15 +50,18 @@ export function capacityUnknownReason(tasks: ReadState, tasksComplete: boolean, 
  * on record. While the records are incomplete (`unknownReason`) or every free candidate is still 待核对, it is 无法判断,
  * never 0; agents still to be checked beside a free one are noted rather than counted.
  */
-export function freeCountStat(capacity: FreeCapacity, unknownReason: string | null, stale: boolean): { value: number | string; label: string; note?: string } {
+export function freeCountStat(capacity: FreeCapacity, unknownReason: string | null, stale: boolean, directoryComplete = true): { value: number | string; label: string; note?: string } {
   if (unknownReason || (capacity.unknown > 0 && !capacity.free.length)) return { value: "无法判断", label: "谁空闲" };
-  const notes = [...capacity.unknown > 0 ? [`另有 ${capacity.unknown} 个待核对`] : [], ...stale ? ["上次读回"] : []];
+  // The agent directory was not read to its end: agents not read may be free, so "0" would claim nobody is. Only a floor can be said.
+  if (!directoryComplete && !capacity.free.length) return { value: "无法判断", label: "谁空闲", note: "智能体目录没读全" };
+  const notes = [...capacity.unknown > 0 ? [`另有 ${capacity.unknown} 个待核对`] : [], ...!directoryComplete ? ["目录没读全，未读到的智能体未计入"] : [], ...stale ? ["上次读回"] : []];
   const label = "个智能体空闲";
   return notes.length ? { value: capacity.free.length, label, note: notes.join(" · ") } : { value: capacity.free.length, label };
 }
 
 /** The line under 空闲与过载 when nobody is free. Only says "everyone has work" when every agent's work is on record. */
-export function noFreeAgentText(capacity: FreeCapacity): string {
+export function noFreeAgentText(capacity: FreeCapacity, directoryComplete = true): string {
+  if (!directoryComplete) return "智能体目录没有读全，无法确认谁空闲；先点“重新读取”或读完目录。";
   if (!capacity.others) return "统筹以外还没有其他智能体。";
   if (capacity.unknown === capacity.others) return "各智能体的占用都待核对，暂不能确认谁空闲。";
   if (capacity.unknown) return "没有可确认空闲的智能体。";

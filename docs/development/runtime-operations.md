@@ -171,6 +171,8 @@ Leader 读到交付后，按 Task 声明的验收方式，用 `acceptance.assign
 
 **运行时限制。** Codex 的 `0.166.0-alpha.6` 与 `0.167.0-alpha.3.2` 支持运行中补入；所有现代 Codex 协议支持空闲直启。Claude 不支持即时输入。`thread/settings/update` 只属于执行配置切换，alpha.6 支持，0.167 不支持；不要再把补入与配置切换绑成一个开关。
 
+**发送给 Leader 的两条路与 `TURN_CHANGED`。** 工作台和 CLI 都可以选“插入当前这一轮”或“排队”。插入时若人看到的那一轮已经换了、主回合还没绑定 Turn，或人以为空闲而 Session 已在运行，输入自动转为一条排队消息（原输入 ID 和操作 ID，只有一条），回执 `state=rejected`、`queuedMessageId` 非空、原因以 `TURN_CHANGED:` 或 `NOT_BOUND:` 开头；重复提交同一输入 ID 返回同一份回执，仍只有一条；`session.message.post` 不接受已是即时输入的消息 ID。迁移 096 放宽 `session_direct_input` 的检查约束，允许“被转排队的直启”这一行。缺授权时能力查询在 `detail` 里写出缺哪一项，提交的 `DIRECT_GRANT_MISSING` 也一样（只写项目名称，不回显授权内容）。CLI：`session input send SESSION --project P --mode insert|queue --content TEXT`、`session input show SESSION INPUT --project P`，说明见 [CLI 指南](agent-cli.md)。
+
 **并发与不可补入回合。** 业务 Run 或普通消息开新一轮、用户即时输入和后续通知包送入共用每 Session 一把短锁。锁前撞车返回 409 `SESSION_INPUT_BUSY`，没有预占输入；适配器在途检查在已持久化意图后拒绝时，也证明没有写入原生传输，服务保留同一输入编号与操作编号供重试。两种情况都不关闭恢复门；业务 Run 保持 `requested` 等下一轮，普通消息留下待处理原因后下一轮重试同一操作，工作台保留草稿和原输入编号。只有结构化 `codexErrorInfo.activeTurnNotSteerable`（`turnKind` 为 `review` 或 `compact`）或 0.167 的精确文字才把 direct input 记为 `rejected`，并把同一内容写成一条普通排队消息；`TurnError.misalignment.steer` 是失败回合的继续指令，不是补入拒绝。补入已被接受、回合随后失败且没有对应输入 Item 时，该输入保持未读，不因送达回执算作已读。
 
 ### 占用、未知与恢复
@@ -191,7 +193,7 @@ Leader 读到交付后，按 Task 声明的验收方式，用 `acceptance.assign
 | --- | --- |
 | `apps/workbench/test/direct-input-client.test.ts` | 能力响应；503 之后 404 时保留原输入；400、409 等预占前明确拒绝的区分；`SESSION_INPUT_BUSY` 可重试 |
 | `apps/coordinator/test/direct-input-admission.test.ts` | 准入把普通消息授权的 `receiverActorId` 解析为 Session 业务身份；A 预约、业务身份 B、授权写 B 时通过，授权仍写预约身份时拒绝 |
-| `apps/coordinator/test/direct-input-service.test.ts` | 按实际运行时能力回答；共享送入锁的撞车、重试与无持久写入；不可补入回合转为普通排队消息 |
+| `apps/coordinator/test/direct-input-service.test.ts` | 按实际运行时能力回答；共享送入锁的撞车、重试与无持久写入；不可补入回合转为普通排队消息；期望的 Turn 已换时存储层转排队、不向运行时发送；缺授权时名称写在能力和提交里 |
 | `packages/adapter-postgres/test/direct-input.test.ts` | 在独立 PostgreSQL schema 里检查双启动唯一槽位、Run 与消息两种主来源、同一 Turn 的两条补入、TaskRevision 与输入哈希不变、额度、撤权、未知和终态 CAS |
 | `apps/coordinator/test/direct-input-native-live.mts` | 用 `LIVE_CODEX_VERSION` 固定的真实二进制在隔离的 HTTP、PostgreSQL 和 Thread 中执行一次直启和两条补入，回读三个精确的 client ID 和 Item；W3 用 0.167.0-alpha.3.2 记录 |
 | `apps/coordinator/test/direct-input-native-sources-live.mts` | 同一隔离边界里，分别对已有业务 Run 和普通消息处理各补入两条；前者核对固定 Run 输入未变，后者由现有泵完成终态结算 |

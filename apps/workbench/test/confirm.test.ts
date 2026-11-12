@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  answerConfirm, askConfirm, cancelConfirms, confirmHostFailed, confirmHostMounted, currentConfirm, hostWaitMs, onConfirmUnavailable,
+  answerConfirm, askConfirm, cancelConfirms, confirmHostFailed, confirmHostMounted, currentConfirm, hostWaitMs, onConfirmRetry, onConfirmUnavailable,
 } from "../src/shared/confirm";
 
 const ask = (title: string) => askConfirm({ title, confirmLabel: "离开" });
@@ -72,4 +72,35 @@ test("a question waits for the host at most hostWaitMs, then is cancelled", asyn
   assert.equal(await shown, false);
   unmount();
   stop();
+});
+
+test("#295 item 6: after a failed load the next question asks for another try and is shown once the dialog mounts, so a draft is not locked in until a refresh", async t => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const said: string[] = [];
+  const stop = onConfirmUnavailable(() => said.push("unavailable"));
+  const first = ask("离开当前项目？");
+  confirmHostFailed();
+  assert.equal(await first, false, "the question that was waiting when the load failed is cancelled");
+  // Someone can load the dialog again (the app): a new question asks for it and waits for it.
+  let retries = 0, unmount: (() => void) | null = null;
+  const stopRetry = onConfirmRetry(() => { retries++; unmount = confirmHostMounted(); });
+  const again = ask("离开当前项目？");
+  assert.equal(retries, 1, "the failed load is tried again when asked again");
+  assert.equal(currentConfirm()?.title, "离开当前项目？", "and the question is on screen, not cancelled");
+  answerConfirm(true);
+  assert.equal(await again, true);
+  assert.deepEqual(said, ["unavailable"], "only the first, cancelled question was reported as unavailable");
+  unmount?.(); stopRetry();
+  // A retry that does not bring the dialog up in time still ends the question, and the next question tries again.
+  confirmHostFailed();
+  const stopRetry2 = onConfirmRetry(() => { retries++; });
+  const stuck = ask("退出并清除草稿？");
+  t.mock.timers.tick(hostWaitMs);
+  assert.equal(await stuck, false);
+  assert.equal(retries, 2);
+  const next = ask("退出并清除草稿？");
+  assert.equal(retries, 3, "every later question is another chance");
+  t.mock.timers.tick(hostWaitMs);
+  assert.equal(await next, false);
+  stopRetry2(); stop();
 });

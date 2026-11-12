@@ -66,7 +66,7 @@ export class DirectInputService {
     catch{return result(false,null,null,"NATIVE_UNAVAILABLE");}
     let grant:DirectInputGrant,binding:RuntimeBinding;
     try{({grant,binding}=await this.deps.admission(principal,projectId,sessionId));}
-    catch{return result(false,null,null,"DIRECT_GRANT_MISSING");}
+    catch(error){return result(false,null,null,"DIRECT_GRANT_MISSING",error instanceof DomainError?error.message:undefined);}
     if(this.lock.isBusy(projectId,sessionId))return result(false,null,null,"SESSION_INPUT_BUSY");
     const capabilities=runtime.capabilitiesFor?.(binding)??runtime.capabilities?.();
     if(!capabilities)return result(false,null,null,"NATIVE_CAPABILITY_UNKNOWN");
@@ -143,6 +143,8 @@ export class DirectInputService {
     // Never replay an uncertain native attempt. The only exception is an identical intent the adapter
     // refused before writing; it still carries the same operation ID and has no native attempt.
     if(!reserved.created&&!retrying)return publicDirectInput(record);
+    // The Turn changed under a steer: reserve saved the text as one queued message and recorded that; nothing is sent.
+    if(record.state==="rejected")return publicDirectInput(record);
     if(record.mode==="steer"&&!capabilities.delivery.midTurnInput)
       return publicDirectInput(await this.deps.store.reject(projectId,record.inputId,
         "This runtime cannot add input to an active Turn"));

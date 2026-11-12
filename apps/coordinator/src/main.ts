@@ -995,8 +995,8 @@ const app = await buildServer({ service, credentials, canWrite: lease.canWrite, 
     await dynamicAdmission?.canStartConversation(session) === true,
   runtimeGrants: (projectId, actorId) => runtimeConfig?.enabled ? runtimeConfig.grants.filter(g => g.projectId === projectId && g.actorId === actorId) : [],
   roleRuntimeView: (principal, projectId, roleId) => roleRuntimeView({ service, runtime: runner ?? undefined,
-    grantCwds: (project, actorId, role) => runtimeConfig?.enabled ? runtimeConfig.grants.filter(g => g.projectId === project &&
-      g.actorId === actorId && g.roleId === role).map(g => g.cwd) : [],
+    roleGrants: (project, role) => runtimeConfig?.enabled ? runtimeConfig.grants.filter(g => g.projectId === project && g.roleId === role)
+      .map(g => ({ actorId: g.actorId, cwd: g.cwd })) : [],
     skillRoots: async (project, role) => ({ businessRoot: skillSourceRoot, businessPaths: await roleBusinessSkillPaths(project, role) }),
     claudeContextMode: runtimeConfig?.claude?.contextMode ?? null }, principal, projectId, roleId),
   messageSendAuthority: async (principal, projectId, sessionId) => {
