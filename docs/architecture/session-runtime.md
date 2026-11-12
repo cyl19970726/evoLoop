@@ -134,6 +134,14 @@ flowchart TD
 
 即时发送是否可用，由能力查询（`direct-input-capability`）按同一组授权、槽位和 Session 当前运行时能力实时回答；只有回答 `steer` 或 `start` 时工作台才显示即时发送，否则保留普通消息入口，用户的输入作为普通消息排队。“占用中”指 Session 已有主来源但还没有可以附着的运行中 Turn，例如刚派发还没拿到 Turn ID，或上一次结果未知。运行时分别声明 `delivery.midTurnInput`（能否补入）与 `delivery.idleTurnStart`（能否空闲直启）；Codex 的声明来自实际绑定的协议版本，Claude 两项均为否。
 
+**两条明确的路（W2b）。** 发给 Leader 等 owned Session 的消息有两种去处，结果都能按同一个输入 ID 读回：**插入当前这一轮**（即时输入，`steer`；Session 空闲时则开一轮，`start`）和**排队**（普通消息，消息 ID 就是输入 ID，这一轮结束后按顺序处理）。工作台在 Leader 页面、Leader 正在执行且两条路都开放时显示两个按钮“插入当前这一轮”和“排队”，快捷键不变；Leader 空闲时只有一个“发送”。发送后写明结果：已插入、已开始新的一轮、已排队、已转排队（写明原因）。CLI 给智能体同样的两个选择（`session input send --mode insert|queue`，见[CLI 指南](../development/agent-cli.md)）。缺授权时在发出前被拒绝，并说出缺哪一项（即时输入授权、普通消息授权、写入身份、执行授权、工作目录）。
+
+**可证明没有送入原生的拒绝，统一转排队。** 在预占时，人的输入遇到下面三种情况：人看到的那一轮已经结束或换成别的一轮（`TURN_CHANGED`），主回合已派发但还没绑定 Turn（`NOT_BOUND`），或人以为空闲、提交时 Session 已有运行中的 Turn（`TURN_CHANGED`）。存储层在**同一个事务**里把这条输入存成一条排队的普通消息（沿用原输入 ID 和操作 ID，只有一条），并把输入记为 `rejected`、原因以 `TURN_CHANGED:` 或 `NOT_BOUND:` 开头，回执的 `queuedMessageId` 等于输入 ID；没有向运行时发送任何东西。这三种转排队在 `PgDirectInputs.reserve` 内由 `queueRefused` 完成，不经过 `rejectSteerAndQueue`；原生返回“不可补入回合”（评审、压缩）时才由 `rejectSteerAndQueue` 在发送之后转排队，回执同样带 `queuedMessageId`。**结果未知的输入不转**：它们在预占之后，从不走这两条路径。空闲直启被转排队时，回执行的形状是“`mode=start`、`rejected`、没有处理槽位”（迁移 096 放宽了该表的约束）。
+
+**同一个输入 ID 只表示一个意图。** 重复提交（包括补回执丢失后的重试）先读该 ID 已保存的结果并照它回答：已转排队的返回同一份“已排队”回执，不会再发成第二条消息；已被运行时接收、结果未知的输入保持原结果。普通消息入口（`session.message.post`）拒绝“消息 ID 已是一条未被拒绝的即时输入”的提交（`INPUT_ID_IS_DIRECT_INPUT`），所以同一段文字不会既插入又排队。工作台把预占之前的明确拒绝（授权缺失、`TURN_CHANGED`、`SESSION_BUSY` 等）当作没有保存任何输入：文字保留，按钮解锁，可以重新选择插入或排队；5xx 和丢失的回答才算结果未知。
+
+**人的插入先于等待中的通知包。** Session 空闲时，人的插入在预占时同步占用唯一的处理槽位；已排队等待的通知（包括今后的通知包）不会与它并排启动，等这一轮结束后按顺序再处理。顺序由存储层的单槽位保证，并有测试覆盖（`direct-input.test.ts`）；通知包本身（W2）尚未上线。
+
 规则如下：
 
 - **一个 Turn 只有一个主来源。** 补入的输入不另立主来源，也不改写原 Run 的固定 TaskRevision 和输入哈希。每条补入有自己的 `inputId`、`operationId`、署名、期望 Turn、实际 Turn 和状态。
