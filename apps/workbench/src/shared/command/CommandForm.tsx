@@ -16,6 +16,17 @@ import {
 } from "./rules";
 import { useCommand, type CommandOptions } from "./useCommand";
 
+/**
+ * A control of the page's own that is still reading what its choices come from (the member list) tells the form around it, so the
+ * form does not send while the choice is not settled: `useFormPending("正在读取…")` while it reads, `null` when it is done.
+ */
+export const FormPendingContext = React.createContext<((id: string, reason: string | null) => void) | null>(null);
+export function useFormPending(reason: string | null) {
+  const report = React.useContext(FormPendingContext);
+  const id = React.useId();
+  React.useEffect(() => { report?.(id, reason); return () => report?.(id, null); }, [report, id, reason]);
+}
+
 /** Why the forms in this region may not write right now (a historical revision, a reread), or "". */
 export const CommandBlock = React.createContext("");
 
@@ -145,20 +156,27 @@ export function CommandFrame({ context, command, label, submitLabel, dirty, onSu
   changedFields = [], conflicts, onResolve,
   permission = "write", paused, danger, saved, copy, rereading, onCancel, cancelLabel = "收起", actions, surface = "muted", layout = "stack", submitOnModEnter, className, children }: CommandFrameProps) {
   const block = React.useContext(CommandBlock);
+  // Controls of the form that are still reading their choices (FormPendingContext): the form does not send meanwhile.
+  const [reading, setReading] = React.useState<Record<string, string>>({});
+  const reportReading = React.useCallback((id: string, reason: string | null) => setReading(current => {
+    if (reason === null) { if (!(id in current)) return current; const { [id]: _, ...rest } = current; return rest; }
+    return current[id] === reason ? current : { ...current, [id]: reason };
+  }), []);
+  const waiting = paused ?? Object.values(reading)[0] ?? null;
   const needed: readonly Permission[] = typeof permission === "string" ? [permission] : permission;
   const denied = permissionText(context.principal.permissions, needed);
   const blocked = !!block || context.blocked;
   const changed = command.baselineChanged || moved;
-  const disabled = !!denied || blocked || command.busy || changed || command.unconfirmed || !!paused;
+  const disabled = !!denied || blocked || command.busy || changed || command.unconfirmed || !!waiting;
   const reread = onReread ?? context.onChanged;
   const submitButton = <Button type="submit" variant={danger ? "danger" : "primary"} size={layout === "inline" ? "default" : "compact"} disabled={disabled}
     className="shrink-0">{command.busy ? "正在提交…" : submitLabel}</Button>;
   const notices = <>
-    {paused && <Notice tone="waiting">{paused}</Notice>}
+    {waiting && <Notice tone="waiting">{waiting}</Notice>}
     {denied && <p className="text-caption text-muted-foreground">{denied}</p>}
     {blocked && <p className="text-caption text-muted-foreground">{block ? `暂不能提交：${block}` : blockedText}</p>}
     {changed && <BaselineNotice awaiting={command.awaitingReread} onReread={reread} onKeep={onKeep} onRefill={onRefill} keepLabel={keepLabel}
-      keepNote={keepNote} changed={[...new Set([...command.changed, ...changedFields])]} copy={copy} rereading={rereading || !!paused} title={baselineTitle}
+      keepNote={keepNote} changed={[...new Set([...command.changed, ...changedFields])]} copy={copy} rereading={rereading || !!waiting} title={baselineTitle}
       conflicts={conflicts} onResolve={onResolve} />}
     {command.unconfirmed && <Notice tone="waiting" title={unconfirmedTitle} action={!context.blocked &&
       <Button size="compact" disabled={command.checking} onClick={() => void command.readBack()}>{command.checking ? "正在核对…" : "按原操作核对"}</Button>}>
@@ -173,10 +191,12 @@ export function CommandFrame({ context, command, label, submitLabel, dirty, onSu
       if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && !command.busy) { event.preventDefault(); event.currentTarget.requestSubmit(); }
     } : undefined}
     className={cn("flex min-w-0 flex-col gap-3", surface === "muted" && "rounded-lg bg-muted p-4", className)}>
-    {layout === "inline"
-      ? <><div className="flex min-w-0 items-end gap-2"><div className="flex min-w-0 flex-1 flex-col gap-3">{children}</div>{submitButton}</div>{notices}</>
-      : <>{children}{notices}<div className="flex flex-wrap items-center gap-2">{submitButton}{actions}
-        {onCancel && <Button size="compact" variant="ghost" onClick={onCancel} disabled={command.busy}>{cancelLabel}</Button>}</div></>}
+    <FormPendingContext.Provider value={reportReading}>
+      {layout === "inline"
+        ? <><div className="flex min-w-0 items-end gap-2"><div className="flex min-w-0 flex-1 flex-col gap-3">{children}</div>{submitButton}</div>{notices}</>
+        : <>{children}{notices}<div className="flex flex-wrap items-center gap-2">{submitButton}{actions}
+          {onCancel && <Button size="compact" variant="ghost" onClick={onCancel} disabled={command.busy}>{cancelLabel}</Button>}</div></>}
+    </FormPendingContext.Provider>
   </form>;
 }
 
@@ -314,11 +334,12 @@ export function CommandForm<B extends Baseline | string | undefined = undefined>
     if (errors[name]) setErrors(({ [name]: _, ...rest }) => rest);
   };
   function submit() {
-    const problems = missingFields(fields, form.values);
+    // What the form holds now, even when this handler belongs to an earlier render.
+    const problems = missingFields(fields, latestForm.current.values);
     setErrors(problems);
     if (Object.keys(problems).length) return;
     setSaved(false);
-    const values = form.values;
+    const values = latestForm.current.values;
     void command.submit(seen => build(values, seen));
   }
   // Kept only where nobody else changed the same field; a field both changed is decided field by field.
@@ -364,8 +385,10 @@ function FieldControl(props: FieldProps) {
     <div role="status" data-field-preview={props.field.name} className="mt-1.5 text-caption text-text-secondary empty:mt-0 [overflow-wrap:anywhere]">{preview ?? null}</div></div>;
 }
 
-function FieldInput({ field, value, values, error, hideLabel, onChange }: FieldProps) {
+export function FieldInput({ field, value, values, error, hideLabel, onChange }: FieldProps) {
   const label = fieldLabel(field, values);
+  // `requiredWhen` can make an optional field required now: the control's own `required` and its empty choice follow the same rule as the label and the checks.
+  const optional = fieldOptional(field, values);
   const errorId = React.useId();
   const legendId = React.useId();
   if (field.kind === "radio" || field.kind === "multi") {
@@ -389,16 +412,16 @@ function FieldInput({ field, value, values, error, hideLabel, onChange }: FieldP
     ? field.render?.({ control, value, values, onChange }) ?? null
     : field.kind === "textarea"
     ? field.autoGrow
-      ? <Textarea {...control} name={field.name} value={value} required={!field.optional} rows={1} placeholder={field.placeholder}
+      ? <Textarea {...control} name={field.name} value={value} required={!optional} rows={1} placeholder={field.placeholder}
         autoComplete="off" className="min-h-10 resize-none" onChange={event => onChange(event.target.value)}
         ref={node => { if (node) { node.style.height = "auto"; node.style.height = `${Math.min(node.scrollHeight, 120)}px`; } }} />
-      : <Textarea {...control} name={field.name} value={value} required={!field.optional} rows={field.rows ?? 3}
+      : <Textarea {...control} name={field.name} value={value} required={!optional} rows={field.rows ?? 3}
         placeholder={field.placeholder} autoComplete="off" onChange={event => onChange(event.target.value)} />
-    : field.kind === "select" ? <Select {...control} name={field.name} value={value} required={!field.optional} onChange={event => onChange(event.target.value)} className="w-full">
-      {(field.optional || !field.options?.some(option => option.value === value)) && <option value="">{field.optional ? "不设置" : "请选择"}</option>}
+    : field.kind === "select" ? <Select {...control} name={field.name} value={value} required={!optional} onChange={event => onChange(event.target.value)} className="w-full">
+      {(optional || !field.options?.some(option => option.value === value)) && <option value="">{optional ? "不设置" : "请选择"}</option>}
       {field.options?.map(option => <option key={option.value} value={option.value} disabled={option.disabled}>{option.label}</option>)}
     </Select>
       : <Input {...control} name={field.name} type={field.kind === "datetime" ? "datetime-local" : field.kind === "time" ? "time" : "text"}
-        step={field.kind === "datetime" || field.kind === "time" ? (/:\d{2}:\d{2}$/.test(value) ? 1 : 60) : undefined} value={value} required={!field.optional}
+        step={field.kind === "datetime" || field.kind === "time" ? (/:\d{2}:\d{2}$/.test(value) ? 1 : 60) : undefined} value={value} required={!optional}
         placeholder={field.placeholder} autoComplete="off" onChange={event => onChange(event.target.value)} />}</Field>;
 }

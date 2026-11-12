@@ -34,6 +34,9 @@ export function loadConfig(text, path) {
   }
   for (const name of HOOKS) if (!OPTIONAL_HOOKS.has(name) && !config.hooks?.[name]) throw new Error(`config.hooks.${name} is required`);
   if (!config.backup?.out || !isAbsolute(config.backup.out) || !config.backup.blobRoot) throw new Error("config.backup.out (absolute) and config.backup.blobRoot are required");
+  // Where the source tree sits inside a release directory: "" (default) = the release directory itself is the checkout;
+  // "source" = a layout of <release>/source plus sibling directories (runtime, artifacts) that hooks fill in.
+  if (config.sourceSubdir !== undefined && (typeof config.sourceSubdir !== "string" || isAbsolute(config.sourceSubdir) || config.sourceSubdir.split(/[\\/]/).includes("..") || /[\0]/.test(config.sourceSubdir))) throw new Error("config.sourceSubdir must be a relative path without ..");
   if (!config.database?.name) throw new Error("config.database.name is required: the release refuses a database other than the one it expects");
   return config;
 }
@@ -125,6 +128,7 @@ export async function run({ config, id, ref = "HEAD", execute = false, from = nu
   env: processEnv = process.env, log = console.log, runner = exec, readManifest = path => readFile(path, "utf8") }) {
   const steps = selectSteps({ from, only });
   const releaseDir = join(config.releaseRoot, id);
+  const sourceDir = config.sourceSubdir ? join(releaseDir, config.sourceSubdir) : releaseDir;
   const prior = await readState(config, id);
   // A resumed run keeps the original `previous`: the link may already point at this release. Always absolute.
   const previous = prior ? prior.previous : await currentTarget(config.currentLink);
@@ -133,7 +137,7 @@ export async function run({ config, id, ref = "HEAD", execute = false, from = nu
   // Each backup attempt gets its own target: a retry after a failed or undone attempt must not trip over the earlier directory.
   const attempt = (state.backupAttempts ?? 0) + 1;
   const ctx = { id, ref, releaseDir, previous, backupDir: join(config.backup.out, `${id}-${attempt}`) };
-  const env = { EVOLOOP_RELEASE_ID: id, EVOLOOP_RELEASE_DIR: releaseDir, EVOLOOP_RELEASE_PREVIOUS: previous ?? "", EVOLOOP_RELEASE_CURRENT_LINK: config.currentLink };
+  const env = { EVOLOOP_RELEASE_ID: id, EVOLOOP_RELEASE_DIR: releaseDir, EVOLOOP_RELEASE_SOURCE: sourceDir, EVOLOOP_RELEASE_PREVIOUS: previous ?? "", EVOLOOP_RELEASE_CURRENT_LINK: config.currentLink };
   const done = new Set(state.steps.filter(entry => entry.result === "ok" || entry.result === "skipped").map(entry => entry.step));
   const first = STEPS.indexOf(steps[0]);
   const reachesDisruptive = steps.some(step => STEPS.indexOf(step) >= FIRST_DISRUPTIVE);
@@ -156,14 +160,14 @@ export async function run({ config, id, ref = "HEAD", execute = false, from = nu
   const acceptance = state.acceptance ??= {};
   // Recording hooks never fail the release: a count or status that cannot be read is written down, not acted on.
   const record = async (label, argv) => {
-    try { return String(await runner(argv, { cwd: releaseDir, env, capture: true })).trim(); }
+    try { return String(await runner(argv, { cwd: sourceDir, env, capture: true })).trim(); }
     catch (error) { acceptance[`${label}Error`] = error.message; log(`WARN ${label} could not be recorded: ${error.message} (the release continues)`); return null; }
   };
   const counts = async label => { if (config.hooks?.["data-counts"]) { const text = await record(label, config.hooks["data-counts"]); if (text !== null) acceptance[label] = text; } };
   let stopAt = null;
   for (const step of steps) {
     const argv = commandFor(step, config, ctx);
-    const action = step === "prepare" ? `git worktree add --detach ${releaseDir} ${ref}` : step === "switch" ? `link ${config.currentLink} -> ${releaseDir}` : argv ? argv.join(" ") : "(skipped)";
+    const action = step === "prepare" ? `git worktree add --detach ${sourceDir} ${ref}` : step === "switch" ? `link ${config.currentLink} -> ${releaseDir}` : argv ? argv.join(" ") : "(skipped)";
     log(`${execute ? "RUN " : "PLAN"} ${step}: ${action}`);
     if (!execute) continue;
     const entry = { step, startedAt: new Date().toISOString() };
@@ -171,25 +175,25 @@ export async function run({ config, id, ref = "HEAD", execute = false, from = nu
     try {
       if (step === "prepare") {
         await mkdir(config.releaseRoot, { recursive: true });
-        if (await exists(releaseDir)) {
+        if (await exists(sourceDir)) {
           // A rerun without --from: reuse the working tree only when it is exactly the commit asked for.
-          const have = String(await runner(["git", "-C", releaseDir, "rev-parse", "HEAD"], { cwd: repoRoot, env, capture: true })).trim();
+          const have = String(await runner(["git", "-C", sourceDir, "rev-parse", "HEAD"], { cwd: repoRoot, env, capture: true })).trim();
           const want = String(await runner(["git", "-C", repoRoot, "rev-parse", `${ref}^{commit}`], { cwd: repoRoot, env, capture: true })).trim();
-          if (have !== want) throw new Error(`${releaseDir} already exists at ${have.slice(0, 8)}, not ${want.slice(0, 8)} (${ref}); remove it or use a new release id`);
-          log(`reusing the existing working tree ${releaseDir} at ${have.slice(0, 8)}`);
-        } else await runner(["git", "-C", repoRoot, "worktree", "add", "--detach", releaseDir, ref], { cwd: repoRoot, env });
+          if (have !== want) throw new Error(`${sourceDir} already exists at ${have.slice(0, 8)}, not ${want.slice(0, 8)} (${ref}); remove it or use a new release id`);
+          log(`reusing the existing working tree ${sourceDir} at ${have.slice(0, 8)}`);
+        } else { await mkdir(dirname(sourceDir), { recursive: true }); await runner(["git", "-C", repoRoot, "worktree", "add", "--detach", sourceDir, ref], { cwd: repoRoot, env }); }
       } else if (step === "switch") await switchLink(config.currentLink, releaseDir);
-      else if (step === "backup") { state.backupAttempts = attempt; await save(); await runner(argv, { cwd: releaseDir, env }); }
-      else if (argv) await runner(argv, { cwd: releaseDir, env: { ...env, ...(step === "test" ? testDatabaseEnv(processEnv) : {}) } });
+      else if (step === "backup") { state.backupAttempts = attempt; await save(); await runner(argv, { cwd: sourceDir, env }); }
+      else if (argv) await runner(argv, { cwd: sourceDir, env: { ...env, ...(step === "test" ? testDatabaseEnv(processEnv) : {}) } });
       if (step === "preflight") {
         // Record what is being released and how it relates to the remote main; an unmerged commit is refused unless allowed.
-        state.commit = await gitFacts({ runner, env, releaseDir, ref, remote: config.remote ?? "origin", branch: config.baseBranch ?? "main" });
+        state.commit = await gitFacts({ runner, env, releaseDir: sourceDir, ref, remote: config.remote ?? "origin", branch: config.baseBranch ?? "main" });
         if (!state.commit.onRemote && !allowOffMain) throw new Error(`Release commit ${state.commit.sha.slice(0, 8)} is not on ${state.commit.remote} (${state.commit.remoteHead.slice(0, 8)}); merge it first or pass --allow-off-main for a rehearsal`);
       }
       entry.result = argv || step === "prepare" || step === "switch" ? "ok" : "skipped";
       if (step === "stop") { stopAt = Date.now(); acceptance.stopCompletedAt = new Date().toISOString(); }
       if (step === "migrate") {
-        if (config.hooks?.["post-migrate"]) await runner(config.hooks["post-migrate"], { cwd: releaseDir, env });
+        if (config.hooks?.["post-migrate"]) await runner(config.hooks["post-migrate"], { cwd: sourceDir, env });
         acceptance.postMigrateCheck = config.hooks?.["post-migrate"] ? "passed" : "not configured";
       }
     } catch (error) {
@@ -249,7 +253,7 @@ export async function run({ config, id, ref = "HEAD", execute = false, from = nu
 async function recoverOldService({ config, state, execute, env, log, runner, switched }) {
   if (!execute) return { result: "not attempted (dry run)" };
   if (!state.previous) return { result: "not possible: no previous release was recorded" };
-  const prevEnv = { ...env, EVOLOOP_RELEASE_DIR: state.previous };
+  const prevEnv = { ...env, EVOLOOP_RELEASE_DIR: state.previous, EVOLOOP_RELEASE_SOURCE: config.sourceSubdir ? join(state.previous, config.sourceSubdir) : state.previous };
   const steps = [];
   try {
     await runner(config.hooks.stop, { cwd: state.previous, env }); steps.push("stop");
@@ -277,7 +281,7 @@ export async function rollback({ config, id, execute = false, log = console.log,
   const releaseDir = state.releaseDir ?? join(config.releaseRoot, id);
   if (current !== resolve(releaseDir)) throw new Error(`Cannot roll back ${id}: the current link points at ${current ?? "nothing"}, not at this release (${releaseDir}). It may already have been rolled back or replaced by a later release.`);
   if (!(await exists(state.previous))) throw new Error(`Cannot roll back ${id}: the previous release directory ${state.previous} no longer exists.`);
-  const env = { EVOLOOP_RELEASE_ID: id, EVOLOOP_RELEASE_DIR: state.previous, EVOLOOP_RELEASE_PREVIOUS: state.previous, EVOLOOP_RELEASE_CURRENT_LINK: config.currentLink };
+  const env = { EVOLOOP_RELEASE_ID: id, EVOLOOP_RELEASE_DIR: state.previous, EVOLOOP_RELEASE_SOURCE: config.sourceSubdir ? join(state.previous, config.sourceSubdir) : state.previous, EVOLOOP_RELEASE_PREVIOUS: state.previous, EVOLOOP_RELEASE_CURRENT_LINK: config.currentLink };
   const startedAt = new Date().toISOString();
   for (const step of ["stop", "switch", "repoint-cli", "start", "post-check"]) {
     const argv = commandFor(step, config, { id, releaseDir: state.previous });

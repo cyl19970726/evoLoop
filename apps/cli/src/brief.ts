@@ -18,7 +18,9 @@ export function briefTask(item: Obj): Obj {
   const convention = obj(item.acceptanceConvention);
   return {
     taskId: item.taskId, version: item.version, revisionId: item.currentRevisionId, title: item.title,
-    kind: item.taskKind ?? null, state: item.taskState, phase: item.phase, nextAction: item.nextAction,
+    // `taskKind` and `acceptanceConvention` carry the full view's names and shape (null values kept: "no readiness yet" is a fact), so a
+    // reader that looks them up the same way in both views finds them. `kind` and `acceptance` are the earlier short forms, kept as they were.
+    taskKind: item.taskKind ?? null, kind: item.taskKind ?? null, state: item.taskState, phase: item.phase, nextAction: item.nextAction,
     ...(item.actionKey ? { actionKey: item.actionKey } : {}),
     responsible: pick(obj(item.responsible), ["kind", "id", "label"]),
     ...(item.assignment ? { assignment: pick(obj(item.assignment), ["state", "targetKind", "targetId", "recipientActorId", "taskRevisionId"]) } : {}),
@@ -30,6 +32,8 @@ export function briefTask(item: Obj): Obj {
     ...(item.pendingImpactCount ? { pendingImpacts: item.pendingImpactCount } : {}),
     ...(blockedBy.length ? { blockedBy } : {}),
     ...(item.plan ? { plan: pick(obj(item.plan), ["dueAt", "plannedStartAt", "priority"]) } : {}),
+    acceptanceConvention: convention ? { acceptanceTarget: convention.acceptanceTarget ?? null, acceptancePrecondition: convention.acceptancePrecondition ?? null,
+      readiness: convention.readiness ?? null, namedAgent: convention.namedAgent ?? null } : null,
     ...(convention ? { acceptance: pick(convention, ["acceptanceTarget", "acceptancePrecondition", "readiness", "namedAgent"]) } : {}),
   };
 }
@@ -41,7 +45,7 @@ export function briefIndex(page: Obj): Obj {
 }
 
 const CAPACITY_KEYS = ["sessionId", "roleId", "state", "tenure", "isLeader", "activeRuns", "pendingMessages", "queueEntries", "openAssignments",
-  "openAcceptance", "persistedWorkIdle", "missingCapabilities", "readyForAcceptance"];
+  "openAcceptance", "lineQueued", "lineStarting", "persistedWorkIdle", "missingCapabilities", "readyForAcceptance"];
 /** `work acceptance`: the briefed work index and each Session's occupation and missing capabilities. */
 export function briefAcceptanceOverview(body: Obj): Obj {
   return { brief: true, work: obj(body.work) ? briefIndex(body.work) : body.work ?? null,

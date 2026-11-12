@@ -171,6 +171,8 @@ Leader 读到交付后，按 Task 声明的验收方式，用 `acceptance.assign
 
 **运行时限制。** Codex 的 `0.166.0-alpha.6` 与 `0.167.0-alpha.3.2` 支持运行中补入；所有现代 Codex 协议支持空闲直启。Claude 不支持即时输入。`thread/settings/update` 只属于执行配置切换，alpha.6 支持，0.167 不支持；不要再把补入与配置切换绑成一个开关。
 
+**发送给 Leader 的两条路与 `TURN_CHANGED`。** 工作台和 CLI 都可以选“插入当前这一轮”或“排队”。插入时若人看到的那一轮已经换了、主回合还没绑定 Turn，或人以为空闲而 Session 已在运行，输入自动转为一条排队消息（原输入 ID 和操作 ID，只有一条），回执 `state=rejected`、`queuedMessageId` 非空、原因以 `TURN_CHANGED:` 或 `NOT_BOUND:` 开头；重复提交同一输入 ID 返回同一份回执，仍只有一条；`session.message.post` 不接受已是即时输入的消息 ID。迁移 096 放宽 `session_direct_input` 的检查约束，允许“被转排队的直启”这一行。缺授权时能力查询在 `detail` 里写出缺哪一项，提交的 `DIRECT_GRANT_MISSING` 也一样（只写项目名称，不回显授权内容）。CLI：`session input send SESSION --project P --mode insert|queue --content TEXT`、`session input show SESSION INPUT --project P`，说明见 [CLI 指南](agent-cli.md)。
+
 **并发与不可补入回合。** 业务 Run 或普通消息开新一轮、用户即时输入和后续通知包送入共用每 Session 一把短锁。锁前撞车返回 409 `SESSION_INPUT_BUSY`，没有预占输入；适配器在途检查在已持久化意图后拒绝时，也证明没有写入原生传输，服务保留同一输入编号与操作编号供重试。两种情况都不关闭恢复门；业务 Run 保持 `requested` 等下一轮，普通消息留下待处理原因后下一轮重试同一操作，工作台保留草稿和原输入编号。只有结构化 `codexErrorInfo.activeTurnNotSteerable`（`turnKind` 为 `review` 或 `compact`）或 0.167 的精确文字才把 direct input 记为 `rejected`，并把同一内容写成一条普通排队消息；`TurnError.misalignment.steer` 是失败回合的继续指令，不是补入拒绝。补入已被接受、回合随后失败且没有对应输入 Item 时，该输入保持未读，不因送达回执算作已读。
 
 ### 占用、未知与恢复
@@ -191,7 +193,7 @@ Leader 读到交付后，按 Task 声明的验收方式，用 `acceptance.assign
 | --- | --- |
 | `apps/workbench/test/direct-input-client.test.ts` | 能力响应；503 之后 404 时保留原输入；400、409 等预占前明确拒绝的区分；`SESSION_INPUT_BUSY` 可重试 |
 | `apps/coordinator/test/direct-input-admission.test.ts` | 准入把普通消息授权的 `receiverActorId` 解析为 Session 业务身份；A 预约、业务身份 B、授权写 B 时通过，授权仍写预约身份时拒绝 |
-| `apps/coordinator/test/direct-input-service.test.ts` | 按实际运行时能力回答；共享送入锁的撞车、重试与无持久写入；不可补入回合转为普通排队消息 |
+| `apps/coordinator/test/direct-input-service.test.ts` | 按实际运行时能力回答；共享送入锁的撞车、重试与无持久写入；不可补入回合转为普通排队消息；期望的 Turn 已换时存储层转排队、不向运行时发送；缺授权时名称写在能力和提交里 |
 | `packages/adapter-postgres/test/direct-input.test.ts` | 在独立 PostgreSQL schema 里检查双启动唯一槽位、Run 与消息两种主来源、同一 Turn 的两条补入、TaskRevision 与输入哈希不变、额度、撤权、未知和终态 CAS |
 | `apps/coordinator/test/direct-input-native-live.mts` | 用 `LIVE_CODEX_VERSION` 固定的真实二进制在隔离的 HTTP、PostgreSQL 和 Thread 中执行一次直启和两条补入，回读三个精确的 client ID 和 Item；W3 用 0.167.0-alpha.3.2 记录 |
 | `apps/coordinator/test/direct-input-native-sources-live.mts` | 同一隔离边界里，分别对已有业务 Run 和普通消息处理各补入两条；前者核对固定 Run 输入未变，后者由现有泵完成终态结算 |
@@ -359,7 +361,7 @@ node --import tsx tests/manual/session-compaction-e1.ts
 }
 ```
 
-- **读回用量。** `GET /api/projects/PROJECT_ID/runtime/usage?from=YYYY-MM-DD&to=YYYY-MM-DD` 按 Session 和按天返回输入、输出、缓存输入、费用与上下文压力；工作台智能体页右栏“环境与用量”用同一个读取。费用缺失写“未报告”，不当 0。
+- **读回用量。** `GET /api/projects/PROJECT_ID/runtime/usage?from=YYYY-MM-DD&to=YYYY-MM-DD` 按 Session 和按天返回输入、输出、缓存输入、费用与上下文压力；工作台智能体页右栏“用量与上下文”用同一个读取。费用缺失写“未报告”，不当 0。
 - **警告与暂停。** 达到 `warningRatio` 只显示提示；达到上限后，结果通知消息以 `DAILY_BUDGET_EXHAUSTED` 或 `CONTEXT_HANDOFF_REQUIRED` 留在队列并写阻断原因。业务 Task Run、验收和人工消息仍可执行。要恢复，先处理交接或调整上限，再按原消息记录重试；不要另建一条消息冒充原通知。
 - **交接到新线程。** 用同一 Role 开启新 Session，把原 Session、原生 Thread、固定 Task 与未处理通知写进接手说明；新线程读取固定 Task 和当前工作变化后再决定下一步。`contextHandoffSummary()` 的格式可直接作为交接摘要；它不复制原生对话正文。
 - **基线。** `node scripts/context-baseline.mjs <rollout.jsonl>` 只读 Codex 原生记录，报告每轮最大输入、均值／中位数／p90、累计用量、压缩次数和字节占比。改动前后用同一口径比较，不以单轮或通知数量代替。
@@ -373,7 +375,7 @@ node --import tsx tests/manual/session-compaction-e1.ts
 
 ## Session 队伍调度程序
 
-协调器在运行时启用（`runtime.enabled`）后运行队伍调度程序（轮询间隔沿用 `residentQueue.pollIntervalMs`，默认 2 秒）。它只推进由 Leader 凭据控制的队伍，每一步都是普通命令，操作 ID 由队伍项和尝试次数决定，重启后重放不会重复开 Run。队伍项、事件和 `QUEUED_IN_SESSION_LINE` 的含义见 [Session 运行时](../architecture/session-runtime.md#session-队伍dec-045-q1)。迁移 087 新增 `session_line`、`session_line_entry`、`session_line_event`、`task_assignment_confirmation`；不需要改私有配置，但 Session 的业务身份要在 `residentQueue.roleActors` 里有映射，否则该 Session 的队伍项会挂起。
+协调器在运行时启用（`runtime.enabled`）后运行队伍调度程序（轮询间隔沿用 `residentQueue.pollIntervalMs`，默认 2 秒）。它只推进由 Leader 凭据控制的队伍，每一步都是普通命令，操作 ID 由队伍项和尝试次数决定，重启后重放不会重复开 Run。队伍项、事件和 `QUEUED_IN_SESSION_LINE` 的含义见 [Session 运行时](../architecture/session-runtime.md#session-队伍dec-045-q1)。迁移 087 新增 `session_line`、`session_line_entry`、`session_line_event`、`task_assignment_confirmation`；不需要改私有配置，**接收者解析规则（队伍写 assignment 的对象）**：队伍项的接收者必须是该 Session 实际签署交付的业务身份，不再按 Role 猜。顺序是：①该 Session 自己的 `runtime.materialCli` 条目（`sessionId` 与它的原生 actor `sessionActorId` 都匹配，条目的 `cliActorId` 就是接收者）；②只有当这个 Role 恰好只有一个未关闭的 Session 时，才用 Role 级 `materialCli` 条目或 `residentQueue.roleActors`（单 Session 的旧配置照常工作）；③否则**在写任何 assignment、确认请求或 Run 之前**把这一项挂起（`RECIPIENT_UNAVAILABLE`），原因点名该 Session 并写明要补的配置（该 Session 的 `materialCli` 条目）。结果还必须是当前项目 writer。同一 Role 下有开发、验收、验收 2 等多个身份不同的 Session 时，每个 Session 都要有自己的 `materialCli` 条目；缺了不会改用别人的身份，也不会产生 `RECIPIENT_UNBOUND` 预检失败的 Run。测试：`apps/coordinator/test/session-line-recipient.test.ts`、`packages/adapter-postgres/test/session-line.test.ts`。
 
 ## Leader 通知包
 

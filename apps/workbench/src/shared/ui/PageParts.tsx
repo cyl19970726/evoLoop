@@ -30,8 +30,15 @@ export function PanelSection({ title, action, children }: { title: string; actio
   </section>;
 }
 
-/** Label above value; values wrap instead of overflowing. `columns` lays rows side by side from the compact width up. */
-export function FactList({ rows, columns = false }: { rows: Array<[string, ReactNode]>; columns?: boolean }) {
+/** Label above value; values wrap instead of overflowing. `columns` lays rows side by side from the compact width up.
+ * `inline` puts the label beside its value at every width, for short facts in the right column. */
+export function FactList({ rows, columns = false, inline = false }: { rows: Array<[string, ReactNode]>; columns?: boolean; inline?: boolean }) {
+  if (inline) return <dl className="grid min-w-0 gap-y-1.5">
+    {rows.map(([label, value]) => <div key={label} className="grid min-w-0 grid-cols-[6rem_minmax(0,1fr)] items-baseline gap-x-3">
+      <dt className={cn(mutedText, "break-words")}>{label}</dt>
+      <dd className="m-0 min-w-0 whitespace-pre-wrap break-words text-small text-foreground">{value}</dd>
+    </div>)}
+  </dl>;
   return <dl className={cn("grid min-w-0 gap-x-6 gap-y-3", columns && "compact:grid-cols-2")}>
     {rows.map(([label, value]) => <div key={label} className="flex min-w-0 flex-col gap-0.5">
       <dt className={mutedText}>{label}</dt>

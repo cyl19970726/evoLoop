@@ -54,6 +54,7 @@ import { evaluationPacketMediaType } from "./runtime/evaluation-materials.js";
 import { activeTaskTimingGrants, drivenRuntimeProviders, hasExactEngineeringActionGrant, hasFeishuActorGrant, hasTaskTimingGrant, knowledgeServesProject, loadIntegrations, runtimeThreadConfigForSession, schedulingGrantsFor, selectMaterialCli } from "./configuration.js";
 import { OpenVikingKnowledgeRepository } from "@evoloop/adapter-wiki-openviking";
 import { DomainError } from "@evoloop/contracts/ports";
+import { DrainControl, isInstanceMaintainer } from "./drain/service.js";
 import { ordinaryMessageGrantProblem } from "./session-messages/send-authority.js";
 import type { Principal } from "@evoloop/contracts";
 import { LocalBlobStore } from "@evoloop/adapter-local-blobs";
@@ -88,6 +89,7 @@ import { SessionTimelineService } from "./session-timeline/index.js";
 import { OrdinaryRunSubmissionService, leaseCheckedUnitOfWork } from "./ordinary-run-submission/service.js";
 import { createOrdinaryRunSealer } from "./ordinary-run-submission/seal.js";
 import { OrdinaryRunSealPump } from "./ordinary-run-submission/pump.js";
+import { resolveLineRecipient } from "./session-line/recipient.js";
 import { throttledLog } from "./log-throttle.js";
 import { materialCliRecipientMatches, configuredCliActorId, createRunRecipientGuard, requireOrdinaryRecipient } from "./runtime/recipient-preflight.js";
 import { createMessageExecutionReader } from "./session-messages/execution-capability.js";
@@ -118,6 +120,8 @@ const pool = new pg.Pool({ connectionString: databaseUrl, max: 8, connectionTime
 const skillSourceRoot = fileURLToPath(new URL("../../../", import.meta.url));
 pool.on("error", () => { /* Requests receive explicit unavailable responses; credentials are never logged. */ });
 const lease = await acquireCoordinatorLease(pool);
+// Drain mode: while held, no new Run or message Turn begins (docs/architecture/deployment.md §2).
+const drain = new DrainControl(pool);
 const integrations = await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE);
 const configuredUsageTimeZone = integrations.runtime?.dailyBudget?.timeZone ?? "UTC";
 const currentIdentity = async () => authConfigSchema.parse(JSON.parse(await readFile(authFile,"utf8")));
@@ -528,6 +532,7 @@ const runner = runtimeFactory ? new RuntimeRunner({ runtimeFactory, workflow: se
       dynamicAdmission ? () => dynamicAdmission.canCreateSession(session) : undefined);
   },
   mayDispatchRun: async run => {
+    if (await drain.holdNewStarts()) return false;
     if (!await mayStartManaged(run.projectId, "run", run.id)) return false;
     const current=await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE);
     if(!hasCurrentStudyReviewer(await currentIdentity(),run.projectId,run.actorId))return false;
@@ -727,6 +732,7 @@ const messagePump = runner ? new SessionMessagePump({ service: messageService, r
       await messageService.noteBlocked(message.projectId,message.id,admission.reason);
     return admission.allowed;
   },
+  holdNewStarts: () => drain.holdNewStarts(),
   canStart: async message => {
     if(!await acceptanceRelay.messageAdmission(message.projectId,message.id))return false;
     const current = (await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE)).sessionMessages;
@@ -810,9 +816,15 @@ const sessionLinePump = new SessionLinePump({workflow:service,canWrite:lease.can
   enabled:async()=>!!(await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE)).runtime?.enabled,
   pollIntervalMs:integrations.residentQueue?.pollIntervalMs??2000,
   recipientActorId:async(projectId,sessionId)=>{
-    const role=(await pool.query("SELECT role_id FROM runtime_session WHERE project_id=$1 AND session_id=$2",[projectId,sessionId])).rows[0]?.role_id;
-    const binding=role&&(await currentQueueConfiguration())?.roleActors.find(x=>x.projectId===projectId&&x.roleId===role);
-    return binding&&await currentProjectWriter(projectId,binding.actorId)?binding.actorId:null;
+    // The Session's own signing identity, never the Role's guess: Sessions of one Role sign as different identities.
+    const row=(await pool.query(`SELECT s.role_id,s.actor_id,(SELECT count(*)::int FROM runtime_session o WHERE o.project_id=s.project_id
+      AND o.role_id=s.role_id AND o.state<>'closed') AS live FROM runtime_session s WHERE s.project_id=$1 AND s.session_id=$2`,[projectId,sessionId])).rows[0];
+    if(!row)return null;
+    const configured=await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE);
+    const found=await resolveLineRecipient({projectId,id:sessionId,roleId:row.role_id,actorId:row.actor_id},
+      {materialCli:configured.runtime?.enabled?configured.runtime.materialCli:[],roleActors:configured.residentQueue?.enabled?configured.residentQueue.roleActors:[]},
+      row.live,currentProjectWriter);
+    return "actorId" in found?found.actorId:found;
   },
   onError:()=>console.error("Session line tick failed; inspect the persisted line entry and its Run before retrying.")});
 const ordinarySealPump = new OrdinaryRunSealPump({
@@ -867,6 +879,7 @@ const directInput = runner && integrations.runtime?.enabled ? createDirectInputS
   runtime: () => requireDirectInputRuntime(runner.nativeAdapter()),
   canWrite: () => lease.canWrite() && runner.nativeStartsAvailable(),
   configuration: () => loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE),
+  holdNewStarts: () => drain.holdNewStarts(),
   currentProjectWriter, currentSessionExecutionAuthority,
   allowedCwd: async (projectId,cwd) => {
     const current = await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE);
@@ -889,7 +902,7 @@ if (runner) {
   catch { console.error(`${runtimeConfig?.provider === "claude" ? "Claude" : "Codex"} runtime is unavailable; check the configured CLI, its settings and project directories. No new dispatch was enabled.`); }
 }
 const app = await buildServer({ service, credentials, canWrite: lease.canWrite, ordinarySubmissions,
-  acceptanceRelay,
+  acceptanceRelay, drain: { control: drain, isMaintainer: principal => isInstanceMaintainer(pool, principal) },
   ...(runner ? {compaction:new CompactionMaintenance(pool,runner,{owned:()=>runtimeConfig?.compaction.owned!==false})} : {}),
   connectorRoutes, connectorDeliveries: connectorDecisions, connectorSources: connectorLinks,
   canActivateConnectorRoute: qualifyConnectorRoute,
@@ -984,8 +997,8 @@ const app = await buildServer({ service, credentials, canWrite: lease.canWrite, 
     await dynamicAdmission?.canStartConversation(session) === true,
   runtimeGrants: (projectId, actorId) => runtimeConfig?.enabled ? runtimeConfig.grants.filter(g => g.projectId === projectId && g.actorId === actorId) : [],
   roleRuntimeView: (principal, projectId, roleId) => roleRuntimeView({ service, runtime: runner ?? undefined,
-    grantCwds: (project, actorId, role) => runtimeConfig?.enabled ? runtimeConfig.grants.filter(g => g.projectId === project &&
-      g.actorId === actorId && g.roleId === role).map(g => g.cwd) : [],
+    roleGrants: (project, role) => runtimeConfig?.enabled ? runtimeConfig.grants.filter(g => g.projectId === project && g.roleId === role)
+      .map(g => ({ actorId: g.actorId, cwd: g.cwd })) : [],
     skillRoots: async (project, role) => ({ businessRoot: skillSourceRoot, businessPaths: await roleBusinessSkillPaths(project, role) }),
     claudeContextMode: runtimeConfig?.claude?.contextMode ?? null }, principal, projectId, roleId),
   messageSendAuthority: async (principal, projectId, sessionId) => {

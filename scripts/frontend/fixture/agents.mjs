@@ -6,9 +6,12 @@ const capability = { available: true, reason: null };
 const unavailable = { available: false, reason: "当前不可用" };
 const observedRole = key => ({ ...roles[key], state: "active" });
 
+// Three kinds of agent for the right column: 前端实现 runs a Task, 文档整理 is idle with two Tasks in its line, 设计走查 is idle.
 const currentTaskOf = {
-  dev: tasks.t2, verify: tasks.t6, design: null, docs: tasks.t8, lead: null,
+  dev: tasks.t2, verify: tasks.t6, design: null, docs: null, lead: null,
 };
+/** Tasks assigned to an agent besides its current one (the 统筹安排 board shows the same ones under 已分派). */
+const otherAssignedOf = { dev: [tasks.t1, tasks.t3], docs: [tasks.t8] };
 export function observedTask(t, relation = "accepted") {
   return { id: t.id, title: t.title, state: t.state, revisionId: revisionIdOf(t), owner: roles[t.owner].title, relation,
     source: { kind: "task", id: t.id, revision: revisionIdOf(t), evidence: "project-record", href: "" } };
@@ -23,7 +26,7 @@ export function observedSession(name) {
       membership: "current", tenure: name === "lead" || name === "verify" ? "resident" : "temporary", actorId, reason: "建立智能体", updatedAt: ago(60 * 24 * 5) },
     identity: { projectId, target: { kind: "owned", sessionId: a.sessionId }, version: 1, color: a.color, mark: a.mark,
       actorId, reason: "建立时选定", updatedAt: ago(60 * 24 * 5) },
-    kind: "owned", roles: [observedRole(a.role)], membership: "current", membershipReason: "verified", runtimeState: "ready",
+    kind: "owned", roles: [observedRole(a.role)], membership: "current", membershipReason: "verified", runtime: { provider: "codex", model: "gpt-6-sol" }, runtimeState: "ready",
     busy: a.busy, currentTask: task ? observedTask(task) : null,
     latestBusinessRun: name === "dev" ? { id: runIdOf(tasks.t2), taskId: tasks.t2.id, state: "running", updatedAt: ago(3),
       source: { kind: "run", id: runIdOf(tasks.t2), revision: null, evidence: "project-record", href: "" } } : null,
@@ -43,15 +46,16 @@ export const sessionNameOf = key => order.find(name => agentKey(name) === key) ?
 
 const resource = (value, unit, unavailableReason = null) => ({ value, unit, source: value === null ? null : "runtime", scope: "session",
   observedAt: value === null ? null : ago(3), interval: null, unavailableReason });
+const assignmentOf = (name, t) => ({ assignment: { projectId, taskId: t.id, version: 1, taskRevisionId: revisionIdOf(t),
+  target: { kind: "owned", sessionId: agents[name].sessionId }, recipientActorId: `agent-${name}`, state: "accepted",
+  ack: { method: "direct", actorId: `agent-${name}`, observerActorId: `agent-${name}`, evidence: "读过固定输入后接手", sourceRef: null, at: ago(60 * 26) },
+  actorId: "leader-actor", reason: "按职责安排", updatedAt: ago(60 * 26) }, task: observedTask(t), stale: false });
 export function snapshot(name) {
   const session = observedSession(name);
   const t = currentTaskOf[name];
   return {
     session, observationCursor: "12", currentWork: session.currentTask,
-    assignments: t ? [{ assignment: { projectId, taskId: t.id, version: 1, taskRevisionId: revisionIdOf(t),
-      target: { kind: "owned", sessionId: agents[name].sessionId }, recipientActorId: `agent-${name}`, state: "accepted",
-      ack: { method: "direct", actorId: `agent-${name}`, observerActorId: `agent-${name}`, evidence: "读过固定输入后接手", sourceRef: null, at: ago(60 * 26) },
-      actorId: "leader-actor", reason: "按职责安排", updatedAt: ago(60 * 26) }, task: observedTask(t), stale: false }] : [],
+    assignments: [...(t ? [t] : []), ...(otherAssignedOf[name] ?? [])].map(task => assignmentOf(name, task)),
     roleTasks: [], queue: name === "dev" ? [{ queueId: id(900), entryId: id(901), taskId: tasks.t4.id, taskTitle: tasks.t4.title, position: 1,
       state: "held", holdCode: "dependency", holdReason: null, dependsOn: [tasks.t2.id],
       source: { kind: "queue", id: id(900), revision: null, evidence: "project-record", href: "" } }] : [],
@@ -125,6 +129,34 @@ export const acceptanceCapacity = () => ["verify", "design"].map(name => ({ sess
   tenure: name === "verify" ? "resident" : "temporary", isLeader: false, activeRuns: name === "verify" ? 1 : 0, pendingMessages: 0,
   queueEntries: 0, openAssignments: name === "verify" ? 1 : 0, openAcceptance: name === "verify" ? 1 : 0, persistedWorkIdle: name !== "verify",
   missingCapabilities: name === "design" ? ["MESSAGE_GRANT_MISSING"] : [], readyForAcceptance: false }));
+
+/** Session lines (DEC-045): 文档整理 waits on two Tasks, the second paused. */
+export const sessionLines = () => ({ lines: [{ projectId, sessionId: agents.docs.sessionId, controllerActorId: "leader-actor", version: 3,
+  createdAt: ago(60 * 30), updatedAt: ago(40), entries: [
+    { projectId, id: id(980), sessionId: agents.docs.sessionId, taskId: tasks.t8.id, position: 1, state: "queued", step: null, attempt: 0, stepTry: 0,
+      assignOperationId: null, startOperationId: null, reassignOperationId: null, reserveOperationId: null, messageId: null, suspendReason: null,
+      withdrawnReason: null, source: "leader", sourceActorId: "leader-actor", scheduleId: null, releaseRule: "run_end", runId: null, runEndedAt: null,
+      version: 1, appendedAt: ago(60 * 3), updatedAt: ago(60 * 3) },
+    { projectId, id: id(981), sessionId: agents.docs.sessionId, taskId: tasks.t5.id, position: 2, state: "suspended", step: null, attempt: 1, stepTry: 0,
+      assignOperationId: null, startOperationId: null, reassignOperationId: null, reserveOperationId: null, messageId: null,
+      suspendReason: "等页面说明的模板定稿", withdrawnReason: null, source: "leader", sourceActorId: "leader-actor", scheduleId: null,
+      releaseRule: "run_end", runId: null, runEndedAt: null, version: 2, appendedAt: ago(60 * 2), updatedAt: ago(40) },
+  ] }] });
+
+/** Usage and the daily budget (用量与上下文). Only 前端实现 has recorded usage. */
+export const usage = () => {
+  const day = (d, inputTokens, outputTokens) => ({ day: d, inputTokens, outputTokens, cachedInputTokens: Math.round(inputTokens / 2), costUsd: null, costReported: false });
+  const today = day("2026-11-10", 182400, 23150), none = day("2026-11-10", 0, 0);
+  const context = recorded => ({ configured: false, state: "unconfigured", inputTokens: recorded ? 96000 : null, limit: null, ratio: null, warningRatio: 0.8,
+    pauseOrdinaryTurns: false, observedAt: recorded ? ago(3) : null, reason: null });
+  return { projectId, from: "2026-10-28", to: "2026-11-11", timeZone: "Asia/Shanghai", observedAt: ago(1),
+    sessions: order.map(name => ({ sessionId: agents[name].sessionId, roleId: roles[agents[name].role].id, nativeThreadId: `thread-${name}`,
+      recorded: name === "dev", days: name === "dev" ? [today] : [], today: name === "dev" ? today : none, total: name === "dev" ? today : none,
+      contextInputTokens: name === "dev" ? 96000 : null, observedAt: name === "dev" ? ago(3) : null, context: context(name === "dev") })),
+    daily: [day("2026-11-09", 401200, 51800), today],
+    budget: { configured: false, state: "unconfigured", limitKind: null, limit: null, used: null, ratio: null, warningRatio: 0.8,
+      pauseOrdinaryTurns: false, costComplete: true, reason: null } };
+};
 
 export const residentQueues = () => [{ projectId, id: id(900), version: 2, adoptedVersion: 2, maxRuns: 5, reason: "先完成列表，再接日程", actorId: "leader-actor",
   entries: [

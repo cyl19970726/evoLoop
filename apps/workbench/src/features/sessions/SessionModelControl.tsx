@@ -62,7 +62,7 @@ export function SessionModelControl({context,sessionId,recovery,busy,onApplied}:
   const active=observedProfile?.activeRevisionId?
     `${observedProfile.activeModel??'未确认'} / ${observedProfile.activeReasoningEffort??'未记录'}`:'未确认';
   return <div className="session-model-control flex min-w-0 flex-col gap-2">
-    <FactList rows={[
+    <FactList inline rows={[
       ['目标配置',<>{target}{currentRevision&&<> · 修订 {currentRevision.version}</>}</>],
       ['最后确认',active],
       ['应用状态',observedProfile?recoveryActivationLabel(observedProfile.activationState):'未读取'],
