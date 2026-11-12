@@ -42,8 +42,11 @@ export function ProjectUsageView({ usage, error = null, stale = false }: { usage
                 <h3 className={heading}>今日与每日上限</h3>
                 <StatusTag tone={gauge.tone} label={gauge.status} />
               </div>
-              {gauge.ratio !== null && <UsageBar ratio={gauge.ratio} tone={gauge.tone} label="项目今日用量占每日上限" />}
-              <p className="text-caption text-text-secondary tabular-nums">{gauge.detail}</p>
+              {gauge.ratio !== null && <UsageBar ratio={gauge.ratio} tone={gauge.tone} label="项目今日用量占每日上限" valueText={gauge.exact ? `${Math.round(gauge.ratio * 100)}%，${gauge.exact}` : null} />}
+              {/* The line shows the amounts rounded (33 亿 / 40 亿); the exact used amount and limit are its tooltip and its screen-reader text. */}
+              <p className="text-caption text-text-secondary tabular-nums" data-project-limit-line="" {...(gauge.exact ? { title: gauge.exact } : {})}>
+                {gauge.detail}{gauge.exact && <span className="sr-only">（{gauge.exact}）</span>}
+              </p>
             </div>
             <div className="flex min-w-0 flex-col gap-1">
               <h3 className={heading}>近 7 天</h3>
@@ -57,7 +60,7 @@ export function ProjectUsageView({ usage, error = null, stale = false }: { usage
                   <tbody>{days.map(day => <tr key={day.day} className="border-b border-border last:border-b-0">
                     <th scope="row" className={`${cell} font-normal text-text-secondary`}>{day.day.slice(5)}</th>
                     {/* A day the service lists no ledger rows for had no record: said, never shown as 0. */}
-                    {day.recorded ? <><td className={cell}>{day.input}</td><td className={cell}>{day.output}</td><td className={cell}>{day.cached}</td><td className={cell}>{day.cost}</td></>
+                    {day.recorded ? <><td className={cell} title={day.inputFull ?? undefined}>{day.input}</td><td className={cell} title={day.outputFull ?? undefined}>{day.output}</td><td className={cell} title={day.cachedFull ?? undefined}>{day.cached}</td><td className={cell}>{day.cost}</td></>
                       : <td colSpan={4} className={`${cell} text-muted-foreground`}>没有记录</td>}
                   </tr>)}</tbody>
                 </table>

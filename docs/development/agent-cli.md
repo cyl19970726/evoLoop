@@ -442,6 +442,8 @@ Leader 收到的是“Leader 通知包”消息：先 `get /api/projects/PROJECT
 
 被阻塞的包（读到后那一轮失败且恢复门关闭）不会自动重发，它出现在 `work` 的 Leader 索引（`blockedNoticePackets`，带包编号和提示）。先按 Session 恢复流程恢复恢复门，再用 `request leader.notice.recover --project UUID --id 包编号 --file BODY.json --receipt UUID`（body 只写 `{"reason":"..."}`，需要 review 权限）恢复这一包，其中的项进入下一包。`leader.notice.recover` 带 `expectedOperationId` 等四个 ID 的旧形式仍用于迁移前已有的、消息被拒绝的通知。包的步骤（打包、已送、观察）只由配置里的通知发送身份运行，不是 Agent 的命令。
 
+通知有级别（立即/汇总，见[接口合同](../architecture/contracts.md#leader-通知层)）：立即项在包里行首标“立即·”，不等 60 秒、排在前面，来源是验收安排受阻、提交受阻、Run 结束未提交、Task 提问与阻塞、验收观察失败；验收观察按结论拆成 `observation_used`（汇总）和 `observation_failed`（立即）。只记录事件（Run 已按请求停止、关注项已解决、通知撤回）不是通知，读 `get /api/projects/PROJECT/leader-records`（`taskId`、`kind`、`limit`、`cursor` 可选，从旧到新续页）。
+
 ## 待我决定
 
 需要某个身份（例如使用者）决定时，不要只在对话里问：用 `command run` 提交 `decision.request.create`（`command schema decision.request.create`：`requestId`、`requestedFrom`、`subject`、`question`、可选 `taskId` 与 `options`，需要复核权限），它出现在对方“待我处理 › 待我决定”里，答复后消失。`get /api/projects/PROJECT/decisions-for-me` 以当前身份读自己待决定的事项。不再需要时用 `decision.request.withdraw` 撤回。被请求的身份用 `decision.request.answer`（带 `expectedVersion`，选项非空时答案必须是其中之一）答复。

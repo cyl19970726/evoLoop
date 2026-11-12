@@ -43,7 +43,7 @@ export interface LeaderNoticePacketItem {
 }
 /** A notice that can go into the next packet, with how long it has waited by the database clock. */
 export interface LeaderNoticeCandidate {
-  noticeId: string; kind: string; sourceEventId: string; taskId: string; taskRevisionId: string; sourceRef: string; occurredAt: string;
+  noticeId: string; kind: string; /** immediate notices are first in line and do not wait for the debounce */ level: "immediate" | "digest"; sourceEventId: string; taskId: string; taskRevisionId: string; sourceRef: string; occurredAt: string;
   sourceActorId: string | null; sourceSessionId: string | null; state: "pending" | "linked"; readBefore: boolean; waitedSeconds: number; version: number;
 }
 

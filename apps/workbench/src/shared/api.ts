@@ -197,6 +197,7 @@ export function api(token = "", timeoutMs = 15000) {
     evaluationSourceTask: (p: string, taskId: string) => call<{ sourceTaskRevisionId: string; sourceSignature: EvaluationSourceSignature }>(`${projectPath(p)}/evaluations/source-task/${key(taskId)}`),
     evaluationPacket: (p: string, id: string, revisionId: string, attemptId: string) => call<{ content: string; contentHash: string; manifestHash: string; builderVersion: string; sources: EvaluationFixedRef[] }>(`${projectPath(p)}/evaluations/${key(id)}/attempts/${key(attemptId)}/packet?revision=${key(revisionId)}`),
     impacts: (p: string) => call<Impact[]>(`${projectPath(p)}/impacts`),
+    usageOverview: (p: string, day: string) => call<import("@evoloop/contracts").UsageOverview>(`${projectPath(p)}/runtime/usage?from=${day}&to=${day}`),
     decisionsForMe: (p: string) => call<import("@evoloop/contracts/decision-requests").DecisionsForMe>(`${projectPath(p)}/decisions-for-me`),
     operation: async (p: string, id: string) => checkedOperation(await call<unknown>(`${projectPath(p)}/operations/${key(id)}`), id),
     command: async (command: Command) => checkedCommandResult(await call<unknown>("/api/commands", { method: "POST", body: JSON.stringify(command) }), command.operationId),
