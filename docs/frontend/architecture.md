@@ -165,7 +165,7 @@ Playwright 不进依赖，和浏览器回归一样从环境变量载入：
 
 ```sh
 export EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE=/path/to/playwright/index.js
-export EVOLOOP_BROWSER_TEST_CHROMIUM_EXECUTABLE=/path/to/chromium   # 不设则用 Playwright 自带的浏览器
+export EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH=/path/to/chromium   # 不设则用 Playwright 自带的浏览器；旧名 …_CHROMIUM_EXECUTABLE 同样读取
 npm run docs:screenshots                                    # 全部页面
 npm run docs:screenshots -- --only task,tasks --skip-build  # 只截几页，复用已有构建
 ```
