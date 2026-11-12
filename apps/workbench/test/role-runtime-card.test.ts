@@ -60,3 +60,14 @@ test("a skill says in one Chinese sentence what it is for; an English descriptio
     location: "/opt/skills/simplify", contentHash: null, delivery: "none" }] }));
   assert.equal(shown.groups[0]!.skills[0]!.purpose, englishDescription);
 });
+
+test("the card says 已配置 instead of the path when the reader may not see it, how many directories the grants name, and why there is none", () => {
+  assert.equal(presentRoleRuntime(view({ workDirectory: { cwd: null, source: "grant", grantCount: 1, hidden: true } })).workDirectory,
+    "已配置；路径只对有复核权限或本人持有该角色运行授权的人显示");
+  const hidden = presentRoleRuntime(view({ workDirectory: { cwd: null, source: "grant", grantCount: 3, hidden: true } })).workDirectory;
+  assert.match(hidden, /已配置（共 3 个授权目录，取第一个）/);
+  assert.ok(!hidden.includes("/work"), "no path");
+  assert.equal(presentRoleRuntime(view({ workDirectory: { cwd: "/work/repo", source: "grant", grantCount: 2 } })).workDirectory, "/work/repo（授权目录，共 2 个授权目录，取第一个）");
+  assert.equal(presentRoleRuntime(view({ workDirectory: { cwd: "/work/repo", source: "session" } })).workDirectory, "/work/repo（最近会话）", "a Role with a Session says as before");
+  assert.equal(presentRoleRuntime(view({ workDirectory: null })).workDirectory, "尚无会话，也没有运行授权");
+});
