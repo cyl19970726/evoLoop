@@ -31,11 +31,13 @@ export class PgDirectInputs {
     finally{client.release();}
   }
   /**
-   * A refused input is "queued" exactly when its text exists as an ordinary message under the same ID and the input never
-   * had a processing slot of its own (a refused start that owned a slot has processing_id; a plain refusal has no message).
+   * A refused input is "queued" exactly when its text exists as an ordinary message under the same ID and that message is
+   * not the input's own primary. A start that owned a slot wrote its primary message under the input ID, so a refused start
+   * counts only when it never had a slot. A steer never writes a message under its ID except when it is queued, but it
+   * carries the processing_id of the message Turn it was inserted into (the Leader's usual case), so that ID says nothing.
    */
   private async withQueued(items:DirectInputRecord[],run:Pick<Pool,"query">=this.pool):Promise<DirectInputRecord[]>{
-    const refused=items.filter(x=>x.state==="rejected"&&x.source.processingId===null);
+    const refused=items.filter(x=>x.state==="rejected"&&(x.mode==="steer"||x.source.processingId===null));
     if(!refused.length)return items.map(x=>({...x,queuedMessageId:null}));
     const found=await run.query(`SELECT message_id FROM session_message WHERE project_id=$1 AND message_id=ANY($2::uuid[])`,
       [refused[0]!.projectId,refused.map(x=>x.inputId)]);
@@ -214,7 +216,7 @@ export class PgDirectInputs {
       const old=needed((await client.query("SELECT * FROM session_direct_input WHERE project_id=$1 AND input_id=$2 FOR UPDATE",
         [projectId,inputId])).rows[0]);
       if(old.mode!=="steer")throw new DomainError("INPUT_STATE","Only a steer can become a queued ordinary message");
-      if(old.state==="rejected")return old;
+      if(old.state==="rejected")return (await this.withQueued([old],client))[0]!;
       // Queue only after an explicit pre-send refusal. An unknown steer may already have reached the Turn,
       // so turning it into a second ordinary message would duplicate the person's input.
       if(!["pending","attempted"].includes(old.state))
