@@ -102,7 +102,7 @@ test("overview top: goal, version, six phases with one current, the three blocks
       const links = await page.locator("[data-overview-version] a").evaluateAll(items => items.map(item => item.getAttribute("href")));
       assert.deepEqual(links, ["https://github.com/cyl19970726/evoLoop/commit/9a4020a5886be01b2d74fe850687ca7355b2d226", "https://github.com/cyl19970726/evoLoop/blob/main/docs/roadmap.md#当前基线", "https://github.com/cyl19970726/evoLoop/blob/main/docs/development/local-run.md"]);
       assert.ok((await page.locator("[data-phase][data-current]").innerText()).includes("退出证据"), "the current phase shows its exit evidence");
-      for (const word of ["部分成立", "已退出", "进行中", "未开始", ...(width >= 1000 ? ["回看于 2026-11-10", "未登记"] : [])]) assert.ok(text.includes(word), word);
+      for (const word of ["部分成立", "已退出", "进行中", "未开始", ...(width >= 1000 ? ["回看于 2026-11-10", "暂无回看"] : [])]) assert.ok(text.includes(word), word);
       if (shots) { await page.screenshot({ path: `${shots}/overview-top-${width}.png` }); await page.screenshot({ path: `${shots}/overview-top-${width}-full.png`, fullPage: true }); }
       const m = await measure(page, `linked ${width}x${height}`);
       assert.equal(m.scrollWidth <= m.clientWidth, true, `no horizontal overflow at ${width}`);

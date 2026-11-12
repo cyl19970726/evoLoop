@@ -5,6 +5,7 @@ import type { MilestonePhase, MilestonesView, VersionInfo } from "@evoloop/contr
 export const repoBase = "https://github.com/cyl19970726/evoLoop";
 export const NOT_REGISTERED = "未登记";
 export const VERSION_UNREAD = "版本未读到";
+export const NO_REVIEW = "暂无回看";
 
 const day = (value: string) => new Date(value).toISOString().slice(0, 10);
 const minute = (value: string) => `${new Date(value).toISOString().slice(0, 16).replace("T", " ")} UTC`;
@@ -30,7 +31,8 @@ export function milestoneRows(view: MilestonesView | null): MilestoneRowView[] {
     id: phase.id, title: phase.title, deliver: phase.deliver, exit: phase.exit,
     status: phase.statusLabel ?? (phase.linkedStages > 1 ? `${NOT_REGISTERED}（关联了 ${phase.linkedStages} 个阶段）` : NOT_REGISTERED),
     tone: phase.status ? tones[phase.status] ?? "idle" : "none",
-    date: phase.reviewedAt ? `回看于 ${day(phase.reviewedAt)}` : NOT_REGISTERED,
+    // 未登记 only when no stage is linked; a linked stage that was never reviewed says so.
+    date: !phase.stage ? NOT_REGISTERED : phase.reviewedAt ? `回看于 ${day(phase.reviewedAt)}` : NO_REVIEW,
     current: view?.currentPhaseId === phase.id, linked: !!phase.stage,
   }));
 }
