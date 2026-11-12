@@ -17,6 +17,9 @@ export const taskTypeLabel: Record<TaskKind, string> = {
   implementation: "实施",
   research: "调研",
   validation: "验证",
+  defect: "缺陷",
+  documentation: "文档",
+  operation: "运维与配置",
 };
 
 export function taskType(kind: TaskKind | null | undefined): string {

@@ -4,9 +4,10 @@
 // decision-only close rule. Pure, so the page and its tests agree.
 import type { TaskKind } from "@evoloop/contracts";
 import { localInstant } from "../../shared/zonedTime";
+import { taskTypeLabel } from "./taskWorkspacePresentation";
 import { dailyScheduledInstant, scheduledInstant, scheduledTimezone } from "./taskTimingPresentation";
 
-export const taskKinds: Record<TaskKind, string> = { implementation: "实施", research: "调研", validation: "验证" };
+export const taskKinds: Record<TaskKind, string> = taskTypeLabel;
 export const maxLinkedDocuments = 20;
 
 export interface TaskDraft {

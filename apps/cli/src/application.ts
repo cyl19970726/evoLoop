@@ -88,7 +88,7 @@ const help = {
     "work task TASK_UUID --project UUID [--brief] (one Task's current stage, timing and responsibility; --brief adds its current acceptance arrangements and drops the timing history)",
     "work acceptance --project UUID [--brief] [--limit 1..100 --cursor CURSOR] (Leader stage and persisted Session capacity)",
     "work acceptance TASK_UUID --project UUID [--brief] (exact acceptance arrangements and dispatch outcomes; --brief drops the long prose)",
-    "work acceptance mine --project UUID (human recipient's acceptance inbox)",
+    "work acceptance mine --project UUID (the caller's pending acceptance: human relays in items; deliveries it is the declared consumer of and has not signed, with precondition readiness, in direct)",
     "work acceptance read RELAY_UUID --project UUID --task TASK_UUID --file BODY.json (named human records reading an arrangement)",
     "work acceptance observe RELAY_UUID --project UUID --task TASK_UUID --file BODY.json (recipient links their existing observation)",
     "work retirement SESSION_UUID --project UUID (temporary Session blockers, decision and archive readback)",
@@ -372,7 +372,7 @@ async function dispatch(args: Args, env: Environment, io: IO): Promise<unknown> 
       const brief=args.options.has("brief");
       if(args.words[2] === "mine"){
         if(brief)throw new UsageError("--brief does not apply to work acceptance mine; it is already a short list.");
-        return client.get(`${prefix}/acceptance-relay/mine`);
+        return client.get(`${prefix}/acceptance-relay/mine?direct=1`);
       }
       if(args.words[2]){
         const relays=await client.get(`${prefix}/tasks/${uuid(args.words[2],"Task")}/acceptance-relay`);
