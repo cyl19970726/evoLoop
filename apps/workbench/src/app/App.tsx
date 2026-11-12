@@ -1,4 +1,4 @@
-import { Component, Suspense, lazy, useEffect, useMemo, useRef, useState, useLayoutEffect, type ComponentType, type LazyExoticComponent, type ReactNode } from "react";
+import { Component, Suspense, useEffect, useMemo, useRef, useState, useLayoutEffect, type ReactNode } from "react";
 import type { Operation } from "@evoloop/contracts";
 import { ApiError, api, errorText, type Session } from "../shared/api";
 import { describeFailure } from "../shared/errorPresentation";
@@ -20,6 +20,7 @@ import { drainNotice } from "./drainPresentation";
 import { queryClient } from "./queryClient";
 import { sectionLabels } from "./shell/spaces";
 import { PageBoundary } from "./PageBoundary";
+import { lazyChunk } from "./chunkLoad";
 import { PageActive } from "../shared/ui/pageActive";
 import { AuthGate } from "./entry/AuthGate";
 import { useInboxCount } from "../features/workflow/inboxReads";
@@ -27,9 +28,8 @@ import { shellInboxCount } from "../features/workflow/inboxModel";
 
 // Each page is its own chunk: the first load carries login, the shell and shared code only.
 // lazy() accepts any component; the props stay typed through M[K].
-function named<M extends Record<K, ComponentType<any>>, K extends keyof M & string>(load: () => Promise<M>, name: K): LazyExoticComponent<M[K]> {
-  return lazy(async () => ({ default: (await load())[name] }));
-}
+// A chunk that cannot be fetched (an old tab after a release) is tried again after a retry: see chunkLoad.tsx.
+const named = lazyChunk;
 const ReferencePanel = named(() => import("../features/references/ReferencePanel"), "ReferencePanel");
 const CollaborationPanel = named(() => import("../features/collaboration/CollaborationPanel"), "CollaborationPanel");
 const KnowledgePanel = named(() => import("../features/knowledge/KnowledgePanel"), "KnowledgePanel");
@@ -378,5 +378,5 @@ function WorkspacePages({ route, context, refresh, operations }: { route: Route;
       <h1 tabIndex={-1} className="text-title font-semibold text-foreground outline-none">{sectionLabels[r.section]}</h1>{components[r.section as keyof typeof components]}</div>;
   }
   return <>{Array.from(cache.current.entries()).map(([pageKey, r]) => <div key={pageKey} data-page-key={pageKey} hidden={pageKey !== key}>
-    <PageActive.Provider value={pageKey === key}><PageBoundary><Suspense fallback={<p className={opening} role="status">正在打开页面…</p>}>{page(r, pageKey === key)}</Suspense></PageBoundary></PageActive.Provider></div>)}</>;
+    <PageActive.Provider value={pageKey === key}><PageBoundary active={pageKey === key}><Suspense fallback={<p className={opening} role="status">正在打开页面…</p>}>{page(r, pageKey === key)}</Suspense></PageBoundary></PageActive.Provider></div>)}</>;
 }
