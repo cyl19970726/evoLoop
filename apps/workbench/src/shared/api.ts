@@ -123,6 +123,10 @@ export function api(token = "", timeoutMs = 15000) {
     goalRevisions: (p: string, id: string) => call<GoalRevision[]>(`${projectPath(p)}/goals/${key(id)}/revisions`),
     stageRevisions: (p: string, id: string) => call<StageRevision[]>(`${projectPath(p)}/stages/${key(id)}/revisions`),
     stages: (p: string) => call<Stage[]>(`${projectPath(p)}/stages`),
+    /** The deployed version (public: no login): commit, build time and process start time. */
+    version: (signal?: AbortSignal) => call<import("@evoloop/contracts/milestones").VersionInfo>("/api/version", { signal }),
+    /** The roadmap phases with the status and date of the stage linked to each. */
+    milestones: (p: string, signal?: AbortSignal) => call<import("@evoloop/contracts/milestones").MilestonesView>(`${projectPath(p)}/milestones`, { signal }),
     stageReviews: (p: string, id: string) => call<StageReview[]>(`${projectPath(p)}/stages/${key(id)}/reviews`),
     discussions: (p: string, cursor?: string, kind?: DiscussionRecord["kind"]) => call<Page<DiscussionRecord>>(`${projectPath(p)}/discussions?limit=50${cursor ? `&cursor=${key(cursor)}` : ""}${kind ? `&kind=${key(kind)}` : ""}`),
     discussion: (p: string, id: string) => call<DiscussionRecord>(`${projectPath(p)}/discussions/${key(id)}`),

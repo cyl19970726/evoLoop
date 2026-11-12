@@ -1,0 +1,41 @@
+[
+ {
+  "label": "linked 1440x900",
+  "viewport": "1440x900",
+  "scrollWidth": 1440,
+  "clientWidth": 1440,
+  "goalBottom": 325,
+  "versionBottom": 644,
+  "milestonesBottom": 644,
+  "lastPhaseBottom": 624,
+  "attentionTop": 656,
+  "phaseCount": 6,
+  "pastRightEdge": 0
+ },
+ {
+  "label": "linked 390x844",
+  "viewport": "390x844",
+  "scrollWidth": 390,
+  "clientWidth": 390,
+  "goalBottom": 307,
+  "versionBottom": 463,
+  "milestonesBottom": 764,
+  "lastPhaseBottom": 752,
+  "attentionTop": 776,
+  "phaseCount": 6,
+  "pastRightEdge": 0
+ },
+ {
+  "label": "day1 390x844",
+  "viewport": "390x844",
+  "scrollWidth": 390,
+  "clientWidth": 390,
+  "goalBottom": 274,
+  "versionBottom": 430,
+  "milestonesBottom": 694,
+  "lastPhaseBottom": 682,
+  "attentionTop": 706,
+  "phaseCount": 6,
+  "pastRightEdge": 0
+ }
+]
