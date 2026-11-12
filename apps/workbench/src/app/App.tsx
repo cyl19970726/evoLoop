@@ -16,6 +16,7 @@ import { readRoute, href, type Route } from "../shared/ui/shared";
 import { clearKnowledgeReturnsOnLogin, rememberKnowledgeSource } from "../shared/ui/returnRoute";
 import { appHistory, appPath, currentPath, navigate, onNavigate } from "../shared/navigation";
 import { leaveProject, projectChanged, useProjectQuery } from "../shared/query";
+import { drainNotice } from "./drainPresentation";
 import { queryClient } from "./queryClient";
 import { sectionLabels } from "./shell/spaces";
 import { PageBoundary } from "./PageBoundary";
@@ -200,6 +201,9 @@ export function App() {
     return () => window.removeEventListener("beforeunload", beforeUnload);
   }, []);
   const projectRead = useProjectQuery(projectId ?? "", ["project"], () => client.project(projectId!), { enabled: !!session });
+  // Drain mode: the instance is being emptied for a release; read often while it is.
+  const drainRead = useProjectQuery(projectId ?? "", ["instance", "drain"], signal => client.instanceDrain(signal), { enabled: !!session && !!projectId, refetchInterval: 15_000, retry: false });
+  const drain = drainNotice(drainRead.data, iso => new Date(iso).toLocaleString("zh-CN"));
   const projectTitle = projectRead.data?.title ?? "";
   const holdsRead = useProjectQuery(projectId ?? "", ["provider-holds"], () => client.providerHolds(projectId!), { enabled: !!session && !!projectId, refetchInterval: 30_000 });
   // 待我处理 counts 验收安排, 依据变化 and 等我使用的交付 under the page's own keys; an unknown part is never counted as 0.
@@ -284,6 +288,7 @@ export function App() {
     ...projectId ? providerHoldNotices(holdsRead.data, href(projectId, "sessions")) : [],
     ...projectId && holdsRead.isError ? [providerHoldReadFailure(holdsRead.error, href(projectId, "sessions"))] : [],
     ...projectError ? [{ key: "project", tone: "error" as const, text: `项目暂不可读取：${projectError}`, button: { label: "重试读取项目", onClick: context.onChanged } }] : [],
+    ...drain ? [{ key: drain.key, tone: drain.tone, text: drain.text, ...(drain.detail ? { detail: drain.detail } : {}) }] : [],
     ...route.section !== "inbox" && inbox.state === "unknown" ? [{ key: "inbox", tone: "waiting" as const, text: inbox.text, link: { href: href(projectId, "inbox"), label: "去待我处理核对" } }] : [],
   ];
   return <>{confirmHost}<Suspense fallback={<p className={opening} role="status">正在打开工作台…</p>}><AppShell route={route} projectId={projectId} projectTitle={projectTitle} actor={principal.actorId} permissions={principal.permissions}
