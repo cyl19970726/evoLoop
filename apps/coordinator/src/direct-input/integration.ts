@@ -11,6 +11,7 @@ import { bindingOf } from "../runtime/runner.js";
 import type { SessionSteerLock } from "../runtime/session-steer-lock.js";
 import type { loadIntegrations } from "../configuration.js";
 import { currentConnectorBusinessActor } from "../message-connectors/business-actor.js";
+import type { SenderClass } from "../session-messages/sender.js";
 import { DirectInputService } from "./service.js";
 
 type CurrentConfiguration=Awaited<ReturnType<typeof loadIntegrations>>;
@@ -81,11 +82,14 @@ export function createDirectInputService(deps:{
   /** Drain mode: true while no new Turn may begin. An idle Session then cannot be started by direct input (the message is
    *  saved as an ordinary queued one); adding to a Turn already running is unaffected. */
   holdNewStarts?():Promise<boolean>;
+  /** Who is sending, for the opening line of an idle start. */
+  senderClass?(principal:Principal,projectId:string):Promise<SenderClass>;
 }):DirectInputService{
   const {session,admission}=createDirectInputAdmission(deps);
   return new DirectInputService({
     store:new PgDirectInputs(deps.pool),runtime:deps.runtime,canWrite:deps.canWrite,
     ...(deps.lock?{lock:deps.lock}:{}),
+    ...(deps.senderClass?{senderClass:deps.senderClass}:{}),
     bindingFor:async(projectId,sessionId)=>bindingOf(await session(projectId,sessionId)),
     observeEffort:async(projectId,sessionId,inputId,turn,requested)=>{
       const note=describeTurnEffort(requested,turn);

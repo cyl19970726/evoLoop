@@ -94,6 +94,7 @@ import { SessionTimelineService } from "./session-timeline/index.js";
 import { OrdinaryRunSubmissionService, leaseCheckedUnitOfWork } from "./ordinary-run-submission/service.js";
 import { createOrdinaryRunSealer } from "./ordinary-run-submission/seal.js";
 import { OrdinaryRunSealPump } from "./ordinary-run-submission/pump.js";
+import type { SenderClass } from "./session-messages/sender.js";
 import { resolveLineRecipient } from "./session-line/recipient.js";
 import { throttledLog } from "./log-throttle.js";
 import { materialCliRecipientMatches, createReserveRecipientCheck, requireOrdinaryRecipient } from "./runtime/recipient-preflight.js";
@@ -718,8 +719,40 @@ const taskAttentionPump = new TaskAttentionPump({pool,canWrite:lease.canWrite,no
   pollIntervalMs:30000,onError:()=>console.error("Task attention evaluation needs source reconciliation.")});
 const businessBeforeMessage = sessionMessageCanStart({ workflow: service, service: messageService, principals: currentIdentity,
   onError: () => console.error("Task answer continuation requires review; inspect the saved queue and message reason.") });
+/**
+ * Who sent a message, as the receiving Session is told: the user's own identity (a human credential), a platform notice, the Leader
+ * Session, or an agent that signs for a managed Session, told apart by that Session's Role template (lead / product). An agent identity
+ * that is not tied to a managed Session, or one nobody knows, is named with an unrecorded class and never as the user.
+ */
+const senderClassOf = async (projectId: string, actorId: string): Promise<SenderClass> => {
+  const known = (await currentIdentity()).find(p => p.actorId === actorId && p.projectIds.includes(projectId));
+  if (known?.identityKind === "human") return { kind: "user", actorId };
+  const current = await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE);
+  const notices = current.leaderResultNotices?.targets.find(t => t.projectId === projectId);
+  if (notices?.senderActorId === actorId) return { kind: "system", actorId };
+  if (notices?.receiverActorId === actorId) return { kind: "leader", actorId };
+  const roles = new Set<string>();
+  if (current.runtime?.enabled) for (const entry of current.runtime.materialCli.filter(e => e.projectId === projectId && e.cliActorId === actorId)) {
+    if (entry.roleId) roles.add(entry.roleId);
+    else if (entry.sessionId) {
+      const row = (await pool.query("SELECT role_id FROM runtime_session WHERE project_id=$1 AND session_id=$2", [projectId, entry.sessionId])).rows[0];
+      if (row?.role_id) roles.add(row.role_id);
+    }
+  }
+  if (current.residentQueue?.enabled) for (const entry of current.residentQueue.roleActors.filter(e => e.projectId === projectId && e.actorId === actorId)) roles.add(entry.roleId);
+  if (!roles.size) return { kind: "unknown", actorId };
+  const reader = (await currentIdentity()).find(p => p.projectIds.includes(projectId) && p.permissions.includes("read"));
+  let title: string | null = null, template: string | undefined;
+  for (const roleId of roles) {
+    const role = reader ? await service.getRole(reader, projectId, roleId).catch(() => null) : null;
+    template = role?.proposal.templateKey ?? template; title = role?.proposal.title ?? title;
+    if (template === "lead" || template === "product") break;
+  }
+  return { kind: template === "lead" ? "leader" : template === "product" ? "requirements" : "session", actorId, roleTitle: title };
+};
 const messagePump = runner ? new SessionMessagePump({ service: messageService, runtime: () => runner.nativeAdapter(),
   lock: sessionSteerLock,
+  senderClass: message => senderClassOf(message.projectId, message.senderActorId),
   roleContext: async message => {
     if(message.target.kind!=="owned")return null;
     const session=await messageService.session(message.projectId,message.target.sessionId);
@@ -899,6 +932,7 @@ const directInput = runner && integrations.runtime?.enabled ? createDirectInputS
   canWrite: () => lease.canWrite() && runner.nativeStartsAvailable(),
   configuration: () => loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE),
   holdNewStarts: () => drain.holdNewStarts(),
+  senderClass: (principal, projectId) => senderClassOf(projectId, principal.actorId),
   currentProjectWriter, currentSessionExecutionAuthority,
   allowedCwd: async (projectId,cwd) => {
     const current = await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE);
