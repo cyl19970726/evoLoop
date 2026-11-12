@@ -364,8 +364,12 @@ test("a targeted Schedule occurrence creates one Stage Task and enters only its 
       .finally(() => { settled = true; });
     await new Promise(resolve => setTimeout(resolve, 40));
     assert.equal(settled, false, "materialize waits for the Stage row lock");
+    // Attach the assertion BEFORE releasing the lock: once COMMIT lets materialize continue, its rejection can arrive before
+    // COMMIT's own acknowledgement (a slow runner does this), and a rejected promise with no handler fails the test as an
+    // unhandled rejection instead of being asserted on.
+    const rejection = assert.rejects(pending, /managed schedule target is no longer eligible/);
     await lockClient.query("COMMIT");
-    await assert.rejects(pending, /managed schedule target is no longer eligible/);
+    await rejection;
   } finally {
     await lockClient.query("ROLLBACK").catch(() => {});
     lockClient.release();
