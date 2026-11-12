@@ -326,3 +326,32 @@ test("a steer error is queued only when it proves nothing was applied: -32600 is
   await structured.service.submit(principal, projectId, sessionId, structured.value);
   assert.deepEqual(structured.calls, ["queue"]);
 });
+
+test("a platform notice is never added to a business Task Run: refused before admission and before any native call", async () => {
+  const value = { ...command(), expectedTurnId: turnId };
+  let admitted = 0, reserved = 0, native = 0;
+  const store = { get: async () => null, primaryKind: async () => "run", reserve: async () => { reserved++; return { record: record(value, "steer"), created: true }; } } as never;
+  const runtime = { isReady: () => true, capabilitiesFor: () => capabilities(true, true), registerBinding: async () => { native++; },
+    steerTurn: async () => { native++; return { turnId, itemId: null }; } } as never;
+  const service = new DirectInputService({ store, runtime: () => runtime, canWrite: () => true,
+    admission: async () => { admitted++; return { grant, binding }; }, bindingFor: async () => binding });
+  await assert.rejects(service.submit(principal, projectId, sessionId, value, { notice: true }), (error: unknown) => error instanceof DomainError && error.code === "NOTICE_NOT_INTO_RUN");
+  assert.deepEqual([admitted, reserved, native], [0, 0, 0]);
+});
+
+test("a platform notice goes into a message-started Turn with the notice option; a runtime refusal because the Turn changed is not saved as a queued message", async () => {
+  const value = { ...command(), expectedTurnId: turnId };
+  const seen: unknown[] = []; const queued: string[] = []; const rejected: string[] = [];
+  const store = { get: async () => null, hasPrimary: async () => true, primaryKind: async () => "message",
+    reserve: async (...args: unknown[]) => { seen.push(args[6]); return { record: record(value, "steer"), created: true }; },
+    reject: async (_p: string, id: string, reason: string) => { rejected.push(reason); return { ...record(value, "steer"), inputId: id, state: "rejected" as const, reason }; },
+    rejectSteerAndQueue: async (_p: string, id: string) => { queued.push(id); return { ...record(value, "steer"), state: "rejected" as const }; } } as never;
+  const runtime = { isReady: () => true, capabilitiesFor: () => capabilities(true, true), registerBinding: async () => {},
+    steerTurn: async () => { throw new RuntimeServerError("turn/steer", 3, -32600, "no active turn"); } } as never;
+  const service = new DirectInputService({ store, runtime: () => runtime, canWrite: () => true,
+    admission: async () => ({ grant, binding }), bindingFor: async () => binding });
+  const receipt = await service.submit(principal, projectId, sessionId, value, { notice: true });
+  assert.deepEqual(seen, [{ notice: true }], "the store is told this is a notice");
+  assert.equal(receipt.state, "rejected"); assert.deepEqual(queued, [], "never saved as an ordinary message");
+  assert.match(rejected[0] ?? "", /TURN_CHANGED/);
+});
