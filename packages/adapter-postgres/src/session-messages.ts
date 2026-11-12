@@ -26,6 +26,7 @@ const message = (r: QueryResultRow): SessionMessageRecord => ({
 const processing = (r: QueryResultRow): SessionMessageProcessing => ({
   projectId:r.project_id,id:r.processing_id,messageId:r.message_id,sessionId:r.session_id,
   operationId:r.operation_id,state:r.state,nativeTurnId:r.native_turn_id,response:r.response,
+  responseKind:r.response_kind,
   failure:r.failure,failureCategory:r.failure_category??null,readOnlyPolicyFingerprint:r.read_only_policy_fingerprint,receiverActorId:r.receiver_actor_id,
   roleContext:r.role_context??null,
   nativeEnvironmentEpoch:nativeEpoch(r.native_environment_epoch),
@@ -233,8 +234,8 @@ export class PgSessionMessages implements SessionMessageTransaction {
       throw new DomainError('POLICY_PROOF_MISSING','native Session execution admission policy proof is required');
     if(!v.receiverActorId?.trim())throw new DomainError('MESSAGE_RECIPIENT','actual receiving actor is required');
     try {
-      await this.client.query(`INSERT INTO session_message_processing(project_id,processing_id,message_id,session_id,operation_id,receiver_actor_id,state,native_turn_id,response,failure,read_only_policy_fingerprint,version,started_at,updated_at,role_context)
-        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,[v.projectId,v.id,v.messageId,v.sessionId,v.operationId,v.receiverActorId,v.state,v.nativeTurnId,v.response,v.failure,v.readOnlyPolicyFingerprint,v.version,v.startedAt,v.updatedAt,v.roleContext??null]);
+      await this.client.query(`INSERT INTO session_message_processing(project_id,processing_id,message_id,session_id,operation_id,receiver_actor_id,state,native_turn_id,response,response_kind,failure,read_only_policy_fingerprint,version,started_at,updated_at,role_context)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,[v.projectId,v.id,v.messageId,v.sessionId,v.operationId,v.receiverActorId,v.state,v.nativeTurnId,v.response,v.responseKind,v.failure,v.readOnlyPolicyFingerprint,v.version,v.startedAt,v.updatedAt,v.roleContext??null]);
     } catch (error) {
       if ((error as {constraint?:string}).constraint === 'acceptance_source_current')
         throw new DomainError('ACCEPTANCE_SOURCE_SUPERSEDED','Acceptance Delivery or arrangement changed before message start');
@@ -242,11 +243,11 @@ export class PgSessionMessages implements SessionMessageTransaction {
     }
   }
   async updateSessionMessageProcessing(v:SessionMessageProcessing,expectedVersion:number):Promise<void>{
-    this.scope(v.projectId);const r=await this.client.query(`UPDATE session_message_processing SET state=$3,native_turn_id=$4,response=$5,failure=$6,version=$7,updated_at=$8,
+    this.scope(v.projectId);const r=await this.client.query(`UPDATE session_message_processing SET state=$3,native_turn_id=$4,response=$5,response_kind=$16,failure=$6,version=$7,updated_at=$8,
       interrupt_operation_id=$10,interrupt_actor_id=$11,interrupt_reason=$12,interrupt_requested_at=$13,pre_turn_proof=$14::jsonb,failure_category=$15
       WHERE project_id=$1 AND processing_id=$2 AND version=$9`,[v.projectId,v.id,v.state,v.nativeTurnId,v.response,v.failure,v.version,v.updatedAt,expectedVersion,
       v.interruptOperationId??null,v.interruptActorId??null,v.interruptReason??null,v.interruptRequestedAt??null,
-      v.preTurnProof?JSON.stringify(preTurnProofSchema.parse(v.preTurnProof)):null,v.failureCategory??null]);
+      v.preTurnProof?JSON.stringify(preTurnProofSchema.parse(v.preTurnProof)):null,v.failureCategory??null,v.responseKind]);
     if(!r.rowCount)throw new DomainError('VERSION_CONFLICT','message processing changed');
   }
   async insertSessionMessageManualStopEvidence(v:SessionMessageManualStopEvidence):Promise<void>{

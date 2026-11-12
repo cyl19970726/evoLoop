@@ -36,6 +36,8 @@ export const sessionMessageCommands = [
 ] as const;
 export type SessionMessageCommand = z.infer<(typeof sessionMessageCommands)[number]>;
 export type SessionMessageState = "queued" | "processing" | "replied" | "completed_without_reply" | "failed" | "unknown" | "cancelled" | "manual_pending";
+/** `bounded_unread` is a system note that the native reply exceeded the bounded read, not reply text. */
+export type SessionMessageResponseKind = "native" | "bounded_unread";
 export interface SessionMessageRecord {
   projectId: string; id: string; operationId: string; target: SessionTarget; senderActorId: string;
   content: string; context: { taskId: string; taskRevisionId: string } | null;
@@ -50,6 +52,7 @@ export type SessionMessageProcessingState = "dispatching" | "running" | "unknown
 export interface SessionMessageProcessing {
   projectId: string; id: string; messageId: string; sessionId: string; operationId: string;
   state: SessionMessageProcessingState; nativeTurnId: string | null; response: string | null;
+  responseKind: SessionMessageResponseKind;
   /** Legacy field name retained for immutable processing records; new values identify the full Session admission profile. */
   failure: string | null;
   /** Native failure category (RuntimeTurnFailure.category) when the Turn failed with a classified native error. */

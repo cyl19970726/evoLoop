@@ -227,7 +227,7 @@ test("the six work types are accepted by the service and the database, and older
     assert.match(check.def, new RegExp(`'${kind}'`), `${check.tbl} allows ${kind}`);
 });
 
-test("migration 091 widens the work types and targets on a schema that already holds Tasks, changing no existing row", async t => {
+test("migration 095 widens the work types and targets on a schema that already holds Tasks, changing no existing row", async t => {
   const schema = `convention_upgrade_${randomUUID().replaceAll("-", "")}`;
   const migrations = fileURLToPath(new URL("../../packages/adapter-postgres/migrations/", import.meta.url));
   const before = (await readdir(migrations)).filter(name => name.endsWith(".mjs") && Number(name.slice(0, 3)) < 88).length;
@@ -241,7 +241,7 @@ test("migration 091 widens the work types and targets on a schema that already h
   });
   const columns = async () => (await pool.query(`SELECT column_name FROM information_schema.columns WHERE table_schema=$1 AND table_name='task_proposal'
     AND column_name IN ('acceptance_precondition','delivery_form')`, [schema])).rows.map(row => row.column_name);
-  assert.deepEqual(await columns(), [], "091 has not run yet");
+  assert.deepEqual(await columns(), [], "095 has not run yet");
 
   const projectId = randomUUID(), taskId = randomUUID(), revisionId = randomUUID(), documentId = randomUUID(), contentId = randomUUID(), roleId = randomUUID();
   const now = new Date().toISOString();
@@ -269,8 +269,8 @@ test("migration 091 widens the work types and targets on a schema that already h
     WHERE contype='c' AND connamespace=$1::regnamespace AND (conname='task_proposal_acceptance_target_check' OR (conrelid IN ('task'::regclass,'task_revision'::regclass)
       AND pg_get_constraintdef(oid) LIKE '%implementation%'))`, [schema])).rows.map(row => [row.conname, row.def as string]));
   const narrow = await definitions();
-  assert.ok(!narrow.task_proposal_acceptance_target_check!.includes("named_agent"), "not yet allowed before 091");
-  assert.ok(Object.values(narrow).filter(def => def.includes("implementation")).every(def => !def.includes("defect")), "the old type check before 091");
+  assert.ok(!narrow.task_proposal_acceptance_target_check!.includes("named_agent"), "not yet allowed before 095");
+  assert.ok(Object.values(narrow).filter(def => def.includes("implementation")).every(def => !def.includes("defect")), "the old type check before 095");
 
   await migrate(database!, schema);
   assert.deepEqual(await columns(), ["acceptance_precondition"], "the optional column exists, delivery_form never does");

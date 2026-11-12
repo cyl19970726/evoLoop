@@ -127,6 +127,10 @@ const sameBinding = (a: RuntimeBinding, b: RuntimeBinding): boolean =>
   (["sessionId", "roleId", "projectId", "nativeThreadId", "nativeSessionId", "cwd", "authorizationScope", "owner"] as const).every(key => a[key] === b[key]) &&
   (["actorId", "model", "reasoningEffort", "sandbox", "approvalPolicy", "executionProfileRevisionId"] as const).every(key =>
     (a.resumeProfile?.[key] ?? null) === (b.resumeProfile?.[key] ?? null));
+/** Same session and profile except the effort and the execution profile revision that carries it. */
+const effortRevisionOnly = (a: RuntimeBinding, b: RuntimeBinding): boolean =>
+  (["sessionId", "roleId", "projectId", "nativeThreadId", "nativeSessionId", "cwd", "authorizationScope", "owner"] as const).every(key => a[key] === b[key]) &&
+  (["actorId", "model", "sandbox", "approvalPolicy"] as const).every(key => (a.resumeProfile?.[key] ?? null) === (b.resumeProfile?.[key] ?? null));
 const withTimeout = <T>(promise: Promise<T>, ms: number): Promise<T> => new Promise<T>((resolvePromise, reject) => {
   const timer = setTimeout(() => reject(new Error("timed out")), ms);
   promise.then(value => { clearTimeout(timer); resolvePromise(value); }, error => { clearTimeout(timer); reject(error); });
@@ -223,10 +227,11 @@ export class ClaudeAgentSdkAdapter implements RuntimePort {
       binding.nativeThreadId !== binding.nativeSessionId || !isAbsolute(binding.cwd) || resolve(binding.cwd) !== binding.cwd)
       throw new RuntimeProtocolError("invalid runtime binding");
   }
-  private remember(binding: RuntimeBinding): void {
+  private remember(binding: RuntimeBinding, replaceEffortRevision = false): void {
     this.validateBinding(binding);
     const existing = this.bindings.get(binding.nativeThreadId);
-    if (existing && !sameBinding(existing, binding)) throw new RuntimeProtocolError("conflicting runtime binding");
+    if (existing && !sameBinding(existing, binding) && !(replaceEffortRevision && effortRevisionOnly(existing, binding)))
+      throw new RuntimeProtocolError("conflicting runtime binding");
     this.bindings.set(binding.nativeThreadId, binding);
   }
   private owned(binding: RuntimeBinding): void {
@@ -239,8 +244,13 @@ export class ClaudeAgentSdkAdapter implements RuntimePort {
   async registerBinding(binding: RuntimeBinding): Promise<void> {
     this.validateBinding(binding);
     if (!this.options.verifyBinding || !await this.options.verifyBinding(binding)) throw new RuntimeProtocolError("binding provenance not verified");
-    this.remember(binding);
+    // The trusted store has confirmed it: a revision that changed only the effort replaces the registered one (effort travels with each query).
+    this.remember(binding, true);
   }
+  /** Claude takes the effort with every query, so an effort-only revision needs no native activation: it applies from the next Turn. */
+  appliesEffortWithNextTurn(_binding: RuntimeBinding): boolean { return true; }
+  /** The effort levels Claude takes: its own set, which has no `none` or `minimal`. */
+  allowedReasoningEfforts(_binding: RuntimeBinding): readonly string[] { return [...EFFORTS]; }
 
   /** Records the Session in the ledger. Claude creates its native session with the first Turn, under this ID. */
   async create(spec: RuntimeSessionSpec): Promise<RuntimeBinding> {

@@ -47,9 +47,10 @@ export class PgSessionRecovery implements SessionRecoveryTransaction {
     return result.rows.some(row=>dynamicSessionId(row.dispatch_id as string)===sessionId);
   }
   async getRecoveryGate(sessionId:string):Promise<SessionRecoveryGate|null>{
-    const r=await this.client.query(`SELECT g.*,(SELECT p.failure_category FROM session_message_processing p
+    const r=await this.client.query(`SELECT g.*,COALESCE((SELECT p.failure_category FROM session_message_processing p
       WHERE g.cause_kind='message' AND p.project_id=g.project_id AND p.message_id=g.cause_id
-      ORDER BY p.updated_at DESC LIMIT 1) AS failure_category
+      ORDER BY p.updated_at DESC LIMIT 1),(SELECT r.failure_category FROM runtime_run r
+      WHERE g.cause_kind='run' AND r.project_id=g.project_id AND r.run_id=g.cause_id)) AS failure_category
       FROM session_recovery_gate g WHERE g.project_id=$1 AND g.session_id=$2`,[this.projectId,sessionId]);
     return r.rows[0]?gateOf(r.rows[0]):null;
   }
@@ -81,7 +82,7 @@ export class PgSessionRecovery implements SessionRecoveryTransaction {
     const r=await this.client.query('SELECT * FROM session_recovery_decision WHERE project_id=$1 AND session_id=$2 ORDER BY created_at DESC,decision_id DESC LIMIT $3',[this.projectId,sessionId,limit]);
     return r.rows.map(decisionOf);
   }
-  async adoptExecutionProfile(revision:ExecutionProfileRevision,expectedSessionVersion:number):Promise<void>{
+  async adoptExecutionProfile(revision:ExecutionProfileRevision,expectedSessionVersion:number,options?:{appliesNextTurn?:boolean}):Promise<void>{
     this.scope(revision.projectId);
     const gate=await this.lockRecoveryGate(revision.sessionId);
     if(!['open','blocked'].includes(gate.phase))throw new DomainError('RECOVERY_BLOCKED','Session recovery is already in progress');
@@ -118,9 +119,13 @@ export class PgSessionRecovery implements SessionRecoveryTransaction {
       [this.projectId,revision.sessionId,revision.revisionId,revision.version,revision.previousRevisionId,revision.model,
         revision.reasoningEffort??null,revision.sandbox,revision.approvalPolicy,revision.cwd,revision.authorizationScope,revision.provenance,
         revision.operationId,revision.actorId,revision.reason,revision.evidenceRef,revision.createdAt]);
-    const head=await this.client.query(`UPDATE session_execution_profile SET revision_id=$3,activation_state='pending',activation_operation_id=NULL,
-      attempted_at=NULL,activation_evidence=NULL WHERE project_id=$1 AND session_id=$2 AND revision_id=$4`,
-      [this.projectId,revision.sessionId,revision.revisionId,before.revisionId]);
+    // An effort-only change the runtime cannot activate natively is active at once; every later turn/start carries it.
+    const head=await this.client.query(`UPDATE session_execution_profile SET revision_id=$3,
+      activation_state=CASE WHEN $5::boolean THEN 'active' ELSE 'pending' END,
+      active_revision_id=CASE WHEN $5::boolean THEN $3::uuid ELSE active_revision_id END,activation_operation_id=NULL,
+      attempted_at=NULL,activation_evidence=CASE WHEN $5::boolean THEN 'Applied with the next turn/start; the runtime has no thread/settings/update' END
+      WHERE project_id=$1 AND session_id=$2 AND revision_id=$4`,
+      [this.projectId,revision.sessionId,revision.revisionId,before.revisionId,options?.appliesNextTurn===true]);
     if(!head.rowCount)throw conflict('Execution profile changed');
     const policyChanged=before.sandbox!==revision.sandbox||before.approvalPolicy!==revision.approvalPolicy;
     const updated=await this.client.query(`UPDATE runtime_session SET
@@ -329,7 +334,10 @@ export class PgSessionRecovery implements SessionRecoveryTransaction {
     const r=await this.client.query(`SELECT s.session_id,g.phase,
         (g.phase='blocked' AND g.cause_kind='message' AND EXISTS (SELECT 1 FROM session_message_processing p
           WHERE p.project_id=g.project_id AND p.message_id=g.cause_id
-            AND p.failure_category IN ('quota_exhausted','authentication_failed'))) AS blocked_by_quota,
+            AND p.failure_category IN ('quota_exhausted','authentication_failed'))
+          OR g.phase='blocked' AND g.cause_kind='run' AND EXISTS (SELECT 1 FROM runtime_run r
+          WHERE r.project_id=g.project_id AND r.run_id=g.cause_id
+            AND r.failure_category IN ('quota_exhausted','authentication_failed'))) AS blocked_by_quota,
         (SELECT count(*)::int FROM session_message m WHERE m.project_id=s.project_id AND m.target_kind='owned'
           AND m.session_id=s.session_id AND m.state='queued') AS queued
       FROM runtime_session s LEFT JOIN session_recovery_gate g ON g.project_id=s.project_id AND g.session_id=s.session_id

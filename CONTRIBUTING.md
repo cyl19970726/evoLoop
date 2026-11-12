@@ -23,7 +23,7 @@ evoLoop 当前包含正式文档、隔离实验和本机试用切片；当前能
 2. **核现场并定做法。** 确认当前基线、已有改动、相关代码与证据；给多步骤工作留与风险相称的方案。仓库改动在隔离 worktree 中进行，多人并行先明确文件所有权，具体边界见[协作规则](docs/development/standards.md#多-session-协作)。领域 session 可完成授权内修复。
 3. **实现并同步。** 行为修复在可行时先保留失败复现，再补能检验失效的回归检查。改一个事实先改唯一正文，再改受影响引用；文档分类、过程结论纳入正式正文和公开边界见[文档维护](docs/development/documentation.md)。提交前审阅集成差异，剔除无关改动。
 4. **按范围验证。** 使用[检查分层](docs/development/standards.md#按变更选择检查)，文档具体命令只在[文档检查与构建](docs/development/documentation.md#文档检查与构建)维护。检查失败先解决或说明阻断，不以未运行的未来验收冒充通过。
-5. **经 PR 审阅和合入。** 共享 `main` 的功能与维护改动从 topic branch 提交聚焦 PR，附目标、实际检查、未验证项及 head/base；自审 PR 并处理发现的问题，按[共享主分支与审阅](docs/development/standards.md#共享主分支与审阅)核当前 head 的必要检查和独立审阅，head 改变时复核受影响差异，再正常合入。不绕过 hook/CI，不直接推送、强推或删除 `main`；紧急例外须先有具体授权并记录理由、影响和恢复。无仓库改动的报告任务不制造空 PR。
+5. **经 PR 审阅和合入。** 由 Task 产出的 PR 在描述里写 `Task 编号`，其交付的技术证据写 `#PR号 头提交前缀`（如 `#352 975b569d`），这样合并入口 `scripts/release/merge-gate.mjs` 才能核对“当前头已验收”；推送新提交后需重新交付，GitHub 的“Update branch”不算新增内容（详见[合并入口](docs/development/standards.md#共享主分支与审阅)）。共享 `main` 的功能与维护改动从 topic branch 提交聚焦 PR，附目标、实际检查、未验证项及 head/base；自审 PR 并处理发现的问题，按[共享主分支与审阅](docs/development/standards.md#共享主分支与审阅)核当前 head 的必要检查和独立审阅，head 改变时复核受影响差异，再正常合入。不绕过 hook/CI，不直接推送、强推或删除 `main`；紧急例外须先有具体授权并记录理由、影响和恢复。无仓库改动的报告任务不制造空 PR。
 6. **回读交付结果。** 核对实际 merge commit、`main` 对应检查及部署或试用环境版本；按[证据与交付](docs/development/standards.md#证据与交付)报告改动、固定产物、执行者、已做检查、未知项、使用入口和下一责任。任务验收、合入、构建、部署和实际使用分别记录；运行结束不代替验收。若工程动作不在当前执行者权限内，按[CLI 工程交接](docs/development/agent-cli.md#仓库工程任务与动作交接)记录精确待承接动作与实际执行者。
 
 项目专用技能的位置和安装边界见 [AGENTS.md](AGENTS.md)，不因完成任务而自动扩大安装范围。

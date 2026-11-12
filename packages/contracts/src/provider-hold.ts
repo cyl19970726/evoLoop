@@ -10,7 +10,7 @@ export const holdsProvider=(category:string|null|undefined):boolean=>
 export const providerHoldCommands=[
   /** One decision frees the provider and resumes every Session whose gate was closed by the hold's quota/auth failure. */
   z.strictObject({projectId:id,operationId:id,type:z.literal('runtime.providerHold.release'),
-    provider:providerSchema,expectedVersion:version,evidenceRef:text,reason:text}),
+    provider:providerSchema,holdId:id,expectedVersion:version,evidenceRef:text,reason:text}),
 ];
 export type ProviderHoldCommand=z.infer<typeof providerHoldCommands[number]>;
 

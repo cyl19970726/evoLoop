@@ -56,6 +56,7 @@ const steerReasons: Record<string, string> = {
   NATIVE_CAPABILITY_UNKNOWN: "运行时版本能力暂无法核对，暂不发送",
   NATIVE_TURN_NOT_ACTIVE: "运行时里这一轮已经不在进行，不能补充",
   NATIVE_TURN_UNKNOWN: "运行时里这一轮的状态无法判断，暂不补充",
+  PROVIDER_HELD: "模型服务因额度或鉴权问题已暂停新的一轮，消息会照常保存排队，处理后一次放行",
 };
 export function steerNote(direct: DirectInputCapability | null | undefined, pending: boolean): string {
   if (pending) return "上一条即时输入的结果还没核对，这一轮暂不接受补充";

@@ -28,4 +28,6 @@ export const publicDirectInput = ({content: _content, ...receipt}: DirectInputRe
 export interface DirectInputCapability {
   available: boolean; mode: "steer" | "start" | null; expectedTurnId: string | null;
   reasonCode: string; observedAt: string;
+  /** Which authorization or condition is missing, in words, when the grant is the reason. */
+  detail?: string;
 }

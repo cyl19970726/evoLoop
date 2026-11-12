@@ -131,13 +131,24 @@ export function SessionComposer({ context, snapshot, entries, activeTurn, live, 
     delivery: "queued", system: item.roles.length > 0 && item.roles.every(role => role.roleClass === "system"),
     avatar: <AgentAvatar seed={item.key} roleSeed={item.roles[0]?.id ?? item.title} size={28} />,
   }));
+  // The commands are always listed; one that cannot be used now says why. A role without skills (a Codex role may have none) still gets
+  // this menu, so typing / never answers with nothing.
+  const queuedLast = queued.at(-1);
   const commands: ComposerCommand[] = [
     ...(skills.data?.skills ?? []).filter(item => item.selected).map(item => ({ id: `skill:${item.source}:${item.name}`, name: item.name,
       description: item.description ?? undefined, slug: skillSourceLabel[item.source] ?? item.source, kind: "skill" as const })),
-    ...(mayStop && running ? [{ id: "stop", name: "停止这一轮", description: "中断正在进行的这一轮", slug: "/stop", kind: "command" as const }] : []),
-    ...(queued.length && !context.blocked ? [{ id: "withdraw", name: "撤回排队消息", description: "撤回最后一条还没处理的消息", slug: "/withdraw", kind: "command" as const }] : []),
-    ...(snapshot.currentWork && !taskAttached ? [{ id: "task", name: "关联当前任务", description: snapshot.currentWork.title, slug: "/task", kind: "command" as const }] : []),
+    { id: "stop", name: "停止这一轮", description: "中断正在进行的这一轮", slug: "/stop", kind: "command" as const,
+      ...(mayStop && running ? {} : { unavailable: !owned ? "这个智能体不是受管会话" : !running ? "现在没有进行中的一轮" : stopNote ?? "现在不能停止这一轮" }) },
+    { id: "withdraw", name: "撤回排队消息", description: "撤回最后一条还没处理的消息", slug: "/withdraw", kind: "command" as const,
+      ...(queuedLast && !context.blocked ? {} : { unavailable: context.blocked ? "项目里还有结果未确认的操作，核对后才能撤回" : "没有排队的消息" }) },
+    { id: "task", name: "关联当前任务", description: snapshot.currentWork?.title, slug: "/task", kind: "command" as const,
+      ...(snapshot.currentWork && !taskAttached ? {} : { unavailable: snapshot.currentWork ? "已关联当前任务" : "这个智能体现在没有当前任务" }) },
   ];
+  const commandStatus = !owned || !roleId ? "这个智能体没有可读取的职责，所以没有技能可列。"
+    : skills.isPending ? "正在读取这个职责可用的技能……"
+    : skills.isError ? "这个职责的技能读取失败，下面的命令仍可用；稍后再输入 / 重试。"
+    : (skills.data?.skills ?? []).some(item => item.selected) ? undefined
+    : "这个职责现在没有可用的技能（运行时没有给它选用任何技能）。";
   const attachments: ComposerAttachment[] = [
     ...(snapshot.currentWork && taskAttached && session.kind === "owned" ? [{ id: "task", label: `关联任务 · ${snapshot.currentWork.title}`, kind: "task" as const }] : []),
     ...(skill ? [{ id: "skill", label: `技能 · ${skill.name}`, kind: "skill" as const }] : []),
@@ -223,6 +234,7 @@ export function SessionComposer({ context, snapshot, entries, activeTurn, live, 
       attachments={attachments}
       onRemoveAttachment={id => { if (id === "task") setTaskAttached(false); if (id === "skill") setSkill(null); }}
       commands={commands}
+      commandStatus={commandStatus}
       skillScope={session.roles[0]?.title ? `${session.roles[0].title}可用` : undefined}
       onPickCommand={command => {
         if (command.kind === "skill") setSkill({ id: command.id, name: command.name, slug: command.slug });

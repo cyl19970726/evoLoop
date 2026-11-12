@@ -6,7 +6,7 @@ import type { WechatGatewayClient } from "@evoloop/connector-wechat";
 type Gateway = Pick<WechatGatewayClient, "call">;
 type Row = Record<string, unknown>;
 type DeliveryMessage = {eventCursor:number;messageId:string;messageState:string;processingState:string|null;
-  nativeTurnId:string|null;response:string|null};
+  nativeTurnId:string|null;response:string|null;responseKind:'native'|'bounded_unread'|null};
 type DeliveryDecision = {projectId:string;bindingId:string;deliveryId:number;routeVersion:number;
   routeOwner:string;routeEpoch:number;routeSessionRef:string;conversationId:string;
   cursorStart:number;cursorEnd:number;
@@ -415,6 +415,9 @@ export class ConnectorIngressPump {
     }
     if(!['completed','interrupted','failed'].includes(String(shown.turn_state)))return;
     let decision=await store.get(route.projectId,route.bindingId,delivery.id);
+    const boundedUnread=messages.some(value=>value.responseKind==='bounded_unread');
+    if(boundedUnread&&decision?.decision==='reply')
+      throw new Error("saved wx reply conflicts with a bounded-unread native response; inspect original records");
     if(!decision){
       const response=messages.map(value=>value.response?.trim()).filter((value):value is string=>!!value).join("\n\n");
       const failed=messages.some(value=>value.messageState==='failed'||value.messageState==='cancelled');
@@ -422,7 +425,7 @@ export class ConnectorIngressPump {
       const bytes=Buffer.byteLength(response,'utf8');
       const sendable=Array.from(response).length<=2000&&bytes<=16000&&
         !/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(response);
-      const action=failed||bytes>65536||unhandled.length?'defer':
+      const action=failed||bytes>65536||unhandled.length||boundedUnread?'defer':
         response?(canSend&&sendable?'reply':'draft'):'skip';
       const requestId=action==='reply'?`ev${createHash('sha256').update(JSON.stringify([
         route.bindingId,delivery.id,route.version])).digest('hex').slice(0,48)}`:null;
@@ -459,7 +462,9 @@ export class ConnectorIngressPump {
         ? {conversation_id,delivery_id:delivery.id,token:shown.token,decision:'draft' as const,text:decision.content!}
         : decision.decision==='defer'
           ? {conversation_id,delivery_id:delivery.id,token:shown.token,decision:'defer' as const,
-            reason:'Native processing or source content requires review; inspect saved Connector records'}
+            reason:boundedUnread
+              ? 'Native reply exceeded the bounded read and was not sent; inspect saved Connector records'
+              : 'Native processing or source content requires review; inspect saved Connector records'}
           : {conversation_id,delivery_id:delivery.id,token:shown.token,decision:'skip' as const,
             reason:'No reply text was produced by the native Session'};
     if(!await store.markCompleteAttempted(decision))
