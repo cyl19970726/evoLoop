@@ -62,18 +62,26 @@ test("two external agents of one role are told apart by their short identifier, 
   assert.equal(new Set(offered.map(entry => entry.name)).size, offered.length, "no two @ entries share a name, so the copy goes to the one picked");
 });
 
-test("设置展示信息 starts from the service's name and, when only 团队归属 changes, sends the same displayName as before", () => {
+test("设置展示信息 shows the service's name as the starting point but refuses to register it as it stands (#295 item 2)", () => {
   const snapshot = { session: { ...external("0aba35cb"), target: { kind: "external", linkId: "0aba35cb-0000-4000-8000-000000000001" }, membership: "unclassified" } } as unknown as SessionSnapshot;
   const fields = sessionProfileFields(snapshot);
   const values = Object.fromEntries(fields.map(field => [field.name, field.value ?? ""]));
   assert.equal(values.displayName, "功能开发 · 外部 0aba35cb", "the form starts from the service's title, not the page's generic name");
-  const command = sessionProfileCommand(snapshot, { ...values, membership: "current", reason: "归入当前团队" });
-  assert.equal(command.displayName, "功能开发 · 外部 0aba35cb");
+  assert.match(String(fields.find(field => field.name === "displayName")?.hint), /还没有登记名称.*短标识/, "and says it is not yet a registered name");
+  // Saved as it stands, the generated title (with its short identifier) would become the registered name: refused before sending.
+  assert.throws(() => sessionProfileCommand(snapshot, { ...values, membership: "current", reason: "归入当前团队" }), /还没有给这个智能体起名/);
+  assert.throws(() => sessionProfileCommand(snapshot, { ...values, displayName: "  功能开发 · 外部 0aba35cb  ", membership: "current", reason: "x" }), /还没有给这个智能体起名/, "whitespace around it changes nothing");
+  // A name the person wrote is registered as written.
+  const command = sessionProfileCommand(snapshot, { ...values, displayName: "前端评审", membership: "current", reason: "归入当前团队" });
+  assert.equal(command.displayName, "前端评审");
   assert.equal(command.membership, "current");
   assert.deepEqual(command.target, { kind: "external", linkId: "0aba35cb-0000-4000-8000-000000000001" });
   const registered = { session: { ...(snapshot.session as object), profile: { displayName: "前端评审", membership: "current", tenure: "resident", version: 3, purpose: "", target: { kind: "external", linkId: "x" } } } } as unknown as SessionSnapshot;
   assert.equal(Object.fromEntries(sessionProfileFields(registered).map(field => [field.name, field.value]))["displayName"], "前端评审");
   assert.equal(sessionProfileCommand(registered, { displayName: "前端评审", membership: "current" }).expectedVersion, 3);
+  assert.equal(Object.hasOwn(Object.fromEntries(sessionProfileFields(registered).map(field => [field.name, field.hint])), "displayName") && sessionProfileFields(registered)[0]!.hint, undefined, "a registered name carries no such hint");
+  // A registered agent keeps saving its own name (even if it happens to equal the service title).
+  assert.equal(sessionProfileCommand({ session: { ...(registered.session as object), title: "前端评审" } } as unknown as SessionSnapshot, { displayName: "前端评审", membership: "current" }).displayName, "前端评审");
 });
 
 test("an unnamed project-run agent says which runtime it is on, so a developer and a reviewer of one role read differently", async () => {

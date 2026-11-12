@@ -70,18 +70,22 @@ export function useCommand<B extends Baseline | string | undefined = undefined>(
   const view = `${current ?? ""}\u0000${options.content ?? ""}`;
   const baselineChanged = submissionRefusal({ busy: false, blocked: false, stale, recorded: baselineText(recorded), current }) === "baseline";
 
+  // A control that sets its value after an asynchronous read calls the `saveDraft` of the render it started in. What it writes is the
+  // baseline and the pending operation as they are now, not as they were then: read through a ref, never closed over.
+  const live = useRef({ recorded, pending });
+  live.current = { recorded, pending };
   const store = () => options.draft && draftKey ? { store: options.draft.store, key: draftKey } : null;
   function dropDraft() { const kept = store(); if (kept) kept.store.delete(kept.key); }
   /** Keep the typed values with the baseline they are written against (and an operation still to be checked). */
   function saveDraft(values: unknown) {
     const kept = store();
-    if (kept) kept.store.set(kept.key, { values, baseline: recorded, ...(pending ? { pending } : {}) });
+    if (kept) kept.store.set(kept.key, { values, baseline: live.current.recorded, ...(live.current.pending ? { pending: live.current.pending } : {}) });
   }
   function keepPending(operation: PendingOperation | null) {
     const kept = store();
     if (!kept) return;
     const saved = kept.store.get(kept.key);
-    if (operation) kept.store.set(kept.key, { ...(saved ?? { values: undefined, baseline: recorded }), pending: operation });
+    if (operation) kept.store.set(kept.key, { ...(saved ?? { values: undefined, baseline: live.current.recorded }), pending: operation });
     else if (saved) {
       const { pending: _, ...rest } = saved;
       if (rest.values === undefined) kept.store.delete(kept.key); else kept.store.set(kept.key, rest);
