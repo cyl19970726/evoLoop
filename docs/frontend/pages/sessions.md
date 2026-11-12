@@ -14,7 +14,7 @@ Session 页说明一个具体实例此刻在做什么、做出了什么；“Lea
 | 栏 | Session | Leader 安排 |
 | --- | --- | --- |
 | 内层栏（对象列表） | 顶部固定“Leader 安排”，下面是 Session 目录：搜索，分业务 / System / 待归类，历史可展开。已绑定职责的 Session（无论经 `session prepare` 还是 reserve + bind 建立）按职责类别归入业务或 System，不进待归类；每行写运行时与模型，没人命名的同职责 Session 写成“<职责> · Claude/Codex”，重名再加“标识 <8 位>” | 同左 |
-| 中间 | 对话与 Agent 活动流（见下方“目标体验”），输入框固定在底部；从别处进来时页首写“返回任务：<名称>”“返回统筹安排”“返回文档：<名称>”等，点回原页面和页签 | 上半部分是当前的编排总览文档，下半部分是安排看板：每个 Session 一行，写职责、当前任务、排队任务和状态；没有承接者的任务单独一组。下一步是派发（待接手、可开始、返工）而分派固定在任务旧修订上的，写“分派（接手）属于旧修订 · 要重新指定”，不写“待接手”；规则同服务端派发时的 `ASSIGNMENT_STALE`，交付、运行中、待验收换了修订是正常流程，不算。从看板点进的任务和智能体页首写“返回统筹安排” |
+| 中间 | 对话与 Agent 活动流（见下方“目标体验”），输入框固定在底部；从别处进来时页首写“返回任务：<名称>”“返回统筹安排”“返回文档：<名称>”等，点回原页面和页签 | 上半部分是当前的编排总览文档，下半部分是安排看板：每个 Session 一行，写职责、当前任务、排队任务和状态；没有承接者的任务单独一组。下一步是派发（待接手、可开始、返工）而分派固定在任务旧修订上的，写“分派（接手）属于旧修订 · 要重新指定”，不写“待接手”；规则同服务端派发时的 `ASSIGNMENT_STALE`，交付、运行中、待验收换了修订是正常流程，不算。从看板点进的任务和智能体页首写“返回统筹安排”。最后是“项目用量”块（锚点 `#project-usage`）：今日用量对每日上限，用与智能体“上下文”同一种进度条和状态（正常、接近上限、已达上限；未设上限时只写“未设上限”）；近 7 天按日历每天一行（到项目时区的今天为止），输入、输出、缓存输入用“万”，费用没报告写“未报告”，服务没有记账记录的日子写“没有记录”而不是 0（记了 0 才写 0）；计日时区和读取时间放在块底部小字 |
 | 右栏（可收起） | 按下表“右栏信息层级”：实体卡 → 正在做 → 接下来（“动态”页签；“资料库”页签是成果）→ 运行环境 → 上下文与用量 → 详情与来源（收起）；所在机器 #219 之前写“待接入” | 数据能证明的冲突与风险：同一 Session 有多项进行中任务、依赖未通过验收就已开始、截止已过、待验收却未登记下一责任、下一步是派发而分派或接手属于旧修订（要重新指定；任务索引带回分派固定的修订、队列也读回、没有队列领取时才判断）；再下面是空闲与过载、截止临近 |
 
 外壳与左栏见[布局](../layout.md)，场景见[场景 3](../scenarios.md#十个场景)与[场景 11](../scenarios.md#场景-11看清-leader-怎样安排-session)。
@@ -27,7 +27,7 @@ Session 页说明一个具体实例此刻在做什么、做出了什么；“Lea
 | 2 | 正在做（“动态”页签） | 现在在做哪项任务 | 当前任务：执行队列的领取优先，其次是任务当前修订上的分派；没有时看未结束的 Run（含已预留）；状态取统筹索引的任务阶段，未读回时取 Run 状态 | 柔底色块（[事实卡片](../foundations.md#表面从后往前)）：标题、阶段、接手方式、用时是同一对象的事实，要读成一个单位；它是首屏的主答案。状态用 StatusTag |
 | 3 | 接下来（“动态”页签） | 接下来做哪项，按什么顺序 | 先列智能体队伍（[DEC-045](../../decisions.md#用户已确定的方向) 的 session line，按位置），再列执行队列里未领取的项，最后列不在两者里的分派；分派按统筹索引的阶段分：待验收算已交出 | 同一种色块，块内一行一项，用细线分隔；序号是在自己队伍或执行队列里的位置，分派没有序号。超过 3 项折叠；已交出或已结束的分派另起一行折叠 |
 | 4 | 运行环境 | 它在用什么跑 | 运行时；模型（最近一轮原生报告的实际模型，没有时用目标）；思考强度（没有逐轮记录，总是配置值）；有新目标待应用时改用最后确认的配置，并标出下一轮改成什么；执行权限（Session 执行配置）；技能（随职责，链到职责页）。修订、最后确认、应用状态、操作标识在“配置记录”里 | 和“正在做”同一种色块：一张卡片回答一个问题。主行一句“运行时 · 模型 · 强度”，每个值标“实际 / 目标 / 已确认”，都是目标时只写一次“目标，尚无实际报告”。目标还没生效时给状态标签。权限是小标签，技能标签可点，链到该职责页。“调整模型与强度”在右上角，不能用时在卡片底部写一行“不能调整：原因 · 去处”，去处是链接（例如“不是完整权限 · 去分工与运行”）。其余收进“配置记录”，说明只在相关时出现 |
-| 5 | 上下文与用量 | 还能用多久；今天用了多少 | 用量读取里这个智能体的一项：上下文压力（当前大小 / 交接阈值）、今日与本会话累计；原生观察回报的这条线程用量 | 同一种色块，标题“上下文与用量”，里面先“上下文”、后“今日”。上下文用进度条加百分比和状态色（正常、接近交接、需交接新线程），需交接时直接给出处理说明和“去分工与运行”。“今日”是四个小数字格（输入、输出、缓存输入用“万”，费用没报告写“未报告”）。累计收进“本会话累计”。每日上限、近几天项目用量、用量时区属于项目，不放这里；只有项目用量接近或达到每日上限时写一行提醒，链到统筹安排（目前没有项目用量页） |
+| 5 | 上下文与用量 | 还能用多久；今天用了多少 | 用量读取里这个智能体的一项：上下文压力（当前大小 / 交接阈值）、今日与本会话累计；原生观察回报的这条线程用量 | 同一种色块，标题“上下文与用量”，里面先“上下文”、后“今日”。上下文用进度条加百分比和状态色（正常、接近交接、需交接新线程），需交接时直接给出处理说明和“去分工与运行”。“今日”是四个小数字格（输入、输出、缓存输入用“万”，费用没报告写“未报告”）。累计收进“本会话累计”。每日上限、近几天项目用量、用量时区属于项目，不放这里；只有项目用量接近或达到每日上限时写一行提醒，链到统筹安排的“项目用量”块（`#project-usage`） |
 | 6 | 资料库（页签） | 交出了什么 | 关联的交付与使用观察 | 列表行加细线 |
 | 7 | 详情与来源（收起） | 来源、诊断和低频设置 | 标识设置、原聊天入口、职责与分派、资源观察、恢复、活动与来源记录、完整标识 | 收起；标识设置是低频操作，从首屏移到这里 |
 
@@ -69,6 +69,7 @@ Session 页说明一个具体实例此刻在做什么、做出了什么；“Lea
 | 外部接入 | 主行写“外部接入”和外部宿主报过的模型；没有时写“模型与强度由外部宿主决定，没有同步到这里”；“配置记录”里目标模型、思考强度、执行权限写“外部接入不提供” |
 | 没有交接阈值 | 标签“未设阈值”，写当前上下文大小，不画进度条 |
 | 没有任何用量记录 | 上下文标“没有记录”；今日写“这个智能体还没有用量记录，不按 0 计” |
+| 今天没有记账记录（之前有） | 智能体右栏“今日”写“今日没有用量记录，不按 0 计”，不画数字格；统筹安排“项目用量”标“今日没有记录”，写“今日没有记录，不按 0 计 · 每日上限 …”，不画进度条、不写 0%。服务对没有记录的今天给的是 0，只有当天确实记了 0 才写 0 |
 | 用量读取失败 | 写失败原因，并说明上下文和今日用量暂时无法判断 |
 
 | 正在做与接下来 | 页面上写 |
@@ -129,6 +130,10 @@ Session 页说明一个具体实例此刻在做什么、做出了什么；“Lea
 
 ![统筹安排，390](../../assets/frontend-pages/arrangement-390.png)
 
+![统筹安排的项目用量（从智能体右栏的上限提醒进入），1440](../../assets/frontend-pages/arrangement-usage-1440.png)
+
+![统筹安排的项目用量，390](../../assets/frontend-pages/arrangement-usage-390.png)
+
 ![智能体页，1440：右栏内嵌](../../assets/frontend-pages/agent-1440.png)
 
 ![智能体页，1024：右栏以抽屉打开](../../assets/frontend-pages/agent-1024.png)
@@ -150,7 +155,7 @@ Session 页说明一个具体实例此刻在做什么、做出了什么；“Lea
 | 智能体详情 | `features/sessions/SessionWorkspace.tsx`（页首、右栏；执行队列由 `app/App.tsx` 传入 `features/workflow` 的面板）、`features/sessions/sessionWorkPresentation.ts`（正在做与接下来的判定与用语）、`features/sessions/RuntimeEnvironmentCard.tsx`（运行环境卡片）、`features/sessions/environmentPresentation.ts`（环境与用量的三种状态）、`features/sessions/SessionTimeline.tsx`（对话流）、`features/sessions/readingScopePresentation.ts` 与 `features/sessions/SourceLimitations.tsx`（读取限制的中文与原文）、`shared/agentNamePresentation.ts`（没登记名称时怎样称呼）、`features/sessions/conversationPresentation.ts`（工具、计划、状态行与每轮小结的用语）、`features/sessions/workspaceTimelineModel.ts`、`features/sessions/NativeSessionPanel.tsx`、`features/sessions/SessionModelControl.tsx`、`features/sessions/SessionClosePanel.tsx` | `session-work-presentation.test.ts`、`session-rail-browser.test.ts`（三类智能体在 1440 与 390 宽的首屏、溢出、队伍读取失败）、`session-wording-presentation.test.ts`、`agent-name-presentation.test.ts`、`session-external-wording-browser.test.ts`（`EVOLOOP_AGENT_WORDING_SCREENSHOT_DIR`）、`session-workspace-redesign-browser.test.ts`、`session-timeline-browser.test.ts`、`session-workspace-timeline-model.test.ts`、`session-conversation-presentation.test.ts`、`session-native-input-browser.test.ts`、`session-native-progress-browser.test.ts`、`session-close-entry-browser.test.ts`、`session-activity-narrow-browser.test.ts`、`task-session-return-browser.test.ts` |
 | 上下文与用量 | `features/sessions/UsageBudgetPanel.tsx`（上下文与用量卡片）、`features/sessions/usagePresentation.ts`（进度、今日、项目上限提醒） | `usage-presentation.test.ts`、`usage-budget-panel.test.ts`、`runtime-environment-presentation.test.ts`（运行环境主行与上下文、今日、提醒的说法） |
 | 输入框 | `features/sessions/SessionComposer.tsx`（待办、排队、`/`、`@`、停止）、`features/sessions/queuedMessagePresentation.ts`（排队项的中文摘要、授权受阻提示）、`packages/ui` 的 `QueuedMessages`（限高与折叠）、`features/sessions/composerPresentation.ts`（Enter 与 Cmd/Ctrl+Enter 做什么）、`features/sessions/useDirectInput.tsx`（即时输入与回执）、`features/sessions/sessionCommand.ts` | `session-grant-blocked-browser.test.ts`（授权受阻的消息可见且页面可用）、`session-queue-area-browser.test.ts`（12 条排队时 1195 与 390 宽：时间线可滚、输入框在屏内、折叠展开、摘要与原文、撤回；无排队不变）、`queued-message-summary.test.ts`、`session-composer-browser.test.ts`（三个宽度，`EVOLOOP_AGENT_SCREENSHOT_DIR` 存截图）、`session-direct-input-layout-browser.test.ts`、`session-message-entry-browser.test.ts`、`session-conversation-presentation.test.ts`、`leader-insert-queue-browser.test.ts`（统筹页面两个发送按钮与结果，1440 与 390 宽） |
-| 统筹安排 | `features/sessions/ArrangementPage.tsx`（页面与右栏）、`features/sessions/arrangementModel.ts`（看板、空闲与风险规则，含分派属于旧修订）、`features/sessions/arrangementPresentation.ts`（读取状态、页首空闲数与看板阶段用语；按阶段的下一步与总览共用，在 `shared/workPresentation.ts`） | `arrangement-model.test.ts`、`arrangement-presentation.test.ts`、`work-presentation.test.ts`、`arrangement-browser.test.ts`、`cross-space-return-browser.test.ts` |
+| 统筹安排 | `features/sessions/ArrangementPage.tsx`（页面与右栏）、`features/sessions/ProjectUsageSection.tsx`（项目用量块）、`features/sessions/arrangementModel.ts`（看板、空闲与风险规则，含分派属于旧修订）、`features/sessions/arrangementPresentation.ts`（读取状态、页首空闲数与看板阶段用语；按阶段的下一步与总览共用，在 `shared/workPresentation.ts`） | `arrangement-model.test.ts`、`arrangement-presentation.test.ts`、`usage-budget-panel.test.ts`（项目用量块）、`work-presentation.test.ts`、`arrangement-browser.test.ts`、`cross-space-return-browser.test.ts` |
 | 返回来处 | `features/sessions/sessionReturn.ts`（智能体页认哪些来处）、`shared/returnLink.ts`、`shared/ui/ReturnLink.tsx` | `return-link.test.ts`、`session-conversation-presentation.test.ts`、`cross-space-return-browser.test.ts` |
 | Leader 安排的数据 | `shared/leaderWorkLoad.ts`（任务索引分页与阶段名）、`shared/queueClient.ts`；执行队列 `features/workflow/ResidentQueuePanel.tsx` 与分派、确认 `features/workflow/TaskRuntimeTab.tsx` 显示在任务详情的“运行与关联”，见[任务](tasks.md) | `leader-work-load.test.ts`、`leader-work-overview-browser.test.ts` |
 | 数据来源 | `packages/contracts/src/session-timeline.ts`、`packages/adapter-claude-agent-sdk/src/index.ts`、`packages/adapter-codex-app-server/src/workspace-map.ts`、`apps/coordinator/src/runtime/routed.ts` | — |

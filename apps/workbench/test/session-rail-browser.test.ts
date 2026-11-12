@@ -95,7 +95,11 @@ test("the agent's right column shows what it does now and next on its first scre
       assert.match(text, /上下文\s*接近交接[\s\S]*17\.2 万 \/ 20 万（86%）[\s\S]*今日\s*输入\s*8\.8 万\s*输出\s*9200\s*缓存输入\s*4\.4 万\s*费用\s*未报告/, text);
       assert.equal(await usage.getByRole("progressbar").getAttribute("aria-valuenow"), "86");
       // A new target waits: the line keeps what is in effect and the tag says what comes next.
-      assert.match(await panel.locator("section[aria-label=运行环境]").innerText(), /gpt-6-sol\s*实际\s*·\s*high\s*已确认[\s\S]*下一轮改为 gpt-6-astra \/ max/);
+      // The line in effect is labelled 现在 and the next target is its own row below it.
+      const environment = panel.locator("section[aria-label=运行环境]");
+      assert.match(await environment.innerText(), /现在：\s*Codex\s*·\s*gpt-6-sol\s*实际\s*·\s*high\s*已确认[\s\S]*下一轮改为 gpt-6-astra \/ max/);
+      const now = (await environment.locator(".session-runtime-now").boundingBox())!, next = (await environment.locator(".session-runtime-next").boundingBox())!;
+      assert.ok(next.y >= now.y + now.height, "the next-turn tag sits on its own row under the 现在 line");
     }
     if (name === "lead") {
       assert.match(text, /需交接新线程[\s\S]*21\.2 万 \/ 20 万（106%）[\s\S]*请交接新线程/, text);
@@ -114,7 +118,20 @@ test("the agent's right column shows what it does now and next on its first scre
   const budgeted = await open("dev", 1440, 900, page => page.route(/\/runtime\/usage\?/, route => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(nearLimit) })));
   const reminder = budgeted.panel.locator("section[aria-label=上下文与用量]").getByText(/项目今日用量接近每日上限（86%）/);
   await reminder.waitFor();
-  assert.match(await budgeted.panel.getByRole("link", { name: "去统筹安排" }).getAttribute("href") ?? "", new RegExp(`/p/${projectId}/sessions$`));
+  const toUsage = budgeted.panel.getByRole("link", { name: "查看项目用量" });
+  assert.match(await toUsage.getAttribute("href") ?? "", new RegExp(`/p/${projectId}/sessions#project-usage$`));
+  // Following it lands on 统筹安排 with 项目用量 in view: the limit as a bar, seven days, the time zone below.
+  await toUsage.click();
+  const block = budgeted.page.locator("#project-usage");
+  await block.getByText("今日与每日上限").waitFor();
+  await budgeted.page.waitForTimeout(300);
+  const blockBox = (await block.boundingBox())!;
+  assert.ok(blockBox.y < 900 && blockBox.y + 40 > 0, `项目用量 is scrolled into view (${blockBox.y})`);
+  const blockText = await block.innerText();
+  assert.match(blockText, /接近上限[\s\S]*输入 86 万 \/ 100 万（86%）[\s\S]*近 7 天[\s\S]*11-10[\s\S]*11-04[\s\S]*按 Asia\/Shanghai 计日/, blockText);
+  assert.equal(await block.locator("tbody tr").count(), 7);
+  // 11-08 has no ledger rows: the row says so instead of showing 0.
+  assert.match(await block.locator("tbody tr", { hasText: "11-08" }).innerText(), /11-08\s*没有记录/);
   await budgeted.page.context().close();
 
   // The skills chip is a link to the agent's Role, reachable and visibly focused from the keyboard.
@@ -124,8 +141,33 @@ test("the agent's right column shows what it does now and next on its first scre
     assert.match(await skills.getAttribute("href") ?? "", new RegExp(`/p/${projectId}/roles\\?role=`));
     await skills.focus(); await page.keyboard.press("Shift+Tab"); await page.keyboard.press("Tab");
     assert.equal(await skills.evaluate(element => element === document.activeElement && element.matches(":focus-visible")), true);
-    assert.notEqual(await skills.evaluate(element => getComputedStyle(element).boxShadow), "none", "a focus ring is drawn");
+    // An opaque accent edge (#2f4bb3) drawn inside the chip, with a surface-coloured band within it (WCAG 2.4.7).
+    await page.waitForFunction(element => /rgb\(47, 75, 179\) 0px 0px 0px 2px inset/.test(getComputedStyle(element!).boxShadow), await skills.elementHandle(), { timeout: 3000 })
+      .catch(() => undefined);
+    assert.match(await skills.evaluate(element => getComputedStyle(element).boxShadow), /rgb\(47, 75, 179\) 0px 0px 0px 2px inset/);
     await page.context().close();
+  }
+
+  // A day without ledger rows is not 0: nothing recorded today (only yesterday) shows no figures and no 0% limit bar.
+  {
+    const noToday = usageFixture();
+    noToday.daily = noToday.daily.filter((day: { day: string }) => day.day !== "2026-11-10");
+    noToday.sessions = noToday.sessions.map((session: { days: Array<{ day: string }>; today: object }) => ({ ...session,
+      days: session.days.filter(day => day.day !== "2026-11-10").concat([{ ...session.today, day: "2026-11-09" }]),
+      today: { day: "2026-11-10", inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, costUsd: null, costReported: false } }));
+    noToday.budget = { ...noToday.budget, used: 0, ratio: 0 };
+    const quiet = await open("dev", 1440, 900, page => page.route(/\/runtime\/usage\?/, route => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(noToday) })));
+    const card = quiet.panel.locator("section[aria-label=上下文与用量]");
+    await card.getByText("今日没有用量记录，不按 0 计").waitFor();
+    assert.equal(await card.locator(".session-usage-today dl").count(), 0, "no figure tiles");
+    await quiet.page.goto(`${fixture.base}/p/${projectId}/sessions#project-usage`);
+    await quiet.page.getByLabel("访问令牌").fill(token); await quiet.page.getByRole("button", { name: "进入", exact: true }).click();
+    const block = quiet.page.locator("#project-usage");
+    await block.getByText("今日没有记录，不按 0 计 · 每日上限 150 万").waitFor();
+    assert.equal(await block.getByRole("progressbar").count(), 0);
+    assert.doesNotMatch(await block.innerText(), /0 \/ 150 万|（0%）/);
+    assert.match(await block.locator("tbody tr", { hasText: "11-10" }).innerText(), /11-10\s*没有记录/);
+    await quiet.page.context().close();
   }
 
   // The rarely used 标识设置 is not on the first screen; it opens from 详情与来源.

@@ -29,6 +29,7 @@ import {
   staleLabel, type ReadState,
 } from "./arrangementPresentation";
 import { workNextStep } from "../../shared/workPresentation";
+import { ProjectUsageSection } from "./ProjectUsageSection";
 
 const maxSessionPages = 10;
 const maxTaskPages = 20;
@@ -287,6 +288,8 @@ export function ArrangementPage({ context, refresh }: { context: MutationContext
               : <p className="text-caption text-muted-foreground">{reads.tasksComplete ? "每项未关闭的任务都有承接者。" : "已读取的任务都有承接者。"}</p>}
             {(reads.queues === "failed" || reads.queues === "loading") && <p className="text-caption text-muted-foreground">队列还没读到：从排队中领取的任务也可能列在这里。</p>}
           </section>}
+          {/* The project's daily limit and recent days; an agent's card links here when the project is near its limit. */}
+          <ProjectUsageSection projectId={projectId} token={token} />
           <p className="flex items-center gap-1.5 text-caption text-muted-foreground"><CalendarClock size={14} aria-hidden="true" />优先级、截止时间和依赖由统筹经 CLI 设置；这里只读。</p>
           <ArrangementPanel projectId={projectId} board={board} reads={reads} from={from} directoryComplete={!moreAgents} />
         </>}

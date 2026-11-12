@@ -62,9 +62,11 @@
   summary { display: list-item; }
   [hidden]:where(:not([hidden="until-found"])) { display: none !important; }
 
-  /* Components draw their own ring (`focus-visible:shadow-[var(--focus-ring)]` with `outline-none`); anything focusable
-     that does not still shows where the keyboard is. */
-  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  /* Components draw their own ring (`focus-visible:shadow-[var(--focus-ring)]` with `outline-none`, inside the element);
+     anything focusable that does not — a scroll region the browser makes focusable, a summary — still shows where the
+     keyboard is, drawn inward so a scroll container never clips it. Inline text links keep it outside the text. */
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  a:focus-visible { outline-offset: 2px; }
   ::selection { background-color: var(--accent-soft); }
 
   @media (prefers-reduced-motion: reduce) {
