@@ -333,6 +333,15 @@ git diff --check
 
 **新工作树不再各带一份依赖。** 用 `node scripts/ops/new-worktree.mjs --path 绝对路径 --branch 名字 --seed 装好依赖的克隆`（`--seed` 默认读 `EVOLOOP_DEPS_SEED`）：seed 的 `package-lock.json` 与新工作树一致时，把它的 `node_modules` 用 APFS 写时复制克隆过来（`cp -c`，共享磁盘块，文件被改时才各占各的），否则回退 `npm ci`；不在 macOS 上、克隆失败也回退。本机实测（APFS）：普通复制 `node_modules` 约占用 960 MB，克隆约 40 MB；克隆出的工作树 `npm run build:packages` 与测试可正常运行。依赖在工作树里被 `npm install` 改过之后，被改的文件才会额外占用空间。
 
+### 每日边界核对
+
+谁能做什么只写在 Role 的文字里；11-12 一天里，一个 Session 用另一个 Session 的私有合并配置合并了 13 个 PR，改了正式私有配置，另一个 Session 以使用者身份发了输入，都是事后从原始记录里查出来的。`npm run boundary:check` 每天（随 CI/CD 的 12 小时例行任务）把这些在当天读出来，**只读，不拦截、不改任何配置**，输出写进例行报告：
+
+- **命令**：`EVOLOOP_BOUNDARY_CONFIG=<私有配置> node scripts/ops/boundary-check.mjs --day YYYY-MM-DD`（或 `--from ISO --to ISO`；`--flagged-only` 只列要看的行，`--json` 给机器读）。配置在仓库外、绝对路径，字段：`repo`、`utcOffsetMinutes`（本地时区偏移，如塔什干 300）、`databaseUrl`（只读事务打开，不写）、`humanActors`（使用者的身份名）、`identityFiles`（存放身份令牌的文件路径片段）、`mergeTrainLogs.dir`、`transcriptRoots`（Codex 与 Claude 会话记录目录）、`privateFiles[].globs`（正式运行目录里的私有文件，含备份）。私有路径和数据库地址只在这份配置里，不进仓库，也不进输出。
+- **四张表**：①窗口内合并的 PR 与实际发起者：GitHub 的合并者永远是同一个账号，所以看合并列车日志里有没有、会话记录里谁运行了 `merge-gate.mjs merge … --execute`（含 `for` 循环和一行多条）、`gh pr merge`，并把该会话平时用的身份（它的命令里最常出现的 `agent-cli/<身份>/`）和合并配置所属身份对照；不同则写“借用他人合并配置”，两处都没有则写“发起者无记录”。②私有文件的修改时间、备份、是否仍能解析、键名与条目数变化（只写名字和数量，不写值），以及改动前后 5 分钟内命令里提到该文件的会话。③`humanActors` 名下的写入（直接输入、`operation_journal`、会话消息）；库里没有“是否出自工作台”这一项，所以只给能核对的证据：写入前后 10 分钟内有哪个会话的命令引用了身份文件，没有就写“来源未证实”，不猜。④窗口内的关闭记录和依据观察：依据里提到“候选”且没有“正式……读回/已验证”字样的列出，并写任务声明的阶段。
+- **只写会话编号、时间和条数**，不写命令原文、文件内容或令牌值。会话记录是本机文件，脚本只在本机读。
+- **局限**：判断“借用”靠会话记录里的命令，换一种写法（脚本文件里的循环、别名）会漏，漏掉的显示为“发起者无记录”；第四张表靠文字匹配，不是结构化的阶段字段；工作台与自动化的区分只在有会话引用身份文件时才成立。
+
 ## 原生文字与选项提问
 
 现代固定协议的 `runtime.nativeUserInput` 默认 `false`。仅在独立运行环境验证后，配置为 `true` 可让本 coordinator 拥有的 App Server 子进程以 `-c features.default_mode_request_user_input=true` 启动；该开关不写用户全局配置、不将任务切到 Plan，也不改变 full/never 或业务授权。0.154 不支持且启动前拒绝该组合。当前 0.164、0.166 alpha.5.1／alpha.6 与 0.167 alpha.3.2 共用已核协议分支；每次升级仍须重新核 schema 和可达性。
