@@ -90,8 +90,15 @@ export class SessionLinePump {
     if (!head || !await this.sessionFree(projectId, sessionId, lead)) return;
     if (await wf.hasOlderQueuedMessage(lead, projectId, sessionId, head.appendedAt)) return;
     const attempt = head.attempt + 1;
-    const result = await wf.execute(lead, { type: "line.begin", projectId, operationId: lineIntentId("begin", head.id, String(attempt), String(head.version)),
-      entryId: head.id, expectedVersion: head.version, ...operations(head.id, attempt, 0), messageId: lineIntentId("message", head.id, String(attempt)) });
+    let result;
+    try {
+      result = await wf.execute(lead, { type: "line.begin", projectId, operationId: lineIntentId("begin", head.id, String(attempt), String(head.version)),
+        entryId: head.id, expectedVersion: head.version, ...operations(head.id, attempt, 0), messageId: lineIntentId("message", head.id, String(attempt)) });
+    } catch (error) {
+      // A held provider starts nothing; nothing was saved, so the head is simply tried again after the release.
+      if ((error as { code?: string }).code === "PROVIDER_HELD") return;
+      throw error;
+    }
     if (result.status === "rejected" && !["VERSION_CONFLICT", "SESSION_BUSY", "LINE_BUSY", "NOT_AT_HEAD"].includes(result.code))
       this.deps.onError(new Error(`session line begin ${result.code}`));
   }
@@ -124,6 +131,8 @@ export class SessionLinePump {
       } catch (error) {
         code = (error as { code?: string }).code ?? "STEP_FAILED"; message = error instanceof Error ? error.message : code;
       }
+      // A held provider is a wait, not a failure of the step: no retry is written and the entry is not suspended.
+      if (code === "PROVIDER_HELD") return { kind: "wait" };
       return transient.has(code) ? this.retry(projectId, entry, lead) : this.suspend(projectId, entry, lead, code, message);
     };
     const task = (await wf.getTask(lead, projectId, entry.taskId)).task;

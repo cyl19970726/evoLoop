@@ -92,3 +92,22 @@ test("init observation keeps MCP server names so an unconfigured server is visib
   assert.deepEqual(observed.mcpServers, ["claude.ai Fake Docs", "unrecognized"]);
   assert.deepEqual(observeInit({ mode: "project", plan: null, allowedSkills: null, instructions: null }, {}, "t").mcpServers, []);
 });
+
+test("an API status reported by the SDK is read as a structured fact: 402 and 401 pause-worthy, 429 a rate limit, 403 a rejected request", async () => {
+  const { classifyResult } = await import("../src/classify.ts");
+  const fail = (status: unknown, assistantError: string | null = null) => {
+    const result = classifyResult({ subtype: "error_during_execution", is_error: true, api_error_status: status } as never,
+      { assistantError, interruptRequested: false });
+    return result.status === "failed" ? result.error : null;
+  };
+  assert.equal(fail(402)?.category, "quota_exhausted"); assert.equal(fail(402)?.httpStatus, 402);
+  assert.equal(fail(401)?.category, "authentication_failed");
+  assert.equal(fail(429)?.category, "rate_limited");
+  assert.equal(fail(403)?.category, "provider_rejected");
+  assert.equal(fail(529)?.category, "provider_unavailable");
+  assert.equal(fail("402")?.category, "native_failure", "a status written as text is not a structured status");
+  assert.equal(fail(null)?.category, "native_failure");
+  // The SDK's own class still leads; the status only fills in when the class says nothing specific.
+  assert.equal(fail(402, "unknown_future_class")?.category, "quota_exhausted");
+  assert.equal(fail(500, "rate_limit")?.category, "rate_limited");
+});
