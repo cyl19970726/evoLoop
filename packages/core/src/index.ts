@@ -461,13 +461,16 @@ export class WorkflowService {
           ownerRole?.proposal?.templateKey === "cognition" && principal.permissions.includes("review");
         if (command.useRequired === false && !decisionOnly)
           throw new DomainError("ACCEPTANCE_POLICY", "new business Tasks require current delivery use under their acceptance mode");
+        // Omitted means independent_agent (it is what is stored below), so the rules are judged on that value: only a mode written explicitly
+        // as something else is refused. A decision-only Task stores no mode and is not judged on one.
+        const createdMode = decisionOnly ? command.acceptanceMode : command.acceptanceMode ?? "independent_agent";
         if (command.acceptanceMode === "human_required" && !command.consumer)
           throw new DomainError("ACCEPTANCE_POLICY", "human-required Tasks need the exact human consumer actor");
-        if (command.acceptanceTarget && (command.acceptanceTarget === "human") !== (command.acceptanceMode === "human_required"))
+        if (command.acceptanceTarget && (command.acceptanceTarget === "human") !== (createdMode === "human_required"))
           throw new DomainError("ACCEPTANCE_POLICY", "acceptance target and mode disagree");
         if (command.acceptanceTarget === "named_agent" && !command.consumer)
           throw new DomainError("ACCEPTANCE_POLICY", "named_agent acceptance needs the declared consumer: the business identity that accepts directly");
-        if (command.acceptanceTarget === "named_agent" && command.acceptanceMode !== "independent_agent")
+        if (command.acceptanceTarget === "named_agent" && createdMode !== "independent_agent")
           throw new DomainError("ACCEPTANCE_POLICY", "named_agent acceptance needs the independent_agent mode: the consumer must not be the author");
         await tx.insertTaskProposal({ projectId: command.projectId, taskId: task.id, taskRevisionId: revisionId,
           stageId: command.stageId ?? null, consumer: command.consumer ?? "", useRequired: !decisionOnly,

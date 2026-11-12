@@ -294,7 +294,10 @@ function acceptanceConvention(row: QueryResultRow): NonNullable<LeaderWorkTask["
   return { acceptanceTarget: row.acceptance_target ?? null,
     acceptancePrecondition: row.acceptance_precondition ?? null,
     readiness: row.delivery_id ? acceptanceReadiness(row.acceptance_precondition, row.precondition_marked === true) : null,
-    namedAgent: row.acceptance_target === "named_agent" ? String(row.consumer ?? "") || null : null };
+    namedAgent: row.acceptance_target === "named_agent" ? String(row.consumer ?? "") || null : null,
+    // The mark belongs to the delivery it was made for: a newer delivery has none until it is marked.
+    preconditionMark: row.precondition_mark ? { actorId: String(row.precondition_mark.actorId), evidence: String(row.precondition_mark.evidence),
+      markedAt: new Date(String(row.precondition_mark.markedAt)).toISOString() } : null };
 }
 /** A delivery that is waiting for its precondition is not "ready to accept"; a named-agent Task needs no arrangement. */
 function conventionAction(row: QueryResultRow, phase: LeaderWorkPhase, base: string): string {
@@ -883,6 +886,8 @@ export async function readLeaderWorkTasks(db: Database, projectId: string, query
         proposal.acceptance_target,proposal.acceptance_precondition,
         EXISTS(SELECT 1 FROM task_acceptance_precondition_mark pm WHERE pm.project_id=facts.project_id
           AND pm.delivery_id=facts.delivery_id) AS precondition_marked,
+        (SELECT jsonb_build_object('actorId',pm.actor_id,'evidence',pm.evidence,'markedAt',pm.created_at)
+          FROM task_acceptance_precondition_mark pm WHERE pm.project_id=facts.project_id AND pm.delivery_id=facts.delivery_id) AS precondition_mark,
         (SELECT o.result FROM consumer_observation o WHERE o.project_id=facts.project_id AND o.delivery_id=facts.delivery_id
           AND o.observer=proposal.consumer ORDER BY o.sequence DESC LIMIT 1) AS consumer_own_result,
         stage.stage_id,stage.deliverable AS stage_deliverable,

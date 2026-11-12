@@ -30,7 +30,7 @@ export function briefTask(item: Obj): Obj {
     ...(item.pendingImpactCount ? { pendingImpacts: item.pendingImpactCount } : {}),
     ...(blockedBy.length ? { blockedBy } : {}),
     ...(item.plan ? { plan: pick(obj(item.plan), ["dueAt", "plannedStartAt", "priority"]) } : {}),
-    ...(convention ? { acceptance: pick(convention, ["acceptanceTarget", "acceptancePrecondition", "readiness", "namedAgent"]) } : {}),
+    ...(convention ? { acceptance: pick(convention, ["acceptanceTarget", "acceptancePrecondition", "readiness", "namedAgent", "preconditionMark"]) } : {}),
   };
 }
 
