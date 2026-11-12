@@ -117,6 +117,90 @@ test('the usage ledger records cumulative deltas and starts a replacement thread
   ]);
 });
 
+test('the usage ledger keeps its baseline across Turn boundaries and reconnects',async()=>{
+  const projectId='project',sessionId='session';
+  let previous:NativeObservationRecord|null=null;
+  let sessionThread='thread';
+  const added:unknown[][]=[];
+  const tx={
+    nativeObservation:{
+      get:async()=>previous,
+      upsert:async(record:NativeObservationRecord)=>{previous=record;},
+    },
+    getRuntimeSession:async()=>({projectId,id:sessionId,state:'ready',
+      nativeThreadId:sessionThread,nativeSessionId:'native-one'}),
+    usage:{addUsage:async(...args:unknown[])=>{added.push(args);}},
+  };
+  const service=new NativeObservationService({uow:{
+    transaction:async(_project:string,action:(value:unknown)=>Promise<unknown>)=>action(tx),
+    read:async()=>null,
+  } as never,clock:{now:()=>'2026-11-10T00:00:00.000Z'}});
+  const u=(input:number,output:number)=>({inputTokens:input,cachedInputTokens:0,
+    outputTokens:output,reasoningOutputTokens:0,totalTokens:input+output});
+  let connectionId='c1';
+  const apply=async(method:string,params:unknown,at:string)=>{
+    const next=reduceNativeObservation(previous,event(method,params,{threadId:'thread',connectionId,observedAt:at}));
+    assert.ok(next);
+    previous=await service.apply(next);
+  };
+  await apply('turn/started',started('one'),'2026-11-10T00:00:01.000Z');
+  await apply('thread/tokenUsage/updated',{threadId:'thread',turnId:'one',tokenUsage:{
+    total:u(100,20),last:u(100,20)}},'2026-11-10T00:00:02.000Z');
+  await apply('turn/completed',{threadId:'thread',turn:{id:'one',status:'completed'}},'2026-11-10T00:00:03.000Z');
+  await apply('turn/started',started('two'),'2026-11-10T00:00:04.000Z');
+  await apply('thread/tokenUsage/updated',{threadId:'thread',turnId:'two',tokenUsage:{
+    total:u(150,30),last:u(50,10)}},'2026-11-10T00:00:05.000Z');
+
+  previous={...previous!,freshness:'stale'};
+  connectionId='c2';
+  await apply('turn/started',started('three'),'2026-11-10T00:00:06.000Z');
+  const latest=reduceNativeObservation(previous,event('thread/tokenUsage/updated',{threadId:'thread',turnId:'three',tokenUsage:{
+    total:u(180,40),last:u(30,10)}},{threadId:'thread',connectionId,observedAt:'2026-11-10T00:00:07.000Z'}));
+  assert.ok(latest);
+  previous=await service.apply(latest);
+  previous=await service.apply(latest);
+  previous=await service.apply({...latest,observedAt:'2026-11-10T00:00:08.000Z'});
+  assert.deepEqual(added.map(value=>value.slice(3)),[
+    [{inputTokens:100,outputTokens:20,cachedInputTokens:0,costUsd:0,costReported:false}],
+    [{inputTokens:50,outputTokens:10,cachedInputTokens:0,costUsd:0,costReported:false}],
+    [{inputTokens:30,outputTokens:10,cachedInputTokens:0,costUsd:0,costReported:false}],
+  ]);
+});
+
+test('an existing observation without a baseline and incremental-only events record last once',async()=>{
+  const projectId='project',sessionId='session';
+  let previous:NativeObservationRecord|null=null;
+  const added:unknown[][]=[];
+  const tx={
+    nativeObservation:{
+      get:async()=>previous,
+      upsert:async(record:NativeObservationRecord)=>{previous=record;},
+    },
+    getRuntimeSession:async()=>({projectId,id:sessionId,state:'ready',
+      nativeThreadId:'thread',nativeSessionId:'native-one'}),
+    usage:{addUsage:async(...args:unknown[])=>{added.push(args);}},
+  };
+  const service=new NativeObservationService({uow:{
+    transaction:async(_project:string,action:(value:unknown)=>Promise<unknown>)=>action(tx),
+    read:async()=>null,
+  } as never,clock:{now:()=>'2026-11-10T00:00:00.000Z'}});
+  const u=(input:number,output:number)=>({inputTokens:input,cachedInputTokens:0,
+    outputTokens:output,reasoningOutputTokens:0,totalTokens:input+output});
+  let row=reduceNativeObservation(null,event('turn/started',started('one')))!;
+  previous=await service.apply(row);
+  row=reduceNativeObservation(previous,event('thread/tokenUsage/updated',{threadId:'thread',turnId:'one',tokenUsage:{
+    total:u(1000,200),last:u(25,5)}},{threadId:'thread',observedAt:'2026-11-10T00:00:01.000Z'}))!;
+  previous=await service.apply(row);
+  previous=await service.apply(row);
+  row=reduceNativeObservation(previous,event('thread/tokenUsage/updated',{threadId:'thread',turnId:'one',tokenUsage:{
+    total:null,last:u(30,7)}},{threadId:'thread',observedAt:'2026-11-10T00:00:02.000Z'}))!;
+  previous=await service.apply(row);
+  assert.deepEqual(added.map(value=>value.slice(3)),[
+    [{inputTokens:25,outputTokens:5,cachedInputTokens:0,costUsd:0,costReported:false}],
+    [{inputTokens:30,outputTokens:7,cachedInputTokens:0,costUsd:0,costReported:false}],
+  ]);
+});
+
 test('per-Turn usage is the Thread total difference from before the Turn\'s first request',()=>{
   const u=(input:number,output:number,reasoning:number)=>({inputTokens:input,cachedInputTokens:0,outputTokens:output,reasoningOutputTokens:reasoning,totalTokens:input+output});
   let row=reduce(null,'turn/started',started('one'))!;
