@@ -101,7 +101,7 @@ export interface RuntimeRecordEvent {
   projectId: string; id: string; runId: string | null; sessionId: string | null;
   kind: "session.reserved" | "session.creating" | "session.bound" | "session.unknown" | "session.closeRequested" | "session.archiveAttempted" | "session.closed" |
     "run.requested" | "run.dispatching" | "run.dispatchWithdrawn" | "run.preflightRejected" | "run.dispatchRejected" | "run.bound" | "run.status" | "run.unknown" |
-    "run.reviewed" | "message.preTurnReviewed" | "run.reconciled" | "run.interruptRequested" | "run.interruptResult" | "run.stopRequested" |
+    "turn.effortObserved" | "run.reviewed" | "message.preTurnReviewed" | "run.reconciled" | "run.interruptRequested" | "run.interruptResult" | "run.stopRequested" |
     "session.executionProfile.activationStarted" | "session.executionProfile.active" |
     "session.executionProfile.unknown" | "session.executionProfile.rejected" |
     "runtime.approvalDeclined" | "native.childDiagnostic" | "handoff.received" | "handoff.read" | "handoff.adopted" | "handoff.effect";
@@ -166,6 +166,8 @@ export interface RuntimeTurn {
   error?: RuntimeTurnFailure;
   /** Provider-reported usage for this Turn when the provider reports it per Turn. */
   usage?: RuntimeUsage | null;
+  /** Effort the Thread reported right after turn/start, when the Run carried one; null when it could not be read back. */
+  observedReasoningEffort?: string | null;
   /** Provider-reported cost in USD for this Turn; absent when the provider reports none. */
   costUsd?: number | null;
   /** What the native runtime reported loading for this Turn; absent when the adapter observes none. */

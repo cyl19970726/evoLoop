@@ -81,7 +81,7 @@ export class PgSessionRecovery implements SessionRecoveryTransaction {
     const r=await this.client.query('SELECT * FROM session_recovery_decision WHERE project_id=$1 AND session_id=$2 ORDER BY created_at DESC,decision_id DESC LIMIT $3',[this.projectId,sessionId,limit]);
     return r.rows.map(decisionOf);
   }
-  async adoptExecutionProfile(revision:ExecutionProfileRevision,expectedSessionVersion:number):Promise<void>{
+  async adoptExecutionProfile(revision:ExecutionProfileRevision,expectedSessionVersion:number,options?:{appliesNextTurn?:boolean}):Promise<void>{
     this.scope(revision.projectId);
     const gate=await this.lockRecoveryGate(revision.sessionId);
     if(!['open','blocked'].includes(gate.phase))throw new DomainError('RECOVERY_BLOCKED','Session recovery is already in progress');
@@ -118,9 +118,13 @@ export class PgSessionRecovery implements SessionRecoveryTransaction {
       [this.projectId,revision.sessionId,revision.revisionId,revision.version,revision.previousRevisionId,revision.model,
         revision.reasoningEffort??null,revision.sandbox,revision.approvalPolicy,revision.cwd,revision.authorizationScope,revision.provenance,
         revision.operationId,revision.actorId,revision.reason,revision.evidenceRef,revision.createdAt]);
-    const head=await this.client.query(`UPDATE session_execution_profile SET revision_id=$3,activation_state='pending',activation_operation_id=NULL,
-      attempted_at=NULL,activation_evidence=NULL WHERE project_id=$1 AND session_id=$2 AND revision_id=$4`,
-      [this.projectId,revision.sessionId,revision.revisionId,before.revisionId]);
+    // An effort-only change the runtime cannot activate natively is active at once; every later turn/start carries it.
+    const head=await this.client.query(`UPDATE session_execution_profile SET revision_id=$3,
+      activation_state=CASE WHEN $5::boolean THEN 'active' ELSE 'pending' END,
+      active_revision_id=CASE WHEN $5::boolean THEN $3::uuid ELSE active_revision_id END,activation_operation_id=NULL,
+      attempted_at=NULL,activation_evidence=CASE WHEN $5::boolean THEN 'Applied with the next turn/start; the runtime has no thread/settings/update' END
+      WHERE project_id=$1 AND session_id=$2 AND revision_id=$4`,
+      [this.projectId,revision.sessionId,revision.revisionId,before.revisionId,options?.appliesNextTurn===true]);
     if(!head.rowCount)throw conflict('Execution profile changed');
     const policyChanged=before.sandbox!==revision.sandbox||before.approvalPolicy!==revision.approvalPolicy;
     const updated=await this.client.query(`UPDATE runtime_session SET

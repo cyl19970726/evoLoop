@@ -160,6 +160,8 @@ const clock = { now: () => new Date().toISOString() };
 const ids = { next: randomUUID };
 const hasher = { hash: (value: string) => createHash("sha256").update(value, "utf8").digest("hex") };
 const usage = new UsageService({ uow, clock });
+// The runner is built after the service; the recovery authority asks it, once it exists, how effort reaches the runtime.
+const lateRunner: { current: { effortAppliesNextTurn(session: RuntimeSessionRecord): boolean; allowedReasoningEfforts(session: RuntimeSessionRecord): readonly string[] | null } | null } = { current: null };
 const service = new WorkflowService({
   uow, clock, ids,
   hasher,
@@ -171,8 +173,10 @@ const service = new WorkflowService({
     return hasTaskTimingGrant(current, projectId, actorId, roleId, scopeId) &&
       await currentProjectWriter(projectId, actorId);
   },
-  recoveryAuthority: staticRecoveryAuthority(
+  recoveryAuthority: { ...staticRecoveryAuthority(
     () => loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE), currentIdentity),
+    effortAppliesNextTurn: (session: RuntimeSessionRecord) => lateRunner.current?.effortAppliesNextTurn(session) === true,
+    allowedEfforts: (session: RuntimeSessionRecord) => lateRunner.current?.allowedReasoningEfforts(session) ?? null },
   // The notice packet's own steps (build, sent, observe) belong to the configured notice sender, not to the Leader or any reviewer.
   leaderNoticeServiceActor: async projectId => {
     const target = (await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE)).leaderResultNotices?.targets.find(value => value.projectId === projectId);
@@ -558,6 +562,7 @@ const runner = runtimeFactory ? new RuntimeRunner({ runtimeFactory, workflow: se
   canSettleOwned: (session,run) => dynamicAdmission?.canSettleOwned(session,run) ?? Promise.resolve(false),
   ownedCwd: async (_projectId,cwd) => { try { return await realpath(cwd) === cwd; } catch { return false; } },
   }) : null;
+lateRunner.current = runner;
 const scheduling = new SchedulingPump({ store: new PgSchedulingStore(pool), taskTiming: new PgTaskTimingStore(pool), canWrite: lease.canWrite,
   credentials: () => credentials, grants: () => integrations.scheduling?.grants ?? [],
   taskTimingGrants: async () => {
