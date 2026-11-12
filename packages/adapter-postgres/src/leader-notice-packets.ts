@@ -36,8 +36,8 @@ const CANDIDATES = `
 export class PgLeaderNoticePackets implements LeaderNoticePacketTransaction {
   constructor(private readonly client: PoolClient, private readonly projectId: string) {}
   async listLeaderNoticeCandidates(limit: number, offset = 0): Promise<LeaderNoticeCandidate[]> {
-    const r = await this.client.query(`${CANDIDATES} ORDER BY COALESCE(i.eligible_at,n.occurred_at), n.notice_id LIMIT $2 OFFSET $3`, [this.projectId, limit, offset]);
-    return r.rows.map(row => ({ noticeId: row.notice_id, kind: row.kind, sourceEventId: row.source_event_id, taskId: row.task_id,
+    const r = await this.client.query(`${CANDIDATES} ORDER BY (n.level='immediate') DESC, COALESCE(i.eligible_at,n.occurred_at), n.notice_id LIMIT $2 OFFSET $3`, [this.projectId, limit, offset]);
+    return r.rows.map(row => ({ noticeId: row.notice_id, kind: row.kind, level: row.level === "immediate" ? "immediate" as const : "digest" as const, sourceEventId: row.source_event_id, taskId: row.task_id,
       taskRevisionId: row.task_revision_id, sourceRef: row.source_ref, occurredAt: iso(row.occurred_at)!, sourceActorId: row.source_actor_id,
       sourceSessionId: row.source_session_id, state: row.state, readBefore: row.item_read_before === true, version: row.item_version ?? 0,
       waitedSeconds: Number(row.waited_seconds) }));

@@ -60,6 +60,11 @@ const detail = (f: Fixture) => ({
     : f.observer ? [observation(f, f.observer, f.result!, at(6))] : [],
 });
 const all = Object.values(fixtures);
+// Budget and context alerts for the person (W5): the day's budget at its warning line and one Session that must hand off.
+const usageOverview = { projectId, from: "2026-11-12", to: "2026-11-12", timeZone: "UTC", observedAt: stamp, daily: [],
+  budget: { configured: true, state: "warning", limitKind: "input_tokens", limit: 100, used: 90, ratio: 0.9, warningRatio: 0.8, pauseOrdinaryTurns: true, costComplete: true, reason: "今日用量已达到上限的 90%，请留意。" },
+  sessions: [{ sessionId: id(721), roleId: "r", nativeThreadId: null, recorded: true, days: [], context: { configured: true, state: "handoff_required", inputTokens: 95, limit: 100, ratio: 0.95, warningRatio: 0.8,
+    pauseOrdinaryTurns: true, observedAt: stamp, reason: "这个智能体的上下文已满，需要交接后才能继续普通消息。" } }] };
 // 待我决定: one item of each kind that opens somewhere, and one whose id is missing (a link must never fall back to a list page).
 const decisionItems = [
   { kind: "role_proposal", id: id(701), title: "新增验收职责", detail: "提案", proposedBy: "lead", at: stamp, roleId: id(711), version: 1 },
@@ -103,6 +108,7 @@ test("待我处理 lists what waits for my use and counts every part, or says it
     else if (path === `${root}/impacts`) { if (!fail("impacts")) value = [{ projectId, id: id(31), taskId: taskId(fixtures.used), taskRevisionId: revision(fixtures.used),
       documentId: id(32), fromRevisionId: id(33), toRevisionId: id(34), state: "pending", decisionId: null, createdAt: stamp }]; }
     else if (path === `${root}/decisions-for-me`) { if (!fail("decisions")) value = { items: failing.has("decisionItems") ? decisionItems : [], observedAt: stamp }; }
+    else if (path === `${root}/runtime/usage`) { if (failing.has("usageAlerts")) value = usageOverview; }
     else if (path === `${root}/work-management/index`) {
       const cursor = url.searchParams.get("cursor");
       indexCursors.push(cursor);
@@ -282,6 +288,21 @@ test("待我处理 lists what waits for my use and counts every part, or says it
   assert.equal(await decisions.getByRole("link", { name: "去决定" }).count(), 3);
   await fixture("recover?what=decisionItems");
   await decide.close();
+
+  // 用量与上下文告警: the budget and a full context are listed for the person, with a way to the Session, and the count includes them.
+  await fixture("fail?what=usageAlerts");
+  const alerted = await open(`/p/${projectId}/inbox`);
+  const alertList = alerted.getByRole("list", { name: "用量与上下文告警" });
+  await alertList.waitFor({ timeout: 20000 });
+  assert.equal(await alertList.getByRole("listitem").count(), 2);
+  await alertList.getByText("今日用量已达到上限的 90%").waitFor();
+  await alertList.getByText("需要交接").waitFor();
+  assert.equal(await alertList.locator('[data-alert-severity="limit"]').count(), 1);
+  assert.equal(new URL((await alertList.getByRole("link", { name: "打开这个智能体" }).getAttribute("href"))!, "http://x").searchParams.get("session"), `owned:${id(721)}`);
+  await alerted.getByText("2 项").first().waitFor();
+  assert.ok(Number(await badge(alerted)) >= 2, "the 待我处理 count includes the two alerts");
+  await fixture("recover?what=usageAlerts");
+  await alerted.close();
 
   assert.deepEqual(errors, []);
 });
