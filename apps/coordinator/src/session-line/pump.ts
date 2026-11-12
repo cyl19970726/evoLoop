@@ -38,8 +38,11 @@ export interface SessionLinePumpDeps {
   canWrite(): boolean;
   pollIntervalMs: number;
   onError(error: unknown): void;
-  /** The Session's business identity (the recipient of its assignments), or null when none is configured. */
-  recipientActorId(projectId: string, sessionId: string): Promise<string | null>;
+  /**
+   * The Session's own business identity (the recipient of its assignments), null when none is configured, or `{ unresolved }` with
+   * the reason when it cannot be told from the configuration (for example several Sessions share its Role).
+   */
+  recipientActorId(projectId: string, sessionId: string): Promise<string | null | { unresolved: string }>;
   messageBusy?(projectId: string, sessionId: string): Promise<boolean>;
   /** How long the Session may take to answer the execution confirmation before the entry is suspended. */
   confirmationTimeoutMs?: number;
@@ -181,10 +184,14 @@ export class SessionLinePump {
     const detail = await wf.getTask(lead, projectId, entry.taskId);
     const task = detail.task;
     const recipient = async () => this.deps.recipientActorId(projectId, entry.sessionId);
-    const noRecipient = () => this.suspend(projectId, entry, lead, "RECIPIENT_UNAVAILABLE", "the Session has no configured business identity");
+    const noRecipient = (reason = `Session ${entry.sessionId} has no configured business identity`) =>
+      this.suspend(projectId, entry, lead, "RECIPIENT_UNAVAILABLE", reason);
     const set = async (opId: string, reason: string, current: typeof task): Promise<Outcome> => {
-      const actor = await recipient();
-      if (!actor) return noRecipient();
+      const found = await recipient();
+      // Unresolved: the entry is suspended with the reason before any assignment, confirmation request or Run exists.
+      if (!found) return noRecipient();
+      if (typeof found === "object") return noRecipient(found.unresolved);
+      const actor = found;
       const assignment = await wf.getTaskAssignment(lead, projectId, entry.taskId);
       return step({ type: "task.assignment.set", projectId, operationId: opId, taskId: entry.taskId, expectedTaskVersion: current.version,
         target: { kind: "owned", sessionId: entry.sessionId }, recipientActorId: actor, expectedVersion: assignment?.version ?? 0, reason });

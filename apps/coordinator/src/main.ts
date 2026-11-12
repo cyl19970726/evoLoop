@@ -88,6 +88,7 @@ import { SessionTimelineService } from "./session-timeline/index.js";
 import { OrdinaryRunSubmissionService, leaseCheckedUnitOfWork } from "./ordinary-run-submission/service.js";
 import { createOrdinaryRunSealer } from "./ordinary-run-submission/seal.js";
 import { OrdinaryRunSealPump } from "./ordinary-run-submission/pump.js";
+import { resolveLineRecipient } from "./session-line/recipient.js";
 import { throttledLog } from "./log-throttle.js";
 import { materialCliRecipientMatches, requireOrdinaryRecipient, requireReservableRecipient } from "./runtime/recipient-preflight.js";
 import { createMessageExecutionReader } from "./session-messages/execution-capability.js";
@@ -810,9 +811,15 @@ const sessionLinePump = new SessionLinePump({workflow:service,canWrite:lease.can
   enabled:async()=>!!(await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE)).runtime?.enabled,
   pollIntervalMs:integrations.residentQueue?.pollIntervalMs??2000,
   recipientActorId:async(projectId,sessionId)=>{
-    const role=(await pool.query("SELECT role_id FROM runtime_session WHERE project_id=$1 AND session_id=$2",[projectId,sessionId])).rows[0]?.role_id;
-    const binding=role&&(await currentQueueConfiguration())?.roleActors.find(x=>x.projectId===projectId&&x.roleId===role);
-    return binding&&await currentProjectWriter(projectId,binding.actorId)?binding.actorId:null;
+    // The Session's own signing identity, never the Role's guess: Sessions of one Role sign as different identities.
+    const row=(await pool.query(`SELECT s.role_id,s.actor_id,(SELECT count(*)::int FROM runtime_session o WHERE o.project_id=s.project_id
+      AND o.role_id=s.role_id AND o.state<>'closed') AS live FROM runtime_session s WHERE s.project_id=$1 AND s.session_id=$2`,[projectId,sessionId])).rows[0];
+    if(!row)return null;
+    const configured=await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE);
+    const found=await resolveLineRecipient({projectId,id:sessionId,roleId:row.role_id,actorId:row.actor_id},
+      {materialCli:configured.runtime?.enabled?configured.runtime.materialCli:[],roleActors:configured.residentQueue?.enabled?configured.residentQueue.roleActors:[]},
+      row.live,currentProjectWriter);
+    return "actorId" in found?found.actorId:found;
   },
   onError:()=>console.error("Session line tick failed; inspect the persisted line entry and its Run before retrying.")});
 const ordinarySealPump = new OrdinaryRunSealPump({
