@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { WorkspaceEntry, WorkspaceMessage, WorkspaceTool } from "@evoloop/contracts/session-timeline";
 import { mergeWorkspaceEntries, mergeWorkspaceTurns, workspaceEntryKey, workspaceReadingGroups, workspaceReadingOrder } from "../src/features/sessions/workspaceTimelineModel";
-import { pinnedToolIds } from "../src/features/sessions/conversationPresentation";
+import { pinnedToolIds, turnLabel, turnReasoningTokensText } from "../src/features/sessions/conversationPresentation";
 
 const stamp = "2026-11-01T12:00:00.000Z";
 function message(id: string, role: WorkspaceMessage["role"], overrides: Partial<WorkspaceMessage> = {}): WorkspaceMessage {
@@ -202,4 +202,23 @@ test("partial turn boundaries retain known times and do not reopen terminal turn
   assert.equal(merged[0]?.state, "completed");
   assert.equal(merged[0]?.startedAt, stamp);
   assert.equal(merged[0]?.completedAt, completed.completedAt);
+});
+
+test("each Turn's reasoning folds into one group at its first entry, in native order, never across Turns", () => {
+  const r = (item: string, turnId: string): WorkspaceEntry => ({ id: `native:t:${turnId}:${item}`, turnId, nativeItemId: item, nativeKind: "reasoning",
+    author: { kind: "session", id: "s", label: "Agent" }, origin: null, occurredAt: null, observedAt: "now", freshness: "persisted", truncated: false,
+    kind: "reasoning", source: "summary", readable: true, body: item, unavailableReason: null, state: "completed" });
+  const tool = (item: string, turnId: string): WorkspaceEntry => ({ id: `native:t:${turnId}:${item}`, turnId, nativeItemId: item, nativeKind: "commandExecution",
+    author: { kind: "session", id: "s", label: "Agent" }, origin: null, occurredAt: null, observedAt: "now", freshness: "persisted", truncated: false,
+    kind: "tool", name: "Command", summary: "Command", state: "completed", durationMs: null, exitCode: null, detailAvailable: false, detailReason: null });
+  const groups = workspaceReadingGroups([r("a1", "A"), tool("t1", "A"), r("a2", "A"), tool("t2", "A"), r("b1", "B"), r("a3", "A")]);
+  assert.deepEqual(groups.map(group => group.kind === "reasoning" ? `reasoning:${group.turnId}:${group.entries.map(e => e.nativeItemId).join(",")}`
+    : group.kind === "tools" ? `tools:${group.entries.map(e => e.nativeItemId).join(",")}` : "entry"),
+  ["reasoning:A:a1,a2,a3", "tools:t1,t2", "reasoning:B:b1"]);
+  assert.equal(turnReasoningTokensText(null), "推理 token：原生未报告");
+  assert.equal(turnReasoningTokensText({ outputTokens: 1200, reasoningOutputTokens: 300, source: "codex-token-usage" }), "推理 token 300 / 输出 1,200（Codex 用量事件）");
+  assert.equal(turnReasoningTokensText({ outputTokens: null, reasoningOutputTokens: null, source: "claude-result" }), "推理 token 原生未报告（Claude 结果用量）");
+  assert.match(turnLabel("019a2b3c-dead-beef", null), /^回合 019a2b3c$/);
+  assert.equal(turnReasoningTokensText({ outputTokens: null, reasoningOutputTokens: null, source: "codex-token-usage", complete: false }),
+    "推理 token 未知（没有观察到这一轮的起点，读数不完整）");
 });

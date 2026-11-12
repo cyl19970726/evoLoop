@@ -109,6 +109,21 @@ function turn(message) {
   }
   if (mode === "budget") { total += 0.5; persist(); result({ subtype: "error_max_budget_usd", is_error: true, errors: ["budget reached in /private/work"] }); return; }
   if (mode === "context") { result({ subtype: "error_during_execution", is_error: true, terminal_reason: "prompt_too_long", errors: ["Prompt is too long"] }); return; }
+  if (mode === "thinking") {
+    // Like a real Turn with summarized thinking: readable thinking, an omitted (empty) block and a redacted one.
+    // The cumulative thinking total grows by 40 per Turn and is reported per model, like the CLI's modelUsage.
+    assistant([{ type: "thinking", thinking: "Plan: read the task first.", signature: "sig-private" }]);
+    assistant([{ type: "text", text: "Reading the task" }]);
+    assistant([{ type: "thinking", thinking: "", signature: "sig-omitted" }, { type: "redacted_thinking", data: "encrypted-private" }]);
+    assistant([{ type: "tool_use", id: `toolu_${randomUUID()}`, name: "Read", input: { file_path: "/private/secret.txt" } }]);
+    total += 0.01;
+    persist();
+    const thinkingTokens = Math.round(total * 100) * 40;
+    result({ subtype: "success", is_error: false, result: `done: ${text.slice(0, 60)}`, terminal_reason: "completed",
+      modelUsage: { "claude-fake-1": { inputTokens: 10, outputTokens: 5 + thinkingTokens, thinkingTokens, cacheReadInputTokens: 0,
+        cacheCreationInputTokens: 0, webSearchRequests: 0, costUSD: total, contextWindow: 200000, maxOutputTokens: 32000 } } });
+    return;
+  }
   assistant([{ type: "text", text: "Reading the task" }]);
   assistant([{ type: "tool_use", id: `toolu_${randomUUID()}`, name: "Read", input: { file_path: "/private/secret.txt" } }]);
   total += 0.01;

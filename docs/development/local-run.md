@@ -304,4 +304,4 @@ Default 下请求为非阻塞且仅 root Agent 可调用；子 Agent 与通用 M
 
 迁移 `038_native_observation` 新建独立当前投影，每个 Session 一行；不回填推测的历史进度或用量，不改 Task、Run 和既有原始事件。原生进度不依赖 `runtime.nativeUserInput` 开关；只接收本服务已登记 Thread 的白名单事件，按现有 runner 周期合并持久化，再由当前 Session snapshot／变化游标读取。重启使旧连接投影过期，缺乏新的事实时不会显示为当前运行。
 
-包含工具、计划与 diff 的有界预览和原生累计 Token；不保存 reasoning、完整 delta 或费用猜测。观察刷新不进入业务活动历史，最终原件、Run 终态与交付验收继续沿原流程核对。离线真实 Token 样本、隔离 PostgreSQL、浏览器回归和部署后的实际查看分别留证。
+包含工具、计划与 diff 的有界预览、原生累计 Token 与最近 24 个 Turn 的逐轮读数；不保存 reasoning、完整 delta 或费用猜测。推理内容按需从原生历史读出，不入此投影。观察刷新不进入业务活动历史，最终原件、Run 终态与交付验收继续沿原流程核对。离线真实 Token 样本、隔离 PostgreSQL、浏览器回归和部署后的实际查看分别留证。

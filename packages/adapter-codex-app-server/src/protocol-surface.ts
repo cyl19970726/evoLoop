@@ -42,7 +42,7 @@ export const USED_REQUESTS: Readonly<Record<string, readonly string[]>> = {
   "thread/items/list": ["threadId", "turnId", "limit", "cursor"],
   "thread/archive": ["threadId"],
   "thread/list": ["archived", "cwd", "useStateDbOnly", "limit", "cursor"],
-  "turn/start": ["threadId", "input", "clientUserMessageId", "model", "effort", "cwd", "sandboxPolicy", "approvalPolicy"],
+  "turn/start": ["threadId", "input", "clientUserMessageId", "model", "effort", "summary", "cwd", "sandboxPolicy", "approvalPolicy"],
   "turn/interrupt": ["threadId", "turnId"],
   "model/list": ["limit", "cursor"],
 };
