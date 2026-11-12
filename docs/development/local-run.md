@@ -224,6 +224,15 @@ node scripts/restore.mjs --from /absolute/private-backups/evoloop-20261020 \
 
 随后按后端流程导入 Wiki，核对修订、来源、Blob 原文哈希、Task/操作回执及待对账运行。全部核实前不要开启 Wiki 或 runtime 写入。跨数据库与文件目录的恢复并非单个事务；若数据库已恢复而文件改名失败，保留现场，用新的空库重做，不在半恢复库上盲目重试。脚本拒绝非空数据库、已有目标目录和仓库内正文路径。
 
+### 线上版本：`/api/version` 与 `build-info.json`
+
+总览顶部的“线上当前版本”读公开只读的 `GET /api/version`（与 `/health` 一样不需要令牌），只返回 `{commit, builtAt, startedAt}`：
+
+- `commit`、`builtAt` 由服务端读**已部署目录根部的 `build-info.json`**（`{"commit": "<7–40 位十六进制>", "builtAt": "<ISO 时间>"}`）。文件缺失、不是合法 JSON 或字段不合规时，两者都是 `null`，页面写“版本未读到”，不回退旧值。
+- `startedAt` 是服务进程启动时间，页面叫“启动时间”，不是发布时间。
+- 发布脚本写 `build-info.json` 不在这次改动里：在发布流程写入之前，线上页面如实显示“版本未读到”。
+- `/milestones` 读已部署的 `docs/roadmap.md` 阶段表；阶段与路线图阶段的关联存在 `stage_phase_key`（迁移 101），用 `stage.phaseKey.set`（review 权限）设置；未关联显示“未登记”。
+
 ### 发布脚本
 
 `npm run release -- plan --id ID --ref GIT_REF` 只打印计划；`run ... --execute` 才执行；`rollback --id ID --execute` 把代码切回上一个版本。`--from STEP` 续跑要求该发布记录里前面的步骤都已成功且没有被撤销，`--only A,B` 只跑所列步骤，步骤名拼错直接报错。`--allow-no-previous` 仅用于第一次发布：当前链接不存在时没有可恢复的旧版本，没有该参数一律拒绝。`--allow-off-main` 仅用于演练：发布提交必须已在远端主分支（默认 `origin/main`，可用配置 `remote`、`baseBranch` 改）上，预检会取远端核对，不在就拒绝。不带 `--from` 重跑时，`prepare` 遇到已存在的版本目录，只在它正好是要发布的提交时复用，否则报错。

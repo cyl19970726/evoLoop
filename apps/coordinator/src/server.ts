@@ -42,6 +42,7 @@ import type { ScheduleGrant, SchedulingPump } from "./scheduling/pump.js";
 import { registerKnowledgeRoutes, type KnowledgeRouteOptions } from "./knowledge/routes.js";
 import { registerWorkManagementRoutes } from "./work-management/routes.js";
 import { registerAcceptanceRelayRoutes } from "./acceptance-relay/routes.js";
+import { registerMilestoneRoutes } from "./milestones/index.js";
 import { registerDrainRoutes } from "./drain/routes.js";
 import type { DrainControl } from "./drain/service.js";
 import type { AcceptanceRelayService } from "./acceptance-relay/service.js";
@@ -128,6 +129,8 @@ export async function buildServer(options: {
   workStatuses?: WorkStatusesReader;
   workIndex?: LeaderWorkIndexReader;
   acceptanceRelay?: AcceptanceRelayService;
+  /** The deployed checkout: serves GET /api/version (public) and GET /api/projects/:id/milestones from its build-info.json and docs/roadmap.md. */
+  milestones?: { repoRoot: string; startedAt?: string };
   /** Drain mode (docs/architecture/deployment.md §2): the control and who counts as an instance maintainer. */
   drain?: { control: DrainControl; isMaintainer(principal: Principal): Promise<boolean> };
   leaderNotices?: LeaderNoticeReader;
@@ -151,6 +154,8 @@ export async function buildServer(options: {
     reply.header("Referrer-Policy", "no-referrer");
     reply.header("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' blob:; connect-src 'self'; img-src 'self' data: blob:; font-src 'self' data:; media-src 'self' data:; frame-src 'self' blob:; object-src 'none'; frame-ancestors 'none'; base-uri 'none'");
     if (!request.url.startsWith("/api/")) return;
+    // The version is as public as /health: the commit, the build time and the start time only.
+    if (options.milestones && request.method === "GET" && request.url.split("?")[0] === "/api/version") return;
     request.principal = authenticate(request.headers.authorization, credentials);
     if (!request.principal && options.workers) {
       request.workerIdentity = await options.workers.authenticate(request.headers.authorization);
@@ -800,6 +805,7 @@ export async function buildServer(options: {
   await registerWorkManagementRoutes(app, options.service, options.workIndex);
   if (options.drain) registerDrainRoutes(app, options.drain);
   if (options.acceptanceRelay) registerAcceptanceRelayRoutes(app, options.service, options.acceptanceRelay, options.workIndex);
+  if (options.milestones) registerMilestoneRoutes(app, { service: options.service, ...options.milestones });
   if (options.leaderNotices) registerLeaderNoticeRoutes(app, options.service, options.leaderNotices);
   if (options.taskAttentionPool) registerTaskAttentionRoutes(app, options.service, options.taskAttentionPool);
   registerEvaluationRoutes(app, options.service, options.readEvaluationPacket);

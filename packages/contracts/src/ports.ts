@@ -60,6 +60,8 @@ export interface Reader extends ReferenceReader, RoleReader, SchedulingReader, D
   listGoalRevisions(goalId: string): Promise<GoalRevision[]>;
   getStage(id: string): Promise<Stage | null>;
   listStages(goalId?: string): Promise<Stage[]>;
+  /** Stages linked to a roadmap phase with their latest review. */
+  listStagePhaseLinks?(): Promise<import("./milestones.js").StagePhaseLink[]>;
   listStageRevisions(stageId: string): Promise<StageRevision[]>;
   listStageReviews(stageId: string): Promise<StageReview[]>;
   /** Latest policy at or before the selected revision; omit revision for the current Task. */
@@ -159,6 +161,8 @@ export interface Transaction extends Reader, Omit<RoleTransaction, "getTask" | "
   updateDiscussion(value: DiscussionRecord, expectedVersion: number, event: DiscussionEvent): Promise<void>;
   insertRuntimeSession(session: RuntimeSessionRecord): Promise<void>;
   updateRuntimeSession(session: RuntimeSessionRecord, expectedVersion: number): Promise<void>;
+  /** Link a stage to a roadmap phase (or clear the link with null). One link per stage; no version bump of the stage. */
+  setStagePhaseKey?(link: { stageId: string; phaseKey: string | null; actorId: string; reason: string; at: string }): Promise<void>;
   /** Telemetry: the exact model a Turn of this Session reported. Updates in place without a version bump; never configuration. */
   recordSessionActualModel?(sessionId: string, model: string, at: string): Promise<void>;
   insertRuntimeRun(run: RuntimeRunRecord): Promise<void>;

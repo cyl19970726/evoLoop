@@ -120,12 +120,12 @@ test("external agents are named without the short identifier, same-role ones sta
   assert.doesNotMatch(`${signalA}${signalB}`, /最近活动/, "an external agent records no activity time, so none is claimed");
   assert.doesNotMatch(await directory.locator(`.session-nav-item[href*="${ownedId}"]`).innerText(), /标识/, "a name nobody shares needs no identifier");
 
-  // 环境与用量: not applicable, and still so after the page has had time to read.
+  // 执行配置: not applicable, and still so after the page has had time to read.
   if (await page.getByRole("button", { name: "展开右栏" }).count()) await page.getByRole("button", { name: "展开右栏" }).click();
   const panel = page.locator(".session-panel");
   await panel.getByText("外部接入不提供", { exact: true }).first().waitFor();
   await page.waitForTimeout(1500);
-  const environment = await panel.locator('section[aria-label="环境与用量"]').innerText();
+  const environment = await panel.locator('section[aria-label="执行配置"]').innerText();
   assert.match(environment, /目标模型\s*外部接入不提供[\s\S]*思考强度\s*外部接入不提供[\s\S]*执行权限\s*外部接入不提供/, environment);
   assert.doesNotMatch(await panel.innerText(), /正在读取/, "nothing in the right column waits on a read that never runs");
   assert.deepEqual(recoveryReads, [], "an external agent's recovery is never read");
