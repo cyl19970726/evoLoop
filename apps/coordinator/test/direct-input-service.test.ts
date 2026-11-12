@@ -212,3 +212,28 @@ test("capability: a held provider offers no idle start, with the reason named", 
     canWrite: () => true, admission: async () => ({ grant, binding }), bindingFor: async () => binding });
   assert.equal((await running.capability(principal, projectId, sessionId)).mode, "steer", "a running Turn can still be added to");
 });
+
+// ---- Task e31f9511: "this kind of Session cannot take an addition" is not "no authorization" ----------------------------------
+const reasonFor = async (options: { midTurnInput: boolean; admission: "granted" | "missing"; canSteer?: boolean; state?: "running" | "idle" }) => {
+  const runtime = { isReady: () => true, capabilitiesFor: () => capabilities(options.midTurnInput, true), registerBinding: async () => {},
+    qualifyConversationThread: async () => ({ available: true, reason: "ok", fingerprint: "f".repeat(64) }),
+    listTurns: async () => ({ data: [{ id: turnId, status: "inProgress" }], nextCursor: null }) } as never;
+  const store = { inspect: async () => ({ state: options.state ?? "running", turnId: options.state === "idle" ? null : turnId, used: 0 }), providerHeld: async () => false } as never;
+  const service = new DirectInputService({ store, runtime: () => runtime, canWrite: () => true, bindingFor: async () => binding,
+    admission: async () => { if (options.admission === "missing") throw new DomainError("DIRECT_GRANT_MISSING", "no grant"); return { grant: { ...grant, canSteer: options.canSteer ?? true }, binding }; } });
+  const result = await service.capability(principal, projectId, sessionId);
+  return result.reasonCode;
+};
+
+test("capability: a running Session whose runtime has no mid-turn input says so, with or without a grant; authorization is named only when it is what is missing", async () => {
+  // Claude-like runtime (no mid-turn input): the runtime's limit wins over every grant state.
+  assert.equal(await reasonFor({ midTurnInput: false, admission: "missing" }), "NATIVE_STEER_UNAVAILABLE", "no grant, but adding one would not help");
+  assert.equal(await reasonFor({ midTurnInput: false, admission: "granted", canSteer: false }), "NATIVE_STEER_UNAVAILABLE", "a grant without steer does not change the runtime's limit");
+  assert.equal(await reasonFor({ midTurnInput: false, admission: "granted", canSteer: true }), "NATIVE_STEER_UNAVAILABLE");
+  // A runtime that can take an addition: now the authorization is what is said.
+  assert.equal(await reasonFor({ midTurnInput: true, admission: "missing" }), "DIRECT_GRANT_MISSING");
+  assert.equal(await reasonFor({ midTurnInput: true, admission: "granted", canSteer: false }), "DIRECT_STEER_DISABLED");
+  assert.equal(await reasonFor({ midTurnInput: true, admission: "granted", canSteer: true }), "READY_TO_STEER");
+  // Idle: nothing to add to, so a missing grant is still a missing grant.
+  assert.equal(await reasonFor({ midTurnInput: false, admission: "missing", state: "idle" }), "DIRECT_GRANT_MISSING");
+});

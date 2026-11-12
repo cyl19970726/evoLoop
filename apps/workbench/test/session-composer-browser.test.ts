@@ -274,7 +274,7 @@ test("the composer sends, adds, queues, stops, lists skills and agents, and says
     // A runtime that cannot take additions: Enter queues for the next turn, and the page says why.
     steer = false;
     await page.getByRole("button", { name: "重新读取", exact: true }).click();
-    await page.getByText("这个智能体的运行时或授权不支持补充到这一轮；Enter 排到下一轮").waitFor({ timeout: 8000 });
+    await page.getByText("这个智能体的即时输入授权不包含补入这一轮，需要在私有配置里为它开启补入；Enter 排到下一轮").waitFor({ timeout: 8000 });
     await box.fill("没法补充时排队");
     await page.getByRole("button", { name: "发送，排到下一轮" }).waitFor();
     const directBefore = directInputs.length;

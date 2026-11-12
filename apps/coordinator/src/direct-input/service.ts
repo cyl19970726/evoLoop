@@ -66,15 +66,26 @@ export class DirectInputService {
     catch{return result(false,null,null,"NATIVE_UNAVAILABLE");}
     let grant:DirectInputGrant,binding:RuntimeBinding;
     try{({grant,binding}=await this.deps.admission(principal,projectId,sessionId));}
-    catch{return result(false,null,null,"DIRECT_GRANT_MISSING");}
+    catch{
+      // Without a grant the reason is still not "no authorization" when the runtime cannot take an addition at all: a Session whose
+      // runtime has no mid-turn input (Claude) running a turn is told so, because adding a grant would not change it.
+      try{
+        const owned=await this.deps.bindingFor(projectId,sessionId);
+        const known=runtime.capabilitiesFor?.(owned)??runtime.capabilities?.();
+        if(known&&!known.delivery.midTurnInput&&(await this.deps.store.inspect(projectId,sessionId,principal.actorId)).state==="running")
+          return result(false,null,null,"NATIVE_STEER_UNAVAILABLE");
+      }catch{/* the runtime facts are unknown: the grant is what the page can say */}
+      return result(false,null,null,"DIRECT_GRANT_MISSING");
+    }
     if(this.lock.isBusy(projectId,sessionId))return result(false,null,null,"SESSION_INPUT_BUSY");
     const capabilities=runtime.capabilitiesFor?.(binding)??runtime.capabilities?.();
     if(!capabilities)return result(false,null,null,"NATIVE_CAPABILITY_UNKNOWN");
     const state=await this.deps.store.inspect(projectId,sessionId,principal.actorId);
     if(state.state==="busy")return result(false,null,null,"SESSION_BUSY");
     if(state.state==="running"){
-      if(!grant.canSteer)return result(false,null,null,"DIRECT_STEER_DISABLED");
+      // What the runtime cannot do comes first: a grant to steer does not make a runtime without mid-turn input steerable.
       if(!capabilities.delivery.midTurnInput)return result(false,null,null,"NATIVE_STEER_UNAVAILABLE");
+      if(!grant.canSteer)return result(false,null,null,"DIRECT_STEER_DISABLED");
       try{
         await runtime.registerBinding(binding);
         const turn=await this.findTurn(runtime,binding,state.turnId!);
