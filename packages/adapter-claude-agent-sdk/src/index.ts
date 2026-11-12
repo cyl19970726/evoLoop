@@ -6,7 +6,7 @@ import { query, type Options, type Query, type SDKAssistantMessage, type SDKResu
 import type { NativeWorkspacePage, NativeWorkspaceReadOptions } from "@evoloop/contracts/session-timeline";
 import type { RuntimeApprovalRequest, RuntimeBinding, RuntimeCapabilities, RuntimeEvent, RuntimeHistoryItem,
   RuntimeModelList, RuntimePage, RuntimePort, RuntimeSessionSpec, RuntimeSkillPlan, RuntimeTurn } from "@evoloop/contracts/runtime";
-import { ownerOf, RuntimeNotSentError, RuntimeProtocolError, RuntimeUnknownError } from "@evoloop/contracts/runtime";
+import { ownerOf, RuntimeLocalBusyError, RuntimeNotSentError, RuntimeProtocolError, RuntimeUnknownError } from "@evoloop/contracts/runtime";
 import type { ExecutionProfileSnapshot } from "@evoloop/contracts/session-recovery";
 import { classifyResult, failure, thinkingTokensOf, turnCost, turnThinking, usageOf, usd, type ObservedResult } from "./classify.js";
 import { readLedgerWorkspace } from "./workspace.js";
@@ -75,6 +75,10 @@ export interface ClaudeAgentSdkAdapterOptions {
    * sends SIGTERM to its process group (the CLI then stops its own tool shells), and SIGKILL after the same bound again.
    */
   exitGraceMs?: number;
+  /**
+   * How many Turns this adapter runs at once across all Sessions (default 4); each Turn is one Claude Code process.
+   * A start past the limit is refused as locally busy, so the caller retries it instead of failing it.
+   */
   maxConcurrentTurns?: number;
   /**
    * The Role's skill plan, resolved before each Turn. Its plugins are loaded as local plugins (MCP discovery off)
@@ -126,6 +130,10 @@ const sameBinding = (a: RuntimeBinding, b: RuntimeBinding): boolean =>
   (["sessionId", "roleId", "projectId", "nativeThreadId", "nativeSessionId", "cwd", "authorizationScope", "owner"] as const).every(key => a[key] === b[key]) &&
   (["actorId", "model", "reasoningEffort", "sandbox", "approvalPolicy", "executionProfileRevisionId"] as const).every(key =>
     (a.resumeProfile?.[key] ?? null) === (b.resumeProfile?.[key] ?? null));
+/** Same session and profile except the effort and the execution profile revision that carries it. */
+const effortRevisionOnly = (a: RuntimeBinding, b: RuntimeBinding): boolean =>
+  (["sessionId", "roleId", "projectId", "nativeThreadId", "nativeSessionId", "cwd", "authorizationScope", "owner"] as const).every(key => a[key] === b[key]) &&
+  (["actorId", "model", "sandbox", "approvalPolicy"] as const).every(key => (a.resumeProfile?.[key] ?? null) === (b.resumeProfile?.[key] ?? null));
 const withTimeout = <T>(promise: Promise<T>, ms: number): Promise<T> => new Promise<T>((resolvePromise, reject) => {
   const timer = setTimeout(() => reject(new Error("timed out")), ms);
   promise.then(value => { clearTimeout(timer); resolvePromise(value); }, error => { clearTimeout(timer); reject(error); });
@@ -222,10 +230,11 @@ export class ClaudeAgentSdkAdapter implements RuntimePort {
       binding.nativeThreadId !== binding.nativeSessionId || !isAbsolute(binding.cwd) || resolve(binding.cwd) !== binding.cwd)
       throw new RuntimeProtocolError("invalid runtime binding");
   }
-  private remember(binding: RuntimeBinding): void {
+  private remember(binding: RuntimeBinding, replaceEffortRevision = false): void {
     this.validateBinding(binding);
     const existing = this.bindings.get(binding.nativeThreadId);
-    if (existing && !sameBinding(existing, binding)) throw new RuntimeProtocolError("conflicting runtime binding");
+    if (existing && !sameBinding(existing, binding) && !(replaceEffortRevision && effortRevisionOnly(existing, binding)))
+      throw new RuntimeProtocolError("conflicting runtime binding");
     this.bindings.set(binding.nativeThreadId, binding);
   }
   private owned(binding: RuntimeBinding): void {
@@ -238,8 +247,13 @@ export class ClaudeAgentSdkAdapter implements RuntimePort {
   async registerBinding(binding: RuntimeBinding): Promise<void> {
     this.validateBinding(binding);
     if (!this.options.verifyBinding || !await this.options.verifyBinding(binding)) throw new RuntimeProtocolError("binding provenance not verified");
-    this.remember(binding);
+    // The trusted store has confirmed it: a revision that changed only the effort replaces the registered one (effort travels with each query).
+    this.remember(binding, true);
   }
+  /** Claude takes the effort with every query, so an effort-only revision needs no native activation: it applies from the next Turn. */
+  appliesEffortWithNextTurn(_binding: RuntimeBinding): boolean { return true; }
+  /** The effort levels Claude takes: its own set, which has no `none` or `minimal`. */
+  allowedReasoningEfforts(_binding: RuntimeBinding): readonly string[] { return [...EFFORTS]; }
 
   /** Records the Session in the ledger. Claude creates its native session with the first Turn, under this ID. */
   async create(spec: RuntimeSessionSpec): Promise<RuntimeBinding> {
@@ -492,8 +506,11 @@ export class ClaudeAgentSdkAdapter implements RuntimePort {
       // Re-checked after the wait, in the same synchronous step that registers this start.
       if (this.attempted.has(attempt)) throw new RuntimeProtocolError("this Turn operation was already attempted; reconcile its original result");
     }
-    if (this.live.has(key)) throw new RuntimeNotSentError("turn/start", "another Turn is running on this Session");
-    if (this.live.size >= (this.options.maxConcurrentTurns ?? 4)) throw new RuntimeNotSentError("turn/start", "concurrent Turn limit reached");
+    // Both refusals are transient and happen before this start is registered or anything is written, so the caller
+    // keeps its durable intent and retries once a slot frees: a queued message stays queued with its recovery gate
+    // open, a Run returns to requested. Raising a plain "not sent" here made an ordinary message fail for good.
+    if (this.live.has(key)) throw new RuntimeLocalBusyError("turn/start", "another Turn is running on this Session");
+    if (this.live.size >= (this.options.maxConcurrentTurns ?? 4)) throw new RuntimeLocalBusyError("turn/start", "concurrent Turn limit reached");
     let release!: () => void;
     const released = new Promise<void>(resolveRelease => { release = resolveRelease; });
     const live: LiveTurn = { projectId: binding.projectId, nativeSessionId: binding.nativeSessionId, turnId: randomUUID(),

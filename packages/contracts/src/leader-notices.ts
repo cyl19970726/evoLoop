@@ -10,6 +10,9 @@ export const leaderNoticeRecoverySchema = z.strictObject({
 }).refine(value => new Set([value.expectedOperationId, value.newNoticeId,
   value.newMessageId, value.newOperationId]).size === 4, "Recovery IDs must be distinct");
 
+/** Recovery by packet (the form for notices that travel in packets) or, unchanged, of one blocked notice that predates packets. */
+export const leaderNoticeRecoveryRequestSchema = z.union([leaderNoticeRecoverySchema, z.strictObject({ reason: z.string().trim().min(1).max(4000) })]);
+
 export type LeaderNoticeKind = "task_todo" | "delivery" | "observation" | "task_question" | "task_blocker" | "run_without_submission" | "run_submission_blocked" | "task_attention" | "acceptance_blocked";
 export type LeaderNoticeState = "pending" | "linked" | "blocked";
 export interface LeaderNoticeRecoveryLink {
@@ -42,6 +45,14 @@ export interface LeaderNotice {
   readAt: string | null;
   updatedAt: string;
   recovery?: LeaderNoticeRecoveryLink;
+  /** True for notices that travel in packets (created while the packet switch was on); their message fields above are unused. */
+  viaPacket?: boolean;
+  /** The notice's latest packet item: where it is on its way to the Leader and what the Leader decided. */
+  packet?: LeaderNoticePacketStatus | null;
+}
+export interface LeaderNoticePacketStatus {
+  packetId: string; packetState: string; itemState: string; readBefore: boolean; disposition: "handled" | "deferred" | null;
+  deferUntil: string | null; withdrawnReason: string | null; itemVersion: number;
 }
 export interface LeaderNoticePage { items: LeaderNotice[]; nextCursor: string | null }
 

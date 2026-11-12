@@ -1,18 +1,64 @@
+import { randomUUID } from "node:crypto";
 import type { Pool } from "pg";
+import { describeTurnEffort } from "@evoloop/core";
 import type { Principal } from "@evoloop/contracts";
-import type { RuntimeSessionRecord } from "@evoloop/contracts/runtime";
+import type { RuntimeBinding, RuntimeSessionRecord } from "@evoloop/contracts/runtime";
+import type { DirectInputGrant } from "@evoloop/contracts/direct-input";
 import type { UnitOfWork } from "@evoloop/contracts/ports";
 import { DomainError } from "@evoloop/contracts/ports";
 import { PgDirectInputs } from "@evoloop/adapter-postgres/direct-input";
 import { bindingOf } from "../runtime/runner.js";
 import type { SessionSteerLock } from "../runtime/session-steer-lock.js";
 import type { loadIntegrations } from "../configuration.js";
-import type { DirectInputConfiguration } from "./configuration.js";
+import { currentConnectorBusinessActor } from "../message-connectors/business-actor.js";
 import { DirectInputService } from "./service.js";
 
-type CurrentConfiguration=Pick<Awaited<ReturnType<typeof loadIntegrations>>,"sessionMessages">&{
-  directInputs:DirectInputConfiguration|undefined;
+type CurrentConfiguration=Awaited<ReturnType<typeof loadIntegrations>>;
+
+/** The Session must exist with the exact active full profile this entry point can drive. */
+async function readSession(uow:UnitOfWork,projectId:string,sessionId:string):Promise<RuntimeSessionRecord>{
+  const value=await uow.read(projectId,r=>r.getRuntimeSession(sessionId));
+  if(!value||value.projectId!==projectId||value.id!==sessionId||value.state!=="ready"||
+    !value.nativeThreadId||!value.nativeSessionId||value.sandbox!=="danger-full-access"||
+    value.approvalPolicy!=="never"||value.executionProfile?.activationState!=="active")
+    throw new DomainError("SESSION_NOT_READY","Exact owned Session full profile is unavailable");
+  return value;
+}
+
+export type DirectInputAdmissionDeps={
+  uow:UnitOfWork;pool:Pick<Pool,"query">;
+  configuration():Promise<CurrentConfiguration>;
+  currentProjectWriter(projectId:string,actorId:string):Promise<boolean>;
+  currentSessionExecutionAuthority(session:RuntimeSessionRecord):Promise<boolean>;
+  allowedCwd(projectId:string,cwd:string):Promise<boolean>;
 };
+
+/**
+ * The ordinary grant names the Session's business identity, which differs from the actor that
+ * reserved the Session. Resolve it through the same business-actor binding the ordinary path uses.
+ */
+export function createDirectInputAdmission(deps:DirectInputAdmissionDeps){
+  const session=(projectId:string,sessionId:string)=>readSession(deps.uow,projectId,sessionId);
+  const admission=async(principal:Principal,projectId:string,sessionId:string):
+    Promise<{grant:DirectInputGrant;binding:RuntimeBinding}>=>{
+    if(!principal.projectIds.includes(projectId)||!principal.permissions.includes("read")||
+      !principal.permissions.includes("write"))throw new DomainError("FORBIDDEN","Project writer required");
+    const owner=await session(projectId,sessionId);
+    const configured=await deps.configuration();
+    const direct=configured.directInputs;
+    const directGrant=direct?.enabled?direct.grants.find(g=>g.projectId===projectId&&g.sessionId===sessionId&&
+      g.senderActorId===principal.actorId&& (g.canStart||g.canSteer)):null;
+    const ordinary=configured.sessionMessages?.enabled?configured.sessionMessages.grants.find(g=>g.enabled&&
+      g.projectId===projectId&&g.sessionId===sessionId&&g.senderActorId===principal.actorId&&
+      g.receiverRoleId===owner.roleId&&g.cwd===owner.cwd):null;
+    if(!directGrant||!ordinary||!await deps.currentProjectWriter(projectId,principal.actorId)||
+      !await currentConnectorBusinessActor(owner,ordinary.receiverActorId,configured,deps.pool,deps.currentProjectWriter)||
+      !await deps.currentSessionExecutionAuthority(owner)||!await deps.allowedCwd(projectId,owner.cwd))
+      throw new DomainError("DIRECT_GRANT_MISSING","Exact direct and ordinary Session grants are unavailable");
+    return {grant:{...ordinary,canSteer:directGrant.canSteer,canStart:directGrant.canStart},binding:bindingOf(owner)};
+  };
+  return {session,admission};
+}
 
 /** One composition point for capability and submission; direct grants never replace ordinary grants. */
 export function createDirectInputService(deps:{
@@ -25,34 +71,17 @@ export function createDirectInputService(deps:{
   currentSessionExecutionAuthority(session:RuntimeSessionRecord):Promise<boolean>;
   allowedCwd(projectId:string,cwd:string):Promise<boolean>;
 }):DirectInputService{
-  const session=async(projectId:string,sessionId:string):Promise<RuntimeSessionRecord>=>{
-    const value=await deps.uow.read(projectId,r=>r.getRuntimeSession(sessionId));
-    if(!value||value.projectId!==projectId||value.id!==sessionId||value.state!=="ready"||
-      !value.nativeThreadId||!value.nativeSessionId||value.sandbox!=="danger-full-access"||
-      value.approvalPolicy!=="never"||value.executionProfile?.activationState!=="active")
-      throw new DomainError("SESSION_NOT_READY","Exact owned Session full profile is unavailable");
-    return value;
-  };
+  const {session,admission}=createDirectInputAdmission(deps);
   return new DirectInputService({
     store:new PgDirectInputs(deps.pool),runtime:deps.runtime,canWrite:deps.canWrite,
     ...(deps.lock?{lock:deps.lock}:{}),
     bindingFor:async(projectId,sessionId)=>bindingOf(await session(projectId,sessionId)),
-    admission:async(principal:Principal,projectId,sessionId)=>{
-      if(!principal.projectIds.includes(projectId)||!principal.permissions.includes("read")||
-        !principal.permissions.includes("write"))throw new DomainError("FORBIDDEN","Project writer required");
-      const owner=await session(projectId,sessionId);
-      const configured=await deps.configuration();
-      const direct=configured.directInputs;
-      const directGrant=direct?.enabled?direct.grants.find(g=>g.projectId===projectId&&g.sessionId===sessionId&&
-        g.senderActorId===principal.actorId&& (g.canStart||g.canSteer)):null;
-      const ordinary=configured.sessionMessages?.enabled?configured.sessionMessages.grants.find(g=>g.enabled&&
-        g.projectId===projectId&&g.sessionId===sessionId&&g.senderActorId===principal.actorId&&
-        g.receiverRoleId===owner.roleId&&g.cwd===owner.cwd&&g.receiverActorId===owner.actorId):null;
-      if(!directGrant||!ordinary||!await deps.currentProjectWriter(projectId,principal.actorId)||
-        !await deps.currentProjectWriter(projectId,ordinary.receiverActorId)||
-        !await deps.currentSessionExecutionAuthority(owner)||!await deps.allowedCwd(projectId,owner.cwd))
-        throw new DomainError("DIRECT_GRANT_MISSING","Exact direct and ordinary Session grants are unavailable");
-      return {grant:{...ordinary,canSteer:directGrant.canSteer,canStart:directGrant.canStart},binding:bindingOf(owner)};
+    observeEffort:async(projectId,sessionId,inputId,turn,requested)=>{
+      const note=describeTurnEffort(requested,turn);
+      if(!note)return;
+      await deps.uow.transaction(projectId,tx=>tx.appendRuntimeEvent({projectId,id:randomUUID(),runId:null,sessionId,kind:"turn.effortObserved",
+        detail:`direct input ${inputId}${note}`,nativeTurnId:turn.id,cursor:null,itemsDigest:null,actorId:"direct-input",createdAt:new Date().toISOString()}));
     },
+    admission,
   });
 }

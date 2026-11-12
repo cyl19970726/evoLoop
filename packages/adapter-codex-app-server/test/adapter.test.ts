@@ -1653,3 +1653,111 @@ test('turn listing waits out the brief -32601 history attach window after turn/s
   await assert.rejects(()=>adapter.listTurns(binding),RuntimeServerError);
   assert.equal(calls,1,'other rejections, such as a missing rollout, are never retried');
 });
+
+test('effort rides on turn/start where the runtime cannot update a live Thread, and the Thread reports it back', async () => {
+  const bare = new CodexAppServerAdapter({expectedVersion:'codex-cli 0.167.0-alpha.3.2'});
+  const withUpdate = new CodexAppServerAdapter({expectedVersion:'codex-cli 0.166.0-alpha.6'});
+  const anyBinding = {} as Parameters<typeof bare.appliesEffortWithNextTurn>[0];
+  assert.equal(bare.appliesEffortWithNextTurn(anyBinding), true, '0.167 has no thread/settings/update');
+  assert.equal(withUpdate.appliesEffortWithNextTurn(anyBinding), false, 'a runtime with thread/settings/update activates natively');
+  assert.ok(bare.allowedReasoningEfforts(anyBinding).includes('max') && !bare.allowedReasoningEfforts(anyBinding).includes('none'), "Codex's set has the gateway's max; the profile table cannot store none");
+
+  const adapter = bare;
+  const internals = adapter as unknown as Record<string, unknown>;
+  const sent: Array<{ method: string; params: Record<string, unknown> }> = [];
+  internals.owned = () => {};
+  let reported: string | undefined = 'max', latest = 'turn-1';
+  internals.request = async (method: string, params: Record<string, unknown>) => {
+    sent.push({ method, params });
+    if (method === 'turn/start') return { turn: { id: 'turn-1', status: 'inProgress', completedAt: null, items: [] } };
+    if (method === 'thread/turns/list') return { data: [{ id: latest, status: 'inProgress' }], nextCursor: null };
+    if (method === 'thread/read') return { thread: { id: 'thread', reasoningEffort: reported } };
+    assert.fail(method);
+  };
+  const binding = { sessionId: 's', roleId: 'r', projectId: 'p', nativeThreadId: 'thread', nativeSessionId: 'thread', cwd: '/tmp/e', authorizationScope: 'project',
+    owner: 'evoloop-codex-app-server', resumeProfile: { actorId: 'a', model: 'deepseek/deepseek-flash', reasoningEffort: 'max', sandbox: 'danger-full-access',
+      approvalPolicy: 'never', executionProfileRevisionId: 'rev-1' } } as Parameters<typeof adapter.startTurn>[0];
+  const profile = { revisionId: 'rev-1', version: 2, model: 'deepseek/deepseek-flash', reasoningEffort: 'max', sandbox: 'danger-full-access', approvalPolicy: 'never',
+    cwd: '/tmp/e', authorizationScope: 'project', provenance: 'revised' } as Parameters<typeof adapter.startTurn>[3];
+  const turn = await adapter.startTurn(binding, 'business', 'op-1', profile);
+  const start = sent.find(call => call.method === 'turn/start')!;
+  assert.equal(start.params.effort, 'max', 'turn/start carries the configured effort');
+  assert.equal(turn.observedReasoningEffort, 'max', 'and the Thread reports it back');
+  // The Thread's latest Turn is another one: the reported value is not proof for this Turn, so it is not claimed.
+  latest = 'someone-elses-turn';
+  const foreign = await adapter.startTurn(binding, 'business', 'op-foreign', profile);
+  assert.equal(foreign.observedReasoningEffort, null);
+  // A readback that fails or reports nothing never fails the Turn that already started.
+  internals.request = async (method: string) => {
+    if (method === 'turn/start') return { turn: { id: 'turn-2', status: 'inProgress', completedAt: null, items: [] } };
+    throw new RuntimeServerError('thread/read', -32000, 'unavailable', 'server_error');
+  };
+  const second = await adapter.startTurn(binding, 'business', 'op-2', profile);
+  assert.equal(second.id, 'turn-2'); assert.equal(second.observedReasoningEffort, null);
+});
+
+test('the per-turn effort readback waits out the same -32601 attach window as turn listing, for Run, message and direct-input starts alike', async () => {
+  const adapter = new CodexAppServerAdapter({expectedVersion:'codex-cli 0.167.0-alpha.3.2'});
+  const internals = adapter as unknown as Record<string, unknown>;
+  internals.owned = () => {};
+  let listCalls = 0, rejections = 2;
+  internals.request = async (method: string) => {
+    if (method === 'turn/start') return { turn: { id: 'turn-1', status: 'inProgress', completedAt: null, items: [] } };
+    if (method === 'thread/turns/list') {
+      listCalls++;
+      if (rejections-- > 0) throw new RuntimeServerError(method, listCalls, -32601, 'list_turns is not supported yet');
+      return { data: [{ id: 'turn-1', status: 'inProgress' }], nextCursor: null };
+    }
+    if (method === 'thread/read') return { thread: { id: 'thread', reasoningEffort: 'max' } };
+    assert.fail(method);
+  };
+  const binding = { sessionId: 's', roleId: 'r', projectId: 'p', nativeThreadId: 'thread', nativeSessionId: 'thread', cwd: '/tmp/e', authorizationScope: 'project',
+    owner: 'evoloop-codex-app-server', resumeProfile: { actorId: 'a', model: 'deepseek/deepseek-flash', reasoningEffort: 'max', sandbox: 'danger-full-access',
+      approvalPolicy: 'never', executionProfileRevisionId: 'rev-1' } } as Parameters<typeof adapter.startTurn>[0];
+  const profile = { revisionId: 'rev-1', version: 2, model: 'deepseek/deepseek-flash', reasoningEffort: 'max', sandbox: 'danger-full-access', approvalPolicy: 'never',
+    cwd: '/tmp/e', authorizationScope: 'project', provenance: 'revised' } as Parameters<typeof adapter.startTurn>[3];
+  // Run start.
+  const run = await adapter.startTurn(binding, 'business', 'op-run', profile);
+  assert.equal(listCalls, 3, 'two transient rejections, then the page');
+  assert.equal(run.observedReasoningEffort, 'max', 'the readback is read, not reported unread');
+  // Message / direct-input start (the conversation path both use).
+  listCalls = 0; rejections = 2;
+  // Admission, resume and idle checks are not under test here: only what happens after turn/start is.
+  (internals.conversationQualifications as Map<string, unknown>).set('thread', { observedAt: Date.now(), fingerprint: 'f'.repeat(64), model: 'deepseek/deepseek-flash' });
+  internals.qualifyConversationThread = async () => ({ available: true, reason: 'ok', fingerprint: 'f'.repeat(64) });
+  internals.resumeBinding = async () => ({ usedStartProof: false });
+  internals.nativeThreadIdle = async () => true;
+  const conversation = await (adapter as unknown as { startConversationTurn(b: unknown, i: string, o: string): Promise<{ observedReasoningEffort?: string | null }> })
+    .startConversationTurn(binding, 'hello', 'op-message');
+  assert.equal(listCalls, 3, 'the conversation start retries the same way');
+  assert.equal(conversation.observedReasoningEffort, 'max');
+  // Persistent rejection: bounded, then honestly unread; the Turn that already started is never failed.
+  listCalls = 0; rejections = Infinity;
+  const unread = await adapter.startTurn(binding, 'business', 'op-late', profile);
+  assert.equal(listCalls, 6, 'the wait is bounded');
+  assert.equal(unread.observedReasoningEffort, null);
+});
+
+for (const [expectedVersion, replaces] of [["codex-cli 0.167.0-alpha.3.2", true], ["codex-cli 0.166.0-alpha.6", false]] as const) {
+  test(`${expectedVersion}: an effort-only revision ${replaces ? "re-registers on the real adapter and starts a Turn" : "still conflicts, because it is activated natively"}`, async t => {
+    const adapter = testAdapter({ executable: process.execPath, spawnArgs: [fixture, 'full-normal'], expectedVersion, verifyBinding: async () => true });
+    t.after(() => adapter.close()); await adapter.open();
+    const created = await adapter.create(fullSpec);
+    const withProfile = (b: RuntimeBinding, effort: string, revisionId: string): RuntimeBinding =>
+      ({ ...b, resumeProfile: { ...b.resumeProfile!, reasoningEffort: effort, executionProfileRevisionId: revisionId } });
+    const first = withProfile(created, 'high', 'rev-1'), second = withProfile(created, 'low', 'rev-2');
+    if (!replaces) {
+      await assert.rejects(() => adapter.registerBinding(first), /conflicting runtime binding/);
+      return;
+    }
+    await adapter.registerBinding(first);
+    // The coordinator re-registers after the revision became active; no stubbed ownership check.
+    await adapter.registerBinding(second);
+    const profile = { revisionId: 'rev-2', version: 2, model: second.resumeProfile!.model, reasoningEffort: 'low', sandbox: 'danger-full-access', approvalPolicy: 'never',
+      cwd: second.cwd, authorizationScope: second.authorizationScope, provenance: 'revised' } as Parameters<typeof adapter.startTurn>[3];
+    assert.equal((await adapter.startTurn(second, 'business', 'op-effort', profile)).status !== undefined, true);
+    // The old registration is gone and a different model is still a conflict.
+    await assert.rejects(() => adapter.startTurn(first, 'again', 'op-old', { ...profile, revisionId: 'rev-1', reasoningEffort: 'high' } as typeof profile), /not registered to this adapter and scope/);
+    await assert.rejects(() => adapter.registerBinding({ ...second, resumeProfile: { ...second.resumeProfile!, model: 'another-model' } }), /conflicting runtime binding/);
+  });
+}

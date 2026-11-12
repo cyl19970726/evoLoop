@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { PoolClient, QueryResultRow } from 'pg';
 import { DomainError } from '@evoloop/contracts/ports';
+import { providerHeldMessage, type ProviderHold, type ProviderHoldImpact } from '@evoloop/contracts/provider-hold';
 import type { ExecutionProfileRevision, SessionExecutionProfile, SessionRecoveryDecision,
   SessionRecoveryGate, SessionRecoveryTransaction } from '@evoloop/contracts/session-recovery';
 
@@ -8,7 +9,8 @@ const iso=(value:Date|string):string=>new Date(value).toISOString();
 const gateOf=(r:QueryResultRow):SessionRecoveryGate=>({projectId:r.project_id,sessionId:r.session_id,
   version:r.version,phase:r.phase,causeKind:r.cause_kind,causeId:r.cause_id,causeState:r.cause_state,
   reason:r.reason,queueId:r.queue_id,claimId:r.claim_id,retryRunId:r.retry_run_id,
-  resumeMessageId:r.resume_message_id,decisionOperationId:r.decision_operation_id,updatedAt:iso(r.updated_at)});
+  resumeMessageId:r.resume_message_id,decisionOperationId:r.decision_operation_id,updatedAt:iso(r.updated_at),
+  failureCategory:r.failure_category??null});
 const revisionOf=(r:QueryResultRow):ExecutionProfileRevision=>({projectId:r.project_id,sessionId:r.session_id,
   revisionId:r.revision_id,version:r.version,previousRevisionId:r.previous_revision_id,
   model:r.model,...(r.reasoning_effort?{reasoningEffort:r.reasoning_effort}:{}),sandbox:r.sandbox,approvalPolicy:r.approval_policy,cwd:r.cwd,
@@ -19,6 +21,10 @@ const decisionOf=(r:QueryResultRow):SessionRecoveryDecision=>({projectId:r.proje
   sourceRunId:r.source_run_id,sourceInputHash:r.source_input_hash,retryRunId:r.retry_run_id,
   resumeMessageId:r.resume_message_id,actorId:r.actor_id,reason:r.reason,evidenceRef:r.evidence_ref,
   createdAt:iso(r.created_at)});
+const holdOf=(r:QueryResultRow):ProviderHold=>({projectId:r.project_id,id:r.hold_id,provider:r.provider,state:r.state,
+  category:r.category,causeSessionId:r.cause_session_id,causeMessageId:r.cause_message_id,reason:r.reason,version:r.version,
+  openedAt:iso(r.opened_at),releasedAt:r.released_at?iso(r.released_at):null,releasedBy:r.released_by,releaseReason:r.release_reason,
+  releaseSummary:r.release_summary??null});
 const conflict=(message:string,current?:number)=>new DomainError('VERSION_CONFLICT',message,current);
 const dynamicSessionId=(dispatchId:string):string=>{
   const bytes=Buffer.from(createHash('sha256').update(JSON.stringify([dispatchId,'session'])).digest().subarray(0,16));
@@ -41,7 +47,10 @@ export class PgSessionRecovery implements SessionRecoveryTransaction {
     return result.rows.some(row=>dynamicSessionId(row.dispatch_id as string)===sessionId);
   }
   async getRecoveryGate(sessionId:string):Promise<SessionRecoveryGate|null>{
-    const r=await this.client.query('SELECT * FROM session_recovery_gate WHERE project_id=$1 AND session_id=$2',[this.projectId,sessionId]);
+    const r=await this.client.query(`SELECT g.*,(SELECT p.failure_category FROM session_message_processing p
+      WHERE g.cause_kind='message' AND p.project_id=g.project_id AND p.message_id=g.cause_id
+      ORDER BY p.updated_at DESC LIMIT 1) AS failure_category
+      FROM session_recovery_gate g WHERE g.project_id=$1 AND g.session_id=$2`,[this.projectId,sessionId]);
     return r.rows[0]?gateOf(r.rows[0]):null;
   }
   async lockRecoveryGate(sessionId:string):Promise<SessionRecoveryGate>{
@@ -72,7 +81,7 @@ export class PgSessionRecovery implements SessionRecoveryTransaction {
     const r=await this.client.query('SELECT * FROM session_recovery_decision WHERE project_id=$1 AND session_id=$2 ORDER BY created_at DESC,decision_id DESC LIMIT $3',[this.projectId,sessionId,limit]);
     return r.rows.map(decisionOf);
   }
-  async adoptExecutionProfile(revision:ExecutionProfileRevision,expectedSessionVersion:number):Promise<void>{
+  async adoptExecutionProfile(revision:ExecutionProfileRevision,expectedSessionVersion:number,options?:{appliesNextTurn?:boolean}):Promise<void>{
     this.scope(revision.projectId);
     const gate=await this.lockRecoveryGate(revision.sessionId);
     if(!['open','blocked'].includes(gate.phase))throw new DomainError('RECOVERY_BLOCKED','Session recovery is already in progress');
@@ -109,9 +118,13 @@ export class PgSessionRecovery implements SessionRecoveryTransaction {
       [this.projectId,revision.sessionId,revision.revisionId,revision.version,revision.previousRevisionId,revision.model,
         revision.reasoningEffort??null,revision.sandbox,revision.approvalPolicy,revision.cwd,revision.authorizationScope,revision.provenance,
         revision.operationId,revision.actorId,revision.reason,revision.evidenceRef,revision.createdAt]);
-    const head=await this.client.query(`UPDATE session_execution_profile SET revision_id=$3,activation_state='pending',activation_operation_id=NULL,
-      attempted_at=NULL,activation_evidence=NULL WHERE project_id=$1 AND session_id=$2 AND revision_id=$4`,
-      [this.projectId,revision.sessionId,revision.revisionId,before.revisionId]);
+    // An effort-only change the runtime cannot activate natively is active at once; every later turn/start carries it.
+    const head=await this.client.query(`UPDATE session_execution_profile SET revision_id=$3,
+      activation_state=CASE WHEN $5::boolean THEN 'active' ELSE 'pending' END,
+      active_revision_id=CASE WHEN $5::boolean THEN $3::uuid ELSE active_revision_id END,activation_operation_id=NULL,
+      attempted_at=NULL,activation_evidence=CASE WHEN $5::boolean THEN 'Applied with the next turn/start; the runtime has no thread/settings/update' END
+      WHERE project_id=$1 AND session_id=$2 AND revision_id=$4`,
+      [this.projectId,revision.sessionId,revision.revisionId,before.revisionId,options?.appliesNextTurn===true]);
     if(!head.rowCount)throw conflict('Execution profile changed');
     const policyChanged=before.sandbox!==revision.sandbox||before.approvalPolicy!==revision.approvalPolicy;
     const updated=await this.client.query(`UPDATE runtime_session SET
@@ -306,7 +319,49 @@ export class PgSessionRecovery implements SessionRecoveryTransaction {
       [this.projectId,sessionId,newRunId,operationId,reason,nowUtc,expectedGateVersion]);
     if(changed.rowCount!==1)throw new DomainError('VERSION_CONFLICT','Rework permit changed');
   }
+  async getActiveProviderHold(provider:'codex'|'claude'):Promise<ProviderHold|null>{
+    const r=await this.client.query("SELECT * FROM runtime_provider_hold WHERE project_id=$1 AND provider=$2 AND state='held'",[this.projectId,provider]);
+    return r.rows[0]?holdOf(r.rows[0]):null;
+  }
+  async listProviderHolds(limit:number):Promise<ProviderHold[]>{
+    const r=await this.client.query(`SELECT * FROM runtime_provider_hold WHERE project_id=$1
+      ORDER BY (state='held') DESC,opened_at DESC LIMIT $2`,[this.projectId,Math.max(1,Math.min(limit,50))]);
+    return r.rows.map(holdOf);
+  }
+  /** Sessions of the provider with their gate and queued messages: what a release would free, and what is waiting. */
+  async providerHoldImpact(provider:'codex'|'claude'):Promise<ProviderHoldImpact[]>{
+    const r=await this.client.query(`SELECT s.session_id,g.phase,
+        (g.phase='blocked' AND g.cause_kind='message' AND EXISTS (SELECT 1 FROM session_message_processing p
+          WHERE p.project_id=g.project_id AND p.message_id=g.cause_id
+            AND p.failure_category IN ('quota_exhausted','authentication_failed'))) AS blocked_by_quota,
+        (SELECT count(*)::int FROM session_message m WHERE m.project_id=s.project_id AND m.target_kind='owned'
+          AND m.session_id=s.session_id AND m.state='queued') AS queued
+      FROM runtime_session s LEFT JOIN session_recovery_gate g ON g.project_id=s.project_id AND g.session_id=s.session_id
+      WHERE s.project_id=$1 AND s.runtime_provider=$2 AND s.state<>'closed'
+      ORDER BY s.session_id LIMIT 200`,[this.projectId,provider]);
+    return r.rows.map(row=>({sessionId:row.session_id,gatePhase:row.phase??null,blockedByQuotaFailure:!!row.blocked_by_quota,
+      queuedMessages:row.queued}));
+  }
+  async openProviderHold(hold:Pick<ProviderHold,'id'|'provider'|'category'|'causeSessionId'|'causeMessageId'|'reason'>,nowUtc:string):Promise<boolean>{
+    const r=await this.client.query(`INSERT INTO runtime_provider_hold(project_id,hold_id,provider,state,category,cause_session_id,
+      cause_message_id,reason,version,opened_at) VALUES($1,$2,$3,'held',$4,$5,$6,$7,1,$8)
+      ON CONFLICT (project_id,provider) WHERE state='held' DO NOTHING`,
+      [this.projectId,hold.id,hold.provider,hold.category,hold.causeSessionId,hold.causeMessageId,hold.reason,nowUtc]);
+    return (r.rowCount??0)>0;
+  }
+  async releaseProviderHold(holdId:string,expectedVersion:number,actorId:string,reason:string,
+    summary:NonNullable<ProviderHold['releaseSummary']>,nowUtc:string):Promise<void>{
+    const r=await this.client.query(`UPDATE runtime_provider_hold SET state='released',version=version+1,released_at=$4,released_by=$5,
+      release_reason=$6,release_summary=$7::jsonb WHERE project_id=$1 AND hold_id=$2 AND version=$3 AND state='held'`,
+      [this.projectId,holdId,expectedVersion,nowUtc,actorId,reason,JSON.stringify(summary)]);
+    if(!r.rowCount)throw conflict('Provider hold changed or already released');
+  }
   async assertStartupAllowed(sessionId:string,kind:'run'|'message',id:string):Promise<void>{
+    const provider=(await this.client.query('SELECT runtime_provider FROM runtime_session WHERE project_id=$1 AND session_id=$2',
+      [this.projectId,sessionId])).rows[0]?.runtime_provider as 'codex'|'claude'|undefined;
+    // A held provider starts nothing new, for any Session of it; the message stays queued rather than failing.
+    const hold=provider?await this.getActiveProviderHold(provider):null;
+    if(hold)throw new DomainError('PROVIDER_HELD',providerHeldMessage(hold.provider,hold.category));
     const gate=await this.lockRecoveryGate(sessionId);
     const profile=await this.getCurrentExecutionProfile(sessionId);
     const permitted=gate.phase==='open'||(kind==='run'&&['retrying','reworking'].includes(gate.phase)&&gate.retryRunId===id)||

@@ -268,7 +268,7 @@ export async function buildServer(options: {
     }
     if (command.type.startsWith("runtime.")) {
       if (command.type !== "runtime.handoff.record" && command.type !== "runtime.run.abandonReadOnly" &&
-        command.type !== "runtime.session.executionProfile.revise" && command.type !== "runtime.session.recovery.resume" && command.type !== "runtime.run.stop" &&
+        command.type !== "runtime.session.executionProfile.revise" && command.type !== "runtime.session.recovery.resume" && command.type !== "runtime.run.stop" && command.type !== "runtime.providerHold.release" &&
         !options.runtime?.status().available) throw new DomainError("RUNTIME_UNAVAILABLE", "Codex 执行服务尚未配置或当前不可用；本次未登记派发。");
       const principal = who(request.principal);
       if (!principal.projectIds.includes(command.projectId) || (command.type === "runtime.handoff.record" ? !principal.permissions.includes("write") : !principal.permissions.includes("review"))) {
@@ -308,8 +308,10 @@ export async function buildServer(options: {
         if(!options.runtime)throw new DomainError("RUNTIME_READ_UNAVAILABLE","原生执行服务不可读，未保存新配置；请恢复连接后重试。");
         await options.runtime.preflightExecutionProfileRevision(principal,command);
         const current=await catalog(sessionProvider(await options.service.getRuntimeSession(principal,command.projectId,command.sessionId)));
-        if(current.status!=="available")throw new DomainError("MODEL_CATALOG_UNAVAILABLE","原生模型目录不可用，未保存新配置。");
-        if(!current.options?.find(option=>option.model===command.model)?.supportedReasoningEfforts.includes(command.reasoningEffort??""))
+        // A catalog that is empty, unreadable or does not list the model cannot say what the model supports, so it does not block the
+        // change (the requester names the effort the model declares). A catalog that does list the model is binding.
+        const listed=current.status==="available"?current.options?.find(option=>option.model===command.model):undefined;
+        if(listed&&listed.supportedReasoningEfforts.length&&!listed.supportedReasoningEfforts.includes(command.reasoningEffort??""))
           throw new DomainError("REASONING_EFFORT_UNSUPPORTED","该模型当前未列出所选思考强度，未保存新配置。");
       }
       if (command.type === "runtime.run.reserve") {
@@ -341,6 +343,22 @@ export async function buildServer(options: {
     return reply.code(result.status === "applied" ? 200 : errorStatus(result.code)).send(result);
   });
   app.get("/api/projects/:projectId", async request => options.service.getProject(who(request.principal), params(request.params).projectId!));
+  // Session lines (DEC-045 Q1): each line with its waiting entries, and the ordered line events for the scheduling board.
+  app.get("/api/projects/:projectId/session-lines", async request => {
+    const p = z.strictObject({ projectId: idSchema }).parse(request.params);
+    const q = z.strictObject({ includeEnded: z.enum(["true", "false"]).optional() }).parse(request.query);
+    const principal = who(request.principal);
+    const lines = await options.service.listSessionLines(principal, p.projectId);
+    return { lines: await Promise.all(lines.map(async line => ({ ...line,
+      entries: await options.service.listSessionLineEntries(principal, p.projectId, line.sessionId, q.includeEnded === "true") }))) };
+  });
+  app.get("/api/projects/:projectId/session-lines/events", async request => {
+    const p = z.strictObject({ projectId: idSchema }).parse(request.params);
+    const q = z.strictObject({ after: z.coerce.number().int().nonnegative().default(0), limit: z.coerce.number().int().min(1).max(500).default(100),
+      sessionId: idSchema.optional() }).parse(request.query);
+    const events = await options.service.listSessionLineEvents(who(request.principal), p.projectId, q.after, q.limit, q.sessionId);
+    return { events, nextAfter: events.at(-1)?.seq ?? q.after };
+  });
   app.get("/api/projects/:projectId/session-preparation/:sessionId", async request => {
     const p=z.strictObject({projectId:z.uuid(),sessionId:z.uuid()}).parse(request.params);
     const q=z.strictObject({roleId:z.uuid(),cwd:z.string().optional(),authorizationScope:z.string().optional(),
@@ -480,6 +498,8 @@ export async function buildServer(options: {
         cwd:g.cwd,configuredModel:g.model??null,models:current.status==="available"?
           current.models.filter(model=>grantAllowsModel(g,model)):[]}))};
   });
+  app.get("/api/projects/:projectId/runtime/provider-holds", async request =>
+    options.service.listProviderHolds(who(request.principal), params(request.params).projectId!));
   app.get("/api/projects/:projectId/runtime/sessions", async request => options.service.listRuntimeSessions(who(request.principal), params(request.params).projectId!));
   app.get("/api/projects/:projectId/runtime/usage", async request => {
     const p = params(request.params);

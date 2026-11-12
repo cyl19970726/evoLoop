@@ -143,7 +143,7 @@ erDiagram
 
 ## 迁移 054 到 081 新增的表和列
 
-下表按 `packages/adapter-postgres/schema/` 的实际文件逐个列出 054–081 新增的表和列。编号 053、060、061 没有使用（分支上曾占用，合入时改号）；071–077、079–080 仍由其他候选分支占用，迁移仍按编号顺序执行。各表都带 `project_id` 并以同项目复合外键关联既有对象；“不可变”指有触发器拒绝更新或删除。语义以右列的合同为准。更早的 046、047（Leader 通知）见[接口合同](contracts.md#leader-通知层)。
+下表按 `packages/adapter-postgres/schema/` 的实际文件逐个列出 054–081 新增的表和列。编号 053、060、061 没有使用（分支上曾占用，合入时改号）；071–077 与 084 以后的编号仍由其他候选分支占用，迁移仍按编号顺序执行。各表都带 `project_id` 并以同项目复合外键关联既有对象；“不可变”指有触发器拒绝更新或删除。语义以右列的合同为准。更早的 046、047（Leader 通知）见[接口合同](contracts.md#leader-通知层)。
 
 | 迁移 | 新增的表或列 | 归属与关键约束 | 语义见 |
 | --- | --- | --- | --- |
@@ -164,6 +164,8 @@ erDiagram
 | 070 `acceptance_relay_stage_closure` | 无新增表或列；替换 `guard_acceptance_relay_closure()` | 同一 Delivery 有现行正式安排时，关闭只要求每条现行正式安排有指定收件人对该 Delivery 的已关联 `used` 观察；候选安排保留历史，不阻塞正式收口。没有正式安排时仍逐条核对现行候选安排，不能用一条已关联观察掩盖另一条未满足的安排。 | [验收接力与退役](contracts.md#验收接力与临时-session-退役) |
 | 081 `session_usage_daily` | `session_usage_daily` | 每个 `(project_id, session_id, day)` 一行，只累加运行时报告的输入、输出、缓存输入与成本；`cost_reported=false` 表示至少有一笔记账未报告费用，读取时不能把该日成本显示为 0。`day` 是项目配置时区下的日历日；行随新观察增量更新，不存原生正文。 | [上下文交接与每日用量上限](session-runtime.md#长会话的上下文交接与每日用量上限) |
 | 078 `run_stop_request` | `runtime_run.stop_requested_at`、`stop_reason`、`stop_requested_by`（三者要么全空要么全有，写入后不可改） | 请求停止一个 Run 的标记，不新增 Run 状态。同一事务里把 Run 已签但未封存的提交意图（`submitted`、`blocked`）改为 `rejected: RUN_STOPPED`，并把该 Session 里同一 Task 的排队消息阻塞原因标为被取代；触发器拒绝引用已停止 Run 的新提交与交付，以及 Task 上有未结束的已停止 Run 时不带 Run 的交付。就地补丁恢复门触发器（已停止 Run 的失败或中断不关开着的门）和两个 Leader 通知触发器（不为已停止 Run 发通知）。 | [Session 运行时](session-runtime.md) |
+| 087 `session_line` | 新表 `session_line`（每个常驻 Session 一条，控制者与版本）、`session_line_entry`（Task、位置、状态 queued/suspended/starting/started/withdrawn、步骤、尝试次数、重试次数 `step_try`、四个登记的操作 ID、挂起/撤下原因、来源与来源身份、日程 ID、Run ID、`run_ended_at`）、`session_line_event`（有序、不可变的队伍事件）、`task_assignment_confirmation`（按分派版本记录执行确认的 verdict/plan/missing/expectedRevisionId，不可变） | `(project_id, task_id)` 在 queued/suspended/starting 上部分唯一，同一 Task 不能同时排两处；确认 `confirm` 必须有 plan，`return` 必须有 missing。语义见 [Session 运行时](session-runtime.md#session-队伍dec-045-q1)。迁移号 087：main 已执行到 083，不能插入更小的号。 |
+| 089 `leader_notice_packet` | `leader_result_notice.via_packet`（默认 false；开关打开后由插入触发器按 `leader_notice_packet_mode` 给新通知置 true）；新表 `leader_notice_packet`（每包不超过 8192 字节）、`leader_notice_packet_attempt`、`leader_notice_packet_item`、`leader_notice_packet_mode` | 一个包合并多条通知；每项有独立状态与版本，同一通知同时只在一个未结束的包里（部分唯一索引）；每次送达尝试一行，消息 ID 与输入 ID 恰有其一。语义见[接口合同](contracts.md#leader-通知层)。 |
 
 ## 事务、幂等和读取
 

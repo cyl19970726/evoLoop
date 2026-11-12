@@ -28,10 +28,15 @@
 | `runtime.materialCli` | Role 级 CLI 绑定：`{projectId, roleId, sessionActorId, cliActorId, command}`；`sessionActorId` 是调用 `session prepare` 的身份，`command` 是该业务身份 CLI 包装脚本的绝对路径 | `material_cli`、`material_cli_incompatible` | 每次重读 |
 | `residentQueue.roleActors` | Role → 业务身份映射：`{projectId, roleId, actorId}`；`actorId` 必须等于上一行的 `cliActorId` | **`role_actor`**（没有这一项）、`material_cli_actor_mismatch`（两处不一致） | 每次重读，**不需要重启** |
 | `residentQueue.enabled` | 为 `true`，上一行才被采用 | `role_actor` | 每次重读 |
-| `sessionMessages.grants` | 消息授权：发送者、接收者 Session、工作目录与次数 | 不在 prepare 检查；别人给该 Session 发普通消息时才用 | 每次重读 |
+| `sessionMessages.grants`（新业务身份 → Leader） | **必配**：`sessionId` 指 Leader Session，`senderActorId` 是新业务身份，`receiverActorId`、`receiverRoleId` 与 `cwd` 取 Leader 的，`enabled` 为 `true` | 不在 prepare 检查；漏配时发送当场报 `MESSAGE_GRANT_MISSING`，消息不保存 | 每次重读 |
+| `sessionMessages.grants`（Leader → 新业务身份） | **必配**：`sessionId` 指新 Session，`senderActorId` 是 Leader，`receiverActorId`、`receiverRoleId` 与 `cwd` 取新 Session 的，`enabled` 为 `true`；`sessionMessages.enabled` 也须为 `true` | 同上 | 每次重读 |
 | `runtime.roleSkills` | Role 的业务 skill 路径；缺省为项目业务 skill | `role_skill` | 每次重读 |
 
 `role_actor` 一个代码对应三种情形，`missingDetails` 会说清是哪一种：`residentQueue` 未启用；已启用但没有这个 Role 的映射（要加 `{"projectId":"<项目>","roleId":"<Role>","actorId":"<业务身份>"}`）；有映射但该 `actorId` 在身份文件里对本项目没有 read 与 write。以上“每次重读”按代码核对（`apps/coordinator/src/main.ts` 的 `sessionPreparation` 每次调用都重读 integrations 与身份文件），未在运行中的实例上逐项验证；仍以所连服务的实际回读为准。
+
+**双向消息授权是编制必配，不是“需要时”。** 上表两个方向都要有；只配别人给新 Session 发消息、或只配新 Session 给 Leader 发消息，都会让另一端在真实对话时被拒绝。`session prepare` 不检查这些 grant，所以准备成功不代表消息通路可用。
+
+**“就绪”不能只看准备检查。** 新 Session 必须成功处理过一条真实消息，并通过反向授权把约定的唯一标记回给 Leader；两个方向都用 `work message` 与 `work status ... --message` 读回 processing、原生 Turn 和回复后才可报告。准备检查通过、配置缺项为空、`runtime_session.state=ready`、发送返回 `applied` 或消息已保存都不算。最小演练步骤见[运行接线手册](runtime-operations.md#6-受管-session-编制所需配置)。
 
 身份文件里凭据的 `extraCommands` 只用来开放 `document.archive` 与 `document.restore`，与 `permissions` 分开：有它的身份在本项目有 write 即可对应归档或恢复，不能 `task.start`、`task.close`。改身份文件后须重启服务。
 
@@ -191,6 +196,8 @@ Agent 间发送含中文、引号或换行的正文时，用 `work send` 从私�
 
 `work acceptance --project PROJECT [--limit N --cursor CURSOR]` 同屏返回现有 `work leader` 的分页阶段投影和各 Session 的持久占用。`persistedWorkIdle` 只说明数据库中的 Run、消息、队列、assignment 和未观察验收已清；`missingCapabilities` 给出当前执行配置、材料 CLI、业务身份或消息授权的具体缺项，`readyForAcceptance` 要求占用已清且缺项为空。仍须核原生 writer 和实际能力，缺项由有权的配置责任者补齐，模型不能自授权限。`work acceptance TASK --project PROJECT` 读每次安排、消息 processing/Turn、接收读取和本人观察；`work acceptance mine` 是具名人类的待验收列表，工作台收件页同源显示。以 `request schema acceptance.assign` 读取完整私有请求字段，再用 `request acceptance.assign --project PROJECT --id TASK --file BODY.json` 保存当前 Delivery 的一个固定范围；Agent 分支的 `senderActorId` 必须是当前安排者的业务 actor。HTTP 成功回执含原 operation ID；回执不明时按原 ID 读取 `work acceptance TASK`，不另造消息 ID。Agent 分支的投递沿普通消息泵，记作使用要求：消息 processing 已完成并保存原生 Turn，本人已用 `session.message.receipt` 记录已读，且本人的观察晚于该已读回执——观察可以在被安排的这一轮内记录，processing 完成后再关联；早于已读回执的观察不能关联。拒绝时 `ACCEPTANCE_NOT_USED` 的信息指出缺哪一项。安排受阻会留下一次 Leader 通知；结果仍由现有观察通知回传。人类本人读取及观察分别用 `work acceptance read RELAY --project PROJECT --task TASK --file BODY.json` 和 `work acceptance observe RELAY --project PROJECT --task TASK --file BODY.json`，Agent 凭据不能冒充人类。
 
+模型服务额度或鉴权失败会暂停同一提供方的新 Turn（排队消息保留，不失败）：用 `get /api/projects/PROJECT/runtime/provider-holds` 读取暂停中的提供方、受影响 Session 与排队消息数，工作台在所有页面顶部显示“运行受阻”。账户使用者处理后，复核者用 `command schema runtime.providerHold.release` 取结构，以读到的 `version` 提交 `command run FILE`，一次放行该提供方并恢复被它关闭的各 Session 恢复门。
+
 `work retirement SESSION --project PROJECT` 给临时实例的关闭阻塞项及原生归档读回。`request schema session.retirement.approve` 给出审阅决定所需字段；`request session.retirement.approve --project PROJECT --id SESSION --file BODY.json` 保存决定，`decisionId` 与 `operationId` 相同，`closeOperationId` 固定给后续 `runtime.session.close`。必须先核业务交接及所有阻塞，关闭后读回 `closed`、`closeVerifiedAt` 和精确 native archive；`closing` 或未知回执不能当完成。
 
 有项目 `write` 和 `review` 权限的负责人可先读 `command schema task.attention.thresholds.set`、`task.attention.followUp.set`、`task.attention.publication.record`、`task.attention.resolve`，再用 `command run PRIVATE_JSON` 提交。跟进固定当前 Task version/revision 与跟进版本；发布准备的交接需写明责任方和固定产物，真正发布另记时间与来源。跟进动作 `checked`、`waiting`、`acted` 均保留审计历史，重复检查不刷新业务进展。响应不明时核原 operation 与同一正文，不换 ID 猜测执行结果。
@@ -324,6 +331,8 @@ Codex App Server 版本是协调服务的显式配置，不是 CLI 命令，也�
 
 CLI 可用 `models --project UUID` 查看当前身份获授权的原生模型与各自 `supportedReasoningEfforts`，用 `session profile show SESSION_UUID --project UUID` 看目标、最后确认版本及恢复门，再用 `session profile set SESSION_UUID --project UUID --model gpt-6-astra --effort max --reason "..." --evidence-ref "..."` 保存下一轮目标。CLI 读取现行 Session/version 和 profile revision 后以一次有收据的 CAS 命令提交；冲突须重新读取，未知结果用原 operationId/receipt 对账。已确认运行的原 Turn 保持旧快照并完成；未开始、正在派发或未知的原生操作须先对账。新目标保存后显示 pending，空闲时再激活；下一条业务消息或 Run 须等待 active。active 仅确认原 Thread 当前配置和后续 `turn/start` 显式携带相同 model/effort，不能代替逐 Turn 的 provider 实际遥测。迁移须在新服务启动前依序应用 051。
 
+**只改思考强度（不换模型）。** 运行时不能在已加载的 Thread 上原生改强度时——没有 `thread/settings/update` 的 Codex（0.167 及更早，适配器的 `executionProfileSwitch` 为假），以及每次查询本来就带强度的 Claude——只改强度不再走原生激活：新修订保存后立即生效（`activationState` 为 `active`，恢复门保持打开），之后每一轮都带这个强度（Codex 的 `turn/start effort`、Claude 的 SDK `effort` 选项）。这条捷径只对比**已确认生效的配置**：头部修订还是 `pending` 或被 `rejected`（例如刚改过模型、尚未经原生确认）时，只改强度被拒（`PROFILE_NOT_ACTIVE`），先对账。强度必须是已知的写法（`minimal`、`low`、`medium`、`high`、`xhigh`、`max`，区分大小写；档案表存不下 `none`，网关即使列出也不能保存），否则 `REASONING_EFFORT_UNKNOWN`；再按这个 Session **自己运行时**的集合校验：Claude Session 只接受 `low`、`medium`、`high`、`xhigh`、`max`，`minimal` 被拒（`REASONING_EFFORT_UNSUPPORTED`），即使模型目录里没有该模型。这类运行时上，**带强度的任何模型修改**（只改模型、同时改模型和强度）都在预检里直接拒绝，什么也不保存、恢复门不动（`EXECUTION_PROFILE_MODEL_CHANGE_UNSUPPORTED`）：它们没有在已有 Thread 上原生切换模型的办法，保存下来的模型修订永远无法生效。要换模型只能按目标模型新建 Session（`session prepare`）；原来写的“先只改模型、再只改强度”走不通，已取消。`session profile set` 的 `--model` 可省略，省略时取**当前生效**配置的模型（`activeModel`），不是头部的。模型目录为空、读不到或没有列出该模型时不阻塞修订；目录列出该模型的强度时，所选强度必须在其中（`REASONING_EFFORT_UNSUPPORTED`）。**读回**：Codex 在 `turn/start` 之后读线程报告的强度，且只有该线程最新一轮就是这一轮时才算数，记入 `run.bound` 事件（Run）或 `turn.effortObserved` 事件（消息回合、直接输入）：`effort requested=… observed=…`，不一致标 `MISMATCH`，读不到或不是本回合记 `unread`；读回时 `thread/turns/list` 与列表读取用同一个有上限的重试（0.167 在 `turn/start` 之后约 50 ms 内会回 -32601），Run、消息回合、直接输入三条起点共用，所以不会一律记 `unread`；重试用尽仍读不到才记 `unread`。Claude 没有读回，记 `unread`。**消息回合没有配置快照**：消息回合在派发前不固定配置修订，登记绑定与 `turn/start` 之间落下的新强度修订，会让这一轮按新值运行；记录下来的是实际发出去的值（`turn.effortObserved` 的 `requested`），不是登记时的值。验收强度时用与全局默认不同的值（例如默认是 `max` 就验收 `low`）。有 `thread/settings/update` 的版本仍走原生激活。
+
 Session 的视觉身份作为现有 `session_profile` 的属性按精确 `owned:UUID` 或 `external:UUID` 保存，与运行状态、模型和名称分开。应用 052 迁移后，旧 Session 会按稳定顺序获得默认颜色与图形，新建 Session 自动保存默认身份。用 `session identity show owned:UUID --project UUID` 读已保存身份；有项目复核权限者用 `session identity set owned:UUID --project UUID --color teal --mark brackets --reason "..."` 修改。CLI 先读当前版本，以 `session.identity.set` 的 CAS 命令保存并回读；冲突重读，结果未知按原 operationId/receipt 对账。前端目录与已证来源的对话只使用该 Session 的身份；actor、Task 关联或消息目标不证明发言来源。此变更依赖 schema 052，部署时在 051 后迁移，再启动候选服务。
 
 `queue.extendBudget` 由登记该队列的当前控制者提出，须同时给 `expectedVersion`、`expectedMaxRuns`、严格更大的 `maxRuns`、`evidenceRef` 与理由。它保留旧 attempts 与 decisions，不自动 unhold、adopt 或启动；读取新队列 version 后须重新采纳。`queue.retryFailed` 只接受原 claim 最新且终态明确为 `failed` 或 `interrupted` 的 Run；保留来源 Run 状态，不把 `interrupted` 改写为 `failed`，禁止 `unknown`／`completed`。每次都由控制者显式复核影响、固定输入与原 claim，并要求 Run version/inputHash、当前 Task 修订、`expectedExecutionProfileRevisionId` 指定的受审目标配置、gate version、队列 version、原 claim、pin 消息、原因及依据全部精确匹配。输入检查比较原 Task 的固定业务签名，确保工作内容未变；新 Run 使用新沟通通道和执行封套，因此同时留存 sourceRun/sourceInputHash 和新 Run 的实际 inputHash，不伪称两份完整 Run 输入 hash 一致。retry 消耗同队列预算且最多为来源 Run 创建一个 successor，不自动重试。
@@ -397,3 +406,16 @@ npm run --silent cli -- allocations --project PROJECT_UUID --discussion DISCUSSI
 普通消息 grant 省略 `maxTurns` 表示不限累计次数；显式正整数仍为上限。历史 `used` 继续累计。Session snapshot 的 `ordinaryExecution.messageBudget` 在精确 grant 和计数核实后给出 `used`、`limit`、`remaining`；无限时后两项为 `null`，未核计数时该字段缺失。账户模型额度、Task 和队列尝试上限须分别核对。
 
 Root 可在私有静默维护窗口以 `node scripts/prepare-unlimited-message-grants.mjs PRIVATE_CONFIG PRIVATE_SELECTIONS NEW_PRIVATE_CANDIDATE` 生成权限 0600 的新候选。选择文件是精确 `{projectId,sessionId,senderActorId,receiverActorId,receiverRoleId,cwd,expectedMaxTurns}` 数组。脚本要求旧 grant 启用、限额匹配、输出文件不存在，只移除指定 grant 的 `maxTurns`。发布前后读回原 Session/Thread、grant、累计计数、原消息和处理状态；回退保留的旧私有配置并按正常发布流程执行，不清计数或重放 unknown。
+
+## Session 队伍
+
+Leader 用 `evoloop command run` 提交 `line.append`（sessionId、taskId、expectedTaskVersion、reason）、`line.move`（entryId、expectedVersion、direction=forward|back）、`line.remove`、`line.resume`。读取：`evoloop get /api/projects/PROJECT/session-lines` 与 `/session-lines/events`。排队中的 Task 不能直接 `task.start`、`runtime.run.reserve` 或改派（`QUEUED_IN_SESSION_LINE`），先 `line.remove`。
+
+业务 Session 收到“执行确认请求”消息后，只做确认，不开始改文件：读固定 Task 修订，然后提交 `task.assignment.acknowledge`，`verdict=confirm`（`plan` 简短计划、`expectedRevisionId`）或 `verdict=return`（`missing` 列出缺什么）。确认后系统自动开 Run；退回的 Task 退出队伍、保持未开始。需要的私有配置：队伍调度程序随运行时启用而运行，Session 的业务身份取自 `residentQueue.roleActors`（没有则该项挂起为 `RECIPIENT_UNAVAILABLE`）。
+
+## Leader 通知包
+
+Leader 收到的是“Leader 通知包”消息：先 `get /api/projects/PROJECT/leader-notice-packets/PACKET` 读每一项的状态与版本，读当前 Task 和固定来源，再用 `command run` 提交 `leader.notice.handle`（`command schema leader.notice.handle` 取结构）：`noticeId`、`expectedVersion`、`disposition`（`handled` 或 `deferred`）、`reason`，延后要写 `notBefore`。重复提交同一操作安全；版本过期（`VERSION_CONFLICT`）要重新读。只读到这包不算处理，一轮正常结束只记“已看到”。
+
+被阻塞的包（读到后那一轮失败且恢复门关闭）不会自动重发，它出现在 `work` 的 Leader 索引（`blockedNoticePackets`，带包编号和提示）。先按 Session 恢复流程恢复恢复门，再用 `request leader.notice.recover --project UUID --id 包编号 --file BODY.json --receipt UUID`（body 只写 `{"reason":"..."}`，需要 review 权限）恢复这一包，其中的项进入下一包。`leader.notice.recover` 带 `expectedOperationId` 等四个 ID 的旧形式仍用于迁移前已有的、消息被拒绝的通知。包的步骤（打包、已送、观察）只由配置里的通知发送身份运行，不是 Agent 的命令。
+

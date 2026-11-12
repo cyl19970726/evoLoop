@@ -67,6 +67,29 @@ test("Leader notice recovery confirms only the exact replacement IDs",async t=>{
   assert.equal((await store.get(intent.id)).state,"confirmed");
 });
 
+test("packet recovery is confirmed by the recorded result, and after a lost reply by reading the packet",async t=>{
+  const store=await temporaryStore(t),packetId=randomUUID(),actor=verifiedActor("reviewer");
+  const body={reason:"Recovery gate reviewed"};
+  const intent=prepareRequest("leader.notice.recover",projectId,body,packetId,randomUUID());
+  const ok=await dispatchMutation(client(async()=>response({status:"recorded",packetId,state:"recovered"})),store,apiUrl,token,intent,()=>{},actor);
+  assert.equal((ok as {status:string}).status,"recorded");
+  assert.equal((await store.get(intent.id)).state,"confirmed");
+  // A reply about another packet confirms nothing.
+  const other=prepareRequest("leader.notice.recover",projectId,body,randomUUID(),randomUUID());
+  await assert.rejects(dispatchMutation(client(async()=>response({status:"recorded",packetId,state:"recovered"})),store,apiUrl,token,other,()=>{},actor));
+  // Lost reply: only a packet that is read back as recovered confirms.
+  const lost=prepareRequest("leader.notice.recover",projectId,body,packetId,randomUUID());
+  let state="blocked";
+  const transport=client(async(_url,init)=>{
+    if(init?.method==="POST")throw new TypeError("response lost");
+    return response({packet:{id:packetId,projectId,state}});
+  });
+  await assert.rejects(dispatchMutation(transport,store,apiUrl,token,lost,()=>{},actor),pendingError);
+  await assert.rejects(reconcileReceipt(transport,store,apiUrl,token,lost.id,actor),pendingError);
+  state="recovered";
+  assert.equal((await reconcileReceipt(transport,store,apiUrl,token,lost.id,actor)).state,"confirmed");
+});
+
 test("lost recovery response confirms by reading both immutable notice identities",async t=>{
   const store=await temporaryStore(t),noticeId=randomUUID(),actor=verifiedActor("reviewer");
   const body={expectedOperationId:randomUUID(),newNoticeId:randomUUID(),newMessageId:randomUUID(),

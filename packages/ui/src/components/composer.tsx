@@ -15,6 +15,8 @@ export interface ComposerCommand {
   /** The original name (skill name or /command), shown small on the right. */
   slug: string;
   kind: "skill" | "command";
+  /** Why this item cannot be used now. It stays in the menu, dimmed with this reason, and cannot be picked: "/" never answers with nothing. */
+  unavailable?: string | undefined;
 }
 
 export interface ComposerAgent {
@@ -83,6 +85,8 @@ export interface ComposerProps {
   /** The + button: attach a task, document or file. */
   onAttach?: (() => void) | undefined;
   commands?: ComposerCommand[] | undefined;
+  /** One line at the top of the "/" menu about where its skills stand: still loading, none for this role, or unreadable. */
+  commandStatus?: string | undefined;
   onPickCommand?: ((command: ComposerCommand) => void) | undefined;
   agents?: ComposerAgent[] | undefined;
   onPickAgent?: ((agent: ComposerAgent) => void) | undefined;
@@ -98,7 +102,7 @@ type MenuItem = { type: "command"; item: ComposerCommand } | { type: "agent"; it
 
 export function Composer({
   value, onChange, onSend, onQueue, onQueueUnavailable, sendMode, busy, label = "消息", maxLength, onStop, running, placeholder = "发消息，/ 调用技能，@ 转给其他智能体",
-  attachments = [], onRemoveAttachment, onAttach, commands = [], onPickCommand, agents = [], onPickAgent, meta, disabled, className, skillScope,
+  attachments = [], onRemoveAttachment, onAttach, commands = [], commandStatus, onPickCommand, agents = [], onPickAgent, meta, disabled, className, skillScope,
 }: ComposerProps) {
   const mode: ComposerSendMode = sendMode ?? (running ? "queue" : "send");
   const textarea = React.useRef<HTMLTextAreaElement>(null);
@@ -113,7 +117,9 @@ export function Composer({
     : menu?.kind === "mention"
       ? agents.filter(agent => matchQuery(menu.query, agent.name)).map(item => ({ type: "agent" as const, item }))
       : [];
-  const open = menu !== null && items.length > 0;
+  // "/" always answers: with matches, with unavailable commands and their reasons, or with a line saying nothing matches.
+  const open = menu !== null && (items.length > 0 || menu.kind === "command");
+  const hasItems = items.length > 0;
   const activeIndex = Math.min(active, Math.max(items.length - 1, 0));
 
   React.useEffect(() => { setActive(0); }, [menu?.kind, menu?.query]);
@@ -127,6 +133,7 @@ export function Composer({
   function pick(entry: MenuItem) {
     if (!menu) return;
     if (entry.type === "command") {
+      if (entry.item.unavailable) return;
       onChange(value.slice(menu.query.length + 1).replace(/^\s+/, ""));
       onPickCommand?.(entry.item);
     } else {
@@ -153,12 +160,13 @@ export function Composer({
   function onKeyDown(event: React.KeyboardEvent<HTMLTextAreaElement>) {
     // Confirming an IME candidate is not sending; Safari reports it as keyCode 229 rather than isComposing.
     if (event.nativeEvent.isComposing || event.keyCode === 229) return;
-    if (open) {
+    if (open && hasItems) {
       if (event.key === "ArrowDown") { event.preventDefault(); setActive((activeIndex + 1) % items.length); return; }
       if (event.key === "ArrowUp") { event.preventDefault(); setActive((activeIndex - 1 + items.length) % items.length); return; }
       if (event.key === "Enter" || event.key === "Tab") { event.preventDefault(); const entry = items[activeIndex]; if (entry) pick(entry); return; }
-      if (event.key === "Escape") { event.preventDefault(); setDismissed(value); return; }
     }
+    // Escape closes the menu whether or not it has items to pick.
+    if (open && event.key === "Escape") { event.preventDefault(); setDismissed(value); return; }
     if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
       event.preventDefault();
       if (onQueue) queue(); else if (value.trim()) onQueueUnavailable?.();
@@ -189,9 +197,10 @@ export function Composer({
               id={optionId(index)}
               role="option"
               aria-selected={selected}
+              aria-disabled={entry.type === "command" && entry.item.unavailable ? true : undefined}
               onMouseDown={event => { event.preventDefault(); pick(entry); }}
               onMouseEnter={() => setActive(index)}
-              className={cn("flex cursor-pointer items-center gap-2.5 rounded-md px-2.5 py-2", selected && "bg-selected")}
+              className={cn("flex items-center gap-2.5 rounded-md px-2.5 py-2", entry.type === "command" && entry.item.unavailable ? "cursor-not-allowed opacity-70" : "cursor-pointer", selected && "bg-selected")}
             >
               {entry.type === "command" ? (
                 <>
@@ -200,7 +209,9 @@ export function Composer({
                   </span>
                   <span className="flex min-w-0 flex-1 flex-col">
                     <span className="truncate font-medium text-foreground">{entry.item.name}</span>
-                    {entry.item.description && <span className="truncate text-caption text-muted-foreground">{entry.item.description}</span>}
+                    {entry.item.unavailable
+                      ? <span className="text-caption text-muted-foreground">现在不能用：{entry.item.unavailable}</span>
+                      : entry.item.description && <span className="truncate text-caption text-muted-foreground">{entry.item.description}</span>}
                   </span>
                   <span className="shrink-0 font-mono text-caption text-muted-foreground">{entry.item.slug}</span>
                 </>
@@ -228,6 +239,8 @@ export function Composer({
           <ul id={listId} role="listbox" aria-label={menu?.kind === "command" ? "技能与命令" : "选择智能体"} className="m-0 flex max-h-80 list-none flex-col overflow-y-auto p-0">
             {menu?.kind === "command" ? (
               <>
+                {commandStatus && <li role="presentation" className="px-2.5 py-1.5 text-caption text-muted-foreground">{commandStatus}</li>}
+                {!hasItems && <li role="presentation" className="px-2.5 py-1.5 text-caption text-muted-foreground">没有匹配的技能或命令；按 Esc 关闭，或继续输入。</li>}
                 {renderGroup(skillScope ? `技能 · ${skillScope}` : "技能", skills)}
                 {skills.length > 0 && commandItems.length > 0 && <li role="presentation" className="mx-2.5 my-1 h-px bg-border" />}
                 {renderGroup("命令", commandItems)}
@@ -240,7 +253,7 @@ export function Composer({
               </>
             )}
           </ul>
-          <p className="m-0 px-2.5 pb-1 pt-1.5 text-caption text-muted-foreground">↑↓ 选择 · 回车确认 · Esc 关闭{menu?.kind === "mention" ? " · 可以 @ 多个" : ""}</p>
+          <p className="m-0 px-2.5 pb-1 pt-1.5 text-caption text-muted-foreground">{hasItems ? "↑↓ 选择 · 回车确认 · Esc 关闭" : "Esc 关闭"}{menu?.kind === "mention" ? " · 可以 @ 多个" : ""}</p>
         </div>
       )}
 
@@ -278,7 +291,7 @@ export function Composer({
             aria-expanded={open}
             aria-controls={open ? listId : undefined}
             aria-autocomplete="list"
-            aria-activedescendant={open ? optionId(activeIndex) : undefined}
+            aria-activedescendant={open && hasItems ? optionId(activeIndex) : undefined}
             onChange={event => { onChange(event.target.value); setCaret(event.target.selectionStart); setDismissed(null); }}
             onSelect={event => setCaret(event.currentTarget.selectionStart)}
             onKeyDown={onKeyDown}
