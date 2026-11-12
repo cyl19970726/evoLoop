@@ -306,11 +306,6 @@ node --import tsx tests/manual/session-compaction-e1.ts
 
 业务 Run 的范围变了就叫停，不要等它做完再返工：`command schema runtime.run.stop` 取结构，带 Run 的当前版本和理由，用 `command run FILE` 提交；身份要有 review 权限并持有该 Session 的精确执行授权，原生运行时离线时也能提交（未派发的 Run 在数据库里直接判失败，运行中的由 runner 在运行时恢复后中断）。提交后回读 Run：`stopRequestedAt` 已有、`interruptRequested` 为真表示等运行时中断；终态（`interrupted` 或 `failed`）由运行时观察确认，在此之前仍算未结束，Task 上不能再派新的 Run。用这个 Run 再提交会得到 `RUN_STOPPED`，叫停前已签的意图作废，不会产生交付。停止不会关恢复门，也没有失败通知，只有一条 `run.stopRequested` 运行事件。结果未知的 Run 也可以叫停：标记立即生效，有已知 Turn 的会被中断，Run 仍是 `unknown`，直到读回终态；读回终态后，被它关闭的恢复门自动打开（队列认领持有的门除外）。被叫停作废的排队消息带持久的“被取代”标记，选取与准入都排除，发送人取消或 `session.message.confirmSuperseded` 确认后才重新投递。
 
-## 已知缺口
-
-- **导入通知没有正式命令。** 迁移导入的 Leader 通知只能由维护者直接标记，没有权限检查和操作回执（见[迁移之后先处理导入的通知](#迁移之后先处理导入的通知)）。
-- **托管压缩只在 alpha.6 可用。** 隔离测试只用替身，不验证有认证的模型压缩。
-
 ## 6. 受管 Session 编制所需配置
 
 给一个 Role 新建受管 Session，要同时配好：业务身份（身份文件里对本项目有 read 与 write）、`runtime.grants`（含工作区 `cwd`）、Role 级 `runtime.materialCli`、**`residentQueue.roleActors`** 与 `residentQueue.enabled`、**成对配置的 `sessionMessages.grants`**，以及 `runtime.enabled`。完整清单、每项的格式和生效时机见 [Agent CLI：编制所需私有配置清单](agent-cli.md#编制所需私有配置清单session-prepare-缺项时)。
@@ -340,24 +335,49 @@ node --import tsx tests/manual/session-compaction-e1.ts
 
 这两项都只拦普通 Leader 结果通知，不拦业务 Task Run，也不拦使用者自己发的消息。默认都不配置，因此升级本身不改变行为。
 
+### 最小配置
+
 ```json
 "runtime": {
   "dailyBudget": {
     "enabled": true,
-    "maxInputTokens": 50000000,
-    "maxCostUsd": 25,
+    "maxInputTokens": 1000000000,
     "warningRatio": 0.8,
     "pauseOrdinaryTurns": true,
     "timeZone": "Asia/Tashkent"
   },
   "contextBudget": {
     "enabled": true,
-    "maxInputTokens": 150000,
+    "maxInputTokens": 200000,
     "warningRatio": 0.8,
     "pauseOrdinaryTurns": true
   }
 }
 ```
+
+- **每日上限。** `dailyBudget` 至少要设 `maxInputTokens` 或 `maxCostUsd` 之一。Codex 当前可能没有完整费用，因此优先用输入词元上限；只有运行时确实报告费用时才用 `maxCostUsd` 判定，未报告不会当成 0。上面的数字只是示例，启用前必须按当前用量调整；上限低于当日已用量会立即暂停普通通知。
+- **时区与生效时机。** `timeZone` 必须是 IANA 时区。账本按启动时读到的 `dailyBudget.timeZone` 分日，改动时区后要重启协调器；上限和 `pauseOrdinaryTurns` 则在每个普通结果通知前重读。即使不重启也能改变文案和字段，但分日键仍会沿用启动值，不能用这种不一致状态做验收。
+- **先只告警再暂停。** 若只想先核对提示，可先设 `pauseOrdinaryTurns:false`；确认工作台和 `runtime/usage` 的 `warning` 状态后再改为 `true`。不要为了制造告警，在正式实例临时压低上限。
+
+### 启用步骤与验收前置
+
+1. **维护者读当前用量。** 在工作台智能体页右栏“环境与用量”或 `GET /api/projects/PROJECT_ID/runtime/usage?from=YYYY-MM-DD&to=YYYY-MM-DD` 核对最近几天、今日和 Leader 的上下文，记下读取时区与时间。阈值由维护者按实际预算决定，不由执行代码的 Session 代填私有值。
+2. **维护者改私有配置。** 保留 `EVOLOOP_INTEGRATIONS_FILE` 原有字段，只增加或修订上例中的两个对象；令牌、Session ID 和真实限额不进入仓库。时区改动后重启协调器，并读回服务已使用新配置。
+3. **跑无生产副作用的固定验证。** 下面的场景测试只在临时目录写合成配置，不连数据库、不启动原生 Turn、不发送业务消息：
+
+   ```sh
+   npm run build:packages
+   node --import tsx --test \
+     packages/core/test/usage-context.test.ts \
+     apps/coordinator/test/ordinary-turn-admission.test.ts \
+     apps/coordinator/test/session-budget-verification.test.ts \
+     apps/workbench/test/usage-budget-panel.test.ts \
+     apps/workbench/test/usage-presentation.test.ts
+   ```
+
+   它覆盖配置解析、`warning`、每日上限与上下文上限的阻断、非通知消息不受影响、交接摘要和工作台提示。这个测试证明代码路径可重复，不证明某套私有配置已经启用或正式实例已经实际阻断。
+4. **只读读回启用状态。** 配置启用后重新读取 `runtime/usage` 和工作台：`budget.state` 应为 `ok`、`warning` 或 `exhausted`，目标 Session 的 `context.state` 应为 `ok`、`warning` 或 `handoff_required`；未知数据保持“未知/未报告”。这一步不触发通知，也不制造用量。
+5. **正式阻断与交接另行验收。** 需要观察真实阻断时，在隔离候选或专用测试库用合成通知验证，不在正式实例强压低阈值。交接仍由维护者用同一 Role 开启新 Session，写清原 Session、原生 Thread、固定 Task 和未处理通知；服务不会自动搬线程。发布与私有配置启用后，由独立验收 Session 按此入口核对，作者不能代签 `used` 或把代码测试写成正式启用。
 
 - **读回用量。** `GET /api/projects/PROJECT_ID/runtime/usage?from=YYYY-MM-DD&to=YYYY-MM-DD` 按 Session 和按天返回输入、输出、缓存输入、费用与上下文压力；工作台智能体页右栏“环境与用量”用同一个读取。费用缺失写“未报告”，不当 0。
 - **警告与暂停。** 达到 `warningRatio` 只显示提示；达到上限后，结果通知消息以 `DAILY_BUDGET_EXHAUSTED` 或 `CONTEXT_HANDOFF_REQUIRED` 留在队列并写阻断原因。业务 Task Run、验收和人工消息仍可执行。要恢复，先处理交接或调整上限，再按原消息记录重试；不要另建一条消息冒充原通知。
