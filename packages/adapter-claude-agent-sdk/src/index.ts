@@ -112,6 +112,9 @@ interface LiveTurn {
   /** The init report was recorded; later re-emitted inits are ignored. */
   observed: boolean;
   assistantError: string | null;
+  /** The exact model ID the main thread's assistant messages carried (the last one), and the IDs a subagent's messages carried. */
+  observedModel: string | null;
+  subagentModels: Set<string>;
   previousCumulative: number | null;
   previousThinking: number | null;
   settled: boolean;
@@ -324,7 +327,9 @@ export class ClaudeAgentSdkAdapter implements RuntimePort {
     const settled = turn.settled;
     const observed = turn.capabilities ? { observedCapabilities: turn.capabilities } : {};
     if (settled) return { id: turn.turnId, status: settled.status, completedAtUtc: settled.completedAtUtc,
-      ...(settled.error ? { error: settled.error } : {}), usage: settled.usage, costUsd: settled.costUsd, ...observed };
+      ...(settled.error ? { error: settled.error } : {}), usage: settled.usage, costUsd: settled.costUsd,
+      ...(settled.observedModel !== undefined ? { observedModel: settled.observedModel } : {}),
+      ...(settled.subagentModels?.length ? { subagentModels: settled.subagentModels } : {}), ...observed };
     const live = this.live.get(this.key(binding));
     // An unsettled Turn whose process outlived this adapter instance is not known to be running here.
     return { id: turn.turnId, status: live?.turnId === turn.turnId ? "inProgress" : "unknown", completedAtUtc: null, ...observed };
@@ -515,7 +520,7 @@ export class ClaudeAgentSdkAdapter implements RuntimePort {
     const released = new Promise<void>(resolveRelease => { release = resolveRelease; });
     const live: LiveTurn = { projectId: binding.projectId, nativeSessionId: binding.nativeSessionId, turnId: randomUUID(),
       controller: new AbortController(), query: null, child: null, sent: false, blocked: false, onSent: null,
-      interruptRequested: false, closing: false, assistantError: null, previousCumulative: null, previousThinking: null, settled: false,
+      interruptRequested: false, closing: false, assistantError: null, observedModel: null, subagentModels: new Set<string>(), previousCumulative: null, previousThinking: null, settled: false,
       context: { mode: this.options.contextMode ?? "project", plan: null, allowedSkills: null, instructions: null }, observed: false,
       release, done: Promise.resolve() };
     // Registered before any await so a concurrent read never mistakes this start for an orphan.
@@ -663,6 +668,8 @@ export class ClaudeAgentSdkAdapter implements RuntimePort {
       for await (const message of live.query!) {
         if (message.type === "system" && message.subtype === "init") await this.observeCapabilities(live, message);
         else if (message.type === "assistant" && message.parent_tool_use_id === null) await this.observeAssistant(live, message);
+        // A subagent's own messages carry the model it answered with; only its model is kept, never its content.
+        else if (message.type === "assistant") { const child = safeModel((message as { message?: { model?: unknown } }).message?.model); if (child) live.subagentModels.add(child); }
         else if (message.type === "result" && !live.settled && live.sent && this.answers(live, message)) {
           await this.settle(live, this.fromResult(live, message as ObservedResult), message.subtype === "success" &&
             message.is_error !== true && typeof message.result === "string" && message.result.length > 0
@@ -734,6 +741,9 @@ export class ClaudeAgentSdkAdapter implements RuntimePort {
 
   private async observeAssistant(live: LiveTurn, message: SDKAssistantMessage): Promise<void> {
     if (typeof message.error === "string") { live.assistantError = message.error; return; } // synthetic API-error text is not recorded
+    // The exact model the API answered with, from the native message itself (an alias such as "opus" in the configuration is resolved here).
+    const answered = safeModel(message.message?.model);
+    if (answered) live.observedModel = answered;
     const content: unknown[] = Array.isArray(message.message?.content) ? message.message.content : [];
     const items: RuntimeHistoryItem[] = [];
     content.forEach((block, index) => {
@@ -764,6 +774,7 @@ export class ClaudeAgentSdkAdapter implements RuntimePort {
     return { status: classified.status, completedAtUtc, usage: usageOf(result.usage),
       costUsd: turnCost(cumulative, live.previousCumulative), cumulativeCostUsd: cumulative,
       thinkingTokens: turnThinking(thinking, live.previousThinking), cumulativeThinkingTokens: thinking, source: "result",
+      observedModel: live.observedModel, subagentModels: [...live.subagentModels].filter(model => model !== live.observedModel).sort(),
       ...(classified.status === "failed" ? { error: classified.error } : {}) };
   }
 
@@ -822,7 +833,8 @@ export class ClaudeAgentSdkAdapter implements RuntimePort {
         const model = safeModel(info.value);
         if (!model) return [];
         const efforts = (info.supportedEffortLevels ?? []).filter(level => EFFORTS.has(level));
-        return [{ model, supportedReasoningEfforts: efforts, defaultReasoningEffort: null }];
+        return [{ model, supportedReasoningEfforts: efforts, defaultReasoningEffort: null,
+          ...(typeof info.displayName === "string" && info.displayName.trim() && info.displayName.length <= 120 ? { displayName: info.displayName.trim() } : {}) }];
       });
       const value: RuntimeModelList = { status: options.length ? "available" : "empty", models: options.map(option => option.model),
         options, error: null, observedAtUtc };

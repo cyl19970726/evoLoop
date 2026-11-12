@@ -37,7 +37,7 @@ const history = Array.from({ length: 30 }, (_, index) => [
   timelineAssistant(`answer-${index}`, `第 ${index + 1} 个回答：已核对，结论如下。\n\n- 要点一\n- 要点二\n- 要点三`, { turnId: `turn-h${index}`, author: { kind: "session", id: sessionId, label: "统筹" } }),
 ]).flat();
 
-const blockedReason = "MESSAGE_GRANT_MISSING: 没有发送这条消息的授权：私有配置 sessionMessages.grants 里没有 user-sim-agent → 这个 Session 的授权。在 sessionMessages.grants 加一项 {…}（使用时重读，不需要重启）。消息没有保存。";
+const blockedReason = "MESSAGE_GRANT_MISSING: 没有发送这条消息的授权：私有配置 sessionMessages.grants 里没有 user-sim-agent → 这个 Session 的授权。在 sessionMessages.grants 加一项 {\"enabled\":true,\"sessionId\":\"s\",\"senderActorId\":\"user-sim-agent\",\"cwd\":\"/Users/gongshi006/.local/share/evoloop/workspaces/leader\"}（使用时重读，不需要重启）。消息没有保存。";
 test("a message blocked for a missing grant is visible on the Session page with what is missing, and the page stays usable",
   { skip: !modulePath && "Set EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE after building the workbench" }, async t => {
   const { chromium } = (await import(pathToFileURL(modulePath!).href)).default;
@@ -86,6 +86,8 @@ test("a message blocked for a missing grant is visible on the Session page with 
     assert.match(text, /有 1 条来自 user-sim-agent 的消息因缺少消息授权而受阻/);
     assert.match(text, /没有占用队列，后面的消息照常处理/);
     assert.match(text, /sessionMessages\.grants 里没有 user-sim-agent → 这个 Session 的授权/, "what is missing is named");
+    assert.match(text, /维护者/, "who sets it up is named");
+    assert.doesNotMatch(text, /[{}]|\/Users|workspaces\/leader|cwd/, "no configuration text and no local path on the page");
     assert.equal(await page.getByText("受阻：缺少消息授权").count(), 1, "the blocked message is tagged; the one behind it is an ordinary queued message");
     assert.equal(await page.getByText("排队中", { exact: true }).count() >= 1, true);
     const layout = await page.evaluate(`(() => { const t = document.querySelector(".workspace-timeline-scroll"); const c = document.querySelector(".session-composer-host").getBoundingClientRect();

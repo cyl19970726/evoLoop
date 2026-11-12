@@ -165,6 +165,21 @@ test("a busy Session makes entries wait; on its Run's end the first entry is con
   assert.ok(events.every((e, i) => i === 0 || e.seq > events[i - 1]!.seq), "events are ordered");
 });
 
+test("an unresolved business identity suspends the entry before any assignment or Run, with a reason that names the Session", async () => {
+  const x = await newTask("Unresolved identity");
+  await append(x);
+  const reason = `Session ${session} shares its Role with 2 other live Session(s) and has no runtime.materialCli entry of its own; the business identity is not guessed from the Role`;
+  const unresolved = new SessionLinePump({ workflow, credentials: async () => [lead, worker], enabled: async () => true, canWrite: () => true, pollIntervalMs: 1000,
+    onError: error => { throw error; }, recipientActorId: async () => ({ unresolved: reason }) });
+  await unresolved.tick(); await unresolved.tick();
+  const suspended = await entryOf(x);
+  assert.equal(suspended.state, "suspended"); assert.match(suspended.suspendReason!, /^RECIPIENT_UNAVAILABLE/);
+  assert.match(suspended.suspendReason!, new RegExp(session)); assert.match(suspended.suspendReason!, /not guessed from the Role/);
+  assert.equal((await task(x)).state, "todo", "nothing started");
+  assert.equal(await workflow.getTaskAssignment(lead, p, x), null, "no assignment was written for another identity");
+  assert.equal((await pool.query("SELECT count(*)::int n FROM runtime_run WHERE project_id=$1 AND task_id=$2", [p, x])).rows[0].n, 0, "no Run, so no preflight failure");
+});
+
 test("an entry that cannot start is suspended with its reason and an immediate event, and the next entry moves up; resume puts it back", async () => {
   const x = await newTask("Blocked"), y = await newTask("Next");
   await append(x); await append(y);
