@@ -16,35 +16,54 @@ export const MANUAL_ONLY = {
 };
 
 // Directories under scripts/ whose tests belong to another group: `.js` suites of test:docs (docs, architecture-map) and research code.
-const OTHER_GROUPS = new Set(["node_modules", "research", "docs", "architecture-map"]);
+// ONLY test:unit's discovery skips these. The coverage check's universe (allScriptTests) does not: a `.test.mjs` dropped in one
+// of them is run by nobody, so the check must see it and fail unless a group matches it or MANUAL_ONLY registers it.
+export const OTHER_GROUPS = new Set(["node_modules", "research", "docs", "architecture-map"]);
 
-function walk(dir, out) {
+function walk(dir, out, skip, pattern) {
   for (const name of readdirSync(dir).sort()) {
-    if (OTHER_GROUPS.has(name)) continue;
+    if (skip.has(name)) continue;
     const path = join(dir, name);
-    if (statSync(path).isDirectory()) walk(path, out);
-    else if (name.endsWith(".test.mjs")) out.push(path);
+    if (statSync(path).isDirectory()) walk(path, out, skip, pattern);
+    else if (pattern.test(name)) out.push(path);
   }
   return out;
 }
 
-/** Script test files that test:unit runs under `root`, as repo-relative posix paths. */
-export function listScriptTests(root = repoRoot) {
+const rel = (root, paths) => paths.map(path => relative(root, path).split(sep).join("/")).sort();
+const exists = dir => { try { return statSync(dir).isDirectory(); } catch { return false; } };
+
+/** Script test files that test:unit runs under `root`, as repo-relative posix paths. `skip` is only for tests that simulate a wrong skip list. */
+export function listScriptTests(root = repoRoot, { skip = OTHER_GROUPS } = {}) {
   const scripts = join(root, "scripts");
-  try { statSync(scripts); } catch { return []; }
-  return walk(scripts, []).map(path => relative(root, path).split(sep).join("/")).filter(path => !(path in MANUAL_ONLY)).sort();
+  if (!exists(scripts)) return [];
+  return rel(root, walk(scripts, [], skip, /\.test\.mjs$/)).filter(path => !(path in MANUAL_ONLY));
 }
 
-/** Every `scripts/**` `.test.mjs` file regardless of exclusion: what the coverage check must account for. */
+/** Every `.test.mjs` / `.test.js` under scripts/ except in node_modules, whatever group should run it: what the coverage check must account for. */
 export function allScriptTests(root = repoRoot) {
   const scripts = join(root, "scripts");
-  try { statSync(scripts); } catch { return []; }
-  return walk(scripts, []).map(path => relative(root, path).split(sep).join("/")).sort();
+  if (!exists(scripts)) return [];
+  return rel(root, walk(scripts, [], new Set(["node_modules"]), /\.test\.(mjs|js)$/));
+}
+
+/**
+ * The discovery output is handed to `node --test` through the shell, where an empty or garbled list would silently run
+ * fewer tests. So the list must be non-empty, every line a repo-relative `.test.mjs` path under scripts/, no duplicates.
+ */
+export function assertValidList(list) {
+  if (!Array.isArray(list) || list.length === 0) throw new Error("script test discovery found no tests; test:unit would silently skip every script test");
+  const bad = list.filter(path => typeof path !== "string" || !/^scripts\/[\w./-]+\.test\.mjs$/.test(path));
+  if (bad.length) throw new Error(`script test discovery produced unparsable entries: ${bad.slice(0, 3).join(", ")}`);
+  if (new Set(list).size !== list.length) throw new Error("script test discovery produced duplicate entries");
+  return list;
 }
 
 const isMain = () => { try { return realpathSync(fileURLToPath(import.meta.url)) === realpathSync(process.argv[1]); } catch { return false; } };
 if (isMain()) {
   const rootArg = process.argv.indexOf("--root");
   const root = rootArg > 0 ? resolve(process.argv[rootArg + 1]) : repoRoot;
-  process.stdout.write(listScriptTests(root).map(path => `${path}\n`).join(""));
+  // Any failure exits non-zero BEFORE anything is printed: `files=$(…) && …` in test:unit then stops instead of running without them.
+  try { process.stdout.write(assertValidList(listScriptTests(root)).map(path => `${path}\n`).join("")); }
+  catch (error) { process.stderr.write(`script-tests: ${error.message}\n`); process.exit(1); }
 }
