@@ -7,12 +7,14 @@ import { permissionLabel, type RecoveryRead } from "./recoveryPresentation";
 export const notProvidedByExternal = "外部接入不提供";
 export type EnvironmentRow = [label: string, value: string];
 
-export function environmentRows({ kind, recovery, configuredModel }: {
+export function environmentRows({ kind, recovery, configuredModel, modelLabelOf = (model: string) => model }: {
   kind: "owned" | "external";
   /** The recovery read; ignored for an external agent, whose recovery is never read. */
   recovery: RecoveryRead;
   /** The configured model the agent's snapshot records, if any (a project-run agent's launch, or a value an external host reported). */
   configuredModel: string | number | null;
+  /** How a model ID is said (the catalog's display name in front of the exact ID); the ID itself by default. */
+  modelLabelOf?: (model: string) => string;
 }): EnvironmentRow[] {
   const recorded = configuredModel === null || configuredModel === "" ? null : String(configuredModel);
   if (kind === "external") return [
@@ -26,7 +28,7 @@ export function environmentRows({ kind, recovery, configuredModel }: {
   const revision = profile?.revision ?? null;
   return [
     ["运行方式", "项目受管"],
-    ["目标模型", revision?.model ?? recorded ?? pending ?? (profile ? "未配置" : "未登记执行配置")],
+    ["目标模型", revision?.model ? modelLabelOf(revision.model) : recorded ? modelLabelOf(recorded) : pending ?? (profile ? "未配置" : "未登记执行配置")],
     ["思考强度", revision?.reasoningEffort ?? pending ?? (profile ? "未配置" : "未登记执行配置")],
     ["执行权限", revision ? permissionLabel(revision.sandbox, revision.approvalPolicy) : pending ?? "未登记执行配置"],
   ];
