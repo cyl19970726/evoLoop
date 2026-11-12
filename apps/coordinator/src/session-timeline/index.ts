@@ -10,6 +10,8 @@ import type { NativeWorkspacePage, SessionTimelinePage, WorkspaceEntry, Workspac
 import type { RuntimeBinding, RuntimePort } from '@evoloop/contracts/runtime';
 import type { DirectInputRecord } from '@evoloop/contracts/direct-input';
 import type { SessionObservationService } from '@evoloop/core/session-observation';
+import { turnUsageOf } from '@evoloop/core/native-observation';
+import type { NativeObservationRecord } from '@evoloop/contracts/native-observation';
 
 /** A started runner or a separately opened read-only adapter can own these exact reads. */
 export interface WorkspaceHistoryOwner {
@@ -64,12 +66,21 @@ const originOf=(source:NativeInputSource|null):WorkspaceOrigin|null=>source?.kin
 }:source?.kind==='message'?{kind:'message',id:source.messageId,taskId:null,taskRevisionId:null,
   initiatingActorId:source.actorId}:null;
 const toolDetailDenied='原始工具详情需要本项目读取与复核权限。';
+/**
+ * The client ID a native input carries for its business source. An ordinary message or Run sends its operation ID. A direct
+ * idle start (the workbench's "send to an idle Session") saves a message whose ID is the direct input ID and sends that ID as the
+ * client ID, while the text marker names the operation: both belong to the same source, so the input is exact only when the
+ * client ID is the source's message ID AND the marker names the source's operation.
+ */
+const clientIdMatches=(raw:WorkspaceMessage,source:NativeInputSource,markerMatches:boolean):boolean=>
+  raw.clientId===source.operationId||
+  source.kind==='message'&&raw.clientId===source.messageId&&markerMatches;
 const exactInput=(raw:WorkspaceEntry,source:NativeInputSource|null):raw is WorkspaceMessage=>{
   if(raw.kind!=='message'||raw.role!=='input'||!source)return false;
   const marker=raw.inputReference;
   const markerMatches=!!marker&&marker.kind==='operation-marker'&&marker.source===source.kind&&
     marker.operationId===source.operationId;
-  if(raw.clientId!==null)return raw.clientId===source.operationId&&(!marker||markerMatches);
+  if(raw.clientId!==null)return clientIdMatches(raw,source,markerMatches)&&(!marker||markerMatches);
   return markerMatches;
 };
 type InputNoticeReason='unassociated'|'duplicate'|'conflict'|'compacted';
@@ -86,7 +97,8 @@ const nativeInputNotice=(raw:WorkspaceMessage,reason:InputNoticeReason='unassoci
 const inputNoticeReason=(raw:WorkspaceMessage,source:NativeInputSource|null,duplicate=false):'unassociated'|'duplicate'|'conflict'=>{
   if(duplicate)return 'duplicate';
   if(raw.clientId!==null&&raw.inputReference&&source&&
-      (raw.clientId!==source.operationId||raw.inputReference.source!==source.kind||
+      (!clientIdMatches(raw,source,raw.inputReference.kind==='operation-marker'&&raw.inputReference.source===source.kind&&
+        raw.inputReference.operationId===source.operationId)||raw.inputReference.source!==source.kind||
         raw.inputReference.operationId!==source.operationId))return 'conflict';
   return 'unassociated';
 };
@@ -117,6 +129,9 @@ const safeEntry=(entry:WorkspaceEntry,allowDetail:boolean):WorkspaceEntry=>{
       detailReason:allowDetail?entry.detailReason:toolDetailDenied,
       ...(allowDetail&&originalDetail?{detail:originalDetail}:{})};
   }
+  // Readable reasoning is shown only through project-read timeline reads; it never enters notices or notice packages.
+  if(entry.kind==='reasoning')return {...entry,origin:null,body:entry.readable?bounded(entry.body):'',
+    truncated:entry.truncated||entry.readable&&entry.body.length>16000};
   if(entry.kind==='message')return entry.role==='assistant'
     ? {...entry,origin:null,body:bounded(entry.body),truncated:entry.truncated||entry.body.length>16000}
     : nativeInputNotice(entry);
@@ -139,6 +154,16 @@ const bufferEntry=(entry:WorkspaceEntry):WorkspaceEntry=>{
     ? {...projected,detailAvailable:entry.detailAvailable,detailReason:entry.detailReason}:projected;
 };
 const liveKey=(p:string,s:string,t:string)=>`${p}:${s}:${t}`;
+/** Codex reports usage per Thread; its observed per-Turn difference is attached to the matching Turn. An adapter's own
+ * per-Turn usage (Claude) is kept as reported. */
+const withUsage=(turn:WorkspaceTurn,observation:NativeObservationRecord|null):WorkspaceTurn=>{
+  if(turn.usage)return turn;
+  const recorded=observation?.turnUsage?.find(entry=>entry.turnId===turn.id);
+  if(!recorded)return turn;
+  const usage=turnUsageOf(recorded);
+  return {...turn,usage:{outputTokens:usage.outputTokens,reasoningOutputTokens:usage.reasoningOutputTokens,source:'codex-token-usage',
+    complete:recorded.base!==null}};
+};
 
 /** Project reads and exact owned binding checks occur on every request; the buffer grants no authority. */
 export class SessionTimelineService {
@@ -315,8 +340,15 @@ export class SessionTimelineService {
       return {...publicEntry(raw,principal),origin,...(raw.kind==='message'&&raw.role==='assistant'?{
         author:{kind:'session' as const,id:scope.sessionId,label:scope.title}}:{})};
     });
-    return {...live,entries,turns:live.turns.map(turn=>({...turn,origin:originOf(associations.found.get(turn.id)??null)})),
+    const observation=await this.turnObservation(scope);
+    return {...live,entries,turns:live.turns.map(turn=>withUsage({...turn,origin:originOf(associations.found.get(turn.id)??null)},observation)),
       limitations:[...live.limitations,...read.limitations]};
+  }
+  /** The Session's saved native observation, read only for its per-Turn usage. */
+  private async turnObservation(scope:Scope):Promise<NativeObservationRecord|null>{
+    if(!scope.sessionId)return null;
+    const record=await this.deps.uow.read(scope.projectId,r=>r.nativeObservation?.get(scope.projectId,scope.sessionId!)??Promise.resolve(null));
+    return record&&record.threadId===scope.threadId?record:null;
   }
   private async sources(projectId:string,sessionId:string,turnIds:string[]){
     return this.deps.uow.read(projectId,async r=>{
@@ -397,7 +429,8 @@ export class SessionTimelineService {
           origin,...(entry.kind==='message'&&entry.role==='assistant'?{
             author:{kind:'session' as const,id:scope.sessionId,label:scope.title}}:{})}];
       });
-      turns=native.turns.map(turn=>({...turn,origin:originOf(associations.found.get(turn.id)??null)}));
+      const observation=await this.turnObservation(scope);
+      turns=native.turns.map(turn=>withUsage({...turn,origin:originOf(associations.found.get(turn.id)??null)},observation));
     }else if(readMessages&&(readNative||!scope.threadId||!this.deps.runner?.status(projectId).available||
       !support.history||historyKey&&this.historyAvailability.get(historyKey)===false))
       for(const m of [...page.messages.items].reverse()){
@@ -533,7 +566,8 @@ export class SessionTimelineService {
       // Context compaction rewrites native input, so the operation marker may be gone. The Turn itself is still the one
       // the saved business record started: when it holds exactly one input and that input carries no other identity,
       // that input is the business input. Anything less certain says so instead of implying an unknown sender.
-      const otherIdentity=raw.clientId!==null&&raw.clientId!==source.operationId||
+      const otherIdentity=raw.clientId!==null&&!clientIdMatches(raw,source,!!raw.inputReference&&raw.inputReference.source===source.kind&&
+          raw.inputReference.operationId===source.operationId)||
         !!raw.inputReference&&(raw.inputReference.source!==source.kind||raw.inputReference.operationId!==source.operationId);
       if(context.inputs===1&&!otherIdentity){
         if(source.kind==='run')return runInput(raw,source);

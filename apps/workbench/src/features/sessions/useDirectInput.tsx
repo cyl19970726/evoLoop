@@ -14,6 +14,9 @@ const stateLabel: Record<DirectInputReceipt["state"], string> = {
   pending: "准备发送", attempted: "发送中，等待原操作回执", accepted: "运行时已接收；不代表智能体已阅读或采用",
   rejected: "运行时已拒绝这条输入", unknown: "发送结果未知，需核对原操作",
 };
+/** An accepted input says more once its native Item is recorded: the runtime holds it. Still not "adopted" by the agent. */
+export const receiptLabel = (receipt: Pick<DirectInputReceipt, "state" | "nativeItemId">): string =>
+  receipt.state === "accepted" && receipt.nativeItemId ? "已读到：运行时已记录这条输入的原生条目；不代表智能体已采用" : stateLabel[receipt.state];
 type ExplicitAudit = { inputId: string; operationId: string; reason: string; observedAt: string };
 const readAudit = (value: string | null): ExplicitAudit | null => {
   if (!value) return null;
@@ -91,6 +94,19 @@ export function useDirectInput({ projectId, sessionId, actorId, active, onAccept
       .catch(cause => { if (live) setError(`原输入回执暂不可读取：${errorText(cause)}`); });
     return () => { live = false; };
   }, [projectId, sessionId, pendingId, active]);
+  // An accepted input learns its native Item only after its Turn ends (the service reads the history back then); look again until it does.
+  useEffect(() => {
+    if (!active || !receipt || receipt.state !== "accepted" || receipt.nativeItemId) return;
+    const inputId = receipt.inputId;
+    let live = true, looks = 0;
+    const timer = setInterval(() => {
+      if (++looks > 120) { clearInterval(timer); return; }
+      void client.read(inputId).then(value => {
+        if (live && value && value.inputId === inputId && value.state === "accepted" && value.nativeItemId) { setReceipt(value); clearInterval(timer); }
+      }).catch(() => undefined);
+    }, 5000);
+    return () => { live = false; clearInterval(timer); };
+  }, [projectId, sessionId, active, receipt?.inputId, receipt?.state, receipt?.nativeItemId]);
   const current = capability.isError ? null : capability.data;
   async function send(content: string): Promise<DirectSendResult> {
     if (!current?.available || !current.mode || busy || pendingId || !content.trim()) return "skipped";
@@ -134,7 +150,7 @@ export function useDirectInput({ projectId, sessionId, actorId, active, onAccept
   const view = <>
     {(pendingId || receipt) && <div className="session-direct-receipt" role={pendingId && error ? "alert" : "status"}>
       <Notice tone={pendingId ? "waiting" : receipt?.state === "rejected" ? "error" : "info"}
-        title={receipt ? stateLabel[receipt.state] : error || "正在读取原输入回执"}
+        title={receipt ? receiptLabel(receipt) : error || "正在读取原输入回执"}
         action={pendingId ? <Button size="compact" disabled={busy} onClick={() => void reconcile()}>核对结果（不会重发）</Button> : undefined}>
         {pendingId && <p>只按原输入核对，不会重发。核对前不能发送新消息，草稿仍保留在输入框里。</p>}
         {receipt?.reason && <p>{receipt.state === "rejected" ? "运行时说明了拒绝原因，原文见完整标识。" : "运行时附了说明，原文见完整标识。"}</p>}
