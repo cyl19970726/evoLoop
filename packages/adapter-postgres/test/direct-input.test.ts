@@ -581,3 +581,48 @@ test("item 4: a refusal that arrives after a concurrent reconcile flipped the in
   await assert.rejects(store.rejectSteerAndQueue(projectId,maybe.inputId,"later retry without proof"),{code:"INPUT_STATE"});
   assert.equal(await messageCount(maybe.inputId,maybe.operationId),0,"no message was made");
 });
+
+// ---- Task c0dba0fa (rework of #383) -----------------------------------------------------------------------------------------------
+test("the ordinary entry refuses a new message ID that carries the operation ID of a live direct input (symmetric with reserve): one intent enters the Leader once",async()=>{
+  const id=await freshSession();
+  await running(id,`turn-op-${randomUUID()}`);
+  const turn=(await pool.query("SELECT native_turn_id FROM session_message_processing WHERE session_id=$1",[id])).rows[0].native_turn_id as string;
+  const insert=input(turn);                                   // input I1, operation O
+  const reserved=await store.reserve(projectId,id,"user",insert,grant(id,5),"");
+  assert.equal(reserved.record.state,"attempted"); assert.equal(reserved.record.mode,"steer");
+  // The same intent asked to queue under a different message ID I2 (same operation O): refused, nothing saved.
+  const I2=randomUUID();
+  await assert.rejects(postMessage(id,I2,insert.operationId,insert.content),{code:"INPUT_ID_IS_DIRECT_INPUT"});
+  assert.equal(await messageCount(I2,insert.operationId),0,"no message was saved under I2 or under O");
+  assert.equal(await directRows(insert.inputId),1,"the direct input is still the one entry");
+  // The same message ID (I1) is refused as before, and a refused (rejected) direct input still frees its ID and operation for the queue.
+  await assert.rejects(postMessage(id,insert.inputId,randomUUID(),insert.content),{code:"INPUT_ID_IS_DIRECT_INPUT"});
+  await store.reject(projectId,insert.inputId,"explicit refusal");
+  await postMessage(id,I2,insert.operationId,insert.content);
+  assert.equal(await messageCount(I2,insert.operationId),1,"after a plain refusal the text may be queued, once");
+});
+
+test("a -32603 on a steer leaves the input unknown with no message; only a refusal that answers the request itself queues it",async()=>{
+  const id=await freshSession();
+  await running(id,`turn-603-${randomUUID()}`);
+  const turn=(await pool.query("SELECT native_turn_id FROM session_message_processing WHERE session_id=$1",[id])).rows[0].native_turn_id as string;
+  const command=input(turn);
+  const binding={projectId,sessionId:id,roleId,nativeThreadId:`thread-${id}`,nativeSessionId:`native-${id}`,cwd:"/tmp/direct-test",authorizationScope:"project",owner:"evoloop-codex-app-server"} as never;
+  const { RuntimeServerError }=await import("@evoloop/contracts/runtime");
+  let code=-32603;
+  const runtime={isReady:()=>true,registerBinding:async()=>undefined,capabilitiesFor:()=>({delivery:{midTurnInput:true,idleTurnStart:true}}),
+    steerTurn:async()=>{throw new RuntimeServerError("turn/steer",9,code,"native error");}} as never;
+  const service=new DirectInputService({store,runtime:()=>runtime,canWrite:()=>true,admission:async()=>({grant:grant(id,5),binding}),bindingFor:async()=>binding});
+  const principal={actorId:"user",projectIds:[projectId],permissions:["read","write"] as Array<"read"|"write">};
+  const receipt=await service.submit(principal,projectId,id,command);
+  assert.equal(receipt.state,"unknown","not provably unsent: unknown, to be reconciled");
+  assert.equal(await messageCount(command.inputId,command.operationId),0,"and not queued");
+  // A later retry without proof cannot turn it into a message either.
+  await assert.rejects(store.rejectSteerAndQueue(projectId,command.inputId,"retry without proof"),{code:"INPUT_STATE"});
+  // -32600 for another input on the same Session queues exactly one message.
+  code=-32600;
+  const other=input(turn);
+  const queued=await service.submit(principal,projectId,id,other);
+  assert.equal(queued.state,"rejected"); assert.equal(queued.queuedMessageId,other.inputId);
+  assert.equal(await messageCount(other.inputId,other.operationId),1);
+});

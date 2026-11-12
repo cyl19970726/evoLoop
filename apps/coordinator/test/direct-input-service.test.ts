@@ -306,3 +306,23 @@ test("item 1: only a provable refusal of the steer is queued; an unclear outcome
   await lost.service.submit(principal, projectId, sessionId, lost.value);
   assert.deepEqual(lost.calls, ["unknown"], "a lost reply may have reached the Turn: not queued");
 });
+
+// ---- Task c0dba0fa (rework of #383): only an error that proves the steer was not applied is queued ------------------------------
+test("a steer error is queued only when it proves nothing was applied: -32600 is; -32603 and server-defined errors are unknown and need a reconcile", async () => {
+  const outcome = async (code: number, message = "native error") => {
+    const fixture = steerFixture(new RuntimeServerError("turn/steer", 21, code, message));
+    await fixture.service.submit(principal, projectId, sessionId, fixture.value);
+    return fixture.calls;
+  };
+  assert.deepEqual(await outcome(-32600, "no active turn to steer"), ["queue"], "invalid request: no active Turn, nothing was applied");
+  assert.deepEqual(await outcome(-32603, "internal error"), ["unknown"], "an internal error may have applied the steer: not queued, reconcile first");
+  assert.deepEqual(await outcome(-32000, "server error"), ["unknown"], "a server-defined error proves nothing");
+  assert.deepEqual(await outcome(-32099, "server error"), ["unknown"]);
+  // Method not found and invalid params are refused before anything runs: a plain refusal as before (not queued, not unknown).
+  assert.deepEqual(await outcome(-32601, "method not found"), ["reject"]);
+  assert.deepEqual(await outcome(-32602, "invalid params"), ["reject"]);
+  // The structured "this Turn kind cannot take input" refusal is evidence too and still queues.
+  const structured = steerFixture(new RuntimeServerError("turn/steer", 22, -32602, "cannot steer a review turn", undefined, { codexErrorInfo: { activeTurnNotSteerable: { turnKind: "review" } } }));
+  await structured.service.submit(principal, projectId, sessionId, structured.value);
+  assert.deepEqual(structured.calls, ["queue"]);
+});
