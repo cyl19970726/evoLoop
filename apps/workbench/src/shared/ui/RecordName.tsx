@@ -9,7 +9,7 @@ import { ApiError, api } from "../api";
 import { isRoleOwnerId, readOwnerRole } from "../ownerRole";
 import { useProjectQuery } from "../query";
 import type { LeaderWorkTask } from "@evoloop/contracts/work-index";
-import { nameOnly, nameText, responsibleSessionKey, responsibleText, type NameRead } from "../workPresentation";
+import { MIGRATION_PLACEHOLDER_OWNER, nameOnly, nameText, responsibleSessionKey, responsibleText, type NameRead } from "../workPresentation";
 
 /** A name as read: a record that is not there (404) is said as such, any other failure as unreadable. */
 export function readOf<T>(query: { data?: T; isError: boolean; error?: unknown }, name: (value: T) => string | null | undefined): NameRead {
@@ -26,6 +26,7 @@ export function useRoleName(projectId: string, roleId: string | null | undefined
   const enabled = !!roleId && isRoleOwnerId(roleId);
   // Same key and value as the documents page's owner names, so the two share one read.
   const query = useProjectQuery(projectId, ["role", roleId, "title"], signal => readOwnerRole("", projectId, roleId!, signal), { enabled });
+  if (roleId === MIGRATION_PLACEHOLDER_OWNER) return { state: "unassigned" };
   return enabled ? readOf(query, role => role.proposal.title) : { state: "failed" };
 }
 

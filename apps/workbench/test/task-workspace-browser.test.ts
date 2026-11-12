@@ -149,9 +149,9 @@ test("task list sort survives opening, Back and reload; documents open beside th
     assert.fail(`rail missing on the task: body=${(await page.locator("body").innerText()).slice(0, 700)} pre=${await page.locator("pre").allTextContents()} errors=${errors.join(" | ")}`));
   assert.equal(await page.getByLabel("任务排序").inputValue(), "priority");
   assert.equal(await rail.locator('[aria-current="page"]').innerText().then(text => text.split("\n")[0]), "甲：进行中的任务");
-  // Center reading order: goal → completion conditions → body → progress and discussion.
+  // Center reading order: completion conditions → body → progress and discussion; 目标 only when the Task has a stage goal (here it has none).
   const headings = await page.getByRole("main").getByRole("heading", { level: 2 }).allInnerTexts();
-  assert.deepEqual(headings.filter(text => ["目标", "完成条件", "正文", "进展与讨论"].includes(text)), ["目标", "完成条件", "正文", "进展与讨论"]);
+  assert.deepEqual(headings.filter(text => ["目标", "完成条件", "正文", "进展与讨论"].includes(text)), ["完成条件", "正文", "进展与讨论"]);
   await page.goBack();
   await page.getByRole("heading", { level: 1, name: "任务" }).waitFor();
   assert.equal(await page.getByLabel("任务排序").inputValue(), "priority");

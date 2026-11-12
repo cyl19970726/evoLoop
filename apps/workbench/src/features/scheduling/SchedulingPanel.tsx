@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { ScheduleGrantHelp } from "./ScheduleGrantHelp";
 import { useQueries } from "@tanstack/react-query";
 import { CalendarClock, Plus, RefreshCw } from "lucide-react";
 import { Button, EmptyState, ListRow, Notice as UiNotice, Select, cn } from "@evoloop/ui";
@@ -141,7 +142,7 @@ export function SchedulingPanel({ context, refresh }: { context: MutationContext
   };
   const createForm = status && status.grants.length > 0
     ? <>{!fresh && <p className={muted}>以下为上次读回的授权；重新核对完成前不可提交。</p>}{bounded("创建日程表单", <ActionForm context={{ ...formContext, draftScope: "schedule:create", draftBaseline: JSON.stringify(status.grants.map(grant => grantKey(grant)).sort()) }} review title="创建日程" fields={withMemberChoice(scheduleFields(status.grants, names, undefined, fresh).filter(field => field.name !== "state"), context.projectId)} build={v => ({ type: "schedule.create", scheduleId: crypto.randomUUID(), revisionId: crypto.randomUUID(), watermarkUtc: new Date().toISOString(), ...scheduleCommandValues({ ...v, state: "active" }, context.principal.actorId, status.grants), state: "active" })} />)}</>
-    : <p className="text-small text-text-secondary">{loading ? "正在核对当前身份的创建授权。" : "取得本项目明确授权后才能创建日程。"}</p>;
+    : <p className="text-small text-text-secondary">{loading ? "正在核对当前身份的创建授权。" : <ScheduleGrantHelp />}</p>;
   return <div data-ui="" className="schedule-page mx-auto flex w-full max-w-[980px] flex-col gap-5 px-4 py-5 compact:px-8 compact:py-7">
     {schedules.length > 0 && <ContextRailContent>
       <nav aria-label="日程" className="flex flex-col gap-0.5 pt-2">

@@ -114,8 +114,10 @@ test("Enter adds to the running turn only where the runtime declares it can; oth
   assert.equal(unsupported.steerNote, "这个智能体现在不能补充到这一轮", "an unexplained refusal is not called unsupported");
   assert.match(unsupported.hint, /不能补充到这一轮；Enter 排到下一轮/);
   const because = (reasonCode: string) => composerPlan(facts({ running: true, direct: { ...capability(null), reasonCode } })).steerNote;
-  assert.equal(because("DIRECT_STEER_DISABLED"), "这个智能体的运行时或授权不支持补充到这一轮");
-  assert.equal(because("NATIVE_STEER_UNAVAILABLE"), "当前运行时版本不支持补充到这一轮");
+  assert.equal(because("DIRECT_STEER_DISABLED"), "这个智能体的即时输入授权不包含补入这一轮，需要在私有配置里为它开启补入");
+  assert.equal(because("NATIVE_STEER_UNAVAILABLE"), "当前运行时不支持补入正在进行的一轮，消息可以排到下一轮");
+  assert.doesNotMatch(because("NATIVE_STEER_UNAVAILABLE"), /授权/, "the runtime limit never mentions authorization, not even to deny it");
+  assert.match(because("NATIVE_STEER_UNAVAILABLE"), /排到下一轮/, "and says what to do instead");
   assert.equal(because("SESSION_INPUT_BUSY"), "这个智能体正在开始另一轮或接收另一条输入，稍后再试");
   assert.equal(because("SESSION_BUSY"), "这一轮正在做的工作不接受补充");
   assert.equal(because("NATIVE_UNAVAILABLE"), "运行时连接暂不可用，不能补充到这一轮");

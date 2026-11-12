@@ -39,6 +39,12 @@ export class PgSessionLine implements SessionLineTransaction {
       AND ($3::boolean OR state NOT IN ('started','withdrawn')) ORDER BY position,entry_id`, [this.projectId, sessionId, includeEnded]);
     return r.rows.map(entryOf);
   }
+  async listUnfinishedSessionLineEntries(sessionId: string): Promise<SessionLineEntry[]> {
+    const r = await this.client.query(`SELECT * FROM session_line_entry WHERE project_id=$1 AND session_id=$2
+      AND (state IN ('queued','suspended','starting') OR (state='started' AND run_ended_at IS NULL AND run_id IS NOT NULL))
+      ORDER BY position,entry_id`, [this.projectId, sessionId]);
+    return r.rows.map(entryOf);
+  }
   async getSessionLineEntry(entryId: string): Promise<SessionLineEntry | null> {
     const r = await this.client.query("SELECT * FROM session_line_entry WHERE project_id=$1 AND entry_id=$2", [this.projectId, entryId]);
     return r.rows[0] ? entryOf(r.rows[0]) : null;

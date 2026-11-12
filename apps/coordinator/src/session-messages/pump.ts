@@ -57,6 +57,8 @@ export interface SessionMessagePumpDeps {
   roleContext?(message:SessionMessageRecord):Promise<string|null>;
   /** Source is a persisted Connector message link, independent of Session scope. */
   connectorSource?(message:SessionMessageRecord):Promise<boolean>;
+  /** Drain mode: true while no new message Turn may begin. Queued messages wait untouched; Turns already begun finish. */
+  holdNewStarts?():Promise<boolean>;
   /** Must honor original Task answer first and one ready business turn after an ordinary turn. */
   canStart(message:SessionMessageRecord):Promise<boolean>;
   /** Shared in-process admission with direct input; absent only in isolated tests and callers. */
@@ -107,6 +109,8 @@ export class SessionMessagePump {
       message.blockedReason?.startsWith('SESSION_INPUT_BUSY')===true;
     if(message.state==='queued'||continuation||localBusyRetry){
       if(message.state==='queued'&&record)return;
+      // Drain mode: a new Turn is not begun, and nothing is noted or dropped; the message waits and goes in order afterwards.
+      if(!continuation&&this.deps.holdNewStarts&&await this.deps.holdNewStarts())return;
       if(!continuation&&!localBusyRetry){
         if(this.deps.beforePreflight&&!await this.deps.beforePreflight(message))return;
         try{await this.deps.service.preflightDispatch(message.projectId,message.id);}
