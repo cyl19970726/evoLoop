@@ -138,9 +138,9 @@ export function ProjectContext({ token, projectId, refresh, active }: { token: s
     </ContextRailContent>}
     <section className={cn(card, "overview-goal")} aria-label="当前目标">
       {title(<Target />, "当前目标", <a href={href(projectId, "journey")} className="ml-auto flex items-center gap-1 text-caption text-text-secondary hover:text-foreground">目标与阶段 <ArrowRight size={13} aria-hidden="true" /></a>)}
-      <h3 className="text-heading font-semibold text-foreground">{goal?.outcome ?? (stages.length > 1 ? `当前有 ${stages.length} 个正在推进的阶段` : reading && !value ? "正在核对项目目标…" : value?.goalProblem ? "目标与阶段暂未核对完整" : value?.goals.length ? "项目有多个目标，请进入目标与阶段核对" : "项目目标尚未读回或登记")}</h3>
+      <h3 className="line-clamp-2 text-heading font-semibold text-foreground compact:line-clamp-none" title={goal?.outcome}>{goal?.outcome ?? (stages.length > 1 ? `当前有 ${stages.length} 个正在推进的阶段` : reading && !value ? "正在核对项目目标…" : value?.goalProblem ? "目标与阶段暂未核对完整" : value?.goals.length ? "项目有多个目标，请进入目标与阶段核对" : "项目目标尚未读回或登记")}</h3>
       {/* The inner rail is hidden below 1100px or when folded, so the card always offers every active stage. */}
-      {!stage && stages.length > 1 && <div className="flex flex-col gap-1"><p className={muted}>选一个阶段阅读：</p>{stages.map(item => <div key={item.id} className="rounded-lg bg-field">{stageButton(item)}<span className="block px-3 pb-2 text-caption text-muted-foreground">{value?.goals.find(entry => entry.id === item.goalId)?.outcome ?? "目标名称尚未核对"}</span></div>)}</div>}
+      {!stage && stages.length > 1 && <details className="text-small" data-stage-picker=""><summary className="cursor-pointer text-text-secondary">选一个阶段阅读（{stages.length} 个正在推进）</summary><div className="mt-2 flex flex-col gap-1">{stages.map(item => <div key={item.id} className="rounded-lg bg-field">{stageButton(item)}<span className="block px-3 pb-2 text-caption text-muted-foreground">{value?.goals.find(entry => entry.id === item.goalId)?.outcome ?? "目标名称尚未核对"}</span></div>)}</div></details>}
       {stage && stages.length > 1 && <label className="flex flex-col gap-1">
         <span className={muted}>切换阶段 · 共 {stages.length} 个正在推进</span>
         <Select className="w-full" value={stage.id} onChange={event => choose(event.target.value)}>
@@ -148,10 +148,10 @@ export function ProjectContext({ token, projectId, refresh, active }: { token: s
         </Select>
       </label>}
       {stage ? <dl className="grid grid-cols-2 gap-x-3 gap-y-1 compact:gap-3">
-        <div><dt className={muted}>阶段交付</dt><dd className="m-0 line-clamp-2 text-small text-foreground compact:line-clamp-none">{stage.deliverable}</dd></div>
-        <div><dt className={muted}>要弄清的问题</dt><dd className="m-0 line-clamp-2 text-small text-foreground compact:line-clamp-none">{stage.learningQuestion}</dd></div>
+        <div><dt className={muted}>阶段交付</dt><dd className="m-0 line-clamp-1 text-small text-foreground compact:line-clamp-none">{stage.deliverable}</dd></div>
+        <div><dt className={muted}>要弄清的问题</dt><dd className="m-0 line-clamp-1 text-small text-foreground compact:line-clamp-none">{stage.learningQuestion}</dd></div>
       </dl> : <p className={muted}>{value && !value.goalProblem && stages.length === 0 ? "没有读到正在推进的阶段。可与现有责任智能体明确首项工作、消费者和需要补的证据。" : "按真实阶段关系阅读，不从最近任务或队列推定项目目标。"}</p>}
-      {goal && <details className="text-small"><summary className="cursor-pointer text-text-secondary">目标的消费者、约束与范围</summary><div className="mt-2 flex flex-col gap-1 text-text-secondary"><p>消费者：{goal.consumer} · 责任：{isRoleOwnerId(goal.owner) ? <RoleName projectId={projectId} roleId={goal.owner} /> : goal.owner}</p><p>{goal.constraints}</p><p>{goal.scope}</p></div></details>}
+      {goal && <details className="text-small"><summary className="cursor-pointer text-text-secondary">目标全文、消费者、约束与范围</summary><div className="mt-2 flex flex-col gap-1 text-text-secondary"><p className="compact:hidden">目标：{goal.outcome}</p><p>消费者：{goal.consumer} · 责任：{isRoleOwnerId(goal.owner) ? <RoleName projectId={projectId} roleId={goal.owner} /> : goal.owner}</p><p>{goal.constraints}</p><p>{goal.scope}</p></div></details>}
       {value?.goalProblem && <div className={problem} role="status">目标与阶段读取未完成，已读工作仍可查看。<details><summary className="cursor-pointer">读取原因</summary>{value.goalProblem}</details></div>}
       {value?.retainedGoals && <p className={problem}>保留上次目标与阶段，读于 {value.goalObservedAt ? date(value.goalObservedAt) : "上次读取"}，本次未能确认最新状态。</p>}
       {value && !value.goalsComplete && <p className={muted}>目标列表仅覆盖已读部分。</p>}
