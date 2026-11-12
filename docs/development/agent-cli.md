@@ -440,3 +440,6 @@ Leader 收到的是“Leader 通知包”消息：先 `get /api/projects/PROJECT
 
 被阻塞的包（读到后那一轮失败且恢复门关闭）不会自动重发，它出现在 `work` 的 Leader 索引（`blockedNoticePackets`，带包编号和提示）。先按 Session 恢复流程恢复恢复门，再用 `request leader.notice.recover --project UUID --id 包编号 --file BODY.json --receipt UUID`（body 只写 `{"reason":"..."}`，需要 review 权限）恢复这一包，其中的项进入下一包。`leader.notice.recover` 带 `expectedOperationId` 等四个 ID 的旧形式仍用于迁移前已有的、消息被拒绝的通知。包的步骤（打包、已送、观察）只由配置里的通知发送身份运行，不是 Agent 的命令。
 
+## 待我决定
+
+需要某个身份（例如使用者）决定时，不要只在对话里问：用 `command run` 提交 `decision.request.create`（`command schema decision.request.create`：`requestId`、`requestedFrom`、`subject`、`question`、可选 `taskId` 与 `options`，需要复核权限），它出现在对方“待我处理 › 待我决定”里，答复后消失。`get /api/projects/PROJECT/decisions-for-me` 以当前身份读自己待决定的事项。不再需要时用 `decision.request.withdraw` 撤回。被请求的身份用 `decision.request.answer`（带 `expectedVersion`，选项非空时答案必须是其中之一）答复。

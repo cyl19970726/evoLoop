@@ -3,6 +3,7 @@
 // with the first screen, and the work-index reading (inboxDeliveries.ts) loads on demand after sign-in.
 import type { AcceptanceHumanItem } from "@evoloop/contracts/acceptance-relay";
 import type { Impact } from "@evoloop/contracts";
+import type { DecisionsForMe } from "@evoloop/contracts/decision-requests";
 import { api } from "../../shared/api";
 import { useProjectQuery } from "../../shared/query";
 import { inboxBadge, type InboxBadge } from "./inboxModel";
@@ -13,6 +14,7 @@ export type { DeliveriesForMe } from "./inboxDeliveries";
 export const inboxKeys = {
   acceptance: ["acceptance", "mine"] as const,
   impacts: ["impacts"] as const,
+  decisions: (actorId: string) => ["inbox", "decisions", actorId] as const,
   deliveries: (actorId: string) => ["inbox", "deliveries", actorId] as const,
 };
 
@@ -28,6 +30,12 @@ export async function readImpacts(projectId: string): Promise<Impact[]> {
   return value;
 }
 
+export async function readDecisions(projectId: string): Promise<DecisionsForMe> {
+  const value = await api().decisionsForMe(projectId);
+  if (!Array.isArray(value?.items)) throw new Error("待我决定响应不完整");
+  return value;
+}
+
 const readDeliveries = async (projectId: string, actorId: string, signal: AbortSignal): Promise<DeliveriesForMe> =>
   (await import("./inboxDeliveries")).readDeliveriesForMe(projectId, actorId, signal);
 
@@ -37,14 +45,16 @@ export function useInboxReads(projectId: string, actorId: string, enabled = true
   const impacts = useProjectQuery(projectId, inboxKeys.impacts, () => readImpacts(projectId), { enabled });
   const deliveries = useProjectQuery(projectId, inboxKeys.deliveries(actorId), signal => readDeliveries(projectId, actorId, signal),
     { enabled: enabled && !!actorId });
-  return { acceptance, impacts, deliveries };
+  const decisions = useProjectQuery(projectId, inboxKeys.decisions(actorId), () => readDecisions(projectId), { enabled: enabled && !!actorId });
+  return { acceptance, impacts, deliveries, decisions };
 }
 
 /** The 待我处理 count: 验收安排 + 依据变化 + 等我使用的交付, or why it cannot be counted now. */
 export function useInboxCount(projectId: string, actorId: string, enabled = true): InboxBadge {
-  const { acceptance, impacts, deliveries } = useInboxReads(projectId, actorId, enabled);
+  const { acceptance, impacts, deliveries, decisions } = useInboxReads(projectId, actorId, enabled);
   return inboxBadge([
     { label: "待我验收", count: acceptance.data?.items.length, failed: acceptance.isError },
+    { label: "待我决定", count: decisions.data?.items.length, failed: decisions.isError },
     { label: "依据变化", count: impacts.data?.filter(item => item.state === "pending").length, failed: impacts.isError },
     { label: "等我使用的交付", count: deliveries.data?.items.length, failed: deliveries.isError, incomplete: deliveries.data ? !deliveries.data.complete : false },
   ]);

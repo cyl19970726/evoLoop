@@ -4,8 +4,9 @@ import { test } from "node:test";
 import type { ConsumerObservation } from "@evoloop/contracts";
 import type { LeaderWorkDeliveryFact, LeaderWorkPage, LeaderWorkTask } from "@evoloop/contracts/work-index";
 import {
-  deliveredAt, deliveryLink, inboxBadge, inboxTaskLink, judgeMyDelivery, lastUseText, myLatestObservation, shellInboxCount, useRequirementText,
+  decisionKindText, decisionLink, deliveredAt, deliveryLink, inboxBadge, inboxTaskLink, judgeMyDelivery, lastUseText, myLatestObservation, shellInboxCount, useRequirementText,
 } from "../src/features/workflow/inboxModel.ts";
+import type { DecisionItem } from "@evoloop/contracts/decision-requests";
 import { readDeliveriesForMe } from "../src/features/workflow/inboxDeliveries.ts";
 
 const me = "consumer-a", other = "consumer-b";
@@ -185,4 +186,34 @@ test("someone else observed last: my own observation decides, read from the task
   await withFetch(path => path.includes("/work-management/index") ? index : { task: { projectId: "p", id: "another" }, observations: [] }, async () => {
     await assert.rejects(readDeliveriesForMe("p", me), /不符/);
   });
+});
+
+const decision = (kind: DecisionItem["kind"]): DecisionItem => {
+  const common = { id: "item-1", title: "标题", detail: "说明", proposedBy: "leader", at: stamp };
+  switch (kind) {
+    case "role_proposal": return { ...common, kind, roleId: "role-1", version: 1 };
+    case "stage_proposal": return { ...common, kind, stageId: "stage-1", version: 1 };
+    case "task_question": return { ...common, kind, taskId: "task-9", discussionId: "d-1", eventId: "e-1" };
+    case "decision_request": return { ...common, kind, taskId: null, options: ["确认", "不确认"], version: 1 };
+  }
+};
+
+test("待我决定: every item says what it is, and each opens the place that decides it (a request without a task is answered in the list)", () => {
+  assert.deepEqual(Object.keys(decisionKindText).sort(), ["decision_request", "role_proposal", "stage_proposal", "task_question"]);
+  assert.match(decisionLink("p1", decision("role_proposal"), me)!, /^\/p\/p1\/roles\?/);
+  assert.match(decisionLink("p1", decision("stage_proposal"), me)!, /^\/p\/p1\/journey\?/);
+  const question = decisionLink("p1", decision("task_question"), me)!;
+  assert.match(question, /^\/p\/p1\/tasks\/task-9\?/);
+  assert.match(question, /return=%2Fp%2Fp1%2Finbox/, "the way back to the inbox is kept");
+  assert.equal(decisionLink("p1", decision("decision_request"), me), null, "answered right in the row");
+  assert.match(decisionLink("p1", { ...decision("decision_request"), taskId: "task-3" } as DecisionItem, me)!, /tasks\/task-3/);
+  // A link is never a conversation: no item sends the reader to a Leader chat.
+  for (const kind of ["role_proposal", "stage_proposal", "task_question"] as const) assert.doesNotMatch(decisionLink("p1", decision(kind), me)!, /sessions|conversation/);
+});
+
+test("the 待我处理 count includes 待我决定, and an unreadable 待我决定 is 待核对, never zero", () => {
+  const parts = (decisions: { count: number | undefined; failed: boolean }) => [
+    { label: "待我验收", count: 1, failed: false }, { label: "待我决定", ...decisions }, { label: "依据变化", count: 0, failed: false }];
+  assert.deepEqual(inboxBadge(parts({ count: 2, failed: false })), { state: "known", count: 3 });
+  assert.equal(inboxBadge(parts({ count: undefined, failed: true })).state, "unknown");
 });
