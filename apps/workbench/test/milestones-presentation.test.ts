@@ -18,3 +18,14 @@ test("unlinked phases say 未登记 and none is current", () => {
     phases: [{ id: "M0", title: "t", deliver: "d", exit: "e", status: null, statusLabel: null, stage: null, linkedStages: 0, reviewedAt: null }] });
   assert.equal(rows[0]!.status, "未登记"); assert.equal(rows[0]!.date, "未登记"); assert.equal(rows[0]!.current, false);
 });
+
+test("the date column says three different things: no link, linked but never reviewed, linked and reviewed", () => {
+  const phase = (id: string, stage: { id: string; goalId: string } | null, reviewedAt: string | null) =>
+    ({ id, title: "t", deliver: "d", exit: "e", status: stage ? "in_progress" as const : null, statusLabel: stage ? "进行中" : null, stage, linkedStages: stage ? 1 : 0, reviewedAt });
+  const rows = milestoneRows({ source: { commit: null, roadmap: "read" }, currentPhaseId: null, currentNote: null, phases: [
+    phase("M0", null, null), phase("M1", { id: "s1", goalId: "g" }, null), phase("M2", { id: "s2", goalId: "g" }, "2026-11-10T09:00:00.000Z"),
+  ] });
+  assert.deepEqual(rows.map(row => row.date), ["未登记", "暂无回看", "回看于 2026-11-10"]);
+  // An unlinked phase says 未登记 even if a date somehow came with it: nothing is read off a stage that is not linked.
+  assert.equal(milestoneRows({ source: { commit: null, roadmap: "read" }, currentPhaseId: null, currentNote: null, phases: [phase("M0", null, "2026-11-10T09:00:00.000Z")] })[0]!.date, "未登记");
+});
