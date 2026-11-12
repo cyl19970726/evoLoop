@@ -63,7 +63,8 @@ export function snapshot(name) {
       artifactRef: "git:evoloop/workbench", artifactRevision: "4f1c2ab", contentHash: "c".repeat(64), submittedAt: ago(45), latestUse: null,
       source: { kind: "delivery", id: id(501), revision: null, evidence: "project-record", href: "" } }] : [],
     questions: [], activity: [],
-    resources: { configuredModel: resource("gpt-6-sol", ""), actualModel: resource("gpt-6-sol", ""), inputTokens: resource(182400, "tokens"),
+    // A Turn reported its model for the agents that ran; 文档整理 and 设计走查 have no report, so the page shows the target.
+    resources: { configuredModel: resource("gpt-6-sol", ""), actualModel: ["docs", "design"].includes(name) ? resource(null, "", "未报告") : resource("gpt-6-sol", ""), inputTokens: resource(182400, "tokens"),
       outputTokens: resource(23150, "tokens"), cost: resource(null, "", "未记录"), processMemory: resource(null, "", "未记录") },
     metadata,
     nativeObservation: name === "dev" ? { projectId, sessionId: agents.dev.sessionId, threadId: "thread-dev", version: 4, observedAt: ago(1),
@@ -109,11 +110,18 @@ export const executionProfile = name => {
   const revision = { projectId, sessionId: agents[name].sessionId, revisionId: id(950 + order.indexOf(name)), version: 1, previousRevisionId: null,
     model: "gpt-6-sol", reasoningEffort: "high", sandbox: "workspace-write", approvalPolicy: "never", cwd: "/srv/evoloop/workbench",
     authorizationScope: "project", provenance: "reserved", operationId: id(960), actorId, reason: "建立智能体", evidenceRef: null, createdAt: ago(60 * 24 * 5) };
+  // 前端实现 runs with full access, as managed agents do, so its model can be adjusted; the others show why they cannot.
+  if (name === "dev") Object.assign(revision, { sandbox: "danger-full-access" });
+  // 验收 has a new target saved that its next turn applies (运行环境 shows “下一轮改为 …”).
+  if (name === "verify") return { revision: { ...revision, revisionId: id(959), version: 2, previousRevisionId: revision.revisionId,
+    model: "gpt-6-astra", reasoningEffort: "max", provenance: "revised", reason: "验收需要更强的推理" },
+    activationState: "pending", activeRevisionId: revision.revisionId, activeModel: "gpt-6-sol", activeReasoningEffort: "high",
+    activationOperationId: null, attemptedAt: null, activationEvidence: "运行时读回" };
   return { revision, activationState: "active", activeRevisionId: revision.revisionId, activeModel: "gpt-6-sol", activeReasoningEffort: "high",
     activationOperationId: null, attemptedAt: null, activationEvidence: "运行时读回" };
 };
 export const runtimeSessions = () => order.map(name => ({ projectId, id: agents[name].sessionId, version: 1, state: "ready",
-  roleId: roles[agents[name].role].id, sandbox: "workspace-write", approvalPolicy: "never", model: "gpt-6-sol",
+  roleId: roles[agents[name].role].id, sandbox: name === "dev" ? "danger-full-access" : "workspace-write", approvalPolicy: "never", model: "gpt-6-sol",
   cwd: "/srv/evoloop/workbench", authorizationScope: "前端任务", nativeThreadId: `thread-${name}`, nativeSessionId: `native-${name}`,
   operationId: id(970 + order.indexOf(name)), actorId, createdAt: ago(60 * 24 * 5), updatedAt: ago(30),
   executionProfile: executionProfile(name) }));
@@ -144,16 +152,27 @@ export const sessionLines = () => ({ lines: [{ projectId, sessionId: agents.docs
   ] }] });
 
 /** Usage and the daily budget (用量与上下文). Only 前端实现 has recorded usage. */
+/**
+ * Usage (上下文与用量), one sample each: 前端实现 normal context, 验收 close to its hand-off threshold, 文档整理 used today but
+ * with no threshold set, 设计走查 with no usage record at all, 统筹 past its threshold (needs a new thread).
+ */
 export const usage = () => {
   const day = (d, inputTokens, outputTokens) => ({ day: d, inputTokens, outputTokens, cachedInputTokens: Math.round(inputTokens / 2), costUsd: null, costReported: false });
-  const today = day("2026-11-10", 182400, 23150), none = day("2026-11-10", 0, 0);
-  const context = recorded => ({ configured: false, state: "unconfigured", inputTokens: recorded ? 96000 : null, limit: null, ratio: null, warningRatio: 0.8,
-    pauseOrdinaryTurns: false, observedAt: recorded ? ago(3) : null, reason: null });
+  const context = (inputTokens, limit) => limit === null
+    ? { configured: false, state: "unconfigured", inputTokens, limit: null, ratio: null, warningRatio: 0.8, pauseOrdinaryTurns: false, observedAt: ago(3), reason: null }
+    : { configured: true, state: inputTokens / limit >= 1 ? "handoff_required" : inputTokens / limit >= 0.8 ? "warning" : "ok", inputTokens, limit,
+      ratio: inputTokens / limit, warningRatio: 0.8, pauseOrdinaryTurns: true, observedAt: ago(3), reason: null };
+  const samples = {
+    dev: { today: day("2026-11-10", 182400, 23150), total: day("2026-11-10", 642000, 81300), context: context(96000, 200000) },
+    verify: { today: day("2026-11-10", 88000, 9200), total: day("2026-11-10", 310500, 30100), context: context(172000, 200000) },
+    docs: { today: day("2026-11-10", 12600, 1800), total: day("2026-11-10", 12600, 1800), context: context(31000, null) },
+    lead: { today: day("2026-11-10", 240000, 18000), total: day("2026-11-10", 1880000, 140000), context: context(212000, 200000) },
+  };
   return { projectId, from: "2026-10-28", to: "2026-11-11", timeZone: "Asia/Shanghai", observedAt: ago(1),
-    sessions: order.map(name => ({ sessionId: agents[name].sessionId, roleId: roles[agents[name].role].id, nativeThreadId: `thread-${name}`,
-      recorded: name === "dev", days: name === "dev" ? [today] : [], today: name === "dev" ? today : none, total: name === "dev" ? today : none,
-      contextInputTokens: name === "dev" ? 96000 : null, observedAt: name === "dev" ? ago(3) : null, context: context(name === "dev") })),
-    daily: [day("2026-11-09", 401200, 51800), today],
+    sessions: order.filter(name => samples[name]).map(name => ({ sessionId: agents[name].sessionId, roleId: roles[agents[name].role].id,
+      nativeThreadId: `thread-${name}`, recorded: true, days: [samples[name].today], today: samples[name].today, total: samples[name].total,
+      contextInputTokens: samples[name].context.inputTokens, observedAt: ago(3), context: samples[name].context })),
+    daily: [day("2026-11-09", 401200, 51800), day("2026-11-10", 523000, 52150)],
     budget: { configured: false, state: "unconfigured", limitKind: null, limit: null, used: null, ratio: null, warningRatio: 0.8,
       pauseOrdinaryTurns: false, costComplete: true, reason: null } };
 };
