@@ -265,6 +265,9 @@ export function SessionWorkspace({ context, sessionKey, active, refresh, queue }
   }, { enabled: active && historyLoaded });
   const historyPages = history.data?.pages ?? [];
 
+  // Every hook runs before the early return below (a hook after it changes the hook count once the snapshot arrives).
+  // The catalog's display names (Codex) in front of the exact IDs; a catalog that cannot be read leaves the IDs as they are.
+  const modelCatalog = useProjectQuery(projectId, ["runtime", "models", "catalog"], signal => sessionClient("", projectId).models(signal), { enabled: active && owned, retry: false }).data?.options ?? null;
   // An explicit reread holds answers and closing until it is back; background polls do not interrupt a form being filled.
   const [rereading, setRereading] = useState(false);
   const reread = () => {
@@ -336,8 +339,6 @@ export function SessionWorkspace({ context, sessionKey, active, refresh, queue }
   const executionProfile = recoveryRead.status === "ready" ? recoveryRead.view.executionProfile : null;
   const configuredModel = executionProfile?.revision.model ?? current.resources.configuredModel.value;
   const actualModel = current.resources.actualModel.value;
-  // The catalog's display names (Codex) in front of the exact IDs; a catalog that cannot be read leaves the IDs as they are.
-  const modelCatalog = useProjectQuery(projectId, ["runtime", "models", "catalog"], signal => sessionClient("", projectId).models(signal), { enabled: active && owned, retry: false }).data?.options ?? null;
   const busyNow = session.busy === true;
   const waitingTurnIds = new Set(native.questions.filter(question => question.state === "pending" && question.turnId).map(question => question.turnId!));
   const activity = [...historyPages.flatMap(page => page.items), ...current.activity].filter((item, index, all) => all.findIndex(other => other.id === item.id) === index)
