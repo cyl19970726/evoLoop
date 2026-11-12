@@ -125,7 +125,7 @@ export function projectBudgetGauge(budget: UsageBudget, todayRecorded: boolean |
 }
 
 export type ProjectDayRow =
-  | { day: string; recorded: true; input: string; output: string; cached: string; cost: string }
+  | { day: string; recorded: true; input: string; output: string; cached: string; cost: string; inputFull: string | null; outputFull: string | null; cachedFull: string | null }
   | { day: string; recorded: false };
 
 /** The project's “today” (`YYYY-MM-DD`) in its usage time zone at the time of the read; null when the zone is unusable. */
@@ -142,8 +142,11 @@ export function projectToday(observedAt: string, timeZone: string): string | nul
  * shown as 0 (a day recorded as 0 still shows 0). Without a usable today, only the recorded days are listed.
  */
 export function recentProjectDays(daily: readonly UsageDay[], today: string | null, count = 7): ProjectDayRow[] {
+  // A rounded figure also carries its exact count (a tooltip), as an agent's 今日 figures do.
+  const exact = (count: number | null | undefined) => { const full = tokenFullText(count); return full !== null && String(Math.trunc(count as number)) !== tokenText(count) ? full : null; };
   const row = (day: UsageDay): ProjectDayRow => ({ day: day.day, recorded: true, input: tokenText(day.inputTokens),
-    output: tokenText(day.outputTokens), cached: tokenText(day.cachedInputTokens), cost: costText(day) });
+    output: tokenText(day.outputTokens), cached: tokenText(day.cachedInputTokens), cost: costText(day),
+    inputFull: exact(day.inputTokens), outputFull: exact(day.outputTokens), cachedFull: exact(day.cachedInputTokens) });
   if (!today || !/^\d{4}-\d{2}-\d{2}$/.test(today)) return [...daily].sort((a, b) => b.day.localeCompare(a.day)).slice(0, count).map(row);
   const byDay = new Map(daily.map(day => [day.day, day]));
   const end = Date.UTC(Number(today.slice(0, 4)), Number(today.slice(5, 7)) - 1, Number(today.slice(8, 10)));

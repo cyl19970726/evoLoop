@@ -65,4 +65,48 @@ test("the 今日 figures stay readable with their unit at billion-scale token co
     if (process.env.EVOLOOP_USAGE_SCREENSHOT_DIR) await today.screenshot({ path: `${process.env.EVOLOOP_USAGE_SCREENSHOT_DIR}/usage-today-${width}.png` });
     await context.close();
   }
+
+  // 项目用量 on 统筹安排 with the same magnitudes: the limit line, the bar and the day rows read in 亿, the exact counts are tooltips, and
+  // neither the cells nor the page are cut or scroll sideways.
+  for (const [width, height] of [[1440, 900], [390, 844]] as const) {
+    const huge = usageFixture();
+    huge.daily = huge.daily.map((day: Record<string, unknown>, index: number) => ({ ...day, inputTokens: 3_300_000_000 + index, outputTokens: 214_258_000_000, cachedInputTokens: 1_650_000_000 }));
+    huge.budget = { ...huge.budget, configured: true, state: "warning", limitKind: "input_tokens", limit: 4_000_000_000, used: 3_300_000_000, ratio: 0.825 };
+    const { page, errors, context } = await open(width, height, huge);
+    await page.goto(`${fixture.base}/p/${projectId}/sessions#project-usage`);
+    await page.getByLabel("访问令牌").fill(token); await page.getByRole("button", { name: "进入", exact: true }).click();
+    const block = page.locator("#project-usage");
+    await block.getByText("今日与每日上限").waitFor();
+    await page.waitForTimeout(300);
+    const text = await block.innerText();
+    assert.match(text, /输入 33 亿 \/ 40 亿（83%）/, `${width}: the limit line reads in 亿 with its unit: ${text}`);
+    assert.match(text, /2142\.6 亿/, `${width}: the day rows read in 亿`);
+    const cells = await block.locator("tbody tr").first().locator("td").evaluateAll((nodes: Element[]) => nodes.map(node => ({ text: node.textContent!.trim(), title: node.getAttribute("title"), clipped: node.scrollWidth > node.clientWidth + 1 })));
+    assert.ok(cells.slice(0, 3).every(cell => /亿/.test(cell.text) && cell.title && /个令牌$/.test(cell.title)), `${width}: unit and exact value on every token cell: ${JSON.stringify(cells)}`);
+    assert.ok(cells.every(cell => !cell.clipped), `${width}: no cell is cut`);
+    const sideways = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+    assert.ok(sideways <= 1, `${width}: no sideways page scroll (${sideways}px)`);
+    assert.deepEqual(errors, []);
+    if (process.env.EVOLOOP_USAGE_SCREENSHOT_DIR) await block.screenshot({ path: `${process.env.EVOLOOP_USAGE_SCREENSHOT_DIR}/project-usage-${width}.png` });
+    await context.close();
+  }
+
+  // “Nothing recorded today” and “recorded today as 0” are different things, also next to big yesterday figures.
+  {
+    const base = usageFixture();
+    const bigDay = (day: string) => ({ day, inputTokens: 231_390_851_234, outputTokens: 2_142_580_000, cachedInputTokens: 1_000_000_000, costUsd: null, costReported: false });
+    const zero = { day: "2026-11-10", inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, costUsd: null, costReported: false };
+    const variant = (recordedToday: boolean) => ({ ...base, sessions: base.sessions.map((session: { days: unknown[] }) => ({ ...session,
+      days: recordedToday ? [bigDay("2026-11-09"), zero] : [bigDay("2026-11-09")], today: zero })) });
+    const none = await open(1440, 900, variant(false));
+    const noneCard = none.panel.locator("section[aria-label=上下文与用量]");
+    await noneCard.getByText("今日没有用量记录，不按 0 计").waitFor();
+    assert.equal(await noneCard.locator(".session-usage-today dl").count(), 0, "no recorded row for today: no figures, not zeros");
+    await none.context.close();
+    const recorded = await open(1440, 900, variant(true));
+    const tiles = recorded.panel.locator("section[aria-label=上下文与用量] .session-usage-today dd");
+    await tiles.first().waitFor();
+    assert.deepEqual(await tiles.evaluateAll((nodes: Element[]) => nodes.map(node => (node.firstChild?.textContent ?? "").trim())), ["0", "0", "0", "未报告"], "a recorded 0 shows 0");
+    await recorded.context.close();
+  }
 });

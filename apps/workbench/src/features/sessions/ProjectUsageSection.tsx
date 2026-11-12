@@ -57,7 +57,7 @@ export function ProjectUsageView({ usage, error = null, stale = false }: { usage
                   <tbody>{days.map(day => <tr key={day.day} className="border-b border-border last:border-b-0">
                     <th scope="row" className={`${cell} font-normal text-text-secondary`}>{day.day.slice(5)}</th>
                     {/* A day the service lists no ledger rows for had no record: said, never shown as 0. */}
-                    {day.recorded ? <><td className={cell}>{day.input}</td><td className={cell}>{day.output}</td><td className={cell}>{day.cached}</td><td className={cell}>{day.cost}</td></>
+                    {day.recorded ? <><td className={cell} title={day.inputFull ?? undefined}>{day.input}</td><td className={cell} title={day.outputFull ?? undefined}>{day.output}</td><td className={cell} title={day.cachedFull ?? undefined}>{day.cached}</td><td className={cell}>{day.cost}</td></>
                       : <td colSpan={4} className={`${cell} text-muted-foreground`}>没有记录</td>}
                   </tr>)}</tbody>
                 </table>

@@ -114,9 +114,12 @@ test("项目用量 on 统筹安排: today against the daily limit with the same 
   const days = recentProjectDays(daily, "2026-11-10");
   assert.deepEqual(days.map(row => row.day), ["2026-11-10", "2026-11-09", "2026-11-08", "2026-11-07", "2026-11-06", "2026-11-05", "2026-11-04"],
     "seven calendar days ending today, newest first; 11-03 is outside them");
-  assert.deepEqual(days[0], { day: "2026-11-10", recorded: true, input: "52.3 万", output: "7300", cached: "3.1 万", cost: "未报告" });
+  // What is shown; the exact counts of rounded figures ride along as tooltips (…Full) and are checked below.
+  const shown = (row: (typeof days)[number]) => row.recorded ? { day: row.day, recorded: true, input: row.input, output: row.output, cached: row.cached, cost: row.cost } : row;
+  assert.deepEqual(shown(days[0]!), { day: "2026-11-10", recorded: true, input: "52.3 万", output: "7300", cached: "3.1 万", cost: "未报告" });
+  assert.equal(days[0]!.recorded && days[0]!.inputFull, "523,000 个令牌"); assert.equal(days[0]!.recorded && days[0]!.outputFull, null, "an exact small count needs no second value");
   assert.deepEqual(days[2], { day: "2026-11-08", recorded: false }, "a day with no record is said to have none, never 0");
-  assert.deepEqual(days[3], { day: "2026-11-07", recorded: true, input: "0", output: "0", cached: "0", cost: "未报告" }, "a day recorded as 0 shows 0");
+  assert.deepEqual(shown(days[3]!), { day: "2026-11-07", recorded: true, input: "0", output: "0", cached: "0", cost: "未报告" }, "a day recorded as 0 shows 0");
   assert.deepEqual(days[5], { day: "2026-11-05", recorded: false });
   // A month boundary, and no usable today: then only the recorded days, newest first.
   assert.deepEqual(recentProjectDays([], "2026-12-02").map(row => row.day).slice(0, 3), ["2026-12-02", "2026-12-01", "2026-11-30"]);

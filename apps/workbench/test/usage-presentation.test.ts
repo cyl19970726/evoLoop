@@ -44,3 +44,20 @@ test("from one hundred million up a count is shown in 亿 so the unit stays in v
   const small = todayTiles({ recorded: true, today: { ...day, inputTokens: 8800, outputTokens: 9200, cachedInputTokens: 4400 } })!;
   assert.deepEqual(small.slice(0, 3).map(tile => tile.full), [null, null, null], "an exact small count needs no second value");
 });
+
+test("after #402: no record today is not 0, a recorded 0 is, and both keep working next to billion-scale figures and project usage", async () => {
+  const { projectBudgetGauge, recentProjectDays, todayTiles } = await import("../src/features/sessions/usagePresentation");
+  const zero = { day: "2026-11-12", inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, costUsd: null, costReported: false };
+  const big = { ...zero, day: "2026-11-11", inputTokens: 231_390_851_234, outputTokens: 2_142_580_000, cachedInputTokens: 1_000_000_000 };
+  assert.equal(todayTiles({ recorded: true, today: zero, days: [big] }), null, "nothing recorded today, only a big yesterday: no figures");
+  assert.deepEqual(todayTiles({ recorded: true, today: zero, days: [big, zero] })!.map(tile => tile.value), ["0", "0", "0", "未报告"], "a recorded 0 shows 0");
+  assert.deepEqual(todayTiles({ recorded: true, today: big, days: [big] })!.map(tile => tile.value), ["2313.9 亿", "21.4 亿", "10 亿", "未报告"]);
+  // Project usage: the same formatting in the limit line and the day rows, exact counts kept.
+  const budget = { configured: true, state: "warning", limitKind: "input_tokens", limit: 4_000_000_000, used: 3_300_000_000, ratio: 0.825, warningRatio: 0.8, pauseOrdinaryTurns: true, costComplete: true, reason: null } as never;
+  assert.equal(projectBudgetGauge(budget, true).detail, "输入 33 亿 / 40 亿（83%）");
+  assert.match(projectBudgetGauge(budget, false).detail, /今日没有记录，不按 0 计 · 每日上限 40 亿/);
+  const rows = recentProjectDays([big, { ...big, day: "2026-11-10", inputTokens: 99_990_000 }], "2026-11-11", 3);
+  const [first, second, third] = rows as Array<Record<string, unknown>>;
+  assert.equal(first!.input, "2313.9 亿"); assert.equal(first!.inputFull, "231,390,851,234 个令牌");
+  assert.equal(second!.input, "9999 万", "below 亿 the earlier form is unchanged"); assert.equal(third!.recorded, false, "a day without a row says so, never 0");
+});
