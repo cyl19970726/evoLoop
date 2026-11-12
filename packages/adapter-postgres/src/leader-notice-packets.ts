@@ -61,6 +61,13 @@ export class PgLeaderNoticePackets implements LeaderNoticePacketTransaction {
       AND ($2::uuid IS NULL OR session_id=$2) ORDER BY created_at`, [this.projectId, sessionId ?? null]);
     return r.rows.map(packetOf);
   }
+  /** Open packets that keep the next one back: all but those already read into a running Turn by steer. */
+  private async blockingPackets(sessionId: string): Promise<number> {
+    return (await this.client.query(`SELECT count(*)::integer AS n FROM leader_notice_packet p WHERE p.project_id=$1 AND p.session_id=$2
+      AND p.state IN ('building','sent','delivered','unknown')
+      AND NOT (p.state='delivered' AND EXISTS(SELECT 1 FROM leader_notice_packet_attempt a WHERE a.project_id=p.project_id AND a.packet_id=p.packet_id AND a.method='steer'))`,
+    [this.projectId, sessionId])).rows[0].n;
+  }
   async listBlockedLeaderNoticePackets(): Promise<LeaderNoticePacket[]> {
     return (await this.client.query("SELECT * FROM leader_notice_packet WHERE project_id=$1 AND state='blocked' ORDER BY created_at", [this.projectId])).rows.map(packetOf);
   }
@@ -94,7 +101,8 @@ export class PgLeaderNoticePackets implements LeaderNoticePacketTransaction {
     if (bytes > PACKET_BYTE_LIMIT) throw new DomainError("PACKET_TOO_LARGE", `A packet carries at most ${PACKET_BYTE_LIMIT} bytes`);
     if (withdrawOnly && input.withdraw.length > 20) throw new DomainError("PACKET_TOO_LARGE", "At most 20 stale items are recorded at a time");
     // The Session takes one packet at a time: the earlier one has to be read or returned first. Withdrawing stale items builds no message, so it is not held.
-    if (!withdrawOnly && (await this.listOpenLeaderNoticePackets(input.sessionId)).length) throw new DomainError("PACKET_IN_FLIGHT", "An earlier packet for this Leader Session has not been settled");
+    // A packet already read into a running Turn (delivered by steer) does not hold the next one: up to five may go into one Turn.
+    if (!withdrawOnly && await this.blockingPackets(input.sessionId)) throw new DomainError("PACKET_IN_FLIGHT", "An earlier packet for this Leader Session has not been settled");
     const candidates = new Map((await this.client.query(`${CANDIDATES}`, [this.projectId])).rows.map(r => [r.notice_id as string, r]));
     const wanted = new Set(input.noticeIds), gone = new Set(input.withdraw.map(w => w.noticeId));
     for (const noticeId of [...wanted, ...gone]) if (!candidates.has(noticeId)) throw new DomainError("NOTICE_NOT_PENDING", "A notice is no longer waiting to be sent");
@@ -156,6 +164,16 @@ export class PgLeaderNoticePackets implements LeaderNoticePacketTransaction {
     // The message exists now: the delivery attempt (a new Turn) is recorded against it.
     await this.client.query(`INSERT INTO leader_notice_packet_attempt(project_id,packet_id,attempt,method,operation_id,message_id,created_at)
       VALUES($1,$2,1,'new_turn',$3,$4,$5) ON CONFLICT DO NOTHING`, [this.projectId, packetId, r.rows[0].message_operation_id, r.rows[0].message_id, at]);
+    return packetOf(r.rows[0]);
+  }
+
+  async markLeaderNoticePacketSteered(input: Parameters<LeaderNoticePacketTransaction["markLeaderNoticePacketSteered"]>[0]): Promise<LeaderNoticePacket> {
+    const r = await this.client.query(`UPDATE leader_notice_packet SET state='sent',sent_at=COALESCE(sent_at,$3) WHERE project_id=$1 AND packet_id=$2 AND state IN ('building','sent') RETURNING *`,
+      [this.projectId, input.packetId, input.at]);
+    if (!r.rows[0]) throw new DomainError("PACKET_STATE", "Only a building packet can be marked as steered into a Turn");
+    // The packet's message was never posted: the input ID is the message ID, and the ledger row is the attempt.
+    await this.client.query(`INSERT INTO leader_notice_packet_attempt(project_id,packet_id,attempt,method,operation_id,direct_input_id,created_at)
+      VALUES($1,$2,1,'steer',$3,$4,$5) ON CONFLICT DO NOTHING`, [this.projectId, input.packetId, input.inputOperationId, input.directInputId, input.at]);
     return packetOf(r.rows[0]);
   }
 

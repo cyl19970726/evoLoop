@@ -9,7 +9,7 @@ import { SessionMessageService } from "@evoloop/core/session-messages";
 import type { Principal } from "@evoloop/contracts";
 import { migrate, PostgresUnitOfWork } from "../src/index.ts";
 import { getLeaderNotice } from "../src/leader-result-notices.ts";
-import { LeaderResultNoticePump, type LeaderResultNoticeConfig } from "../../../apps/coordinator/src/leader-results/pump.ts";
+import { LeaderResultNoticePump, type LeaderResultNoticeConfig, type LeaderSteerDeps } from "../../../apps/coordinator/src/leader-results/pump.ts";
 import { pgLeaderPacketPorts, type LeaderPacketPorts } from "../../../apps/coordinator/src/leader-results/packet-ports.ts";
 import { SessionMessagePump } from "../../../apps/coordinator/src/session-messages/pump.ts";
 import { createLeaderWorkIndexReader } from "../../../apps/coordinator/src/work-management/work-index.ts";
@@ -96,7 +96,29 @@ const currentSession = () => config.targets[0]!.sessionId;
 const leaderSessionRecord = (id: string) => ({ projectId: p, id, roleId: role, state: "ready", nativeThreadId: "t", nativeSessionId: "n" }) as never;
 const leaderRole = { id: role, state: "active", proposal: { templateKey: "lead", roleClass: "system" } } as never;
 const principals = [sender, receiver];
-const makePump = (debounce: number) => new LeaderResultNoticePump({
+// W2: a scripted runtime for the notice service's direct input. The input row is what the real service would have saved.
+type SteerMode = "item" | "noitem" | "unknown" | "refuse";
+let steerMode: SteerMode = "item", reconcileState = "unknown", admit = true, grantMissing = false;
+const diagnostics: string[] = [];
+const steerCalls: Array<{ inputId: string; expectedTurnId: string; options?: unknown }> = [];
+const runningTurn = async () => (await pool.query("SELECT native_turn_id FROM session_message_processing WHERE project_id=$1 AND state='running' LIMIT 1", [p])).rows[0]?.native_turn_id as string | undefined;
+const saveInput = async (command: { inputId: string; operationId: string; content: string; expectedTurnId: string }, state: string, item: string | null) =>
+  pool.query(`INSERT INTO session_direct_input(project_id,session_id,input_id,operation_id,actor_id,content,mode,source_kind,source_id,processing_id,expected_turn_id,actual_turn_id,native_item_id,state,version,created_at,updated_at)
+    SELECT $1,pr.session_id,$2,$3,$4,$5,'steer','message',pr.message_id,pr.processing_id,$6,$7,$8,$9,1,now(),now() FROM session_message_processing pr WHERE pr.project_id=$1 AND pr.state='running'`,
+  [p, command.inputId, command.operationId, sender.actorId, command.content, command.expectedTurnId, state === "accepted" ? command.expectedTurnId : null, item, state]);
+const steerDeps: LeaderSteerDeps = {
+  capability: async () => grantMissing ? { available: false, mode: null, expectedTurnId: null, reasonCode: "DIRECT_GRANT_MISSING", detail: "direct input grant" }
+    : { available: true, mode: "steer", expectedTurnId: (await runningTurn()) ?? null, reasonCode: "READY_TO_STEER" },
+  submit: async (_who, _project, _session, command) => {
+    steerCalls.push({ inputId: command.inputId, expectedTurnId: command.expectedTurnId });
+    if (steerMode === "refuse") throw Object.assign(new Error("turn changed"), { code: "TURN_CHANGED" });
+    await saveInput(command, steerMode === "unknown" ? "unknown" : "accepted", steerMode === "item" ? `item-${command.inputId}` : null);
+    return { state: steerMode === "unknown" ? "unknown" : "accepted" };
+  },
+  reconcile: async () => ({ state: reconcileState }),
+  admission: async () => ({ allowed: admit, reason: null }),
+};
+const makePump = (debounce: number, steer?: LeaderSteerDeps) => new LeaderResultNoticePump({
   store: { listPending: async () => ({ items: [], nextCursor: null }), getByMessageId: async () => null, disposeStalePendingTodo: async () => "current", disposeStaleTodo: async () => "current",
     attentionSourceCurrent: async () => "current", disposeStaleAttention: async () => "current", hasInFlightOnOtherSession: async () => false, notePendingReason: async () => undefined,
     block: async () => undefined, pinRecipient: async () => null, markPosted: async () => undefined } as never,
@@ -106,8 +128,9 @@ const makePump = (debounce: number) => new LeaderResultNoticePump({
   messages: { get: async () => { throw new Error("not used"); } } as never,
   configuration: async () => config, principals: async () => principals, canExecuteSession: async () => true, hasMessageGrant: async () => true,
   readTaskFacts: async (project: string, taskId: string) => uow.read(project, async r => { const t = await r.getTask(taskId); return t ? { currentRevisionId: t.currentRevisionId, state: t.state, assigned: false } : null; }),
-  canWrite: () => true, canStartNative: () => true, pollIntervalMs: 1000, onError: error => errors.push(error), packets: ports, packetDebounceSeconds: debounce });
+  canWrite: () => true, canStartNative: () => true, pollIntervalMs: 1000, onError: error => errors.push(error), packets: ports, packetDebounceSeconds: debounce, steer, onDiagnostic: (_p, _n, reason) => diagnostics.push(reason) });
 const noticePump = makePump(0);
+const steerPump = makePump(0, steerDeps);
 // The same wiring main.ts gives the message pump: the notice pump decides whether a queued message may start.
 const messagePump = new SessionMessagePump({ service: messageService, runtime: () => fakeRuntime as never, projects: async () => [p],
   beforePreflight: async message => { const a = await noticePump.messageAdmission(message); if (!a.allowed && a.reason) await messageService.noteBlocked(message.projectId, message.id, a.reason); return a.allowed; },
@@ -129,7 +152,7 @@ const humanPost = async (text: string, sessionId = currentSession()) => {
 /** Every step starts from an empty line: open packets settled, notices handled, queued messages cancelled, the Leader idle. */
 const reset = async () => {
   config = { enabled: true, packets: true, targets: [sessionTarget(sessionA)] };
-  overrides = {}; beforeExecute = null; errors.length = 0;
+  overrides = {}; beforeExecute = null; errors.length = 0; steerMode = "item"; reconcileState = "unknown"; admit = true; grantMissing = false; diagnostics.length = 0; steerCalls.length = 0;
   await pool.query("UPDATE leader_notice_packet SET state='seen',ended_at=COALESCE(ended_at,now()) WHERE project_id=$1 AND state IN ('building','sent','delivered','unknown','blocked')", [p]);
   await pool.query(`UPDATE leader_notice_packet_item SET state='handled',disposition='handled',handled_by='reset',version=version+1 WHERE project_id=$1 AND state IN ('pending','delivered','seen','unknown')`, [p]);
   await pool.query("UPDATE leader_result_notice SET state='blocked',blocked_reason='reset' WHERE project_id=$1 AND state='pending'", [p]);
@@ -793,4 +816,133 @@ test("Q2 defect 52eb5ecf: write latency under concurrent writers — the per-pro
   const line = (r: typeof withTrigger) => `p50 ${r.p50.toFixed(2)} ms, p95 ${r.p95.toFixed(2)} ms, ${r.perSecond.toFixed(0)} commits/s`;
   console.log(`Q2 concurrent writes (${writers} writers x ${each}, one transaction per insert): with the event trigger and its project lock: ${line(withTrigger)}; without: ${line(without)}`);
   assert.ok(withTrigger.p95 < 250, `p95 with the lock ${withTrigger.p95.toFixed(1)} ms`);
+});
+
+// ---- W2: packets into the Leader's running Turn ----
+const leaderBusyWithMessage = async () => {
+  const h = await humanPost("Leader, take a few minutes");
+  await messagePump.tick();
+  const turn = `turn-${turns.size}`;
+  assert.equal((await messageRow(h)).state, "processing");
+  return { h, turn };
+};
+
+test("W2: a notice that arrives while a message runs the Leader's Turn goes into that Turn as direct input; delivered on read-back, seen when the Turn ends; no message is posted", async () => {
+  await reset();
+  const { h, turn } = await leaderBusyWithMessage();
+  await newTask("Steer A"); await newTask("Steer B");
+  await steerPump.tick();
+  const packet = await lastPacket();
+  assert.equal(packet.state, "delivered", "read back as an Item: delivered");
+  const attempts = (await pool.query("SELECT * FROM leader_notice_packet_attempt WHERE packet_id=$1", [packet.packet_id])).rows;
+  assert.equal(attempts.length, 1); assert.equal(attempts[0].method, "steer"); assert.equal(attempts[0].direct_input_id, packet.message_id); assert.equal(attempts[0].message_id, null);
+  assert.deepEqual(steerCalls.map(c => [c.inputId, c.expectedTurnId]), [[packet.message_id, turn]]);
+  assert.equal((await pool.query("SELECT 1 FROM session_message WHERE message_id=$1", [packet.message_id])).rowCount, 0, "no packet message exists");
+  assert.deepEqual((await items(packet.packet_id)).map(r => r.state), ["delivered", "delivered"]);
+  finishTurn(turn);
+  await (async () => { await messagePump.tick(); await steerPump.tick(); })();
+  assert.equal((await messageRow(h)).state, "replied");
+  assert.equal((await packetRow(packet.packet_id)).state, "seen");
+  assert.deepEqual((await items(packet.packet_id)).map(r => r.state), ["seen", "seen"], "a normal end is only seen");
+  assert.deepEqual(errors, []);
+});
+
+test("W2: up to five packets go into one Turn; the sixth waits and goes in the next Turn's packet", async () => {
+  await reset();
+  const before = (await packets()).length;
+  const { turn } = await leaderBusyWithMessage();
+  for (let i = 0; i < 6; i++) { await newTask(`Five ${i}`); await steerPump.tick(); }
+  const steered = (await packets()).filter(x => x.state === "delivered");
+  assert.equal(steered.length, 5, "five packets, the sixth was not sent");
+  assert.equal((await packets()).length, before + 5);
+  finishTurn(turn);
+  await (async () => { await messagePump.tick(); await steerPump.tick(); })();
+  for (const x of steered) assert.equal((await packetRow(x.packet_id)).state, "seen");
+  const next = await lastPacket();
+  assert.equal((await packets()).length, before + 6, "the sixth notice follows as a packet once the Turn ended"); assert.equal(next.state, "sent");
+  assert.equal((await pool.query("SELECT method FROM leader_notice_packet_attempt WHERE packet_id=$1", [next.packet_id])).rows[0].method, "new_turn");
+});
+
+test("W2: nothing is sent into a Turn past 30 minutes, with a person's message waiting, behind a closed gate, without a context reading, or for a Run; a missing grant is named", async () => {
+  await reset();
+  const before = (await packets()).length;
+  const { turn } = await leaderBusyWithMessage();
+  await newTask("Refusals");
+  overrides = { steerFacts: async () => ({ source: "message", turnId: turn, elapsedSeconds: 1801, steeredPackets: 0 }) };
+  await steerPump.tick(); assert.equal((await packets()).length, before, "30 minutes");
+  overrides = { steerFacts: async () => ({ source: "run", turnId: null, elapsedSeconds: null, steeredPackets: 0 }) };
+  await steerPump.tick(); assert.equal((await packets()).length, before, "a business Task Run never takes a notice");
+  overrides = { leaderState: async () => ({ busy: true, humanMessageQueued: true, gateOpen: true, gateBlocked: false }) };
+  await steerPump.tick(); assert.equal((await packets()).length, before, "a person's queued message goes first");
+  overrides = { leaderState: async () => ({ busy: true, humanMessageQueued: false, gateOpen: false, gateBlocked: true }) };
+  await steerPump.tick(); assert.equal((await packets()).length, before, "closed gate");
+  overrides = {}; admit = false;
+  await steerPump.tick(); assert.equal((await packets()).length, before, "no context reading or a guard reached");
+  admit = true; grantMissing = true;
+  await steerPump.tick(); assert.equal((await packets()).length, before);
+  assert.ok(diagnostics.some(d => /directInputs\.grants/.test(d) && d.includes(sender.actorId) && /canSteer:true, canStart:false/.test(d)), diagnostics.join("|"));
+  assert.equal(steerCalls.length, 0);
+  finishTurn(turn); await messagePump.tick();
+});
+
+test("W2: a Turn that fails after the notice went in returns the items marked 'may have been read' (behind the closed recovery gate: blocked until recovered); then the next packet has new ids and no item is lost", async () => {
+  await reset();
+  const { turn } = await leaderBusyWithMessage();
+  await newTask("Failing");
+  await steerPump.tick();
+  const packet = await lastPacket();
+  assert.equal(packet.state, "delivered");
+  finishTurn(turn, "failed");
+  await messagePump.tick(); await steerPump.tick();
+  assert.equal((await pool.query("SELECT phase FROM session_recovery_gate WHERE session_id=$1", [sessionA])).rows[0].phase, "blocked", "the failed Turn closed the recovery gate");
+  assert.equal((await packetRow(packet.packet_id)).state, "blocked");
+  const rows = await items(packet.packet_id);
+  assert.equal(rows[0]!.state, "unknown"); assert.equal(rows[0]!.requeue, true); assert.equal(rows[0]!.read_before, true);
+  assert.match(String(rows[0]!.evidence), /上一轮可能已读到/);
+  await pool.query("UPDATE session_recovery_gate SET phase='open',cause_kind=NULL,cause_id=NULL,cause_state=NULL,version=version+1 WHERE session_id=$1", [sessionA]);
+  const recovered = await workflow.execute(receiver, { type: "leader.noticePacket.recover", projectId: p, operationId: randomUUID(), packetId: packet.packet_id, reason: "gate reviewed" } as never);
+  assert.equal(recovered.status, "applied");
+  await messagePump.tick(); await steerPump.tick();
+  const next = await lastPacket();
+  assert.notEqual(next.packet_id, packet.packet_id); assert.notEqual(next.message_id, packet.message_id);
+  assert.ok((await items(next.packet_id)).some(r => r.notice_id === rows[0]!.notice_id && r.read_before === true), "the item comes back, marked");
+});
+
+test("W2: accepted without a read-back Item stays sent until the Turn ends, then returns 'may have been read'; an unknown result is looked up once, read only, after the Turn ends", async () => {
+  await reset();
+  steerMode = "noitem";
+  let { turn } = await leaderBusyWithMessage();
+  await newTask("No item");
+  await steerPump.tick();
+  let packet = await lastPacket();
+  assert.equal(packet.state, "sent", "no Item: not yet delivered");
+  await steerPump.tick(); assert.equal((await packetRow(packet.packet_id)).state, "sent", "still running: wait");
+  finishTurn(turn); await (async () => { await messagePump.tick(); await steerPump.tick(); })();
+  assert.equal((await packetRow(packet.packet_id)).state, "returned");
+  assert.equal((await items(packet.packet_id))[0]!.read_before, true);
+  await reset();
+  steerMode = "unknown"; reconcileState = "unknown";
+  ({ turn } = await leaderBusyWithMessage());
+  await newTask("Unknown");
+  await steerPump.tick();
+  packet = await lastPacket();
+  assert.equal(packet.state, "sent");
+  await steerPump.tick(); assert.equal((await packetRow(packet.packet_id)).state, "sent", "an unknown result waits for the Turn to end");
+  finishTurn(turn); await (async () => { await messagePump.tick(); await steerPump.tick(); })();
+  assert.equal((await packetRow(packet.packet_id)).state, "withdrawn");
+  const row = (await items(packet.packet_id))[0]!;
+  assert.equal(row.state, "unknown"); assert.equal(row.requeue, true); assert.equal(row.read_before, false); assert.match(String(row.evidence), /上一轮结果未知/);
+});
+
+test("W2: a refusal before the runtime saw the input returns the items at once; nothing is read and nothing is saved as a message", async () => {
+  await reset();
+  steerMode = "refuse";
+  await leaderBusyWithMessage();
+  await newTask("Refused");
+  await steerPump.tick();
+  const packet = (await packets()).filter(x => x.state === "withdrawn").at(-1)!;
+  assert.ok(packet, "the built packet was withdrawn");
+  const row = (await items(packet.packet_id))[0]!;
+  assert.equal(row.requeue, true); assert.equal(row.read_before, false); assert.match(String(row.evidence), /STEER_REFUSED:TURN_CHANGED/);
+  assert.equal((await pool.query("SELECT 1 FROM session_message WHERE message_id=$1", [packet.message_id])).rowCount, 0);
 });

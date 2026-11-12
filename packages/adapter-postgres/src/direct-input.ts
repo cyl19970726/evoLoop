@@ -69,6 +69,13 @@ export class PgDirectInputs {
       AND s.runtime_provider=h.provider WHERE h.project_id=$1 AND h.state='held' AND s.session_id=$2) AS held`,[projectId,sessionId]);
     return r.rows[0]?.held===true;
   }
+  /** What the Session's running primary Turn came from: a business Task Run, or a message (also a direct start); null when idle. */
+  async primaryKind(projectId:string,sessionId:string):Promise<"run"|"message"|null>{
+    const r=await this.pool.query(`SELECT EXISTS(SELECT 1 FROM runtime_run WHERE project_id=$1 AND session_id=$2
+      AND state IN ('requested','dispatching','running','unknown')) AS run,EXISTS(SELECT 1 FROM session_message_processing WHERE project_id=$1
+      AND session_id=$2 AND state IN ('dispatching','running','unknown')) AS message`,[projectId,sessionId]);
+    return r.rows[0]?.run?"run":r.rows[0]?.message?"message":null;
+  }
   async hasPrimary(projectId:string,sessionId:string):Promise<boolean>{
     const r=await this.pool.query(`SELECT EXISTS(SELECT 1 FROM runtime_run WHERE project_id=$1 AND session_id=$2
       AND state IN ('requested','dispatching','running','unknown')) OR EXISTS(
@@ -103,7 +110,7 @@ export class PgDirectInputs {
     return {items:await this.withQueued(r.rows.slice(0,limit).map(map)),nextCursor:r.rows.length>limit?r.rows[limit-1]!.input_id:null};
   }
   async reserve(projectId:string,sessionId:string,actorId:string,command:DirectInputCommand,
-    grant:DirectInputGrant,fingerprint:string):Promise<{record:DirectInputRecord;created:boolean}>{
+    grant:DirectInputGrant,fingerprint:string,options:{notice?:boolean}={}):Promise<{record:DirectInputRecord;created:boolean}>{
     return this.transaction(projectId,async client=>{
       const prior=await client.query(`SELECT * FROM session_direct_input WHERE project_id=$1 AND
         (input_id=$2 OR operation_id=$3) FOR UPDATE`,[projectId,command.inputId,command.operationId]);
@@ -141,6 +148,12 @@ export class PgDirectInputs {
       const turn=active?.native_turn_id??null;
       let mode:"steer"|"start";
       let source:{kind:"run"|"message";id:string;processingId:string|null};
+      // A platform notice only ever adds to a running Turn that a message started: never to a Run, never as a new Turn, and a changed Turn is
+      // refused (to be retried with a new packet) instead of being saved as a queued message.
+      if(options.notice&&runs.length)throw new DomainError("NOTICE_NOT_INTO_RUN","A platform notice is never added to a business Task Run");
+      if(options.notice&&!active)throw new DomainError("TURN_ENDED","The Turn ended before the notice was added; nothing was reserved");
+      if(options.notice&&(active.state!=="running"||!turn||command.expectedTurnId!==turn))
+        throw new DomainError("TURN_CHANGED","The Turn is not the one the notice was built for; nothing was reserved");
       if(active){
         // Everything below is refused before any native request: it is saved as one queued message instead of failing the person.
         if(active.state!=="running"||!turn)return this.queueRefused(client,projectId,sessionId,actorId,command,

@@ -711,6 +711,29 @@ const leaderResultNoticePump = new LeaderResultNoticePump({
   pollIntervalMs: integrations.leaderResultNotices?.pollIntervalMs??2000,
   onError: () => reconciliationLog("Leader result notice needs reconciliation; inspect its fixed notice and message operation."),
   onDiagnostic: (projectId, noticeId, reason) => console.error(`Leader result notice ${noticeId} in project ${projectId} waits: ${reason}`),
+  // W2: packets into the Leader's running Turn, as the notice service's direct input (Codex only; the runtime's own capability decides).
+  steer: integrations.runtime?.enabled ? {
+    capability: (principal, projectId, sessionId) => directInput ? directInput.capability(principal, projectId, sessionId)
+      : Promise.resolve({ available: false, mode: null, expectedTurnId: null, reasonCode: "NATIVE_UNAVAILABLE" }),
+    submit: (principal, projectId, sessionId, command) => directInput ? directInput.submit(principal, projectId, sessionId, { ...command }, { notice: true })
+      : Promise.reject(new DomainError("NATIVE_UNAVAILABLE", "Direct input is unavailable")),
+    reconcile: (principal, projectId, inputId) => directInput ? directInput.reconcile(principal, projectId, inputId)
+      : Promise.reject(new DomainError("NATIVE_UNAVAILABLE", "Direct input is unavailable")),
+    // The same two guards an ordinary notice passes, and no context reading at all means no injection.
+    admission: async (projectId, sessionId) => {
+      const current = await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE);
+      const budgetConfig = current.runtime?.dailyBudget ?? null, contextConfig = current.runtime?.contextBudget ?? null;
+      const reader = (await currentIdentity()).find(p => p.projectIds.includes(projectId) && p.permissions.includes("read"));
+      if (!reader || !contextConfig?.enabled) return { allowed: false, reason: "CONTEXT_READING_UNAVAILABLE" };
+      const zone = budgetConfig?.timeZone ?? configuredUsageTimeZone, day = usageDay(clock.now(), zone);
+      const overview = await usage.overview(reader, projectId, day, day, zone, budgetConfig, contextConfig);
+      const context = overview.sessions.find(item => item.sessionId === sessionId)?.context ?? contextPressure(contextConfig, null);
+      if (context.inputTokens === null) return { allowed: false, reason: "NO_CONTEXT_READING" };
+      if (context.state === "handoff_required") return { allowed: false, reason: "CONTEXT_THRESHOLD_REACHED" };
+      const admission = ordinaryTurnAdmission({ isNotice: true, budget: overview.budget, context });
+      return { allowed: admission.allowed, reason: admission.reason };
+    },
+  } : undefined,
 });
 const taskAttentionPump = new TaskAttentionPump({pool,canWrite:lease.canWrite,now:clock.now,
   projects:async()=> (await currentIdentity()).filter(p=>p.permissions.includes("read")&&
