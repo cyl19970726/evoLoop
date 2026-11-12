@@ -60,6 +60,13 @@ const detail = (f: Fixture) => ({
     : f.observer ? [observation(f, f.observer, f.result!, at(6))] : [],
 });
 const all = Object.values(fixtures);
+// 待我决定: one item of each kind that opens somewhere, and one whose id is missing (a link must never fall back to a list page).
+const decisionItems = [
+  { kind: "role_proposal", id: id(701), title: "新增验收职责", detail: "提案", proposedBy: "lead", at: stamp, roleId: id(711), version: 1 },
+  { kind: "stage_proposal", id: id(702), title: "下一阶段提案", detail: "提案", proposedBy: "lead", at: stamp, stageId: id(712), version: 1 },
+  { kind: "task_question", id: id(703), title: "接口放哪里", detail: "问题", proposedBy: "builder", at: stamp, taskId: taskId(fixtures.mine), discussionId: id(713), eventId: id(703) },
+  { kind: "role_proposal", id: id(704), title: "没有编号的提案", detail: "提案", proposedBy: "lead", at: stamp, roleId: "", version: 1 },
+];
 const firstPage = [fixtures.mine, fixtures.others, fixtures.used], secondPage = [fixtures.observedByOther, fixtures.oldRevision, fixtures.declared, fixtures.failedByMe];
 
 test("待我处理 lists what waits for my use and counts every part, or says it cannot", {
@@ -95,7 +102,7 @@ test("待我处理 lists what waits for my use and counts every part, or says it
       entrypoint: null, publicationRef: null, version: 1, createdAt: stamp, readAt: null, observationId: null }] }; }
     else if (path === `${root}/impacts`) { if (!fail("impacts")) value = [{ projectId, id: id(31), taskId: taskId(fixtures.used), taskRevisionId: revision(fixtures.used),
       documentId: id(32), fromRevisionId: id(33), toRevisionId: id(34), state: "pending", decisionId: null, createdAt: stamp }]; }
-    else if (path === `${root}/decisions-for-me`) { if (!fail("decisions")) value = { items: [], observedAt: stamp }; }
+    else if (path === `${root}/decisions-for-me`) { if (!fail("decisions")) value = { items: failing.has("decisionItems") ? decisionItems : [], observedAt: stamp }; }
     else if (path === `${root}/work-management/index`) {
       const cursor = url.searchParams.get("cursor");
       indexCursors.push(cursor);
@@ -256,6 +263,25 @@ test("待我处理 lists what waits for my use and counts every part, or says it
   await shoot(failed, "inbox-index-failed", () => failedSection.getByRole("alert").getByText("等我使用的交付暂不可读取").waitFor());
   await fixture("recover?what=index");
   await failed.close();
+
+  // 待我决定: each row opens its own item, and an item without its id has no link and says why.
+  await fixture("fail?what=decisionItems");
+  const decide = await open(`/p/${projectId}/inbox`);
+  const decisions = decide.getByRole("list", { name: "待我决定" });
+  await decisions.waitFor({ timeout: 20000 });
+  const hrefOf = async (title: string) => new URL((await decisions.getByRole("link", { name: new RegExp(title) }).getAttribute("href"))!, "http://x");
+  const role = await hrefOf("新增验收职责");
+  assert.deepEqual([role.pathname, role.searchParams.get("role")], [`/p/${projectId}/roles`, id(711)]);
+  const stage = await hrefOf("下一阶段提案");
+  assert.deepEqual([stage.pathname, stage.searchParams.get("stage")], [`/p/${projectId}/journey`, id(712)]);
+  const question = await hrefOf("接口放哪里");
+  assert.deepEqual([question.pathname, question.searchParams.get("section"), question.searchParams.get("discussion"), question.searchParams.get("question")],
+    [`/p/${projectId}/tasks/${taskId(fixtures.mine)}`, "collaboration", id(713), id(703)]);
+  assert.equal(await decisions.getByRole("link", { name: /没有编号的提案/ }).count(), 0, "no link for an item without its id");
+  await decisions.getByText("没有带职责编号").waitFor();
+  assert.equal(await decisions.getByRole("link", { name: "去决定" }).count(), 3);
+  await fixture("recover?what=decisionItems");
+  await decide.close();
 
   assert.deepEqual(errors, []);
 });
