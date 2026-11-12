@@ -57,3 +57,15 @@ test("direct input distinguishes a missing receipt after 503 from an explicit pr
   assert.equal(explicitlyUnaccepted(cause), false);
   assert.equal(paths.filter(path => path.includes("/direct-inputs") && path.startsWith("POST")).length, 4);
 });
+
+test("every refusal the service raises before it reserves an input releases the draft; unknown outcomes never do", () => {
+  const refused = (status: number, code: string) => new ApiError(status, "x", { code });
+  for (const code of ["TURN_CHANGED", "SESSION_BUSY", "SOURCE_AMBIGUOUS", "SESSION_NOT_READY", "MESSAGE_BUDGET_EXHAUSTED", "NATIVE_ADMISSION_MISSING",
+    "NATIVE_UNAVAILABLE", "NATIVE_CAPABILITY_UNKNOWN", "DIRECT_GRANT_MISSING"])
+    assert.equal(explicitlyUnaccepted(refused(409, code)), true, `${code}: nothing was reserved, the text stays and the buttons unlock`);
+  assert.equal(explicitlyUnaccepted(refused(409, "INPUT_ID_CONFLICT")), false, "the ID already belongs to another intent: read it");
+  assert.equal(explicitlyUnaccepted(refused(409, "SESSION_INPUT_BUSY")), false, "retryable with the same IDs, a different path");
+  assert.equal(explicitlyUnaccepted(refused(503, "SERVICE_UNAVAILABLE")), false);
+  assert.equal(explicitlyUnaccepted(refused(500, "TURN_CHANGED")), false, "a server error says nothing about a reservation");
+  assert.equal(explicitlyUnaccepted(new ApiError(0, "network")), false);
+});

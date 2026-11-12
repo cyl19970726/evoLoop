@@ -14,6 +14,7 @@ import {
   composerMenu, type ComposerAgent, type ComposerAttachment, type ComposerCommand,
 } from "@evoloop/ui";
 import { commandDrafts, useCommand, type MutationContext } from "../../shared/command";
+import { ErrorDetails } from "../../shared/ui/ErrorDetails";
 import { errorText } from "../../shared/api";
 import { useProjectQuery } from "../../shared/query";
 import { roleClient } from "../../shared/roleClient";
@@ -21,7 +22,8 @@ import { sessionClient } from "../../shared/sessionClient";
 import type { SubmissionOutcome } from "../../shared/submissionOutcome";
 import { href } from "../../shared/ui/shared";
 import type { NativeProgressView } from "./NativeSessionPanel";
-import { composerPlan, contextUseText, mentionCandidates, mentionedAgents, messageWithSkill } from "./composerPresentation";
+import { composerPlan, contextUseText, mentionCandidates, mentionedAgents, messageWithSkill, sentResultText, type SentResult } from "./composerPresentation";
+import { isLeaderSession } from "./arrangementModel";
 import { latestPlan, planExplanation, planSteps } from "./conversationPresentation";
 import { agentStatusLabel } from "./sessionStatusPresentation";
 import { sendSessionCommand } from "./sessionCommand";
@@ -65,6 +67,8 @@ export function SessionComposer({ context, snapshot, entries, activeTurn, live, 
   const [picked, setPicked] = useState<Agent[]>([]);
   const [sending, setSending] = useState(false);
   const [outcome, setOutcome] = useState<{ text: ReactNode; failed: boolean } | null>(null);
+  // How the last message went out (inserted, started, queued, queued after the Turn changed); kept until the next send.
+  const [delivered, setDelivered] = useState<SentResult | null>(null);
   const [stopOpen, setStopOpen] = useState(false);
   // The message is gone: clear the box and its kept draft, the chosen skill and @ names, and what was said about it.
   const sent = () => { setValue(""); setSkill(null); setPicked([]); setOutcome(null); };
@@ -78,8 +82,10 @@ export function SessionComposer({ context, snapshot, entries, activeTurn, live, 
   };
   // The @ copies of a 即时输入 go out once the runtime has received it, whichever way that is found out.
   const afterDirect = useRef<{ content: string; agents: Agent[] } | null>(null);
-  const direct = useDirectInput({ projectId, sessionId: owned ?? "", actorId: principal.actorId, active: !!owned, onAccepted: () => {
+  const direct = useDirectInput({ projectId, sessionId: owned ?? "", actorId: principal.actorId, active: !!owned, onAccepted: receipt => {
     command.dropDraft(); command.clear(); sent();
+    setDelivered(receipt.queuedMessageId ? { kind: "converted", reason: receipt.reason }
+      : { kind: receipt.mode === "start" ? "started" : "inserted" });
     const copies = afterDirect.current; afterDirect.current = null;
     if (copies) void sendCopies(copies.content, copies.agents);
     onApplied();
@@ -88,6 +94,7 @@ export function SessionComposer({ context, snapshot, entries, activeTurn, live, 
   const plan = composerPlan({
     kind: session.kind, canSave: session.capabilities.send.available, saveReason: session.capabilities.send.reason,
     direct: direct.capability, directPending: direct.pending, running, canWrite: principal.permissions.includes("write"), blocked: context.blocked,
+    leader: isLeaderSession(session),
   });
 
   // Messages I saved that are still waiting: they can be withdrawn until they are handled.
@@ -186,12 +193,12 @@ export function SessionComposer({ context, snapshot, entries, activeTurn, live, 
     if (sending || command.busy || !text.trim()) return;
     const content = messageWithSkill(text.trim(), skill);
     const agents = mentionedAgents(text, picked);
-    setOutcome(null);
+    setOutcome(null); setDelivered(null);
     if (action === "post") {
       // Copies follow only an applied message; the hook calls back once it is applied, now or after it is checked.
       await command.submit(() => ({ type: "session.message.post", messageId: crypto.randomUUID(), target: session.target, content,
         ...(session.kind === "owned" && taskAttached && snapshot.currentWork ? { context: { taskId: snapshot.currentWork.id, taskRevisionId: snapshot.currentWork.revisionId } } : {}) }),
-      () => { void sendCopies(content, agents); });
+      () => { setDelivered({ kind: "queued" }); void sendCopies(content, agents); });
       return;
     }
     setSending(true); command.clear();
@@ -215,7 +222,10 @@ export function SessionComposer({ context, snapshot, entries, activeTurn, live, 
       onCancel={context.blocked ? undefined : id => void withdraw(id)} />}
     {direct.receipt}
     {plan.disabledReason && <p role="status" className="text-caption text-muted-foreground">{plan.disabledReason}</p>}
-    {command.outcome && <p role={command.outcome.failed ? "alert" : "status"} className={command.outcome.failed ? "text-caption text-destructive" : "text-caption text-muted-foreground"}>{command.outcome.message}</p>}
+    {command.outcome && <p role={command.outcome.failed ? "alert" : "status"} className={command.outcome.failed ? "text-caption text-destructive" : "text-caption text-muted-foreground"}>{command.outcome.message}
+      {/* The service's original answer, folded: for a missing message grant that is only the code (no configuration text, no local path). */}
+      {command.outcome.detail && <ErrorDetails failure={{ text: command.outcome.message, detail: command.outcome.detail }} />}</p>}
+    {delivered && <p role="status" data-sent-result={delivered.kind} className="text-caption text-muted-foreground">{sentResultText(delivered)}</p>}
     {outcome && <p role={outcome.failed ? "alert" : "status"} className={outcome.failed ? "text-caption text-destructive" : "text-caption text-muted-foreground"}>{outcome.text}</p>}
     <Composer
       value={value}
@@ -227,6 +237,7 @@ export function SessionComposer({ context, snapshot, entries, activeTurn, live, 
       busy={sending || command.busy || direct.busy || direct.pending}
       running={plan.running}
       sendMode={plan.sendMode}
+      splitSend={plan.split ?? undefined}
       onSend={text => { if (plan.enter) void deliver(plan.enter, text); }}
       onQueue={plan.modEnter ? text => void deliver("post", text) : undefined}
       onQueueUnavailable={() => setOutcome({ text: plan.queueNote ?? "现在不能排到下一轮。", failed: false })}
