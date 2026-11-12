@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  commandsOfLine, configIdentity, day, declaredStage, dominantActor, expandLoops, jsonKeyDiff, mentionsCandidate, mentionsFormalReadback,
+  commandsOfLine, configIdentity, day, declaredStage, dominantActor, expandLoops, ghMergeNumber, jsonKeyDiff, mentionsCandidate, mentionsFormalReadback,
   mentionsNear, mergeInvocations, mergeRows, parseTrainLog,
 } from "./boundary-check.mjs";
 import { loadConfig } from "../ops/boundary-check.mjs";
@@ -89,6 +89,33 @@ test("observation wording: candidate, a formal read-back, and the stage a Task d
   assert.equal(declaredStage("**阶段**：正式（读正式数据）"), "正式");
   assert.equal(declaredStage("**阶段**：候选"), "候选");
   assert.equal(declaredStage("没有写阶段"), null);
+});
+
+test("a negated or to-do formal clause is not a formal read-back (candidate acceptance rework)", () => {
+  for (const text of [
+    "候选环境通过；正式实例未验证，不代表正式已通过",
+    "仅候选验证，正式未通过",
+    "候选验证通过，正式环境尚未读回",
+    "候选环境通过，正式读回待做",
+    "正式环境没有读回",
+  ]) assert.equal(mentionsFormalReadback(text), false, text);
+  for (const text of ["候选已用，正式实例读回通过", "正式环境已验证", "候选通过；正式实测通过"]) assert.equal(mentionsFormalReadback(text), true, text);
+  assert.equal(mentionsFormalReadback(null), false);
+});
+
+test("gh pr merge is read wherever the flags stand, and a merge-gate path held in a variable still counts", () => {
+  const prs = command => mergeInvocations([{ at: "t", command }]).map(item => item.pr);
+  assert.deepEqual(prs("gh pr merge --squash 6"), [6]);
+  assert.deepEqual(prs("gh pr merge --auto 10"), [10]);
+  assert.deepEqual(prs("gh pr merge 7 --merge"), [7]);
+  assert.deepEqual(prs("gh pr merge --match-head-commit abcdef0 --repo o/r 11"), [11]);
+  assert.deepEqual(prs("gh pr merge https://github.com/o/r/pull/12 --merge"), [12]);
+  assert.deepEqual(prs("gh pr merge --squash"), [], "no number, nothing to attribute");
+  assert.equal(ghMergeNumber("--subject 99 8"), 8, "a value of an option is not the PR number");
+  const indirect = "MG=/tmp/merge-gate.mjs; node $MG merge --pr 21 --execute --config ~/ops/merge-config.json; node ${MG} merge --pr 22 --execute";
+  assert.deepEqual(prs(indirect), [21, 22]);
+  assert.equal(mergeInvocations([{ at: "t", command: indirect }])[0].config, "~/ops/merge-config.json");
+  assert.deepEqual(prs("node $UNKNOWN merge --pr 23 --execute"), [], "a script path that is not resolvable stays unattributed (a stated limit)");
 });
 
 test("a day is 24 hours of local time, and the config must live outside the repository with its required fields", () => {

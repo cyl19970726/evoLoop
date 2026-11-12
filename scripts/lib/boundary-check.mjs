@@ -51,10 +51,32 @@ export function expandLoops(command) {
     values.trim().split(/\s+/).map(value => body.replaceAll("${" + name + "}", value).replaceAll("$" + name, value)).join("\n"));
 }
 
+/** `NAME=…merge-gate.mjs` assignments written into the later `$NAME` / `${NAME}` uses, so an indirect call still reads as a merge-gate call. */
+export function resolveVariables(command) {
+  let out = command;
+  for (const match of command.matchAll(/\b(\w+)=(\S*merge-gate\.mjs)\b/g)) out = out.replaceAll("${" + match[1] + "}", match[2]).replaceAll("$" + match[1], match[2]);
+  return out;
+}
+
+/** The PR number of `gh pr merge` arguments wherever the flags stand (`--squash 6`, `--auto 10`, `6 --merge`, a pull URL); options that take a value are skipped with it. */
+export function ghMergeNumber(args) {
+  const takesValue = new Set(["--match-head-commit", "--subject", "-t", "--body", "-b", "--body-file", "-F", "--author-email", "-A", "--repo", "-R"]);
+  const tokens = args.trim().split(/\s+/).filter(Boolean);
+  for (let index = 0; index < tokens.length; index++) {
+    const token = tokens[index];
+    if (takesValue.has(token)) { index++; continue; }
+    if (token.startsWith("-")) continue;
+    if (/^\d+$/.test(token)) return Number(token);
+    const url = /\/pull\/(\d+)/.exec(token);
+    if (url) return Number(url[1]);
+  }
+  return null;
+}
+
 export function mergeInvocations(commands) {
   const found = [];
   for (const { at, command: raw } of commands) {
-    const command = expandLoops(raw);
+    const command = resolveVariables(expandLoops(raw));
     for (const match of command.matchAll(/merge-gate\.mjs\s+merge\b([^;&|\n]*)/g)) {
       const rest = match[1];
       if (!/--execute\b/.test(rest)) continue;
@@ -62,7 +84,10 @@ export function mergeInvocations(commands) {
       const config = /--config[ =]("[^"]+"|'[^']+'|\S+)/.exec(rest);
       if (pr) found.push({ at, pr: Number(pr[1]), config: config ? config[1].replace(/^["']|["']$/g, "") : null, via: "merge-gate" });
     }
-    for (const match of command.matchAll(/\bgh\s+pr\s+merge\s+(\d+)/g)) found.push({ at, pr: Number(match[1]), config: null, via: "gh pr merge" });
+    for (const match of command.matchAll(/\bgh\s+pr\s+merge\b([^;&|\n]*)/g)) {
+      const pr = ghMergeNumber(match[1]);
+      if (pr) found.push({ at, pr, config: null, via: "gh pr merge" });
+    }
     for (const match of command.matchAll(/\bgh\s+api\s+\S*pulls\/(\d+)\/merge/g)) found.push({ at, pr: Number(match[1]), config: null, via: "gh api merge" });
   }
   return found;
@@ -129,7 +154,12 @@ export function mentionsNear(transcripts, needles, atMs, windowMs) {
 
 /** The two words an observation is judged by: it speaks of a candidate, and says it read the formal environment back. */
 export const mentionsCandidate = text => /候选/.test(text ?? "");
-export const mentionsFormalReadback = text => /正式[^。；\n]{0,25}(读回|已验证|验证通过|实测|已通过|通过)/.test(text ?? "");
+/**
+ * A formal read-back is a clause that speaks of 正式 and says it was read back or passed, with no negation or to-do in that clause
+ * (未、不、尚未、待、没): “正式实例未验证”, “正式未通过”, “正式环境尚未读回”, “正式读回待做” are not read-backs.
+ */
+export const mentionsFormalReadback = text => (text ?? "").split(/[。；;，,\n]/).some(clause =>
+  /正式/.test(clause) && /(读回|已验证|验证通过|实测|已通过|通过)/.test(clause) && !/(未|不|没|待)/.test(clause));
 export const declaredStage = body => { const match = /阶段\*{0,2}[:：]\*{0,2}\s*(正式|候选)/.exec(body ?? ""); return match ? match[1] : null; };
 
 export const day = (value, offsetMinutes) => {
