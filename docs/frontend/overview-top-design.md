@@ -96,4 +96,6 @@ Task `e5af6765`（2026-11-12 返工）。使用者要从总览一眼看清三件
 
 ## 多个进行中的阶段（发布后返工）
 
-正式项目的 M0–M4 五个阶段同时是进行中。按已确认规则不猜当前阶段，页面写“有多个进行中的阶段，不猜哪个是当前”，没有高亮；目标卡里的“选一个阶段阅读”列表默认折叠成一行，展开后仍列出每个阶段的全文，所以目标、版本、6 个阶段留在首屏。浏览器回归（`apps/workbench/test/overview-top-browser.test.ts`，五个进行中阶段、每个阶段文字很长）实测：1440×900 最后阶段底边 595；390×844 最后阶段底边 763（标签栏之上），均无水平溢出；截图 [1440](../assets/frontend-pages/overview-top-1440-multi-active.png)、[390](../assets/frontend-pages/overview-top-390-multi-active.png)。
+正式项目的 M0–M4 五个阶段同时是进行中，目标正文约 150 字。按已确认规则不猜当前阶段，页面写“有多个进行中的阶段，不猜哪个是当前”，没有高亮。为让目标、版本、6 个阶段留在首屏：目标卡里的“选一个阶段阅读”列表默认折叠成一行（展开后仍列每个阶段全文）；手机宽度下目标标题最多两行，全文放进卡里的“目标全文、消费者、约束与范围”折叠块；手机上阶段行只留一行，当前阶段的“交付/退出证据”只在较宽的版面展开。
+
+浏览器回归（`apps/workbench/test/overview-top-browser.test.ts`，目标夹具约 145 字、五个进行中阶段）实测：1440×900 最后阶段底边 719；390×844 最后阶段底边 772，在底部标签栏顶（784）之上，无水平溢出；去掉标题两行限制后该测试在 390 下失败（最后阶段底边 994）。截图 [1440](../assets/frontend-pages/overview-top-1440-multi-active.png)、[390](../assets/frontend-pages/overview-top-390-multi-active.png)。该测试需要本机 Playwright 模块（`EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE`），CI 不设置时会跳过，所以交付要写本机运行结果。

@@ -12,6 +12,8 @@ const modulePath = process.env.EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE;
 const shots = process.env.EVOLOOP_OVERVIEW_SCREENSHOT_DIR;
 const dist = resolve(import.meta.dirname, "../dist");
 const projectId = "42000001-0000-4000-8000-000000000001", goalId = "42000009-0000-4000-8000-000000000009", stageId = "42000011-0000-4000-8000-000000000011";
+// About 150 characters, the length of the real project's goal: at 390px it wraps to seven lines unless the page clamps it.
+const LONG_GOAL = "让使用者在打开总览的第一屏就看清项目要去哪里、线上现在是哪个版本、六个路线图阶段各做到了哪一步，并且不需要滚动或点开任何东西，就能知道下一步该核对什么、找谁、看哪份证据、这些证据是什么时候读到的；若证据过期，要能一眼分辨哪些来源还没有读回、哪些只是保留了上一次读回的结果，不必再点进去核对。";
 const stamp = "2026-11-12T08:00:00.000Z";
 const phases = [
   ["M0", "正式定义与仓库", "产品目标、架构边界、规范、决定和可重建文档站；供后续切片共用同一判断依据", "新 checkout 能重建，未参与编写者能按文档解释一个目标→任务→使用→下一步的场景并定位边界"],
@@ -39,7 +41,7 @@ test("overview top: goal, version, six phases with one current, the three blocks
         }
         else if (url.pathname === base) value = { id: projectId, title: "总览顶部项目", createdAt: stamp };
         else if (url.pathname === `${base}/impacts` || url.pathname === `${base}/resident-queues`) value = [];
-        else if (url.pathname === `${base}/goals`) value = { items: mode === "day1" ? [] : [{ projectId, id: goalId, version: 1, outcome: "让使用者一眼看清项目要去哪里", constraints: "数据来自服务", consumer: "使用者",
+        else if (url.pathname === `${base}/goals`) value = { items: mode === "day1" ? [] : [{ projectId, id: goalId, version: 1, outcome: LONG_GOAL, constraints: "数据来自服务", consumer: "使用者",
           authority: "负责人", scope: "总览", owner: "o", createdAt: stamp, actorId: "reader" }], nextCursor: null };
         else if (url.pathname === `${base}/stages`) value = mode === "day1" ? [] : mode === "multi" ? phases.slice(0, 5).map(([key, title, deliver, exit], index) => ({ projectId, id: `4200001${index}-0000-4000-8000-00000000001${index}`, goalId, version: 2, state: "active",
           deliverable: `${key} ${title}：${deliver}；${exit}`, learningQuestion: `${key} 要弄清：${exit}，并且这一段文字故意写得很长，用来证明多个进行中的阶段不会把版本和里程碑挤出首屏`, createdAt: stamp, actorId: "reader" })) : [{ projectId, id: stageId, goalId, version: 2, state: "active", deliverable: "总览顶部", learningQuestion: "看得清吗", createdAt: stamp, actorId: "reader" }];
@@ -102,7 +104,7 @@ test("overview top: goal, version, six phases with one current, the three blocks
       assert.match(text, /源码提交[\s\S]*9a4020a/); assert.match(text, /构建时间[\s\S]*2026-11-12 03:10 UTC/); assert.match(text, /启动时间/); assert.doesNotMatch(text, /发布时间/, "the start time is not called the release time");
       const links = await page.locator("[data-overview-version] a").evaluateAll(items => items.map(item => item.getAttribute("href")));
       assert.deepEqual(links, ["https://github.com/cyl19970726/evoLoop/commit/9a4020a5886be01b2d74fe850687ca7355b2d226", "https://github.com/cyl19970726/evoLoop/blob/main/docs/roadmap.md#当前基线", "https://github.com/cyl19970726/evoLoop/blob/main/docs/development/local-run.md"]);
-      assert.ok((await page.locator("[data-phase][data-current]").innerText()).includes("退出证据"), "the current phase shows its exit evidence");
+      if (width >= 1000) assert.ok((await page.locator("[data-phase][data-current]").innerText()).includes("退出证据"), "the current phase shows its exit evidence on the wide page");
       for (const word of ["部分成立", "已退出", "进行中", "未开始", ...(width >= 1000 ? ["回看于 2026-11-10", "未登记"] : [])]) assert.ok(text.includes(word), word);
       if (shots) { await page.screenshot({ path: `${shots}/overview-top-${width}.png` }); await page.screenshot({ path: `${shots}/overview-top-${width}-full.png`, fullPage: true }); }
       const m = await measure(page, `linked ${width}x${height}`);
@@ -140,6 +142,8 @@ test("overview top: goal, version, six phases with one current, the three blocks
       assert.equal(m.phaseCount, 6);
       assert.ok(m.versionBottom! <= height - (width >= 1000 ? 0 : 64), `the version is on the first screen at ${width}x${height} (bottom ${m.versionBottom})`);
       assert.ok(m.lastPhaseBottom <= height - (width >= 1000 ? 0 : 64), `all six phases are on the first screen at ${width}x${height} (last bottom ${m.lastPhaseBottom})`);
+      assert.ok(LONG_GOAL.length >= 140, "the goal fixture is as long as the real one");
+      assert.ok(m.lastPhaseBottom < 784, `the last phase ends above the phone's bottom bar (top at 784), at ${m.lastPhaseBottom}`);
       await picker.locator("summary").click();
       assert.equal(await picker.locator("button").count(), 5, "opening the list shows all five stages");
       await multi.close();
