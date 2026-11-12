@@ -30,6 +30,7 @@
     "./artifact-reference": "./dist/artifact-reference.js",
     "./division": "./dist/division.js",
     "./session-work": "./dist/session-work.js",
+    "./instance-drain": "./dist/instance-drain.js",
     "./session-observation": "./dist/session-observation.js",
     "./session-preparation": "./dist/session-preparation.js",
     "./session-assignments": "./dist/session-assignments.js",

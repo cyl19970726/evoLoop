@@ -227,7 +227,9 @@ function EntryInspector({ entry, context, sessionKey, mayReadOriginal, agentName
     } catch (cause) { if (current.current === scope) setError(errorText(cause)); }
     finally { if (current.current === scope) setBusy(false); }
   };
-  useEffect(() => { if (entry.kind === "message" && entry.truncated) void read(); return () => { current.current = ""; }; }, [scope]);
+  // A "not checked" input: opening its source asks the service to check this one Item with its own budget; what comes back replaces the notice.
+  const unchecked = entry.kind === "notice" && entry.nativeKind === "userMessage" && entry.label === "未核对的原生输入";
+  useEffect(() => { if (entry.kind === "message" && entry.truncated || unchecked) void read(); return () => { current.current = ""; }; }, [scope]);
   const block = "max-h-[42vh] overflow-auto whitespace-pre-wrap rounded-md bg-muted p-3 font-mono text-caption [overflow-wrap:anywhere]";
   return <>
     <p className="text-caption text-muted-foreground">{entryAuthorText(value.author, agentName, context.principal.actorId)}{value.occurredAt ? ` · ${date(value.occurredAt)}` : " · 来源未提供时间"}</p>
@@ -281,7 +283,7 @@ function MessageInspector({ id, context, snapshot, onApplied }: { id: string; co
     <div className={replyProse}><MarkdownBody source={message.content} identity={`message-detail-${message.id}`} projectId={context.projectId} topHeading={4} /></div>
     {processing?.response && <><h3 className="text-label font-semibold">回复</h3><div className={replyProse}><MarkdownBody source={processing.response} identity={`message-response-${processing.id}`} projectId={context.projectId} topHeading={4} /></div></>}
     {processing?.failure && <Notice tone="error">{nativeFailureLine(processing.failureCategory)}处理失败：{processing.failure}</Notice>}
-    {message.blockedReason && <p className="text-text-secondary">等待原因：{message.blockedReason}</p>}
+    {message.blockedReason && <p className="text-text-secondary">等待原因：{grantBlockText(message.blockedReason) ?? message.blockedReason}</p>}
     {message.readReceipt && <p className="text-text-secondary">已读回执：{message.readReceipt.evidence} · {date(message.readReceipt.at)}</p>}
     {canRead && <ActionForm context={{ ...context, draftScope: `message-read:${message.id}` }} title="记录本人已读原消息" fields={[{ name: "evidence", label: "阅读证据", kind: "textarea" }]} build={v => ({ type: "session.message.receipt", messageId: message.id, stage: "read", evidence: v.evidence })} onApplied={applied} />}
     {(["queued", "manual_pending"].includes(message.state)) && message.senderActorId === context.principal.actorId && <ActionForm context={{ ...context, draftScope: `message-cancel:${message.id}`, draftBaseline: String(message.version) }} title="取消待处理消息" fields={[{ name: "reason", label: "取消原因", kind: "textarea" }]} build={v => ({ type: "session.message.cancel", messageId: message.id, expectedVersion: message.version, reason: v.reason })} onApplied={applied} />}
