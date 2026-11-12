@@ -43,7 +43,8 @@ export function contextText(context: ContextPressure): string {
 export interface ContextGauge {
   /** 0–1 for the bar; null when there is no threshold or no current size, so no bar is drawn. */
   ratio: number | null;
-  tone: "progress" | "waiting" | "blocked" | "idle" | "unknown";
+  /** “正常” is `done` (a check), never `progress`, whose spinning icon would say something is running. */
+  tone: "done" | "waiting" | "blocked" | "idle" | "unknown";
   /** Two to six characters for the tag. */
   status: string;
   /** “9.6 万 / 20 万（48%）”, or what is known without a threshold. */
@@ -61,7 +62,7 @@ export function contextGauge(context: ContextPressure | null | undefined): Conte
   const detail = `${tokenText(context.inputTokens)} / ${tokenText(context.limit)}（${Math.round((context.ratio ?? context.inputTokens / context.limit) * 100)}%）`;
   if (context.state === "handoff_required") return { ratio, tone: "blocked", status: "需交接新线程", detail, handoff: true };
   if (context.state === "warning") return { ratio, tone: "waiting", status: "接近交接", detail, handoff: false };
-  return { ratio, tone: "progress", status: "正常", detail, handoff: false };
+  return { ratio, tone: "done", status: "正常", detail, handoff: false };
 }
 
 /** Today's use in four small figures; null when nothing was recorded today (never shown as 0). */
@@ -83,4 +84,27 @@ export function budgetReminder(budget: UsageBudget | null | undefined): { tone: 
   if (budget.state === "exhausted") return { tone: "blocked", text: `项目今日用量已达每日上限${percent}，普通结果通知已暂停` };
   if (budget.state === "warning") return { tone: "waiting", text: `项目今日用量接近每日上限${percent}` };
   return null;
+}
+
+/** 项目用量 on 统筹安排: today's project use against the daily limit, drawn as the same bar as an agent's context. */
+export function projectBudgetGauge(budget: UsageBudget): ContextGauge {
+  if (!budget.configured) return { ratio: null, tone: "idle", status: "未设上限", detail: "未配置每日上限，只记录用量", handoff: false };
+  if (budget.state === "unknown" || budget.ratio === null || budget.limit === null)
+    return { ratio: null, tone: "unknown", status: "无法判定",
+      detail: budget.costComplete ? "今日用量暂时无法判定" : "有的记录没有报告费用，费用上限暂时无法判定", handoff: false };
+  const cost = budget.limitKind === "cost_usd";
+  const amount = (value: number | null) => value === null ? "未知" : cost ? `$${value.toFixed(2)}` : tokenText(value);
+  const detail = `${cost ? "费用" : "输入"} ${amount(budget.used)} / ${amount(budget.limit)}（${Math.round(budget.ratio * 100)}%）`;
+  const ratio = Math.max(0, Math.min(1, budget.ratio));
+  if (budget.state === "exhausted") return { ratio, tone: "blocked", status: "已达上限",
+    detail: budget.pauseOrdinaryTurns ? `${detail} · 普通结果通知已暂停` : detail, handoff: false };
+  if (budget.state === "warning") return { ratio, tone: "waiting", status: "接近上限", detail, handoff: false };
+  return { ratio, tone: "done", status: "正常", detail, handoff: false };
+}
+
+/** The project's latest days, newest first, one row each in 万; a missing cost is 未报告. */
+export function recentProjectDays(daily: readonly UsageDay[], count = 7): Array<{ day: string; input: string; output: string; cached: string; cost: string }> {
+  return [...daily].sort((a, b) => b.day.localeCompare(a.day)).slice(0, count).map(day => ({
+    day: day.day, input: tokenText(day.inputTokens), output: tokenText(day.outputTokens), cached: tokenText(day.cachedInputTokens), cost: costText(day),
+  }));
 }

@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { ContextPressure, UsageBudget } from "@evoloop/contracts";
 import { adjustBlocked, runtimeEnvironment } from "../src/features/sessions/environmentPresentation.ts";
-import { budgetReminder, contextGauge, todayTiles } from "../src/features/sessions/usagePresentation.ts";
+import { budgetReminder, contextGauge, projectBudgetGauge, recentProjectDays, todayTiles } from "../src/features/sessions/usagePresentation.ts";
 import type { RecoveryRead } from "../src/features/sessions/recoveryPresentation.ts";
 
 const revision = { revisionId: "r2", version: 2, model: "gpt-6-astra", reasoningEffort: "max", sandbox: "danger-full-access", approvalPolicy: "never" };
@@ -50,7 +50,7 @@ const pressure = (overrides: Partial<ContextPressure>): ContextPressure => ({ co
   ratio: 0.48, warningRatio: 0.8, pauseOrdinaryTurns: true, observedAt: "2026-11-12T00:00:00Z", reason: null, ...overrides });
 
 test("上下文 is a bar against the hand-off threshold with a state; without a threshold it is the size alone", () => {
-  assert.deepEqual(contextGauge(pressure({})), { ratio: 0.48, tone: "progress", status: "正常", detail: "9.6 万 / 20 万（48%）", handoff: false });
+  assert.deepEqual(contextGauge(pressure({})), { ratio: 0.48, tone: "done", status: "正常", detail: "9.6 万 / 20 万（48%）", handoff: false });
   assert.deepEqual(contextGauge(pressure({ state: "warning", inputTokens: 172_000, ratio: 0.86 })),
     { ratio: 0.86, tone: "waiting", status: "接近交接", detail: "17.2 万 / 20 万（86%）", handoff: false });
   const handoff = contextGauge(pressure({ state: "handoff_required", inputTokens: 212_000, ratio: 1.06 }));
@@ -94,4 +94,22 @@ test("why the model cannot be adjusted is one short reason, with where to fix it
   assert.equal(adjustBlocked({ ...ok, runtimeReady: null, fullAccess: null, catalog: null }), null);
   for (const reason of [{ ...ok, fullAccess: false }, { ...ok, pendingOperation: true }, { ...ok, viewMismatch: true }])
     assert.ok(adjustBlocked(reason)!.text.length <= 18, "short enough for one line");
+});
+
+test("项目用量 on 统筹安排: today against the daily limit with the same states, and seven days newest first in 万", () => {
+  const budget = (overrides: Partial<UsageBudget>): UsageBudget => ({ configured: true, state: "ok", limitKind: "input_tokens", limit: 1_500_000, used: 523_000,
+    ratio: 523_000 / 1_500_000, warningRatio: 0.8, pauseOrdinaryTurns: true, costComplete: true, reason: null, ...overrides });
+  assert.deepEqual(projectBudgetGauge(budget({})), { ratio: 523_000 / 1_500_000, tone: "done", status: "正常", detail: "输入 52.3 万 / 150 万（35%）", handoff: false });
+  assert.deepEqual(projectBudgetGauge(budget({ state: "warning", used: 1_290_000, ratio: 0.86 })).status, "接近上限");
+  assert.deepEqual(projectBudgetGauge(budget({ state: "exhausted", used: 1_530_000, ratio: 1.02 })),
+    { ratio: 1, tone: "blocked", status: "已达上限", detail: "输入 153 万 / 150 万（102%） · 普通结果通知已暂停", handoff: false });
+  assert.equal(projectBudgetGauge(budget({ limitKind: "cost_usd", limit: 20, used: 4.5, ratio: 0.225 })).detail, "费用 $4.50 / $20.00（23%）");
+  assert.deepEqual(projectBudgetGauge(budget({ configured: false, state: "unconfigured", limit: null, ratio: null })),
+    { ratio: null, tone: "idle", status: "未设上限", detail: "未配置每日上限，只记录用量", handoff: false });
+  assert.equal(projectBudgetGauge(budget({ state: "unknown", ratio: null, costComplete: false })).detail, "有的记录没有报告费用，费用上限暂时无法判定");
+  const day = (d: string, input: number) => ({ day: d, inputTokens: input, outputTokens: 7_300, cachedInputTokens: 31_000, costUsd: null, costReported: false });
+  const days = recentProjectDays(["01", "02", "03", "04", "05", "06", "07", "08"].map((d, i) => day(`2026-11-${d}`, 61_200 * (i + 1))));
+  assert.equal(days.length, 7, "seven days");
+  assert.deepEqual(days[0], { day: "2026-11-08", input: "49 万", output: "7300", cached: "3.1 万", cost: "未报告" });
+  assert.equal(days.at(-1)!.day, "2026-11-02", "newest first; the oldest of eight is left out");
 });

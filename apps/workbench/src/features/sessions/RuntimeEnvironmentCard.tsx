@@ -61,12 +61,14 @@ function RuntimeEnvironmentView({ context, session, recovery, configuredModel, a
       <h2 className="text-label font-semibold text-foreground">运行环境</h2>
       {control?.button}
     </div>
-    <p className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 text-small font-medium text-foreground">
+    {/* While a new target waits, the line is labelled 现在 so “已确认” is not read as the new target in the tag below. */}
+    <p className="session-runtime-now flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 text-small font-medium text-foreground">
+      {env.change && <span className="text-caption font-normal text-muted-foreground">现在：</span>}
       {parts.map((part, index) => <span key={index} className="inline-flex min-w-0 items-center gap-1.5">{index > 0 && <span aria-hidden="true" className="text-muted-foreground">·</span>}{part}</span>)}
     </p>
     {env.note ? <p className="text-caption text-text-secondary">{env.note}</p>
       : allTarget && env.model && <p className="text-caption text-text-secondary">目标，尚无实际报告</p>}
-    {env.change && <StatusTag className="self-start" tone={env.change.tone} label={env.change.label} />}
+    {env.change && <StatusTag className="session-runtime-next mt-0.5 self-start" tone={env.change.tone} label={env.change.label} />}
     <div className="flex min-w-0 flex-wrap gap-1.5">
       {env.permission && <span className={`${chip} text-text-secondary`}>{env.permission}</span>}
       {session.kind === "owned" && role && <a className={`${chip} text-primary outline-none hover:underline focus-visible:shadow-[var(--focus-ring)]`}

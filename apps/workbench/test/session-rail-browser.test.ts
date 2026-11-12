@@ -95,7 +95,11 @@ test("the agent's right column shows what it does now and next on its first scre
       assert.match(text, /上下文\s*接近交接[\s\S]*17\.2 万 \/ 20 万（86%）[\s\S]*今日\s*输入\s*8\.8 万\s*输出\s*9200\s*缓存输入\s*4\.4 万\s*费用\s*未报告/, text);
       assert.equal(await usage.getByRole("progressbar").getAttribute("aria-valuenow"), "86");
       // A new target waits: the line keeps what is in effect and the tag says what comes next.
-      assert.match(await panel.locator("section[aria-label=运行环境]").innerText(), /gpt-6-sol\s*实际\s*·\s*high\s*已确认[\s\S]*下一轮改为 gpt-6-astra \/ max/);
+      // The line in effect is labelled 现在 and the next target is its own row below it.
+      const environment = panel.locator("section[aria-label=运行环境]");
+      assert.match(await environment.innerText(), /现在：\s*Codex\s*·\s*gpt-6-sol\s*实际\s*·\s*high\s*已确认[\s\S]*下一轮改为 gpt-6-astra \/ max/);
+      const now = (await environment.locator(".session-runtime-now").boundingBox())!, next = (await environment.locator(".session-runtime-next").boundingBox())!;
+      assert.ok(next.y >= now.y + now.height, "the next-turn tag sits on its own row under the 现在 line");
     }
     if (name === "lead") {
       assert.match(text, /需交接新线程[\s\S]*21\.2 万 \/ 20 万（106%）[\s\S]*请交接新线程/, text);
@@ -114,7 +118,18 @@ test("the agent's right column shows what it does now and next on its first scre
   const budgeted = await open("dev", 1440, 900, page => page.route(/\/runtime\/usage\?/, route => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(nearLimit) })));
   const reminder = budgeted.panel.locator("section[aria-label=上下文与用量]").getByText(/项目今日用量接近每日上限（86%）/);
   await reminder.waitFor();
-  assert.match(await budgeted.panel.getByRole("link", { name: "去统筹安排" }).getAttribute("href") ?? "", new RegExp(`/p/${projectId}/sessions$`));
+  const toUsage = budgeted.panel.getByRole("link", { name: "查看项目用量" });
+  assert.match(await toUsage.getAttribute("href") ?? "", new RegExp(`/p/${projectId}/sessions#project-usage$`));
+  // Following it lands on 统筹安排 with 项目用量 in view: the limit as a bar, seven days, the time zone below.
+  await toUsage.click();
+  const block = budgeted.page.locator("#project-usage");
+  await block.getByText("今日与每日上限").waitFor();
+  await budgeted.page.waitForTimeout(300);
+  const blockBox = (await block.boundingBox())!;
+  assert.ok(blockBox.y < 900 && blockBox.y + 40 > 0, `项目用量 is scrolled into view (${blockBox.y})`);
+  const blockText = await block.innerText();
+  assert.match(blockText, /接近上限[\s\S]*输入 86 万 \/ 100 万（86%）[\s\S]*近 7 天[\s\S]*11-10[\s\S]*11-04[\s\S]*按 Asia\/Shanghai 计日/, blockText);
+  assert.equal(await block.locator("tbody tr").count(), 7);
   await budgeted.page.context().close();
 
   // The skills chip is a link to the agent's Role, reachable and visibly focused from the keyboard.
@@ -124,7 +139,10 @@ test("the agent's right column shows what it does now and next on its first scre
     assert.match(await skills.getAttribute("href") ?? "", new RegExp(`/p/${projectId}/roles\\?role=`));
     await skills.focus(); await page.keyboard.press("Shift+Tab"); await page.keyboard.press("Tab");
     assert.equal(await skills.evaluate(element => element === document.activeElement && element.matches(":focus-visible")), true);
-    assert.notEqual(await skills.evaluate(element => getComputedStyle(element).boxShadow), "none", "a focus ring is drawn");
+    // An opaque accent ring (#2f4bb3) outside a surface-coloured gap: plain on the soft card (WCAG 2.4.7).
+    await page.waitForFunction(element => /rgb\(47, 75, 179\) 0px 0px 0px 4px/.test(getComputedStyle(element!).boxShadow), await skills.elementHandle(), { timeout: 3000 })
+      .catch(() => undefined);
+    assert.match(await skills.evaluate(element => getComputedStyle(element).boxShadow), /rgb\(47, 75, 179\) 0px 0px 0px 4px/);
     await page.context().close();
   }
 
