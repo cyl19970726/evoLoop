@@ -10,7 +10,11 @@ import { Button } from "./button";
 
 /* Tabs: a pill segmented control. Use sparingly; a continuous flow is preferred. */
 export const Tabs = TabsPrimitive.Root;
-export const TabsContent = TabsPrimitive.Content;
+/** A tab panel is focusable (Radix gives it tabIndex 0): it shows the same inset ring as any control when reached by keyboard. */
+export const TabsContent = React.forwardRef<React.ComponentRef<typeof TabsPrimitive.Content>, React.ComponentPropsWithoutRef<typeof TabsPrimitive.Content>>(({ className, ...props }, ref) => (
+  <TabsPrimitive.Content ref={ref} className={cn("rounded-lg outline-none focus-visible:shadow-[var(--focus-ring)]", className)} {...props} />
+));
+TabsContent.displayName = "TabsContent";
 
 export const TabsList = React.forwardRef<React.ComponentRef<typeof TabsPrimitive.List>, React.ComponentPropsWithoutRef<typeof TabsPrimitive.List>>(({ className, ...props }, ref) => (
   <TabsPrimitive.List ref={ref} className={cn("inline-flex items-center gap-0.5 rounded-full bg-field p-1", className)} {...props} />
@@ -21,7 +25,7 @@ export const TabsTrigger = React.forwardRef<React.ComponentRef<typeof TabsPrimit
   <TabsPrimitive.Trigger
     ref={ref}
     className={cn(
-      "h-7 cursor-pointer whitespace-nowrap rounded-full border-0 bg-transparent px-3 text-label text-muted-foreground outline-none transition-[background-color,color,box-shadow] duration-150 focus-visible:shadow-[var(--focus-ring)] data-[state=active]:bg-raised data-[state=active]:font-medium data-[state=active]:text-foreground data-[state=active]:shadow-sm",
+      "h-7 cursor-pointer whitespace-nowrap rounded-full border-0 bg-transparent px-3 text-label text-muted-foreground outline-none transition-[background-color,color,box-shadow] duration-150 focus-visible:outline-solid focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary data-[state=active]:bg-raised data-[state=active]:font-medium data-[state=active]:text-foreground data-[state=active]:shadow-sm",
       className,
     )}
     {...props}

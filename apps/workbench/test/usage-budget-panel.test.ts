@@ -5,6 +5,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import test from "node:test";
 import type { UsageOverview } from "@evoloop/contracts";
 import { SessionUsageView } from "../src/features/sessions/UsageBudgetPanel.tsx";
+import { ProjectUsageView } from "../src/features/sessions/ProjectUsageSection.tsx";
 
 // Shared parts written for the automatic JSX runtime expect React in scope under this test loader.
 Object.assign(globalThis, { React: ReactModule });
@@ -50,16 +51,54 @@ test("the agent's usage card shows its context first, today in small figures, an
   // The project's daily limit, its recent days and the usage time zone belong to the project, not to this agent.
   for (const projectWide of ["每日上限", "最近 2 天的项目用量", "2026-11-10", "Asia/Shanghai"]) assert.equal(html.includes(projectWide), false, projectWide);
   // The project's budget is fine: no reminder.
-  assert.equal(html.includes("去统筹安排"), false);
+  assert.equal(html.includes("查看项目用量"), false);
 });
 
 test("a project close to its daily limit is one reminder line linking to 统筹安排; an agent without records says so", () => {
   const warning = { ...overview, budget: { ...overview.budget, state: "warning" as const, ratio: 0.86 } };
   const html = renderToStaticMarkup(createElement(SessionUsageView, { usage: warning, sessionId: "session", projectId: "project" }));
   assert.match(html, /项目今日用量接近每日上限（86%）/);
-  assert.match(html, /href="\/p\/project\/sessions"[^>]*>去统筹安排/);
+  assert.match(html, /href="\/p\/project\/sessions#project-usage"[^>]*>查看项目用量/);
   const none = renderToStaticMarkup(createElement(SessionUsageView, { usage: overview, sessionId: "other", projectId: "project" }));
   assert.match(none, /没有记录/);
   assert.match(none, /这个智能体还没有用量记录，不按 0 计/);
   assert.equal(none.includes("本会话累计"), false);
+});
+
+test("项目用量 on 统筹安排 shows the daily limit as a bar, the days in 万 and the time zone in small print", () => {
+  const html = renderToStaticMarkup(createElement(ProjectUsageView, { usage: overview }));
+  assert.match(html, /今日与每日上限/);
+  assert.match(html, /接近上限/);
+  assert.match(html, /role="progressbar"[^>]*aria-valuenow="61"/);
+  assert.match(html, /输入 30\.6 万 \/ 50 万（61%）/);
+  assert.match(html, /近 7 天/);
+  assert.ok(html.indexOf(">11-11<") < html.indexOf(">11-10<"), "newest day first");
+  // Seven calendar days ending on the project's today (11-11 in Asia/Shanghai); the five the service lists no rows for say so.
+  assert.equal((html.match(/<tr/g) ?? []).length, 8, "a header and seven days");
+  assert.equal((html.match(/没有记录/g) ?? []).length, 5);
+  assert.ok(html.indexOf(">11-09<") > html.indexOf(">11-10<") && html.indexOf(">11-05<") > 0);
+  assert.match(html, /18\.6 万/); assert.match(html, /未报告/); assert.match(html, /\$0\.0200/);
+  assert.equal(html.includes("$0.0000"), false, "an unreported cost is never $0");
+  assert.match(html, /按 Asia\/Shanghai 计日/);
+  const failed = renderToStaticMarkup(createElement(ProjectUsageView, { usage: null, error: "连接中断" }));
+  assert.match(failed, /项目用量暂不可读取：连接中断。每日上限和近几天用量暂时无法判断/);
+  const empty = renderToStaticMarkup(createElement(ProjectUsageView, { usage: { ...overview, daily: [] } }));
+  assert.match(empty, /近 7 天没有用量记录，不按 0 计/);
+  assert.equal(empty.includes(">0<"), false, "no day without a record is shown as 0");
+});
+
+test("today without a ledger row: no 0 figures on the agent's card and no 0% bar in 项目用量", () => {
+  // The fixture's read is at 2026-11-11 10:00 in Asia/Shanghai; keep only the day before, as the service would list it.
+  const yesterdayOnly = { ...overview, daily: overview.daily.filter(day => day.day !== "2026-11-11"),
+    sessions: overview.sessions.map(session => ({ ...session, days: session.days.filter(day => day.day !== "2026-11-11").concat([{ ...session.today, day: "2026-11-10" }]),
+      today: { day: "2026-11-11", inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, costUsd: null, costReported: false } })),
+    budget: { ...overview.budget, state: "ok" as const, used: 0, ratio: 0 } };
+  const agent = renderToStaticMarkup(createElement(SessionUsageView, { usage: yesterdayOnly, sessionId: "session", projectId: "project" }));
+  assert.match(agent, /今日没有用量记录，不按 0 计/);
+  assert.equal(/<dt[^>]*>输入<\/dt>/.test(agent), false, "no figure tiles");
+  const project = renderToStaticMarkup(createElement(ProjectUsageView, { usage: yesterdayOnly }));
+  assert.match(project, /今日没有记录/);
+  assert.match(project, /今日没有记录，不按 0 计 · 每日上限 50 万/);
+  assert.equal(project.includes("role=\"progressbar\""), false, "no bar for a day nothing was recorded on");
+  assert.equal(/0 \/ 50 万|（0%）/.test(project), false);
 });

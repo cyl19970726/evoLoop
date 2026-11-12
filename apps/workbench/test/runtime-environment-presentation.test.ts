@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { ContextPressure, UsageBudget } from "@evoloop/contracts";
 import { adjustBlocked, runtimeEnvironment } from "../src/features/sessions/environmentPresentation.ts";
-import { budgetReminder, contextGauge, todayTiles } from "../src/features/sessions/usagePresentation.ts";
+import { budgetReminder, contextGauge, projectBudgetGauge, projectToday, recentProjectDays, todayTiles } from "../src/features/sessions/usagePresentation.ts";
 import type { RecoveryRead } from "../src/features/sessions/recoveryPresentation.ts";
 
 const revision = { revisionId: "r2", version: 2, model: "gpt-6-astra", reasoningEffort: "max", sandbox: "danger-full-access", approvalPolicy: "never" };
@@ -50,7 +50,7 @@ const pressure = (overrides: Partial<ContextPressure>): ContextPressure => ({ co
   ratio: 0.48, warningRatio: 0.8, pauseOrdinaryTurns: true, observedAt: "2026-11-12T00:00:00Z", reason: null, ...overrides });
 
 test("上下文 is a bar against the hand-off threshold with a state; without a threshold it is the size alone", () => {
-  assert.deepEqual(contextGauge(pressure({})), { ratio: 0.48, tone: "progress", status: "正常", detail: "9.6 万 / 20 万（48%）", handoff: false });
+  assert.deepEqual(contextGauge(pressure({})), { ratio: 0.48, tone: "done", status: "正常", detail: "9.6 万 / 20 万（48%）", handoff: false });
   assert.deepEqual(contextGauge(pressure({ state: "warning", inputTokens: 172_000, ratio: 0.86 })),
     { ratio: 0.86, tone: "waiting", status: "接近交接", detail: "17.2 万 / 20 万（86%）", handoff: false });
   const handoff = contextGauge(pressure({ state: "handoff_required", inputTokens: 212_000, ratio: 1.06 }));
@@ -94,4 +94,59 @@ test("why the model cannot be adjusted is one short reason, with where to fix it
   assert.equal(adjustBlocked({ ...ok, runtimeReady: null, fullAccess: null, catalog: null }), null);
   for (const reason of [{ ...ok, fullAccess: false }, { ...ok, pendingOperation: true }, { ...ok, viewMismatch: true }])
     assert.ok(adjustBlocked(reason)!.text.length <= 18, "short enough for one line");
+});
+
+test("项目用量 on 统筹安排: today against the daily limit with the same states, and seven days newest first in 万", () => {
+  const budget = (overrides: Partial<UsageBudget>): UsageBudget => ({ configured: true, state: "ok", limitKind: "input_tokens", limit: 1_500_000, used: 523_000,
+    ratio: 523_000 / 1_500_000, warningRatio: 0.8, pauseOrdinaryTurns: true, costComplete: true, reason: null, ...overrides });
+  assert.deepEqual(projectBudgetGauge(budget({})), { ratio: 523_000 / 1_500_000, tone: "done", status: "正常", detail: "输入 52.3 万 / 150 万（35%）", handoff: false });
+  assert.deepEqual(projectBudgetGauge(budget({ state: "warning", used: 1_290_000, ratio: 0.86 })).status, "接近上限");
+  assert.deepEqual(projectBudgetGauge(budget({ state: "exhausted", used: 1_530_000, ratio: 1.02 })),
+    { ratio: 1, tone: "blocked", status: "已达上限", detail: "输入 153 万 / 150 万（102%） · 普通结果通知已暂停", handoff: false });
+  assert.equal(projectBudgetGauge(budget({ limitKind: "cost_usd", limit: 20, used: 4.5, ratio: 0.225 })).detail, "费用 $4.50 / $20.00（23%）");
+  assert.deepEqual(projectBudgetGauge(budget({ configured: false, state: "unconfigured", limit: null, ratio: null })),
+    { ratio: null, tone: "idle", status: "未设上限", detail: "未配置每日上限，只记录用量", handoff: false });
+  assert.equal(projectBudgetGauge(budget({ state: "unknown", ratio: null, costComplete: false })).detail, "有的记录没有报告费用，费用上限暂时无法判定");
+  const day = (d: string, input: number) => ({ day: d, inputTokens: input, outputTokens: input ? 7_300 : 0, cachedInputTokens: input ? 31_000 : 0, costUsd: null, costReported: false });
+  // The service lists only days with ledger rows: 11-08 and 11-05 had none; 11-07 was recorded as 0.
+  const daily = [day("2026-11-03", 90_000), day("2026-11-04", 120_000), day("2026-11-06", 61_200), day("2026-11-07", 0), day("2026-11-09", 401_200), day("2026-11-10", 523_000)];
+  const days = recentProjectDays(daily, "2026-11-10");
+  assert.deepEqual(days.map(row => row.day), ["2026-11-10", "2026-11-09", "2026-11-08", "2026-11-07", "2026-11-06", "2026-11-05", "2026-11-04"],
+    "seven calendar days ending today, newest first; 11-03 is outside them");
+  assert.deepEqual(days[0], { day: "2026-11-10", recorded: true, input: "52.3 万", output: "7300", cached: "3.1 万", cost: "未报告" });
+  assert.deepEqual(days[2], { day: "2026-11-08", recorded: false }, "a day with no record is said to have none, never 0");
+  assert.deepEqual(days[3], { day: "2026-11-07", recorded: true, input: "0", output: "0", cached: "0", cost: "未报告" }, "a day recorded as 0 shows 0");
+  assert.deepEqual(days[5], { day: "2026-11-05", recorded: false });
+  // A month boundary, and no usable today: then only the recorded days, newest first.
+  assert.deepEqual(recentProjectDays([], "2026-12-02").map(row => row.day).slice(0, 3), ["2026-12-02", "2026-12-01", "2026-11-30"]);
+  assert.deepEqual(recentProjectDays(daily, null).map(row => row.day)[0], "2026-11-10");
+  assert.equal(recentProjectDays(daily, null).every(row => row.recorded), true);
+  // Today is the project's own calendar day at the time of the read.
+  assert.equal(projectToday("2026-11-10T17:30:00.000Z", "Asia/Shanghai"), "2026-11-11");
+  assert.equal(projectToday("2026-11-10T17:30:00.000Z", "UTC"), "2026-11-10");
+  assert.equal(projectToday("2026-11-10T17:30:00.000Z", "Not/AZone"), null);
+  assert.equal(projectToday("not a time", "UTC"), null);
+});
+
+test("a day with no ledger row is never shown as 0: not in today's figures, not in the project's limit bar", () => {
+  const zero = { day: "2026-11-12", inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, costUsd: null, costReported: false };
+  const yesterday = { ...zero, day: "2026-11-11", inputTokens: 120_000 };
+  // The service fills today with zeros when there is no row for it; only `days` tells whether it was recorded.
+  assert.equal(todayTiles({ recorded: true, today: zero, days: [yesterday] }), null, "recorded yesterday, nothing today: no figures");
+  assert.deepEqual(todayTiles({ recorded: true, today: zero, days: [yesterday, zero] })!.map(tile => tile.value), ["0", "0", "0", "未报告"], "a recorded 0 is 0");
+  const budget: UsageBudget = { configured: true, state: "ok", limitKind: "input_tokens", limit: 400_000, used: 0, ratio: 0, warningRatio: 0.8,
+    pauseOrdinaryTurns: true, costComplete: true, reason: null };
+  assert.deepEqual(projectBudgetGauge(budget, false), { ratio: null, tone: "idle", status: "今日没有记录", detail: "今日没有记录，不按 0 计 · 每日上限 40 万", handoff: false });
+  assert.deepEqual(projectBudgetGauge(budget, true).detail, "输入 0 / 40 万（0%）", "recorded as 0: the bar and 0% are right");
+  assert.equal(projectBudgetGauge({ ...budget, limitKind: "cost_usd", limit: 20 }, false).detail, "今日没有记录，不按 0 计 · 每日上限 $20.00");
+  assert.equal(projectBudgetGauge({ ...budget, configured: false, state: "unconfigured", limit: null, ratio: null }, false).status, "未设上限");
+});
+
+test("while a new target waits, a strength or model nobody confirmed is said so, never the new target's", () => {
+  const waiting = (extra: Record<string, unknown>): RecoveryRead => ({ status: "ready", view: { executionProfile: {
+    revision, activationState: "pending", activeRevisionId: "r1", activeModel: "gpt-6-sol", activeReasoningEffort: null, ...extra } } } as never);
+  const noEffort = runtimeEnvironment({ ...owned, recovery: waiting({}), actualModel: null });
+  assert.deepEqual([noEffort.model, noEffort.effort], [{ text: "gpt-6-sol", source: "confirmed" }, { text: "强度未确认", source: null }]);
+  assert.deepEqual(runtimeEnvironment({ ...owned, recovery: waiting({ activeModel: null }), actualModel: null }).model, { text: "模型未确认", source: null });
+  assert.deepEqual(noEffort.change, { tone: "waiting", label: "下一轮改为 gpt-6-astra / max" });
 });

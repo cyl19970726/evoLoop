@@ -86,9 +86,12 @@ export function runtimeEnvironment({ kind, provider, recovery, configuredModel, 
   const targetModel = revision?.model ?? recorded;
   const model: EnvironmentValue | null = actual ? { text: modelLabelOf(actual), source: "actual" }
     : confirmedModel ? { text: modelLabelOf(confirmedModel), source: "confirmed" }
-      : targetModel ? { text: modelLabelOf(targetModel), source: "target" } : null;
+      : waiting ? { text: "模型未确认", source: null }
+        : targetModel ? { text: modelLabelOf(targetModel), source: "target" } : null;
+  // While a new target waits, the line is what is in effect: an effort nobody confirmed is said so, never the new target's.
   const effort: EnvironmentValue | null = confirmedEffort ? { text: confirmedEffort, source: "confirmed" }
-    : revision?.reasoningEffort ? { text: revision.reasoningEffort, source: "target" } : null;
+    : waiting ? { text: "强度未确认", source: null }
+      : revision?.reasoningEffort ? { text: revision.reasoningEffort, source: "target" } : null;
   const note = model ? null : recovery.status !== "ready" ? "运行配置暂不可读取" : profile ? "没有配置目标模型" : "未登记执行配置";
   const permission = revision ? `权限：${sandboxShort[revision.sandbox] ?? "待核对"}` : null;
   const target = revision ? `${revision.model ? modelLabelOf(revision.model) : "默认模型"} / ${revision.reasoningEffort ?? "默认强度"}` : "";
