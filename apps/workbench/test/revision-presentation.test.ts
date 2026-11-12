@@ -70,3 +70,17 @@ test("a reason a person wrote is shown as written, with nothing replaced", () =>
   assert.equal(revisionOrigin({ actorId: "reader", reason: "Fix the typo in step 2" }).reason, "Fix the typo in step 2", "an unknown reason a person wrote stays as written");
   assert.equal(revisionOrigin({}).line, "作者未记录 · 理由未记录", "a record without author or reason says so");
 });
+
+test("a revision a daily repetition generated names its series, so a page without a task can find the zone (#295 item 8)", async () => {
+  const { revisionOrigin } = await import("../src/shared/revisionPresentation.ts");
+  const reason = "Task timing series 4a3c1f10-0000-4000-8000-0000000000aa at 2026-11-10T02:28:00.000Z";
+  const without = revisionOrigin({ actorId: "task-timing", reason });
+  assert.equal(without.series, true);
+  assert.equal(without.seriesId, "4a3c1f10-0000-4000-8000-0000000000aa", "the series the reason names");
+  assert.match(without.line, /^按每天重复生成，计划时间 /);
+  // With the series' zone (read from the timed tasks list by that id) the time is said on its clock.
+  const withZone = revisionOrigin({ actorId: "task-timing", reason }, { seriesZone: "Asia/Shanghai", reader: "Asia/Shanghai" });
+  assert.notEqual(withZone.line, without.line, "the zone changes how the time is said");
+  assert.match(withZone.line, /上海|10:28/);
+  assert.equal(revisionOrigin({ actorId: "someone", reason: "新建任务" }).seriesId ?? null, null);
+});

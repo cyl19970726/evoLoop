@@ -245,5 +245,26 @@ test("验收身份 by member name: who can be chosen, typed when needed, and eac
     await failedForm.getByText(/本项目的成员没有读回：.*读回之前无法判断谁可选，可以按完整标识填写/).waitFor({ timeout: 20000 });
     await failedForm.getByLabel(/^指定验收人/).fill(actorId);
     await failed.context().close();
+
+    // #295 item 3: a form with a choice that is still reading the members does not send; item 7: the member list turning into a failure while the
+    // identity is being typed keeps the typed field, its text and its focus.
+    state.members = "fail"; state.membersDelay = 2500;
+    const racing = await open(`/p/${projectId}/tasks/new`);
+    await racing.getByRole("heading", { name: "新建任务" }).first().waitFor();
+    await racing.locator("option", { hasText: "正在读取本项目的成员…" }).waitFor({ state: "attached" });
+    await racing.getByLabel("任务名称").fill("整理验收清单");
+    const send = racing.locator("form button[type=submit]").last();
+    assert.equal(await send.isDisabled(), true, "the form waits while the members are read");
+    await racing.getByText("正在读取本项目的成员，读回后才能提交。").waitFor();
+    await racing.getByText("按完整标识填写").click();
+    const typedBox = racing.getByLabel("完整标识");
+    await typedBox.fill("someone-");
+    await typedBox.evaluate(node => { (node as HTMLElement).dataset.keep = "1"; (node as HTMLInputElement).focus(); });
+    await racing.getByText(/本项目的成员没有读回/).waitFor({ timeout: 20000 });
+    assert.equal(await racing.evaluate(() => (document.activeElement as HTMLElement | null)?.dataset.keep ?? null), "1", "the field being typed in is the same one, with its focus");
+    await racing.keyboard.type("outside");
+    assert.equal(await racing.locator("[data-keep='1']").inputValue(), "someone-outside", "what was typed before the failure and after it are one text");
+    assert.equal(await send.isDisabled(), false, "once the read has ended (here: failed) the form is free to send");
+    await racing.context().close();
     assert.deepEqual(errors, []);
   });
