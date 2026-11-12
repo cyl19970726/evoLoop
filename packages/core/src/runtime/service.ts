@@ -3,6 +3,7 @@ import { bindingMatchesSession, sessionProvider, type RuntimeProvider, nativeChi
   type NativeResumeRejection, type RuntimeBinding, type RuntimeSessionSpec, type RuntimeTurn, type RuntimeUsage } from "@evoloop/contracts/runtime";
 import type { ExecutionProfileRevision } from "@evoloop/contracts/session-recovery";
 import { DomainError } from "@evoloop/contracts/ports";
+import { holdsProvider } from "@evoloop/contracts/provider-hold";
 import type { Clock, IdFactory, Transaction, UnitOfWork } from "@evoloop/contracts/ports";
 import { event } from "./reserve.js";
 import { validateDispatchBasis } from "./basis.js";
@@ -30,6 +31,17 @@ const canonicalUtc = (value: string): boolean => {
 };
 
 /** Trusted coordinator entry. Never expose these result-recording methods as public HTTP commands. */
+/** Requested effort (from the Run's frozen profile) beside the effort the Thread reported after turn/start. */
+function effortNote(run: RuntimeRunRecord, turn: RuntimeTurn): string {
+  return describeTurnEffort(run.executionProfile?.reasoningEffort ?? null, turn);
+}
+/** "; effort requested=… observed=…" for a started Turn, empty when no effort was involved. An unread value is never shown as consistent. */
+export function describeTurnEffort(requested: string | null, turn: RuntimeTurn): string {
+  if (!requested && turn.observedReasoningEffort === undefined) return "";
+  const observed = turn.observedReasoningEffort ?? null;
+  return `; effort requested=${requested ?? "none"} observed=${observed ?? "unread"}${requested && observed && requested !== observed ? " MISMATCH" : ""}`;
+}
+
 export class RuntimeWorkflowService {
   constructor(private readonly deps: RuntimeWorkflowDependencies) {}
 
@@ -384,8 +396,8 @@ export class RuntimeWorkflowService {
       await tx.updateRuntimeRun(next, current.version);
       await this.emit(tx, runId, current.sessionId, "run.bound",
         proof.inputReceipt && proof.kind === "startReply" ?
-          `Turn bound from startReply; sent input ${proof.inputReceipt.protocol} SHA256 ${proof.inputReceipt.contentHash} bytes ${proof.inputReceipt.byteLength}` :
-          `Turn bound from ${proof.kind}`, turn.id, projectId);
+          `Turn bound from startReply; sent input ${proof.inputReceipt.protocol} SHA256 ${proof.inputReceipt.contentHash} bytes ${proof.inputReceipt.byteLength}${effortNote(current, turn)}` :
+          `Turn bound from ${proof.kind}${effortNote(current, turn)}`, turn.id, projectId);
       return next;
     });
   }
@@ -516,7 +528,7 @@ export class RuntimeWorkflowService {
   async recordTurn(projectId: string, runId: string, turnId: string,
     status: "running" | "completed" | "failed" | "interrupted", summary: string | null = null,
     checkpoint: { cursor?: string; itemsDigest?: string; completedAtUtc?: string;
-      usage?: RuntimeUsage | null; costUsd?: number | null } = {}): Promise<RuntimeRunRecord> {
+      usage?: RuntimeUsage | null; costUsd?: number | null; failureCategory?: string | null } = {}): Promise<RuntimeRunRecord> {
     if (checkpoint.completedAtUtc && !canonicalUtc(checkpoint.completedAtUtc)) {
       throw new DomainError("INVALID_OBSERVATION", "native completion time must be canonical UTC");
     }
@@ -538,8 +550,17 @@ export class RuntimeWorkflowService {
         // Provider-reported accounting of the bound Turn; never estimated or carried from another Turn.
         ...(terminal && checkpoint.usage ? { usage: { ...checkpoint.usage } } : {}),
         ...(terminal && checkpoint.costUsd != null ? { costUsd: checkpoint.costUsd } : {}),
+        ...(status === "failed" && checkpoint.failureCategory ? { failureCategory: checkpoint.failureCategory } : {}),
         updatedAt: this.deps.clock.now() };
       await tx.updateRuntimeRun(next, current.version);
+      // A Run that fails on the account pauses the whole provider, exactly as a message does: the next Turn of any Session of it
+      // would fail the same way and close its gate. The first one opens the hold; later ones find it already there.
+      if (status === "failed" && holdsProvider(checkpoint.failureCategory)) {
+        const session = await tx.getRuntimeSession(current.sessionId);
+        await tx.recovery?.openProviderHold({ id: this.deps.ids.next(), provider: session?.runtimeProvider ?? "codex",
+          category: checkpoint.failureCategory!, causeSessionId: current.sessionId, causeMessageId: null,
+          reason: (summary ?? "quota or authentication failure").slice(0, 1000) }, this.deps.clock.now());
+      }
       if (terminal && checkpoint.usage && tx.usage) {
         // Codex reports cumulative thread usage through native observations; that source already counts
         // this Run. Recording both would double the Session-day bucket. Runtimes without cumulative
