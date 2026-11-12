@@ -128,7 +128,9 @@ export interface NextItem {
   /** Where it waits and in what state, e.g. “队伍第 2 位 · 排队中”. */
   caption: string;
   /** A state that needs attention (paused, needs confirming) gets a tag; plain waiting does not. */
-  flag: { tone: StatusTone; label: string; detail?: string | undefined } | null;
+  flag: { tone: StatusTone; label: string; detail?: string | undefined;
+    /** The server's code and wording the detail replaced, shown only when opened. */
+    source?: { code: string | null; original: string } | undefined } | null;
 }
 
 export interface NextView {
@@ -143,9 +145,39 @@ export interface NextView {
 
 const lineStepLabel: Record<string, string> = { assign: "正在分派", confirm: "等它确认执行", start: "正在启动运行" };
 
+// Why the line pump paused an entry. It stores `CODE: reason`, the reason in English (apps/coordinator/src/session-line/pump.ts);
+// a refused step keeps the refusing command's code. People read a sentence; the code and the original stay one click away.
+const lineSuspendCodes: Record<string, string> = {
+  RECIPIENT_UNAVAILABLE: "找不到这个智能体签名用的业务身份，任务没法分派给它；要先给它登记执行身份",
+  RETRY_LIMIT: "这一步多次被拒绝，已停止重试，等统筹处理",
+  MESSAGE_MISSING: "执行确认的请求没有记录下来，等统筹处理",
+  MESSAGE_UNDELIVERED: "执行确认的请求没有送达这个智能体",
+  CONFIRMATION_TIMEOUT: "这个智能体没有按时确认执行",
+  CONFIRMATION_STALE: "确认之后任务又改了，需要重新确认",
+};
+const chinese = /[㐀-鿿]/;
+const latinWord = /[A-Za-z]{2,}/;
+/** Said for a pause reason the page has no words of its own for; the code and the original are right below it. */
+export const unexplainedSuspendReason = "暂停原因暂无说明，见下方“暂停代码与原文”";
+
+/** A pause reason in words; `code` and `original` are what it replaced (null when the reason was already plain Chinese). */
+export function lineSuspendReason(raw: string | null | undefined): { text: string; code: string | null; original: string | null } {
+  const value = (raw ?? "").trim();
+  if (!value) return { text: "原因未记录", code: null, original: null };
+  const coded = /^([A-Z][A-Z0-9_]{2,}):\s*([\s\S]*)$/.exec(value);
+  const code = coded?.[1] ?? null, rest = (coded?.[2] ?? value).trim();
+  if (code && lineSuspendCodes[code]) return { text: lineSuspendCodes[code], code, original: value };
+  if (chinese.test(rest) && !latinWord.test(rest)) return { text: rest, code, original: code ? value : null };
+  return { text: unexplainedSuspendReason, code, original: value };
+}
+
 /** One Session line entry in words: its place and state, with a tag only for a paused or starting entry. */
 export function lineEntryCaption(entry: Pick<SessionLineEntry, "state" | "step" | "suspendReason">, order: number): Pick<NextItem, "caption" | "flag"> {
-  if (entry.state === "suspended") return { caption: `队伍第 ${order} 位`, flag: { tone: "waiting", label: "已暂停", detail: entry.suspendReason ?? "原因未记录" } };
+  if (entry.state === "suspended") {
+    const reason = lineSuspendReason(entry.suspendReason);
+    return { caption: `队伍第 ${order} 位`, flag: { tone: "waiting", label: "已暂停", detail: reason.text,
+      ...(reason.original ? { source: { code: reason.code, original: reason.original } } : {}) } };
+  }
   if (entry.state === "starting") return { caption: `队伍第 ${order} 位`, flag: { tone: "progress", label: "正在开始", detail: lineStepLabel[entry.step ?? ""] ?? undefined } };
   if (entry.state === "queued") return { caption: `队伍第 ${order} 位 · 排队中`, flag: null };
   return { caption: `队伍第 ${order} 位 · 状态待核对（${entry.state}）`, flag: { tone: "unknown", label: "待核对" } };
@@ -196,7 +228,8 @@ export function nextWork({ kind, currentTaskId, line, queue, assignments, partia
       continue;
     }
     items.push({ key: `assignment:${item.task.id}:${item.assignment.version}`, taskId: item.task.id, title: item.task.title, source: "assignment", order: null,
-      caption: `已分派，未排进队伍 · ${item.task.state === "in_progress" ? "任务进行中" : "任务待开始"}`,
+      // Only a line that was read can say the Task is not in it; while it is reading or failed, “已分派” is all that is known.
+      caption: `${line.status === "ready" ? "已分派，未排进队伍" : "已分派"} · ${item.task.state === "in_progress" ? "任务进行中" : "任务待开始"}`,
       flag: item.stale ? { tone: "waiting", label: "需重新确认", detail: "任务修订已变化" }
         : phase && phase !== "running" ? { tone: phaseStatus[phase].tone, label: phaseStatus[phase].label }
           : item.assignment.state === "assigned" ? { tone: "waiting", label: "待确认接手" } : null });

@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { SessionLineEntry } from "@evoloop/contracts/session-line";
 import type { SessionQueueItem, SessionResult, SessionSnapshot } from "@evoloop/contracts/session-observation";
-import { assignmentLabel, lineEntryCaption, nextWork, nowWork, type LineRead } from "../src/features/sessions/sessionWorkPresentation.ts";
+import { assignmentLabel, lineEntryCaption, lineSuspendReason, nextWork, nowWork, unexplainedSuspendReason, type LineRead } from "../src/features/sessions/sessionWorkPresentation.ts";
 
 type Assignment = SessionSnapshot["assignments"][number];
 const source = { kind: "task", id: "t", revision: null, evidence: "project-record", href: "" } as never;
@@ -107,4 +107,39 @@ test("a line entry in words, and the assignment labels the rows reuse", () => {
   assert.equal(assignmentLabel(assignment("x", "in_progress", "accepted", true)), "任务修订已变化，需重新确认");
   assert.equal(assignmentLabel(assignment("x")), "已接手（本人确认）");
   assert.equal(assignmentLabel(assignment("x", "todo", "assigned")), "待确认");
+});
+
+test("an assignment is said to be outside the line only once the line was read", () => {
+  const base = { kind: "owned" as const, currentTaskId: null, queue: [], assignments: [assignment("a1", "todo"), assignment("a2")], partial: false, titleOf: () => null };
+  const captions = (line: LineRead) => nextWork({ ...base, line }).items.map(item => item.caption);
+  assert.deepEqual(captions({ status: "ready", entries: [] }), ["已分派，未排进队伍 · 任务待开始", "已分派，未排进队伍 · 任务进行中"]);
+  // Reading or failed: the Task may well be in the line, so nothing claims it is not.
+  for (const line of [{ status: "loading" }, { status: "failed", message: "超时" }, { status: "none", reason: "服务还不提供智能体队伍" }] as LineRead[])
+    assert.deepEqual(captions(line), ["已分派 · 任务待开始", "已分派 · 任务进行中"], line.status);
+  assert.deepEqual(nextWork({ ...base, kind: "external", line: { status: "none", reason: "外部" } }).items.map(item => item.caption)[0], "已分派 · 任务待开始");
+});
+
+test("a pause reason reads as a sentence; the server's code and wording stay behind 暂停代码与原文", () => {
+  const raw = "RECIPIENT_UNAVAILABLE: Session 7a1b2c3d shares its Role with 1 other live Session(s) and has no runtime.materialCli entry of its own";
+  const known = lineSuspendReason(raw);
+  assert.deepEqual([known.code, known.original], ["RECIPIENT_UNAVAILABLE", raw]);
+  assert.match(known.text, /业务身份/); assert.doesNotMatch(known.text, /RECIPIENT_UNAVAILABLE|[A-Za-z]{2,}/, "no code or English in the sentence");
+  for (const code of ["RETRY_LIMIT", "MESSAGE_MISSING", "MESSAGE_UNDELIVERED", "CONFIRMATION_TIMEOUT", "CONFIRMATION_STALE"])
+    assert.doesNotMatch(lineSuspendReason(`${code}: whatever the pump wrote`).text, /[A-Za-z]{2,}/, code);
+  // A refused step's own Chinese message is kept; its code is still available, but not in the sentence.
+  assert.deepEqual(lineSuspendReason("TASK_NOT_READY: 依赖的任务还没有通过验收"),
+    { text: "依赖的任务还没有通过验收", code: "TASK_NOT_READY", original: "TASK_NOT_READY: 依赖的任务还没有通过验收" });
+  assert.deepEqual(lineSuspendReason("FORBIDDEN: actor lacks review on project"),
+    { text: unexplainedSuspendReason, code: "FORBIDDEN", original: "FORBIDDEN: actor lacks review on project" });
+  // The fallback is a plain sentence: it neither shows English nor talks about translating.
+  assert.equal(unexplainedSuspendReason, "暂停原因暂无说明，见下方“暂停代码与原文”");
+  assert.doesNotMatch(unexplainedSuspendReason, /翻译|[A-Za-z]{2,}/);
+  // Plain Chinese with no code is the reason itself; English without a code is not shown as the sentence.
+  assert.deepEqual(lineSuspendReason("等页面说明的模板定稿"), { text: "等页面说明的模板定稿", code: null, original: null });
+  assert.deepEqual(lineSuspendReason("waiting for the template"), { text: unexplainedSuspendReason, code: null, original: "waiting for the template" });
+  assert.deepEqual(lineSuspendReason(null), { text: "原因未记录", code: null, original: null });
+  // The row carries the sentence as its detail and the source for the expandable part.
+  const flag = lineEntryCaption({ state: "suspended", step: null, suspendReason: raw }, 2).flag!;
+  assert.deepEqual([flag.label, flag.detail, flag.source], ["已暂停", known.text, { code: "RECIPIENT_UNAVAILABLE", original: raw }]);
+  assert.equal(lineEntryCaption({ state: "suspended", step: null, suspendReason: "等页面说明的模板定稿" }, 1).flag!.source, undefined);
 });
