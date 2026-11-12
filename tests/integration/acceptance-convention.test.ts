@@ -8,10 +8,11 @@ import test from "node:test";
 import pg from "pg";
 import { runner } from "node-pg-migrate";
 import { migrate, PostgresUnitOfWork } from "@evoloop/adapter-postgres";
-import { readLeaderWorkTask } from "../../packages/adapter-postgres/src/work-index.js";
+import { readLeaderWorkTask, readLeaderWorkTasks } from "../../packages/adapter-postgres/src/work-index.js";
 import { WorkflowService } from "@evoloop/core";
 import type { Principal } from "@evoloop/contracts";
 import { AcceptanceRelayService } from "../../apps/coordinator/src/acceptance-relay/service.js";
+import { buildServer } from "../../apps/coordinator/src/server.js";
 import { fixtureRoleId, seedFixtureRole } from "./role-fixture.test.js";
 
 const database = process.env.TEST_DATABASE_URL;
@@ -93,9 +94,12 @@ test("the convention fields and the named_agent target are written, read back, c
   assert.equal(noConsumer.status, "rejected");
   assert.match(JSON.stringify(noConsumer), /named_agent acceptance needs the declared consumer/);
   await assert.rejects(f.workflow.execute(f.reviewer, { type: "task.create", projectId: f.projectId, operationId: randomUUID(), taskId: randomUUID(),
-    title: "x", content: "# x", acceptance: "y", owner: "o", acceptancePrecondition: "someday" } as never));
+    title: "x", content: "# x", acceptance: "y", owner: "o", acceptancePrecondition: "someday" } as never),
+    (error: { message: string }) => /"path":\s*\[\s*"acceptancePrecondition"\s*\]/.test(error.message) && /invalid_value/.test(error.message));
 });
 
+// The refusal a Task with another target gets from this fixture (an unrelated check: the delivery has no bound author Run), asserted by its exact code.
+const OTHER_TARGET_REFUSAL = "AUTHOR_SESSION_UNVERIFIED";
 test("acceptance.assign is refused for a named_agent Task with the reason, and unchanged for the other targets", async t => {
   const f = await fixture(t);
   const taskId = await f.createTask({ acceptanceTarget: "named_agent" });
@@ -111,7 +115,7 @@ test("acceptance.assign is refused for a named_agent Task with the reason, and u
   const otherDelivery = await f.deliver(other);
   const otherTask = await f.workflow.getTask(f.reviewer, f.projectId, other);
   await assert.rejects(f.relay.arrange(f.reviewer, { ...input, taskId: other, deliveryId: otherDelivery, expectedTaskVersion: otherTask.task.version,
-    operationId: randomUUID(), relayId: randomUUID() }), (error: { code: string }) => error.code !== "ACCEPTANCE_NAMED_AGENT" && typeof error.code === "string" && error.code.length > 0);
+    operationId: randomUUID(), relayId: randomUUID() }), { code: OTHER_TARGET_REFUSAL });
 });
 
 test("the projection says waiting for the precondition until it is marked, and names the direct acceptor", async t => {
@@ -126,7 +130,7 @@ test("the projection says waiting for the precondition until it is marked, and n
   const waiting = (await readLeaderWorkTask(f.pool, f.projectId, taskId))!;
   assert.equal(waiting.phase, "awaiting_acceptance");
   assert.deepEqual(waiting.acceptanceConvention, { acceptanceTarget: "named_agent", acceptancePrecondition: "release",
-    readiness: "waiting_precondition", namedAgent: "requirements-agent" });
+    readiness: "waiting_precondition", namedAgent: "requirements-agent", preconditionMark: null });
   assert.match(waiting.nextAction, /等待发布后才可验收（尚未标记已满足）/);
   assert.match(waiting.nextAction, /requirements-agent.*直接验收.*不要安排接力/);
   assert.equal(waiting.responsible.id, "requirements-agent");
@@ -218,7 +222,8 @@ test("the six work types are accepted by the service and the database, and older
   assert.equal((await f.workflow.getTask(f.reviewer, f.projectId, taskId)).task.kind, "defect");
   // Unknown types are still refused by the schema, and by the database check if a writer bypasses it.
   await assert.rejects(f.workflow.execute(f.reviewer, { type: "task.create", projectId: f.projectId, operationId: randomUUID(), taskId: randomUUID(),
-    title: "x", content: "# x", acceptance: "y", owner, kind: "feature" } as never));
+    title: "x", content: "# x", acceptance: "y", owner, kind: "feature" } as never),
+    (error: { message: string }) => /"path":\s*\[\s*"kind"\s*\]/.test(error.message) && /invalid_value/.test(error.message));
   // The database check is the widened one on both tables (a direct write is blocked by the head-version trigger, so read the constraint).
   const checks = (await f.pool.query(`SELECT conrelid::regclass::text AS tbl, pg_get_constraintdef(oid) AS def FROM pg_constraint
     WHERE contype='c' AND conname IN ('task_kind_check','task_revision_kind_check') AND connamespace=current_schema()::regnamespace ORDER BY 1`)).rows;
@@ -365,4 +370,111 @@ test("review 1: the direct list survives a write between pages and a failure the
   assert.ok(interfered, "a write really landed between two pages");
   assert.equal(direct.complete, true, "re-read from the first page until a consistent snapshot");
   assert.deepEqual(direct.items.map(item => (item as { taskId: string }).taskId).sort(), owed.sort());
+});
+
+// ---- Task 486acdf2 (follow-up to #327) ------------------------------------------------------------------------------------------
+const waitingTask = async (f: Awaited<ReturnType<typeof fixture>>, extra: Record<string, unknown> = {}) => {
+  const taskId = await f.createTask({ acceptanceTarget: "named_agent", acceptancePrecondition: "release", ...extra });
+  const version = (await f.workflow.getTask(f.reviewer, f.projectId, taskId)).task.version;
+  await f.applied(f.reviewer, { type: "task.start", taskId, expectedVersion: version, basis: [], reason: "start" });
+  const deliveryId = await f.deliver(taskId);
+  return { taskId, deliveryId };
+};
+
+test("item 1: marking the precondition is a work change: a paged read in progress notices it, and the next read shows the delivery ready", async t => {
+  const f = await fixture(t);
+  const { taskId, deliveryId } = await waitingTask(f);
+  await f.createTask(); await f.createTask(); // more than one page at limit 1
+  const first = await readLeaderWorkTasks(f.pool, f.projectId, { view: "tasks", limit: 1, includeClosed: false });
+  assert.ok(first.nextCursor, "there is a second page");
+  const before = first.changeSequence;
+  await f.applied(f.reviewer, { type: "task.acceptancePrecondition.mark", taskId, deliveryId, evidence: "released in the build that has the PR" });
+  const after = await readLeaderWorkTasks(f.pool, f.projectId, { view: "tasks", limit: 50, includeClosed: false });
+  assert.ok(after.changeSequence > before, "the mark moved the change sequence");
+  await assert.rejects(readLeaderWorkTasks(f.pool, f.projectId, { view: "tasks", limit: 1, includeClosed: false, cursor: first.nextCursor! }), { code: "WORK_INDEX_CHANGED" },
+    "the page cursor taken before the mark is refused, so the reader starts again and reads 可验收");
+  const task = after.items.find(item => item.kind === "task" && item.taskId === taskId) as { acceptanceConvention: { readiness: string } };
+  assert.equal(task.acceptanceConvention.readiness, "ready");
+  // The change is on the Task's own feed, found by an incremental reader.
+  const changes = (await f.pool.query("SELECT entity_kind,task_id FROM leader_work_change WHERE project_id=$1 AND task_id=$2 ORDER BY sequence DESC LIMIT 1", [f.projectId, taskId])).rows[0];
+  assert.deepEqual({ ...changes }, { entity_kind: "delivery", task_id: taskId }, "the newest change of the Task is the mark");
+});
+
+test("item 2: who marked the precondition, on what evidence and when is read back by the work index (work task, work acceptance, Task detail)", async t => {
+  const f = await fixture(t);
+  const { taskId, deliveryId } = await waitingTask(f);
+  assert.equal((await readLeaderWorkTask(f.pool, f.projectId, taskId))!.acceptanceConvention!.preconditionMark, null, "not marked: nothing to show");
+  const evidence = "released in the build that contains the PR";
+  await f.applied(f.reviewer, { type: "task.acceptancePrecondition.mark", taskId, deliveryId, evidence });
+  const mark = (await readLeaderWorkTask(f.pool, f.projectId, taskId))!.acceptanceConvention!.preconditionMark!;
+  assert.equal(mark.actorId, "reviewer"); assert.equal(mark.evidence, evidence);
+  assert.ok(!Number.isNaN(Date.parse(mark.markedAt)), "a real time");
+  // The acceptance overview reads the same index.
+  const page = await readLeaderWorkTasks(f.pool, f.projectId, { view: "tasks", limit: 50, includeClosed: false });
+  const item = page.items.find(candidate => candidate.kind === "task" && candidate.taskId === taskId) as { acceptanceConvention: { preconditionMark: { actorId: string } } };
+  assert.equal(item.acceptanceConvention.preconditionMark.actorId, "reviewer");
+  // A newer delivery has no mark of its own: the old mark is not shown for it.
+  const second = await f.deliver(taskId);
+  assert.notEqual(second, deliveryId);
+  assert.equal((await readLeaderWorkTask(f.pool, f.projectId, taskId))!.acceptanceConvention!.preconditionMark, null, "the mark belongs to the delivery it was made for");
+});
+
+test("item 4: omitting acceptanceMode at creation means independent_agent; only an explicitly different mode is refused, with its code", async t => {
+  const f = await fixture(t);
+  const owner = fixtureRoleId("convention-owner");
+  const base = { type: "task.create", title: "Direct acceptance", content: "# d", acceptance: "y", owner, consumer: f.consumer.actorId, useRequired: true, acceptanceTarget: "named_agent" };
+  const omitted = await f.issue(f.reviewer, { ...base, taskId: randomUUID() });
+  assert.equal(omitted.status, "applied", JSON.stringify(omitted));
+  const taskId = (omitted as { entityId: string }).entityId;
+  assert.equal((await f.workflow.getTask(f.reviewer, f.projectId, taskId)).proposal!.acceptanceMode, "independent_agent", "the default is what was stored");
+  const explicit = await f.issue(f.reviewer, { ...base, taskId: randomUUID(), acceptanceMode: "independent_agent" });
+  assert.equal(explicit.status, "applied", JSON.stringify(explicit));
+  const refused = await f.issue(f.reviewer, { ...base, taskId: randomUUID(), acceptanceMode: "human_required" });
+  assert.equal(refused.status, "rejected"); assert.equal((refused as { code: string }).code, "ACCEPTANCE_POLICY");
+  assert.match(JSON.stringify(refused), /acceptance target and mode disagree/);
+  // A human target with the mode omitted disagrees with the default and says so (it is not silently accepted).
+  const humanOmitted = await f.issue(f.reviewer, { ...base, taskId: randomUUID(), acceptanceTarget: "human" });
+  assert.equal(humanOmitted.status, "rejected"); assert.equal((humanOmitted as { code: string }).code, "ACCEPTANCE_POLICY");
+});
+
+test("item 6: a delivery whose precondition was never marked but whose declared consumer already signed used: no waiting line, not on the owed list, facts unchanged", async t => {
+  const f = await fixture(t);
+  const { taskId, deliveryId } = await waitingTask(f);
+  await f.pool.query(`INSERT INTO consumer_observation(project_id,observation_id,task_id,delivery_id,observer,observer_kind,result,evidence,reason,actor_id,created_at)
+    VALUES($1,$2,$3,$4,$5,'agent','used','Used it before the mark','direct acceptance',$5,now())`, [f.projectId, randomUUID(), taskId, deliveryId, f.consumer.actorId]);
+  const task = (await readLeaderWorkTask(f.pool, f.projectId, taskId))!;
+  assert.doesNotMatch(task.nextAction, /等待发布/, "the consumer already answered: the waiting line no longer applies");
+  assert.equal(task.acceptanceConvention!.readiness, "waiting_precondition", "the fact that nobody marked the precondition is still reported");
+  assert.equal(task.acceptanceConvention!.preconditionMark, null);
+  const owed = await f.relay.mineDirect(f.consumer, f.projectId);
+  assert.ok(!owed.items.some(item => (item as { taskId: string }).taskId === taskId), "a signed delivery is not owed again");
+});
+
+test("item 5: the owed list route accepts direct=0 like no flag, ignores unknown parameters, and says so when the direct list failed", async t => {
+  const f = await fixture(t);
+  const { taskId } = await waitingTask(f, { acceptanceTarget: "named_agent" });
+  const token = "c".repeat(40);
+  const failing = new Proxy(f.relay, { get: (target, key) => key === "mineDirect" ? async () => { throw Object.assign(new Error("boom"), { code: "WORK_INDEX_BROKEN" }); } : (target as never)[key] }) as typeof f.relay;
+  const logged: string[] = [];
+  const app = await buildServer({ service: f.workflow, acceptanceRelay: f.relay, credentials: [{ token, actorId: f.consumer.actorId, identityKind: "agent", projectIds: [f.projectId], permissions: ["read", "write"] }] });
+  const broken = await buildServer({ service: f.workflow, acceptanceRelay: failing, credentials: [{ token, actorId: f.consumer.actorId, identityKind: "agent", projectIds: [f.projectId], permissions: ["read", "write"] }] });
+  (broken.log as unknown as { error: (...args: unknown[]) => void }).error = (...args: unknown[]) => { logged.push(JSON.stringify(args)); };
+  t.after(async () => { await app.close(); await broken.close(); });
+  const get = (server: typeof app, query: string) => server.inject({ url: `/api/projects/${f.projectId}/acceptance-relay/mine${query}`, headers: { authorization: `Bearer ${token}` } });
+  const plain = await get(app, "");
+  assert.equal(plain.statusCode, 200, plain.body); assert.equal("direct" in plain.json(), false, "no flag: the human list only");
+  const zero = await get(app, "?direct=0");
+  assert.equal(zero.statusCode, 200, zero.body); assert.deepEqual(zero.json(), plain.json().items ? { items: plain.json().items } : zero.json(), "direct=0 is the same as no flag");
+  const extra = await get(app, "?direct=0&cacheBust=1");
+  assert.equal(extra.statusCode, 200, extra.body);
+  const direct = await get(app, "?direct=1");
+  assert.equal(direct.statusCode, 200, direct.body);
+  assert.equal(direct.json().directComplete, true);
+  assert.ok(direct.json().direct.some((item: { taskId: string }) => item.taskId === taskId), "the direct branch lists the owed delivery");
+  const failed = await get(broken, "?direct=1");
+  assert.equal(failed.statusCode, 200, failed.body);
+  const body = failed.json();
+  assert.equal(body.directComplete, false); assert.equal(body.directError, "WORK_INDEX_BROKEN");
+  assert.match(body.directMessage, /没有读完整/, "the response says the list is incomplete");
+  assert.ok(logged.some(line => /WORK_INDEX_BROKEN/.test(line)), "the failure is logged");
 });
