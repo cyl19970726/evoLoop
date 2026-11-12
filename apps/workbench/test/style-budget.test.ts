@@ -86,8 +86,8 @@ const nativeControlExceptions: ReadonlyArray<{ file: string; control: string; co
     reason: "The login page is the first load, which must not carry @evoloop/ui's Button (tailwind-merge and icons, bundle-budget.test.ts); its classes follow Button." },
   { file: "app/router.tsx", control: "<button", count: 1,
     reason: "The router's error page is in the first load and must render even when a page chunk failed; no design-system import." },
-  { file: "app/PageBoundary.tsx", control: "<button", count: 1,
-    reason: "The page error boundary wraps every page from the first load; same reason as the router's error page." },
+  { file: "app/PageBoundary.tsx", control: "<button", count: 3,
+    reason: "The page error boundary wraps every page from the first load; same reason as the router's error page. Three buttons: 重试显示 (a render error), and 刷新页面 and 重试 (a page chunk that cannot be fetched)." },
 ];
 // JSX and createElement (h) alike; confirm() is the browser's (bare or on window), not a method of the same name.
 const nativeControls: ReadonlyArray<[string, RegExp]> = [

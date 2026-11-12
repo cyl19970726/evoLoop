@@ -29,6 +29,8 @@ jobs:
       - run: npm ci
       # The PR is checked out merged into main, so a migration number main already holds shows up here, before any build.
       - run: npm run check:migrations
+      # Only react/rules-of-hooks, over apps/workbench/src and packages/ui/src (every .tsx in the repo): a hook after a condition or early return fails here (PR #386 / React #310).
+      - run: npm run lint:hooks
       - run: npm run build
       - run: npm run test:unit
 
@@ -50,14 +52,35 @@ jobs:
       - run: npm run build:packages
       - run: npm run test:integration
 
+  # The built workbench over the screenshot fixture, in a real browser: the pages a hook-order mistake breaks must read back.
+  # Playwright stays out of the dependencies (docs/frontend/architecture.md); it is installed beside the checkout, and the
+  # runner's own Chrome is used so no browser is downloaded. EVOLOOP_BROWSER_TEST_REQUIRED turns a missing module into a failure.
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm install --prefix "$RUNNER_TEMP/playwright" --no-save --no-audit --no-fund playwright-core@1.65.0
+      - run: npm run test:browser
+        env:
+          EVOLOOP_BROWSER_TEST_REQUIRED: "1"
+          EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE: ${{ runner.temp }}/playwright/node_modules/playwright-core/index.js
+          EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH: /usr/bin/google-chrome
+
   app:
     if: ${{ always() }}
-    needs: [unit, integration]
+    needs: [unit, integration, browser]
     runs-on: ubuntu-latest
     steps:
       - name: Require every parallel job to succeed
         env:
-          RESULTS: ${{ needs.unit.result }} ${{ needs.integration.result }}
+          RESULTS: ${{ needs.unit.result }} ${{ needs.integration.result }} ${{ needs.browser.result }}
         run: |
-          echo "unit/integration: $RESULTS"
-          [ "$RESULTS" = "success success" ]
+          echo "unit/integration/browser: $RESULTS"
+          [ "$RESULTS" = "success success success" ]
