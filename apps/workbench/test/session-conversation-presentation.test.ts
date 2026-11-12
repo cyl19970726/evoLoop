@@ -7,7 +7,7 @@ import {
   elapsedText, latestPlan, liveStatusText, planExplanation, planSteps, recordLabel, toolDetailReason, toolGroupStatus, toolGroupSummary, toolLabel,
   toolStepState, toolStepText, turnSummaries,
 } from "../src/features/sessions/conversationPresentation";
-import { composerPlan, contextUseText, mentionedAgents, messageWithSkill, type ComposerFacts } from "../src/features/sessions/composerPresentation";
+import { composerPlan, contextUseText, mentionedAgents, messageWithSkill, sentResultText, type ComposerFacts } from "../src/features/sessions/composerPresentation";
 import { sessionTaskReturn, sourceParams } from "../src/features/sessions/sessionReturn";
 
 test("an agent page opened from another page offers the way back only to that project's page and its reader", () => {
@@ -114,8 +114,10 @@ test("Enter adds to the running turn only where the runtime declares it can; oth
   assert.equal(unsupported.steerNote, "这个智能体现在不能补充到这一轮", "an unexplained refusal is not called unsupported");
   assert.match(unsupported.hint, /不能补充到这一轮；Enter 排到下一轮/);
   const because = (reasonCode: string) => composerPlan(facts({ running: true, direct: { ...capability(null), reasonCode } })).steerNote;
-  assert.equal(because("DIRECT_STEER_DISABLED"), "这个智能体的运行时或授权不支持补充到这一轮");
-  assert.equal(because("NATIVE_STEER_UNAVAILABLE"), "当前运行时版本不支持补充到这一轮");
+  assert.equal(because("DIRECT_STEER_DISABLED"), "这个智能体的即时输入授权不包含补入这一轮，需要在私有配置里为它开启补入");
+  assert.equal(because("NATIVE_STEER_UNAVAILABLE"), "当前运行时不支持补入正在进行的一轮，消息可以排到下一轮");
+  assert.doesNotMatch(because("NATIVE_STEER_UNAVAILABLE"), /授权/, "the runtime limit never mentions authorization, not even to deny it");
+  assert.match(because("NATIVE_STEER_UNAVAILABLE"), /排到下一轮/, "and says what to do instead");
   assert.equal(because("SESSION_INPUT_BUSY"), "这个智能体正在开始另一轮或接收另一条输入，稍后再试");
   assert.equal(because("SESSION_BUSY"), "这一轮正在做的工作不接受补充");
   assert.equal(because("NATIVE_UNAVAILABLE"), "运行时连接暂不可用，不能补充到这一轮");
@@ -159,4 +161,33 @@ test("a chosen skill is named in the message; @ copies go only to agents still n
   assert.equal(contextUseText({ last: { totalTokens: 42_000 }, modelContextWindow: 100_000 }), "上下文 42%");
   assert.equal(contextUseText({ last: { totalTokens: null }, modelContextWindow: 100_000 }), null, "unknown use is not 0%");
   assert.equal(contextUseText(null), null);
+});
+
+test("the Leader's page shows two named ways only while it works and both are open; idle it is one 发送, other agents keep the keys", () => {
+  const working = composerPlan(facts({ leader: true, running: true, direct: capability("steer") }));
+  assert.deepEqual(working.split, { sendLabel: "插入当前这一轮", queueLabel: "排队" });
+  assert.deepEqual([working.enter, working.modEnter], ["steer", "post"], "the two buttons are the two keys");
+  assert.equal(composerPlan(facts({ leader: true, running: false, direct: capability("start") })).split, null, "idle: one 发送");
+  assert.equal(composerPlan(facts({ leader: true, running: false, direct: undefined })).split, null);
+  assert.equal(composerPlan(facts({ leader: true, running: true, direct: capability(null) })).split, null, "no insert: only the queue way, and Enter says so");
+  assert.equal(composerPlan(facts({ leader: true, running: true, canSave: false, saveReason: "没有消息授权", direct: capability("steer") })).split, null, "no queue: no pair");
+  assert.equal(composerPlan(facts({ leader: false, running: true, direct: capability("steer") })).split, null, "a business agent's page is unchanged");
+});
+
+test("by default (no Leader fact) the composer keeps its one send button and the keys, so every other page is unchanged", () => {
+  const plain = composerPlan(facts({ running: true, direct: capability("steer") }));
+  assert.equal(plain.split, null); assert.equal(plain.enter, "steer"); assert.equal(plain.modEnter, "post");
+  assert.equal(composerPlan(facts({ running: false, direct: capability("start") })).split, null);
+  assert.equal(composerPlan(facts({ running: true, direct: capability(null) })).split, null);
+});
+
+test("every way a message went out is told in its own words, and a changed Turn says why and that it is one queued message", () => {
+  assert.match(sentResultText({ kind: "inserted" }), /已插入当前这一轮/);
+  assert.match(sentResultText({ kind: "queued" }), /已排队/);
+  assert.match(sentResultText({ kind: "started" }), /已开始新的一轮/);
+  const converted = sentResultText({ kind: "converted", reason: "TURN_CHANGED: the Turn changed before the input was added; saved as a queued ordinary message" });
+  assert.match(converted, /没有插入，已转排队/); assert.match(converted, /那一轮已经换了/); assert.match(converted, /只有一条/);
+  assert.match(sentResultText({ kind: "converted", reason: "Native Turn kind cannot accept input" }), /评审、压缩/);
+  assert.match(sentResultText({ kind: "converted", reason: "NOT_BOUND: the primary Turn is not bound and running yet; saved as a queued ordinary message" }), /还没准备好接收补充/);
+  for (const kind of ["inserted", "started", "queued", "converted"] as const) assert.doesNotMatch(sentResultText({ kind }), /已阅读。|已经阅读/, "never claims the agent read it");
 });

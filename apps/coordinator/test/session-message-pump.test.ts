@@ -468,8 +468,9 @@ test('a finished Turn longer than the bounded read still settles, with its reply
     const data=index===count-1?[{type:'agentMessage',phase:'final_answer',text:final}]:[{type:'commandExecution'}];
     return Promise.resolve({data,nextCursor:index===count-1?null:String(index+1)});
   };
-  assert.equal(await settledReply(pages(18,'本轮完成')),'本轮完成');
+  assert.deepEqual(await settledReply(pages(18,'本轮完成')),{text:'本轮完成',kind:'native'});
   const unread=await settledReply(pages(80,'本轮完成'));
-  assert.ok(unread&&unread.includes('回复没有在有界读取内读出')&&!unread.includes('本轮完成'));
+  assert.equal(unread.kind,'bounded_unread');
+  assert.ok(unread.text?.includes('回复没有在有界读取内读出')&&!unread.text.includes('本轮完成'));
   await assert.rejects(settledReply(()=>Promise.resolve({data:[],nextCursor:'same'}),5),/cursor repeated/);
 });

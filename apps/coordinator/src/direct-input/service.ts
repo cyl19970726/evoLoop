@@ -66,15 +66,27 @@ export class DirectInputService {
     catch{return result(false,null,null,"NATIVE_UNAVAILABLE");}
     let grant:DirectInputGrant,binding:RuntimeBinding;
     try{({grant,binding}=await this.deps.admission(principal,projectId,sessionId));}
-    catch{return result(false,null,null,"DIRECT_GRANT_MISSING");}
+    catch(error){
+      // Without a grant the reason is still not "no authorization" when the runtime cannot take an addition at all: a Session whose
+      // runtime has no mid-turn input (Claude) running a turn is told so, because adding a grant would not change it.
+      try{
+        const owned=await this.deps.bindingFor(projectId,sessionId);
+        const known=runtime.capabilitiesFor?.(owned)??runtime.capabilities?.();
+        if(known&&!known.delivery.midTurnInput&&(await this.deps.store.inspect(projectId,sessionId,principal.actorId)).state==="running")
+          return result(false,null,null,"NATIVE_STEER_UNAVAILABLE");
+      }catch{/* the runtime facts are unknown: the grant is what the page can say */}
+      // The refusal's own message names what is missing (main): it travels with the reason.
+      return result(false,null,null,"DIRECT_GRANT_MISSING",error instanceof DomainError?error.message:undefined);
+    }
     if(this.lock.isBusy(projectId,sessionId))return result(false,null,null,"SESSION_INPUT_BUSY");
     const capabilities=runtime.capabilitiesFor?.(binding)??runtime.capabilities?.();
     if(!capabilities)return result(false,null,null,"NATIVE_CAPABILITY_UNKNOWN");
     const state=await this.deps.store.inspect(projectId,sessionId,principal.actorId);
     if(state.state==="busy")return result(false,null,null,"SESSION_BUSY");
     if(state.state==="running"){
-      if(!grant.canSteer)return result(false,null,null,"DIRECT_STEER_DISABLED");
+      // What the runtime cannot do comes first: a grant to steer does not make a runtime without mid-turn input steerable.
       if(!capabilities.delivery.midTurnInput)return result(false,null,null,"NATIVE_STEER_UNAVAILABLE");
+      if(!grant.canSteer)return result(false,null,null,"DIRECT_STEER_DISABLED");
       try{
         await runtime.registerBinding(binding);
         const turn=await this.findTurn(runtime,binding,state.turnId!);
@@ -143,6 +155,8 @@ export class DirectInputService {
     // Never replay an uncertain native attempt. The only exception is an identical intent the adapter
     // refused before writing; it still carries the same operation ID and has no native attempt.
     if(!reserved.created&&!retrying)return publicDirectInput(record);
+    // The Turn changed under a steer: reserve saved the text as one queued message and recorded that; nothing is sent.
+    if(record.state==="rejected")return publicDirectInput(record);
     if(record.mode==="steer"&&!capabilities.delivery.midTurnInput)
       return publicDirectInput(await this.deps.store.reject(projectId,record.inputId,
         "This runtime cannot add input to an active Turn"));
@@ -193,28 +207,9 @@ export class DirectInputService {
     const binding=await this.deps.bindingFor(projectId,record.sessionId);
     const runtime=this.deps.runtime();
     await runtime.registerBinding(binding);
-    const matches:{turnId:string;itemId:string|null}[]=[];
-    try{
-      const turns=(record.actualTurnId??record.expectedTurnId)?
-        [await this.findTurn(runtime,binding,(record.actualTurnId??record.expectedTurnId)!)].filter(Boolean) as RuntimeTurn[]:
-        (await runtime.listTurns(binding)).data.slice(0,20);
-      for(const turn of turns){
-        let cursor:string|undefined;
-        for(let page=0;page<10;page++){
-          const items=await runtime.listItems(binding,turn.id,cursor);
-          for(const item of items.data){
-            const x=object(item);
-            if(x?.type!=="userMessage")continue;
-            // Materialized alpha.6 Items use clientId for clientUserMessageId.
-            const clientId=x.clientUserMessageId??x.client_user_message_id??x.clientId;
-            if(clientId===record.inputId||record.mode==="start"&&textOf(item).startsWith(marker(record.operationId)))
-              matches.push({turnId:turn.id,itemId:typeof x.id==="string"?x.id:null});
-          }
-          if(!items.nextCursor)break;
-          cursor=items.nextCursor;
-        }
-      }
-    }catch(error){
+    let matches:{turnId:string;itemId:string|null}[];
+    try{matches=await this.matchOriginal(runtime,binding,record);}
+    catch(error){
       // Zero-Turn history can be unmaterialized; other native history reads may be unsupported.
       // Neither condition proves that the original send was rejected.
       if(error instanceof RuntimeServerError&&
@@ -227,6 +222,55 @@ export class DirectInputService {
     if(matches.length===1)return publicDirectInput(await this.deps.store.accept(projectId,inputId,matches[0]!.turnId,matches[0]!.itemId));
     if(record.state==="attempted")return publicDirectInput(await this.deps.store.unknown(projectId,inputId,"No unique original input in bounded native history"));
     return publicDirectInput(record);
+  }
+  /** The Items of the bounded native history that are this input: by exact client ID, or for a start by its operation marker. */
+  private async matchOriginal(runtime:Native,binding:RuntimeBinding,record:DirectInputRecord):Promise<{turnId:string;itemId:string|null}[]>{
+    const matches:{turnId:string;itemId:string|null}[]=[];
+    const turns=(record.actualTurnId??record.expectedTurnId)?
+      [await this.findTurn(runtime,binding,(record.actualTurnId??record.expectedTurnId)!)].filter(Boolean) as RuntimeTurn[]:
+      (await runtime.listTurns(binding)).data.slice(0,20);
+    for(const turn of turns){
+      let cursor:string|undefined;
+      for(let page=0;page<10;page++){
+        const items=await runtime.listItems(binding,turn.id,cursor);
+        for(const item of items.data){
+          const x=object(item);
+          if(x?.type!=="userMessage")continue;
+          // Materialized alpha.6 Items use clientId for clientUserMessageId.
+          const clientId=x.clientUserMessageId??x.client_user_message_id??x.clientId;
+          if(clientId===record.inputId||record.mode==="start"&&textOf(item).startsWith(marker(record.operationId)))
+            matches.push({turnId:turn.id,itemId:typeof x.id==="string"?x.id:null});
+        }
+        if(!items.nextCursor)break;
+        cursor=items.nextCursor;
+      }
+    }
+    return matches;
+  }
+  /**
+   * After a Turn has ended, read its history once (read only, never a send) and record the native Item of every accepted input that
+   * does not have one yet. A start learns its Item only this way; a steer whose acknowledgement carried none does too. Nothing here
+   * claims the agent read or adopted the input: it records which native Item the runtime holds for it.
+   */
+  async backfillItems(limit=20):Promise<number>{
+    if(!this.deps.canWrite())return 0;
+    const runtime=this.deps.runtime();
+    if(!runtime.isReady())return 0;
+    let recorded=0;
+    for(const record of await this.deps.store.unboundAccepted(limit)){
+      try{
+        const binding=await this.deps.bindingFor(record.projectId,record.sessionId);
+        await runtime.registerBinding(binding);
+        const turn=await this.findTurn(runtime,binding,record.actualTurnId!);
+        // Only a finished Turn has a settled history; an unfinished one is looked at again later.
+        if(!turn||turn.completedAtUtc==null||!["completed","failed","interrupted"].includes(turn.status))continue;
+        const matches=await this.matchOriginal(runtime,binding,record);
+        if(matches.length===1&&matches[0]!.itemId&&matches[0]!.turnId===record.actualTurnId){
+          await this.deps.store.accept(record.projectId,record.inputId,matches[0]!.turnId,matches[0]!.itemId);recorded++;
+        }
+      }catch{ /* a read that fails is tried again next time; it proves nothing */ }
+    }
+    return recorded;
   }
   private async findTurn(runtime:Native,binding:RuntimeBinding,id:string):Promise<RuntimeTurn|null>{
     const first=await runtime.listTurns(binding);

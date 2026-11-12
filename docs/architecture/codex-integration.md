@@ -109,11 +109,11 @@ GUI 只读限制由独立浏览器上下文与网络/动作白名单落实；Ses
 
 ### 有界原生观察
 
-适配器只给已登记的 owned Thread 事件附上项目与 Session 身份。现有 runner 接收状态、Turn、工具 Item 完成、计划、diff 与 Token 通知，按原生连接顺序归并当前观察，在既有周期写入 `session_native_observation`；每个 Session 一行，不另起业务队列或保存完整通知流。最多显示 10 个工具、20 个计划步骤、8 KiB diff，整个投影不超过 24 KiB；原生 reasoning、delta 和完整工具参数／输出不入投影。截断和未知值保留原意。
+适配器只给已登记的 owned Thread 事件附上项目与 Session 身份。现有 runner 接收状态、Turn、工具 Item 完成、计划、diff 与 Token 通知，按原生连接顺序归并当前观察，在既有周期写入 `session_native_observation`；每个 Session 一行，不另起业务队列或保存完整通知流。最多显示 10 个工具、20 个计划步骤、8 KiB diff，整个投影不超过 24 KiB；原生 reasoning、delta 和完整工具参数／输出不入投影；投影另存最近 24 个 Turn 的 Token 读数（见下段）。截断和未知值保留原意。
 
 来源按精确 Turn 关联 Run 或普通消息，绑定回执未到时保持未绑定。旧 Turn 的 Item、计划及 diff 不替换当前 Turn；Item 完成不因晚到 started 倒退。有原生 `Turn.startedAt` 证据时拒绝更早 Turn 抢占当前观察，时间缺失或相同时不推测先后。投影不是可重放的全量事件审计；断线、重启或 Session 不可用时保留最后读数并标过期，等待新连接的实际事实。
 
-Token `total` 是 Thread 累计绝对快照，重复通知直接覆盖，不能累加；`last` 保留原生提供的范围，不能用自行计算的相邻快照差值冒充。cached input 已包含在 input，reasoning output 已包含在 output；不再相加。缺失指标为未知，配置模型不当作实际逐 Turn 用模，没有原生费用时不推测货币成本。Session snapshot 与 CLI 读取相同当前投影和时间；5 秒前端查询与 runner 周期内合并不是实时推送或延迟保证。变化游标只触发刷新，进度刷新不刷进业务活动历史，也不增加 `runtime_record_event` 或修改 Run／Task 终态。
+Token `total` 是 Thread 累计绝对快照，重复通知直接覆盖，不能累加；`last` 保留原生提供的范围，不能用自行计算的相邻快照差值冒充。逐 Turn 用量单独记为 `turnUsage`：该 Turn 首个用量通知的 `total − last`（这一轮第一次请求之前的累计）与该 Turn 最新 `total`，两者之差才是这一轮的输出与推理 token；任一侧缺失或倒退即为未知。`total − last` 只有在同一连接先观察到该 Turn 的 `turn/started` 时才能证明是“这一轮第一次请求之前”的累计（同一连接上的通知有序），否则起点记为未知、整轮读数标为不完整。投影超限时先丢旧 Turn 的 `turnUsage`，再丢当前 Turn 的条目预览。只覆盖协调器在线观察到的 Turn，不回填更早历史。cached input 已包含在 input，reasoning output 已包含在 output；不再相加。缺失指标为未知，配置模型不当作实际逐 Turn 用模，没有原生费用时不推测货币成本。Session snapshot 与 CLI 读取相同当前投影和时间；5 秒前端查询与 runner 周期内合并不是实时推送或延迟保证。变化游标只触发刷新，进度刷新不刷进业务活动历史，也不增加 `runtime_record_event` 或修改 Run／Task 终态。
 
 ### Session 工作区的历史与实时读取
 
@@ -139,7 +139,7 @@ flowchart LR
 
 一个 native Turn 至多关联一个正式 Run 或普通消息处理；该关联说明业务归属，不能证明其中任意输入的发送者。仅当输入的 `clientId` 精确匹配派发 operation ID，或有明确协议 marker/已核 Item 绑定，且能核实唯一 Item，才用 PG 原消息替换派发封套。分页、单条详情和实时覆盖复用同一证明；完整已终结 Turn 有多个匹配时全部保持未关联，PG 原消息仍独立可读，不能以当前页或首次看到的 Item 选择正本。证明有界，超预算明确未知；Item 枚举完整性与正文预览截断分别表达。缺键的老输入保持未关联；不会按文本、Task 标题、时间接近或同 Turn 猜身份。Run actor 是发起者，公开 Agent 回复的作者仍是当前 Session。排队、人工转交和未绑定消息继续保留真实署名与状态；迟绑定按稳定来源键去重。
 
-普通项目读取返回公开文本和结构化工具摘要；内部 reasoning 不进入流。命令名称、搜索/读取/列文件动作优先用原生解析字段，路径限制在项目范围；参数、stdout、补丁及其他原始工具证据另核 read+review 或确切 worker Run 资格。公共长回复可按 Item 续读，不因此取得原始工具权限。权限拒绝、来源不可用和正文截断分别表达。 owner 的共享实时缓冲只保留安全概要和来源的原件可用性，不保留原始载荷，也不预先套用某个读者权限；history 与 live 每次响应都按当前读者统一投影。剥离内联原文不能把可按需读取的 Item 标成无权限；原件仍由精确 Item 路径独立核权。
+普通项目读取返回公开文本和结构化工具摘要；`reasoning` Item 只显示原生记录里可读的内容：有摘要用摘要，否则用可读的原生推理文字，都没有（加密或未返回）时作为“不可显示”条目保留，不从回复推测。推理条目只经项目读取的时间线返回，不进入 Run 结果、Leader 通知或通知包；Run 轨迹仍不含推理。命令名称、搜索/读取/列文件动作优先用原生解析字段，路径限制在项目范围；参数、stdout、补丁及其他原始工具证据另核 read+review 或确切 worker Run 资格。公共长回复可按 Item 续读，不因此取得原始工具权限。权限拒绝、来源不可用和正文截断分别表达。 owner 的共享实时缓冲只保留安全概要和来源的原件可用性，不保留原始载荷，也不预先套用某个读者权限；history 与 live 每次响应都按当前读者统一投影。剥离内联原文不能把可按需读取的 Item 标成无权限；原件仍由精确 Item 路径独立核权。
 
 实时覆盖只消费原 owner 的已核范围事件，不额外 resume 一个观察者。缓冲有界并带代次/更新位置；断连、进程重启或溢出要求重新校准持久历史。全局 App Server ready 不能证明某 Thread 有实时订阅；独立只读历史连接不宣称 live。external/Desktop 保留人工接入与实际已同步范围。此读取模型不改变下文的恢复 gate、首次终态观察或未知结果规则。
 

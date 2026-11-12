@@ -14,6 +14,13 @@ const stateLabel: Record<DirectInputReceipt["state"], string> = {
   pending: "准备发送", attempted: "发送中，等待原操作回执", accepted: "运行时已接收；不代表智能体已阅读或采用",
   rejected: "运行时已拒绝这条输入", unknown: "发送结果未知，需核对原操作",
 };
+/** An accepted input says more once its native Item is recorded: the runtime holds it. Still not "adopted" by the agent. */
+/** The receipt's headline: a steer that could not go into the Turn but was saved as one queued message is not a refusal. */
+export const receiptLabel = (receipt: DirectInputReceipt): string =>
+  receipt.state === "rejected" && receipt.queuedMessageId ? "没有插入，已转为排队消息（原输入编号即消息编号，只有一条）"
+    : receipt.state === "accepted" && receipt.nativeItemId ? "已读到：运行时已记录这条输入的原生条目；不代表智能体已采用"
+    : receipt.state === "accepted" && receipt.mode === "start" ? "已开始新的一轮 · 运行时已接收；不代表智能体已阅读或采用"
+      : receipt.state === "accepted" ? "已插入当前这一轮 · 运行时已接收；不代表智能体已阅读或采用" : stateLabel[receipt.state];
 type ExplicitAudit = { inputId: string; operationId: string; reason: string; observedAt: string };
 const readAudit = (value: string | null): ExplicitAudit | null => {
   if (!value) return null;
@@ -38,7 +45,7 @@ const storage = {
 };
 
 /** `skipped`: nothing was sent (no capability, an earlier input still unknown, empty text). */
-export type DirectSendResult = "accepted" | "rejected" | "unknown" | "skipped";
+export type DirectSendResult = "accepted" | "queued" | "rejected" | "unknown" | "skipped";
 
 export interface DirectInput {
   /** undefined while read, null when it could not be read. */
@@ -53,7 +60,7 @@ export interface DirectInput {
 
 /** `active` is false for agents the runtime does not manage (external ones): nothing is read or sent. */
 export function useDirectInput({ projectId, sessionId, actorId, active, onAccepted }: {
-  projectId: string; sessionId: string; actorId: string; active: boolean; onAccepted(): void;
+  projectId: string; sessionId: string; actorId: string; active: boolean; onAccepted(receipt: DirectInputReceipt): void;
 }): DirectInput {
   const client = directInputClient("", projectId, sessionId);
   const storageKey = `direct-input:${projectId}:${sessionId}:${actorId}`;
@@ -79,7 +86,9 @@ export function useDirectInput({ projectId, sessionId, actorId, active, onAccept
     if (value.state === "accepted" || value.state === "rejected") {
       storage.remove(storageKey); storage.remove(operationStorageKey); storage.remove(auditStorageKey);
       setAudit(null); setPendingId(null);
-      if (value.state === "accepted") { onAccepted(); return "accepted"; }
+      if (value.state === "accepted") { onAccepted(value); return "accepted"; }
+      // The text was saved as one queued message: it is on its way, so the draft is cleared like any saved message.
+      if (value.queuedMessageId) { onAccepted(value); return "queued"; }
       return "rejected";
     }
     return "unknown";
@@ -91,6 +100,19 @@ export function useDirectInput({ projectId, sessionId, actorId, active, onAccept
       .catch(cause => { if (live) setError(`原输入回执暂不可读取：${errorText(cause)}`); });
     return () => { live = false; };
   }, [projectId, sessionId, pendingId, active]);
+  // An accepted input learns its native Item only after its Turn ends (the service reads the history back then); look again until it does.
+  useEffect(() => {
+    if (!active || !receipt || receipt.state !== "accepted" || receipt.nativeItemId) return;
+    const inputId = receipt.inputId;
+    let live = true, looks = 0;
+    const timer = setInterval(() => {
+      if (++looks > 120) { clearInterval(timer); return; }
+      void client.read(inputId).then(value => {
+        if (live && value && value.inputId === inputId && value.state === "accepted" && value.nativeItemId) { setReceipt(value); clearInterval(timer); }
+      }).catch(() => undefined);
+    }, 5000);
+    return () => { live = false; clearInterval(timer); };
+  }, [projectId, sessionId, active, receipt?.inputId, receipt?.state, receipt?.nativeItemId]);
   const current = capability.isError ? null : capability.data;
   async function send(content: string): Promise<DirectSendResult> {
     if (!current?.available || !current.mode || busy || pendingId || !content.trim()) return "skipped";
@@ -133,16 +155,17 @@ export function useDirectInput({ projectId, sessionId, actorId, active, onAccept
   const unknown = !!pendingId;
   const view = <>
     {(pendingId || receipt) && <div className="session-direct-receipt" role={pendingId && error ? "alert" : "status"}>
-      <Notice tone={pendingId ? "waiting" : receipt?.state === "rejected" ? "error" : "info"}
-        title={receipt ? stateLabel[receipt.state] : error || "正在读取原输入回执"}
+      <Notice tone={pendingId ? "waiting" : receipt?.state === "rejected" && !receipt.queuedMessageId ? "error" : "info"}
+        title={receipt ? receiptLabel(receipt) : error || "正在读取原输入回执"}
         action={pendingId ? <Button size="compact" disabled={busy} onClick={() => void reconcile()}>核对结果（不会重发）</Button> : undefined}>
         {pendingId && <p>只按原输入核对，不会重发。核对前不能发送新消息，草稿仍保留在输入框里。</p>}
-        {receipt?.reason && <p>{receipt.state === "rejected" ? "运行时说明了拒绝原因，原文见完整标识。" : "运行时附了说明，原文见完整标识。"}</p>}
+        {receipt?.reason && <p>{receipt.queuedMessageId ? "转排队的原因见完整标识。" : receipt.state === "rejected" ? "运行时说明了拒绝原因，原文见完整标识。" : "运行时附了说明，原文见完整标识。"}</p>}
         {receipt && pendingId && error && <p>{error}</p>}
         <FullIdentifiers rows={[
           { label: "输入 ID", value: receipt?.inputId ?? pendingId },
           { label: "原轮次 ID", value: receipt?.actualTurnId },
-          { label: "运行时说明原文", value: receipt?.reason, text: true },
+          { label: receipt?.queuedMessageId ? "转排队原因" : "运行时说明原文", value: receipt?.reason, text: true },
+          { label: "排队消息 ID", value: receipt?.queuedMessageId },
         ]} />
       </Notice>
     </div>}

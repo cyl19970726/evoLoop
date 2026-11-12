@@ -379,6 +379,27 @@ test('message persists separately, unknown retains exact operation, receipt requ
   await reviewBlockedMessage(message.id);
 });
 
+test('settlement persists whether response text is a native reply or a bounded-unread system note',async()=>{
+  for(const responseKind of ['native','bounded_unread'] as const){
+    const targetSessionId=randomUUID();
+    await seedFullSession(targetSessionId);
+    const m={...item(),target:{kind:'owned' as const,sessionId:targetSessionId}};
+    await uow.transaction(projectId,tx=>tx.sessionMessages!.insertSessionMessage(m));
+    const local=new SessionMessageService({uow,clock:{now:()=>now},ids:{next:randomUUID},
+      grantFor:async()=>({...grant,sessionId:targetSessionId})});
+    await local.beginDispatch(projectId,m.id,randomUUID(),randomUUID(),qualified);
+    const turnId=`response-kind-${responseKind}`;
+    await local.bindTurn(projectId,m.id,{id:turnId,status:'inProgress'});
+    await local.settle(projectId,m.id,{id:turnId,status:'completed',completedAtUtc:now},
+      responseKind==='native'?'Normal answer':'Reply was not read within the bound',responseKind);
+    const detail=await local.detail(projectId,m.id);
+    assert.equal(detail.processing?.responseKind,responseKind);
+    assert.equal(detail.processing?.response,
+      responseKind==='native'?'Normal answer':'Reply was not read within the bound');
+    assert.equal(detail.message.state,'replied');
+  }
+});
+
 test('preflight is side-effect-free for missing or exhausted grants and dispatch rechecks revocation',async()=>{
   const sender=`sender-${randomUUID()}`;
   const first={...item(),senderActorId:sender};
@@ -888,6 +909,45 @@ test('049 migration preserves preexisting ordinary message and processing rows',
     assert.deepEqual((await legacy.query('SELECT state,content FROM session_message WHERE project_id=$1 AND message_id=$2',[p,m])).rows[0],
       {state:'failed',content:'Original content'});
     assert.equal((await legacy.query('SELECT count(*)::int AS n FROM session_message_manual_stop_evidence')).rows[0].n,0);
+  }finally{
+    await legacy.end().catch(()=>{});
+    const cleanup=new pg.Client({connectionString:url});await cleanup.connect();
+    try{await cleanup.query(`DROP SCHEMA "${legacySchema}" CASCADE`);}finally{await cleanup.end();}
+  }
+});
+
+test('090 marks only the exact preexisting bounded-unread note and leaves similar reply text native',async()=>{
+  const legacySchema=`el_msg_kind_${randomUUID().replaceAll('-','').slice(0,12)}`;
+  const migrations=fileURLToPath(new URL('../migrations/',import.meta.url));
+  const legacy=new pg.Client({connectionString:url,options:`-c search_path=${legacySchema}`});
+  try{
+    await runner({databaseUrl:url!,dir:migrations,migrationsTable:'pgmigrations',schema:legacySchema,
+      createSchema:true,createMigrationsSchema:true,direction:'up',singleTransaction:true,count:75,log:()=>{}});
+    await legacy.connect();
+    const p=randomUUID(),s=randomUUID();
+    await legacy.query("INSERT INTO project(project_id,title,created_at) VALUES($1,'Legacy response kinds',$2)",[p,now]);
+    await legacy.query(`INSERT INTO runtime_session(project_id,session_id,role_id,cwd,authorization_scope,sandbox,approval_policy,
+      state,version,native_thread_id,native_session_id,operation_id,actor_id,created_at,updated_at)
+      VALUES($1,$2,$3,'/tmp','project','danger-full-access','never','ready',1,$4,$5,$6,'receiver',$7,$7)`,
+      [p,s,randomUUID(),'thread-'+s,'native-'+s,randomUUID(),now]);
+    const process=async(response:string)=>{
+      const m=randomUUID();
+      await legacy.query(`INSERT INTO session_message(project_id,message_id,operation_id,target_kind,session_id,sender_actor_id,
+        content,state,version,created_at,updated_at)
+        VALUES($1,$2,$3,'owned',$4,'sender','Legacy content','failed',2,$5,$5)`,[p,m,randomUUID(),s,now]);
+      await legacy.query(`INSERT INTO session_message_processing(project_id,processing_id,message_id,session_id,operation_id,
+        receiver_actor_id,state,response,failure,read_only_policy_fingerprint,version,started_at,updated_at)
+        VALUES($1,$2,$3,$4,$5,'receiver','failed',$6,$7,$8,2,$9,$9)`,
+        [p,randomUUID(),m,s,randomUUID(),response,'Legacy failure',qualified,now]);
+      return m;
+    };
+    const exact=await process('（本轮已结束，但它的原生记录超过 50 页，回复没有在有界读取内读出；完整回复见该 Session 的原生会话记录。）');
+    const similar=await process('我读过“回复没有在有界读取内读出”这句话，但这是用户的真实答复。');
+    await migrate(url!,legacySchema);
+    const kinds=(await legacy.query(`SELECT message_id,response_kind FROM session_message_processing
+      WHERE project_id=$1 ORDER BY message_id`,[p])).rows;
+    assert.equal(kinds.find(row=>row.message_id===exact)?.response_kind,'bounded_unread');
+    assert.equal(kinds.find(row=>row.message_id===similar)?.response_kind,'native');
   }finally{
     await legacy.end().catch(()=>{});
     const cleanup=new pg.Client({connectionString:url});await cleanup.connect();

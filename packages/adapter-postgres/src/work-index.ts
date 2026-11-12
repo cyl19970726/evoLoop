@@ -6,6 +6,7 @@ import type {
   LeaderWorkPhase, LeaderWorkPlanCommand, LeaderWorkReviewCommand, LeaderWorkTask,
   LeaderWorkTaskTiming, LeaderWorkTimingInterval, LeaderWorkTimingStage, LeaderWorkWaitingFor,
 } from "@evoloop/contracts/work-index";
+import { acceptanceReadiness, preconditionText } from "@evoloop/contracts/acceptance-convention";
 import {
   leaderWorkDependenciesCommandSchema, leaderWorkPlanCommandSchema, leaderWorkReviewCommandSchema,
 } from "@evoloop/contracts/work-index";
@@ -285,6 +286,30 @@ function taskAction(phase: LeaderWorkPhase): string {
     case "closed": return "查看固定交付、使用与关闭证据";
     case "cancelled": return "如需继续，先核对取消理由并重新打开";
   }
+}
+
+/** What the Task declared about acceptance, with whether the delivery can be checked yet. Null when it declared nothing. */
+function acceptanceConvention(row: QueryResultRow): NonNullable<LeaderWorkTask["acceptanceConvention"]> | null {
+  if (!row.acceptance_target && !row.acceptance_precondition) return null;
+  return { acceptanceTarget: row.acceptance_target ?? null,
+    acceptancePrecondition: row.acceptance_precondition ?? null,
+    readiness: row.delivery_id ? acceptanceReadiness(row.acceptance_precondition, row.precondition_marked === true) : null,
+    namedAgent: row.acceptance_target === "named_agent" ? String(row.consumer ?? "") || null : null };
+}
+/** A delivery that is waiting for its precondition is not "ready to accept"; a named-agent Task needs no arrangement. */
+function conventionAction(row: QueryResultRow, phase: LeaderWorkPhase, base: string): string {
+  if (phase !== "awaiting_acceptance" || consumerAnswered(row)) return base;
+  const waiting = row.acceptance_precondition && row.acceptance_precondition !== "none" && row.precondition_marked !== true;
+  const who = row.acceptance_target === "named_agent" ? `由声明的业务身份 ${row.consumer || "（未写明）"} 直接验收，不经验收接力，不要安排接力` : base;
+  return waiting ? `等待${preconditionText[row.acceptance_precondition as keyof typeof preconditionText]}后才可验收（尚未标记已满足）；${who}` : who;
+}
+/** The declared consumer has already signed "used" or "failed" for the current delivery: the direct-acceptance wording no longer applies. */
+function consumerAnswered(row: QueryResultRow): boolean {
+  return row.consumer_own_result === "used" || row.consumer_own_result === "failed";
+}
+function conventionResponsible(row: QueryResultRow, phase: LeaderWorkPhase, base: LeaderWorkTask["responsible"]): LeaderWorkTask["responsible"] {
+  return phase === "awaiting_acceptance" && !consumerAnswered(row) && row.acceptance_target === "named_agent" && row.consumer
+    ? { kind: "consumer", id: String(row.consumer), label: `验收者 ${row.consumer}（直接验收）` } : base;
 }
 
 /** The latest Run ended because someone stopped it: say so in the next step instead of reading it as failed work to redo. */
@@ -643,7 +668,9 @@ export function leaderWorkTaskFromRow(row: QueryResultRow, observedAt: string): 
     kind: "task", taskId: row.task_id, version: int(row.version),
     currentRevisionId: row.current_revision_id, workChangeSequence: int(row.work_change_sequence ?? 0),
     title: row.title, taskKind: row.kind, taskState: row.state,
-    phase, nextAction: stoppedRunAction(row, phase, taskAction(phase)), responsible: taskResponsibility(row, phase, timing), assignment,
+    phase, nextAction: stoppedRunAction(row, phase, conventionAction(row, phase, taskAction(phase))),
+    responsible: conventionResponsible(row, phase, taskResponsibility(row, phase, timing)), assignment,
+    acceptanceConvention: acceptanceConvention(row),
     latestRun: row.latest_run_id ? { runId: row.latest_run_id, state: row.latest_run_state,
       ...(row.latest_run_stopped_at ? { stopped: { at: iso(row.latest_run_stopped_at), reason: row.latest_run_stop_reason ?? null } } : {}) } : null,
     delivery: row.delivery_id ? {
@@ -853,6 +880,11 @@ export async function readLeaderWorkTasks(db: Database, projectId: string, query
     if (offset > total) throw new DomainError("INVALID_CURSOR", "待处理工作分页位置超出当前快照");
     const pageResult = await snapshot.query(`${taskFactsSql(query.includeClosed === true, query.taskId ? 4 : undefined)}
       SELECT facts.*,proposal.consumer,proposal.use_required,
+        proposal.acceptance_target,proposal.acceptance_precondition,
+        EXISTS(SELECT 1 FROM task_acceptance_precondition_mark pm WHERE pm.project_id=facts.project_id
+          AND pm.delivery_id=facts.delivery_id) AS precondition_marked,
+        (SELECT o.result FROM consumer_observation o WHERE o.project_id=facts.project_id AND o.delivery_id=facts.delivery_id
+          AND o.observer=proposal.consumer ORDER BY o.sequence DESC LIMIT 1) AS consumer_own_result,
         stage.stage_id,stage.deliverable AS stage_deliverable,
         goal.goal_id,goal.outcome AS goal_outcome,
         COALESCE(dependencies.items,'[]'::jsonb) AS dependency_facts,
@@ -868,7 +900,7 @@ export async function readLeaderWorkTasks(db: Database, projectId: string, query
         follow_up.updated_at AS follow_up_updated_at,
         follow_up.version AS follow_up_version
       FROM facts
-      LEFT JOIN LATERAL (SELECT p.consumer,p.use_required,p.stage_id FROM task_proposal p
+      LEFT JOIN LATERAL (SELECT p.consumer,p.use_required,p.stage_id,p.acceptance_target,p.acceptance_precondition FROM task_proposal p
         JOIN task_revision r ON r.project_id=p.project_id AND r.task_id=p.task_id
           AND r.revision_id=p.task_revision_id
         WHERE p.project_id=facts.project_id AND p.task_id=facts.task_id

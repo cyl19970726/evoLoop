@@ -9,6 +9,6 @@ export {
 } from "./rules";
 export { useCommand, type CommandOptions } from "./useCommand";
 export {
-  BaselineNotice, CommandBlock, CommandForm, CommandFrame, OutcomeNotice, initialValues, missingFields,
+  BaselineNotice, CommandBlock, CommandForm, CommandFrame, FieldInput, FormPendingContext, OutcomeNotice, fieldOptional, initialValues, missingFields, useFormPending,
   type CommandFormProps, type CommandFrameProps, type CommandView, type ConflictChoices, type CustomControl, type FieldConflict, type FormField, type FormHandle,
 } from "./CommandForm";

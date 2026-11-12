@@ -17,22 +17,21 @@ export const taskTypeLabel: Record<TaskKind, string> = {
   implementation: "实施",
   research: "调研",
   validation: "验证",
+  defect: "缺陷",
+  documentation: "文档",
+  operation: "运维与配置",
 };
 
 export function taskType(kind: TaskKind | null | undefined): string {
   return kind ? taskTypeLabel[kind] : "未分类";
 }
 
-/** Use the stage goal when available, otherwise the first real line of the Task body. */
-export function taskGoal(item: LeaderWorkTask | null | undefined, task: Pick<Task, "content">): string {
-  const goal = item?.goal?.outcome?.trim();
-  if (goal) return goal;
-  const line = task.content.split("\n").map(value => value.trim()).find(value => value && !/^#{1,6}\s/.test(value));
-  if (!line) return "目标见任务正文";
-  const plain = line.replace(/^[-*>]\s+/, "").replace(/[*_`]/g, "");
-  const firstSentence = plain.match(/^.*?[。！？!?](?:\s|$)/)?.[0]?.trim() ?? plain;
-  const summary = firstSentence.length >= 24 ? firstSentence : plain;
-  return summary.length > 220 ? `${summary.slice(0, 220)}…` : summary;
+/**
+ * The goal line of a Task: the stage goal when the work index has one (an explicit field), otherwise nothing. The body is shown
+ * in full right below, so quoting its first paragraph as a "goal" only said the same thing twice (and lost its code styling).
+ */
+export function taskGoal(item: LeaderWorkTask | null | undefined): string | null {
+  return item?.goal?.outcome?.trim() || null;
 }
 
 export function currentProgressLabel(item: LeaderWorkTask | null | undefined, fallback: Task["state"]): string {

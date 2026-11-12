@@ -167,6 +167,8 @@ erDiagram
 | 087 `session_line` | 新表 `session_line`（每个常驻 Session 一条，控制者与版本）、`session_line_entry`（Task、位置、状态 queued/suspended/starting/started/withdrawn、步骤、尝试次数、重试次数 `step_try`、四个登记的操作 ID、挂起/撤下原因、来源与来源身份、日程 ID、Run ID、`run_ended_at`）、`session_line_event`（有序、不可变的队伍事件）、`task_assignment_confirmation`（按分派版本记录执行确认的 verdict/plan/missing/expectedRevisionId，不可变） | `(project_id, task_id)` 在 queued/suspended/starting 上部分唯一，同一 Task 不能同时排两处；确认 `confirm` 必须有 plan，`return` 必须有 missing。语义见 [Session 运行时](session-runtime.md#session-队伍dec-045-q1)。迁移号 087：main 已执行到 083，不能插入更小的号。 |
 | 089 `leader_notice_packet` | `leader_result_notice.via_packet`（默认 false；开关打开后由插入触发器按 `leader_notice_packet_mode` 给新通知置 true）；新表 `leader_notice_packet`（每包不超过 8192 字节）、`leader_notice_packet_attempt`、`leader_notice_packet_item`、`leader_notice_packet_mode` | 一个包合并多条通知；每项有独立状态与版本，同一通知同时只在一个未结束的包里（部分唯一索引）；每次送达尝试一行，消息 ID 与输入 ID 恰有其一。语义见[接口合同](contracts.md#leader-通知层)。 |
 | 094 `run_failure_category` | `runtime_run.failure_category`（可空文本） | Task Run 失败时适配器报告的类别（额度、鉴权、上下文超长等）；额度/鉴权类失败据此开提供方暂停，并让该 Run 关闭的恢复门随放行一起恢复 |
+| 095 `acceptance_convention` | `task_proposal.acceptance_precondition`；`task_acceptance_precondition_mark`；`task` / `task_revision` 的 `kind` 检查 | 可选列 `acceptance_precondition` 写明验收前要满足什么；`kind` 的检查加 `defect`、`documentation`、`operation`（原有三种和旧数据不变）；`acceptance_target` 增加 `named_agent`（由声明的业务身份直接验收，不经接力）。标记表每个交付至多一条、不可变：复核者显式声明该交付的前置（发布、迁移、重启等）已满足，没有标记时投影显示等待而非可验收。 | [验收接力](contracts.md#验收接力与临时-session-退役) |
+| 096 `direct_input_queued_start` | 无新表；放宽 `session_direct_input` 的检查约束 | 允许一行 `mode=start`、`rejected`、没有处理槽位、来源是同 ID 的排队消息：直启在预占时被可证明未送入的原因拒绝（主回合未绑定、已有运行中的 Turn），文字存成一条排队消息 |
 
 ## 事务、幂等和读取
 

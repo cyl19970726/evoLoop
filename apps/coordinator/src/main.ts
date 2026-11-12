@@ -874,6 +874,16 @@ const directInput = runner && integrations.runtime?.enabled ? createDirectInputS
     catch { return false; }
   },
 }) : undefined;
+// After a Turn ends, record the native Item of each accepted direct input that has none yet (read only; never a send).
+if (directInput) {
+  let itemBackfillBusy = false;
+  const itemBackfill = setInterval(() => {
+    if (itemBackfillBusy) return;
+    itemBackfillBusy = true;
+    void directInput.backfillItems().catch(() => undefined).finally(() => { itemBackfillBusy = false; });
+  }, 5000);
+  itemBackfill.unref();
+}
 if (runner) {
   try { await runner.start(); }
   catch { console.error(`${runtimeConfig?.provider === "claude" ? "Claude" : "Codex"} runtime is unavailable; check the configured CLI, its settings and project directories. No new dispatch was enabled.`); }
@@ -985,8 +995,8 @@ const app = await buildServer({ service, credentials, canWrite: lease.canWrite, 
     await dynamicAdmission?.canStartConversation(session) === true,
   runtimeGrants: (projectId, actorId) => runtimeConfig?.enabled ? runtimeConfig.grants.filter(g => g.projectId === projectId && g.actorId === actorId) : [],
   roleRuntimeView: (principal, projectId, roleId) => roleRuntimeView({ service, runtime: runner ?? undefined,
-    grantCwds: (project, actorId, role) => runtimeConfig?.enabled ? runtimeConfig.grants.filter(g => g.projectId === project &&
-      g.actorId === actorId && g.roleId === role).map(g => g.cwd) : [],
+    roleGrants: (project, role) => runtimeConfig?.enabled ? runtimeConfig.grants.filter(g => g.projectId === project && g.roleId === role)
+      .map(g => ({ actorId: g.actorId, cwd: g.cwd })) : [],
     skillRoots: async (project, role) => ({ businessRoot: skillSourceRoot, businessPaths: await roleBusinessSkillPaths(project, role) }),
     claudeContextMode: runtimeConfig?.claude?.contextMode ?? null }, principal, projectId, roleId),
   messageSendAuthority: async (principal, projectId, sessionId) => {

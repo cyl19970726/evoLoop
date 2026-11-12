@@ -26,6 +26,7 @@ const message = (r: QueryResultRow): SessionMessageRecord => ({
 const processing = (r: QueryResultRow): SessionMessageProcessing => ({
   projectId:r.project_id,id:r.processing_id,messageId:r.message_id,sessionId:r.session_id,
   operationId:r.operation_id,state:r.state,nativeTurnId:r.native_turn_id,response:r.response,
+  responseKind:r.response_kind,
   failure:r.failure,failureCategory:r.failure_category??null,readOnlyPolicyFingerprint:r.read_only_policy_fingerprint,receiverActorId:r.receiver_actor_id,
   roleContext:r.role_context??null,
   nativeEnvironmentEpoch:nativeEpoch(r.native_environment_epoch),
@@ -218,6 +219,11 @@ export class PgSessionMessages implements SessionMessageTransaction {
         [this.projectId,v.target.sessionId]);
       if(session.rows[0]?.state!=='ready')throw new DomainError('SESSION_NOT_READY','owned recipient must be a ready Session');
     }
+    // The ordinary entry never reuses the ID of a direct input that was not refused: that input is already inserted, started or
+    // of unknown outcome, and a message under the same ID would send the same text a second time.
+    const direct=await this.client.query(`SELECT state FROM session_direct_input WHERE project_id=$1 AND input_id=$2`,[v.projectId,v.id]);
+    if(direct.rows[0]&&direct.rows[0].state!=='rejected')
+      throw new DomainError('INPUT_ID_IS_DIRECT_INPUT',`this ID is already a direct input (state ${direct.rows[0].state}); read it by its input ID instead of queueing the text again`);
     await this.client.query(`INSERT INTO session_message(project_id,message_id,operation_id,target_kind,session_id,link_id,sender_actor_id,content,context_task_id,context_task_revision_id,reply_to_message_id,state,version,created_at,updated_at)
       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
       [v.projectId,v.id,v.operationId,v.target.kind,v.target.kind==='owned'?v.target.sessionId:null,v.target.kind==='external'?v.target.linkId:null,v.senderActorId,v.content,v.context?.taskId??null,v.context?.taskRevisionId??null,v.replyToMessageId,v.state,v.version,v.createdAt,v.updatedAt]);
@@ -233,8 +239,8 @@ export class PgSessionMessages implements SessionMessageTransaction {
       throw new DomainError('POLICY_PROOF_MISSING','native Session execution admission policy proof is required');
     if(!v.receiverActorId?.trim())throw new DomainError('MESSAGE_RECIPIENT','actual receiving actor is required');
     try {
-      await this.client.query(`INSERT INTO session_message_processing(project_id,processing_id,message_id,session_id,operation_id,receiver_actor_id,state,native_turn_id,response,failure,read_only_policy_fingerprint,version,started_at,updated_at,role_context)
-        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,[v.projectId,v.id,v.messageId,v.sessionId,v.operationId,v.receiverActorId,v.state,v.nativeTurnId,v.response,v.failure,v.readOnlyPolicyFingerprint,v.version,v.startedAt,v.updatedAt,v.roleContext??null]);
+      await this.client.query(`INSERT INTO session_message_processing(project_id,processing_id,message_id,session_id,operation_id,receiver_actor_id,state,native_turn_id,response,response_kind,failure,read_only_policy_fingerprint,version,started_at,updated_at,role_context)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,[v.projectId,v.id,v.messageId,v.sessionId,v.operationId,v.receiverActorId,v.state,v.nativeTurnId,v.response,v.responseKind,v.failure,v.readOnlyPolicyFingerprint,v.version,v.startedAt,v.updatedAt,v.roleContext??null]);
     } catch (error) {
       if ((error as {constraint?:string}).constraint === 'acceptance_source_current')
         throw new DomainError('ACCEPTANCE_SOURCE_SUPERSEDED','Acceptance Delivery or arrangement changed before message start');
@@ -242,11 +248,11 @@ export class PgSessionMessages implements SessionMessageTransaction {
     }
   }
   async updateSessionMessageProcessing(v:SessionMessageProcessing,expectedVersion:number):Promise<void>{
-    this.scope(v.projectId);const r=await this.client.query(`UPDATE session_message_processing SET state=$3,native_turn_id=$4,response=$5,failure=$6,version=$7,updated_at=$8,
+    this.scope(v.projectId);const r=await this.client.query(`UPDATE session_message_processing SET state=$3,native_turn_id=$4,response=$5,response_kind=$16,failure=$6,version=$7,updated_at=$8,
       interrupt_operation_id=$10,interrupt_actor_id=$11,interrupt_reason=$12,interrupt_requested_at=$13,pre_turn_proof=$14::jsonb,failure_category=$15
       WHERE project_id=$1 AND processing_id=$2 AND version=$9`,[v.projectId,v.id,v.state,v.nativeTurnId,v.response,v.failure,v.version,v.updatedAt,expectedVersion,
       v.interruptOperationId??null,v.interruptActorId??null,v.interruptReason??null,v.interruptRequestedAt??null,
-      v.preTurnProof?JSON.stringify(preTurnProofSchema.parse(v.preTurnProof)):null,v.failureCategory??null]);
+      v.preTurnProof?JSON.stringify(preTurnProofSchema.parse(v.preTurnProof)):null,v.failureCategory??null,v.responseKind]);
     if(!r.rowCount)throw new DomainError('VERSION_CONFLICT','message processing changed');
   }
   async insertSessionMessageManualStopEvidence(v:SessionMessageManualStopEvidence):Promise<void>{

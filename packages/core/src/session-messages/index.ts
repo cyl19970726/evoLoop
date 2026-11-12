@@ -1,6 +1,6 @@
 import { holdsProvider, providerHeldMessage } from '@evoloop/contracts/provider-hold';
 import type { AppliedResult, Principal } from "@evoloop/contracts";
-import type { SessionMessageCommand, SessionMessageDispatchGrant, SessionMessageManualStopEvidence, SessionMessageManualStopPreflight, SessionMessageProcessing, SessionMessageRecord } from "@evoloop/contracts/session-messages";
+import type { SessionMessageCommand, SessionMessageDispatchGrant, SessionMessageManualStopEvidence, SessionMessageManualStopPreflight, SessionMessageProcessing, SessionMessageRecord, SessionMessageResponseKind } from "@evoloop/contracts/session-messages";
 import { preTurnProofSchema, type PreTurnProof, type RuntimeTurn, type RuntimeSessionRecord } from "@evoloop/contracts/runtime";
 import type { Clock, IdFactory, Reader, Transaction, UnitOfWork } from "@evoloop/contracts/ports";
 import { DomainError } from "@evoloop/contracts/ports";
@@ -238,7 +238,7 @@ export class SessionMessageService {
       const now=this.deps.clock.now();
       const processing:SessionMessageProcessing={projectId,id:processingId,messageId,sessionId:session.id,operationId,
         receiverActorId:grant.receiverActorId,
-        state:'dispatching',nativeTurnId:null,response:null,failure:null,readOnlyPolicyFingerprint,roleContext,
+        state:'dispatching',nativeTurnId:null,response:null,responseKind:'native',failure:null,readOnlyPolicyFingerprint,roleContext,
         version:1,startedAt:now,updatedAt:now};
       await store.insertSessionMessageProcessing(processing);
       await store.updateSessionMessage({...item,state:'processing',blockedReason:null,version:item.version+1,updatedAt:now},item.version);
@@ -368,7 +368,8 @@ export class SessionMessageService {
       await store.updateSessionMessage({...m,state:'failed',version:m.version+1,updatedAt:now},m.version);
     });
   }
-  async settle(projectId:string,messageId:string,turn:RuntimeTurn,response:string|null):Promise<void>{
+  async settle(projectId:string,messageId:string,turn:RuntimeTurn,response:string|null,
+    responseKind:SessionMessageResponseKind='native'):Promise<void>{
     await this.deps.uow.transaction(projectId,async tx=>{
       const store=tx.sessionMessages!;const p=required(await store.getSessionMessageProcessing(messageId),'processing');
       if(!turn.completedAtUtc||!['completed','failed','interrupted'].includes(turn.status)||p.nativeTurnId!==turn.id)
@@ -376,6 +377,7 @@ export class SessionMessageService {
       if(['completed','failed'].includes(p.state))return;
       const now=this.deps.clock.now();const ok=turn.status==='completed';const visible=!!response?.trim();
       await store.updateSessionMessageProcessing({...p,state:ok?'completed':'failed',response:ok&&visible?response!.slice(0,65536):null,
+        responseKind:ok&&visible?responseKind:'native',
         failure:ok?null:(turn.error?.summary??`Native Turn ${turn.status}`).slice(0,4000),
         failureCategory:ok?null:turn.error?.category??null,version:p.version+1,updatedAt:now},p.version);
       const m=required(await store.getSessionMessage(messageId),'message');
