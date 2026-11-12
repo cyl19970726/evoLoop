@@ -18,6 +18,7 @@
     "test:scheduling-metrics": "node --test scripts/scheduling-metrics.test.mjs",
     "check:migrations": "node scripts/check-migration-numbers.mjs",
     "disk:reclaim": "node scripts/ops/disk-reclaim.mjs",
+    "boundary:check": "node scripts/ops/boundary-check.mjs",
     "worktree:new": "node scripts/ops/new-worktree.mjs",
     "test-pg": "node scripts/ops/test-pg.mjs",
     "test:docs": "node --test scripts/docs/*.test.js scripts/architecture-map/*.test.js",

@@ -19,6 +19,7 @@ import { PostgresUnitOfWork, PgConnectorRoutes, PgConnectorMessageLinks, PgConne
 import { disposeStalePendingTodo, disposeStaleTodoMessage, getLeaderNotice, getLeaderNoticeByMessageId, hasInFlightLeaderNoticeMessage, linkLeaderNoticeMessage,
   listLeaderNotices, listPendingLeaderNotices, markLeaderNoticeBlocked, pinLeaderNoticeRecipient,
   recoverRejectedLeaderNotice, setLeaderNoticePendingReason } from "@evoloop/adapter-postgres/leader-result-notices";
+import { listLeaderEventRecords } from "@evoloop/adapter-postgres/leader-event-records";
 import { authConfigSchema, hasCurrentStudyReviewer, isProjectWriter } from "./auth.js";
 import { buildServer } from "./server.js";
 import { acquireCoordinatorLease, leaseFencedUnitOfWork } from "./lease.js";
@@ -928,6 +929,7 @@ const app = await buildServer({ service, credentials, canWrite: lease.canWrite, 
       return { status: "recorded" as const, packetId, state: "recovered" as const };
     },
     list: (projectId, query) => listLeaderNotices(pool, projectId, query),
+    records: (projectId, query) => listLeaderEventRecords(pool, projectId, query),
     get: (projectId, noticeId) => getLeaderNotice(pool, projectId, noticeId),
     recover: async (projectId, noticeId, input, actorId) => {
       const recovered=await recoverRejectedLeaderNotice(pool, projectId, noticeId,
