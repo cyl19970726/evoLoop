@@ -5,7 +5,7 @@ import { describeFailure } from "../shared/errorPresentation";
 import { onUnauthorized, signIn, signOut } from "../shared/identity";
 import type { MutationContext, RecoverableCommand } from "../shared/command/context";
 import { clearCommandDrafts } from "../shared/command/drafts";
-import { askConfirm, cancelConfirms, confirmHostFailed, currentConfirm, onConfirmUnavailable } from "../shared/confirm";
+import { askConfirm, cancelConfirms, confirmHostFailed, currentConfirm, onConfirmRetry, onConfirmUnavailable } from "../shared/confirm";
 import { addReceipt, hasProjectReceipt, readReceipts, removeReceipt, visibleReceipts as forPrincipal, writeReceipts, type OperationReceipt } from "./recovery";
 import type { CheckedOrigin, OperationItem } from "../features/settings/operationsPresentation";
 import { checkedNoticeText } from "./operationNotice";
@@ -16,6 +16,7 @@ import { readRoute, href, type Route } from "../shared/ui/shared";
 import { clearKnowledgeReturnsOnLogin, rememberKnowledgeSource } from "../shared/ui/returnRoute";
 import { appHistory, appPath, currentPath, navigate, onNavigate } from "../shared/navigation";
 import { leaveProject, projectChanged, useProjectQuery } from "../shared/query";
+import { drainNotice } from "./drainPresentation";
 import { queryClient } from "./queryClient";
 import { sectionLabels } from "./shell/spaces";
 import { PageBoundary } from "./PageBoundary";
@@ -52,13 +53,23 @@ const ResidentQueuePanel = named(() => import("../features/workflow"), "Resident
 const ConnectorPage = named(() => import("../features/connectors/ConnectorPage"), "ConnectorPage");
 const NotFoundPage = named(() => import("./NotFoundPage"), "NotFoundPage");
 // The confirmation dialog (leaving a project or signing out with drafts) loads after login, with the design system.
-const ConfirmHost = named(() => import("../shared/ui/ConfirmHost"), "ConfirmHost");
+const loadConfirmHost = () => named(() => import("../shared/ui/ConfirmHost"), "ConfirmHost");
 /** If the dialog's code cannot load, the questions waiting for it are cancelled (shared/confirm.ts) instead of hanging. */
 class ConfirmHostBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
   state = { failed: false };
   static getDerivedStateFromError() { return { failed: true }; }
   componentDidCatch(error: unknown) { console.error("确认框没能加载", error); confirmHostFailed(); }
   render() { return this.state.failed ? null : this.props.children; }
+}
+/**
+ * The dialog and its fallback. When the code failed to load, the next question asks for another try (onConfirmRetry): a new lazy component and a
+ * fresh boundary, so leaving a project or signing out with a draft is not locked until the page is refreshed.
+ */
+function ConfirmHostSlot() {
+  const [attempt, setAttempt] = useState(0);
+  useEffect(() => onConfirmRetry(() => setAttempt(count => count + 1)), []);
+  const Host = useMemo(() => loadConfirmHost(), [attempt]);
+  return <ConfirmHostBoundary key={attempt}><Suspense fallback={null}><Host /></Suspense></ConfirmHostBoundary>;
 }
 const historyIndex = (location: { state: unknown }) => (location.state as { __TSR_index?: unknown } | null)?.__TSR_index;
 // The frame loads after login; the login gate starts fetching it while the token is typed.
@@ -190,6 +201,9 @@ export function App() {
     return () => window.removeEventListener("beforeunload", beforeUnload);
   }, []);
   const projectRead = useProjectQuery(projectId ?? "", ["project"], () => client.project(projectId!), { enabled: !!session });
+  // Drain mode: the instance is being emptied for a release; read often while it is.
+  const drainRead = useProjectQuery(projectId ?? "", ["instance", "drain"], signal => client.instanceDrain(signal), { enabled: !!session && !!projectId, refetchInterval: 15_000, retry: false });
+  const drain = drainNotice(drainRead.data, iso => new Date(iso).toLocaleString("zh-CN"));
   const projectTitle = projectRead.data?.title ?? "";
   const holdsRead = useProjectQuery(projectId ?? "", ["provider-holds"], () => client.providerHolds(projectId!), { enabled: !!session && !!projectId, refetchInterval: 30_000 });
   // 待我处理 counts 验收安排, 依据变化 and 等我使用的交付 under the page's own keys; an unknown part is never counted as 0.
@@ -258,7 +272,7 @@ export function App() {
     setOperationLink(origin?.link ?? null);
     replaceReceipts(removeReceipt(receiptsRef.current, receipt.operationId)); changed();
   }
-  const confirmHost = <ConfirmHostBoundary><Suspense fallback={null}><ConfirmHost /></Suspense></ConfirmHostBoundary>;
+  const confirmHost = <ConfirmHostSlot />;
   if (!projectId) return <>{confirmHost}<Suspense fallback={<p role="status" className="p-8 text-small">正在打开项目列表…</p>}><ProjectChooser context={context} token={token} principal={principal} receipts={visibleReceipts} operationNotice={operationNotice} operationDetail={operationDetail} onConfirmed={confirmReceipt} onRefreshSession={async () => setSession(await api(token).session())} logout={logout} /></Suspense></>;
   const projectReceipts = visibleReceipts.filter(r => r.projectId === projectId);
   // 结果未知的操作 gets each receipt with its check card. OperationCheck loads on demand; its own boundary keeps a first
@@ -274,6 +288,7 @@ export function App() {
     ...projectId ? providerHoldNotices(holdsRead.data, href(projectId, "sessions")) : [],
     ...projectId && holdsRead.isError ? [providerHoldReadFailure(holdsRead.error, href(projectId, "sessions"))] : [],
     ...projectError ? [{ key: "project", tone: "error" as const, text: `项目暂不可读取：${projectError}`, button: { label: "重试读取项目", onClick: context.onChanged } }] : [],
+    ...drain ? [{ key: drain.key, tone: drain.tone, text: drain.text, ...(drain.detail ? { detail: drain.detail } : {}) }] : [],
     ...route.section !== "inbox" && inbox.state === "unknown" ? [{ key: "inbox", tone: "waiting" as const, text: inbox.text, link: { href: href(projectId, "inbox"), label: "去待我处理核对" } }] : [],
   ];
   return <>{confirmHost}<Suspense fallback={<p className={opening} role="status">正在打开工作台…</p>}><AppShell route={route} projectId={projectId} projectTitle={projectTitle} actor={principal.actorId} permissions={principal.permissions}

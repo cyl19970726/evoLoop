@@ -184,6 +184,8 @@ export function api(token = "", timeoutMs = 15000) {
         throw new ApiError(0, "定时任务响应与当前项目不符；请重新读取。");
       return page;
     },
+    /** Drain mode: instance-wide state of the release gate (not project scoped). */
+    instanceDrain: (signal?: AbortSignal) => requestJson<import("@evoloop/contracts/instance-drain").InstanceDrainView>(token, "/api/instance/drain", timeoutMs, { signal }),
     taskRevisions: (p: string, id: string) => call<Array<{ revision: TaskRevision; basis: BasisSet | null }>>(`${projectPath(p)}/tasks/${key(id)}/revisions`),
     taskRevision: (p: string, id: string, revision: string) => call<{ revision: TaskRevision; basis: BasisSet | null }>(`${projectPath(p)}/tasks/${key(id)}/revisions/${key(revision)}`),
     evaluations: (p: string, cursor?: string, taskId?: string, knowledgePageId?: string) => call<Page<EvaluationRevision>>(`${projectPath(p)}/evaluations?limit=50${cursor ? `&cursor=${key(cursor)}` : ""}${taskId ? `&taskId=${key(taskId)}` : ""}${knowledgePageId ? `&knowledgePageId=${key(knowledgePageId)}` : ""}`),

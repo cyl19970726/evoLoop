@@ -30,7 +30,7 @@ export function sessionClient(token: string, projectId: string) {
     recovery: (sessionId: string, signal?: AbortSignal) => get<SessionRecoveryView>(`${base}/runtime/sessions/${part(sessionId)}/recovery`, signal),
     runtimeSessions: (signal?:AbortSignal) => get<RuntimeSessionRecord[]>(`${base}/runtime/sessions`,signal),
     models: (signal?:AbortSignal) => get<{status:'available'|'empty'|'unavailable';models:string[];
-      options:Array<{model:string;supportedReasoningEfforts:string[];defaultReasoningEffort:string|null}>;
+      options:Array<{model:string;supportedReasoningEfforts:string[];defaultReasoningEffort:string|null;displayName?:string|null}>;
       error:string|null}>(`${base}/runtime/models`,signal),
     changes: (cursor: string, key?: string, signal?: AbortSignal) =>
       get<SessionChanges>(`${base}/session-work/changes?${query({ cursor, limit: 100, key })}`, signal),

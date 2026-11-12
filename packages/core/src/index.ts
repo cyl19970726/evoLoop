@@ -38,7 +38,7 @@ import { canonicalTaskInputJson, taskInputSignature } from "./task-input.js";
 import type { TaskCollaborationPayload } from "@evoloop/contracts/discussions";
 import { applyEvaluation, taskSignature } from "./evaluation/index.js";
 import type { ScheduleCommand } from "@evoloop/contracts/scheduling";
-export { RuntimeWorkflowService, describeTurnEffort } from "./runtime/service.js";
+export { RuntimeWorkflowService, describeTurnEffort, mergeRunActual } from "./runtime/service.js";
 export { applyProviderHoldRelease } from "./provider-hold.js";
 import type { Clock, ContentHasher, IdFactory, Reader, Transaction, UnitOfWork } from "@evoloop/contracts/ports";
 import { applyProviderHoldRelease } from "./provider-hold.js";
@@ -1174,6 +1174,9 @@ export class WorkflowService {
   listRuntimeSessions(principal: Principal, projectId: string) { return this.read(principal, projectId, reader => reader.listRuntimeSessions()); }
   getRuntimeRun(principal: Principal, projectId: string, runId: string) { return this.read(principal, projectId, async reader => required(await reader.getRuntimeRun(runId), "Runtime run")); }
   listSessionLines(principal: Principal, projectId: string) { return this.read(principal, projectId, reader => reader.sessionLines?.listSessionLines() ?? Promise.resolve([])); }
+  listUnfinishedSessionLineEntries(principal: Principal, projectId: string, sessionId: string) {
+    return this.read(principal, projectId, reader => reader.sessionLines?.listUnfinishedSessionLineEntries(sessionId) ?? Promise.resolve([]));
+  }
   listSessionLineEntries(principal: Principal, projectId: string, sessionId: string, includeEnded = false) {
     return this.read(principal, projectId, reader => reader.sessionLines?.listSessionLineEntries(sessionId, includeEnded) ?? Promise.resolve([]));
   }

@@ -38,7 +38,8 @@ test('Claude ledger timeline shows a person\'s message, a Run input and their re
   const root = await mkdtemp(join(tmpdir(), 'evoloop-claude-timeline-'));
   const cwd = join(root, 'work'); await mkdir(cwd);
   const adapter = new ClaudeAgentSdkAdapter({ configDir: join(root, 'config'), executable: fake, startTimeoutMs: 15_000,
-    environment: { PATH: process.env.PATH, HOME: process.env.HOME, FAKE_CLAUDE_MODE: 'thinking' }, envPassthrough: ['FAKE_CLAUDE_MODE'],
+    environment: { PATH: process.env.PATH, HOME: process.env.HOME, FAKE_CLAUDE_MODE: 'thinking', FAKE_CLAUDE_ANSWER_BLOCK: '1' },
+    envPassthrough: ['FAKE_CLAUDE_MODE', 'FAKE_CLAUDE_ANSWER_BLOCK'],
     verifyBinding: async () => true });
   await adapter.open();
   try {
@@ -98,6 +99,11 @@ test('Claude ledger timeline shows a person\'s message, a Run input and their re
       for (const turn of [first.id, second.id]) {
         const replies = page.entries.filter(entry => entry.turnId === turn && entry.kind === 'message' && entry.role === 'assistant' && entry.phase === 'final_answer');
         assert.equal(replies.length, 1, 'each Turn has exactly one reply');
+        // Like the real CLI, the answer was streamed as a text block and repeated as the result: the same text shows once.
+        const bodies = page.entries.filter(entry => entry.turnId === turn && entry.kind === 'message' && entry.role === 'assistant')
+          .map(entry => entry.kind === 'message' ? entry.body : '');
+        assert.equal(bodies.filter(body => body === replies[0]!.body).length, 1, 'the reply text appears once in the Turn');
+        assert.equal(new Set(bodies).size, bodies.length, 'no assistant text is repeated within a Turn');
         assert.deepEqual([replies[0]!.author.kind, replies[0]!.author.id], ['session', sessionId]);
         assert.ok(page.entries.some(entry => entry.turnId === turn && entry.kind === 'reasoning'));
       }

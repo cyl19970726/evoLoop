@@ -1,6 +1,6 @@
 # 存储逻辑：主数据、固定依据与外部引用
 
-状态：2026-10-20 **目标逻辑设计，S1a 的任务/过程 Markdown/依据/影响/操作日志/outbox 已建表、迁移并通过真实 PG 检查，其余表按切片实施。** 2026-11-09 补记迁移 054–068 新增的表，2026-11-10 补记 069 给过程文档修订加的序号列，2026-11-11 补记 070 的验收阶段收口规则、078 的 Run 停止标记与 081 的 Session 日用量账本，见[下文](#迁移-054-到-081-新增的表和列)；部署与迁移范围见[部署与迁移](deployment.md)。 用户已选定 PostgreSQL 保存 evoLoop 主数据、飞书作为 connector；本页细化逻辑约束，不宣称字段名或 SQL 已成为合同。语义以[领域合同](contracts.md)为准，权威位置见[项目数据](project-data.md)，包和运行边界见[包架构](packages.md)与[技术选型](technology-selection.md)。
+状态：2026-10-20 **目标逻辑设计，S1a 的任务/过程 Markdown/依据/影响/操作日志/outbox 已建表、迁移并通过真实 PG 检查，其余表按切片实施。** 2026-11-09 补记迁移 054–068 新增的表，2026-11-10 补记 069 给过程文档修订加的序号列，2026-11-11 补记 070 的验收阶段收口规则、078 的 Run 停止标记与 081 的 Session 日用量账本，见[下文](#迁移-054-到-087-新增的表和列)；部署与迁移范围见[部署与迁移](deployment.md)。 用户已选定 PostgreSQL 保存 evoLoop 主数据、飞书作为 connector；本页细化逻辑约束，不宣称字段名或 SQL 已成为合同。语义以[领域合同](contracts.md)为准，权威位置见[项目数据](project-data.md)，包和运行边界见[包架构](packages.md)与[技术选型](technology-selection.md)。
 
 C5 的 Task 正文不再双存：头表和 TaskRevision 都固定引用主 DocumentRevision，读取联结产生 content。迁移保留旧 TaskRevision ID/状态/验收及 Run/Basis/operation；将原 goal 原字节存为对应的主正文修订，当前状态才映射为四态。不得向既有 sealed BasisSet 补写成员或改旧操作摘要。Document 追加用途 kind（可空）与 draft/published/archived；Schedule 历史 task_template JSON 保留原样，只读兼容旧 goal，新模板写 content。具体 DDL 以新增迁移 012 及非空迁移测试为准。
 
@@ -141,9 +141,9 @@ erDiagram
 
 这些记录为讨论页提供查询与交接锚点，不把聊天文本或通知送达当作判断已被消费的证据。关联到外部 Git/Wiki 的字段只能保存经权限检查的固定引用；没有外部修订可核验时显示缺项，而不是伪造本库 FK。
 
-## 迁移 054 到 081 新增的表和列
+## 迁移 054 到 087 新增的表和列
 
-下表按 `packages/adapter-postgres/schema/` 的实际文件逐个列出 054–081 新增的表和列。编号 053、060、061 没有使用（分支上曾占用，合入时改号）；071–077 与 084 以后的编号仍由其他候选分支占用，迁移仍按编号顺序执行。各表都带 `project_id` 并以同项目复合外键关联既有对象；“不可变”指有触发器拒绝更新或删除。语义以右列的合同为准。更早的 046、047（Leader 通知）见[接口合同](contracts.md#leader-通知层)。
+下表按 `packages/adapter-postgres/schema/` 的实际文件逐个列出 054–087 新增的表和列。编号 053、060、061 没有使用（分支上曾占用，合入时改号），迁移仍按编号顺序执行。各表都带 `project_id` 并以同项目复合外键关联既有对象；“不可变”指有触发器拒绝更新或删除。语义以右列的合同为准。更早的 046、047（Leader 通知）见[接口合同](contracts.md#leader-通知层)。
 
 | 迁移 | 新增的表或列 | 归属与关键约束 | 语义见 |
 | --- | --- | --- | --- |
@@ -166,8 +166,10 @@ erDiagram
 | 078 `run_stop_request` | `runtime_run.stop_requested_at`、`stop_reason`、`stop_requested_by`（三者要么全空要么全有，写入后不可改） | 请求停止一个 Run 的标记，不新增 Run 状态。同一事务里把 Run 已签但未封存的提交意图（`submitted`、`blocked`）改为 `rejected: RUN_STOPPED`，并把该 Session 里同一 Task 的排队消息阻塞原因标为被取代；触发器拒绝引用已停止 Run 的新提交与交付，以及 Task 上有未结束的已停止 Run 时不带 Run 的交付。就地补丁恢复门触发器（已停止 Run 的失败或中断不关开着的门）和两个 Leader 通知触发器（不为已停止 Run 发通知）。 | [Session 运行时](session-runtime.md) |
 | 087 `session_line` | 新表 `session_line`（每个常驻 Session 一条，控制者与版本）、`session_line_entry`（Task、位置、状态 queued/suspended/starting/started/withdrawn、步骤、尝试次数、重试次数 `step_try`、四个登记的操作 ID、挂起/撤下原因、来源与来源身份、日程 ID、Run ID、`run_ended_at`）、`session_line_event`（有序、不可变的队伍事件）、`task_assignment_confirmation`（按分派版本记录执行确认的 verdict/plan/missing/expectedRevisionId，不可变） | `(project_id, task_id)` 在 queued/suspended/starting 上部分唯一，同一 Task 不能同时排两处；确认 `confirm` 必须有 plan，`return` 必须有 missing。语义见 [Session 运行时](session-runtime.md#session-队伍dec-045-q1)。迁移号 087：main 已执行到 083，不能插入更小的号。 |
 | 089 `leader_notice_packet` | `leader_result_notice.via_packet`（默认 false；开关打开后由插入触发器按 `leader_notice_packet_mode` 给新通知置 true）；新表 `leader_notice_packet`（每包不超过 8192 字节）、`leader_notice_packet_attempt`、`leader_notice_packet_item`、`leader_notice_packet_mode` | 一个包合并多条通知；每项有独立状态与版本，同一通知同时只在一个未结束的包里（部分唯一索引）；每次送达尝试一行，消息 ID 与输入 ID 恰有其一。语义见[接口合同](contracts.md#leader-通知层)。 |
+| 097 `instance_drain` | `instance_drain`（单行）、`instance_drain_event` | 整个实例一行：`active` 或 `draining`，记录开启者、原因和时间，重启后仍有效；每次开启和解除另存一条不可变事件。“已排空”不存储，由在途 Run 与消息 Turn 的数量推出。 | [部署](deployment.md#2-发布新版本) |
 | 094 `run_failure_category` | `runtime_run.failure_category`（可空文本） | Task Run 失败时适配器报告的类别（额度、鉴权、上下文超长等）；额度/鉴权类失败据此开提供方暂停，并让该 Run 关闭的恢复门随放行一起恢复 |
 | 095 `acceptance_convention` | `task_proposal.acceptance_precondition`；`task_acceptance_precondition_mark`；`task` / `task_revision` 的 `kind` 检查 | 可选列 `acceptance_precondition` 写明验收前要满足什么；`kind` 的检查加 `defect`、`documentation`、`operation`（原有三种和旧数据不变）；`acceptance_target` 增加 `named_agent`（由声明的业务身份直接验收，不经接力）。标记表每个交付至多一条、不可变：复核者显式声明该交付的前置（发布、迁移、重启等）已满足，没有标记时投影显示等待而非可验收。 | [验收接力](contracts.md#验收接力与临时-session-退役) |
+| 096 `direct_input_queued_start` | 无新表；放宽 `session_direct_input` 的检查约束 | 允许一行 `mode=start`、`rejected`、没有处理槽位、来源是同 ID 的排队消息：直启在预占时被可证明未送入的原因拒绝（主回合未绑定、已有运行中的 Turn），文字存成一条排队消息 |
 | 098 `decision_request` | 新表 `decision_request`（请求人、被请求身份、可选 Task、主题、问题、选项、状态 open/answered/withdrawn、答复与理由、版本） | 待我决定里“请你确认”的结构化来源；只有被请求的身份能答复。语义见[接口合同](contracts.md#待我决定与决定请求)。 |
 
 ## 事务、幂等和读取

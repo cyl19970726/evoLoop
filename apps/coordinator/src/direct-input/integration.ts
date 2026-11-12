@@ -51,11 +51,19 @@ export function createDirectInputAdmission(deps:DirectInputAdmissionDeps){
     const ordinary=configured.sessionMessages?.enabled?configured.sessionMessages.grants.find(g=>g.enabled&&
       g.projectId===projectId&&g.sessionId===sessionId&&g.senderActorId===principal.actorId&&
       g.receiverRoleId===owner.roleId&&g.cwd===owner.cwd):null;
-    if(!directGrant||!ordinary||!await deps.currentProjectWriter(projectId,principal.actorId)||
-      !await currentConnectorBusinessActor(owner,ordinary.receiverActorId,configured,deps.pool,deps.currentProjectWriter)||
-      !await deps.currentSessionExecutionAuthority(owner)||!await deps.allowedCwd(projectId,owner.cwd))
-      throw new DomainError("DIRECT_GRANT_MISSING","Exact direct and ordinary Session grants are unavailable");
-    return {grant:{...ordinary,canSteer:directGrant.canSteer,canStart:directGrant.canStart},binding:bindingOf(owner)};
+    // Name what is missing, so a refused sender knows which authorization to ask for (no grant values are echoed).
+    const missing:string[]=[];
+    if(!directGrant)missing.push("direct input grant (steer or start) for this sender and Session");
+    if(!ordinary)missing.push("ordinary message grant for this sender and Session");
+    if(directGrant&&ordinary){
+      if(!await deps.currentProjectWriter(projectId,principal.actorId))missing.push("current project writer identity for the sender");
+      if(!await currentConnectorBusinessActor(owner,ordinary.receiverActorId,configured,deps.pool,deps.currentProjectWriter))
+        missing.push("current project writer identity for the receiving Session's business actor");
+      if(!await deps.currentSessionExecutionAuthority(owner))missing.push("current execution authority of the receiving Session");
+      if(!await deps.allowedCwd(projectId,owner.cwd))missing.push("allowed working directory for the receiving Session");
+    }
+    if(missing.length)throw new DomainError("DIRECT_GRANT_MISSING",`Direct input refused; missing: ${missing.join("; ")}`);
+    return {grant:{...ordinary!,canSteer:directGrant!.canSteer,canStart:directGrant!.canStart},binding:bindingOf(owner)};
   };
   return {session,admission};
 }
@@ -70,6 +78,9 @@ export function createDirectInputService(deps:{
   currentProjectWriter(projectId:string,actorId:string):Promise<boolean>;
   currentSessionExecutionAuthority(session:RuntimeSessionRecord):Promise<boolean>;
   allowedCwd(projectId:string,cwd:string):Promise<boolean>;
+  /** Drain mode: true while no new Turn may begin. An idle Session then cannot be started by direct input (the message is
+   *  saved as an ordinary queued one); adding to a Turn already running is unaffected. */
+  holdNewStarts?():Promise<boolean>;
 }):DirectInputService{
   const {session,admission}=createDirectInputAdmission(deps);
   return new DirectInputService({
@@ -82,6 +93,11 @@ export function createDirectInputService(deps:{
       await deps.uow.transaction(projectId,tx=>tx.appendRuntimeEvent({projectId,id:randomUUID(),runId:null,sessionId,kind:"turn.effortObserved",
         detail:`direct input ${inputId}${note}`,nativeTurnId:turn.id,cursor:null,itemsDigest:null,actorId:"direct-input",createdAt:new Date().toISOString()}));
     },
-    admission,
+    // Drain mode: while new Turns are held, an idle Session cannot be started by direct input (it is saved as a queued message);
+    // adding to a Turn already running is unaffected.
+    admission:async(principal,projectId,sessionId)=>{
+      const admitted=await admission(principal,projectId,sessionId);
+      return {...admitted,grant:{...admitted.grant,canStart:admitted.grant.canStart&&!(await deps.holdNewStarts?.())}};
+    },
   });
 }

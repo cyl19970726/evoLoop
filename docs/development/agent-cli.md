@@ -4,6 +4,10 @@
 
 ## 先发现能力，再读任务
 
+### 排空模式（发布前）
+
+`drain status` 读实例状态：`active`、`draining`（还有在途）或 `drained`（可以停服），谁、何时、为什么开启，已排队的消息与 Run 数，以及仍在途的 Run 和消息 Turn（清单只给实例维护者，其他人只看到数量）。`drain start --reason TEXT` / `drain release --reason TEXT` 开启或解除，只有实例维护者（在本实例每个项目都有 read、write、review 的凭据）能用，普通业务 Session 会被拒绝；`drain history` 列出每次开启与解除的操作者、时间和原因。排空期间新消息、新 Run 照常保存排队，只是**不再启动**新的 Run 和消息 Turn，已经开始的照常完成；解除后排队工作按原顺序继续。发布步骤见[部署](../architecture/deployment.md#2-发布新版本)。
+
 ### 准备或复用受管 Session
 
 项目审阅者可在私有 JSON 文件中指定 `projectId`、`sessionId`、`operationId`、`roleId` 和 `mode`（`create` 或 `reuse`），调用 `session prepare --file /PRIVATE/PATH.json`。新建还须写 `cwd`、`authorizationScope`、`displayName` 和从 `models --project` 查到的精确 `model` slug；`purpose` 可选。未配置 `model` 或 `models` 的旧授权环境须先配置精确授权，不能用原生默认模型创建新会话；复用既有 Session 可省略 `model`。升级前已冻结的无 `model` 创建意图只按原准备文件、回执及 operation ID 对账：已记录的同 ID 操作须核 actor/命令 hash 后回读；原 operation 未找到时保持 pending/unknown，由项目审阅者核原操作与 Session，不自动重放或补模型改写原正文。先用 `session` 核本人身份。此入口依次使用现有 `runtime.session.reserve`、`session.profile.set`、`role.bindSession`，返回真实 Session 状态、配置缺项、固定职责和 skill 引用；它不分配 Task，也不生成新的执行授权或凭据。完整准备规格在首次调用时以私有文件固定到该 `operationId`，包括模式、名称和用途；改动输入须用新操作 ID，旧操作未知仍先按原回执恢复。`waiting_for_native_thread` 表示预留已保存、原生 Thread 仍待核；`recovery_required` 表示原操作或 Session 状态未知，须按原回执对账。不可改用新 Session ID 绕过未知。显示资料已保存不证明原生 Thread 名称同步完成。
@@ -25,7 +29,7 @@
 | `runtime.enabled` | 服务启动时已启用运行时 | `runtime_unavailable` | 只在服务启动时读，改后重启 |
 | `runtime.grants` | 该 Session 的执行授权：项目、Session 身份、Role、授权范围、工作目录；全权限、never | `runtime_grant`、`model_not_authorized` | `session prepare` 每次重读 |
 | `runtime.grants[].cwd` | 工作区：须是规范绝对路径（与 realpath 一致），请求的 cwd 与之相同 | `cwd` | 每次重读 |
-| `runtime.materialCli` | Role 级 CLI 绑定：`{projectId, roleId, sessionActorId, cliActorId, command}`；`sessionActorId` 是调用 `session prepare` 的身份，`command` 是该业务身份 CLI 包装脚本的绝对路径 | `material_cli`、`material_cli_incompatible` | 每次重读 |
+| `runtime.materialCli` | Role 级 CLI 绑定：`{projectId, roleId, sessionActorId, cliActorId, command}`；`sessionActorId` 是调用 `session prepare` 的身份，`command` 是该业务身份 CLI 包装脚本的绝对路径，**只能含字母、数字和 `_ . / -`**（可再带一个以空格分隔的绝对路径参数）；含 `@`、`+`、空格等其他字符的路径会在预检里被直接判为不可用（`material_cli_incompatible`，不会去运行它），看起来像“CLI 太旧”，换到符合的路径即可 | `material_cli`、`material_cli_incompatible` | 每次重读 |
 | `residentQueue.roleActors` | Role → 业务身份映射：`{projectId, roleId, actorId}`；`actorId` 必须等于上一行的 `cliActorId` | **`role_actor`**（没有这一项）、`material_cli_actor_mismatch`（两处不一致） | 每次重读，**不需要重启** |
 | `residentQueue.enabled` | 为 `true`，上一行才被采用 | `role_actor` | 每次重读 |
 | `sessionMessages.grants`（新业务身份 → Leader） | **必配**：`sessionId` 指 Leader Session，`senderActorId` 是新业务身份，`receiverActorId`、`receiverRoleId` 与 `cwd` 取 Leader 的，`enabled` 为 `true` | 不在 prepare 检查；漏配时发送当场报 `MESSAGE_GRANT_MISSING`，消息不保存 | 每次重读 |
@@ -123,6 +127,8 @@ npm run --silent cli -- operation "$OPERATION_ID" --project "$PROJECT_ID"
 
 通过当前 Task 协作通道提交 `discussion.action.request` 时，`inputHash` 逐字取该通道原 Run 的 `inputHash`；补丁、正文或产物的 hash 应固定在 `detail` 报告中，不能替代 Run 输入 hash。先回读 Run、通道、报告的固定修订和 `command schema discussion.action.request`；JSON 形状通过只说明结构有效，仍须核 Run 状态、参与者、版本和来源语义。原 Run 确认终态后，若仍需工程动作，先形成新的真实 Run 与自己的通道、Run 输入 hash 和同 Run 来源的报告，再在新答复指导下形成新意图；保留旧拒绝，不由 Lead 代造 worker 签名。具体命令和动作回执仍按本节的正式工程入口处理。
 
+`read run RUN_UUID --project UUID` 在 Run 记录旁给出 `actualView`：这一轮运行时实际报告的模型（`model`）、思考强度（`reasoningEffort`）和子代理模型（`subagentModels`），以及配置的 `configuredModel`、`configuredEffort`；没有观察到的写“未记录”，配置值不会冒充实际值。
+
 工程回执让下一位可以复核：问题与实际改动、Task/Run/Session 及固定输入版本、commit/PR/merge commit、当前 head 的检查和失败项、固定产物链接与修订/hash、各动作真实执行者、部署状态与使用入口、已知限制及下一责任。没有发生的 PR、合并、部署或使用写为待办/未验，不能填占位符充完成。普通静态及队列 Run 的执行者按下文在运行中签 `ordinary.submit`，系统核终态后封存匹配 Delivery；broker worker 仍走下文的独立提交路径。独立消费者沿实际入口使用当前 Delivery，要求 `useRequired` 时由声明消费者亲签观察；失败保留原观察并回原 Task 修复、重新交付和复测，新发现的独立问题才另建有来源 Task。Run 终态、Delivery、合并、部署、消费者使用和 Task close 是不同证据。同一 owned Session 的受限常驻队列见[Lead 分派、返工与再次承接](#lead-分派返工与再次承接)；本节的 `runtime.run.reserve` 是显式手动路径。以所连服务、CLI schema、现行授权和队列读回核可用范围；任意 Desktop 自动唤醒仍未验证。
 
 ### 回链：过程文档纳入了哪一页
@@ -189,7 +195,7 @@ Agent 间发送含中文、引号或换行的正文时，用 `work send` 从私�
 
 `work leader` 是 Leader 的当前工作入口。它从 Task 四态、assignment、最近 Run、当前 TaskRevision 的 Delivery、声明消费者的使用观察、待复核依据、依赖和队列 hold 派生阶段与下一责任；返回值含当前 Task version/revision、创建／业务变化／实际开始／完成时间和可选的计划开始、截止、优先级。依赖只在其前置 Task 的当前修订有 Task closure 或同修订 accepted release 时视为满足，Run 结束不能替代。计划字段不决定实际排序，结果按风险阶段、截止、显式优先级和稳定对象次序读取。
 
-**简要输出 `--brief`。** `work leader`（任务视图）、`work task TASK`、`work acceptance` 和 `work acceptance TASK` 都接受 `--brief`：服务的答案不变，CLI 只保留安排所需的字段再输出，不带 `--brief` 时输出与以前逐字节相同。一条 Task 简要保留：`taskId`、`version`、`revisionId`、`title`、`kind`、`state`、`phase`、`nextAction`、`actionKey`、`responsible`、`assignment`、`run`（最近 Run 的 ID 与状态）、`delivery`（交付 ID、技术结果、声明的消费者与最新观察）、`waiting`（当前阶段、在等谁、从何时起）、`queueHold`、`pendingImpacts`、`blockedBy`（未满足的前置 Task）、`plan` 与 `acceptance`（验收目标、前置、`readiness`）；丢掉的是每个 Task 的计时历史（占大头）、日期、最近进展与依赖的完整记录。分页字段（`total`、`counts`、`changeSequence`、`nextCursor`、`partial`、`observedAt`）原样保留，输出里带 `"brief": true`。`work task --brief` 另读一次该 Task 的验收安排，只列仍有效的（未被取代、未释放）安排的 `relayId`、阶段、方式、状态、收件人、交付与观察结果，那次读取失败时 `acceptanceRelays` 为 `null` 而不是空数组。`work acceptance TASK --brief` 的每条安排保留 ID、版本、阶段、范围键、收件人、Session、交付、投递与处理状态、观察结果，去掉长说明。`work acceptance --brief` 的 Session 占用只留 ID、角色、状态、各项占用计数、`missingCapabilities` 与 `readyForAcceptance`。不适用的读取（`--documents`、`work acceptance mine`、`work leader changes|notices` 等）带 `--brief` 会在发请求前被拒绝。用简要输出定位要处理的 Task，要写命令或核对原件时再读不带 `--brief` 的完整输出或固定原件。
+**简要输出 `--brief`。** `work leader`（任务视图）、`work task TASK`、`work acceptance` 和 `work acceptance TASK` 都接受 `--brief`：服务的答案不变，CLI 只保留安排所需的字段再输出，不带 `--brief` 时输出与以前逐字节相同。一条 Task 简要保留：`taskId`、`version`、`revisionId`、`title`、`taskKind`（与完整视图同名；早先的短名 `kind` 保留）、`state`、`phase`、`nextAction`、`actionKey`、`responsible`、`assignment`、`run`（最近 Run 的 ID 与状态）、`delivery`（交付 ID、技术结果、声明的消费者与最新观察）、`waiting`（当前阶段、在等谁、从何时起）、`queueHold`、`pendingImpacts`、`blockedBy`（未满足的前置 Task）、`plan` 与 `acceptanceConvention`（与完整视图同名同形：`acceptanceTarget`、`acceptancePrecondition`、`readiness`、`namedAgent`，为空的值保留为 `null`——没有交付时 `readiness` 就是 `null`；Task 没声明验收约定时整项为 `null`；早先的短名 `acceptance` 保留，省略空值）。Leader 靠它区分“声明身份直接验收（`named_agent`）”和“要等发布后才能验收（`acceptancePrecondition: release`，`readiness: waiting_precondition`）”的 Task，不必再读完整视图；丢掉的是每个 Task 的计时历史（占大头）、日期、最近进展与依赖的完整记录。分页字段（`total`、`counts`、`changeSequence`、`nextCursor`、`partial`、`observedAt`）原样保留，输出里带 `"brief": true`。`work task --brief` 另读一次该 Task 的验收安排，只列仍有效的（未被取代、未释放）安排的 `relayId`、阶段、方式、状态、收件人、交付与观察结果，那次读取失败时 `acceptanceRelays` 为 `null` 而不是空数组。`work acceptance TASK --brief` 的每条安排保留 ID、版本、阶段、范围键、收件人、Session、交付、投递与处理状态、观察结果，去掉长说明。`work acceptance --brief` 的 Session 占用只留 ID、角色、状态、各项占用计数、`missingCapabilities` 与 `readyForAcceptance`。不适用的读取（`--documents`、`work acceptance mine`、`work leader changes|notices` 等）带 `--brief` 会在发请求前被拒绝。用简要输出定位要处理的 Task，要写命令或核对原件时再读不带 `--brief` 的完整输出或固定原件。
 
 
 `work task` 给一项 Task 的时间投影：创建、各轮阶段起止、当前阶段停留、最新有据业务进展、仅属于当前 Task/Run 的原生活动和观测时间。缺失来源是未知，不把 Session 正在做另一项 Task 算作本项进展。`work attention` 列持久关注项，支持 `--task`、`--phase`、`--signal`、`--waiting-on-kind`、`--waiting-on-id`、`--state` 和有界续页；`work attention task` 读该 Task 的跟进/发布交接历史，`work attention item` 读一项关注的事件，`work attention thresholds` 读项目试行门槛及覆盖。时间门槛只要求核查，不代表 Run 失败，也不会自动取消、重试、封存或签消息已读。保存、原生送达、本人 read 和实际跟进分别核。来源口径与可调初值见[接口合同](../architecture/contracts.md#阶段等待由事实推导)。
@@ -225,6 +231,21 @@ Task 或 Document 列表使用不可伪造业务含义的 base64url 位置；它
 `work snapshot owned:SESSION_ID --project PROJECT_ID` 的 `nativeObservation` 与 `read session SESSION_ID --observation --project PROJECT_ID` 返回同一有界观察。`null` 表示尚无该投影，不能推断从未运行。先核 `freshness`、`lastEventAt`、精确 Turn 和来源，再读工具／计划／diff 预览；旧连接或不可用 Session 的 `stale` 事实只供核对。该只读入口不唤醒模型，也不凭通知改变 Run、Task 或交付验收。
 
 `work status` 将服务 Session 状态、原生连接／Turn 状态、最近原生活动和持久消息状态分列。`--message` 另读原消息与 processing；目标必须属于所选 Session 或已登记别名。两次只读查询不是原子快照，操作前仍须回读当前版本。缺少状态或时间时保持 null。`freshness: live` 只说明连接与绑定在观察时有效，`inProgress` 是宿主报告；两者均不证明最近仍有模型进展。状态冲突时保留各自来源与时间，不按耗时判终态。
+
+### 发给 owned Session：插入当前这一轮，或排队
+
+需求 Session 等智能体给 Leader 发消息时选一条路，两条路用同一个输入 ID：
+
+```sh
+npm run --silent cli -- session input send "$SESSION_UUID" --project "$PROJECT_ID" --mode insert --content "补充：先看 PR 346"
+npm run --silent cli -- session input send "$SESSION_UUID" --project "$PROJECT_ID" --mode queue --file ./note.txt
+npm run --silent cli -- session input show "$SESSION_UUID" "$INPUT_UUID" --project "$PROJECT_ID"
+```
+
+- `--mode insert`：先读这个身份对该 Session 的能力。Session 正在执行时把消息送入**当前这一轮**；空闲时在原会话开一轮。请求正文沿用即时输入合同（`inputId`、`operationId`、`content`、`expectedTurnId`，见 `packages/contracts/src/direct-input.ts`）。需要**即时输入授权**（送入，以及空闲时开一轮）和**普通消息授权**；缺哪一项，命令在发出前拒绝并写明（`INSERT_NOT_AVAILABLE`），同时提示可改用 `--mode queue`。
+- `--mode queue`：保存为一条普通排队消息（`session.message.post`，消息 ID 即输入 ID），这一轮结束后按顺序处理；只需要普通消息授权。
+- `--input` 与 `--operation` 可指定输入 ID 和操作 ID；不给则生成，并在发送前把它们写到标准错误。结果未知时命令以退出码 3 结束（`RESULT_UNCONFIRMED`），不要换 ID 重发：用 `session input show` 读回，或带同样的 `--input`、`--operation` 重复该命令。带 `--input` 的重复命令**先读该 ID 已保存的结果并照它回答**（输出里 `repeated: true`），不再读能力、不再发送；已是未被拒绝的即时输入的 ID 不能再用 `--mode queue` 发（`INPUT_ID_IS_DIRECT_INPUT`）。`--file` 按严格 UTF-8 读取。`session input show` 对运行时已接收但没记录原生条目的输入，会先按原输入对账一次（只读，不重发），输出里 `reconciled` 与 `receipt.nativeItemId` 给出结果。
+- 读回的 `outcome`：`inserted`（已插入当前这一轮）、`started`（空闲，已开新一轮）、`queued`（已排队）、`queued_after_change`（插入时那一轮已经换了，自动转成一条排队消息，原因在 `reason`，仍只有一条）、`rejected`（运行时明确拒绝，什么也没送入）、`unknown`。`inserted` 与 `started` 只表示运行时接收，不表示智能体已阅读或采用。
 
 ### 叫停执行中的 Run
 

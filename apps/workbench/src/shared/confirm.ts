@@ -31,14 +31,21 @@ let hostMounted = false;
 let hostFailed = false;
 const listeners = new Set<() => void>();
 const unavailableListeners = new Set<() => void>();
+const retryListeners = new Set<() => void>();
 const emit = () => { for (const listener of [...listeners]) listener(); };
 const reportUnavailable = () => { for (const listener of [...unavailableListeners]) listener(); };
 
 /** Ask; resolves true when confirmed, false when cancelled. Requests made while one is open wait their turn. */
 export function askConfirm(request: ConfirmRequest): Promise<boolean> {
   if (hostFailed && !hostMounted) {
-    reportUnavailable();
-    return Promise.resolve(false);
+    // The dialog's code failed to load earlier. Another question is another chance: the app is asked to load it again, and the question waits
+    // for it like any other. Without anyone to load it (no listener) the question is cancelled at once, as before.
+    if (!retryListeners.size) {
+      reportUnavailable();
+      return Promise.resolve(false);
+    }
+    hostFailed = false;
+    for (const listener of [...retryListeners]) listener();
   }
   return new Promise(resolve => {
     const entry: Entry = { ...request, id: nextId++, resolve };
@@ -95,4 +102,10 @@ export function subscribeConfirm(listener: () => void): () => void {
 export function onConfirmUnavailable(listener: () => void): () => void {
   unavailableListeners.add(listener);
   return () => { unavailableListeners.delete(listener); };
+}
+
+/** The app loads the dialog's code again when a question is asked after a failed load. */
+export function onConfirmRetry(listener: () => void): () => void {
+  retryListeners.add(listener);
+  return () => { retryListeners.delete(listener); };
 }

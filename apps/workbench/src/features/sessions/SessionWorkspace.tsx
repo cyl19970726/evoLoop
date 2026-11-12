@@ -18,6 +18,7 @@ import { useProjectPages, useProjectQuery } from "../../shared/query";
 import { date, href } from "../../shared/ui/shared";
 import { runtimeClient } from "../../shared/runtimeClient";
 import { sessionClient } from "../../shared/sessionClient";
+import { modelLabel } from "../../shared/modelPresentation";
 import { timingDuration, timingStageLabel, timingWaitingFor } from "../../shared/taskTiming";
 import { ContextPanelContent, useContextPanel } from "../../shared/ui/ContextPanel";
 import { SectionBoundary } from "../../shared/ui/SectionBoundary";
@@ -264,6 +265,9 @@ export function SessionWorkspace({ context, sessionKey, active, refresh, queue }
   }, { enabled: active && historyLoaded });
   const historyPages = history.data?.pages ?? [];
 
+  // Every hook runs before the early return below (a hook after it changes the hook count once the snapshot arrives).
+  // The catalog's display names (Codex) in front of the exact IDs; a catalog that cannot be read leaves the IDs as they are.
+  const modelCatalog = useProjectQuery(projectId, ["runtime", "models", "catalog"], signal => sessionClient("", projectId).models(signal), { enabled: active && owned, retry: false }).data?.options ?? null;
   // An explicit reread holds answers and closing until it is back; background polls do not interrupt a form being filled.
   const [rereading, setRereading] = useState(false);
   const reread = () => {
@@ -390,8 +394,8 @@ export function SessionWorkspace({ context, sessionKey, active, refresh, queue }
   </PanelSection>;
   const environmentSection = <PanelSection title="环境与用量">
     <FactList rows={[
-      ...environmentRows({ kind: session.kind, recovery: recoveryRead, configuredModel: current.resources.configuredModel.value }),
-      ["实际运行模型", actualModel ? String(actualModel) : "没有可靠记录"],
+      ...environmentRows({ kind: session.kind, recovery: recoveryRead, configuredModel: current.resources.configuredModel.value, modelLabelOf: model => modelLabel(model, modelCatalog) }),
+      ["实际运行模型（最近一轮原生报告）", actualModel ? modelLabel(String(actualModel), modelCatalog) : "未记录（还没有任何一轮报告过实际模型，不用配置值代替）"],
       ["用量", observation.progress?.usage ? `输入 ${observation.progress.usage.total.inputTokens ?? "未提供"} · 输出 ${observation.progress.usage.total.outputTokens ?? "未提供"}${observation.progress.freshness === "live" && nativeReadCurrent ? "" : "（上次记录）"}` : "没有可靠记录，不按 0 计"],
     ]} />
     {session.kind === "owned" && session.target.kind === "owned" && <UsageBudgetPanel
