@@ -200,3 +200,15 @@ test("an accepted steer whose Turn later fails stays unread without a native Ite
   assert.equal(receipt.nativeItemId, null, "no matching Item means the input is unread, not consumed");
   assert.equal(acceptedWrites, 0);
 });
+
+test("capability: a held provider offers no idle start, with the reason named", async () => {
+  const runtime = { isReady: () => true, capabilitiesFor: () => capabilities(true, true), registerBinding: async () => {}, qualifyConversationThread: async () => ({ available: true, reason: "ok", fingerprint: "a".repeat(64) }) } as never;
+  const store = { inspect: async () => ({ state: "idle", turnId: null, used: 0 }), providerHeld: async () => true } as never;
+  const service = new DirectInputService({ store, runtime: () => runtime, canWrite: () => true, admission: async () => ({ grant, binding }), bindingFor: async () => binding });
+  const result = await service.capability(principal, projectId, sessionId);
+  assert.equal(result.available, false); assert.equal(result.reasonCode, "PROVIDER_HELD"); assert.match(result.detail!, /paused/);
+  const running = new DirectInputService({ store: { inspect: async () => ({ state: "running", turnId, used: 0 }), providerHeld: async () => true } as never,
+    runtime: () => ({ ...(runtime as object), listTurns: async () => ({ data: [{ id: turnId, status: "inProgress" }], nextCursor: null }) }) as never,
+    canWrite: () => true, admission: async () => ({ grant, binding }), bindingFor: async () => binding });
+  assert.equal((await running.capability(principal, projectId, sessionId)).mode, "steer", "a running Turn can still be added to");
+});
