@@ -98,3 +98,48 @@ test("a ready Task nobody dispatched reaches the Leader after 2 hours, at night 
   assert.equal((await openItems()).some(item => item.task_id === waiting), true, "past the checkpoint it is raised again");
   assert.equal((await openItems()).some(item => item.task_id === dependent), false, "a Task blocked on its dependency is never raised as ready");
 });
+
+// "Ready" starts when the Task can be dispatched, not when it was created: time spent blocked on a dependency is not time spent ready and undispatched.
+test("a Task released by its dependency is ready from that moment: creation time and the blocked hours do not count", async t => {
+  const schema = `ready_dependency_${randomUUID().replaceAll("-", "")}`;
+  await migrate(database!, schema);
+  const pool = new pg.Pool({ connectionString: database, options: `-c search_path=${schema}` });
+  t.after(async () => { await pool.end(); const admin = new pg.Client({ connectionString: database }); await admin.connect(); try { await admin.query(`DROP SCHEMA "${schema}" CASCADE`); } finally { await admin.end(); } });
+  let clock = T0;
+  const projectId = randomUUID();
+  const lead: Principal = { actorId: "lead", projectIds: [projectId], permissions: ["read", "write", "review"] };
+  const workflow = new WorkflowService({ uow: new PostgresUnitOfWork(pool), clock: { now: () => new Date(clock).toISOString() }, ids: { next: randomUUID },
+    hasher: { hash: (value: string) => createHash("sha256").update(value).digest("hex") } });
+  const applied = async (command: Record<string, unknown>) => { const r = await workflow.execute(lead, { ...command, projectId, operationId: randomUUID() } as never); assert.equal(r.status, "applied", JSON.stringify(r)); return r; };
+  await applied({ type: "project.create", title: "Ready after dependency" });
+  const owner = fixtureRoleId("dependency-owner"); await seedFixtureRole(pool, projectId, owner);
+  const errors: unknown[] = [];
+  const pump = new TaskAttentionPump({ pool, projects: async () => [projectId], canWrite: () => true, now: () => new Date(clock).toISOString(), onError: error => errors.push(error), pollIntervalMs: 24 * hour });
+  const makeTask = async (title: string) => { const taskId = randomUUID(); await applied({ type: "task.create", taskId, title, content: `# ${title}`, acceptance: "Result", owner }); return taskId; };
+  const open = async (taskId: string) => (await pool.query(`SELECT 1 FROM task_attention_item WHERE project_id=$1 AND task_id=$2 AND state='open'`, [projectId, taskId])).rowCount;
+  const evaluate = async (at: number) => { clock = at; await pump.tick(); assert.deepEqual(errors, [], "no evaluation error"); };
+
+  const prerequisite = await makeTask("Prerequisite");
+  const dependent = await makeTask("Waits for the prerequisite");
+  await pool.query(`INSERT INTO task_dependency(project_id,task_id,depends_on_task_id,actor_id,reason,created_at) VALUES($1,$2,$3,'lead','needs it',$4)`, [projectId, dependent, prerequisite, new Date(T0).toISOString()]);
+  await pool.query(`INSERT INTO task_dependency_head(project_id,task_id,version,updated_at) VALUES($1,$2,1,$3)`, [projectId, dependent, new Date(T0).toISOString()]);
+  // Blocked for five hours: never reminded as ready.
+  await evaluate(T0 + 5 * hour);
+  assert.equal(await open(dependent), 0, "blocked on its dependency, not ready");
+  // The dependency is accepted and closed at T0+5h.
+  const doneAt = new Date(T0 + 5 * hour).toISOString();
+  const revision = (await pool.query("SELECT current_revision_id FROM task WHERE project_id=$1 AND task_id=$2", [projectId, prerequisite])).rows[0].current_revision_id;
+  const deliveryId = randomUUID();
+  await pool.query(`INSERT INTO delivery(project_id,delivery_id,task_id,task_revision_id,artifact_ref,artifact_revision,content_hash,technical_result,technical_evidence,reason,actor_id,created_at)
+    VALUES($1,$2,$3,$4,'fixture:report','r1',$5,'passed','fixture','delivery','author',$6)`, [projectId, deliveryId, prerequisite, revision, "a".repeat(64), doneAt]);
+  await pool.query(`INSERT INTO task_closure(project_id,closure_id,task_id,task_revision_id,delivery_id,acceptance_result,acceptance_evidence,reason,actor_id,created_at)
+    VALUES($1,$2,$3,$4,$5,'met','evidence','close','lead',$6)`, [projectId, randomUUID(), prerequisite, revision, deliveryId, doneAt]);
+  // One minute and just under two hours after it became ready: not yet. (Counted from creation it would be 5 hours: a false reminder.)
+  await evaluate(T0 + 5 * hour + 60_000);
+  assert.equal(await open(dependent), 0, "ready for one minute: no reminder");
+  await evaluate(T0 + 7 * hour - 60_000);
+  assert.equal(await open(dependent), 0, "ready for 1h59: no reminder");
+  // Two hours after it became ready, still undispatched: now.
+  await evaluate(T0 + 7 * hour + 60_000);
+  assert.equal(await open(dependent), 1, "ready for 2h01 and still undispatched: reminded");
+});

@@ -587,6 +587,15 @@ function taskTiming(row: QueryResultRow, observedAt: string): LeaderWorkTaskTimi
       row.latest_run_id ? { kind: "run", id: row.latest_run_id } : null);
   }
   let current = getActive()!;
+  // A Task that waits to be dispatched is "ready" from the moment it could be dispatched. One that was blocked on a dependency is not ready until the last
+  // dependency is accepted: its creation and the blocked hours are not time spent ready and undispatched, so the interval starts again at that moment.
+  if (["unassigned", "awaiting_ack", "awaiting_run", "rework"].includes(current.stage) && current.startedAt) {
+    const dependencies = (row.dependency_facts ?? []) as Array<{ acceptanceSatisfied?: boolean; satisfiedAt?: string | null }>;
+    if (dependencies.length && dependencies.every(dependency => dependency.acceptanceSatisfied)) {
+      const readyAt = dependencies.map(dependency => validTime(dependency.satisfiedAt)).filter((value): value is string => !!value).sort().at(-1);
+      if (readyAt && Date.parse(readyAt) > Date.parse(current.startedAt)) current = { ...current, startedAt: readyAt };
+    }
+  }
   const closedAt = getRound()?.endedAt;
   // An explicit release handoff may follow Task closure. It is a current external
   // wait, while the Task round's total still ends at the immutable closure time.
@@ -919,6 +928,8 @@ export async function readLeaderWorkTasks(db: Database, projectId: string, query
       LEFT JOIN LATERAL (
         SELECT jsonb_agg(jsonb_build_object('taskId',d.depends_on_task_id,'title',dt.title,'state',dt.state,
           'currentRevisionId',dt.current_revision_id,'actorId',d.actor_id,'reason',d.reason,'createdAt',d.created_at,
+          'satisfiedAt',(SELECT c.created_at FROM task_closure c WHERE c.project_id=d.project_id AND c.task_id=d.depends_on_task_id
+              AND c.task_revision_id=dt.current_revision_id ORDER BY c.created_at LIMIT 1),
           'acceptanceSatisfied',EXISTS(SELECT 1 FROM task_closure c
             WHERE c.project_id=d.project_id AND c.task_id=d.depends_on_task_id
               AND c.task_revision_id=dt.current_revision_id)
