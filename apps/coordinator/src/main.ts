@@ -95,6 +95,7 @@ import { OrdinaryRunSubmissionService, leaseCheckedUnitOfWork } from "./ordinary
 import { createOrdinaryRunSealer } from "./ordinary-run-submission/seal.js";
 import { OrdinaryRunSealPump } from "./ordinary-run-submission/pump.js";
 import { resolveLineRecipient } from "./session-line/recipient.js";
+import { messageErrorLine } from "./session-messages/error-line.js";
 import { throttledLog } from "./log-throttle.js";
 import { materialCliRecipientMatches, createReserveRecipientCheck, requireOrdinaryRecipient } from "./runtime/recipient-preflight.js";
 import { createMessageExecutionReader } from "./session-messages/execution-capability.js";
@@ -786,7 +787,12 @@ const messagePump = runner ? new SessionMessagePump({ service: messageService, r
       }
     }
     return businessBeforeMessage(message);
-  }, onError: () => reconciliationLog("Session message needs reconciliation; inspect its original saved processing record.") }) : null;
+  }, onError: (error, message) => {
+    // The line names the error code, message, Session and project; identical lines (same message, same code) are written once a minute.
+    // A message that only waits (Session running, provider paused, grant missing) is not an error and writes nothing.
+    const line = messageErrorLine(error, message);
+    if (line) reconciliationLog(line);
+  } }) : null;
 const connectorGateway = integrations.messageConnectors ? new WechatGatewayClient({
     executable: integrations.messageConnectors.gateway.executable,
     configPath: integrations.messageConnectors.gateway.configPath,

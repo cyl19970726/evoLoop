@@ -378,6 +378,14 @@ node --import tsx tests/manual/session-compaction-e1.ts
 
 协调器在运行时启用（`runtime.enabled`）后运行队伍调度程序（轮询间隔沿用 `residentQueue.pollIntervalMs`，默认 2 秒）。它只推进由 Leader 凭据控制的队伍，每一步都是普通命令，操作 ID 由队伍项和尝试次数决定，重启后重放不会重复开 Run。队伍项、事件和 `QUEUED_IN_SESSION_LINE` 的含义见 [Session 运行时](../architecture/session-runtime.md#session-队伍dec-045-q1)。迁移 087 新增 `session_line`、`session_line_entry`、`session_line_event`、`task_assignment_confirmation`；不需要改私有配置，**接收者解析规则（队伍写 assignment 的对象）**：队伍项的接收者必须是该 Session 实际签署交付的业务身份，不再按 Role 猜。顺序是：①该 Session 自己的 `runtime.materialCli` 条目（`sessionId` 与它的原生 actor `sessionActorId` 都匹配，条目的 `cliActorId` 就是接收者）；②只有当这个 Role 恰好只有一个未关闭的 Session 时，才用 Role 级 `materialCli` 条目或 `residentQueue.roleActors`（单 Session 的旧配置照常工作）；③否则**在写任何 assignment、确认请求或 Run 之前**把这一项挂起（`RECIPIENT_UNAVAILABLE`），原因点名该 Session 并写明要补的配置（该 Session 的 `materialCli` 条目）。结果还必须是当前项目 writer。同一 Role 下有开发、验收、验收 2 等多个身份不同的 Session 时，每个 Session 都要有自己的 `materialCli` 条目；缺了不会改用别人的身份，也不会产生 `RECIPIENT_UNBOUND` 预检失败的 Run。测试：`apps/coordinator/test/session-line-recipient.test.ts`、`packages/adapter-postgres/test/session-line.test.ts`。
 
+## 消息泵日志与关闭的恢复门
+
+**消息泵的错误日志。** 服务 stderr 里的 `Session message needs reconciliation` 现在写成一行带原因的话：`code=错误码 message=消息ID session=SessionID project=项目ID state=消息状态 error=错误自己的摘要（最多 200 字、去掉换行）`。错误码是业务错误的 code、原生 JSON-RPC 错误（如 `RuntimeServerError(-32600)`）或错误类名。行里没有消息正文、令牌或配置值。同一条消息的同一个错误码一分钟内只写一行，之后那一行会写明期间压下了几次；另一条消息或另一个错误码各有自己的行。只是在等的消息（Session 在运行、排空中、模型服务暂停、授权缺失、预算用尽、本地正在发送：`SESSION_BUSY`、`PROVIDER_HELD`、`MESSAGE_GRANT_MISSING`、`MESSAGE_BUDGET_EXHAUSTED`、`SESSION_NOT_READY`、`MESSAGE_NOT_QUEUED`、`SESSION_INPUT_BUSY`、`RuntimeLocalBusyError`）不是错误，不写日志。
+
+**每秒一条的那个错误。** 排在运行中回合后面的消息不会被泵遍历（待处理列表只含能开始或正在处理的消息），所以每秒一条并不来自“正在排队的消息”。每个 tick 对每条正在处理的消息都会读一次原生历史（`listTurns`、`listItems`），这里抛出的错误会进日志；有两条在运行的消息就是每秒两次尝试。已读代码能指出的候选是：原生线程刚开的第一个回合在历史还没物化时 `thread/turns/list` 返回 -32600（直接输入的对账代码里有同样的处理注释）。这只是推断，没有在正式实例上确认：新日志会直接写出错误码和消息，发布后看第一行就能知道。
+
+**关闭的恢复门。** 恢复门不是 `open`、更新时间已超过 30 分钟（一轮 Leader 安排和一次正常恢复通常都比这短；再短会把刚停下一轮后的正常恢复也算进来），并且有 owned 消息排在它后面时，`work board` 的 `awaitingLeader` 里出现一项 `kind=recovery_gate`：`id` 是 Session，`title` 写职责、阶段和排队条数，`waitingOn` 是最近一次为这个门做过恢复决定的身份（`{kind:"actor", id}`），没有人决定过时是 `{kind:"reviewer", id:null}`（任一有复核权限的身份可以执行 `runtime.session.recovery.resume`）。这一项每次读取时从门和队列算出：门重新打开、或后面不再有排队消息，它就没有了；`--brief` 输出里带 `waitingOn`。Leader 每轮读 `work board --brief`，定时代班读同一份，所以不需要另外的通知。
+
 ## 调度板与调度事件流（Q2，迁移 105）
 
 **数据从哪来。** 迁移 105 建 `sched_event` 表，并在既有表上挂 AFTER 触发器：事件与引起它的状态变化在同一个事务里写一小行，应用代码的写入路径没有改动，也没有第二次写入。触发器取与 `leader_work_change` 相同的项目锁，所以同一项目里序号不会乱序提交。上线要先看发布顺序：105 不得早于 104（通知分级）等更小的号进入正式库；迁移只加表、函数和触发器，不改既有行为。回退：删除 `sched_event_*` 触发器即停止写入，表和已有事件可留。

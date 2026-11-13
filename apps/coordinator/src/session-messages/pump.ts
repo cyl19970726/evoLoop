@@ -63,7 +63,7 @@ export interface SessionMessagePumpDeps {
   canStart(message:SessionMessageRecord):Promise<boolean>;
   /** Shared in-process admission with direct input; absent only in isolated tests and callers. */
   lock?:SessionSteerLock;
-  canWrite():boolean;pollIntervalMs:number;onError(error:unknown):void;
+  canWrite():boolean;pollIntervalMs:number;onError(error:unknown,message?:SessionMessageRecord):void;
 }
 /** One message at a time per owned thread; only the original operation marker can heal an unknown start. */
 export class SessionMessagePump {
@@ -91,7 +91,7 @@ export class SessionMessagePump {
       this.nextOffset.set(projectId,page.length<pageLimit||!Number.isSafeInteger(nextOffset)?0:nextOffset);
       for(const message of page){
         processed++;
-        try{await this.process(message);}catch(error){this.deps.onError(error);}
+        try{await this.process(message);}catch(error){this.deps.onError(error,message);}
       }
     }
   }

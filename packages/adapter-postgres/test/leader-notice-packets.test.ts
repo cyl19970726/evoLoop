@@ -793,4 +793,47 @@ test("Q2 defect 52eb5ecf: write latency under concurrent writers — the per-pro
   const line = (r: typeof withTrigger) => `p50 ${r.p50.toFixed(2)} ms, p95 ${r.p95.toFixed(2)} ms, ${r.perSecond.toFixed(0)} commits/s`;
   console.log(`Q2 concurrent writes (${writers} writers x ${each}, one transaction per insert): with the event trigger and its project lock: ${line(withTrigger)}; without: ${line(without)}`);
   assert.ok(withTrigger.p95 < 250, `p95 with the lock ${withTrigger.p95.toFixed(1)} ms`);
+
+// ---- defect d6dd0a1e: the message pump's log and the closed recovery gate ----
+test("d6dd0a1e: a message queued behind a running Turn is not an error: the pump logs nothing for it while the first Turn runs", async () => {
+  await reset();
+  const first = await humanPost("Runs for a while");
+  await messagePump.tick();
+  assert.equal((await messageRow(first)).state, "processing");
+  await humanPost("Queued behind the running Turn");
+  for (let i = 0; i < 6; i++) await messagePump.tick();
+  assert.deepEqual(errors, [], "the pump's onError is never called for a message that only waits");
+  finishTurn(`turn-${turns.size}`); await messagePump.tick(); await messagePump.tick();
+  finishTurn(`turn-${turns.size}`); await messagePump.tick();
+});
+
+test("d6dd0a1e: a recovery gate closed 30 minutes with a message behind it is an attention item with who can resume it; it goes when the gate opens or nothing waits", async () => {
+  const { readWorkBoard } = await import("../src/work-board.ts");
+  await reset();
+  const itemOf = async () => (await readWorkBoard(pool, p)).awaitingLeader.filter(i => i.kind === "recovery_gate" && i.id === sessionA);
+  const close = (minutesAgo: number) => pool.query(`UPDATE session_recovery_gate SET phase='blocked',updated_at=now()-make_interval(mins=>$2),version=version+1 WHERE project_id=$1 AND session_id=$3`, [p, minutesAgo, sessionA]);
+  await close(31);
+  assert.deepEqual(await itemOf(), [], "a closed gate with nothing queued behind it is not an item");
+  const queued = await humanPost("Waits behind the closed gate");
+  let items = await itemOf();
+  assert.equal(items.length, 1);
+  assert.equal(items[0]!.state, "blocked"); assert.match(items[0]!.title ?? "", /超过 30 分钟，1 条消息排在后面/);
+  assert.deepEqual(items[0]!.waitingOn, { kind: "reviewer", id: null }, "nobody has decided for this gate yet: any reviewer can resume it");
+  await pool.query(`INSERT INTO session_recovery_decision(project_id,decision_id,session_id,kind,expected_gate_version,cause_id,evidence_ref,actor_id,reason,created_at)
+    VALUES($1,$2,$3,'resume',1,gen_random_uuid(),'test:evidence','requirements-claude-agent','earlier decision',now()-interval '2 hours')`, [p, randomUUID(), sessionA]);
+  items = await itemOf();
+  assert.deepEqual(items[0]!.waitingOn, { kind: "actor", id: "requirements-claude-agent" }, "waiting on the identity that last decided for this gate");
+  await close(5);
+  assert.deepEqual(await itemOf(), [], "a gate closed only 5 minutes is not yet an item");
+  await close(45);
+  assert.equal((await itemOf()).length, 1);
+  await pool.query("UPDATE session_recovery_gate SET phase='open',version=version+1 WHERE project_id=$1 AND session_id=$2", [p, sessionA]);
+  assert.deepEqual(await itemOf(), [], "the gate reopened: the item is gone");
+  await close(45);
+  await pool.query("ALTER TABLE session_message DISABLE TRIGGER USER");
+  await pool.query("UPDATE session_message SET state='cancelled',version=version+1 WHERE project_id=$1 AND message_id=$2", [p, queued]);
+  await pool.query("ALTER TABLE session_message ENABLE TRIGGER USER");
+  assert.deepEqual(await itemOf(), [], "nothing waits behind the gate any more");
+  await pool.query("UPDATE session_recovery_gate SET phase='open',version=version+1 WHERE project_id=$1 AND session_id=$2", [p, sessionA]);
+
 });
