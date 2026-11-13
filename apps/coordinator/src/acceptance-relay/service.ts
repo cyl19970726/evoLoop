@@ -6,7 +6,7 @@ import { createHash } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import type { Principal, RuntimeSessionRecord } from "@evoloop/contracts";
 import { DomainError } from "@evoloop/contracts/ports";
-import { type AcceptanceArrangeInput, type AcceptanceCapacityView } from "@evoloop/contracts/acceptance-relay";
+import { type AcceptanceArrangeInput, type AcceptanceCapacityView, type AcceptanceReleaseInput } from "@evoloop/contracts/acceptance-relay";
 import type { WorkflowService } from "@evoloop/core";
 import type { SessionMessageService } from "@evoloop/core/session-messages";
 export interface AcceptanceRelayRecord {
@@ -359,6 +359,54 @@ export class AcceptanceRelayService {
       }
       await client.query("COMMIT");
     }catch(error){await client.query("ROLLBACK");throw error;}finally{client.release();}
+  }
+
+  /**
+   * Release an effective arrangement that can no longer be satisfied: one that is blocked, or one whose recipient recorded something other than use
+   * (the Delivery was checked again, by another arrangement, later). It needs review authority and a reason, which is kept. It is refused for the last
+   * effective arrangement of the Delivery's stage (closure must still be governed by someone's recorded use), for one already satisfied (that is evidence,
+   * not an obstacle) and while its message is already running.
+   */
+  async release(principal: Principal, input: AcceptanceReleaseInput): Promise<{ relayId: string; state: "released"; version: number }> {
+    if (!principal.projectIds.includes(input.projectId) || !principal.permissions.includes("review"))
+      throw new DomainError("FORBIDDEN", "Releasing an acceptance arrangement requires project review authority");
+    const client = await this.deps.pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [input.projectId]);
+      await client.query("SELECT task_id FROM task WHERE project_id=$1 AND task_id=$2 FOR UPDATE", [input.projectId, input.taskId]);
+      const prior = (await client.query("SELECT * FROM task_acceptance_relay_release WHERE project_id=$1 AND operation_id=$2", [input.projectId, input.operationId])).rows[0];
+      if (prior) {
+        if (prior.relay_id !== input.relayId || prior.actor_id !== principal.actorId || prior.reason !== input.reason)
+          throw new DomainError("OPERATION_REUSED", "This operation released another arrangement or with another reason");
+        await client.query("COMMIT");
+        return { relayId: input.relayId, state: "released", version: Number(prior.from_version) + 1 };
+      }
+      const item = required((await client.query("SELECT * FROM task_acceptance_relay WHERE project_id=$1 AND relay_id=$2 FOR UPDATE", [input.projectId, input.relayId])).rows[0] ?? null, "acceptance arrangement");
+      if (item.task_id !== input.taskId) throw new DomainError("TARGET_MISMATCH", "Arrangement belongs to another Task");
+      if (item.version !== input.expectedVersion) throw new DomainError("ACCEPTANCE_CHANGED", "Acceptance arrangement changed", item.version);
+      if (["superseded", "released"].includes(item.state)) throw new DomainError("ACCEPTANCE_NOT_EFFECTIVE", "This arrangement is already out of effect");
+      const satisfied = (await client.query(`SELECT 1 FROM task_acceptance_observation_link l JOIN consumer_observation o ON o.project_id=l.project_id AND o.observation_id=l.observation_id
+        WHERE l.project_id=$1 AND l.relay_id=$2 AND o.result='used' AND o.delivery_id=$3 AND o.observer=$4`, [input.projectId, input.relayId, item.delivery_id, item.recipient_actor_id])).rows[0];
+      if (satisfied) throw new DomainError("ARRANGEMENT_SATISFIED", "An arrangement whose recipient recorded use is evidence and is not released");
+      const others = (await client.query(`SELECT 1 FROM task_acceptance_relay WHERE project_id=$1 AND task_id=$2 AND delivery_id=$3 AND stage=$4 AND relay_id<>$5
+        AND state NOT IN ('superseded','released') LIMIT 1`, [input.projectId, input.taskId, item.delivery_id, item.stage, input.relayId])).rows[0];
+      if (!others) throw new DomainError("LAST_ARRANGEMENT", "The last effective arrangement of this stage cannot be released: closure still needs a recorded use");
+      if (item.message_id) {
+        const message = (await client.query("SELECT state FROM session_message WHERE project_id=$1 AND message_id=$2 FOR UPDATE", [input.projectId, item.message_id])).rows[0];
+        if (message && !["queued", "cancelled", "failed", "blocked"].includes(message.state))
+          throw new DomainError("ACCEPTANCE_IN_FLIGHT", "A started or unknown acceptance message must settle before the arrangement is released");
+        if (message && ["queued", "blocked"].includes(message.state))
+          await client.query("UPDATE session_message SET state='cancelled',version=version+1,blocked_reason='Acceptance arrangement released',updated_at=now() WHERE project_id=$1 AND message_id=$2 AND state IN ('queued','blocked')", [input.projectId, item.message_id]);
+      }
+      await client.query("UPDATE task_acceptance_relay SET state='released',version=version+1,blocked_reason=$3,updated_at=now() WHERE project_id=$1 AND relay_id=$2",
+        [input.projectId, input.relayId, `Released: ${input.reason}`.slice(0, 4000)]);
+      await client.query(`INSERT INTO task_acceptance_relay_release(project_id,relay_id,operation_id,actor_id,reason,from_state,from_version,released_at) VALUES($1,$2,$3,$4,$5,$6,$7,now())`,
+        [input.projectId, input.relayId, input.operationId, principal.actorId, input.reason, item.state, item.version]);
+      await client.query("COMMIT");
+      return { relayId: input.relayId, state: "released", version: item.version + 1 };
+    } catch (error) { await client.query("ROLLBACK"); throw error; }
+    finally { client.release(); }
   }
 
   /** Links an existing workflow observation; the actor credential and saved native Turn are distinct evidence. */

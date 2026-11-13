@@ -308,6 +308,17 @@ node --import tsx tests/manual/session-compaction-e1.ts
 
 业务 Run 的范围变了就叫停，不要等它做完再返工：`command schema runtime.run.stop` 取结构，带 Run 的当前版本和理由，用 `command run FILE` 提交；身份要有 review 权限并持有该 Session 的精确执行授权，原生运行时离线时也能提交（未派发的 Run 在数据库里直接判失败，运行中的由 runner 在运行时恢复后中断）。提交后回读 Run：`stopRequestedAt` 已有、`interruptRequested` 为真表示等运行时中断；终态（`interrupted` 或 `failed`）由运行时观察确认，在此之前仍算未结束，Task 上不能再派新的 Run。用这个 Run 再提交会得到 `RUN_STOPPED`，叫停前已签的意图作废，不会产生交付。停止不会关恢复门，也没有失败通知，只有一条 `run.stopRequested` 运行事件。结果未知的 Run 也可以叫停：标记立即生效，有已知 Turn 的会被中断，Run 仍是 `unknown`，直到读回终态；读回终态后，被它关闭的恢复门自动打开（队列认领持有的门除外）。被叫停作废的排队消息带持久的“被取代”标记，选取与准入都排除，发送人取消或 `session.message.confirmSuperseded` 确认后才重新投递。
 
+## 处理关不掉的 Task：旧的或卡住的验收接力（迁移 109）
+
+`task.close` 被 `SQLSTATE 23514 effective acceptance arrangement lacks linked consumer use` 拒绝，说明同一交付上还有一条有效接力没有已链接的 used。先读这个 Task 的接力（`work acceptance TASK`，或 `get /api/projects/PROJECT/tasks/TASK/acceptance-relay`），确认哪条是旧的（接收者当时记 notUsed，后来有另一条接力记了 used）或卡住的（`blocked`），再用 `request acceptance.release` 逐条释放（需要 review 权限、写明理由；同一阶段至少要留下另一条有效接力，否则拒绝），释放后重试 `task.close`。
+
+发布迁移 109 后对两个正式 Task 的处理（**不做迁移里的一次性数据修复**：哪条过时是 Leader 的判断，理由要留在记录里）：
+
+- `d596d7f6`：交付 1f21590f 上的接力 807c9510（11-11 18:03，当时记 notUsed，因为 #322 还没合并）释放，理由写“已由 aad18785（11-11 21:16，正式补核，记 used）取代，按需求 Session 的决定”；然后 `task.close`。
+- `dcd01bb1`：接力 964982d7（候选，blocked：`MESSAGE_BINDING_CHANGED`）释放，理由写“消息绑定的 Task 修订与交付修订不一致；已由新接力取代并记 used”；然后 `task.close`。
+
+两条都只用新命令，不改库。每次释放先读 `version`（`expectedVersion`），释放后读回接力状态为 `released` 与 `task_acceptance_relay_release` 里的理由；这一步需要发布后由 Leader 执行，我没有在正式实例上做。
+
 ## 已知缺口
 
 - **导入通知没有正式命令。** 迁移导入的 Leader 通知只能由维护者直接标记，没有权限检查和操作回执（见[迁移之后先处理导入的通知](#迁移之后先处理导入的通知)）。

@@ -374,6 +374,8 @@ Task 协作通道把 question/answer/progress/blocker/handoff/result 固定到�
 - **临时 Session 退役。** 标为临时的 Session 进入 `closing` 前，必须有一条匹配的 `session_retirement_decision`（理由、交接证据、所见版本、Role 与原 Thread）；它名下若还有未释放的未结束 Task 分派或未结束的验收安排，数据库拒绝关闭。Leader 核业务责任，引擎核运行状态。
 - **容量视图。** 只读的容量视图按 Session 汇总在途 Run、排队消息、队列条目、未结束分派和验收安排，是 Leader 做编制判断的输入；它只反映数据库里的持久占用，不证明原生写入权。
 
+**释放不再可能满足的接力（迁移 109）。** 关闭闸门（迁移 070）要求 Task 当前交付上、governing 阶段（有正式接力就看正式，否则看候选）的**每一条有效接力**都有已链接、接收者匹配的 used。旧的（接收者当时记了 notUsed，之后又有新的接力记了 used）或被阻塞的（如 `MESSAGE_BINDING_CHANGED`）接力一直处在有效状态，之前没有服务路径把它们移出去（重新指派 `supersedesRelayId` 只能取代没有被读、没有链接观察的接力）。`acceptance.release`（review 权限，`POST …/tasks/:taskId/acceptance-relay/:relayId/release`，CLI `request acceptance.release`）把这样的接力置为 `released`，理由、操作者和原状态进不可改的 `task_acceptance_relay_release`。规则不放松：同一交付同一阶段必须还剩另一条有效接力（否则 `LAST_ARRANGEMENT`，阶段里最后一条没有 used 时仍拒绝关闭）；接收者已记 used 的不释放（`ARRANGEMENT_SATISFIED`，那是证据）；消息已在运行时拒绝；有正式接力时，候选的 used 仍不能代替它。选“有权限的释放命令”而不是“再建时自动取代”，因为旧接力常常已经有链接的观察（不能被重新指派取代），而且哪些旧接力过时是 Leader 的判断，要留理由。
+
 **“直接验收”与在途 Task。** 验收目标 `named_agent` 由 Task `4acdd4d2` 实现（迁移 095）：难验收的 Task 把承担难验收的那个验收身份写成消费者，不经验收接力；新建 Task 不再把需求 Session 写成消费者，常规验收写受管验收身份并由 Leader 安排接力。消费者一时改不了的在途 Task，以及需求 Session 自己的 PR，由 Leader 另建“合并前验收”或“正式验证”Task 交验收 Session 完成，需求 Session 只照报告结论签字（DEC-046，试行）。
 
 ## 6. StageReview：从交付到下一阶段
