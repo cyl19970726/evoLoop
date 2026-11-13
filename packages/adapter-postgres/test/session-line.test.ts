@@ -595,3 +595,72 @@ test("follow-up 4: the pump reads only unfinished entries; finished old ones are
   const all = (await workflow.listSessionLineEntries(lead, p, session, true)).map(e => e.taskId);
   assert.ok(all.includes(done) && all.includes(gone), "the full history is still there for the workbench");
 });
+
+test("Q2 defect 52eb5ecf: the work board and the event stream follow the Session line — append, move, remove, suspend, resume, start, end — and the measures are not zero", async () => {
+  const { readSchedEvents, readWorkBoard } = await import("../src/work-board.ts");
+  const { computeBoardMetrics } = await import("../../../apps/coordinator/src/work-board/metrics.ts");
+  for (const entry of await entries()) await apply({ type: "line.remove", projectId: p, operationId: randomUUID(), entryId: entry.id, expectedVersion: entry.version, reason: "Q2 scenario starts from an empty line" });
+  const startSeq = (await readSchedEvents(pool, p, { limit: 1 })).head;
+  const startedAt = new Date().toISOString();
+  const busy = await newTask("Q2 busy", true);
+  const busyRun = randomUUID();
+  await apply({ type: "runtime.run.reserve", projectId: p, operationId: randomUUID(), runId: busyRun, taskId: busy, sessionId: session,
+    expectedVersion: (await task(busy)).version, input: "Current work" });
+  const a = await newTask("Q2 line A"), b = await newTask("Q2 line B"), c = await newTask("Q2 line C");
+  const ready = (board: Awaited<ReturnType<typeof readWorkBoard>>) => board.readyNotQueued.map(t => t.taskId);
+  const baseline = (await readWorkBoard(pool, p)).graph.counts.queued!;
+  const ours = (m: { queue: Array<{ taskId: string }> }) => m.queue.map(q => q.taskId).filter(id => [a, b, c].includes(id));
+  assert.ok(ready(await readWorkBoard(pool, p)).includes(a), "before it is in a line, a ready Task is listed as ready and not queued");
+  await append(a); await append(b); await append(c);
+  let board = await readWorkBoard(pool, p);
+  let mine = board.sessions.find(s => s.sessionId === session)!;
+  assert.deepEqual(ours(mine), [a, b, c], "the board's queue is the Session line, in order");
+  assert.ok(mine.queue.filter(q => [a, b, c].includes(q.taskId)).every(q => q.state === "queued" && q.source === "lead" && q.waitedSeconds >= 0));
+  assert.equal(board.graph.counts.queued, baseline + 3); assert.equal(board.graph.counts.running, 1);
+  assert.ok(![a, b, c].some(id => ready(board).includes(id)), "a Task that waits in a line is not 'ready but in no line'");
+  assert.ok(mine.current?.kind === "run", "the Session is busy with the Run");
+  const entryC = await entryOf(c);
+  await apply({ type: "line.move", projectId: p, operationId: randomUUID(), entryId: entryC.id, expectedVersion: entryC.version, direction: "forward" });
+  board = await readWorkBoard(pool, p); mine = board.sessions.find(s => s.sessionId === session)!;
+  assert.deepEqual(ours(mine), [a, c, b], "a move shows");
+  const entryB = await entryOf(b);
+  await apply({ type: "line.remove", projectId: p, operationId: randomUUID(), entryId: entryB.id, expectedVersion: entryB.version, reason: "no longer needed" });
+  board = await readWorkBoard(pool, p); mine = board.sessions.find(s => s.sessionId === session)!;
+  assert.deepEqual(ours(mine), [a, c], "a removed entry leaves the board's queue");
+  assert.equal(board.graph.counts.queued, baseline + 2); assert.ok(ready(board).includes(b), "and its Task is ready again");
+
+  await finishRun(busyRun);
+  await settle();
+  board = await readWorkBoard(pool, p); mine = board.sessions.find(s => s.sessionId === session)!;
+  assert.equal(mine.queue.find(q => q.taskId === a)?.state, "claimed", "the head's turn has come: it is being started");
+
+  const page = await readSchedEvents(pool, p, { after: startSeq, limit: 500 });
+  const lineEvents = page.items.filter(e => e.subject.kind === "line_entry");
+  const kinds = lineEvents.map(e => e.kind);
+  for (const kind of ["task.queued", "task.reordered", "task.removed", "task.turn"]) assert.ok(kinds.includes(kind), `${kind} in ${kinds.join(",")}`);
+  assert.equal(lineEvents.filter(e => e.kind === "task.queued").length, 3);
+  assert.ok(lineEvents.find(e => e.kind === "task.queued")!.from === "lead", "the appended entry names who added it");
+  assert.ok(lineEvents.every(e => e.sessionId === session && e.taskId));
+  const metrics = computeBoardMetrics(page.items, startedAt, new Date(Date.now() + 1000).toISOString());
+  const lead_ = metrics.queueWait.find(w => w.source === "lead");
+  assert.ok(lead_ && lead_.count >= 1 && lead_.medianSeconds !== null, `queue wait by source is measured: ${JSON.stringify(metrics.queueWait)}`);
+  const idle = metrics.sessionIdle.find(s => s.sessionId === session);
+  assert.ok(idle && idle.idleWithWorkSeconds > 0, `idle with work waiting is measured: ${JSON.stringify(metrics.sessionIdle)}`);
+});
+
+test("Q2 defect 52eb5ecf: a suspended entry is held on the board and an event, resuming it is an event too", async () => {
+  const { readSchedEvents, readWorkBoard } = await import("../src/work-board.ts");
+  for (const entry of await entries()) await apply({ type: "line.remove", projectId: p, operationId: randomUUID(), entryId: entry.id, expectedVersion: entry.version, reason: "Q2 scenario starts from an empty line" });
+  const start = (await readSchedEvents(pool, p, { limit: 1 })).head;
+  const t = await newTask("Q2 suspended"); await append(t);
+  const entry = await entryOf(t);
+  await pool.query("UPDATE session_line_entry SET state='suspended',suspend_reason='AUTHORIZATION_MISSING',version=version+1,updated_at=now() WHERE entry_id=$1", [entry.id]);
+  const board = await readWorkBoard(pool, p);
+  const item = board.sessions.find(s => s.sessionId === session)!.queue.find(q => q.taskId === t)!;
+  assert.equal(item.state, "held"); assert.equal(item.holdCode, "AUTHORIZATION_MISSING");
+  assert.ok(board.graph.counts.held >= 1);
+  await pool.query("UPDATE session_line_entry SET state='queued',suspend_reason=NULL,version=version+1,updated_at=now() WHERE entry_id=$1", [entry.id]);
+  const kinds = (await readSchedEvents(pool, p, { after: start, limit: 500 })).items.filter(e => e.taskId === t && e.subject.kind === "line_entry").map(e => e.kind);
+  assert.deepEqual(kinds, ["task.queued", "task.held", "task.resumed"]);
+  await pool.query("UPDATE session_line_entry SET state='withdrawn',withdrawn_reason='cleanup',version=version+1 WHERE entry_id=$1", [entry.id]);
+});
