@@ -12,6 +12,9 @@ const short = (id: string) => id;
  * fields that carry nothing in the usual case (state ready, gate open) are left out. If the result still exceeds the limit, the tails of the lists are dropped and said so.
  */
 export function briefWorkBoard(board: WorkBoardSnapshot): Record<string, unknown> {
+  // A closed recovery gate with messages behind it is what the Leader must not miss: such items go first and are never cut for room.
+  const leaderFirst = [...board.awaitingLeader.filter(i => i.kind === "recovery_gate"), ...board.awaitingLeader.filter(i => i.kind !== "recovery_gate")];
+  const gateCount = board.awaitingLeader.filter(i => i.kind === "recovery_gate").length;
   const build = (queueItems: number, readyItems: number, leaderItems: number, sessionItems: number) => ({
     brief: true, observedAt: board.observedAt, eventSeq: board.eventSeq, counts: board.graph.counts,
     sessions: board.sessions.slice(0, sessionItems).map(s => ({
@@ -25,8 +28,8 @@ export function briefWorkBoard(board: WorkBoardSnapshot): Record<string, unknown
     sessionsOmitted: board.sessions.length > sessionItems ? board.sessions.length - sessionItems : undefined,
     ready: board.readyNotQueued.slice(0, readyItems).map(t => ({ task: short(t.taskId), title: cut(t.title, 40) })),
     readyMore: board.readyNotQueued.length > readyItems ? board.readyNotQueued.length - readyItems : undefined,
-    leader: board.awaitingLeader.slice(0, leaderItems).map(i => ({ kind: i.kind, id: short(i.id), task: i.taskId ? short(i.taskId) : undefined, title: cut(i.title, 40), state: i.state, waitingOn: i.waitingOn ? (i.waitingOn.id ?? "任一复核身份") : undefined })),
-    leaderMore: board.awaitingLeader.length > leaderItems ? board.awaitingLeader.length - leaderItems : undefined,
+    leader: leaderFirst.slice(0, Math.max(leaderItems, gateCount)).map(i => ({ kind: i.kind, id: short(i.id), task: i.taskId ? short(i.taskId) : undefined, title: cut(i.title, 40), state: i.state, waitingOn: i.waitingOn ? (i.waitingOn.id ?? "任一复核身份") : undefined })),
+    leaderMore: leaderFirst.length > Math.max(leaderItems, gateCount) ? leaderFirst.length - Math.max(leaderItems, gateCount) : undefined,
     full: "work board (without --brief) has every field and the full IDs",
   });
   for (const [q, r, l, s] of [[5, 20, 20, 100], [3, 10, 10, 60], [2, 5, 5, 40], [1, 3, 3, 25], [0, 0, 3, 15]] as const) {

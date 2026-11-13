@@ -143,12 +143,14 @@ export async function readWorkBoard(pool: Pool, projectId: string): Promise<Work
            JOIN role_revision rr ON rr.project_id=d.project_id AND rr.role_id=d.role_id AND rr.revision_id=d.current_revision_id
           WHERE s.project_id=g.project_id AND s.session_id=g.session_id) AS role_title,
         (SELECT x.actor_id FROM session_recovery_decision x WHERE x.project_id=g.project_id AND x.session_id=g.session_id ORDER BY x.created_at DESC LIMIT 1) AS controller
-      FROM session_recovery_gate g WHERE g.project_id=$1 AND g.phase<>'open' AND g.updated_at < now() - make_interval(mins => ${GATE_ATTENTION_MINUTES})
+      FROM session_recovery_gate g WHERE g.project_id=$1 AND g.phase='blocked' AND g.updated_at < now() - make_interval(mins => ${GATE_ATTENTION_MINUTES})
         AND EXISTS(SELECT 1 FROM session_message m WHERE m.project_id=g.project_id AND m.session_id=g.session_id AND m.target_kind='owned' AND m.state='queued')
       ORDER BY g.updated_at LIMIT 20`))
       awaiting.push({ kind: "recovery_gate", id: r.session_id, taskId: null, state: r.phase, since: iso(r.updated_at)!,
         title: `${r.role_title ?? r.session_id}：恢复门 ${r.phase} 超过 ${GATE_ATTENTION_MINUTES} 分钟，${r.queued} 条消息排在后面`,
         waitingOn: r.controller ? { kind: "actor", id: r.controller } : { kind: "reviewer", id: null } });
+    // Closed recovery gates first, in the full snapshot as in the brief.
+    awaiting.sort((a, b) => Number(b.kind === "recovery_gate") - Number(a.kind === "recovery_gate"));
     const packets = await q(`SELECT packet_id,session_id,state FROM leader_notice_packet WHERE project_id=$1 AND state IN ('building','sent','delivered','unknown','blocked')`);
     const relays = await q(`SELECT relay_id,session_id,state,(SELECT title FROM task t WHERE t.project_id=r.project_id AND t.task_id=r.task_id) AS title
       FROM task_acceptance_relay r WHERE project_id=$1 AND state IN ('pending','linked') ORDER BY created_at DESC LIMIT 100`);

@@ -127,4 +127,21 @@ test("defect 52eb5ecf: line entries wait from task.queued (or task.resumed) to t
   const m = computeBoardMetrics(events, at(0), at(300));
   assert.deepEqual(m.queueWait, [{ source: "lead", count: 1, medianSeconds: 160, p95Seconds: 160 }], "queued at 0, its turn at 160 (a hold in between does not reset the first queueing)");
   assert.equal(m.sessionIdle[0]!.idleWithWorkSeconds, 60 + 60, "waiting and idle 0-60 and 100-160; held 60-100 is not waiting");
+
+test("defect d6dd0a1e rework 2: a recovery gate item is never cut from the brief for room — 21 other waiting items do not push it out, and the brief stays within 6 KB", () => {
+  const board = snapshot(6, 3);
+  const others = Array.from({ length: 21 }, (_, i) => ({ kind: (i % 2 ? "notice" : "decision") as "notice" | "decision", id: randomUUID(), taskId: randomUUID(), title: `其它待办项 ${i} 一个相当长的标题用来占位`.repeat(2), state: "seen", since: at(0) }));
+  const gate = { kind: "recovery_gate" as const, id: randomUUID(), taskId: null, title: "模拟用户：恢复门 blocked 超过 30 分钟，2 条消息排在后面", state: "blocked", since: at(0), waitingOn: { kind: "actor" as const, id: "requirements-claude-agent" } };
+  // The gate is last in the data the brief is given: it must still come first and stay.
+  const out = briefWorkBoard({ ...board, awaitingLeader: [...others, gate] }) as { leader: Array<{ kind: string; id: string; waitingOn?: string }>; leaderMore?: number };
+  assert.equal(out.leader[0]!.kind, "recovery_gate", "gate first");
+  assert.equal(out.leader[0]!.id, gate.id); assert.equal(out.leader[0]!.waitingOn, "requirements-claude-agent");
+  assert.ok(Buffer.byteLength(JSON.stringify(out), "utf8") <= BRIEF_BYTE_LIMIT, "still within 6 KB");
+  assert.ok(out.leader.length + (out.leaderMore ?? 0) === 22, "every item is either listed or counted");
+  // Several gates are all kept, even where the tiers would have cut the list down.
+  const gates = Array.from({ length: 4 }, (_, i) => ({ ...gate, id: randomUUID(), title: `会话 ${i}：恢复门 blocked` }));
+  const many = briefWorkBoard({ ...snapshot(40, 8), awaitingLeader: [...others, ...gates] }) as { leader: Array<{ kind: string }> };
+  assert.equal(many.leader.filter(i => i.kind === "recovery_gate").length, 4, "all four gates are listed");
+  assert.ok(Buffer.byteLength(JSON.stringify(many), "utf8") <= BRIEF_BYTE_LIMIT);
+
 });
