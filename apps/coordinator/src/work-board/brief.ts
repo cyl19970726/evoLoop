@@ -25,7 +25,7 @@ export function briefWorkBoard(board: WorkBoardSnapshot): Record<string, unknown
     sessionsOmitted: board.sessions.length > sessionItems ? board.sessions.length - sessionItems : undefined,
     ready: board.readyNotQueued.slice(0, readyItems).map(t => ({ task: short(t.taskId), title: cut(t.title, 40) })),
     readyMore: board.readyNotQueued.length > readyItems ? board.readyNotQueued.length - readyItems : undefined,
-    leader: board.awaitingLeader.slice(0, leaderItems).map(i => ({ kind: i.kind, id: short(i.id), task: i.taskId ? short(i.taskId) : undefined, title: cut(i.title, 40), state: i.state })),
+    leader: board.awaitingLeader.slice(0, leaderItems).map(i => ({ kind: i.kind, id: short(i.id), task: i.taskId ? short(i.taskId) : undefined, title: cut(i.title, 40), state: i.state, waitingOn: i.waitingOn ? (i.waitingOn.id ?? "任一复核身份") : undefined })),
     leaderMore: board.awaitingLeader.length > leaderItems ? board.awaitingLeader.length - leaderItems : undefined,
     full: "work board (without --brief) has every field and the full IDs",
   });
