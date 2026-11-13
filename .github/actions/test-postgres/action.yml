@@ -11,13 +11,17 @@ runs:
         # docs/development/local-run.md#集成测试与-postgresql-锁表). 256 x 100 connections = 25.6k slots, about 4x
         # the ~19k rows that 4 simultaneous drops need, for ~10 MB of shared memory. The RAM disk is capped at 4 GB; a full run used about 1.7 GB. The default 64 x 100
         # had less than 2x headroom and failed intermittently with "out of shared memory".
+        # jit=off: the official image has JIT, the production PostgreSQL (Homebrew) does not. Once a table has statistics (autoanalyze), the work-index
+        # paging test's queries pass jit_above_cost and every one pays JIT compilation: 159 s instead of 10 s on this image (Task 6bd7f664), about one
+        # CI run in six. JIT does nothing for these small test queries.
         docker run -d --name evoloop-test-pg -p 127.0.0.1:5432:5432 \
           -e POSTGRES_USER=evoloop -e POSTGRES_PASSWORD=test-only-password -e POSTGRES_DB=evoloop_ci_test \
           --tmpfs /var/lib/postgresql:rw,size=4g \
           postgres:18.6 \
           -c fsync=off -c synchronous_commit=off -c full_page_writes=off \
           -c wal_level=minimal -c max_wal_senders=0 \
-          -c max_locks_per_transaction=256
+          -c max_locks_per_transaction=256 \
+          -c jit=off
         for attempt in $(seq 1 60); do
           # TCP check: the image's first-start initialisation only listens on a socket.
           if docker exec evoloop-test-pg pg_isready -h 127.0.0.1 -U evoloop -d evoloop_ci_test; then exit 0; fi
