@@ -241,7 +241,7 @@ export const mentionsCandidate = text => /候选/.test(text ?? "");
 // negation/failure (未 不 没 尚 暂 缺 失败 失效 拒绝), to-do/waiting (待 TODO 等待 等…读回/正式 安排), release/review wording (评审 发布前 发布成功 上线),
 // and conditions, requirements and plans about a read-back that has not been done: 后再/之后再/再签 (“读回通过后再签 used”), 需/需要/须/要求/应当 … 才
 // (“需正式实例读回通过才能关闭”), 如果/若/假如/一旦/则 (“如果正式实例读回成功则关闭”), 预计/预期/计划/拟/打算/将 (“预计正式实例读回通过”).
-const NOT_DONE = /(未|不|没|待|尚|暂|缺|失败|失效|拒绝|TODO|todo|等待|等[^，。；]{0,4}(读回|正式)|安排|评审|发布前|发布成功|上线|后再|之后再|再签|需|须|要求|应当|应该|才|如果|若|假如|一旦|则|预计|预期|计划|拟|打算|将)/;
+const NOT_DONE = /(未|不|没|待|尚|暂|缺|失败|失效|拒绝|TODO|todo|等待|等[^，。；]{0,4}(读回|正式)|安排|评审|发布前|发布成功|上线|后再|之后再|再签|需|须|要求|应当|应该|才|如果|若|假如|一旦|则|预计|预期|计划|拟|打算|将|只要|要是|希望|目标|期望|期待|争取|力求|盼|愿|以便|为了|(?:通过|成功|一致|完成)后|后签|后关|后合|后发布|之后|然后)/;
 // A read-back of the formal environment that worked: “正式” must itself qualify the environment (正式 / 正式环境 / 实例 / 数据库 / 版本 / 入口 / 站点 / 服务,
 // not 非正式, 伪正式, 准正式 and not “正式包”, “正式文档” …) and be followed directly by 读回通过/成功/一致/正常/完成/可用 or 已验证/验证通过/实测通过/实测成功.
 // “通过”, “成功” alone are not enough: “正式发布成功”, “正式：已通过评审”, “正式发布前候选已通过” are not read-backs.
@@ -254,7 +254,21 @@ const NOT_FORMAL_PLACE = /(自建|候选|沙箱|演练|本地|测试实例|预�
  * self-built/candidate/local instance. “通过”/“成功” on their own are not read-backs: “候选通过，正式发布成功”, “正式发布前候选已通过”,
  * “正式：已通过评审，读回另行安排”, “非正式实例读回成功”, “正式包在自建实例读回通过”, “正式实例读回失败”, “等正式读回”, “正式读回 TODO/缺” are not.
  */
-export const mentionsFormalReadback = text => (text ?? "").split(/[。；;，,\n]/).some(clause => FORMAL_READBACK.test(clause) && !NOT_DONE.test(clause) && !NOT_FORMAL_PLACE.test(clause));
+/**
+ * Positive evidence that the read-back was DONE: a time, a version or commit, a PR/Run/delivery id, or a command, in the same sentence.
+ * A bare “正式实例读回通过” says nothing about when, on what, or how; without it the sentence is listed.
+ */
+export const hasCompletionEvidence = sentence => /(\d{4}-\d{1,2}-\d{1,2}|\d{1,2}-\d{1,2}[ T]\d{1,2}:\d{2}|\b\d{1,2}:\d{2}(?::\d{2})?\b|\b[0-9a-f]{7,40}\b|\bv\d+(?:\.\d+)+\b|版本\s*[\w.-]+|#\d+|`[^`]+`|\b(?:npm|node|curl|gh|evoloop|psql)\s|(?:Run|run|交付|观察|operation)[\s:：]*[0-9a-f]{6,})/.test(sentence);
+
+/**
+ * Positive rule: a formal read-back counts only when a clause says the formal environment/instance/database/version was read back and it
+ * worked (FORMAL_READBACK), nothing in that clause makes it conditional, hoped for, planned, scheduled, negated or elsewhere
+ * (NOT_DONE, NOT_FORMAL_PLACE), AND the sentence carries completion evidence (hasCompletionEvidence). Anything else that mentions it —
+ * conditions (只要…就, 要是…就, 如果…则), sequencing (读回通过后签), hopes and goals (希望, 目标是, 期望), plans (预计, 计划), or a bare claim
+ * without time/version/command — is listed.
+ */
+export const mentionsFormalReadback = text => (text ?? "").split(/[。；;\n]/).some(sentence =>
+  hasCompletionEvidence(sentence) && sentence.split(/[，,]/).some(clause => FORMAL_READBACK.test(clause) && !NOT_DONE.test(clause) && !NOT_FORMAL_PLACE.test(clause)));
 
 /**
  * What to say about one closure. `hasDelivery`: the closure was decided on a Delivery, so there is an observation to read; a closure
