@@ -807,6 +807,19 @@ test("d6dd0a1e: a message queued behind a running Turn is not an error: the pump
   finishTurn(`turn-${turns.size}`); await messagePump.tick();
 });
 
+test("d6dd0a1e rework: only a blocked gate is an item; retrying, reworking, message_pending and awaiting_acceptance are normal waits; the gate item comes first in the snapshot", async () => {
+  const { readWorkBoard } = await import("../src/work-board.ts");
+  await reset();
+  await humanPost("Waits behind a gate");
+  const setPhase = (phase: string) => pool.query("UPDATE session_recovery_gate SET phase=$3,updated_at=now()-interval '45 minutes',version=version+1 WHERE project_id=$1 AND session_id=$2", [p, sessionA, phase]);
+  const gateItems = async () => (await readWorkBoard(pool, p)).awaitingLeader.filter(i => i.kind === "recovery_gate" && i.id === sessionA).length;
+  for (const phase of ["retrying", "reworking", "message_pending", "awaiting_acceptance", "open"]) { await setPhase(phase); assert.equal(await gateItems(), 0, phase); }
+  await setPhase("blocked"); assert.equal(await gateItems(), 1, "blocked");
+  const board = await readWorkBoard(pool, p);
+  assert.equal(board.awaitingLeader[0]!.kind, "recovery_gate", "first in the snapshot");
+  await setPhase("open");
+});
+
 test("d6dd0a1e: a recovery gate closed 30 minutes with a message behind it is an attention item with who can resume it; it goes when the gate opens or nothing waits", async () => {
   const { readWorkBoard } = await import("../src/work-board.ts");
   await reset();

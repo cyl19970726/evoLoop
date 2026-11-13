@@ -95,7 +95,7 @@ import { OrdinaryRunSubmissionService, leaseCheckedUnitOfWork } from "./ordinary
 import { createOrdinaryRunSealer } from "./ordinary-run-submission/seal.js";
 import { OrdinaryRunSealPump } from "./ordinary-run-submission/pump.js";
 import { resolveLineRecipient } from "./session-line/recipient.js";
-import { messageErrorLine } from "./session-messages/error-line.js";
+import { keyedThrottledLog, messageErrorEntry } from "./session-messages/error-line.js";
 import { throttledLog } from "./log-throttle.js";
 import { materialCliRecipientMatches, createReserveRecipientCheck, requireOrdinaryRecipient } from "./runtime/recipient-preflight.js";
 import { createMessageExecutionReader } from "./session-messages/execution-capability.js";
@@ -112,6 +112,8 @@ import { SessionSteerLock } from "./runtime/session-steer-lock.js";
 import { localProjectConfiguration } from "./project-configuration/local.js";
 
 const reconciliationLog = throttledLog(line => console.error(line));
+/** The message pump's errors: one line per message and error code a minute, whatever the error text says. */
+const messageErrorLog = keyedThrottledLog(line => console.error(line));
 const databaseUrl = process.env.EVOLOOP_DATABASE_URL;
 const authFile = process.env.EVOLOOP_AUTH_FILE;
 if (!databaseUrl || !authFile) throw new Error("Set EVOLOOP_DATABASE_URL and EVOLOOP_AUTH_FILE. Run migrations separately before starting.");
@@ -790,8 +792,8 @@ const messagePump = runner ? new SessionMessagePump({ service: messageService, r
   }, onError: (error, message) => {
     // The line names the error code, message, Session and project; identical lines (same message, same code) are written once a minute.
     // A message that only waits (Session running, provider paused, grant missing) is not an error and writes nothing.
-    const line = messageErrorLine(error, message);
-    if (line) reconciliationLog(line);
+    const entry = messageErrorEntry(error, message);
+    if (entry) messageErrorLog(entry.key, entry.line);
   } }) : null;
 const connectorGateway = integrations.messageConnectors ? new WechatGatewayClient({
     executable: integrations.messageConnectors.gateway.executable,

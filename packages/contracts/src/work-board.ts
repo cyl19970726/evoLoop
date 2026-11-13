@@ -47,7 +47,7 @@ export interface WorkBoardSession {
 }
 export interface WorkBoardWaitingTask { taskId: string; title: string | null; state: string; since: string }
 /**
- * A recovery gate that has been closed for GATE_ATTENTION_MINUTES with messages queued behind it (defect d6dd0a1e: a gate stayed closed for 20 hours
+ * A recovery gate that has been blocked (phase blocked: waiting for someone to resume it; retrying, reworking, message_pending and awaiting_acceptance are normal waits and are not flagged) for GATE_ATTENTION_MINUTES with messages queued behind it (defect d6dd0a1e: a gate stayed closed for 20 hours
  * with nothing to say so). The item is computed on every read from the gate and the queue, so it is there exactly while the gate is closed and
  * something waits, and it disappears when the gate reopens. `id` is the Session; `waitingOn` is who last decided for this gate (who can resume
  * it), or null when nobody has decided yet: then any reviewer can run runtime.session.recovery.resume.
