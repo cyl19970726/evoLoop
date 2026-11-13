@@ -705,3 +705,17 @@ test("thinking blocks reach the timeline in native order, unreadable ones are ma
     assert.equal(selected.entries[0]!.kind === "reasoning" && selected.entries[0]!.body, "Plan: read the task first.");
   } finally { await h.cleanup(); }
 });
+
+test("defect 3d30f7ac: the adapter asks the SDK to forward a subagent's messages, because only those carry its model (by default a subagent that answers in plain text is invisible)", async () => {
+  // Evidence: sdk.d.ts forwardSubagentText — "By default, only tool_use/tool_result blocks from subagents are emitted"; a real subagent transcript entry
+  // (type assistant, isSidechain, message.model "claude-sonnet-5-5") carries the model. The adapter keeps only that model from them, never their content.
+  const h = await setup("ok");
+  try {
+    const binding = await h.adapter.create(h.spec);
+    const operation = randomUUID();
+    const started = await h.adapter.startTurn(binding, `${marker(operation)}\nDo the task`, operation);
+    await settled(h.adapter, binding, started.id);
+    const init = (await readFile(`${join(h.root, "fake.log")}.init`, "utf8").catch(() => "")).split("\n").filter(Boolean).map(line => JSON.parse(line) as { forwardSubagentText: boolean | null });
+    assert.ok(init.length > 0 && init.every(request => request.forwardSubagentText === true), `forwardSubagentText in the initialize request: ${JSON.stringify(init)}`);
+  } finally { await h.cleanup(); }
+});

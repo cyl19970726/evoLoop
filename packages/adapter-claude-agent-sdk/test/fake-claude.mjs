@@ -152,7 +152,8 @@ lines.on("line", line => {
     if (subtype === "initialize") {
       if (process.env.FAKE_CLAUDE_LOG) appendFileSync(`${process.env.FAKE_CLAUDE_LOG}.init`, JSON.stringify({ pid: process.pid,
         skills: message.request.skills ?? null, appendSystemPrompt: message.request.appendSystemPrompt ?? null,
-        systemPromptSnapshot: message.request.systemPromptSnapshot ?? null }) + "\n");
+        systemPromptSnapshot: message.request.systemPromptSnapshot ?? null,
+        forwardSubagentText: message.request.forwardSubagentText ?? null }) + "\n");
       reply({ commands: [], agents: [], output_style: "default", available_output_styles: [], account: {},
         models: [
           { value: "claude-fake-1", displayName: "Fake One", description: "fake", supportsEffort: true, supportedEffortLevels: ["low", "high"] },

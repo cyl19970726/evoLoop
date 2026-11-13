@@ -658,6 +658,10 @@ export class ClaudeAgentSdkAdapter implements RuntimePort {
       // Readable thinking: the CLI's default display can omit thinking text. This only selects the summarized text the
       // API returns; it does not turn thinking on or change its budget, so billed thinking tokens are unchanged.
       extraArgs: { "thinking-display": "summarized" },
+      // By default the SDK forwards only a subagent's tool_use/tool_result blocks; its assistant messages (the ones that carry the model it answered
+      // with) reach this adapter only with this option. A subagent that answers in plain text, without a tool call, was invisible: subagentModels
+      // stayed empty. The adapter keeps only the model from those messages, never their content (see drive()).
+      forwardSubagentText: true,
       ...(this.options.maxTurns ? { maxTurns: this.options.maxTurns } : {}),
       ...(this.options.maxBudgetUsd ? { maxBudgetUsd: this.options.maxBudgetUsd } : {}),
     };
