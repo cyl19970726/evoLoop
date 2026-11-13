@@ -156,3 +156,31 @@ test("defect 52eb5ecf: two subscribers arriving together at a project without a 
   fail = false; const off = await broken.subscribe(projectId, { onEvents: () => undefined, onReset: () => undefined });
   assert.equal(broken.activeProjects(), 1); off();
 });
+
+// A real browser: EventSource opens `stream?after=<eventSeq>`, the server drops the connection, EventSource reconnects by itself to the same
+// URL with Last-Event-ID. Opt-in like the other browser checks (EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE).
+const playwright = process.env.EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE;
+test("browser EventSource: a dropped connection reconnects with Last-Event-ID — no repeat, no gap", { skip: !playwright && "Set EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE" }, async t => {
+  const { pathToFileURL } = await import("node:url");
+  const { chromium } = (await import(pathToFileURL(playwright!).href)).default;
+  const f = fixture({ head: 5, floor: 0 });
+  const { app, base } = await build(f);
+  const browser = await chromium.launch({ headless: true, ...(process.env.EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH ? { executablePath: process.env.EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH } : {}) });
+  t.after(async () => { await browser.close(); app.server.closeAllConnections(); await app.close(); });
+  const page = await browser.newPage();
+  await page.goto(`${base}/events?limit=1`);   // same origin as the stream
+  await page.evaluate(String.raw`(() => {
+    window.__seen = []; window.__opens = 0;
+    const source = new EventSource(location.pathname.replace(/\/events$/, "/stream") + "?after=0");
+    source.addEventListener("open", () => { window.__opens++; });
+    source.addEventListener("sched", e => window.__seen.push(Number(e.lastEventId)));
+  })()`);
+  const seen = async () => await page.evaluate("window.__seen") as number[];
+  for (let i = 0; i < 40 && (await seen()).length < 5; i++) await page.waitForTimeout(100);
+  assert.deepEqual(await seen(), [1, 2, 3, 4, 5]);
+  f.state.head = 8;
+  app.server.closeAllConnections();            // the drop: the browser must reconnect by itself
+  for (let i = 0; i < 100 && (await seen()).length < 8; i++) await page.waitForTimeout(100);
+  assert.deepEqual(await seen(), [1, 2, 3, 4, 5, 6, 7, 8], "after the automatic reconnect: 6, 7, 8 once each — not 1, 2, 3 again");
+  assert.ok(await page.evaluate("window.__opens") as number >= 2, "the connection was really reopened");
+});
