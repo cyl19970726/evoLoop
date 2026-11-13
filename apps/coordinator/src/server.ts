@@ -1,3 +1,4 @@
+import { registerWorkBoardRoutes, type WorkBoardRouteDeps } from "./work-board/routes.js";
 import { registerReferenceRoutes, type ReferenceRouteOptions } from "./references/routes.js";
 import Fastify from "fastify";
 import staticPlugin from "@fastify/static";
@@ -128,6 +129,8 @@ export async function buildServer(options: {
   orchestration?: OrchestrationRouteOptions;
   workStatuses?: WorkStatusesReader;
   workIndex?: LeaderWorkIndexReader;
+  /** The work board and the scheduling event stream (DEC-045 Q2). */
+  workBoard?: Omit<WorkBoardRouteDeps, "service">;
   acceptanceRelay?: AcceptanceRelayService;
   /** The deployed checkout: serves GET /api/version (public) and GET /api/projects/:id/milestones from its build-info.json and docs/roadmap.md. */
   milestones?: { repoRoot: string; startedAt?: string };
@@ -803,6 +806,7 @@ export async function buildServer(options: {
   if (options.planningSources) registerPlanningSourcesRoute(app, options.planningSources);
   if (options.collaboration) registerCollaborationRoutes(app, { ...options.collaboration, workflow: options.service });
   await registerWorkManagementRoutes(app, options.service, options.workIndex);
+  if (options.workBoard) registerWorkBoardRoutes(app, { service: options.service, ...options.workBoard });
   if (options.drain) registerDrainRoutes(app, options.drain);
   if (options.acceptanceRelay) registerAcceptanceRelayRoutes(app, options.service, options.acceptanceRelay, options.workIndex);
   if (options.milestones) registerMilestoneRoutes(app, { service: options.service, ...options.milestones });

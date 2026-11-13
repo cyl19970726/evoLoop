@@ -5,8 +5,16 @@ import type { ContextPressure, UsageBudget, UsageDay } from "@evoloop/contracts"
 export function tokenText(value: number | null | undefined): string {
   if (value === null || value === undefined || !Number.isFinite(value)) return "未知";
   if (value < 10_000) return String(Math.trunc(value));
+  // From 一亿 up the 万 figure has seven or more digits and the unit is lost on a narrow card; 亿 keeps the figure short and the unit in view.
+  if (value >= 100_000_000) return `${Number((value / 100_000_000).toFixed(1))} 亿`;
   const wan = value / 10_000;
   return `${Number(wan.toFixed(1))} 万`;
+}
+
+/** The exact count for a reader who needs it (a tooltip, a screen reader): digits grouped by thousands, never rounded. */
+export function tokenFullText(value: number | null | undefined): string | null {
+  if (value === null || value === undefined || !Number.isFinite(value)) return null;
+  return `${Math.trunc(value).toLocaleString("en-US")} 个令牌`;
 }
 
 export function costText(value: Pick<UsageDay, "costUsd" | "costReported"> | null | undefined): string {
@@ -68,16 +76,21 @@ export function contextGauge(context: ContextPressure | null | undefined): Conte
 /**
  * Today's use in four small figures; null when nothing was recorded today (never shown as 0). The service fills
  * `today` with zeros when there is no ledger row for it, so “recorded today” is whether `days` holds today's day.
+ * `full` is the exact figure when `value` is a rounded one (otherwise null); it is offered as a tooltip and to screen readers.
  */
-export function todayTiles(session: { recorded: boolean; today: UsageDay; days?: readonly UsageDay[] } | null | undefined): Array<{ label: string; value: string }> | null {
+export function todayTiles(session: { recorded: boolean; today: UsageDay; days?: readonly UsageDay[] } | null | undefined): Array<{ label: string; value: string; full: string | null }> | null {
   if (!session?.recorded) return null;
   if (session.days && !session.days.some(day => day.day === session.today.day)) return null;
   const day = session.today;
+  const tokens = (label: string, count: number | null | undefined) => {
+    const value = tokenText(count), full = tokenFullText(count);
+    return { label, value, full: full !== null && String(Math.trunc(count as number)) !== value ? full : null };
+  };
   return [
-    { label: "输入", value: tokenText(day.inputTokens) },
-    { label: "输出", value: tokenText(day.outputTokens) },
-    { label: "缓存输入", value: tokenText(day.cachedInputTokens) },
-    { label: "费用", value: costText(day) },
+    tokens("输入", day.inputTokens),
+    tokens("输出", day.outputTokens),
+    tokens("缓存输入", day.cachedInputTokens),
+    { label: "费用", value: costText(day), full: null },
   ];
 }
 
@@ -91,7 +104,23 @@ export function budgetReminder(budget: UsageBudget | null | undefined): { tone: 
 }
 
 /** 项目用量 on 统筹安排: today's project use against the daily limit, drawn as the same bar as an agent's context. */
-export function projectBudgetGauge(budget: UsageBudget, todayRecorded: boolean | null = null): ContextGauge {
+export function projectBudgetGauge(budget: UsageBudget, todayRecorded: boolean | null = null): ContextGauge & { exact: string | null } {
+  const gauge = projectGauge(budget, todayRecorded);
+  return { ...gauge, exact: projectExactText(budget, gauge) };
+}
+
+/**
+ * The exact used amount and limit behind a limit line that shows them rounded (33 亿 / 40 亿): for a screen reader and a tooltip.
+ * Only where a used amount against a limit is shown; a token count is written in full, a cost limit is already exact to the cent.
+ */
+function projectExactText(budget: UsageBudget, gauge: ContextGauge): string | null {
+  if (!budget.configured || gauge.ratio === null || budget.used === null || budget.limit === null) return null;
+  if (budget.limitKind === "cost_usd") return `已用 $${budget.used.toFixed(2)} / 上限 $${budget.limit.toFixed(2)}`;
+  const used = tokenFullText(budget.used), limit = tokenFullText(budget.limit);
+  return used !== null && limit !== null ? `已用 ${used.replace(" 个令牌", "")} / 上限 ${limit}` : null;
+}
+
+function projectGauge(budget: UsageBudget, todayRecorded: boolean | null = null): ContextGauge {
   if (!budget.configured) return { ratio: null, tone: "idle", status: "未设上限", detail: "未配置每日上限，只记录用量", handoff: false };
   // The service counts a day without ledger rows as 0 used; that is not a recorded 0, so no bar and no 0% is drawn.
   if (todayRecorded === false) {
@@ -112,7 +141,7 @@ export function projectBudgetGauge(budget: UsageBudget, todayRecorded: boolean |
 }
 
 export type ProjectDayRow =
-  | { day: string; recorded: true; input: string; output: string; cached: string; cost: string }
+  | { day: string; recorded: true; input: string; output: string; cached: string; cost: string; inputFull: string | null; outputFull: string | null; cachedFull: string | null }
   | { day: string; recorded: false };
 
 /** The project's “today” (`YYYY-MM-DD`) in its usage time zone at the time of the read; null when the zone is unusable. */
@@ -129,8 +158,11 @@ export function projectToday(observedAt: string, timeZone: string): string | nul
  * shown as 0 (a day recorded as 0 still shows 0). Without a usable today, only the recorded days are listed.
  */
 export function recentProjectDays(daily: readonly UsageDay[], today: string | null, count = 7): ProjectDayRow[] {
+  // A rounded figure also carries its exact count (a tooltip), as an agent's 今日 figures do.
+  const exact = (count: number | null | undefined) => { const full = tokenFullText(count); return full !== null && String(Math.trunc(count as number)) !== tokenText(count) ? full : null; };
   const row = (day: UsageDay): ProjectDayRow => ({ day: day.day, recorded: true, input: tokenText(day.inputTokens),
-    output: tokenText(day.outputTokens), cached: tokenText(day.cachedInputTokens), cost: costText(day) });
+    output: tokenText(day.outputTokens), cached: tokenText(day.cachedInputTokens), cost: costText(day),
+    inputFull: exact(day.inputTokens), outputFull: exact(day.outputTokens), cachedFull: exact(day.cachedInputTokens) });
   if (!today || !/^\d{4}-\d{2}-\d{2}$/.test(today)) return [...daily].sort((a, b) => b.day.localeCompare(a.day)).slice(0, count).map(row);
   const byDay = new Map(daily.map(day => [day.day, day]));
   const end = Date.UTC(Number(today.slice(0, 4)), Number(today.slice(5, 7)) - 1, Number(today.slice(8, 10)));

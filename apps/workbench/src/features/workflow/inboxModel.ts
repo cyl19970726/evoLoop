@@ -7,6 +7,7 @@
 // When my latest observation of the current delivery is 使用失败, the next step is the executor's rework, not mine:
 // the delivery is not listed and not counted until a new delivery comes (未使用 stays listed).
 import type { LeaderWorkTask } from "@evoloop/contracts/work-index";
+import type { UsageBudget, SessionUsage } from "@evoloop/contracts";
 import type { DecisionItem } from "@evoloop/contracts/decision-requests";
 
 export { judgeMyDelivery, myLatestObservation, type MyDeliveryJudgement, type NotUsedResult, type UseResult } from "@evoloop/contracts/delivery-for-me";
@@ -104,12 +105,67 @@ export function shellInboxCount(badge: InboxBadge): number | null {
 export const decisionKindText: Record<DecisionItem["kind"], string> = {
   role_proposal: "职责提案", stage_proposal: "阶段提案", task_question: "任务讨论里的问题", decision_request: "请你确认",
 };
-/** Where to decide one item: the Roles page, the Goals and stages page, or the task the question was asked in; null when it is answered in the list. */
-export function decisionLink(projectId: string, item: DecisionItem, actorId: string): string | null {
+const blank = (value: string | null | undefined) => !value || !value.trim();
+/**
+ * Why one item cannot be opened at its own place, or null when it can: the id that locates it is missing. The row then says so and offers
+ * no link, rather than sending the reader to a list and letting that pass for the item.
+ */
+export function decisionLinkProblem(item: DecisionItem): string | null {
   switch (item.kind) {
-    case "role_proposal": return `/p/${projectId}/roles?return=${encodeURIComponent(`/p/${projectId}/inbox`)}&returnTitle=${encodeURIComponent("待我验收与判断")}`;
-    case "stage_proposal": return `/p/${projectId}/journey?return=${encodeURIComponent(`/p/${projectId}/inbox`)}&returnTitle=${encodeURIComponent("待我验收与判断")}`;
-    case "task_question": return inboxTaskLink(projectId, item.taskId, actorId);
+    case "role_proposal": return blank(item.roleId) ? "这条职责提案没有带职责编号，无法直接打开；请到职责页按标题查找。" : null;
+    case "stage_proposal": return blank(item.stageId) ? "这条阶段提案没有带阶段编号，无法直接打开；请到目标与阶段页按标题查找。" : null;
+    case "task_question":
+      return blank(item.taskId) ? "这个问题没有带任务编号，无法直接打开。"
+        : blank(item.discussionId) ? "这个问题没有带讨论编号，无法定位到那条讨论；请到该任务的协作里查找。"
+          : blank(item.eventId) ? "这个问题没有带问题编号，无法定位到具体问题；请到该任务的协作里查找。" : null;
+    case "decision_request": return null;
+  }
+}
+
+/**
+ * Where to decide one item, at the item itself: the Roles page on that role (`?role=`), the Goals and stages page on that stage (`?stage=`),
+ * or the task page on its collaboration section at that discussion and question. Null when the item is answered in the list, or when its
+ * id is missing (see {@link decisionLinkProblem}).
+ */
+export function decisionLink(projectId: string, item: DecisionItem, actorId: string): string | null {
+  if (decisionLinkProblem(item)) return null;
+  const back = { return: `/p/${projectId}/inbox`, actor: actorId, returnTitle: "待我验收与判断" };
+  const decisionBack = { ...back, returnTitle: "待我处理" };
+  switch (item.kind) {
+    case "role_proposal": return `/p/${projectId}/roles?${new URLSearchParams({ role: item.roleId, ...decisionBack })}`;
+    case "stage_proposal": return `/p/${projectId}/journey?${new URLSearchParams({ stage: item.stageId, ...decisionBack })}`;
+    case "task_question": return `/p/${projectId}/tasks/${item.taskId}?${new URLSearchParams({ section: "collaboration", discussion: item.discussionId, question: item.eventId,
+      ...back })}`;
     case "decision_request": return item.taskId ? inboxTaskLink(projectId, item.taskId, actorId) : null;
   }
+}
+
+/** One budget or context alert for the person (W5: these never go to the Leader). `limit` means ordinary Turns are held or a hand-off is needed. */
+export interface UsageAlert { kind: "budget" | "context"; severity: "warning" | "limit"; text: string; sessionId?: string }
+/**
+ * The alerts in a usage overview: the day's budget when it is at its warning line or used up, and each Session whose context is near its limit or
+ * must be handed off. Nothing is listed for ok, unknown or unconfigured, and nothing when the overview was not read.
+ */
+export function usageAlerts(overview: { budget: UsageBudget; sessions: SessionUsage[] } | null | undefined): UsageAlert[] {
+  if (!overview) return [];
+  const alerts: UsageAlert[] = [];
+  const { budget } = overview;
+  if (budget.configured && (budget.state === "warning" || budget.state === "exhausted"))
+    alerts.push({ kind: "budget", severity: budget.state === "exhausted" ? "limit" : "warning",
+      text: budget.reason ?? (budget.state === "exhausted" ? "今日用量已达到上限。" : "今日用量接近上限。") });
+  for (const session of overview.sessions) {
+    const state = session.context?.state;
+    if (state === "warning") alerts.push({ kind: "context", severity: "warning", sessionId: session.sessionId, text: session.context.reason ?? "这个智能体的上下文接近上限，请留意。" });
+    if (state === "handoff_required") alerts.push({ kind: "context", severity: "limit", sessionId: session.sessionId, text: session.context.reason ?? "这个智能体的上下文已满，需要交接后才能继续普通消息。" });
+  }
+  return alerts;
+}
+
+/**
+ * The days to ask the usage overview for. The server counts "today" in the project's time zone and finds today's usage inside the asked window, so the
+ * window must contain the project's day whatever its offset: UTC-12 to UTC+14 are never more than one calendar day from the UTC day.
+ */
+export function usageWindow(nowIso: string): { from: string; to: string } {
+  const day = (offset: number) => new Date(Date.parse(nowIso) + offset * 86_400_000).toISOString().slice(0, 10);
+  return { from: day(-1), to: day(1) };
 }

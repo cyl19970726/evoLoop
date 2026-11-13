@@ -60,6 +60,18 @@ const detail = (f: Fixture) => ({
     : f.observer ? [observation(f, f.observer, f.result!, at(6))] : [],
 });
 const all = Object.values(fixtures);
+// Budget and context alerts for the person (W5): the day's budget at its warning line and one Session that must hand off.
+const usageOverview = { projectId, from: "2026-11-12", to: "2026-11-12", timeZone: "UTC", observedAt: stamp, daily: [],
+  budget: { configured: true, state: "warning", limitKind: "input_tokens", limit: 100, used: 90, ratio: 0.9, warningRatio: 0.8, pauseOrdinaryTurns: true, costComplete: true, reason: "今日用量已达到上限的 90%，请留意。" },
+  sessions: [{ sessionId: id(721), roleId: "r", nativeThreadId: null, recorded: true, days: [], context: { configured: true, state: "handoff_required", inputTokens: 95, limit: 100, ratio: 0.95, warningRatio: 0.8,
+    pauseOrdinaryTurns: true, observedAt: stamp, reason: "这个智能体的上下文已满，需要交接后才能继续普通消息。" } }] };
+// 待我决定: one item of each kind that opens somewhere, and one whose id is missing (a link must never fall back to a list page).
+const decisionItems = [
+  { kind: "role_proposal", id: id(701), title: "新增验收职责", detail: "提案", proposedBy: "lead", at: stamp, roleId: id(711), version: 1 },
+  { kind: "stage_proposal", id: id(702), title: "下一阶段提案", detail: "提案", proposedBy: "lead", at: stamp, stageId: id(712), version: 1 },
+  { kind: "task_question", id: id(703), title: "接口放哪里", detail: "问题", proposedBy: "builder", at: stamp, taskId: taskId(fixtures.mine), discussionId: id(713), eventId: id(703) },
+  { kind: "role_proposal", id: id(704), title: "没有编号的提案", detail: "提案", proposedBy: "lead", at: stamp, roleId: "", version: 1 },
+];
 const firstPage = [fixtures.mine, fixtures.others, fixtures.used], secondPage = [fixtures.observedByOther, fixtures.oldRevision, fixtures.declared, fixtures.failedByMe];
 
 test("待我处理 lists what waits for my use and counts every part, or says it cannot", {
@@ -67,6 +79,7 @@ test("待我处理 lists what waits for my use and counts every part, or says it
 }, async t => {
   const { chromium } = (await import(pathToFileURL(modulePath!).href)).default;
   const failing = new Set<string>();
+  const usageQueries: string[][] = [];
   const indexCursors: Array<string | null> = [];
   const server = createServer(async (req, res) => {
     const url = new URL(req.url!, "http://127.0.0.1");
@@ -95,7 +108,8 @@ test("待我处理 lists what waits for my use and counts every part, or says it
       entrypoint: null, publicationRef: null, version: 1, createdAt: stamp, readAt: null, observationId: null }] }; }
     else if (path === `${root}/impacts`) { if (!fail("impacts")) value = [{ projectId, id: id(31), taskId: taskId(fixtures.used), taskRevisionId: revision(fixtures.used),
       documentId: id(32), fromRevisionId: id(33), toRevisionId: id(34), state: "pending", decisionId: null, createdAt: stamp }]; }
-    else if (path === `${root}/decisions-for-me`) { if (!fail("decisions")) value = { items: [], observedAt: stamp }; }
+    else if (path === `${root}/decisions-for-me`) { if (!fail("decisions")) value = { items: failing.has("decisionItems") ? decisionItems : [], observedAt: stamp }; }
+    else if (path === `${root}/runtime/usage`) { usageQueries.push([url.searchParams.get("from") ?? "", url.searchParams.get("to") ?? ""]); if (failing.has("usageAlerts")) value = usageOverview; }
     else if (path === `${root}/work-management/index`) {
       const cursor = url.searchParams.get("cursor");
       indexCursors.push(cursor);
@@ -256,6 +270,44 @@ test("待我处理 lists what waits for my use and counts every part, or says it
   await shoot(failed, "inbox-index-failed", () => failedSection.getByRole("alert").getByText("等我使用的交付暂不可读取").waitFor());
   await fixture("recover?what=index");
   await failed.close();
+
+  // 待我决定: each row opens its own item, and an item without its id has no link and says why.
+  await fixture("fail?what=decisionItems");
+  const decide = await open(`/p/${projectId}/inbox`);
+  const decisions = decide.getByRole("list", { name: "待我决定" });
+  await decisions.waitFor({ timeout: 20000 });
+  const hrefOf = async (title: string) => new URL((await decisions.getByRole("link", { name: new RegExp(title) }).getAttribute("href"))!, "http://x");
+  const role = await hrefOf("新增验收职责");
+  assert.deepEqual([role.pathname, role.searchParams.get("role")], [`/p/${projectId}/roles`, id(711)]);
+  const stage = await hrefOf("下一阶段提案");
+  assert.deepEqual([stage.pathname, stage.searchParams.get("stage")], [`/p/${projectId}/journey`, id(712)]);
+  const question = await hrefOf("接口放哪里");
+  assert.deepEqual([question.pathname, question.searchParams.get("section"), question.searchParams.get("discussion"), question.searchParams.get("question")],
+    [`/p/${projectId}/tasks/${taskId(fixtures.mine)}`, "collaboration", id(713), id(703)]);
+  assert.equal(await decisions.getByRole("link", { name: /没有编号的提案/ }).count(), 0, "no link for an item without its id");
+  await decisions.getByText("没有带职责编号").waitFor();
+  assert.equal(await decisions.getByRole("link", { name: "去决定" }).count(), 3);
+  await fixture("recover?what=decisionItems");
+  await decide.close();
+
+  // 用量与上下文告警: the budget and a full context are listed for the person, with a way to the Session, and the count includes them.
+  await fixture("fail?what=usageAlerts");
+  const alerted = await open(`/p/${projectId}/inbox`);
+  const alertList = alerted.getByRole("list", { name: "用量与上下文告警" });
+  await alertList.waitFor({ timeout: 20000 });
+  assert.equal(await alertList.getByRole("listitem").count(), 2);
+  await alertList.getByText("今日用量已达到上限的 90%").waitFor();
+  await alertList.getByText("需要交接").waitFor();
+  assert.equal(await alertList.locator('[data-alert-severity="limit"]').count(), 1);
+  assert.equal(new URL((await alertList.getByRole("link", { name: "打开这个智能体" }).getAttribute("href"))!, "http://x").searchParams.get("session"), `owned:${id(721)}`);
+  await alerted.getByText("2 项").first().waitFor();
+  assert.ok(Number(await badge(alerted)) >= 2, "the 待我处理 count includes the two alerts");
+  // The day asked for is a window around today, not the UTC day alone: the project's own calendar day is inside it at any offset.
+  const [from, to] = usageQueries.at(-1)!;
+  const nowDay = Date.now();
+  assert.ok(from < new Date(nowDay).toISOString().slice(0, 10) && new Date(nowDay).toISOString().slice(0, 10) < to, `window ${from}..${to} brackets the UTC day`);
+  await fixture("recover?what=usageAlerts");
+  await alerted.close();
 
   assert.deepEqual(errors, []);
 });

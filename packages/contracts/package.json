@@ -50,6 +50,7 @@
     "./native-input": "./dist/native-input.js",
     "./native-observation": "./dist/native-observation.js",
     "./work-index": "./dist/work-index.js",
+    "./work-board": "./dist/work-board.js",
     "./leader-notices": "./dist/leader-notices.js",
     "./session-timeline": "./dist/session-timeline.js",
     "./project-configuration": "./dist/project-configuration.js"

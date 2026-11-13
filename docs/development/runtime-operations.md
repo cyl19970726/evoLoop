@@ -362,6 +362,7 @@ node --import tsx tests/manual/session-compaction-e1.ts
 ```
 
 - **读回用量。** `GET /api/projects/PROJECT_ID/runtime/usage?from=YYYY-MM-DD&to=YYYY-MM-DD` 按 Session 和按天返回输入、输出、缓存输入、费用与上下文压力；工作台智能体页右栏“上下文与用量”（这个 Session 的上下文与今日用量）和统筹安排的“项目用量”（每日上限、近 7 天、计日时区）用同一个读取。费用缺失写“未报告”，不当 0。
+- **修复旧账后再打开上限。** 修复累计值被当成增量的版本之前写入的 Codex 日桶不会自行变准。先在维护窗口备份 `session_usage_daily`，再按受影响 Session 与日期，从对应原生 rollout 的 `last_token_usage` 重算输入、缓存输入和输出，替换这些日桶，并记录 Session、日期、修复前后合计与 rollout 路径。无法取得完整原生样本的日桶删除并标为未记录，不能保留旧值后再按它打开每日上限；修复边界之后的记录继续由账本增量维护。
 - **警告与暂停。** 达到 `warningRatio` 只显示提示；达到上限后，结果通知消息以 `DAILY_BUDGET_EXHAUSTED` 或 `CONTEXT_HANDOFF_REQUIRED` 留在队列并写阻断原因。业务 Task Run、验收和人工消息仍可执行。要恢复，先处理交接或调整上限，再按原消息记录重试；不要另建一条消息冒充原通知。
 - **交接到新线程。** 用同一 Role 开启新 Session，把原 Session、原生 Thread、固定 Task 与未处理通知写进接手说明；新线程读取固定 Task 和当前工作变化后再决定下一步。`contextHandoffSummary()` 的格式可直接作为交接摘要；它不复制原生对话正文。
 - **基线。** `node scripts/context-baseline.mjs <rollout.jsonl>` 只读 Codex 原生记录，报告每轮最大输入、均值／中位数／p90、累计用量、压缩次数和字节占比。改动前后用同一口径比较，不以单轮或通知数量代替。
@@ -376,6 +377,22 @@ node --import tsx tests/manual/session-compaction-e1.ts
 ## Session 队伍调度程序
 
 协调器在运行时启用（`runtime.enabled`）后运行队伍调度程序（轮询间隔沿用 `residentQueue.pollIntervalMs`，默认 2 秒）。它只推进由 Leader 凭据控制的队伍，每一步都是普通命令，操作 ID 由队伍项和尝试次数决定，重启后重放不会重复开 Run。队伍项、事件和 `QUEUED_IN_SESSION_LINE` 的含义见 [Session 运行时](../architecture/session-runtime.md#session-队伍dec-045-q1)。迁移 087 新增 `session_line`、`session_line_entry`、`session_line_event`、`task_assignment_confirmation`；不需要改私有配置，**接收者解析规则（队伍写 assignment 的对象）**：队伍项的接收者必须是该 Session 实际签署交付的业务身份，不再按 Role 猜。顺序是：①该 Session 自己的 `runtime.materialCli` 条目（`sessionId` 与它的原生 actor `sessionActorId` 都匹配，条目的 `cliActorId` 就是接收者）；②只有当这个 Role 恰好只有一个未关闭的 Session 时，才用 Role 级 `materialCli` 条目或 `residentQueue.roleActors`（单 Session 的旧配置照常工作）；③否则**在写任何 assignment、确认请求或 Run 之前**把这一项挂起（`RECIPIENT_UNAVAILABLE`），原因点名该 Session 并写明要补的配置（该 Session 的 `materialCli` 条目）。结果还必须是当前项目 writer。同一 Role 下有开发、验收、验收 2 等多个身份不同的 Session 时，每个 Session 都要有自己的 `materialCli` 条目；缺了不会改用别人的身份，也不会产生 `RECIPIENT_UNBOUND` 预检失败的 Run。测试：`apps/coordinator/test/session-line-recipient.test.ts`、`packages/adapter-postgres/test/session-line.test.ts`。
+
+## 调度板与调度事件流（Q2，迁移 105）
+
+**数据从哪来。** 迁移 105 建 `sched_event` 表，并在既有表上挂 AFTER 触发器：事件与引起它的状态变化在同一个事务里写一小行，应用代码的写入路径没有改动，也没有第二次写入。触发器取与 `leader_work_change` 相同的项目锁，所以同一项目里序号不会乱序提交。上线要先看发布顺序：105 不得早于 104（通知分级）等更小的号进入正式库；迁移只加表、函数和触发器，不改既有行为。回退：删除 `sched_event_*` 触发器即停止写入，表和已有事件可留。
+
+**保留期。** 协调器启动一分钟后和之后每 6 小时调用 `purge_sched_event(30, 5000)` 直到没有可删的行（只在持有写租约的实例上；重启比 6 小时频繁也会清理）。迁移 107 补上 Session 队伍（`session_line_entry`）的事件触发器，并让空闲即时输入只记 `message.started`；回退同样是删除 `sched_event_*` 触发器。被清理的最高序号按项目记在 `sched_event_floor`；游标低于它的读取返回 `resetRequired:true`。
+
+**推送。** `GET /api/projects/P/work-board/stream`（SSE）和 `GET .../work-board/events?after=N&wait=S`（长轮询）都经进程内一个共享读取者：每个项目一个循环，只在至少有一个订阅者时才存在，每秒先读一次最新序号，只有变了才读新事件并分发给所有订阅者；没人打开页面时没有定时器，也没有查询。
+
+**性能预算怎样读回。**
+- 写入：`packages/adapter-postgres/test/leader-notice-packets.test.ts` 里有两个写入用例。单连接用例插入 200 条消息，分别开着和关掉事件触发器，打印每条耗时（本机一次：0.40 ms 对 0.31 ms）。并发用例用 8 个写入者各做 40 次“一个事务一次插入”，打印开着触发器和项目级 advisory 锁时的 p50、p95 与每秒提交数（本机一次：p50 0.95 ms、p95 3.25 ms、5771 次/秒；关掉触发器 p50 0.92 ms、p95 2.60 ms、6729 次/秒）。锁一直持有到提交，所以长事务会让同项目的其他写入排队：这个测量只覆盖短事务，正式实例上的锁等待要在真实负载下读 `pg_locks`/`pg_stat_activity` 的 advisory 锁等待。正式实例上可对同一张表临时 `ALTER TABLE ... DISABLE TRIGGER sched_event_message_ins` 在测试库复测，不要在正式库上关。
+- 尾部读取和快照：对正式实例各执行 20 次 `work events --after 当前序号` 和 `work board`，取 p95 并与 100 毫秒预算对比；一次读取的耗时可用 `time` 包住 CLI 得到（含 CLI 启动，只作上限）。
+- 没有订阅者时没有额外读取：不开任何页面或长轮询，在数据库里看 `pg_stat_statements`（或 `pg_stat_activity` 抽样）中不应出现 `FROM sched_event` 的周期查询。
+- 简要输出字节数：`work board --brief` 与 `work board` 各一次，比较字节数（要求不超过 6144，且不超过完整输出的一半）。
+
+**事件量。** 事件表只写元数据，按每天 5 千到 1 万行、5 MB 以内估计，保留 30 天约 150 MB 以内；用 `SELECT pg_total_relation_size('sched_event')` 核对，超出预期时先查哪一类事件最多（`SELECT kind, count(*) FROM sched_event GROUP BY 1 ORDER BY 2 DESC`）。
 
 ## Leader 通知包
 

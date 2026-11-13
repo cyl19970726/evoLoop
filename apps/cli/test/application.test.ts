@@ -828,3 +828,28 @@ test('item 4 (CLI): show only reads; reconciling is its own explicit command', a
     assert.equal(world.calls.filter(call => call.startsWith('POST') && call.endsWith('/reconcile')).length, 1, 'the explicit command reconciles once');
   } finally { fetch.mock.restore(); await rm(directory, { recursive: true, force: true }); }
 });
+
+test("work board, events and metrics forward their parameters to the work board reads and reject unknown options", async () => {
+  const project = "00000000-0000-4000-8000-000000000001";
+  const urls: string[] = [];
+  const fetch = mock.method(globalThis, "fetch", async (url: string | URL | Request) => {
+    urls.push(String(url)); return new Response(JSON.stringify({ items: [] }), { status: 200 });
+  });
+  const env = { EVOLOOP_TOKEN: "fixture", EVOLOOP_PROJECT: project };
+  try {
+    const commands = [
+      ["work", "board"], ["work", "board", "--brief"],
+      ["work", "events", "--after", "42", "--limit", "10", "--wait", "5", "--category", "task"],
+      ["work", "events", "--from", "2026-11-12T00:00:00Z", "--to", "2026-11-12T01:00:00Z"],
+      ["work", "metrics", "--from", "2026-11-12T00:00:00Z"], ["work", "metrics"],
+    ];
+    for (const command of commands) { const result = await run(command, env); assert.equal(result.code, 0, `${command.join(" ")}: ${result.stderr}`); }
+    assert.deepEqual(urls.map(value => new URL(value).pathname + new URL(value).search), [
+      `/api/projects/${project}/work-board`, `/api/projects/${project}/work-board?brief=true`,
+      `/api/projects/${project}/work-board/events?after=42&limit=10&category=task&wait=5`,
+      `/api/projects/${project}/work-board/events?from=2026-11-12T00%3A00%3A00Z&to=2026-11-12T01%3A00%3A00Z`,
+      `/api/projects/${project}/work-board/metrics?from=2026-11-12T00%3A00%3A00Z`, `/api/projects/${project}/work-board/metrics`,
+    ]);
+    assert.notEqual((await run(["work", "board", "--cursor", "x"], env)).code, 0, "an option the command does not take is refused");
+  } finally { fetch.mock.restore(); }
+});
