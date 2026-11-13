@@ -65,7 +65,9 @@ export function registerWorkBoardRoutes(app: FastifyInstance, deps: WorkBoardRou
     const q = z.object({ after: seq.optional() }).parse(request.query);
     await deps.service.getProject(principal, p.projectId);
     const header = request.headers["last-event-id"];
-    let sent = q.after ?? (typeof header === "string" && /^\d+$/.test(header) ? Number(header) : undefined);
+    // A browser EventSource opens `stream?after=<snapshot eventSeq>` and, after a drop, reconnects to the same URL with Last-Event-ID set to
+    // the newest event it received: that header is the more recent position, so it wins.
+    let sent = typeof header === "string" && /^\d+$/.test(header) ? Number(header) : q.after;
     reply.hijack();
     const out = reply.raw;
     out.writeHead(200, { "content-type": "text/event-stream; charset=utf-8", "cache-control": "no-store", connection: "keep-alive", "x-accel-buffering": "no" });

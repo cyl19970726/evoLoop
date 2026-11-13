@@ -31,10 +31,12 @@ export function computeBoardMetrics(events: SchedEvent[], from: string, to: stri
     ({ source, count: values.length, medianSeconds: median(values), p95Seconds: percentile(values, 0.95) }));
 
   // Session idle with work waiting
-  const busyStart = new Set(["task.run_requested", "message.processing"]);
+  const busyStart = new Set(["task.run_requested", "message.processing", "message.started"]);
   const busyEnd = new Set(["task.run_ended", "message.replied", "message.completed_without_reply", "message.failed", "message.cancelled"]);
-  const waitStart = new Set(["task.queued", "message.queued"]);
-  const waitEnd = new Set(["task.turn", "task.released", "message.processing", "message.cancelled"]);
+  // A line entry waits from task.queued (or task.resumed after a suspension) until its turn (task.turn), its suspension (task.held: it cannot
+  // run, so it is not work that waits for a free Session) or its withdrawal; task.released closes an entry whose Run ended.
+  const waitStart = new Set(["task.queued", "task.resumed", "message.queued"]);
+  const waitEnd = new Set(["task.turn", "task.held", "task.removed", "task.released", "message.processing", "message.cancelled"]);
   const state = new Map<string, { busy: Set<string>; waiting: Set<string>; since: string; idle: number }>();
   for (const e of events) {
     if (!e.sessionId) continue;

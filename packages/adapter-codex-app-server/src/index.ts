@@ -1900,17 +1900,29 @@ export class CodexAppServerAdapter implements RuntimePort {
     // read is null ("not recorded"), never the configured model. `observedReasoningEffort` stays absent when no effort was requested.
     // The effort the Thread reports is read whether or not one was requested (an unconfigured Session runs at the runtime's own default, and
     // that value is the Turn's real effort). Whether it was requested is the Run's configuration, kept apart by the caller (`effortRequested`).
-    const unread = { ...turn, observedReasoningEffort: null, observedModel: null };
+    const seen = await this.readTurnEffort(binding, turn.id);
+    return { ...turn, observedReasoningEffort: seen.reasoningEffort, observedModel: seen.model };
+  }
+
+  /** The Thread's own effort and model, counted only while `turnId` is the Thread's latest Turn; anything else is null (not recorded). Never throws. */
+  private async readTurnEffort(binding: RuntimeBinding, turnId: string): Promise<{ reasoningEffort: string | null; model: string | null }> {
+    const unread = { reasoningEffort: null, model: null };
     try {
       const latest = await this.requestTurnsList({ threadId: binding.nativeThreadId, limit: 1, sortDirection: "desc", ...(this.features.modern ? { itemsView: "notLoaded" } : {}) });
       const first = Array.isArray(latest?.data) ? object(latest.data[0]) : null;
-      if (first?.id !== turn.id) return unread;
+      if (first?.id !== turnId) return unread;
       const readback = object(await this.request("thread/read", { threadId: binding.nativeThreadId, includeTurns: false }));
       const thread = object(readback?.thread);
       const effort = thread?.reasoningEffort, model = thread?.model;
-      return { ...turn, observedReasoningEffort: typeof effort === "string" && effort ? effort : null,
-        observedModel: typeof model === "string" && model ? model : null };
+      return { reasoningEffort: typeof effort === "string" && effort ? effort : null, model: typeof model === "string" && model ? model : null };
     } catch { return unread; }
+  }
+
+  /** A second chance at the readback of a Turn that is already running or settled (see RuntimePort.observeTurnEffort). */
+  async observeTurnEffort(binding: RuntimeBinding, turnId: string): Promise<{ reasoningEffort: string | null; model: string | null }> {
+    this.owned(binding);
+    if (!nonempty(turnId)) throw new RuntimeProtocolError("turn ID required");
+    return this.readTurnEffort(binding, turnId);
   }
 
   async interruptTurn(binding: RuntimeBinding, turnId: string): Promise<void> {

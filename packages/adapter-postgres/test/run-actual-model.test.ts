@@ -161,3 +161,29 @@ test("the Session snapshot reads the actual model from what a Turn reported, not
   assert.equal(after.configuredModel.value, "opus", "the configured alias is still shown as configured");
   assert.ok(after.actualModel.observedAt);
 });
+
+test("defect 3d30f7ac: a Run whose start-time readback was missed (bound unread) is filled by the readback at the terminal Turn, with effortRequested=false when none was configured; an earlier value is never replaced", async () => {
+  // The reported state: bound with both values null, recorded=false.
+  const f = await fixture("deepseek/deepseek-flash");
+  await runtime.beginDispatch(p, f.runId);
+  await runtime.bindTurn(p, f.runId, { id: `turn-${f.runId}`, status: "inProgress", observedModel: null, observedReasoningEffort: null }, { kind: "startReply", operationId: f.operationId });
+  assert.equal(describeRunActual(await runOf(f.runId)).recorded, false, "before: recorded=false, the reported symptom");
+  // At the terminal Turn the runner read the Thread again while this Turn was still its latest: max, deepseek/deepseek-flash.
+  await runtime.recordTurn(p, f.runId, `turn-${f.runId}`, "completed", "done", { completedAtUtc: new Date().toISOString(),
+    observedModel: "deepseek/deepseek-flash", observedReasoningEffort: "max" });
+  const run = await runOf(f.runId);
+  assert.deepEqual(run.actual, { model: "deepseek/deepseek-flash", reasoningEffort: "max", subagentModels: [], effortRequested: false });
+  const view = describeRunActual(run);
+  assert.equal(view.recorded, true); assert.equal(view.reasoningEffort, "max"); assert.equal(view.effortRequested, false);
+  // A value recorded at the start survives a later unread; a null late readback records nothing.
+  const g = await fixture("deepseek/deepseek-flash");
+  await runtime.beginDispatch(p, g.runId);
+  await runtime.bindTurn(p, g.runId, { id: `turn-${g.runId}`, status: "inProgress", observedModel: "deepseek/deepseek-flash", observedReasoningEffort: "high" }, { kind: "startReply", operationId: g.operationId });
+  await runtime.recordTurn(p, g.runId, `turn-${g.runId}`, "completed", "done", { completedAtUtc: new Date().toISOString(), observedReasoningEffort: null });
+  assert.equal((await runOf(g.runId)).actual?.reasoningEffort, "high", "the start-time value stays");
+  const h = await fixture("deepseek/deepseek-flash");
+  await runtime.beginDispatch(p, h.runId);
+  await runtime.bindTurn(p, h.runId, { id: `turn-${h.runId}`, status: "inProgress", observedModel: null, observedReasoningEffort: null }, { kind: "startReply", operationId: h.operationId });
+  await runtime.recordTurn(p, h.runId, `turn-${h.runId}`, "completed", "done", { completedAtUtc: new Date().toISOString() });
+  assert.equal(describeRunActual(await runOf(h.runId)).recorded, false, "nothing was ever read: still 未记录, never a configured value");
+});

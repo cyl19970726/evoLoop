@@ -120,3 +120,67 @@ test("with no stream open the hub is idle: no timer, no head lookups", async () 
     assert.equal(f.state.heads, heads); assert.equal(f.hub.activeProjects(), 0);
   } finally { await app.close(); }
 });
+
+test("defect 52eb5ecf: a browser reconnect resends the original ?after URL with Last-Event-ID; the header wins, so no event repeats", async () => {
+  const f = fixture({ head: 9, floor: 0 });
+  const { app, base } = await build(f);
+  try {
+    const seqs = (text: string) => [...text.matchAll(/^id: (\d+)$/gm)].map(m => Number(m[1]));
+    const first = await frames(`${base}/stream?after=2`, {}, t => seqs(t).includes(9));
+    assert.deepEqual(seqs(first), [3, 4, 5, 6, 7, 8, 9], "the first open starts after the snapshot's eventSeq");
+    const again = await frames(`${base}/stream?after=2`, { "last-event-id": "6" }, t => seqs(t).includes(9));
+    assert.deepEqual(seqs(again), [7, 8, 9], "reconnect: the same URL with Last-Event-ID 6 continues at 7, not at 3 again");
+  } finally { await app.close(); }
+});
+
+test("defect 52eb5ecf: two subscribers arriving together at a project without a loop share one loop; both keep receiving, one timer, none leaks", async () => {
+  let head = 5, headCalls = 0;
+  const hub = new SchedEventHub({ head: async () => { headCalls++; await new Promise(r => setTimeout(r, 30)); return head; },
+    read: async (_p, after): Promise<SchedEventsPage> => ({ items: [event(after + 1)], cursor: after + 1, head, resetRequired: false, more: false }) }, 10);
+  const a: number[] = [], b: number[] = [];
+  const [offA, offB] = await Promise.all([hub.subscribe(projectId, { onEvents: i => a.push(...i.map(e => e.seq)), onReset: () => undefined }),
+    hub.subscribe(projectId, { onEvents: i => b.push(...i.map(e => e.seq)), onReset: () => undefined })]);
+  assert.equal(headCalls, 1, "one first read of the head for both");
+  assert.equal(hub.activeProjects(), 1); assert.equal(hub.subscribers(projectId), 2);
+  head = 6; await new Promise(r => setTimeout(r, 80));
+  assert.deepEqual([a, b], [[6], [6]], "both receive the event");
+  offA(); assert.equal(hub.subscribers(projectId), 1);
+  head = 7; await new Promise(r => setTimeout(r, 80));
+  assert.deepEqual(b, [6, 7], "the remaining one is still served");
+  offB(); assert.equal(hub.activeProjects(), 0, "the last one leaving removes the loop and its timer");
+  // A failing first read leaves nothing behind and the next subscriber can start again.
+  let fail = true;
+  const broken = new SchedEventHub({ head: async () => { if (fail) throw new Error("db down"); return 1; }, read: async () => ({ items: [], cursor: 1, head: 1, resetRequired: false, more: false }) }, 10);
+  await assert.rejects(broken.subscribe(projectId, { onEvents: () => undefined, onReset: () => undefined }), /db down/);
+  assert.equal(broken.activeProjects(), 0);
+  fail = false; const off = await broken.subscribe(projectId, { onEvents: () => undefined, onReset: () => undefined });
+  assert.equal(broken.activeProjects(), 1); off();
+});
+
+// A real browser: EventSource opens `stream?after=<eventSeq>`, the server drops the connection, EventSource reconnects by itself to the same
+// URL with Last-Event-ID. Opt-in like the other browser checks (EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE).
+const playwright = process.env.EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE;
+test("browser EventSource: a dropped connection reconnects with Last-Event-ID — no repeat, no gap", { skip: !playwright && "Set EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE" }, async t => {
+  const { pathToFileURL } = await import("node:url");
+  const { chromium } = (await import(pathToFileURL(playwright!).href)).default;
+  const f = fixture({ head: 5, floor: 0 });
+  const { app, base } = await build(f);
+  const browser = await chromium.launch({ headless: true, ...(process.env.EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH ? { executablePath: process.env.EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH } : {}) });
+  t.after(async () => { await browser.close(); app.server.closeAllConnections(); await app.close(); });
+  const page = await browser.newPage();
+  await page.goto(`${base}/events?limit=1`);   // same origin as the stream
+  await page.evaluate(String.raw`(() => {
+    window.__seen = []; window.__opens = 0;
+    const source = new EventSource(location.pathname.replace(/\/events$/, "/stream") + "?after=0");
+    source.addEventListener("open", () => { window.__opens++; });
+    source.addEventListener("sched", e => window.__seen.push(Number(e.lastEventId)));
+  })()`);
+  const seen = async () => await page.evaluate("window.__seen") as number[];
+  for (let i = 0; i < 40 && (await seen()).length < 5; i++) await page.waitForTimeout(100);
+  assert.deepEqual(await seen(), [1, 2, 3, 4, 5]);
+  f.state.head = 8;
+  app.server.closeAllConnections();            // the drop: the browser must reconnect by itself
+  for (let i = 0; i < 100 && (await seen()).length < 8; i++) await page.waitForTimeout(100);
+  assert.deepEqual(await seen(), [1, 2, 3, 4, 5, 6, 7, 8], "after the automatic reconnect: 6, 7, 8 once each — not 1, 2, 3 again");
+  assert.ok(await page.evaluate("window.__opens") as number >= 2, "the connection was really reopened");
+});

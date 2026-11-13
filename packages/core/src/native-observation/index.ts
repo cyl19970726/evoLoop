@@ -179,7 +179,8 @@ export class NativeObservationService {
   get(projectId: string, sessionId: string): Promise<NativeObservationRecord | null> {
     return this.deps.uow.read(projectId, r => r.nativeObservation?.get(projectId, sessionId) ?? Promise.resolve(null));
   }
-  async apply(value: NativeObservationProjection): Promise<NativeObservationRecord> {
+  async apply(value: NativeObservationProjection,
+    usageObserved: NonNullable<NativeObservationProjection["usage"]>[] = []): Promise<NativeObservationRecord> {
     return this.deps.uow.transaction(value.projectId, async tx => {
       const store = tx.nativeObservation; if (!store) throw new DomainError('NATIVE_OBSERVATION_UNAVAILABLE','Native observation persistence is unavailable');
       const session = await tx.getRuntimeSession(value.sessionId);
@@ -188,10 +189,28 @@ export class NativeObservationService {
       const old = await store.get(value.projectId, value.sessionId);
       if (old?.freshness === 'live' && old.connectionId !== value.connectionId) throw new DomainError('OBSERVATION_CONNECTION','A newer live connection owns this Session');
       const source = value.currentTurn ? await tx.nativeInputs?.findSource(value.projectId,value.sessionId,value.currentTurn.id) ?? null : null;
-      const record = bounded({ ...value, currentTurn: value.currentTurn ? { ...value.currentTurn, source } : null, version: (old?.version ?? 0) + 1 });
-      const delta = usageDelta(old, value);
-      if (delta && tx.usage) await tx.usage.addUsage(value.projectId, value.sessionId,
-        this.deps.usageDay?.(value.observedAt) ?? value.observedAt.slice(0, 10), delta);
+      const readings = [...usageObserved];
+      const last = readings.at(-1);
+      if (value.usage && (!last || !sameReading(last, value.usage))) readings.push(value.usage);
+      let prior: UsageSnapshot | null = old ? { threadId: old.threadId, usage: old.usage } : null;
+      const delta = zeroUsageCounts();
+      for (const usage of readings) {
+        const added = usageDelta(prior, { ...value, usage });
+        if (added) {
+          delta.inputTokens += added.inputTokens;
+          delta.outputTokens += added.outputTokens;
+          delta.cachedInputTokens += added.cachedInputTokens;
+        }
+        prior = { threadId: value.threadId, usage };
+      }
+      if (delta.inputTokens + delta.outputTokens + delta.cachedInputTokens && tx.usage)
+        await tx.usage.addUsage(value.projectId, value.sessionId,
+          this.deps.usageDay?.(value.observedAt) ?? value.observedAt.slice(0, 10), { ...delta, costUsd: 0, costReported: false });
+      // A Thread's cumulative usage is not a property of one connection or
+      // event. An event without usage must not erase the last persisted baseline.
+      const usage = value.usage ?? (old?.threadId === value.threadId ? old.usage : null);
+      const record = bounded({ ...value, usage, currentTurn: value.currentTurn ? { ...value.currentTurn, source } : null,
+        version: (old?.version ?? 0) + 1 });
       await store.upsert(record, old?.version ?? null); return record;
     });
   }
@@ -213,16 +232,24 @@ export class NativeObservationService {
   }
 }
 
-function usageDelta(previous: NativeObservationRecord | null,
+type UsageSnapshot = Pick<NativeObservationRecord, 'threadId' | 'usage'>;
+
+function sameReading(left: NonNullable<NativeObservationRecord['usage']>,
+  right: NonNullable<NativeObservationRecord['usage']>): boolean {
+  return left.observedAt === right.observedAt && left.turnId === right.turnId &&
+    sameUsage(left.total, right.total) && sameUsage(left.last, right.last);
+}
+
+function usageDelta(previous: UsageSnapshot | null,
   next: NativeObservationProjection): import("@evoloop/contracts").UsageDelta | null {
   if (!next.usage) return null;
   const sameThread = previous?.threadId === next.threadId;
   const prior = sameThread ? previous?.usage ?? null : null;
-  // Native events can be delivered again while history is replayed. The same
-  // reading at the same time is one fact, not another request.
-  if (prior && next.usage.observedAt === prior.observedAt && next.usage.turnId === prior.turnId &&
-    sameUsage(next.usage.total, prior.total) && sameUsage(next.usage.last, prior.last)) return null;
-  // An older reading cannot move a cumulative counter forward.
+  // The same reading at the same observedAt is one fact. Codex replay uses
+  // the receiver time, so this only protects callers that preserve source time.
+  if (prior && sameReading(next.usage, prior)) return null;
+  // Ignore a caller-preserved older reading. This cannot identify Codex replay,
+  // whose observedAt is the receive time rather than the original source time.
   if (prior && Date.parse(next.usage.observedAt) < Date.parse(prior.observedAt)) return null;
 
   const after = usageCounts(next.usage.total);
@@ -234,11 +261,15 @@ function usageDelta(previous: NativeObservationRecord | null,
       ? null : positiveDelta(delta, zeroUsageCounts());
     // A newer notification with a smaller cumulative counter is a reset (for
     // example after native compaction), so only this request's `last` is new.
+    // Codex 0.167 replays only the latest persisted snapshot on attach
+    // (request_processors/token_usage_replay.rs, conversation.token_usage_info);
+    // it does not deliver an arbitrary historical TokenCount sequence here.
     const last = usageCounts(next.usage.last);
     return last ? positiveDelta(last, zeroUsageCounts()) : null;
   }
-  // A mid-Turn restart can leave an older observation without a cumulative
-  // baseline. Its `last` reading is still the amount this notification added.
+  // Compatibility only: v2 ThreadTokenUsage.total is non-optional
+  // (app-server-protocol/src/protocol/v2/thread.rs). A repeated total-less
+  // event cannot be distinguished from a new request and can overcount.
   const last = usageCounts(next.usage.last);
   return last ? positiveDelta(last, zeroUsageCounts()) : null;
 }

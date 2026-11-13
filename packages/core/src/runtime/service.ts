@@ -8,6 +8,7 @@ import type { Clock, IdFactory, Transaction, UnitOfWork } from "@evoloop/contrac
 import { event } from "./reserve.js";
 import { validateDispatchBasis } from "./basis.js";
 import { priorReviewDecision, reviewIntentJson } from "./pre-turn-review.js";
+import { inclusiveRuntimeUsage } from "../usage.js";
 
 export interface RuntimeWorkflowDependencies { uow: UnitOfWork; clock: Clock; ids: IdFactory;
   /** Local day used by the usage ledger; absent keeps canonical UTC. */
@@ -549,7 +550,9 @@ export class RuntimeWorkflowService {
     checkpoint: { cursor?: string; itemsDigest?: string; completedAtUtc?: string;
       usage?: RuntimeUsage | null; costUsd?: number | null; failureCategory?: string | null;
       /** What the settled Turn reported (Claude learns its model only from the Turn's own messages). Absent when nothing was observed. */
-      observedModel?: string | null; subagentModels?: string[] } = {}): Promise<RuntimeRunRecord> {
+      observedModel?: string | null; subagentModels?: string[];
+      /** The effort the Thread reported for this Turn, read after it settled when the start-time readback was missed. Null/absent keeps what is recorded. */
+      observedReasoningEffort?: string | null } = {}): Promise<RuntimeRunRecord> {
     if (checkpoint.completedAtUtc && !canonicalUtc(checkpoint.completedAtUtc)) {
       throw new DomainError("INVALID_OBSERVATION", "native completion time must be canonical UTC");
     }
@@ -566,7 +569,10 @@ export class RuntimeWorkflowService {
       }
       if (status === "running" && current.state === "running" && !checkpoint.cursor && !checkpoint.itemsDigest) return current;
       const terminal = status !== "running";
-      const actual = terminal ? mergeRunActual(current.actual, { model: checkpoint.observedModel, subagentModels: checkpoint.subagentModels }) : current.actual ?? null;
+      const actual = terminal ? mergeRunActual(current.actual, { model: checkpoint.observedModel, subagentModels: checkpoint.subagentModels,
+        reasoningEffort: checkpoint.observedReasoningEffort,
+        // Asked or left to the default is the Run's configuration; it only says how to read a reported value (never replaces one).
+        ...(checkpoint.observedReasoningEffort ? { effortRequested: !!current.executionProfile?.reasoningEffort } : {}) }) : current.actual ?? null;
       const next: RuntimeRunRecord = { ...current, state: status, version: current.version + 1,
         ...(actual ? { actual } : {}),
         resultSummary: summary ? safeDetail(summary) : current.resultSummary,
@@ -593,11 +599,10 @@ export class RuntimeWorkflowService {
         const cumulativeNative = (session?.runtimeProvider ?? "codex") === "codex";
         if (!cumulativeNative) {
           const at = next.updatedAt;
+          const tokens = inclusiveRuntimeUsage(checkpoint.usage);
           await tx.usage.addUsage(projectId, current.sessionId,
             this.deps.usageDay?.(at) ?? at.slice(0, 10), {
-              inputTokens: checkpoint.usage.inputTokens ?? 0,
-              outputTokens: checkpoint.usage.outputTokens ?? 0,
-              cachedInputTokens: checkpoint.usage.cacheReadInputTokens ?? 0,
+              ...tokens,
               costUsd: checkpoint.costUsd != null && checkpoint.costUsd > 0 ? checkpoint.costUsd : 0,
               costReported: checkpoint.costUsd != null,
             });
