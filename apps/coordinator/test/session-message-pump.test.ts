@@ -499,3 +499,20 @@ test('drain mode: a queued message does not begin while held, and is neither not
   assert.deepEqual(preflights,[queuedFirst.id,queuedSecond.id],'released: the queued messages are looked at again, first the earlier one');
   assert.equal(starts,2);
 });
+
+test('defect d6dd0a1e: an error from polling a running message reaches onError WITH the message, so the log can name code, message and Session',async()=>{
+  const target=randomUUID(),m={...message(randomUUID(),target,'processing')};
+  const errors:Array<{error:unknown;message?:SessionMessageRecord}>=[];
+  const service={pending:async()=>[m],session:async()=>({...session(target),nativeThreadId:target}),
+    processing:async()=>({operationId:randomUUID(),state:'running',nativeTurnId:'turn-1',readOnlyPolicyFingerprint:'a'.repeat(64)})} as unknown as SessionMessageService;
+  const runtime={isReady:()=>true,registerBinding:async()=>{},
+    listTurns:async()=>{throw new RuntimeServerError('thread/turns/list',7,-32600,'thread is not materialized yet');},listItems:async()=>({data:[],nextCursor:null})};
+  const pump=new SessionMessagePump({service,runtime:()=>runtime,projects:async()=>[projectId],canStart:async()=>true,canWrite:()=>true,pollIntervalMs:1000,
+    onError:(error,message)=>{errors.push({error,message});}});
+  await pump.tick();await pump.tick();
+  assert.equal(errors.length,2,'one call per tick for this one message');
+  assert.equal(errors[0]!.message?.id,m.id,'the message travels with the error');
+  const {messageErrorLine}=await import('../src/session-messages/error-line.ts');
+  const line=messageErrorLine(errors[0]!.error,errors[0]!.message)!;
+  assert.match(line,new RegExp(`code=RuntimeServerError\\(-32600\\) message=${m.id} session=${target} project=${projectId} state=processing error=thread\/turns\/list`));
+});
