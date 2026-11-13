@@ -4,6 +4,7 @@ import { NativeObservationService, reduceNativeObservation } from "@evoloop/core
 
 type ObservableRuntime = RuntimePort & { onDisconnect(listener: (reason: string) => void): () => void };
 type Entry = { value: NativeObservationRecord; sequence: number; dirty: boolean };
+type PendingUsage = { sequence: number; value: NonNullable<NativeObservationRecord["usage"]> };
 export type NativeObservationView = Omit<NativeObservationRecord, "connectionId" | "diff"> & {
   diff: (NonNullable<NativeObservationRecord["diff"]> & { contentProtected?: boolean }) | null;
 };
@@ -23,13 +24,17 @@ export class NativeObservationBridge {
   private unsubscribe: (() => void) | null = null;
   private disconnect: (() => void) | null = null;
   private entries = new Map<string, Entry>();
+  // Current-state coalescing keeps the last projection, but every usage reading
+  // must reach the ledger in order: a reset followed by more requests cannot be
+  // reconstructed from only the final `last`.
+  private usage = new Map<string, PendingUsage[]>();
   private errors = new Set<string>();
   private writes: Promise<void> = Promise.resolve();
   constructor(private readonly deps: { service: NativeObservationService; canWrite(): boolean;
     projects(): Promise<string[]>; session(projectId: string, sessionId: string): Promise<RuntimeSessionRecord | null>; now(): string }) {}
 
   attach(runtime: ObservableRuntime): void {
-    this.detach(); this.runtime = runtime; this.entries.clear(); this.errors.clear(); this.connectionId = null;
+    this.detach(); this.runtime = runtime; this.entries.clear(); this.usage.clear(); this.errors.clear(); this.connectionId = null;
     this.unsubscribe = runtime.onEvent(event => this.observe(runtime, event));
     this.disconnect = runtime.onDisconnect(() => {
       const connectionId = this.connectionId;
@@ -41,7 +46,7 @@ export class NativeObservationBridge {
         for (const entry of this.entries.values()) {
           if (entry.value.connectionId !== connectionId || !entry.dirty) continue;
           const value = { ...entry.value, freshness: "stale" as const, staleReason: "disconnected" };
-          try { await this.save(entry, value); }
+          try { await this.saveWithUsage(entry, value); }
           catch { this.errors.add(keyOf(value.projectId, value.sessionId)); }
         }
         for (const projectId of await this.deps.projects())
@@ -65,7 +70,12 @@ export class NativeObservationBridge {
     try {
       const value = reduceNativeObservation(prior?.value ?? null, { projectId: event.projectId, sessionId: event.sessionId,
         threadId: event.threadId, connectionId, method: event.method, params: event.params, observedAt: this.deps.now() });
-      if (value) this.entries.set(key, { value, sequence: (prior?.sequence ?? 0) + 1, dirty: true });
+      if (value) {
+        const sequence = (prior?.sequence ?? 0) + 1;
+        if (event.method === "thread/tokenUsage/updated" && value.usage)
+          this.usage.set(key, [...(this.usage.get(key) ?? []), { sequence, value: value.usage }]);
+        this.entries.set(key, { value, sequence, dirty: true });
+      }
     } catch { this.errors.add(key); }
   }
   private enqueue(work: () => Promise<void>): void {
@@ -73,9 +83,13 @@ export class NativeObservationBridge {
       for (const key of this.entries.keys()) this.errors.add(key);
     });
   }
-  private async save(entry: Entry, value = entry.value): Promise<void> {
+  private async saveWithUsage(entry: Entry, value = entry.value): Promise<void> {
     const sequence = entry.sequence, key = keyOf(value.projectId, value.sessionId);
-    const saved = await this.deps.service.apply(value);
+    const pending = [...(this.usage.get(key) ?? [])];
+    const appliedThrough = pending.at(-1)?.sequence ?? 0;
+    const saved = await this.deps.service.apply(value, pending.map(item => item.value));
+    const remaining = (this.usage.get(key) ?? []).filter(item => item.sequence > appliedThrough);
+    if (remaining.length) this.usage.set(key, remaining); else this.usage.delete(key);
     const current = this.entries.get(key);
     if (current === entry && current.sequence === sequence) { current.value = saved; current.dirty = false; }
     this.errors.delete(key);
@@ -88,9 +102,9 @@ export class NativeObservationBridge {
       const ready = new Set(sessions.filter(session => session.state === "ready").map(session => session.id));
       for (const [key, entry] of this.entries) {
         if (entry.value.projectId !== projectId) continue;
-        if (!ready.has(entry.value.sessionId)) { this.entries.delete(key); continue; }
+        if (!ready.has(entry.value.sessionId)) { this.entries.delete(key); this.usage.delete(key); continue; }
         if (entry.value.connectionId !== connectionId || !entry.dirty) continue;
-        try { await this.save(entry); } catch { this.errors.add(key); }
+        try { await this.saveWithUsage(entry); } catch { this.errors.add(key); }
       }
       for (const session of sessions) {
         const key = keyOf(projectId, session.id);
