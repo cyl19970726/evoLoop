@@ -33,3 +33,23 @@ export function senderPreamble(sender: SenderClass): string {
 
 /** The sentence every ordinary message carried before; kept only to recognise a reviewed pre-turn continuation sent under it. */
 export const legacyPreamble = "Ordinary Session conversation using this Session's normal tools and full execution permissions. Act within the user's request and project identity.";
+
+/** What the private identity file says about one credential, and the Leader notice configuration (system sender, Leader receiver). */
+export interface SenderIdentity { actorId: string; projectIds: string[]; identityKind?: "agent" | "human" | undefined; senderClass?: "requirements" | "leader" | "session" | undefined }
+export interface SenderNotices { senderActorId: string; receiverActorId: string }
+
+/**
+ * The sender's class, from the stated configuration only: a human credential is the user; the notice service identity is a platform notice; an
+ * identity entry's own `senderClass` names a requirements Session, the Leader or another managed Session. Nothing is inferred from a Role
+ * template, a Session binding or a name. An agent identity with no stated class is "an identity whose class is not recorded": never the user.
+ */
+export function resolveSenderClass(identities: SenderIdentity[], notices: SenderNotices | null | undefined, projectId: string, actorId: string): SenderClass {
+  const entries = identities.filter(entry => entry.actorId === actorId && entry.projectIds.includes(projectId));
+  if (entries.some(entry => entry.identityKind === "human")) return { kind: "user", actorId };
+  if (notices?.senderActorId === actorId) return { kind: "system", actorId };
+  const stated = entries.find(entry => entry.senderClass)?.senderClass;
+  if (stated) return { kind: stated, actorId };
+  // The Leader's own receiving identity is configured for notices: that is a statement of the same kind.
+  if (notices?.receiverActorId === actorId) return { kind: "leader", actorId };
+  return { kind: "unknown", actorId };
+}

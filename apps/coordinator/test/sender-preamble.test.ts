@@ -71,3 +71,57 @@ test('a continuation refused under the old opening line is sent again with that 
   const { sent, expected } = await continued({ kind: 'leader', actorId: 'l-1' }, line(legacyPreamble));
   assert.equal(sent, expected);
 });
+
+// ---- rework: the class comes from the private identity file's stated senderClass, never from a Role template ----
+import { resolveSenderClass, type SenderIdentity } from '../src/session-messages/sender.ts';
+import { authConfigSchema, authenticate } from '../src/auth.ts';
+
+const project = randomUUID(), other = randomUUID();
+const identities: SenderIdentity[] = [
+  { actorId: 'owner-human', projectIds: [project], identityKind: 'human' },
+  { actorId: 'requirements-claude-agent', projectIds: [project], identityKind: 'agent', senderClass: 'requirements' },
+  { actorId: 'leader-actor', projectIds: [project], identityKind: 'agent', senderClass: 'leader' },
+  { actorId: 'evocation-claude-agent', projectIds: [project], identityKind: 'agent', senderClass: 'session' },
+  { actorId: 'dev-claude-agent', projectIds: [project] },                       // an agent with no stated class
+  { actorId: 'requirements-elsewhere', projectIds: [other], senderClass: 'requirements' },
+];
+const notices = { senderActorId: 'notice-service', receiverActorId: 'leader-receiver' };
+
+test('rework: human is the user; requirements, Leader and other Sessions are named from their stated senderClass; the notice service is a platform notice', () => {
+  const who = (actorId: string) => resolveSenderClass(identities, notices, project, actorId);
+  assert.deepEqual(who('owner-human'), { kind: 'user', actorId: 'owner-human' });
+  assert.equal(who('requirements-claude-agent').kind, 'requirements');
+  assert.equal(who('leader-actor').kind, 'leader');
+  assert.equal(who('evocation-claude-agent').kind, 'session');
+  assert.equal(who('notice-service').kind, 'system');
+  assert.equal(who('leader-receiver').kind, 'leader', 'the Leader receiving identity of the notice configuration');
+  assert.ok(senderPreamble(who('owner-human')).includes(claim));
+  for (const actor of ['requirements-claude-agent', 'leader-actor', 'evocation-claude-agent', 'notice-service']) {
+    const text = senderPreamble(who(actor));
+    assert.ok(!text.includes(claim), actor); assert.ok(text.includes(actor), actor); assert.match(text, /不等于使用者授权；超出你职责的权限交给有权者/, actor);
+  }
+});
+
+test('rework counter-examples: an agent with no stated senderClass, an unknown identity and another project\'s class are "class not recorded" — never the user, never guessed', () => {
+  const who = (actorId: string, p = project) => resolveSenderClass(identities, notices, p, actorId);
+  for (const sender of [who('dev-claude-agent'), who('nobody-we-know'), who('requirements-elsewhere')]) {
+    assert.equal(sender.kind, 'unknown');
+    const text = senderPreamble(sender);
+    assert.ok(!text.includes(claim), 'an ordinary agent is not written as the user\'s request');
+    assert.match(text, /class is not recorded|未记录类别/);
+  }
+  assert.equal(who('requirements-elsewhere', other).kind, 'requirements', 'the stated class counts in the project it was stated for');
+  // An agent credential is not human just because its name says so, and a stated class never turns it into the user.
+  const spoof = resolveSenderClass([{ actorId: 'human-named-agent', projectIds: [project], identityKind: 'agent', senderClass: 'requirements' }], null, project, 'human-named-agent');
+  assert.notEqual(spoof.kind, 'user');
+});
+
+test('rework: the identity file accepts senderClass, rejects an unknown class and two credentials of one actor that disagree, and authentication carries it', () => {
+  const token = (n: string) => n.repeat(32).slice(0, 32);
+  const entry = (extra: Record<string, unknown>) => ({ token: token('a'), actorId: 'requirements-claude-agent', projectIds: [project], permissions: ['read', 'write'], ...extra });
+  const ok = authConfigSchema.parse([entry({ senderClass: 'requirements' })]);
+  assert.equal(authenticate(`Bearer ${token('a')}`, ok)?.senderClass, 'requirements');
+  assert.equal(authenticate(`Bearer ${token('a')}`, authConfigSchema.parse([entry({})]))?.senderClass, undefined, 'no stated class: none is invented');
+  assert.throws(() => authConfigSchema.parse([entry({ senderClass: 'product' })]));
+  assert.throws(() => authConfigSchema.parse([entry({ senderClass: 'requirements' }), entry({ token: token('b'), senderClass: 'leader' })]), /same senderClass/);
+});
