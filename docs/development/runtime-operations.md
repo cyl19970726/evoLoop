@@ -100,7 +100,7 @@
 
 ### 安排验收
 
-Leader 读到交付后，按 Task 声明的验收方式，用 `acceptance.assign` 安排验收（命令见 [Agent CLI](agent-cli.md#观察会话具体接手与普通消息)）。常规验收由 Leader 指派独立业务 Session；难验收由需求 Session 以消费者身份直接验收，不经验收接力；使用者亲用时写人；Leader 只在使用者为某项 Task 明确要求时验收。交付作者和安排者都不能验收；执行者自检、CI 与 Run 终态是交付证据，不是验收。安排受阻会留下一条 `acceptance_blocked` 通知；验收结果仍以观察通知回到 Leader。
+Leader 读到交付后，按 Task 声明的验收方式，用 `acceptance.assign` 安排验收（命令见 [Agent CLI](agent-cli.md#观察会话具体接手与普通消息)）。常规验收由 Leader 指派受管验收 Session；较难的交承担难验收的那个验收身份，样本、反例和判据在 Task 正文中先设计好。消费者写受管验收身份；需求 Session 不做验收者，只照验收结论合并与发布并事后抽查（DEC-046，试行）。消费者一时改不了的在途 Task，以及需求 Session 自己的 PR，由 Leader 另建“合并前验收”或“正式验证”Task 交验收 Session 完成。使用者亲用时写人；Leader 只在使用者为某项 Task 明确要求时验收。交付作者和安排者都不能验收；执行者自检、CI 与 Run 终态是交付证据，不是验收。安排受阻会留下一条 `acceptance_blocked` 通知；验收结果仍以观察通知回到 Leader。
 
 ### 关闭与回退
 
@@ -171,6 +171,8 @@ Leader 读到交付后，按 Task 声明的验收方式，用 `acceptance.assign
 
 **运行时限制。** Codex 的 `0.166.0-alpha.6` 与 `0.167.0-alpha.3.2` 支持运行中补入；所有现代 Codex 协议支持空闲直启。Claude 不支持即时输入。`thread/settings/update` 只属于执行配置切换，alpha.6 支持，0.167 不支持；不要再把补入与配置切换绑成一个开关。
 
+**发送给 Leader 的两条路与 `TURN_CHANGED`。** 工作台和 CLI 都可以选“插入当前这一轮”或“排队”。插入时若人看到的那一轮已经换了、主回合还没绑定 Turn，或人以为空闲而 Session 已在运行，输入自动转为一条排队消息（原输入 ID 和操作 ID，只有一条），回执 `state=rejected`、`queuedMessageId` 非空、原因以 `TURN_CHANGED:` 或 `NOT_BOUND:` 开头；重复提交同一输入 ID 返回同一份回执，仍只有一条；`session.message.post` 不接受已是即时输入的消息 ID。迁移 096 放宽 `session_direct_input` 的检查约束，允许“被转排队的直启”这一行。缺授权时能力查询在 `detail` 里写出缺哪一项，提交的 `DIRECT_GRANT_MISSING` 也一样（只写项目名称，不回显授权内容）。CLI：`session input send SESSION --project P --mode insert|queue --content TEXT`、`session input show SESSION INPUT --project P`，说明见 [CLI 指南](agent-cli.md)。
+
 **并发与不可补入回合。** 业务 Run 或普通消息开新一轮、用户即时输入和后续通知包送入共用每 Session 一把短锁。锁前撞车返回 409 `SESSION_INPUT_BUSY`，没有预占输入；适配器在途检查在已持久化意图后拒绝时，也证明没有写入原生传输，服务保留同一输入编号与操作编号供重试。两种情况都不关闭恢复门；业务 Run 保持 `requested` 等下一轮，普通消息留下待处理原因后下一轮重试同一操作，工作台保留草稿和原输入编号。只有结构化 `codexErrorInfo.activeTurnNotSteerable`（`turnKind` 为 `review` 或 `compact`）或 0.167 的精确文字才把 direct input 记为 `rejected`，并把同一内容写成一条普通排队消息；`TurnError.misalignment.steer` 是失败回合的继续指令，不是补入拒绝。补入已被接受、回合随后失败且没有对应输入 Item 时，该输入保持未读，不因送达回执算作已读。
 
 ### 占用、未知与恢复
@@ -191,7 +193,7 @@ Leader 读到交付后，按 Task 声明的验收方式，用 `acceptance.assign
 | --- | --- |
 | `apps/workbench/test/direct-input-client.test.ts` | 能力响应；503 之后 404 时保留原输入；400、409 等预占前明确拒绝的区分；`SESSION_INPUT_BUSY` 可重试 |
 | `apps/coordinator/test/direct-input-admission.test.ts` | 准入把普通消息授权的 `receiverActorId` 解析为 Session 业务身份；A 预约、业务身份 B、授权写 B 时通过，授权仍写预约身份时拒绝 |
-| `apps/coordinator/test/direct-input-service.test.ts` | 按实际运行时能力回答；共享送入锁的撞车、重试与无持久写入；不可补入回合转为普通排队消息 |
+| `apps/coordinator/test/direct-input-service.test.ts` | 按实际运行时能力回答；共享送入锁的撞车、重试与无持久写入；不可补入回合转为普通排队消息；期望的 Turn 已换时存储层转排队、不向运行时发送；缺授权时名称写在能力和提交里 |
 | `packages/adapter-postgres/test/direct-input.test.ts` | 在独立 PostgreSQL schema 里检查双启动唯一槽位、Run 与消息两种主来源、同一 Turn 的两条补入、TaskRevision 与输入哈希不变、额度、撤权、未知和终态 CAS |
 | `apps/coordinator/test/direct-input-native-live.mts` | 用 `LIVE_CODEX_VERSION` 固定的真实二进制在隔离的 HTTP、PostgreSQL 和 Thread 中执行一次直启和两条补入，回读三个精确的 client ID 和 Item；W3 用 0.167.0-alpha.3.2 记录 |
 | `apps/coordinator/test/direct-input-native-sources-live.mts` | 同一隔离边界里，分别对已有业务 Run 和普通消息处理各补入两条；前者核对固定 Run 输入未变，后者由现有泵完成终态结算 |
@@ -379,7 +381,11 @@ node --import tsx tests/manual/session-compaction-e1.ts
 4. **只读读回启用状态。** 配置启用后重新读取 `runtime/usage` 和工作台：`budget.state` 应为 `ok`、`warning` 或 `exhausted`，目标 Session 的 `context.state` 应为 `ok`、`warning` 或 `handoff_required`；未知数据保持“未知/未报告”。这一步不触发通知，也不制造用量。
 5. **正式阻断与交接另行验收。** 需要观察真实阻断时，在隔离候选或专用测试库用合成通知验证，不在正式实例强压低阈值。交接仍由维护者用同一 Role 开启新 Session，写清原 Session、原生 Thread、固定 Task 和未处理通知；服务不会自动搬线程。发布与私有配置启用后，由独立验收 Session 按此入口核对，作者不能代签 `used` 或把代码测试写成正式启用。
 
-- **读回用量。** `GET /api/projects/PROJECT_ID/runtime/usage?from=YYYY-MM-DD&to=YYYY-MM-DD` 按 Session 和按天返回输入、输出、缓存输入、费用与上下文压力；工作台智能体页右栏“环境与用量”用同一个读取。费用缺失写“未报告”，不当 0。
+- **读回用量。** `GET /api/projects/PROJECT_ID/runtime/usage?from=YYYY-MM-DD&to=YYYY-MM-DD` 按 Session 和按天返回输入、输出、缓存输入、费用与上下文压力；工作台智能体页右栏“上下文与用量”（这个 Session 的上下文与今日用量）和统筹安排的“项目用量”（每日上限、近 7 天、计日时区）用同一个读取。费用缺失写“未报告”，不当 0。
+- **输入是含缓存的总量。** 账本和每日上限里的“输入”统一指模型处理过的全部输入词元，缓存读取与缓存创建都算在其中；`cachedInputTokens` 只是其中的子集，供展示，不再另加一次。Claude SDK 的 `input_tokens` 不含 `cache_read_input_tokens` 与 `cache_creation_input_tokens`，写账时三者相加；Codex v2 的 `input_tokens` 已包含 `cached_input_tokens`，由 `non_cached_input = input_tokens - cached_input_tokens` 可核。每日上限比较的是全项目当日所有 Session、所有运行时的输入合计，不只 Leader，也不只 Codex。
+- **账本误差的方向与范围。** 正常 Codex 路径按 Thread 累计快照取差；同一个 pump 内的多个用量通知仍逐个参与差值，不能只拿最后一条的 `last`。修复前有三类误差：重连后首个不含 usage 的事件曾把持久化基线覆盖为 `null`，到下一条通知只记 `last`，单次少算一条请求的量；复位后又在一个 pump 内继续请求时，曾只记最后一条 `last`，少算该间隔内其余请求的 `last` 之和；Claude 的输入曾漏掉缓存读取与缓存创建，少算这两项之和，并把与 Codex 不同口径的数直接相加。现在前两类按持久化基线与逐个通知修复，Claude 按上述含缓存口径写账。
+- **只适用于正常协议的范围。** 当前固定的 Codex `0.166.0-alpha.6` 与 `0.167.0-alpha.3.2` 都已把 v2 `ThreadTokenUsage.total` 定为必填字段（`codex-rs/app-server-protocol/src/protocol/v2/thread.rs` 的 `ThreadTokenUsage`），每条实时通知都带累计值；连接已有 Thread 时只重放 rollout 中最新的一条 `TokenCount` 快照，不把任意旧读数序列重投给同一连接（`codex-rs/app-server/src/request_processors/token_usage_replay.rs` 的 `rposition` 与 `conversation.token_usage_info()`）。因此正常路径不会触发“累计非单调的旧读数重投”或“只有 `last` 的重复通知”。若非标准或损坏的写入方仍重投递减的累计值，当前代码会把它当复位并可能各多记一条 `last`；若重复投递没有 `total` 的事件，则会每份多记一次 `last`。协议通知没有源事件序号，账本无法把这类输入与真实复位区分；遇到时应按原生 rollout 对账，不把它当作正常误差。
+- **修复旧账后再打开上限。** 累计值被当成增量的版本（PR #410 之前）写入的 Codex 日桶会偏大；本页这组重连、pump 与 Claude 口径修复之前的日桶还可能偏小。先在维护窗口备份 `session_usage_daily`，再按受影响 Session、日期与代码边界，从对应原生 rollout 的 `last_token_usage` 或真实 Turn 用量重算输入、缓存输入和输出，替换这些日桶，并记录 Session、日期、修复前后合计与 rollout 路径。无法取得完整原生样本的日桶删除并标为未记录，不能保留旧值后再按它打开每日上限；修复边界之后的记录继续由账本增量维护。
 - **警告与暂停。** 达到 `warningRatio` 只显示提示；达到上限后，结果通知消息以 `DAILY_BUDGET_EXHAUSTED` 或 `CONTEXT_HANDOFF_REQUIRED` 留在队列并写阻断原因。业务 Task Run、验收和人工消息仍可执行。要恢复，先处理交接或调整上限，再按原消息记录重试；不要另建一条消息冒充原通知。
 - **交接到新线程。** 用同一 Role 开启新 Session，把原 Session、原生 Thread、固定 Task 与未处理通知写进接手说明；新线程读取固定 Task 和当前工作变化后再决定下一步。`contextHandoffSummary()` 的格式可直接作为交接摘要；它不复制原生对话正文。
 - **基线。** `node scripts/context-baseline.mjs <rollout.jsonl>` 只读 Codex 原生记录，报告每轮最大输入、均值／中位数／p90、累计用量、压缩次数和字节占比。改动前后用同一口径比较，不以单轮或通知数量代替。
@@ -393,7 +399,23 @@ node --import tsx tests/manual/session-compaction-e1.ts
 
 ## Session 队伍调度程序
 
-协调器在运行时启用（`runtime.enabled`）后运行队伍调度程序（轮询间隔沿用 `residentQueue.pollIntervalMs`，默认 2 秒）。它只推进由 Leader 凭据控制的队伍，每一步都是普通命令，操作 ID 由队伍项和尝试次数决定，重启后重放不会重复开 Run。队伍项、事件和 `QUEUED_IN_SESSION_LINE` 的含义见 [Session 运行时](../architecture/session-runtime.md#session-队伍dec-045-q1)。迁移 087 新增 `session_line`、`session_line_entry`、`session_line_event`、`task_assignment_confirmation`；不需要改私有配置，但 Session 的业务身份要在 `residentQueue.roleActors` 里有映射，否则该 Session 的队伍项会挂起。
+协调器在运行时启用（`runtime.enabled`）后运行队伍调度程序（轮询间隔沿用 `residentQueue.pollIntervalMs`，默认 2 秒）。它只推进由 Leader 凭据控制的队伍，每一步都是普通命令，操作 ID 由队伍项和尝试次数决定，重启后重放不会重复开 Run。队伍项、事件和 `QUEUED_IN_SESSION_LINE` 的含义见 [Session 运行时](../architecture/session-runtime.md#session-队伍dec-045-q1)。迁移 087 新增 `session_line`、`session_line_entry`、`session_line_event`、`task_assignment_confirmation`；不需要改私有配置，**接收者解析规则（队伍写 assignment 的对象）**：队伍项的接收者必须是该 Session 实际签署交付的业务身份，不再按 Role 猜。顺序是：①该 Session 自己的 `runtime.materialCli` 条目（`sessionId` 与它的原生 actor `sessionActorId` 都匹配，条目的 `cliActorId` 就是接收者）；②只有当这个 Role 恰好只有一个未关闭的 Session 时，才用 Role 级 `materialCli` 条目或 `residentQueue.roleActors`（单 Session 的旧配置照常工作）；③否则**在写任何 assignment、确认请求或 Run 之前**把这一项挂起（`RECIPIENT_UNAVAILABLE`），原因点名该 Session 并写明要补的配置（该 Session 的 `materialCli` 条目）。结果还必须是当前项目 writer。同一 Role 下有开发、验收、验收 2 等多个身份不同的 Session 时，每个 Session 都要有自己的 `materialCli` 条目；缺了不会改用别人的身份，也不会产生 `RECIPIENT_UNBOUND` 预检失败的 Run。测试：`apps/coordinator/test/session-line-recipient.test.ts`、`packages/adapter-postgres/test/session-line.test.ts`。
+
+## 调度板与调度事件流（Q2，迁移 105）
+
+**数据从哪来。** 迁移 105 建 `sched_event` 表，并在既有表上挂 AFTER 触发器：事件与引起它的状态变化在同一个事务里写一小行，应用代码的写入路径没有改动，也没有第二次写入。触发器取与 `leader_work_change` 相同的项目锁，所以同一项目里序号不会乱序提交。上线要先看发布顺序：105 不得早于 104（通知分级）等更小的号进入正式库；迁移只加表、函数和触发器，不改既有行为。回退：删除 `sched_event_*` 触发器即停止写入，表和已有事件可留。
+
+**保留期。** 协调器启动一分钟后和之后每 6 小时调用 `purge_sched_event(30, 5000)` 直到没有可删的行（只在持有写租约的实例上；重启比 6 小时频繁也会清理）。迁移 107 补上 Session 队伍（`session_line_entry`）的事件触发器，并让空闲即时输入只记 `message.started`；回退同样是删除 `sched_event_*` 触发器。被清理的最高序号按项目记在 `sched_event_floor`；游标低于它的读取返回 `resetRequired:true`。
+
+**推送。** `GET /api/projects/P/work-board/stream`（SSE）和 `GET .../work-board/events?after=N&wait=S`（长轮询）都经进程内一个共享读取者：每个项目一个循环，只在至少有一个订阅者时才存在，每秒先读一次最新序号，只有变了才读新事件并分发给所有订阅者；没人打开页面时没有定时器，也没有查询。
+
+**性能预算怎样读回。**
+- 写入：`packages/adapter-postgres/test/leader-notice-packets.test.ts` 里有两个写入用例。单连接用例插入 200 条消息，分别开着和关掉事件触发器，打印每条耗时（本机一次：0.40 ms 对 0.31 ms）。并发用例用 8 个写入者各做 40 次“一个事务一次插入”，打印开着触发器和项目级 advisory 锁时的 p50、p95 与每秒提交数（本机一次：p50 0.95 ms、p95 3.25 ms、5771 次/秒；关掉触发器 p50 0.92 ms、p95 2.60 ms、6729 次/秒）。锁一直持有到提交，所以长事务会让同项目的其他写入排队：这个测量只覆盖短事务，正式实例上的锁等待要在真实负载下读 `pg_locks`/`pg_stat_activity` 的 advisory 锁等待。正式实例上可对同一张表临时 `ALTER TABLE ... DISABLE TRIGGER sched_event_message_ins` 在测试库复测，不要在正式库上关。
+- 尾部读取和快照：对正式实例各执行 20 次 `work events --after 当前序号` 和 `work board`，取 p95 并与 100 毫秒预算对比；一次读取的耗时可用 `time` 包住 CLI 得到（含 CLI 启动，只作上限）。
+- 没有订阅者时没有额外读取：不开任何页面或长轮询，在数据库里看 `pg_stat_statements`（或 `pg_stat_activity` 抽样）中不应出现 `FROM sched_event` 的周期查询。
+- 简要输出字节数：`work board --brief` 与 `work board` 各一次，比较字节数（要求不超过 6144，且不超过完整输出的一半）。
+
+**事件量。** 事件表只写元数据，按每天 5 千到 1 万行、5 MB 以内估计，保留 30 天约 150 MB 以内；用 `SELECT pg_total_relation_size('sched_event')` 核对，超出预期时先查哪一类事件最多（`SELECT kind, count(*) FROM sched_event GROUP BY 1 ORDER BY 2 DESC`）。
 
 ## Leader 通知包
 

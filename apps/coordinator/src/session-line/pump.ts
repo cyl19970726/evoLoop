@@ -4,8 +4,18 @@ import type { SessionLineEntry } from "@evoloop/contracts/session-line";
 import type { WorkflowService } from "@evoloop/core";
 
 const terminalRun = new Set(["completed", "failed", "interrupted"]);
-/** Waiting is not a failure: a refusal with one of these codes only means the Session or Task is not free yet. */
-const transient = new Set(["SESSION_BUSY", "SESSION_MESSAGE_BUSY", "VERSION_CONFLICT", "RECOVERY_BLOCKED"]);
+/**
+ * Waiting is not a failure: a refusal with one of these codes only means the Session or Task is not free yet. A blocked recovery gate
+ * (RECOVERY_BLOCKED) is not here: it does not clear by itself, so the entry is suspended at once with that reason instead of retrying.
+ */
+const transient = new Set(["SESSION_BUSY", "SESSION_MESSAGE_BUSY", "VERSION_CONFLICT"]);
+/** A retry is bounded: after this many retries of one step the entry is suspended with the last refusal as its reason. */
+export const DEFAULT_MAX_STEP_RETRIES = 5;
+/** Retries back off (base, 2x, 4x, … up to the ceiling) so a refusal that lasts is not written again every poll. */
+export const DEFAULT_RETRY_BACKOFF_BASE_MS = 2000;
+export const RETRY_BACKOFF_CEILING_MS = 60 * 1000;
+const startReason = (entryId: string) => `Session line: started after the Session's execution confirmation (entry ${entryId})`;
+const reassignReason = (entryId: string) => `Session line: assigned on the started revision (entry ${entryId})`;
 const failedMessage = new Set(["failed", "cancelled", "unknown", "manual_pending"]);
 export const DEFAULT_CONFIRMATION_TIMEOUT_MS = 60 * 60 * 1000;
 
@@ -28,12 +38,19 @@ export interface SessionLinePumpDeps {
   canWrite(): boolean;
   pollIntervalMs: number;
   onError(error: unknown): void;
-  /** The Session's business identity (the recipient of its assignments), or null when none is configured. */
-  recipientActorId(projectId: string, sessionId: string): Promise<string | null>;
+  /**
+   * The Session's own business identity (the recipient of its assignments), null when none is configured, or `{ unresolved }` with
+   * the reason when it cannot be told from the configuration (for example several Sessions share its Role).
+   */
+  recipientActorId(projectId: string, sessionId: string): Promise<string | null | { unresolved: string }>;
   messageBusy?(projectId: string, sessionId: string): Promise<boolean>;
   /** How long the Session may take to answer the execution confirmation before the entry is suspended. */
   confirmationTimeoutMs?: number;
   now?(): number;
+  /** Most retries of one step before the entry is suspended (default {@link DEFAULT_MAX_STEP_RETRIES}). */
+  maxStepRetries?: number;
+  /** Wait before retry n (1-based); default doubles from {@link DEFAULT_RETRY_BACKOFF_BASE_MS} up to a minute. 0 retries at the next poll. */
+  retryBackoffMs?(stepTry: number): number;
 }
 
 type Outcome = { kind: "ok" } | { kind: "wait" } | { kind: "stop" };
@@ -75,7 +92,8 @@ export class SessionLinePump {
   }
   async advance(projectId: string, sessionId: string, lead: Principal): Promise<void> {
     const wf = this.deps.workflow;
-    const entries = await wf.listSessionLineEntries(lead, projectId, sessionId, true);
+    // Only what is still to be acted on: finished (started with its Run end recorded, or withdrawn) entries are never read.
+    const entries = await wf.listUnfinishedSessionLineEntries(lead, projectId, sessionId);
     // An entry whose Run ended is recorded once, so the event stream shows when the Session became free for the next one.
     for (const entry of entries.filter(e => e.state === "started" && !e.runEndedAt && e.runId)) {
       const run = (await wf.listRuntimeRuns(lead, projectId, entry.taskId)).find(r => r.id === entry.runId);
@@ -90,8 +108,15 @@ export class SessionLinePump {
     if (!head || !await this.sessionFree(projectId, sessionId, lead)) return;
     if (await wf.hasOlderQueuedMessage(lead, projectId, sessionId, head.appendedAt)) return;
     const attempt = head.attempt + 1;
-    const result = await wf.execute(lead, { type: "line.begin", projectId, operationId: lineIntentId("begin", head.id, String(attempt), String(head.version)),
-      entryId: head.id, expectedVersion: head.version, ...operations(head.id, attempt, 0), messageId: lineIntentId("message", head.id, String(attempt)) });
+    let result;
+    try {
+      result = await wf.execute(lead, { type: "line.begin", projectId, operationId: lineIntentId("begin", head.id, String(attempt), String(head.version)),
+        entryId: head.id, expectedVersion: head.version, ...operations(head.id, attempt, 0), messageId: lineIntentId("message", head.id, String(attempt)) });
+    } catch (error) {
+      // A held provider starts nothing; nothing was saved, so the head is simply tried again after the release.
+      if ((error as { code?: string }).code === "PROVIDER_HELD") return;
+      throw error;
+    }
     if (result.status === "rejected" && !["VERSION_CONFLICT", "SESSION_BUSY", "LINE_BUSY", "NOT_AT_HEAD"].includes(result.code))
       this.deps.onError(new Error(`session line begin ${result.code}`));
   }
@@ -106,11 +131,33 @@ export class SessionLinePump {
     return { kind: "stop" };
   }
   /** Register fresh operation ids for the same step after a refusal that only meant "wait". */
-  private async retry(projectId: string, entry: SessionLineEntry, lead: Principal): Promise<Outcome> {
+  private async retry(projectId: string, entry: SessionLineEntry, lead: Principal, code: string, message: string): Promise<Outcome> {
+    // The cap is checked before another retry is written: the entry stops with the refusal that kept coming back, as an immediate event.
+    if (entry.stepTry >= (this.deps.maxStepRetries ?? DEFAULT_MAX_STEP_RETRIES))
+      return this.suspend(projectId, entry, lead, "RETRY_LIMIT", `${entry.step} was refused ${entry.stepTry + 1} times, last ${code}: ${message}`);
     await this.deps.workflow.execute(lead, { type: "line.retry", projectId,
       operationId: lineIntentId("retry", entry.id, String(entry.attempt), String(entry.stepTry), String(entry.version)),
       entryId: entry.id, expectedVersion: entry.version, ...operations(entry.id, entry.attempt, entry.stepTry + 1) });
     return { kind: "wait" };
+  }
+  /**
+   * Whether the Task's current revision is no longer the one the Session confirmed. The revision the line's own task.start made
+   * (recognised by its reason) is the confirmed one, started; once the line has assigned the Task on that revision, only a later revision counts.
+   */
+  private async confirmationStale(projectId: string, entry: SessionLineEntry, lead: Principal, revisionId: string, revisionReason: string, state: string): Promise<boolean> {
+    const wf = this.deps.workflow;
+    const assignment = await wf.getTaskAssignment(lead, projectId, entry.taskId);
+    // The line's reassignment on the started revision opens a new assignment version, which has no confirmation of its own: the check
+    // had passed before it was made, so what remains to see is whether the Task was revised after it.
+    if (assignment && assignment.state !== "released" && assignment.reason === reassignReason(entry.id)) return assignment.taskRevisionId !== revisionId;
+    const confirmation = assignment ? await wf.getAssignmentConfirmation(lead, projectId, entry.taskId, assignment.version) : null;
+    if (!(assignment?.state === "accepted" && confirmation?.verdict === "confirm")) return true;
+    if (confirmation.expectedRevisionId === revisionId) return false;
+    if (state !== "in_progress" || revisionReason !== startReason(entry.id)) return true;
+    const current = (await wf.listTaskRevisions(lead, projectId, entry.taskId)).map(item => item.revision).find(item => item.id === revisionId);
+    const before = (await wf.listTaskRevisions(lead, projectId, entry.taskId)).map(item => item.revision)
+      .filter(item => current && item.version < current.version).sort((x, y) => y.version - x.version)[0];
+    return before?.id !== confirmation.expectedRevisionId;
   }
   private async drive(projectId: string, entry: SessionLineEntry, lead: Principal): Promise<void> {
     const wf = this.deps.workflow;
@@ -124,14 +171,27 @@ export class SessionLinePump {
       } catch (error) {
         code = (error as { code?: string }).code ?? "STEP_FAILED"; message = error instanceof Error ? error.message : code;
       }
-      return transient.has(code) ? this.retry(projectId, entry, lead) : this.suspend(projectId, entry, lead, code, message);
+      // A held provider is a wait, not a failure of the step: no retry is written and the entry is not suspended.
+      if (code === "PROVIDER_HELD") return { kind: "wait" };
+      return transient.has(code) ? this.retry(projectId, entry, lead, code, message) : this.suspend(projectId, entry, lead, code, message);
     };
-    const task = (await wf.getTask(lead, projectId, entry.taskId)).task;
+    // A retried step waits out its backoff first; the confirmation wait has its own timeout.
+    if (entry.stepTry > 0 && entry.step !== "confirm") {
+      const backoff = this.deps.retryBackoffMs?.(entry.stepTry) ??
+        Math.min(DEFAULT_RETRY_BACKOFF_BASE_MS * 2 ** (entry.stepTry - 1), RETRY_BACKOFF_CEILING_MS);
+      if ((this.deps.now?.() ?? Date.now()) - Date.parse(entry.updatedAt) < backoff) return;
+    }
+    const detail = await wf.getTask(lead, projectId, entry.taskId);
+    const task = detail.task;
     const recipient = async () => this.deps.recipientActorId(projectId, entry.sessionId);
-    const noRecipient = () => this.suspend(projectId, entry, lead, "RECIPIENT_UNAVAILABLE", "the Session has no configured business identity");
+    const noRecipient = (reason = `Session ${entry.sessionId} has no configured business identity`) =>
+      this.suspend(projectId, entry, lead, "RECIPIENT_UNAVAILABLE", reason);
     const set = async (opId: string, reason: string, current: typeof task): Promise<Outcome> => {
-      const actor = await recipient();
-      if (!actor) return noRecipient();
+      const found = await recipient();
+      // Unresolved: the entry is suspended with the reason before any assignment, confirmation request or Run exists.
+      if (!found) return noRecipient();
+      if (typeof found === "object") return noRecipient(found.unresolved);
+      const actor = found;
       const assignment = await wf.getTaskAssignment(lead, projectId, entry.taskId);
       return step({ type: "task.assignment.set", projectId, operationId: opId, taskId: entry.taskId, expectedTaskVersion: current.version,
         target: { kind: "owned", sessionId: entry.sessionId }, recipientActorId: actor, expectedVersion: assignment?.version ?? 0, reason });
@@ -159,7 +219,9 @@ export class SessionLinePump {
     if (entry.step === "confirm") {
       const message = await wf.getSessionMessageRecord(lead, projectId, entry.messageId!);
       if (!message) return void await this.suspend(projectId, entry, lead, "MESSAGE_MISSING", "the confirmation request was never recorded");
-      if (failedMessage.has(message.state) || message.blockedReason)
+      // The message pump parks the request behind another native send (SESSION_INPUT_BUSY): that clears by itself, so the entry keeps waiting.
+      const parked = message.blockedReason?.startsWith("SESSION_INPUT_BUSY") === true;
+      if (failedMessage.has(message.state) || (message.blockedReason && !parked))
         return void await this.suspend(projectId, entry, lead, "MESSAGE_UNDELIVERED", `the confirmation request ${message.state}${message.blockedReason ? `: ${message.blockedReason}` : ""}`);
       const assignment = await wf.getTaskAssignment(lead, projectId, entry.taskId);
       const confirmation = assignment ? await wf.getAssignmentConfirmation(lead, projectId, entry.taskId, assignment.version) : null;
@@ -187,19 +249,17 @@ export class SessionLinePump {
     }
     if (!await this.sessionFree(projectId, entry.sessionId, lead)) return;
     let current = task;
+    // The confirmation covers one revision, whether or not the Task has started; if it moved on since, the Session must confirm again.
+    if (await this.confirmationStale(projectId, entry, lead, detail.revision.id, detail.revision.reason, current.state))
+      return void await this.suspend(projectId, entry, lead, "CONFIRMATION_STALE", "the Task changed after the Session confirmed it; resume the entry to ask again");
     if (current.state !== "in_progress") {
-      // The confirmation covers one revision; if the Task moved on since, the Session must confirm again.
-      const assignment = await wf.getTaskAssignment(lead, projectId, entry.taskId);
-      const confirmation = assignment ? await wf.getAssignmentConfirmation(lead, projectId, entry.taskId, assignment.version) : null;
-      if (!(assignment?.state === "accepted" && confirmation?.verdict === "confirm" && confirmation.expectedRevisionId === current.currentRevisionId))
-        return void await this.suspend(projectId, entry, lead, "CONFIRMATION_STALE", "the Task changed after the Session confirmed it; resume the entry to ask again");
       const started = await step({ type: "task.start", projectId, operationId: entry.startOperationId!, taskId: entry.taskId, expectedVersion: current.version,
-        reason: `Session line: started after the Session's execution confirmation (entry ${entry.id})` });
+        reason: startReason(entry.id) });
       if (started.kind !== "ok") return;
       current = (await wf.getTask(lead, projectId, entry.taskId)).task;
     }
     if (!fresh(await wf.getTaskAssignment(lead, projectId, entry.taskId), current.currentRevisionId)) {
-      const done = await set(entry.reassignOperationId!, `Session line: assigned on the started revision (entry ${entry.id})`, current);
+      const done = await set(entry.reassignOperationId!, reassignReason(entry.id), current);
       if (done.kind !== "ok") return;
       current = (await wf.getTask(lead, projectId, entry.taskId)).task;
     }

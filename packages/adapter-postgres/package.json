@@ -14,9 +14,12 @@
     "./orchestration": "./dist/orchestration.js",
     "./work-index": "./dist/work-index.js",
     "./leader-notice-packets": "./dist/leader-notice-packets.js",
+    "./work-board": "./dist/work-board.js",
+    "./decisions-for-me": "./dist/decisions-for-me.js",
     "./ordinary-run-submission": "./dist/ordinary-run-submission.js",
     "./direct-input": "./dist/direct-input.js",
-    "./leader-result-notices": "./dist/leader-result-notices.js"
+    "./leader-result-notices": "./dist/leader-result-notices.js",
+    "./leader-event-records": "./dist/leader-event-records.js"
   },
   "dependencies": {
     "@evoloop/contracts": "0.1.0",

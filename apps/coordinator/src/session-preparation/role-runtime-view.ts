@@ -21,8 +21,8 @@ export interface RoleRuntimeViewDeps {
     listCapabilitiesFor(provider: RuntimeProvider, cwd: string): Promise<RuntimeCapabilityListing | null>;
     latestObservedCapabilities(session: RuntimeSessionRecord): Promise<RuntimeObservedCapabilities | null>;
   } | undefined;
-  /** Work directories the caller is authorized to run this Role in. */
-  grantCwds: (projectId: string, actorId: string, roleId: string) => string[];
+  /** The runtime grants of this Role (every holder, not only the caller): the work directory a Role without a Session starts in follows its own grants. */
+  roleGrants: (projectId: string, roleId: string) => Array<{ actorId: string; cwd: string }>;
   /** Business skills the Role always carries and where they live. */
   skillRoots: (projectId: string, roleId: string) => Promise<{ businessRoot: string; businessPaths: readonly string[] }>;
   /** Claude context mode; decides which project skills Claude reads natively. */
@@ -64,12 +64,19 @@ export async function roleRuntimeView(deps: RoleRuntimeViewDeps, principal: Prin
   const own = sessions.filter(session => session.roleId === roleId && sessionProvider(session) === provider)
     .sort((a, b) => b.updatedAt < a.updatedAt ? -1 : b.updatedAt > a.updatedAt ? 1 : 0);
   const latest = own.find(session => session.state !== "closed") ?? own[0] ?? null;
-  const grantCwd = [...new Set(deps.grantCwds(projectId, principal.actorId, roleId))].sort()[0];
-  const workDirectory = latest ? { cwd: latest.cwd, source: "session" as const } : grantCwd ? { cwd: grantCwd, source: "grant" as const } : null;
-  if (!workDirectory) notes.push("该角色还没有会话或授权目录，未读取项目 skill。");
+  // Without a Session, the work directory is the Role's own: the first of its grants' directories, whoever is looking. The skills found there are
+  // shown to every project reader; the path is a private fact of the machine and shows only to a reviewer or to a holder of a grant of this Role.
+  const grants = deps.roleGrants(projectId, roleId);
+  const grantCwds = [...new Set(grants.map(grant => grant.cwd))].sort();
+  const grantCwd = grantCwds[0];
+  const mayShowPath = principal.permissions.includes("review") || grants.some(grant => grant.actorId === principal.actorId);
+  const workDirectory: RoleRuntimeView["workDirectory"] = latest ? { cwd: latest.cwd, source: "session" as const }
+    : grantCwd ? { cwd: mayShowPath ? grantCwd : null, source: "grant" as const, grantCount: grantCwds.length, ...mayShowPath ? {} : { hidden: true } } : null;
+  const readCwd = latest ? latest.cwd : grantCwd ?? null;
+  if (!workDirectory) notes.push("该角色还没有会话，也没有任何运行授权，所以没有工作目录，没有读取项目 skill；需要维护者先为它授予运行授权。");
 
   const roots = await deps.skillRoots(projectId, roleId);
-  const discovery = await discoverSkills({ ...roots, cwd: workDirectory?.cwd ?? null, home });
+  const discovery = await discoverSkills({ ...roots, cwd: readCwd, home });
   notes.push(...discovery.notes);
 
   let skills: RoleRuntimeSkill[];
@@ -78,8 +85,8 @@ export async function roleRuntimeView(deps: RoleRuntimeViewDeps, principal: Prin
 
   if (provider === "codex") {
     let listing: RuntimeCapabilityListing | null = null;
-    if (workDirectory && deps.runtime && availableProviders.includes("codex")) {
-      listing = await deps.runtime.listCapabilitiesFor("codex", workDirectory.cwd).catch(() => null);
+    if (readCwd && deps.runtime && availableProviders.includes("codex")) {
+      listing = await deps.runtime.listCapabilitiesFor("codex", readCwd).catch(() => null);
       if (!listing) notes.push("Codex 暂时无法列出 skill；以下按文件推断，内置 skill 未列出。");
     } else if (selection.builtin) notes.push("内置 skill 由运行中的 Codex 列出；当前按文件推断。");
     // Codex receives the business skills through the Role context unless it lists them itself.

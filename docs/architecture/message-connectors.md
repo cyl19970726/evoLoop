@@ -6,7 +6,7 @@
 
 - 在系统里的位置：[架构总览](overview.md#2-四部分如何组成系统)的结构图；代码分在 `packages/connector-wechat`（网关命令封装）与 `apps/coordinator/src/message-connectors/`（路由、资格与泵），见[包架构](packages.md#当前工作区与目标责任)。
 - 网关作为本机进程运行，平台凭据与原始事件留在网关；部署形态见[部署与迁移](deployment.md)。
-- 表结构见[存储](storage.md#迁移-054-到-081-新增的表和列)（schema 063–066），实现合入于 PR #221。
+- 表结构见[存储](storage.md#迁移-054-到-087-新增的表和列)（schema 063–066），实现合入于 PR #221。
 
 **支持哪些运行时。** 以代码为准（2026-11-09 核对）：标准模式的资格检查 `qualifyStandardConnectorRoute`（`apps/coordinator/src/message-connectors/qualification.ts`）不区分运行时；入站消息作为该 Session 的普通消息，由消息泵经普通消息的原生准入启动 Turn，而 Codex 与 Claude 两个适配器都实现了这条准入（见[Session 运行时](session-runtime.md#7-codex-与-claude-能力对照)）。因此代码上 Claude Session 也能作为标准模式的接收方；但现有测试用的是不区分运行时的替身，没有专门覆盖 Claude Session 作为接收方，也没有实际用过，按“待核”处理。受限接收只在 Codex 固定 `0.166.0-alpha.6` 上有对应的只读配置，而且适配器在无法证明内置 shell 已关闭时总是回答不可用，首版不启用。
 
@@ -41,7 +41,7 @@ flowchart LR
 
 wx `deliveryId`、事件 cursor 范围、`eventCursor`、可选 participant/reply cursor 定位原来源；`connector_message_link` 关联平台 `messageId`、`messageOperationId`、decision、route version 和 gateway 身份。平台 `session_message` 与 processing 的 state、operation ID、native Turn ID 是另一层证据。每个已关联 delivery 的这些状态及原出站请求 ID 可经 delivery API 和 Workbench 路由卡片读回；它们不证明收件人已收到。
 
-标准模式在入队前按原 delivery 查询 `transport_status` 并 `reserve_turn`；`connector_transport_attempt` 在 reserve、record、finish 各次外部写入前保存首次尝试，未知时不重复调用，而沿原 delivery 读回。同一 delivery 的来源事件各有平台消息，平台队列串行处理。网关只能为一个 delivery 固定一个 Turn，因此记录该 delivery 中首个已绑定的代表 Turn；全部事件消息都保留各自 processing 和 Turn 关联，等它们结束后才 `finish_turn`。不支持的内容和空/超长 incoming 文本会作为不含正文的不可变 `connector_unhandled_event` 保存，并让该 delivery 的最终决定为 `defer`；游标只有在平台消息或拒绝记录落库后才推进。回复文字由这些已保存的响应组成；超出 wx 文本限制或无发送资格时保存为 draft。`connector_delivery_decision` 在任何 `send_text` 前冻结原 request ID、内容和唯一尝试状态。`pending` 只保留为 attempted，`ui_observed` 也只表示本地可观察，不证明对方收到；发送回执未知时只调用 `result` 查询原请求。`complete` 调用前先持久化 `complete_attempted`，随后只从原 `inbox_status` 的完整 delivery/owner/epoch/session/cursor 身份读回终态。重启后使用原 delivery 和原操作继续核对。
+标准模式在入队前按原 delivery 查询 `transport_status` 并 `reserve_turn`；`connector_transport_attempt` 在 reserve、record、finish 各次外部写入前保存首次尝试，未知时不重复调用，而沿原 delivery 读回。同一 delivery 的来源事件各有平台消息，平台队列串行处理。网关只能为一个 delivery 固定一个 Turn，因此记录该 delivery 中首个已绑定的代表 Turn；全部事件消息都保留各自 processing 和 Turn 关联，等它们结束后才 `finish_turn`。不支持的内容和空/超长 incoming 文本会作为不含正文的不可变 `connector_unhandled_event` 保存，并让该 delivery 的最终决定为 `defer`；游标只有在平台消息或拒绝记录落库后才推进。回复文字由这些已保存的响应组成；超出 wx 文本限制或无发送资格时保存为 draft。`session_message_processing.response_kind` 区分响应来源：只有 `native` 可作为外发回复；`bounded_unread` 是“超过有界读取上限、真实回复未读出”的系统说明，整批保存为 `defer`，不从说明文本反推或外发，原响应仍留作审计和后续补读。迁移 `090` 只按 #362 的完整系统说明整段回填既有记录，运行时不按中文短语分类。`connector_delivery_decision` 在任何 `send_text` 前冻结原 request ID、内容和唯一尝试状态。`pending` 只保留为 attempted，`ui_observed` 也只表示本地可观察，不证明对方收到；发送回执未知时只调用 `result` 查询原请求。`complete` 调用前先持久化 `complete_attempted`，随后只从原 `inbox_status` 的完整 delivery/owner/epoch/session/cursor 身份读回终态。重启后使用原 delivery 和原操作继续核对。
 
 暂停、恢复或停用配置会推进路由版本，但已经 claim/reserve 的 delivery 继续使用冻结的 route version、policy hash、允许目标和原 wx 身份完成或保留 unknown；暂停后不 claim 新 delivery。只有 policy、来源、Session/Thread、actor 或允许目标发生变化时，在途记录停止并进入人工对账。
 

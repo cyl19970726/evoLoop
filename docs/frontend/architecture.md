@@ -41,6 +41,7 @@
   - **站内跳转**：`shared/navigation.ts` 是唯一入口：`navigate()`、`currentPath()`、`onNavigate()`；只改地址栏、不通知页面的视图状态（筛选、展开项）用 `replaceQuietly()`。站内 `<a href="/p/…">` 的点击统一转成历史导航，不整页刷新，所以内存里的登录不丢；带修饰键、新标签页、下载和外站链接不拦。
   - **离开项目**：有未提交草稿时先确认，前进后退同样拦截。
   - **拆包**：每个页面是单独的 chunk，首屏只带登录门与共用代码，外壳（`app/shell/`）登录后再加载。首屏 JS 预算以 `apps/workbench/bundle-budget.json` 为准（现为 gzip 170 KB；拆包前单包 392 KB，历次调整写在该文件的 `note` 里），由 `bundle-budget.test.ts` 对构建产物检查。
+  - **旧标签页与分块取不到**：发布后旧的 chunk 文件会消失，令牌只在页面内存里所以旧标签页会一直开着，打开没访问过的页面就取不到分块。页面边界（`app/PageBoundary.tsx`）认出这类错误（`app/chunkLoad.tsx` 的 `isChunkLoadError`），单独显示“工作台已经更新到新版本，这一页需要刷新后才能打开。刷新后需要重新输入访问令牌。”，带“刷新页面”和“重试”，原始错误放在可展开的详情里；**不自动刷新**（会丢令牌）。React.lazy 会记住第一次失败，所以页面分块经 `lazyChunk` 加载：点“重试”或再次进入该页面时先 `resetChunks()`，下一次渲染重新请求分块，只有再次失败才显示该状态。测试：`chunk-load.test.ts`、`chunk-load-failure-browser.test.ts`（1440 与 390 宽）。
   - **服务**：coordinator 对 `/p/*` 和 `/ui` 返回 `index.html`，`/api` 与静态资源不受影响；Vite 开发服务默认同样回退。页面声明 `/favicon.svg`；Safari 还会探测 `/favicon.ico`、`/apple-touch-icon.png` 和 `/apple-touch-icon-precomposed.png`，这三条统一重定向到同一图标，避免每个页面留下三个静默 404。
 - **目标**：页面改为路由组件（布局路由承载外壳），筛选与排序用路由的 search 校验写进地址栏。以后要服务端渲染，可在同一套路由上换 TanStack Start。
 
@@ -165,7 +166,7 @@ Playwright 不进依赖，和浏览器回归一样从环境变量载入：
 
 ```sh
 export EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE=/path/to/playwright/index.js
-export EVOLOOP_BROWSER_TEST_CHROMIUM_EXECUTABLE=/path/to/chromium   # 不设则用 Playwright 自带的浏览器
+export EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH=/path/to/chromium   # 不设则用 Playwright 自带的浏览器；旧名 …_CHROMIUM_EXECUTABLE 同样读取
 npm run docs:screenshots                                    # 全部页面
 npm run docs:screenshots -- --only task,tasks --skip-build  # 只截几页，复用已有构建
 ```

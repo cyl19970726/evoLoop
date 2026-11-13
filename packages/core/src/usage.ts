@@ -1,6 +1,7 @@
 import type { Principal } from "@evoloop/contracts";
+import type { RuntimeUsage } from "@evoloop/contracts/runtime";
 import type {
-  ContextBudgetConfig, SessionUsage, UsageBudget, UsageBudgetConfig, UsageBucketRow, UsageDay, UsageOverview, UsageTotals,
+  ContextBudgetConfig, SessionUsage, UsageBudget, UsageBudgetConfig, UsageBucketRow, UsageDay, UsageDelta, UsageOverview, UsageTotals,
 } from "@evoloop/contracts";
 import type { Clock, UnitOfWork } from "@evoloop/contracts/ports";
 import { DomainError } from "@evoloop/contracts/ports";
@@ -32,6 +33,20 @@ const add = (target: UsageTotals, row: Pick<UsageTotals, "inputTokens" | "output
 const dayOf = (row: UsageBucketRow): UsageDay => ({ day: row.day, inputTokens: row.inputTokens,
   outputTokens: row.outputTokens, cachedInputTokens: row.cachedInputTokens,
   costUsd: row.costReported ? row.costUsd : null, costReported: row.costReported });
+
+/**
+ * Token fields for the daily ledger. Claude's SDK reports `input_tokens` without cache reads or
+ * cache creation; both are input the provider processed, so the ledger adds them. Codex native
+ * observations already report cached input inside `inputTokens` and do not use this adapter shape.
+ */
+export function inclusiveRuntimeUsage(usage: RuntimeUsage): Pick<UsageDelta, "inputTokens" | "outputTokens" | "cachedInputTokens"> {
+  const cachedInputTokens = (usage.cacheReadInputTokens ?? 0) + (usage.cacheCreationInputTokens ?? 0);
+  return {
+    inputTokens: (usage.inputTokens ?? 0) + cachedInputTokens,
+    outputTokens: usage.outputTokens ?? 0,
+    cachedInputTokens,
+  };
+}
 
 export function usageBudget(config: UsageBudgetConfig | null | undefined, today: UsageDay,
   now = new Date().toISOString()): UsageBudget {

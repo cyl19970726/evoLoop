@@ -30,6 +30,21 @@ export interface NativeObservationRecord {
   plan: null | { turnId: string; steps: Array<{ step: string; status: 'pending' | 'inProgress' | 'completed' }>; explanation: string | null; truncated: boolean; observedAt: string };
   diff: null | { turnId: string; text: string; truncated: boolean; observedAt: string };
   usage: null | { turnId: string; total: NativeUsageBreakdown; last: NativeUsageBreakdown; modelContextWindow: number | null; observedAt: string };
+  /**
+   * Recent Turns' native usage, newest last: the Thread total before the Turn's first model request (that event's
+   * total minus its last request) and the latest total in the Turn. Their difference is the Turn's own usage.
+   */
+  turnUsage?: NativeTurnUsage[];
+}
+export interface NativeTurnUsage {
+  turnId: string;
+  /** Thread total before the Turn's first request; null when this observer did not see the Turn start on the same connection. */
+  base: NativeUsageBreakdown | null;
+  /** Latest Thread total in the Turn; null before its first usage notification. */
+  total: NativeUsageBreakdown | null;
+  /** Connection that observed `turn/started`; null when the start was not observed. */
+  startConnectionId?: string | null;
+  observedAt: string;
 }
 export type NativeObservationProjection = Omit<NativeObservationRecord, 'version'>;
 export interface NativeObservationEvent {

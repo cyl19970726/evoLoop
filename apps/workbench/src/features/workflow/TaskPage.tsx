@@ -207,7 +207,7 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
       setTab(value);
     }
   }
-  const goal = taskGoal(leaderTask, detail.task);
+  const goal = taskGoal(leaderTask);
   const projection = leaderTask ?? undefined;
   const responsibilityLabel = leaderState === "loading" || leaderState === "checking" ? "正在核对责任…"
     : leaderState === "failed" ? "责任暂无法判断"
@@ -255,10 +255,10 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
         </TabsTrigger>)}
       </TabsList>
       <TabsContent value="overview" forceMount hidden={tab !== "overview"} id={panelId("overview")} aria-labelledby={tabId("overview")} className="flex flex-col gap-7 pt-5 outline-none">
-        <section aria-labelledby={`${panelId("overview")}-goal`} className="flex flex-col gap-2">
+        {goal && <section aria-labelledby={`${panelId("overview")}-goal`} className="flex flex-col gap-2">
           <h2 id={`${panelId("overview")}-goal`} className={heading}>目标</h2>
-          <p className="text-body leading-(--leading-body) text-foreground">{goal}</p>
-        </section>
+          <MarkdownBody source={goal} identity={`task-goal-${detail.revision.id}`} projectId={projectId} topHeading={3} />
+        </section>}
         <section aria-labelledby={`${panelId("overview")}-acceptance`} className="flex flex-col gap-2" data-task-acceptance="">
           <h2 id={`${panelId("overview")}-acceptance`} className={heading}>完成条件</h2>
           {acceptance ? <ol className="flex list-decimal flex-col gap-1.5 pl-5 text-body leading-(--leading-body) text-foreground marker:text-muted-foreground">{acceptance.map((point, index) => <li key={index}>{point}</li>)}</ol>
@@ -293,7 +293,7 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
         <SectionBoundary label="依据与影响"><TaskBasisTab context={taskContext} detail={detail} reads={documents.reads} canReview={canReview} /></SectionBoundary>
       </TabsContent>
       <TabsContent value="delivery" forceMount hidden={tab !== "delivery"} id={panelId("delivery")} aria-labelledby={tabId("delivery")} className="pt-5 outline-none">
-        <SectionBoundary label="交付与使用"><TaskDeliveryTab projectId={projectId} actorId={context.principal.actorId} detail={detail} active={active && tab === "delivery"} actionsHref={linkForTab("actions")} /></SectionBoundary>
+        <SectionBoundary label="交付与使用"><TaskDeliveryTab projectId={projectId} actorId={context.principal.actorId} detail={detail} active={active && tab === "delivery"} actionsHref={linkForTab("actions")} convention={leaderTask?.acceptanceConvention ?? null} /></SectionBoundary>
       </TabsContent>
       <TabsContent value="runtime" forceMount hidden={tab !== "runtime"} id={panelId("runtime")} aria-labelledby={tabId("runtime")} className="pt-5 outline-none">
         <SectionBoundary label="运行与关联"><TaskRuntimeTab context={taskContext} detail={detail} active={active && tab === "runtime"} overviewHref={linkForTab("overview")} /></SectionBoundary>

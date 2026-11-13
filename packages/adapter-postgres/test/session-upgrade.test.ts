@@ -48,7 +48,7 @@ const legacyTables = ["project", "process_document", "document_revision", "docum
 async function legacySnapshot(): Promise<Record<string, unknown[]>> {
   const result: Record<string, unknown[]> = {};
   for (const table of legacyTables) {
-    const rows = await client.query(`SELECT ${table==='runtime_run'?"to_jsonb(t)-'execution_profile_snapshot'-'pre_turn_proof'-'stop_requested_at'-'stop_reason'-'stop_requested_by'":(table==='document_revision'?"to_jsonb(t)-'organization_review'-'revision_number'":"to_jsonb(t)")}-'native_environment_epoch'-'observed_model'-'observed_provider'-'usage'-'cost_usd'-'runtime_provider' AS row FROM ${table} t WHERE project_id=$1`, [projectId]);
+    const rows = await client.query(`SELECT ${table==='runtime_run'?"to_jsonb(t)-'execution_profile_snapshot'-'pre_turn_proof'-'stop_requested_at'-'stop_reason'-'stop_requested_by'-'failure_category'-'actual'":(table==='document_revision'?"to_jsonb(t)-'organization_review'-'revision_number'":"to_jsonb(t)")}-'native_environment_epoch'-'observed_model'-'observed_provider'-'usage'-'cost_usd'-'runtime_provider' AS row FROM ${table} t WHERE project_id=$1`, [projectId]);
     result[table] = rows.rows.map(row => row.row).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
   }
   return result;

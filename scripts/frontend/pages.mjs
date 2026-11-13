@@ -93,7 +93,11 @@ export const scenes = [
 
   // Agents: the directory with 统筹安排, one agent's conversation.
   { name: "arrangement", path: p("sessions"), drawer: true, ready: both(heading("统筹安排"), text("前端实现")) },
+  // 项目用量 at the foot of 统筹安排, reached the way an agent's reminder links to it (the page scrolls to the anchor).
+  { name: "arrangement-usage", path: p("sessions#project-usage"), ready: both(heading("项目用量"), text("今日与每日上限")) },
   { name: "agent", path: p(`sessions?session=${encodeURIComponent(agentKey("dev"))}`), drawer: true, ready: text("已核对：1024 下右栏默认收起") },
+  // An idle agent with two Tasks in its Session line: 接下来 in order, the second paused. At 390 the column rises from the bottom.
+  { name: "agent-queued", path: p(`sessions?session=${encodeURIComponent(agentKey("docs"))}`), widths: [1440], drawer: [390], ready: text("从这里开始沟通") },
 
   // Team.
   { name: "team-roles", path: p(`roles?role=${roles.dev.id}`), drawer: true, ready: both(heading("功能开发", 1), text("提出依据")) },

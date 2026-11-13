@@ -468,8 +468,34 @@ test('a finished Turn longer than the bounded read still settles, with its reply
     const data=index===count-1?[{type:'agentMessage',phase:'final_answer',text:final}]:[{type:'commandExecution'}];
     return Promise.resolve({data,nextCursor:index===count-1?null:String(index+1)});
   };
-  assert.equal(await settledReply(pages(18,'本轮完成')),'本轮完成');
+  assert.deepEqual(await settledReply(pages(18,'本轮完成')),{text:'本轮完成',kind:'native'});
   const unread=await settledReply(pages(80,'本轮完成'));
-  assert.ok(unread&&unread.includes('回复没有在有界读取内读出')&&!unread.includes('本轮完成'));
+  assert.equal(unread.kind,'bounded_unread');
+  assert.ok(unread.text?.includes('回复没有在有界读取内读出')&&!unread.text.includes('本轮完成'));
   await assert.rejects(settledReply(()=>Promise.resolve({data:[],nextCursor:'same'}),5),/cursor repeated/);
+});
+
+test('drain mode: a queued message does not begin while held, and is neither noted nor dropped; a Turn already begun still settles; released, it begins in order',async()=>{
+  const busy=randomUUID(),idle=randomUUID();
+  const inFlight=message(randomUUID(),busy,'processing'),queuedFirst=message(randomUUID(),idle,'queued'),queuedSecond=message(randomUUID(),randomUUID(),'queued');
+  let held=true,settled=0,preflights:string[]=[],notes=0,starts=0;
+  const service={pending:async()=>[inFlight,queuedFirst,queuedSecond],
+    session:async(_p:string,id:string)=>session(id),
+    processing:async(_p:string,id:string)=>id===inFlight.id?{operationId:randomUUID(),nativeTurnId:'turn-exact',state:'running'}:null,
+    settle:async()=>{settled++;},
+    preflightDispatch:async(_p:string,id:string)=>{preflights.push(id);},
+    noteBlocked:async()=>{notes++;},
+    beginDispatch:async()=>{starts++;throw new DomainError('SESSION_BUSY','stop here: the start itself is not under test');}} as unknown as SessionMessageService;
+  const runtime={isReady:()=>true,registerBinding:async()=>{},markReadOnlyThread:()=>{},
+    qualifyConversationThread:async()=>({available:true,reason:'ok',fingerprint:'a'.repeat(64)}),startConversationTurn:async()=>{throw new Error('must not start');},
+    listTurns:async()=>({data:[{id:'turn-exact',status:'completed',completedAtUtc:new Date().toISOString()}],nextCursor:null}),
+    listItems:async()=>({data:[{id:'answer',type:'agentMessage',phase:'final_answer',text:'Done'}],nextCursor:null})};
+  const pump=new SessionMessagePump({service,runtime:()=>runtime,projects:async()=>[projectId],canStart:async()=>true,
+    holdNewStarts:async()=>held,canWrite:()=>true,pollIntervalMs:1000,onError:e=>{throw e;}});
+  await pump.tick();
+  assert.deepEqual([preflights.length,notes,starts],[0,0,0],'held: no queued message is preflighted, noted as blocked or begun');
+  assert.equal(settled,1,'the Turn already begun settles as usual');
+  held=false;await pump.tick();
+  assert.deepEqual(preflights,[queuedFirst.id,queuedSecond.id],'released: the queued messages are looked at again, first the earlier one');
+  assert.equal(starts,2);
 });

@@ -154,6 +154,10 @@ test("repeated evaluation deduplicates and same-revision phase change expires th
   await store.recordAssessment(task,assessTaskAttention(task,{...policy,stageOverdueMs:null},evalNow),evalNow,null);
   assert.equal((await store.getItem(first.id))?.state,"resolved");
   assert.equal(await taskAttentionNoticeCurrent(pool,projectId,first.noticeId!),"expired");
+  {const { listLeaderEventRecords }=await import("../src/leader-event-records.ts");
+    const resolved=(await listLeaderEventRecords(pool,projectId,{taskId,kind:"attention_resolved",limit:10})).items;
+    assert.equal(resolved.length,1,"a resolved attention item is a record: it is not a Leader notice");
+    assert.match(resolved[0]!.sourceRef,new RegExp(`^attention:${first.id}@v`));}
   assert.equal((await service().execute(lead,{...thresholdCommand,operationId:randomUUID(),expectedVersion:2})).status,"applied");
   await store.recordAssessment(task,assessed,evalNow,null);
   const item=(await store.items({taskId,state:"open",limit:10})).items[0]!;

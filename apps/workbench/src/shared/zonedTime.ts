@@ -157,6 +157,21 @@ export function timeFieldInstant(value: string, timezone: string): string {
   return localInstant(local, timezone).iso;
 }
 
+/**
+ * What a time field becomes when the record's time zone is changed while the field is filled. A value filled from the record
+ * (it carries its instant) keeps that instant: its clock reading is worked out again in the new zone, so changing only the zone
+ * never moves the moment. A value typed by hand has only a reading, which is now read on the new zone's clock; that is said, not hidden.
+ */
+export function timeFieldAfterZoneChange(value: string, from: string, to: string): { value: string; note: string | null } {
+  const { local, instant } = splitTimeField(value);
+  if (!local.trim() || from === to || !knownZone(to)) return { value, note: null };
+  if (instant && localInputIn(instant, fieldClockZone(from)) === local.trim()) {
+    const next = timeFieldValue(instant, to);
+    return { value: next, note: `时区改成了 ${to}：这个时刻不变（${utcText(instant)}），当地时间已换算为 ${splitTimeField(next).local.replace("T", " ")}。` };
+  }
+  return { value, note: `时区改成了 ${to}：这里填的 ${local.replace("T", " ")} 现在按 ${to} 的当地时间算，不是原来那个时刻；需要的话请重新填写。` };
+}
+
 /** The two instants of a reading that happens twice (daylight saving ends), or null. */
 export function repeatedInstants(local: string, timezone: string): { earlier: string; later: string } | null {
   try { const read = localInstant(local, timezone); return read.later ? { earlier: read.iso, later: read.later } : null; }

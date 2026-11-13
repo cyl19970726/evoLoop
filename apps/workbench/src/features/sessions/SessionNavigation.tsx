@@ -95,7 +95,7 @@ export function SessionNavigation({ token, projectId, selectedId, onNavigate, st
   const moreButton = (busy: boolean, label: string, onClick: () => void) => <Button variant="ghost" disabled={busy} onClick={onClick}
     className="session-nav-more mx-3 my-1 h-auto rounded-md px-2 py-1 text-small font-normal text-primary hover:bg-accent hover:text-primary disabled:text-muted-foreground disabled:opacity-100">{busy ? "加载中…" : label}</Button>;
   return <section ref={root} className="session-navigation flex flex-col" aria-label="智能体目录" data-ui="">
-    <label className="mb-1.5 flex h-9 items-center gap-2 rounded-full bg-field px-3 text-muted-foreground">
+    <label className="mb-1.5 flex h-9 items-center gap-2 rounded-full bg-field px-3 text-muted-foreground has-[input:focus-visible]:shadow-[var(--focus-ring)]">
       <Search size={14} aria-hidden="true" />
       <input aria-label="搜索智能体名称或职责" placeholder="搜索智能体" value={query} className="w-full bg-transparent text-foreground outline-none" onChange={event => onState(previous => ({ ...previous, query: event.target.value,
         pages: { current: 1, historical: 1, unclassified: 1 },

@@ -57,3 +57,16 @@ test("no conflict is only claimed from a complete read", () => {
   assert.match(noConflictText("ready", false, ""), /其余任务还没核对/);
   assert.match(noConflictText("ready", true, ""), /记录里没有看出冲突/);
 });
+
+test("an agent directory that was not read to its end never yields a '0 个空闲' (#295 item 1)", () => {
+  const row = {} as never;
+  // Nobody known to be free, but agents were left unread: not 0.
+  assert.deepEqual(freeCountStat({ judged: true, free: [], others: 3, unknown: 0 }, null, false, false), { value: "无法判断", label: "谁空闲", note: "智能体目录没读全" });
+  // Some known to be free: the count is a floor and says so.
+  assert.deepEqual(freeCountStat({ judged: true, free: [row], others: 3, unknown: 0 }, null, false, false), { value: 1, label: "个智能体空闲", note: "目录没读全，未读到的智能体未计入" });
+  // A fully read directory keeps the old, exact behaviour (0 only when everyone's work is on record).
+  assert.deepEqual(freeCountStat({ judged: true, free: [], others: 2, unknown: 0 }, null, false, true), { value: 0, label: "个智能体空闲" });
+  assert.match(noFreeAgentText({ judged: true, free: [], others: 3, unknown: 0 }, false), /智能体目录没有读全，无法确认谁空闲/);
+  assert.doesNotMatch(noFreeAgentText({ judged: true, free: [], others: 3, unknown: 0 }, false), /没有空闲的智能体：/);
+  assert.match(noFreeAgentText({ judged: true, free: [], others: 3, unknown: 0 }, true), /没有空闲的智能体：/);
+});

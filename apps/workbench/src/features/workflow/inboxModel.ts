@@ -6,49 +6,12 @@
 // current delivery by anyone, so a later observation by someone else hides mine: then mine is read from the task.
 // When my latest observation of the current delivery is 使用失败, the next step is the executor's rework, not mine:
 // the delivery is not listed and not counted until a new delivery comes (未使用 stays listed).
-import type { ConsumerObservation } from "@evoloop/contracts";
 import type { LeaderWorkTask } from "@evoloop/contracts/work-index";
+import type { UsageBudget, SessionUsage } from "@evoloop/contracts";
+import type { DecisionItem } from "@evoloop/contracts/decision-requests";
 
-export type UseResult = "used" | "failed" | "notUsed";
-/** The observation after which the delivery still waits for me: 未使用 (使用失败 sends it back to rework). */
-export type NotUsedResult = "notUsed";
-
-/** What the work index says about one task's current delivery for this reader. */
-export type MyDeliveryJudgement =
-  /** Not a current, passed delivery declared for me on an open task. */
-  | { kind: "none"; reason: "closed" | "no-delivery" | "old-revision" | "other-consumer" | "not-passed" }
-  /** My latest observation of the current delivery is 已使用. */
-  | { kind: "used" }
-  /** My latest observation of the current delivery is 使用失败: it goes back to the executor for rework, not to me. */
-  | { kind: "failed" }
-  /** Declared for me and not yet 已使用 by me; `last` is my latest observation, if any. */
-  | { kind: "waiting"; last: NotUsedResult | null }
-  /** The latest observation is someone else's: whether I recorded 已使用 is read from the task's observations. */
-  | { kind: "check-own" };
-
-export function judgeMyDelivery(item: Pick<LeaderWorkTask, "taskState" | "currentRevisionId" | "delivery">, actorId: string): MyDeliveryJudgement {
-  if (item.taskState === "done" || item.taskState === "cancelled") return { kind: "none", reason: "closed" };
-  const delivery = item.delivery;
-  if (!delivery) return { kind: "none", reason: "no-delivery" };
-  if (delivery.taskRevisionId !== item.currentRevisionId) return { kind: "none", reason: "old-revision" };
-  if (!actorId || delivery.consumer !== actorId) return { kind: "none", reason: "other-consumer" };
-  // A delivery whose technical check failed goes back to rework; there is nothing to use until the next one.
-  if (delivery.technicalResult !== "passed") return { kind: "none", reason: "not-passed" };
-  if (!delivery.observationActorId || !delivery.observationResult) return { kind: "waiting", last: null };
-  if (delivery.observationActorId !== actorId) return { kind: "check-own" };
-  const result = delivery.observationResult;
-  return result === "used" ? { kind: "used" } : result === "failed" ? { kind: "failed" } : { kind: "waiting", last: result };
-}
-
-/** My latest observation of one delivery among a task's observations (the observer, not who typed it, is the consumer). */
-export function myLatestObservation(observations: readonly ConsumerObservation[], deliveryId: string, actorId: string): ConsumerObservation | null {
-  let latest: ConsumerObservation | null = null;
-  for (const item of observations) {
-    if (item.deliveryId !== deliveryId || item.observer !== actorId) continue;
-    if (!latest || Date.parse(item.createdAt) >= Date.parse(latest.createdAt)) latest = item;
-  }
-  return latest;
-}
+export { judgeMyDelivery, myLatestObservation, type MyDeliveryJudgement, type NotUsedResult, type UseResult } from "@evoloop/contracts/delivery-for-me";
+import type { NotUsedResult } from "@evoloop/contracts/delivery-for-me";
 
 /** When the current delivery was recorded, from the index's timeline; null when the index does not say. */
 export function deliveredAt(item: Pick<LeaderWorkTask, "delivery" | "timing" | "latestProgress">): string | null {
@@ -136,4 +99,73 @@ export function inboxBadge(parts: readonly InboxPart[]): InboxBadge {
  */
 export function shellInboxCount(badge: InboxBadge): number | null {
   return badge.state === "known" ? badge.count : badge.state === "unknown" ? null : 0;
+}
+
+/** 待我决定: what each kind of item is called, and the page that decides it (a request is answered right in the row). */
+export const decisionKindText: Record<DecisionItem["kind"], string> = {
+  role_proposal: "职责提案", stage_proposal: "阶段提案", task_question: "任务讨论里的问题", decision_request: "请你确认",
+};
+const blank = (value: string | null | undefined) => !value || !value.trim();
+/**
+ * Why one item cannot be opened at its own place, or null when it can: the id that locates it is missing. The row then says so and offers
+ * no link, rather than sending the reader to a list and letting that pass for the item.
+ */
+export function decisionLinkProblem(item: DecisionItem): string | null {
+  switch (item.kind) {
+    case "role_proposal": return blank(item.roleId) ? "这条职责提案没有带职责编号，无法直接打开；请到职责页按标题查找。" : null;
+    case "stage_proposal": return blank(item.stageId) ? "这条阶段提案没有带阶段编号，无法直接打开；请到目标与阶段页按标题查找。" : null;
+    case "task_question":
+      return blank(item.taskId) ? "这个问题没有带任务编号，无法直接打开。"
+        : blank(item.discussionId) ? "这个问题没有带讨论编号，无法定位到那条讨论；请到该任务的协作里查找。"
+          : blank(item.eventId) ? "这个问题没有带问题编号，无法定位到具体问题；请到该任务的协作里查找。" : null;
+    case "decision_request": return null;
+  }
+}
+
+/**
+ * Where to decide one item, at the item itself: the Roles page on that role (`?role=`), the Goals and stages page on that stage (`?stage=`),
+ * or the task page on its collaboration section at that discussion and question. Null when the item is answered in the list, or when its
+ * id is missing (see {@link decisionLinkProblem}).
+ */
+export function decisionLink(projectId: string, item: DecisionItem, actorId: string): string | null {
+  if (decisionLinkProblem(item)) return null;
+  const back = { return: `/p/${projectId}/inbox`, actor: actorId, returnTitle: "待我验收与判断" };
+  const decisionBack = { ...back, returnTitle: "待我处理" };
+  switch (item.kind) {
+    case "role_proposal": return `/p/${projectId}/roles?${new URLSearchParams({ role: item.roleId, ...decisionBack })}`;
+    case "stage_proposal": return `/p/${projectId}/journey?${new URLSearchParams({ stage: item.stageId, ...decisionBack })}`;
+    case "task_question": return `/p/${projectId}/tasks/${item.taskId}?${new URLSearchParams({ section: "collaboration", discussion: item.discussionId, question: item.eventId,
+      ...back })}`;
+    case "decision_request": return item.taskId ? inboxTaskLink(projectId, item.taskId, actorId) : null;
+  }
+}
+
+/** One budget or context alert for the person (W5: these never go to the Leader). `limit` means ordinary Turns are held or a hand-off is needed. */
+export interface UsageAlert { kind: "budget" | "context"; severity: "warning" | "limit"; text: string; sessionId?: string }
+/**
+ * The alerts in a usage overview: the day's budget when it is at its warning line or used up, and each Session whose context is near its limit or
+ * must be handed off. Nothing is listed for ok, unknown or unconfigured, and nothing when the overview was not read.
+ */
+export function usageAlerts(overview: { budget: UsageBudget; sessions: SessionUsage[] } | null | undefined): UsageAlert[] {
+  if (!overview) return [];
+  const alerts: UsageAlert[] = [];
+  const { budget } = overview;
+  if (budget.configured && (budget.state === "warning" || budget.state === "exhausted"))
+    alerts.push({ kind: "budget", severity: budget.state === "exhausted" ? "limit" : "warning",
+      text: budget.reason ?? (budget.state === "exhausted" ? "今日用量已达到上限。" : "今日用量接近上限。") });
+  for (const session of overview.sessions) {
+    const state = session.context?.state;
+    if (state === "warning") alerts.push({ kind: "context", severity: "warning", sessionId: session.sessionId, text: session.context.reason ?? "这个智能体的上下文接近上限，请留意。" });
+    if (state === "handoff_required") alerts.push({ kind: "context", severity: "limit", sessionId: session.sessionId, text: session.context.reason ?? "这个智能体的上下文已满，需要交接后才能继续普通消息。" });
+  }
+  return alerts;
+}
+
+/**
+ * The days to ask the usage overview for. The server counts "today" in the project's time zone and finds today's usage inside the asked window, so the
+ * window must contain the project's day whatever its offset: UTC-12 to UTC+14 are never more than one calendar day from the UTC day.
+ */
+export function usageWindow(nowIso: string): { from: string; to: string } {
+  const day = (offset: number) => new Date(Date.parse(nowIso) + offset * 86_400_000).toISOString().slice(0, 10);
+  return { from: day(-1), to: day(1) };
 }

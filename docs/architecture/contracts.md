@@ -42,7 +42,7 @@
 
 ### 正文、执行与验收责任
 
-`task.create` 接收 title/content/acceptance/owner 和按需元数据，一次创建 Task 与主 DocumentRevision。Task/TaskRevision 的 content 是固定主正文的读取投影，不另存正文。Task.kind 可为空或 implementation/research/validation；所有类型共用 todo/in_progress/done/cancelled。项目 Goal 与 Role.goal 不改变含义，Schedule 的新 TaskTemplate 使用 content，旧模板仅在读取时兼容。
+`task.create` 接收 title/content/acceptance/owner 和按需元数据，一次创建 Task 与主 DocumentRevision。Task/TaskRevision 的 content 是固定主正文的读取投影，不另存正文。Task.kind 可为空或 implementation/research/validation/defect/documentation/operation（迁移 095 扩到六种，旧数据不变）；所有类型共用 todo/in_progress/done/cancelled。项目 Goal 与 Role.goal 不改变含义，Schedule 的新 TaskTemplate 使用 content，旧模板仅在读取时兼容。
 
 开始时校验当前版本、实际授权和固定原件，原子发布主正文、封存 BasisSet 并进入 in_progress；外部材料可显式加入，主正文会自动加入，无需独立创建/采纳其他 Document。`task.start` 保留明确的 review 权限核验；状态简化不把旧提议自动变成已获准运行。Runtime 只从已开始的 in_progress Task 派发。
 
@@ -194,6 +194,8 @@ HostLink 独立记录 Role、owned Session 或外部 Codex Desktop 引用及历�
 
 `SessionRuntime` 合同不绑定具体运行时。协调服务只经中立的 `RuntimePort`（`packages/contracts/src/runtime.ts`）调用运行时：创建/继续、查询状态、发送已授权任务、读取回复/产物、请求停止、恢复关联。每个适配器用 `capabilities()` 逐项声明进程模型、执行中补入、压缩、历史、命名、归档、模型修订、用量与费用等能力；未声明的能力返回 unsupported，不由协调服务模拟。当前有 Codex App Server 与 Claude Agent SDK 两个适配器，一个协调服务可同时驱动两者；Role 第一次预留 Session 时绑定一种运行时，之后不能更换，Session 在预留时固定运行时（DEC-035，schema 067、068）。两者的生命周期与能力差别见[Session 运行时](session-runtime.md)。
 
+**发给 owned Session 的输入（即时输入，`packages/contracts/src/direct-input.ts`）。** 请求 `{ inputId, operationId, content, expectedTurnId }`；`expectedTurnId` 为当前 Turn 表示插入（steer），为 `null` 表示 Session 空闲时开一轮（start）。回执 `DirectInputReceipt` 带 `state`（`accepted`、`rejected`、`attempted`、`unknown`）、`mode`、`reason`，以及**新增的可选字段 `queuedMessageId`**：非空表示这条输入没有送入运行时，而是存成了一条普通排队消息，其 ID 等于输入 ID；`state` 此时为 `rejected`，`reason` 说明原因（以 `TURN_CHANGED:` 或 `NOT_BOUND:` 开头表示人看到的 Turn 在提交时已换、主回合尚未绑定，或不可补入的回合；转排队的直启行 `mode=start`、没有处理槽位，迁移 096）。能力响应 `DirectInputCapability` 新增可选 `detail`，在授权缺失时写出缺哪一项。排队这条路的请求就是 `session.message.post`（`messageId` 即输入 ID），没有新的命令类型。CLI 为两条路提供 `session input send|show`。
+
 发送消息或唤醒并不等于接收、执行、完成。不能凭“创建请求已发出”就登记为已运行。运行时身份映射保留 `roleId ↔ sessionId ↔ taskId` 的时间范围和来源；同一任务因续做换 session 时保留交接链。
 
 运行时专有的版本锁定由适配器负责，不进入共同合同。Codex 的 App Server 协议版本由运行配置显式固定，服务按选中版本精确核对二进制与 schema 指纹，不自动升级或放宽协议锁；`model/list` 返回某模型也不能证明新 Turn 会被接受或其实际运行模型。版本与可选能力见[Codex 接入](codex-integration.md#协议版本与可选能力)。
@@ -311,13 +313,37 @@ Task 协作通道把 question/answer/progress/blocker/handoff/result 固定到�
 
 第一版口径来自 Task `7700932d-0d59-4497-b621-03f0818382bf`，固定观察样本是 Document `c3685781-54b1-459e-94d0-0ceebc706210@af2de0c1-36ea-431f-9582-1b430950c47a`，于 2026-11-04 读取，不代表当前健康状态。读取命令、跟进命令与截图见[运行接线手册](../development/runtime-operations.md#5-阶段关注)。
 
+### 待我决定与决定请求
+
+`GET /api/projects/:projectId/decisions-for-me` 读出等当前身份决定的事项：职责提案（`role_definition` 为 candidate）、阶段提案（`project_stage` 为 proposed）——这两类只对有 review 权限的身份列出——、Task 讨论里 `recipientActorId` 指名当前身份的 `question` 消息（当前身份的回复或“已采纳/已解决”回执前一直在）、以及发给当前身份的未答复决定请求。每项有类型、标题、说明、提出者、时间和决定位置所需的 ID。
+
+“Leader 请你确认”没有结构化来源，所以新增 `decision_request`（迁移 102）：`decision.request.create`（review 权限；`requestedFrom` 是被请求的身份，可带 `taskId` 与至多 10 个选项）、`decision.request.answer`（只有被请求的身份，选项非空时答案必须是其中之一，带版本）、`decision.request.withdraw`（只有提出者）。已答复或撤回的请求离开列表；答复保留在 `decision_request` 行里。
+
 ### Leader 通知层
 
 需要 Leader 处理的业务事实，由服务端引擎送到受管 Leader Session，不依赖插件、Stop Hook 或 Agent 自己记得去查（DEC-038；schema 046、047）。
 
+**调度板与调度事件流（DEC-045 Q2，迁移 105）。** 三个读取接口，都需要项目读权限，只返回元数据（没有消息正文，也不返回 Task、Run 的正文）：`GET /api/projects/{id}/work-board[?brief=true]` 返回快照——每个 Session 的当前工作、队伍项、能力与健康（恢复门阶段、模型服务暂停）、就绪但没进任何队伍的 Task、等 Leader 决定的事项、给页面用的 `graph`（节点：Leader、通知包、各 Session；在途对象；各步数量）和 `eventSeq`；`GET .../work-board/events` 按序号（`after`）或按时间段（`from`、`to`）读事件，返回 `{items, cursor, head, resetRequired, more}`，`wait` 为长轮询；`GET .../work-board/stream` 是 SSE（帧：`sched` 每条事件带 `id: 序号`、`ready`、`reset`、保活注释），用 `Last-Event-ID` 或 `after` 续传；`GET .../work-board/metrics` 返回由事件算出的三项指标。事件字段见 `packages/contracts/src/work-board.ts` 的 `SchedEvent`：序号、时间、`category`（notice、task、message、acceptance）、`kind`、`from`、`to`、`sessionId`、`taskId`、`subject`（种类、编号、Task 标题、可打开的接口路径）、`prior`、`next`。序号是递增的，同一项目内两个序号之间有空洞是正常的；`resetRequired` 表示游标早于保留期（30 天）已清理的范围，或超前于项目最新序号，调用方重读快照后从它的 `eventSeq` 继续。简要输出不超过 6 KB。通知事件暂不带级别（W5 上线时补）。
+
 **通知包（DEC-045 W1，迁移 089）。** 通知包由私有配置 `leaderResultNotices.packets` 控制，**默认关闭**：关闭时新通知与现在完全一致，仍是一条通知一条消息（`leader_result_notice.via_packet` 为 false）。打开后，之后新产生的通知走通知包（`via_packet` 为 true；通知泵每轮把开关抄进 `leader_notice_packet_mode`，由插入触发器给新通知打标，迁移前已有的通知和旧通知的恢复替换件永远走旧路径）。再关闭时，还没有进过任何包的通知回到旧路径；已经进过包的项仍按包处理完。这样发布前后可对照，出问题时改配置即可退回，不必重新发布。
 
 一个包把等待中的通知合成一条消息：最早一项等满 60 秒（数据库时间）、Leader 空闲（没有 Run 或消息回合在进行）、没有“可以开始”的人的消息在排队、恢复门打开时才合成。判断“有人的消息在等”与消息泵用同一个条件：缺发送者授权而受阻的消息、被 Run 停止取代而未确认的消息，消息泵自己会跳过，不算在等。每包最多 20 项、**8 KB**（`PACKET_BYTE_BUDGET`，数据库也限 8192 字节；先尽量写完整行，放不下的降为摘要行，再放不下只写通知 ID，“上一轮已读到过”标记在各种写法里都保留）。Leader 正在执行时通知先攒着，执行中送入归 W2。每包送出前的阈值与预算沿用 #321 对通知消息的开始前检查，达到阈值就不开始，交接后再继续。
+
+**通知分级（DEC-045 W5，迁移 104）。** 每条通知有一个级别，由种类决定（`leader_result_notice.level` 是种类的生成列，不会漂移，不需回填；`@evoloop/contracts/leader-notices` 的 `noticeLevelOf` 是同一张表，测试逐种类核对两者一致）：
+
+| 级别 | 送达 | 种类 |
+| --- | --- | --- |
+| 立即 | Leader 下一个能接收的时点就送，不等 60 秒，排在汇总项前面，同一包里也带上此刻在等的汇总项 | `acceptance_blocked`（验收安排受阻）、`run_submission_blocked`（提交受阻）、`run_without_submission`（Run 结束未提交，被叫停的 Run 除外）、`task_question`、`task_blocker`、`observation_failed`（验收观察记了失败，也包括“未使用”）、`line_entry_suspended`（Session 队伍项挂起，来自 `entry.suspended`） |
+| 汇总 | 等满 60 秒进下一包 | `delivery`、`observation_used`（验收观察记了使用）、`task_todo`、`task_attention`、`line_confirmation_returned`（Session 退回执行确认，来自 `entry.returned`），以及迁移前的旧种类 `observation` |
+| 只记录 | 不是通知，不唤醒 Leader | 见下“只记录事件” |
+
+立即级仍受恢复门、“人的消息在排队”、Leader 正在执行（不打断）、每包 20 项与 8 KB 的约束；多于一包的立即通知排在前面、连续成包，汇总项的积压不会挡住它们。验收观察按结论拆开：`used` 是 `observation_used`，其余结论（`failed`、`notUsed`）是 `observation_failed`。包里的立即项在行首标“立即·”。
+
+**只记录事件。** Run 已按请求停止、关注项已解决、通知撤回，以及 Session 队伍的追加、开始、结束（`line_entry_appended`、`line_entry_started`、`line_entry_ended`，来自 `entry.appended`、`entry.started`、`entry.runEnded`）不产生通知，从只读视图 `leader_event_record` 读取（无新存储，每行都是别的表里不可改的事实）：`GET /api/projects/:projectId/leader-records?taskId=&kind=&limit=&cursor=`，`kind` 取以上任一种，按时间从旧到新续页，项目读权限即可。Run 停止同时仍出现在 `work changes` 的 run 变更里；调度板（Q2）与每日评估读这个接口。
+
+**Session 队伍事件（迁移 106）。** 队伍（迁移 087）的每一步都已写不可改的 `session_line_event`；触发器把其中两种变成通知：挂起（立即）、执行确认被退回（汇总），通知的来源编号是由项目和事件序号算出的稳定 uuid，来源写成 `line:<序号>:<事件种类>`。**连续跳过**与直派相关的事件（直派受阻、直派本次跳过）属于定时直派（S1），不在这里，随 S1 接入；执行确认闸门自己的“退回”就是上面的 `entry.returned`。
+
+**用量告警按项目时区计日。** 预算的“今天”由服务按私有配置里的项目时区算（`UsageService`），读用量概览的窗口必须包含这一天；UTC 与项目时区最多差一个日历日，所以待我处理读“UTC 日前一天到后一天”（`usageWindow`），告警本身取服务回答的预算状态，不在页面里再按 UTC 日期自己算。
 
 **过时判断在打包事务里做。** 待办通知：选入的项在 `leader.noticePacket.build` 的事务内按 Task 行锁重新判断，已过时则整次打包被拒、下一轮重来；被撤回的待办必须真的已过时，并在同一事务里为 Task 的当前修订补一条新通知（与旧路径一致）。过时项即使这一批没有可送的也会撤回（只记“已撤回”，不建消息）；读候选时分页向后读，排在前面的过时或来源不明的项不会挡住后面的新通知。
 
@@ -339,16 +365,16 @@ Task 协作通道把 question/answer/progress/blocker/handoff/result 固定到�
 
 ### 验收接力与临时 Session 退役
 
-验收由谁做，由 Task 声明，不默认交给 Leader（DEC-038；PR #217，schema 062）。
+验收由谁做，由 Task 声明，不默认交给 Leader（DEC-038、DEC-042、DEC-046；PR #217，schema 062）。
 
-- **验收方式与 `acceptance_target`。** Task 的 `acceptance_target` 仍声明为人、Leader 或独立业务 Session 之一；`leader` 值保留，但只在使用者为某项 Task 明确要求时使用，不是常规验收选项（DEC-042）。常规验收交 Leader 指派的独立业务 Session；难验收由需求 Session 以消费者身份直接验收，不经验收接力。收件人还须与 Task 声明的消费者和验收模式一致。作者 Session 与安排者不能充当独立验收，执行者自检、CI 与 Run 终态是交付证据，不是验收。代码层面：选 Leader 方式时，收件 Session 必须是项目当前的 Leader Session；选业务 Session 方式时，它不能是 Leader Session，也不能是当前 Delivery 的作者 Run 所在的 Session；安排者须有项目 review 权限，并且就是那条验收消息的发送者。
+- **验收目标与 `acceptance_target`（DEC-042、DEC-046）。** Task 的 `acceptance_target` 声明为人、Leader、Leader 指派的独立业务 Session，或 `named_agent`（由声明的 `consumer` 业务身份直接验收，不经验收接力；必须同时是 `independent_agent` 方式，否则创建与更新都拒绝；`task.timing.set` 与每日复制保留该目标和验收前置；难验收由承担难验收的那个验收身份以此方式验收）。`leader` 值保留，但只在使用者为某项 Task 明确要求时使用，不是常规验收选项。常规验收交 Leader 指派的受管验收 Session；较难的交承担难验收的那个验收身份，样本、反例和判据在 Task 正文中先设计好。消费者写受管验收身份；需求 Session 不做验收者，只照验收结论合并与发布，并事后抽查（DEC-046，试行）。`named_agent` 下 `acceptance.assign` 以 `ACCEPTANCE_NAMED_AGENT` 明确拒绝；`task.update` 可把目标改成它或用 `null` 清空。Task 还可写 `acceptancePrecondition`；前置不是 `none` 时，复核者用 `task.acceptancePrecondition.mark` 按交付显式标记已满足，标记前投影的 `acceptanceConvention.readiness` 为 `waiting_precondition`（不从部署版本推断：仓库还没有可核的只读部署版本）。以下按接力说明前三种：收件人还须与 Task 声明的消费者和验收模式一致。作者 Session 与安排者不能充当独立验收（DEC-038），执行者自检、CI 与 Run 终态是交付证据，不是验收。代码层面：选 Leader 方式时，收件 Session 必须是项目当前的 Leader Session；选业务 Session 方式时，它不能是 Leader Session，也不能是当前 Delivery 的作者 Run 所在的 Session；安排者须有项目 review 权限，并且就是那条验收消息的发送者。
 - **接力记录。** Leader 用 `task_acceptance_relay` 安排验收：固定 Task 修订、当前 Delivery、阶段（候选 `candidate` 或正式 `formal`）、验收范围、入口与收件人。非人工方式同时固定一条发给收件 Session 的消息。同一 Delivery、阶段和范围同时只有一条现行安排；改派以原安排和版本为前提，旧安排保留为 `superseded` 或 `released`。
 - **开始前再核。** 验收消息真正开始处理前，触发器再次核对 Task 未结束、当前修订和最新 Delivery 仍是安排时那一份；不符就拒绝开始，避免验收旧版本。
 - **验收证据。** 人的阅读记入 `task_acceptance_human_read`；验收者本人的 Observation 经 `task_acceptance_observation_link` 关联到安排，并标明证据级别。存在现行安排时，Task 关闭要求指定收件人对该 Delivery 有已关联的 `used` 观察。候选阶段通过不等于正式通过：同一 Delivery 的候选与正式安排可以并存，但存在现行正式安排时，关闭只按正式安排核对；候选安排保留为历史证据，不因没有关联观察而阻塞正式收口。安排无法开始时生成 `acceptance_blocked` 通知交给 Leader。
 - **临时 Session 退役。** 标为临时的 Session 进入 `closing` 前，必须有一条匹配的 `session_retirement_decision`（理由、交接证据、所见版本、Role 与原 Thread）；它名下若还有未释放的未结束 Task 分派或未结束的验收安排，数据库拒绝关闭。Leader 核业务责任，引擎核运行状态。
 - **容量视图。** 只读的容量视图按 Session 汇总在途 Run、排队消息、队列条目、未结束分派和验收安排，是 Leader 做编制判断的输入；它只反映数据库里的持久占用，不证明原生写入权。
 
-**“直接验收”的过渡。** 专门字段与目标值尚未实现（Task `4acdd4d2`）。当前做法是在 Task 正文把需求 Session 的业务身份写成消费者，并注明不经验收接力；验收仍由现有观察记录承载，字段与合同枚举在实现前不变。
+**“直接验收”与在途 Task。** 验收目标 `named_agent` 由 Task `4acdd4d2` 实现（迁移 095）：难验收的 Task 把承担难验收的那个验收身份写成消费者，不经验收接力；新建 Task 不再把需求 Session 写成消费者，常规验收写受管验收身份并由 Leader 安排接力。消费者一时改不了的在途 Task，以及需求 Session 自己的 PR，由 Leader 另建“合并前验收”或“正式验证”Task 交验收 Session 完成，需求 Session 只照报告结论签字（DEC-046，试行）。
 
 ## 6. StageReview：从交付到下一阶段
 

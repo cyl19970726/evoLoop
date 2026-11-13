@@ -19,6 +19,7 @@ import { PostgresUnitOfWork, PgConnectorRoutes, PgConnectorMessageLinks, PgConne
 import { disposeStalePendingTodo, disposeStaleTodoMessage, getLeaderNotice, getLeaderNoticeByMessageId, hasInFlightLeaderNoticeMessage, linkLeaderNoticeMessage,
   listLeaderNotices, listPendingLeaderNotices, markLeaderNoticeBlocked, pinLeaderNoticeRecipient,
   recoverRejectedLeaderNotice, setLeaderNoticePendingReason } from "@evoloop/adapter-postgres/leader-result-notices";
+import { listLeaderEventRecords } from "@evoloop/adapter-postgres/leader-event-records";
 import { authConfigSchema, hasCurrentStudyReviewer, isProjectWriter } from "./auth.js";
 import { buildServer } from "./server.js";
 import { acquireCoordinatorLease, leaseFencedUnitOfWork } from "./lease.js";
@@ -54,12 +55,16 @@ import { evaluationPacketMediaType } from "./runtime/evaluation-materials.js";
 import { activeTaskTimingGrants, drivenRuntimeProviders, hasExactEngineeringActionGrant, hasFeishuActorGrant, hasTaskTimingGrant, knowledgeServesProject, loadIntegrations, runtimeThreadConfigForSession, schedulingGrantsFor, selectMaterialCli } from "./configuration.js";
 import { OpenVikingKnowledgeRepository } from "@evoloop/adapter-wiki-openviking";
 import { DomainError } from "@evoloop/contracts/ports";
+import { DrainControl, isInstanceMaintainer } from "./drain/service.js";
 import { ordinaryMessageGrantProblem } from "./session-messages/send-authority.js";
 import type { Principal } from "@evoloop/contracts";
 import { LocalBlobStore } from "@evoloop/adapter-local-blobs";
 import { setupManagedLoops } from "./orchestration/setup.js";
 import type { WorkerCredentialBroker } from "./workers/credentials.js";
 import { readWorkStatuses } from "./orchestration/work-status.js";
+import { headSeq, purgeSchedEvents, readSchedEvents, readWorkBoard } from "@evoloop/adapter-postgres/work-board";
+import { schedEventRetentionDays } from "@evoloop/contracts/work-board";
+import { SchedEventHub } from "./work-board/hub.js";
 import { createLeaderWorkIndexReader } from "./work-management/work-index.js";
 import { readPlanningSources } from "./orchestration/planning-sources.js";
 import { managedRuntimeAdmission } from "./orchestration/admission.js";
@@ -72,6 +77,7 @@ import type { DynamicToolCall } from "@evoloop/adapter-codex-app-server";
 import { RuntimeNotSentError, type RuntimeBinding, type RuntimeSessionRecord, type RuntimeSessionSpec } from "@evoloop/contracts/runtime";
 import { loopIntentId } from "./orchestration/runner.js";
 import { pgLeaderPacketPorts } from "./leader-results/packet-ports.js";
+import { readDecisionsForMe } from "@evoloop/adapter-postgres/decisions-for-me";
 import { ResidentQueuePump } from "./resident-queue/pump.js";
 import { SessionLinePump } from "./session-line/pump.js";
 import { SessionObservationService } from "@evoloop/core/session-observation";
@@ -88,8 +94,9 @@ import { SessionTimelineService } from "./session-timeline/index.js";
 import { OrdinaryRunSubmissionService, leaseCheckedUnitOfWork } from "./ordinary-run-submission/service.js";
 import { createOrdinaryRunSealer } from "./ordinary-run-submission/seal.js";
 import { OrdinaryRunSealPump } from "./ordinary-run-submission/pump.js";
+import { resolveLineRecipient } from "./session-line/recipient.js";
 import { throttledLog } from "./log-throttle.js";
-import { materialCliRecipientMatches, requireOrdinaryRecipient, requireReservableRecipient } from "./runtime/recipient-preflight.js";
+import { materialCliRecipientMatches, createReserveRecipientCheck, requireOrdinaryRecipient } from "./runtime/recipient-preflight.js";
 import { createMessageExecutionReader } from "./session-messages/execution-capability.js";
 import { sessionMessageCanStart } from "./session-messages/scheduling.js";
 import { LeaderResultNoticePump } from "./leader-results/pump.js";
@@ -118,6 +125,8 @@ const pool = new pg.Pool({ connectionString: databaseUrl, max: 8, connectionTime
 const skillSourceRoot = fileURLToPath(new URL("../../../", import.meta.url));
 pool.on("error", () => { /* Requests receive explicit unavailable responses; credentials are never logged. */ });
 const lease = await acquireCoordinatorLease(pool);
+// Drain mode: while held, no new Run or message Turn begins (docs/architecture/deployment.md §2).
+const drain = new DrainControl(pool);
 const integrations = await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE);
 const configuredUsageTimeZone = integrations.runtime?.dailyBudget?.timeZone ?? "UTC";
 const currentIdentity = async () => authConfigSchema.parse(JSON.parse(await readFile(authFile,"utf8")));
@@ -528,6 +537,7 @@ const runner = runtimeFactory ? new RuntimeRunner({ runtimeFactory, workflow: se
       dynamicAdmission ? () => dynamicAdmission.canCreateSession(session) : undefined);
   },
   mayDispatchRun: async run => {
+    if (await drain.holdNewStarts()) return false;
     if (!await mayStartManaged(run.projectId, "run", run.id)) return false;
     const current=await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE);
     if(!hasCurrentStudyReviewer(await currentIdentity(),run.projectId,run.actorId))return false;
@@ -643,6 +653,20 @@ const acceptanceTimer=setInterval(()=>{
     .finally(()=>{acceptanceTickBusy=false;});
 },2000);
 acceptanceTimer.unref();
+// The work board (DEC-045 Q2): reads over the event table the database triggers fill, one shared hub for every stream subscriber, and the
+// 30-day retention. Retention runs on the writer only and once a day at most; nothing here reads while nobody is subscribed.
+const workBoardReads = {
+  board: (projectId: string) => readWorkBoard(pool, projectId),
+  events: (projectId: string, query: Parameters<typeof readSchedEvents>[2]) => readSchedEvents(pool, projectId, query),
+};
+const schedEventHub = new SchedEventHub({ head: projectId => headSeq(pool, projectId), read: (projectId, after, limit) => readSchedEvents(pool, projectId, { after, limit }) },
+  1000, () => reconciliationLog("Work board event stream needs a re-read."));
+const runSchedRetention = () => { if (lease.canWrite()) void purgeSchedEvents(pool, schedEventRetentionDays).catch(() => reconciliationLog("Scheduling event retention needs a re-run.")); };
+// Also shortly after start: a coordinator that is restarted more often than every 6 hours must still purge.
+const schedRetentionStart = setTimeout(runSchedRetention, 60_000);
+schedRetentionStart.unref();
+const schedRetention = setInterval(runSchedRetention, 6 * 3600 * 1000);
+schedRetention.unref();
 const leaderPacketPorts = pgLeaderPacketPorts(pool, uow);
 const leaderResultNoticePump = new LeaderResultNoticePump({
   packets: leaderPacketPorts,
@@ -727,6 +751,7 @@ const messagePump = runner ? new SessionMessagePump({ service: messageService, r
       await messageService.noteBlocked(message.projectId,message.id,admission.reason);
     return admission.allowed;
   },
+  holdNewStarts: () => drain.holdNewStarts(),
   canStart: async message => {
     if(!await acceptanceRelay.messageAdmission(message.projectId,message.id))return false;
     const current = (await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE)).sessionMessages;
@@ -804,15 +829,21 @@ const residentQueue = new ResidentQueuePump({workflow:service,canWrite:lease.can
   messageBusy: (projectId, sessionId) => messageService.isBusy(projectId, sessionId),
   credentials:currentIdentity,enabled:async()=>!!(await currentQueueConfiguration())?.enabled,
   pollIntervalMs:integrations.residentQueue?.pollIntervalMs??2000,
-  onError:()=>console.error("Resident queue tick failed; inspect persisted queue and Run state before retrying.")});
+  onError:(()=>{const log=throttledLog(line=>console.error(line));return(error:unknown)=>log(`Resident queue tick failed: ${error instanceof Error?error.message.slice(0,200):"unknown"}; inspect persisted queue and Run state before retrying.`);})()});
 const sessionLinePump = new SessionLinePump({workflow:service,canWrite:lease.canWrite,
   messageBusy:(projectId,sessionId)=>messageService.isBusy(projectId,sessionId),credentials:currentIdentity,
   enabled:async()=>!!(await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE)).runtime?.enabled,
   pollIntervalMs:integrations.residentQueue?.pollIntervalMs??2000,
   recipientActorId:async(projectId,sessionId)=>{
-    const role=(await pool.query("SELECT role_id FROM runtime_session WHERE project_id=$1 AND session_id=$2",[projectId,sessionId])).rows[0]?.role_id;
-    const binding=role&&(await currentQueueConfiguration())?.roleActors.find(x=>x.projectId===projectId&&x.roleId===role);
-    return binding&&await currentProjectWriter(projectId,binding.actorId)?binding.actorId:null;
+    // The Session's own signing identity, never the Role's guess: Sessions of one Role sign as different identities.
+    const row=(await pool.query(`SELECT s.role_id,s.actor_id,(SELECT count(*)::int FROM runtime_session o WHERE o.project_id=s.project_id
+      AND o.role_id=s.role_id AND o.state<>'closed') AS live FROM runtime_session s WHERE s.project_id=$1 AND s.session_id=$2`,[projectId,sessionId])).rows[0];
+    if(!row)return null;
+    const configured=await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE);
+    const found=await resolveLineRecipient({projectId,id:sessionId,roleId:row.role_id,actorId:row.actor_id},
+      {materialCli:configured.runtime?.enabled?configured.runtime.materialCli:[],roleActors:configured.residentQueue?.enabled?configured.residentQueue.roleActors:[]},
+      row.live,currentProjectWriter);
+    return "actorId" in found?found.actorId:found;
   },
   onError:()=>console.error("Session line tick failed; inspect the persisted line entry and its Run before retrying.")});
 const ordinarySealPump = new OrdinaryRunSealPump({
@@ -867,6 +898,7 @@ const directInput = runner && integrations.runtime?.enabled ? createDirectInputS
   runtime: () => requireDirectInputRuntime(runner.nativeAdapter()),
   canWrite: () => lease.canWrite() && runner.nativeStartsAvailable(),
   configuration: () => loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE),
+  holdNewStarts: () => drain.holdNewStarts(),
   currentProjectWriter, currentSessionExecutionAuthority,
   allowedCwd: async (projectId,cwd) => {
     const current = await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE);
@@ -874,18 +906,31 @@ const directInput = runner && integrations.runtime?.enabled ? createDirectInputS
     catch { return false; }
   },
 }) : undefined;
+// After a Turn ends, record the native Item of each accepted direct input that has none yet (read only; never a send).
+if (directInput) {
+  let itemBackfillBusy = false;
+  const itemBackfill = setInterval(() => {
+    if (itemBackfillBusy) return;
+    itemBackfillBusy = true;
+    void directInput.backfillItems().catch(() => undefined).finally(() => { itemBackfillBusy = false; });
+  }, 5000);
+  itemBackfill.unref();
+}
 if (runner) {
   try { await runner.start(); }
   catch { console.error(`${runtimeConfig?.provider === "claude" ? "Claude" : "Codex"} runtime is unavailable; check the configured CLI, its settings and project directories. No new dispatch was enabled.`); }
 }
 const app = await buildServer({ service, credentials, canWrite: lease.canWrite, ordinarySubmissions,
-  acceptanceRelay,
+  acceptanceRelay, milestones: { repoRoot: resolve(fileURLToPath(new URL("../../..", import.meta.url))), startedAt: new Date().toISOString() },
+  drain: { control: drain, isMaintainer: principal => isInstanceMaintainer(pool, principal) },
   ...(runner ? {compaction:new CompactionMaintenance(pool,runner,{owned:()=>runtimeConfig?.compaction.owned!==false})} : {}),
   connectorRoutes, connectorDeliveries: connectorDecisions, connectorSources: connectorLinks,
   canActivateConnectorRoute: qualifyConnectorRoute,
   taskAttentionPool: pool,
   workStatuses: (principal, projectId, taskIds) => readWorkStatuses(pool, service, principal, projectId, taskIds),
   workIndex: createLeaderWorkIndexReader(pool),
+  workBoard: { reads: workBoardReads, hub: schedEventHub },
+  decisionsForMe: (projectId, actorId, canDecide) => readDecisionsForMe(pool, projectId, actorId, canDecide),
   leaderNotices: {
     packet: async (projectId, packetId) => {
       const result = await uow.read(projectId, async reader => {
@@ -902,6 +947,7 @@ const app = await buildServer({ service, credentials, canWrite: lease.canWrite, 
       return { status: "recorded" as const, packetId, state: "recovered" as const };
     },
     list: (projectId, query) => listLeaderNotices(pool, projectId, query),
+    records: (projectId, query) => listLeaderEventRecords(pool, projectId, query),
     get: (projectId, noticeId) => getLeaderNotice(pool, projectId, noticeId),
     recover: async (projectId, noticeId, input, actorId) => {
       const recovered=await recoverRejectedLeaderNotice(pool, projectId, noticeId,
@@ -965,28 +1011,13 @@ const app = await buildServer({ service, credentials, canWrite: lease.canWrite, 
       approvalPolicy:command.approvalPolicy}) === true,
   authorizeDynamicRun: async (principal,command,session) => principal.permissions.includes("review") &&
     principal.actorId === session.actorId && await dynamicAdmission?.canReserveRun(session,command.runId,command.taskId) === true,
-  requireRunRecipient: async (_principal,command,session) => {
-    const facts = await uow.read(command.projectId, async reader => {
-      const task = await reader.getTask(command.taskId);
-      if (!task) return null;
-      const proposal = await reader.getTaskProposal(task.id, task.currentRevisionId);
-      const assignment = await reader.sessionAssignments?.getTaskSessionAssignment(task.id) ?? null;
-      return { acceptanceMode: proposal?.acceptanceMode, taskRevisionId: task.currentRevisionId, assignment: assignment
-        ? { state: assignment.state, taskRevisionId: assignment.taskRevisionId, recipientActorId: assignment.recipientActorId } : null };
-    });
-    if (!facts) return;
-    // A brokered (dynamic) Session gets its CLI identity when the Run starts, so only a configured one can be compared now.
-    const current = await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE);
-    const entry = current.runtime?.enabled ? selectMaterialCli(current.runtime.materialCli, command.projectId,
-      session.id, session.actorId, command.taskId, session.roleId) : null;
-    requireReservableRecipient({ ...facts, cliActorId: entry?.cliActorId ?? null });
-  },
+  requireRunRecipient: createReserveRecipientCheck({ uow, loadIntegrations: () => loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE) }),
   authorizeDynamicMessageRecovery: async (principal,session) => principal.permissions.includes("review") &&
     await dynamicAdmission?.canStartConversation(session) === true,
   runtimeGrants: (projectId, actorId) => runtimeConfig?.enabled ? runtimeConfig.grants.filter(g => g.projectId === projectId && g.actorId === actorId) : [],
   roleRuntimeView: (principal, projectId, roleId) => roleRuntimeView({ service, runtime: runner ?? undefined,
-    grantCwds: (project, actorId, role) => runtimeConfig?.enabled ? runtimeConfig.grants.filter(g => g.projectId === project &&
-      g.actorId === actorId && g.roleId === role).map(g => g.cwd) : [],
+    roleGrants: (project, role) => runtimeConfig?.enabled ? runtimeConfig.grants.filter(g => g.projectId === project && g.roleId === role)
+      .map(g => ({ actorId: g.actorId, cwd: g.cwd })) : [],
     skillRoots: async (project, role) => ({ businessRoot: skillSourceRoot, businessPaths: await roleBusinessSkillPaths(project, role) }),
     claudeContextMode: runtimeConfig?.claude?.contextMode ?? null }, principal, projectId, roleId),
   messageSendAuthority: async (principal, projectId, sessionId) => {

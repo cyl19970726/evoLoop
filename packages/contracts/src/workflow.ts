@@ -41,6 +41,14 @@ export const workflowCommands = [
   }),
   z.strictObject({
     ...common,
+    type: z.literal("stage.phaseKey.set"),
+    stageId: id,
+    // Links the stage to a roadmap phase (M1, M0.5, …) for the overview's milestones; null clears the link. Review permission.
+    phaseKey: z.string().regex(/^M[0-9]+(?:\.[0-9]+)?$/).nullable(),
+    reason: text,
+  }),
+  z.strictObject({
+    ...common,
     type: z.literal("stage.accept"),
     stageId: id,
     expectedVersion: version,
@@ -193,7 +201,10 @@ export interface TaskProposal {
   /** Null is the historical contract; new Tasks always set an explicit mode. */
   acceptanceMode?: AcceptanceMode | null;
   /** Explicitly permits Leader acceptance; historical null requires a concrete arrangement decision. */
-  acceptanceTarget?: "human" | "leader" | "business_session" | null;
+  /** `named_agent`: the declared consumer (a business identity, not a managed Session) accepts directly; no relay is arranged. */
+  acceptanceTarget?: "human" | "leader" | "business_session" | "named_agent" | null;
+  /** What must happen before the delivery can be checked at its real entrance. Null: not declared. */
+  acceptancePrecondition?: "none" | "refresh" | "release" | "migration" | "config_restart" | null;
   evidence: string;
   stopCondition: string;
   createdAt: string;

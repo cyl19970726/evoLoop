@@ -1,11 +1,12 @@
 import { holdsProvider, providerHeldMessage } from '@evoloop/contracts/provider-hold';
 import type { AppliedResult, Principal } from "@evoloop/contracts";
-import type { SessionMessageCommand, SessionMessageDispatchGrant, SessionMessageManualStopEvidence, SessionMessageManualStopPreflight, SessionMessageProcessing, SessionMessageRecord } from "@evoloop/contracts/session-messages";
+import type { SessionMessageCommand, SessionMessageDispatchGrant, SessionMessageManualStopEvidence, SessionMessageManualStopPreflight, SessionMessageProcessing, SessionMessageRecord, SessionMessageResponseKind } from "@evoloop/contracts/session-messages";
 import { preTurnProofSchema, type PreTurnProof, type RuntimeTurn, type RuntimeSessionRecord } from "@evoloop/contracts/runtime";
 import type { Clock, IdFactory, Reader, Transaction, UnitOfWork } from "@evoloop/contracts/ports";
 import { DomainError } from "@evoloop/contracts/ports";
 import { priorReviewDecision, reviewIntentJson } from "../runtime/pre-turn-review.js";
 import { describeTurnEffort } from "../runtime/service.js";
+import { inclusiveRuntimeUsage } from "../usage.js";
 
 const required = <T>(value:T|null,label:string):T => {if(value===null)throw new DomainError('NOT_FOUND',`${label} not found`);return value;};
 const sameTarget = (a:SessionMessageRecord['target'],b:SessionMessageRecord['target']) =>
@@ -238,7 +239,7 @@ export class SessionMessageService {
       const now=this.deps.clock.now();
       const processing:SessionMessageProcessing={projectId,id:processingId,messageId,sessionId:session.id,operationId,
         receiverActorId:grant.receiverActorId,
-        state:'dispatching',nativeTurnId:null,response:null,failure:null,readOnlyPolicyFingerprint,roleContext,
+        state:'dispatching',nativeTurnId:null,response:null,responseKind:'native',failure:null,readOnlyPolicyFingerprint,roleContext,
         version:1,startedAt:now,updatedAt:now};
       await store.insertSessionMessageProcessing(processing);
       await store.updateSessionMessage({...item,state:'processing',blockedReason:null,version:item.version+1,updatedAt:now},item.version);
@@ -255,6 +256,7 @@ export class SessionMessageService {
         version:p.version+1,updatedAt:this.deps.clock.now()},p.version);
       const m=required(await store.getSessionMessage(messageId),'message');
       if(m.state==='unknown')await store.updateSessionMessage({...m,state:'processing',version:m.version+1,updatedAt:this.deps.clock.now()},m.version);
+      if(turn.observedModel)await tx.recordSessionActualModel?.(p.sessionId,turn.observedModel,this.deps.clock.now());
       // The Turn started with an effort: say what was asked and what the Thread then reported for this very Turn.
       const note=describeTurnEffort(requestedEffort,turn);
       if(note)await tx.appendRuntimeEvent({projectId,id:this.deps.ids.next(),runId:null,sessionId:p.sessionId,kind:'turn.effortObserved',
@@ -368,7 +370,8 @@ export class SessionMessageService {
       await store.updateSessionMessage({...m,state:'failed',version:m.version+1,updatedAt:now},m.version);
     });
   }
-  async settle(projectId:string,messageId:string,turn:RuntimeTurn,response:string|null):Promise<void>{
+  async settle(projectId:string,messageId:string,turn:RuntimeTurn,response:string|null,
+    responseKind:SessionMessageResponseKind='native'):Promise<void>{
     await this.deps.uow.transaction(projectId,async tx=>{
       const store=tx.sessionMessages!;const p=required(await store.getSessionMessageProcessing(messageId),'processing');
       if(!turn.completedAtUtc||!['completed','failed','interrupted'].includes(turn.status)||p.nativeTurnId!==turn.id)
@@ -376,6 +379,7 @@ export class SessionMessageService {
       if(['completed','failed'].includes(p.state))return;
       const now=this.deps.clock.now();const ok=turn.status==='completed';const visible=!!response?.trim();
       await store.updateSessionMessageProcessing({...p,state:ok?'completed':'failed',response:ok&&visible?response!.slice(0,65536):null,
+        responseKind:ok&&visible?responseKind:'native',
         failure:ok?null:(turn.error?.summary??`Native Turn ${turn.status}`).slice(0,4000),
         failureCategory:ok?null:turn.error?.category??null,version:p.version+1,updatedAt:now},p.version);
       const m=required(await store.getSessionMessage(messageId),'message');
@@ -384,10 +388,11 @@ export class SessionMessageService {
       // Codex's cumulative native observation already counts this Turn; only a runtime without that
       // source writes the bound Turn's provider accounting here.
       const session=await tx.getRuntimeSession(p.sessionId);
+      // Claude learns the exact model only from the settled Turn's own messages.
+      if(turn.observedModel)await tx.recordSessionActualModel?.(p.sessionId,turn.observedModel,now);
       if(turn.usage&&tx.usage&&(session?.runtimeProvider??'codex')!=='codex')
         await tx.usage.addUsage(projectId,p.sessionId,this.deps.usageDay?.(now)??now.slice(0,10),{
-          inputTokens:turn.usage.inputTokens??0,outputTokens:turn.usage.outputTokens??0,
-          cachedInputTokens:turn.usage.cacheReadInputTokens??0,costUsd:0,costReported:false});
+          ...inclusiveRuntimeUsage(turn.usage),costUsd:0,costReported:false});
       // The first quota/authentication failure pauses the whole provider: every Session of it would fail the same way.
       if(!ok&&holdsProvider(turn.error?.category)){
         await tx.recovery?.openProviderHold({id:this.deps.ids.next(),provider:session?.runtimeProvider??'codex',

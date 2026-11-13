@@ -19,7 +19,7 @@ const second = "2026-11-08T00:00:00.000Z";
 const third = "2026-11-09T00:00:00.000Z";
 const hash = (s:string) => createHash("sha256").update(s).digest("hex");
 
-async function task(title:string,content:string,priority:number|null=null):Promise<string> {
+async function task(title:string,content:string,priority:number|null=null,convention?:{target:string;precondition:string}):Promise<string> {
   const taskId=randomUUID(),revisionId=randomUUID(),documentId=randomUUID(),contentId=randomUUID();
   const client=await pool.connect();
   try {
@@ -38,9 +38,9 @@ async function task(title:string,content:string,priority:number|null=null):Promi
       VALUES($1,$2,$3,1,$4,'accept',$5,'todo',$6,$7,$8,'test',$9)`,
       [projectId,taskId,revisionId,title,roleId,documentId,contentId,actorId,"2026-11-06T00:00:00.000Z"]);
     await client.query(`INSERT INTO task_proposal(project_id,task_id,task_revision_id,consumer,use_required,
-      acceptance_mode,evidence,stop_condition,created_at)
-      VALUES($1,$2,$3,'consumer',true,'independent_agent','source','','2026-11-06T00:00:00.000Z')`,
-      [projectId,taskId,revisionId]);
+      acceptance_mode,evidence,stop_condition,created_at,acceptance_target,acceptance_precondition)
+      VALUES($1,$2,$3,'consumer',true,'independent_agent','source','','2026-11-06T00:00:00.000Z',$4,$5)`,
+      [projectId,taskId,revisionId,convention?.target??null,convention?.precondition??null]);
     if(priority!==null) await client.query(`INSERT INTO task_work_plan(project_id,task_id,version,
       priority,actor_id,reason,updated_at) VALUES($1,$2,1,$3,$4,'test','2026-11-06T00:00:00.000Z')`,
       [projectId,taskId,priority,actorId]);
@@ -303,4 +303,21 @@ test("a timing the store cannot accept is INVALID_TASK_TIMING with the accepted 
     await rejected(queries(q=>q.set({type:"task.timing.set",projectId,operationId:randomUUID(),taskId:a,expectedTaskVersion:1,
       expectedTimingVersion:0,scope:"this",...value,reason:"bad"},actorId,"2026-11-06T00:00:00.000Z")));
   }
+});
+
+test("a copy of a Task keeps its declared acceptance target and precondition, on a daily instance and on an edited revision",async()=>{
+  const a=await task("Direct acceptance","Check the release",null,{target:"named_agent",precondition:"release"});
+  await queries(q=>q.create(a,timing(first),actorId,"2026-11-06T00:00:00.000Z"));
+  await tick(a).tick(projectId,first,actorId,roleId);
+  const b=(await tick(a).tick(projectId,second,actorId,roleId))[0]!;
+  assert.equal(b.created,true);
+  const convention=async(taskId:string)=>(await pool.query(`SELECT p.acceptance_target,p.acceptance_precondition FROM task t
+    JOIN task_proposal p ON p.project_id=t.project_id AND p.task_id=t.task_id AND p.task_revision_id=t.current_revision_id
+    WHERE t.project_id=$1 AND t.task_id=$2`,[projectId,taskId])).rows[0];
+  assert.deepEqual(await convention(b.taskId),{acceptance_target:"named_agent",acceptance_precondition:"release"},"the daily instance");
+  // Editing the instance's prose makes a new Task revision; its proposal must not lose the convention.
+  await queries(q=>q.set({type:"task.timing.set",projectId,operationId:randomUUID(),taskId:b.taskId,
+    expectedTaskVersion:1,expectedTimingVersion:1,scope:"this",...timing(second),
+    content:"Edited prompt",reason:"edit this instance"},actorId,"2026-11-08T02:00:00.000Z"));
+  assert.deepEqual(await convention(b.taskId),{acceptance_target:"named_agent",acceptance_precondition:"release"},"the edited revision");
 });

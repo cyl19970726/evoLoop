@@ -53,6 +53,8 @@ export interface RuntimeSessionRecord {
   model: string | null; sandbox: "read-only" | "workspace-write" | "danger-full-access"; approvalPolicy: "on-request" | "untrusted" | "never";
   /** Native thread/start acknowledgement. Null for historical Sessions without this observation. */
   observedModel?: string | null; observedProvider?: string | null;
+  /** The exact model the most recent observed Turn of this Session reported (a Run's or a message's) and when; absent until one was observed. */
+  actualModel?: string | null; actualModelAt?: string | null;
   state: RuntimeSessionState; version: number; nativeThreadId: string | null; nativeSessionId: string | null;
   operationId: string; actorId: string; createdAt: string; updatedAt: string;
   /** Persisted native-start permit; null/absent for historical unmanaged Sessions. */
@@ -70,6 +72,8 @@ export interface RuntimeRunRecord {
   interruptRequested: boolean; resultSummary: string | null; actorId: string; createdAt: string; updatedAt: string;
   /** Set by runtime.run.stop; no new Run state: a stopped Run still moves through the existing states to a terminal one. */
   stopRequestedAt?: string | null; stopReason?: string | null; stopRequestedBy?: string | null;
+  /** The adapter's failure category when the Run failed (quota_exhausted, authentication_failed, …); null otherwise. */
+  failureCategory?: string | null;
   /** Immutable native environment used for this original dispatch, never inferred from the current child. */
   nativeEnvironmentEpoch?: number | null;
   evaluationBinding?: { evaluationId: string; revisionId: string; caseId: string; conditionId: string;
@@ -83,6 +87,19 @@ export interface RuntimeRunRecord {
   usage?: RuntimeUsage | null;
   /** Provider-reported cost in USD of the bound terminal Turn; never estimated. */
   costUsd?: number | null;
+  /** What the runtime reported for this Run's Turn (migration 099): the model that answered, the effort in force, the subagents' models.
+   *  A field that was not observed is null; this is never filled from the configured profile. Absent until a Turn was observed. */
+  actual?: RunActual | null;
+}
+/** The observed side of a Run's Turn, kept beside the configured executionProfile. */
+export interface RunActual {
+  model: string | null;
+  /** The effort the runtime reported for the Turn (Codex: the Thread's readback), whether or not one was requested; null when not read. */
+  reasoningEffort: string | null;
+  subagentModels: string[];
+  /** Whether the Run's configured profile asked for an effort (true), left it to the runtime's default (false), or this was not recorded (null/absent).
+   *  Kept apart from the reported value: a configured effort is never the reported one. */
+  effortRequested?: boolean | null;
 }
 /** Trusted caller proof that thread/resume explicitly failed before any turn/start call. */
 export interface NativeResumeRejection {
@@ -170,6 +187,11 @@ export interface RuntimeTurn {
   observedReasoningEffort?: string | null;
   /** Provider-reported cost in USD for this Turn; absent when the provider reports none. */
   costUsd?: number | null;
+  /** The exact model ID the runtime reported answering this Turn (Claude: the main thread's assistant messages; Codex: the Thread read back
+   *  after turn/start); null when it could not be read; absent when the adapter observes none. Never the configured value. */
+  observedModel?: string | null;
+  /** Exact model IDs the Turn's subagents answered with (a child's own messages); empty or absent when none were observed. */
+  subagentModels?: string[];
   /** What the native runtime reported loading for this Turn; absent when the adapter observes none. */
   observedCapabilities?: RuntimeObservedCapabilities | null;
 }
@@ -345,7 +367,7 @@ export interface RuntimeApprovalRequest {
 export interface RuntimeModelList {
   status: "available" | "empty" | "unavailable";
   models: string[];
-  options: Array<{ model: string; supportedReasoningEfforts: string[]; defaultReasoningEffort: string | null }>;
+  options: Array<{ model: string; supportedReasoningEfforts: string[]; defaultReasoningEffort: string | null; /** The catalog's display name for the model, when it gives one. */ displayName?: string | null }>;
   error: string | null;
   observedAtUtc: string;
 }

@@ -58,8 +58,15 @@ test("a delivery observation, an acceptance convention and queue holds survive w
   assert.equal(rich.queueHold, "awaiting_acceptance");
   assert.equal(rich.pendingImpacts, 2);
   assert.deepEqual(rich.acceptance, { acceptanceTarget: "named_agent", acceptancePrecondition: "release", readiness: "waiting_precondition", namedAgent: "req" });
+  // Who marked the precondition, on what evidence and when survives --brief (Task 486acdf2); an unmarked delivery has no such field in the brief.
+  const mark = { actorId: "release-owner", evidence: "released in build 9a4020a5", markedAt: "2026-11-12T03:00:00.000Z" };
+  const marked = briefTask(indexTask(2, { acceptanceConvention: { acceptanceTarget: "named_agent", acceptancePrecondition: "release", readiness: "ready", namedAgent: "req", preconditionMark: mark } })) as Record<string, any>;
+  assert.deepEqual(marked.acceptance.preconditionMark, mark);
+  const unmarked = briefTask(indexTask(2, { acceptanceConvention: { acceptanceTarget: "named_agent", acceptancePrecondition: "release", readiness: "waiting_precondition", namedAgent: "req", preconditionMark: null } })) as Record<string, any>;
+  assert.equal("preconditionMark" in unmarked.acceptance, false, "brief leaves a null field out, like the others: absent means not marked");
   const bare = briefTask(indexTask(3, { assignment: null, latestRun: null, delivery: null, plan: null, dependencies: [], timing: null })) as Record<string, any>;
   for (const absent of ["assignment", "run", "delivery", "plan", "blockedBy", "queueHold", "pendingImpacts", "acceptance"]) assert.equal(absent in bare, false, absent);
+  assert.equal(bare.acceptanceConvention, null, "a Task that declared nothing says so, as the full view does");
   assert.equal(bare.waiting, null);
 });
 
@@ -71,12 +78,13 @@ test("the index, the acceptance overview and the relays shrink to well under hal
   assert.deepEqual(brief.counts, index.counts);
   assert.equal(brief.items.length, 20);
   const capacity = { sessionId: "s", roleId: "r", sessionActorId: "x", cwd: "/work/long/path", state: "ready", nativeThreadId: "t", tenure: "resident", isLeader: true,
-    activeRuns: 0, pendingMessages: 7, queueEntries: 0, openAssignments: 0, openAcceptance: 0, persistedWorkIdle: false, missingCapabilities: ["MESSAGE_GRANT_MISSING"], readyForAcceptance: false };
+    activeRuns: 0, pendingMessages: 7, queueEntries: 0, openAssignments: 0, openAcceptance: 0, lineQueued: 3, lineStarting: 1, persistedWorkIdle: false, missingCapabilities: ["MESSAGE_GRANT_MISSING"], readyForAcceptance: false };
   const overview = { work: index, capacity: [capacity], observedAt: "2026-11-11T08:00:00.000Z" };
   const briefOverview = briefAcceptanceOverview(overview) as Record<string, any>;
   assert.ok(bytes(briefOverview) < bytes(overview) / 2);
   assert.deepEqual(briefOverview.capacity[0].missingCapabilities, ["MESSAGE_GRANT_MISSING"]);
   assert.equal("cwd" in briefOverview.capacity[0], false);
+  assert.deepEqual([briefOverview.capacity[0].lineQueued, briefOverview.capacity[0].lineStarting], [3, 1], "the Session line's capacity fields survive --brief");
   const relays = { items: [relay(), relay({ relayId: "relay-2", state: "linked", observationResult: "used" })] };
   const briefList = briefRelays(relays) as Record<string, any>;
   assert.ok(bytes(briefList) < bytes(relays) / 2);
@@ -138,4 +146,31 @@ test("--brief is refused where it has no brief form, before any request is made"
     assert.equal(result.code, 2, `${args.join(" ")}: ${result.stderr}`);
     assert.equal(result.calls.length, 0, `${args.join(" ")} makes no request`);
   }
+});
+
+test("the brief carries taskKind and acceptanceConvention under the full view's names and values, for a named_agent + release Task and for a plain Task", () => {
+  const named = indexTask(7, { taskKind: "defect",
+    acceptanceConvention: { acceptanceTarget: "named_agent", acceptancePrecondition: "release", readiness: "waiting_precondition", namedAgent: "acceptance-2-claude-agent" } });
+  const nameNoDelivery = indexTask(8, { taskKind: "defect", delivery: null,
+    acceptanceConvention: { acceptanceTarget: "named_agent", acceptancePrecondition: "release", readiness: null, namedAgent: "acceptance-2-claude-agent" } });
+  const plain = indexTask(9, { taskKind: "implementation", acceptanceConvention: undefined });
+  const declared = indexTask(10, { acceptanceConvention: { acceptanceTarget: "business_session", acceptancePrecondition: "none", readiness: "ready", namedAgent: null } });
+  for (const item of [named, nameNoDelivery, plain, declared]) {
+    const brief = briefTask(item) as Record<string, any>;
+    // The same two keys, found the same way in both views, with equal values.
+    assert.equal(brief.taskKind, item.taskKind);
+    assert.deepEqual(brief.acceptanceConvention, (item as Record<string, any>).acceptanceConvention ?? null);
+  }
+  const brief = briefTask(named) as Record<string, any>;
+  assert.deepEqual(brief.acceptanceConvention, { acceptanceTarget: "named_agent", acceptancePrecondition: "release", readiness: "waiting_precondition", namedAgent: "acceptance-2-claude-agent" });
+  assert.equal(brief.taskKind, "defect");
+  assert.equal((briefTask(nameNoDelivery) as Record<string, any>).acceptanceConvention.readiness, null, "no delivery yet: readiness stays null, not dropped");
+  assert.equal((briefTask(plain) as Record<string, any>).acceptanceConvention, null);
+  // The earlier short forms are unchanged.
+  assert.equal(brief.kind, "defect"); assert.equal(brief.acceptance.namedAgent, "acceptance-2-claude-agent");
+  // The same through the Leader index and `work task`, both of which brief each Task with this function.
+  const leader = briefIndex({ items: [named, plain], total: 2 }) as Record<string, any>;
+  assert.deepEqual(leader.items.map((row: Record<string, any>) => [row.taskKind, row.acceptanceConvention?.acceptanceTarget ?? null]), [["defect", "named_agent"], ["implementation", null]]);
+  const single = briefTaskWithRelays(named, { items: [] }) as Record<string, any>;
+  assert.equal(single.taskKind, "defect"); assert.equal(single.acceptanceConvention.acceptancePrecondition, "release");
 });

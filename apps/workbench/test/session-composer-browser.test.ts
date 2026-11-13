@@ -44,7 +44,7 @@ test("the composer sends, adds, queues, stops, lists skills and agents, and says
   const { chromium } = (await import(pathToFileURL(modulePath!).href)).default;
   const commands: Array<Record<string, unknown>> = [];
   const directInputs: Array<Record<string, unknown>> = [];
-  let steer = true, canSave = true, loseCopy = false;
+  let steer = true, canSave = true, loseCopy = false, itemRecorded = false, refuseGrant = false;
   const currentTask = { id: taskId, title: "新版智能体页", state: "in_progress", revisionId: id(9), owner: "前端实现", relation: "accepted",
     source: { kind: "task", id: taskId, revision: null, evidence: "project-record", href: "" } };
   const self = { ...agent(2, "前端实现", [role(20, "前端实现", "business")], true), currentTask };
@@ -89,6 +89,12 @@ test("the composer sends, adds, queues, stops, lists skills and agents, and says
         const command = await body(); commands.push(command);
         // The answer to a copy for 架构 can be lost on the way back: its result is then unknown, not refused.
         if (loseCopy && (command.target as { sessionId?: string } | undefined)?.sessionId === otherId) { res.writeHead(200, { "content-type": "application/json" }); res.end(""); return; }
+        // The service's real refusal for a sender without a message grant: its answer to agents carries the fix as JSON with this machine's directory.
+        if (refuseGrant && command.type === "session.message.post") {
+          res.writeHead(409, { "content-type": "application/json" });
+          res.end(JSON.stringify({ code: "MESSAGE_GRANT_MISSING", message: `没有发送这条消息的授权：私有配置 sessionMessages.grants 里没有 reader → 这个 Session（${sessionId}）的授权。在 sessionMessages.grants 加一项 {"enabled":true,"senderActorId":"reader","cwd":"/Users/gongshi006/.local/share/evoloop/workspaces/leader"}（使用时重读，不需要重启）。消息没有保存。` }));
+          return;
+        }
         value = { status: "applied", operationId: command.operationId, entityId: String(command.messageId ?? command.runId ?? "x"), version: 1 };
       } else if (url.pathname === `${root}/sessions/${sessionId}/direct-input-capability`) value = steer
         ? { available: true, mode: "steer", expectedTurnId: "turn-2", reasonCode: "READY_TO_STEER", observedAt: stamp }
@@ -96,13 +102,13 @@ test("the composer sends, adds, queues, stops, lists skills and agents, and says
       else if (url.pathname === `${root}/sessions/${sessionId}/direct-inputs` && req.method === "POST") {
         const input = await body(); directInputs.push(input);
         value = { projectId, sessionId, inputId: input.inputId, operationId: input.operationId, actorId: "reader", mode: "steer",
-          source: { kind: "message", id: runningMessageId, processingId }, expectedTurnId: input.expectedTurnId, actualTurnId: "turn-2", nativeItemId: "n",
+          source: { kind: "message", id: runningMessageId, processingId }, expectedTurnId: input.expectedTurnId, actualTurnId: "turn-2", nativeItemId: null,   // the acknowledgement of a supplement carries no Item yet
           state: "accepted", reason: null, version: 2, createdAt: stamp, updatedAt: stamp };
       } else if (url.pathname.startsWith(`${root}/sessions/${sessionId}/direct-inputs/`)) {
         const input = directInputs.find(item => url.pathname.endsWith(String(item.inputId)));
         if (!input) { status = 404; value = { message: "Not found" }; }
         else value = { projectId, sessionId, inputId: input.inputId, operationId: input.operationId, actorId: "reader", mode: "steer",
-          source: { kind: "message", id: runningMessageId, processingId }, expectedTurnId: input.expectedTurnId, actualTurnId: "turn-2", nativeItemId: "n",
+          source: { kind: "message", id: runningMessageId, processingId }, expectedTurnId: input.expectedTurnId, actualTurnId: "turn-2", nativeItemId: itemRecorded ? "n" : null,   // the Item is recorded only after the Turn ends
           state: "accepted", reason: null, version: 2, createdAt: stamp, updatedAt: stamp };
       } else if (url.pathname === `${root}/session-work`) value = { items: directory, nextCursor: null, observationCursor: "1", metadata,
         totals: { current: directory.length, historical: 0, unclassified: 0 }, attention: { unansweredQuestions: 0, pendingMessages: 0, pendingAcceptance: null, unclassifiedSessions: 0 } };
@@ -200,6 +206,7 @@ test("the composer sends, adds, queues, stops, lists skills and agents, and says
     assert.doesNotMatch(await page.locator(".unified-session-timeline").innerText(), internalWords, `${viewport.width}: no internal words in the flow`);
 
     // Enter while a turn runs and the runtime takes additions: the text goes into this turn.
+    itemRecorded = false;   // each width starts with a supplement whose Item is not recorded yet
     const before = { direct: directInputs.length, posts: posted("session.message.post").length };
     await box.fill("把颜色改成 token");
     await page.getByRole("button", { name: "补充到这一轮" }).waitFor();
@@ -208,6 +215,10 @@ test("the composer sends, adds, queues, stops, lists skills and agents, and says
     assert.equal(directInputs.length, before.direct + 1, "Enter adds to the running turn");
     assert.deepEqual([directInputs.at(-1)!.content, directInputs.at(-1)!.expectedTurnId], ["把颜色改成 token", "turn-2"]);
     await page.locator(".session-direct-receipt").getByText("运行时已接收；不代表智能体已阅读或采用").waitFor();
+    itemRecorded = true;
+    // The turn ends and the service reads the Item back: the page looks again and now says it was read (never "adopted").
+    await page.locator(".session-direct-receipt").getByText("已读到：运行时已记录这条输入的原生条目；不代表智能体已采用").waitFor({ timeout: 20_000 });
+    assert.doesNotMatch(await page.locator(".session-direct-receipt").innerText(), /(?<!不代表智能体)已采用/, "never claims adoption");
     // Cmd/Ctrl+Enter: an ordinary message for the next turn, tied to the current task.
     await box.fill("下一轮再处理窄屏");
     await box.press(process.platform === "darwin" ? "Meta+Enter" : "Control+Enter");
@@ -269,7 +280,7 @@ test("the composer sends, adds, queues, stops, lists skills and agents, and says
     // A runtime that cannot take additions: Enter queues for the next turn, and the page says why.
     steer = false;
     await page.getByRole("button", { name: "重新读取", exact: true }).click();
-    await page.getByText("这个智能体的运行时或授权不支持补充到这一轮；Enter 排到下一轮").waitFor({ timeout: 8000 });
+    await page.getByText("这个智能体的即时输入授权不包含补入这一轮，需要在私有配置里为它开启补入；Enter 排到下一轮").waitFor({ timeout: 8000 });
     await box.fill("没法补充时排队");
     await page.getByRole("button", { name: "发送，排到下一轮" }).waitFor();
     const directBefore = directInputs.length;
@@ -284,6 +295,25 @@ test("the composer sends, adds, queues, stops, lists skills and agents, and says
     await page.waitForFunction(() => document.querySelector<HTMLTextAreaElement>("[aria-label='消息']")?.value === "");
     assert.equal(directInputs.length, directBefore);
     assert.equal(posted("session.message.post").at(-1)!.content, "不支持补充时也能排队");
+
+    // Task e31f9511 v7: a send the service refuses for want of a message grant says one sentence, folds the error code under 诊断信息, and the
+    // page (folded or expanded) holds neither the configuration JSON nor a local path.
+    refuseGrant = true;
+    await box.fill("没有授权的发送");
+    await box.press("Control+Enter");
+    const alert = page.getByRole("alert").filter({ hasText: "没有发送这条消息的授权" });
+    await alert.waitFor({ timeout: 8000 });
+    const pageText = async () => await page.locator("body").innerText();
+    assert.match(await alert.innerText(), /维护者/, "who sets it up is named");
+    const code = page.getByText("MESSAGE_GRANT_MISSING", { exact: false });
+    assert.equal(await code.isVisible(), false, "folded: the code is not in view");
+    await alert.getByText("诊断信息", { exact: true }).click();
+    assert.equal(await code.isVisible(), true, "expanded: the error code is shown");
+    const leaks = async () => { const html = await page.locator("body").innerHTML(), text = await pageText();
+      return { json: /[{}]|"enabled"/.test(text) || /&quot;enabled&quot;|"enabled"/.test(html), path: /\/Users\/|workspaces\/leader|cwd/.test(text + html) }; };
+    assert.deepEqual(await leaks(), { json: false, path: false }, "expanded or folded: no configuration JSON and no local path on the page or in the DOM");
+    refuseGrant = false;
+    await box.fill("");
 
     // No ordinary message can be saved but the turn takes additions: Cmd/Ctrl+Enter does nothing and says why.
     steer = true; canSave = false;
@@ -450,7 +480,7 @@ test("a send whose answer was lost, once checked as received or applied, clears 
   assert.equal(await page.getByRole("button", { name: "发送", exact: true }).isDisabled(), true);
   // Checked by its original input: received, so the box and its kept draft are cleared.
   await page.getByRole("button", { name: "核对结果（不会重发）" }).click();
-  await page.getByText("运行时已接收；不代表智能体已阅读或采用").waitFor();
+  await page.getByText("已读到：运行时已记录这条输入的原生条目；不代表智能体已采用").waitFor();   // the checked receipt carries its Item
   await page.waitForFunction(() => document.querySelector<HTMLTextAreaElement>("[aria-label='消息']")?.value === "");
   await box.press("Enter");
   await page.getByRole("link", { name: "统筹安排" }).first().click();

@@ -9,7 +9,7 @@ import type { SessionSnapshot } from "@evoloop/contracts/session-observation";
 import type { LeaderWorkTask } from "@evoloop/contracts/work-index";
 import type { RuntimeRunRecord, RuntimeSessionRecord } from "@evoloop/contracts/runtime";
 import { commandSchema, type Command } from "@evoloop/contracts";
-import { AgentAvatar, Button, CollapsibleRow, Notice, Tabs, TabsContent, TabsList, TabsTrigger } from "@evoloop/ui";
+import { AgentAvatar, Button, CollapsibleRow, Notice, StatusTag, Tabs, TabsContent, TabsList, TabsTrigger } from "@evoloop/ui";
 import { ApiError, api, errorText, isUnconfirmed } from "../../shared/api";
 import { ActionForm, type MutationContext } from "../../shared/ActionForm";
 import { sessionProfileCommand, sessionProfileFields } from "./sessionProfilePresentation";
@@ -18,6 +18,7 @@ import { useProjectPages, useProjectQuery } from "../../shared/query";
 import { date, href } from "../../shared/ui/shared";
 import { runtimeClient } from "../../shared/runtimeClient";
 import { sessionClient } from "../../shared/sessionClient";
+import { modelLabel } from "../../shared/modelPresentation";
 import { timingDuration, timingStageLabel, timingWaitingFor } from "../../shared/taskTiming";
 import { ContextPanelContent, useContextPanel } from "../../shared/ui/ContextPanel";
 import { SectionBoundary } from "../../shared/ui/SectionBoundary";
@@ -27,17 +28,16 @@ import { agentDisplayName, agentNameIsGenerated } from "../../shared/agentNamePr
 import { currentPath, onNavigate, replaceQuietly } from "../../shared/navigation";
 import { AllocationBacklinks } from "../discussions";
 import { SessionOpenEntry } from "./SessionOpenEntry";
-import { queuePosition, queueStateLabel } from "./queuePresentation";
+import { nextWork, nowWork, type LineRead, type NextItem, type NowTiming } from "./sessionWorkPresentation";
 import { ActivityFeed, clearActivityDetails, type ActivityFilter } from "./ActivityFeed";
 import { SessionRecoveryOverview, SessionRecoveryResources } from "./SessionRecoveryObservation";
 import { checkedRecoveryView, type RecoveryRead } from "./recoveryPresentation";
-import { environmentRows } from "./environmentPresentation";
-import { currentNativeRunId, currentWorkRelationLabel, idleSessionResult, latestSessionResult, agentHeaderStatus, sessionIdleSummary, sessionResultUseLabel } from "./sessionStatusPresentation";
+import { currentNativeRunId, currentWorkRelationLabel, idleSessionResult, latestSessionResult, agentHeaderStatus, sessionResultUseLabel } from "./sessionStatusPresentation";
 import { NativeSessionPanel } from "./NativeSessionPanel";
 import { SessionClosePanel } from "./SessionClosePanel";
 import { SessionExecutionFacts } from "./SessionExecutionFacts";
-import { SessionModelControl } from "./SessionModelControl";
-import { UsageBudgetPanel } from "./UsageBudgetPanel";
+import { RuntimeEnvironmentCard } from "./RuntimeEnvironmentCard";
+import { SessionUsagePanel } from "./UsageBudgetPanel";
 import { SessionIdentityMark } from "./SessionIdentityMark";
 import { SessionIdentityControl } from "./SessionIdentityControl";
 import { nativeInputPresentation } from "./nativeInputPresentation";
@@ -55,20 +55,6 @@ type PanelTab = "activity" | "results";
 const tabNames: Record<Tab, string> = { activity: "活动与对话", queue: "任务与队列", results: "成果" };
 const sessionMembership = (value: SessionSnapshot["session"]["membership"]) =>
   value === "current" ? "当前团队" : value === "historical" ? "历史会话" : "待归类";
-const taskProgress = (value: string) => ({ todo: "待开始", in_progress: "进行中", done: "已完成", cancelled: "已取消" } as Record<string, string>)[value] ?? "状态未识别";
-function assignmentLabel({ assignment, task, stale }: SessionSnapshot["assignments"][number]): string {
-  if (task.state === "done" || task.state === "cancelled") {
-    const outcome = task.state === "done" ? "任务已完成" : "任务已取消";
-    const history = assignment.state === "accepted"
-      ? assignment.ack?.method === "direct" ? "（曾直接确认接手）"
-        : assignment.ack?.method === "lead-observed" ? "（曾由负责人观察接手）" : "（曾记录接手）"
-      : assignment.state === "released" ? "（已释放）" : "（未确认接手）";
-    return `${outcome} · 历史分派${history}`;
-  }
-  if (stale) return "任务修订已变化，需重新确认";
-  if (assignment.state === "accepted") return `已接手（${assignment.ack?.method === "direct" ? "本人确认" : "负责人观察"}）`;
-  return assignment.state === "assigned" ? "待确认" : "已释放";
-}
 function tabFromHash(sessionKey: string): Tab {
   const values = new URLSearchParams(currentPath().split("?")[1] ?? "");
   const value = values.get("tab");
@@ -264,6 +250,44 @@ export function SessionWorkspace({ context, sessionKey, active, refresh, queue }
   }, { enabled: active && historyLoaded });
   const historyPages = history.data?.pages ?? [];
 
+  // What comes next (正在做 / 接下来): the agent's Session line (DEC-045), read on its own; a failed read is said, never “没有”.
+  const lineRead = useProjectQuery(projectId, ["session-lines"], async signal => {
+    try {
+      const value = await sessionClient("", projectId).sessionLines(signal);
+      if (!value || !Array.isArray(value.lines) || value.lines.some(line => !Array.isArray(line.entries))) throw new Error("队伍响应不完整");
+      return { available: true as const, lines: value.lines };
+    } catch (cause) {
+      // A coordinator without Session lines has nothing to read; that is not the same as an empty line.
+      if (cause instanceof ApiError && cause.status === 404) return { available: false as const, lines: [] };
+      throw cause;
+    }
+  }, { enabled: active && owned, refetchInterval: active && owned ? 15000 : false, retry: false });
+  const lineEntries = lineRead.data?.lines.find(line => line.sessionId === ownedId)?.entries ?? [];
+  // Per Task, from the Leader index: titles the snapshot does not carry (a line entry, a Run whose Task is neither claimed nor
+  // assigned) and the phase of each other open assignment (待验收 is handed over, 待返工 is the agent's again).
+  const knownTitles = new Map<string, string>();
+  if (snapshot) {
+    for (const task of [snapshot.currentWork, ...snapshot.assignments.map(item => item.task), ...snapshot.roleTasks]) if (task) knownTitles.set(task.id, task.title);
+    for (const item of snapshot.queue) knownTitles.set(item.taskId, item.taskTitle);
+    for (const item of snapshot.results) knownTitles.set(item.taskId, item.taskTitle);
+  }
+  const runTaskId = snapshot && ["requested", "dispatching", "running", "unknown"].includes(snapshot.session.latestBusinessRun?.state ?? "") ? snapshot.session.latestBusinessRun!.taskId : null;
+  const otherOpen = (snapshot?.assignments ?? []).filter(item => item.task.id !== snapshot?.currentWork?.id && item.assignment.state !== "released"
+    && (item.task.state === "todo" || item.task.state === "in_progress")).map(item => item.task.id);
+  const factIds = [...new Set([...lineEntries.map(entry => entry.taskId), ...(runTaskId ? [runTaskId] : [])].filter(id => !knownTitles.has(id))
+    .concat(otherOpen))].sort().slice(0, 10);
+  const taskFacts = useProjectQuery(projectId, ["task-facts", ...factIds], async () => {
+    const settled = await Promise.allSettled(factIds.map(id => api().leaderTask(projectId, id)));
+    const facts: Record<string, Pick<LeaderWorkTask, "title" | "phase">> = {};
+    settled.forEach((result, index) => { if (result.status === "fulfilled" && result.value.taskId === factIds[index]) facts[factIds[index]!] = { title: result.value.title, phase: result.value.phase }; });
+    return facts;
+  }, { enabled: active && factIds.length > 0, retry: false, keepPrevious: true });
+  const titleOf = (taskId: string) => knownTitles.get(taskId) ?? taskFacts.data?.[taskId]?.title ?? null;
+  const phaseOf = (taskId: string) => taskFacts.data?.[taskId]?.phase ?? null;
+
+  // Every hook runs before the early return below (a hook after it changes the hook count once the snapshot arrives).
+  // The catalog's display names (Codex) in front of the exact IDs; a catalog that cannot be read leaves the IDs as they are.
+  const modelCatalog = useProjectQuery(projectId, ["runtime", "models", "catalog"], signal => sessionClient("", projectId).models(signal), { enabled: active && owned, retry: false }).data?.options ?? null;
   // An explicit reread holds answers and closing until it is back; background polls do not interrupt a form being filled.
   const [rereading, setRereading] = useState(false);
   const reread = () => {
@@ -271,6 +295,7 @@ export function SessionWorkspace({ context, sessionKey, active, refresh, queue }
     setRereading(true);
     void snapshotRead.refetch().finally(() => setRereading(false));
     if (currentTaskId) void timing.refetch();
+    if (owned) void lineRead.refetch();
   };
   if (!snapshot) return <div ref={workspaceRef} data-ui="" className="flex flex-col gap-3 p-4 compact:p-6">
     <h1 className="text-title font-semibold">智能体</h1>
@@ -325,8 +350,6 @@ export function SessionWorkspace({ context, sessionKey, active, refresh, queue }
   const limitation = [...new Set([...session.metadata.limitations, ...current.metadata.limitations, ...historyPages.flatMap(page => page.metadata.limitations)])];
   const messageRunning = runtimeAvailable === true && nativeReadCurrent && observation.progress?.freshness === "live" && observation.progress.status === "active" && observation.progress.turn?.status === "inProgress" && observation.progress.turn.source?.kind === "message";
   const statusLabel = agentHeaderStatus(session, observation.progress, nativeReadCurrent && !observation.error, runtimeAvailable);
-  const activeBusy = session.runtimeState === "ready" && session.busy === true;
-  const displayedTaskId = work?.id ?? idleResult?.taskId;
   const relationLabel = work ? currentWorkRelationLabel(work, session, recoveryRead.status === "ready" ? recoveryRead.view.gate?.phase : undefined) : null;
   const currentRunId = currentNativeRunId(session, observation.progress, nativeReadCurrent && !observation.error, runtimeAvailable);
   const recentResult = latestSessionResult(current.results);
@@ -342,39 +365,65 @@ export function SessionWorkspace({ context, sessionKey, active, refresh, queue }
   const exactTiming = timing.data && !timing.isError ? timing.data.timing : null;
   const queueHref = href(projectId, "runtime");
 
-  const currentWorkSection = <PanelSection title={work ? "当前任务" : "当前状态"} action={displayedTaskId ? <a className="text-caption text-primary hover:underline" href={taskHref(displayedTaskId)}>查看任务</a> : undefined}>
-    <div className="session-current-work flex min-w-0 flex-col gap-1">
-      {work ? <a className="text-small font-medium text-foreground hover:underline" href={taskHref(work.id)}>{work.title}</a>
-        : idleResult ? <>
-          <span className="text-caption text-muted-foreground">最近关联的交付 · 当前任务未确认</span>
-          <a className="text-small font-medium text-foreground hover:underline" href={taskHref(idleResult.taskId)}>{idleResult.taskTitle || "任务标题未提供"}</a>
-        </> : <span className="text-small text-text-secondary">{activeBusy ? messageRunning ? "正在回复消息" : "在途结果待核对" : sessionIdleSummary(session)}</span>}
-      <span className={mutedText}>{work ? `${relationLabel} · 任务${taskProgress(work.state)}`
-        : idleResult ? `最近关联交付 · 技术结果：${idleResult.technicalResult || "未提供"} · ${sessionResultUseLabel(idleResult)}${current.metadata.partial ? " · 已读范围有限" : ""}`
-          : session.lastProgressAt ? `最近进展 ${date(session.lastProgressAt)}` : "没有可确认的当前任务"}{discussionQuestionCount + nativeQuestionCount > 0 && ` · 待答 ${discussionQuestionCount + nativeQuestionCount}`}</span>
-      {work && <p className="session-current-task-timing text-caption text-text-secondary">{timing.isError
-        ? `此任务的阶段时间暂不可读：${errorText(timing.error)}${timing.data ? "；上次读回，当前待核对" : ""}`
-        : !exactTiming ? "正在读取阶段时间…"
-          : `${timingStageLabel[exactTiming.current.stage] ?? "阶段未知"} · 已历时 ${timingDuration(exactTiming.current.elapsedMs)} · 等待 ${timingWaitingFor(exactTiming)}`}</p>}
+  const now = nowWork({ session, work, assignments: current.assignments, relationLabel, messageRunning, idleResult, titleOf,
+    questionCount: discussionQuestionCount + nativeQuestionCount,
+    timing: !work ? null : timing.isError
+      ? { status: "failed", line: `阶段时间暂不可读：${errorText(timing.error)}${timing.data ? "；上次读回，当前待核对" : ""}` }
+      : !exactTiming ? { status: "loading" }
+        : { status: "ready", stage: timingStageLabel[exactTiming.current.stage] ?? "阶段未知", stageKey: exactTiming.current.stage,
+          line: `已历时 ${timingDuration(exactTiming.current.elapsedMs)} · 等待 ${timingWaitingFor(exactTiming)}` } satisfies NowTiming });
+  const line: LineRead = session.kind !== "owned" ? { status: "none", reason: "外部接入的智能体没有队伍" }
+    : lineRead.isError ? { status: "failed", message: errorText(lineRead.error) }
+      : !lineRead.data ? { status: "loading" }
+        : !lineRead.data.available ? { status: "none", reason: "服务还不提供智能体队伍" } : { status: "ready", entries: lineEntries };
+  const next = nextWork({ kind: session.kind, currentTaskId: now.task?.id ?? null, line, queue: current.queue, assignments: current.assignments,
+    partial: current.metadata.partial, titleOf, phaseOf });
+  const card = "flex min-w-0 flex-col gap-1.5 rounded-lg bg-muted px-3 py-2.5";
+  const cardHeading = "flex min-w-0 flex-wrap items-center justify-between gap-x-2 gap-y-1";
+  const taskTitle = (taskId: string, title: string | null) => <a className="min-w-0 text-small font-medium text-foreground [overflow-wrap:anywhere] hover:underline" href={taskHref(taskId)}>{title || "任务标题暂不可读"}</a>;
+  // 正在做: one Task (or a message, 空闲, or why it cannot be told) with its stage, how it was taken on and how long it has run.
+  const nowSection = <section aria-label="正在做" className={`session-current-work ${card}`}>
+    <div className={cardHeading}><h2 className="text-label font-semibold text-foreground">正在做</h2><StatusTag tone={now.tone} label={now.badge} /></div>
+    {now.task && taskTitle(now.task.id, now.task.title)}
+    {now.summary && <p className="text-small text-text-secondary">{now.summary}</p>}
+    {now.lines.map(text => <p key={text} className="text-caption text-text-secondary [overflow-wrap:anywhere]">{text}</p>)}
+    {now.timing && <p className="session-current-task-timing text-caption text-text-secondary [overflow-wrap:anywhere]">{now.timing}</p>}
+    {now.questions && <p className="text-caption font-medium text-warning">{now.questions}</p>}
+    {/* 空闲 still says what was handed over last: the Task, its technical result and its use, kept apart. */}
+    {now.recent && <div className="flex min-w-0 flex-col gap-0.5 text-caption text-text-secondary [overflow-wrap:anywhere]">
+      <p>最近交付：<a className="text-foreground hover:underline" href={taskHref(now.recent.taskId)}>{now.recent.taskTitle || "任务标题未提供"}</a></p>
+      <p>技术结果：{now.recent.technicalResult || "未提供"} · {sessionResultUseLabel(now.recent)} · {date(now.recent.submittedAt)}{current.metadata.partial ? " · 已读范围有限" : ""}</p>
+    </div>}
+  </section>;
+  const nextRow = (item: NextItem) => <li key={item.key} className="flex min-w-0 items-start gap-2 border-t border-border pt-1.5 first:border-t-0 first:pt-0">
+    {/* The number is the place in its own line or queue; an assignment nothing has ordered gets an empty mark. */}
+    <span aria-hidden="true" className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full bg-field text-caption text-text-secondary">{item.order ?? ""}</span>
+    <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+      {taskTitle(item.taskId, item.title)}
+      <span className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 text-caption text-muted-foreground [overflow-wrap:anywhere]">{item.caption}
+        {item.flag && <StatusTag tone={item.flag.tone} label={item.flag.label} />}{item.flag?.detail && <span className="min-w-0">{item.flag.detail}</span>}</span>
+      {/* The server's code and wording behind a paused entry's reason (原始标识放在来源层). */}
+      {item.flag?.source && <FullIdentifiers summary="暂停代码与原文" rows={[{ label: "代码", value: item.flag.source.code }, { label: "原文", value: item.flag.source.original, text: true }]} />}
+    </span>
+  </li>;
+  // 接下来: the agent's line in order, then the execution queue, then assignments nothing has ordered yet.
+  const nextSection = <section aria-label="接下来" className="flex min-w-0 flex-col gap-2">
+    <div className={`session-next-work ${card}`}>
+      <div className={cardHeading}><h2 className="text-label font-semibold text-foreground">接下来{next.items.length > 0 && <span className="ml-1.5 font-normal text-muted-foreground">{next.items.length} 项</span>}</h2>
+        <a className="text-caption text-primary hover:underline" href={queueHref}>在分工与运行中查看</a></div>
+      {next.items.length ? <ol className="session-task-summary flex min-w-0 flex-col gap-1.5">{next.items.slice(0, 3).map(nextRow)}</ol>
+        : <p className="text-small text-text-secondary">{next.empty}</p>}
+      {next.items.length > 3 && <CollapsibleRow summary={`还有 ${next.items.length - 3} 项`}><ol className="flex min-w-0 flex-col gap-1.5">{next.items.slice(3).map(nextRow)}</ol></CollapsibleRow>}
+      {next.note && <p className="text-caption text-text-secondary [overflow-wrap:anywhere]" role={line.status === "failed" ? "alert" : "status"}>{next.note}{line.status === "failed" && <> <Button variant="link" onClick={() => void lineRead.refetch()}>重试</Button></>}</p>}
     </div>
-  </PanelSection>;
-  const assignmentSection = <PanelSection title="具体分派">
-    <div className="session-task-summary flex min-w-0 flex-col gap-1 text-small">
-      {work && <p className="text-text-secondary">{(() => { const item = current.assignments.find(entry => entry.task.id === work.id && !entry.stale && entry.assignment.state !== "released"); return item ? assignmentLabel(item) : "没有可确认的当前修订接受记录"; })()}</p>}
-      {current.assignments.filter(item => item.task.id !== work?.id).map(item => <p key={`${item.task.id}:${item.assignment.version}`} className="min-w-0"><a className="text-foreground hover:underline" href={taskHref(item.task.id)}>{item.task.title}</a><span className="text-caption text-muted-foreground"> · {assignmentLabel(item)}</span></p>)}
-      {!work && !current.assignments.length && <p className={mutedText}>{current.metadata.partial ? "已读范围内没有具体分派；来源只读到部分记录。" : "没有具体分派。"}</p>}
-    </div>
-  </PanelSection>;
-  const queueSection = <PanelSection title="执行队列" action={<a className="text-caption text-primary hover:underline" href={queueHref}>在分工与运行中查看</a>}>
-    {current.queue.length ? <ol className="flex flex-col gap-1.5">{current.queue.map(item => <li key={item.entryId} className="flex min-w-0 items-start gap-2 text-small">
-      <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-field text-caption text-text-secondary" aria-label={`第 ${queuePosition(item.position)} 项`}>{queuePosition(item.position)}</span>
-      <span className="min-w-0"><a className="text-foreground hover:underline" href={taskHref(item.taskId)}>{item.taskTitle}</a><span className="block text-caption text-muted-foreground">{queueStateLabel(item.state)}{item.holdReason && ` · ${item.holdReason}`}</span></span>
-    </li>)}</ol> : <p className={mutedText}>{current.metadata.partial ? "已读范围内没有排队的任务；来源只读到部分记录。" : "没有排队的任务。"}</p>}
+    {next.ended.length > 0 && <CollapsibleRow summary={`已交出或已结束的分派 · ${next.ended.length} 项`}>
+      <div className="session-ended-assignments flex min-w-0 flex-col gap-1 text-small">{next.ended.map(({ item, label }) => <p key={`${item.task.id}:${item.assignment.version}`} className="min-w-0"><a className="text-foreground hover:underline" href={taskHref(item.task.id)}>{item.task.title}</a><span className="text-caption text-muted-foreground"> · {label}</span></p>)}</div>
+    </CollapsibleRow>}
     {/* The project's execution queue for this agent, with its order, holds and attempts; read when opened. */}
     {session.kind === "owned" && session.target.kind === "owned" && <CollapsibleRow summary="查看并调整执行队列">
       <OwnedQueue context={context} sessionId={session.target.sessionId} enabled={active} queue={queue} />
     </CollapsibleRow>}
-  </PanelSection>;
+  </section>;
   const resultsSection = <PanelSection title="成果与使用">
     <p className={mutedText}>这里列出与这个智能体关联的交付；关联不证明由它提交。</p>
     {current.results.length ? <ul className="session-results flex min-w-0 flex-col">{current.results.map(item => {
@@ -388,21 +437,27 @@ export function SessionWorkspace({ context, sessionKey, active, refresh, queue }
     })}</ul> : <p className={mutedText}>{current.metadata.partial ? "已读范围内没有交付记录；来源只读到部分记录。" : "还没有交付记录。"}</p>}
     {recentResult && <p className={mutedText}>最近一次交付：{recentResult.taskTitle} · {sessionResultUseLabel(recentResult)} · {date(recentResult.submittedAt)}</p>}
   </PanelSection>;
-  const environmentSection = <PanelSection title="环境与用量">
-    <FactList rows={[
-      ...environmentRows({ kind: session.kind, recovery: recoveryRead, configuredModel: current.resources.configuredModel.value }),
-      ["实际运行模型", actualModel ? String(actualModel) : "没有可靠记录"],
-      ["用量", observation.progress?.usage ? `输入 ${observation.progress.usage.total.inputTokens ?? "未提供"} · 输出 ${observation.progress.usage.total.outputTokens ?? "未提供"}${observation.progress.freshness === "live" && nativeReadCurrent ? "" : "（上次记录）"}` : "没有可靠记录，不按 0 计"],
-    ]} />
-    {session.kind === "owned" && session.target.kind === "owned" && <UsageBudgetPanel
-      projectId={projectId} token={context.token} sessionId={session.target.sessionId} />}
-    {session.kind === "external" ? <p className={mutedText}>外部智能体的实时状态、模型与工具没有同步到这里。</p>
-      : session.target.kind === "owned" && <SessionModelControl context={context} sessionId={session.target.sessionId} recovery={recoveryRead.status === "ready" ? recoveryRead.view : null} busy={busyNow} onApplied={() => void snapshotRead.refetch()} />}
-  </PanelSection>;
+  // 运行环境 and 上下文与用量 come right after the work (docs/frontend/pages/sessions.md 右栏): what the agent runs on, then how
+  // much room it has left and what it used today. Only the presentation lives here; the reads are the same as before.
+  const environmentCard = <RuntimeEnvironmentCard context={context} session={session} recovery={recoveryRead}
+    configuredModel={current.resources.configuredModel.value} actualModel={actualModel} modelLabelOf={model => modelLabel(model, modelCatalog)}
+    busy={busyNow} onApplied={() => void snapshotRead.refetch()} />;
+  const nativeUsage = observation.progress?.usage ? { inputTokens: observation.progress.usage.total.inputTokens ?? null,
+    outputTokens: observation.progress.usage.total.outputTokens ?? null, current: observation.progress.freshness === "live" && nativeReadCurrent } : null;
+  const usageCard = session.kind === "owned" && session.target.kind === "owned"
+    ? <SessionUsagePanel projectId={projectId} token={context.token} sessionId={session.target.sessionId} nativeUsage={nativeUsage} />
+    : <section aria-label="上下文与用量" className="session-usage flex min-w-0 flex-col gap-1 rounded-lg bg-muted px-3 py-2.5">
+      <h2 className="text-label font-semibold text-foreground">上下文与用量</h2>
+      <p className="text-small text-text-secondary">外部接入的智能体没有同步上下文和用量，不按 0 计。</p>
+    </section>;
   const details = <details ref={undefined} className="session-information group min-w-0 border-t border-border pt-4" id="session-information-panel" open={informationOpen}
     onToggle={event => { if (event.currentTarget.open !== informationOpen) showInformation(event.currentTarget.open); }}>
     <summary className="cursor-pointer text-label font-semibold text-foreground">详情与来源</summary>
     <div className="mt-3 flex min-w-0 flex-col gap-4">
+      <details className="session-identity-settings min-w-0 text-caption">
+        <summary className="w-fit cursor-pointer text-label font-semibold text-foreground">标识设置</summary>
+        <div className="mt-2"><SessionIdentityControl context={context} session={session} onApplied={() => void snapshotRead.refetch()} /></div>
+      </details>
       <section aria-label="原聊天入口" className="flex min-w-0 flex-col gap-1.5"><h3 className="text-label font-semibold">原聊天入口</h3><p className={mutedText}>{session.kind === "owned" ? "项目受管；消息保存后按顺序真实处理。" : "外部接入；消息只保存为人工转交。"}</p><SessionOpenEntry session={session} projectId={projectId} currentRead={active && readCurrent} active={active} /></section>
       <section aria-label="职责与分派" className="flex min-w-0 flex-col gap-1.5">
         <h3 className="text-label font-semibold">职责与分派</h3>
@@ -438,7 +493,8 @@ export function SessionWorkspace({ context, sessionKey, active, refresh, queue }
         { label: "服务生成的名称", value: agentNameIsGenerated(session) ? session.title : null, text: true }]} />
     </div>
   </details>;
-  // The right column: who this agent is, what it works on (动态) and what it produced (资料库), its environment, then details.
+  // The right column (docs/frontend/pages/sessions.md 右栏): who this agent is; what it does now and next (动态) or what it
+  // produced (资料库); what it runs on (执行配置); how much it used; then details, where the rarely used settings live.
   const facts = <ContextPanelContent>
     <div className="session-panel flex min-w-0 flex-col gap-4">
       <section aria-label="智能体" className="flex min-w-0 items-start gap-3">
@@ -450,22 +506,20 @@ export function SessionWorkspace({ context, sessionKey, active, refresh, queue }
           <p className="mt-1 flex items-center gap-1.5 text-caption"><span aria-hidden="true" className={busyNow ? "size-1.5 rounded-full bg-primary" : "size-1.5 rounded-full bg-border"} />{statusLabel}</p>
         </div>
       </section>
-      <details className="session-identity-settings min-w-0 text-caption">
-        <summary className="w-fit cursor-pointer text-muted-foreground hover:text-foreground">标识设置</summary>
-        <div className="mt-2"><SessionIdentityControl context={context} session={session} onApplied={() => void snapshotRead.refetch()} /></div>
-      </details>
       <Tabs value={panelTab} onValueChange={value => showPanelTab(value as PanelTab)}>
         <TabsList aria-label="动态与资料库"><TabsTrigger value="activity">动态</TabsTrigger><TabsTrigger value="results">资料库</TabsTrigger></TabsList>
-        <TabsContent value="activity" className="flex flex-col gap-4 pt-3">
-          <SectionBoundary label="当前任务">{currentWorkSection}</SectionBoundary>
-          <SectionBoundary label="具体分派">{assignmentSection}</SectionBoundary>
-          <SectionBoundary label="执行队列">{queueSection}</SectionBoundary>
+        <TabsContent value="activity" className="flex flex-col gap-2.5 pt-3">
+          <SectionBoundary label="正在做">{nowSection}</SectionBoundary>
+          <SectionBoundary label="接下来">{nextSection}</SectionBoundary>
         </TabsContent>
         <TabsContent value="results" className="flex flex-col gap-4 pt-3">
           <SectionBoundary label="成果与使用">{resultsSection}</SectionBoundary>
         </TabsContent>
       </Tabs>
-      <SectionBoundary label="环境与用量">{environmentSection}</SectionBoundary>
+      <div className="flex min-w-0 flex-col gap-2.5">
+        <SectionBoundary label="运行环境">{environmentCard}</SectionBoundary>
+        <SectionBoundary label="上下文与用量">{usageCard}</SectionBoundary>
+      </div>
       {closeOpen && <div id="session-close-panel" className="border-t border-border pt-4"><SectionBoundary label="结束会话"><SessionClosePanel context={context} snapshot={current} currentRead={active && readCurrent} onReadAgain={() => void snapshotRead.refetch()} /></SectionBoundary></div>}
       <SectionBoundary label="详情与来源">{details}</SectionBoundary>
     </div>

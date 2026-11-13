@@ -177,7 +177,6 @@ test('mapper preserves public phases and withholds private input and tool payloa
   }
   const input=mapWorkspaceItem({id:'u',type:'userMessage',clientId:'client',content:[{type:'text',text:'handoff credential SECRET'}]},'turn',binding,'now');
   assert.equal(input?.kind,'message');if(input?.kind==='message'){assert.equal(input.body,'');assert.equal(input.clientId,'client');}
-  assert.equal(mapWorkspaceItem({id:'r',type:'reasoning',content:['SECRET']},'turn',binding,'now'),null);
   const operation='a0000000-0000-4000-8000-000000000003';
   for(const source of ['run','message'] as const){
     const marked=mapWorkspaceItem({id:source,type:'userMessage',clientId:null,content:[{type:'text',text:`[evoloop-${source}-operation:${operation}]\nsecret envelope`}]},'turn',binding,'now');
@@ -426,4 +425,26 @@ test(`${expectedVersion} explicit workspace opt-in negotiates experimental timel
   assert.equal(notice?.nativeItemId,null);
   assert.equal(notice?.order?.position,2);
   assert.equal(page.turns.at(-1)?.state,'failed');
+});
+
+test('reasoning Items show their summary, else readable native text, else an explicit unreadable entry',()=>{
+  const summary=mapWorkspaceItem({id:'r1',type:'reasoning',summary:['**Plan** read files','then edit'],content:['raw chain']},'turn',binding,'now');
+  assert.ok(summary?.kind==='reasoning');
+  assert.deepEqual([summary.source,summary.readable,summary.body,summary.unavailableReason],['summary',true,'**Plan** read files\n\nthen edit',null]);
+  assert.equal(JSON.stringify(summary).includes('raw chain'),false,'a summary is preferred over raw reasoning');
+  const raw=mapWorkspaceItem({id:'r2',type:'reasoning',summary:[],content:['DeepSeek reasoning text']},'turn',binding,'now');
+  assert.ok(raw?.kind==='reasoning');assert.deepEqual([raw.source,raw.readable,raw.body],['raw',true,'DeepSeek reasoning text']);
+  for(const item of [{id:'r3',type:'reasoning'},{id:'r4',type:'reasoning',summary:['  '],content:[]}]){
+    const hidden=mapWorkspaceItem(item,'turn',binding,'now');
+    assert.ok(hidden?.kind==='reasoning');
+    assert.deepEqual([hidden.source,hidden.readable,hidden.body],['none',false,'']);
+    assert.match(hidden.unavailableReason??'',/没有可读的推理内容/);
+  }
+  const long=mapWorkspaceItem({id:'r5',type:'reasoning',summary:['x'.repeat(20000)]},'turn',binding,'now');
+  assert.ok(long?.kind==='reasoning'&&long.truncated&&long.body.length===16000);
+  const started=mapWorkspaceEvent('item/started',{threadId:binding.nativeThreadId,turnId:'turn',item:{id:'r6',type:'reasoning',summary:[],content:[]}},binding,'now');
+  assert.ok(started?.kind==='entry'&&started.entry.kind==='reasoning');
+  assert.equal(started.entry.state,'running');assert.equal(started.entry.unavailableReason,null,'a running Item is not yet unreadable');
+  const completed=mapWorkspaceEvent('item/completed',{threadId:binding.nativeThreadId,turnId:'turn',item:{id:'r6',type:'reasoning',summary:['done'],content:[]}},binding,'now');
+  assert.ok(completed?.kind==='entry'&&completed.entry.kind==='reasoning'&&completed.entry.body==='done'&&completed.entry.state==='completed');
 });

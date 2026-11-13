@@ -12,6 +12,7 @@ import { PgUsage } from "./usage.js";
 import { PgSessionAssignments } from "./session-assignments.js";
 import { PgLeaderNoticePackets } from "./leader-notice-packets.js";
 import { PgSessionLine } from "./session-line.js";
+import { PgDecisionRequests } from "./decision-requests.js";
 import { PgSessionObservation } from "./session-observation.js";
 import { PgAllocationRelations } from "./allocation-relations.js";
 import { PgRoleQueries } from "./roles.js";
@@ -115,7 +116,7 @@ const rowGoalRevision = (r: Row): GoalRevision => ({...rowGoal(r),reason:r.reaso
 const rowStage = (r: Row): Stage => ({ projectId:r.project_id,id:r.stage_id,goalId:r.goal_id,version:r.version,deliverable:r.deliverable,learningQuestion:r.learning_question,state:r.state,actorId:r.actor_id,createdAt:iso(r.created_at) });
 const rowStageRevision = (r: Row): StageRevision => ({projectId:r.project_id,stageId:r.stage_id,id:r.revision_id,version:r.version,state:r.state,deliverable:r.deliverable,learningQuestion:r.learning_question,actorId:r.actor_id,reason:r.reason,createdAt:iso(r.created_at)});
 const rowStageReview = (r: Row): StageReview => ({ projectId:r.project_id,id:r.review_id,stageId:r.stage_id,stageVersion:r.stage_version,supersedesReviewId:r.supersedes_review_id,adopted:r.adopted,rejected:r.rejected,gap:r.gap,nextChoice:r.next_choice,evidence:r.evidence,reason:r.reason,actorId:r.actor_id,createdAt:iso(r.created_at) });
-const rowProposal = (r: Row): TaskProposal => ({ projectId:r.project_id,taskId:r.task_id,taskRevisionId:r.task_revision_id,stageId:r.stage_id,consumer:r.consumer,useRequired:r.use_required,acceptanceMode:r.acceptance_mode??null,acceptanceTarget:r.acceptance_target??null,evidence:r.evidence,stopCondition:r.stop_condition,createdAt:iso(r.created_at) });
+const rowProposal = (r: Row): TaskProposal => ({ projectId:r.project_id,taskId:r.task_id,taskRevisionId:r.task_revision_id,stageId:r.stage_id,consumer:r.consumer,useRequired:r.use_required,acceptanceMode:r.acceptance_mode??null,acceptanceTarget:r.acceptance_target??null,acceptancePrecondition:r.acceptance_precondition??null,evidence:r.evidence,stopCondition:r.stop_condition,createdAt:iso(r.created_at) });
 const rowJudgement = (r: Row): TaskJudgement => ({ projectId:r.project_id,id:r.judgement_id,taskId:r.task_id,taskRevisionId:r.task_revision_id,decision:r.decision,reason:r.reason,evidence:r.evidence,relookCondition:r.relook_condition,actorId:r.actor_id,createdAt:iso(r.created_at) });
 const rowDelivery = (r: Row): Delivery => ({ projectId:r.project_id,id:r.delivery_id,taskId:r.task_id,taskRevisionId:r.task_revision_id,runId:r.run_id??null,sourceRunVersion:r.source_run_version??null,submittedByActorId:r.submitted_by_actor_id??null,artifactRef:r.artifact_ref,artifactRevision:r.artifact_revision,contentHash:r.content_hash,technicalResult:r.technical_result,technicalEvidence:r.technical_evidence,reason:r.reason,actorId:r.actor_id,createdAt:iso(r.created_at) });
 const rowObservation = (r: Row): ConsumerObservation => ({ projectId:r.project_id,id:r.observation_id,taskId:r.task_id,deliveryId:r.delivery_id,observer:r.observer,observerKind:r.observer_kind,result:r.result,evidence:r.evidence,reason:r.reason,actorId:r.actor_id,createdAt:iso(r.created_at) });
@@ -159,6 +160,7 @@ class PgReader implements Reader {
   readonly sessionAssignments: PgSessionAssignments;
   readonly leaderNoticePackets: PgLeaderNoticePackets;
   readonly sessionLines: PgSessionLine;
+  readonly decisionRequests: PgDecisionRequests;
   protected readonly runtime: PgRuntimeStore;
   protected readonly roles: PgRoleQueries;
   protected readonly residents: PgResidentHosts;
@@ -180,6 +182,7 @@ class PgReader implements Reader {
     this.sessionAssignments = new PgSessionAssignments(client, projectId);
     this.leaderNoticePackets = new PgLeaderNoticePackets(client, projectId);
     this.sessionLines = new PgSessionLine(client, projectId);
+    this.decisionRequests = new PgDecisionRequests(client, projectId);
     this.roles = new PgRoleQueries(client, projectId);
     this.residents = new PgResidentHosts(client, projectId);
     this.scheduling = new PgSchedulingQueries(client, projectId);
@@ -275,6 +278,15 @@ class PgReader implements Reader {
     pageLimit(limit); const r=await this.client.query("SELECT * FROM project_goal WHERE project_id=$1 AND ($2::uuid IS NULL OR goal_id>$2::uuid) ORDER BY goal_id LIMIT $3",[this.projectId,cursor??null,limit+1]); return page(r.rows,limit,rowGoal,x=>x.goal_id);
   }
   async listGoalRevisions(goalId:string):Promise<GoalRevision[]> {const r=await this.client.query("SELECT * FROM goal_revision WHERE project_id=$1 AND goal_id=$2 ORDER BY version LIMIT $3",[this.projectId,goalId,maxDetailRows+1]);return bounded(r.rows.map(rowGoalRevision),"goal revisions");}
+  async listStagePhaseLinks():Promise<import("@evoloop/contracts/milestones").StagePhaseLink[]> {
+    const r=await this.client.query(`SELECT k.stage_id,s.goal_id,k.phase_key,s.state,rv.adopted,rv.rejected,rv.gap,rv.created_at AS review_at
+      FROM stage_phase_key k JOIN project_stage s ON s.project_id=k.project_id AND s.stage_id=k.stage_id
+      LEFT JOIN LATERAL (SELECT adopted,rejected,gap,created_at FROM stage_review v WHERE v.project_id=k.project_id AND v.stage_id=k.stage_id
+        ORDER BY v.created_at DESC,v.review_id DESC LIMIT 1) rv ON true
+      WHERE k.project_id=$1 ORDER BY k.phase_key,s.created_at,s.stage_id LIMIT $2`,[this.projectId,maxDetailRows+1]);
+    return bounded(r.rows.map(x=>({stageId:x.stage_id,goalId:x.goal_id,phaseKey:x.phase_key,state:x.state,
+      review:x.review_at?{adopted:x.adopted,rejected:x.rejected,gap:x.gap,createdAt:new Date(x.review_at).toISOString()}:null})),"stage phase links");
+  }
   async getStage(id:string):Promise<Stage|null> { const r=await this.client.query("SELECT * FROM project_stage WHERE project_id=$1 AND stage_id=$2",[this.projectId,id]);return r.rows[0]?rowStage(r.rows[0]):null; }
   async listStages(goalId?:string):Promise<Stage[]> { const r=await this.client.query("SELECT * FROM project_stage WHERE project_id=$1 AND ($2::uuid IS NULL OR goal_id=$2::uuid) ORDER BY created_at,stage_id LIMIT $3",[this.projectId,goalId??null,maxDetailRows+1]);return bounded(r.rows.map(rowStage),"stages"); }
   async listStageRevisions(stageId:string):Promise<StageRevision[]> {const r=await this.client.query("SELECT * FROM stage_revision WHERE project_id=$1 AND stage_id=$2 ORDER BY version LIMIT $3",[this.projectId,stageId,maxDetailRows+1]);return bounded(r.rows.map(rowStageRevision),"stage revisions");}
@@ -308,6 +320,7 @@ class PgReader implements Reader {
   }
   async listTaskJudgements(taskId:string):Promise<TaskJudgement[]> {const r=await this.client.query("SELECT j.* FROM task_judgement j JOIN task_revision r ON r.project_id=j.project_id AND r.task_id=j.task_id AND r.revision_id=j.task_revision_id WHERE j.project_id=$1 AND j.task_id=$2 ORDER BY r.version,j.created_at,j.judgement_id LIMIT $3",[this.projectId,taskId,maxDetailRows+1]);return bounded(r.rows.map(rowJudgement),"task judgements");}
   async getDelivery(id:string):Promise<Delivery|null> {const r=await this.client.query("SELECT * FROM delivery WHERE project_id=$1 AND delivery_id=$2",[this.projectId,id]);return r.rows[0]?rowDelivery(r.rows[0]):null;}
+  async getPreconditionMark(deliveryId:string):Promise<{markId:string;actorId:string;evidence:string;createdAt:string}|null> {const r=await this.client.query("SELECT * FROM task_acceptance_precondition_mark WHERE project_id=$1 AND delivery_id=$2",[this.projectId,deliveryId]);const row=r.rows[0];return row?{markId:row.mark_id,actorId:row.actor_id,evidence:row.evidence,createdAt:iso(row.created_at)}:null;}
   async listDeliveries(taskId:string):Promise<Delivery[]> {const r=await this.client.query("SELECT d.* FROM delivery d JOIN task_revision r ON r.project_id=d.project_id AND r.task_id=d.task_id AND r.revision_id=d.task_revision_id WHERE d.project_id=$1 AND d.task_id=$2 ORDER BY r.version LIMIT $3",[this.projectId,taskId,maxDetailRows+1]);return bounded(r.rows.map(rowDelivery),"deliveries");}
   async listObservations(taskId:string):Promise<ConsumerObservation[]> {const r=await this.client.query("SELECT * FROM consumer_observation WHERE project_id=$1 AND task_id=$2 ORDER BY sequence LIMIT $3",[this.projectId,taskId,maxDetailRows+1]);return bounded(r.rows.map(rowObservation),"observations");}
   async listTaskClosures(taskId:string):Promise<TaskClosure[]> {const r=await this.client.query("SELECT * FROM task_closure WHERE project_id=$1 AND task_id=$2 ORDER BY created_at,closure_id LIMIT $3",[this.projectId,taskId,maxDetailRows+1]);return bounded(r.rows.map(rowClosure),"task closures");}
@@ -570,6 +583,18 @@ class PgReader implements Reader {
       JOIN basis_member bm ON bm.project_id=bs.project_id AND bm.task_id=bs.task_id
         AND bm.task_revision_id=bs.task_revision_id AND bm.basis_set_id=bs.basis_set_id
       WHERE t.project_id=$1 AND bm.document_id=$2
+      UNION
+      -- A Delivery names its artifact as stored by the service: the workbench path "#/p/<project>/documents/<id>?revision=<rev>"
+      -- (what "document:<id>@<revision>" is saved as), or the short form itself. The Task that delivered this Document references it.
+      SELECT t.task_id, 'delivery'::text AS relation
+      FROM delivery d JOIN task t ON t.project_id=d.project_id AND t.task_id=d.task_id
+      WHERE d.project_id=$1 AND (starts_with(d.artifact_ref, 'document:' || $2::text || '@')
+        OR starts_with(d.artifact_ref, '#/p/' || $1::text || '/documents/' || $2::text || '?revision='))
+      UNION
+      -- A report or issue created under a Task's Run records that Task as its origin.
+      SELECT t.task_id, 'origin'::text AS relation
+      FROM process_document pd JOIN task t ON t.project_id=pd.project_id AND t.task_id=pd.origin_task_id
+      WHERE pd.project_id=$1 AND pd.document_id=$2
     ), grouped AS (
       SELECT task_id, array_agg(DISTINCT relation ORDER BY relation) AS relations
       FROM matching GROUP BY task_id
@@ -682,6 +707,7 @@ class PgTransaction extends PgReader implements Transaction {
   insertGitSourceRef(id: string, ref: GitSourceRef, state: "reachable" | "unavailable" | "withdrawn", observedAt: string) { return this.payloads.insertGitSourceRef(id, ref, state, observedAt); }
   insertRuntimeSession(item: import("@evoloop/contracts").RuntimeSessionRecord) { return this.runtime.insertRuntimeSession(item); }
   updateRuntimeSession(item: import("@evoloop/contracts").RuntimeSessionRecord, expectedVersion: number) { return this.runtime.updateRuntimeSession(item, expectedVersion); }
+  recordSessionActualModel(sessionId: string, model: string, at: string) { return this.runtime.recordSessionActualModel(sessionId, model, at); }
   insertRuntimeRun(item: import("@evoloop/contracts").RuntimeRunRecord) { return this.runtime.insertRuntimeRun(item); }
   updateRuntimeRun(item: import("@evoloop/contracts").RuntimeRunRecord, expectedVersion: number) { return this.runtime.updateRuntimeRun(item, expectedVersion); }
   appendRuntimeEvent(item: import("@evoloop/contracts").RuntimeRecordEvent) { return this.runtime.appendRuntimeEvent(item); }
@@ -692,11 +718,18 @@ class PgTransaction extends PgReader implements Transaction {
   async insertGoal(g:Goal,reason:string):Promise<void> {this.assertScope(g.projectId);await this.client.query("INSERT INTO project_goal(project_id,goal_id,version,outcome,constraints,consumer,authority,scope,owner,actor_id,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",[g.projectId,g.id,g.version,g.outcome,g.constraints,g.consumer,g.authority,g.scope,g.owner,g.actorId,g.createdAt]);await this.insertGoalRevision(g,reason);}
   private async insertGoalRevision(g:Goal,reason:string):Promise<void> {await this.client.query("INSERT INTO goal_revision(project_id,goal_id,version,outcome,constraints,consumer,authority,scope,owner,actor_id,reason,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)",[g.projectId,g.id,g.version,g.outcome,g.constraints,g.consumer,g.authority,g.scope,g.owner,g.actorId,reason,g.createdAt]);}
   async updateGoal(g:Goal,expectedVersion:number,reason:string):Promise<void> {this.assertScope(g.projectId);const r=await this.client.query("UPDATE project_goal SET version=$3,outcome=$4,constraints=$5,consumer=$6,authority=$7,scope=$8,owner=$9,actor_id=$10,created_at=$11 WHERE project_id=$1 AND goal_id=$2 AND version=$12",[g.projectId,g.id,g.version,g.outcome,g.constraints,g.consumer,g.authority,g.scope,g.owner,g.actorId,g.createdAt,expectedVersion]);if(!r.rowCount)throw new DomainError("VERSION_CONFLICT","goal version changed",(await this.getGoal(g.id))?.version);await this.insertGoalRevision(g,reason);}
+  async setStagePhaseKey(link:{stageId:string;phaseKey:string|null;actorId:string;reason:string;at:string}):Promise<void> {
+    if(link.phaseKey===null){await this.client.query("DELETE FROM stage_phase_key WHERE project_id=$1 AND stage_id=$2",[this.projectId,link.stageId]);return;}
+    await this.client.query(`INSERT INTO stage_phase_key(project_id,stage_id,phase_key,actor_id,reason,updated_at) VALUES($1,$2,$3,$4,$5,$6)
+      ON CONFLICT (project_id,stage_id) DO UPDATE SET phase_key=EXCLUDED.phase_key,actor_id=EXCLUDED.actor_id,reason=EXCLUDED.reason,updated_at=EXCLUDED.updated_at`,
+      [this.projectId,link.stageId,link.phaseKey,link.actorId,link.reason,link.at]);
+  }
   async insertStage(s:Stage,r:StageRevision):Promise<void> {this.assertScope(s.projectId);await this.client.query("INSERT INTO project_stage(project_id,stage_id,goal_id,version,deliverable,learning_question,state,actor_id,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)",[s.projectId,s.id,s.goalId,s.version,s.deliverable,s.learningQuestion,s.state,s.actorId,s.createdAt]);await this.insertStageRevision(r);}
   private async insertStageRevision(r:StageRevision):Promise<void> {await this.client.query("INSERT INTO stage_revision(project_id,stage_id,revision_id,version,state,deliverable,learning_question,actor_id,reason,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)",[r.projectId,r.stageId,r.id,r.version,r.state,r.deliverable,r.learningQuestion,r.actorId,r.reason,r.createdAt]);}
   async updateStage(s:Stage,r:StageRevision,expectedVersion:number):Promise<void> {this.assertScope(s.projectId);const q=await this.client.query("UPDATE project_stage SET version=$3,state=$4,actor_id=$5,created_at=$6 WHERE project_id=$1 AND stage_id=$2 AND version=$7",[s.projectId,s.id,s.version,s.state,s.actorId,s.createdAt,expectedVersion]);if(!q.rowCount)throw new DomainError("VERSION_CONFLICT","stage version changed",(await this.getStage(s.id))?.version);await this.insertStageRevision(r);}
   async insertStageReview(r:StageReview):Promise<void> {this.assertScope(r.projectId);await this.client.query("INSERT INTO stage_review(project_id,review_id,stage_id,stage_version,supersedes_review_id,adopted,rejected,gap,next_choice,evidence,reason,actor_id,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)",[r.projectId,r.id,r.stageId,r.stageVersion,r.supersedesReviewId,r.adopted,r.rejected,r.gap,r.nextChoice,r.evidence,r.reason,r.actorId,r.createdAt]);}
-  async insertTaskProposal(p:TaskProposal):Promise<void> {this.assertScope(p.projectId);await this.client.query("INSERT INTO task_proposal(project_id,task_id,task_revision_id,stage_id,consumer,use_required,acceptance_mode,acceptance_target,evidence,stop_condition,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",[p.projectId,p.taskId,p.taskRevisionId,p.stageId,p.consumer,p.useRequired,p.acceptanceMode??null,p.acceptanceTarget??null,p.evidence,p.stopCondition,p.createdAt]);}
+  async insertTaskProposal(p:TaskProposal):Promise<void> {this.assertScope(p.projectId);await this.client.query("INSERT INTO task_proposal(project_id,task_id,task_revision_id,stage_id,consumer,use_required,acceptance_mode,acceptance_target,evidence,stop_condition,created_at,acceptance_precondition) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)",[p.projectId,p.taskId,p.taskRevisionId,p.stageId,p.consumer,p.useRequired,p.acceptanceMode??null,p.acceptanceTarget??null,p.evidence,p.stopCondition,p.createdAt,p.acceptancePrecondition??null]);}
+  async insertPreconditionMark(m:{projectId:string;markId:string;taskId:string;deliveryId:string;actorId:string;evidence:string;createdAt:string}):Promise<void> {this.assertScope(m.projectId);await this.client.query("INSERT INTO task_acceptance_precondition_mark(project_id,mark_id,task_id,delivery_id,actor_id,evidence,created_at) VALUES($1,$2,$3,$4,$5,$6,$7)",[m.projectId,m.markId,m.taskId,m.deliveryId,m.actorId,m.evidence,m.createdAt]);}
   async insertTaskJudgement(j:TaskJudgement):Promise<void> {this.assertScope(j.projectId);await this.client.query("INSERT INTO task_judgement(project_id,judgement_id,task_id,task_revision_id,decision,reason,evidence,relook_condition,actor_id,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)",[j.projectId,j.id,j.taskId,j.taskRevisionId,j.decision,j.reason,j.evidence,j.relookCondition,j.actorId,j.createdAt]);}
   async insertDelivery(d:Delivery):Promise<void> {this.assertScope(d.projectId);await this.client.query("INSERT INTO delivery(project_id,delivery_id,task_id,task_revision_id,run_id,source_run_version,submitted_by_actor_id,artifact_ref,artifact_revision,content_hash,technical_result,technical_evidence,reason,actor_id,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)",[d.projectId,d.id,d.taskId,d.taskRevisionId,d.runId??null,d.sourceRunVersion??null,d.submittedByActorId??null,d.artifactRef,d.artifactRevision,d.contentHash,d.technicalResult,d.technicalEvidence,d.reason,d.actorId,d.createdAt]);}
   async insertObservation(o:ConsumerObservation):Promise<void> {this.assertScope(o.projectId);await this.client.query("INSERT INTO consumer_observation(project_id,observation_id,task_id,delivery_id,observer,observer_kind,result,evidence,reason,actor_id,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",[o.projectId,o.id,o.taskId,o.deliveryId,o.observer,o.observerKind,o.result,o.evidence,o.reason,o.actorId,o.createdAt]);}

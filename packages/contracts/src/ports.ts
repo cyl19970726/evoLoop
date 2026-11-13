@@ -15,6 +15,7 @@ import type { SessionMessageReader, SessionMessageTransaction } from "./session-
 import type { SessionAssignmentReader, SessionAssignmentTransaction } from "./session-assignments.js";
 import type { LeaderNoticePacketReader, LeaderNoticePacketTransaction } from "./leader-notice-packets.js";
 import type { SessionLineReader, SessionLineTransaction } from "./session-line.js";
+import type { DecisionRequestTransaction } from "./decision-requests.js";
 import type { SessionObservationReader } from "./session-observation.js";
 import type { NativeInputReader, NativeInputTransaction } from "./native-input.js";
 import type { NativeObservationReader, NativeObservationTransaction } from "./native-observation.js";
@@ -59,6 +60,8 @@ export interface Reader extends ReferenceReader, RoleReader, SchedulingReader, D
   listGoalRevisions(goalId: string): Promise<GoalRevision[]>;
   getStage(id: string): Promise<Stage | null>;
   listStages(goalId?: string): Promise<Stage[]>;
+  /** Stages linked to a roadmap phase with their latest review. */
+  listStagePhaseLinks?(): Promise<import("./milestones.js").StagePhaseLink[]>;
   listStageRevisions(stageId: string): Promise<StageRevision[]>;
   listStageReviews(stageId: string): Promise<StageReview[]>;
   /** Latest policy at or before the selected revision; omit revision for the current Task. */
@@ -74,6 +77,8 @@ export interface Reader extends ReferenceReader, RoleReader, SchedulingReader, D
   listTaskJudgements(taskId: string): Promise<TaskJudgement[]>;
   getDelivery(id: string): Promise<Delivery | null>;
   listDeliveries(taskId: string): Promise<Delivery[]>;
+  /** The explicit mark that a delivery's acceptance precondition is met; null while nobody has stated it. */
+  getPreconditionMark(deliveryId: string): Promise<{ markId: string; actorId: string; evidence: string; createdAt: string } | null>;
   listObservations(taskId: string): Promise<ConsumerObservation[]>;
   listTaskClosures(taskId: string): Promise<TaskClosure[]>;
   getProject(): Promise<Project | null>;
@@ -151,10 +156,15 @@ export interface Transaction extends Reader, Omit<RoleTransaction, "getTask" | "
   sessionAssignments?: SessionAssignmentTransaction;
   leaderNoticePackets?: LeaderNoticePacketTransaction;
   sessionLines?: SessionLineTransaction;
+  decisionRequests?: DecisionRequestTransaction;
   insertDiscussion(value: DiscussionRecord, event: DiscussionEvent): Promise<void>;
   updateDiscussion(value: DiscussionRecord, expectedVersion: number, event: DiscussionEvent): Promise<void>;
   insertRuntimeSession(session: RuntimeSessionRecord): Promise<void>;
   updateRuntimeSession(session: RuntimeSessionRecord, expectedVersion: number): Promise<void>;
+  /** Link a stage to a roadmap phase (or clear the link with null). One link per stage; no version bump of the stage. */
+  setStagePhaseKey?(link: { stageId: string; phaseKey: string | null; actorId: string; reason: string; at: string }): Promise<void>;
+  /** Telemetry: the exact model a Turn of this Session reported. Updates in place without a version bump; never configuration. */
+  recordSessionActualModel?(sessionId: string, model: string, at: string): Promise<void>;
   insertRuntimeRun(run: RuntimeRunRecord): Promise<void>;
   updateRuntimeRun(run: RuntimeRunRecord, expectedVersion: number): Promise<void>;
   appendRuntimeEvent(event: RuntimeRecordEvent): Promise<void>;
@@ -167,6 +177,7 @@ export interface Transaction extends Reader, Omit<RoleTransaction, "getTask" | "
   insertTaskProposal(proposal: TaskProposal): Promise<void>;
   insertTaskJudgement(judgement: TaskJudgement): Promise<void>;
   insertDelivery(delivery: Delivery): Promise<void>;
+  insertPreconditionMark(mark: { projectId: string; markId: string; taskId: string; deliveryId: string; actorId: string; evidence: string; createdAt: string }): Promise<void>;
   insertObservation(observation: ConsumerObservation): Promise<void>;
   insertTaskClosure(closure: TaskClosure): Promise<void>;
   savepoint<T>(action: () => Promise<T>): Promise<T>;

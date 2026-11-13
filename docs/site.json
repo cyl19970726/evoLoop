@@ -48,6 +48,11 @@
       "group": "前端文档"
     },
     {
+      "path": "docs/frontend/overview-top-design.md",
+      "title": "总览顶部重做设计（待确认）",
+      "group": "前端文档"
+    },
+    {
       "path": "docs/frontend/foundations.md",
       "title": "设计基础",
       "group": "前端文档"
@@ -485,6 +490,11 @@
     {
       "path": "docs/development/local-run.md",
       "title": "运行本机首片",
+      "group": "开发与维护"
+    },
+    {
+      "path": "docs/development/organization-review-period-repair.md",
+      "title": "组织复盘观察期修复",
       "group": "开发与维护"
     },
     {

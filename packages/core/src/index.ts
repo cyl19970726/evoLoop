@@ -26,6 +26,7 @@ import type { SessionMessageCommand } from "@evoloop/contracts/session-messages"
 import { applySessionAssignment } from "./session-assignments/index.js";
 import { applyLeaderNoticePacket } from "./leader-notice-packets/index.js";
 import { applySessionLine } from "./session-line/index.js";
+import { applyDecisionRequest } from "./decision-requests/index.js";
 import type { SessionAssignmentCommand } from "@evoloop/contracts/session-assignments";
 import type { DomainRoute, HostLink } from "@evoloop/contracts/resident-hosts";
 import { applySchedule } from "./scheduling/commands.js";
@@ -37,7 +38,7 @@ import { canonicalTaskInputJson, taskInputSignature } from "./task-input.js";
 import type { TaskCollaborationPayload } from "@evoloop/contracts/discussions";
 import { applyEvaluation, taskSignature } from "./evaluation/index.js";
 import type { ScheduleCommand } from "@evoloop/contracts/scheduling";
-export { RuntimeWorkflowService, describeTurnEffort } from "./runtime/service.js";
+export { RuntimeWorkflowService, describeTurnEffort, mergeRunActual } from "./runtime/service.js";
 export { applyProviderHoldRelease } from "./provider-hold.js";
 import type { Clock, ContentHasher, IdFactory, Reader, Transaction, UnitOfWork } from "@evoloop/contracts/ports";
 import { applyProviderHoldRelease } from "./provider-hold.js";
@@ -181,6 +182,9 @@ export class WorkflowService {
         result = outcome.result;
         effects = outcome.effects;
       } catch (error) {
+        // A provider hold is a temporary state, not a decision about this command: nothing is journalled, so the same operation
+        // ID is evaluated afresh once the hold is released instead of replaying the refusal forever.
+        if (error instanceof DomainError && error.code === "PROVIDER_HELD") throw error;
         if (error instanceof DomainError) {
           result = {
             status: "rejected", operationId: command.operationId, code: error.code,
@@ -218,9 +222,11 @@ export class WorkflowService {
     if (command.type === "session.profile.set" || command.type === "session.identity.set" || command.type.startsWith("task.assignment.") && command.type !== "task.assignment.acknowledge") return "review";
     // The packet's own steps belong to the notice service identity (checked in apply); the Leader's decision and recovery need review.
     if (command.type === "leader.noticePacket.build" || command.type === "leader.noticePacket.sent" || command.type === "leader.noticePacket.observe") return "write";
+    if (command.type === "stage.phaseKey.set") return "review";
     if (command.type.startsWith("queue.") || command.type.startsWith("line.") || command.type.startsWith("leader.notice")) return "review";
+    if (command.type === "decision.request.create" || command.type === "decision.request.withdraw") return "review";
     if (command.type.startsWith("evaluation.") || command.type.startsWith("domain.") || command.type.startsWith("host.")) return "review";
-    return command.type === "document.adopt" || command.type === "document.publish" || command.type === "document.archive" || command.type === "document.restore" || command.type === "task.start" || command.type === "task.reviewBasis" || command.type === "task.close" || command.type === "task.cancel" || command.type === "task.reopen" || command.type === "stage.accept" || command.type === "stage.review" || command.type === "stage.review.correct" || command.type === "runtime.session.reserve" || command.type === "runtime.session.close" || command.type === "runtime.run.reserve" || (command.type === "runtime.run.interrupt" || command.type === "runtime.run.stop" || command.type === "runtime.run.abandonReadOnly") || command.type.startsWith("schedule.") || command.type.startsWith("role.") && command.type !== "role.propose" || command.type === "discussion.decision.record" || command.type === "discussion.action.link"
+    return command.type === "document.adopt" || command.type === "document.publish" || command.type === "document.archive" || command.type === "document.restore" || command.type === "task.start" || command.type === "task.acceptancePrecondition.mark" || command.type === "task.reviewBasis" || command.type === "task.close" || command.type === "task.cancel" || command.type === "task.reopen" || command.type === "stage.accept" || command.type === "stage.review" || command.type === "stage.review.correct" || command.type === "runtime.session.reserve" || command.type === "runtime.session.close" || command.type === "runtime.run.reserve" || (command.type === "runtime.run.interrupt" || command.type === "runtime.run.stop" || command.type === "runtime.run.abandonReadOnly") || command.type.startsWith("schedule.") || command.type.startsWith("role.") && command.type !== "role.propose" || command.type === "discussion.decision.record" || command.type === "discussion.action.link"
       ? "review" : "write";
   }
 
@@ -241,6 +247,8 @@ export class WorkflowService {
     }
     if (command.type.startsWith("line."))
       return applySessionLine(tx, principal, command as import("@evoloop/contracts/session-line").SessionLineCommand, now, () => this.deps.ids.next());
+    if (command.type.startsWith("decision.request."))
+      return applyDecisionRequest(tx, principal, command as import("@evoloop/contracts/decision-requests").DecisionRequestCommand, now);
     if (command.type.startsWith("session.message."))
       return applySessionMessage(tx, principal, command as SessionMessageCommand, now);
     if (command.type === "session.input.reply")
@@ -347,7 +355,7 @@ export class WorkflowService {
         requireBody(command.body);
         const organizationReview = reviewMetadata(document.kind, command.organizationReview, previous.organizationReview);
         await validatePreviousReview(organizationReview, command.projectId, document.id,
-          id => tx.getDocument(id), (id, revision) => tx.getDocumentRevision(id, revision));
+          id => tx.getDocument(id), (id, revision) => tx.getDocumentRevision(id, revision), previous.organizationReview);
         const revisionId = this.deps.ids.next();
         const revision: DocumentRevision = {
           projectId: command.projectId, documentId: document.id, id: revisionId, body: command.body,
@@ -458,14 +466,22 @@ export class WorkflowService {
           ownerRole?.proposal?.templateKey === "cognition" && principal.permissions.includes("review");
         if (command.useRequired === false && !decisionOnly)
           throw new DomainError("ACCEPTANCE_POLICY", "new business Tasks require current delivery use under their acceptance mode");
+        // Omitted means independent_agent (it is what is stored below), so the rules are judged on that value: only a mode written explicitly
+        // as something else is refused. A decision-only Task stores no mode and is not judged on one.
+        const createdMode = decisionOnly ? command.acceptanceMode : command.acceptanceMode ?? "independent_agent";
         if (command.acceptanceMode === "human_required" && !command.consumer)
           throw new DomainError("ACCEPTANCE_POLICY", "human-required Tasks need the exact human consumer actor");
-        if (command.acceptanceTarget && (command.acceptanceTarget === "human") !== (command.acceptanceMode === "human_required"))
+        if (command.acceptanceTarget && (command.acceptanceTarget === "human") !== (createdMode === "human_required"))
           throw new DomainError("ACCEPTANCE_POLICY", "acceptance target and mode disagree");
+        if (command.acceptanceTarget === "named_agent" && !command.consumer)
+          throw new DomainError("ACCEPTANCE_POLICY", "named_agent acceptance needs the declared consumer: the business identity that accepts directly");
+        if (command.acceptanceTarget === "named_agent" && createdMode !== "independent_agent")
+          throw new DomainError("ACCEPTANCE_POLICY", "named_agent acceptance needs the independent_agent mode: the consumer must not be the author");
         await tx.insertTaskProposal({ projectId: command.projectId, taskId: task.id, taskRevisionId: revisionId,
           stageId: command.stageId ?? null, consumer: command.consumer ?? "", useRequired: !decisionOnly,
           acceptanceMode: decisionOnly ? null : command.acceptanceMode ?? "independent_agent",
           acceptanceTarget: decisionOnly ? null : command.acceptanceTarget ?? null,
+          acceptancePrecondition: command.acceptancePrecondition ?? null,
           evidence: command.evidence ?? "", stopCondition: command.stopCondition ?? "", createdAt: now });
         for (const linkedId of documentIds) await tx.insertLink({ projectId: command.projectId, id: this.deps.ids.next(),
           taskId: task.id, documentId: linkedId, actorId, createdAt: now });
@@ -502,12 +518,22 @@ export class WorkflowService {
         }
         const priorProposal = await tx.getTaskProposal(task.id);
         const acceptanceMode = command.acceptanceMode ?? priorProposal?.acceptanceMode ?? null;
-        const acceptanceTarget = command.acceptanceTarget ?? priorProposal?.acceptanceTarget ?? null;
+        // undefined keeps the declared target; null clears it.
+        const acceptanceTarget = command.acceptanceTarget !== undefined ? command.acceptanceTarget : priorProposal?.acceptanceTarget ?? null;
+        const acceptancePrecondition = command.acceptancePrecondition !== undefined ? command.acceptancePrecondition : priorProposal?.acceptancePrecondition ?? null;
         if (acceptanceTarget && (acceptanceTarget === "human") !== (acceptanceMode === "human_required"))
           throw new DomainError("ACCEPTANCE_POLICY", "acceptance target and mode disagree");
-        if (command.acceptanceTarget && command.acceptanceTarget !== priorProposal?.acceptanceTarget) {
-          if (!principal.permissions.includes("review")) throw new DomainError("FORBIDDEN", "acceptance target changes require review permission");
-          if (task.state !== "todo") throw new DomainError("REOPEN_REQUIRED", "reopen the Task before changing acceptance target");
+        const effectiveConsumer = command.consumer !== undefined ? command.consumer : priorProposal?.consumer ?? null;
+        if (acceptanceTarget === "named_agent" && !effectiveConsumer)
+          throw new DomainError("ACCEPTANCE_POLICY", "named_agent acceptance needs the declared consumer: the business identity that accepts directly");
+        if (acceptanceTarget === "named_agent" && acceptanceMode !== "independent_agent")
+          throw new DomainError("ACCEPTANCE_POLICY", "named_agent acceptance needs the independent_agent mode: the consumer must not be the author");
+        // The acceptance convention changes under the same rule as the other acceptance fields: review permission, Task still todo.
+        const conventionChanged = command.acceptanceTarget !== undefined && command.acceptanceTarget !== (priorProposal?.acceptanceTarget ?? null) ||
+          command.acceptancePrecondition !== undefined && command.acceptancePrecondition !== (priorProposal?.acceptancePrecondition ?? null);
+        if (conventionChanged) {
+          if (!principal.permissions.includes("review")) throw new DomainError("FORBIDDEN", "acceptance target and acceptance precondition changes require review permission");
+          if (task.state !== "todo") throw new DomainError("REOPEN_REQUIRED", "reopen the Task before changing its acceptance target or acceptance precondition");
         }
         if (priorProposal?.acceptanceMode === "human_required" &&
           (acceptanceMode !== "human_required" || command.consumer !== undefined && command.consumer !== priorProposal.consumer) &&
@@ -547,7 +573,7 @@ export class WorkflowService {
           command.consumer !== undefined && command.consumer !== priorProposal?.consumer ||
           command.useRequired !== undefined && command.useRequired !== priorProposal?.useRequired ||
           command.acceptanceMode !== undefined && command.acceptanceMode !== priorProposal?.acceptanceMode ||
-          command.acceptanceTarget !== undefined && command.acceptanceTarget !== priorProposal?.acceptanceTarget ||
+          conventionChanged ||
           command.evidence !== undefined && command.evidence !== priorProposal?.evidence ||
           command.stopCondition !== undefined && command.stopCondition !== priorProposal?.stopCondition))
           throw new DomainError("REOPEN_REQUIRED", "Return the Task to todo before changing its execution scope");
@@ -598,12 +624,12 @@ export class WorkflowService {
         await tx.updateTask({ ...task, version: revision.version, currentRevisionId: revisionId,
           title: revision.title, content: revision.content, contentRevisionId, kind, domainId, acceptance: revision.acceptance,
           owner: revision.owner }, task.version);
-        if (priorProposal || stageChanged || command.consumer || command.evidence || command.stopCondition || command.useRequired !== undefined || command.acceptanceMode !== undefined || command.acceptanceTarget !== undefined) {
+        if (priorProposal || stageChanged || command.consumer || command.evidence || command.stopCondition || command.useRequired !== undefined || command.acceptanceMode !== undefined || command.acceptanceTarget !== undefined || command.acceptancePrecondition !== undefined) {
           await tx.insertTaskProposal({ projectId: task.projectId, taskId: task.id, taskRevisionId: revisionId,
             stageId, consumer,
             useRequired: acceptanceMode ? true : command.useRequired ?? priorProposal?.useRequired ?? false,
             acceptanceMode,
-            acceptanceTarget,
+            acceptanceTarget, acceptancePrecondition,
             evidence, stopCondition, createdAt: now });
         }
         for (const id of documentIds.filter(id => !linked.includes(id))) await tx.insertLink({ projectId: task.projectId,
@@ -670,6 +696,21 @@ export class WorkflowService {
         return { result: { ...base, entityId: task.id, version: revision.version, revisionId }, effects: [
           { kind: "task", entityId: task.id, version: revision.version },
           { kind: "document", entityId: main.id, version: documentVersion }] };
+      }
+      case "task.acceptancePrecondition.mark": {
+        const task = required(await tx.getTask(command.taskId), "Task");
+        const delivery = required(await tx.getDelivery(command.deliveryId), "Delivery");
+        if (delivery.taskId !== task.id) throw new DomainError("TARGET_MISMATCH", "The delivery belongs to another Task");
+        // The same notion of current as the acceptance relay: the newest delivery by creation time, then ID.
+        const latest = [...await tx.listDeliveries(task.id)].sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id)).at(-1);
+        if (!latest || latest.id !== delivery.id) throw new DomainError("DELIVERY_NOT_CURRENT", "Only the Task's current delivery can be marked");
+        const proposal = await tx.getTaskProposal(task.id);
+        if (!proposal?.acceptancePrecondition || proposal.acceptancePrecondition === "none")
+          throw new DomainError("NO_PRECONDITION", "The Task declares no acceptance precondition to mark");
+        if (await tx.getPreconditionMark(delivery.id)) throw new DomainError("ALREADY_MARKED", "This delivery's precondition is already marked");
+        await tx.insertPreconditionMark({ projectId: command.projectId, markId: this.deps.ids.next(), taskId: task.id,
+          deliveryId: delivery.id, actorId, evidence: command.evidence, createdAt: now });
+        return { result: { ...base, entityId: task.id, version: task.version }, effects: [{ kind: "task", entityId: task.id, version: task.version }] };
       }
       case "task.reviewBasis": {
         const task = required(await tx.getTask(command.taskId), "Task");
@@ -1086,6 +1127,10 @@ export class WorkflowService {
   listGoals(principal: Principal, projectId: string, limit?: number, cursor?: string) { return this.read(principal, projectId, reader => reader.listGoals(pageLimit(limit), cursor)); }
   listGoalRevisions(principal: Principal, projectId: string, goalId: string) { return this.read(principal, projectId, async reader => { required(await reader.getGoal(goalId),"Goal"); return reader.listGoalRevisions(goalId); }); }
   getStage(principal: Principal, projectId: string, stageId: string) { return this.read(principal, projectId, reader => Promise.resolve(reader.getStage(stageId)).then(stage => required(stage,"Stage"))); }
+  /** The stages linked to a roadmap phase, each with its latest review (the overview's milestones read these). */
+  listStagePhaseLinks(principal: Principal, projectId: string) {
+    return this.read(principal, projectId, reader => reader.listStagePhaseLinks?.() ?? Promise.resolve([]));
+  }
   listStages(principal: Principal, projectId: string, goalId?: string) { return this.read(principal, projectId, reader => reader.listStages(goalId)); }
   listStageRevisions(principal: Principal, projectId: string, stageId: string) { return this.read(principal, projectId, async reader => { required(await reader.getStage(stageId),"Stage"); return reader.listStageRevisions(stageId); }); }
   listStageReviews(principal: Principal, projectId: string, stageId: string) { return this.read(principal, projectId, async reader => { required(await reader.getStage(stageId),"Stage"); return reader.listStageReviews(stageId); }); }
@@ -1137,6 +1182,9 @@ export class WorkflowService {
   listRuntimeSessions(principal: Principal, projectId: string) { return this.read(principal, projectId, reader => reader.listRuntimeSessions()); }
   getRuntimeRun(principal: Principal, projectId: string, runId: string) { return this.read(principal, projectId, async reader => required(await reader.getRuntimeRun(runId), "Runtime run")); }
   listSessionLines(principal: Principal, projectId: string) { return this.read(principal, projectId, reader => reader.sessionLines?.listSessionLines() ?? Promise.resolve([])); }
+  listUnfinishedSessionLineEntries(principal: Principal, projectId: string, sessionId: string) {
+    return this.read(principal, projectId, reader => reader.sessionLines?.listUnfinishedSessionLineEntries(sessionId) ?? Promise.resolve([]));
+  }
   listSessionLineEntries(principal: Principal, projectId: string, sessionId: string, includeEnded = false) {
     return this.read(principal, projectId, reader => reader.sessionLines?.listSessionLineEntries(sessionId, includeEnded) ?? Promise.resolve([]));
   }

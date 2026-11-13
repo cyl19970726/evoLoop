@@ -1,5 +1,6 @@
 // A queued message as one short line: the Leader notices the coordinator saves are English text with long IDs, so the
 // list says what happened in Chinese (kind, task, time) and keeps the original behind “原文与标识”.
+import { grantRefusalText } from "../../shared/errorPresentation";
 const kinds: Array<[prefix: string, label: string]> = [
   ["A Task was created for Leader triage", "新 Task 待安排"],
   ["A fixed Delivery was recorded", "交付已提交"],
@@ -38,7 +39,7 @@ export function queuedMessageSummary(body: string, originTaskId?: string | null)
 const grantBlockPrefix = "MESSAGE_GRANT_MISSING:";
 /** The message's own words for what is missing, without the code the queue uses to skip it. */
 export function grantBlockText(blockedReason: string | null | undefined): string | null {
-  return blockedReason?.startsWith(grantBlockPrefix) ? blockedReason.slice(grantBlockPrefix.length).trim() : null;
+  return blockedReason?.startsWith(grantBlockPrefix) ? grantRefusalText(blockedReason.slice(grantBlockPrefix.length).trim()) : null;
 }
 
 export interface GrantBlockedNotice {

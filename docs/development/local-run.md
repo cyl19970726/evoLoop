@@ -133,7 +133,7 @@ Claude 运行时：新实例的 Dev Role 已在用，有真实 Run，尚未验�
 
 Role 的 skill 选择决定每个 Turn 放进模型上下文的 skill，用 `role runtime set` 或工作台角色卡片修改，下一个 Turn 生效。evoLoop 业务 skill 按 Role 配置始终加载；项目、个人与运行时内置 skill 按开关加载，`add`、`remove` 按名称单独增减；会修改运行时自身配置的内置 skill（例如安装器）默认不加载。Codex 由线程配置关闭未选的 skill，业务 skill 经 Role 上下文交付；Claude 在 `claude.skillBundle` 为默认的 `true` 时，把选中的 skill 链接成本次 Turn 的本地插件并关闭其余。工作目录仓库把 `.claude/skills` 链接到 `.agents/skills` 时（本仓库即如此），Claude 原生读到的同一份 skill 会按名称关闭，每个 skill 只经插件加载一次。`runtime.roleSkills[].builtinSkills` 已被这项选择取代，旧配置仍可加载但不再生效。选择只决定上下文，不是安全边界。
 
-`role runtime show` 与工作台角色卡片每次读取时都实时取值。Codex 角色在最近一个 Session 的工作目录（没有时用授权目录）询问运行中的 App Server 的 skill、插件与 MCP 列表；Claude 角色按文件列出 skill，再用最近一次 Turn 启动时的报告补上内置 skill、插件与 MCP，尚无 Turn 时注明内置 skill 待首个 Turn 后显示。运行时不可用时退回按文件推断，并在结果中标明来源。Codex 由插件提供的 skill 可能不出现在它的列表中。
+`role runtime show` 与工作台角色卡片每次读取时都实时取值。Codex 角色在最近一个 Session 的工作目录（没有时用这个角色自己的授权目录：不按查看者过滤，有多个时取排序后的第一个并写明共几个；路径只给有复核权限或本人持有该角色运行授权的人，其他读者看到“已配置”，项目 skill 的名称对所有项目读者显示；角色没有任何运行授权时写明原因）询问运行中的 App Server 的 skill、插件与 MCP 列表；Claude 角色按文件列出 skill，再用最近一次 Turn 启动时的报告补上内置 skill、插件与 MCP，尚无 Turn 时注明内置 skill 待首个 Turn 后显示。运行时不可用时退回按文件推断，并在结果中标明来源。Codex 由插件提供的 skill 可能不出现在它的列表中。
 
 重启或恢复 owned Session 前，核持久 actor、Role、scope、cwd、model、sandbox、approvalPolicy 与当前业务授权，先对账在途和未知 Run。新 Session 用 `danger-full-access`、`never` 与正常网络；旧 Session、旧 Run 和其配置快照保持原值。恢复时对原 `thread/resume` 明确传入完整配置；新 App Server 可恢复未加载的旧 Thread，同进程已加载而权限回显不符时保持 unknown。只有原生线程/恢复/启动回执明确确认 full/never 权限才标记 active；`thread/read` 不含权限时不能作为丢失回执或恢复成功的证据。模型修订使用原 Thread 上独立、持久的 activation，不创建假 Run，也不改旧 Run snapshot；配置 revision、activation 状态与 provider 实际模型遥测分开记录。旧 readonly protocol 检查字段 `readOnlyProtocolVerified` 仅为解析兼容保留，忽略其值，不要求设置，也不作为新 Session 的准入条件。动态授权失效不能借静态授权继续。
 
@@ -197,7 +197,7 @@ EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE='/absolute/path/to/playwright/index.js' \
 
 ## 停写备份与空目标恢复
 
-在保存真实不可重建材料前，先定备份周期、保留和恢复目标。脚本覆盖 **PostgreSQL + evoLoop 外部 Blob + 显式提供的 Wiki 外部快照**，不声称三者有原子快照。先停止 coordinator，并暂停 OpenViking/其他 Wiki 写者；按 Wiki 后端真实存储方式生成包含正文、修订、来源及 evoLoop `manifestRoot` 的完整外部导出。脚本持有与 coordinator 相同的 PostgreSQL advisory lock，拒绝仍在运行的 coordinator，但不能阻止旁路 SQL 或远端 Wiki 写者。`pg_dump` 给数据库自身一致快照；跨存储一致性依赖停写和后续核对。
+在保存真实不可重建材料前，先定备份周期、保留和恢复目标。脚本覆盖 **PostgreSQL + evoLoop 外部 Blob + 显式提供的 Wiki 外部快照**，不声称三者有原子快照。先排空（`node scripts/release-drain.mjs start --reason …`，见[部署](../architecture/deployment.md#2-发布新版本)）并停止 coordinator，等它的数据库咨询锁真正释放（`node scripts/release-drain.mjs wait-stopped`），再备份；并暂停 OpenViking/其他 Wiki 写者；按 Wiki 后端真实存储方式生成包含正文、修订、来源及 evoLoop `manifestRoot` 的完整外部导出。脚本持有与 coordinator 相同的 PostgreSQL advisory lock，拒绝仍在运行的 coordinator，但不能阻止旁路 SQL 或远端 Wiki 写者。`pg_dump` 给数据库自身一致快照；跨存储一致性依赖停写和后续核对。
 
 确保 `EVOLOOP_PG_BIN_DIR` 指向 PostgreSQL 18 工具目录，或 18.x 工具已排在 `PATH` 前面。备份位置、Blob 根目录和 Wiki 导出均须为仓库外的绝对路径，互不嵌套，父目录已存在；备份目标不能预先存在。Wiki 未启用时明确用 `--wiki-disabled`；启用时改用 `--wiki-snapshot`：
 
@@ -224,11 +224,23 @@ node scripts/restore.mjs --from /absolute/private-backups/evoloop-20261020 \
 
 随后按后端流程导入 Wiki，核对修订、来源、Blob 原文哈希、Task/操作回执及待对账运行。全部核实前不要开启 Wiki 或 runtime 写入。跨数据库与文件目录的恢复并非单个事务；若数据库已恢复而文件改名失败，保留现场，用新的空库重做，不在半恢复库上盲目重试。脚本拒绝非空数据库、已有目标目录和仓库内正文路径。
 
+### 线上版本：`/api/version` 与 `build-info.json`
+
+总览顶部的“线上当前版本”读公开只读的 `GET /api/version`（与 `/health` 一样不需要令牌），只返回 `{commit, builtAt, startedAt}`：
+
+- `commit`、`builtAt` 由服务端读**已部署目录根部的 `build-info.json`**（`{"commit": "<7–40 位十六进制>", "builtAt": "<ISO 时间>"}`）。文件缺失、不是合法 JSON 或字段不合规时，两者都是 `null`，页面写“版本未读到”，不回退旧值。
+- `startedAt` 是服务进程启动时间，页面叫“启动时间”，不是发布时间。
+- 发布脚本写 `build-info.json` 不在这次改动里：在发布流程写入之前，线上页面如实显示“版本未读到”。
+- `/milestones` 读已部署的 `docs/roadmap.md` 阶段表；阶段与路线图阶段的关联存在 `stage_phase_key`（迁移 101），用 `stage.phaseKey.set`（review 权限）设置；未关联显示“未登记”。
+
 ### 发布脚本
 
 `npm run release -- plan --id ID --ref GIT_REF` 只打印计划；`run ... --execute` 才执行；`rollback --id ID --execute` 把代码切回上一个版本。`--from STEP` 续跑要求该发布记录里前面的步骤都已成功且没有被撤销，`--only A,B` 只跑所列步骤，步骤名拼错直接报错。`--allow-no-previous` 仅用于第一次发布：当前链接不存在时没有可恢复的旧版本，没有该参数一律拒绝。`--allow-off-main` 仅用于演练：发布提交必须已在远端主分支（默认 `origin/main`，可用配置 `remote`、`baseBranch` 改）上，预检会取远端核对，不在就拒绝。不带 `--from` 重跑时，`prepare` 遇到已存在的版本目录，只在它正好是要发布的提交时复用，否则报错。
 
-配置文件放在仓库外，由 `EVOLOOP_RELEASE_CONFIG` 指向，JSON 字段：`releaseRoot`、`currentLink`、`stateDir`（均为绝对路径）、`backup.out`、`backup.blobRoot`（可选 `wikiSnapshot`、`integrations`）、`database.name`（必填，可加 `host`、`port`）、`skipTests`，以及 `hooks`（各为命令参数数组）。执行前把环境变量 `EVOLOOP_DATABASE_URL` 与 `database` 比对，库名、主机或端口不一致即拒绝，任何步骤都不会运行。不跳过测试时还须设 `EVOLOOP_RELEASE_TEST_DATABASE_URL` 指向独立的 `evoloop_*_test` 库，且不能等于线上库。命令运行时可读 `EVOLOOP_RELEASE_ID`、`EVOLOOP_RELEASE_DIR`、`EVOLOOP_RELEASE_PREVIOUS`（绝对路径）、`EVOLOOP_RELEASE_CURRENT_LINK`。
+配置文件放在仓库外，由 `EVOLOOP_RELEASE_CONFIG` 指向，JSON 字段：`releaseRoot`、`currentLink`、`stateDir`（均为绝对路径）、`backup.out`、`backup.blobRoot`（可选 `wikiSnapshot`、`integrations`）、`database.name`（必填，可加 `host`、`port`）、`skipTests`、可选 `sourceSubdir`（版本目录里放源码的子目录；默认空，即版本目录本身就是检出的源码。主机上若是 `<版本目录>/source` 加 `runtime`、`artifacts` 等同级目录的布局，就写 `source`：构建、预检、备份、迁移都在这个子目录里运行，钩子从 `EVOLOOP_RELEASE_SOURCE` 读到源码路径，`EVOLOOP_RELEASE_DIR` 仍是版本目录），以及 `hooks`（各为命令参数数组）。执行前把环境变量 `EVOLOOP_DATABASE_URL` 与 `database` 比对，库名、主机或端口不一致即拒绝，任何步骤都不会运行。不跳过测试时还须设 `EVOLOOP_RELEASE_TEST_DATABASE_URL` 指向独立的 `evoloop_*_test` 库，且不能等于线上库。命令运行时可读 `EVOLOOP_RELEASE_ID`、`EVOLOOP_RELEASE_DIR`、`EVOLOOP_RELEASE_SOURCE`、`EVOLOOP_RELEASE_PREVIOUS`（绝对路径）、`EVOLOOP_RELEASE_CURRENT_LINK`。
+
+**带上上一版的工作台分块。** 工作台的页面是按需加载的分块文件，文件名带内容哈希（如 `assets/ArrangementPage-BFkRO_z-.js`），每次发布都会换名。令牌只存在页面内存里，刷新就要重新输入，所以发布前打开的标签页会一直开着；它之后再打开没打开过的页面，会去取旧名字的文件，旧版本不在了就报 `Failed to fetch dynamically imported module`（2026-11-12 线上“统筹安排”即此）。因此 `build` 步骤结束后，发布脚本（`scripts/release/carry-assets.mjs`）把上一版 `apps/workbench/dist/assets/` 里**新版本没有的文件**复制进新版本的同名目录，只补缺、绝不覆盖（同名即同内容哈希，新版本的文件原样保留）；这一步在停服务之前，失败即中止发布，什么都没动。上一版没有该目录（首次发布）时只记一行日志。配置 `carryAssets` 可选：`false` 关闭；`{ "keep": N, "assetsDir": "…" }` 调整，默认 `keep` 为 3、`assetsDir` 为 `apps/workbench/dist/assets`（相对源码目录，随 `sourceSubdir`）。
+**保留策略：** 每次发布算一代；带过来的文件记下它被构建出来的那一代（新版本目录里的 `apps/workbench/dist/assets-carry.json`），到第 `keep` 代之后不再带，所以目录不会无限增长。默认保留最近 3 个版本（新版本加前两版）：覆盖“发布前打开、几天不关的标签页”，而按本机演练，三版合计约 10–12 MB（单版约 7.6 MB），代价可忽略；`keep` 越大旧标签页能撑越久、占用越多，需要更长时可调大。超出保留的标签页仍会在打开新页面时失败，刷新即恢复。发布状态文件的 `acceptance.carriedAssets` 记录这次复制、过期和同名的文件数及字节数。这一步只补静态文件，不让旧标签页的接口调用与新服务兼容，接口不兼容的改动仍须靠刷新。
 
 **钩子必须做到什么**（都不得回显密钥，失败时以非零退出；每个都要能重复执行而不出错）：
 
@@ -261,7 +273,11 @@ git diff --check
 
 ### 脚本测试要接进 CI 会执行的那组
 
-`scripts/` 下的每个 `*.test.mjs` 必须被某个 CI 工作流会运行的 npm 脚本（通常是 `test:unit`）点名或用通配符覆盖，否则它只会在手动运行时才执行，`app` 全绿也说明不了它。`scripts/ci-test-coverage.test.mjs` 沿工作流里的 `npm run` 逐层展开，找出没人运行的测试并失败；确实无法在 CI 运行的（例如 `scripts/backup.test.mjs` 需要专用的 `evoloop_backup_test` 库和 PostgreSQL 18 客户端工具）要在该文件的 `MANUAL_ONLY` 里写明理由，条目失效时检查也会失败。
+`scripts/` 下的每个 `*.test.mjs` 都由 `npm run test:unit` 自动发现并运行：命令里先 `files=$(node scripts/lib/script-tests.mjs)` 再把 `$files` 交给 `node --test`，发现脚本递归找出 `scripts/**` 下的测试文件，**新增脚本测试只需把文件放进 `scripts/` 的任何子目录，不要改 `package.json`**。以前是在 `test:unit` 的同一行里逐个列文件，两个 PR 各加一个测试就在这一行冲突，每次都要作者变基、验收者再核“只有变基”。不要把文件重新逐个列回那一行（`ci-test-coverage` 会检查）。
+
+**发现失败会让 `test:unit` 失败。** 发现脚本在找不到任何测试、输出不是 `scripts/…test.mjs` 路径、有重复项或崩溃时，先不输出任何东西并以非零退出；命令里的 `files=$(…) && [ -n "$files" ] &&` 让整条命令随之停止（发现脚本被改坏而“退出 0 却什么也不输出”时，`[ -n "$files" ]` 也会拦住），而不是少跑脚本测试还显示通过。
+
+**排除与分组。** 发现脚本只跳过另有归属的目录：`scripts/docs`、`scripts/architecture-map`（它们的 `.js` 套件属 `test:docs`）和 `scripts/research`（研究代码）。但**覆盖检查的全集不套用这份跳过表**，只排除 `node_modules`：在这些目录里放一个 `.test.mjs`，既没有 `test:unit` 发现它，`test:docs` 也只匹配 `*.test.js`，覆盖检查会失败——把它移出这些目录、改成 `.test.js` 让 `test:docs` 跑，或登记到 `MANUAL_ONLY` 并写明理由。确实无法在 CI 运行的测试登记在 `scripts/lib/script-tests.mjs` 的 `MANUAL_ONLY` 里，这是唯一的排除办法，发现脚本据此跳过（目前只有 `scripts/backup.test.mjs`：它需要专用的 `evoloop_backup_test` 库和 PostgreSQL 18 客户端工具，CI 里没有，按本页的备份章节手动运行）。`scripts/ci-test-coverage.test.mjs` 沿工作流里的 `npm run` 逐层展开，找出没人运行、也不在 `MANUAL_ONLY` 里的测试并失败；`MANUAL_ONLY` 里的条目失效（文件不在了，或 CI 开始运行它）时也失败，免得清单悄悄过期。
 
 ### 集成测试与 PostgreSQL 锁表
 
@@ -294,6 +310,38 @@ git diff --check
 - **挂住。** 内存不足后曾有测试进程不再结束，会拖到整个作业超时。运行器给每个文件设单文件超时（`EVOLOOP_INTEGRATION_FILE_TIMEOUT_SECONDS`，默认 600 秒，最大的文件约 60 秒），超时即杀掉并计为失败；两个测试作业另设 `timeout-minutes`。
 - **范围外。** 没有改 90 个测试文件的清理方式（例如按库删除代替删 schema）：能把每个文件的占用降到接近零，但要逐个动夹具，留作建议。
 
+### 磁盘回收与测试实例约定
+
+常驻主机的磁盘曾只剩 4.4 GB：工作区里 46 个工作树各带一份约 758 MB 的依赖，约 20 个测试用 PostgreSQL 实例（每个约 1.4 GB）没人停。手工清理不会自己重复，所以由脚本回收，并在例行报告里报告剩余空间。
+
+**怎样用。** 私有路径放在仓库外的配置里，由 `EVOLOOP_DISK_CONFIG` 指向，JSON 字段：`repos`（各克隆的绝对路径，用来列出它们的工作树）、`workspaceRoots`（只在其下回收）、`protectedPaths`（正式数据库目录、发布目录等，**永不触碰**）、可选 `protectedPorts`、`testPgRoots`（测试实例所在的根目录）、`legacyPgNames`（旧实例的目录名正则）、`minFreeGB`（默认 20）、`pgMinAgeMinutes`（默认 30）、`pgIdleMinutes`（默认 120）、`baseBranch`、`remote`、`repo`。
+
+- `npm run disk:reclaim -- report`：预演，不删任何东西；输出剩余空间、工作树数量与总大小、运行中的测试实例数、将回收和跳过的清单（每项写明原因）；`--json` 给机器读。
+- `npm run disk:reclaim -- run --execute`：真正回收；`--branch NAME` 只处理一个分支的工作树，以及归属标记指向它的测试实例，或标记里的工作树已不存在、分支等于 NAME 的测试实例（不碰别的实例；顺序是：第一次运行时实例因有客户端连接被跳过、工作树已回收，客户端离开后再带 `--branch NAME` 运行就能回收这个实例，不必等下一次不带 `--branch` 的例行运行），用于刚合并完一个 PR 之后（合并者或作者的收尾步骤）。
+- 剩余空间低于 `minFreeGB` 时，报告第一行是“⚠ 剩余空间 … 需要 Leader 处理”，退出码为 3，调度器能看到；回收之后仍不够属于 Leader 的事项（加盘、清理其他项目的缓存），不在本脚本范围内。
+- 谁来触发：CI/CD 每 12 小时的例行任务运行 `run --execute` 并把 `report` 的输出写进报告开头；这与作者 Session 是否还在无关。也可以由主机上的定时器运行同一条命令（macOS 的 launchd 或 cron，安装属于全局设置，需要使用者授权，仓库不替人安装）。
+
+**回收的安全条件**（都是脚本里的检查，缺一不回收，原因写进报告）：
+- 工作树：只回收 git 的链接工作树，主克隆本体永不回收；它的分支对应的 PR 已**合并**（还开着、已关闭未合并、没有 PR、查询失败都跳过）；没有未提交内容（已修改、已暂存、未跟踪的文件都算）；没有未进入远端主分支或 PR 头的提交；没有进程以它为工作目录（Session 或 Run 在里面工作就会在 `lsof` 里出现；列不出进程时全部跳过）；在 `workspaceRoots` 之内且不在 `protectedPaths` 之内；没有被锁定。**不按“多久没改动”判断。** 回收用 `git worktree remove`（不加 `--force`），分支和提交都还在。
+- 测试实例：只处理 `testPgRoots` 之下、且能确认是测试实例的：带 `test-pg.mjs` 写的归属标记，或目录名匹配 `legacyPgNames`；其他项目的数据库即使在同一目录下也不碰。受保护的路径和端口永不触碰；没有客户端连接（从进程表数 postmaster 的客户端子进程，不登录；数不出来按有连接处理）；数据目录最近 `pgIdleMinutes` 分钟没有写入（零连接可能只是两次跑测试之间）；不是刚启动；停止前再复查一次连接；带标记的实例，其工作树还在使用时保留，工作树已不在或本次一并回收时才回收。停止用 `pg_ctl stop -m fast`，再删除实例目录。
+
+**测试实例的约定**（`scripts/ops/test-pg.mjs`，现有位置有四种、名字对不上工作树，回收只能靠猜）：
+- 位置：`EVOLOOP_TEST_PG_ROOT/<名字>/`（私有的绝对路径，不在仓库内），一个实例一个目录，数据在 `data/`。
+- 名字：工作树目录的名字（小写字母、数字、`-`、`_`），数据库名 `evoloop_<名字，- 换成 _>_test`，符合集成测试的保护检查。
+- 归属标记：`<目录>/.evoloop-test-pg.json`，记录名字、工作树路径、分支、端口；回收脚本据此把实例和工作树对上。分支取启动时工作树检出的分支（也可 `--branch` 指定；游离 HEAD 记为空）。**这次改动之前启动的实例，标记里没有分支**，工作树回收后不能靠 `--branch` 找到，要等不带 `--branch` 的例行运行回收。
+- 启动 `node scripts/ops/test-pg.mjs start`（在工作树里运行，输出 `TEST_DATABASE_URL`），停用 `stop`，列出 `list`；需要 `EVOLOOP_PG_BIN_DIR`。用完请 `stop`，忘了也会在工作树被回收时一并回收。
+
+**新工作树不再各带一份依赖。** 用 `node scripts/ops/new-worktree.mjs --path 绝对路径 --branch 名字 --seed 装好依赖的克隆`（`--seed` 默认读 `EVOLOOP_DEPS_SEED`）：seed 的 `package-lock.json` 与新工作树一致时，把它的 `node_modules` 用 APFS 写时复制克隆过来（`cp -c`，共享磁盘块，文件被改时才各占各的），否则回退 `npm ci`；不在 macOS 上、克隆失败也回退。本机实测（APFS）：普通复制 `node_modules` 约占用 960 MB，克隆约 40 MB；克隆出的工作树 `npm run build:packages` 与测试可正常运行。依赖在工作树里被 `npm install` 改过之后，被改的文件才会额外占用空间。
+
+### 每日边界核对
+
+谁能做什么只写在 Role 的文字里；11-12 一天里，一个 Session 用另一个 Session 的私有合并配置合并了 13 个 PR，改了正式私有配置，另一个 Session 以使用者身份发了输入，都是事后从原始记录里查出来的。`npm run boundary:check` 每天（随 CI/CD 的 12 小时例行任务）把这些在当天读出来，**只读，不拦截、不改任何配置**，输出写进例行报告：
+
+- **命令**：`EVOLOOP_BOUNDARY_CONFIG=<私有配置> node scripts/ops/boundary-check.mjs --day YYYY-MM-DD`（或 `--from ISO --to ISO`；`--flagged-only` 只列要看的行，`--json` 给机器读）。配置在仓库外、绝对路径，字段：`repo`、`utcOffsetMinutes`（本地时区偏移，如塔什干 300）、`databaseUrl`（只读事务打开，不写）、`humanActors`（使用者的身份名）、`identityFiles`（存放身份令牌的文件路径片段）、`mergeTrainLogs.dir`、`transcriptRoots`（Codex 与 Claude 会话记录目录）、`privateFiles[].globs`（正式运行目录里的私有文件，含备份）。私有路径和数据库地址只在这份配置里，不进仓库，也不进输出。
+- **四张表**：①窗口内合并的 PR 与实际发起者：GitHub 的合并者永远是同一个账号，所以看合并列车日志里有没有、会话记录里谁运行了 `merge-gate.mjs merge … --execute`（含 `for` 循环和一行多条）、`gh pr merge`，并把该会话平时用的身份（它的命令里最常出现的 `agent-cli/<身份>/`）和合并配置所属身份对照；不同则写“借用他人合并配置”，两处都没有则写“发起者无记录”。②私有文件的修改时间、备份、是否仍能解析、键名与条目数变化（只写名字和数量，不写值），以及改动前后 5 分钟内命令里提到该文件的会话。③`humanActors` 名下的写入（直接输入、`operation_journal`、会话消息）；库里没有“是否出自工作台”这一项，所以只给能核对的证据：写入前后 10 分钟内有哪个会话的命令引用了身份文件，没有就写“来源未证实”，不猜。④窗口内的关闭记录和依据观察：依据里提到“候选”且没有“正式……读回/已验证”字样的列出，并写任务声明的阶段。
+- **只写会话编号、时间和条数**，不写命令原文、文件内容或令牌值。会话记录是本机文件，脚本只在本机读。
+- **局限**：判断“借用”靠会话记录里的命令：`for` 循环、一行多条、`gh pr merge` 的任意参数顺序、写在同一条命令里的 `NAME=…merge-gate.mjs` 变量都能读，写进脚本文件里的循环、别名、变量定义在别的命令里的，会漏，漏掉的显示为“发起者无记录”；第四张表靠文字匹配，不是结构化的阶段字段（一句话里同时有“正式”和读回/通过字样、而该句带未、不、没、待的，不算正式读回）；工作台与自动化的区分只在有会话引用身份文件时才成立。
+
 ## 原生文字与选项提问
 
 现代固定协议的 `runtime.nativeUserInput` 默认 `false`。仅在独立运行环境验证后，配置为 `true` 可让本 coordinator 拥有的 App Server 子进程以 `-c features.default_mode_request_user_input=true` 启动；该开关不写用户全局配置、不将任务切到 Plan，也不改变 full/never 或业务授权。0.154 不支持且启动前拒绝该组合。当前 0.164、0.166 alpha.5.1／alpha.6 与 0.167 alpha.3.2 共用已核协议分支；每次升级仍须重新核 schema 和可达性。
@@ -304,4 +352,4 @@ Default 下请求为非阻塞且仅 root Agent 可调用；子 Agent 与通用 M
 
 迁移 `038_native_observation` 新建独立当前投影，每个 Session 一行；不回填推测的历史进度或用量，不改 Task、Run 和既有原始事件。原生进度不依赖 `runtime.nativeUserInput` 开关；只接收本服务已登记 Thread 的白名单事件，按现有 runner 周期合并持久化，再由当前 Session snapshot／变化游标读取。重启使旧连接投影过期，缺乏新的事实时不会显示为当前运行。
 
-包含工具、计划与 diff 的有界预览和原生累计 Token；不保存 reasoning、完整 delta 或费用猜测。观察刷新不进入业务活动历史，最终原件、Run 终态与交付验收继续沿原流程核对。离线真实 Token 样本、隔离 PostgreSQL、浏览器回归和部署后的实际查看分别留证。
+包含工具、计划与 diff 的有界预览、原生累计 Token 与最近 24 个 Turn 的逐轮读数；不保存 reasoning、完整 delta 或费用猜测。推理内容按需从原生历史读出，不入此投影。观察刷新不进入业务活动历史，最终原件、Run 终态与交付验收继续沿原流程核对。离线真实 Token 样本、隔离 PostgreSQL、浏览器回归和部署后的实际查看分别留证。

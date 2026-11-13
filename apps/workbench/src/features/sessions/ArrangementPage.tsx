@@ -29,6 +29,7 @@ import {
   staleLabel, type ReadState,
 } from "./arrangementPresentation";
 import { workNextStep } from "../../shared/workPresentation";
+import { ProjectUsageSection } from "./ProjectUsageSection";
 
 const maxSessionPages = 10;
 const maxTaskPages = 20;
@@ -150,7 +151,7 @@ interface Reads {
   stale: boolean;
 }
 
-function ArrangementPanel({ projectId, board, reads, from }: { projectId: string; board: Arrangement; reads: Reads; from: ReturnFrom }) {
+function ArrangementPanel({ projectId, board, reads, from, directoryComplete }: { projectId: string; board: Arrangement; reads: Reads; from: ReturnFrom; directoryComplete: boolean }) {
   const capacity = freeCapacity(board);
   const unknownReason = capacityUnknownReason(reads.tasks, reads.tasksComplete, reads.queues);
   const tasksShown = reads.tasks === "ready" || reads.tasks === "stale";
@@ -170,7 +171,8 @@ function ArrangementPanel({ projectId, board, reads, from }: { projectId: string
           : capacity.free.length ? <ul className="flex flex-col gap-1.5">{capacity.free.map(row => <li key={row.session.key} className="flex items-center gap-2 text-small">
             <AgentAvatar seed={row.session.key} roleSeed={row.session.roles[0]?.id ?? row.session.title} size={22} />
             <a href={sessionHref(projectId, row.session.key, from)} className="truncate hover:underline">{agentDisplayName(row.session)}</a><span className="shrink-0 text-caption text-muted-foreground">空闲</span>
-          </li>)}</ul> : muted(noFreeAgentText(capacity))}
+          </li>)}</ul> : muted(noFreeAgentText(capacity, directoryComplete))}
+        {!unknownReason && !directoryComplete && capacity.free.length > 0 && muted("智能体目录没有读全，上面只是已读到的空闲智能体。")}
         {!unknownReason && capacity.unknown > 0 && capacity.unknown < capacity.others && muted(`另有 ${capacity.unknown} 个智能体的状态待核对，不算空闲。`)}
       </PanelSection>
       <PanelSection title="截止临近" count={tasksShown ? board.dueSoon.length : undefined}>
@@ -228,7 +230,7 @@ export function ArrangementPage({ context, refresh }: { context: MutationContext
   const tasksShown = reads.tasks === "ready" || reads.tasks === "stale";
   const working = board?.rows.filter(row => row.load === "busy" || row.load === "overloaded").length ?? 0;
   const capacity = board ? freeCapacity(board) : null;
-  const free = capacity ? freeCountStat(capacity, capacityUnknownReason(reads.tasks, reads.tasksComplete, reads.queues), reads.stale) : null;
+  const free = capacity ? freeCountStat(capacity, capacityUnknownReason(reads.tasks, reads.tasksComplete, reads.queues), reads.stale, !moreAgents) : null;
   const taskNote = reads.tasks === "stale" ? "上次读回" : tasksShown && !reads.tasksComplete ? "已读部分" : undefined;
   const stale = (state: ReadState) => state === "stale" ? "上次读回" : undefined;
   return <div data-ui="" className="arrangement-page mx-auto flex w-full max-w-[1180px] flex-col gap-6 px-4 py-5 compact:px-8 compact:py-7">
@@ -286,8 +288,10 @@ export function ArrangementPage({ context, refresh }: { context: MutationContext
               : <p className="text-caption text-muted-foreground">{reads.tasksComplete ? "每项未关闭的任务都有承接者。" : "已读取的任务都有承接者。"}</p>}
             {(reads.queues === "failed" || reads.queues === "loading") && <p className="text-caption text-muted-foreground">队列还没读到：从排队中领取的任务也可能列在这里。</p>}
           </section>}
+          {/* The project's daily limit and recent days; an agent's card links here when the project is near its limit. */}
+          <ProjectUsageSection projectId={projectId} token={token} />
           <p className="flex items-center gap-1.5 text-caption text-muted-foreground"><CalendarClock size={14} aria-hidden="true" />优先级、截止时间和依赖由统筹经 CLI 设置；这里只读。</p>
-          <ArrangementPanel projectId={projectId} board={board} reads={reads} from={from} />
+          <ArrangementPanel projectId={projectId} board={board} reads={reads} from={from} directoryComplete={!moreAgents} />
         </>}
   </div>;
 }

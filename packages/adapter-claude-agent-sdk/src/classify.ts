@@ -10,6 +10,7 @@ export interface ObservedResult {
   terminal_reason?: unknown;
   api_error_status?: unknown;
   session_id?: unknown;
+  modelUsage?: unknown;
 }
 
 export interface TurnObservation {
@@ -60,6 +61,17 @@ function assistantCategory(error: string): RuntimeTurnFailure["category"] {
   }
 }
 
+/** The category a structured API status stands for, or null when it says nothing specific. */
+function statusCategory(status: unknown): RuntimeTurnFailure["category"] | null {
+  if (typeof status !== "number" || !Number.isInteger(status)) return null;
+  if (status === 402) return "quota_exhausted";
+  if (status === 401) return "authentication_failed";
+  if (status === 429) return "rate_limited";
+  if (status === 403) return "provider_rejected";
+  if (status >= 500 && status <= 599) return "provider_unavailable";
+  return status >= 400 && status < 500 ? "provider_rejected" : null;
+}
+
 /**
  * Classify one Turn from its SDK result. Summaries are fixed text: the result's `errors[]` and `result`
  * strings can carry private paths or session material and are never copied into failure metadata.
@@ -73,9 +85,14 @@ export function classifyResult(result: ObservedResult, observed: TurnObservation
     return { status: "failed", error: failure("budget_exceeded", result.subtype) };
   if (terminal === "prompt_too_long") return { status: "failed", error: failure("context_window_exceeded", terminal, result.api_error_status) };
   if (terminal === "budget_exhausted" || terminal === "max_turns") return { status: "failed", error: failure("budget_exceeded", terminal) };
-  if (observed.assistantError)
-    return { status: "failed", error: failure(assistantCategory(observed.assistantError), observed.assistantError, result.api_error_status) };
-  return { status: "failed", error: failure("native_failure", terminal ?? result.subtype, result.api_error_status) };
+  // The SDK's own error class first, then the API status it reports: 402 and 401 name an account problem only when the status is
+  // structured (never a number found in text); a 429 stays a rate limit and 403 a rejected request, neither pauses the provider.
+  const fromStatus = statusCategory(result.api_error_status);
+  if (observed.assistantError) {
+    const named = assistantCategory(observed.assistantError);
+    return { status: "failed", error: failure(named === "native_failure" && fromStatus ? fromStatus : named, observed.assistantError, result.api_error_status) };
+  }
+  return { status: "failed", error: failure(fromStatus ?? "native_failure", terminal ?? result.subtype, result.api_error_status) };
 }
 
 const count = (value: unknown): number | null =>
@@ -105,4 +122,26 @@ export const usd = (value: unknown): number | null =>
 export function turnCost(cumulative: number | null, previous: number | null): number | null {
   if (cumulative === null || previous === null || cumulative < previous) return null;
   return Math.round((cumulative - previous) * 1e10) / 1e10;
+}
+
+/**
+ * Cumulative session thinking tokens from the SDK's per-model usage. Every model entry must report the field;
+ * an older CLI that omits it leaves the total unknown rather than zero.
+ */
+export function thinkingTokensOf(modelUsage: unknown): number | null {
+  if (!modelUsage || typeof modelUsage !== "object" || Array.isArray(modelUsage)) return null;
+  const entries = Object.values(modelUsage as Record<string, unknown>);
+  if (!entries.length) return null;
+  let total = 0;
+  for (const entry of entries) {
+    const value = entry && typeof entry === "object" ? count((entry as Record<string, unknown>).thinkingTokens) : null;
+    if (value === null) return null;
+    total += value;
+  }
+  return total;
+}
+
+/** A Turn's own thinking tokens from cumulative totals, as for cost; unproven when either is unknown or it went back. */
+export function turnThinking(cumulative: number | null, previous: number | null): number | null {
+  return cumulative === null || previous === null || cumulative < previous ? null : cumulative - previous;
 }

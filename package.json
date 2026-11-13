@@ -17,9 +17,15 @@
     "test:pilot-storage": "node --test scripts/pilot-storage-check.test.mjs",
     "test:scheduling-metrics": "node --test scripts/scheduling-metrics.test.mjs",
     "check:migrations": "node scripts/check-migration-numbers.mjs",
+    "disk:reclaim": "node scripts/ops/disk-reclaim.mjs",
+    "boundary:check": "node scripts/ops/boundary-check.mjs",
+    "worktree:new": "node scripts/ops/new-worktree.mjs",
+    "test-pg": "node scripts/ops/test-pg.mjs",
     "test:docs": "node --test scripts/docs/*.test.js scripts/architecture-map/*.test.js",
-    "test:unit": "npm run build:packages && node --import tsx --test packages/contracts/test/*.test.ts packages/core/test/*.test.ts apps/coordinator/test/*.test.ts apps/workbench/test/*.test.ts packages/ui/test/*.test.ts apps/cli/test/*.test.ts packages/adapter-codex-app-server/test/*.test.ts packages/adapter-claude-agent-sdk/test/*.test.ts packages/adapter-git-documents/test/*.test.ts packages/adapter-local-blobs/test/*.test.ts packages/connector-feishu/test/*.test.ts packages/connector-wechat/test/*.test.ts packages/adapter-wiki-openviking/test/*.test.ts scripts/pilot-storage-check.test.mjs scripts/database-target.test.mjs scripts/check-migration-numbers.test.mjs scripts/ci-metrics.test.mjs scripts/ci-test-coverage.test.mjs scripts/lib/lock-budget.test.mjs scripts/release/release.test.mjs scripts/release/merge-gate.test.mjs scripts/capture-session-message-preflight.test.mjs scripts/context-baseline.test.mjs scripts/codex-conformance.test.mjs scripts/scheduling-metrics.test.mjs .agents/skills/evoloop-evocation/scripts/*.test.mjs",
+    "test:unit": "npm run build:packages && files=$(node scripts/lib/script-tests.mjs) && [ -n \"$files\" ] && node --import tsx --test packages/contracts/test/*.test.ts packages/core/test/*.test.ts apps/coordinator/test/*.test.ts apps/workbench/test/*.test.ts packages/ui/test/*.test.ts apps/cli/test/*.test.ts packages/adapter-codex-app-server/test/*.test.ts packages/adapter-claude-agent-sdk/test/*.test.ts packages/adapter-git-documents/test/*.test.ts packages/adapter-local-blobs/test/*.test.ts packages/connector-feishu/test/*.test.ts packages/connector-wechat/test/*.test.ts packages/adapter-wiki-openviking/test/*.test.ts $files .agents/skills/evoloop-evocation/scripts/*.test.mjs",
     "test:integration": "node scripts/test-integration.mjs",
+    "lint:hooks": "oxlint -c .oxlintrc.json apps/workbench/src packages/ui/src",
+    "test:browser": "node --import tsx --test apps/workbench/test/key-pages-ci-browser.test.ts apps/workbench/test/focus-ring-ci-browser.test.ts",
     "build:packages": "tsc -b packages/contracts packages/core packages/adapter-postgres packages/adapter-codex-app-server packages/adapter-claude-agent-sdk packages/adapter-git-documents packages/adapter-local-blobs packages/adapter-wiki-openviking packages/connector-feishu packages/connector-wechat apps/coordinator apps/cli",
     "build": "npm run build:packages && npm run build --workspace @evoloop/workbench",
     "typecheck": "npm run build:packages && npm run typecheck --workspace @evoloop/workbench",
@@ -41,8 +47,9 @@
     "mermaid": "12.2.0"
   },
   "devDependencies": {
-    "typescript": "7.0.2",
+    "@types/node": "^24.0.0",
+    "oxlint": "1.93.0",
     "tsx": "4.23.15",
-    "@types/node": "^24.0.0"
+    "typescript": "7.0.2"
   }
 }

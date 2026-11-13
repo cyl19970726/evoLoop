@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { describeRunActual } from "@evoloop/contracts/run-actual";
 import { readFile } from "node:fs/promises";
 import { commandSchema, idSchema } from "@evoloop/contracts";
 import { orchestrationCommandSchema } from "@evoloop/contracts/orchestration";
@@ -13,12 +14,13 @@ import { allocationRelationsPath } from "./allocation-relations.js";
 import { fixedHash, materialAsset, materialBody, materialCatalog, materialHandoff, materialRunInput } from "./lightweight-materials.js";
 import { prepareSession } from "./session-preparation.js";
 import { MessageBodyError, parseSessionTarget, readMessageBody } from "./message-send.js";
+import { directInputOutcome, missingForInsert, queuedMessageOutcome } from "./session-input.js";
 
 type Environment = Record<string, string | undefined>;
 interface IO { stdout(text: string): void; stderr(text: string): void; stdin?(): AsyncIterable<Uint8Array> }
 class UsageError extends Error { readonly code = "INVALID_INPUT"; }
 interface Args { words: string[]; options: Map<string, string | true> }
-const values = new Set(["project", "revision", "limit", "cursor", "turn-cursor", "messages-cursor", "source", "turn-id", "after", "wait-ms", "out", "file", "id", "receipt", "attempt", "task", "state", "phase", "signal", "waiting-on-kind", "waiting-on-id", "stage", "knowledge", "loop", "search", "membership", "importance", "role", "session", "discussion", "message", "kind", "hash", "asset-hash", "model", "effort", "color", "mark", "reason", "evidence-ref", "operation", "provider", "project-skills", "personal", "builtin", "add", "remove", "context-task", "context-revision", "reply-to", "message-id"]);
+const values = new Set(["project", "revision", "limit", "cursor", "turn-cursor", "messages-cursor", "source", "turn-id", "after", "wait-ms", "out", "file", "id", "receipt", "attempt", "task", "state", "phase", "signal", "waiting-on-kind", "waiting-on-id", "stage", "knowledge", "loop", "search", "membership", "importance", "role", "session", "discussion", "message", "kind", "hash", "asset-hash", "model", "effort", "color", "mark", "reason", "evidence-ref", "operation", "provider", "project-skills", "personal", "builtin", "add", "remove", "context-task", "context-revision", "reply-to", "message-id","mode","content","input", "wait", "from", "to", "category"]);
 const switches = ["help", "history", "graph", "events", "revisions", "result", "trace", "occurrences", "reviews", "handoffs", "bindings", "route", "hosts", "attempts", "recovery", "inputs", "observation", "documents", "closed", "brief", "stdin"];
 function uuid(value: string | undefined, label: string): string {
   if (!idSchema.safeParse(value).success) throw new UsageError(`${label} must be a UUID.`);
@@ -88,7 +90,7 @@ const help = {
     "work task TASK_UUID --project UUID [--brief] (one Task's current stage, timing and responsibility; --brief adds its current acceptance arrangements and drops the timing history)",
     "work acceptance --project UUID [--brief] [--limit 1..100 --cursor CURSOR] (Leader stage and persisted Session capacity)",
     "work acceptance TASK_UUID --project UUID [--brief] (exact acceptance arrangements and dispatch outcomes; --brief drops the long prose)",
-    "work acceptance mine --project UUID (human recipient's acceptance inbox)",
+    "work acceptance mine --project UUID (the caller's pending acceptance: human relays in items; deliveries it is the declared consumer of and has not signed, with precondition readiness, in direct)",
     "work acceptance read RELAY_UUID --project UUID --task TASK_UUID --file BODY.json (named human records reading an arrangement)",
     "work acceptance observe RELAY_UUID --project UUID --task TASK_UUID --file BODY.json (recipient links their existing observation)",
     "work retirement SESSION_UUID --project UUID (temporary Session blockers, decision and archive readback)",
@@ -99,10 +101,16 @@ const help = {
     "work attention task TASK_UUID --project UUID (follow-up and Task attention history)",
     "work attention item ITEM_UUID --project UUID (one attention item and its events)",
     "work attention thresholds --project UUID [--stage STAGE_UUID --phase PHASE]",
+    "work board --project UUID [--brief] (every Session's current work, line, health; ready Tasks in no line; what waits for the Leader; --brief: arranging fields only, at most 6 KB, what the Leader reads each round)",
+    "work events --project UUID [--after SEQ --limit 1..500 --wait 0..30 | --from ISO --to ISO] [--category notice|task|message|acceptance] (scheduling events by sequence; --wait long-polls for the next one; resetRequired:true means read work board again; the browser stream is GET /api/projects/UUID/work-board/stream)",
+    "work metrics --project UUID [--from ISO --to ISO] (queue wait by source, Session idle with work waiting, notice intake time; worked out from the events, window at most 30 days)",
     "work leader changes --project UUID [--cursor CURSOR --limit 1..100] (monotonic Task/Document change feed)",
     "work leader notices --project UUID [--task TASK_UUID --cursor CURSOR --limit 1..100] (durable result notices and dispatch status)",
     "request leader.notice.recover --project UUID --id BLOCKED_PACKET_UUID --file BODY.json --receipt LOCAL_UUID (body {\"reason\":...}: recover a notice packet that stopped behind a closed recovery gate, after the Session itself was recovered; its items return to the next packet. A notice from before packets keeps the old body: BLOCKED_NOTICE_UUID with expectedOperationId, newNoticeId, newMessageId, newOperationId, reason)",
     "session prepare --file PRIVATE_JSON (prepare or reuse one authorized owned Session; never assigns a Task)",
+    "session input send OWNED_SESSION_UUID --project UUID --mode insert|queue (--content TEXT | --file TEXT_FILE) [--input UUID --operation UUID] (insert: into the running Turn, or open one when idle; queue: ordinary message handled after the current Turn; a missing grant is named)",
+    "session input show OWNED_SESSION_UUID INPUT_UUID --project UUID (read only: read back one input by its ID: inserted, started, queued, queued after a Turn change, refused or unknown)",
+    "session input reconcile OWNED_SESSION_UUID INPUT_UUID --project UUID (explicit: look for the original input once in the bounded native history; never sends the text again)",
     "session profile show SESSION_UUID --project UUID (configured target, last confirmed profile and recovery state)",
     "session profile set SESSION_UUID --project UUID [--model SLUG] --effort LEVEL --reason TEXT --evidence-ref REF [--operation UUID] (save next-Turn target)",
     "session identity show owned:UUID|external:UUID --project UUID",
@@ -125,7 +133,7 @@ const help = {
     "command types", "command schema TYPE", "command run JSON_FILE", "command JSON_FILE (legacy)", "request types", "request schema NAME",
     "request schema reference.task-decide (reviewed Run: kind=run, referenceId=Run ID, revision=source TaskRevision ID, contentHash=Run inputHash; read run ID --trace for native evidence)",
     "request NAME --project UUID --file JSON_FILE [--id UUID] [--receipt UUID for endpoints without server operation IDs]",
-    "receipts list", "receipts show UUID", "receipts reconcile UUID", "receipts retry UUID (explicit same-ID transactional command replay after readback; never seal/external dispatch)", "get /api/... (legacy read-only)"],
+    "drain status|history (instance-wide: state, who/when/why, queued work and what is still in flight)", "drain start|release --reason TEXT (instance maintainers only; start stops NEW Runs and message Turns from beginning while everything is still saved and queued and work in flight finishes; release lets queued work continue in order)", "receipts list", "receipts show UUID", "receipts reconcile UUID", "receipts retry UUID (explicit same-ID transactional command replay after readback; never seal/external dispatch)", "get /api/... (legacy read-only)"],
   readModes: reads,
   environment: { EVOLOOP_API_URL: "coordinator HTTP(S) origin, default http://127.0.0.1:4318", EVOLOOP_TOKEN: "private bearer credential",
     EVOLOOP_PROJECT: "optional default project UUID", EVOLOOP_STATE_DIR: "private local receipt directory", EVOLOOP_TIMEOUT_MS: "request+body deadline, default 15000; max 300000" },
@@ -169,6 +177,18 @@ async function dispatch(args: Args, env: Environment, io: IO): Promise<unknown> 
       throw new ReceiptError("INVALID_SESSION", "Cannot bind intent to a server-verified identity.");
     return { actorId: principal.actorId, projectIds: principal.projectIds as string[] };
   };
+  if (action === "drain") {
+    // Instance drain (docs/architecture/deployment.md §2): maintainers only for start and release; not project scoped.
+    const mode = args.words[1];
+    if (mode === "status" || mode === "history") { check(args, 2); return client.get(mode === "status" ? "/api/instance/drain" : "/api/instance/drain/history"); }
+    if (mode === "start" || mode === "release") {
+      check(args, 2, ["reason"]);
+      const reason = option(args, "reason");
+      if (!reason?.trim()) throw new UsageError(`drain ${mode} requires --reason TEXT (it is recorded with your identity and the time).`);
+      return client.post("/api/instance/drain", { action: mode, reason });
+    }
+    throw new UsageError("Use drain status | history | start --reason TEXT | release --reason TEXT.");
+  }
   if(action==="session"&&args.words[1]==="prepare"){
     check(args,2,["file"]);
     const file=option(args,"file");if(!file)throw new UsageError("session prepare requires --file PRIVATE_JSON");
@@ -209,6 +229,109 @@ async function dispatch(args: Args, env: Environment, io: IO): Promise<unknown> 
         value=>io.stderr(JSON.stringify(value)+'\n'),await verifiedActor());
     }
     throw new UsageError('Use session profile show or session profile set.');
+  }
+  if(action==="session"&&args.words[1]==="input"){
+    // Send to an owned Session: insert into the running Turn (or start one when idle), or queue as an ordinary message.
+    // One input ID is one intent: a repeat answers from what the service saved for that ID before it decides anything else.
+    const kind=args.words[2],sessionId=uuid(args.words[3],"Session"),projectId=project();
+    const base=`/api/projects/${projectId}`;
+    const notFound=(error:unknown)=>error instanceof CliApiError&&error.status===404;
+    /** What the service saved under this input ID: a direct input receipt, an ordinary message, or nothing. */
+    const saved=async(inputId:string)=>{
+      try{return {via:"direct-input" as const,value:await client.get(`${base}/sessions/${sessionId}/direct-inputs/${inputId}`)};}
+      catch(error){if(!notFound(error))throw error;}
+      try{return {via:"message" as const,value:await client.get(`${base}/session-messages/${inputId}`)};}
+      catch(error){if(!notFound(error))throw error;}
+      return null;
+    };
+    const answer=(found:NonNullable<Awaited<ReturnType<typeof saved>>>,inputId:string,extra:Record<string,unknown>={})=>
+      found.via==="direct-input"?{inputId,via:"direct-input",...directInputOutcome(found.value),receipt:found.value,...extra}
+        :{inputId,via:"message",...queuedMessageOutcome(found.value),detail:found.value,...extra};
+    if(kind==="show"){
+      // Read only. Checking the original against the native history can change the saved state (an input nothing matched becomes
+      // unknown), and a lost reply tells the person to run show at once: that must never move a request still in flight.
+      check(args,5,["project"]);
+      const inputId=uuid(args.words[4],"Input");
+      const found=await saved(inputId);
+      if(!found)throw new ReceiptError("INPUT_NOT_FOUND","No input or message with this ID in this Session.",{inputId});
+      if(found.via==="direct-input"){
+        const receipt=record(found.value);
+        if(receipt&&(["attempted","unknown"].includes(String(receipt.state))||receipt.state==="accepted"&&!receipt.nativeItemId))
+          return answer(found,inputId,{reconciled:false,
+            next:`Not checked against the native history (show only reads). If it stays unclear, run: session input reconcile ${sessionId} ${inputId} --project ${projectId} (never sends the text again).`});
+      }
+      return answer(found,inputId);
+    }
+    if(kind==="reconcile"){
+      // The explicit check: the original input is looked for once in the bounded native history (read only on the runtime; it can mark
+      // an input nothing matched as unknown). It never sends the text again.
+      check(args,5,["project"]);
+      const inputId=uuid(args.words[4],"Input");
+      const found=await saved(inputId);
+      if(!found||found.via!=="direct-input")throw new ReceiptError("INPUT_NOT_FOUND","No direct input with this ID in this Session (a queued message is read with session input show).",{inputId});
+      try{
+        const reconciled=await client.post(`${base}/sessions/${sessionId}/direct-inputs/${inputId}/reconcile`,{});
+        return answer({via:"direct-input",value:reconciled},inputId,{reconciled:true});
+      }catch(error){
+        if(!(error instanceof CliApiError))throw error;
+        return answer(found,inputId,{reconciled:false,reconcileError:{code:error.code,status:error.status,data:error.data}});
+      }
+    }
+    if(kind!=="send")throw new UsageError("Use session input send SESSION_UUID --mode insert|queue ..., session input show SESSION_UUID INPUT_UUID, or session input reconcile SESSION_UUID INPUT_UUID.");
+    check(args,4,["project","mode","content","file","input","operation"]);
+    const how=option(args,"mode");
+    if(how!=="insert"&&how!=="queue")throw new UsageError("--mode must be insert or queue.");
+    const file=option(args,"file"),inline=option(args,"content");
+    if(!!file===!!inline)throw new UsageError("Give the text with exactly one of --content TEXT or --file TEXT_FILE.");
+    let content:string;
+    try{content=file?await readMessageBody(file,io.stdin?.()??process.stdin):inline!.trim();}
+    catch(error){if(error instanceof MessageBodyError)throw new UsageError(error.message);throw error;}
+    if(!content||content.length>16000)throw new UsageError("The text must be 1..16000 characters.");
+    const given=option(args,"input")?uuid(option(args,"input"),"Input"):null;
+    const inputId=given??randomUUID();
+    const operationId=option(args,"operation")?uuid(option(args,"operation"),"Operation"):randomUUID();
+    const identity={inputId,operationId};
+    if(given){
+      const found=await saved(inputId);
+      if(found){
+        const told=answer(found,inputId) as {outcome?:string};
+        // Same ID, saved result: answer with it, whichever way the repeat asked. A direct input that was not refused is never queued again.
+        if(how==="queue"&&found.via==="direct-input"&&told.outcome!=="queued_after_change"&&told.outcome!=="rejected")
+          throw new ReceiptError("INPUT_ID_IS_DIRECT_INPUT",`This input ID is already a direct input (${told.outcome}); read it with session input show instead of queueing the text again.`,told);
+        // An input the runtime plainly refused (nothing was sent, no message saved) may be queued under the same ID: the service allows
+        // an ordinary message under the ID of a refused input and still refuses one under an input that was not refused.
+        const refusedPlainly=how==="queue"&&found.via==="direct-input"&&told.outcome==="rejected";
+        if(!refusedPlainly&&!(how==="queue"&&found.via==="message"))return {mode:how,...identity,repeated:true,...told};
+      }
+    }
+    if(how==="queue"){
+      const command=commandSchema.parse({type:"session.message.post",projectId,operationId,messageId:inputId,
+        target:{kind:"owned",sessionId},content});
+      await dispatchMutation(client,store,origin,token,{id:operationId,operationId,projectId,kind:command.type,path:"/api/commands",
+        body:command,confirmation:"command",recovery:{kind:"core",path:`${base}/operations/${operationId}`}},
+        value=>io.stderr(JSON.stringify(value)+"\n"),await verifiedActor());
+      const detail=await client.get(`${base}/session-messages/${inputId}`);
+      return {mode:"queue",...identity,via:"message",...queuedMessageOutcome(detail),detail};
+    }
+    // Insert: the service reads this sender's authorization and the Session's Turn; a missing grant is named, not guessed.
+    const capability=await client.get(`${base}/sessions/${sessionId}/direct-input-capability`);
+    // Two readings only mean the Turn is in the middle of changing (it just ended, or is not bound yet): not a missing authorization. The
+    // service decides under its lock and saves the text as one queued message under this ID, so the person is not sent back to --mode queue.
+    const timing=["NATIVE_TURN_NOT_ACTIVE","SESSION_BUSY"].includes(String(record(capability)?.reasonCode));
+    const missing=timing?null:missingForInsert(capability);
+    if(missing)throw new ReceiptError("INSERT_NOT_AVAILABLE",`Cannot insert into this Session: ${missing}. Use --mode queue to save an ordinary message instead.`,capability);
+    const cap=record(capability)!;
+    const body={inputId,operationId,content,expectedTurnId:cap.mode==="steer"&&!timing?cap.expectedTurnId:null};
+    io.stderr(JSON.stringify({inputId,operationId,note:"keep these IDs: if the outcome is unknown, read them with session input show, or repeat this command with --input and --operation"})+"\n");
+    try{
+      const receipt=await client.post(`${base}/sessions/${sessionId}/direct-inputs`,body);
+      return {mode:"insert",...identity,via:"direct-input",...directInputOutcome(receipt),receipt};
+    }catch(error){
+      // Exit code 3 like every unconfirmed mutation: the original input is saved or not, only its ID can tell.
+      if(error instanceof CliApiError&&error.unconfirmed)
+        throw new ReceiptError("RESULT_UNCONFIRMED",`The result is unknown. Run: session input show ${sessionId} ${inputId} --project ${projectId} (read only; session input reconcile checks the native history if it stays unclear); do not send the text again under another ID.`,identity);
+      throw error;
+    }
   }
   if(action==="session"&&args.words[1]==="identity"){
     const mode=args.words[2],sessionKey=args.words[3],projectId=project();
@@ -372,7 +495,7 @@ async function dispatch(args: Args, env: Environment, io: IO): Promise<unknown> 
       const brief=args.options.has("brief");
       if(args.words[2] === "mine"){
         if(brief)throw new UsageError("--brief does not apply to work acceptance mine; it is already a short list.");
-        return client.get(`${prefix}/acceptance-relay/mine`);
+        return client.get(`${prefix}/acceptance-relay/mine?direct=1`);
       }
       if(args.words[2]){
         const relays=await client.get(`${prefix}/tasks/${uuid(args.words[2],"Task")}/acceptance-relay`);
@@ -402,6 +525,23 @@ async function dispatch(args: Args, env: Environment, io: IO): Promise<unknown> 
       ]);
       try { return sessionStatus(snapshot, detail, messageId, runtimeRead); }
       catch (error) { throw new ReceiptError("INVALID_STATUS_SOURCE", error instanceof Error ? error.message : "Cannot verify status sources."); }
+    }
+    // The work board and the scheduling event stream (DEC-045 Q2).
+    if (args.words[1] === "board") {
+      check(args, 2, ["project", "brief"]);
+      return client.get(`${prefix}/work-board${args.options.has("brief") ? "?brief=true" : ""}`);
+    }
+    if (args.words[1] === "events") {
+      check(args, 2, ["project", "after", "limit", "from", "to", "category", "wait"]);
+      const query = new URLSearchParams();
+      for (const name of ["after", "limit", "from", "to", "category", "wait"]) { const value = option(args, name); if (value !== undefined) query.set(name, value); }
+      return client.get(`${prefix}/work-board/events${query.size ? `?${query}` : ""}`);
+    }
+    if (args.words[1] === "metrics") {
+      check(args, 2, ["project", "from", "to"]);
+      const query = new URLSearchParams();
+      for (const name of ["from", "to"]) { const value = option(args, name); if (value !== undefined) query.set(name, value); }
+      return client.get(`${prefix}/work-board/metrics${query.size ? `?${query}` : ""}`);
     }
     let path: string;
     try { path = sessionWorkPath(args.words.slice(1), args.options); }
@@ -529,7 +669,10 @@ async function dispatch(args: Args, env: Environment, io: IO): Promise<unknown> 
     const query = new URLSearchParams();
     if (option(args, "cursor")) query.set("cursor", option(args, "cursor")!);
     if (option(args, "turn-cursor")) query.set("turnCursor", option(args, "turn-cursor")!);
-    return client.get(`${prefix}/${definition.path}/${objectId}${selected ? `/${selected}` : ""}${query.size ? `?${query}` : ""}`);
+    const read = await client.get(`${prefix}/${definition.path}/${objectId}${selected ? `/${selected}` : ""}${query.size ? `?${query}` : ""}`);
+    // A Run read carries what its Turn actually reported next to the configured profile, in the same words the workbench uses ("未记录" when nothing was observed).
+    if (kind === "run" && !selected && record(read)) return { ...record(read)!, actualView: describeRunActual(record(read) as never) };
+    return read;
   }
   throw new UsageError("Unknown command; use help.");
 }

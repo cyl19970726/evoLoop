@@ -510,6 +510,34 @@ test('role runtime CLI binds once from the live view, then changes only skills a
   }finally{fetch.mock.restore();await rm(directory,{recursive:true,force:true});}
 });
 
+test("drain CLI reads the instance state and history, starts and releases with a recorded reason, and refuses a missing reason before any request", async () => {
+  const calls: Array<{ method: string; path: string; body: unknown }> = [];
+  const fetch = mock.method(globalThis, "fetch", async (url: string | URL | Request, init?: RequestInit) => {
+    calls.push({ method: init?.method ?? "GET", path: new URL(String(url)).pathname, body: init?.body ? JSON.parse(String(init.body)) : null });
+    return new Response(JSON.stringify({ state: "draining" }), { status: 200 });
+  });
+  const env = { EVOLOOP_TOKEN: "fixture" };
+  try {
+    for (const command of [["drain", "status"], ["drain", "history"], ["drain", "start", "--reason", "发布 0dd0baa"], ["drain", "release", "--reason", "发布完成"]]) {
+      const result = await run(command, env);
+      assert.equal(result.code, 0, `${command.join(" ")}: ${result.stderr}`);
+    }
+    assert.deepEqual(calls, [
+      { method: "GET", path: "/api/instance/drain", body: null },
+      { method: "GET", path: "/api/instance/drain/history", body: null },
+      { method: "POST", path: "/api/instance/drain", body: { action: "start", reason: "发布 0dd0baa" } },
+      { method: "POST", path: "/api/instance/drain", body: { action: "release", reason: "发布完成" } },
+    ]);
+    calls.length = 0;
+    const noReason = await run(["drain", "start"], env);
+    assert.notEqual(noReason.code, 0);
+    assert.match(noReason.stderr, /requires --reason/);
+    assert.notEqual((await run(["drain", "pause"], env)).code, 0);
+    assert.equal(calls.length, 0, "nothing was sent");
+    assert.match((await run(["help"], env)).stdout, /drain start\|release --reason TEXT/);
+  } finally { fetch.mock.restore(); }
+});
+
 test("command run shows the failing field and its accepted form when executeAtUtc is malformed", async () => {
   const dir = await mkdtemp(join(tmpdir(), "evoloop-cli-timing-"));
   try {
@@ -559,4 +587,269 @@ test("session profile set keeps the model in force: without --model it takes the
       "--operation", "00000000-0000-4000-8000-000000000055"], { EVOLOOP_TOKEN: "fixture", EVOLOOP_STATE_DIR: directory });
     assert.equal(submitted?.model, "deepseek/deepseek-v4-pro");
   } finally { fetch.mock.restore(); await rm(directory, { recursive: true, force: true }); }
+});
+
+test('read run carries what the Turn actually reported next to the configured profile, 未记录 when nothing was observed', async () => {
+  const projectId = '00000000-0000-4000-8000-0000000000e1', runId = '00000000-0000-4000-8000-0000000000e2', other = '00000000-0000-4000-8000-0000000000e3';
+  const directory = await mkdtemp(join(tmpdir(), 'evoloop-read-run-'));
+  const base = `/api/projects/${projectId}/runtime/runs`;
+  const fetch = mock.method(globalThis, 'fetch', async (url: string | URL | Request) => {
+    const path = new URL(String(url)).pathname;
+    if (path === '/api/session') return new Response(JSON.stringify({ principal: { actorId: 'reader', projectIds: [projectId] } }));
+    if (path === `${base}/${runId}`) return new Response(JSON.stringify({ id: runId, state: 'completed', executionProfile: { model: 'opus', reasoningEffort: 'high' },
+      actual: { model: 'claude-opus-5-5', reasoningEffort: null, subagentModels: ['claude-haiku-4-5'] } }));
+    if (path === `${base}/${other}`) return new Response(JSON.stringify({ id: other, state: 'completed', executionProfile: { model: 'opus', reasoningEffort: 'high' } }));
+    throw new Error(`Unexpected ${path}`);
+  });
+  const env = { EVOLOOP_TOKEN: 'fixture', EVOLOOP_STATE_DIR: directory };
+  try {
+    const seen = JSON.parse((await run(['read', 'run', runId, '--project', projectId], env)).stdout);
+    assert.deepEqual(seen.actualView, { model: 'claude-opus-5-5', reasoningEffort: '未记录', effortRequested: null, subagentModels: ['claude-haiku-4-5'], configuredModel: 'opus', configuredEffort: 'high', recorded: true });
+    const unseen = JSON.parse((await run(['read', 'run', other, '--project', projectId], env)).stdout);
+    assert.equal(unseen.actualView.model, '未记录'); assert.equal(unseen.actualView.recorded, false); assert.equal(unseen.actualView.configuredModel, 'opus');
+    assert.equal(unseen.state, 'completed', 'the Run itself is passed through unchanged');
+  } finally { fetch.mock.restore(); await rm(directory, { recursive: true, force: true }); }
+});
+
+test('session input CLI inserts into the running Turn, queues, names a missing grant, and reads back by the same input ID', async () => {
+  const projectId = '00000000-0000-4000-8000-000000000021', sessionId = '00000000-0000-4000-8000-000000000022';
+  const inputId = '00000000-0000-4000-8000-000000000023', operationId = '00000000-0000-4000-8000-000000000024';
+  const queueId = '00000000-0000-4000-8000-000000000025', queueOperation = '00000000-0000-4000-8000-000000000026';
+  const directory = await mkdtemp(join(tmpdir(), 'evoloop-input-cli-'));
+  const base = `/api/projects/${projectId}`;
+  let capability: Record<string, unknown> = { available: true, mode: 'steer', expectedTurnId: 'turn-7', reasonCode: 'READY_TO_STEER' };
+  let submitted: Record<string, unknown> | null = null, posted: Record<string, unknown> | null = null, direct: Record<string, unknown> | null = null, queued_posted = false;
+  const fetch = mock.method(globalThis, 'fetch', async (url: string | URL | Request, init?: RequestInit) => {
+    const path = new URL(String(url)).pathname;
+    if (path === '/api/session') return new Response(JSON.stringify({ principal: { actorId: 'requirements', projectIds: [projectId] } }));
+    if (path === `${base}/sessions/${sessionId}/direct-input-capability`) return new Response(JSON.stringify(capability));
+    if (path === `${base}/sessions/${sessionId}/direct-inputs` && init?.method === 'POST') {
+      submitted = JSON.parse(String(init.body));
+      direct = { inputId, operationId, mode: 'steer', state: 'accepted', actualTurnId: 'turn-7', reason: null };
+      return new Response(JSON.stringify(direct));
+    }
+    if (path.startsWith(`${base}/sessions/${sessionId}/direct-inputs/`)) {
+      const found = path.endsWith(inputId) && direct;
+      return new Response(JSON.stringify(found || { code: 'NOT_FOUND' }), { status: found ? 200 : 404 });
+    }
+    if (path === '/api/commands') { posted = JSON.parse(String(init?.body)); queued_posted = true; return new Response(JSON.stringify({ status: 'applied', operationId: queueOperation, entityId: queueId, version: 1 })); }
+    if (path === `${base}/session-messages/${queueId}`) return new Response(JSON.stringify({ message: { id: queueId, state: 'queued' } }), { status: queued_posted ? 200 : 404 });
+    if (path.startsWith(`${base}/session-messages/`)) return new Response(JSON.stringify({ code: 'NOT_FOUND' }), { status: 404 });
+    throw new Error(`Unexpected ${init?.method ?? 'GET'} ${path}`);
+  });
+  const env = { EVOLOOP_TOKEN: 'fixture', EVOLOOP_STATE_DIR: directory };
+  try {
+    // insert while the Leader runs: the current Turn ID from the capability is the expected Turn
+    const inserted = await run(['session', 'input', 'send', sessionId, '--project', projectId, '--mode', 'insert', '--content', 'Also check X', '--input', inputId, '--operation', operationId], env);
+    assert.equal(inserted.code, 0, inserted.stderr);
+    assert.deepEqual(submitted, { inputId, operationId, content: 'Also check X', expectedTurnId: 'turn-7' });
+    const insertedBody = JSON.parse(inserted.stdout);
+    assert.equal(insertedBody.outcome, 'inserted'); assert.equal(insertedBody.inputId, inputId);
+    assert.match(inserted.stderr, new RegExp(inputId), 'the IDs are printed before the send, so a lost answer can be read back');
+    // the same input ID reads back
+    const shown = JSON.parse((await run(['session', 'input', 'show', sessionId, inputId, '--project', projectId], env)).stdout);
+    assert.equal(shown.outcome, 'inserted'); assert.equal(shown.via, 'direct-input');
+    // queue: an ordinary message with the same ID, read back as queued
+    const queued = await run(['session', 'input', 'send', sessionId, '--project', projectId, '--mode', 'queue', '--content', 'After this Turn', '--input', queueId, '--operation', queueOperation], env);
+    assert.equal(queued.code, 0, queued.stderr);
+    assert.equal(posted?.type, 'session.message.post'); assert.equal(posted?.messageId, queueId); assert.equal(posted?.operationId, queueOperation);
+    assert.equal(JSON.parse(queued.stdout).outcome, 'queued');
+    const shownQueue = JSON.parse((await run(['session', 'input', 'show', sessionId, queueId, '--project', projectId], env)).stdout);
+    assert.equal(shownQueue.outcome, 'queued'); assert.equal(shownQueue.via, 'message');
+    // no direct input grant: refused before anything is sent, saying which item is missing
+    capability = { available: false, mode: null, expectedTurnId: null, reasonCode: 'DIRECT_GRANT_MISSING',
+      detail: 'Direct input refused; missing: direct input grant (steer or start) for this sender and Session' };
+    submitted = null;
+    const refused = await run(['session', 'input', 'send', sessionId, '--project', projectId, '--mode', 'insert', '--content', 'Hello'], env);
+    assert.notEqual(refused.code, 0); assert.equal(submitted, null, 'nothing was sent');
+    assert.match(refused.stderr, /missing: direct input grant/); assert.match(refused.stderr, /--mode queue/);
+    // usage errors
+    assert.equal((await run(['session', 'input', 'send', sessionId, '--project', projectId, '--mode', 'later', '--content', 'x'], env)).code, 2);
+    assert.equal((await run(['session', 'input', 'send', sessionId, '--project', projectId, '--mode', 'queue'], env)).code, 2);
+  } finally { fetch.mock.restore(); await rm(directory, { recursive: true, force: true }); }
+});
+
+test('direct input outcomes read in the workbench words, including a steer queued after the Turn changed', async () => {
+  const { directInputOutcome } = await import('../src/session-input.ts');
+  assert.equal(directInputOutcome({ state: 'accepted', mode: 'steer' }).outcome, 'inserted');
+  assert.equal(directInputOutcome({ state: 'accepted', mode: 'start' }).outcome, 'started');
+  const changed = directInputOutcome({ state: 'rejected', mode: 'steer', queuedMessageId: 'm', reason: 'TURN_CHANGED: the Turn changed' });
+  assert.equal(changed.outcome, 'queued_after_change'); assert.match(changed.summary, /same ID/); assert.match(changed.reason!, /TURN_CHANGED/);
+  assert.equal(directInputOutcome({ state: 'rejected', mode: 'steer', queuedMessageId: null, reason: 'no' }).outcome, 'rejected');
+  assert.equal(directInputOutcome({ state: 'unknown', mode: 'steer' }).outcome, 'unknown');
+});
+
+test('session input CLI: a repeat with a known ID answers from what was saved, never inserts and queues the same text, reconciles a missing native Item, and exits 3 on an unknown outcome', async () => {
+  const projectId = '00000000-0000-4000-8000-000000000031', sessionId = '00000000-0000-4000-8000-000000000032';
+  const sent = '00000000-0000-4000-8000-000000000033', converted = '00000000-0000-4000-8000-000000000034', lost = '00000000-0000-4000-8000-000000000035';
+  const directory = await mkdtemp(join(tmpdir(), 'evoloop-input-retry-'));
+  const base = `/api/projects/${projectId}`;
+  const calls: string[] = [];
+  let reconciled = false, capabilityCalls = 0, postMode: 'down' | 'ok' = 'ok';
+  const accepted = (inputId: string, item: string | null) => ({ inputId, operationId: inputId, mode: 'steer', state: 'accepted', actualTurnId: 'turn-7', nativeItemId: item, reason: null });
+  const fetch = mock.method(globalThis, 'fetch', async (url: string | URL | Request, init?: RequestInit) => {
+    const path = new URL(String(url)).pathname; calls.push(`${init?.method ?? 'GET'} ${path}`);
+    const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status });
+    if (path === '/api/session') return json({ principal: { actorId: 'requirements', projectIds: [projectId] } });
+    if (path === `${base}/sessions/${sessionId}/direct-input-capability`) { capabilityCalls++; return json({ available: true, mode: 'start', expectedTurnId: null, reasonCode: 'READY_TO_START' }); }
+    if (path === `${base}/sessions/${sessionId}/direct-inputs/${sent}/reconcile`) { reconciled = true; return json(accepted(sent, 'item-9')); }
+    if (path === `${base}/sessions/${sessionId}/direct-inputs/${sent}`) return json(accepted(sent, reconciled ? 'item-9' : null));
+    if (path === `${base}/sessions/${sessionId}/direct-inputs/${converted}`) return json({ inputId: converted, operationId: converted, mode: 'steer', state: 'rejected', reason: 'TURN_CHANGED: the Turn changed before the input was added; saved as a queued ordinary message', queuedMessageId: converted });
+    if (path.startsWith(`${base}/sessions/${sessionId}/direct-inputs/`)) return json({ code: 'NOT_FOUND' }, 404);
+    if (path === `${base}/session-messages/${converted}`) return json({ message: { id: converted, state: 'queued' } });
+    if (path.startsWith(`${base}/session-messages/`)) return json({ code: 'NOT_FOUND' }, 404);
+    if (path === `${base}/sessions/${sessionId}/direct-inputs` && init?.method === 'POST') { if (postMode === 'down') return json({ message: 'down' }, 503); return json(accepted(lost, 'x')); }
+    if (path === '/api/commands') return json({ status: 'applied', operationId: converted, entityId: converted, version: 1 });
+    throw new Error(`Unexpected ${init?.method ?? 'GET'} ${path}`);
+  });
+  const env = { EVOLOOP_TOKEN: 'fixture', EVOLOOP_STATE_DIR: directory };
+  const send = (mode: string, input: string) => run(['session', 'input', 'send', sessionId, '--project', projectId, '--mode', mode, '--content', 'Also check X', '--input', input, '--operation', input], env);
+  try {
+    // 1. The reply to an insert was lost; the repeat finds the saved input and answers it, without reading the capability or sending again.
+    const again = await send('insert', sent);
+    assert.equal(again.code, 0, again.stderr);
+    assert.equal(JSON.parse(again.stdout).outcome, 'inserted'); assert.equal(JSON.parse(again.stdout).repeated, true);
+    assert.equal(capabilityCalls, 0); assert.equal(calls.some(call => call === `POST ${base}/sessions/${sessionId}/direct-inputs`), false);
+    // 2. The same ID asked to queue: refused, nothing is posted.
+    const queueAgain = await send('queue', sent);
+    assert.notEqual(queueAgain.code, 0); assert.match(queueAgain.stderr, /INPUT_ID_IS_DIRECT_INPUT/);
+    assert.equal(calls.some(call => call === 'POST /api/commands'), false, 'the text is not queued a second time');
+    // 3. An input already turned into a queued message answers "queued after the Turn changed", for either way of asking.
+    for (const mode of ['insert', 'queue']) {
+      const result = await send(mode, converted);
+      assert.equal(result.code, 0, result.stderr);
+      const body = JSON.parse(result.stdout);
+      assert.equal(body.outcome, 'queued_after_change'); assert.equal(body.receipt.queuedMessageId, converted);
+    }
+    assert.equal(calls.some(call => call === 'POST /api/commands'), false, 'no second message');
+    // 4. show only reads (an accepted input without a native Item is reported as it is, with the explicit command to check it); reconcile is the
+    //    explicit check that looks for the original once and then names the Item.
+    const shown = JSON.parse((await run(['session', 'input', 'show', sessionId, sent, '--project', projectId], env)).stdout);
+    assert.equal(shown.reconciled, false); assert.equal(shown.receipt.nativeItemId, null); assert.equal(shown.outcome, 'inserted'); assert.match(shown.next, /session input reconcile/);
+    assert.equal(reconciled, false, 'show did not call reconcile');
+    const checked = JSON.parse((await run(['session', 'input', 'reconcile', sessionId, sent, '--project', projectId], env)).stdout);
+    assert.equal(checked.reconciled, true); assert.equal(checked.receipt.nativeItemId, 'item-9'); assert.equal(checked.outcome, 'inserted');
+    // 5. An answer lost on a fresh insert exits 3 like every unconfirmed mutation and points at the same ID.
+    postMode = 'down';
+    const unknown = await run(['session', 'input', 'send', sessionId, '--project', projectId, '--mode', 'insert', '--content', 'new text', '--input', lost, '--operation', lost], env);
+    assert.equal(unknown.code, 3, unknown.stderr); assert.match(unknown.stderr, /RESULT_UNCONFIRMED/); assert.match(unknown.stderr, new RegExp(lost));
+  } finally { fetch.mock.restore(); await rm(directory, { recursive: true, force: true }); }
+});
+
+// ---- Task e0bcde26 (follow-up to #350): session input ----------------------------------------------------------------------
+type InputFake = { direct: Record<string, Record<string, unknown>>; messages: Set<string>; capability: Record<string, unknown>; calls: string[]; bodies: Record<string, unknown>[] };
+const inputWorld = (projectId: string, sessionId: string, init: Partial<InputFake> = {}) => {
+  const world: InputFake = { direct: {}, messages: new Set(), capability: { available: true, mode: 'start', expectedTurnId: null, reasonCode: 'READY_TO_START' }, calls: [], bodies: [], ...init };
+  const base = `/api/projects/${projectId}`;
+  const fetch = mock.method(globalThis, 'fetch', async (url: string | URL | Request, req?: RequestInit) => {
+    const path = new URL(String(url)).pathname, method = req?.method ?? 'GET';
+    world.calls.push(`${method} ${path}`);
+    const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status });
+    if (path === '/api/session') return json({ principal: { actorId: 'requirements', projectIds: [projectId] } });
+    if (path === `${base}/sessions/${sessionId}/direct-input-capability`) return json(world.capability);
+    const reconcile = new RegExp(`^${base}/sessions/${sessionId}/direct-inputs/([0-9a-f-]{36})/reconcile$`).exec(path);
+    if (reconcile && method === 'POST') return json({ ...world.direct[reconcile[1]!]!, state: 'unknown', reason: 'reconciled by the test' });
+    const one = new RegExp(`^${base}/sessions/${sessionId}/direct-inputs/([0-9a-f-]{36})$`).exec(path);
+    if (one) return world.direct[one[1]!] ? json(world.direct[one[1]!]) : json({ code: 'NOT_FOUND' }, 404);
+    if (path === `${base}/sessions/${sessionId}/direct-inputs` && method === 'POST') {
+      const body = JSON.parse(String(req!.body)); world.bodies.push(body);
+      // The service decides under its lock: a refused-by-state steer comes back saved as one queued message.
+      world.direct[body.inputId] = { inputId: body.inputId, operationId: body.operationId, mode: 'steer', state: 'rejected', queuedMessageId: body.inputId, reason: 'TURN_CHANGED: saved as a queued ordinary message' };
+      world.messages.add(body.inputId);
+      return json(world.direct[body.inputId]);
+    }
+    const message = new RegExp(`^${base}/session-messages/([0-9a-f-]{36})$`).exec(path);
+    if (message) return world.messages.has(message[1]!) ? json({ message: { id: message[1], state: 'queued' } }) : json({ code: 'NOT_FOUND' }, 404);
+    if (path === '/api/commands') { const body = JSON.parse(String(req!.body)); world.bodies.push(body); world.messages.add(body.messageId);
+      if (world.direct[body.messageId]) world.direct[body.messageId] = { ...world.direct[body.messageId]!, queuedMessageId: body.messageId };
+      return json({ status: 'applied', operationId: body.operationId, entityId: body.messageId, version: 1 }); }
+    throw new Error(`Unexpected ${method} ${path}`);
+  });
+  return { world, fetch, base };
+};
+const inputIds = { project: '00000000-0000-4000-8000-0000000000a1', session: '00000000-0000-4000-8000-0000000000a2' };
+const cliInput = (...words: string[]) => run(['session', 'input', ...words], { EVOLOOP_TOKEN: 'fixture', EVOLOOP_STATE_DIR: '' });
+
+test('item 1 (CLI): when the Turn has just ended the insert is still sent, and the service saves it as one queued message instead of the CLI refusing', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'evoloop-input-window-'));
+  for (const reasonCode of ['NATIVE_TURN_NOT_ACTIVE', 'SESSION_BUSY']) {
+    const { world, fetch } = inputWorld(inputIds.project, inputIds.session, { capability: { available: false, mode: null, expectedTurnId: null, reasonCode } });
+    const id = reasonCode === 'SESSION_BUSY' ? '00000000-0000-4000-8000-0000000000b2' : '00000000-0000-4000-8000-0000000000b1';
+    try {
+      const result = await run(['session', 'input', 'send', inputIds.session, '--project', inputIds.project, '--mode', 'insert', '--content', 'Just after the Turn ended', '--input', id, '--operation', id],
+        { EVOLOOP_TOKEN: 'fixture', EVOLOOP_STATE_DIR: directory });
+      assert.equal(result.code, 0, `${reasonCode}: ${result.stderr}`);
+      assert.equal(world.bodies.length, 1, 'the input was sent to the service once');
+      assert.equal(world.bodies[0]!.expectedTurnId, null);
+      assert.equal(JSON.parse(result.stdout).outcome, 'queued_after_change', 'told as saved-queued, with the same ID');
+    } finally { fetch.mock.restore(); }
+  }
+  // A missing authorization is still refused before anything is sent (only the two timing readings go through).
+  const { world, fetch } = inputWorld(inputIds.project, inputIds.session, { capability: { available: false, mode: null, expectedTurnId: null, reasonCode: 'DIRECT_GRANT_MISSING' } });
+  try {
+    const refused = await run(['session', 'input', 'send', inputIds.session, '--project', inputIds.project, '--mode', 'insert', '--content', 'x'], { EVOLOOP_TOKEN: 'fixture', EVOLOOP_STATE_DIR: directory });
+    assert.notEqual(refused.code, 0); assert.equal(world.bodies.length, 0);
+  } finally { fetch.mock.restore(); await rm(directory, { recursive: true, force: true }); }
+});
+
+test('item 2 (CLI): the same ID whose insert was plainly refused can be queued, and the text then goes in once', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'evoloop-input-requeue-'));
+  const id = '00000000-0000-4000-8000-0000000000c1';
+  const { world, fetch } = inputWorld(inputIds.project, inputIds.session, { direct: { [id]: { inputId: id, operationId: id, mode: 'steer', state: 'rejected', queuedMessageId: null, reason: 'Native request was explicitly rejected' } } });
+  const env = { EVOLOOP_TOKEN: 'fixture', EVOLOOP_STATE_DIR: directory };
+  try {
+    const queued = await run(['session', 'input', 'send', inputIds.session, '--project', inputIds.project, '--mode', 'queue', '--content', 'Refused earlier', '--input', id], env);
+    assert.equal(queued.code, 0, queued.stderr);
+    const post = world.bodies.find(body => body.type === 'session.message.post');
+    assert.ok(post, 'an ordinary message was posted'); assert.equal(post!.messageId, id, 'under the same ID');
+    assert.equal(JSON.parse(queued.stdout).outcome, 'queued');
+    // Repeating the queue request (a lost answer) does not post a second message; asking to insert returns the saved result.
+    const before = world.bodies.length;
+    const repeat = await run(['session', 'input', 'send', inputIds.session, '--project', inputIds.project, '--mode', 'queue', '--content', 'Refused earlier', '--input', id], env);
+    assert.equal(repeat.code, 0, repeat.stderr); assert.equal(world.bodies.length, before, 'no second message');
+    const insertAgain = await run(['session', 'input', 'send', inputIds.session, '--project', inputIds.project, '--mode', 'insert', '--content', 'Refused earlier', '--input', id], env);
+    assert.equal(insertAgain.code, 0, insertAgain.stderr); assert.equal(world.bodies.length, before, 'insert under a saved ID sends nothing');
+  } finally { fetch.mock.restore(); await rm(directory, { recursive: true, force: true }); }
+});
+
+test('item 4 (CLI): show only reads; reconciling is its own explicit command', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'evoloop-input-show-'));
+  const id = '00000000-0000-4000-8000-0000000000d1';
+  const { world, fetch } = inputWorld(inputIds.project, inputIds.session, { direct: { [id]: { inputId: id, operationId: id, mode: 'steer', state: 'attempted', actualTurnId: null, nativeItemId: null, reason: null } } });
+  const env = { EVOLOOP_TOKEN: 'fixture', EVOLOOP_STATE_DIR: directory };
+  try {
+    const shown = await run(['session', 'input', 'show', inputIds.session, id, '--project', inputIds.project], env);
+    assert.equal(shown.code, 0, shown.stderr);
+    assert.equal(world.calls.some(call => call.startsWith('POST') && call.endsWith('/reconcile')), false, 'show did not reconcile');
+    assert.equal(world.direct[id]!.state, 'attempted', 'the saved state is untouched');
+    assert.equal(JSON.parse(shown.stdout).outcome, 'unknown'); assert.match(shown.stdout, /session input reconcile/);
+    const reconciled = await run(['session', 'input', 'reconcile', inputIds.session, id, '--project', inputIds.project], env);
+    assert.equal(reconciled.code, 0, reconciled.stderr);
+    assert.equal(world.calls.filter(call => call.startsWith('POST') && call.endsWith('/reconcile')).length, 1, 'the explicit command reconciles once');
+  } finally { fetch.mock.restore(); await rm(directory, { recursive: true, force: true }); }
+});
+
+test("work board, events and metrics forward their parameters to the work board reads and reject unknown options", async () => {
+  const project = "00000000-0000-4000-8000-000000000001";
+  const urls: string[] = [];
+  const fetch = mock.method(globalThis, "fetch", async (url: string | URL | Request) => {
+    urls.push(String(url)); return new Response(JSON.stringify({ items: [] }), { status: 200 });
+  });
+  const env = { EVOLOOP_TOKEN: "fixture", EVOLOOP_PROJECT: project };
+  try {
+    const commands = [
+      ["work", "board"], ["work", "board", "--brief"],
+      ["work", "events", "--after", "42", "--limit", "10", "--wait", "5", "--category", "task"],
+      ["work", "events", "--from", "2026-11-12T00:00:00Z", "--to", "2026-11-12T01:00:00Z"],
+      ["work", "metrics", "--from", "2026-11-12T00:00:00Z"], ["work", "metrics"],
+    ];
+    for (const command of commands) { const result = await run(command, env); assert.equal(result.code, 0, `${command.join(" ")}: ${result.stderr}`); }
+    assert.deepEqual(urls.map(value => new URL(value).pathname + new URL(value).search), [
+      `/api/projects/${project}/work-board`, `/api/projects/${project}/work-board?brief=true`,
+      `/api/projects/${project}/work-board/events?after=42&limit=10&category=task&wait=5`,
+      `/api/projects/${project}/work-board/events?from=2026-11-12T00%3A00%3A00Z&to=2026-11-12T01%3A00%3A00Z`,
+      `/api/projects/${project}/work-board/metrics?from=2026-11-12T00%3A00%3A00Z`, `/api/projects/${project}/work-board/metrics`,
+    ]);
+    assert.notEqual((await run(["work", "board", "--cursor", "x"], env)).code, 0, "an option the command does not take is refused");
+  } finally { fetch.mock.restore(); }
 });

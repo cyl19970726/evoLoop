@@ -6,7 +6,7 @@ import type { LeaderWorkTask } from "@evoloop/contracts/work-index";
 import { phaseOrder, phaseStatus, taskStateStatus } from "../../shared/taskStatus";
 import { cognitionSummary, type WorkTaskStatus } from "../../shared/workStatusPresentation";
 import { isMyCurrentWork, matchingProjection, type TaskListView, type TaskSort } from "./taskExperience";
-import { taskTimestamp } from "./taskWorkspacePresentation";
+import { taskTimestamp, taskTypeLabel } from "./taskWorkspacePresentation";
 
 export const sortLabels: Record<TaskSort, string> = {
   default: "默认顺序", priority: "优先级", due: "截止时间", progress: "最近进展", created: "创建时间", phase: "对账阶段",
@@ -14,7 +14,7 @@ export const sortLabels: Record<TaskSort, string> = {
 export const stateFilterLabels: Record<string, string> = {
   open: "未完成", all: "全部状态", todo: "待办", in_progress: "进行中", done: "已完成", cancelled: "已取消",
 };
-export const kindFilterLabels: Record<string, string> = { all: "全部类型", implementation: "实施", research: "调研", validation: "验证" };
+export const kindFilterLabels: Record<string, string> = { all: "全部类型", ...taskTypeLabel };
 
 /** Search text of a task: its title, owner and id, plus the readable title of a judgement record. */
 function searchText(task: Task, status: WorkTaskStatus | undefined): string {

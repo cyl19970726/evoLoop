@@ -1067,7 +1067,14 @@ export class RuntimeRunner {
           const claimed=await this.deps.trusted.claimPreTurnContinuation(run.projectId,run.id);
           if(!claimed)return false;
           run=claimed;
-        }else await this.deps.trusted.beginDispatch(run.projectId, run.id, inputReceipt);
+        }else{
+          try{await this.deps.trusted.beginDispatch(run.projectId, run.id, inputReceipt);}
+          catch(error){
+            // A held provider starts nothing: the Run stays requested with nothing saved against it and is dispatched after the release.
+            if(error instanceof DomainError&&error.code==="PROVIDER_HELD")return false;
+            throw error;
+          }
+        }
         let startBinding: RuntimeBinding;
         try {
           // Persist the original intent before resuming the same full-permission Thread
@@ -1170,7 +1177,9 @@ export class RuntimeRunner {
     if (turn.error) messages.push(`Native failure: ${turn.error.summary}; category=${turn.error.category}; HTTP=${turn.error.httpStatus ?? "unknown"}; providerCode=${turn.error.providerCode ?? "unknown"}`);
     await this.deps.trusted.recordTurn(run.projectId, run.id, turn.id, turn.status as "completed" | "failed" | "interrupted",
       messages.join("\n\n"), { itemsDigest: digest(JSON.stringify(items)), completedAtUtc: turn.completedAtUtc,
-        ...(turn.usage ? { usage: turn.usage } : {}), ...(turn.costUsd != null ? { costUsd: turn.costUsd } : {}) });
+        ...(turn.usage ? { usage: turn.usage } : {}), ...(turn.costUsd != null ? { costUsd: turn.costUsd } : {}),
+        ...(turn.observedModel !== undefined ? { observedModel: turn.observedModel } : {}), ...(turn.subagentModels?.length ? { subagentModels: turn.subagentModels } : {}),
+        ...(turn.error?.category ? { failureCategory: turn.error.category } : {}) });
     return true;
   }
   private async flushApprovals(target?: typeof this.approvalQueue[number]): Promise<void> {

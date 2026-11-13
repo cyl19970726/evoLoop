@@ -635,3 +635,73 @@ test("a plan that cannot be prepared or whose plugins no longer match it stops t
     assert.deepEqual((await h.adapter.listTurns(binding)).data, [], "nothing reached history");
   } finally { await h.cleanup(); }
 });
+
+test("a Turn records the exact model the native messages carried, and a subagent's model apart; a Turn with no answer records none", async () => {
+  const h = await setup("ok", { environment: { PATH: process.env.PATH, HOME: process.env.HOME, FAKE_CLAUDE_MODE: "ok", FAKE_CLAUDE_SUBAGENT: "1" } as never,
+    envPassthrough: ["FAKE_CLAUDE_MODE", "FAKE_CLAUDE_LOG", "FAKE_CLAUDE_SUBAGENT"] });
+  try {
+    const binding = await h.adapter.create({ ...h.spec, model: "opus" } as never);
+    const operation = randomUUID();
+    const started = await h.adapter.startTurn(binding, `${marker(operation)}\nDo the task`, operation);
+    const turn = await settled(h.adapter, binding, started.id);
+    assert.equal(turn.observedModel, "claude-fake-1", "the native record's model ID, not the configured alias");
+    assert.deepEqual(turn.subagentModels, ["claude-haiku-fake-1"]);
+    assert.notEqual(turn.observedModel, "opus");
+  } finally { await h.cleanup(); }
+  // Nothing answered (the process was lost before any assistant message): no model is claimed.
+  const lost = await setup("crash");
+  try {
+    const binding = await lost.adapter.create(lost.spec);
+    const operation = randomUUID();
+    const started = await lost.adapter.startTurn(binding, `${marker(operation)}\nDo the task`, operation);
+    const turn = await settled(lost.adapter, binding, started.id);
+    assert.equal(turn.status, "failed"); assert.equal(turn.observedModel ?? null, null);
+  } finally { await lost.cleanup(); }
+});
+test("thinking blocks reach the timeline in native order, unreadable ones are marked, and Turn thinking tokens are per Turn", async () => {
+  const h = await setup("thinking");
+  try {
+    const binding = await h.adapter.create(h.spec);
+    const turnIds: string[] = [];
+    for (const label of ["first", "second"]) {
+      const operation = randomUUID();
+      const started = await h.adapter.startTurn(binding, `${marker(operation)}\nDo the ${label} task`, operation);
+      await settled(h.adapter, binding, started.id);
+      turnIds.push(started.id);
+    }
+    const [launch] = await h.launches();
+    const display = launch!.argv.indexOf("--thinking-display");
+    assert.ok(display >= 0 && launch!.argv[display + 1] === "summarized", "readable thinking display is requested");
+    assert.ok(!launch!.argv.some(arg => arg.startsWith("--thinking=") || arg === "--max-thinking-tokens"), "thinking mode and budget are unchanged");
+
+    const page = await h.adapter.readWorkspaceHistory!(binding, { limit: 50 });
+    const second = page.entries.filter(entry => entry.turnId === turnIds[1]);
+    assert.deepEqual(second.map(entry => entry.kind), ["message", "reasoning", "message", "reasoning", "reasoning", "tool", "message"]);
+    const reasoning = second.filter(entry => entry.kind === "reasoning");
+    assert.deepEqual(reasoning.map(entry => [entry.readable, entry.source, entry.body]),
+      [[true, "thinking", "Plan: read the task first."], [false, "none", ""], [false, "none", ""]]);
+    assert.match(reasoning[2]!.unavailableReason ?? "", /redacted_thinking/);
+    assert.doesNotMatch(JSON.stringify(page), /sig-private|sig-omitted|encrypted-private|secret\.txt/);
+    const input = second[0]!;
+    assert.ok(input.kind === "message" && input.role === "input" && input.inputReference?.kind === "operation-marker");
+    assert.equal(second.at(-1)!.kind === "message" && second.at(-1)!.phase, "final_answer");
+
+    const turns = new Map(page.turns.map(turn => [turn.id, turn]));
+    for (const id of turnIds) assert.deepEqual(turns.get(id)!.usage, { outputTokens: 5, reasoningOutputTokens: 40, source: "claude-result" });
+
+    // Reasoning items never become the Turn's answer, the only text a result notice carries.
+    const items = (await h.adapter.listItems(binding, turnIds[1]!)).data as Array<Record<string, unknown>>;
+    const answers = items.filter(item => item.type === "agentMessage" && item.phase === "final_answer");
+    assert.equal(answers.length, 1);
+    assert.match(String(answers[0]!.text), /^done: /);
+    assert.ok(items.filter(item => item.type === "agentMessage").every(item => !String(item.text).includes("Plan: read")));
+
+    const paged = await h.adapter.readWorkspaceHistory!(binding, { limit: 3 });
+    assert.equal(paged.entries.length, 3);
+    assert.equal(paged.entries.at(-1)!.id, page.entries.at(-1)!.id, "the first page is the newest");
+    const older = await h.adapter.readWorkspaceHistory!(binding, { limit: 50, cursor: paged.nextCursor! });
+    assert.deepEqual([...older.entries, ...paged.entries].map(entry => entry.id), page.entries.map(entry => entry.id));
+    const selected = await h.adapter.readWorkspaceHistory!(binding, { turnId: turnIds[1]!, itemId: reasoning[0]!.nativeItemId! });
+    assert.equal(selected.entries[0]!.kind === "reasoning" && selected.entries[0]!.body, "Plan: read the task first.");
+  } finally { await h.cleanup(); }
+});

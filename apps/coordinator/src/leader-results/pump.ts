@@ -21,7 +21,7 @@ export interface LeaderResultRecipient {
 export interface LeaderResultNotice {
   projectId: string;
   id: string;
-  kind: "task_todo"|"delivery"|"observation"|"task_question"|"task_blocker"|
+  kind: "task_todo"|"delivery"|"observation"|"observation_used"|"observation_failed"|"line_entry_suspended"|"line_confirmation_returned"|"task_question"|"task_blocker"|
     "run_without_submission"|"run_submission_blocked"|"task_attention"|"acceptance_blocked";
   sourceEventId: string;
   sourceSessionId: string | null;
@@ -81,7 +81,7 @@ export interface LeaderResultNoticePumpDeps {
   packetDebounceSeconds?: number;
 }
 
-const noticeLabel: Record<string,string> = {task_todo:"新 Task 待分诊",delivery:"已记录固定交付",observation:"已记录独立使用观察",
+const noticeLabel: Record<string,string> = {task_todo:"新 Task 待分诊",delivery:"已记录固定交付",observation:"已记录独立使用观察",observation_used:"独立使用观察：已使用",observation_failed:"独立使用观察：失败或未使用（需要处理）",line_entry_suspended:"Session 队伍项挂起（无法开始）",line_confirmation_returned:"Session 退回了执行确认",
   task_question:"Task 接收者提了问题",task_blocker:"Task 接收者报告阻塞",run_without_submission:"终态 Run 没有已签提交",
   run_submission_blocked:"已签提交无法封存",task_attention:"Task 关注项需要 Leader 跟进",acceptance_blocked:"验收交接受阻"};
 /** One packet message carries at most this many bytes (design: 8 KB) and this many items. */
@@ -92,7 +92,7 @@ export function packetContent(projectId:string, packetId:string, items:Array<Lea
   const mark=(item:{readBefore:boolean})=>item.readBefore?"（上一轮已读到过）":"";
   // Three renderings of one item, richest first: full, a summary line, and the id alone. Every item has at least its id; the "read before" mark is never dropped.
   const forms=items.map((item,index)=>[
-    `${index+1}. [${noticeLabel[item.kind]??item.kind}] 通知 ${item.noticeId}${mark(item)}\n   Task ${item.taskId}@${item.taskRevisionId}；来源 ${item.sourceRef}；事件 ${item.sourceEventId}，发生于 ${item.occurredAt}；操作者 ${item.sourceActorId??"未核实"}`,
+    `${index+1}. [${item.level==="immediate"?"立即·":""}${noticeLabel[item.kind]??item.kind}] 通知 ${item.noticeId}${mark(item)}\n   Task ${item.taskId}@${item.taskRevisionId}；来源 ${item.sourceRef}；事件 ${item.sourceEventId}，发生于 ${item.occurredAt}；操作者 ${item.sourceActorId??"未核实"}`,
     `${index+1}. ${item.kind} 通知 ${item.noticeId}${mark(item)} Task ${item.taskId}（摘要，详情读通知）`,
     `${index+1}. 通知 ${item.noticeId}${mark(item)}（仅编号，详情读通知）`]);
   const size=(text:string)=>Buffer.byteLength(text,"utf8")+1;
@@ -235,8 +235,11 @@ export class LeaderResultNoticePump {
     if((await ports.openPackets(projectId)).length)return;
     const state=await ports.leaderState(projectId,recipient.sessionId);
     if(state.busy||state.humanMessageQueued||!state.gateOpen)return;
-    const debounce=this.deps.packetDebounceSeconds??60;
-    if(Math.max(...chosen.map(item=>item.waitedSeconds))<debounce)return;
+    // An immediate notice (W5) does not wait out the debounce: the Leader is idle, no person's message waits and the gate is open, so this is the
+    // next moment it can be delivered. The candidates come immediate first, so it is at the front of the packet and the waiting digest notices follow.
+    const immediate=chosen.some(item=>item.level==="immediate");
+    const debounce=immediate?0:this.deps.packetDebounceSeconds??60;
+    if(!immediate&&Math.max(...chosen.map(item=>item.waitedSeconds))<debounce)return;
     const packetId=randomUUID(),messageId=randomUUID(),operationId=randomUUID();
     const content=packetContent(projectId,packetId,chosen);
     const built=await this.deps.workflow.execute(service,{type:"leader.noticePacket.build",projectId,operationId:randomUUID(),sessionId:recipient.sessionId,

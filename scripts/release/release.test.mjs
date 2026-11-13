@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readlink, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readdir, readlink, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative } from "node:path";
 import test from "node:test";
@@ -339,4 +339,71 @@ test("the test step needs a dedicated test database that is not the live one", a
 
 test("duplicate migration numbers are reported with their files", () => {
   assert.deepEqual(duplicateMigrationNumbers(["078_a.mjs", "078_b.mjs", "079_c.mjs"]), [{ number: "078", files: ["078_a.mjs", "078_b.mjs"] }]);
+});
+
+test("sourceSubdir puts the checkout in <release>/source: every build step runs there, hooks still see the release directory and the source path", async () => {
+  const root = await fresh();
+  await mkdir(join(root, "rel", "old", "source"), { recursive: true });
+  const seen = [];
+  const inner = sim().runner;
+  const runner = async (argv, options) => { seen.push({ name: argv[0] === "node" ? argv[1] : argv[0], cwd: options.cwd, source: options.env?.EVOLOOP_RELEASE_SOURCE, dir: options.env?.EVOLOOP_RELEASE_DIR, argv }); return inner(argv, options); };
+  const config = { ...base(root), sourceSubdir: "source" };
+  await run({ config, id: "r1", execute: true, env: ENV, log: quiet, runner });
+  const release = join(root, "rel", "r1");
+  const at = name => seen.find(item => item.name === name);
+  assert.ok(at("git").argv.includes(join(release, "source")), "the working tree is created at <release>/source");
+  assert.ok(!at("git").argv.includes(release), "not at the release directory itself");
+  for (const name of ["sh", "scripts/release/preflight.mjs", "scripts/backup.mjs", "npm"]) assert.equal(at(name).cwd, join(release, "source"), name);
+  for (const name of ["wait", "stop", "start", "check"]) { assert.equal(at(name).dir, release, name); assert.equal(at(name).source, join(release, "source"), name); }
+  assert.equal(await readlink(join(root, "current")), release); // the link still points at the release directory, not at source
+  assert.equal((await stateOf(root, "r1")).releaseDir, release);
+});
+
+test("sourceSubdir is a relative path without ..; the default keeps the release directory as the checkout", () => {
+  for (const bad of ["/abs", "../up", "a/../b"]) assert.throws(() => loadConfig(JSON.stringify({ ...base("/srv/x"), sourceSubdir: bad }), "/etc/r.json"), /sourceSubdir/);
+  assert.ok(loadConfig(JSON.stringify({ ...base("/srv/x"), sourceSubdir: "source" }), "/etc/r.json"));
+  assert.ok(loadConfig(JSON.stringify(base("/srv/x")), "/etc/r.json"));
+});
+
+test("with sourceSubdir the restore after a failure hands the previous release's own source path to the hooks", async () => {
+  const root = await fresh();
+  const seen = [];
+  const inner = sim({ fail: { check: 1 } }).runner;
+  const runner = async (argv, options) => { seen.push({ name: argv[0], source: options.env?.EVOLOOP_RELEASE_SOURCE, dir: options.env?.EVOLOOP_RELEASE_DIR }); return inner(argv, options); };
+  await assert.rejects(run({ config: { ...base(root), sourceSubdir: "source" }, id: "r1", execute: true, env: ENV, log: quiet, runner }));
+  const restoreStart = seen.filter(item => item.name === "start").at(-1);
+  assert.equal(restoreStart.dir, join(root, "rel", "old"));
+  assert.equal(restoreStart.source, join(root, "rel", "old", "source"));
+});
+
+test("the build step carries the previous version's chunk files into the new build and records it", async () => {
+  const root = await fresh();
+  const assets = release => join(root, "rel", release, "apps", "workbench", "dist", "assets");
+  await mkdir(assets("old"), { recursive: true });
+  await writeFile(join(assets("old"), "ArrangementPage-OLD.js"), "old page");
+  await writeFile(join(assets("old"), "vendor-1.js"), "old vendor");
+  const { log, runner: base } = sim();
+  // The fake build writes what the real one would: new hashed names, and one name that is the same in both versions.
+  const runner = async (argv, options) => {
+    if (argv[0] === "sh") { await mkdir(assets("r1"), { recursive: true }); await writeFile(join(assets("r1"), "ArrangementPage-NEW.js"), "new page"); await writeFile(join(assets("r1"), "vendor-1.js"), "new vendor"); }
+    return base(argv, options);
+  };
+  await go(root, { runner });
+  assert.deepEqual((await readdir(assets("r1"))).sort(), ["ArrangementPage-NEW.js", "ArrangementPage-OLD.js", "vendor-1.js"]);
+  assert.equal(await readFile(join(assets("r1"), "vendor-1.js"), "utf8"), "new vendor", "a same-named file is not overwritten");
+  assert.deepEqual((await stateOf(root, "r1")).acceptance.carriedAssets, { generation: 1, copied: 1, expired: 0, unchanged: 1, bytes: "old page".length });
+  order(log, "sh", "stop"); // carried before anything is stopped
+});
+
+test("carryAssets can be switched off and is validated in the config", async () => {
+  const root = await fresh();
+  const assets = release => join(root, "rel", release, "apps", "workbench", "dist", "assets");
+  await mkdir(assets("old"), { recursive: true }); await writeFile(join(assets("old"), "A-OLD.js"), "x");
+  const { runner: inner } = sim();
+  const runner = async (argv, options) => { if (argv[0] === "sh") { await mkdir(assets("r1"), { recursive: true }); await writeFile(join(assets("r1"), "A-NEW.js"), "y"); } return inner(argv, options); };
+  await run({ config: { ...base(root), carryAssets: false }, id: "r1", execute: true, env: ENV, log: quiet, runner });
+  assert.deepEqual(await readdir(assets("r1")), ["A-NEW.js"]);
+  for (const bad of [{ keep: 0 }, { keep: 1.5 }, { assetsDir: "/abs" }, { assetsDir: "../x" }, "yes"])
+    assert.throws(() => loadConfig(JSON.stringify({ ...base("/srv/x"), carryAssets: bad }), "/etc/r.json"), /carryAssets/);
+  assert.ok(loadConfig(JSON.stringify({ ...base("/srv/x"), carryAssets: { keep: 5, assetsDir: "web/dist/assets" } }), "/etc/r.json"));
 });

@@ -4,7 +4,7 @@ import test from "node:test";
 import type { DirectInputCommand, DirectInputRecord } from "@evoloop/contracts/direct-input";
 import type { RuntimeBinding, RuntimeCapabilities } from "@evoloop/contracts/runtime";
 import { DomainError } from "@evoloop/contracts/ports";
-import { RuntimeLocalBusyError, RuntimeServerError } from "@evoloop/adapter-codex-app-server";
+import { RuntimeLocalBusyError, RuntimeServerError, RuntimeUnknownError } from "@evoloop/adapter-codex-app-server";
 import { DirectInputService } from "../src/direct-input/service.js";
 import { SessionSteerLock } from "../src/runtime/session-steer-lock.js";
 
@@ -199,4 +199,130 @@ test("an accepted steer whose Turn later fails stays unread without a native Ite
   assert.equal(receipt.state, "accepted", "the native acknowledgement is still a delivery fact");
   assert.equal(receipt.nativeItemId, null, "no matching Item means the input is unread, not consumed");
   assert.equal(acceptedWrites, 0);
+});
+
+test("capability: a held provider offers no idle start, with the reason named", async () => {
+  const runtime = { isReady: () => true, capabilitiesFor: () => capabilities(true, true), registerBinding: async () => {}, qualifyConversationThread: async () => ({ available: true, reason: "ok", fingerprint: "a".repeat(64) }) } as never;
+  const store = { inspect: async () => ({ state: "idle", turnId: null, used: 0 }), providerHeld: async () => true } as never;
+  const service = new DirectInputService({ store, runtime: () => runtime, canWrite: () => true, admission: async () => ({ grant, binding }), bindingFor: async () => binding });
+  const result = await service.capability(principal, projectId, sessionId);
+  assert.equal(result.available, false); assert.equal(result.reasonCode, "PROVIDER_HELD"); assert.match(result.detail!, /paused/);
+  const running = new DirectInputService({ store: { inspect: async () => ({ state: "running", turnId, used: 0 }), providerHeld: async () => true } as never,
+    runtime: () => ({ ...(runtime as object), listTurns: async () => ({ data: [{ id: turnId, status: "inProgress" }], nextCursor: null }) }) as never,
+    canWrite: () => true, admission: async () => ({ grant, binding }), bindingFor: async () => binding });
+  assert.equal((await running.capability(principal, projectId, sessionId)).mode, "steer", "a running Turn can still be added to");
+});
+
+// ---- Task e31f9511: "this kind of Session cannot take an addition" is not "no authorization" ----------------------------------
+const reasonFor = async (options: { midTurnInput: boolean; admission: "granted" | "missing"; canSteer?: boolean; state?: "running" | "idle" }) => {
+  const runtime = { isReady: () => true, capabilitiesFor: () => capabilities(options.midTurnInput, true), registerBinding: async () => {},
+    qualifyConversationThread: async () => ({ available: true, reason: "ok", fingerprint: "f".repeat(64) }),
+    listTurns: async () => ({ data: [{ id: turnId, status: "inProgress" }], nextCursor: null }) } as never;
+  const store = { inspect: async () => ({ state: options.state ?? "running", turnId: options.state === "idle" ? null : turnId, used: 0 }), providerHeld: async () => false } as never;
+  const service = new DirectInputService({ store, runtime: () => runtime, canWrite: () => true, bindingFor: async () => binding,
+    admission: async () => { if (options.admission === "missing") throw new DomainError("DIRECT_GRANT_MISSING", "no grant"); return { grant: { ...grant, canSteer: options.canSteer ?? true }, binding }; } });
+  const result = await service.capability(principal, projectId, sessionId);
+  return result.reasonCode;
+};
+
+test("capability: a running Session whose runtime has no mid-turn input says so, with or without a grant; authorization is named only when it is what is missing", async () => {
+  // Claude-like runtime (no mid-turn input): the runtime's limit wins over every grant state.
+  assert.equal(await reasonFor({ midTurnInput: false, admission: "missing" }), "NATIVE_STEER_UNAVAILABLE", "no grant, but adding one would not help");
+  assert.equal(await reasonFor({ midTurnInput: false, admission: "granted", canSteer: false }), "NATIVE_STEER_UNAVAILABLE", "a grant without steer does not change the runtime's limit");
+  assert.equal(await reasonFor({ midTurnInput: false, admission: "granted", canSteer: true }), "NATIVE_STEER_UNAVAILABLE");
+  // A runtime that can take an addition: now the authorization is what is said.
+  assert.equal(await reasonFor({ midTurnInput: true, admission: "missing" }), "DIRECT_GRANT_MISSING");
+  assert.equal(await reasonFor({ midTurnInput: true, admission: "granted", canSteer: false }), "DIRECT_STEER_DISABLED");
+  assert.equal(await reasonFor({ midTurnInput: true, admission: "granted", canSteer: true }), "READY_TO_STEER");
+  // Idle: nothing to add to, so a missing grant is still a missing grant.
+  assert.equal(await reasonFor({ midTurnInput: false, admission: "missing", state: "idle" }), "DIRECT_GRANT_MISSING");
+});
+
+test("a steer whose Turn changed is queued by the store and nothing is sent to the runtime", async () => {
+  const value = { ...command(), expectedTurnId: "turn-seen" };
+  let steers = 0, starts = 0;
+  const runtime = {
+    isReady: () => true, capabilitiesFor: () => capabilities(true, true), registerBinding: async () => {},
+    steerTurn: async () => { steers++; return { turnId: "x", itemId: null }; },
+    startConversationTurn: async () => { starts++; throw new Error("never"); },
+  } as never;
+  const queued = { ...record(value, "steer"), expectedTurnId: "turn-seen", state: "rejected" as const,
+    reason: "TURN_CHANGED: the Turn changed before the input was added; saved as a queued ordinary message", queuedMessageId: value.inputId };
+  const store = { get: async () => null, hasPrimary: async () => true, reserve: async () => ({ record: queued, created: true }) } as never;
+  const service = new DirectInputService({ store, runtime: () => runtime, canWrite: () => true,
+    admission: async () => ({ grant, binding }), bindingFor: async () => binding });
+  const receipt = await service.submit(principal, projectId, sessionId, value);
+  assert.equal(receipt.state, "rejected"); assert.equal(receipt.queuedMessageId, value.inputId);
+  assert.match(receipt.reason!, /^TURN_CHANGED/);
+  assert.deepEqual({ steers, starts }, { steers: 0, starts: 0 }, "the changed Turn is not steered and no other Turn is started");
+  assert.equal("content" in receipt, false);
+});
+
+test("a missing grant is refused with the missing item named, in the capability and the submission", async () => {
+  const refuse = async () => { throw new DomainError("DIRECT_GRANT_MISSING", "Direct input refused; missing: direct input grant (steer or start) for this sender and Session"); };
+  const runtime = { isReady: () => true } as never;
+  const service = new DirectInputService({ store: { get: async () => null } as never, runtime: () => runtime, canWrite: () => true,
+    admission: refuse, bindingFor: async () => binding });
+  const capability = await service.capability(principal, projectId, sessionId);
+  assert.equal(capability.available, false); assert.equal(capability.reasonCode, "DIRECT_GRANT_MISSING");
+  assert.match(capability.detail!, /missing: direct input grant/);
+  await assert.rejects(service.submit(principal, projectId, sessionId, command()), { code: "DIRECT_GRANT_MISSING", message: /missing: direct input grant/ });
+});
+
+// ---- Task e0bcde26 (follow-up to #350) ---------------------------------------------------------------------------------------
+const steerFixture = (thrown: unknown) => {
+  const value = { ...command(), expectedTurnId: turnId };
+  const calls: string[] = [];
+  const stored = { ...record(value, "steer") };
+  const store = {
+    get: async () => null, hasPrimary: async () => true,
+    reserve: async () => ({ record: stored, created: true }),
+    reject: async () => { calls.push("reject"); return { ...stored, state: "rejected" as const, reason: "Native request was explicitly rejected" }; },
+    rejectSteerAndQueue: async () => { calls.push("queue"); return { ...stored, state: "rejected" as const, queuedMessageId: value.inputId }; },
+    unknown: async () => { calls.push("unknown"); return { ...stored, state: "unknown" as const }; },
+  } as never;
+  const runtime = { isReady: () => true, capabilitiesFor: () => capabilities(true, true), registerBinding: async () => {},
+    steerTurn: async () => { throw thrown; } } as never;
+  const service = new DirectInputService({ store, runtime: () => runtime, canWrite: () => true, admission: async () => ({ grant, binding }), bindingFor: async () => binding });
+  return { service, value, calls };
+};
+
+test("item 1: the native runtime refusing a steer because the Turn just ended (-32600, no steer classification) saves it as one queued message, not a red error", async () => {
+  // The window: the Turn has ended natively while the database still says running; the runtime answers -32600 and no steerRejection.
+  const ended = new RuntimeServerError("turn/steer", 9, -32600, "no active turn to steer");
+  assert.equal(ended.steerRejection, null);
+  const { service, value, calls } = steerFixture(ended);
+  const receipt = await service.submit(principal, projectId, sessionId, value);
+  assert.deepEqual(calls, ["queue"], "queued once, not rejected");
+  assert.equal(receipt.state, "rejected"); assert.equal(receipt.queuedMessageId, value.inputId);
+  // A different expected Turn answered the same way is the same window.
+  const mismatch = steerFixture(new RuntimeServerError("turn/steer", 10, -32600, "expected turn id does not match the active turn"));
+  await mismatch.service.submit(principal, projectId, sessionId, mismatch.value);
+  assert.deepEqual(mismatch.calls, ["queue"]);
+});
+
+test("item 1: only a provable refusal of the steer is queued; an unclear outcome stays unknown (never a second message)", async () => {
+  const lost = steerFixture(new RuntimeUnknownError("turn/steer", 11, "no reply"));
+  await lost.service.submit(principal, projectId, sessionId, lost.value);
+  assert.deepEqual(lost.calls, ["unknown"], "a lost reply may have reached the Turn: not queued");
+});
+
+// ---- Task c0dba0fa (rework of #383): only an error that proves the steer was not applied is queued ------------------------------
+test("a steer error is queued only when it proves nothing was applied: -32600 is; -32603 and server-defined errors are unknown and need a reconcile", async () => {
+  const outcome = async (code: number, message = "native error") => {
+    const fixture = steerFixture(new RuntimeServerError("turn/steer", 21, code, message));
+    await fixture.service.submit(principal, projectId, sessionId, fixture.value);
+    return fixture.calls;
+  };
+  assert.deepEqual(await outcome(-32600, "no active turn to steer"), ["queue"], "invalid request: no active Turn, nothing was applied");
+  assert.deepEqual(await outcome(-32603, "internal error"), ["unknown"], "an internal error may have applied the steer: not queued, reconcile first");
+  assert.deepEqual(await outcome(-32000, "server error"), ["unknown"], "a server-defined error proves nothing");
+  assert.deepEqual(await outcome(-32099, "server error"), ["unknown"]);
+  // Method not found and invalid params are refused before anything runs: a plain refusal as before (not queued, not unknown).
+  assert.deepEqual(await outcome(-32601, "method not found"), ["reject"]);
+  assert.deepEqual(await outcome(-32602, "invalid params"), ["reject"]);
+  // The structured "this Turn kind cannot take input" refusal is evidence too and still queues.
+  const structured = steerFixture(new RuntimeServerError("turn/steer", 22, -32602, "cannot steer a review turn", undefined, { codexErrorInfo: { activeTurnNotSteerable: { turnKind: "review" } } }));
+  await structured.service.submit(principal, projectId, sessionId, structured.value);
+  assert.deepEqual(structured.calls, ["queue"]);
 });

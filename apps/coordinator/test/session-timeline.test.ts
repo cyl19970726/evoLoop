@@ -255,7 +255,7 @@ test('unsettled or bounded incomplete Turn reads never select an input from the 
   }
 });
 
-test('input proof read failure remains unassociated and native permission denial propagates',async()=>{
+test('a failed separate proof read leaves the input "not checked" (never an unverified sender) where the page does not hold the Turn, and native permission denial propagates',async()=>{
   const h=inputProofHarness('message',{unique:true});
   const history=h.runner.workspaceHistory.bind(h.runner);
   let forbidden=false;
@@ -264,14 +264,23 @@ test('input proof read failure remains unassociated and native permission denial
     return history(principal,projectId,sessionId,query);
   };
   try{
-    const page=await h.service.page(reader,project,key,{limit:2,source:'native'});
-    assert.ok(page.entries.every(entry=>entry.kind==='notice'));
-    assert.equal(page.pending[0]?.body,'Message 10 from human-a');
-    assert.equal(page.partial,true);
-    assert.ok(page.limitations.length>0);
-    assert.equal((await h.service.item(reader,project,key,h.turnId,'proof-a')).kind,'notice');
+    // The page lists the whole Turn (both Items, no continuation): it proves the Turn without the separate read that fails here.
+    const whole=await h.service.page(reader,project,key,{limit:2,source:'native'});
+    assert.equal(whole.entries.find(entry=>entry.nativeItemId==='proof-a')?.kind,'message');
+    // A request for one Item cannot lean on a page: its own proof read fails, so the input is "not checked", not "unverified".
+    const item=await h.service.item(reader,project,key,h.turnId,'proof-a');
+    assert.equal(item.kind,'notice');
+    assert.equal((item as {label:string}).label,'未核对的原生输入');
+    assert.match((item as {body:string}).body,/本次未核对，可展开核对/);
+    assert.doesNotMatch((item as {body:string}).body,/未能核实/);
+    // A page that continues past the Turn cannot prove it either: the Turn is at its edge.
+    const edge=await h.service.page(reader,project,key,{limit:1,source:'native'});
+    assert.equal(edge.pending[0]?.body,'Message 10 from human-a');
+    assert.equal(edge.partial,true);
     h.emit({projectId:project,sessionId,threadId:thread,turnId:h.turnId,observedAt:now,kind:'entry',entry:h.a});
-    assert.equal((await h.service.updates(reader,project,key)).entries[0]?.kind,'notice');
+    const live=(await h.service.updates(reader,project,key)).entries[0];
+    assert.equal(live?.kind,'notice');
+    assert.equal((live as {label:string}).label,'未核对的原生输入');
     forbidden=true;
     const denied=(error:unknown)=>error instanceof DomainError&&error.code==='FORBIDDEN';
     await assert.rejects(h.service.page(reader,project,key,{limit:2,source:'native'}),denied);
@@ -444,6 +453,42 @@ test('a matching Turn and identical text never prove native input ownership with
   assert.equal(detail.id,`native:${thread}:turn-message:input-1`);
   assert.equal((detail as {body:string}).body.includes('Message 10'),false);
   h.service.close();
+});
+
+test('a direct idle start and a later supplement on its Turn both show their verified sender (the start sends its input ID as client ID and names the operation in the marker)',async()=>{
+  const h=harness();
+  const turnId='turn-message',steerId=id(701),steerItem='steer-item';
+  const startMarker={kind:'operation-marker' as const,source:'message' as const,operationId:sourceMessage.operationId};
+  const history=(startClient:string,marker:typeof startMarker|null)=>async()=>({
+    entries:[{...nativeInput('start-item',turnId,startClient),...(marker?{inputReference:marker}:{})},nativeInput(steerItem,turnId,steerId),agent('answer-1',turnId)],
+    turns:[{id:turnId,state:'completed' as const,startedAt:now,completedAt:now,origin:null}],nextCursor:null,observedAt:now,historyMode:'paginated' as const,
+    method:'items' as const,partial:false,limitations:[],unsupportedKinds:[]});
+  h.directRecords.push({projectId:project,sessionId,inputId:steerId,operationId:id(702),actorId:'human-steer',content:'Supplement',mode:'steer',
+    source:{kind:'message',id:sourceMessage.messageId,processingId:sourceMessage.processingId},expectedTurnId:turnId,actualTurnId:turnId,nativeItemId:steerItem,
+    state:'accepted',reason:null,version:2,createdAt:now,updatedAt:now});
+  try{
+    // The real shape: client ID = the saved message's ID (the direct input ID), marker = that message's operation.
+    h.runner.workspaceHistory=history(sourceMessage.messageId,startMarker);
+    const page=await h.service.page(reader,project,key,{limit:5,source:'native'});
+    const inputs=page.entries.filter(e=>e.kind==='message'&&e.nativeKind==='userMessage'||e.kind==='notice');
+    assert.equal(inputs.length,2);
+    assert.deepEqual(inputs.map(e=>e.kind),['message','message'],'neither input is a notice about conflicting identity');
+    assert.deepEqual(inputs.map(e=>e.author.id),['human-a','human-steer'],'both senders are verified');
+    assert.equal(inputs[0]!.origin?.kind,'message');assert.equal(inputs[0]!.origin?.id,sourceMessage.messageId);
+    assert.ok(!page.entries.some(e=>e.kind==='notice'&&/冲突/.test(e.label)));
+    const detail=await h.service.item(reader,project,key,turnId,'start-item');
+    assert.equal(detail.kind,'message');assert.equal(detail.author.id,'human-a');
+    // Not a way to hide the warning: an input whose marker names another operation, or that has no marker, still fails closed.
+    h.runner.workspaceHistory=history(sourceMessage.messageId,{...startMarker,operationId:id(999)});
+    const wrongMarker=(await h.service.page(reader,project,key,{limit:5,source:'native'})).entries.find(e=>e.nativeItemId==='start-item');
+    assert.equal(wrongMarker?.kind,'notice');
+    h.runner.workspaceHistory=history(sourceMessage.messageId,null);
+    const noMarker=(await h.service.page(reader,project,key,{limit:5,source:'native'})).entries.find(e=>e.nativeItemId==='start-item');
+    assert.equal(noMarker?.kind,'notice','the message ID alone proves nothing without the marker naming its operation');
+    h.runner.workspaceHistory=history(id(998),startMarker);
+    const otherClient=(await h.service.page(reader,project,key,{limit:5,source:'native'})).entries.find(e=>e.nativeItemId==='start-item');
+    assert.equal(otherClient?.kind==='notice'&&otherClient.label,'标识冲突的原生输入');
+  }finally{h.service.close()}
 });
 
 test('contradictory client ID and operation marker fail closed on page, detail and live',async()=>{

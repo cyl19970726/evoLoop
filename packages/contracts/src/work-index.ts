@@ -148,6 +148,16 @@ export interface LeaderWorkTask {
     label: string;
   };
   assignment: LeaderWorkAssignment | null;
+  /** The Task's declared acceptance convention (DEC-042); null when it declared nothing. `readiness` is null until a delivery exists. */
+  acceptanceConvention?: {
+    acceptanceTarget: "human" | "leader" | "business_session" | "named_agent" | null;
+    acceptancePrecondition: "none" | "refresh" | "release" | "migration" | "config_restart" | null;
+    readiness: "ready" | "waiting_precondition" | null;
+    /** Set for `named_agent`: the business identity that accepts directly. */
+    namedAgent: string | null;
+    /** Who marked the current delivery's precondition met, on what evidence and when; null when not marked (or no delivery yet). */
+    preconditionMark: { actorId: string; evidence: string; markedAt: string } | null;
+  } | null;
   latestRun: LeaderWorkRunFact | null;
   delivery: LeaderWorkDeliveryFact | null;
   pendingImpactCount: number;

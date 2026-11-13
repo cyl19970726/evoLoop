@@ -80,7 +80,10 @@ async function finishRun(runId: string) {
   await runtime.recordTurn(p, runId, `turn-${runId}`, "completed", "done", { completedAtUtc: new Date().toISOString() });
 }
 const pump = new SessionLinePump({ workflow, credentials: async () => [lead, worker], enabled: async () => true, canWrite: () => true, pollIntervalMs: 1000,
-  onError: error => { throw error; }, recipientActorId: async () => "worker" });
+  onError: error => { throw error; }, recipientActorId: async () => "worker", retryBackoffMs: () => 0 });
+// W5 follow-up: what a line event does to the Leader. Only some become notices; the rest are records that wake no one.
+const lineNotices = async (taskId: string) => (await pool.query(`SELECT kind, level, source_session_id FROM leader_result_notice WHERE project_id=$1 AND task_id=$2 AND kind LIKE 'line\\_%' ORDER BY occurred_at, kind`, [p, taskId])).rows;
+const lineRecords = async (taskId: string) => (await pool.query(`SELECT kind, source_ref FROM leader_event_record WHERE project_id=$1 AND task_id=$2 AND kind LIKE 'line\\_%' ORDER BY occurred_at, source_ref`, [p, taskId])).rows;
 const settle = async () => { for (let i = 0; i < 4; i++) await pump.tick(); };
 
 test("entries keep their order, move one step, and a queued Task cannot be started, reserved or reassigned another way", async () => {
@@ -163,6 +166,27 @@ test("a busy Session makes entries wait; on its Run's end the first entry is con
   assert.ok(events.some(e => e.kind === "entry.runEnded" && e.taskId === a && e.detail.runState === "completed"), "one item's Run end is written once");
   assert.equal(events.filter(e => e.kind === "entry.runEnded" && e.taskId === a).length, 1);
   assert.ok(events.every((e, i) => i === 0 || e.seq > events[i - 1]!.seq), "events are ordered");
+  // W5 follow-up: appended, started and ended are records (no notice); a returned confirmation is a digest notice for the Leader.
+  assert.deepEqual(await lineNotices(a), [], "appending, starting and ending raise no notice");
+  assert.deepEqual((await lineRecords(a)).map(row => row.kind), ["line_entry_appended", "line_entry_started", "line_entry_ended"], "they are recorded, in order");
+  assert.deepEqual((await lineNotices(b)).map(row => [row.kind, row.level, String(row.source_session_id)]), [["line_confirmation_returned", "digest", session]],
+    "the returned execution confirmation is a digest notice");
+  assert.deepEqual((await lineRecords(b)).map(row => row.kind), ["line_entry_appended"]);
+});
+
+test("an unresolved business identity suspends the entry before any assignment or Run, with a reason that names the Session", async () => {
+  const x = await newTask("Unresolved identity");
+  await append(x);
+  const reason = `Session ${session} shares its Role with 2 other live Session(s) and has no runtime.materialCli entry of its own; the business identity is not guessed from the Role`;
+  const unresolved = new SessionLinePump({ workflow, credentials: async () => [lead, worker], enabled: async () => true, canWrite: () => true, pollIntervalMs: 1000,
+    onError: error => { throw error; }, recipientActorId: async () => ({ unresolved: reason }) });
+  await unresolved.tick(); await unresolved.tick();
+  const suspended = await entryOf(x);
+  assert.equal(suspended.state, "suspended"); assert.match(suspended.suspendReason!, /^RECIPIENT_UNAVAILABLE/);
+  assert.match(suspended.suspendReason!, new RegExp(session)); assert.match(suspended.suspendReason!, /not guessed from the Role/);
+  assert.equal((await task(x)).state, "todo", "nothing started");
+  assert.equal(await workflow.getTaskAssignment(lead, p, x), null, "no assignment was written for another identity");
+  assert.equal((await pool.query("SELECT count(*)::int n FROM runtime_run WHERE project_id=$1 AND task_id=$2", [p, x])).rows[0].n, 0, "no Run, so no preflight failure");
 });
 
 test("an entry that cannot start is suspended with its reason and an immediate event, and the next entry moves up; resume puts it back", async () => {
@@ -181,6 +205,9 @@ test("an entry that cannot start is suspended with its reason and an immediate e
   assert.equal((await task(x)).state, "todo", "the suspended Task was not started");
   const events = await workflow.listSessionLineEvents(lead, p, 0, 500, session);
   assert.ok(events.some(e => e.kind === "entry.suspended" && e.detail.level === "immediate" && e.entryId === suspended.id));
+  // W5 follow-up: a suspended entry is an immediate notice for the Leader, once; the entry behind it raised none.
+  assert.deepEqual((await lineNotices(x)).map(row => [row.kind, row.level]), [["line_entry_suspended", "immediate"]]);
+  assert.deepEqual(await lineNotices(y), []);
   assert.equal(await reject({ type: "line.move", projectId: p, operationId: randomUUID(), entryId: (await entryOf(y)).id, expectedVersion: (await entryOf(y)).version, direction: "back" }), "ENTRY_STARTING");
   const again = await entryOf(x);
   await apply({ type: "line.resume", projectId: p, operationId: randomUUID(), entryId: again.id, expectedVersion: again.version, reason: "recipient configured" });
@@ -228,7 +255,7 @@ const makePump = (over: Partial<SessionLinePumpDeps> = {}, exec?: (real: Workflo
     ? (principal: Principal, command: Parameters<WorkflowService["execute"]>[1]) => exec(target.execute.bind(target), command) ?? target.execute(principal, command)
     : (target as never)[key] }) as WorkflowService : workflow;
   return new SessionLinePump({ workflow: wf, credentials: async () => [lead, worker], enabled: async () => true, canWrite: () => true, pollIntervalMs: 1000,
-    onError: error => { throw error; }, recipientActorId: async () => "worker", ...over });
+    onError: error => { throw error; }, recipientActorId: async () => "worker", retryBackoffMs: () => 0, ...over });
 };
 const ticks = async (pumpUnderTest: SessionLinePump, n = 6) => { for (let i = 0; i < n; i++) await pumpUnderTest.tick(); };
 const confirmTask = async (taskId: string) => {
@@ -412,4 +439,228 @@ test("review 6: the capacity view separates a busy Session from queued line item
   assert.equal(row.openAssignments, base.openAssignments, "the assignment the line wrote before the Task started is not an unfinished arrangement");
   assert.equal(row.persistedWorkIdle, false);
   await cleanLine();
+});
+
+// ---- follow-up: retry cap, temporary blocks, confirmation re-check, pump read scope ------------------------------------------------
+const refuseReserve = (code: string, log: string[] = []) => (_real: WorkflowService["execute"], command: Parameters<WorkflowService["execute"]>[1]) => {
+  if (command.type !== "runtime.run.reserve") return null;
+  log.push(code);
+  return Promise.resolve({ status: "rejected" as const, code, message: `${code} (test)` }) as ReturnType<WorkflowService["execute"]>;
+};
+const countKind = async (kind: string, taskId: string) =>
+  (await workflow.listSessionLineEvents(lead, p, 0, 500, session)).filter(e => e.kind === kind && (e as { taskId?: string }).taskId !== "other" && JSON.stringify(e).includes(taskId)).length;
+/** Drive an entry to its start step: appended, requested, confirmed. */
+const toStartStep = async (title: string, pumpUnderTest: SessionLinePump, startTask = false) => {
+  const t = await newTask(title, startTask); await append(t);
+  await ticks(pumpUnderTest, 2); await confirmTask(t); await ticks(pumpUnderTest, 1);
+  assert.equal((await entryOf(t)).step, "start");
+  return t;
+};
+
+test("follow-up 1a: a blocked recovery gate suspends the entry once, with no retry", async () => {
+  await cleanLine();
+  const log: string[] = [];
+  const blocked = makePump({}, refuseReserve("RECOVERY_BLOCKED", log));
+  const t = await toStartStep("Gate blocked", blocked);
+  await ticks(blocked, 6);
+  const entry = await entryOf(t);
+  assert.equal(entry.state, "suspended"); assert.match(entry.suspendReason!, /^RECOVERY_BLOCKED/);
+  assert.equal(log.length, 1, "the refused reserve was sent once");
+  assert.equal(entry.stepTry, 0);
+  assert.equal(await countKind("entry.retried", t), 0, "no entry.retried event");
+  assert.equal(await countKind("entry.suspended", t), 1, "one immediate-level suspension");
+});
+
+test("follow-up 1b: a retryable refusal is retried within the cap, then the entry is suspended with the reason", async () => {
+  await cleanLine();
+  const log: string[] = [];
+  const capped = makePump({ maxStepRetries: 3 }, refuseReserve("SESSION_BUSY", log));
+  const t = await toStartStep("Busy forever", capped);
+  await ticks(capped, 12);
+  const entry = await entryOf(t);
+  assert.equal(entry.state, "suspended"); assert.match(entry.suspendReason!, /^RETRY_LIMIT: .*SESSION_BUSY/);
+  assert.equal(entry.stepTry, 3);
+  assert.equal(await countKind("entry.retried", t), 3, "exactly the cap of retries were written");
+  assert.equal(log.length, 4, "the first try plus three retries");
+  const suspended = (await workflow.listSessionLineEvents(lead, p, 0, 500, session)).filter(e => e.kind === "entry.suspended" && JSON.stringify(e).includes(t));
+  assert.equal(suspended.length, 1); assert.match(JSON.stringify(suspended[0]), /immediate/);
+  await ticks(capped, 3);
+  assert.equal(log.length, 4, "a suspended entry sends nothing more");
+});
+
+test("follow-up 1c: retries back off instead of repeating on every poll", async () => {
+  await cleanLine();
+  const log: string[] = [];
+  const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+  const slow = makePump({ retryBackoffMs: n => 300 * n, maxStepRetries: 9 }, refuseReserve("SESSION_BUSY", log));
+  const t = await toStartStep("Backoff", slow);
+  await ticks(slow, 6); // polled six times at once: the first refusal is written, then nothing until the backoff passes
+  assert.equal(log.length, 1); assert.equal((await entryOf(t)).stepTry, 1);
+  await sleep(350); await ticks(slow, 1); assert.equal(log.length, 2); assert.equal((await entryOf(t)).stepTry, 2);
+  await sleep(350); await ticks(slow, 3); assert.equal(log.length, 2, "the second backoff (600 ms) is longer than the first");
+  await sleep(300); await ticks(slow, 1); assert.equal(log.length, 3);
+  assert.equal(await countKind("entry.retried", t), 3, "one retry per refusal, none per poll");
+});
+
+test("follow-up 2: SESSION_INPUT_BUSY on the confirmation request keeps the entry waiting; any other reason suspends", async () => {
+  await cleanLine();
+  const wait = makePump();
+  const t = await newTask("Parked request"); await append(t);
+  await ticks(wait, 2);
+  const requestId = (await entryOf(t)).messageId!;
+  // The message pump records blockedReason on the message; the pump under test sees the record with it (a message cannot be edited in place).
+  let reason: string | null = null;
+  const seesBlock = new Proxy(workflow, { get: (target, key) => key === "getSessionMessageRecord"
+    ? async (...args: unknown[]) => { const record = await (target.getSessionMessageRecord as (...a: unknown[]) => Promise<Record<string, unknown> | null>)(...args);
+      return record && reason ? { ...record, blockedReason: reason } : record; }
+    : (target as never)[key] }) as WorkflowService;
+  const parked = makePump({ workflow: seesBlock });
+  reason = "SESSION_INPUT_BUSY: another native send owns this Session";
+  await ticks(parked, 3);
+  assert.equal((await entryOf(t)).state, "starting", "waiting, not suspended");
+  assert.equal(requestId, (await entryOf(t)).messageId);
+  reason = null;
+  await confirmTask(t); await ticks(wait, 6);
+  const started = await entryOf(t);
+  assert.equal(started.state, "started", JSON.stringify(started));
+  await finishRun((await runsOf(t))[0]!.id); await ticks(wait, 2);
+  await cleanLine();
+  const u = await newTask("Other block"); await append(u);
+  await ticks(wait, 2);
+  reason = "GRANT_MISSING: no grant";
+  await ticks(parked, 2);
+  const other = await entryOf(u);
+  assert.equal(other.state, "suspended"); assert.match(other.suspendReason!, /^MESSAGE_UNDELIVERED: .*GRANT_MISSING/);
+});
+
+test("follow-up 3: an in_progress Task revised after the Session confirmed it is CONFIRMATION_STALE and no Run is opened", async () => {
+  await cleanLine();
+  const wait = makePump();
+  const t = await toStartStep("Started then revised", wait, true);
+  assert.equal((await task(t)).state, "in_progress");
+  const hold = await busyRun();
+  await ticks(wait, 2);
+  const before = await task(t);
+  await apply({ type: "task.update", projectId: p, operationId: randomUUID(), taskId: t, expectedVersion: before.version, title: `${before.title} (retitled)`,
+    content: before.content, acceptance: before.acceptance, owner: before.owner, reason: "retitle after the confirmation" });
+  assert.notEqual((await task(t)).currentRevisionId, before.currentRevisionId, "the in_progress Task has a new revision");
+  await finishRun(hold);
+  await ticks(wait, 4);
+  const entry = await entryOf(t);
+  assert.equal(entry.state, "suspended", JSON.stringify(entry)); assert.match(entry.suspendReason!, /^CONFIRMATION_STALE/);
+  assert.equal((await runsOf(t)).length, 0, "no Run was opened");
+});
+
+test("follow-up 3b: the revision made by the line's own task.start is not a change, also across a retry", async () => {
+  await cleanLine();
+  const log: string[] = [];
+  let refuse = true;
+  const own = makePump({ maxStepRetries: 4 }, (real, command) => command.type === "runtime.run.reserve" && refuse ? refuseReserve("SESSION_BUSY", log)(real, command) : null);
+  const t = await toStartStep("Own start", own); // todo Task: the line starts it, then the reserve is refused and retried
+  await ticks(own, 3);
+  assert.equal((await task(t)).state, "in_progress"); assert.ok(log.length >= 2, "the reserve was retried after the Task started");
+  assert.equal((await entryOf(t)).state, "starting", "its own start does not make the confirmation stale");
+  refuse = false; await ticks(own, 3);
+  assert.equal((await entryOf(t)).state, "started");
+  await finishRun((await runsOf(t))[0]!.id); await ticks(own, 2);
+});
+
+test("follow-up 4: the pump reads only unfinished entries; finished old ones are no longer read", async () => {
+  await cleanLine();
+  const done = await newTask("Finished long ago"); await append(done);
+  const quick = makePump();
+  await ticks(quick, 2); await confirmTask(done); await ticks(quick, 4);
+  await finishRun((await runsOf(done))[0]!.id); await ticks(quick, 2);
+  assert.ok((await entryOf(done)).runEndedAt, "the old entry's Run end is recorded");
+  const gone = await newTask("Withdrawn"); await append(gone);
+  const g = await entryOf(gone); await apply({ type: "line.remove", projectId: p, operationId: randomUUID(), entryId: g.id, expectedVersion: g.version, reason: "no" });
+  const waiting = await newTask("Waiting now"); await append(waiting);
+  const seen: string[][] = []; const asked: string[] = [];
+  const spy = new Proxy(workflow, { get: (target, key) => {
+    if (key === "listSessionLineEntries") return (...args: unknown[]) => { asked.push("all"); return (target.listSessionLineEntries as (...a: unknown[]) => unknown)(...args); };
+    if (key === "listUnfinishedSessionLineEntries") return async (...args: unknown[]) => {
+      asked.push("unfinished");
+      const rows = await (target.listUnfinishedSessionLineEntries as (...a: unknown[]) => Promise<Array<{ taskId: string }>>)(...args);
+      seen.push(rows.map(row => row.taskId)); return rows;
+    };
+    return (target as never)[key];
+  } }) as WorkflowService;
+  await ticks(makePump({ workflow: spy }), 2);
+  assert.deepEqual([...new Set(asked)], ["unfinished"], "the pump never asks for the whole history");
+  for (const rows of seen) { assert.ok(!rows.includes(done), "the finished entry is not read"); assert.ok(!rows.includes(gone), "the withdrawn entry is not read"); }
+  assert.ok(seen.some(rows => rows.includes(waiting)));
+  // A started entry whose Run end is still unrecorded is read, so the end gets recorded.
+  const live = (await workflow.listUnfinishedSessionLineEntries(lead, p, session)).map(e => e.taskId);
+  assert.ok(!live.includes(done) && !live.includes(gone));
+  const all = (await workflow.listSessionLineEntries(lead, p, session, true)).map(e => e.taskId);
+  assert.ok(all.includes(done) && all.includes(gone), "the full history is still there for the workbench");
+});
+
+test("Q2 defect 52eb5ecf: the work board and the event stream follow the Session line — append, move, remove, suspend, resume, start, end — and the measures are not zero", async () => {
+  const { readSchedEvents, readWorkBoard } = await import("../src/work-board.ts");
+  const { computeBoardMetrics } = await import("../../../apps/coordinator/src/work-board/metrics.ts");
+  for (const entry of await entries()) await apply({ type: "line.remove", projectId: p, operationId: randomUUID(), entryId: entry.id, expectedVersion: entry.version, reason: "Q2 scenario starts from an empty line" });
+  const startSeq = (await readSchedEvents(pool, p, { limit: 1 })).head;
+  const startedAt = new Date().toISOString();
+  const busy = await newTask("Q2 busy", true);
+  const busyRun = randomUUID();
+  await apply({ type: "runtime.run.reserve", projectId: p, operationId: randomUUID(), runId: busyRun, taskId: busy, sessionId: session,
+    expectedVersion: (await task(busy)).version, input: "Current work" });
+  const a = await newTask("Q2 line A"), b = await newTask("Q2 line B"), c = await newTask("Q2 line C");
+  const ready = (board: Awaited<ReturnType<typeof readWorkBoard>>) => board.readyNotQueued.map(t => t.taskId);
+  const baseline = (await readWorkBoard(pool, p)).graph.counts.queued!;
+  const ours = (m: { queue: Array<{ taskId: string }> }) => m.queue.map(q => q.taskId).filter(id => [a, b, c].includes(id));
+  assert.ok(ready(await readWorkBoard(pool, p)).includes(a), "before it is in a line, a ready Task is listed as ready and not queued");
+  await append(a); await append(b); await append(c);
+  let board = await readWorkBoard(pool, p);
+  let mine = board.sessions.find(s => s.sessionId === session)!;
+  assert.deepEqual(ours(mine), [a, b, c], "the board's queue is the Session line, in order");
+  assert.ok(mine.queue.filter(q => [a, b, c].includes(q.taskId)).every(q => q.state === "queued" && q.source === "lead" && q.waitedSeconds >= 0));
+  assert.equal(board.graph.counts.queued, baseline + 3); assert.equal(board.graph.counts.running, 1);
+  assert.ok(![a, b, c].some(id => ready(board).includes(id)), "a Task that waits in a line is not 'ready but in no line'");
+  assert.ok(mine.current?.kind === "run", "the Session is busy with the Run");
+  const entryC = await entryOf(c);
+  await apply({ type: "line.move", projectId: p, operationId: randomUUID(), entryId: entryC.id, expectedVersion: entryC.version, direction: "forward" });
+  board = await readWorkBoard(pool, p); mine = board.sessions.find(s => s.sessionId === session)!;
+  assert.deepEqual(ours(mine), [a, c, b], "a move shows");
+  const entryB = await entryOf(b);
+  await apply({ type: "line.remove", projectId: p, operationId: randomUUID(), entryId: entryB.id, expectedVersion: entryB.version, reason: "no longer needed" });
+  board = await readWorkBoard(pool, p); mine = board.sessions.find(s => s.sessionId === session)!;
+  assert.deepEqual(ours(mine), [a, c], "a removed entry leaves the board's queue");
+  assert.equal(board.graph.counts.queued, baseline + 2); assert.ok(ready(board).includes(b), "and its Task is ready again");
+
+  await finishRun(busyRun);
+  await settle();
+  board = await readWorkBoard(pool, p); mine = board.sessions.find(s => s.sessionId === session)!;
+  assert.equal(mine.queue.find(q => q.taskId === a)?.state, "claimed", "the head's turn has come: it is being started");
+
+  const page = await readSchedEvents(pool, p, { after: startSeq, limit: 500 });
+  const lineEvents = page.items.filter(e => e.subject.kind === "line_entry");
+  const kinds = lineEvents.map(e => e.kind);
+  for (const kind of ["task.queued", "task.reordered", "task.removed", "task.turn"]) assert.ok(kinds.includes(kind), `${kind} in ${kinds.join(",")}`);
+  assert.equal(lineEvents.filter(e => e.kind === "task.queued").length, 3);
+  assert.ok(lineEvents.find(e => e.kind === "task.queued")!.from === "lead", "the appended entry names who added it");
+  assert.ok(lineEvents.every(e => e.sessionId === session && e.taskId));
+  const metrics = computeBoardMetrics(page.items, startedAt, new Date(Date.now() + 1000).toISOString());
+  const lead_ = metrics.queueWait.find(w => w.source === "lead");
+  assert.ok(lead_ && lead_.count >= 1 && lead_.medianSeconds !== null, `queue wait by source is measured: ${JSON.stringify(metrics.queueWait)}`);
+  const idle = metrics.sessionIdle.find(s => s.sessionId === session);
+  assert.ok(idle && idle.idleWithWorkSeconds > 0, `idle with work waiting is measured: ${JSON.stringify(metrics.sessionIdle)}`);
+});
+
+test("Q2 defect 52eb5ecf: a suspended entry is held on the board and an event, resuming it is an event too", async () => {
+  const { readSchedEvents, readWorkBoard } = await import("../src/work-board.ts");
+  for (const entry of await entries()) await apply({ type: "line.remove", projectId: p, operationId: randomUUID(), entryId: entry.id, expectedVersion: entry.version, reason: "Q2 scenario starts from an empty line" });
+  const start = (await readSchedEvents(pool, p, { limit: 1 })).head;
+  const t = await newTask("Q2 suspended"); await append(t);
+  const entry = await entryOf(t);
+  await pool.query("UPDATE session_line_entry SET state='suspended',suspend_reason='AUTHORIZATION_MISSING',version=version+1,updated_at=now() WHERE entry_id=$1", [entry.id]);
+  const board = await readWorkBoard(pool, p);
+  const item = board.sessions.find(s => s.sessionId === session)!.queue.find(q => q.taskId === t)!;
+  assert.equal(item.state, "held"); assert.equal(item.holdCode, "AUTHORIZATION_MISSING");
+  assert.ok(board.graph.counts.held >= 1);
+  await pool.query("UPDATE session_line_entry SET state='queued',suspend_reason=NULL,version=version+1,updated_at=now() WHERE entry_id=$1", [entry.id]);
+  const kinds = (await readSchedEvents(pool, p, { after: start, limit: 500 })).items.filter(e => e.taskId === t && e.subject.kind === "line_entry").map(e => e.kind);
+  assert.deepEqual(kinds, ["task.queued", "task.held", "task.resumed"]);
+  await pool.query("UPDATE session_line_entry SET state='withdrawn',withdrawn_reason='cleanup',version=version+1 WHERE entry_id=$1", [entry.id]);
 });

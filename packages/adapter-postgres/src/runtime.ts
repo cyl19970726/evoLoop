@@ -19,6 +19,7 @@ const session = (r: QueryResultRow): RuntimeSessionRecord => ({
   projectId: r.project_id, id: r.session_id, roleId: r.role_id, cwd: r.cwd,
   authorizationScope: r.authorization_scope, model: r.model, sandbox: r.sandbox,
   observedModel:r.observed_model??null,observedProvider:r.observed_provider??null,
+  ...(r.actual_model?{actualModel:r.actual_model,actualModelAt:iso(r.actual_model_at)}:{}),
   // Codex is the implicit provider (sessionProvider); only another provider is carried explicitly.
   ...(r.runtime_provider && r.runtime_provider !== "codex" ? { runtimeProvider: r.runtime_provider } : {}),
   approvalPolicy: r.approval_policy, state: r.state, version: r.version,
@@ -53,10 +54,12 @@ const run = (r: QueryResultRow): RuntimeRunRecord => ({
   nativeTurnId: r.native_turn_id, interruptRequested: r.interrupt_requested,
   ...(r.stop_requested_at ? { stopRequestedAt: iso(r.stop_requested_at), stopReason: r.stop_reason, stopRequestedBy: r.stop_requested_by } : {}),
   nativeEnvironmentEpoch: nativeEpoch(r.native_environment_epoch),
+  ...(r.failure_category ? { failureCategory: r.failure_category } : {}),
   resultSummary: r.result_summary, actorId: r.actor_id,
   createdAt: iso(r.created_at), updatedAt: iso(r.updated_at),
   ...(r.usage ? { usage: r.usage } : {}),
   ...(r.cost_usd != null ? { costUsd: Number(r.cost_usd) } : {}),
+  ...(r.actual ? { actual: r.actual } : {}),
   evaluationBinding: r.evaluation_id ? {
     evaluationId: r.evaluation_id, revisionId: r.evaluation_revision_id, caseId: r.evaluation_case_id,
     conditionId: r.evaluation_condition_id, sourceTaskRevisionId: r.evaluation_source_task_revision_id,
@@ -87,12 +90,13 @@ export class PgRuntimeStore {
     const result = await this.client.query(`${this.sessionProjection()} WHERE s.project_id=$1 ORDER BY s.created_at,s.session_id LIMIT $2`, [this.projectId, limit + 1]);
     return bounded(result.rows.map(session), "runtime sessions");
   }
-  private sessionProjection():string {return `SELECT s.*,to_jsonb(p) AS profile_revision,
+  private sessionProjection():string {return `SELECT s.*,am.model AS actual_model,am.observed_at AS actual_model_at,to_jsonb(p) AS profile_revision,
     h.activation_state AS profile_activation_state,h.active_revision_id AS profile_active_revision_id,
     active.model AS profile_active_model,active.reasoning_effort AS profile_active_reasoning_effort,
     h.activation_operation_id AS profile_activation_operation_id,h.attempted_at AS profile_attempted_at,
     h.activation_evidence AS profile_activation_evidence
-    FROM runtime_session s LEFT JOIN session_execution_profile h ON h.project_id=s.project_id AND h.session_id=s.session_id
+    FROM runtime_session s LEFT JOIN runtime_session_actual_model am ON am.project_id=s.project_id AND am.session_id=s.session_id
+    LEFT JOIN session_execution_profile h ON h.project_id=s.project_id AND h.session_id=s.session_id
     LEFT JOIN session_execution_profile_revision p ON p.project_id=h.project_id AND p.session_id=h.session_id AND p.revision_id=h.revision_id
     LEFT JOIN session_execution_profile_revision active ON active.project_id=h.project_id AND active.session_id=h.session_id
       AND active.revision_id=h.active_revision_id`;}
@@ -159,16 +163,23 @@ export class PgRuntimeStore {
         item.evaluationPacket ? JSON.stringify(item.evaluationPacket) : null,
         item.executionProfile ? JSON.stringify(item.executionProfile) : null]);
   }
+  async recordSessionActualModel(sessionId: string, model: string, at: string): Promise<void> {
+    this.scope(this.projectId);
+    await this.client.query(`INSERT INTO runtime_session_actual_model(project_id,session_id,model,observed_at) VALUES($1,$2,$3,$4)
+      ON CONFLICT (project_id,session_id) DO UPDATE SET model=EXCLUDED.model,observed_at=EXCLUDED.observed_at
+      WHERE runtime_session_actual_model.observed_at<=EXCLUDED.observed_at`, [this.projectId, sessionId, model, at]);
+  }
   async updateRuntimeRun(item: RuntimeRunRecord, expectedVersion: number): Promise<void> {
     this.scope(item.projectId);
     const result = await this.client.query(`UPDATE runtime_run SET state=$3,version=$4,native_turn_id=$5,interrupt_requested=$6,result_summary=$7,updated_at=$8,evaluation_packet=$9::jsonb,pre_turn_proof=$11::jsonb,
-      usage=$12::jsonb,cost_usd=$13,stop_requested_at=$14,stop_reason=$15,stop_requested_by=$16
+      usage=$12::jsonb,cost_usd=$13,stop_requested_at=$14,stop_reason=$15,stop_requested_by=$16,failure_category=$17,actual=$18::jsonb
       WHERE project_id=$1 AND run_id=$2 AND version=$10`,
       [item.projectId,item.id,item.state,item.version,item.nativeTurnId,item.interruptRequested,item.resultSummary,item.updatedAt,
         item.evaluationPacket ? JSON.stringify(item.evaluationPacket) : null,expectedVersion,
         item.preTurnProof ? JSON.stringify(preTurnProofSchema.parse(item.preTurnProof)) : null,
         item.usage ? JSON.stringify(item.usage) : null, item.costUsd ?? null,
-        item.stopRequestedAt ?? null, item.stopReason ?? null, item.stopRequestedBy ?? null]);
+        item.stopRequestedAt ?? null, item.stopReason ?? null, item.stopRequestedBy ?? null, item.failureCategory ?? null,
+        item.actual ? JSON.stringify(item.actual) : null]);
     if (!result.rowCount) throw new DomainError("VERSION_CONFLICT", "runtime run version changed", (await this.getRuntimeRun(item.id))?.version);
   }
   async appendRuntimeEvent(item: RuntimeRecordEvent): Promise<void> {
