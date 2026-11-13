@@ -58,7 +58,8 @@ export class PgScheduleDispatch implements ScheduleDispatchTransaction {
       'task:'||t.task_id||'@'||t.current_revision_id,$3::timestamptz) FROM task t WHERE t.project_id=$1 AND t.task_id=$2`, [this.projectId, taskId, at]);
   }
   async markWithdrawn(taskId: string, choice: "cancel" | "to_leader", at: string): Promise<void> {
-    await this.client.query(`UPDATE schedule_dispatch_log SET state='fell_back',reason=$3,decided_at=$4 WHERE project_id=$1 AND task_id=$2 AND state IN ('pending','dispatched')`,
+    // A dispatch that already happened stays dispatched (it counts against the daily budget); only the reason notes what became of its Task.
+    await this.client.query(`UPDATE schedule_dispatch_log SET state=CASE WHEN state='pending' THEN 'fell_back' ELSE state END,reason=$3,decided_at=CASE WHEN state='pending' THEN $4::timestamptz ELSE decided_at END WHERE project_id=$1 AND task_id=$2 AND state IN ('pending','dispatched')`,
       [this.projectId, taskId, choice === "cancel" ? "WITHDRAWN_CANCELLED" : "WITHDRAWN_TO_LEADER", at]);
   }
 }

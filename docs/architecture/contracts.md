@@ -351,6 +351,9 @@ Task 协作通道把 question/answer/progress/blocker/handoff/result 固定到�
 - **防失控**：每日运行预算按日程时区的日历日计，用完则本次跳过并记录（`DAILY_BUDGET`）；上一次还没关闭则本次跳过（`PREVIOUS_STILL_OPEN`），连续 2 次跳过发汇总级的 `schedule_skips_escalated`；直派队伍项的 Run 连续 2 次失败（`failed`/`interrupted`；被请求停止的和完成的不计，完成会清零）熔断：策略改成 `leader`、状态 `circuit_open`，发立即级的 `direct_circuit_open`，重新批准（再设 `direct`）才清除；已进队伍的 Task 在队伍里等过等待上限，发一次 `direct_dispatch_blocked`。
 - **Leader 知情**：直派的 Task 不发待分诊；`direct_dispatched`（已直派）和 `direct_dispatch_skipped`（本次跳过）是只记录事件，读 `/leader-records`。
 - **执行授权**：每次到点，派发主体对每个候选 Session 重新读一次私有配置（`sessionDenial`），确认它就绪、且配置里有它的 Role 在其授权范围、工作目录与沙箱下的运行时执行授权（`runtime.run.reserve` 随后要用的那份），工作目录被允许；没有授权的 Session 被跳过，没有任何候选有授权就把 Task 退回 Leader（补发待分诊），并发立即级 `direct_dispatch_blocked`，原因（`NOT_AUTHORIZED:NO_EXECUTION_GRANT`、`RUNTIME_NOT_ENABLED`、`CWD_NOT_ALLOWED`、`SESSION_NOT_READY`）写在日志和通知的来源里。第一期不新增直派配置段：直派授权 = 日程原有的授权范围 + 分发策略的状态，撤权 = 把策略设为 `revoked`。“只有派发主体能追加”第一期不做：`line.append` 仍按 review 权限；第一期只支持日程。
+- **预检同一套**：除执行授权外，派发主体对候选 Session 还核：就绪、恢复门打开、执行配置没有被拒或未知、队首没有挂起的项，以及**签名身份**（与队伍泵用同一个 `resolveLineRecipient`：同一 Role 有多个在线 Session 时必须有该 Session 自己的 `runtime.materialCli`，身份须是当前项目写入者）。都过了才追加；没有任何候选通过，Task 退回 Leader 并发立即级 `direct_dispatch_blocked`，不会只留下一个挂起的队伍项（`line_entry_suspended`）。原因取名单里第一个被拒的 Session 的：`NOT_AVAILABLE:<SESSION_NOT_READY|RECOVERY_GATE_CLOSED|EXECUTION_PROFILE_UNAVAILABLE|HEAD_SUSPENDED>`、`NOT_AUTHORIZED:<…>`、`RECIPIENT_UNAVAILABLE:<…>`、`DIRECT_LIST_EMPTY`。
+- **清理过期占位**：已取消或已关闭的定时 Task 的队伍项（挂起或已开始的队首会让该 Session 永远不能再直派）由 `schedule.directEntry.withdraw` 清理（Task 已关闭时只清条目，不再取消 Task），派发主体每轮也自动清理，并且选 Session 时不把这类条目算作队伍长度或挂起的队首。清理不会让已发生的直派不再计入每日预算。
+- **已知限制**：每日预算用完只是只记录事件（`direct_dispatch_skipped`），不发通知（设计里“直派本次跳过”就是只记录级）；执行授权按 Session 自己的授权范围检查（`runtime.run.reserve` 用的那份），日程的授权范围由日程泵既有的 grant 检查负责，两者没有合成一次检查。
 
 **用量告警按项目时区计日。** 预算的“今天”由服务按私有配置里的项目时区算（`UsageService`），读用量概览的窗口必须包含这一天；UTC 与项目时区最多差一个日历日，所以待我处理读“UTC 日前一天到后一天”（`usageWindow`），告警本身取服务回答的预算状态，不在页面里再按 UTC 日期自己算。
 

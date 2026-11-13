@@ -53,7 +53,9 @@ export async function applyScheduleDispatch(tx: Transaction, principal: Principa
   // The line's own removal does the entry; the internal flag is what lets it touch a scheduled one.
   const removed = await applySessionLine(tx, principal, { type: "line.remove", projectId: command.projectId, operationId: command.operationId, entryId: command.entryId,
     expectedVersion: command.expectedVersion, reason: `${command.choice === "cancel" ? "Cancelled" : "Handed to the Leader"}: ${command.reason}`, viaDirectWithdraw: true } as never, now, nextId);
-  if (command.choice === "cancel") {
+  const closed = ["done", "cancelled"].includes(task.state);
+  if (closed) { /* The Task is already closed or cancelled: only the stale line entry is left to clear. */ }
+  else if (command.choice === "cancel") {
     await applyWorkflow({ tx, command: { type: "task.cancel", projectId: command.projectId, operationId: nextId(), taskId: task.id, expectedVersion: task.version,
       reason: `Scheduled Task cancelled when taken out of the line: ${command.reason}` } as never, principal, now, nextId });
   } else await port.enqueueTodoNotice(task.id, now);
