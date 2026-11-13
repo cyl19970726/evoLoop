@@ -9,8 +9,11 @@ import type { Principal } from "@evoloop/contracts";
 export interface DirectDispatchDeps {
   pool: Pool;
   workflow: { execute(principal: Principal, command: never): Promise<{ status: string; entityId?: string; code?: string; message?: string }> };
-  /** The Session's authorization is complete (execution and message grants in the private configuration), read each time. Absent: no extra filter. */
-  sessionAuthorized?(projectId: string, sessionId: string): Promise<boolean>;
+  /**
+   * Why this Session may not be sent scheduled work, or null when it may: its execution authorization (the private configuration's runtime grant for
+   * its Role and scope, which `runtime.run.reserve` will need) is read afresh at every trigger. Absent: no extra filter.
+   */
+  sessionDenial?(projectId: string, sessionId: string): Promise<string | null>;
   newId(): string;
 }
 
@@ -34,8 +37,9 @@ export class ScheduleDirectDispatcher {
         await this.deps.pool.query("SELECT schedule_direct_fall_back($1,$2,$3::timestamptz,$4,$5,$6::timestamptz)", [projectId, row.schedule_id, plannedAt, reason, blocked, now]);
         counts.fellBack++;
       };
-      const chosen = await this.choose(projectId, String(row.owner));
-      if (!chosen) { await fallBack("NO_AVAILABLE_SESSION", true); continue; }
+      const picked = await this.choose(projectId, String(row.owner));
+      if (!picked.sessionId) { await fallBack(picked.denial ? `NOT_AUTHORIZED:${picked.denial}` : "NO_AVAILABLE_SESSION", true); continue; }
+      const chosen = picked.sessionId;
       const task = await this.deps.pool.query("SELECT version FROM task WHERE project_id=$1 AND task_id=$2", [projectId, row.task_id]);
       const result = await this.deps.workflow.execute(principal, { type: "line.append", projectId, operationId: this.deps.newId(), sessionId: chosen, taskId: row.task_id,
         expectedTaskVersion: task.rows[0].version, source: "schedule", scheduleId: row.schedule_id, reason: `Scheduled direct dispatch for ${plannedAt}` } as never)
@@ -64,7 +68,7 @@ export class ScheduleDirectDispatcher {
   }
 
   /** Idle first, then the shortest line, then the list's own order; only Sessions that can take it. */
-  private async choose(projectId: string, roleId: string): Promise<string | null> {
+  private async choose(projectId: string, roleId: string): Promise<{ sessionId: string | null; denial: string | null }> {
     const rows = (await this.deps.pool.query<Candidate>(`WITH list AS (SELECT s.sid, s.ord FROM direct_dispatch_list l, unnest(l.session_ids) WITH ORDINALITY s(sid,ord)
         WHERE l.project_id=$1 AND l.role_id::text=$2)
       SELECT list.sid::text AS sid, list.ord::int AS ord,
@@ -77,7 +81,12 @@ export class ScheduleDirectDispatcher {
         AND NOT EXISTS(SELECT 1 FROM session_line_entry h WHERE h.project_id=$1 AND h.session_id=list.sid AND h.state='suspended'
           AND h.position=(SELECT min(x.position) FROM session_line_entry x WHERE x.project_id=$1 AND x.session_id=list.sid AND x.state IN ${LIVE}))`, [projectId, roleId])).rows;
     rows.sort((a, b) => Number(a.running || a.qlen > 0) - Number(b.running || b.qlen > 0) || a.qlen - b.qlen || a.ord - b.ord);
-    for (const candidate of rows) if (!this.deps.sessionAuthorized || await this.deps.sessionAuthorized(projectId, candidate.sid)) return candidate.sid;
-    return null;
+    let denial: string | null = null;
+    for (const candidate of rows) {
+      const refused = this.deps.sessionDenial ? await this.deps.sessionDenial(projectId, candidate.sid) : null;
+      if (!refused) return { sessionId: candidate.sid, denial: null };
+      denial ??= refused;
+    }
+    return { sessionId: null, denial };
   }
 }

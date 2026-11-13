@@ -350,7 +350,7 @@ Task 协作通道把 question/answer/progress/blocker/handoff/result 固定到�
 - **退回交 Leader**：日程模板改了（修订时触发器立刻把策略改成 `leader`，原因 `TEMPLATE_CHANGED`）、Role 的修订变了（下一次到点时 `ROLE_BINDING_CHANGED`）、策略被设为暂停或撤权，到点的 Task 都走 Leader 的待分诊。
 - **防失控**：每日运行预算按日程时区的日历日计，用完则本次跳过并记录（`DAILY_BUDGET`）；上一次还没关闭则本次跳过（`PREVIOUS_STILL_OPEN`），连续 2 次跳过发汇总级的 `schedule_skips_escalated`；直派队伍项的 Run 连续 2 次失败（`failed`/`interrupted`；被请求停止的和完成的不计，完成会清零）熔断：策略改成 `leader`、状态 `circuit_open`，发立即级的 `direct_circuit_open`，重新批准（再设 `direct`）才清除；已进队伍的 Task 在队伍里等过等待上限，发一次 `direct_dispatch_blocked`。
 - **Leader 知情**：直派的 Task 不发待分诊；`direct_dispatched`（已直派）和 `direct_dispatch_skipped`（本次跳过）是只记录事件，读 `/leader-records`。
-- 没有做：直派授权没有单独进私有配置——这一版用日程原有的授权范围加分发策略的状态（撤权就是把 `state` 设为 `revoked`）；`sessionAuthorized` 是预留的钩子，主进程尚未接私有配置里的执行授权；第一期只支持日程。
+- **执行授权**：每次到点，派发主体对每个候选 Session 重新读一次私有配置（`sessionDenial`），确认它就绪、且配置里有它的 Role 在其授权范围、工作目录与沙箱下的运行时执行授权（`runtime.run.reserve` 随后要用的那份），工作目录被允许；没有授权的 Session 被跳过，没有任何候选有授权就把 Task 退回 Leader（补发待分诊），并发立即级 `direct_dispatch_blocked`，原因（`NOT_AUTHORIZED:NO_EXECUTION_GRANT`、`RUNTIME_NOT_ENABLED`、`CWD_NOT_ALLOWED`、`SESSION_NOT_READY`）写在日志和通知的来源里。第一期不新增直派配置段：直派授权 = 日程原有的授权范围 + 分发策略的状态，撤权 = 把策略设为 `revoked`。“只有派发主体能追加”第一期不做：`line.append` 仍按 review 权限；第一期只支持日程。
 
 **用量告警按项目时区计日。** 预算的“今天”由服务按私有配置里的项目时区算（`UsageService`），读用量概览的窗口必须包含这一天；UTC 与项目时区最多差一个日历日，所以待我处理读“UTC 日前一天到后一天”（`usageWindow`），告警本身取服务回答的预算状态，不在页面里再按 UTC 日期自己算。
 

@@ -10,6 +10,7 @@ import { RuntimeWorkflowService, WorkflowService } from "@evoloop/core";
 import { SchedulingService } from "@evoloop/core/scheduling";
 import type { Principal } from "@evoloop/contracts";
 import { ScheduleDirectDispatcher } from "../../apps/coordinator/src/scheduling/direct-dispatch.js";
+import { sessionDenial, type DirectAuthorizationConfig } from "../../apps/coordinator/src/scheduling/direct-authorization.js";
 import { fixtureRoleId, seedFixtureRole } from "./role-fixture.test.js";
 
 const database = process.env.TEST_DATABASE_URL;
@@ -37,18 +38,22 @@ async function rig(t: import("node:test").TestContext) {
     .then(r => ({ code: (r as { code?: string }).code ?? r.status }), (error: { code?: string; message: string }) => ({ code: error.code ?? error.message }));
   await applied(lead, { type: "project.create", title: "Direct dispatch" });
   const role = fixtureRoleId("scheduled-role"); await seedFixtureRole(pool, projectId, role);
-  const session = async () => {
+  const session = async (cwd = "/tmp/direct") => {
     const sessionId = randomUUID();
-    await applied(lead, { type: "runtime.session.reserve", sessionId, roleId: role, cwd: "/tmp/direct", authorizationScope: "project", sandbox: "danger-full-access", approvalPolicy: "never" });
+    await applied(lead, { type: "runtime.session.reserve", sessionId, roleId: role, cwd, authorizationScope: "project", sandbox: "danger-full-access", approvalPolicy: "never" });
     await runtime.beginSessionCreate(projectId, sessionId);
     const saved = (await deps.uow.read(projectId, r => r.getRuntimeSession(sessionId)))!;
-    await runtime.bindSession(projectId, sessionId, { owner: "evoloop-codex-app-server", projectId, sessionId, roleId: role, cwd: "/tmp/direct", authorizationScope: "project",
+    await runtime.bindSession(projectId, sessionId, { owner: "evoloop-codex-app-server", projectId, sessionId, roleId: role, cwd, authorizationScope: "project",
       nativeThreadId: `thread-${sessionId}`, nativeSessionId: `native-${sessionId}`, resumeProfile: { actorId: saved.actorId, model: saved.model, sandbox: saved.sandbox,
         approvalPolicy: saved.approvalPolicy, executionProfileRevisionId: saved.executionProfile!.revision.revisionId } });
     return sessionId;
   };
   const store = new PgSchedulingStore(pool);
-  const dispatcher = new ScheduleDirectDispatcher({ pool, workflow: { execute: (who, command) => workflow.execute(who, command as never) as never }, newId: randomUUID });
+  /** The private configuration as the dispatcher sees it, changeable between triggers: which Sessions' runtime grants exist. */
+  const config = { enabled: true, granted: new Set<string>(), reads: 0, allGranted: true };
+  const dispatcher = new ScheduleDirectDispatcher({ pool, workflow: { execute: (who, command) => workflow.execute(who, command as never) as never }, newId: randomUUID,
+    sessionDenial: sessionDenial(pool, async (): Promise<DirectAuthorizationConfig> => { config.reads++; return { runtime: { enabled: config.enabled },
+      hasRuntimeGrant: scope => config.allGranted || config.granted.has(scope.cwd), allowedRuntimeCwd: async () => true }; }) });
   const T0 = Date.now();
   let scheduleSeq = 0;
   /** An hourly schedule (skip while the previous occurrence is open) whose first trigger is one hour after T0. */
@@ -77,7 +82,7 @@ async function rig(t: import("node:test").TestContext) {
   const records = async (kind: string) => (await pool.query("SELECT task_id, source_ref FROM leader_event_record WHERE project_id=$1 AND kind=$2 ORDER BY occurred_at", [projectId, kind])).rows;
   const leaderTask = async (title: string) => { const taskId = randomUUID(); await applied(lead, { type: "task.create", taskId, title, content: `# ${title}`, acceptance: "ok", owner: role }); return taskId; };
   const appendLeader = async (sessionId: string, taskId: string) => applied(lead, { type: "line.append", sessionId, taskId, expectedTaskVersion: 1, source: "leader", reason: "arranged" });
-  return { pool, projectId, lead, writer, workflow, role, session, makeSchedule, fire, dispatchAt, setList, setPolicy, taskOfOccurrence, notices, logOf, lineOf, records, leaderTask, appendLeader, applied, refused, T0 };
+  return { config, pool, projectId, lead, writer, workflow, role, session, makeSchedule, fire, dispatchAt, setList, setPolicy, taskOfOccurrence, notices, logOf, lineOf, records, leaderTask, appendLeader, applied, refused, T0 };
 }
 
 test("a direct schedule's Task is made without a triage notice, then appended to the line of the first idle Session on the list; the Leader gets a record, not a notice", async t => {
@@ -234,4 +239,34 @@ test("direct dispatch decisions need review authority, a Role's own Sessions and
   assert.equal((await r.refused(r.lead, { type: "schedule.directList.set", roleId: r.role, expectedVersion: 0, sessionIds: [a], reason: "stale" })).code, "VERSION_CONFLICT");
   await r.setPolicy(scheduleId);
   assert.equal((await r.refused(r.lead, { type: "schedule.dispatch.set", scheduleId, expectedVersion: 0, mode: "leader", state: "active", reason: "stale" })).code, "VERSION_CONFLICT");
+});
+
+test("execution authorization is read afresh at every trigger: a Session without it is passed over, none left means the Leader gets the Task with the reason, and a withdrawn grant is honoured at the next trigger", async t => {
+  const r = await rig(t);
+  const a = await r.session("/tmp/direct-a"), b = await r.session("/tmp/direct-b");
+  await r.setList([a, b]);
+  r.config.allGranted = false;
+  // Only B's working directory has a runtime grant: A (first on the list, idle) is passed over for B.
+  r.config.granted = new Set(["/tmp/direct-b"]);
+  const first = await r.makeSchedule(); await r.setPolicy(first);
+  const readsBefore = r.config.reads;
+  await r.fire(1); await r.dispatchAt(1);
+  assert.deepEqual((await r.logOf(first)).map(row => [row.state, row.session_id]), [["dispatched", b]], "an unauthorized Session is never sent work");
+  assert.ok(r.config.reads > readsBefore, "the configuration was read at this trigger");
+  // The grant of B is withdrawn: the next trigger finds nobody authorized; the Task goes to the Leader and the notice says why.
+  r.config.granted = new Set();
+  const second = await r.makeSchedule(); await r.setPolicy(second);
+  await r.fire(1); const before = r.config.reads;
+  assert.deepEqual(await r.dispatchAt(1), { dispatched: 0, fellBack: 1 });
+  assert.ok(r.config.reads > before, "read again, not remembered from the last trigger");
+  const taskId = await r.taskOfOccurrence(second);
+  assert.deepEqual((await r.notices(taskId)).map(row => [row.kind, row.level]), [["direct_dispatch_blocked", "immediate"], ["task_todo", "digest"]]);
+  assert.deepEqual((await r.logOf(second)).map(row => [row.state, row.reason]), [["fell_back", "NOT_AUTHORIZED:NO_EXECUTION_GRANT"]]);
+  const notice = (await r.pool.query("SELECT source_ref FROM leader_result_notice WHERE project_id=$1 AND task_id=$2 AND kind='direct_dispatch_blocked'", [r.projectId, taskId])).rows[0];
+  assert.match(notice.source_ref, /NOT_AUTHORIZED:NO_EXECUTION_GRANT/, "the reason is on the notice the Leader reads");
+  // Runtime switched off altogether: the same.
+  r.config.allGranted = true; r.config.enabled = false;
+  const third = await r.makeSchedule(); await r.setPolicy(third);
+  await r.fire(1); await r.dispatchAt(1);
+  assert.deepEqual((await r.logOf(third)).map(row => row.reason), ["NOT_AUTHORIZED:RUNTIME_NOT_ENABLED"]);
 });
