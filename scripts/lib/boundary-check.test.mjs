@@ -100,7 +100,7 @@ test("a negated or to-do formal clause is not a formal read-back (candidate acce
     "候选环境通过，正式读回待做",
     "正式环境没有读回",
   ]) assert.equal(mentionsFormalReadback(text), false, text);
-  for (const text of ["候选已用，正式实例读回通过（2026-11-13 09:12Z，5ae8f8fc）", "正式环境已验证（2026-11-13 09:12Z，5ae8f8fc）", "候选通过；正式实测通过（2026-11-13 09:12Z，5ae8f8fc）"]) assert.equal(mentionsFormalReadback(text), true, text);
+  for (const text of ["候选已用；正式实例读回通过（2026-11-13 09:12Z，5ae8f8fc）", "正式环境已验证（2026-11-13 09:12Z，5ae8f8fc）", "候选通过；正式实测通过（2026-11-13 09:12Z，5ae8f8fc）"]) assert.equal(mentionsFormalReadback(text), true, text);
   assert.equal(mentionsFormalReadback(null), false);
 });
 
@@ -239,7 +239,7 @@ test("R1. a release, a review or a plain “成功/通过” is not a formal rea
   }
   for (const evidence of ["候选通过；正式发布成功", "正式发布前候选已通过", "候选已通过。正式：已通过评审，读回另行安排"]) assert.equal(judgeClosure({ evidence, hasDelivery: true, stage: null }).flagged, true, evidence);
   // the earlier cases stay as they were
-  for (const evidence of ["候选已用，正式实例读回通过（2026-11-13 09:12Z，5ae8f8fc）", "正式环境已验证（2026-11-13 09:12Z，5ae8f8fc）", "候选通过；正式实测通过（2026-11-13 09:12Z，5ae8f8fc）", "正式环境读回一致（2026-11-13 09:12Z，5ae8f8fc）"]) assert.equal(mentionsFormalReadback(evidence), true, evidence);
+  for (const evidence of ["候选已用；正式实例读回通过（2026-11-13 09:12Z，5ae8f8fc）", "正式环境已验证（2026-11-13 09:12Z，5ae8f8fc）", "候选通过；正式实测通过（2026-11-13 09:12Z，5ae8f8fc）", "正式环境读回一致（2026-11-13 09:12Z，5ae8f8fc）"]) assert.equal(mentionsFormalReadback(evidence), true, evidence);
   for (const evidence of ["候选通过；正式实例读回失败", "候选通过，等正式读回", "候选通过；正式读回 TODO", "候选通过；正式读回缺", "候选通过；正式读回"]) assert.equal(mentionsFormalReadback(evidence), false, evidence);
 });
 
@@ -302,7 +302,7 @@ test("C9. a read-back must be of the formal environment itself: “正式包” 
 });
 
 test("C8/C9 keep the earlier formal read-back cases as they were (R1 and the positives)", () => {
-  for (const evidence of ["候选已用，正式实例读回通过（2026-11-13 09:12Z，5ae8f8fc）", "正式环境已验证（2026-11-13 09:12Z，5ae8f8fc）", "候选通过；正式实测通过（2026-11-13 09:12Z，5ae8f8fc）", "正式环境读回一致（2026-11-13 09:12Z，5ae8f8fc）", "正式数据库读回通过（2026-11-13 09:12Z，5ae8f8fc）", "正式环境的读回通过（2026-11-13 09:12Z，5ae8f8fc）"]) assert.equal(mentionsFormalReadback(evidence), true, evidence);
+  for (const evidence of ["候选已用；正式实例读回通过（2026-11-13 09:12Z，5ae8f8fc）", "正式环境已验证（2026-11-13 09:12Z，5ae8f8fc）", "候选通过；正式实测通过（2026-11-13 09:12Z，5ae8f8fc）", "正式环境读回一致（2026-11-13 09:12Z，5ae8f8fc）", "正式数据库读回通过（2026-11-13 09:12Z，5ae8f8fc）", "正式环境的读回通过（2026-11-13 09:12Z，5ae8f8fc）"]) assert.equal(mentionsFormalReadback(evidence), true, evidence);
   for (const evidence of ["正式发布前候选已通过", "候选通过，正式发布成功", "正式：已通过评审，读回另行安排", "候选通过；正式实例读回失败", "候选通过，等正式读回", "候选通过；正式读回"]) assert.equal(mentionsFormalReadback(evidence), false, evidence);
 });
 
@@ -325,7 +325,7 @@ test("C11–C14 neighbours: other ways of saying the read-back is still to come 
   for (const evidence of ["候选通过；正式实例读回通过之后再关闭", "候选通过；须正式实例读回通过才算完成", "候选通过；若正式实例读回成功则关闭", "候选通过；一旦正式实例读回通过就关闭",
     "候选通过；预期正式环境读回成功", "候选通过；计划正式实例读回通过", "候选通过；要求正式实例读回通过", "候选通过；将在正式实例读回通过", "候选通过；拟正式实例读回通过"])
     assert.equal(mentionsFormalReadback(evidence), false, evidence);
-  for (const evidence of ["候选已用，正式实例读回通过（2026-11-13 09:12Z，5ae8f8fc）", "正式环境已验证（2026-11-13 09:12Z，5ae8f8fc）", "候选通过；正式实测通过（2026-11-13 09:12Z，5ae8f8fc）", "正式环境读回一致（2026-11-13 09:12Z，5ae8f8fc）", "正式数据库读回通过（2026-11-13 09:12Z，5ae8f8fc）", "正式环境的读回通过（2026-11-13 09:12Z，5ae8f8fc）"])
+  for (const evidence of ["候选已用；正式实例读回通过（2026-11-13 09:12Z，5ae8f8fc）", "正式环境已验证（2026-11-13 09:12Z，5ae8f8fc）", "候选通过；正式实测通过（2026-11-13 09:12Z，5ae8f8fc）", "正式环境读回一致（2026-11-13 09:12Z，5ae8f8fc）", "正式数据库读回通过（2026-11-13 09:12Z，5ae8f8fc）", "正式环境的读回通过（2026-11-13 09:12Z，5ae8f8fc）"])
     assert.equal(mentionsFormalReadback(evidence), true, evidence);
 });
 
@@ -354,9 +354,34 @@ test("N1–N6 even with evidence-looking text next to them stay listed, because 
 test("a read-back counts only with completion evidence: a bare claim is listed, the same claim with a time, a version, a PR/Run id or a command counts", () => {
   assert.equal(mentionsFormalReadback("候选通过；正式实例读回通过"), false, "no time, version, id or command");
   assert.equal(hasCompletionEvidence("正式实例读回通过"), false);
-  for (const text of ["候选通过；正式实例读回通过（2026-11-13 09:12Z）", "候选通过；正式实例读回通过，版本 5ae8f8fc", "候选通过；正式实例读回通过 v1.2.3",
-    "候选通过；正式实例读回通过，见 #419", "候选通过；正式实例读回通过，命令 `npm run boundary:check`", "候选通过；正式实例读回通过，Run 1ea394b7"])
+  for (const text of ["候选通过；正式实例读回通过（2026-11-13 09:12Z）", "候选通过；正式实例读回通过（版本 5ae8f8fc）", "候选通过；正式实例读回通过 v1.2.3",
+    "候选通过；正式实例读回通过（见 #419）", "候选通过；正式实例读回通过 `npm run boundary:check`", "候选通过；正式实例读回通过（Run 1ea394b7）"])
     assert.equal(mentionsFormalReadback(text), true, text);
   assert.deepEqual([judgeClosure({ evidence: "候选通过；正式实例读回通过", hasDelivery: true, stage: null }).flagged,
     judgeClosure({ evidence: "候选通过；正式实例读回通过（2026-11-13 09:12Z，5ae8f8fc）", hasDelivery: true, stage: null }).flagged], [true, false]);
+});
+
+// ---- Task ac254c1a, rework 6 (observation d8b687d2): conditions and places are checked over the whole SENTENCE, and the evidence must sit in
+// the read-back's own clause right after it. Each of these used to come out as a formal read-back.
+const E = {
+  E1: "如果 #419 合并发布，正式实例读回通过就签 used",
+  E2: "正式实例读回通过的截止时间是 2026-11-14 10:00Z",
+  E3: "等 7729e587 发布，正式实例读回通过就关闭",
+  E4: "下一步：正式实例读回通过，命令 evoloop read run",
+  E6: "正式实例读回通过，用的是候选实例 4400 的 7729e587",
+};
+for (const [name, evidence] of Object.entries(E)) {
+  test(`${name}. “${evidence}” is listed: the condition, deadline, next step or place is in the same sentence`, () => {
+    assert.equal(mentionsFormalReadback(evidence), false);
+    const judged = judgeClosure({ evidence: `候选通过；${evidence}`, hasDelivery: true, stage: null });
+    assert.deepEqual([judged.candidateOnly, judged.flagged], [true, true]);
+  });
+}
+
+test("E1–E6 keep working when a real completion follows in its own sentence, and the evidence must be in the read-back's clause", () => {
+  const done = "候选通过；正式实例读回通过（2026-11-13 09:12Z，5ae8f8fc）";
+  assert.equal(mentionsFormalReadback(done), true);
+  assert.equal(mentionsFormalReadback(`${E.E1}；${done.split("；")[1]}`), true, "a separate sentence with its own evidence still counts");
+  assert.equal(mentionsFormalReadback("候选通过；正式实例读回通过，版本 5ae8f8fc"), false, "evidence in a later clause is not adjacent");
+  assert.equal(mentionsFormalReadback("候选通过；正式实例读回通过 `evoloop read run`"), true, "a command right after the read-back is evidence");
 });

@@ -241,7 +241,7 @@ export const mentionsCandidate = text => /候选/.test(text ?? "");
 // negation/failure (未 不 没 尚 暂 缺 失败 失效 拒绝), to-do/waiting (待 TODO 等待 等…读回/正式 安排), release/review wording (评审 发布前 发布成功 上线),
 // and conditions, requirements and plans about a read-back that has not been done: 后再/之后再/再签 (“读回通过后再签 used”), 需/需要/须/要求/应当 … 才
 // (“需正式实例读回通过才能关闭”), 如果/若/假如/一旦/则 (“如果正式实例读回成功则关闭”), 预计/预期/计划/拟/打算/将 (“预计正式实例读回通过”).
-const NOT_DONE = /(未|不|没|待|尚|暂|缺|失败|失效|拒绝|TODO|todo|等待|等[^，。；]{0,4}(读回|正式)|安排|评审|发布前|发布成功|上线|后再|之后再|再签|需|须|要求|应当|应该|才|如果|若|假如|一旦|则|预计|预期|计划|拟|打算|将|只要|要是|希望|目标|期望|期待|争取|力求|盼|愿|以便|为了|(?:通过|成功|一致|完成)后|后签|后关|后合|后发布|之后|然后)/;
+const NOT_DONE = /(未|不|没|待|尚|暂|缺|失败|失效|拒绝|TODO|todo|等待|等[^，。；]{0,4}(读回|正式)|安排|评审|发布前|发布成功|上线|后再|之后再|再签|需|须|要求|应当|应该|才|如果|若|假如|一旦|则|预计|预期|计划|拟|打算|将|只要|要是|希望|目标|期望|期待|争取|力求|盼|愿|以便|为了|(?:通过|成功|一致|完成)后|后签|后关|后合|后发布|之后|然后|截止|期限|最迟|下一步|待办|就(?:签|关|合|发|算|可|能|行))/;
 // A read-back of the formal environment that worked: “正式” must itself qualify the environment (正式 / 正式环境 / 实例 / 数据库 / 版本 / 入口 / 站点 / 服务,
 // not 非正式, 伪正式, 准正式 and not “正式包”, “正式文档” …) and be followed directly by 读回通过/成功/一致/正常/完成/可用 or 已验证/验证通过/实测通过/实测成功.
 // “通过”, “成功” alone are not enough: “正式发布成功”, “正式：已通过评审”, “正式发布前候选已通过” are not read-backs.
@@ -260,15 +260,28 @@ const NOT_FORMAL_PLACE = /(自建|候选|沙箱|演练|本地|测试实例|预�
  */
 export const hasCompletionEvidence = sentence => /(\d{4}-\d{1,2}-\d{1,2}|\d{1,2}-\d{1,2}[ T]\d{1,2}:\d{2}|\b\d{1,2}:\d{2}(?::\d{2})?\b|\b[0-9a-f]{7,40}\b|\bv\d+(?:\.\d+)+\b|版本\s*[\w.-]+|#\d+|`[^`]+`|\b(?:npm|node|curl|gh|evoloop|psql)\s|(?:Run|run|交付|观察|operation)[\s:：]*[0-9a-f]{6,})/.test(sentence);
 
+/** Commas inside （…）/(…) belong to the parenthesis, so “（2026-11-13 09:12Z，5ae8f8fc）” stays one piece of the clause it follows. */
+const maskParentheses = text => text.replace(/[（(][^）)]*[）)]/g, group => group.replace(/[，,]/g, " "));
+/** The evidence must sit in the read-back's own clause, within this many characters after the read-back phrase. */
+const EVIDENCE_REACH = 40;
+
 /**
- * Positive rule: a formal read-back counts only when a clause says the formal environment/instance/database/version was read back and it
- * worked (FORMAL_READBACK), nothing in that clause makes it conditional, hoped for, planned, scheduled, negated or elsewhere
- * (NOT_DONE, NOT_FORMAL_PLACE), AND the sentence carries completion evidence (hasCompletionEvidence). Anything else that mentions it —
- * conditions (只要…就, 要是…就, 如果…则), sequencing (读回通过后签), hopes and goals (希望, 目标是, 期望), plans (预计, 计划), or a bare claim
- * without time/version/command — is listed.
+ * Positive rule, judged per sentence (split at 。 ； ;): a sentence counts as a formal read-back only when
+ *  1. nothing anywhere in the SENTENCE makes it conditional, hoped for, planned, scheduled, a deadline, a next step, negated, about a release
+ *     or review, or about somewhere that is not the formal environment (NOT_DONE, NOT_FORMAL_PLACE): a condition or a place in another clause
+ *     of the same sentence still disqualifies it (“如果 #419 合并发布，正式实例读回通过就签 used”, “…读回通过，用的是候选实例 4400 的 7729e587”);
+ *  2. one clause says the formal environment/instance/database/version was read back and it worked (FORMAL_READBACK); and
+ *  3. that same clause carries completion evidence (hasCompletionEvidence) right after the read-back phrase — a time, a version/commit, a
+ *     PR/Run/delivery id or a command in a LATER clause (“下一步：…，命令 evoloop read run”) or a date that is a deadline does not count.
+ * Anything else that mentions it is listed. A bare claim without evidence is listed too.
  */
-export const mentionsFormalReadback = text => (text ?? "").split(/[。；;\n]/).some(sentence =>
-  hasCompletionEvidence(sentence) && sentence.split(/[，,]/).some(clause => FORMAL_READBACK.test(clause) && !NOT_DONE.test(clause) && !NOT_FORMAL_PLACE.test(clause)));
+export const mentionsFormalReadback = text => (text ?? "").split(/[。；;\n]/).some(sentence => {
+  if (NOT_DONE.test(sentence) || NOT_FORMAL_PLACE.test(sentence)) return false;
+  return maskParentheses(sentence).split(/[，,]/).some(clause => {
+    const found = FORMAL_READBACK.exec(clause);
+    return !!found && hasCompletionEvidence(clause.slice(found.index, found.index + found[0].length + EVIDENCE_REACH));
+  });
+});
 
 /**
  * What to say about one closure. `hasDelivery`: the closure was decided on a Delivery, so there is an observation to read; a closure
