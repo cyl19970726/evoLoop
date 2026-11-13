@@ -239,16 +239,19 @@ export function mentionsAnywhere(transcripts, needles, atMs) {
 export const mentionsCandidate = text => /候选/.test(text ?? "");
 // Negation, to-do, failure, scheduling and release/review wording in a clause: it did not happen, or it is not a read-back.
 const NOT_DONE = /(未|不|没|待|尚|暂|缺|失败|失效|拒绝|TODO|todo|等待|等[^，。；]{0,4}(读回|正式)|安排|评审|发布前|发布成功|上线)/;
-// A read-back of the formal environment that worked: 正式 … 读回通过/成功/一致/正常/完成/可用, or 正式环境/实例/版本 … 已验证/验证通过/实测通过.
+// A read-back of the formal environment that worked: “正式” must itself qualify the environment (正式 / 正式环境 / 实例 / 数据库 / 版本 / 入口 / 站点 / 服务,
+// not 非正式, 伪正式, 准正式 and not “正式包”, “正式文档” …) and be followed directly by 读回通过/成功/一致/正常/完成/可用 or 已验证/验证通过/实测通过/实测成功.
 // “通过”, “成功” alone are not enough: “正式发布成功”, “正式：已通过评审”, “正式发布前候选已通过” are not read-backs.
-const FORMAL_READBACK = /正式[^，。；\n]{0,12}(?:读回(?:通过|成功|一致|正常|完成|可用)|(?:已验证|验证通过|实测通过|实测成功))/;
+const FORMAL_READBACK = /(?<![非伪准])正式(?:环境|实例|数据库|库|版本|入口|站点|服务)?的?(?:读回(?:通过|成功|一致|正常|完成|可用)|已验证|验证通过|实测通过|实测成功)/;
+// A read-back done somewhere that is not the formal environment: a self-built, candidate, local, sandbox or rehearsal instance named in the same clause.
+const NOT_FORMAL_PLACE = /(自建|候选|沙箱|演练|本地|测试实例|预发)/;
 /**
- * A formal read-back is a clause that says the formal environment/instance/version was READ BACK and it worked (读回通过/成功/一致…,
- * 已验证, 实测通过), with nothing in that clause saying it did not happen, failed, is to do, is arranged for later or is about a
- * release or a review. “通过”/“成功” on their own are not read-backs: “候选通过，正式发布成功”, “正式发布前候选已通过”,
- * “正式：已通过评审，读回另行安排”, “正式实例读回失败”, “等正式读回”, “正式读回 TODO/缺” are all not read-backs.
+ * A formal read-back is a clause that says the formal environment/instance/database/version was READ BACK and it worked, with nothing in
+ * that clause saying it did not happen, failed, is to do, is arranged for later, is about a release or a review, or happened on a
+ * self-built/candidate/local instance. “通过”/“成功” on their own are not read-backs: “候选通过，正式发布成功”, “正式发布前候选已通过”,
+ * “正式：已通过评审，读回另行安排”, “非正式实例读回成功”, “正式包在自建实例读回通过”, “正式实例读回失败”, “等正式读回”, “正式读回 TODO/缺” are not.
  */
-export const mentionsFormalReadback = text => (text ?? "").split(/[。；;，,\n]/).some(clause => FORMAL_READBACK.test(clause) && !NOT_DONE.test(clause));
+export const mentionsFormalReadback = text => (text ?? "").split(/[。；;，,\n]/).some(clause => FORMAL_READBACK.test(clause) && !NOT_DONE.test(clause) && !NOT_FORMAL_PLACE.test(clause));
 
 /**
  * What to say about one closure. `hasDelivery`: the closure was decided on a Delivery, so there is an observation to read; a closure

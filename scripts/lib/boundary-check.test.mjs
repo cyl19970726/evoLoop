@@ -283,3 +283,25 @@ test("R4. a Codex array-form command [bash, -lc, gh pr merge N] is read: the met
   const scripted = commandsOfLine(JSON.stringify({ timestamp: "2026-11-13T05:00:00Z", type: "response_item", payload: { type: "function_call", arguments: JSON.stringify({ command: ["bash", "-lc", "echo hi\ngh pr merge --squash 506"] }) } }));
   assert.deepEqual(mergeInvocations(scripted).map(item => item.pr), [506]);
 });
+
+// ---- Task ac254c1a, rework 3 (acceptance report 3166a125): C8 and C9, the two sentences that still passed as a formal read-back.
+test("C8. “非正式” is not the formal environment: a read-back on a non-formal instance is listed", () => {
+  const evidence = "候选通过；非正式实例读回成功";
+  assert.equal(mentionsFormalReadback(evidence), false);
+  const judged = judgeClosure({ evidence, hasDelivery: true, stage: null });
+  assert.deepEqual([judged.candidateOnly, judged.flagged], [true, true]);
+  for (const text of ["候选通过；伪正式实例读回成功", "候选通过；准正式环境读回通过"]) assert.equal(mentionsFormalReadback(text), false, text);
+});
+
+test("C9. a read-back must be of the formal environment itself: “正式包” read back on a self-built instance is listed", () => {
+  const evidence = "候选通过；正式包在自建实例读回通过";
+  assert.equal(mentionsFormalReadback(evidence), false);
+  const judged = judgeClosure({ evidence, hasDelivery: true, stage: null });
+  assert.deepEqual([judged.candidateOnly, judged.flagged], [true, true]);
+  for (const text of ["候选通过；正式包在本地读回通过", "候选通过；正式实例在候选环境读回成功", "候选通过；正式环境的演练读回通过"]) assert.equal(mentionsFormalReadback(text), false, text);
+});
+
+test("C8/C9 keep the earlier formal read-back cases as they were (R1 and the positives)", () => {
+  for (const evidence of ["候选已用，正式实例读回通过", "正式环境已验证", "候选通过；正式实测通过", "正式环境读回一致", "正式数据库读回通过", "正式环境的读回通过"]) assert.equal(mentionsFormalReadback(evidence), true, evidence);
+  for (const evidence of ["正式发布前候选已通过", "候选通过，正式发布成功", "正式：已通过评审，读回另行安排", "候选通过；正式实例读回失败", "候选通过，等正式读回", "候选通过；正式读回"]) assert.equal(mentionsFormalReadback(evidence), false, evidence);
+});
