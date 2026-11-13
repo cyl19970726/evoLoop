@@ -19,6 +19,7 @@ import { PostgresUnitOfWork, PgConnectorRoutes, PgConnectorMessageLinks, PgConne
 import { disposeStalePendingTodo, disposeStaleTodoMessage, getLeaderNotice, getLeaderNoticeByMessageId, hasInFlightLeaderNoticeMessage, linkLeaderNoticeMessage,
   listLeaderNotices, listPendingLeaderNotices, markLeaderNoticeBlocked, pinLeaderNoticeRecipient,
   recoverRejectedLeaderNotice, setLeaderNoticePendingReason } from "@evoloop/adapter-postgres/leader-result-notices";
+import { listLeaderEventRecords } from "@evoloop/adapter-postgres/leader-event-records";
 import { authConfigSchema, hasCurrentStudyReviewer, isProjectWriter } from "./auth.js";
 import { buildServer } from "./server.js";
 import { acquireCoordinatorLease, leaseFencedUnitOfWork } from "./lease.js";
@@ -61,6 +62,9 @@ import { LocalBlobStore } from "@evoloop/adapter-local-blobs";
 import { setupManagedLoops } from "./orchestration/setup.js";
 import type { WorkerCredentialBroker } from "./workers/credentials.js";
 import { readWorkStatuses } from "./orchestration/work-status.js";
+import { headSeq, purgeSchedEvents, readSchedEvents, readWorkBoard } from "@evoloop/adapter-postgres/work-board";
+import { schedEventRetentionDays } from "@evoloop/contracts/work-board";
+import { SchedEventHub } from "./work-board/hub.js";
 import { createLeaderWorkIndexReader } from "./work-management/work-index.js";
 import { readPlanningSources } from "./orchestration/planning-sources.js";
 import { managedRuntimeAdmission } from "./orchestration/admission.js";
@@ -649,6 +653,20 @@ const acceptanceTimer=setInterval(()=>{
     .finally(()=>{acceptanceTickBusy=false;});
 },2000);
 acceptanceTimer.unref();
+// The work board (DEC-045 Q2): reads over the event table the database triggers fill, one shared hub for every stream subscriber, and the
+// 30-day retention. Retention runs on the writer only and once a day at most; nothing here reads while nobody is subscribed.
+const workBoardReads = {
+  board: (projectId: string) => readWorkBoard(pool, projectId),
+  events: (projectId: string, query: Parameters<typeof readSchedEvents>[2]) => readSchedEvents(pool, projectId, query),
+};
+const schedEventHub = new SchedEventHub({ head: projectId => headSeq(pool, projectId), read: (projectId, after, limit) => readSchedEvents(pool, projectId, { after, limit }) },
+  1000, () => reconciliationLog("Work board event stream needs a re-read."));
+const runSchedRetention = () => { if (lease.canWrite()) void purgeSchedEvents(pool, schedEventRetentionDays).catch(() => reconciliationLog("Scheduling event retention needs a re-run.")); };
+// Also shortly after start: a coordinator that is restarted more often than every 6 hours must still purge.
+const schedRetentionStart = setTimeout(runSchedRetention, 60_000);
+schedRetentionStart.unref();
+const schedRetention = setInterval(runSchedRetention, 6 * 3600 * 1000);
+schedRetention.unref();
 const leaderPacketPorts = pgLeaderPacketPorts(pool, uow);
 const leaderResultNoticePump = new LeaderResultNoticePump({
   packets: leaderPacketPorts,
@@ -911,6 +929,7 @@ const app = await buildServer({ service, credentials, canWrite: lease.canWrite, 
   taskAttentionPool: pool,
   workStatuses: (principal, projectId, taskIds) => readWorkStatuses(pool, service, principal, projectId, taskIds),
   workIndex: createLeaderWorkIndexReader(pool),
+  workBoard: { reads: workBoardReads, hub: schedEventHub },
   decisionsForMe: (projectId, actorId, canDecide) => readDecisionsForMe(pool, projectId, actorId, canDecide),
   leaderNotices: {
     packet: async (projectId, packetId) => {
@@ -928,6 +947,7 @@ const app = await buildServer({ service, credentials, canWrite: lease.canWrite, 
       return { status: "recorded" as const, packetId, state: "recovered" as const };
     },
     list: (projectId, query) => listLeaderNotices(pool, projectId, query),
+    records: (projectId, query) => listLeaderEventRecords(pool, projectId, query),
     get: (projectId, noticeId) => getLeaderNotice(pool, projectId, noticeId),
     recover: async (projectId, noticeId, input, actorId) => {
       const recovered=await recoverRejectedLeaderNotice(pool, projectId, noticeId,

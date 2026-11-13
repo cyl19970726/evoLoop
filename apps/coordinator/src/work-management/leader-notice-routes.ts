@@ -2,7 +2,7 @@ import type { FastifyInstance } from "fastify";
 import type { Principal } from "@evoloop/contracts";
 import { DomainError } from "@evoloop/contracts/ports";
 import { z } from "zod";
-import { leaderNoticeRecoverySchema } from "@evoloop/contracts/leader-notices";
+import { leaderNoticeRecoverySchema, type LeaderEventRecordKind } from "@evoloop/contracts/leader-notices";
 import { leaderNoticePacketRecoverySchema } from "@evoloop/contracts/leader-notice-packets";
 
 export interface LeaderNoticeReader {
@@ -13,6 +13,8 @@ export interface LeaderNoticeReader {
   /** Recover one blocked packet (the Leader's decision, needs review authority); its items return to the next packet. */
   recoverPacket?(principal: Principal, projectId: string, packetId: string, reason: string): Promise<unknown>;
   recover?(projectId: string, noticeId: string, input: z.infer<typeof leaderNoticeRecoverySchema>, actorId: string): Promise<unknown>;
+  /** Events that are only recorded (W5 level "record only"): a Run stopped on request, a resolved attention item, a withdrawn notice. Oldest first. */
+  records?(projectId: string, query: { taskId?: string; kind?: LeaderEventRecordKind; limit: number; cursor?: string }): Promise<unknown>;
 }
 
 /** The notice read is a project fact, not a permit to dispatch a managed Leader. */
@@ -27,6 +29,15 @@ export function registerLeaderNoticeRoutes(app: FastifyInstance,
     await service.getProject(request.principal, projectId);
     return notices.list(projectId, { limit: query.limit,
       ...(query.taskId ? { taskId: query.taskId } : {}),
+      ...(query.cursor ? { cursor: query.cursor } : {}) });
+  });
+  if (notices.records) app.get("/api/projects/:projectId/leader-records", async request => {
+    if (!request.principal) throw new DomainError("FORBIDDEN", "Authentication required");
+    const { projectId } = z.object({ projectId: z.uuid() }).parse(request.params);
+    const query = z.strictObject({ taskId: z.uuid().optional(), kind: z.enum(["run_stopped", "attention_resolved", "notice_withdrawn", "line_entry_appended", "line_entry_started", "line_entry_ended"]).optional(),
+      limit: z.coerce.number().int().min(1).max(200).default(50), cursor: z.string().min(1).max(512).optional() }).parse(request.query);
+    await service.getProject(request.principal, projectId);
+    return notices.records!(projectId, { limit: query.limit, ...(query.taskId ? { taskId: query.taskId } : {}), ...(query.kind ? { kind: query.kind } : {}),
       ...(query.cursor ? { cursor: query.cursor } : {}) });
   });
   if (notices.get) app.get("/api/projects/:projectId/work-management/notices/:noticeId", async request => {

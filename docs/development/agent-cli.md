@@ -436,11 +436,21 @@ Leader 用 `evoloop command run` 提交 `line.append`（sessionId、taskId、exp
 
 业务 Session 收到“执行确认请求”消息后，只做确认，不开始改文件：读固定 Task 修订，然后提交 `task.assignment.acknowledge`，`verdict=confirm`（`plan` 简短计划、`expectedRevisionId`）或 `verdict=return`（`missing` 列出缺什么）。确认后系统自动开 Run；退回的 Task 退出队伍、保持未开始。需要的私有配置：队伍调度程序随运行时启用而运行，Session 的业务身份取自 `residentQueue.roleActors`（没有则该项挂起为 `RECIPIENT_UNAVAILABLE`）。
 
+## 调度板与调度事件流
+
+`work board --project P [--brief]` 读调度板：每个 Session 现在做的（Run，或由消息、即时输入开的这一轮，带开始时间和已用时长）、队伍里排着的项（Session 队伍 `session_line_entry` 与旧的批量队伍合在一起；顺序、状态 queued / held（挂起）/ claimed（轮到、正在启动）、来源、追加时间、已等待多久；“就绪但不在任何队伍里”同样排除 Session 队伍里的 Task）、排队中的普通消息数、恢复门阶段和模型服务暂停；还有就绪但不在任何队伍里的 Task，以及等 Leader 决定的事项（已送入或已看到、尚未处置的通知项，受阻的通知包，开放的决定请求）。`--brief` 只留安排工作用的字段，不超过 6 KB，通常不到完整输出的一半；ID 保持完整，标题截短，没有内容的字段省略；超出时从各列表尾部丢项并写明省略了几项。Leader 每轮先读 `--brief`，要看某一项的全部字段再读不带 `--brief` 的完整输出。两种输出都带 `eventSeq`：这份快照读取时事件流的最新序号。
+
+`work events --project P [--after SEQ] [--limit 1..500] [--wait 0..30] [--category notice|task|message|acceptance]` 按序号读调度事件，`--from ISO --to ISO` 按时间段读（回放；与 `--after` 合用时只在这段时间内续页）。事件含递增序号、时间、种类、从谁到谁、Session、Task、主体（种类、编号、Task 标题、可打开的接口路径）、变化前后的状态，**不含消息正文**。空闲 Session 上的即时输入开一轮记 `message.started`（不会同时记成排队）。种类：通知 `notice.created|packet_built|packed|sent|delivered|seen|handled|deferred|withdrawn|blocked|returned`（`notice.sent` 的 `next` 是 `new_turn` 或 `steer`），任务 `task.created|confirmed|returned|queued|resumed|turn|held|removed|released|reordered|run_requested|run_started|run_ended|delivered|started|done|cancelled|todo`（Session 队伍项的追加、恢复、轮到、挂起、撤下、移动、Run 结束放行都是 `subject.kind` 为 `line_entry` 的 `task.*` 事件；`task.released` 对批量队伍是放行、对 Session 队伍是 Run 结束放行，撤下是 `task.removed`），消息 `message.queued|processing|replied|failed|cancelled|inserted|started|stopped`，验收 `acceptance.arranged|delivered|blocked|observed|closed|reviewed|precondition_marked`。`--wait N` 是长轮询：暂时没有新事件时最多等 N 秒，等待期间不额外查库。返回 `resetRequired:true` 表示游标早于保留期（30 天）已清理的范围或超前于最新序号，先重读 `work board` 再从它的 `eventSeq` 续。浏览器订阅是 `GET /api/projects/P/work-board/stream`（SSE；首次用 `?after=` 打开快照的 `eventSeq`，断线后浏览器带着同一个 URL 和 `Last-Event-ID` 重连，`Last-Event-ID` 优先，缺口时发 `event: reset`）。保留期清理掉某个项目的全部事件后，最新序号取清理水位，重读快照后从它的 `eventSeq` 续读不会再被要求重置。
+
+`work metrics --project P [--from ISO --to ISO]`（窗口不超过 30 天，默认最近 24 小时）从事件流算三项指标：进队等待（`task.queued` 到 `task.turn`，按追加者分开；挂起、撤下的队伍项不算在等）、Session 空转（没有任何东西在运行——Run、处理中的消息、即时输入开的一轮都算在运行——却有队伍项或排队消息在等的总时长）、新情况纳入时间（通知产生到它的包被读到——`notice.delivered`，没有则 `notice.seen`；不走包的通知到 `notice.sent`）。窗口开始之前就已入队或已在运行的对象不在事件里，不会被猜出来。
+
 ## Leader 通知包
 
 Leader 收到的是“Leader 通知包”消息：先 `get /api/projects/PROJECT/leader-notice-packets/PACKET` 读每一项的状态与版本，读当前 Task 和固定来源，再用 `command run` 提交 `leader.notice.handle`（`command schema leader.notice.handle` 取结构）：`noticeId`、`expectedVersion`、`disposition`（`handled` 或 `deferred`）、`reason`，延后要写 `notBefore`。重复提交同一操作安全；版本过期（`VERSION_CONFLICT`）要重新读。只读到这包不算处理，一轮正常结束只记“已看到”。
 
 被阻塞的包（读到后那一轮失败且恢复门关闭）不会自动重发，它出现在 `work` 的 Leader 索引（`blockedNoticePackets`，带包编号和提示）。先按 Session 恢复流程恢复恢复门，再用 `request leader.notice.recover --project UUID --id 包编号 --file BODY.json --receipt UUID`（body 只写 `{"reason":"..."}`，需要 review 权限）恢复这一包，其中的项进入下一包。`leader.notice.recover` 带 `expectedOperationId` 等四个 ID 的旧形式仍用于迁移前已有的、消息被拒绝的通知。包的步骤（打包、已送、观察）只由配置里的通知发送身份运行，不是 Agent 的命令。
+
+通知有级别（立即/汇总，见[接口合同](../architecture/contracts.md#leader-通知层)）：立即项在包里行首标“立即·”，不等 60 秒、排在前面，来源是验收安排受阻、提交受阻、Run 结束未提交、Task 提问与阻塞、验收观察失败；验收观察按结论拆成 `observation_used`（汇总）和 `observation_failed`（立即）。只记录事件（Run 已按请求停止、关注项已解决、通知撤回）不是通知，读 `get /api/projects/PROJECT/leader-records`（`taskId`、`kind`、`limit`、`cursor` 可选，从旧到新续页）。
 
 ## 待我决定
 

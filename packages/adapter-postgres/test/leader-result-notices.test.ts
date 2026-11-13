@@ -107,10 +107,10 @@ test("delivery and actual consumer use notify; producer self-use and ordinary re
     VALUES($1,$2,$3,$4,$5,'agent','used','actual use','checked',$5,$6)`,
     [projectId, randomUUID(), item.taskId, deliveryId, observer, now]);
   const notices = (await listLeaderNotices(pool, projectId, { taskId: item.taskId, limit: 10 })).items;
-  assert.deepEqual(notices.map(n => n.kind).sort(), ["delivery", "observation"]);
+  assert.deepEqual(notices.map(n => n.kind).sort(), ["delivery", "observation_used"], "a use observation travels as observation_used");
   assert.equal(notices.find(n => n.kind === "delivery")!.sourceSessionId, sessionId);
-  assert.equal(notices.find(n => n.kind === "observation")!.sourceSessionId, null);
-  assert.equal(notices.find(n => n.kind === "observation")!.sourceActorId, "qa");
+  assert.equal(notices.find(n => n.kind === "observation_used")!.sourceSessionId, null);
+  assert.equal(notices.find(n => n.kind === "observation_used")!.sourceActorId, "qa");
   const noticeCount = notices.length, client = await pool.connect();
   try {
     await client.query("BEGIN");
@@ -143,7 +143,7 @@ test("delivery and actual consumer use notify; producer self-use and ordinary re
   } catch(error) { await revisionTx.query("ROLLBACK"); throw error; } finally { revisionTx.release(); }
   const historical = (await listPendingLeaderNotices(pool, projectId, {limit:100})).items
     .filter(x=>x.taskId===item.taskId);
-  assert.deepEqual(historical.map(x=>x.kind).sort(), ["delivery","observation"]);
+  assert.deepEqual(historical.map(x=>x.kind).sort(), ["delivery","observation_used"]);
   assert.ok(historical.every(x=>x.stale));
   const pinnedHistorical = await pinLeaderNoticeRecipient(pool, projectId, historical[0]!.id,
     {sessionId,receiverRoleId:"worker",receiverActorId:"leader",senderActorId:"notifier"});
@@ -412,4 +412,47 @@ test("public notice pages retain stale history while pending scan exposes it for
   assert.equal(next.items.some(x => latest.items.some(y => y.id === x.id)), false);
   await assert.rejects(listLeaderNotices(pool, projectId, { taskId: item.taskId, limit: 3,
     cursor: latest.nextCursor }), /cursor/i);
+});
+
+test("an observation is told apart by its result: use is a digest notice, anything else the Leader must act on is immediate", async () => {
+  const item = await task("in_progress"), { runId } = await sessionRun(item);
+  const deliveryId = randomUUID();
+  await pool.query(`INSERT INTO delivery(project_id,delivery_id,task_id,task_revision_id,run_id,source_run_version,
+    submitted_by_actor_id,artifact_ref,artifact_revision,content_hash,technical_result,technical_evidence,reason,actor_id,created_at)
+    VALUES($1,$2,$3,$4,$5,1,'worker','artifact','rev',$6,'passed','check','done','sealer',$7)`,
+    [projectId, deliveryId, item.taskId, item.revisionId, runId, hash, now]);
+  for (const [observer, result] of [["qa-used", "used"], ["qa-failed", "failed"], ["qa-unused", "notUsed"]] as const)
+    await pool.query(`INSERT INTO consumer_observation(project_id,observation_id,task_id,delivery_id,observer,observer_kind,result,evidence,reason,actor_id,created_at)
+      VALUES($1,$2,$3,$4,$5,'agent',$6,'actual use','checked',$5,$7)`, [projectId, randomUUID(), item.taskId, deliveryId, observer, result, now]);
+  const rows = (await pool.query(`SELECT kind, level, source_actor_id FROM leader_result_notice WHERE project_id=$1 AND task_id=$2 AND kind LIKE 'observation%' ORDER BY source_actor_id`, [projectId, item.taskId])).rows;
+  assert.deepEqual(rows.map(row => [row.source_actor_id, row.kind, row.level]),
+    [["qa-failed", "observation_failed", "immediate"], ["qa-unused", "observation_failed", "immediate"], ["qa-used", "observation_used", "digest"]]);
+});
+
+test("the level of a notice is a function of its kind, and the TypeScript table and the database agree on every kind", async () => {
+  const item = await task("todo");
+  const { leaderNoticeKinds, noticeLevelOf } = await import("@evoloop/contracts/leader-notices");
+  const seen: Record<string, string> = {};
+  for (const kind of leaderNoticeKinds) {
+    await pool.query(`SELECT enqueue_leader_result_notice($1,$2,$3,$4,$5,NULL,'worker',$6,$7)`, [projectId, kind, randomUUID(), item.taskId, item.revisionId, `level:${kind}`, now]);
+    const row = (await pool.query(`SELECT level FROM leader_result_notice WHERE project_id=$1 AND task_id=$2 AND kind=$3`, [projectId, item.taskId, kind])).rows[0];
+    assert.equal(row.level, noticeLevelOf(kind), `${kind}: the database level is the contract level`);
+    seen[kind] = row.level;
+  }
+  const levelOf = (kind: string) => seen[kind];
+  for (const kind of ["acceptance_blocked", "run_submission_blocked", "run_without_submission", "task_question", "task_blocker", "observation_failed", "line_entry_suspended"]) assert.equal(levelOf(kind), "immediate", kind);
+  for (const kind of ["delivery", "observation_used", "observation", "task_todo", "task_attention", "line_confirmation_returned"]) assert.equal(levelOf(kind), "digest", kind);
+});
+
+test("a Run stopped on request wakes no one and is a record: no notice, but readable from the record view", async () => {
+  const item = await task("in_progress"), { runId } = await sessionRun(item);
+  // In the order it happens: the stop is requested while the Run is running, then the Run ends.
+  await pool.query(`UPDATE runtime_run SET stop_requested_at=now(), stop_reason='no longer wanted', stop_requested_by='lead', version=2 WHERE project_id=$1 AND run_id=$2`, [projectId, runId]);
+  await pool.query(`UPDATE runtime_run SET state='completed', native_turn_id=$3, version=3, updated_at=now() WHERE project_id=$1 AND run_id=$2`, [projectId, runId, `turn-${runId}`]);
+  const notices = (await pool.query(`SELECT kind FROM leader_result_notice WHERE project_id=$1 AND task_id=$2 AND kind IN ('run_without_submission','run_submission_blocked')`, [projectId, item.taskId])).rows;
+  assert.deepEqual(notices, [], "a Run stopped on request produces no Leader notice");
+  const { listLeaderEventRecords } = await import("../src/leader-event-records.ts");
+  const records = (await listLeaderEventRecords(pool, projectId, { taskId: item.taskId, limit: 10 })).items;
+  assert.deepEqual(records.map(row => row.kind), ["run_stopped"]);
+  assert.equal(records[0]!.sourceRef, `run:${runId}`);
 });

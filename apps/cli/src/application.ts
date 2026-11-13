@@ -20,7 +20,7 @@ type Environment = Record<string, string | undefined>;
 interface IO { stdout(text: string): void; stderr(text: string): void; stdin?(): AsyncIterable<Uint8Array> }
 class UsageError extends Error { readonly code = "INVALID_INPUT"; }
 interface Args { words: string[]; options: Map<string, string | true> }
-const values = new Set(["project", "revision", "limit", "cursor", "turn-cursor", "messages-cursor", "source", "turn-id", "after", "wait-ms", "out", "file", "id", "receipt", "attempt", "task", "state", "phase", "signal", "waiting-on-kind", "waiting-on-id", "stage", "knowledge", "loop", "search", "membership", "importance", "role", "session", "discussion", "message", "kind", "hash", "asset-hash", "model", "effort", "color", "mark", "reason", "evidence-ref", "operation", "provider", "project-skills", "personal", "builtin", "add", "remove", "context-task", "context-revision", "reply-to", "message-id","mode","content","input"]);
+const values = new Set(["project", "revision", "limit", "cursor", "turn-cursor", "messages-cursor", "source", "turn-id", "after", "wait-ms", "out", "file", "id", "receipt", "attempt", "task", "state", "phase", "signal", "waiting-on-kind", "waiting-on-id", "stage", "knowledge", "loop", "search", "membership", "importance", "role", "session", "discussion", "message", "kind", "hash", "asset-hash", "model", "effort", "color", "mark", "reason", "evidence-ref", "operation", "provider", "project-skills", "personal", "builtin", "add", "remove", "context-task", "context-revision", "reply-to", "message-id","mode","content","input", "wait", "from", "to", "category"]);
 const switches = ["help", "history", "graph", "events", "revisions", "result", "trace", "occurrences", "reviews", "handoffs", "bindings", "route", "hosts", "attempts", "recovery", "inputs", "observation", "documents", "closed", "brief", "stdin"];
 function uuid(value: string | undefined, label: string): string {
   if (!idSchema.safeParse(value).success) throw new UsageError(`${label} must be a UUID.`);
@@ -101,6 +101,9 @@ const help = {
     "work attention task TASK_UUID --project UUID (follow-up and Task attention history)",
     "work attention item ITEM_UUID --project UUID (one attention item and its events)",
     "work attention thresholds --project UUID [--stage STAGE_UUID --phase PHASE]",
+    "work board --project UUID [--brief] (every Session's current work, line, health; ready Tasks in no line; what waits for the Leader; --brief: arranging fields only, at most 6 KB, what the Leader reads each round)",
+    "work events --project UUID [--after SEQ --limit 1..500 --wait 0..30 | --from ISO --to ISO] [--category notice|task|message|acceptance] (scheduling events by sequence; --wait long-polls for the next one; resetRequired:true means read work board again; the browser stream is GET /api/projects/UUID/work-board/stream)",
+    "work metrics --project UUID [--from ISO --to ISO] (queue wait by source, Session idle with work waiting, notice intake time; worked out from the events, window at most 30 days)",
     "work leader changes --project UUID [--cursor CURSOR --limit 1..100] (monotonic Task/Document change feed)",
     "work leader notices --project UUID [--task TASK_UUID --cursor CURSOR --limit 1..100] (durable result notices and dispatch status)",
     "request leader.notice.recover --project UUID --id BLOCKED_PACKET_UUID --file BODY.json --receipt LOCAL_UUID (body {\"reason\":...}: recover a notice packet that stopped behind a closed recovery gate, after the Session itself was recovered; its items return to the next packet. A notice from before packets keeps the old body: BLOCKED_NOTICE_UUID with expectedOperationId, newNoticeId, newMessageId, newOperationId, reason)",
@@ -522,6 +525,23 @@ async function dispatch(args: Args, env: Environment, io: IO): Promise<unknown> 
       ]);
       try { return sessionStatus(snapshot, detail, messageId, runtimeRead); }
       catch (error) { throw new ReceiptError("INVALID_STATUS_SOURCE", error instanceof Error ? error.message : "Cannot verify status sources."); }
+    }
+    // The work board and the scheduling event stream (DEC-045 Q2).
+    if (args.words[1] === "board") {
+      check(args, 2, ["project", "brief"]);
+      return client.get(`${prefix}/work-board${args.options.has("brief") ? "?brief=true" : ""}`);
+    }
+    if (args.words[1] === "events") {
+      check(args, 2, ["project", "after", "limit", "from", "to", "category", "wait"]);
+      const query = new URLSearchParams();
+      for (const name of ["after", "limit", "from", "to", "category", "wait"]) { const value = option(args, name); if (value !== undefined) query.set(name, value); }
+      return client.get(`${prefix}/work-board/events${query.size ? `?${query}` : ""}`);
+    }
+    if (args.words[1] === "metrics") {
+      check(args, 2, ["project", "from", "to"]);
+      const query = new URLSearchParams();
+      for (const name of ["from", "to"]) { const value = option(args, name); if (value !== undefined) query.set(name, value); }
+      return client.get(`${prefix}/work-board/metrics${query.size ? `?${query}` : ""}`);
     }
     let path: string;
     try { path = sessionWorkPath(args.words.slice(1), args.options); }

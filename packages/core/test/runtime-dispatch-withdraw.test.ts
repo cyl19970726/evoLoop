@@ -8,13 +8,13 @@ const projectId = "00000000-0000-4000-8000-000000000001";
 const runId = "00000000-0000-4000-8000-000000000002";
 const sessionId = "00000000-0000-4000-8000-000000000003";
 
-function fixture(run: Partial<RuntimeRunRecord>) {
+function fixture(run: Partial<RuntimeRunRecord>, provider: "codex" | "claude" = "codex") {
   const state = {
     run: { projectId, id: runId, taskId: "t", taskRevisionId: "r", basisSetId: "b", sessionId,
       operationId: "00000000-0000-4000-8000-000000000004", input: "bounded", inputHash: "h", state: "dispatching",
       version: 4, nativeTurnId: null, interruptRequested: false, resultSummary: null, actorId: "a",
       createdAt: "2026-11-08T00:00:00.000Z", updatedAt: "2026-11-08T00:00:00.000Z", ...run } as RuntimeRunRecord,
-    events: [] as { kind: string; detail: string }[], outbox: 0,
+    events: [] as { kind: string; detail: string }[], outbox: 0, usage: [] as unknown[][],
   };
   const tx = {
     getRuntimeRun: async () => state.run,
@@ -23,6 +23,8 @@ function fixture(run: Partial<RuntimeRunRecord>) {
     },
     appendRuntimeEvent: async (event: { kind: string; detail: string }) => { state.events.push(event); },
     appendOutbox: async () => { state.outbox++; },
+    getRuntimeSession: async () => ({ runtimeProvider: provider }),
+    usage: { addUsage: async (...args: unknown[]) => { state.usage.push(args); } },
   } as unknown as Transaction;
   let seq = 10;
   const service = new RuntimeWorkflowService({ uow: { transaction: async (_p, action) => action(tx),
@@ -73,4 +75,14 @@ test("invalid provider accounting is rejected before any write", async () => {
     { costUsd: Number.NaN }), /non-negative amount/);
   assert.equal(state.run.state, "running");
   assert.equal(state.events.length, 0);
+});
+
+test("a Claude Run records uncached input, cache reads and cache creation as one inclusive input count", async () => {
+  const { state, service } = fixture({ state: "running", nativeTurnId: "turn-1" }, "claude");
+  await service.recordTurn(projectId, runId, "turn-1", "completed", "done", {
+    usage: { inputTokens: 1_000, outputTokens: 500, cacheReadInputTokens: 8_000, cacheCreationInputTokens: 2_000 },
+    costUsd: 0.25,
+  });
+  assert.deepEqual(state.usage, [[projectId, sessionId, "2026-11-08",
+    { inputTokens: 11_000, outputTokens: 500, cachedInputTokens: 10_000, costUsd: 0.25, costReported: true }]]);
 });

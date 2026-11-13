@@ -168,3 +168,23 @@ test("the Leader's task index lists blocked notice packets with what to do about
   const documents=await app.inject({method:"GET",url:`/api/projects/${projectId}/work-management/index?view=documents`});
   assert.equal(documents.json().blockedNoticePackets,undefined);
 });
+
+test("the record-only events are a project read with a kind filter and a cursor; no authentication is refused", async t => {
+  const projectId = randomUUID(), taskId = randomUUID();
+  let authenticated = true;
+  const seen: unknown[] = [];
+  const app = Fastify();
+  t.after(() => app.close());
+  app.decorateRequest("principal", null);
+  app.addHook("onRequest", async request => { request.principal = authenticated ? { actorId: "reader", projectIds: [projectId], permissions: ["read"] } : null; });
+  app.setErrorHandler((error, _request, reply) => { if (error instanceof DomainError) return reply.code(403).send({ code: error.code }); throw error; });
+  registerLeaderNoticeRoutes(app, { getProject: async (_who, p) => { if (p !== projectId) throw new DomainError("FORBIDDEN", "project"); return { id: p }; } },
+    { list: async () => ({ items: [], nextCursor: null }), records: async (p, query) => { seen.push({ p, query }); return { items: [], nextCursor: null }; } });
+  const base = `/api/projects/${projectId}/leader-records`;
+  assert.equal((await app.inject({ method: "GET", url: `${base}?taskId=${taskId}&kind=notice_withdrawn&limit=20&cursor=next` })).statusCode, 200);
+  assert.deepEqual(seen[0], { p: projectId, query: { taskId, kind: "notice_withdrawn", limit: 20, cursor: "next" } });
+  assert.equal((await app.inject({ method: "GET", url: `${base}?kind=task_todo` })).statusCode >= 400, true, "only the three record-only kinds are a filter");
+  authenticated = false;
+  assert.equal((await app.inject({ method: "GET", url: base })).statusCode, 403);
+  assert.equal(seen.length, 1);
+});

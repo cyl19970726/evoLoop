@@ -559,3 +559,238 @@ test("notices that existed before the migration keep the one-notice-one-message 
   const pending = await pool.query("SELECT 1 FROM leader_result_notice WHERE project_id=$1 AND task_id=$2 AND NOT via_packet AND state='pending'", [p, taskId]);
   assert.equal(pending.rowCount, 1);
 });
+
+// ---- W5: levels. An immediate notice does not wait out the debounce and is first in line; it is still held by a busy Leader, a closed gate and
+// the packet's own limits (20 items, 8 KB), and a backlog of digest notices never holds it back. ----
+const raise = async (kind: string, taskId: string, label: string) => {
+  const revision = (await pool.query("SELECT current_revision_id FROM task WHERE project_id=$1 AND task_id=$2", [p, taskId])).rows[0].current_revision_id;
+  await pool.query("SELECT enqueue_leader_result_notice($1,$2,$3,$4,$5,NULL,'worker',$6,now())", [p, kind, randomUUID(), taskId, revision, `test:${label}`]);
+  return String((await pool.query("SELECT notice_id FROM leader_result_notice WHERE project_id=$1 AND task_id=$2 AND kind=$3 ORDER BY occurred_at DESC LIMIT 1", [p, taskId, kind])).rows[0].notice_id);
+};
+const settlePacket = async (packetId: string) => {
+  await pool.query("UPDATE leader_notice_packet SET state='seen',ended_at=now() WHERE packet_id=$1", [packetId]);
+  await pool.query("UPDATE leader_notice_packet_item SET state='handled',disposition='handled',handled_by='t',version=version+1 WHERE packet_id=$1", [packetId]);
+  await pool.query("ALTER TABLE session_message DISABLE TRIGGER USER");
+  await pool.query("UPDATE session_message SET state='cancelled',version=version+1 WHERE project_id=$1 AND state='queued'", [p]);
+  await pool.query("ALTER TABLE session_message ENABLE TRIGGER USER");
+};
+
+test("W5: digest notices wait for the debounce, an immediate one does not, and it takes the waiting digest notices along", async () => {
+  await reset();
+  const slow = makePump(3600);
+  const before = (await packets()).length;
+  await newTask("Digest one"); await newTask("Digest two");
+  await slow.tick();
+  assert.equal((await packets()).length, before, "digest notices alone wait for the debounce");
+  const blocked = await newTask("Blocked");
+  const immediate = await raise("task_blocker", blocked, "blocked");
+  await slow.tick();
+  const packet = await lastPacket();
+  assert.equal(packet.state, "sent", "the immediate notice was sent at once, without waiting 3600 seconds");
+  const rows = await items(packet.packet_id);
+  assert.equal(rows[0]!.notice_id, immediate, "the immediate notice is first in line");
+  assert.ok(rows.length >= 3, "the digest notices waiting at that moment travel with it");
+  assert.deepEqual(errors, []);
+});
+
+test("W5: an immediate notice is still held by a Leader that is busy or behind a closed recovery gate, and goes at the next moment it can be delivered", async () => {
+  await reset();
+  const slow = makePump(3600);
+  const before = (await packets()).length;
+  await raise("task_question", await newTask("Asked"), "asked");
+  overrides = { leaderState: async () => ({ busy: true, humanMessageQueued: false, gateOpen: true, gateBlocked: false }) };
+  await slow.tick();
+  assert.equal((await packets()).length, before, "a busy Leader is not interrupted");
+  overrides = { leaderState: async () => ({ busy: false, humanMessageQueued: false, gateOpen: false, gateBlocked: true }) };
+  await slow.tick();
+  assert.equal((await packets()).length, before, "a closed recovery gate holds it");
+  overrides = { leaderState: async () => ({ busy: false, humanMessageQueued: true, gateOpen: true, gateBlocked: false }) };
+  await slow.tick();
+  assert.equal((await packets()).length, before, "a person's message goes first");
+  overrides = {};
+  await slow.tick();
+  assert.equal((await lastPacket()).state, "sent", "at the next deliverable moment it goes, with no debounce");
+  assert.deepEqual(errors, []);
+});
+
+test("W5: a backlog of digest notices never holds an immediate one back, and more immediate notices than a packet holds go in packets one after another", async () => {
+  await reset();
+  const slow = makePump(3600);
+  for (let i = 0; i < 25; i++) await newTask(`Backlog ${i}`);
+  const urgent = await raise("run_submission_blocked", await newTask("Urgent"), "urgent");
+  await slow.tick();
+  const first = await lastPacket();
+  const firstRows = await items(first.packet_id);
+  assert.equal(first.item_count, 20, "the packet limit still applies");
+  assert.equal(firstRows[0]!.notice_id, urgent, "yet the newest immediate notice is ahead of 25 digest notices that were queued before it");
+  await settlePacket(first.packet_id);
+  await reset();
+  const many: string[] = [];
+  for (let i = 0; i < 22; i++) many.push(await raise("acceptance_blocked", await newTask(`Blocked acceptance ${i}`), `many-${i}`));
+  await slow.tick();
+  const one = await lastPacket();
+  assert.equal(one.item_count, 20);
+  await settlePacket(one.packet_id);
+  await slow.tick();
+  const two = await lastPacket();
+  assert.notEqual(two.packet_id, one.packet_id);
+  const sent = new Set([...(await items(one.packet_id)), ...(await items(two.packet_id))].map(row => row.notice_id));
+  for (const id of many) assert.ok(sent.has(id), "every immediate notice went out, in the next packet when the first was full");
+  assert.deepEqual(errors, []);
+});
+
+test("W5: a withdrawn notice is a record: it wakes no one, and the record view lists it with its reason", async () => {
+  await reset();
+  const stale = await newTask("Withdrawn in the record");
+  const noticeId = await noticeOf(stale);
+  await apply(author, { type: "task.start", taskId: stale, expectedVersion: 1, reason: "started elsewhere" });
+  await noticePump.tick();
+  const { listLeaderEventRecords } = await import("../src/leader-event-records.ts");
+  const records = (await listLeaderEventRecords(pool, p, { taskId: stale, limit: 10 })).items;
+  assert.deepEqual(records.map(row => row.kind), ["notice_withdrawn"]);
+  assert.match(records[0]!.sourceRef, new RegExp(`^notice:${noticeId}:TODO_SOURCE`));
+  assert.equal((await pool.query("SELECT 1 FROM leader_result_notice WHERE project_id=$1 AND task_id=$2 AND state='linked' AND level='immediate'", [p, stale])).rowCount, 0, "it never became an immediate notice");
+  const page = await listLeaderEventRecords(pool, p, { kind: "notice_withdrawn", limit: 1 });
+  assert.equal(page.items.length, 1);
+  const rest = await listLeaderEventRecords(pool, p, { kind: "notice_withdrawn", limit: 5, ...(page.nextCursor ? { cursor: page.nextCursor } : {}) });
+  assert.ok(!rest.items.some(row => row.sourceEventId === page.items[0]!.sourceEventId), "a cursor continues after the last record read");
+  assert.deepEqual(errors, []);
+});
+
+// ---- Q2: the scheduling event stream and the work board, over the real flows above ----
+test("Q2: the stream records a packet's whole way in order (notice, built, packed, sent by a new Turn, delivered, seen) and the metrics follow from it", async () => {
+  await reset();
+  const { readSchedEvents, readWorkBoard } = await import("../src/work-board.ts");
+  const { computeBoardMetrics } = await import("../../../apps/coordinator/src/work-board/metrics.ts");
+  const startSeq = (await readSchedEvents(pool, p, { limit: 1 })).head;
+  await humanPost("Leader, a question");
+  await messagePump.tick();
+  const first = `turn-${turns.size}`;
+  await newTask("Stream A");
+  await noticePump.tick();                       // the Leader is busy: the notice only waits
+  finishTurn(first);
+  await messagePump.tick(); await noticePump.tick();   // the packet message is posted
+  await messagePump.tick();                      // and started: its Turn runs
+  await noticePump.tick();
+  const during = await readWorkBoard(pool, p);
+  const leader = during.sessions.find(s => s.sessionId === sessionA)!;
+  assert.equal(leader.current?.kind, "message", "the Leader's running Turn is a message");
+  assert.ok(leader.current!.elapsedSeconds! >= 0);
+  assert.ok(during.awaitingLeader.some(i => i.kind === "notice" && i.state === "delivered"), "a delivered notice waits for the Leader's decision");
+  assert.ok(during.eventSeq > startSeq);
+  assert.ok(during.graph.nodes.some(n => n.kind === "leader") && during.graph.nodes.some(n => n.id === sessionA));
+  assert.ok(during.graph.inFlight.some(f => f.kind === "packet"));
+  finishTurn(`turn-${turns.size}`); await settleAndPump();
+  const page = await readSchedEvents(pool, p, { after: startSeq, limit: 500 });
+  const kinds = page.items.map(e => e.kind);
+  const order = ["message.queued", "message.processing", "notice.created", "notice.packet_built", "notice.packed", "notice.sent", "notice.delivered", "notice.seen"];
+  let at = -1;
+  for (const kind of order) { const next = kinds.indexOf(kind, at + 1); assert.ok(next > at, `${kind} after ${order[order.indexOf(kind) - 1] ?? "start"} in ${kinds.join(",")}`); at = next; }
+  const sent = page.items.find(e => e.kind === "notice.sent")!;
+  assert.equal(sent.next, "new_turn"); assert.equal(sent.subject.kind, "packet");
+  const packed = page.items.find(e => e.kind === "notice.packed")!;
+  assert.equal(packed.to, sent.subject.id, "a notice names its packet");
+  assert.ok(page.items.every((e, i) => i === 0 || e.seq > page.items[i - 1]!.seq), "strictly increasing");
+  assert.ok(page.items.every(e => !("content" in e)), "metadata only");
+  const m = computeBoardMetrics(page.items, page.items[0]!.at, new Date(Date.now() + 1000).toISOString());
+  assert.ok(m.noticeIntake.count >= 1 && m.noticeIntake.medianSeconds !== null);
+  // The time read returns the same events as the cursor read.
+  const timed = await readSchedEvents(pool, p, { from: page.items[0]!.at, to: new Date(Date.now() + 1000).toISOString(), limit: 500 });
+  assert.deepEqual(timed.items.filter(e => e.seq > startSeq).map(e => e.seq), page.items.map(e => e.seq));
+});
+
+test("Q2: retention removes only what is older than the window, a cursor behind it is told resetRequired, and one ahead of the head too", async () => {
+  const { readSchedEvents, purgeSchedEvents, headSeq } = await import("../src/work-board.ts");
+  await reset();
+  await newTask("Retention");
+  const head = await headSeq(pool, p);
+  const old = (await pool.query(`INSERT INTO sched_event(project_id,at,category,kind,subject_kind,subject_id) SELECT $1,now()-interval '31 days','task','task.created','task',$2 RETURNING seq`, [p, randomUUID()])).rows[0].seq as number;
+  const kept = (await pool.query(`INSERT INTO sched_event(project_id,at,category,kind,subject_kind,subject_id) SELECT $1,now()-interval '29 days','task','task.created','task',$2 RETURNING seq`, [p, randomUUID()])).rows[0].seq as number;
+  assert.ok(Number(old) > head);
+  const before = await readSchedEvents(pool, p, { after: head, limit: 10 });
+  assert.equal(before.resetRequired, false);
+  assert.equal(await purgeSchedEvents(pool, 30, 1), 1, "batches of one: the loop continues until nothing is left to purge");
+  assert.equal((await pool.query("SELECT 1 FROM sched_event WHERE seq=$1", [kept])).rowCount, 1);
+  assert.equal((await pool.query("SELECT 1 FROM sched_event WHERE seq=$1", [old])).rowCount, 0);
+  const behind = await readSchedEvents(pool, p, { after: Number(old) - 1, limit: 10 });
+  assert.equal(behind.resetRequired, true, "events the cursor had not seen are gone");
+  const at = await readSchedEvents(pool, p, { after: Number(old), limit: 10 });
+  assert.equal(at.resetRequired, false); assert.ok(at.items.some(e => e.seq === Number(kept)));
+  assert.equal((await readSchedEvents(pool, p, { after: Number(kept) + 100000, limit: 10 })).resetRequired, true);
+  assert.equal(await purgeSchedEvents(pool, 30), 0, "nothing more to purge");
+});
+
+test("Q2: the triggers add little to a write: a message insert with and without its event trigger", async () => {
+  await reset();
+  const n = 200;
+  const run = async () => {
+    const started = process.hrtime.bigint();
+    for (let i = 0; i < n; i++) await pool.query(`INSERT INTO session_message(project_id,message_id,operation_id,target_kind,session_id,sender_actor_id,content,state,version,created_at,updated_at)
+      VALUES($1,$2,$3,'owned',$4,'perf','x','cancelled',1,now(),now())`, [p, randomUUID(), randomUUID(), sessionB]);
+    return Number(process.hrtime.bigint() - started) / 1e6 / n;
+  };
+  const withTrigger = await run();
+  await pool.query("ALTER TABLE session_message DISABLE TRIGGER sched_event_message_ins");
+  const without = await run();
+  await pool.query("ALTER TABLE session_message ENABLE TRIGGER sched_event_message_ins");
+  console.log(`Q2 write cost per message insert: ${withTrigger.toFixed(2)} ms with the event trigger, ${without.toFixed(2)} ms without (${n} rows, one connection)`);
+  assert.ok(withTrigger - without < 5, `the trigger adds ${(withTrigger - without).toFixed(2)} ms per insert`);
+});
+
+test("Q2 defect 52eb5ecf: after retention removed every event the head is the purge floor, so a reader that re-reads the snapshot is not told resetRequired again", async () => {
+  const { readSchedEvents, readWorkBoard, headSeq, purgeSchedEvents } = await import("../src/work-board.ts");
+  await pool.query("UPDATE sched_event SET at=now()-interval '40 days' WHERE project_id=$1", [p]);
+  await purgeSchedEvents(pool, 30);
+  assert.equal((await pool.query("SELECT count(*)::int AS n FROM sched_event WHERE project_id=$1", [p])).rows[0].n, 0, "nothing left");
+  const floor = Number((await pool.query("SELECT floor_seq FROM sched_event_floor WHERE project_id=$1", [p])).rows[0].floor_seq);
+  assert.equal(await headSeq(pool, p), floor, "the head is the floor, not 0");
+  const snapshot = await readWorkBoard(pool, p);
+  assert.equal(snapshot.eventSeq, floor);
+  const page = await readSchedEvents(pool, p, { after: snapshot.eventSeq, limit: 10 });
+  assert.equal(page.resetRequired, false, "continuing from the snapshot's eventSeq is current, not a reset");
+  assert.equal((await readSchedEvents(pool, p, { after: 0, limit: 10 })).resetRequired, true, "a cursor below the floor still is");
+});
+
+test("Q2 defect 52eb5ecf: a Session that is not ready (unknown, creating) stays on the board with its state", async () => {
+  const { readWorkBoard } = await import("../src/work-board.ts");
+  await pool.query("ALTER TABLE runtime_session DISABLE TRIGGER USER");
+  await pool.query("UPDATE runtime_session SET state='unknown' WHERE project_id=$1 AND session_id=$2", [p, sessionB]);
+  try {
+    const board = await readWorkBoard(pool, p);
+    assert.equal(board.sessions.find(s => s.sessionId === sessionB)?.state, "unknown");
+  } finally {
+    await pool.query("UPDATE runtime_session SET state='ready' WHERE project_id=$1 AND session_id=$2", [p, sessionB]);
+    await pool.query("ALTER TABLE runtime_session ENABLE TRIGGER USER");
+  }
+});
+
+test("Q2 defect 52eb5ecf: write latency under concurrent writers — the per-project advisory lock held to commit, measured with and without the event trigger", async () => {
+  await reset();
+  const writers = 8, each = 40;
+  const run = async () => {
+    const latencies: number[] = [];
+    const started = process.hrtime.bigint();
+    await Promise.all(Array.from({ length: writers }, async () => {
+      for (let i = 0; i < each; i++) {
+        const c = await pool.connect();
+        const t = process.hrtime.bigint();
+        try {
+          await c.query("BEGIN");
+          await c.query(`INSERT INTO session_message(project_id,message_id,operation_id,target_kind,session_id,sender_actor_id,content,state,version,created_at,updated_at)
+            VALUES($1,$2,$3,'owned',$4,'perf','x','cancelled',1,now(),now())`, [p, randomUUID(), randomUUID(), sessionB]);
+          await c.query("COMMIT");
+        } finally { c.release(); }
+        latencies.push(Number(process.hrtime.bigint() - t) / 1e6);
+      }
+    }));
+    const sorted = latencies.sort((a, b) => a - b);
+    return { p50: sorted[sorted.length >> 1]!, p95: sorted[Math.ceil(sorted.length * 0.95) - 1]!, perSecond: latencies.length / (Number(process.hrtime.bigint() - started) / 1e9) };
+  };
+  const withTrigger = await run();
+  await pool.query("ALTER TABLE session_message DISABLE TRIGGER sched_event_message_ins");
+  const without = await run();
+  await pool.query("ALTER TABLE session_message ENABLE TRIGGER sched_event_message_ins");
+  const line = (r: typeof withTrigger) => `p50 ${r.p50.toFixed(2)} ms, p95 ${r.p95.toFixed(2)} ms, ${r.perSecond.toFixed(0)} commits/s`;
+  console.log(`Q2 concurrent writes (${writers} writers x ${each}, one transaction per insert): with the event trigger and its project lock: ${line(withTrigger)}; without: ${line(without)}`);
+  assert.ok(withTrigger.p95 < 250, `p95 with the lock ${withTrigger.p95.toFixed(1)} ms`);
+});

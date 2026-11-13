@@ -8,6 +8,7 @@ import type { Clock, IdFactory, Transaction, UnitOfWork } from "@evoloop/contrac
 import { event } from "./reserve.js";
 import { validateDispatchBasis } from "./basis.js";
 import { priorReviewDecision, reviewIntentJson } from "./pre-turn-review.js";
+import { inclusiveRuntimeUsage } from "../usage.js";
 
 export interface RuntimeWorkflowDependencies { uow: UnitOfWork; clock: Clock; ids: IdFactory;
   /** Local day used by the usage ledger; absent keeps canonical UTC. */
@@ -593,11 +594,10 @@ export class RuntimeWorkflowService {
         const cumulativeNative = (session?.runtimeProvider ?? "codex") === "codex";
         if (!cumulativeNative) {
           const at = next.updatedAt;
+          const tokens = inclusiveRuntimeUsage(checkpoint.usage);
           await tx.usage.addUsage(projectId, current.sessionId,
             this.deps.usageDay?.(at) ?? at.slice(0, 10), {
-              inputTokens: checkpoint.usage.inputTokens ?? 0,
-              outputTokens: checkpoint.usage.outputTokens ?? 0,
-              cachedInputTokens: checkpoint.usage.cacheReadInputTokens ?? 0,
+              ...tokens,
               costUsd: checkpoint.costUsd != null && checkpoint.costUsd > 0 ? checkpoint.costUsd : 0,
               costReported: checkpoint.costUsd != null,
             });

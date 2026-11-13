@@ -626,3 +626,24 @@ test("a -32603 on a steer leaves the input unknown with no message; only a refus
   assert.equal(queued.state,"rejected"); assert.equal(queued.queuedMessageId,other.inputId);
   assert.equal(await messageCount(other.inputId,other.operationId),1);
 });
+
+test("Q2: a direct input into a running Turn is a message.inserted event and an idle start a message.started event, from the sender, metadata only",async()=>{
+  const rows=(await pool.query("SELECT kind,category,from_ref,subject_kind,new_state FROM sched_event WHERE project_id=$1 AND kind IN ('message.inserted','message.started','message.queued')",[projectId])).rows;
+  assert.ok(rows.some(r=>r.kind==='message.inserted'&&r.subject_kind==='input'&&r.category==='message'&&r.from_ref==='user'),'a steer is an insertion');
+  assert.ok(rows.some(r=>r.kind==='message.started'&&r.from_ref==='user'),'an idle start is a started message');
+  assert.ok(rows.some(r=>r.kind==='message.queued'),'a refused steer saved as a queued message is a queued message');
+});
+
+test("defect 52eb5ecf: an idle start is recorded as message.started only — never also as message.queued — and its message then ends as an ordinary state change",async()=>{
+  const id=randomUUID(),command={inputId:id,operationId:randomUUID(),content:"Start on an idle Session",expectedTurnId:null};
+  const startSession=randomUUID();
+  await pool.query(`INSERT INTO runtime_session(project_id,session_id,role_id,cwd,authorization_scope,sandbox,approval_policy,state,version,native_thread_id,native_session_id,operation_id,actor_id,created_at,updated_at)
+    VALUES($1,$2,$3,'/tmp/direct-test','project','danger-full-access','never','ready',1,$4,$5,$6,'agent',now(),now())`,[projectId,startSession,roleId,`thread-${startSession}`,`native-${startSession}`,randomUUID()]);
+  const reserved=await store.reserve(projectId,startSession,"user",command,grant(startSession),hash);
+  assert.equal(reserved.record.mode,"start");
+  const kinds=(await pool.query("SELECT kind FROM sched_event WHERE project_id=$1 AND subject_id=$2 ORDER BY seq",[projectId,id])).rows.map(r=>r.kind);
+  assert.deepEqual(kinds,["message.started"],"the message was inserted already processing: not queued");
+  await pool.query("ALTER TABLE session_message DISABLE TRIGGER USER");
+  await pool.query("UPDATE session_message SET state='replied' WHERE project_id=$1 AND message_id=$2",[projectId,id]);
+  await pool.query("ALTER TABLE session_message ENABLE TRIGGER USER");
+});

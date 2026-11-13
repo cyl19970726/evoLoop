@@ -16,7 +16,7 @@ import { PageSection, mutedText } from "../../shared/ui/PageParts";
 import { useTaskName } from "../../shared/ui/RecordName";
 import { date } from "../../shared/ui/shared";
 import { nameOnly } from "../../shared/workPresentation";
-import { decisionKindText, decisionLink, deliveryLink, inboxTaskLink, lastUseText, useRequirementText, type DeliveryForMe } from "./inboxModel";
+import { decisionKindText, decisionLink, decisionLinkProblem, deliveryLink, inboxTaskLink, lastUseText, useRequirementText, type DeliveryForMe } from "./inboxModel";
 import type { DecisionItem } from "@evoloop/contracts/decision-requests";
 import { ActionForm, option } from "../../shared/ActionForm";
 import { useInboxReads, type DeliveriesForMe } from "./inboxReads";
@@ -40,7 +40,7 @@ const countText = (read: Read<unknown>, count: number | undefined) => read.data 
 export function InboxIndex({ context }: { context: MutationContext; refresh: number }) {
   const { projectId } = context;
   const actorId = context.principal.actorId;
-  const { acceptance: mine, impacts, deliveries, decisions } = useInboxReads(projectId, actorId);
+  const { acceptance: mine, impacts, deliveries, decisions, alerts } = useInboxReads(projectId, actorId);
   const acceptance = mine.data?.items;
   const pending = impacts.data?.filter(item => item.state === "pending");
   const reading = mine.isFetching || impacts.isFetching || deliveries.isFetching || decisions.isFetching;
@@ -75,6 +75,17 @@ export function InboxIndex({ context }: { context: MutationContext; refresh: num
       <ReadState read={impacts} what="依据变化" />
       {pending?.length === 0 && <p className="text-small text-text-secondary">当前没有待复核的依据变化。</p>}
       {!!pending?.length && <ul aria-label="依据变化" className="flex flex-col">{pending.map(item => <li key={item.id}><ImpactRow projectId={projectId} actorId={actorId} item={item} /></li>)}</ul>}
+    </PageSection>
+    <PageSection title="用量与上下文告警" action={<span className={mutedText}>{countText(alerts, alerts.data?.length)}</span>}
+      description="今日预算接近或达到上限，或某个智能体的上下文已满需要交接。这些告警发给你，不发给 Leader；处理方式在“智能体”页的用量与对话里。">
+      <ReadState read={alerts} what="用量与上下文告警" />
+      {alerts.data?.length === 0 && <p className="text-small text-text-secondary">当前没有用量或上下文告警。</p>}
+      {!!alerts.data?.length && <ul aria-label="用量与上下文告警" className="flex flex-col" data-usage-alerts="">{alerts.data.map((item, index) => <li key={`${item.kind}:${item.sessionId ?? "day"}:${index}`}
+        className="flex flex-col gap-0.5 border-t border-border px-3 py-2 first:border-t-0" data-alert-severity={item.severity}>
+        <p className="text-body font-medium text-foreground">{item.kind === "budget" ? "今日用量" : "智能体上下文"} · {item.severity === "limit" ? "已到上限" : "接近上限"}</p>
+        <p className={mutedText}>{item.text}</p>
+        {item.sessionId && <a className="w-fit text-caption text-primary hover:underline" href={`/p/${projectId}/sessions?session=${encodeURIComponent(`owned:${item.sessionId}`)}`}>打开这个智能体</a>}
+      </li>)}</ul>}
     </PageSection>
     <p className={mutedText}>待办任务在任务表格里按“待办”筛选查看。<a className="ml-1 text-primary hover:underline" href={taskListRoute(projectId, { ...defaultTaskListView, filter: "todo" })}>打开待办任务</a></p>
   </div>;
@@ -133,10 +144,12 @@ function ImpactRow({ projectId, actorId, item }: { projectId: string; actorId: s
 
 function DecisionRow({ context, item }: { context: MutationContext; item: DecisionItem }) {
   const link = decisionLink(context.projectId, item, context.principal.actorId);
+  const problem = decisionLinkProblem(item);
   const meta = `${decisionKindText[item.kind]} · ${item.proposedBy} 提出 · ${date(item.at)}`;
   return <div className="flex flex-col gap-1 border-t border-border py-1 first:border-t-0">
     {link ? <ListRow href={link} title={item.title} meta={meta} trailing={<span className="text-primary">去决定</span>} />
       : <div className="px-3 py-2"><p className="text-body font-medium text-foreground">{item.title}</p><p className={mutedText}>{meta}</p></div>}
+    {problem && <p className={`${mutedText} px-3`} role="status" data-decision-link-problem="">{problem}</p>}
     <p className={`${mutedText} px-3`}>{item.detail}</p>
     {item.kind === "decision_request" && <div className="px-3">
       <ActionForm context={context} embedded title="答复" fields={[

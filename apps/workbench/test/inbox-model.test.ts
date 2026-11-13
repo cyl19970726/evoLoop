@@ -4,7 +4,7 @@ import { test } from "node:test";
 import type { ConsumerObservation } from "@evoloop/contracts";
 import type { LeaderWorkDeliveryFact, LeaderWorkPage, LeaderWorkTask } from "@evoloop/contracts/work-index";
 import {
-  decisionKindText, decisionLink, deliveredAt, deliveryLink, inboxBadge, inboxTaskLink, judgeMyDelivery, lastUseText, myLatestObservation, shellInboxCount, useRequirementText,
+  decisionKindText, decisionLink, decisionLinkProblem, deliveredAt, usageAlerts, usageWindow, deliveryLink, inboxBadge, inboxTaskLink, judgeMyDelivery, lastUseText, myLatestObservation, shellInboxCount, useRequirementText,
 } from "../src/features/workflow/inboxModel.ts";
 import type { DecisionItem } from "@evoloop/contracts/decision-requests";
 import { readDeliveriesForMe } from "../src/features/workflow/inboxDeliveries.ts";
@@ -216,4 +216,78 @@ test("the 待我处理 count includes 待我决定, and an unreadable 待我决�
     { label: "待我验收", count: 1, failed: false }, { label: "待我决定", ...decisions }, { label: "依据变化", count: 0, failed: false }];
   assert.deepEqual(inboxBadge(parts({ count: 2, failed: false })), { state: "known", count: 3 });
   assert.equal(inboxBadge(parts({ count: undefined, failed: true })).state, "unknown");
+});
+
+test("待我决定 deep links carry the specific id of the item, not a list page", () => {
+  const params = (item: DecisionItem) => new URL(decisionLink("p1", item, me)!, "http://x");
+  const role = params(decision("role_proposal"));
+  assert.equal(role.pathname, "/p/p1/roles");
+  assert.equal(role.searchParams.get("role"), "role-1", "the role page selects this role");
+  assert.equal(role.searchParams.get("return"), "/p/p1/inbox");
+  assert.equal(role.searchParams.get("actor"), me);
+  assert.equal(role.searchParams.get("returnTitle"), "待我处理");
+  const stage = params(decision("stage_proposal"));
+  assert.equal(stage.pathname, "/p/p1/journey");
+  assert.equal(stage.searchParams.get("stage"), "stage-1", "the journey page selects this stage");
+  assert.equal(stage.searchParams.get("return"), "/p/p1/inbox");
+  assert.equal(stage.searchParams.get("actor"), me);
+  assert.equal(stage.searchParams.get("returnTitle"), "待我处理");
+  const question = params(decision("task_question"));
+  assert.equal(question.pathname, "/p/p1/tasks/task-9");
+  assert.equal(question.searchParams.get("section"), "collaboration", "the task page opens its collaboration section");
+  assert.equal(question.searchParams.get("discussion"), "d-1");
+  assert.equal(question.searchParams.get("question"), "e-1", "and the question event itself");
+  assert.equal(question.searchParams.get("return"), "/p/p1/inbox");
+  assert.equal(question.searchParams.get("actor"), me);
+  assert.equal(question.searchParams.get("returnTitle"), "待我验收与判断", "the task page keeps its existing inbox return name");
+  // Ids are encoded, never concatenated raw.
+  assert.equal(params({ ...decision("role_proposal"), roleId: "a b&c" } as DecisionItem).searchParams.get("role"), "a b&c");
+});
+
+test("待我决定 with a missing id has no link and says why: it never falls back to the list page", () => {
+  const blank = (kind: "role_proposal" | "stage_proposal" | "task_question", field: string, value: string) => ({ ...decision(kind), [field]: value }) as DecisionItem;
+  const cases: Array<[DecisionItem, RegExp]> = [
+    [blank("role_proposal", "roleId", ""), /职责/], [blank("role_proposal", "roleId", "   "), /职责/],
+    [blank("stage_proposal", "stageId", ""), /阶段/],
+    [blank("task_question", "taskId", ""), /任务/], [blank("task_question", "eventId", ""), /问题/], [blank("task_question", "discussionId", ""), /讨论/],
+  ];
+  for (const [item, why] of cases) {
+    assert.equal(decisionLink("p1", item, me), null, `${item.kind} without its id has no link`);
+    assert.match(decisionLinkProblem(item)!, why);
+  }
+  for (const kind of ["role_proposal", "stage_proposal", "task_question"] as const) assert.equal(decisionLinkProblem(decision(kind)), null, "a complete item has no problem");
+  assert.equal(decisionLinkProblem(decision("decision_request")), null, "a request is answered in the row");
+  // The empty list needs no link at all.
+  assert.equal(([] as DecisionItem[]).map(item => decisionLink("p1", item, me)).length, 0);
+});
+
+// W5: budget and context alerts go to the person (待我处理), never to the Leader.
+const budget = (state: string, reason: string | null = null) => ({ configured: true, state, limitKind: "input_tokens", limit: 100, used: 90, ratio: 0.9, warningRatio: 0.8, pauseOrdinaryTurns: true, costComplete: true, reason });
+const sessionUsage = (sessionId: string, state: string) => ({ sessionId, roleId: "r", context: { configured: true, state, inputTokens: 90, limit: 100, ratio: 0.9, warningRatio: 0.8, pauseOrdinaryTurns: true, observedAt: null, reason: null } });
+test("budget and context alerts are listed for the person: nothing for ok, unconfigured or unknown, a line each for warning, exhausted and a Session that must hand off", () => {
+  assert.deepEqual(usageAlerts(null), [], "nothing was read");
+  assert.deepEqual(usageAlerts({ budget: budget("ok") as never, sessions: [sessionUsage("s1", "ok") as never, sessionUsage("s2", "unknown") as never, sessionUsage("s3", "unconfigured") as never] }), []);
+  const warning = usageAlerts({ budget: budget("warning", "今日用量已达到上限的 90%，请留意。") as never, sessions: [] });
+  assert.deepEqual(warning.map(item => [item.kind, item.severity]), [["budget", "warning"]]);
+  assert.match(warning[0]!.text, /90%/);
+  const exhausted = usageAlerts({ budget: budget("exhausted", "今日用量已达到上限；普通结果通知和消息轮次暂停。") as never, sessions: [] });
+  assert.deepEqual(exhausted.map(item => [item.kind, item.severity]), [["budget", "limit"]]);
+  const context = usageAlerts({ budget: budget("ok") as never, sessions: [sessionUsage("11111111-1111-4111-8111-111111111111", "warning") as never, sessionUsage("22222222-2222-4222-8222-222222222222", "handoff_required") as never] });
+  assert.deepEqual(context.map(item => [item.kind, item.severity, item.sessionId]), [["context", "warning", "11111111-1111-4111-8111-111111111111"], ["context", "limit", "22222222-2222-4222-8222-222222222222"]]);
+  assert.match(context[1]!.text, /交接/);
+  assert.equal(usageAlerts({ budget: { ...budget("warning"), configured: false } as never, sessions: [] }).length, 0, "an unconfigured budget has no alert");
+});
+
+// The day a budget alert counts is the project's, not UTC's: the window asked for has to contain it whatever the offset (UTC-12 .. UTC+14).
+test("the usage window around now contains the project's calendar day at every UTC offset, at the moments the calendars disagree", () => {
+  const dayAt = (instant: string, offsetHours: number) => new Date(Date.parse(instant) + offsetHours * 3_600_000).toISOString().slice(0, 10);
+  for (const instant of ["2026-11-12T20:00:00.000Z", "2026-11-12T23:59:00.000Z", "2026-11-13T00:01:00.000Z", "2026-11-13T02:00:00.000Z", "2026-12-31T23:30:00.000Z"]) {
+    const { from, to } = usageWindow(instant);
+    for (let offset = -12; offset <= 14; offset++) {
+      const projectDay = dayAt(instant, offset);
+      assert.ok(from <= projectDay && projectDay <= to, `${instant} at UTC${offset >= 0 ? "+" : ""}${offset}: ${projectDay} is in ${from}..${to}`);
+    }
+  }
+  assert.deepEqual(usageWindow("2026-11-12T20:00:00.000Z"), { from: "2026-11-11", to: "2026-11-13" });
+  assert.deepEqual(usageWindow("2026-01-01T00:30:00.000Z"), { from: "2025-12-31", to: "2026-01-02" }, "across a year end");
 });
