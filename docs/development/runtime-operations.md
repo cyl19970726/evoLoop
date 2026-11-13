@@ -403,5 +403,11 @@ node --import tsx tests/manual/session-compaction-e1.ts
 
 通知泵在发现等待中的新通知时按包送达：最早一项等满 60 秒、Leader 空闲、没有可以开始的人的消息排队、恢复门打开才合成一包并发一条消息。包的步骤（`leader.noticePacket.build`、`.sent`、`.observe`）只由配置里的通知发送身份（`senderActorId`）运行，Leader 和其他复核身份不能运行；它们的处置命令 `leader.notice.handle` 需要 review 权限。逐项状态、各步骤和恢复见[接口合同](../architecture/contracts.md#leader-通知层)。
 
+**包送入 Leader 当前这一轮（W2，只做 Codex；不新增迁移）。** Leader 正在执行、且这一轮由消息（含即时输入开的一轮）发起时，通知泵把包作为通知发送身份的即时输入送进当前这一轮，走和人的即时输入同一套准入，不另写一套。前提：
+- 私有配置 `directInputs.enabled` 为 `true`，并给通知发送身份加一条只能送入、不能开新一轮的授权：`directInputs.grants` 增一项 `{"projectId":"项目","sessionId":"Leader Session","senderActorId":"通知发送身份 senderActorId","canSteer":true,"canStart":false}`；该身份原有的普通消息授权（`sessionMessages.grants`）不变。缺这条授权时通知泵不送入，在日志里给出上述字段，包照旧等这一轮结束（W1）；本 Task 不改私有配置。
+- 上下文阈值已开启（`runtime.contextBudget.enabled`）。这一轮已达阈值，或一次上下文读数都没有，都不送入；每日总额用尽按普通通知处理。送入不消耗人的额度（人的额度只算发送者自己的消息），计入这个 Session 的每日总额。
+- 公平与上限：有人发的消息在排队、恢复门没开、这一轮已超过 30 分钟、这一轮已送入 5 包，都停止送入，让这一轮早点结束；之后攒下的通知照常开下一轮。当前这一轮来自业务 Task Run 时，服务层（`submit` 的 `notice` 选项）和存储层（`reserve`）都拒绝，包里的项保持待发。
+- 状态：送入后读回了条目，包和各项记已送入，这一轮正常结束再记已看到；送入被接受但没读回条目，或这一轮随后失败，各项退回待发并标“上一轮可能已读到”（恢复门因此关闭时包为 `blocked`，处理同下）；结果未知则等这一轮结束，只读对账一次，读不到就退回待发并标“上一轮结果未知”；运行时拒绝（这一轮刚换了、已结束、本地撞车 `SESSION_INPUT_BUSY`）证明没有读到，各项立即退回，下一包用新的输入编号和操作编号，且不会被存成排队消息。每次送入在包的送达尝试里记一行（方法 `steer`，带输入编号，输入编号即包的消息编号）；补入账本来源种类仍是 `session_direct_input`。
+
 **受阻的包。** 读到包的那一轮失败而恢复门关闭时包为 `blocked`，出现在 Leader 工作索引的 `blockedNoticePackets`。先恢复恢复门，再 `request leader.notice.recover --id 包编号 --file BODY.json --receipt UUID`（body `{"reason":"..."}`）恢复这一包。
 

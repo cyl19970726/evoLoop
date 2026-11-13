@@ -23,6 +23,8 @@ export async function applyLeaderNoticePacket(tx: Transaction, principal: Princi
       return ok(packet.id, 1);
     }
     case "leader.noticePacket.sent": return ok((await store.markLeaderNoticePacketSent(command.packetId, now)).id, 1);
+    case "leader.noticePacket.steered":
+      return ok((await store.markLeaderNoticePacketSteered({ packetId: command.packetId, directInputId: command.directInputId, inputOperationId: command.inputOperationId, at: now })).id, 1);
     case "leader.noticePacket.observe": {
       const packet = await store.observeLeaderNoticePacket({ packetId: command.packetId, outcome: command.outcome, turnId: command.turnId ?? null,
         turnStarted: command.turnStarted === true, gateBlocked: command.gateBlocked === true, evidence: command.evidence ?? null, at: now });

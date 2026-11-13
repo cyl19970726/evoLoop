@@ -61,6 +61,22 @@ export interface LeaderResultNoticeConfig {
   targets: Array<{projectId:string;sessionId:string;receiverRoleId:string;receiverActorId:string;senderActorId:string}>;
 }
 
+/** A steered input as the pump needs to see it. */
+export interface SteerReceipt { state: string; nativeItemId?: string | null; actualTurnId?: string | null; reason?: string | null }
+export interface LeaderSteerDeps {
+  /** The same admission a person's direct input passes (grant, writer identities, native capability), asked as the notice sender. */
+  capability(principal: Principal, projectId: string, sessionId: string): Promise<{ available: boolean; mode: string | null; expectedTurnId: string | null; reasonCode: string; detail?: string }>;
+  submit(principal: Principal, projectId: string, sessionId: string, command: { inputId: string; operationId: string; content: string; expectedTurnId: string }): Promise<SteerReceipt>;
+  /** Read only: looks for the original input in native history. */
+  reconcile(principal: Principal, projectId: string, inputId: string): Promise<SteerReceipt>;
+  /** The Session's daily-total and context guards for a notice; no context reading at all is a refusal. */
+  admission(projectId: string, sessionId: string): Promise<{ allowed: boolean; reason: string | null }>;
+  /** A Turn running longer than this stops taking packets (default 1800). */
+  maxTurnSeconds?: number;
+  /** At most this many packets go into one Turn (default 5). */
+  maxPackets?: number;
+}
+
 export interface LeaderResultNoticePumpDeps {
   store: LeaderResultNoticeStore;
   workflow: Pick<WorkflowService,"listRoles"|"listRuntimeSessions"|"execute"|"getOperation">;
@@ -79,6 +95,8 @@ export interface LeaderResultNoticePumpDeps {
   packets?: LeaderPacketPorts;
   /** The earliest waiting notice must have waited this long (database time) before a packet is built. */
   packetDebounceSeconds?: number;
+  /** Packets into the Leader's running Turn (DEC-045 W2, Codex). Absent: a packet waits for the Turn to end (W1). */
+  steer?: LeaderSteerDeps | undefined;
 }
 
 const noticeLabel: Record<string,string> = {task_todo:"新 Task 待分诊",delivery:"已记录固定交付",observation:"已记录独立使用观察",observation_used:"独立使用观察：已使用",observation_failed:"独立使用观察：失败或未使用（需要处理）",line_entry_suspended:"Session 队伍项挂起（无法开始）",line_confirmation_returned:"Session 退回了执行确认",
@@ -232,8 +250,11 @@ export class LeaderResultNoticePump {
       if(built.status==="rejected"){this.noteBuildRejection(built);break;}
     }
     if(!chosen.length||!this.deps.canStartNative())return;
-    if((await ports.openPackets(projectId)).length)return;
+    const open=await ports.openPackets(projectId);
     const state=await ports.leaderState(projectId,recipient.sessionId);
+    // A Leader that is running a Turn takes the packet into it (W2) when it can; otherwise the packet waits for the Turn to end (W1).
+    if(state.busy&&this.deps.steer){await this.steerPacket(projectId,recipient,service,principals,chosen,open);return;}
+    if(open.length)return;
     if(state.busy||state.humanMessageQueued||!state.gateOpen)return;
     // An immediate notice (W5) does not wait out the debounce: the Leader is idle, no person's message waits and the gate is open, so this is the
     // next moment it can be delivered. The candidates come immediate first, so it is at the front of the packet and the waiting digest notices follow.
@@ -248,6 +269,92 @@ export class LeaderResultNoticePump {
       noticeIds:chosen.map(item=>item.noticeId),debounceSeconds:debounce,withdraw:[]} as never);
     if(built.status==="rejected"){this.noteBuildRejection(built);return;}
     await this.postPacket(projectId,packetId,principals,service,recipient);
+  }
+
+  /**
+   * W2. Only when the Leader's running Turn was started by a message (never a business Task Run), nobody's message waits, the recovery gate is open,
+   * the Turn is under its time and packet limits and the Session's guards allow a notice. The packet is built as for a message, then added to the Turn
+   * as the notice service's direct input (input ID = the packet's message ID). Anything refused before the runtime saw it returns the items at once.
+   */
+  private async steerPacket(projectId:string,recipient:LeaderResultRecipient,service:Principal,principals:Principal[],
+    chosen:LeaderNoticeCandidate[],open:Array<{id:string;state:string}>):Promise<void>{
+    const ports=this.deps.packets!,steer=this.deps.steer!;
+    // Packets already read into this Turn do not hold the next one; any other open packet does.
+    for(const packet of open)if(!(packet.state==="delivered"&&(await ports.attempt(projectId,packet.id))?.method==="steer"))return;
+    const state=await ports.leaderState(projectId,recipient.sessionId);
+    if(state.humanMessageQueued||!state.gateOpen)return;
+    if(Math.max(...chosen.map(item=>item.waitedSeconds))<(this.deps.packetDebounceSeconds??60))return;
+    const facts=await ports.steerFacts(projectId,recipient.sessionId);
+    if(facts.source!=="message"||!facts.turnId||facts.elapsedSeconds===null)return;
+    if(facts.elapsedSeconds>(steer.maxTurnSeconds??1800)||facts.steeredPackets>=(steer.maxPackets??5))return;
+    if(!(await steer.admission(projectId,recipient.sessionId)).allowed)return;
+    const capability=await steer.capability(service,projectId,recipient.sessionId);
+    if(!capability.available||capability.mode!=="steer"||capability.expectedTurnId!==facts.turnId){
+      if(capability.reasonCode==="DIRECT_GRANT_MISSING"||capability.reasonCode==="DIRECT_STEER_DISABLED")
+        this.deps.onDiagnostic?.(projectId,chosen[0]!.noticeId,`STEER_NOT_AUTHORIZED: the packets wait for the Turn to end. Private configuration directInputs.grants needs one entry `+
+          `{projectId, sessionId:"${recipient.sessionId}", senderActorId:"${recipient.senderActorId}", canSteer:true, canStart:false}${capability.detail?` (${capability.detail})`:""}`);
+      return;
+    }
+    const packetId=randomUUID(),messageId=randomUUID(),operationId=randomUUID();
+    const content=packetContent(projectId,packetId,chosen);
+    const debounce=this.deps.packetDebounceSeconds??60;
+    const built=await this.deps.workflow.execute(service,{type:"leader.noticePacket.build",projectId,operationId:randomUUID(),sessionId:recipient.sessionId,
+      packetId,messageId,messageOperationId:operationId,content,
+      recipient:{receiverRoleId:recipient.receiverRoleId,receiverActorId:recipient.receiverActorId,senderActorId:recipient.senderActorId},
+      noticeIds:chosen.map(item=>item.noticeId),debounceSeconds:debounce,withdraw:[]} as never);
+    if(built.status==="rejected"){this.noteBuildRejection(built);return;}
+    const observe=(outcome:"withdrawn",evidence:string)=>this.deps.workflow.execute(service,
+      {type:"leader.noticePacket.observe",projectId,operationId:randomUUID(),packetId,outcome,evidence} as never);
+    try{await steer.submit(service,projectId,recipient.sessionId,{inputId:messageId,operationId,content,expectedTurnId:facts.turnId});}
+    catch(error){
+      // Nothing reserved or provably unsent: the items go back and the next packet has new IDs. Otherwise the input exists and its record decides.
+      const code=(error as {code?:string}).code??"ERROR";
+      if(code!=="SESSION_INPUT_BUSY"&&await ports.directInput(projectId,messageId)){
+        await this.deps.workflow.execute(service,{type:"leader.noticePacket.steered",projectId,operationId:randomUUID(),packetId,directInputId:messageId,inputOperationId:operationId} as never);
+        this.deps.onError(error);return;
+      }
+      await observe("withdrawn",`STEER_REFUSED:${code}`);
+      if(!["NOTICE_NOT_INTO_RUN","TURN_ENDED","TURN_CHANGED","SESSION_INPUT_BUSY","DIRECT_GRANT_MISSING"].includes(code))this.deps.onError(error);
+      return;
+    }
+    await this.deps.workflow.execute(service,{type:"leader.noticePacket.steered",projectId,operationId:randomUUID(),packetId,directInputId:messageId,inputOperationId:operationId} as never);
+    const packet=(await ports.openPackets(projectId,recipient.sessionId)).find(p=>p.id===packetId);
+    if(packet)await this.reconcileSteered(projectId,packet,service,state.gateBlocked);
+  }
+
+  /**
+   * What the runtime did with a steered packet. Accepted and read back as an Item: the items are delivered, and seen when the Turn ended normally.
+   * Accepted without an Item, or the Turn failed afterwards: back to waiting, marked "may already have been read". Unknown: after the Turn ends, one
+   * read-only look; not found means back to waiting, marked "result unknown". A refusal means nothing was read. Every resend has a new operation ID.
+   */
+  private async reconcileSteered(projectId:string,packet:{id:string;state:string;sessionId:string;messageId:string},service:Principal,gateBlocked:boolean):Promise<void>{
+    const ports=this.deps.packets!;
+    const observe=(outcome:"delivered"|"seen"|"failed"|"withdrawn",extra:Record<string,unknown>)=>this.deps.workflow.execute(service,
+      {type:"leader.noticePacket.observe",projectId,operationId:randomUUID(),packetId:packet.id,outcome,...extra} as never);
+    let input=await ports.directInput(projectId,packet.messageId);
+    if(!input){await observe("withdrawn",{evidence:"STEER_INPUT_MISSING"});return;}
+    if(input.state==="rejected"){await observe("withdrawn",{evidence:`STEER_REJECTED:${input.reason??""}`.slice(0,500)});return;}
+    if(input.state==="attempted"||input.state==="unknown"){
+      // Settled only by the end of the Turn it was meant for; then one read-only look, never a second send.
+      const turn=input.actualTurnId??input.expectedTurnId;
+      if(!turn||await ports.turnOutcome(projectId,packet.sessionId,turn)==="running")return;
+      const looked=await this.deps.steer!.reconcile(service,projectId,packet.messageId);
+      if(looked.state!=="accepted"){await observe("withdrawn",{evidence:"STEER_RESULT_UNKNOWN: 上一轮结果未知，重新送入"});return;}
+      input=await ports.directInput(projectId,packet.messageId);
+      if(!input)return;
+    }
+    if(input.state!=="accepted")return;
+    const turn=input.actualTurnId??input.expectedTurnId;
+    const outcome=turn?await ports.turnOutcome(projectId,packet.sessionId,turn):null;
+    if(!input.nativeItemId){
+      // Accepted, but no Item was read back: once the Turn is over it may still have been read.
+      if(outcome&&outcome!=="running")await observe("failed",{turnStarted:true,gateBlocked,evidence:"STEER_ACCEPTED_WITHOUT_ITEM: 上一轮可能已读到",...(turn?{turnId:turn}:{})});
+      return;
+    }
+    if(packet.state!=="delivered")await observe("delivered",{turnId:turn??undefined});
+    if(outcome==="completed")await observe("seen",{turnId:turn??undefined});
+    else if(outcome==="failed"||outcome==="unknown")
+      await observe("failed",{turnStarted:true,gateBlocked,evidence:`STEER_TURN_${outcome.toUpperCase()}: 上一轮可能已读到`,...(turn?{turnId:turn}:{})});
   }
 
   private noteBuildRejection(built:{code:string;message:string}):void{
@@ -301,7 +408,7 @@ export class LeaderResultNoticePump {
     await this.deps.workflow.execute(service,{type:"leader.noticePacket.sent",projectId,operationId:randomUUID(),packetId});
   }
 
-  private async reconcilePacket(projectId:string,packet:{id:string;state:string;sessionId:string;messageId:string},principals:Principal[],
+  private async reconcilePacket(projectId:string,packet:{id:string;state:string;sessionId:string;messageId:string;messageOperationId:string},principals:Principal[],
     eligibility:Eligibility,service:Principal|null):Promise<void>{
     const ports=this.deps.packets!;
     const observe=(outcome:"delivered"|"seen"|"failed"|"unknown"|"withdrawn",extra:Record<string,unknown>={})=>this.deps.workflow.execute(service!,
@@ -311,6 +418,13 @@ export class LeaderResultNoticePump {
     if(packet.state==="building"){
       // The build committed but the post (or its record) did not.
       const existing=await ports.message(projectId,packet.messageId);
+      // A steered packet: the input exists (its ID is the message ID) but the attempt row was not recorded.
+      if(!existing&&service&&await ports.directInput(projectId,packet.messageId)){
+        await this.deps.workflow.execute(service,{type:"leader.noticePacket.steered",projectId,operationId:randomUUID(),packetId:packet.id,
+          directInputId:packet.messageId,inputOperationId:packet.messageOperationId} as never);
+        await this.reconcileSteered(projectId,packet,service,(await ports.leaderState(projectId,packet.sessionId)).gateBlocked);
+        return;
+      }
       if(!existing){
         if(here&&service)await this.postPacket(projectId,packet.id,principals,service,recipient!);
         else if(service)await observe("withdrawn",{evidence:here?"LEADER_NOTICES_UNAVAILABLE":(recipient?"LEADER_SESSION_CHANGED":eligibility.reason!)});
@@ -321,6 +435,10 @@ export class LeaderResultNoticePump {
       await this.deps.workflow.execute(service,{type:"leader.noticePacket.sent",projectId,operationId:randomUUID(),packetId:packet.id});
     }
     const attempt=await ports.attempt(projectId,packet.id);
+    if(attempt?.method==="steer"){
+      if(service)await this.reconcileSteered(projectId,packet,service,(await ports.leaderState(projectId,packet.sessionId)).gateBlocked);
+      return;
+    }
     if(!attempt?.messageId)return;
     const message=await ports.message(projectId,attempt.messageId);
     if(!message)return;

@@ -221,7 +221,7 @@ export class WorkflowService {
       command.type==='session.message.manualStop')return 'review';
     if (command.type === "session.profile.set" || command.type === "session.identity.set" || command.type.startsWith("task.assignment.") && command.type !== "task.assignment.acknowledge") return "review";
     // The packet's own steps belong to the notice service identity (checked in apply); the Leader's decision and recovery need review.
-    if (command.type === "leader.noticePacket.build" || command.type === "leader.noticePacket.sent" || command.type === "leader.noticePacket.observe") return "write";
+    if (command.type === "leader.noticePacket.build" || command.type === "leader.noticePacket.sent" || command.type === "leader.noticePacket.steered" || command.type === "leader.noticePacket.observe") return "write";
     if (command.type === "stage.phaseKey.set") return "review";
     if (command.type.startsWith("queue.") || command.type.startsWith("line.") || command.type.startsWith("leader.notice")) return "review";
     if (command.type === "decision.request.create" || command.type === "decision.request.withdraw") return "review";
@@ -239,7 +239,7 @@ export class WorkflowService {
     if(command.type==='runtime.session.executionProfile.revise'||command.type==='runtime.session.recovery.resume')
       return applySessionRecovery(tx,principal,command,now,()=>this.deps.ids.next(),this.deps.recoveryAuthority);
     if (command.type.startsWith("leader.notice")) {
-      if (command.type === "leader.noticePacket.build" || command.type === "leader.noticePacket.sent" || command.type === "leader.noticePacket.observe") {
+      if (command.type === "leader.noticePacket.build" || command.type === "leader.noticePacket.sent" || command.type === "leader.noticePacket.steered" || command.type === "leader.noticePacket.observe") {
         const service = await this.deps.leaderNoticeServiceActor?.(command.projectId);
         if (!service || service !== principal.actorId) throw new DomainError("FORBIDDEN", "Only the Leader notice service identity may run notice packet steps");
       }

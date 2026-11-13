@@ -120,7 +120,11 @@ export class DirectInputService {
       principal.permissions.includes("review")?undefined:principal.actorId);
     return {...page,items:page.items.map(publicDirectInput)};
   }
-  async submit(principal:Principal,projectId:string,sessionId:string,command:DirectInputCommand):Promise<DirectInputReceipt>{
+  /**
+   * `notice`: the platform's own notice to the Leader (DEC-045 W2). It can only be added to a Turn a message is running; a business Task Run refuses it here and
+   * in the store, an idle Session is not started by it, and a changed Turn is refused with nothing saved (the caller sends a new packet).
+   */
+  async submit(principal:Principal,projectId:string,sessionId:string,command:DirectInputCommand,options:{notice?:boolean}={}):Promise<DirectInputReceipt>{
     if(!principal.projectIds.includes(projectId)||!principal.permissions.includes("write")||
       !principal.permissions.includes("read")||!this.deps.canWrite())
       throw new DomainError("FORBIDDEN","Current project writer is unavailable");
@@ -132,6 +136,8 @@ export class DirectInputService {
       // A later request may reuse the exact intent only after a local admission refusal proved no send.
       if(!retrying)return publicDirectInput(prior);
     }
+    if(options.notice&&!prior&&await this.deps.store.primaryKind(projectId,sessionId)==="run")
+      throw new DomainError("NOTICE_NOT_INTO_RUN","A platform notice is never added to a business Task Run");
     const {grant,binding}=await this.deps.admission(principal,projectId,sessionId);
     const runtime=this.deps.runtime();
     if(!runtime.isReady())throw new DomainError("NATIVE_UNAVAILABLE","Owned native connection is unavailable");
@@ -149,7 +155,7 @@ export class DirectInputService {
         throw new DomainError("NATIVE_ADMISSION_MISSING",qualification.reason);
       fingerprint=qualification.fingerprint;
     }
-    const reserved=await this.deps.store.reserve(projectId,sessionId,principal.actorId,command,grant,fingerprint);
+    const reserved=await this.deps.store.reserve(projectId,sessionId,principal.actorId,command,grant,fingerprint,options);
     const record=reserved.record;
     this.requireSameIntent(principal,sessionId,command,record);
     // Never replay an uncertain native attempt. The only exception is an identical intent the adapter
@@ -185,6 +191,8 @@ export class DirectInputService {
         provedBusy=true;this.provedUnsent.add(key);
         throw new DomainError("SESSION_INPUT_BUSY","该会话正在开始另一轮或接收另一条输入；稍后用同一输入编号重试");
       }
+      if(options.notice&&record.mode==="steer"&&error instanceof RuntimeServerError&&(error.steerRejection==="non_steerable_turn"||error.method==="turn/steer"&&error.code===-32600))
+        return publicDirectInput(await this.deps.store.reject(projectId,record.inputId,"TURN_CHANGED: the runtime refused the notice; it was not applied and is not saved as a message"));
       if(error instanceof RuntimeServerError&&error.steerRejection==="non_steerable_turn"&&record.mode==="steer")
         return publicDirectInput(await this.deps.store.rejectSteerAndQueue(projectId,record.inputId,
           "Native Turn kind cannot accept input; saved as a queued ordinary message",{provedUnsent:true}));
