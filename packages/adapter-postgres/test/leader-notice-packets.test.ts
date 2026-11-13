@@ -793,6 +793,7 @@ test("Q2 defect 52eb5ecf: write latency under concurrent writers — the per-pro
   const line = (r: typeof withTrigger) => `p50 ${r.p50.toFixed(2)} ms, p95 ${r.p95.toFixed(2)} ms, ${r.perSecond.toFixed(0)} commits/s`;
   console.log(`Q2 concurrent writes (${writers} writers x ${each}, one transaction per insert): with the event trigger and its project lock: ${line(withTrigger)}; without: ${line(without)}`);
   assert.ok(withTrigger.p95 < 250, `p95 with the lock ${withTrigger.p95.toFixed(1)} ms`);
+});
 
 // ---- defect d6dd0a1e: the message pump's log and the closed recovery gate ----
 test("d6dd0a1e: a message queued behind a running Turn is not an error: the pump logs nothing for it while the first Turn runs", async () => {

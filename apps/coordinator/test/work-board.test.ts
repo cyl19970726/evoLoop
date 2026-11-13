@@ -127,6 +127,7 @@ test("defect 52eb5ecf: line entries wait from task.queued (or task.resumed) to t
   const m = computeBoardMetrics(events, at(0), at(300));
   assert.deepEqual(m.queueWait, [{ source: "lead", count: 1, medianSeconds: 160, p95Seconds: 160 }], "queued at 0, its turn at 160 (a hold in between does not reset the first queueing)");
   assert.equal(m.sessionIdle[0]!.idleWithWorkSeconds, 60 + 60, "waiting and idle 0-60 and 100-160; held 60-100 is not waiting");
+});
 
 test("defect d6dd0a1e rework 2: a recovery gate item is never cut from the brief for room — 21 other waiting items do not push it out, and the brief stays within 6 KB", () => {
   const board = snapshot(6, 3);
