@@ -5,6 +5,7 @@ import type { RuntimeBinding, RuntimeCapabilities, RuntimePage, RuntimeTurn } fr
 import { DomainError } from "@evoloop/contracts/ports";
 import { RuntimeLocalBusyError, RuntimeProtocolError, RuntimeServerError, RuntimeUnknownError } from "@evoloop/adapter-codex-app-server";
 import type { PgDirectInputs } from "@evoloop/adapter-postgres/direct-input";
+import { senderPreamble, type SenderClass } from "../session-messages/sender.js";
 import { SessionSteerLock } from "../runtime/session-steer-lock.js";
 
 type Native = {
@@ -43,6 +44,8 @@ export interface DirectInputServiceDeps {
   admission(principal:Principal,projectId:string,sessionId:string):Promise<{grant:DirectInputGrant;binding:RuntimeBinding}>;
   /** Existing owned binding for read-only reconciliation; a revoked sender grant cannot erase prior evidence. */
   bindingFor(projectId:string,sessionId:string):Promise<RuntimeBinding>;
+  /** Who is sending and its class, for the opening line of an idle start. Absent: named with an unrecorded class, never as the user. */
+  senderClass?(principal:Principal,projectId:string):Promise<SenderClass>;
   /** Records the requested effort beside the one the Thread reported for the started Turn. Best effort. */
   observeEffort?(projectId:string,sessionId:string,inputId:string,turn:RuntimeTurn,requested:string|null):Promise<void>;
 }
@@ -174,7 +177,9 @@ export class DirectInputService {
         const receipt=await runtime.steerTurn(binding,turnId,record.content,record.inputId);
         return publicDirectInput(await this.deps.store.accept(projectId,record.inputId,receipt.turnId,receipt.itemId));
       }
-      const input=`${marker(record.operationId)}\nOrdinary Session conversation using this Session's normal tools and full execution permissions. Act within the user's request and project identity. A reply does not itself record Task delivery or acceptance.\n${record.content}`;
+      // The opening line names who is sending (this is a person at the workbench or an agent on the CLI); only the user's own says so.
+      const sender=await this.deps.senderClass?.(principal,projectId)??{kind:"unknown" as const,actorId:principal.actorId};
+      const input=`${marker(record.operationId)}\n${senderPreamble(sender)} A reply does not itself record Task delivery or acceptance.\n${record.content}`;
       const turn=await runtime.startConversationTurn(binding,input,record.inputId);
       const accepted=publicDirectInput(await this.deps.store.accept(projectId,record.inputId,turn.id,null));
       await this.deps.observeEffort?.(projectId,record.sessionId,record.inputId,turn,binding.resumeProfile?.reasoningEffort??null).catch(()=>undefined);

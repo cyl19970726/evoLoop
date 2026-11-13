@@ -94,6 +94,7 @@ import { SessionTimelineService } from "./session-timeline/index.js";
 import { OrdinaryRunSubmissionService, leaseCheckedUnitOfWork } from "./ordinary-run-submission/service.js";
 import { createOrdinaryRunSealer } from "./ordinary-run-submission/seal.js";
 import { OrdinaryRunSealPump } from "./ordinary-run-submission/pump.js";
+import { resolveSenderClass, type SenderClass } from "./session-messages/sender.js";
 import { resolveLineRecipient } from "./session-line/recipient.js";
 import { throttledLog } from "./log-throttle.js";
 import { materialCliRecipientMatches, createReserveRecipientCheck, requireOrdinaryRecipient } from "./runtime/recipient-preflight.js";
@@ -718,8 +719,14 @@ const taskAttentionPump = new TaskAttentionPump({pool,canWrite:lease.canWrite,no
   pollIntervalMs:30000,onError:()=>console.error("Task attention evaluation needs source reconciliation.")});
 const businessBeforeMessage = sessionMessageCanStart({ workflow: service, service: messageService, principals: currentIdentity,
   onError: () => console.error("Task answer continuation requires review; inspect the saved queue and message reason.") });
+/** Who sent a message, as the receiving Session is told (sender.ts resolveSenderClass): from the identity file's stated senderClass, never from a Role. */
+const senderClassOf = async (projectId: string, actorId: string): Promise<SenderClass> => {
+  const current = await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE);
+  return resolveSenderClass(await currentIdentity(), current.leaderResultNotices?.targets.find(t => t.projectId === projectId), projectId, actorId);
+};
 const messagePump = runner ? new SessionMessagePump({ service: messageService, runtime: () => runner.nativeAdapter(),
   lock: sessionSteerLock,
+  senderClass: message => senderClassOf(message.projectId, message.senderActorId),
   roleContext: async message => {
     if(message.target.kind!=="owned")return null;
     const session=await messageService.session(message.projectId,message.target.sessionId);
@@ -899,6 +906,7 @@ const directInput = runner && integrations.runtime?.enabled ? createDirectInputS
   canWrite: () => lease.canWrite() && runner.nativeStartsAvailable(),
   configuration: () => loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE),
   holdNewStarts: () => drain.holdNewStarts(),
+  senderClass: (principal, projectId) => senderClassOf(projectId, principal.actorId),
   currentProjectWriter, currentSessionExecutionAuthority,
   allowedCwd: async (projectId,cwd) => {
     const current = await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE);

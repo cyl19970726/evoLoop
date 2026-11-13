@@ -103,7 +103,7 @@ export type Permission = "read" | "write" | "review";
  */
 export const extraCommandNames = ["document.archive", "document.restore"] as const;
 export type ExtraCommand = (typeof extraCommandNames)[number];
-export interface Principal { actorId: string; projectIds: string[]; permissions: Permission[]; extraCommands?: ExtraCommand[] | undefined; identityKind?: "agent" | "human" | undefined }
+export interface Principal { actorId: string; projectIds: string[]; permissions: Permission[]; extraCommands?: ExtraCommand[] | undefined; identityKind?: "agent" | "human" | undefined; senderClass?: "requirements" | "leader" | "session" | undefined }
 export interface Project { id: string; title: string; createdAt: string }
 export interface Document {
   projectId: string; id: string; title: string; version: number;
