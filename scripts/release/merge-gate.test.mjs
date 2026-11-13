@@ -4,7 +4,7 @@ import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { checkPr, deliveryClaims, evaluatePr, formatPending, loadConfig, mergePr, pendingMerges, repoRoot, resolveTasks, taskReferences } from "./merge-gate.mjs";
+import { CLAIM_WINDOW, checkPr, deliveryClaims, evaluatePr, formatPending, loadConfig, mergePr, pendingMerges, repoRoot, resolveTasks, taskReferences } from "./merge-gate.mjs";
 
 const T1 = "bcce4633-1111-4222-8333-444455556666"; // the #330 Task: delivered, never accepted
 const T2 = "1a886c5b-d5cb-4d62-b026-58d2660f236b"; // an accepted Task
@@ -27,6 +27,38 @@ test("Task ids come from the PR description, Document ids are not mistaken for T
 test("a Delivery claims a PR head with '#N commit'", () => {
   assert.deepEqual(deliveryClaims("#339 bb46b90a、#342 8fe31bc9(#342 含 #339 提交,base main)"), [{ pr: 339, commit: "bb46b90a" }, { pr: 342, commit: "8fe31bc9" }]);
   assert.deepEqual(deliveryClaims("no pr here abcdef1"), []);
+});
+
+// Task 62804062: the two Delivery texts that the gate failed to read on 2026-11-13 (#414 and #413), as they were written.
+const REBASE_414 = "#414 rebased onto main 01cf998f, migration 105 kept, all five CI checks green on head 8c8010f.";
+const REBASE_413 = "只做 PR #413 变基到 origin/main 8207a373；新 head 4b492a12，其余没有改动。";
+
+test("a rebase Delivery names main's commit first and the new head after it: both are candidates, in the order written", () => {
+  assert.deepEqual(deliveryClaims(REBASE_414), [{ pr: 414, commit: "01cf998f" }, { pr: 414, commit: "8c8010f" }]);
+  assert.deepEqual(deliveryClaims(REBASE_413), [{ pr: 413, commit: "8207a373" }, { pr: 413, commit: "4b492a12" }]);
+  // the old reading took only the first commit after the number, which was main's
+  assert.ok(REBASE_414.indexOf("8c8010f") - REBASE_414.indexOf("#414") > 40 && REBASE_414.indexOf("8c8010f") - REBASE_414.indexOf("#414") < CLAIM_WINDOW);
+});
+
+test("a claim belongs to the nearest PR number before it: the window stops at the next #N, at a line end and at the window length", () => {
+  assert.deepEqual(deliveryClaims("#339 rebased onto main 01cf998f; #342 head 8fe31bc9"), [{ pr: 339, commit: "01cf998f" }, { pr: 342, commit: "8fe31bc9" }]);
+  assert.deepEqual(deliveryClaims("#339 on main 01cf998f\nhead bb46b90a"), [{ pr: 339, commit: "01cf998f" }]);
+  assert.deepEqual(deliveryClaims(`#339 ${"x".repeat(CLAIM_WINDOW)} bb46b90a`), [], "a commit beyond the window is not about this PR");
+});
+
+test("a rebased PR whose Delivery names main first and the new head after it is recognised as accepted (it was refused before)", () => {
+  for (const reason of ["#339 rebased onto main 01cf998f, migration kept, all CI checks green on head bb46b90a.", "只做 PR #339 变基到 origin/main 8207a373；新 head bb46b90a，其余没有改动。"]) {
+    const result = evaluate({ tasks: new Map([[T2, taskData(T2, [delivery({ technicalEvidence: "", reason })], [obs()])]]) });
+    assert.equal(result.verdict, "allow", reason);
+    assert.equal(result.accepted.observer, "requirements-claude-agent");
+  }
+});
+
+test("a Delivery that names only main's commit still does not identify the head", () => {
+  const result = evaluate({ tasks: new Map([[T2, taskData(T2, [delivery({ technicalEvidence: "", reason: "#339 rebased onto main 01cf998f, all checks green" })], [obs()])]]) });
+  assert.equal(result.verdict, "refuse");
+  assert.match(result.reasons.join("\n"), /没有交付写明 "#339 bb46b90a"/);
+  assert.match(result.reasons.join("\n"), /01cf998f/, "what the Delivery did say is shown");
 });
 
 test("a PR whose current head has a used observation by the designated consumer may merge", () => {

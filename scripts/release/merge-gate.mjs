@@ -42,9 +42,25 @@ export function resolveTasks(references, taskIds) {
   return [...new Set(references.flatMap(ref => ids.filter(id => id === ref || (ref.length === 8 && id.startsWith(ref)))))];
 }
 
-/** "(#339, bb46b90a)" pairs written in Delivery text: a PR number followed shortly by a commit prefix. */
+/**
+ * How far after "#N" a commit prefix still counts as written about that PR. A rebase delivery names main's commit first and the new
+ * head after it ("#414 rebased onto main 01cf998f, migration 105 kept, all five CI checks green on head 8c8010f" puts the head
+ * 64 characters in), so 40 characters missed it; 120 covers a sentence of that shape and stops well before the next sentence.
+ */
+export const CLAIM_WINDOW = 120;
+
+/**
+ * "(#339, bb46b90a)" pairs written in Delivery text: every commit prefix in the window after a PR number (up to the next "#N", a line
+ * end, or CLAIM_WINDOW characters), each one a candidate. Only a candidate that is the PR's head, or on its update chain, is ever used
+ * (sameCommit against the lineage), so main's commit in the same sentence never matches and cannot be mistaken for the head.
+ */
 export function deliveryClaims(text = "") {
-  return [...text.matchAll(/#(\d+)[^#\n]{0,40}?\b([0-9a-f]{7,40})\b/g)].map(match => ({ pr: Number(match[1]), commit: match[2] }));
+  const claims = [];
+  for (const match of text.matchAll(/#(\d+)([^#\n]*)/g)) {
+    const window = match[2].slice(0, CLAIM_WINDOW);
+    for (const commit of window.matchAll(/\b([0-9a-f]{7,40})\b/g)) claims.push({ pr: Number(match[1]), commit: commit[1] });
+  }
+  return claims;
 }
 
 const docsOnly = files => files.length > 0 && files.every(file => file.startsWith("docs/") || /\.md$/i.test(file));
