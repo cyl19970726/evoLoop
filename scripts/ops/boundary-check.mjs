@@ -16,7 +16,7 @@ import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import {
-  MERGE_OK, commandsOfLine, configIdentity, configProblems, day, declaredStage, dominantActor, exitCodeFor, jsonKeyDiff, judgeClosure,
+  MERGE_OK, commandsOfLine, configIdentity, configProblems, day, declaredStage, dominantActor, exitCodeFor, humanWriteProblem, jsonKeyDiff, judgeClosure,
   mentionsAnywhere, mentionsNear, mergeInvocations, mergeRows, parseTrainLog, targetLabel, truncationProblem,
 } from "../lib/boundary-check.mjs";
 
@@ -36,11 +36,13 @@ const iso = ms => new Date(ms).toISOString();
 const local = (ms, offset) => new Date(ms + offset * MINUTE).toISOString().replace("T", " ").slice(5, 19);
 
 /** Transcripts (JSONL) modified since the window started: the commands each ran inside the window, and the identity it mostly acts as. */
-async function readTranscripts(roots, fromMs, toMs, problems) {
+export async function readTranscripts(roots, fromMs, toMs, problems) {
   const files = [];
   for (const root of roots ?? []) {
     try { await stat(root); } catch { problems.push(`会话记录目录读不到（${basename(root)}）`); continue; }
-    try { for await (const entry of glob("**/*.jsonl", { cwd: root })) { const path = join(root, entry); if ((await stat(path)).mtimeMs >= fromMs - 15 * MINUTE) files.push(path); } } catch (error) { problems.push(`会话记录目录读取出错（${basename(root)}：${error.code ?? error.message}）`); }
+    let seen = 0;
+    try { for await (const entry of glob("**/*.jsonl", { cwd: root })) { seen++; const path = join(root, entry); if ((await stat(path)).mtimeMs >= fromMs - 15 * MINUTE) files.push(path); } } catch (error) { problems.push(`会话记录目录读取出错（${basename(root)}：${error.code ?? error.message}）`); }
+    if (seen === 0) problems.push(`会话记录目录存在但里面没有任何会话记录文件（${basename(root)}）：合并发起者和身份文件引用都无法核对`);
   }
   const transcripts = [];
   for (const path of files) {
@@ -164,6 +166,8 @@ export async function collect(config, { from, to }) {
   const train = await attempt("读取合并列车日志", () => trainMerges(config, fromMs, toMs, problems), []);
   const db = await attempt("读取数据库", () => databaseRows(config, from, to, transcripts), { humanWrites: [], closures: [] });
   const privateFiles = await attempt("读取私有文件", () => privateFileRows(config, fromMs, toMs, transcripts, problems), []);
+  const unchecked = humanWriteProblem(db.humanWrites.length, transcripts.length);
+  if (unchecked) problems.push(unchecked);
   return { window: { from, to }, sources, problems: [...new Set(problems)],
     merges: mergeRows({ merged, train, transcripts }), privateFiles, humanWrites: db.humanWrites, closures: db.closures };
 }

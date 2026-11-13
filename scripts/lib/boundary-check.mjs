@@ -30,7 +30,13 @@ export function parseTrainLog(text, day, offsetMinutes, name = "") {
 /** Every string in a tool call's arguments (a command, a Read/Edit file_path, an array-form command), joined: what the call touched. */
 const argumentText = value => {
   if (typeof value === "string") return [value];
-  if (Array.isArray(value)) return [value.flatMap(argumentText).join(" ")];
+  if (Array.isArray(value)) {
+    // ["bash", "-lc", "gh pr merge 5"]: the script after the -c flag is the command that runs, so it stands on its own line
+    const shell = /(?:^|\/)(?:ba|z|da)?sh$/.test(String(value[0] ?? ""));
+    const flag = shell ? value.findIndex((item, index) => index > 0 && /^-[a-z]*c[a-z]*$/.test(String(item))) : -1;
+    if (flag > 0 && typeof value[flag + 1] === "string") return [value.slice(flag + 1).filter(item => typeof item === "string").join("\n")];
+    return [value.flatMap(argumentText).join(" ")];
+  }
   if (value && typeof value === "object") return Object.values(value).flatMap(argumentText);
   return [];
 };
@@ -61,6 +67,13 @@ export function dominantActor(commands) {
   for (const { command } of commands) for (const match of command.matchAll(/agent-cli\/([A-Za-z0-9._-]+)\/evoloop/g)) counts.set(match[1], (counts.get(match[1]) ?? 0) + 1);
   const ranked = [...counts].sort((a, b) => b[1] - a[1]);
   return ranked.length ? { actor: ranked[0][0], uses: ranked[0][1], others: ranked.slice(1).map(([actor, uses]) => `${actor}×${uses}`) } : null;
+}
+
+/** The identity of a transcript when it can be told: one CLI identity only. A session that used several is not attributed to the most frequent one. */
+export function sessionIdentity(actor) {
+  if (!actor) return { actor: null, mixed: null };
+  const others = actor.others ?? [];
+  return others.length ? { actor: null, mixed: [`${actor.actor}×${actor.uses}`, ...others].join("、") } : { actor: actor.actor, mixed: null };
 }
 
 /**
@@ -151,11 +164,12 @@ export const MERGE_OK = ["合并列车", "本人发起"];
 export function mergeRows({ merged, train, transcripts }) {
   const trainBy = new Map(train.map(item => [item.pr, item]));
   return merged.map(pr => {
-    const runs = transcripts.flatMap(t => t.merges.filter(m => m.pr === pr.number).map(m => ({ transcript: t.id, actor: t.actor?.actor ?? null, config: m.configIdentity ?? null, at: m.at, via: m.via })));
+    const runs = transcripts.flatMap(t => { const who = sessionIdentity(t.actor); return t.merges.filter(m => m.pr === pr.number).map(m => ({ transcript: t.id, actor: who.actor, mixed: who.mixed, config: m.configIdentity ?? null, at: m.at, via: m.via })); });
     const own = trainBy.get(pr.number);
+    const who_ = run => run.actor ?? (run.mixed ? `身份认不出（会话混用多个身份：${run.mixed}）` : "身份未识别");
     const describe = run => run.via === "merge-gate"
-      ? `${run.actor ?? "身份未识别"} 用 ${run.config ?? "配置未识别"} 的配置（会话记录 ${run.transcript}）`
-      : `${run.actor ?? "身份未识别"} 用 ${run.via}（会话记录 ${run.transcript}）`;
+      ? `${who_(run)} 用 ${run.config ?? "配置未识别"} 的配置（会话记录 ${run.transcript}）`
+      : `${who_(run)} 用 ${run.via}，没有经过合并门，不涉及合并配置（会话记录 ${run.transcript}）`;
     const seen = new Set();
     const who = runs.map(describe).filter(text => !seen.has(text) && seen.add(text)).join("；");
     let verdict, why = "";
@@ -223,15 +237,18 @@ export function mentionsAnywhere(transcripts, needles, atMs) {
 
 /** The words an observation is judged by: it speaks of a candidate, and it says the formal environment was read back and it worked. */
 export const mentionsCandidate = text => /候选/.test(text ?? "");
-// Negation, to-do and failure in a clause: 未 不 没 待 尚 暂 缺 失败 TODO 等待 / “等正式读回”.
-const NOT_DONE = /(未|不|没|待|尚|暂|缺|失败|失效|拒绝|TODO|todo|等待|等[^，。；]{0,4}(读回|正式))/;
-const SUCCESS = /(读回(通过|成功|一致|正常|完成|可用)|已验证|验证通过|实测(通过|成功)|已通过|通过|成功)/;
+// Negation, to-do, failure, scheduling and release/review wording in a clause: it did not happen, or it is not a read-back.
+const NOT_DONE = /(未|不|没|待|尚|暂|缺|失败|失效|拒绝|TODO|todo|等待|等[^，。；]{0,4}(读回|正式)|安排|评审|发布前|发布成功|上线)/;
+// A read-back of the formal environment that worked: 正式 … 读回通过/成功/一致/正常/完成/可用, or 正式环境/实例/版本 … 已验证/验证通过/实测通过.
+// “通过”, “成功” alone are not enough: “正式发布成功”, “正式：已通过评审”, “正式发布前候选已通过” are not read-backs.
+const FORMAL_READBACK = /正式[^，。；\n]{0,12}(?:读回(?:通过|成功|一致|正常|完成|可用)|(?:已验证|验证通过|实测通过|实测成功))/;
 /**
- * A formal read-back is a clause that speaks of 正式 and states success (读回通过/成功、已验证、实测通过、已通过…), with nothing in
- * that clause saying it did not happen, failed, is still to do or is being waited for. “读回” alone is not success:
- * “正式实例读回失败”, “等正式读回”, “正式读回 TODO”, “正式读回缺”, “正式未通过”, “正式读回待做” are all not read-backs.
+ * A formal read-back is a clause that says the formal environment/instance/version was READ BACK and it worked (读回通过/成功/一致…,
+ * 已验证, 实测通过), with nothing in that clause saying it did not happen, failed, is to do, is arranged for later or is about a
+ * release or a review. “通过”/“成功” on their own are not read-backs: “候选通过，正式发布成功”, “正式发布前候选已通过”,
+ * “正式：已通过评审，读回另行安排”, “正式实例读回失败”, “等正式读回”, “正式读回 TODO/缺” are all not read-backs.
  */
-export const mentionsFormalReadback = text => (text ?? "").split(/[。；;，,\n]/).some(clause => /正式/.test(clause) && SUCCESS.test(clause) && !NOT_DONE.test(clause));
+export const mentionsFormalReadback = text => (text ?? "").split(/[。；;，,\n]/).some(clause => FORMAL_READBACK.test(clause) && !NOT_DONE.test(clause));
 
 /**
  * What to say about one closure. `hasDelivery`: the closure was decided on a Delivery, so there is an observation to read; a closure
@@ -276,3 +293,7 @@ export const targetLabel = value => String(value ?? "").slice(0, 8) || "（无�
 
 /** Non-zero when any source was not read or not configured: an incomplete check must not look like a clean one. */
 export const exitCodeFor = result => (result.problems?.length ? 2 : 0);
+
+/** User-identity writes whose source cannot be checked because no transcript had any command in the window: "no session touched the identity file" would be empty, not clean. */
+export const humanWriteProblem = (writes, transcriptCount) => writes && !transcriptCount
+  ? `窗口内有 ${writes} 条以使用者身份的写入，但没有任何会话记录里有窗口内的命令：写入的来源无法核对，“没有会话引用身份文件”不能当作正常` : null;
