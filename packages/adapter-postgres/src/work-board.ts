@@ -28,8 +28,11 @@ export interface SchedEventQuery {
 }
 
 export async function headSeq(db: Db, projectId: string): Promise<number> {
-  const r = await db.query("SELECT seq FROM sched_event WHERE project_id=$1 ORDER BY seq DESC LIMIT 1", [projectId]);
-  return r.rows[0] ? num(r.rows[0].seq) : 0;
+  // After retention removed every event the head is the purge floor, not 0: a cursor at the head is then current, and a reader that
+  // re-reads the snapshot and continues from its eventSeq is not told resetRequired again forever.
+  const r = await db.query(`SELECT GREATEST(COALESCE((SELECT seq FROM sched_event WHERE project_id=$1 ORDER BY seq DESC LIMIT 1),0),
+    COALESCE((SELECT floor_seq FROM sched_event_floor WHERE project_id=$1),0)) AS head`, [projectId]);
+  return num(r.rows[0].head);
 }
 
 /** Tail and replay reads. A cursor read uses (project_id, seq); a time read uses (project_id, at, seq). */
@@ -85,7 +88,7 @@ export async function readWorkBoard(pool: Pool, projectId: string): Promise<Work
         EXISTS(SELECT 1 FROM runtime_provider_hold h WHERE h.project_id=s.project_id AND h.provider=s.runtime_provider AND h.state='held') AS held,
         (SELECT count(*)::int FROM session_message m WHERE m.project_id=s.project_id AND m.session_id=s.session_id AND m.state='queued') AS queued_messages
       FROM runtime_session s LEFT JOIN session_recovery_gate g ON g.project_id=s.project_id AND g.session_id=s.session_id
-      WHERE s.project_id=$1 AND s.state='ready' ORDER BY s.created_at, s.session_id LIMIT ${LIMITS.sessions}`);
+      WHERE s.project_id=$1 AND s.state<>'closed' ORDER BY s.created_at, s.session_id LIMIT ${LIMITS.sessions}`);
     const runs = await q(`SELECT run_id,session_id,task_id,state,created_at,EXTRACT(EPOCH FROM (now()-created_at))::float AS elapsed,
         (SELECT title FROM task t WHERE t.project_id=r.project_id AND t.task_id=r.task_id) AS title
       FROM runtime_run r WHERE project_id=$1 AND state IN ('requested','dispatching','running','unknown')`);
@@ -94,10 +97,19 @@ export async function readWorkBoard(pool: Pool, projectId: string): Promise<Work
         m.context_task_id AS task_id,(SELECT title FROM task t WHERE t.project_id=p.project_id AND t.task_id=m.context_task_id) AS title
       FROM session_message_processing p JOIN session_message m ON m.project_id=p.project_id AND m.message_id=p.message_id
       WHERE p.project_id=$1 AND p.state IN ('dispatching','running','unknown')`);
-    const entries = await q(`SELECT e.entry_id,e.session_id,e.task_id,e.position,e.state,e.hold_code,e.created_at,EXTRACT(EPOCH FROM (now()-e.created_at))::float AS waited,
-        (SELECT q.actor_id FROM resident_queue q WHERE q.project_id=e.project_id AND q.queue_id=e.queue_id) AS source,
-        (SELECT title FROM task t WHERE t.project_id=e.project_id AND t.task_id=e.task_id) AS title
-      FROM resident_queue_entry e WHERE e.project_id=$1 AND e.state IN ('queued','held','claimed') ORDER BY e.session_id,e.position,e.created_at LIMIT ${LIMITS.queue}`);
+    // The line Leaders and schedules append to (session_line_entry, Q1) and the older batch queue (resident_queue_entry); one list per Session.
+    // A line entry's state is shown as it is: queued, suspended (held), starting (its turn has come, the start steps are running).
+    const entries = await q(`SELECT * FROM (
+        SELECT e.entry_id,e.session_id,e.task_id,e.position::bigint AS position,CASE e.state WHEN 'suspended' THEN 'held' WHEN 'starting' THEN 'claimed' ELSE e.state END AS state,
+          e.suspend_reason AS hold_code,e.appended_at AS created_at,EXTRACT(EPOCH FROM (now()-e.appended_at))::float AS waited,e.source_actor_id AS source,
+          (SELECT title FROM task t WHERE t.project_id=e.project_id AND t.task_id=e.task_id) AS title,'line' AS origin
+        FROM session_line_entry e WHERE e.project_id=$1 AND e.state IN ('queued','suspended','starting')
+        UNION ALL
+        SELECT e.entry_id,e.session_id,e.task_id,e.position::bigint,e.state,e.hold_code,e.created_at,EXTRACT(EPOCH FROM (now()-e.created_at))::float,
+          (SELECT q.actor_id FROM resident_queue q WHERE q.project_id=e.project_id AND q.queue_id=e.queue_id),
+          (SELECT title FROM task t WHERE t.project_id=e.project_id AND t.task_id=e.task_id),'batch'
+        FROM resident_queue_entry e WHERE e.project_id=$1 AND e.state IN ('queued','held','claimed')) u
+      ORDER BY session_id,position,created_at LIMIT ${LIMITS.queue}`);
     const sessions: WorkBoardSession[] = sessionsRows.map(s => {
       const run = runs.find(r => r.session_id === s.session_id), turn = turns.find(t => t.session_id === s.session_id);
       const current: WorkBoardWork | null = run
@@ -111,6 +123,7 @@ export async function readWorkBoard(pool: Pool, projectId: string): Promise<Work
     const ready = await q(`SELECT t.task_id,t.title,t.state,COALESCE((SELECT max(r.created_at) FROM task_revision r WHERE r.project_id=t.project_id AND r.task_id=t.task_id),now()) AS since
       FROM task t WHERE t.project_id=$1 AND t.state='todo'
         AND NOT EXISTS(SELECT 1 FROM resident_queue_entry e WHERE e.project_id=t.project_id AND e.task_id=t.task_id AND e.state IN ('queued','held','claimed'))
+        AND NOT EXISTS(SELECT 1 FROM session_line_entry l WHERE l.project_id=t.project_id AND l.task_id=t.task_id AND l.state IN ('queued','suspended','starting'))
         AND NOT EXISTS(SELECT 1 FROM task_session_assignment a WHERE a.project_id=t.project_id AND a.task_id=t.task_id AND a.state IN ('assigned','accepted'))
       ORDER BY since LIMIT ${LIMITS.ready}`);
     const readyNotQueued: WorkBoardWaitingTask[] = ready.map(r => ({ taskId: r.task_id, title: r.title, state: r.state, since: iso(r.since)! }));

@@ -362,7 +362,10 @@ node --import tsx tests/manual/session-compaction-e1.ts
 ```
 
 - **读回用量。** `GET /api/projects/PROJECT_ID/runtime/usage?from=YYYY-MM-DD&to=YYYY-MM-DD` 按 Session 和按天返回输入、输出、缓存输入、费用与上下文压力；工作台智能体页右栏“上下文与用量”（这个 Session 的上下文与今日用量）和统筹安排的“项目用量”（每日上限、近 7 天、计日时区）用同一个读取。费用缺失写“未报告”，不当 0。
-- **修复旧账后再打开上限。** 修复累计值被当成增量的版本之前写入的 Codex 日桶不会自行变准。先在维护窗口备份 `session_usage_daily`，再按受影响 Session 与日期，从对应原生 rollout 的 `last_token_usage` 重算输入、缓存输入和输出，替换这些日桶，并记录 Session、日期、修复前后合计与 rollout 路径。无法取得完整原生样本的日桶删除并标为未记录，不能保留旧值后再按它打开每日上限；修复边界之后的记录继续由账本增量维护。
+- **输入是含缓存的总量。** 账本和每日上限里的“输入”统一指模型处理过的全部输入词元，缓存读取与缓存创建都算在其中；`cachedInputTokens` 只是其中的子集，供展示，不再另加一次。Claude SDK 的 `input_tokens` 不含 `cache_read_input_tokens` 与 `cache_creation_input_tokens`，写账时三者相加；Codex v2 的 `input_tokens` 已包含 `cached_input_tokens`，由 `non_cached_input = input_tokens - cached_input_tokens` 可核。每日上限比较的是全项目当日所有 Session、所有运行时的输入合计，不只 Leader，也不只 Codex。
+- **账本误差的方向与范围。** 正常 Codex 路径按 Thread 累计快照取差；同一个 pump 内的多个用量通知仍逐个参与差值，不能只拿最后一条的 `last`。修复前有三类误差：重连后首个不含 usage 的事件曾把持久化基线覆盖为 `null`，到下一条通知只记 `last`，单次少算一条请求的量；复位后又在一个 pump 内继续请求时，曾只记最后一条 `last`，少算该间隔内其余请求的 `last` 之和；Claude 的输入曾漏掉缓存读取与缓存创建，少算这两项之和，并把与 Codex 不同口径的数直接相加。现在前两类按持久化基线与逐个通知修复，Claude 按上述含缓存口径写账。
+- **只适用于正常协议的范围。** 当前固定的 Codex `0.166.0-alpha.6` 与 `0.167.0-alpha.3.2` 都已把 v2 `ThreadTokenUsage.total` 定为必填字段（`codex-rs/app-server-protocol/src/protocol/v2/thread.rs` 的 `ThreadTokenUsage`），每条实时通知都带累计值；连接已有 Thread 时只重放 rollout 中最新的一条 `TokenCount` 快照，不把任意旧读数序列重投给同一连接（`codex-rs/app-server/src/request_processors/token_usage_replay.rs` 的 `rposition` 与 `conversation.token_usage_info()`）。因此正常路径不会触发“累计非单调的旧读数重投”或“只有 `last` 的重复通知”。若非标准或损坏的写入方仍重投递减的累计值，当前代码会把它当复位并可能各多记一条 `last`；若重复投递没有 `total` 的事件，则会每份多记一次 `last`。协议通知没有源事件序号，账本无法把这类输入与真实复位区分；遇到时应按原生 rollout 对账，不把它当作正常误差。
+- **修复旧账后再打开上限。** 累计值被当成增量的版本（PR #410 之前）写入的 Codex 日桶会偏大；本页这组重连、pump 与 Claude 口径修复之前的日桶还可能偏小。先在维护窗口备份 `session_usage_daily`，再按受影响 Session、日期与代码边界，从对应原生 rollout 的 `last_token_usage` 或真实 Turn 用量重算输入、缓存输入和输出，替换这些日桶，并记录 Session、日期、修复前后合计与 rollout 路径。无法取得完整原生样本的日桶删除并标为未记录，不能保留旧值后再按它打开每日上限；修复边界之后的记录继续由账本增量维护。
 - **警告与暂停。** 达到 `warningRatio` 只显示提示；达到上限后，结果通知消息以 `DAILY_BUDGET_EXHAUSTED` 或 `CONTEXT_HANDOFF_REQUIRED` 留在队列并写阻断原因。业务 Task Run、验收和人工消息仍可执行。要恢复，先处理交接或调整上限，再按原消息记录重试；不要另建一条消息冒充原通知。
 - **交接到新线程。** 用同一 Role 开启新 Session，把原 Session、原生 Thread、固定 Task 与未处理通知写进接手说明；新线程读取固定 Task 和当前工作变化后再决定下一步。`contextHandoffSummary()` 的格式可直接作为交接摘要；它不复制原生对话正文。
 - **基线。** `node scripts/context-baseline.mjs <rollout.jsonl>` 只读 Codex 原生记录，报告每轮最大输入、均值／中位数／p90、累计用量、压缩次数和字节占比。改动前后用同一口径比较，不以单轮或通知数量代替。
@@ -382,12 +385,12 @@ node --import tsx tests/manual/session-compaction-e1.ts
 
 **数据从哪来。** 迁移 105 建 `sched_event` 表，并在既有表上挂 AFTER 触发器：事件与引起它的状态变化在同一个事务里写一小行，应用代码的写入路径没有改动，也没有第二次写入。触发器取与 `leader_work_change` 相同的项目锁，所以同一项目里序号不会乱序提交。上线要先看发布顺序：105 不得早于 104（通知分级）等更小的号进入正式库；迁移只加表、函数和触发器，不改既有行为。回退：删除 `sched_event_*` 触发器即停止写入，表和已有事件可留。
 
-**保留期。** 协调器每 6 小时调用 `purge_sched_event(30, 5000)` 直到没有可删的行（只在持有写租约的实例上）。被清理的最高序号按项目记在 `sched_event_floor`；游标低于它的读取返回 `resetRequired:true`。
+**保留期。** 协调器启动一分钟后和之后每 6 小时调用 `purge_sched_event(30, 5000)` 直到没有可删的行（只在持有写租约的实例上；重启比 6 小时频繁也会清理）。迁移 107 补上 Session 队伍（`session_line_entry`）的事件触发器，并让空闲即时输入只记 `message.started`；回退同样是删除 `sched_event_*` 触发器。被清理的最高序号按项目记在 `sched_event_floor`；游标低于它的读取返回 `resetRequired:true`。
 
 **推送。** `GET /api/projects/P/work-board/stream`（SSE）和 `GET .../work-board/events?after=N&wait=S`（长轮询）都经进程内一个共享读取者：每个项目一个循环，只在至少有一个订阅者时才存在，每秒先读一次最新序号，只有变了才读新事件并分发给所有订阅者；没人打开页面时没有定时器，也没有查询。
 
 **性能预算怎样读回。**
-- 写入：`packages/adapter-postgres/test/leader-notice-packets.test.ts` 里的写入对比用例在同一连接上插入 200 条消息，分别开着和关掉事件触发器，打印每条的耗时（本机一次：0.40 ms 对 0.31 ms；用例要求差距小于 5 ms）。正式实例上可对同一张表临时 `ALTER TABLE ... DISABLE TRIGGER sched_event_message_ins` 在测试库复测，不要在正式库上关。
+- 写入：`packages/adapter-postgres/test/leader-notice-packets.test.ts` 里有两个写入用例。单连接用例插入 200 条消息，分别开着和关掉事件触发器，打印每条耗时（本机一次：0.40 ms 对 0.31 ms）。并发用例用 8 个写入者各做 40 次“一个事务一次插入”，打印开着触发器和项目级 advisory 锁时的 p50、p95 与每秒提交数（本机一次：p50 0.95 ms、p95 3.25 ms、5771 次/秒；关掉触发器 p50 0.92 ms、p95 2.60 ms、6729 次/秒）。锁一直持有到提交，所以长事务会让同项目的其他写入排队：这个测量只覆盖短事务，正式实例上的锁等待要在真实负载下读 `pg_locks`/`pg_stat_activity` 的 advisory 锁等待。正式实例上可对同一张表临时 `ALTER TABLE ... DISABLE TRIGGER sched_event_message_ins` 在测试库复测，不要在正式库上关。
 - 尾部读取和快照：对正式实例各执行 20 次 `work events --after 当前序号` 和 `work board`，取 p95 并与 100 毫秒预算对比；一次读取的耗时可用 `time` 包住 CLI 得到（含 CLI 启动，只作上限）。
 - 没有订阅者时没有额外读取：不开任何页面或长轮询，在数据库里看 `pg_stat_statements`（或 `pg_stat_activity` 抽样）中不应出现 `FROM sched_event` 的周期查询。
 - 简要输出字节数：`work board --brief` 与 `work board` 各一次，比较字节数（要求不超过 6144，且不超过完整输出的一半）。
