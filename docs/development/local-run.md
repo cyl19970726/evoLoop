@@ -307,6 +307,7 @@ git diff --check
 **处理。**
 - **隔离（运行器）。** `scripts/test-integration.mjs` 启动时读取服务器的 `max_locks_per_transaction`、`max_connections`、`max_prepared_transactions`，在没有显式设置 `EVOLOOP_INTEGRATION_CONCURRENCY` 时，把并发限制为 `⌊2.7 × 名义容量 ÷ 7050⌋`（每个并发文件按一次删 schema 的 4.7k 行再留 1.5 倍余量，至少 1）；默认配置的服务器得到 2，并打印原因。公式与常数在 `scripts/lib/lock-budget.mjs`，有单元测试。
 - **取值（CI）。** `.github/actions/test-postgres` 用 `max_locks_per_transaction=256`、连接数保持默认 100：名义容量 25600，公式允许并发 9，按实测上限约为并发 4 同时删 schema 所需 19k 的 4 倍；多占共享内存约 10 MB（`pg_shmem_allocations` 对比 64→256：149.8→160.1 MB），客户端连接峰值只有 13，无需调大连接数。不是只调大：服务器参数被改小或换了服务器，运行器仍按容量限流，不会再随机失败。
+- **JIT（CI）。** 测试容器另设 `-c jit=off`：官方镜像带 JIT，正式库（Homebrew PostgreSQL）没有。表有了统计信息（CI 里是 autoanalyze 恰好跑过）后，`work-index.test.ts` 的“5000-row ceiling”那个测试每条查询的代价越过 `jit_above_cost`，每次都付 JIT 编译：在 CI 同款镜像上本机实测，批量插入后 `ANALYZE`、JIT 开 159 s（每页约 3 s），同样条件 `jit=off` 11 s，原样 10 s；CI 日志里两次 323–327 s 的运行正是四张表都已 autoanalyze 的那两次（12 次里 2 次）。JIT 对这些小查询没有收益。
 - **挂住。** 内存不足后曾有测试进程不再结束，会拖到整个作业超时。运行器给每个文件设单文件超时（`EVOLOOP_INTEGRATION_FILE_TIMEOUT_SECONDS`，默认 600 秒，最大的文件约 60 秒），超时即杀掉并计为失败；两个测试作业另设 `timeout-minutes`。
 - **范围外。** 没有改 90 个测试文件的清理方式（例如按库删除代替删 schema）：能把每个文件的占用降到接近零，但要逐个动夹具，留作建议。
 
