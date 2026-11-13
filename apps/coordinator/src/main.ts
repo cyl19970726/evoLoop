@@ -661,7 +661,11 @@ const workBoardReads = {
 };
 const schedEventHub = new SchedEventHub({ head: projectId => headSeq(pool, projectId), read: (projectId, after, limit) => readSchedEvents(pool, projectId, { after, limit }) },
   1000, () => reconciliationLog("Work board event stream needs a re-read."));
-const schedRetention = setInterval(() => { if (lease.canWrite()) void purgeSchedEvents(pool, schedEventRetentionDays).catch(() => reconciliationLog("Scheduling event retention needs a re-run.")); }, 6 * 3600 * 1000);
+const runSchedRetention = () => { if (lease.canWrite()) void purgeSchedEvents(pool, schedEventRetentionDays).catch(() => reconciliationLog("Scheduling event retention needs a re-run.")); };
+// Also shortly after start: a coordinator that is restarted more often than every 6 hours must still purge.
+const schedRetentionStart = setTimeout(runSchedRetention, 60_000);
+schedRetentionStart.unref();
+const schedRetention = setInterval(runSchedRetention, 6 * 3600 * 1000);
 schedRetention.unref();
 const leaderPacketPorts = pgLeaderPacketPorts(pool, uow);
 const leaderResultNoticePump = new LeaderResultNoticePump({

@@ -120,3 +120,39 @@ test("with no stream open the hub is idle: no timer, no head lookups", async () 
     assert.equal(f.state.heads, heads); assert.equal(f.hub.activeProjects(), 0);
   } finally { await app.close(); }
 });
+
+test("defect 52eb5ecf: a browser reconnect resends the original ?after URL with Last-Event-ID; the header wins, so no event repeats", async () => {
+  const f = fixture({ head: 9, floor: 0 });
+  const { app, base } = await build(f);
+  try {
+    const seqs = (text: string) => [...text.matchAll(/^id: (\d+)$/gm)].map(m => Number(m[1]));
+    const first = await frames(`${base}/stream?after=2`, {}, t => seqs(t).includes(9));
+    assert.deepEqual(seqs(first), [3, 4, 5, 6, 7, 8, 9], "the first open starts after the snapshot's eventSeq");
+    const again = await frames(`${base}/stream?after=2`, { "last-event-id": "6" }, t => seqs(t).includes(9));
+    assert.deepEqual(seqs(again), [7, 8, 9], "reconnect: the same URL with Last-Event-ID 6 continues at 7, not at 3 again");
+  } finally { await app.close(); }
+});
+
+test("defect 52eb5ecf: two subscribers arriving together at a project without a loop share one loop; both keep receiving, one timer, none leaks", async () => {
+  let head = 5, headCalls = 0;
+  const hub = new SchedEventHub({ head: async () => { headCalls++; await new Promise(r => setTimeout(r, 30)); return head; },
+    read: async (_p, after): Promise<SchedEventsPage> => ({ items: [event(after + 1)], cursor: after + 1, head, resetRequired: false, more: false }) }, 10);
+  const a: number[] = [], b: number[] = [];
+  const [offA, offB] = await Promise.all([hub.subscribe(projectId, { onEvents: i => a.push(...i.map(e => e.seq)), onReset: () => undefined }),
+    hub.subscribe(projectId, { onEvents: i => b.push(...i.map(e => e.seq)), onReset: () => undefined })]);
+  assert.equal(headCalls, 1, "one first read of the head for both");
+  assert.equal(hub.activeProjects(), 1); assert.equal(hub.subscribers(projectId), 2);
+  head = 6; await new Promise(r => setTimeout(r, 80));
+  assert.deepEqual([a, b], [[6], [6]], "both receive the event");
+  offA(); assert.equal(hub.subscribers(projectId), 1);
+  head = 7; await new Promise(r => setTimeout(r, 80));
+  assert.deepEqual(b, [6, 7], "the remaining one is still served");
+  offB(); assert.equal(hub.activeProjects(), 0, "the last one leaving removes the loop and its timer");
+  // A failing first read leaves nothing behind and the next subscriber can start again.
+  let fail = true;
+  const broken = new SchedEventHub({ head: async () => { if (fail) throw new Error("db down"); return 1; }, read: async () => ({ items: [], cursor: 1, head: 1, resetRequired: false, more: false }) }, 10);
+  await assert.rejects(broken.subscribe(projectId, { onEvents: () => undefined, onReset: () => undefined }), /db down/);
+  assert.equal(broken.activeProjects(), 0);
+  fail = false; const off = await broken.subscribe(projectId, { onEvents: () => undefined, onReset: () => undefined });
+  assert.equal(broken.activeProjects(), 1); off();
+});
