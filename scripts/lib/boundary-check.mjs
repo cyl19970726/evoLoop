@@ -237,8 +237,11 @@ export function mentionsAnywhere(transcripts, needles, atMs) {
 
 /** The words an observation is judged by: it speaks of a candidate, and it says the formal environment was read back and it worked. */
 export const mentionsCandidate = text => /候选/.test(text ?? "");
-// Negation, to-do, failure, scheduling and release/review wording in a clause: it did not happen, or it is not a read-back.
-const NOT_DONE = /(未|不|没|待|尚|暂|缺|失败|失效|拒绝|TODO|todo|等待|等[^，。；]{0,4}(读回|正式)|安排|评审|发布前|发布成功|上线)/;
+// It did not happen, is not done yet, or is only planned/conditional in this clause:
+// negation/failure (未 不 没 尚 暂 缺 失败 失效 拒绝), to-do/waiting (待 TODO 等待 等…读回/正式 安排), release/review wording (评审 发布前 发布成功 上线),
+// and conditions, requirements and plans about a read-back that has not been done: 后再/之后再/再签 (“读回通过后再签 used”), 需/需要/须/要求/应当 … 才
+// (“需正式实例读回通过才能关闭”), 如果/若/假如/一旦/则 (“如果正式实例读回成功则关闭”), 预计/预期/计划/拟/打算/将 (“预计正式实例读回通过”).
+const NOT_DONE = /(未|不|没|待|尚|暂|缺|失败|失效|拒绝|TODO|todo|等待|等[^，。；]{0,4}(读回|正式)|安排|评审|发布前|发布成功|上线|后再|之后再|再签|需|须|要求|应当|应该|才|如果|若|假如|一旦|则|预计|预期|计划|拟|打算|将)/;
 // A read-back of the formal environment that worked: “正式” must itself qualify the environment (正式 / 正式环境 / 实例 / 数据库 / 版本 / 入口 / 站点 / 服务,
 // not 非正式, 伪正式, 准正式 and not “正式包”, “正式文档” …) and be followed directly by 读回通过/成功/一致/正常/完成/可用 or 已验证/验证通过/实测通过/实测成功.
 // “通过”, “成功” alone are not enough: “正式发布成功”, “正式：已通过评审”, “正式发布前候选已通过” are not read-backs.

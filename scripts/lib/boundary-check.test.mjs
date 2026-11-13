@@ -305,3 +305,26 @@ test("C8/C9 keep the earlier formal read-back cases as they were (R1 and the pos
   for (const evidence of ["候选已用，正式实例读回通过", "正式环境已验证", "候选通过；正式实测通过", "正式环境读回一致", "正式数据库读回通过", "正式环境的读回通过"]) assert.equal(mentionsFormalReadback(evidence), true, evidence);
   for (const evidence of ["正式发布前候选已通过", "候选通过，正式发布成功", "正式：已通过评审，读回另行安排", "候选通过；正式实例读回失败", "候选通过，等正式读回", "候选通过；正式读回"]) assert.equal(mentionsFormalReadback(evidence), false, evidence);
 });
+
+// ---- Task ac254c1a, rework 4 (acceptance report ff5b3134): C11–C14, conditions and plans about a read-back that has not happened.
+const CONDITIONAL = {
+  C11: "候选通过；正式实例读回通过后再签 used",
+  C12: "候选通过；需正式实例读回通过才能关闭",
+  C13: "候选通过；如果正式实例读回成功则关闭",
+  C14: "候选通过；预计正式实例读回通过",
+};
+for (const [name, evidence] of Object.entries(CONDITIONAL)) {
+  test(`${name}. “${evidence.split("；")[1]}” is a condition or a plan, not a formal read-back, and is listed`, () => {
+    assert.equal(mentionsFormalReadback(evidence), false);
+    const judged = judgeClosure({ evidence, hasDelivery: true, stage: null });
+    assert.deepEqual([judged.candidateOnly, judged.flagged], [true, true]);
+  });
+}
+
+test("C11–C14 neighbours: other ways of saying the read-back is still to come are not read-backs either; stated successes stay", () => {
+  for (const evidence of ["候选通过；正式实例读回通过之后再关闭", "候选通过；须正式实例读回通过才算完成", "候选通过；若正式实例读回成功则关闭", "候选通过；一旦正式实例读回通过就关闭",
+    "候选通过；预期正式环境读回成功", "候选通过；计划正式实例读回通过", "候选通过；要求正式实例读回通过", "候选通过；将在正式实例读回通过", "候选通过；拟正式实例读回通过"])
+    assert.equal(mentionsFormalReadback(evidence), false, evidence);
+  for (const evidence of ["候选已用，正式实例读回通过", "正式环境已验证", "候选通过；正式实测通过", "正式环境读回一致", "正式数据库读回通过", "正式环境的读回通过"])
+    assert.equal(mentionsFormalReadback(evidence), true, evidence);
+});
