@@ -778,7 +778,9 @@ export class ClaudeAgentSdkAdapter implements RuntimePort {
     return { status: classified.status, completedAtUtc, usage: usageOf(result.usage),
       costUsd: turnCost(cumulative, live.previousCumulative), cumulativeCostUsd: cumulative,
       thinkingTokens: turnThinking(thinking, live.previousThinking), cumulativeThinkingTokens: thinking, source: "result",
-      observedModel: live.observedModel, subagentModels: [...live.subagentModels].filter(model => model !== live.observedModel).sort(),
+      observedModel: live.observedModel, // A subagent that answered under the main Turn's own model is still a subagent that ran: its model is kept (the list is the set of models subagents
+      // answered with, not "the ones that differ"), or the record would say no subagent was read exactly when the common case happened.
+      subagentModels: [...live.subagentModels].sort(),
       ...(classified.status === "failed" ? { error: classified.error } : {}) };
   }
 

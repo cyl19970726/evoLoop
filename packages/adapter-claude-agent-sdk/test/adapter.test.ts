@@ -719,3 +719,23 @@ test("defect 3d30f7ac: the adapter asks the SDK to forward a subagent's messages
     assert.ok(init.length > 0 && init.every(request => request.forwardSubagentText === true), `forwardSubagentText in the initialize request: ${JSON.stringify(init)}`);
   } finally { await h.cleanup(); }
 });
+
+test("defect 3d30f7ac rework: a subagent that answered under the SAME model as the main Turn is kept in subagentModels (it ran), and a different one still is; no subagent keeps it empty", async () => {
+  const run = async (subagent: string | null) => {
+    const environment = { PATH: process.env.PATH, HOME: process.env.HOME, FAKE_CLAUDE_MODE: "ok", ...(subagent ? { FAKE_CLAUDE_SUBAGENT: subagent } : {}) } as never;
+    const h = await setup("ok", { environment, envPassthrough: ["FAKE_CLAUDE_MODE", "FAKE_CLAUDE_LOG", "FAKE_CLAUDE_SUBAGENT"] });
+    try {
+      const binding = await h.adapter.create({ ...h.spec, model: "opus" } as never);
+      const operation = randomUUID();
+      const started = await h.adapter.startTurn(binding, `${marker(operation)}\nDo the task`, operation);
+      return await settled(h.adapter, binding, started.id);
+    } finally { await h.cleanup(); }
+  };
+  const same = await run("same");
+  assert.equal(same.observedModel, "claude-fake-1");
+  assert.deepEqual(same.subagentModels, ["claude-fake-1"], "same model as the main Turn: kept, not filtered to empty");
+  const different = await run("1");
+  assert.deepEqual(different.subagentModels, ["claude-haiku-fake-1"], "a different model is kept as before");
+  const none = await run(null);
+  assert.ok(!none.subagentModels?.length, "no subagent message: nothing is claimed");
+});
