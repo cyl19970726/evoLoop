@@ -156,6 +156,7 @@ export interface Transaction extends Reader, Omit<RoleTransaction, "getTask" | "
   sessionAssignments?: SessionAssignmentTransaction;
   leaderNoticePackets?: LeaderNoticePacketTransaction;
   sessionLines?: SessionLineTransaction;
+  scheduleDispatch?: import("./schedule-dispatch.js").ScheduleDispatchTransaction;
   decisionRequests?: DecisionRequestTransaction;
   insertDiscussion(value: DiscussionRecord, event: DiscussionEvent): Promise<void>;
   updateDiscussion(value: DiscussionRecord, expectedVersion: number, event: DiscussionEvent): Promise<void>;

@@ -19,7 +19,8 @@
     "./ordinary-run-submission": "./dist/ordinary-run-submission.js",
     "./direct-input": "./dist/direct-input.js",
     "./leader-result-notices": "./dist/leader-result-notices.js",
-    "./leader-event-records": "./dist/leader-event-records.js"
+    "./leader-event-records": "./dist/leader-event-records.js",
+    "./schedule-dispatch": "./dist/schedule-dispatch.js"
   },
   "dependencies": {
     "@evoloop/contracts": "0.1.0",

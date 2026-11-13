@@ -19,6 +19,8 @@ import { PostgresUnitOfWork, PgConnectorRoutes, PgConnectorMessageLinks, PgConne
 import { disposeStalePendingTodo, disposeStaleTodoMessage, getLeaderNotice, getLeaderNoticeByMessageId, hasInFlightLeaderNoticeMessage, linkLeaderNoticeMessage,
   listLeaderNotices, listPendingLeaderNotices, markLeaderNoticeBlocked, pinLeaderNoticeRecipient,
   recoverRejectedLeaderNotice, setLeaderNoticePendingReason } from "@evoloop/adapter-postgres/leader-result-notices";
+import { ScheduleDirectDispatcher } from "./scheduling/direct-dispatch.js";
+import { sessionDenial } from "./scheduling/direct-authorization.js";
 import { listLeaderEventRecords } from "@evoloop/adapter-postgres/leader-event-records";
 import { authConfigSchema, hasCurrentStudyReviewer, isProjectWriter } from "./auth.js";
 import { buildServer } from "./server.js";
@@ -574,6 +576,8 @@ const runner = runtimeFactory ? new RuntimeRunner({ runtimeFactory, workflow: se
   }) : null;
 lateRunner.current = runner;
 const scheduling = new SchedulingPump({ store: new PgSchedulingStore(pool), taskTiming: new PgTaskTimingStore(pool), canWrite: lease.canWrite,
+  directDispatch: new ScheduleDirectDispatcher({ pool, workflow: { execute: (principal, command) => service.execute(principal, command as never) as never }, sessionDenial: sessionDenial(pool, () => loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE) as never),
+    recipientDenial: async (projectId, sessionId) => { const found = await lineRecipient(projectId, sessionId); return found === null ? "SESSION_NOT_FOUND" : typeof found === "string" ? null : found.unresolved; }, newId: randomUUID }),
   credentials: () => credentials, grants: () => integrations.scheduling?.grants ?? [],
   taskTimingGrants: async () => {
     const current = (await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE)).scheduling;
@@ -830,11 +834,7 @@ const residentQueue = new ResidentQueuePump({workflow:service,canWrite:lease.can
   credentials:currentIdentity,enabled:async()=>!!(await currentQueueConfiguration())?.enabled,
   pollIntervalMs:integrations.residentQueue?.pollIntervalMs??2000,
   onError:(()=>{const log=throttledLog(line=>console.error(line));return(error:unknown)=>log(`Resident queue tick failed: ${error instanceof Error?error.message.slice(0,200):"unknown"}; inspect persisted queue and Run state before retrying.`);})()});
-const sessionLinePump = new SessionLinePump({workflow:service,canWrite:lease.canWrite,
-  messageBusy:(projectId,sessionId)=>messageService.isBusy(projectId,sessionId),credentials:currentIdentity,
-  enabled:async()=>!!(await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE)).runtime?.enabled,
-  pollIntervalMs:integrations.residentQueue?.pollIntervalMs??2000,
-  recipientActorId:async(projectId,sessionId)=>{
+const lineRecipient=async(projectId:string,sessionId:string)=>{
     // The Session's own signing identity, never the Role's guess: Sessions of one Role sign as different identities.
     const row=(await pool.query(`SELECT s.role_id,s.actor_id,(SELECT count(*)::int FROM runtime_session o WHERE o.project_id=s.project_id
       AND o.role_id=s.role_id AND o.state<>'closed') AS live FROM runtime_session s WHERE s.project_id=$1 AND s.session_id=$2`,[projectId,sessionId])).rows[0];
@@ -844,7 +844,12 @@ const sessionLinePump = new SessionLinePump({workflow:service,canWrite:lease.can
       {materialCli:configured.runtime?.enabled?configured.runtime.materialCli:[],roleActors:configured.residentQueue?.enabled?configured.residentQueue.roleActors:[]},
       row.live,currentProjectWriter);
     return "actorId" in found?found.actorId:found;
-  },
+  };
+const sessionLinePump = new SessionLinePump({workflow:service,canWrite:lease.canWrite,
+  messageBusy:(projectId,sessionId)=>messageService.isBusy(projectId,sessionId),credentials:currentIdentity,
+  enabled:async()=>!!(await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE)).runtime?.enabled,
+  pollIntervalMs:integrations.residentQueue?.pollIntervalMs??2000,
+  recipientActorId:lineRecipient,
   onError:()=>console.error("Session line tick failed; inspect the persisted line entry and its Run before retrying.")});
 const ordinarySealPump = new OrdinaryRunSealPump({
   canWrite: lease.canWrite,

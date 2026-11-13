@@ -34,7 +34,7 @@ export function registerLeaderNoticeRoutes(app: FastifyInstance,
   if (notices.records) app.get("/api/projects/:projectId/leader-records", async request => {
     if (!request.principal) throw new DomainError("FORBIDDEN", "Authentication required");
     const { projectId } = z.object({ projectId: z.uuid() }).parse(request.params);
-    const query = z.strictObject({ taskId: z.uuid().optional(), kind: z.enum(["run_stopped", "attention_resolved", "notice_withdrawn", "line_entry_appended", "line_entry_started", "line_entry_ended"]).optional(),
+    const query = z.strictObject({ taskId: z.uuid().optional(), kind: z.enum(["run_stopped", "attention_resolved", "notice_withdrawn", "line_entry_appended", "line_entry_started", "line_entry_ended", "direct_dispatched", "direct_dispatch_skipped"]).optional(),
       limit: z.coerce.number().int().min(1).max(200).default(50), cursor: z.string().min(1).max(512).optional() }).parse(request.query);
     await service.getProject(request.principal, projectId);
     return notices.records!(projectId, { limit: query.limit, ...(query.taskId ? { taskId: query.taskId } : {}), ...(query.kind ? { kind: query.kind } : {}),
