@@ -700,6 +700,38 @@ test("a settled Turn's observed model and subagent models reach the Run record; 
   }
 });
 
+test("defect 3d30f7ac: a Run bound without a readback (actual unread) gets one more readback at its terminal Turn; a Run that already has its values does not ask, and a failed readback changes nothing",async()=>{
+  const cases:Array<{name:string;actual:RuntimeRunRecord["actual"];late:{reasoningEffort:string|null;model:string|null}|"throws"|null;
+    expectEffort:string|undefined;expectModel:string|undefined;asked:boolean}>=[
+    {name:"bound unread, late readback works",actual:{model:null,reasoningEffort:null,subagentModels:[],effortRequested:false},late:{reasoningEffort:"max",model:"deepseek/deepseek-flash"},expectEffort:"max",expectModel:"deepseek/deepseek-flash",asked:true},
+    {name:"bound unread, late readback also unread",actual:{model:null,reasoningEffort:null,subagentModels:[],effortRequested:false},late:{reasoningEffort:null,model:null},expectEffort:undefined,expectModel:undefined,asked:true},
+    {name:"bound unread, late readback throws",actual:{model:null,reasoningEffort:null,subagentModels:[],effortRequested:false},late:"throws",expectEffort:undefined,expectModel:undefined,asked:true},
+    {name:"already recorded at the start",actual:{model:"deepseek/deepseek-flash",reasoningEffort:"high",subagentModels:[],effortRequested:true},late:{reasoningEffort:"max",model:"other"},expectEffort:undefined,expectModel:undefined,asked:false},
+  ];
+  for(const c of cases){
+    const active={...run,id:randomUUID(),state:"running" as RuntimeRunRecord["state"],nativeTurnId:"owned-turn",actual:c.actual};
+    const native=new FakeRuntime() as unknown as Record<string,unknown>;
+    let asked=0;
+    native.listTurns=async()=>({data:[{id:"owned-turn",status:"completed",completedAtUtc:new Date().toISOString()}],nextCursor:null});
+    native.observeTurnEffort=async()=>{asked++;if(c.late==="throws")throw new Error("thread/read failed");return c.late;};
+    let checkpoint:Record<string,unknown>|null=null;
+    const workflow={getProject:async()=>({id:projectId}),listRuntimeSessions:async()=>[session],
+      listRuntimeRuns:async()=>[active],getRuntimeSession:async()=>session} as unknown as WorkflowService;
+    const trusted={recoverDispatching:async()=>({sessions:[],runs:[]}),
+      recordTurn:async(_p:string,_id:string,_turn:string,_status:string,_summary:string,given:Record<string,unknown>)=>{checkpoint=given;active.state="completed";return active;}} as unknown as RuntimeWorkflowService;
+    const runner=new RuntimeRunner({runtimeFactory:()=>native as unknown as RuntimePort & FakeRuntime,
+      workflow,trusted,principals:[{actorId,projectIds:[projectId],permissions:["read","write","review"]}],
+      canWrite:()=>true,allowedCwd:async()=>true,hasGrant:()=>true});
+    try{
+      await runner.start();await runner.pump();
+      assert.ok(checkpoint,`${c.name}: the Turn was settled`);
+      assert.equal(asked>0,c.asked,`${c.name}: asked for the late readback`);
+      assert.equal(checkpoint!.observedReasoningEffort,c.expectEffort,`${c.name}: effort passed on`);
+      assert.equal(checkpoint!.observedModel,c.expectModel,`${c.name}: model passed on`);
+    }finally{await runner.stop();}
+  }
+});
+
 test("close uses the original actor and exact grant, refusing missing authority or cwd without native writes", async t => {
   const originalGrant = { projectId, actorId, roleId: session.roleId, authorizationScope: session.authorizationScope,
     cwd: session.cwd, sandbox: session.sandbox, model: session.model, approvalPolicy: session.approvalPolicy };

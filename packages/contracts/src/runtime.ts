@@ -463,6 +463,11 @@ export interface RuntimePort {
   /** Name metadata only; this must never start a model Turn. */
   setThreadName?(binding: RuntimeBinding, name: string): Promise<void>;
   listTurns(binding: RuntimeBinding, cursor?: string): Promise<RuntimePage<RuntimeTurn>>;
+  /**
+   * Read the model and effort the Thread reports for this exact Turn, when it is still the Thread's latest one. A second chance for a Turn whose start-time
+   * readback was missed (the history store was not yet attached): null for either value means "could not be read", never a guess. Read only.
+   */
+  observeTurnEffort?(binding: RuntimeBinding, turnId: string): Promise<{ reasoningEffort: string | null; model: string | null }>;
   listItems(binding: RuntimeBinding, turnId: string, cursor?: string): Promise<RuntimePage<unknown>>;
   /** Optional classified trace capability. Absence means unsupported, never an empty complete trace. */
   readWorkPage?(binding: RuntimeBinding, turnId: string, cursor?: string): Promise<RuntimeWorkPage>;
