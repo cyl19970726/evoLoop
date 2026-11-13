@@ -5,7 +5,7 @@ import { runtimeReconcileSchema, runtimeCompactionIntentSchema } from "@evoloop/
 import { ordinaryRunSubmissionSchema } from "@evoloop/contracts/ordinary-run-submission";
 import { leaderNoticeRecoverySchema, leaderNoticeRecoveryRequestSchema } from "@evoloop/contracts/leader-notices";
 import { leaderNoticePacketRecoverySchema } from "@evoloop/contracts/leader-notice-packets";
-import { acceptanceArrangeSchema, acceptanceObserveSchema, acceptanceReadSchema,
+import { acceptanceArrangeSchema, acceptanceReleaseSchema, acceptanceObserveSchema, acceptanceReadSchema,
   retirementApprovalSchema } from "@evoloop/contracts/acceptance-relay";
 import { ArtifactReferenceError, parseArtifactReference } from "@evoloop/contracts/artifact-reference";
 import { formalSourceDecisionSchema, registerGitReferenceSchema, taskExternalReferenceSchema } from "@evoloop/contracts/references";
@@ -17,7 +17,7 @@ export type RequestName =
   | "reference.git-register" | "reference.formal-decide" | "reference.task-decide"
   | "work.plan.set" | "work.dependencies.set" | "work.review.set"
   | "leader.notice.recover"
-  | "acceptance.assign" | "acceptance.read" | "acceptance.observe" | "session.retirement.approve"
+  | "acceptance.assign" | "acceptance.read" | "acceptance.observe" | "acceptance.release" | "session.retirement.approve"
   | "runtime.reconcile" | "runtime.recover" | "runtime.compact.start" | "runtime.compact.reconcile" | "ordinary.submit";
 
 export class RequestInputError extends Error {
@@ -49,6 +49,7 @@ const help: readonly RequestHelp[] = [
   { name: "acceptance.assign", requiredBodyKeys: ["projectId","taskId","operationId","relayId","expectedTaskVersion","deliveryId","stage","scopeKey","mode","recipientActorId"], targetId: "taskId", operationId: "body", recovery: "manual" },
   { name: "acceptance.read", requiredBodyKeys: ["projectId","taskId","relayId","operationId","expectedVersion","evidence"], targetId: "relayId", operationId: "body", recovery: "manual" },
   { name: "acceptance.observe", requiredBodyKeys: ["projectId","taskId","relayId","operationId","expectedVersion","observationId"], targetId: "relayId", operationId: "body", recovery: "manual" },
+  { name: "acceptance.release", requiredBodyKeys: ["projectId","taskId","relayId","operationId","expectedVersion","reason"], targetId: "relayId", operationId: "body", recovery: "manual" },
   { name: "session.retirement.approve", requiredBodyKeys: ["operationId","decisionId","closeOperationId","expectedSessionVersion","reason","handoffEvidence"], targetId: "sessionId", operationId: "body", recovery: "manual" },
   { name: "runtime.reconcile", requiredBodyKeys: ["expectedVersion", "reason"], targetId: "runId", operationId: "localReceipt", recovery: "manual" },
   { name: "runtime.recover", requiredBodyKeys: [], targetId: null, operationId: "localReceipt", recovery: "manual" },
@@ -105,6 +106,7 @@ function bodySchema(name: string) {
     case "acceptance.assign": return acceptanceArrangeSchema;
     case "acceptance.read": return acceptanceReadSchema;
     case "acceptance.observe": return acceptanceObserveSchema;
+    case "acceptance.release": return acceptanceReleaseSchema;
     case "session.retirement.approve": return retirementApprovalSchema;
     case "runtime.reconcile": return runtimeReconcileSchema;
     case "runtime.compact.start": return runtimeCompactionIntentSchema;
@@ -290,6 +292,14 @@ export function prepareRequest(name: string, projectIdInput: string, bodyInput: 
       if("relayId" in body&&body.relayId!==id)
         throw new RequestInputError("acceptance.observe body relayId differs from route target");
       path = `${base}/tasks/${String(body.taskId)}/acceptance-relay/${id}/observation`;
+      recovery = {kind:"manual",path:`${base}/tasks/${String(body.taskId)}/acceptance-relay`};
+      confirmation = "ack";
+      break;
+    }
+    case "acceptance.release": {
+      if("relayId" in body&&body.relayId!==id)
+        throw new RequestInputError("acceptance.release body relayId differs from route target");
+      path = `${base}/tasks/${String(body.taskId)}/acceptance-relay/${id}/release`;
       recovery = {kind:"manual",path:`${base}/tasks/${String(body.taskId)}/acceptance-relay`};
       confirmation = "ack";
       break;

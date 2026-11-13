@@ -455,3 +455,5 @@ Leader 收到的是“Leader 通知包”消息：先 `get /api/projects/PROJECT
 ## 待我决定
 
 需要某个身份（例如使用者）决定时，不要只在对话里问：用 `command run` 提交 `decision.request.create`（`command schema decision.request.create`：`requestId`、`requestedFrom`、`subject`、`question`、可选 `taskId` 与 `options`，需要复核权限），它出现在对方“待我处理 › 待我决定”里，答复后消失。`get /api/projects/PROJECT/decisions-for-me` 以当前身份读自己待决定的事项。不再需要时用 `decision.request.withdraw` 撤回。被请求的身份用 `decision.request.answer`（带 `expectedVersion`，选项非空时答案必须是其中之一）答复。
+
+`request acceptance.release --project PROJECT --id RELAY --file BODY.json --receipt UUID`（body：`projectId`、`taskId`、`relayId`、`operationId`、`expectedVersion`、`reason`，需要 review 权限）把一条**不可能再被满足**的有效验收接力置为 `released`：被阻塞（如 `MESSAGE_BINDING_CHANGED`）的，或接收者记的不是 used 的旧接力。它只在同一交付、同一阶段还剩另一条有效接力时允许（最后一条拒绝 `LAST_ARRANGEMENT`，关闭规则不放松），已有 used 的接力拒绝（`ARRANGEMENT_SATISFIED`，那是证据），消息已在运行时拒绝（`ACCEPTANCE_IN_FLIGHT`）。理由进 `task_acceptance_relay_release`，不可改。释放后 `task.close` 的闸门（迁移 070）只看剩下的有效接力。

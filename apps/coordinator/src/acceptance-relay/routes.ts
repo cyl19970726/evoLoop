@@ -2,7 +2,7 @@ import type { FastifyInstance } from "fastify";
 import type { WorkflowService } from "@evoloop/core";
 import { DomainError } from "@evoloop/contracts/ports";
 import { z } from "zod";
-import { acceptanceArrangeSchema, acceptanceObserveSchema, acceptanceReadSchema,
+import { acceptanceArrangeSchema, acceptanceReleaseSchema, acceptanceObserveSchema, acceptanceReadSchema,
   retirementApprovalSchema } from "@evoloop/contracts/acceptance-relay";
 import type { AcceptanceRelayService } from "./service.js";
 import type { LeaderWorkIndexReader } from "../work-management/work-index.js";
@@ -82,6 +82,15 @@ export function registerAcceptanceRelayRoutes(app: FastifyInstance, workflow: Wo
     await relay.linkObservation(request.principal,p.projectId,p.taskId,p.relayId,body.observationId,
       body.operationId,body.expectedVersion);
     return {items:await relay.list(p.projectId,p.taskId)};
+  });
+  app.post("/api/projects/:projectId/tasks/:taskId/acceptance-relay/:relayId/release", async request => {
+    const p=relayParams.parse(request.params);
+    const body=acceptanceReleaseSchema.parse(request.body);
+    if(p.projectId!==body.projectId||p.taskId!==body.taskId||p.relayId!==body.relayId)
+      throw new DomainError("TARGET_MISMATCH","Route and release target differ");
+    if(!request.principal)throw new DomainError("FORBIDDEN","Authentication required");
+    await workflow.getProject(request.principal,p.projectId);
+    return {released:await relay.release(request.principal,body)};
   });
   app.get("/api/projects/:projectId/runtime/sessions/:sessionId/retirement", async request => {
     const p=z.strictObject({projectId:z.uuid(),sessionId:z.uuid()}).parse(request.params);
