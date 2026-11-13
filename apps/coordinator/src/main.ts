@@ -19,6 +19,7 @@ import { PostgresUnitOfWork, PgConnectorRoutes, PgConnectorMessageLinks, PgConne
 import { disposeStalePendingTodo, disposeStaleTodoMessage, getLeaderNotice, getLeaderNoticeByMessageId, hasInFlightLeaderNoticeMessage, linkLeaderNoticeMessage,
   listLeaderNotices, listPendingLeaderNotices, markLeaderNoticeBlocked, pinLeaderNoticeRecipient,
   recoverRejectedLeaderNotice, setLeaderNoticePendingReason } from "@evoloop/adapter-postgres/leader-result-notices";
+import { ScheduleDirectDispatcher } from "./scheduling/direct-dispatch.js";
 import { listLeaderEventRecords } from "@evoloop/adapter-postgres/leader-event-records";
 import { authConfigSchema, hasCurrentStudyReviewer, isProjectWriter } from "./auth.js";
 import { buildServer } from "./server.js";
@@ -574,6 +575,7 @@ const runner = runtimeFactory ? new RuntimeRunner({ runtimeFactory, workflow: se
   }) : null;
 lateRunner.current = runner;
 const scheduling = new SchedulingPump({ store: new PgSchedulingStore(pool), taskTiming: new PgTaskTimingStore(pool), canWrite: lease.canWrite,
+  directDispatch: new ScheduleDirectDispatcher({ pool, workflow: { execute: (principal, command) => service.execute(principal, command as never) as never }, newId: randomUUID }),
   credentials: () => credentials, grants: () => integrations.scheduling?.grants ?? [],
   taskTimingGrants: async () => {
     const current = (await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE)).scheduling;

@@ -30,6 +30,7 @@ import { applyDecisionRequest } from "./decision-requests/index.js";
 import type { SessionAssignmentCommand } from "@evoloop/contracts/session-assignments";
 import type { DomainRoute, HostLink } from "@evoloop/contracts/resident-hosts";
 import { applySchedule } from "./scheduling/commands.js";
+import { applyScheduleDispatch } from "./scheduling/dispatch.js";
 import { applyDiscussion } from "./discussions.js";
 import { applyTaskCollaboration, taskAnswerInputBlock } from "./task-collaboration.js";
 export { taskAnswerInputBlock } from "./task-collaboration.js";
@@ -223,7 +224,7 @@ export class WorkflowService {
     // The packet's own steps belong to the notice service identity (checked in apply); the Leader's decision and recovery need review.
     if (command.type === "leader.noticePacket.build" || command.type === "leader.noticePacket.sent" || command.type === "leader.noticePacket.observe") return "write";
     if (command.type === "stage.phaseKey.set") return "review";
-    if (command.type.startsWith("queue.") || command.type.startsWith("line.") || command.type.startsWith("leader.notice")) return "review";
+    if (command.type.startsWith("queue.") || command.type.startsWith("line.") || command.type.startsWith("schedule.dispatch.") || command.type.startsWith("schedule.directList.") || command.type.startsWith("schedule.directEntry.") || command.type.startsWith("leader.notice")) return "review";
     if (command.type === "decision.request.create" || command.type === "decision.request.withdraw") return "review";
     if (command.type.startsWith("evaluation.") || command.type.startsWith("domain.") || command.type.startsWith("host.")) return "review";
     return command.type === "document.adopt" || command.type === "document.publish" || command.type === "document.archive" || command.type === "document.restore" || command.type === "task.start" || command.type === "task.acceptancePrecondition.mark" || command.type === "task.reviewBasis" || command.type === "task.close" || command.type === "task.cancel" || command.type === "task.reopen" || command.type === "stage.accept" || command.type === "stage.review" || command.type === "stage.review.correct" || command.type === "runtime.session.reserve" || command.type === "runtime.session.close" || command.type === "runtime.run.reserve" || (command.type === "runtime.run.interrupt" || command.type === "runtime.run.stop" || command.type === "runtime.run.abandonReadOnly") || command.type.startsWith("schedule.") || command.type.startsWith("role.") && command.type !== "role.propose" || command.type === "discussion.decision.record" || command.type === "discussion.action.link"
@@ -245,6 +246,8 @@ export class WorkflowService {
       }
       return applyLeaderNoticePacket(tx, principal, command as import("@evoloop/contracts/leader-notice-packets").LeaderNoticePacketCommand, now);
     }
+    if (command.type.startsWith("schedule.dispatch.") || command.type.startsWith("schedule.directList.") || command.type.startsWith("schedule.directEntry."))
+      return applyScheduleDispatch(tx, principal, command as import("@evoloop/contracts/schedule-dispatch").ScheduleDispatchCommand, now, () => this.deps.ids.next());
     if (command.type.startsWith("line."))
       return applySessionLine(tx, principal, command as import("@evoloop/contracts/session-line").SessionLineCommand, now, () => this.deps.ids.next());
     if (command.type.startsWith("decision.request."))

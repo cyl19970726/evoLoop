@@ -333,15 +333,24 @@ Task 协作通道把 question/answer/progress/blocker/handoff/result 固定到�
 
 | 级别 | 送达 | 种类 |
 | --- | --- | --- |
-| 立即 | Leader 下一个能接收的时点就送，不等 60 秒，排在汇总项前面，同一包里也带上此刻在等的汇总项 | `acceptance_blocked`（验收安排受阻）、`run_submission_blocked`（提交受阻）、`run_without_submission`（Run 结束未提交，被叫停的 Run 除外）、`task_question`、`task_blocker`、`observation_failed`（验收观察记了失败，也包括“未使用”）、`line_entry_suspended`（Session 队伍项挂起，来自 `entry.suspended`） |
-| 汇总 | 等满 60 秒进下一包 | `delivery`、`observation_used`（验收观察记了使用）、`task_todo`、`task_attention`、`line_confirmation_returned`（Session 退回执行确认，来自 `entry.returned`），以及迁移前的旧种类 `observation` |
+| 立即 | Leader 下一个能接收的时点就送，不等 60 秒，排在汇总项前面，同一包里也带上此刻在等的汇总项 | `acceptance_blocked`（验收安排受阻）、`run_submission_blocked`（提交受阻）、`run_without_submission`（Run 结束未提交，被叫停的 Run 除外）、`task_question`、`task_blocker`、`observation_failed`（验收观察记了失败，也包括“未使用”）、`line_entry_suspended`（Session 队伍项挂起，来自 `entry.suspended`）、`direct_dispatch_blocked`（定时直派受阻或等待过久）、`direct_circuit_open`（定时直派熔断） |
+| 汇总 | 等满 60 秒进下一包 | `delivery`、`observation_used`（验收观察记了使用）、`task_todo`、`task_attention`、`line_confirmation_returned`（Session 退回执行确认，来自 `entry.returned`），`schedule_skips_escalated`（定时任务连续跳过），以及迁移前的旧种类 `observation` |
 | 只记录 | 不是通知，不唤醒 Leader | 见下“只记录事件” |
 
 立即级仍受恢复门、“人的消息在排队”、Leader 正在执行（不打断）、每包 20 项与 8 KB 的约束；多于一包的立即通知排在前面、连续成包，汇总项的积压不会挡住它们。验收观察按结论拆开：`used` 是 `observation_used`，其余结论（`failed`、`notUsed`）是 `observation_failed`。包里的立即项在行首标“立即·”。
 
-**只记录事件。** Run 已按请求停止、关注项已解决、通知撤回，以及 Session 队伍的追加、开始、结束（`line_entry_appended`、`line_entry_started`、`line_entry_ended`，来自 `entry.appended`、`entry.started`、`entry.runEnded`）不产生通知，从只读视图 `leader_event_record` 读取（无新存储，每行都是别的表里不可改的事实）：`GET /api/projects/:projectId/leader-records?taskId=&kind=&limit=&cursor=`，`kind` 取以上任一种，按时间从旧到新续页，项目读权限即可。Run 停止同时仍出现在 `work changes` 的 run 变更里；调度板（Q2）与每日评估读这个接口。
+**只记录事件。** Run 已按请求停止、关注项已解决、通知撤回，以及 Session 队伍的追加、开始、结束（`line_entry_appended`、`line_entry_started`、`line_entry_ended`，来自 `entry.appended`、`entry.started`、`entry.runEnded`；定时直派的 `direct_dispatched`、`direct_dispatch_skipped`）不产生通知，从只读视图 `leader_event_record` 读取（无新存储，每行都是别的表里不可改的事实）：`GET /api/projects/:projectId/leader-records?taskId=&kind=&limit=&cursor=`，`kind` 取以上任一种，按时间从旧到新续页，项目读权限即可。Run 停止同时仍出现在 `work changes` 的 run 变更里；调度板（Q2）与每日评估读这个接口。
 
-**Session 队伍事件（迁移 106）。** 队伍（迁移 087）的每一步都已写不可改的 `session_line_event`；触发器把其中两种变成通知：挂起（立即）、执行确认被退回（汇总），通知的来源编号是由项目和事件序号算出的稳定 uuid，来源写成 `line:<序号>:<事件种类>`。**连续跳过**与直派相关的事件（直派受阻、直派本次跳过）属于定时直派（S1），不在这里，随 S1 接入；执行确认闸门自己的“退回”就是上面的 `entry.returned`。
+**Session 队伍事件（迁移 106）。** 队伍（迁移 087）的每一步都已写不可改的 `session_line_event`；触发器把其中两种变成通知：挂起（立即）、执行确认被退回（汇总），通知的来源编号是由项目和事件序号算出的稳定 uuid，来源写成 `line:<序号>:<事件种类>`。
+
+**定时直派（DEC-045 S1，迁移 108）。** 日程到点生成的 Task 默认交 Leader（进汇总的“待分诊”）。给日程设**分发策略**后可以直接进某个常驻 Session 的队伍，不经 Leader 排期：
+
+- 命令（都要 review 权限）：`schedule.dispatch.set`（日程、`mode`=`leader`/`direct`、`state`=`active`/`paused`/`revoked`、等待上限分钟数默认 120、每日运行预算可空；设为 `direct` 时记下此刻日程的 Task 模板和 Role 的当前修订）、`schedule.directList.set`（某个 Role 的直派名单：最多 20 个该 Role 的 Session，按偏好顺序整体替换）、`schedule.directEntry.withdraw`（把一个定时项从队伍撤下，必须选 `cancel` 取消 Task 或 `to_leader` 交 Leader；这时才补上它没发过的“待分诊”）。普通的 `line.remove` 对定时项一律拒绝（`SCHEDULE_CHOICE_REQUIRED`）。
+- 到点：同一事务里生成 occurrence、Task 和一行**派发意图**（`schedule_dispatch_log`，状态 `pending`，记模板哈希、Role 修订和等待上限），并关掉这一个 Task 的待分诊通知（`schedule_direct_intent`）。之后服务进程内的派发主体（`ScheduleDirectDispatcher`，随日程泵运行；重启后也会做完所有 `pending`）选 Session：**先空闲的，再队伍最短的，一样长按名单顺序**；只选“可用”的——就绪、恢复门打开、执行配置没有被拒或未知、队首没有挂起的项（另可由 `sessionAuthorized` 再核私有配置里的执行授权）。选定后用 `line.append`（来源 `schedule`）追加到队尾；没有可用 Session 或追加被拒，Task 回到 Leader：补发待分诊，并发立即级的 `direct_dispatch_blocked`。
+- **退回交 Leader**：日程模板改了（修订时触发器立刻把策略改成 `leader`，原因 `TEMPLATE_CHANGED`）、Role 的修订变了（下一次到点时 `ROLE_BINDING_CHANGED`）、策略被设为暂停或撤权，到点的 Task 都走 Leader 的待分诊。
+- **防失控**：每日运行预算按日程时区的日历日计，用完则本次跳过并记录（`DAILY_BUDGET`）；上一次还没关闭则本次跳过（`PREVIOUS_STILL_OPEN`），连续 2 次跳过发汇总级的 `schedule_skips_escalated`；直派队伍项的 Run 连续 2 次失败（`failed`/`interrupted`；被请求停止的和完成的不计，完成会清零）熔断：策略改成 `leader`、状态 `circuit_open`，发立即级的 `direct_circuit_open`，重新批准（再设 `direct`）才清除；已进队伍的 Task 在队伍里等过等待上限，发一次 `direct_dispatch_blocked`。
+- **Leader 知情**：直派的 Task 不发待分诊；`direct_dispatched`（已直派）和 `direct_dispatch_skipped`（本次跳过）是只记录事件，读 `/leader-records`。
+- 没有做：直派授权没有单独进私有配置——这一版用日程原有的授权范围加分发策略的状态（撤权就是把 `state` 设为 `revoked`）；`sessionAuthorized` 是预留的钩子，主进程尚未接私有配置里的执行授权；第一期只支持日程。
 
 **用量告警按项目时区计日。** 预算的“今天”由服务按私有配置里的项目时区算（`UsageService`），读用量概览的窗口必须包含这一天；UTC 与项目时区最多差一个日历日，所以待我处理读“UTC 日前一天到后一天”（`usageWindow`），告警本身取服务回答的预算状态，不在页面里再按 UTC 日期自己算。
 

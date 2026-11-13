@@ -74,6 +74,9 @@ export async function applySessionLine(tx: Transaction, principal: Principal, co
     return { result: ok(command, entry.id, after.version), effects: [effect(after)] };
   }
   if (command.type === "line.remove") {
+    // A scheduled entry is taken out with schedule.directEntry.withdraw, which asks what becomes of its Task; that command passes the internal flag.
+    if (entry.source === "schedule" && !(command as { viaDirectWithdraw?: boolean }).viaDirectWithdraw)
+      fail("SCHEDULE_CHOICE_REQUIRED", "a scheduled Task is taken out of the line with schedule.directEntry.withdraw: cancel it or hand it to the Leader");
     if (entry.state === "started" || entry.state === "withdrawn") fail("ENTRY_NOT_REMOVABLE", "the entry has already started or ended");
     // At the start step the entry can still leave, as long as no Run was reserved for it: otherwise it would hold the line for good.
     if (entry.state === "starting" && entry.step === "start" &&

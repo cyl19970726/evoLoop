@@ -15,7 +15,8 @@ export const leaderNoticeRecoveryRequestSchema = z.union([leaderNoticeRecoverySc
 
 /** Every kind of Leader notice that exists as a row. `observation` is the kind of notices created before observations were told apart by result. */
 export const leaderNoticeKinds = ["task_todo", "delivery", "observation", "observation_used", "observation_failed", "task_question", "task_blocker",
-  "run_without_submission", "run_submission_blocked", "task_attention", "acceptance_blocked", "line_entry_suspended", "line_confirmation_returned"] as const;
+  "run_without_submission", "run_submission_blocked", "task_attention", "acceptance_blocked", "line_entry_suspended", "line_confirmation_returned",
+  "direct_dispatch_blocked", "direct_circuit_open", "schedule_skips_escalated"] as const;
 export type LeaderNoticeKind = (typeof leaderNoticeKinds)[number];
 
 /**
@@ -26,11 +27,11 @@ export type LeaderNoticeKind = (typeof leaderNoticeKinds)[number];
  */
 export type LeaderNoticeLevel = "immediate" | "digest";
 const immediateKinds: ReadonlySet<LeaderNoticeKind> = new Set<LeaderNoticeKind>(["acceptance_blocked", "run_submission_blocked", "run_without_submission",
-  "task_question", "task_blocker", "observation_failed", "line_entry_suspended"]);
+  "task_question", "task_blocker", "observation_failed", "line_entry_suspended", "direct_dispatch_blocked", "direct_circuit_open"]);
 export const noticeLevelOf = (kind: LeaderNoticeKind): LeaderNoticeLevel => immediateKinds.has(kind) ? "immediate" : "digest";
 
 /** An event that only gets recorded: it wakes no one. Read from the `leader_event_record` view (`GET /api/projects/:id/leader-records`). */
-export type LeaderEventRecordKind = "run_stopped" | "attention_resolved" | "notice_withdrawn" | "line_entry_appended" | "line_entry_started" | "line_entry_ended";
+export type LeaderEventRecordKind = "run_stopped" | "attention_resolved" | "notice_withdrawn" | "line_entry_appended" | "line_entry_started" | "line_entry_ended" | "direct_dispatched" | "direct_dispatch_skipped";
 export interface LeaderEventRecord { kind: LeaderEventRecordKind; sourceEventId: string; taskId: string; sourceRef: string; occurredAt: string }
 export interface LeaderEventRecordPage { items: LeaderEventRecord[]; nextCursor: string | null }
 export type LeaderNoticeState = "pending" | "linked" | "blocked";
@@ -90,6 +91,9 @@ export function leaderNoticePostCommand(notice: Pick<LeaderNotice,"projectId"|"k
     observation_failed:"An independent use observation recorded that the Delivery was not usable",
     line_entry_suspended:"A Session line entry cannot start and was suspended",
     line_confirmation_returned:"A Session returned its execution confirmation for a Task",
+    direct_dispatch_blocked:"A scheduled direct dispatch could not happen or is waiting too long and needs a Leader decision",
+    direct_circuit_open:"A direct schedule's breaker opened after two failed Runs and the schedule returned to the Leader",
+    schedule_skips_escalated:"A schedule skipped two triggers in a row because its previous Task is still open",
     task_attention:"A current Task attention item needs a Leader follow-up",
     acceptance_blocked:"An acceptance handoff is blocked and needs a Leader decision"};
   const content=`${label[notice.kind]}.\nSource event: ${notice.sourceEventId} at ${notice.occurredAt}`+

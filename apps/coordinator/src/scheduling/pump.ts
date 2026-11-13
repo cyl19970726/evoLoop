@@ -24,6 +24,8 @@ export interface SchedulingPumpOptions {
   /** Separate from legacy Schedule grants; never authorizes a Schedule. */
   taskTimingGrants?(): Promise<readonly TaskTimingGrant[]> | readonly TaskTimingGrant[];
   enabled(): boolean;
+  /** Scheduled direct dispatch (S1): runs after each grant's tick, also when nothing new was due, so a pending dispatch is always finished. */
+  directDispatch?: { process(projectId: string, principal: Principal, now: string): Promise<unknown> };
   now?(): string;
   intervalMs?: number;
   onError?(error: unknown): void;
@@ -175,6 +177,7 @@ export class SchedulingPump {
         if (!principal) continue;
         const service = new SchedulingService(this.guardedStore(grant));
         occurrences.push(...await service.tick(principal, grant.projectId, now, [grant.scopeId]));
+        if (this.options.directDispatch && this.permitted(grant)) await this.options.directDispatch.process(grant.projectId, principal, now);
         if (this.options.taskTiming && this.permitted(grant))
           taskCopies += (await this.options.taskTiming.tick(grant.projectId, now, grant.actorId, grant.roleId, grant.scopeId))
             .filter(item => item.created).length;
