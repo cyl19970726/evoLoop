@@ -332,6 +332,8 @@ node --import tsx tests/manual/session-compaction-e1.ts
 
 只有两个方向都成功发送并处理、原生 Turn 可核、回复中的标记一致，才报告就绪，并保留两条消息 ID 与读回结果作对照记录。只有配置检查通过、发送返回 `applied`、状态显示 `ready`、消息已保存或没有回复，都不算就绪。
 
+**换路径后先实跑一次。** 换 Role、换验收者或换 Session 后，新的路径必须先实际跑通一次才算落地：第一次派单要真的开出 Run，或新 Session 真的处理过一条消息。换验收者时，新的验收安排也要真正送达并由接收 Session 处理；只改配置、只换绑定、只保存一条分派记录或只在文档里写计划，都不算。保留这次 Run 或消息的 ID、实际处理结果与读回证据，作为新路径可用的对照记录。
+
 - **缺项怎么看。** `session prepare` 返回 `status=blocked`，`missing` 是代码，`missingDetails` 写明要设的配置项、可复制的修法和是否需重启；`role_actor` 就是缺 `residentQueue.roleActors`（或它没启用、或该身份无写权限）。
 - **哪些要重启。** 按代码核对，`session prepare` 每次调用都重读 integrations 与身份文件，补 `residentQueue.roleActors`、`runtime.materialCli`、`runtime.grants` 不需要重启；只有 `runtime.enabled`（运行时只在启动时建立）和新增 HTTP 令牌要重启。
 

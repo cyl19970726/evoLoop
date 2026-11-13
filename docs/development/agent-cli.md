@@ -42,6 +42,8 @@
 
 **“就绪”不能只看准备检查。** 新 Session 必须成功处理过一条真实消息，并通过反向授权把约定的唯一标记回给 Leader；两个方向都用 `work message` 与 `work status ... --message` 读回 processing、原生 Turn 和回复后才可报告。准备检查通过、配置缺项为空、`runtime_session.state=ready`、发送返回 `applied` 或消息已保存都不算。最小演练步骤见[运行接线手册](runtime-operations.md#6-受管-session-编制所需配置)。
 
+**换路径后先实跑一次。** 换 Role、换验收者或换 Session 后，新的路径必须先实际跑通一次才算落地：第一次派单要真的开出 Run，或新 Session 真的处理过一条消息。换验收者时，新的验收安排也要真正送达并由接收 Session 处理；只改配置、只换绑定、只保存一条分派记录或只在文档里写计划，都不算。保留 Run 或消息 ID、实际处理结果与读回证据，作为新路径可用的对照记录。
+
 身份文件里凭据的 `extraCommands` 只用来开放 `document.archive` 与 `document.restore`，与 `permissions` 分开：有它的身份在本项目有 write 即可对应归档或恢复，不能 `task.start`、`task.close`。改身份文件后须重启服务。
 
 **为什么 `runtime.materialCli` 与 `residentQueue.roleActors` 都要写。** 评估结论：现在不合并。两处不是同一个取值：`roleActors` 是“项目 × Role → 业务身份”，常驻队列、协作授权、消息连接器和队列绑定都读它；`materialCli` 是“项目 ×（Session 或 Role）× Session 身份 → CLI 身份 + 命令路径”，可细到 Session 或 Task，只有启用运行时才有意义。Role 级条目里二者的身份必须相同，服务用 `material_cli_actor_mismatch` 检查，所以重复的是书写成本，不是两个可以不同的事实。合并的风险：要迁移私有配置；Session/Task 级覆盖会丢；只走队列、没有 `materialCli` 的 Role 仍需要 `roleActors`；由一处推导另一处，会让“谁能以这个 Role 行事”的授权隐含进 CLI 配置。较小的后续做法（本轮未做）：加载配置时二者不一致就一次性报错，或 Role 级 `materialCli.cliActorId` 缺省取 `roleActors` 的 `actorId`（向后兼容）。
