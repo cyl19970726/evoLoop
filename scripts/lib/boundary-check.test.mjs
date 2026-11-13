@@ -3,8 +3,9 @@ import test from "node:test";
 import {
   commandsOfLine, configIdentity, day, declaredStage, dominantActor, expandLoops, ghMergeNumber, jsonKeyDiff, mentionsCandidate, mentionsFormalReadback,
   mentionsNear, mergeInvocations, mergeRows, parseTrainLog,
+  MERGE_OK, configProblems, exitCodeFor, judgeClosure, mentionsAnywhere, mentionsFile, targetLabel, truncationProblem,
 } from "./boundary-check.mjs";
-import { loadConfig } from "../ops/boundary-check.mjs";
+import { format, loadConfig } from "../ops/boundary-check.mjs";
 
 const codexLine = (at, cmd) => JSON.stringify({ timestamp: at, type: "response_item", payload: { type: "function_call", name: "exec_command", arguments: JSON.stringify({ cmd }) } });
 const claudeLine = (at, command) => JSON.stringify({ timestamp: at, message: { content: [{ type: "tool_use", input: { command } }] } });
@@ -126,4 +127,105 @@ test("a day is 24 hours of local time, and the config must live outside the repo
   assert.throws(() => loadConfig(ok, new URL("../../x.json", import.meta.url).pathname), /outside the repository/);
   assert.throws(() => loadConfig(JSON.stringify({ repo: "o/r", humanActors: ["h"] }), "/etc/b.json"), /utcOffsetMinutes/);
   assert.throws(() => loadConfig(JSON.stringify({ repo: "o/r", utcOffsetMinutes: 0, humanActors: [] }), "/etc/b.json"), /humanActors/);
+});
+
+// ---- Task ac254c1a: the check must never say "all normal" when it could not tell. Each case below is a counterexample that used to
+// come out as a clean report.
+const merged = number => ({ number, mergedAt: "2026-11-12T07:00:00Z", mergedBy: { login: "someone" }, title: "t" });
+const listed = rows => rows.filter(row => !MERGE_OK.includes(row.verdict));
+
+test("1. a merge whose session or config identity cannot be recognised is listed, with which one is unknown", () => {
+  const rows = mergeRows({ merged: [merged(1), merged(2), merged(3)], train: [], transcripts: [
+    { id: "a", actor: { actor: "leader" }, merges: [{ pr: 1, via: "merge-gate", configIdentity: null }] },
+    { id: "b", actor: null, merges: [{ pr: 2, via: "merge-gate", configIdentity: "requirements" }] },
+    { id: "c", actor: null, merges: [{ pr: 3, via: "merge-gate", configIdentity: null }] }] });
+  assert.deepEqual(rows.map(row => row.verdict), ["发起者或配置认不出", "发起者或配置认不出", "发起者或配置认不出"]);
+  assert.match(rows[0].who, /合并配置所属的身份/); assert.match(rows[1].who, /发起会话的身份/); assert.match(rows[2].who, /发起会话的身份和合并配置所属的身份/);
+  assert.equal(listed(rows).length, 3);
+});
+
+test("1. a merge-gate config passed through EVOLOOP_MERGE_CONFIG is read, not dropped", () => {
+  const found = mergeInvocations([{ at: "t", command: "EVOLOOP_MERGE_CONFIG=~/ops/merge-config.json node /tmp/merge-gate.mjs merge --pr 31 --execute" }]);
+  assert.deepEqual(found.map(item => [item.pr, item.config]), [[31, "~/ops/merge-config.json"]]);
+});
+
+test("2. a merge that did not go through the merge gate is listed with how it was made", () => {
+  const rows = mergeRows({ merged: [merged(5), merged(6)], train: [], transcripts: [
+    { id: "d", actor: { actor: "dev" }, merges: [{ pr: 5, via: "gh pr merge", configIdentity: null }, { pr: 6, via: "gh api merge", configIdentity: null }] }] });
+  assert.deepEqual(rows.map(row => row.verdict), ["绕过合并门", "绕过合并门"]);
+  assert.match(rows[0].who, /dev 用 gh pr merge/); assert.match(rows[1].who, /gh api merge/);
+  assert.equal(listed(rows).length, 2);
+});
+
+test("3. the merge train log does not outrank the transcripts: a train merge that a session also ran is a conflict", () => {
+  const rows = mergeRows({ merged: [merged(7)], train: [{ pr: 7, at: "x", log: "merge-train-1.log" }], transcripts: [
+    { id: "e", actor: { actor: "leader" }, merges: [{ pr: 7, via: "merge-gate", configIdentity: "requirements" }] }] });
+  assert.equal(rows[0].verdict, "合并列车与会话记录冲突");
+  assert.match(rows[0].who, /合并列车日志 merge-train-1.log 记了它/); assert.match(rows[0].who, /leader 用 requirements/);
+  assert.equal(listed(rows).length, 1);
+});
+
+test("merge commands written into a heredoc, a note or an argument are text, not merges", () => {
+  const written = "cat > t.test.mjs <<'EOF'\nnode /tmp/merge-gate.mjs merge --pr 9 --execute --config ~/c.json\nEOF";
+  assert.deepEqual(mergeInvocations([{ at: "t", command: written }]), []);
+  assert.deepEqual(mergeInvocations([{ at: "t", command: 'grep -n "node /tmp/merge-gate.mjs merge --pr 9 --execute" log' }]), []);
+  assert.deepEqual(mergeInvocations([{ at: "t", command: "echo hi; node /tmp/merge-gate.mjs merge --pr 9 --execute --config ~/c.json" }]).map(item => item.pr), [9]);
+});
+
+test("4. a token file read through a Read/Edit tool or an array-form command is seen, and a read hours before the write counts", () => {
+  const readTool = JSON.stringify({ timestamp: "2026-11-12T01:00:00Z", message: { content: [{ type: "tool_use", name: "Read", input: { file_path: "/p/runtime/auth.json" } }] } });
+  const arrayCommand = JSON.stringify({ timestamp: "2026-11-12T02:00:00Z", type: "response_item", payload: { type: "function_call", arguments: JSON.stringify({ command: ["bash", "-lc", "cat /p/runtime/auth.json"] }) } });
+  const commands = [...commandsOfLine(readTool), ...commandsOfLine(arrayCommand)];
+  assert.equal(commands.length, 2);
+  assert.ok(commands.every(item => mentionsFile(item.command, "runtime/auth.json")));
+  const transcripts = [{ id: "dev", actor: { actor: "codex-dev-agent" }, commands }];
+  assert.deepEqual(mentionsNear(transcripts, ["runtime/auth.json"], Date.parse("2026-11-12T05:24:00Z"), 10 * 60_000), [], "a fixed 10-minute window misses it");
+  assert.deepEqual(mentionsAnywhere(transcripts, ["runtime/auth.json"], Date.parse("2026-11-12T05:24:00Z")), [{ transcript: "dev", actor: "codex-dev-agent", commands: 2, nearestMinutes: 204 }]);
+});
+
+test("5. a write with no session (an external message) is a row, not an exception", () => {
+  assert.equal(targetLabel(null), "（无会话）");
+  assert.equal(targetLabel(""), "（无会话）");
+  assert.equal(targetLabel("c82afb21-e827-44e7"), "c82afb21");
+});
+
+test("6. only a stated formal success is a formal read-back; failures, waiting and to-dos are not, and a closure with no basis is listed", () => {
+  for (const evidence of ["候选通过；正式实例读回失败", "候选通过，等正式读回", "候选通过；正式读回 TODO", "候选通过；正式读回缺", "候选通过；正式读回"]) {
+    const judged = judgeClosure({ evidence, hasDelivery: true, stage: null });
+    assert.equal(judged.candidateOnly, true, evidence); assert.equal(judged.flagged, true, evidence);
+  }
+  assert.equal(judgeClosure({ evidence: "候选通过；正式实例读回通过", hasDelivery: true, stage: null }).flagged, false);
+  const none = judgeClosure({ evidence: null, hasDelivery: false, stage: null });
+  assert.deepEqual([none.noBasis, none.flagged], [true, true]);
+});
+
+test("9. a Task that declares the candidate stage is not listed for a candidate-only closure; one that declares 正式 or nothing is", () => {
+  assert.equal(judgeClosure({ evidence: "候选环境通过", hasDelivery: true, stage: "候选" }).flagged, false);
+  assert.equal(judgeClosure({ evidence: "候选环境通过", hasDelivery: true, stage: "正式" }).flagged, true);
+  assert.equal(judgeClosure({ evidence: "候选环境通过", hasDelivery: true, stage: null }).flagged, true);
+});
+
+test("7. an unconfigured or unread source makes the report say so on its first line and exit non-zero; a complete one does not", () => {
+  assert.equal(configProblems({ transcriptRoots: ["/a"], privateFiles: [{ globs: ["/b/*"] }], identityFiles: ["runtime/auth.json"], mergeTrainLogs: { dir: "/c" }, databaseUrl: "postgresql://x/y" }).length, 0);
+  const problems = configProblems({ repo: "o/r", utcOffsetMinutes: 0, humanActors: ["h"] });
+  assert.equal(problems.length, 5);
+  assert.match(problems.join("\n"), /transcriptRoots.*privateFiles.*identityFiles.*mergeTrainLogs.*databaseUrl/s);
+  const empty = { window: { from: "2026-11-12T00:00:00Z", to: "2026-11-13T00:00:00Z" }, sources: {}, merges: [], privateFiles: [], humanWrites: [], closures: [] };
+  const incomplete = format({ ...empty, problems }, 0);
+  assert.match(incomplete.split("\n")[0], /^⚠ 核对不完整：/);
+  assert.match(incomplete, /不代表正常/);
+  assert.equal(exitCodeFor({ problems }), 2);
+  assert.doesNotMatch(format({ ...empty, problems: [] }, 0), /核对不完整/);
+  assert.equal(exitCodeFor({ problems: [] }), 0);
+});
+
+test("8. a file name is matched whole, the train log crosses midnight, and a truncated GitHub listing is a problem", () => {
+  assert.equal(mentionsFile("cat tsconfig.json", "config.json"), false);
+  assert.equal(mentionsFile("cat /x/config.json", "config.json"), true);
+  assert.equal(mentionsFile("cp integrations.json.bak-1 y", "integrations.json"), true);
+  const text = "23:50:00 main abc (execute)\n23:58:00    已合并 PR #1(aaaaaaa)\n00:05:00    已合并 PR #2(bbbbbbb)\n";
+  assert.deepEqual(parseTrainLog(text, "2026-11-12", 300, "a.log").map(item => [item.pr, item.at]), [[1, "2026-11-12T18:58:00.000Z"], [2, "2026-11-12T19:05:00.000Z"]]);
+  assert.match(truncationProblem(1000, 1000, Date.parse("2026-11-12T10:00:00Z"), Date.parse("2026-11-12T00:00:00Z")), /达到上限 1000/);
+  assert.equal(truncationProblem(1000, 1000, Date.parse("2026-11-11T10:00:00Z"), Date.parse("2026-11-12T00:00:00Z")), null, "the listing reaches back before the window: nothing lost");
+  assert.equal(truncationProblem(20, 1000, Date.parse("2026-11-12T10:00:00Z"), 0), null);
 });
