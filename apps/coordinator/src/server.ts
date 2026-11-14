@@ -512,9 +512,11 @@ export async function buildServer(options: {
     const fullGrants=callerGrants(projectId,principal.actorId).filter(g=>g.sandbox==="danger-full-access"&&
       (g.approvalPolicy??"never")==="never"&&g.networkAccess!==false);
     const allowed=new Set(fullGrants.flatMap(grantModels));
-    return {...current,provider,models:current.status==="available"?current.models.filter(model=>allowed.has(model)):[],
+    return {...current,provider,models:current.status==="available"?current.models:[],
       options:current.status==="available"?current.options?.filter(option=>allowed.has(option.model))??[]:[],
-      authorizedModels:[...allowed],environments:fullGrants.map(g=>({roleId:g.roleId,authorizationScope:g.authorizationScope,
+      authorizedModels:[...allowed],
+      modelStatus:current.status==="available"?current.models.map(model=>({model,authorized:allowed.has(model)})):[],
+      environments:fullGrants.map(g=>({roleId:g.roleId,authorizationScope:g.authorizationScope,
         cwd:g.cwd,configuredModel:g.model??null,models:current.status==="available"?
           current.models.filter(model=>grantAllowsModel(g,model)):[]}))};
   });
