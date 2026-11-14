@@ -52,36 +52,53 @@ exec <NODE_ABSOLUTE_PATH> <RELEASE_SOURCE>/apps/cli/dist/main.js "$@"
 
 ## 2. 第一个 Role 的引导
 
-**缺口：** `task.create` 要求 `owner` 是 trial 或 active 的 Role（`TASK_OWNER_ROLE_REQUIRED`）；`role.propose` 要求 `firstTaskId` 指向一个已存在且未完成的 Task（`INVALID_FIRST_TASK`）。全新项目里两者互相要求，只经 API 建不出第一个 Role。仓库里的合成数据脚本（`scripts/seed-frontend-scenarios.mjs`）也因此要求先有一个试行 Role。这个缺口待服务端补上一个正式的引导办法，在那之前用下面的绕行。
+只在项目已有 `project.create` 操作、但 `list roles` 仍为空时使用。由有项目 write 与 review 权限的身份（通常是需求 Session）提交 `role.bootstrap`：
 
-**绕行（只做一次，只在本项目还没有任何 Role 和 Task 时）：** 由实例维护者直接在数据库里插入一个 Task，负责人写**将要提议的 Lead Role 的 UUID**（此刻还不存在）；随后经 API 正常提议该 Role（`firstTaskId` 指这个 Task）并接受试行，这个 Task 就成了 Leader 的第一项工作（例如“接入后的第一次编制评估”）。此后所有 Task 都经 `task.create`。
-
-- 正式实例上：先停写备份（[停写备份](../../../../docs/development/local-run.md#停写备份与空目标恢复)），在维护窗口里做，写进接入记录。
-- 只插这一行，不插 Role、不改别的表。
-
-```sh
-psql "$EVOLOOP_DATABASE_URL" -v ON_ERROR_STOP=1 \
-  -v project=<PROJECT> -v lead_role=<将要提议的 LEAD_ROLE_UUID> \
-  -v task=<新 UUID> -v rev=<新 UUID> -v doc=<新 UUID> -v content=<新 UUID> \
-  -v title='接入后的第一次编制评估' -v body='<Task 正文 Markdown>' -v acceptance='<验收条件>' <<'SQL'
-BEGIN;
-SELECT 1/(CASE WHEN (SELECT count(*) FROM role_definition WHERE project_id=:'project')=0
-                AND (SELECT count(*) FROM task WHERE project_id=:'project')=0 THEN 1 ELSE 0 END) AS empty_project_check;
-INSERT INTO process_document(project_id,document_id,title,version,current_revision_id,kind,status)
-  VALUES(:'project',:'doc',:'title',1,:'content','task','draft');
-INSERT INTO document_revision(project_id,document_id,revision_id,body,format,content_hash,author,created_at,reason,media_type,original_name,assets_manifest)
-  VALUES(:'project',:'doc',:'content',:'body','markdown',encode(sha256(convert_to(:'body','UTF8')),'hex'),'onboarding-bootstrap',now(),'first Role bootstrap','text/markdown',:'doc'||'.md','[]'::jsonb);
-INSERT INTO task(project_id,task_id,version,current_revision_id,title,acceptance,owner,state,content_document_id,content_revision_id)
-  VALUES(:'project',:'task',1,:'rev',:'title',:'acceptance',:'lead_role','todo',:'doc',:'content');
-INSERT INTO task_revision(project_id,task_id,revision_id,version,title,acceptance,owner,state,content_document_id,content_revision_id,actor_id,reason,created_at)
-  VALUES(:'project',:'task',:'rev',1,:'title',:'acceptance',:'lead_role','todo',:'doc',:'content','onboarding-bootstrap','first Role bootstrap',now());
-COMMIT;
-SQL
+```json
+{
+  "type": "role.bootstrap",
+  "projectId": "<PROJECT>",
+  "operationId": "<新 UUID>",
+  "roleId": "<LEAD_ROLE_UUID>",
+  "projectCreateOperationId": "<project.create 回执里的 operationId>",
+  "reason": "空项目需要一个有界试行的第一个 Lead",
+  "proposal": {
+    "title": "Lead",
+    "roleClass": "system",
+    "templateKey": "lead",
+    "goal": "<Lead 的独立目标>",
+    "independentResponsibility": "<为什么需要持续独立判断>",
+    "ownerScope": "<责任与授权范围>",
+    "inputs": ["<主要输入>"],
+    "writableAssets": ["<可写资产>"],
+    "deliverables": ["<交付>"],
+    "triggers": ["<触发条件>"],
+    "workflow": "<检查、判断、修复与交付流程>",
+    "handoffBoundary": "只用本 Session 的 CLI 和工作目录；被拒时回报错误码，不到磁盘上自行排查。",
+    "evidence": [
+      {"kind": "omission", "observation": "<空项目缺首个责任的问题>", "sourceRef": "project:<PROJECT>", "observedAtUtc": "<ISO 8601>"},
+      {"kind": "effect", "observation": "<没有 Role 的实际影响>", "sourceRef": "project:<PROJECT>", "observedAtUtc": "<ISO 8601>"},
+      {"kind": "cost", "observation": "<继续缺少 Lead 的已付成本>", "sourceRef": "project:<PROJECT>", "observedAtUtc": "<ISO 8601>"}
+    ],
+    "alternatives": [
+      {"kind": "method", "assessment": "<比较>", "estimatedCost": "<成本>"},
+      {"kind": "knowledge", "assessment": "<比较>", "estimatedCost": "<成本>"},
+      {"kind": "another-instance", "assessment": "<比较>", "estimatedCost": "<成本>"},
+      {"kind": "temporary-assignment", "assessment": "<比较>", "estimatedCost": "<成本>"}
+    ],
+    "baseline": "<当前基线>",
+    "expectedEffect": "<预期效果>",
+    "costLimit": "<试行成本上限>",
+    "trialDays": 14,
+    "reviewAtUtc": "<现在之后、试行期之内的 ISO 8601>",
+    "exitCriteria": "<停止或撤回判据>"
+  }
+}
 ```
 
-第一行检查不满足时除零报错、整段回滚。之后用 `role.propose`（`roleId` 就是上面的 `lead_role`）提议 Lead，再 `role.decide accept-trial`。
+`proposal` 不写 `firstTaskId`，其余字段与 `role.propose` 相同；至少一条 evidence 的来源必须是 `project:<PROJECT>`。命令只在项目还没有任何 Role 时有效，并要求 `projectCreateOperationId` 是同项目一条已应用的 `project.create`。服务端在同一事务里建立版本 1 的 trial Lead、不可变修订和 `accept-trial` 决定；操作日志、`proposedBy`、修订与决定记录同一发令者。项目已有任何 Role（包括 candidate、rejected、retired）时返回 `ROLE_BOOTSTRAP_NOT_EMPTY`，之后的业务 Role 仍须用普通 `role.propose` 和真实未完成的首 Task。不要把数据库写入作为引导或失败后的绕行。
 
-**读回：** `task <TASK> --project <PROJECT>` 可读、`owner` 是 Lead Role；`list roles` 里 Lead 为 `trial`。业务 Role 的首个 Task 从此正常用 `task.create` 建（负责人可先写 Lead，Role 接受后再按交接规则转给业务 Role），或直接以 Lead 已有的 Task 为 `firstTaskId`。
+**读回：** `list roles --project <PROJECT>` 里 Lead 为 `trial`、`proposedBy` 是发令者；`read role <LEAD> --project <PROJECT>` 不含 `firstTaskId`；`read role <LEAD> --revisions --project <PROJECT>` 的理由包含 `project.create <projectCreateOperationId>`；用 `operation <projectCreateOperationId>` 和该引导操作的 ID 读回两条已应用记录。随后由该 Lead 用正常 `task.create` 建第一项工作；业务 Role 的首个 Task 从此正常创建，或直接引用一项已存在且未完成的 Task。
 
 ## 3. 每个 Session 的配置
 
@@ -180,7 +197,8 @@ SQL
 | 回报消息报 `REPLY_TARGET_MISMATCH` | `--reply-to` 指向了发给另一个 Session 的消息 | 发新消息，不加 `--reply-to` |
 | `work events --wait 30` 报 `TIMEOUT` | CLI 默认 15 秒超时短于等待时间 | `EVOLOOP_TIMEOUT_MS=60000` |
 | `project.create` 被拒 | 发命令的身份的 `projectIds` 里还没有这个项目（或没重启） | 先写身份文件、重启 |
-| `TASK_OWNER_ROLE_REQUIRED` / `INVALID_FIRST_TASK` | 第一个 Role 的引导缺口 | 第 2 节 |
+| `TASK_OWNER_ROLE_REQUIRED` / `INVALID_FIRST_TASK` | 项目尚无 Role 时的正常保护：一个要已有试行 Role，一个要已有未完成 Task | 用第 2 节的 `role.bootstrap` 建首个 Lead；已有 Role 后仍报 `INVALID_FIRST_TASK`，检查 `firstTaskId` 是否指向本项目未完成 Task |
+| `ROLE_BOOTSTRAP_NOT_EMPTY` / `ROLE_BOOTSTRAP_ORIGIN_INVALID` / `INVALID_BOOTSTRAP_*` | 引导命令只适用于空项目，或项目创建操作、Role 类型、证据不符合要求 | 第 2 节；已有 Role 时改走 `role.propose`，不要重试数据库写入 |
 | `INVALID_TRIAL` | 回看日期不在试行期内，或已经过去 | `reviewAtUtc` 设在现在之后、`trialDays` 之内 |
 | `session prepare` 返回 `blocked` | 缺配置 | 照 `missingDetails` 补，用同一 `operationId` 重跑 |
 | `material_cli_incompatible` | 包装路径含不允许的字符 | 换到只含 `A-Za-z0-9_./-` 的路径 |
