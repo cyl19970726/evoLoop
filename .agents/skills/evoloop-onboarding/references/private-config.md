@@ -108,7 +108,7 @@ SQL
 
 `models` 的候选值从运行时的模型目录取（`models --project` 只列已授权的，第一次是空的），重启后再用 `models --project` 确认。
 
-**`runtime.materialCli`**（Session 里用哪个 CLI 身份）：Role 级一条（业务身份）；验收 Session 再加一条按 `sessionId` 精确绑定的（验收身份），精确绑定优先。**同一 Role 有两个及以上 Session 时（例如作者与验收者同在业务 Role），每个 Session 都要一条按 `sessionId` 的精确绑定**：服务这时不再用 Role 级条目推断业务身份，缺的那个 Session 收到的队伍条目会被挂起（`RECIPIENT_UNAVAILABLE`）。验收 Session 因此不能用 `session prepare` 建（会报 `material_cli_actor_mismatch`），改用 `runtime.session.reserve` → `role.bindSession` → `session profile set`，各按 `command schema` 填写，`runtime.session.reserve` 的 `cwd`、`authorizationScope`、`model` 与上面的 grant 一致。
+**`runtime.materialCli`**（Session 里用哪个 CLI 身份）：Role 级一条（业务身份）；验收 Session 再加一条按 `sessionId` 精确绑定的（验收身份），精确绑定优先。**同一 Role 有两个及以上 Session 时（例如作者与验收者同在业务 Role），每个 Session 都要一条按 `sessionId` 的精确绑定**：服务这时不再用 Role 级条目推断业务身份，缺的那个 Session 收到的队伍条目会被挂起（`RECIPIENT_UNAVAILABLE`）。有了这条精确绑定，验收 Session 也能用 `session prepare` 建：它按精确绑定判断，不再要求等于 `roleActors`（读回的 `config.materialCli.actorId` 是验收身份）；精确绑定指向的身份须是项目当前写入者，否则 `material_cli_actor_not_writer`。
 
 ```json
 { "projectId": "<PROJECT>", "roleId": "<ROLE>", "sessionActorId": "<建 Session 的身份>",
@@ -117,7 +117,7 @@ SQL
   "cliActorId": "<验收身份>", "command": "<CLI_ROOT>/<验收身份>/evoloop" }
 ```
 
-**`residentQueue.roleActors`**：每个 Role 一条 `{projectId, roleId, actorId}`，`actorId` 等于 Role 级 `materialCli` 的 `cliActorId`（不一致报 `material_cli_actor_mismatch`），`residentQueue.enabled: true`。
+**`residentQueue.roleActors`**：每个 Role 一条 `{projectId, roleId, actorId}`，`actorId` 等于 Role 级 `materialCli` 的 `cliActorId`（Session 没有自己的精确绑定而不一致时报 `material_cli_actor_mismatch`），`residentQueue.enabled: true`。
 
 **`sessionMessages.grants`**（成对，`sessionMessages.enabled: true`）：每条按“接收 Session”写。
 
@@ -174,7 +174,7 @@ SQL
 | `capabilities` 的 `runtime` 为 `grant_directory_unavailable`、`pending` 显示重启后 `configured` | 新的工作目录只在启动时登记 | 重启 |
 | `role.propose` 报 `INVALID_INPUT`（evidence 或 alternatives） | `evidence` 缺缺口类/`effect`/`cost` 之一，或 `alternatives` 不是四类各一 | 按 SKILL 第 3 步补齐 |
 | `session prepare` 报参数错误 | 传了 `--project` | 项目 ID 只写在准备文件里 |
-| 验收 Session 的 `session prepare` 报 `material_cli_actor_mismatch` | 准备检查要求 CLI 身份等于 Role 的业务身份 | 不照它的修法改；改用 reserve + bindSession + profile set（第 3 节） |
+| 验收 Session 的 `session prepare` 报 `material_cli_actor_mismatch` | 这个 Session 没有自己按 `sessionId` 精确的 `materialCli`，被按 Role 级检查 | 给它补一条精确绑定（cliActorId 是验收身份），不要改 Role 级条目；指向非写入者则报 `material_cli_actor_not_writer` |
 | 队伍条目被挂起 `RECIPIENT_UNAVAILABLE`（“shares its Role with … other live Session(s) and has no runtime.materialCli entry of its own”） | 同 Role 有多个 Session，这个 Session 没有按 `sessionId` 的精确绑定 | 第 3 节补精确绑定（每次使用时重读），再按 `work board` 读回条目是否恢复 |
 | `session prepare` 返回 `waiting_for_native_thread`，立刻重跑又得到 `blocked` | 原生 Thread 还没就绪 | 等 `read session` 显示 `ready` 和原生 Thread，再用同一文件重跑 |
 | 回报消息报 `REPLY_TARGET_MISMATCH` | `--reply-to` 指向了发给另一个 Session 的消息 | 发新消息，不加 `--reply-to` |

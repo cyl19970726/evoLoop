@@ -56,7 +56,7 @@ JS
 }
 ```
 
-给 Role 新建受管 Session 还要 `runtime.materialCli`（Role 级 CLI 绑定）、**`residentQueue.roleActors`**（Role → 业务身份，须与前者的 `cliActorId` 一致，`residentQueue.enabled` 为 `true`）和 `runtime.grants`；缺哪项，`session prepare` 的 `missingDetails` 会指明配置项与修法，完整清单见 [Agent CLI](agent-cli.md#编制所需私有配置清单session-prepare-缺项时)。
+给 Role 新建受管 Session 还要 `runtime.materialCli`（Role 级 CLI 绑定）、**`residentQueue.roleActors`**（Role → 业务身份，须与前者 Role 级条目的 `cliActorId` 一致；Session 有自己的精确 `materialCli` 条目时按那一条判断，`residentQueue.enabled` 为 `true`）和 `runtime.grants`；缺哪项，`session prepare` 的 `missingDetails` 会指明配置项与修法，完整清单见 [Agent CLI](agent-cli.md#编制所需私有配置清单session-prepare-缺项时)。
 
 Leader 结果通知、即时输入、托管压缩、普通 Task 的每日复制和阶段关注各有自己的配置、打开和核对步骤，见[运行接线手册](runtime-operations.md)。
 

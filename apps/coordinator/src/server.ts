@@ -109,7 +109,7 @@ export async function buildServer(options: {
   messageSendAuthority?: (principal: Principal, projectId: string, sessionId: string) => Promise<{ code: "MESSAGE_GRANT_MISSING"; message: string } | null>;
   sessionPreparation?: (input:{projectId:string;sessionId:string;roleId:string;sessionActorId:string;
     cwd:string;authorizationScope:string;model:string|null}) => Promise<{runtimeAvailable:boolean;grantReady:boolean;
-    cwdReady:boolean;materialCli:{actorId:string;command:string;ready:boolean}|null;roleActorId:string|null;
+    cwdReady:boolean;materialCli:{actorId:string;command:string;ready:boolean;exact?:boolean;writer?:boolean}|null;roleActorId:string|null;
     roleActorState?:import("@evoloop/contracts/session-preparation").RoleActorState;roleActorConfiguredId?:string|null;
     skills:Array<{path:string;commit:string;contentHash:string;readSubcommand:string}>}>;
   readRoleSkill?: (projectId:string,roleId:string,name:string,commit:string,hash:string) =>
@@ -428,7 +428,10 @@ export async function buildServer(options: {
       ...(!session&&selectedModel&&modelCatalog.status==="available"&&!modelCatalog.models.includes(selectedModel)?["model_not_active"]:[]),
       ...(!config.roleActorId?["role_actor"]:[]),...(!config.materialCli?["material_cli"]:
         !config.materialCli.ready?["material_cli_incompatible"]:[]),
-      ...(config.materialCli&&config.roleActorId&&config.materialCli.actorId!==config.roleActorId?["material_cli_actor_mismatch"]:[]),
+      // A Session's own materialCli entry names who signs for that Session and wins over the Role's actor (resolveLineRecipient): the
+      // Role-level equality only applies when the Session has no entry of its own, and an exact entry must name a current project writer.
+      ...(config.materialCli&&!config.materialCli.exact&&config.roleActorId&&config.materialCli.actorId!==config.roleActorId?["material_cli_actor_mismatch"]:[]),
+      ...(config.materialCli?.exact&&config.materialCli.writer===false?["material_cli_actor_not_writer"]:[]),
       ...(!config.skills.length?["role_skill"]:[]),
       ...(!["trial","active"].includes(role.state)?["role_inactive"]:[]),
       ...(session&&!actualFull?["session_execution_profile_restricted"]:[]),
