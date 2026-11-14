@@ -241,7 +241,7 @@ export const mentionsCandidate = text => /候选/.test(text ?? "");
 // negation/failure (未 不 没 尚 暂 缺 失败 失效 拒绝), to-do/waiting (待 TODO 等待 等…读回/正式 安排), release/review wording (评审 发布前 发布成功 上线),
 // and conditions, requirements and plans about a read-back that has not been done: 后再/之后再/再签 (“读回通过后再签 used”), 需/需要/须/要求/应当 … 才
 // (“需正式实例读回通过才能关闭”), 如果/若/假如/一旦/则 (“如果正式实例读回成功则关闭”), 预计/预期/计划/拟/打算/将 (“预计正式实例读回通过”).
-const NOT_DONE = /(未|不|没|待|尚|暂|缺|失败|失效|拒绝|TODO|todo|等待|等[^，。；]{0,4}(读回|正式)|安排|评审|发布前|发布成功|上线|后再|之后再|再签|需|须|要求|应当|应该|才|如果|若|假如|一旦|则|预计|预期|计划|拟|打算|将|只要|要是|希望|目标|期望|期待|争取|力求|盼|愿|以便|为了|(?:通过|成功|一致|完成)后|后签|后关|后合|后发布|之后|然后|截止|期限|最迟|下一步|待办|就(?:签|关|合|发|算|可|能|行)|预定|排期|定于|[Ss]cheduled|SCHEDULED|ETA|再做|还没|等[^，。；]{0,40}(?:合并|发布|部署))/;
+const NOT_DONE = /(未|不|没|待|尚|暂|缺|失败|失效|拒绝|TODO|todo|等待|等[^，。；]{0,4}(读回|正式)|安排|评审|发布前|发布成功|上线|后再|之后再|再签|需|须|要求|应当|应该|才|如果|若|假如|一旦|则|预计|预期|计划|拟|打算|将|只要|要是|希望|目标|期望|期待|争取|力求|盼|愿|以便|为了|(?:通过|成功|一致|完成)后|后签|后关|后合|后发布|之后|然后|截止|期限|最迟|下一步|待办|就(?:签|关|合|发|算|可|能|行)|预定|排期|定于|\b(?:[Ss]cheduled|SCHEDULED|ETA|planned|pending|TBD|will)\b|稍后|届时|明天|回头|发版后|再看|还没|等[^，。；]{0,40}(?:合并|合入|发布|部署|发版))/;
 // A read-back of the formal environment that worked: “正式” must itself qualify the environment (正式 / 正式环境 / 实例 / 数据库 / 版本 / 入口 / 站点 / 服务,
 // not 非正式, 伪正式, 准正式 and not “正式包”, “正式文档” …) and be followed directly by 读回通过/成功/一致/正常/完成/可用 or 已验证/验证通过/实测通过/实测成功.
 // “通过”, “成功” alone are not enough: “正式发布成功”, “正式：已通过评审”, “正式发布前候选已通过” are not read-backs.
@@ -283,6 +283,7 @@ export function evidenceCandidates(phrase) {
 export function hasCompletionEvidence(phrase, verifier) {
   if (!verifier) return false;
   const text = phrase ?? "";
+  if (!evidencePhraseIsClean(text)) return false;
   if (TIMING_OR_PLAN.test(text.replace(DONE_FORMS, ""))) return false;
   const { hashes, ids, times } = evidenceCandidates(text);
   const observedAt = Number.isFinite(verifier.observedAtMs) ? verifier.observedAtMs : null;
@@ -294,6 +295,24 @@ export function hasCompletionEvidence(phrase, verifier) {
   const idOk = ids.some(hex => verifier.idExists?.(hex) === true);
   return timeOk || hashOk || idOk;
 }
+/** Pieces an evidence phrase may consist of; whatever is left after taking these out makes the phrase “other content” and the sentence is listed. */
+const ALLOWED_TIME = /(?:\d{4}-)?\d{1,2}-\d{1,2}[ T]\d{1,2}:\d{2}Z?/g;
+const ALLOWED_LABELLED_ID = /(?:Run|run|交付|观察|operation|commit|提交|会话|hash)[\s:：]*(?=[0-9a-f]{6,40}\b)[0-9a-f]{6,40}\b/g;
+const ALLOWED_HASH = /\b(?=[0-9]*[a-f])[0-9a-f]{7,40}\b/g;
+const ALLOWED_DONE = /已(?:经)?(?:完成|进行)?/g;
+
+/**
+ * The positive form of evidence (an allow-list, not a word list): the phrase right after the read-back may contain ONLY actual times, commit hashes,
+ * Run / delivery / observation / operation / session ids with their label, separators and the words 已 / 已经 / 已完成 / 已进行. Anything else in it —
+ * planned, pending, TBD, 稍后, 届时, 明天, 等…合入, 发版后, 回头…再看, will run, a command, a PR number, a version label — is other content, so the
+ * sentence is listed. Then the evidence still has to check out (verifier), and any time after the observation voids it.
+ */
+export function evidencePhraseIsClean(phrase) {
+  const rest = (phrase ?? "").replace(ALLOWED_TIME, " ").replace(ALLOWED_LABELLED_ID, " ").replace(ALLOWED_HASH, " ").replace(ALLOWED_DONE, " ")
+    .replace(/[\s，,、;；:：()（）]+/g, "");
+  return rest === "";
+}
+
 
 /** Commas inside （…）/(…) belong to the parenthesis, so “（2026-11-13 09:12Z，5ae8f8fc）” stays one piece of the clause it follows. */
 const maskParentheses = text => text.replace(/[（(][^）)]*[）)]/g, group => group.replace(/[，,]/g, " "));
@@ -320,7 +339,10 @@ export const mentionsFormalReadback = (text, verifier) => (text ?? "").split(/[�
   if (AFTER_EVENT.test(sentence) && !SAYS_DONE.test(sentence)) return false;
   return maskParentheses(sentence).split(/[，,]/).some(clause => {
     const found = FORMAL_READBACK.exec(clause);
-    return !!found && hasCompletionEvidence(clause.slice(found.index, found.index + found[0].length + EVIDENCE_REACH), verifier);
+    if (!found) return false;
+    const rest = clause.slice(found.index + found[0].length);
+    const group = /^\s*[（(]([^）)]*)[）)]/.exec(rest);
+    return hasCompletionEvidence(group ? group[1] : rest.slice(0, EVIDENCE_REACH), verifier);
   });
 });
 

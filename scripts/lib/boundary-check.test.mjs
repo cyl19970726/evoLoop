@@ -3,7 +3,7 @@ import test from "node:test";
 import {
   commandsOfLine, configIdentity, day, declaredStage, dominantActor, expandLoops, ghMergeNumber, jsonKeyDiff, mentionsCandidate, mentionsFormalReadback as rawMentionsFormalReadback,
   mentionsNear, mergeInvocations, mergeRows, parseTrainLog,
-  MERGE_OK, configProblems, exitCodeFor, hasCompletionEvidence as rawHasCompletionEvidence, humanWriteProblem, judgeClosure as rawJudgeClosure, mentionsAnywhere, mentionsFile, targetLabel, truncationProblem,
+  MERGE_OK, configProblems, evidencePhraseIsClean, exitCodeFor, hasCompletionEvidence as rawHasCompletionEvidence, humanWriteProblem, judgeClosure as rawJudgeClosure, mentionsAnywhere, mentionsFile, targetLabel, truncationProblem,
 } from "./boundary-check.mjs";
 import { format, loadConfig } from "../ops/boundary-check.mjs";
 
@@ -498,8 +498,53 @@ test("plan words win over a resolvable commit and a past time, while an explicit
   assert.equal(mentionsFormalReadback("候选通过；正式实例读回通过（定于 2026-11-13 10:00Z）"), false);
   assert.equal(mentionsFormalReadback("候选通过；正式实例读回通过（等 5ae8f8fc 发布）"), false);
   assert.equal(mentionsFormalReadback("候选通过；正式实例读回通过（还没做，5ae8f8fc）"), false);
-  assert.equal(mentionsFormalReadback("候选通过；正式实例已读回通过（#419 合并后，2026-11-14 10:05Z，5ae8f8fc）"), true, "plainly done after the merge");
+  assert.equal(mentionsFormalReadback("候选通过；正式实例已读回通过（2026-11-14 10:05Z，5ae8f8fc），#419 合并后"), true, "plainly done, with “合并后” outside the evidence phrase");
+  assert.equal(mentionsFormalReadback("候选通过；正式实例已读回通过（#419 合并后，2026-11-14 10:05Z，5ae8f8fc）"), false, "other content inside the evidence phrase: listed");
   assert.equal(mentionsFormalReadback("候选通过；正式实例读回通过（#419 合并后，2026-11-14 10:05Z，5ae8f8fc）"), false, "“合并后” without a plain “已…” is a plan: listed when unsure");
   for (const evidence of ["候选通过；正式实例读回通过（2026-11-14 10:05Z，commit 530497b9）", "候选通过；正式实例读回通过（2026-11-14 10:05Z 已进行，5ae8f8fc）", "候选通过；正式实例读回通过（Run 8fecc67c）"])
     assert.equal(mentionsFormalReadback(evidence), true, evidence);
+});
+
+// ---- Task ac254c1a, rework 10 (acceptance report 010a2c1b): the evidence phrase is an allow-list. Right after the read-back it may contain only actual times,
+// commit hashes, labelled Run/delivery/observation ids, separators and 已/已经/已完成. Anything else — planned, pending, TBD, 稍后, 届时, 明天, 等…合入, 发版后,
+// 回头…再看, will run — makes the sentence listed, even with a past time or a commit that resolves.
+const I = {
+  I1: "（planned 2026-11-13 10:00Z）",
+  I2: "（pending 2026-11-13 10:00Z）",
+  I3: "（TBD，2026-11-13 10:00Z）",
+  I4: "（稍后 2026-11-13 10:00Z 做）",
+  I5: "（届时 2026-11-13 10:00Z）",
+  I6: "（明天 10:00，530497b9）",
+  I7: "（等 530497b9 合入）",
+  I8: "（发版后 2026-11-13 10:00Z）",
+  I9: "（回头 2026-11-13 10:00Z 再看）",
+  I10: "（will run 2026-11-13 10:00Z）",
+};
+for (const [name, evidence] of Object.entries(I)) {
+  test(`${name}. “${evidence}” is other content in the evidence phrase and is listed, with a past time or a resolvable commit`, () => {
+    const text = `候选通过；正式实例读回通过${evidence}`;
+    for (const verifier of [V, LATE]) {
+      assert.equal(rawMentionsFormalReadback(text, verifier), false);
+      const judged = rawJudgeClosure({ evidence: text, hasDelivery: true, stage: null, verifier });
+      assert.deepEqual([judged.candidateOnly, judged.flagged], [true, true]);
+    }
+  });
+}
+
+test("the allow-list: only times, hashes, labelled ids, separators and 已/已经/已完成/已进行 may stand in the evidence phrase", () => {
+  for (const phrase of ["（2026-11-14 10:05Z，commit 530497b9）", "（5ae8f8fc）", "（Run 8fecc67c）", "（观察 7be5a242，已完成）", "（已，2026-11-14 10:05Z；5ae8f8fc）", "（2026-11-14 10:05Z 已进行，5ae8f8fc）", "（会话 c9c73237，2026-11-14 10:05Z）"])
+    assert.equal(evidencePhraseIsClean(phrase), true, phrase);
+  for (const phrase of ["（planned 2026-11-14 10:05Z）", "（2026-11-14 10:05Z，OK）", "（#419）", "（版本 12345678）", "（`npm run x` 2026-11-14 10:05Z）", "（2026-11-14）", "（已经看过 5ae8f8fc）"])
+    assert.equal(evidencePhraseIsClean(phrase), false, phrase);
+});
+
+test("BETA is not ETA: English plan words match as whole words only, so a real completion mentioning BETA keeps counting, while a real ETA is listed", () => {
+  assert.equal(mentionsFormalReadback("候选通过；正式实例读回通过（2026-11-14 10:05Z，commit 530497b9），BETA 环境之外"), true, "BETA outside the evidence phrase");
+  assert.equal(mentionsFormalReadback("候选通过；BETA 实例通过；正式实例读回通过（2026-11-14 10:05Z，commit 530497b9）"), true, "BETA in an earlier sentence");
+  assert.equal(mentionsFormalReadback("候选通过；正式实例读回通过（ETA 11-14 09:00）"), false, "a real ETA");
+  assert.equal(mentionsFormalReadback("候选通过；正式实例读回通过（2026-11-14 10:05Z，commit 530497b9），ETA 之后补测"), false, "a real ETA in the sentence");
+  assert.equal(mentionsFormalReadback("候选通过；正式实例读回通过（BETA 环境之外，2026-11-14 10:05Z，commit 530497b9）"), false, "words inside the evidence phrase are other content, whatever they are: listed when unsure");
+  assert.equal(mentionsFormalReadback("候选通过；正式实例读回通过 SCHEDULED"), false);
+  assert.equal(mentionsFormalReadback("候选通过；正式实例读回通过（2026-11-14 10:05Z，commit 530497b9），pending 之外"), false, "pending as a whole word");
+  assert.equal(mentionsFormalReadback("候选通过；正式实例读回通过（2026-11-14 10:05Z，commit 530497b9），suspending 之外"), true, "suspending contains pending but is not the word");
 });
