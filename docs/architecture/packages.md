@@ -121,9 +121,9 @@ flowchart TB
 
 ## 当前工作区与目标责任
 
-根 `package.json` 采用 `packages/*`、`apps/*` 工作区；各目录的 `package.json` 实有 **14 个**：11 个 `packages`（`contracts`、`core`、`ui`、`adapter-postgres`、`adapter-codex-app-server`、`adapter-claude-agent-sdk`、`adapter-git-documents`、`adapter-local-blobs`、`adapter-wiki-openviking`、`connector-feishu`、`connector-wechat`）和 3 个 `apps`（`coordinator`、`workbench`、`cli`）。第一张表是[完整模块索引](#完整模块索引)对应的 12 个目标责任，含其中 11 个已建工作区和可选目标 `packages/agent-tools`（MCP 扩展，尚未建立）；后来新增的 3 个工作区见[第二张表](#后来新增的三个工作区)，模块索引尚未补入它们。项目本地业务 skill 不属于 npm 工作区。已建包不表示整行目标均已完成。
+根 `package.json` 采用 `packages/*`、`apps/*` 工作区；各目录的 `package.json` 实有 **15 个**：11 个 `packages`（`contracts`、`core`、`ui`、`adapter-postgres`、`adapter-codex-app-server`、`adapter-claude-agent-sdk`、`adapter-git-documents`、`adapter-local-blobs`、`adapter-wiki-openviking`、`connector-feishu`、`connector-wechat`）和 4 个 `apps`（`coordinator`、`workbench`、`cli`、`hub`）。第一张表是[完整模块索引](#完整模块索引)对应的 12 个目标责任，含其中 11 个已建工作区和可选目标 `packages/agent-tools`（MCP 扩展，尚未建立）；后来新增的 4 个工作区见[第二张表](#后来新增的四个工作区)，模块索引尚未补入它们。项目本地业务 skill 不属于 npm 工作区。已建包不表示整行目标均已完成。
 
-实际 package 依赖：`core`→`contracts`；七个边界包→`contracts`，其中 `adapter-postgres` 另依赖 `core`；`connector-wechat` 只依赖 Zod；`ui` 只依赖界面组件库；`cli`→`contracts`，`workbench`→`contracts`、`ui`；coordinator 装配 core、contracts 与全部边界包。平台依赖留在适配器：PG 的 `pg`/迁移工具、Claude 的 Agent SDK、coordinator 的 Fastify、浏览器的 React；core 不导入平台包。
+实际 package 依赖：`core`→`contracts`；七个边界包→`contracts`，其中 `adapter-postgres` 另依赖 `core`；`connector-wechat` 只依赖 Zod；`ui` 只依赖界面组件库；`cli`→`contracts`，`workbench`→`contracts`、`ui`，`hub` 只依赖 Fastify 与 `pg`；coordinator 装配 core、contracts 与全部边界包。平台依赖留在适配器：PG 的 `pg`/迁移工具、Claude 的 Agent SDK、coordinator 的 Fastify、浏览器的 React；core 不导入平台包。
 
 当前 `packages/core/src/` 的实际边界是根 `index.ts`/`workflow.ts`/`discussions.ts` 与 Task 关注、定时、协作、输入等单文件用例，以及 `documents/`、`roles/`、`runtime/`、`scheduling/`、`delivery/`、`references/`、`evaluation/`、`orchestration/`、`queues/`、`session-*`、`native-*` 与 `allocation-relations/` 目录。`knowledge/`、`queries/`、`cognition/` 等仍是目标责任名称；知识 HTTP 路由现由 coordinator 装配适配器，不能把目标图读成这些目录已实现。运行装配分布在 coordinator 的 `runtime/`（含双运行时路由）、`scheduling/`、`session-messages/`、`direct-input/`、`leader-results/`、`acceptance-relay/`、`task-attention/`、`message-connectors/`、`knowledge/`、`documents/` 与 `references/` 等路由/泵。
 
@@ -144,15 +144,16 @@ flowchart TB
 
 `contracts` 不做运行时业务判断，只有一种例外：服务端和浏览器必须得出同一结果、又不依赖任何平台的纯计算，放在合同里由两边共用，免得各写一份后结论不一致。这类函数只读入参，不读时钟、存储或网络；新加的要在 `packages/contracts/test/` 里配单测。现有的有：`role-skills.ts` 的 `decideSkill`（技能是否被选中及理由）、`task-attention.ts` 的 `taskAttentionSource`（任务关注的来源），以及 `scheduling.ts` 的每日规则推算（`scheduleZoneFormat`、`scheduleWallClock`、`dailyRuleInstant`，`core` 的到期计算和工作台的“下次时间”预览共用）。新增这类函数前，先确认它确实需要两边一致，否则仍放在 `core`。
 
-### 后来新增的三个工作区
+### 后来新增的四个工作区
 
-下面三个工作区在模块索引之后加入，按同样的列说明责任与边界。
+下面四个工作区在模块索引之后加入，按同样的列说明责任与边界。
 
 | 责任 | 工作区 | 对外接口与责任 | 可依赖 | 禁止承担 |
 | --- | --- | --- | --- | --- |
 | 第二种会话运行时 | `packages/adapter-claude-agent-sdk` | `RuntimePort` 实现（PR #224）；每个 Turn 启动一个 Claude Code 进程，适配器自管 Turn 账本、专用配置目录、子进程环境白名单、禁用工具与 Role skill 插件；能力差别见[Session 运行时](session-runtime.md#7-codex-与-claude-能力对照) | `contracts`、Claude Agent SDK | 读取用户个人的 Claude 设置、记忆或账号连接器；跨 Session 原生消息；任务验收 |
 | 外部消息平台网关 | `packages/connector-wechat` | 消息平台网关的命令封装：只允许固定的一组网关命令，逐项校验会话 ID、投递 ID、文本长度与请求 ID 后调用本机网关（PR #221） | Zod、受控子进程 | 自行决定路由或授权、持有平台凭据、直接写库；路由合同由协调层按[消息 Connector](message-connectors.md)执行 |
 | 工作台设计体系 | `packages/ui` | 工作台设计体系：设计 token 单一来源、Tailwind 主题、Logo 与共享组件（DEC-036、DEC-037）；组件只接收调用方给的文字，不认识业务对象 | 界面组件库 | 依赖 `contracts`、发请求或持有业务状态 |
+| Hub 账号与成员 | `apps/hub` | 独立进程、独立 PostgreSQL 数据库与迁移目录；人类账号、邀请、登录会话、个人令牌哈希、服务身份、项目元数据、成员权限与审计；PR2 不接机器、不代理 coordinator | Fastify、`pg` | 保存 Task/Document 正文或 Session 原生记录；共享 coordinator 数据库；从 Hub 管理员身份自动获得项目权限 |
 
 `packages/testkit` 仅在出现跨适配器故障测试的重复夹具时新增，可提供可控时钟、故障注入和合同测试；它不属于生产依赖。现有 `scripts/docs/` 保持文档工具，不因 npm workspaces 自动成为业务包。
 
