@@ -1768,3 +1768,22 @@ for (const [expectedVersion, replaces] of [["codex-cli 0.167.0-alpha.3.2", true]
     await assert.rejects(() => adapter.registerBinding({ ...second, resumeProfile: { ...second.resumeProfile!, model: 'another-model' } }), /conflicting runtime binding/);
   });
 }
+
+test('defect 3d30f7ac: observeTurnEffort reads the Thread effort and model for a Turn that is already running or settled, only while it is the Thread\'s latest, and never throws', async () => {
+  const adapter = new CodexAppServerAdapter({expectedVersion:'codex-cli 0.167.0-alpha.3.2'});
+  const internals = adapter as unknown as Record<string, unknown>;
+  internals.owned = () => {};
+  let latest = 'turn-1', failList = false;
+  internals.request = async (method: string) => {
+    if (method === 'thread/turns/list') { if (failList) throw new RuntimeServerError(method, 1, -32000, 'unavailable'); return { data: [{ id: latest, status: 'completed' }], nextCursor: null }; }
+    if (method === 'thread/read') return { thread: { id: 'thread', reasoningEffort: 'max', model: 'deepseek/deepseek-flash' } };
+    assert.fail(method);
+  };
+  const binding = { sessionId: 's', roleId: 'r', projectId: 'p', nativeThreadId: 'thread', nativeSessionId: 'thread', cwd: '/tmp/e', authorizationScope: 'project', owner: 'evoloop-codex-app-server' } as Parameters<typeof adapter.observeTurnEffort>[0];
+  assert.deepEqual(await adapter.observeTurnEffort(binding, 'turn-1'), { reasoningEffort: 'max', model: 'deepseek/deepseek-flash' }, 'the latest Turn: the Thread\'s values');
+  latest = 'turn-2';
+  assert.deepEqual(await adapter.observeTurnEffort(binding, 'turn-1'), { reasoningEffort: null, model: null }, 'a newer Turn exists: the value is not claimed for the older one');
+  latest = 'turn-1'; failList = true;
+  assert.deepEqual(await adapter.observeTurnEffort(binding, 'turn-1'), { reasoningEffort: null, model: null }, 'a failed read is not recorded, and does not throw');
+  await assert.rejects(adapter.observeTurnEffort(binding, ''), /turn ID required/);
+});

@@ -10,6 +10,9 @@ export const authConfigSchema = z.array(z.strictObject({
   // Read when the service starts: a change to the identity file takes effect after a restart.
   extraCommands: z.array(z.enum(extraCommandNames)).optional(),
   identityKind: z.enum(["agent", "human"]).optional(),
+  // What this identity is to the Sessions it writes to, for the platform's opening line of an ordinary message (who sent it). Only a stated class
+  // is used; an agent identity without one is told as "an identity whose class is not recorded", never as the user and never guessed from a Role.
+  senderClass: z.enum(["requirements", "leader", "session"]).optional(),
 })).min(1).refine(items => new Set(items.map(x => x.token)).size === items.length, "Tokens must be unique")
   .refine(items => {
     const kinds = new Map<string, string>();
@@ -19,7 +22,16 @@ export const authConfigSchema = z.array(z.strictObject({
       kinds.set(key, kind);
     }
     return true;
-  }, "One actor cannot mix human and agent credentials in a project");
+  }, "One actor cannot mix human and agent credentials in a project")
+  .refine(items => {
+    const classes = new Map<string, string | undefined>();
+    for (const item of items) for (const projectId of item.projectIds) {
+      const key = `${projectId}:${item.actorId}`;
+      if (classes.has(key) && classes.get(key) !== item.senderClass) return false;
+      classes.set(key, item.senderClass);
+    }
+    return true;
+  }, "One actor's credentials must state the same senderClass in a project");
 export type AuthConfig = z.infer<typeof authConfigSchema>;
 /** A study declaration keeps authority only while its actual reviewer credential remains configured. */
 export function hasCurrentStudyReviewer(credentials: AuthConfig, projectId: string, actorId: string): boolean {
@@ -46,7 +58,7 @@ export function authenticate(header: string | undefined, credentials: AuthConfig
   for (const entry of credentials) {
     const expected = Buffer.from(entry.token);
     if (token.length === expected.length && timingSafeEqual(token, expected)) {
-      return { actorId: entry.actorId, projectIds: [...entry.projectIds], permissions: [...entry.permissions], ...(entry.extraCommands ? { extraCommands: [...entry.extraCommands] } : {}), identityKind: entry.identityKind ?? "agent" };
+      return { actorId: entry.actorId, projectIds: [...entry.projectIds], permissions: [...entry.permissions], ...(entry.extraCommands ? { extraCommands: [...entry.extraCommands] } : {}), ...(entry.senderClass ? { senderClass: entry.senderClass } : {}), identityKind: entry.identityKind ?? "agent" };
     }
   }
   return null;

@@ -1175,10 +1175,17 @@ export class RuntimeRunner {
     const items = await collect(cursor => this.runtime.listItems(binding, turn.id, cursor), 100);
     const messages = finalMessages(items);
     if (turn.error) messages.push(`Native failure: ${turn.error.summary}; category=${turn.error.category}; HTTP=${turn.error.httpStatus ?? "unknown"}; providerCode=${turn.error.providerCode ?? "unknown"}`);
+    // The start-time readback of the Thread's effort and model can be missed (the history store was not attached yet, or the Turn was not yet the
+    // latest): the Run then settles with 'unread'. One more read now, while this Turn is still the Thread's latest, fills what is missing.
+    let late: { reasoningEffort: string | null; model: string | null } | null = null;
+    if ((!run.actual?.reasoningEffort || !run.actual?.model) && this.runtime.observeTurnEffort) {
+      try { late = await this.runtime.observeTurnEffort(binding, turn.id); } catch { late = null; }
+    }
     await this.deps.trusted.recordTurn(run.projectId, run.id, turn.id, turn.status as "completed" | "failed" | "interrupted",
       messages.join("\n\n"), { itemsDigest: digest(JSON.stringify(items)), completedAtUtc: turn.completedAtUtc,
         ...(turn.usage ? { usage: turn.usage } : {}), ...(turn.costUsd != null ? { costUsd: turn.costUsd } : {}),
-        ...(turn.observedModel !== undefined ? { observedModel: turn.observedModel } : {}), ...(turn.subagentModels?.length ? { subagentModels: turn.subagentModels } : {}),
+        ...(turn.observedModel !== undefined ? { observedModel: turn.observedModel } : late?.model ? { observedModel: late.model } : {}), ...(turn.subagentModels?.length ? { subagentModels: turn.subagentModels } : {}),
+        ...(late?.reasoningEffort && !run.actual?.reasoningEffort ? { observedReasoningEffort: late.reasoningEffort } : {}),
         ...(turn.error?.category ? { failureCategory: turn.error.category } : {}) });
     return true;
   }
