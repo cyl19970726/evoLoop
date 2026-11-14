@@ -118,7 +118,7 @@ export interface RuntimeRecordEvent {
   projectId: string; id: string; runId: string | null; sessionId: string | null;
   kind: "session.reserved" | "session.creating" | "session.bound" | "session.unknown" | "session.closeRequested" | "session.archiveAttempted" | "session.closed" |
     "run.requested" | "run.dispatching" | "run.dispatchWithdrawn" | "run.preflightRejected" | "run.dispatchRejected" | "run.bound" | "run.status" | "run.unknown" |
-    "turn.effortObserved" | "run.reviewed" | "message.preTurnReviewed" | "run.reconciled" | "run.interruptRequested" | "run.interruptResult" | "run.stopRequested" |
+    "turn.effortObserved" | "usage.staleReadingIgnored" | "run.reviewed" | "message.preTurnReviewed" | "run.reconciled" | "run.interruptRequested" | "run.interruptResult" | "run.stopRequested" |
     "session.executionProfile.activationStarted" | "session.executionProfile.active" |
     "session.executionProfile.unknown" | "session.executionProfile.rejected" |
     "runtime.approvalDeclined" | "native.childDiagnostic" | "handoff.received" | "handoff.read" | "handoff.adopted" | "handoff.effect";
@@ -463,6 +463,11 @@ export interface RuntimePort {
   /** Name metadata only; this must never start a model Turn. */
   setThreadName?(binding: RuntimeBinding, name: string): Promise<void>;
   listTurns(binding: RuntimeBinding, cursor?: string): Promise<RuntimePage<RuntimeTurn>>;
+  /**
+   * Read the model and effort the Thread reports for this exact Turn, when it is still the Thread's latest one. A second chance for a Turn whose start-time
+   * readback was missed (the history store was not yet attached): null for either value means "could not be read", never a guess. Read only.
+   */
+  observeTurnEffort?(binding: RuntimeBinding, turnId: string): Promise<{ reasoningEffort: string | null; model: string | null }>;
   listItems(binding: RuntimeBinding, turnId: string, cursor?: string): Promise<RuntimePage<unknown>>;
   /** Optional classified trace capability. Absence means unsupported, never an empty complete trace. */
   readWorkPage?(binding: RuntimeBinding, turnId: string, cursor?: string): Promise<RuntimeWorkPage>;

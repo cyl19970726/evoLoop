@@ -7,6 +7,9 @@ import { taskAttentionSource } from "@evoloop/contracts";
 export const trialAttentionThresholdMs: Partial<Record<LeaderWorkTimingStage, {
   stageOverdueMs: number | null; activityWithoutProgressMs: number | null; observationGapMs: number | null
 }>> = {
+  // Ready but nobody dispatched it: todo with no assignment, or sent back for rework. Without these the Leader's own memory was the only reminder.
+  unassigned: {stageOverdueMs: 2*60*60*1000,activityWithoutProgressMs:null,observationGapMs:null},
+  rework: {stageOverdueMs: 2*60*60*1000,activityWithoutProgressMs:null,observationGapMs:null},
   awaiting_ack: {stageOverdueMs: 4*60*60*1000,activityWithoutProgressMs:null,observationGapMs:null},
   awaiting_run: {stageOverdueMs: 2*60*60*1000,activityWithoutProgressMs:null,observationGapMs:null},
   run_reserved: {stageOverdueMs: 2*60*60*1000,activityWithoutProgressMs:null,observationGapMs:null},

@@ -343,6 +343,8 @@ node --import tsx tests/manual/session-compaction-e1.ts
 
 只有两个方向都成功发送并处理、原生 Turn 可核、回复中的标记一致，才报告就绪，并保留两条消息 ID 与读回结果作对照记录。只有配置检查通过、发送返回 `applied`、状态显示 `ready`、消息已保存或没有回复，都不算就绪。
 
+**换路径后先实跑一次。** 换 Role、换验收者或换 Session 后，新的路径必须先实际跑通一次才算落地：第一次派单要真的开出 Run，或新 Session 真的处理过一条消息。换验收者时，新的验收安排也要真正送达并由接收 Session 处理；只改配置、只换绑定、只保存一条分派记录或只在文档里写计划，都不算。保留这次 Run 或消息的 ID、实际处理结果与读回证据，作为新路径可用的对照记录。
+
 - **缺项怎么看。** `session prepare` 返回 `status=blocked`，`missing` 是代码，`missingDetails` 写明要设的配置项、可复制的修法和是否需重启；`role_actor` 就是缺 `residentQueue.roleActors`（或它没启用、或该身份无写权限）。
 - **哪些要重启。** 按代码核对，`session prepare` 每次调用都重读 integrations 与身份文件，补 `residentQueue.roleActors`、`runtime.materialCli`、`runtime.grants` 不需要重启；只有 `runtime.enabled`（运行时只在启动时建立）和新增 HTTP 令牌要重启。
 
@@ -375,7 +377,9 @@ node --import tsx tests/manual/session-compaction-e1.ts
 - **读回用量。** `GET /api/projects/PROJECT_ID/runtime/usage?from=YYYY-MM-DD&to=YYYY-MM-DD` 按 Session 和按天返回输入、输出、缓存输入、费用与上下文压力；工作台智能体页右栏“上下文与用量”（这个 Session 的上下文与今日用量）和统筹安排的“项目用量”（每日上限、近 7 天、计日时区）用同一个读取。费用缺失写“未报告”，不当 0。
 - **输入是含缓存的总量。** 账本和每日上限里的“输入”统一指模型处理过的全部输入词元，缓存读取与缓存创建都算在其中；`cachedInputTokens` 只是其中的子集，供展示，不再另加一次。Claude SDK 的 `input_tokens` 不含 `cache_read_input_tokens` 与 `cache_creation_input_tokens`，写账时三者相加；Codex v2 的 `input_tokens` 已包含 `cached_input_tokens`，由 `non_cached_input = input_tokens - cached_input_tokens` 可核。每日上限比较的是全项目当日所有 Session、所有运行时的输入合计，不只 Leader，也不只 Codex。
 - **账本误差的方向与范围。** 正常 Codex 路径按 Thread 累计快照取差；同一个 pump 内的多个用量通知仍逐个参与差值，不能只拿最后一条的 `last`。修复前有三类误差：重连后首个不含 usage 的事件曾把持久化基线覆盖为 `null`，到下一条通知只记 `last`，单次少算一条请求的量；复位后又在一个 pump 内继续请求时，曾只记最后一条 `last`，少算该间隔内其余请求的 `last` 之和；Claude 的输入曾漏掉缓存读取与缓存创建，少算这两项之和，并把与 Codex 不同口径的数直接相加。现在前两类按持久化基线与逐个通知修复，Claude 按上述含缓存口径写账。
-- **只适用于正常协议的范围。** 当前固定的 Codex `0.166.0-alpha.6` 与 `0.167.0-alpha.3.2` 都已把 v2 `ThreadTokenUsage.total` 定为必填字段（`codex-rs/app-server-protocol/src/protocol/v2/thread.rs` 的 `ThreadTokenUsage`），每条实时通知都带累计值；连接已有 Thread 时只重放 rollout 中最新的一条 `TokenCount` 快照，不把任意旧读数序列重投给同一连接（`codex-rs/app-server/src/request_processors/token_usage_replay.rs` 的 `rposition` 与 `conversation.token_usage_info()`）。因此正常路径不会触发“累计非单调的旧读数重投”或“只有 `last` 的重复通知”。若非标准或损坏的写入方仍重投递减的累计值，当前代码会把它当复位并可能各多记一条 `last`；若重复投递没有 `total` 的事件，则会每份多记一次 `last`。协议通知没有源事件序号，账本无法把这类输入与真实复位区分；遇到时应按原生 rollout 对账，不把它当作正常误差。
+- **只适用于正常协议的范围。** 当前固定的 Codex `0.166.0-alpha.6` 与 `0.167.0-alpha.3.2` 都已把 v2 `ThreadTokenUsage.total` 定为必填字段（`codex-rs/app-server-protocol/src/protocol/v2/thread.rs` 的 `ThreadTokenUsage`），每条实时通知都带累计值；连接已有 Thread 时只重放 rollout 中最新的一条 `TokenCount` 快照，不把任意旧读数序列重投给同一连接（`codex-rs/app-server/src/request_processors/token_usage_replay.rs` 的 `rposition` 与 `conversation.token_usage_info()`）。因此正常实时路径不会触发“只有 `last` 的重复通知”。**但“重放的那条最新持久化快照”仍可能比账本已见到的读数旧**：账本先收到内存里更新的实时读数，连接断开后重连，原生端重放的是 rollout 里落盘较早的最新快照，它的累计值就小于账本基线（发布切换、子进程丢失都会触发重连）。这条依据来自上面引用的 `token_usage_replay.rs`（只重放 rollout 里最新的 `TokenCount`），“落盘可能落后于实时读数”是推断，本机没有 Codex 源码，未能在本机核实。
+- **较小的累计值怎么判（缺陷 cbce1ba5）。** 同一 Thread 内累计值小于基线时，旧版本一律当复位：记这条读数的 `last` 并把基线退回这条旧读数，之后每条读数再按差值记一遍，三条旧读数重放就多记三条请求再加一遍差值。现在只有读数自己证明计数器重新开始才算复位——它的 `last` 等于 `total`（复位后的第一个请求，整个计数器就是这一个请求），记这条 `last` 并以它为新基线；除此之外一律是旧读数：不记任何增量、不退基线（持久化的基线也不退），并写一条 `runtime_record_event`，种类 `usage.staleReadingIgnored`，说明原因、这条读数、它对照的基线和“没有记入账本”。**没有可靠依据时宁可少记，不重复计入。** 局限：复位后的第一条读数若恰好也不满足 `last == total`（例如压缩后第一个请求之前就有别的请求），会被当旧读数忽略，该间隔的增量少记，直到累计值超过旧基线才继续按差值记；遇到时按原生 rollout 对账。
+- **没有 `total` 的重复事件。** 只有 `last` 的事件仍是兼容分支（v2 协议里 `total` 必填，正常路径不会进来；只在非标准写入方时进入）。同一 Turn 里紧接基线、`last` 与基线完全相同的这类事件当作同一事件再投递，不再记第二次，并写同一种 `usage.staleReadingIgnored` 记录（原因 `total_less_repeat_of_baseline_last`）；同一 Turn 里恰好连续两个大小完全相同的无 `total` 请求会少记一个——兼容分支里无法区分，取少记。
 - **修复旧账后再打开上限。** 累计值被当成增量的版本（PR #410 之前）写入的 Codex 日桶会偏大；本页这组重连、pump 与 Claude 口径修复之前的日桶还可能偏小。先在维护窗口备份 `session_usage_daily`，再按受影响 Session、日期与代码边界，从对应原生 rollout 的 `last_token_usage` 或真实 Turn 用量重算输入、缓存输入和输出，替换这些日桶，并记录 Session、日期、修复前后合计与 rollout 路径。无法取得完整原生样本的日桶删除并标为未记录，不能保留旧值后再按它打开每日上限；修复边界之后的记录继续由账本增量维护。
 - **警告与暂停。** 达到 `warningRatio` 只显示提示；达到上限后，结果通知消息以 `DAILY_BUDGET_EXHAUSTED` 或 `CONTEXT_HANDOFF_REQUIRED` 留在队列并写阻断原因。业务 Task Run、验收和人工消息仍可执行。要恢复，先处理交接或调整上限，再按原消息记录重试；不要另建一条消息冒充原通知。
 - **交接到新线程。** 用同一 Role 开启新 Session，把原 Session、原生 Thread、固定 Task 与未处理通知写进接手说明；新线程读取固定 Task 和当前工作变化后再决定下一步。`contextHandoffSummary()` 的格式可直接作为交接摘要；它不复制原生对话正文。
@@ -391,6 +395,20 @@ node --import tsx tests/manual/session-compaction-e1.ts
 ## Session 队伍调度程序
 
 协调器在运行时启用（`runtime.enabled`）后运行队伍调度程序（轮询间隔沿用 `residentQueue.pollIntervalMs`，默认 2 秒）。它只推进由 Leader 凭据控制的队伍，每一步都是普通命令，操作 ID 由队伍项和尝试次数决定，重启后重放不会重复开 Run。队伍项、事件和 `QUEUED_IN_SESSION_LINE` 的含义见 [Session 运行时](../architecture/session-runtime.md#session-队伍dec-045-q1)。迁移 087 新增 `session_line`、`session_line_entry`、`session_line_event`、`task_assignment_confirmation`；不需要改私有配置，**接收者解析规则（队伍写 assignment 的对象）**：队伍项的接收者必须是该 Session 实际签署交付的业务身份，不再按 Role 猜。顺序是：①该 Session 自己的 `runtime.materialCli` 条目（`sessionId` 与它的原生 actor `sessionActorId` 都匹配，条目的 `cliActorId` 就是接收者）；②只有当这个 Role 恰好只有一个未关闭的 Session 时，才用 Role 级 `materialCli` 条目或 `residentQueue.roleActors`（单 Session 的旧配置照常工作）；③否则**在写任何 assignment、确认请求或 Run 之前**把这一项挂起（`RECIPIENT_UNAVAILABLE`），原因点名该 Session 并写明要补的配置（该 Session 的 `materialCli` 条目）。结果还必须是当前项目 writer。同一 Role 下有开发、验收、验收 2 等多个身份不同的 Session 时，每个 Session 都要有自己的 `materialCli` 条目；缺了不会改用别人的身份，也不会产生 `RECIPIENT_UNBOUND` 预检失败的 Run。测试：`apps/coordinator/test/session-line-recipient.test.ts`、`packages/adapter-postgres/test/session-line.test.ts`。
+
+## 验收接力的消息卡在队首（缺陷 0fd4a99b）
+
+**现象与原因。** 验收接力的消息排在接收 Session 的队首，接力却不能开始（已 blocked、等发布，或已被取代）时，旧版本只让准入判断返回“不开始”：不写原因、不撤下，而同一 Session 里更早的 queued 消息先走，于是后面所有消息（别的 Task 的接力、普通对话）都被堵住，页面上只显示 queued。
+
+**现在怎样处理。**
+- 接力 `superseded` 或 `released`：它的 queued 消息撤下（cancelled），原因写 `ACCEPTANCE_RELAY_SUPERSEDED` / `ACCEPTANCE_RELAY_RELEASED`。
+- 接力 `blocked`：消息保留（接力可能被重试：规则变了、发送者回来了），消息上写 `ACCEPTANCE_RELAY_BLOCKED: <接力原因>`（原因变了才写，不会每轮写一次）。
+- 正式接力在等发布（`PUBLICATION_PENDING`）：消息上写 `PUBLICATION_PENDING: …`，发布标记写上后下一轮准入通过。
+- 队列规则：消息的 `blocked_reason` 以 `MESSAGE_GRANT_MISSING:`、`PUBLICATION_PENDING:` 或 `ACCEPTANCE_RELAY_BLOCKED:` 开头时仍留在队里、仍被重新看，但不再让它后面的消息等它（Leader 判断“有没有人在等”的检查用同样的例外）。不放松：接力的交付或 Task 修订变了的消息仍然不开始（接力被取代，消息撤下）；前面有消息正在处理时，后面的仍按原规则等待；前面有普通 queued 消息时它先走。
+
+**`MESSAGE_POST_applied` 的原因。** 接力保留了一个消息 ID 和一个操作 ID。Leader 若自己发了这条接力消息，用了保留的操作 ID 却用了自己的消息 ID，日志里这个操作确实是 applied，但创建的实体不是保留的消息 ID，旧代码就把接力置为 blocked 并写 `MESSAGE_POST_applied`——而这条消息其实是正确的。现在：那个操作创建的消息若是同一发送者、同一 Session、同一 Task 修订、用保留的操作 ID 写的，接力绑定到它（接力的消息 ID 改成它）并继续；否则接力 blocked，原因写 `MESSAGE_OPERATION_ID_USED_BY_ANOTHER_MESSAGE: operation … created …`，说明发生了什么。复现与修复前后输出见 `packages/adapter-postgres/test/acceptance-relay-queue-head.test.ts` 的第 5 个用例（修前该用例得到 `blocked / MESSAGE_POST_applied`）。
+
+**正式实例上已卡住的消息。** 发布后，acceptance-claude 队伍里已卡的接力消息会在下一轮准入时按上面处理：被取代、已释放的接力其消息被撤下；blocked 的接力其消息写上原因、不再堵后面；等发布的在发布标记写上后开始。消息已被 Leader 先撤下的不再处理。逐条核对用 `work messages` 读消息状态与 `blocked_reason`，用 `work acceptance TASK` 读接力状态。
 
 ## 调度板与调度事件流（Q2，迁移 105）
 

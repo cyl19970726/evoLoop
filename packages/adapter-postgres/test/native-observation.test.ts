@@ -65,3 +65,34 @@ test('exact thread and scope are enforced at service boundary',async()=>{
   await assert.rejects(()=>service.apply({...row,threadId:'wrong'}),/exact ready Session and Thread/);
   assert.equal(await service.get(randomUUID(),sessionId),null);
 });
+
+// ---- defect cbce1ba5, on the real store: the ledger and the observation row across separate writes ----
+test('a replayed older snapshot adds nothing to the ledger and leaves the baseline; a real reset still counts; the ignored reading stays readable',async()=>{
+  const p=randomUUID(),s=randomUUID(),c=randomUUID(),thread='replay-thread';
+  await pool.query('INSERT INTO project(project_id,title,created_at) VALUES($1,$2,$3)',[p,'Replay',now]);
+  await pool.query(`INSERT INTO runtime_session(project_id,session_id,role_id,cwd,authorization_scope,sandbox,approval_policy,state,version,native_thread_id,native_session_id,operation_id,actor_id,created_at,updated_at)
+    VALUES($1,$2,'worker','/tmp','project','danger-full-access','never','ready',1,$3,'native-session',$4,'agent',$5,$5)`,[p,s,thread,randomUUID(),now]);
+  let second=0;
+  const ev=(method:string,params:unknown)=>({projectId:p,sessionId:s,threadId:thread,connectionId:c,method,params,observedAt:new Date(Date.parse(now)+(++second)*1000).toISOString()});
+  const usage=(total:number,last:number)=>({total:{inputTokens:total,cachedInputTokens:0,outputTokens:0,reasoningOutputTokens:0,totalTokens:total},last:{inputTokens:last,cachedInputTokens:0,outputTokens:0,reasoningOutputTokens:0,totalTokens:last},modelContextWindow:null});
+  let row:ReturnType<typeof reduceNativeObservation>=null;
+  const write=async(turn:string,total:number,last:number)=>{
+    row=reduceNativeObservation(row,ev('turn/started',{threadId:thread,turn:{id:turn,status:'inProgress',items:[]}}))!;
+    row=reduceNativeObservation(row,ev('thread/tokenUsage/updated',{threadId:thread,turnId:turn,tokenUsage:usage(total,last)}))!;
+    await service.apply(row);
+  };
+  const ledger=async()=>Number((await pool.query('SELECT coalesce(sum(input_tokens),0)::bigint AS n FROM session_usage_daily WHERE project_id=$1',[p])).rows[0].n);
+  await write('one',1000,1000); await write('two',2000,1000);
+  assert.equal(await ledger(),2000);
+  // Three old readings (older persisted snapshots replayed after a reconnect), each in its own write: nothing is added.
+  for(const old of [600,700,800])await write('two',old,100);
+  assert.equal(await ledger(),2000,'before the fix this was 2300');
+  const ignored=(await pool.query("SELECT detail FROM runtime_record_event WHERE project_id=$1 AND kind='usage.staleReadingIgnored' ORDER BY sequence",[p])).rows;
+  assert.equal(ignored.length,3); assert.match(ignored[0].detail,/total_below_baseline_without_reset_evidence.*nothing was added/);
+  // The persisted baseline did not go back: the next real reading counts only its own growth.
+  await write('three',2500,500);
+  assert.equal(await ledger(),2500);
+  // A real reset (counter starts over: last equals total) is counted.
+  await write('four',200,200);
+  assert.equal(await ledger(),2700);
+});

@@ -14,6 +14,7 @@ import { sessionMessageCommands } from "./session-messages.js";
 import { sessionAssignmentCommands } from "./session-assignments.js";
 import { leaderNoticePacketCommands } from "./leader-notice-packets.js";
 import { sessionLineCommands } from "./session-line.js";
+import { scheduleDispatchCommands } from "./schedule-dispatch.js";
 import { decisionRequestCommands } from "./decision-requests.js";
 import { sessionRecoveryCommands } from "./session-recovery.js";
 import { acceptanceConventionCommands, acceptancePreconditionSchema } from "./acceptance-convention.js";
@@ -80,6 +81,7 @@ export const commandSchema = z.discriminatedUnion("type", [
   ...sessionAssignmentCommands,
   ...leaderNoticePacketCommands,
   ...sessionLineCommands,
+  ...scheduleDispatchCommands,
   ...decisionRequestCommands,
   ...sessionRecoveryCommands,
   ...acceptanceConventionCommands,
@@ -103,7 +105,7 @@ export type Permission = "read" | "write" | "review";
  */
 export const extraCommandNames = ["document.archive", "document.restore"] as const;
 export type ExtraCommand = (typeof extraCommandNames)[number];
-export interface Principal { actorId: string; projectIds: string[]; permissions: Permission[]; extraCommands?: ExtraCommand[] | undefined; identityKind?: "agent" | "human" | undefined }
+export interface Principal { actorId: string; projectIds: string[]; permissions: Permission[]; extraCommands?: ExtraCommand[] | undefined; identityKind?: "agent" | "human" | undefined; senderClass?: "requirements" | "leader" | "session" | undefined }
 export interface Project { id: string; title: string; createdAt: string }
 export interface Document {
   projectId: string; id: string; title: string; version: number;
