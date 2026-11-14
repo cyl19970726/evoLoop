@@ -98,7 +98,7 @@ exec <NODE_ABSOLUTE_PATH> <RELEASE_SOURCE>/apps/cli/dist/main.js "$@"
 
 `proposal` 不写 `firstTaskId`，其余字段与 `role.propose` 相同；至少一条 evidence 的来源必须是 `project:<PROJECT>`。命令只在项目还没有任何 Role 时有效，并要求 `projectCreateOperationId` 是同项目一条已应用的 `project.create`。服务端在同一事务里建立版本 1 的 trial Lead、不可变修订和 `accept-trial` 决定；操作日志、`proposedBy`、修订与决定记录同一发令者。项目已有任何 Role（包括 candidate、rejected、retired）时返回 `ROLE_BOOTSTRAP_NOT_EMPTY`，之后的业务 Role 仍须用普通 `role.propose` 和真实未完成的首 Task。不要把数据库写入作为引导或失败后的绕行。
 
-**读回：** `list roles --project <PROJECT>` 里 Lead 为 `trial`、`proposedBy` 是发令者；`read role <LEAD> --project <PROJECT>` 不含 `firstTaskId`；`read role <LEAD> --revisions --project <PROJECT>` 的理由包含 `project.create <projectCreateOperationId>`；用 `operation <projectCreateOperationId>` 和该引导操作的 ID 读回两条已应用记录。随后由该 Lead 用正常 `task.create` 建第一项工作；业务 Role 的首个 Task 从此正常创建，或直接引用一项已存在且未完成的 Task。
+**读回：** `list roles --project <PROJECT>` 里 Lead 为 `trial`、`proposedBy` 是发令者；`read role <LEAD> --project <PROJECT>` 不含 `firstTaskId`；`read role <LEAD> --revisions --project <PROJECT>` 的理由包含 `project.create <projectCreateOperationId>`；用 `operation <projectCreateOperationId>` 和该引导操作的 ID 读回两条已应用记录。随后用正常 `task.create` 给该 Lead 建第一项工作（`owner` 为 Lead Role 的普通 Task，见 SKILL 第 3 步）；没有单独的“引导 Task”。业务 Role 的 `firstTaskId` 可以引用它，或引用本项目另一项已存在且未完成的 Task。
 
 ## 3. 每个 Session 的配置
 

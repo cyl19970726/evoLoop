@@ -71,8 +71,9 @@ description: 把一个新项目接入 evoLoop：先判断情况，再按步骤�
 ## 3. Role
 
 1. **第一个 Role 的引导。** 项目已有 `project.create`、但 `list roles` 还是空时，用 `command schema role.bootstrap` 建立第一个 system Lead。命令必须由有项目 write 与 review 权限的身份发出；proposal 不填 `firstTaskId`，其余仍按下面的建议证据规则填写，并至少有一条 evidence 的 `sourceRef` 是 `project:<PROJECT>`。同时提交 `projectCreateOperationId`（第 2 步 `project.create` 回执里的 operationId）和理由。服务端只在项目没有任何 Role、且该操作确实是同项目已应用的 `project.create` 时，原子建立版本 1 的 trial Lead、不可变修订和 `accept-trial` 决定；不要直接写数据库，也不要再手工造 Task 绕过。字段和读回见[私有配置·引导](references/private-config.md#2-第一个-role-的引导)。
-2. **提议并接受业务 Role。** 第一个 system Lead 已由引导命令建立；不要再提第二个 active 或 trial 的 system Lead。业务 Role 仍用 `role.propose`。把“只用本 Session 的 CLI 和工作目录、被拒就回报错误码、不到磁盘上自行排查”写进每个 Role 提议的 `handoffBoundary`：平台通知触发的 Turn 只带 Role 的职责上下文，不带你写在消息里的提醒。`role.propose` 的硬性要求：`evidence` 至少含缺口类（`backlog`/`omission`/`rework` 之一）、`effect`、`cost` 各一条；`alternatives` 恰好四条，`method`、`knowledge`、`another-instance`、`temporary-assignment` 各一；`reviewAtUtc` 在现在之后、`trialDays` 之内；`firstTaskId` 指一个未完成、已存在的 Task。再由有审阅权的身份 `role.decide accept-trial`（决定类）。
-3. **绑定运行时。** `role runtime set <ROLE> --project <PROJECT> --provider codex|claude --reason …`，首次绑定后不能换。
+2. **建 Lead 的第一个 Task。** 引导之后 Lead 已是 `trial`，用需求 Session 的身份按 `command schema task.create` 建一个 `owner` 为 Lead Role 的普通 Task，例如“接入后的第一次编制评估”。没有单独的“引导 Task”：它和以后的 Task 一样，只是 Lead 的第一项工作。业务 Role 的 `firstTaskId` 可以指它，第 5 步也用它确认 Leader 能执行自己的 Task。项目还没有 `trial` 或 `active` 的 Role 时，`task.create` 报 `TASK_OWNER_ROLE_REQUIRED`（`packages/core/src/index.ts` 的 `requireRealTaskOwner`）。
+3. **提议并接受业务 Role。** 第一个 system Lead 已由引导命令建立；不要再提第二个 active 或 trial 的 system Lead。业务 Role 仍用 `role.propose`。把“只用本 Session 的 CLI 和工作目录、被拒就回报错误码、不到磁盘上自行排查”写进每个 Role 提议的 `handoffBoundary`：平台通知触发的 Turn 只带 Role 的职责上下文，不带你写在消息里的提醒。`role.propose` 的硬性要求：`evidence` 至少含缺口类（`backlog`/`omission`/`rework` 之一）、`effect`、`cost` 各一条；`alternatives` 恰好四条，`method`、`knowledge`、`another-instance`、`temporary-assignment` 各一；`reviewAtUtc` 在现在之后、`trialDays` 之内；`firstTaskId` 指本项目一个已存在、未完成的 Task（上一条建的那个即可），否则报 `INVALID_FIRST_TASK`（`packages/core/src/roles/index.ts` 的 `checkProposal`）。再由有审阅权的身份 `role.decide accept-trial`（决定类）。
+4. **绑定运行时。** `role runtime set <ROLE> --project <PROJECT> --provider codex|claude --reason …`，首次绑定后不能换。
 
 **读回：** `cli list roles --project <PROJECT>` 里第一个 Lead 为 `trial`、`proposedBy` 是引导命令的发令身份；`cli read role <LEAD> --revisions --project <PROJECT>` 的修订理由记录来源 `project.create` 操作；`cli get /api/projects/<PROJECT>/capabilities`（`runtime` 为 `configured`，所有项 `pending: null`）；每个 Role 为 `trial`；`cli role runtime show <ROLE> --project <PROJECT>`。
 
@@ -89,7 +90,7 @@ description: 把一个新项目接入 evoLoop：先判断情况，再按步骤�
 
 给 Leader 一个每天固定时点的评估 Task（DEC-038）。默认用普通 Task 的每日复制：建一个负责人是 Lead Role 的评估 Task 并设每日时点，授权 `scheduling.taskTimingGrants` 每次使用时重读；做法见[运行接线手册·普通 Task 的每日复制](../../../docs/development/runtime-operations.md#4-普通-task-的每日复制)。授权的 `actorId` 是建这个系列的身份（要有读写审阅），`roleId` 是 Lead Role。也可以用旧 Schedule（`schedule.create`），但它的 `scheduling.grants` 只在启动时读。
 
-**读回：** `cli get /api/projects/<PROJECT>/task-timings` 里有这个系列，下一个评估时点在 `latestTask.plannedAtUtc`（第一次还没执行时）或 `nextAtUtc`；或 `cli list schedules --project <PROJECT>` 里有 active 的 Schedule。再确认 Leader 能执行自己的 Task：引导 Task（第 3 步）由 Leader 在自己的 Session 开出了 Run（`cli work task <引导 TASK> --brief` 不停在 `awaiting_run`）。
+**读回：** `cli get /api/projects/<PROJECT>/task-timings` 里有这个系列，下一个评估时点在 `latestTask.plannedAtUtc`（第一次还没执行时）或 `nextAtUtc`；或 `cli list schedules --project <PROJECT>` 里有 active 的 Schedule。再确认 Leader 能执行自己的 Task：第 3 步建的 Lead 第一个 Task 已由 Leader 身份在 Leader 自己的 Session 开出 Run。`cli work task <LEAD_TASK> --project <PROJECT> --brief` 里 `run.runId` 有值、`waiting.stage` 不是 `awaiting_run`；`cli read run <RUN> --project <PROJECT>` 的 `actorId` 是 Leader 身份、`sessionId` 是 Leader Session。Leader 没有对自己 Session 的执行授权时，预留 Run 报 `FORBIDDEN`（`apps/coordinator/src/server.ts` 里 `runtime.run.reserve` 的执行授权检查），回第 2 步补那一条 `runtime.grants`。
 
 ## 6. 第一个 Task 走通全程
 
