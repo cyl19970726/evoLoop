@@ -98,7 +98,7 @@ SQL
 
 **工作目录 `cwd`** 必须是规范绝对路径（与 `realpath` 结果一致；macOS 上 `/tmp/…` 的规范形式是 `/private/tmp/…`），每个 Session 一个，验收 Session 不与作者共用。
 
-**`runtime.grants`**（执行授权，工作目录与模型在启动时登记）：Session 由谁建，就给谁一条；Leader 要对每个业务 Session 和验收 Session 再有一条自己的，才能开 Run。
+**`runtime.grants`**（执行授权，工作目录与模型在启动时登记）：Session 由谁建，就给谁一条；Leader 要对每个业务 Session、验收 Session **和它自己的 Session** 各有一条以 Leader 身份为 `actorId` 的，才能开 Run（Lead Role 的 Task，例如引导评估和每日评估，在 Leader 自己的 Session 里跑；缺这条时报 `FORBIDDEN`）。
 
 ```json
 { "projectId": "<PROJECT>", "actorId": "<建 Session 或开 Run 的身份>", "roleId": "<ROLE>",
@@ -108,7 +108,7 @@ SQL
 
 `models` 的候选值从运行时的模型目录取（`models --project` 只列已授权的，第一次是空的），重启后再用 `models --project` 确认。
 
-**`runtime.materialCli`**（Session 里用哪个 CLI 身份）：Role 级一条（业务身份）；验收 Session 再加一条按 `sessionId` 精确绑定的（验收身份），精确绑定优先。验收 Session 因此不能用 `session prepare` 建（会报 `material_cli_actor_mismatch`），改用 `runtime.session.reserve` → `role.bindSession` → `session profile set`，各按 `command schema` 填写，`runtime.session.reserve` 的 `cwd`、`authorizationScope`、`model` 与上面的 grant 一致。
+**`runtime.materialCli`**（Session 里用哪个 CLI 身份）：Role 级一条（业务身份）；验收 Session 再加一条按 `sessionId` 精确绑定的（验收身份），精确绑定优先。**同一 Role 有两个及以上 Session 时（例如作者与验收者同在业务 Role），每个 Session 都要一条按 `sessionId` 的精确绑定**：服务这时不再用 Role 级条目推断业务身份，缺的那个 Session 收到的队伍条目会被挂起（`RECIPIENT_UNAVAILABLE`）。验收 Session 因此不能用 `session prepare` 建（会报 `material_cli_actor_mismatch`），改用 `runtime.session.reserve` → `role.bindSession` → `session profile set`，各按 `command schema` 填写，`runtime.session.reserve` 的 `cwd`、`authorizationScope`、`model` 与上面的 grant 一致。
 
 ```json
 { "projectId": "<PROJECT>", "roleId": "<ROLE>", "sessionActorId": "<建 Session 的身份>",
@@ -175,6 +175,8 @@ SQL
 | `role.propose` 报 `INVALID_INPUT`（evidence 或 alternatives） | `evidence` 缺缺口类/`effect`/`cost` 之一，或 `alternatives` 不是四类各一 | 按 SKILL 第 3 步补齐 |
 | `session prepare` 报参数错误 | 传了 `--project` | 项目 ID 只写在准备文件里 |
 | 验收 Session 的 `session prepare` 报 `material_cli_actor_mismatch` | 准备检查要求 CLI 身份等于 Role 的业务身份 | 不照它的修法改；改用 reserve + bindSession + profile set（第 3 节） |
+| 队伍条目被挂起 `RECIPIENT_UNAVAILABLE`（“shares its Role with … other live Session(s) and has no runtime.materialCli entry of its own”） | 同 Role 有多个 Session，这个 Session 没有按 `sessionId` 的精确绑定 | 第 3 节补精确绑定（每次使用时重读），再按 `work board` 读回条目是否恢复 |
+| `session prepare` 返回 `waiting_for_native_thread`，立刻重跑又得到 `blocked` | 原生 Thread 还没就绪 | 等 `read session` 显示 `ready` 和原生 Thread，再用同一文件重跑 |
 | 回报消息报 `REPLY_TARGET_MISMATCH` | `--reply-to` 指向了发给另一个 Session 的消息 | 发新消息，不加 `--reply-to` |
 | `work events --wait 30` 报 `TIMEOUT` | CLI 默认 15 秒超时短于等待时间 | `EVOLOOP_TIMEOUT_MS=60000` |
 | `project.create` 被拒 | 发命令的身份的 `projectIds` 里还没有这个项目（或没重启） | 先写身份文件、重启 |
@@ -186,7 +188,8 @@ SQL
 | `cwd` 缺项或 Session 不能执行 | 工作目录不是规范绝对路径，或与 grant 不完全相同 | 用 `realpath` 的结果 |
 | 发消息报 `MESSAGE_GRANT_MISSING` | 这个方向没有授权，或 `receiverRoleId`/`cwd` 与接收 Session 不符 | 第 3 节，成对补齐 |
 | 消息送达但对方没有职责上下文；验收接力报 `RECIPIENT_BINDING_MISSING` | `receiverActorId` 写成了建 Session 的身份 | 改成接收 Session 的 `materialCli.cliActorId` |
-| Leader `runtime.run.reserve` 403 | Leader 没有该 Session 的 Role/范围/目录的执行授权 | 给 Leader 加一条对应的 `runtime.grants` |
+| Leader `runtime.run.reserve` 403 | Leader 没有该 Session 的 Role/范围/目录的执行授权（包括它自己的 Session） | 给 Leader 加一条对应的 `runtime.grants`，新目录要重启 |
+| 关闭报 `STORAGE_REJECTED … lacks linked consumer use`，或验收者关联时报 `ACCEPTANCE_NOT_USED` | 有验收接力时，验收者的 `used` 观察要关联到接力：观察须记在签 `session.message.receipt` 之后，接力那条消息处理完才会关联 | 按 [Leader 安排验收](../../evoloop-workflow/references/leader-scheduling.md) 的规则；没关联上时由 Leader 再给验收 Session 一轮，验收者用 `work acceptance observe` 补关联，再关闭 |
 | `runtime.run.reserve` 报分派缺失或过期 | `task.start` 会让旧分派过期 | `task.start` 之后重新 `task.assignment.set` 并等接手确认 |
 | 关闭被拒（`SELF_ACCEPTANCE`、`INDEPENDENT_OBSERVER_REQUIRED`、`CONSUMER_MISMATCH`） | 签 `used` 的身份是作者、或不是声明的 `consumer` | 验收 Session 用独立身份，`consumer` 写它的 `actorId` |
 | 某个 Session 一直不处理新消息 | 队首旧消息卡住 | 对账那一条（见 SKILL“运维时要记住的”），不重发 |

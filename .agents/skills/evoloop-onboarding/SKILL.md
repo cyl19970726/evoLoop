@@ -40,7 +40,7 @@ description: 把一个新项目接入 evoLoop：先判断情况，再按步骤�
 | | 没有仓库（纯文档/运营项目） | 不配 `repositories`；工作目录仍要有，放 Session 的工作材料 |
 | 有没有现成 Role | 没有（最常见） | 从 **Leader（system Lead）+ 一个业务 Role** 起步，不一次建全阵容（DEC-001）；验收由业务 Role 下另一个有独立身份的 Session 承担，不新建 QA Role（DEC-038、DEC-046） |
 | | 想沿用 evoLoop 自己的 Role 写法 | 只借鉴职责写法；每个 Role 仍在新项目里重新提议、重新接受试行 |
-| 运行时与模型（决定类） | Codex / Claude | 每个 Role 只绑定一种运行时，绑定后不能换（DEC-035）；运行时要先在主机上登录好（[本机运行](../../../docs/development/local-run.md)的 Codex 与 Claude 两段），接入者不替人登录。每个 Session 用哪个模型由使用者定；没定时按使用者已表达的偏好选，并写进接入记录 |
+| 运行时与模型（决定类） | Codex / Claude | 每个 Role 只绑定一种运行时，绑定后不能换（DEC-035）；运行时要先在主机上登录好（[本机运行](../../../docs/development/local-run.md)的 Codex 与 Claude 两段），接入者不替人登录。每个 Session 用哪个模型由使用者定；没定时按使用者已表达的偏好选，并写进接入记录。Codex 会为每个新工作目录往 codexHome 的 `config.toml` 追加一条信任条目；与使用者共用 codexHome 时，这会改动使用者自己的配置，接入前说明，试用结束后由使用者决定是否清理 |
 
 ## 1. 定清单、预生成全部 ID
 
@@ -52,28 +52,30 @@ description: 把一个新项目接入 evoLoop：先判断情况，再按步骤�
 
 ## 2. 一次写完私有配置，重启一次
 
-按[私有配置](references/private-config.md)写好：身份文件（含新项目 ID）、每个身份的令牌与 CLI 包装、integrations 里的全部条目（运行时设置、`runtime.grants`、`materialCli`、`roleActors`、`repositories`、成对的 `sessionMessages.grants`、`leaderResultNotices`、`scheduling`），然后重启服务一次。
+按[私有配置](references/private-config.md)写好：身份文件（含新项目 ID）、每个身份的令牌与 CLI 包装、integrations 里的全部条目（运行时设置、`runtime.grants`、`materialCli`、`roleActors`、`repositories`、成对的 `sessionMessages.grants`、`leaderResultNotices`、`scheduling`），然后重启服务一次。最容易漏的三条：Leader 对**每个** Session（包括它自己的）各一条执行授权，否则它开不了 Run；同 Role 多个 Session 时每个 Session 一条精确 `materialCli`；每对 Session 两个方向的消息授权。
 
 只在启动时读、改了必须重启的有：身份文件；`runtime.enabled` 与运行时设置；`runtime.grants` 里的**工作目录和模型**（运行器建 Session、开 Run 时只认启动时登记的目录，`models` 也只列启动时的授权）；`repositories`；`scheduling.grants`。其余（`materialCli`、`roleActors`、消息授权、Leader 通知目标、`taskTimingGrants`）每次使用时重读。完整的“何时生效”表见[运行接线手册·共同做法](../../../docs/development/runtime-operations.md#共同做法)。漏了一项，补上后能否免重启就按这张表判断。
 
-**读回：** 每个身份用自己的包装跑一次 `cli session`，`principal.actorId` 正确；用需求 Session 的身份 `cli get /api/projects/<PROJECT>/members`：每个身份的 `canRead`/`canWrite`/`canReview` 与清单一致、`identityFile: unchanged`、没有 `pending`；`cli models --project <PROJECT>` 列出了要用的模型。项目还没建，`capabilities` 和 `repositories` 在第 3 步之后读。
+重启后**建项目**：用需求 Session 的身份按 `command schema project.create` 建项目（`projectId` 用第 1 步的值）。项目级的读回都要项目先存在。
 
-## 3. 项目与 Role
+**读回：** 每个身份用自己的包装跑一次 `cli session`，`principal.actorId` 正确；`cli project <PROJECT>`；`cli get /api/projects/<PROJECT>/members`：每个身份的 `canRead`/`canWrite`/`canReview` 与清单一致、`identityFile: unchanged`、没有 `pending`；`cli models --project <PROJECT>` 列出了要用的模型；`cli get /api/projects/<PROJECT>/repositories`（`status: available`）。`capabilities` 的 `runtime` 要等第 3 步有了 Role 之后才是 `configured`。
 
-1. **建项目。** 用需求 Session 的身份按 `command schema project.create` 建项目（`projectId` 用第 1 步的值）。
-2. **第一个 Role 的引导。** 全新项目里 `task.create` 要求负责人是已试行的 Role，而 `role.propose` 要求引用一个已存在、未完成的 Task，**两者互相要求，只经 API 建不出第一个 Role**。今天的绕行见[私有配置·引导](references/private-config.md#2-第一个-role-的引导)；这是已知缺口，不要另找办法绕。
-3. **提议并接受 Leader 与业务 Role。** Leader 用 `roleClass: system`、`templateKey: lead`，项目里只能有一个 active 或 trial 的 system Lead。`role.propose` 的硬性要求：`evidence` 至少含缺口类（`backlog`/`omission`/`rework` 之一）、`effect`、`cost` 各一条；`alternatives` 恰好四条，`method`、`knowledge`、`another-instance`、`temporary-assignment` 各一；`reviewAtUtc` 在现在之后、`trialDays` 之内；`firstTaskId` 指一个未完成的 Task（业务 Role 也可以先引用引导 Task）。再由有审阅权的身份 `role.decide accept-trial`（决定类）。
-4. **绑定运行时。** `role runtime set <ROLE> --project <PROJECT> --provider codex|claude --reason …`，首次绑定后不能换。
+## 3. Role
 
-**读回：** `cli project <PROJECT>`；`cli get /api/projects/<PROJECT>/repositories`（`status: available`）；`cli get /api/projects/<PROJECT>/capabilities`（`runtime` 为 `configured`，所有项 `pending: null`）；`cli list roles --project <PROJECT>`（每个 Role `trial`）；`cli role runtime show <ROLE> --project <PROJECT>`。
+1. **第一个 Role 的引导。** 全新项目里 `task.create` 要求负责人是已试行的 Role，而 `role.propose` 要求引用一个已存在、未完成的 Task，**两者互相要求，只经 API 建不出第一个 Role**。今天的绕行见[私有配置·引导](references/private-config.md#2-第一个-role-的引导)；这是已知缺口，不要另找办法绕。
+2. **提议并接受 Leader 与业务 Role。** Leader 用 `roleClass: system`、`templateKey: lead`，项目里只能有一个 active 或 trial 的 system Lead。把“只用本 Session 的 CLI 和工作目录、被拒就回报错误码、不到磁盘上自行排查”写进每个 Role 提议的 `handoffBoundary`：平台通知触发的 Turn 只带 Role 的职责上下文，不带你写在消息里的提醒。`role.propose` 的硬性要求：`evidence` 至少含缺口类（`backlog`/`omission`/`rework` 之一）、`effect`、`cost` 各一条；`alternatives` 恰好四条，`method`、`knowledge`、`another-instance`、`temporary-assignment` 各一；`reviewAtUtc` 在现在之后、`trialDays` 之内；`firstTaskId` 指一个未完成的 Task（业务 Role 也可以先引用引导 Task）。再由有审阅权的身份 `role.decide accept-trial`（决定类）。
+3. **绑定运行时。** `role runtime set <ROLE> --project <PROJECT> --provider codex|claude --reason …`，首次绑定后不能换。
+
+**读回：** `cli get /api/projects/<PROJECT>/capabilities`（`runtime` 为 `configured`，所有项 `pending: null`）；`cli list roles --project <PROJECT>`（每个 Role `trial`）；`cli role runtime show <ROLE> --project <PROJECT>`。
 
 ## 4. Session 与消息往返
 
-1. **Leader 与业务 Session 用 `session prepare --file <PRIVATE_JSON>` 建**（`mode: create`）。它不接受 `--project`（项目 ID 写在文件里）；标准输出是多段 JSON（中间回执加最终结果），存进文件逐段解析。返回 `status=blocked` 时照 `missingDetails` 补配置，用**同一个** `operationId` 和文件重跑；不换 ID 绕过 `recovery_required`。
-2. **验收 Session 不用 `session prepare`。** 它要按 `sessionId` 精确绑定自己的 CLI 身份，而 `session prepare` 要求 CLI 身份等于该 Role 在 `roleActors` 里的业务身份，会报 `material_cli_actor_mismatch`；照它给的修法改，验收者就和作者成了同一身份。改用 [Agent CLI](../../../docs/development/agent-cli.md#准备或复用受管-session) 写明同样有效的路径：`runtime.session.reserve` → `role.bindSession` → `session profile set`（显示名；版本取 `session profile show` 读到的值）。这是服务端的已知不一致，待修。
-3. **让 Leader 自己做往返测试。** 用需求 Session 的 CLI 给 Leader 发一条消息（`work send owned:<LEADER_SESSION> --file <BODY>`），请它用自己的 CLI 给每个业务 Session 和验收 Session 各发一条带唯一标记的探测消息；探测消息里写明：对方处理后，**另发一条新消息**给 Leader（`work send owned:<LEADER_SESSION> --file <BODY>`，**不加 `--reply-to`**）带回同一标记。`--reply-to` 只能指向发给同一个接收 Session 的消息，跨 Session 回复会报 `REPLY_TARGET_MISMATCH`。探测消息的正文同样写上“只用本 Session 的 CLI 和工作目录，被拒就回报错误码”。
+1. **Leader 与业务 Session 用 `session prepare --file <PRIVATE_JSON>` 建**（`mode: create`）。它不接受 `--project`（项目 ID 写在文件里）；标准输出是多段 JSON（中间回执加最终结果），存进文件逐段解析。返回 `waiting_for_native_thread` 时，等 `read session <SESSION>` 显示 `ready` 且有原生 Thread，再用**同一个** `operationId` 和文件重跑（立刻重跑会得到一次 `blocked`）；返回 `blocked` 时照 `missingDetails` 补配置后同样重跑；不换 ID 绕过 `recovery_required`。
+2. **验收 Session 不用 `session prepare`。** 它要按 `sessionId` 精确绑定自己的 CLI 身份，而 `session prepare` 要求 CLI 身份等于该 Role 在 `roleActors` 里的业务身份，会报 `material_cli_actor_mismatch`；照它给的修法改，验收者就和作者成了同一身份。改用 [Agent CLI](../../../docs/development/agent-cli.md#准备或复用受管-session) 写明同样有效的路径：`runtime.session.reserve` → `role.bindSession` → 用 `command run` 提交 `session.profile.set` 设显示名（`expectedVersion` 取 `work profile owned:<SESSION>` 读到的显示资料版本；CLI 的 `session profile set` 改的是模型与推理强度，不是这个）。这是服务端的已知不一致，待修。
+3. **同一 Role 有两个及以上 Session 时，每个 Session 都要一条按 `sessionId` 精确的 `materialCli`**，包括作者那个业务 Session。服务这时不再用 Role 级条目推断业务身份，缺了就把派给它的队伍条目挂起（`RECIPIENT_UNAVAILABLE`）。第 2 步一次写好。
+4. **让 Leader 自己做往返测试。** 用需求 Session 的 CLI 给 Leader 发一条消息（`work send owned:<LEADER_SESSION> --file <BODY>`），请它用自己的 CLI 给每个业务 Session 和验收 Session 各发一条带唯一标记的探测消息；探测消息里写明：对方处理后，**另发一条新消息**给 Leader（`work send owned:<LEADER_SESSION> --file <BODY>`，**不加 `--reply-to`**）带回同一标记。`--reply-to` 只能指向发给同一个接收 Session 的消息，跨 Session 回复会报 `REPLY_TARGET_MISMATCH`。探测消息的正文同样写上“只用本 Session 的 CLI 和工作目录，被拒就回报错误码”。
 
-**读回：** 先做不花模型的：用 Leader 的 CLI `work acceptance --project <PROJECT>`，容量视图里每个业务 Session 和验收 Session 的 `missingCapabilities` 为空（它核“Leader → 该 Session”的消息授权、`receiverActorId` 是否等于该 Session 绑定的 CLI 身份、执行授权；**不核反方向**）。再核往返：用 `work messages owned:<SESSION>`、`work message <MSG>`、`work status owned:<SESSION> --message <MSG>` 读回两个方向的消息都已处理、有原生 Turn、标记一致，且回报消息的发送者是该 Session 的 CLI 业务身份。`session prepare` 成功、`state: ready`、发送返回 `applied` 都**不算**就绪。往返期间看着各 Session 的 `work timeline`，出现越出工作目录的读取就停下（见“受管 Session 能碰到什么”）。
+**读回：** 先做不花模型的：用 Leader 的 CLI `work acceptance --project <PROJECT>`，容量视图里每个业务 Session 和验收 Session 的 `missingCapabilities` 为空（它核“Leader → 该 Session”的消息授权、`receiverActorId` 是否等于该 Session 绑定的 CLI 身份、执行授权；**不核反方向**；Leader 自己那一行显示 `MESSAGE_GRANT_MISSING` 是正常的，没有人需要给自己发消息）。再核往返：用 `work messages owned:<SESSION>`、`work message <MSG>`、`work status owned:<SESSION> --message <MSG>` 读回两个方向的消息都已处理、有原生 Turn、标记一致，且回报消息的发送者是该 Session 的 CLI 业务身份。`session prepare` 成功、`state: ready`、发送返回 `applied` 都**不算**就绪。往返期间看着各 Session 的 `work timeline`，出现越出工作目录的读取就停下（见“受管 Session 能碰到什么”）。
 
 ## 5. Leader 每日评估
 
@@ -83,10 +85,10 @@ description: 把一个新项目接入 evoLoop：先判断情况，再按步骤�
 
 ## 6. 第一个 Task 走通全程
 
-接入以第一个真实 Task 被独立验收并关闭为准。选一件小而真实、能在一个 Run 里交付、验收者能实际使用的工作（例如给样本仓库补一个带测试的小功能）。
+接入以第一个真实 Task 被独立验收并关闭为准。选一件小而真实、能在一个 Run 里交付、验收者能实际使用的工作（例如给样本仓库补一个带测试的小功能）。**等第 4 步往返通过后再建这个 Task**：Leader 一有结果通知就会自己读到新 Task 并开始安排，配置没就绪时派出去的条目会被挂起。
 
 1. 按 [evoloop-requirements](../evoloop-requirements/SKILL.md) 写 Task：负责人是业务 Role，`consumer` 写验收 Session 的业务身份，`useRequired: true`，验收方式 `independent_agent`，验收方案写清样本、入口、预期和反例；正文写明交付放在哪里（例如推到裸仓库的某个分支）、验收者从哪里取。
-2. 交 Leader 安排：用需求 Session 的 CLI 给 Leader 发一条消息说明这项 Task。之后开始、分派、开 Run、交付、验收接力和关闭，按 [evoloop-workflow](../evoloop-workflow/SKILL.md) 与[协作要点](../evoloop-workflow/references/coordination.md)走；接入者只读回，不替 Leader、执行者或验收者签。
+2. 交 Leader 安排：Leader 会从新 Task 的结果通知自己读到它并开始安排，不等你的消息；你给 Leader 的消息只作补充说明（为什么做、验收要注意什么）。之后开始、分派、开 Run、交付、验收接力和关闭，按 [evoloop-workflow](../evoloop-workflow/SKILL.md)、[协作要点](../evoloop-workflow/references/coordination.md)与 [Leader 安排验收](../evoloop-workflow/references/leader-scheduling.md)走；验收者的 `used` 观察要关联到验收接力，关闭才会通过（规则见后者）。接入者只读回，不替 Leader、执行者或验收者签。
 3. 中途卡住先看[常见卡点](references/private-config.md#5-常见卡点)，按原 ID 对账，不换 ID 重发。
 
 **读回：** `cli task <TASK> --project <PROJECT>` 为 `done`；`cli work acceptance <TASK> --project <PROJECT>` 里验收者对当前 Delivery 签了 `used`；签 `used` 的身份不是交付者，也不是安排者。
@@ -112,7 +114,7 @@ description: 把一个新项目接入 evoLoop：先判断情况，再按步骤�
 | 今天的块 | Hub 上线后 |
 | --- | --- |
 | 第 0 步“有几台机器”与第 2 步的启动项 | 机器加入 Hub：在机器上确认一次允许的根目录 |
-| 第 1、2 步的身份文件、令牌、项目 ID 进身份文件，第 3 步的 `project.create` | 网页建项目、加成员；人用账号登录，智能体用 Hub 管理员建的服务身份；`members` 读回的 `source` 变为 `hub` |
+| 第 1、2 步的身份文件、令牌、项目 ID 进身份文件和 `project.create` | 网页建项目、加成员；人用账号登录，智能体用 Hub 管理员建的服务身份；`members` 读回的 `source` 变为 `hub` |
 | 第 1、2 步的工作目录与 `runtime.grants` 的 `cwd` | 在已确认的根目录下选项目目录 |
 
 在那之前，不要为“以后多机”提前改动今天的手工步骤。

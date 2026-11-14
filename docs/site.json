@@ -343,6 +343,11 @@
       "group": "研究 · 综合判断"
     },
     {
+      "path": "docs/research/onboarding-skill-trials.md",
+      "title": "接入 skill 的试跑记录",
+      "group": "研究 · 综合判断"
+    },
+    {
       "path": "docs/research/codex-app-server-20261019.md",
       "title": "Codex App Server 调查",
       "group": "研究 · 运行时"
