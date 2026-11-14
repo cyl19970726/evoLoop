@@ -308,11 +308,6 @@ node --import tsx tests/manual/session-compaction-e1.ts
 
 业务 Run 的范围变了就叫停，不要等它做完再返工：`command schema runtime.run.stop` 取结构，带 Run 的当前版本和理由，用 `command run FILE` 提交；身份要有 review 权限并持有该 Session 的精确执行授权，原生运行时离线时也能提交（未派发的 Run 在数据库里直接判失败，运行中的由 runner 在运行时恢复后中断）。提交后回读 Run：`stopRequestedAt` 已有、`interruptRequested` 为真表示等运行时中断；终态（`interrupted` 或 `failed`）由运行时观察确认，在此之前仍算未结束，Task 上不能再派新的 Run。用这个 Run 再提交会得到 `RUN_STOPPED`，叫停前已签的意图作废，不会产生交付。停止不会关恢复门，也没有失败通知，只有一条 `run.stopRequested` 运行事件。结果未知的 Run 也可以叫停：标记立即生效，有已知 Turn 的会被中断，Run 仍是 `unknown`，直到读回终态；读回终态后，被它关闭的恢复门自动打开（队列认领持有的门除外）。被叫停作废的排队消息带持久的“被取代”标记，选取与准入都排除，发送人取消或 `session.message.confirmSuperseded` 确认后才重新投递。
 
-## 已知缺口
-
-- **导入通知没有正式命令。** 迁移导入的 Leader 通知只能由维护者直接标记，没有权限检查和操作回执（见[迁移之后先处理导入的通知](#迁移之后先处理导入的通知)）。
-- **托管压缩只在 alpha.6 可用。** 隔离测试只用替身，不验证有认证的模型压缩。
-
 ## 6. 受管 Session 编制所需配置
 
 给一个 Role 新建受管 Session，要同时配好：业务身份（身份文件里对本项目有 read 与 write）、`runtime.grants`（含工作区 `cwd`）、Role 级 `runtime.materialCli`、**`residentQueue.roleActors`** 与 `residentQueue.enabled`、**成对配置的 `sessionMessages.grants`**，以及 `runtime.enabled`。完整清单、每项的格式和生效时机见 [Agent CLI：编制所需私有配置清单](agent-cli.md#编制所需私有配置清单session-prepare-缺项时)。
@@ -344,29 +339,56 @@ node --import tsx tests/manual/session-compaction-e1.ts
 
 这两项都只拦普通 Leader 结果通知，不拦业务 Task Run，也不拦使用者自己发的消息。默认都不配置，因此升级本身不改变行为。
 
+### 最小配置
+
 ```json
 "runtime": {
   "dailyBudget": {
     "enabled": true,
-    "maxInputTokens": 50000000,
-    "maxCostUsd": 25,
+    "maxInputTokens": 1000000000,
     "warningRatio": 0.8,
     "pauseOrdinaryTurns": true,
     "timeZone": "Asia/Tashkent"
   },
   "contextBudget": {
     "enabled": true,
-    "maxInputTokens": 150000,
+    "maxInputTokens": 200000,
     "warningRatio": 0.8,
     "pauseOrdinaryTurns": true
   }
 }
 ```
 
+- **每日上限。** `dailyBudget` 至少要设 `maxInputTokens` 或 `maxCostUsd` 之一。Codex 当前可能没有完整费用，因此优先用输入词元上限；只有运行时确实报告费用时才用 `maxCostUsd` 判定，未报告不会当成 0。上面的数字只是示例，启用前必须按当前用量调整；上限低于当日已用量会立即暂停普通通知。
+- **时区与生效时机。** `timeZone` 必须是 IANA 时区。账本按启动时读到的 `dailyBudget.timeZone` 分日，改动时区后要重启协调器；上限和 `pauseOrdinaryTurns` 则在每个普通结果通知前重读。即使不重启也能改变文案和字段，但分日键仍会沿用启动值，不能用这种不一致状态做验收。
+- **先只告警再暂停。** 若只想先核对提示，可先设 `pauseOrdinaryTurns:false`；确认工作台和 `runtime/usage` 的 `warning` 状态后再改为 `true`。不要为了制造告警，在正式实例临时压低上限。
+
+### 启用步骤与验收前置
+
+1. **维护者读当前用量。** 在工作台智能体页右栏“环境与用量”或 `GET /api/projects/PROJECT_ID/runtime/usage?from=YYYY-MM-DD&to=YYYY-MM-DD` 核对最近几天、今日和 Leader 的上下文，记下读取时区与时间。阈值由维护者按实际预算决定，不由执行代码的 Session 代填私有值。
+2. **维护者改私有配置。** 保留 `EVOLOOP_INTEGRATIONS_FILE` 原有字段，只增加或修订上例中的两个对象；令牌、Session ID 和真实限额不进入仓库。时区改动后重启协调器，并读回服务已使用新配置。
+3. **跑无生产副作用的固定验证。** 下面的场景测试只在临时目录写合成配置，不连数据库、不启动原生 Turn、不发送业务消息：
+
+   ```sh
+   npm run build:packages
+   node --import tsx --test \
+     packages/core/test/usage-context.test.ts \
+     apps/coordinator/test/ordinary-turn-admission.test.ts \
+     apps/coordinator/test/session-budget-verification.test.ts \
+     apps/workbench/test/usage-budget-panel.test.ts \
+     apps/workbench/test/usage-presentation.test.ts
+   ```
+
+   它覆盖配置解析、`warning`、每日上限与上下文上限的阻断、非通知消息不受影响、交接摘要和工作台提示。这个测试证明代码路径可重复，不证明某套私有配置已经启用或正式实例已经实际阻断。
+4. **只读读回启用状态。** 配置启用后重新读取 `runtime/usage` 和工作台：`budget.state` 应为 `ok`、`warning` 或 `exhausted`，目标 Session 的 `context.state` 应为 `ok`、`warning` 或 `handoff_required`；未知数据保持“未知/未报告”。这一步不触发通知，也不制造用量。
+5. **正式阻断与交接另行验收。** 需要观察真实阻断时，在隔离候选或专用测试库用合成通知验证，不在正式实例强压低阈值。交接仍由维护者用同一 Role 开启新 Session，写清原 Session、原生 Thread、固定 Task 和未处理通知；服务不会自动搬线程。发布与私有配置启用后，由独立验收 Session 按此入口核对，作者不能代签 `used` 或把代码测试写成正式启用。
+
 - **读回用量。** `GET /api/projects/PROJECT_ID/runtime/usage?from=YYYY-MM-DD&to=YYYY-MM-DD` 按 Session 和按天返回输入、输出、缓存输入、费用与上下文压力；工作台智能体页右栏“上下文与用量”（这个 Session 的上下文与今日用量）和统筹安排的“项目用量”（每日上限、近 7 天、计日时区）用同一个读取。费用缺失写“未报告”，不当 0。
 - **输入是含缓存的总量。** 账本和每日上限里的“输入”统一指模型处理过的全部输入词元，缓存读取与缓存创建都算在其中；`cachedInputTokens` 只是其中的子集，供展示，不再另加一次。Claude SDK 的 `input_tokens` 不含 `cache_read_input_tokens` 与 `cache_creation_input_tokens`，写账时三者相加；Codex v2 的 `input_tokens` 已包含 `cached_input_tokens`，由 `non_cached_input = input_tokens - cached_input_tokens` 可核。每日上限比较的是全项目当日所有 Session、所有运行时的输入合计，不只 Leader，也不只 Codex。
 - **账本误差的方向与范围。** 正常 Codex 路径按 Thread 累计快照取差；同一个 pump 内的多个用量通知仍逐个参与差值，不能只拿最后一条的 `last`。修复前有三类误差：重连后首个不含 usage 的事件曾把持久化基线覆盖为 `null`，到下一条通知只记 `last`，单次少算一条请求的量；复位后又在一个 pump 内继续请求时，曾只记最后一条 `last`，少算该间隔内其余请求的 `last` 之和；Claude 的输入曾漏掉缓存读取与缓存创建，少算这两项之和，并把与 Codex 不同口径的数直接相加。现在前两类按持久化基线与逐个通知修复，Claude 按上述含缓存口径写账。
-- **只适用于正常协议的范围。** 当前固定的 Codex `0.166.0-alpha.6` 与 `0.167.0-alpha.3.2` 都已把 v2 `ThreadTokenUsage.total` 定为必填字段（`codex-rs/app-server-protocol/src/protocol/v2/thread.rs` 的 `ThreadTokenUsage`），每条实时通知都带累计值；连接已有 Thread 时只重放 rollout 中最新的一条 `TokenCount` 快照，不把任意旧读数序列重投给同一连接（`codex-rs/app-server/src/request_processors/token_usage_replay.rs` 的 `rposition` 与 `conversation.token_usage_info()`）。因此正常路径不会触发“累计非单调的旧读数重投”或“只有 `last` 的重复通知”。若非标准或损坏的写入方仍重投递减的累计值，当前代码会把它当复位并可能各多记一条 `last`；若重复投递没有 `total` 的事件，则会每份多记一次 `last`。协议通知没有源事件序号，账本无法把这类输入与真实复位区分；遇到时应按原生 rollout 对账，不把它当作正常误差。
+- **只适用于正常协议的范围。** 当前固定的 Codex `0.166.0-alpha.6` 与 `0.167.0-alpha.3.2` 都已把 v2 `ThreadTokenUsage.total` 定为必填字段（`codex-rs/app-server-protocol/src/protocol/v2/thread.rs` 的 `ThreadTokenUsage`），每条实时通知都带累计值；连接已有 Thread 时只重放 rollout 中最新的一条 `TokenCount` 快照，不把任意旧读数序列重投给同一连接（`codex-rs/app-server/src/request_processors/token_usage_replay.rs` 的 `rposition` 与 `conversation.token_usage_info()`）。因此正常实时路径不会触发“只有 `last` 的重复通知”。**但“重放的那条最新持久化快照”仍可能比账本已见到的读数旧**：账本先收到内存里更新的实时读数，连接断开后重连，原生端重放的是 rollout 里落盘较早的最新快照，它的累计值就小于账本基线（发布切换、子进程丢失都会触发重连）。这条依据来自上面引用的 `token_usage_replay.rs`（只重放 rollout 里最新的 `TokenCount`），“落盘可能落后于实时读数”是推断，本机没有 Codex 源码，未能在本机核实。
+- **较小的累计值怎么判（缺陷 cbce1ba5）。** 同一 Thread 内累计值小于基线时，旧版本一律当复位：记这条读数的 `last` 并把基线退回这条旧读数，之后每条读数再按差值记一遍，三条旧读数重放就多记三条请求再加一遍差值。现在只有读数自己证明计数器重新开始才算复位——它的 `last` 等于 `total`（复位后的第一个请求，整个计数器就是这一个请求），记这条 `last` 并以它为新基线；除此之外一律是旧读数：不记任何增量、不退基线（持久化的基线也不退），并写一条 `runtime_record_event`，种类 `usage.staleReadingIgnored`，说明原因、这条读数、它对照的基线和“没有记入账本”。**没有可靠依据时宁可少记，不重复计入。** 局限：复位后的第一条读数若恰好也不满足 `last == total`（例如压缩后第一个请求之前就有别的请求），会被当旧读数忽略，该间隔的增量少记，直到累计值超过旧基线才继续按差值记；遇到时按原生 rollout 对账。
+- **没有 `total` 的重复事件。** 只有 `last` 的事件仍是兼容分支（v2 协议里 `total` 必填，正常路径不会进来；只在非标准写入方时进入）。同一 Turn 里紧接基线、`last` 与基线完全相同的这类事件当作同一事件再投递，不再记第二次，并写同一种 `usage.staleReadingIgnored` 记录（原因 `total_less_repeat_of_baseline_last`）；同一 Turn 里恰好连续两个大小完全相同的无 `total` 请求会少记一个——兼容分支里无法区分，取少记。
 - **修复旧账后再打开上限。** 累计值被当成增量的版本（PR #410 之前）写入的 Codex 日桶会偏大；本页这组重连、pump 与 Claude 口径修复之前的日桶还可能偏小。先在维护窗口备份 `session_usage_daily`，再按受影响 Session、日期与代码边界，从对应原生 rollout 的 `last_token_usage` 或真实 Turn 用量重算输入、缓存输入和输出，替换这些日桶，并记录 Session、日期、修复前后合计与 rollout 路径。无法取得完整原生样本的日桶删除并标为未记录，不能保留旧值后再按它打开每日上限；修复边界之后的记录继续由账本增量维护。
 - **警告与暂停。** 达到 `warningRatio` 只显示提示；达到上限后，结果通知消息以 `DAILY_BUDGET_EXHAUSTED` 或 `CONTEXT_HANDOFF_REQUIRED` 留在队列并写阻断原因。业务 Task Run、验收和人工消息仍可执行。要恢复，先处理交接或调整上限，再按原消息记录重试；不要另建一条消息冒充原通知。
 - **交接到新线程。** 用同一 Role 开启新 Session，把原 Session、原生 Thread、固定 Task 与未处理通知写进接手说明；新线程读取固定 Task 和当前工作变化后再决定下一步。`contextHandoffSummary()` 的格式可直接作为交接摘要；它不复制原生对话正文。

@@ -166,13 +166,18 @@ export class PgSessionObservation implements SessionObservationReader {
         WHERE a.project_id=$1 AND a.target_id=ANY($2::uuid[]) AND a.state IN ('assigned','accepted')
           AND a.task_revision_id=t.current_revision_id AND t.state='in_progress'
         ORDER BY a.target_kind,a.target_id,(a.state='accepted') DESC,t.task_id`, [this.projectId, aliases]);
-    const activeRuns = await this.client.query(`SELECT DISTINCT session_id FROM runtime_run WHERE project_id=$1 AND session_id=ANY($2::uuid[])
-        AND state=ANY($3::text[])`, [this.projectId, owned, active]);
+    // One row per Session with a live Run, carrying the Task that Run executes (the Session is busy and this is its current work).
+    const activeRuns = await this.client.query(`SELECT DISTINCT ON(r.session_id) r.session_id,t.*,'run'::text AS relation FROM runtime_run r
+        JOIN task t ON t.project_id=r.project_id AND t.task_id=r.task_id
+        WHERE r.project_id=$1 AND r.session_id=ANY($2::uuid[]) AND r.state=ANY($3::text[])
+        ORDER BY r.session_id,r.created_at DESC,r.run_id DESC`, [this.projectId, owned, active]);
     const activeMessages = await this.client.query(`SELECT DISTINCT session_id FROM session_message_processing WHERE project_id=$1 AND session_id=ANY($2::uuid[])
         AND state IN ('dispatching','running','unknown')`, [this.projectId, owned]);
     const work = new Map<string, Row>();
     for (const row of assignments.rows) work.set(`${row.target_kind}:${row.target_id}`, row);
     for (const row of claims.rows) work.set(`owned:${row.session_id}`, row);
+    // The Task a live Run is executing is the current work, whatever later happened to its revision or assignment (defect 52eb5ecf item 6).
+    for (const row of activeRuns.rows) work.set(`owned:${row.session_id}`, row);
     return { runs: new Map(runs.rows.map(row => [row.session_id, row])), work,
       busy: new Set([...activeRuns.rows, ...activeMessages.rows].map(row => row.session_id)) };
   }
@@ -186,7 +191,10 @@ export class PgSessionObservation implements SessionObservationReader {
     const runs = prepared ? { rows: [prepared.runs.get(row.identity)].filter(Boolean) } : row.kind === "owned" ? await this.client.query(`SELECT run_id,task_id,state,updated_at FROM runtime_run
       WHERE project_id=$1 AND session_id=$2 ORDER BY created_at DESC,run_id DESC LIMIT 1`, [this.projectId, row.identity]) : { rows: [] };
     const run = runs.rows[0];
-    const work = prepared ? { rows: [((row.all_aliases as string[]).map(id => prepared.work.get(`${row.kind}:${id}`)).find(Boolean))].filter(Boolean) } : await this.client.query(`SELECT t.*,CASE WHEN c.claim_id IS NOT NULL THEN 'claimed' ELSE a.state END AS relation
+    const executing = prepared || row.kind !== "owned" ? { rows: [] } : await this.client.query(`SELECT t.*,'run'::text AS relation FROM runtime_run r
+      JOIN task t ON t.project_id=r.project_id AND t.task_id=r.task_id WHERE r.project_id=$1 AND r.session_id=$2 AND r.state=ANY($3::text[])
+      ORDER BY r.created_at DESC,r.run_id DESC LIMIT 1`, [this.projectId, row.identity, active]);
+    const work = prepared ? { rows: [((row.all_aliases as string[]).map(id => prepared.work.get(`${row.kind}:${id}`)).find(Boolean))].filter(Boolean) } : executing.rows.length ? executing : await this.client.query(`SELECT t.*,CASE WHEN c.claim_id IS NOT NULL THEN 'claimed' ELSE a.state END AS relation
       FROM task t LEFT JOIN resident_queue_claim c ON c.project_id=t.project_id AND c.task_id=t.task_id
         AND c.session_id=$2 AND c.released_at IS NULL
       LEFT JOIN task_session_assignment a ON a.project_id=t.project_id AND a.task_id=t.task_id AND a.target_kind=$3
