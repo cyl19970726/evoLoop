@@ -441,3 +441,70 @@ test("a HostLink beyond the bounded directory alias list still resolves its exac
     assert.equal(exact?.currentWork?.id, taskId);
   } catch (error) { await client.query("ROLLBACK"); throw error; } finally { client.release(); }
 });
+
+test("current work is the Task a live Run executes, even after its revision changed; a queued accepted Task is not current work (defect 52eb5ecf)", async () => {
+  const sessionId = randomUUID(), runningTask = randomUUID(), queuedTask = randomUUID();
+  const rev = { running: randomUUID(), runningNext: randomUUID(), queued: randomUUID() };
+  const docs = new Map([[runningTask, { doc: randomUUID(), docRev: randomUUID() }], [queuedTask, { doc: randomUUID(), docRev: randomUUID() }]]);
+  const runId = randomUUID(), at = "2026-10-26T01:00:00.000Z";
+  const setup = await pool.connect();
+  try {
+    await setup.query(`INSERT INTO runtime_session(project_id,session_id,role_id,cwd,authorization_scope,model,sandbox,approval_policy,
+      state,version,native_thread_id,native_session_id,operation_id,actor_id,created_at,updated_at)
+      VALUES($1,$2,$3,'/tmp','fixture',NULL,'danger-full-access','never','ready',1,$4,$4,$5,'lead',$6,$6)`,
+      [projectId, sessionId, roleId, `native-${sessionId}`, randomUUID(), at]);
+  } finally { setup.release(); }
+  await new PostgresUnitOfWork(pool).transaction(projectId, async tx => {
+    for (const [id, revision, title] of [[runningTask, rev.running, "Running task"], [queuedTask, rev.queued, "Queued task"]] as const) {
+      const { doc, docRev } = docs.get(id)!, basis = randomUUID();
+      await tx.insertDocument({ projectId, id: doc, title, version: 1, currentRevisionId: docRev, adoptedRevisionId: null, kind: "task", status: "draft" });
+      await tx.insertDocumentRevision({ projectId, documentId: doc, id: docRev, body: "work", format: "markdown", mediaType: "text/markdown",
+        originalName: "t.md", payloadRef: null, entrypoint: null, assetsManifest: [], contentHash: "4".repeat(64), author: "lead", createdAt: at,
+        previousRevisionId: null, reason: "fixture" });
+      await tx.insertTask({ projectId, id, version: 1, currentRevisionId: revision, title, content: "work", contentDocumentId: doc, contentRevisionId: docRev,
+        kind: null, acceptance: "Result", owner: roleId, state: "in_progress" });
+      await tx.insertTaskRevision({ projectId, taskId: id, id: revision, version: 1, title, content: "work", contentDocumentId: doc, contentRevisionId: docRev,
+        kind: null, acceptance: "Result", owner: roleId, state: "in_progress", basisSetId: basis, actorId: "lead", reason: "fixture", createdAt: at });
+      await tx.insertSealedBasisSet({ projectId, taskId: id, taskRevisionId: revision, id: basis, sealed: true, members: [{ documentId: doc, revisionId: docRev }] });
+    }
+  });
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const store = new PgSessionAssignments(client, projectId);
+    const ack = { method: "lead-observed" as const, actorId: null, observerActorId: "lead", evidence: "replied", sourceRef: "chat:1", at };
+    for (const [id, revision] of [[runningTask, rev.running], [queuedTask, rev.queued]] as const)
+      await store.saveTaskSessionAssignment({ projectId, taskId: id, version: 1, taskRevisionId: revision, target: { kind: "owned", sessionId },
+        recipientActorId: "worker", state: "accepted", ack, actorId: "lead", reason: "accepted", updatedAt: at }, 0);
+    await client.query("COMMIT");
+    const runningRevision = (await new PostgresUnitOfWork(pool).transaction(projectId, async tx => (await tx.getTaskRevision(runningTask, rev.running))!.basisSetId))!;
+    await new PostgresUnitOfWork(pool).transaction(projectId, tx => tx.insertRuntimeRun({ projectId, id: runId, taskId: runningTask, taskRevisionId: rev.running,
+      basisSetId: runningRevision, sessionId, operationId: randomUUID(), input: "fixed", inputHash: "0".repeat(64), state: "requested", version: 1, nativeTurnId: null,
+      interruptRequested: false, resultSummary: null, actorId: "lead", createdAt: at, updatedAt: at }));
+    const reader = new PgSessionObservation(client, projectId, scope);
+    // The running Task's revision changes after its Run started (the live shape): its assignment no longer matches the current revision.
+    await new PostgresUnitOfWork(pool).transaction(projectId, async tx => {
+      const basis = randomUUID(), { doc, docRev } = docs.get(runningTask)!;
+      await tx.insertTaskRevision({ projectId, taskId: runningTask, id: rev.runningNext, version: 2, title: "Running task", content: "work v2", contentDocumentId: doc,
+        contentRevisionId: docRev, kind: null, acceptance: "Result", owner: roleId, state: "in_progress", basisSetId: basis, actorId: "lead", reason: "revised", createdAt: at });
+      await tx.insertSealedBasisSet({ projectId, taskId: runningTask, taskRevisionId: rev.runningNext, id: basis, sealed: true, members: [{ documentId: doc, revisionId: docRev }] });
+      await tx.updateTask({ projectId, id: runningTask, version: 2, currentRevisionId: rev.runningNext, title: "Running task", content: "work v2",
+        contentDocumentId: doc, contentRevisionId: docRev, kind: null, acceptance: "Result", owner: roleId, state: "in_progress" }, 1);
+    });
+    const snapshot = await reader.snapshot(`owned:${sessionId}`);
+    assert.equal(snapshot?.currentWork?.id, runningTask, "the Task the live Run executes is the current work");
+    assert.equal(snapshot?.currentWork?.relation, "run");
+    assert.equal(snapshot?.session.currentTask?.id, runningTask);
+    assert.equal(snapshot?.assignments.find(item => item.task.id === queuedTask)?.stale, false, "the queued Task stays listed as its own assignment, not as current work");
+    assert.equal(snapshot?.assignments.find(item => item.task.id === runningTask)?.stale, true);
+    let listed, page = await reader.directory({ limit: 50, membership: "all" });
+    for (;;) { listed = page.items.find(item => item.key === `owned:${sessionId}`); if (listed || !page.nextCursor) break; page = await reader.directory({ limit: 50, membership: "all", cursor: page.nextCursor }); }
+    assert.equal(listed?.currentTask?.id, runningTask, "the directory reads the same fact");
+    // When the Run ends, the executing Task no longer wins: the accepted assignment at the current revision is what remains.
+    await new PostgresUnitOfWork(pool).transaction(projectId, async tx => {
+      const run = await tx.getRuntimeRun(runId);
+      await tx.updateRuntimeRun({ ...run!, state: "failed", resultSummary: "ended", version: run!.version + 1, updatedAt: later }, run!.version);
+    });
+    assert.equal((await reader.snapshot(`owned:${sessionId}`))?.currentWork?.id, queuedTask);
+  } catch (error) { await client.query("ROLLBACK").catch(() => undefined); throw error; } finally { client.release(); }
+});

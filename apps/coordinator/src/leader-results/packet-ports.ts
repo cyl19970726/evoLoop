@@ -39,7 +39,8 @@ export function pgLeaderPacketPorts(pool: Pool, uow: PostgresUnitOfWork): Leader
       // A message a person sent that is still waiting: packet messages do not count, and neither do the two kinds the message pump skips
       // (blocked for want of its sender's grant; superseded by a Run stop and not yet confirmed): they cannot start however long they wait.
       const human = await client.query(`SELECT 1 FROM session_message m WHERE m.project_id=$1 AND m.session_id=$2 AND m.target_kind='owned' AND m.state='queued'
-        AND (m.blocked_reason IS NULL OR m.blocked_reason NOT LIKE 'MESSAGE_GRANT_MISSING:%')
+        AND (m.blocked_reason IS NULL OR (m.blocked_reason NOT LIKE 'MESSAGE_GRANT_MISSING:%' AND m.blocked_reason NOT LIKE 'PUBLICATION_PENDING:%'
+          AND m.blocked_reason NOT LIKE 'ACCEPTANCE_RELAY_BLOCKED:%'))
         AND (m.superseded_at IS NULL OR m.superseded_confirmed_at IS NOT NULL)
         AND NOT EXISTS(SELECT 1 FROM leader_notice_packet_attempt a WHERE a.project_id=m.project_id AND a.message_id=m.message_id)
         AND NOT EXISTS(SELECT 1 FROM leader_result_notice n WHERE n.project_id=m.project_id AND n.message_id=m.message_id AND n.state='linked' AND NOT n.via_packet) LIMIT 1`, [projectId, sessionId]);
