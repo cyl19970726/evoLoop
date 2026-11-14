@@ -90,6 +90,26 @@ test("packet recovery is confirmed by the recorded result, and after a lost repl
   assert.equal((await reconcileReceipt(transport,store,apiUrl,token,lost.id,actor)).state,"confirmed");
 });
 
+test("acceptance observation reconciles only the exact original operation and observation", async t => {
+  const store=await temporaryStore(t),taskId=randomUUID(),relayId=randomUUID(),observationId=randomUUID(),actor=verifiedActor("recipient");
+  const body={projectId,taskId,relayId,operationId:randomUUID(),expectedVersion:2,observationId};
+  const intent=prepareRequest("acceptance.observe",projectId,body,relayId);
+  const transport=client(async(_url,init)=>{
+    if(init?.method==="POST")throw new TypeError("response lost");
+    return response({items:[{relayId,taskId,observationId,observationActorId:actor.actorId,
+      observationOperationId:body.operationId}]});
+  });
+  await assert.rejects(dispatchMutation(transport,store,apiUrl,token,intent,()=>{},actor),pendingError);
+  const reconciled=await reconcileReceipt(transport,store,apiUrl,token,intent.id,actor);
+  assert.equal(reconciled.state,"confirmed");
+  assert.deepEqual(reconciled.result,{status:"recorded",operationId:body.operationId,relayId,observationId});
+
+  const other=prepareRequest("acceptance.observe",projectId,{...body,operationId:randomUUID()},relayId);
+  await assert.rejects(dispatchMutation(transport,store,apiUrl,token,other,()=>{},actor),pendingError);
+  await assert.rejects(reconcileReceipt(client(async()=>response({items:[{relayId,taskId,observationId,
+    observationActorId:actor.actorId,observationOperationId:body.operationId}]})),store,apiUrl,token,other.id,actor),pendingError);
+});
+
 test("lost recovery response confirms by reading both immutable notice identities",async t=>{
   const store=await temporaryStore(t),noticeId=randomUUID(),actor=verifiedActor("reviewer");
   const body={expectedOperationId:randomUUID(),newNoticeId:randomUUID(),newMessageId:randomUUID(),
