@@ -51,11 +51,11 @@ async function rig(t: import("node:test").TestContext) {
   };
   const store = new PgSchedulingStore(pool);
   /** The private configuration as the dispatcher sees it, changeable between triggers: which Sessions' runtime grants exist. */
-  const config = { enabled: true, granted: new Set<string>(), reads: 0, allGranted: true, recipientDenied: new Map<string, string>() };
+  const config = { enabled: true, granted: new Set<string>(), reads: 0, allGranted: true, recipientDenied: new Map<string, string>(), errors: [] as string[] };
   const dispatcher = new ScheduleDirectDispatcher({ pool, workflow: { execute: (who, command) => workflow.execute(who, command as never) as never }, newId: randomUUID,
     sessionDenial: sessionDenial(pool, async (): Promise<DirectAuthorizationConfig> => { config.reads++; return { runtime: { enabled: config.enabled },
       hasRuntimeGrant: scope => config.allGranted || config.granted.has(scope.cwd), allowedRuntimeCwd: async () => true }; }),
-    recipientDenial: async (_project, sessionId) => config.recipientDenied.get(sessionId) ?? null });
+    recipientDenial: async (_project, sessionId) => config.recipientDenied.get(sessionId) ?? null, onError: error => config.errors.push(error.message) });
   const T0 = Date.now();
   let scheduleSeq = 0;
   /** An hourly schedule (skip while the previous occurrence is open) whose first trigger is one hour after T0. */
@@ -345,4 +345,65 @@ test("the real scheduling pump runs the whole path: due occurrence, direct inten
   await pump.tickOnce();
   const last = (await r.logOf(scheduleId)).at(-1)!;
   assert.deepEqual([last.state, last.reason], ["fell_back", "POLICY_REVOKED"]);
+});
+
+/** A stale entry (its Task cancelled) put straight into a Session's line, as the earlier dispatch would have left it. */
+const staleEntry = async (r: Awaited<ReturnType<typeof rig>>, sessionId: string, title: string, state: "suspended" | "started", ended = false) => {
+  const taskId = await r.leaderTask(title);
+  await r.applied(r.lead, { type: "task.cancel", taskId, expectedVersion: 1, reason: "no longer needed" });
+  const entryId = randomUUID();
+  await r.pool.query(`INSERT INTO session_line(project_id,session_id,controller_actor_id,version,created_at,updated_at) SELECT $1,$2,'lead',1,now(),now()
+    WHERE NOT EXISTS(SELECT 1 FROM session_line WHERE project_id=$1 AND session_id=$2)`, [r.projectId, sessionId]);
+  await r.pool.query(`INSERT INTO session_line_entry(project_id,entry_id,session_id,task_id,position,state,suspend_reason,source,source_actor_id,schedule_id,run_id,run_ended_at,version,appended_at,updated_at)
+    VALUES($1,$2,$3,$4,(SELECT COALESCE(max(position),0)+1 FROM session_line_entry WHERE project_id=$1 AND session_id=$3),$5,$6,'schedule','dispatcher:schedule',$7,$8,$9,1,now(),now())`,
+    [r.projectId, entryId, sessionId, taskId, state, state === "suspended" ? "RECIPIENT_UNAVAILABLE" : null, randomUUID(), state === "started" ? randomUUID() : null, ended ? new Date().toISOString() : null]);
+  return { entryId, taskId };
+};
+const cleanupEvents = async (r: Awaited<ReturnType<typeof rig>>) => (await r.pool.query("SELECT entry_id, detail FROM session_line_event WHERE project_id=$1 AND kind='entry.cleanupFailed' ORDER BY event_seq", [r.projectId])).rows;
+
+test("a started entry whose Run has ended is finished work: it is not selected, counted or cleared, and it does not make the cleanup fail", async t => {
+  const r = await rig(t);
+  const a = await r.session("/tmp/a"), b = await r.session("/tmp/b");
+  await r.setList([a, b]);
+  const finished = await staleEntry(r, a, "Finished", "started", true);
+  const scheduleId = await r.makeSchedule(); await r.setPolicy(scheduleId);
+  await r.fire(1);
+  assert.deepEqual(await r.dispatchAt(1), { dispatched: 1, fellBack: 0 });
+  assert.equal((await r.logOf(scheduleId))[0]!.session_id, a, "A's finished entry does not count as a queue: A and B tie at 0 and the list order picks A");
+  assert.equal((await r.lineOf(a)).find(row => row.entry_id === finished.entryId)!.state, "started", "the finished entry was left as it is");
+  assert.deepEqual(await cleanupEvents(r), [], "nothing was attempted on it, so nothing failed");
+  assert.deepEqual(r.config.errors, []);
+});
+
+test("a cleanup that is refused is told with the entry, the reason and the operation, once, not silently every pass", async t => {
+  const r = await rig(t);
+  const a = await r.session();
+  await r.setList([a]);
+  const stuck = await staleEntry(r, a, "Stuck", "suspended");
+  // The dispatcher is given an identity without review authority: the withdrawal is refused.
+  await r.dispatcher.process(r.projectId, r.writer, new Date(r.T0 + HOUR).toISOString());
+  const events = await cleanupEvents(r);
+  assert.equal(events.length, 1);
+  assert.deepEqual([events[0].entry_id, events[0].detail.operation, events[0].detail.code], [stuck.entryId, "schedule.directEntry.withdraw", "FORBIDDEN"]);
+  assert.equal(r.config.errors.length, 1); assert.match(r.config.errors[0]!, new RegExp(stuck.entryId));
+  await r.dispatcher.process(r.projectId, r.writer, new Date(r.T0 + HOUR + 60_000).toISOString());
+  assert.equal((await cleanupEvents(r)).length, 1, "the same failure is not recorded again");
+  assert.equal(r.config.errors.length, 1);
+  // With the right authority the same entry is cleared and nothing is left over.
+  await r.dispatcher.process(r.projectId, r.lead, new Date(r.T0 + HOUR + 120_000).toISOString());
+  assert.equal((await r.lineOf(a)).find(row => row.entry_id === stuck.entryId)!.state, "withdrawn");
+});
+
+test("more than one page of stale entries is cleared completely, and the Session is then sent work: a real suspended head is never hidden behind the first 50", async t => {
+  const r = await rig(t);
+  const a = await r.session();
+  await r.setList([a]);
+  const total = 55;
+  for (let i = 0; i < total; i++) await staleEntry(r, a, `Stale ${i}`, "suspended");
+  const scheduleId = await r.makeSchedule(); await r.setPolicy(scheduleId);
+  await r.fire(1);
+  assert.deepEqual(await r.dispatchAt(1), { dispatched: 1, fellBack: 0 }, "every stale suspended head was cleared in one pass and the Session took the work");
+  const states = (await r.lineOf(a)).map(row => row.state);
+  assert.equal(states.filter(state => state === "withdrawn").length, total, "all 55 were cleared, not only the first page");
+  assert.deepEqual(await cleanupEvents(r), []);
 });

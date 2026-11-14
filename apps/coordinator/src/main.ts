@@ -578,6 +578,7 @@ const runner = runtimeFactory ? new RuntimeRunner({ runtimeFactory, workflow: se
 lateRunner.current = runner;
 const scheduling = new SchedulingPump({ store: new PgSchedulingStore(pool), taskTiming: new PgTaskTimingStore(pool), canWrite: lease.canWrite,
   directDispatch: new ScheduleDirectDispatcher({ pool, workflow: { execute: (principal, command) => service.execute(principal, command as never) as never }, sessionDenial: sessionDenial(pool, () => loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE) as never),
+    onError: error => console.error(error.message),
     recipientDenial: async (projectId, sessionId) => { const found = await lineRecipient(projectId, sessionId); return found === null ? "SESSION_NOT_FOUND" : typeof found === "string" ? null : found.unresolved; }, newId: randomUUID }),
   credentials: () => credentials, grants: () => integrations.scheduling?.grants ?? [],
   taskTimingGrants: async () => {

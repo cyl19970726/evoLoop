@@ -20,12 +20,15 @@ export interface DirectDispatchDeps {
    */
   recipientDenial?(projectId: string, sessionId: string): Promise<string | null>;
   newId(): string;
+  /** Called with every failure the dispatcher could not handle (cleanup that was refused, for instance); it is also recorded as a line event. */
+  onError?(error: Error): void;
 }
 
 interface Candidate { sid: string; ord: number; qlen: number; running: boolean; ready: boolean; gateOpen: boolean; profileOk: boolean; headSuspended: boolean }
-const LIVE = "('queued','suspended','starting','started')";
+/** An entry still occupies its line while it waits, is being started, or its Run is running. A started entry whose Run has ended is finished work: it neither counts nor can be removed. */
+const live = (alias: string) => `(${alias}.state IN ('queued','suspended','starting') OR (${alias}.state='started' AND ${alias}.run_ended_at IS NULL))`;
 /** A line entry only counts while its Task is open: the entry of a cancelled or closed Task is a stale occupant, never work waiting. */
-const OPEN_ENTRY = `e.state IN ${LIVE} AND EXISTS(SELECT 1 FROM task tt WHERE tt.project_id=e.project_id AND tt.task_id=e.task_id AND tt.state NOT IN ('done','cancelled'))`;
+const OPEN_ENTRY = `${live("e")} AND EXISTS(SELECT 1 FROM task tt WHERE tt.project_id=e.project_id AND tt.task_id=e.task_id AND tt.state NOT IN ('done','cancelled'))`;
 
 export class ScheduleDirectDispatcher {
   constructor(private readonly deps: DirectDispatchDeps) {}
@@ -75,14 +78,41 @@ export class ScheduleDirectDispatcher {
       FROM late JOIN task t ON t.project_id=$1 AND t.task_id=late.task_id`, [projectId, now]);
   }
 
-  /** The entry of a scheduled Task that was cancelled or closed still sits in its line (a suspended or started head blocks the Session for good): clear it. */
+  /**
+   * The entry of a scheduled Task that was cancelled or closed still sits in its line (a suspended or started head blocks the Session for good): clear it.
+   * Entries are read page by page in order, so a line with many stale entries is cleared completely and a real suspended head is never hidden behind a
+   * fixed first page. A started entry whose Run has ended is finished work, not an occupant, and is left alone. A refusal is not swallowed: it is
+   * reported with the entry, the reason and the operation, and recorded once as a line event.
+   */
   private async clearStaleOccupants(projectId: string, principal: Principal): Promise<void> {
-    const stale = await this.deps.pool.query(`SELECT e.entry_id, e.version FROM session_line_entry e JOIN task t ON t.project_id=e.project_id AND t.task_id=e.task_id
-      WHERE e.project_id=$1 AND e.source='schedule' AND e.state IN ${LIVE} AND t.state IN ('done','cancelled') ORDER BY e.appended_at LIMIT 50`, [projectId]);
-    for (const row of stale.rows) {
-      await this.deps.workflow.execute(principal, { type: "schedule.directEntry.withdraw", projectId, operationId: this.deps.newId(), entryId: row.entry_id,
-        expectedVersion: row.version, choice: "cancel", reason: "The scheduled Task is already cancelled or closed" } as never).catch(() => undefined);
+    let after: { at: string; id: string } | null = null;
+    for (let page = 0; page < 40; page++) {
+      const stale: { rows: Array<{ entry_id: string; version: number; session_id: string; task_id: string; appended_at: Date }> } = await this.deps.pool.query(
+        `SELECT e.entry_id, e.version, e.session_id, e.task_id, e.appended_at FROM session_line_entry e JOIN task t ON t.project_id=e.project_id AND t.task_id=e.task_id
+          WHERE e.project_id=$1 AND e.source='schedule' AND ${live("e")} AND t.state IN ('done','cancelled')
+            AND ($2::timestamptz IS NULL OR (e.appended_at, e.entry_id::text) > ($2::timestamptz, $3::text))
+          ORDER BY e.appended_at, e.entry_id LIMIT 50`, [projectId, after?.at ?? null, after?.id ?? null]);
+      for (const row of stale.rows) {
+        const outcome: { status: string; code?: string; message?: string } = await this.deps.workflow.execute(principal, { type: "schedule.directEntry.withdraw", projectId,
+          operationId: this.deps.newId(), entryId: row.entry_id, expectedVersion: row.version, choice: "cancel", reason: "The scheduled Task is already cancelled or closed" } as never)
+          .catch((error: { code?: string; message?: string }) => ({ status: "rejected", code: error.code ?? "ERROR", message: error.message ?? "" }));
+        if (outcome.status !== "applied") await this.reportCleanupFailure(projectId, row, outcome.code ?? "REJECTED", outcome.message ?? "");
+      }
+      if (stale.rows.length < 50) return;
+      const last = stale.rows[stale.rows.length - 1]!;
+      after = { at: last.appended_at.toISOString(), id: last.entry_id };
     }
+  }
+
+  /** A failed cleanup is told, with what failed and why, once per distinct failure: it is retried every pass, so repeating it would only add noise. */
+  private async reportCleanupFailure(projectId: string, row: { entry_id: string; session_id: string; task_id: string }, code: string, message: string): Promise<void> {
+    const detail = { operation: "schedule.directEntry.withdraw", entryId: row.entry_id, code, message: message.slice(0, 500) };
+    const known = await this.deps.pool.query(`SELECT 1 FROM session_line_event WHERE project_id=$1 AND entry_id=$2 AND kind='entry.cleanupFailed' AND detail->>'code'=$3 AND detail->>'message'=$4 LIMIT 1`,
+      [projectId, row.entry_id, code, detail.message]);
+    if (known.rowCount) return;
+    await this.deps.pool.query(`INSERT INTO session_line_event(project_id,session_id,entry_id,task_id,kind,detail,actor_id,at) VALUES($1,$2,$3,$4,'entry.cleanupFailed',$5::jsonb,'dispatcher:schedule',now())`,
+      [projectId, row.session_id, row.entry_id, row.task_id, JSON.stringify(detail)]);
+    this.deps.onError?.(new Error(`Direct dispatch could not clear stale line entry ${row.entry_id} (${detail.operation}): ${code} ${detail.message}`));
   }
 
   /**
@@ -101,7 +131,7 @@ export class ScheduleDirectDispatcher {
         NOT EXISTS(SELECT 1 FROM session_execution_profile p WHERE p.project_id=$1 AND p.session_id=list.sid AND p.activation_state IN ('rejected','unknown')) AS "profileOk",
         EXISTS(SELECT 1 FROM session_line_entry h WHERE h.project_id=$1 AND h.session_id=list.sid AND h.state='suspended'
           AND h.position=(SELECT min(x.position) FROM session_line_entry x JOIN task tx ON tx.project_id=x.project_id AND tx.task_id=x.task_id
-            WHERE x.project_id=$1 AND x.session_id=list.sid AND x.state IN ${LIVE} AND tx.state NOT IN ('done','cancelled'))) AS "headSuspended"
+            WHERE x.project_id=$1 AND x.session_id=list.sid AND ${live("x")} AND tx.state NOT IN ('done','cancelled'))) AS "headSuspended"
       FROM list LEFT JOIN runtime_session rs ON rs.project_id=$1 AND rs.session_id=list.sid ORDER BY list.ord`, [projectId, roleId])).rows;
     if (!rows.length) return { sessionId: null, denial: "DIRECT_LIST_EMPTY" };
     const usable: Candidate[] = [];
