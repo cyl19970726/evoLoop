@@ -732,6 +732,37 @@ test("defect 3d30f7ac: a Run bound without a readback (actual unread) gets one m
   }
 });
 
+test("defect 3d30f7ac (formal re-work): the terminal readback also reaches Codex through the provider router the coordinator really uses with two providers",async()=>{
+  // The production runtime with Codex and Claude is a ProviderRoutedRuntime. It forwarded a fixed list of optional methods that did not include
+  // observeTurnEffort, so the runner saw no such method and never ran the terminal readback: every Codex Run settled "not recorded".
+  for(const withRouter of [true,false]){
+    const active={...run,id:randomUUID(),state:"running" as RuntimeRunRecord["state"],nativeTurnId:"owned-turn",
+      actual:{model:null,reasoningEffort:null,subagentModels:[],effortRequested:false} as RuntimeRunRecord["actual"]};
+    const codex=new FakeRuntime() as unknown as Record<string,unknown>;
+    let asked=0;
+    codex.listTurns=async()=>({data:[{id:"owned-turn",status:"completed",completedAtUtc:new Date().toISOString()}],nextCursor:null});
+    codex.observeTurnEffort=async()=>{asked++;return{reasoningEffort:"max",model:"deepseek/deepseek-flash"};};
+    const claude=new FakeRuntime();
+    const runtime=withRouter?new ProviderRoutedRuntime(new Map<RuntimeProvider,ManagedRuntime>([["codex",codex as unknown as ManagedRuntime],["claude",claude as unknown as ManagedRuntime]]),"codex")
+      :codex as unknown as ManagedRuntime;
+    let checkpoint:Record<string,unknown>|null=null;
+    const workflow={getProject:async()=>({id:projectId}),listRuntimeSessions:async()=>[session],
+      listRuntimeRuns:async()=>[active],getRuntimeSession:async()=>session} as unknown as WorkflowService;
+    const trusted={recoverDispatching:async()=>({sessions:[],runs:[]}),
+      recordTurn:async(_p:string,_id:string,_turn:string,_status:string,_summary:string,given:Record<string,unknown>)=>{checkpoint=given;active.state="completed";return active;}} as unknown as RuntimeWorkflowService;
+    const runner=new RuntimeRunner({runtimeFactory:()=>runtime as unknown as RuntimePort & FakeRuntime,
+      workflow,trusted,principals:[{actorId,projectIds:[projectId],permissions:["read","write","review"]}],
+      canWrite:()=>true,allowedCwd:async()=>true,hasGrant:()=>true});
+    try{
+      await runner.start();await runner.pump();
+      assert.ok(checkpoint,`router=${withRouter}: the Turn was settled`);
+      assert.equal(asked,1,`router=${withRouter}: Codex was asked for the late readback`);
+      assert.equal(checkpoint!.observedReasoningEffort,"max",`router=${withRouter}: effort recorded`);
+      assert.equal(checkpoint!.observedModel,"deepseek/deepseek-flash",`router=${withRouter}: model recorded`);
+    }finally{await runner.stop();}
+  }
+});
+
 test("close uses the original actor and exact grant, refusing missing authority or cwd without native writes", async t => {
   const originalGrant = { projectId, actorId, roleId: session.roleId, authorizationScope: session.authorizationScope,
     cwd: session.cwd, sandbox: session.sandbox, model: session.model, approvalPolicy: session.approvalPolicy };

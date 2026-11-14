@@ -16,7 +16,7 @@
 | [即时输入](#2-即时输入) | `directInputs` | 关闭 | 每次请求重读；前提是服务启动时已启用运行时 | [即时输入](../architecture/session-runtime.md#3-即时输入执行中收到的消息怎样处理) |
 | [托管压缩](#3-托管压缩) | `runtime.compaction.owned` | `true` | 启动时读，改后重启 | [托管压缩](../architecture/session-runtime.md#4-托管压缩) |
 | [普通 Task 的每日复制](#4-普通-task-的每日复制) | `scheduling.taskTimingGrants` | 空 | 每次创建、改时和物化时重读 | [一次与每日复制](../architecture/contracts.md#普通-task-的一次与每日复制) |
-| [受管 Session 编制](#6-受管-session-编制所需配置) | `residentQueue.roleActors`、`runtime.materialCli`、`runtime.grants` 等 | 无（逐项见该节） | `session prepare` 每次重读；只有 `runtime.enabled` 与新增 HTTP 令牌要重启 | [准备或复用受管 Session](agent-cli.md#准备或复用受管-session) |
+| [受管 Session 编制](#6-受管-session-编制所需配置) | `residentQueue.roleActors`、`runtime.materialCli`、`runtime.grants` 等 | 无（逐项见该节） | `session prepare` 每次重读；`runtime.enabled`、新增 HTTP 令牌、`runtime.grants` 新增的工作目录或模型要重启 | [准备或复用受管 Session](agent-cli.md#准备或复用受管-session) |
 | [阶段关注](#5-阶段关注) | 没有开关，门槛用命令修订 | 服务运行就评估，每 30 秒一次 | 不适用 | [阶段等待由事实推导](../architecture/contracts.md#阶段等待由事实推导) |
 | [用量上限与上下文交接](#7-用量上限与上下文交接) | `runtime.dailyBudget`、`runtime.contextBudget` | 都不限 | 上限与开关在每个普通结果通知前重读；账本时区在启动时读 | [长会话的上下文交接](../architecture/session-runtime.md#长会话的上下文交接与每日用量上限) |
 
@@ -324,11 +324,6 @@ node --import tsx tests/manual/session-compaction-e1.ts
 
 两条都只用新命令，不改库。每次释放先读 `version`（`expectedVersion`），释放后读回接力状态为 `released`，`blockedReason` 带这条理由（`task_acceptance_relay_release` 里也有，不可改）。这一步需要发布后由 Leader 执行，我没有在正式实例上做。上述顺序（新接力 → 链接新的 used → 释放 → 关闭，以及其中的 `LAST_ARRANGEMENT`、`OBSERVATION_MISMATCH` 拒绝）已在自建实例用真实 CLI 进程走过一遍，见 `tests/integration/acceptance-release-cli.test.ts`（用的是人类接收者；`session` 模式的消息发送与处理没有在这条测试里走）。
 
-## 已知缺口
-
-- **导入通知没有正式命令。** 迁移导入的 Leader 通知只能由维护者直接标记，没有权限检查和操作回执（见[迁移之后先处理导入的通知](#迁移之后先处理导入的通知)）。
-- **托管压缩只在 alpha.6 可用。** 隔离测试只用替身，不验证有认证的模型压缩。
-
 ## 6. 受管 Session 编制所需配置
 
 给一个 Role 新建受管 Session，要同时配好：业务身份（身份文件里对本项目有 read 与 write）、`runtime.grants`（含工作区 `cwd`）、Role 级 `runtime.materialCli`、**`residentQueue.roleActors`** 与 `residentQueue.enabled`、**成对配置的 `sessionMessages.grants`**，以及 `runtime.enabled`。完整清单、每项的格式和生效时机见 [Agent CLI：编制所需私有配置清单](agent-cli.md#编制所需私有配置清单session-prepare-缺项时)。
@@ -343,7 +338,7 @@ node --import tsx tests/manual/session-compaction-e1.ts
 **“可报告为就绪”的判据。** `session prepare` 成功、配置缺项为空、`runtime_session.state=ready` 或原生 Thread 可读，只证明编制和原生绑定完成，可能仍早于模型成功运行。对外报告新 Session“就绪”前，必须完成一次真实消息往返：
 
 1. 用 Leader 身份按 `command schema session.message.post` 发一条带唯一标记的约定测试消息，保留返回的 `messageId`。
-2. 新 Session 实际处理后，按同一命令和反向授权发回原标记，并带原消息的 `replyToMessageId`。
+2. 新 Session 实际处理后，按同一命令和反向授权**另发一条新消息**带回原标记，不带 `replyToMessageId`：`replyToMessageId` 只能指向发给同一个接收 Session 的消息，指向发给对方 Session 的原消息会被拒（`REPLY_TARGET_MISMATCH`），消息不保存。
 3. 用 `work message MESSAGE_ID` 和 `work status owned:SESSION_ID --message MESSAGE_ID` 分别读回两个方向的已保存消息、processing 与原生 Turn；目标 Session 一侧还要核到已有回复。
 
 只有两个方向都成功发送并处理、原生 Turn 可核、回复中的标记一致，才报告就绪，并保留两条消息 ID 与读回结果作对照记录。只有配置检查通过、发送返回 `applied`、状态显示 `ready`、消息已保存或没有回复，都不算就绪。
@@ -351,7 +346,7 @@ node --import tsx tests/manual/session-compaction-e1.ts
 **换路径后先实跑一次。** 换 Role、换验收者或换 Session 后，新的路径必须先实际跑通一次才算落地：第一次派单要真的开出 Run，或新 Session 真的处理过一条消息。换验收者时，新的验收安排也要真正送达并由接收 Session 处理；只改配置、只换绑定、只保存一条分派记录或只在文档里写计划，都不算。保留这次 Run 或消息的 ID、实际处理结果与读回证据，作为新路径可用的对照记录。
 
 - **缺项怎么看。** `session prepare` 返回 `status=blocked`，`missing` 是代码，`missingDetails` 写明要设的配置项、可复制的修法和是否需重启；`role_actor` 就是缺 `residentQueue.roleActors`（或它没启用、或该身份无写权限）。
-- **哪些要重启。** 按代码核对，`session prepare` 每次调用都重读 integrations 与身份文件，补 `residentQueue.roleActors`、`runtime.materialCli`、`runtime.grants` 不需要重启；只有 `runtime.enabled`（运行时只在启动时建立）和新增 HTTP 令牌要重启。
+- **哪些要重启。** 按代码核对，`session prepare` 每次调用都重读 integrations 与身份文件，补 `residentQueue.roleActors`、`runtime.materialCli` 不需要重启。`runtime.grants` 的授权匹配每次重读，但运行器建 Session、开 Run 和恢复时接受的工作目录、`models` 列出的模型，用的是服务启动时读入的 grants（`apps/coordinator/src/main.ts` 把启动时的 `allowedRuntimeCwd` 交给运行器），所以**新增工作目录或模型的 grant 要重启**才可用；2026-11-14 的接入试跑里，只改文件不重启时 `capabilities` 的 `runtime` 显示 `grant_directory_unavailable`、`pending` 显示重启后才是 `configured`。另外 `runtime.enabled`（运行时只在启动时建立）和新增 HTTP 令牌要重启。
 
 - **身份的额外命令（`extraCommands`）。** 给文档与架构这类只有 read、write 的身份开放归档与恢复时，在身份文件里该凭据上加 `"extraCommands": ["document.archive", "document.restore"]`，不要给它 `review`（那样它还能开始、关闭、分派 Task）。清单只接受这两个值，别的命令写进去则服务启动时读身份文件失败；每条命令各自生效。**身份文件在服务启动时读取，改了要重启服务才生效**（`session prepare` 重读身份文件只用于其编制检查，不改变 HTTP 认证用的启动快照）。
 - **同一个事实写两处。** `runtime.materialCli` 的 `cliActorId` 与 `residentQueue.roleActors` 的 `actorId` 在 Role 级必须一致，不一致时报 `material_cli_actor_mismatch`；为什么暂不合并见 Agent CLI 那一节。
@@ -360,24 +355,49 @@ node --import tsx tests/manual/session-compaction-e1.ts
 
 这两项都只拦普通 Leader 结果通知，不拦业务 Task Run，也不拦使用者自己发的消息。默认都不配置，因此升级本身不改变行为。
 
+### 最小配置
+
 ```json
 "runtime": {
   "dailyBudget": {
     "enabled": true,
-    "maxInputTokens": 50000000,
-    "maxCostUsd": 25,
+    "maxInputTokens": 1000000000,
     "warningRatio": 0.8,
     "pauseOrdinaryTurns": true,
     "timeZone": "Asia/Tashkent"
   },
   "contextBudget": {
     "enabled": true,
-    "maxInputTokens": 150000,
+    "maxInputTokens": 200000,
     "warningRatio": 0.8,
     "pauseOrdinaryTurns": true
   }
 }
 ```
+
+- **每日上限。** `dailyBudget` 至少要设 `maxInputTokens` 或 `maxCostUsd` 之一。Codex 当前可能没有完整费用，因此优先用输入词元上限；只有运行时确实报告费用时才用 `maxCostUsd` 判定，未报告不会当成 0。上面的数字只是示例，启用前必须按当前用量调整；上限低于当日已用量会立即暂停普通通知。
+- **时区与生效时机。** `timeZone` 必须是 IANA 时区。账本按启动时读到的 `dailyBudget.timeZone` 分日，改动时区后要重启协调器；上限和 `pauseOrdinaryTurns` 则在每个普通结果通知前重读。即使不重启也能改变文案和字段，但分日键仍会沿用启动值，不能用这种不一致状态做验收。
+- **先只告警再暂停。** 若只想先核对提示，可先设 `pauseOrdinaryTurns:false`；确认工作台和 `runtime/usage` 的 `warning` 状态后再改为 `true`。不要为了制造告警，在正式实例临时压低上限。
+
+### 启用步骤与验收前置
+
+1. **维护者读当前用量。** 在工作台智能体页右栏“环境与用量”或 `GET /api/projects/PROJECT_ID/runtime/usage?from=YYYY-MM-DD&to=YYYY-MM-DD` 核对最近几天、今日和 Leader 的上下文，记下读取时区与时间。阈值由维护者按实际预算决定，不由执行代码的 Session 代填私有值。
+2. **维护者改私有配置。** 保留 `EVOLOOP_INTEGRATIONS_FILE` 原有字段，只增加或修订上例中的两个对象；令牌、Session ID 和真实限额不进入仓库。时区改动后重启协调器，并读回服务已使用新配置。
+3. **跑无生产副作用的固定验证。** 下面的场景测试只在临时目录写合成配置，不连数据库、不启动原生 Turn、不发送业务消息：
+
+   ```sh
+   npm run build:packages
+   node --import tsx --test \
+     packages/core/test/usage-context.test.ts \
+     apps/coordinator/test/ordinary-turn-admission.test.ts \
+     apps/coordinator/test/session-budget-verification.test.ts \
+     apps/workbench/test/usage-budget-panel.test.ts \
+     apps/workbench/test/usage-presentation.test.ts
+   ```
+
+   它覆盖配置解析、`warning`、每日上限与上下文上限的阻断、非通知消息不受影响、交接摘要和工作台提示。这个测试证明代码路径可重复，不证明某套私有配置已经启用或正式实例已经实际阻断。
+4. **只读读回启用状态。** 配置启用后重新读取 `runtime/usage` 和工作台：`budget.state` 应为 `ok`、`warning` 或 `exhausted`，目标 Session 的 `context.state` 应为 `ok`、`warning` 或 `handoff_required`；未知数据保持“未知/未报告”。这一步不触发通知，也不制造用量。
+5. **正式阻断与交接另行验收。** 需要观察真实阻断时，在隔离候选或专用测试库用合成通知验证，不在正式实例强压低阈值。交接仍由维护者用同一 Role 开启新 Session，写清原 Session、原生 Thread、固定 Task 和未处理通知；服务不会自动搬线程。发布与私有配置启用后，由独立验收 Session 按此入口核对，作者不能代签 `used` 或把代码测试写成正式启用。
 
 - **读回用量。** `GET /api/projects/PROJECT_ID/runtime/usage?from=YYYY-MM-DD&to=YYYY-MM-DD` 按 Session 和按天返回输入、输出、缓存输入、费用与上下文压力；工作台智能体页右栏“上下文与用量”（这个 Session 的上下文与今日用量）和统筹安排的“项目用量”（每日上限、近 7 天、计日时区）用同一个读取。费用缺失写“未报告”，不当 0。
 - **输入是含缓存的总量。** 账本和每日上限里的“输入”统一指模型处理过的全部输入词元，缓存读取与缓存创建都算在其中；`cachedInputTokens` 只是其中的子集，供展示，不再另加一次。Claude SDK 的 `input_tokens` 不含 `cache_read_input_tokens` 与 `cache_creation_input_tokens`，写账时三者相加；Codex v2 的 `input_tokens` 已包含 `cached_input_tokens`，由 `non_cached_input = input_tokens - cached_input_tokens` 可核。每日上限比较的是全项目当日所有 Session、所有运行时的输入合计，不只 Leader，也不只 Codex。
@@ -414,6 +434,14 @@ node --import tsx tests/manual/session-compaction-e1.ts
 **`MESSAGE_POST_applied` 的原因。** 接力保留了一个消息 ID 和一个操作 ID。Leader 若自己发了这条接力消息，用了保留的操作 ID 却用了自己的消息 ID，日志里这个操作确实是 applied，但创建的实体不是保留的消息 ID，旧代码就把接力置为 blocked 并写 `MESSAGE_POST_applied`——而这条消息其实是正确的。现在：那个操作创建的消息若是同一发送者、同一 Session、同一 Task 修订、用保留的操作 ID 写的，接力绑定到它（接力的消息 ID 改成它）并继续；否则接力 blocked，原因写 `MESSAGE_OPERATION_ID_USED_BY_ANOTHER_MESSAGE: operation … created …`，说明发生了什么。复现与修复前后输出见 `packages/adapter-postgres/test/acceptance-relay-queue-head.test.ts` 的第 5 个用例（修前该用例得到 `blocked / MESSAGE_POST_applied`）。
 
 **正式实例上已卡住的消息。** 发布后，acceptance-claude 队伍里已卡的接力消息会在下一轮准入时按上面处理：被取代、已释放的接力其消息被撤下；blocked 的接力其消息写上原因、不再堵后面；等发布的在发布标记写上后开始。消息已被 Leader 先撤下的不再处理。逐条核对用 `work messages` 读消息状态与 `blocked_reason`，用 `work acceptance TASK` 读接力状态。
+
+## 消息泵日志与关闭的恢复门
+
+**消息泵的错误日志。** 服务 stderr 里的 `Session message needs reconciliation` 现在写成一行带原因的话：`code=错误码 message=消息ID session=SessionID project=项目ID state=消息状态 error=摘要`。错误码是业务错误的 code、原生 JSON-RPC 错误（如 `RuntimeServerError(-32600)`）或错误类名。**摘要怎么来：** 平台自己写文案的错误（`DomainError`、`RuntimeServerError`）保留摘要（最多 200 字、去换行），其它错误（普通 `Error`、网络错误等）不回显文字，只写“text withheld: 类名”；保留的摘要还要统一脱敏：引号里的长文本、`Bearer …`、`token=…`/`password=…`/`authorization: …` 之类、`sk-…`、JWT、绝对私有路径（`/Users`、`/home`、`/private`、`/tmp`、`/var` 或盘符路径）、长十六进制与长不透明串，都替换成占位符。行里没有消息正文、令牌或配置值。**限流键是“消息 ID + 错误码”**，不是整行文字：同一条消息的同一个错误码一分钟内只写一行，即使错误文字每次都不同（带计数或时间戳）；一分钟后的那一行写最新一次的文字并说明期间压下了几次。另一条消息或另一个错误码各自有自己的行。只是在等的消息（Session 在运行、排空中、模型服务暂停、授权缺失、预算用尽、本地正在发送：`SESSION_BUSY`、`PROVIDER_HELD`、`MESSAGE_GRANT_MISSING`、`MESSAGE_BUDGET_EXHAUSTED`、`SESSION_NOT_READY`、`MESSAGE_NOT_QUEUED`、`SESSION_INPUT_BUSY`、`RuntimeLocalBusyError`）不是错误，不写日志。
+
+**每秒一条的那个错误。** 排在运行中回合后面的消息不会被泵遍历（待处理列表只含能开始或正在处理的消息），所以每秒一条并不来自“正在排队的消息”。每个 tick 对每条正在处理的消息都会读一次原生历史（`listTurns`、`listItems`），这里抛出的错误会进日志；有两条在运行的消息就是每秒两次尝试。已读代码能指出的候选是：原生线程刚开的第一个回合在历史还没物化时 `thread/turns/list` 返回 -32600（直接输入的对账代码里有同样的处理注释）。这只是推断，没有在正式实例上确认：新日志会直接写出错误码和消息，发布后看第一行就能知道。
+
+**关闭的恢复门。** 恢复门处于 `blocked`（等人恢复；`retrying`、`reworking`、`message_pending`、`awaiting_acceptance` 是正常等待，不触发）、更新时间已超过 30 分钟（一轮 Leader 安排和一次正常恢复通常都比这短；再短会把刚停下一轮后的正常恢复也算进来），并且有 owned 消息排在它后面时，`work board` 的 `awaitingLeader` 里出现一项 `kind=recovery_gate`：`id` 是 Session，`title` 写职责、阶段和排队条数，`waitingOn` 是最近一次为这个门做过恢复决定的身份（`{kind:"actor", id}`），没有人决定过时是 `{kind:"reviewer", id:null}`（任一有复核权限的身份可以执行 `runtime.session.recovery.resume`）。这一项每次读取时从门和队列算出：门重新打开（或进入正常等待的阶段）、或后面不再有排队消息，它就没有了。**它总排在列表最前**（完整快照和 `--brief` 都是），`--brief` 在各档截断时先保留所有门项再填其它项，所以其它待办项再多也挤不掉它；`--brief` 输出里带 `waitingOn`。Leader 每轮读 `work board --brief`，定时代班读同一份，所以不需要另外的通知。
 
 ## 调度板与调度事件流（Q2，迁移 105）
 

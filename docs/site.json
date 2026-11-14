@@ -188,6 +188,11 @@
       }
     },
     {
+      "path": "docs/architecture/hub.md",
+      "title": "Hub 账号、邀请与项目成员",
+      "group": "架构 · 整体与主线"
+    },
+    {
       "path": "docs/architecture/project-data.md",
       "title": "任务、文档、Wiki 与 Connector",
       "group": "架构 · 整体与主线",
@@ -340,6 +345,11 @@
     {
       "path": "docs/research/development-workflow-review-20261021.md",
       "title": "开发流程审阅与改进",
+      "group": "研究 · 综合判断"
+    },
+    {
+      "path": "docs/research/onboarding-skill-trials.md",
+      "title": "接入 skill 的试跑记录",
       "group": "研究 · 综合判断"
     },
     {

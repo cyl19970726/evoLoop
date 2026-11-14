@@ -6,7 +6,7 @@ import type { ManagedRuntime } from "./runner.js";
 /** Binding-scoped optional methods: present when any runtime has them, unsupported for a binding whose runtime lacks them. */
 const routedOptional = ["compactThread", "observeCompaction", "readThreadName", "setThreadName", "readWorkPage", "readWorkspaceHistory",
   "archiveThread", "isThreadArchived", "startConversationTurn", "qualifyConversationThread", "activateExecutionProfile",
-  "inspectExecutionProfileActivation", "steerTurn", "qualifyConnectorReceiver", "startConnectorTurn"] as const;
+  "inspectExecutionProfileActivation", "steerTurn", "qualifyConnectorReceiver", "startConnectorTurn", "observeTurnEffort"] as const;
 type Subscription = { subscribe: (child: ManagedRuntime) => (() => void) | undefined; codexOnly: boolean;
   active: Map<RuntimeProvider, () => void> };
 
@@ -40,6 +40,12 @@ export class ProviderRoutedRuntime implements ManagedRuntime {
   readonly startConnectorTurn?: (binding: RuntimeBinding, input: string, operationId: string, connectorBindingId: string,
     fingerprint: string) => Promise<import("@evoloop/contracts/runtime").RuntimeTurn>;
   readonly nativeInputConnectionId?: NonNullable<ManagedRuntime["nativeInputConnectionId"]>;
+  /**
+   * The late effort/model readback of a settled Turn. The Run runner asks the runtime it holds, which with two providers is this router;
+   * without this entry in the forwarded list the optional method was absent here, the runner skipped the terminal readback, and every
+   * Codex Run settled "not recorded" (defect 3d30f7ac, formal Run 4f97d75d).
+   */
+  readonly observeTurnEffort?: NonNullable<ManagedRuntime["observeTurnEffort"]>;
   readonly onNativeInput?: NonNullable<ManagedRuntime["onNativeInput"]>;
   readonly hasPendingInput?: NonNullable<ManagedRuntime["hasPendingInput"]>;
   readonly respondToInput?: NonNullable<ManagedRuntime["respondToInput"]>;

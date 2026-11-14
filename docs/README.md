@@ -84,6 +84,7 @@ evoLoop 面向一个人与多个 Agent 持续推进的软件项目。[两张产�
 | 文档 | 负责回答的问题 | 谁在变更时维护 |
 | --- | --- | --- |
 | [架构总览](architecture/overview.md) | 组件和层级怎样支撑场景，数据和责任归谁 | 负责架构或接口变化的 session |
+| [Hub 账号、邀请与项目成员](architecture/hub.md) | 独立 Hub 进程怎样管理账号、邀请、登录、令牌、服务身份与项目成员，数据边界和备份恢复是什么 | 账号、成员与多机器接入责任者 |
 | [项目数据与 Connector](architecture/project-data.md) | 任务、需求文档与 Wiki 如何关联，飞书如何接入 | 产品、架构与集成责任者 |
 | [知识关联](architecture/knowledge-flow.md) | Task、需求、Git 规范如何进入 Wiki，纠正怎样影响后续工作 | 认知与集成责任者 |
 | [包架构](architecture/packages.md) | 四部分如何落到语言、包、接口、依赖与运行边界 | 架构及实现责任者 |
