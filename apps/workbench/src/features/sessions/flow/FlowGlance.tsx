@@ -1,5 +1,6 @@
 // The small card on 总览: where scheduling is stuck right now and the latest few events, from the same snapshot and event reads as 动态. It
 // reads once (and again on request); it does not subscribe. It links to 统筹安排 › 动态.
+import { Component, type ReactNode } from "react";
 import { RefreshCw } from "lucide-react";
 import { Button, cn } from "@evoloop/ui";
 import { useProjectQuery } from "../../../shared/query";
@@ -10,7 +11,19 @@ import { isStuck, stuckSpots, styleOf } from "./flowModel";
 
 export const flowHref = (projectId: string) => `${href(projectId, "sessions")}?view=flow`;
 
-export function FlowGlance({ token, projectId, active }: { token: string; projectId: string; active: boolean }) {
+/** The card is an extra on 总览: if it ever fails to draw, it says so and the page around it stays. */
+class GlanceBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
+  state = { failed: false };
+  static getDerivedStateFromError() { return { failed: true }; }
+  componentDidCatch(error: unknown) { console.error("调度动态小卡片没能显示", error); }
+  render() { return this.state.failed ? <p role="status" className="rounded-xl bg-raised px-4 py-3 text-small text-warning shadow-sm">调度动态小卡片没能显示；总览的其余内容不受影响。</p> : this.props.children; }
+}
+
+export function FlowGlance(props: { token: string; projectId: string; active: boolean }) {
+  return <GlanceBoundary><FlowGlanceCard {...props} /></GlanceBoundary>;
+}
+
+function FlowGlanceCard({ token, projectId, active }: { token: string; projectId: string; active: boolean }) {
   const read = useProjectQuery(projectId, ["flow-glance"], async signal => {
     const board = await readBoard(token, projectId, signal);
     // The newest events: the page just before the head.

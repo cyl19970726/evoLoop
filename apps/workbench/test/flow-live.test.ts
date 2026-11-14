@@ -58,3 +58,13 @@ test("an event opens the real objects it names: its Task and its Session, nothin
   assert.match(openTargetsOf(p, ev(1, "task.delivered", { taskId: "T1" }))[0]!.href, /\/tasks\/T1$/);
   assert.deepEqual(openTargetsOf(p, ev(2, "notice.sent")), []);
 });
+
+test("a response that is not a board or an events page is refused as a failed read, never handed to the drawing code", async () => {
+  const { checkedBoard, checkedEventsPage } = await import("../src/features/sessions/flow/flowClient");
+  for (const bad of [{}, null, [], "x", { sessions: 1 }, { sessions: [], readyNotQueued: [], awaitingLeader: [], eventSeq: 1, graph: {} }]) assert.throws(() => checkedBoard(bad), /不是预期的格式/);
+  for (const bad of [{}, null, { items: [] }, { items: {}, cursor: 1, head: 1 }]) assert.throws(() => checkedEventsPage(bad), /不是预期的格式/);
+  const board = { sessions: [], readyNotQueued: [], awaitingLeader: [], eventSeq: 3, graph: { counts: {}, nodes: [], inFlight: [] } };
+  assert.equal(checkedBoard(board), board);
+  const page = { items: [], cursor: 3, head: 3, resetRequired: false, more: false };
+  assert.equal(checkedEventsPage(page), page);
+});

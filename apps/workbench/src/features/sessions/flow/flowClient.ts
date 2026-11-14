@@ -19,7 +19,18 @@ async function getJson<T>(token: string, path: string, signal: AbortSignal): Pro
   return await response.json() as T;
 }
 
-export const readBoard = (token: string, projectId: string, signal: AbortSignal) => getJson<WorkBoardSnapshot>(token, base(projectId), signal);
+const isObject = (value: unknown): value is Record<string, unknown> => !!value && typeof value === "object" && !Array.isArray(value);
+/** A response that is not the shape the page draws from is a read that failed, said so; it must never reach the drawing code and take the page down. */
+export function checkedBoard(value: unknown): WorkBoardSnapshot {
+  if (!isObject(value) || !Array.isArray(value.sessions) || !Array.isArray(value.readyNotQueued) || !Array.isArray(value.awaitingLeader) || typeof value.eventSeq !== "number"
+    || !isObject(value.graph) || !isObject(value.graph.counts)) throw new ApiError(0, "调度板的响应不是预期的格式");
+  return value as unknown as WorkBoardSnapshot;
+}
+export function checkedEventsPage(value: unknown): SchedEventsPage {
+  if (!isObject(value) || !Array.isArray(value.items) || typeof value.cursor !== "number" || typeof value.head !== "number") throw new ApiError(0, "事件的响应不是预期的格式");
+  return value as unknown as SchedEventsPage;
+}
+export const readBoard = async (token: string, projectId: string, signal: AbortSignal) => checkedBoard(await getJson<unknown>(token, base(projectId), signal));
 
 export interface EventsQuery { after?: number; from?: string; to?: string; limit?: number }
 export function readEventsPage(token: string, projectId: string, query: EventsQuery, signal: AbortSignal): Promise<SchedEventsPage> {
@@ -28,7 +39,7 @@ export function readEventsPage(token: string, projectId: string, query: EventsQu
   if (query.from) params.set("from", query.from);
   if (query.to) params.set("to", query.to);
   params.set("limit", String(query.limit ?? 500));
-  return getJson<SchedEventsPage>(token, `${base(projectId)}/events?${params}`, signal);
+  return getJson<unknown>(token, `${base(projectId)}/events?${params}`, signal).then(checkedEventsPage);
 }
 
 /** Events of a time window, oldest first. `truncated` says the window held more than the pages read (the earliest part is then what is missing). */
