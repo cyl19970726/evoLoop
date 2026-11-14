@@ -143,7 +143,17 @@ export class PgSchedulingStore implements ScheduleStore {
       }
       const overlap = await client.query(`SELECT 1 FROM schedule_occurrence o JOIN task t ON t.project_id=o.project_id AND t.task_id=o.task_id
         WHERE o.project_id=$1 AND o.schedule_id=$2 AND o.planned_at_utc<>$3 AND o.state='created' AND t.state NOT IN ('done','cancelled') LIMIT 1`, [definition.projectId, definition.id, plannedAtUtc]);
-      const state: Occurrence["state"] = overlap.rows.length && requestedState === "created" ? current.revision.overlap === "queue" ? "queued" : "skipped" : requestedState;
+      let state: Occurrence["state"] = overlap.rows.length && requestedState === "created" ? current.revision.overlap === "queue" ? "queued" : "skipped" : requestedState;
+      // Scheduled direct dispatch (S1): in this same transaction decide how the Task is handed over, before it is inserted. A skip because the previous
+      // occurrence is still open is counted for the schedule; a daily budget used up skips the occurrence; 'direct' keeps the Leader's triage notice from
+      // being made for the Task, which a dispatcher then appends to a line (or hands to the Leader if none can take it).
+      let direct = false;
+      if (state === "skipped" && !existing)
+        await client.query("SELECT schedule_direct_note_skip($1,$2,$3::timestamptz,$4::timestamptz)", [definition.projectId, definition.id, plannedAtUtc, observedAtUtc]);
+      else if (state === "created" && !target) {
+        const intent = (await client.query("SELECT schedule_direct_intent($1,$2,$3::timestamptz,$4::timestamptz) AS intent", [definition.projectId, definition.id, plannedAtUtc, observedAtUtc])).rows[0]?.intent;
+        if (intent === "skip") state = "skipped"; else direct = intent === "direct";
+      }
       const key = `${definition.projectId}:${definition.id}:${plannedAtUtc}`;
       const operationId = deterministicId(`schedule-operation:${key}`);
       const taskId = state === "created" ? deterministicId(`schedule-task:${key}`) : null;
@@ -177,6 +187,7 @@ export class PgSchedulingStore implements ScheduleStore {
           target ? template.owner : template.consumer ?? "", !target,
           target ? null : template.acceptanceMode ?? "independent_agent",
           `schedule ${definition.id} revision ${definition.currentRevisionId}`, observedAtUtc]);
+        if (direct) await client.query("SELECT set_config('evoloop.direct_dispatch','off',true)");
         const receipt = { status: "applied", operationId, entityId: taskId, version: 1 };
         const hash = createHash("sha256").update(key).digest("hex");
         await client.query(`INSERT INTO operation_journal(project_id,operation_id,actor_id,command_hash,command_type,result,created_at)

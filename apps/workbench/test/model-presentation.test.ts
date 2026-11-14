@@ -17,7 +17,7 @@ test("a Run says what its Turn reported and, apart, what was configured; nothing
   const configured = { model: "opus", reasoningEffort: "high" };
   const none = Object.fromEntries(runActualRows({ executionProfile: configured }));
   assert.equal(none["本轮实际模型"], "未记录"); assert.equal(none["本轮实际思考强度"], "未记录");
-  assert.equal(none["子代理模型"], "没有观察到子代理的模型");
+  assert.equal(none["子代理模型"], "没有读到子代理的模型（不等于没有子代理）");
   assert.equal(none["配置的模型（不是实际值）"], "opus"); assert.equal(none["配置的思考强度（不是实际值）"], "high");
   const seen = Object.fromEntries(runActualRows({ executionProfile: configured, actual: { model: "claude-opus-5-5", reasoningEffort: null, subagentModels: ["claude-haiku-4-5"] } }));
   assert.equal(seen["本轮实际模型"], "claude-opus-5-5"); assert.equal(seen["本轮实际思考强度"], "未记录", "an effort nobody reported is not filled from the configuration");
