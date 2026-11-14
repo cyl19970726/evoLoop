@@ -194,21 +194,31 @@ export class NativeObservationService {
       if (value.usage && (!last || !sameReading(last, value.usage))) readings.push(value.usage);
       let prior: UsageSnapshot | null = old ? { threadId: old.threadId, usage: old.usage } : null;
       const delta = zeroUsageCounts();
+      const ignored: Array<{ usage: NonNullable<NativeObservationRecord['usage']>; baseline: NonNullable<NativeObservationRecord['usage']>; reason: string }> = [];
       for (const usage of readings) {
-        const added = usageDelta(prior, { ...value, usage });
-        if (added) {
-          delta.inputTokens += added.inputTokens;
-          delta.outputTokens += added.outputTokens;
-          delta.cachedInputTokens += added.cachedInputTokens;
+        const step = usageStep(prior, { ...value, usage });
+        if (step.added) {
+          delta.inputTokens += step.added.inputTokens;
+          delta.outputTokens += step.added.outputTokens;
+          delta.cachedInputTokens += step.added.cachedInputTokens;
         }
-        prior = { threadId: value.threadId, usage };
+        // A reading that is not newer than what the ledger has already seen (a replayed snapshot) neither counts nor moves the baseline back.
+        if (step.ignored && prior?.usage) ignored.push({ usage, baseline: prior.usage, reason: step.ignored });
+        else prior = { threadId: value.threadId, usage };
       }
+      // The ignored readings stay readable: one record per ignored reading, with the reading, the baseline it was judged against and the reason.
+      for (const item of ignored)
+        await tx.appendRuntimeEvent({ projectId: value.projectId, id: (globalThis as unknown as { crypto: { randomUUID(): string } }).crypto.randomUUID(), runId: null, sessionId: value.sessionId, kind: 'usage.staleReadingIgnored',
+          detail: `reason=${item.reason}; reading total=${item.usage.total.inputTokens}/${item.usage.total.outputTokens}/${item.usage.total.cachedInputTokens} last=${item.usage.last.inputTokens}/${item.usage.last.outputTokens}/${item.usage.last.cachedInputTokens} turn=${item.usage.turnId}; baseline total=${item.baseline.total.inputTokens}/${item.baseline.total.outputTokens}/${item.baseline.total.cachedInputTokens} turn=${item.baseline.turnId}; nothing was added to the ledger`,
+          nativeTurnId: item.usage.turnId ?? null, cursor: null, itemsDigest: null, actorId: 'native-observation', createdAt: this.deps.clock.now() });
       if (delta.inputTokens + delta.outputTokens + delta.cachedInputTokens && tx.usage)
         await tx.usage.addUsage(value.projectId, value.sessionId,
           this.deps.usageDay?.(value.observedAt) ?? value.observedAt.slice(0, 10), { ...delta, costUsd: 0, costReported: false });
       // A Thread's cumulative usage is not a property of one connection or
       // event. An event without usage must not erase the last persisted baseline.
-      const usage = value.usage ?? (old?.threadId === value.threadId ? old.usage : null);
+      // The persisted usage is the ledger's baseline for the next write: when the newest reading was an old one seen again, the baseline stays what it was.
+      const staleLast = !!value.usage && ignored.some(item => item.usage === value.usage || sameReading(item.usage, value.usage!));
+      const usage = staleLast && prior?.usage ? prior.usage : value.usage ?? (old?.threadId === value.threadId ? old.usage : null);
       const record = bounded({ ...value, usage, currentTurn: value.currentTurn ? { ...value.currentTurn, source } : null,
         version: (old?.version ?? 0) + 1 });
       await store.upsert(record, old?.version ?? null); return record;
@@ -240,38 +250,44 @@ function sameReading(left: NonNullable<NativeObservationRecord['usage']>,
     sameUsage(left.total, right.total) && sameUsage(left.last, right.last);
 }
 
-function usageDelta(previous: UsageSnapshot | null,
-  next: NativeObservationProjection): import("@evoloop/contracts").UsageDelta | null {
-  if (!next.usage) return null;
+/**
+ * What one usage reading adds to the ledger, and whether it is only an old reading seen again.
+ *
+ * A cumulative `total` that is smaller than the baseline of the same Thread is one of two things: a real reset (native compaction starts the counter
+ * over) or a stale reading replayed (Codex replays the latest persisted snapshot on attach, which can be older than a reading the ledger already saw
+ * in memory; request_processors/token_usage_replay.rs as cited in this file's history). The two used to be treated alike, as a reset: the reading's
+ * `last` was added and the baseline moved back, so every later reading was added again (defect cbce1ba5: three replayed readings added 300k).
+ * Now a smaller total is a reset only when the reading itself shows the counter started over: its `last` equals its `total` (the first request after a
+ * reset). Anything else is stale: nothing is added, the baseline stays, and the caller keeps a readable record of the ignored reading. Where no reliable
+ * evidence exists the ledger counts less, never twice.
+ */
+function usageStep(previous: UsageSnapshot | null, next: NativeObservationProjection): { added: import("@evoloop/contracts").UsageDelta | null; ignored?: string } {
+  if (!next.usage) return { added: null };
   const sameThread = previous?.threadId === next.threadId;
   const prior = sameThread ? previous?.usage ?? null : null;
-  // The same reading at the same observedAt is one fact. Codex replay uses
-  // the receiver time, so this only protects callers that preserve source time.
-  if (prior && sameReading(next.usage, prior)) return null;
-  // Ignore a caller-preserved older reading. This cannot identify Codex replay,
-  // whose observedAt is the receive time rather than the original source time.
-  if (prior && Date.parse(next.usage.observedAt) < Date.parse(prior.observedAt)) return null;
+  // The same reading at the same observedAt is one fact. Codex replay uses the receiver time, so this only protects callers that preserve source time.
+  if (prior && sameReading(next.usage, prior)) return { added: null };
+  // Ignore a caller-preserved older reading. This cannot identify Codex replay, whose observedAt is the receive time rather than the original source time.
+  if (prior && Date.parse(next.usage.observedAt) < Date.parse(prior.observedAt)) return { added: null, ignored: 'observed_before_baseline' };
 
   const after = usageCounts(next.usage.total);
   const before = prior ? usageCounts(prior.total) : null;
-  if (after && (!sameThread || !previous)) return positiveDelta(after, zeroUsageCounts());
+  if (after && (!sameThread || !previous)) return { added: positiveDelta(after, zeroUsageCounts()) };
   if (after && before) {
     const delta = subtractUsage(after, before);
-    if (delta) return delta.inputTokens + delta.outputTokens + delta.cachedInputTokens === 0
-      ? null : positiveDelta(delta, zeroUsageCounts());
-    // A newer notification with a smaller cumulative counter is a reset (for
-    // example after native compaction), so only this request's `last` is new.
-    // Codex 0.167 replays only the latest persisted snapshot on attach
-    // (request_processors/token_usage_replay.rs, conversation.token_usage_info);
-    // it does not deliver an arbitrary historical TokenCount sequence here.
+    if (delta) return { added: delta.inputTokens + delta.outputTokens + delta.cachedInputTokens === 0 ? null : positiveDelta(delta, zeroUsageCounts()) };
+    // Smaller total. A real reset shows itself: this request is the whole counter (last equals total). Otherwise it is an old reading.
     const last = usageCounts(next.usage.last);
-    return last ? positiveDelta(last, zeroUsageCounts()) : null;
+    if (last && after.inputTokens === last.inputTokens && after.outputTokens === last.outputTokens && after.cachedInputTokens === last.cachedInputTokens)
+      return { added: positiveDelta(last, zeroUsageCounts()) };
+    return { added: null, ignored: 'total_below_baseline_without_reset_evidence' };
   }
-  // Compatibility only: v2 ThreadTokenUsage.total is non-optional
-  // (app-server-protocol/src/protocol/v2/thread.rs). A repeated total-less
-  // event cannot be distinguished from a new request and can overcount.
+  // Compatibility only: v2 ThreadTokenUsage.total is non-optional (app-server-protocol/src/protocol/v2/thread.rs). A total-less event gives no way to tell
+  // a new request from the same event delivered again; the identical `last` of the same Turn right after the baseline is that event again, and is not counted twice.
   const last = usageCounts(next.usage.last);
-  return last ? positiveDelta(last, zeroUsageCounts()) : null;
+  if (last && prior && prior.turnId === next.usage.turnId && sameUsage(prior.last, next.usage.last))
+    return { added: null, ignored: 'total_less_repeat_of_baseline_last' };
+  return { added: last ? positiveDelta(last, zeroUsageCounts()) : null };
 }
 
 interface UsageCounts {

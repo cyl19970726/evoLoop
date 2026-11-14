@@ -19,7 +19,7 @@ export function runActualRows(run: { actual?: RunActual | null; executionProfile
     ["本轮实际模型", view.model === NOT_RECORDED ? NOT_RECORDED : modelLabel(view.model, catalog)],
     ["本轮实际思考强度", view.reasoningEffort === NOT_RECORDED ? NOT_RECORDED
       : `${view.reasoningEffort}（原生读回；${view.effortRequested === true ? "配置里显式请求过强度" : view.effortRequested === false ? "没有显式请求，是运行时的默认" : "是否显式请求未记录"}）`],
-    ["子代理模型", view.subagentModels.length ? view.subagentModels.map(model => modelLabel(model, catalog)).join("、") : "没有观察到子代理的模型"],
+    ["子代理模型", view.subagentModels.length ? view.subagentModels.map(model => modelLabel(model, catalog)).join("、") : "没有读到子代理的模型（不等于没有子代理）"],
     ["配置的模型（不是实际值）", view.configuredModel ? modelLabel(view.configuredModel, catalog) : "未指定"],
     ["配置的思考强度（不是实际值）", view.configuredEffort ?? "未指定"],
   ];
