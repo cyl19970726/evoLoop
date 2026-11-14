@@ -5,6 +5,8 @@ description: 把一个新项目接入 evoLoop：先判断情况，再按步骤�
 
 # 把一个新项目接入 evoLoop
 
+只想**核对一个已接入的项目还缺什么**时，直接按[终态清单](references/end-state.md)开头的核对方式读回，缺哪项再回到对应步骤。
+
 接入的终点不是“配置写完了”，而是[终态清单](references/end-state.md)里每一项都能用 CLI 读回、并且第一个真实 Task 走完“派发 → 交付 → 独立验收 → 关闭”。每一步做完先读回，读回不符就停在这一步，不往下走。
 
 这份 skill 写给做接入的 Agent，通常是需求 Session（今天它也承担平台维护，即 Root）。它只讲接入的顺序、读回和容易出错的地方；命令字段以所连服务的 `command schema` / `request schema` 为准，私有配置的模板在[私有配置](references/private-config.md)，派单、交付与验收的做法在 [evoloop-workflow](../evoloop-workflow/SKILL.md)，写 Task 与设计验收在 [evoloop-requirements](../evoloop-requirements/SKILL.md)，这里只链接、不复述。
@@ -58,7 +60,7 @@ description: 把一个新项目接入 evoLoop：先判断情况，再按步骤�
 
 重启后**建项目**：用需求 Session 的身份按 `command schema project.create` 建项目（`projectId` 用第 1 步的值）。项目级的读回都要项目先存在。
 
-**读回：** 每个身份用自己的包装跑一次 `cli session`，`principal.actorId` 正确；`cli project <PROJECT>`；`cli get /api/projects/<PROJECT>/members`：每个身份的 `canRead`/`canWrite`/`canReview` 与清单一致、`identityFile: unchanged`、没有 `pending`；`cli models --project <PROJECT>` 列出了要用的模型；`cli get /api/projects/<PROJECT>/repositories`（`status: available`）。`capabilities` 的 `runtime` 要等第 3 步有了 Role 之后才是 `configured`。
+**读回：** 除使用者本人外，每个身份用自己的包装跑一次 `cli session`，`principal.actorId` 正确（使用者本人只经 `members` 核对，不用它的令牌）；`cli project <PROJECT>`；`cli get /api/projects/<PROJECT>/members`：每个身份的 `canRead`/`canWrite`/`canReview` 与清单一致、`identityFile: unchanged`、没有 `pending`；`cli models --project <PROJECT>` 列出了要用的模型；`cli get /api/projects/<PROJECT>/repositories`（`status: available`）。`capabilities` 的 `runtime` 要等第 3 步有了 Role 之后才是 `configured`。
 
 ## 3. Role
 
@@ -73,7 +75,7 @@ description: 把一个新项目接入 evoLoop：先判断情况，再按步骤�
 1. **Leader 与业务 Session 用 `session prepare --file <PRIVATE_JSON>` 建**（`mode: create`）。它不接受 `--project`（项目 ID 写在文件里）；标准输出是多段 JSON（中间回执加最终结果），存进文件逐段解析。返回 `waiting_for_native_thread` 时，等 `read session <SESSION>` 显示 `ready` 且有原生 Thread，再用**同一个** `operationId` 和文件重跑（立刻重跑会得到一次 `blocked`）；返回 `blocked` 时照 `missingDetails` 补配置后同样重跑；不换 ID 绕过 `recovery_required`。
 2. **验收 Session 不用 `session prepare`。** 它要按 `sessionId` 精确绑定自己的 CLI 身份，而 `session prepare` 要求 CLI 身份等于该 Role 在 `roleActors` 里的业务身份，会报 `material_cli_actor_mismatch`；照它给的修法改，验收者就和作者成了同一身份。改用 [Agent CLI](../../../docs/development/agent-cli.md#准备或复用受管-session) 写明同样有效的路径：`runtime.session.reserve` → `role.bindSession` → 用 `command run` 提交 `session.profile.set` 设显示名（`expectedVersion` 取 `work profile owned:<SESSION>` 读到的显示资料版本；CLI 的 `session profile set` 改的是模型与推理强度，不是这个）。这是服务端的已知不一致，待修。
 3. **同一 Role 有两个及以上 Session 时，每个 Session 都要一条按 `sessionId` 精确的 `materialCli`**，包括作者那个业务 Session。服务这时不再用 Role 级条目推断业务身份，缺了就把派给它的队伍条目挂起（`RECIPIENT_UNAVAILABLE`）。第 2 步一次写好。
-4. **让 Leader 自己做往返测试。** 用需求 Session 的 CLI 给 Leader 发一条消息（`work send owned:<LEADER_SESSION> --file <BODY>`），请它用自己的 CLI 给每个业务 Session 和验收 Session 各发一条带唯一标记的探测消息；探测消息里写明：对方处理后，**另发一条新消息**给 Leader（`work send owned:<LEADER_SESSION> --file <BODY>`，**不加 `--reply-to`**）带回同一标记。`--reply-to` 只能指向发给同一个接收 Session 的消息，跨 Session 回复会报 `REPLY_TARGET_MISMATCH`。探测消息的正文同样写上“只用本 Session 的 CLI 和工作目录，被拒就回报错误码”。
+4. **让 Leader 自己做往返测试。** 用需求 Session 的 CLI 给 Leader 发一条消息（`work send owned:<LEADER_SESSION> --file <BODY>`），请它用自己的 CLI 给每个业务 Session 和验收 Session 各发一条带唯一标记的探测消息；探测消息里写明：对方处理后，**另发一条新消息**给 Leader（`work send owned:<LEADER_SESSION> --file <BODY>`，**不加 `--reply-to`**）带回同一标记。`--reply-to` 只能指向发给同一个接收 Session 的消息，跨 Session 回复会报 `REPLY_TARGET_MISMATCH`。探测消息的正文同样写上“只用本 Session 的 CLI 和工作目录；回报被拒时把错误码写进本轮最终回复，不到磁盘上自行排查”：回报被拒时消息不会保存，错误码只在对方的 `work timeline` 里。
 
 **读回：** 先做不花模型的：用 Leader 的 CLI `work acceptance --project <PROJECT>`，容量视图里每个业务 Session 和验收 Session 的 `missingCapabilities` 为空（它核“Leader → 该 Session”的消息授权、`receiverActorId` 是否等于该 Session 绑定的 CLI 身份、执行授权；**不核反方向**；Leader 自己那一行显示 `MESSAGE_GRANT_MISSING` 是正常的，没有人需要给自己发消息）。再核往返：用 `work messages owned:<SESSION>`、`work message <MSG>`、`work status owned:<SESSION> --message <MSG>` 读回两个方向的消息都已处理、有原生 Turn、标记一致，且回报消息的发送者是该 Session 的 CLI 业务身份。`session prepare` 成功、`state: ready`、发送返回 `applied` 都**不算**就绪。往返期间看着各 Session 的 `work timeline`，出现越出工作目录的读取就停下（见“受管 Session 能碰到什么”）。
 
@@ -81,7 +83,7 @@ description: 把一个新项目接入 evoLoop：先判断情况，再按步骤�
 
 给 Leader 一个每天固定时点的评估 Task（DEC-038）。默认用普通 Task 的每日复制：建一个负责人是 Lead Role 的评估 Task 并设每日时点，授权 `scheduling.taskTimingGrants` 每次使用时重读；做法见[运行接线手册·普通 Task 的每日复制](../../../docs/development/runtime-operations.md#4-普通-task-的每日复制)。授权的 `actorId` 是建这个系列的身份（要有读写审阅），`roleId` 是 Lead Role。也可以用旧 Schedule（`schedule.create`），但它的 `scheduling.grants` 只在启动时读。
 
-**读回：** `cli get /api/projects/<PROJECT>/task-timings` 里有这个系列，`nextAtUtc` 是下一个评估时点；或 `cli list schedules --project <PROJECT>` 里有 active 的 Schedule。
+**读回：** `cli get /api/projects/<PROJECT>/task-timings` 里有这个系列，下一个评估时点在 `latestTask.plannedAtUtc`（第一次还没执行时）或 `nextAtUtc`；或 `cli list schedules --project <PROJECT>` 里有 active 的 Schedule。再确认 Leader 能执行自己的 Task：引导 Task（第 3 步）由 Leader 在自己的 Session 开出了 Run（`cli work task <引导 TASK> --brief` 不停在 `awaiting_run`）。
 
 ## 6. 第一个 Task 走通全程
 
