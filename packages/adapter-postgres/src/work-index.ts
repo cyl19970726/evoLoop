@@ -928,8 +928,15 @@ export async function readLeaderWorkTasks(db: Database, projectId: string, query
       LEFT JOIN LATERAL (
         SELECT jsonb_agg(jsonb_build_object('taskId',d.depends_on_task_id,'title',dt.title,'state',dt.state,
           'currentRevisionId',dt.current_revision_id,'actorId',d.actor_id,'reason',d.reason,'createdAt',d.created_at,
-          'satisfiedAt',(SELECT c.created_at FROM task_closure c WHERE c.project_id=d.project_id AND c.task_id=d.depends_on_task_id
-              AND c.task_revision_id=dt.current_revision_id ORDER BY c.created_at LIMIT 1),
+          -- When the dependency became satisfied: its closure of the current revision, or the accepted resident queue release that settled it
+          -- (resident_queue_claim.released_at, the moment the queue accepted the release), whichever came first.
+          'satisfiedAt',(SELECT min(x.at) FROM (
+              SELECT c.created_at AS at FROM task_closure c WHERE c.project_id=d.project_id AND c.task_id=d.depends_on_task_id
+                AND c.task_revision_id=dt.current_revision_id
+              UNION ALL
+              SELECT q.released_at FROM resident_queue_claim q JOIN resident_queue_attempt a ON a.project_id=q.project_id AND a.claim_id=q.claim_id
+                WHERE q.project_id=d.project_id AND q.task_id=d.depends_on_task_id AND q.release_kind='accepted'
+                  AND a.task_revision_id=dt.current_revision_id) x),
           'acceptanceSatisfied',EXISTS(SELECT 1 FROM task_closure c
             WHERE c.project_id=d.project_id AND c.task_id=d.depends_on_task_id
               AND c.task_revision_id=dt.current_revision_id)

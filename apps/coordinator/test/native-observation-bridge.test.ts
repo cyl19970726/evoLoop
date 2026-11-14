@@ -42,6 +42,7 @@ function ledgerSetup() {
   let eventListener: ((event: RuntimeEvent) => void) | undefined, disconnectListener: (() => void) | undefined;
   let record: NativeObservationRecord | null = null;
   const added: { day: string; delta: { inputTokens: number; outputTokens: number; cachedInputTokens: number } }[] = [];
+  const ignoredEvents: { kind: string; detail: string }[] = [];
   const tx = {
     nativeObservation: {
       get: async () => record,
@@ -58,6 +59,7 @@ function ledgerSetup() {
     },
     getRuntimeSession: async () => ({ id: sessionId, projectId, state: "ready", nativeThreadId: "owned" }),
     nativeInputs: { findSource: async () => null },
+    appendRuntimeEvent: async (event: { kind: string; detail: string }) => { ignoredEvents.push(event); },
     usage: { addUsage: async (_projectId: string, _sessionId: string, day: string,
       delta: { inputTokens: number; outputTokens: number; cachedInputTokens: number }) => {
       added.push({ day, delta });
@@ -96,7 +98,7 @@ function ledgerSetup() {
     },
     async pump() { await bridge.pump(projectId, [session]); },
     get inputTokens() { return added.reduce((total, entry) => total + entry.delta.inputTokens, 0); },
-    added,
+    added, ignoredEvents,
   };
 }
 
@@ -185,4 +187,85 @@ test("a repeated cumulative notification with a new receive time is not charged 
   f.token("one", 100, 100);
   await f.pump();
   assert.equal(f.inputTokens, 100);
+});
+
+// ---- defect cbce1ba5: a smaller cumulative reading is a reset only when the reading shows the counter started over; otherwise it is an old reading ----
+test("S4: three replayed old readings after the ledger saw newer ones add nothing and do not move the baseline back", async () => {
+  const f = ledgerSetup();
+  await f.connect();
+  let start = 100;
+  const begin = (id: string) => f.emit("turn/started", { turn: { id, status: "inProgress", startedAt: start++ } });
+  begin("one"); f.token("one", 1000, 1000); await f.pump();
+  begin("two"); f.token("two", 2000, 1000); await f.pump();
+  assert.equal(f.inputTokens, 2000);
+  // Replay of persisted snapshots older than what the ledger saw (each total below the baseline, none of them a fresh counter: last != total).
+  for (const old of [600, 700, 800]) { f.token("two", old, 100); await f.pump(); }
+  assert.equal(f.inputTokens, 2000, "old readings added 0 (before the fix: +300k-style over-count)");
+  assert.equal(f.ignoredEvents.length, 3, "each ignored reading left a readable record");
+  assert.match(f.ignoredEvents[0]!.detail, /reason=total_below_baseline_without_reset_evidence.*reading total=600.*baseline total=2000.*nothing was added/);
+  // The baseline stayed at 2000: the next real reading counts only its own growth.
+  begin("three"); f.token("three", 2600, 600); await f.pump();
+  assert.equal(f.inputTokens, 2600, "later readings are measured against the unmoved baseline, not against the replayed one");
+});
+
+test("S4b: the same three old readings merged into ONE pump behave the same", async () => {
+  const f = ledgerSetup();
+  await f.connect();
+  let start = 100;
+  const begin = (id: string) => f.emit("turn/started", { turn: { id, status: "inProgress", startedAt: start++ } });
+  begin("one"); f.token("one", 1000, 1000); await f.pump();
+  begin("two"); f.token("two", 2000, 1000); await f.pump();
+  f.token("two", 600, 100); f.token("two", 700, 100); f.token("two", 800, 100);
+  await f.pump();
+  assert.equal(f.inputTokens, 2000);
+  assert.equal(f.ignoredEvents.length, 3);
+  begin("three"); f.token("three", 2400, 400); await f.pump();
+  assert.equal(f.inputTokens, 2400);
+});
+
+test("a Codex reconnect that replays the latest persisted snapshot, older than a reading the ledger already saw, adds nothing", async () => {
+  const f = ledgerSetup();
+  await f.connect();
+  let start = 100;
+  const begin = (id: string) => f.emit("turn/started", { turn: { id, status: "inProgress", startedAt: start++ } });
+  begin("one"); f.token("one", 500, 500); await f.pump();
+  // The ledger sees a newer in-memory reading, then the connection drops before it was persisted by the native side.
+  begin("two"); f.token("two", 900, 400); await f.pump();
+  assert.equal(f.inputTokens, 900);
+  f.disconnect(); await f.bridge.drain();
+  await f.connect();
+  // On attach the runtime replays its latest persisted snapshot: turn two's, but with the older total.
+  f.token("two", 500, 100); await f.pump();
+  assert.equal(f.inputTokens, 900, "the replay is not counted");
+  begin("three"); f.token("three", 1100, 200); await f.pump();
+  assert.equal(f.inputTokens, 1100);
+});
+
+test("a real reset still counts: after compaction the counter starts over and the first reading has last equal to total", async () => {
+  const f = ledgerSetup();
+  await f.connect();
+  let start = 100;
+  const begin = (id: string) => f.emit("turn/started", { turn: { id, status: "inProgress", startedAt: start++ } });
+  begin("one"); f.token("one", 100, 100); await f.pump();
+  begin("two"); f.token("two", 1000, 900); await f.pump();
+  begin("three"); f.token("three", 300, 300); await f.pump();       // compaction: the counter began again; this request is the whole counter
+  assert.equal(f.inputTokens, 1000 + 300);
+  assert.equal(f.ignoredEvents.length, 0, "a real reset is not ignored");
+  f.token("three", 450, 150); await f.pump();       // the new counter keeps growing from 300
+  assert.equal(f.inputTokens, 1000 + 450);
+});
+
+test("S5: a total-less event delivered twice is counted once; a different one still counts", async () => {
+  const f = ledgerSetup();
+  await f.connect();
+  let start = 100;
+  const begin = (id: string) => f.emit("turn/started", { turn: { id, status: "inProgress", startedAt: start++ } });
+  const lastOnly = (turnId: string, last: number) => f.emit("thread/tokenUsage/updated", { turnId, tokenUsage: { last: { inputTokens: last, cachedInputTokens: 0, outputTokens: 0, reasoningOutputTokens: 0, totalTokens: last }, modelContextWindow: null } });
+  begin("one"); lastOnly("one", 100); await f.pump();
+  assert.equal(f.inputTokens, 100);
+  lastOnly("one", 100); await f.pump();
+  assert.equal(f.inputTokens, 100, "the same event again: not doubled");
+  assert.match(f.ignoredEvents.at(-1)?.detail ?? "", /total_less_repeat_of_baseline_last/);
+  begin("two"); lastOnly("two", 100); await f.pump();
+  assert.equal(f.inputTokens, 200, "another Turn's request with the same size is a new request");
 });
