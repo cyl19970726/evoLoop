@@ -21,6 +21,7 @@ interface IO { stdout(text: string): void; stderr(text: string): void; stdin?():
 class UsageError extends Error { readonly code = "INVALID_INPUT"; }
 interface Args { words: string[]; options: Map<string, string | true> }
 const values = new Set(["project", "revision", "limit", "cursor", "turn-cursor", "messages-cursor", "source", "turn-id", "after", "wait-ms", "out", "file", "id", "receipt", "attempt", "task", "state", "phase", "signal", "waiting-on-kind", "waiting-on-id", "stage", "knowledge", "loop", "search", "membership", "importance", "role", "session", "discussion", "message", "kind", "hash", "asset-hash", "model", "effort", "color", "mark", "reason", "evidence-ref", "operation", "provider", "project-skills", "personal", "builtin", "add", "remove", "context-task", "context-revision", "reply-to", "message-id","mode","content","input", "wait", "from", "to", "category"]);
+const longPollTimeout = (configured: number, waitMs: number) => Math.max(configured, Math.min(300_000, waitMs + 5_000));
 const switches = ["help", "history", "graph", "events", "revisions", "result", "trace", "occurrences", "reviews", "handoffs", "bindings", "route", "hosts", "attempts", "recovery", "inputs", "observation", "documents", "closed", "brief", "stdin"];
 function uuid(value: string | undefined, label: string): string {
   if (!idSchema.safeParse(value).success) throw new UsageError(`${label} must be a UUID.`);
@@ -535,7 +536,8 @@ async function dispatch(args: Args, env: Environment, io: IO): Promise<unknown> 
       check(args, 2, ["project", "after", "limit", "from", "to", "category", "wait"]);
       const query = new URLSearchParams();
       for (const name of ["after", "limit", "from", "to", "category", "wait"]) { const value = option(args, name); if (value !== undefined) query.set(name, value); }
-      return client.get(`${prefix}/work-board/events${query.size ? `?${query}` : ""}`);
+      const waitMs = Number(option(args, "wait") ?? 0) * 1000;
+      return client.get(`${prefix}/work-board/events${query.size ? `?${query}` : ""}`, longPollTimeout(timeoutMs, waitMs));
     }
     if (args.words[1] === "metrics") {
       check(args, 2, ["project", "from", "to"]);
@@ -546,7 +548,8 @@ async function dispatch(args: Args, env: Environment, io: IO): Promise<unknown> 
     let path: string;
     try { path = sessionWorkPath(args.words.slice(1), args.options); }
     catch (error) { throw new UsageError(error instanceof Error ? error.message : "Invalid Session work read parameters."); }
-    const read = await client.get(`${prefix}${path}`);
+    const updateWaitMs = args.words[1] === "updates" ? Number(option(args, "wait-ms") ?? 0) : 0;
+    const read = await client.get(`${prefix}${path}`, longPollTimeout(timeoutMs, updateWaitMs));
     if (!args.options.has("brief")) return read;
     if (args.words[1] === "leader") return briefIndex(read as Record<string, any>);
     // work task: the Task, plus the arrangements that are current for it (a second small read; its failure leaves the Task brief intact).
