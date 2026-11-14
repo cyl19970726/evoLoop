@@ -45,6 +45,8 @@ test("the way back says where it goes and names it once, without nested brackets
   assert.equal(returnText({ kind: "document", documentId: task }, "需求总图"), "返回文档：需求总图");
   assert.equal(returnText({ kind: "page", section: "documents" }), "返回文档列表");
   assert.equal(returnText({ kind: "page", section: "overview" }), "返回总览");
+  assert.equal(returnText({ kind: "page", section: "inbox" }, "待我处理"), "返回待我处理", "a link may name the page it came from");
+  assert.equal(returnText({ kind: "page", section: "inbox" }), "返回待我验收与判断", "without a name the page keeps its canonical name");
   // A schedule is named (N2): “返回日程：<名称>”; without its name, “返回日程”.
   assert.equal(returnText({ kind: "page", section: "schedules" }, "季度巡检"), "返回日程：季度巡检");
   assert.equal(returnText({ kind: "page", section: "schedules" }), "返回日程");
@@ -67,6 +69,17 @@ test("a link carries the way back for its reader; the page reads it only for tha
   assert.equal(readReturn(`${link}&return=${encodeURIComponent(`${p}/work`)}`, project, "me"), null, "one way back only");
   assert.equal(returnSource(`${p}/work?state=all&return=x&actor=me&returnTitle=t`), `${p}/work?state=all`);
   assert.deepEqual(hereOrigin("me", `${p}/runtime`), { href: `${p}/runtime`, actorId: "me" });
+});
+
+test("a 待我决定 deep link into 职责 or 目标与阶段 reads back as 返回待我处理", () => {
+  const back = { return: `${p}/inbox`, actor: "me", returnTitle: "待我处理" };
+  for (const target of [`${p}/roles?${new URLSearchParams({ role: task, ...back })}`,
+    `${p}/journey?${new URLSearchParams({ stage: other, ...back })}`]) {
+    assert.deepEqual(readReturn(target, project, "me"), {
+      href: `${p}/inbox`, place: { kind: "page", section: "inbox" }, title: "待我处理", label: "返回待我处理",
+    });
+    assert.equal(readReturn(target, project, "someone-else"), null, "the link belongs to the reader it was made for");
+  }
 });
 
 test("an agent page comes back to a task, the task table or 统筹安排, never to itself", () => {

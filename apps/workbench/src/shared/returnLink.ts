@@ -74,7 +74,8 @@ export function returnText(place: ReturnPlace, name?: string | null): string {
     case "arrangement": return "返回统筹安排";
     case "document": return named("文档");
     // A schedule is one selected on 日程 (`/schedules?schedule=`): “返回日程：<名称>”.
-    case "page": return place.section === "schedules" ? named("日程") : `返回${pageNames[place.section] ?? "上一页"}`;
+    case "page": return place.section === "schedules" ? named("日程")
+      : place.section === "inbox" && text ? `返回${text}` : `返回${pageNames[place.section] ?? "上一页"}`;
   }
 }
 

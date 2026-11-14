@@ -14,12 +14,14 @@ import { leaderPhaseLabel } from "../../shared/leaderWorkLoad";
 import { currentPath, onNavigate, replaceQuietly } from "../../shared/navigation";
 import { isRoleOwnerId } from "../../shared/ownerRole";
 import { queryKeys, useProjectQuery } from "../../shared/query";
+import { readReturn } from "../../shared/returnLink";
 import { rowStatus } from "../../shared/taskStatus";
 import { workItemNextStep } from "../../shared/workPresentation";
 import { ContextPanelContent, useContextPanel } from "../../shared/ui/ContextPanel";
 import { ContextRailContent } from "../../shared/ui/ContextRail";
 import { FullIdentifiers } from "../../shared/ui/FullIdentifiers";
 import { ResponsibleName, RoleName } from "../../shared/ui/RecordName";
+import { ReturnLink } from "../../shared/ui/ReturnLink";
 import { date, href } from "../../shared/ui/shared";
 import { CreateTaskView } from "./CreateTaskPage";
 import { DraftsContext, GoalCreateForm, GoalReviseForm, StageAcceptForm, StageCorrectForm, StageProposeForm, StageReviewForm, goalFieldLabels, type Drafts } from "./JourneyForms";
@@ -47,6 +49,7 @@ function readState(query: { isPending: boolean; isError: boolean; data?: unknown
 
 export function JourneyPage({ context, active, propose }: { context: MutationContext; active: boolean; propose: boolean }) {
   const { projectId } = context;
+  const returnTo = readReturn(currentPath(), projectId, context.principal.actorId);
   const drafts = React.useRef<Drafts>(new Map()).current;
   const client = useQueryClient();
   const panel = useContextPanel();
@@ -116,6 +119,7 @@ export function JourneyPage({ context, active, propose }: { context: MutationCon
   </div></ContextRailContent>;
   const header = <header className="flex flex-wrap items-start justify-between gap-3">
     <div className="min-w-0">
+      {returnTo && <ReturnLink projectId={projectId} href={returnTo.href} place={returnTo.place} label={returnTo.label} className="mb-1" />}
       <h1 tabIndex={-1} className="text-title font-semibold text-foreground outline-none">目标与阶段</h1>
       <p className="mt-1 text-small text-text-secondary">目标、阶段和阶段下的任务都来自本项目的记录；不按工程里程碑推算完成比例。</p>
       <p className={cn(muted, "mt-1")} role="status" data-read-scope="">{scopeLine(goalsRead.data, stagesKnown ? stages.length : stagesUnknown, work, goalsKnown, fetching)}</p>

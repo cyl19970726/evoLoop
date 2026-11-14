@@ -31,7 +31,7 @@ const signalLabel: Record<TaskAttentionItem["signal"], string> = {
 };
 const decisionLabel: Record<TaskAttentionFollowUp["decision"], string> = { waiting: "等待中", checked: "已核对", acted: "已采取行动" };
 const noticeLabel: Record<LeaderNotice["kind"], string> = {
-  task_todo: "待编排的任务", delivery: "交付已封存", observation: "验收结果", observation_used: "验收结果：已使用", observation_failed: "验收结果：失败或未使用（需处理）", line_entry_suspended: "队伍项挂起，无法开始", line_confirmation_returned: "执行确认被退回", task_question: "关键问题", task_blocker: "执行受阻",
+  task_todo: "待编排的任务", delivery: "交付已封存", observation: "验收结果", observation_used: "验收结果：已使用", observation_failed: "验收结果：失败或未使用（需处理）", line_entry_suspended: "队伍项挂起，无法开始", line_confirmation_returned: "执行确认被退回", direct_dispatch_blocked: "定时直派受阻或等待过久", direct_circuit_open: "定时直派熔断", schedule_skips_escalated: "定时任务连续跳过", task_question: "关键问题", task_blocker: "执行受阻",
   run_without_submission: "运行结束但没有提交", run_submission_blocked: "运行结果封存受阻", task_attention: "任务关注待跟进", acceptance_blocked: "验收投递受阻",
 };
 

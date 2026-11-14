@@ -6,6 +6,7 @@ import type { Clock, IdFactory, Reader, Transaction, UnitOfWork } from "@evoloop
 import { DomainError } from "@evoloop/contracts/ports";
 import { priorReviewDecision, reviewIntentJson } from "../runtime/pre-turn-review.js";
 import { describeTurnEffort } from "../runtime/service.js";
+import { inclusiveRuntimeUsage } from "../usage.js";
 
 const required = <T>(value:T|null,label:string):T => {if(value===null)throw new DomainError('NOT_FOUND',`${label} not found`);return value;};
 const sameTarget = (a:SessionMessageRecord['target'],b:SessionMessageRecord['target']) =>
@@ -391,8 +392,7 @@ export class SessionMessageService {
       if(turn.observedModel)await tx.recordSessionActualModel?.(p.sessionId,turn.observedModel,now);
       if(turn.usage&&tx.usage&&(session?.runtimeProvider??'codex')!=='codex')
         await tx.usage.addUsage(projectId,p.sessionId,this.deps.usageDay?.(now)??now.slice(0,10),{
-          inputTokens:turn.usage.inputTokens??0,outputTokens:turn.usage.outputTokens??0,
-          cachedInputTokens:turn.usage.cacheReadInputTokens??0,costUsd:0,costReported:false});
+          ...inclusiveRuntimeUsage(turn.usage),costUsd:0,costReported:false});
       // The first quota/authentication failure pauses the whole provider: every Session of it would fail the same way.
       if(!ok&&holdsProvider(turn.error?.category)){
         await tx.recovery?.openProviderHold({id:this.deps.ids.next(),provider:session?.runtimeProvider??'codex',

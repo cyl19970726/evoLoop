@@ -129,12 +129,13 @@ export function decisionLinkProblem(item: DecisionItem): string | null {
  */
 export function decisionLink(projectId: string, item: DecisionItem, actorId: string): string | null {
   if (decisionLinkProblem(item)) return null;
-  const back = { return: `/p/${projectId}/inbox`, returnTitle: "待我验收与判断" };
+  const back = { return: `/p/${projectId}/inbox`, actor: actorId, returnTitle: "待我验收与判断" };
+  const decisionBack = { ...back, returnTitle: "待我处理" };
   switch (item.kind) {
-    case "role_proposal": return `/p/${projectId}/roles?${new URLSearchParams({ role: item.roleId, ...back })}`;
-    case "stage_proposal": return `/p/${projectId}/journey?${new URLSearchParams({ stage: item.stageId, ...back })}`;
+    case "role_proposal": return `/p/${projectId}/roles?${new URLSearchParams({ role: item.roleId, ...decisionBack })}`;
+    case "stage_proposal": return `/p/${projectId}/journey?${new URLSearchParams({ stage: item.stageId, ...decisionBack })}`;
     case "task_question": return `/p/${projectId}/tasks/${item.taskId}?${new URLSearchParams({ section: "collaboration", discussion: item.discussionId, question: item.eventId,
-      ...back, actor: actorId })}`;
+      ...back })}`;
     case "decision_request": return item.taskId ? inboxTaskLink(projectId, item.taskId, actorId) : null;
   }
 }

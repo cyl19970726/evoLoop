@@ -42,6 +42,8 @@
 
 **“就绪”不能只看准备检查。** 新 Session 必须成功处理过一条真实消息，并通过反向授权把约定的唯一标记回给 Leader；两个方向都用 `work message` 与 `work status ... --message` 读回 processing、原生 Turn 和回复后才可报告。准备检查通过、配置缺项为空、`runtime_session.state=ready`、发送返回 `applied` 或消息已保存都不算。最小演练步骤见[运行接线手册](runtime-operations.md#6-受管-session-编制所需配置)。
 
+**换路径后先实跑一次。** 换 Role、换验收者或换 Session 后，新的路径必须先实际跑通一次才算落地：第一次派单要真的开出 Run，或新 Session 真的处理过一条消息。换验收者时，新的验收安排也要真正送达并由接收 Session 处理；只改配置、只换绑定、只保存一条分派记录或只在文档里写计划，都不算。保留 Run 或消息 ID、实际处理结果与读回证据，作为新路径可用的对照记录。
+
 身份文件里凭据的 `extraCommands` 只用来开放 `document.archive` 与 `document.restore`，与 `permissions` 分开：有它的身份在本项目有 write 即可对应归档或恢复，不能 `task.start`、`task.close`。改身份文件后须重启服务。
 
 **为什么 `runtime.materialCli` 与 `residentQueue.roleActors` 都要写。** 评估结论：现在不合并。两处不是同一个取值：`roleActors` 是“项目 × Role → 业务身份”，常驻队列、协作授权、消息连接器和队列绑定都读它；`materialCli` 是“项目 ×（Session 或 Role）× Session 身份 → CLI 身份 + 命令路径”，可细到 Session 或 Task，只有启用运行时才有意义。Role 级条目里二者的身份必须相同，服务用 `material_cli_actor_mismatch` 检查，所以重复的是书写成本，不是两个可以不同的事实。合并的风险：要迁移私有配置；Session/Task 级覆盖会丢；只走队列、没有 `materialCli` 的 Role 仍需要 `roleActors`；由一处推导另一处，会让“谁能以这个 Role 行事”的授权隐含进 CLI 配置。较小的后续做法（本轮未做）：加载配置时二者不一致就一次性报错，或 Role 级 `materialCli.cliActorId` 缺省取 `roleActors` 的 `actorId`（向后兼容）。
@@ -187,7 +189,7 @@ npm run --silent cli -- request work.dependencies.set --project "$PROJECT_ID" --
 npm run --silent cli -- request work.review.set --project "$PROJECT_ID" --id "$TASK_ID" --file "$PRIVATE_REVIEW_JSON"
 ```
 
-除 `work send` 外，这些都是只读查询，不唤醒模型。目录、变化、活动和版本历史的游标不可混用；改变身份、项目或筛选后重建读取位置。消息列表是正文／阻塞／回执预览，完整内容和处理答复从消息详情读取。部分结果、来源未同步和缺失资源指标须原样表达，不把 null 改成 0 或把 roleTasks 当每个会话的当前任务。
+除 `work send` 外，这些都是只读查询，不唤醒模型。目录、变化、活动和版本历史的游标不可混用；改变身份、项目或筛选后重建读取位置。消息列表是正文／阻塞／回执预览，完整内容和处理答复从消息详情读取。部分结果、来源未同步和缺失资源指标须原样表达，不把 null 改成 0 或把 roleTasks 当每个会话的当前任务。`currentWork` 的来源顺序：该 Session 上仍在进行（requested、dispatching、running、unknown）的业务 Run 所执行的 Task（`relation` 为 `run`），其次是 Session 承接中的 Task，再次是分派修订等于 Task 当前修订的已分派／已接受 Task。Task 在 Run 开始后修订过，不会让仍在执行的 Run 的 Task 掉出 `currentWork`，队伍里排队的已接受 Task 也不会顶替它；它在 `assignments` 里仍按 `stale` 标出。
 
 Agent 间发送含中文、引号或换行的正文时，用 `work send` 从私有 UTF-8 文件或 stdin 读取，不把正文拼进 shell 参数，也不要用界面自动键入转交正文。CLI 按字节严格解码 UTF-8，按服务端同样规则去掉首尾空白，拒绝空正文、无效 UTF-8、替换字符、超过 16000 字符或没有字母／数字的疑似截断正文，再提交 `session.message.post`。提交后必须回读该消息；只有响应中的 `readbackVerified: true` 且 `message.content` 与发送正文逐字一致才算本命令成功。回读失败或内容不一致分别报 `MESSAGE_READBACK_FAILED`／`MESSAGE_CONTENT_MISMATCH`，保留原 `messageId`、`operationId` 和回执，不能按聊天末句推断已送达。保存仍不等于接收方处理或已读，后续按原消息 ID 核 processing、Turn 和本人 read。
 
@@ -438,11 +440,11 @@ Leader 用 `evoloop command run` 提交 `line.append`（sessionId、taskId、exp
 
 ## 调度板与调度事件流
 
-`work board --project P [--brief]` 读调度板：每个 Session 现在做的（Run，或由消息、即时输入开的这一轮，带开始时间和已用时长）、队伍里排着的项（顺序、状态、来源、追加时间、已等待多久）、排队中的普通消息数、恢复门阶段和模型服务暂停；还有就绪但不在任何队伍里的 Task，以及等 Leader 决定的事项（已送入或已看到、尚未处置的通知项，受阻的通知包，开放的决定请求）。`--brief` 只留安排工作用的字段，不超过 6 KB，通常不到完整输出的一半；ID 保持完整，标题截短，没有内容的字段省略；超出时从各列表尾部丢项并写明省略了几项。Leader 每轮先读 `--brief`，要看某一项的全部字段再读不带 `--brief` 的完整输出。两种输出都带 `eventSeq`：这份快照读取时事件流的最新序号。
+`work board --project P [--brief]` 读调度板：每个 Session 现在做的（Run，或由消息、即时输入开的这一轮，带开始时间和已用时长）、队伍里排着的项（Session 队伍 `session_line_entry` 与旧的批量队伍合在一起；顺序、状态 queued / held（挂起）/ claimed（轮到、正在启动）、来源、追加时间、已等待多久；“就绪但不在任何队伍里”同样排除 Session 队伍里的 Task）、排队中的普通消息数、恢复门阶段和模型服务暂停；还有就绪但不在任何队伍里的 Task，以及等 Leader 决定的事项（已送入或已看到、尚未处置的通知项，受阻的通知包，开放的决定请求）。`--brief` 只留安排工作用的字段，不超过 6 KB，通常不到完整输出的一半；ID 保持完整，标题截短，没有内容的字段省略；超出时从各列表尾部丢项并写明省略了几项。Leader 每轮先读 `--brief`，要看某一项的全部字段再读不带 `--brief` 的完整输出。两种输出都带 `eventSeq`：这份快照读取时事件流的最新序号。
 
-`work events --project P [--after SEQ] [--limit 1..500] [--wait 0..30] [--category notice|task|message|acceptance]` 按序号读调度事件，`--from ISO --to ISO` 按时间段读（回放；与 `--after` 合用时只在这段时间内续页）。事件含递增序号、时间、种类、从谁到谁、Session、Task、主体（种类、编号、Task 标题、可打开的接口路径）、变化前后的状态，**不含消息正文**。种类：通知 `notice.created|packet_built|packed|sent|delivered|seen|handled|deferred|withdrawn|blocked|returned`（`notice.sent` 的 `next` 是 `new_turn` 或 `steer`），任务 `task.created|confirmed|returned|queued|turn|held|released|reordered|run_requested|run_started|run_ended|delivered|started|done|cancelled|todo`，消息 `message.queued|processing|replied|failed|cancelled|inserted|started|stopped`，验收 `acceptance.arranged|delivered|blocked|observed|closed|reviewed|precondition_marked`。`--wait N` 是长轮询：暂时没有新事件时最多等 N 秒，等待期间不额外查库。返回 `resetRequired:true` 表示游标早于保留期（30 天）已清理的范围或超前于最新序号，先重读 `work board` 再从它的 `eventSeq` 续。浏览器订阅是 `GET /api/projects/P/work-board/stream`（SSE，`Last-Event-ID` 或 `?after=` 续传，缺口时发 `event: reset`）。
+`work events --project P [--after SEQ] [--limit 1..500] [--wait 0..30] [--category notice|task|message|acceptance]` 按序号读调度事件，`--from ISO --to ISO` 按时间段读（回放；与 `--after` 合用时只在这段时间内续页）。事件含递增序号、时间、种类、从谁到谁、Session、Task、主体（种类、编号、Task 标题、可打开的接口路径）、变化前后的状态，**不含消息正文**。空闲 Session 上的即时输入开一轮记 `message.started`（不会同时记成排队）。种类：通知 `notice.created|packet_built|packed|sent|delivered|seen|handled|deferred|withdrawn|blocked|returned`（`notice.sent` 的 `next` 是 `new_turn` 或 `steer`），任务 `task.created|confirmed|returned|queued|resumed|turn|held|removed|released|reordered|run_requested|run_started|run_ended|delivered|started|done|cancelled|todo`（Session 队伍项的追加、恢复、轮到、挂起、撤下、移动、Run 结束放行都是 `subject.kind` 为 `line_entry` 的 `task.*` 事件；`task.released` 对批量队伍是放行、对 Session 队伍是 Run 结束放行，撤下是 `task.removed`），消息 `message.queued|processing|replied|failed|cancelled|inserted|started|stopped`，验收 `acceptance.arranged|delivered|blocked|observed|closed|reviewed|precondition_marked`。`--wait N` 是长轮询：暂时没有新事件时最多等 N 秒，等待期间不额外查库。返回 `resetRequired:true` 表示游标早于保留期（30 天）已清理的范围或超前于最新序号，先重读 `work board` 再从它的 `eventSeq` 续。浏览器订阅是 `GET /api/projects/P/work-board/stream`（SSE；首次用 `?after=` 打开快照的 `eventSeq`，断线后浏览器带着同一个 URL 和 `Last-Event-ID` 重连，`Last-Event-ID` 优先，缺口时发 `event: reset`）。保留期清理掉某个项目的全部事件后，最新序号取清理水位，重读快照后从它的 `eventSeq` 续读不会再被要求重置。
 
-`work metrics --project P [--from ISO --to ISO]`（窗口不超过 30 天，默认最近 24 小时）从事件流算三项指标：进队等待（`task.queued` 到 `task.turn`，按追加者分开）、Session 空转（没有任何东西在运行、却有队伍项或排队消息在等的总时长）、新情况纳入时间（通知产生到它的包被读到——`notice.delivered`，没有则 `notice.seen`；不走包的通知到 `notice.sent`）。窗口开始之前就已入队或已在运行的对象不在事件里，不会被猜出来。
+`work metrics --project P [--from ISO --to ISO]`（窗口不超过 30 天，默认最近 24 小时）从事件流算三项指标：进队等待（`task.queued` 到 `task.turn`，按追加者分开；挂起、撤下的队伍项不算在等）、Session 空转（没有任何东西在运行——Run、处理中的消息、即时输入开的一轮都算在运行——却有队伍项或排队消息在等的总时长）、新情况纳入时间（通知产生到它的包被读到——`notice.delivered`，没有则 `notice.seen`；不走包的通知到 `notice.sent`）。窗口开始之前就已入队或已在运行的对象不在事件里，不会被猜出来。
 
 ## Leader 通知包
 
@@ -451,6 +453,8 @@ Leader 收到的是“Leader 通知包”消息：先 `get /api/projects/PROJECT
 被阻塞的包（读到后那一轮失败且恢复门关闭）不会自动重发，它出现在 `work` 的 Leader 索引（`blockedNoticePackets`，带包编号和提示）。先按 Session 恢复流程恢复恢复门，再用 `request leader.notice.recover --project UUID --id 包编号 --file BODY.json --receipt UUID`（body 只写 `{"reason":"..."}`，需要 review 权限）恢复这一包，其中的项进入下一包。`leader.notice.recover` 带 `expectedOperationId` 等四个 ID 的旧形式仍用于迁移前已有的、消息被拒绝的通知。包的步骤（打包、已送、观察）只由配置里的通知发送身份运行，不是 Agent 的命令。
 
 通知有级别（立即/汇总，见[接口合同](../architecture/contracts.md#leader-通知层)）：立即项在包里行首标“立即·”，不等 60 秒、排在前面，来源是验收安排受阻、提交受阻、Run 结束未提交、Task 提问与阻塞、验收观察失败；验收观察按结论拆成 `observation_used`（汇总）和 `observation_failed`（立即）。只记录事件（Run 已按请求停止、关注项已解决、通知撤回）不是通知，读 `get /api/projects/PROJECT/leader-records`（`taskId`、`kind`、`limit`、`cursor` 可选，从旧到新续页）。
+
+定时直派的三条命令（`command schema` 取结构，都要 review 权限）：`schedule.directList.set`（某个 Role 的直派名单）、`schedule.dispatch.set`（某个日程交 Leader 还是直接进队伍，含等待上限与每日预算）、`schedule.directEntry.withdraw`（撤下一个定时项，必须选 `cancel` 或 `to_leader`；普通 `line.remove` 拒绝定时项）。直派的 Task 不发待分诊，直派与跳过读 `get /api/projects/PROJECT/leader-records?kind=direct_dispatched`（或 `direct_dispatch_skipped`）。
 
 ## 待我决定
 

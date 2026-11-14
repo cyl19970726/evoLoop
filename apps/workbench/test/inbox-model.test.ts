@@ -224,10 +224,14 @@ test("待我决定 deep links carry the specific id of the item, not a list page
   assert.equal(role.pathname, "/p/p1/roles");
   assert.equal(role.searchParams.get("role"), "role-1", "the role page selects this role");
   assert.equal(role.searchParams.get("return"), "/p/p1/inbox");
+  assert.equal(role.searchParams.get("actor"), me);
+  assert.equal(role.searchParams.get("returnTitle"), "待我处理");
   const stage = params(decision("stage_proposal"));
   assert.equal(stage.pathname, "/p/p1/journey");
   assert.equal(stage.searchParams.get("stage"), "stage-1", "the journey page selects this stage");
   assert.equal(stage.searchParams.get("return"), "/p/p1/inbox");
+  assert.equal(stage.searchParams.get("actor"), me);
+  assert.equal(stage.searchParams.get("returnTitle"), "待我处理");
   const question = params(decision("task_question"));
   assert.equal(question.pathname, "/p/p1/tasks/task-9");
   assert.equal(question.searchParams.get("section"), "collaboration", "the task page opens its collaboration section");
@@ -235,6 +239,7 @@ test("待我决定 deep links carry the specific id of the item, not a list page
   assert.equal(question.searchParams.get("question"), "e-1", "and the question event itself");
   assert.equal(question.searchParams.get("return"), "/p/p1/inbox");
   assert.equal(question.searchParams.get("actor"), me);
+  assert.equal(question.searchParams.get("returnTitle"), "待我验收与判断", "the task page keeps its existing inbox return name");
   // Ids are encoded, never concatenated raw.
   assert.equal(params({ ...decision("role_proposal"), roleId: "a b&c" } as DecisionItem).searchParams.get("role"), "a b&c");
 });

@@ -165,9 +165,11 @@ export class PgSessionMessages implements SessionMessageTransaction {
           WHERE busy.project_id=m.project_id AND busy.session_id=m.session_id AND busy.state IN ('dispatching','running','unknown'))
         AND NOT EXISTS(SELECT 1 FROM session_message older WHERE older.project_id=m.project_id
           AND older.session_id=m.session_id AND older.state='queued'
-          -- A message blocked for want of its sender's grant cannot be delivered however long it waits, and another
-          -- sender's messages are not behind it; it stays queued (and visible) but does not hold the line.
-          AND (older.blocked_reason IS NULL OR older.blocked_reason NOT LIKE 'MESSAGE_GRANT_MISSING:%')
+          -- A message that cannot be delivered yet however long it waits does not hold the line behind it: it stays queued (and visible, with its
+          -- reason) and is looked at again each pass. Three reasons: its sender's grant is missing; its acceptance arrangement waits for the publication
+          -- it names (PUBLICATION_PENDING:); its acceptance arrangement is blocked (ACCEPTANCE_RELAY_BLOCKED:, defect 0fd4a99b).
+          AND (older.blocked_reason IS NULL OR (older.blocked_reason NOT LIKE 'MESSAGE_GRANT_MISSING:%'
+            AND older.blocked_reason NOT LIKE 'PUBLICATION_PENDING:%' AND older.blocked_reason NOT LIKE 'ACCEPTANCE_RELAY_BLOCKED:%'))
           AND (older.superseded_at IS NULL OR older.superseded_confirmed_at IS NOT NULL)
           AND (older.created_at,older.message_id)<(m.created_at,m.message_id))))
       ORDER BY CASE WHEN m.state IN ('processing','unknown') THEN 0 ELSE 1 END,

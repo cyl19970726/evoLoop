@@ -193,6 +193,11 @@
       }
     },
     {
+      "path": "docs/architecture/hub.md",
+      "title": "Hub 账号、邀请与项目成员",
+      "group": "架构 · 整体与主线"
+    },
+    {
       "path": "docs/architecture/project-data.md",
       "title": "任务、文档、Wiki 与 Connector",
       "group": "架构 · 整体与主线",

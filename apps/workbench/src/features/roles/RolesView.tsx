@@ -7,9 +7,11 @@ import type { RoleRecord } from "@evoloop/contracts/roles";
 import { Button, EmptyState, ListRow, LoadingState, Notice, cn } from "@evoloop/ui";
 import { ActionForm, type MutationContext } from "../../shared/ActionForm";
 import { currentPath, onNavigate } from "../../shared/navigation";
+import { readReturn } from "../../shared/returnLink";
 import { ContextPanelContent } from "../../shared/ui/ContextPanel";
 import { ContextRailContent } from "../../shared/ui/ContextRail";
 import { FactList, PageSection, PanelSection, mutedText } from "../../shared/ui/PageParts";
+import { ReturnLink } from "../../shared/ui/ReturnLink";
 import { SectionBoundary } from "../../shared/ui/SectionBoundary";
 import { href } from "../../shared/ui/shared";
 import { RoleDetail, RoleTrialFacts } from "./RoleDetail";
@@ -36,6 +38,7 @@ export function RolesView({ context, refresh }: { context: MutationContext; refr
   const { projectId } = context;
   const list = useRoleList(projectId);
   const { value: target, tick } = useRoleSelection(projectId);
+  const returnTo = readReturn(currentPath(), projectId, context.principal.actorId);
   const [proposing, setProposing] = useState(false);
   const roles = list.items;
   const selected = target ? roles.find(role => role.id === target && role.projectId === projectId) : undefined;
@@ -59,6 +62,7 @@ export function RolesView({ context, refresh }: { context: MutationContext; refr
   const roleLink = (role: RoleRecord) => `${href(projectId, "roles")}?role=${encodeURIComponent(role.id)}`;
   const showProposal = proposing || !list.loading && !list.error && roles.length === 0;
   return <div data-ui="" className="team-roles mx-auto flex w-full max-w-[980px] flex-col gap-6 px-4 py-5 compact:px-8 compact:py-7" ref={detailRef}>
+    {returnTo && <div className="flex flex-wrap items-center gap-2"><ReturnLink projectId={projectId} href={returnTo.href} place={returnTo.place} label={returnTo.label} /></div>}
     <ContextRailContent>
       <nav aria-label="职责目录" className="flex flex-col gap-0.5 pt-1">
         <a href={href(projectId, "roles")} aria-current={!target ? "page" : undefined}
