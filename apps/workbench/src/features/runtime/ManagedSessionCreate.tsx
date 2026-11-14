@@ -19,7 +19,9 @@ export function ManagedSessionCreate({ context, grants, roleName }: { context: M
   const value = catalog.data;
   const error = catalog.error ? errorText(catalog.error) : "";
   const available = !error && value?.status === "available" && Array.isArray(value.models);
-  const models = available ? value!.models.filter((item): item is string => typeof item === "string" && !!item.trim()) : [];
+  const authorized = new Set(value?.authorizedModels ?? value?.models ?? []);
+  const models = available ? value!.models.filter((item): item is string =>
+    typeof item === "string" && !!item.trim() && authorized.has(item)) : [];
   const grant = grantIndex === "" ? undefined : grants[Number(grantIndex)];
   const choices = grant ? allowedModels(grant, models) : [];
   const chosen = choices.includes(model) ? model : "";
