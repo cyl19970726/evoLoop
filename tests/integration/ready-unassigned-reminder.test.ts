@@ -143,3 +143,61 @@ test("a Task released by its dependency is ready from that moment: creation time
   await evaluate(T0 + 7 * hour + 60_000);
   assert.equal(await open(dependent), 1, "ready for 2h01 and still undispatched: reminded");
 });
+
+// A dependency can also be satisfied by an accepted release from a resident queue (no closure of the current revision). That release has its own time.
+test("a dependency satisfied through a resident queue release is ready from the release time, not from the Task's creation", async t => {
+  const schema = `ready_queue_${randomUUID().replaceAll("-", "")}`;
+  await migrate(database!, schema);
+  const pool = new pg.Pool({ connectionString: database, options: `-c search_path=${schema}` });
+  t.after(async () => { await pool.end(); const admin = new pg.Client({ connectionString: database }); await admin.connect(); try { await admin.query(`DROP SCHEMA "${schema}" CASCADE`); } finally { await admin.end(); } });
+  let clock = T0;
+  const projectId = randomUUID();
+  const lead: Principal = { actorId: "lead", projectIds: [projectId], permissions: ["read", "write", "review"] };
+  const workflow = new WorkflowService({ uow: new PostgresUnitOfWork(pool), clock: { now: () => new Date(clock).toISOString() }, ids: { next: randomUUID },
+    hasher: { hash: (value: string) => createHash("sha256").update(value).digest("hex") } });
+  const applied = async (command: Record<string, unknown>) => { const r = await workflow.execute(lead, { ...command, projectId, operationId: randomUUID() } as never); assert.equal(r.status, "applied", JSON.stringify(r)); return r; };
+  await applied({ type: "project.create", title: "Ready after a queue release" });
+  const owner = fixtureRoleId("queue-owner"); await seedFixtureRole(pool, projectId, owner);
+  const errors: unknown[] = [];
+  const pump = new TaskAttentionPump({ pool, projects: async () => [projectId], canWrite: () => true, now: () => new Date(clock).toISOString(), onError: error => errors.push(error), pollIntervalMs: 24 * hour });
+  const makeTask = async (title: string) => { const taskId = randomUUID(); await applied({ type: "task.create", taskId, title, content: `# ${title}`, acceptance: "Result", owner }); return taskId; };
+  const open = async (taskId: string) => (await pool.query(`SELECT 1 FROM task_attention_item WHERE project_id=$1 AND task_id=$2 AND state='open'`, [projectId, taskId])).rowCount;
+  const evaluate = async (at: number) => { clock = at; await pump.tick(); assert.deepEqual(errors, [], "no evaluation error"); };
+
+  const prerequisite = await makeTask("Prerequisite");
+  const dependent = await makeTask("Waits for the prerequisite");
+  await pool.query(`INSERT INTO task_dependency(project_id,task_id,depends_on_task_id,actor_id,reason,created_at) VALUES($1,$2,$3,'lead','needs it',$4)`, [projectId, dependent, prerequisite, new Date(T0).toISOString()]);
+  await pool.query(`INSERT INTO task_dependency_head(project_id,task_id,version,updated_at) VALUES($1,$2,1,$3)`, [projectId, dependent, new Date(T0).toISOString()]);
+  await evaluate(T0 + 5 * hour);
+  assert.equal(await open(dependent), 0, "blocked on its dependency, not ready");
+  // The prerequisite is satisfied by an accepted resident queue release at T0+5h (the closure it names belongs to the revision before the current one, so the
+  // dependency is satisfied through the queue alone).
+  const doneAt = new Date(T0 + 5 * hour).toISOString();
+  const firstRevision = (await pool.query("SELECT current_revision_id FROM task WHERE project_id=$1 AND task_id=$2", [projectId, prerequisite])).rows[0].current_revision_id;
+  const deliveryId = randomUUID();
+  await pool.query(`INSERT INTO delivery(project_id,delivery_id,task_id,task_revision_id,artifact_ref,artifact_revision,content_hash,technical_result,technical_evidence,reason,actor_id,created_at)
+    VALUES($1,$2,$3,$4,'fixture:report','r1',$5,'passed','fixture','delivery','author',$6)`, [projectId, deliveryId, prerequisite, firstRevision, "a".repeat(64), doneAt]);
+  const closureId = randomUUID();
+  await pool.query(`INSERT INTO task_closure(project_id,closure_id,task_id,task_revision_id,delivery_id,acceptance_result,acceptance_evidence,reason,actor_id,created_at)
+    VALUES($1,$2,$3,$4,$5,'met','evidence','close','lead',$6)`, [projectId, closureId, prerequisite, firstRevision, deliveryId, doneAt]);
+  const stored = (await workflow.getTask(lead, projectId, prerequisite)).task;
+  await applied({ type: "task.update", taskId: prerequisite, expectedVersion: stored.version, title: "Prerequisite, revised", content: "# Revised", acceptance: "Result", owner, consumer: null, reason: "revised after the closure" });
+  const currentRevision = (await pool.query("SELECT current_revision_id FROM task WHERE project_id=$1 AND task_id=$2", [projectId, prerequisite])).rows[0].current_revision_id;
+  assert.notEqual(currentRevision, firstRevision, "the closure is for an earlier revision");
+  const session = randomUUID(), queue = randomUUID(), entry = randomUUID(), claim = randomUUID();
+  await pool.query(`INSERT INTO runtime_session(project_id,session_id,role_id,cwd,authorization_scope,sandbox,approval_policy,state,version,native_thread_id,native_session_id,operation_id,actor_id,created_at,updated_at)
+    VALUES($1,$2,$3,'/tmp','project','danger-full-access','never','ready',1,$4,$5,$6,'lead',now(),now())`, [projectId, session, owner, `thread-${session}`, `native-${session}`, randomUUID()]);
+  await pool.query(`INSERT INTO resident_queue(project_id,queue_id,version,max_runs,reason,actor_id) VALUES($1,$2,1,3,'queue','lead')`, [projectId, queue]);
+  await pool.query(`INSERT INTO resident_queue_entry(project_id,queue_id,entry_id,task_id,task_revision_id,source_input_json,session_id,role_id,position,consumer_id,use_required,release_rule,state,claim_id)
+    VALUES($1,$2,$3,$4,$5,'{}',$6,$7,0,'consumer',true,'accepted','released',$8)`, [projectId, queue, entry, prerequisite, currentRevision, session, owner, claim]);
+  await pool.query(`INSERT INTO resident_queue_claim(project_id,queue_id,entry_id,claim_id,task_id,session_id,role_id,release_kind,delivery_id,closure_id,claimed_at,released_at)
+    VALUES($1,$2,$3,$4,$5,$6,$7,'accepted',$8,$9,$10,$10)`, [projectId, queue, entry, claim, prerequisite, session, owner, deliveryId, closureId, doneAt]);
+  await pool.query(`INSERT INTO resident_queue_attempt(project_id,claim_id,sequence,run_id,operation_id,task_revision_id) VALUES($1,$2,1,$3,$4,$5)`, [projectId, claim, randomUUID(), randomUUID(), currentRevision]);
+  // One minute after the release it is not yet two hours ready; counted from creation it would be 5 hours (a false reminder: the defect).
+  await evaluate(T0 + 5 * hour + 60_000);
+  assert.equal(await open(dependent), 0, "released one minute ago: no reminder");
+  await evaluate(T0 + 7 * hour - 60_000);
+  assert.equal(await open(dependent), 0, "released 1h59 ago: no reminder");
+  await evaluate(T0 + 7 * hour + 60_000);
+  assert.equal(await open(dependent), 1, "ready for 2h01 and still undispatched: reminded");
+});
