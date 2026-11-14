@@ -108,3 +108,23 @@ test("a head that went backwards, or a read that says resetRequired, resets ever
   assert.deepEqual(resets, [3, 12]);
   off();
 });
+
+test("defect 52eb5ecf: a direct input that starts a Turn on an idle Session is busy time, not waiting and not idle", () => {
+  const s = "session-i";
+  // 5 minutes of direct-input work in a 1 hour window: started (busy) ... replied (free). Nothing waits: no idle time.
+  const events = [ev(600, "message.started", "m1", { sessionId: s }), ev(900, "message.replied", "m1", { sessionId: s })];
+  const m = computeBoardMetrics(events, at(0), at(3600));
+  assert.equal(m.sessionIdle.length === 0 || m.sessionIdle[0]!.idleWithWorkSeconds === 0, true, JSON.stringify(m.sessionIdle));
+  // The same text recorded the old way (queued, then processing) would have counted as waiting; a real queued message still does.
+  const queued = computeBoardMetrics([ev(0, "message.queued", "m2", { sessionId: s }), ev(120, "message.processing", "m2", { sessionId: s }), ev(300, "message.replied", "m2", { sessionId: s })], at(0), at(3600));
+  assert.equal(queued.sessionIdle[0]!.idleWithWorkSeconds, 120, "a message that waited 120 s with nothing running is idle-with-work for 120 s");
+});
+
+test("defect 52eb5ecf: line entries wait from task.queued (or task.resumed) to task.turn; a suspended or removed entry is not work waiting for a free Session", () => {
+  const s = "session-l";
+  const events = [ev(0, "task.queued", "e1", { sessionId: s, from: "lead" }), ev(60, "task.held", "e1", { sessionId: s }),
+    ev(100, "task.resumed", "e1", { sessionId: s }), ev(160, "task.turn", "e1", { sessionId: s }), ev(160, "task.run_requested", "r1", { sessionId: s })];
+  const m = computeBoardMetrics(events, at(0), at(300));
+  assert.deepEqual(m.queueWait, [{ source: "lead", count: 1, medianSeconds: 160, p95Seconds: 160 }], "queued at 0, its turn at 160 (a hold in between does not reset the first queueing)");
+  assert.equal(m.sessionIdle[0]!.idleWithWorkSeconds, 60 + 60, "waiting and idle 0-60 and 100-160; held 60-100 is not waiting");
+});

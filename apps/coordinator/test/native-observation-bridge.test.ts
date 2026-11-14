@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import type { RuntimeEvent, RuntimePort, RuntimeSessionRecord } from "@evoloop/contracts/runtime";
 import type { NativeObservationRecord, NativeObservationProjection } from "@evoloop/contracts/native-observation";
-import type { NativeObservationService } from "@evoloop/core/native-observation";
+import { NativeObservationService } from "@evoloop/core/native-observation";
 import { NativeObservationBridge } from "../src/runtime/native-observation.js";
 
 function setup() {
@@ -33,6 +33,70 @@ function setup() {
     emit(method: string, params: Record<string, unknown>) { eventListener?.({ method, projectId, sessionId, threadId: "owned", params: { threadId: "owned", ...params } }); },
     disconnect() { connected = false; disconnectListener?.(); },
     bindSource() { resolveSource = true; }, get record() { return record; }, get writes() { return writes; },
+  };
+}
+
+function ledgerSetup() {
+  const projectId = randomUUID(), sessionId = randomUUID();
+  let connectionId = randomUUID(), tick = 0;
+  let eventListener: ((event: RuntimeEvent) => void) | undefined, disconnectListener: (() => void) | undefined;
+  let record: NativeObservationRecord | null = null;
+  const added: { day: string; delta: { inputTokens: number; outputTokens: number; cachedInputTokens: number } }[] = [];
+  const tx = {
+    nativeObservation: {
+      get: async () => record,
+      upsert: async (value: NativeObservationRecord) => { record = structuredClone(value); },
+      invalidateConnections: async (_projectId: string, currentConnectionId: string) => {
+        if (record && record.connectionId !== currentConnectionId) record = { ...record, freshness: "stale" };
+        return record ? 1 : 0;
+      },
+      staleConnection: async (_projectId: string, staleConnectionId: string, reason: string) => {
+        if (record?.connectionId !== staleConnectionId) return 0;
+        record = { ...record, freshness: "stale", staleReason: reason };
+        return 1;
+      },
+    },
+    getRuntimeSession: async () => ({ id: sessionId, projectId, state: "ready", nativeThreadId: "owned" }),
+    nativeInputs: { findSource: async () => null },
+    usage: { addUsage: async (_projectId: string, _sessionId: string, day: string,
+      delta: { inputTokens: number; outputTokens: number; cachedInputTokens: number }) => {
+      added.push({ day, delta });
+    } },
+  };
+  const service = new NativeObservationService({ uow: {
+    transaction: async (_projectId: string, action: (value: unknown) => Promise<unknown>) => action(tx),
+    read: async (_projectId: string, action: (value: unknown) => Promise<unknown>) => action(tx),
+  } as never, clock: { now: () => "2026-11-10T00:00:00.000Z" } });
+  const runtime = {
+    onEvent(listener: typeof eventListener) { eventListener = listener; return () => { eventListener = undefined; }; },
+    onDisconnect(listener: () => void) { disconnectListener = listener; return () => { disconnectListener = undefined; }; },
+    nativeInputConnectionId: () => connectionId,
+  } as unknown as RuntimePort & { onDisconnect(listener: () => void): () => void };
+  const session = { id: sessionId, projectId, state: "ready", nativeThreadId: "owned" } as RuntimeSessionRecord;
+  const bridge = new NativeObservationBridge({ service,
+    session: async () => session, projects: async () => [projectId], canWrite: () => true,
+    now: () => new Date(Date.UTC(2026, 10, 10, 0, 0, tick++)).toISOString() });
+  bridge.attach(runtime);
+  const usage = (total: number, last: number) => ({
+    total: { inputTokens: total, cachedInputTokens: 0, outputTokens: 0, reasoningOutputTokens: 0, totalTokens: total },
+    last: { inputTokens: last, cachedInputTokens: 0, outputTokens: 0, reasoningOutputTokens: 0, totalTokens: last },
+    modelContextWindow: null,
+  });
+  return {
+    bridge, projectId, sessionId, session,
+    async connect() { connectionId = randomUUID(); bridge.attach(runtime); await bridge.opened(); },
+    disconnect() { disconnectListener?.(); },
+    emit(method: string, params: Record<string, unknown>) {
+      eventListener?.({
+        method, projectId, sessionId, threadId: "owned", params: { threadId: "owned", ...params },
+      });
+    },
+    token(turnId: string, total: number, last: number) {
+      this.emit("thread/tokenUsage/updated", { turnId, tokenUsage: usage(total, last) });
+    },
+    async pump() { await bridge.pump(projectId, [session]); },
+    get inputTokens() { return added.reduce((total, entry) => total + entry.delta.inputTokens, 0); },
+    added,
   };
 }
 
@@ -81,4 +145,44 @@ test("an old Turn cannot replace current work items or terminal status", async (
   await f.bridge.pump(f.projectId, [f.session]);
   assert.equal(f.record?.currentTurn?.id, "B"); assert.equal(f.record?.items[0]?.status, "completed");
   assert.equal(f.record?.diff, null);
+});
+
+test("a reconnect keeps the persisted usage baseline before the next usage notification", async () => {
+  const f = ledgerSetup();
+  await f.connect();
+  f.token("one", 100, 100);
+  await f.pump();
+  assert.equal(f.inputTokens, 100);
+
+  f.disconnect();
+  await f.bridge.drain();
+  await f.connect();
+  f.emit("turn/started", { turn: { id: "two", status: "inProgress", startedAt: 200 } });
+  await f.pump();
+  f.token("two", 150, 50);
+  f.token("two", 200, 50);
+  await f.pump();
+  assert.equal(f.inputTokens, 200);
+});
+
+test("usage notifications coalesced into one pump keep every request across a reset", async () => {
+  const f = ledgerSetup();
+  await f.connect();
+  f.token("one", 100, 100);
+  await f.pump();
+
+  f.emit("turn/started", { turn: { id: "two", status: "inProgress", startedAt: 200 } });
+  f.token("two", 50, 50);
+  f.token("two", 100, 50);
+  await f.pump();
+  assert.equal(f.inputTokens, 200);
+});
+
+test("a repeated cumulative notification with a new receive time is not charged twice", async () => {
+  const f = ledgerSetup();
+  await f.connect();
+  f.token("one", 100, 100);
+  f.token("one", 100, 100);
+  await f.pump();
+  assert.equal(f.inputTokens, 100);
 });

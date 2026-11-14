@@ -736,3 +736,61 @@ test("Q2: the triggers add little to a write: a message insert with and without 
   console.log(`Q2 write cost per message insert: ${withTrigger.toFixed(2)} ms with the event trigger, ${without.toFixed(2)} ms without (${n} rows, one connection)`);
   assert.ok(withTrigger - without < 5, `the trigger adds ${(withTrigger - without).toFixed(2)} ms per insert`);
 });
+
+test("Q2 defect 52eb5ecf: after retention removed every event the head is the purge floor, so a reader that re-reads the snapshot is not told resetRequired again", async () => {
+  const { readSchedEvents, readWorkBoard, headSeq, purgeSchedEvents } = await import("../src/work-board.ts");
+  await pool.query("UPDATE sched_event SET at=now()-interval '40 days' WHERE project_id=$1", [p]);
+  await purgeSchedEvents(pool, 30);
+  assert.equal((await pool.query("SELECT count(*)::int AS n FROM sched_event WHERE project_id=$1", [p])).rows[0].n, 0, "nothing left");
+  const floor = Number((await pool.query("SELECT floor_seq FROM sched_event_floor WHERE project_id=$1", [p])).rows[0].floor_seq);
+  assert.equal(await headSeq(pool, p), floor, "the head is the floor, not 0");
+  const snapshot = await readWorkBoard(pool, p);
+  assert.equal(snapshot.eventSeq, floor);
+  const page = await readSchedEvents(pool, p, { after: snapshot.eventSeq, limit: 10 });
+  assert.equal(page.resetRequired, false, "continuing from the snapshot's eventSeq is current, not a reset");
+  assert.equal((await readSchedEvents(pool, p, { after: 0, limit: 10 })).resetRequired, true, "a cursor below the floor still is");
+});
+
+test("Q2 defect 52eb5ecf: a Session that is not ready (unknown, creating) stays on the board with its state", async () => {
+  const { readWorkBoard } = await import("../src/work-board.ts");
+  await pool.query("ALTER TABLE runtime_session DISABLE TRIGGER USER");
+  await pool.query("UPDATE runtime_session SET state='unknown' WHERE project_id=$1 AND session_id=$2", [p, sessionB]);
+  try {
+    const board = await readWorkBoard(pool, p);
+    assert.equal(board.sessions.find(s => s.sessionId === sessionB)?.state, "unknown");
+  } finally {
+    await pool.query("UPDATE runtime_session SET state='ready' WHERE project_id=$1 AND session_id=$2", [p, sessionB]);
+    await pool.query("ALTER TABLE runtime_session ENABLE TRIGGER USER");
+  }
+});
+
+test("Q2 defect 52eb5ecf: write latency under concurrent writers — the per-project advisory lock held to commit, measured with and without the event trigger", async () => {
+  await reset();
+  const writers = 8, each = 40;
+  const run = async () => {
+    const latencies: number[] = [];
+    const started = process.hrtime.bigint();
+    await Promise.all(Array.from({ length: writers }, async () => {
+      for (let i = 0; i < each; i++) {
+        const c = await pool.connect();
+        const t = process.hrtime.bigint();
+        try {
+          await c.query("BEGIN");
+          await c.query(`INSERT INTO session_message(project_id,message_id,operation_id,target_kind,session_id,sender_actor_id,content,state,version,created_at,updated_at)
+            VALUES($1,$2,$3,'owned',$4,'perf','x','cancelled',1,now(),now())`, [p, randomUUID(), randomUUID(), sessionB]);
+          await c.query("COMMIT");
+        } finally { c.release(); }
+        latencies.push(Number(process.hrtime.bigint() - t) / 1e6);
+      }
+    }));
+    const sorted = latencies.sort((a, b) => a - b);
+    return { p50: sorted[sorted.length >> 1]!, p95: sorted[Math.ceil(sorted.length * 0.95) - 1]!, perSecond: latencies.length / (Number(process.hrtime.bigint() - started) / 1e9) };
+  };
+  const withTrigger = await run();
+  await pool.query("ALTER TABLE session_message DISABLE TRIGGER sched_event_message_ins");
+  const without = await run();
+  await pool.query("ALTER TABLE session_message ENABLE TRIGGER sched_event_message_ins");
+  const line = (r: typeof withTrigger) => `p50 ${r.p50.toFixed(2)} ms, p95 ${r.p95.toFixed(2)} ms, ${r.perSecond.toFixed(0)} commits/s`;
+  console.log(`Q2 concurrent writes (${writers} writers x ${each}, one transaction per insert): with the event trigger and its project lock: ${line(withTrigger)}; without: ${line(without)}`);
+  assert.ok(withTrigger.p95 < 250, `p95 with the lock ${withTrigger.p95.toFixed(1)} ms`);
+});

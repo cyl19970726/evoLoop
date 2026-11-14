@@ -4,7 +4,7 @@ export interface HubSubscriber { onEvents(items: SchedEvent[]): void; onReset(he
 /** One cheap look at the project's newest seq, and the read of what is after a given seq. */
 export interface HubReads { head(projectId: string): Promise<number>; read(projectId: string, after: number, limit: number): Promise<SchedEventsPage> }
 
-interface ProjectLoop { subscribers: Set<HubSubscriber>; last: number; timer: NodeJS.Timeout | null; running: boolean }
+interface ProjectLoop { subscribers: Set<HubSubscriber>; last: number; timer: NodeJS.Timeout | null; running: boolean; started: Promise<void> }
 
 /**
  * One shared reader for every subscriber of the event stream. Per project a single loop reads the database, and only while at least one
@@ -17,26 +17,38 @@ export class SchedEventHub {
 
   /** `after`: the position the caller already has; the hub delivers what comes after the later of it and its own start. */
   async subscribe(projectId: string, subscriber: HubSubscriber): Promise<() => void> {
+    // The loop is registered before anything is awaited: two subscribers that arrive together share it (the second waits for the same
+    // first read of the head), so neither replaces the other's loop and no timer is left running.
     let loop = this.loops.get(projectId);
     if (!loop) {
-      loop = { subscribers: new Set(), last: await this.reads.head(projectId), timer: null, running: false };
-      this.loops.set(projectId, loop);
+      const created: ProjectLoop = { subscribers: new Set(), last: -1, timer: null, running: false, started: Promise.resolve() };
+      created.started = this.reads.head(projectId).then(head => { created.last = head; });
+      this.loops.set(projectId, created);
+      loop = created;
     }
     loop.subscribers.add(subscriber);
-    if (!loop.timer) { loop.timer = setInterval(() => void this.tick(projectId), this.pollMs); loop.timer.unref(); }
-    return () => {
+    const mine = loop;
+    const release = () => {
       const current = this.loops.get(projectId);
-      if (!current) return;
+      if (current !== mine) return;
       current.subscribers.delete(subscriber);
       if (!current.subscribers.size) { if (current.timer) clearInterval(current.timer); this.loops.delete(projectId); }
     };
+    try { await mine.started; }
+    catch (error) {
+      // The first read of the head failed: nobody is subscribed through this loop; the next subscriber tries again.
+      if (this.loops.get(projectId) === mine) { mine.subscribers.clear(); this.loops.delete(projectId); }
+      throw error;
+    }
+    if (this.loops.get(projectId) === mine && !mine.timer) { mine.timer = setInterval(() => void this.tick(projectId), this.pollMs); mine.timer.unref(); }
+    return release;
   }
   subscribers(projectId: string): number { return this.loops.get(projectId)?.subscribers.size ?? 0; }
   activeProjects(): number { return this.loops.size; }
 
   async tick(projectId: string): Promise<void> {
     const loop = this.loops.get(projectId);
-    if (!loop || loop.running) return;
+    if (!loop || loop.running || loop.last < 0) return;
     loop.running = true;
     try {
       const head = await this.reads.head(projectId);
