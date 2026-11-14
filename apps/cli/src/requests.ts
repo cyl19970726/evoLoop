@@ -291,7 +291,7 @@ export function prepareRequest(name: string, projectIdInput: string, bodyInput: 
         throw new RequestInputError("acceptance.observe body relayId differs from route target");
       path = `${base}/tasks/${String(body.taskId)}/acceptance-relay/${id}/observation`;
       recovery = {kind:"manual",path:`${base}/tasks/${String(body.taskId)}/acceptance-relay`};
-      confirmation = "ack";
+      confirmation = "acceptance-observe";
       break;
     }
     case "session.retirement.approve": {

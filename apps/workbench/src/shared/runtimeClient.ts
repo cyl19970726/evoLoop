@@ -7,7 +7,8 @@ export interface ExecutionGrant { projectId: string; actorId: string; roleId: st
 export interface RuntimeStatus { available: boolean; error: string | null; allowedCwds: string[]; grants: ExecutionGrant[];
   faults?: { sessionId: string | null; phase: string; category: string; nativeMethod?: string; nativeCode?: number;
     nativeCategory?: string; observedAtUtc: string }[] }
-export interface RuntimeModels { status: "available" | "empty" | "unavailable"; models: string[]; error?: string | null }
+export interface RuntimeModels { status: "available" | "empty" | "unavailable"; models: string[];
+  authorizedModels?: string[]; modelStatus?: { model: string; authorized: boolean }[]; error?: string | null }
 export interface NativeResult { messages: string[]; source: "owned-native-history"; finalPhaseConfirmed: boolean; observedAt: string }
 export function runtimeClient(token: string, projectId: string) {
   const base = `/api/projects/${encodeURIComponent(projectId)}/runtime`;

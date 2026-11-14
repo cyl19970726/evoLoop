@@ -29,7 +29,7 @@
   - `grant_directory_unavailable`：grant 的工作目录启动时没登记，或者不是规范绝对路径、目录不存在。改好后重启。
   - `configured` 但 `reason: runtime_unavailable`：配置没问题，是运行时进程现在没打开。看服务日志。
 - **运行时种类不在这一项里看，由 E5 核对。** `runtime` 不区分 Codex 和 Claude。沿用的实例不驱动 Role 选的那一种时，这里照样是 `configured`，但 `role runtime set` 会报 `RUNTIME_PROVIDER_UNAVAILABLE`。实例驱动哪几种，看 `runtime.providers`；没写时只有 `runtime.provider`，默认 `codex`。是改实例的运行时设置并重启，还是改选运行时，属于决定类，交给使用者。
-- **`taskTiming` 与 `scheduling`**：每日评估用哪一种，就看哪一项。没用的那一项读到 `not_configured`（`project_not_configured`）属预期。两项都是 `scheduling_disabled`，说明实例没打开 `scheduling`，是缺项。读到 `grant_holder_not_authorized`，说明授权给的身份缺读、写、审阅中的某项，或者身份文件改了还没重启。
+- **`taskTiming` 与 `scheduling`**：每日评估用哪一种，就看哪一项。没用的那一项读到 `not_configured`（`project_not_configured`）属预期。两项都是 `scheduling_disabled`，说明实例没打开 `scheduling`，是缺项。读到 `grant_holder_not_authorized`，说明授权给的身份权限不够，或者身份文件改了还没重启。两项要求不同：`taskTiming` 的每日复制授权（`taskTimingGrants`）要求读、写、审阅三项都有；旧 `scheduling` 的授权（`scheduling.grants`）只要求写和审阅。
 - **其余能力接入不要求**，读到 `not_configured` 属预期：`knowledge`、`orchestration`、`feishu`、`wechat`。`documentOriginals` 是服务级能力，不归接入管。
 
 ## 只读回、不会发现的问题

@@ -42,7 +42,7 @@ export interface SessionPreparationHintContext {
 /** The codes that are private configuration; every other code in `missing` describes Session or Role state. */
 export const sessionPreparationConfigurationCodes = [
   "runtime_unavailable", "runtime_grant", "model_not_authorized", "cwd", "role_actor", "material_cli", "material_cli_incompatible",
-  "material_cli_actor_mismatch", "role_skill",
+  "material_cli_actor_mismatch", "material_cli_actor_not_writer", "role_skill",
 ] as const;
 
 /**
@@ -95,6 +95,10 @@ export function sessionPreparationHints(missing: readonly string[], context: Ses
         return { code, setting: "runtime.materialCli / residentQueue.roleActors", reread: "per_call",
           problem: `runtime.materialCli 的 cliActorId（${context.materialCliActorId ?? "?"}）与 residentQueue.roleActors 的 actorId（${context.roleActorId ?? "?"}）不一致；同一个“这个 Role 由谁执行”写了两处，必须相同。`,
           fix: "把两处改成同一个业务 actorId（二者每次调用重读，不需要重启）。" };
+      case "material_cli_actor_not_writer":
+        return { code, setting: "runtime.materialCli", reread: "per_call",
+          problem: `这个 Session 自己的 runtime.materialCli 绑定写的业务身份（${context.materialCliActorId ?? "?"}）不是本项目当前的写入者，它签的交付不会被接受。`,
+          fix: "把该绑定的 cliActorId 改成本项目有 write 权限的业务身份，或先给该身份在项目里开 write；每次调用重读，不需要重启。" };
       case "runtime_grant":
         return { code, setting: "runtime.grants", reread: "per_call",
           problem: "没有与本次请求完全一致的运行时授权（项目、Session 身份、Role、授权范围、工作目录；全权限、never）。",
