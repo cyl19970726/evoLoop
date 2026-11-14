@@ -8,6 +8,8 @@
 
 [多角度设计审阅与首片实测](design-review-20261020.md)记录产品、数据恢复、前端知识和独立代码审查的问题，及 S1a 真实 PostgreSQL/API/浏览器范围。
 
+[接入 skill 的试跑记录](onboarding-skill-trials.md)记录用无会话历史的 Agent 在自建实例上按 `evoloop-onboarding` 接入一个真实小项目的结果、卡点、越界事件和据此做的修改，以及不归 skill 的产品缺口。
+
 [开发流程审阅与改进](development-workflow-review-20261021.md)记录 PR、旧对象迁移与接续、恢复和独立使用的观察、已修复项及下一轮流程验证；原始会话和私有试用材料不发布。
 
 ## 产品文档与使用
