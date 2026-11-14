@@ -42,7 +42,7 @@ description: 把一个新项目接入 evoLoop：先判断情况，再按步骤�
 | | 没有仓库（纯文档/运营项目） | 不配 `repositories`；工作目录仍要有，放 Session 的工作材料 |
 | 有没有现成 Role | 没有（最常见） | 从 **Leader（system Lead）+ 一个业务 Role** 起步，不一次建全阵容（DEC-001）；验收由业务 Role 下另一个有独立身份的 Session 承担，不新建 QA Role（DEC-038、DEC-046） |
 | | 想沿用 evoLoop 自己的 Role 写法 | 只借鉴职责写法；每个 Role 仍在新项目里重新提议、重新接受试行 |
-| 运行时与模型（决定类） | Codex / Claude | 每个 Role 只绑定一种运行时，绑定后不能换（DEC-035）；运行时要先在主机上登录好（[本机运行](../../../docs/development/local-run.md)的 Codex 与 Claude 两段），接入者不替人登录。每个 Session 用哪个模型由使用者定；没定时按使用者已表达的偏好选，并写进接入记录。Codex 会为每个新工作目录往 codexHome 的 `config.toml` 追加一条信任条目；与使用者共用 codexHome 时，这会改动使用者自己的配置，接入前说明，试用结束后由使用者决定是否清理 |
+| 运行时与模型（决定类） | Codex / Claude | 每个 Role 只绑定一种运行时，绑定后不能换（DEC-035）；选的运行时必须是实例在驱动的（`runtime.providers`，没写时只有 `runtime.provider`，默认 `codex`），沿用已有实例时先核对，不在就交使用者定，见[终态清单·E4](references/end-state.md#e4-读到-not_configured-时)；运行时要先在主机上登录好（[本机运行](../../../docs/development/local-run.md)的 Codex 与 Claude 两段），接入者不替人登录。每个 Session 用哪个模型由使用者定；没定时按使用者已表达的偏好选，并写进接入记录。Codex 会为每个新工作目录往 codexHome 的 `config.toml` 追加一条信任条目；与使用者共用 codexHome 时，这会改动使用者自己的配置，接入前说明，试用结束后由使用者决定是否清理 |
 
 ## 1. 定清单、预生成全部 ID
 
@@ -58,9 +58,15 @@ description: 把一个新项目接入 evoLoop：先判断情况，再按步骤�
 
 只在启动时读、改了必须重启的有：身份文件；`runtime.enabled` 与运行时设置；`runtime.grants` 里的**工作目录和模型**（运行器建 Session、开 Run 时只认启动时登记的目录，`models` 也只列启动时的授权）；`repositories`；`scheduling.grants`。其余（`materialCli`、`roleActors`、消息授权、Leader 通知目标、`taskTimingGrants`）每次使用时重读。完整的“何时生效”表见[运行接线手册·共同做法](../../../docs/development/runtime-operations.md#共同做法)。漏了一项，补上后能否免重启就按这张表判断。
 
-重启后**建项目**：用需求 Session 的身份按 `command schema project.create` 建项目（`projectId` 用第 1 步的值）。项目级的读回都要项目先存在。
+重启后**建项目**：用需求 Session 的身份建项目，`projectId` 和 `operationId` 用第 1 步的值。字段只有下面四个，项目名称写在 `title`，没有 `name`、`description`：
 
-**读回：** 除使用者本人外，每个身份用自己的包装跑一次 `cli session`，`principal.actorId` 正确（使用者本人只经 `members` 核对，不用它的令牌）；`cli project <PROJECT>`；`cli get /api/projects/<PROJECT>/members`：每个身份的 `canRead`/`canWrite`/`canReview` 与清单一致、`identityFile: unchanged`、没有 `pending`；`cli models --project <PROJECT>` 列出了要用的模型；`cli get /api/projects/<PROJECT>/repositories`（`status: available`）。`capabilities` 的 `runtime` 要等第 3 步有了 Role 之后才是 `configured`。
+```json
+{"type":"project.create","projectId":"<PROJECT>","operationId":"<OPERATION>","title":"<项目名称>"}
+```
+
+存进私有 JSON 文件，用 `cli command run <PRIVATE_JSON>` 提交；字段以所连服务的 `command schema project.create` 为准。项目级的读回都要项目先存在。
+
+**读回：** 除使用者本人外，每个身份用自己的包装跑一次 `cli session`，`principal.actorId` 正确（使用者本人只经 `members` 核对，不用它的令牌）；`cli project <PROJECT>`；`cli get /api/projects/<PROJECT>/members`：每个身份的 `canRead`/`canWrite`/`canReview` 与清单一致、`identityFile: unchanged`、没有 `pending`；`cli models --project <PROJECT>` 列出了要用的模型；`cli get /api/projects/<PROJECT>/repositories`（`status: available`）；`cli get /api/projects/<PROJECT>/capabilities`：`runtime` 这时就该是 `configured`。它只看启动时的运行时设置和 grant 的工作目录，不看 Role，也不看运行时种类。读到 `not_configured` 时按[终态清单·E4](references/end-state.md#e4-读到-not_configured-时)判断缺什么。
 
 ## 3. Role
 
@@ -107,7 +113,7 @@ description: 把一个新项目接入 evoLoop：先判断情况，再按步骤�
 - **发布切换会把身份文件和 integrations 从旧版本复制过来**，CLI 包装里写死的发布路径要逐个改指新版本，并各跑一次 `session` 确认。
 - **同一 Session 的消息按顺序处理。** 一条卡住的旧消息会挡住后面所有消息；先按[消息卡在队首](../../../docs/development/runtime-operations.md#验收接力的消息卡在队首缺陷-0fd4a99b)对账那一条，不重发新消息。
 - **模型额度用完或鉴权失败时，服务暂停该提供方的所有新 Turn**（新消息照常排队）。由账户使用者续费或重新登录后，由有审阅权的身份读 `get /api/projects/<PROJECT>/runtime/provider-holds`，再按 `command schema runtime.providerHold.release` 放行一次。
-- **改私有文件前先备份，改完先读回**：`members`、`capabilities` 的 `pending` 告诉你哪些改动要等重启。
+- **改私有文件前先备份，改完先读回**：`members`、`capabilities` 的 `pending` 只能发现**会改变判断结果**的改动，比如某个能力的状态或原因、某个身份的权限，重启前后不一样。只追加条目、不改变状态的改动读不出 `pending`：再登记一个仓库、给 `runtime.grants` 加工作目录或模型、换令牌，都属于这一类。这类改动按第 2 步“只在启动时读”的清单自己判断要不要重启；或者重启后用对应的读回（`repositories`、`models --project`、包装的 `session`）逐条核对清单。
 
 ## Hub 上线后替换哪些块
 

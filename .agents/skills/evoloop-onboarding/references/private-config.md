@@ -151,7 +151,7 @@ SQL
 | 要核什么 | 命令 |
 | --- | --- |
 | 成员与权限、改了没重启 | `get /api/projects/<PROJECT>/members` |
-| 各能力是否生效、重启后会变成什么 | `get /api/projects/<PROJECT>/capabilities`（看 `state`、`reason`、`pending`） |
+| 各能力是否生效、重启后状态会不会变 | `get /api/projects/<PROJECT>/capabilities`（看 `state`、`reason`、`pending`；只追加条目、不改变状态的改动读不出 `pending`） |
 | 仓库登记 | `get /api/projects/<PROJECT>/repositories` |
 | Role 与运行时 | `list roles`、`read role <ROLE> --bindings`、`role runtime show <ROLE>` |
 | Session | `list sessions`、`work list`、`work status owned:<SESSION>`、`session profile show <SESSION>` |
@@ -172,6 +172,8 @@ SQL
 | 服务起不来，日志 `Document originals must stay outside the development checkout` | 启动服务时的当前目录包含了 Blob 目录 | 从不包含 Blob 目录的位置启动（服务管理器通常从 `/` 启动） |
 | `models --project` 为空 | 调用者还没有授权这些模型的 `runtime.grants`，或 grant 改了没重启 | 候选值从运行时模型目录取，写进 grant 后重启 |
 | `capabilities` 的 `runtime` 为 `grant_directory_unavailable`、`pending` 显示重启后 `configured` | 新的工作目录只在启动时登记 | 重启 |
+| 追加了仓库、grant 的工作目录或模型，`pending` 仍是 null，`repositories` 或 `models --project` 却没有新条目 | `pending` 只在重启前后能力状态不同时出现，只追加条目读不出来 | 按 SKILL 第 2 步“只在启动时读”的清单判断，重启后再读回 |
+| `role runtime set` 报 `RUNTIME_PROVIDER_UNAVAILABLE` | 实例没在驱动这种运行时（`runtime.providers`，没写时只有 `runtime.provider`） | 由使用者定：改实例的运行时设置并重启，或改选运行时（终态清单 E4 表下） |
 | `role.propose` 报 `INVALID_INPUT`（evidence 或 alternatives） | `evidence` 缺缺口类/`effect`/`cost` 之一，或 `alternatives` 不是四类各一 | 按 SKILL 第 3 步补齐 |
 | `session prepare` 报参数错误 | 传了 `--project` | 项目 ID 只写在准备文件里 |
 | 验收 Session 的 `session prepare` 报 `material_cli_actor_mismatch` | 准备检查要求 CLI 身份等于 Role 的业务身份 | 不照它的修法改；改用 reserve + bindSession + profile set（第 3 节） |
@@ -180,6 +182,7 @@ SQL
 | 回报消息报 `REPLY_TARGET_MISMATCH` | `--reply-to` 指向了发给另一个 Session 的消息 | 发新消息，不加 `--reply-to` |
 | `work events --wait 30` 报 `TIMEOUT` | CLI 默认 15 秒超时短于等待时间 | `EVOLOOP_TIMEOUT_MS=60000` |
 | `project.create` 被拒 | 发命令的身份的 `projectIds` 里还没有这个项目（或没重启） | 先写身份文件、重启 |
+| `project.create` 报 `INVALID_INPUT` | 字段只有 `type`、`projectId`、`operationId`、`title` 四个，项目名称写在 `title`，没有 `name`、`description` | 照 SKILL 第 2 步的最小示例 |
 | `TASK_OWNER_ROLE_REQUIRED` / `INVALID_FIRST_TASK` | 第一个 Role 的引导缺口 | 第 2 节 |
 | `INVALID_TRIAL` | 回看日期不在试行期内，或已经过去 | `reviewAtUtc` 设在现在之后、`trialDays` 之内 |
 | `session prepare` 返回 `blocked` | 缺配置 | 照 `missingDetails` 补，用同一 `operationId` 重跑 |
