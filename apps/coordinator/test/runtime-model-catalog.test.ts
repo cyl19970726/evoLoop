@@ -41,14 +41,23 @@ test("model catalog and reservation apply the same exact authorization and activ
   try{
     const read=await app.inject({method:"GET",url:`/api/projects/${projectId}/runtime/models`,headers});
     assert.equal(read.statusCode,200);
-    assert.deepEqual(JSON.parse(read.body).models,["gpt-6","deepseek/deepseek-flash","kimi-code-cn/k3.1-pro"]);
-    assert.deepEqual(JSON.parse(read.body).environments[0].models,JSON.parse(read.body).models);
+    const catalog=JSON.parse(read.body);
+    assert.deepEqual(catalog.models,active,"the catalog must expose models the caller cannot yet authorize");
+    assert.deepEqual(catalog.authorizedModels,["gpt-6","deepseek/deepseek-flash","kimi-code-cn/k3.1-pro"]);
+    assert.deepEqual(catalog.modelStatus,[
+      {model:"gpt-6",authorized:true},
+      {model:"deepseek/deepseek-flash",authorized:true},
+      {model:"deepseek/deepseek-v4-pro",authorized:false},
+      {model:"kimi-code-cn/k3.1-pro",authorized:true},
+    ]);
+    assert.deepEqual(catalog.environments[0].models,["gpt-6","deepseek/deepseek-flash","kimi-code-cn/k3.1-pro"]);
     const origin=await app.listen({host:"127.0.0.1",port:0});
     let stdout="",stderr="";
     const code=await runCli(["models","--project",projectId],{EVOLOOP_API_URL:origin,EVOLOOP_TOKEN:token},
       {stdout:value=>{stdout+=value;},stderr:value=>{stderr+=value;}});
     assert.equal(code,0,stderr);
-    assert.deepEqual(JSON.parse(stdout).models,JSON.parse(read.body).models,"CLI must read the real service route");
+    const cliCatalog=JSON.parse(stdout);
+    assert.deepEqual({...cliCatalog,observedAtUtc:null},{...catalog,observedAtUtc:null},"CLI must read the real service route");
     const omitted=await app.inject({method:"POST",url:"/api/commands",headers,payload:command()});
     assert.equal(JSON.parse(omitted.body).code,"MODEL_SELECTION_REQUIRED");
     assert.equal(calls,0,"an omitted slug cannot reach the reservation write");
@@ -133,7 +142,13 @@ test("a legacy grant without exact models cannot create a new Session even when 
       error:null,observedAtUtc:new Date().toISOString()})});
   try{
     const read=await app.inject({method:"GET",url:`/api/projects/${projectId}/runtime/models`,headers});
-    assert.deepEqual(JSON.parse(read.body).models,[]);
+    const catalog=JSON.parse(read.body);
+    assert.deepEqual(catalog.models,["gpt-6","deepseek/deepseek-flash"]);
+    assert.deepEqual(catalog.authorizedModels,[]);
+    assert.deepEqual(catalog.modelStatus,[
+      {model:"gpt-6",authorized:false},
+      {model:"deepseek/deepseek-flash",authorized:false},
+    ]);
     const noSlug=await app.inject({method:"POST",url:"/api/commands",headers,payload:command()});
     assert.equal(JSON.parse(noSlug.body).code,"MODEL_SELECTION_REQUIRED");
     const arbitrary=await app.inject({method:"POST",url:"/api/commands",headers,payload:command("gpt-6")});
