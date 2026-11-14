@@ -72,6 +72,20 @@ npm start
 
 在浏览器打开服务监听的本机回环地址（端口由 `EVOLOOP_PORT` 设定，未设时用代码里的默认值），用身份文件中的 token 登录。令牌只留在当前页面内存，刷新后需重新登录。更新应用后请刷新已打开的标签页并重新登录；旧标签页仍可能运行旧版本界面，本轮独立消费曾因此失败，刷新后才成功，失败观察仍保留。服务只监听回环地址。迁移不会在启动时自动执行。C5 将 Task 正文归入 Document 并改为四态；既有实例须单独运行迁移并同步服务、CLI 和界面版本，本轮未自动升级其他会话的预览或持久数据。同一数据库只允许一个 coordinator 持有专用连接锁；锁丢失后写入不可用，不是双机自动接管证明。
 
+### Hub 骨架（未接机器）
+
+Hub 是独立进程和独立数据库，不能复用 coordinator 的项目库。先准备一个只给 Hub 的 PostgreSQL 数据库和私有环境文件；不要把数据库 URL、初始密码或恢复 dump 提交到仓库。下面的 `<...>` 都代表私有值。
+
+```sh
+export HUB_DATABASE_URL='postgres://.../evoloop_hub'
+export HUB_PUBLIC_ORIGIN='https://hub.example'
+npm run hub:migrate
+npm run hub:init -- --email admin@example.test --name 'Hub Admin' --password-file /private/hub-initial-password
+npm run start:hub
+```
+
+`hub:init` 只用于创建第一位 Hub 管理员；已有管理员时会拒绝。默认监听 `127.0.0.1:4319`，由同站 HTTPS 入口反向代理；`HUB_PORT` 可覆盖端口。备份、恢复和完整 API 合同见 [Hub 账号、邀请与项目成员](../architecture/hub.md)。测试或演练不要连接正式实例的 `55432`；用 `npm run test-pg` 约定的一次性实例，并在演练后停止、删除。
+
 ## 在常驻主机上运行
 
 常驻实例按本页同样的步骤安装、迁移和启动，部署形态见[部署与迁移](../architecture/deployment.md#1-部署形态)。与在开发机上试用相比，有四点不同：

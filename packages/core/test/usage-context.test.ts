@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { ContextBudgetConfig, Principal, UsageBucketRow, UsageBudgetConfig, UsageContextRow } from "@evoloop/contracts";
 import { contextHandoffSummary, contextPressure } from "../src/context-budget.ts";
-import { UsageService, usageBudget, usageDay } from "../src/usage.ts";
+import { inclusiveRuntimeUsage, UsageService, usageBudget, usageDay } from "../src/usage.ts";
 
 const projectId = "00000000-0000-4000-8000-000000000001";
 const principal: Principal = { actorId: "reader", projectIds: [projectId], permissions: ["read", "write"] };
@@ -100,6 +100,31 @@ test("UsageService aggregates Session-day buckets and exposes context pressure w
   assert.equal(added.length, 1);
   assert.deepEqual(added[0], [projectId, "session-a", "2026-11-11",
     { inputTokens: 50, outputTokens: 5, cachedInputTokens: 0, costUsd: 0, costReported: false }]);
+});
+
+test("one project day reads back Claude and Codex input on the same inclusive basis", async () => {
+  const claude = inclusiveRuntimeUsage({
+    inputTokens: 1_000, outputTokens: 500, cacheReadInputTokens: 8_000, cacheCreationInputTokens: 2_000,
+  });
+  const rows: UsageBucketRow[] = [
+    { sessionId: "claude", roleId: "role", nativeThreadId: "claude-thread", day: "2026-11-13",
+      ...claude, costUsd: 0.25, costReported: true },
+    { sessionId: "codex", roleId: "role", nativeThreadId: "codex-thread", day: "2026-11-13",
+      inputTokens: 12_000, outputTokens: 500, cachedInputTokens: 9_000, costUsd: 0, costReported: false },
+  ];
+  const service = new UsageService({
+    uow: { read: async (_projectId: string, action: (reader: unknown) => Promise<unknown>) => action({
+      usage: { listUsage: async () => rows, listUsageContext: async () => [] },
+    }) },
+    clock: { now: () => "2026-11-13T12:00:00.000Z" },
+  } as never);
+  const overview = await service.overview(principal, projectId, "2026-11-13", "2026-11-13", "UTC", null);
+  assert.deepEqual(overview.daily[0] && {
+    inputTokens: overview.daily[0].inputTokens, outputTokens: overview.daily[0].outputTokens,
+    cachedInputTokens: overview.daily[0].cachedInputTokens,
+  }, { inputTokens: 23_000, outputTokens: 1_000, cachedInputTokens: 19_000 });
+  assert.equal(overview.sessions.find(session => session.sessionId === "claude")?.today.inputTokens, 11_000);
+  assert.equal(overview.sessions.find(session => session.sessionId === "codex")?.today.inputTokens, 12_000);
 });
 
 // The budget alert is "today" in the project's time zone. UsageService already counts it there; what a reader must do is ask for a window that
