@@ -11,6 +11,7 @@ import { PgNativeObservation } from "./native-observation.js";
 import { PgUsage } from "./usage.js";
 import { PgSessionAssignments } from "./session-assignments.js";
 import { PgLeaderNoticePackets } from "./leader-notice-packets.js";
+import { PgScheduleDispatch } from "./schedule-dispatch.js";
 import { PgSessionLine } from "./session-line.js";
 import { PgDecisionRequests } from "./decision-requests.js";
 import { PgSessionObservation } from "./session-observation.js";
@@ -160,6 +161,7 @@ class PgReader implements Reader {
   readonly sessionAssignments: PgSessionAssignments;
   readonly leaderNoticePackets: PgLeaderNoticePackets;
   readonly sessionLines: PgSessionLine;
+  readonly scheduleDispatch: PgScheduleDispatch;
   readonly decisionRequests: PgDecisionRequests;
   protected readonly runtime: PgRuntimeStore;
   protected readonly roles: PgRoleQueries;
@@ -182,6 +184,7 @@ class PgReader implements Reader {
     this.sessionAssignments = new PgSessionAssignments(client, projectId);
     this.leaderNoticePackets = new PgLeaderNoticePackets(client, projectId);
     this.sessionLines = new PgSessionLine(client, projectId);
+    this.scheduleDispatch = new PgScheduleDispatch(client, projectId);
     this.decisionRequests = new PgDecisionRequests(client, projectId);
     this.roles = new PgRoleQueries(client, projectId);
     this.residents = new PgResidentHosts(client, projectId);
