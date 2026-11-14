@@ -322,7 +322,17 @@ node --import tsx tests/manual/session-compaction-e1.ts
   4. **释放 964982d7。** 先重读它的 `version`（若不是 2 就用读到的），再 `request acceptance.release --project PROJECT --id 964982d7-25d1-45a5-b97a-92b10c677955 --file BODY.json`，body：`projectId`、`taskId`、`relayId`、`operationId`（新 UUID）、`expectedVersion`、`reason`（“消息绑定的 Task 修订与交付修订不一致；已由新接力 <新接力ID> 取代并记 used”）。失败分支：`LAST_ARRANGEMENT`（新接力没建成或已不是有效状态，回第 2 步）、`ACCEPTANCE_CHANGED`（版本变了，重读后重提）、`ACCEPTANCE_IN_FLIGHT`（消息仍在运行时处理，等其落定）、`ARRANGEMENT_SATISFIED`（它已有 used，那是证据，不释放）、`FORBIDDEN`（身份没有 review 权限）。读回：接力 `state` 为 `released`，`blockedReason` 带这条理由。
   5. **按决定关闭。** `command run` 提交 `task.close`（`expectedVersion`=Task 当前版本，`deliveryId`=b42af967 的完整编号，`acceptanceResult`、`acceptanceEvidence`、`reason`）；成功后 `task` 读回关闭记录。仍得到 23514 时说明还有别的有效接力没有已链接的 used，回第 1 步读全部接力。
 
-两条都只用新命令，不改库。每次释放先读 `version`（`expectedVersion`），释放后读回接力状态为 `released`，`blockedReason` 带这条理由（`task_acceptance_relay_release` 里也有，不可改）。这一步需要发布后由 Leader 执行，我没有在正式实例上做。上述顺序（新接力 → 链接新的 used → 释放 → 关闭，以及其中的 `LAST_ARRANGEMENT`、`OBSERVATION_MISMATCH` 拒绝）已在自建实例用真实 CLI 进程走过一遍，见 `tests/integration/acceptance-release-cli.test.ts`（用的是人类接收者；`session` 模式的消息发送与处理没有在这条测试里走）。
+**`dcd01bb1` 每一步一览**（命令、目标对象、身份与权限、回读、失败怎么办；顺序不能换，第 4 步在第 2、3 步之前得到 `LAST_ARRANGEMENT`）：
+
+| 步 | 命令 | 目标对象 | 谁、要什么权限 | 回读 | 失败怎么办 |
+| --- | --- | --- | --- | --- | --- |
+| 1 | `work acceptance TASK`、`task TASK` | Task `dcd01bb1…`，交付 `b42af967…`，卡住的接力 `964982d7…` | 任何有读权限的身份 | 接力 `state`/`blockedReason`/`version`、Task `version`、交付的 `taskRevisionId` 等于 Task 当前修订 | 交付不是最新或修订对不上：先处理交付，不继续 |
+| 2 | `request acceptance.assign --id TASK` | 新接力（新 `relayId`、新 `scopeKey`、同一交付、`stage`=`candidate`） | 有 review 权限且等于 `senderActorId` 的身份（Leader） | `work acceptance TASK` 里新接力 `state` 为 `pending`，`version`=1 | `ACCEPTANCE_ALREADY_ASSIGNED`（换 `scopeKey`）、`DELIVERY_CHANGED`/`VERSION_CONFLICT`（回第 1 步）、`SESSION_NOT_READY`/`SENDER_MISMATCH`/`INDEPENDENT_SESSION_REQUIRED`（由有权者补齐，不绕过） |
+| 3 | `observation.record`（`used`），再 `request acceptance.observe --id 新接力` | 新接力与验收者**在新接力创建之后**记的观察 | 验收者本人的凭据（接收者；agent 接收者用 agent 身份，人类接收者先 `acceptance.read`） | 新接力 `observationResult` 为 `used`、`observationId` 非空 | `OBSERVATION_MISMATCH`（观察早于新接力、或不是该接收者、该交付，比较精确到毫秒；重新记一条）、`HUMAN_READ_REQUIRED`、`AGENT_OBSERVER_REQUIRED`、`ACCEPTANCE_CHANGED`（版本变了，重读） |
+| 4 | `request acceptance.release --id 964982d7…` | 卡住的接力 | 有 review 权限的身份（Leader），写明理由 | 接力 `state` 为 `released`、`blockedReason` 带理由；`task_acceptance_relay_release` 有不可改的一行 | `LAST_ARRANGEMENT`（回第 2 步）、`ACCEPTANCE_CHANGED`（重读版本）、`ACCEPTANCE_IN_FLIGHT`、`ARRANGEMENT_SATISFIED`（已有 used 的不释放）、`FORBIDDEN` |
+| 5 | `command run`（`task.close`） | Task，交付 `b42af967…` | 有关闭权限的身份 | `task TASK` 的 `task.state` 为 `done`，有一条关闭记录 | 仍是 `23514`：还有别的有效接力没有已链接的 used，回第 1 步读全部接力 |
+
+两条都只用新命令，不改库。每次释放先读 `version`（`expectedVersion`），释放后读回接力状态为 `released`，`blockedReason` 带这条理由（`task_acceptance_relay_release` 里也有，不可改）。这一步需要发布后由 Leader 执行，我没有在正式实例上做。上述顺序（新接力 → 链接新的 used → 释放 → 关闭，以及其中的 `LAST_ARRANGEMENT`、`OBSERVATION_MISMATCH` 拒绝）已在自建实例用真实 CLI 进程走过一遍，见 `tests/integration/acceptance-release-cli.test.ts`（用的是人类接收者；`session` 模式的消息发送与处理没有在这条测试里走，那一段由 `tests/integration/acceptance-relay.test.ts` 在服务层覆盖）。设 `EVOLOOP_RELEASE_CLI_TRANSCRIPT=1` 运行它会逐条打印真实 CLI 命令原文（凭据来自环境，不显示）、退出码和输出，可作为照文档执行的对照。第 3 步的“早于新接力的观察不能链接”此前按秒比较（`Date.parse` 作用在数据库时间对象上会丢掉毫秒），同一秒内的早观察会被放过；现在按毫秒比较。
 
 ## 6. 受管 Session 编制所需配置
 

@@ -49,6 +49,9 @@ test("real CLI: a Delivery whose only arrangement is stuck is closed by a new ar
       child.stdout.on("data", chunk => { stdout += String(chunk); }); child.stderr.on("data", chunk => { stderr += String(chunk); });
       child.once("error", reject); child.once("close", code => done({ code, stdout, stderr }));
     });
+    // EVOLOOP_RELEASE_CLI_TRANSCRIPT=1 prints every command as it was run (credentials come from the environment, so none is shown) with its exit code and output.
+    if (process.env.EVOLOOP_RELEASE_CLI_TRANSCRIPT === "1")
+      console.log(`$ evoloop ${args.map(arg => arg.startsWith(directory) ? "BODY.json" : arg).join(" ")}   # as ${who}\n  exit ${result.code}\n  ${(result.stdout.trim() || result.stderr.trim()).split("\n").at(-1)!.slice(0, 600)}`);
     assert.equal(result.code, expected, `CLI ${args.join(" ")} exited ${result.code}: ${result.stderr}${result.stdout}`);
     const text = result.stdout.trim() || result.stderr.trim().split("\n").at(-1) || "{}";
     return JSON.parse(text.split("\n").at(-1)!);
