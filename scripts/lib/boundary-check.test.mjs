@@ -1,11 +1,19 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  commandsOfLine, configIdentity, day, declaredStage, dominantActor, expandLoops, ghMergeNumber, jsonKeyDiff, mentionsCandidate, mentionsFormalReadback,
+  commandsOfLine, configIdentity, day, declaredStage, dominantActor, expandLoops, ghMergeNumber, jsonKeyDiff, mentionsCandidate, mentionsFormalReadback as rawMentionsFormalReadback,
   mentionsNear, mergeInvocations, mergeRows, parseTrainLog,
-  MERGE_OK, configProblems, exitCodeFor, hasCompletionEvidence, humanWriteProblem, judgeClosure, mentionsAnywhere, mentionsFile, targetLabel, truncationProblem,
+  MERGE_OK, configProblems, exitCodeFor, hasCompletionEvidence as rawHasCompletionEvidence, humanWriteProblem, judgeClosure as rawJudgeClosure, mentionsAnywhere, mentionsFile, targetLabel, truncationProblem,
 } from "./boundary-check.mjs";
 import { format, loadConfig } from "../ops/boundary-check.mjs";
+
+// The observation these tests are read against: written 2026-11-14 12:00Z. A commit resolves only if it is one of these, an id exists only if it is one of these.
+const OBSERVED = Date.parse("2026-11-14T12:00:00Z");
+const COMMITS = ["5ae8f8fc", "530497b9"], IDS = ["1ea394b7", "8fecc67c", "7be5a242"];
+const V = { observedAtMs: OBSERVED, commitExists: hex => COMMITS.some(known => known.startsWith(hex) || hex.startsWith(known)), idExists: hex => IDS.some(known => known.startsWith(hex) || hex.startsWith(known)) };
+const mentionsFormalReadback = text => rawMentionsFormalReadback(text, V);
+const judgeClosure = args => rawJudgeClosure({ ...args, verifier: V });
+const hasCompletionEvidence = phrase => rawHasCompletionEvidence(phrase, V);
 
 const codexLine = (at, cmd) => JSON.stringify({ timestamp: at, type: "response_item", payload: { type: "function_call", name: "exec_command", arguments: JSON.stringify({ cmd }) } });
 const claudeLine = (at, command) => JSON.stringify({ timestamp: at, message: { content: [{ type: "tool_use", input: { command } }] } });
@@ -411,4 +419,52 @@ test("F2/F5 do not remove genuine completions: a real time plus a commit, a comm
     assert.equal(hasCompletionEvidence(phrase), false, phrase);
   assert.equal(hasCompletionEvidence("（会话 5ae8f8fc）"), true, "“会话” is not the future word 会");
   assert.equal(hasCompletionEvidence("（20261114）"), false, "a bare number is not a hash");
+});
+
+// ---- Task ac254c1a, rework 8 (acceptance report bbadddc0): no lexical list decides what counts as evidence. Evidence is verified: a commit that resolves,
+// an id that exists, a time that is not after the observation. Plans, schedules, ETAs, "waiting for" and unresolved hex words cannot pass.
+const G = {
+  G1: "候选通过；正式实例读回通过（预定 2026-11-20 10:00Z）",
+  G2: "候选通过；正式实例读回通过（发布后 2026-11-20 10:00Z 再做）",
+  G3: "候选通过；正式实例读回通过 (scheduled 2026-11-20 10:00Z)",
+  G4: "候选通过；正式实例读回通过（排期 11-21 09:00）",
+  G5: "候选通过；正式实例读回通过（拟于 2026-11-21 09:00Z 执行）",
+  G6: "候选通过；正式实例读回通过（等 deadbeef 合并）",
+  G7: "候选通过；正式实例读回通过（ETA 2026-11-21 09:00Z）",
+  G8: "候选通过；正式实例读回通过（还没做，目标 2026-11-21 09:00Z）",
+};
+for (const [name, evidence] of Object.entries(G)) {
+  test(`${name}. “${evidence.split("通过")[2] ?? evidence}” is a plan, a schedule, an ETA or an unresolved word, not evidence of a completed read-back, and is listed`, () => {
+    assert.equal(mentionsFormalReadback(evidence), false);
+    const judged = judgeClosure({ evidence, hasDelivery: true, stage: null });
+    assert.deepEqual([judged.candidateOnly, judged.flagged], [true, true]);
+  });
+}
+
+test("P1–P5. genuine completions are accepted: a past time with a resolvable commit, a Run id, a past time alone, an existing observation id; “已进行” does not void them", () => {
+  const P = {
+    P1: "候选通过；正式实例读回通过（2026-11-14 10:05Z，commit 530497b9）",
+    P2: "候选通过；正式实例读回通过（Run 8fecc67c）",
+    P3: "候选通过；正式实例读回通过（2026-11-14 10:05Z 已进行，5ae8f8fc）",
+    P4: "候选通过；正式实例读回通过（2026-11-14 10:05Z，会话 c9c73237）",
+    P5: "候选通过；正式实例读回通过（观察 7be5a242）",
+  };
+  for (const [name, evidence] of Object.entries(P)) {
+    assert.equal(mentionsFormalReadback(evidence), true, name);
+    assert.equal(judgeClosure({ evidence, hasDelivery: true, stage: null }).flagged, false, name);
+  }
+});
+
+test("verification, not wording: the same words pass or fail by what they point at", () => {
+  const phrase = "候选通过；正式实例读回通过（5ae8f8fc）";
+  assert.equal(rawMentionsFormalReadback(phrase, V), true);
+  assert.equal(rawMentionsFormalReadback(phrase, { ...V, commitExists: () => false }), false, "a hash that does not resolve is just a word");
+  assert.equal(rawMentionsFormalReadback(phrase, undefined), false, "without a verifier nothing can be checked and nothing counts");
+  assert.equal(rawMentionsFormalReadback("候选通过；正式实例读回通过（Run 1ea394b7）", { ...V, idExists: () => false }), false, "an id that does not exist");
+  const timed = "候选通过；正式实例读回通过（2026-11-14 10:05Z）";
+  assert.equal(rawMentionsFormalReadback(timed, V), true);
+  assert.equal(rawMentionsFormalReadback(timed, { ...V, observedAtMs: Date.parse("2026-11-14T10:00:00Z") }), false, "a time after the observation is a plan");
+  assert.equal(rawMentionsFormalReadback(timed, { ...V, observedAtMs: null }), false, "without the observation time a bare time cannot be checked");
+  assert.equal(rawMentionsFormalReadback("候选通过；正式实例读回通过（2026-11-14 10:05Z，2026-11-21 09:00Z）", V), false, "one future time voids the phrase");
+  assert.equal(rawMentionsFormalReadback("候选通过；正式实例读回通过（5ae8f8fc，ETA 2026-11-21 09:00Z）", V), false, "a valid commit does not rescue a future time next to it");
 });

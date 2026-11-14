@@ -16,7 +16,7 @@ import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import {
-  MERGE_OK, commandsOfLine, configIdentity, configProblems, day, declaredStage, dominantActor, exitCodeFor, humanWriteProblem, jsonKeyDiff, judgeClosure,
+  MERGE_OK, evidenceCandidates, commandsOfLine, configIdentity, configProblems, day, declaredStage, dominantActor, exitCodeFor, humanWriteProblem, jsonKeyDiff, judgeClosure,
   mentionsAnywhere, mentionsNear, mergeInvocations, mergeRows, parseTrainLog, targetLabel, truncationProblem,
 } from "../lib/boundary-check.mjs";
 
@@ -110,9 +110,23 @@ async function databaseRows(config, fromIso, toIso, transcripts) {
       SELECT c.created_at, c.actor_id, c.task_id::text, (c.delivery_id IS NOT NULL) AS has_delivery, (SELECT t.title FROM task t WHERE t.project_id = c.project_id AND t.task_id = c.task_id) AS title,
              (SELECT o.observer || ':' || o.result FROM consumer_observation o WHERE o.project_id = c.project_id AND o.delivery_id = c.delivery_id ORDER BY o.sequence DESC, o.created_at DESC LIMIT 1) AS observation,
              (SELECT coalesce(o.evidence, '') || ' ' || coalesce(o.reason, '') FROM consumer_observation o WHERE o.project_id = c.project_id AND o.delivery_id = c.delivery_id ORDER BY o.sequence DESC, o.created_at DESC LIMIT 1) AS evidence,
+             (SELECT o.created_at FROM consumer_observation o WHERE o.project_id = c.project_id AND o.delivery_id = c.delivery_id ORDER BY o.sequence DESC, o.created_at DESC LIMIT 1) AS observed_at,
              (SELECT dr.body FROM document_revision dr WHERE dr.project_id = c.project_id AND dr.revision_id = (SELECT tr.content_revision_id FROM task_revision tr WHERE tr.project_id = c.project_id AND tr.revision_id = c.task_revision_id)) AS body
         FROM cl c ORDER BY c.created_at`, [fromIso, toIso])).rows;
     const needles = config.identityFiles ?? [];
+    // Evidence is verified, not worded: a commit must resolve in this repository, a Run / delivery / observation id must exist in the database.
+    const wanted = [...new Set(closures.flatMap(row => evidenceCandidates(row.evidence).ids))];
+    const knownIds = new Set();
+    for (const hex of wanted) {
+      const found = await client.query(`SELECT 1 FROM runtime_run WHERE run_id::text LIKE $1 UNION ALL SELECT 1 FROM consumer_observation WHERE observation_id::text LIKE $1
+        UNION ALL SELECT 1 FROM delivery WHERE delivery_id::text LIKE $1 LIMIT 1`, [`${hex}%`]);
+      if (found.rowCount) knownIds.add(hex);
+    }
+    const commits = new Map();
+    const commitExists = hex => {
+      if (!commits.has(hex)) { try { execFileSync("git", ["-C", repoRoot, "rev-parse", "--verify", "--quiet", `${hex}^{commit}`], { stdio: "ignore" }); commits.set(hex, true); } catch { commits.set(hex, false); } }
+      return commits.get(hex);
+    };
     return {
       humanWrites: writes.map(row => {
         const sessions = needles.length ? mentionsAnywhere(transcripts, needles, Date.parse(row.created_at)) : [];
@@ -120,8 +134,9 @@ async function databaseRows(config, fromIso, toIso, transcripts) {
       }),
       closures: closures.map(row => {
         const stage = declaredStage(row.body);
+        const verifier = { observedAtMs: row.observed_at ? new Date(row.observed_at).getTime() : null, commitExists, idExists: hex => knownIds.has(hex) };
         return { closedAt: new Date(row.created_at).toISOString(), by: row.actor_id, task: row.task_id.slice(0, 8), title: row.title, observation: row.observation, declaredStage: stage,
-          ...judgeClosure({ evidence: row.has_delivery ? row.evidence : null, hasDelivery: row.has_delivery, stage }) };
+          ...judgeClosure({ evidence: row.has_delivery ? row.evidence : null, hasDelivery: row.has_delivery, stage, verifier }) };
       }),
     };
   } finally { await client.end(); }

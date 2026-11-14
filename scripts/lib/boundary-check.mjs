@@ -255,17 +255,46 @@ const NOT_FORMAL_PLACE = /(自建|候选|沙箱|演练|本地|测试实例|预�
  * “正式：已通过评审，读回另行安排”, “非正式实例读回成功”, “正式包在自建实例读回通过”, “正式实例读回失败”, “等正式读回”, “正式读回 TODO/缺” are not.
  */
 /**
- * Timing and planning words. If the evidence phrase (the text right after the read-back, in its own clause) contains one, what stands there is a
- * cut-off, a future step or a plan, not something that happened: “（2026-11-14 10:00Z 之前）”, “#419 合并后进行”, “下一步”, “预计…”.
+ * The guard on what stands around the evidence: a cut-off, a future step or a plan is not a completed read-back (“（2026-11-14 10:00Z 之前）”,
+ * “#419 合并后进行”, “下一步”). “已进行/已经进行/已完成” say it happened and are taken out first. This only guards the meaning of the phrase; whether
+ * the evidence itself is real is decided by verification below, not by words.
  */
 const TIMING_OR_PLAN = /(之前|之后|以前|以后|进行|计划|截止|下一步|待|预计|将|会(?![话议]))/;
+const DONE_FORMS = /已(?:经)?进行|已完成/g;
+
+/** Evidence candidates written in a phrase, in fixed forms only: commit-hash-like words, Run/delivery/observation/operation ids, and clock times. */
+export function evidenceCandidates(phrase) {
+  const text = phrase ?? "";
+  const hashes = [...text.matchAll(/\b(?=[0-9]*[a-f])([0-9a-f]{7,40})\b/g)].map(match => match[1]);
+  const ids = [...text.matchAll(/(?:Run|run|交付|观察|operation)[\s:：]*([0-9a-f]{6,40})/g)].map(match => match[1]);
+  const times = [...text.matchAll(/(?:(\d{4})-)?(\d{1,2})-(\d{1,2})[ T](\d{1,2}):(\d{2})(Z)?/g)].map(match => ({ year: match[1] ? Number(match[1]) : null, month: Number(match[2]), day: Number(match[3]), hour: Number(match[4]), minute: Number(match[5]) }));
+  return { hashes, ids, times };
+}
+
 /**
- * Evidence that the read-back already happened, in a fixed form only: a real commit hash (7–40 hex characters with at least one letter, so a
- * bare number is not one), a Run / delivery / observation / operation id, or a fixed point in time (a date WITH a clock time). A PR number
- * alone, a bare date, a command or a version label says nothing about completion. Any timing or plan word in the phrase voids it.
+ * Evidence that the read-back already happened — verified, not worded. A verifier supplies what is checkable:
+ *   observedAtMs      when the observation was written; a time after it is a plan, so every time in the phrase must be at or before it
+ *                     (a time without a year is read in the observation's year, UTC);
+ *   commitExists(hex) the commit resolves in the repository (an unresolved hex word such as “deadbeef” is not a commit);
+ *   idExists(hex)     the Run / delivery / observation id exists.
+ * Without a verifier nothing can be checked and nothing counts. Any future time voids the phrase; a timing or plan word voids it too.
+ * Uncertain means listed.
  */
-export const hasCompletionEvidence = phrase => !TIMING_OR_PLAN.test(phrase)
-  && /(\b(?=[0-9]*[a-f])[0-9a-f]{7,40}\b|(?:Run|run|交付|观察|operation)[\s:：]*[0-9a-f]{6,}|\d{4}-\d{1,2}-\d{1,2}[ T]\d{1,2}:\d{2}|\b\d{1,2}-\d{1,2}[ T]\d{1,2}:\d{2})/.test(phrase);
+export function hasCompletionEvidence(phrase, verifier) {
+  if (!verifier) return false;
+  const text = phrase ?? "";
+  if (TIMING_OR_PLAN.test(text.replace(DONE_FORMS, ""))) return false;
+  const { hashes, ids, times } = evidenceCandidates(text);
+  const observedAt = Number.isFinite(verifier.observedAtMs) ? verifier.observedAtMs : null;
+  const stamps = times.map(time => observedAt === null ? Infinity
+    : Date.UTC(time.year ?? new Date(observedAt).getUTCFullYear(), time.month - 1, time.day, time.hour, time.minute));
+  if (stamps.some(stamp => stamp > (observedAt ?? -Infinity))) return false; // any time after the observation is a plan
+  const timeOk = times.length > 0 && observedAt !== null;
+  const hashOk = hashes.some(hex => verifier.commitExists?.(hex) === true);
+  const idOk = ids.some(hex => verifier.idExists?.(hex) === true);
+  return timeOk || hashOk || idOk;
+}
+
 /** Commas inside （…）/(…) belong to the parenthesis, so “（2026-11-13 09:12Z，5ae8f8fc）” stays one piece of the clause it follows. */
 const maskParentheses = text => text.replace(/[（(][^）)]*[）)]/g, group => group.replace(/[，,]/g, " "));
 /** The evidence must sit in the read-back's own clause, within this many characters after the read-back phrase. */
@@ -277,15 +306,16 @@ const EVIDENCE_REACH = 40;
  *     or review, or about somewhere that is not the formal environment (NOT_DONE, NOT_FORMAL_PLACE): a condition or a place in another clause
  *     of the same sentence still disqualifies it (“如果 #419 合并发布，正式实例读回通过就签 used”, “…读回通过，用的是候选实例 4400 的 7729e587”);
  *  2. one clause says the formal environment/instance/database/version was read back and it worked (FORMAL_READBACK); and
- *  3. that same clause carries completion evidence (hasCompletionEvidence) right after the read-back phrase — a time, a version/commit, a
- *     PR/Run/delivery id or a command in a LATER clause (“下一步：…，命令 evoloop read run”) or a date that is a deadline does not count.
+ *  3. that same clause carries VERIFIED completion evidence (hasCompletionEvidence with a verifier) right after the read-back phrase: a commit that
+ *     resolves, an existing Run/delivery/observation id, or a time not after the observation. Evidence in a LATER clause (“下一步：…，命令 evoloop read run”),
+ *     an unresolved hex word, or any time after the observation does not count.
  * Anything else that mentions it is listed. A bare claim without evidence is listed too.
  */
-export const mentionsFormalReadback = text => (text ?? "").split(/[。；;\n]/).some(sentence => {
+export const mentionsFormalReadback = (text, verifier) => (text ?? "").split(/[。；;\n]/).some(sentence => {
   if (NOT_DONE.test(sentence) || NOT_FORMAL_PLACE.test(sentence)) return false;
   return maskParentheses(sentence).split(/[，,]/).some(clause => {
     const found = FORMAL_READBACK.exec(clause);
-    return !!found && hasCompletionEvidence(clause.slice(found.index, found.index + found[0].length + EVIDENCE_REACH));
+    return !!found && hasCompletionEvidence(clause.slice(found.index, found.index + found[0].length + EVIDENCE_REACH), verifier);
   });
 });
 
@@ -294,9 +324,9 @@ export const mentionsFormalReadback = text => (text ?? "").split(/[。；;\n]/).
  * decided without one (delivery_id empty) has no basis to judge and is listed as such rather than passed over. A Task that itself
  * declares the candidate stage may be closed on a candidate observation: that is what its stage asks for.
  */
-export function judgeClosure({ evidence, hasDelivery, stage }) {
+export function judgeClosure({ evidence, hasDelivery, stage, verifier }) {
   if (!hasDelivery || evidence === null || evidence === undefined) return { noBasis: true, candidateOnly: false, mentionsCandidate: false, formalReadback: false, flagged: true };
-  const candidate = mentionsCandidate(evidence), formal = mentionsFormalReadback(evidence);
+  const candidate = mentionsCandidate(evidence), formal = mentionsFormalReadback(evidence, verifier);
   const candidateOnly = candidate && !formal;
   return { noBasis: false, candidateOnly, mentionsCandidate: candidate, formalReadback: formal, flagged: candidateOnly && stage !== "候选" };
 }
