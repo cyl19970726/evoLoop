@@ -351,12 +351,14 @@ test("N1–N6 even with evidence-looking text next to them stay listed, because 
   for (const evidence of Object.values(N)) assert.equal(mentionsFormalReadback(`${evidence}（2026-11-13 09:12Z，5ae8f8fc）`), false, evidence);
 });
 
-test("a read-back counts only with completion evidence: a bare claim is listed, the same claim with a time, a version, a PR/Run id or a command counts", () => {
-  assert.equal(mentionsFormalReadback("候选通过；正式实例读回通过"), false, "no time, version, id or command");
+test("a read-back counts only with completion evidence in a fixed form: a commit hash, a Run id, or a date with a clock time; a bare claim, a PR number, a bare date, a version label or a command is listed", () => {
+  assert.equal(mentionsFormalReadback("候选通过；正式实例读回通过"), false, "no time, hash, or id");
   assert.equal(hasCompletionEvidence("正式实例读回通过"), false);
-  for (const text of ["候选通过；正式实例读回通过（2026-11-13 09:12Z）", "候选通过；正式实例读回通过（版本 5ae8f8fc）", "候选通过；正式实例读回通过 v1.2.3",
-    "候选通过；正式实例读回通过（见 #419）", "候选通过；正式实例读回通过 `npm run boundary:check`", "候选通过；正式实例读回通过（Run 1ea394b7）"])
+  for (const text of ["候选通过；正式实例读回通过（2026-11-13 09:12Z）", "候选通过；正式实例读回通过（5ae8f8fc）", "候选通过；正式实例读回通过（Run 1ea394b7）",
+    "候选通过；正式实例读回通过（2026-11-13 09:12Z，5ae8f8fc）"])
     assert.equal(mentionsFormalReadback(text), true, text);
+  for (const text of ["候选通过；正式实例读回通过 v1.2.3", "候选通过；正式实例读回通过（见 #419）", "候选通过；正式实例读回通过 2026-11-13", "候选通过；正式实例读回通过 `npm run boundary:check`", "候选通过；正式实例读回通过（版本 12345678）"])
+    assert.equal(mentionsFormalReadback(text), false, text);
   assert.deepEqual([judgeClosure({ evidence: "候选通过；正式实例读回通过", hasDelivery: true, stage: null }).flagged,
     judgeClosure({ evidence: "候选通过；正式实例读回通过（2026-11-13 09:12Z，5ae8f8fc）", hasDelivery: true, stage: null }).flagged], [true, false]);
 });
@@ -383,5 +385,30 @@ test("E1–E6 keep working when a real completion follows in its own sentence, a
   assert.equal(mentionsFormalReadback(done), true);
   assert.equal(mentionsFormalReadback(`${E.E1}；${done.split("；")[1]}`), true, "a separate sentence with its own evidence still counts");
   assert.equal(mentionsFormalReadback("候选通过；正式实例读回通过，版本 5ae8f8fc"), false, "evidence in a later clause is not adjacent");
-  assert.equal(mentionsFormalReadback("候选通过；正式实例读回通过 `evoloop read run`"), true, "a command right after the read-back is evidence");
+  assert.equal(mentionsFormalReadback("候选通过；正式实例读回通过 `evoloop read run`"), false, "a command is not proof that it was done");
+});
+
+// ---- Task ac254c1a, rework 7 (observation d8074774): F2 and F5. A date or a number near the read-back is not evidence when the words around it
+// make it a cut-off or a future step; evidence is only a commit hash, a Run id, or a date with a clock time, and any timing or plan word voids it.
+const F = {
+  F2: "候选通过；正式实例读回通过（2026-11-14 10:00Z 之前）",
+  F5: "候选通过；正式实例读回通过 #419 合并后进行",
+};
+for (const [name, evidence] of Object.entries(F)) {
+  test(`${name}. “${evidence.split("；")[1]}” is a cut-off or a future step, not a completed read-back, and is listed`, () => {
+    assert.equal(mentionsFormalReadback(evidence), false);
+    const judged = judgeClosure({ evidence, hasDelivery: true, stage: null });
+    assert.deepEqual([judged.candidateOnly, judged.flagged], [true, true]);
+  });
+}
+
+test("F2/F5 do not remove genuine completions: a real time plus a commit, a commit alone and a Run id still count; timing words void the evidence", () => {
+  for (const evidence of ["候选通过；正式实例读回通过（2026-11-13 09:12Z，5ae8f8fc）", "候选通过；正式实例读回通过（5ae8f8fc）", "候选通过；正式实例读回通过（Run 1ea394b7）", "候选通过；正式实例读回通过（2026-11-13 09:12Z）"]) {
+    assert.equal(mentionsFormalReadback(evidence), true, evidence);
+    assert.equal(judgeClosure({ evidence, hasDelivery: true, stage: null }).flagged, false, evidence);
+  }
+  for (const phrase of ["（2026-11-13 09:12Z 之后）", "（5ae8f8fc 以前）", "（2026-11-14 10:00Z 截止）", "（5ae8f8fc，计划）", "（2026-11-14 10:00Z，预计）", "（5ae8f8fc 将）", "（2026-11-14 10:00Z 进行）", "（下一步 5ae8f8fc）", "（待 5ae8f8fc）"])
+    assert.equal(hasCompletionEvidence(phrase), false, phrase);
+  assert.equal(hasCompletionEvidence("（会话 5ae8f8fc）"), true, "“会话” is not the future word 会");
+  assert.equal(hasCompletionEvidence("（20261114）"), false, "a bare number is not a hash");
 });

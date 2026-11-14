@@ -255,11 +255,17 @@ const NOT_FORMAL_PLACE = /(自建|候选|沙箱|演练|本地|测试实例|预�
  * “正式：已通过评审，读回另行安排”, “非正式实例读回成功”, “正式包在自建实例读回通过”, “正式实例读回失败”, “等正式读回”, “正式读回 TODO/缺” are not.
  */
 /**
- * Positive evidence that the read-back was DONE: a time, a version or commit, a PR/Run/delivery id, or a command, in the same sentence.
- * A bare “正式实例读回通过” says nothing about when, on what, or how; without it the sentence is listed.
+ * Timing and planning words. If the evidence phrase (the text right after the read-back, in its own clause) contains one, what stands there is a
+ * cut-off, a future step or a plan, not something that happened: “（2026-11-14 10:00Z 之前）”, “#419 合并后进行”, “下一步”, “预计…”.
  */
-export const hasCompletionEvidence = sentence => /(\d{4}-\d{1,2}-\d{1,2}|\d{1,2}-\d{1,2}[ T]\d{1,2}:\d{2}|\b\d{1,2}:\d{2}(?::\d{2})?\b|\b[0-9a-f]{7,40}\b|\bv\d+(?:\.\d+)+\b|版本\s*[\w.-]+|#\d+|`[^`]+`|\b(?:npm|node|curl|gh|evoloop|psql)\s|(?:Run|run|交付|观察|operation)[\s:：]*[0-9a-f]{6,})/.test(sentence);
-
+const TIMING_OR_PLAN = /(之前|之后|以前|以后|进行|计划|截止|下一步|待|预计|将|会(?![话议]))/;
+/**
+ * Evidence that the read-back already happened, in a fixed form only: a real commit hash (7–40 hex characters with at least one letter, so a
+ * bare number is not one), a Run / delivery / observation / operation id, or a fixed point in time (a date WITH a clock time). A PR number
+ * alone, a bare date, a command or a version label says nothing about completion. Any timing or plan word in the phrase voids it.
+ */
+export const hasCompletionEvidence = phrase => !TIMING_OR_PLAN.test(phrase)
+  && /(\b(?=[0-9]*[a-f])[0-9a-f]{7,40}\b|(?:Run|run|交付|观察|operation)[\s:：]*[0-9a-f]{6,}|\d{4}-\d{1,2}-\d{1,2}[ T]\d{1,2}:\d{2}|\b\d{1,2}-\d{1,2}[ T]\d{1,2}:\d{2})/.test(phrase);
 /** Commas inside （…）/(…) belong to the parenthesis, so “（2026-11-13 09:12Z，5ae8f8fc）” stays one piece of the clause it follows. */
 const maskParentheses = text => text.replace(/[（(][^）)]*[）)]/g, group => group.replace(/[，,]/g, " "));
 /** The evidence must sit in the read-back's own clause, within this many characters after the read-back phrase. */
