@@ -19,7 +19,7 @@ const KINDS: Record<string, KindStyle> = {
   "notice.sent": S("通知包送达", "▤", "notice", "brand"), "notice.delivered": S("通知被读到", "▤", "notice", "brand"), "notice.seen": S("通知已看到", "▤", "notice", "neutral"),
   "notice.handled": S("通知已处置", "✓", "notice", "neutral"), "notice.deferred": S("通知延后", "…", "notice", "warning"), "notice.withdrawn": S("通知撤回", "×", "notice", "neutral"),
   "notice.blocked": S("通知受阻", "!", "notice", "danger"), "notice.returned": S("通知退回待发", "↺", "notice", "warning"), "notice.unknown": S("通知结果未知", "?", "notice", "warning"),
-  "task.created": S("任务建立", "+", "task", "neutral"), "task.confirmed": S("执行确认", "✓", "task", "accent"), "task.returned": S("任务退回", "!", "task", "danger"),
+  "task.created": S("任务建立", "+", "task", "neutral"), "task.resumed": S("任务继续", "▶", "task", "accent"), "task.removed": S("队伍项移除", "×", "task", "neutral"), "task.confirmed": S("执行确认", "✓", "task", "accent"), "task.returned": S("任务退回", "!", "task", "danger"),
   "task.queued": S("追加进队伍", "→", "task", "accent"), "task.turn": S("轮到执行", "→", "task", "accent"), "task.held": S("队伍项挂起", "!", "task", "danger"),
   "task.released": S("放行或撤下", "↑", "task", "brand"), "task.reordered": S("队伍重排", "⇅", "task", "accent"), "task.run_requested": S("预留 Run", "→", "task", "accent"),
   "task.run_started": S("Run 开始", "▶", "task", "accent"), "task.run_ended": S("Run 结束", "■", "task", "neutral"), "task.delivered": S("交付", "◆", "accept", "neutral"),
@@ -126,3 +126,22 @@ export function stuckSpots(board: WorkBoardSnapshot): Array<{ node: NodeId; text
 
 /** Events up to and including `index` of the stream the replay is at; the canvas state is a function of this, not of what was animated. */
 export const upTo = (events: SchedEvent[], index: number): SchedEvent[] => events.slice(0, Math.max(0, index + 1));
+
+/**
+ * Which node an actor ID is, as far as the events themselves say it (no registry is read): the recipient of an arrangement and the signer of a
+ * delivery are the identity of the Session the event names; whoever arranges, closes or reviews acceptance, or reserves a Run, is the Leader.
+ * An actor these facts do not place stays "其他身份". The result is the given context with `actors` filled in.
+ */
+export function learnContext(base: Pick<FlowContext, "sessionIds" | "leaderSessionId">, events: SchedEvent[]): FlowContext {
+  const actors: Record<string, NodeId> = {};
+  const node = (sessionId: string | null): NodeId | null => session(sessionId, { actors, ...base });
+  for (const e of events) {
+    const own = node(e.sessionId);
+    if (own && e.kind === "acceptance.arranged" && e.to && e.to !== "leader" && e.to !== "system") actors[e.to] ??= own;
+    if (own && e.kind === "task.delivered" && e.from && e.from !== "leader" && e.from !== "system") actors[e.from] ??= own;
+  }
+  for (const e of events)
+    if (e.from && e.from !== "system" && e.from !== "leader" && ["acceptance.arranged", "acceptance.closed", "acceptance.reviewed", "task.run_requested", "task.run_started"].includes(e.kind))
+      actors[e.from] ??= "leader";
+  return { ...base, actors };
+}
