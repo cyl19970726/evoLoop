@@ -282,7 +282,7 @@ export class HubService {
     principal: Principal,
     input: { name: string; projectId: string | null; expiresAt: Date | null },
   ): Promise<{ token: string; record: PublicPersonalToken }> {
-    const human = this.requireHuman(principal);
+    const human = this.requireCookie(principal);
     if (input.projectId) {
       this.requireTokenProjectScope(human, input.projectId);
       if (!(await this.store.getMembership(input.projectId, human.accountId))) {
@@ -316,12 +316,12 @@ export class HubService {
   }
 
   async listPersonalTokens(principal: Principal): Promise<PublicPersonalToken[]> {
-    const human = this.requireHuman(principal);
+    const human = this.requireCookie(principal);
     return (await this.store.listPersonalTokens(human.accountId)).map(publicPersonalToken);
   }
 
   async revokePersonalToken(principal: Principal, tokenId: string): Promise<void> {
-    const human = this.requireHuman(principal);
+    const human = this.requireCookie(principal);
     const now = this.clock();
     const revoked = await this.store.transaction(async client => {
       const didRevoke = await this.store.revokePersonalToken(client, tokenId, human.accountId, now);

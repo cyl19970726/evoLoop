@@ -2,6 +2,7 @@
 import "../../scripts/test-database-guard.mjs";
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
+import { Writable } from "node:stream";
 import test from "node:test";
 import pg from "pg";
 import { buildHubApp } from "../../apps/hub/src/server.js";
@@ -112,6 +113,18 @@ test("Hub H1 account, invitation, session, token, service identity and membershi
     });
     assert.equal(crossSite.statusCode, 403, crossSite.body);
     assert.equal(crossSite.json<{ error: { code: string } }>().error.code, "ORIGIN_MISMATCH");
+    const nonBearerAuthorization = await raw(
+      "POST",
+      "/api/auth/login",
+      { email: "admin@example.test", password: passwordFor("admin") },
+      { authorization: "Basic Zm9vOmJhcg==", "content-type": "application/json" },
+    );
+    assert.equal(nonBearerAuthorization.statusCode, 403, nonBearerAuthorization.body);
+    assert.equal(
+      nonBearerAuthorization.json<{ error: { code: string } }>().error.code,
+      "ORIGIN_REQUIRED",
+      "only Bearer requests are exempt from the Origin check",
+    );
     assert.equal((await raw("GET", "/api/projects")).statusCode, 401, "unauthenticated project reads are refused");
     assert.equal((await raw("GET", "/api/health")).statusCode, 200, "health is public");
   });
@@ -326,6 +339,41 @@ test("Hub H1 account, invitation, session, token, service identity and membershi
     assert.equal((await bearertInject(app, token.token, "GET", "/api/projects")).statusCode, 401);
   });
 
+  await t.test("Bearer tokens cannot create, list or revoke personal tokens", async () => {
+    const scoped = await memberA.browser.post("/api/tokens", { name: "scope guard", projectId: projectA });
+    assert.equal(scoped.statusCode, 201, scoped.body);
+    const scopedToken = scoped.json<{ token: string; record: { tokenId: string } }>();
+    const target = await memberA.browser.post("/api/tokens", { name: "revoke target", projectId: projectA });
+    assert.equal(target.statusCode, 201, target.body);
+    const targetToken = target.json<{ token: string; record: { tokenId: string } }>();
+    const before = await pool.query<{ count: string }>(
+      "SELECT count(*)::text AS count FROM hub_personal_token WHERE account_id=$1 AND revoked_at IS NULL",
+      [memberA.account.accountId],
+    );
+
+    const created = await bearertInject(app, scopedToken.token, "POST", "/api/tokens", { name: "privilege expansion" });
+    assert.equal(created.statusCode, 403, created.body);
+    assert.equal(created.json<{ error: { code: string } }>().error.code, "COOKIE_SESSION_REQUIRED");
+    const after = await pool.query<{ count: string }>(
+      "SELECT count(*)::text AS count FROM hub_personal_token WHERE account_id=$1 AND revoked_at IS NULL",
+      [memberA.account.accountId],
+    );
+    assert.equal(after.rows[0]!.count, before.rows[0]!.count, "the rejected request did not mint a token");
+
+    const listed = await bearertInject(app, scopedToken.token, "GET", "/api/tokens");
+    assert.equal(listed.statusCode, 403, listed.body);
+    assert.equal(listed.json<{ error: { code: string } }>().error.code, "COOKIE_SESSION_REQUIRED");
+
+    const revoked = await bearertInject(app, scopedToken.token, "DELETE", `/api/tokens/${targetToken.record.tokenId}`);
+    assert.equal(revoked.statusCode, 403, revoked.body);
+    assert.equal(revoked.json<{ error: { code: string } }>().error.code, "COOKIE_SESSION_REQUIRED");
+    assert.equal(
+      (await bearertInject(app, targetToken.token, "GET", `/api/projects/${projectA}`)).statusCode,
+      200,
+      "the target token remains active",
+    );
+  });
+
   await t.test("minimal browser forms render and a form token is created with the page CSRF field", async () => {
     assert.equal((await app.inject({ method: "GET", url: "/login" })).statusCode, 200);
     assert.equal((await app.inject({ method: "GET", url: "/register?invite=fixture-token" })).statusCode, 200);
@@ -352,6 +400,36 @@ test("Hub H1 account, invitation, session, token, service identity and membershi
     });
     assert.equal(created.statusCode, 200, created.body);
     assert.match(created.body, /个人令牌已创建/);
+  });
+
+  await t.test("registration request logs do not contain invitation tokens", async () => {
+    const lines: string[] = [];
+    const sink = new Writable({
+      write(chunk, _encoding, callback) {
+        lines.push(String(chunk));
+        callback();
+      },
+    });
+    const loggingApp = buildHubApp({ config, store, service, logger: { level: "info", stream: sink } });
+    try {
+      const inviteResponse = await adminBrowser.post("/api/admin/invites", { email: "log@example.test" });
+      assert.equal(inviteResponse.statusCode, 201, inviteResponse.body);
+      const invite = inviteResponse.json<{ invite: { token: string; inviteUrl: string } }>().invite;
+      const registrationUrl = new URL(invite.inviteUrl);
+      const page = await loggingApp.inject({
+        method: "GET",
+        url: `${registrationUrl.pathname}${registrationUrl.search}`,
+      });
+      assert.equal(page.statusCode, 200, page.body);
+      assert.match(page.body, /接受邀请/);
+      const logs = lines.join("");
+      assert.match(logs, /\/register/, "the request path remains useful in the log");
+      assert.ok(!logs.includes(invite.token), "the invitation token is absent from request logs");
+      assert.ok(!logs.includes("invite="), "the query string is absent from request logs");
+    } finally {
+      await loggingApp.close();
+      sink.end();
+    }
   });
 
   let serviceToken = "";
@@ -525,7 +603,10 @@ async function bearertInject(
   return app.inject({
     method,
     url,
-    headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+    headers: {
+      authorization: `Bearer ${token}`,
+      ...(payload === undefined ? {} : { "content-type": "application/json" }),
+    },
     ...(payload === undefined ? {} : { payload }),
   });
 }

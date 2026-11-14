@@ -1,4 +1,5 @@
 import Fastify, { type FastifyInstance, type FastifyServerOptions } from "fastify";
+import { bearerToken } from "./auth.js";
 import { assertSameOrigin, type HubConfig } from "./config.js";
 import { asHubError } from "./errors.js";
 import { errorPage } from "./pages.js";
@@ -13,11 +14,25 @@ export type HubAppOptions = {
   logger?: FastifyServerOptions["logger"];
 };
 
+const requestLogView = (request: { method?: string; url?: string }): { method: string; url: string } => ({
+  method: request.method ?? "",
+  url: (request.url ?? "").split("?", 1)[0] || "/",
+});
+
+const safeLogger = (logger: FastifyServerOptions["logger"]): NonNullable<FastifyServerOptions["logger"]> => {
+  if (!logger) return false;
+  if (logger === true) return { serializers: { req: requestLogView } };
+  return {
+    ...logger,
+    serializers: { ...logger.serializers, req: requestLogView },
+  };
+};
+
 export function buildHubApp(options: HubAppOptions): FastifyInstance {
   const { config, store } = options;
   const service = options.service ?? new HubService(store, config);
   const app = Fastify({
-    logger: options.logger ?? false,
+    logger: safeLogger(options.logger),
     bodyLimit: config.bodyLimitBytes,
     trustProxy: false,
   });
@@ -44,7 +59,7 @@ export function buildHubApp(options: HubAppOptions): FastifyInstance {
   app.addHook("onRequest", async request => {
     const method = request.method.toUpperCase();
     if (!["POST", "PUT", "PATCH", "DELETE"].includes(method)) return;
-    if (request.headers.authorization) return;
+    if (bearerToken(request)) return;
     assertSameOrigin(request.headers.origin, config.publicOrigin);
   });
 

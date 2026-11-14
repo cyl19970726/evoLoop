@@ -90,6 +90,7 @@ __Host-hub_session=<opaque-token>; Path=/; HttpOnly; Secure; SameSite=Strict; Ma
 - 创建响应只显示一次 token；库里只存 SHA-256、名称、项目范围、创建/最后使用/撤销时间。
 - 请求携带 `Authorization: Bearer <token>`。撤销后下一次请求即返回 401；限定项目的令牌访问其他项目返回 403。项目范围令牌不能使用 Hub 全局管理接口，读取审计时也只能读到该项目的记录。
 - 个人令牌不能替代浏览器会话执行改密码或登出。
+- 个人令牌的创建、列出与撤销只接受浏览器 cookie 会话；Bearer 令牌不能管理自己或其他令牌，也不能借此扩大项目范围。
 
 ### 5.2 服务身份
 
@@ -126,8 +127,8 @@ __Host-hub_session=<opaque-token>; Path=/; HttpOnly; Secure; SameSite=Strict; Ma
 | `POST /api/projects/:projectId/members` | 加成员、三类权限、Session 列表 | 项目管理员 |
 | `PATCH /api/projects/:projectId/members/:accountId` | 改成员权限/管理员标记 | 项目管理员 |
 | `DELETE /api/projects/:projectId/members/:accountId` | 移除成员，拒绝移除最后管理员 | 项目管理员 |
-| `GET /api/tokens` / `POST /api/tokens` | 列出/创建个人令牌 | 人类账号 |
-| `DELETE /api/tokens/:tokenId` | 撤销个人令牌 | 人类账号 |
+| `GET /api/tokens` | 列出个人令牌 | 浏览器 cookie 会话 |
+| `POST /api/tokens` / `DELETE /api/tokens/:tokenId` | 创建/撤销个人令牌 | 浏览器 cookie 会话 + CSRF |
 | `GET /api/audit?projectId=&limit=` | 审计查询 | Hub 管理员；项目管理员仅限自己的项目 |
 | `GET /api/admin/accounts` | 人类账号列表（无密码哈希） | Hub 管理员 |
 | `POST /api/admin/invites` | 创建一次性邀请 | Hub 管理员 |
@@ -157,7 +158,7 @@ __Host-hub_session=<opaque-token>; Path=/; HttpOnly; Secure; SameSite=Strict; Ma
 
 - 审计记录账号注册、邀请创建、登录成功/失败、登出、改密码、令牌创建/撤销、服务身份创建/吊销、项目创建/更新、成员新增/更新/移除。
 - 审计 `detail` 只放对象 ID、范围、权限和原因，不放密码、token、cookie、请求正文或私密路径。
-- Fastify 默认请求日志不记录 JSON 请求体；启动日志只打印监听地址与公共 Origin，不打印数据库 URL。
+- Fastify 请求日志只记录不含查询串的请求路径，不记录 JSON 请求体；启动日志只打印监听地址与公共 Origin，不打印数据库 URL。
 - 错误响应不返回 SQL 语句、数据库 URL 或 token。
 
 ## 10. 备份与恢复

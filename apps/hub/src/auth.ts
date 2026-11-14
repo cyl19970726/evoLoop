@@ -38,7 +38,7 @@ export function cookieSessionToken(request: FastifyRequest): string | null {
   return parseCookie(headerValue(request.headers.cookie), SESSION_COOKIE);
 }
 
-export function bearerToken(request: FastifyRequest): string | null {
+export function bearerToken(request: { headers: { authorization?: string | string[] | undefined } }): string | null {
   const header = headerValue(request.headers.authorization);
   if (!header) return null;
   const match = /^Bearer\s+(.+)$/i.exec(header);
