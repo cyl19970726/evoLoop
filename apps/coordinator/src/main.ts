@@ -54,7 +54,7 @@ import { brokeredCliForRun } from "./runtime/brokered-cli.js";
 import { staticRecoveryAuthority } from "./runtime/recovery-authority.js";
 import { readEvaluationMaterial } from "./runtime/evaluation-sources.js";
 import { evaluationPacketMediaType } from "./runtime/evaluation-materials.js";
-import { activeTaskTimingGrants, drivenRuntimeProviders, hasExactEngineeringActionGrant, hasFeishuActorGrant, hasTaskTimingGrant, knowledgeServesProject, loadIntegrations, runtimeThreadConfigForSession, schedulingGrantsFor, selectMaterialCli } from "./configuration.js";
+import { activeTaskTimingGrants, drivenRuntimeProviders, hasExactEngineeringActionGrant, hasFeishuActorGrant, hasTaskTimingGrant, knowledgeServesProject, loadIntegrations, prepareMaterialCli, runtimeThreadConfigForSession, schedulingGrantsFor, selectMaterialCli } from "./configuration.js";
 import { OpenVikingKnowledgeRepository } from "@evoloop/adapter-wiki-openviking";
 import { DomainError } from "@evoloop/contracts/ports";
 import { DrainControl, isInstanceMaintainer } from "./drain/service.js";
@@ -98,6 +98,7 @@ import { createOrdinaryRunSealer } from "./ordinary-run-submission/seal.js";
 import { OrdinaryRunSealPump } from "./ordinary-run-submission/pump.js";
 import { resolveSenderClass, type SenderClass } from "./session-messages/sender.js";
 import { resolveLineRecipient } from "./session-line/recipient.js";
+import { keyedThrottledLog, messageErrorEntry } from "./session-messages/error-line.js";
 import { throttledLog } from "./log-throttle.js";
 import { materialCliRecipientMatches, createReserveRecipientCheck, requireOrdinaryRecipient } from "./runtime/recipient-preflight.js";
 import { createMessageExecutionReader } from "./session-messages/execution-capability.js";
@@ -114,6 +115,8 @@ import { SessionSteerLock } from "./runtime/session-steer-lock.js";
 import { localProjectConfiguration } from "./project-configuration/local.js";
 
 const reconciliationLog = throttledLog(line => console.error(line));
+/** The message pump's errors: one line per message and error code a minute, whatever the error text says. */
+const messageErrorLog = keyedThrottledLog(line => console.error(line));
 const databaseUrl = process.env.EVOLOOP_DATABASE_URL;
 const authFile = process.env.EVOLOOP_AUTH_FILE;
 if (!databaseUrl || !authFile) throw new Error("Set EVOLOOP_DATABASE_URL and EVOLOOP_AUTH_FILE. Run migrations separately before starting.");
@@ -798,7 +801,12 @@ const messagePump = runner ? new SessionMessagePump({ service: messageService, r
       }
     }
     return businessBeforeMessage(message);
-  }, onError: () => reconciliationLog("Session message needs reconciliation; inspect its original saved processing record.") }) : null;
+  }, onError: (error, message) => {
+    // The line names the error code, message, Session and project; identical lines (same message, same code) are written once a minute.
+    // A message that only waits (Session running, provider paused, grant missing) is not an error and writes nothing.
+    const entry = messageErrorEntry(error, message);
+    if (entry) messageErrorLog(entry.key, entry.line);
+  } }) : null;
 const connectorGateway = integrations.messageConnectors ? new WechatGatewayClient({
     executable: integrations.messageConnectors.gateway.executable,
     configPath: integrations.messageConnectors.gateway.configPath,
@@ -1042,8 +1050,8 @@ const app = await buildServer({ service, credentials, canWrite: lease.canWrite, 
   },
   sessionPreparation: async input => {
     const current=await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE);
-    const cli=current.runtime?.enabled ? selectMaterialCli(current.runtime.materialCli,input.projectId,
-      input.sessionId,input.sessionActorId,undefined,input.roleId) : null;
+    const cli=current.runtime?.enabled ? await prepareMaterialCli(current.runtime.materialCli,input,
+      {ready:value=>supportsFixedHandoff(value.command,value.cliActorId,input.projectId),projectWriter:currentProjectWriter}) : null;
     // The Role's entry as configured, whether or not it can be used: `session prepare` says which of the three reasons applies.
     const configuredRoleActor=current.residentQueue?.roleActors.find(value=>
       value.projectId===input.projectId&&value.roleId===input.roleId)??null;
@@ -1057,8 +1065,7 @@ const app = await buildServer({ service, credentials, canWrite: lease.canWrite, 
         roleId:input.roleId,authorizationScope:input.authorizationScope,cwd:input.cwd,sandbox:"danger-full-access",
         model:input.model,approvalPolicy:"never"}),
       cwdReady:await current.allowedRuntimeCwd(input.projectId,input.cwd),
-      materialCli:cli?{actorId:cli.cliActorId,command:cli.command,
-        ready:await supportsFixedHandoff(cli.command,cli.cliActorId,input.projectId)}:null,
+      materialCli:cli,
       roleActorId:roleActor&&roleActorWriter?roleActor.actorId:null,
       roleActorState:(!current.residentQueue?.enabled?"queue_disabled":!roleActor?"no_entry":roleActorWriter?"ready":"actor_not_project_writer") as
         "ready"|"queue_disabled"|"no_entry"|"actor_not_project_writer",

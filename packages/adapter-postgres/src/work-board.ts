@@ -1,6 +1,6 @@
 import type { Pool } from "pg";
 import { DomainError } from "@evoloop/contracts/ports";
-import type { SchedEvent, SchedEventsPage, WorkBoardInFlight, WorkBoardLeaderItem, WorkBoardQueueItem, WorkBoardSession, WorkBoardSnapshot, WorkBoardWaitingTask, WorkBoardWork } from "@evoloop/contracts/work-board";
+import { GATE_ATTENTION_MINUTES, type SchedEvent, SchedEventsPage, WorkBoardInFlight, WorkBoardLeaderItem, WorkBoardQueueItem, WorkBoardSession, WorkBoardSnapshot, WorkBoardWaitingTask, WorkBoardWork } from "@evoloop/contracts/work-board";
 
 type Db = Pick<Pool, "query">;
 const iso = (v: Date | string | null): string | null => v === null ? null : v instanceof Date ? v.toISOString() : v;
@@ -136,6 +136,21 @@ export async function readWorkBoard(pool: Pool, projectId: string): Promise<Work
       awaiting.push({ kind: "blocked_packet", id: r.packet_id, taskId: null, title: null, state: "blocked", since: iso(r.created_at)! });
     for (const r of await q(`SELECT request_id,task_id,question,created_at FROM decision_request WHERE project_id=$1 AND state='open' ORDER BY created_at LIMIT 20`))
       awaiting.push({ kind: "decision", id: r.request_id, taskId: r.task_id ?? null, title: String(r.question).slice(0, 80), state: "open", since: iso(r.created_at)! });
+    // A recovery gate closed for the threshold with messages queued behind it waits for someone to resume it.
+    for (const r of await q(`SELECT g.session_id,g.phase,g.updated_at,
+        (SELECT count(*)::int FROM session_message m WHERE m.project_id=g.project_id AND m.session_id=g.session_id AND m.target_kind='owned' AND m.state='queued') AS queued,
+        (SELECT rr.proposal->>'title' FROM runtime_session s JOIN role_definition d ON d.project_id=s.project_id AND d.role_id::text=s.role_id::text
+           JOIN role_revision rr ON rr.project_id=d.project_id AND rr.role_id=d.role_id AND rr.revision_id=d.current_revision_id
+          WHERE s.project_id=g.project_id AND s.session_id=g.session_id) AS role_title,
+        (SELECT x.actor_id FROM session_recovery_decision x WHERE x.project_id=g.project_id AND x.session_id=g.session_id ORDER BY x.created_at DESC LIMIT 1) AS controller
+      FROM session_recovery_gate g WHERE g.project_id=$1 AND g.phase='blocked' AND g.updated_at < now() - make_interval(mins => ${GATE_ATTENTION_MINUTES})
+        AND EXISTS(SELECT 1 FROM session_message m WHERE m.project_id=g.project_id AND m.session_id=g.session_id AND m.target_kind='owned' AND m.state='queued')
+      ORDER BY g.updated_at LIMIT 20`))
+      awaiting.push({ kind: "recovery_gate", id: r.session_id, taskId: null, state: r.phase, since: iso(r.updated_at)!,
+        title: `${r.role_title ?? r.session_id}：恢复门 ${r.phase} 超过 ${GATE_ATTENTION_MINUTES} 分钟，${r.queued} 条消息排在后面`,
+        waitingOn: r.controller ? { kind: "actor", id: r.controller } : { kind: "reviewer", id: null } });
+    // Closed recovery gates first, in the full snapshot as in the brief.
+    awaiting.sort((a, b) => Number(b.kind === "recovery_gate") - Number(a.kind === "recovery_gate"));
     const packets = await q(`SELECT packet_id,session_id,state FROM leader_notice_packet WHERE project_id=$1 AND state IN ('building','sent','delivered','unknown','blocked')`);
     const relays = await q(`SELECT relay_id,session_id,state,(SELECT title FROM task t WHERE t.project_id=r.project_id AND t.task_id=r.task_id) AS title
       FROM task_acceptance_relay r WHERE project_id=$1 AND state IN ('pending','linked') ORDER BY created_at DESC LIMIT 100`);

@@ -333,7 +333,7 @@ node --import tsx tests/manual/session-compaction-e1.ts
 - **哪些要重启。** 按代码核对，`session prepare` 每次调用都重读 integrations 与身份文件，补 `residentQueue.roleActors`、`runtime.materialCli` 不需要重启。`runtime.grants` 的授权匹配每次重读，但运行器建 Session、开 Run 和恢复时接受的工作目录、`models` 列出的模型，用的是服务启动时读入的 grants（`apps/coordinator/src/main.ts` 把启动时的 `allowedRuntimeCwd` 交给运行器），所以**新增工作目录或模型的 grant 要重启**才可用；2026-11-14 的接入试跑里，只改文件不重启时 `capabilities` 的 `runtime` 显示 `grant_directory_unavailable`、`pending` 显示重启后才是 `configured`。另外 `runtime.enabled`（运行时只在启动时建立）和新增 HTTP 令牌要重启。
 
 - **身份的额外命令（`extraCommands`）。** 给文档与架构这类只有 read、write 的身份开放归档与恢复时，在身份文件里该凭据上加 `"extraCommands": ["document.archive", "document.restore"]`，不要给它 `review`（那样它还能开始、关闭、分派 Task）。清单只接受这两个值，别的命令写进去则服务启动时读身份文件失败；每条命令各自生效。**身份文件在服务启动时读取，改了要重启服务才生效**（`session prepare` 重读身份文件只用于其编制检查，不改变 HTTP 认证用的启动快照）。
-- **同一个事实写两处。** `runtime.materialCli` 的 `cliActorId` 与 `residentQueue.roleActors` 的 `actorId` 在 Role 级必须一致，不一致时报 `material_cli_actor_mismatch`；为什么暂不合并见 Agent CLI 那一节。
+- **同一个事实写两处。** `runtime.materialCli` 的 `cliActorId` 与 `residentQueue.roleActors` 的 `actorId` 在 Role 级必须一致，不一致时报 `material_cli_actor_mismatch`；Session 有自己按 `sessionId` 精确的 `materialCli` 条目时按这一条判断（它须是项目当前写入者，否则 `material_cli_actor_not_writer`），所以同一 Role 下用独立身份签字的验收 Session 可以直接 `session prepare`。为什么暂不合并见 Agent CLI 那一节。
 
 ## 7. 用量上限与上下文交接
 
@@ -418,6 +418,14 @@ node --import tsx tests/manual/session-compaction-e1.ts
 **`MESSAGE_POST_applied` 的原因。** 接力保留了一个消息 ID 和一个操作 ID。Leader 若自己发了这条接力消息，用了保留的操作 ID 却用了自己的消息 ID，日志里这个操作确实是 applied，但创建的实体不是保留的消息 ID，旧代码就把接力置为 blocked 并写 `MESSAGE_POST_applied`——而这条消息其实是正确的。现在：那个操作创建的消息若是同一发送者、同一 Session、同一 Task 修订、用保留的操作 ID 写的，接力绑定到它（接力的消息 ID 改成它）并继续；否则接力 blocked，原因写 `MESSAGE_OPERATION_ID_USED_BY_ANOTHER_MESSAGE: operation … created …`，说明发生了什么。复现与修复前后输出见 `packages/adapter-postgres/test/acceptance-relay-queue-head.test.ts` 的第 5 个用例（修前该用例得到 `blocked / MESSAGE_POST_applied`）。
 
 **正式实例上已卡住的消息。** 发布后，acceptance-claude 队伍里已卡的接力消息会在下一轮准入时按上面处理：被取代、已释放的接力其消息被撤下；blocked 的接力其消息写上原因、不再堵后面；等发布的在发布标记写上后开始。消息已被 Leader 先撤下的不再处理。逐条核对用 `work messages` 读消息状态与 `blocked_reason`，用 `work acceptance TASK` 读接力状态。
+
+## 消息泵日志与关闭的恢复门
+
+**消息泵的错误日志。** 服务 stderr 里的 `Session message needs reconciliation` 现在写成一行带原因的话：`code=错误码 message=消息ID session=SessionID project=项目ID state=消息状态 error=摘要`。错误码是业务错误的 code、原生 JSON-RPC 错误（如 `RuntimeServerError(-32600)`）或错误类名。**摘要怎么来：** 平台自己写文案的错误（`DomainError`、`RuntimeServerError`）保留摘要（最多 200 字、去换行），其它错误（普通 `Error`、网络错误等）不回显文字，只写“text withheld: 类名”；保留的摘要还要统一脱敏：引号里的长文本、`Bearer …`、`token=…`/`password=…`/`authorization: …` 之类、`sk-…`、JWT、绝对私有路径（`/Users`、`/home`、`/private`、`/tmp`、`/var` 或盘符路径）、长十六进制与长不透明串，都替换成占位符。行里没有消息正文、令牌或配置值。**限流键是“消息 ID + 错误码”**，不是整行文字：同一条消息的同一个错误码一分钟内只写一行，即使错误文字每次都不同（带计数或时间戳）；一分钟后的那一行写最新一次的文字并说明期间压下了几次。另一条消息或另一个错误码各自有自己的行。只是在等的消息（Session 在运行、排空中、模型服务暂停、授权缺失、预算用尽、本地正在发送：`SESSION_BUSY`、`PROVIDER_HELD`、`MESSAGE_GRANT_MISSING`、`MESSAGE_BUDGET_EXHAUSTED`、`SESSION_NOT_READY`、`MESSAGE_NOT_QUEUED`、`SESSION_INPUT_BUSY`、`RuntimeLocalBusyError`）不是错误，不写日志。
+
+**每秒一条的那个错误。** 排在运行中回合后面的消息不会被泵遍历（待处理列表只含能开始或正在处理的消息），所以每秒一条并不来自“正在排队的消息”。每个 tick 对每条正在处理的消息都会读一次原生历史（`listTurns`、`listItems`），这里抛出的错误会进日志；有两条在运行的消息就是每秒两次尝试。已读代码能指出的候选是：原生线程刚开的第一个回合在历史还没物化时 `thread/turns/list` 返回 -32600（直接输入的对账代码里有同样的处理注释）。这只是推断，没有在正式实例上确认：新日志会直接写出错误码和消息，发布后看第一行就能知道。
+
+**关闭的恢复门。** 恢复门处于 `blocked`（等人恢复；`retrying`、`reworking`、`message_pending`、`awaiting_acceptance` 是正常等待，不触发）、更新时间已超过 30 分钟（一轮 Leader 安排和一次正常恢复通常都比这短；再短会把刚停下一轮后的正常恢复也算进来），并且有 owned 消息排在它后面时，`work board` 的 `awaitingLeader` 里出现一项 `kind=recovery_gate`：`id` 是 Session，`title` 写职责、阶段和排队条数，`waitingOn` 是最近一次为这个门做过恢复决定的身份（`{kind:"actor", id}`），没有人决定过时是 `{kind:"reviewer", id:null}`（任一有复核权限的身份可以执行 `runtime.session.recovery.resume`）。这一项每次读取时从门和队列算出：门重新打开（或进入正常等待的阶段）、或后面不再有排队消息，它就没有了。**它总排在列表最前**（完整快照和 `--brief` 都是），`--brief` 在各档截断时先保留所有门项再填其它项，所以其它待办项再多也挤不掉它；`--brief` 输出里带 `waitingOn`。Leader 每轮读 `work board --brief`，定时代班读同一份，所以不需要另外的通知。
 
 ## 调度板与调度事件流（Q2，迁移 105）
 

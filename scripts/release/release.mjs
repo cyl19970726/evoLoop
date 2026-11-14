@@ -2,7 +2,7 @@
 // Reusable release runner. It contains only generic steps; every host, path, service name and
 // identity file comes from a private config file outside the repository (EVOLOOP_RELEASE_CONFIG).
 // Default is a dry run that prints the plan. Nothing is executed without --execute.
-import { carryAssets, DEFAULT_KEEP } from "./carry-assets.mjs";
+import { carryAssets, DEFAULT_KEEP, DEFAULT_KEEP_DAYS } from "./carry-assets.mjs";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, rename, stat, symlink, readlink, rm, writeFile } from "node:fs/promises";
@@ -35,8 +35,8 @@ export function loadConfig(text, path) {
   }
   for (const name of HOOKS) if (!OPTIONAL_HOOKS.has(name) && !config.hooks?.[name]) throw new Error(`config.hooks.${name} is required`);
   if (config.carryAssets !== undefined && config.carryAssets !== false) {
-    const { assetsDir, keep } = config.carryAssets ?? {};
-    if (typeof config.carryAssets !== "object" || (keep !== undefined && (!Number.isInteger(keep) || keep < 1))) throw new Error("config.carryAssets must be false or { keep (whole number >= 1), assetsDir }");
+    const { assetsDir, keep, keepDays } = config.carryAssets ?? {};
+    if (typeof config.carryAssets !== "object" || (keep !== undefined && (!Number.isInteger(keep) || keep < 1)) || (keepDays !== undefined && (typeof keepDays !== "number" || !Number.isFinite(keepDays) || keepDays < 0))) throw new Error("config.carryAssets must be false or { keep (whole number >= 1), keepDays (number >= 0), assetsDir }");
     if (assetsDir !== undefined && (typeof assetsDir !== "string" || isAbsolute(assetsDir) || assetsDir.split(/[\\/]/).includes(".."))) throw new Error("config.carryAssets.assetsDir must be a relative path inside the source directory");
   }
   if (!config.backup?.out || !isAbsolute(config.backup.out) || !config.backup.blobRoot) throw new Error("config.backup.out (absolute) and config.backup.blobRoot are required");
@@ -198,9 +198,11 @@ export async function run({ config, id, ref = "HEAD", execute = false, from = nu
         if (!previous) log("carry-assets: no previous release, nothing to carry");
         else {
           const previousSource = config.sourceSubdir ? join(previous, config.sourceSubdir) : previous;
-          const carried = await carryAssets({ previousAssets: join(previousSource, assetsDir), newAssets: join(sourceDir, assetsDir), keep: settings.keep ?? DEFAULT_KEEP });
-          acceptance.carriedAssets = { generation: carried.generation, copied: carried.copied.length, expired: carried.expired.length, unchanged: carried.unchanged.length, bytes: carried.bytes, ...(carried.skipped ? { skipped: carried.skipped } : {}) };
+          const carried = await carryAssets({ previousAssets: join(previousSource, assetsDir), newAssets: join(sourceDir, assetsDir), keep: settings.keep ?? DEFAULT_KEEP, keepDays: settings.keepDays ?? DEFAULT_KEEP_DAYS });
+          acceptance.carriedAssets = { generation: carried.generation, copied: carried.copied.length, expired: carried.expired.length, unchanged: carried.unchanged.length, bytes: carried.bytes, retainedGenerations: carried.retained, oldestUsableEntry: carried.oldestUsable, ...(carried.skipped ? { skipped: carried.skipped } : {}) };
           log(`carry-assets: copied ${carried.copied.length} (${carried.bytes} bytes), expired ${carried.expired.length}, same name ${carried.unchanged.length}${carried.skipped ? `; ${carried.skipped}` : ""}`);
+          // The readback: the oldest entry whose tabs can still open any page after this release.
+          log(`carry-assets: oldest entry still usable after this release: ${carried.oldestUsable ? `${carried.oldestUsable.builtAt} (generation ${carried.oldestUsable.generation}, ${carried.retained} generations retained)` : "none (nothing carried)"}`);
         }
       }
       if (step === "preflight") {
