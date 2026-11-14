@@ -37,6 +37,7 @@
     "./session-assignments": "./dist/session-assignments.js",
     "./leader-notice-packets": "./dist/leader-notice-packets.js",
     "./session-line": "./dist/session-line.js",
+    "./schedule-dispatch": "./dist/schedule-dispatch.js",
     "./decision-requests": "./dist/decision-requests.js",
     "./session-identity": "./dist/session-identity.js",
     "./session-messages": "./dist/session-messages.js",
