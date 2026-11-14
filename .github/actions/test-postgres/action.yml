@@ -29,3 +29,8 @@ runs:
         done
         docker logs evoloop-test-pg
         exit 1
+    - shell: bash
+      run: |
+        # Evidence that the test database really runs with JIT off (Task 6bd7f664 / PR #425): the server's own settings, printed into the job log.
+        docker exec evoloop-test-pg psql -U evoloop -d evoloop_ci_test -Atc "select 'pg_settings: ' || name || '=' || setting from pg_settings where name in ('jit', 'jit_above_cost') order by name"
+        docker exec evoloop-test-pg psql -U evoloop -d evoloop_ci_test -Atc "show jit" | sed 's/^/SHOW jit: /'
