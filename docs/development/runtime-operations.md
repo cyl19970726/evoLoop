@@ -106,6 +106,10 @@ Leader 读到交付后，按 Task 声明的验收方式，用 `acceptance.assign
 
 把 `enabled` 改回 `false`，下一轮起就停止自动投递，数据库里的通知和已保存的消息都保留。已在途或结果未知的原生 Turn，先按原 operation 对账。数据库迁移不回滚、不删表，以免丢失结果历史。
 
+## Session 不可用：读板、被拒与同因连续失败
+
+`work board` 里 `usable: false` 的 Session 不要派活，`unusable` 写着原因和补法：没有绑定业务身份或身份不是项目写入者（给这个 Session 配 `runtime.materialCli` 精确绑定，同 Role 只有一个 Session 时才可由 `residentQueue.roleActors` 代替，身份须是项目写入者；两处每次使用重读，不需要重启）、没有原生线程记录或状态不是 ready（恢复或重建 Session）。向它预留 Run 得到 `SESSION_UNUSABLE`，没有 Run 产生。补齐后下次读板即恢复。同一 Session 连续三次以同一预检原因失败时，Leader 收到一条 `session_repeated_failure`（立即级）；处理原因后不需要手动清除。**判断不到的**：原生线程在运行时一侧不可用而数据库里仍有线程记录的情形，数据库看不出来，这类 Session 仍可能显示可用，直到 Run 失败；连续三次同因失败的通知会兜住它。
+
 ## 2. 即时输入
 
 即时输入让用户从工作台发给 owned Session 的消息立即进入执行：Session 正在跑时补入当前 Turn，空闲时直接在原会话开一个新 Turn。设计和规则见 [Session 运行时 §3](../architecture/session-runtime.md#3-即时输入执行中收到的消息怎样处理)。

@@ -24,6 +24,8 @@ export function briefWorkBoard(board: WorkBoardSnapshot): Record<string, unknown
       more: s.queue.length > queueItems ? s.queue.length - queueItems : undefined,
       msgs: s.queuedMessages || undefined,
       gate: s.health.recoveryGate === "open" ? undefined : s.health.recoveryGate, held: s.health.providerHeld || undefined,
+      // Not dispatchable: the reasons are the point, so they are kept whole enough to act on.
+      unusable: s.usable === false ? (s.unusable ?? []).map(r => ({ code: r.code, reason: cut(r.reason, 90) })) : undefined,
     })),
     sessionsOmitted: board.sessions.length > sessionItems ? board.sessions.length - sessionItems : undefined,
     ready: board.readyNotQueued.slice(0, readyItems).map(t => ({ task: short(t.taskId), title: cut(t.title, 40) })),

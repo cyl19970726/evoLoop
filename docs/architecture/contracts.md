@@ -335,9 +335,11 @@ Task 协作通道把 question/answer/progress/blocker/handoff/result 固定到�
 
 | 级别 | 送达 | 种类 |
 | --- | --- | --- |
-| 立即 | Leader 下一个能接收的时点就送，不等 60 秒，排在汇总项前面，同一包里也带上此刻在等的汇总项 | `acceptance_blocked`（验收安排受阻）、`run_submission_blocked`（提交受阻）、`run_without_submission`（Run 结束未提交，被叫停的 Run 除外）、`task_question`、`task_blocker`、`observation_failed`（验收观察记了失败，也包括“未使用”）、`line_entry_suspended`（Session 队伍项挂起，来自 `entry.suspended`）、`direct_dispatch_blocked`（定时直派受阻或等待过久）、`direct_circuit_open`（定时直派熔断） |
+| 立即 | Leader 下一个能接收的时点就送，不等 60 秒，排在汇总项前面，同一包里也带上此刻在等的汇总项 | `acceptance_blocked`（验收安排受阻）、`run_submission_blocked`（提交受阻）、`run_without_submission`（Run 结束未提交，被叫停的 Run 除外）、`task_question`、`task_blocker`、`observation_failed`（验收观察记了失败，也包括“未使用”）、`line_entry_suspended`（Session 队伍项挂起，来自 `entry.suspended`）、`direct_dispatch_blocked`（定时直派受阻或等待过久）、`direct_circuit_open`（定时直派熔断）、`session_repeated_failure`（同一 Session 连续三次以同一预检原因失败，见下） |
 | 汇总 | 等满 60 秒进下一包 | `delivery`、`observation_used`（验收观察记了使用）、`task_todo`、`task_attention`、`line_confirmation_returned`（Session 退回执行确认，来自 `entry.returned`），`schedule_skips_escalated`（定时任务连续跳过），以及迁移前的旧种类 `observation` |
 | 只记录 | 不是通知，不唤醒 Leader | 见下“只记录事件” |
+
+**Session 不可用与同因连续失败。** 启动前检查必然失败的 Session（没有绑定业务身份、绑定的身份不是项目写入者、没有原生线程记录、状态不是 ready）在调度板里标 `usable: false` 并带原因，向它预留 Run 在预留时以 `SESSION_UNUSABLE` 拒绝，不产生失败的 Run；判断来自私有配置和数据库事实，与 Session 队伍解析收件人同一条规则，不看失败历史。同一 Session 最近的终态 Run 连续三个以同一预检原因失败（迁移 110），第三个失败时给 Leader 一条立即级的 `session_repeated_failure`，之间有成功的 Run 或别的原因就重新计，第四个及以后不重复。每个失败的 Run 原有的 `run_without_submission` 通知不变。
 
 立即级仍受恢复门、“人的消息在排队”、Leader 正在执行（不打断）、每包 20 项与 8 KB 的约束；多于一包的立即通知排在前面、连续成包，汇总项的积压不会挡住它们。验收观察按结论拆开：`used` 是 `observation_used`，其余结论（`failed`、`notUsed`）是 `observation_failed`。包里的立即项在行首标“立即·”。
 

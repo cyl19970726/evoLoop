@@ -98,6 +98,7 @@ import { createOrdinaryRunSealer } from "./ordinary-run-submission/seal.js";
 import { OrdinaryRunSealPump } from "./ordinary-run-submission/pump.js";
 import { resolveSenderClass, type SenderClass } from "./session-messages/sender.js";
 import { resolveLineRecipient } from "./session-line/recipient.js";
+import { createSessionUsability } from "./runtime/session-usability.js";
 import { keyedThrottledLog, messageErrorEntry } from "./session-messages/error-line.js";
 import { throttledLog } from "./log-throttle.js";
 import { materialCliRecipientMatches, createReserveRecipientCheck, requireOrdinaryRecipient } from "./runtime/recipient-preflight.js";
@@ -664,6 +665,11 @@ const acceptanceTimer=setInterval(()=>{
 acceptanceTimer.unref();
 // The work board (DEC-045 Q2): reads over the event table the database triggers fill, one shared hub for every stream subscriber, and the
 // 30-day retention. Retention runs on the writer only and once a day at most; nothing here reads while nobody is subscribed.
+// Whether a Session can start work now, judged from the same facts as the Session line's recipient (private configuration + project writers).
+const sessionUsability = createSessionUsability({ query: (sql, params) => pool.query(sql, params as never[]) as never,
+  config: async () => { const configured = await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE);
+    return { materialCli: configured.runtime?.enabled ? configured.runtime.materialCli : [], roleActors: configured.residentQueue?.enabled ? configured.residentQueue.roleActors : [] }; },
+  projectWriter: (projectId, actorId) => currentProjectWriter(projectId, actorId) });
 const workBoardReads = {
   board: (projectId: string) => readWorkBoard(pool, projectId),
   events: (projectId: string, query: Parameters<typeof readSchedEvents>[2]) => readSchedEvents(pool, projectId, query),
@@ -951,7 +957,7 @@ const app = await buildServer({ service, credentials, canWrite: lease.canWrite, 
   taskAttentionPool: pool,
   workStatuses: (principal, projectId, taskIds) => readWorkStatuses(pool, service, principal, projectId, taskIds),
   workIndex: createLeaderWorkIndexReader(pool),
-  workBoard: { reads: workBoardReads, hub: schedEventHub },
+  workBoard: { reads: workBoardReads, hub: schedEventHub, usability: sessionUsability },
   decisionsForMe: (projectId, actorId, canDecide) => readDecisionsForMe(pool, projectId, actorId, canDecide),
   leaderNotices: {
     packet: async (projectId, packetId) => {
@@ -1033,7 +1039,7 @@ const app = await buildServer({ service, credentials, canWrite: lease.canWrite, 
       approvalPolicy:command.approvalPolicy}) === true,
   authorizeDynamicRun: async (principal,command,session) => principal.permissions.includes("review") &&
     principal.actorId === session.actorId && await dynamicAdmission?.canReserveRun(session,command.runId,command.taskId) === true,
-  requireRunRecipient: createReserveRecipientCheck({ uow, loadIntegrations: () => loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE) }),
+  requireRunRecipient: createReserveRecipientCheck({ uow, loadIntegrations: () => loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE), usability: sessionUsability }),
   authorizeDynamicMessageRecovery: async (principal,session) => principal.permissions.includes("review") &&
     await dynamicAdmission?.canStartConversation(session) === true,
   runtimeGrants: (projectId, actorId) => runtimeConfig?.enabled ? runtimeConfig.grants.filter(g => g.projectId === projectId && g.actorId === actorId) : [],

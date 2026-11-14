@@ -11,7 +11,18 @@ export interface WorkBoardReads {
   board(projectId: string): Promise<WorkBoardSnapshot>;
   events(projectId: string, query: { after?: number; limit: number; from?: string; to?: string; category?: string }): Promise<SchedEventsPage>;
 }
-export interface WorkBoardRouteDeps { service: { getProject(principal: Principal, projectId: string): Promise<unknown> }; reads: WorkBoardReads; hub: SchedEventHub; keepAliveMs?: number }
+export interface WorkBoardRouteDeps { service: { getProject(principal: Principal, projectId: string): Promise<unknown> }; reads: WorkBoardReads; hub: SchedEventHub; keepAliveMs?: number;
+  /** Whether each Session can start work now (needs the private configuration, so it is judged here and not in the database read). */
+  usability?: (projectId: string, sessionIds: string[]) => Promise<Map<string, { usable: boolean; reasons: Array<{ code: string; reason: string }> }>> }
+
+/** Adds `usable` / `unusable` to each Session and the count of unusable Sessions; a judgement that fails leaves the board as read (absent means not judged). */
+export async function withUsability(board: WorkBoardSnapshot, usability: WorkBoardRouteDeps["usability"]): Promise<WorkBoardSnapshot> {
+  if (!usability || !board.sessions.length) return board;
+  const judged = await usability(board.projectId, board.sessions.map(s => s.sessionId)).catch(() => null);
+  if (!judged) return board;
+  const sessions = board.sessions.map(s => { const j = judged.get(s.sessionId); return j ? { ...s, usable: j.usable, ...(j.usable ? {} : { unusable: j.reasons }) } : s; });
+  return { ...board, sessions, graph: { ...board.graph, counts: { ...board.graph.counts, unusableSessions: sessions.filter(s => s.usable === false).length } } };
+}
 
 const MAX_WINDOW_MS = 30 * 24 * 3600 * 1000;
 const MAX_METRIC_EVENTS = 50_000;
@@ -33,7 +44,7 @@ export function registerWorkBoardRoutes(app: FastifyInstance, deps: WorkBoardRou
     const p = project(request.params), principal = who(request);
     const q = z.object({ brief: z.enum(["true", "false", "1", "0"]).default("false") }).parse(request.query);
     await deps.service.getProject(principal, p.projectId);
-    const board = await deps.reads.board(p.projectId);
+    const board = await withUsability(await deps.reads.board(p.projectId), deps.usability);
     return q.brief === "true" || q.brief === "1" ? briefWorkBoard(board) : board;
   });
 

@@ -44,6 +44,12 @@ export interface WorkBoardSession {
   /** Queued ordinary messages waiting for this Session. */
   queuedMessages: number;
   health: { recoveryGate: string; gateCause: string | null; providerHeld: boolean };
+  /**
+   * Whether a Run can start on this Session now. Set by the coordinator (it needs the private configuration the database does not hold); absent when it
+   * could not be judged. `false` carries the reasons (no business identity, no native thread, not ready): such a Session is not in the dispatchable list.
+   */
+  usable?: boolean;
+  unusable?: Array<{ code: string; reason: string }>;
 }
 export interface WorkBoardWaitingTask { taskId: string; title: string | null; state: string; since: string }
 /**

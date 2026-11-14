@@ -99,8 +99,30 @@ export function configuredCliActorId(load: () => Promise<{ runtime?: { enabled: 
 export function createReserveRecipientCheck(deps: {
   uow: { read<T>(projectId: string, fn: (reader: any) => Promise<T>): Promise<T> };
   loadIntegrations: Parameters<typeof configuredCliActorId>[0];
+  /** Whether the Session can start work now (session-usability.ts); without it only the recipient check below runs. */
+  usability?: (projectId: string, sessionIds: string[]) => Promise<Map<string, { usable: boolean; reasons: Array<{ code: string; reason: string }> }>>;
 }) {
   const guard = createRunRecipientGuard({ read: (projectId, fn) => deps.uow.read(projectId, reader => fn(reader as never)),
     cliActorId: configuredCliActorId(deps.loadIntegrations) });
-  return async (_principal: unknown, command: { projectId: string; taskId: string }, session: { id: string; actorId: string; roleId: string }): Promise<void> => guard(command, session);
+  return async (_principal: unknown, command: { projectId: string; taskId: string }, session: { id: string; actorId: string; roleId: string }): Promise<void> => {
+    if (deps.usability) await requireUsableSession(deps, command, session);
+    await guard(command, session);
+  };
+}
+
+/**
+ * Refuse the reservation of a Run on a Session that cannot start it, before any Run exists: no failed Run, no closed recovery gate. A missing native thread
+ * or a Session that is not ready fails every Run; a missing business identity fails the Runs of Tasks that need an independent signer (acceptance mode),
+ * so that reason only counts for those Tasks. Each message names the reasons and what fixes them.
+ */
+async function requireUsableSession(deps: Parameters<typeof createReserveRecipientCheck>[0], command: { projectId: string; taskId: string }, session: { id: string }): Promise<void> {
+  const judged = (await deps.usability!(command.projectId, [session.id]).catch(() => null))?.get(session.id);
+  if (!judged || judged.usable) return;
+  const acceptanceMode = await deps.uow.read(command.projectId, async reader => {
+    const task = await reader.getTask(command.taskId);
+    return task ? (await reader.getTaskProposal(task.id, task.currentRevisionId))?.acceptanceMode ?? null : null;
+  });
+  const blocking = judged.reasons.filter(r => acceptanceMode || !r.code.startsWith("BUSINESS_IDENTITY"));
+  if (!blocking.length) return;
+  throw new DomainError("SESSION_UNUSABLE", `这个 Session 现在不能开工，未创建 Run：${blocking.map(r => r.reason).join("；")}。补齐后再预留；它在 work board 里会一直标为不可用，直到条件满足。`);
 }
