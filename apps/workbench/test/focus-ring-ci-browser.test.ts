@@ -23,7 +23,12 @@ const skip = !required && !modulePath && "Set EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MO
 const probe = String.raw`(() => {
   const focused = document.activeElement;
   if (!focused || focused === document.body) return null;
-  const accent = /rgb\((47, 75, 179|147, 166, 242)\)/;
+  // The ring is drawn in the theme's own --accent, so the colour is read from the live token (resolved to rgb by the browser) and not
+  // written here: a literal went stale when DEC-049 changed the accent, and said "no ring" for rings that were drawn.
+  const probeColour = document.createElement("span");
+  probeColour.style.color = "var(--accent)"; document.body.append(probeColour);
+  const accentRgb = getComputedStyle(probeColour).color; probeColour.remove();
+  const accent = { test: value => String(value).includes(accentRgb) };
   const indicator = el => {
     const s = getComputedStyle(el);
     const outline = s.outlineStyle !== "none" && parseFloat(s.outlineWidth) > 0 && accent.test(s.outlineColor);
