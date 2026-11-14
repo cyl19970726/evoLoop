@@ -385,9 +385,10 @@ export class AcceptanceRelayService {
           throw new DomainError("ACCEPTANCE_NOT_READY","Current Delivery or publication changed");
         const observation=required((await client.query(`SELECT * FROM consumer_observation
           WHERE project_id=$1 AND observation_id=$2`,[projectId,observationId])).rows[0]??null,"consumer observation");
+        // pg gives timestamptz as a Date; Date.parse(Date) reads its string form and drops the milliseconds (defect ba59825a), so compare the instants themselves.
         if(observation.task_id!==item.task_id||observation.delivery_id!==item.delivery_id||
           observation.observer!==principal.actorId||observation.actor_id!==principal.actorId||
-          Date.parse(observation.created_at)<Date.parse(item.created_at))
+          new Date(observation.created_at).getTime()<new Date(item.created_at).getTime())
           throw new DomainError("OBSERVATION_MISMATCH","Observation does not belong to this recipient, Delivery and arrangement");
         if(item.mode==='human'){
           if(principal.identityKind!=="human"||observation.observer_kind!=="human"||
