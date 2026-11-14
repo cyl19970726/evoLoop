@@ -80,12 +80,15 @@ export function toolGroupStatus(entries: readonly Pick<WorkspaceTool, "state" | 
   const running = entries.some(entry => entry.state === "running" && entry.freshness === "live");
   const unconfirmed = entries.some(entry => entry.state === "running" && entry.freshness !== "live");
   const failures = entries.filter(isFailedEntry).length;
-  return [running && "，正在进行", unconfirmed && "，上次进行中的一项当前待核对", failures > 0 && `，${failures} 项失败或中断`].filter(Boolean).join("");
+  const unknown = entries.filter(entry => entry.state === "unknown").length;
+  return [running && "，正在进行", unconfirmed && "，上次进行中的一项当前待核对", failures > 0 && `，${failures} 项失败或中断`,
+    unknown > 0 && `，${unknown} 项结果未确认`].filter(Boolean).join("");
 }
 
 /** A step's state on the right of its row; a running step from an older read is not presented as running. */
 export function toolStepState(entry: Pick<WorkspaceTool, "state" | "freshness" | "durationMs">): string {
-  const state = entry.state === "running" && entry.freshness !== "live" ? "上次进行中，当前待核对" : entryStateLabel[entry.state];
+  const state = entry.state === "running" && entry.freshness !== "live" ? "上次进行中，当前待核对"
+    : entry.state === "unknown" ? "结果未确认（这一轮没有记下它的结果）" : entryStateLabel[entry.state];
   return entry.durationMs !== null ? `${state} · ${Math.round(entry.durationMs) / 1000} 秒` : state;
 }
 
