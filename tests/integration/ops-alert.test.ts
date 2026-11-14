@@ -110,6 +110,8 @@ test("a provider pause and its release each send one message with the reason, th
     expectedVersion: hold!.version, evidenceRef: "ops://balance-restored", reason: "Balance restored" } as never);
   assert.equal(release.status, "applied");
   await pump.tick();
+  // EVOLOOP_ALERT_TRANSCRIPT=1 prints the messages the receiver got, as the candidate acceptance reads them back.
+  if (process.env.EVOLOOP_ALERT_TRANSCRIPT === "1") for (const m of h.received) console.log(`ALERT ${m.event} ${m.kind}: ${m.text}`);
   assert.equal(h.received.length, 2);
   assert.deepEqual([h.received[1]!.kind, h.received[1]!.event, h.received[1]!.key], ["provider_hold", "resolved", `hold:${hold!.hold_id}`]);
   assert.match(h.received[1]!.text, /已放行，共暂停 \d+ 分钟/); assert.match(h.received[1]!.text, /放行人 lead/); assert.match(h.received[1]!.text, /Balance restored/);
