@@ -64,11 +64,11 @@ description: 把一个新项目接入 evoLoop：先判断情况，再按步骤�
 
 ## 3. Role
 
-1. **第一个 Role 的引导。** 全新项目里 `task.create` 要求负责人是已试行的 Role，而 `role.propose` 要求引用一个已存在、未完成的 Task，**两者互相要求，只经 API 建不出第一个 Role**。今天的绕行见[私有配置·引导](references/private-config.md#2-第一个-role-的引导)；这是已知缺口，不要另找办法绕。
-2. **提议并接受 Leader 与业务 Role。** Leader 用 `roleClass: system`、`templateKey: lead`，项目里只能有一个 active 或 trial 的 system Lead。把“只用本 Session 的 CLI 和工作目录、被拒就回报错误码、不到磁盘上自行排查”写进每个 Role 提议的 `handoffBoundary`：平台通知触发的 Turn 只带 Role 的职责上下文，不带你写在消息里的提醒。`role.propose` 的硬性要求：`evidence` 至少含缺口类（`backlog`/`omission`/`rework` 之一）、`effect`、`cost` 各一条；`alternatives` 恰好四条，`method`、`knowledge`、`another-instance`、`temporary-assignment` 各一；`reviewAtUtc` 在现在之后、`trialDays` 之内；`firstTaskId` 指一个未完成的 Task（业务 Role 也可以先引用引导 Task）。再由有审阅权的身份 `role.decide accept-trial`（决定类）。
+1. **第一个 Role 的引导。** 项目已有 `project.create`、但 `list roles` 还是空时，用 `command schema role.bootstrap` 建立第一个 system Lead。命令必须由有项目 write 与 review 权限的身份发出；proposal 不填 `firstTaskId`，其余仍按下面的建议证据规则填写，并至少有一条 evidence 的 `sourceRef` 是 `project:<PROJECT>`。同时提交 `projectCreateOperationId`（第 2 步 `project.create` 回执里的 operationId）和理由。服务端只在项目没有任何 Role、且该操作确实是同项目已应用的 `project.create` 时，原子建立版本 1 的 trial Lead、不可变修订和 `accept-trial` 决定；不要直接写数据库，也不要再手工造 Task 绕过。字段和读回见[私有配置·引导](references/private-config.md#2-第一个-role-的引导)。
+2. **提议并接受业务 Role。** 第一个 system Lead 已由引导命令建立；不要再提第二个 active 或 trial 的 system Lead。业务 Role 仍用 `role.propose`。把“只用本 Session 的 CLI 和工作目录、被拒就回报错误码、不到磁盘上自行排查”写进每个 Role 提议的 `handoffBoundary`：平台通知触发的 Turn 只带 Role 的职责上下文，不带你写在消息里的提醒。`role.propose` 的硬性要求：`evidence` 至少含缺口类（`backlog`/`omission`/`rework` 之一）、`effect`、`cost` 各一条；`alternatives` 恰好四条，`method`、`knowledge`、`another-instance`、`temporary-assignment` 各一；`reviewAtUtc` 在现在之后、`trialDays` 之内；`firstTaskId` 指一个未完成、已存在的 Task。再由有审阅权的身份 `role.decide accept-trial`（决定类）。
 3. **绑定运行时。** `role runtime set <ROLE> --project <PROJECT> --provider codex|claude --reason …`，首次绑定后不能换。
 
-**读回：** `cli get /api/projects/<PROJECT>/capabilities`（`runtime` 为 `configured`，所有项 `pending: null`）；`cli list roles --project <PROJECT>`（每个 Role `trial`）；`cli role runtime show <ROLE> --project <PROJECT>`。
+**读回：** `cli list roles --project <PROJECT>` 里第一个 Lead 为 `trial`、`proposedBy` 是引导命令的发令身份；`cli read role <LEAD> --revisions --project <PROJECT>` 的修订理由记录来源 `project.create` 操作；`cli get /api/projects/<PROJECT>/capabilities`（`runtime` 为 `configured`，所有项 `pending: null`）；每个 Role 为 `trial`；`cli role runtime show <ROLE> --project <PROJECT>`。
 
 ## 4. Session 与消息往返
 

@@ -9,24 +9,37 @@ export const roleTemplateKeySchema = z.enum(["lead", "cognition", "division", "p
 const common = { projectId: id, operationId: id, roleId: id };
 const evidence = z.strictObject({ kind: z.enum(["backlog", "omission", "rework", "effect", "cost"]), observation: text, sourceRef: text, observedAtUtc: z.iso.datetime() });
 const alternative = z.strictObject({ kind: z.enum(["method", "knowledge", "another-instance", "temporary-assignment"]), assessment: text, estimatedCost: text });
-export const roleProposalSchema = z.strictObject({
+const roleProposalFields = {
   title: short, roleClass: z.enum(["system", "business"]).optional(), templateKey: roleTemplateKeySchema.optional(), goal: text, independentResponsibility: text, ownerScope: text,
   inputs: z.array(text).min(1).max(20), writableAssets: z.array(text).max(20), deliverables: z.array(text).min(1).max(20),
   triggers: z.array(text).min(1).max(20), workflow: text, handoffBoundary: text,
   evidence: z.array(evidence).min(1).max(40), alternatives: z.array(alternative).min(4).max(4),
-  firstTaskId: id, baseline: text, expectedEffect: text, costLimit: text,
+  baseline: text, expectedEffect: text, costLimit: text,
   trialDays: z.number().int().min(1).max(90), reviewAtUtc: z.iso.datetime(), exitCriteria: text,
-}).superRefine((value, context) => {
+};
+const validateProposal = (value: { evidence: Array<{ kind: string }>; alternatives: Array<{ kind: string }> }, context: z.RefinementCtx) => {
   const kinds = new Set(value.alternatives.map(item => item.kind));
   if (kinds.size !== 4) context.addIssue({ code: "custom", message: "all four alternative categories must be assessed", path: ["alternatives"] });
   const observations = new Set(value.evidence.map(item => item.kind));
   if (!["backlog", "omission", "rework"].some(kind => observations.has(kind as "backlog" | "omission" | "rework")) || !observations.has("effect") || !observations.has("cost"))
     context.addIssue({ code: "custom", message: "proposal needs a responsibility gap, observed effect, and cost evidence", path: ["evidence"] });
-});
+};
+export const roleProposalSchema = z.strictObject({
+  ...roleProposalFields, firstTaskId: id,
+}).superRefine(validateProposal);
 export type RoleProposal = z.infer<typeof roleProposalSchema>;
+/** Only the first Role of a completely empty project may omit its first Task; see role.bootstrap. */
+export const roleBootstrapProposalSchema = z.strictObject(roleProposalFields).superRefine(validateProposal);
+export type RoleBootstrapProposal = z.infer<typeof roleBootstrapProposalSchema> & { firstTaskId?: undefined };
+export type StoredRoleProposal = RoleProposal | RoleBootstrapProposal;
 
 export const roleCommands = [
   z.strictObject({ ...common, type: z.literal("role.propose"), proposal: roleProposalSchema }),
+  /**
+   * One-time first Role of an empty project. The project.create operation is the immutable origin; the command creates
+   * a trial system Lead and its accept-trial decision atomically.
+   */
+  z.strictObject({ ...common, type: z.literal("role.bootstrap"), proposal: roleBootstrapProposalSchema, projectCreateOperationId: id, reason: text }),
   /** Appends a new candidate revision to an existing Role (same roleId, version+1); it is decided with role.decide. */
   z.strictObject({ ...common, type: z.literal("role.revise"), expectedVersion: z.number().int().positive(), proposal: roleProposalSchema, reason: text.optional() }),
   z.strictObject({ ...common, type: z.literal("role.decide"), expectedVersion: z.number().int().positive(), decision: z.enum(["accept-trial", "reject", "defer"]), reason: text }),
@@ -52,8 +65,8 @@ export const initialRoleTemplates = [
   { key: "development-workflow", title: "开发流程与规范", roleClass: "business" },
   { key: "functional-development", title: "功能开发", roleClass: "business" },
 ] as const;
-export interface RoleRecord { projectId: string; id: string; version: number; currentRevisionId: string; state: RoleState; proposal: RoleProposal; proposedBy: string; createdAtUtc: string; trialStartedAtUtc: string | null; reviewAtUtc: string; mergeTargetRoleId: string | null }
-export interface RoleRevision { projectId: string; roleId: string; id: string; version: number; state: RoleState; proposal: RoleProposal; actorId: string; reason: string; createdAtUtc: string; reviewAtUtc: string; mergeTargetRoleId: string | null }
+export interface RoleRecord { projectId: string; id: string; version: number; currentRevisionId: string; state: RoleState; proposal: StoredRoleProposal; proposedBy: string; createdAtUtc: string; trialStartedAtUtc: string | null; reviewAtUtc: string; mergeTargetRoleId: string | null }
+export interface RoleRevision { projectId: string; roleId: string; id: string; version: number; state: RoleState; proposal: StoredRoleProposal; actorId: string; reason: string; createdAtUtc: string; reviewAtUtc: string; mergeTargetRoleId: string | null }
 export interface RoleDecision { projectId: string; id: string; roleId: string; revisionId: string; decision: "accept-trial" | "reject" | "defer"; actorId: string; reason: string; createdAtUtc: string }
 export interface RoleTrialReview { projectId: string; id: string; roleId: string; revisionId: string; decision: "continue-trial" | "activate" | "merge" | "retire"; effectEvidence: string; effectEvidenceRefs: string[]; costEvidence: string; costEvidenceRefs: string[]; baselineComparison: string; actorId: string; reason: string; createdAtUtc: string }
 export interface RoleHandoff { projectId: string; id: string; roleId: string; kind: "task" | "knowledge" | "session"; sourceRef: string; targetRoleId: string; observedTaskVersion: number | null; state: "prepared" | "acknowledged"; preparedAtUtc: string; acknowledgedAtUtc: string | null }
