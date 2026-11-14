@@ -562,11 +562,31 @@ export class AcceptanceRelayService {
       operation = await this.deps.workflow.getOperation(sender,item.projectId,item.messageOperationId);
     }
     if (!operation) { await hold("MESSAGE_POST_UNCONFIRMED"); return; }
-    if (operation.result.status !== "applied" || operation.result.entityId !== item.messageId) {
+    let messageId = item.messageId;
+    if (operation.result.status !== "applied") {
       if (!retry) await this.setState(item,"blocked",`MESSAGE_POST_${operation.result.status}`);
       return;
     }
-    const message = await this.deps.messages.get(item.projectId,item.messageId);
+    if (operation.result.entityId !== item.messageId) {
+      // The reserved operation ID was used, and applied, for a message with ANOTHER message ID (for example a Leader who posted the arrangement's message
+      // with the reserved operation ID but a message ID of its own). That used to be blocked as the unexplained "MESSAGE_POST_applied", and the message
+      // sat at the head of the Session's queue (defect 0fd4a99b). If the message that operation created is the one the arrangement asks for — the same
+      // sender, Session and Task revision, written under the reserved operation ID — the arrangement is bound to it; anything else says what happened.
+      const created = typeof operation.result.entityId === "string" ? await this.deps.messages.get(item.projectId, operation.result.entityId).catch(() => null) : null;
+      const same = !!created && created.operationId === item.messageOperationId && created.senderActorId === item.senderActorId &&
+        created.target.kind === "owned" && created.target.sessionId === item.sessionId &&
+        created.context?.taskId === item.taskId && created.context?.taskRevisionId === item.taskRevisionId;
+      if (!same) {
+        if (!retry) await this.setState(item,"blocked",`MESSAGE_OPERATION_ID_USED_BY_ANOTHER_MESSAGE: operation ${item.messageOperationId} created ${String(operation.result.entityId).slice(0, 8)}, which is not this arrangement's message for ${item.messageId.slice(0, 8)}`);
+        return;
+      }
+      messageId = operation.result.entityId as string;
+      await this.write(item.projectId, async client => {
+        await client.query("UPDATE task_acceptance_relay SET message_id=$3,version=version+1,updated_at=now() WHERE project_id=$1 AND relay_id=$2 AND state IN ('pending','blocked')",
+          [item.projectId, item.relayId, messageId]);
+      });
+    }
+    const message = await this.deps.messages.get(item.projectId,messageId);
     if (message.state === "failed" || message.state === "cancelled") {
       await this.setState(item,"blocked",`ACCEPTANCE_MESSAGE_${message.state.toUpperCase()}`);
       return;
@@ -634,14 +654,34 @@ export class AcceptanceRelayService {
   private async setState(item: AcceptanceRelayRecord, state: AcceptanceRelayRecord["state"], reason: string | null): Promise<void> {
     await this.write(item.projectId, async client => { await this.updateState(client, item, state, reason); });
   }
+  /** Say why a queued acceptance message is not starting; written once (only when the reason changes), never on a message that already started. */
+  private async noteMessage(item: AcceptanceRelayRecord, reason: string): Promise<void> {
+    if (!item.messageId) return;
+    await this.deps.pool.query(`UPDATE session_message SET blocked_reason=$3,version=version+1,updated_at=now()
+      WHERE project_id=$1 AND message_id=$2 AND state='queued' AND blocked_reason IS DISTINCT FROM $3`, [item.projectId, item.messageId, reason.slice(0, 500)]);
+  }
+  /** An arrangement that will never run: its queued message is cancelled with the reason, under the project lock and only while still queued. */
+  private async retireMessage(item: AcceptanceRelayRecord, reason: string): Promise<void> {
+    if (!item.messageId) return;
+    await this.write(item.projectId, async client => {
+      await client.query(`UPDATE session_message SET state='cancelled',version=version+1,blocked_reason=$3,updated_at=now()
+        WHERE project_id=$1 AND message_id=$2 AND state='queued'`, [item.projectId, item.messageId, reason.slice(0, 500)]);
+    });
+  }
   /** Called before native start. A stale queued handoff is retired; a started one remains immutable evidence. */
   async messageAdmission(projectId: string, messageId: string): Promise<boolean> {
     const r = await this.deps.pool.query("SELECT * FROM task_acceptance_relay WHERE project_id=$1 AND message_id=$2",[projectId,messageId]);
     if (!r.rows[0]) return true;
     const item = row(r.rows[0]);
+    // An arrangement that is no longer live (blocked, superseded, released) must not leave its message waiting silently at the head of the Session's
+    // queue (defect 0fd4a99b). Superseded or released: the message has no purpose, it is cancelled with the reason. Blocked: it may still be retried
+    // (the rule can change, the sender can come back), so the message stays, now saying why, and does not hold the messages behind it.
+    if (item.state === "superseded" || item.state === "released") { await this.retireMessage(item, `ACCEPTANCE_RELAY_${item.state.toUpperCase()}`); return false; }
+    if (item.state === "blocked") { await this.noteMessage(item, `ACCEPTANCE_RELAY_BLOCKED: ${item.blockedReason ?? "blocked"}`); return false; }
     if (item.state !== "linked" && item.state !== "pending") return false;
     if (await this.current(item)) {
-      if(!await this.publicationReady(item)){await this.note(item,"PUBLICATION_PENDING");return false;}
+      // Waiting for the publication it names: the message says so and does not hold the line (it is looked at again each pass).
+      if(!await this.publicationReady(item)){await this.note(item,"PUBLICATION_PENDING");await this.noteMessage(item,"PUBLICATION_PENDING: the arrangement waits for its publication marker");return false;}
       const m=await this.deps.pool.query(`SELECT operation_id,sender_actor_id,session_id,
         context_task_id,context_task_revision_id,content,state FROM session_message
         WHERE project_id=$1 AND message_id=$2`,[projectId,messageId]);
