@@ -468,3 +468,38 @@ test("verification, not wording: the same words pass or fail by what they point 
   assert.equal(rawMentionsFormalReadback("候选通过；正式实例读回通过（2026-11-14 10:05Z，2026-11-21 09:00Z）", V), false, "one future time voids the phrase");
   assert.equal(rawMentionsFormalReadback("候选通过；正式实例读回通过（5ae8f8fc，ETA 2026-11-21 09:00Z）", V), false, "a valid commit does not rescue a future time next to it");
 });
+
+// ---- Task ac254c1a, rework 9 (acceptance report 17815932): plan semantics win over time and commit. These stayed "normal" because a past time, or a
+// commit that resolves, was taken as proof of completion even when the sentence says the read-back is scheduled, waited for, or to be done after a release.
+const H = {
+  G1: "候选通过；正式实例读回通过（预定 2026-11-20 10:00Z）",
+  G2: "候选通过；正式实例读回通过（发布后 2026-11-20 10:00Z 再做）",
+  G3: "候选通过；正式实例读回通过（scheduled 2026-11-20 10:00Z）",
+  H1: "候选通过；正式实例读回通过（预定 2026-11-13 10:00Z）",
+  H2: "候选通过；正式实例读回通过（scheduled 2026-11-13 10:00Z）",
+  H3: "候选通过；正式实例读回通过（等真实 commit 530497b9 合并后）",
+  H4: "候选通过；正式实例读回通过（ETA 11-14 09:00）",
+  H5: "候选通过；正式实例读回通过（发布后 2026-11-13 10:00Z 再做）",
+};
+const LATE = { ...V, observedAtMs: Date.parse("2026-12-01T00:00:00Z") }; // an observation written after every one of these times: time can no longer rule them out
+for (const [name, evidence] of Object.entries(H)) {
+  test(`${name}. “${evidence.split("通过")[2]}” is a plan, a schedule or a wait whatever the time or commit says, and is listed`, () => {
+    for (const verifier of [V, LATE]) {
+      assert.equal(rawMentionsFormalReadback(evidence, verifier), false, `${name} observed at ${new Date(verifier.observedAtMs).toISOString()}`);
+      const judged = rawJudgeClosure({ evidence, hasDelivery: true, stage: null, verifier });
+      assert.deepEqual([judged.candidateOnly, judged.flagged], [true, true]);
+    }
+  });
+}
+
+test("plan words win over a resolvable commit and a past time, while an explicit completed read-back keeps its “合并后/发布后” and the P cases stay accepted", () => {
+  assert.equal(mentionsFormalReadback("候选通过；正式实例读回通过（预定，5ae8f8fc）"), false);
+  assert.equal(mentionsFormalReadback("候选通过；正式实例读回通过（排期 2026-11-13 10:00Z，5ae8f8fc）"), false);
+  assert.equal(mentionsFormalReadback("候选通过；正式实例读回通过（定于 2026-11-13 10:00Z）"), false);
+  assert.equal(mentionsFormalReadback("候选通过；正式实例读回通过（等 5ae8f8fc 发布）"), false);
+  assert.equal(mentionsFormalReadback("候选通过；正式实例读回通过（还没做，5ae8f8fc）"), false);
+  assert.equal(mentionsFormalReadback("候选通过；正式实例已读回通过（#419 合并后，2026-11-14 10:05Z，5ae8f8fc）"), true, "plainly done after the merge");
+  assert.equal(mentionsFormalReadback("候选通过；正式实例读回通过（#419 合并后，2026-11-14 10:05Z，5ae8f8fc）"), false, "“合并后” without a plain “已…” is a plan: listed when unsure");
+  for (const evidence of ["候选通过；正式实例读回通过（2026-11-14 10:05Z，commit 530497b9）", "候选通过；正式实例读回通过（2026-11-14 10:05Z 已进行，5ae8f8fc）", "候选通过；正式实例读回通过（Run 8fecc67c）"])
+    assert.equal(mentionsFormalReadback(evidence), true, evidence);
+});
