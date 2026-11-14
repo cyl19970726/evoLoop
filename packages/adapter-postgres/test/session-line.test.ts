@@ -664,3 +664,32 @@ test("Q2 defect 52eb5ecf: a suspended entry is held on the board and an event, r
   assert.deepEqual(kinds, ["task.queued", "task.held", "task.resumed"]);
   await pool.query("UPDATE session_line_entry SET state='withdrawn',withdrawn_reason='cleanup',version=version+1 WHERE entry_id=$1", [entry.id]);
 });
+
+test("Q2 defect 52eb5ecf (re-work): a hold made by the line's own pump — not by SQL — reads back on the board and the event stream, and resume reads back too", async () => {
+  const { readSchedEvents, readWorkBoard } = await import("../src/work-board.ts");
+  for (const entry of await entries()) await apply({ type: "line.remove", projectId: p, operationId: randomUUID(), entryId: entry.id, expectedVersion: entry.version, reason: "hold readback starts from an empty line" });
+  const start = (await readSchedEvents(pool, p, { limit: 1 })).head;
+  const t = await newTask("Hold readback"); await append(t);
+  let recipient: string | null = null;
+  const pump = new SessionLinePump({ workflow, credentials: async () => [lead, worker], enabled: async () => true, canWrite: () => true, pollIntervalMs: 1000,
+    onError: error => { throw error; }, recipientActorId: async () => recipient });
+  await pump.tick(); await pump.tick();
+  const held = await entryOf(t);
+  assert.equal(held.state, "suspended");
+  const board = await readWorkBoard(pool, p);
+  const item = board.sessions.find(s => s.sessionId === session)!.queue.find(q => q.taskId === t)!;
+  assert.equal(item.state, "held");
+  assert.match(item.holdCode ?? "", /^RECIPIENT_UNAVAILABLE/, "the board reads the entry's own hold reason");
+  assert.ok(board.graph.counts.held >= 1);
+  assert.equal(board.sessions.find(s => s.sessionId === session)!.current, null, "a held entry is not current work");
+  recipient = "worker";
+  const again = await entryOf(t);
+  await apply({ type: "line.resume", projectId: p, operationId: randomUUID(), entryId: again.id, expectedVersion: again.version, reason: "recipient configured" });
+  const resumed = (await readWorkBoard(pool, p)).sessions.find(s => s.sessionId === session)!.queue.find(q => q.taskId === t)!;
+  assert.equal(resumed.state, "queued"); assert.equal(resumed.holdCode, null);
+  const kinds = (await readSchedEvents(pool, p, { after: start, limit: 500 })).items.filter(e => e.taskId === t && e.subject.kind === "line_entry").map(e => e.kind);
+  // The pump takes the entry into its start step (task.turn) before the step refuses it; the hold and the resume follow in order.
+  assert.deepEqual(kinds, ["task.queued", "task.turn", "task.held", "task.resumed"]);
+  const left = await entryOf(t);
+  await apply({ type: "line.remove", projectId: p, operationId: randomUUID(), entryId: left.id, expectedVersion: left.version, reason: "hold readback cleanup" });
+});
