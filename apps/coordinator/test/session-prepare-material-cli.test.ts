@@ -66,3 +66,17 @@ test("the Session's own entry beats a conflicting Role entry, as the line's reci
       roleActors: [{ projectId, roleId, actorId: "dev-agent" }] }, 2, async () => true);
   assert.deepEqual(recipient, { actorId: "acceptance-agent" }, "prepare and the line agree on who signs");
 });
+
+test("the onboarding skill and its private-config reference say what prepare now does: an acceptance Session is prepared with its own exact entry", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const { resolve } = await import("node:path");
+  const root = resolve(import.meta.dirname, "../../../.agents/skills/evoloop-onboarding");
+  const skill = await readFile(`${root}/SKILL.md`, "utf8"), config = await readFile(`${root}/references/private-config.md`, "utf8");
+  for (const [name, text] of [["SKILL.md", skill], ["private-config.md", config]] as const) {
+    assert.ok(!text.includes("验收 Session 不用 `session prepare`"), `${name}: the old advice not to use session prepare is gone`);
+    assert.ok(!text.includes("已知不一致，待修"), `${name}: no "known inconsistency, to be fixed" left`);
+    assert.ok(!text.includes("不能用 `session prepare` 建"), `${name}: no claim that an acceptance Session cannot be prepared`);
+    assert.ok(text.includes("material_cli_actor_not_writer") || name === "SKILL.md", `${name}: the new refusal is named`);
+  }
+  assert.ok(skill.includes("精确绑定优先") && skill.includes("material_cli_actor_not_writer") && skill.includes("config.materialCli.actorId"), "step 4 names the rule, the refusal and the read-back");
+});
