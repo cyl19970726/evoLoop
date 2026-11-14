@@ -16,7 +16,7 @@
 | [即时输入](#2-即时输入) | `directInputs` | 关闭 | 每次请求重读；前提是服务启动时已启用运行时 | [即时输入](../architecture/session-runtime.md#3-即时输入执行中收到的消息怎样处理) |
 | [托管压缩](#3-托管压缩) | `runtime.compaction.owned` | `true` | 启动时读，改后重启 | [托管压缩](../architecture/session-runtime.md#4-托管压缩) |
 | [普通 Task 的每日复制](#4-普通-task-的每日复制) | `scheduling.taskTimingGrants` | 空 | 每次创建、改时和物化时重读 | [一次与每日复制](../architecture/contracts.md#普通-task-的一次与每日复制) |
-| [受管 Session 编制](#6-受管-session-编制所需配置) | `residentQueue.roleActors`、`runtime.materialCli`、`runtime.grants` 等 | 无（逐项见该节） | `session prepare` 每次重读；只有 `runtime.enabled` 与新增 HTTP 令牌要重启 | [准备或复用受管 Session](agent-cli.md#准备或复用受管-session) |
+| [受管 Session 编制](#6-受管-session-编制所需配置) | `residentQueue.roleActors`、`runtime.materialCli`、`runtime.grants` 等 | 无（逐项见该节） | `session prepare` 每次重读；`runtime.enabled`、新增 HTTP 令牌、`runtime.grants` 新增的工作目录或模型要重启 | [准备或复用受管 Session](agent-cli.md#准备或复用受管-session) |
 | [阶段关注](#5-阶段关注) | 没有开关，门槛用命令修订 | 服务运行就评估，每 30 秒一次 | 不适用 | [阶段等待由事实推导](../architecture/contracts.md#阶段等待由事实推导) |
 | [用量上限与上下文交接](#7-用量上限与上下文交接) | `runtime.dailyBudget`、`runtime.contextBudget` | 都不限 | 上限与开关在每个普通结果通知前重读；账本时区在启动时读 | [长会话的上下文交接](../architecture/session-runtime.md#长会话的上下文交接与每日用量上限) |
 
@@ -327,7 +327,7 @@ node --import tsx tests/manual/session-compaction-e1.ts
 **“可报告为就绪”的判据。** `session prepare` 成功、配置缺项为空、`runtime_session.state=ready` 或原生 Thread 可读，只证明编制和原生绑定完成，可能仍早于模型成功运行。对外报告新 Session“就绪”前，必须完成一次真实消息往返：
 
 1. 用 Leader 身份按 `command schema session.message.post` 发一条带唯一标记的约定测试消息，保留返回的 `messageId`。
-2. 新 Session 实际处理后，按同一命令和反向授权发回原标记，并带原消息的 `replyToMessageId`。
+2. 新 Session 实际处理后，按同一命令和反向授权**另发一条新消息**带回原标记，不带 `replyToMessageId`：`replyToMessageId` 只能指向发给同一个接收 Session 的消息，指向发给对方 Session 的原消息会被拒（`REPLY_TARGET_MISMATCH`），消息不保存。
 3. 用 `work message MESSAGE_ID` 和 `work status owned:SESSION_ID --message MESSAGE_ID` 分别读回两个方向的已保存消息、processing 与原生 Turn；目标 Session 一侧还要核到已有回复。
 
 只有两个方向都成功发送并处理、原生 Turn 可核、回复中的标记一致，才报告就绪，并保留两条消息 ID 与读回结果作对照记录。只有配置检查通过、发送返回 `applied`、状态显示 `ready`、消息已保存或没有回复，都不算就绪。
@@ -335,7 +335,7 @@ node --import tsx tests/manual/session-compaction-e1.ts
 **换路径后先实跑一次。** 换 Role、换验收者或换 Session 后，新的路径必须先实际跑通一次才算落地：第一次派单要真的开出 Run，或新 Session 真的处理过一条消息。换验收者时，新的验收安排也要真正送达并由接收 Session 处理；只改配置、只换绑定、只保存一条分派记录或只在文档里写计划，都不算。保留这次 Run 或消息的 ID、实际处理结果与读回证据，作为新路径可用的对照记录。
 
 - **缺项怎么看。** `session prepare` 返回 `status=blocked`，`missing` 是代码，`missingDetails` 写明要设的配置项、可复制的修法和是否需重启；`role_actor` 就是缺 `residentQueue.roleActors`（或它没启用、或该身份无写权限）。
-- **哪些要重启。** 按代码核对，`session prepare` 每次调用都重读 integrations 与身份文件，补 `residentQueue.roleActors`、`runtime.materialCli`、`runtime.grants` 不需要重启；只有 `runtime.enabled`（运行时只在启动时建立）和新增 HTTP 令牌要重启。
+- **哪些要重启。** 按代码核对，`session prepare` 每次调用都重读 integrations 与身份文件，补 `residentQueue.roleActors`、`runtime.materialCli` 不需要重启。`runtime.grants` 的授权匹配每次重读，但运行器建 Session、开 Run 和恢复时接受的工作目录、`models` 列出的模型，用的是服务启动时读入的 grants（`apps/coordinator/src/main.ts` 把启动时的 `allowedRuntimeCwd` 交给运行器），所以**新增工作目录或模型的 grant 要重启**才可用；2026-11-14 的接入试跑里，只改文件不重启时 `capabilities` 的 `runtime` 显示 `grant_directory_unavailable`、`pending` 显示重启后才是 `configured`。另外 `runtime.enabled`（运行时只在启动时建立）和新增 HTTP 令牌要重启。
 
 - **身份的额外命令（`extraCommands`）。** 给文档与架构这类只有 read、write 的身份开放归档与恢复时，在身份文件里该凭据上加 `"extraCommands": ["document.archive", "document.restore"]`，不要给它 `review`（那样它还能开始、关闭、分派 Task）。清单只接受这两个值，别的命令写进去则服务启动时读身份文件失败；每条命令各自生效。**身份文件在服务启动时读取，改了要重启服务才生效**（`session prepare` 重读身份文件只用于其编制检查，不改变 HTTP 认证用的启动快照）。
 - **同一个事实写两处。** `runtime.materialCli` 的 `cliActorId` 与 `residentQueue.roleActors` 的 `actorId` 在 Role 级必须一致，不一致时报 `material_cli_actor_mismatch`；为什么暂不合并见 Agent CLI 那一节。

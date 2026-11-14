@@ -15,7 +15,8 @@
 | Leader | read, write, review | `agent` | `leader` | 不要 | 排程、分派、验收接力、每日评估 |
 | 每个业务 Role 一个 | read, write | `agent` | `session` | 不要 | 业务 Session 里签 `ordinary.submit` 的身份 |
 | 验收者 | read, write | `agent` | `session` | 不要 | 验收 Session 里签 `used` 的身份，必须不同于作者 |
-| “代你使用” | read, write | `agent` | — | 可以 | 不给 review（DEC-047）；只给样本 Session 的消息与即时输入授权 |
+| 结果通知者 | read, write | `agent` | — | 不要 | 只作 `leaderResultNotices` 的发送者，不给任何 Session 用；必须不同于 Leader |
+| “代你使用” | read, write | `agent` | — | 可以 | 不给 review（DEC-047）；实例里没有就新建。只给样本 Session（例如模拟用户）的消息与即时输入授权；项目还没有样本 Session 时先不给任何授权 |
 
 - “跨项目：可以”的身份，把新项目 ID 加进它已有条目的 `projectIds`；其余按项目新建 `actorId`，一个项目的 Session 令牌碰不到另一个项目。
 - 同一 `actorId` 在同一项目里的所有条目必须是同一个 `identityKind` 和 `senderClass`，否则服务启动时拒绝整个身份文件。
@@ -84,11 +85,20 @@ SQL
 
 ## 3. 每个 Session 的配置
 
-以下都在 integrations 文件里，每次使用时重读，不用重启（`runtime.enabled` 除外，见 SKILL 第 2 步）。
+以下都在 integrations 文件里。`runtime.enabled` 与运行时设置、`runtime.grants` 的工作目录和模型、`repositories`、`scheduling.grants` 只在启动时读；其余每次使用时重读（见 SKILL 第 2 步）。
+
+**`repositories`**（有仓库时，启动时读）：
+
+```json
+{ "projectId": "<PROJECT>", "repositoryId": "<短名>", "root": "<仓库的绝对路径，可以是裸仓库>",
+  "allowedPaths": ["README.md", "src/", "test/"] }
+```
+
+`allowedPaths` 是仓库内的相对路径，以 `/` 结尾的按目录前缀匹配；写绝对路径或跳出仓库的路径，整份登记都会被拒（`repositories` 读回 `registration_invalid`）。
 
 **工作目录 `cwd`** 必须是规范绝对路径（与 `realpath` 结果一致；macOS 上 `/tmp/…` 的规范形式是 `/private/tmp/…`），每个 Session 一个，验收 Session 不与作者共用。
 
-**`runtime.grants`**（执行授权）：Session 由谁建，就给谁一条；Leader 要对每个业务 Session 再有一条自己的，才能开 Run。
+**`runtime.grants`**（执行授权，工作目录与模型在启动时登记）：Session 由谁建，就给谁一条；Leader 要对每个业务 Session 和验收 Session 再有一条自己的，才能开 Run。
 
 ```json
 { "projectId": "<PROJECT>", "actorId": "<建 Session 或开 Run 的身份>", "roleId": "<ROLE>",
@@ -96,7 +106,9 @@ SQL
   "sandbox": "danger-full-access", "models": ["<models --project 列出的精确值>"] }
 ```
 
-**`runtime.materialCli`**（Session 里用哪个 CLI 身份）：Role 级一条（业务身份）；验收 Session 再加一条按 `sessionId` 精确绑定的（验收身份），精确绑定优先。
+`models` 的候选值从运行时的模型目录取（`models --project` 只列已授权的，第一次是空的），重启后再用 `models --project` 确认。
+
+**`runtime.materialCli`**（Session 里用哪个 CLI 身份）：Role 级一条（业务身份）；验收 Session 再加一条按 `sessionId` 精确绑定的（验收身份），精确绑定优先。验收 Session 因此不能用 `session prepare` 建（会报 `material_cli_actor_mismatch`），改用 `runtime.session.reserve` → `role.bindSession` → `session profile set`，各按 `command schema` 填写，`runtime.session.reserve` 的 `cwd`、`authorizationScope`、`model` 与上面的 grant 一致。
 
 ```json
 { "projectId": "<PROJECT>", "roleId": "<ROLE>", "sessionActorId": "<建 Session 的身份>",
@@ -117,10 +129,12 @@ SQL
 
 - Leader → 业务/验收 Session：`senderActorId` 是 Leader 的身份。
 - 业务/验收 Session → Leader：`senderActorId` 是该 Session 的业务身份，`receiverActorId` 是 Leader 的业务身份。
-- 需求 Session → Leader：接入者要给 Leader 发消息时也要这一条。
+- 需求 Session → Leader：接入者要给 Leader 发消息、交 Task。
+- 结果通知者 → Leader：Leader 结果通知要用。
 - 一个“接收 Session + 发送者”只能有一条。
+- 回复：`work send --reply-to` 只能指向发给**同一个接收 Session** 的消息；反方向回报一律发新消息，不加 `--reply-to`（否则 `REPLY_TARGET_MISMATCH`）。
 
-**`leaderResultNotices`**：`{ "enabled": true, "targets": [{ "projectId", "sessionId": "<LEADER_SESSION>", "receiverRoleId": "<LEAD_ROLE>", "receiverActorId": "<Leader 身份>", "senderActorId": "<另一个写身份>" }] }`；每个项目一个目标，发送者和接收者必须是不同身份，且这对身份之间要有对应的消息授权。
+**`leaderResultNotices`**：`{ "enabled": true, "packets": true, "targets": [{ "projectId", "sessionId": "<LEADER_SESSION>", "receiverRoleId": "<LEAD_ROLE>", "receiverActorId": "<Leader 身份>", "senderActorId": "<结果通知者>" }] }`；每个项目一个目标，发送者和接收者必须是不同身份，且有“结果通知者 → Leader”的消息授权。
 
 **`scheduling.taskTimingGrants`**：`{ "projectId", "actorId": "<建每日系列的身份，需读写审阅>", "roleId": "<LEAD_ROLE>" }`，`scheduling.enabled: true`。
 
@@ -141,7 +155,8 @@ SQL
 | 仓库登记 | `get /api/projects/<PROJECT>/repositories` |
 | Role 与运行时 | `list roles`、`read role <ROLE> --bindings`、`role runtime show <ROLE>` |
 | Session | `list sessions`、`work list`、`work status owned:<SESSION>`、`session profile show <SESSION>` |
-| 消息往返 | `work send`、`work message <MSG>`、`work status owned:<SESSION> --message <MSG>` |
+| Leader → 各 Session 的消息授权与绑定（不花模型） | 用 Leader 的 CLI：`work acceptance`（看每个 Session 的 `missingCapabilities`） |
+| 消息往返 | `work send`、`work messages owned:<SESSION>`、`work message <MSG>`、`work status owned:<SESSION> --message <MSG>` |
 | Leader 通知 | `work leader notices` |
 | 每日评估 | `get /api/projects/<PROJECT>/task-timings`、`list schedules` |
 | 验收与关闭 | `work acceptance <TASK>`、`work acceptance mine`（验收者自己）、`task <TASK>` |
@@ -154,6 +169,14 @@ SQL
 | 现象 | 原因 | 处理 |
 | --- | --- | --- |
 | 新身份登录 401，或 `members` 里有 `pending` | 身份文件改了没重启 | 重启服务后再读回 |
+| 服务起不来，日志 `Document originals must stay outside the development checkout` | 启动服务时的当前目录包含了 Blob 目录 | 从不包含 Blob 目录的位置启动（服务管理器通常从 `/` 启动） |
+| `models --project` 为空 | 调用者还没有授权这些模型的 `runtime.grants`，或 grant 改了没重启 | 候选值从运行时模型目录取，写进 grant 后重启 |
+| `capabilities` 的 `runtime` 为 `grant_directory_unavailable`、`pending` 显示重启后 `configured` | 新的工作目录只在启动时登记 | 重启 |
+| `role.propose` 报 `INVALID_INPUT`（evidence 或 alternatives） | `evidence` 缺缺口类/`effect`/`cost` 之一，或 `alternatives` 不是四类各一 | 按 SKILL 第 3 步补齐 |
+| `session prepare` 报参数错误 | 传了 `--project` | 项目 ID 只写在准备文件里 |
+| 验收 Session 的 `session prepare` 报 `material_cli_actor_mismatch` | 准备检查要求 CLI 身份等于 Role 的业务身份 | 不照它的修法改；改用 reserve + bindSession + profile set（第 3 节） |
+| 回报消息报 `REPLY_TARGET_MISMATCH` | `--reply-to` 指向了发给另一个 Session 的消息 | 发新消息，不加 `--reply-to` |
+| `work events --wait 30` 报 `TIMEOUT` | CLI 默认 15 秒超时短于等待时间 | `EVOLOOP_TIMEOUT_MS=60000` |
 | `project.create` 被拒 | 发命令的身份的 `projectIds` 里还没有这个项目（或没重启） | 先写身份文件、重启 |
 | `TASK_OWNER_ROLE_REQUIRED` / `INVALID_FIRST_TASK` | 第一个 Role 的引导缺口 | 第 2 节 |
 | `INVALID_TRIAL` | 回看日期不在试行期内，或已经过去 | `reviewAtUtc` 设在现在之后、`trialDays` 之内 |
@@ -168,4 +191,23 @@ SQL
 | 关闭被拒（`SELF_ACCEPTANCE`、`INDEPENDENT_OBSERVER_REQUIRED`、`CONSUMER_MISMATCH`） | 签 `used` 的身份是作者、或不是声明的 `consumer` | 验收 Session 用独立身份，`consumer` 写它的 `actorId` |
 | 某个 Session 一直不处理新消息 | 队首旧消息卡住 | 对账那一条（见 SKILL“运维时要记住的”），不重发 |
 | 所有 Session 都停了、新消息只排队 | 模型额度用完或鉴权失败，提供方被暂停 | 账户使用者处理后由审阅身份 `runtime.providerHold.release` |
-| 改了 `scheduling.grants` / `repositories` / `runtime.enabled` 没生效 | 这些只在启动时读 | 重启；每日复制改用 `taskTimingGrants` 免重启 |
+| 改了 `scheduling.grants` / `repositories` / `runtime.enabled` / grant 的工作目录或模型没生效 | 这些只在启动时读 | 重启；每日复制改用 `taskTimingGrants` 免重启 |
+| Session 读了工作目录以外的文件 | 受管 Session 是全权限、与服务同一系统用户 | 停实例；按第 6 节加隔离；消息与 Task 正文写明活动范围 |
+
+## 6. 同一主机上的隔离
+
+受管 Session 能读服务的系统用户能读的一切。同一主机上已有正式实例、又要另起一个试用或单独实例时，把新实例的运行时可执行文件换成一个包装脚本，用 macOS 的 `sandbox-exec` 拒绝读写正式实例的私有目录、拒绝连正式实例的端口；沙箱会继承给运行时启动的每个子进程（Session 里的 shell 命令）。
+
+```sh
+#!/bin/sh
+# <TRIAL_ROOT>/bin/codex-sandboxed：integrations 的 runtime.executable 指向它
+exec /usr/bin/sandbox-exec -p '(version 1)(allow default)
+  (deny file-read* file-write* (subpath "<正式实例的私有根目录>"))
+  (deny network-outbound (remote ip "localhost:<正式实例端口>"))
+  (deny network-outbound (remote ip "localhost:<正式数据库端口>"))' <原运行时可执行文件> "$@"
+```
+
+- 被拒的目录按实际情况补全：正式实例的数据目录、发布目录、身份文件与 CLI 包装所在目录，以及其他不该让 Session 看到的个人目录。不要拒绝运行时自己的登录目录（例如 codexHome），否则 Session 起不来。
+- 包好后先实测：用同一个沙箱参数跑 `ls <被拒目录>` 应失败、`curl` 正式端口应失败、读试用目录与访问外网应成功；写进接入记录。
+- 这只隔离新实例的 Session，不隔离正式实例里不同项目的 Session（同一服务、同一沙箱）；后者仍是 DEC-047 待定的隔离问题。
+- `sandbox-exec` 是 macOS 自带、已不再维护的工具；换平台时用该平台的等价办法（独立系统用户、容器）。
