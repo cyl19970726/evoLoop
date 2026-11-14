@@ -381,6 +381,20 @@ node --import tsx tests/manual/session-compaction-e1.ts
 
 协调器在运行时启用（`runtime.enabled`）后运行队伍调度程序（轮询间隔沿用 `residentQueue.pollIntervalMs`，默认 2 秒）。它只推进由 Leader 凭据控制的队伍，每一步都是普通命令，操作 ID 由队伍项和尝试次数决定，重启后重放不会重复开 Run。队伍项、事件和 `QUEUED_IN_SESSION_LINE` 的含义见 [Session 运行时](../architecture/session-runtime.md#session-队伍dec-045-q1)。迁移 087 新增 `session_line`、`session_line_entry`、`session_line_event`、`task_assignment_confirmation`；不需要改私有配置，**接收者解析规则（队伍写 assignment 的对象）**：队伍项的接收者必须是该 Session 实际签署交付的业务身份，不再按 Role 猜。顺序是：①该 Session 自己的 `runtime.materialCli` 条目（`sessionId` 与它的原生 actor `sessionActorId` 都匹配，条目的 `cliActorId` 就是接收者）；②只有当这个 Role 恰好只有一个未关闭的 Session 时，才用 Role 级 `materialCli` 条目或 `residentQueue.roleActors`（单 Session 的旧配置照常工作）；③否则**在写任何 assignment、确认请求或 Run 之前**把这一项挂起（`RECIPIENT_UNAVAILABLE`），原因点名该 Session 并写明要补的配置（该 Session 的 `materialCli` 条目）。结果还必须是当前项目 writer。同一 Role 下有开发、验收、验收 2 等多个身份不同的 Session 时，每个 Session 都要有自己的 `materialCli` 条目；缺了不会改用别人的身份，也不会产生 `RECIPIENT_UNBOUND` 预检失败的 Run。测试：`apps/coordinator/test/session-line-recipient.test.ts`、`packages/adapter-postgres/test/session-line.test.ts`。
 
+## 验收接力的消息卡在队首（缺陷 0fd4a99b）
+
+**现象与原因。** 验收接力的消息排在接收 Session 的队首，接力却不能开始（已 blocked、等发布，或已被取代）时，旧版本只让准入判断返回“不开始”：不写原因、不撤下，而同一 Session 里更早的 queued 消息先走，于是后面所有消息（别的 Task 的接力、普通对话）都被堵住，页面上只显示 queued。
+
+**现在怎样处理。**
+- 接力 `superseded` 或 `released`：它的 queued 消息撤下（cancelled），原因写 `ACCEPTANCE_RELAY_SUPERSEDED` / `ACCEPTANCE_RELAY_RELEASED`。
+- 接力 `blocked`：消息保留（接力可能被重试：规则变了、发送者回来了），消息上写 `ACCEPTANCE_RELAY_BLOCKED: <接力原因>`（原因变了才写，不会每轮写一次）。
+- 正式接力在等发布（`PUBLICATION_PENDING`）：消息上写 `PUBLICATION_PENDING: …`，发布标记写上后下一轮准入通过。
+- 队列规则：消息的 `blocked_reason` 以 `MESSAGE_GRANT_MISSING:`、`PUBLICATION_PENDING:` 或 `ACCEPTANCE_RELAY_BLOCKED:` 开头时仍留在队里、仍被重新看，但不再让它后面的消息等它（Leader 判断“有没有人在等”的检查用同样的例外）。不放松：接力的交付或 Task 修订变了的消息仍然不开始（接力被取代，消息撤下）；前面有消息正在处理时，后面的仍按原规则等待；前面有普通 queued 消息时它先走。
+
+**`MESSAGE_POST_applied` 的原因。** 接力保留了一个消息 ID 和一个操作 ID。Leader 若自己发了这条接力消息，用了保留的操作 ID 却用了自己的消息 ID，日志里这个操作确实是 applied，但创建的实体不是保留的消息 ID，旧代码就把接力置为 blocked 并写 `MESSAGE_POST_applied`——而这条消息其实是正确的。现在：那个操作创建的消息若是同一发送者、同一 Session、同一 Task 修订、用保留的操作 ID 写的，接力绑定到它（接力的消息 ID 改成它）并继续；否则接力 blocked，原因写 `MESSAGE_OPERATION_ID_USED_BY_ANOTHER_MESSAGE: operation … created …`，说明发生了什么。复现与修复前后输出见 `packages/adapter-postgres/test/acceptance-relay-queue-head.test.ts` 的第 5 个用例（修前该用例得到 `blocked / MESSAGE_POST_applied`）。
+
+**正式实例上已卡住的消息。** 发布后，acceptance-claude 队伍里已卡的接力消息会在下一轮准入时按上面处理：被取代、已释放的接力其消息被撤下；blocked 的接力其消息写上原因、不再堵后面；等发布的在发布标记写上后开始。消息已被 Leader 先撤下的不再处理。逐条核对用 `work messages` 读消息状态与 `blocked_reason`，用 `work acceptance TASK` 读接力状态。
+
 ## 调度板与调度事件流（Q2，迁移 105）
 
 **数据从哪来。** 迁移 105 建 `sched_event` 表，并在既有表上挂 AFTER 触发器：事件与引起它的状态变化在同一个事务里写一小行，应用代码的写入路径没有改动，也没有第二次写入。触发器取与 `leader_work_change` 相同的项目锁，所以同一项目里序号不会乱序提交。上线要先看发布顺序：105 不得早于 104（通知分级）等更小的号进入正式库；迁移只加表、函数和触发器，不改既有行为。回退：删除 `sched_event_*` 触发器即停止写入，表和已有事件可留。
