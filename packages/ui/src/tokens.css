@@ -1,41 +1,47 @@
 /* evoLoop design tokens: the only place where colour, type, spacing, radius, shadow and motion values are defined.
-   Usage rules live in docs/frontend/foundations.md. Light ("warm paper") is the default; dark ("warm ink") applies
+   Usage rules live in docs/frontend/foundations.md. Light ("xuan paper", DEC-049) is the default; dark ("pine soot") applies
    under [data-theme="dark"]. No page hard-codes colours since the old global sheets were removed (#229 PR10). */
 :root {
   color-scheme: light;
 
   /* Colour: surfaces, from back to front */
-  --surface-sunken: #f2efea;   /* app background behind the rails */
-  --background: #fbfaf8;       /* the raised work panel: content and right panel */
-  --surface-raised: #fff;      /* cards that float on the panel, popovers, composer */
-  --surface-muted: #f4f1ec;    /* soft blocks inside the panel: facts, tool steps, todo list */
-  --surface-field: #e9e5de;    /* inputs, chips, secondary buttons */
-  --surface-selected: #e6e1d8; /* selected row in the rails and lists */
+  --surface-sunken: #efebe5;   /* app background behind the rails */
+  --background: #fcfbf8;       /* the raised work panel: content and right panel */
+  --surface-raised: #ffffff;      /* cards that float on the panel, popovers, composer */
+  --surface-muted: #f5f2ed;    /* soft blocks inside the panel: facts, tool steps, todo list */
+  --surface-field: #e7e3dc;    /* inputs, chips, secondary buttons */
+  --surface-selected: #e3dcd3; /* selected row in the rails and lists */
 
   /* Colour: text */
-  --text: #1f1d1a;
-  --text-secondary: #57534e;
-  --text-muted: #67615a;
-  --on-accent: #fff;
+  --text: #1c1714;
+  --text-secondary: #49423d;
+  --text-muted: #635d57;
+  --on-accent: #ffffff;
 
   /* Colour: lines */
-  --border: #ece7df;
-  --border-strong: #dcd5ca;
+  --border: #e4dfd8;
+  --border-strong: #d0c9c1;
 
   /* Colour: roles (no green) */
-  --accent: #2f4bb3;
-  --accent-strong: #263f99;
-  --accent-soft: #e9edfa;
-  --warning: #965a12;
-  --warning-soft: #faeedb;
-  --danger: #a9432b;
-  --danger-soft: #faeae4;
-  --brand: #b5582f;
-  --on-brand: #fff;
+  --accent: #2a52a8;
+  --accent-strong: #1b4090;
+  --accent-soft: #e5edfc;
+  --warning: #906106;
+  --warning-soft: #fceed1;
+  --danger: #a3203a;
+  --danger-soft: #fde9e9;
+  --done: #72487c;             /* a finished state: a muted violet, apart from the running blue and the warm failure red */
+  --done-soft: #f5eaf7;
+  --brand: #b1582b;
+  --on-brand: #ffffff;
 
   /* Colour: conversation */
-  --user-bubble: #1f1d1a;
-  --on-user-bubble: #fbfaf8;
+  --user-bubble: #1c1714;
+  --on-user-bubble: #fcfbf8;
+
+  /* Colour: counts (ink, so a count never reads as an error; brand is for the logo and the account avatar only) */
+  --count-bg: #1c1714;
+  --count-fg: #fcfbf8;
 
   /* Type */
   --font-sans: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
@@ -76,8 +82,8 @@
   --radius-pill: 999px;   /* buttons, chips, the composer */
 
   /* Elevation: the work panel and floating layers have shadows; regions inside the panel do not */
-  --shadow-panel: 0 1px 2px rgb(31 29 26 / 5%), 0 8px 28px rgb(31 29 26 / 7%);
-  --shadow-control: 0 1px 2px rgb(31 29 26 / 6%), 0 2px 8px rgb(31 29 26 / 5%);
+  --shadow-panel: 0 1px 2px rgb(28 23 20 / 6%), 0 10px 32px rgb(28 23 20 / 9%);
+  --shadow-control: 0 1px 2px rgb(28 23 20 / 7%), 0 2px 8px rgb(28 23 20 / 5%);
   --shadow-popover: 0 2px 6px rgb(31 29 26 / 6%), 0 12px 32px rgb(31 29 26 / 12%);
   --shadow-overlay: 0 18px 50px rgb(31 29 26 / 18%);
   /* Drawn inside the element: an opaque accent edge with a surface-coloured band within it, plain on any surface
@@ -95,36 +101,41 @@
 :root[data-theme="dark"] {
   color-scheme: dark;
 
-  --surface-sunken: #131211;
-  --background: #1b1a18;
-  --surface-raised: #24221f;
-  --surface-muted: #25231f;
-  --surface-field: #2a2723;
-  --surface-selected: #2a2724;
+  --surface-sunken: #0c0b09;
+  --background: #161412;
+  --surface-raised: #24211f;
+  --surface-muted: #1c1a18;
+  --surface-field: #2a2725;
+  --surface-selected: #322e2a;
 
-  --text: #ede9e3;
-  --text-secondary: #bdb6ab;
-  --text-muted: #958d81;
-  --on-accent: #12131a;
+  --text: #eae7e3;
+  --text-secondary: #c0bbb6;
+  --text-muted: #9f9a94;
+  --on-accent: #0f1216;
 
-  --border: #2f2c28;
-  --border-strong: #403c36;
+  --border: #2a2826;
+  --border-strong: #3e3b38;
 
-  --accent: #93a6f2;
-  --accent-strong: #b0bff6;
-  --accent-soft: #26304f;
-  --warning: #e2a55c;
-  --warning-soft: #3a2b17;
-  --danger: #e58d73;
-  --danger-soft: #3b231c;
-  --brand: #e08a62;
-  --on-brand: #12131a;
+  --accent: #90aef3;
+  --accent-strong: #b2c9fb;
+  --accent-soft: #222d47;
+  --warning: #e3b667;
+  --warning-soft: #362913;
+  --danger: #ec8287;
+  --danger-soft: #3f1e20;
+  --done: #c99dd3;
+  --done-soft: #332337;
+  --brand: #e18c5f;
+  --on-brand: #15110d;
 
-  --user-bubble: #2f2c28;
-  --on-user-bubble: #ede9e3;
+  --user-bubble: #393633;
+  --on-user-bubble: #eae7e3;
 
-  --shadow-panel: 0 1px 2px rgb(0 0 0 / 35%), 0 10px 30px rgb(0 0 0 / 35%);
-  --shadow-control: 0 1px 2px rgb(0 0 0 / 30%), 0 2px 8px rgb(0 0 0 / 25%);
+  --count-bg: #eae7e3;
+  --count-fg: #161412;
+
+  --shadow-panel: 0 0 0 1px rgb(255 248 240 / 5%), 0 1px 2px rgb(0 0 0 / 40%), 0 12px 32px rgb(0 0 0 / 50%);
+  --shadow-control: 0 0 0 1px rgb(255 248 240 / 5%), 0 2px 8px rgb(0 0 0 / 35%);
   --shadow-popover: 0 2px 6px rgb(0 0 0 / 30%), 0 12px 32px rgb(0 0 0 / 40%);
   --shadow-overlay: 0 18px 50px rgb(0 0 0 / 50%);
   --focus-ring: inset 0 0 0 2px var(--accent), inset 0 0 0 4px var(--background);
