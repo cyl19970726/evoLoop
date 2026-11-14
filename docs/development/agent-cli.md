@@ -42,6 +42,8 @@
 
 **“就绪”不能只看准备检查。** 新 Session 必须成功处理过一条真实消息，并通过反向授权把约定的唯一标记回给 Leader；两个方向都用 `work message` 与 `work status ... --message` 读回 processing、原生 Turn 和回复后才可报告。准备检查通过、配置缺项为空、`runtime_session.state=ready`、发送返回 `applied` 或消息已保存都不算。最小演练步骤见[运行接线手册](runtime-operations.md#6-受管-session-编制所需配置)。
 
+**换路径后先实跑一次。** 换 Role、换验收者或换 Session 后，新的路径必须先实际跑通一次才算落地：第一次派单要真的开出 Run，或新 Session 真的处理过一条消息。换验收者时，新的验收安排也要真正送达并由接收 Session 处理；只改配置、只换绑定、只保存一条分派记录或只在文档里写计划，都不算。保留 Run 或消息 ID、实际处理结果与读回证据，作为新路径可用的对照记录。
+
 身份文件里凭据的 `extraCommands` 只用来开放 `document.archive` 与 `document.restore`，与 `permissions` 分开：有它的身份在本项目有 write 即可对应归档或恢复，不能 `task.start`、`task.close`。改身份文件后须重启服务。
 
 **为什么 `runtime.materialCli` 与 `residentQueue.roleActors` 都要写。** 评估结论：现在不合并。两处不是同一个取值：`roleActors` 是“项目 × Role → 业务身份”，常驻队列、协作授权、消息连接器和队列绑定都读它；`materialCli` 是“项目 ×（Session 或 Role）× Session 身份 → CLI 身份 + 命令路径”，可细到 Session 或 Task，只有启用运行时才有意义。Role 级条目里二者的身份必须相同，服务用 `material_cli_actor_mismatch` 检查，所以重复的是书写成本，不是两个可以不同的事实。合并的风险：要迁移私有配置；Session/Task 级覆盖会丢；只走队列、没有 `materialCli` 的 Role 仍需要 `roleActors`；由一处推导另一处，会让“谁能以这个 Role 行事”的授权隐含进 CLI 配置。较小的后续做法（本轮未做）：加载配置时二者不一致就一次性报错，或 Role 级 `materialCli.cliActorId` 缺省取 `roleActors` 的 `actorId`（向后兼容）。
@@ -451,6 +453,8 @@ Leader 收到的是“Leader 通知包”消息：先 `get /api/projects/PROJECT
 被阻塞的包（读到后那一轮失败且恢复门关闭）不会自动重发，它出现在 `work` 的 Leader 索引（`blockedNoticePackets`，带包编号和提示）。先按 Session 恢复流程恢复恢复门，再用 `request leader.notice.recover --project UUID --id 包编号 --file BODY.json --receipt UUID`（body 只写 `{"reason":"..."}`，需要 review 权限）恢复这一包，其中的项进入下一包。`leader.notice.recover` 带 `expectedOperationId` 等四个 ID 的旧形式仍用于迁移前已有的、消息被拒绝的通知。包的步骤（打包、已送、观察）只由配置里的通知发送身份运行，不是 Agent 的命令。
 
 通知有级别（立即/汇总，见[接口合同](../architecture/contracts.md#leader-通知层)）：立即项在包里行首标“立即·”，不等 60 秒、排在前面，来源是验收安排受阻、提交受阻、Run 结束未提交、Task 提问与阻塞、验收观察失败；验收观察按结论拆成 `observation_used`（汇总）和 `observation_failed`（立即）。只记录事件（Run 已按请求停止、关注项已解决、通知撤回）不是通知，读 `get /api/projects/PROJECT/leader-records`（`taskId`、`kind`、`limit`、`cursor` 可选，从旧到新续页）。
+
+定时直派的三条命令（`command schema` 取结构，都要 review 权限）：`schedule.directList.set`（某个 Role 的直派名单）、`schedule.dispatch.set`（某个日程交 Leader 还是直接进队伍，含等待上限与每日预算）、`schedule.directEntry.withdraw`（撤下一个定时项，必须选 `cancel` 或 `to_leader`；普通 `line.remove` 拒绝定时项）。直派的 Task 不发待分诊，直派与跳过读 `get /api/projects/PROJECT/leader-records?kind=direct_dispatched`（或 `direct_dispatch_skipped`）。
 
 ## 待我决定
 
