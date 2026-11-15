@@ -49,7 +49,7 @@ async function harness(t: { after: (fn: () => Promise<void>) => void }) {
     settings: async (): Promise<AlertSettings> => ({ enabled: true, pollIntervalMs: 15000, stallMinutes: state.stallMinutes, outlet: state.outlet }),
     onGiveUp: line => state.gaveUp.push(line), onError: () => { state.errors++; } });
   /** A Session (provider codex) with a Task and a Run in the given state; returns what is needed to fail it. */
-  async function run(runState: "requested" | "running" | "completed", createdAt = new Date().toISOString()) {
+  async function run(runState: "requested" | "running" | "completed" | "failed_preflight", createdAt = new Date().toISOString()) {
     const sessionId = randomUUID(), runId = randomUUID(), taskId = randomUUID(), revisionId = randomUUID(), basisId = randomUUID(), documentId = randomUUID(), docRev = randomUUID();
     const c = await pool.connect();
     try {
@@ -65,8 +65,8 @@ async function harness(t: { after: (fn: () => Promise<void>) => void }) {
     await c.query("UPDATE basis_set SET sealed=true WHERE basis_set_id=$1", [basisId]);
     const operationId = randomUUID();
     await c.query(`INSERT INTO runtime_run(project_id,run_id,task_id,task_revision_id,basis_set_id,session_id,operation_id,input,input_hash,state,version,native_turn_id,actor_id,created_at,updated_at,result_summary)
-      VALUES($1,$2,$3,$4,$5,$6,$7,'Fixed input',$8,$9,1,$10,'worker',$11,$11,$12)`, [projectId, runId, taskId, revisionId, basisId, sessionId, operationId, "b".repeat(64), runState,
-      runState === "requested" ? null : `turn-${runId}`, createdAt, runState === "completed" ? "done" : null]);
+      VALUES($1,$2,$3,$4,$5,$6,$7,'Fixed input',$8,$9,1,$10,'worker',$11,$11,$12)`, [projectId, runId, taskId, revisionId, basisId, sessionId, operationId, "b".repeat(64), runState === "failed_preflight" ? "failed" : runState,
+      runState === "requested" || runState === "failed_preflight" ? null : `turn-${runId}`, createdAt, runState === "completed" ? "done" : runState === "failed_preflight" ? "RECIPIENT_UNBOUND: no business identity" : null]);
     await c.query("INSERT INTO operation_journal(project_id,operation_id,actor_id,command_hash,command_type,result,created_at) VALUES($1,$2,'worker',$3,'runtime.run.reserve','{}',$4)", [projectId, operationId, "c".repeat(64), createdAt]);
     await c.query("COMMIT");
     } catch (error) { await c.query("ROLLBACK"); throw error; } finally { c.release(); }
@@ -291,4 +291,35 @@ test("defect rework (abcf2a12): work waiting for acceptance counts deliveries no
   await h2.delivered(["notUsed"]); await h2.delivered(["used"]);
   h2.state.offsetMs = 3 * 3600_000; await h2.pump().tick();
   assert.equal(h2.received.length, 0, "returned or accepted deliveries are not work waiting for the organisation to run");
+});
+
+test("defect rework (5cce25e2): a Run that failed its start-up checks (RECIPIENT_UNBOUND and the like) neither ends a stall nor sends a second alert, however often it repeats; only a Run that really started ends it, with exactly one recovery", async t => {
+  const h = await harness(t);
+  h.state.outlet = { kind: "webhook", url: await h.receiver(), headers: {}, timeoutMs: 2000 };
+  await h.readyTask("Waiting");
+  const pump = h.pump();
+  h.state.offsetMs = 31 * 60_000; await pump.tick();
+  assert.deepEqual(h.received.map(m => `${m.kind}:${m.event}`), ["stall:opened"]);
+  // One preflight failure, then more of them over more than two stall periods (31 -> 100 minutes), a pump restart in between: the same stall stays, nothing is sent.
+  for (const minute of [40, 55, 70, 85, 100]) {
+    await h.run("failed_preflight", new Date(Date.now() + minute * 60_000).toISOString());
+    h.state.offsetMs = minute * 60_000 + 1000; await pump.tick();
+    if (minute === 70) await h.pump().tick();
+  }
+  assert.deepEqual(h.received.map(m => `${m.kind}:${m.event}`), ["stall:opened"], "no recovery and no second opened while only preflight-failed Runs appear");
+  assert.deepEqual((await h.alerts()).map(a => a.state), ["open"], "the one stall stays open");
+  // A Run that really starts (it has its native Turn and is running): it ends the stall, with one recovery, and nothing more after it.
+  await h.run("running", new Date(Date.now() + 105 * 60_000).toISOString()); h.state.offsetMs = 106 * 60_000; await pump.tick(); await pump.tick(); await h.pump().tick();
+  assert.deepEqual(h.received.map(m => `${m.kind}:${m.event}`), ["stall:opened", "stall:resolved"]);
+});
+
+test("defect rework (5cce25e2): repeated preflight failures shorter than the stall time do not silence the alert before it is announced", async t => {
+  const h = await harness(t);
+  h.state.outlet = { kind: "webhook", url: await h.receiver(), headers: {}, timeoutMs: 2000 };
+  await h.readyTask("Waiting");
+  const pump = h.pump();
+  for (const minute of [10, 20, 30, 36]) await h.run("failed_preflight", new Date(Date.now() + minute * 60_000).toISOString());
+  h.state.offsetMs = 41 * 60_000; await pump.tick();
+  assert.deepEqual(h.received.map(m => `${m.kind}:${m.event}`), ["stall:opened"], "Runs that never started are not activity");
+  assert.match(h.received[0]!.text, /项目里还没有 Run/, "the message does not call a failed start-up the last Run");
 });
