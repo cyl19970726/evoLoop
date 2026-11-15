@@ -82,6 +82,8 @@ import { pgLeaderPacketPorts } from "./leader-results/packet-ports.js";
 import { readDecisionsForMe } from "@evoloop/adapter-postgres/decisions-for-me";
 import { ResidentQueuePump } from "./resident-queue/pump.js";
 import { SessionLinePump } from "./session-line/pump.js";
+import { OpsAlertPump } from "./ops-alerts/pump.js";
+import type { AlertOutletConfig } from "./ops-alerts/outlet.js";
 import { SessionObservationService } from "@evoloop/core/session-observation";
 import { AllocationRelationsService } from "@evoloop/core/allocation-relations";
 import { SessionMessageService } from "@evoloop/core/session-messages";
@@ -749,6 +751,11 @@ const taskAttentionPump = new TaskAttentionPump({pool,canWrite:lease.canWrite,no
   projects:async()=> (await currentIdentity()).filter(p=>p.permissions.includes("read")&&
     p.permissions.includes("write")&&p.permissions.includes("review")).flatMap(p=>p.projectIds),
   pollIntervalMs:30000,onError:()=>console.error("Task attention evaluation needs source reconciliation.")});
+// Alerts that leave the workbench (Task 5da8b6d9). Read-only on the system it reports on; the outlet is private configuration.
+const opsAlertPump = new OpsAlertPump({ pool, canWrite: lease.canWrite,
+  settings: async () => { const alerts = (await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE)).alerts; return alerts ? { enabled: alerts.enabled, pollIntervalMs: alerts.pollIntervalMs, stallMinutes: alerts.stallMinutes, outlet: alerts.outlet as AlertOutletConfig } : null; },
+  projects: async () => (await currentIdentity()).filter(p => p.permissions.includes("read") && p.permissions.includes("write") && p.permissions.includes("review")).flatMap(p => p.projectIds),
+  onError: () => console.error("Alert evaluation or delivery needs reconciliation; inspect ops_alert."), onGiveUp: line => console.error(line) });
 const businessBeforeMessage = sessionMessageCanStart({ workflow: service, service: messageService, principals: currentIdentity,
   onError: () => console.error("Task answer continuation requires review; inspect the saved queue and message reason.") });
 /** Who sent a message, as the receiving Session is told (sender.ts resolveSenderClass): from the identity file's stated senderClass, never from a Role. */
@@ -1115,7 +1122,7 @@ const app = await buildServer({ service, credentials, canWrite: lease.canWrite, 
 let shuttingDown = false;
 async function shutdown() {
   if (shuttingDown) return; shuttingDown = true;
-  try { clearInterval(acceptanceTimer); connectorIngress?.stop(); taskAttentionPump.stop(); leaderResultNoticePump.stop();
+  try { clearInterval(acceptanceTimer); connectorIngress?.stop(); taskAttentionPump.stop(); opsAlertPump.stop(); leaderResultNoticePump.stop();
     messagePump?.stop(); residentQueue.stop(); sessionLinePump.stop(); ordinarySealPump.stop(); await managed?.stop();
     await collaboration.stop(); await scheduling.stop(); await app.close(); sessionTimeline.close(); }
   finally {
@@ -1127,5 +1134,5 @@ async function shutdown() {
 }
 process.once("SIGINT", () => void shutdown());
 process.once("SIGTERM", () => void shutdown());
-try { await app.listen({ host: "127.0.0.1", port }); managed?.start(); ordinarySealPump.start(); residentQueue.start(); sessionLinePump.start(); messagePump?.start(); connectorIngress?.start(); leaderResultNoticePump.start(); taskAttentionPump.start(); console.log(`evoLoop local workbench: http://127.0.0.1:${port}`); }
+try { await app.listen({ host: "127.0.0.1", port }); managed?.start(); ordinarySealPump.start(); residentQueue.start(); sessionLinePump.start(); messagePump?.start(); connectorIngress?.start(); leaderResultNoticePump.start(); taskAttentionPump.start(); opsAlertPump.start(); console.log(`evoLoop local workbench: http://127.0.0.1:${port}`); }
 catch (error) { await shutdown(); throw error; }
