@@ -1304,6 +1304,27 @@ export class WorkflowService {
   listSchedules(principal: Principal, projectId: string) { return this.read(principal, projectId, reader => reader.listSchedules()); }
   listScheduleRevisions(principal: Principal, projectId: string, scheduleId: string) { return this.read(principal, projectId, async reader => { required(await reader.getSchedule(scheduleId), "Schedule"); return reader.listScheduleRevisions(scheduleId); }); }
   listScheduleOccurrences(principal: Principal, projectId: string, scheduleId: string) { return this.read(principal, projectId, async reader => { required(await reader.getSchedule(scheduleId), "Schedule"); return reader.listOccurrences(scheduleId); }); }
+  getScheduleDispatchPolicy(principal: Principal, projectId: string, scheduleId: string) {
+    return this.read(principal, projectId, async reader => {
+      required(await reader.getSchedule(scheduleId), "Schedule");
+      if (!reader.scheduleDispatch) throw new DomainError("CAPABILITY_UNAVAILABLE", "Scheduled direct-dispatch reads are not configured");
+      return reader.scheduleDispatch.getDispatchPolicy(scheduleId);
+    });
+  }
+  listScheduleDispatches(principal: Principal, projectId: string, scheduleId: string, limit = 50, cursor?: string) {
+    return this.read(principal, projectId, async reader => {
+      required(await reader.getSchedule(scheduleId), "Schedule");
+      if (!reader.scheduleDispatch) throw new DomainError("CAPABILITY_UNAVAILABLE", "Scheduled direct-dispatch reads are not configured");
+      return reader.scheduleDispatch.listDispatches(scheduleId, pageLimit(limit), cursor);
+    });
+  }
+  getRoleDirectDispatchList(principal: Principal, projectId: string, roleId: string) {
+    return this.read(principal, projectId, async reader => {
+      required(await reader.getRole(roleId), "Role");
+      if (!reader.scheduleDispatch) throw new DomainError("CAPABILITY_UNAVAILABLE", "Scheduled direct-dispatch reads are not configured");
+      return reader.scheduleDispatch.getDirectList(roleId);
+    });
+  }
   getDocumentPayloadRevision(principal: Principal, projectId: string, documentId: string, revisionId: string) { return this.read(principal, projectId, async reader => required(await reader.getDocumentPayloadRevision(documentId, revisionId), "Document payload revision")); }
   listDocumentAssets(principal: Principal, projectId: string, documentId: string, revisionId: string) { return this.read(principal, projectId, async reader => { required(await reader.getDocumentPayloadRevision(documentId, revisionId), "Document payload revision"); return reader.listDocumentAssets(documentId, revisionId); }); }
   getRegisteredBlob(principal: Principal, projectId: string, blobId: string) { return this.read(principal, projectId, async reader => required(await reader.getRegisteredBlob(blobId), "Registered blob")); }
