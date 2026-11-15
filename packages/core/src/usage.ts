@@ -21,18 +21,19 @@ export function usageDay(at: string, timeZone: string): string {
 }
 
 const zero = (): UsageTotals => ({ inputTokens: 0, outputTokens: 0, cachedInputTokens: 0,
-  costUsd: 0, costReported: true });
+  costUsd: 0, costReported: true, costScope: "all_turns" });
 const add = (target: UsageTotals, row: Pick<UsageTotals, "inputTokens" | "outputTokens" |
-  "cachedInputTokens" | "costUsd" | "costReported">) => {
+  "cachedInputTokens" | "costUsd" | "costReported" | "costScope">) => {
   target.inputTokens += row.inputTokens;
   target.outputTokens += row.outputTokens;
   target.cachedInputTokens += row.cachedInputTokens;
   target.costUsd = (target.costUsd ?? 0) + (row.costUsd ?? 0);
   target.costReported = target.costReported && row.costReported;
+  if (row.costScope === "runs_only") target.costScope = "runs_only";
 };
 const dayOf = (row: UsageBucketRow): UsageDay => ({ day: row.day, inputTokens: row.inputTokens,
   outputTokens: row.outputTokens, cachedInputTokens: row.cachedInputTokens,
-  costUsd: row.costReported ? row.costUsd : null, costReported: row.costReported });
+  costUsd: row.costReported ? row.costUsd : null, costReported: row.costReported, costScope: row.costScope });
 
 /**
  * Token fields for the daily ledger. Claude's SDK reports `input_tokens` without cache reads or

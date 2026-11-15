@@ -36,7 +36,7 @@ export class PgUsage implements UsageReader, UsageTransaction {
     if (!dayPattern.test(from) || !dayPattern.test(to) || from > to)
       throw new DomainError("INVALID_USAGE_RANGE", "Usage range must be an ordered pair of YYYY-MM-DD days");
     const result = await this.client.query(`SELECT u.session_id,s.role_id,s.native_thread_id,u.day::text,
-        u.input_tokens,u.output_tokens,u.cached_input_tokens,u.cost_usd,u.cost_reported
+        u.input_tokens,u.output_tokens,u.cached_input_tokens,u.cost_usd,u.cost_reported,u.cost_scope
       FROM session_usage_daily u
       JOIN runtime_session s ON s.project_id=u.project_id AND s.session_id=u.session_id
       WHERE u.project_id=$1 AND u.day BETWEEN $2::date AND $3::date
@@ -47,7 +47,7 @@ export class PgUsage implements UsageReader, UsageTransaction {
       nativeThreadId: row.native_thread_id as string | null, day: row.day as string,
       inputTokens: count(row.input_tokens), outputTokens: count(row.output_tokens),
       cachedInputTokens: count(row.cached_input_tokens), costUsd: count(row.cost_usd),
-      costReported: row.cost_reported as boolean,
+      costReported: row.cost_reported as boolean, costScope: row.cost_scope === "runs_only" ? "runs_only" : "all_turns",
     }));
   }
 
