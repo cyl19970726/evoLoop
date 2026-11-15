@@ -14,7 +14,9 @@ import { SchedEventHub } from "../../apps/coordinator/src/work-board/hub.js";
 import { createReserveRecipientCheck } from "../../apps/coordinator/src/runtime/recipient-preflight.js";
 import { SessionObservationService } from "@evoloop/core/session-observation";
 import { createSessionUsability } from "../../apps/coordinator/src/runtime/session-usability.js";
-import { SessionAttentionPump, pgSessionAttentionStore } from "../../apps/coordinator/src/session-attention/pump.js";
+import { SessionAttentionPump, pgSessionAttentionStore, postAttentionMessage, listSessionAttention } from "../../apps/coordinator/src/session-attention/pump.js";
+import { AcceptanceRelayService } from "../../apps/coordinator/src/acceptance-relay/service.js";
+import { acceptanceCapabilityProblemsFor } from "../../apps/coordinator/src/acceptance-relay/capability.js";
 import { PreflightError, safePreflightReport } from "../../apps/coordinator/src/runtime/preflight-report.js";
 
 const url = process.env.TEST_DATABASE_URL;
@@ -68,7 +70,7 @@ test("a Session without a business identity or native thread is unusable and say
   const hub = new SchedEventHub({ head: id => headSeq(pool, id), read: (id, after, limit) => readSchedEvents(pool, id, { after, limit }) }, 500);
   const app = await buildServer({ service: workflow, credentials: [{ token, actorId: "lead", projectIds: [projectId], permissions: ["read", "write", "review"] }],
     runtime: { status: () => ({ available: true, error: null, faults: [] }) } as never, listRuntimeModels: async () => ({ status: "available", models: [], error: null, observedAtUtc: new Date().toISOString() }),
-    hasRuntimeGrant: () => true, workBoard: { reads, hub, usability: judge }, sessionWork: new SessionObservationService({ uow }), sessionUsability: judge,
+    hasRuntimeGrant: () => true, workBoard: { reads, hub, usability: judge }, sessionWork: new SessionObservationService({ uow }), sessionUsability: judge, sessionAttention: (project: string) => listSessionAttention(pool as never, project),
     requireRunRecipient: createReserveRecipientCheck({ uow, loadIntegrations: async () => ({ runtime: { enabled: true, materialCli: config.materialCli as never } }), usability: judge,
       recordRefusal: async (project, session, task, cause) => { await pool.query("SELECT record_session_start_refusal($1,$2,$3,$4)", [project, session, task, cause]); } }) } as never);
   t.after(() => app.close());
@@ -253,4 +255,58 @@ test("a Session without a business identity or native thread is unusable and say
   assert.equal(new Set(all.map(x => x.messageId)).size, 2);
   const none = new SessionAttentionPump({ store: pgSessionAttentionStore(pool as never), canWrite: () => true, requirementsSessions: async () => [], post: async () => { throw new Error("must not post"); } });
   await assert.doesNotReject(none.tick(), "no requirements Session to tell: nothing posted, no crash");
+
+  // ---- Rework 2 (Task 6612e287, acceptance 3196b5d9) ----
+  // 11. No requirements Session: the item is not dropped. A skip row says why (and is readable over HTTP), the Leader's notice is there, and when a
+  //     requirements Session appears the item is delivered through the REAL session.message.post command, once.
+  const worker2: Principal = { actorId: "worker", projectIds: [projectId], permissions: ["read", "write"] };
+  const realPost = (_project: string, to: string, content: string, messageId: string, operationId: string) => postAttentionMessage(workflow, worker2, projectId, to, content, messageId, operationId);
+  let requirements: string[] = [];
+  const skipped: string[] = [];
+  const realPump = new SessionAttentionPump({ store: pgSessionAttentionStore(pool as never), canWrite: () => true, requirementsSessions: async () => requirements, post: realPost, onSkipped: (_i, reason) => skipped.push(reason) });
+  const mine2 = item[0].attention_id as string;
+  await realPump.tick(); const toldOnce = skipped.length; await realPump.tick();
+  const skipRow = (await pool.query("SELECT reason FROM session_attention_skip WHERE project_id=$1 AND attention_id=$2", [projectId, mine2])).rows[0];
+  assert.match(skipRow.reason, /NO_REQUIREMENTS_SESSION/, "a skip record with its reason is kept, not nothing");
+  assert.ok(toldOnce >= 1 && skipped.length === toldOnce, "each item is told to the log once, not every round");
+  const readBack = (await get("/session-attention")).items.find((x: any) => x.attentionId === mine2);
+  assert.match(readBack.skipped, /NO_REQUIREMENTS_SESSION/, "readable over HTTP"); assert.deepEqual(readBack.deliveries.filter((d: any) => d.recipientSessionId === requirementsA || d.recipientSessionId === requirementsB).map((d: any) => d.state).sort(), ["posted", "posted"], "earlier deliveries are listed too");
+  assert.equal((await notices(stuck)).length, 1, "the Leader still has its notice");
+  const messagesOf = async (sessionId: string) => (await pool.query("SELECT message_id, content FROM session_message WHERE project_id=$1 AND session_id=$2", [projectId, sessionId])).rows;
+  const requirementsC = await makeSession();
+  // A second item for a Session with no requirements Session at all: use a fresh streak.
+  const lonely = await makeSession();
+  for (let i = 0; i < 3; i++) await reserve(await newTask(false), lonely);
+  const lonelyItem = (await attention(lonely))[0];
+  await realPump.tick();
+  assert.match((await pool.query("SELECT reason FROM session_attention_skip WHERE project_id=$1 AND attention_id=$2", [projectId, lonelyItem.attention_id])).rows[0].reason, /NO_REQUIREMENTS_SESSION/);
+  assert.equal((await messagesOf(requirementsC)).length, 0, "nothing was posted anywhere");
+  assert.equal((await notices(lonely)).length, 1, "and the Leader still got its notice");
+  requirements = [requirementsC];
+  await realPump.tick(); await realPump.tick();
+  const delivered = (await messagesOf(requirementsC)).filter(m => m.content.includes(lonelyItem.attention_id));
+  assert.equal(delivered.length, 1, `now delivered through the real session.message.post, once: ${JSON.stringify((await pool.query("SELECT recipient_session_id,state,reason FROM session_attention_delivery WHERE project_id=$1 AND attention_id=$2", [projectId, lonelyItem.attention_id])).rows)}`);
+  assert.match(delivered[0]!.content, new RegExp(lonely));
+  assert.equal((await pool.query("SELECT count(*)::int n FROM session_attention_skip WHERE project_id=$1 AND attention_id=$2", [projectId, lonelyItem.attention_id])).rows[0].n, 0, "the skip note is cleared once it is delivered");
+  assert.equal((await pool.query("SELECT state FROM session_attention_delivery WHERE project_id=$1 AND attention_id=$2 AND recipient_session_id=$3", [projectId, lonelyItem.attention_id, requirementsC])).rows[0].state, "posted");
+  // A real post that is refused is kept with its reason (a Session that does not exist for the sender: no write permission).
+  const refusedPump = new SessionAttentionPump({ store: pgSessionAttentionStore(pool as never), canWrite: () => true, requirementsSessions: async () => [requirementsC],
+    post: (_project, to, content, messageId, operationId) => postAttentionMessage(workflow, { ...worker2, permissions: ["read"] }, projectId, to, content, messageId, operationId) });
+  const fourth = await makeSession();
+  for (let i = 0; i < 3; i++) await reserve(await newTask(false), fourth);
+  await refusedPump.tick();
+  const refusedRows = (await pool.query("SELECT state, reason FROM session_attention_delivery WHERE project_id=$1 AND recipient_session_id=$2 AND state<>'posted'", [projectId, requirementsC])).rows;
+  assert.equal(refusedRows.length, 1); assert.equal(refusedRows[0].state, "blocked"); assert.match(refusedRows[0].reason, /MESSAGE_POST_REJECTED|POST_FAILED.*write is required/);
+
+  // 12. The capacity view (`work acceptance`), run for real: an unbound Session carries the reasons and is not ready for acceptance, a bound one is.
+  const relay = new AcceptanceRelayService({ pool, workflow, messages: {} as never, principals: async () => [], canWrite: () => false, leaderSession: async () => null, qualify: async () => null,
+    boundRecipient: async () => "worker", capabilities: acceptanceCapabilityProblemsFor({ usability: judge, executionAuthority: async () => true, projectWriter: async () => true,
+      config: async () => ({ boundRecipient: () => "worker", messageGrant: () => true }) }) });
+  const capacity = (await relay.capacity(lead, projectId)) as Array<{ sessionId: string; missingCapabilities: string[]; readyForAcceptance: boolean }>;
+  const cap = (id: string) => capacity.find(x => x.sessionId === id)!;
+  assert.ok(cap(stuck).missingCapabilities.includes("BUSINESS_IDENTITY_UNBOUND"), `capacity reads back the reason: ${JSON.stringify(cap(stuck).missingCapabilities)}`); assert.equal(cap(stuck).readyForAcceptance, false);
+  assert.ok(!cap(flaky).missingCapabilities.some(code => code.startsWith("BUSINESS_IDENTITY") || code === "USABILITY_UNKNOWN"), "a bound Session has no usability problem");
+  judgeMode = "throws";
+  assert.ok(((await relay.capacity(lead, projectId)) as typeof capacity).every(x => x.missingCapabilities.includes("USABILITY_UNKNOWN") || x.missingCapabilities.includes("SESSION_NOT_READY")), "a failing judgement is a capacity problem too");
+  judgeMode = "real";
 });

@@ -22,6 +22,9 @@ const resources = Object.fromEntries(["configuredModel", "actualModel", "inputTo
 const reason = "没有绑定业务身份：这个 Session 没有自己的 materialCli 条目，业务身份不会从 Role 猜";
 let mode: "judged" | "older" = "judged";   // "older": a server that does not judge (no `dispatch` at all)
 const dispatchOf = (id: string) => mode === "older" ? {} : { dispatch: id === badId ? { usable: false, reasons: [{ code: "BUSINESS_IDENTITY_UNBOUND", reason }] } : { usable: true, reasons: [] } };
+const runtimeRecord = (id: string, minute: string) => ({ projectId, id, roleId: "99000009-0000-4000-8000-000000000009", cwd: "/tmp/x", authorizationScope: "project", model: null, sandbox: "danger-full-access", approvalPolicy: "never",
+  state: "ready", version: 1, nativeThreadId: `thread-${id}`, nativeSessionId: null, operationId: id, actorId: "owner", createdAt: `2026-11-01T12:0${minute === "a" ? 0 : 1}:00.000Z`, updatedAt: stamp,
+  ...(mode === "older" ? {} : id === badId ? { usable: false, unusable: [{ code: "BUSINESS_IDENTITY_UNBOUND", reason }] } : { usable: true }) });
 const agent = (id: string, title: string) => ({ key: `owned:${id}`, target: { kind: "owned", sessionId: id }, aliases: [], title, profile: null, identity: null, kind: "owned",
   roles: [{ id: "99000009-0000-4000-8000-000000000009", title: "功能开发", state: "active", roleClass: "business", templateKey: null, responsibility: "开发" }],
   membership: "current", membershipReason: "fixture", runtimeState: "ready", busy: false, currentTask: null, latestBusinessRun: null, lastProgressAt: stamp,
@@ -46,7 +49,8 @@ test("the workbench labels an unusable Session 不可用 with its reason and doe
       else if (url.pathname === `${root}/session-work/changes`) value = { items: [], nextCursor: "0", hasMore: false, resetRequired: false, metadata };
       else if (url.pathname === `${root}/work-management/index`) value = { items: [], nextCursor: null, partial: false, observedAt: stamp };
       else if (url.pathname === `${root}/resident-queues`) value = [];
-      else if (url.pathname === `${root}/impacts` || url.pathname === `${root}/runtime/runs` || url.pathname === `${root}/runtime/sessions` || url.pathname.startsWith(`${root}/references/`)) value = [];
+      else if (url.pathname === `${root}/runtime/sessions`) value = [runtimeRecord(badId, "a"), runtimeRecord(goodId, "b")];
+      else if (url.pathname === `${root}/impacts` || url.pathname === `${root}/runtime/runs` || url.pathname.startsWith(`${root}/references/`)) value = [];
       else if (url.pathname === `${root}/runtime`) value = { available: false, error: null, allowedCwds: [], grants: [] };
       else if (url.pathname.startsWith(`${root}/session-work/`) && url.pathname.endsWith("/timeline")) value = { sessionKey: `owned:${badId}`, sessionTitle: "x", entries: [], pending: [], turns: [], nextCursor: null, messagesCursor: null, observedAt: stamp, partial: false, limitations: [], unsupportedKinds: [],
         live: { cursor: "0", resetRequired: false, entries: [], turns: [], freshness: "live", limitations: [], activeTurnId: null }, capabilities: { history: true, live: true, originalToolDetail: false, reason: null } };
@@ -106,8 +110,22 @@ test("the workbench labels an unusable Session 不可用 with its reason and doe
   await s.page.getByRole("heading", { name: "没绑身份的开发" }).first().waitFor({ timeout: 30000 });
   const text = await s.page.locator("body").innerText();
   assert.match(text, /不可用 · 没有绑定业务身份/, "the Session page and its directory entry say 不可用");
+  const nowBadge = await s.page.locator("section[aria-label=正在做]").innerText();
+  assert.ok(/不可用/.test(nowBadge) && !/空闲/.test(nowBadge), `the current-work badge on the Session page says 不可用, not 空闲 (${nowBadge.replace(/\s+/g, " ")})`);
   if (shots) await s.page.screenshot({ path: `${shots}/session-header-1440-light.png`, fullPage: true });
   await s.context.close();
+
+  // 分工与运行: the rail groups a ready-but-unusable Session under 不可用, not under 就绪, and says why.
+  for (const [w, h] of [[1440, 900], [390, 844]] as const) {
+    const e = await open(w, h, "/runtime");
+    await e.page.getByText("不可用 · 没有绑定业务身份").first().waitFor({ timeout: 30000 }).catch(async () => { if (w < 760) { await e.page.getByRole("button", { name: /项目导航/ }).first().click(); await e.page.getByText("不可用 · 没有绑定业务身份").first().waitFor({ timeout: 30000 }); } else throw new Error("no 不可用 line on the 分工与运行 rail"); });
+    const rail = await e.page.locator("nav[aria-label=受管智能体]").evaluate((el: HTMLElement) => el.innerText.replace(/\s+/g, " "));
+    const ready = rail.slice(rail.indexOf("就绪"), rail.indexOf("不可用 ·") > rail.indexOf("就绪") ? rail.indexOf("不可用 ·") : undefined);
+    assert.match(rail, /不可用 · 1/, `${w}: the group 不可用 lists the Session`); assert.match(rail, /就绪 · 1/, `${w}: only the bound Session is under 就绪 (${rail})`);
+    assert.ok(!/不可用/.test(ready.split("不可用")[0]!.slice(0, 0)), "ready group text sanity");
+    if (shots) await e.page.screenshot({ path: `${shots}/runtime-${w}.png`, fullPage: true });
+    await e.context.close();
+  }
 
   // An older server (no `dispatch`): the old wording, nothing invented.
   await (await fetch(`${base}/__fixture/older`)).text();

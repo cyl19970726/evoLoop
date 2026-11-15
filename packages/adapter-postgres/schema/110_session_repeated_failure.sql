@@ -74,6 +74,17 @@ CREATE TABLE session_attention_delivery (
   CHECK ((state='posted' AND message_id IS NOT NULL) OR state<>'posted')
 );
 
+-- An item that found no requirements Session to tell is not dropped: this row says so and why (the Leader's notice is unaffected). It is replaced
+-- by delivery rows once a requirements Session exists; the coordinator rewrites the reason each round while there is none.
+CREATE TABLE session_attention_skip (
+  project_id uuid NOT NULL REFERENCES project(project_id),
+  attention_id uuid NOT NULL,
+  reason text NOT NULL CHECK (length(btrim(reason)) > 0),
+  noted_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (project_id,attention_id),
+  FOREIGN KEY (project_id,attention_id) REFERENCES session_attention(project_id,attention_id)
+);
+
 -- One place counts: appends the event, and when it is the third in a row with its cause, the attention item.
 CREATE FUNCTION session_start_event_attention() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE newest text[]; streak integer := 0;

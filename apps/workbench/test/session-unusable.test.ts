@@ -4,6 +4,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { agentStatusLabel, sessionStatusLabel, unusableLabel } from "../src/features/sessions/sessionStatusPresentation";
 import { agentLoad, buildArrangement, freeCapacity } from "../src/features/sessions/arrangementModel";
+import { nowWork } from "../src/features/sessions/sessionWorkPresentation";
+import { sessionGroups, sessionStateLine } from "../src/features/runtime/executionPresentation";
 
 const session = (id: string, extra: Record<string, unknown> = {}) => ({ key: `owned:${id}`, target: { kind: "owned", sessionId: id }, aliases: [], title: id, profile: null, identity: null,
   kind: "owned", roles: [{ id: "r", title: "开发", state: "active", roleClass: "business", templateKey: null, responsibility: "x" }], membership: "current", membershipReason: "x",
@@ -30,4 +32,24 @@ test("an unusable Session is not spare capacity: its load is `unusable`, it is n
   const free = freeCapacity(board).free.map(row => row.session.key);
   assert.deepEqual(free, ["owned:b"], "only the usable idle Session is free");
   assert.equal(board.rows.find(row => row.session.key === "owned:a")!.load, "unusable");
+});
+
+const record = (id: string, extra: Record<string, unknown> = {}) => ({ projectId: "p", id, roleId: "r", state: "ready", createdAt: `2026-11-0${id.length}T00:00:00.000Z`, ...extra }) as never;
+test("分工与运行: a ready Session that cannot start a Run is not listed under 就绪; it is listed apart as 不可用 with its reason", () => {
+  const sessions = [record("a", { usable: false, unusable: [{ code: "BUSINESS_IDENTITY_UNBOUND", reason: "没有绑定业务身份" }] }), record("bb", { usable: true }), record("ccc"), record("dddd", { state: "closed", usable: false })];
+  const groups = sessionGroups(sessions);
+  const ids = (key: string) => groups.find(g => g.key === key)?.items.map((x: { id: string }) => x.id).sort();
+  assert.deepEqual(ids("working"), ["bb", "ccc"], "usable and unjudged Sessions stay ready"); assert.deepEqual(ids("unusable"), ["a"]);
+  assert.deepEqual(ids("closed"), ["dddd"], "a closed Session is closed, whatever its flag");
+  assert.equal(groups.find(g => g.key === "unusable")!.label, "不可用");
+  assert.match(sessionStateLine(sessions[0] as never), /^不可用 · 没有绑定业务身份/); assert.equal(sessionStateLine(sessions[1] as never), "就绪");
+});
+
+test("the current-work badge of a Session page says 不可用 (not 空闲) for a Session that cannot start a Run, and 空闲 for one that can", () => {
+  const base = { kind: "owned", runtimeState: "ready", busy: false, latestBusinessRun: null } as const;
+  const args = { work: null, assignments: [], relationLabel: null, timing: null, messageRunning: false, idleResult: null, questionCount: 0, titleOf: () => null } as never;
+  const bad = nowWork({ session: { ...base, dispatch: unusable } as never, ...(args as object) } as never);
+  assert.equal(bad.badge, "不可用"); assert.match(bad.summary!, /没有绑定业务身份/); assert.notEqual(bad.tone, "idle");
+  assert.equal(nowWork({ session: { ...base, dispatch: { usable: true, reasons: [] } } as never, ...(args as object) } as never).badge, "空闲");
+  assert.equal(nowWork({ session: { ...base } as never, ...(args as object) } as never).badge, "空闲", "no judgement: as before");
 });

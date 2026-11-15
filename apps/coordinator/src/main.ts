@@ -98,8 +98,9 @@ import { createOrdinaryRunSealer } from "./ordinary-run-submission/seal.js";
 import { OrdinaryRunSealPump } from "./ordinary-run-submission/pump.js";
 import { resolveSenderClass, type SenderClass } from "./session-messages/sender.js";
 import { resolveLineRecipient } from "./session-line/recipient.js";
-import { createSessionUsability, usabilityProblems } from "./runtime/session-usability.js";
-import { SessionAttentionPump, pgSessionAttentionStore } from "./session-attention/pump.js";
+import { createSessionUsability } from "./runtime/session-usability.js";
+import { acceptanceCapabilityProblemsFor } from "./acceptance-relay/capability.js";
+import { SessionAttentionPump, pgSessionAttentionStore, listSessionAttention, postAttentionMessage } from "./session-attention/pump.js";
 import { keyedThrottledLog, messageErrorEntry } from "./session-messages/error-line.js";
 import { throttledLog } from "./log-throttle.js";
 import { materialCliRecipientMatches, createReserveRecipientCheck, requireOrdinaryRecipient } from "./runtime/recipient-preflight.js";
@@ -633,24 +634,16 @@ const sessionUsability = createSessionUsability({ query: (sql, params) => pool.q
   config: async () => { const configured = await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE);
     return { materialCli: configured.runtime?.enabled ? configured.runtime.materialCli : [], roleActors: configured.residentQueue?.enabled ? configured.residentQueue.roleActors : [] }; },
   projectWriter: (projectId, actorId) => currentProjectWriter(projectId, actorId) });
-const acceptanceCapabilityProblems = async ({projectId,session,senderActorId,receiverActorId}:
-  {projectId:string;session:RuntimeSessionRecord;senderActorId:string;receiverActorId:string}) => {
-  const problems:string[]=[];
-  const current=await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE);
-  if(session.state!=="ready"||!session.nativeThreadId||!await currentSessionExecutionAuthority(session))
-    problems.push("SESSION_NOT_READY");
-  if(!await currentProjectWriter(projectId,senderActorId))problems.push("SENDER_IDENTITY_UNAVAILABLE");
-  if(!await currentProjectWriter(projectId,receiverActorId))problems.push("RECEIVER_IDENTITY_UNAVAILABLE");
-  const material=current.runtime?.enabled ? selectMaterialCli(current.runtime.materialCli,projectId,
-    session.id,session.actorId,undefined,session.roleId) : null;
-  if(material?.cliActorId!==receiverActorId)problems.push("RECIPIENT_BINDING_MISSING");
-  // The same judgement as the work board and the reservation: a Session that cannot start work is not capacity. A judgement that fails is a problem too.
-  problems.push(...await usabilityProblems(sessionUsability,projectId,session.id));
-  if(!current.sessionMessages?.enabled||!current.sessionMessages.grants.some(g=>g.enabled&&g.projectId===projectId&&
-    g.sessionId===session.id&&g.senderActorId===senderActorId&&g.receiverActorId===receiverActorId&&
-    g.receiverRoleId===session.roleId&&g.cwd===session.cwd))problems.push("MESSAGE_GRANT_MISSING");
-  return [...new Set(problems)];
-};
+const acceptanceCapabilityProblems = acceptanceCapabilityProblemsFor({
+  config: async () => {
+    const current = await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE);
+    return {
+      boundRecipient: (projectId, session) => (current.runtime?.enabled ? selectMaterialCli(current.runtime.materialCli, projectId, session.id, session.actorId, undefined, session.roleId) : null)?.cliActorId ?? null,
+      messageGrant: (projectId, session, senderActorId, receiverActorId) => !!current.sessionMessages?.enabled && current.sessionMessages.grants.some(g => g.enabled && g.projectId === projectId &&
+        g.sessionId === session.id && g.senderActorId === senderActorId && g.receiverActorId === receiverActorId && g.receiverRoleId === session.roleId && g.cwd === session.cwd),
+    };
+  },
+  executionAuthority: session => currentSessionExecutionAuthority(session), projectWriter: (projectId, actorId) => currentProjectWriter(projectId, actorId), usability: sessionUsability });
 const acceptanceRelay = new AcceptanceRelayService({pool,workflow:service,messages:messageService,
   principals:currentIdentity,canWrite:lease.canWrite,
   leaderSession:async projectId => (await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE)).leaderResultNotices?.targets
@@ -890,10 +883,9 @@ const sessionAttentionPump = new SessionAttentionPump({ store: pgSessionAttentio
   post: async (projectId, recipientSessionId, content, messageId, operationId) => {
     const target = (await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE)).leaderResultNotices?.targets.find(t => t.projectId === projectId);
     const sender = (await currentIdentity()).find((p: { actorId: string; projectIds: string[]; permissions: string[] }) => p.actorId === target?.senderActorId && p.projectIds.includes(projectId) && p.permissions.includes("read") && p.permissions.includes("write"));
-    if (!target || !sender) return { ok: false as const, reason: "NOTICE_SENDER_UNAVAILABLE" };
-    const posted = await service.execute(sender as never, { type: "session.message.post", projectId, operationId, messageId, target: { kind: "owned", sessionId: recipientSessionId }, content } as never);
-    return posted.status === "rejected" ? { ok: false as const, reason: `MESSAGE_POST_REJECTED:${(posted as { code?: string }).code ?? "unknown"}` } : { ok: true as const };
+    return postAttentionMessage(service as never, target && sender ? sender : null, projectId, recipientSessionId, content, messageId, operationId);
   },
+  onSkipped: (item, reason) => console.error(`Session attention ${item.attentionId} has nobody to tell: ${reason.slice(0, 80)}`),
   onError: () => console.error("Session attention delivery failed; the item stays and is tried again next round.") });
 const ordinarySealPump = new OrdinaryRunSealPump({
   canWrite: lease.canWrite,
@@ -980,6 +972,7 @@ const app = await buildServer({ service, credentials, canWrite: lease.canWrite, 
   workStatuses: (principal, projectId, taskIds) => readWorkStatuses(pool, service, principal, projectId, taskIds),
   workIndex: createLeaderWorkIndexReader(pool),
   workBoard: { reads: workBoardReads, hub: schedEventHub, usability: sessionUsability }, sessionUsability,
+  sessionAttention: projectId => listSessionAttention(pool as never, projectId),
   decisionsForMe: (projectId, actorId, canDecide) => readDecisionsForMe(pool, projectId, actorId, canDecide),
   leaderNotices: {
     packet: async (projectId, packetId) => {

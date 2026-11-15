@@ -12,6 +12,10 @@ export interface SessionAttentionStore {
   ensure(projectId: string, attentionId: string, recipientSessionId: string): Promise<void>;
   posted(projectId: string, attentionId: string, recipientSessionId: string, messageId: string): Promise<void>;
   blocked(projectId: string, attentionId: string, recipientSessionId: string, reason: string): Promise<void>;
+  /** No requirements Session to tell: say so, with the reason (kept while there is none). */
+  skipped(projectId: string, attentionId: string, reason: string): Promise<void>;
+  /** A requirements Session exists now and the item has deliveries: the skip note no longer applies. */
+  clearSkip(projectId: string, attentionId: string): Promise<void>;
 }
 export interface SessionAttentionDeps {
   store: SessionAttentionStore;
@@ -21,6 +25,8 @@ export interface SessionAttentionDeps {
   /** Posts one ordinary message to a Session; resolves with how it went. */
   post(projectId: string, recipientSessionId: string, content: string, messageId: string, operationId: string): Promise<{ ok: true } | { ok: false; reason: string }>;
   onError?(error: unknown): void;
+  /** Called when an item found nobody to tell (also recorded in the store). */
+  onSkipped?(item: AttentionItem, reason: string): void;
 }
 
 export const attentionText = (item: AttentionItem): string =>
@@ -29,6 +35,7 @@ export const attentionText = (item: AttentionItem): string =>
 export class SessionAttentionPump {
   private timer: ReturnType<typeof setInterval> | null = null;
   private busy: Promise<void> | null = null;
+  private readonly told = new Set<string>();
   constructor(private readonly deps: SessionAttentionDeps, private readonly pollMs = 5000) {}
   start(): void { if (this.timer) return; this.timer = setInterval(() => { void this.tick(); }, this.pollMs); this.timer.unref(); void this.tick(); }
   stop(): void { if (this.timer) clearInterval(this.timer); this.timer = null; }
@@ -41,6 +48,13 @@ export class SessionAttentionPump {
     if (!this.deps.canWrite()) return;
     for (const item of await this.deps.store.open(7)) {
       const recipients = await this.deps.requirementsSessions(item.projectId);
+      if (!recipients.length) {
+        const reason = "NO_REQUIREMENTS_SESSION: 项目里没有受管的需求 Session（身份文件里 senderClass 为 requirements 且绑定了受管 Session），没有可投递的对象；Leader 仍收到同一关注项";
+        await this.deps.store.skipped(item.projectId, item.attentionId, reason);
+        if (!this.told.has(item.attentionId)) { this.told.add(item.attentionId); this.deps.onSkipped?.(item, reason); }
+        continue;
+      }
+      await this.deps.store.clearSkip(item.projectId, item.attentionId);
       for (const recipient of recipients) await this.deps.store.ensure(item.projectId, item.attentionId, recipient);
       for (const delivery of await this.deps.store.deliveries(item.projectId, item.attentionId)) {
         if (delivery.state === "posted") continue;
@@ -64,6 +78,26 @@ export function pgSessionAttentionStore(pool: { query(sql: string, params?: unkn
       .map(r => ({ recipientSessionId: String(r.recipient_session_id), state: r.state as "pending" | "posted" | "blocked", messageId: r.message_id ? String(r.message_id) : null })),
     ensure: async (projectId, attentionId, recipient) => { await pool.query(`INSERT INTO session_attention_delivery(project_id,attention_id,recipient_session_id) VALUES($1,$2,$3) ON CONFLICT DO NOTHING`, [projectId, attentionId, recipient]); },
     posted: async (projectId, attentionId, recipient, messageId) => { await pool.query(`UPDATE session_attention_delivery SET state='posted',message_id=$4,reason=NULL,updated_at=now() WHERE project_id=$1 AND attention_id=$2 AND recipient_session_id=$3`, [projectId, attentionId, recipient, messageId]); },
+    skipped: async (projectId, attentionId, reason) => { await pool.query(`INSERT INTO session_attention_skip(project_id,attention_id,reason) VALUES($1,$2,$3) ON CONFLICT (project_id,attention_id) DO UPDATE SET reason=EXCLUDED.reason`, [projectId, attentionId, reason]); },
+    clearSkip: async (projectId, attentionId) => { await pool.query(`DELETE FROM session_attention_skip WHERE project_id=$1 AND attention_id=$2`, [projectId, attentionId]); },
     blocked: async (projectId, attentionId, recipient, reason) => { await pool.query(`UPDATE session_attention_delivery SET state='blocked',reason=$4,updated_at=now() WHERE project_id=$1 AND attention_id=$2 AND recipient_session_id=$3 AND state<>'posted'`, [projectId, attentionId, recipient, reason]); },
   };
+}
+
+/** What the Leader or a person reads to see where each item went: delivered, blocked with its reason, or skipped because there was nobody to tell. */
+export async function listSessionAttention(pool: { query(sql: string, params?: unknown[]): Promise<{ rows: Array<Record<string, unknown>> }> }, projectId: string) {
+  const items = (await pool.query(`SELECT attention_id,session_id,cause,task_id,created_at FROM session_attention WHERE project_id=$1 ORDER BY created_at DESC LIMIT 100`, [projectId])).rows;
+  const deliveries = (await pool.query(`SELECT attention_id,recipient_session_id,state,message_id,reason FROM session_attention_delivery WHERE project_id=$1`, [projectId])).rows;
+  const skips = (await pool.query(`SELECT attention_id,reason FROM session_attention_skip WHERE project_id=$1`, [projectId])).rows;
+  return { items: items.map(r => ({ attentionId: String(r.attention_id), sessionId: String(r.session_id), cause: String(r.cause), taskId: String(r.task_id), createdAt: new Date(String(r.created_at)).toISOString(),
+    deliveries: deliveries.filter(d => d.attention_id === r.attention_id).map(d => ({ recipientSessionId: String(d.recipient_session_id), state: String(d.state), messageId: d.message_id ? String(d.message_id) : null, reason: d.reason ? String(d.reason) : null })),
+    skipped: skips.find(k => k.attention_id === r.attention_id)?.reason ?? null })) };
+}
+
+/** The post to a requirements Session as the Leader-notice sender, through the real `session.message.post` command (same ids every time). */
+export async function postAttentionMessage(workflow: { execute(principal: never, command: never): Promise<{ status: string; code?: string }> },
+  sender: unknown | null, projectId: string, recipientSessionId: string, content: string, messageId: string, operationId: string): Promise<{ ok: true } | { ok: false; reason: string }> {
+  if (!sender) return { ok: false, reason: "NOTICE_SENDER_UNAVAILABLE" };
+  const posted = await workflow.execute(sender as never, { type: "session.message.post", projectId, operationId, messageId, target: { kind: "owned", sessionId: recipientSessionId }, content } as never);
+  return posted.status === "rejected" ? { ok: false, reason: `MESSAGE_POST_REJECTED:${posted.code ?? "unknown"}` } : { ok: true };
 }

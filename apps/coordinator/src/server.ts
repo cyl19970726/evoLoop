@@ -173,6 +173,8 @@ export async function buildServer(options: {
   workIndex?: LeaderWorkIndexReader;
   /** The work board and the scheduling event stream (DEC-045 Q2). */
   workBoard?: Omit<WorkBoardRouteDeps, "service">;
+  /** Where each repeated-cause attention item went (delivered, blocked with its reason, skipped for lack of a requirements Session). */
+  sessionAttention?: (projectId: string) => Promise<unknown>;
   /** Whether each Session can start work now: shown on `list sessions`, the Session directory and snapshot, and the work board. Without it nothing is judged and nothing claims usable. */
   sessionUsability?: (projectId: string, sessionIds: string[]) => Promise<Map<string, { usable: boolean; reasons: Array<{ code: string; reason: string }> }>>;
   acceptanceRelay?: AcceptanceRelayService;
@@ -569,6 +571,11 @@ export async function buildServer(options: {
   });
   app.get("/api/projects/:projectId/runtime/provider-holds", async request =>
     options.service.listProviderHolds(who(request.principal), params(request.params).projectId!));
+  if (options.sessionAttention) app.get("/api/projects/:projectId/session-attention", async request => {
+    const projectId = params(request.params).projectId!;
+    await options.service.getProject(who(request.principal), projectId);
+    return options.sessionAttention!(projectId);
+  });
   app.get("/api/projects/:projectId/runtime/sessions", async request => {
     const projectId = params(request.params).projectId!;
     const sessions = await options.service.listRuntimeSessions(who(request.principal), projectId);
