@@ -1,4 +1,4 @@
-import type { Principal } from "@evoloop/contracts";
+import { hasPermission, type Principal } from "@evoloop/contracts";
 import type { Transaction } from "@evoloop/contracts/ports";
 import { DomainError } from "@evoloop/contracts/ports";
 import type { BusinessDomain, BusinessDomainRevision, HostLink, HostLinkRevision, ResidentCommand } from "@evoloop/contracts/resident-hosts";
@@ -9,7 +9,7 @@ const live = (state: string) => state === "trial" || state === "active";
 
 export async function applyResident(tx: Transaction, principal: Principal, command: ResidentCommand,
   now: string, nextId: () => string): Promise<{ entityId: string; version: number; revisionId?: string; kind: "domain" | "host" }> {
-  if (!principal.permissions.includes("review")) return fail("FORBIDDEN", "review permission required");
+  if (!hasPermission(principal, command.projectId, "management")) return fail("FORBIDDEN", "project management permission required");
   if (command.type === "domain.create" || command.type === "domain.update") {
     const existing = await tx.getBusinessDomain(command.domainId);
     if (command.type === "domain.create" && existing) return fail("ALREADY_EXISTS", "domain already exists");

@@ -8,7 +8,7 @@ import { RuntimeRunner } from "../src/runtime/runner.js";
 
 const hash = (value: Uint8Array | string) => createHash("sha256").update(value).digest("hex");
 const projectId = randomUUID(), documentId = randomUUID(), revisionId = randomUUID();
-const principal: Principal = { actorId: "reviewer", projectIds: [projectId], permissions: ["read", "write", "review"] };
+const principal: Principal = { actorId: "reviewer", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true };
 const html = "<!doctype html><html><body><img src='figure.svg'><script>alert('inert')</script></body></html>";
 const asset = Buffer.from("<svg xmlns='http://www.w3.org/2000/svg'/>");
 const revision: DocumentPayloadRevision = {

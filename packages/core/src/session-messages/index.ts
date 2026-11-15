@@ -1,5 +1,5 @@
 import { holdsProvider, providerHeldMessage } from '@evoloop/contracts/provider-hold';
-import type { AppliedResult, Principal } from "@evoloop/contracts";
+import { hasDecisionAuthority, mayAccessSession, type AppliedResult, type Principal } from "@evoloop/contracts";
 import type { SessionMessageCommand, SessionMessageDispatchGrant, SessionMessageManualStopEvidence, SessionMessageManualStopPreflight, SessionMessageProcessing, SessionMessageRecord, SessionMessageResponseKind } from "@evoloop/contracts/session-messages";
 import { preTurnProofSchema, type PreTurnProof, type RuntimeTurn, type RuntimeSessionRecord } from "@evoloop/contracts/runtime";
 import type { Clock, IdFactory, Reader, Transaction, UnitOfWork } from "@evoloop/contracts/ports";
@@ -23,6 +23,8 @@ export async function applySessionMessage(tx:Transaction,principal:Principal,com
       const session=required(await tx.getRuntimeSession(command.target.sessionId),'Session');
       if(session.state!=='ready'||!session.nativeThreadId||!session.nativeSessionId)
         throw new DomainError('SESSION_NOT_READY','owned recipient must be a ready bound Session');
+      if(!mayAccessSession(principal,command.projectId,session.id))
+        throw new DomainError('FORBIDDEN','This identity is not granted access to that Session');
     }else{
       const link=required(await tx.getHostLink(command.target.linkId),'host link');
       if(link.host.kind!=='external'||link.state==='revoked')throw new DomainError('MANUAL_TARGET_ONLY','external recipient must be a current manual link');
@@ -43,6 +45,8 @@ export async function applySessionMessage(tx:Transaction,principal:Principal,com
     return{result:applied(command.operationId,item.id,1),effects:[{kind:'session.message',entityId:item.id,version:1}]};
   }
   const item=required(await store.getSessionMessage(command.messageId),'message');
+  if(item.target.kind==='owned'&&!mayAccessSession(principal,command.projectId,item.target.sessionId))
+    throw new DomainError('FORBIDDEN','This identity is not granted access to that Session');
   if(command.type==='session.message.confirmSuperseded'){
     if(item.senderActorId!==principal.actorId)throw new DomainError('MESSAGE_SENDER','only the sender may confirm a superseded message');
     if(item.version!==command.expectedVersion)throw new DomainError('VERSION_CONFLICT','message changed',item.version);
@@ -59,7 +63,7 @@ export async function applySessionMessage(tx:Transaction,principal:Principal,com
   }
   if(command.type==='session.message.reconcile'||command.type==='session.message.interrupt'||
     command.type==='session.message.manualStop'){
-    if(!principal.permissions.includes('review'))throw new DomainError('FORBIDDEN','message recovery requires project review authority');
+    if(!hasDecisionAuthority(principal,command.projectId,'session'))throw new DomainError('FORBIDDEN','message recovery requires Session decision authority');
     const processing=required(await store.getSessionMessageProcessing(item.id),'processing');
     if(item.target.kind!=='owned'||item.target.sessionId!==command.sessionId||
       processing.sessionId!==command.sessionId||processing.id!==command.processingId||
@@ -289,7 +293,8 @@ export class SessionMessageService {
   async approvePreTurnContinuation(projectId:string,messageId:string,principal:Principal,
     command:{operationId:string;sessionId:string;originalOperationId:string;expectedVersion:number;
       expectedMessageVersion:number;expectedGateVersion:number;evidenceRef:string;reason:string}):Promise<SessionMessageProcessing>{
-    if(!principal.projectIds.includes(projectId)||!principal.permissions.includes('review')||principal.actorId.startsWith('worker-'))
+    if(!hasDecisionAuthority(principal,projectId,'session')||
+      !mayAccessSession(principal,projectId,command.sessionId)||principal.actorId.startsWith('worker-'))
       throw new DomainError('FORBIDDEN','pre-turn continuation requires project review authority');
     return this.deps.uow.transaction(projectId,async tx=>{
       const intentJson=reviewIntentJson(principal.actorId,'message',messageId,command);
@@ -331,7 +336,8 @@ export class SessionMessageService {
   }
   async readPreTurnContinuationDecision(projectId:string,messageId:string,principal:Principal,
     command:Parameters<SessionMessageService['approvePreTurnContinuation']>[3]):Promise<SessionMessageProcessing|null>{
-    if(!principal.projectIds.includes(projectId)||!principal.permissions.includes('review')||principal.actorId.startsWith('worker-'))
+    if(!hasDecisionAuthority(principal,projectId,'session')||
+      !mayAccessSession(principal,projectId,command.sessionId)||principal.actorId.startsWith('worker-'))
       throw new DomainError('FORBIDDEN','pre-turn continuation requires project review authority');
     return this.deps.uow.read(projectId,reader=>priorReviewDecision<SessionMessageProcessing>(reader,
       command.operationId,principal.actorId,'message',messageId,

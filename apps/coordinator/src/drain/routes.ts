@@ -25,7 +25,7 @@ export function registerDrainRoutes(app: FastifyInstance, deps: { control: Drain
     const principal = principalOf(request);
     const body = z.strictObject({ action: z.enum(["start", "release"]), reason: z.string().trim().min(1).max(1000) }).parse(request.body);
     if (!await deps.isMaintainer(principal))
-      throw new DomainError("FORBIDDEN", "Only an instance maintainer (a credential with read, write and review in every project) may start or release a drain");
+      throw new DomainError("FORBIDDEN", "Only an instance maintainer (a credential with management and decision authority in every project) may start or release a drain");
     return deps.control.set(principal, body.action, body.reason);
   });
   app.get("/api/instance/drain/history", async request => {

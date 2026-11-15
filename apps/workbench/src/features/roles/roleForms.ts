@@ -2,6 +2,7 @@
 // command forms (draft keeping, operation receipts); only their placement on the page is new.
 import type { RoleHandoff, RoleProposal, RoleRecord } from "@evoloop/contracts/roles";
 import type { HostLink } from "@evoloop/contracts/resident-hosts";
+import type { Permission } from "@evoloop/contracts";
 import { option, reasonField, type Field } from "../../shared/ActionForm";
 import { codexThreadHref } from "../../shared/externalHostEntry";
 import { splitLines as lines } from "./rolePresentation";
@@ -54,6 +55,7 @@ export function buildProposal(values: Record<string, string>): RoleProposal {
 
 export interface RoleForm {
   title: string; fields: Field[]; build(values: Record<string, string>): Record<string, unknown>;
+  permission: Permission; decision?: boolean;
   /** The versions the command depends on, when the form's context does not already record them (`draftBaseline`). */
   baseline?: Record<string, string | number>;
 }
@@ -61,13 +63,13 @@ export interface RoleForm {
 const base = (role: RoleRecord) => ({ roleId: role.id, expectedVersion: role.version });
 
 export const decideForm = (role: RoleRecord): RoleForm => ({
-  title: "决定是否试行",
+  title: "决定是否试行", permission: "management", decision: true,
   fields: [{ name: "decision", label: "决定", kind: "select", options: [option("accept-trial", "接受有限试行"), option("reject", "不采纳"), option("defer", "暂缓重看")] }, reasonField],
   build: v => ({ ...base(role), type: "role.decide", ...v }),
 });
 
 export const reviewForm = (role: RoleRecord): RoleForm => ({
-  title: "记录职责回看",
+  title: "记录职责回看", permission: "management", decision: true,
   fields: [
     { name: "decision", label: "回看决定", kind: "select", options: [option("continue-trial", "延长试行并设下次回看"), option("activate", "确认持续职责"), option("merge", "并入已有职责并准备交接"), option("retire", "撤回并准备交接")] },
     { name: "effectEvidence", label: "实际效果与反例", kind: "textarea" }, { name: "effectEvidenceRefs", label: "效果固定来源（每行一项）", kind: "textarea" },
@@ -82,7 +84,7 @@ export const reviewForm = (role: RoleRecord): RoleForm => ({
 });
 
 export const handoffForm = (role: RoleRecord): RoleForm => ({
-  title: "登记待交接事项",
+  title: "登记待交接事项", permission: "management",
   fields: [
     { name: "kind", label: "事项类型", kind: "select", options: [option("task", "未完成任务"), option("knowledge", "知识与材料"), option("session", "智能体现场")] },
     { name: "sourceRef", label: "原对象引用；任务请填任务 ID" }, { name: "targetRoleId", label: "接收职责 ID" },
@@ -93,26 +95,26 @@ export const handoffForm = (role: RoleRecord): RoleForm => ({
 });
 
 export const ackHandoffForm = (role: RoleRecord, handoff: RoleHandoff): RoleForm => ({
-  title: "确认交接已完成", baseline: { roleVersion: role.version, handoffState: handoff.state },
+  title: "确认交接已完成", permission: "management", baseline: { roleVersion: role.version, handoffState: handoff.state },
   fields: [{ name: "note", label: "接收与核对证据", kind: "textarea" }],
   build: v => ({ ...base(role), type: "role.ackHandoff", handoffId: handoff.id, ...v }),
 });
 
 export const bindForm = (role: RoleRecord): RoleForm => ({
-  title: "绑定承载智能体",
+  title: "绑定承载智能体", permission: "management",
   fields: [{ name: "sessionId", label: "本项目已预留且就绪的受管智能体 ID", hint: "不能绑定任意桌面聊天。" }, { name: "note", label: "绑定说明" }],
   build: v => ({ ...base(role), type: "role.bindSession", ...v }),
 });
 
 export const retireForm = (role: RoleRecord): RoleForm => ({
-  title: "核对并撤回职责",
+  title: "核对并撤回职责", permission: "management", decision: true,
   fields: [reasonField, { name: "knowledgeDisposition", label: "知识与未读材料的处理", kind: "textarea" },
     { name: "runtimeDisposition", label: "在途及结果未知的智能体核对结果", kind: "textarea" }],
   build: v => ({ ...base(role), type: "role.retire", ...v }),
 });
 
 export const registerHostForm = (role: RoleRecord): RoleForm => ({
-  title: "登记外部聊天", baseline: { roleVersion: role.version },
+  title: "登记外部聊天", permission: "management", baseline: { roleVersion: role.version },
   fields: [{ name: "ref", label: "原聊天完整引用", hint: "填写 codex://threads/<聊天 UUID>；历史裸 UUID 也会规范化。先在原应用核对。" }, reasonField],
   build: v => {
     const ref = codexThreadHref(v.ref);
@@ -123,7 +125,7 @@ export const registerHostForm = (role: RoleRecord): RoleForm => ({
 });
 
 export const verifyHostForm = (role: RoleRecord, link: HostLink): RoleForm => ({
-  title: "核实人工连接能力", baseline: { roleVersion: role.version, linkVersion: link.version },
+  title: "核实人工连接能力", permission: "management", baseline: { roleVersion: role.version, linkVersion: link.version },
   fields: [{ name: "verifiedCapabilities", label: "亲自核实的能力", kind: "multi", options: [option("open", "打开原聊天"), option("read", "读取原聊天"), option("manual-claim", "人工领取")] },
     { name: "evidence", label: "核实证据", kind: "textarea" }, reasonField],
   build: v => ({ type: "host.verify", linkId: link.id, expectedVersion: link.version, expectedRoleVersion: role.version,

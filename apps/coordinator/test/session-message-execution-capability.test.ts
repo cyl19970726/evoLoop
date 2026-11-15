@@ -10,7 +10,7 @@ const sessionId="22222222-2222-4222-8222-222222222222";
 const roleId="receiver-role";
 const cwd="/tmp/evoloop-message-receiver";
 const at="2026-10-27T10:00:00.000Z";
-const principal:Principal={actorId:"lead",projectIds:[projectId],permissions:["read","write"]};
+const principal:Principal={actorId:"lead",projectIds:[projectId],permissions:["session"]};
 const observed:ObservedSession={key:`owned:${sessionId}`,target:{kind:"owned",sessionId},aliases:[],
   title:"Receiver",profile:null,kind:"owned",roles:[],membership:"current",membershipReason:"assigned",
   runtimeState:"ready",busy:false,currentTask:null,latestBusinessRun:null,lastProgressAt:null,
@@ -43,10 +43,10 @@ function setup(overrides:Partial<MessageExecutionReaderDeps>={}){
   return{read:createMessageExecutionReader(deps),calls};
 }
 
-test("write and project authority fail before any configuration, session or grant probe",async()=>{
+test("Session authority fails before any configuration, session or grant probe",async()=>{
   const {read,calls}=setup();
-  assert.deepEqual((await read({...principal,permissions:["read"]},projectId,observed)).state,"blocked");
-  assert.equal((await read({...principal,permissions:["read"]},projectId,observed)).reasonCode,"WRITE_REQUIRED");
+  assert.deepEqual((await read({...principal,permissions:[]},projectId,observed)).state,"blocked");
+  assert.equal((await read({...principal,permissions:[]},projectId,observed)).reasonCode,"FORBIDDEN");
   assert.equal((await read({...principal,projectIds:[]},projectId,observed)).reasonCode,"FORBIDDEN");
   assert.deepEqual(calls,{configuration:0,session:0,writer:0,turns:0,cwd:0,runtime:0});
 });

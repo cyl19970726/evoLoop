@@ -8,26 +8,28 @@
 
 ### 身份清单
 
-| 身份 | `permissions` | `identityKind` | `senderClass` | 跨项目 | 说明 |
-| --- | --- | --- | --- | --- | --- |
-| 使用者本人 | read, write, review | `human` | — | 可以 | 只给本人用，Agent 不拿它的令牌 |
-| 需求 Session | read, write, review | `agent` | `requirements` | 可以 | 写 Task、私有配置、接受 Role（受使用者授权） |
-| Leader | read, write, review | `agent` | `leader` | 不要 | 排程、分派、验收接力、每日评估 |
-| 每个业务 Role 一个 | read, write | `agent` | `session` | 不要 | 业务 Session 里签 `ordinary.submit` 的身份 |
-| 验收者 | read, write | `agent` | `session` | 不要 | 验收 Session 里签 `used` 的身份，必须不同于作者 |
-| 结果通知者 | read, write | `agent` | — | 不要 | 只作 `leaderResultNotices` 的发送者，不给任何 Session 用；必须不同于 Leader |
-| “代你使用” | read, write | `agent` | — | 可以 | 不给 review（DEC-047）；实例里没有就新建。只给样本 Session（例如模拟用户）的消息与即时输入授权；项目还没有样本 Session 时先不给任何授权 |
+| 身份 | `permissions` | `decisions` | `identityKind` | `senderClass` | 跨项目 | 说明 |
+| --- | --- | --- | --- | --- | --- | --- |
+| 使用者本人 | task, document, session, management | 不需要写（人类随类别） | `human` | — | 可以 | 只给本人用，Agent 不拿它的令牌 |
+| 需求 Session | task, document, session, management | `true` | `agent` | `requirements` | 可以 | 写 Task、私有配置、接受 Role（受使用者授权） |
+| Leader | task, document, session, management | `true` | `agent` | `leader` | 不要 | 排程、分派、验收接力、每日评估 |
+| 每个业务 Role 一个 | task, document, session | — | `agent` | `session` | 不要 | 业务 Session 里签 `ordinary.submit` 的身份 |
+| 验收者 | task, document, session | — | `agent` | `session` | 不要 | 验收 Session 里签 `used` 的身份，必须不同于作者 |
+| 结果通知者 | task, document, session | — | `agent` | — | 不要 | 只作 `leaderResultNotices` 的发送者，不给任何 Session 用；必须不同于 Leader |
+| “代你使用” | task, document, session | 不给（DEC-047） | `agent` | — | 可以 | 实例里没有就新建；用 `sessionIds` 限定到样本 Session（例如模拟用户），项目还没有样本 Session 时先不给任何授权 |
 
 - “跨项目：可以”的身份，把新项目 ID 加进它已有条目的 `projectIds`；其余按项目新建 `actorId`，一个项目的 Session 令牌碰不到另一个项目。
 - 同一 `actorId` 在同一项目里的所有条目必须是同一个 `identityKind` 和 `senderClass`，否则服务启动时拒绝整个身份文件。
-- `extraCommands` 只接受 `document.archive`、`document.restore`，不要用它代替 review。
+- 项目成员默认可读项目内对象；`permissions` 只决定可写哪几类对象。决定类动作（开工、关闭、阶段审阅、接受 Role、“待我决定”里的决定等）另需决定类授权：人类随类别获得，智能体服务身份必须显式写 `decisions: true`。
+- `sessionIds` 限定可写和可读完整原生记录、工具输入输出的 Session；省略或空数组表示该项目内全部 Session。
+- `extraCommands` 只接受 `document.archive`、`document.restore`，不要用它代替决定类授权。
 - 身份文件在启动时读，改了要重启；`session prepare` 会重读它，但只用于编制检查，HTTP 登录仍用启动时的快照。
 
 身份文件条目（数组中的一项）：
 
 ```json
 { "token": "<64 位十六进制，见下>", "actorId": "<actorId>", "projectIds": ["<PROJECT>"],
-  "permissions": ["read", "write"], "identityKind": "agent", "senderClass": "session" }
+  "permissions": ["task", "document", "session"], "identityKind": "agent", "senderClass": "session" }
 ```
 
 ### 令牌与包装
@@ -52,7 +54,7 @@ exec <NODE_ABSOLUTE_PATH> <RELEASE_SOURCE>/apps/cli/dist/main.js "$@"
 
 ## 2. 第一个 Role 的引导
 
-只在项目已有 `project.create` 操作、但 `list roles` 仍为空时使用。由有项目 write 与 review 权限的身份（通常是需求 Session）提交 `role.bootstrap`：
+只在项目已有 `project.create` 操作、但 `list roles` 仍为空时使用。由有项目 `management` 类写入与决定类授权的身份（通常是需求 Session）提交 `role.bootstrap`：
 
 ```json
 {

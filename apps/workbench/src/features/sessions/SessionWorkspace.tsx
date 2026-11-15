@@ -588,6 +588,7 @@ function OwnedQueue({ context, sessionId, enabled, queue }: { context: MutationC
 
 function SessionProfileForm({ context, snapshot, onApplied }: { context: MutationContext; snapshot: SessionSnapshot; onApplied(): void }) {
   const profile = snapshot.session.profile;
-  return <ActionForm context={{ ...context, draftScope: `session-profile:${snapshot.session.key}`, draftBaseline: `${profile?.version ?? 0}` }} review title="设置展示信息"
+  return <ActionForm context={{ ...context, draftScope: `session-profile:${snapshot.session.key}`, draftBaseline: `${profile?.version ?? 0}` }}
+    requiredPermissions={["session"]} decision title="设置展示信息"
     fields={sessionProfileFields(snapshot)} build={v => sessionProfileCommand(snapshot, v)} onApplied={onApplied} />;
 }

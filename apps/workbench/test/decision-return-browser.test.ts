@@ -57,7 +57,7 @@ test("待我决定的职责与阶段深链带着返回待我处理，直接打�
       const root = `/api/projects/${projectId}`;
       const path = decodeURIComponent(url.pathname);
       let value: unknown = { items: [], nextCursor: null };
-      if (path === "/api/session") value = { principal: { actorId, projectIds: [projectId], permissions: ["read", "write", "review"] }, capabilities: {} };
+      if (path === "/api/session") value = { principal: { actorId, projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true }, capabilities: {} };
       else if (path === root) value = { id: projectId, title: "待我决定返回夹具", createdAt: stamp };
       else if (path === `${root}/decisions-for-me`) value = { items: decisions, observedAt: stamp };
       else if (path === `${root}/acceptance-relay/mine`) value = { items: [] };

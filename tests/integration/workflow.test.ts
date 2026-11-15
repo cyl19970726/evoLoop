@@ -23,7 +23,7 @@ const makeService = (store: UnitOfWork = uow) => new WorkflowService({
 const service = makeService();
 const applied = (result: CommandResult): AppliedResult => { assert.equal(result.status, "applied", JSON.stringify(result)); return result as AppliedResult; };
 const projectId = randomUUID();
-const principal: Principal = { actorId: "integration-owner", projectIds: [projectId], permissions: ["read", "write", "review"] };
+const principal: Principal = { actorId: "integration-owner", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true };
 const token = "integration-token-not-a-real-secret-000000000000000";
 const app = await buildServer({ service, credentials: [{ token, ...principal }] });
 async function send(input: Omit<Command, "projectId" | "operationId"> | Record<string, unknown>, operationId = randomUUID()) {
@@ -92,9 +92,9 @@ test("real PostgreSQL/API: adopted requirement → two independent basis reviews
     assert.equal((await service.getOperation(principal, projectId, rejected.operationId))?.result.status, "rejected");
   });
   await t.test("authorization is rechecked on historic reads, commands and operation replay", async () => {
-    const readOnly: Principal = { ...principal, permissions: ["read"] };
+    const readOnly: Principal = { ...principal, permissions: [] };
     await assert.rejects(() => service.execute(readOnly, { ...command, type: "task.reviewBasis", decision: "adopt", taskId: taskIds[0]!, projectId, operationId } as Command), /Permission/);
-    await assert.rejects(() => service.getTask({ ...principal, projectIds: [] }, projectId, taskIds[0]!), /Permission/);
+    await assert.rejects(() => service.getTask({ ...principal, projectIds: [] }, projectId, taskIds[0]!), /membership/);
     await assert.rejects(() => service.getOperation({ ...principal, actorId: "another-actor" }, projectId, operationId), /actor|Actor|operation|Operation/);
     const foreign = await app.inject({ url: `/api/projects/${randomUUID()}/tasks`, headers: { authorization: `Bearer ${token}` } });
     assert.equal(foreign.statusCode, 403);

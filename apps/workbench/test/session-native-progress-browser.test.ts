@@ -71,7 +71,7 @@ test("native progress keeps source, freshness and cumulative usage separate from
     if (url.pathname.startsWith("/api/")) {
       const root = `/api/projects/${projectId}`;
       let value: unknown = { items: [], nextCursor: null, metadata }, status = 200;
-      if (url.pathname === "/api/session") value = { principal: { actorId: "operator", projectIds: [projectId], permissions: ["read"] }, capabilities: {} };
+      if (url.pathname === "/api/session") value = { principal: { actorId: "operator", projectIds: [projectId], permissions: [] }, capabilities: {} };
       else if (url.pathname === root) value = { id: projectId, title: "测试项目", createdAt: stamp };
       else if (url.pathname === `${root}/session-work/${encodeURIComponent(sessionKey)}`) {
         if (mode === "fail") { status = 503; value = { message: "进度读取失败" }; } else value = snapshot();

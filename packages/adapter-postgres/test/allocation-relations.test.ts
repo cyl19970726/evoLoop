@@ -335,7 +335,7 @@ test("composed PG service, authenticated HTTP and CLI expose the same read-only 
   const workflow = new WorkflowService({ uow, clock: { now: () => new Date().toISOString() }, ids: { next: randomUUID },
     hasher: { hash: value => value } });
   const app = await buildServer({ service: workflow, allocationRelations: new AllocationRelationsService({ uow }),
-    credentials: [{ token, actorId: "allocation-reader", projectIds: [p], permissions: ["read"] }] });
+    credentials: [{ token, actorId: "allocation-reader", projectIds: [p], permissions: [] }] });
   const headers = { authorization: `Bearer ${token}` };
   const prefix = `/api/projects/${p}`;
   const counts = () => pool.query(`SELECT

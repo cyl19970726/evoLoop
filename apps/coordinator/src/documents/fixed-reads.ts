@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { Principal } from "@evoloop/contracts";
+import { isProjectMember, type Principal } from "@evoloop/contracts";
 import type { DocumentPayloadRevision } from "@evoloop/contracts/process-documents";
 import { DomainError } from "@evoloop/contracts/ports";
 import { matches, type OriginalReaderOptions } from "./read-original.js";
@@ -70,8 +70,8 @@ export class FixedBodyCache {
 /** Verify a single registered blob and its fixed manifest entry before disclosing bytes. */
 export async function fixedPart(options: OriginalReaderOptions, principal: Principal, revision: DocumentPayloadRevision,
   blobId?: string, cache?: FixedBodyCache): Promise<Buffer> {
-  if (!principal.permissions.includes("read") || !principal.projectIds.includes(revision.projectId))
-    throw new DomainError("FORBIDDEN", "Project read permission is required");
+  if (!isProjectMember(principal, revision.projectId))
+    throw new DomainError("FORBIDDEN", "Project membership is required");
   if (blobId === undefined && revision.body !== null) {
     if (revision.payloadRef !== null || revision.assetsManifest.length) return fail("Invalid inline original metadata");
     const bytes = Buffer.from(revision.body, "utf8");

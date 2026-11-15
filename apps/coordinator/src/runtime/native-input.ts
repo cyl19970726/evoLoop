@@ -1,4 +1,5 @@
-import type { Principal, RuntimeSessionRecord } from "@evoloop/contracts";
+import { hasDecisionAuthority, hasPermission, mayAccessSession, type Principal, type RuntimeSessionRecord }
+  from "@evoloop/contracts";
 import type { NativeInputEvent, NativeInputRecord } from "@evoloop/contracts/native-input";
 import type { NativeInputView } from "@evoloop/contracts/session-observation";
 import type { RuntimePort } from "@evoloop/contracts/runtime";
@@ -51,17 +52,18 @@ export class NativeInputBridge {
   detach(): void { this.unsubscribe?.(); this.unsubscribe = null; this.runtime = null; }
 
   private async replyReason(principal: Principal, record: NativeInputRecord): Promise<string | null> {
-    if (!principal.projectIds.includes(record.projectId) || !principal.permissions.includes("read") ||
-        !principal.permissions.includes("write")) return "当前身份没有本项目的回复权限。";
+    if (!hasPermission(principal, record.projectId, "session") ||
+        !mayAccessSession(principal, record.projectId, record.sessionId)) return "当前身份没有本会话的回复权限。";
     if (record.state !== "pending" || !record.supported) return record.reason ?? "原生请求当前不可回复。";
     if (!record.source) return "原生请求的运行或消息归属仍在核对。";
-    if (record.source.actorId !== principal.actorId && !principal.permissions.includes("review"))
+    if (record.source.actorId !== principal.actorId && !hasDecisionAuthority(principal, record.projectId, "session"))
       return "需要原请求发起者或本项目复核者回复。";
     if (!this.deps.canWrite() || !this.runtime?.hasPendingInput?.(record.id, record.connectionId))
       return "原生请求已清理、连接已断开或协调者当前不可写。";
     const current = await this.deps.principal(record.projectId, principal.actorId);
-    if (!current || !current.permissions.includes("read") || !current.permissions.includes("write") ||
-        (record.source.actorId !== current.actorId && !current.permissions.includes("review")))
+    if (!current || !hasPermission(current, record.projectId, "session") ||
+        !mayAccessSession(current, record.projectId, record.sessionId) ||
+        (record.source.actorId !== current.actorId && !hasDecisionAuthority(current, record.projectId, "session")))
       return "当前回复身份的授权已失效。";
     const session = await this.deps.session(record.projectId, record.sessionId);
     if (!session || session.state !== "ready" || session.nativeThreadId !== record.threadId ||

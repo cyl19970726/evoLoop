@@ -31,7 +31,7 @@ const schema=`el_resume_${randomUUID().replaceAll("-","").slice(0,16)}`;
 const pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`});
 const projectId=randomUUID(),reviewer="resume-reviewer",cognition="resume-cognition",reporter="independent-reporter";
 const cognitiveRole=fixtureRoleId("resume-cognitive-role"),businessRole=fixtureRoleId("resume-business-role"),scope="resume-cognitive-scope";
-const principal=(actorId:string,permissions:Array<"read"|"write"|"review">=["read","write","review"])=>({actorId,projectIds:[projectId],permissions});
+const principal=(actorId:string,permissions:Array<"task"|"document"|"session"|"management">=["task","document","session","management"],decisions=true)=>({actorId,projectIds:[projectId],permissions,decisions});
 const hash=(s:string)=>createHash("sha256").update(s).digest("hex");
 const uow=new PostgresUnitOfWork(pool);
 const workflow=new WorkflowService({uow,clock:{now:()=>new Date().toISOString()},ids:{next:randomUUID},hasher:{hash}});
@@ -89,7 +89,7 @@ test("PG waiting resume keeps signed history and exposes only verified fixed Iss
   const beforeLoop=(await orchestration.getLoop(principal(reviewer),projectId,loopId))!;
   const beforeDecision=await orchestration.getDecision(principal(reviewer),projectId,decisionId);
   const operationId=randomUUID(),command={type:"loop.resumeWaiting",loopId,expectedLoopVersion:beforeLoop.version,decisionId,dispatchId,evidenceRef:"review:evidence",reason:"Resume original Issue"};
-  await fails(orchestration.execute(principal(cognition,["read","write"]),{projectId,operationId:randomUUID(),...command} as never),"FORBIDDEN");
+  await fails(orchestration.execute(principal(cognition,["task","document","session"]),{projectId,operationId:randomUUID(),...command} as never),"FORBIDDEN");
   const secondOperationId=randomUUID();
   const [one,two]=await Promise.allSettled([managed(reviewer,command,operationId),managed(reviewer,command,secondOperationId)]);
   assert.equal([one,two].filter(x=>x.status==="fulfilled").length,1,"only one distinct operation may resume a Decision");
@@ -129,7 +129,7 @@ test("PG waiting resume keeps signed history and exposes only verified fixed Iss
   await managed(cognition,{type:"dispatch.resolve",dispatchId:resumedDispatch,claimToken:resumedClaim,
     result:"accepted",runtimeRunId:resumedRun,reason:"Fixture new Run; no native Turn"});
   const worker:WorkerIdentity={principal:{actorId:`worker-${randomUUID()}`,projectIds:[projectId],
-    permissions:["read","write","review"]},scope:{projectId,loopId,taskId:resumedTask,runId:resumedRun,
+    permissions:["task", "document", "session", "management"], decisions: true},scope:{projectId,loopId,taskId:resumedTask,runId:resumedRun,
       sessionId:resumedSession,roleId:cognitiveRole,kind:"cognition",allowedRoleIds:[cognitiveRole,businessRole]}};
   const facts=workerGuardFacts(pool,worker);
   const fixedPath=`/api/projects/${projectId}/documents/${issueId}/revisions/${created.revisionId}/original`;

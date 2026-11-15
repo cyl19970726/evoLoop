@@ -1,4 +1,5 @@
-import type { Principal, RuntimeRunRecord } from "@evoloop/contracts";
+import { hasDecisionAuthority, hasPermission, type Permission, type Principal, type RuntimeRunRecord }
+  from "@evoloop/contracts";
 import type { OrchestrationDispatch, OrchestrationSubmission, OrchestrationWorkerDecision } from "@evoloop/contracts/orchestration";
 import type { WorkflowService } from "@evoloop/core";
 import type { OrchestrationService } from "@evoloop/core/orchestration";
@@ -44,8 +45,9 @@ export function createWorkerSealer(deps: WorkerSealerDependencies) {
     if (dispatch.projectId !== run.projectId || dispatch.taskId !== run.taskId || dispatch.runtimeRunId !== run.id ||
       dispatch.state !== "accepted" || !terminal(run)) return { status: "pending", reason: "BOUND_TERMINAL_RUN_REQUIRED" };
     const controller = await deps.controller(dispatch.projectId, dispatch.recipientRoleId, dispatch);
-    if (!controller || !controller.projectIds.includes(dispatch.projectId) ||
-      !["read", "write", "review"].every(p => controller.permissions.includes(p as "read" | "write" | "review")))
+    if (!controller || !(["task", "document", "session"] as Permission[]).every(permission =>
+      hasPermission(controller, dispatch.projectId, permission)) ||
+      !hasDecisionAuthority(controller, dispatch.projectId, "management"))
       return { status: "pending", reason: "SEAL_CONTROLLER_UNAVAILABLE" };
     const [submission, decision] = await Promise.all([
       deps.orchestration.getSubmissionForDispatch(controller, dispatch.projectId, dispatch.id),

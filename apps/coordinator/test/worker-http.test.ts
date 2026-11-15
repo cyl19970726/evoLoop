@@ -86,7 +86,8 @@ async function fixture() {
     },
     getOperation: async () => {reached.push("orchestrationOperation");return null;},
   } as unknown as OrchestrationService;
-  const app = await buildServer({credentials:[{token:ownerToken,actorId:"owner",projectIds:[P],permissions:["read","write","review"]}],
+  const app = await buildServer({credentials:[{token:ownerToken,actorId:"owner",projectIds:[P],
+    permissions:["task","document","session","management"],decisions:true}],
     service:workflow, orchestration:{service:orchestration},
     runtime:{status:()=>({available:true,error:null}),trace:async (_principal:unknown,_project:string,target:string,_cursor:unknown,identity:unknown)=>{
       reached.push(`trace:${target}:${identity ? "worker" : "reviewer"}`); return {runId:target,source:"owned-native-history"};

@@ -1,4 +1,4 @@
-import type { AppliedResult, Command, Principal } from "@evoloop/contracts";
+import { hasDecisionAuthority, hasPermission, mayAccessSession, type AppliedResult, type Command, type Principal } from "@evoloop/contracts";
 import type { NativeInputCapture, NativeInputRecord } from "@evoloop/contracts/native-input";
 import type { Clock, IdFactory, Transaction, UnitOfWork } from "@evoloop/contracts/ports";
 import { DomainError } from "@evoloop/contracts/ports";
@@ -35,7 +35,8 @@ export async function applyNativeInputReply(tx:Transaction,principal:Principal,c
   const value=required(await store.get(c.projectId,c.inputRequestId),'native input');
   if(value.version!==c.expectedVersion)throw new DomainError('VERSION_CONFLICT','Native input changed',value.version);
   if(value.state!=='pending'||!value.supported||!value.source)throw new DomainError('INPUT_NOT_REPLYABLE','Native input is not awaiting a supported reply');
-  if(principal.actorId!==value.source.actorId&&!principal.permissions.includes('review'))
+  if(!hasPermission(principal,c.projectId,'session')||!mayAccessSession(principal,c.projectId,value.sessionId)||
+    principal.actorId!==value.source.actorId&&!hasDecisionAuthority(principal,c.projectId,'session'))
     throw new DomainError('FORBIDDEN','Only the initiating actor or project reviewer may reply');
   const keys=Object.keys(c.answers);
   if(keys.length!==value.questions.length||value.questions.some(q=>!Object.hasOwn(c.answers,q.id)))

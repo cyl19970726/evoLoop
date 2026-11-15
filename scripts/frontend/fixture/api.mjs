@@ -72,7 +72,7 @@ function projectRoutes(params) {
 }
 
 export function answer(path, params) {
-  if (path === "/api/session") return ok({ principal: { actorId, projectIds: [projectId, otherProject.id], permissions: ["read", "write", "review"],
+  if (path === "/api/session") return ok({ principal: { actorId, projectIds: [projectId, otherProject.id], permissions: ["task", "document", "session", "management"], decisions: true,
     identityKind: "human" }, capabilities: {} });
   if (path === "/api/projects") return ok([project, otherProject]);
   // The running version shown at the top of 总览 (made up: no commit of this repository).

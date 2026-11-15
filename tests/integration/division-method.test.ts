@@ -33,7 +33,7 @@ function withPersistedResumeProfile(runtime: RuntimeWorkflowService, uow: Postgr
 const url=process.env.TEST_DATABASE_URL;
 if(!url||!/evoloop.*test/.test(new URL(url).pathname))throw new Error("dedicated PostgreSQL test database required");
 const hash=(value:string)=>createHash("sha256").update(value).digest("hex");
-const principal=(actorId:string,projectId:string)=>({actorId,projectIds:[projectId],permissions:["read","write","review"] as Array<"read"|"write"|"review">});
+const principal=(actorId:string,projectId:string)=>({actorId,projectIds:[projectId],permissions:["task", "document", "session", "management"], decisions: true});
 const denied=async(p:Promise<unknown>,code:string)=>assert.rejects(p,error=>error instanceof OrchestrationError&&error.code===code);
 
 test("PG method records a choice, then permits only its original todo Task through ordinary same-source dispatch",async t=>{
@@ -116,7 +116,7 @@ test("PG method records a choice, then permits only its original todo Task throu
     workflow,trusted:runtime,principals:[principal(owner,projectId)],canWrite:()=>true,
     allowedCwd:async()=>true,hasGrant:()=>true});
   const app=await buildServer({service:workflow,credentials:[{token:"o".repeat(40),actorId:owner,
-    projectIds:[projectId],permissions:["read","write","review"]}] as never,
+    projectIds:[projectId],permissions:["task", "document", "session", "management"], decisions: true}] as never,
     documents:{uow,blobsForPrincipal:async()=>({}) as never},runtime:metadataRunner,
     orchestration:{service:orchestration},workers:{authenticate:header=>broker.authenticate(header),
       facts:identity=>workerGuardFacts(pool,identity)}});

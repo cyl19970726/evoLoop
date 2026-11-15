@@ -22,8 +22,8 @@ const deps = { uow, clock: { now: () => new Date().toISOString() }, ids: { next:
 const workflow = new WorkflowService(deps);
 const runtime = new RuntimeWorkflowService(deps);
 const project = randomUUID(), role = randomUUID();
-const reviewer = { actorId: 'lead', projectIds: [project], permissions: ['read' as const, 'write' as const, 'review' as const] };
-const writer = { actorId: 'worker', projectIds: [project], permissions: ['read' as const, 'write' as const] };
+const reviewer = { actorId: 'lead', projectIds: [project], permissions: ['task','document','session','management'] as ('task'|'document'|'session'|'management')[], decisions: true };
+const writer = { actorId: 'worker', projectIds: [project], permissions: ['task','document','session'] as ('task'|'document'|'session'|'management')[] };
 
 before(async () => {
   await migrate(url!, schema);

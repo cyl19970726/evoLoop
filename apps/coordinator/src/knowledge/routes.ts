@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { idSchema, type Document, type DocumentDetail, type Principal, type Page } from "@evoloop/contracts";
+import { hasDecisionAuthority, hasPermission, isProjectMember, idSchema,
+  type Document, type DocumentDetail, type Principal, type Page } from "@evoloop/contracts";
 import type { DocumentPayloadRevision } from "@evoloop/contracts/process-documents";
 import type { RegisteredDocumentBlob } from "@evoloop/contracts/process-documents";
 import type { BlobStore } from "@evoloop/contracts/sources";
@@ -19,7 +20,9 @@ const sha = (body: string) => createHash("sha256").update(body, "utf8").digest("
 const params = (raw: unknown) => z.record(z.string(), uuid).parse(raw);
 const pageQuery = z.strictObject({ limit: z.coerce.number().int().min(1).max(100).default(50), cursor: z.string().optional() });
 const permission = (principal: Principal | null, projectId: string, kind: "read" | "write" | "review"): Principal => {
-  if (!principal || !principal.projectIds.includes(projectId) || !principal.permissions.includes(kind))
+  if (!principal || !isProjectMember(principal, projectId) ||
+      kind === "write" && !hasPermission(principal, projectId, "document") ||
+      kind === "review" && !hasDecisionAuthority(principal, projectId, "document"))
     throw new DomainError("FORBIDDEN", `Project ${kind} permission is required`);
   return principal;
 };

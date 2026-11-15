@@ -1,8 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import type { Principal } from "@evoloop/contracts";
-import { idSchema } from "@evoloop/contracts";
+import { hasPermission, isProjectMember, idSchema, type Principal } from "@evoloop/contracts";
 import { documentImportSchema } from "@evoloop/contracts/process-documents";
 import type { DocumentPayloadRevision, DocumentPayloadUnitOfWork } from "@evoloop/contracts/process-documents";
 import type { BlobStore } from "@evoloop/contracts/sources";
@@ -15,7 +14,8 @@ const maxBundleBytes = 16 * 1024 * 1024;
 const hash = (bytes: Uint8Array | string): string => createHash("sha256").update(bytes).digest("hex");
 const paramsSchema = z.strictObject({ projectId: idSchema, id: idSchema, revisionId: idSchema });
 const scoped = (principal: Principal | null, projectId: string, permission: "read" | "write"): Principal => {
-  if (!principal || !principal.projectIds.includes(projectId) || !principal.permissions.includes(permission))
+  if (!principal || !isProjectMember(principal, projectId) ||
+      permission === "write" && !hasPermission(principal, projectId, "document"))
     throw new DomainError("FORBIDDEN", "Project permission is required");
   return principal;
 };

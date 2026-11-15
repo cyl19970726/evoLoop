@@ -12,7 +12,7 @@ const loopId = "00000000-0000-4000-8000-000000000004";
 const sourceId = "00000000-0000-4000-8000-000000000005";
 const cognition = "cognition";
 const scopeId = "cognitive-scope";
-const principal: Principal = { actorId: "controller", projectIds: [projectId], permissions: ["read", "write", "review"] };
+const principal: Principal = { actorId: "controller", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true };
 const now = "2026-10-23T00:00:00.000Z";
 const noObservation = { operationId: null, sourceActorId: null, observationId: null,
   deliveryId: null, observationResult: null } as const;

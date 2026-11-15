@@ -4,6 +4,7 @@
 // writes go through the knowledge API and reread with context.onChanged; publish and retract keep an operation receipt
 // until the outside result is reconciled.
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { hasDecisionAuthority, hasPermission } from "@evoloop/contracts";
 import type { KnowledgeCandidateRecord, KnowledgeRevision } from "@evoloop/contracts/knowledge";
 import { Button, ConfirmDialog, Notice, RefreshingIndicator, cn } from "@evoloop/ui";
 import { errorCode, errorDetail, errorText, isUnconfirmed } from "../../shared/api";
@@ -59,8 +60,8 @@ function OutcomeNotice({ message, onClose }: { message: Message; onClose(): void
 
 export function KnowledgePanel({ context }: { context: MutationContext; refresh: number }) {
   const { projectId, principal } = context;
-  const canWrite = principal.permissions.includes("write");
-  const canReview = principal.permissions.includes("review");
+  const canWrite = hasPermission(principal, projectId, "document");
+  const canReview = hasDecisionAuthority(principal, projectId, "document");
   const [route, setRoute] = useState<KnowledgeRoute>(() => routeHere(projectId));
   // Only a page-to-page switch keeps the previous page on screen while the next loads; opening a page from the index
   // or from 候选与审阅 starts from a loading state instead of resurfacing a page read earlier.

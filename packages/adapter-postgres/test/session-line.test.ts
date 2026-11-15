@@ -23,9 +23,10 @@ const deps = { uow, clock: { now: () => new Date().toISOString() }, ids: { next:
 const workflow = new WorkflowService(deps);
 const runtime = new RuntimeWorkflowService(deps);
 const p = randomUUID(), role = randomUUID(), roleRev = randomUUID(), session = randomUUID();
-const lead: Principal = { actorId: "lead", projectIds: [p], permissions: ["read", "write", "review"] };
-const worker: Principal = { actorId: "worker", projectIds: [p], permissions: ["read", "write", "review"] };
-const targetOwner: Principal = { actorId: "target-owner", projectIds: [p], permissions: ["read", "write", "review"] };
+const lead: Principal = { actorId: "lead", projectIds: [p], permissions: ["task", "document", "session", "management"], decisions: true };
+const worker: Principal = { actorId: "worker", projectIds: [p], permissions: ["task", "document", "session"], decisions: true };
+const targetOwner: Principal = { actorId: "target-owner", projectIds: [p], permissions: ["task", "document", "session", "management"], decisions: true };
+const managementOnly: Principal = { actorId: "management-only", projectIds: [p], permissions: ["management"] };
 
 before(async () => {
   await migrate(url!, schema);
@@ -120,6 +121,27 @@ test("entries keep their order, move one step, and a queued Task cannot be start
   assert.equal((await entries()).length, 0);
   assert.ok(first.entityId);
   assert.ok((await eventKinds()).includes("entry.appended") && (await eventKinds()).includes("entry.moved") && (await eventKinds()).includes("entry.removed"));
+});
+
+test("a management-only issuer cannot append work for a decision-enabled line pump to start", async () => {
+  const t = await newTask("No borrowed decision");
+  const before = await task(t);
+  assert.equal(await reject({ type: "line.append", projectId: p, operationId: randomUUID(), sessionId: session, taskId: t,
+    expectedTaskVersion: before.version, source: "leader", reason: "try to borrow the pump's decision" }, managementOnly), "FORBIDDEN");
+  assert.deepEqual((await pool.query(`SELECT
+      (SELECT count(*)::int FROM session_line_entry WHERE project_id=$1 AND task_id=$2) AS entries,
+      (SELECT count(*)::int FROM task_session_assignment WHERE project_id=$1 AND task_id=$2) AS assignments,
+      (SELECT count(*)::int FROM runtime_run WHERE project_id=$1 AND task_id=$2) AS runs,
+      (SELECT count(*)::int FROM session_message WHERE project_id=$1 AND context_task_id=$2) AS confirmations`,
+    [p, t])).rows[0], { entries: 0, assignments: 0, runs: 0, confirmations: 0 });
+  assert.deepEqual(await task(t), before, "Task phase and version remain unchanged");
+
+  await append(t);
+  const queued = await entryOf(t);
+  assert.equal(queued.state, "queued");
+  assert.equal((await task(t)).state, "todo", "appending authorizes waiting, not an unconfirmed start");
+  await apply({ type: "line.remove", projectId: p, operationId: randomUUID(), entryId: queued.id,
+    expectedVersion: queued.version, reason: "cleanup" });
 });
 
 test("a controller's own business Session is refused even when another identity created it, and the refusal writes nothing", async () => {

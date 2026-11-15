@@ -1,4 +1,4 @@
-import type { Principal, RuntimeSessionRecord } from '@evoloop/contracts';
+import { hasDecisionAuthority, type Principal, type RuntimeSessionRecord } from '@evoloop/contracts';
 import { DomainError, type Transaction } from '@evoloop/contracts/ports';
 import type { ExecutionProfileRevision, SessionRecoveryCommand } from '@evoloop/contracts/session-recovery';
 
@@ -17,8 +17,7 @@ const need=<T>(value:T|null|undefined,label:string):T=>{if(value==null)throw new
 const active=new Set(['requested','dispatching','running','unknown']);
 export async function applySessionRecovery(tx:Transaction,principal:Principal,command:SessionRecoveryCommand,
   now:string,nextId:()=>string,authority?:RecoveryAuthority){
-  if(!principal.actorId||!principal.projectIds.includes(command.projectId)||
-    !principal.permissions.includes('write')||!principal.permissions.includes('review')||principal.actorId.startsWith('worker-'))
+  if(!hasDecisionAuthority(principal,command.projectId,'session')||principal.actorId.startsWith('worker-'))
     throw new DomainError('FORBIDDEN','Recovery requires the project reviewer, not a runtime worker');
   const recovery=need(tx.recovery,'Session recovery persistence');
   const session=need(await tx.getRuntimeSession(command.sessionId),'Session');

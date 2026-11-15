@@ -135,7 +135,7 @@ test("ordinary submission attribution requires the frozen terminal Run version",
       terminal_run_version=3,sealed_by='coordinator',delivery_command_hash=$3,updated_at_utc=now()
       WHERE project_id=$1 AND run_id=$2`,[p.id,runId,deliveryCommandHash]);
     const runtime=new RuntimeWorkflowService({uow,clock:{now:()=>now},ids:{next:randomUUID}});
-    const reviewer={actorId:"runtime-reviewer",projectIds:[p.id],permissions:["read","review"] as ("read"|"review")[]};
+    const reviewer={actorId:"runtime-reviewer",projectIds:[p.id],permissions:["session","management"] as ("task"|"document"|"session"|"management")[],decisions:true};
     const terminalEvents=await uow.read(p.id,r=>r.listRuntimeEvents(runId));
     assert.equal(terminalEvents.at(-1)?.detail,`completed; completedAtUtc=${now}`);
     assert.equal(terminalEvents.at(-1)?.itemsDigest,terminalDigest);
@@ -147,13 +147,13 @@ test("ordinary submission attribution requires the frozen terminal Run version",
       deliveryOperationId,1,intent));
     assert.equal(await signer(),actor);
     const workflow=new WorkflowService({uow,clock:{now:()=>now},ids:{next:randomUUID},hasher:{hash:sha}});
-    const signerPrincipal={actorId:actor,projectIds:[p.id],permissions:["read","write","review"] as ("read"|"write"|"review")[]};
+    const signerPrincipal={actorId:actor,projectIds:[p.id],permissions:["task","document","session","management"] as ("task"|"document"|"session"|"management")[],decisions:true};
     const saved=await workflow.execute(signerPrincipal,deliveryCommand as Parameters<typeof workflow.execute>[1]);
     assert.equal(saved.status,"applied");
     const deliveryId=saved.status==="applied"?saved.revisionId!:"";
     assert.equal((await uow.read(p.id,r=>r.getDelivery(deliveryId)))?.sourceRunVersion,3);
     assert.equal((await observeAgain()).version,3,"same evidence after Delivery preserves its acceptance path");
-    const independent={actorId:"independent",projectIds:[p.id],permissions:["read","write"] as ("read"|"write")[]};
+    const independent={actorId:"independent",projectIds:[p.id],permissions:["task","document","session"] as ("task"|"document"|"session"|"management")[]};
     const acceptedUse=await workflow.execute(independent,{type:"observation.record",projectId:p.id,operationId:randomUUID(),
       taskId:item.head.id,deliveryId,observer:"independent",observerKind:"agent",result:"used",evidence:"Read artifact",reason:"Use"});
     assert.equal(acceptedUse.status,"applied",JSON.stringify(acceptedUse));
@@ -282,7 +282,7 @@ test("legacy Task decision projection follows only the current historical revisi
 
     const workflow = new WorkflowService({ uow: local, clock: { now: () => now }, ids: { next: randomUUID },
       hasher: { hash: sha } });
-    const principal = { actorId: actor, projectIds: [localProjectId], permissions: ["read", "write", "review"] as ("read" | "write" | "review")[] };
+    const principal = { actorId: actor, projectIds: [localProjectId], permissions: ["task", "document", "session", "management"] as ("task" | "document" | "session" | "management")[], decisions: true };
     const changed = await workflow.execute(principal, { type: "task.update", projectId: localProjectId,
       operationId: randomUUID(), taskId: proposedId, expectedVersion: 1, title: "Clarified task",
       content: "Old content", acceptance: "Check result", owner: actor, reason: "Replace the old proposal" });

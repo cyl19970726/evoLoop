@@ -22,7 +22,8 @@ import { disposeStalePendingTodo, disposeStaleTodoMessage, getLeaderNotice, getL
 import { ScheduleDirectDispatcher } from "./scheduling/direct-dispatch.js";
 import { sessionDenial } from "./scheduling/direct-authorization.js";
 import { listLeaderEventRecords } from "@evoloop/adapter-postgres/leader-event-records";
-import { authConfigSchema, hasCurrentStudyReviewer, isProjectWriter } from "./auth.js";
+import { authConfigSchema, hasCurrentStudyReviewer, isProjectWriter, parseAuthConfig } from "./auth.js";
+import { hasDecisionAuthority, hasPermission, isProjectMember, mayAccessSession } from "@evoloop/contracts";
 import { buildServer } from "./server.js";
 import { acquireCoordinatorLease, leaseFencedUnitOfWork } from "./lease.js";
 import { RuntimeWorkflowService } from "@evoloop/core/runtime";
@@ -126,8 +127,8 @@ const databaseUrl = process.env.EVOLOOP_DATABASE_URL;
 const authFile = process.env.EVOLOOP_AUTH_FILE;
 if (!databaseUrl || !authFile) throw new Error("Set EVOLOOP_DATABASE_URL and EVOLOOP_AUTH_FILE. Run migrations separately before starting.");
 let credentials: ReturnType<typeof authConfigSchema.parse>;
-try { credentials = authConfigSchema.parse(JSON.parse(await readFile(authFile, "utf8"))); }
-catch { throw new Error("Invalid identity file: check its JSON and credential schema (extraCommands may only list document.archive and document.restore); values are not logged."); }
+try { credentials = parseAuthConfig(JSON.parse(await readFile(authFile, "utf8"))); }
+catch (error) { throw new Error(`Invalid identity file: ${error instanceof Error ? error.message : "check its JSON and credential schema"}; values are not logged.`); }
 const currentStudyReviewer = async (projectId: string, actorId: string) =>
   hasCurrentStudyReviewer(credentials,projectId,actorId);
 const port = Number(process.env.EVOLOOP_PORT ?? "4318");
@@ -140,7 +141,7 @@ const lease = await acquireCoordinatorLease(pool);
 const drain = new DrainControl(pool);
 const integrations = await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE);
 const configuredUsageTimeZone = integrations.runtime?.dailyBudget?.timeZone ?? "UTC";
-const currentIdentity = async () => authConfigSchema.parse(JSON.parse(await readFile(authFile,"utf8")));
+const currentIdentity = async () => parseAuthConfig(JSON.parse(await readFile(authFile,"utf8")));
 const currentProjectWriter = async (projectId:string,actorId:string) =>
   isProjectWriter(await currentIdentity(),projectId,actorId);
 const resolveSessionLineRecipient=async(projectId:string,sessionId:string)=>{
@@ -249,7 +250,7 @@ if (configuredBlobRoot && !isAbsolute(configuredBlobRoot)) throw new Error("EVOL
 const blobRoot = resolve(configuredBlobRoot ?? `${homedir()}/.local/share/evoloop-pilot/blobs`);
 if (blobRoot === process.cwd() || blobRoot.startsWith(process.cwd() + sep)) throw new Error("Document originals must stay outside the development checkout.");
 const blobsForPrincipal = (principal: Principal) => new LocalBlobStore(blobRoot,
-  async payload => principal.projectIds.includes(payload.projectId) && principal.permissions.includes("read"),
+  async payload => isProjectMember(principal, payload.projectId),
   async payload => {
     try {
       const record = await service.getRegisteredBlob(principal, payload.projectId, payload.id);
@@ -261,18 +262,21 @@ const blobsForPrincipal = (principal: Principal) => new LocalBlobStore(blobRoot,
     return runs.some(run => run.projectId === payload.projectId && run.evaluationPacket?.payloadRef === payload.id &&
       run.evaluationPacket.contentHash === payload.contentHash);
   });
-const gitForPrincipal = (principal:Principal) => new GitDocumentSource(integrations.repositories, async ref => principal.projectIds.includes(ref.projectId) && principal.permissions.includes("read"));
+const gitForPrincipal = (principal:Principal) => new GitDocumentSource(integrations.repositories, async ref => isProjectMember(principal, ref.projectId));
 const knowledge = integrations.knowledge;
 const repositoryForPrincipal = (principal: Principal, projectId: string) => {
   if (!knowledge || !knowledgeServesProject(knowledge, projectId)) throw new DomainError("KNOWLEDGE_NOT_CONFIGURED", "当前项目尚未配置外置知识后端。");
-  const allowed = (permission: "read" | "write" | "review") => principal.projectIds.includes(projectId) && principal.permissions.includes(permission);
   const raw = new OpenVikingKnowledgeRepository({ baseUrl: knowledge.baseUrl, manifestRoot: knowledge.manifestRoot,
     maintainerId: knowledge.maintainerId,
-    mayRead: async p => p === projectId && allowed("read"),
-    mayPropose: async candidate => candidate.projectId === projectId && candidate.actorId === principal.actorId && allowed("write"),
-    mayReview: async (p, actor) => p === projectId && actor === principal.actorId && allowed("review"),
-    mayPublish: async (p, actor) => lease.canWrite() && p === projectId && actor === principal.actorId && allowed("review"),
-    mayReconcile: async (p, actor) => lease.canWrite() && p === projectId && actor === principal.actorId && allowed("review"),
+    mayRead: async p => p === projectId && isProjectMember(principal, projectId),
+    mayPropose: async candidate => candidate.projectId === projectId && candidate.actorId === principal.actorId &&
+      hasPermission(principal, projectId, "document"),
+    mayReview: async (p, actor) => p === projectId && actor === principal.actorId &&
+      hasDecisionAuthority(principal, projectId, "document"),
+    mayPublish: async (p, actor) => lease.canWrite() && p === projectId && actor === principal.actorId &&
+      hasDecisionAuthority(principal, projectId, "document"),
+    mayReconcile: async (p, actor) => lease.canWrite() && p === projectId && actor === principal.actorId &&
+      hasDecisionAuthority(principal, projectId, "document"),
   });
   return withObservedSources(raw, async (p, source) => {
     if (p !== projectId || !source.sourceKey.startsWith("document:") || source.state !== "reachable") return false;
@@ -310,10 +314,10 @@ const browserRead = runtimeConfig?.enabled && runtimeConfig.browserRead ? new Br
       if (!currentIntegrations.runtime?.enabled ||
         currentIntegrations.runtime.browserRead?.scopePath!==runtimeConfig.browserRead?.scopePath ||
         currentIntegrations.runtime.browserRead?.playwrightModulePath!==runtimeConfig.browserRead?.playwrightModulePath) return null;
-      const currentAuth=authConfigSchema.parse(JSON.parse(await readFile(authFile,"utf8")));
+      const currentAuth=parseAuthConfig(JSON.parse(await readFile(authFile,"utf8")));
       const readerToken=readerTokenForScope(scope,currentAuth);
       if (!readerToken) return null;
-      const reader={actorId:scope.readerActorId,projectIds:[scope.projectId],permissions:["read"] as ("read"|"write"|"review")[]};
+      const reader={actorId:scope.readerActorId,projectIds:[scope.projectId],permissions:[]};
       const session=await service.getRuntimeSession(reader,scope.projectId,scope.sessionId);
       const run=await service.getRuntimeRun(reader,scope.projectId,scope.runId);
       const currentTask=await service.getTask(reader,scope.projectId,scope.taskId);
@@ -534,7 +538,7 @@ const runner = runtimeFactory ? new RuntimeRunner({ runtimeFactory, workflow: se
   },
   roleContextForRun: async (session,run) => {
     if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(session.roleId))return null;
-    const principal=(await currentIdentity()).find(value=>value.projectIds.includes(run.projectId)&&value.permissions.includes("read"));
+    const principal=(await currentIdentity()).find(value=>isProjectMember(value,run.projectId));
     if(!principal)throw new Error("Role source authority is unavailable");
     const role=await service.getRole(principal,run.projectId,session.roleId);
     const current=await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE);
@@ -579,7 +583,7 @@ const runner = runtimeFactory ? new RuntimeRunner({ runtimeFactory, workflow: se
       if(!business||!await currentProjectWriter(run.projectId,business.actorId))return false;
       if(!await uow.read(run.projectId,reader=>reader.queue?.queueBindingCurrent(attempt.role_id,run.sessionId)??Promise.resolve(false)))return false;
     }
-    const reader = credentials.find(p => p.projectIds.includes(run.projectId) && p.permissions.includes("read"));
+    const reader = credentials.find(p => isProjectMember(p, run.projectId));
     if (!reader) return false;
     const session = await service.getRuntimeSession(reader, run.projectId, run.sessionId);
     return currentSessionGrant(pool,session,
@@ -750,13 +754,14 @@ const leaderResultNoticePump = new LeaderResultNoticePump({
   onDiagnostic: (projectId, noticeId, reason) => console.error(`Leader result notice ${noticeId} in project ${projectId} waits: ${reason}`),
 });
 const taskAttentionPump = new TaskAttentionPump({pool,canWrite:lease.canWrite,now:clock.now,
-  projects:async()=> (await currentIdentity()).filter(p=>p.permissions.includes("read")&&
-    p.permissions.includes("write")&&p.permissions.includes("review")).flatMap(p=>p.projectIds),
+  projects:async()=> (await currentIdentity()).filter(p=>p.projectIds.some(projectId =>
+    hasPermission(p, projectId, "management") && hasDecisionAuthority(p, projectId, "management"))).flatMap(p=>p.projectIds),
   pollIntervalMs:30000,onError:()=>console.error("Task attention evaluation needs source reconciliation.")});
 // Alerts that leave the workbench (Task 5da8b6d9). Read-only on the system it reports on; the outlet is private configuration.
 const opsAlertPump = new OpsAlertPump({ pool, canWrite: lease.canWrite,
   settings: async () => { const alerts = (await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE)).alerts; return alerts ? { enabled: alerts.enabled, pollIntervalMs: alerts.pollIntervalMs, stallMinutes: alerts.stallMinutes, outlet: alerts.outlet as AlertOutletConfig } : null; },
-  projects: async () => (await currentIdentity()).filter(p => p.permissions.includes("read") && p.permissions.includes("write") && p.permissions.includes("review")).flatMap(p => p.projectIds),
+  projects: async () => (await currentIdentity()).filter(p => p.projectIds.some(projectId =>
+    hasPermission(p, projectId, "management") && hasDecisionAuthority(p, projectId, "management"))).flatMap(p => p.projectIds),
   onError: () => console.error("Alert evaluation or delivery needs reconciliation; inspect ops_alert."), onGiveUp: line => console.error(line) });
 const businessBeforeMessage = sessionMessageCanStart({ workflow: service, service: messageService, principals: currentIdentity,
   onError: () => console.error("Task answer continuation requires review; inspect the saved queue and message reason.") });
@@ -778,7 +783,7 @@ const messagePump = runner ? new SessionMessagePump({ service: messageService, r
       session.id,session.actorId,undefined,session.roleId) : null;
     if(!grant||!material||material.cliActorId!==grant.receiverActorId||
       !await currentProjectWriter(message.projectId,material.cliActorId))return null;
-    const reader=(await currentIdentity()).find(p=>p.projectIds.includes(message.projectId)&&p.permissions.includes("read"));
+    const reader=(await currentIdentity()).find(p=>isProjectMember(p,message.projectId));
     if(!reader)return null;
     const role=await service.getRole(reader,message.projectId,session.roleId);
     const paths=current.runtime?.roleSkills.find(x=>x.projectId===message.projectId&&x.roleId===session.roleId)?.paths??
@@ -817,7 +822,7 @@ const messagePump = runner ? new SessionMessagePump({ service: messageService, r
     const contextConfig=currentIntegrations.runtime?.contextBudget??null;
     if(await leaderResultNoticePump.isNoticeMessage(message.projectId,message.id)&&
       (budgetConfig?.enabled||contextConfig?.enabled)){
-      const reader=(await currentIdentity()).find(p=>p.projectIds.includes(message.projectId)&&p.permissions.includes("read"));
+      const reader=(await currentIdentity()).find(p=>isProjectMember(p,message.projectId));
       if(reader){
         const zone=budgetConfig?.timeZone??configuredUsageTimeZone;
         const day=usageDay(clock.now(),zone);
@@ -923,9 +928,10 @@ const ordinarySealPump = new OrdinaryRunSealPump({
     readDeliveryOperation: s => ordinarySubmissions.readDeliveryOperation(s),
     readDelivery: (p, d) => ordinarySubmissions.readDelivery(p, d),
     resolveSubmittedActor: async (p, actorId) => (await currentIdentity()).find(actor => actor.actorId === actorId &&
-      actor.projectIds.includes(p) && actor.permissions.includes("read") && actor.permissions.includes("write")) ?? null,
+      isProjectMember(actor, p)) ?? null,
     workflow: ordinarySealWorkflow, sealer: { actorId: "system:ordinary-run-sealer", projectIds: [projectId],
-      permissions: ["read", "write", "review"] }, now: clock.now, canWrite: lease.canWrite,
+      permissions: ["task", "document", "session", "management"], decisions: true, identityKind: "agent" },
+    now: clock.now, canWrite: lease.canWrite,
   })(projectId, runId),
 });
 const deliveryStore = new PgOutboxDeliveryStore(pool);
@@ -934,7 +940,8 @@ const hasFeishuGrant = (projectId: string, actorId: string) => hasFeishuActorGra
 const collaboration = new CollaborationRunner({ store: deliveryStore, workflow: service,
   connector: feishu?.enabled ? new FeishuBitableConnector(feishu) : null, consumerId: "feishu",
   principals: credentials, canWrite: lease.canWrite, hasGrant: hasFeishuGrant,
-  allowProjection: async (projectId, principal, task) => hasFeishuGrant(projectId, principal.actorId) && principal.permissions.includes("read") && principal.permissions.includes("write") &&
+  allowProjection: async (projectId, principal, task) => hasFeishuGrant(projectId, principal.actorId) &&
+    hasPermission(principal, projectId, "task") &&
     task.task.projectId === projectId,
   ...(feishu?.enabled && feishu.pollEnabled ? { pollIntervalMs: feishu.pollIntervalMs } : {}),
 });
@@ -1072,16 +1079,17 @@ const app = await buildServer({ service, credentials, canWrite: lease.canWrite, 
   allowedRuntimeCwds: integrations.allowedRuntimeCwds,
   hasRuntimeGrant: async scope => (await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE)).hasRuntimeGrant(scope),
   isDynamicSession: sessionOrigin.isDynamicSession,
-  authorizeDynamicSession: async (principal,command) => principal.permissions.includes("review") &&
+  authorizeDynamicSession: async (principal,command) => hasDecisionAuthority(principal,command.projectId,"session") &&
     await dynamicAdmission?.canReserveSession({projectId:command.projectId,sessionId:command.sessionId,
       actorId:principal.actorId,roleId:command.roleId,authorizationScope:command.authorizationScope,
       cwd:command.cwd,sandbox:command.sandbox,model:command.model??null,
       approvalPolicy:command.approvalPolicy}) === true,
-  authorizeDynamicRun: async (principal,command,session) => principal.permissions.includes("review") &&
+  authorizeDynamicRun: async (principal,command,session) => hasDecisionAuthority(principal,command.projectId,"session") &&
     principal.actorId === session.actorId && await dynamicAdmission?.canReserveRun(session,command.runId,command.taskId) === true,
   requireRunRecipient: createReserveRecipientCheck({ uow, loadIntegrations: () => loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE), usability: sessionUsability,
     recordRefusal: async (projectId, sessionId, taskId, cause) => { await pool.query("SELECT record_session_start_refusal($1,$2,$3,$4)", [projectId, sessionId, taskId, cause]); } }),
-  authorizeDynamicMessageRecovery: async (principal,session) => principal.permissions.includes("review") &&
+  authorizeDynamicMessageRecovery: async (principal,session) => hasDecisionAuthority(principal,session.projectId,"session") &&
+    mayAccessSession(principal,session.projectId,session.id) &&
     await dynamicAdmission?.canStartConversation(session) === true,
   runtimeGrants: (projectId, actorId) => runtimeConfig?.enabled ? runtimeConfig.grants.filter(g => g.projectId === projectId && g.actorId === actorId) : [],
   roleRuntimeView: (principal, projectId, roleId) => roleRuntimeView({ service, runtime: runner ?? undefined,
@@ -1090,6 +1098,8 @@ const app = await buildServer({ service, credentials, canWrite: lease.canWrite, 
     skillRoots: async (project, role) => ({ businessRoot: skillSourceRoot, businessPaths: await roleBusinessSkillPaths(project, role) }),
     claudeContextMode: runtimeConfig?.claude?.contextMode ?? null }, principal, projectId, roleId),
   messageSendAuthority: async (principal, projectId, sessionId) => {
+    if (!mayAccessSession(principal, projectId, sessionId))
+      return { code: "MESSAGE_GRANT_MISSING", message: "This identity is not granted access to that Session" };
     const session = await service.getRuntimeSession(principal, projectId, sessionId);
     return ordinaryMessageGrantProblem({ projectId, senderActorId: principal.actorId, session,
       sessionMessages: (await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE)).sessionMessages,

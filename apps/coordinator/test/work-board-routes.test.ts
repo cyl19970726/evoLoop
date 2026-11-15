@@ -31,7 +31,7 @@ function fixture(initial: { head: number; floor?: number }) {
 async function build(f: ReturnType<typeof fixture>, permitted = true) {
   const app = Fastify();
   app.decorateRequest("principal", null);
-  app.addHook("onRequest", async request => { request.principal = { actorId: "reader", projectIds: [projectId], permissions: ["read"] } as never; });
+  app.addHook("onRequest", async request => { request.principal = { actorId: "reader", projectIds: [projectId], permissions: [] } as never; });
   app.setErrorHandler((error, _request, reply) => { reply.code(403).send({ code: error.message }); });
   registerWorkBoardRoutes(app, { service: { getProject: async () => { if (!permitted) throw new Error("FORBIDDEN"); } }, reads: f.reads as never, hub: f.hub, keepAliveMs: 50 });
   await app.listen({ port: 0, host: "127.0.0.1" });

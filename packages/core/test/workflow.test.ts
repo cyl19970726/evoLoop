@@ -21,7 +21,7 @@ const secondDocumentId = "00000000-0000-4000-8000-000000000003";
 const taskA = "00000000-0000-4000-8000-000000000004";
 const taskB = "00000000-0000-4000-8000-000000000005";
 const ownerRoleId = "00000000-0000-4000-8000-000000000006";
-const principal: Principal = { actorId: "owner", projectIds: [projectId], permissions: ["read", "write", "review"] };
+const principal: Principal = { actorId: "owner", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true };
 
 type State = {
   project: Project | null;
@@ -308,7 +308,7 @@ test("fixed basis read checks project authority and revision ownership before sh
   await assert.rejects(() => f.service.validateTaskRevisionBasis(principal, projectId, taskA,
     fixed.revision.id, "00000000-0000-4000-8000-000000009999"), error =>
       error instanceof DomainError && error.code === "BASIS_UNAVAILABLE");
-  await assert.rejects(() => f.service.validateTaskRevisionBasis({ ...principal, permissions: [] }, projectId,
+  await assert.rejects(() => f.service.validateTaskRevisionBasis({ ...principal, projectIds: [] }, projectId,
     taskA, fixed.revision.id, fixed.basis!.id), error =>
       error instanceof DomainError && error.code === "FORBIDDEN");
 });
@@ -390,7 +390,7 @@ test("Task creation owns a primary Document and pins each changed body to an imm
   assert.equal(active.task.state, "in_progress");
   assert.deepEqual(active.basis?.members, [{ documentId: active.task.contentDocumentId, revisionId: active.task.contentRevisionId }]);
   assert.equal((await f.service.getDocument(principal, projectId, active.task.contentDocumentId)).document.status, "published");
-  const unauthorized: Principal = { ...principal, permissions: ["read", "write"] };
+  const unauthorized: Principal = { ...principal, permissions: ["task", "document", "session"], decisions: false };
   await assert.rejects(f.service.execute(unauthorized, { type: "task.start", projectId, operationId: f.operation(),
     taskId: taskA, expectedVersion: 3, reason: "No review authority" }), error =>
     error instanceof DomainError && error.code === "FORBIDDEN");
@@ -411,7 +411,7 @@ test("reopen invalidates an earlier delivery before the same Task can close agai
     taskId: taskA, expectedVersion: 2, artifactRef: "repo/check", artifactRevision: "abc123",
     contentHash: "a".repeat(64), technicalResult: "passed", technicalEvidence: "Fixture passed", reason: "Ready for acceptance" });
   assert.equal(delivery.status, "applied");
-  const reviewer: Principal = { actorId: "independent-reviewer", projectIds: [projectId], permissions: ["read", "write"] };
+  const reviewer: Principal = { actorId: "independent-reviewer", projectIds: [projectId], permissions: ["task", "document", "session"] };
   const use = await f.service.execute(reviewer, { type: "observation.record", projectId, operationId: f.operation(),
     taskId: taskA, deliveryId: delivery.status === "applied" ? delivery.revisionId! : "", observer: reviewer.actorId,
     observerKind: "agent", result: "used", evidence: "Reviewed current fixture", reason: "Independent use" });
@@ -482,8 +482,8 @@ test("an older signed Document intent still checks project and exact saved hash"
 
 test("new Task defaults to independent use; a registrar cannot make the submitter an independent consumer", async () => {
   const f = fixture();
-  const executor: Principal = {actorId:"executor",projectIds:[projectId],permissions:["read","write"]};
-  const reviewer: Principal = {actorId:"reviewer",projectIds:[projectId],permissions:["read","write","review"]};
+  const executor: Principal = {actorId:"executor",projectIds:[projectId],permissions:["task","document","session"]};
+  const reviewer: Principal = {actorId:"reviewer",projectIds:[projectId],permissions:["task","document","session","management"],decisions:true};
   await f.service.execute(principal,{type:"project.create",projectId,operationId:f.operation(),title:"Project"});
   const create={type:"task.create" as const,projectId,operationId:f.operation(),taskId:taskA,
     title:"Independent Task",content:"Deliver evidence",acceptance:"Different actor uses result",owner:ownerRoleId};
@@ -551,7 +551,7 @@ test("human-required use needs the configured human principal; a reviewer can cl
   const premature=await f.service.execute(principal,{type:"task.close",projectId,operationId:f.operation(),taskId:taskA,
     expectedVersion:3,deliveryId,acceptanceResult:"met",acceptanceEvidence:"Claimed",reason:"Close"});
   assert.equal(premature.status==="rejected"?premature.code:null,"USE_NOT_OBSERVED");
-  const human:Principal={actorId:"real-user",projectIds:[projectId],permissions:["read","write"],identityKind:"human"};
+  const human:Principal={actorId:"real-user",projectIds:[projectId],permissions:["task","document","session"],identityKind:"human"};
   assert.equal((await observation(human)).status,"applied");
   const closed=await f.service.execute(principal,{type:"task.close",projectId,operationId:f.operation(),taskId:taskA,
     expectedVersion:3,deliveryId,acceptanceResult:"met",acceptanceEvidence:"Human use recorded",reason:"Close"});
@@ -574,7 +574,7 @@ test("an agent reviewer cannot downgrade human acceptance or replace its consume
   const replaced=await update({consumer:"another-user"});
   assert.equal(replaced.status==="rejected"?replaced.code:null,"TRUSTED_HUMAN_REQUIRED");
   assert.equal((await f.service.getTask(principal,projectId,taskA)).proposal?.consumer,"real-user");
-  const human:Principal={actorId:"real-user",projectIds:[projectId],permissions:["read","write","review"],identityKind:"human"};
+  const human:Principal={actorId:"real-user",projectIds:[projectId],permissions:["task","document","session","management"],decisions:true,identityKind:"human"};
   const released=await f.service.execute(human,{type:"task.update",projectId,operationId:f.operation(),taskId:taskA,
     expectedVersion:1,title:"Human check",content:"Deliver",acceptance:"User confirms",owner:ownerRoleId,
     acceptanceMode:"independent_agent",consumer:null,reason:"Human chose independent Agent review"});
@@ -820,7 +820,7 @@ test("explicit stage reassignment needs review and a complete active-stage propo
   const command = { type: "task.update" as const, projectId, operationId: f.operation(), taskId: taskA,
     expectedVersion: 1, title: "Task", content: "Body", acceptance: "Check", owner: ownerRoleId,
     stageId, reason: "Bind stage" };
-  const writer: Principal = { actorId: "writer", projectIds: [projectId], permissions: ["read", "write"] };
+  const writer: Principal = { actorId: "writer", projectIds: [projectId], permissions: ["task", "document", "session"] };
   await assert.rejects(f.service.execute(writer, command), error =>
     error instanceof DomainError && error.code === "FORBIDDEN");
   const incomplete = await f.service.execute(principal, command);
@@ -959,7 +959,7 @@ test("read permission and operation ownership are checked on every query", async
   const f = fixture();
   const operationId = f.operation();
   await f.service.execute(principal, { type: "project.create", projectId, operationId, title: "Project" });
-  const other: Principal = { actorId: "other", projectIds: [projectId], permissions: ["read"] };
+  const other: Principal = { actorId: "other", projectIds: [projectId], permissions: [] };
   await assert.rejects(f.service.getOperation(other, projectId, operationId),
     (error: unknown) => error instanceof DomainError && error.code === "FORBIDDEN");
   assert.equal(await f.service.getOperation(principal, projectId, f.operation()), null);

@@ -5,7 +5,7 @@
 // frame with useCommand directly.
 import * as React from "react";
 import type { ReactNode } from "react";
-import type { AppliedResult, Permission } from "@evoloop/contracts";
+import type { AppliedResult, ExtraCommand, Permission } from "@evoloop/contracts";
 import { Button, Checkbox, Field, Input, Notice, RadioGroup, RadioGroupItem, Select, Textarea, cn } from "@evoloop/ui";
 import type { SubmissionOutcome } from "../submissionOutcome";
 import type { MutationContext } from "./context";
@@ -129,8 +129,12 @@ export interface CommandFrameProps {
   /** Fields both the person and someone else changed; with them, keeping is decided field by field (`onResolve`). */
   conflicts?: readonly FieldConflict[] | undefined;
   onResolve?: ((choices: ConflictChoices) => void) | undefined;
-  /** The permissions needed to send (write by default). */
+  /** The object classes whose write permission is needed to send. */
   permission?: Permission | readonly Permission[] | undefined;
+  /** A decision-class command also needs explicit decision authority over one listed class. */
+  decision?: boolean | undefined;
+  /** A specifically granted legacy extra command may pass the decision gate; it never bypasses the class gate. */
+  extraCommand?: ExtraCommand | undefined;
   /** Why sending waits (the content on screen is being checked), or nothing. */
   paused?: string | null | undefined;
   danger?: boolean | undefined;
@@ -154,7 +158,8 @@ export interface CommandFrameProps {
 
 export function CommandFrame({ context, command, label, submitLabel, dirty, onSubmit, onKeep, onRefill, onReread, keepLabel, keepNote, baselineTitle, moved = false,
   changedFields = [], conflicts, onResolve,
-  permission = "write", paused, danger, saved, copy, rereading, onCancel, cancelLabel = "收起", actions, surface = "muted", layout = "stack", submitOnModEnter, className, children }: CommandFrameProps) {
+  permission, decision = false, extraCommand, paused, danger, saved, copy, rereading, onCancel, cancelLabel = "收起", actions,
+  surface = "muted", layout = "stack", submitOnModEnter, className, children }: CommandFrameProps) {
   const block = React.useContext(CommandBlock);
   // Controls of the form that are still reading their choices (FormPendingContext): the form does not send meanwhile.
   const [reading, setReading] = React.useState<Record<string, string>>({});
@@ -163,8 +168,8 @@ export function CommandFrame({ context, command, label, submitLabel, dirty, onSu
     return current[id] === reason ? current : { ...current, [id]: reason };
   }), []);
   const waiting = paused ?? Object.values(reading)[0] ?? null;
-  const needed: readonly Permission[] = typeof permission === "string" ? [permission] : permission;
-  const denied = permissionText(context.principal.permissions, needed);
+  const needed: readonly Permission[] = permission === undefined ? [] : typeof permission === "string" ? [permission] : permission;
+  const denied = permissionText(context.principal, context.projectId, needed, decision, extraCommand);
   const blocked = !!block || context.blocked;
   const changed = command.baselineChanged || moved;
   const disabled = !!denied || blocked || command.busy || changed || command.unconfirmed || !!waiting;
@@ -284,6 +289,10 @@ export interface CommandFormProps<B extends Baseline | string | undefined> {
   /** Offer “清空草稿” while the person has changes. */
   clearable?: boolean | undefined;
   permission?: Permission | readonly Permission[] | undefined;
+  /** A decision-class command also needs explicit decision authority over every listed class. */
+  decision?: boolean | undefined;
+  /** A specifically granted legacy extra command may pass the decision gate, never the class gate. */
+  extraCommand?: ExtraCommand | undefined;
   paused?: string | null | undefined;
   /** Offer to copy the draft as text when the baseline moved. */
   copyable?: boolean | undefined;
@@ -301,7 +310,7 @@ export interface FormHandle { dirty: boolean; initials: Record<string, string>; 
  * decides. With `options.draft` the typed values are kept between mounts with the baseline they were written on.
  */
 export function CommandForm<B extends Baseline | string | undefined = undefined>({ context, fields, submitLabel, build, title, label, baseline, options,
-  onApplied, notes, children, danger, clearable, permission, paused, copyable, submitOnModEnter, surface, className }: CommandFormProps<B>) {
+  onApplied, notes, children, danger, clearable, permission, decision = false, extraCommand, paused, copyable, submitOnModEnter, surface, className }: CommandFormProps<B>) {
   const reread = options?.onStale ?? context.onChanged;
   const initials = initialValues(fields);
   const initialKey = JSON.stringify(initials);
@@ -356,7 +365,8 @@ export function CommandForm<B extends Baseline | string | undefined = undefined>
     hideLabel={inline} onChange={value => set(field.name, value)} />;
   const advanced = fields.filter(field => field.advanced);
   return <CommandFrame context={context} command={command} label={name} submitLabel={submitLabel} dirty={dirty} onSubmit={submit} onKeep={() => keep()}
-    onRefill={refill} onReread={reread} moved={moved} permission={permission} paused={paused} danger={danger} saved={saved}
+    onRefill={refill} onReread={reread} moved={moved} permission={permission} decision={decision} extraCommand={extraCommand}
+    paused={paused} danger={danger} saved={saved}
     conflicts={conflicts} onResolve={keep} changedFields={changedFields}
     baselineTitle={fromEarlierMount && !command.outcome ? "这份草稿写于较早的版本" : undefined}
     actions={clearable && dirty && <Button size="compact" variant="ghost" onClick={clear} disabled={command.busy}>清空草稿</Button>}

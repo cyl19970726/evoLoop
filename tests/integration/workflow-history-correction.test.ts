@@ -17,8 +17,8 @@ const service = new WorkflowService({ uow: new PostgresUnitOfWork(pool),
   clock: { now: () => new Date().toISOString() }, ids: { next: randomUUID },
   hasher: { hash: value => createHash("sha256").update(value).digest("hex") } });
 const projectId = randomUUID();
-const reviewer: Principal = { actorId: "history-reviewer", projectIds: [projectId], permissions: ["read", "write", "review"] };
-const writer: Principal = { actorId: "history-writer", projectIds: [projectId], permissions: ["read", "write"] };
+const reviewer: Principal = { actorId: "history-reviewer", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true };
+const writer: Principal = { actorId: "history-writer", projectIds: [projectId], permissions: ["task", "document", "session"] };
 const issue = (principal: Principal, data: Record<string, unknown>, operationId = randomUUID()) =>
   service.execute(principal, { ...data, projectId, operationId } as Command);
 const applied = (value: CommandResult) => {
@@ -86,14 +86,14 @@ test("task history exposes persisted states and reviewed-stage correction append
   assert.notEqual(history[0]?.revision.contentRevisionId, history[1]?.revision.contentRevisionId,
     "the old Task revision keeps its original Document revision");
   assert.equal(history[0]?.revision.contentDocumentId, history[2]?.revision.contentDocumentId);
-  await assert.rejects(service.listTaskRevisions({ ...writer, projectIds: [randomUUID()] }, projectId, taskId), /Permission read/);
+  await assert.rejects(service.listTaskRevisions({ ...writer, projectIds: [randomUUID()] }, projectId, taskId), /Project membership is required/);
 
   const correction = { type: "stage.review.correct", stageId: firstStageId, expectedVersion: 3,
     supersedesReviewId: firstReview.id, adopted: "Corrected observation", rejected: "Original explanation",
     gap: "Still one sample", nextChoice: "continue", evidence: "Follow-up inspection", reason: "Correct the interpretation" };
   rejected(await issue(reviewer, { ...correction, expectedVersion: 2 }), "VERSION_CONFLICT");
   rejected(await issue(reviewer, { ...correction, supersedesReviewId: secondReview.id }), "REVIEW_TARGET_CHANGED");
-  await assert.rejects(issue(writer, correction), /Permission review/);
+  await assert.rejects(issue(writer, correction), /Decision authority for task is required/);
   const { supersedesReviewId: _supersedesReviewId, ...ordinaryReview } = correction;
   rejected(await issue(reviewer, { ...ordinaryReview, type: "stage.review" }), "INVALID_STATE");
   const operationId = randomUUID();

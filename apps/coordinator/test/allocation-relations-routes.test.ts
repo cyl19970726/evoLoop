@@ -28,7 +28,7 @@ test('GET allocation relations uses the project principal and preserves paginati
   app.decorateRequest('principal', null);
   app.addHook('onRequest', async (request, reply) => {
     if (!request.headers.authorization) return reply.code(401).send({ code: 'UNAUTHENTICATED' });
-    request.principal = { actorId: 'reader', projectIds: [projectId], permissions: ['read'] } as Principal;
+    request.principal = { actorId: 'reader', projectIds: [projectId], permissions: [] } as Principal;
   });
   app.addHook('preValidation', async (request, reply) => {
     if (request.headers.authorization === 'worker') return reply.code(403).send({ code: 'FORBIDDEN' });
@@ -70,7 +70,7 @@ test('GET allocation relations uses the project principal and preserves paginati
 
 test('installed server guard rejects anonymous and foreign project reads before relation storage', async () => {
   const token = 'r'.repeat(40), credentials = authConfigSchema.parse([
-    { token, actorId: 'reader', projectIds: [projectId], permissions: ['read'] },
+    { token, actorId: 'reader', projectIds: [projectId], permissions: [] },
   ]);
   let reads = 0;
   const uow = { read: async (_project: string, action: (reader: unknown) => Promise<unknown>) => {

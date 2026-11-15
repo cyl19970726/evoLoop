@@ -185,7 +185,8 @@ function ConclusionForm({ context, revision, assessments, attempts, conclusions,
   context: MutationContext; revision: EvaluationRevision; assessments: EvaluationAssessment[]; attempts: EvaluationAttempt[]; conclusions: EvaluationConclusion[]; hold?: string | undefined;
 }) {
   const replaced = new Set(conclusions.map(item => item.supersedesId).filter((id): id is string => !!id));
-  return <EvaluationForm context={{ ...context, draftScope: `evaluation-conclusion:${revision.id}`, draftBaseline: revision.id }} review hold={hold}
+  return <EvaluationForm context={{ ...context, draftScope: `evaluation-conclusion:${revision.id}`, draftBaseline: revision.id }}
+    permission="management" decision hold={hold}
     title={conclusions.length ? "追加更正结论" : "记录评价结论"} fields={[
       { name: "assessmentIds", label: "纳入逐次判定", kind: "multi", options: assessments.map(item => option(item.id, assessmentName(item, revision, attempts, date))) },
       { name: "supersedesId", label: "更正此前结论（可选）", kind: "select", optional: true, options: conclusions.filter(item => !replaced.has(item.id)).map(item => option(item.id, `${labelOf(comparabilityLabels, item.comparability)} · ${date(item.createdAt)} · ${actorText(item.actorId)}`)) },

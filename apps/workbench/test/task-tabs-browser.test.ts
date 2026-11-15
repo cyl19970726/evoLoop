@@ -111,7 +111,7 @@ test("the task page's five tabs read, write and refuse as the record allows, at 
       body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString()) as Record<string, unknown> : {};
     }
     if (path === "/api/session") value = { principal: { actorId: reader ? "viewer" : "reader", projectIds: [projectId],
-      permissions: reader ? ["read"] : ["read", "write", "review"], identityKind: "human" }, capabilities: {} };
+      permissions: reader ? [] : ["task", "document", "session", "management"], identityKind: "human" }, capabilities: {} };
     else if (path === root) value = { id: projectId, title: "页签夹具", createdAt: stamp };
     else if (path === `${root}/tasks`) value = { items: [task(), other, later], nextCursor: null };
     else if (path === `${root}/orchestration/work-status`) value = { items: [taskA, taskC].map(taskId => ({ taskId, cognition: false, hasClosure: false, readyForAcceptance: false })) };

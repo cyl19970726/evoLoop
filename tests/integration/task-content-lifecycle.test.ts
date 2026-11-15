@@ -33,7 +33,7 @@ test("migration 019 preserves an existing Delivery closure without changing its 
   withoutTaskTimingBeforeMigration(uow, () => legacySchema);
   const service=new WorkflowService({uow,clock:{now:()=>new Date().toISOString()},
     ids:{next:randomUUID},hasher:{hash:value=>createHash("sha256").update(value).digest("hex")}});
-  const principal:Principal={actorId,projectIds:[projectId],permissions:["read","write","review"]};
+  const principal:Principal={actorId,projectIds:[projectId],permissions:["task", "document", "session", "management"], decisions: true};
   const issue=async(command:Record<string,unknown>)=>{
     const result=await service.execute(principal,{projectId,operationId:randomUUID(),...command} as never);
     assert.equal(result.status,"applied",JSON.stringify(result));return result as Extract<CommandResult,{status:"applied"}>;
@@ -90,14 +90,14 @@ test("HTTP and PostgreSQL: a simple Task owns its Document body and closes witho
   await migrate(database, schema);
   const pool = new pg.Pool({ connectionString: database, options: `-c search_path=${schema}` });
   const projectId = randomUUID(), taskId = randomUUID();
-  const principal: Principal = { actorId: "task-owner", projectIds: [projectId], permissions: ["read", "write", "review"] };
+  const principal: Principal = { actorId: "task-owner", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true };
   const token = randomUUID() + randomUUID(), writerToken = randomUUID() + randomUUID(), consumerToken = randomUUID() + randomUUID();
   const service = new WorkflowService({ uow: new PostgresUnitOfWork(pool),
     clock: { now: () => new Date().toISOString() }, ids: { next: randomUUID },
     hasher: { hash: value => createHash("sha256").update(value).digest("hex") } });
   const app = await buildServer({ service, credentials: [{ token, ...principal },
-    { token: writerToken, actorId: "task-writer", projectIds: [projectId], permissions: ["read", "write"] },
-    { token: consumerToken, actorId: "report-consumer", projectIds: [projectId], permissions: ["read", "write"] }] });
+    { token: writerToken, actorId: "task-writer", projectIds: [projectId], permissions: ["task", "document", "session"] },
+    { token: consumerToken, actorId: "report-consumer", projectIds: [projectId], permissions: ["task", "document", "session"] }] });
   t.after(async () => {
     await app.close(); await pool.end();
     const admin = new pg.Client({ connectionString: database }); await admin.connect();

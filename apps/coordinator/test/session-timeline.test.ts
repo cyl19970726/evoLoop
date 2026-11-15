@@ -13,8 +13,9 @@ import { SessionTimelineService } from '../src/session-timeline/index.js';
 
 const id=(n:number)=>`00000000-0000-4000-8000-${String(n).padStart(12,'0')}`;
 const project=id(1),sessionId=id(2),key=`owned:${sessionId}`,thread='native-thread',now='2026-11-01T00:00:00.000Z';
-const reader:Principal={actorId:'reader',projectIds:[project],permissions:['read']};
-const reviewer:Principal={...reader,actorId:'reviewer',permissions:['read','review']};
+const reader:Principal={actorId:'reader',projectIds:[project],permissions:['session']};
+const reviewer:Principal={...reader,actorId:'reviewer',permissions:['session'],decisions:true};
+const member:Principal={actorId:'member',projectIds:[project],permissions:[]};
 const nativeInput=(itemId:string,turnId:string,clientId:string|null=null,body='private dispatch credential'):WorkspaceMessage=>({id:`native:${thread}:${turnId}:${itemId}`,
   kind:'message',role:'input',phase:'unknown',body,clientId,state:'completed',
   turnId,nativeItemId:itemId,nativeKind:'userMessage',author:{kind:'native',id:null,label:'Native input'},origin:null,
@@ -59,7 +60,7 @@ function harness(){
       getSessionMessages:async(ids:string[])=>messages.filter(m=>ids.includes(m.id))}
   })} as unknown as UnitOfWork;
   const observation={snapshot:async(p:Principal,projectId:string,requestKey:string)=>{
-    if(revoked||!p.projectIds.includes(projectId)||!p.permissions.includes('read')||requestKey!==key)
+    if(revoked||!p.projectIds.includes(projectId)||requestKey!==key)
       throw new DomainError('FORBIDDEN','scope');
     return {session:{key,target:{kind:'owned',sessionId},title:'Session'}};
   }} as unknown as SessionObservationService;
@@ -349,7 +350,7 @@ for(const kind of ['run','message'] as const)test(`accepted ${kind} steer uses e
     const entry=page.entries[0];
     assert.equal(entry?.kind,'message');assert.equal(entry?.author.id,'human-steer');
     assert.equal(entry?.origin?.kind,kind);assert.equal(entry?.origin?.id,record.source.id);
-    assert.equal((entry as WorkspaceMessage).body,'已接受的即时补充');
+    assert.equal((entry as WorkspaceMessage).body,'Private authorized supplement');
     assert.equal((await h.service.item(reviewer,project,key,turnId,itemId) as WorkspaceMessage).body,
       'Private authorized supplement');
     h.emit({projectId:project,sessionId,threadId:thread,turnId,observedAt:now,kind:'entry',entry:raw});
@@ -372,8 +373,9 @@ test('source ambiguity, cursor scope, revoked binding and original detail remain
     (error:unknown)=>error instanceof DomainError&&error.code==='INVALID_CURSOR');
   await assert.rejects(h.service.page(reader,id(9),key,{limit:1}),DomainError);
   await assert.rejects(h.service.page(reader,project,`owned:${id(9)}`,{limit:1,cursor:page.nextCursor!}),DomainError);
-  await assert.rejects(h.service.page({...reader,permissions:[]},project,key,{limit:1}),DomainError);
-  await assert.rejects(h.service.item(reader,project,key,'turn-run','tool-1'),
+  assert.equal((await h.service.page(member,project,key,{limit:1})).sessionKey,key,
+    'project membership keeps the ordinary saved-message view');
+  await assert.rejects(h.service.item(member,project,key,'turn-run','tool-1'),
     (error:unknown)=>error instanceof DomainError&&error.code==='FORBIDDEN');
   const publicAnswer=await h.service.item(reader,project,key,'turn-message','answer-1');
   assert.equal((publicAnswer as {body:string}).body,'Public answer');
@@ -708,20 +710,16 @@ test('owner live tools retain detail availability for reviewers without inlining
   assert.equal(live.detailAvailable,true,'an owner live overlay must not downgrade the same readable historical Item');
   assert.equal(live.detailReason,null);
   assert.equal(live.detail,undefined,'review permission enables an on-demand read, not inline originals');
-  const ordinary=await h.service.updates(reader,project,key);
-  const ordinaryTool=ordinary.entries.find(e=>e.nativeItemId==='tool-1');
-  assert.equal(ordinaryTool?.kind,'tool');
-  if(ordinaryTool?.kind!=='tool')throw new Error('ordinary tool missing');
-  assert.equal(ordinaryTool.detailAvailable,false);
-  assert.equal(ordinaryTool.detail,undefined);
-  assert.match(ordinaryTool.detailReason!,/读取与复核权限/);
+  const ordinary=await h.service.updates(member,project,key);
+  assert.equal(ordinary.entries.length,0,'a project member without Session permission gets no native live entries');
+  assert.ok(ordinary.limitations.includes('完整原生实时记录需要此 Session 的 Session 权限'));
   const reviewedAgain=await h.service.updates(reviewer,project,key);
   const reviewedTool=reviewedAgain.entries.find(e=>e.nativeItemId==='tool-1');
   assert.equal(reviewedTool?.kind==='tool'&&reviewedTool.detailAvailable,true,'one reader cannot poison capability metadata for another');
   for(const response of [page,ordinary,reviewedAgain])assert.doesNotMatch(JSON.stringify(response),/private command|private output/);
   const original=await h.service.item(reviewer,project,key,'turn-run','tool-1');
   assert.equal(original.kind==='tool'&&original.detail?.output,'private output');
-  await assert.rejects(h.service.item(reader,project,key,'turn-run','tool-1'),e=>e instanceof DomainError&&e.code==='FORBIDDEN');
+  await assert.rejects(h.service.item(member,project,key,'turn-run','tool-1'),e=>e instanceof DomainError&&e.code==='FORBIDDEN');
   assert.equal(h.calls().starts,0);h.service.close();
 });
 

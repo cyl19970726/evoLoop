@@ -1,4 +1,4 @@
-import type { Principal } from "@evoloop/contracts";
+import { isProjectMember, type Principal } from "@evoloop/contracts";
 import type { RuntimeUsage } from "@evoloop/contracts/runtime";
 import type {
   ContextBudgetConfig, SessionUsage, UsageBudget, UsageBudgetConfig, UsageBucketRow, UsageDay, UsageDelta, UsageOverview, UsageTotals,
@@ -84,8 +84,8 @@ export class UsageService {
   async overview(principal: Principal, projectId: string, from: string, to: string,
     timeZone: string, config: UsageBudgetConfig | null,
     contextConfig?: ContextBudgetConfig | null): Promise<UsageOverview> {
-    if (!principal.projectIds.includes(projectId) || !principal.permissions.includes("read"))
-      throw new DomainError("FORBIDDEN", "Project read permission is required");
+    if (!isProjectMember(principal, projectId))
+      throw new DomainError("FORBIDDEN", "Project membership is required");
     if (!dayPattern.test(from) || !dayPattern.test(to) || from > to)
       throw new DomainError("INVALID_USAGE_RANGE", "Usage range must be an ordered pair of YYYY-MM-DD days");
     const today = usageDay(this.deps.clock.now(), timeZone);

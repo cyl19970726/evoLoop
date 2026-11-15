@@ -26,8 +26,8 @@
 
 ### 准备
 
-- **一条受管 Leader Session。** 它所在的 Role 是项目里唯一 active 或 trial 的 system Lead。核对实际接收 actor、项目写权限、原生 Thread、执行授权、工作目录和 CLI 身份。业务 Session 不能作为 Leader 目标。
-- **两个不同的 actor。** `senderActorId` 是配置里明确授权的技术通知者，`receiverActorId` 是实际的 Leader，二者都要是项目 writer。Leader 还要有 `review` 权限，才能保存计划和复核。
+- **一条受管 Leader Session。** 它所在的 Role 是项目里唯一 active 或 trial 的 system Lead。核对实际接收 actor、Session 类别与范围、原生 Thread、执行授权、工作目录和 CLI 身份。业务 Session 不能作为 Leader 目标。
+- **两个不同的 actor。** `senderActorId` 是配置里明确授权的技术通知者，须可写 `session`；`receiverActorId` 是实际的 Leader，须有 `session` 类别与决定权。二者都须是当前身份文件里的项目成员。
 - **消息授权。** `sessionMessages` 已启用，并有针对这个 sender、Leader Session、receiver actor、Role 和 cwd 的**精确授权**，额度可用。 经 HTTP/CLI 发普通消息时，这项授权在**发送时**就核对：缺了当场拒绝（`MESSAGE_GRANT_MISSING`），并写明缺 `sessionMessages.grants` 里的哪一项和可复制的条目，消息不保存。服务内部自动发的消息（通知、验收接力）仍按各自的投递规则处理。已经入队、后来才因授权撤销而受阻的消息，原因以 `MESSAGE_GRANT_MISSING:` 开头，**不占用同一 Session 的队列**：它保持 queued、会话页可见，补上授权后按原顺序记录继续，后面的消息不再等它。
 
 在私有 integrations 文件中增加：
@@ -90,7 +90,7 @@
 
 原 `session.message.post` 的操作日志明确拒绝时，原通知转为 `blocked`，不再用原 ID 自动重试；结果未知时只读原 operation 对账。
 
-要重新投递，由有项目 `write` 和 `review` 权限的操作者处理：
+要重新投递，由有 `management` 类别与决定权的操作者处理：
 
 1. **先核对。** 核原 operation 的拒绝、当前 Task、消息状态和旧目标的 Turn。
 2. **建立新意图。** 用 `request leader.notice.recover --project PROJECT_UUID --id ORIGINAL_NOTICE_UUID --file BODY.json --receipt LOCAL_RECEIPT_UUID`。BODY 包含原 `expectedOperationId`、全新的 `newNoticeId`、`newMessageId`、`newOperationId` 和处置 `reason`。
@@ -169,7 +169,7 @@ Leader 读到交付后，按 Task 声明的验收方式，用 `acceptance.assign
 | `GET /api/projects/:projectId/sessions/:sessionId/direct-inputs/:inputId` | 读回一条输入 |
 | `POST /api/projects/:projectId/sessions/:sessionId/direct-inputs/:inputId/reconcile` | 按原 `inputId` 只读对账 |
 
-所有读取都按当前项目、actor 和 review 权限重新授权。客户端自报的 `human`、`direct` 或角色名不能替代授权。
+所有读取都按当前项目、actor、Session 类别与 `sessionIds` 范围重新授权。客户端自报的 `human`、`direct` 或角色名不能替代授权。
 
 能力查询和提交使用同一组检查：当前 writer、Session 执行授权、普通消息授权、即时输入授权、cwd、原生资格，以及 Session 实际绑定的运行时能力。只有查询明确返回 `steer` 或 `start` 时，工作台才显示即时发送；否则只保留普通消息入口。`steer` 需要 `delivery.midTurnInput`，`start` 需要 `delivery.idleTurnStart`。
 
@@ -214,7 +214,7 @@ Session 因失败被恢复门挡住时，维护者可以显式请求一次原生
 
 - 运行时是 Codex 固定 `0.166.0-alpha.6`；Claude 不支持托管压缩。
 - 私有配置 `runtime.compaction.owned` 不为 `false`（默认 `true`，启动时读取）。设为 `false` 时关闭这组入口，压缩完全交给运行时自己。
-- 请求者有当前项目的 review 与 write 权限，以及该 Session 的精确运行授权。
+- 请求者有当前项目的 Session 类别与 Session 决定权，以及该 Session 的精确运行授权。
 - 恢复门处于 `blocked`，原失败 Run 或消息有已知终态。
 
 正式操作前，回读原 Thread 的模型、思考强度、权限、当前 writer、最后一个原生 Turn、未知的在途处理和有效 hooks。任何一项无法证明，就保留 blocked 门，并记录准确缺了什么。
@@ -273,7 +273,7 @@ node --import tsx tests/manual/session-compaction-e1.ts
 ```
 
 - **授权范围。** 有了这项授权，该业务 actor 可以用普通 `task.create` 或 `task.timing.set`，为同一 Role 的新 Task 设每日重复，不必为每个尚未创建的 Task ID 预先添加范围。
-- **仍要满足的条件。** actor 在当前项目有读、写和审阅权限，Task owner 是有效 Role，`scheduling.enabled` 已打开。
+- **仍要满足的条件。** actor 在当前项目是成员，有 `task` 类别与 Task 决定权，Task owner 是有效 Role，`scheduling.enabled` 已打开。
 - **每次重读。** 创建、改时和物化时都重读授权；物化只选同项目、同 actor、同 Role 的已保存系列，并重核当前授权和身份资格。撤权后不能再创建、修改未来要求或继续复制。
 
 `taskTimingGrants` 与旧的 `scheduling.grants` 是两回事：
@@ -301,7 +301,7 @@ node --import tsx tests/manual/session-compaction-e1.ts
 
 服务从已有事实推出每项进行中的 Task 停在哪一环、在等谁，并对超过门槛的环节生成持久关注项。规则、来源和门槛见[阶段等待由事实推导](../architecture/contracts.md#阶段等待由事实推导)。
 
-- **怎样运转。** 没有配置开关：服务运行时，每 30 秒为有读、写和审阅身份的项目评估一次。
+- **怎样运转。** 没有配置开关：服务运行时，每 30 秒为有 `management` 类别与决定权身份的项目评估一次。
 - **怎样送到 Leader。** 关注项以 `task_attention` 类型的 Leader 通知送达，所以要先打开 [Leader 结果通知](#1-leader-结果通知)；没打开时，关注项照常生成，用 CLI 读取。
 - **怎样读。** `work task`、`work attention`、`work attention task`、`work attention item`、`work attention thresholds`（见 [Agent CLI](agent-cli.md#观察会话具体接手与普通消息)）。
 - **怎样调整与跟进。** 项目默认门槛和单 Task 检查点用 `task.attention.thresholds.set` 修订并留历史；跟进、发布交接和处置分别用 `task.attention.followUp.set`、`task.attention.publication.record`、`task.attention.resolve`。
@@ -310,20 +310,20 @@ node --import tsx tests/manual/session-compaction-e1.ts
 
 ## 叫停执行中的 Run
 
-业务 Run 的范围变了就叫停，不要等它做完再返工：`command schema runtime.run.stop` 取结构，带 Run 的当前版本和理由，用 `command run FILE` 提交；身份要有 review 权限并持有该 Session 的精确执行授权，原生运行时离线时也能提交（未派发的 Run 在数据库里直接判失败，运行中的由 runner 在运行时恢复后中断）。提交后回读 Run：`stopRequestedAt` 已有、`interruptRequested` 为真表示等运行时中断；终态（`interrupted` 或 `failed`）由运行时观察确认，在此之前仍算未结束，Task 上不能再派新的 Run。用这个 Run 再提交会得到 `RUN_STOPPED`，叫停前已签的意图作废，不会产生交付。停止不会关恢复门，也没有失败通知，只有一条 `run.stopRequested` 运行事件。结果未知的 Run 也可以叫停：标记立即生效，有已知 Turn 的会被中断，Run 仍是 `unknown`，直到读回终态；读回终态后，被它关闭的恢复门自动打开（队列认领持有的门除外）。被叫停作废的排队消息带持久的“被取代”标记，选取与准入都排除，发送人取消或 `session.message.confirmSuperseded` 确认后才重新投递。
+业务 Run 的范围变了就叫停，不要等它做完再返工：`command schema runtime.run.stop` 取结构，带 Run 的当前版本和理由，用 `command run FILE` 提交；身份要有 Session 类别与 Session 决定权并持有该 Session 的精确执行授权，原生运行时离线时也能提交（未派发的 Run 在数据库里直接判失败，运行中的由 runner 在运行时恢复后中断）。提交后回读 Run：`stopRequestedAt` 已有、`interruptRequested` 为真表示等运行时中断；终态（`interrupted` 或 `failed`）由运行时观察确认，在此之前仍算未结束，Task 上不能再派新的 Run。用这个 Run 再提交会得到 `RUN_STOPPED`，叫停前已签的意图作废，不会产生交付。停止不会关恢复门，也没有失败通知，只有一条 `run.stopRequested` 运行事件。结果未知的 Run 也可以叫停：标记立即生效，有已知 Turn 的会被中断，Run 仍是 `unknown`，直到读回终态；读回终态后，被它关闭的恢复门自动打开（队列认领持有的门除外）。被叫停作废的排队消息带持久的“被取代”标记，选取与准入都排除，发送人取消或 `session.message.confirmSuperseded` 确认后才重新投递。
 
 ## 处理关不掉的 Task：旧的或卡住的验收接力（迁移 109）
 
-`task.close` 被 `SQLSTATE 23514 effective acceptance arrangement lacks linked consumer use` 拒绝，说明同一交付上还有一条有效接力没有已链接的 used。先读这个 Task 的接力（`work acceptance TASK`，或 `get /api/projects/PROJECT/tasks/TASK/acceptance-relay`），确认哪条是旧的（接收者当时记 notUsed，后来有另一条接力记了 used）或卡住的（`blocked`），再用 `request acceptance.release` 逐条释放（需要 review 权限、写明理由；同一阶段至少要留下另一条有效接力，否则拒绝），释放后重试 `task.close`。
+`task.close` 被 `SQLSTATE 23514 effective acceptance arrangement lacks linked consumer use` 拒绝，说明同一交付上还有一条有效接力没有已链接的 used。先读这个 Task 的接力（`work acceptance TASK`，或 `get /api/projects/PROJECT/tasks/TASK/acceptance-relay`），确认哪条是旧的（接收者当时记 notUsed，后来有另一条接力记了 used）或卡住的（`blocked`），再用 `request acceptance.release` 逐条释放（需要 Task 类别与决定权、写明理由；同一阶段至少要留下另一条有效接力，否则拒绝），释放后重试 `task.close`。
 
 发布迁移 109 后对两个正式 Task 的处理（**不做迁移里的一次性数据修复**：哪条过时是 Leader 的判断，理由要留在记录里）：
 
 - `d596d7f6`：交付 1f21590f 上的接力 807c9510（11-11 18:03，当时记 notUsed，因为 #322 还没合并）释放，理由写“已由 aad18785（11-11 21:16，正式补核，记 used）取代，按需求 Session 的决定”；然后 `task.close`。
 - `dcd01bb1`：交付 b42af967 上现在只有一条接力 964982d7（候选，blocked：`MESSAGE_BINDING_CHANGED`，版本 2，消息已 replied）。**直接释放它会得到 `LAST_ARRANGEMENT`**（同一阶段不能一条有效接力都不剩），所以先要有一条能记 used 的新接力。顺序固定，命令都用 `request`，操作编号只写在 body 的 `operationId`（不带 `--receipt`）：
   1. **读现状。** `work acceptance dcd01bb1-18a1-4431-8dd3-8077d0c4e23b --project PROJECT` 与 `task dcd01bb1-18a1-4431-8dd3-8077d0c4e23b --project PROJECT`：记下 964982d7 的 `version`（释放时要用）、交付 b42af967 仍是最新交付且 `taskRevisionId` 等于 Task 当前修订、Task 当前 `version`（`expectedTaskVersion`）。
-  2. **新建一条候选接力。** `request acceptance.assign --project PROJECT --id dcd01bb1-18a1-4431-8dd3-8077d0c4e23b --file BODY.json`，body：`projectId`、`taskId`、`relayId`（新 UUID）、`operationId`（新 UUID）、`expectedTaskVersion`、`deliveryId`=b42af967 的完整编号、`stage`=`candidate`、`scopeKey`（**必须换一个新的**，如 `usage-ledger-followup-candidate-2`；同一交付、阶段、范围已有有效接力会得到 `ACCEPTANCE_ALREADY_ASSIGNED`）、`scopeDescription`、`entrypoint`、`publicationRef`、`mode`=`session`、`recipientActorId`=`acceptance-claude-agent`、`sessionId`（验收 Session）、`senderActorId`（发起安排的身份，须等于调用者）、新的 `messageId` 与 `messageOperationId`、`reason`、`supersedesRelayId`=null。需要 review 权限。不能用“取代”（`supersedesRelayId` 指向 964982d7）代替：取代要求同一范围，且旧接力的消息已处理完（replied）时得到 `ACCEPTANCE_IN_FLIGHT`。失败分支：`DELIVERY_CHANGED`（交付或修订变了，重新读第 1 步）、`VERSION_CONFLICT`（Task 版本变了，重读后用新版本重提）、`SESSION_NOT_READY` / `SENDER_MISMATCH` / `INDEPENDENT_SESSION_REQUIRED`（验收 Session 或发起身份不满足条件，由有权者补齐，不要绕过）。
+  2. **新建一条候选接力。** `request acceptance.assign --project PROJECT --id dcd01bb1-18a1-4431-8dd3-8077d0c4e23b --file BODY.json`，body：`projectId`、`taskId`、`relayId`（新 UUID）、`operationId`（新 UUID）、`expectedTaskVersion`、`deliveryId`=b42af967 的完整编号、`stage`=`candidate`、`scopeKey`（**必须换一个新的**，如 `usage-ledger-followup-candidate-2`；同一交付、阶段、范围已有有效接力会得到 `ACCEPTANCE_ALREADY_ASSIGNED`）、`scopeDescription`、`entrypoint`、`publicationRef`、`mode`=`session`、`recipientActorId`=`acceptance-claude-agent`、`sessionId`（验收 Session）、`senderActorId`（发起安排的身份，须等于调用者）、新的 `messageId` 与 `messageOperationId`、`reason`、`supersedesRelayId`=null。需要 Task 类别与决定权。不能用“取代”（`supersedesRelayId` 指向 964982d7）代替：取代要求同一范围，且旧接力的消息已处理完（replied）时得到 `ACCEPTANCE_IN_FLIGHT`。失败分支：`DELIVERY_CHANGED`（交付或修订变了，重新读第 1 步）、`VERSION_CONFLICT`（Task 版本变了，重读后用新版本重提）、`SESSION_NOT_READY` / `SENDER_MISMATCH` / `INDEPENDENT_SESSION_REQUIRED`（验收 Session 或发起身份不满足条件，由有权者补齐，不要绕过）。
   3. **验收者对新接力记一次新的 used，并链接。** 消息送达后，验收 Session 读它、再用自己的身份 `observation.record`（`used`，`observerKind` 为 `agent`），然后 `request acceptance.observe --project PROJECT --id 新接力 --file BODY.json`（body：`projectId`、`taskId`、`relayId`、`operationId`、`expectedVersion`=新接力当前版本、`observationId`）。**不能链接已有的观察 d3917f31**：它记于 11-13 02:03，早于新接力的创建时间，会得到 `OBSERVATION_MISMATCH`（观察必须不早于它所链接的接力）；d3917f31 留作证据，不改。链接成功后读回新接力的 `observationResult` 为 `used`。
-  4. **释放 964982d7。** 先重读它的 `version`（若不是 2 就用读到的），再 `request acceptance.release --project PROJECT --id 964982d7-25d1-45a5-b97a-92b10c677955 --file BODY.json`，body：`projectId`、`taskId`、`relayId`、`operationId`（新 UUID）、`expectedVersion`、`reason`（“消息绑定的 Task 修订与交付修订不一致；已由新接力 <新接力ID> 取代并记 used”）。失败分支：`LAST_ARRANGEMENT`（新接力没建成或已不是有效状态，回第 2 步）、`ACCEPTANCE_CHANGED`（版本变了，重读后重提）、`ACCEPTANCE_IN_FLIGHT`（只在这条接力的消息真的还没落定时出现：消息状态是 processing 或 unknown。等它落定——replied、completed_without_reply、failed 或 cancelled——后重提；消息已经 replied 或 completed_without_reply 的卡住接力可以直接释放，不会得到这个错误，这正是 dcd01bb1 的情形）、`ARRANGEMENT_SATISFIED`（它已有 used，那是证据，不释放）、`FORBIDDEN`（身份没有 review 权限）。读回：接力 `state` 为 `released`，`blockedReason` 带这条理由。
+  4. **释放 964982d7。** 先重读它的 `version`（若不是 2 就用读到的），再 `request acceptance.release --project PROJECT --id 964982d7-25d1-45a5-b97a-92b10c677955 --file BODY.json`，body：`projectId`、`taskId`、`relayId`、`operationId`（新 UUID）、`expectedVersion`、`reason`（“消息绑定的 Task 修订与交付修订不一致；已由新接力 <新接力ID> 取代并记 used”）。失败分支：`LAST_ARRANGEMENT`（新接力没建成或已不是有效状态，回第 2 步）、`ACCEPTANCE_CHANGED`（版本变了，重读后重提）、`ACCEPTANCE_IN_FLIGHT`（只在这条接力的消息真的还没落定时出现：消息状态是 processing 或 unknown。等它落定——replied、completed_without_reply、failed 或 cancelled——后重提；消息已经 replied 或 completed_without_reply 的卡住接力可以直接释放，不会得到这个错误，这正是 dcd01bb1 的情形）、`ARRANGEMENT_SATISFIED`（它已有 used，那是证据，不释放）、`FORBIDDEN`（身份没有 Task 类别或决定权）。读回：接力 `state` 为 `released`，`blockedReason` 带这条理由。
   5. **按决定关闭。** `command run` 提交 `task.close`（`expectedVersion`=Task 当前版本，`deliveryId`=b42af967 的完整编号，`acceptanceResult`、`acceptanceEvidence`、`reason`）；成功后 `task` 读回关闭记录。仍得到 23514 时说明还有别的有效接力没有已链接的 used，回第 1 步读全部接力。
 
 **`dcd01bb1` 每一步一览**（命令、目标对象、身份与权限、回读、失败怎么办；顺序不能换，第 4 步在第 2、3 步之前得到 `LAST_ARRANGEMENT`）：
@@ -331,9 +331,9 @@ node --import tsx tests/manual/session-compaction-e1.ts
 | 步 | 命令 | 目标对象 | 谁、要什么权限 | 回读 | 失败怎么办 |
 | --- | --- | --- | --- | --- | --- |
 | 1 | `work acceptance TASK`、`task TASK` | Task `dcd01bb1…`，交付 `b42af967…`，卡住的接力 `964982d7…` | 任何有读权限的身份 | 接力 `state`/`blockedReason`/`version`、Task `version`、交付的 `taskRevisionId` 等于 Task 当前修订 | 交付不是最新或修订对不上：先处理交付，不继续 |
-| 2 | `request acceptance.assign --id TASK` | 新接力（新 `relayId`、新 `scopeKey`、同一交付、`stage`=`candidate`） | 有 review 权限且等于 `senderActorId` 的身份（Leader） | `work acceptance TASK` 里新接力 `state` 为 `pending`，`version`=1 | `ACCEPTANCE_ALREADY_ASSIGNED`（换 `scopeKey`）、`DELIVERY_CHANGED`/`VERSION_CONFLICT`（回第 1 步）、`SESSION_NOT_READY`/`SENDER_MISMATCH`/`INDEPENDENT_SESSION_REQUIRED`（由有权者补齐，不绕过） |
+| 2 | `request acceptance.assign --id TASK` | 新接力（新 `relayId`、新 `scopeKey`、同一交付、`stage`=`candidate`） | 有 Task 类别与决定权且等于 `senderActorId` 的身份（Leader） | `work acceptance TASK` 里新接力 `state` 为 `pending`，`version`=1 | `ACCEPTANCE_ALREADY_ASSIGNED`（换 `scopeKey`）、`DELIVERY_CHANGED`/`VERSION_CONFLICT`（回第 1 步）、`SESSION_NOT_READY`/`SENDER_MISMATCH`/`INDEPENDENT_SESSION_REQUIRED`（由有权者补齐，不绕过） |
 | 3 | `observation.record`（`used`），再 `request acceptance.observe --id 新接力` | 新接力与验收者**在新接力创建之后**记的观察 | 验收者本人的凭据（接收者；agent 接收者用 agent 身份，人类接收者先 `acceptance.read`） | 新接力 `observationResult` 为 `used`、`observationId` 非空 | `OBSERVATION_MISMATCH`（观察早于新接力、或不是该接收者、该交付，比较精确到毫秒；重新记一条）、`HUMAN_READ_REQUIRED`、`AGENT_OBSERVER_REQUIRED`、`ACCEPTANCE_CHANGED`（版本变了，重读） |
-| 4 | `request acceptance.release --id 964982d7…` | 卡住的接力 | 有 review 权限的身份（Leader），写明理由 | 接力 `state` 为 `released`、`blockedReason` 带理由；`task_acceptance_relay_release` 有不可改的一行 | `LAST_ARRANGEMENT`（回第 2 步）、`ACCEPTANCE_CHANGED`（重读版本）、`ACCEPTANCE_IN_FLIGHT`（消息还在 processing／unknown，等其落定；replied／completed_without_reply 不算）、`ARRANGEMENT_SATISFIED`（已有 used 的不释放）、`FORBIDDEN` |
+| 4 | `request acceptance.release --id 964982d7…` | 卡住的接力 | 有 Task 类别与决定权的身份（Leader），写明理由 | 接力 `state` 为 `released`、`blockedReason` 带理由；`task_acceptance_relay_release` 有不可改的一行 | `LAST_ARRANGEMENT`（回第 2 步）、`ACCEPTANCE_CHANGED`（重读版本）、`ACCEPTANCE_IN_FLIGHT`（消息还在 processing／unknown，等其落定；replied／completed_without_reply 不算）、`ARRANGEMENT_SATISFIED`（已有 used 的不释放）、`FORBIDDEN` |
 | 5 | `command run`（`task.close`） | Task，交付 `b42af967…` | 有关闭权限的身份 | `task TASK` 的 `task.state` 为 `done`，有一条关闭记录 | 仍是 `23514`：还有别的有效接力没有已链接的 used，回第 1 步读全部接力 |
 
 两条都只用新命令，不改库。每次释放先读 `version`（`expectedVersion`），释放后读回接力状态为 `released`，`blockedReason` 带这条理由（`task_acceptance_relay_release` 里也有，不可改）。这一步需要发布后由 Leader 执行，我没有在正式实例上做。上述顺序（新接力 → 链接新的 used → 释放 → 关闭，以及其中的 `LAST_ARRANGEMENT`、`OBSERVATION_MISMATCH` 拒绝）已在自建实例用真实 CLI 进程走过一遍，见 `tests/integration/acceptance-release-cli.test.ts`（用的是人类接收者；`session` 模式的消息发送与处理没有在这条测试里走，那一段由 `tests/integration/acceptance-relay.test.ts` 在服务层覆盖）。设 `EVOLOOP_RELEASE_CLI_TRANSCRIPT=1` 运行它会逐条打印真实 CLI 命令原文（凭据来自环境，不显示）、退出码和输出，可作为照文档执行的对照。第 3 步的“早于新接力的观察不能链接”此前按秒比较（`Date.parse` 作用在数据库时间对象上会丢掉毫秒），同一秒内的早观察会被放过；现在按毫秒比较。
@@ -363,9 +363,19 @@ node --import tsx tests/manual/session-compaction-e1.ts
 
 **读回与限制。** `ops_alert` 表里可以读到每条的状态、开始／结束时间、送达时间、尝试次数和最后一次错误（没有专门的 CLI 命令）。限制：只有一个出口；告警只在协调器运行时发，协调器自己停了发不出（这类情况需要出口之外的存活探测，不在本 Task）；正式环境的出口配置和一次送达核验在发布后另做。
 
+### 额度读数：放行以来用了上个周期的多少（Task a319d0ef）
+
+DeepSeek 额度已用完四次，没有一次事先预警；用量是算术题，所以有一个只读脚本 `scripts/ops/quota-reading.mjs`（任何人或定时任务可运行）：
+
+- **数据来源。** 各 Codex Session 原生记录（`rollout-*-<线程>.jsonl`）里带时间戳的 `token_count` 累计值取差，所以有小时以下的粒度（按日账本不够）；提供方暂停/放行记录读自 `runtime_provider_hold`（只读事务），也可在配置里直接给 `holds`。不读账单、不调提供方接口、不写库、不发消息。
+- **周期。** 当前周期从最近一次放行算起；上一个完整周期是前一次放行到下一次暂停开启。暂停还开着时输出“暂停中”，没有上一个完整周期（至少要两次放行记录）时输出“无法估计”，不给数字。
+- **输出。** 一行中文结论（例如“放行 2.3 小时，已用上个周期的 22%，照现在的速度约 21:30 用完”，过 60%、80% 时标“已过 60% 线”等）；当前周期已用的输入、其中未命中缓存的、输出，分 Session 列出；相当于上个周期的百分之几（三种分开给，另按 `weights` 折算一个合计，默认只算输入）；按最近 `windowHours`（默认 2）小时的速度预计几点到 100%。配置里给了 `recharge`（充值金额和每百万 token 的单价）就按金额算，不需要上个周期。`--json` 给机器读（`flags` 列出已过的提醒线），`--now ISO` 回放某个历史时刻。
+- **配置。** 私有配置经 `EVOLOOP_QUOTA_CONFIG` 传入（仓库外的绝对路径）：`codexSessionsRoot`、`utcOffsetMinutes`、`databaseUrl`+`projectId` 或 `holds`，可选 `provider`、`windowHours`、`warnAt`、`weights`、`recharge`、`sessionLabels`。读不到某个记录文件时只跳过那个文件，第一行写“读数不完整”，退出码 2。
+- **接进定时代班**由需求 Session 做，不在这个脚本里。
+
 ## 6. 受管 Session 编制所需配置
 
-给一个 Role 新建受管 Session，要同时配好：业务身份（身份文件里对本项目有 read 与 write）、`runtime.grants`（含工作区 `cwd`）、Role 级 `runtime.materialCli`、**`residentQueue.roleActors`** 与 `residentQueue.enabled`、**成对配置的 `sessionMessages.grants`**，以及 `runtime.enabled`。完整清单、每项的格式和生效时机见 [Agent CLI：编制所需私有配置清单](agent-cli.md#编制所需私有配置清单session-prepare-缺项时)。
+给一个 Role 新建受管 Session，要同时配好：业务身份（身份文件里对本项目是成员，并至少有一类任务、文档或 Session 写权限）、`runtime.grants`（含工作区 `cwd`）、Role 级 `runtime.materialCli`、**`residentQueue.roleActors`** 与 `residentQueue.enabled`、**成对配置的 `sessionMessages.grants`**，以及 `runtime.enabled`。完整清单、每项的格式和生效时机见 [Agent CLI：编制所需私有配置清单](agent-cli.md#编制所需私有配置清单session-prepare-缺项时)。
 
 **双向消息授权是必配。** 不能因为新 Session“暂时不用消息”而省略，也不能只配一个方向。`sessionMessages.enabled` 须为 `true`，并同时有：
 
@@ -384,11 +394,11 @@ node --import tsx tests/manual/session-compaction-e1.ts
 
 **换路径后先实跑一次。** 换 Role、换验收者或换 Session 后，新的路径必须先实际跑通一次才算落地：第一次派单要真的开出 Run，或新 Session 真的处理过一条消息。换验收者时，新的验收安排也要真正送达并由接收 Session 处理；只改配置、只换绑定、只保存一条分派记录或只在文档里写计划，都不算。保留这次 Run 或消息的 ID、实际处理结果与读回证据，作为新路径可用的对照记录。
 
-- **缺项怎么看。** `session prepare` 返回 `status=blocked`，`missing` 是代码，`missingDetails` 写明要设的配置项、可复制的修法和是否需重启；`role_actor` 就是缺 `residentQueue.roleActors`（或它没启用、或该身份无写权限）。
+- **缺项怎么看。** `session prepare` 返回 `status=blocked`，`missing` 是代码，`missingDetails` 写明要设的配置项、可复制的修法和是否需重启；`role_actor` 就是缺 `residentQueue.roleActors`（或它没启用、或该身份在本项目没有任务、文档或 Session 写类别）。
 - **哪些要重启。** 按代码核对，`session prepare` 每次调用都重读 integrations 与身份文件，补 `residentQueue.roleActors`、`runtime.materialCli` 不需要重启。`runtime.grants` 的授权匹配每次重读，但运行器建 Session、开 Run 和恢复时接受的工作目录、`models` 列出的模型，用的是服务启动时读入的 grants（`apps/coordinator/src/main.ts` 把启动时的 `allowedRuntimeCwd` 交给运行器），所以**新增工作目录或模型的 grant 要重启**才可用；2026-11-14 的接入试跑里，只改文件不重启时 `capabilities` 的 `runtime` 显示 `grant_directory_unavailable`、`pending` 显示重启后才是 `configured`。另外 `runtime.enabled`（运行时只在启动时建立）和新增 HTTP 令牌要重启。
 
-- **身份的额外命令（`extraCommands`）。** 给文档与架构这类只有 read、write 的身份开放归档与恢复时，在身份文件里该凭据上加 `"extraCommands": ["document.archive", "document.restore"]`，不要给它 `review`（那样它还能开始、关闭、分派 Task）。清单只接受这两个值，别的命令写进去则服务启动时读身份文件失败；每条命令各自生效。**身份文件在服务启动时读取，改了要重启服务才生效**（`session prepare` 重读身份文件只用于其编制检查，不改变 HTTP 认证用的启动快照）。
-- **同一个事实写两处。** `runtime.materialCli` 的 `cliActorId` 与 `residentQueue.roleActors` 的 `actorId` 在 Role 级必须一致，不一致时报 `material_cli_actor_mismatch`；Session 有自己按 `sessionId` 精确的 `materialCli` 条目时按这一条判断（它须是项目当前写入者，否则 `material_cli_actor_not_writer`），所以同一 Role 下用独立身份签字的验收 Session 可以直接 `session prepare`。为什么暂不合并见 Agent CLI 那一节。
+- **身份的额外命令（`extraCommands`）。** 给文档与架构这类只有 `document` 类别的身份开放归档与恢复时，在身份文件里该凭据上加 `"extraCommands": ["document.archive", "document.restore"]`，不要给它 `management` 或 `task` 决定权（那样它还能开始、关闭、分派 Task）。清单只接受这两个值，别的命令写进去则服务启动时读身份文件失败；每条命令各自生效，仍须 `document` 类别。**身份文件在服务启动时读取，改了要重启服务才生效**（`session prepare` 重读身份文件只用于其编制检查，不改变 HTTP 认证用的启动快照）。
+- **同一个事实写两处。** `runtime.materialCli` 的 `cliActorId` 与 `residentQueue.roleActors` 的 `actorId` 在 Role 级必须一致，不一致时报 `material_cli_actor_mismatch`；Session 有自己按 `sessionId` 精确的 `materialCli` 条目时按这一条判断（它须在当前身份文件里可写至少一类任务、文档或 Session 对象，否则 `material_cli_actor_not_writer`），所以同一 Role 下用独立身份签字的验收 Session 可以直接 `session prepare`。为什么暂不合并见 Agent CLI 那一节。
 
 ## 7. 用量上限与上下文交接
 
@@ -460,6 +470,7 @@ node --import tsx tests/manual/session-compaction-e1.ts
 ## Session 队伍调度程序
 
 协调器在运行时启用（`runtime.enabled`）后运行队伍调度程序（轮询间隔沿用 `residentQueue.pollIntervalMs`，默认 2 秒）。它只推进由 Leader 凭据控制的队伍，每一步都是普通命令，操作 ID 由队伍项和尝试次数决定，重启后重放不会重复开 Run。队伍项、事件和 `QUEUED_IN_SESSION_LINE` 的含义见 [Session 运行时](../architecture/session-runtime.md#session-队伍dec-045-q1)。迁移 087 新增 `session_line`、`session_line_entry`、`session_line_event`、`task_assignment_confirmation`；不需要改私有配置，**接收者解析规则（队伍写 assignment 的对象）**：队伍项的接收者必须是该 Session 实际签署交付的业务身份，不再按 Role 猜。顺序是：①该 Session 自己的 `runtime.materialCli` 条目（`sessionId` 与它的原生 actor `sessionActorId` 都匹配，条目的 `cliActorId` 就是接收者）；②只有当这个 Role 恰好只有一个未关闭的 Session 时，才用 Role 级 `materialCli` 条目或 `residentQueue.roleActors`（单 Session 的旧配置照常工作）；③否则**在写任何 assignment、确认请求或 Run 之前**把这一项挂起（`RECIPIENT_UNAVAILABLE`），原因点名该 Session 并写明要补的配置（该 Session 的 `materialCli` 条目）。结果还必须是当前项目 writer。同一 Role 下有开发、验收、验收 2 等多个身份不同的 Session 时，每个 Session 都要有自己的 `materialCli` 条目；缺了不会改用别人的身份，也不会产生 `RECIPIENT_UNBOUND` 预检失败的 Run。控制者自己的 Session 也不能被追加：判据复用这里的业务身份解析，而不是 `runtime_session.actor_id` 创建者；该路径返回 `SELF_SESSION_LINE_FORBIDDEN`，不写队伍、确认消息或 Run。测试：`apps/coordinator/test/session-line-recipient.test.ts`、`packages/adapter-postgres/test/session-line.test.ts`。
+协调器在运行时启用（`runtime.enabled`）后运行队伍调度程序（轮询间隔沿用 `residentQueue.pollIntervalMs`，默认 2 秒）。它只推进由 Leader 凭据控制的队伍，每一步都是普通命令，操作 ID 由队伍项和尝试次数决定，重启后重放不会重复开 Run。队伍项、事件和 `QUEUED_IN_SESSION_LINE` 的含义见 [Session 运行时](../architecture/session-runtime.md#session-队伍dec-045-q1)。迁移 087 新增 `session_line`、`session_line_entry`、`session_line_event`、`task_assignment_confirmation`；不需要改私有配置，**接收者解析规则（队伍写 assignment 的对象）**：队伍项的接收者必须是该 Session 实际签署交付的业务身份，不再按 Role 猜。顺序是：①该 Session 自己的 `runtime.materialCli` 条目（`sessionId` 与它的原生 actor `sessionActorId` 都匹配，条目的 `cliActorId` 就是接收者）；②只有当这个 Role 恰好只有一个未关闭的 Session 时，才用 Role 级 `materialCli` 条目或 `residentQueue.roleActors`（单 Session 的旧配置照常工作）；③否则**在写任何 assignment、确认请求或 Run 之前**把这一项挂起（`RECIPIENT_UNAVAILABLE`），原因点名该 Session 并写明要补的配置（该 Session 的 `materialCli` 条目）。结果还必须是当前项目成员且至少可写一类任务、文档或 Session 对象。同一 Role 下有开发、验收、验收 2 等多个身份不同的 Session 时，每个 Session 都要有自己的 `materialCli` 条目；缺了不会改用别人的身份，也不会产生 `RECIPIENT_UNBOUND` 预检失败的 Run。控制者自己的 Session 也不能被追加：判据复用这里的业务身份解析，而不是 `runtime_session.actor_id` 创建者；该路径返回 `SELF_SESSION_LINE_FORBIDDEN`，不写队伍、确认消息或 Run。测试：`apps/coordinator/test/session-line-recipient.test.ts`、`packages/adapter-postgres/test/session-line.test.ts`。
 
 ## 验收接力的消息卡在队首（缺陷 0fd4a99b）
 
@@ -481,7 +492,7 @@ node --import tsx tests/manual/session-compaction-e1.ts
 
 **每秒一条的那个错误。** 排在运行中回合后面的消息不会被泵遍历（待处理列表只含能开始或正在处理的消息），所以每秒一条并不来自“正在排队的消息”。每个 tick 对每条正在处理的消息都会读一次原生历史（`listTurns`、`listItems`），这里抛出的错误会进日志；有两条在运行的消息就是每秒两次尝试。已读代码能指出的候选是：原生线程刚开的第一个回合在历史还没物化时 `thread/turns/list` 返回 -32600（直接输入的对账代码里有同样的处理注释）。这只是推断，没有在正式实例上确认：新日志会直接写出错误码和消息，发布后看第一行就能知道。
 
-**关闭的恢复门。** 恢复门处于 `blocked`（等人恢复；`retrying`、`reworking`、`message_pending`、`awaiting_acceptance` 是正常等待，不触发）、更新时间已超过 30 分钟（一轮 Leader 安排和一次正常恢复通常都比这短；再短会把刚停下一轮后的正常恢复也算进来），并且有 owned 消息排在它后面时，`work board` 的 `awaitingLeader` 里出现一项 `kind=recovery_gate`：`id` 是 Session，`title` 写职责、阶段和排队条数，`waitingOn` 是最近一次为这个门做过恢复决定的身份（`{kind:"actor", id}`），没有人决定过时是 `{kind:"reviewer", id:null}`（任一有复核权限的身份可以执行 `runtime.session.recovery.resume`）。这一项每次读取时从门和队列算出：门重新打开（或进入正常等待的阶段）、或后面不再有排队消息，它就没有了。**它总排在列表最前**（完整快照和 `--brief` 都是），`--brief` 在各档截断时先保留所有门项再填其它项，所以其它待办项再多也挤不掉它；`--brief` 输出里带 `waitingOn`。Leader 每轮读 `work board --brief`，定时代班读同一份，所以不需要另外的通知。
+**关闭的恢复门。** 恢复门处于 `blocked`（等人恢复；`retrying`、`reworking`、`message_pending`、`awaiting_acceptance` 是正常等待，不触发）、更新时间已超过 30 分钟（一轮 Leader 安排和一次正常恢复通常都比这短；再短会把刚停下一轮后的正常恢复也算进来），并且有 owned 消息排在它后面时，`work board` 的 `awaitingLeader` 里出现一项 `kind=recovery_gate`：`id` 是 Session，`title` 写职责、阶段和排队条数，`waitingOn` 是最近一次为这个门做过恢复决定的身份（`{kind:"actor", id}`），没有人决定过时是 `{kind:"reviewer", id:null}`（任一有 Session 类别与决定权的身份可以执行 `runtime.session.recovery.resume`）。这一项每次读取时从门和队列算出：门重新打开（或进入正常等待的阶段）、或后面不再有排队消息，它就没有了。**它总排在列表最前**（完整快照和 `--brief` 都是），`--brief` 在各档截断时先保留所有门项再填其它项，所以其它待办项再多也挤不掉它；`--brief` 输出里带 `waitingOn`。Leader 每轮读 `work board --brief`，定时代班读同一份，所以不需要另外的通知。
 
 ## 调度板与调度事件流（Q2，迁移 105）
 
@@ -503,7 +514,7 @@ node --import tsx tests/manual/session-compaction-e1.ts
 
 **开关（默认关闭）。** 在 `leaderResultNotices` 里加 `"packets": true`：之后新产生的通知走通知包；不写或 `false` 时，新通知仍是一条通知一条消息，与未发布这个功能时一致（迁移 089 本身只加一列和一张开关表，不改变既有行为）。通知泵每轮重读配置并把开关抄进数据库，不需要重启。`enabled:false` 时不投递新通知，但已发出的包仍会收尾（对账、取消没开始的包消息）。回退：把 `packets` 改回 `false`——没进过包的通知回到旧路径，进过包的项由包处理完。上线要先看发布顺序：089 不得早于 084–088 进入正式库。
 
-通知泵在发现等待中的新通知时按包送达：最早一项等满 60 秒、Leader 空闲、没有可以开始的人的消息排队、恢复门打开才合成一包并发一条消息。包的步骤（`leader.noticePacket.build`、`.sent`、`.observe`）只由配置里的通知发送身份（`senderActorId`）运行，Leader 和其他复核身份不能运行；它们的处置命令 `leader.notice.handle` 需要 review 权限。逐项状态、各步骤和恢复见[接口合同](../architecture/contracts.md#leader-通知层)。
+通知泵在发现等待中的新通知时按包送达：最早一项等满 60 秒、Leader 空闲、没有可以开始的人的消息排队、恢复门打开才合成一包并发一条消息。包的步骤（`leader.noticePacket.build`、`.sent`、`.observe`）只由配置里的通知发送身份（`senderActorId`）运行，Leader 和其他有 `management` 类别与决定权的身份不能运行；它们的处置命令 `leader.notice.handle` 需要 `management` 类别。逐项状态、各步骤和恢复见[接口合同](../architecture/contracts.md#leader-通知层)。
 
 **受阻的包。** 读到包的那一轮失败而恢复门关闭时包为 `blocked`，出现在 Leader 工作索引的 `blockedNoticePackets`。先恢复恢复门，再 `request leader.notice.recover --id 包编号 --file BODY.json --receipt UUID`（body `{"reason":"..."}`）恢复这一包。
 

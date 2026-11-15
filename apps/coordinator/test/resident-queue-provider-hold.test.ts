@@ -5,7 +5,7 @@ import { DomainError } from "@evoloop/contracts/ports";
 import { ResidentQueuePump } from "../src/resident-queue/pump.js";
 
 const projectId = randomUUID(), queueId = randomUUID(), entryId = randomUUID(), sessionId = randomUUID(), taskId = randomUUID();
-const lead = { actorId: "lead", projectIds: [projectId], permissions: ["read", "write", "review"] as Array<"read" | "write" | "review"> };
+const lead = { actorId: "lead", projectIds: [projectId], permissions: ["task", "document", "session", "management"] as ('task'|'document'|'session'|'management')[], decisions: true };
 const queue = { projectId, id: queueId, version: 3, adoptedVersion: 3, actorId: "lead", entries: [{
   id: entryId, state: "queued", position: 0, sessionId, taskId, dependsOn: [], version: 5, claimId: null, holdCode: null, useRequired: false }] };
 
@@ -41,4 +41,17 @@ test("other claim failures are still reported", async () => {
     pollIntervalMs: 1000, onError: error => errors.push(error) });
   await pump.tick();
   assert.equal(errors.length, 1);
+});
+
+test("a management-only queue owner is not selected as the pump's decision-enabled controller", async () => {
+  let executions = 0;
+  const managementOnly = { ...lead, actorId: "management-only", permissions: ["management"] as const, decisions: false };
+  const workflow = {
+    listResidentQueues: async () => [{ ...queue, actorId: managementOnly.actorId }],
+    execute: async () => { executions++; return { status: "applied" }; },
+  };
+  const pump = new ResidentQueuePump({ workflow: workflow as never, credentials: async () => [managementOnly] as never,
+    enabled: async () => true, canWrite: () => true, pollIntervalMs: 1000, onError: () => {} });
+  await pump.tick();
+  assert.equal(executions, 0, "the pump never spends another identity's decision authority on this queue");
 });

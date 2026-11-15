@@ -86,7 +86,7 @@ async function setup(t: import("node:test").TestContext, webRoot?: string) {
   };
   const runner = { workspaceBinding: async () => ({ nativeThreadId: threadId, nativeSessionId: threadId }), workspaceHistory: history,
     nativeAdapter: () => ({ onWorkspaceUpdate: true }), status: () => ({ available: true }), onWorkspaceUpdate: () => () => undefined, onWorkspaceDisconnect: () => () => undefined };
-  const principal = { actorId: owner, projectIds: [projectId], permissions: ["read", "write"] as Array<"read" | "write"> };
+  const principal = { actorId: owner, projectIds: [projectId], permissions: ["task", "document", "session"] };
   const hash = (value: string) => createHash("sha256").update(value).digest("hex");
   const service = new WorkflowService({ uow, clock: { now }, ids: { next: randomUUID }, hasher: { hash } });
   const observation = new SessionObservationService({ uow });

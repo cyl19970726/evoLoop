@@ -9,7 +9,7 @@ import type { SessionMessageCommand, SessionMessageManualStopEvidence,
 import { applySessionMessage } from '../src/session-messages/index.ts';
 
 const projectId=randomUUID(),sessionId=randomUUID(),messageId=randomUUID(),processingId=randomUUID();
-const principal:Principal={actorId:'reviewer',projectIds:[projectId],permissions:['read','write','review']};
+const principal:Principal={actorId:'reviewer',projectIds:[projectId],permissions:['task','document','session','management'],decisions:true};
 const now='2026-11-03T04:00:00.000Z';
 const command:Extract<SessionMessageCommand,{type:'session.message.manualStop'}>={
   type:'session.message.manualStop',projectId,operationId:randomUUID(),messageId,sessionId,processingId,
