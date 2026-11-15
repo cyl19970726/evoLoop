@@ -7,11 +7,13 @@ export type StatusTone = "progress" | "done" | "waiting" | "blocked" | "idle" | 
 
 const tones: Record<StatusTone, { className: string; Icon?: LucideIcon; spin?: boolean }> = {
   progress: { className: "bg-accent text-primary", Icon: LoaderCircle, spin: true },
-  done: { className: "bg-field text-text-secondary", Icon: Check },
+  done: { className: "bg-done-soft text-done", Icon: Check },
   waiting: { className: "bg-warning-soft text-warning", Icon: Clock },
   blocked: { className: "bg-danger-soft text-destructive", Icon: TriangleAlert },
-  idle: { className: "bg-field text-text-secondary" },
-  unknown: { className: "bg-transparent text-muted-foreground shadow-[inset_0_0_0_1px_var(--border-strong)]", Icon: CircleHelp },
+  // 待办: a hollow tag, a neutral edge and no fill (DEC-049), so it is not mistaken for 完成.
+  idle: { className: "bg-transparent text-text-secondary shadow-[inset_0_0_0_1px_var(--border-strong)]" },
+  // 未知: a dashed edge (DEC-049). The outline is drawn inside the tag, so the tag keeps the size of the others.
+  unknown: { className: "bg-transparent text-muted-foreground outline-dashed outline-1 -outline-offset-1 outline-(--border-strong)", Icon: CircleHelp },
   history: { className: "bg-transparent text-muted-foreground" },
 };
 
@@ -48,7 +50,7 @@ export function CountDot({ count, className }: { count: number | null; className
   if (count === null) return <span title="数目待核对" data-count="unknown" className={cn(dot, "bg-field text-muted-foreground", className)}>
     <span aria-hidden="true">?</span><span className="sr-only">数目待核对</span></span>;
   if (count <= 0) return null;
-  return <span className={cn(dot, "bg-brand text-on-brand", className)}>{count > 99 ? "99+" : count}</span>;
+  return <span className={cn(dot, "bg-count-bg text-count-fg", className)}>{count > 99 ? "99+" : count}</span>;
 }
 
 export type NoticeTone = "info" | "waiting" | "error";

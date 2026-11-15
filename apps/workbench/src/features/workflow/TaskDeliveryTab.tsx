@@ -49,6 +49,9 @@ function useDeliveryTitles(projectId: string, deliveries: Delivery[]) {
   return titles;
 }
 
+/** The delivery a link asked for (?delivery=ID), if any. */
+const locatedDelivery = (): string | null => new URLSearchParams(typeof window === "undefined" ? "" : window.location.search).get("delivery");
+
 export function TaskDeliveryTab({ projectId, detail, active, actionsHref, actorId, convention }: {
   projectId: string; detail: TaskDetail; active: boolean; actionsHref: string; actorId?: string;
   /** The work index's acceptance convention for this Task, when read: gives the precondition line. */
@@ -57,6 +60,16 @@ export function TaskDeliveryTab({ projectId, detail, active, actionsHref, actorI
   const deliveries = detail.deliveries ?? emptyDeliveries;
   const latestId = deliveries.at(-1)?.id;
   const titles = useDeliveryTitles(projectId, deliveries);
+  // A link from the dynamic view (?tab=delivery&delivery=ID) lands on that delivery: it is scrolled into view and marked, only when this tab is on screen.
+  const located = React.useMemo(locatedDelivery, []);
+  React.useEffect(() => {
+    if (!active || !located) return;
+    const frame = window.requestAnimationFrame(() => {
+      const element = [...document.querySelectorAll<HTMLElement>("[data-delivery]")].find(item => item.dataset.delivery === located);
+      element?.scrollIntoView({ block: "start" });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [active, located, deliveries.length]);
   // The declared source runs are checked only while this tab is on screen: the latest five by themselves, older
   // ones on request.
   const [requested, setRequested] = React.useState<string[]>([]);
@@ -139,7 +152,7 @@ function DeliveryRecord({ projectId, detail, delivery, latest, title, run, activ
   const target = deliveryTarget(delivery, projectId);
   const inScope = delivery.projectId === projectId && delivery.taskId === detail.task.id;
   const current = delivery.taskRevisionId === detail.revision.id;
-  return <article className="flex flex-col gap-3 border-t border-border py-5 first:border-t-0 first:pt-0" data-delivery={delivery.id} aria-label={latest ? "最新交付" : "历史交付"}>
+  return <article className="flex flex-col gap-3 border-t border-border py-5 first:border-t-0 first:pt-0" data-delivery={delivery.id} data-delivery-located={locatedDelivery() === delivery.id ? "" : undefined} aria-label={latest ? "最新交付" : "历史交付"}>
     <div className="flex flex-wrap items-center gap-2">
       <h3 className="text-small font-semibold text-foreground">{latest ? "最新交付" : "历史交付"}</h3>
       <StatusTag tone={delivery.technicalResult === "passed" ? "done" : "blocked"} label={delivery.technicalResult === "passed" ? "技术检查通过" : "技术检查未通过"} />

@@ -97,7 +97,7 @@ Session 页说明一个具体实例此刻在做什么、做出了什么；“Lea
 
 | 交互 | 怎样做 | 数据来源与现状 |
 | --- | --- | --- |
-| 连续的工作流 | Agent 正文不包卡片；工具调用折叠成一行灰字（“已执行 5 个指令，已建立 1 个文件，1 个失败 ›”），展开后每步一行，失败标红，改动的文件带增删行数 | 已实现：折叠时失败与正在进行的一步仍可见，每步可原位看详情；增删行数需要工具详情 |
+| 连续的工作流 | Agent 正文不包卡片；工具调用折叠成一行灰字（“已执行 5 个指令，已建立 1 个文件，1 个失败 ›”），展开后每步一行，失败标红，改动的文件带增删行数 | 已实现：折叠时失败与正在进行的一步仍可见，每步可原位看详情；增删行数需要工具详情。已结束（完成、失败、中断）的一轮里没有记下结果的工具写“结果未确认”，不再显示“正在进行”；工具行的图标按状态区分：只有已完成是 ✓，失败 ✕、进行中转圈、结果未确认 ?、待处理空心圈、上次进行中当前待核对 ⏱，各有颜色和读屏名称，三种“没确认”从不画成成功（Task 3c6973c5） |
 | 需要你决定 | Agent 停下来等人时，流末出现提问卡：一句问题、几个可点的选项（A、B、C…），最后一项“其他”可以直接写；选好后点“提交”，等于发出这条回复，卡片随后折叠成一行“已回答：…” | 原生提问与业务问答已有，但不在时间线里（见下表） |
 | 输入框信息 | 输入框下方一行：当前模型、权限或执行配置、上下文用量 | Session 执行配置与用量部分已有 |
 | 实时状态行 | 流末一行，前面是 Session 的身份标记：“正在运行测试 · 1 分 04 秒 ›”，点开看当前工具 | 已实现（头像、当前工具、耗时、关联任务）；连接过期时只写“上次读回” |
@@ -161,6 +161,8 @@ Session 页说明一个具体实例此刻在做什么、做出了什么；“Lea
 | 数据来源 | `packages/contracts/src/session-timeline.ts`、`packages/adapter-claude-agent-sdk/src/index.ts`、`packages/adapter-codex-app-server/src/workspace-map.ts`、`apps/coordinator/src/runtime/routed.ts` | — |
 
 ## 相关
+
+- 调度的动态数据流（统筹安排 › 动态，已接真实调度板）：[动态](flow-view.md)
 
 - 产品：[对象关系与能力职责](../../product/workbench.md#对象关系与能力职责)、[职责与 Session](../../product/functional-scenarios.md#职责session-与项目初始安排)、[从需求到 Leader 安排](../../product/functional-scenarios.md#场景-1从需求到-leader-安排)
 - 合同：[Session 工作观察](../../architecture/contracts.md#session-工作观察有界读取同一份事实)、[RoleRegistry 与 SessionRuntime](../../architecture/contracts.md#4-roleregistry-与-sessionruntime)、[具体承接与职责分开](../../architecture/contracts.md#具体承接与职责分开)

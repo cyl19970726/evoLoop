@@ -8,7 +8,7 @@ import { NOT_REGISTERED, milestoneRows, versionView } from "./milestonesPresenta
 const card = "flex min-w-0 flex-col gap-1.5 rounded-xl bg-raised px-4 py-3 shadow-sm compact:gap-2 compact:p-5";
 const muted = "text-caption text-muted-foreground";
 const heading = "text-label font-semibold text-foreground";
-const toneClass = { done: "bg-success-soft text-success", progress: "bg-selected text-primary", partial: "bg-warning-soft text-warning", idle: "bg-field text-text-secondary", none: "border border-dashed border-border text-text-secondary" } as const;
+const toneClass = { done: "bg-done-soft text-done", progress: "bg-selected text-primary", partial: "bg-warning-soft text-warning", idle: "bg-field text-text-secondary", none: "border border-dashed border-border text-text-secondary" } as const;
 
 export function MilestonesBlock({ projectId, active }: { projectId: string; active: boolean }) {
   const version = useProjectQuery(projectId, ["overview", "version"], signal => api().version(signal), { enabled: active, retry: false });
