@@ -448,11 +448,11 @@ test("D2. merged-PR worktrees that fail the whole-tree conditions still lose nod
   assert.ok(existsSync(join(open, "node_modules")) && existsSync(join(busy, "node_modules")) && existsSync(join(fresh, "node_modules")));
 });
 
-test("D3. old releases lose node_modules; the current release, the previous complete one (not an aborted empty build) and protected paths are kept", async () => {
+test("D3. old releases lose node_modules; the current release, the previous deployed one (not a newer build that was never deployed) and protected paths are kept", async () => {
   const w = world();
   const releases = join(w.root, "rel"); mkdirP(releases, { recursive: true });
-  const make = (name, hoursAgo, complete = true) => { const dir = join(releases, name); mkdirP(dir, { recursive: true }); if (complete) { mkdirP(join(dir, "source"), { recursive: true }); copyWithDeps(join(dir, "source"), hoursAgo); } aged(dir, hoursAgo); return dir; };
-  const oldest = make("box-main-aaaaaaa-20261101", 400), older = make("box-main-bbbbbbb-20261110", 100), previous = make("box-main-ccccccc-20261113", 30), aborted = make("box-main-ddddddd-20261115", 5, false), current = make("box-main-eeeeeee-20261115", 2);
+  const make = (name, hoursAgo, complete = true, deployed = true) => { const dir = join(releases, name); mkdirP(dir, { recursive: true }); if (complete) { mkdirP(join(dir, "source"), { recursive: true }); copyWithDeps(join(dir, "source"), hoursAgo); if (deployed) mkdirP(join(dir, "runtime")); } aged(dir, hoursAgo); return dir; };
+  const oldest = make("box-main-aaaaaaa-20261101", 400), older = make("box-main-bbbbbbb-20261110", 100), previous = make("box-main-ccccccc-20261113", 30), aborted = make("box-main-ddddddd-20261115", 5, false), builtOnly = make("box-main-fffffff-20261115", 1, true, false), current = make("box-main-eeeeeee-20261115", 2);
   const formal = join(releases, "box-release-20261108"); mkdirP(join(formal, "source"), { recursive: true }); copyWithDeps(join(formal, "source"), 900);
   linkTo(current, join(releases, "current"));
   Object.assign(w.config, { releaseRoot: releases, releaseNames: /^box-main-/, protectedPaths: [...w.config.protectedPaths, formal] });
@@ -464,6 +464,9 @@ test("D3. old releases lose node_modules; the current release, the previous comp
   assert.match(reasonsFor(done, current), /是当前发布/);
   assert.match(reasonsFor(done, previous), /是上一个完整发布/);
   assert.ok(existsSync(aborted));
+  assert.ok(existsSync(join(builtOnly, "source", "node_modules")), "a build newer than the current release may be the next one being prepared: untouched");
+  assert.match(depsReasonsFor(done, builtOnly), /比当前发布还新/);
+  assert.match(reasonsFor(done, previous), /是上一个完整发布/, "the previous release is the newest DEPLOYED one, not the newest directory");
 });
 
 test("D4. depsSkipReasons: protected paths, unknown process data and unknown recent changes block; only node_modules can be removed", () => {

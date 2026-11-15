@@ -119,6 +119,7 @@ export function depsSkipReasons(facts, config) {
     else if (!(config.releaseNames ?? new RegExp(DEFAULT_RELEASE_NAMES)).test(basename(facts.path))) reasons.push("目录名不匹配 releaseNames:不是发布目录,不触碰");
     if (facts.isCurrent) reasons.push("是当前发布(current 指向它)");
     if (facts.isPrevious) reasons.push("是上一个完整发布(保留作回退)");
+    if (facts.isNewerThanCurrent) reasons.push("比当前发布还新:可能是正在准备的下一个发布,不动");
   } else reasons.push(`未知类型 ${facts.kind}`);
   if (facts.processes === null) reasons.push("无法检查有没有进程以它为工作目录");
   else if (facts.processes.length) reasons.push(`有进程以它为工作目录(${facts.processes.slice(0, 3).map(p => `${p.command}[${p.pid}]`).join(", ")})`);
@@ -216,7 +217,8 @@ export function makeAdapters(config, exec = execFileSync) {
     },
     listDirs: root => { try { return readdirSync(root, { withFileTypes: true }).filter(entry => entry.isDirectory() && !entry.isSymbolicLink()).map(entry => join(root, entry.name)); } catch { return null; } },
     realpath: path => real(path),
-    hasSource: dir => existsSync(join(dir, "source")),
+    // A release that was deployed has both source/ and runtime/; a build that was only made (or aborted) has less and is not a rollback target.
+    deployed: dir => existsSync(join(dir, "source")) && existsSync(join(dir, "runtime")),
     mtimeMs: path => { try { return statSync(path).mtimeMs; } catch { return null; } },
     removeDeps: path => { if (basename(path) !== "node_modules") throw new Error("refusing to remove a directory that is not node_modules"); rmSync(path, { recursive: true, force: true }); },
     freeBytes: path => { const s = statfsSync(path); return s.bavail * s.bsize; },
@@ -318,9 +320,11 @@ export function surveyDeps({ adapter, config, surveyed, wholeRemoved = new Set()
   if (config.releaseRoot) {
     const dirs = (adapter.listDirs(config.releaseRoot) ?? []).filter(dir => (config.releaseNames ?? new RegExp(DEFAULT_RELEASE_NAMES)).test(basename(dir)));
     const current = (() => { const link = adapter.realpath(join(config.releaseRoot, "current")); return dirs.map(real).includes(link) ? link : null; })();
-    // The previous release is the newest other one that is complete (has source/): an aborted build leaves an empty directory that must not count.
-    const previous = dirs.filter(dir => real(dir) !== current && adapter.hasSource(dir)).sort((a, b) => (adapter.mtimeMs(b) ?? 0) - (adapter.mtimeMs(a) ?? 0))[0] ?? null;
-    for (const dir of dirs) add("release", dir, { kind: "release", isCurrent: real(dir) === current, isPrevious: previous !== null && real(dir) === real(previous) });
+    // The previous release is the newest other one that was deployed (source/ and runtime/): a build that was made but never deployed, or an aborted
+    // one, is newer but is not what a rollback would go back to.
+    const previous = dirs.filter(dir => real(dir) !== current && adapter.deployed(dir)).sort((a, b) => (adapter.mtimeMs(b) ?? 0) - (adapter.mtimeMs(a) ?? 0))[0] ?? null;
+    for (const dir of dirs) add("release", dir, { kind: "release", isCurrent: real(dir) === current, isPrevious: previous !== null && real(dir) === real(previous),
+      isNewerThanCurrent: current !== null && real(dir) !== current && (adapter.mtimeMs(dir) ?? 0) > (adapter.mtimeMs(current) ?? Infinity) });
   }
   return items;
 }

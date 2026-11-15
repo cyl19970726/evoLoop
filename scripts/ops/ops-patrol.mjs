@@ -5,7 +5,8 @@
 // occurrence or a low-space reading is then no longer only a line in a log or in a report nobody gets.
 //   ops-patrol.mjs [--execute] [--json]      EVOLOOP_DISK_CONFIG points at the private config (see disk-reclaim.mjs); its `patrol` object holds:
 //     cli (absolute path of the agent CLI), projectId, leaderSessionKey (as `work send` takes it), watchSchedules (schedule ids),
-//     stateFile (absolute path outside the repository: what was already told), alertIntervalMinutes (default 360), skipLookbackHours (default 48).
+//     stateFile (absolute path outside the repository: what was already told), alertIntervalMinutes (default 360), skipLookbackHours (default 48),
+//     messagePrefix (optional text put before the message, e.g. to mark a test).
 // Read-only except what disk-reclaim does with --execute and the one `work send` message; the message carries counts, ids and times only.
 import { execFileSync } from "node:child_process";
 import { readFileSync, realpathSync, writeFileSync } from "node:fs";
@@ -85,7 +86,7 @@ export async function patrolOnce({ config, patrol, adapter, execute, now = Date.
   if (decision.send) {
     const generatedAt = new Date(now).toISOString();
     try {
-      sent = sendAlert(patrol, alertText({ report, fresh: decision.fresh, lowDue: decision.lowDue, generatedAt }), exec).trim().slice(0, 400);
+      sent = sendAlert(patrol, `${patrol.messagePrefix ?? ""}${alertText({ report, fresh: decision.fresh, lowDue: decision.lowDue, generatedAt })}`, exec).trim().slice(0, 400);
       write(patrol.stateFile, JSON.stringify({ lastAlertAt: decision.lowDue ? generatedAt : (state.lastAlertAt ?? generatedAt), lastLow: report.lowSpace ? (decision.lowDue || state.lastLow === true) : false, toldOccurrences: [...new Set([...(state.toldOccurrences ?? []), ...decision.fresh.map(item => item.operationId).filter(Boolean)])].slice(-200) }));
     } catch (error) { problems.push(`发给 Leader 的告警没有送出(${String(error.message).split("\n")[0].slice(0, 100)}):下次巡检会再试`); }
   } else if (!report.lowSpace && state.lastLow) write(patrol.stateFile, JSON.stringify({ ...state, lastLow: false }));
