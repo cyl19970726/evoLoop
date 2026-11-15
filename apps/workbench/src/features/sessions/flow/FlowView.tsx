@@ -1,7 +1,7 @@
 // 统筹安排 › 动态 (DEC-045 F1): the scheduling flow as a picture. The layout, the event-to-picture mapping, the live / pause / replay controls
 // and the accessibility rules, driven by whatever `events` and `board` it is given. It reads nothing by itself: FlowPage feeds it the work
 // board (source "live") and the sample route /ui/flow feeds it hand-written fixtures, which the page says on screen.
-import type { OpenInfo } from "./flowOpen";
+import { stationNode, type NodeInfo, type OpenInfo } from "./flowOpen";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Pause, Play, Radio } from "lucide-react";
 import { Button, cn } from "@evoloop/ui";
@@ -60,14 +60,18 @@ export interface FlowViewProps {
   windowNote?: string;
   /** The real objects an event opens, what the links do not say, and the pull request (or why it cannot be read). */
   openInfo?: (event: SchedEvent) => OpenInfo;
+  /** What a node opens, or why it cannot (live only; a fixture node has no real object). */
+  nodeInfo?: (id: NodeId) => NodeInfo;
   /** How many hours the loaded events and the 已验收 count cover. Said on the 已验收 cell itself. */
   windowHours?: number;
   /** Which event is selected at first (used by tests and by deep links). */
   selectSeq?: number;
+  /** Which node is selected at first (tests and deep links). */
+  selectNode?: NodeId;
 }
 type Mode = "live" | "paused" | "replay";
 
-export function FlowView({ board, events, context, source, startAt, connection, windowNote, openInfo, windowHours, selectSeq }: FlowViewProps) {
+export function FlowView({ board, events, context, source, startAt, connection, windowNote, openInfo, nodeInfo, windowHours, selectSeq, selectNode }: FlowViewProps) {
   const reduced = useMedia("(prefers-reduced-motion: reduce)");
   const narrow = useMedia("(max-width: 640px)");
   const live = source === "live";
@@ -78,7 +82,7 @@ export function FlowView({ board, events, context, source, startAt, connection, 
   const newer = Math.max(0, events.length - 1 - cursor);
   const [hidden, setHidden] = useState<Set<FlowGroup>>(new Set());
   const [stuckOnly, setStuckOnly] = useState(false);
-  const [selected, setSelected] = useState<{ type: "event"; seq: number } | { type: "node"; id: NodeId } | null>(selectSeq !== undefined ? { type: "event", seq: selectSeq } : null);
+  const [selected, setSelected] = useState<{ type: "event"; seq: number } | { type: "node"; id: NodeId } | null>(selectSeq !== undefined ? { type: "event", seq: selectSeq } : selectNode ? { type: "node", id: selectNode } : null);
   const [fresh, setFresh] = useState<SchedEvent[]>([]);
   const [flash, setFlash] = useState<Set<NodeId>>(new Set());
   const timers = useRef<number[]>([]);
@@ -201,7 +205,16 @@ export function FlowView({ board, events, context, source, startAt, connection, 
       })()}</dd>
       {source === "live" && openInfo?.(selectedEvent)?.pr && <><dt className="text-muted-foreground">PR</dt><dd data-pr="">{openInfo(selectedEvent)!.pr}</dd></>}
     </dl>;
-  })() : selected?.type === "node" ? <p className="text-small">{selected.id}：{selected.id.startsWith("session:") ? sessionStatus(selected.id.slice(8)).text : "固定节点"}</p> : <p className="text-small text-muted-foreground">点画面上的节点或列表里的一行，看详情。</p>;
+  })() : selected?.type === "node" ? (() => {
+    if (source === "fixture" || !nodeInfo) return <p className="text-small" data-node-detail="">{selected.id}：{selected.id.startsWith("session:") ? sessionStatus(selected.id.slice(8)).text : "固定节点"}。夹具节点没有真实对象。</p>;
+    const info = nodeInfo(selected.id);
+    return <div className="flex flex-col gap-1 text-small" data-node-detail="" aria-label="节点详情">
+      <p className="m-0 font-medium">{info.title}</p>
+      {info.lines.map(line => <p key={line} className="m-0 text-muted-foreground">{line}</p>)}
+      {info.targets.length > 0 && <span className="flex flex-wrap gap-x-3">{info.targets.map(t => <a key={t.href} className="text-accent-foreground underline" href={t.href} data-open="">{t.label}</a>)}</span>}
+      {info.notes.map(note => <span key={note} className="text-caption text-muted-foreground" data-open-note="">{note}</span>)}
+    </div>;
+  })() : <p className="text-small text-muted-foreground">点画面上的节点或列表里的一行，看详情。</p>;
 
   const controls = (
     <div className="flex flex-wrap items-center gap-2" role="group" aria-label="回放与筛选">
@@ -232,14 +245,22 @@ export function FlowView({ board, events, context, source, startAt, connection, 
     {live && mode === "paused" && newer > 0 && <p role="status" className="basis-full text-label text-muted-foreground">画面停在这里；之后又来了 {newer} 条事件。<Button variant="link" size="compact" onClick={() => start("live")}>回到实时</Button></p>}
   </div>;
 
+  const windowLabel = windowHours ? `近 ${windowHours} 小时` : "窗口内";
   const trackItems = <ol className="flex flex-wrap gap-2" aria-label="对象轨道">
     {stations.map((s, i) => <li key={s.station} className="flex items-center gap-1.5 text-small"><span className="text-muted-foreground" aria-hidden="true">{i ? "→" : ""}</span>
-      <span>{s.station}</span><span className="tabular-nums font-medium">{s.count === null ? "读不到" : s.count}</span></li>)}</ol>;
+      <Button variant="row" data-node={stationNode(s.station)} aria-pressed={selected?.type === "node" && selected.id === stationNode(s.station)} onClick={() => setSelected({ type: "node", id: stationNode(s.station) })}
+        className={cn("flex h-auto items-center gap-1.5 rounded-md px-1.5 py-1 text-left text-small", selected?.type === "node" && selected.id === stationNode(s.station) && "bg-selected")}>
+        <span>{s.station}</span><span className="tabular-nums font-medium">{s.count === null ? "读不到" : s.count}</span>
+        {s.station === "已验收" && <span className="text-caption text-muted-foreground" data-station-window="">{windowLabel}</span>}</Button></li>)}</ol>;
 
   if (narrow) {
     return <section className="flex flex-col gap-4" aria-label="动态（窄屏泳道）" data-layout="lanes">
       {header}{controls}
       <ul className="flex flex-col gap-2" aria-label="节点">
+        {PEOPLE.map(p => <li key={p.id}><Button variant="row" data-node={p.id} aria-pressed={selected?.type === "node" && selected.id === p.id} onClick={() => setSelected({ type: "node", id: p.id })} className="flex h-auto w-full flex-col items-start rounded-lg bg-card px-3 py-2 text-left shadow-sm">
+          <span className="block text-small font-medium">{p.label}</span><span className="text-caption text-muted-foreground">{p.sub}</span></Button></li>)}
+        <li><Button variant="row" data-node="packets" aria-pressed={selected?.type === "node" && selected.id === "packets"} onClick={() => setSelected({ type: "node", id: "packets" })} className="flex h-auto w-full flex-col items-start rounded-lg bg-card px-3 py-2 text-left shadow-sm">
+          <span className="block text-small font-medium">通知包托盘</span><span className="text-caption text-muted-foreground">开放 {board.graph.counts.openPackets ?? "读不到"}</span></Button></li>
         <li><Button variant="row" data-node="leader" onClick={() => setSelected({ type: "node", id: "leader" })} className="flex h-auto w-full flex-col items-start rounded-lg bg-card px-3 py-2 text-left shadow-sm">
           <span className="block text-small font-medium">Leader</span><span className="text-caption text-muted-foreground">{stuck.length ? `${stuck.length} 处卡住` : "没有读到卡住的地方"}</span></Button></li>
         {sessions.map(s => { const st = sessionStatus(s.sessionId); return <li key={s.sessionId}>
@@ -279,7 +300,9 @@ export function FlowView({ board, events, context, source, startAt, connection, 
         {sessions.length > MAX_SESSIONS && <p className="absolute right-6 bottom-24 text-caption text-muted-foreground">另有 {sessions.length - MAX_SESSIONS} 个 Session，见“统筹安排”</p>}
         <ol aria-label="对象轨道">
           {stations.map((s, i) => <li key={s.station} className="absolute bottom-2 flex -translate-x-1/2 flex-col items-center text-caption" style={{ left: `${((100 + i * ((W - 200) / (STATIONS.length - 1))) / W) * 100}%` }}>
-            <span className="tabular-nums font-medium">{s.count === null ? "读不到" : s.count}</span><span className="text-muted-foreground">{s.station}</span>{s.station === "已验收" && <span className="text-muted-foreground" data-station-window="">{windowHours ? `近 ${windowHours} 小时` : "窗口内"}</span>}</li>)}
+            <Button variant="row" data-node={stationNode(s.station)} aria-pressed={selected?.type === "node" && selected.id === stationNode(s.station)} onClick={() => setSelected({ type: "node", id: stationNode(s.station) })}
+              className={cn("flex h-auto flex-col items-center rounded-md px-1.5 py-0.5 text-caption", selected?.type === "node" && selected.id === stationNode(s.station) && "bg-selected")}>
+              <span className="tabular-nums font-medium">{s.count === null ? "读不到" : s.count}</span><span className="text-muted-foreground">{s.station}</span>{s.station === "已验收" && <span className="text-muted-foreground" data-station-window="">{windowLabel}</span>}</Button></li>)}
         </ol>
       </div>
       <div className="grid gap-4 @2xl:grid-cols-2 md:grid-cols-2"><div>{eventList}</div><div>{detail}</div></div>

@@ -4,7 +4,7 @@ import { useMemo } from "react";
 import { Button, ErrorState, LoadingState } from "@evoloop/ui";
 import type { SchedEvent } from "@evoloop/contracts/work-board";
 import { FlowView } from "./FlowView";
-import { openInfoOf } from "./flowOpen";
+import { nodeInfoOf, openInfoOf } from "./flowOpen";
 import { learnContext } from "./flowModel";
 import { useFlowData } from "./useFlowData";
 
@@ -23,5 +23,6 @@ export function FlowPage({ token, projectId, leaderSessionId, active = true }: {
   return <FlowView board={data.board} events={data.events} context={context} source="live"
     connection={{ state: data.connection, error: data.error, lastSeq: data.lastSeq, reconnects: data.reconnects }}
     windowNote={`近 ${data.windowHours} 小时${data.truncated ? "（窗口内事件太多，最早的一部分没有读）" : ""}`}
-    windowHours={data.windowHours} openInfo={event => openInfoOf(projectId, event)} />;
+    windowHours={data.windowHours} openInfo={event => openInfoOf(projectId, event)}
+    nodeInfo={node => nodeInfoOf(projectId, node, data.board!, leaderSessionId, data.windowHours)} />;
 }
