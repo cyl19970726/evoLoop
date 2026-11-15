@@ -42,3 +42,16 @@ test("other claim failures are still reported", async () => {
   await pump.tick();
   assert.equal(errors.length, 1);
 });
+
+test("a management-only queue owner is not selected as the pump's decision-enabled controller", async () => {
+  let executions = 0;
+  const managementOnly = { ...lead, actorId: "management-only", permissions: ["management"] as const, decisions: false };
+  const workflow = {
+    listResidentQueues: async () => [{ ...queue, actorId: managementOnly.actorId }],
+    execute: async () => { executions++; return { status: "applied" }; },
+  };
+  const pump = new ResidentQueuePump({ workflow: workflow as never, credentials: async () => [managementOnly] as never,
+    enabled: async () => true, canWrite: () => true, pollIntervalMs: 1000, onError: () => {} });
+  await pump.tick();
+  assert.equal(executions, 0, "the pump never spends another identity's decision authority on this queue");
+});

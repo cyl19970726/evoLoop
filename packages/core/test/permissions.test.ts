@@ -49,7 +49,8 @@ test("the command table keeps task, document, Session and management ownership d
   for (const type of Object.keys(commandPermissionPolicy) as Command["type"][])
     assert.equal(commandPermissionPolicy[type].permission, expected(type), type);
   for (const type of ["task.start", "stage.review", "document.publish", "runtime.session.reserve",
-    "session.message.interrupt", "role.decide"] as const)
+    "session.message.interrupt", "role.decide", "line.append", "queue.claim",
+    "schedule.dispatch.set", "schedule.directList.set"] as const)
     assert.equal(commandPolicy(type).decision, true, `${type} is decision-class`);
   for (const type of ["task.create", "document.create", "session.message.post", "schedule.revise"] as const)
     assert.equal(commandPolicy(type).decision, false, `${type} is not decision-class`);
@@ -111,6 +112,42 @@ test("decision authority and explicit extra commands stay separate from object o
     expectedVersion: 1, revisionId: crypto.randomUUID(), reason: "R" })));
   forbidden(() => authorizeCommand({ ...archiver, permissions: ["task"] },
     command({ type: "document.archive", projectId, documentId, expectedVersion: 1, reason: "R" })));
+});
+
+test("dispatch intake requires the original issuer's decision authority", () => {
+  const managementOnly = principal("management-only", ["management"]);
+  for (const value of [
+    command({ type: "line.append", projectId, sessionId: sessionX, taskId, expectedTaskVersion: 1, source: "leader", reason: "R" }),
+    command({ type: "line.begin", projectId, entryId: crypto.randomUUID(), expectedVersion: 1,
+      assignOperationId: crypto.randomUUID(), startOperationId: crypto.randomUUID(),
+      reassignOperationId: crypto.randomUUID(), reserveOperationId: crypto.randomUUID(), messageId: crypto.randomUUID() }),
+    command({ type: "schedule.dispatch.set", projectId, scheduleId, expectedVersion: 0, mode: "direct",
+      state: "active", reason: "R" }),
+    command({ type: "schedule.directList.set", projectId, roleId, expectedVersion: 0, sessionIds: [sessionX], reason: "R" }),
+    command({ type: "queue.create", projectId, queueId, maxRuns: 1, reason: "R", entries: [] }),
+    command({ type: "queue.claim", projectId, queueId, entryId: crypto.randomUUID(), expectedVersion: 1,
+      claimId: crypto.randomUUID(), runId: crypto.randomUUID(), runOperationId: crypto.randomUUID() }),
+  ]) forbidden(() => authorizeCommand(managementOnly, value));
+
+  const decisionManager = { ...managementOnly, decisions: true };
+  for (const value of [
+    command({ type: "line.append", projectId, sessionId: sessionX, taskId, expectedTaskVersion: 1, source: "leader", reason: "R" }),
+    command({ type: "schedule.dispatch.set", projectId, scheduleId, expectedVersion: 0, mode: "direct",
+      state: "active", reason: "R" }),
+    command({ type: "queue.hold", projectId, queueId, entryId: crypto.randomUUID(), reason: "R" }),
+  ]) authorizeCommand(decisionManager, value);
+
+  const taskOnly = principal("task-only", ["task"], { decisions: true });
+  forbidden(() => authorizeCommand(taskOnly, command({ type: "line.append", projectId, sessionId: sessionX, taskId,
+    expectedTaskVersion: 1, source: "leader", reason: "R" })));
+  forbidden(() => authorizeCommand(taskOnly, command({ type: "queue.claim", projectId, queueId,
+    entryId: crypto.randomUUID(), expectedVersion: 1, claimId: crypto.randomUUID(), runId: crypto.randomUUID(),
+    runOperationId: crypto.randomUUID() })));
+
+  const migrated = migrateLegacyAuthConfig([{ token: "c".repeat(32), actorId: "owner-proxy-agent",
+    projectIds: [projectId], permissions: ["read", "write"] }]).config[0]!;
+  forbidden(() => authorizeCommand({ ...migrated, identityKind: "agent" }, command({ type: "line.append", projectId,
+    sessionId: sessionX, taskId, expectedTaskVersion: 1, source: "leader", reason: "R" })));
 });
 
 test("Session-scoped identities cannot message or resume another Session", () => {

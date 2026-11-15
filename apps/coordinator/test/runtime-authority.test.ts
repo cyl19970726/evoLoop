@@ -4,7 +4,7 @@ import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import type { WorkflowService } from "@evoloop/core";
+import { authorizeCommand, type WorkflowService } from "@evoloop/core";
 import { RuntimeRunner } from "../src/runtime/runner.js";
 import { buildServer } from "../src/server.js";
 import { delegationTemplateHash, hasExactEngineeringActionGrant, loadIntegrations, runtimeThreadConfig, runtimeThreadConfigForSession } from "../src/configuration.js";
@@ -492,6 +492,33 @@ test("a Session-scoped identity sees another Run's status but cannot read its fu
     const allowed = await app.inject({ method: "GET", url: `/api/projects/${projectId}/runtime/runs/${allowedRun}/trace`, headers });
     assert.equal(allowed.statusCode, 200, allowed.body);
     assert.equal(nativeReads, 1);
+  } finally { await app.close(); }
+});
+
+test("a Session-scoped identity cannot post a message to another Session through the command route", async () => {
+  const actorId = "session-writer", token = "u".repeat(40);
+  let executions = 0;
+  const base = { ...workManagementQueries,
+    execute: async (principal: Principal, command: Parameters<WorkflowService["execute"]>[1]) => {
+      authorizeCommand(principal, command);
+      executions++;
+      return { status: "applied", operationId: command.operationId, entityId: command.operationId, version: 1 };
+    },
+    getOperation: async () => null,
+  };
+  const service = new Proxy(base, { get: (target, name) => name in target ? target[name as string] : async () => undefined }) as unknown as WorkflowService;
+  const app = await buildServer({ service, credentials: [{ token, actorId, projectIds: [projectId],
+    permissions: ["session"], sessionIds: [sessionId], decisions: false }] });
+  const headers = { authorization: `Bearer ${token}` };
+  const post = (targetSessionId: string) => app.inject({ method: "POST", url: "/api/commands", headers,
+    payload: { type: "session.message.post", projectId, operationId: randomUUID(), messageId: randomUUID(),
+      target: { kind: "owned", sessionId: targetSessionId }, content: "message" } });
+  try {
+    assert.equal((await post(sessionId)).statusCode, 200);
+    const denied = await post(randomUUID());
+    assert.equal(denied.statusCode, 403);
+    assert.equal(denied.json().code, "FORBIDDEN");
+    assert.equal(executions, 1, "the other Session was refused before any message was saved");
   } finally { await app.close(); }
 });
 

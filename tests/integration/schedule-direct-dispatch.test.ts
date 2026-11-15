@@ -377,13 +377,43 @@ test("direct dispatch decisions need management authority, a Role's own Sessions
   const r = await rig(t);
   const a = await r.session();
   const scheduleId = await r.makeSchedule();
+  const managementOnly: Principal = { actorId: "management-only", projectIds: [r.projectId], permissions: ["management"] };
   assert.equal((await r.refused(r.writer, { type: "schedule.directList.set", roleId: r.role, expectedVersion: 0, sessionIds: [a], reason: "x" })).code, "FORBIDDEN");
+  assert.equal((await r.refused(managementOnly, { type: "schedule.directList.set", roleId: r.role, expectedVersion: 0, sessionIds: [a], reason: "x" })).code, "FORBIDDEN");
+  assert.equal((await r.refused(managementOnly, { type: "schedule.dispatch.set", scheduleId, expectedVersion: 0, mode: "direct", state: "active", reason: "x" })).code, "FORBIDDEN");
   assert.equal((await r.refused(r.lead, { type: "schedule.dispatch.set", scheduleId, expectedVersion: 0, mode: "direct", state: "active", reason: "x" })).code, "DIRECT_LIST_EMPTY");
   assert.equal((await r.refused(r.lead, { type: "schedule.directList.set", roleId: r.role, expectedVersion: 0, sessionIds: [randomUUID()], reason: "x" })).code, "NOT_FOUND");
   await r.setList([a]);
   assert.equal((await r.refused(r.lead, { type: "schedule.directList.set", roleId: r.role, expectedVersion: 0, sessionIds: [a], reason: "stale" })).code, "VERSION_CONFLICT");
   await r.setPolicy(scheduleId);
   assert.equal((await r.refused(r.lead, { type: "schedule.dispatch.set", scheduleId, expectedVersion: 0, mode: "leader", state: "active", reason: "stale" })).code, "VERSION_CONFLICT");
+
+  // The real direct-dispatch path a management-only identity could try to use: the occurrence exists, the Session is
+  // eligible, but the append is refused before it can leave a line entry for the decision-enabled pump to consume.
+  await r.fire(1);
+  const refusedTask = await r.taskOfOccurrence(scheduleId);
+  assert.deepEqual(await r.dispatcher.process(r.projectId, managementOnly, new Date(r.T0 + 2 * HOUR).toISOString()),
+    { dispatched: 0, fellBack: 1 });
+  assert.deepEqual(await r.lineOf(a), []);
+  assert.deepEqual((await r.pool.query(`SELECT state, version
+      FROM task WHERE project_id=$1 AND task_id=$2`,
+    [r.projectId, refusedTask])).rows[0], { state: "todo", version: 1 });
+  assert.deepEqual((await r.pool.query(`SELECT
+      (SELECT count(*)::int FROM runtime_run WHERE project_id=$1 AND task_id=$2) AS runs,
+      (SELECT count(*)::int FROM task_session_assignment WHERE project_id=$1 AND task_id=$2) AS assignments,
+      (SELECT count(*)::int FROM session_message WHERE project_id=$1 AND context_task_id=$2) AS confirmations`,
+    [r.projectId, refusedTask])).rows[0],
+  { runs: 0, assignments: 0, confirmations: 0 });
+  assert.deepEqual((await r.logOf(scheduleId)).map(row => [row.state, row.reason]), [["fell_back", "APPEND_FORBIDDEN"]]);
+
+  const second = await r.makeSchedule();
+  await r.setPolicy(second);
+  await r.fire(1);
+  assert.deepEqual(await r.dispatchAt(1), { dispatched: 1, fellBack: 0 },
+    "a management identity with decision authority can dispatch");
+  const dispatchedTask = await r.taskOfOccurrence(second);
+  assert.deepEqual((await r.lineOf(a)).map(row => [row.task_id, row.state]),
+    [[dispatchedTask, "queued"]], "the accepted append has no confirmation or Run yet");
 });
 
 test("execution authorization is read afresh at every trigger: a Session without it is passed over, none left means the Leader gets the Task with the reason, and a withdrawn grant is honoured at the next trigger", async t => {

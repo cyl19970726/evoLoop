@@ -12,6 +12,7 @@ import { queueCommandSchema } from '@evoloop/contracts/queues';
 import { canonicalTaskInputJson, taskInputSignature } from '../../core/src/task-input.ts';
 import { reserveRuntime } from '../../core/src/runtime/reserve.ts';
 import { ResidentQueuePump, queueIntentId } from '../../../apps/coordinator/src/resident-queue/pump.ts';
+import type { Principal } from '@evoloop/contracts';
 import { loopIntentId } from '../../../apps/coordinator/src/orchestration/runner.ts';
 import { materialHandoff } from '../../../apps/cli/src/lightweight-materials.ts';
 import type { ApiClient } from '../../../apps/cli/src/client.ts';
@@ -49,6 +50,27 @@ before(async()=>{
   await pool.query('INSERT INTO project(project_id,title,created_at) VALUES($1,$2,now())',[projectId,'Queue test']);
 });
 after(async()=>{await pool.end();const c=new pg.Client({connectionString:url});await c.connect();try{await c.query(`DROP SCHEMA "${schema}" CASCADE`);}finally{await c.end();}});
+test('management-only and task-only identities cannot arrange resident queue work',async()=>{
+  const managementOnly:Principal={actorId:'management-only',projectIds:[projectId],permissions:['management']};
+  const taskOnly:Principal={actorId:'task-only',projectIds:[projectId],permissions:['task'],decisions:true};
+  const refusal=async(who:Principal,command:Record<string,unknown>)=>workflow.execute(who,{...command,projectId,
+    operationId:randomUUID()} as never).then(result=>({code:result.status==='rejected'?result.code:result.status}),
+    (error:{code?:string})=>({code:error.code??'THREW'}));
+  const id=randomUUID(),taskId=randomUUID(),sessionId=randomUUID();
+  const created=await refusal(managementOnly,{type:'queue.create',queueId:id,maxRuns:1,reason:'must not arrange work',
+    entries:[{id:randomUUID(),taskId,taskRevisionId:randomUUID(),sessionId,roleId:randomUUID(),
+      dependsOn:[],consumerId:'consumer',useRequired:true,releaseRule:'accepted'}]});
+  assert.equal(created.code,'FORBIDDEN');
+  assert.deepEqual((await pool.query(`SELECT
+      (SELECT count(*)::int FROM resident_queue WHERE project_id=$1 AND queue_id=$2) AS queues,
+      (SELECT count(*)::int FROM resident_queue_entry WHERE project_id=$1 AND queue_id=$2) AS entries,
+      (SELECT count(*)::int FROM task_session_assignment WHERE project_id=$1 AND task_id=$3) AS assignments,
+      (SELECT count(*)::int FROM runtime_run WHERE project_id=$1 AND task_id=$3) AS runs`,
+    [projectId,id,taskId])).rows[0],{queues:0,entries:0,assignments:0,runs:0},
+  'the refusal runs before any queue, entry, assignment or Run write');
+  const held=await refusal(taskOnly,{type:'queue.hold',queueId:randomUUID(),entryId:randomUUID(),reason:'must not arrange work'});
+  assert.equal(held.code,'FORBIDDEN');
+});
 test('unadopted version is held and adoption is CAS',async()=>{
   const client=await pool.connect();try{await client.query('BEGIN');const store=new PgResidentQueue(client,projectId,grant,input,leader,binding);
     await store.createResidentQueue({projectId,id:queueId,version:1,adoptedVersion:null,maxRuns:2,reason:'ordered for value and dependency',actorId:'lead',entries:[]});

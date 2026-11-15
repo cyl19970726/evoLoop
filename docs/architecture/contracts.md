@@ -33,6 +33,8 @@
 
 **逐命令映射。** 下面是 `commandPermissionPolicy` 的完整清单；每个命令恰好出现一次。“决定权”为“是”时，除了对象类别还须 `decisions: true`（或人类身份）。新增命令若没有登记，类型检查和该命令的运行时授权都会失败。
 
+派发入口按**原命令的实际发起者**检查决定权：`line.*`、`queue.*` 与 `schedule.dispatch.*`、`schedule.directList.*`、`schedule.directEntry.*` 都是决定类。队伍泵、直派分发器或排队泵之后可以用已具决定权的控制器主体执行推进，但不会把该权利借给只有 `management` 的发起者；拒绝发生在前置授权阶段，因而不会先写入队伍条目、确认请求、assignment 或 Run。定时直派仍须具决定权的日程授权与控制器凭据，直派分发到 Session 队伍时再次核验实际分发主体。
+
 | 命令 | 对象类别 | 决定权 |
 | --- | --- | --- |
 | `decision.request.create` | `task` | 是 |
@@ -109,30 +111,30 @@
 | `leader.noticePacket.observe` | `task` | 否 |
 | `leader.noticePacket.recover` | `task` | 是 |
 | `leader.noticePacket.sent` | `task` | 否 |
-| `line.advance` | `management` | 否 |
-| `line.append` | `management` | 否 |
-| `line.begin` | `management` | 否 |
-| `line.move` | `management` | 否 |
-| `line.remove` | `management` | 否 |
-| `line.resume` | `management` | 否 |
-| `line.retry` | `management` | 否 |
-| `line.runEnded` | `management` | 否 |
-| `line.started` | `management` | 否 |
-| `line.suspend` | `management` | 否 |
-| `line.withdrawReturned` | `management` | 否 |
+| `line.advance` | `management` | 是 |
+| `line.append` | `management` | 是 |
+| `line.begin` | `management` | 是 |
+| `line.move` | `management` | 是 |
+| `line.remove` | `management` | 是 |
+| `line.resume` | `management` | 是 |
+| `line.retry` | `management` | 是 |
+| `line.runEnded` | `management` | 是 |
+| `line.started` | `management` | 是 |
+| `line.suspend` | `management` | 是 |
+| `line.withdrawReturned` | `management` | 是 |
 | `project.create` | `management` | 否 |
-| `queue.adopt` | `management` | 否 |
-| `queue.amend` | `management` | 否 |
-| `queue.claim` | `management` | 否 |
-| `queue.continue` | `management` | 否 |
-| `queue.create` | `management` | 否 |
-| `queue.extendBudget` | `management` | 否 |
-| `queue.hold` | `management` | 否 |
-| `queue.release` | `management` | 否 |
-| `queue.reorder` | `management` | 否 |
-| `queue.retryFailed` | `management` | 否 |
-| `queue.stop` | `management` | 否 |
-| `queue.unhold` | `management` | 否 |
+| `queue.adopt` | `management` | 是 |
+| `queue.amend` | `management` | 是 |
+| `queue.claim` | `management` | 是 |
+| `queue.continue` | `management` | 是 |
+| `queue.create` | `management` | 是 |
+| `queue.extendBudget` | `management` | 是 |
+| `queue.hold` | `management` | 是 |
+| `queue.release` | `management` | 是 |
+| `queue.reorder` | `management` | 是 |
+| `queue.retryFailed` | `management` | 是 |
+| `queue.stop` | `management` | 是 |
+| `queue.unhold` | `management` | 是 |
 | `role.ackHandoff` | `management` | 否 |
 | `role.bindSession` | `management` | 否 |
 | `role.classify` | `management` | 否 |
@@ -141,9 +143,9 @@
 | `role.revise` | `management` | 否 |
 | `role.runtime.set` | `management` | 否 |
 | `schedule.create` | `management` | 否 |
-| `schedule.directEntry.withdraw` | `management` | 否 |
-| `schedule.directList.set` | `management` | 否 |
-| `schedule.dispatch.set` | `management` | 否 |
+| `schedule.directEntry.withdraw` | `management` | 是 |
+| `schedule.directList.set` | `management` | 是 |
+| `schedule.dispatch.set` | `management` | 是 |
 | `schedule.revise` | `management` | 否 |
 | `task.attention.followUp.set` | `management` | 否 |
 | `task.attention.publication.record` | `management` | 否 |
