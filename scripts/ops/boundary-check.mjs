@@ -35,15 +35,32 @@ export function loadConfig(text, path) {
 const iso = ms => new Date(ms).toISOString();
 const local = (ms, offset) => new Date(ms + offset * MINUTE).toISOString().replace("T", " ").slice(5, 19);
 
-/** Transcripts (JSONL) modified since the window started: the commands each ran inside the window, and the identity it mostly acts as. */
-export async function readTranscripts(roots, fromMs, toMs, problems) {
+/**
+ * The transcript files to read: every *.jsonl under the roots that was modified since the window started. A root that cannot be read is named and
+ * skipped; a single file whose stat fails (a dangling link, a file that vanished between the listing and the stat) is named with its error code and
+ * skipped alone, so the other files of that root are still looked at. `stat` is replaced in tests.
+ */
+export async function transcriptFiles(roots, fromMs, problems, { statFn = stat } = {}) {
   const files = [];
   for (const root of roots ?? []) {
-    try { await stat(root); } catch { problems.push(`会话记录目录读不到（${basename(root)}）`); continue; }
+    try { await statFn(root); } catch { problems.push(`会话记录目录读不到（${basename(root)}）`); continue; }
     let seen = 0;
-    try { for await (const entry of glob("**/*.jsonl", { cwd: root })) { seen++; const path = join(root, entry); if ((await stat(path)).mtimeMs >= fromMs - 15 * MINUTE) files.push(path); } } catch (error) { problems.push(`会话记录目录读取出错（${basename(root)}：${error.code ?? error.message}）`); }
+    try {
+      for await (const entry of glob("**/*.jsonl", { cwd: root })) {
+        seen++;
+        const path = join(root, entry);
+        try { if ((await statFn(path)).mtimeMs >= fromMs - 15 * MINUTE) files.push(path); }
+        catch (error) { problems.push(`会话记录读不了（${basename(entry)}：${error.code ?? error.message}），只有这一个文件没有核对`); }
+      }
+    } catch (error) { problems.push(`会话记录目录读取出错（${basename(root)}：${error.code ?? error.message}）`); }
     if (seen === 0) problems.push(`会话记录目录存在但里面没有任何会话记录文件（${basename(root)}）：合并发起者和身份文件引用都无法核对`);
   }
+  return files;
+}
+
+/** Transcripts (JSONL) modified since the window started: the commands each ran inside the window, and the identity it mostly acts as. */
+export async function readTranscripts(roots, fromMs, toMs, problems) {
+  const files = await transcriptFiles(roots, fromMs, problems);
   const transcripts = [], bad = [];
   for (const path of files) {
     const commands = [], all = [], byCall = new Map(), file = basename(path), badBefore = bad.length;

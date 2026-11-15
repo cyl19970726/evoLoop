@@ -5,8 +5,8 @@ import {
   mentionsNear, mergeInvocations, mergeRows as rawMergeRows, parseTrainLog,
   MERGE_OK, badLineProblem, inspectLine, missingMergeTimeProblem, configProblems, evidencePhraseIsClean, exitCodeFor, hasCompletionEvidence as rawHasCompletionEvidence, humanWriteProblem, judgeClosure as rawJudgeClosure, mentionsAnywhere, mentionsFile, targetLabel, truncationProblem,
 } from "./boundary-check.mjs";
-import { format, loadConfig, readTranscripts } from "../ops/boundary-check.mjs";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { format, loadConfig, readTranscripts, transcriptFiles } from "../ops/boundary-check.mjs";
+import { mkdirSync, mkdtempSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -638,4 +638,36 @@ test("M7. a merged PR with no merge time is listed, the report says so and the f
   assert.match(text, /时间未知 #30 合并时间缺失/);
   assert.match(text, /判定依据：边界核对判定约定 7c58f1f4 修订 2/);
   assert.equal(exitCodeFor({ problems: [problem] }), 2);
+});
+
+test("M8. one transcript whose stat fails is named and skipped alone: a dangling link, and a file that vanishes between the listing and the stat; the other files are still read", async () => {
+  const root = mkdtempSync(join(tmpdir(), "bcs-"));
+  const at = "2026-11-12T06:59:00Z";
+  writeFileSync(join(root, "good.jsonl"), `${codexLine(at, "node /x/merge-gate.mjs merge --pr 7 --execute")}\n`);
+  writeFileSync(join(root, "gone.jsonl"), `${codexLine(at, "ls")}\n`);
+  writeFileSync(join(root, "later.jsonl"), `${codexLine(at, "ls")}\n`);
+  symlinkSync(join(root, "does-not-exist.jsonl"), join(root, "dangling.jsonl"));
+  const fromMs = Date.parse("2026-11-12T00:00:00Z");
+  for (const name of ["good.jsonl", "gone.jsonl", "later.jsonl"]) utimesSync(join(root, name), new Date(), new Date()); // modified after the window started
+  // 1. the real file system: the dangling link
+  const problems = [];
+  const found = (await transcriptFiles([root], fromMs, problems)).map(path => path.split("/").pop()).sort();
+  assert.deepEqual(found, ["gone.jsonl", "good.jsonl", "later.jsonl"], "every other transcript is still listed");
+  assert.match(problems.join("\n"), /会话记录读不了（dangling\.jsonl：ENOENT），只有这一个文件没有核对/);
+  assert.doesNotMatch(problems.join("\n"), /会话记录目录读取出错/, "the directory as a whole is not given up on");
+  // 2. a file that disappears after the listing: the stat of that one name fails, the others succeed
+  const later = [];
+  const real = await import("node:fs/promises");
+  const statFn = async path => { if (path.endsWith("gone.jsonl")) { const error = new Error("vanished"); error.code = "ENOENT"; throw error; } return real.stat(path); };
+  const listed = (await transcriptFiles([root], fromMs, later, { statFn })).map(path => path.split("/").pop()).sort();
+  assert.deepEqual(listed, ["good.jsonl", "later.jsonl"]);
+  assert.match(later.join("\n"), /会话记录读不了（gone\.jsonl：ENOENT），只有这一个文件没有核对/);
+  assert.match(later.join("\n"), /dangling\.jsonl/);
+  // 3. end to end: readTranscripts still reads the good one, the report is incomplete, the exit code is not zero
+  const all = [];
+  const transcripts = await readTranscripts([root], fromMs, Date.parse("2026-11-13T00:00:00Z"), all);
+  assert.equal(transcripts.length, 3, "good, gone and later are all read; only the dangling link is not");
+  assert.ok(transcripts.some(item => item.commands.some(command => command.command.includes("merge-gate.mjs"))));
+  assert.match(all.join("\n"), /会话记录读不了（dangling\.jsonl：ENOENT）/);
+  assert.equal(exitCodeFor({ problems: all }), 2);
 });
