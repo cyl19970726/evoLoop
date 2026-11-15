@@ -3,6 +3,8 @@ import "../../scripts/test-database-guard.mjs";
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import test from "node:test";
+import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import pg from "pg";
 import { migrate, PostgresUnitOfWork } from "@evoloop/adapter-postgres";
 import { headSeq, readSchedEvents, readWorkBoard } from "@evoloop/adapter-postgres/work-board";
@@ -68,7 +70,10 @@ test("a Session without a business identity or native thread is unusable and say
   const judge: typeof usability = async (projectId, ids) => { if (judgeMode === "throws") throw new Error("integrations file unreadable"); return judgeMode === "empty" ? new Map() : usability(projectId, ids); };
   const reads = { board: (id: string) => readWorkBoard(pool, id), events: (id: string, q: Parameters<typeof readSchedEvents>[2]) => readSchedEvents(pool, id, q) };
   const hub = new SchedEventHub({ head: id => headSeq(pool, id), read: (id, after, limit) => readSchedEvents(pool, id, { after, limit }) }, 500);
-  const app = await buildServer({ service: workflow, credentials: [{ token, actorId: "lead", projectIds: [projectId], permissions: ["read", "write", "review"] }],
+  // Opt-in (EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE + the built workbench): the same real server also serves the workbench, and step 13 reads the page back.
+  const playwrightModule = process.env.EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE;
+  const webRoot = playwrightModule ? (process.env.EVOLOOP_BROWSER_TEST_DIST ?? resolve(import.meta.dirname, "../../apps/workbench/dist")) : undefined;
+  const app = await buildServer({ ...(webRoot ? { webRoot } : {}), service: workflow, credentials: [{ token, actorId: "lead", projectIds: [projectId], permissions: ["read", "write", "review"] }],
     runtime: { status: () => ({ available: true, error: null, faults: [] }) } as never, listRuntimeModels: async () => ({ status: "available", models: [], error: null, observedAtUtc: new Date().toISOString() }),
     hasRuntimeGrant: () => true, workBoard: { reads, hub, usability: judge }, sessionWork: new SessionObservationService({ uow }), sessionUsability: judge, sessionAttention: (project: string) => listSessionAttention(pool as never, project),
     requireRunRecipient: createReserveRecipientCheck({ uow, loadIntegrations: async () => ({ runtime: { enabled: true, materialCli: config.materialCli as never } }), usability: judge,
@@ -309,4 +314,38 @@ test("a Session without a business identity or native thread is unusable and say
   judgeMode = "throws";
   assert.ok(((await relay.capacity(lead, projectId)) as typeof capacity).every(x => x.missingCapabilities.includes("USABILITY_UNKNOWN") || x.missingCapabilities.includes("SESSION_NOT_READY")), "a failing judgement is a capacity problem too");
   judgeMode = "real";
+
+  // 13. The workbench page itself, against this real server (no fixture): the page shows 不可用 and the reason for the unbound Session, not 空闲 or 就绪,
+  // and the bound Session still reads as free. Only when a browser is available (CI sets the module path; locally see the Task report).
+  if (playwrightModule) {
+    await app.listen({ host: "127.0.0.1", port: 0 });
+    const base = `http://127.0.0.1:${(app.server.address() as { port: number }).port}`;
+    const { chromium } = (await import(pathToFileURL(playwrightModule).href)).default;
+    const browser = await chromium.launch({ headless: true, ...(process.env.EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH ? { executablePath: process.env.EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH } : {}) });
+    t.after(() => browser.close());
+    const stuckTitle = (await get(`/session-work/${encodeURIComponent(`owned:${stuck}`)}`)).session.title as string;
+    const flakyTitle = (await get(`/session-work/${encodeURIComponent(`owned:${flaky}`)}`)).session.title as string;
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const page = await context.newPage();
+    const errors: string[] = []; page.on("pageerror", e => errors.push(e.message));
+    // This Role's Sessions have no current assignment, so the directory files them under 历史与待归类; open the Session itself and read its page.
+    await page.goto(`${base}/p/${projectId}/sessions?session=${encodeURIComponent(`owned:${stuck}`)}`);
+    await page.getByLabel("访问令牌").fill(token); await page.getByRole("button", { name: "进入", exact: true }).click();
+    await page.getByRole("button", { name: /历史与待归类/ }).click();
+    await page.getByText(/不可用 · /).first().waitFor({ timeout: 30000 }).catch(async (e: Error) => { throw new Error(`${e.message}\nPAGE: ${(await page.locator("body").innerText()).slice(0, 2500)}`); });
+    const body = await page.locator("body").innerText();
+    assert.match(body, /不可用 · 没有绑定业务身份/, `the Session's own page says 不可用 and why: ${body.slice(0, 1200)}`);
+    assert.ok(!/空闲/.test(await page.locator("section[aria-label=正在做]").innerText()), "the current-work badge does not say 空闲");
+    const nav = await page.locator("body").innerText();
+    assert.ok(/不可用/.test(nav), "the directory entry of the Session says 不可用");
+    if (process.env.EVOLOOP_UNUSABLE_SCREENSHOT_DIR) await page.screenshot({ path: `${process.env.EVOLOOP_UNUSABLE_SCREENSHOT_DIR}/real-unusable-session-page.png`, fullPage: true });
+    await page.goto(`${base}/p/${projectId}/sessions?session=${encodeURIComponent(`owned:${flaky}`)}`);   // the token lives in page memory only
+    await page.getByLabel("访问令牌").fill(token); await page.getByRole("button", { name: "进入", exact: true }).click();
+    await page.locator("section[aria-label=正在做]").waitFor({ timeout: 30000 }).catch(async (e: Error) => { throw new Error(`${e.message}\nPAGE: ${(await page.locator("body").innerText()).slice(0, 2500)}`); });
+    assert.ok(!/不可用/.test(await page.locator("section[aria-label=正在做]").innerText()), "the bound Session's page is unchanged");
+    if (process.env.EVOLOOP_UNUSABLE_SCREENSHOT_DIR) await page.screenshot({ path: `${process.env.EVOLOOP_UNUSABLE_SCREENSHOT_DIR}/real-bound-session-page.png`, fullPage: true });
+
+    assert.deepEqual(errors, []);
+    await context.close();
+  }
 });
