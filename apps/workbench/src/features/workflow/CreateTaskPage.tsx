@@ -5,7 +5,7 @@
 // result checked by its original operation ID, and the chosen stage's version recorded when it was chosen. The
 // checklist, the chosen stage and the identifiers sit in the right column.
 import React from "react";
-import type { Document } from "@evoloop/contracts";
+import { hasPermission, type Document } from "@evoloop/contracts";
 import { ArrowLeft } from "lucide-react";
 import { Button, Checkbox, Field, Input, Notice, Select, Textarea, cn } from "@evoloop/ui";
 import { errorText } from "../../shared/api";
@@ -52,8 +52,8 @@ export function CreateTaskView({ context, active, pathname, back, embedded = fal
   embedded?: boolean;
 }) {
   const { projectId, principal } = context;
-  const canWrite = principal.permissions.includes("write");
-  const canReview = principal.permissions.includes("review");
+  const canWrite = hasPermission(principal, projectId, "task");
+  const canReview = canWrite;
   const panel = useContextPanel();
   const fresh = React.useMemo(() => emptyTaskDraft(), []);
   const [draft, setDraft] = React.useState<TaskDraft>(() => ({ ...fresh, stageId: stageFromAddress(pathname) }));
@@ -122,6 +122,7 @@ export function CreateTaskView({ context, active, pathname, back, embedded = fal
     : !ownersReady ? "项目里还没有可用的职责，暂时不能保存。" : null;
   const field = (key: keyof TaskDraft) => ({ error: shown[key] });
   const form = <CommandFrame context={context} command={command} label="新建任务" submitLabel="保存任务" dirty={touched} onSubmit={send}
+    permission="task"
     surface="plain" className="gap-4" paused={waitOwners} onReread={context.onChanged}
     onKeep={() => command.rebase()} onRefill={() => { command.rebase(); clear(); }}
     keepNote="保留我的修改：输入不变，任务建在右栏读回的最新阶段里；先确认这一阶段仍在推进、仍适合这项任务。"

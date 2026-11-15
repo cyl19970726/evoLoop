@@ -1,5 +1,7 @@
 import { reviewMetadata, validatePreviousReview } from "./documents/organization-review.js";
-import { commandSchema } from "@evoloop/contracts";
+import { commandSchema, hasDecisionAuthority, hasPermission, isProjectMember, mayAccessSession } from "@evoloop/contracts";
+import { commandPermissionPolicy, commandPolicy } from "./command-policy.js";
+export { commandPermissionPolicy, commandPolicy } from "./command-policy.js";
 import { applyTaskAttention } from "./task-attention-command.js";
 import { requireTaskTimingReady } from "./task-timing-guard.js";
 import { taskTimingScopeId } from "@evoloop/contracts/task-timing";
@@ -59,6 +61,8 @@ export interface WorkflowDependencies { uow: UnitOfWork; clock: Clock; ids: IdFa
   recoveryAuthority?: RecoveryAuthority;
   /** The one identity that runs the notice packet's own steps (build, sent, observe) for a project: the configured notice sender. Absent: none may. */
   leaderNoticeServiceActor?: (projectId: string) => Promise<string | null>;
+  /** The identity that actually signs for a Session. Never the creator stored on runtime_session. */
+  sessionLineBusinessActor?: (projectId: string, sessionId: string) => Promise<string | null>;
   collaborationAuthority?: {
     actorForRole(projectId:string,roleId:string):Promise<string|null>;
     isAuthorizedRoleActor(projectId:string,actorId:string,roleId:string):Promise<boolean>;
@@ -89,10 +93,49 @@ export function canonicalJson(value: unknown): string {
   return encoded;
 }
 
-function requirePermission(principal: Principal, projectId: string, permission: "read" | "write" | "review"): void {
-  if (!principal.actorId || !principal.projectIds.includes(projectId) || !principal.permissions.includes(permission)) {
+function requirePermission(principal: Principal, projectId: string, permission: import("@evoloop/contracts").Permission): void {
+  if (!hasPermission(principal, projectId, permission)) {
     throw new DomainError("FORBIDDEN", `Permission ${permission} is required for this project`);
   }
+}
+
+function requireDecision(principal: Principal, projectId: string, permission: import("@evoloop/contracts").Permission): void {
+  if (!hasDecisionAuthority(principal, projectId, permission)) {
+    throw new DomainError("FORBIDDEN", `Decision authority for ${permission} is required for this project`);
+  }
+}
+
+function commandSessionId(command: Command): string | undefined {
+  if ("sessionId" in command && typeof command.sessionId === "string") return command.sessionId;
+  if ("target" in command && command.target && typeof command.target === "object" && "kind" in command.target &&
+      command.target.kind === "owned") return command.target.sessionId;
+  return undefined;
+}
+
+/** Apply the single command-class table plus decision and Session-scope gates before any domain state is read. */
+export function authorizeCommand(principal: Principal, command: Command): void {
+  const policy = commandPolicy(command.type);
+  // An identity's extra command (archive/restore) replaces the decision requirement for that command only; the owning
+  // document permission is still required.
+  const extra = policy.decision && (command.type === "document.archive" || command.type === "document.restore") &&
+    principal.extraCommands?.includes(command.type) === true;
+  requirePermission(principal, command.projectId, policy.permission);
+  if (policy.decision && !extra) requireDecision(principal, command.projectId, policy.permission);
+  if (policy.permission === "session") {
+    const sessionId = commandSessionId(command);
+    if (sessionId && !mayAccessSession(principal, command.projectId, sessionId))
+      throw new DomainError("FORBIDDEN", "This identity is not granted access to that Session");
+  }
+  if (command.type === "task.create" && command.timing?.repeat === "daily" ||
+    command.type === "task.timing.set" && (command.repeat === "daily" || command.scope !== "this") ||
+    command.type === "task.timing.stop" ||
+    command.type === "task.update" && command.repeatScope === "this_and_future")
+    requireDecision(principal, command.projectId, "task");
+  // An explicit stage decision needs decision authority even when replaying an earlier operation.
+  if (command.type === "task.update" && command.stageId !== undefined)
+    requireDecision(principal, command.projectId, "task");
+  if (command.type === "task.update" && command.basis !== undefined)
+    requireDecision(principal, command.projectId, "task");
 }
 
 function required<T>(value: T | null, kind: string): T {
@@ -139,29 +182,7 @@ export class WorkflowService {
     const parsed = commandSchema.safeParse(input);
     if (!parsed.success) throw new DomainError("INVALID_COMMAND", parsed.error.message);
     const command = parsed.data;
-    const permission = this.commandPermission(command);
-    // An identity's extra command (archive/restore) replaces the review requirement for that command only; write is still needed.
-    const extra = permission === "review" && (command.type === "document.archive" || command.type === "document.restore") &&
-      principal.extraCommands?.includes(command.type) === true;
-    requirePermission(principal, command.projectId, extra ? "write" : permission);
-    if (command.type === "task.create" && command.timing?.repeat === "daily" ||
-      command.type === "task.timing.set" && (command.repeat === "daily" || command.scope !== "this") ||
-      command.type === "task.timing.stop" ||
-      command.type === "task.update" && command.repeatScope === "this_and_future")
-      requirePermission(principal, command.projectId, "review");
-    if (command.type.startsWith("task.attention.")) {
-      requirePermission(principal, command.projectId, "read");
-      requirePermission(principal, command.projectId, "write");
-    }
-    // An explicit stage decision needs review even when replaying an earlier operation.
-    if (command.type === "task.update" && command.stageId !== undefined)
-      requirePermission(principal, command.projectId, "review");
-    if (command.type === "task.update" && command.basis !== undefined) {
-      requirePermission(principal, command.projectId, "review");
-      requirePermission(principal, command.projectId, "read");
-    }
-    if (command.type === "evaluation.create" || command.type === "evaluation.revise")
-      requirePermission(principal, command.projectId, "write");
+    authorizeCommand(principal, command);
     const commandHash = this.deps.hasher.hash(canonicalJson({ actorId: principal.actorId, command }));
     return this.deps.uow.transaction(command.projectId, async (tx) => {
       const project = await tx.getProject();
@@ -215,22 +236,6 @@ export class WorkflowService {
     });
   }
 
-  private commandPermission(command: Command): "write" | "review" {
-    if (command.type.startsWith("task.attention.")) return "review";
-    if(command.type==='runtime.session.executionProfile.revise'||command.type==='runtime.session.recovery.resume'||
-      command.type==='runtime.providerHold.release'||command.type==='session.message.reconcile'||command.type==='session.message.interrupt'||
-      command.type==='session.message.manualStop')return 'review';
-    if (command.type === "session.profile.set" || command.type === "session.identity.set" || command.type.startsWith("task.assignment.") && command.type !== "task.assignment.acknowledge") return "review";
-    // The packet's own steps belong to the notice service identity (checked in apply); the Leader's decision and recovery need review.
-    if (command.type === "leader.noticePacket.build" || command.type === "leader.noticePacket.sent" || command.type === "leader.noticePacket.steered" || command.type === "leader.noticePacket.observe") return "write";
-    if (command.type === "stage.phaseKey.set") return "review";
-    if (command.type.startsWith("queue.") || command.type.startsWith("line.") || command.type.startsWith("schedule.dispatch.") || command.type.startsWith("schedule.directList.") || command.type.startsWith("schedule.directEntry.") || command.type.startsWith("leader.notice")) return "review";
-    if (command.type === "decision.request.create" || command.type === "decision.request.withdraw") return "review";
-    if (command.type.startsWith("evaluation.") || command.type.startsWith("domain.") || command.type.startsWith("host.")) return "review";
-    return command.type === "document.adopt" || command.type === "document.publish" || command.type === "document.archive" || command.type === "document.restore" || command.type === "task.start" || command.type === "task.acceptancePrecondition.mark" || command.type === "task.reviewBasis" || command.type === "task.close" || command.type === "task.cancel" || command.type === "task.reopen" || command.type === "stage.accept" || command.type === "stage.review" || command.type === "stage.review.correct" || command.type === "runtime.session.reserve" || command.type === "runtime.session.close" || command.type === "runtime.run.reserve" || (command.type === "runtime.run.interrupt" || command.type === "runtime.run.stop" || command.type === "runtime.run.abandonReadOnly") || command.type.startsWith("schedule.") || command.type.startsWith("role.") && command.type !== "role.propose" || command.type === "discussion.decision.record" || command.type === "discussion.action.link"
-      ? "review" : "write";
-  }
-
   private async apply(tx: Transaction, principal: Principal, command: Command, now: string): Promise<Outcome> {
     if (command.type.startsWith("task.attention."))
       return applyTaskAttention(tx, command as import("@evoloop/contracts").TaskAttentionCommand,
@@ -249,7 +254,8 @@ export class WorkflowService {
     if (command.type.startsWith("schedule.dispatch.") || command.type.startsWith("schedule.directList.") || command.type.startsWith("schedule.directEntry."))
       return applyScheduleDispatch(tx, principal, command as import("@evoloop/contracts/schedule-dispatch").ScheduleDispatchCommand, now, () => this.deps.ids.next());
     if (command.type.startsWith("line."))
-      return applySessionLine(tx, principal, command as import("@evoloop/contracts/session-line").SessionLineCommand, now, () => this.deps.ids.next());
+      return applySessionLine(tx, principal, command as import("@evoloop/contracts/session-line").SessionLineCommand, now,
+        () => this.deps.ids.next(), this.deps.sessionLineBusinessActor);
     if (command.type.startsWith("decision.request."))
       return applyDecisionRequest(tx, principal, command as import("@evoloop/contracts/decision-requests").DecisionRequestCommand, now);
     if (command.type.startsWith("session.message."))
@@ -466,7 +472,7 @@ export class WorkflowService {
         const ownerRole = await tx.getRole(command.owner);
         const decisionOnly = command.useRequired === false && command.acceptanceMode === undefined &&
           command.kind === "research" && !!command.stageId && command.consumer === command.owner &&
-          ownerRole?.proposal?.templateKey === "cognition" && principal.permissions.includes("review");
+          ownerRole?.proposal?.templateKey === "cognition" && hasDecisionAuthority(principal, command.projectId, "task");
         if (command.useRequired === false && !decisionOnly)
           throw new DomainError("ACCEPTANCE_POLICY", "new business Tasks require current delivery use under their acceptance mode");
         // Omitted means independent_agent (it is what is stored below), so the rules are judged on that value: only a mode written explicitly
@@ -535,7 +541,7 @@ export class WorkflowService {
         const conventionChanged = command.acceptanceTarget !== undefined && command.acceptanceTarget !== (priorProposal?.acceptanceTarget ?? null) ||
           command.acceptancePrecondition !== undefined && command.acceptancePrecondition !== (priorProposal?.acceptancePrecondition ?? null);
         if (conventionChanged) {
-          if (!principal.permissions.includes("review")) throw new DomainError("FORBIDDEN", "acceptance target and acceptance precondition changes require review permission");
+          if (!hasDecisionAuthority(principal, command.projectId, "task")) throw new DomainError("FORBIDDEN", "acceptance target and acceptance precondition changes require Task decision authority");
           if (task.state !== "todo") throw new DomainError("REOPEN_REQUIRED", "reopen the Task before changing its acceptance target or acceptance precondition");
         }
         if (priorProposal?.acceptanceMode === "human_required" &&
@@ -543,11 +549,11 @@ export class WorkflowService {
           (principal.identityKind !== "human" || principal.actorId !== priorProposal.consumer))
           throw new DomainError("TRUSTED_HUMAN_REQUIRED", "changing human acceptance requires the current human consumer");
         if (command.acceptanceMode && command.acceptanceMode !== priorProposal?.acceptanceMode) {
-          if (!principal.permissions.includes("review")) throw new DomainError("FORBIDDEN", "acceptance mode changes require review permission");
+          if (!hasDecisionAuthority(principal, command.projectId, "task")) throw new DomainError("FORBIDDEN", "acceptance mode changes require Task decision authority");
           if (task.state !== "todo") throw new DomainError("REOPEN_REQUIRED", "reopen the Task before changing acceptance mode");
         }
         if (priorProposal?.acceptanceMode && command.consumer !== undefined && command.consumer !== priorProposal.consumer) {
-          if (!principal.permissions.includes("review")) throw new DomainError("FORBIDDEN", "changing the acceptance consumer requires review permission");
+          if (!hasDecisionAuthority(principal, command.projectId, "task")) throw new DomainError("FORBIDDEN", "changing the acceptance consumer requires Task decision authority");
           if (task.state !== "todo") throw new DomainError("REOPEN_REQUIRED", "reopen the Task before changing acceptance consumer");
         }
         if (acceptanceMode && command.useRequired === false)
@@ -906,6 +912,7 @@ export class WorkflowService {
                   actorId:principal.actorId}});
               effects.push(...reserved.effects);
               const opened=await applyTaskCollaboration({tx,principal,now,nextId:()=>this.deps.ids.next(),hasher:this.deps.hasher,
+                queueClaimChannel:true,
                 command:{type:"discussion.openTask",projectId:command.projectId,operationId:command.operationId,
                   discussionId,documentId,title:`Task ${task.title}`,task:{id:task.id,revisionId:reserved.result.revisionId!},
                   runId:command.runId,sessionId:entry.sessionId,recipientActorId:recipient},
@@ -953,7 +960,7 @@ export class WorkflowService {
   }
 
   private async read<T>(principal: Principal, projectId: string, action: (reader: Reader) => Promise<T>): Promise<T> {
-    requirePermission(principal, projectId, "read");
+    if (!isProjectMember(principal, projectId)) throw new DomainError("FORBIDDEN", "Project membership is required");
     return this.deps.uow.read(projectId, async (reader) => {
       required(await reader.getProject(), "Project");
       return action(reader);
@@ -1304,6 +1311,27 @@ export class WorkflowService {
   listSchedules(principal: Principal, projectId: string) { return this.read(principal, projectId, reader => reader.listSchedules()); }
   listScheduleRevisions(principal: Principal, projectId: string, scheduleId: string) { return this.read(principal, projectId, async reader => { required(await reader.getSchedule(scheduleId), "Schedule"); return reader.listScheduleRevisions(scheduleId); }); }
   listScheduleOccurrences(principal: Principal, projectId: string, scheduleId: string) { return this.read(principal, projectId, async reader => { required(await reader.getSchedule(scheduleId), "Schedule"); return reader.listOccurrences(scheduleId); }); }
+  getScheduleDispatchPolicy(principal: Principal, projectId: string, scheduleId: string) {
+    return this.read(principal, projectId, async reader => {
+      required(await reader.getSchedule(scheduleId), "Schedule");
+      if (!reader.scheduleDispatch) throw new DomainError("CAPABILITY_UNAVAILABLE", "Scheduled direct-dispatch reads are not configured");
+      return reader.scheduleDispatch.getDispatchPolicy(scheduleId);
+    });
+  }
+  listScheduleDispatches(principal: Principal, projectId: string, scheduleId: string, limit = 50, cursor?: string) {
+    return this.read(principal, projectId, async reader => {
+      required(await reader.getSchedule(scheduleId), "Schedule");
+      if (!reader.scheduleDispatch) throw new DomainError("CAPABILITY_UNAVAILABLE", "Scheduled direct-dispatch reads are not configured");
+      return reader.scheduleDispatch.listDispatches(scheduleId, pageLimit(limit), cursor);
+    });
+  }
+  getRoleDirectDispatchList(principal: Principal, projectId: string, roleId: string) {
+    return this.read(principal, projectId, async reader => {
+      required(await reader.getRole(roleId), "Role");
+      if (!reader.scheduleDispatch) throw new DomainError("CAPABILITY_UNAVAILABLE", "Scheduled direct-dispatch reads are not configured");
+      return reader.scheduleDispatch.getDirectList(roleId);
+    });
+  }
   getDocumentPayloadRevision(principal: Principal, projectId: string, documentId: string, revisionId: string) { return this.read(principal, projectId, async reader => required(await reader.getDocumentPayloadRevision(documentId, revisionId), "Document payload revision")); }
   listDocumentAssets(principal: Principal, projectId: string, documentId: string, revisionId: string) { return this.read(principal, projectId, async reader => { required(await reader.getDocumentPayloadRevision(documentId, revisionId), "Document payload revision"); return reader.listDocumentAssets(documentId, revisionId); }); }
   getRegisteredBlob(principal: Principal, projectId: string, blobId: string) { return this.read(principal, projectId, async reader => required(await reader.getRegisteredBlob(blobId), "Registered blob")); }

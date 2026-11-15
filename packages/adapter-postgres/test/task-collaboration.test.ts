@@ -110,8 +110,8 @@ test("Task Discussion and fixed-reference events survive PostgreSQL readback, CA
 async function continuationScenario(withExternalChange: boolean, adoptionTiming: "running" | "completed" = "running") {
   const projectId = randomUUID();
   const workerRoleId = randomUUID(), workerRoleRevisionId = randomUUID();
-  const issuer: Principal = { actorId: "issuer", projectIds: [projectId], permissions: ["read", "write", "review"] };
-  const worker: Principal = { actorId: "worker", projectIds: [projectId], permissions: ["read", "write"] };
+  const issuer: Principal = { actorId: "issuer", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true };
+  const worker: Principal = { actorId: "worker", projectIds: [projectId], permissions: ["task", "document", "session"] };
   let currentTime = "2026-10-25T01:00:00.000Z";
   const deps = { uow, clock: { now: () => currentTime }, ids: { next: randomUUID }, hasher: { hash } };
   const workflow = new WorkflowService(deps), runtime = new RuntimeWorkflowService(deps);

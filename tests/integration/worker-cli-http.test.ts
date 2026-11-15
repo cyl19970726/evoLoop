@@ -37,7 +37,7 @@ const database = process.env.TEST_DATABASE_URL;
 if (!database || !/^\/evoloop(?:_[a-z0-9]+)*_test$/.test(new URL(database).pathname))
   throw new Error("worker CLI/HTTP test requires the isolated evoloop_journey_eval_test database");
 const hash = (value: string) => createHash("sha256").update(value).digest("hex");
-const principal = (projectId: string, actorId: string) => ({actorId,projectIds:[projectId],permissions:["read","write","review"] as Array<"read"|"write"|"review">});
+const principal = (projectId: string, actorId: string) => ({actorId,projectIds:[projectId],permissions:["task", "document", "session", "management"], decisions: true});
 
 /** This binds fixture session and Run records; it never starts a native AppServer Turn. */
 test("real wrapper, HTTP guard and PG facts admit fixed context and bounded cognitive work", async t => {
@@ -87,7 +87,7 @@ test("real wrapper, HTTP guard and PG facts admit fixed context and bounded cogn
         await facts.sourceIssueDocumentRevision?.(documentId,revisionId)===true ||
         await facts.recoveryDocument?.(documentId,revisionId)===true;
     }});
-  const app=await buildServer({service:workflow,credentials:[{token:ownerToken,actorId:controller,projectIds:[projectId],permissions:["read","write","review"]}],
+  const app=await buildServer({service:workflow,credentials:[{token:ownerToken,actorId:controller,projectIds:[projectId],permissions:["task", "document", "session", "management"], decisions: true}],
     workers:{authenticate:header=>broker.authenticate(header),facts:identity=>workerGuardFacts(pool,identity)},
     orchestration:{service:orchestration},documents:{uow,blobsForPrincipal:async()=>({} as never)},
     references:{uow,gitForPrincipal:async()=>gitSource,

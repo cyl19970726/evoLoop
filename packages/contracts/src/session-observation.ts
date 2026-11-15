@@ -26,8 +26,12 @@ export interface ObservedRun {
   updatedAt: string;
   source: ObservationSource;
 }
+/** Whether a Run can start on a Session now, with the reasons when it cannot (coordinator-judged; see apps/coordinator/src/runtime/session-usability.ts). */
+export interface SessionDispatch { usable: boolean; reasons: Array<{ code: string; reason: string }> }
 export interface ObservedSession {
   key: SessionKey;
+  /** Set by the coordinator for an owned Session. A failed judgement is `usable: false` with USABILITY_UNKNOWN, never absent-as-ready; absent only means an older server that does not judge. */
+  dispatch?: SessionDispatch;
   target: SessionTarget;
   aliases: SessionTarget[];
   title: string;

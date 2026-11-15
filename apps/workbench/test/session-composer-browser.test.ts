@@ -83,7 +83,7 @@ test("the composer sends, adds, queues, stops, lists skills and agents, and says
       const root = `/api/projects/${projectId}`;
       let value: unknown = { items: [], nextCursor: null, metadata }, status = 200;
       const body = async () => { let text = ""; for await (const chunk of req) text += String(chunk); return JSON.parse(text) as Record<string, unknown>; };
-      if (url.pathname === "/api/session") value = { principal: { actorId: "reader", projectIds: [projectId], permissions: ["read", "write", "review"] }, capabilities: {} };
+      if (url.pathname === "/api/session") value = { principal: { actorId: "reader", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true }, capabilities: {} };
       else if (url.pathname === root) value = { id: projectId, title: "输入框测试项目", createdAt: stamp };
       else if (url.pathname === "/api/commands" && req.method === "POST") {
         const command = await body(); commands.push(command);
@@ -219,6 +219,8 @@ test("the composer sends, adds, queues, stops, lists skills and agents, and says
     // The turn ends and the service reads the Item back: the page looks again and now says it was read (never "adopted").
     await page.locator(".session-direct-receipt").getByText("已读到：运行时已记录这条输入的原生条目；不代表智能体已采用").waitFor({ timeout: 20_000 });
     assert.doesNotMatch(await page.locator(".session-direct-receipt").innerText(), /(?<!不代表智能体)已采用/, "never claims adoption");
+    // One status for one input (Task 3c6973c5): the earlier "已插入当前这一轮" line is replaced by the receipt that now says 已读到, not left beside it.
+    assert.equal(await page.locator("[data-sent-result=inserted]").count(), 0, `${viewport.width}: the stale 已插入 line is gone once the receipt reads 已读到`);
     // Cmd/Ctrl+Enter: an ordinary message for the next turn, tied to the current task.
     await box.fill("下一轮再处理窄屏");
     await box.press(process.platform === "darwin" ? "Meta+Enter" : "Control+Enter");
@@ -414,7 +416,7 @@ test("a send whose answer was lost, once checked as received or applied, clears 
     const json = (value: unknown, status = 200) => { res.writeHead(status, { "content-type": "application/json" }); res.end(JSON.stringify(value)); };
     const body = async () => { let text = ""; for await (const chunk of req) text += String(chunk); return JSON.parse(text) as Record<string, unknown>; };
     if (url.pathname.startsWith("/api/")) {
-      if (url.pathname === "/api/session") return json({ principal: { actorId: "reader", projectIds: [projectId], permissions: ["read", "write", "review"] }, capabilities: {} });
+      if (url.pathname === "/api/session") return json({ principal: { actorId: "reader", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true }, capabilities: {} });
       if (url.pathname === root) return json({ id: projectId, title: "输入框测试项目", createdAt: stamp });
       if (url.pathname === "/api/commands" && req.method === "POST") {
         // The ordinary message is applied, but its answer is lost on the way back.

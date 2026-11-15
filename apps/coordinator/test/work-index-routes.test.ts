@@ -9,7 +9,7 @@ import { DomainError } from "@evoloop/contracts/ports";
 
 test("work-management routes bind route identity and expose stable read/write commands", async t => {
   const projectId = randomUUID(), taskId = randomUUID(), operationId = randomUUID();
-  let principal = { actorId: "leader", projectIds: [projectId], permissions: ["read", "write", "review"] as const };
+  let principal = { actorId: "leader", projectIds: [projectId], permissions: ["task", "document", "session", "management"] as const, decisions: true };
   const reads: unknown[] = [], plans: unknown[] = [], dependencies: unknown[] = [], reviews: unknown[] = [];
   const reader: LeaderWorkIndexReader = {
     index: async (_principal, project, query) => { reads.push({ project, query }); return { items: [], nextCursor: null }; },
@@ -64,7 +64,7 @@ test("work-management routes bind route identity and expose stable read/write co
   assert.equal(review.statusCode, 200);
   assert.equal((reviews[0] as { command: { decision: string } }).command.decision, "deferred");
 
-  principal = { ...principal, permissions: ["read", "write"] as const };
+  principal = { ...principal, permissions: ["task", "document", "session"] as const, decisions: false };
   const denied = await app.inject({ method: "PUT",
     url: `/api/projects/${projectId}/work-management/tasks/${taskId}/plan`,
     payload: { operationId: randomUUID(), expectedTaskVersion: 1, expectedPlanVersion: 1,
@@ -80,7 +80,7 @@ test("Leader notice reads require project access and retain Task scoped cursor",
   t.after(() => app.close());
   app.decorateRequest("principal", null);
   app.addHook("onRequest", async request => { request.principal = authenticated ?
-    { actorId: "reader", projectIds: [projectId], permissions: ["read"] } : null; });
+    { actorId: "reader", projectIds: [projectId], permissions: [] } : null; });
   app.setErrorHandler((error, _request, reply) => {
     if (error instanceof DomainError) return reply.code(403).send({ code: error.code });
     throw error;
@@ -101,7 +101,7 @@ test("only a project reviewer can create a fresh intent for a rejected notice",a
   const projectId=randomUUID(),noticeId=randomUUID();
   const input={expectedOperationId:randomUUID(),newNoticeId:randomUUID(),newMessageId:randomUUID(),
     newOperationId:randomUUID(),reason:"Confirmed rejection after Session recovery"};
-  let principal={actorId:"lead",projectIds:[projectId],permissions:["read","write"] as string[]};
+  let principal={actorId:"lead",projectIds:[projectId],permissions:["task","document","session"] as string[]};
   const calls:unknown[]=[];
   const app=Fastify();t.after(()=>app.close());
   app.decorateRequest("principal",null);
@@ -118,7 +118,7 @@ test("only a project reviewer can create a fresh intent for a rejected notice",a
       newNoticeId:body.newNoticeId,newMessageId:body.newMessageId,newOperationId:body.newOperationId};}});
   const url=`/api/projects/${projectId}/work-management/notices/${noticeId}/recover`;
   assert.equal((await app.inject({method:"POST",url,payload:input})).statusCode,403);
-  principal={...principal,permissions:["read","write","review"]};
+  principal={...principal,permissions:["task","document","session","management"],decisions:true};
   const response=await app.inject({method:"POST",url,payload:input});
   assert.equal(response.statusCode,200);
   assert.deepEqual(calls,[{p:projectId,id:noticeId,body:input,actor:"lead"}]);
@@ -128,7 +128,7 @@ test("only a project reviewer can create a fresh intent for a rejected notice",a
 
 test("a blocked notice packet is recovered by its id with review authority and a reason",async t=>{
   const projectId=randomUUID(),packetId=randomUUID();
-  let principal={actorId:"lead",projectIds:[projectId],permissions:["read","write","review"] as string[]};
+  let principal={actorId:"lead",projectIds:[projectId],permissions:["task","document","session","management"] as string[],decisions:true};
   const calls:unknown[]=[];
   const app=Fastify();t.after(()=>app.close());
   app.decorateRequest("principal",null);
@@ -149,7 +149,7 @@ test("a blocked notice packet is recovered by its id with review authority and a
   assert.deepEqual(calls,[{who:"lead",p:projectId,id:packetId,reason:"gate reviewed"}]);
   assert.equal((await app.inject({method:"POST",url,payload:{}})).statusCode,400,"a reason is required");
   assert.equal((await app.inject({method:"POST",url,payload:{reason:"x",extra:1}})).statusCode,400);
-  principal={...principal,permissions:["read","write"]};
+  principal={...principal,permissions:["task","document","session"],decisions:false};
   assert.equal((await app.inject({method:"POST",url,payload:{reason:"gate reviewed"}})).statusCode,403,"review authority is required");
   assert.equal(calls.length,1);
 });
@@ -158,7 +158,7 @@ test("the Leader's task index lists blocked notice packets with what to do about
   const projectId=randomUUID();
   const app=Fastify();t.after(()=>app.close());
   app.decorateRequest("principal",null);
-  app.addHook("onRequest",async request=>{request.principal={actorId:"lead",projectIds:[projectId],permissions:["read","write","review"]} as typeof request.principal;});
+  app.addHook("onRequest",async request=>{request.principal={actorId:"lead",projectIds:[projectId],permissions:["task","document","session","management"],decisions:true} as typeof request.principal;});
   const blocked=[{packetId:randomUUID(),sessionId:randomUUID(),itemCount:3,blockedAt:null,hint:"leader.notice.recover"}];
   const reader={index:async()=>({items:[],total:0}),blockedNoticePackets:async()=>blocked} as unknown as LeaderWorkIndexReader;
   registerLeaderWorkRoutes(app,{getProject:async()=>({})} as never,reader);
@@ -176,7 +176,7 @@ test("the record-only events are a project read with a kind filter and a cursor;
   const app = Fastify();
   t.after(() => app.close());
   app.decorateRequest("principal", null);
-  app.addHook("onRequest", async request => { request.principal = authenticated ? { actorId: "reader", projectIds: [projectId], permissions: ["read"] } : null; });
+  app.addHook("onRequest", async request => { request.principal = authenticated ? { actorId: "reader", projectIds: [projectId], permissions: [] } : null; });
   app.setErrorHandler((error, _request, reply) => { if (error instanceof DomainError) return reply.code(403).send({ code: error.code }); throw error; });
   registerLeaderNoticeRoutes(app, { getProject: async (_who, p) => { if (p !== projectId) throw new DomainError("FORBIDDEN", "project"); return { id: p }; } },
     { list: async () => ({ items: [], nextCursor: null }), records: async (p, query) => { seen.push({ p, query }); return { items: [], nextCursor: null }; } });

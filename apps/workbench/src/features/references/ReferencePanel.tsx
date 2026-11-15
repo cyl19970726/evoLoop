@@ -9,7 +9,7 @@
 // commit and hash are typed (the page cannot read them) and say at once what is wrong with a value. The formal decision
 // chooses its document and revision by name (FormalSourceFields.tsx), identifiers in the source layer.
 import { useEffect, useState, type ReactNode } from "react";
-import type { CommandResult } from "@evoloop/contracts";
+import { hasDecisionAuthority, hasPermission, type CommandResult } from "@evoloop/contracts";
 import type { KnowledgeRevision, KnowledgeSummary } from "@evoloop/contracts/knowledge";
 import type { TaskExternalReferenceRecord } from "@evoloop/contracts/references";
 import { Button, ErrorState, Field, Input, LoadingState, Notice, RefreshingIndicator, Select, Textarea } from "@evoloop/ui";
@@ -93,8 +93,8 @@ export function ReferencePanel({ context, taskId, taskRevisionId, taskVersion }:
   context: MutationContext; taskId?: string; taskRevisionId?: string; taskVersion?: number;
 }) {
   const { projectId } = context;
-  const permissions = context.principal.permissions;
-  const canWrite = permissions.includes("write"), canReview = permissions.includes("review");
+  const canWrite = hasPermission(context.principal, projectId, "task");
+  const canReview = hasDecisionAuthority(context.principal, projectId, "task");
   const [opened, setOpened] = useState<Record<WriteName, boolean>>({ git: false, formal: false, adopt: false });
   const toggle = (name: WriteName) => (open: boolean) => setOpened(current => current[name] === open ? current : { ...current, [name]: open });
   // 登记 Git 固定来源
@@ -270,7 +270,7 @@ export function ReferencePanel({ context, taskId, taskRevisionId, taskVersion }:
     {canReview ? <WriteBlock title="记录正式文档与过程文档的关系" open={opened.formal} onToggle={toggle("formal")}
       description="这是审核人的决定和理由。系统核验固定原文可以读取，但不会自动证明正式文档已包含过程成果；请在理由里指出具体段落或差异。">
       <CommandFrame context={context} command={savedView(formalCommand, "已保存。")} label="记录正式文档与过程文档的关系" submitLabel="记录关系"
-        dirty={formalDirty} onSubmit={recordFormal} surface="plain" permission="review" onKeep={() => formalCommand.rebase()}
+        dirty={formalDirty} onSubmit={recordFormal} surface="plain" permission="document" decision onKeep={() => formalCommand.rebase()}
         onRefill={() => { formalCommand.rebase(); setProcessDocumentId(""); setProcessRevisionId(""); setFormalReason(""); setFormalDecision("adopted"); }}>
         <GitReferenceChoice projectId={projectId} enabled={opened.formal} value={formalGitId} onChange={setFormalGitId} registered={registered}
           editing={editingGitReference} onEditing={setEditingGitReference} />
@@ -287,7 +287,7 @@ export function ReferencePanel({ context, taskId, taskRevisionId, taskVersion }:
     {taskId && canReview && <WriteBlock id={`reference-adopt-${taskId}`} title="为当前任务修订采用外部依据" open={opened.adopt} onToggle={toggle("adopt")}
       description="采用后会生成新的任务修订，并冻结当前的过程文档与外部依据。">
       <CommandFrame context={context} command={savedView(adoptCommand, adoptSaved)} label="为当前任务修订采用外部依据" submitLabel="保存决定"
-        dirty={adoptDirty} onSubmit={adopt} surface="plain" permission="review"
+        dirty={adoptDirty} onSubmit={adopt} surface="plain" permission="task" decision
         paused={!knowledgeUnusable ? null : knowledgeLoading ? "正在核对已发布知识与固定版本…" : "选好一篇当前有效的已发布知识、等它的固定版本读回后，才能保存。"}
         onKeep={keepAdopt} keepNote="保留我的修改：输入不变；正在复核的依据位置按上方读回的最新版本复核。先看读回的登记，确认这份决定仍然适用，再保存。"
         onRefill={() => { adoptCommand.rebase(); startNewSlot(); setReason(""); setActionImpact(""); }}>

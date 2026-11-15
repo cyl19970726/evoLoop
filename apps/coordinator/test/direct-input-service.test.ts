@@ -9,7 +9,7 @@ import { DirectInputService } from "../src/direct-input/service.js";
 import { SessionSteerLock } from "../src/runtime/session-steer-lock.js";
 
 const projectId = randomUUID(), sessionId = randomUUID(), turnId = randomUUID();
-const principal = { actorId: "sender", projectIds: [projectId], permissions: ["read", "write"] as Array<"read" | "write"> };
+const principal = { actorId: "sender", projectIds: [projectId], permissions: ["task", "document", "session"] as ('task'|'document'|'session'|'management')[] };
 const binding: RuntimeBinding = { projectId, sessionId, roleId: "role", nativeThreadId: "thread",
   nativeSessionId: "thread", cwd: "/tmp/direct-input-service", authorizationScope: "test",
   owner: "evoloop-codex-app-server" };
@@ -194,7 +194,7 @@ test("an accepted steer whose Turn later fails stays unread without a native Ite
   } as never;
   const service = new DirectInputService({ store, runtime: () => runtime, canWrite: () => true,
     admission: async () => ({ grant, binding }), bindingFor: async () => binding });
-  const receipt = await service.reconcile({ ...principal, permissions: ["read", "write"] },
+  const receipt = await service.reconcile({ ...principal, permissions: ["task", "document", "session"] },
     projectId, value.inputId);
   assert.equal(receipt.state, "accepted", "the native acknowledgement is still a delivery fact");
   assert.equal(receipt.nativeItemId, null, "no matching Item means the input is unread, not consumed");

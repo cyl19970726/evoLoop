@@ -18,10 +18,9 @@ const workManagementQueries = { listRoleRevisions: async () => [], listRoleRevie
 test('ordinary Task work status reads without managed Loop, runtime or runner', async () => {
   let projectReads = 0, databaseReads = 0, broken = false;
   const workflow = { ...workManagementQueries,
-    getProject: async (principal: { projectIds: string[]; permissions: string[] }, project: string) => {
+    getProject: async (principal: { projectIds: string[] }, project: string) => {
       projectReads++;
-      if (!principal.projectIds.includes(project) || !principal.permissions.includes('read'))
-        throw new DomainError('FORBIDDEN', 'Project read required');
+      if (!principal.projectIds.includes(project)) throw new DomainError('FORBIDDEN', 'Project membership required');
       return { id: project };
     } } as unknown as WorkflowService;
   const pool = { query: async (sql: string, params: unknown[]) => {
@@ -37,12 +36,12 @@ test('ordinary Task work status reads without managed Loop, runtime or runner', 
       delivery_id: null, technical_result: null, observation_result: null, observer_kind: null,
       has_closure: false, ready_for_acceptance: false }] };
   } } as unknown as Pool;
-  const options = { credentials: [{ token, actorId: 'reader', projectIds: [projectId], permissions: ['read'] }],
+  const options = { credentials: [{ token, actorId: 'reader', projectIds: [projectId], permissions: [] }],
     service: workflow,
     workStatuses: (principal: Parameters<typeof readWorkStatuses>[2], project: string, taskIds: string[]) =>
       readWorkStatuses(pool, workflow, principal, project, taskIds),
     workers: { authenticate: async (header: string | undefined) => header === `Bearer ${workerToken}` ?
-      { principal: { actorId: 'worker-fixture', projectIds: [projectId], permissions: ['read'] },
+      { principal: { actorId: 'worker-fixture', projectIds: [projectId], permissions: [] },
         scope: { projectId, loopId: id(3), taskId, runId: id(4), sessionId: id(5), roleId: id(6),
           kind: 'business', allowedRoleIds: [] } } : null,
       facts: () => ({ loop: async () => ({ projectId, state: 'active', goalId: id(7), stageId: null,
@@ -65,19 +64,28 @@ test('ordinary Task work status reads without managed Loop, runtime or runner', 
       assert.equal((await app.inject({ url: `/api/projects/${projectId}/orchestration/work-status?${suffix}`, headers: auth })).statusCode, 400);
     assert.equal(databaseReads, 1);
     assert.equal(projectReads, 2); // Foreign request and successful read; invalid/worker requests never enter the reader.
-    assert.equal((await app.inject({ url: `/api/projects/${projectId}/orchestration/loops`, headers: auth })).statusCode, 404);
+    const status = await app.inject({ url: `/api/projects/${projectId}/orchestration/status`, headers: auth });
+    assert.equal(status.statusCode, 200, status.body);
+    assert.deepEqual(status.json(), { state: 'disabled', running: false, busy: false, faults: [], lastError: null });
+    const loops = await app.inject({ url: `/api/projects/${projectId}/orchestration/loops`, headers: auth });
+    assert.equal(loops.statusCode, 200, loops.body);
+    assert.deepEqual(loops.json(), { items: [], nextCursor: null });
+    assert.equal((await app.inject({ url: `/api/projects/${id(9)}/orchestration/status`, headers: auth })).statusCode, 403);
+    assert.equal((await app.inject({ url: `/api/projects/${id(9)}/orchestration/loops`, headers: auth })).statusCode, 403);
+    assert.equal((await app.inject({ url: `/api/projects/${projectId}/orchestration/loops?limit=0`, headers: auth })).statusCode, 400);
     broken = true;
     const failed = await app.inject({ url: path, headers: auth });
     assert.equal(failed.statusCode, 503);
     assert.equal(failed.json().code, 'RESULT_UNCONFIRMED');
     assert.equal(failed.body.includes('private database connection string'), false);
+    assert.equal(projectReads, 7);
   } finally { await app.close(); }
 });
 
 test('managed route options retain the original work-status read with one registered path', async () => {
   let reads = 0;
   const app = await buildServer({
-    credentials: [{ token, actorId: 'reader', projectIds: [projectId], permissions: ['read'] }],
+    credentials: [{ token, actorId: 'reader', projectIds: [projectId], permissions: [] }],
     service: workManagementQueries as unknown as WorkflowService,
     orchestration: { service: { listLoops: async () => ({ items: [], nextCursor: null }) } as unknown as OrchestrationService,
       workStatuses: async (_principal, project, taskIds) => {

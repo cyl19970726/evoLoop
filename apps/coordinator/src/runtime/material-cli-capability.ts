@@ -19,8 +19,7 @@ export async function supportsMaterialCli(command: string, actorId: string, proj
       { principal?: { actorId?: unknown; projectIds?: unknown; permissions?: unknown } };
     if (!(session.principal?.actorId === actorId &&
       Array.isArray(session.principal.projectIds) && session.principal.projectIds.includes(projectId) &&
-      Array.isArray(session.principal.permissions) && session.principal.permissions.includes("read") &&
-      (!required.ordinarySubmit || session.principal.permissions.includes("write")))) return false;
+      Array.isArray(session.principal.permissions) && session.principal.permissions.includes("task"))) return false;
     if (!required.ordinarySubmit) return true;
     // Older wrappers advertise generic `request schema NAME` but do not know ordinary.submit.
     const schema = JSON.parse((await run(executable!, [...args, "request", "schema", "ordinary.submit"], options)).stdout) as

@@ -26,7 +26,7 @@ test("saving runtime settings keeps the Role selected and shows the new revision
     const url = new URL(req.url!, "http://127.0.0.1"); const root = `/api/projects/${projectId}`;
     if (url.pathname.startsWith("/api/")) {
       let value: unknown = { items: [], nextCursor: null };
-      if (url.pathname === "/api/session") value = { principal: { actorId: "lead", projectIds: [projectId], permissions: ["read", "write", "review"] }, capabilities: {} };
+      if (url.pathname === "/api/session") value = { principal: { actorId: "lead", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true }, capabilities: {} };
       else if (url.pathname === root) value = { id: projectId, title: "p", createdAt: stamp };
       else if (url.pathname === `${root}/roles`) value = { items: [role()], nextCursor: null };
       else if (url.pathname === `${root}/roles/${roleId}/runtime`) value = runtime();

@@ -88,7 +88,7 @@ test('migrated message proof survives readback and grants one reviewed original 
     WHERE project_id=$1 AND message_id=$2`,[projectId,original.id]),/blocked gate|durable review/);
   const gate=await uow.read(projectId,r=>r.recovery!.getRecoveryGate(targetSessionId));
   assert.equal(gate?.phase,'blocked');
-  const reviewer={actorId:'reviewer',projectIds:[projectId],permissions:['read' as const,'write' as const,'review' as const]};
+  const reviewer={actorId:'reviewer',projectIds:[projectId],permissions:['task','document','session','management'] as ('task'|'document'|'session'|'management')[],decisions:true};
   await local.approvePreTurnContinuation(projectId,original.id,reviewer,{
     operationId:randomUUID(),sessionId:targetSessionId,originalOperationId:operationId,
     expectedVersion:before.processing!.version,expectedMessageVersion:before.message.version,
@@ -142,8 +142,8 @@ test('queued owned message blocks close until cancellation; a rejected close rep
   await seedFullSession(targetSessionId);await seedFullSession(otherSessionId);
   const workflow=new WorkflowService({uow,clock:{now:()=>now},ids:{next:randomUUID},
     hasher:{hash:value=>createHash('sha256').update(value).digest('hex')}});
-  const sender={actorId:'sender',projectIds:[projectId],permissions:['write' as const]};
-  const reviewer={actorId:'receiver',projectIds:[projectId],permissions:['read' as const,'write' as const,'review' as const]};
+  const sender={actorId:'sender',projectIds:[projectId],permissions:['task','document','session'] as ('task'|'document'|'session'|'management')[]};
+  const reviewer={actorId:'receiver',projectIds:[projectId],permissions:['task','document','session','management'] as ('task'|'document'|'session'|'management')[],decisions:true};
   const post={type:'session.message.post' as const,projectId,operationId:randomUUID(),messageId,
     target:{kind:'owned' as const,sessionId:targetSessionId},content:'Keep this pending'};
   assert.equal((await workflow.execute(sender,post)).status,'applied');
@@ -205,7 +205,7 @@ test('close waits for a concurrent owned message insert and observes its queued 
   const poster=await pool.connect();
   const workflow=new WorkflowService({uow,clock:{now:()=>now},ids:{next:randomUUID},
     hasher:{hash:value=>createHash('sha256').update(value).digest('hex')}});
-  const reviewer={actorId:'receiver',projectIds:[projectId],permissions:['read' as const,'write' as const,'review' as const]};
+  const reviewer={actorId:'receiver',projectIds:[projectId],permissions:['task','document','session','management'] as ('task'|'document'|'session'|'management')[],decisions:true};
   try{
     await poster.query('BEGIN');
     await new PgSessionMessages(poster,projectId).insertSessionMessage({...item(),target:{kind:'owned',sessionId:targetSessionId}});
@@ -233,7 +233,7 @@ test('read refuses a bound Turn whose processing identity differs from the origi
     const tx={sessionMessages:{getSessionMessage:async()=>message,
       getSessionMessageProcessing:async()=>({...base,...mismatch}),
       insertSessionMessageReadReceipt:async()=>{inserts++;}}} as unknown as Parameters<typeof applySessionMessage>[0];
-    await assert.rejects(()=>applySessionMessage(tx,{actorId:'receiver',projectIds:[projectId],permissions:['write']},command,now),
+    await assert.rejects(()=>applySessionMessage(tx,{actorId:'receiver',projectIds:[projectId],permissions:['task','document','session']},command,now),
       /bound running or settled native Turn/);
     assert.equal(inserts,0);
   }
@@ -246,9 +246,9 @@ test('receiving actor records an immutable read during the bound running Turn',a
     grantFor:async()=>({...grant,sessionId:targetSessionId,maxTurns:10})});
   const workflow=new WorkflowService({uow,clock:{now:()=>now},ids:{next:randomUUID},
     hasher:{hash:value=>createHash('sha256').update(value).digest('hex')}});
-  const sender={actorId:'sender',projectIds:[projectId],permissions:['write' as const]};
-  const receiver={actorId:'receiver',projectIds:[projectId],permissions:['read' as const,'write' as const]};
-  const reviewer={actorId:'lead',projectIds:[projectId],permissions:['write' as const,'review' as const]};
+  const sender={actorId:'sender',projectIds:[projectId],permissions:['task','document','session'] as ('task'|'document'|'session'|'management')[]};
+  const receiver={actorId:'receiver',projectIds:[projectId],permissions:['task','document','session'] as ('task'|'document'|'session'|'management')[]};
+  const reviewer={actorId:'lead',projectIds:[projectId],permissions:['task','document','session','management'] as ('task'|'document'|'session'|'management')[],decisions:true};
   const post=await workflow.execute(sender,{type:'session.message.post',projectId,operationId:randomUUID(),
     messageId,target:{kind:'owned',sessionId:targetSessionId},content:'Read this original message'});
   assert.equal(post.status,'applied');
@@ -276,7 +276,7 @@ test('receiving actor records an immutable read during the bound running Turn',a
     [projectId,targetSessionId,messageId]);
   assert.equal((await workflow.execute(sender,{...receipt,operationId:randomUUID()})).status,'rejected');
   assert.equal((await workflow.execute(reviewer,{...receipt,operationId:randomUUID()})).status,'rejected');
-  await assert.rejects(()=>workflow.execute({actorId:'receiver',projectIds:[randomUUID()],permissions:['write']},
+  await assert.rejects(()=>workflow.execute({actorId:'receiver',projectIds:[randomUUID()],permissions:['task','document','session']},
     {...receipt,operationId:randomUUID()}),/project/);
   const result=await workflow.execute(receiver,receipt);
   assert.equal(result.status,'applied');
@@ -326,7 +326,7 @@ test('an uncertain processing state refuses read even after a native Turn was bo
   const receipt={type:'session.message.receipt' as const,projectId,operationId:randomUUID(),messageId:message.id,
     stage:'read' as const,evidence:'I read it'};
   await assert.rejects(()=>uow.transaction(projectId,tx=>applySessionMessage(tx,
-    {actorId:'receiver',projectIds:[projectId],permissions:['write']},receipt,now)),/bound running or settled native Turn/);
+    {actorId:'receiver',projectIds:[projectId],permissions:['task','document','session']},receipt,now)),/bound running or settled native Turn/);
   assert.equal((await local.get(projectId,message.id)).readReceipt,null);
   await local.settle(projectId,message.id,{id:'uncertain-turn',status:'completed',completedAtUtc:now},null);
 });
@@ -340,11 +340,11 @@ test('message persists separately, unknown retains exact operation, receipt requ
   await service.beginDispatch(projectId,message.id,processingId,operationId,qualified);
   const cancel={type:'session.message.cancel' as const,projectId,operationId:randomUUID(),messageId:message.id,
     expectedVersion:(await service.get(projectId,message.id)).version,reason:'I changed my mind'};
-  await assert.rejects(()=>uow.transaction(projectId,tx=>applySessionMessage(tx,{actorId:'sender',projectIds:[projectId],permissions:['write']},cancel,now)),/unprocessed/);
+  await assert.rejects(()=>uow.transaction(projectId,tx=>applySessionMessage(tx,{actorId:'sender',projectIds:[projectId],permissions:['task','document','session']},cancel,now)),/unprocessed/);
   await assert.rejects(()=>service.beginDispatch(projectId,message.id,randomUUID(),randomUUID(),qualified),/queued/);
   await service.markUnknown(projectId,message.id,'lost native reply');
   const unknownVersion=(await service.get(projectId,message.id)).version;
-  await assert.rejects(()=>uow.transaction(projectId,tx=>applySessionMessage(tx,{actorId:'sender',projectIds:[projectId],permissions:['write']},
+  await assert.rejects(()=>uow.transaction(projectId,tx=>applySessionMessage(tx,{actorId:'sender',projectIds:[projectId],permissions:['task','document','session']},
     {...cancel,expectedVersion:unknownVersion},now)),/unprocessed/);
   assert.equal((await service.processing(projectId,message.id))?.operationId,operationId);
   assert.equal((await service.get(projectId,message.id)).state,'unknown');
@@ -362,11 +362,11 @@ test('message persists separately, unknown retains exact operation, receipt requ
   const restarted=new SessionMessageService({uow,clock:{now:()=>new Date().toISOString()},ids:{next:randomUUID},grantFor:async()=>grant});
   assert.equal(await restarted.mustYieldBusiness(projectId,sessionId),true);
   const receipt={type:'session.message.receipt' as const,projectId,operationId:randomUUID(),messageId:message.id,stage:'read' as const,evidence:'I personally read it'};
-  await assert.rejects(()=>uow.transaction(projectId,tx=>applySessionMessage(tx,{actorId:'sender',projectIds:[projectId],permissions:['write']},receipt,now)),/receiving/);
-  await assert.rejects(()=>uow.transaction(projectId,tx=>applySessionMessage(tx,{actorId:'lead',projectIds:[projectId],permissions:['write','review']},receipt,now)),/receiving/);
+  await assert.rejects(()=>uow.transaction(projectId,tx=>applySessionMessage(tx,{actorId:'sender',projectIds:[projectId],permissions:['task','document','session']},receipt,now)),/receiving/);
+  await assert.rejects(()=>uow.transaction(projectId,tx=>applySessionMessage(tx,{actorId:'lead',projectIds:[projectId],permissions:['task','document','session','management'],decisions:true},receipt,now)),/receiving/);
   const beforeReceipt=(await pool.query('SELECT sequence FROM session_observation_head WHERE project_id=$1',[projectId])).rows[0].sequence;
   const settledVersion=(await service.get(projectId,message.id)).version;
-  await uow.transaction(projectId,tx=>applySessionMessage(tx,{actorId:'receiver',projectIds:[projectId],permissions:['write']},receipt,now));
+  await uow.transaction(projectId,tx=>applySessionMessage(tx,{actorId:'receiver',projectIds:[projectId],permissions:['task','document','session']},receipt,now));
   assert.equal((await service.get(projectId,message.id)).readReceipt?.actorId,'receiver');
   const readChanges=(await pool.query(`SELECT actor_id,source_table FROM session_observation_change
     WHERE project_id=$1 AND sequence>$2 AND message_id=$3 AND session_id=$4`,
@@ -432,7 +432,7 @@ test('preflight is side-effect-free for missing or exhausted grants and dispatch
   current={...grant,senderActorId:sender,maxTurns:1};
   await assert.rejects(()=>guarded.preflightDispatch(projectId,second.id),/grant is exhausted/);
   await uow.transaction(projectId,tx=>applySessionMessage(tx,
-    {actorId:sender,projectIds:[projectId],permissions:['write']},
+    {actorId:sender,projectIds:[projectId],permissions:['task','document','session']},
     {type:'session.message.cancel',projectId,operationId:randomUUID(),messageId:second.id,
       expectedVersion:1,reason:'End isolated grant test'},now));
 });
@@ -493,7 +493,7 @@ test('raising one ordinary message grant from 100 to 200 preserves all billed tu
     for(const messageId of inserted){
       const pending=await guarded.get(projectId,messageId);
       if(pending.state==='queued')await uow.transaction(projectId,tx=>applySessionMessage(tx,
-        {actorId:sender,projectIds:[projectId],permissions:['write']},
+        {actorId:sender,projectIds:[projectId],permissions:['task','document','session']},
         {type:'session.message.cancel',projectId,operationId:randomUUID(),messageId,
           expectedVersion:pending.version,reason:'End isolated budget test'},now));
     }
@@ -618,7 +618,7 @@ test('direct ordinary processing INSERT cannot cross an active Task Run',async()
 test('sender identity, same-project recipient and exact conversation grant fail closed',async()=>{
   const badTarget={type:'session.message.post' as const,projectId,operationId:randomUUID(),messageId:randomUUID(),
     target:{kind:'owned' as const,sessionId:randomUUID()},content:'Please clarify'};
-  await assert.rejects(()=>uow.transaction(projectId,tx=>applySessionMessage(tx,{actorId:'sender',projectIds:[projectId],permissions:['write']},badTarget,now)),/Session not found/);
+  await assert.rejects(()=>uow.transaction(projectId,tx=>applySessionMessage(tx,{actorId:'sender',projectIds:[projectId],permissions:['task','document','session']},badTarget,now)),/Session not found/);
   const message=item();
   await uow.transaction(projectId,tx=>tx.sessionMessages!.insertSessionMessage(message));
   const denied=new SessionMessageService({uow,clock:{now:()=>new Date().toISOString()},ids:{next:randomUUID},
@@ -628,8 +628,8 @@ test('sender identity, same-project recipient and exact conversation grant fail 
   assert.equal(await service.processing(projectId,message.id),null);
   const cancel={type:'session.message.cancel' as const,projectId,operationId:randomUUID(),messageId:message.id,
     expectedVersion:1,reason:'No longer needed'};
-  await assert.rejects(()=>uow.transaction(projectId,tx=>applySessionMessage(tx,{actorId:'other',projectIds:[projectId],permissions:['write']},cancel,now)),/sender/);
-  await uow.transaction(projectId,tx=>applySessionMessage(tx,{actorId:'sender',projectIds:[projectId],permissions:['write']},cancel,now));
+  await assert.rejects(()=>uow.transaction(projectId,tx=>applySessionMessage(tx,{actorId:'other',projectIds:[projectId],permissions:['task','document','session']},cancel,now)),/sender/);
+  await uow.transaction(projectId,tx=>applySessionMessage(tx,{actorId:'sender',projectIds:[projectId],permissions:['task','document','session']},cancel,now));
   assert.equal((await service.get(projectId,message.id)).state,'cancelled');
 });
 
@@ -642,7 +642,7 @@ test('creator may message their Session, but only the granted worker may attest 
   const id=randomUUID();
   const post={type:'session.message.post' as const,projectId,operationId:randomUUID(),messageId:id,
     target:{kind:'owned' as const,sessionId:ownedSessionId},content:'Please explain the current state'};
-  await uow.transaction(projectId,tx=>applySessionMessage(tx,{actorId:'lead',projectIds:[projectId],permissions:['write']},post,now));
+  await uow.transaction(projectId,tx=>applySessionMessage(tx,{actorId:'lead',projectIds:[projectId],permissions:['task','document','session']},post,now));
   const workerService=new SessionMessageService({uow,clock:{now:()=>new Date().toISOString()},ids:{next:randomUUID},
     grantFor:async()=>({...grant,sessionId:ownedSessionId,senderActorId:'lead',receiverActorId:'worker',maxTurns:1})});
   await workerService.beginDispatch(projectId,id,randomUUID(),randomUUID(),qualified);
@@ -651,9 +651,9 @@ test('creator may message their Session, but only the granted worker may attest 
   const receipt={type:'session.message.receipt' as const,projectId,operationId:randomUUID(),messageId:id,
     stage:'read' as const,evidence:'Read the original question'};
   await assert.rejects(()=>uow.transaction(projectId,tx=>applySessionMessage(tx,
-    {actorId:'lead',projectIds:[projectId],permissions:['write','review']},receipt,now)),/granted receiving actor/);
+    {actorId:'lead',projectIds:[projectId],permissions:['task','document','session','management'],decisions:true},receipt,now)),/granted receiving actor/);
   await uow.transaction(projectId,tx=>applySessionMessage(tx,
-    {actorId:'worker',projectIds:[projectId],permissions:['write']},receipt,now));
+    {actorId:'worker',projectIds:[projectId],permissions:['task','document','session']},receipt,now));
   assert.equal((await workerService.get(projectId,id)).readReceipt?.actorId,'worker');
   assert.equal((await workerService.processing(projectId,id))?.receiverActorId,'worker');
 });
@@ -675,7 +675,7 @@ test('explicit pre-turn rejection releases occupancy and does not claim a native
   const receipt={type:'session.message.receipt' as const,projectId,operationId:randomUUID(),messageId:first.id,
     stage:'read' as const,evidence:'I saw it'};
   await assert.rejects(()=>uow.transaction(projectId,tx=>applySessionMessage(tx,
-    {actorId:'receiver',projectIds:[projectId],permissions:['write']},receipt,now)),/bound running or settled native Turn/);
+    {actorId:'receiver',projectIds:[projectId],permissions:['task','document','session']},receipt,now)),/bound running or settled native Turn/);
   assert.equal((await uow.read(projectId,r=>r.recovery!.getRecoveryGate(isolatedSessionId)))?.resumeMessageId,second.id);
   await reviewBlockedMessage(first.id,isolatedSessionId);
   await roomy.beginDispatch(projectId,second.id,randomUUID(),randomUUID(),qualified);
@@ -718,8 +718,8 @@ test('reviewed exact message recovery request is durable, CAS-bound and one-shot
   const p=await local.beginDispatch(projectId,m.id,randomUUID(),randomUUID(),qualified);
   await local.bindTurn(projectId,m.id,{id:'turn-'+m.id,status:'inProgress'});
   const before=await local.detail(projectId,m.id);
-  const reviewer={actorId:'lead',projectIds:[projectId],permissions:['read' as const,'write' as const,'review' as const]};
-  const sender={actorId:'sender',projectIds:[projectId],permissions:['read' as const,'write' as const]};
+  const reviewer={actorId:'lead',projectIds:[projectId],permissions:['task','document','session','management'] as ('task'|'document'|'session'|'management')[],decisions:true};
+  const sender={actorId:'sender',projectIds:[projectId],permissions:['task','document','session'] as ('task'|'document'|'session'|'management')[]};
   const workflow=new WorkflowService({uow,clock:{now:()=>new Date().toISOString()},ids:{next:randomUUID},
     hasher:{hash:value=>createHash('sha256').update(value).digest('hex')}});
   const exact={projectId,messageId:m.id,sessionId:targetSessionId,processingId:p.id,nativeTurnId:'turn-'+m.id,
@@ -853,8 +853,8 @@ test('manual stop settles original processing, blocks the gate, and exact recove
   const before=await local.detail(projectId,first.id);
   const workflow=new WorkflowService({uow,clock:{now:()=>new Date().toISOString()},ids:{next:randomUUID},
     hasher:{hash:value=>createHash('sha256').update(value).digest('hex')}});
-  const reviewer={actorId:'reviewer',projectIds:[projectId],permissions:['read' as const,'write' as const,'review' as const]};
-  const sender={actorId:'sender',projectIds:[projectId],permissions:['write' as const]};
+  const reviewer={actorId:'reviewer',projectIds:[projectId],permissions:['task','document','session','management'] as ('task'|'document'|'session'|'management')[],decisions:true};
+  const sender={actorId:'sender',projectIds:[projectId],permissions:['task','document','session'] as ('task'|'document'|'session'|'management')[]};
   const stopped=await workflow.execute(reviewer,{type:'session.message.manualStop',projectId,operationId:randomUUID(),
     messageId:first.id,sessionId:targetSessionId,processingId,preflightId,nativeTurnId:turn,
     expectedMessageVersion:before.message.version,expectedProcessingVersion:before.processing!.version,
@@ -998,7 +998,7 @@ test('a quota failure pauses the provider: other Sessions of it stay queued with
     grantFor:async(_item,session)=>({...grant,sessionId:session.id,maxTurns:1000})});
   const workflow=new WorkflowService({uow,clock:{now:()=>new Date().toISOString()},ids:{next:randomUUID},
     hasher:{hash:value=>createHash('sha256').update(value).digest('hex')}});
-  const reviewer={actorId:'lead',projectIds:[projectId],permissions:['read' as const,'write' as const,'review' as const]};
+  const reviewer={actorId:'lead',projectIds:[projectId],permissions:['task','document','session','management'] as ('task'|'document'|'session'|'management')[],decisions:true};
 
   // 1. The first 402 closes that Session's gate and opens one hold for the provider.
   const first=await failTurn(svc,a1,'quota_exhausted','quota-1');

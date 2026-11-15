@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import type { Principal, TaskDetail } from "@evoloop/contracts";
+import { hasDecisionAuthority, hasPermission, type Principal, type TaskDetail } from "@evoloop/contracts";
 import type { CollaborationConnector, IncomingChangeCandidate, ProjectionIntent, RemoteTaskRecord } from "@evoloop/contracts/collaboration";
 import type { DeliveryRecord, DeliveryStore, IncomingRecord, ProjectionStatus } from "@evoloop/contracts/delivery";
 import type { WorkflowService } from "@evoloop/core";
@@ -13,8 +13,7 @@ const reason = (error: unknown) => error instanceof Error ? error.message.slice(
 /** The identity collaboration acts as in a project: one credential with read and write there whose actor holds the grant. */
 export function collaborationPrincipal<P extends Principal>(principals: readonly P[], projectId: string,
   hasGrant: (projectId: string, actorId: string) => boolean): P | null {
-  return principals.find(p => p.projectIds.includes(projectId) && p.permissions.includes("read") &&
-    p.permissions.includes("write") && hasGrant(projectId, p.actorId)) ?? null;
+  return principals.find(p => hasPermission(p, projectId, "task") && hasGrant(projectId, p.actorId)) ?? null;
 }
 
 /** Project-scoped outbox consumer. PG claims fence local workers; remote effects need stable-key readback. */
@@ -76,7 +75,7 @@ export class CollaborationRunner {
         if (!claim) break;
         await this.dispatch(claim.delivery,claim.token);
       }
-      const reviewer=this.deps.principals.find(p=>p.projectIds.includes(projectId)&&p.permissions.includes("read")&&p.permissions.includes("write")&&p.permissions.includes("review")&&this.hasGrant(projectId,p.actorId));
+      const reviewer=this.deps.principals.find(p=>hasDecisionAuthority(p,projectId,"task")&&this.hasGrant(projectId,p.actorId));
       if (!this.stopped && reviewer && this.deps.pollIntervalMs && Date.now()>=(this.nextPoll.get(projectId)??0) && this.deps.canWrite()) {
         this.nextPoll.set(projectId,Date.now()+this.deps.pollIntervalMs);
         try { await this.pollIncoming(reviewer,projectId); }
@@ -135,7 +134,8 @@ export class CollaborationRunner {
     return this.deps.store.requestRetry(projectId,eventId,this.deps.consumerId,principal.actorId,retryReason,now());
   }
   private requireReviewer(principal: Principal, projectId: string): void {
-    if (!principal.projectIds.includes(projectId) || !principal.permissions.includes("read") || !principal.permissions.includes("write") || !principal.permissions.includes("review") || !this.hasGrant(projectId,principal.actorId)) throw new DomainError("FORBIDDEN","project review and current integration grant required");
+    if (!hasDecisionAuthority(principal, projectId, "task") || !this.hasGrant(projectId,principal.actorId))
+      throw new DomainError("FORBIDDEN","project Task decision authority and current integration grant required");
   }
   /** Bounded full remote scan. Polling supplies no verified external actor; candidates stay review-only. */
   async pollIncoming(principal: Principal, projectId: string): Promise<number> {

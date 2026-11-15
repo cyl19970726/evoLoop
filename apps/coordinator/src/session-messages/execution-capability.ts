@@ -1,4 +1,4 @@
-import type { Principal } from "@evoloop/contracts";
+import { hasPermission, mayAccessSession, type Principal } from "@evoloop/contracts";
 import { ordinaryMessageBudget } from "@evoloop/contracts/session-messages";
 import type { RuntimeSessionRecord } from "@evoloop/contracts/runtime";
 import type { ObservedSession } from "@evoloop/contracts/session-observation";
@@ -26,10 +26,10 @@ export function createMessageExecutionReader(deps:MessageExecutionReaderDeps){
     }catch{observedAt=new Date().toISOString();}
     const result=(state:OrdinaryMessageExecutionCapability["state"],reasonCode:string,reason:string):OrdinaryMessageExecutionCapability=>
       ({state,reasonCode,reason,observedAt});
-    if(!principal.projectIds.includes(projectId)||!principal.actorId.trim()||!principal.permissions.includes("read"))
+    if(!principal.actorId.trim()||!hasPermission(principal,projectId,"session"))
       return result("blocked","FORBIDDEN","当前身份不能读取此项目的会话执行状态。");
-    if(!principal.permissions.includes("write"))
-      return result("blocked","WRITE_REQUIRED","当前身份没有此项目的消息写入权限。");
+    if(observed.target.kind==="owned"&&!mayAccessSession(principal,projectId,observed.target.sessionId))
+      return result("blocked","FORBIDDEN","当前身份没有此 Session 的消息写入权限。");
     if(observed.target.kind==="external"||observed.kind==="external") {
       if(observed.capabilities.send.available&&observed.capabilities.send.mode==="manual-handoff")
         return result("manual","MANUAL_HANDOFF","外部会话需要由宿主手工转交消息。");

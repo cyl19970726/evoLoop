@@ -43,8 +43,8 @@ const workflow = new WorkflowService(deps);
 const runtime = new RuntimeWorkflowService(deps);
 withPersistedResumeProfile(runtime,uow);
 const projectId = randomUUID();
-const reviewer: Principal = { actorId: "runtime-reviewer", projectIds: [projectId], permissions: ["read", "review"] };
-const writer: Principal = { actorId: "runtime-writer", projectIds: [projectId], permissions: ["read", "write"] };
+const reviewer: Principal = { actorId: "runtime-reviewer", projectIds: [projectId], permissions: ["session", "management"], decisions: true };
+const writer: Principal = { actorId: "runtime-writer", projectIds: [projectId], permissions: ["task", "document", "session"] };
 const issue = async (principal: Principal, data: Record<string, unknown>, operationId = randomUUID()): Promise<CommandResult> =>
   workflow.execute(principal, { ...data, projectId, operationId } as Command);
 const applied = (result: CommandResult) => {
@@ -69,7 +69,7 @@ test("reviewers can abandon only uncertain unbound read-only runs while preservi
     finally { await cleanup.end(); }
   });
 
-  const owner: Principal = { actorId: "runtime-owner", projectIds: [projectId], permissions: ["read", "write", "review"] };
+  const owner: Principal = { actorId: "runtime-owner", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true };
   const create = async (principal: Principal, data: Record<string, unknown>) => applied(await issue(principal, data));
   const own = (data: Record<string, unknown>) => create(owner, data);
   await own({ type: "project.create", title: "Runtime abandon integration" });

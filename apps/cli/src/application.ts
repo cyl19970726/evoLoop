@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { describeRunActual } from "@evoloop/contracts/run-actual";
-import { readFile } from "node:fs/promises";
-import { commandSchema, idSchema } from "@evoloop/contracts";
+import { readFile, writeFile } from "node:fs/promises";
+import { commandSchema, idSchema, migrateLegacyAuthConfig } from "@evoloop/contracts";
 import { orchestrationCommandSchema } from "@evoloop/contracts/orchestration";
 import { ApiClient, CliApiError } from "./client.js";
 import { exportOriginal, readOriginal, readTaskContext, MaterialError } from "./materials.js";
@@ -10,6 +10,10 @@ import { prepareRequest, requestTypes, requestSchema, RequestInputError } from "
 import { sessionWorkPath } from "./session-work.js";
 import { briefAcceptanceOverview, briefIndex, briefRelays, briefTaskWithRelays } from "./brief.js";
 import { sessionStatus } from "./session-status.js";
+
+class IdentityFileError extends Error {
+  readonly code = "INVALID_IDENTITY_FILE";
+}
 import { allocationRelationsPath } from "./allocation-relations.js";
 import { fixedHash, materialAsset, materialBody, materialCatalog, materialHandoff, materialRunInput } from "./lightweight-materials.js";
 import { prepareSession } from "./session-preparation.js";
@@ -22,7 +26,7 @@ class UsageError extends Error { readonly code = "INVALID_INPUT"; }
 interface Args { words: string[]; options: Map<string, string | true> }
 const values = new Set(["project", "revision", "limit", "cursor", "turn-cursor", "messages-cursor", "source", "turn-id", "after", "wait-ms", "out", "file", "id", "receipt", "attempt", "task", "state", "phase", "signal", "waiting-on-kind", "waiting-on-id", "stage", "knowledge", "loop", "search", "membership", "importance", "role", "session", "discussion", "message", "kind", "hash", "asset-hash", "model", "effort", "color", "mark", "reason", "evidence-ref", "operation", "provider", "project-skills", "personal", "builtin", "add", "remove", "context-task", "context-revision", "reply-to", "message-id","mode","content","input", "wait", "from", "to", "category"]);
 const longPollTimeout = (configured: number, waitMs: number) => Math.max(configured, Math.min(300_000, waitMs + 5_000));
-const switches = ["help", "history", "graph", "events", "revisions", "result", "trace", "occurrences", "reviews", "handoffs", "bindings", "route", "hosts", "attempts", "recovery", "inputs", "observation", "documents", "closed", "brief", "stdin"];
+const switches = ["help", "history", "graph", "events", "revisions", "result", "trace", "occurrences", "dispatch", "dispatches", "direct-list", "reviews", "handoffs", "bindings", "route", "hosts", "attempts", "recovery", "inputs", "observation", "documents", "closed", "brief", "stdin", "confirm-review-as-management"];
 function uuid(value: string | undefined, label: string): string {
   if (!idSchema.safeParse(value).success) throw new UsageError(`${label} must be a UUID.`);
   return value!;
@@ -53,16 +57,16 @@ function mode(args: Args, names: string[]): string | undefined {
   if (selected.length > 1) throw new UsageError(`Choose one of ${names.map(key => `--${key}`).join(", ")}.`);
   return selected[0];
 }
-const readModes = ["events", "history", "revisions", "result", "trace", "occurrences", "reviews", "handoffs", "bindings", "route", "hosts", "attempts", "recovery", "inputs", "observation"];
+const readModes = ["events", "history", "revisions", "result", "trace", "occurrences", "dispatch", "dispatches", "direct-list", "reviews", "handoffs", "bindings", "route", "hosts", "attempts", "recovery", "inputs", "observation"];
 const listPaths: Record<string, string> = { tasks: "tasks", documents: "documents", goals: "goals", stages: "stages", discussions: "discussions", roles: "roles", domains: "domains", "role-templates": "role-templates",
   schedules: "schedules", "resident-queues": "resident-queues", evaluations: "evaluations", knowledge: "knowledge/pages", candidates: "knowledge/candidates", runs: "runtime/runs", sessions: "runtime/sessions", impacts: "impacts" };
 const orchestrationLists: Record<string, string> = { loops: "loops", inbox: "inbox", dispatches: "dispatches" };
 const reads: Record<string, { path: string; modes: string[]; list?: boolean }> = {
   goal: { path: "goals", modes: ["revisions"] }, stage: { path: "stages", modes: ["revisions", "reviews"] },
-  discussion: { path: "discussions", modes: ["events"] }, role: { path: "roles", modes: ["revisions", "reviews", "handoffs", "bindings", "hosts"], list: true },
+  discussion: { path: "discussions", modes: ["events"] }, role: { path: "roles", modes: ["revisions", "reviews", "handoffs", "bindings", "hosts", "direct-list"], list: true },
   "resident-queue": { path: "resident-queues", modes: ["attempts"] },
   domain: { path: "domains", modes: ["revisions", "route"] }, host: { path: "hosts", modes: ["revisions"] },
-  schedule: { path: "schedules", modes: ["revisions", "occurrences"], list: true }, run: { path: "runtime/runs", modes: ["events", "result", "trace"] },
+  schedule: { path: "schedules", modes: ["revisions", "occurrences", "dispatch", "dispatches"], list: true }, run: { path: "runtime/runs", modes: ["events", "result", "trace"] },
   session: { path: "runtime/sessions", modes: ["events", "history", "recovery", "inputs", "observation"], list: true },
   "native-input": { path: "session-inputs", modes: [] }, git: { path: "references/git", modes: [] }, references: { path: "references/tasks", modes: [] },
 };
@@ -75,7 +79,7 @@ const orchestrationReads: Record<string, { path: string; modes: string[] }> = {
 const allCommandSchemas = [...commandSchema.options, ...orchestrationCommandSchema.options];
 const help = {
   name: "evoLoop Agent CLI", output: "JSON stdout, diagnostic JSON stderr; no automatic POST retries",
-  commands: ["id", "session", "project UUID", `list ${[...Object.keys(listPaths), ...Object.keys(orchestrationLists)].join("|")} --project UUID [--loop UUID for inbox/dispatches] [--limit 1..100] [--cursor CURSOR]`,
+  commands: ["id", "identity migrate --input LEGACY_JSON [--out NEW_JSON --confirm-review-as-management] (converts read/write/review; prints a before/after table and refuses legacy review without explicit confirmation)", "session", "project UUID", `list ${[...Object.keys(listPaths), ...Object.keys(orchestrationLists)].join("|")} --project UUID [--loop UUID for inbox/dispatches] [--limit 1..100] [--cursor CURSOR]`,
     "list discussions --project UUID [--kind allocation|direction|task_collaboration] [--limit 1..100 --cursor UUID] (read only)",
     "allocations --project UUID (--role UUID | --session owned:UUID|external:UUID | --discussion UUID) [--limit 1..50 --cursor OPAQUE] (read only; does not assign a Task or Session)",
     "work list --project UUID [--limit 1..50 --cursor CURSOR --search TEXT --membership current|historical|unclassified|all]",
@@ -131,6 +135,7 @@ const help = {
     "evaluation-packet EVALUATION_UUID --project UUID --revision UUID --attempt UUID",
     "knowledge UUID --project UUID [--revision UUID | --history | --graph]", "candidate UUID --project UUID", "operation UUID --project UUID",
     `read ${[...Object.keys(reads), ...Object.keys(orchestrationReads)].join("|")} UUID --project UUID [${readModes.map(name => `--${name}`).join(" | ")}] [--cursor ITEM_CURSOR --turn-cursor TURN_CURSOR for run --trace]`,
+    "read schedule UUID --project UUID (--dispatch | --dispatches [--limit 1..100 --cursor CURSOR]); read role UUID --project UUID --direct-list",
     "command types", "command schema TYPE", "command run JSON_FILE", "command JSON_FILE (legacy)", "request types", "request schema NAME",
     "request schema reference.task-decide (reviewed Run: kind=run, referenceId=Run ID, revision=source TaskRevision ID, contentHash=Run inputHash; read run ID --trace for native evidence)",
     "request NAME --project UUID --file JSON_FILE [--id UUID] [--receipt UUID for endpoints without server operation IDs]",
@@ -147,6 +152,22 @@ async function dispatch(args: Args, env: Environment, io: IO): Promise<unknown> 
   const action = args.words[0];
   if (!action || action === "help" || args.options.has("help")) return help;
   if (action === "id") { check(args, 1); return { id: randomUUID() }; }
+  if (action === "identity" && args.words[1] === "migrate") {
+    check(args, 2, ["input", "out", "confirm-review-as-management"]);
+    const input = option(args, "input");
+    if (!input) throw new UsageError("identity migrate requires --input LEGACY_JSON.");
+    let migration;
+    try {
+      migration = migrateLegacyAuthConfig(JSON.parse(await readFile(input, "utf8")), {
+        confirmReviewAsManagement: args.options.has("confirm-review-as-management"),
+      });
+    } catch (error) {
+      throw new IdentityFileError(error instanceof Error ? error.message : "Invalid legacy identity file.");
+    }
+    const out = option(args, "out");
+    if (out) await writeFile(out, `${JSON.stringify(migration.config, null, 2)}\n`, { mode: 0o600 });
+    return { output: out ?? null, changes: migration.changes, config: out ? undefined : migration.config };
+  }
   const project = () => uuid(option(args, "project") ?? env.EVOLOOP_PROJECT, "Project");
   const revision = () => option(args, "revision") ? uuid(option(args, "revision"), "Revision") : undefined;
   const store = new ReceiptStore(env.EVOLOOP_STATE_DIR);
@@ -655,8 +676,14 @@ async function dispatch(args: Args, env: Environment, io: IO): Promise<unknown> 
   }
   if (action === "candidate" || action === "operation") { check(args, 2, ["project"]); return client.get(`${prefix}/${action === "candidate" ? "knowledge/candidates" : "operations"}/${uuid(args.words[1], action)}`); }
   if (action === "read") {
-    check(args, 3, ["project", "cursor", "turn-cursor", ...readModes]); const kind = args.words[1]!, objectId = uuid(args.words[2], "Object"), selected = mode(args, readModes);
-    if ((option(args, "cursor") || option(args, "turn-cursor")) && !(kind === "run" && selected === "trace")) throw new UsageError("--cursor and --turn-cursor apply only to read run --trace.");
+    check(args, 3, ["project", "cursor", "turn-cursor", "limit", ...readModes]); const kind = args.words[1]!, objectId = uuid(args.words[2], "Object"), selected = mode(args, readModes);
+    const traceRead = kind === "run" && selected === "trace", dispatchRead = kind === "schedule" && selected === "dispatches";
+    if ((option(args, "cursor") || option(args, "turn-cursor")) && !traceRead && !dispatchRead)
+      throw new UsageError("--cursor applies to read run --trace or read schedule --dispatches; --turn-cursor applies only to read run --trace.");
+    if (option(args, "turn-cursor") && dispatchRead) throw new UsageError("--turn-cursor applies only to read run --trace.");
+    if (option(args, "limit") && !dispatchRead) throw new UsageError("--limit applies only to read schedule --dispatches.");
+    const limit = option(args, "limit");
+    if (limit !== undefined && (!/^\d+$/.test(limit) || Number(limit) < 1 || Number(limit) > 100)) throw new UsageError("--limit must be 1..100.");
     const orchestration = orchestrationReads[kind];
     if (orchestration) {
       if (selected && !orchestration.modes.includes(selected)) throw new UsageError("Unsupported orchestration read mode.");
@@ -672,6 +699,7 @@ async function dispatch(args: Args, env: Environment, io: IO): Promise<unknown> 
     const query = new URLSearchParams();
     if (option(args, "cursor")) query.set("cursor", option(args, "cursor")!);
     if (option(args, "turn-cursor")) query.set("turnCursor", option(args, "turn-cursor")!);
+    if (limit) query.set("limit", limit);
     const read = await client.get(`${prefix}/${definition.path}/${objectId}${selected ? `/${selected}` : ""}${query.size ? `?${query}` : ""}`);
     // A Run read carries what its Turn actually reported next to the configured profile, in the same words the workbench uses ("未记录" when nothing was observed).
     if (kind === "run" && !selected && record(read)) return { ...record(read)!, actualView: describeRunActual(record(read) as never) };
@@ -685,10 +713,10 @@ export async function runCli(args: string[], env: Environment = process.env, io:
   catch (error) {
     const invalid = error instanceof UsageError || error instanceof RequestInputError || error instanceof MessageBodyError || record(error)?.name === "ZodError" || error instanceof SyntaxError || error instanceof TypeError ||
       error instanceof CliApiError && error.status === 0 && !error.unconfirmed && error.code.startsWith("INVALID_");
-    const code = invalid ? "INVALID_INPUT" : error instanceof CliApiError || error instanceof ReceiptError || error instanceof MaterialError ? error.code : "LOCAL_IO_ERROR";
+    const code = invalid ? "INVALID_INPUT" : error instanceof CliApiError || error instanceof ReceiptError || error instanceof MaterialError || error instanceof IdentityFileError ? error.code : "LOCAL_IO_ERROR";
     const payload = error instanceof CliApiError ? { code, status: error.status, message: error.message, data: error.data }
       : error instanceof ReceiptError ? { code, message: error.message, data: error.data }
-      : error instanceof MaterialError || error instanceof MessageBodyError ? { code, message: error.message }
+      : error instanceof MaterialError || error instanceof MessageBodyError || error instanceof IdentityFileError ? { code, message: error.message }
       : { code, message: invalid ? error instanceof UsageError || error instanceof RequestInputError ? error.message : "Input does not match CLI/schema; use help or command schema TYPE."
         : record(error)?.code === "ENOENT" ? "The input file or export parent directory is missing; preserve the requested path and create the parent before exporting."
         : "Local operation failed; preserve input and inspect the requested file/state path." };

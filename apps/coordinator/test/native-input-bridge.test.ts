@@ -10,7 +10,7 @@ import { NativeInputBridge } from "../src/runtime/native-input.js";
 const now = "2026-10-27T06:00:00.000Z";
 function setup() {
   const projectId = randomUUID(), sessionId = randomUUID(), connectionId = randomUUID();
-  const principal: Principal = { actorId: "human", projectIds: [projectId], permissions: ["read", "write", "review"] };
+  const principal: Principal = { actorId: "human", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true };
   const session = { projectId, id: sessionId, state: "ready", nativeThreadId: "thread" } as RuntimeSessionRecord;
   const capture: NativeInputCapture = { projectId, sessionId, id: randomUUID(), connectionId, nativeRequestId: "rpc-1",
     threadId: "thread", turnId: "turn", itemId: "item", method: "item/tool/requestUserInput",
@@ -108,7 +108,7 @@ test("revoked current execution authority blocks a reply saved under earlier aut
 
 test("a read-only identity or lost coordinator lease cannot reply", async () => {
   const f = setup(); await f.emit({ type: "requested", request: f.capture });
-  await assert.rejects(() => f.bridge.requireReply({ ...f.principal, permissions: ["read"] }, f.projectId, f.capture.id));
+  await assert.rejects(() => f.bridge.requireReply({ ...f.principal, permissions: [] }, f.projectId, f.capture.id));
   f.loseLease(); await assert.rejects(() => f.bridge.requireReply(f.principal, f.projectId, f.capture.id));
   assert.equal(f.sends, 0);
 });

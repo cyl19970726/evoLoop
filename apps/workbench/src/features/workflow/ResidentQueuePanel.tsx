@@ -4,7 +4,7 @@
 // task's queues) and by the team's 分工与运行 (all queues, or one agent's).
 import React from "react";
 import { useQueries } from "@tanstack/react-query";
-import type { Task, TaskDetail } from "@evoloop/contracts";
+import { hasPermission, type Task, type TaskDetail } from "@evoloop/contracts";
 import type { QueueHoldCode, ResidentQueue, ResidentQueueEntry } from "@evoloop/contracts/queues";
 import type { RoleRecord } from "@evoloop/contracts/roles";
 import type { RuntimeRunRecord, RuntimeSessionRecord } from "@evoloop/contracts/runtime";
@@ -147,7 +147,7 @@ function QueueCard({ context, queue, task, sessionId, runs, sessions, round }: {
   const total = attemptRead.data?.reduce((sum, row) => sum + row.attempts.length, 0);
   const waiting = shown.entries.filter(entry => entry.state === "queued" || entry.state === "held");
   const staleEntry = task ? shown.entries.find(entry => entry.taskId === task.id && entry.taskRevisionId !== task.currentRevisionId && entry.state === "queued") : undefined;
-  const canReview = context.principal.permissions.includes("review");
+  const canReview = hasPermission(context.principal, context.projectId, "management");
   const reading = detail.isFetching || attemptRead.isFetching;
   const readable = !!detail.data && !detail.error && !attemptRead.error;
   return <details open={open} onToggle={event => { setOpen(event.currentTarget.open); if (event.currentTarget.open) setOpened(true); }} data-queue={queue.id} className="group rounded-lg bg-muted px-4 py-3">

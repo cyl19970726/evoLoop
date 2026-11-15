@@ -1,4 +1,4 @@
-import type { Principal, RuntimeRecordEvent, RuntimeRunRecord, RuntimeSessionRecord } from "@evoloop/contracts";
+import { hasDecisionAuthority, type Principal, type RuntimeRecordEvent, type RuntimeRunRecord, type RuntimeSessionRecord } from "@evoloop/contracts";
 import { bindingMatchesSession, sessionProvider, type RuntimeProvider, nativeChildDiagnosticSchema, preTurnProofSchema, type PreTurnProof, type EvaluationPacketBinding, type NativeChildDiagnosticRecord,
   type NativeResumeRejection, type RunActual, type RuntimeBinding, type RuntimeSessionSpec, type RuntimeTurn, type RuntimeUsage } from "@evoloop/contracts/runtime";
 import type { ExecutionProfileRevision } from "@evoloop/contracts/session-recovery";
@@ -450,7 +450,7 @@ export class RuntimeWorkflowService {
   /** Reviewer grants one attempt for the same operation after an exact pre-turn rejection. */
   async approvePreTurnContinuation(projectId:string,runId:string,principal:Principal,
     command:{operationId:string;sessionId:string;originalOperationId:string;expectedVersion:number;expectedGateVersion:number;evidenceRef:string;reason:string}):Promise<RuntimeRunRecord>{
-    if(!principal.projectIds.includes(projectId)||!principal.permissions.includes("review")||principal.actorId.startsWith("worker-"))
+    if(!hasDecisionAuthority(principal,projectId,"session")||principal.actorId.startsWith("worker-"))
       throw new DomainError("FORBIDDEN","pre-turn continuation requires project review authority");
     return this.deps.uow.transaction(projectId,async tx=>{
       const intentJson=reviewIntentJson(principal.actorId,'run',runId,command);
@@ -511,7 +511,7 @@ export class RuntimeWorkflowService {
   }
   async readPreTurnContinuationDecision(projectId:string,runId:string,principal:Principal,
     command:Parameters<RuntimeWorkflowService['approvePreTurnContinuation']>[3]):Promise<RuntimeRunRecord|null>{
-    if(!principal.projectIds.includes(projectId)||!principal.permissions.includes("review")||principal.actorId.startsWith("worker-"))
+    if(!hasDecisionAuthority(principal,projectId,"session")||principal.actorId.startsWith("worker-"))
       throw new DomainError("FORBIDDEN","pre-turn continuation requires project review authority");
     return this.deps.uow.read(projectId,reader=>priorReviewDecision<RuntimeRunRecord>(reader,
       command.operationId,principal.actorId,'run',runId,
@@ -625,8 +625,8 @@ export class RuntimeWorkflowService {
     status: "completed" | "failed" | "interrupted", summary: string | null,
     checkpoint: { itemsDigest: string; completedAtUtc: string }, expectedVersion: number,
     principal: Principal, reason: string): Promise<RuntimeRunRecord> {
-    if (!principal.projectIds.includes(projectId) || !principal.permissions.includes("review") || !principal.actorId.trim()) {
-      throw new DomainError("FORBIDDEN", "run reconciliation requires project review permission");
+    if (!hasDecisionAuthority(principal, projectId, "session") || !principal.actorId.trim()) {
+      throw new DomainError("FORBIDDEN", "run reconciliation requires Session decision authority");
     }
     if (!canonicalUtc(checkpoint.completedAtUtc) ||
       !/^[a-f0-9]{64}$/.test(checkpoint.itemsDigest) || !reason.trim()) {

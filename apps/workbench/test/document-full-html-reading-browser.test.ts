@@ -47,7 +47,7 @@ test("built HTML Document uses the available reading space and keeps fixed revis
     if (url.pathname.startsWith("/api/")) {
       const root = `/api/projects/${projectId}`;
       let value: unknown = { items: [], nextCursor: null }, status = 200;
-      if (url.pathname === "/api/session") value = { principal: { actorId: "fixture", projectIds: [projectId], permissions: ["read"] }, capabilities: {} };
+      if (url.pathname === "/api/session") value = { principal: { actorId: "fixture", projectIds: [projectId], permissions: [] }, capabilities: {} };
       else if (url.pathname === root) value = { id: projectId, title: "HTML 阅读测试", createdAt: stamp };
       else if (url.pathname === `${root}/documents/${documentId}`) value = { document, current, adopted: current };
       else if (url.pathname === `${root}/documents/${documentId}/tasks`) value = { items: [], nextCursor: null };
@@ -247,7 +247,7 @@ test("optional real HTML original keeps all five images readable in the built fi
     if (url.pathname.startsWith("/api/")) {
       const root = `/api/projects/${realProjectId}`;
       let value: unknown = { items: [], nextCursor: null }, status = 200;
-      if (url.pathname === "/api/session") value = { principal: { actorId: "fixture", projectIds: [realProjectId], permissions: ["read"] }, capabilities: {} };
+      if (url.pathname === "/api/session") value = { principal: { actorId: "fixture", projectIds: [realProjectId], permissions: [] }, capabilities: {} };
       else if (url.pathname === root) value = { id: realProjectId, title: "实景原件测试", createdAt: stamp };
       else if (url.pathname === `${root}/documents/${realDocumentId}`) value = { document: realDocument, current: manifest.revision, adopted: manifest.revision };
       else if (url.pathname === `${root}/documents/${realDocumentId}/tasks`) value = { items: [], nextCursor: null };

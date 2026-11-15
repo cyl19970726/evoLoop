@@ -34,14 +34,22 @@ export interface DirectDispatchList { projectId: string; roleId: string; version
 export interface ScheduleDispatchLog {
   scheduleId: string; plannedAtUtc: string; state: "pending" | "dispatched" | "fell_back" | "skipped"; reason: string; taskId: string | null; sessionId: string | null;
   entryId: string | null; templateHash: string; roleRevisionId: string | null; executionConfig: Record<string, unknown>; decidedAt: string; dispatchedAt: string | null;
+  escalatedAt: string | null;
 }
 
-export interface ScheduleDispatchTransaction {
+export interface ScheduleDispatchLogPage { items: ScheduleDispatchLog[]; nextCursor: string | null }
+
+export interface ScheduleDispatchReader {
   getDispatchPolicy(scheduleId: string): Promise<ScheduleDispatchPolicy | null>;
+  getDirectList(roleId: string): Promise<DirectDispatchList | null>;
+  /** Oldest first; the opaque cursor is bound to this project and schedule. */
+  listDispatches(scheduleId: string, limit: number, cursor?: string): Promise<ScheduleDispatchLogPage>;
+}
+
+export interface ScheduleDispatchTransaction extends ScheduleDispatchReader {
   /** Insert (expectedVersion 0) or update with a version check; the approval fields come from the schedule's current revision and the Role's current revision. */
   saveDispatchPolicy(value: Omit<ScheduleDispatchPolicy, "setRevisionId" | "roleRevisionId" | "consecutiveFailures" | "consecutiveSkips" | "revertReason">, expectedVersion: number,
     approve: boolean): Promise<ScheduleDispatchPolicy>;
-  getDirectList(roleId: string): Promise<DirectDispatchList | null>;
   saveDirectList(value: DirectDispatchList, expectedVersion: number): Promise<void>;
   /** The triage notice a Task did not get when it went straight to a line, made when it is handed to the Leader after all. */
   enqueueTodoNotice(taskId: string, at: string): Promise<void>;

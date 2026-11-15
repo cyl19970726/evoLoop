@@ -120,7 +120,8 @@ export async function authenticatedRoot(projectId, port, fetcher = fetch) {
   } catch { fail('ROOT_IDENTITY_UNVERIFIED'); }
   const principal = value?.principal;
   if (principal?.actorId !== expected || !principal?.projectIds?.includes(projectId) ||
-    !principal?.permissions?.includes('review')) fail('ROOT_IDENTITY_UNVERIFIED');
+    !principal?.permissions?.includes('management') ||
+    !(principal?.identityKind === 'human' || principal?.decisions === true)) fail('ROOT_IDENTITY_UNVERIFIED');
   return expected;
 }
 

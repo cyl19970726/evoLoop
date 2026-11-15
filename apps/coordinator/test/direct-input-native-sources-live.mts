@@ -175,7 +175,7 @@ try {
   app.decorateRequest("principal", null);
   app.addHook("onRequest", async request => {
     if (request.headers.authorization === `Bearer ${token}`)
-      request.principal = { actorId, projectIds: [projectId], permissions: ["read", "write"] } as never;
+      request.principal = { actorId, projectIds: [projectId], permissions: ["task", "document", "session"] } as never;
   });
   app.setErrorHandler((error, _request, reply) => reply.code(
     error instanceof Error && error.message === "isolated actor mismatch" ? 403 : 409,

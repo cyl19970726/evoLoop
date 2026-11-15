@@ -11,7 +11,7 @@ const turnId = "97000003-0000-4000-8000-000000000003";
 const binding: RuntimeBinding = { projectId, sessionId, roleId: "role", nativeThreadId: "thread",
   nativeSessionId: "thread", cwd: "/private/tmp/isolated", authorizationScope: "test",
   owner: "evoloop-codex-app-server" };
-const principal = { actorId: "sender", projectIds: [projectId], permissions: ["read", "write"] as Array<"read" | "write"> };
+const principal = { actorId: "sender", projectIds: [projectId], permissions: ["task", "document", "session"] as ('task'|'document'|'session'|'management')[] };
 const input = (inputId: string, kind: "run" | "message", state: DirectInputRecord["state"] = "unknown"): DirectInputRecord => ({
   projectId, sessionId, inputId, operationId: inputId, actorId: "sender", content: "private input",
   mode: "steer", source: { kind, id: `source-${kind}`, processingId: kind === "message" ? "processing" : null },

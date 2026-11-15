@@ -35,7 +35,7 @@ test("Task owner resolves one real Role and only verified bound agent links at 3
     if (url.pathname.startsWith("/api/")) {
       const p = `/api/projects/${projectId}`;
       let value:unknown = page, status = 200;
-      if (url.pathname === "/api/session") value = {principal:{actorId:"reader",projectIds:[projectId],permissions:["read"]},capabilities:{}};
+      if (url.pathname === "/api/session") value = {principal:{actorId:"reader",projectIds:[projectId],permissions:[]},capabilities:{}};
       else if (url.pathname === p) value = {id:projectId,title:"夹具项目",createdAt:stamp};
       else if (url.pathname === `${p}/tasks/${taskId}` || url.pathname === `${p}/tasks/${otherTaskId}`) {
         const id = url.pathname.endsWith(otherTaskId) ? otherTaskId : taskId;

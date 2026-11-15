@@ -55,7 +55,7 @@ test("the agent page calls the same hooks before and after its snapshot is read"
   const { projectId, agentKey, actorId } = await import(pathToFileURL(`${fixture}/common.mjs`).href);
   const { snapshot } = await import(pathToFileURL(`${fixture}/agents.mjs`).href);
   const sessionKey = agentKey("dev");
-  const context = { projectId, token: "", blocked: false, principal: { actorId, projectIds: [projectId], permissions: ["read", "write", "review"] },
+  const context = { projectId, token: "", blocked: false, principal: { actorId, projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true },
     onAttempt: async () => true, onKnown: () => undefined, onChanged: () => undefined } as unknown as Parameters<typeof SessionWorkspace>[0]["context"];
   const props = { context, sessionKey, active: true, refresh: 0 };
 

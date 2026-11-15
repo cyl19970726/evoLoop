@@ -34,7 +34,7 @@ const tickWrites = relay as unknown as {
   setState(item: RelayRecord, state: RelayRecord["state"], reason: string | null): Promise<void>;
 };
 const projectId = randomUUID(), roleId = randomUUID(), at = "2026-11-06T00:00:00.000Z";
-const reviewer: Principal = { actorId: "reviewer", projectIds: [projectId], permissions: ["read", "write", "review"] };
+const reviewer: Principal = { actorId: "reviewer", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true };
 const hash = (s: string) => createHash("sha256").update(s).digest("hex");
 
 async function inTransaction<T>(run: (client: pg.PoolClient) => Promise<T>): Promise<T> {

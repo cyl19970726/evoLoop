@@ -3,7 +3,7 @@
 // acceptance, execution, delivery, the Leader's decision, the result notices and the prerequisites). Server text
 // written for agents and raw identifiers stay in the full-identifier layer.
 import React from "react";
-import type { TaskAttentionFollowUp, TaskAttentionItem, TaskDetail } from "@evoloop/contracts";
+import { hasPermission, type TaskAttentionFollowUp, type TaskAttentionItem, type TaskDetail } from "@evoloop/contracts";
 import type { LeaderNotice } from "@evoloop/contracts/leader-notices";
 import type { LeaderWorkTask } from "@evoloop/contracts/work-index";
 import { Button, Checkbox, Field, Input, Notice, Select, StatusTag, Textarea } from "@evoloop/ui";
@@ -31,7 +31,7 @@ const signalLabel: Record<TaskAttentionItem["signal"], string> = {
 };
 const decisionLabel: Record<TaskAttentionFollowUp["decision"], string> = { waiting: "等待中", checked: "已核对", acted: "已采取行动" };
 const noticeLabel: Record<LeaderNotice["kind"], string> = {
-  task_todo: "待编排的任务", delivery: "交付已封存", observation: "验收结果", observation_used: "验收结果：已使用", observation_failed: "验收结果：失败或未使用（需处理）", line_entry_suspended: "队伍项挂起，无法开始", line_confirmation_returned: "执行确认被退回", direct_dispatch_blocked: "定时直派受阻或等待过久", direct_circuit_open: "定时直派熔断", schedule_skips_escalated: "定时任务连续跳过", task_question: "关键问题", task_blocker: "执行受阻",
+  task_todo: "待编排的任务", delivery: "交付已封存", observation: "验收结果", observation_used: "验收结果：已使用", observation_failed: "验收结果：失败或未使用（需处理）", line_entry_suspended: "队伍项挂起，无法开始", line_confirmation_returned: "执行确认被退回", direct_dispatch_blocked: "定时直派受阻或等待过久", direct_circuit_open: "定时直派熔断", session_repeated_failure: "Session 连续同因启动前失败", schedule_skips_escalated: "定时任务连续跳过", task_question: "关键问题", task_blocker: "执行受阻",
   run_without_submission: "运行结束但没有提交", run_submission_blocked: "运行结果封存受阻", task_attention: "任务关注待跟进", acceptance_blocked: "验收投递受阻",
 };
 
@@ -69,9 +69,8 @@ export function TaskAttentionSection({ context, detail, leader }: { context: Mut
   const proven = !!origin && (origin.version === 1 || firstPublication > 0 && !ordered[firstPublication - 1]!.publication);
   const publicationCurrent = !!followUp?.publication && proven && origin?.taskRevisionId === revisionId;
   const staleFollowUp = !!value?.followUp && !followUp;
-  const permissions = context.principal.permissions;
   // Writes go out only from a current read: after a failed reread the last answer is shown, marked, and not written from.
-  const canWrite = permissions.includes("review") && permissions.includes("write") && leader.currentRevisionId === revisionId && readCurrent(read);
+  const canWrite = hasPermission(context.principal, projectId, "management") && leader.currentRevisionId === revisionId && readCurrent(read);
   const open = items.filter(item => item.state === "open");
   async function readMore() {
     if (!cursor) return;
@@ -98,6 +97,7 @@ export function TaskAttentionSection({ context, detail, leader }: { context: Mut
       <Fine>依据：{Object.keys(item.evidence ?? {}).length ? `${Object.keys(item.evidence).length} 项观察记录` : "没有附带的观察记录"} · 来源观察于 {date(item.sourceObservedAt)}；原文见完整标识。</Fine>
       {item.state === "open" && item.taskRevisionId === revisionId && canWrite && <ActionRow title="解决这一项">
         <CommandForm context={context} submitLabel="记录已解决" baseline={{ itemId: item.id, itemVersion: item.version }} fields={[reasonField("解决依据")]}
+          permission="management" decision
           build={(values, seen) => attentionResolveCommand(item, seen, { reason: values.reason ?? "" })} /></ActionRow>}
       <FullIdentifiers rows={[{ label: "关注项", value: item.id }, { label: "通知", value: item.noticeId }, { label: "原因原文", value: item.reason, text: true },
         { label: "等待对象", value: item.waitingOn?.id }, { label: "依据原文", value: Object.keys(item.evidence ?? {}).length ? JSON.stringify(item.evidence) : null, text: true }]} />
@@ -118,6 +118,7 @@ export function TaskAttentionSection({ context, detail, leader }: { context: Mut
       {canWrite && followUp?.releaseHandoff && !followUp.publication && <ActionRow title="登记实际发布" description="只在维护者已发布、且有可以核对的固定证据时登记。">
         <CommandForm context={context} submitLabel="记录已发布" baseline={{ taskVersion: detail.task.version, revisionId, followUpVersion: followUp.version }} fields={[
           { name: "publishedAt", label: "实际发布时间", kind: "datetime" }, { name: "publicationRef", label: "发布证据引用", maxLength: 500 }, reasonField("记录理由")]}
+          permission="management"
           build={(values, seen) => publicationCommand(detail.task.id, seen, { publishedAt: values.publishedAt ?? "", publicationRef: values.publicationRef ?? "", reason: values.reason ?? "" })} /></ActionRow>}
       {!canWrite && <Fine>{read.error ? "关注项没有重新读回，暂不能按旧内容写入；先重新读取。" : "当前身份没有审阅与写入权限，或工作安排不是当前修订；可以阅读关注依据。"}</Fine>}
       {value.followUpHistory.length > 0 && <details><summary className="w-fit cursor-pointer text-caption text-primary hover:underline">跟进历史（{value.followUpHistory.length}）</summary>
@@ -193,7 +194,8 @@ function FollowUpForm({ context, detail, value, followUp, onReread }: {
   const input = (label: string, name: string, options: { required?: boolean; type?: string; hint?: string } = {}) =>
     <Field label={options.required ? label : `${label}（可选）`} hint={options.hint} error={options.required ? missing(name, label) : tooLong(name)}>{control => <Input {...control} type={options.type ?? "text"} value={v[name] ?? ""} required={options.required}
       onChange={event => set(name)(event.target.value)} autoComplete="off" />}</Field>;
-  return <CommandFrame context={context} command={command} label="保存跟进安排" submitLabel="保存跟进安排" dirty={dirty} onSubmit={() => void submit()} onReread={reread}
+  return <CommandFrame context={context} command={command} label="保存跟进安排" submitLabel="保存跟进安排" dirty={dirty}
+    permission="management" onSubmit={() => void submit()} onReread={reread}
     conflicts={conflicts} onResolve={choices => { command.rebase(); setForm(keepEdits(form, latest, choices)); }}
     onKeep={() => { command.rebase(); setForm(keepEdits(form, latest)); }} onRefill={() => { command.rebase(); setForm({ base: latest, values: latest }); }}>
     <Field label="跟进判断">{control => <Select {...control} value={v.decision} onChange={event => set("decision")(event.target.value)} className="w-full">

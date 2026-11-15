@@ -75,7 +75,8 @@ export function RoleDetail({ context, role, refresh, checking, roleTitle }: {
       {forms.map(({ form, note }) => <details key={form.title} className="min-w-0 rounded-xl bg-raised px-4 py-3 shadow-sm">
         <summary className="cursor-pointer text-small font-medium text-foreground">{form.title}</summary>
         {note && <p className={`${mutedText} mt-2`}>{note}</p>}
-        <ActionForm context={roleContext} review embedded title={form.title} fields={form.fields} build={form.build} />
+        <ActionForm context={roleContext} embedded requiredPermissions={[form.permission]} decision={form.decision}
+          title={form.title} fields={form.fields} build={form.build} />
       </details>)}
     </PageSection>
     <RoleHistory context={roleContext} role={role} roleTitle={roleTitle} />
@@ -131,7 +132,8 @@ function RoleHistory({ context, role, roleTitle }: { context: MutationContext; r
           {" → "}<a href={`${href(context.projectId, "roles")}?role=${encodeURIComponent(item.targetRoleId)}`} className="text-primary hover:underline">
             <RoleLabel projectId={context.projectId} roleId={item.targetRoleId} kind="接收职责" known={roleTitle(item.targetRoleId)} /></a></span>
         <FullIdentifiers rows={[{ label: "交接事项", value: item.id }, { label: "接收职责", value: item.targetRoleId }]} />
-        {item.state === "prepared" && <ActionForm context={{ ...context, draftScope: `role:${role.id}:handoff:${item.id}` }} review {...ackHandoffForm(role, item)} />}
+        {item.state === "prepared" && <ActionForm context={{ ...context, draftScope: `role:${role.id}:handoff:${item.id}` }}
+          requiredPermissions={["management"]} {...ackHandoffForm(role, item)} />}
       </>, `登记于 ${stamp(item.preparedAtUtc)}${item.acknowledgedAtUtc ? ` · 确认于 ${stamp(item.acknowledgedAtUtc)}` : ""}`)))}
       {block("承载绑定", "尚无已确认绑定的受管智能体。", current.bindings.map(item => row(item.id,
         <a href={`${href(context.projectId, "runtime")}?session=${encodeURIComponent(item.sessionId)}`} className="text-primary hover:underline">

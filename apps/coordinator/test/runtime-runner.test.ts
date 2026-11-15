@@ -46,7 +46,7 @@ test("compaction uses current static authority and never settles a dynamic origi
       activationState:"active",activationOperationId:randomUUID(),attemptedAt:new Date().toISOString(),
       activationEvidence:null}} as RuntimeSessionRecord;
   owner.executionProfile!.revision.sessionId=owner.id;
-  const reviewer:Principal={actorId:"maintainer",projectIds:[projectId],permissions:["read","write","review"]};
+  const reviewer:Principal={actorId:"maintainer",projectIds:[projectId],permissions:["session"],decisions:true};
   const grant={projectId,actorId:reviewer.actorId,roleId:owner.roleId,
     authorizationScope:owner.authorizationScope,cwd:owner.cwd,sandbox:owner.sandbox,
     model:"gpt-6-sol",models:["gpt-6-astra"],approvalPolicy:owner.approvalPolicy};
@@ -68,7 +68,7 @@ test("compaction uses current static authority and never settles a dynamic origi
   currentGrant=false;await assert.rejects(check,/grant/);currentGrant=true;
   cwdAllowed=false;await assert.rejects(check,/grant/);cwdAllowed=true;
   for(const changed of [{actorId:"foreign"},{projectIds:[randomUUID()]},
-    {permissions:["read"] as Principal["permissions"]}])
+    {permissions:[] as Principal["permissions"]}])
     await assert.rejects(()=>runner.compactionBinding({...reviewer,...changed},projectId,owner.id,
       owner.version,owner.nativeThreadId!),/Compaction|grant/);
   for(const key of ["roleId","authorizationScope","cwd","sandbox","approvalPolicy","model"] as const){
@@ -152,7 +152,7 @@ test('runtime status reloads persisted child loss after coordinator restart',asy
     {detail:JSON.stringify({...diagnostic,startId:randomUUID(),pid:-1})}],
     recoverDispatching:async()=>({sessions:[],runs:[]})} as unknown as RuntimeWorkflowService;
   const runner=new RuntimeRunner({runtimeFactory:()=>new FakeRuntime(),workflow,trusted,
-    principals:[{actorId,projectIds:[projectId],permissions:['read','write','review']}],
+    principals:[{actorId,projectIds:[projectId],permissions:['task','document','session','management'],decisions:true}],
     canWrite:()=>true,allowedCwd:async()=>true,hasGrant:()=>true});
   try{
     await runner.start();
@@ -174,7 +174,7 @@ test('runtime status retains confirmed exit when projects saved equal-time loss 
     project===otherProjectId?[{detail:JSON.stringify(loss)}]:[{detail:JSON.stringify(diagnostic)}],
     recoverDispatching:async()=>({sessions:[],runs:[]})} as unknown as RuntimeWorkflowService;
   const runner=new RuntimeRunner({runtimeFactory:()=>new FakeRuntime(),workflow,trusted,
-    principals:[{actorId,projectIds:[otherProjectId,projectId],permissions:['read','write','review']}],
+    principals:[{actorId,projectIds:[otherProjectId,projectId],permissions:['task','document','session','management'],decisions:true}],
     canWrite:()=>true,allowedCwd:async()=>true,hasGrant:()=>true});
   try{
     await runner.start();
@@ -200,7 +200,7 @@ test('native loss callback persists a diagnostic before replacing the child',asy
     return Object.assign(new FakeRuntime(),{
       onChildDiagnostic:(listener:typeof notify)=>{notify=listener;return()=>{notify=null;}},
       flushChildDiagnostics:async()=>{flushed++;},listChildDiagnostics:()=>created===1?[diagnostic]:[]});
-  },workflow,trusted,principals:[{actorId,projectIds:[projectId],permissions:['read','write','review']}],
+  },workflow,trusted,principals:[{actorId,projectIds:[projectId],permissions:['task','document','session','management'],decisions:true}],
   canWrite:()=>true,allowedCwd:async()=>true,hasGrant:()=>true});
   try{
     await runner.start();
@@ -249,7 +249,7 @@ test("owned Session names follow the newest business profile across creation, ed
     } } as unknown as RuntimeWorkflowService;
   const runner = new RuntimeRunner({ runtimeFactory: () => native as unknown as RuntimePort & NamingRuntime,
     workflow, trusted, profileForSession: async (_principal, current) => current.id === owned.id ? profile : null,
-    principals: [{ actorId, projectIds: [projectId], permissions: ["read", "write", "review"] }],
+    principals: [{ actorId, projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true }],
     canWrite: () => true, allowedCwd: async () => true, hasGrant: () => true });
   try {
     await runner.start();
@@ -311,7 +311,7 @@ test("a profile added after the owned Thread is ready names that same Thread wit
       listRuntimeRuns: async () => [] } as unknown as WorkflowService,
     trusted: { recoverDispatching: async () => ({ sessions: [], runs: [] }) } as unknown as RuntimeWorkflowService,
     profileForSession: async () => profile,
-    principals: [{ actorId, projectIds: [projectId], permissions: ["read", "write", "review"] }],
+    principals: [{ actorId, projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true }],
     canWrite: () => true, allowedCwd: async () => true, hasGrant: () => true });
   try {
     await runner.start();
@@ -334,7 +334,7 @@ test("a project lookup failure is retained, while a genuinely absent project is 
   } } as unknown as WorkflowService;
   const trusted = { recoverDispatching: async () => ({ sessions: [], runs: [] }) } as unknown as RuntimeWorkflowService;
   const runner = new RuntimeRunner({ runtimeFactory: () => runtime as unknown as RuntimePort & FakeRuntime,
-    workflow, trusted, principals: [{ actorId, projectIds: [projectId], permissions: ["read", "write", "review"] }],
+    workflow, trusted, principals: [{ actorId, projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true }],
     canWrite: () => true, allowedCwd: async () => true, hasGrant: () => true });
   try {
     await runner.start();
@@ -370,7 +370,7 @@ test("closing session archives once, verifies identity, and restart only reads a
     markSessionArchiveAttempt: async () => { closing.closeAttemptedAt = new Date().toISOString(); },
     confirmSessionClosed: async () => { confirms++; closing.state = "closed"; } } as unknown as RuntimeWorkflowService;
   const runner = new RuntimeRunner({ runtimeFactory: () => runtime as unknown as RuntimePort & ArchiveRuntime,
-    workflow, trusted, principals: [{ actorId, projectIds: [projectId], permissions: ["read", "write", "review"] }],
+    workflow, trusted, principals: [{ actorId, projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true }],
     canWrite: () => true, allowedCwd: async () => true, hasGrant: () => true });
   try {
     await runner.start();
@@ -380,7 +380,7 @@ test("closing session archives once, verifies identity, and restart only reads a
   closing.state = "closing"; closing.closeAttemptedAt = null;
   const lost = new ArchiveRuntime(); lost.loseAck = true;
   const again = new RuntimeRunner({ runtimeFactory: () => lost as unknown as RuntimePort & ArchiveRuntime,
-    workflow, trusted, principals: [{ actorId, projectIds: [projectId], permissions: ["read", "write", "review"] }],
+    workflow, trusted, principals: [{ actorId, projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true }],
     canWrite: () => true, allowedCwd: async () => true, hasGrant: () => true });
   try {
     await again.start();
@@ -402,7 +402,7 @@ test("closing session archives once, verifies identity, and restart only reads a
   }
   const foreign = new ForeignRuntime();
   const reject = new RuntimeRunner({ runtimeFactory: () => foreign as unknown as RuntimePort & ForeignRuntime,
-    workflow, trusted, principals: [{ actorId, projectIds: [projectId], permissions: ["read", "write", "review"] }],
+    workflow, trusted, principals: [{ actorId, projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true }],
     canWrite: () => true, allowedCwd: async () => true, hasGrant: () => true });
   try {
     await reject.start();
@@ -439,7 +439,7 @@ test("fresh runner retains an unverified prior archive attempt until exact nativ
       confirms++; closing.state = "closed";
     } } as unknown as RuntimeWorkflowService;
   const runner = new RuntimeRunner({ runtimeFactory: () => native as unknown as RuntimePort & EmptyThreadRuntime,
-    workflow, trusted, principals: [{ actorId, projectIds: [projectId], permissions: ["read", "write", "review"] }],
+    workflow, trusted, principals: [{ actorId, projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true }],
     canWrite: () => true, allowedCwd: async () => true, hasGrant: () => true });
   try {
     await runner.start();
@@ -484,7 +484,7 @@ test("readback failure after a durable archive attempt remains unknown and canno
       markSessionArchiveAttempt: async () => { marks++; closing.closeAttemptedAt = new Date().toISOString(); },
       confirmSessionClosed: async () => { confirms++; } } as unknown as RuntimeWorkflowService;
     const runner = new RuntimeRunner({ runtimeFactory: () => native as unknown as RuntimePort & ReadFailureRuntime,
-      workflow, trusted, principals: [{ actorId, projectIds: [projectId], permissions: ["read", "write", "review"] }],
+      workflow, trusted, principals: [{ actorId, projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true }],
       canWrite: () => true, allowedCwd: async () => true, hasGrant: () => true });
     try {
       await runner.start();
@@ -518,7 +518,7 @@ test("failed archive precheck stops before durable attempt or native write", asy
   const trusted = { recoverDispatching: async () => ({ sessions: [], runs: [] }),
     markSessionArchiveAttempt: async () => { marks++; }, confirmSessionClosed: async () => { confirms++; } } as unknown as RuntimeWorkflowService;
   const runner = new RuntimeRunner({ runtimeFactory: () => native as unknown as RuntimePort & FailedPrecheckRuntime,
-    workflow, trusted, principals: [{ actorId, projectIds: [projectId], permissions: ["read", "write", "review"] }],
+    workflow, trusted, principals: [{ actorId, projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true }],
     canWrite: () => true, allowedCwd: async () => true, hasGrant: () => true });
   try { await runner.start(); assert.equal(closing.state, "closing"); assert.equal(closing.closeAttemptedAt, null);
     assert.equal(archives, 0); assert.equal(marks, 0); assert.equal(inspections, 0); assert.equal(confirms, 0);
@@ -551,7 +551,7 @@ test("archive failure keeps a redacted rejection or unknown timeout category wit
       markSessionArchiveAttempt: async () => { closing.closeAttemptedAt = new Date().toISOString(); },
       confirmSessionClosed: async () => { confirms++; } } as unknown as RuntimeWorkflowService;
     const runner = new RuntimeRunner({ runtimeFactory: () => native as unknown as RuntimePort & FailureRuntime,
-      workflow, trusted, principals: [{ actorId, projectIds: [projectId], permissions: ["read", "write", "review"] }],
+      workflow, trusted, principals: [{ actorId, projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true }],
       canWrite: () => true, allowedCwd: async () => true, hasGrant: () => true });
     try {
       await runner.start();
@@ -603,7 +603,7 @@ test("runtime faults retain exact Run ownership, redact errors, and clear only t
   const trusted=({recoverDispatching:async()=>({sessions:[],runs:[]}),
     recordTurn:async(p:string,id:string)=>{const matched=runs.find(r=>r.projectId===p&&r.id===id)!;matched.state="completed";}}) as unknown as RuntimeWorkflowService;
   const runner=new RuntimeRunner({runtimeFactory:()=>native as unknown as RuntimePort & DiagnosticRuntime,
-    workflow,trusted,principals:[{actorId,projectIds:[projectId,otherProject],permissions:["read","write","review"]}],
+    workflow,trusted,principals:[{actorId,projectIds:[projectId,otherProject],permissions:["task","document","session","management"],decisions:true}],
     canWrite:()=>true,allowedCwd:async()=>true,hasGrant:()=>true});
   try {
     await runner.start();
@@ -631,7 +631,7 @@ test("an admission skip cannot erase an earlier Run fault; its persisted termina
   const trusted={recoverDispatching:async()=>({sessions:[],runs:[]})} as unknown as RuntimeWorkflowService;
   const native=new FakeRuntime();
   const runner=new RuntimeRunner({runtimeFactory:()=>native as unknown as RuntimePort & FakeRuntime,
-    workflow,trusted,principals:[{actorId,projectIds:[projectId],permissions:["read","write","review"]}],
+    workflow,trusted,principals:[{actorId,projectIds:[projectId],permissions:["task","document","session","management"],decisions:true}],
     canWrite:()=>true,allowedCwd:async()=>true,hasGrant:()=>true,mayDispatchRun:async()=>permitted});
   try {
     await runner.start();
@@ -657,7 +657,7 @@ test("only an exact running Turn readback clears a transient reconcile fault bef
   const trusted={recoverDispatching:async()=>({sessions:[],runs:[]}),
     recordTurn:async()=>{settled++;active.state="completed";return active;}} as unknown as RuntimeWorkflowService;
   const runner=new RuntimeRunner({runtimeFactory:()=>native as unknown as RuntimePort & FakeRuntime,
-    workflow,trusted,principals:[{actorId,projectIds:[projectId],permissions:["read","write","review"]}],
+    workflow,trusted,principals:[{actorId,projectIds:[projectId],permissions:["task","document","session","management"],decisions:true}],
     canWrite:()=>true,allowedCwd:async()=>true,hasGrant:()=>true});
   try{
     await runner.start();
@@ -688,7 +688,7 @@ test("a settled Turn's observed model and subagent models reach the Run record; 
     const trusted={recoverDispatching:async()=>({sessions:[],runs:[]}),
       recordTurn:async(_p:string,_id:string,_turn:string,_status:string,_summary:string,given:Record<string,unknown>)=>{checkpoint=given;active.state="completed";return active;}} as unknown as RuntimeWorkflowService;
     const runner=new RuntimeRunner({runtimeFactory:()=>native as unknown as RuntimePort & FakeRuntime,
-      workflow,trusted,principals:[{actorId,projectIds:[projectId],permissions:["read","write","review"]}],
+      workflow,trusted,principals:[{actorId,projectIds:[projectId],permissions:["task","document","session","management"],decisions:true}],
       canWrite:()=>true,allowedCwd:async()=>true,hasGrant:()=>true});
     try{
       await runner.start();await runner.pump();
@@ -720,7 +720,7 @@ test("defect 3d30f7ac: a Run bound without a readback (actual unread) gets one m
     const trusted={recoverDispatching:async()=>({sessions:[],runs:[]}),
       recordTurn:async(_p:string,_id:string,_turn:string,_status:string,_summary:string,given:Record<string,unknown>)=>{checkpoint=given;active.state="completed";return active;}} as unknown as RuntimeWorkflowService;
     const runner=new RuntimeRunner({runtimeFactory:()=>native as unknown as RuntimePort & FakeRuntime,
-      workflow,trusted,principals:[{actorId,projectIds:[projectId],permissions:["read","write","review"]}],
+      workflow,trusted,principals:[{actorId,projectIds:[projectId],permissions:["task","document","session","management"],decisions:true}],
       canWrite:()=>true,allowedCwd:async()=>true,hasGrant:()=>true});
     try{
       await runner.start();await runner.pump();
@@ -751,7 +751,7 @@ test("defect 3d30f7ac (formal re-work): the terminal readback also reaches Codex
     const trusted={recoverDispatching:async()=>({sessions:[],runs:[]}),
       recordTurn:async(_p:string,_id:string,_turn:string,_status:string,_summary:string,given:Record<string,unknown>)=>{checkpoint=given;active.state="completed";return active;}} as unknown as RuntimeWorkflowService;
     const runner=new RuntimeRunner({runtimeFactory:()=>runtime as unknown as RuntimePort & FakeRuntime,
-      workflow,trusted,principals:[{actorId,projectIds:[projectId],permissions:["read","write","review"]}],
+      workflow,trusted,principals:[{actorId,projectIds:[projectId],permissions:["task","document","session","management"],decisions:true}],
       canWrite:()=>true,allowedCwd:async()=>true,hasGrant:()=>true});
     try{
       await runner.start();await runner.pump();
@@ -800,8 +800,8 @@ test("close uses the original actor and exact grant, refusing missing authority 
       confirmSessionClosed: async () => { calls.push("confirm"); closing.state = "closed"; } } as unknown as RuntimeWorkflowService;
     const runner = new RuntimeRunner({ runtimeFactory: () => runtime as unknown as RuntimePort & ArchiveRuntime,
       workflow, trusted, principals: [
-        { actorId: "close-requester", projectIds: [projectId], permissions: ["read", "write", "review"] },
-        ...("missingPrincipal" in sample ? [] : [{ actorId, projectIds: [projectId], permissions: ["read", "write", "review"] as Principal["permissions"] }]),
+        { actorId: "close-requester", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true },
+        ...("missingPrincipal" in sample ? [] : [{ actorId, projectIds: [projectId], permissions: ["task", "document", "session", "management"] as Principal["permissions"], decisions: true }]),
       ], canWrite: () => true, allowedCwd: async () => !("denyCwd" in sample),
       hasGrant: actual => {
         assert.deepEqual(actual, originalGrant, "never substitute the close requester for the Session actor");
@@ -834,7 +834,7 @@ test("reserved session waits at admission and creates one native thread after re
     beginSessionCreate: async () => { beginCalls++; },
     bindSession: async () => { reserved.state = "ready"; } } as unknown as RuntimeWorkflowService;
   const runner = new RuntimeRunner({ runtimeFactory: () => runtime as unknown as RuntimePort & FakeRuntime,
-    workflow, trusted, principals: [{ actorId, projectIds: [projectId], permissions: ["read", "write", "review"] }],
+    workflow, trusted, principals: [{ actorId, projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true }],
     canWrite: () => true, allowedCwd: async () => true, hasGrant: () => true,
     mayCreateSession: async () => permitted });
   try {
@@ -864,7 +864,7 @@ test("requested Run waits without native start or state mutation, then uses its 
     beginDispatch: async () => { beginCalls++; },
     bindTurn: async () => { bindCalls++; return { ...requested, state: "running", nativeTurnId: "turn-managed" }; } } as unknown as RuntimeWorkflowService;
   const runner = new RuntimeRunner({ runtimeFactory: () => runtime as unknown as RuntimePort & FakeRuntime,
-    workflow, trusted, principals: [{ actorId, projectIds: [projectId], permissions: ["read", "write", "review"] }],
+    workflow, trusted, principals: [{ actorId, projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true }],
     canWrite: () => true, allowedCwd: async () => true, hasGrant: () => true,
     mayDispatchRun: async () => permitted });
   (runner as unknown as { lightweightInput: () => Promise<{ input: string; protocol: string; contentHash: string; byteLength: number }> }).lightweightInput = async () => ({ input: "fixed task input", protocol: "evoloop-lightweight-v1", contentHash: "a".repeat(64), byteLength: 16 });
@@ -879,6 +879,32 @@ test("requested Run waits without native start or state mutation, then uses its 
     assert.equal(beginCalls, 1);
     assert.equal(bindCalls, 1);
     assert.deepEqual(seenOperations, [requested.operationId]);
+  } finally { await runner.stop(); }
+});
+
+test("a requested Run whose requester has no configured runtime authority is rejected on the first poll with a readable reason", async () => {
+  const requested = { ...run, state: "requested" as const, nativeTurnId: null };
+  const runtime = new FakeRuntime();
+  let rejected = 0, reason = "", authorityChecks = 0;
+  const workflow = { getProject: async () => ({ id: projectId }), listRuntimeSessions: async () => [session],
+    listRuntimeRuns: async () => [requested], getRuntimeSession: async () => session } as unknown as WorkflowService;
+  const trusted = { recoverDispatching: async () => ({ sessions: [], runs: [] }),
+    rejectDispatch: async (_project: string, runId: string, why: string) => {
+      assert.equal(runId, requested.id);
+      rejected++; reason = why; requested.state = "failed";
+    } } as unknown as RuntimeWorkflowService;
+  const runner = new RuntimeRunner({ runtimeFactory: () => runtime as unknown as RuntimePort & FakeRuntime,
+    workflow, trusted, principals: [{ actorId, projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true }],
+    canWrite: () => true, allowedCwd: async () => true, hasGrant: () => true,
+    requesterAuthorityMissing: async () => { authorityChecks++; return true; },
+    mayDispatchRun: async () => false });
+  try {
+    await runner.start();
+    assert.equal(authorityChecks, 1);
+    assert.equal(rejected, 1);
+    assert.equal(requested.state, "failed");
+    assert.equal(runtime.starts, 0);
+    assert.match(reason, /requester authority is no longer configured/);
   } finally { await runner.stop(); }
 });
 
@@ -897,8 +923,9 @@ test("drain mode: a requested Run is not started while held (queued untouched) a
     beginDispatch: async () => { beginCalls++; },
     bindTurn: async () => { bindCalls++; return { ...requested, state: "running", nativeTurnId: "turn-managed" }; } } as unknown as RuntimeWorkflowService;
   const runner = new RuntimeRunner({ runtimeFactory: () => runtime as unknown as RuntimePort & FakeRuntime,
-    workflow, trusted, principals: [{ actorId, projectIds: [projectId], permissions: ["read", "write", "review"] }],
+    workflow, trusted, principals: [{ actorId, projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true }],
     canWrite: () => true, allowedCwd: async () => true, hasGrant: () => true,
+    requesterAuthorityMissing: async () => false,
     mayDispatchRun: async () => !held /* the composition in main.ts: drain.holdNewStarts() */ });
   (runner as unknown as { lightweightInput: () => Promise<{ input: string; protocol: string; contentHash: string; byteLength: number }> }).lightweightInput = async () => ({ input: "fixed task input", protocol: "evoloop-lightweight-v1", contentHash: "a".repeat(64), byteLength: 16 });
   try {
@@ -965,7 +992,7 @@ test("lost execution profile resume needs original Thread readback and a separat
     bindTurn:async()=>{requested.state="running";requested.nativeTurnId="recovered-turn";return requested;},
   } as unknown as RuntimeWorkflowService;
   const runner=new RuntimeRunner({runtimeFactory:()=>runtime as unknown as RuntimePort&ProfileRuntime,
-    workflow,trusted,principals:[{actorId,projectIds:[projectId],permissions:["read","write","review"]}],
+    workflow,trusted,principals:[{actorId,projectIds:[projectId],permissions:["task","document","session","management"],decisions:true}],
     canWrite:()=>true,allowedCwd:async()=>true,hasGrant:()=>true,mayDispatchRun:async()=>true});
   (runner as unknown as { lightweightInput: () => Promise<{ input: string; protocol: string; contentHash: string; byteLength: number }> }).lightweightInput = async () => ({ input: "same fixed Task input", protocol: "evoloop-lightweight-v1", contentHash: "a".repeat(64), byteLength: 21 });
   try{
@@ -1027,7 +1054,7 @@ test(`profile activation ${rejection} never dispatches or replays the fixed requ
     beginDispatch:async()=>{dispatches++;},
   } as unknown as RuntimeWorkflowService;
   const runner=new RuntimeRunner({runtimeFactory:()=>runtime as unknown as RuntimePort&RejectedProfileRuntime,
-    workflow,trusted,principals:[{actorId,projectIds:[projectId],permissions:["read","write","review"]}],
+    workflow,trusted,principals:[{actorId,projectIds:[projectId],permissions:["task","document","session","management"],decisions:true}],
     canWrite:()=>true,allowedCwd:async()=>true,hasGrant:()=>true,mayDispatchRun:async()=>true});
   try{
     await runner.start();
@@ -1051,7 +1078,7 @@ test("late admission denial after preflight leaves the requested Run untouched",
   const trusted = { recoverDispatching: async () => ({ sessions: [], runs: [] }),
     beginDispatch: async () => { beginCalls++; } } as unknown as RuntimeWorkflowService;
   const runner = new RuntimeRunner({ runtimeFactory: () => runtime as unknown as RuntimePort & FakeRuntime,
-    workflow, trusted, principals: [{ actorId, projectIds: [projectId], permissions: ["read", "write", "review"] }],
+    workflow, trusted, principals: [{ actorId, projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true }],
     canWrite: () => true, allowedCwd: async () => true, hasGrant: () => true,
     mayDispatchRun: async () => ++checks % 2 === 1 });
   (runner as unknown as { lightweightInput: () => Promise<{ input: string; protocol: string; contentHash: string; byteLength: number }> }).lightweightInput = async () => ({ input: "fixed input", protocol: "evoloop-lightweight-v1", contentHash: "a".repeat(64), byteLength: 11 });
@@ -1076,7 +1103,7 @@ test("transport disconnect closes admission; explicit recovery reconciles unknow
   const trusted = { recoverDispatching: async () => { recoveries++; return { sessions: [], runs: [] }; } } as unknown as RuntimeWorkflowService;
   const runner = new RuntimeRunner({
     runtimeFactory: () => { const value = new FakeRuntime(); instances.push(value); return value as unknown as RuntimePort & FakeRuntime; },
-    workflow, trusted, principals: [{ actorId, projectIds: [projectId], permissions: ["read", "write", "review"] }],
+    workflow, trusted, principals: [{ actorId, projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true }],
     canWrite: () => true, allowedCwd: async () => true, hasGrant: () => true,
   });
   try {
@@ -1107,7 +1134,7 @@ test("with several runtimes, recovery replaces only the one that lost its connec
   const trusted = { recoverDispatching: async (_projectId: string, providers: RuntimeProvider[]) => {
     recovered.push([...providers]); return { sessions: [], runs: [] }; } } as unknown as RuntimeWorkflowService;
   const runner = new RuntimeRunner({ runtimeFactory: () => routed, workflow, trusted,
-    principals: [{ actorId, projectIds: [projectId], permissions: ["read", "write", "review"] }],
+    principals: [{ actorId, projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true }],
     canWrite: () => true, allowedCwd: async () => true, hasGrant: () => true });
   try {
     await runner.start();
@@ -1137,7 +1164,7 @@ test("workspace listeners follow the owned adapter across explicit recovery",asy
     emitWorkspace(event:WorkspaceRuntimeUpdate){for(const listener of this.workspaceListeners)listener(event)}
   }
   const instances:WorkspaceRuntime[]=[];
-  const principal:Principal={actorId,projectIds:[projectId],permissions:['read','write','review']};
+  const principal:Principal={actorId,projectIds:[projectId],permissions:['task','document','session','management'],decisions:true};
   const workflow={getProject:async()=>({id:projectId}),listRuntimeSessions:async()=>[],listRuntimeRuns:async()=>[],
     getRuntimeSession:async()=>session} as unknown as WorkflowService;
   const trusted={recoverDispatching:async()=>({sessions:[],runs:[]})} as unknown as RuntimeWorkflowService;
@@ -1184,7 +1211,7 @@ test("workspace listeners follow the owned adapter across explicit recovery",asy
     assert.equal(ownedTool?.kind==='tool'&&ownedTool.detailAvailable,true,
       'the real Runner listener path preserves availability for a reviewer after live dispatch');
     assert.doesNotMatch(JSON.stringify(projected),/private-owned-input|private-owned-output/);
-    const restricted=await timeline.updates({...principal,permissions:['read']},projectId,`owned:${session.id}`);
+    const restricted=await timeline.updates({...principal,permissions:[]},projectId,`owned:${session.id}`);
     assert.equal(restricted.entries.some(entry=>entry.kind==='tool'&&entry.detailAvailable),false);
     const reread=await read();
     assert.equal(reread.entries.some(entry=>entry.kind==='tool'&&entry.detailAvailable),true,
@@ -1209,7 +1236,7 @@ test("creating-session approval receipt labels native identity unverified", asyn
         receipts.push(detail);
       } } as unknown as RuntimeWorkflowService;
   const runner = new RuntimeRunner({ runtimeFactory: () => (runtime = new FakeRuntime()) as unknown as RuntimePort & FakeRuntime,
-    workflow, trusted, principals: [{ actorId, projectIds: [projectId], permissions: ["read", "write", "review"] }],
+    workflow, trusted, principals: [{ actorId, projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true }],
     canWrite: () => true, allowedCwd: async () => true, hasGrant: () => true });
   try {
     await runner.start();
@@ -1249,7 +1276,7 @@ test("transient interrupted history without completion time cannot settle a boun
   const trusted = { recoverDispatching: async () => ({ sessions: [], runs: [] }),
     recordTurn: async (_projectId: string, _runId: string, _turnId: string, status: string) => { recorded.push(status); return active; } } as unknown as RuntimeWorkflowService;
   const runner = new RuntimeRunner({ runtimeFactory: () => runtime as unknown as RuntimePort & FakeRuntime,
-    workflow, trusted, principals: [{ actorId, projectIds: [projectId], permissions: ["read", "write", "review"] }],
+    workflow, trusted, principals: [{ actorId, projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true }],
     canWrite: () => true, allowedCwd: async () => true, hasGrant: () => true,
     mayDispatchRun: async () => false });
   runtime.listItems = async () =>
@@ -1278,7 +1305,7 @@ test("restart dispatches a reserved Run with the original Session profile and ne
     bindTurn: async () => { active.state = "running"; active.nativeTurnId = "owned-turn"; return active; } } as unknown as RuntimeWorkflowService;
   let granted = true;
   const runner = new RuntimeRunner({ runtimeFactory: () => runtime as unknown as RuntimePort & FakeRuntime,
-    workflow, trusted, principals: [{ actorId, projectIds: [projectId], permissions: ["read", "write", "review"] }],
+    workflow, trusted, principals: [{ actorId, projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true }],
     canWrite: () => true, allowedCwd: async () => true,
     hasGrant: (scope) => granted && scope.actorId === actorId && scope.roleId === persisted.roleId &&
       scope.authorizationScope === persisted.authorizationScope && scope.cwd === persisted.cwd &&
@@ -1323,7 +1350,7 @@ test("registered full Session keeps the same execution profile across conversati
       const item=runs.find(r=>r.id===id)!;item.state='running';item.nativeTurnId=turn.id;return item;
     },markRunUnknown:async()=>{unknown++;}} as unknown as RuntimeWorkflowService;
   const runner=new RuntimeRunner({runtimeFactory:()=>runtime as unknown as RuntimePort & typeof runtime,
-    workflow,trusted,principals:[{actorId,projectIds:[projectId],permissions:['read','write','review']}],
+    workflow,trusted,principals:[{actorId,projectIds:[projectId],permissions:['task','document','session','management'],decisions:true}],
     canWrite:()=>true,allowedCwd:async()=>true,hasGrant:()=>true});
   (runner as unknown as { lightweightInput: () => Promise<{ input: string; protocol: string; contentHash: string; byteLength: number }> }).lightweightInput = async () => ({ input: 'fixed Task input', protocol: "evoloop-lightweight-v1", contentHash: "a".repeat(64), byteLength: 16 });
   try{
@@ -1367,7 +1394,7 @@ test("two runners with a positive gate hint restore and start only after the sin
     },
     bindTurn:async()=>({...requested,state:'running' as const,nativeTurnId:'one-turn'}),
   } as unknown as RuntimeWorkflowService;
-  const principal={actorId,projectIds:[projectId],permissions:['read','write','review'] as Array<'read'|'write'|'review'>};
+  const principal={actorId,projectIds:[projectId],permissions:['task','document','session','management'] as Principal['permissions'],decisions:true as const};
   const runners=[makeRuntime(),makeRuntime()].map(native=>{
     const value=new RuntimeRunner({runtimeFactory:()=>native as unknown as RuntimePort&FakeRuntime,
       workflow,trusted,principals:[principal],canWrite:()=>true,allowedCwd:async()=>true,hasGrant:()=>true});
@@ -1406,7 +1433,7 @@ test("lost business-profile restore acknowledgement makes the Run unknown withou
       unknowns++;unknownReason=reason;requested.state='unknown';},
   } as unknown as RuntimeWorkflowService;
   const runner=new RuntimeRunner({runtimeFactory:()=>native as unknown as RuntimePort&FakeRuntime,
-    workflow,trusted,principals:[{actorId,projectIds:[projectId],permissions:['read','write','review']}],
+    workflow,trusted,principals:[{actorId,projectIds:[projectId],permissions:['task','document','session','management'],decisions:true}],
     canWrite:()=>true,allowedCwd:async()=>true,hasGrant:()=>true});
   (runner as unknown as { lightweightInput: () => Promise<{ input: string; protocol: string; contentHash: string; byteLength: number }> }).lightweightInput = async () => ({ input: 'fixed Task input', protocol: "evoloop-lightweight-v1", contentHash: "a".repeat(64), byteLength: 16 });
   try{
@@ -1455,7 +1482,7 @@ for (const failure of ['resume_rejected','turn_start_unknown','binding_failed'] 
       },
     } as unknown as RuntimeWorkflowService;
     const runner=new RuntimeRunner({runtimeFactory:()=>runtime as unknown as RuntimePort&FakeRuntime,
-      workflow,trusted,principals:[{actorId,projectIds:[projectId],permissions:['read','write','review']}],
+      workflow,trusted,principals:[{actorId,projectIds:[projectId],permissions:['task','document','session','management'],decisions:true}],
       canWrite:()=>true,allowedCwd:async()=>true,hasGrant:()=>true});
     (runner as unknown as { lightweightInput: () => Promise<{ input: string; protocol: string; contentHash: string; byteLength: number }> }).lightweightInput = async () => ({ input: 'fixed Task input', protocol: "evoloop-lightweight-v1", contentHash: "a".repeat(64), byteLength: 16 });
     try{
@@ -1498,7 +1525,7 @@ test('a competing native writer does not turn a reserved Task Run into a busines
     markRunUnknown:async(_p:string,_id:string,value:string)=>{unknowns++;reason=value;requested.state='unknown';}
   } as unknown as RuntimeWorkflowService;
   const runner=new RuntimeRunner({runtimeFactory:()=>native as unknown as RuntimePort&FakeRuntime,
-    workflow,trusted,principals:[{actorId,projectIds:[projectId],permissions:['read','write','review']}],
+      workflow,trusted,principals:[{actorId,projectIds:[projectId],permissions:['task','document','session','management'],decisions:true}],
     canWrite:()=>true,allowedCwd:async()=>true,hasGrant:()=>true});
   (runner as unknown as { lightweightInput: () => Promise<{ input: string; protocol: string; contentHash: string; byteLength: number }> }).lightweightInput = async () => ({ input: 'fixed Task input', protocol: 'evoloop-lightweight-v1', contentHash: 'a'.repeat(64), byteLength: 16 });
   try{
@@ -1525,12 +1552,12 @@ test('a reviewed pre-turn Run continues its original operation once, while unkno
   const trusted={claimPreTurnContinuation:async()=>{claims++;saved={...saved,preTurnProof:{...saved.preTurnProof!,status:'attempting'}};return saved;},
     bindTurn:async()=>{saved={...saved,state:'running',nativeTurnId:'one-turn'};return saved;}} as unknown as RuntimeWorkflowService;
   const runner=new RuntimeRunner({runtimeFactory:()=>native as unknown as RuntimePort&FakeRuntime,
-    workflow,trusted,principals:[{actorId,projectIds:[projectId],permissions:['read','write','review']}],
+    workflow,trusted,principals:[{actorId,projectIds:[projectId],permissions:['task','document','session','management'],decisions:true}],
     canWrite:()=>true,allowedCwd:async()=>true,hasGrant:()=>true});
   (runner as unknown as {lightweightInput:()=>Promise<{input:string;protocol:string;contentHash:string;byteLength:number}>}).lightweightInput=
     async()=>({input:'fixed Task input',protocol:'evoloop-lightweight-v1',contentHash:'a'.repeat(64),byteLength:16});
   const process=(value:RuntimeRunRecord)=>(runner as unknown as {process:(p:Principal,r:RuntimeRunRecord)=>Promise<boolean>}).process(
-    {actorId,projectIds:[projectId],permissions:['read','write','review']},value);
+    {actorId,projectIds:[projectId],permissions:['task','document','session','management'],decisions:true},value);
   await process(original);await process(saved);
   assert.deepEqual([claims,resumes,starts],[1,1,1]);
   const unknownWithoutProof={...original,id:randomUUID(),preTurnProof:null};
@@ -1554,7 +1581,7 @@ test("rehydration of a bound dynamic Session ignores a colliding static grant un
   const trusted={recoverDispatching:async()=>({sessions:[],runs:[]}),beginDispatch:async()=>{},
     bindTurn:async()=>{requested.state="running";requested.nativeTurnId="dynamic-turn";return requested;}} as unknown as RuntimeWorkflowService;
   const runner=new RuntimeRunner({runtimeFactory:()=>runtime as unknown as RuntimePort & FakeRuntime,
-    workflow,trusted,principals:[{actorId,projectIds:[projectId],permissions:["read","write","review"]}],
+    workflow,trusted,principals:[{actorId,projectIds:[projectId],permissions:["task","document","session","management"],decisions:true}],
     canWrite:()=>true,allowedCwd:async()=>true,
     hasGrant:(_scope,record)=>currentSessionGrant(persisted,record!,()=>true,async()=>current),
     mayDispatchRun:async()=>current});
@@ -1583,7 +1610,7 @@ test("admission denial does not block terminal reconciliation of an unknown boun
   const trusted = { recoverDispatching: async () => ({ sessions: [], runs: [] }),
     recordTurn: async (_projectId: string, _runId: string, _turnId: string, status: string) => { recorded.push(status); return uncertain; } } as unknown as RuntimeWorkflowService;
   const runner = new RuntimeRunner({ runtimeFactory: () => runtime as unknown as RuntimePort & FakeRuntime,
-    workflow, trusted, principals: [{ actorId, projectIds: [projectId], permissions: ["read", "write", "review"] }],
+    workflow, trusted, principals: [{ actorId, projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true }],
     canWrite: () => true, allowedCwd: async () => true, hasGrant: () => true,
     mayDispatchRun: async () => false });
   try {
@@ -1609,13 +1636,13 @@ test("explicit reviewer readback corrects only a settled owned turn without repl
     getRuntimeRun: async () => observed } as unknown as WorkflowService;
   const trusted = { recoverDispatching: async () => ({ sessions: [], runs: [] }),
     reconcileTerminalObservation: async (...args: unknown[]) => { calls.push(args); return { ...observed, state: "completed", version: 5 }; } } as unknown as RuntimeWorkflowService;
-  const reviewer = { actorId, projectIds: [projectId], permissions: ["read", "write", "review"] as const };
+  const reviewer = { actorId, projectIds: [projectId], permissions: ["task", "document", "session", "management"] as const, decisions: true };
   const runner = new RuntimeRunner({ runtimeFactory: () => runtime as unknown as RuntimePort & FakeRuntime,
-    workflow, trusted, principals: [{ actorId, projectIds: [projectId], permissions: ["read", "write", "review"] }],
+    workflow, trusted, principals: [{ actorId, projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true }],
     canWrite: () => true, allowedCwd: async () => true, hasGrant: () => true });
   try {
     await runner.start();
-    await assert.rejects(() => runner.reconcile({ actorId: "outsider", projectIds: [projectId], permissions: ["read", "review"] }, projectId, observed.id, 4, "review"), /authority/);
+    await assert.rejects(() => runner.reconcile({ actorId: "outsider", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true }, projectId, observed.id, 4, "review"), /authority/);
     await assert.rejects(() => runner.reconcile({ ...reviewer, permissions: [...reviewer.permissions] }, projectId, observed.id, 4, "review"), /no settled terminal/);
     assert.equal(calls.length, 0);
     oldTurn = true;
@@ -1637,7 +1664,7 @@ test("explicit reviewer readback corrects only a settled owned turn without repl
   } finally { await runner.stop(); }
 });
 
-test("read-only history and result page owned data without native resume or turn replay", async () => {
+test("a Session-scoped reader pages full history and result without decision authority", async () => {
   const observed = { ...run, state: "completed" as const, nativeTurnId: "turn-1" };
   const runtime = new FakeRuntime();
   let resumes = 0, registrations = 0, inspections = 0, turnPages = 0, itemPages = 0;
@@ -1659,11 +1686,13 @@ test("read-only history and result page owned data without native resume or turn
     listRuntimeRuns: async () => [observed], getRuntimeSession: async () => session,
     getRuntimeRun: async () => observed } as unknown as WorkflowService;
   const trusted = { recoverDispatching: async () => ({ sessions: [], runs: [] }) } as unknown as RuntimeWorkflowService;
-  const reviewer = { actorId, projectIds: [projectId], permissions: ["read", "write", "review"] as ("read" | "write" | "review")[] };
+  const reviewer = { actorId, projectIds: [projectId], permissions: ["session"] as Principal["permissions"], decisions: false };
   const runner = new RuntimeRunner({ runtimeFactory: () => runtime as unknown as RuntimePort & FakeRuntime,
     workflow, trusted, principals: [reviewer], canWrite: () => true, allowedCwd: async () => true, hasGrant: () => true });
   try {
     await runner.start();
+    await assert.rejects(() => runner.history({ ...reviewer, permissions: [] }, projectId, session.id), /Session 权限/);
+    await assert.rejects(() => runner.result({ ...reviewer, sessionIds: [randomUUID()] }, projectId, observed.id), /Session 权限/);
     const history = await runner.history(reviewer, projectId, session.id);
     const result = await runner.result(reviewer, projectId, observed.id);
     assert.equal(history.turns.length, 2);
@@ -1676,7 +1705,7 @@ test("read-only history and result page owned data without native resume or turn
   } finally { await runner.stop(); }
 });
 
-test("work trace requires reviewer authority and keeps unsupported and page limits explicit", async () => {
+test("work trace requires Session authority and keeps unsupported and page limits explicit", async () => {
   const observed = { ...run, state: "completed" as const, nativeTurnId: "turn-1" };
   let originalGrant = true, nativeReads = 0;
   let oldTurn = false;
@@ -1701,16 +1730,18 @@ test("work trace requires reviewer authority and keeps unsupported and page limi
     listRuntimeRuns: async () => [observed], getRuntimeSession: async () => ownedSession,
     getRuntimeRun: async () => observed } as unknown as WorkflowService;
   const trusted = { recoverDispatching: async () => ({ sessions: [], runs: [] }) } as unknown as RuntimeWorkflowService;
-  const executor = { actorId, projectIds: [projectId], permissions: ["read", "write", "review"] as ("read" | "write" | "review")[] };
-  const reviewer = { actorId: "trace-reviewer", projectIds: [projectId], permissions: ["read", "review"] as ("read" | "review")[] };
+  const executor = { actorId, projectIds: [projectId], permissions: ["task", "document", "session", "management"] as Principal["permissions"], decisions: true };
+  const reviewer = { actorId: "trace-reader", projectIds: [projectId], permissions: ["session"] as Principal["permissions"],
+    sessionIds: [session.id], decisions: false };
   const runner = new RuntimeRunner({ runtimeFactory: () => runtime as RuntimePort & FakeRuntime,
     workflow, trusted, principals: [executor, reviewer], canWrite: () => true, allowedCwd: async () => true,
     hasGrant: scope => scope.actorId === actorId && originalGrant,
     canSettleOwned: async () => true, ownedCwd: async () => true });
   try {
     await runner.start();
-    await assert.rejects(() => runner.trace({ ...reviewer, permissions: ["read"] }, projectId, observed.id), /读取和复核权限/);
-    await assert.rejects(() => runner.trace({ ...reviewer, projectIds: [randomUUID()] }, projectId, observed.id), /读取和复核权限/);
+    await assert.rejects(() => runner.trace({ ...reviewer, permissions: [] }, projectId, observed.id), /Session 权限/);
+    await assert.rejects(() => runner.trace({ ...reviewer, projectIds: [randomUUID()] }, projectId, observed.id), /Session 权限/);
+    await assert.rejects(() => runner.trace({ ...reviewer, sessionIds: [randomUUID()] }, projectId, observed.id), /Session 权限/);
     const trace = await runner.trace(reviewer, projectId, observed.id);
     assert.equal(trace.source, "owned-native-history");
     assert.equal(trace.unsupportedCount, 1);
@@ -1751,7 +1782,7 @@ test("disabled orchestration cannot start or trace a bound dynamic Session throu
     listRuntimeRuns:async()=>[pending,terminal],getRuntimeSession:async()=>boundSession,
     getRuntimeRun:async()=>terminal} as unknown as WorkflowService;
   const trusted={recoverDispatching:async()=>({sessions:[],runs:[]}),rejectDispatch:async()=>{rejected++;}} as unknown as RuntimeWorkflowService;
-  const reviewer={actorId,projectIds:[projectId],permissions:["read","write","review"] as ("read"|"write"|"review")[]};
+  const reviewer:Principal={actorId,projectIds:[projectId],permissions:["task","document","session","management"],decisions:true};
   const runner=new RuntimeRunner({runtimeFactory:()=>runtime as unknown as RuntimePort & FakeRuntime,
     workflow,trusted,principals:[reviewer],canWrite:()=>true,allowedCwd:async()=>true,
     hasGrant:(_scope,source)=>source ? currentSessionGrant(persisted,source,()=>true) : true});
@@ -1768,7 +1799,7 @@ test("managed worker trace checks its own bound Run, exact fixed authority, and 
   const target={...run,id:randomUUID(),state:"completed" as const,nativeTurnId:"turn-1"};
   const readerSession={...session,id:randomUUID(),roleId:"researcher",nativeThreadId:"reader-thread",nativeSessionId:"reader-session"};
   const reader={...run,id:randomUUID(),sessionId:readerSession.id,nativeTurnId:"reader-turn",state:"running" as const};
-  const worker={actorId:"worker-fixture",projectIds:[projectId],permissions:["read","write"] as ("read"|"write")[]};
+  const worker:Principal={actorId:"worker-fixture",projectIds:[projectId],permissions:["session"]};
   const identity={principal:worker,scope:{projectId,loopId:randomUUID(),taskId:reader.taskId,runId:reader.id,
     sessionId:readerSession.id,roleId:readerSession.roleId,kind:"business" as const,allowedRoleIds:[readerSession.roleId]}};
   const runtime=new FakeRuntime() as FakeRuntime & Pick<RuntimePort,"readWorkPage">;
@@ -1782,7 +1813,7 @@ test("managed worker trace checks its own bound Run, exact fixed authority, and 
       {...readerSession,state:readerState}:{...session,state:sourceState}} as unknown as WorkflowService;
   const trusted={recoverDispatching:async()=>({sessions:[],runs:[]})} as unknown as RuntimeWorkflowService;
   const runner=new RuntimeRunner({runtimeFactory:()=>runtime as RuntimePort & FakeRuntime,workflow,trusted,
-    principals:[{actorId,projectIds:[projectId],permissions:["read","write","review"]}],
+    principals:[{actorId,projectIds:[projectId],permissions:["task","document","session","management"],decisions:true}],
     canWrite:()=>true,allowedCwd:async()=>true,
     hasGrant:async(scope,boundSession)=>scope.roleId===readerSession.roleId
       ? boundSession?.id===readerSession.id && readerGrant
@@ -1803,7 +1834,7 @@ test("managed worker trace checks its own bound Run, exact fixed authority, and 
     await assert.rejects(runner.trace(worker,projectId,target.id,undefined,identity),/固定依据/);
     readerGrant=true;sourceState="closed" as typeof session.state;
     await assert.rejects(runner.trace(worker,projectId,target.id,undefined,identity),/授权已失效/);
-    await assert.rejects(runner.trace(worker,projectId,target.id),/读取和复核权限/);
+    await assert.rejects(runner.trace(worker,projectId,target.id),/Session 权限/);
   } finally {await runner.stop();}
 });
 
@@ -1816,7 +1847,7 @@ test("native read rejection reports a read-specific error without private protoc
     listRuntimeRuns: async () => [observed], getRuntimeSession: async () => session,
     getRuntimeRun: async () => observed } as unknown as WorkflowService;
   const trusted = { recoverDispatching: async () => ({ sessions: [], runs: [] }) } as unknown as RuntimeWorkflowService;
-  const reviewer = { actorId, projectIds: [projectId], permissions: ["read", "write", "review"] as ("read" | "write" | "review")[] };
+  const reviewer = { actorId, projectIds: [projectId], permissions: ["task", "document", "session", "management"] as Principal["permissions"], decisions: true };
   const runner = new RuntimeRunner({ runtimeFactory: () => runtime as unknown as RuntimePort & FakeRuntime,
     workflow, trusted, principals: [reviewer], canWrite: () => true, allowedCwd: async () => true, hasGrant: () => true });
   try {
@@ -1878,7 +1909,7 @@ test("a versioned full profile activates on the original idle Thread without man
     settleExecutionProfileActivation:async(_p:string,_s:string,id:string,state:"active")=>{
       assert.equal(id,revisionId);target.executionProfile!.activationState=state;target.executionProfile!.activeRevisionId=id;}} as unknown as RuntimeWorkflowService;
   const runner=new RuntimeRunner({runtimeFactory:()=>runtime,workflow,trusted,
-    principals:[{actorId,projectIds:[projectId],permissions:["read","write","review"]}],
+    principals:[{actorId,projectIds:[projectId],permissions:["task","document","session","management"],decisions:true}],
     canWrite:()=>true,allowedCwd:async()=>true,hasGrant:()=>true});
   try{await runner.start();await runner.pump();assert.equal(permits,1);assert.equal(activations,1);
     assert.equal(target.executionProfile?.activationState,"active");assert.equal(runtime.starts,0);assert.equal(runtime.creates,0);
@@ -1901,11 +1932,13 @@ test("a known old Run result reads its own Item pages without scanning the Threa
     getRuntimeRun:async()=>historical,getRuntimeSession:async()=>session} as unknown as WorkflowService;
   const trusted={recoverDispatching:async()=>({sessions:[],runs:[]})} as unknown as RuntimeWorkflowService;
   const runner=new RuntimeRunner({runtimeFactory:()=>runtime,workflow,trusted,
-    principals:[{actorId,projectIds:[projectId],permissions:["read","write","review"]}],
+    principals:[{actorId,projectIds:[projectId],permissions:["task","document","session","management"],decisions:true}],
     canWrite:()=>true,allowedCwd:async()=>true,hasGrant:()=>true});
   try{
     await runner.start();
-    const result=await runner.result({actorId,projectIds:[projectId],permissions:["read"]},projectId,historical.id);
+    const reader={actorId,projectIds:[projectId],permissions:["session"] as Principal["permissions"],decisions:false};
+    await assert.rejects(()=>runner.result({...reader,sessionIds:[randomUUID()]},projectId,historical.id),/Session 权限/);
+    const result=await runner.result(reader,projectId,historical.id);
     assert.deepEqual(result.messages,["Original fixed result"]);assert.equal(result.finalPhaseConfirmed,true);
     assert.equal(result.source,"owned-native-history");assert.equal(turnPages,0);assert.equal(itemPages,2);
     assert.equal(runtime.starts,0);assert.equal(resumes,0);assert.equal(historical.nativeTurnId,"older-known-turn");

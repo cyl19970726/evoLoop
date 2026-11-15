@@ -20,17 +20,18 @@ export function DocumentRevise({ context, detail, checking, failed }: {
   return <CommandBlock.Provider value={waiting}>
     <div data-ui="" className="flex min-w-0 flex-col gap-3">
       {checking && <Notice tone="waiting">正在核对当前版本；保存与发布暂不可用。</Notice>}
-      {!archived && detail.current.format === "markdown" && detail.current.body !== null && <ActionForm context={formContext} title="保存候选修订"
+      {!archived && detail.current.format === "markdown" && detail.current.body !== null && <ActionForm context={formContext} title="保存候选修订" requiredPermissions={["document"]}
         fields={[{ name: "body", label: "完整正文", kind: "textarea", value: detail.current.body ?? "", maxLength: 65536 }, { name: "reason", label: "修订理由", kind: "textarea", maxLength: 4000 }]}
         build={values => ({ type: "document.revise", documentId: id, expectedVersion: document.version, ...values })} />}
       {!archived && <>
         <UploadDocument key={id} context={formContext} mode="revise" documentId={id} expectedVersion={document.version} />
         {detail.current.id === detail.adopted?.id
           ? <p className={mutedText}>当前版已经发布；要更新，先保存新的修订。</p>
-          : <ActionForm context={formContext} review title="发布当前版" fields={[{ name: "reason", label: "发布依据", kind: "textarea", maxLength: 4000 }]}
+          : <ActionForm context={formContext} decision requiredPermissions={["document"]} title="发布当前版" fields={[{ name: "reason", label: "发布依据", kind: "textarea", maxLength: 4000 }]}
             build={values => ({ type: "document.publish", documentId: id, expectedVersion: document.version, revisionId: detail.current.id, ...values })} />}
       </>}
-      <ActionForm context={formContext} review title={archived ? "恢复文档" : "归档文档"} fields={[{ name: "reason", label: archived ? "恢复理由" : "归档理由", kind: "textarea", maxLength: 4000 }]}
+      <ActionForm context={formContext} decision requiredPermissions={["document"]} extraCommand={archived ? "document.restore" : "document.archive"}
+        title={archived ? "恢复文档" : "归档文档"} fields={[{ name: "reason", label: archived ? "恢复理由" : "归档理由", kind: "textarea", maxLength: 4000 }]}
         build={values => ({ type: archived ? "document.restore" : "document.archive", documentId: id, expectedVersion: document.version, ...values })} />
     </div>
   </CommandBlock.Provider>;

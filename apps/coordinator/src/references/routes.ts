@@ -1,7 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import type { Principal, RuntimeRunRecord, RuntimeSessionRecord } from "@evoloop/contracts";
+import { hasDecisionAuthority, hasPermission, isProjectMember, type Principal, type RuntimeRunRecord,
+  type RuntimeSessionRecord } from "@evoloop/contracts";
 import type { ExternalReferenceKind, ReferenceUnitOfWork } from "@evoloop/contracts/references";
 import type { DocumentSource } from "@evoloop/contracts/sources";
 import type { KnowledgeRepository } from "@evoloop/contracts/knowledge";
@@ -11,7 +12,9 @@ import type { ExternalReferenceObservation } from "@evoloop/core/references";
 
 const id = z.uuid();
 const scoped = (principal: Principal | null, projectId: string, permission: "read" | "write" | "review"): Principal => {
-  if (!principal || !principal.projectIds.includes(projectId) || !principal.permissions.includes(permission))
+  if (!principal || !isProjectMember(principal, projectId) ||
+      permission === "write" && !hasPermission(principal, projectId, "task") ||
+      permission === "review" && !hasDecisionAuthority(principal, projectId, "task"))
     throw new DomainError("FORBIDDEN", "Project reference permission is required");
   return principal;
 };

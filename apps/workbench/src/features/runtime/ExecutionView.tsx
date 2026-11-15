@@ -3,6 +3,7 @@
 // orchestration loop, queues and recorded runs. The right column holds the service facts and the selected agent's
 // identity. `/runtime?session={uuid}` selects an agent; that is also where the old deep link lands.
 import { useContext, useEffect, useRef, useState } from "react";
+import { hasDecisionAuthority } from "@evoloop/contracts";
 import { Plus, RefreshCw } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import type { RuntimeRunRecord, RuntimeSessionRecord } from "@evoloop/contracts/runtime";
@@ -22,7 +23,7 @@ import { AgentName } from "./AgentName";
 import { ManagedSessionCreate } from "./ManagedSessionCreate";
 import { ManagedSessionDetail, RoleLabel } from "./ManagedSessionDetail";
 import { RunList } from "./RunList";
-import { executionHref, fullGrants, permissionsText, sessionGroups, sessionStateText, sessionStateTone, sessionTargetNotice, uuidPattern } from "./executionPresentation";
+import { executionHref, fullGrants, permissionsText, sessionGroups, sessionStateLine, sessionStateText, sessionStateTone, sessionTargetNotice, uuidPattern } from "./executionPresentation";
 import { useRoleNames } from "./useRoleNames";
 import { failureOf, type Failure } from "../../shared/errorPresentation";
 import { ErrorDetails } from "../../shared/ui/ErrorDetails";
@@ -104,7 +105,7 @@ export function ExecutionView({ context, refresh, sessionId }: { context: Mutati
             return <a key={item.id} href={executionHref(projectId, item.id)} aria-current={sessionId === item.id ? "page" : undefined}
               className={cn("flex flex-col rounded-lg px-3 py-1.5 outline-none focus-visible:shadow-[var(--focus-ring)]", sessionId === item.id ? "bg-raised shadow-sm" : "hover:bg-selected")}>
               <span className="truncate text-small text-foreground">{name.title ?? name.fallback}</span>
-              <span className="truncate text-caption text-muted-foreground">{sessionStateText[item.state]} · <AgentName projectId={projectId} sessionId={item.id} /></span>
+              <span className="truncate text-caption text-muted-foreground">{sessionStateLine(item)} · <AgentName projectId={projectId} sessionId={item.id} /></span>
             </a>;
           })}
         </div>)}
@@ -138,7 +139,7 @@ export function ExecutionView({ context, refresh, sessionId }: { context: Mutati
               ? "当前没有同时允许完整本机权限、无需逐次审批和联网的精确授权；请核对项目执行配置后再创建新智能体。" : "当前身份在本项目没有执行授权，不能创建新智能体。"}</p>
             : <Notice tone="waiting" title="执行服务尚未接通">{status.data.error || "已有运行记录仍保留；不自动重发结果未知的启动。"}</Notice>)}
           {statusError && <Notice tone="error">执行服务状态{status.data ? "本次核对失败，上面是上次读回" : "暂不可读"}：{statusError}<ErrorDetails error={status.error} /></Notice>}
-          {status.data && !status.data.available && context.principal.permissions.includes("review") && <Button className="w-fit" disabled={recovering} onClick={() => void recover()}>{recovering ? "恢复核对中…" : "受控恢复执行连接"}</Button>}
+          {status.data && !status.data.available && hasDecisionAuthority(context.principal, projectId, "management") && <Button className="w-fit" disabled={recovering} onClick={() => void recover()}>{recovering ? "恢复核对中…" : "受控恢复执行连接"}</Button>}
           {recoverError && <Notice tone="error">恢复未完成：{recoverError.text}。请先读取运行状态，不要重复发起。<ErrorDetails failure={recoverError} /></Notice>}
         </PageSection>
         {creating && status.data?.available && grants.length > 0 && <PageSection title="新建受管智能体">
@@ -154,7 +155,7 @@ export function ExecutionView({ context, refresh, sessionId }: { context: Mutati
               return <li key={item.id} data-session-id={item.id}>
                 <ListRow href={executionHref(projectId, item.id)} title={name.title ?? name.fallback}
                   meta={<><AgentName projectId={projectId} sessionId={item.id} /> · {permissionsText(item.sandbox, item.approvalPolicy)} · {item.authorizationScope}</>}
-                  trailing={<StatusTag tone={sessionStateTone(item.state)} label={sessionStateText[item.state]} />} />
+                  trailing={item.state === "ready" && item.usable === false ? <StatusTag tone="waiting" label="不可用" /> : <StatusTag tone={sessionStateTone(item.state)} label={sessionStateText[item.state]} />} />
               </li>;
             })}</ul>
           </div>)}
@@ -173,7 +174,7 @@ export function ExecutionView({ context, refresh, sessionId }: { context: Mutati
       <div className="flex flex-col gap-4">
         {selected && <PanelSection title="受管智能体">
           <FactList rows={[
-            ["状态", sessionStateText[selected.state]],
+            ["状态", sessionStateLine(selected)],
             ["职责", <RoleLabel key="role" projectId={projectId} roleId={selected.roleId} name={nameOf(selected.roleId)} />],
             ["模型", selected.model ?? "未显式指定"],
             ["权限", permissionsText(selected.sandbox, selected.approvalPolicy)],

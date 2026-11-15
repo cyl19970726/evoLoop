@@ -10,7 +10,7 @@ import { WorkflowService } from "../src/index.js";
 
 const projectId=randomUUID(), roleId=randomUUID(), sessionId=randomUUID();
 const now="2026-10-25T10:00:00.000Z";
-const reviewer: Principal={actorId:"reviewer",projectIds:[projectId],permissions:["read","write","review"]};
+const reviewer: Principal={actorId:"reviewer",projectIds:[projectId],permissions:["task","document","session","management"],decisions:true};
 function fixture() {
   const domains=new Map<string,BusinessDomain>(), links=new Map<string,HostLink>();
   let roleState="active", roleVersion=4, sessionState="ready", bound=true;
@@ -34,7 +34,7 @@ const domain=(id:string):ResidentCommand=>({type:"domain.create",projectId,opera
 
 test("domain mapping is reviewed, versioned, and distinct from Task kind",async()=>{
   const f=fixture(),id=randomUUID();
-  await assert.rejects(()=>apply(f.tx,domain(id),{...reviewer,permissions:["write"]}),
+  await assert.rejects(()=>apply(f.tx,domain(id),{...reviewer,permissions:["task","document","session"]}),
     (e:unknown)=>e instanceof DomainError&&e.code==="FORBIDDEN");
   assert.equal((await apply(f.tx,domain(id))).version,1);
   await assert.rejects(()=>apply(f.tx,{type:"domain.update",projectId,operationId:randomUUID(),domainId:id,

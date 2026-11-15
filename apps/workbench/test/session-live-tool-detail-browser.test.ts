@@ -27,8 +27,8 @@ const stamp = "2026-11-02T00:00:00.000Z";
 const originalInput = "CONTROLLED_TOOL_INPUT_FROM_EXISTING_ITEM";
 const originalOutput = "CONTROLLED_TOOL_OUTPUT_FROM_EXISTING_ITEM";
 const toolName = "commandExecution";
-const reviewer: Principal = { actorId: "acceptance-owner", projectIds: [projectId], permissions: ["read", "review"] };
-const reader: Principal = { actorId: "ordinary-reader", projectIds: [projectId], permissions: ["read"] };
+const reviewer: Principal = { actorId: "acceptance-owner", projectIds: [projectId], permissions: ["session"], decisions: true };
+const reader: Principal = { actorId: "ordinary-reader", projectIds: [projectId], permissions: [] };
 const principals: Record<string, Principal> = { "reviewer-token": reviewer, "reader-token": reader };
 type Tool = Extract<WorkspaceEntry, { kind: "tool" }>;
 
@@ -54,7 +54,7 @@ class ObservableOwner implements WorkspaceHistoryOwner {
 
   async workspaceBinding(principal: Principal, requestedProject: string, requestedSession: string): Promise<RuntimeBinding> {
     if (requestedProject !== projectId || requestedSession !== sessionId || !principal.projectIds.includes(projectId)
-      || !principal.permissions.includes("read")) throw new DomainError("FORBIDDEN", "Exact controlled owner scope required");
+      || !principal.projectIds.includes(projectId)) throw new DomainError("FORBIDDEN", "Exact controlled owner scope required");
     return this.binding;
   }
   async workspaceHistory(principal: Principal, requestedProject: string, requestedSession: string,

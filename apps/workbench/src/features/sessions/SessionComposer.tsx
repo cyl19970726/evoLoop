@@ -6,6 +6,7 @@
 // 即时输入 found received on any path (at once, on reading the receipt, after 核对结果) clears the draft too, so the same
 // text is never sent again by mistake.
 import { useMemo, useRef, useState, type ReactNode } from "react";
+import { hasDecisionAuthority, hasPermission, mayAccessSession } from "@evoloop/contracts";
 import type { SessionSnapshot } from "@evoloop/contracts/session-observation";
 import type { WorkspaceEntry, WorkspaceTurn } from "@evoloop/contracts/session-timeline";
 import type { SessionTarget } from "@evoloop/contracts/session-work";
@@ -91,9 +92,13 @@ export function SessionComposer({ context, snapshot, entries, activeTurn, live, 
     onApplied();
   } });
   const running = live && !!activeTurn || session.busy === true;
+  const canWriteSession = hasPermission(principal, projectId, "session") &&
+    (!owned || mayAccessSession(principal, projectId, owned));
+  const canDecideSession = hasDecisionAuthority(principal, projectId, "session") &&
+    (!owned || mayAccessSession(principal, projectId, owned));
   const plan = composerPlan({
     kind: session.kind, canSave: session.capabilities.send.available, saveReason: session.capabilities.send.reason,
-    direct: direct.capability, directPending: direct.pending, running, canWrite: principal.permissions.includes("write"), blocked: context.blocked,
+    direct: direct.capability, directPending: direct.pending, running, canWrite: canWriteSession, blocked: context.blocked,
     leader: isLeaderSession(session),
   });
 
@@ -116,9 +121,9 @@ export function SessionComposer({ context, snapshot, entries, activeTurn, live, 
     ? activeTurn.origin && (activeTurn.origin.kind === "message" || activeTurn.origin.kind === "run") ? { kind: activeTurn.origin.kind, id: activeTurn.origin.id }
       : progress?.freshness === "live" && progress.turn?.id === activeTurn.id && progress.turn.source ? { kind: progress.turn.source.kind, id: progress.turn.source.id } : null
     : null;
-  const mayStop = !!owned && !!source && principal.permissions.includes("review") && !context.blocked;
+  const mayStop = !!owned && !!source && canDecideSession && !context.blocked;
   const stopNote = !running ? null : !live || !activeTurn ? "这一轮的实时状态未读回，暂不能从这里停止"
-    : !source ? "这一轮的来源未关联，不能从这里停止" : !principal.permissions.includes("review") ? "停止这一轮需要复核权限" : null;
+    : !source ? "这一轮的来源未关联，不能从这里停止" : !canDecideSession ? "停止这一轮需要此 Session 的决定权限" : null;
 
   const menu = composerMenu(value);
   const roleId = owned ? session.roles[0]?.id : undefined;
@@ -225,7 +230,8 @@ export function SessionComposer({ context, snapshot, entries, activeTurn, live, 
     {command.outcome && <p role={command.outcome.failed ? "alert" : "status"} className={command.outcome.failed ? "text-caption text-destructive" : "text-caption text-muted-foreground"}>{command.outcome.message}
       {/* The service's original answer, folded: for a missing message grant that is only the code (no configuration text, no local path). */}
       {command.outcome.detail && <ErrorDetails failure={{ text: command.outcome.message, detail: command.outcome.detail }} />}</p>}
-    {delivered && <p role="status" data-sent-result={delivered.kind} className="text-caption text-muted-foreground">{sentResultText(delivered)}</p>}
+    {/* One status for one input: once the receipt reads 已读到, the earlier 已插入/已开始 line is replaced, not left beside it. */}
+    {delivered && !(direct.itemRecorded && (delivered.kind === "inserted" || delivered.kind === "started")) && <p role="status" data-sent-result={delivered.kind} className="text-caption text-muted-foreground">{sentResultText(delivered)}</p>}
     {outcome && <p role={outcome.failed ? "alert" : "status"} className={outcome.failed ? "text-caption text-destructive" : "text-caption text-muted-foreground"}>{outcome.text}</p>}
     <Composer
       value={value}

@@ -7,7 +7,7 @@ const projectId = "00000000-0000-4000-8000-000000000001", id = "00000000-0000-40
 const revisionId = "00000000-0000-4000-8000-000000000003", attemptId = "00000000-0000-4000-8000-000000000004";
 const runId = "00000000-0000-4000-8000-000000000005", actualTaskRevisionId = "00000000-0000-4000-8000-000000000006";
 const token = "a".repeat(40), auth = { authorization: `Bearer ${token}` };
-const credentials = [{ token, actorId: "reader", projectIds: [projectId], permissions: ["read" as const] }];
+const credentials = [{ token, actorId: "reader", projectIds: [projectId], permissions: [] as ('task'|'document'|'session'|'management')[] }];
 const workQueries = { listRoleRevisions: async () => [], listRoleReviews: async () => [],
   listRoleHandoffs: async () => [], listRoleSessionBindings: async () => [] };
 

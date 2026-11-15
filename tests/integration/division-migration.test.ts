@@ -28,7 +28,7 @@ test("021 pins nonempty static Loop and Dispatch to legacy policy without invent
     try{await admin.query(`DROP SCHEMA "${schema}" CASCADE`);}finally{await admin.end();}});
   const projectId=randomUUID(),goalId=randomUUID(),stageId=randomUUID(),taskId=randomUUID(),loopId=randomUUID();
   const inboxId=randomUUID(),dispatchId=randomUUID(),role=fixtureRoleId("legacy-business"),cognition="legacy-cognition";
-  const principal={actorId:"migration-reviewer",projectIds:[projectId],permissions:["read","write","review"] as Array<"read"|"write"|"review">};
+  const principal={actorId:"migration-reviewer",projectIds:[projectId],permissions:["task", "document", "session", "management"], decisions: true};
   const uow=new PostgresUnitOfWork(pool);
   withoutTaskTimingBeforeMigration(uow,()=>true);
   const workflow=new WorkflowService({uow,clock:{now:()=>new Date().toISOString()},

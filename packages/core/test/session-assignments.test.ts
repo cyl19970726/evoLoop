@@ -8,8 +8,8 @@ import { applySessionAssignment } from "../src/session-assignments/index.ts";
 
 const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const projectId = id(1), taskId = id(2), roleId = id(3), firstLink = id(4), secondLink = id(5), sessionId = id(10);
-const lead: Principal = { actorId: "lead", projectIds: [projectId], permissions: ["read", "write", "review"] };
-const recipient: Principal = { actorId: "recipient", projectIds: [projectId], permissions: ["read", "write"] };
+const lead: Principal = { actorId: "lead", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true };
+const recipient: Principal = { actorId: "recipient", projectIds: [projectId], permissions: ["task", "document", "session"] };
 function fixture() {
   const task: Task = { projectId, id: taskId, version: 1, currentRevisionId: id(6), title: "Shared Role Task",
     content: "fixed", contentDocumentId: id(7), contentRevisionId: id(8), kind: null, acceptance: "result", owner: roleId, state: "todo" };

@@ -29,24 +29,31 @@ async function rig(t: import("node:test").TestContext) {
   const pool = new pg.Pool({ connectionString: database, options: `-c search_path=${schema}` });
   t.after(async () => { await pool.end(); const admin = new pg.Client({ connectionString: database }); await admin.connect(); try { await admin.query(`DROP SCHEMA "${schema}" CASCADE`); } finally { await admin.end(); } });
   const projectId = randomUUID();
-  const lead: Principal = { actorId: "lead", projectIds: [projectId], permissions: ["read", "write", "review"] };
-  const writer: Principal = { actorId: "writer", projectIds: [projectId], permissions: ["read", "write"] };
+  const lead: Principal = { actorId: "lead", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true };
+  const writer: Principal = { actorId: "writer", projectIds: [projectId], permissions: ["task", "document", "session"] };
+  const reader: Principal = { actorId: "reader", projectIds: [projectId], permissions: [] };
+  const noRead: Principal = { actorId: "no-read", projectIds: [randomUUID()], permissions: ["task", "document", "session"] };
+  const sessionActor: Principal = { actorId: "session-actor", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true };
+  const targetOwner: Principal = { actorId: "target-owner", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true };
+  const businessActors = new Map<string, string>();
   const deps = { uow: new PostgresUnitOfWork(pool), clock: { now: () => new Date().toISOString() }, ids: { next: randomUUID },
-    hasher: { hash: (value: string) => createHash("sha256").update(value).digest("hex") } };
+    hasher: { hash: (value: string) => createHash("sha256").update(value).digest("hex") },
+    sessionLineBusinessActor: async (_projectId: string, sessionId: string) => businessActors.get(sessionId) ?? null };
   const workflow = new WorkflowService(deps), runtime = new RuntimeWorkflowService(deps);
   const applied = async (who: Principal, command: Record<string, unknown>) => { const r = await workflow.execute(who, { ...command, projectId, operationId: randomUUID() } as never); assert.equal(r.status, "applied", JSON.stringify(r)); return r; };
   const refused = async (who: Principal, command: Record<string, unknown>) => workflow.execute(who, { ...command, projectId, operationId: randomUUID() } as never)
     .then(r => ({ code: (r as { code?: string }).code ?? r.status }), (error: { code?: string; message: string }) => ({ code: error.code ?? error.message }));
   await applied(lead, { type: "project.create", title: "Direct dispatch" });
   const role = fixtureRoleId("scheduled-role"); await seedFixtureRole(pool, projectId, role);
-  const session = async (cwd = "/tmp/direct") => {
+  const session = async (cwd = "/tmp/direct", who: Principal = sessionActor, businessActor = who.actorId) => {
     const sessionId = randomUUID();
-    await applied(lead, { type: "runtime.session.reserve", sessionId, roleId: role, cwd, authorizationScope: "project", sandbox: "danger-full-access", approvalPolicy: "never" });
+    await applied(who, { type: "runtime.session.reserve", sessionId, roleId: role, cwd, authorizationScope: "project", sandbox: "danger-full-access", approvalPolicy: "never" });
     await runtime.beginSessionCreate(projectId, sessionId);
     const saved = (await deps.uow.read(projectId, r => r.getRuntimeSession(sessionId)))!;
     await runtime.bindSession(projectId, sessionId, { owner: "evoloop-codex-app-server", projectId, sessionId, roleId: role, cwd, authorizationScope: "project",
       nativeThreadId: `thread-${sessionId}`, nativeSessionId: `native-${sessionId}`, resumeProfile: { actorId: saved.actorId, model: saved.model, sandbox: saved.sandbox,
         approvalPolicy: saved.approvalPolicy, executionProfileRevisionId: saved.executionProfile!.revision.revisionId } });
+    businessActors.set(sessionId, businessActor);
     return sessionId;
   };
   const store = new PgSchedulingStore(pool);
@@ -55,8 +62,12 @@ async function rig(t: import("node:test").TestContext) {
   const dispatcher = new ScheduleDirectDispatcher({ pool, workflow: { execute: (who, command) => workflow.execute(who, command as never) as never }, newId: randomUUID,
     sessionDenial: sessionDenial(pool, async (): Promise<DirectAuthorizationConfig> => { config.reads++; return { runtime: { enabled: config.enabled },
       hasRuntimeGrant: scope => config.allGranted || config.granted.has(scope.cwd), allowedRuntimeCwd: async () => true }; }),
-    recipientDenial: async (_project, sessionId) => config.recipientDenied.get(sessionId) ?? null, onError: error => config.errors.push(error.message) });
-  const T0 = Date.now();
+    recipientDenial: async (_project, sessionId) => config.recipientDenied.get(sessionId) ?? null,
+    sessionLineBusinessActor: async (_project, sessionId) => businessActors.get(sessionId) ?? null,
+    onError: error => config.errors.push(error.message) });
+  // Pinned to 03:00 UTC of YESTERDAY, not to the moment the test runs: the daily budget counts calendar days, so a base near midnight UTC makes T0 + a few hours fall on the next day
+  // (seen at 22:24 UTC); and a base at 03:00 of today is still in the future before 03:00 (the schedule refuses a watermark ahead of now, seen at 01:5x UTC).
+  const T0 = new Date().setUTCHours(3, 0, 0, 0) - 24 * 3600_000;
   let scheduleSeq = 0;
   /** An hourly schedule (skip while the previous occurrence is open) whose first trigger is one hour after T0. */
   const makeSchedule = async (overrides: Record<string, unknown> = {}) => {
@@ -84,8 +95,40 @@ async function rig(t: import("node:test").TestContext) {
   const records = async (kind: string) => (await pool.query("SELECT task_id, source_ref FROM leader_event_record WHERE project_id=$1 AND kind=$2 ORDER BY occurred_at", [projectId, kind])).rows;
   const leaderTask = async (title: string) => { const taskId = randomUUID(); await applied(lead, { type: "task.create", taskId, title, content: `# ${title}`, acceptance: "ok", owner: role }); return taskId; };
   const appendLeader = async (sessionId: string, taskId: string) => applied(lead, { type: "line.append", sessionId, taskId, expectedTaskVersion: 1, source: "leader", reason: "arranged" });
-  return { dispatcher, store, config, pool, projectId, lead, writer, workflow, role, session, makeSchedule, fire, dispatchAt, setList, setPolicy, taskOfOccurrence, notices, logOf, lineOf, records, leaderTask, appendLeader, applied, refused, T0 };
+  return { dispatcher, store, config, pool, projectId, lead, writer, reader, noRead, sessionActor, targetOwner, businessActors, workflow, role, session,
+    makeSchedule, fire, dispatchAt, setList, setPolicy, taskOfOccurrence, notices, logOf, lineOf, records, leaderTask, appendLeader, applied, refused, T0 };
 }
+
+test("a direct list Session whose business identity is the controller is refused even when another identity created it", async t => {
+  const r = await rig(t);
+  const own = await r.session("/tmp/own-direct", r.targetOwner, r.lead.actorId);
+  const creator = await r.pool.query("SELECT actor_id FROM runtime_session WHERE project_id=$1 AND session_id=$2", [r.projectId, own]);
+  assert.equal(creator.rows[0].actor_id, r.targetOwner.actorId);
+  await r.setList([own]);
+  const scheduleId = await r.makeSchedule();
+  await r.setPolicy(scheduleId);
+  await r.fire(1);
+  const taskId = await r.taskOfOccurrence(scheduleId);
+  assert.deepEqual(await r.dispatchAt(1), { dispatched: 0, fellBack: 1 });
+  assert.deepEqual(await r.lineOf(own), []);
+  assert.deepEqual((await r.logOf(scheduleId)).map(row => [row.state, row.reason]), [["fell_back", "NOT_AVAILABLE:CONTROLLER_SESSION"]]);
+  assert.deepEqual((await r.notices(taskId)).map(row => row.kind), ["direct_dispatch_blocked", "task_todo"]);
+});
+
+test("a controller-created Session with another business identity is not mistaken for the controller's own", async t => {
+  const r = await rig(t);
+  const development = await r.session("/tmp/controller-created-normal", r.lead, "codex-dev-agent");
+  const creator = await r.pool.query("SELECT actor_id FROM runtime_session WHERE project_id=$1 AND session_id=$2", [r.projectId, development]);
+  assert.equal(creator.rows[0].actor_id, r.lead.actorId);
+  await r.setList([development]);
+  const scheduleId = await r.makeSchedule();
+  await r.setPolicy(scheduleId);
+  await r.fire(1);
+  const taskId = await r.taskOfOccurrence(scheduleId);
+  assert.deepEqual(await r.dispatchAt(1), { dispatched: 1, fellBack: 0 });
+  assert.deepEqual((await r.lineOf(development)).map(row => [row.task_id, row.state, row.source]), [[taskId, "queued", "schedule"]]);
+  assert.deepEqual((await r.logOf(scheduleId)).map(row => [row.state, row.session_id]), [["dispatched", development]]);
+});
 
 test("a direct schedule's Task is made without a triage notice, then appended to the line of the first idle Session on the list; the Leader gets a record, not a notice", async t => {
   const r = await rig(t);
@@ -107,6 +150,107 @@ test("a direct schedule's Task is made without a triage notice, then appended to
   assert.deepEqual(await r.notices(taskId), [], "still no notice");
   assert.deepEqual((await r.records("direct_dispatched")).map(row => row.task_id), [taskId], "the Leader can see it in the records");
   assert.deepEqual(await r.dispatchAt(1), { dispatched: 0, fellBack: 0 }, "nothing is dispatched twice");
+});
+
+test("project readers can read policy, direct list and a paged dispatch trail without management authority; the four observable outcomes correlate with occurrences", async t => {
+  const r = await rig(t);
+  const a = await r.session(), b = await r.session();
+  await r.setList([a, b]);
+  const scheduleId = await r.makeSchedule({ overlap: "queue" });
+  await r.setPolicy(scheduleId, { waitLimitMinutes: 1 });
+
+  // direct + dispatched
+  await r.fire(1);
+  assert.deepEqual(await r.dispatchAt(1), { dispatched: 1, fellBack: 0 });
+  await r.dispatchAt(1.1); // past the one-minute wait limit: the dispatched row now carries escalatedAt
+  const directPolicy = await r.workflow.getScheduleDispatchPolicy(r.reader, r.projectId, scheduleId);
+  assert.equal(directPolicy?.mode, "direct");
+  assert.equal(directPolicy?.state, "active");
+  assert.equal(directPolicy?.waitLimitMinutes, 1);
+  assert.equal(directPolicy?.dailyRunBudget, null);
+  assert.equal(directPolicy?.revertReason, null);
+  assert.equal(directPolicy?.version, 1);
+  assert.equal(directPolicy?.actorId, r.lead.actorId);
+  assert.ok(directPolicy?.updatedAt);
+  const directList = await r.workflow.getRoleDirectDispatchList(r.reader, r.projectId, r.role);
+  assert.deepEqual(directList && { ...directList, updatedAt: undefined },
+    { projectId: r.projectId, roleId: r.role, version: 1, sessionIds: [a, b], actorId: r.lead.actorId, reason: "direct list", updatedAt: undefined });
+  assert.ok(directList?.updatedAt);
+
+  const occurrences = await r.workflow.listScheduleOccurrences(r.reader, r.projectId, scheduleId);
+  const beforeWithdraw = await r.workflow.listScheduleDispatches(r.reader, r.projectId, scheduleId);
+  assert.equal(beforeWithdraw.items.length, 1);
+  const first = beforeWithdraw.items[0]!;
+  assert.equal(first.state, "dispatched");
+  assert.equal(first.sessionId, a);
+  assert.ok(first.taskId);
+  assert.ok(first.entryId);
+  assert.ok(first.decidedAt);
+  assert.ok(first.dispatchedAt);
+  assert.ok(first.escalatedAt);
+  assert.equal(occurrences.find(item => item.plannedAtUtc === first.plannedAtUtc)?.taskId, first.taskId,
+    "the dispatch row joins to the same occurrence by plannedAtUtc");
+
+  // Withdrawn while queued in the Session's line, then handed to the Leader.
+  const firstEntry = (await r.lineOf(a)).find(row => row.task_id === first.taskId)!;
+  await r.applied(r.lead, { type: "schedule.directEntry.withdraw", entryId: firstEntry.entry_id, expectedVersion: 1, choice: "to_leader", reason: "Leader will arrange it" });
+  const withdrawn = (await r.workflow.listScheduleDispatches(r.reader, r.projectId, scheduleId)).items[0]!;
+  assert.deepEqual([withdrawn.state, withdrawn.reason], ["dispatched", "WITHDRAWN_TO_LEADER"]);
+  // Close the handed-over Task so the next trigger can create another occurrence on this schedule.
+  await r.applied(r.lead, { type: "task.cancel", taskId: first.taskId!, expectedVersion: 1, reason: "arranged by the Leader" });
+  await r.fire(2);
+  assert.deepEqual(await r.dispatchAt(2), { dispatched: 1, fellBack: 0 });
+  const firstPage = await r.workflow.listScheduleDispatches(r.reader, r.projectId, scheduleId, 1);
+  assert.equal(firstPage.items.length, 1);
+  assert.ok(firstPage.nextCursor);
+  assert.deepEqual([firstPage.items[0]!.state, firstPage.items[0]!.reason], ["dispatched", "WITHDRAWN_TO_LEADER"]);
+  const secondPage = await r.workflow.listScheduleDispatches(r.reader, r.projectId, scheduleId, 1, firstPage.nextCursor!);
+  assert.equal(secondPage.items.length, 1);
+  assert.equal(secondPage.nextCursor, null);
+  assert.ok(secondPage.items[0]!.plannedAtUtc > firstPage.items[0]!.plannedAtUtc);
+  await assert.rejects(r.workflow.listScheduleDispatches(r.reader, r.projectId, scheduleId, 1, "not-a-cursor"),
+    (error: { code?: string }) => error.code === "INVALID_CURSOR");
+
+  // Template change returns the same schedule to the Leader with the reason visible.
+  const current = (await r.pool.query("SELECT version FROM schedule_definition WHERE project_id=$1 AND schedule_id=$2", [r.projectId, scheduleId])).rows[0].version;
+  await r.applied(r.lead, { type: "schedule.revise", scheduleId, revisionId: randomUUID(), expectedVersion: current, state: "active", timezone: "UTC",
+    rule: { kind: "interval", anchorUtc: new Date(r.T0).toISOString(), everyMinutes: 60 }, misfire: { kind: "latest" }, overlap: "queue",
+    template: { title: "Changed", content: "# Different", acceptance: "Done", owner: r.role },
+    authorization: { scopeId: "scope", roleId: r.role, authorizedBy: "lead", expiresAtUtc: null }, reason: "edit template" });
+  const changed = await r.workflow.getScheduleDispatchPolicy(r.reader, r.projectId, scheduleId);
+  assert.deepEqual([changed?.mode, changed?.revertReason, changed?.version], ["leader", "TEMPLATE_CHANGED", 2]);
+
+  // Revocation is visible on policy and on the next trigger's fallback record.
+  const revokedSchedule = await r.makeSchedule({ overlap: "queue" });
+  await r.setPolicy(revokedSchedule, { state: "revoked" });
+  await r.fire(27);
+  const revoked = await r.workflow.getScheduleDispatchPolicy(r.reader, r.projectId, revokedSchedule);
+  assert.deepEqual([revoked?.mode, revoked?.state], ["direct", "revoked"]);
+  const revokedLog = await r.workflow.listScheduleDispatches(r.reader, r.projectId, revokedSchedule);
+  assert.deepEqual(revokedLog.items.map(item => [item.state, item.reason]), [["fell_back", "POLICY_REVOKED"]]);
+
+  // A schedule without a policy is explicit null, not manufactured defaults.
+  const unconfigured = await r.makeSchedule();
+  assert.equal(await r.workflow.getScheduleDispatchPolicy(r.reader, r.projectId, unconfigured), null);
+
+  // Project read is required for all three; review is not.
+  for (const read of [
+    () => r.workflow.getScheduleDispatchPolicy(r.noRead, r.projectId, scheduleId),
+    () => r.workflow.listScheduleDispatches(r.noRead, r.projectId, scheduleId),
+    () => r.workflow.getRoleDirectDispatchList(r.noRead, r.projectId, r.role),
+  ]) await assert.rejects(read(), (error: { code?: string }) => error.code === "FORBIDDEN");
+
+  // The same IDs under another project are absent rather than exposed.
+  const otherProject = randomUUID();
+  const otherLead: Principal = { actorId: "other-lead", projectIds: [otherProject], permissions: ["task", "document", "session", "management"], decisions: true };
+  const otherReader: Principal = { actorId: "other-reader", projectIds: [otherProject], permissions: [] };
+  const created = await r.workflow.execute(otherLead, { type: "project.create", projectId: otherProject, operationId: randomUUID(), title: "Other" });
+  assert.equal(created.status, "applied");
+  for (const read of [
+    () => r.workflow.getScheduleDispatchPolicy(otherReader, otherProject, scheduleId),
+    () => r.workflow.listScheduleDispatches(otherReader, otherProject, scheduleId),
+    () => r.workflow.getRoleDirectDispatchList(otherReader, otherProject, r.role),
+  ]) await assert.rejects(read(), (error: { code?: string }) => error.code === "NOT_FOUND");
 });
 
 test("busy Sessions: an idle one first, then the shortest line, then list order", async t => {
@@ -229,17 +373,47 @@ test("two failed Runs in a row open the breaker; a stopped or completed one does
   assert.deepEqual((await r.notices(first)).filter(row => row.kind === "direct_circuit_open").map(row => row.level), ["immediate"]);
 });
 
-test("direct dispatch decisions need review authority, a Role's own Sessions and a non-empty list", async t => {
+test("direct dispatch decisions need management authority, a Role's own Sessions and a non-empty list", async t => {
   const r = await rig(t);
   const a = await r.session();
   const scheduleId = await r.makeSchedule();
+  const managementOnly: Principal = { actorId: "management-only", projectIds: [r.projectId], permissions: ["management"] };
   assert.equal((await r.refused(r.writer, { type: "schedule.directList.set", roleId: r.role, expectedVersion: 0, sessionIds: [a], reason: "x" })).code, "FORBIDDEN");
+  assert.equal((await r.refused(managementOnly, { type: "schedule.directList.set", roleId: r.role, expectedVersion: 0, sessionIds: [a], reason: "x" })).code, "FORBIDDEN");
+  assert.equal((await r.refused(managementOnly, { type: "schedule.dispatch.set", scheduleId, expectedVersion: 0, mode: "direct", state: "active", reason: "x" })).code, "FORBIDDEN");
   assert.equal((await r.refused(r.lead, { type: "schedule.dispatch.set", scheduleId, expectedVersion: 0, mode: "direct", state: "active", reason: "x" })).code, "DIRECT_LIST_EMPTY");
   assert.equal((await r.refused(r.lead, { type: "schedule.directList.set", roleId: r.role, expectedVersion: 0, sessionIds: [randomUUID()], reason: "x" })).code, "NOT_FOUND");
   await r.setList([a]);
   assert.equal((await r.refused(r.lead, { type: "schedule.directList.set", roleId: r.role, expectedVersion: 0, sessionIds: [a], reason: "stale" })).code, "VERSION_CONFLICT");
   await r.setPolicy(scheduleId);
   assert.equal((await r.refused(r.lead, { type: "schedule.dispatch.set", scheduleId, expectedVersion: 0, mode: "leader", state: "active", reason: "stale" })).code, "VERSION_CONFLICT");
+
+  // The real direct-dispatch path a management-only identity could try to use: the occurrence exists, the Session is
+  // eligible, but the append is refused before it can leave a line entry for the decision-enabled pump to consume.
+  await r.fire(1);
+  const refusedTask = await r.taskOfOccurrence(scheduleId);
+  assert.deepEqual(await r.dispatcher.process(r.projectId, managementOnly, new Date(r.T0 + 2 * HOUR).toISOString()),
+    { dispatched: 0, fellBack: 1 });
+  assert.deepEqual(await r.lineOf(a), []);
+  assert.deepEqual((await r.pool.query(`SELECT state, version
+      FROM task WHERE project_id=$1 AND task_id=$2`,
+    [r.projectId, refusedTask])).rows[0], { state: "todo", version: 1 });
+  assert.deepEqual((await r.pool.query(`SELECT
+      (SELECT count(*)::int FROM runtime_run WHERE project_id=$1 AND task_id=$2) AS runs,
+      (SELECT count(*)::int FROM task_session_assignment WHERE project_id=$1 AND task_id=$2) AS assignments,
+      (SELECT count(*)::int FROM session_message WHERE project_id=$1 AND context_task_id=$2) AS confirmations`,
+    [r.projectId, refusedTask])).rows[0],
+  { runs: 0, assignments: 0, confirmations: 0 });
+  assert.deepEqual((await r.logOf(scheduleId)).map(row => [row.state, row.reason]), [["fell_back", "APPEND_FORBIDDEN"]]);
+
+  const second = await r.makeSchedule();
+  await r.setPolicy(second);
+  await r.fire(1);
+  assert.deepEqual(await r.dispatchAt(1), { dispatched: 1, fellBack: 0 },
+    "a management identity with decision authority can dispatch");
+  const dispatchedTask = await r.taskOfOccurrence(second);
+  assert.deepEqual((await r.lineOf(a)).map(row => [row.task_id, row.state]),
+    [[dispatchedTask, "queued"]], "the accepted append has no confirmation or Run yet");
 });
 
 test("execution authorization is read afresh at every trigger: a Session without it is passed over, none left means the Leader gets the Task with the reason, and a withdrawn grant is honoured at the next trigger", async t => {
@@ -325,7 +499,7 @@ test("the real scheduling pump runs the whole path: due occurrence, direct inten
   await r.setList([a]);
   let clock = r.T0;
   const pump = new SchedulingPump({ store: r.store, canWrite: () => true, enabled: () => true, now: () => new Date(clock).toISOString(),
-    credentials: () => [{ token: "t".repeat(40), actorId: "lead", projectIds: [r.projectId], permissions: ["read", "write", "review"] }],
+    credentials: () => [{ token: "t".repeat(40), actorId: "lead", projectIds: [r.projectId], permissions: ["task", "document", "session", "management"], decisions: true }],
     grants: () => [{ projectId: r.projectId, actorId: "lead", scopeId: "scope", roleId: r.role }], directDispatch: r.dispatcher });
   const scheduleId = await r.makeSchedule(); await r.setPolicy(scheduleId, { dailyRunBudget: 1 });
   clock = r.T0 + HOUR + 60_000;
@@ -380,7 +554,7 @@ test("a cleanup that is refused is told with the entry, the reason and the opera
   const a = await r.session();
   await r.setList([a]);
   const stuck = await staleEntry(r, a, "Stuck", "suspended");
-  // The dispatcher is given an identity without review authority: the withdrawal is refused.
+  // The dispatcher is given an identity without management authority: the withdrawal is refused.
   await r.dispatcher.process(r.projectId, r.writer, new Date(r.T0 + HOUR).toISOString());
   const events = await cleanupEvents(r);
   assert.equal(events.length, 1);

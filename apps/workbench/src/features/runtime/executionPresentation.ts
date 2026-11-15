@@ -13,6 +13,10 @@ export const sessionStateText: Record<RuntimeSessionRecord["state"], string> = {
 const sessionTone: Record<RuntimeSessionRecord["state"], StatusTone> = {
   reserved: "waiting", creating: "progress", ready: "idle", closing: "progress", unknown: "unknown", closed: "history",
 };
+/** The line under a Session in the rail: its state, or 不可用 with the first reason when it is ready but cannot start a Run. */
+export const sessionStateLine = (session: Pick<RuntimeSessionRecord, "state" | "usable" | "unusable">): string =>
+  session.state === "ready" && session.usable === false
+    ? `不可用 · ${(session.unusable?.[0]?.reason ?? "原因待核对").slice(0, 40)}` : sessionStateText[session.state];
 export const sessionStateTone = (state: RuntimeSessionRecord["state"]): StatusTone => sessionTone[state];
 
 export const runStateText: Record<RuntimeRunRecord["state"], string> = {
@@ -30,13 +34,15 @@ const permissionText: Record<string, string> = {
 };
 export const permissionsText = (sandbox: string, approval: string) => `${permissionText[sandbox] ?? sandbox} · ${permissionText[approval] ?? approval}`;
 
-export interface SessionGroup { key: "working" | "preparing" | "check" | "closed"; label: string; items: RuntimeSessionRecord[] }
+export interface SessionGroup { key: "working" | "unusable" | "preparing" | "check" | "closed"; label: string; items: RuntimeSessionRecord[] }
 
 /** Rail and overview groups: usable first, then those still being prepared, those needing a check, and closed ones. */
 export function sessionGroups(sessions: readonly RuntimeSessionRecord[]): SessionGroup[] {
   const byTime = [...sessions].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt) || a.id.localeCompare(b.id));
   const groups: SessionGroup[] = [
-    { key: "working", label: "就绪", items: byTime.filter(session => session.state === "ready") },
+    // "就绪" is the stored lifecycle; a Session the coordinator judged unable to start a Run is not ready to take work and is listed apart, with its reason.
+    { key: "working", label: "就绪", items: byTime.filter(session => session.state === "ready" && session.usable !== false) },
+    { key: "unusable", label: "不可用", items: byTime.filter(session => session.state === "ready" && session.usable === false) },
     { key: "preparing", label: "准备中", items: byTime.filter(session => session.state === "reserved" || session.state === "creating") },
     { key: "check", label: "需要核对", items: byTime.filter(session => session.state === "closing" || session.state === "unknown") },
     { key: "closed", label: "已关闭", items: byTime.filter(session => session.state === "closed") },

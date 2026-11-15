@@ -21,10 +21,10 @@ const pool = new pg.Pool({ connectionString: url, options: `-c search_path=${sch
 const uow = new PostgresUnitOfWork(pool);
 const hash = (text: string) => createHash("sha256").update(text).digest("hex");
 const p = randomUUID(), role = randomUUID(), roleRev = randomUUID(), sessionA = randomUUID(), sessionB = randomUUID();
-const receiver: Principal = { actorId: "leader-actor", projectIds: [p], permissions: ["read", "write", "review"] };
-const sender: Principal = { actorId: "notice-sender", projectIds: [p], permissions: ["read", "write"] };
-const author: Principal = { actorId: "author", projectIds: [p], permissions: ["read", "write", "review"] };
-const human: Principal = { actorId: "human-actor", projectIds: [p], permissions: ["read", "write"] };
+const receiver: Principal = { actorId: "leader-actor", projectIds: [p], permissions: ["task", "document", "session", "management"], decisions: true };
+const sender: Principal = { actorId: "notice-sender", projectIds: [p], permissions: ["task", "document", "session"] };
+const author: Principal = { actorId: "author", projectIds: [p], permissions: ["task", "document", "session", "management"], decisions: true };
+const human: Principal = { actorId: "human-actor", projectIds: [p], permissions: ["task", "document", "session"] };
 // Only the configured notice sender may run the packet's own steps.
 const deps = { uow, clock: { now: () => new Date().toISOString() }, ids: { next: randomUUID }, hasher: { hash }, leaderNoticeServiceActor: async () => sender.actorId };
 const workflow = new WorkflowService(deps);

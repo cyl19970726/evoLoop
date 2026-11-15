@@ -45,7 +45,7 @@ test("schedule wording: reason codes and errors in words, names for roles, ident
       if (url.pathname.startsWith("/api/")) {
         const base = `/api/projects/${projectId}`;
         let value: unknown = { items: [], nextCursor: null }, status = 200;
-        if (url.pathname === "/api/session") value = { principal: { actorId: "reader", projectIds: [projectId], permissions: ["read", "write", "review"] }, capabilities: {} };
+        if (url.pathname === "/api/session") value = { principal: { actorId: "reader", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true }, capabilities: {} };
         else if (url.pathname === base) value = { id: projectId, title: "日程用语项目", createdAt: stamp };
         else if (url.pathname === `${base}/impacts`) value = [];
         else if (url.pathname === `${base}/schedules`) value = [

@@ -23,7 +23,7 @@ const discussionDocument = id(), discussionDocumentRevision = id();
 const discussionX = id(), discussionY = id(), preparedX = id(), decisionX = id(), actionB = id(), actionF = id();
 const preparedY = id(), decisionY = id(), actionC = id();
 const at = "2026-10-26T00:00:00.000Z", acceptedAt = "2026-10-26T00:00:01.000Z", eventAt = "2026-10-26T00:00:02.000Z";
-const scope = JSON.stringify({ actorId: "reader", permissions: ["read"] });
+const scope = JSON.stringify({ actorId: "reader", permissions: [] });
 const q = (client: pg.PoolClient, sql: string, values: unknown[] = []) => client.query(sql, values);
 const observe = <T>(fn: (reader: SessionObservationReader) => Promise<T>) =>
   uow.read(project, async reader => fn(reader.sessionObservation!(scope)));

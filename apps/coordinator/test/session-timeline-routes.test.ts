@@ -11,7 +11,7 @@ const key='owned:00000000-0000-4000-8000-000000000002';
 const root=`/api/projects/${project}/session-work/${key}/timeline`;
 test('authenticated timeline GET routes expose independent source, direct Item and bounded live reads',async()=>{
   const app=Fastify();const calls:unknown[][]=[];
-  const principal:Principal={actorId:'reader',projectIds:[project],permissions:['read']};
+  const principal:Principal={actorId:'reader',projectIds:[project],permissions:['session']};
   app.decorateRequest('principal',null);app.decorateRequest('workerIdentity',null);
   app.addHook('onRequest',async request=>{request.principal=request.headers.authorization?principal:null});
   app.setErrorHandler((error,_request,reply)=>reply.code(error instanceof z.ZodError?400:
