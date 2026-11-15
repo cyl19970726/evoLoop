@@ -56,7 +56,7 @@ JS
 }
 ```
 
-给 Role 新建受管 Session 还要 `runtime.materialCli`（Role 级 CLI 绑定）、**`residentQueue.roleActors`**（Role → 业务身份，须与前者的 `cliActorId` 一致，`residentQueue.enabled` 为 `true`）和 `runtime.grants`；缺哪项，`session prepare` 的 `missingDetails` 会指明配置项与修法，完整清单见 [Agent CLI](agent-cli.md#编制所需私有配置清单session-prepare-缺项时)。
+给 Role 新建受管 Session 还要 `runtime.materialCli`（Role 级 CLI 绑定）、**`residentQueue.roleActors`**（Role → 业务身份，须与前者 Role 级条目的 `cliActorId` 一致；Session 有自己的精确 `materialCli` 条目时按那一条判断，`residentQueue.enabled` 为 `true`）和 `runtime.grants`；缺哪项，`session prepare` 的 `missingDetails` 会指明配置项与修法，完整清单见 [Agent CLI](agent-cli.md#编制所需私有配置清单session-prepare-缺项时)。
 
 Leader 结果通知、即时输入、托管压缩、普通 Task 的每日复制和阶段关注各有自己的配置、打开和核对步骤，见[运行接线手册](runtime-operations.md)。
 
@@ -137,7 +137,7 @@ npm run --silent cli -- list tasks --project "$PROJECT_ID"
 
 命令需稳定的 `operationId`、`projectId`；修改已有对象还需读入的 `expectedVersion`。同一 ID、身份和内容返回原回执；不同内容复用 ID 被拒绝。结果未知时先查 `/api/projects/PROJECT_ID/operations/OPERATION_ID`；404 只表示当次未查到，不能证明外部动作没发生。未知 Turn 必须按已有原生 thread 和 operation 标记对账，不能换 ID 盲目重派。工作台临时恢复索引在当前标签页 `sessionStorage`，不存令牌或正文；关闭标签页可能失去索引，重要操作应另存 ID。
 
-Codex App Server 的协议版本默认是 `0.166.0-alpha.5.1`。要选其他已核版本，在私有运行配置里显式设置 `runtime.protocolVersion`，并核对实际二进制与生成的标准或实验 schema 指纹；旧私有包的版本约束须由发布者另行更新。各版本可用的能力（托管压缩和运行中补入只在 `0.166.0-alpha.6`）见[Codex 接入](../architecture/codex-integration.md#协议版本与可选能力)，新实例用的是哪个版本见[阶段路线](../roadmap.md#当前基线)。未配置 `codexHome` 时，子进程共用使用者自己的 Codex 登录、provider 与历史，evoLoop 创建的线程会出现在使用者自己的 Codex 历史里；需要隔离时配置专用 `codexHome`。Turn 完成不自动证明技术验收、交付、消费者使用或 Task 关闭。启用前核对实际安装版本、schema、授权目录与隔离真实任务；升级须重新核协议、终态、断线与恢复。HTML/CSS/SVG 阅读中的 Document iframe sandbox 是独立内容隔离，不随 Session OS 权限变化。结果未知时保留原操作并人工核对。
+Codex App Server 的协议版本默认是 `0.166.0-alpha.5.1`。要选其他已核版本，在私有运行配置里显式设置 `runtime.protocolVersion`，并核对实际二进制与生成的标准或实验 schema 指纹；旧私有包的版本约束须由发布者另行更新。各版本可用的能力（托管压缩和运行中补入只在 `0.166.0-alpha.6`）见[Codex 接入](../architecture/codex-integration.md#协议版本与可选能力)，新实例用的是哪个版本见[阶段路线](../roadmap.md#当前基线)。未配置 `codexHome` 时，子进程共用使用者自己的 Codex 登录、provider 与历史，evoLoop 创建的线程会出现在使用者自己的 Codex 历史里；Codex 也可能在使用者的 `config.toml` 里为每个新的 Session 工作目录追加一条项目信任条目。新实例或试用应从一开始就配置专用、绝对路径的 `runtime.codexHome`，并把登录、provider 和模型目录在该目录中单独准备好；evoLoop 不复制或改写使用者个人的 Codex 配置。若已经共用，先停止创建新 Session 并备份 `config.toml`，再由使用者按 Codex 的实际格式核对哪些条目只属于本次试用目录并手工清理；不要在会话仍使用这些目录时删除条目，也没有 evoLoop 自动回滚或批量清理，因为条目格式、登录和历史都由 Codex 拥有。Turn 完成不自动证明技术验收、交付、消费者使用或 Task 关闭。启用前核对实际安装版本、schema、授权目录与隔离真实任务；升级须重新核协议、终态、断线与恢复。HTML/CSS/SVG 阅读中的 Document iframe sandbox 是独立内容隔离，不随 Session OS 权限变化。结果未知时保留原操作并人工核对。
 
 App Server、版本检查与协议探测使用同一份明确的子进程环境白名单，保留本机 Codex 登录目录、基本运行环境和代理/证书配置，不转发协调服务的数据库连接、身份配置路径、API 密钥或 Node 执行注入参数。本片沿用 Codex 的本机 ChatGPT 登录；这项环境筛选不限制读取 HOME 文件，工作目录也不是文件读取白名单。runtime 的 authorizationScope 当前用于精确匹配授权，不应把形似 Task ID 的字符串宣称为单任务执行隔离。
 
@@ -253,8 +253,10 @@ node scripts/restore.mjs --from /absolute/private-backups/evoloop-20261020 \
 
 配置文件放在仓库外，由 `EVOLOOP_RELEASE_CONFIG` 指向，JSON 字段：`releaseRoot`、`currentLink`、`stateDir`（均为绝对路径）、`backup.out`、`backup.blobRoot`（可选 `wikiSnapshot`、`integrations`）、`database.name`（必填，可加 `host`、`port`）、`skipTests`、可选 `sourceSubdir`（版本目录里放源码的子目录；默认空，即版本目录本身就是检出的源码。主机上若是 `<版本目录>/source` 加 `runtime`、`artifacts` 等同级目录的布局，就写 `source`：构建、预检、备份、迁移都在这个子目录里运行，钩子从 `EVOLOOP_RELEASE_SOURCE` 读到源码路径，`EVOLOOP_RELEASE_DIR` 仍是版本目录），以及 `hooks`（各为命令参数数组）。执行前把环境变量 `EVOLOOP_DATABASE_URL` 与 `database` 比对，库名、主机或端口不一致即拒绝，任何步骤都不会运行。不跳过测试时还须设 `EVOLOOP_RELEASE_TEST_DATABASE_URL` 指向独立的 `evoloop_*_test` 库，且不能等于线上库。命令运行时可读 `EVOLOOP_RELEASE_ID`、`EVOLOOP_RELEASE_DIR`、`EVOLOOP_RELEASE_SOURCE`、`EVOLOOP_RELEASE_PREVIOUS`（绝对路径）、`EVOLOOP_RELEASE_CURRENT_LINK`。
 
-**带上上一版的工作台分块。** 工作台的页面是按需加载的分块文件，文件名带内容哈希（如 `assets/ArrangementPage-BFkRO_z-.js`），每次发布都会换名。令牌只存在页面内存里，刷新就要重新输入，所以发布前打开的标签页会一直开着；它之后再打开没打开过的页面，会去取旧名字的文件，旧版本不在了就报 `Failed to fetch dynamically imported module`（2026-11-12 线上“统筹安排”即此）。因此 `build` 步骤结束后，发布脚本（`scripts/release/carry-assets.mjs`）把上一版 `apps/workbench/dist/assets/` 里**新版本没有的文件**复制进新版本的同名目录，只补缺、绝不覆盖（同名即同内容哈希，新版本的文件原样保留）；这一步在停服务之前，失败即中止发布，什么都没动。上一版没有该目录（首次发布）时只记一行日志。配置 `carryAssets` 可选：`false` 关闭；`{ "keep": N, "assetsDir": "…" }` 调整，默认 `keep` 为 3、`assetsDir` 为 `apps/workbench/dist/assets`（相对源码目录，随 `sourceSubdir`）。
-**保留策略：** 每次发布算一代；带过来的文件记下它被构建出来的那一代（新版本目录里的 `apps/workbench/dist/assets-carry.json`），到第 `keep` 代之后不再带，所以目录不会无限增长。默认保留最近 3 个版本（新版本加前两版）：覆盖“发布前打开、几天不关的标签页”，而按本机演练，三版合计约 10–12 MB（单版约 7.6 MB），代价可忽略；`keep` 越大旧标签页能撑越久、占用越多，需要更长时可调大。超出保留的标签页仍会在打开新页面时失败，刷新即恢复。发布状态文件的 `acceptance.carriedAssets` 记录这次复制、过期和同名的文件数及字节数。这一步只补静态文件，不让旧标签页的接口调用与新服务兼容，接口不兼容的改动仍须靠刷新。
+**带上上一版的工作台分块。** 工作台的页面是按需加载的分块文件，文件名带内容哈希（如 `assets/ArrangementPage-BFkRO_z-.js`），每次发布都会换名。令牌只存在页面内存里，刷新就要重新输入，所以发布前打开的标签页会一直开着；它之后再打开没打开过的页面，会去取旧名字的文件，旧版本不在了就报 `Failed to fetch dynamically imported module`（2026-11-12 线上“统筹安排”即此）。因此 `build` 步骤结束后，发布脚本（`scripts/release/carry-assets.mjs`）把上一版 `apps/workbench/dist/assets/` 里**新版本没有的文件**复制进新版本的同名目录，只补缺、绝不覆盖（同名即同内容哈希，新版本的文件原样保留）；这一步在停服务之前，失败即中止发布，什么都没动。上一版没有该目录（首次发布）时只记一行日志。配置 `carryAssets` 可选：`false` 关闭；`{ "keep": N, "keepDays": D, "assetsDir": "…" }` 调整，默认 `keep` 为 3、`keepDays` 为 7、`assetsDir` 为 `apps/workbench/dist/assets`（相对源码目录，随 `sourceSubdir`）。
+**保留策略（缺陷 581441ad：不再只按代数）：** 每次发布算一代，`assets-carry.json`（新版本目录里的 `apps/workbench/dist/assets-carry.json`）记下每一个仍保留的版本的构建时间和它构建出的文件。一个版本在**最近 `keep` 代之内，或构建不到 `keepDays` 天**时都保留，谁保留得更久听谁的；文件只要还有一个保留的版本在用就留着，所以目录仍然不会无限增长。只按代数时，一天发布三次就把前一天打开的标签页挤出去了（11-13 06:15、09:06、12:00 三次发布，11-12 那一代在 09:06 被删，使用者的标签页从此打不开没访问过的页面）。按每天发布 3 次估：7 天约 20 个版本、一个版本约 7.6 MB，目录约 150 MB，代价可以接受；需要更长或更短时调 `keepDays`（`0` 表示只按代数）。上一版的清单是旧格式（只有代数、没有时间）时按尽力读取：它的各代取清单文件的修改时间，最多比应有的多留 `keepDays` 天，不会提前删。
+**读回：** 发布日志和发布状态文件的 `acceptance.carriedAssets` 记录这次复制、过期和同名的文件数及字节数，以及 `oldestUsableEntry`（这次发布之后仍能用的最旧入口：它的构建时间和代数，要求该版本构建出的文件现在都在）和保留的版本数；日志一行“oldest entry still usable after this release: <时间>”。
+**超出保留的标签页：** 工作台自己有“已经更新到新版本”页（#396），但比 #396 更早打开的标签页没有。协调服务对 `/assets/` 下取不到的 `.js` 文件不再回 404，而是回 200、`Cache-Control: no-store` 的一小段脚本：在页面上显示“工作台已经更新到新版本……请刷新页面”和刷新按钮，并以 `Failed to fetch dynamically imported module` 失败这次导入（新标签页据此显示它们自己的页面）。其他类型的缺失文件和 `/assets/` 之外仍是 404。这一步只补静态文件，不让旧标签页的接口调用与新服务兼容，接口不兼容的改动仍须靠刷新。
 
 **钩子必须做到什么**（都不得回显密钥，失败时以非零退出；每个都要能重复执行而不出错）：
 

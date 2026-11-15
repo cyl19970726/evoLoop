@@ -26,7 +26,7 @@ export interface Recovery { kind: "core" | "orchestration" | "ordinary" | "candi
 export interface Intent {
   projectId: string; id: string; operationId: string | null; kind: string; path: string; body: unknown; recovery: Recovery;
   method?: "PUT"; // Absence preserves the POST method of existing receipts.
-  confirmation: "command" | "candidate" | "publish" | "ack" | "review" | "publish-reconcile" | "runtime-reconcile" | "runtime-recover" | "leader-notice-recovery" | "leader-packet-recovery" | "compaction-start" | "compaction-reconcile";
+  confirmation: "command" | "candidate" | "publish" | "ack" | "review" | "publish-reconcile" | "runtime-reconcile" | "runtime-recover" | "leader-notice-recovery" | "leader-packet-recovery" | "compaction-start" | "compaction-reconcile" | "acceptance-observe";
   targetId?: string;
 }
 export interface Receipt extends Intent {
@@ -156,6 +156,9 @@ function confirmed(receipt: Receipt, result: unknown): boolean {
   if (receipt.confirmation === "leader-notice-recovery") return value.status === "recorded" &&
     value.originalNoticeId === receipt.targetId && value.newNoticeId === body?.newNoticeId &&
     value.newMessageId === body?.newMessageId && value.newOperationId === body?.newOperationId;
+  if (receipt.confirmation === "acceptance-observe") return value.status === "recorded" &&
+    value.operationId === receipt.operationId && value.relayId === receipt.targetId &&
+    value.observationId === body?.observationId;
   if (receipt.confirmation === "runtime-recover") return value.available === true && (value.error === null || value.error === undefined);
   if (receipt.confirmation === "runtime-reconcile" && value.status === "partial") return value.changed === false &&
     value.runId === receipt.targetId && value.projectId === receipt.projectId &&
@@ -323,6 +326,20 @@ export async function reconcileReceipt(client: ApiClient, store: ReceiptStore, a
       }
     }
     await store.update(receipt,{lastError:{code:"RECOVERY_NOT_CONFIRMED",observation:observed}});
+    throw pending(receipt,observed);
+  }
+  if (receipt.confirmation === "acceptance-observe") {
+    const body=record(receipt.body),items=record(observed)?.items;
+    const link=Array.isArray(items) ? items.map(record).find(item => !!item && item.relayId === receipt.targetId &&
+      item.observationId === body?.observationId && item.observationOperationId === receipt.operationId &&
+      item.observationActorId === receipt.actorId) : null;
+    if (link) {
+      const result={status:"recorded",operationId:receipt.operationId,relayId:receipt.targetId,
+        observationId:body!.observationId};
+      await store.update(receipt,{state:"confirmed",result});
+      return store.get(receipt.id);
+    }
+    await store.update(receipt,{lastError:{code:"OBSERVATION_LINK_NOT_CONFIRMED",observation:observed}});
     throw pending(receipt,observed);
   }
   if (receipt.recovery.kind === "manual") {

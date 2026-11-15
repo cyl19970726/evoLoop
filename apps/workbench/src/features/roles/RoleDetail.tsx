@@ -57,7 +57,9 @@ export function RoleDetail({ context, role, refresh, checking, roleTitle }: {
         ["主要输入", p.inputs.join("；")], ["可写资产", p.writableAssets.join("；") || "未列出"], ["交付", p.deliverables.join("；")],
         ["触发条件", p.triggers.join("；")], ["交接边界", p.handoffBoundary],
       ]} />
-      <FactList rows={[["检查、判断与交付流程", p.workflow], ["首项试行任务", <a key="task" href={href(context.projectId, "task", p.firstTaskId)} className="text-primary hover:underline">打开首项任务</a>]]} />
+      <FactList rows={[["检查、判断与交付流程", p.workflow], ["首项试行任务", p.firstTaskId
+        ? <a key="task" href={href(context.projectId, "task", p.firstTaskId)} className="text-primary hover:underline">打开首项任务</a>
+        : "引导创建，尚无首项任务"]]} />
     </PageSection>
     <PageSection title="提出依据与比较" description={`试行前基线：${p.baseline}。期望效果：${p.expectedEffect}。成本上限：${p.costLimit}。`}>
       {p.evidence.length === 0 && <p className="text-small text-text-secondary">提案没有附观察记录。</p>}

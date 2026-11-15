@@ -333,7 +333,7 @@ node --import tsx tests/manual/session-compaction-e1.ts
 - **哪些要重启。** 按代码核对，`session prepare` 每次调用都重读 integrations 与身份文件，补 `residentQueue.roleActors`、`runtime.materialCli` 不需要重启。`runtime.grants` 的授权匹配每次重读，但运行器建 Session、开 Run 和恢复时接受的工作目录、`models` 列出的模型，用的是服务启动时读入的 grants（`apps/coordinator/src/main.ts` 把启动时的 `allowedRuntimeCwd` 交给运行器），所以**新增工作目录或模型的 grant 要重启**才可用；2026-11-14 的接入试跑里，只改文件不重启时 `capabilities` 的 `runtime` 显示 `grant_directory_unavailable`、`pending` 显示重启后才是 `configured`。另外 `runtime.enabled`（运行时只在启动时建立）和新增 HTTP 令牌要重启。
 
 - **身份的额外命令（`extraCommands`）。** 给文档与架构这类只有 read、write 的身份开放归档与恢复时，在身份文件里该凭据上加 `"extraCommands": ["document.archive", "document.restore"]`，不要给它 `review`（那样它还能开始、关闭、分派 Task）。清单只接受这两个值，别的命令写进去则服务启动时读身份文件失败；每条命令各自生效。**身份文件在服务启动时读取，改了要重启服务才生效**（`session prepare` 重读身份文件只用于其编制检查，不改变 HTTP 认证用的启动快照）。
-- **同一个事实写两处。** `runtime.materialCli` 的 `cliActorId` 与 `residentQueue.roleActors` 的 `actorId` 在 Role 级必须一致，不一致时报 `material_cli_actor_mismatch`；为什么暂不合并见 Agent CLI 那一节。
+- **同一个事实写两处。** `runtime.materialCli` 的 `cliActorId` 与 `residentQueue.roleActors` 的 `actorId` 在 Role 级必须一致，不一致时报 `material_cli_actor_mismatch`；Session 有自己按 `sessionId` 精确的 `materialCli` 条目时按这一条判断（它须是项目当前写入者，否则 `material_cli_actor_not_writer`），所以同一 Role 下用独立身份签字的验收 Session 可以直接 `session prepare`。为什么暂不合并见 Agent CLI 那一节。
 
 ## 7. 用量上限与上下文交接
 
