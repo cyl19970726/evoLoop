@@ -7,7 +7,8 @@ import type { ObservedSession } from "@evoloop/contracts/session-observation";
 import type { ResidentQueue, QueueHoldCode } from "@evoloop/contracts/queues";
 import { agentDisplayName } from "../../shared/agentNamePresentation";
 
-export type AgentLoad = "overloaded" | "busy" | "idle" | "unknown";
+/** `unusable`: the coordinator judged the Session unable to start a Run (no identity, no thread …); it is never spare capacity. */
+export type AgentLoad = "overloaded" | "busy" | "idle" | "unusable" | "unknown";
 
 /** What the page managed to read. Free capacity needs every open Task and the queues. */
 export interface ArrangementEvidence {
@@ -134,6 +135,7 @@ export function agentLoad(session: ObservedSession, running: number,
   evidence: Pick<ArrangementEvidence, "tasksComplete" | "queuesRead">): AgentLoad {
   if (running > 1) return "overloaded";
   if (running === 1 || session.busy === true) return "busy";
+  if (session.kind === "owned" && session.dispatch?.usable === false) return "unusable";
   // Without every open Task and the queues, "nothing found" is not "nothing there".
   if (!evidence.tasksComplete || !evidence.queuesRead) return "unknown";
   // Closing, reserved or a lifecycle still to be checked is not spare capacity.
@@ -237,7 +239,7 @@ export function buildArrangement(sessions: readonly ObservedSession[], tasks: re
     return Number.isFinite(due) && due >= now && due - now <= dueSoonMs;
   }).sort((a, b) => Date.parse(a.plan!.dueAt!) - Date.parse(b.plan!.dueAt!));
   // Agents with work first (busiest first), then the free ones; ties keep the directory order.
-  const rank: Record<AgentLoad, number> = { overloaded: 0, busy: 1, unknown: 2, idle: 3 };
+  const rank: Record<AgentLoad, number> = { overloaded: 0, busy: 1, unusable: 2, unknown: 2, idle: 3 };
   const withWork = (row: ArrangementRow) => row.running.length + row.assigned.length + row.queued.length > 0 ? 0 : 1;
   const ordered = rows.map((row, index) => ({ row, index }))
     .sort((a, b) => withWork(a.row) - withWork(b.row) || rank[a.row.load] - rank[b.row.load] || a.index - b.index)
@@ -258,6 +260,8 @@ export interface FreeCapacity {
   others: number;
   /** Agents other than the Leader whose occupation stays unknown. */
   unknown: number;
+  /** Agents other than the Leader that cannot start a Run (no business identity, no native thread …): never counted as free. */
+  unusable: number;
 }
 
 export function freeCapacity(arrangement: Arrangement): FreeCapacity {
@@ -266,5 +270,6 @@ export function freeCapacity(arrangement: Arrangement): FreeCapacity {
   return {
     judged: tasksComplete && queuesRead, free: freeAgents(arrangement), others: others.length,
     unknown: others.filter(row => row.load === "unknown").length,
+    unusable: others.filter(row => row.load === "unusable").length,
   };
 }

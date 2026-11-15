@@ -2,6 +2,7 @@ import type { ObservedSession, ObservedTask, SessionResult } from "@evoloop/cont
 import type { NativeProgressView } from "./NativeSessionPanel";
 
 type StatusSource = Pick<ObservedSession, "kind" | "runtimeState" | "busy"> & {
+  dispatch?: ObservedSession["dispatch"];
   latestBusinessRun?: { id?: string; state: string } | null;
 };
 
@@ -16,12 +17,25 @@ export function runStateLabel(state: string): string {
   return runStates[state] ?? `状态待核对（${state}）`;
 }
 
+/**
+ * "ready" is the stored lifecycle, not "can take work": a Session the coordinator judged unable to start a Run (no business identity, no native thread,
+ * the judgement itself failing) is labelled 不可用 with the first reason, in every place a status is written. Absent `dispatch` is an older server that
+ * did not judge: the label is the old one.
+ */
+export function unusableLabel(session: StatusSource): string | null {
+  if (session.kind !== "owned" || session.dispatch?.usable !== false) return null;
+  const first = session.dispatch.reasons[0]?.reason ?? "原因待核对";
+  return `不可用 · ${first.length > 40 ? `${first.slice(0, 39)}…` : first}`;
+}
+
 export function sessionLifecycleLabel(session: StatusSource): string {
   if (session.kind === "external") return "外部接入，原会话状态需核对";
   return session.runtimeState ? lifecycle[session.runtimeState] ?? "生命周期状态未识别" : "生命周期未知";
 }
 
 export function sessionStatusLabel(session: StatusSource): string {
+  const unusable = unusableLabel(session);
+  if (unusable) return `项目记录：${unusable}`;
   if (session.kind === "owned") {
     if (session.runtimeState !== "ready") return `项目记录：${sessionLifecycleLabel(session)} · 原生状态待核`;
     return session.busy === true ? "项目记录：有在途占用 · 原生状态待核"
@@ -33,6 +47,8 @@ export function sessionStatusLabel(session: StatusSource): string {
 
 /** Directory wording for people: what the project record says, without claiming live state it has not checked. */
 export function agentStatusLabel(session: StatusSource): string {
+  const unusable = unusableLabel(session);
+  if (unusable) return unusable;
   if (session.kind === "external") return session.busy === true ? "外部 · 有活动" : session.busy === false ? "外部 · 空闲" : "外部 · 状态未知";
   if (session.runtimeState !== "ready") return lifecycle[session.runtimeState ?? ""] ?? "状态待核对";
   return session.busy === true ? "有在途工作" : session.busy === false ? "无在途工作" : "占用待核对";

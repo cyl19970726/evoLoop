@@ -16,7 +16,7 @@ export const leaderNoticeRecoveryRequestSchema = z.union([leaderNoticeRecoverySc
 /** Every kind of Leader notice that exists as a row. `observation` is the kind of notices created before observations were told apart by result. */
 export const leaderNoticeKinds = ["task_todo", "delivery", "observation", "observation_used", "observation_failed", "task_question", "task_blocker",
   "run_without_submission", "run_submission_blocked", "task_attention", "acceptance_blocked", "line_entry_suspended", "line_confirmation_returned",
-  "direct_dispatch_blocked", "direct_circuit_open", "schedule_skips_escalated"] as const;
+  "direct_dispatch_blocked", "direct_circuit_open", "schedule_skips_escalated", "session_repeated_failure"] as const;
 export type LeaderNoticeKind = (typeof leaderNoticeKinds)[number];
 
 /**
@@ -27,7 +27,7 @@ export type LeaderNoticeKind = (typeof leaderNoticeKinds)[number];
  */
 export type LeaderNoticeLevel = "immediate" | "digest";
 const immediateKinds: ReadonlySet<LeaderNoticeKind> = new Set<LeaderNoticeKind>(["acceptance_blocked", "run_submission_blocked", "run_without_submission",
-  "task_question", "task_blocker", "observation_failed", "line_entry_suspended", "direct_dispatch_blocked", "direct_circuit_open"]);
+  "task_question", "task_blocker", "observation_failed", "line_entry_suspended", "direct_dispatch_blocked", "direct_circuit_open", "session_repeated_failure"]);
 export const noticeLevelOf = (kind: LeaderNoticeKind): LeaderNoticeLevel => immediateKinds.has(kind) ? "immediate" : "digest";
 
 /** An event that only gets recorded: it wakes no one. Read from the `leader_event_record` view (`GET /api/projects/:id/leader-records`). */
@@ -93,6 +93,7 @@ export function leaderNoticePostCommand(notice: Pick<LeaderNotice,"projectId"|"k
     line_confirmation_returned:"A Session returned its execution confirmation for a Task",
     direct_dispatch_blocked:"A scheduled direct dispatch could not happen or is waiting too long and needs a Leader decision",
     direct_circuit_open:"A direct schedule's breaker opened after two failed Runs and the schedule returned to the Leader",
+    session_repeated_failure:"A Session failed three Runs in a row in the preflight for the same cause: it cannot start work until the cause is fixed",
     schedule_skips_escalated:"A schedule skipped two triggers in a row because its previous Task is still open",
     task_attention:"A current Task attention item needs a Leader follow-up",
     acceptance_blocked:"An acceptance handoff is blocked and needs a Leader decision"};
