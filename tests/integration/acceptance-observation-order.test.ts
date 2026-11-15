@@ -19,11 +19,11 @@ if (!database || !/^\/evoloop(?:_[a-z0-9]+)*_test$/.test(new URL(database).pathn
  * Here the arrangement is created at a fixed instant with a fractional second, observations are stored at exact offsets from it, and the real
  * service (AcceptanceRelayService.linkObservation, over real PostgreSQL rows and real timestamptz precision) is asked to link each.
  *
- * Rule, in the one place it is written (service.ts, linkObservation): an observation is refused when its time is strictly earlier than the arrangement's
- * `created_at`; an observation made at exactly that instant is not earlier and is accepted. There is no window and no tie-break between two candidates:
+ * Rule, in the one place it is written (service.ts, linkObservation): an observation is refused when PostgreSQL finds its time strictly earlier than the arrangement's
+ * `created_at` (full microsecond precision; the Node driver's Date holds only milliseconds, which is what let 1–999 µs through); an observation made at exactly that instant is not earlier and is accepted. There is no window and no tie-break between two candidates:
  * one observation is linked per arrangement, and the comparison is a total order on the stored microsecond-precision instants.
  */
-test("an observation earlier than the arrangement is refused at any offset down to one millisecond; one at or after it is linked", async t => {
+test("an observation earlier than the arrangement is refused at any offset down to one microsecond; one at or after it is linked", async t => {
   const schema = `obs_order_${randomUUID().replaceAll("-", "")}`;
   await migrate(database!, schema);
   const pool = new pg.Pool({ connectionString: database, options: `-c search_path=${schema}` });
@@ -45,9 +45,9 @@ test("an observation earlier than the arrangement is refused at any offset down 
   await pool.query(`INSERT INTO delivery(project_id,delivery_id,task_id,task_revision_id,artifact_ref,artifact_revision,content_hash,technical_result,technical_evidence,reason,actor_id,created_at)
     VALUES($1,$2,$3,$4,'fixture:report','r1',$5,'passed','fixture','delivery','author',now())`, [projectId, deliveryId, taskId, task.currentRevisionId, "a".repeat(64)]);
 
-  // The arrangement is created at 12:00:00.500 UTC, a fractional second so that offsets inside the same second exist on both sides.
-  const arrangedAt = "2026-11-14T12:00:00.500Z";
-  const at = (offsetMs: number) => new Date(Date.parse(arrangedAt) + offsetMs).toISOString();
+  // The arrangement is created at 12:00:00.500500 UTC: 500 microseconds into its millisecond, so offsets of 1 to 500 microseconds stay inside the same millisecond (which a JavaScript Date cannot tell apart) and 501 reaches the previous one.
+  // Observations are stored at exact offsets in MICROSECONDS from it, computed by PostgreSQL itself, so what is compared is what timestamptz really holds.
+  const arrangedAt = "2026-11-14T12:00:00.500500Z";
   let scope = 0;
   const arrange = async (): Promise<string> => {
     const relayId = randomUUID();
@@ -57,10 +57,10 @@ test("an observation earlier than the arrangement is refused at any offset down 
     await service.humanRead(human, projectId, taskId, relayId, randomUUID(), 1, "read the delivery");
     return relayId;
   };
-  const observe = async (offsetMs: number): Promise<string> => {
+  const observe = async (offsetUs: number): Promise<string> => {
     const id = randomUUID();
     await pool.query(`INSERT INTO consumer_observation(project_id,observation_id,task_id,delivery_id,observer,observer_kind,result,evidence,reason,actor_id,created_at)
-      VALUES($1,$2,$3,$4,'named-human','human','used','checked','used','named-human',$5)`, [projectId, id, taskId, deliveryId, at(offsetMs)]);
+      VALUES($1,$2,$3,$4,'named-human','human','used','checked','used','named-human',$5::timestamptz + ($6::int * interval '1 microsecond'))`, [projectId, id, taskId, deliveryId, arrangedAt, offsetUs]);
     return id;
   };
   const link = async (relayId: string, observationId: string) => {
@@ -74,31 +74,34 @@ test("an observation earlier than the arrangement is refused at any offset down 
 
   // Older by 1 ms, 37 ms (the reported case), 400 ms, 499 ms (same second as the arrangement), 999 ms and 1 s (earlier second) and 5 s: all refused, and refusal changes nothing.
   // Each offset gets its own arrangement: a wrongly accepted observation would link the arrangement and hide what the next offset does.
+  const olderUs = [1, 400, 499, 500, 501, 999, 1000, 37_000, 400_000, 499_999, 500_000, 999_000, 1_000_000, 5_000_000];
   const outcomes: Record<number, string> = {};
   const rejectedRelays: string[] = [];
-  for (const older of [1, 37, 400, 499, 999, 1000, 5000]) {
+  for (const older of olderUs) {
     const relay = await arrange(); rejectedRelays.push(relay);
     outcomes[older] = await refused(relay, await observe(-older));
   }
-  assert.deepEqual(outcomes, { 1: "OBSERVATION_MISMATCH", 37: "OBSERVATION_MISMATCH", 400: "OBSERVATION_MISMATCH", 499: "OBSERVATION_MISMATCH",
-    999: "OBSERVATION_MISMATCH", 1000: "OBSERVATION_MISMATCH", 5000: "OBSERVATION_MISMATCH" }, JSON.stringify(outcomes));
+  assert.deepEqual(outcomes, Object.fromEntries(olderUs.map(us => [us, "OBSERVATION_MISMATCH"])), JSON.stringify(outcomes));
   assert.equal((await pool.query("SELECT count(*)::int AS n FROM task_acceptance_observation_link WHERE project_id=$1 AND relay_id=ANY($2::uuid[])", [projectId, rejectedRelays])).rows[0].n, 0, "nothing was linked");
-  assert.equal((await pool.query("SELECT count(*)::int AS n FROM task_acceptance_relay WHERE project_id=$1 AND relay_id=ANY($2::uuid[]) AND state='pending'", [projectId, rejectedRelays])).rows[0].n, 7, "the arrangements stay pending");
-  // The stored times are not rewritten by the refusals.
-  assert.equal((await pool.query("SELECT count(*)::int AS n FROM consumer_observation WHERE project_id=$1 AND created_at < $2", [projectId, arrangedAt])).rows[0].n, 7);
+  assert.equal((await pool.query("SELECT count(*)::int AS n FROM task_acceptance_relay WHERE project_id=$1 AND relay_id=ANY($2::uuid[]) AND state='pending'", [projectId, rejectedRelays])).rows[0].n, olderUs.length, "the arrangements stay pending");
+  // The stored times are not rewritten by the refusals: every one of them is still exactly its offset before the arrangement.
+  assert.deepEqual((await pool.query(`SELECT (extract(epoch FROM ($1::timestamptz - created_at)) * 1000000)::bigint AS us FROM consumer_observation WHERE project_id=$2 AND created_at < $1::timestamptz ORDER BY us`, [arrangedAt, projectId])).rows.map(r => Number(r.us)),
+    [...olderUs].sort((x, y) => x - y));
 
-  // At the same instant, 1 ms later, 37 ms later, in the next second: each links (one arrangement each, a linked arrangement takes one observation).
+  // At the same instant (the deterministic rule: not earlier, so accepted), 1 microsecond later, 400 us, 1 ms, 37 ms, 500 ms, 1 s later: each links.
   const accepted: Record<number, string> = {};
-  for (const later of [0, 1, 37, 500, 1000]) {
+  const laterUs = [0, 1, 400, 1000, 37_000, 500_000, 1_000_000];
+  for (const later of laterUs) {
     const fresh = await arrange();
     accepted[later] = await refused(fresh, await observe(later));
-    if (accepted[later] === "linked") {
+    if (accepted[later] === "linked")
       assert.equal((await pool.query("SELECT count(*)::int AS n FROM task_acceptance_observation_link WHERE project_id=$1 AND relay_id=$2", [projectId, fresh])).rows[0].n, 1, "the observation is linked");
-    }
   }
-  assert.deepEqual(accepted, { 0: "linked", 1: "linked", 37: "linked", 500: "linked", 1000: "linked" }, JSON.stringify(accepted));
+  assert.deepEqual(accepted, Object.fromEntries(laterUs.map(us => [us, "linked"])), JSON.stringify(accepted));
 
   // The stored precision really is finer than a second (the test would pass for the wrong reason if timestamptz were truncated).
-  const stored = (await pool.query("SELECT to_char(created_at AT TIME ZONE 'UTC','HH24:MI:SS.MS') AS t FROM task_acceptance_relay WHERE project_id=$1 AND relay_id=$2", [projectId, rejectedRelays[0]])).rows[0].t;
-  assert.equal(stored, "12:00:00.500");
+  const stored = (await pool.query("SELECT to_char(created_at AT TIME ZONE 'UTC','HH24:MI:SS.US') AS t FROM task_acceptance_relay WHERE project_id=$1 AND relay_id=$2", [projectId, rejectedRelays[0]])).rows[0].t;
+  assert.equal(stored, "12:00:00.500500");
+  const sub = (await pool.query("SELECT to_char(created_at AT TIME ZONE 'UTC','HH24:MI:SS.US') AS t FROM consumer_observation WHERE project_id=$1 ORDER BY created_at LIMIT 1", [projectId])).rows[0].t;
+  assert.equal(sub, "11:59:55.500500", "the 5 s offset is exact");
 });

@@ -384,12 +384,16 @@ export class AcceptanceRelayService {
           throw new DomainError("ACCEPTANCE_CHANGED","Current acceptance recipient or version changed",item.version);
         if(!await this.current(row(item)) || !await this.publicationReady(row(item)))
           throw new DomainError("ACCEPTANCE_NOT_READY","Current Delivery or publication changed");
-        const observation=required((await client.query(`SELECT * FROM consumer_observation
-          WHERE project_id=$1 AND observation_id=$2`,[projectId,observationId])).rows[0]??null,"consumer observation");
-        // pg gives timestamptz as a Date; Date.parse(Date) reads its string form and drops the milliseconds (defect ba59825a), so compare the instants themselves.
+        // "Earlier than the arrangement" is decided by PostgreSQL on the stored timestamptz values, at their full (microsecond) precision. The node driver turns a
+        // timestamptz into a JavaScript Date, which holds milliseconds only: comparing those would let an observation 1 to 999 microseconds older than the arrangement
+        // pass as "not older" (defect ba59825a; the first fix, which compared milliseconds, still had this). Equal instants are not earlier and are accepted:
+        // one arrangement links one observation, so there is no tie to break between candidates.
+        const observation=required((await client.query(`SELECT o.*,
+            o.created_at < (SELECT r.created_at FROM task_acceptance_relay r WHERE r.project_id=o.project_id AND r.relay_id=$3) AS earlier_than_arrangement
+          FROM consumer_observation o WHERE o.project_id=$1 AND o.observation_id=$2`,[projectId,observationId,relayId])).rows[0]??null,"consumer observation");
         if(observation.task_id!==item.task_id||observation.delivery_id!==item.delivery_id||
           observation.observer!==principal.actorId||observation.actor_id!==principal.actorId||
-          new Date(observation.created_at).getTime()<new Date(item.created_at).getTime())
+          observation.earlier_than_arrangement)
           throw new DomainError("OBSERVATION_MISMATCH","Observation does not belong to this recipient, Delivery and arrangement");
         if(item.mode==='human'){
           if(principal.identityKind!=="human"||observation.observer_kind!=="human"||
