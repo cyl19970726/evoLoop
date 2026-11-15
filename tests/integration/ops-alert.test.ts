@@ -77,9 +77,34 @@ async function harness(t: { after: (fn: () => Promise<void>) => void }) {
     const result = await workflow.execute(reviewer, { type: "task.create", projectId, operationId: randomUUID(), taskId, title, content: "# Work", acceptance: "Used", owner: role, consumer: "named-human",
       useRequired: true, acceptanceMode: "human_required", acceptanceTarget: "human" } as never);
     assert.equal(result.status, "applied", JSON.stringify(result)); return taskId; };
+  /** An ordinary message Turn on a Session (not a Run): the message, and the processing record of the Turn it started at `startedAt`. */
+  const messageTurn = async (startedAt: string, turnState: "completed" | "running" = "completed") => {
+    let sessionId: string | undefined = (await pool.query("SELECT session_id FROM runtime_session WHERE project_id=$1 ORDER BY created_at LIMIT 1", [projectId])).rows[0]?.session_id;
+    if (!sessionId) {
+      sessionId = randomUUID();
+      await pool.query(`INSERT INTO runtime_session(project_id,session_id,role_id,cwd,authorization_scope,sandbox,approval_policy,state,version,native_thread_id,native_session_id,operation_id,actor_id,created_at,updated_at)
+        VALUES($1,$2,$3,'/tmp/ops-alert','project','danger-full-access','never','ready',1,$4,$4,$5,'worker',now(),now())`, [projectId, sessionId, role, randomUUID(), randomUUID()]);
+    }
+    const messageId = randomUUID(), operationId = randomUUID();
+    await pool.query(`INSERT INTO session_message(project_id,message_id,operation_id,target_kind,session_id,sender_actor_id,content,state,version,created_at,updated_at)
+      VALUES($1,$2,$3,'owned',$4,'needs-agent','Periodic request',$5,1,$6,$6)`, [projectId, messageId, operationId, sessionId, turnState === "completed" ? "replied" : "processing", startedAt]);
+    await pool.query(`INSERT INTO session_message_processing(project_id,processing_id,message_id,session_id,operation_id,receiver_actor_id,state,native_turn_id,read_only_policy_fingerprint,version,started_at,updated_at)
+      VALUES($1,$2,$3,$4,$5,'agent',$6,$7,$8,1,$9,$9)`, [projectId, randomUUID(), messageId, sessionId, operationId, turnState, `turn-${messageId}`, "a".repeat(64), startedAt]);
+  };
+  /** A Delivery of a Task's current revision that passed its technical check, with the given observations ("used" / "notUsed" / "failed") recorded on it. */
+  const delivered = async (results: Array<"used" | "notUsed" | "failed">) => {
+    const item = await run("completed");
+    const task = (await pool.query("SELECT current_revision_id FROM task WHERE project_id=$1 AND task_id=$2", [projectId, item.taskId])).rows[0];
+    const deliveryId = randomUUID();
+    await pool.query(`INSERT INTO delivery(project_id,delivery_id,task_id,task_revision_id,artifact_ref,artifact_revision,content_hash,technical_result,technical_evidence,reason,actor_id,created_at)
+      VALUES($1,$2,$3,$4,'fixture:report','r1',$5,'passed','fixture','delivery','author',now())`, [projectId, deliveryId, item.taskId, task.current_revision_id, "a".repeat(64)]);
+    for (const result of results) await pool.query(`INSERT INTO consumer_observation(project_id,observation_id,task_id,delivery_id,observer,observer_kind,result,evidence,reason,actor_id,created_at)
+      VALUES($1,$2,$3,$4,'named-human','human',$5,'checked','recorded','named-human',now())`, [projectId, randomUUID(), item.taskId, deliveryId, result]);
+    return item;
+  };
   const holds = async () => (await pool.query("SELECT hold_id,version,state FROM runtime_provider_hold WHERE project_id=$1 ORDER BY opened_at", [projectId])).rows;
   const alerts = async () => (await pool.query("SELECT alert_key,kind,state,open_attempts,open_delivered_at,resolved_attempts,resolved_delivered_at,last_error FROM ops_alert WHERE project_id=$1 ORDER BY opened_at", [projectId])).rows;
-  return { pool, projectId, role, workflow, runtime, reviewer, state, pump, run, readyTask, holds, alerts, receiver, received, directory };
+  return { pool, projectId, role, workflow, runtime, reviewer, state, pump, run, readyTask, messageTurn, delivered, holds, alerts, receiver, received, directory };
 }
 
 test("a provider pause and its release each send one message with the reason, the start, the affected Sessions and the work waiting; restarts and repeats send nothing more", async t => {
@@ -215,4 +240,55 @@ test("while a provider is paused the stall is not announced a second time, and t
   assert.deepEqual(h.received.map(m => `${m.kind}:${m.event}`), ["provider_hold:opened", "provider_hold:resolved"], "work resumes after a release: the stall clock starts there, so no stall yet");
   h.state.offsetMs = 40 * 60_000; await pump.tick();
   assert.deepEqual(h.received.map(m => `${m.kind}:${m.event}`).slice(2), ["stall:opened"], "still nothing runs 31 minutes after the release, with work waiting");
+});
+
+test("defect rework (abcf2a12): ordinary message Turns neither end an announced stall nor send a second alert; only a Run created after the stall began does, with one recovery", async t => {
+  const h = await harness(t);
+  h.state.outlet = { kind: "webhook", url: await h.receiver(), headers: {}, timeoutMs: 2000 };
+  await h.readyTask("Waiting");
+  const pump = h.pump();
+  h.state.offsetMs = 31 * 60_000; await pump.tick();
+  assert.deepEqual(h.received.map(m => `${m.kind}:${m.event}`), ["stall:opened"]);
+  // During the stall a periodic request is answered, again and again, and one is running right now: none of it is a Run.
+  for (const minute of [33, 40, 47]) { await h.messageTurn(new Date(Date.now() + minute * 60_000).toISOString()); h.state.offsetMs = minute * 60_000 + 1000; await pump.tick(); }
+  await h.messageTurn(new Date(Date.now() + 50 * 60_000).toISOString(), "running"); h.state.offsetMs = 51 * 60_000; await pump.tick();
+  await h.pump().tick(); // a restart, too
+  assert.deepEqual(h.received.map(m => `${m.kind}:${m.event}`), ["stall:opened"], "no recovery and no second alert while only message Turns happen");
+  assert.deepEqual((await h.alerts()).map(a => a.state), ["open"]);
+  // A Run is created after the stall began: that ends it, with one recovery, and nothing else is sent.
+  await h.run("running", new Date(Date.now() + 55 * 60_000).toISOString()); h.state.offsetMs = 56 * 60_000; await pump.tick(); await pump.tick();
+  assert.deepEqual(h.received.map(m => `${m.kind}:${m.event}`), ["stall:opened", "stall:resolved"]);
+});
+
+test("defect rework (abcf2a12): a periodic message shorter than the stall time does not silence the alert", async t => {
+  const h = await harness(t);
+  h.state.outlet = { kind: "webhook", url: await h.receiver(), headers: {}, timeoutMs: 2000 };
+  await h.readyTask("Waiting");
+  const pump = h.pump();
+  // Requests every 10 minutes (shorter than the 30), the last one 5 minutes before the check at 41 minutes. Counting them as activity would keep the clock at 5 minutes for ever.
+  for (const minute of [10, 20, 30, 36]) await h.messageTurn(new Date(Date.now() + minute * 60_000).toISOString());
+  h.state.offsetMs = 41 * 60_000; await pump.tick();
+  assert.deepEqual(h.received.map(m => `${m.kind}:${m.event}`), ["stall:opened"], "the stall is announced although messages keep coming");
+  assert.match(h.received[0]!.text, /项目里还没有 Run/);
+});
+
+test("defect rework (abcf2a12): work waiting for acceptance counts deliveries nobody has observed; one sent back (notUsed or failed) or accepted (used) does not", async t => {
+  const h = await harness(t);
+  h.state.outlet = { kind: "webhook", url: await h.receiver(), headers: {}, timeoutMs: 2000 };
+  await h.delivered([]);                       // waiting: no observation yet
+  await h.delivered(["notUsed"]);              // sent back to its author
+  await h.delivered(["failed"]);               // sent back as well
+  await h.delivered(["used"]);                 // accepted
+  await h.delivered(["notUsed", "used"]);      // first sent back, then used after the rework: accepted
+  const pump = h.pump();
+  h.state.offsetMs = 31 * 60_000; await pump.tick();
+  assert.equal(h.received.length, 1);
+  assert.deepEqual(h.received[0]!.facts.pending, { ready: 0, queued: 0, awaitingAcceptance: 1 }, "only the delivery nobody observed waits");
+  assert.match(h.received[0]!.text, /压着 1 件活（就绪未派 0，在队伍里排队 0，等验收 1）/);
+  // With only returned and accepted deliveries, nothing waits: no stall at all.
+  const h2 = await harness(t);
+  h2.state.outlet = { kind: "webhook", url: await h2.receiver(), headers: {}, timeoutMs: 2000 };
+  await h2.delivered(["notUsed"]); await h2.delivered(["used"]);
+  h2.state.offsetMs = 3 * 3600_000; await h2.pump().tick();
+  assert.equal(h2.received.length, 0, "returned or accepted deliveries are not work waiting for the organisation to run");
 });
