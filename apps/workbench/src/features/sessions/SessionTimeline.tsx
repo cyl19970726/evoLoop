@@ -29,7 +29,7 @@ import { useSessionTimeline } from "./useSessionTimeline";
 import { ActorIdentifiers } from "../../shared/ui/ActorIdentifiers";
 import { settleEndedTools, workspaceReadingGroups, workspaceReadingOrder } from "./workspaceTimelineModel";
 import {
-  elapsedText, entryStateLabel, isFailedEntry, liveStatusText, pinnedToolIds, planExplanation, planSteps, recordLabel, toolDetailReason, toolGroupStatus, toolGroupSummary,
+  elapsedText, entryStateLabel, isFailedEntry, toolStepKind, liveStatusText, pinnedToolIds, planExplanation, planSteps, recordLabel, toolDetailReason, toolGroupStatus, toolGroupSummary,
   entryAuthorText, reasoningSourceLabel, toolLabel, toolStepState, toolStepText, turnLabel, turnReasoningTokensText, turnSummaries,
 } from "./conversationPresentation";
 import { SessionIdentityMark } from "./SessionIdentityMark";
@@ -118,7 +118,7 @@ function ToolGroup({ entries, scope, context, sessionKey, mayReadOriginal }: { e
       const label = toolLabel(entry.name);
       const selected = selectedId === entry.id;
       return {
-        id: entry.id, text: toolStepText(entry), meta: toolStepState(entry), failed: isFailedEntry(entry),
+        id: entry.id, text: toolStepText(entry), meta: toolStepState(entry), failed: isFailedEntry(entry), state: toolStepKind(entry),
         running: entry.state === "running" && entry.freshness === "live", pinned: pinned.has(entry.id),
         rowProps: { className: cn("workspace-tool", entry.state), "data-workspace-entry": entry.id, "data-turn-id": entry.turnId ?? undefined },
         action: <Button variant="link" className={cn(linkButton, "shrink-0")} aria-label={`${selected ? "收起" : "查看"}工具详情：${label}`} aria-expanded={selected}

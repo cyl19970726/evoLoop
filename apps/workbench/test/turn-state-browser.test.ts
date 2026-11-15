@@ -37,13 +37,19 @@ async function fixture(t: { after(fn: () => unknown): void }) {
   if (shots) mkdirSync(shots, { recursive: true });
   // The Turn "switch" starts running and is interrupted later; the others have their state from the start.
   let switchState: TurnState = "running";
-  const turns = () => [turnDef("t-done", "completed"), turnDef("t-int", "interrupted"), turnDef("t-fail", "failed"), turnDef("t-unk", "unknown"), turnDef("t-switch", switchState)];
+  const turns = () => [turnDef("t-done", "completed"), turnDef("t-int", "interrupted"), turnDef("t-fail", "failed"), turnDef("t-unk", "unknown"), turnDef("t-switch", switchState), turnDef("t-live", "running")];
   const entries = () => [
     timelineMessage("m-done", "任务一"), timelineAssistant("a-done", "一已结束", { turnId: "t-done" }), toolOf("t-done", "已结束的一轮"),
     timelineMessage("m-int", "任务二"), toolOf("t-int", "被中断的一轮"), timelineAssistant("a-int", "二被打断", { turnId: "t-int", state: "interrupted" }),
     timelineMessage("m-fail", "任务三"), toolOf("t-fail", "失败的一轮"),
     timelineMessage("m-unk", "任务四"), toolOf("t-unk", "结果未知的一轮"),
     timelineMessage("m-switch", "任务五"), toolOf("t-switch", "会切换状态的一轮"),
+    // Rework: the rows beside the unconfirmed one. A completed and a failed tool and a pending one in the interrupted Turn; a tool with no Turn; a running Turn with a live and a stale tool.
+    timelineTool("ok-int", "命令", "工具·中断轮里已完成的", "completed", { turnId: "t-int" }), timelineTool("bad-int", "命令", "工具·中断轮里失败的", "failed", { turnId: "t-int" }),
+    timelineTool("pend-int", "命令", "工具·中断轮里待处理的", "pending", { turnId: "t-int" }),
+    timelineTool("tool-none", "命令", "工具·没有轮次的", "running", { turnId: null, freshness: "live" }),
+    timelineMessage("m-live", "任务六"), timelineTool("live-live", "命令", "工具·运行中的轮里在跑的", "running", { turnId: "t-live", freshness: "live" }),
+    timelineTool("stale-live", "命令", "工具·运行中的轮里上次读到的", "running", { turnId: "t-live", freshness: "stale" }),
   ];
   const server = createServer(async (req, res) => {
     const url = new URL(req.url!, "http://127.0.0.1");
@@ -91,6 +97,7 @@ test("an ended Turn does not show its tool as running, whether it completed, fai
     await page.getByLabel("访问令牌").fill("fixture-token");
     await page.getByRole("button", { name: "进入", exact: true }).click();
     await page.locator(".workspace-tools").first().waitFor({ timeout: 30000 });
+    await page.evaluate((mode: string) => { document.documentElement.dataset.theme = mode; }, scheme);   // the dark tokens hang on :root[data-theme="dark"]
     return { page, context, errors };
   };
   /** The one-line status of the tool group of a Turn, read from the page: what the reader is told. */
@@ -107,8 +114,9 @@ test("an ended Turn does not show its tool as running, whether it completed, fai
     assert.ok(!/正在进行|进行中/.test(by(turn).text), `${turn}: an ended Turn does not say 进行中 (${by(turn).text})`);
     assert.match(by(turn).text, /结果未确认/, `${turn}: its tool says the result was not confirmed`);
   }
-  assert.match(by("t-unk").text, /正在进行|进行中/, "a Turn whose state is unknown is not settled by the page: its tool stays as read");
+  assert.ok(!/正在进行|进行中/.test(by("t-unk").text) && /结果未确认/.test(by("t-unk").text), `a Turn whose state is unknown does not confirm its tool as running (${by("t-unk").text})`);
   assert.match(by("t-switch").text, /正在进行|进行中/, "a Turn that is running shows its tool running");
+  assert.match(by("t-live").text, /正在进行|进行中/, "a running Turn's live tool is running");
   if (shots) await page.screenshot({ path: `${shots}/turn-1440-before-switch.png`, fullPage: true });
 
   // A status change: the running Turn is interrupted; the page follows (poll) and the line is replaced, not left beside the new one.
@@ -141,4 +149,42 @@ test("an ended Turn does not show its tool as running, whether it completed, fai
     await r.context.close();
   }
   void groupOf;
+});
+
+test("rows of one interrupted Turn: completed, failed, unconfirmed, pending, stale and running each have their own icon, colour and spoken name; only completed is a check, at 1440 and 390, light and dark", { skip }, async t => {
+  const { base, browser } = await fixture(t);
+  const expected: Record<string, string> = { "tool-t-done": "unknown", "tool-t-int": "unknown", "ok-int": "completed", "bad-int": "failed", "pend-int": "pending",
+    "tool-t-unk": "unknown", "tool-none": "unknown", "live-live": "running", "stale-live": "stale" };
+  const names: Record<string, string> = { unknown: "结果未确认", completed: "已完成", failed: "失败", pending: "待处理", running: "进行中", stale: "上次进行中，当前待核对" };
+  for (const [w, h, scheme] of [[1440, 900, "light"], [1440, 900, "dark"], [390, 844, "light"], [390, 844, "dark"]] as const) {
+    const context = await browser.newContext({ viewport: { width: w, height: h }, colorScheme: scheme });
+    const page = await context.newPage();
+    const errors: string[] = []; page.on("pageerror", e => errors.push(e.message));
+    await page.goto(`${base}/p/${projectId}/sessions?session=${encodeURIComponent(sessionKey)}&tab=activity`);
+    await page.getByLabel("访问令牌").fill("fixture-token"); await page.getByRole("button", { name: "进入", exact: true }).click();
+    await page.locator(".workspace-tools").first().waitFor({ timeout: 30000 });
+    await page.evaluate((mode: string) => { document.documentElement.dataset.theme = mode; }, scheme);
+    for (const toggle of await page.locator(".workspace-tools-toggle").all()) { if ((await toggle.getAttribute("aria-expanded")) !== "true") await toggle.click().catch(() => undefined); }
+    const rows = await page.evaluate(() => [...document.querySelectorAll<HTMLElement>(".workspace-tool")].map(li => ({
+      entry: li.getAttribute("data-workspace-entry")!, state: li.querySelector<HTMLElement>("[data-step-state]")?.getAttribute("data-step-state") ?? null,
+      icon: li.querySelector("svg")?.getAttribute("class")?.match(/lucide-([a-z-]+)/)?.[1] ?? null, name: li.querySelector(".sr-only")?.textContent?.replace("：", "") ?? null,
+      colour: getComputedStyle(li.querySelector("[data-step-state]")!).color })));
+    const by = (id: string) => rows.find(r => r.entry === id)!;
+    for (const [id, state] of Object.entries(expected)) {
+      const r = by(id);
+      assert.ok(r, `${w} ${scheme}: row ${id} is there`);
+      assert.equal(r.state, state, `${w} ${scheme} ${id}: state`); assert.equal(r.name, names[state], `${w} ${scheme} ${id}: spoken name`);
+      if (state === "completed") assert.equal(r.icon, "check", `${w} ${scheme}: completed is the check`);
+      else assert.notEqual(r.icon, "check", `${w} ${scheme} ${id}: ${state} is not drawn as a check (icon ${r.icon})`);
+    }
+    // One icon per state, and unconfirmed / stale differ in colour from completed (so a glance at 390 wide tells them apart).
+    const byState = new Map(Object.entries(expected).map(([id, state]) => [state, by(id)]));
+    assert.equal(new Set([...byState.values()].map(r => r.icon)).size, byState.size, `${w} ${scheme}: one icon per state ${JSON.stringify([...byState].map(([k, v]) => [k, v.icon]))}`);
+    for (const state of ["unknown", "stale"]) assert.notEqual(byState.get(state)!.colour, byState.get("completed")!.colour, `${w} ${scheme}: ${state} colour differs from completed`);
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+    assert.ok(overflow <= 0, `${w} ${scheme}: no horizontal overflow (${overflow}px)`);
+    assert.deepEqual(errors, []);
+    if (shots) await page.screenshot({ path: `${shots}/icons-${w}-${scheme}.png`, fullPage: true });
+    await context.close();
+  }
 });

@@ -62,17 +62,20 @@ export function mergeWorkspaceEntries(previous: WorkspaceEntry[], incoming: Work
 }
 
 /**
- * A tool whose Turn has ended is not running. The native source often never records the end of a tool of a Turn that was interrupted (or ended while
+ * A tool whose Turn has ended is not running; a running tool with no Turn, or of a Turn whose state is unknown, is not confirmed either.
+ * The native source often never records the end of a tool of a Turn that was interrupted (or ended while
  * the tool was still open), so the entry stays "running" forever; shown as it is, an interrupted Turn would say "正在进行" next to "这一轮已中断".
  * Such a tool becomes "unknown" (结果未确认): neither finished nor failed, which is all that is known. A tool of a Turn still running, or of a
  * Turn this read does not know, is left as it is.
  */
 export function settleEndedTools(entries: WorkspaceEntry[], turns: readonly Pick<WorkspaceTurn, "id" | "state">[]): WorkspaceEntry[] {
   const ended = new Set(turns.filter(turn => ["completed", "failed", "interrupted"].includes(turn.state)).map(turn => turn.id));
-  if (!ended.size) return entries;
+  const unknownTurn = new Set(turns.filter(turn => turn.state === "unknown").map(turn => turn.id));
   let changed = false;
   const settled = entries.map(entry => {
-    if (entry.kind !== "tool" || entry.state !== "running" || !entry.turnId || !ended.has(entry.turnId)) return entry;
+    if (entry.kind !== "tool" || entry.state !== "running") return entry;
+    // Nothing says this tool belongs to a Turn that is running: without a Turn, or in a Turn of unknown state, "进行中" would be an assertion nobody made.
+    if (entry.turnId && !ended.has(entry.turnId) && !unknownTurn.has(entry.turnId)) return entry;
     changed = true;
     return { ...entry, state: "unknown" as const };
   });
