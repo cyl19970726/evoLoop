@@ -398,7 +398,9 @@ export class SessionMessageService {
       if(turn.observedModel)await tx.recordSessionActualModel?.(p.sessionId,turn.observedModel,now);
       if(turn.usage&&tx.usage&&(session?.runtimeProvider??'codex')!=='codex')
         await tx.usage.addUsage(projectId,p.sessionId,this.deps.usageDay?.(now)??now.slice(0,10),{
-          ...inclusiveRuntimeUsage(turn.usage),costUsd:0,costReported:false});
+          ...inclusiveRuntimeUsage(turn.usage),
+          // The Turn's own cost, as a Run's is added: the daily cost covers every Turn, not only the Runs (defect 44ba20f6). Not reported stays 0 and not reported.
+          costUsd:turn.costUsd!=null&&turn.costUsd>0?turn.costUsd:0,costReported:turn.costUsd!=null});
       // The first quota/authentication failure pauses the whole provider: every Session of it would fail the same way.
       if(!ok&&holdsProvider(turn.error?.category)){
         await tx.recovery?.openProviderHold({id:this.deps.ids.next(),provider:session?.runtimeProvider??'codex',
