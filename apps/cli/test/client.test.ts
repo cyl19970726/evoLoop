@@ -116,6 +116,15 @@ test("one deadline covers the response body even if injected transport ignores a
   assert.equal(signal?.aborted, true);
 });
 
+test("a read can extend its deadline to the server wait it requested", async () => {
+  const client = new ApiClient({ apiUrl: origin, token, timeoutMs: 10, fetch: async () => {
+    await new Promise(resolve => setTimeout(resolve, 40));
+    return json({ waited: true });
+  } });
+  assert.deepEqual(await client.get("/api/projects/p/work-board/events?wait=1", 1000), { waited: true });
+  await assert.rejects(() => client.get("/api/session"), isError("TIMEOUT", 0, false));
+});
+
 test("invalid or truncated success JSON leaves a POST unconfirmed", async () => {
   const client = new ApiClient({ apiUrl: origin, token, fetch: async () => new Response('{"status":"applied"', { status: 200 }) });
   await assert.rejects(() => client.post("/api/commands", {}), isError("INVALID_RESPONSE", 200, true));

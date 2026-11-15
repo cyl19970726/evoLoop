@@ -82,7 +82,8 @@ export function registerAcceptanceRelayRoutes(app: FastifyInstance, workflow: Wo
     await workflow.getProject(request.principal,p.projectId);
     await relay.linkObservation(request.principal,p.projectId,p.taskId,p.relayId,body.observationId,
       body.operationId,body.expectedVersion);
-    return {status:"recorded",operationId:body.operationId,items:await relay.list(p.projectId,p.taskId)};
+    return {status:"recorded",operationId:body.operationId,relayId:p.relayId,observationId:body.observationId,
+      items:await relay.list(p.projectId,p.taskId)};
   });
   app.post("/api/projects/:projectId/tasks/:taskId/acceptance-relay/:relayId/release", async request => {
     const p=relayParams.parse(request.params);

@@ -162,6 +162,8 @@ flowchart TD
 | 普通消息：Agent 或人经 `session.message.post` 发出的消息、Leader 通知、消息 Connector 写入的外部平台消息 | 排队，等当前 Turn 结束、恢复门开放后，在原会话开新 Turn |
 | 业务 Task 队列的下一项 | 不进消息队列；队列控制者在 Session 空闲、上一项按释放规则放行后，才领取并启动新 Run |
 
+**平台通知触发的 Turn 仍有活动边界。** Leader 结果通知和通知包只保存来源事件、Task 修订、发送者与固定来源；它们的正文不是执行授权，也不承诺重复该 Session 的工作目录或 `authorizationScope`。收到通知的 Turn 只能使用 Session 绑定的工作目录、当前 Role 职责和从 CLI 读到的固定 Task 材料；不得因为通知缺上下文而扫描 `/tmp`、home、其他 Session 的回执、另一个项目或运行时私有配置。Role 提议的 `handoffBoundary` 必须写出实际工作目录和允许的活动范围，并在范围改变时修订；通知只负责触发本轮读取和判断，不负责把沙箱的 `danger-full-access` 解释成业务授权。当前通知格式没有逐 Turn 注入可执行的路径白名单，因此这条边界先由 Role 文字、Session 执行配置和固定 Task 共同约束；若通知要求的材料不在该边界内，就记录缺项并交回负责人，不自行扩大搜索。
+
 普通消息和业务 Run 共用同一个 Session 槽位，轮流启动；即时输入不借用这两条排队路径，它们也不借用即时输入。协调服务另用一把短锁串行化“开新一轮”和“送入当前轮”的原生发送，避免同一 Session 同时出现两个准入。
 
 **两种运行时的差别。** Codex 的 `delivery.midTurnInput` 按协议特性表开启：`0.166.0-alpha.6` 与 `0.167.0-alpha.3.2` 为是，早期版本和默认的 `0.166.0-alpha.5.1` 为否；`delivery.idleTurnStart` 在所有现代协议为是。`thread/settings/update` 只控制执行配置切换，不再与补入共用开关，因此只有 alpha.6 声明执行配置切换。Claude 适配器没有补入方法，两项即时能力均为否。两种运行时都实现了空闲直启所用的普通消息启动。
@@ -281,7 +283,7 @@ Codex 一列有几项取决于运行配置选的协议版本。“现代协议�
 | 沙箱和审批来自项目授权配置，而不是用户本机设置：普通 Session 为完全访问＋不需审批；连接器接收方的受限配置为只读、无网络，仅在固定 `0.166.0-alpha.6` 下可建，且首版不启用 | `nativeProfile()`、`connectorReceiver()` |
 | MCP 服务发起的表单请求（elicitation）一律拒绝 | `mcpServer/elicitation/request` 固定回 `decline` |
 | 原生提问 `request_user_input` 默认关闭；打开后只对本服务的子进程生效，不改用户全局配置 | `runtime.nativeUserInput`，默认 `false` |
-| 未配置 `codexHome` 时，与用户共用 Codex 状态目录（登录、模型设置、历史），evoLoop 创建的 Thread 会出现在用户自己的历史里；配置后独立 | `runtime.codexHome` |
+| 未配置 `codexHome` 时，与用户共用 Codex 状态目录（登录、模型设置、历史），evoLoop 创建的 Thread 会出现在用户自己的历史里；Codex 还可能为该 Session 的每个新工作目录在共用 `config.toml` 中追加信任条目，因此试用新目录会改动使用者自己的 Codex 配置；配置专用绝对路径后独立 | `runtime.codexHome`；条目格式与清理由 Codex 自己拥有 |
 | 浏览器只有实验性的只读桥，限定精确的项目、Run 和路由 | `runtime.browserRead` |
 | 受管 Thread 由 evoLoop 排他派发，不能同时从桌面客户端向同一 Thread 输入；桌面里的既有聊天只能人工转交 | 见[Codex 接入](codex-integration.md#普通消息与业务执行共用原会话) |
 

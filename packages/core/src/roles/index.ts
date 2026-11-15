@@ -19,6 +19,7 @@ export async function applyRole(tx: RoleTransaction, principal: Principal, input
   if (command.type !== "role.propose" && !principal.permissions.includes("review")) return fail("FORBIDDEN", "role decision requires review permission");
   if (!Number.isFinite(date(context.nowUtc))) return fail("INVALID_TIME", "nowUtc must be a valid instant");
   if (command.type === "role.runtime.set") return fail("INVALID_COMMAND", "role runtime commands are applied by applyRoleRuntime");
+  if (command.type === "role.bootstrap") return fail("INVALID_COMMAND", "role.bootstrap is applied by applyRoleBootstrap");
 
   if (command.type === "role.propose") {
     await checkProposal(tx, command.proposal, context.nowUtc);
@@ -141,16 +142,54 @@ export async function applyRole(tx: RoleTransaction, principal: Principal, input
   return { entityId: next.id, version: next.version, revisionId: revision.id };
 }
 
+/**
+ * Creates the one-time first Role of an empty project as an accepted trial Lead. The caller must have verified the
+ * project.create operation and that no Role exists; this function only owns the atomic Role/decision rules.
+ */
+export async function applyRoleBootstrap(tx: RoleTransaction, principal: Principal, input: RoleCommand, context: RoleApplyContext): Promise<RoleApplied> {
+  const parsed = roleCommandSchema.safeParse(input);
+  if (!parsed.success || parsed.data.type !== "role.bootstrap") return fail("INVALID_COMMAND", parsed.success ? "role.bootstrap required" : parsed.error.message);
+  const command = parsed.data;
+  if (!principal.actorId || !principal.projectIds.includes(command.projectId) ||
+    !principal.permissions.includes("write") || !principal.permissions.includes("review"))
+    return fail("FORBIDDEN", "role bootstrap requires project write and review permission");
+  if (!Number.isFinite(date(context.nowUtc))) return fail("INVALID_TIME", "nowUtc must be a valid instant");
+  checkProposalShape(command.proposal, context.nowUtc);
+  if (command.proposal.templateKey !== "lead" || command.proposal.roleClass !== "system")
+    return fail("INVALID_BOOTSTRAP_ROLE", "the first Role must be a system Lead");
+  if (!command.proposal.evidence.some(item => item.sourceRef === `project:${command.projectId}`))
+    return fail("INVALID_BOOTSTRAP_EVIDENCE", `bootstrap evidence must cite project:${command.projectId}`);
+  const revisionId = context.nextId();
+  const record: RoleRecord = {
+    projectId: command.projectId, id: command.roleId, version: 1, currentRevisionId: revisionId,
+    state: "trial", proposal: command.proposal, proposedBy: principal.actorId,
+    createdAtUtc: context.nowUtc, trialStartedAtUtc: context.nowUtc,
+    reviewAtUtc: command.proposal.reviewAtUtc, mergeTargetRoleId: null,
+  };
+  await tx.createRole(record, makeRevision(record, principal.actorId,
+    `first Role bootstrap from project.create ${command.projectCreateOperationId}: ${command.reason}`, context.nowUtc));
+  const decision: RoleDecision = {
+    projectId: record.projectId, id: context.nextId(), roleId: record.id, revisionId,
+    decision: "accept-trial", actorId: principal.actorId, reason: command.reason, createdAtUtc: context.nowUtc,
+  };
+  await tx.addDecision(decision);
+  return { entityId: record.id, version: record.version, revisionId };
+}
+
 /** The rules a proposal must meet to enter or re-enter the decision: class/template, a bounded trial, an open first Task. */
 async function checkProposal(tx: RoleTransaction, proposal: RoleProposal, nowUtc: string): Promise<void> {
+  checkProposalShape(proposal, nowUtc);
+  const first = await tx.getTask(proposal.firstTaskId);
+  if (!first || first.state === "done" || first.state === "cancelled") return fail("INVALID_FIRST_TASK", "first trial task must exist and remain open");
+}
+
+function checkProposalShape(proposal: Pick<RoleProposal, "templateKey" | "roleClass" | "reviewAtUtc" | "trialDays">, nowUtc: string): void {
   if (proposal.templateKey && !proposal.roleClass)
     return fail("INVALID_CLASS", "template association requires an explicit Role class");
   if (proposal.templateKey && proposal.roleClass &&
     (["lead","cognition","division"].includes(proposal.templateKey) ? "system" : "business") !== proposal.roleClass)
     return fail("INVALID_CLASS", "template class and Role class differ");
   if (date(proposal.reviewAtUtc) <= date(nowUtc) || date(proposal.reviewAtUtc) > date(nowUtc) + proposal.trialDays * 86_400_000) return fail("INVALID_TRIAL", "review date must fall inside the bounded trial");
-  const first = await tx.getTask(proposal.firstTaskId);
-  if (!first || first.state === "done" || first.state === "cancelled") return fail("INVALID_FIRST_TASK", "first trial task must exist and remain open");
 }
 
 function makeRevision(record: RoleRecord, actorId: string, reason: string, createdAtUtc: string): RoleRevision {

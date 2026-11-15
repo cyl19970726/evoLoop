@@ -174,7 +174,7 @@ export class AcceptanceRelayService {
     const result = await this.deps.pool.query(`SELECT a.*,m.state AS message_state,m.blocked_reason AS message_blocked_reason,
       p.state AS processing_state,p.native_turn_id,rr.actor_id AS read_actor_id,
       hr.read_at AS human_read_at,l.evidence_level,
-      o.result AS observation_result,o.observer AS observation_actor_id,o.observation_id,
+      o.result AS observation_result,o.observer AS observation_actor_id,o.observation_id,l.operation_id AS observation_operation_id,
       (SELECT r.session_id FROM delivery d JOIN runtime_run r
         ON r.project_id=d.project_id AND r.run_id=d.run_id
         WHERE d.project_id=a.project_id AND d.delivery_id=a.delivery_id LIMIT 1) AS author_session_id
@@ -190,7 +190,8 @@ export class AcceptanceRelayService {
     return result.rows.map(r => ({ ...row(r), messageState:r.message_state ?? null, messageBlockedReason:r.message_blocked_reason ?? null,
       processingState:r.processing_state ?? null, nativeTurnId:r.native_turn_id ?? null,
       readActorId:r.read_actor_id ?? null, humanReadAt:r.human_read_at ? new Date(r.human_read_at).toISOString() : null,
-      observationId:r.observation_id ?? null, observationResult:r.observation_result ?? null,
+      observationId:r.observation_id ?? null, observationOperationId:r.observation_operation_id ?? null,
+      observationResult:r.observation_result ?? null,
       observationActorId:r.observation_actor_id ?? null, evidenceLevel:r.evidence_level ?? null,
       independenceEvidence:r.mode === "human" ? "human_credential" :
         r.session_id && r.author_session_id && r.session_id !== r.author_session_id
