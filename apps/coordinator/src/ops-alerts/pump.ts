@@ -9,11 +9,14 @@ export const MAX_DELIVERY_ATTEMPTS = 12;
 const backoffMs = (attempts: number) => Math.min(30 * 60_000, 30_000 * 2 ** Math.max(0, attempts - 1));
 
 /**
- * A Run that really started: it got past the checks before the native Turn (recipient bound, authorisation, profile) and has a native Turn, or reached running or a
- * terminal state that needs one. A Run that was reserved and then failed in those checks (RECIPIENT_UNBOUND and the like) never ran anything: it is not activity, whether
- * it is looking for a stall to announce or for a stall to end. Counting it made the organisation look alive while nothing was done.
+ * A Run that really started executing: it is running, or it ran and ended (completed, interrupted, or failed AFTER it had its native Turn). Everything short of that
+ * is not activity, whether the question is "is the organisation alive" or "did the stall end": requested and dispatching (reserved, the start has not happened, maybe never
+ * will: a dispatch stuck there is exactly the kind of stillness this alert is for), unknown (the outcome is not known), and failed without a native Turn (it did not
+ * pass the start-up checks: RECIPIENT_UNBOUND and the like).
  */
-const STARTED = "(native_turn_id IS NOT NULL OR state IN ('running','completed','interrupted'))";
+const STARTED = "(state IN ('running','completed','interrupted') OR (state='failed' AND native_turn_id IS NOT NULL))";
+/** Executing right now. */
+const RUNNING = "state='running'";
 
 const iso = (value: unknown): string | null => value ? new Date(value as string | Date).toISOString() : null;
 
@@ -106,7 +109,7 @@ export class OpsAlertPump {
    * release of a provider pause (work only resumes after it), or at the project's creation. Ordinary message Turns are not Runs and count for nothing here, in either
    * direction: they neither keep a stall from being announced (a periodic request shorter than the time would otherwise silence it for ever) nor end one that was
    * announced (it would send a recovery and then a second alert for the same stillness). A stall ends only when a Run that really STARTED (see STARTED) is created after it
-   * began, or when nothing waits any more; a Run that failed its start-up checks does not, however often it is retried.
+   * began, or when nothing waits any more; a Run stuck in requested or dispatching, an unknown one, or one that failed its start-up checks does not, however often it appears.
    */
   private async reconcileStall(projectId: string, settings: AlertSettings): Promise<void> {
     const { pool } = this.deps;
@@ -115,7 +118,7 @@ export class OpsAlertPump {
           COALESCE((SELECT max(created_at) FROM runtime_run WHERE project_id=$1 AND ${STARTED}),'-infinity'),
           COALESCE((SELECT max(released_at) FROM runtime_provider_hold WHERE project_id=$1),'-infinity')) AS quiet_since,
         (SELECT max(created_at) FROM runtime_run WHERE project_id=$1 AND ${STARTED}) AS last_run,
-        EXISTS(SELECT 1 FROM runtime_run WHERE project_id=$1 AND state IN ('requested','dispatching','running','unknown')) AS active,
+        EXISTS(SELECT 1 FROM runtime_run WHERE project_id=$1 AND ${RUNNING}) AS active,
         EXISTS(SELECT 1 FROM runtime_provider_hold WHERE project_id=$1 AND state='held') AS held`, [projectId])).rows[0];
     const open = (await pool.query("SELECT alert_key,opened_at FROM ops_alert WHERE project_id=$1 AND kind='stall' AND state='open'", [projectId])).rows[0];
     if (!open) {

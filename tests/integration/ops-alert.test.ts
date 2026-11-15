@@ -49,7 +49,7 @@ async function harness(t: { after: (fn: () => Promise<void>) => void }) {
     settings: async (): Promise<AlertSettings> => ({ enabled: true, pollIntervalMs: 15000, stallMinutes: state.stallMinutes, outlet: state.outlet }),
     onGiveUp: line => state.gaveUp.push(line), onError: () => { state.errors++; } });
   /** A Session (provider codex) with a Task and a Run in the given state; returns what is needed to fail it. */
-  async function run(runState: "requested" | "running" | "completed" | "failed_preflight", createdAt = new Date().toISOString()) {
+  async function run(runState: "requested" | "dispatching" | "unknown" | "running" | "completed" | "failed_preflight", createdAt = new Date().toISOString()) {
     const sessionId = randomUUID(), runId = randomUUID(), taskId = randomUUID(), revisionId = randomUUID(), basisId = randomUUID(), documentId = randomUUID(), docRev = randomUUID();
     const c = await pool.connect();
     try {
@@ -66,7 +66,7 @@ async function harness(t: { after: (fn: () => Promise<void>) => void }) {
     const operationId = randomUUID();
     await c.query(`INSERT INTO runtime_run(project_id,run_id,task_id,task_revision_id,basis_set_id,session_id,operation_id,input,input_hash,state,version,native_turn_id,actor_id,created_at,updated_at,result_summary)
       VALUES($1,$2,$3,$4,$5,$6,$7,'Fixed input',$8,$9,1,$10,'worker',$11,$11,$12)`, [projectId, runId, taskId, revisionId, basisId, sessionId, operationId, "b".repeat(64), runState === "failed_preflight" ? "failed" : runState,
-      runState === "requested" || runState === "failed_preflight" ? null : `turn-${runId}`, createdAt, runState === "completed" ? "done" : runState === "failed_preflight" ? "RECIPIENT_UNBOUND: no business identity" : null]);
+      runState === "requested" || runState === "dispatching" || runState === "unknown" || runState === "failed_preflight" ? null : `turn-${runId}`, createdAt, runState === "completed" ? "done" : runState === "failed_preflight" ? "RECIPIENT_UNBOUND: no business identity" : null]);
     await c.query("INSERT INTO operation_journal(project_id,operation_id,actor_id,command_hash,command_type,result,created_at) VALUES($1,$2,'worker',$3,'runtime.run.reserve','{}',$4)", [projectId, operationId, "c".repeat(64), createdAt]);
     await c.query("COMMIT");
     } catch (error) { await c.query("ROLLBACK"); throw error; } finally { c.release(); }
@@ -322,4 +322,32 @@ test("defect rework (5cce25e2): repeated preflight failures shorter than the sta
   h.state.offsetMs = 41 * 60_000; await pump.tick();
   assert.deepEqual(h.received.map(m => `${m.kind}:${m.event}`), ["stall:opened"], "Runs that never started are not activity");
   assert.match(h.received[0]!.text, /项目里还没有 Run/, "the message does not call a failed start-up the last Run");
+});
+
+test("defect rework 4 (7376b8e9): a Run stuck in requested, dispatching or unknown, or one that failed its start-up checks, neither ends nor postpones a stall, however often it repeats; the same Run, or a new one, that really starts ends it with exactly one recovery", async t => {
+  for (const kind of ["requested", "dispatching", "unknown", "failed_preflight"] as const) {
+    const h = await harness(t);
+    h.state.outlet = { kind: "webhook", url: await h.receiver(), headers: {}, timeoutMs: 2000 };
+    await h.readyTask("Waiting");
+    const pump = h.pump();
+    // The dispatch is stuck from the first minute: a Run of this kind exists, and 31 minutes later the stall must still be announced on time (it does not postpone it).
+    const first = await h.run(kind, new Date(Date.now() + 1 * 60_000).toISOString());
+    h.state.offsetMs = 32 * 60_000; await pump.tick();
+    assert.deepEqual(h.received.map(m => `${m.kind}:${m.event}`), ["stall:opened"], `${kind}: announced on time although a Run of this kind exists`);
+    // More of the same, over more than two stall periods (32 -> 100 minutes), with a restart in between: still the one stall, nothing sent.
+    for (const minute of [40, 55, 70, 85, 100]) {
+      await h.run(kind, new Date(Date.now() + minute * 60_000).toISOString());
+      h.state.offsetMs = minute * 60_000 + 1000; await pump.tick();
+      if (minute === 70) await h.pump().tick();
+    }
+    assert.deepEqual(h.received.map(m => `${m.kind}:${m.event}`), ["stall:opened"], `${kind}: no recovery and no second opened`);
+    assert.deepEqual((await h.alerts()).map(a => a.state), ["open"], `${kind}: the one stall stays open`);
+    // Now it really starts. For the kinds that are a stuck Run, that same Run starts (it gets its native Turn and runs); for the failed one a new Run starts.
+    if (kind === "failed_preflight") await h.run("running", new Date(Date.now() + 105 * 60_000).toISOString());
+    else await h.pool.query("UPDATE runtime_run SET state='running', native_turn_id=$2, version=version+1 WHERE project_id=$1 AND run_id=$3", [h.projectId, `turn-${first.runId}`, first.runId]);
+    // (the stuck Run was created at minute 1, before the stall began at minute 32: starting it now is not "a new Run after the stall" for the created_at rule, so a new Run follows for those kinds)
+    if (kind !== "failed_preflight") await h.run("running", new Date(Date.now() + 105 * 60_000).toISOString());
+    h.state.offsetMs = 106 * 60_000; await pump.tick(); await pump.tick(); await h.pump().tick();
+    assert.deepEqual(h.received.map(m => `${m.kind}:${m.event}`), ["stall:opened", "stall:resolved"], `${kind}: exactly one recovery once a Run really runs`);
+  }
 });
