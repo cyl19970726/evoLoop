@@ -244,8 +244,12 @@ node scripts/restore.mjs --from /absolute/private-backups/evoloop-20261020 \
 
 - `commit`、`builtAt` 由服务端读**已部署目录根部的 `build-info.json`**（`{"commit": "<7–40 位十六进制>", "builtAt": "<ISO 时间>"}`）。文件缺失、不是合法 JSON 或字段不合规时，两者都是 `null`，页面写“版本未读到”，不回退旧值。
 - `startedAt` 是服务进程启动时间，页面叫“启动时间”，不是发布时间。
-- 发布脚本写 `build-info.json` 不在这次改动里：在发布流程写入之前，线上页面如实显示“版本未读到”。
+- 发布脚本在 `build` 步骤（构建和 carry-assets 之后）把 `build-info.json` 写进源码目录根（`commit` 是该目录 `HEAD` 的完整哈希，`builtAt` 是写入时的 UTC 时间）；写不出来（取不到提交哈希、目录不可写）这一步失败，此时还没有停服务，什么都没有变。`post-check` 钩子通过后，发布脚本自己再请求配置里的 `versionUrl`（`GET /api/version`），`commit` 必须与本次发布的提交一致（互为前缀，7–40 位）；服务还没起来会按 `versionCheck.retries`（默认 10）、`intervalMs`（默认 3000）重试，最后仍不一致或读不到提交就**判发布失败**，按现有规则停掉并恢复旧服务，发布记录里 `acceptance.versionCheck` 写 `failed` 与原因，成功时写 `passed` 与读到的提交。`versionUrl` 是必填的（私有配置里写服务自己的地址）；确实不检查要显式写 `skipVersionCheck: true`，发布记录会写 `skipped by config` 并打警告。回滚（`rollback`）不做这个检查。私有发布钩子里原来临时补写 `build-info.json` 的部分在这个版本生效后可以去掉（由需求 Session 处理）。
 - `/milestones` 读已部署的 `docs/roadmap.md` 阶段表；阶段与路线图阶段的关联存在 `stage_phase_key`（迁移 101），用 `stage.phaseKey.set`（review 权限）设置；未关联显示“未登记”。
+
+### 开放 PR 抢同一个迁移号
+
+`npm run check:migrations` 只看一棵合并后的树，看不到两个**都还开着**的 PR 各自占了同一个迁移号（#442 与 #448 都用了 110，合并前验收才发现）。`npm run check:open-pr-migrations -- --pr N`（`scripts/check-open-pr-migrations.mjs`）读开放 PR 的文件列表（`gh pr list --json files`）和基线分支（默认 `origin/main`）上的迁移文件：一个 PR 在某个号上有基线没有的迁移文件就算占了这个号，两个不同的 PR 占同一个号（不管文件名是否相同）就报，**指名两个 PR**（草稿也算并标出），并给一个没人用的号；只有一个 PR 用某个号、或某个 PR 只是改基线上已有的迁移，都不报。给了 `--pr` 只报牵涉该 PR 的冲突，不给则报所有冲突。读不到 PR 列表时退出码为 2（检查没有运行），不当作通过。两个地方运行：CI 的单元切片在 pull request 上运行它（用 `github.token`，工作流已加 `pull-requests: read`）；合并门 `merge-gate.mjs` 在放行一个改了迁移文件的 PR 前再查一次，有冲突就拒绝并指名，读不到开放 PR 也拒绝。限制：`gh` 对每个 PR 只给前 100 个文件，改动极大的 PR 里的迁移文件可能看不到；CI 只在 PR 有新推送时运行，所以后开的冲突 PR 要靠合并门拦。
 
 ### 发布脚本
 
@@ -255,6 +259,8 @@ node scripts/restore.mjs --from /absolute/private-backups/evoloop-20261020 \
 
 **带上上一版的工作台分块。** 工作台的页面是按需加载的分块文件，文件名带内容哈希（如 `assets/ArrangementPage-BFkRO_z-.js`），每次发布都会换名。令牌只存在页面内存里，刷新就要重新输入，所以发布前打开的标签页会一直开着；它之后再打开没打开过的页面，会去取旧名字的文件，旧版本不在了就报 `Failed to fetch dynamically imported module`（2026-11-12 线上“统筹安排”即此）。因此 `build` 步骤结束后，发布脚本（`scripts/release/carry-assets.mjs`）把上一版 `apps/workbench/dist/assets/` 里**新版本没有的文件**复制进新版本的同名目录，只补缺、绝不覆盖（同名即同内容哈希，新版本的文件原样保留）；这一步在停服务之前，失败即中止发布，什么都没动。上一版没有该目录（首次发布）时只记一行日志。配置 `carryAssets` 可选：`false` 关闭；`{ "keep": N, "keepDays": D, "assetsDir": "…" }` 调整，默认 `keep` 为 3、`keepDays` 为 7、`assetsDir` 为 `apps/workbench/dist/assets`（相对源码目录，随 `sourceSubdir`）。
 **保留策略（缺陷 581441ad：不再只按代数）：** 每次发布算一代，`assets-carry.json`（新版本目录里的 `apps/workbench/dist/assets-carry.json`）记下每一个仍保留的版本的构建时间和它构建出的文件。一个版本在**最近 `keep` 代之内，或构建不到 `keepDays` 天**时都保留，谁保留得更久听谁的；文件只要还有一个保留的版本在用就留着，所以目录仍然不会无限增长。只按代数时，一天发布三次就把前一天打开的标签页挤出去了（11-13 06:15、09:06、12:00 三次发布，11-12 那一代在 09:06 被删，使用者的标签页从此打不开没访问过的页面）。按每天发布 3 次估：7 天约 20 个版本、一个版本约 7.6 MB，目录约 150 MB，代价可以接受；需要更长或更短时调 `keepDays`（`0` 表示只按代数）。上一版的清单是旧格式（只有代数、没有时间）时按尽力读取：它的各代取清单文件的修改时间，最多比应有的多留 `keepDays` 天，不会提前删。
+**构建时间是构建自己的。** 一代的 `builtAt` 取这次构建自己生成的文件里最新的修改时间（不晚于当前时间，也不早于上一代已记录的时间），不是复制或写记录的那一刻；这次构建没有自己的文件、或读不到时间时才退回当前时间。
+
 **读回：** 发布日志和发布状态文件的 `acceptance.carriedAssets` 记录这次复制、过期和同名的文件数及字节数，以及 `oldestUsableEntry`（这次发布之后仍能用的最旧入口：它的构建时间和代数，要求该版本构建出的文件现在都在）和保留的版本数；日志一行“oldest entry still usable after this release: <时间>”。
 **超出保留的标签页：** 工作台自己有“已经更新到新版本”页（#396），但比 #396 更早打开的标签页没有。协调服务对 `/assets/` 下取不到的 `.js` 文件不再回 404，而是回 200、`Cache-Control: no-store` 的一小段脚本：在页面上显示“工作台已经更新到新版本……请刷新页面”和刷新按钮，并以 `Failed to fetch dynamically imported module` 失败这次导入（新标签页据此显示它们自己的页面）。其他类型的缺失文件和 `/assets/` 之外仍是 404。这一步只补静态文件，不让旧标签页的接口调用与新服务兼容，接口不兼容的改动仍须靠刷新。
 
