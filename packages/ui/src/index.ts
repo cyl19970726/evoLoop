@@ -21,8 +21,8 @@ export {
 } from "./components/avatar";
 export { Logo, type LogoProps } from "./components/logo";
 export {
-  Mention, MessageBubble, AgentMessage, ToolSummary, NestedActivity, LiveStatusLine, QuestionCard, TodoList, QueuedMessages, TurnSummary,
-  type MessageBubbleProps, type ToolStep, type ToolSummaryProps, type NestedActivityProps, type LiveStatusLineProps, type QuestionOption,
+  Mention, MessageBubble, AgentMessage, ToolSummary, toolStepVisual, NestedActivity, LiveStatusLine, QuestionCard, TodoList, QueuedMessages, TurnSummary,
+  type MessageBubbleProps, type ToolStep, type ToolStepState, type ToolSummaryProps, type NestedActivityProps, type LiveStatusLineProps, type QuestionOption,
   type QuestionCardProps, type TodoItem, type TodoStatus, type QueuedMessage, type QueuedMessagesProps, type TurnSummaryProps,
 } from "./components/conversation";
 export {
