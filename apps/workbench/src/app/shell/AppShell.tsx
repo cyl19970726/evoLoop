@@ -12,6 +12,7 @@ import { currentPath, navigate, onAddressChange } from "../../shared/navigation"
 import { SessionNavigation, emptySessionNavigationState, type SessionNavigationState } from "../../features/sessions/SessionNavigation";
 import { ContextPanelColumn, ContextPanelProvider } from "../../shared/ui/ContextPanel";
 import { ContextRailProvider, ContextRailSlot } from "../../shared/ui/ContextRail";
+import { SectionTabs, sectionTabsFor } from "./SectionTabs";
 import { useMediaQuery } from "../../shared/ui/useMediaQuery";
 import {
   inboxNavigation, leafOf, projectInitial, rememberSpace, sectionLabels, spaceHref, spaceLabels, spaceOf, workNavigation, workSectionOf,
@@ -39,6 +40,7 @@ export function AppShell(props: AppShellProps) {
   const { route, projectId, actor } = props;
   const space = spaceOf(route);
   const compact = !useMediaQuery("(min-width: 760px)");
+  const tabs = sectionTabsFor(route);   // a section's sub-pages in the page itself on the narrow frame
   const store = typeof window === "undefined" ? null : window.sessionStorage;
   // The address including quiet rewrites (a list's filter, search or selected row), so each space is remembered as
   // the reader left it and the space links point there.
@@ -118,7 +120,7 @@ export function AppShell(props: AppShellProps) {
         </nav>
         {!railHidden && <div className="sticky top-0 hidden h-dvh compact:block"><ContextRail {...railProps} /></div>}
         <div className="flex min-w-0 bg-background compact:m-2 compact:ml-0 compact:min-h-[calc(100dvh-16px)] compact:rounded-xl compact:shadow-lg">
-          <main id="workspace-main" tabIndex={-1} className="min-w-0 flex-1 outline-none max-compact:pb-20">{props.notices?.map(({ key, ...notice }) => <ShellNotice key={key} {...notice} />)}{props.children}</main>
+          <main id="workspace-main" tabIndex={-1} className="min-w-0 flex-1 outline-none max-compact:pb-20">{props.notices?.map(({ key, ...notice }) => <ShellNotice key={key} {...notice} />)}{compact && tabs && <SectionTabs item={tabs} route={route} projectId={projectId} />}{props.children}</main>
           <ContextPanelColumn />
         </div>
       </div>

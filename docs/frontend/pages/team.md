@@ -71,6 +71,7 @@
 
 | 范围 | 源码（`apps/workbench/src/`） | 测试（`apps/workbench/test/`） |
 | --- | --- | --- |
+| 窄屏子页入口（390 宽，五个子页在页面顶部） | `app/shell/SectionTabs.tsx`、`app/shell/AppShell.tsx` | `team-subnav-browser.test.ts` |
 | 外壳与组织复盘 | `features/team/TeamWorkspace.tsx`、`features/team/OrganizationReviewList.tsx`、`shared/routes.ts` | `team-browser.test.ts`、`team-presentation.test.ts` |
 | 职责 | `features/roles/RolesView.tsx`、`features/roles/RoleDetail.tsx`（历史里只有标识的记录者写“未登记名称的身份”，标识在“完整标识”）、`features/roles/RolePresence.tsx`、`features/roles/RoleRuntime.tsx`、`features/roles/RoleTemplates.tsx`、`features/roles/SourceRef.tsx`、`features/roles/rolePresentation.ts` | `role-presentation.test.ts`、`role-runtime-card.test.ts`、`role-template-summary-browser.test.ts`、`role-card-keep-open-browser.test.ts`、`resident-observation-browser.test.ts`、`team-roles-browser.test.ts` |
 | 分工与运行 | `features/runtime/ExecutionView.tsx`、`features/runtime/ManagedSessionDetail.tsx`、`features/runtime/ManagedSessionCreate.tsx`、`features/runtime/RunList.tsx`、`features/runtime/AgentName.tsx`、`features/runtime/executionPresentation.ts`、`features/orchestration/OrchestrationPanel.tsx`（编排）、`features/orchestration/presentation.ts` | `execution-presentation.test.ts`、`orchestration-observation.test.ts`、`task-loop-browser.test.ts`、`legacy-bits-browser.test.ts`、`runtime-session-role-browser.test.ts`、`runtime-model-selection-browser.test.ts`、`runtime-reconcile-browser.test.ts` |
