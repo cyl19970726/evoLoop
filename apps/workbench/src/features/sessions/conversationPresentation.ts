@@ -80,12 +80,38 @@ export function toolGroupStatus(entries: readonly Pick<WorkspaceTool, "state" | 
   const running = entries.some(entry => entry.state === "running" && entry.freshness === "live");
   const unconfirmed = entries.some(entry => entry.state === "running" && entry.freshness !== "live");
   const failures = entries.filter(isFailedEntry).length;
-  return [running && "，正在进行", unconfirmed && "，上次进行中的一项当前待核对", failures > 0 && `，${failures} 项失败或中断`].filter(Boolean).join("");
+  const unknown = entries.filter(entry => entry.state === "unknown").length;
+  const pending = entries.filter(entry => entry.state === "pending").length;
+  return [running && "，正在进行", unconfirmed && "，上次进行中的一项当前待核对", failures > 0 && `，${failures} 项失败或中断`,
+    unknown > 0 && `，${unknown} 项结果未确认`, pending > 0 && `，${pending} 项待处理`].filter(Boolean).join("");
+}
+
+/**
+ * How a tool row is drawn: the one mapping from the entry's state to the step state the UI shows. Completed alone is a check; failed (and
+ * interrupted, declined) is an X; running is a spinner only while the read is live; a running tool of an old read is stale, one whose result
+ * was never recorded is unknown, one not started is pending. None of the last three is ever drawn as a success.
+ */
+export function toolStepKind(entry: Pick<WorkspaceTool, "state" | "freshness">): "completed" | "failed" | "running" | "unknown" | "pending" | "stale" {
+  if (isFailedEntry(entry)) return "failed";
+  if (entry.state === "running") return entry.freshness === "live" ? "running" : "stale";
+  if (entry.state === "unknown") return "unknown";
+  if (entry.state === "pending") return "pending";
+  return "completed";
+}
+
+/**
+ * Items of an owned-native-history trace page: an item still "inProgress" on a page whose Turn has ended (completed, failed, interrupted) was never
+ * given its result by the source, so it is shown as unconfirmed, not as in progress. Same rule as settleEndedTools, for the activity feed's trace.
+ */
+export function settleTraceItems<T extends { status: string | null }>(items: readonly T[], turnStatus: string | null | undefined): T[] {
+  if (!turnStatus || !["completed", "failed", "interrupted"].includes(turnStatus)) return [...items];
+  return items.map(item => item.status !== null && ["inProgress", "in_progress", "running"].includes(item.status) ? { ...item, status: "unconfirmed" } : item);
 }
 
 /** A step's state on the right of its row; a running step from an older read is not presented as running. */
 export function toolStepState(entry: Pick<WorkspaceTool, "state" | "freshness" | "durationMs">): string {
-  const state = entry.state === "running" && entry.freshness !== "live" ? "上次进行中，当前待核对" : entryStateLabel[entry.state];
+  const state = entry.state === "running" && entry.freshness !== "live" ? "上次进行中，当前待核对"
+    : entry.state === "unknown" ? "结果未确认（没有记下它的结果）" : entryStateLabel[entry.state];
   return entry.durationMs !== null ? `${state} · ${Math.round(entry.durationMs) / 1000} 秒` : state;
 }
 
