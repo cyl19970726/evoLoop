@@ -12,6 +12,7 @@ import {
   AgentMessage, Composer, LiveStatusLine, Mention, MessageBubble, NestedActivity, QuestionCard, QueuedMessages, TodoList, ToolSummary, TurnSummary,
   type ComposerAgent, type ComposerAttachment, type ComposerCommand, type QueuedMessage,
 } from "@evoloop/ui";
+import { claimThemeForSample } from "../../shared/theme";
 import { sampleAgent, sampleAgents, sampleCommands, sampleInbox, samplePerson, sampleTasks, sampleTodos, type SampleAgent } from "../../shared/fixtures";
 
 type Theme = "light" | "dark";
@@ -192,10 +193,10 @@ export default function UiSamplesPage() {
   const [selected, setSelected] = React.useState(sampleTasks[0].id);
 
   React.useEffect(() => {
-    const root = document.documentElement;
-    const previous = root.dataset.theme;
-    root.dataset.theme = theme;
-    return () => { if (previous) root.dataset.theme = previous; else delete root.dataset.theme; };
+    // The sample's own switch wins while the page is open; leaving applies the formal preference again (shared/theme.ts).
+    const release = claimThemeForSample();
+    document.documentElement.dataset.theme = theme;
+    return release;
   }, [theme]);
 
   return (
