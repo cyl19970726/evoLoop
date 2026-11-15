@@ -22,7 +22,7 @@ import { AgentName } from "./AgentName";
 import { ManagedSessionCreate } from "./ManagedSessionCreate";
 import { ManagedSessionDetail, RoleLabel } from "./ManagedSessionDetail";
 import { RunList } from "./RunList";
-import { executionHref, fullGrants, permissionsText, sessionGroups, sessionStateText, sessionStateTone, sessionTargetNotice, uuidPattern } from "./executionPresentation";
+import { executionHref, fullGrants, permissionsText, sessionGroups, sessionStateLine, sessionStateText, sessionStateTone, sessionTargetNotice, uuidPattern } from "./executionPresentation";
 import { useRoleNames } from "./useRoleNames";
 import { failureOf, type Failure } from "../../shared/errorPresentation";
 import { ErrorDetails } from "../../shared/ui/ErrorDetails";
@@ -104,7 +104,7 @@ export function ExecutionView({ context, refresh, sessionId }: { context: Mutati
             return <a key={item.id} href={executionHref(projectId, item.id)} aria-current={sessionId === item.id ? "page" : undefined}
               className={cn("flex flex-col rounded-lg px-3 py-1.5 outline-none focus-visible:shadow-[var(--focus-ring)]", sessionId === item.id ? "bg-raised shadow-sm" : "hover:bg-selected")}>
               <span className="truncate text-small text-foreground">{name.title ?? name.fallback}</span>
-              <span className="truncate text-caption text-muted-foreground">{sessionStateText[item.state]} · <AgentName projectId={projectId} sessionId={item.id} /></span>
+              <span className="truncate text-caption text-muted-foreground">{sessionStateLine(item)} · <AgentName projectId={projectId} sessionId={item.id} /></span>
             </a>;
           })}
         </div>)}
@@ -154,7 +154,7 @@ export function ExecutionView({ context, refresh, sessionId }: { context: Mutati
               return <li key={item.id} data-session-id={item.id}>
                 <ListRow href={executionHref(projectId, item.id)} title={name.title ?? name.fallback}
                   meta={<><AgentName projectId={projectId} sessionId={item.id} /> · {permissionsText(item.sandbox, item.approvalPolicy)} · {item.authorizationScope}</>}
-                  trailing={<StatusTag tone={sessionStateTone(item.state)} label={sessionStateText[item.state]} />} />
+                  trailing={item.state === "ready" && item.usable === false ? <StatusTag tone="waiting" label="不可用" /> : <StatusTag tone={sessionStateTone(item.state)} label={sessionStateText[item.state]} />} />
               </li>;
             })}</ul>
           </div>)}
@@ -173,7 +173,7 @@ export function ExecutionView({ context, refresh, sessionId }: { context: Mutati
       <div className="flex flex-col gap-4">
         {selected && <PanelSection title="受管智能体">
           <FactList rows={[
-            ["状态", sessionStateText[selected.state]],
+            ["状态", sessionStateLine(selected)],
             ["职责", <RoleLabel key="role" projectId={projectId} roleId={selected.roleId} name={nameOf(selected.roleId)} />],
             ["模型", selected.model ?? "未显式指定"],
             ["权限", permissionsText(selected.sandbox, selected.approvalPolicy)],

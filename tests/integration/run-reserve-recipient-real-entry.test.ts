@@ -160,7 +160,7 @@ test("a caller without the runtime execution grant is stopped by authorization f
 test("main.ts hands buildServer the production assembly, not an inline copy", async () => {
   const { readFile } = await import("node:fs/promises");
   const source = await readFile(new URL("../../apps/coordinator/src/main.ts", import.meta.url), "utf8");
-  const wired = source.match(/requireRunRecipient:\s*createReserveRecipientCheck\(\{\s*uow,\s*loadIntegrations:\s*\(\)\s*=>\s*loadIntegrations\(process\.env\.EVOLOOP_INTEGRATIONS_FILE\)\s*\}\)/g) ?? [];
-  assert.equal(wired.length, 1, "buildServer's requireRunRecipient is createReserveRecipientCheck over the real unit of work and configuration loader");
+  const wired = source.match(/requireRunRecipient:\s*createReserveRecipientCheck\(\{\s*uow,\s*loadIntegrations:\s*\(\)\s*=>\s*loadIntegrations\(process\.env\.EVOLOOP_INTEGRATIONS_FILE\),\s*usability:\s*sessionUsability,\s*recordRefusal:[\s\S]*?\}\s*\}\)/g) ?? [];
+  assert.equal(wired.length, 1, "buildServer's requireRunRecipient is createReserveRecipientCheck over the real unit of work, configuration loader and Session usability judgement (Task 6612e287)");
   assert.equal((source.match(/requireRunRecipient/g) ?? []).length, 1, "no second, inline recipient check is wired");
 });

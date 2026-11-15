@@ -142,7 +142,7 @@ test("a managed agent that is closing or whose lifecycle is unchecked is not fre
   assert.deepEqual(board.rows.map(row => [row.session.title, row.load]),
     [["智能体1", "unknown"], ["智能体2", "unknown"], ["智能体3", "idle"]]);
   assert.deepEqual(freeAgents(board).map(row => row.session.title), ["智能体3"]);
-  assert.deepEqual(freeCapacity(board), { judged: true, free: freeAgents(board), others: 3, unknown: 2 });
+  assert.deepEqual(freeCapacity(board), { judged: true, free: freeAgents(board), others: 3, unknown: 2, unusable: 0 });
 });
 
 test("entries of a queue that is not adopted are not queued work", () => {

@@ -100,6 +100,9 @@ import { createOrdinaryRunSealer } from "./ordinary-run-submission/seal.js";
 import { OrdinaryRunSealPump } from "./ordinary-run-submission/pump.js";
 import { resolveSenderClass, type SenderClass } from "./session-messages/sender.js";
 import { resolveLineRecipient } from "./session-line/recipient.js";
+import { createSessionUsability } from "./runtime/session-usability.js";
+import { acceptanceCapabilityProblemsFor } from "./acceptance-relay/capability.js";
+import { SessionAttentionPump, pgSessionAttentionStore, listSessionAttention, postAttentionMessage } from "./session-attention/pump.js";
 import { keyedThrottledLog, messageErrorEntry } from "./session-messages/error-line.js";
 import { throttledLog } from "./log-throttle.js";
 import { materialCliRecipientMatches, createReserveRecipientCheck, requireOrdinaryRecipient } from "./runtime/recipient-preflight.js";
@@ -652,22 +655,21 @@ const messageService = new SessionMessageService({ uow, clock, ids,
   if (!grant || !await currentProjectWriter(message.projectId, grant.receiverActorId)) return null;
   try { return await realpath(session.cwd) === session.cwd ? grant : null; } catch { return null; }
 } });
-const acceptanceCapabilityProblems = async ({projectId,session,senderActorId,receiverActorId}:
-  {projectId:string;session:RuntimeSessionRecord;senderActorId:string;receiverActorId:string}) => {
-  const problems:string[]=[];
-  const current=await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE);
-  if(session.state!=="ready"||!session.nativeThreadId||!await currentSessionExecutionAuthority(session))
-    problems.push("SESSION_NOT_READY");
-  if(!await currentProjectWriter(projectId,senderActorId))problems.push("SENDER_IDENTITY_UNAVAILABLE");
-  if(!await currentProjectWriter(projectId,receiverActorId))problems.push("RECEIVER_IDENTITY_UNAVAILABLE");
-  const material=current.runtime?.enabled ? selectMaterialCli(current.runtime.materialCli,projectId,
-    session.id,session.actorId,undefined,session.roleId) : null;
-  if(material?.cliActorId!==receiverActorId)problems.push("RECIPIENT_BINDING_MISSING");
-  if(!current.sessionMessages?.enabled||!current.sessionMessages.grants.some(g=>g.enabled&&g.projectId===projectId&&
-    g.sessionId===session.id&&g.senderActorId===senderActorId&&g.receiverActorId===receiverActorId&&
-    g.receiverRoleId===session.roleId&&g.cwd===session.cwd))problems.push("MESSAGE_GRANT_MISSING");
-  return [...new Set(problems)];
-};
+// Whether a Session can start work now, judged from the same facts as the Session line's recipient (private configuration + project writers).
+const sessionUsability = createSessionUsability({ query: (sql, params) => pool.query(sql, params as never[]) as never,
+  config: async () => { const configured = await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE);
+    return { materialCli: configured.runtime?.enabled ? configured.runtime.materialCli : [], roleActors: configured.residentQueue?.enabled ? configured.residentQueue.roleActors : [] }; },
+  projectWriter: (projectId, actorId) => currentProjectWriter(projectId, actorId) });
+const acceptanceCapabilityProblems = acceptanceCapabilityProblemsFor({
+  config: async () => {
+    const current = await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE);
+    return {
+      boundRecipient: (projectId, session) => (current.runtime?.enabled ? selectMaterialCli(current.runtime.materialCli, projectId, session.id, session.actorId, undefined, session.roleId) : null)?.cliActorId ?? null,
+      messageGrant: (projectId, session, senderActorId, receiverActorId) => !!current.sessionMessages?.enabled && current.sessionMessages.grants.some(g => g.enabled && g.projectId === projectId &&
+        g.sessionId === session.id && g.senderActorId === senderActorId && g.receiverActorId === receiverActorId && g.receiverRoleId === session.roleId && g.cwd === session.cwd),
+    };
+  },
+  executionAuthority: session => currentSessionExecutionAuthority(session), projectWriter: (projectId, actorId) => currentProjectWriter(projectId, actorId), usability: sessionUsability });
 const acceptanceRelay = new AcceptanceRelayService({pool,workflow:service,messages:messageService,
   principals:currentIdentity,canWrite:lease.canWrite,
   leaderSession:async projectId => (await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE)).leaderResultNotices?.targets
@@ -892,6 +894,24 @@ const sessionLinePump = new SessionLinePump({workflow:service,canWrite:lease.can
   pollIntervalMs:integrations.residentQueue?.pollIntervalMs??2000,
   recipientActorId:lineRecipient,
   onError:()=>console.error("Session line tick failed; inspect the persisted line entry and its Run before retrying.")});
+// Repeated same-cause start failures or refusals (migration 111): the Leader gets the notice through the notice path; the requirements Sessions get a message here.
+const sessionAttentionPump = new SessionAttentionPump({ store: pgSessionAttentionStore(pool as never), canWrite: lease.canWrite,
+  requirementsSessions: async projectId => {
+    const live = (await pool.query("SELECT session_id FROM runtime_session WHERE project_id=$1 AND state='ready'", [projectId])).rows as Array<{ session_id: string }>;
+    const found: string[] = [];
+    for (const row of live) {
+      const recipient = await lineRecipient(projectId, row.session_id);
+      if (recipient && typeof recipient === "string" && (await senderClassOf(projectId, recipient)).kind === "requirements") found.push(row.session_id);
+    }
+    return found;
+  },
+  post: async (projectId, recipientSessionId, content, messageId, operationId) => {
+    const target = (await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE)).leaderResultNotices?.targets.find(t => t.projectId === projectId);
+    const sender = (await currentIdentity()).find((p: { actorId: string; projectIds: string[]; permissions: string[] }) => p.actorId === target?.senderActorId && p.projectIds.includes(projectId) && p.permissions.includes("read") && p.permissions.includes("write"));
+    return postAttentionMessage(service as never, target && sender ? sender : null, projectId, recipientSessionId, content, messageId, operationId);
+  },
+  onSkipped: (item, reason) => console.error(`Session attention ${item.attentionId} has nobody to tell: ${reason.slice(0, 80)}`),
+  onError: () => console.error("Session attention delivery failed; the item stays and is tried again next round.") });
 const ordinarySealPump = new OrdinaryRunSealPump({
   canWrite: lease.canWrite,
   listProjects: () => ordinarySubmissions.listUnsettledProjects(),
@@ -976,7 +996,8 @@ const app = await buildServer({ service, credentials, canWrite: lease.canWrite, 
   taskAttentionPool: pool,
   workStatuses: (principal, projectId, taskIds) => readWorkStatuses(pool, service, principal, projectId, taskIds),
   workIndex: createLeaderWorkIndexReader(pool),
-  workBoard: { reads: workBoardReads, hub: schedEventHub },
+  workBoard: { reads: workBoardReads, hub: schedEventHub, usability: sessionUsability }, sessionUsability,
+  sessionAttention: projectId => listSessionAttention(pool as never, projectId),
   decisionsForMe: (projectId, actorId, canDecide) => readDecisionsForMe(pool, projectId, actorId, canDecide),
   leaderNotices: {
     packet: async (projectId, packetId) => {
@@ -1058,7 +1079,8 @@ const app = await buildServer({ service, credentials, canWrite: lease.canWrite, 
       approvalPolicy:command.approvalPolicy}) === true,
   authorizeDynamicRun: async (principal,command,session) => principal.permissions.includes("review") &&
     principal.actorId === session.actorId && await dynamicAdmission?.canReserveRun(session,command.runId,command.taskId) === true,
-  requireRunRecipient: createReserveRecipientCheck({ uow, loadIntegrations: () => loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE) }),
+  requireRunRecipient: createReserveRecipientCheck({ uow, loadIntegrations: () => loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE), usability: sessionUsability,
+    recordRefusal: async (projectId, sessionId, taskId, cause) => { await pool.query("SELECT record_session_start_refusal($1,$2,$3,$4)", [projectId, sessionId, taskId, cause]); } }),
   authorizeDynamicMessageRecovery: async (principal,session) => principal.permissions.includes("review") &&
     await dynamicAdmission?.canStartConversation(session) === true,
   runtimeGrants: (projectId, actorId) => runtimeConfig?.enabled ? runtimeConfig.grants.filter(g => g.projectId === projectId && g.actorId === actorId) : [],
@@ -1123,7 +1145,7 @@ let shuttingDown = false;
 async function shutdown() {
   if (shuttingDown) return; shuttingDown = true;
   try { clearInterval(acceptanceTimer); connectorIngress?.stop(); taskAttentionPump.stop(); opsAlertPump.stop(); leaderResultNoticePump.stop();
-    messagePump?.stop(); residentQueue.stop(); sessionLinePump.stop(); ordinarySealPump.stop(); await managed?.stop();
+    messagePump?.stop(); residentQueue.stop(); sessionLinePump.stop(); sessionAttentionPump.stop(); ordinarySealPump.stop(); await managed?.stop();
     await collaboration.stop(); await scheduling.stop(); await app.close(); sessionTimeline.close(); }
   finally {
     // Keep the coordinator lease while a native child may still be alive.
@@ -1134,5 +1156,5 @@ async function shutdown() {
 }
 process.once("SIGINT", () => void shutdown());
 process.once("SIGTERM", () => void shutdown());
-try { await app.listen({ host: "127.0.0.1", port }); managed?.start(); ordinarySealPump.start(); residentQueue.start(); sessionLinePump.start(); messagePump?.start(); connectorIngress?.start(); leaderResultNoticePump.start(); taskAttentionPump.start(); opsAlertPump.start(); console.log(`evoLoop local workbench: http://127.0.0.1:${port}`); }
+try { await app.listen({ host: "127.0.0.1", port }); managed?.start(); ordinarySealPump.start(); residentQueue.start(); sessionLinePump.start(); sessionAttentionPump.start(); messagePump?.start(); connectorIngress?.start(); leaderResultNoticePump.start(); taskAttentionPump.start(); opsAlertPump.start(); console.log(`evoLoop local workbench: http://127.0.0.1:${port}`); }
 catch (error) { await shutdown(); throw error; }

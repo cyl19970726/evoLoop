@@ -20,7 +20,9 @@ const principalOf = (request: { principal: Principal | null }): Principal => {
 export function registerSessionWorkRoutes(app: FastifyInstance, service: SessionObservationService,
   present: (principal: Principal, session: ObservedSession) => ObservedSession = (_principal, session) => session,
   presentSnapshot: (principal: Principal, projectId: string, session: ObservedSession) => Promise<ObservedSession> = async (_principal, _projectId, session) => session,
-  enrichSnapshot: (principal: Principal, projectId: string, snapshot: SessionSnapshot) => Promise<SessionSnapshot> = async (_principal, _projectId, snapshot) => snapshot): void {
+  enrichSnapshot: (principal: Principal, projectId: string, snapshot: SessionSnapshot) => Promise<SessionSnapshot> = async (_principal, _projectId, snapshot) => snapshot,
+  /** Adds `dispatch` (can a Run start here now) to the owned Sessions of a directory page. */
+  dispatchOf: (projectId: string, sessions: ObservedSession[]) => Promise<ObservedSession[]> = async (_projectId, sessions) => sessions): void {
   app.get("/api/projects/:projectId/session-work", async request => {
     const { projectId } = z.strictObject({ projectId: id }).parse(request.params);
     const options = z.strictObject({ limit: limit50, cursor: cursor.optional(), search: z.string().trim().max(240).optional(),
@@ -29,7 +31,7 @@ export function registerSessionWorkRoutes(app: FastifyInstance, service: Session
     const page = await service.directory(principal, projectId, { limit: options.limit,
       ...(options.cursor ? { cursor: options.cursor } : {}), ...(options.search ? { search: options.search } : {}),
       ...(options.membership ? { membership: options.membership } : {}) });
-    return { ...page, items: page.items.map(session => present(principal, session)) };
+    return { ...page, items: await dispatchOf(projectId, page.items.map(session => present(principal, session))) };
   });
   app.get("/api/projects/:projectId/session-work/changes", request => {
     const { projectId } = z.strictObject({ projectId: id }).parse(request.params);
