@@ -1,6 +1,6 @@
 import type { PoolClient } from "pg";
 import { DomainError } from "@evoloop/contracts/ports";
-import type { DirectDispatchList, ScheduleDispatchPolicy, ScheduleDispatchTransaction } from "@evoloop/contracts/schedule-dispatch";
+import type { DirectDispatchList, ScheduleDispatchLog, ScheduleDispatchLogPage, ScheduleDispatchPolicy, ScheduleDispatchTransaction } from "@evoloop/contracts/schedule-dispatch";
 
 const iso = (value: unknown): string => value instanceof Date ? value.toISOString() : new Date(String(value)).toISOString();
 const policy = (row: Record<string, unknown>): ScheduleDispatchPolicy => ({ projectId: String(row.project_id), scheduleId: String(row.schedule_id), version: Number(row.version),
@@ -8,6 +8,25 @@ const policy = (row: Record<string, unknown>): ScheduleDispatchPolicy => ({ proj
   dailyRunBudget: row.daily_run_budget === null ? null : Number(row.daily_run_budget), setRevisionId: String(row.set_revision_id),
   roleRevisionId: row.role_revision_id ? String(row.role_revision_id) : null, consecutiveFailures: Number(row.consecutive_failures), consecutiveSkips: Number(row.consecutive_skips),
   revertReason: row.revert_reason ? String(row.revert_reason) : null, actorId: String(row.actor_id), reason: String(row.reason), updatedAt: iso(row.updated_at) });
+const dispatchLog = (row: Record<string, unknown>): ScheduleDispatchLog => ({ scheduleId: String(row.schedule_id), plannedAtUtc: iso(row.planned_at_utc),
+  state: row.state as ScheduleDispatchLog["state"], reason: String(row.reason), taskId: row.task_id ? String(row.task_id) : null,
+  sessionId: row.session_id ? String(row.session_id) : null, entryId: row.entry_id ? String(row.entry_id) : null, templateHash: String(row.template_hash),
+  roleRevisionId: row.role_revision_id ? String(row.role_revision_id) : null,
+  executionConfig: row.execution_config && typeof row.execution_config === "object" ? row.execution_config as Record<string, unknown> : {},
+  decidedAt: iso(row.decided_at), dispatchedAt: row.dispatched_at ? iso(row.dispatched_at) : null,
+  escalatedAt: row.escalated_at ? iso(row.escalated_at) : null });
+interface Cursor { v: 1; projectId: string; scheduleId: string; after: string }
+const encodeCursor = (value: Cursor): string => Buffer.from(JSON.stringify(value), "utf8").toString("base64url");
+function decodeCursor(value: string, projectId: string, scheduleId: string): Cursor {
+  try {
+    const parsed = JSON.parse(Buffer.from(value, "base64url").toString("utf8")) as Record<string, unknown>;
+    if (parsed.v !== 1 || parsed.projectId !== projectId || parsed.scheduleId !== scheduleId ||
+      typeof parsed.after !== "string" || Number.isNaN(Date.parse(parsed.after))) throw new Error("scope");
+    return parsed as unknown as Cursor;
+  } catch {
+    throw new DomainError("INVALID_CURSOR", "The dispatch cursor does not belong to this project and schedule");
+  }
+}
 
 /** Scheduled direct dispatch records (migration 108) inside the command transaction. */
 export class PgScheduleDispatch implements ScheduleDispatchTransaction {
@@ -42,6 +61,16 @@ export class PgScheduleDispatch implements ScheduleDispatchTransaction {
     const r = await this.client.query("SELECT * FROM direct_dispatch_list WHERE project_id=$1 AND role_id=$2", [this.projectId, roleId]);
     const row = r.rows[0];
     return row ? { projectId: this.projectId, roleId, version: Number(row.version), sessionIds: row.session_ids, actorId: row.actor_id, reason: row.reason, updatedAt: iso(row.updated_at) } : null;
+  }
+  async listDispatches(scheduleId: string, limit: number, cursor?: string): Promise<ScheduleDispatchLogPage> {
+    const after = cursor ? decodeCursor(cursor, this.projectId, scheduleId) : null;
+    const result = await this.client.query(`SELECT * FROM schedule_dispatch_log
+      WHERE project_id=$1 AND schedule_id=$2 AND ($3::timestamptz IS NULL OR planned_at_utc>$3::timestamptz)
+      ORDER BY planned_at_utc LIMIT $4`, [this.projectId, scheduleId, after?.after ?? null, limit + 1]);
+    const items = result.rows.slice(0, limit).map(dispatchLog);
+    const last = items.at(-1);
+    return { items, nextCursor: result.rows.length > limit && last
+      ? encodeCursor({ v: 1, projectId: this.projectId, scheduleId, after: last.plannedAtUtc }) : null };
   }
   async saveDirectList(value: DirectDispatchList, expectedVersion: number): Promise<void> {
     if (expectedVersion === 0) {
