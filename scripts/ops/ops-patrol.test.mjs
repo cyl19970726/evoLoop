@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { alertDecision, alertText, exitCodeFor, formatPatrol, loadPatrol, patrolOnce, readOccurrences, skippedOccurrences } from "./ops-patrol.mjs";
+import { alertDecision, alertText, exitCodeFor, formatPatrol, loadPatrol, patrolOnce, readOccurrences, skippedOccurrences, statusText } from "./ops-patrol.mjs";
 
 const NOW = Date.parse("2026-11-15T07:00:00Z");
 const GB = 1024 ** 3;
@@ -83,4 +83,25 @@ test("P6. loadPatrol wants an absolute CLI and state file outside the repository
   assert.throws(() => loadPatrol({ patrol: { ...patrol, stateFile: new URL("../../x.json", import.meta.url).pathname } }, "/p"), /stateFile must be an absolute path outside the repository/);
   assert.throws(() => loadPatrol({ patrol: { ...patrol, leaderSessionKey: "" } }, "/p"), /leaderSessionKey is required/);
   assert.throws(() => loadPatrol({ patrol: { ...patrol, watchSchedules: "x" } }, "/p"), /watchSchedules must be a list/);
+});
+
+test("P7. the line about the alert always matches the state: a raised threshold alerts once, a repeat says space is STILL low and does not resend, a restored threshold says normal", async () => {
+  const cli = fakeCli({ occurrences: [] }); const files = {};
+  const step = (report, now) => patrolOnce({ patrol, config: {}, execute: false, now, exec: cli.exec, write: (path, text) => { files[path] = JSON.parse(text); }, read: path => files[path] ?? {}, adapter: {}, reclaimFn: async () => report });
+  const low = reportOf({ lowSpace: true, freeBytes: 44 * GB, minFreeBytes: 100 * GB }), fine = reportOf({ lowSpace: false, freeBytes: 44 * GB, minFreeBytes: 20 * GB });
+  const sends = () => cli.calls.filter(call => call.args[0] === "work").length;
+  const first = await step(low, NOW);
+  assert.equal(first.decision.send, true); assert.equal(sends(), 1);
+  assert.match(statusText(first), /^已发给 Leader.*空间仍低于阈值\(44\.0 GB < 100\.0 GB\)/);
+  const repeat = await step(low, NOW + 30 * 60_000);
+  assert.equal(repeat.decision.send, false); assert.equal(sends(), 1, "same configuration, run again: told once");
+  assert.match(statusText(repeat), /本次不重复发送:空间仍低于阈值/);
+  assert.doesNotMatch(statusText(repeat), /空间正常/);
+  assert.doesNotMatch(formatPatrol(repeat), /空间正常/, "the whole printed text never says normal while space is low");
+  const restored = await step(fine, NOW + 60 * 60_000);
+  assert.equal(restored.decision.send, false); assert.equal(sends(), 1);
+  assert.match(statusText(restored), /本次不需要:空间正常\(44\.0 GB ≥ 20\.0 GB\)/);
+  assert.equal(files["/state/patrol.json"].lastLow, false, "recovery is remembered, so a later low reading is told again");
+  const lowAgain = await step(low, NOW + 90 * 60_000);
+  assert.equal(lowAgain.decision.send, true); assert.equal(sends(), 2);
 });

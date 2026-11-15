@@ -98,12 +98,24 @@ export function instanceSkipReasons(facts, config, { reclaimedWorktrees = new Se
 }
 
 /**
+ * Directories that are protected by what they ARE, whatever the private config says (or does not say): the formal instance's own directory
+ * (it holds the database or the receipts of its bootstrap, service registration or tunnel) and a tunnel's directory (cloudflared runtime files).
+ * `entries` is a function (relative path -> boolean: does it exist). The config's protectedPaths are an addition to this, never the only guard.
+ */
+export function builtInProtection(exists) {
+  const reasons = [];
+  if (["bootstrap-receipt.json", "launchd-receipt.json", "launchd-stable-receipt.json", "tunnel-receipt.json", "postgres/PG_VERSION", "postgres/data/PG_VERSION"].some(exists)) reasons.push("内置保护:正式实例目录(有数据库或引导/服务/隧道回执),不依赖配置,永不回收");
+  if (["runtime/cloudflared.stderr.log", "runtime/cloudflared.stdout.log", "runtime/cloudflared.pid", "runtime/cloudflared.yml", "runtime/cloudflared.json", "cloudflared"].some(exists)) reasons.push("内置保护:隧道配置目录(有 cloudflared 运行文件),不依赖配置,永不回收");
+  return reasons;
+}
+
+/**
  * Why the dependency directories of a place may not be removed. `facts`: { path, kind: "tmp-copy" | "worktree" | "release", processes (list or null),
  * recentChange (a path changed inside the idle window, null = unknown, false = none), plus per kind: tmp-copy: nothing more; worktree: pr, branch;
  * release: isCurrent, isPrevious }. Empty list = remove its node_modules.
  */
 export function depsSkipReasons(facts, config) {
-  const reasons = [];
+  const reasons = [...(facts.builtIn ?? [])];
   if (config.protectedPaths.some(p => within(facts.path, p) || within(p, facts.path))) reasons.push("路径受保护(正式数据库目录、隧道配置目录或发布目录相关),永不回收");
   if (facts.kind === "tmp-copy") {
     if (!(config.tmpCopyRoots ?? []).some(root => inside(facts.path, root))) reasons.push("不在配置的临时目录根下");
@@ -215,6 +227,7 @@ export function makeAdapters(config, exec = execFileSync) {
         return out ? out.slice(dir.length + 1) || true : false;
       } catch { return null; }
     },
+    pathExists: path => existsSync(path),
     listDirs: root => { try { return readdirSync(root, { withFileTypes: true }).filter(entry => entry.isDirectory() && !entry.isSymbolicLink()).map(entry => join(root, entry.name)); } catch { return null; } },
     realpath: path => real(path),
     // A release that was deployed has both source/ and runtime/; a build that was only made (or aborted) has less and is not a rollback target.
@@ -308,7 +321,7 @@ export function surveyDeps({ adapter, config, surveyed, wholeRemoved = new Set()
   const add = (cls, path, facts) => {
     const depsDirs = adapter.findDeps(path);
     if (!depsDirs.length) return;
-    items.push({ class: cls, path, depsDirs, bytes: bytesOf(depsDirs), reasons: depsSkipReasons({ path, ...facts, processes: using(path), recentChange: adapter.recentChange(path, config.depsIdleMinutes ?? 120) }, config) });
+    items.push({ class: cls, path, depsDirs, bytes: bytesOf(depsDirs), reasons: depsSkipReasons({ path, ...facts, builtIn: builtInProtection(rel => adapter.pathExists(join(path, rel))), processes: using(path), recentChange: adapter.recentChange(path, config.depsIdleMinutes ?? 120) }, config) });
   };
   for (const root of config.tmpCopyRoots ?? []) {
     for (const dir of adapter.listDirs(root) ?? []) if ((config.tmpCopyNames ?? []).some(pattern => pattern.test(basename(dir)))) add("tmp-copy", dir, { kind: "tmp-copy" });
@@ -320,9 +333,10 @@ export function surveyDeps({ adapter, config, surveyed, wholeRemoved = new Set()
   if (config.releaseRoot) {
     const dirs = (adapter.listDirs(config.releaseRoot) ?? []).filter(dir => (config.releaseNames ?? new RegExp(DEFAULT_RELEASE_NAMES)).test(basename(dir)));
     const current = (() => { const link = adapter.realpath(join(config.releaseRoot, "current")); return dirs.map(real).includes(link) ? link : null; })();
-    // The previous release is the newest other one that was deployed (source/ and runtime/): a build that was made but never deployed, or an aborted
-    // one, is newer but is not what a rollback would go back to.
-    const previous = dirs.filter(dir => real(dir) !== current && adapter.deployed(dir)).sort((a, b) => (adapter.mtimeMs(b) ?? 0) - (adapter.mtimeMs(a) ?? 0))[0] ?? null;
+    // The previous release is the newest other one that was deployed (source/ and runtime/) and is a release at all: a build that was made but never
+    // deployed, an aborted one, or the formal instance's or a tunnel's directory (which can be newer) is not what a rollback would go back to.
+    const isRelease = dir => builtInProtection(rel => adapter.pathExists(join(dir, rel))).length === 0 && !config.protectedPaths.some(p => within(dir, p) || within(p, dir));
+    const previous = dirs.filter(dir => real(dir) !== current && isRelease(dir) && adapter.deployed(dir)).sort((a, b) => (adapter.mtimeMs(b) ?? 0) - (adapter.mtimeMs(a) ?? 0))[0] ?? null;
     for (const dir of dirs) add("release", dir, { kind: "release", isCurrent: real(dir) === current, isPrevious: previous !== null && real(dir) === real(previous),
       isNewerThanCurrent: current !== null && real(dir) !== current && (adapter.mtimeMs(dir) ?? 0) > (adapter.mtimeMs(current) ?? Infinity) });
   }

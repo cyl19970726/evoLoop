@@ -90,16 +90,26 @@ export async function patrolOnce({ config, patrol, adapter, execute, now = Date.
       write(patrol.stateFile, JSON.stringify({ lastAlertAt: decision.lowDue ? generatedAt : (state.lastAlertAt ?? generatedAt), lastLow: report.lowSpace ? (decision.lowDue || state.lastLow === true) : false, toldOccurrences: [...new Set([...(state.toldOccurrences ?? []), ...decision.fresh.map(item => item.operationId).filter(Boolean)])].slice(-200) }));
     } catch (error) { problems.push(`发给 Leader 的告警没有送出(${String(error.message).split("\n")[0].slice(0, 100)}):下次巡检会再试`); }
   } else if (!report.lowSpace && state.lastLow) write(patrol.stateFile, JSON.stringify({ ...state, lastLow: false }));
-  return { report, skipped: occurrences.skipped, decision, sent, problems };
+  return { report, skipped: occurrences.skipped, decision, sent, problems, lastAlertAt: state.lastAlertAt ?? null };
 }
 
 export const exitCodeFor = result => (result.problems.length || result.report.failed.length ? 1 : result.report.lowSpace ? 3 : 0);
+
+/** What the alert line says, from the actual state: sent now, not sent because it was told recently, or nothing to tell because space is fine. Never "normal" while space is low. */
+export function statusText(result) {
+  const gb = bytes => `${(bytes / GB).toFixed(1)} GB`;
+  const { report, decision, skipped } = result;
+  const state = report.lowSpace ? `空间仍低于阈值(${gb(report.freeBytes)} < ${gb(report.minFreeBytes)})` : `空间正常(${gb(report.freeBytes)} ≥ ${gb(report.minFreeBytes)})`;
+  if (decision.send) return `已发给 Leader(${result.sent ?? "送出失败"});${state}`;
+  const told = skipped.length ? `;回看窗口内 ${skipped.length} 个被跳过的时刻都已告知过` : ";没有新的被跳过的时刻";
+  return report.lowSpace ? `本次不重复发送:${state},上一次告警在 ${result.lastAlertAt ?? "之前"},未满重复间隔${told}` : `本次不需要:${state}${told}`;
+}
 
 export function formatPatrol(result) {
   const lines = [];
   if (result.problems.length) lines.push(`⚠ 巡检不完整或告警未送出:${result.problems.join(";")}`, "");
   lines.push(`日程被跳过的时刻(回看窗口内):${result.skipped.length ? result.skipped.map(item => `${item.scheduleId.slice(0, 8)}@${item.plannedAtUtc}`).join("、") : "无"}`);
-  lines.push(`告警:${result.decision.send ? `已发给 Leader(${result.sent ?? "送出失败"})` : "本次不需要(空间正常,没有新的跳过)"}`, "");
+  lines.push(`告警:${statusText(result)}`, "");
   lines.push(formatReport(result.report));
   return lines.join("\n");
 }

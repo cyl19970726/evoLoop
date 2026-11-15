@@ -7,7 +7,7 @@ import test from "node:test";
 import { countClientBackends, formatReport, instanceDir, instanceSkipReasons, loadConfig, makeAdapters, reclaim, repoRoot, worktreeSkipReasons } from "./disk-reclaim.mjs";
 import { MARKER } from "./test-pg.mjs";
 import { symlinkSync as linkTo, utimesSync as touchAt, mkdirSync as mkdirP, writeFileSync as writeF } from "node:fs";
-import { depsSkipReasons, formatReport as formatDiskReport } from "./disk-reclaim.mjs";
+import { builtInProtection, depsSkipReasons, formatReport as formatDiskReport } from "./disk-reclaim.mjs";
 
 const git = (cwd, ...args) => execFileSync("git", ["-C", cwd, "-c", "user.email=t@example.com", "-c", "user.name=t", ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
 const GB = 1024 ** 3;
@@ -491,4 +491,39 @@ test("D5. the report names the three classes with reclaimed and skipped amounts,
   assert.match(text, /已合并 PR 的工作树依赖:回收 0 处/);
   assert.match(text, /旧发布依赖:回收 0 处/);
   assert.match(text, /执行前后可用空间\(statfs\)/);
+});
+
+test("D6. the formal instance directory and a tunnel directory are protected by what they are, with protectedPaths empty of them or the release root missing from the config", async () => {
+  const w = world();
+  const releases = join(w.root, "rel"); mkdirP(releases, { recursive: true });
+  const make = (name, hoursAgo, extra = () => {}) => { const dir = join(releases, name); mkdirP(join(dir, "source", "x"), { recursive: true }); copyWithDeps(join(dir, "source"), hoursAgo); mkdirP(join(dir, "runtime"), { recursive: true }); extra(dir); aged(dir, hoursAgo); return dir; };
+  const plain = make("box-main-1111111-20261101", 400);
+  const formal = make("box-main-2222222-20261102", 20, dir => { writeF(join(dir, "bootstrap-receipt.json"), "{}"); mkdirP(join(dir, "postgres"), { recursive: true }); writeF(join(dir, "postgres", "PG_VERSION"), "18\n"); });
+  const tunnel = make("box-final-main-3333333-20261103", 10, dir => writeF(join(dir, "runtime", "cloudflared.stderr.log"), "log"));
+  const previous = make("box-main-4444444-20261113", 30), current = make("box-main-5555555-20261115", 2);
+  linkTo(current, join(releases, "current"));
+  // protectedPaths names none of them: only what the directories are keeps the formal and tunnel ones safe
+  Object.assign(w.config, { releaseRoot: releases, protectedPaths: [join(w.root, "somewhere-else")] });
+  const done = await run(w, {}, { execute: true });
+  assert.ok(!existsSync(join(plain, "source", "node_modules")), "an ordinary old release is cleaned");
+  assert.ok(existsSync(join(formal, "source", "node_modules")), "the formal instance directory keeps its node_modules");
+  assert.ok(existsSync(join(tunnel, "source", "node_modules")), "the tunnel directory keeps its node_modules");
+  assert.match(depsReasonsFor(done, formal), /内置保护:正式实例目录/);
+  assert.match(depsReasonsFor(done, tunnel), /内置保护:隧道配置目录/);
+  for (const dir of [previous, current]) assert.ok(existsSync(join(dir, "source", "node_modules")));
+  assert.match(depsReasonsFor(done, previous), /是上一个完整发布/, "the formal and tunnel directories are newer than the previous release but are not mistaken for it");
+  // the release root is not in the config at all: no release is touched, formal included
+  delete w.config.releaseRoot;
+  const again = await run(w, {}, { execute: true });
+  assert.deepEqual(again.reclaimed.filter(item => item.class === "release"), []);
+  assert.ok(existsSync(join(formal, "source", "node_modules")) && existsSync(join(previous, "source", "node_modules")));
+});
+
+test("D7. builtInProtection reads the markers only: receipts or a database for the formal instance, cloudflared files for a tunnel, nothing for an ordinary release", () => {
+  const has = set => path => set.includes(path);
+  assert.deepEqual(builtInProtection(has([])), []);
+  assert.match(builtInProtection(has(["launchd-receipt.json"])).join("|"), /正式实例目录/);
+  assert.match(builtInProtection(has(["postgres/PG_VERSION"])).join("|"), /正式实例目录/);
+  assert.match(builtInProtection(has(["runtime/cloudflared.stderr.log"])).join("|"), /隧道配置目录/);
+  assert.equal(builtInProtection(has(["bootstrap-receipt.json", "runtime/cloudflared.pid"])).length, 2);
 });
