@@ -59,7 +59,19 @@ test("a left-over or stuck arrangement is released with a reason and closure the
     const release = async (relayId: string, who = reviewer, operationId = randomUUID(), reason = "superseded by the later formal check") =>
       relayService.release(who, { projectId, taskId, relayId, operationId, expectedVersion: await version(relayId), reason });
     const refused = async (action: () => Promise<unknown>) => action().then(() => "released", (error: { code?: string; message: string }) => error.code ?? error.message);
-    return { taskId, relay, version, close, release, refused };
+    /** A session-mode arrangement whose acceptance message is in the given state (the arrangement as the Leader made it for an acceptance Session). */
+    const sessionRelay = async (stage: "candidate" | "formal", scope: string, state: string, messageState: string, sessionId: string) => {
+      const relayId = randomUUID(), messageId = randomUUID(), operationId = randomUUID();
+      await pool.query(`INSERT INTO session_message(project_id,message_id,operation_id,target_kind,session_id,sender_actor_id,content,context_task_id,context_task_revision_id,state,version,created_at,updated_at)
+        VALUES($1,$2,$3,'owned',$4,'reviewer','Please check the delivery',$5,$6,$7,1,now(),now())`, [projectId, messageId, operationId, sessionId, taskId, task.currentRevisionId, messageState]);
+      await pool.query(`INSERT INTO task_acceptance_relay(project_id,relay_id,operation_id,request_hash,task_id,task_revision_id,delivery_id,stage,scope_key,scope_description,publication_ref,reason,
+        mode,recipient_actor_id,session_id,native_thread_id,role_id,sender_actor_id,message_id,message_operation_id,state,blocked_reason,arranged_by,created_at,updated_at)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'scope',$10,'fixture','session','acceptance-agent',$11,'thread-x','role-x','reviewer',$12,$13,$14,$15,'reviewer',now(),now())`,
+        [projectId, relayId, randomUUID(), "b".repeat(64), taskId, task.currentRevisionId, deliveryId, stage, scope, stage === "formal" ? "fixture://published" : null, sessionId, messageId, operationId, state,
+          state === "blocked" ? "MESSAGE_BINDING_CHANGED" : null]);
+      return { relayId, messageId };
+    };
+    return { taskId, relay, sessionRelay, version, close, release, refused };
   };
 
   // 1. Two formal arrangements: the first recorded notUsed (before a fix was merged), the second used. Before this change nothing could close the Task.
@@ -100,4 +112,63 @@ test("a left-over or stuck arrangement is released with a reason and closure the
   assert.equal(await four.refused(() => four.release(formalUnused)), "LAST_ARRANGEMENT");
   const stale = await four.refused(async () => relayService.release(reviewer, { projectId, taskId: four.taskId, relayId: formalUnused, operationId: randomUUID(), expectedVersion: 99, reason: "x" }));
   assert.equal(stale, "ACCEPTANCE_CHANGED", "a stale version is refused");
+});
+
+/**
+ * The dcd01bb1 shape in session mode: the stuck arrangement's acceptance message was already answered (replied) when it got stuck. release() treats a settled message
+ * (replied, completed_without_reply, cancelled, failed) as nothing left to wait for, cancels a queued or blocked one, and still refuses while the message is moving (processing, unknown).
+ */
+test("session-mode: a stuck arrangement whose message was replied or completed is released; a message still moving (processing, unknown) must settle first", async t => {
+  const schema = `relay_release_session_${randomUUID().replaceAll("-", "")}`;
+  await migrate(database!, schema);
+  const pool = new pg.Pool({ connectionString: database, options: `-c search_path=${schema}` });
+  t.after(async () => { await pool.end(); const admin = new pg.Client({ connectionString: database }); await admin.connect(); try { await admin.query(`DROP SCHEMA "${schema}" CASCADE`); } finally { await admin.end(); } });
+  const projectId = randomUUID();
+  const reviewer: Principal = { actorId: "reviewer", projectIds: [projectId], permissions: ["read", "write", "review"] };
+  const workflow = new WorkflowService({ uow: new PostgresUnitOfWork(pool), clock: { now: () => new Date().toISOString() }, ids: { next: randomUUID },
+    hasher: { hash: (value: string) => createHash("sha256").update(value).digest("hex") } });
+  await workflow.execute(reviewer, { type: "project.create", projectId, title: "Relay release session", operationId: randomUUID() } as never);
+  const owner = fixtureRoleId("release-session-owner"); await seedFixtureRole(pool, projectId, owner);
+  const sessionId = randomUUID();
+  await pool.query(`INSERT INTO runtime_session(project_id,session_id,role_id,cwd,authorization_scope,sandbox,approval_policy,state,version,native_thread_id,native_session_id,operation_id,actor_id,created_at,updated_at)
+    VALUES($1,$2,$3,'/tmp/relay-release','project','danger-full-access','never','ready',1,$4,$4,$5,'acceptance-agent',now(),now())`, [projectId, sessionId, owner, randomUUID(), randomUUID()]);
+  const relayService = new AcceptanceRelayService({ pool, workflow, messages: {} as never, principals: async () => [], canWrite: () => false, leaderSession: async () => null, qualify: async () => null, capabilities: async () => [] });
+
+  const caseFor = async (messageState: string) => {
+    const taskId = randomUUID(), deliveryId = randomUUID();
+    await workflow.execute(reviewer, { type: "task.create", projectId, operationId: randomUUID(), taskId, title: `Case ${messageState}`, content: "# Case", acceptance: "Used", owner, consumer: "acceptance-agent",
+      useRequired: true, acceptanceMode: "human_required", acceptanceTarget: "human" } as never);
+    const task = (await workflow.getTask(reviewer, projectId, taskId)).task;
+    await pool.query(`INSERT INTO delivery(project_id,delivery_id,task_id,task_revision_id,artifact_ref,artifact_revision,content_hash,technical_result,technical_evidence,reason,actor_id,created_at)
+      VALUES($1,$2,$3,$4,'fixture:report','r1',$5,'passed','fixture','delivery','author',now())`, [projectId, deliveryId, taskId, task.currentRevisionId, "a".repeat(64)]);
+    const insert = async (scope: string, state: string, mState: string) => {
+      const relayId = randomUUID(), messageId = randomUUID(), operationId = randomUUID();
+      await pool.query(`INSERT INTO session_message(project_id,message_id,operation_id,target_kind,session_id,sender_actor_id,content,context_task_id,context_task_revision_id,state,version,created_at,updated_at)
+        VALUES($1,$2,$3,'owned',$4,'reviewer','Please check',$5,$6,$7,1,now(),now())`, [projectId, messageId, operationId, sessionId, taskId, task.currentRevisionId, mState]);
+      await pool.query(`INSERT INTO task_acceptance_relay(project_id,relay_id,operation_id,request_hash,task_id,task_revision_id,delivery_id,stage,scope_key,scope_description,publication_ref,reason,
+        mode,recipient_actor_id,session_id,native_thread_id,role_id,sender_actor_id,message_id,message_operation_id,state,blocked_reason,arranged_by,created_at,updated_at)
+        VALUES($1,$2,$3,$4,$5,$6,$7,'candidate',$8,'scope',NULL,'fixture','session','acceptance-agent',$9,'thread-x','role-x','reviewer',$10,$11,$12,$13,'reviewer',now(),now())`,
+        [projectId, relayId, randomUUID(), "b".repeat(64), taskId, task.currentRevisionId, deliveryId, scope, sessionId, messageId, operationId, state, state === "blocked" ? "MESSAGE_BINDING_CHANGED" : null]);
+      return { relayId, messageId };
+    };
+    const stuck = await insert("candidate-a", "blocked", messageState);
+    await insert("candidate-b", "pending", "replied"); // the replacement: another effective arrangement of the stage
+    const release = async () => relayService.release(reviewer, { projectId, taskId, relayId: stuck.relayId,
+      expectedVersion: Number((await pool.query("SELECT version FROM task_acceptance_relay WHERE project_id=$1 AND relay_id=$2", [projectId, stuck.relayId])).rows[0].version), operationId: randomUUID(), reason: "message binding changed; replaced by candidate-b" });
+    const outcome = () => release().then(() => "released", (error: { code?: string; message: string }) => error.code ?? error.message);
+    const messageNow = async () => (await pool.query("SELECT state FROM session_message WHERE project_id=$1 AND message_id=$2", [projectId, stuck.messageId])).rows[0].state as string;
+    return { outcome, messageNow, relayId: stuck.relayId };
+  };
+
+  const results: Record<string, string> = {};
+  for (const state of ["replied", "completed_without_reply", "failed", "cancelled", "queued", "processing", "unknown"]) {
+    const item = await caseFor(state);
+    results[state] = await item.outcome();
+    if (results[state] === "released") assert.equal((await pool.query("SELECT state FROM task_acceptance_relay WHERE project_id=$1 AND relay_id=$2", [projectId, item.relayId])).rows[0].state, "released");
+    else assert.equal((await pool.query("SELECT state FROM task_acceptance_relay WHERE project_id=$1 AND relay_id=$2", [projectId, item.relayId])).rows[0].state, "blocked", `${state}: a refused release changes nothing`);
+    if (state === "queued") assert.equal(await item.messageNow(), "cancelled", "a queued message of a released arrangement is cancelled");
+    if (state === "replied" || state === "completed_without_reply") assert.equal(await item.messageNow(), state, "a settled message is left as it was");
+  }
+  assert.deepEqual(results, { replied: "released", completed_without_reply: "released", failed: "released", cancelled: "released", queued: "released",
+    processing: "ACCEPTANCE_IN_FLIGHT", unknown: "ACCEPTANCE_IN_FLIGHT" }, JSON.stringify(results));
 });

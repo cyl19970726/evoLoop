@@ -395,7 +395,9 @@ export class AcceptanceRelayService {
       if (!others) throw new DomainError("LAST_ARRANGEMENT", "The last effective arrangement of this stage cannot be released: closure still needs a recorded use");
       if (item.message_id) {
         const message = (await client.query("SELECT state FROM session_message WHERE project_id=$1 AND message_id=$2 FOR UPDATE", [input.projectId, item.message_id])).rows[0];
-        if (message && !["queued", "cancelled", "failed", "blocked"].includes(message.state))
+        // Settled: nothing more will happen to the message (queued and blocked are cancelled below; cancelled and failed are over; replied and completed_without_reply
+        // were handled, which is the state of a stuck arrangement whose message was answered, as dcd01bb1's was). Anything still moving (processing, unknown, manual_pending) must settle first.
+        if (message && !["queued", "cancelled", "failed", "blocked", "replied", "completed_without_reply"].includes(message.state))
           throw new DomainError("ACCEPTANCE_IN_FLIGHT", "A started or unknown acceptance message must settle before the arrangement is released");
         if (message && ["queued", "blocked"].includes(message.state))
           await client.query("UPDATE session_message SET state='cancelled',version=version+1,blocked_reason='Acceptance arrangement released',updated_at=now() WHERE project_id=$1 AND message_id=$2 AND state IN ('queued','blocked')", [input.projectId, item.message_id]);
