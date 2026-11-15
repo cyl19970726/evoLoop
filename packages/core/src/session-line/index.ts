@@ -15,7 +15,8 @@ const ok = (command: SessionLineCommand, entityId: string, version: number): App
  * pump's steps. Starting the Task, assigning it and reserving the Run are ordinary commands guarded by QUEUED_IN_SESSION_LINE.
  */
 export async function applySessionLine(tx: Transaction, principal: Principal, command: SessionLineCommand, now: string,
-  nextId: () => string): Promise<{ result: AppliedResult; effects: Effect[] }> {
+  nextId: () => string, businessActorForSession?: (projectId: string, sessionId: string) => Promise<string | null>):
+  Promise<{ result: AppliedResult; effects: Effect[] }> {
   const lines = tx.sessionLines ?? fail("CAPABILITY_UNAVAILABLE", "Session line storage is unavailable");
   const actorId = principal.actorId;
   const event = (sessionId: string, entry: SessionLineEntry | null, kind: string, detail: Record<string, unknown>) =>
@@ -50,7 +51,8 @@ export async function applySessionLine(tx: Transaction, principal: Principal, co
     if (command.source === "schedule" && !command.scheduleId) fail("SCHEDULE_REQUIRED", "a scheduled entry names its schedule");
     if (await lines.getLiveSessionLineEntryForTask(task.id)) fail("TASK_ALREADY_QUEUED", "This Task is already waiting in a Session line");
     const line = await lines.getSessionLine(session.id);
-    if (session.actorId === (line?.controllerActorId ?? actorId))
+    const businessActorId = await businessActorForSession?.(command.projectId, session.id) ?? null;
+    if (businessActorId === (line?.controllerActorId ?? actorId))
       fail("SELF_SESSION_LINE_FORBIDDEN", `不能把 Task 排进控制者自己的 Session 队伍（${session.id}）；自己的 Task 直接执行，不经队伍`);
     if (line) await touch(session.id);
     else

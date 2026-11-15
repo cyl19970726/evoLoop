@@ -17,12 +17,15 @@ const schema = `el_line_${randomUUID().replaceAll("-", "").slice(0, 16)}`;
 const pool = new pg.Pool({ connectionString: url, options: `-c search_path=${schema}` });
 const uow = new PostgresUnitOfWork(pool);
 const hash = (text: string) => createHash("sha256").update(text).digest("hex");
-const deps = { uow, clock: { now: () => new Date().toISOString() }, ids: { next: randomUUID }, hasher: { hash } };
+const businessActors = new Map<string, string>();
+const deps = { uow, clock: { now: () => new Date().toISOString() }, ids: { next: randomUUID }, hasher: { hash },
+  sessionLineBusinessActor: async (_projectId: string, sessionId: string) => businessActors.get(sessionId) ?? null };
 const workflow = new WorkflowService(deps);
 const runtime = new RuntimeWorkflowService(deps);
 const p = randomUUID(), role = randomUUID(), roleRev = randomUUID(), session = randomUUID();
 const lead: Principal = { actorId: "lead", projectIds: [p], permissions: ["read", "write", "review"] };
 const worker: Principal = { actorId: "worker", projectIds: [p], permissions: ["read", "write", "review"] };
+const targetOwner: Principal = { actorId: "target-owner", projectIds: [p], permissions: ["read", "write", "review"] };
 
 before(async () => {
   await migrate(url!, schema);
@@ -44,6 +47,7 @@ before(async () => {
     authorizationScope: "project", nativeThreadId: `thread-${session}`, nativeSessionId: `native-${session}`,
     resumeProfile: { actorId: saved.actorId, model: saved.model, sandbox: saved.sandbox, approvalPolicy: saved.approvalPolicy,
       executionProfileRevisionId: saved.executionProfile!.revision.revisionId } });
+  businessActors.set(session, worker.actorId);
 });
 after(async () => {
   await pool.end();
@@ -73,6 +77,10 @@ const append = async (taskId: string) => apply({ type: "line.append", projectId:
 const entries = (ended = false) => workflow.listSessionLineEntries(lead, p, session, ended);
 const entryOf = async (taskId: string) => (await entries(true)).find(e => e.taskId === taskId)!;
 const eventKinds = async () => (await workflow.listSessionLineEvents(lead, p, 0, 500, session)).map(e => e.kind);
+async function removeSessionLine(sessionId: string) {
+  await pool.query("DELETE FROM session_line_entry WHERE project_id=$1 AND session_id=$2", [p, sessionId]);
+  await pool.query("DELETE FROM session_line WHERE project_id=$1 AND session_id=$2", [p, sessionId]);
+}
 async function finishRun(runId: string) {
   await runtime.beginDispatch(p, runId);
   const stored = (await uow.read(p, r => r.getRuntimeRun(runId)))!;
@@ -114,17 +122,18 @@ test("entries keep their order, move one step, and a queued Task cannot be start
   assert.ok((await eventKinds()).includes("entry.appended") && (await eventKinds()).includes("entry.moved") && (await eventKinds()).includes("entry.removed"));
 });
 
-test("a controller cannot append a Task to the line of its own Session, and the refusal writes nothing", async () => {
+test("a controller's own business Session is refused even when another identity created it, and the refusal writes nothing", async () => {
   const own = randomUUID();
   await apply({ type: "runtime.session.reserve", projectId: p, operationId: randomUUID(), sessionId: own, roleId: role, cwd: "/tmp/own-line",
-    authorizationScope: "project", sandbox: "danger-full-access", approvalPolicy: "never" });
+    authorizationScope: "project", sandbox: "danger-full-access", approvalPolicy: "never" }, targetOwner);
   await runtime.beginSessionCreate(p, own);
   const saved = (await uow.read(p, r => r.getRuntimeSession(own)))!;
-  assert.equal(saved.actorId, lead.actorId);
+  assert.equal(saved.actorId, targetOwner.actorId, "the creator is deliberately not the business identity");
   await runtime.bindSession(p, own, { owner: "evoloop-codex-app-server", projectId: p, sessionId: own, roleId: role, cwd: "/tmp/own-line",
     authorizationScope: "project", nativeThreadId: `thread-${own}`, nativeSessionId: `native-${own}`,
     resumeProfile: { actorId: saved.actorId, model: saved.model, sandbox: saved.sandbox, approvalPolicy: saved.approvalPolicy,
       executionProfileRevisionId: saved.executionProfile!.revision.revisionId } });
+  businessActors.set(own, lead.actorId);
   const t = await newTask("Controller's own Session");
   const refusal = await workflow.execute(lead, { type: "line.append", projectId: p, operationId: randomUUID(), sessionId: own, taskId: t,
     expectedTaskVersion: (await task(t)).version, source: "leader", reason: "try the Leader's own Session" })
@@ -137,6 +146,44 @@ test("a controller cannot append a Task to the line of its own Session, and the 
   assert.equal((await pool.query("SELECT count(*)::int AS n FROM runtime_run WHERE project_id=$1 AND task_id=$2", [p, t])).rows[0].n, 0);
   assert.equal((await pool.query("SELECT count(*)::int AS n FROM task_session_assignment WHERE project_id=$1 AND task_id=$2", [p, t])).rows[0].n, 0);
   assert.equal((await task(t)).state, "todo");
+});
+
+test("a Session created by the controller but signing as a development identity can be queued", async () => {
+  const development = randomUUID();
+  await apply({ type: "runtime.session.reserve", projectId: p, operationId: randomUUID(), sessionId: development, roleId: role, cwd: "/tmp/controller-created-dev",
+    authorizationScope: "project", sandbox: "danger-full-access", approvalPolicy: "never" }, lead);
+  await runtime.beginSessionCreate(p, development);
+  const saved = (await uow.read(p, r => r.getRuntimeSession(development)))!;
+  assert.equal(saved.actorId, lead.actorId);
+  await runtime.bindSession(p, development, { owner: "evoloop-codex-app-server", projectId: p, sessionId: development, roleId: role, cwd: "/tmp/controller-created-dev",
+    authorizationScope: "project", nativeThreadId: `thread-${development}`, nativeSessionId: `native-${development}`,
+    resumeProfile: { actorId: saved.actorId, model: saved.model, sandbox: saved.sandbox, approvalPolicy: saved.approvalPolicy,
+      executionProfileRevisionId: saved.executionProfile!.revision.revisionId } });
+  businessActors.set(development, "codex-dev-agent");
+  const t = await newTask("Controller-created development Session");
+  await apply({ type: "line.append", projectId: p, operationId: randomUUID(), sessionId: development, taskId: t,
+    expectedTaskVersion: (await task(t)).version, source: "leader", reason: "normal development work" });
+  assert.equal((await workflow.listSessionLineEntries(lead, p, development)).length, 1);
+  await removeSessionLine(development);
+});
+
+test("a Session created by a development identity can be queued", async () => {
+  const development = randomUUID();
+  await apply({ type: "runtime.session.reserve", projectId: p, operationId: randomUUID(), sessionId: development, roleId: role, cwd: "/tmp/developer-created-dev",
+    authorizationScope: "project", sandbox: "danger-full-access", approvalPolicy: "never" }, worker);
+  await runtime.beginSessionCreate(p, development);
+  const saved = (await uow.read(p, r => r.getRuntimeSession(development)))!;
+  assert.equal(saved.actorId, worker.actorId);
+  await runtime.bindSession(p, development, { owner: "evoloop-codex-app-server", projectId: p, sessionId: development, roleId: role, cwd: "/tmp/developer-created-dev",
+    authorizationScope: "project", nativeThreadId: `thread-${development}`, nativeSessionId: `native-${development}`,
+    resumeProfile: { actorId: saved.actorId, model: saved.model, sandbox: saved.sandbox, approvalPolicy: saved.approvalPolicy,
+      executionProfileRevisionId: saved.executionProfile!.revision.revisionId } });
+  businessActors.set(development, "codex-dev-agent");
+  const t = await newTask("Developer-created development Session");
+  await apply({ type: "line.append", projectId: p, operationId: randomUUID(), sessionId: development, taskId: t,
+    expectedTaskVersion: (await task(t)).version, source: "leader", reason: "normal development work" });
+  assert.equal((await workflow.listSessionLineEntries(lead, p, development)).length, 1);
+  await removeSessionLine(development);
 });
 
 test("a busy Session makes entries wait; on its Run's end the first entry is confirmed, started, and the next follows after its Run", async () => {
