@@ -1,5 +1,5 @@
 import * as React from "react";
-import { Check, ChevronRight, CornerDownRight, LoaderCircle, X } from "lucide-react";
+import { Check, ChevronRight, Circle, CircleHelp, Clock, CornerDownRight, LoaderCircle, X } from "lucide-react";
 import { cn } from "../lib/cn";
 import { Button } from "./button";
 import { CollapsibleRow } from "./list";
@@ -33,6 +33,20 @@ export function AgentMessage({ children, className }: { children: React.ReactNod
   return <div className={cn("text-body leading-(--leading-reading) text-foreground [&_code]:rounded-sm [&_code]:bg-muted [&_code]:px-1.5 [&_code]:py-0.5 [&_code]:font-mono [&_code]:text-label [&_p+p]:mt-3", className)}>{children}</div>;
 }
 
+export type ToolStepState = "completed" | "failed" | "running" | "unknown" | "pending" | "stale";
+/** The one place that decides how a step looks: its icon, tone and spoken name. Every tool row of every page goes through it. */
+export function toolStepVisual(step: Pick<ToolStep, "failed" | "running" | "state">): { state: ToolStepState; label: string; icon: "check" | "x" | "spinner" | "help" | "circle" | "clock"; tone: string } {
+  const state = step.state ?? (step.failed ? "failed" : step.running ? "running" : "completed");
+  switch (state) {
+    case "failed": return { state, label: "失败", icon: "x", tone: "text-destructive" };
+    case "running": return { state, label: "进行中", icon: "spinner", tone: "text-muted-foreground" };
+    case "unknown": return { state, label: "结果未确认", icon: "help", tone: "text-warning" };
+    case "pending": return { state, label: "待处理", icon: "circle", tone: "text-muted-foreground" };
+    case "stale": return { state, label: "上次进行中，当前待核对", icon: "clock", tone: "text-warning" };
+    default: return { state: "completed", label: "已完成", icon: "check", tone: "text-muted-foreground" };
+  }
+}
+
 export interface ToolStep {
   text: string;
   /** Right-aligned detail such as a duration or +12 −3. */
@@ -40,6 +54,12 @@ export interface ToolStep {
   failed?: boolean | undefined;
   /** Still running: a spinner instead of a check. */
   running?: boolean | undefined;
+  /**
+   * What the step's state is, when it is more than failed / running / completed. Wins over `failed` and `running`. Only completed gets the check:
+   * unknown (the result was never recorded), pending (not started) and stale (running when last read, not confirmed now) each have their own
+   * icon, colour and spoken name, so a step that was not confirmed is never read as a success.
+   */
+  state?: ToolStepState | undefined;
   /** Commands and paths read better in monospace. */
   code?: boolean | undefined;
   /** Stable key, for steps that change while shown. */
@@ -68,17 +88,21 @@ export interface ToolSummaryProps {
   listClassName?: string | undefined;
 }
 
+const stepIcon = { check: Check, x: X, help: CircleHelp, circle: Circle, clock: Clock } as const;
+
 function StepRow({ step }: { step: ToolStep }) {
   const { className, ...rowProps } = step.rowProps ?? {};
+  const visual = toolStepVisual(step);
+  const Icon = visual.icon === "spinner" ? null : stepIcon[visual.icon];
   return (
     <li {...rowProps} className={cn("flex min-w-0 flex-col gap-1.5", className)}>
       <div className="flex min-w-0 items-center gap-2.5">
-        <span aria-hidden="true" className={cn("flex w-4 shrink-0 justify-center", step.failed ? "text-destructive" : "text-muted-foreground")}>
-          {step.failed ? <X className="size-3.5" /> : step.running ? <LoaderCircle className="size-3.5 animate-spin motion-reduce:animate-none" /> : <Check className="size-3.5" />}
+        <span aria-hidden="true" data-step-state={visual.state} className={cn("flex w-4 shrink-0 justify-center", visual.tone)}>
+          {Icon ? <Icon className="size-3.5" /> : <LoaderCircle className="size-3.5 animate-spin motion-reduce:animate-none" />}
         </span>
-        {step.failed ? <span className="sr-only">失败：</span> : step.running ? <span className="sr-only">进行中：</span> : null}
-        <span className={cn("min-w-0 flex-1 truncate", step.code && "font-mono text-caption", step.failed && "text-destructive")}>{step.text}</span>
-        {step.meta && <span className="shrink-0 text-caption text-muted-foreground tabular-nums">{step.meta}</span>}
+        <span className="sr-only">{visual.label}：</span>
+        <span className={cn("min-w-0 flex-1 truncate", step.code && "font-mono text-caption", visual.state === "failed" && "text-destructive")}>{step.text}</span>
+        {step.meta && <span className={cn("shrink-0 text-caption tabular-nums", visual.state === "unknown" || visual.state === "stale" ? "text-warning" : "text-muted-foreground")}>{step.meta}</span>}
         {step.action}
       </div>
       {step.detail}

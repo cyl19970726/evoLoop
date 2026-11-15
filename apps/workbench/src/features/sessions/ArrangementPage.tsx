@@ -3,7 +3,7 @@
 // prove. The Leader's own overview document has no marker yet, so the page says so instead of guessing one.
 // A read that is still running or failed is never shown as "free", "no conflict" or 0; a failed reread that keeps
 // the previous answer says it is the previous answer.
-import { useEffect, type ReactNode } from "react";
+import { Suspense, useContext, useEffect, useState, type ReactNode } from "react";
 import { CalendarClock, MessageSquare, RefreshCw, TriangleAlert } from "lucide-react";
 import { AgentAvatar, Button, EmptyState, ErrorState, LoadingState, Notice, cn } from "@evoloop/ui";
 import type { LeaderWorkPage, LeaderWorkTask } from "@evoloop/contracts/work-index";
@@ -30,6 +30,12 @@ import {
 } from "./arrangementPresentation";
 import { workNextStep } from "../../shared/workPresentation";
 import { ProjectUsageSection } from "./ProjectUsageSection";
+import { appHistory, onNavigate, replaceQuietly } from "../../shared/navigation";
+import { PageActive } from "../../shared/ui/pageActive";
+
+// 动态 is its own chunk, loaded by the app and passed in (a feature does not import the app): the other pages, and 安排 itself, do not carry it.
+type View = "board" | "flow";
+const viewOfAddress = (): View => new URLSearchParams(appHistory().location.search).get("view") === "flow" ? "flow" : "board";
 
 const maxSessionPages = 10;
 const maxTaskPages = 20;
@@ -200,9 +206,17 @@ function Waiting({ attention, stale }: { attention: SessionDirectory["attention"
   </p>;
 }
 
-export function ArrangementPage({ context, refresh }: { context: MutationContext; refresh: number }) {
+export function ArrangementPage({ context, refresh, flow }: { context: MutationContext; refresh: number;
+  flow: (props: { leaderSessionId: string | null; active: boolean }) => ReactNode }) {
   const { token, projectId } = context;
   const panel = useContextPanel();
+  const pageActive = useContext(PageActive);
+  const [view, setView] = useState<View>(viewOfAddress);
+  useEffect(() => onNavigate(() => setView(viewOfAddress())), []);
+  const chooseView = (next: View) => {
+    setView(next);
+    replaceQuietly(next === "flow" ? `${href(projectId, "sessions")}?view=flow` : href(projectId, "sessions"));
+  };
   const from: ReturnFrom = { href: href(projectId, "sessions"), actorId: context.principal.actorId };
   const sessions = useProjectQuery(projectId, ["arrangement", "agents"],
     signal => readSessionDirectoryPages(sessionClient(token, projectId), "current", "", maxSessionPages, signal));
@@ -227,6 +241,8 @@ export function ArrangementPage({ context, refresh }: { context: MutationContext
     tasksComplete: reads.tasksComplete, queuesRead: !!queues.data, directoryComplete: !sessions.data.page.nextCursor,
   }) : null;
   const moreAgents = !!sessions.data?.page.nextCursor;
+  const leaderKey = board?.leader?.key ?? null;
+  const leaderSessionId = leaderKey ? leaderKey.replace(/^owned:/, "") : null;
   const tasksShown = reads.tasks === "ready" || reads.tasks === "stale";
   const working = board?.rows.filter(row => row.load === "busy" || row.load === "overloaded").length ?? 0;
   const capacity = board ? freeCapacity(board) : null;
@@ -244,7 +260,14 @@ export function ArrangementPage({ context, refresh }: { context: MutationContext
         <Button onClick={reread} disabled={busy}><RefreshCw aria-hidden="true" className={busy ? "animate-spin" : undefined} />重新读取</Button>
       </div>
     </header>
-    {sessionRead === "failed" ? <ErrorState title="智能体目录暂不可读取" happened={errorText(sessions.error)} next="稍后重试；如果一直失败，检查与服务的连接。" action={<Button onClick={reread}>重试</Button>} />
+    <div role="tablist" aria-label="统筹安排的视图" className="-mt-2 flex gap-1">
+      {([["board", "安排"], ["flow", "动态"]] as const).map(([id, label]) =>
+        <Button key={id} role="tab" size="compact" aria-selected={view === id} onClick={() => chooseView(id)} className={cn(view === id && "bg-selected font-medium")}>{label}</Button>)}
+    </div>
+    {view === "flow" ? <div role="tabpanel" aria-label="动态">
+      {sessions.isPending ? <LoadingState label="正在读取智能体目录" lines={2} />
+        : <Suspense fallback={<LoadingState label="正在加载动态" lines={4} />}>{flow({ leaderSessionId, active: pageActive })}</Suspense>}
+    </div> : sessionRead === "failed" ? <ErrorState title="智能体目录暂不可读取" happened={errorText(sessions.error)} next="稍后重试；如果一直失败，检查与服务的连接。" action={<Button onClick={reread}>重试</Button>} />
       : !board || !capacity ? <LoadingState label="正在读取智能体与任务" lines={4} />
         : <>
           <div className="grid grid-cols-2 gap-2 compact:grid-cols-4" aria-label="概况">

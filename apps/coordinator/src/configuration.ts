@@ -116,6 +116,19 @@ const integrationSchema = z.strictObject({
     enabled: z.boolean().default(false), pollIntervalMs: z.number().int().min(500).max(60000).default(2000),
     gateway: z.strictObject({executable:absolute,configPath:absolute}),
   }).optional(),
+  /**
+   * Alerts that leave the workbench (Task 5da8b6d9): a provider pause opened or lifted, and a stall (no new Run for `stallMinutes` while work waits).
+   * One general outlet; which channel a person reads is chosen here, in private configuration: `webhook` POSTs the alert as JSON to the URL (headers may carry
+   * a credential), `command` runs the executable with the alert as JSON on its standard input (no shell, an empty environment apart from PATH).
+   */
+  alerts: z.strictObject({
+    enabled: z.boolean(), pollIntervalMs: z.number().int().min(1000).max(300000).default(15000),
+    stallMinutes: z.number().int().min(1).max(10080).default(30),
+    outlet: z.discriminatedUnion("kind", [
+      z.strictObject({ kind: z.literal("webhook"), url: z.url({ protocol: /^https?$/ }), headers: z.record(z.string().min(1).max(100), z.string().max(2000)).default({}), timeoutMs: z.number().int().min(500).max(60000).default(5000) }),
+      z.strictObject({ kind: z.literal("command"), argv: z.array(z.string().min(1).max(4096)).min(1).max(32).refine(value => value[0]!.startsWith("/"), "The alert command must be an absolute executable path"), timeoutMs: z.number().int().min(500).max(120000).default(10000) }),
+    ]),
+  }).optional(),
   leaderResultNotices: z.strictObject({
     enabled: z.boolean(), pollIntervalMs: z.number().int().min(500).max(60000).default(2000),
     /** DEC-045 W1: notices created from now on travel in Leader notice packets. Default off: new notices keep the one-notice-one-message path. */
@@ -339,7 +352,7 @@ export async function loadIntegrations(path?: string) {
     return { template, hash: delegationTemplateHash(template) };
   };
   return { runtime, sessionMessages: configuration.sessionMessages, directInputs: configuration.directInputs,
-    messageConnectors: configuration.messageConnectors, leaderResultNotices: configuration.leaderResultNotices,
+    messageConnectors: configuration.messageConnectors, leaderResultNotices: configuration.leaderResultNotices, alerts: configuration.alerts,
     residentQueue: configuration.residentQueue, orchestration: configuration.orchestration,
     repositories: configuration.repositories, feishu: configuration.feishu, knowledge: configuration.knowledge,
     scheduling: configuration.scheduling, allowedRuntimeCwds, allowedRuntimeCwd, hasRuntimeGrant,

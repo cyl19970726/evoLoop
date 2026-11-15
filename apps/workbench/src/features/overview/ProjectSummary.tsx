@@ -167,7 +167,7 @@ function PanelSection({ title, children }: { title: string; children: React.Reac
   </section>;
 }
 
-export function ProjectSummary({ token, projectId, refresh, active }: { token: string; projectId: string; refresh: number; active: boolean }) {
+export function ProjectSummary({ token, projectId, refresh, active, flowGlance }: { token: string; projectId: string; refresh: number; active: boolean; flowGlance?: React.ReactNode }) {
   const scope = `${projectId}:${token}`;
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [pending, setPending] = useState(false);
@@ -212,6 +212,8 @@ export function ProjectSummary({ token, projectId, refresh, active }: { token: s
     {error && <Notice tone="error">摘要读取失败：{error}。{current ? "以下保留上次读回，不能视为当前状态。" : "请重试或进入原页面核对。"}</Notice>}
     {current?.failedNames ? <Notice tone="waiting">有 {current.failedNames} 个名称未读回，显示为“名称暂不可读”；完整标识在各项的来源里，原任务与承载入口仍保留。</Notice> : null}
     <ProjectContext token={token} projectId={projectId} refresh={refresh + reread} active={active} />
+
+    {flowGlance}
 
     <section className={cn(card, "overview-current-work")} aria-label="当前工作">
       <div className="flex items-center justify-between gap-2 pb-1"><h2 className="text-label font-semibold text-foreground">当前工作</h2><a href={href(projectId, "work")} className="flex items-center gap-1 text-caption text-text-secondary hover:text-foreground">全部工作 <ArrowRight size={13} aria-hidden="true" /></a></div>

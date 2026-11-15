@@ -82,6 +82,8 @@ import { pgLeaderPacketPorts } from "./leader-results/packet-ports.js";
 import { readDecisionsForMe } from "@evoloop/adapter-postgres/decisions-for-me";
 import { ResidentQueuePump } from "./resident-queue/pump.js";
 import { SessionLinePump } from "./session-line/pump.js";
+import { OpsAlertPump } from "./ops-alerts/pump.js";
+import type { AlertOutletConfig } from "./ops-alerts/outlet.js";
 import { SessionObservationService } from "@evoloop/core/session-observation";
 import { AllocationRelationsService } from "@evoloop/core/allocation-relations";
 import { SessionMessageService } from "@evoloop/core/session-messages";
@@ -138,6 +140,20 @@ const configuredUsageTimeZone = integrations.runtime?.dailyBudget?.timeZone ?? "
 const currentIdentity = async () => authConfigSchema.parse(JSON.parse(await readFile(authFile,"utf8")));
 const currentProjectWriter = async (projectId:string,actorId:string) =>
   isProjectWriter(await currentIdentity(),projectId,actorId);
+const resolveSessionLineRecipient=async(projectId:string,sessionId:string)=>{
+    // The Session's own signing identity, never its creator or a guess from the Role.
+    const row=(await pool.query(`SELECT s.role_id,s.actor_id,(SELECT count(*)::int FROM runtime_session o WHERE o.project_id=s.project_id
+      AND o.role_id=s.role_id AND o.state<>'closed') AS live FROM runtime_session s WHERE s.project_id=$1 AND s.session_id=$2`,[projectId,sessionId])).rows[0];
+    if(!row)return null;
+    const configured=await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE);
+    return resolveLineRecipient({projectId,id:sessionId,roleId:row.role_id,actorId:row.actor_id},
+      {materialCli:configured.runtime?.enabled?configured.runtime.materialCli:[],roleActors:configured.residentQueue?.enabled?configured.residentQueue.roleActors:[]},
+      row.live,currentProjectWriter);
+  };
+const sessionLineBusinessActor=async(projectId:string,sessionId:string)=>{
+  const found=await resolveSessionLineRecipient(projectId,sessionId);
+  return found && "actorId" in found ? found.actorId : null;
+};
 const currentQueueConfiguration = async () => (await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE)).residentQueue;
 const uow = new PostgresUnitOfWork(pool, {
   input: async (reader,taskId) => {
@@ -197,6 +213,7 @@ const service = new WorkflowService({
     const target = (await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE)).leaderResultNotices?.targets.find(value => value.projectId === projectId);
     return target && await currentProjectWriter(projectId, target.senderActorId) ? target.senderActorId : null;
   },
+  sessionLineBusinessActor,
   collaborationAuthority: {
     actorForRole: async (projectId,roleId) => {
       const config=await currentQueueConfiguration();
@@ -568,6 +585,14 @@ const runner = runtimeFactory ? new RuntimeRunner({ runtimeFactory, workflow: se
         approvalPolicy:session.approvalPolicy}),
       dynamicAdmission ? () => dynamicAdmission.canStartRun(run,session) : undefined);
   },
+  requesterAuthorityMissing: async (run, session) => {
+    const current = await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE);
+    return !!current.runtime?.enabled &&
+      !await isBoundDynamicSession(pool, run.projectId, run.sessionId) &&
+      !current.hasRuntimeGrant({projectId:session.projectId,actorId:run.actorId,roleId:session.roleId,
+        authorizationScope:session.authorizationScope,cwd:session.cwd,sandbox:session.sandbox,model:session.model,
+        approvalPolicy:session.approvalPolicy});
+  },
   hasGrant: async (scope,session) => {
     const current=await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE);
     return session
@@ -581,6 +606,7 @@ const runner = runtimeFactory ? new RuntimeRunner({ runtimeFactory, workflow: se
 lateRunner.current = runner;
 const scheduling = new SchedulingPump({ store: new PgSchedulingStore(pool), taskTiming: new PgTaskTimingStore(pool), canWrite: lease.canWrite,
   directDispatch: new ScheduleDirectDispatcher({ pool, workflow: { execute: (principal, command) => service.execute(principal, command as never) as never }, sessionDenial: sessionDenial(pool, () => loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE) as never),
+    sessionLineBusinessActor,
     onError: error => console.error(error.message),
     recipientDenial: async (projectId, sessionId) => { const found = await lineRecipient(projectId, sessionId); return found === null ? "SESSION_NOT_FOUND" : typeof found === "string" ? null : found.unresolved; }, newId: randomUUID }),
   credentials: () => credentials, grants: () => integrations.scheduling?.grants ?? [],
@@ -725,6 +751,11 @@ const taskAttentionPump = new TaskAttentionPump({pool,canWrite:lease.canWrite,no
   projects:async()=> (await currentIdentity()).filter(p=>p.permissions.includes("read")&&
     p.permissions.includes("write")&&p.permissions.includes("review")).flatMap(p=>p.projectIds),
   pollIntervalMs:30000,onError:()=>console.error("Task attention evaluation needs source reconciliation.")});
+// Alerts that leave the workbench (Task 5da8b6d9). Read-only on the system it reports on; the outlet is private configuration.
+const opsAlertPump = new OpsAlertPump({ pool, canWrite: lease.canWrite,
+  settings: async () => { const alerts = (await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE)).alerts; return alerts ? { enabled: alerts.enabled, pollIntervalMs: alerts.pollIntervalMs, stallMinutes: alerts.stallMinutes, outlet: alerts.outlet as AlertOutletConfig } : null; },
+  projects: async () => (await currentIdentity()).filter(p => p.permissions.includes("read") && p.permissions.includes("write") && p.permissions.includes("review")).flatMap(p => p.projectIds),
+  onError: () => console.error("Alert evaluation or delivery needs reconciliation; inspect ops_alert."), onGiveUp: line => console.error(line) });
 const businessBeforeMessage = sessionMessageCanStart({ workflow: service, service: messageService, principals: currentIdentity,
   onError: () => console.error("Task answer continuation requires review; inspect the saved queue and message reason.") });
 /** Who sent a message, as the receiving Session is told (sender.ts resolveSenderClass): from the identity file's stated senderClass, never from a Role. */
@@ -851,14 +882,8 @@ const residentQueue = new ResidentQueuePump({workflow:service,canWrite:lease.can
   pollIntervalMs:integrations.residentQueue?.pollIntervalMs??2000,
   onError:(()=>{const log=throttledLog(line=>console.error(line));return(error:unknown)=>log(`Resident queue tick failed: ${error instanceof Error?error.message.slice(0,200):"unknown"}; inspect persisted queue and Run state before retrying.`);})()});
 const lineRecipient=async(projectId:string,sessionId:string)=>{
-    // The Session's own signing identity, never the Role's guess: Sessions of one Role sign as different identities.
-    const row=(await pool.query(`SELECT s.role_id,s.actor_id,(SELECT count(*)::int FROM runtime_session o WHERE o.project_id=s.project_id
-      AND o.role_id=s.role_id AND o.state<>'closed') AS live FROM runtime_session s WHERE s.project_id=$1 AND s.session_id=$2`,[projectId,sessionId])).rows[0];
-    if(!row)return null;
-    const configured=await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE);
-    const found=await resolveLineRecipient({projectId,id:sessionId,roleId:row.role_id,actorId:row.actor_id},
-      {materialCli:configured.runtime?.enabled?configured.runtime.materialCli:[],roleActors:configured.residentQueue?.enabled?configured.residentQueue.roleActors:[]},
-      row.live,currentProjectWriter);
+    const found=await resolveSessionLineRecipient(projectId,sessionId);
+    if(!found)return null;
     return "actorId" in found?found.actorId:found;
   };
 const sessionLinePump = new SessionLinePump({workflow:service,canWrite:lease.canWrite,
@@ -1097,7 +1122,7 @@ const app = await buildServer({ service, credentials, canWrite: lease.canWrite, 
 let shuttingDown = false;
 async function shutdown() {
   if (shuttingDown) return; shuttingDown = true;
-  try { clearInterval(acceptanceTimer); connectorIngress?.stop(); taskAttentionPump.stop(); leaderResultNoticePump.stop();
+  try { clearInterval(acceptanceTimer); connectorIngress?.stop(); taskAttentionPump.stop(); opsAlertPump.stop(); leaderResultNoticePump.stop();
     messagePump?.stop(); residentQueue.stop(); sessionLinePump.stop(); ordinarySealPump.stop(); await managed?.stop();
     await collaboration.stop(); await scheduling.stop(); await app.close(); sessionTimeline.close(); }
   finally {
@@ -1109,5 +1134,5 @@ async function shutdown() {
 }
 process.once("SIGINT", () => void shutdown());
 process.once("SIGTERM", () => void shutdown());
-try { await app.listen({ host: "127.0.0.1", port }); managed?.start(); ordinarySealPump.start(); residentQueue.start(); sessionLinePump.start(); messagePump?.start(); connectorIngress?.start(); leaderResultNoticePump.start(); taskAttentionPump.start(); console.log(`evoLoop local workbench: http://127.0.0.1:${port}`); }
+try { await app.listen({ host: "127.0.0.1", port }); managed?.start(); ordinarySealPump.start(); residentQueue.start(); sessionLinePump.start(); messagePump?.start(); connectorIngress?.start(); leaderResultNoticePump.start(); taskAttentionPump.start(); opsAlertPump.start(); console.log(`evoLoop local workbench: http://127.0.0.1:${port}`); }
 catch (error) { await shutdown(); throw error; }
