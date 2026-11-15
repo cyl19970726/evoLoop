@@ -16,8 +16,8 @@ import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import {
-  MERGE_OK, evidenceCandidates, commandsOfLine, configIdentity, configProblems, day, declaredStage, dominantActor, exitCodeFor, humanWriteProblem, jsonKeyDiff, judgeClosure,
-  mentionsAnywhere, mentionsNear, mergeInvocations, mergeRows, parseTrainLog, targetLabel, truncationProblem,
+  MERGE_OK, badLineProblem, evidenceCandidates, inspectLine, configIdentity, configProblems, day, declaredStage, dominantActor, exitCodeFor, humanWriteProblem, jsonKeyDiff, judgeClosure,
+  mentionsAnywhere, mentionsNear, mergeInvocations, mergeRows, missingMergeTimeProblem, parseTrainLog, targetLabel, truncationProblem,
 } from "../lib/boundary-check.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
@@ -44,21 +44,35 @@ export async function readTranscripts(roots, fromMs, toMs, problems) {
     try { for await (const entry of glob("**/*.jsonl", { cwd: root })) { seen++; const path = join(root, entry); if ((await stat(path)).mtimeMs >= fromMs - 15 * MINUTE) files.push(path); } } catch (error) { problems.push(`会话记录目录读取出错（${basename(root)}：${error.code ?? error.message}）`); }
     if (seen === 0) problems.push(`会话记录目录存在但里面没有任何会话记录文件（${basename(root)}）：合并发起者和身份文件引用都无法核对`);
   }
-  const transcripts = [];
+  const transcripts = [], bad = [];
   for (const path of files) {
-    const commands = [], all = [];
-    for await (const line of createInterface({ input: createReadStream(path, { encoding: "utf8" }), crlfDelay: Infinity })) {
-      if (!line.includes("function_call") && !line.includes("tool_use")) continue;
-      for (const item of commandsOfLine(line)) {
-        const at = Date.parse(item.at);
-        all.push({ at: item.at, command: item.command.match(/agent-cli\/[A-Za-z0-9._-]+\/evoloop/g)?.join(" ") ?? "" });
-        if (at >= fromMs - 15 * MINUTE && at < toMs + 15 * MINUTE) commands.push(item);
+    const commands = [], all = [], byCall = new Map(), file = basename(path), badBefore = bad.length;
+    let lineNo = 0;
+    try {
+      for await (const line of createInterface({ input: createReadStream(path, { encoding: "utf8" }), crlfDelay: Infinity })) {
+        lineNo++;
+        if (!line.includes("function_call") && !line.includes("tool_use")) continue;
+        const seen = inspectLine(line);
+        if (seen.defect) { bad.push({ file, line: lineNo, why: seen.defect }); continue; }
+        for (const item of seen.commands) {
+          const at = Date.parse(item.at);
+          all.push({ at: item.at, command: item.command.match(/agent-cli\/[A-Za-z0-9._-]+\/evoloop/g)?.join(" ") ?? "" });
+          if (at >= fromMs - 15 * MINUTE && at < toMs + 15 * MINUTE) { const entry = { ...item, ok: null }; commands.push(entry); if (item.callId) byCall.set(item.callId, entry); }
+        }
+        for (const result of seen.results) { const entry = result.callId ? byCall.get(result.callId) : null; if (entry) entry.ok = result.ok; }
       }
+    } catch (error) {
+      // One unreadable file is set aside by name; the other transcripts are still read.
+      bad.length = badBefore;
+      problems.push(`会话记录读不了（${file}：${error.code ?? error.message}），只有这一个文件没有核对`);
+      continue;
     }
     if (!commands.length) continue;
     const id = basename(path, ".jsonl").replace(/^rollout-\d{4}-\d\d-\d\dT[\d-]+-/, "").slice(0, 8);
     transcripts.push({ id, commands, actor: dominantActor(all.map(item => ({ command: item.command }))), merges: [] });
   }
+  const unreadable = badLineProblem(bad);
+  if (unreadable) problems.push(unreadable);
   return transcripts;
 }
 
@@ -73,7 +87,7 @@ async function privateFileRows(config, fromMs, toMs, transcripts, problems) {
     for (const path of paths) { const dir = dirname(path); byDir.set(dir, [...(byDir.get(dir) ?? []), path]); }
     for (const [dir, list] of byDir) {
       const infos = [];
-      for (const path of list) { const info = await stat(path); infos.push({ path, name: basename(path), mtimeMs: info.mtimeMs, size: info.size }); }
+      for (const path of list) { try { const info = await stat(path); infos.push({ path, name: basename(path), mtimeMs: info.mtimeMs, size: info.size }); } catch (error) { problems.push(`私有文件读不了（${basename(path)}：${error.code ?? error.message}），只有这一个文件没有核对`); } }
       infos.sort((a, b) => a.mtimeMs - b.mtimeMs);
       for (const [index, file] of infos.entries()) {
         if (file.mtimeMs < fromMs || file.mtimeMs >= toMs) continue;
@@ -81,8 +95,10 @@ async function privateFileRows(config, fromMs, toMs, transcripts, problems) {
         const earlier = infos.slice(0, index).reverse().find(other => other.name.startsWith(base) && other.name !== file.name) ?? null;
         let diff = null;
         if (/\.json/.test(file.name)) {
-          const text = await readFile(file.path, "utf8");
-          diff = earlier ? jsonKeyDiff(await readFile(earlier.path, "utf8"), text) : jsonKeyDiff("{}", text);
+          try {
+            const text = await readFile(file.path, "utf8");
+            diff = earlier ? jsonKeyDiff(await readFile(earlier.path, "utf8"), text) : jsonKeyDiff("{}", text);
+          } catch (error) { problems.push(`私有文件读不了（${file.name}：${error.code ?? error.message}），只有这一个文件没有核对`); continue; }
         }
         rows.push({ release: basename(dirname(dir)), file: file.name, modifiedAt: iso(file.mtimeMs), size: file.size, previous: earlier ? { name: earlier.name, modifiedAt: iso(earlier.mtimeMs), size: earlier.size } : null,
           parses: diff ? diff.afterParses : null, keysAdded: diff?.added ?? [], keysRemoved: diff?.removed ?? [], changedSizes: diff?.changedSizes ?? [],
@@ -151,7 +167,9 @@ async function trainMerges(config, fromMs, toMs, problems) {
   for (const name of names) {
     const match = /^merge-train-(\d{4})(\d\d)(\d\d)-/.exec(name);
     if (!match) continue;
-    for (const item of parseTrainLog(await readFile(join(dir, name), "utf8"), `${match[1]}-${match[2]}-${match[3]}`, config.utcOffsetMinutes, name)) {
+    let text;
+    try { text = await readFile(join(dir, name), "utf8"); } catch (error) { problems.push(`合并列车日志读不了（${name}：${error.code ?? error.message}），只有这一个文件没有核对`); continue; }
+    for (const item of parseTrainLog(text, `${match[1]}-${match[2]}-${match[3]}`, config.utcOffsetMinutes, name)) {
       const at = Date.parse(item.at); if (at >= fromMs && at < toMs) merges.push(item);
     }
   }
@@ -174,10 +192,15 @@ export async function collect(config, { from, to }) {
     }
   }
   const prs = await attempt("读取 GitHub 合并列表", () => JSON.parse(execFileSync("gh", ["pr", "list", "--repo", config.repo, "--state", "merged", "--limit", String(MERGE_LIST_LIMIT), "--json", "number,title,mergedAt,mergedBy"], { encoding: "utf8", maxBuffer: 256 << 20 })), []);
-  const oldest = prs.length ? Math.min(...prs.map(pr => Date.parse(pr.mergedAt))) : Infinity;
+  const times = prs.map(pr => Date.parse(pr.mergedAt)).filter(Number.isFinite);
+  const oldest = times.length ? Math.min(...times) : Infinity;
   const truncated = truncationProblem(prs.length, MERGE_LIST_LIMIT, oldest, fromMs);
   if (truncated) problems.push(truncated);
-  const merged = prs.filter(pr => { const at = Date.parse(pr.mergedAt); return at >= fromMs && at < toMs; }).sort((a, b) => a.mergedAt.localeCompare(b.mergedAt));
+  const noTime = missingMergeTimeProblem(prs);
+  if (noTime) problems.push(noTime);
+  // A PR with no merge time cannot be placed in or out of the window, so it is kept and listed rather than filtered away.
+  const merged = prs.filter(pr => { const at = Date.parse(pr.mergedAt); return !Number.isFinite(at) || (at >= fromMs && at < toMs); })
+    .sort((a, b) => String(a.mergedAt ?? "9").localeCompare(String(b.mergedAt ?? "9")));
   const train = await attempt("读取合并列车日志", () => trainMerges(config, fromMs, toMs, problems), []);
   const db = await attempt("读取数据库", () => databaseRows(config, from, to, transcripts), { humanWrites: [], closures: [] });
   const privateFiles = await attempt("读取私有文件", () => privateFileRows(config, fromMs, toMs, transcripts, problems), []);
@@ -188,7 +211,7 @@ export async function collect(config, { from, to }) {
 }
 
 export function format(result, offset, { flaggedOnly = false } = {}) {
-  const out = [], t = value => local(Date.parse(value), offset);
+  const out = [], t = value => (Number.isFinite(Date.parse(value)) ? local(Date.parse(value), offset) : "时间未知");
   const flagged = {
     merges: result.merges.filter(row => !MERGE_OK.includes(row.verdict)),
     files: result.privateFiles.filter(row => row.parses === false || row.sessions.length || row.keysAdded.length || row.keysRemoved.length || row.changedSizes.length),
@@ -197,6 +220,7 @@ export function format(result, offset, { flaggedOnly = false } = {}) {
   };
   if (result.problems?.length) out.push(`⚠ 核对不完整：${result.problems.join("；")}。下面“没有要看的”不代表正常，只代表这些来源没有读到。`);
   out.push(`边界核对 ${t(result.window.from)} — ${t(result.window.to)}（本地时间，UTC${offset >= 0 ? "+" : "-"}${Math.abs(offset) / 60}）`);
+  out.push("判定依据：边界核对判定约定 7c58f1f4 修订 2（77354014）；“没有要看的”只表示按这份约定没有发现。");
   out.push(`需要看的：合并 ${flagged.merges.length}（共 ${result.merges.length}）· 私有文件 ${flagged.files.length}（共 ${result.privateFiles.length}）· 以使用者身份写入 ${flagged.writes.length}（共 ${result.humanWrites.length}）· 候选观察下关闭 ${flagged.closures.length}（共 ${result.closures.length}）`);
   out.push(`数据来源：${Object.values(result.sources).join("；")}`, "");
   out.push("1. 合并（GitHub 合并者只有一个账号，实际发起者看后一列）");
