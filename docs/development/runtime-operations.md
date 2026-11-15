@@ -334,6 +334,31 @@ node --import tsx tests/manual/session-compaction-e1.ts
 
 两条都只用新命令，不改库。每次释放先读 `version`（`expectedVersion`），释放后读回接力状态为 `released`，`blockedReason` 带这条理由（`task_acceptance_relay_release` 里也有，不可改）。这一步需要发布后由 Leader 执行，我没有在正式实例上做。上述顺序（新接力 → 链接新的 used → 释放 → 关闭，以及其中的 `LAST_ARRANGEMENT`、`OBSERVATION_MISMATCH` 拒绝）已在自建实例用真实 CLI 进程走过一遍，见 `tests/integration/acceptance-release-cli.test.ts`（用的是人类接收者；`session` 模式的消息发送与处理没有在这条测试里走，那一段由 `tests/integration/acceptance-relay.test.ts` 在服务层覆盖）。设 `EVOLOOP_RELEASE_CLI_TRANSCRIPT=1` 运行它会逐条打印真实 CLI 命令原文（凭据来自环境，不显示）、退出码和输出，可作为照文档执行的对照。第 3 步的“早于新接力的观察不能链接”此前按秒比较（`Date.parse` 作用在数据库时间对象上会丢掉毫秒），同一秒内的早观察会被放过；现在按毫秒比较。
 
+## 工作台之外的告警（Task 5da8b6d9，迁移 110）
+
+提供方暂停、全组织停摆这两类事，原来只有桌面会话里的文字和工作台页面顶部的横幅，没人打开工作台就没人知道（2026-11-13 DeepSeek 额度用完，暂停 34.5 小时，使用者全程没有收到任何工作台之外的通知）。现在系统自己向一个**配置好的出口**发一条消息，不依赖 Leader、需求 Session 或有人打开工作台。
+
+**什么时候发。** 每个有读、写、审阅身份的项目，每 15 秒评估一次（`pollIntervalMs`）：
+1. **提供方暂停打开**：发一条“提供方已暂停”，写明提供方、原因类别（额度用完／认证失败）、开始时间（UTC）、受影响的 Session（职责和短编号，最多列 6 个，另报总数）、当时压着几件活（就绪未派、在队伍里排队、等验收各多少）和提供方给的原因（先脱敏、截到 200 字）。**放行**时再发一条“已放行”，写共暂停多久、放行人和理由。
+2. **停摆**：从最近一次**真正开始的 Run** 起、或最近一次提供方放行起、或项目创建起，超过 `stallMinutes`（默认 30 分钟）没有新的 Run，现在没有 Run 在跑，**没有提供方暂停（暂停已经说明了原因，不再叠一条）**，并且有活在等（就绪未派的 Task、队伍里排队的项、**还没有任何观察的**等验收交付），才发一条“已超过 N 分钟没有新的 Run”。**普通消息 Turn 不算 Run，两个方向都不算**：它不会让停摆发不出来（周期性的需求代班消息短于阈值时，若算活动就永远不告警），也不会结束一次已发出的停摆（否则先发“停摆已解除”、再发第二条新告警，周期性消息会来回刷屏）。停摆只在**停摆开始之后创建了一个真正开始的新 Run**（越过启动前检查、有原生 Turn，或已在运行／已结束）、或不再有活在等时结束；**真正开始＝正在运行，或运行过并结束（completed、interrupted，或拿到原生 Turn 之后才 failed）；停在 requested 或 dispatching（预留了、没开始，派发卡住正是这条告警要抓的）、结果未知（unknown），以及启动前检查失败（RECIPIENT_UNBOUND 一类，没有原生 Turn）的 Run 都不算开始**：它既不结束已发出的停摆（不发恢复、不重发 opened，重复多少次都一样），也不推迟尚未发出的停摆，发一条“停摆已解除”；停摆期间新打开的提供方暂停不结束它。已有 `notUsed`／`failed` 观察的交付是已退回作者的，已有 `used` 观察的是已验收的，都不算等验收。安静时段没有活在等不发。
+
+**不重复。** 每次事件是一行 `ops_alert`（提供方暂停按暂停编号 `hold:<id>`，停摆按开始时刻 `stall:<时间>`），开始消息和恢复消息各记送达时间；服务重启、换一个协调器实例、重复评估都不会再发一遍。
+
+**出口。** 只有一种通用出口，由需求 Session 在私有集成配置（`EVOLOOP_INTEGRATIONS_FILE`）的 `alerts` 里接到使用者实际收得到的通道，用哪个通道不在这里决定：
+
+```json
+{ "alerts": { "enabled": true, "pollIntervalMs": 15000, "stallMinutes": 30,
+  "outlet": { "kind": "webhook", "url": "https://…", "headers": { "authorization": "Bearer …" }, "timeoutMs": 5000 } } }
+```
+
+或 `"outlet": { "kind": "command", "argv": ["/绝对路径/notify", "…"], "timeoutMs": 10000 }`。webhook 把告警作为 JSON `POST` 出去（只接受 http/https，不跟随重定向，不读取也不保存对方的回答）；command 不经 shell，告警 JSON 写到它的标准输入，环境只有 `PATH`（要别的环境变量请在脚本里自己设）。没有 `alerts` 或 `enabled` 为 false 就一条也不发。
+
+**消息格式。** JSON：`schema`（`evoloop.alert.v1`）、`projectId`、`key`（同一事件不变，接收方可据此去重或串成一串）、`kind`（`provider_hold`／`stall`）、`event`（`opened`／`resolved`）、`text`（一段中文，可直接当消息正文）、`facts`（同样的信息，结构化）。例：`【evoLoop 告警】Codex 提供方已暂停（额度用完）。从 2026-11-13T05:23:00.000Z 起不再开始新的 Turn；3 个 Session 受影响：功能开发（ab12cd34）…；当时压着 5 件活（就绪未派 2，在队伍里排队 1，等验收 2）。原因：…。放行后会再发一条恢复消息。`
+
+**出口不可达时。** 告警只读系统状态、只写自己的 `ops_alert`：**暂停与放行本身不受影响**，没有任何东西在等告警送出去。送不出去就记错误类别（只记“请求失败／超时／HTTP 状态／命令失败”，不记地址或对方的回答），以 30 秒起倍增的间隔重试（最长 30 分钟，最多 12 次，之后放弃并在服务日志里写一行）；开始消息没送出去之前，恢复消息不会越过它先发。
+
+**读回与限制。** `ops_alert` 表里可以读到每条的状态、开始／结束时间、送达时间、尝试次数和最后一次错误（没有专门的 CLI 命令）。限制：只有一个出口；告警只在协调器运行时发，协调器自己停了发不出（这类情况需要出口之外的存活探测，不在本 Task）；正式环境的出口配置和一次送达核验在发布后另做。
+
 ## 6. 受管 Session 编制所需配置
 
 给一个 Role 新建受管 Session，要同时配好：业务身份（身份文件里对本项目有 read 与 write）、`runtime.grants`（含工作区 `cwd`）、Role 级 `runtime.materialCli`、**`residentQueue.roleActors`** 与 `residentQueue.enabled`、**成对配置的 `sessionMessages.grants`**，以及 `runtime.enabled`。完整清单、每项的格式和生效时机见 [Agent CLI：编制所需私有配置清单](agent-cli.md#编制所需私有配置清单session-prepare-缺项时)。

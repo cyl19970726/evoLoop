@@ -16,6 +16,7 @@ export interface OrchestrationRouteOptions {
 export type WorkStatusesReader = NonNullable<OrchestrationRouteOptions["workStatuses"]>;
 export type PlanningSourcesReader = (principal: Principal, projectId: string, taskId: string,
   taskRevisionId: string, loopId?: string) => Promise<unknown>;
+export type ProjectReader = (principal: Principal, projectId: string) => Promise<unknown>;
 const params = z.record(z.string(), z.uuid());
 const page = z.object({limit: z.coerce.number().int().min(1).max(100).default(50), cursor: z.string().min(1).max(200).optional()});
 const workStatusQuery = z.object({taskIds: z.string().min(36).max(1849).transform(value => value.split(","))
@@ -32,6 +33,20 @@ export function registerWorkStatusRoute(app: FastifyInstance, read: WorkStatuses
   app.get("/api/projects/:projectId/orchestration/work-status", async request => {
     const p = params.parse(request.params), q = workStatusQuery.parse(request.query);
     return read(principal(request.principal), p.projectId!, q.taskIds);
+  });
+}
+/** The team page's two overview reads stay explicit when managed orchestration is not configured. */
+export function registerOrchestrationDisabledRoutes(app: FastifyInstance, readProject: ProjectReader): void {
+  app.get("/api/projects/:projectId/orchestration/status", async request => {
+    const p = params.parse(request.params);
+    await readProject(principal(request.principal), p.projectId!);
+    return {state: "disabled", running: false, busy: false, faults: [], lastError: null};
+  });
+  app.get("/api/projects/:projectId/orchestration/loops", async request => {
+    const p = params.parse(request.params);
+    page.parse(request.query);
+    await readProject(principal(request.principal), p.projectId!);
+    return {items: [], nextCursor: null};
   });
 }
 export function registerOrchestrationRoutes(app: FastifyInstance, options: OrchestrationRouteOptions): void {
