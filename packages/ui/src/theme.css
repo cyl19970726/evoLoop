@@ -23,6 +23,10 @@
   --color-warning: var(--warning);
   --color-warning-soft: var(--warning-soft);
   --color-danger-soft: var(--danger-soft);
+  --color-done: var(--done);
+  --color-done-soft: var(--done-soft);
+  --color-count-bg: var(--count-bg);
+  --color-count-fg: var(--count-fg);
   --color-brand: var(--brand);
   --color-on-brand: var(--on-brand);
   --color-text-secondary: var(--text-secondary);

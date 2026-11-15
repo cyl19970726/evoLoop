@@ -47,6 +47,8 @@ const ProjectSettings = named(() => import("../features/settings/ProjectSettings
 const OperationsPage = named(() => import("../features/settings/OperationsPage"), "OperationsPage");
 const RepositoryPage = named(() => import("../features/settings/RepositoryPage"), "RepositoryPage");
 const SessionWorkspace = named(() => import("../features/sessions/SessionWorkspace"), "SessionWorkspace");
+const FlowPage = named(() => import("../features/sessions/flow/FlowPage"), "FlowPage");
+const FlowGlance = named(() => import("../features/sessions/flow/FlowGlance"), "FlowGlance");
 const ArrangementPage = named(() => import("../features/sessions/ArrangementPage"), "ArrangementPage");
 // The execution queue (features/workflow) shown in an agent's right column; passed in so the two features do not import each other.
 const ResidentQueuePanel = named(() => import("../features/workflow"), "ResidentQueuePanel");
@@ -366,9 +368,10 @@ function WorkspacePages({ route, context, refresh, operations }: { route: Route;
     if (r.section === "repository") return <RepositoryPage projectId={projectId} reference={<ReferencePanel context={context} />} />;
     if (r.section === "sessions") return r.session
       ? <SessionWorkspace context={context} refresh={refresh} sessionKey={r.session} active={active} queue={queue => <ResidentQueuePanel context={context} titled={false} {...queue} />} />
-      : <ArrangementPage context={context} refresh={refresh} />;
+      : <ArrangementPage context={context} refresh={refresh} flow={({ leaderSessionId, active: shown }) => <FlowPage token={token} projectId={projectId} leaderSessionId={leaderSessionId} active={shown} />} />;
     if (r.section === "schedules") return <SchedulingPanel context={context} refresh={refresh} />;
-    if (r.section === "overview") return <ProjectSummary token={token} projectId={projectId} refresh={refresh} active={active} />;
+    if (r.section === "overview") return <ProjectSummary token={token} projectId={projectId} refresh={refresh} active={active}
+      flowGlance={<Suspense fallback={null}><FlowGlance token={token} projectId={projectId} active={active} /></Suspense>} />;
     if (r.section === "settings") return <ProjectSettings context={context} refresh={refresh} />;
     if (r.section === "connectors") return <ConnectorPage context={context} />;
     if (r.section === "collaboration") return <CollaborationPanel context={context} refresh={refresh} />;

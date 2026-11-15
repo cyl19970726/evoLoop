@@ -138,6 +138,20 @@ const configuredUsageTimeZone = integrations.runtime?.dailyBudget?.timeZone ?? "
 const currentIdentity = async () => authConfigSchema.parse(JSON.parse(await readFile(authFile,"utf8")));
 const currentProjectWriter = async (projectId:string,actorId:string) =>
   isProjectWriter(await currentIdentity(),projectId,actorId);
+const resolveSessionLineRecipient=async(projectId:string,sessionId:string)=>{
+    // The Session's own signing identity, never its creator or a guess from the Role.
+    const row=(await pool.query(`SELECT s.role_id,s.actor_id,(SELECT count(*)::int FROM runtime_session o WHERE o.project_id=s.project_id
+      AND o.role_id=s.role_id AND o.state<>'closed') AS live FROM runtime_session s WHERE s.project_id=$1 AND s.session_id=$2`,[projectId,sessionId])).rows[0];
+    if(!row)return null;
+    const configured=await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE);
+    return resolveLineRecipient({projectId,id:sessionId,roleId:row.role_id,actorId:row.actor_id},
+      {materialCli:configured.runtime?.enabled?configured.runtime.materialCli:[],roleActors:configured.residentQueue?.enabled?configured.residentQueue.roleActors:[]},
+      row.live,currentProjectWriter);
+  };
+const sessionLineBusinessActor=async(projectId:string,sessionId:string)=>{
+  const found=await resolveSessionLineRecipient(projectId,sessionId);
+  return found && "actorId" in found ? found.actorId : null;
+};
 const currentQueueConfiguration = async () => (await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE)).residentQueue;
 const uow = new PostgresUnitOfWork(pool, {
   input: async (reader,taskId) => {
@@ -197,6 +211,7 @@ const service = new WorkflowService({
     const target = (await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE)).leaderResultNotices?.targets.find(value => value.projectId === projectId);
     return target && await currentProjectWriter(projectId, target.senderActorId) ? target.senderActorId : null;
   },
+  sessionLineBusinessActor,
   collaborationAuthority: {
     actorForRole: async (projectId,roleId) => {
       const config=await currentQueueConfiguration();
@@ -568,6 +583,14 @@ const runner = runtimeFactory ? new RuntimeRunner({ runtimeFactory, workflow: se
         approvalPolicy:session.approvalPolicy}),
       dynamicAdmission ? () => dynamicAdmission.canStartRun(run,session) : undefined);
   },
+  requesterAuthorityMissing: async (run, session) => {
+    const current = await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE);
+    return !!current.runtime?.enabled &&
+      !await isBoundDynamicSession(pool, run.projectId, run.sessionId) &&
+      !current.hasRuntimeGrant({projectId:session.projectId,actorId:run.actorId,roleId:session.roleId,
+        authorizationScope:session.authorizationScope,cwd:session.cwd,sandbox:session.sandbox,model:session.model,
+        approvalPolicy:session.approvalPolicy});
+  },
   hasGrant: async (scope,session) => {
     const current=await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE);
     return session
@@ -581,6 +604,7 @@ const runner = runtimeFactory ? new RuntimeRunner({ runtimeFactory, workflow: se
 lateRunner.current = runner;
 const scheduling = new SchedulingPump({ store: new PgSchedulingStore(pool), taskTiming: new PgTaskTimingStore(pool), canWrite: lease.canWrite,
   directDispatch: new ScheduleDirectDispatcher({ pool, workflow: { execute: (principal, command) => service.execute(principal, command as never) as never }, sessionDenial: sessionDenial(pool, () => loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE) as never),
+    sessionLineBusinessActor,
     onError: error => console.error(error.message),
     recipientDenial: async (projectId, sessionId) => { const found = await lineRecipient(projectId, sessionId); return found === null ? "SESSION_NOT_FOUND" : typeof found === "string" ? null : found.unresolved; }, newId: randomUUID }),
   credentials: () => credentials, grants: () => integrations.scheduling?.grants ?? [],
@@ -851,14 +875,8 @@ const residentQueue = new ResidentQueuePump({workflow:service,canWrite:lease.can
   pollIntervalMs:integrations.residentQueue?.pollIntervalMs??2000,
   onError:(()=>{const log=throttledLog(line=>console.error(line));return(error:unknown)=>log(`Resident queue tick failed: ${error instanceof Error?error.message.slice(0,200):"unknown"}; inspect persisted queue and Run state before retrying.`);})()});
 const lineRecipient=async(projectId:string,sessionId:string)=>{
-    // The Session's own signing identity, never the Role's guess: Sessions of one Role sign as different identities.
-    const row=(await pool.query(`SELECT s.role_id,s.actor_id,(SELECT count(*)::int FROM runtime_session o WHERE o.project_id=s.project_id
-      AND o.role_id=s.role_id AND o.state<>'closed') AS live FROM runtime_session s WHERE s.project_id=$1 AND s.session_id=$2`,[projectId,sessionId])).rows[0];
-    if(!row)return null;
-    const configured=await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE);
-    const found=await resolveLineRecipient({projectId,id:sessionId,roleId:row.role_id,actorId:row.actor_id},
-      {materialCli:configured.runtime?.enabled?configured.runtime.materialCli:[],roleActors:configured.residentQueue?.enabled?configured.residentQueue.roleActors:[]},
-      row.live,currentProjectWriter);
+    const found=await resolveSessionLineRecipient(projectId,sessionId);
+    if(!found)return null;
     return "actorId" in found?found.actorId:found;
   };
 const sessionLinePump = new SessionLinePump({workflow:service,canWrite:lease.canWrite,

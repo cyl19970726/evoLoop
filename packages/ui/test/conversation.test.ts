@@ -4,7 +4,7 @@ import { test } from "node:test";
 import { createElement as h } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import {
-  Composer, LiveStatusLine, MessageBubble, QuestionCard, QueuedMessages, TodoList, ToolSummary, TurnSummary, composerMenu, matchQuery,
+  Composer, LiveStatusLine, MessageBubble, QuestionCard, QueuedMessages, TodoList, ToolSummary, TurnSummary, composerMenu, matchQuery, toolStepVisual,
   type ComposerAgent, type ComposerCommand,
 } from "../src/index.ts";
 
@@ -127,4 +127,32 @@ test("a long queue shows three rows and folds the rest, bounded in height, with 
   assert.equal((few.match(/<li /g) ?? []).length, 3);
   assert.doesNotMatch(few, /还有|原文与标识|aria-expanded/);
   assert.equal((html(h(QueuedMessages, { items, visibleCount: 5 })).match(/<li /g) ?? []).length, 5);
+});
+
+// Task 3c6973c5 (rework): a step that was not confirmed must never look like a success.
+test("each tool step state has its own icon, tone and spoken name; only completed gets the check", () => {
+  const states = ["completed", "failed", "running", "unknown", "pending", "stale"] as const;
+  const visuals = states.map(state => toolStepVisual({ state }));
+  assert.deepEqual(visuals.map(v => v.state), [...states]);
+  for (const key of ["icon", "label"] as const) assert.equal(new Set(visuals.map(v => v[key])).size, states.length, `${key} is different for every state`);
+  const completed = visuals[0]!;
+  for (const v of visuals.slice(1)) assert.notEqual(v.icon, completed.icon, `${v.state} does not share completed's icon`);
+  assert.equal(toolStepVisual({}).state, "completed"); assert.equal(toolStepVisual({ failed: true }).state, "failed"); assert.equal(toolStepVisual({ running: true }).state, "running");
+  assert.equal(toolStepVisual({ state: "unknown", failed: true }).state, "unknown", "an explicit state wins over the old flags");
+  assert.notEqual(toolStepVisual({ state: "unknown" }).tone, completed.tone, "an unconfirmed step is not drawn in the completed colour");
+  assert.notEqual(toolStepVisual({ state: "stale" }).tone, completed.tone);
+});
+
+test("rendered rows: the check icon appears only on completed; every state carries its spoken name and a data hook", () => {
+  const steps = (["completed", "unknown", "pending", "stale", "failed", "running"] as const).map(state => ({ id: state, text: `步骤 ${state}`, state }));
+  const markup = html(h(ToolSummary, { summary: "执行了 6 个指令", steps, open: true }));
+  const row = (state: string) => markup.split("<li").find(part => part.includes(`步骤 ${state}`))!;
+  assert.match(row("completed"), /lucide-check/); assert.match(row("completed"), /已完成：/);
+  for (const [state, name] of [["unknown", "结果未确认"], ["pending", "待处理"], ["stale", "上次进行中，当前待核对"], ["failed", "失败"], ["running", "进行中"]] as const) {
+    assert.doesNotMatch(row(state), /lucide-check/, `${state} has no check`);
+    assert.match(row(state), new RegExp(`${name}：`), `${state} is spoken as ${name}`);
+    assert.match(row(state), new RegExp(`data-step-state="${state}"`));
+  }
+  const icons = ["completed", "unknown", "pending", "stale", "failed"].map(state => (row(state).match(/lucide lucide-([a-z-]+)/) ?? [])[1]);
+  assert.equal(new Set(icons).size, icons.length, `five different icons: ${icons.join(", ")}`);
 });

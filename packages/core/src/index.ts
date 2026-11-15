@@ -59,6 +59,8 @@ export interface WorkflowDependencies { uow: UnitOfWork; clock: Clock; ids: IdFa
   recoveryAuthority?: RecoveryAuthority;
   /** The one identity that runs the notice packet's own steps (build, sent, observe) for a project: the configured notice sender. Absent: none may. */
   leaderNoticeServiceActor?: (projectId: string) => Promise<string | null>;
+  /** The identity that actually signs for a Session. Never the creator stored on runtime_session. */
+  sessionLineBusinessActor?: (projectId: string, sessionId: string) => Promise<string | null>;
   collaborationAuthority?: {
     actorForRole(projectId:string,roleId:string):Promise<string|null>;
     isAuthorizedRoleActor(projectId:string,actorId:string,roleId:string):Promise<boolean>;
@@ -249,7 +251,8 @@ export class WorkflowService {
     if (command.type.startsWith("schedule.dispatch.") || command.type.startsWith("schedule.directList.") || command.type.startsWith("schedule.directEntry."))
       return applyScheduleDispatch(tx, principal, command as import("@evoloop/contracts/schedule-dispatch").ScheduleDispatchCommand, now, () => this.deps.ids.next());
     if (command.type.startsWith("line."))
-      return applySessionLine(tx, principal, command as import("@evoloop/contracts/session-line").SessionLineCommand, now, () => this.deps.ids.next());
+      return applySessionLine(tx, principal, command as import("@evoloop/contracts/session-line").SessionLineCommand, now,
+        () => this.deps.ids.next(), this.deps.sessionLineBusinessActor);
     if (command.type.startsWith("decision.request."))
       return applyDecisionRequest(tx, principal, command as import("@evoloop/contracts/decision-requests").DecisionRequestCommand, now);
     if (command.type.startsWith("session.message."))
