@@ -42,7 +42,7 @@ description: 把一个新项目接入 evoLoop：先判断情况，再按步骤�
 | | 没有仓库（纯文档/运营项目） | 不配 `repositories`；工作目录仍要有，放 Session 的工作材料 |
 | 有没有现成 Role | 没有（最常见） | 从 **Leader（system Lead）+ 一个业务 Role** 起步，不一次建全阵容（DEC-001）；验收由业务 Role 下另一个有独立身份的 Session 承担，不新建 QA Role（DEC-038、DEC-046） |
 | | 想沿用 evoLoop 自己的 Role 写法 | 只借鉴职责写法；每个 Role 仍在新项目里重新提议、重新接受试行 |
-| 运行时与模型（决定类） | Codex / Claude | 每个 Role 只绑定一种运行时，绑定后不能换（DEC-035）；运行时要先在主机上登录好（[本机运行](../../../docs/development/local-run.md)的 Codex 与 Claude 两段），接入者不替人登录。每个 Session 用哪个模型由使用者定；没定时按使用者已表达的偏好选，并写进接入记录。Codex 会为每个新工作目录往 codexHome 的 `config.toml` 追加一条信任条目；与使用者共用 codexHome 时，这会改动使用者自己的配置，接入前说明，试用结束后由使用者决定是否清理 |
+| 运行时与模型（决定类） | Codex / Claude | 每个 Role 只绑定一种运行时，绑定后不能换（DEC-035）；选的运行时必须是实例在驱动的（`runtime.providers`，没写时只有 `runtime.provider`，默认 `codex`），沿用已有实例时先核对，不在就交使用者定，见[终态清单·E4](references/end-state.md#e4-读到-not_configured-时)；运行时要先在主机上登录好（[本机运行](../../../docs/development/local-run.md)的 Codex 与 Claude 两段），接入者不替人登录。每个 Session 用哪个模型由使用者定；没定时按使用者已表达的偏好选，并写进接入记录。Codex 会为每个新工作目录往 codexHome 的 `config.toml` 追加一条信任条目；与使用者共用 codexHome 时，这会改动使用者自己的配置，接入前说明，试用结束后由使用者决定是否清理 |
 
 ## 1. 定清单、预生成全部 ID
 
@@ -58,22 +58,29 @@ description: 把一个新项目接入 evoLoop：先判断情况，再按步骤�
 
 只在启动时读、改了必须重启的有：身份文件；`runtime.enabled` 与运行时设置；`runtime.grants` 里的**工作目录和模型**（运行器建 Session、开 Run 时只认启动时登记的目录，`models` 也只列启动时的授权）；`repositories`；`scheduling.grants`。其余（`materialCli`、`roleActors`、消息授权、Leader 通知目标、`taskTimingGrants`）每次使用时重读。完整的“何时生效”表见[运行接线手册·共同做法](../../../docs/development/runtime-operations.md#共同做法)。漏了一项，补上后能否免重启就按这张表判断。
 
-重启后**建项目**：用需求 Session 的身份按 `command schema project.create` 建项目（`projectId` 用第 1 步的值）。项目级的读回都要项目先存在。
+重启后**建项目**：用需求 Session 的身份建项目，`projectId` 和 `operationId` 用第 1 步的值。字段只有下面四个，项目名称写在 `title`，没有 `name`、`description`：
 
-**读回：** 除使用者本人外，每个身份用自己的包装跑一次 `cli session`，`principal.actorId` 正确（使用者本人只经 `members` 核对，不用它的令牌）；`cli project <PROJECT>`；`cli get /api/projects/<PROJECT>/members`：每个身份的 `canRead`/`canWrite`/`canReview` 与清单一致、`identityFile: unchanged`、没有 `pending`；`cli models --project <PROJECT>` 列出了要用的模型；`cli get /api/projects/<PROJECT>/repositories`（`status: available`）。`capabilities` 的 `runtime` 要等第 3 步有了 Role 之后才是 `configured`。
+```json
+{"type":"project.create","projectId":"<PROJECT>","operationId":"<OPERATION>","title":"<项目名称>"}
+```
+
+存进私有 JSON 文件，用 `cli command run <PRIVATE_JSON>` 提交；字段以所连服务的 `command schema project.create` 为准。这个 `operationId` 第 3 步的 `role.bootstrap` 还要用（`projectCreateOperationId`）。项目级的读回都要项目先存在。
+
+**读回：** 除使用者本人外，每个身份用自己的包装跑一次 `cli session`，`principal.actorId` 正确（使用者本人只经 `members` 核对，不用它的令牌）；`cli project <PROJECT>`；`cli get /api/projects/<PROJECT>/members`：每个身份的 `canRead`/`canWrite`/`canReview` 与清单一致、`identityFile: unchanged`、没有 `pending`；`cli models --project <PROJECT>` 列出了要用的模型；`cli get /api/projects/<PROJECT>/repositories`（`status: available`）；`cli get /api/projects/<PROJECT>/capabilities`：`runtime` 这时就该是 `configured`。它只看启动时的运行时设置和 grant 的工作目录，不看 Role，也不看运行时种类。读到 `not_configured` 时按[终态清单·E4](references/end-state.md#e4-读到-not_configured-时)判断缺什么。
 
 ## 3. Role
 
-1. **第一个 Role 的引导。** 全新项目里 `task.create` 要求负责人是已试行的 Role，而 `role.propose` 要求引用一个已存在、未完成的 Task，**两者互相要求，只经 API 建不出第一个 Role**。今天的绕行见[私有配置·引导](references/private-config.md#2-第一个-role-的引导)；这是已知缺口，不要另找办法绕。
-2. **提议并接受 Leader 与业务 Role。** Leader 用 `roleClass: system`、`templateKey: lead`，项目里只能有一个 active 或 trial 的 system Lead。把“只用本 Session 的 CLI 和工作目录、被拒就回报错误码、不到磁盘上自行排查”写进每个 Role 提议的 `handoffBoundary`：平台通知触发的 Turn 只带 Role 的职责上下文，不带你写在消息里的提醒。`role.propose` 的硬性要求：`evidence` 至少含缺口类（`backlog`/`omission`/`rework` 之一）、`effect`、`cost` 各一条；`alternatives` 恰好四条，`method`、`knowledge`、`another-instance`、`temporary-assignment` 各一；`reviewAtUtc` 在现在之后、`trialDays` 之内；`firstTaskId` 指一个未完成的 Task（业务 Role 也可以先引用引导 Task）。再由有审阅权的身份 `role.decide accept-trial`（决定类）。
-3. **绑定运行时。** `role runtime set <ROLE> --project <PROJECT> --provider codex|claude --reason …`，首次绑定后不能换。
+1. **第一个 Role 的引导。** 项目已有 `project.create`、但 `list roles` 还是空时，用 `command schema role.bootstrap` 建立第一个 system Lead。命令必须由有项目 write 与 review 权限的身份发出；proposal 不填 `firstTaskId`，其余仍按下面的建议证据规则填写，并至少有一条 evidence 的 `sourceRef` 是 `project:<PROJECT>`。同时提交 `projectCreateOperationId`（第 2 步 `project.create` 回执里的 operationId）和理由。服务端只在项目没有任何 Role、且该操作确实是同项目已应用的 `project.create` 时，原子建立版本 1 的 trial Lead、不可变修订和 `accept-trial` 决定；不要直接写数据库，也不要再手工造 Task 绕过。字段和读回见[私有配置·引导](references/private-config.md#2-第一个-role-的引导)。
+2. **建 Lead 的第一个 Task。** 引导之后 Lead 已是 `trial`，用需求 Session 的身份按 `command schema task.create` 建一个 `owner` 为 Lead Role 的普通 Task，例如“接入后的第一次编制评估”。没有单独的“引导 Task”：它和以后的 Task 一样，只是 Lead 的第一项工作。业务 Role 的 `firstTaskId` 可以指它，第 5 步也用它确认 Leader 能执行自己的 Task。项目还没有 `trial` 或 `active` 的 Role 时，`task.create` 报 `TASK_OWNER_ROLE_REQUIRED`（`packages/core/src/index.ts` 的 `requireRealTaskOwner`）。
+3. **提议并接受业务 Role。** 第一个 system Lead 已由引导命令建立；不要再提第二个 active 或 trial 的 system Lead。业务 Role 仍用 `role.propose`。把“只用本 Session 的 CLI 和工作目录、被拒就回报错误码、不到磁盘上自行排查”写进每个 Role 提议的 `handoffBoundary`：平台通知触发的 Turn 只带 Role 的职责上下文，不带你写在消息里的提醒。`role.propose` 的硬性要求：`evidence` 至少含缺口类（`backlog`/`omission`/`rework` 之一）、`effect`、`cost` 各一条；`alternatives` 恰好四条，`method`、`knowledge`、`another-instance`、`temporary-assignment` 各一；`reviewAtUtc` 在现在之后、`trialDays` 之内；`firstTaskId` 指本项目一个已存在、未完成的 Task（上一条建的那个即可），否则报 `INVALID_FIRST_TASK`（`packages/core/src/roles/index.ts` 的 `checkProposal`）。再由有审阅权的身份 `role.decide accept-trial`（决定类）。
+4. **绑定运行时。** `role runtime set <ROLE> --project <PROJECT> --provider codex|claude --reason …`，首次绑定后不能换。
 
-**读回：** `cli get /api/projects/<PROJECT>/capabilities`（`runtime` 为 `configured`，所有项 `pending: null`）；`cli list roles --project <PROJECT>`（每个 Role `trial`）；`cli role runtime show <ROLE> --project <PROJECT>`。
+**读回：** `cli list roles --project <PROJECT>` 里第一个 Lead 为 `trial`、`proposedBy` 是引导命令的发令身份；`cli read role <LEAD> --revisions --project <PROJECT>` 的修订理由记录来源 `project.create` 操作；`cli get /api/projects/<PROJECT>/capabilities`（`runtime` 为 `configured`，所有项 `pending: null`）；每个 Role 为 `trial`；`cli role runtime show <ROLE> --project <PROJECT>`。
 
 ## 4. Session 与消息往返
 
 1. **Leader 与业务 Session 用 `session prepare --file <PRIVATE_JSON>` 建**（`mode: create`）。它不接受 `--project`（项目 ID 写在文件里）；标准输出是多段 JSON（中间回执加最终结果），存进文件逐段解析。返回 `waiting_for_native_thread` 时，等 `read session <SESSION>` 显示 `ready` 且有原生 Thread，再用**同一个** `operationId` 和文件重跑（立刻重跑会得到一次 `blocked`）；返回 `blocked` 时照 `missingDetails` 补配置后同样重跑；不换 ID 绕过 `recovery_required`。
-2. **验收 Session 不用 `session prepare`。** 它要按 `sessionId` 精确绑定自己的 CLI 身份，而 `session prepare` 要求 CLI 身份等于该 Role 在 `roleActors` 里的业务身份，会报 `material_cli_actor_mismatch`；照它给的修法改，验收者就和作者成了同一身份。改用 [Agent CLI](../../../docs/development/agent-cli.md#准备或复用受管-session) 写明同样有效的路径：`runtime.session.reserve` → `role.bindSession` → 用 `command run` 提交 `session.profile.set` 设显示名（`expectedVersion` 取 `work profile owned:<SESSION>` 读到的显示资料版本；CLI 的 `session profile set` 改的是模型与推理强度，不是这个）。这是服务端的已知不一致，待修。
+2. **验收 Session 同样用 `session prepare` 建，但必须先写好它自己按 `sessionId` 精确的 `materialCli`。** 验收 Session 常与作者同在一个业务 Role，签字身份是验收者自己的业务身份，不是该 Role 在 `roleActors` 里的那个。`session prepare` 看到这个 Session 自己的精确绑定，就按它判断，不再要求等于 `roleActors`（与队伍解析收件人的规则一致：精确绑定优先）；读回的 `config.materialCli.actorId` 应是验收者的身份。没有精确绑定时仍按 Role 级检查，不一致报 `material_cli_actor_mismatch`，这时**不要**把 Role 级条目改成验收身份（那会让作者和验收者成为同一身份），而是给这个 Session 补一条精确绑定；精确绑定指向的身份不是项目当前写入者报 `material_cli_actor_not_writer`，改成有写权限的身份。`roleActors` 仍要有这个 Role 的项（`role_actor`）。这是第 1 步 UUID 里为验收 Session 预先生成的 `sessionId` 的用处：精确绑定要写它。
 3. **同一 Role 有两个及以上 Session 时，每个 Session 都要一条按 `sessionId` 精确的 `materialCli`**，包括作者那个业务 Session。服务这时不再用 Role 级条目推断业务身份，缺了就把派给它的队伍条目挂起（`RECIPIENT_UNAVAILABLE`）。第 2 步一次写好。
 4. **让 Leader 自己做往返测试。** 用需求 Session 的 CLI 给 Leader 发一条消息（`work send owned:<LEADER_SESSION> --file <BODY>`），请它用自己的 CLI 给每个业务 Session 和验收 Session 各发一条带唯一标记的探测消息；探测消息里写明：对方处理后，**另发一条新消息**给 Leader（`work send owned:<LEADER_SESSION> --file <BODY>`，**不加 `--reply-to`**）带回同一标记。`--reply-to` 只能指向发给同一个接收 Session 的消息，跨 Session 回复会报 `REPLY_TARGET_MISMATCH`。探测消息的正文同样写上“只用本 Session 的 CLI 和工作目录；回报被拒时把错误码写进本轮最终回复，不到磁盘上自行排查”：回报被拒时消息不会保存，错误码只在对方的 `work timeline` 里。
 
@@ -83,7 +90,7 @@ description: 把一个新项目接入 evoLoop：先判断情况，再按步骤�
 
 给 Leader 一个每天固定时点的评估 Task（DEC-038）。默认用普通 Task 的每日复制：建一个负责人是 Lead Role 的评估 Task 并设每日时点，授权 `scheduling.taskTimingGrants` 每次使用时重读；做法见[运行接线手册·普通 Task 的每日复制](../../../docs/development/runtime-operations.md#4-普通-task-的每日复制)。授权的 `actorId` 是建这个系列的身份（要有读写审阅），`roleId` 是 Lead Role。也可以用旧 Schedule（`schedule.create`），但它的 `scheduling.grants` 只在启动时读。
 
-**读回：** `cli get /api/projects/<PROJECT>/task-timings` 里有这个系列，下一个评估时点在 `latestTask.plannedAtUtc`（第一次还没执行时）或 `nextAtUtc`；或 `cli list schedules --project <PROJECT>` 里有 active 的 Schedule。再确认 Leader 能执行自己的 Task：引导 Task（第 3 步）由 Leader 在自己的 Session 开出了 Run（`cli work task <引导 TASK> --brief` 不停在 `awaiting_run`）。
+**读回：** `cli get /api/projects/<PROJECT>/task-timings` 里有这个系列，下一个评估时点在 `latestTask.plannedAtUtc`（第一次还没执行时）或 `nextAtUtc`；或 `cli list schedules --project <PROJECT>` 里有 active 的 Schedule。再确认 Leader 能执行自己的 Task：第 3 步建的 Lead 第一个 Task 已由 Leader 身份在 Leader 自己的 Session 开出 Run。`cli work task <LEAD_TASK> --project <PROJECT> --brief` 里 `run.runId` 有值、`waiting.stage` 不是 `awaiting_run`；`cli read run <RUN> --project <PROJECT>` 的 `actorId` 是 Leader 身份、`sessionId` 是 Leader Session。Leader 没有对自己 Session 的执行授权时，预留 Run 报 `FORBIDDEN`（`apps/coordinator/src/server.ts` 里 `runtime.run.reserve` 的执行授权检查），回第 2 步补那一条 `runtime.grants`。
 
 ## 6. 第一个 Task 走通全程
 
@@ -107,7 +114,7 @@ description: 把一个新项目接入 evoLoop：先判断情况，再按步骤�
 - **发布切换会把身份文件和 integrations 从旧版本复制过来**，CLI 包装里写死的发布路径要逐个改指新版本，并各跑一次 `session` 确认。
 - **同一 Session 的消息按顺序处理。** 一条卡住的旧消息会挡住后面所有消息；先按[消息卡在队首](../../../docs/development/runtime-operations.md#验收接力的消息卡在队首缺陷-0fd4a99b)对账那一条，不重发新消息。
 - **模型额度用完或鉴权失败时，服务暂停该提供方的所有新 Turn**（新消息照常排队）。由账户使用者续费或重新登录后，由有审阅权的身份读 `get /api/projects/<PROJECT>/runtime/provider-holds`，再按 `command schema runtime.providerHold.release` 放行一次。
-- **改私有文件前先备份，改完先读回**：`members`、`capabilities` 的 `pending` 告诉你哪些改动要等重启。
+- **改私有文件前先备份，改完先读回**：`members`、`capabilities` 的 `pending` 只能发现**会改变判断结果**的改动，比如某个能力的状态或原因、某个身份的权限，重启前后不一样。只追加条目、不改变状态的改动读不出 `pending`：再登记一个仓库、给 `runtime.grants` 加工作目录或模型、换令牌，都属于这一类。这类改动按第 2 步“只在启动时读”的清单自己判断要不要重启；或者重启后用对应的读回（`repositories`、`models --project`、包装的 `session`）逐条核对清单。
 
 ## Hub 上线后替换哪些块
 

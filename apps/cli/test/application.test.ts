@@ -447,6 +447,42 @@ test("the CLI entry point reads resident queue attempts and preserves ordinary r
   } finally { await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())); }
 });
 
+test("schedule direct-dispatch reads use the three read-only routes and page with a scoped cursor", async () => {
+  const project = "00000000-0000-4000-8000-000000000001";
+  const schedule = "00000000-0000-4000-8000-000000000002";
+  const role = "00000000-0000-4000-8000-000000000003";
+  const urls: string[] = [];
+  const fetch = mock.method(globalThis, "fetch", async (url: string | URL | Request) => {
+    urls.push(String(url)); return new Response(JSON.stringify({ items: [], nextCursor: null }), { status: 200 });
+  });
+  const env = { EVOLOOP_TOKEN: "fixture", EVOLOOP_PROJECT: project };
+  try {
+    for (const args of [
+      ["read", "schedule", schedule, "--dispatch"],
+      ["read", "schedule", schedule, "--dispatches", "--limit", "2", "--cursor", "next-page"],
+      ["read", "role", role, "--direct-list"],
+    ]) assert.equal((await run(args, env)).code, 0, args.join(" "));
+    assert.deepEqual(urls.map(url => new URL(url).pathname + new URL(url).search), [
+      `/api/projects/${project}/schedules/${schedule}/dispatch`,
+      `/api/projects/${project}/schedules/${schedule}/dispatches?cursor=next-page&limit=2`,
+      `/api/projects/${project}/roles/${role}/direct-list`,
+    ]);
+    const help = JSON.parse((await run(["help"])).stdout);
+    assert.ok(help.readModes.schedule.modes.includes("dispatch"));
+    assert.ok(help.readModes.schedule.modes.includes("dispatches"));
+    assert.ok(help.readModes.role.modes.includes("direct-list"));
+    for (const args of [
+      ["read", "schedule", schedule, "--dispatch", "--limit", "2"],
+      ["read", "schedule", schedule, "--dispatches", "--turn-cursor", "t"],
+      ["read", "schedule", schedule, "--dispatches", "--limit", "0"],
+    ]) {
+      assert.equal((await run(args, env)).code, 2);
+      assert.equal(JSON.parse((await run(args, env)).stderr).error.code, "INVALID_INPUT");
+    }
+    assert.equal(urls.length, 3, "invalid local options never reach the API");
+  } finally { fetch.mock.restore(); }
+});
+
 
 test("CLI discovers the full-only default profile for core authorization",async()=>{
   const discovery=await run(["command","schema","runtime.session.reserve"]);
@@ -851,5 +887,21 @@ test("work board, events and metrics forward their parameters to the work board 
       `/api/projects/${project}/work-board/metrics?from=2026-11-12T00%3A00%3A00Z`, `/api/projects/${project}/work-board/metrics`,
     ]);
     assert.notEqual((await run(["work", "board", "--cursor", "x"], env)).code, 0, "an option the command does not take is refused");
+  } finally { fetch.mock.restore(); }
+});
+
+test("work events and updates keep their requested long-poll wait open", async () => {
+  const project = "00000000-0000-4000-8000-000000000001";
+  const key = "owned:00000000-0000-4000-8000-000000000002";
+  const fetch = mock.method(globalThis, "fetch", async () => {
+    await new Promise(resolve => setTimeout(resolve, 40));
+    return new Response(JSON.stringify({ items: [] }), { status: 200 });
+  });
+  const env = { EVOLOOP_TOKEN: "fixture", EVOLOOP_PROJECT: project, EVOLOOP_TIMEOUT_MS: "10" };
+  try {
+    const events = await run(["work", "events", "--wait", "1"], env);
+    assert.equal(events.code, 0, events.stderr);
+    const updates = await run(["work", "updates", key, "--wait-ms", "100"], env);
+    assert.equal(updates.code, 0, updates.stderr);
   } finally { fetch.mock.restore(); }
 });

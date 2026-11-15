@@ -64,6 +64,25 @@ import { registerProjectConfigurationRoutes, type ProjectConfigurationSource } f
 declare module "fastify" { interface FastifyRequest { principal: Principal | null; workerIdentity: WorkerIdentity | null } }
 const pageSchema = z.object({ limit: z.coerce.number().int().min(1).max(100).default(50), cursor: idSchema.optional() });
 const errorStatus = (code: string) => code === "FORBIDDEN" ? 403 : code === "NOT_FOUND" ? 404 : 409;
+/**
+ * What an old tab receives for a page file the server no longer has: a notice on the page, and a failed import whose message matches what the
+ * workbench's own load-failure page looks for (apps/workbench/src/app/chunkLoad.tsx), so newer tabs show their page, older ones the notice.
+ */
+export const staleChunkModule = `(() => {
+  if (typeof document !== "undefined" && !document.getElementById("evoloop-stale-chunk")) {
+    const box = document.createElement("div");
+    box.id = "evoloop-stale-chunk"; box.setAttribute("role", "alert");
+    box.style.cssText = "position:fixed;left:50%;top:16px;transform:translateX(-50%);z-index:2147483647;max-width:min(560px,calc(100vw - 32px));padding:12px 16px;border-radius:12px;background:#fde9e9;color:#1c1714;font:14px/1.5 sans-serif;box-shadow:0 4px 24px rgba(0,0,0,.25)";
+    box.textContent = "工作台已经更新到新版本，这一页的文件已不在服务器上。请刷新页面后再打开（刷新后需要重新输入访问令牌）。";
+    const button = document.createElement("button");
+    button.type = "button"; button.textContent = "刷新页面"; button.style.cssText = "margin-left:12px;padding:4px 12px;border-radius:999px;border:0;background:#1c1714;color:#fcfbf8;cursor:pointer";
+    button.addEventListener("click", () => location.reload());
+    box.append(button); document.body.append(box);
+  }
+  throw new Error("Failed to fetch dynamically imported module: this file is no longer on the server (the workbench has been updated)");
+})();
+`;
+
 export async function buildServer(options: {
   service: WorkflowService; credentials: AuthConfig; webRoot?: string; canWrite?: () => boolean;
   runtime?: RuntimeRunner; allowedRuntimeCwds?: (projectId: string) => string[];
@@ -109,7 +128,7 @@ export async function buildServer(options: {
   messageSendAuthority?: (principal: Principal, projectId: string, sessionId: string) => Promise<{ code: "MESSAGE_GRANT_MISSING"; message: string } | null>;
   sessionPreparation?: (input:{projectId:string;sessionId:string;roleId:string;sessionActorId:string;
     cwd:string;authorizationScope:string;model:string|null}) => Promise<{runtimeAvailable:boolean;grantReady:boolean;
-    cwdReady:boolean;materialCli:{actorId:string;command:string;ready:boolean}|null;roleActorId:string|null;
+    cwdReady:boolean;materialCli:{actorId:string;command:string;ready:boolean;exact?:boolean;writer?:boolean}|null;roleActorId:string|null;
     roleActorState?:import("@evoloop/contracts/session-preparation").RoleActorState;roleActorConfiguredId?:string|null;
     skills:Array<{path:string;commit:string;contentHash:string;readSubcommand:string}>}>;
   readRoleSkill?: (projectId:string,roleId:string,name:string,commit:string,hash:string) =>
@@ -428,7 +447,10 @@ export async function buildServer(options: {
       ...(!session&&selectedModel&&modelCatalog.status==="available"&&!modelCatalog.models.includes(selectedModel)?["model_not_active"]:[]),
       ...(!config.roleActorId?["role_actor"]:[]),...(!config.materialCli?["material_cli"]:
         !config.materialCli.ready?["material_cli_incompatible"]:[]),
-      ...(config.materialCli&&config.roleActorId&&config.materialCli.actorId!==config.roleActorId?["material_cli_actor_mismatch"]:[]),
+      // A Session's own materialCli entry names who signs for that Session and wins over the Role's actor (resolveLineRecipient): the
+      // Role-level equality only applies when the Session has no entry of its own, and an exact entry must name a current project writer.
+      ...(config.materialCli&&!config.materialCli.exact&&config.roleActorId&&config.materialCli.actorId!==config.roleActorId?["material_cli_actor_mismatch"]:[]),
+      ...(config.materialCli?.exact&&config.materialCli.writer===false?["material_cli_actor_not_writer"]:[]),
       ...(!config.skills.length?["role_skill"]:[]),
       ...(!["trial","active"].includes(role.state)?["role_inactive"]:[]),
       ...(session&&!actualFull?["session_execution_profile_restricted"]:[]),
@@ -512,9 +534,11 @@ export async function buildServer(options: {
     const fullGrants=callerGrants(projectId,principal.actorId).filter(g=>g.sandbox==="danger-full-access"&&
       (g.approvalPolicy??"never")==="never"&&g.networkAccess!==false);
     const allowed=new Set(fullGrants.flatMap(grantModels));
-    return {...current,provider,models:current.status==="available"?current.models.filter(model=>allowed.has(model)):[],
+    return {...current,provider,models:current.status==="available"?current.models:[],
       options:current.status==="available"?current.options?.filter(option=>allowed.has(option.model))??[]:[],
-      authorizedModels:[...allowed],environments:fullGrants.map(g=>({roleId:g.roleId,authorizationScope:g.authorizationScope,
+      authorizedModels:[...allowed],
+      modelStatus:current.status==="available"?current.models.map(model=>({model,authorized:allowed.has(model)})):[],
+      environments:fullGrants.map(g=>({roleId:g.roleId,authorizationScope:g.authorizationScope,
         cwd:g.cwd,configuredModel:g.model??null,models:current.status==="available"?
           current.models.filter(model=>grantAllowsModel(g,model)):[]}))};
   });
@@ -830,6 +854,16 @@ export async function buildServer(options: {
     const workbenchPage = (_request: unknown, reply: { sendFile(name: string): unknown }) => reply.sendFile("index.html");
     app.get("/p/*", workbenchPage);
     app.get("/ui", workbenchPage);
+    // A page chunk that is no longer on disk (a tab opened before a release that is older than the carried files, defect 581441ad). A tab from before the
+    // "workbench has been updated" page (#396) shows only a generic error for the failed import. The answer to a missing script under /assets/ is
+    // therefore a small module that says what happened and where to go, then fails the import with the message newer tabs already recognise.
+    // Other missing files keep their own 404, and so does everything outside /assets/.
+    app.setNotFoundHandler((request, reply) => {
+      const path = request.raw.url?.split("?")[0] ?? "";
+      if (request.method === "GET" && /^\/assets\/[^/]+\.js$/.test(path))
+        return reply.code(200).header("Content-Type", "text/javascript; charset=utf-8").header("Cache-Control", "no-store").send(staleChunkModule);
+      return reply.code(404).send({ message: `Route ${request.method}:${request.raw.url} not found`, error: "Not Found", statusCode: 404 });
+    });
   }
   return app;
 }

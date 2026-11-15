@@ -16,7 +16,7 @@ export * from "./usage.js";
 export * from "./context-budget.js";
 import { reserveRuntime } from "./runtime/reserve.js";
 import { currentRetentions, validateDispatchBasis, validateReselectedOriginals, validateSelectedExternalBasis } from "./runtime/basis.js";
-import { applyRole, RoleRuleError } from "./roles/index.js";
+import { applyRole, applyRoleBootstrap, RoleRuleError } from "./roles/index.js";
 import { applyRoleRuntime } from "./roles/runtime.js";
 import { applyResident } from "./resident-hosts.js";
 import { applySessionMessage } from "./session-messages/index.js";
@@ -788,6 +788,21 @@ export class WorkflowService {
             throw error;
           }
       }
+      case "role.bootstrap": {
+          if ((await tx.listRoles(1)).items.length)
+            throw new DomainError("ROLE_BOOTSTRAP_NOT_EMPTY", "first Role bootstrap is available only while the project has no Role");
+          const origin = await tx.getOperation(command.projectCreateOperationId);
+          if (!origin || origin.commandType !== "project.create" || origin.result.status !== "applied" ||
+            origin.result.entityId !== command.projectId)
+            throw new DomainError("ROLE_BOOTSTRAP_ORIGIN_INVALID", "role bootstrap requires the applied project.create operation for this project");
+          try {
+            const result = await applyRoleBootstrap(tx, principal, command, { nowUtc: now, nextId: () => this.deps.ids.next() });
+            return { result: { ...base, ...result }, effects: [{ kind: "role", entityId: result.entityId, version: result.version }] };
+          } catch (error) {
+            if (error instanceof RoleRuleError) throw new DomainError(error.code, error.message, error.currentVersion);
+            throw error;
+          }
+      }
       case "role.runtime.set": {
           try {
             const result = await applyRoleRuntime(tx, principal, command, { nowUtc: now, availableProviders: this.runtimeProviders() });
@@ -1289,6 +1304,27 @@ export class WorkflowService {
   listSchedules(principal: Principal, projectId: string) { return this.read(principal, projectId, reader => reader.listSchedules()); }
   listScheduleRevisions(principal: Principal, projectId: string, scheduleId: string) { return this.read(principal, projectId, async reader => { required(await reader.getSchedule(scheduleId), "Schedule"); return reader.listScheduleRevisions(scheduleId); }); }
   listScheduleOccurrences(principal: Principal, projectId: string, scheduleId: string) { return this.read(principal, projectId, async reader => { required(await reader.getSchedule(scheduleId), "Schedule"); return reader.listOccurrences(scheduleId); }); }
+  getScheduleDispatchPolicy(principal: Principal, projectId: string, scheduleId: string) {
+    return this.read(principal, projectId, async reader => {
+      required(await reader.getSchedule(scheduleId), "Schedule");
+      if (!reader.scheduleDispatch) throw new DomainError("CAPABILITY_UNAVAILABLE", "Scheduled direct-dispatch reads are not configured");
+      return reader.scheduleDispatch.getDispatchPolicy(scheduleId);
+    });
+  }
+  listScheduleDispatches(principal: Principal, projectId: string, scheduleId: string, limit = 50, cursor?: string) {
+    return this.read(principal, projectId, async reader => {
+      required(await reader.getSchedule(scheduleId), "Schedule");
+      if (!reader.scheduleDispatch) throw new DomainError("CAPABILITY_UNAVAILABLE", "Scheduled direct-dispatch reads are not configured");
+      return reader.scheduleDispatch.listDispatches(scheduleId, pageLimit(limit), cursor);
+    });
+  }
+  getRoleDirectDispatchList(principal: Principal, projectId: string, roleId: string) {
+    return this.read(principal, projectId, async reader => {
+      required(await reader.getRole(roleId), "Role");
+      if (!reader.scheduleDispatch) throw new DomainError("CAPABILITY_UNAVAILABLE", "Scheduled direct-dispatch reads are not configured");
+      return reader.scheduleDispatch.getDirectList(roleId);
+    });
+  }
   getDocumentPayloadRevision(principal: Principal, projectId: string, documentId: string, revisionId: string) { return this.read(principal, projectId, async reader => required(await reader.getDocumentPayloadRevision(documentId, revisionId), "Document payload revision")); }
   listDocumentAssets(principal: Principal, projectId: string, documentId: string, revisionId: string) { return this.read(principal, projectId, async reader => { required(await reader.getDocumentPayloadRevision(documentId, revisionId), "Document payload revision"); return reader.listDocumentAssets(documentId, revisionId); }); }
   getRegisteredBlob(principal: Principal, projectId: string, blobId: string) { return this.read(principal, projectId, async reader => required(await reader.getRegisteredBlob(blobId), "Registered blob")); }

@@ -52,36 +52,53 @@ exec <NODE_ABSOLUTE_PATH> <RELEASE_SOURCE>/apps/cli/dist/main.js "$@"
 
 ## 2. 第一个 Role 的引导
 
-**缺口：** `task.create` 要求 `owner` 是 trial 或 active 的 Role（`TASK_OWNER_ROLE_REQUIRED`）；`role.propose` 要求 `firstTaskId` 指向一个已存在且未完成的 Task（`INVALID_FIRST_TASK`）。全新项目里两者互相要求，只经 API 建不出第一个 Role。仓库里的合成数据脚本（`scripts/seed-frontend-scenarios.mjs`）也因此要求先有一个试行 Role。这个缺口待服务端补上一个正式的引导办法，在那之前用下面的绕行。
+只在项目已有 `project.create` 操作、但 `list roles` 仍为空时使用。由有项目 write 与 review 权限的身份（通常是需求 Session）提交 `role.bootstrap`：
 
-**绕行（只做一次，只在本项目还没有任何 Role 和 Task 时）：** 由实例维护者直接在数据库里插入一个 Task，负责人写**将要提议的 Lead Role 的 UUID**（此刻还不存在）；随后经 API 正常提议该 Role（`firstTaskId` 指这个 Task）并接受试行，这个 Task 就成了 Leader 的第一项工作（例如“接入后的第一次编制评估”）。此后所有 Task 都经 `task.create`。
-
-- 正式实例上：先停写备份（[停写备份](../../../../docs/development/local-run.md#停写备份与空目标恢复)），在维护窗口里做，写进接入记录。
-- 只插这一行，不插 Role、不改别的表。
-
-```sh
-psql "$EVOLOOP_DATABASE_URL" -v ON_ERROR_STOP=1 \
-  -v project=<PROJECT> -v lead_role=<将要提议的 LEAD_ROLE_UUID> \
-  -v task=<新 UUID> -v rev=<新 UUID> -v doc=<新 UUID> -v content=<新 UUID> \
-  -v title='接入后的第一次编制评估' -v body='<Task 正文 Markdown>' -v acceptance='<验收条件>' <<'SQL'
-BEGIN;
-SELECT 1/(CASE WHEN (SELECT count(*) FROM role_definition WHERE project_id=:'project')=0
-                AND (SELECT count(*) FROM task WHERE project_id=:'project')=0 THEN 1 ELSE 0 END) AS empty_project_check;
-INSERT INTO process_document(project_id,document_id,title,version,current_revision_id,kind,status)
-  VALUES(:'project',:'doc',:'title',1,:'content','task','draft');
-INSERT INTO document_revision(project_id,document_id,revision_id,body,format,content_hash,author,created_at,reason,media_type,original_name,assets_manifest)
-  VALUES(:'project',:'doc',:'content',:'body','markdown',encode(sha256(convert_to(:'body','UTF8')),'hex'),'onboarding-bootstrap',now(),'first Role bootstrap','text/markdown',:'doc'||'.md','[]'::jsonb);
-INSERT INTO task(project_id,task_id,version,current_revision_id,title,acceptance,owner,state,content_document_id,content_revision_id)
-  VALUES(:'project',:'task',1,:'rev',:'title',:'acceptance',:'lead_role','todo',:'doc',:'content');
-INSERT INTO task_revision(project_id,task_id,revision_id,version,title,acceptance,owner,state,content_document_id,content_revision_id,actor_id,reason,created_at)
-  VALUES(:'project',:'task',:'rev',1,:'title',:'acceptance',:'lead_role','todo',:'doc',:'content','onboarding-bootstrap','first Role bootstrap',now());
-COMMIT;
-SQL
+```json
+{
+  "type": "role.bootstrap",
+  "projectId": "<PROJECT>",
+  "operationId": "<新 UUID>",
+  "roleId": "<LEAD_ROLE_UUID>",
+  "projectCreateOperationId": "<project.create 回执里的 operationId>",
+  "reason": "空项目需要一个有界试行的第一个 Lead",
+  "proposal": {
+    "title": "Lead",
+    "roleClass": "system",
+    "templateKey": "lead",
+    "goal": "<Lead 的独立目标>",
+    "independentResponsibility": "<为什么需要持续独立判断>",
+    "ownerScope": "<责任与授权范围>",
+    "inputs": ["<主要输入>"],
+    "writableAssets": ["<可写资产>"],
+    "deliverables": ["<交付>"],
+    "triggers": ["<触发条件>"],
+    "workflow": "<检查、判断、修复与交付流程>",
+    "handoffBoundary": "只用本 Session 的 CLI 和工作目录；被拒时回报错误码，不到磁盘上自行排查。",
+    "evidence": [
+      {"kind": "omission", "observation": "<空项目缺首个责任的问题>", "sourceRef": "project:<PROJECT>", "observedAtUtc": "<ISO 8601>"},
+      {"kind": "effect", "observation": "<没有 Role 的实际影响>", "sourceRef": "project:<PROJECT>", "observedAtUtc": "<ISO 8601>"},
+      {"kind": "cost", "observation": "<继续缺少 Lead 的已付成本>", "sourceRef": "project:<PROJECT>", "observedAtUtc": "<ISO 8601>"}
+    ],
+    "alternatives": [
+      {"kind": "method", "assessment": "<比较>", "estimatedCost": "<成本>"},
+      {"kind": "knowledge", "assessment": "<比较>", "estimatedCost": "<成本>"},
+      {"kind": "another-instance", "assessment": "<比较>", "estimatedCost": "<成本>"},
+      {"kind": "temporary-assignment", "assessment": "<比较>", "estimatedCost": "<成本>"}
+    ],
+    "baseline": "<当前基线>",
+    "expectedEffect": "<预期效果>",
+    "costLimit": "<试行成本上限>",
+    "trialDays": 14,
+    "reviewAtUtc": "<现在之后、试行期之内的 ISO 8601>",
+    "exitCriteria": "<停止或撤回判据>"
+  }
+}
 ```
 
-第一行检查不满足时除零报错、整段回滚。之后用 `role.propose`（`roleId` 就是上面的 `lead_role`）提议 Lead，再 `role.decide accept-trial`。
+`proposal` 不写 `firstTaskId`，其余字段与 `role.propose` 相同；至少一条 evidence 的来源必须是 `project:<PROJECT>`。命令只在项目还没有任何 Role 时有效，并要求 `projectCreateOperationId` 是同项目一条已应用的 `project.create`。服务端在同一事务里建立版本 1 的 trial Lead、不可变修订和 `accept-trial` 决定；操作日志、`proposedBy`、修订与决定记录同一发令者。项目已有任何 Role（包括 candidate、rejected、retired）时返回 `ROLE_BOOTSTRAP_NOT_EMPTY`，之后的业务 Role 仍须用普通 `role.propose` 和真实未完成的首 Task。不要把数据库写入作为引导或失败后的绕行。
 
-**读回：** `task <TASK> --project <PROJECT>` 可读、`owner` 是 Lead Role；`list roles` 里 Lead 为 `trial`。业务 Role 的首个 Task 从此正常用 `task.create` 建（负责人可先写 Lead，Role 接受后再按交接规则转给业务 Role），或直接以 Lead 已有的 Task 为 `firstTaskId`。
+**读回：** `list roles --project <PROJECT>` 里 Lead 为 `trial`、`proposedBy` 是发令者；`read role <LEAD> --project <PROJECT>` 不含 `firstTaskId`；`read role <LEAD> --revisions --project <PROJECT>` 的理由包含 `project.create <projectCreateOperationId>`；用 `operation <projectCreateOperationId>` 和该引导操作的 ID 读回两条已应用记录。随后用正常 `task.create` 给该 Lead 建第一项工作（`owner` 为 Lead Role 的普通 Task，见 SKILL 第 3 步）；没有单独的“引导 Task”。业务 Role 的 `firstTaskId` 可以引用它，或引用本项目另一项已存在且未完成的 Task。
 
 ## 3. 每个 Session 的配置
 
@@ -108,7 +125,7 @@ SQL
 
 `models` 的候选值从运行时的模型目录取（`models --project` 只列已授权的，第一次是空的），重启后再用 `models --project` 确认。
 
-**`runtime.materialCli`**（Session 里用哪个 CLI 身份）：Role 级一条（业务身份）；验收 Session 再加一条按 `sessionId` 精确绑定的（验收身份），精确绑定优先。**同一 Role 有两个及以上 Session 时（例如作者与验收者同在业务 Role），每个 Session 都要一条按 `sessionId` 的精确绑定**：服务这时不再用 Role 级条目推断业务身份，缺的那个 Session 收到的队伍条目会被挂起（`RECIPIENT_UNAVAILABLE`）。验收 Session 因此不能用 `session prepare` 建（会报 `material_cli_actor_mismatch`），改用 `runtime.session.reserve` → `role.bindSession` → `session profile set`，各按 `command schema` 填写，`runtime.session.reserve` 的 `cwd`、`authorizationScope`、`model` 与上面的 grant 一致。
+**`runtime.materialCli`**（Session 里用哪个 CLI 身份）：Role 级一条（业务身份）；验收 Session 再加一条按 `sessionId` 精确绑定的（验收身份），精确绑定优先。**同一 Role 有两个及以上 Session 时（例如作者与验收者同在业务 Role），每个 Session 都要一条按 `sessionId` 的精确绑定**：服务这时不再用 Role 级条目推断业务身份，缺的那个 Session 收到的队伍条目会被挂起（`RECIPIENT_UNAVAILABLE`）。有了这条精确绑定，验收 Session 也能用 `session prepare` 建：它按精确绑定判断，不再要求等于 `roleActors`（读回的 `config.materialCli.actorId` 是验收身份）；精确绑定指向的身份须是项目当前写入者，否则 `material_cli_actor_not_writer`。
 
 ```json
 { "projectId": "<PROJECT>", "roleId": "<ROLE>", "sessionActorId": "<建 Session 的身份>",
@@ -117,7 +134,7 @@ SQL
   "cliActorId": "<验收身份>", "command": "<CLI_ROOT>/<验收身份>/evoloop" }
 ```
 
-**`residentQueue.roleActors`**：每个 Role 一条 `{projectId, roleId, actorId}`，`actorId` 等于 Role 级 `materialCli` 的 `cliActorId`（不一致报 `material_cli_actor_mismatch`），`residentQueue.enabled: true`。
+**`residentQueue.roleActors`**：每个 Role 一条 `{projectId, roleId, actorId}`，`actorId` 等于 Role 级 `materialCli` 的 `cliActorId`（Session 没有自己的精确绑定而不一致时报 `material_cli_actor_mismatch`），`residentQueue.enabled: true`。
 
 **`sessionMessages.grants`**（成对，`sessionMessages.enabled: true`）：每条按“接收 Session”写。
 
@@ -151,7 +168,7 @@ SQL
 | 要核什么 | 命令 |
 | --- | --- |
 | 成员与权限、改了没重启 | `get /api/projects/<PROJECT>/members` |
-| 各能力是否生效、重启后会变成什么 | `get /api/projects/<PROJECT>/capabilities`（看 `state`、`reason`、`pending`） |
+| 各能力是否生效、重启后状态会不会变 | `get /api/projects/<PROJECT>/capabilities`（看 `state`、`reason`、`pending`；只追加条目、不改变状态的改动读不出 `pending`） |
 | 仓库登记 | `get /api/projects/<PROJECT>/repositories` |
 | Role 与运行时 | `list roles`、`read role <ROLE> --bindings`、`role runtime show <ROLE>` |
 | Session | `list sessions`、`work list`、`work status owned:<SESSION>`、`session profile show <SESSION>` |
@@ -172,15 +189,19 @@ SQL
 | 服务起不来，日志 `Document originals must stay outside the development checkout` | 启动服务时的当前目录包含了 Blob 目录 | 从不包含 Blob 目录的位置启动（服务管理器通常从 `/` 启动） |
 | `models --project` 为空 | 调用者还没有授权这些模型的 `runtime.grants`，或 grant 改了没重启 | 候选值从运行时模型目录取，写进 grant 后重启 |
 | `capabilities` 的 `runtime` 为 `grant_directory_unavailable`、`pending` 显示重启后 `configured` | 新的工作目录只在启动时登记 | 重启 |
+| 追加了仓库、grant 的工作目录或模型，`pending` 仍是 null，`repositories` 或 `models --project` 却没有新条目 | `pending` 只在重启前后能力状态不同时出现，只追加条目读不出来 | 按 SKILL 第 2 步“只在启动时读”的清单判断，重启后再读回 |
+| `role runtime set` 报 `RUNTIME_PROVIDER_UNAVAILABLE` | 实例没在驱动这种运行时（`runtime.providers`，没写时只有 `runtime.provider`） | 由使用者定：改实例的运行时设置并重启，或改选运行时（终态清单 E4 表下） |
 | `role.propose` 报 `INVALID_INPUT`（evidence 或 alternatives） | `evidence` 缺缺口类/`effect`/`cost` 之一，或 `alternatives` 不是四类各一 | 按 SKILL 第 3 步补齐 |
 | `session prepare` 报参数错误 | 传了 `--project` | 项目 ID 只写在准备文件里 |
-| 验收 Session 的 `session prepare` 报 `material_cli_actor_mismatch` | 准备检查要求 CLI 身份等于 Role 的业务身份 | 不照它的修法改；改用 reserve + bindSession + profile set（第 3 节） |
+| 验收 Session 的 `session prepare` 报 `material_cli_actor_mismatch` | 这个 Session 没有自己按 `sessionId` 精确的 `materialCli`，被按 Role 级检查 | 给它补一条精确绑定（cliActorId 是验收身份），不要改 Role 级条目；指向非写入者则报 `material_cli_actor_not_writer` |
 | 队伍条目被挂起 `RECIPIENT_UNAVAILABLE`（“shares its Role with … other live Session(s) and has no runtime.materialCli entry of its own”） | 同 Role 有多个 Session，这个 Session 没有按 `sessionId` 的精确绑定 | 第 3 节补精确绑定（每次使用时重读），再按 `work board` 读回条目是否恢复 |
 | `session prepare` 返回 `waiting_for_native_thread`，立刻重跑又得到 `blocked` | 原生 Thread 还没就绪 | 等 `read session` 显示 `ready` 和原生 Thread，再用同一文件重跑 |
 | 回报消息报 `REPLY_TARGET_MISMATCH` | `--reply-to` 指向了发给另一个 Session 的消息 | 发新消息，不加 `--reply-to` |
 | `work events --wait 30` 报 `TIMEOUT` | CLI 默认 15 秒超时短于等待时间 | `EVOLOOP_TIMEOUT_MS=60000` |
 | `project.create` 被拒 | 发命令的身份的 `projectIds` 里还没有这个项目（或没重启） | 先写身份文件、重启 |
-| `TASK_OWNER_ROLE_REQUIRED` / `INVALID_FIRST_TASK` | 第一个 Role 的引导缺口 | 第 2 节 |
+| `project.create` 报 `INVALID_INPUT` | 字段只有 `type`、`projectId`、`operationId`、`title` 四个，项目名称写在 `title`，没有 `name`、`description` | 照 SKILL 第 2 步的最小示例 |
+| `TASK_OWNER_ROLE_REQUIRED` / `INVALID_FIRST_TASK` | 项目尚无 Role 时的正常保护：一个要已有试行 Role，一个要已有未完成 Task | 用第 2 节的 `role.bootstrap` 建首个 Lead；已有 Role 后仍报 `INVALID_FIRST_TASK`，检查 `firstTaskId` 是否指向本项目未完成 Task |
+| `ROLE_BOOTSTRAP_NOT_EMPTY` / `ROLE_BOOTSTRAP_ORIGIN_INVALID` / `INVALID_BOOTSTRAP_*` | 引导命令只适用于空项目，或项目创建操作、Role 类型、证据不符合要求 | 第 2 节；已有 Role 时改走 `role.propose`，不要重试数据库写入 |
 | `INVALID_TRIAL` | 回看日期不在试行期内，或已经过去 | `reviewAtUtc` 设在现在之后、`trialDays` 之内 |
 | `session prepare` 返回 `blocked` | 缺配置 | 照 `missingDetails` 补，用同一 `operationId` 重跑 |
 | `material_cli_incompatible` | 包装路径含不允许的字符 | 换到只含 `A-Za-z0-9_./-` 的路径 |

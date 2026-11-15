@@ -30,6 +30,11 @@ export const acceptanceObserveSchema=z.strictObject({
   projectId:id,taskId:id,relayId:id,operationId:id,
   expectedVersion:z.number().int().positive(),observationId:id,
 });
+/** Move an effective arrangement out of the way (state released) when another arrangement of the same Delivery and stage remains and this one was not satisfied. */
+export const acceptanceReleaseSchema=z.strictObject({
+  projectId:id,taskId:id,relayId:id,operationId:id,expectedVersion:z.number().int().positive(),reason:text,
+});
+export type AcceptanceReleaseInput=z.infer<typeof acceptanceReleaseSchema>;
 export type AcceptanceReadInput=z.infer<typeof acceptanceReadSchema>;
 export type AcceptanceObserveInput=z.infer<typeof acceptanceObserveSchema>;
 
@@ -42,7 +47,7 @@ export interface AcceptanceRelayView {
   roleId:string|null; senderActorId:string|null; state:"pending"|"linked"|"blocked"|"superseded"|"released";
   blockedReason:string|null; messageId:string|null; messageOperationId:string|null; messageState:string|null;
   processingState:string|null; nativeTurnId:string|null; readActorId:string|null;
-  humanReadAt:string|null; observationId:string|null; observationResult:string|null;
+  humanReadAt:string|null; observationId:string|null; observationOperationId:string|null; observationResult:string|null;
   observationActorId:string|null; evidenceLevel:string|null;
   /** Exact session binding is the strongest independence fact stored; actor labels alone are never proof. */
   independenceEvidence:"human_credential"|"distinct_runtime_session"|"unverified";
