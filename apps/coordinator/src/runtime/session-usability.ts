@@ -3,9 +3,11 @@
 // model started. This reads the same facts the preflight and the Session line read (resolveLineRecipient) and says so up front, with the reason.
 import { resolveLineRecipient, type LineRecipientConfig } from "../session-line/recipient.js";
 
-export type UnusableCode = "SESSION_NOT_READY" | "NATIVE_THREAD_UNAVAILABLE" | "BUSINESS_IDENTITY_UNBOUND" | "BUSINESS_IDENTITY_NOT_WRITER";
+export type UnusableCode = "USABILITY_UNKNOWN" | "SESSION_NOT_READY" | "NATIVE_THREAD_UNAVAILABLE" | "BUSINESS_IDENTITY_UNBOUND" | "BUSINESS_IDENTITY_NOT_WRITER";
 export interface UnusableReason { code: UnusableCode; reason: string }
 export interface SessionUsability { usable: boolean; reasons: UnusableReason[] }
+/** What every reader is told when whether a Session can start work could not be judged: not dispatchable, never silently "ready". */
+export const USABILITY_UNKNOWN: UnusableReason = { code: "USABILITY_UNKNOWN" as never, reason: "现在判断不出这个 Session 能否开工（配置或身份解析失败）；按不可用处理，先核对服务日志与私有配置" };
 export interface UsabilitySession { projectId: string; id: string; roleId: string; actorId: string; state: string; nativeThreadId: string | null }
 
 /** Pure: the reasons this Session cannot start work, from the facts given. An empty list is usable. */
@@ -20,6 +22,12 @@ export async function sessionUsability(session: UsabilitySession, config: LineRe
   else if (!await projectWriter(session.projectId, anyone.actorId))
     reasons.push({ code: "BUSINESS_IDENTITY_NOT_WRITER", reason: `绑定的业务身份 ${anyone.actorId} 不是本项目当前的写入者` });
   return { usable: reasons.length === 0, reasons };
+}
+
+/** The codes that keep a Session out of acceptance/capacity views: its unusable reasons, or USABILITY_UNKNOWN when the judgement fails or leaves it out (fail closed). */
+export async function usabilityProblems(judge: (projectId: string, sessionIds: string[]) => Promise<Map<string, SessionUsability>>, projectId: string, sessionId: string): Promise<string[]> {
+  const judged = (await judge(projectId, [sessionId]).catch(() => null))?.get(sessionId);
+  return !judged ? ["USABILITY_UNKNOWN"] : judged.usable ? [] : judged.reasons.map(reason => reason.code);
 }
 
 export interface SessionUsabilityDeps {

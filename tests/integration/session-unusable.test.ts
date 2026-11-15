@@ -12,7 +12,9 @@ import type { Principal } from "@evoloop/contracts";
 import { buildServer } from "../../apps/coordinator/src/server.js";
 import { SchedEventHub } from "../../apps/coordinator/src/work-board/hub.js";
 import { createReserveRecipientCheck } from "../../apps/coordinator/src/runtime/recipient-preflight.js";
+import { SessionObservationService } from "@evoloop/core/session-observation";
 import { createSessionUsability } from "../../apps/coordinator/src/runtime/session-usability.js";
+import { SessionAttentionPump, pgSessionAttentionStore } from "../../apps/coordinator/src/session-attention/pump.js";
 import { PreflightError, safePreflightReport } from "../../apps/coordinator/src/runtime/preflight-report.js";
 
 const url = process.env.TEST_DATABASE_URL;
@@ -59,12 +61,16 @@ test("a Session without a business identity or native thread is unusable and say
   let config: Cfg = { materialCli: [{ projectId, sessionId: bound, sessionActorId: callerActor, cliActorId: "worker" }], roleActors: [{ projectId, roleId, actorId: "worker" }] };
   let writers = ["worker", "late-worker"];
   const usability = createSessionUsability({ query: (sql, params) => pool.query(sql, params as never[]) as never, config: async () => config, projectWriter: async (_p, a) => writers.includes(a) });
+  // The judgement the coordinator uses everywhere; the test can make it fail or say nothing to see that every reader fails closed.
+  let judgeMode: "real" | "throws" | "empty" = "real";
+  const judge: typeof usability = async (projectId, ids) => { if (judgeMode === "throws") throw new Error("integrations file unreadable"); return judgeMode === "empty" ? new Map() : usability(projectId, ids); };
   const reads = { board: (id: string) => readWorkBoard(pool, id), events: (id: string, q: Parameters<typeof readSchedEvents>[2]) => readSchedEvents(pool, id, q) };
   const hub = new SchedEventHub({ head: id => headSeq(pool, id), read: (id, after, limit) => readSchedEvents(pool, id, { after, limit }) }, 500);
   const app = await buildServer({ service: workflow, credentials: [{ token, actorId: "lead", projectIds: [projectId], permissions: ["read", "write", "review"] }],
     runtime: { status: () => ({ available: true, error: null, faults: [] }) } as never, listRuntimeModels: async () => ({ status: "available", models: [], error: null, observedAtUtc: new Date().toISOString() }),
-    hasRuntimeGrant: () => true, workBoard: { reads, hub, usability },
-    requireRunRecipient: createReserveRecipientCheck({ uow, loadIntegrations: async () => ({ runtime: { enabled: true, materialCli: config.materialCli as never } }), usability }) } as never);
+    hasRuntimeGrant: () => true, workBoard: { reads, hub, usability: judge }, sessionWork: new SessionObservationService({ uow }), sessionUsability: judge,
+    requireRunRecipient: createReserveRecipientCheck({ uow, loadIntegrations: async () => ({ runtime: { enabled: true, materialCli: config.materialCli as never } }), usability: judge,
+      recordRefusal: async (project, session, task, cause) => { await pool.query("SELECT record_session_start_refusal($1,$2,$3,$4)", [project, session, task, cause]); } }) } as never);
   t.after(() => app.close());
   const headers = { authorization: `Bearer ${token}` };
   const board = async (brief = false) => (await app.inject({ url: `/api/projects/${projectId}/work-board${brief ? "?brief=true" : ""}`, headers })).json() as { sessions: Array<any>; graph?: { counts: Record<string, number> } } & { counts?: Record<string, number> };
@@ -103,7 +109,7 @@ test("a Session without a business identity or native thread is unusable and say
   assert.equal(brief.sessions.find(s => s.id === unbound)!.unusable[0].code, "BUSINESS_IDENTITY_UNBOUND", "the Leader's brief carries the reason");
   assert.equal(brief.sessions.find(s => s.id === bound)!.unusable, undefined);
 
-  // 2. A Run cannot be reserved on it for a Task that needs an independent signer: refused at the reservation, no Run row. 
+  // 2. A Run cannot be reserved on it, for any Task: refused at the reservation, no Run row. 
   const needsSigner = await newTask(true), plain = await newTask(false);
   await assign(needsSigner, unbound);
   const before = await runs();
@@ -172,4 +178,79 @@ test("a Session without a business identity or native thread is unusable and say
   await new Promise(done => setTimeout(done, 15));
   await failInPreflight(reset, "RECIPIENT_UNBOUND");
   assert.deepEqual(await notices(reset), [], "a completed Run in between starts the count again");
+
+  // ---- Rework (Task 6612e287, acceptance 0eba1d14) ----
+  // 7. Every reader says the same: `list sessions`, the Session directory and snapshot, the work board. Bound and usable stay usable.
+  const stuck = await makeSession();   // two live Sessions of the Role already: this one has no entry of its own (config has no entry for it)
+  const get = async (path: string) => (await app.inject({ url: `/api/projects/${projectId}${path}`, headers })).json() as any;
+  const listed = (await get("/runtime/sessions")) as Array<{ id: string; state: string; usable?: boolean; unusable?: Array<{ code: string }> }>;
+  const of = (id: string) => listed.find(x => x.id === id)!;
+  assert.equal(of(stuck).state, "ready", "the stored lifecycle is unchanged"); assert.equal(of(stuck).usable, false, "list sessions: unusable"); assert.equal(of(stuck).unusable![0]!.code, "BUSINESS_IDENTITY_UNBOUND");
+  assert.equal(of(flaky).usable, true, "list sessions: a bound Session is usable");
+  const directory = (await get("/session-work?membership=all&limit=50")) as { items: Array<{ key: string; dispatch?: { usable: boolean; reasons: Array<{ code: string }> } }> };
+  const dir = (id: string) => directory.items.find(x => x.key === `owned:${id}`)!;
+  assert.deepEqual([dir(stuck).dispatch?.usable, dir(stuck).dispatch?.reasons[0]?.code], [false, "BUSINESS_IDENTITY_UNBOUND"], "the Session directory carries the judgement");
+  assert.equal(dir(flaky).dispatch?.usable, true);
+  const snapshot = await get(`/session-work/${encodeURIComponent(`owned:${stuck}`)}`);
+  assert.deepEqual([snapshot.session.dispatch.usable, snapshot.session.dispatch.reasons[0].code], [false, "BUSINESS_IDENTITY_UNBOUND"], "the Session snapshot carries it too");
+  assert.equal(byId(await board(), stuck).usable, false, "the work board agrees");
+
+  // 8. FAIL CLOSED: a judgement that throws, or says nothing, makes every reader and the reservation say so instead of letting the Session through.
+  for (const mode of ["throws", "empty"] as const) {
+    judgeMode = mode;
+    const unknown = (await board()).sessions.every(x => x.usable === false && x.unusable[0].code === "USABILITY_UNKNOWN");
+    assert.ok(unknown, `${mode}: the board marks every Session unusable (USABILITY_UNKNOWN), not as before`);
+    assert.ok(((await get("/runtime/sessions")) as Array<{ usable?: boolean; unusable?: Array<{ code: string }> }>).every(x => x.usable === false && x.unusable![0]!.code === "USABILITY_UNKNOWN"), `${mode}: list sessions`);
+    assert.ok((await get("/session-work?membership=all&limit=50")).items.every((x: any) => x.dispatch.usable === false && x.dispatch.reasons[0].code === "USABILITY_UNKNOWN"), `${mode}: directory`);
+    const before = await runs(), task = await newTask(true);
+    const refusal = await reserve(task, flaky);
+    assert.notEqual(refusal.status, 200, refusal.body); assert.match(refusal.body, /SESSION_USABILITY_UNKNOWN/); assert.match(refusal.body, /未创建 Run/);
+    assert.equal(await runs(), before, `${mode}: no Run was created`);
+  }
+  judgeMode = "real";
+  assert.equal(byId(await board(), flaky).usable, true, "the judgement is back: the bound Session is usable again");
+
+  // 9. Refusals count like failed starts: three in a row with one cause raise ONE attention item and ONE Leader notice, none more at the fourth and fifth;
+  //    a failed start and refusals of the same cause are one streak; another cause starts again.
+  const attention = async (sessionId: string) => (await pool.query("SELECT attention_id, cause FROM session_attention WHERE project_id=$1 AND session_id=$2 ORDER BY created_at", [projectId, sessionId])).rows;
+  const events = async (sessionId: string) => (await pool.query("SELECT cause, source FROM session_start_event WHERE project_id=$1 AND session_id=$2 ORDER BY seq", [projectId, sessionId])).rows.map(r => `${r.source}:${r.cause}`);
+  for (let i = 0; i < 2; i++) assert.equal((await reserve(await newTask(false), stuck)).status !== 200, true);
+  assert.deepEqual(await attention(stuck), [], "two refusals are not yet an item");
+  assert.equal((await reserve(await newTask(true), stuck)).status !== 200, true);
+  const item = await attention(stuck);
+  assert.equal(item.length, 1, "the third refusal in a row raises exactly one item"); assert.equal(item[0].cause, "BUSINESS_IDENTITY_UNBOUND");
+  assert.equal((await notices(stuck)).length, 1, "and one Leader notice");
+  for (let i = 0; i < 2; i++) await reserve(await newTask(false), stuck);
+  assert.equal((await attention(stuck)).length, 1); assert.equal((await notices(stuck)).length, 1, "the fourth and fifth refusals add nothing");
+  assert.deepEqual((await events(stuck)).slice(0, 3), Array(3).fill("refusal:BUSINESS_IDENTITY_UNBOUND"));
+  // A failed start (the preflight said RECIPIENT_UNBOUND) and refusals are the same cause: one failed start + two refusals make the third.
+  const mixedCause = await makeSession();
+  await failInPreflight(mixedCause, "RECIPIENT_UNBOUND");
+  for (let i = 0; i < 2; i++) await reserve(await newTask(false), mixedCause);
+  assert.equal((await attention(mixedCause)).length, 1, `a failed start and two refusals of the same cause: ${(await events(mixedCause)).join(",")}`);
+  // Another cause in between: not the same cause three times.
+  const otherCause = await makeSession();
+  await reserve(await newTask(false), otherCause); await reserve(await newTask(false), otherCause);
+  config = { ...config, materialCli: [...config.materialCli, { projectId, sessionId: otherCause, sessionActorId: callerActor, cliActorId: "late-worker" }] }; writers = ["worker"];
+  await reserve(await newTask(false), otherCause);   // now NOT_WRITER
+  assert.deepEqual(await attention(otherCause), [], "UNBOUND, UNBOUND, NOT_WRITER is not one cause three times");
+  writers = ["worker", "late-worker"];
+
+  // 10. The item reaches the requirements Session(s): one message each, once; a failing post is kept and retried; nothing to tell is not a crash.
+  const requirementsA = await makeSession(), requirementsB = await makeSession();
+  const posts: Array<{ to: string; content: string; messageId: string }> = []; let failB = true;
+  const pump = new SessionAttentionPump({ store: pgSessionAttentionStore(pool as never), canWrite: () => true, requirementsSessions: async () => [requirementsA, requirementsB],
+    post: async (_p, to, content, messageId) => { if (to === requirementsB && failB) return { ok: false, reason: "MESSAGE_POST_REJECTED:FORBIDDEN" }; posts.push({ to, content, messageId }); return { ok: true }; } });
+  await pump.tick();
+  const mine = posts.filter(x => x.content.includes(item[0].attention_id));
+  assert.deepEqual(mine.map(x => x.to), [requirementsA], "A got it; B's post failed");
+  assert.match(mine[0]!.content, /BUSINESS_IDENTITY_UNBOUND/); assert.match(mine[0]!.content, new RegExp(stuck));
+  const delivery = (to: string, id = item[0].attention_id) => pool.query("SELECT state, reason FROM session_attention_delivery WHERE project_id=$1 AND attention_id=$2 AND recipient_session_id=$3", [projectId, id, to]).then(r => r.rows[0]);
+  assert.deepEqual([(await delivery(requirementsA)).state, (await delivery(requirementsB)).state], ["posted", "blocked"]); assert.match((await delivery(requirementsB)).reason, /FORBIDDEN/, "the reason is kept");
+  failB = false; await pump.tick(); await pump.tick();
+  const all = posts.filter(x => x.content.includes(item[0].attention_id));
+  assert.deepEqual(all.map(x => x.to).sort(), [requirementsA, requirementsB].sort(), "each requirements Session got exactly one message; the retry reached B, A was not told again");
+  assert.equal(new Set(all.map(x => x.messageId)).size, 2);
+  const none = new SessionAttentionPump({ store: pgSessionAttentionStore(pool as never), canWrite: () => true, requirementsSessions: async () => [], post: async () => { throw new Error("must not post"); } });
+  await assert.doesNotReject(none.tick(), "no requirements Session to tell: nothing posted, no crash");
 });

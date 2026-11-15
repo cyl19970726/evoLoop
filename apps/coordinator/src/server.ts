@@ -16,6 +16,7 @@ import type { UsageService } from "@evoloop/core/usage";
 import type { ContextBudgetConfig, UsageBudgetConfig } from "@evoloop/contracts";
 import type { SessionObservationService } from "@evoloop/core/session-observation";
 import type { ObservedSession } from "@evoloop/contracts/session-observation";
+import { USABILITY_UNKNOWN } from "./runtime/session-usability.js";
 import type { OrdinaryMessageExecutionCapability } from "@evoloop/contracts/session-work";
 import { registerSessionWorkRoutes } from "./session-work/routes.js";
 import type { AllocationRelationsService } from "@evoloop/core/allocation-relations";
@@ -82,6 +83,28 @@ export const staleChunkModule = `(() => {
   throw new Error("Failed to fetch dynamically imported module: this file is no longer on the server (the workbench has been updated)");
 })();
 `;
+
+type BuildServerOptionsUsability = (projectId: string, sessionIds: string[]) => Promise<Map<string, { usable: boolean; reasons: Array<{ code: string; reason: string }> }>>;
+/** Adds `usable` / `unusable` to each item; a judgement that fails (or leaves an item out) marks it unusable with USABILITY_UNKNOWN. Without a judge the items are unchanged. */
+export async function withSessionDispatch<T>(judge: BuildServerOptionsUsability | undefined, projectId: string, items: T[], idOf: (item: T) => string,
+  apply: (item: T, judged: { usable: boolean; unusable?: Array<{ code: string; reason: string }> }) => T): Promise<T[]> {
+  if (!judge || !items.length) return items;
+  const map = await judge(projectId, items.map(idOf)).catch(() => null);
+  return items.map(item => {
+    const found = map?.get(idOf(item));
+    return apply(item, found ? (found.usable ? { usable: true } : { usable: false, unusable: found.reasons }) : { usable: false, unusable: [{ ...USABILITY_UNKNOWN }] });
+  });
+}
+
+/** The owned Sessions of an observed list get `dispatch` (can a Run start here now); external ones have no Run to start and are left as they are. */
+async function dispatchOfSessions(judge: BuildServerOptionsUsability | undefined, projectId: string, sessions: ObservedSession[]): Promise<ObservedSession[]> {
+  if (!judge) return sessions;
+  const owned = sessions.filter(session => session.target.kind === "owned");
+  const judged = await withSessionDispatch(judge, projectId, owned, session => (session.target as { sessionId: string }).sessionId,
+    (session, result) => ({ ...session, dispatch: { usable: result.usable, reasons: result.unusable ?? [] } }));
+  const byKey = new Map(judged.map(session => [session.key, session]));
+  return sessions.map(session => byKey.get(session.key) ?? session);
+}
 
 export async function buildServer(options: {
   service: WorkflowService; credentials: AuthConfig; webRoot?: string; canWrite?: () => boolean;
@@ -150,6 +173,8 @@ export async function buildServer(options: {
   workIndex?: LeaderWorkIndexReader;
   /** The work board and the scheduling event stream (DEC-045 Q2). */
   workBoard?: Omit<WorkBoardRouteDeps, "service">;
+  /** Whether each Session can start work now: shown on `list sessions`, the Session directory and snapshot, and the work board. Without it nothing is judged and nothing claims usable. */
+  sessionUsability?: (projectId: string, sessionIds: string[]) => Promise<Map<string, { usable: boolean; reasons: Array<{ code: string; reason: string }> }>>;
   acceptanceRelay?: AcceptanceRelayService;
   /** The deployed checkout: serves GET /api/version (public) and GET /api/projects/:id/milestones from its build-info.json and docs/roadmap.md. */
   milestones?: { repoRoot: string; startedAt?: string };
@@ -544,7 +569,11 @@ export async function buildServer(options: {
   });
   app.get("/api/projects/:projectId/runtime/provider-holds", async request =>
     options.service.listProviderHolds(who(request.principal), params(request.params).projectId!));
-  app.get("/api/projects/:projectId/runtime/sessions", async request => options.service.listRuntimeSessions(who(request.principal), params(request.params).projectId!));
+  app.get("/api/projects/:projectId/runtime/sessions", async request => {
+    const projectId = params(request.params).projectId!;
+    const sessions = await options.service.listRuntimeSessions(who(request.principal), projectId);
+    return withSessionDispatch(options.sessionUsability, projectId, sessions, session => session.id, (session, judged) => ({ ...session, ...judged }));
+  });
   app.get("/api/projects/:projectId/runtime/usage", async request => {
     const p = params(request.params);
     const query = z.strictObject({ from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
@@ -605,8 +634,9 @@ export async function buildServer(options: {
     ...(options.nativeInputs && snapshot.session.target.kind === "owned" ? {
       nativeInputRequests: await options.nativeInputs.views(principal, projectId, snapshot.session.target.sessionId),
     } : {}),
+    session: (await dispatchOfSessions(options.sessionUsability, projectId, [snapshot.session]))[0]!,
     };
-  });
+  }, (projectId, sessions) => dispatchOfSessions(options.sessionUsability, projectId, sessions));
   if (options.sessionWork && options.sessionMessages) registerSessionMessageRoutes(app, {
     workflow: options.service, observation: options.sessionWork, messages: options.sessionMessages,
   });

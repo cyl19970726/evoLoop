@@ -82,7 +82,7 @@ function Column({ label, empty, children }: { label: string; empty: string; chil
 }
 
 const loadDot: Record<ArrangementRow["load"], string> = {
-  overloaded: "bg-destructive", busy: "bg-primary", idle: "bg-border", unknown: "bg-transparent shadow-[inset_0_0_0_1px_var(--border-strong)]",
+  overloaded: "bg-destructive", busy: "bg-primary", idle: "bg-border", unusable: "bg-warning", unknown: "bg-transparent shadow-[inset_0_0_0_1px_var(--border-strong)]",
 };
 
 const unreadText = (state: ReadState, what: string) => state === "loading" ? "正在读取" : state === "failed" ? `${what}未读取` : "—";
@@ -174,6 +174,7 @@ function ArrangementPanel({ projectId, board, reads, from, directoryComplete }: 
           </li>)}</ul> : muted(noFreeAgentText(capacity, directoryComplete))}
         {!unknownReason && !directoryComplete && capacity.free.length > 0 && muted("智能体目录没有读全，上面只是已读到的空闲智能体。")}
         {!unknownReason && capacity.unknown > 0 && capacity.unknown < capacity.others && muted(`另有 ${capacity.unknown} 个智能体的状态待核对，不算空闲。`)}
+        {capacity.unusable > 0 && muted(`另有 ${capacity.unusable} 个智能体不可用（没有绑定业务身份、没有原生线程等），不算空闲，见各自的状态行。`)}
       </PanelSection>
       <PanelSection title="截止临近" count={tasksShown ? board.dueSoon.length : undefined}>
         {tasksShown && board.dueSoon.length ? <ul className="flex flex-col gap-2">{board.dueSoon.map(task => <TaskLine key={task.taskId} projectId={projectId} task={task} from={from} stale={board.stale} />)}</ul>

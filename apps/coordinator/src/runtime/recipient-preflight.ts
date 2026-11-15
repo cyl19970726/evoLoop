@@ -96,33 +96,47 @@ export function configuredCliActorId(load: () => Promise<{ runtime?: { enabled: 
  * The `requireRunRecipient` callback the coordinator passes to buildServer, assembled from the two real dependencies main.ts owns: the
  * PostgreSQL unit of work and the private-configuration loader. main.ts calls this and nothing else, so the real-entry test runs the same code.
  */
+/** A reservation refused because the Session cannot start work; `refusalCause` is what the repeated-cause count keys on. */
+export class SessionStartRefusal extends DomainError {
+  constructor(code: string, readonly refusalCause: string, message: string) { super(code, message); this.name = "SessionStartRefusal"; }
+}
+
 export function createReserveRecipientCheck(deps: {
   uow: { read<T>(projectId: string, fn: (reader: any) => Promise<T>): Promise<T> };
   loadIntegrations: Parameters<typeof configuredCliActorId>[0];
   /** Whether the Session can start work now (session-usability.ts); without it only the recipient check below runs. */
   usability?: (projectId: string, sessionIds: string[]) => Promise<Map<string, { usable: boolean; reasons: Array<{ code: string; reason: string }> }>>;
+  /** Records a refused reservation (no Run exists) so that the same cause again and again is counted; a failure to record never changes the refusal. */
+  recordRefusal?: (projectId: string, sessionId: string, taskId: string, cause: string) => Promise<void>;
 }) {
   const guard = createRunRecipientGuard({ read: (projectId, fn) => deps.uow.read(projectId, reader => fn(reader as never)),
     cliActorId: configuredCliActorId(deps.loadIntegrations) });
   return async (_principal: unknown, command: { projectId: string; taskId: string }, session: { id: string; actorId: string; roleId: string }): Promise<void> => {
-    if (deps.usability) await requireUsableSession(deps, command, session);
+    if (deps.usability) {
+      try { await requireUsableSession(deps, command, session); }
+      catch (error) {
+        if (error instanceof SessionStartRefusal) await deps.recordRefusal?.(command.projectId, session.id, command.taskId, error.refusalCause).catch(() => undefined);
+        throw error;
+      }
+    }
     await guard(command, session);
   };
 }
 
 /**
- * Refuse the reservation of a Run on a Session that cannot start it, before any Run exists: no failed Run, no closed recovery gate. A missing native thread
- * or a Session that is not ready fails every Run; a missing business identity fails the Runs of Tasks that need an independent signer (acceptance mode),
- * so that reason only counts for those Tasks. Each message names the reasons and what fixes them.
+ * Refuse the reservation of a Run on a Session that cannot start it, before any Run exists: no failed Run, no closed recovery gate. Every Run starts a
+ * model, so every execution Task is refused the same way (no business identity, no native thread, not ready); there is no Task kind that is exempt, a Task
+ * that starts no model is not reserved as a Run at all. If the judgement itself fails the reservation is refused too (fail closed). Each refusal is recorded
+ * (session_start_event) so that the same cause refused again and again becomes an attention item like repeated failed starts do.
  */
 async function requireUsableSession(deps: Parameters<typeof createReserveRecipientCheck>[0], command: { projectId: string; taskId: string }, session: { id: string }): Promise<void> {
-  const judged = (await deps.usability!(command.projectId, [session.id]).catch(() => null))?.get(session.id);
-  if (!judged || judged.usable) return;
-  const acceptanceMode = await deps.uow.read(command.projectId, async reader => {
-    const task = await reader.getTask(command.taskId);
-    return task ? (await reader.getTaskProposal(task.id, task.currentRevisionId))?.acceptanceMode ?? null : null;
-  });
-  const blocking = judged.reasons.filter(r => acceptanceMode || !r.code.startsWith("BUSINESS_IDENTITY"));
-  if (!blocking.length) return;
-  throw new DomainError("SESSION_UNUSABLE", `这个 Session 现在不能开工，未创建 Run：${blocking.map(r => r.reason).join("；")}。补齐后再预留；它在 work board 里会一直标为不可用，直到条件满足。`);
+  // FAIL CLOSED: if the judgement itself fails, or says nothing about this Session, the reservation is refused (with the reason), not let through to fail later.
+  let judged: { usable: boolean; reasons: Array<{ code: string; reason: string }> } | undefined, failure: string | null = null;
+  try { judged = (await deps.usability!(command.projectId, [session.id])).get(session.id); }
+  catch (error) { failure = error instanceof Error ? error.message.slice(0, 160) : "未知错误"; }
+  if (!judged && !failure) failure = "没有读到这个 Session";
+  if (failure) throw new SessionStartRefusal("SESSION_USABILITY_UNKNOWN", "USABILITY_UNKNOWN", `现在判断不出这个 Session 能否开工，未创建 Run：${failure}。检查私有配置与身份后再预留；这个判断没有出结果前一律拒绝。`);
+  if (judged!.usable) return;
+  // Every Run starts a model, so every execution Task needs the same: no business identity, no native thread, not ready fail them all (no Task kind is exempt here).
+  throw new SessionStartRefusal("SESSION_UNUSABLE", judged!.reasons[0]?.code ?? "SESSION_UNUSABLE", `这个 Session 现在不能开工，未创建 Run：${judged!.reasons.map(r => r.reason).join("；")}。补齐后再预留；它在 work board 里会一直标为不可用，直到条件满足。`);
 }
