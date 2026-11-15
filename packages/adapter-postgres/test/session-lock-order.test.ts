@@ -28,7 +28,7 @@ const pool = new pg.Pool({ connectionString: url, options });
 const otherPool = new pg.Pool({ connectionString: url, options, application_name: otherApplication });
 const core = new PostgresUnitOfWork(otherPool);
 const projectId = randomUUID(), roleId = randomUUID(), model = "gpt-lock-test";
-const maintainer: Principal = { actorId: "maintainer", projectIds: [projectId], permissions: ["read", "write", "review"] };
+const maintainer: Principal = { actorId: "maintainer", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true };
 
 /** A ready full-profile Session with an active execution profile. */
 async function readySession(): Promise<{ sessionId: string; threadId: string }> {

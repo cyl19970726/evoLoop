@@ -40,9 +40,9 @@ const route:ConnectorRoute={projectId,bindingId,source:{provider:'wechat',connec
   capabilities:{history:true,search:false,subscribe:true,sendText:true,sendMedia:false,receipt:'local_observed'},policyHash};
 const routes=new PgConnectorRoutes(pool),links=new PgConnectorMessageLinks(pool);
 const credentials=authConfigSchema.parse([
-  {token:'r'.repeat(40),actorId:requester,projectIds:[projectId],permissions:['read','write','review']},
-  {token:'w'.repeat(40),actorId:business,projectIds:[projectId],permissions:['read','write']},
-  {token:'g'.repeat(40),actorId:sender,projectIds:[projectId],permissions:['read','write']},
+  {token:'r'.repeat(40),actorId:requester,projectIds:[projectId],permissions:['task','document','session','management'],decisions:true},
+  {token:'w'.repeat(40),actorId:business,projectIds:[projectId],permissions:['task','document','session']},
+  {token:'g'.repeat(40),actorId:sender,projectIds:[projectId],permissions:['task','document','session']},
 ]);
 let gatewayActive=true,nativeActive=true;
 function config(){return {runtime:{enabled:true,grants:[{projectId,actorId:requester,roleId,
@@ -65,9 +65,9 @@ async function qualify(input:VersionedConnectorRoute){
   const current=await loadIntegrations(file);
   const receiving=await session(input.targetSessionId);
   return qualifyStandardConnectorRoute(input,receiving,current,{
-    projectWriter:async(p,a)=>p===projectId&&credentials.some(x=>x.actorId===a&&x.permissions.includes('write')),
+    projectWriter:async(p,a)=>p===projectId&&credentials.some(x=>x.actorId===a&&x.permissions.includes('session')),
     businessActor:async(s,a)=>currentConnectorBusinessActor(s,a,current,pool,async(p,x)=>p===projectId&&
-      credentials.some(v=>v.actorId===x&&v.permissions.includes('write'))),
+      credentials.some(v=>v.actorId===x&&v.permissions.includes('session'))),
     sessionAuthority:async s=>{
       const profile=await pool.query(`SELECT p.activation_state,p.revision_id,p.active_revision_id,
         r.authorization_scope,r.sandbox,r.approval_policy FROM session_execution_profile p

@@ -26,7 +26,7 @@ test("authenticated document route uploads fixed bytes and reports damaged origi
   const workflow = new WorkflowService({ uow, clock: { now: () => new Date().toISOString() },
     ids: { next: randomUUID }, hasher: { hash } });
   const projectId = randomUUID(), documentId = randomUUID(), revisionId = randomUUID(), mainId = randomUUID();
-  const principal: Principal = { actorId: "route-owner", projectIds: [projectId], permissions: ["read", "write", "review"] };
+  const principal: Principal = { actorId: "route-owner", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true };
   const token = "route-token-".padEnd(40, "x");
   const root = await mkdtemp(join(tmpdir(), "evoloop-route-blobs-"));
   const blobs = new LocalBlobStore(root, async payload => payload.projectId === projectId,

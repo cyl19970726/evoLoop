@@ -49,7 +49,7 @@ test("task list sort survives opening, Back and reload; documents open beside th
       const root = `/api/projects/${projectId}`;
       const path = decodeURIComponent(url.pathname);
       let value: unknown = { items: [], nextCursor: null }, status = 200;
-      if (path === "/api/session") value = { principal: { actorId: "reader", projectIds: [projectId], permissions: ["read", "write", "review"] }, capabilities: {} };
+      if (path === "/api/session") value = { principal: { actorId: "reader", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true }, capabilities: {} };
       else if (path === root) value = { id: projectId, title: "核心路径夹具", createdAt: stamp };
       else if (path === `${root}/tasks`) value = { items: tasks, nextCursor: null };
       else if (path === `${root}/orchestration/work-status`) value = { items: (url.searchParams.get("taskIds") ?? "").split(",").filter(Boolean).map(taskId => ({ taskId, cognition: false, hasClosure: false, readyForAcceptance: false })) };

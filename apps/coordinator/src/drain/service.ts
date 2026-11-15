@@ -4,7 +4,7 @@
 // release does not start work again; "drained" is derived, never stored: draining and nothing begun is still running.
 import { randomUUID } from "node:crypto";
 import type { Pool } from "pg";
-import type { Principal } from "@evoloop/contracts";
+import { hasDecisionAuthority, isProjectMember, type Principal } from "@evoloop/contracts";
 import { DomainError } from "@evoloop/contracts/ports";
 
 import type { DrainInFlight, DrainState, DrainStatus } from "@evoloop/contracts/instance-drain";
@@ -82,11 +82,10 @@ export class DrainControl {
 }
 
 /**
- * Who may start or release a drain: a credential that holds read, write and review in every project of this instance.
- * Ordinary business Sessions hold review in some projects at most, never all of them, so none can drain the instance.
+ * Who may start or release a drain: a credential with management decision authority in every project of this instance.
+ * Ordinary business Sessions hold such decisions in some projects at most, never all of them, so none can drain the instance.
  */
 export async function isInstanceMaintainer(pool: Pool, principal: Principal): Promise<boolean> {
-  if (!["read", "write", "review"].every(permission => principal.permissions.includes(permission as "read"))) return false;
   const projects = (await pool.query("SELECT project_id FROM project")).rows.map(row => row.project_id as string);
-  return projects.every(id => principal.projectIds.includes(id));
+  return projects.every(id => isProjectMember(principal, id) && hasDecisionAuthority(principal, id, "management"));
 }

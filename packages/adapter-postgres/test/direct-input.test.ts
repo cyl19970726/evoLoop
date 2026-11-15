@@ -79,7 +79,7 @@ test("unlimited direct start preserves prior usage while an explicit cap still b
       qualifyConversationThread:async()=>({available:true,reason:'',fingerprint:hash}),
       startConversationTurn:async()=>{throw Error('unused')},steerTurn:async()=>{throw Error('unused')},
       listTurns:async()=>({data:[],nextCursor:null}),listItems:async()=>({data:[],nextCursor:null})})});
-  const sender={actorId:'user',projectIds:[projectId],permissions:['read','write']} as never;
+  const sender={actorId:'user',projectIds:[projectId],permissions:['task','document','session']} as never;
   assert.equal((await service.capability(sender,projectId,id)).reasonCode,'MESSAGE_BUDGET_EXHAUSTED');
   current=unlimited;
   assert.equal((await service.capability(sender,projectId,id)).mode,'start');
@@ -188,7 +188,7 @@ test("lost native start acknowledgement keeps original slot and reconciles witho
     steerTurn:async()=>{throw new Error("unexpected steer");},
     listTurns:async()=>({data:[{id:"recovered-turn",status:"inProgress",completedAtUtc:null}],nextCursor:null}),
     listItems:async()=>({data:[{id:"recovered-item",type:"userMessage",clientUserMessageId:command.inputId}],nextCursor:null})};
-  const principal={actorId:"user",projectIds:[projectId],permissions:["read","write"]} as never;
+  const principal={actorId:"user",projectIds:[projectId],permissions:["task","document","session"]} as never;
   const service=new DirectInputService({store,runtime:()=>runtime,canWrite:()=>true,
     admission:async()=>({grant:grant(recoverySessionId),binding}),bindingFor:async()=>binding});
   assert.equal((await service.submit(principal,projectId,recoverySessionId,command)).state,"unknown");
@@ -211,7 +211,7 @@ test("HTTP keeps exact input and actor receipts while repeated steer uses the sa
     startConversationTurn:async(_binding:unknown,_content:string,id:string)=>{writes.push(`start:${id}`);return turn;},
     steerTurn:async(_binding:unknown,_turnId:string,_content:string,id:string)=>{writes.push(`steer:${id}`);return {turnId:turn.id,itemId:null};},
     listTurns:async()=>({data:[turn],nextCursor:null}),listItems:async()=>({data:[],nextCursor:null})};
-  let principal={actorId:"user",projectIds:[projectId],permissions:["read","write"]};
+  let principal={actorId:"user",projectIds:[projectId],permissions:["task","document","session"]};
   let authorized=true;
   const service=new DirectInputService({store,runtime:()=>runtime,canWrite:()=>true,
     admission:async()=>{if(!authorized)throw new Error("revoked");return {grant:grant(httpSessionId,1),binding};},
@@ -243,7 +243,7 @@ test("HTTP keeps exact input and actor receipts while repeated steer uses the sa
     assert.equal(denied.statusCode,403);assert.equal(writes.length,3);
     const disabled=await app.inject({method:"GET",url:`/api/projects/${projectId}/sessions/${httpSessionId}/direct-input-capability`});
     assert.equal(disabled.json().available,false);
-    principal={actorId:"other",projectIds:[projectId],permissions:["read","write"]};
+    principal={actorId:"other",projectIds:[projectId],permissions:["task","document","session"]};
     const privateRead=await app.inject({method:"GET",url:`${endpoint}/${first.inputId}`});
     assert.equal(privateRead.statusCode,409);
   }finally{await app.close();}
@@ -567,7 +567,7 @@ test("item 4: a refusal that arrives after a concurrent reconcile flipped the in
       throw new RuntimeServerError("turn/steer",7,-32600,"no active turn to steer");
     }} as never;
   const service=new DirectInputService({store,runtime:()=>runtime,canWrite:()=>true,admission:async()=>({grant:grant(id,5),binding}),bindingFor:async()=>binding});
-  const principal={actorId:"user",projectIds:[projectId],permissions:["read","write"] as Array<"read"|"write">};
+  const principal={actorId:"user",projectIds:[projectId],permissions:["task","document","session"] as ("task"|"document"|"session"|"management")[]};
   const receipt=await service.submit(principal,projectId,id,command);
   assert.equal(receipt.state,"rejected","the runtime's own refusal is proof the steer was not applied");
   assert.equal(receipt.queuedMessageId,command.inputId,"so the text was saved as one queued message, not lost between 'unknown' and 'rejected'");
@@ -613,7 +613,7 @@ test("a -32603 on a steer leaves the input unknown with no message; only a refus
   const runtime={isReady:()=>true,registerBinding:async()=>undefined,capabilitiesFor:()=>({delivery:{midTurnInput:true,idleTurnStart:true}}),
     steerTurn:async()=>{throw new RuntimeServerError("turn/steer",9,code,"native error");}} as never;
   const service=new DirectInputService({store,runtime:()=>runtime,canWrite:()=>true,admission:async()=>({grant:grant(id,5),binding}),bindingFor:async()=>binding});
-  const principal={actorId:"user",projectIds:[projectId],permissions:["read","write"] as Array<"read"|"write">};
+  const principal={actorId:"user",projectIds:[projectId],permissions:["task","document","session"] as ("task"|"document"|"session"|"management")[]};
   const receipt=await service.submit(principal,projectId,id,command);
   assert.equal(receipt.state,"unknown","not provably unsent: unknown, to be reconciled");
   assert.equal(await messageCount(command.inputId,command.operationId),0,"and not queued");

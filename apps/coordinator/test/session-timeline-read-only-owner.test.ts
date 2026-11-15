@@ -10,7 +10,7 @@ import { ReadOnlyWorkspaceOwner, type ReadOnlyWorkspaceAdapter } from '../src/se
 import { SessionTimelineService } from '../src/session-timeline/index.js';
 
 const project='00000000-0000-4000-8000-000000000001',sessionId='00000000-0000-4000-8000-000000000002';
-const principal:Principal={actorId:'reader',projectIds:[project],permissions:['read']};
+const principal:Principal={actorId:'reader',projectIds:[project],permissions:['session']};
 const saved={projectId:project,id:sessionId,roleId:'role',cwd:'/tmp',authorizationScope:'project',model:null,
   sandbox:'read-only',approvalPolicy:'on-request',state:'ready',version:1,nativeThreadId:'thread',nativeSessionId:'native-session',
   operationId:'00000000-0000-4000-8000-000000000003',actorId:'agent',createdAt:'2026-11-01T00:00:00Z',

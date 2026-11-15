@@ -9,7 +9,7 @@ import { SessionMessageService } from '../src/session-messages/index.ts';
 
 const now='2026-11-06T08:00:00.000Z';
 const projectId=randomUUID(),threadId=randomUUID(),sessionId=randomUUID();
-const principal:Principal={actorId:'reviewer',projectIds:[projectId],permissions:['read','write','review']};
+const principal:Principal={actorId:'reviewer',projectIds:[projectId],permissions:['task','document','session','management'],decisions:true};
 const profileId=randomUUID();
 const session={projectId,id:sessionId,nativeThreadId:threadId,nativeSessionId:randomUUID(),state:'ready',cwd:'/tmp',roleId:'role',
   executionProfile:{activationState:'active',revision:{revisionId:profileId}}} as RuntimeSessionRecord;

@@ -22,8 +22,8 @@ const taskId = randomUUID(), taskRevisionId = randomUUID();
 const documentId = randomUUID(), contentRevisionId = randomUUID(), basisId = randomUUID();
 const now = "2026-10-26T00:00:00.000Z";
 const later = "2026-10-26T00:00:01.000Z";
-const scope = JSON.stringify({ actorId: "reader", permissions: ["read"] });
-const otherScope = JSON.stringify({ actorId: "other", permissions: ["read"] });
+const scope = JSON.stringify({ actorId: "reader", permissions: [] });
+const otherScope = JSON.stringify({ actorId: "other", permissions: [] });
 
 async function addHost(client: pg.PoolClient, linkId: string, host: object, state: "verified" | "registered", createdAt = now) {
   await client.query("INSERT INTO role_host_link(project_id,link_id,role_id,version,state) VALUES($1,$2,$3,1,$4)",

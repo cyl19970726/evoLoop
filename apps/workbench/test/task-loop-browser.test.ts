@@ -59,7 +59,7 @@ test("built Task page selects the current Loop, preserves manual history and fit
     if (url.pathname.startsWith("/api/")) {
       const p = `/api/projects/${projectId}`;
       let value: unknown = page([]), status = 200;
-      if (url.pathname === "/api/session") value = {principal:{actorId:"owner",projectIds:[projectId],permissions:["read"]},capabilities:{}};
+      if (url.pathname === "/api/session") value = {principal:{actorId:"owner",projectIds:[projectId],permissions:[]},capabilities:{}};
       else if (url.pathname === p) value = {id:projectId,title:"夹具项目",createdAt};
       else if (url.pathname === `${p}/tasks/${taskId}` || url.pathname === `${p}/tasks/${otherTaskId}`) {
         const currentTask = url.pathname.endsWith(otherTaskId) ? {...task,id:otherTaskId,currentRevisionId:otherTaskId,title:"另一项任务"} : task;

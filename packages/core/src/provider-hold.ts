@@ -1,4 +1,4 @@
-import type { Principal } from '@evoloop/contracts';
+import { hasDecisionAuthority, hasPermission, type Principal } from '@evoloop/contracts';
 import { DomainError, type Transaction } from '@evoloop/contracts/ports';
 import type { ProviderHoldCommand } from '@evoloop/contracts/provider-hold';
 import { applySessionRecovery } from './session-recovery.js';
@@ -11,8 +11,8 @@ import { applySessionRecovery } from './session-recovery.js';
  */
 export async function applyProviderHoldRelease(tx: Transaction, principal: Principal, command: ProviderHoldCommand,
   now: string, nextId: () => string) {
-  if (!principal.actorId || !principal.projectIds.includes(command.projectId) ||
-    !principal.permissions.includes('write') || !principal.permissions.includes('review') || principal.actorId.startsWith('worker-'))
+  if (!hasPermission(principal, command.projectId, 'session') ||
+    !hasDecisionAuthority(principal, command.projectId, 'session') || principal.actorId.startsWith('worker-'))
     throw new DomainError('FORBIDDEN', 'Releasing a provider hold requires the project reviewer, not a runtime worker');
   const recovery = tx.recovery;
   if (!recovery) throw new DomainError('NOT_FOUND', 'Session recovery persistence unavailable');

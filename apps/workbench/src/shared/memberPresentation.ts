@@ -1,6 +1,6 @@
 // Choosing a member of the project by name (GET /members) where a form used to take a typed sign-in identity: the 验收
 // identity of a task or a schedule. A place that needs write lists only members who can write now (canWrite true); one
-// that needs review only those who can review; a task's old agreement any person but only agents who can write; a kind
+// that needs a decision only those who have decision authority; a task's old agreement any person but only agents who can write; a kind
 // (人 / 智能体) narrows it further. A member whose write cannot be judged (the identity file is unreadable) is shown as 无法判断 and never
 // offered. An edited identity file is said with what each member could do after a restart (or that nothing changes
 // for this project's members). When the service has no member list, the form falls back to typing. A member who could
@@ -12,7 +12,7 @@ import type { ProjectMember, ProjectMembersView } from "@evoloop/contracts/proje
  * `legacy`: a task's old agreement. A reviewer records a person's use for them, so any person may be chosen (or someone
  * outside the project, typed); an agent records its own use (core workflow `task.observe`), so it must be able to write.
  */
-export type MemberNeed = "write" | "review" | "legacy";
+export type MemberNeed = "write" | "decision" | "legacy";
 export type MemberKind = "human" | "agent" | null;
 
 export interface MemberOption { value: string; label: string; disabled: boolean }
@@ -36,7 +36,7 @@ export interface MemberChoices {
 
 export const memberKindLabel: Record<string, string> = { human: "人", agent: "智能体" };
 const kindText = (kind: string) => memberKindLabel[kind] ?? "身份类型未识别";
-const needText: Record<MemberNeed, string> = { write: "写入", review: "复核", legacy: "写入" };
+const needText: Record<MemberNeed, string> = { write: "写入", decision: "决定", legacy: "写入" };
 
 /**
  * Whether a member can do what the place needs now: true, false, or null (cannot be judged). Under a task's old
@@ -52,14 +52,14 @@ export function memberPendingText(member: ProjectMember): string | null {
   const after = member.pending;
   if (!after) return null;
   const changes: string[] = [];
-  const change = (now: boolean | null, then: boolean, what: string) => {
+  const change = (now: boolean | null, then: boolean | null, what: string) => {
     if (now === then) return;
     changes.push(then ? `才能${what}` : now === null ? `不能${what}` : `不能再${what}`);
   };
   if (after.identityKind !== member.identityKind) changes.push(`身份类型变为${kindText(after.identityKind)}`);
   change(member.canRead, after.canRead, "登录读取");
   change(member.canWrite, after.canWrite, "写入");
-  change(member.canReview, after.canReview, "复核");
+  change(member.canReview, after.canReview, "决定");
   return changes.length ? `${member.actorId}：重启后${changes.join("，")}` : null;
 }
 

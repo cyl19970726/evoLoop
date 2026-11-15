@@ -159,7 +159,7 @@ try {
     }, bindingFor: async () => reviewBinding });
   const command = { inputId: randomUUID(), operationId: randomUUID(),
     content: "Queued from a rejected review steer", expectedTurnId: reviewSteerTurnId };
-  const receipt = await service.submit({ actorId, projectIds: [projectId], permissions: ["read", "write"] },
+  const receipt = await service.submit({ actorId, projectIds: [projectId], permissions: ["task", "document", "session"] },
     projectId, sessionId, command);
   assert.equal(receipt.state, "rejected");
   const queued = (await pool.query(`SELECT message_id,operation_id,content,state FROM session_message

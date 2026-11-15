@@ -83,7 +83,7 @@ export function DefinitionForm({ context, current, ownerTaskId, onApplied, hold 
         ? <Notice tone="error">共同任务已要求 Wiki；直接条件不能移除必需来源，请先调整任务基线。</Notice>
         : <EvaluationForm key={`${current?.id ?? "create"}:${ready.sourceTaskRevisionId}`} collapsible={false} hold={hold}
           context={{ ...context, draftScope: `evaluation-definition:${current?.evaluationId ?? "new"}`, draftBaseline: `${current?.id ?? "create"}:${ready.sourceTaskRevisionId}` }}
-          review title={current ? "冻结新定义修订" : "冻结评价定义"} fields={fields}
+          permission="management" title={current ? "冻结新定义修订" : "冻结评价定义"} fields={fields}
           build={values => definitionCommand(values, { taskId: ready.task.task.id, sourceTaskRevisionId: ready.sourceTaskRevisionId, sourceSignature: ready.sourceSignature }, current)}
           onApplied={result => onApplied?.(result.entityId)} />}
     </>}

@@ -50,7 +50,7 @@ export const sessionPreparationConfigurationCodes = [
  * these; a test reads the docs and fails when one is missing there.
  */
 export const sessionPreparationChecklist: ReadonlyArray<{ setting: string; reread: SessionPreparationReread; purpose: string }> = [
-  { setting: "auth 身份文件", reread: "per_call", purpose: "业务身份存在，并对本项目有 read 与 write" },
+  { setting: "auth 身份文件", reread: "per_call", purpose: "业务身份存在，并至少有一类本项目的任务、文档或 Session 写权限" },
   { setting: "runtime.enabled", reread: "startup", purpose: "服务启动时已启用运行时" },
   { setting: "runtime.grants", reread: "per_call", purpose: "该 Session 的执行授权：项目、Session 身份、Role、授权范围、工作目录" },
   { setting: "runtime.grants[].cwd", reread: "per_call", purpose: "工作区：授权里的 cwd 须是规范绝对路径（与 realpath 一致），请求的 cwd 必须与之相同" },
@@ -76,8 +76,8 @@ export function sessionPreparationHints(missing: readonly string[], context: Ses
           problem: "residentQueue 未启用（或没有 residentQueue 配置），所以 residentQueue.roleActors 里的 Role→actor 映射不被采用。",
           fix: "在私有 integrations 文件把 residentQueue.enabled 设为 true，并在 residentQueue.roleActors 里有这个 Role 的一项。保存后再次 session prepare；该配置每次调用重读，不需要重启。" };
         if (state === "actor_not_project_writer") return { ...base,
-          problem: `residentQueue.roleActors 里已有这个 Role 的映射（actorId=${context.roleActorConfiguredId ?? "?"}），但该身份在 auth 身份文件里对本项目没有 read 与 write，所以不被采用。`,
-          fix: "在 auth 身份文件里给这个 actorId 加上本项目的 read 与 write（身份文件每次调用重读；新增 HTTP 令牌仍要重启才被服务认可），或把映射改成已有写权限的 actorId。" };
+          problem: `residentQueue.roleActors 里已有这个 Role 的映射（actorId=${context.roleActorConfiguredId ?? "?"}），但该身份在 auth 身份文件里对本项目没有任务、文档或 Session 写权限，所以不被采用。`,
+          fix: "在 auth 身份文件里给这个 actorId 加上本项目的任务、文档或 Session 写权限（身份文件每次调用重读；新增 HTTP 令牌仍要重启才被服务认可），或把映射改成已有对应写权限的 actorId。" };
         return { ...base,
           problem: "residentQueue.roleActors 里没有这个 Role 的映射（projectId + roleId → 业务身份 actorId）。",
           fix: "在私有 integrations 文件的 residentQueue.roleActors 数组里加一项 { projectId, roleId, actorId }（见 example），actorId 与该 Role 的 runtime.materialCli 里的 cliActorId 必须一致，并保证 residentQueue.enabled 为 true。保存后再次 session prepare；每次调用重读，不需要重启。" };
@@ -98,7 +98,7 @@ export function sessionPreparationHints(missing: readonly string[], context: Ses
       case "material_cli_actor_not_writer":
         return { code, setting: "runtime.materialCli", reread: "per_call",
           problem: `这个 Session 自己的 runtime.materialCli 绑定写的业务身份（${context.materialCliActorId ?? "?"}）不是本项目当前的写入者，它签的交付不会被接受。`,
-          fix: "把该绑定的 cliActorId 改成本项目有 write 权限的业务身份，或先给该身份在项目里开 write；每次调用重读，不需要重启。" };
+          fix: "把该绑定的 cliActorId 改成本项目有任务写权限的业务身份，或先给该身份在项目里开 task 权限；每次调用重读，不需要重启。" };
       case "runtime_grant":
         return { code, setting: "runtime.grants", reread: "per_call",
           problem: "没有与本次请求完全一致的运行时授权（项目、Session 身份、Role、授权范围、工作目录；全权限、never）。",

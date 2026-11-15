@@ -10,7 +10,7 @@ test("single Role read uses authenticated project scope without listing roles", 
   const foreignProject="20000002-0000-4000-8000-000000000002";
   const roleId="20000003-0000-4000-8000-000000000003";
   const token="r".repeat(40);
-  const credentials=authConfigSchema.parse([{token,actorId:"reader",projectIds:[projectId],permissions:["read"]}]);
+  const credentials=authConfigSchema.parse([{token,actorId:"reader",projectIds:[projectId],permissions:[]}]);
   const seen: Array<{actorId:string;projectId:string;roleId:string}>=[];
   let listReads=0;
   const service={

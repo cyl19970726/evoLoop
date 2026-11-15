@@ -60,7 +60,7 @@ test("a phase is linked by an explicit key; none or several linked stages give n
 test("GET /api/version is public and gives only commit, builtAt and startedAt; a missing build-info.json reads null, never an old value", async t => {
   const root = await mkdtemp(join(tmpdir(), "evoloop-version-"));
   t.after(() => rm(root, { recursive: true, force: true }));
-  const app = await buildServer({ service: new Proxy({ getProject: async () => ({ id: "p" }), listStagePhaseLinks: async () => [] }, { get: (target, name) => name in target ? (target as never)[name] : async () => undefined }) as never, credentials: [{ token: "t".repeat(40), actorId: "reader", projectIds: ["00000000-0000-4000-8000-000000000001"], permissions: ["read"] }], milestones: { repoRoot: root, startedAt: "2026-11-12T01:00:00.000Z" } } as never);
+  const app = await buildServer({ service: new Proxy({ getProject: async () => ({ id: "p" }), listStagePhaseLinks: async () => [] }, { get: (target, name) => name in target ? (target as never)[name] : async () => undefined }) as never, credentials: [{ token: "t".repeat(40), actorId: "reader", projectIds: ["00000000-0000-4000-8000-000000000001"], permissions: [] }], milestones: { repoRoot: root, startedAt: "2026-11-12T01:00:00.000Z" } } as never);
   t.after(() => app.close());
   const missing = await app.inject({ url: "/api/version" });
   assert.equal(missing.statusCode, 200, "no login needed");

@@ -40,9 +40,9 @@ test("real CLI Leader writes connect to the HTTP round, recovery, authorization 
   const prerequisiteTaskId = randomUUID(), dependentTaskId = randomUUID();
   const sessionId = randomUUID(), prerequisiteQueueId = randomUUID(), dependentQueueId = randomUUID();
   const prerequisiteEntry = randomUUID(), dependentEntry = randomUUID();
-  const worker: Principal = { actorId: "business-worker", projectIds: [projectId], permissions: ["read", "write"] };
-  const consumer: Principal = { actorId: "acceptance-owner", projectIds: [projectId], permissions: ["read", "write"] };
-  const lead: Principal = { actorId: "leader", projectIds: [projectId], permissions: ["read", "write", "review"] };
+  const worker: Principal = { actorId: "business-worker", projectIds: [projectId], permissions: ["task", "document", "session"] };
+  const consumer: Principal = { actorId: "acceptance-owner", projectIds: [projectId], permissions: ["task", "document", "session"] };
+  const lead: Principal = { actorId: "leader", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true };
   const workerToken = "w".repeat(40), consumerToken = "c".repeat(40), leadToken = "l".repeat(40);
   const cliDirectory = await mkdtemp(join(tmpdir(), "evoloop-leader-cli-"));
   t.after(() => rm(cliDirectory, { recursive: true, force: true }));
@@ -63,9 +63,9 @@ test("real CLI Leader writes connect to the HTTP round, recovery, authorization 
     leaderNotices: { list: (projectId, query) => listLeaderNotices(pool, projectId, query) },
     ordinarySubmissions: ordinary,
     credentials: [
-      { token: workerToken, actorId: worker.actorId, projectIds: [projectId], permissions: ["read", "write"] },
-      { token: consumerToken, actorId: consumer.actorId, projectIds: [projectId], permissions: ["read", "write"] },
-      { token: leadToken, actorId: lead.actorId, projectIds: [projectId], permissions: ["read", "write", "review"] },
+      { token: workerToken, actorId: worker.actorId, projectIds: [projectId], permissions: ["task", "document", "session"] },
+      { token: consumerToken, actorId: consumer.actorId, projectIds: [projectId], permissions: ["task", "document", "session"] },
+      { token: leadToken, actorId: lead.actorId, projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true },
     ],
   });
   let dependencyOperation: string | null = null, dependencyUnavailable = true;
@@ -329,9 +329,9 @@ test("real CLI Leader writes connect to the HTTP round, recovery, authorization 
     readRun: (p, r) => ordinary.readRun(p, r),
     readDeliveryOperation: submission => ordinary.readDeliveryOperation(submission),
     readDelivery: (p, d) => ordinary.readDelivery(p, d),
-    resolveSubmittedActor: async () => ({ actorId: worker.actorId, projectIds: [projectId], permissions: ["read", "write"] }),
+    resolveSubmittedActor: async () => ({ actorId: worker.actorId, projectIds: [projectId], permissions: ["task", "document", "session"] }),
     workflow, sealer: { actorId: "system:ordinary-run-sealer", projectIds: [projectId],
-      permissions: ["read", "write", "review"] },
+      permissions: ["task", "document", "session", "management"], decisions: true },
     now: () => new Date().toISOString(), canWrite: () => true,
   })(projectId, prerequisiteRunId);
   assert.equal(sealed.status, "sealed", JSON.stringify(sealed));

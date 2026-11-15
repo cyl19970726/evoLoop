@@ -37,7 +37,7 @@ test("a todo Task can explicitly retain a published older source without an impa
   });
   const projectId = randomUUID(), documentId = randomUUID(), taskId = randomUUID();
   const laterTaskId = randomUUID(), staleTaskId = randomUUID();
-  const principal: Principal = { actorId: "reviewer", projectIds: [projectId], permissions: ["read", "write", "review"] };
+  const principal: Principal = { actorId: "reviewer", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true };
   const clock = { now: () => "2026-10-21T06:00:00.000Z" };
   const uow = new PostgresUnitOfWork(pool);
   const service = new WorkflowService({ uow, clock, ids: { next: randomUUID },
@@ -88,7 +88,7 @@ test("a todo Task can explicitly retain a published older source without an impa
   rejected(await issue({ ...start, retentions: [{ ...retention, revisionId: r2.revisionId! }] }), "INVALID_RETENTION");
   rejected(await issue({ ...start, retentions: [retention, retention] }), "INVALID_RETENTION");
   rejected(await issue({ ...start, retentions: [{ ...retention, documentId: randomUUID() }] }), "INVALID_RETENTION");
-  const writer: Principal = { actorId: "writer", projectIds: [projectId], permissions: ["read", "write"] };
+  const writer: Principal = { actorId: "writer", projectIds: [projectId], permissions: ["task", "document", "session"] };
   await assert.rejects(() => service.execute(writer, { ...start, projectId, operationId: randomUUID(),
     retentions: [retention] }), error => (error as { code?: string }).code === "FORBIDDEN");
   const operationId = randomUUID();

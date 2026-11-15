@@ -24,8 +24,8 @@ test("native questions use authenticated project reads and live reply checks bef
   const session = { key: `owned:${sessionId}`, target: { kind: "owned", sessionId }, capabilities: {} };
   const unknownResource = { value: null, unit: "unknown", source: null, scope: "session", observedAt: null,
     interval: null, unavailableReason: "没有证据" };
-  const app = await buildServer({ credentials: [{ token, actorId: "human", projectIds: [projectId], permissions: ["read", "write", "review"] },
-    {token:readerToken,actorId:"reader",projectIds:[projectId],permissions:["read"]}],
+  const app = await buildServer({ credentials: [{ token, actorId: "human", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true },
+    {token:readerToken,actorId:"reader",projectIds:[projectId],permissions:[]}],
     service: {
       listRoleRevisions: async () => [], listRoleReviews: async () => [],
       listRoleHandoffs: async () => [], listRoleSessionBindings: async () => [],

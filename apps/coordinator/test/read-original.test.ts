@@ -8,7 +8,7 @@ import { readDocumentOriginal } from "../src/documents/read-original.js";
 
 const sha256 = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
 const projectId = randomUUID();
-const principal: Principal = { actorId: "reader", projectIds: [projectId], permissions: ["read"] };
+const principal: Principal = { actorId: "reader", projectIds: [projectId], permissions: [] };
 const originalBytes = Buffer.from("\ufeff<!doctype html>\r\n<p>繁體字 café</p>\r\n", "utf8");
 const assetBytes = Buffer.from("<svg xmlns='http://www.w3.org/2000/svg' />\n", "utf8");
 const revision: DocumentPayloadRevision = {
@@ -88,7 +88,7 @@ test("unregistered, tampered, invalid UTF-8, and oversized originals stay unavai
 });
 
 test("permission is checked before touching the registry or Blob store", async () => {
-  const denied = { ...principal, permissions: [] };
+  const denied = { ...principal, projectIds: [] };
   const { options, counts } = fixture();
   assert.deepEqual(await readDocumentOriginal(options, denied, revision),
     { status: "unavailable", reason: "forbidden" });

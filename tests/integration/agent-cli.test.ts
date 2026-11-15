@@ -31,10 +31,10 @@ test("real CLI and PostgreSQL share fixed inputs, observable changes, no replay 
   const blobs = new LocalBlobStore(join(directory, "blobs"), async () => true,
     async ref => !!await uow.read(ref.projectId, reader => reader.getRegisteredBlob(ref.id)));
   const app = await buildServer({ service, credentials: [
-    { token, actorId: "cli-test-agent", projectIds: [projectId], permissions: ["read", "write", "review"] },
-    { token: rotatedToken, actorId: "cli-test-agent", projectIds: [projectId], permissions: ["read", "write", "review"] },
-    { token: readerToken, actorId: "test-observer", projectIds: [projectId], permissions: ["read"] },
-    { token: consumerToken, actorId: "cli-test-consumer", projectIds: [projectId], permissions: ["read", "write"] },
+    { token, actorId: "cli-test-agent", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true },
+    { token: rotatedToken, actorId: "cli-test-agent", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true },
+    { token: readerToken, actorId: "test-observer", projectIds: [projectId], permissions: [] },
+    { token: consumerToken, actorId: "cli-test-consumer", projectIds: [projectId], permissions: ["task", "document", "session"] },
   ], documents: { uow, blobsForPrincipal: () => blobs },
   references: { uow, gitForPrincipal: () => ({ read: async () => ({ status: "unavailable", reason: "No Git source in this fixture" }) }) as never,
     knowledgeForPrincipal: () => ({}) as never } });

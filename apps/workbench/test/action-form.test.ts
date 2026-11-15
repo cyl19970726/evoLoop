@@ -13,8 +13,8 @@ import {
 import { draftKeyFor, initialValues, missingFields } from "../src/shared/command/index.ts";
 
 const projectId = "20000001-0000-4000-8000-000000000001";
-const context = (patch: Partial<MutationContext> = {}, permissions: Permission[] = ["read", "write", "review"]): MutationContext => ({
-  token: "", projectId, blocked: false, principal: { actorId: "writer", projectIds: [projectId], permissions } as MutationContext["principal"],
+const context = (patch: Partial<MutationContext> = {}, permissions: Permission[] = ["task", "document", "session", "management"], decisions = true): MutationContext => ({
+  token: "", projectId, blocked: false, principal: { actorId: "writer", projectIds: [projectId], permissions, decisions } as MutationContext["principal"],
   onAttempt: () => true, onKnown: () => undefined, onChanged: () => undefined, ...patch,
 });
 const render = (props: Partial<ActionFormProps> & Pick<ActionFormProps, "context">) =>
@@ -84,15 +84,15 @@ test("folded behind its title by default; open when asked, or when a kept draft 
 });
 
 test("review and other permissions: the form says what the identity lacks and does not send", () => {
-  const writer = context({}, ["read", "write"]);
-  const review = render({ context: writer, review: true, embedded: true });
-  assert.match(review, /当前身份没有审阅权限。/);
+  const writer = context({}, ["task", "document", "session"], false);
+  const review = render({ context: writer, requiredPermissions: ["task"], decision: true, embedded: true });
+  assert.match(review, /当前身份没有这些对象类别的决定权限。/);
   assert.equal(submitDisabled(review), true);
   const write = render({ context: writer, embedded: true });
   assert.doesNotMatch(write, /当前身份没有/);
-  assert.equal(submitDisabled(write), false, "write permission is enough by default");
-  const exact = render({ context: context({}, ["read", "review"]), requiredPermissions: ["write", "review"], embedded: true });
-  assert.match(exact, /当前身份没有写入权限。/);
+  assert.equal(submitDisabled(write), false, "the owning object class is enough by default");
+  const exact = render({ context: context({}, ["document", "session"], true), requiredPermissions: ["task"], embedded: true });
+  assert.match(exact, /当前身份没有任务类写入权限。/);
   assert.equal(submitDisabled(exact), true);
 });
 

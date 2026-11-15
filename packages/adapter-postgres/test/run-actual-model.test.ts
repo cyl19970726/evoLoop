@@ -22,7 +22,7 @@ const hash = (text: string) => createHash("sha256").update(text).digest("hex");
 const deps = { uow, clock: { now: () => new Date().toISOString() }, ids: { next: randomUUID }, hasher: { hash } };
 const workflow = new WorkflowService(deps), runtime = new RuntimeWorkflowService(deps);
 const p = randomUUID(), role = randomUUID(), roleRev = randomUUID();
-const lead: Principal = { actorId: "lead", projectIds: [p], permissions: ["read", "write", "review"] };
+const lead: Principal = { actorId: "lead", projectIds: [p], permissions: ["task", "document", "session", "management"], decisions: true };
 
 before(async () => {
   await migrate(url!, schema);
@@ -147,7 +147,7 @@ test("migration 099: historical Runs have no actual record and the shape is enfo
 test("the Session snapshot reads the actual model from what a Turn reported, not from the configuration", async () => {
   const { SessionObservationService } = await import("@evoloop/core/session-observation");
   const service = new SessionObservationService({ uow });
-  const reader: Principal = { actorId: "lead", projectIds: [p], permissions: ["read", "write", "review"] };
+  const reader: Principal = { actorId: "lead", projectIds: [p], permissions: ["task", "document", "session", "management"], decisions: true };
   const f = await fixture("opus");
   const before = (await service.snapshot(reader, p, `owned:${f.sessionId}`)).resources;
   assert.equal(before.configuredModel.value, "opus");

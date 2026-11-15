@@ -3,6 +3,7 @@
 // orchestration loop, queues and recorded runs. The right column holds the service facts and the selected agent's
 // identity. `/runtime?session={uuid}` selects an agent; that is also where the old deep link lands.
 import { useContext, useEffect, useRef, useState } from "react";
+import { hasDecisionAuthority } from "@evoloop/contracts";
 import { Plus, RefreshCw } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import type { RuntimeRunRecord, RuntimeSessionRecord } from "@evoloop/contracts/runtime";
@@ -138,7 +139,7 @@ export function ExecutionView({ context, refresh, sessionId }: { context: Mutati
               ? "当前没有同时允许完整本机权限、无需逐次审批和联网的精确授权；请核对项目执行配置后再创建新智能体。" : "当前身份在本项目没有执行授权，不能创建新智能体。"}</p>
             : <Notice tone="waiting" title="执行服务尚未接通">{status.data.error || "已有运行记录仍保留；不自动重发结果未知的启动。"}</Notice>)}
           {statusError && <Notice tone="error">执行服务状态{status.data ? "本次核对失败，上面是上次读回" : "暂不可读"}：{statusError}<ErrorDetails error={status.error} /></Notice>}
-          {status.data && !status.data.available && context.principal.permissions.includes("review") && <Button className="w-fit" disabled={recovering} onClick={() => void recover()}>{recovering ? "恢复核对中…" : "受控恢复执行连接"}</Button>}
+          {status.data && !status.data.available && hasDecisionAuthority(context.principal, projectId, "management") && <Button className="w-fit" disabled={recovering} onClick={() => void recover()}>{recovering ? "恢复核对中…" : "受控恢复执行连接"}</Button>}
           {recoverError && <Notice tone="error">恢复未完成：{recoverError.text}。请先读取运行状态，不要重复发起。<ErrorDetails failure={recoverError} /></Notice>}
         </PageSection>
         {creating && status.data?.available && grants.length > 0 && <PageSection title="新建受管智能体">

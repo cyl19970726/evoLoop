@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { Principal } from "@evoloop/contracts";
+import { hasDecisionAuthority, isProjectMember, type Principal } from "@evoloop/contracts";
 import type { SessionLineEntry } from "@evoloop/contracts/session-line";
 import type { WorkflowService } from "@evoloop/core";
 
@@ -80,11 +80,11 @@ export class SessionLinePump {
     if (!this.deps.canWrite() || !await this.deps.enabled()) return;
     const credentials = await this.deps.credentials();
     for (const projectId of new Set(credentials.flatMap(p => p.projectIds))) {
-      const reader = credentials.find(p => p.projectIds.includes(projectId) && p.permissions.includes("read"));
+      const reader = credentials.find(p => isProjectMember(p, projectId));
       if (!reader) continue;
       for (const line of await this.deps.workflow.listSessionLines(reader, projectId)) {
-        const controller = credentials.find(p => p.actorId === line.controllerActorId && p.projectIds.includes(projectId) &&
-          (["read", "write", "review"] as const).every(permission => p.permissions.includes(permission)));
+        const controller = credentials.find(p => p.actorId === line.controllerActorId &&
+          hasDecisionAuthority(p, projectId, "management"));
         if (!controller) continue;
         try { await this.advance(projectId, line.sessionId, controller); } catch (error) { this.deps.onError(error); }
       }

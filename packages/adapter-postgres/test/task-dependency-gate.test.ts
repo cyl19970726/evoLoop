@@ -39,9 +39,9 @@ test("queue claim reaches the same current-acceptance dependency gate as static 
   const projectId = randomUUID(), roleId = randomUUID(), roleRevisionId = randomUUID();
   const prerequisiteTaskId = randomUUID(), dependentTaskId = randomUUID(), sessionId = randomUUID();
   const queueId = randomUUID(), entryId = randomUUID();
-  const lead: Principal = { actorId: "lead", projectIds: [projectId], permissions: ["read", "write", "review"] };
-  const worker: Principal = { actorId: "worker", projectIds: [projectId], permissions: ["read", "write"] };
-  const consumer: Principal = { actorId: "consumer", projectIds: [projectId], permissions: ["read", "write"] };
+  const lead: Principal = { actorId: "lead", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true };
+  const worker: Principal = { actorId: "worker", projectIds: [projectId], permissions: ["task", "document", "session"] };
+  const consumer: Principal = { actorId: "consumer", projectIds: [projectId], permissions: ["task", "document", "session"] };
   const apply = async (command: Parameters<typeof workflow.execute>[1], principal = lead) => {
     const result = await workflow.execute(principal, command);
     assert.equal(result.status, "applied", JSON.stringify(result));

@@ -1,12 +1,12 @@
 import type { Pool } from "pg";
-import type { Principal } from "@evoloop/contracts";
+import { isProjectMember, type Principal } from "@evoloop/contracts";
 import { DomainError } from "@evoloop/contracts/ports";
 
 /** One SQL snapshot binds the current todo revision, historical Stage scope and linked adoption. */
 export async function readPlanningSources(pool: Pool, principal: Principal, projectId: string,
   taskId: string, taskRevisionId: string, loopId?: string) {
-  if (!principal.projectIds.includes(projectId) || !principal.permissions.includes("read"))
-    throw new DomainError("FORBIDDEN", "Project read permission is required");
+  if (!isProjectMember(principal, projectId))
+    throw new DomainError("FORBIDDEN", "Project membership is required");
   const result = await pool.query(`WITH selected AS (
       SELECT t.task_id,t.current_revision_id,t.content_document_id
       FROM task t JOIN task_revision current ON current.project_id=t.project_id

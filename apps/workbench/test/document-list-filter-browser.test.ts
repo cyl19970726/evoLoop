@@ -42,7 +42,7 @@ test("Report + active filtering happens before pagination", {
       res.writeHead(302, { location: "/favicon.svg" }); res.end(); return;
     }
     if (url.pathname.startsWith("/api/")) {
-      if (url.pathname === "/api/session") return send({ principal: { actorId: "fixture", projectIds: [projectId], permissions: ["read", "write", "review"] }, capabilities: {} });
+      if (url.pathname === "/api/session") return send({ principal: { actorId: "fixture", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true }, capabilities: {} });
       if (url.pathname === root) return send({ id: projectId, title: "文档筛选项目", createdAt: stamp });
       if (url.pathname === `${root}/documents`) {
         requests.push(`${url.pathname}?${url.searchParams}`);

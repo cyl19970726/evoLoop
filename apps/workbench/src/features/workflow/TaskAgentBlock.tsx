@@ -109,7 +109,8 @@ export function BindAgentForm({ context, task, currentVersion, currentKey, onDon
     if (!chosen || !reason.trim() || overLimitText(reason, 4000) || overLimitText(recipient, 240)) return;
     await command.submit(seen => assignmentSetCommand(task.id, seen, { target: chosen.target, recipientActorId: recipient, reason }));
   }
-  return <CommandFrame context={context} command={command} label="绑定智能体" submitLabel="保存绑定" dirty={dirty} permission="review" className="p-3"
+  return <CommandFrame context={context} command={command} label="绑定智能体" submitLabel="保存绑定" dirty={dirty}
+    permission="task" decision className="p-3"
     onSubmit={() => void submit()} onCancel={onDone} cancelLabel="取消"
     onRefill={() => { command.rebase(); setTarget(""); setRecipient(""); setReason(""); }}
     onKeep={() => { command.rebase(); if (target === currentKey) setTarget(""); }}

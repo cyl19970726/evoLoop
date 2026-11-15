@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import type { Principal } from "@evoloop/contracts";
+import { hasDecisionAuthority, isProjectMember, type Principal } from "@evoloop/contracts";
 import type { DeliveryStore } from "@evoloop/contracts/delivery";
 import type { WorkflowService } from "@evoloop/core";
 import { reviewIncomingChange, CollaborationRuleError } from "@evoloop/core/delivery";
@@ -13,7 +13,7 @@ const incomingParams = z.object({ projectId:id,incomingId:id });
 const page = z.object({ limit:z.coerce.number().int().min(1).max(100).default(50),cursor:id.optional() });
 const reason = z.object({ reason:z.string().trim().min(1).max(4000) });
 function scope(principal: Principal | null, projectId: string, review = false): Principal {
-  if (!principal || !principal.projectIds.includes(projectId) || !principal.permissions.includes("read") || review && (!principal.permissions.includes("write") || !principal.permissions.includes("review")))
+  if (!principal || !isProjectMember(principal, projectId) || review && !hasDecisionAuthority(principal, projectId, "task"))
     throw new CollaborationRuleError("FORBIDDEN","project collaboration access denied");
   return principal;
 }

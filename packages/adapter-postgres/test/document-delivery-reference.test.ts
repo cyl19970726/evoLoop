@@ -16,7 +16,7 @@ const uow = new PostgresUnitOfWork(pool);
 const hash = (text: string) => createHash("sha256").update(text).digest("hex");
 const workflow = new WorkflowService({ uow, clock: { now: () => new Date().toISOString() }, ids: { next: randomUUID }, hasher: { hash } });
 const p = randomUUID(), role = randomUUID(), roleRev = randomUUID();
-const lead: Principal = { actorId: "lead", projectIds: [p], permissions: ["read", "write", "review"] };
+const lead: Principal = { actorId: "lead", projectIds: [p], permissions: ["task", "document", "session", "management"], decisions: true };
 
 before(async () => {
   await migrate(url!, schema);

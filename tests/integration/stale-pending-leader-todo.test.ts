@@ -26,7 +26,7 @@ test("stale pending todos refresh once after plan metadata, retire when no longe
     finally { await admin.end(); }
   });
   const projectId=randomUUID(),roleId=fixtureRoleId("stale-pending-leader"),actorId="stale-pending-owner";
-  const principal={actorId,projectIds:[projectId],permissions:["read","write","review"] as Array<"read"|"write"|"review">};
+  const principal={actorId,projectIds:[projectId],permissions:["task", "document", "session", "management"], decisions: true};
   const service=new WorkflowService({uow:new PostgresUnitOfWork(pool),clock:{now:()=>new Date().toISOString()},
     ids:{next:randomUUID},hasher:{hash:(value:string)=>createHash("sha256").update(value).digest("hex")}});
   async function apply(command:Record<string,unknown>){

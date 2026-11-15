@@ -40,7 +40,7 @@ test("POST /api/commands refuses an ungranted session.message.post before anythi
   // Routes bind many service methods at registration; only the two this test drives matter.
   const service = new Proxy(base, { get: (target, name) => name in target ? target[name as string] : async () => undefined }) as unknown as WorkflowService;
   const token = "t".repeat(40);
-  const app = await buildServer({ service, credentials: [{ token, actorId: "user-sim", projectIds: [projectId], permissions: ["read", "write"] }],
+  const app = await buildServer({ service, credentials: [{ token, actorId: "user-sim", projectIds: [projectId], permissions: ["task", "document", "session"] }],
     messageSendAuthority: async () => blocked });
   const post = (type = "session.message.post") => app.inject({ method: "POST", url: "/api/commands", headers: { authorization: `Bearer ${token}` },
     payload: { type, projectId, operationId: id(10), messageId: id(11), target: { kind: "owned", sessionId }, content: "你好" } });

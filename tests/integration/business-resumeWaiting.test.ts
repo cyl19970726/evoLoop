@@ -41,7 +41,7 @@ test("PG business waiting resumes from a signed outcome and fixed repaired basis
   const firstTask=randomUUID(),businessTask=randomUUID(),waitingTask=randomUUID(),newTask=randomUUID();
   const otherStageTask=randomUUID(),foreignTask=randomUUID(),basisDocumentId=randomUUID();
   const owner="business-resume-owner",cognition=fixtureRoleId("business-resume-cognition"),business=fixtureRoleId("business-resume-worker");
-  const principal=(actorId:string)=>({actorId,projectIds:[projectId],permissions:["read","write","review"] as Array<"read"|"write"|"review">});
+  const principal=(actorId:string)=>({actorId,projectIds:[projectId],permissions:["task", "document", "session", "management"], decisions: true});
   const uow=new PostgresUnitOfWork(pool),clock={now:()=>new Date().toISOString()},ids={next:randomUUID};
   const workflow=new WorkflowService({uow,clock,ids,hasher:{hash}});
   const runtime=new RuntimeWorkflowService({uow,clock,ids});
@@ -157,7 +157,7 @@ test("PG business waiting resumes from a signed outcome and fixed repaired basis
   const foreign=(await workflow.getTask(principal(owner),projectId,foreignTask)).task;
   const outOfScopePaths=[stageTask,foreign].map(task=>`/api/projects/${projectId}/documents/${task.contentDocumentId}/revisions/${task.contentRevisionId}/original`);
   const waitingWorker:WorkerIdentity={principal:{actorId:`worker-${randomUUID()}`,projectIds:[projectId],
-    permissions:["read","write","review"]},scope:{projectId,loopId,taskId:waitingTask,runId:waiting.runId,
+    permissions:["task", "document", "session", "management"], decisions: true},scope:{projectId,loopId,taskId:waitingTask,runId:waiting.runId,
       sessionId:waiting.sessionId,roleId:cognition,kind:"cognition",allowedRoleIds:[cognition,business]}};
   const assertCognitionReads=async(identity:WorkerIdentity)=>{
     const access=workerGuardFacts(pool,identity);
@@ -244,7 +244,7 @@ test("PG business waiting resumes from a signed outcome and fixed repaired basis
   await issue({type:"dispatch.resolve",dispatchId:newDispatch.entityId,claimToken,
     result:"accepted",runtimeRunId:newRunId,reason:"New Run after waiting"});
   const worker:WorkerIdentity={principal:{actorId:`worker-${randomUUID()}`,projectIds:[projectId],
-    permissions:["read","write","review"]},scope:{projectId,loopId,taskId:newTask,runId:newRunId,
+    permissions:["task", "document", "session", "management"], decisions: true},scope:{projectId,loopId,taskId:newTask,runId:newRunId,
       sessionId:newSessionId,roleId:cognition,kind:"cognition",allowedRoleIds:[cognition,business]}};
   const facts=workerGuardFacts(pool,worker);
   assert.equal(await authorizeWorkerRequest(worker,{method:"GET",path:`/api/projects/${projectId}/tasks/${businessTask}`},facts),true);
@@ -264,7 +264,7 @@ test("PG business waiting resumes from a signed outcome and fixed repaired basis
   await settle({dispatchId:newDispatch.entityId,runId:newRunId},"waiting");
   const nextBusiness=await begin(event.id,businessTask,business,repaired.version,newDispatch.entityId,nextBusinessDispatchId);
   const businessWorker:WorkerIdentity={principal:{actorId:`worker-${randomUUID()}`,projectIds:[projectId],
-    permissions:["read","write","review"]},scope:{projectId,loopId,taskId:businessTask,runId:nextBusiness.runId,
+    permissions:["task", "document", "session", "management"], decisions: true},scope:{projectId,loopId,taskId:businessTask,runId:nextBusiness.runId,
       sessionId:nextBusiness.sessionId,roleId:business,kind:"business",allowedRoleIds:[business]}};
   assert.equal(await authorizeWorkerRequest(businessWorker,{method:"GET",path:original},workerGuardFacts(pool,businessWorker)),true);
   assert.equal(await authorizeWorkerRequest(businessWorker,{method:"GET",path:basisPath},workerGuardFacts(pool,businessWorker)),true);

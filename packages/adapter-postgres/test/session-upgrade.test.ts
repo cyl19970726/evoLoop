@@ -337,7 +337,7 @@ test("029 legacy authority survives 030-034 and recovery upgrade selects only cu
 
   const observationClient = await new pg.Pool({ connectionString: url, options: `-c search_path=${schema}` }).connect();
   try {
-    const observation = new PgSessionObservation(observationClient, projectId, JSON.stringify({ actorId: "reader", permissions: ["read"] }));
+    const observation = new PgSessionObservation(observationClient, projectId, JSON.stringify({ actorId: "reader", permissions: [] }));
     const directory = await observation.directory({ limit: 10, membership: "current" });
     const session = directory.items.find(item => item.key === `external:${hostLinkId}`);
     assert.ok(session, "legacy verified HostLink appears in the unified directory");

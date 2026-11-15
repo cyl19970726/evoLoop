@@ -57,11 +57,11 @@ test("current authority requires the exact owned Thread, running Turn, Run, Task
 });
 
 test("browser reader must be a single current same-project read-only identity",()=>{
-  const reader={actorId:scope.readerActorId,projectIds:[projectId],permissions:["read"],token:"host-only-token"};
+  const reader={actorId:scope.readerActorId,projectIds:[projectId],permissions:[],token:"host-only-token"};
   assert.equal(readerTokenForScope(scope,[reader]),"host-only-token");
   assert.equal(readerTokenForScope(scope,[{...reader,projectIds:[runId]}]),null);
   assert.equal(readerTokenForScope(scope,[{...reader,projectIds:[projectId,runId]}]),null);
-  assert.equal(readerTokenForScope(scope,[{...reader,permissions:["read","write"]}]),null);
+  assert.equal(readerTokenForScope(scope,[{...reader,permissions:["task","document","session"]}]),null);
   assert.equal(readerTokenForScope(scope,[reader,{...reader,token:"another"}]),null);
   assert.equal(readerTokenForScope(scope,[{...reader,actorId:"owner"}]),null);
 });

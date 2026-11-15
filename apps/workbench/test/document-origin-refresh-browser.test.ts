@@ -46,7 +46,7 @@ test("document source run rereads after returning from the task and on manual re
     if (url.pathname.startsWith("/api/")) {
       const p = `/api/projects/${projectId}`;
       let value: unknown = pageItems;
-      if (url.pathname === "/api/session") value = {principal:{actorId:"developer",projectIds:[projectId],permissions:["read"]},capabilities:{}};
+      if (url.pathname === "/api/session") value = {principal:{actorId:"developer",projectIds:[projectId],permissions:[]},capabilities:{}};
       else if (url.pathname === p) value = {id:projectId,title:"项目",createdAt:stamp};
       else if (url.pathname === `${p}/documents/${documentId}`) value = {document:{...document,origin:{...document.origin,runId:originRunId}},current:revision,adopted:revision};
       else if (url.pathname === `${p}/documents/${documentId}/revisions/${revisionId}`) value = revision;
