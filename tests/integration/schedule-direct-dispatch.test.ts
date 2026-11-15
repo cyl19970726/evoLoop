@@ -33,22 +33,27 @@ async function rig(t: import("node:test").TestContext) {
   const writer: Principal = { actorId: "writer", projectIds: [projectId], permissions: ["read", "write"] };
   const reader: Principal = { actorId: "reader", projectIds: [projectId], permissions: ["read"] };
   const noRead: Principal = { actorId: "no-read", projectIds: [projectId], permissions: ["write"] };
+  const sessionActor: Principal = { actorId: "session-actor", projectIds: [projectId], permissions: ["read", "write", "review"] };
+  const targetOwner: Principal = { actorId: "target-owner", projectIds: [projectId], permissions: ["read", "write", "review"] };
+  const businessActors = new Map<string, string>();
   const deps = { uow: new PostgresUnitOfWork(pool), clock: { now: () => new Date().toISOString() }, ids: { next: randomUUID },
-    hasher: { hash: (value: string) => createHash("sha256").update(value).digest("hex") } };
+    hasher: { hash: (value: string) => createHash("sha256").update(value).digest("hex") },
+    sessionLineBusinessActor: async (_projectId: string, sessionId: string) => businessActors.get(sessionId) ?? null };
   const workflow = new WorkflowService(deps), runtime = new RuntimeWorkflowService(deps);
   const applied = async (who: Principal, command: Record<string, unknown>) => { const r = await workflow.execute(who, { ...command, projectId, operationId: randomUUID() } as never); assert.equal(r.status, "applied", JSON.stringify(r)); return r; };
   const refused = async (who: Principal, command: Record<string, unknown>) => workflow.execute(who, { ...command, projectId, operationId: randomUUID() } as never)
     .then(r => ({ code: (r as { code?: string }).code ?? r.status }), (error: { code?: string; message: string }) => ({ code: error.code ?? error.message }));
   await applied(lead, { type: "project.create", title: "Direct dispatch" });
   const role = fixtureRoleId("scheduled-role"); await seedFixtureRole(pool, projectId, role);
-  const session = async (cwd = "/tmp/direct") => {
+  const session = async (cwd = "/tmp/direct", who: Principal = sessionActor, businessActor = who.actorId) => {
     const sessionId = randomUUID();
-    await applied(lead, { type: "runtime.session.reserve", sessionId, roleId: role, cwd, authorizationScope: "project", sandbox: "danger-full-access", approvalPolicy: "never" });
+    await applied(who, { type: "runtime.session.reserve", sessionId, roleId: role, cwd, authorizationScope: "project", sandbox: "danger-full-access", approvalPolicy: "never" });
     await runtime.beginSessionCreate(projectId, sessionId);
     const saved = (await deps.uow.read(projectId, r => r.getRuntimeSession(sessionId)))!;
     await runtime.bindSession(projectId, sessionId, { owner: "evoloop-codex-app-server", projectId, sessionId, roleId: role, cwd, authorizationScope: "project",
       nativeThreadId: `thread-${sessionId}`, nativeSessionId: `native-${sessionId}`, resumeProfile: { actorId: saved.actorId, model: saved.model, sandbox: saved.sandbox,
         approvalPolicy: saved.approvalPolicy, executionProfileRevisionId: saved.executionProfile!.revision.revisionId } });
+    businessActors.set(sessionId, businessActor);
     return sessionId;
   };
   const store = new PgSchedulingStore(pool);
@@ -57,8 +62,12 @@ async function rig(t: import("node:test").TestContext) {
   const dispatcher = new ScheduleDirectDispatcher({ pool, workflow: { execute: (who, command) => workflow.execute(who, command as never) as never }, newId: randomUUID,
     sessionDenial: sessionDenial(pool, async (): Promise<DirectAuthorizationConfig> => { config.reads++; return { runtime: { enabled: config.enabled },
       hasRuntimeGrant: scope => config.allGranted || config.granted.has(scope.cwd), allowedRuntimeCwd: async () => true }; }),
-    recipientDenial: async (_project, sessionId) => config.recipientDenied.get(sessionId) ?? null, onError: error => config.errors.push(error.message) });
-  const T0 = Date.now();
+    recipientDenial: async (_project, sessionId) => config.recipientDenied.get(sessionId) ?? null,
+    sessionLineBusinessActor: async (_project, sessionId) => businessActors.get(sessionId) ?? null,
+    onError: error => config.errors.push(error.message) });
+  // Pinned to 03:00 UTC of YESTERDAY, not to the moment the test runs: the daily budget counts calendar days, so a base near midnight UTC makes T0 + a few hours fall on the next day
+  // (seen at 22:24 UTC); and a base at 03:00 of today is still in the future before 03:00 (the schedule refuses a watermark ahead of now, seen at 01:5x UTC).
+  const T0 = new Date().setUTCHours(3, 0, 0, 0) - 24 * 3600_000;
   let scheduleSeq = 0;
   /** An hourly schedule (skip while the previous occurrence is open) whose first trigger is one hour after T0. */
   const makeSchedule = async (overrides: Record<string, unknown> = {}) => {
@@ -86,9 +95,40 @@ async function rig(t: import("node:test").TestContext) {
   const records = async (kind: string) => (await pool.query("SELECT task_id, source_ref FROM leader_event_record WHERE project_id=$1 AND kind=$2 ORDER BY occurred_at", [projectId, kind])).rows;
   const leaderTask = async (title: string) => { const taskId = randomUUID(); await applied(lead, { type: "task.create", taskId, title, content: `# ${title}`, acceptance: "ok", owner: role }); return taskId; };
   const appendLeader = async (sessionId: string, taskId: string) => applied(lead, { type: "line.append", sessionId, taskId, expectedTaskVersion: 1, source: "leader", reason: "arranged" });
-  return { dispatcher, store, config, pool, projectId, lead, writer, reader, noRead, workflow, role, session, makeSchedule, fire, dispatchAt, setList, setPolicy,
-    taskOfOccurrence, notices, logOf, lineOf, records, leaderTask, appendLeader, applied, refused, T0 };
+  return { dispatcher, store, config, pool, projectId, lead, writer, reader, noRead, sessionActor, targetOwner, businessActors, workflow, role, session,
+    makeSchedule, fire, dispatchAt, setList, setPolicy, taskOfOccurrence, notices, logOf, lineOf, records, leaderTask, appendLeader, applied, refused, T0 };
 }
+
+test("a direct list Session whose business identity is the controller is refused even when another identity created it", async t => {
+  const r = await rig(t);
+  const own = await r.session("/tmp/own-direct", r.targetOwner, r.lead.actorId);
+  const creator = await r.pool.query("SELECT actor_id FROM runtime_session WHERE project_id=$1 AND session_id=$2", [r.projectId, own]);
+  assert.equal(creator.rows[0].actor_id, r.targetOwner.actorId);
+  await r.setList([own]);
+  const scheduleId = await r.makeSchedule();
+  await r.setPolicy(scheduleId);
+  await r.fire(1);
+  const taskId = await r.taskOfOccurrence(scheduleId);
+  assert.deepEqual(await r.dispatchAt(1), { dispatched: 0, fellBack: 1 });
+  assert.deepEqual(await r.lineOf(own), []);
+  assert.deepEqual((await r.logOf(scheduleId)).map(row => [row.state, row.reason]), [["fell_back", "NOT_AVAILABLE:CONTROLLER_SESSION"]]);
+  assert.deepEqual((await r.notices(taskId)).map(row => row.kind), ["direct_dispatch_blocked", "task_todo"]);
+});
+
+test("a controller-created Session with another business identity is not mistaken for the controller's own", async t => {
+  const r = await rig(t);
+  const development = await r.session("/tmp/controller-created-normal", r.lead, "codex-dev-agent");
+  const creator = await r.pool.query("SELECT actor_id FROM runtime_session WHERE project_id=$1 AND session_id=$2", [r.projectId, development]);
+  assert.equal(creator.rows[0].actor_id, r.lead.actorId);
+  await r.setList([development]);
+  const scheduleId = await r.makeSchedule();
+  await r.setPolicy(scheduleId);
+  await r.fire(1);
+  const taskId = await r.taskOfOccurrence(scheduleId);
+  assert.deepEqual(await r.dispatchAt(1), { dispatched: 1, fellBack: 0 });
+  assert.deepEqual((await r.lineOf(development)).map(row => [row.task_id, row.state, row.source]), [[taskId, "queued", "schedule"]]);
+  assert.deepEqual((await r.logOf(scheduleId)).map(row => [row.state, row.session_id]), [["dispatched", development]]);
+});
 
 test("a direct schedule's Task is made without a triage notice, then appended to the line of the first idle Session on the list; the Leader gets a record, not a notice", async t => {
   const r = await rig(t);

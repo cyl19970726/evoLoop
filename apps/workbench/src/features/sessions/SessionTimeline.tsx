@@ -27,9 +27,9 @@ import { useProjectQuery } from "../../shared/query";
 import { sessionMessageEntry } from "./sessionMessageEntry";
 import { useSessionTimeline } from "./useSessionTimeline";
 import { ActorIdentifiers } from "../../shared/ui/ActorIdentifiers";
-import { workspaceReadingGroups, workspaceReadingOrder } from "./workspaceTimelineModel";
+import { settleEndedTools, workspaceReadingGroups, workspaceReadingOrder } from "./workspaceTimelineModel";
 import {
-  elapsedText, entryStateLabel, isFailedEntry, liveStatusText, pinnedToolIds, planExplanation, planSteps, recordLabel, toolDetailReason, toolGroupStatus, toolGroupSummary,
+  elapsedText, entryStateLabel, isFailedEntry, toolStepKind, liveStatusText, pinnedToolIds, planExplanation, planSteps, recordLabel, toolDetailReason, toolGroupStatus, toolGroupSummary,
   entryAuthorText, reasoningSourceLabel, toolLabel, toolStepState, toolStepText, turnLabel, turnReasoningTokensText, turnSummaries,
 } from "./conversationPresentation";
 import { SessionIdentityMark } from "./SessionIdentityMark";
@@ -118,7 +118,7 @@ function ToolGroup({ entries, scope, context, sessionKey, mayReadOriginal }: { e
       const label = toolLabel(entry.name);
       const selected = selectedId === entry.id;
       return {
-        id: entry.id, text: toolStepText(entry), meta: toolStepState(entry), failed: isFailedEntry(entry),
+        id: entry.id, text: toolStepText(entry), meta: toolStepState(entry), failed: isFailedEntry(entry), state: toolStepKind(entry),
         running: entry.state === "running" && entry.freshness === "live", pinned: pinned.has(entry.id),
         rowProps: { className: cn("workspace-tool", entry.state), "data-workspace-entry": entry.id, "data-turn-id": entry.turnId ?? undefined },
         action: <Button variant="link" className={cn(linkButton, "shrink-0")} aria-label={`${selected ? "收起" : "查看"}工具详情：${label}`} aria-expanded={selected}
@@ -298,7 +298,7 @@ export function SessionTimeline({ context, snapshot, onApplied, taskHref, refres
 }) {
   const timeline = useSessionTimeline(context.token, context.projectId, context.principal.actorId, snapshot.session.key, refresh, reauthorizeVersion);
   const capability = sessionMessageEntry(snapshot.session.kind, snapshot.session.capabilities);
-  const items = useMemo(() => workspaceReadingOrder(timeline.entries, timeline.pending), [timeline.entries, timeline.pending]);
+  const items = useMemo(() => settleEndedTools(workspaceReadingOrder(timeline.entries, timeline.pending), timeline.turns), [timeline.entries, timeline.pending, timeline.turns]);
   const grantNotice = useMemo(() => grantBlockedNotice(items), [items]);
   const groups = useMemo(() => workspaceReadingGroups(items), [items]);
   const summaries = useMemo(() => turnSummaries(items, timeline.turns, snapshot.results, waitingTurnIds), [items, timeline.turns, snapshot.results, waitingTurnIds]);

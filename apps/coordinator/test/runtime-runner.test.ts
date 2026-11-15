@@ -882,6 +882,32 @@ test("requested Run waits without native start or state mutation, then uses its 
   } finally { await runner.stop(); }
 });
 
+test("a requested Run whose requester has no configured runtime authority is rejected on the first poll with a readable reason", async () => {
+  const requested = { ...run, state: "requested" as const, nativeTurnId: null };
+  const runtime = new FakeRuntime();
+  let rejected = 0, reason = "", authorityChecks = 0;
+  const workflow = { getProject: async () => ({ id: projectId }), listRuntimeSessions: async () => [session],
+    listRuntimeRuns: async () => [requested], getRuntimeSession: async () => session } as unknown as WorkflowService;
+  const trusted = { recoverDispatching: async () => ({ sessions: [], runs: [] }),
+    rejectDispatch: async (_project: string, runId: string, why: string) => {
+      assert.equal(runId, requested.id);
+      rejected++; reason = why; requested.state = "failed";
+    } } as unknown as RuntimeWorkflowService;
+  const runner = new RuntimeRunner({ runtimeFactory: () => runtime as unknown as RuntimePort & FakeRuntime,
+    workflow, trusted, principals: [{ actorId, projectIds: [projectId], permissions: ["read", "write", "review"] }],
+    canWrite: () => true, allowedCwd: async () => true, hasGrant: () => true,
+    requesterAuthorityMissing: async () => { authorityChecks++; return true; },
+    mayDispatchRun: async () => false });
+  try {
+    await runner.start();
+    assert.equal(authorityChecks, 1);
+    assert.equal(rejected, 1);
+    assert.equal(requested.state, "failed");
+    assert.equal(runtime.starts, 0);
+    assert.match(reason, /requester authority is no longer configured/);
+  } finally { await runner.stop(); }
+});
+
 test("drain mode: a requested Run is not started while held (queued untouched) and starts once released", async () => {
   const requested = { ...run, state: "requested" as const, nativeTurnId: null };
   const runtime = new FakeRuntime();
@@ -899,6 +925,7 @@ test("drain mode: a requested Run is not started while held (queued untouched) a
   const runner = new RuntimeRunner({ runtimeFactory: () => runtime as unknown as RuntimePort & FakeRuntime,
     workflow, trusted, principals: [{ actorId, projectIds: [projectId], permissions: ["read", "write", "review"] }],
     canWrite: () => true, allowedCwd: async () => true, hasGrant: () => true,
+    requesterAuthorityMissing: async () => false,
     mayDispatchRun: async () => !held /* the composition in main.ts: drain.holdNewStarts() */ });
   (runner as unknown as { lightweightInput: () => Promise<{ input: string; protocol: string; contentHash: string; byteLength: number }> }).lightweightInput = async () => ({ input: "fixed task input", protocol: "evoloop-lightweight-v1", contentHash: "a".repeat(64), byteLength: 16 });
   try {

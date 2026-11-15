@@ -7,7 +7,7 @@ import { errorPage } from "./PageBoundary";
 import { projectPaths } from "./routePaths";
 
 function RootLayout() {
-  const samples = useRouterState({ select: state => state.location.pathname === "/ui" });
+  const samples = useRouterState({ select: state => state.location.pathname === "/ui" || state.location.pathname === "/ui/flow" });
   return samples ? <Outlet /> : <App />;
 }
 
@@ -25,11 +25,13 @@ const rootRoute = createRootRoute({ component: RootLayout, errorComponent: PageE
 const homeRoute = createRoute({ getParentRoute: () => rootRoute, path: "/" });
 const samplesRoute = createRoute({ getParentRoute: () => rootRoute, path: "/ui",
   component: lazyRouteComponent(() => import("./ui-samples/UiSamplesPage")) });
+const flowSampleRoute = createRoute({ getParentRoute: () => rootRoute, path: "/ui/flow",
+  component: lazyRouteComponent(() => import("./ui-samples/FlowSamplePage")) });
 const projectRoute = createRoute({ getParentRoute: () => rootRoute, path: "/p/$projectId" });
 
 const projectChildren = projectPaths.map(path => createRoute({ getParentRoute: () => projectRoute, path }));
 
-const routeTree = rootRoute.addChildren([homeRoute, samplesRoute, projectRoute.addChildren(projectChildren)]);
+const routeTree = rootRoute.addChildren([homeRoute, samplesRoute, flowSampleRoute, projectRoute.addChildren(projectChildren)]);
 
 export const router = createRouter({
   routeTree,
