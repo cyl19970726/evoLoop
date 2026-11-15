@@ -1,4 +1,4 @@
-// A Session that cannot start work, refused or failed the same way three times (session_attention, migration 110), is told to the Leader by the
+// A Session that cannot start work, refused or failed the same way three times (session_attention, migration 111), is told to the Leader by the
 // notice path and, here, to the requirements Session(s): one message per item per Session, never repeated. Which Sessions are requirements Sessions is
 // a port (the identity file says it, a Role does not); the post goes out as the Leader-notice sender. A failure to post is kept as the delivery's reason
 // and tried again next round; an item with no requirements Session to tell is recorded as such, not dropped.

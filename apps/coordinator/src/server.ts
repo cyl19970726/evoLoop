@@ -54,7 +54,7 @@ import { registerTaskAttentionRoutes } from "./task-attention/routes.js";
 import type { Pool } from "pg";
 import { registerEvaluationRoutes, type ReadEvaluationPacket } from "./evaluation/routes.js";
 import { OrchestrationError } from "@evoloop/core/orchestration";
-import { registerOrchestrationRoutes, registerPlanningSourcesRoute, registerWorkStatusRoute,
+import { registerOrchestrationDisabledRoutes, registerOrchestrationRoutes, registerPlanningSourcesRoute, registerWorkStatusRoute,
   type WorkStatusesReader, type OrchestrationRouteOptions,
   type PlanningSourcesReader } from "./orchestration/routes.js";
 import { authorizeWorkerRequest, type WorkerGuardFacts } from "./workers/guard.js";
@@ -861,6 +861,7 @@ export async function buildServer(options: {
   });
   if (options.references) registerReferenceRoutes(app, options.references);
   if (options.orchestration) registerOrchestrationRoutes(app, options.orchestration);
+  else registerOrchestrationDisabledRoutes(app, (principal, projectId) => options.service.getProject(principal, projectId));
   if (options.ordinarySubmissions) registerOrdinaryRunSubmissionRoutes(app, options.ordinarySubmissions);
   const workStatuses = options.workStatuses ?? options.orchestration?.workStatuses;
   if (workStatuses) registerWorkStatusRoute(app, workStatuses);

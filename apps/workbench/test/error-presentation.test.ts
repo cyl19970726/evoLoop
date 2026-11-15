@@ -33,6 +33,7 @@ test("a known code with an English message is said in Chinese, and the original 
     assert.equal(errorText(new ApiError(code === "NOT_FOUND" ? 404 : code === "FORBIDDEN" ? 403 : 409, "Some English reason", { code })), words, code);
   assert.match(codeText("SOURCE_UNAVAILABLE")!, /不是可核验的已采纳版本.*重新选择来源/);
   assert.match(codeText("SELF_ACCEPTANCE")!, /提交者不能验收自己的交付.*独立智能体的使用记录/);
+  assert.match(codeText("SELF_SESSION_LINE_FORBIDDEN")!, /控制者自己的智能体.*直接执行/);
   assert.match(codeText("INPUT_ID_CONFLICT")!, /输入编号已用于另一条输入/);
   assert.doesNotMatch(codeText("INPUT_ID_CONFLICT")!, /所见内容已经变化/);
 });

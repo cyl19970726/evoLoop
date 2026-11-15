@@ -12,6 +12,7 @@ import { date } from "../../shared/ui/shared";
 import { activityHeadline, activityPresentation } from "./activityPresentation";
 import { groupActivities, type ActivityGroup } from "./activityGroups";
 import { messageStateLabel } from "./executionStatusPresentation";
+import { settleTraceItems } from "./conversationPresentation";
 import { sessionClient } from "../../shared/sessionClient";
 
 export type ActivityFilter = "important" | "all";
@@ -30,7 +31,7 @@ function cachedDetails(scope: string): Record<string, Detail> {
 
 const traceStatus: Record<string, string> = {
   completed: "已完成", inProgress: "进行中", in_progress: "进行中", running: "进行中", failed: "失败", declined: "已拒绝",
-  interrupted: "已中断", pending: "待进行",
+  interrupted: "已中断", pending: "待进行", unconfirmed: "这一轮结束时结果未确认",
 };
 const traceKind: Record<RuntimeWorkTrace["items"][number]["kind"], string> = {
   command: "命令", tool: "工具", file_change: "文件修改", message: "消息", web_search: "网页搜索", artifact: "成果",
@@ -52,7 +53,7 @@ function TraceItem({ entry, index }: { entry: RuntimeWorkTrace["items"][number];
 }
 
 function TraceRecords({ pages, shown, onMore }: { pages: RuntimeWorkTrace[]; shown: number; onMore(): void }) {
-  const entries = pages.flatMap(page => page.items);
+  const entries = pages.flatMap(page => settleTraceItems(page.items, page.turn?.status));
   const isInput = (entry: typeof entries[number]) => entry.kind === "message" && /^(user|input)$/i.test(entry.name?.trim() ?? "");
   const work = entries.filter(entry => !isInput(entry));
   const input = entries.filter(isInput);

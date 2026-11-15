@@ -89,6 +89,7 @@ const known: Record<string, string> = {
   TASK_NOT_ACTIVE: "任务不在进行中",
   TASK_NOT_READY: "任务还没有准备好",
   TASK_BUSY: "任务正在处理别的请求",
+  SELF_SESSION_LINE_FORBIDDEN: "不能把任务排给控制者自己的智能体；这项任务应直接执行，不进智能体队伍",
   TASK_DEPENDENCY_BLOCKED: "前置任务还没有放行",
   TASK_REOPEN_REQUIRED: "需要先重新打开任务",
   REOPEN_REQUIRED: "需要先重新打开",

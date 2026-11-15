@@ -49,6 +49,25 @@ test("disabled status is explicit and a malformed page never looks complete", as
   } finally { fetch.mock.restore(); }
 });
 
+test("explicit disabled status and an empty overview do not depend on 404 fallbacks", async () => {
+  const paths: string[] = [];
+  const fetch = mock.method(globalThis, "fetch", async (input: RequestInfo | URL) => {
+    const url = new URL(String(input), "http://localhost"); paths.push(url.pathname + url.search);
+    return url.pathname.endsWith("/status")
+      ? response({ state: "disabled", running: false, busy: false, faults: [], lastError: null })
+      : response({ items: [], nextCursor: null });
+  });
+  try {
+    const client = orchestrationClient("private", projectId);
+    assert.deepEqual(await client.overview(), {
+      status: { state: "disabled", running: false, busy: false, faults: [], lastError: null },
+      loops: { items: [], nextCursor: null },
+    });
+    assert.deepEqual(paths, [`/api/projects/${projectId}/orchestration/status`,
+      `/api/projects/${projectId}/orchestration/loops?limit=50`]);
+  } finally { fetch.mock.restore(); }
+});
+
 test("presentation keeps Run, submission, sealed Delivery and use separate", () => {
   assert.equal(inboxStateLabel.pending, "待处理");
   assert.equal(inboxStateLabel.acknowledged, "已接收待决定");

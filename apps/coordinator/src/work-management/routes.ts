@@ -22,6 +22,10 @@ export async function registerWorkManagementRoutes(app: FastifyInstance, service
     const p=z.strictObject({projectId:z.uuid(),id:z.uuid(),revisionId:z.uuid()}).parse(request.params);
     return service.getRoleRevision(principal(request),p.projectId,p.id,p.revisionId);
   });
+  app.get("/api/projects/:projectId/roles/:id/direct-list", request => {
+    const p = params(request.params);
+    return service.getRoleDirectDispatchList(principal(request), p.projectId, p.id!);
+  });
   app.get("/api/projects/:projectId/role-templates", request => {
     const p = params(request.params);
     return service.listRoles(principal(request), p.projectId, 100).then(roles => ({
@@ -63,6 +67,12 @@ export async function registerWorkManagementRoutes(app: FastifyInstance, service
   });
   app.get("/api/projects/:projectId/schedules/:id/revisions", request => { const p = params(request.params); return service.listScheduleRevisions(principal(request), p.projectId, p.id!); });
   app.get("/api/projects/:projectId/schedules/:id/occurrences", request => { const p = params(request.params); return service.listScheduleOccurrences(principal(request), p.projectId, p.id!); });
+  app.get("/api/projects/:projectId/schedules/:id/dispatch", request => { const p = params(request.params); return service.getScheduleDispatchPolicy(principal(request), p.projectId, p.id!); });
+  app.get("/api/projects/:projectId/schedules/:id/dispatches", request => {
+    const p = params(request.params);
+    const q = z.strictObject({ limit: z.coerce.number().int().min(1).max(100).default(50), cursor: z.string().min(1).max(512).optional() }).parse(request.query);
+    return service.listScheduleDispatches(principal(request), p.projectId, p.id!, q.limit, q.cursor);
+  });
   app.get("/api/projects/:projectId/documents/:id/tasks", request => {
     const p = params(request.params);
     const q = z.object({ limit: z.coerce.number().int().min(1).max(100).default(50), cursor: z.uuid().optional() }).parse(request.query);

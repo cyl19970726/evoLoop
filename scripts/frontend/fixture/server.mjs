@@ -28,7 +28,7 @@ export async function startFixtureServer(dist) {
       return send(result.status, result.value);
     }
     try {
-      const file = /^\/(?:$|p\/|ui$)/.test(url.pathname) ? "index.html" : url.pathname;
+      const file = /^\/(?:$|p\/|ui(?:\/flow)?$)/.test(url.pathname) ? "index.html" : url.pathname;
       const body = await readFile(join(dist, file));
       res.writeHead(200, { "content-type": types[extname(file)] ?? "application/octet-stream" });
       res.end(body);
