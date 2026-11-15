@@ -256,7 +256,7 @@ node scripts/restore.mjs --from /absolute/private-backups/evoloop-20261020 \
 
 - `commit`、`builtAt` 由服务端读**已部署目录根部的 `build-info.json`**（`{"commit": "<7–40 位十六进制>", "builtAt": "<ISO 时间>"}`）。文件缺失、不是合法 JSON 或字段不合规时，两者都是 `null`，页面写“版本未读到”，不回退旧值。
 - `startedAt` 是服务进程启动时间，页面叫“启动时间”，不是发布时间。
-- 发布脚本写 `build-info.json` 不在这次改动里：在发布流程写入之前，线上页面如实显示“版本未读到”。
+- 当前正式实例的 `build-info.json` 由私有发布钩子写入；仓库自己的发布流程还没有写入它，发布后的逐版核对也仍待 CI/CD 的发布写入 Task 落地。在仓库流程补齐前，私有钩子的现状不算仓库能力；文件缺失、不是合法 JSON 或字段不合规时，线上页面仍如实显示“版本未读到”。
 - `/milestones` 读已部署的 `docs/roadmap.md` 阶段表；阶段与路线图阶段的关联存在 `stage_phase_key`（迁移 101），用 `stage.phaseKey.set`（Task 决定权）设置；未关联显示“未登记”。
 
 ### 发布脚本

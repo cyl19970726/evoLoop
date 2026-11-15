@@ -2,12 +2,13 @@
 // object list, and one raised work panel with the center column and the right column. The frame is built from
 // @evoloop/ui inside [data-ui]. Pages render in the center; the window scrolls the center.
 import * as React from "react";
-import { BriefcaseBusiness, ChevronsUpDown, Inbox, LogOut, Menu, PanelLeftClose, PanelLeftOpen, Settings, Users, FolderGit2, Plug, TriangleAlert, X } from "lucide-react";
+import { BriefcaseBusiness, Check, ChevronsUpDown, Monitor, Moon, Sun, Inbox, LogOut, Menu, PanelLeftClose, PanelLeftOpen, Settings, Users, FolderGit2, Plug, TriangleAlert, X } from "lucide-react";
 import {
   CountDot, DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger,
   Button, IconButton, Logo, Notice, PersonAvatar, Sheet, SheetClose, SheetContent, SheetDescription, SheetTitle, cn, type NoticeTone,
 } from "@evoloop/ui";
 import { href, parseRoute, type Route, type Section } from "../../shared/routes";
+import { readThemePreference, setThemePreference, subscribeTheme, themeLabels, type ThemePreference } from "../../shared/theme";
 import { currentPath, navigate, onAddressChange } from "../../shared/navigation";
 import { SessionNavigation, emptySessionNavigationState, type SessionNavigationState } from "../../features/sessions/SessionNavigation";
 import { ContextPanelColumn, ContextPanelProvider } from "../../shared/ui/ContextPanel";
@@ -208,6 +209,20 @@ function SectionList({ items, route, projectId, onNavigate }: { items: readonly 
   </ul>;
 }
 
+/** 外观: 跟随系统 / 浅色 / 深色, this browser's own preference (shared/theme.ts); in the account menu, so it is on every page. */
+function ThemeChoice() {
+  const preference = React.useSyncExternalStore(subscribeTheme, readThemePreference, () => "system" as ThemePreference);
+  return <div role="group" aria-label="外观">
+    <DropdownMenuLabel className="text-caption">外观</DropdownMenuLabel>
+    {(["system", "light", "dark"] as const).map(value => {
+      const Icon = value === "system" ? Monitor : value === "light" ? Sun : Moon;
+      return <DropdownMenuItem key={value} role="menuitemradio" aria-checked={preference === value} onSelect={() => setThemePreference(value)}>
+        <Icon size={16} aria-hidden="true" />{themeLabels[value]}{preference === value && <Check size={14} aria-hidden="true" className="ml-auto" />}
+      </DropdownMenuItem>;
+    })}
+  </div>;
+}
+
 function AccountMenu({ projectId, actor, permissions, receiptCount, logout, trigger }: AppShellProps & { trigger: React.ReactElement }) {
   const go = (section: Section) => navigate(href(projectId, section));
   return <DropdownMenu>
@@ -219,6 +234,8 @@ function AccountMenu({ projectId, actor, permissions, receiptCount, logout, trig
       <DropdownMenuItem onSelect={() => go("operations")}><TriangleAlert size={16} aria-hidden="true" />结果未知的操作{receiptCount > 0 && <span className="ml-auto text-caption text-warning">{receiptCount}</span>}</DropdownMenuItem>
       <DropdownMenuItem onSelect={() => go("repository")}><FolderGit2 size={16} aria-hidden="true" />仓库规范</DropdownMenuItem>
       <DropdownMenuItem onSelect={() => go("connectors")}><Plug size={16} aria-hidden="true" />微信连接</DropdownMenuItem>
+      <DropdownMenuSeparator />
+      <ThemeChoice />
       <DropdownMenuSeparator />
       <DropdownMenuItem onSelect={() => navigate("/")}><ChevronsUpDown size={16} aria-hidden="true" />切换项目</DropdownMenuItem>
       <DropdownMenuItem onSelect={logout}><LogOut size={16} aria-hidden="true" />退出</DropdownMenuItem>

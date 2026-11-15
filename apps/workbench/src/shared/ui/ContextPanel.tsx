@@ -113,7 +113,8 @@ export function afterTaskChanged(tabs: PanelObject[], active: string, path: stri
 export function ContextPanelProvider({ space, children }: { space: Space; children: React.ReactNode }) {
   const wide = useMediaQuery("(min-width: 1440px)");
   const inline = useMediaQuery("(min-width: 1100px)");
-  const store = typeof window === "undefined" ? null : window.localStorage;
+  // Reading window.localStorage itself throws where storage is disabled; the panel state then lives in this page only.
+  const store = (() => { try { return typeof window === "undefined" ? null : window.localStorage; } catch { return null; } })();
   const [states, setStates] = React.useState<Partial<Record<Space, PanelState>>>({});
   const state = states[space] ?? readPanelState(store, space, wide);
   const update = (next: PanelState) => {
