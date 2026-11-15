@@ -304,6 +304,20 @@ export function selectMaterialCli(entries: MaterialCliBinding[], projectId: stri
     matching.find(value => value.sessionId === sessionId && value.taskId === undefined) ??
     matching.find(value => value.roleId === roleId && value.taskId === undefined) ?? null;
 }
+/**
+ * What `session prepare` knows about the CLI identity a Session signs with. `exact` is true when the entry is this Session's own (it names the
+ * sessionId), which wins over the Role's configured actor as in `resolveLineRecipient`; `writer` says whether that identity is a current project writer.
+ * A Role-level entry is never exact and keeps the Role-level equality check with `residentQueue.roleActors`.
+ */
+export async function prepareMaterialCli(entries: MaterialCliBinding[], input: { projectId: string; sessionId: string; sessionActorId: string; roleId: string },
+  deps: { ready(cli: MaterialCliBinding): Promise<boolean>; projectWriter(projectId: string, actorId: string): Promise<boolean> }):
+  Promise<{ actorId: string; command: string; ready: boolean; exact: boolean; writer: boolean } | null> {
+  const cli = selectMaterialCli(entries, input.projectId, input.sessionId, input.sessionActorId, undefined, input.roleId);
+  if (!cli) return null;
+  const exact = cli.sessionId === input.sessionId && cli.taskId === undefined;
+  return { actorId: cli.cliActorId, command: cli.command, ready: await deps.ready(cli), exact,
+    writer: exact ? await deps.projectWriter(input.projectId, cli.cliActorId) : true };
+}
 type EngineeringActionRequest=Extract<TaskCollaborationPayload,{type:"action_request"}>;
 export function hasExactEngineeringActionGrant(grants:EngineeringActionGrant[],principal:Principal,
   action:EngineeringActionRequest,actualProjectId:string,nowMs=Date.now()):boolean {

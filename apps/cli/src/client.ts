@@ -50,7 +50,8 @@ export class ApiClient {
     this.fetchFn = options.fetch ?? globalThis.fetch.bind(globalThis);
   }
 
-  get(path: string): Promise<unknown> { return this.request("GET", path); }
+  /** A long-poll read may widen its own deadline; writes keep the configured deadline. */
+  get(path: string, timeoutMs?: number): Promise<unknown> { return this.request("GET", path, undefined, timeoutMs); }
   post(path: string, body: unknown): Promise<unknown> { return this.request("POST", path, body); }
   put(path: string, body: unknown): Promise<unknown> { return this.request("PUT", path, body); }
 
@@ -65,8 +66,10 @@ export class ApiClient {
     return url;
   }
 
-  private async request(method: "GET" | "POST" | "PUT", path: string, body?: unknown): Promise<unknown> {
+  private async request(method: "GET" | "POST" | "PUT", path: string, body?: unknown, timeoutMs = this.timeoutMs): Promise<unknown> {
     const url = this.endpoint(path); // Reject cross-origin input before a token can be sent.
+    if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 300_000)
+      throw new CliApiError(0, "INVALID_TIMEOUT", null, false);
     let serialized: string | undefined;
     if (method !== "GET") {
       try { serialized = JSON.stringify(body); }
@@ -79,7 +82,7 @@ export class ApiClient {
       timer = setTimeout(() => {
         controller.abort();
         reject(new CliApiError(0, "TIMEOUT", null, method !== "GET"));
-      }, this.timeoutMs);
+      }, timeoutMs);
     });
     try {
       const init: RequestInit = { method, redirect: "manual", signal: controller.signal,

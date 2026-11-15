@@ -54,7 +54,7 @@ import { brokeredCliForRun } from "./runtime/brokered-cli.js";
 import { staticRecoveryAuthority } from "./runtime/recovery-authority.js";
 import { readEvaluationMaterial } from "./runtime/evaluation-sources.js";
 import { evaluationPacketMediaType } from "./runtime/evaluation-materials.js";
-import { activeTaskTimingGrants, drivenRuntimeProviders, hasExactEngineeringActionGrant, hasFeishuActorGrant, hasTaskTimingGrant, knowledgeServesProject, loadIntegrations, runtimeThreadConfigForSession, schedulingGrantsFor, selectMaterialCli } from "./configuration.js";
+import { activeTaskTimingGrants, drivenRuntimeProviders, hasExactEngineeringActionGrant, hasFeishuActorGrant, hasTaskTimingGrant, knowledgeServesProject, loadIntegrations, prepareMaterialCli, runtimeThreadConfigForSession, schedulingGrantsFor, selectMaterialCli } from "./configuration.js";
 import { OpenVikingKnowledgeRepository } from "@evoloop/adapter-wiki-openviking";
 import { DomainError } from "@evoloop/contracts/ports";
 import { DrainControl, isInstanceMaintainer } from "./drain/service.js";
@@ -1057,8 +1057,8 @@ const app = await buildServer({ service, credentials, canWrite: lease.canWrite, 
   },
   sessionPreparation: async input => {
     const current=await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE);
-    const cli=current.runtime?.enabled ? selectMaterialCli(current.runtime.materialCli,input.projectId,
-      input.sessionId,input.sessionActorId,undefined,input.roleId) : null;
+    const cli=current.runtime?.enabled ? await prepareMaterialCli(current.runtime.materialCli,input,
+      {ready:value=>supportsFixedHandoff(value.command,value.cliActorId,input.projectId),projectWriter:currentProjectWriter}) : null;
     // The Role's entry as configured, whether or not it can be used: `session prepare` says which of the three reasons applies.
     const configuredRoleActor=current.residentQueue?.roleActors.find(value=>
       value.projectId===input.projectId&&value.roleId===input.roleId)??null;
@@ -1072,8 +1072,7 @@ const app = await buildServer({ service, credentials, canWrite: lease.canWrite, 
         roleId:input.roleId,authorizationScope:input.authorizationScope,cwd:input.cwd,sandbox:"danger-full-access",
         model:input.model,approvalPolicy:"never"}),
       cwdReady:await current.allowedRuntimeCwd(input.projectId,input.cwd),
-      materialCli:cli?{actorId:cli.cliActorId,command:cli.command,
-        ready:await supportsFixedHandoff(cli.command,cli.cliActorId,input.projectId)}:null,
+      materialCli:cli,
       roleActorId:roleActor&&roleActorWriter?roleActor.actorId:null,
       roleActorState:(!current.residentQueue?.enabled?"queue_disabled":!roleActor?"no_entry":roleActorWriter?"ready":"actor_not_project_writer") as
         "ready"|"queue_disabled"|"no_entry"|"actor_not_project_writer",
