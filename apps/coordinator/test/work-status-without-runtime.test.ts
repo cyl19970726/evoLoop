@@ -65,12 +65,21 @@ test('ordinary Task work status reads without managed Loop, runtime or runner', 
       assert.equal((await app.inject({ url: `/api/projects/${projectId}/orchestration/work-status?${suffix}`, headers: auth })).statusCode, 400);
     assert.equal(databaseReads, 1);
     assert.equal(projectReads, 2); // Foreign request and successful read; invalid/worker requests never enter the reader.
-    assert.equal((await app.inject({ url: `/api/projects/${projectId}/orchestration/loops`, headers: auth })).statusCode, 404);
+    const status = await app.inject({ url: `/api/projects/${projectId}/orchestration/status`, headers: auth });
+    assert.equal(status.statusCode, 200, status.body);
+    assert.deepEqual(status.json(), { state: 'disabled', running: false, busy: false, faults: [], lastError: null });
+    const loops = await app.inject({ url: `/api/projects/${projectId}/orchestration/loops`, headers: auth });
+    assert.equal(loops.statusCode, 200, loops.body);
+    assert.deepEqual(loops.json(), { items: [], nextCursor: null });
+    assert.equal((await app.inject({ url: `/api/projects/${id(9)}/orchestration/status`, headers: auth })).statusCode, 403);
+    assert.equal((await app.inject({ url: `/api/projects/${id(9)}/orchestration/loops`, headers: auth })).statusCode, 403);
+    assert.equal((await app.inject({ url: `/api/projects/${projectId}/orchestration/loops?limit=0`, headers: auth })).statusCode, 400);
     broken = true;
     const failed = await app.inject({ url: path, headers: auth });
     assert.equal(failed.statusCode, 503);
     assert.equal(failed.json().code, 'RESULT_UNCONFIRMED');
     assert.equal(failed.body.includes('private database connection string'), false);
+    assert.equal(projectReads, 7);
   } finally { await app.close(); }
 });
 
