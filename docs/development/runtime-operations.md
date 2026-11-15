@@ -106,6 +106,23 @@ Leader 读到交付后，按 Task 声明的验收方式，用 `acceptance.assign
 
 把 `enabled` 改回 `false`，下一轮起就停止自动投递，数据库里的通知和已保存的消息都保留。已在途或结果未知的原生 Turn，先按原 operation 对账。数据库迁移不回滚、不删表，以免丢失结果历史。
 
+## Leader 停摆时的代派预案（草稿）
+
+**状态：草稿。** 只在自建隔离实例上用真实 CLI 实跑过（脚本 `tests/manual/leader-down-dispatch.ts`，替身与未走的部分见下），没有在正式环境做过，也不是已采纳的分工；分工文字由需求 Session 在使用者取舍后决定。
+
+- **触发。** Leader 的 Session 因提供方暂停（`work board` 里 Leader 那一行 `held`）或别的原因超过 30 分钟没有回合，且需要派的 Task 只需要没被暂停的提供方（例如 Claude）。
+- **范围。** 已就绪（`todo`、不在任何队伍里、没有分派）、负责 Role 在没被暂停的提供方上有可用 Session 的 Task。暂停只按目标 Session 的提供方判断：Codex 暂停时，追加给 Claude Session 的队伍项照常开始，追加给 Codex Session 的则等在确认一步、不产生 Run（自建实例读回）。
+- **身份。** 需要读、写、**审阅**三项权限的非 Leader 身份；只有读写的身份 `line.append` 与 `acceptance.assign` 都得到 `FORBIDDEN`（读回）。队伍的推进（确认、预留、开始）由协调服务的队伍泵做，不需要 Leader 的模型回合；泵要能解析目标 Session 的业务身份（该 Session 自己的 `runtime.materialCli` 条目）。
+- **步骤与命令。**
+  1. `work board --project P --brief`：确认目标 Session 没被暂停、不是“不可用”，Task 在“已就绪、没在队伍里”里。
+  2. `command run`：`{"type":"line.append","sessionId":S,"taskId":T,"expectedTaskVersion":V,"reason":"Leader 停摆，由需求 Session 代派：<原因与时间>"}`。读回 `applied`。
+  3. 等目标 Session 做执行确认（它自己的回合，`task.assignment.acknowledge` verdict=confirm）；确认后泵开出 Run，队伍项为 `started`。
+  4. 交付后安排验收：**只发一条普通消息不够**——它让验收 Session 知道有活，但验收接力记录为空，之后没有可链接的安排；用 `request acceptance.assign --project P --id T --file BODY.json`（`mode: session`，`sessionId` 是验收 Session，`senderActorId` 是自己），读回接力 `linked`、消息 `queued`；验收者用自己的身份读 `acceptance-relay/mine?direct=1` 能看到这一项。
+  3. 记录：`reason` 里写明代派与时间；事后在需求 Session 的过程文档里留一条。
+- **Leader 恢复后对账。** 额度释放后 Leader 的看板不会把该 Task 当作“已就绪、没在队伍里”再提；它的 `task.start` 因 `QUEUED_IN_SESSION_LINE` 被拒。**但缺口：Leader（或任何有审阅权限的身份）对同一个已交付、未关闭的 Task 再 `line.append` 不被拒绝**，Session 再给一次确认就会开出第二个 Run（自建实例读回：Run 数 1 → 2）。恢复后先读 Task 的队伍项与交付，不要对它再追加；Leader 的“新 Task 待分诊”类通知可能仍在待处理，它的通知泵在这个实例里没有运行，是否会被判过期没有验证。
+- **没验证的部分。** 原生步骤（开始派发、绑定 Turn、记录完成）由脚本替身；交付行直接写入（真实交付要经 Run 的签名提交）；验收 Session 对消息的处理与已读回执、观察链接与 `task.close` 没有走；没有在正式环境做任何一步。
+- **最小的产品改动建议。** `line.append`（以及 `task.assignment.set`）拒绝当前修订上已有未被取代的交付或已完成 Run 的 Task（例如 `TASK_ALREADY_DELIVERED`），要重做须走明确的返工路径。
+
 ## 2. 即时输入
 
 即时输入让用户从工作台发给 owned Session 的消息立即进入执行：Session 正在跑时补入当前 Turn，空闲时直接在原会话开一个新 Turn。设计和规则见 [Session 运行时 §3](../architecture/session-runtime.md#3-即时输入执行中收到的消息怎样处理)。
