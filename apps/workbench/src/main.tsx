@@ -6,9 +6,11 @@ import { router } from "./app/router";
 import { queryClient } from "./app/queryClient";
 import { installLinkNavigation, redirectLegacyHash } from "./shared/navigation";
 import { installLegacyTeamRedirect } from "./shared/routes";
+import { installTheme } from "./shared/theme";
 import "./main.css";
 
 // Old `#/p/…` links (bookmarks, documents, other tools) land on the matching path before anything renders.
+installTheme();
 redirectLegacyHash();
 // Old team addresses (`/runtime?view=…`, `/runtime?session=owned:…`) likewise, now and on every later navigation.
 installLegacyTeamRedirect();

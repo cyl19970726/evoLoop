@@ -325,9 +325,11 @@ Task 协作通道把 question/answer/progress/blocker/handoff/result 固定到�
 
 ### Leader 通知层
 
+**2026-11-15 修订。** DEC-045 的设计与决定历史不改；本节按已经合入的迁移 104、106、108 补记当前字段和状态，具体迁移文件是代码权威。
+
 需要 Leader 处理的业务事实，由服务端引擎送到受管 Leader Session，不依赖插件、Stop Hook 或 Agent 自己记得去查（DEC-038；schema 046、047）。
 
-**调度板与调度事件流（DEC-045 Q2，迁移 105）。** 三个读取接口，都需要项目读权限，只返回元数据（没有消息正文，也不返回 Task、Run 的正文）：`GET /api/projects/{id}/work-board[?brief=true]` 返回快照——每个 Session 的当前工作、队伍项、能力与健康（恢复门阶段、模型服务暂停）、就绪但没进任何队伍的 Task、等 Leader 决定的事项、给页面用的 `graph`（节点：Leader、通知包、各 Session；在途对象；各步数量）和 `eventSeq`；`GET .../work-board/events` 按序号（`after`）或按时间段（`from`、`to`）读事件，返回 `{items, cursor, head, resetRequired, more}`，`wait` 为长轮询；`GET .../work-board/stream` 是 SSE（帧：`sched` 每条事件带 `id: 序号`、`ready`、`reset`、保活注释），用 `Last-Event-ID` 或 `after` 续传；`GET .../work-board/metrics` 返回由事件算出的三项指标。事件字段见 `packages/contracts/src/work-board.ts` 的 `SchedEvent`：序号、时间、`category`（notice、task、message、acceptance）、`kind`、`from`、`to`、`sessionId`、`taskId`、`subject`（种类、编号、Task 标题、可打开的接口路径）、`prior`、`next`。序号是递增的，同一项目内两个序号之间有空洞是正常的；`resetRequired` 表示游标早于保留期（30 天）已清理的范围，或超前于项目最新序号，调用方重读快照后从它的 `eventSeq` 继续。简要输出不超过 6 KB。通知事件暂不带级别（W5 上线时补）。
+**调度板与调度事件流（DEC-045 Q2，迁移 105）。** 三个读取接口，都需要项目读权限，只返回元数据（没有消息正文，也不返回 Task、Run 的正文）：`GET /api/projects/{id}/work-board[?brief=true]` 返回快照——每个 Session 的当前工作、队伍项、能力与健康（恢复门阶段、模型服务暂停）、就绪但没进任何队伍的 Task、等 Leader 决定的事项、给页面用的 `graph`（节点：Leader、通知包、各 Session；在途对象；各步数量）和 `eventSeq`；`GET .../work-board/events` 按序号（`after`）或按时间段（`from`、`to`）读事件，返回 `{items, cursor, head, resetRequired, more}`，`wait` 为长轮询；`GET .../work-board/stream` 是 SSE（帧：`sched` 每条事件带 `id: 序号`、`ready`、`reset`、保活注释），用 `Last-Event-ID` 或 `after` 续传；`GET .../work-board/metrics` 返回由事件算出的三项指标。事件字段见 `packages/contracts/src/work-board.ts` 的 `SchedEvent`：序号、时间、`category`（notice、task、message、acceptance）、`kind`、`from`、`to`、`sessionId`、`taskId`、`subject`（种类、编号、Task 标题、可打开的接口路径）、`prior`、`next`。序号是递增的，同一项目内两个序号之间有空洞是正常的；`resetRequired` 表示游标早于保留期（30 天）已清理的范围，或超前于项目最新序号，调用方重读快照后从它的 `eventSeq` 继续。简要输出不超过 6 KB。调度事件本身不带 `level`；通知级别记在 `leader_result_notice.level`（DEC-045 W5，迁移 104 的 `immediate` / `digest`），需要分级时读通知或通知包，不从通用事件字段推断。
 
 **通知包（DEC-045 W1，迁移 089）。** 通知包由私有配置 `leaderResultNotices.packets` 控制，**默认关闭**：关闭时新通知与现在完全一致，仍是一条通知一条消息（`leader_result_notice.via_packet` 为 false）。打开后，之后新产生的通知走通知包（`via_packet` 为 true；通知泵每轮把开关抄进 `leader_notice_packet_mode`，由插入触发器给新通知打标，迁移前已有的通知和旧通知的恢复替换件永远走旧路径）。再关闭时，还没有进过任何包的通知回到旧路径；已经进过包的项仍按包处理完。这样发布前后可对照，出问题时改配置即可退回，不必重新发布。
 
