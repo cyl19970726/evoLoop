@@ -73,7 +73,7 @@ stateDiagram-v2
 - **防止绕过**：排队、挂起或启动中的 Task，在 `task.start`、`runtime.run.reserve`、`task.assignment.set` 与 `task.assignment.release` 上被拒（`QUEUED_IN_SESSION_LINE`）。例外只有这一项自己登记的操作 ID：开始前的分派、开始 Task、开始后的分派、预留 Run，且仅在“启动中”时有效。要另行安排，先撤下。
 - **轮到时**：Session 没有未结束的 Run、没有处理中的消息、也没有比这一项更早排队的未处理消息（谁先到谁先）时，队伍调度程序对排头一项依次做：①`task.assignment.set` 把 Task 分派给这个 Session 的业务身份，并发一条带固定 Task 修订的执行确认请求消息；②等 Session 用扩展后的 `task.assignment.acknowledge` 确认（`verdict=confirm`、`plan`、`expectedRevisionId`）或退回（`verdict=return`、`missing`）；③确认后 `task.start`、在开始后的修订上再次 `task.assignment.set`、普通的 `runtime.run.reserve`，记下 Run。每一步的操作 ID 由“队伍项 + 第几次尝试 + 重试次数”决定，重放安全。消息一侧同样让位：比某个排队或启动中的队伍项更晚到的消息，消息泵暂不处理（该项自己的确认请求除外），两边都不饿死。容量视图（`work acceptance`）把 `lineQueued`（排队中、挂起的项）与 `lineStarting`（正在启动，占用 Session）分开：排队项不会让 Session 判为没空，队伍在开始前写的分派也不算未完成分派。
 - **重试封顶与临时受阻**：“还在忙”类拒绝（Session 忙、消息忙、版本冲突）按退避重试（默认 2 秒起每次加倍、上限 1 分钟），同一步最多重试 5 次，超过即挂起（`RETRY_LIMIT`，写明最后一次拒绝的原因，`entry.suspended`，`level: immediate`），不会每次轮询都写一条 `entry.retried`；恢复闸门被拦（`RECOVERY_BLOCKED`）自己不会放开，不重试，直接挂起。等待确认时，确认请求消息的 `blockedReason` 以 `SESSION_INPUT_BUSY` 开头表示被另一次原生送入暂挂，会自行放开，队伍项继续等；其他原因仍按 `MESSAGE_UNDELIVERED` 挂起。开 Run 前对已开始（`in_progress`）和未开始的 Task 同样复核“确认的修订等于当前修订”，队伍自己的 `task.start` 产生的新修订不算改动；不一致按 `CONFIRMATION_STALE` 挂起且不开 Run。调度程序每轮只读未结束的项（排队、挂起、进行中，以及已开始但还没记 Run 结束的项），历史项不再每 2 秒全部读一遍。
-- **受阻与退回**：任何一步被拒且不是“还在忙”（如依据待复核、授权缺失、没有业务身份，或同一 Role 的多个 Session 里这个 Session 没有自己的身份配置——接收者只取该 Session 自己的签署身份，不按 Role 猜，见[运行接线手册](../development/runtime-operations.md)），这一项在写任何 assignment、确认请求或 Run 之前挂起并写明原因（点名该 Session），写一条 `entry.suspended` 事件（`level: immediate`），后面的项照常往前走。被退回的项撤出队伍，Task 保持未开始、回到作者那里，写 `entry.returned` 事件（`level: summary`）。事件进入有序的 `session_line_event`，供调度板（Q2）读取；通知分级（W5）上线前，这些事件还没有被送成通知。
+- **受阻与退回**：任何一步被拒且不是“还在忙”（如依据待复核、授权缺失、没有业务身份，或同一 Role 的多个 Session 里这个 Session 没有自己的身份配置——接收者只取该 Session 自己的签署身份，不按 Role 猜，见[运行接线手册](../development/runtime-operations.md)），这一项在写任何 assignment、确认请求或 Run 之前挂起并写明原因（点名该 Session），写一条 `entry.suspended` 事件（`level: immediate`），后面的项照常往前走。被退回的项撤出队伍，Task 保持未开始、回到作者那里，写 `entry.returned` 事件（`level: summary`）。事件进入有序的 `session_line_event`，供调度板（Q2）读取。迁移 106 的代码把挂起与退回接成“立即级 / 汇总级”；正式实例已读回 2 条队伍挂起通知，退回通知为 0 条，所以“退回→汇总级”目前只有代码与设计依据，尚无正式样本。
 - **重试与重放**：被拒的结果会记进操作记录，同一操作 ID 重放只会拿回同一个拒绝。所以只表示“还在忙”的拒绝（`SESSION_BUSY`、`SESSION_MESSAGE_BUSY`、`VERSION_CONFLICT`、`RECOVERY_BLOCKED`）由 `line.retry` 登记一组新的操作 ID（由项、尝试次数和重试次数决定）后再试；其他拒绝挂起。动手前先查已发生的事实：分派已是当前修订就不再分派，确认请求消息已在就不再发，确定的 Run ID 已存在就只补记 `line.started`，所以崩溃或丢回复后不会开第二个 Run。
 - **确认的等待与换尝试**：等待确认时，不带结论的普通 `task.assignment.acknowledge` 被拒（`CONFIRMATION_VERDICT_REQUIRED`）；确认请求消息失败、被取消或受阻，挂起为 `MESSAGE_UNDELIVERED`；超过确认期限（默认 1 小时）挂起为 `CONFIRMATION_TIMEOUT`。`line.resume` 开始第 2 次尝试时，同一事务把第 1 次仍为 `queued` 的确认请求改为 `cancelled`，原因以 `SESSION_LINE_ATTEMPT_SUPERSEDED` 开头，并在 `entry.resumed` 事件里记下该消息；新尝试另发自己的确认请求。`task.start` 前要求确认记录的 `expectedRevisionId` 等于 Task 当前修订，否则不开始、挂起为 `CONFIRMATION_STALE`（数据库守卫同样拒绝，`LINE_CONFIRMATION_STALE`）。各项登记的操作 ID 只在自己的步骤里豁免。
 - **撤下**：没有为该项预留 Run 时，停在 start 步骤的项也可以撤下。
@@ -143,7 +143,7 @@ flowchart TD
 
 **同一个输入 ID 只表示一个意图。** 重复提交（包括补回执丢失后的重试）先读该 ID 已保存的结果并照它回答：已转排队的返回同一份“已排队”回执，不会再发成第二条消息；已被运行时接收、结果未知的输入保持原结果。普通消息入口（`session.message.post`）拒绝“消息 ID 已是一条未被拒绝的即时输入”的提交（`INPUT_ID_IS_DIRECT_INPUT`），所以同一段文字不会既插入又排队。工作台把预占之前的明确拒绝（授权缺失、`TURN_CHANGED`、`SESSION_BUSY` 等）当作没有保存任何输入：文字保留，按钮解锁，可以重新选择插入或排队；5xx 和丢失的回答才算结果未知。
 
-**人的插入先于等待中的通知包。** Session 空闲时，人的插入在预占时同步占用唯一的处理槽位；已排队等待的通知（包括今后的通知包）不会与它并排启动，等这一轮结束后按顺序再处理。顺序由存储层的单槽位保证，并有测试覆盖（`direct-input.test.ts`）；通知包本身（W2）尚未上线。
+**人的插入先于等待中的通知包。** Session 空闲时，人的插入在预占时同步占用唯一的处理槽位；已排队等待的通知（包括通知包）不会与它并排启动，等这一轮结束后按顺序再处理。顺序由存储层的单槽位保证，并有测试覆盖（`direct-input.test.ts`）；通知包已有独立的逐项记录（W1），把通知包送入正在执行的这一轮（W2）仍未实施。
 
 规则如下：
 
@@ -172,7 +172,7 @@ flowchart TD
 
 工作台入口与核对按钮的设计见[Sessions 页面](../frontend/pages/sessions.md)，配置、入口、对账与检查清单见[运行接线手册](../development/runtime-operations.md#2-即时输入)。
 
-### 调度架构的目标变化（DEC-045，已决定、未实施）
+### 调度架构的落地状态（DEC-045）
 
 DEC-045 在现有即时输入之外增加三类输入，并把“接下来做什么”从 Leader 的上下文搬到每个 Session 的队伍：
 
@@ -181,7 +181,21 @@ DEC-045 在现有即时输入之外增加三类输入，并把“接下来做什
 - **每个常驻业务 Session 一条队伍。** 新工作追加到队尾，Leader 可相对前移、后移或撤下；轮到一项时，先由执行者做轻量执行确认，高风险 Task 先过方案审阅，再依次开始、分派、预留 Run，三步用由队伍项和第几次尝试决定的固定操作 ID，可安全重放。依据待复核、阶段无效、定时未到、依赖未满足或授权缺失时挂起并给 Leader 立即级通知，后面的项照常往前走；Run 结束就放行下一项。验收安排仍走消息队列，一项一轮；Session 空闲时，队伍项与排队消息按到达先后轮流处理。对应 Q1；调度板 `work board` 的快照与事件流对应 Q2：迁移 105 在既有表上挂触发器，每个状态变化在同一事务里写一行元数据事件，覆盖通知、任务、消息、验收四类；`work board` 读快照，`work events` 与 SSE 按序号读和续传，进程内一个共享读取者分发给所有订阅者，三项指标（进队等待、Session 空转、新情况纳入时间）由事件算出，事件保留 30 天。真实实例的读回（事件完整性、指标与手工核对、p95、续传与缺口）待独立验收；工作台页面不在此内。
 - **日程到点分发。** 生成 Task 后默认交 Leader 安排，也可按 Leader 的直派名单直接追加到队伍：先选空闲 Session，没有空闲就选队伍最短的，再按名单顺序；只分发，不立即开始；忙就排队，引擎不新建 Session。对应 S1；测量工具与基线对应 M0。
 
-当前实现（W1，迁移 089）已让 Leader 通知可以走通知包（私有配置 `leaderResultNotices.packets`，默认关闭）：逐项状态、人的消息先于通知包（真取消后才撤回）、读到后失败的至少送达一次与按包恢复；包的步骤只由通知发送身份运行；W2 的执行中送入、W5 的分级仍未做。其余仍是旧路径：任务详情里的“驻留 Session 队列”是旧的批量常驻队列，不充当新的 Session 队伍；`session_direct_input` 只记录人的即时输入，还没有通知包送入（通知包现在只开新一轮）；Codex 0.167 的送入能力与 Claude 一侧的补入都还要按 W3/W4 审定。上述能力上线前，页面和正文都不能把它们写成已具备；工作台调度板页面要等第一阶段检验通过后，由另行安排的原生 Session 设计并实现。
+**逐项状态（2026-11-15 只读核对）。** “已合入”只指 main 有代码或迁移，“已配置”只指正式实例有对应配置或策略，“已真实使用”要求在正式实例读回行为事实；“未实施”指还没有进入 main。三者都不能代替独立验收。
+
+| 能力 | 已合入 | 正式实例 | 当前结论 |
+| --- | --- | --- | --- |
+| Session 队伍（Q1） | PR #338，迁移 087 | 2026-11-15 的事件查询读回队伍项入队、轮到与 Run 结束放行的连续事件 | 已合入、已真实使用；整条调度架构的独立验收另记 |
+| 调度板与事件流（Q2） | PR #414，迁移 105 | `work board` 可读快照与 `eventSeq`；事件流和三项指标可读 | 已合入、已真实使用；事件完整性、指标与续传的独立验收另记 |
+| Leader 通知包（W1） | PR #354，迁移 089 | 通知包开关已打开；最近 20 条通知都读回 `viaPacket=true`，并读回包建立、送出与看到事件 | 已合入、已配置、已真实使用；逐包处置与恢复的独立验收另记 |
+| 人发消息插入或排队（W2b） | PR #350，迁移 096 | 2026-11-15 的事件查询读回 4 条 `message.inserted` 与 7 条空闲直启 `message.started`；普通排队路径另有持续记录 | 已合入、已配置；事件只证明原生接收或直启开始，读到与采用仍未核对，不能据此写成完整“已真实使用” |
+| 通知分级与队伍通知（W5） | PR #412、#415，迁移 104、106 | 2026-11-15 分页读回的通知中，`line_entry_suspended` 有 2 条且均为 `immediate`，`line_confirmation_returned` 为 0；其他通知同时有 `immediate` 与 `digest` | 已合入、已真实使用（仅有挂起样本）；退回为汇总级仍只有代码与设计依据，尚无正式样本，整体未验收 |
+| 定时直派（S1） | PR #422，迁移 108 | 已有 3 条 `direct_dispatched` 记录，另有 1 条来源标为 `WITHDRAWN_TO_LEADER` 的已撤回直派；当前 CI/CD 日程为 `direct`，最近一次因 `PREVIOUS_STILL_OPEN` 跳过，尚无该日程的成功直派 | 已合入、已配置、已真实使用（其他日程）；当前 CI/CD 直派尚未端到端成功，整体未验收 |
+| 通知包送入 Leader 正在执行的这一轮（W2） | 未合入 | 无 | 未实施；当前 W1 通知包只开新一轮 |
+| Codex 0.167 的送入复核与 Claude 侧补入（W3、W4） | main 已有可选 Codex 版本与 `turn/steer`；W3 的 0.167 送入审定与夹具，以及 W4 的 Claude 侧补入尚未合入 | 无 0.167 送入复核或 Claude 补入的正式读回 | 部分基础能力已合入；所述复核与 Claude 侧补入未实施 |
+| 调度测量工具与基线（M0） | 只读脚本 `scripts/scheduling-metrics.mjs`、使用说明 `docs/development/scheduling-metrics.md` 与事件指标读取已合入；正式基线报告 `420b321f-3dd2-4c0b-abff-f69f0bdf92ef@6dd1ed0c-c082-45cd-bb13-1fb36cb6dea2` 可读 | 2026-11-15 读到 `work metrics` 与上述基线报告 | 只读测量与基线已合入、可读；自动调度、按指标触发处置与常态治理未随之实施，不能写成自动调度或自动治理已完成 |
+
+其余仍是旧路径：任务详情里的“驻留 Session 队列”是旧的批量常驻队列，不充当新的 Session 队伍；`session_direct_input` 只记录人的即时输入，还没有通知包送入。W2、W3、W4 的上述新增能力未落地前，页面和正文都不能把它们写成已具备；M0 的只读测量可读，也不能写成自动治理已具备；工作台调度板页面同样要由另行安排的原生 Session 设计并实现。
 
 ## 4. 托管压缩
 
