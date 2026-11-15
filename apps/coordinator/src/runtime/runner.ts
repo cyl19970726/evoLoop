@@ -166,6 +166,8 @@ export class RuntimeRunner {
     /** Optional admission checks for managed loops. A false answer waits without changing durable state. */
     mayCreateSession?(session: RuntimeSessionRecord): Promise<boolean>;
     mayDispatchRun?(run: RuntimeRunRecord): Promise<boolean>;
+    /** Durable absence of static start authority, distinct from a temporarily closed admission. */
+    requesterAuthorityMissing?(run: RuntimeRunRecord, session: RuntimeSessionRecord): Promise<boolean>;
     /** Trusted, exact Session/actor/Task CLI entry; never inferred from Task or Run prose. */
     cliEntryForRun?(session: RuntimeSessionRecord | null, run: RuntimeRunRecord): Promise<CliBootstrap | null>;
     roleContextForRun?(session: RuntimeSessionRecord, run: RuntimeRunRecord): Promise<RoleContextReference | null>;
@@ -1011,10 +1013,26 @@ export class RuntimeRunner {
     return this.loadEvaluationPacket(principal, run, taskInput.input);
   }
 
+  /** Settle only a durable static-authority loss; transient admission denials remain requested. */
+  private async rejectIfRequesterAuthorityMissing(principal: Principal, run: RuntimeRunRecord): Promise<void> {
+    if (run.state !== "requested" || run.nativeTurnId) return;
+    try {
+      const session = await this.deps.workflow.getRuntimeSession(principal, run.projectId, run.sessionId);
+      if (session.state !== "ready") return;
+      if (!this.deps.requesterAuthorityMissing || !await this.deps.requesterAuthorityMissing(run, session)) return;
+      await this.deps.trusted.rejectDispatch(run.projectId, run.id, "Run requester authority is no longer configured");
+    } catch {
+      // A read or configuration failure is not proof of permanent missing authority. Keep the Run requested.
+    }
+  }
+
   private async process(principal: Principal, original: RuntimeRunRecord): Promise<boolean> {
     if (!["requested", "running", "unknown"].includes(original.state)) return false;
     if (original.state === "requested" && !original.nativeTurnId && this.deps.mayDispatchRun &&
-      !await this.deps.mayDispatchRun(original)) return false;
+      !await this.deps.mayDispatchRun(original)) {
+      await this.rejectIfRequesterAuthorityMissing(principal, original);
+      return false;
+    }
     const session = await this.deps.workflow.getRuntimeSession(principal, original.projectId, original.sessionId);
     if (session.state !== "ready") return false;
     const currentAuthority = await this.authorized(session, original.actorId);

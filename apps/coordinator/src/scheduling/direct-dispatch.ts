@@ -19,6 +19,8 @@ export interface DirectDispatchDeps {
    * Sessions needs the Session's own materialCli entry, and the identity must be a current project writer. Null when it resolves. Absent: no extra filter.
    */
   recipientDenial?(projectId: string, sessionId: string): Promise<string | null>;
+  /** The Session's signing identity, resolved exactly as line.append and the line pump resolve it. */
+  sessionLineBusinessActor?(projectId: string, sessionId: string): Promise<string | null>;
   newId(): string;
   /** Called with every failure the dispatcher could not handle (cleanup that was refused, for instance); it is also recorded as a line event. */
   onError?(error: Error): void;
@@ -48,7 +50,7 @@ export class ScheduleDirectDispatcher {
         await this.deps.pool.query("SELECT schedule_direct_fall_back($1,$2,$3::timestamptz,$4,$5,$6::timestamptz)", [projectId, row.schedule_id, plannedAt, reason, blocked, now]);
         counts.fellBack++;
       };
-      const picked = await this.choose(projectId, String(row.owner));
+      const picked = await this.choose(projectId, String(row.owner), principal.actorId);
       if (!picked.sessionId) { await fallBack(picked.denial ?? "NO_AVAILABLE_SESSION", true); continue; }
       const chosen = picked.sessionId;
       const task = await this.deps.pool.query("SELECT version FROM task WHERE project_id=$1 AND task_id=$2", [projectId, row.task_id]);
@@ -117,10 +119,10 @@ export class ScheduleDirectDispatcher {
 
   /**
    * Idle first, then the shortest line, then the list's own order. A Session is passed over when it is not ready, its recovery gate is closed, its execution
-   * profile is refused, the head of its line is suspended, its execution authorization is missing, or its signing identity does not resolve. Nobody left:
+   * profile is refused, the head of its line is suspended, it is the controller's own Session, its execution authorization is missing, or its signing identity does not resolve. Nobody left:
    * the reason of the first listed Session (in list order) is the reason given, never a different one.
    */
-  private async choose(projectId: string, roleId: string): Promise<{ sessionId: string | null; denial: string | null }> {
+  private async choose(projectId: string, roleId: string, controllerActorId: string): Promise<{ sessionId: string | null; denial: string | null }> {
     const rows = (await this.deps.pool.query<Candidate>(`WITH list AS (SELECT s.sid, s.ord FROM direct_dispatch_list l, unnest(l.session_ids) WITH ORDINALITY s(sid,ord)
         WHERE l.project_id=$1 AND l.role_id::text=$2)
       SELECT list.sid::text AS sid, list.ord::int AS ord,
@@ -139,6 +141,9 @@ export class ScheduleDirectDispatcher {
     for (const candidate of rows) {
       let why: string | null = !candidate.ready ? "NOT_AVAILABLE:SESSION_NOT_READY" : !candidate.gateOpen ? "NOT_AVAILABLE:RECOVERY_GATE_CLOSED"
         : !candidate.profileOk ? "NOT_AVAILABLE:EXECUTION_PROFILE_UNAVAILABLE" : candidate.headSuspended ? "NOT_AVAILABLE:HEAD_SUSPENDED" : null;
+      if (!why && this.deps.sessionLineBusinessActor &&
+        await this.deps.sessionLineBusinessActor(projectId, candidate.sid) === controllerActorId)
+        why = "NOT_AVAILABLE:CONTROLLER_SESSION";
       if (!why && this.deps.sessionDenial) { const refused = await this.deps.sessionDenial(projectId, candidate.sid); if (refused) why = `NOT_AUTHORIZED:${refused}`; }
       if (!why && this.deps.recipientDenial) { const refused = await this.deps.recipientDenial(projectId, candidate.sid); if (refused) why = `RECIPIENT_UNAVAILABLE:${refused}`.slice(0, 300); }
       if (why) first ??= why; else usable.push(candidate);
