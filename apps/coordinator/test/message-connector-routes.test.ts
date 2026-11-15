@@ -30,8 +30,8 @@ test("connector route HTTP preserves project and reviewer boundaries while keepi
   app.addHook("onRequest", async request => {
     const role = request.headers.authorization;
     request.principal = role === "none" ? null : { actorId: role ?? "reader", projectIds: [projectId],
-      permissions: role === "reviewer" ? ["read", "write", "review"] : role === 'restricted-receiver'
-        ? ['read','write']: ["read"] } as Principal;
+      permissions: role === "reviewer" ? ["task", "document", "session", "management"] : role === 'restricted-receiver'
+        ? ['session']: [] , decisions: role === "reviewer" } as Principal;
   });
   app.setErrorHandler((error, _request, reply) => reply.code(error instanceof DomainError && error.code === "FORBIDDEN" ? 403 : 409)
     .send({ code: error instanceof DomainError ? error.code : "INVALID_INPUT" }));
@@ -112,7 +112,7 @@ test("connector route HTTP preserves project and reviewer boundaries while keepi
 test("production server registers scoped connector status and refuses writes after lease loss", async () => {
   const token = "c".repeat(40);
   const credentials = authConfigSchema.parse([{ token, actorId: "reviewer", projectIds: [projectId],
-    permissions: ["read", "write", "review"] }]);
+    permissions: ["task", "document", "session", "management"], decisions: true }]);
   let writes = 0;
   const app = await buildServer({ credentials,
     service: { getProject: async () => ({}), listRoleRevisions: async () => [], listRoleReviews: async () => [],

@@ -34,7 +34,7 @@ test("overview top: goal, version, six phases with one current, the three blocks
       if (url.pathname.startsWith("/api/")) {
         const base = `/api/projects/${projectId}`;
         let value: unknown = { items: [], nextCursor: null }, status = 200;
-        if (url.pathname === "/api/session") value = { principal: { actorId: "reader", projectIds: [projectId], permissions: ["read"] }, capabilities: {} };
+        if (url.pathname === "/api/session") value = { principal: { actorId: "reader", projectIds: [projectId], permissions: [] }, capabilities: {} };
         else if (url.pathname === "/api/version") {
           if (mode === "unread") value = { commit: null, builtAt: null, startedAt: stamp };
           else value = { commit: "9a4020a5886be01b2d74fe850687ca7355b2d226", builtAt: "2026-11-12T03:10:00.000Z", startedAt: stamp };

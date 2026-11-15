@@ -21,7 +21,7 @@ const session:RuntimeSessionRecord={
   executionProfile:{activationState:"active",revision:{revisionId:randomUUID(),reasoningEffort:null},
     activeRevisionId:null,activationOperationId:null,attemptedAt:null,activationEvidence:null} as never,
 };
-const principal={actorId:senderActor,projectIds:[projectId],permissions:["read","write"] as Array<"read"|"write">};
+const principal={actorId:senderActor,projectIds:[projectId],permissions:["task","document","session"] as ('task'|'document'|'session'|'management')[]};
 
 function configuration(receiverActorId:string){
   return {

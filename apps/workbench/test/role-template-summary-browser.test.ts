@@ -31,7 +31,7 @@ test("seven template states appear on 职责 with truthful refresh and target li
     if (url.pathname.startsWith("/api/")) {
       let value: unknown = { items: [], nextCursor: null }, status = 200;
       const root = `/api/projects/${projectId}`;
-      if (url.pathname === "/api/session") value = { principal: { actorId: "reader", projectIds: [projectId], permissions: ["read"] }, capabilities: {} };
+      if (url.pathname === "/api/session") value = { principal: { actorId: "reader", projectIds: [projectId], permissions: [] }, capabilities: {} };
       else if (url.pathname === root) value = { id: projectId, title: "模板项目", createdAt: stamp };
       else if (url.pathname === `${root}/session-work`) value = { items: [], nextCursor: null, totals: { current: 0, historical: 0, unclassified: 0 }, metadata: { generatedAt: stamp, sourceObservedAt: stamp, partial: false, limitations: [] } };
       else if (url.pathname === `${root}/runtime`) value = { available: true, error: null, allowedCwds: [], grants: [] };

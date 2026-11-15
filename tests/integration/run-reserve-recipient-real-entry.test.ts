@@ -30,7 +30,7 @@ async function setup(t: import("node:test").TestContext, cliActorId: string | nu
   const service = new WorkflowService(deps), runtime = new RuntimeWorkflowService(deps);
   const projectId = randomUUID(), roleId = randomUUID(), roleRev = randomUUID(), sessionId = randomUUID();
   const token = randomUUID() + randomUUID();
-  const lead: Principal = { actorId: "lead", projectIds: [projectId], permissions: ["read", "write", "review"] };
+  const lead: Principal = { actorId: "lead", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true };
   t.after(async () => { await pool.end(); const admin = new pg.Client({ connectionString: database }); await admin.connect();
     try { await admin.query(`DROP SCHEMA "${schema}" CASCADE`); } finally { await admin.end(); } });
   const run = async (command: Parameters<WorkflowService["execute"]>[1]) => {

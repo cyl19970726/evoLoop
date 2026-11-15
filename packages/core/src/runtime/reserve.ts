@@ -1,4 +1,4 @@
-import type { AppliedResult, BasisSet, Command, Principal, RuntimeRecordEvent, RuntimeRunRecord, RuntimeSessionRecord, TaskRevision } from "@evoloop/contracts";
+import { mayAccessSession, type AppliedResult, type BasisSet, type Command, type Principal, type RuntimeRecordEvent, type RuntimeRunRecord, type RuntimeSessionRecord, type TaskRevision } from "@evoloop/contracts";
 import { DomainError } from "@evoloop/contracts/ports";
 import type { RuntimeProvider } from "@evoloop/contracts/runtime";
 import type { Transaction } from "@evoloop/contracts/ports";
@@ -33,10 +33,15 @@ const required = <T>(value: T | null, name: string): T => {
 const applied = (operationId: string, entityId: string, version: number, revisionId?: string): AppliedResult => ({
   status: "applied", operationId, entityId, version, ...(revisionId ? { revisionId } : {}),
 });
+const requireSessionScope = (principal: Principal, projectId: string, sessionId: string): void => {
+  if (!mayAccessSession(principal, projectId, sessionId))
+    throw new DomainError("FORBIDDEN", "This identity is not granted access to that Session");
+};
 
 export async function reserveRuntime({ tx, command, principal, now, nextId, hash, queueClaim, runtimeProvider, runtimeProviders }: ReserveContext): Promise<{ result: AppliedResult; effects: Effect[] }> {
   if (command.type === "runtime.handoff.record") {
     const run = required(await tx.getRuntimeRun(command.runId), "runtime run");
+    requireSessionScope(principal, command.projectId, run.sessionId);
     if (run.state !== "completed") throw new DomainError("RUN_NOT_COMPLETED", "handoff follows a completed native run");
     const events = await tx.listRuntimeEvents(run.id);
     const stages = ["received","read","adopted","effect"] as const;
@@ -49,6 +54,7 @@ export async function reserveRuntime({ tx, command, principal, now, nextId, hash
   if (command.type === "runtime.run.abandonReadOnly") {
     const run = required(await tx.getRuntimeRun(command.runId), "runtime run");
     const session = required(await tx.getRuntimeSession(run.sessionId), "runtime session");
+    requireSessionScope(principal, command.projectId, run.sessionId);
     if (run.version !== command.expectedVersion) throw new DomainError("VERSION_CONFLICT", "run changed", run.version);
     if (run.state !== "unknown" || run.nativeTurnId || session.sandbox !== "read-only") throw new DomainError("RUN_NOT_ABANDONABLE", "only an unbound unknown read-only run can be abandoned after review");
     const detail = `Reviewer abandoned uncertain read-only dispatch. This is not proof of external completion or non-execution. Old native session closed to further dispatch. Reason: ${command.reason} Evidence: ${command.evidence}`;
@@ -59,6 +65,7 @@ export async function reserveRuntime({ tx, command, principal, now, nextId, hash
   }
   if (command.type === "runtime.run.interrupt") {
     const run = required(await tx.getRuntimeRun(command.runId), "runtime run");
+    requireSessionScope(principal, command.projectId, run.sessionId);
     if (!run.nativeTurnId || !["running", "unknown"].includes(run.state)) {
       throw new DomainError("TURN_NOT_INTERRUPTIBLE", "only a known active turn can be interrupted");
     }
@@ -69,6 +76,7 @@ export async function reserveRuntime({ tx, command, principal, now, nextId, hash
   }
   if (command.type === "runtime.run.stop") {
     const run = required(await tx.getRuntimeRun(command.runId), "runtime run");
+    requireSessionScope(principal, command.projectId, run.sessionId);
     if (run.version !== command.expectedVersion) throw new DomainError("VERSION_CONFLICT", "run changed", run.version);
     if (run.stopRequestedAt) throw new DomainError("STOP_ALREADY_REQUESTED", "this Run already has a stop request");
     if (!(["requested", "dispatching", "running", "unknown"] as string[]).includes(run.state))

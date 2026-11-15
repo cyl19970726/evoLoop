@@ -9,7 +9,7 @@ import { applyDiscussion } from "../src/discussions.ts";
 const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const projectId = id(1), discussionId = id(2), documentId = id(3), oldRevisionId = id(4), editedRevisionId = id(5);
 const hash = (body: string) => createHash("sha256").update(body).digest("hex");
-const principal: Principal = { actorId: "reviewer", projectIds: [projectId], permissions: ["read", "write", "review"] };
+const principal: Principal = { actorId: "reviewer", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true };
 
 function fixture() {
   const oldBody = "# Prepared discussion\nOriginal fixed handoff";

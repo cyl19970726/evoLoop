@@ -31,7 +31,7 @@ test("the upload form reads the file, saves the receipt first and sends the same
     const p = `/api/projects/${projectId}`;
     const send = (value: unknown, status = 200) => { res.writeHead(status, { "content-type": "application/json" }); res.end(JSON.stringify(value)); };
     if (url.pathname.startsWith("/api/")) {
-      if (url.pathname === "/api/session") return send({ principal: { actorId: "lead", projectIds: [projectId], permissions: ["read", "write", "review"] }, capabilities: {} });
+      if (url.pathname === "/api/session") return send({ principal: { actorId: "lead", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true }, capabilities: {} });
       if (url.pathname === p) return send({ id: projectId, title: "上传表单项目", createdAt: stamp });
       if (url.pathname === `${p}/documents/import` && req.method === "POST") {
         let text = ""; for await (const chunk of req) text += String(chunk);

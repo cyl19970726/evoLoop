@@ -1,4 +1,4 @@
-import type { Principal, RuntimeRunRecord } from "@evoloop/contracts";
+import { hasAnyObjectPermission, type Principal, type RuntimeRunRecord } from "@evoloop/contracts";
 import { ordinaryRunSubmissionSchema, type OrdinaryRunSubmissionCommand,
   type OrdinaryRunSubmissionRecord } from "@evoloop/contracts/ordinary-run-submission";
 import { DomainError } from "@evoloop/contracts/ports";
@@ -19,7 +19,7 @@ export interface OrdinaryRunSubmissionStore {
 }
 
 const authorized = (principal: Principal, projectId: string): boolean =>
-  !!principal.actorId && principal.projectIds.includes(projectId) && principal.permissions.includes("write");
+  hasAnyObjectPermission(principal, projectId);
 
 /** No terminal text, Run creator, or caller-supplied actor can sign this intent. */
 export async function submitOrdinaryRun(
@@ -29,7 +29,7 @@ export async function submitOrdinaryRun(
   const parsed = ordinaryRunSubmissionSchema.safeParse(input);
   if (!parsed.success) throw new DomainError("INVALID_COMMAND", parsed.error.message);
   const command = parsed.data;
-  if (!authorized(principal, command.projectId)) throw new DomainError("FORBIDDEN", "Project write permission is required");
+  if (!authorized(principal, command.projectId)) throw new DomainError("FORBIDDEN", "Project task, document or Session permission is required");
   if (command.operationId === command.deliveryOperationId)
     throw new DomainError("OPERATION_REUSED", "Submission and Delivery need separate fixed operation IDs");
   const commandHash = hasher.hash(canonicalJson({ actorId: principal.actorId, command }));

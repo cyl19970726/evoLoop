@@ -8,7 +8,7 @@ import type { RuntimeRunRecord, RuntimeSessionRecord } from "@evoloop/contracts"
 
 const hash = (value: string | Uint8Array) => createHash("sha256").update(value).digest("hex");
 const projectId = randomUUID(), taskId = randomUUID(), taskRevisionId = randomUUID();
-const principal: Principal = { actorId: "reviewer", projectIds: [projectId], permissions: ["read", "write", "review"] };
+const principal: Principal = { actorId: "reviewer", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true };
 const body = "# fixed knowledge\n";
 const fixed: TaskExternalReferenceRecord = { projectId, taskId, taskRevisionId, id: randomUUID(), slotId: randomUUID(),
   version: 2, decision: "retain", kind: "wiki", referenceId: randomUUID(), revision: "wiki-rev-1",
@@ -51,7 +51,7 @@ test("Git material requires the registered immutable commit, current permission 
   assert.match(await readExternalMaterials(principal,projectId,taskId,taskRevisionId,make(Buffer.from(text))), /formal/);
   await assert.rejects(readExternalMaterials(principal,projectId,taskId,taskRevisionId,make(Buffer.from("tampered"))), /hash mismatched/);
   await assert.rejects(readExternalMaterials(principal,projectId,taskId,taskRevisionId,make(Buffer.from(text),false)), /unavailable/);
-  await assert.rejects(readExternalMaterials({ ...principal, permissions: [] },projectId,taskId,taskRevisionId,make(Buffer.from(text))), /permission/);
+  await assert.rejects(readExternalMaterials({ ...principal, projectIds: [] },projectId,taskId,taskRevisionId,make(Buffer.from(text))), /membership/);
 });
 
 test("fixed Run material carries only input identity and a scoped read instruction; closed or changed source fails", async () => {

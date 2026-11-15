@@ -1,3 +1,4 @@
+import { hasDecisionAuthority } from "@evoloop/contracts";
 import type {
   AppliedResult,
   BasisSet,
@@ -433,7 +434,8 @@ export async function applyWorkflow({
         throw new DomainError("TRUSTED_HUMAN_REQUIRED", "human-required acceptance needs the declared human's credential");
       if (c.observerKind === "agent" && c.observer !== actorId)
         throw new DomainError("OBSERVER_MISMATCH", "agent use must be reported by that agent");
-      if (c.observerKind === "human" && !proposal?.acceptanceMode && !principal.permissions.includes("review"))
+      if (c.observerKind === "human" && !proposal?.acceptanceMode &&
+        !hasDecisionAuthority(principal, c.projectId, "task"))
         throw new DomainError("ATTESTATION_REQUIRED", "external human use requires reviewer attestation");
       const observation: ConsumerObservation = { projectId: c.projectId, id: nextId(), taskId: task.id,
         deliveryId: delivery.id, observer: c.observer, observerKind: c.observerKind, result: c.result,

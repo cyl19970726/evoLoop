@@ -18,8 +18,9 @@ const now = "2026-11-10T00:00:00.000Z";
 const sha = (text: string) => createHash("sha256").update(text).digest("hex");
 const workflow = new WorkflowService({ uow, clock: { now: () => now }, ids: { next: randomUUID }, hasher: { hash: sha } });
 const projectId = randomUUID();
-const writer = { actorId: "writer", projectIds: [projectId], permissions: ["read", "write"] as ("read" | "write" | "review")[] };
-const reviewer = { actorId: "reviewer", projectIds: [projectId], permissions: ["read", "write", "review"] as ("read" | "write" | "review")[] };
+const writer = { actorId: "writer", projectIds: [projectId], permissions: ["task", "document", "session"] as ("task" | "document" | "session" | "management")[] };
+const manager = { actorId: "manager", projectIds: [projectId], permissions: ["task", "document", "session", "management"] as ("task" | "document" | "session" | "management")[] };
+const reviewer = { actorId: "reviewer", projectIds: [projectId], permissions: ["task", "document", "session", "management"] as ("task" | "document" | "session" | "management")[], decisions: true };
 
 async function task(title: string, owner: string, state = "todo"): Promise<string> {
   const taskId = randomUUID(), revisionId = randomUUID(), documentId = randomUUID(), contentId = randomUUID();
@@ -58,7 +59,7 @@ after(async () => {
 test("role.revise appends a candidate revision to a trial Role, keeps history and decisions, and role.decide accepts it", async () => {
   const first = await task("first trial task", "manager"), second = await task("second trial task", "manager");
   const roleId = randomUUID();
-  const proposed = await workflow.execute(writer, { type: "role.propose", projectId, operationId: randomUUID(), roleId, proposal: proposal(first) });
+  const proposed = await workflow.execute(manager, { type: "role.propose", projectId, operationId: randomUUID(), roleId, proposal: proposal(first) });
   assert.equal(proposed.status, "applied");
   const accepted = await workflow.execute(reviewer, { type: "role.decide", projectId, operationId: randomUUID(), roleId, expectedVersion: 1, decision: "accept-trial", reason: "reviewed" });
   assert.equal(accepted.status, "applied");
@@ -71,7 +72,7 @@ test("role.revise appends a candidate revision to a trial Role, keeps history an
   const revised = proposal(second, { title: "Release stewardship v2", goal: "Own release and rollback health", reviewAtUtc: "2026-11-20T00:00:00.000Z" });
   const operationId = randomUUID();
   const command = { type: "role.revise" as const, projectId, operationId, roleId, expectedVersion: 2, proposal: revised, reason: "tighten scope" };
-  await assert.rejects(() => workflow.execute(writer, command), (error: unknown) => /review/i.test((error as Error).message), "a writer alone cannot revise a Role");
+  await assert.rejects(() => workflow.execute(writer, command), (error: unknown) => /management/i.test((error as Error).message), "task/document/session writes alone cannot revise a Role");
   const result = await workflow.execute(reviewer, command);
   assert.equal(result.status, "applied", JSON.stringify(result));
   assert.deepEqual([result.status === "applied" && result.entityId, result.status === "applied" && result.version], [roleId, 3]);
@@ -114,7 +115,7 @@ test("role.revise appends a candidate revision to a trial Role, keeps history an
 test("role.revise refuses a closed Role and invalid first Task or review date; role.propose still creates a new Role", async () => {
   const open = await task("open first task", "manager"), done = await task("cancelled task", "manager", "cancelled");
   const roleId = randomUUID();
-  await workflow.execute(writer, { type: "role.propose", projectId, operationId: randomUUID(), roleId, proposal: proposal(open) });
+  await workflow.execute(manager, { type: "role.propose", projectId, operationId: randomUUID(), roleId, proposal: proposal(open) });
   const revise = (over: Record<string, unknown>) => workflow.execute(reviewer, { type: "role.revise", projectId, operationId: randomUUID(), roleId, expectedVersion: 1, proposal: proposal(open), ...over } as Parameters<typeof workflow.execute>[1]);
   const code = (result: Awaited<ReturnType<typeof revise>>) => result.status === "rejected" ? result.code : result.status;
   assert.equal(code(await revise({ proposal: proposal(done) })), "INVALID_FIRST_TASK");
@@ -128,7 +129,7 @@ test("role.revise refuses a closed Role and invalid first Task or review date; r
   assert.equal(code(await revise({ expectedVersion: 2 })), "INVALID_STATE");
   // A new Role is still created by role.propose: version 1, candidate, its own row.
   const another = randomUUID();
-  const created = await workflow.execute(writer, { type: "role.propose", projectId, operationId: randomUUID(), roleId: another, proposal: proposal(open, { title: "Another role" }) });
+  const created = await workflow.execute(manager, { type: "role.propose", projectId, operationId: randomUUID(), roleId: another, proposal: proposal(open, { title: "Another role" }) });
   assert.equal(created.status, "applied");
   const role = await uow.read(projectId, r => r.getRole(another));
   assert.deepEqual([role?.version, role?.state, role?.proposal.title], [1, "candidate", "Another role"]);

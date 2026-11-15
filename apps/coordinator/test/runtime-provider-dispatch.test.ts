@@ -62,7 +62,7 @@ function harness(native: ProviderRuntime, session: RuntimeSessionRecord, run: Ru
     },
   } as unknown as RuntimeWorkflowService;
   const runner = new RuntimeRunner({ runtimeFactory: () => native as unknown as RuntimePort & ProviderRuntime,
-    workflow, trusted, principals: [{ actorId, projectIds: [projectId], permissions: ["read", "write", "review"] }],
+    workflow, trusted, principals: [{ actorId, projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true }],
     canWrite: () => true, allowedCwd: async () => true, hasGrant: () => true,
     ...(steerLock ? { steerLock } : {}) });
   (runner as unknown as { lightweightInput: () => Promise<unknown> }).lightweightInput = async () =>

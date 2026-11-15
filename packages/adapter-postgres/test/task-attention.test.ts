@@ -25,8 +25,8 @@ const handoffTaskId=randomUUID(),handoffRevisionId=randomUUID();
 const handoffDocumentId=randomUUID(),handoffDocumentRevisionId=randomUUID();
 const documentId=randomUUID(),documentRevisionId=randomUUID(),hash="a".repeat(64);
 const now=new Date().toISOString(),earlier=new Date(Date.parse(now)-12*60*60*1000).toISOString();
-const lead:Principal={actorId:"lead",projectIds:[projectId],permissions:["read","write","review"]};
-const writer:Principal={actorId:"writer",projectIds:[projectId],permissions:["read","write"]};
+const lead:Principal={actorId:"lead",projectIds:[projectId],permissions:['task','document','session','management'],decisions:true};
+const writer:Principal={actorId:"writer",projectIds:[projectId],permissions:['task','document','session']};
 const service=()=>new WorkflowService({uow:new PostgresUnitOfWork(pool),clock:{now:()=>now},
   ids:{next:randomUUID},hasher:{hash:value=>createHash("sha256").update(value).digest("hex")}});
 before(async()=>{
@@ -77,13 +77,13 @@ after(async()=>{
   await pool.end();const client=new pg.Client({connectionString:url});await client.connect();
   try{await client.query(`DROP SCHEMA "${schema}" CASCADE`);}finally{await client.end();}
 });
-test("review permission, concurrent CAS, and same-operation replay after service restart",async()=>{
+test("management permission, concurrent CAS, and same-operation replay after service restart",async()=>{
   const base={type:"task.attention.thresholds.set" as const,projectId,stageId:null,
     phase:"awaiting_run" as const,expectedVersion:0,stageOverdueMs:3600000,
     activityWithoutProgressMs:null,observationGapMs:null,reason:"Trial override"};
-  await assert.rejects(service().execute(writer,{...base,operationId:randomUUID()}),/Permission review/);
-  await assert.rejects(service().execute({actorId:"no-read",projectIds:[projectId],
-    permissions:["write","review"]},{...base,operationId:randomUUID()}),/Permission read/);
+  await assert.rejects(service().execute(writer,{...base,operationId:randomUUID()}),/Permission management/);
+  await assert.rejects(service().execute({actorId:"foreign",projectIds:[randomUUID()],
+    permissions:['task','document','session','management'],decisions:true},{...base,operationId:randomUUID()}),/Permission management/);
   const [a,b]=await Promise.all([service().execute(lead,{...base,operationId:randomUUID()}),
     service().execute(lead,{...base,operationId:randomUUID(),stageOverdueMs:7200000})]);
   assert.deepEqual([a.status,b.status].sort(),["applied","rejected"]);
@@ -419,7 +419,7 @@ test("real CLI reads filtered attention pages from isolated PostgreSQL through t
     [projectId,resolvedId,handoffTaskId,handoffRevisionId,"2026-10-24T00:00:00Z","2026-10-24T01:00:00Z",resolvedId]);
   const token=randomUUID()+randomUUID();
   const app=await buildServer({service:service(),credentials:[{token,actorId:"qa-reader",
-    projectIds:[projectId],permissions:["read"]}],taskAttentionPool:pool});
+    projectIds:[projectId],permissions:[]}],taskAttentionPool:pool});
   try{
     const origin=await app.listen({host:"127.0.0.1",port:0});
     const cli=async(args:string[])=>new Promise<{code:number|null;output:unknown;error:string}>((done,reject)=>{

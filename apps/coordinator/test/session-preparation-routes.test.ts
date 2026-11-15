@@ -27,8 +27,8 @@ test("preparation reports a real readiness snapshot only to the project reviewer
   listSchedules:empty,listScheduleRevisions:empty,listScheduleOccurrences:empty,
   listRoles:async()=>({items:[],nextCursor:null})} as unknown as WorkflowService;
   const app=await buildServer({service,credentials:[
-    {token,actorId:"lead",projectIds:[projectId],permissions:["read","write","review"]},
-    {token:readerToken,actorId:"reader",projectIds:[projectId],permissions:["read"]}],
+    {token,actorId:"lead",projectIds:[projectId],permissions:["task","document","session","management"],decisions:true},
+    {token:readerToken,actorId:"reader",projectIds:[projectId],permissions:[]}],
     sessionPreparation:async()=>({runtimeAvailable:true,grantReady:true,cwdReady:true,
       materialCli:{actorId:"agent",command:"/private/cli",ready:true},roleActorId:"agent",
       skills:[{path:".agents/skills/evoloop-workflow/SKILL.md",commit:"a".repeat(40),contentHash:"b".repeat(64),readSubcommand:"get /fixed"}]})});
@@ -62,7 +62,8 @@ test("existing Session requires its actual full profile, open recovery and match
     listRoleSessionBindings:async()=>[{sessionId}],listRoleRevisions:empty,listRoleReviews:empty,listRoleHandoffs:empty,
     listSchedules:empty,listScheduleRevisions:empty,listScheduleOccurrences:empty,
     listRoles:async()=>({items:[],nextCursor:null})} as unknown as WorkflowService;
-  const app=await buildServer({service,credentials:[{token,actorId:"lead",projectIds:[projectId],permissions:["read","write","review"]}],
+  const app=await buildServer({service,credentials:[{token,actorId:"lead",projectIds:[projectId],
+    permissions:["task","document","session","management"],decisions:true}],
     sessionPreparation:async()=>({runtimeAvailable:true,grantReady:true,cwdReady:true,
       materialCli:{actorId:cliActor,command:"/private/cli",ready:true},roleActorId:"agent",
       skills:[{path:".agents/skills/evoloop-workflow/SKILL.md",commit:"a".repeat(40),
@@ -111,7 +112,7 @@ test("fixed skill child read requires project authority and a bounded source tra
   const skillPath=".agents/skills/evoloop-workflow/SKILL.md";
   const sourcePath=".agents/skills/evoloop-workflow/references/writing.md";
   let seen:string[]=[];
-  const app=await buildServer({service,credentials:[{token:readerToken,actorId:"reader",projectIds:[projectId],permissions:["read"]}],
+  const app=await buildServer({service,credentials:[{token:readerToken,actorId:"reader",projectIds:[projectId],permissions:[]}],
     readRoleSkillSource:async(_project,_role,_name,path,via,commit,hash)=>{
       seen=[path,via,commit,hash];
       if(via!==skillPath||path!==sourcePath)return null;
@@ -151,7 +152,7 @@ test("ordinary Role skill HTTP read includes metadata for a large fixed child",a
       listRoleHandoffs:empty,listRoleSessionBindings:empty,listSchedules:empty,
       listScheduleRevisions:empty,listScheduleOccurrences:empty,
       listRoles:async()=>({items:[],nextCursor:null})} as unknown as WorkflowService;
-    const app=await buildServer({service,credentials:[{token:readerToken,actorId:"reader",projectIds:[projectId],permissions:["read"]}],
+    const app=await buildServer({service,credentials:[{token:readerToken,actorId:"reader",projectIds:[projectId],permissions:[]}],
       readRoleSkill:async(_project,_role,_name,readCommit,hash)=>({
         ...await readFixedSkill(root,skillPath,readCommit,hash),
         references:await roleSkillSourceReferences(root,skillPath,readCommit)})});
@@ -179,7 +180,8 @@ test("a missing Role→actor mapping is named as residentQueue.roleActors, with 
   listSchedules:empty,listScheduleRevisions:empty,listScheduleOccurrences:empty,
   listRoles:async()=>({items:[],nextCursor:null})} as unknown as WorkflowService;
   let state:"no_entry"|"queue_disabled"|"actor_not_project_writer"="no_entry";
-  const app=await buildServer({service,credentials:[{token,actorId:"lead",projectIds:[projectId],permissions:["read","write","review"]}],
+  const app=await buildServer({service,credentials:[{token,actorId:"lead",projectIds:[projectId],
+    permissions:["task","document","session","management"],decisions:true}],
     sessionPreparation:async()=>({runtimeAvailable:true,grantReady:true,cwdReady:true,
       materialCli:{actorId:"recipient",command:"/private/cli",ready:true},roleActorId:null,roleActorState:state,
       roleActorConfiguredId:state==="actor_not_project_writer"?"recipient":null,
@@ -207,6 +209,6 @@ test("a missing Role→actor mapping is named as residentQueue.roleActors, with 
     state="actor_not_project_writer";
     const notWriter=(await read()).missingDetails.find(item=>item.code==="role_actor")!;
     assert.match(notWriter.problem,/actorId=recipient/);
-    assert.match(notWriter.fix,/read 与 write/);
+    assert.match(notWriter.fix,/任务、文档或 Session 写权限/);
   } finally {await app.close();}
 });

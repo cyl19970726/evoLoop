@@ -37,8 +37,8 @@ const clock = { now: () => new Date().toISOString() };
 const deps = { uow, clock, ids: { next: randomUUID }, hasher: { hash } };
 const workflow = new WorkflowService(deps), runtime = new RuntimeWorkflowService(deps);
 const p = randomUUID(), role = randomUUID(), roleRev = randomUUID();
-const lead: Principal = { actorId: "lead", projectIds: [p], permissions: ["read", "write", "review"] };
-const human: Principal = { actorId: "human-actor", projectIds: [p], permissions: ["read", "write"] };
+const lead: Principal = { actorId: "lead", projectIds: [p], permissions: ["task", "document", "session", "management"], decisions: true };
+const human: Principal = { actorId: "human-actor", projectIds: [p], permissions: ["task", "document", "session"] };
 const receipts: Array<Record<string, unknown>> = [];
 
 async function command(label: string, body: Record<string, unknown>, who: Principal = lead) {

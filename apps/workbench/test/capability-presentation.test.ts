@@ -67,9 +67,10 @@ test("whether the reader can use a capability granted per actor, and why not", (
   assert.equal(caller(true), "你可以使用。");
   assert.equal(caller(false, "caller_has_no_grant"), "本项目有授权，但你没有。");
   assert.equal(caller(false, "caller_has_no_grant", "not_configured"), "你没有本项目的这项授权。", "nobody has one: not 'the project has one'");
-  assert.equal(caller(false, "caller_lacks_review"), "你有授权，但登录用的令牌缺复核权限。");
-  assert.equal(caller(false, "caller_lacks_write"), "你有授权，但登录用的令牌缺写入权限。");
-  assert.equal(caller(false, "caller_lacks_write_and_review"), "你有授权，但登录用的令牌缺写入和复核权限。");
+  assert.equal(caller(false, "caller_lacks_review"), "你有授权，但登录用的令牌缺这项能力所属的决定权限。");
+  assert.equal(caller(false, "caller_lacks_write"), "你有授权，但登录用的令牌缺这项能力所属的对象写权限。");
+  assert.equal(caller(false, "caller_lacks_write_and_review"),
+    "你有授权，但登录用的令牌缺这项能力所属的对象写权限和决定权限。");
   assert.match(caller(false, "caller_not_current_writer")!, /身份文件现在不认你是写入者/);
   assert.equal(caller(null), "你能否使用无法判断（身份或配置文件读不了）。");
   assert.equal(row(capability({ key: "knowledge" })).caller, null, "not granted per actor: nothing about the reader");

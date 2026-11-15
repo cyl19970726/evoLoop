@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
-import type { Principal, ResidentQueue, ResidentQueueEntry } from '@evoloop/contracts';
+import { hasDecisionAuthority, isProjectMember, type Principal, type ResidentQueue, type ResidentQueueEntry }
+  from '@evoloop/contracts';
 import type { DiscussionEvent } from '@evoloop/contracts/discussions';
 import type { SessionMessageRecord } from '@evoloop/contracts/session-messages';
 import type { WorkflowService } from '@evoloop/core';
@@ -28,7 +29,7 @@ export function sessionMessageCanStart(deps:SessionMessageSchedulingDeps){
   return async(message:SessionMessageRecord):Promise<boolean>=>{
     if(message.target.kind!=='owned')return false;
     const sessionId=message.target.sessionId;
-    const principal=(await deps.principals()).find(p=>p.projectIds.includes(message.projectId)&&p.permissions.includes('read'));
+    const principal=(await deps.principals()).find(p=>isProjectMember(p,message.projectId));
     if(!principal){await deps.service.noteBlocked(message.projectId,message.id,'Project reader is unavailable');return false;}
     const queues=await deps.workflow.listResidentQueues(principal,message.projectId);
     const claimed=queues.flatMap(queue=>queue.entries.map(entry=>({queue,entry}))).filter(x=>
@@ -44,8 +45,8 @@ export function sessionMessageCanStart(deps:SessionMessageSchedulingDeps){
       const events=await deps.workflow.listDiscussionEvents(principal,message.projectId,channel);
       const pairs=answeredPairs(events);
       if(!pairs.length)continue;
-      const lead=(await deps.principals()).find(p=>p.actorId===queue.actorId&&p.projectIds.includes(message.projectId)&&
-        p.permissions.includes('read')&&p.permissions.includes('write')&&p.permissions.includes('review'));
+      const lead=(await deps.principals()).find(p=>p.actorId===queue.actorId&&
+        hasDecisionAuthority(p,message.projectId,'management'));
       if(!lead){await deps.service.noteBlocked(message.projectId,message.id,'Original Task answer awaits its queue controller');return false;}
       const answerKey=pairs.map(p=>`${p.questionEventId}:${p.answerEventId}`).join('|');
       const runId=queueIntentId('answered-run',queue.id,entry.id,last.runId,answerKey);

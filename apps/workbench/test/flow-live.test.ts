@@ -7,7 +7,8 @@ import { createSseParser } from "../src/features/sessions/flow/flowClient";
 import { mergeEvents } from "../src/features/sessions/flow/useFlowData";
 import { learnContext, routeOf, styleOf } from "../src/features/sessions/flow/flowModel";
 import { openTargetsOf } from "../src/features/sessions/flow/FlowPage";
-import { DELIVERY_LOCATION, MESSAGE_LOCATION, PR_UNAVAILABLE, deliveryHref, openInfoOf } from "../src/features/sessions/flow/flowOpen";
+import { DELIVERY_LOCATION, MESSAGE_LOCATION, NODE_UNAVAILABLE, PR_UNAVAILABLE, deliveryHref, nodeInfoOf, openInfoOf, stationNode } from "../src/features/sessions/flow/flowOpen";
+import { PEOPLE, STATIONS, type NodeId } from "../src/features/sessions/flow/flowModel";
 import { FlowView } from "../src/features/sessions/flow/FlowView";
 import { fixtureBoard, fixtureContext } from "../src/features/sessions/flow/flowFixtures";
 import React, { createElement } from "react";
@@ -124,4 +125,62 @@ test("the detail on screen shows the notes and the PR line for a live event, not
   const fixture = render("fixture");
   assert.match(fixture, /夹具事件没有真实对象/); assert.doesNotMatch(fixture, /data-pr=|tab=delivery/);
   assert.match(fixture, /data-station-window="">窗口内/);
+});
+
+const nodes = (): NodeId[] => [...PEOPLE.map(p => p.id), "leader", "packets", ...fixtureBoard.sessions.map(x => `session:${x.sessionId}` as NodeId), ...STATIONS.map(stationNode)];
+
+test("every node the page shows opens a real page or says 读不到 with its reason; none is silent", () => {
+  const leader = fixtureBoard.sessions[0]!.sessionId;
+  for (const node of nodes()) {
+    const info = nodeInfoOf(P, node, fixtureBoard, leader, 6);
+    assert.ok(info.title, `${node}: has a title`);
+    assert.ok(info.targets.length > 0 || info.notes.some(n => n.includes(NODE_UNAVAILABLE) || n.length > 12), `${node}: opens something or explains`);
+    if (!info.targets.length) assert.ok(info.notes.some(n => n.startsWith(NODE_UNAVAILABLE) || n.startsWith("现在没有")), `${node}: no link means a "读不到：" sentence with its reason`);
+    for (const target of info.targets) assert.match(target.href, /^\/p\//, `${node}: a real page of this project`);
+  }
+  // Without the Leader's Session id the Leader node says so; with it, it opens that Session.
+  assert.deepEqual(nodeInfoOf(P, "leader", fixtureBoard, null).targets, []);
+  assert.match(nodeInfoOf(P, "leader", fixtureBoard, null).notes[0]!, /^读不到：.*Leader 的 Session 编号/);
+  assert.match(nodeInfoOf(P, "leader", fixtureBoard, leader).targets[0]!.href, /sessions\?session=owned%3A/);
+});
+
+test("a Session node opens the Session, its current Task and the Tasks in its line; one with nothing running says so; an unknown Session says 读不到", () => {
+  const running = fixtureBoard.sessions.find(x => x.current)!, queued = fixtureBoard.sessions.find(x => x.queue.length)!, idle = fixtureBoard.sessions.find(x => !x.current && !x.queue.length)!;
+  const a = nodeInfoOf(P, `session:${running.sessionId}`, fixtureBoard, null);
+  assert.deepEqual(a.targets.map(t => t.label), ["打开 Session", `打开正在做的任务《${running.current!.taskTitle}》`]);
+  assert.match(a.targets[1]!.href, new RegExp(`/tasks/${running.current!.taskId}$`));
+  assert.ok(nodeInfoOf(P, `session:${queued.sessionId}`, fixtureBoard, null).targets.some(t => t.label.startsWith("打开队伍里的任务")));
+  const b = nodeInfoOf(P, `session:${idle.sessionId}`, fixtureBoard, null);
+  assert.deepEqual(b.targets.map(t => t.label), ["打开 Session"]); assert.ok(b.notes.some(n => n.startsWith("现在没有正在做的事")));
+  const gone = nodeInfoOf(P, "session:00000000-0000-4000-8000-0000000000ff", fixtureBoard, null);
+  assert.deepEqual(gone.targets, []); assert.match(gone.notes[0]!, /^读不到：调度板快照里没有这个 Session/);
+  // A Turn that is a message has no Task: the node says so instead of linking a Task that is not there.
+  const message = { ...fixtureBoard, sessions: [{ ...running, current: { ...running.current!, kind: "message" as const, taskId: null, taskTitle: null } }] };
+  const m = nodeInfoOf(P, `session:${running.sessionId}`, message, null);
+  assert.deepEqual(m.targets.map(t => t.label), ["打开 Session"]); assert.ok(m.notes.some(n => n.startsWith("读不到：正在做的是一条消息")));
+});
+
+test("people nodes and the tray: the scheduler and the requirements Session open real pages; the rest say 读不到 and why; merged and released say the stream does not carry them", () => {
+  assert.match(nodeInfoOf(P, "people.scheduler", fixtureBoard, null).targets[0]!.href, /\/schedules$/);
+  const req = nodeInfoOf(P, "people.requirements", fixtureBoard, null);
+  assert.match(req.targets[0]!.href, /\/sessions$/); assert.match(req.notes[0]!, /^读不到：.*需求 Session 的编号/);
+  for (const id of ["people.user", "people.notices", "people.external", "packets"] as const) {
+    const info = nodeInfoOf(P, id, fixtureBoard, null);
+    assert.deepEqual(info.targets, [], id); assert.match(info.notes[0]!, /^读不到：.{12,}/, `${id}: a reason follows`);
+  }
+  for (const station of ["已合并", "已发布"]) { const info = nodeInfoOf(P, stationNode(station), fixtureBoard, null); assert.deepEqual(info.targets, []); assert.match(info.notes[0]!, /^读不到：调度事件流今天不含合并与发布/); }
+  const closed = nodeInfoOf(P, stationNode("已验收"), fixtureBoard, null, 6);
+  assert.ok(closed.lines.some(l => l.includes("近 6 小时")), "the 已验收 node says its window"); assert.match(closed.targets[0]!.href, /\/work$/);
+});
+
+test("the detail on screen renders a node's links and its 读不到 reasons for a live board, and nothing is invented for a fixture node", () => {
+  const render = (source: "live" | "fixture", selectNode: NodeId) => renderToStaticMarkup(createElement(FlowView, { board: fixtureBoard, events: [], context: fixtureContext, source, selectNode, windowHours: 6,
+    ...(source === "live" ? { nodeInfo: (id: NodeId) => nodeInfoOf(P, id, fixtureBoard, null, 6) } : {}) }));
+  const running = fixtureBoard.sessions.find(x => x.current)!;
+  const live = render("live", `session:${running.sessionId}` as NodeId);
+  assert.match(live, /data-node-detail=""/); assert.match(live, /打开正在做的任务/); assert.match(live, new RegExp(`/tasks/${running.current!.taskId}`));
+  const user = render("live", "people.user");
+  assert.match(user, /data-open-note="">读不到：使用者是人/); assert.doesNotMatch(user, /data-open=""/, "no link is invented");
+  assert.match(render("live", stationNode("已发布")), /读不到：调度事件流今天不含合并与发布/);
+  assert.match(render("fixture", "leader"), /夹具节点没有真实对象/);
 });

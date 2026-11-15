@@ -44,7 +44,7 @@ export function isStuck(event: Pick<SchedEvent, "kind" | "next">): boolean {
 
 // ---- nodes and routes ----
 export type PeopleId = "people.user" | "people.requirements" | "people.scheduler" | "people.notices" | "people.external";
-export type NodeId = PeopleId | "leader" | "packets" | `session:${string}`;
+export type NodeId = PeopleId | "leader" | "packets" | `session:${string}` | `station:${string}`;
 export const PEOPLE: Array<{ id: PeopleId; label: string; sub: string }> = [
   { id: "people.user", label: "使用者", sub: "工作台与对话" }, { id: "people.requirements", label: "需求 Session", sub: "新 Task 与签字" },
   { id: "people.scheduler", label: "定时代班", sub: "日程到点" }, { id: "people.notices", label: "结果通知", sub: "交付与观察产生" }, { id: "people.external", label: "其他身份", sub: "外部会话与未识别" },

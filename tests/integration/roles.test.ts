@@ -29,7 +29,7 @@ test("PG role trial, immutable review, explicit task handoff and retirement gate
   await migrate(url);
   const pool = new pg.Pool({ connectionString: url, max: 3 }); t.after(() => pool.end());
   const projectId = randomUUID(), taskId = randomUUID(), source = randomUUID(), target = randomUUID();
-  const principal: Principal = { actorId: "manager", projectIds: [projectId], permissions: ["write", "review"] };
+  const principal: Principal = { actorId: "manager", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true };
   await pool.query("INSERT INTO project(project_id,title,created_at) VALUES($1,'role fixture',now())", [projectId]);
   const initialRevisionId = randomUUID(), contentDocumentId = randomUUID(), contentRevisionId = randomUUID();
   const initialClient = await pool.connect();

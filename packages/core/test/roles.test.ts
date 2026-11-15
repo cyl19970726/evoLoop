@@ -6,7 +6,7 @@ import type { RoleCommand, RoleProposal, RoleTransaction } from "@evoloop/contra
 import { applyRole, RoleRuleError } from "../src/roles/index.js";
 
 const projectId = randomUUID(), roleId = randomUUID(), taskId = randomUUID();
-const principal: Principal = { actorId: "manager", projectIds: [projectId], permissions: ["write", "review"] };
+const principal: Principal = { actorId: "manager", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true };
 const nowUtc = "2026-10-20T09:00:00.000Z";
 const proposal: RoleProposal = {
   title: "Release stewardship", goal: "Own release health", independentResponsibility: "Judge readiness across releases", ownerScope: "this project releases",
@@ -30,11 +30,11 @@ test("role proposal requires observed evidence, all alternatives and bounded tri
   assert.equal((await applyRole(tx, principal, command(), context)).version, 1);
 });
 
-test("proposal may come from writer; decisions require project reviewer", async () => {
-  const writer = { ...principal, permissions: ["write"] as Principal["permissions"] };
-  assert.equal((await applyRole(tx, writer, command(), { nowUtc, nextId: randomUUID })).version, 1);
-  await assert.rejects(() => applyRole(tx, { ...writer, projectIds: [] }, command(), { nowUtc, nextId: randomUUID }), (error: unknown) => error instanceof RoleRuleError && error.code === "FORBIDDEN");
-  await assert.rejects(() => applyRole(tx, writer, { type: "role.decide", projectId, operationId: randomUUID(), roleId, expectedVersion: 1, decision: "accept-trial", reason: "reviewed" }, { nowUtc, nextId: randomUUID }), (error: unknown) => error instanceof RoleRuleError && error.code === "FORBIDDEN");
+test("module writers cannot propose; project management can propose and decide", async () => {
+  const writer = { ...principal, permissions: ["task", "document", "session"] as Principal["permissions"], decisions: false };
+  await assert.rejects(() => applyRole(tx, writer, command(), { nowUtc, nextId: randomUUID }), (error: unknown) => error instanceof RoleRuleError && error.code === "FORBIDDEN");
+  assert.equal((await applyRole(tx, principal, command(), { nowUtc, nextId: randomUUID })).version, 1);
+  await assert.rejects(() => applyRole(tx, { ...principal, projectIds: [] }, command(), { nowUtc, nextId: randomUUID }), (error: unknown) => error instanceof RoleRuleError && error.code === "FORBIDDEN");
 });
 
 test("reviewer classification appends a Role revision with CAS and keeps proposal evidence", async () => {
@@ -91,7 +91,7 @@ test("proposal cannot associate a template without a matching class", async () =
 });
 
 test("role.revise appends one candidate revision to the same Role and touches nothing else", async () => {
-  const writer = { ...principal, permissions: ["write"] as Principal["permissions"] };
+  const writer = { ...principal, permissions: ["task", "document", "session"] as Principal["permissions"] };
   let current: any = { projectId, id: roleId, version: 3, currentRevisionId: randomUUID(), state: "trial", proposal, proposedBy: "manager",
     createdAtUtc: "2026-10-01T00:00:00.000Z", trialStartedAtUtc: "2026-10-02T00:00:00.000Z", reviewAtUtc: proposal.reviewAtUtc, mergeTargetRoleId: null };
   const advanced: Array<{ expected: number; revision: any }> = [];

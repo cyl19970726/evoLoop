@@ -2,7 +2,7 @@ import { homedir } from "node:os";
 import { dirname, relative, sep } from "node:path";
 import { realpath } from "node:fs/promises";
 import { skillPlanHash } from "@evoloop/adapter-claude-agent-sdk";
-import type { Principal } from "@evoloop/contracts";
+import { hasDecisionAuthority, type Principal } from "@evoloop/contracts";
 import { decideSkill, defaultRoleSkillSelection, missingSkillReferences, type RoleRuntimeSkill, type RoleRuntimeView,
   type RoleSkillSelection } from "@evoloop/contracts/role-skills";
 import { sessionProvider, type RuntimeCapabilityListing, type RuntimeObservedCapabilities, type RuntimeProvider,
@@ -69,7 +69,8 @@ export async function roleRuntimeView(deps: RoleRuntimeViewDeps, principal: Prin
   const grants = deps.roleGrants(projectId, roleId);
   const grantCwds = [...new Set(grants.map(grant => grant.cwd))].sort();
   const grantCwd = grantCwds[0];
-  const mayShowPath = principal.permissions.includes("review") || grants.some(grant => grant.actorId === principal.actorId);
+  const mayShowPath = hasDecisionAuthority(principal, projectId, "management") ||
+    grants.some(grant => grant.actorId === principal.actorId);
   const workDirectory: RoleRuntimeView["workDirectory"] = latest ? { cwd: latest.cwd, source: "session" as const }
     : grantCwd ? { cwd: mayShowPath ? grantCwd : null, source: "grant" as const, grantCount: grantCwds.length, ...mayShowPath ? {} : { hidden: true } } : null;
   const readCwd = latest ? latest.cwd : grantCwd ?? null;

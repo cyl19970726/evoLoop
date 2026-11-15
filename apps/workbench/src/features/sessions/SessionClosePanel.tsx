@@ -134,7 +134,8 @@ export function SessionClosePanel({ context, snapshot, currentRead, onReadAgain 
         {!stateMatches && <p className="text-small text-destructive" role="alert">页面状态与受管登记不一致，请重新读取后再判断。</p>}
         {blockers.length > 0 && <Notice tone="waiting" title="当前不能关闭"><ul className="mt-1 flex list-disc flex-col gap-0.5 pl-5">{blockers.map(item => <li key={item}>{item}</li>)}</ul></Notice>}
         {read && blockers.length === 0 && runtime.state === "ready" && <p className={note}>未在本次已读范围发现未完成任务、队列占用、在途运行或待处理消息；提交时服务端会再次检查。</p>}
-        {canClose && <ActionForm key={`${ownedId}:${runtime.version}`} context={{ ...context, draftScope: `session-close:${ownedId}`, draftBaseline: `${runtime.version}` }} review
+        {canClose && <ActionForm key={`${ownedId}:${runtime.version}`} context={{ ...context, draftScope: `session-close:${ownedId}`, draftBaseline: `${runtime.version}` }}
+          requiredPermissions={["session"]} decision
           title="请求关闭受管智能体" fields={[{ name: "reason", label: "关闭理由与核对依据", kind: "textarea" }]}
           build={values => ({ type: "runtime.session.close", sessionId: ownedId, expectedVersion: runtime.version, reason: values.reason })}
           onApplied={() => { setSubmittedVersion(runtime.version); onReadAgain(); recheck(); }} />}

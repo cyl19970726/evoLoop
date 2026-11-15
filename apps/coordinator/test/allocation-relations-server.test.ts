@@ -22,10 +22,10 @@ test('installed worker guard cannot be bypassed by allocation or Discussion kind
       ...empty, resetRequired: false, canonicalSessionKey: null,
       metadata: { generatedAt: new Date().toISOString(), sourceObservedAt: null, partial: false, limitations: [] } }) }) });
   } } as UnitOfWork;
-  const worker = { principal: { actorId: 'worker-scoped-reader', projectIds: [projectId], permissions: ['read', 'write'] as Array<'read' | 'write'> },
+  const worker = { principal: { actorId: 'worker-scoped-reader', projectIds: [projectId], permissions: ['task','document','session'] as ('task'|'document'|'session'|'management')[] },
     scope: { projectId, loopId, taskId: randomUUID(), runId: randomUUID(), sessionId: randomUUID(), roleId,
       kind: 'business' as const, allowedRoleIds: [roleId] } };
-  const app = await buildServer({ service: workflow, credentials: [{ token, actorId: 'reader', projectIds: [projectId], permissions: ['read'] }],
+  const app = await buildServer({ service: workflow, credentials: [{ token, actorId: 'reader', projectIds: [projectId], permissions: [] }],
     allocationRelations: new AllocationRelationsService({ uow }), workers: {
       authenticate: async header => header === `Bearer ${workerToken}` ? worker : null,
       facts: () => ({ loop: async () => ({ projectId, state: 'active', goalId: randomUUID(), stageId: null,

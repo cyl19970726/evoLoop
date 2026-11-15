@@ -1,6 +1,8 @@
 import { ProviderRoutedRuntime, runtimeForBinding, runtimeForProvider, runtimeProvidersOf } from "./routed.js";
 import { createHash, randomUUID } from "node:crypto";
-import type { BasisSet, Command, EvaluationFixedRef, Principal, RuntimeRunRecord, RuntimeSessionRecord, TaskRevision } from "@evoloop/contracts";
+import { hasDecisionAuthority, hasPermission, isProjectMember, mayAccessSession,
+  type BasisSet, type Command, type EvaluationFixedRef, type Principal, type RuntimeRunRecord,
+  type RuntimeSessionRecord, type TaskRevision } from "@evoloop/contracts";
 import type { RuntimeBinding, RuntimeCapabilityListing, RuntimeCompactionObservation, RuntimeObservedCapabilities, RuntimePage, RuntimePort, RuntimeSessionSpec, RuntimeTurn, EvaluationPacketBinding, RuntimeWorkTrace, RuntimeReconcilePartial } from "@evoloop/contracts/runtime";
 import type { NativeWorkspacePage, NativeWorkspaceReadOptions, WorkspaceRuntimeUpdate } from "@evoloop/contracts/session-timeline";
 import type { BlobStore } from "@evoloop/contracts/sources";
@@ -211,8 +213,8 @@ export class RuntimeRunner {
   }
   async compactionBinding(principal:Principal, projectId:string, sessionId:string,
     expectedVersion:number, threadId:string):Promise<RuntimeBinding>{
-    if(!principal.projectIds.includes(projectId)||!principal.permissions.includes('review')||
-      !principal.permissions.includes('write')||principal.actorId.startsWith('worker-'))
+    if(!hasDecisionAuthority(principal,projectId,'session')||!mayAccessSession(principal,projectId,sessionId)||
+      principal.actorId.startsWith('worker-'))
       throw new DomainError('FORBIDDEN','Compaction requires a project maintenance reviewer');
     if(!this.nativeStartsAvailable()||!this.runtime.isReady())
       throw new DomainError('RUNTIME_UNAVAILABLE','Original owner connection is unavailable');
@@ -280,8 +282,8 @@ export class RuntimeRunner {
     command:Extract<Command,{type:"runtime.session.executionProfile.revise"}>):Promise<void> {
     // Legacy model/policy-only activation uses a different native path.
     if(!command.reasoningEffort)return;
-    if(!principal.projectIds.includes(command.projectId)||!principal.permissions.includes("write")||
-      !principal.permissions.includes("review")||principal.actorId.startsWith("worker-"))
+    if(!hasDecisionAuthority(principal,command.projectId,"session")||
+      !mayAccessSession(principal,command.projectId,command.sessionId)||principal.actorId.startsWith("worker-"))
       throw new DomainError("FORBIDDEN","执行配置修订需要本项目复核者的写入与复核权限。");
     const session=await this.deps.workflow.getRuntimeSession(principal,command.projectId,command.sessionId);
     if(session.projectId!==command.projectId||session.id!==command.sessionId)
@@ -359,6 +361,7 @@ export class RuntimeRunner {
   async workspaceHistory(principal:Principal,projectId:string,sessionId:string,
     options:NativeWorkspaceReadOptions):Promise<NativeWorkspacePage>{
     const session=await this.deps.workflow.getRuntimeSession(principal,projectId,sessionId);
+    this.requireFullSessionRead(principal, session);
     if(session.projectId!==projectId||session.id!==sessionId||!session.nativeThreadId||!session.nativeSessionId)
       throw new DomainError("RUNTIME_READ_UNAVAILABLE","此会话没有可验证的原生历史绑定。");
     if(!this.runtime.readWorkspaceHistory)
@@ -423,13 +426,13 @@ export class RuntimeRunner {
     }
   }
   private principal(projectId: string): Principal {
-    const principal = this.deps.principals.find(p => p.projectIds.includes(projectId) && p.permissions.includes("read") && p.permissions.includes("write"));
+    const principal = this.deps.principals.find(p => hasPermission(p, projectId, "session"));
     if (!principal) throw new Error("Project authority is unavailable");
     return principal;
   }
   private async authorized(session: RuntimeSessionRecord, actorId = session.actorId): Promise<boolean> {
-    return this.deps.principals.some(p => p.actorId === actorId && p.projectIds.includes(session.projectId) &&
-      p.permissions.includes("read") && p.permissions.includes("write") && p.permissions.includes("review")) &&
+    return this.deps.principals.some(p => p.actorId === actorId &&
+      hasDecisionAuthority(p, session.projectId, "session") && mayAccessSession(p, session.projectId, session.id)) &&
       await this.deps.hasGrant({ projectId: session.projectId, actorId, roleId: session.roleId,
         authorizationScope: session.authorizationScope, cwd: session.cwd, sandbox: session.sandbox,
         model: session.model, approvalPolicy: session.approvalPolicy }, session);
@@ -796,12 +799,24 @@ export class RuntimeRunner {
   }
   /** Register provenance and inspect metadata for reads without opening another native writer. */
   private async readBinding(session: RuntimeSessionRecord): Promise<RuntimeBinding> {
-    if (!(await this.authorized(session) && await this.deps.allowedCwd(session.projectId, session.cwd) || await this.owned(session)))
+    if (!(await this.readAuthorized(session) && await this.deps.allowedCwd(session.projectId, session.cwd) || await this.owned(session)))
       throw new DomainError("FORBIDDEN", "当前会话授权或工作目录已失效，无法读取原生历史。");
     const binding = bindingOf(session);
     await this.runtime.registerBinding(binding);
     await this.runtime.inspect(binding);
     return binding;
+  }
+  private async readAuthorized(session: RuntimeSessionRecord, actorId = session.actorId): Promise<boolean> {
+    return this.deps.principals.some(p => p.actorId === actorId &&
+      hasPermission(p, session.projectId, "session") && mayAccessSession(p, session.projectId, session.id)) &&
+      await this.deps.hasGrant({ projectId: session.projectId, actorId, roleId: session.roleId,
+        authorizationScope: session.authorizationScope, cwd: session.cwd, sandbox: session.sandbox,
+        model: session.model, approvalPolicy: session.approvalPolicy }, session);
+  }
+  private requireFullSessionRead(principal: Principal, session: RuntimeSessionRecord): void {
+    if (!hasPermission(principal, session.projectId, "session") ||
+        !mayAccessSession(principal, session.projectId, session.id))
+      throw new DomainError("FORBIDDEN", "读取完整原生记录需要对此 Session 的 Session 权限。");
   }
   private readFailure(error: unknown): DomainError {
     if (error instanceof DomainError) return error;
@@ -811,6 +826,7 @@ export class RuntimeRunner {
   }
   async history(principal: Principal, projectId: string, sessionId: string) {
     const session = await this.deps.workflow.getRuntimeSession(principal, projectId, sessionId);
+    this.requireFullSessionRead(principal, session);
     try {
       const binding = await this.readBinding(session);
       const turns: RuntimeTurn[] = [];
@@ -998,7 +1014,7 @@ export class RuntimeRunner {
   }
 
   async readEvaluationPacket(principal: Principal, projectId: string, runId: string) {
-    if (!principal.projectIds.includes(projectId) || !principal.permissions.includes("read"))
+    if (!isProjectMember(principal, projectId))
       throw new Error("Project read authority is unavailable for evaluation packet");
     const run = await this.deps.workflow.getRuntimeRun(principal, projectId, runId);
     if (run.projectId !== projectId || !run.evaluationBinding || !run.evaluationPacket)
@@ -1256,6 +1272,7 @@ export class RuntimeRunner {
     const run = await this.deps.workflow.getRuntimeRun(principal, projectId, runId);
     if (!run.nativeTurnId) throw new DomainError("RUNTIME_READ_UNAVAILABLE", "此运行尚未绑定原生 Turn，没有可确认的原生答复；请先阅读运行回执。");
     const session = await this.deps.workflow.getRuntimeSession(principal, projectId, run.sessionId);
+    this.requireFullSessionRead(principal, session);
     try {
       const binding = await this.readBinding(session);
       // The persisted owned binding and exact Turn ID identify the result.
@@ -1272,7 +1289,7 @@ export class RuntimeRunner {
       "projectId" | "id" | "taskId" | "taskRevisionId" | "inputHash" | "state" | "nativeTurnId">> {
     const scope = identity.scope;
     if (identity.principal.actorId !== principal.actorId || scope.projectId !== projectId ||
-        !principal.projectIds.includes(projectId) || !principal.permissions.includes("read") ||
+        !isProjectMember(principal, projectId) ||
         !this.deps.workerTraceAuthority)
       throw new DomainError("FORBIDDEN", "受管读取者身份或固定引用不可用。");
     const reader = await this.deps.workflow.getRuntimeRun(principal, projectId, scope.runId);
@@ -1293,13 +1310,16 @@ export class RuntimeRunner {
   }
   async trace(principal: Principal, projectId: string, runId: string, initialCursor?: string,
     workerIdentity?: WorkerIdentity, turnCursor?: string): Promise<RuntimeWorkTrace> {
-    const reviewer = !!principal.actorId && principal.projectIds.includes(projectId) && principal.permissions.includes("read") &&
-      principal.permissions.includes("review") && this.deps.principals.some(p => p.actorId === principal.actorId &&
-        p.projectIds.includes(projectId) && p.permissions.includes("read") && p.permissions.includes("review"));
-    if (workerIdentity) await this.workerFixedRunMetadata(principal, projectId, runId, workerIdentity);
-    else if (!reviewer) throw new DomainError("FORBIDDEN", "读取工作轨迹需要本项目读取和复核权限。");
-    if (!this.runtime.readWorkPage) throw new DomainError("RUNTIME_READ_UNAVAILABLE", "当前执行适配器不支持工作轨迹读取。");
     const run = await this.deps.workflow.getRuntimeRun(principal, projectId, runId);
+    if (workerIdentity) await this.workerFixedRunMetadata(principal, projectId, runId, workerIdentity);
+    else {
+      const session = await this.deps.workflow.getRuntimeSession(principal, projectId, run.sessionId);
+      this.requireFullSessionRead(principal, session);
+      if (!this.deps.principals.some(p => p.actorId === principal.actorId &&
+          hasPermission(p, projectId, "session") && mayAccessSession(p, projectId, run.sessionId)))
+        throw new DomainError("FORBIDDEN", "读取工作轨迹需要本 Session 的 Session 权限。");
+    }
+    if (!this.runtime.readWorkPage) throw new DomainError("RUNTIME_READ_UNAVAILABLE", "当前执行适配器不支持工作轨迹读取。");
     if (run.projectId !== projectId || !run.nativeTurnId)
       throw new DomainError("RUNTIME_READ_UNAVAILABLE", "此运行尚无可核对的受管原生 Turn。");
     const session = await this.deps.workflow.getRuntimeSession(principal, projectId, run.sessionId);
@@ -1333,12 +1353,14 @@ export class RuntimeRunner {
   async reconcile(principal: Principal, projectId: string, runId: string, expectedVersion: number, reason: string,
     turnCursor?: string): Promise<RuntimeRunRecord | RuntimeReconcilePartial> {
     if (!this.available || !this.runtime.isReady() || !this.deps.canWrite()) throw new Error("Runtime readback is unavailable");
-    if (!principal.actorId || !principal.projectIds.includes(projectId) || !principal.permissions.includes("read") ||
-      !principal.permissions.includes("review") || !this.deps.principals.some(p => p.actorId === principal.actorId &&
-        p.projectIds.includes(projectId) && p.permissions.includes("read") && p.permissions.includes("review")))
+    if (!principal.actorId || !hasDecisionAuthority(principal, projectId, "session") ||
+      !this.deps.principals.some(p => p.actorId === principal.actorId &&
+        hasDecisionAuthority(p, projectId, "session")))
       throw new Error("Project review authority is unavailable");
     if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 1 || !reason.trim()) throw new Error("Version and review reason are required");
     const run = await this.deps.workflow.getRuntimeRun(principal, projectId, runId);
+    if (!mayAccessSession(principal, projectId, run.sessionId))
+      throw new Error("Session-scoped review authority is unavailable");
     if (run.version !== expectedVersion || !run.nativeTurnId || !["completed", "failed", "interrupted"].includes(run.state))
       throw new Error("Bound terminal run version is required for readback");
     const session = await this.deps.workflow.getRuntimeSession(principal, projectId, run.sessionId);

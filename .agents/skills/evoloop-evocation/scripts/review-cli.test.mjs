@@ -12,7 +12,7 @@ const projectId='11111111-1111-4111-8111-111111111111';
 // A file-backed stand-in for the project CLI, shared by the tests below.
 const providerSource=`import fs from 'node:fs';import{randomUUID}from'node:crypto';const[file,...a]=process.argv.slice(2),s=JSON.parse(fs.readFileSync(file));let r;
 const find=id=>s.docs.find(d=>d.id===id);
-if(a[0]==='session')r={principal:{actorId:'author',projectIds:['${projectId}'],permissions:['read','write']},capabilities:{organizationReviewDocuments:true,documentOriginals:true}};
+if(a[0]==='session')r={principal:{actorId:'author',projectIds:['${projectId}'],permissions:['task', 'document', 'session']},capabilities:{organizationReviewDocuments:true,documentOriginals:true}};
 else if(a[0]==='command'||a[0]==='request'){
 const q=JSON.parse(fs.readFileSync(a[0]==='request'?a[a.indexOf('--file')+1]:a[2])),c=q.command??q;
 const body=q.command?Buffer.from(q.uploads.find(u=>u.blobId===c.source.payloadRef).base64,'base64').toString('utf8'):c.body;

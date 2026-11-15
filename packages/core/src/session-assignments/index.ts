@@ -1,4 +1,4 @@
-import type { AppliedResult, Principal, Task } from "@evoloop/contracts";
+import { hasDecisionAuthority, hasPermission, type AppliedResult, type Principal, type Task } from "@evoloop/contracts";
 import { DomainError, type Transaction } from "@evoloop/contracts/ports";
 import type { SessionAssignmentCommand, SessionAssignmentTransaction, SessionProfileRecord, TaskSessionAssignment } from "@evoloop/contracts/session-assignments";
 import type { SessionTarget } from "@evoloop/contracts/session-work";
@@ -55,8 +55,8 @@ async function acknowledgedRevision(tx: Transaction, task: Task,
 }
 /** The WorkflowService owns operation-journal idempotence and transaction boundaries. */
 export async function applySessionAssignment({ tx, command, principal, now }: SessionAssignmentContext): Promise<AppliedResult> {
-  if (!principal.actorId || !principal.projectIds.includes(command.projectId) || !principal.permissions.includes("write"))
-    fail("FORBIDDEN", "Actual project principal with write access required");
+  if (!hasPermission(principal, command.projectId, "task"))
+    fail("FORBIDDEN", "Actual project principal with Task access required");
   const store = tx.sessionAssignments ?? fail("CAPABILITY_UNAVAILABLE", "Session assignment storage is unavailable");
   if (command.type === "session.identity.set") {
     await targetRole(tx, command.projectId, command.target, true);
@@ -69,7 +69,7 @@ export async function applySessionAssignment({ tx, command, principal, now }: Se
     return result(command, command.target.kind === "owned" ? command.target.sessionId : command.target.linkId, identity.version);
   }
   if (command.type === "session.profile.set") {
-    if (!principal.permissions.includes("review")) fail("FORBIDDEN", "Session profile requires review authority");
+    if (!hasDecisionAuthority(principal, command.projectId, "session")) fail("FORBIDDEN", "Session profile requires Session decision authority");
     await targetRole(tx, command.projectId, command.target, true);
     const previous = await store.getSessionProfile(command.target);
     ensureVersion(previous?.version ?? 0, command.expectedVersion, "Session profile");
@@ -91,7 +91,7 @@ export async function applySessionAssignment({ tx, command, principal, now }: Se
   if (command.type === "task.assignment.set" || command.type === "task.assignment.release")
     await tx.sessionLines?.assertNotQueuedInLine(task.id, command.operationId);
   if (command.type === "task.assignment.set") {
-    if (!principal.permissions.includes("review")) fail("FORBIDDEN", "Assignment requires review authority");
+    if (!hasDecisionAuthority(principal, command.projectId, "task")) fail("FORBIDDEN", "Assignment requires Task decision authority");
     const roleId = await targetRole(tx, command.projectId, command.target);
     if (task.owner !== roleId) fail("ROLE_MISMATCH", "Task owner must match the target Session role");
     const role = requireRecord(await tx.getRole(roleId), "Role");
@@ -107,7 +107,7 @@ export async function applySessionAssignment({ tx, command, principal, now }: Se
   }
   if (!previous || previous.state === "released") throw new DomainError("ASSIGNMENT_INACTIVE", "Task has no active assignment");
   if (command.type === "task.assignment.release") {
-    if (!principal.permissions.includes("review")) fail("FORBIDDEN", "Release requires review authority");
+    if (!hasDecisionAuthority(principal, command.projectId, "task")) fail("FORBIDDEN", "Release requires Task decision authority");
     await store.assertTaskAssignmentMovable(task.id);
     const record: TaskSessionAssignment = { ...previous, version: previous.version + 1, state: "released",
       actorId: principal.actorId, reason: command.reason, updatedAt: now };
@@ -118,9 +118,8 @@ export async function applySessionAssignment({ tx, command, principal, now }: Se
   if (command.type === "task.assignment.acknowledge") {
     if (!previous.recipientActorId || previous.recipientActorId !== principal.actorId)
       fail("RECIPIENT_MISMATCH", "Only the designated recipient can acknowledge directly");
-    if (!principal.permissions.includes("read")) fail("FORBIDDEN", "Direct acknowledgement requires read access");
-  } else if (!principal.permissions.includes("review")) {
-    fail("FORBIDDEN", "Observed acceptance requires review authority");
+  } else if (!hasDecisionAuthority(principal, command.projectId, "task")) {
+    fail("FORBIDDEN", "Observed acceptance requires Task decision authority");
   }
   if (command.type === "task.assignment.acknowledge" && command.verdict === undefined) {
     // While a Session line waits for this Task's execution confirmation, a plain acknowledgement says nothing it can act on.

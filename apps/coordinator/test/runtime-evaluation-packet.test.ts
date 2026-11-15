@@ -33,7 +33,7 @@ const olderBody = "# Previously adopted source\nKeep the fixed scope.";
 const primaryRef: EvaluationFixedRef = { kind: "document", id: primaryDocumentId, revision: primaryRevisionId, contentHash: primaryHash };
 const protocolRef: EvaluationFixedRef = { kind: "document", id: randomUUID(), revision: randomUUID(), contentHash: "a".repeat(64) };
 const commonRef: EvaluationFixedRef = { kind: "document", id: randomUUID(), revision: randomUUID(), contentHash: "b".repeat(64) };
-const principal: Principal = { actorId, projectIds: [projectId], permissions: ["read", "write", "review"] };
+const principal: Principal = { actorId, projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true };
 
 const session: RuntimeSessionRecord = {
   projectId, id: sessionId, roleId: "evaluation-role", cwd: "/tmp/evoloop-evaluation", authorizationScope: "task:bounded",

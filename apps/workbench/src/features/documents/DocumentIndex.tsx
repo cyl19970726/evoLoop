@@ -2,6 +2,7 @@
 // (docs/frontend/pages/documents.md). Search and filters sit in the rail while it is on screen, otherwise above
 // the table, so the page never shows two search boxes.
 import { useState } from "react";
+import { hasPermission } from "@evoloop/contracts";
 import { Button } from "@evoloop/ui";
 import { ActionForm, option, type MutationContext } from "../../shared/ActionForm";
 import { useContextRailShown } from "../../shared/ui/ContextRail";
@@ -23,7 +24,7 @@ export function DocumentIndex({ context }: { context: MutationContext }) {
   useRereadOnReturn(() => void list.reread());
   const railShown = useContextRailShown();
   const [create, setCreate] = useState(false);
-  const canWrite = context.principal.permissions.includes("write");
+  const canWrite = hasPermission(context.principal, projectId, "document");
   const toolbar = railShown ? null : <div className="flex flex-col gap-2.5">
     <ReadingSpaceSwitch projectId={projectId} current="documents" className="w-40" />
     <div className="flex flex-wrap items-center gap-2">
@@ -47,7 +48,7 @@ export function DocumentIndex({ context }: { context: MutationContext }) {
       <h2 className="text-heading font-semibold text-foreground">保存过程文档</h2>
       {/* Both are the shared command form: a Markdown text written here, or an original uploaded as a file. */}
       <div className="flex min-w-0 flex-col gap-3">
-        <ActionForm context={context} title="创建 Markdown 文档" fields={[{ name: "title", label: "文档名称", maxLength: 240 },
+        <ActionForm context={context} title="创建 Markdown 文档" requiredPermissions={["document"]} fields={[{ name: "title", label: "文档名称", maxLength: 240 },
           { name: "kind", label: "类型（可选）", kind: "select", optional: true, options: Object.entries(kindLabel)
             .filter(([key]) => key !== "task" && key !== "organization_review").map(([key, label]) => option(key, label)) },
           { name: "body", label: "完整 Markdown 正文", kind: "textarea", maxLength: 65536 }]}

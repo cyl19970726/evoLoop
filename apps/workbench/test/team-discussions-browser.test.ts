@@ -39,7 +39,8 @@ type Next = "apply" | "lose" | { reject: string; then?: () => void };
 
 function fixture(start: { status: string; version: number; head: number; registered: number; permissions?: string[] }) {
   const state = {
-    permissions: start.permissions ?? ["read", "write", "review"],
+    permissions: start.permissions ?? ["task", "document", "session", "management"],
+    decisions: true,
     discussion: { projectId, id: id(30), version: start.version, kind: "allocation", status: start.status, documentId: id(10), preparedDocumentRevisionId: id(10 + 1),
       currentDocumentRevisionId: id(10 + start.registered), latestDecisionEventId: null as string | null, goal: { id: id(1), version: 2 }, stage: { id: id(2), version: 1 },
       task: { id: id(3), revisionId: id(4) }, adoptedDocuments: [{ documentId: id(7), revisionId: id(8) }], question, options: ["前端实现职责接手", "统筹另派"],
@@ -384,7 +385,7 @@ test("分工讨论 refuses to send on a changed baseline or a stale answer, reco
 });
 
 test("分工讨论 shows only the writes the identity may make, and says 无法判断 when a check cannot be read", { skip }, async t => {
-  const { state, server } = fixture({ status: "prepared", version: 1, head: 1, registered: 1, permissions: ["read"] });
+  const { state, server } = fixture({ status: "prepared", version: 1, head: 1, registered: 1, permissions: [] });
   const { login } = await open(t, server);
   const reader = await login(`/p/${projectId}/discussions`);
   await reader.center.getByText("原文已核对").first().waitFor();
@@ -398,7 +399,7 @@ test("分工讨论 shows only the writes the identity may make, and says 无法�
   assert.deepEqual(reader.errors, []);
 
   // A writer whose package and document head cannot be read: the page says it cannot judge, and offers no write.
-  state.permissions = ["read", "write", "review"]; state.discussion.status = "prepared"; state.failHead = true; state.failPackage = true;
+  state.permissions = ["task", "document", "session", "management"]; state.discussion.status = "prepared"; state.failHead = true; state.failPackage = true;
   const writer = await login(`/p/${projectId}/discussions`);
   await writer.center.getByText("无法核对").first().waitFor({ timeout: 15000 });
   assert.equal(await writer.center.getByText("原文已核对").count(), 0, "a failed check is never shown as checked");

@@ -16,7 +16,7 @@ const pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`}
 const hash=(s:string)=>createHash('sha256').update(s).digest('hex');
 const projectId=randomUUID(),roleId=randomUUID(),roleRevision=randomUUID(),sessionId=randomUUID(),taskA=randomUUID(),taskB=randomUUID();
 const queueId=randomUUID(),entryA=randomUUID(),entryB=randomUUID(),claimId=randomUUID(),runA=randomUUID(),originalM=randomUUID();
-const lead={actorId:'lead',projectIds:[projectId],permissions:['read','write','review'] as Array<'read'|'write'|'review'>};
+const lead={actorId:'lead',projectIds:[projectId],permissions:['task','document','session','management'] as ('task'|'document'|'session'|'management')[],decisions:true};
 const uow=new PostgresUnitOfWork(pool,{grant:async()=>true,binding:async()=>true,lead:async()=>true,
   input:async(reader,id)=>canonicalTaskInputJson(await taskInputSignature(reader,(await reader.getTask(id))!))});
 const clock={now:()=>new Date().toISOString()},ids={next:randomUUID};

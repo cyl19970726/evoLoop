@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import type { Principal } from "@evoloop/contracts";
+import { hasDecisionAuthority, hasPermission, isProjectMember, mayAccessSession, type Principal } from "@evoloop/contracts";
 import { connectorRouteSchema, versionedConnectorRouteSchema,
   type ConnectorRoute, type ConnectorRoutePage, type ConnectorRouteRecord,
   type VersionedConnectorRoute } from "@evoloop/contracts/message-connectors";
@@ -34,9 +34,9 @@ export function registerConnectorRouteReads(app: FastifyInstance, workflow: Work
   routes: ConnectorRouteReader, canWrite: () => boolean, deliveries?:ConnectorDeliveryReader,
   sources?:ConnectorSourceReader, canActivate?:(route:VersionedConnectorRoute)=>Promise<boolean>): void {
   const identity = async (principal: Principal | null, projectId: string, write = false) => {
-    if (!principal || !principal.projectIds.includes(projectId) || !principal.permissions.includes("read"))
+    if (!principal || !isProjectMember(principal, projectId))
       throw new DomainError("FORBIDDEN", "Connector routes require project read permission");
-    if (write && (!principal.permissions.includes("write") || !principal.permissions.includes("review")))
+    if (write && !hasDecisionAuthority(principal, projectId, "management"))
       throw new DomainError("FORBIDDEN", "Connector route configuration requires project review authority");
     await workflow.getProject(principal, projectId);
     if (write && !canWrite()) throw new DomainError("COORDINATOR_READ_ONLY", "Coordinator lease is read only");
@@ -82,7 +82,8 @@ export function registerConnectorRouteReads(app: FastifyInstance, workflow: Work
     const route=await routes.get(projectId,bindingId);
     const source=await sources?.getByMessageId(projectId,input.sourceMessageId);
     if(!route||route.mode!=='standard'||route.state==='disabled'||!source||source.bindingId!==bindingId||
-      request.principal?.actorId!==route.targetActorId||!request.principal.permissions.includes('write')||
+      request.principal?.actorId!==route.targetActorId||!hasPermission(request.principal,projectId,'session')||
+      !mayAccessSession(request.principal,projectId,input.targetSessionId)||
       !route.internalTargets.includes(input.targetSessionId))
       throw new DomainError('CONNECTOR_TRANSFER_REFUSED','Source, sender, or internal target is outside the reviewed route');
     const command={type:'session.message.post' as const,projectId,operationId:input.operationId,

@@ -7,7 +7,8 @@ const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-
 const sha = (value: string) => createHash("sha256").update(value).digest();
 const metadataFile = "metadata.json", secretFile = "credential", wrapperFile = "worker-cli.mjs";
 const principalFor = (metadata: WorkerMetadata) => ({actorId: metadata.actorId, projectIds: [metadata.scope.projectId],
-  permissions: metadata.scope.kind === "cognition" ? ["read", "write", "review"] as const : ["read", "write"] as const});
+  permissions: ["task", "document", "session"] as const,
+  sessionIds: [metadata.scope.sessionId], decisions: metadata.scope.kind === "cognition", identityKind: "agent" as const});
 
 function validateScope(scope: WorkerScope): void {
   for (const key of ["projectId", "loopId", "taskId", "runId", "sessionId"] as const)

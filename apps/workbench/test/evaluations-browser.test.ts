@@ -73,7 +73,7 @@ async function start(t: TestContext, handle: Handler) {
       const root = `/api/projects/${projectId}`;
       let answer = await handle(url, req, body);
       if (!answer) {
-        if (url.pathname === "/api/session") answer = { value: { principal: { actorId: "reviewer", projectIds: [projectId], permissions: ["read", "write", "review"] }, capabilities: {} } };
+        if (url.pathname === "/api/session") answer = { value: { principal: { actorId: "reviewer", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true }, capabilities: {} } };
         else if (url.pathname === root) answer = { value: { id: projectId, title: "评价回归项目", createdAt: stamp } };
         else if (url.pathname.endsWith("/impacts")) answer = { value: [] };
         else answer = { value: { items: [], nextCursor: null } };
