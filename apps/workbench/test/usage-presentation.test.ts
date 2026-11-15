@@ -6,6 +6,9 @@ import { budgetText, contextText, costText, tokenText, usageDayText } from "../s
 test("usage keeps an unreported cost out of $0 and never turns unknown tokens into zero", () => {
   assert.equal(costText({ costUsd: 0, costReported: false }), "未报告");
   assert.equal(costText({ costUsd: 0.0123, costReported: true }), "$0.0123");
+  assert.equal(costText({ costUsd: 0.0123, costReported: true, costScope: "all_turns" }), "$0.0123");
+  assert.equal(costText({ costUsd: 0.0123, costReported: true, costScope: "runs_only" }), "$0.0123（此前只含 Run）", "a day recorded before cost covered message Turns says so");
+  assert.equal(costText({ costUsd: 0, costReported: false, costScope: "runs_only" }), "未报告");
   assert.equal(tokenText(null), "未知");
   assert.equal(tokenText(9_999), "9999");
   assert.equal(tokenText(186_000), "18.6 万");
