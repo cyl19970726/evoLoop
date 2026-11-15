@@ -912,6 +912,7 @@ export class WorkflowService {
                   actorId:principal.actorId}});
               effects.push(...reserved.effects);
               const opened=await applyTaskCollaboration({tx,principal,now,nextId:()=>this.deps.ids.next(),hasher:this.deps.hasher,
+                queueClaimChannel:true,
                 command:{type:"discussion.openTask",projectId:command.projectId,operationId:command.operationId,
                   discussionId,documentId,title:`Task ${task.title}`,task:{id:task.id,revisionId:reserved.result.revisionId!},
                   runId:command.runId,sessionId:entry.sessionId,recipientActorId:recipient},

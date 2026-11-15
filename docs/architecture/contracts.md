@@ -33,7 +33,7 @@
 
 **逐命令映射。** 下面是 `commandPermissionPolicy` 的完整清单；每个命令恰好出现一次。“决定权”为“是”时，除了对象类别还须 `decisions: true`（或人类身份）。新增命令若没有登记，类型检查和该命令的运行时授权都会失败。
 
-派发入口按**原命令的实际发起者**检查决定权：`line.*`、`queue.*` 与 `schedule.dispatch.*`、`schedule.directList.*`、`schedule.directEntry.*` 都是决定类。队伍泵、直派分发器或排队泵之后可以用已具决定权的控制器主体执行推进，但不会把该权利借给只有 `management` 的发起者；拒绝发生在前置授权阶段，因而不会先写入队伍条目、确认请求、assignment 或 Run。定时直派仍须具决定权的日程授权与控制器凭据，直派分发到 Session 队伍时再次核验实际分发主体。
+派发入口按**原命令的实际发起者**检查决定权：`line.*`、`queue.*` 与 `schedule.dispatch.*`、`schedule.directList.*`、`schedule.directEntry.*` 都是决定类。队伍泵、直派分发器或排队泵之后可以用已具决定权的控制器主体执行推进，但不会把该权利借给只有 `management` 的发起者；拒绝发生在前置授权阶段，因而不会先写入队伍条目、确认请求、assignment 或 Run。定时直派仍须具决定权的日程授权与控制器凭据，直派分发到 Session 队伍时再次核验实际分发主体。一次成功 `queue.claim` 在同一事务内打开该 Run 的 Task 协作通道；这个内部步骤沿用已核的 `management` 决定权，不要求控制者另持 `task` 类别，也不改变 `task.start` 自身的决定类门控。
 
 | 命令 | 对象类别 | 决定权 |
 | --- | --- | --- |

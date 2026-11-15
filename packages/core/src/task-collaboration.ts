@@ -7,6 +7,7 @@ import { parseQueueHandoff } from "@evoloop/contracts/runtime-handoff";
 interface Context { tx: Transaction; command: TaskCollaborationCommand; principal: Principal; now: string;
   nextId(): string; hasher: ContentHasher; isAuthorizedRoleActor(projectId: string, actorId: string, roleId: string): Promise<boolean>;
   isProjectActor(projectId: string, actorId: string): Promise<boolean>;
+  queueClaimChannel?: boolean;
   hasEngineeringActionGrant(principal: Principal, action: Extract<TaskCollaborationPayload, { type: "action_request" }>,
     actualProjectId:string): Promise<boolean> }
 const fail = (code: string, message: string, version?: number): never => { throw new DomainError(code, message, version); };
@@ -48,10 +49,13 @@ const actionRequestOf = (item: DiscussionEvent): Extract<TaskCollaborationPayloa
 
 export async function applyTaskCollaboration(ctx: Context): Promise<{ result: AppliedResult; effects: Array<{ kind: string; entityId: string; version: number }> }> {
   const { tx, command, principal, now } = ctx;
-  if (!hasPermission(principal, command.projectId, "task"))
+  const queueClaimChannel = command.type === "discussion.openTask" && ctx.queueClaimChannel === true &&
+    hasDecisionAuthority(principal, command.projectId, "management");
+  if (!hasPermission(principal, command.projectId, "task") && !queueClaimChannel)
     fail("FORBIDDEN", "Actual project principal with Task access required");
   if (command.type === "discussion.openTask") {
-    if (!hasDecisionAuthority(principal, command.projectId, "task")) fail("FORBIDDEN", "Opening a Task channel requires Task decision authority");
+    if (!queueClaimChannel && !hasDecisionAuthority(principal, command.projectId, "task"))
+      fail("FORBIDDEN", "Opening a Task channel requires Task decision authority");
     if (principal.actorId === command.recipientActorId) fail("INVALID_PARTICIPANTS", "Issuer and recipient must differ");
     if (await tx.getDiscussion(command.discussionId) || await tx.getDocument(command.documentId)) fail("ALREADY_EXISTS", "Discussion or Document already exists");
     const task = need(await tx.getTask(command.task.id), "Task");

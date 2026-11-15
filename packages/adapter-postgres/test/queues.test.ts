@@ -71,6 +71,69 @@ test('management-only and task-only identities cannot arrange resident queue wor
   const held=await refusal(taskOnly,{type:'queue.hold',queueId:randomUUID(),entryId:randomUUID(),reason:'must not arrange work'});
   assert.equal(held.code,'FORBIDDEN');
 });
+test('management+decisions queue controller claims through the real pump without Task permission',async()=>{
+  const p=randomUUID(),roleId=randomUUID(),roleRevisionId=randomUUID(),taskId=randomUUID(),sessionId=randomUUID();
+  const refusedQueueId=randomUUID(),refusedEntryId=randomUUID(),queueId=randomUUID(),entryId=randomUUID();
+  const setup:Principal={actorId:'setup',projectIds:[p],permissions:['task','document','session','management'],decisions:true};
+  const author:Principal={actorId:'task-author',projectIds:[p],permissions:['task'],decisions:true};
+  const controller:Principal={actorId:'queue-controller',projectIds:[p],permissions:['management'],decisions:true};
+  const managementOnly:Principal={actorId:'management-only',projectIds:[p],permissions:['management']};
+  const centralUow=new PostgresUnitOfWork(pool,{grant:async()=>true,binding:async()=>true,lead:async()=>true,
+    input:async(reader,id)=>canonicalTaskInputJson(await taskInputSignature(reader,(await reader.getTask(id))!))});
+  const central=new WorkflowService({uow:centralUow,clock:{now:()=>new Date().toISOString()},ids:{next:randomUUID},hasher:{hash},
+    collaborationAuthority:{actorForRole:async()=> 'worker',isAuthorizedRoleActor:async()=>true,
+      isProjectActor:async()=>true,hasEngineeringActionGrant:async()=>false}});
+  const native=new RuntimeWorkflowService({uow:centralUow,clock:{now:()=>new Date().toISOString()},ids:{next:randomUUID}});
+  const apply=async(who:Principal,command:Parameters<typeof central.execute>[1])=>{
+    const result=await central.execute(who,command);assert.equal(result.status,'applied',JSON.stringify(result));return result;};
+  await apply(setup,{type:'project.create',projectId:p,operationId:randomUUID(),title:'Queue authorization'});
+  const setupRole=await pool.connect();try{await setupRole.query('BEGIN');
+    await setupRole.query(`INSERT INTO role_definition(project_id,role_id,version,current_revision_id,state,proposed_by,created_at_utc,review_at_utc,trial_started_at_utc)
+      VALUES($1,$2,1,$3,'trial','setup',now(),now()+interval '1 day',now())`,[p,roleId,roleRevisionId]);
+    await setupRole.query(`INSERT INTO role_revision(project_id,role_id,revision_id,version,state,proposal,actor_id,reason,created_at_utc,review_at_utc)
+      VALUES($1,$2,$3,1,'trial','{}'::jsonb,'setup','trial',now(),now()+interval '1 day')`,[p,roleId,roleRevisionId]);
+    await setupRole.query('COMMIT');
+  }catch(error){await setupRole.query('ROLLBACK');throw error;}finally{setupRole.release();}
+  await apply(author,{type:'task.create',projectId:p,operationId:randomUUID(),taskId,title:'Queued Task',content:'Fixed work',acceptance:'Accepted result',owner:roleId});
+  await apply(author,{type:'task.start',projectId:p,operationId:randomUUID(),taskId,expectedVersion:1,reason:'Fix source'});
+  await apply(setup,{type:'runtime.session.reserve',projectId:p,operationId:randomUUID(),sessionId,roleId,
+    cwd:'/tmp/queue-authorization',authorizationScope:'project',sandbox:'danger-full-access',approvalPolicy:'never'});
+  await native.beginSessionCreate(p,sessionId);
+  await native.bindSession(p,sessionId,await withExecutionProfile(p,sessionId,{owner:'evoloop-codex-app-server',projectId:p,
+    sessionId,roleId,cwd:'/tmp/queue-authorization',authorizationScope:'project',nativeThreadId:`thread-${sessionId}`,nativeSessionId:`native-${sessionId}`}));
+  await pool.query(`INSERT INTO role_session_binding(project_id,binding_id,role_id,session_id,role_revision_id,actor_id,note,created_at_utc)
+    VALUES($1,$2,$3,$4,$5,'setup','owned',now())`,[p,randomUUID(),roleId,sessionId,roleRevisionId]);
+  const task=(await central.getTask(setup,p,taskId)).task;
+  await assert.rejects(central.execute(managementOnly,{type:'queue.create',projectId:p,operationId:randomUUID(),queueId:refusedQueueId,
+    maxRuns:1,reason:'Management alone must not arrange work',entries:[{id:refusedEntryId,taskId,taskRevisionId:task.currentRevisionId,
+      sessionId,roleId,dependsOn:[],consumerId:'lead',useRequired:true,releaseRule:'accepted'}]}),
+  error=>error instanceof Error&&'code' in error&&error.code==='FORBIDDEN');
+  assert.deepEqual((await pool.query(`SELECT
+      (SELECT count(*)::int FROM resident_queue WHERE project_id=$1 AND queue_id=$2) AS queues,
+      (SELECT count(*)::int FROM resident_queue_entry WHERE project_id=$1 AND queue_id=$2) AS entries,
+      (SELECT count(*)::int FROM task_session_assignment WHERE project_id=$1 AND task_id=$3) AS assignments,
+      (SELECT count(*)::int FROM runtime_run WHERE project_id=$1 AND task_id=$3) AS runs,
+      (SELECT count(*)::int FROM task_assignment_confirmation WHERE project_id=$1 AND task_id=$3) AS confirmations`,
+    [p,refusedQueueId,taskId])).rows[0],{queues:0,entries:0,assignments:0,runs:0,confirmations:0});
+  await apply(controller,{type:'queue.create',projectId:p,operationId:randomUUID(),queueId,maxRuns:1,reason:'Controller owns this work',
+    entries:[{id:entryId,taskId,taskRevisionId:task.currentRevisionId,sessionId,roleId,dependsOn:[],consumerId:'lead',
+      useRequired:true,releaseRule:'accepted'}]});
+  await apply(controller,{type:'queue.adopt',projectId:p,operationId:randomUUID(),queueId,expectedVersion:1});
+  const errors:unknown[]=[];
+  await new ResidentQueuePump({workflow:central,credentials:async()=>[controller],enabled:async()=>true,canWrite:()=>true,
+    pollIntervalMs:60000,onError:error=>errors.push(error)}).tick();
+  assert.deepEqual(errors,[]);
+  const claimed=(await central.getResidentQueue(controller,p,queueId)).entries[0]!;
+  assert.equal(claimed.state,'claimed');
+  assert.ok(claimed.claimId);
+  const attempts=await central.listResidentQueueAttempts(controller,p,claimed.claimId);
+  assert.equal(attempts.length,1);
+  const run=await central.getRuntimeRun(controller,p,attempts[0]!.runId);
+  assert.equal(run.state,'requested');
+  const channels=await central.listDiscussions(controller,p);
+  assert.ok(channels.items.some(item=>item.collaboration?.runId===run.id),
+    'the queue claim opens its Task channel without a second Task permission');
+});
 test('unadopted version is held and adoption is CAS',async()=>{
   const client=await pool.connect();try{await client.query('BEGIN');const store=new PgResidentQueue(client,projectId,grant,input,leader,binding);
     await store.createResidentQueue({projectId,id:queueId,version:1,adoptedVersion:null,maxRuns:2,reason:'ordered for value and dependency',actorId:'lead',entries:[]});

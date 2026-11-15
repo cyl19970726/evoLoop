@@ -74,8 +74,9 @@ function fixture() {
       assert.equal(discussion?.version, expected); discussion = value; events.push(event);
     },
   } as unknown as Transaction;
-  async function apply(command: TaskCollaborationCommand, principal: Principal = worker, now = "2026-10-25T01:00:00Z") {
-    return applyTaskCollaboration({ tx, command, principal, now, nextId: () => id(next++),
+  async function apply(command: TaskCollaborationCommand, principal: Principal = worker, now = "2026-10-25T01:00:00Z",
+    options: { queueClaimChannel?: boolean } = {}) {
+    return applyTaskCollaboration({ tx, command, principal, now, nextId: () => id(next++), ...options,
       hasher: { hash }, isAuthorizedRoleActor: async (project,actor) => project===projectId && recipientValid && actor === "worker",
       isProjectActor: async (project,actor) => project===projectId && (actor === "issuer" || actor === "worker"),
       hasEngineeringActionGrant: async (_principal,_action,actualProjectId) => {
@@ -86,6 +87,11 @@ function fixture() {
     return apply({ type: "discussion.openTask", projectId, operationId: id(100), discussionId,
       documentId: channelDocumentId, title: "Task coordination", task: { id: taskId, revisionId: taskRevisionId },
       runId, sessionId, recipientActorId: "worker" }, issuer);
+  }
+  async function openAs(principal: Principal, queueClaimChannel = false) {
+    return apply({ type: "discussion.openTask", projectId, operationId: id(100), discussionId,
+      documentId: channelDocumentId, title: "Task coordination", task: { id: taskId, revisionId: taskRevisionId },
+      runId, sessionId, recipientActorId: "worker" }, principal, "2026-10-25T01:00:00Z", { queueClaimChannel });
   }
   const version = () => discussion!.version;
   function continueWithAnswer(message: DiscussionEvent, input?: string) {
@@ -102,7 +108,7 @@ function fixture() {
       inputHash: hash(frozen), nativeTurnId: "turn-2", createdAt: "2026-10-25T02:00:00Z" };
     return { runId: continuation.id, taskRevisionId };
   }
-  return { apply, open, version, events, documents, revisions, task, run,
+  return { apply, open, openAs, version, events, documents, revisions, task, run,
     continueWithAnswer,
     setContinuationState: (state: string, nativeTurnId: string | null = "turn-2") => {
       assert.ok(continuation);
@@ -118,6 +124,17 @@ function fixture() {
 }
 const base = (type: string, version: number, n: number) => ({ type, projectId, operationId: id(n), discussionId, expectedVersion: version });
 const rejects = (promise: Promise<unknown>, code: string) => assert.rejects(promise, error => (error as { code?: string }).code === code);
+
+test("queue claim channel authority is internal and still requires decision authority", async () => {
+  const f = fixture();
+  const controller: Principal = { actorId: "queue-controller", projectIds: [projectId],
+    permissions: ["management"], decisions: true };
+  const managementOnly: Principal = { ...controller, actorId: "management-only", decisions: false };
+  await rejects(f.openAs(controller), "FORBIDDEN");
+  await rejects(f.openAs(managementOnly, true), "FORBIDDEN");
+  await f.openAs(controller, true);
+  assert.equal(f.discussion?.collaboration?.issuerActorId, "queue-controller");
+});
 
 test("fixed Task question, answer and actual adoption preserve the original Run input", async () => {
   const f = fixture();
