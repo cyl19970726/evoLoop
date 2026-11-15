@@ -764,7 +764,7 @@ const leaderResultNoticePump = new LeaderResultNoticePump({
     admission: async (projectId, sessionId) => {
       const current = await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE);
       const budgetConfig = current.runtime?.dailyBudget ?? null, contextConfig = current.runtime?.contextBudget ?? null;
-      const reader = (await currentIdentity()).find(p => p.projectIds.includes(projectId) && p.permissions.includes("read"));
+      const reader = (await currentIdentity()).find(p => isProjectMember(p, projectId));
       if (!reader || !contextConfig?.enabled) return { allowed: false, reason: "CONTEXT_READING_UNAVAILABLE" };
       const zone = budgetConfig?.timeZone ?? configuredUsageTimeZone, day = usageDay(clock.now(), zone);
       const overview = await usage.overview(reader, projectId, day, day, zone, budgetConfig, contextConfig);
