@@ -455,8 +455,12 @@ Leader 收到的是“Leader 通知包”消息：先 `get /api/projects/PROJECT
 
 通知有级别（立即/汇总，见[接口合同](../architecture/contracts.md#leader-通知层)）：立即项在包里行首标“立即·”，不等 60 秒、排在前面，来源是验收安排受阻、提交受阻、Run 结束未提交、Task 提问与阻塞、验收观察失败；验收观察按结论拆成 `observation_used`（汇总）和 `observation_failed`（立即）。只记录事件（Run 已按请求停止、关注项已解决、通知撤回）不是通知，读 `get /api/projects/PROJECT/leader-records`（`taskId`、`kind`、`limit`、`cursor` 可选，从旧到新续页）。
 
-定时直派的三条命令（`command schema` 取结构，都要 review 权限）：`schedule.directList.set`（某个 Role 的直派名单）、`schedule.dispatch.set`（某个日程交 Leader 还是直接进队伍，含等待上限与每日预算）、`schedule.directEntry.withdraw`（撤下一个定时项，必须选 `cancel` 或 `to_leader`；普通 `line.remove` 拒绝定时项）。直派的 Task 不发待分诊，直派与跳过读 `get /api/projects/PROJECT/leader-records?kind=direct_dispatched`（或 `direct_dispatch_skipped`）。
+定时直派的三条写命令（`command schema` 取结构，都要 review 权限）：`schedule.directList.set`（某个 Role 的直派名单）、`schedule.dispatch.set`（某个日程交 Leader 还是直接进队伍，含等待上限与每日预算）、`schedule.directEntry.withdraw`（撤下一个定时项，必须选 `cancel` 或 `to_leader`；普通 `line.remove` 拒绝定时项）。直派的 Task 不发待分诊，直派与跳过读 `get /api/projects/PROJECT/leader-records?kind=direct_dispatched`（或 `direct_dispatch_skipped`）。
+
+直派事实的只读入口只要项目读权限，不要 review 权限：`read schedule SCHEDULE --project PROJECT --dispatch` 读当前策略（无策略时为 `null`）；`read role ROLE --project PROJECT --direct-list` 读该 Role 的名单；`read schedule SCHEDULE --project PROJECT --dispatches [--limit 1..100 --cursor CURSOR]` 从旧到新分页读每次触发，`plannedAtUtc` 与 `read schedule SCHEDULE --occurrences` 的同一时间对应。HTTP 路径分别是 `/api/projects/PROJECT/schedules/SCHEDULE/dispatch`、`/roles/ROLE/direct-list`、`/schedules/SCHEDULE/dispatches`；游标只属于原项目和日程，不能跨项目复用。
 
 ## 待我决定
 
 需要某个身份（例如使用者）决定时，不要只在对话里问：用 `command run` 提交 `decision.request.create`（`command schema decision.request.create`：`requestId`、`requestedFrom`、`subject`、`question`、可选 `taskId` 与 `options`，需要复核权限），它出现在对方“待我处理 › 待我决定”里，答复后消失。`get /api/projects/PROJECT/decisions-for-me` 以当前身份读自己待决定的事项。不再需要时用 `decision.request.withdraw` 撤回。被请求的身份用 `decision.request.answer`（带 `expectedVersion`，选项非空时答案必须是其中之一）答复。
+
+`request acceptance.release --project PROJECT --id RELAY --file BODY.json`（操作编号只在 body 的 `operationId`，不带 `--receipt`；body：`projectId`、`taskId`、`relayId`、`operationId`、`expectedVersion`、`reason`，需要 review 权限）把一条**不可能再被满足**的有效验收接力置为 `released`：被阻塞（如 `MESSAGE_BINDING_CHANGED`）的，或接收者记的不是 used 的旧接力。它只在同一交付、同一阶段还剩另一条有效接力时允许（最后一条拒绝 `LAST_ARRANGEMENT`，关闭规则不放松），已有 used 的接力拒绝（`ARRANGEMENT_SATISFIED`，那是证据），消息还没落定时拒绝（`ACCEPTANCE_IN_FLIGHT`：消息状态是 processing 或 unknown；replied、completed_without_reply、failed、cancelled 视为已落定，排队中的消息随释放撤下）。理由进 `task_acceptance_relay_release`，不可改。释放后 `task.close` 的闸门（迁移 070）只看剩下的有效接力。

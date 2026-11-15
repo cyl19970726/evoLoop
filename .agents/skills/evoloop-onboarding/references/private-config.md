@@ -98,7 +98,7 @@ exec <NODE_ABSOLUTE_PATH> <RELEASE_SOURCE>/apps/cli/dist/main.js "$@"
 
 `proposal` 不写 `firstTaskId`，其余字段与 `role.propose` 相同；至少一条 evidence 的来源必须是 `project:<PROJECT>`。命令只在项目还没有任何 Role 时有效，并要求 `projectCreateOperationId` 是同项目一条已应用的 `project.create`。服务端在同一事务里建立版本 1 的 trial Lead、不可变修订和 `accept-trial` 决定；操作日志、`proposedBy`、修订与决定记录同一发令者。项目已有任何 Role（包括 candidate、rejected、retired）时返回 `ROLE_BOOTSTRAP_NOT_EMPTY`，之后的业务 Role 仍须用普通 `role.propose` 和真实未完成的首 Task。不要把数据库写入作为引导或失败后的绕行。
 
-**读回：** `list roles --project <PROJECT>` 里 Lead 为 `trial`、`proposedBy` 是发令者；`read role <LEAD> --project <PROJECT>` 不含 `firstTaskId`；`read role <LEAD> --revisions --project <PROJECT>` 的理由包含 `project.create <projectCreateOperationId>`；用 `operation <projectCreateOperationId>` 和该引导操作的 ID 读回两条已应用记录。随后由该 Lead 用正常 `task.create` 建第一项工作；业务 Role 的首个 Task 从此正常创建，或直接引用一项已存在且未完成的 Task。
+**读回：** `list roles --project <PROJECT>` 里 Lead 为 `trial`、`proposedBy` 是发令者；`read role <LEAD> --project <PROJECT>` 不含 `firstTaskId`；`read role <LEAD> --revisions --project <PROJECT>` 的理由包含 `project.create <projectCreateOperationId>`；用 `operation <projectCreateOperationId>` 和该引导操作的 ID 读回两条已应用记录。随后用正常 `task.create` 给该 Lead 建第一项工作（`owner` 为 Lead Role 的普通 Task，见 SKILL 第 3 步）；没有单独的“引导 Task”。业务 Role 的 `firstTaskId` 可以引用它，或引用本项目另一项已存在且未完成的 Task。
 
 ## 3. 每个 Session 的配置
 
@@ -168,7 +168,7 @@ exec <NODE_ABSOLUTE_PATH> <RELEASE_SOURCE>/apps/cli/dist/main.js "$@"
 | 要核什么 | 命令 |
 | --- | --- |
 | 成员与权限、改了没重启 | `get /api/projects/<PROJECT>/members` |
-| 各能力是否生效、重启后会变成什么 | `get /api/projects/<PROJECT>/capabilities`（看 `state`、`reason`、`pending`） |
+| 各能力是否生效、重启后状态会不会变 | `get /api/projects/<PROJECT>/capabilities`（看 `state`、`reason`、`pending`；只追加条目、不改变状态的改动读不出 `pending`） |
 | 仓库登记 | `get /api/projects/<PROJECT>/repositories` |
 | Role 与运行时 | `list roles`、`read role <ROLE> --bindings`、`role runtime show <ROLE>` |
 | Session | `list sessions`、`work list`、`work status owned:<SESSION>`、`session profile show <SESSION>` |
@@ -189,6 +189,8 @@ exec <NODE_ABSOLUTE_PATH> <RELEASE_SOURCE>/apps/cli/dist/main.js "$@"
 | 服务起不来，日志 `Document originals must stay outside the development checkout` | 启动服务时的当前目录包含了 Blob 目录 | 从不包含 Blob 目录的位置启动（服务管理器通常从 `/` 启动） |
 | `models --project` 为空 | 调用者还没有授权这些模型的 `runtime.grants`，或 grant 改了没重启 | 候选值从运行时模型目录取，写进 grant 后重启 |
 | `capabilities` 的 `runtime` 为 `grant_directory_unavailable`、`pending` 显示重启后 `configured` | 新的工作目录只在启动时登记 | 重启 |
+| 追加了仓库、grant 的工作目录或模型，`pending` 仍是 null，`repositories` 或 `models --project` 却没有新条目 | `pending` 只在重启前后能力状态不同时出现，只追加条目读不出来 | 按 SKILL 第 2 步“只在启动时读”的清单判断，重启后再读回 |
+| `role runtime set` 报 `RUNTIME_PROVIDER_UNAVAILABLE` | 实例没在驱动这种运行时（`runtime.providers`，没写时只有 `runtime.provider`） | 由使用者定：改实例的运行时设置并重启，或改选运行时（终态清单 E4 表下） |
 | `role.propose` 报 `INVALID_INPUT`（evidence 或 alternatives） | `evidence` 缺缺口类/`effect`/`cost` 之一，或 `alternatives` 不是四类各一 | 按 SKILL 第 3 步补齐 |
 | `session prepare` 报参数错误 | 传了 `--project` | 项目 ID 只写在准备文件里 |
 | 验收 Session 的 `session prepare` 报 `material_cli_actor_mismatch` | 这个 Session 没有自己按 `sessionId` 精确的 `materialCli`，被按 Role 级检查 | 给它补一条精确绑定（cliActorId 是验收身份），不要改 Role 级条目；指向非写入者则报 `material_cli_actor_not_writer` |
@@ -197,6 +199,7 @@ exec <NODE_ABSOLUTE_PATH> <RELEASE_SOURCE>/apps/cli/dist/main.js "$@"
 | 回报消息报 `REPLY_TARGET_MISMATCH` | `--reply-to` 指向了发给另一个 Session 的消息 | 发新消息，不加 `--reply-to` |
 | `work events --wait 30` 报 `TIMEOUT` | CLI 默认 15 秒超时短于等待时间 | `EVOLOOP_TIMEOUT_MS=60000` |
 | `project.create` 被拒 | 发命令的身份的 `projectIds` 里还没有这个项目（或没重启） | 先写身份文件、重启 |
+| `project.create` 报 `INVALID_INPUT` | 字段只有 `type`、`projectId`、`operationId`、`title` 四个，项目名称写在 `title`，没有 `name`、`description` | 照 SKILL 第 2 步的最小示例 |
 | `TASK_OWNER_ROLE_REQUIRED` / `INVALID_FIRST_TASK` | 项目尚无 Role 时的正常保护：一个要已有试行 Role，一个要已有未完成 Task | 用第 2 节的 `role.bootstrap` 建首个 Lead；已有 Role 后仍报 `INVALID_FIRST_TASK`，检查 `firstTaskId` 是否指向本项目未完成 Task |
 | `ROLE_BOOTSTRAP_NOT_EMPTY` / `ROLE_BOOTSTRAP_ORIGIN_INVALID` / `INVALID_BOOTSTRAP_*` | 引导命令只适用于空项目，或项目创建操作、Role 类型、证据不符合要求 | 第 2 节；已有 Role 时改走 `role.propose`，不要重试数据库写入 |
 | `INVALID_TRIAL` | 回看日期不在试行期内，或已经过去 | `reviewAtUtc` 设在现在之后、`trialDays` 之内 |
