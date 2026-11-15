@@ -20,7 +20,7 @@ test("a 401 signs out and clears the page; a revoked project returns to the proj
     if (url.pathname.startsWith("/api/")) {
       const signedIn = req.headers.authorization === "Bearer fixture-token" && !expired;
       let status = signedIn ? 200 : 401, value: unknown = signedIn ? { items: [], nextCursor: null } : { message: "令牌无效" };
-      if (signedIn && url.pathname === "/api/session") value = { principal: { actorId: "reader", projectIds: revokedA ? [projectB] : [projectA, projectB], permissions: ["read"] }, capabilities: {} };
+      if (signedIn && url.pathname === "/api/session") value = { principal: { actorId: "reader", projectIds: revokedA ? [projectB] : [projectA, projectB], permissions: [] }, capabilities: {} };
       else if (signedIn && url.pathname === `/api/projects/${projectA}`) {
         if (revokedA) { status = 403; value = { message: "无权访问项目" }; } else value = { id: projectA, title: "甲项目", createdAt: stamp };
       } else if (signedIn && url.pathname === `/api/projects/${projectB}`) value = { id: projectB, title: "乙项目", createdAt: stamp };

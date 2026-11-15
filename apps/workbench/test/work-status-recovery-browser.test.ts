@@ -24,7 +24,7 @@ test("missing work progress stays compact, retryable, and leaves read-only tasks
     if (url.pathname.startsWith("/api/")) {
       const root = `/api/projects/${projectId}`;
       let value: unknown = { items: [], nextCursor: null }, status = 200;
-      if (url.pathname === "/api/session") value = { principal: { actorId: "reader", projectIds: [projectId], permissions: ["read"] }, capabilities: {} };
+      if (url.pathname === "/api/session") value = { principal: { actorId: "reader", projectIds: [projectId], permissions: [] }, capabilities: {} };
       else if (url.pathname === root) value = { id: projectId, title: "回归项目", createdAt: stamp };
       else if (url.pathname === `${root}/tasks`) { taskReads++; value = { items: taskIds.map((id, index) => ({ projectId, id, version: 1, currentRevisionId: id,
         title: `可读任务 ${index + 1}`, content: "正文", contentDocumentId: id, contentRevisionId: id,

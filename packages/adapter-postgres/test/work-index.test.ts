@@ -18,7 +18,7 @@ const pool = new pg.Pool({ connectionString, options: `-c search_path=${schema}`
 const uow = new PostgresUnitOfWork(pool);
 const actor = "work-index-test", now = "2026-10-28T00:00:00.000Z";
 const hash = (value: string) => createHash("sha256").update(value).digest("hex");
-const principal = { actorId: actor, projectIds: [] as string[], permissions: ["read", "write", "review"] as Array<"read" | "write" | "review"> };
+const principal = { actorId: actor, projectIds: [] as string[], permissions: ["task", "document", "session", "management"] as ("task" | "document" | "session" | "management")[], decisions: true };
 
 before(async () => { await migrate(connectionString, schema); });
 after(async () => {
@@ -243,7 +243,7 @@ test("Task.start and Leader plan/review use one project-before-row lock order", 
     hasher: { hash } });
   const writer = new PgLeaderWorkWriter(lockOrderPool);
   const who = { actorId: actor, projectIds: [fixture.project.id],
-    permissions: ["read", "write", "review"] as Array<"read" | "write" | "review"> };
+    permissions: ["task", "document", "session", "management"] as ("task" | "document" | "session" | "management")[], decisions: true };
   try {
     const plan = {
       projectId: fixture.project.id, operationId: randomUUID(), taskId: fixture.dependent.head.id,
@@ -314,7 +314,7 @@ test("Leader review compares the exact per-Task change position read before the 
   const fixture = await seedProject();
   const writer = new PgLeaderWorkWriter(pool);
   const who = { actorId: actor, projectIds: [fixture.project.id],
-    permissions: ["read", "write", "review"] as Array<"read" | "write" | "review"> };
+    permissions: ["task", "document", "session", "management"] as ("task" | "document" | "session" | "management")[], decisions: true };
   const initial = await readLeaderWorkTasks(pool, fixture.project.id, { view: "tasks", limit: 10 });
   const dependentPosition = initial.items.find(item => item.taskId === fixture.dependent.head.id)!.workChangeSequence;
 
@@ -400,7 +400,7 @@ test("direct prerequisite close and reopen invalidate only the dependent review 
   const fixture = await seedProject();
   const writer = new PgLeaderWorkWriter(pool);
   const who = { actorId: actor, projectIds: [fixture.project.id],
-    permissions: ["read", "write", "review"] as Array<"read" | "write" | "review"> };
+    permissions: ["task", "document", "session", "management"] as ("task" | "document" | "session" | "management")[], decisions: true };
   const workflow = new WorkflowService({ uow, clock: { now: () => now }, ids: { next: randomUUID },
     hasher: { hash } });
   const dependentId = fixture.dependent.head.id;
@@ -493,7 +493,7 @@ test("runtime reservation enforces current Task acceptance and invalidates after
   const workflow = new WorkflowService({ uow, clock: { now: () => now }, ids: { next: randomUUID },
     hasher: { hash } });
   const who = { actorId: actor, projectIds: [fixture.project.id],
-    permissions: ["read", "write", "review"] as Array<"read" | "write" | "review"> };
+    permissions: ["task", "document", "session", "management"] as ("task" | "document" | "session" | "management")[], decisions: true };
   const sessionId = randomUUID();
   await uow.transaction(fixture.project.id, async tx => {
     await tx.insertRuntimeSession({ projectId: fixture.project.id, id: sessionId, roleId: actor,
@@ -734,7 +734,7 @@ test("a failed Run from an earlier Task revision does not mark the new revision 
   const workflow = new WorkflowService({ uow, clock: { now: () => now }, ids: { next: randomUUID },
     hasher: { hash } });
   const who = { actorId: actor, projectIds: [fixture.project.id],
-    permissions: ["read", "write", "review"] as Array<"read" | "write" | "review"> };
+    permissions: ["task", "document", "session", "management"] as ("task" | "document" | "session" | "management")[], decisions: true };
   const reopened = await workflow.execute(who, { type: "task.reopen", projectId: fixture.project.id,
     operationId: randomUUID(), taskId: fixture.prerequisite.head.id, expectedVersion: 1,
     reason: "Open a corrected revision" });
@@ -751,7 +751,7 @@ test("closure may advance the Task revision without hiding the Delivery it accep
   const workflow = new WorkflowService({ uow, clock: { now: () => now }, ids: { next: randomUUID },
     hasher: { hash } });
   const who = { actorId: actor, projectIds: [fixture.project.id],
-    permissions: ["read", "write", "review"] as Array<"read" | "write" | "review"> };
+    permissions: ["task", "document", "session", "management"] as ("task" | "document" | "session" | "management")[], decisions: true };
   const sessionId = randomUUID(), runId = randomUUID();
   await uow.transaction(fixture.project.id, async tx => {
     await tx.insertRuntimeSession({ projectId: fixture.project.id, id: sessionId, roleId: actor,
@@ -848,7 +848,7 @@ test("a new Run after an attributed Delivery remains the current attempt", async
   const workflow = new WorkflowService({ uow, clock: { now: () => now }, ids: { next: randomUUID },
     hasher: { hash } });
   const who = { actorId: actor, projectIds: [fixture.project.id],
-    permissions: ["read", "write", "review"] as Array<"read" | "write" | "review"> };
+    permissions: ["task", "document", "session", "management"] as ("task" | "document" | "session" | "management")[], decisions: true };
   const delivered = await workflow.execute(who, { type: "delivery.record", projectId: fixture.project.id,
     operationId: randomUUID(), taskId: fixture.prerequisite.head.id, expectedVersion: 1,
     runId: oldRunId, artifactRef: "fixture://first", artifactRevision: "v1", contentHash: hash("first"),
@@ -1001,7 +1001,7 @@ test("the SQL timing query keeps four reserved Runs through their automatic assi
   const workflow = new WorkflowService({ uow, clock: { now: () => clock }, ids: { next: randomUUID },
     hasher: { hash } });
   const who = { actorId: actor, projectIds: [projectId],
-    permissions: ["read", "write", "review"] as Array<"read" | "write" | "review"> };
+    permissions: ["task", "document", "session", "management"] as ("task" | "document" | "session" | "management")[], decisions: true };
   await uow.transaction(projectId, async tx => {
     await tx.insertRuntimeSession({ projectId, id: sessionId, roleId: actor,
       cwd: "/tmp/leader-work", authorizationScope: "project", model: null, sandbox: "danger-full-access",

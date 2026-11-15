@@ -52,7 +52,7 @@ test("Session results → fixed Document → return restores the exact Session r
       apiReads.push(url.pathname + url.search);
       const root = `/api/projects/${projectId}`;
       let value: unknown = { items: [], nextCursor: null, metadata }, status = 200;
-      if (url.pathname === "/api/session") value = { principal: { actorId: "reader", projectIds: [projectId], permissions: ["read"] }, capabilities: {} };
+      if (url.pathname === "/api/session") value = { principal: { actorId: "reader", projectIds: [projectId], permissions: [] }, capabilities: {} };
       else if (url.pathname === root) value = { id: projectId, title: "Document 往返回归项目", createdAt: stamp };
       else if (url.pathname === `${root}/session-work`) value = { items: url.searchParams.get("membership") && url.searchParams.get("membership") !== "current" ? [] : [session],
         nextCursor: null, observationCursor: "0", metadata, totals: { current: 1, historical: 0, unclassified: 0 },

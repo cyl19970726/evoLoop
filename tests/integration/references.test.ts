@@ -162,13 +162,13 @@ test("fixed Git bytes and immutable PostgreSQL external reference snapshots", { 
       version,state,data,policy_revision_id) VALUES($1,$2,$3,$4,$5,4,1,'accepted',$6,$7)`,
       [projectId,dispatchId,loopId,inboxId,taskId,JSON.stringify({runtimeRunId:readerRunId,recipientRoleId:"researcher",policyRevisionId:policyId,bindingId:null}),policyId]);
     const facts=workerGuardFacts({query:(sql:string,args:unknown[])=>client.query(sql,args)} as never,
-      {principal:{actorId:"worker-fixture",projectIds:[projectId],permissions:["read"]},
+      {principal:{actorId:"worker-fixture",projectIds:[projectId],permissions:[]},
         scope:{projectId,loopId,taskId,runId:readerRunId,sessionId:readerSessionId,roleId:"researcher",
           kind:"business",allowedRoleIds:["researcher"]}});
     assert.equal(await facts.fixedRunTrace!(runId),true);
     assert.equal(await facts.fixedRunTrace!(randomUUID()),false);
     const foreignFacts=workerGuardFacts({query:(sql:string,args:unknown[])=>client.query(sql,args)} as never,
-      {principal:{actorId:"worker-fixture",projectIds:[randomUUID()],permissions:["read"]},
+      {principal:{actorId:"worker-fixture",projectIds:[randomUUID()],permissions:[]},
         scope:{projectId:randomUUID(),loopId,taskId,runId:readerRunId,sessionId:readerSessionId,
           roleId:"researcher",kind:"business",allowedRoleIds:["researcher"]}});
     assert.equal(await foreignFacts.fixedRunTrace!(runId),false);
@@ -184,7 +184,7 @@ test("fixed Git bytes and immutable PostgreSQL external reference snapshots", { 
     await client.query("ROLLBACK TO SAVEPOINT closed_reader");
     assert.equal(await facts.fixedRunTrace!(runId),true);
     const oldFacts=workerGuardFacts({query:(sql:string,args:unknown[])=>client.query(sql,args)} as never,
-      {principal:{actorId:"worker-fixture",projectIds:[projectId],permissions:["read"]},
+      {principal:{actorId:"worker-fixture",projectIds:[projectId],permissions:[]},
         scope:{projectId,loopId,taskId,runId:readerRunId,sessionId:readerSessionId,roleId:"wrong",
           kind:"business",allowedRoleIds:["wrong"]}});
     assert.equal(await oldFacts.fixedRunTrace!(runId),false);
@@ -206,7 +206,7 @@ test("registered Git source becomes an explicit Task revision with replay and ac
   git(root, "add", "formal.md"); git(root, "commit", "-qm", "initial");
   const commit = git(root, "rev-parse", "HEAD"), projectId = randomUUID(), referenceId = randomUUID(), taskId = randomUUID();
   const documentId = randomUUID();
-  const principal = { actorId: "reviewer", projectIds: [projectId], permissions: ["read", "write", "review"] as const };
+  const principal = { actorId: "reviewer", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true };
   const uow = new PostgresUnitOfWork(pool);
   const workflow = new WorkflowService({ uow, clock: { now: () => new Date().toISOString() },
     ids: { next: randomUUID }, hasher: { hash } });
@@ -278,7 +278,7 @@ test("registered Git source becomes an explicit Task revision with replay and ac
     technicalEvidence:"fixture checks passed",reason:"delivered" });
   assert.equal(delivered.status,"applied");
   const deliveryId = delivered.status === "applied" ? delivered.revisionId! : "";
-  const consumer={actorId:"reference-consumer",projectIds:[projectId],permissions:["read","write"] as const};
+  const consumer={actorId:"reference-consumer",projectIds:[projectId],permissions:["task", "document", "session"]};
   const observed=await workflow.execute(consumer as never,{type:"observation.record",projectId,
     operationId:randomUUID(),taskId:doneTaskId,deliveryId,observer:consumer.actorId,observerKind:"agent",
     result:"used",evidence:"Independent reference check",reason:"Consumer used artifact"});
@@ -324,8 +324,8 @@ test("CLI Run-reference request crosses HTTP review and persists a fixed consume
   const workflow=new WorkflowService({uow,clock:{now:()=>new Date().toISOString()},ids:{next:randomUUID},hasher:{hash}});
   const token="r".repeat(40),readOnlyToken="w".repeat(40);
   let sourceGrant=true;
-  const app=await buildServer({service:workflow,credentials:[{token,actorId:"reviewer",projectIds:[projectId],permissions:["read","write","review"]},
-    {token:readOnlyToken,actorId:"writer",projectIds:[projectId],permissions:["read","write"]}],
+  const app=await buildServer({service:workflow,credentials:[{token,actorId:"reviewer",projectIds:[projectId],permissions:["task", "document", "session", "management"], decisions: true},
+    {token:readOnlyToken,actorId:"writer",projectIds:[projectId],permissions:["task", "document", "session"]}],
     references:{uow,gitForPrincipal:async()=>({read:async()=>({status:"unavailable"})}) as never,
       knowledgeForPrincipal:async()=>({}) as never,runSessionAvailable:async()=>sourceGrant}});
   t.after(()=>app.close());
@@ -336,7 +336,7 @@ test("CLI Run-reference request crosses HTTP review and persists a fixed consume
   assert.equal((await app.inject({method:"POST",url:intent.path,headers:{authorization:`Bearer ${readOnlyToken}`},payload:intent.body})).statusCode,403);
   const response=await app.inject({method:"POST",url:intent.path,headers:{authorization:`Bearer ${token}`},payload:intent.body});
   assert.equal(response.statusCode,200,response.body);assert.equal(response.json().status,"applied");
-  const task=await workflow.getTask({actorId:"reviewer",projectIds:[projectId],permissions:["read","write","review"]},projectId,consumerTaskId);
+  const task=await workflow.getTask({actorId:"reviewer",projectIds:[projectId],permissions:["task", "document", "session", "management"], decisions: true},projectId,consumerTaskId);
   const fixed=await uow.read(projectId,reader=>reader.listTaskExternalSnapshot(consumerTaskId,task.task.currentRevisionId));
   assert.equal(fixed[0]?.referenceId,runId);assert.equal(fixed[0]?.revision,sourceRev);assert.equal(fixed[0]?.contentHash,inputHash);
   const denied=await app.inject({method:"POST",url:intent.path,headers:{authorization:`Bearer ${token}`},payload:{...body,operationId:randomUUID(),decisionId:randomUUID(),referenceId:randomUUID()}});

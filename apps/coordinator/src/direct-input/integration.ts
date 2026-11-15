@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Pool } from "pg";
 import { describeTurnEffort } from "@evoloop/core";
-import type { Principal } from "@evoloop/contracts";
+import { hasPermission, mayAccessSession, type Principal } from "@evoloop/contracts";
 import type { RuntimeBinding, RuntimeSessionRecord } from "@evoloop/contracts/runtime";
 import type { DirectInputGrant } from "@evoloop/contracts/direct-input";
 import type { UnitOfWork } from "@evoloop/contracts/ports";
@@ -42,8 +42,8 @@ export function createDirectInputAdmission(deps:DirectInputAdmissionDeps){
   const session=(projectId:string,sessionId:string)=>readSession(deps.uow,projectId,sessionId);
   const admission=async(principal:Principal,projectId:string,sessionId:string):
     Promise<{grant:DirectInputGrant;binding:RuntimeBinding}>=>{
-    if(!principal.projectIds.includes(projectId)||!principal.permissions.includes("read")||
-      !principal.permissions.includes("write"))throw new DomainError("FORBIDDEN","Project writer required");
+    if(!hasPermission(principal,projectId,"session")||!mayAccessSession(principal,projectId,sessionId))
+      throw new DomainError("FORBIDDEN","Session writer required");
     const owner=await session(projectId,sessionId);
     const configured=await deps.configuration();
     const direct=configured.directInputs;

@@ -1,4 +1,4 @@
-import type { Principal } from "@evoloop/contracts";
+import { isProjectMember, type Principal } from "@evoloop/contracts";
 import { DomainError, type Reader, type UnitOfWork } from "@evoloop/contracts/ports";
 import type { SessionActivityPage, SessionChanges, SessionDirectory, SessionSnapshot } from "@evoloop/contracts/session-observation";
 import type { SessionAssignmentPage, SessionProfileRecord, TaskSessionAssignment } from "@evoloop/contracts/session-assignments";
@@ -7,7 +7,7 @@ type DirectoryOptions = { limit: number; cursor?: string; search?: string; membe
 type HistoryOptions = { limit: number; cursor?: string; taskId?: string; importance?: "important" | "all" };
 type ChangesOptions = { cursor: string; limit: number; key?: string };
 const requireRead = (principal: Principal, projectId: string): void => {
-  if (!principal.actorId || !principal.projectIds.includes(projectId) || !principal.permissions.includes("read"))
+  if (!isProjectMember(principal, projectId))
     throw new DomainError("FORBIDDEN", "Project read access is required");
 };
 /** Stable principal scope for a single observation read. It never grants authority by itself. */

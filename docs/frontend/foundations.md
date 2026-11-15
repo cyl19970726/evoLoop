@@ -48,8 +48,20 @@
 ![任务列表里的状态，浅色](../assets/palette/dec049-list-light.png)
 ![任务列表里的状态，深色](../assets/palette/dec049-list-dark.png)
 
-- 深色通过 `<html data-theme="dark">` 切换；跟随系统的开关在新外壳（PR5）里加。
+- 深色通过 `<html data-theme="dark">` 切换；入口和规则见下一节“主题与外观”。
 
+## 主题与外观
+
+**入口。** 账号菜单（宽屏在内层栏底部的设置按钮，窄屏在底部标签栏“我的”）里的“外观”：跟随系统、浅色、深色三选一，当前项带对勾，默认“跟随系统”。每个页面都能到。控件是三个 `menuitemradio`，代码在 `apps/workbench/src/app/shell/AppShell.tsx`，规则在 `apps/workbench/src/shared/theme.ts`。
+
+**规则。**
+- **偏好只属于这个浏览器**：存在 `localStorage` 的 `evoloop.theme`（`light` / `dark`；“跟随系统”就是没有这个键）。不进项目数据，不进服务端。读不到或写不进存储时按“跟随系统”，页面照常可用，选择只在当前页面内生效。
+- **首次绘制前就生效**：`apps/workbench/public/theme-init.js` 在 `<head>` 里同步读取偏好并设置 `<html data-theme>` 与 `color-scheme`，所以不会先闪一下浅色。它是单独的文件而不是内联脚本，因为页面的内容安全策略只允许同源脚本。它和 `theme.ts` 的规则一致，改一处要改另一处。
+- **跟随系统时不用刷新**：监听 `prefers-color-scheme` 的变化；其他标签页改了偏好也会同步。
+- **样例页自管**：`/ui` 和 `/ui/flow` 的临时开关只在样例页打开期间管 `data-theme`（页面上带 `data-theme-sample` 标记，正式偏好的应用暂停），离开后恢复正式偏好；样例页的开关不写偏好。
+- 不改色值与页面结构；色值仍以 DEC-049 为准。
+
+测试：`apps/workbench/test/theme-switch-browser.test.ts`（真实浏览器，宽屏与窄屏）覆盖入口、三个选项、跟随系统不刷新、刷新后保持、首绘不闪、存储不可读、样例页不改偏好。
 ## 文字
 
 | token | 大小 | 用途 |

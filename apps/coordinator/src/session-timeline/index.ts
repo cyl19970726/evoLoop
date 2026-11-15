@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import type { Principal } from '@evoloop/contracts';
+import { hasDecisionAuthority, hasPermission, isProjectMember, mayAccessSession, type Principal } from '@evoloop/contracts';
 import type { UnitOfWork } from '@evoloop/contracts/ports';
 import { DomainError } from '@evoloop/contracts/ports';
 import type { NativeInputSource } from '@evoloop/contracts/native-input';
@@ -138,10 +138,10 @@ const safeEntry=(entry:WorkspaceEntry,allowDetail:boolean):WorkspaceEntry=>{
   return {...entry,origin:null,body:entry.kind==='plan'?bounded(entry.body):'',label:bounded(entry.label,120),
     truncated:entry.truncated||entry.kind==='plan'&&entry.body.length>16000};
 };
-const publicEntry=(entry:WorkspaceEntry,principal:Principal):WorkspaceEntry=>{
+const publicEntry=(entry:WorkspaceEntry,principal:Principal,projectId:string,sessionId:string):WorkspaceEntry=>{
   const projected=safeEntry(entry,false);
   if(entry.kind!=='tool'||projected.kind!=='tool')return projected;
-  const authorized=principal.permissions.includes('read')&&principal.permissions.includes('review');
+  const authorized=hasPermission(principal,projectId,'session')&&mayAccessSession(principal,projectId,sessionId);
   return {...projected,detailAvailable:authorized&&entry.detailAvailable,
     detailReason:authorized?entry.detailReason:toolDetailDenied};
 };
@@ -282,10 +282,15 @@ export class SessionTimelineService {
     return parsed.position;
   }
   private token(position:string|null,fence:string){return position?encode({v:1,fence,position}):null}
+  private mayReadFullNative(principal:Principal,projectId:string,sessionId:string|null):boolean{
+    return !!sessionId&&hasPermission(principal,projectId,'session')&&mayAccessSession(principal,projectId,sessionId);
+  }
   private liveRead(principal:Principal,scope:Scope,after?:string):WorkspaceLiveRead{
-    if(!scope.sessionId||!scope.threadId||!this.deps.runner||!this.support(scope).live)
+    if(!this.mayReadFullNative(principal,scope.projectId,scope.sessionId)||
+      !scope.sessionId||!scope.threadId||!this.deps.runner||!this.support(scope).live)
       return {cursor:'',resetRequired:false,entries:[],turns:[],freshness:'unavailable',activeTurnId:null,
-        limitations:['Live native updates unavailable']};
+        limitations:[this.mayReadFullNative(principal,scope.projectId,scope.sessionId)?
+          'Live native updates unavailable':'完整原生实时记录需要此 Session 的 Session 权限']};
     const state=this.state(liveKey(scope.projectId,scope.sessionId,scope.threadId));
     const fence=this.fence(principal,scope,'live');
     const current=this.token(`${state.generation}|${state.seq}`,fence)!;
@@ -337,7 +342,7 @@ export class SessionTimelineService {
         return this.projectInput(raw,source,source?.kind==='message'?associations.messages.get(source.messageId):undefined,
           raw.turnId?bindings.get(raw.turnId):undefined,raw.turnId?contexts.get(raw.turnId):undefined);
       }
-      return {...publicEntry(raw,principal),origin,...(raw.kind==='message'&&raw.role==='assistant'?{
+      return {...publicEntry(raw,principal,scope.projectId,scope.sessionId!),origin,...(raw.kind==='message'&&raw.role==='assistant'?{
         author:{kind:'session' as const,id:scope.sessionId,label:scope.title}}:{})};
     });
     const observation=await this.turnObservation(scope);
@@ -373,7 +378,10 @@ export class SessionTimelineService {
   async page(principal:Principal,projectId:string,key:string,query:Query):Promise<SessionTimelinePage>{
     const scope=await this.scope(principal,projectId,key),limit=Math.max(1,Math.min(50,query.limit));
     const inputReading=inputRead();
-    const readNative=query.source!=='messages',readMessages=query.source!=='native';
+    const fullNative=this.mayReadFullNative(principal,projectId,scope.sessionId);
+    if(query.source==='native'&&!fullNative)
+      throw new DomainError('FORBIDDEN','读取完整原生记录需要对此 Session 的 Session 权限。');
+    const readNative=query.source!=='messages'&&fullNative,readMessages=query.source!=='native';
     if(!readNative)inputReading.remaining=0;
     const nativeFence=this.fence(principal,scope,'history',query.turnId,query.itemId);
     const messageFence=this.fence(principal,scope,'messages');
@@ -382,7 +390,7 @@ export class SessionTimelineService {
     const historyKey=scope.sessionId&&scope.threadId?liveKey(projectId,scope.sessionId,scope.threadId):null;
     const support=this.support(scope);
     const now=new Date().toISOString();let native:NativeWorkspacePage|null=null;
-    const limitations:string[]=[];
+    const limitations:string[]=fullNative?[]:['完整原生记录需要此 Session 的 Session 权限'];
     if(!readNative){/* source-specific continuation leaves native history untouched */}
     else if(scope.sessionId&&scope.threadId&&this.deps.runner){
       try {native=await this.deps.runner.workspaceHistory(principal,projectId,scope.sessionId,{
@@ -425,7 +433,7 @@ export class SessionTimelineService {
           if(projected.kind==='message'&&source?.kind==='message')displayed.add(source.messageId);
           return [projected];
         }
-        const entry=publicEntry(raw,principal);
+        const entry=publicEntry(raw,principal,scope.projectId,scope.sessionId!);
         return [{...entry,
           origin,...(entry.kind==='message'&&entry.role==='assistant'?{
             author:{kind:'session' as const,id:scope.sessionId,label:scope.title}}:{})}];
@@ -466,7 +474,8 @@ export class SessionTimelineService {
       capabilities:{history:!readNative?!!scope.threadId&&support.history&&
           this.historyAvailability.get(historyKey!)!==false:!!native,
         live:!!scope.threadId&&support.live,
-        originalToolDetail:principal.permissions.includes('review'),reason:!readNative||native?null:'Native history unavailable or unsupported'}};
+        originalToolDetail:fullNative,
+        reason:!readNative||native?null:'Native history unavailable or unsupported'}};
   }
   async item(principal:Principal,projectId:string,key:string,turnId:string,itemId:string,
     workerRunId?:string):Promise<WorkspaceEntry>{
@@ -474,9 +483,11 @@ export class SessionTimelineService {
     if(!scope.sessionId||!scope.threadId||!this.deps.runner)throw new DomainError('RUNTIME_READ_UNAVAILABLE','Native Item unavailable');
     const associations=await this.sources(projectId,scope.sessionId,[turnId]);
     const source=associations.found.get(turnId)??null;
-    const reviewer=principal.permissions.includes('read')&&principal.permissions.includes('review')&&!workerRunId;
+    const fullNativeReader=this.mayReadFullNative(principal,projectId,scope.sessionId)&&!workerRunId;
     const worker=!!workerRunId&&source?.kind==='run'&&source.runId===workerRunId;
-    const detail=reviewer||worker;
+    const detail=fullNativeReader||worker;
+    if(!fullNativeReader&&!worker)
+      throw new DomainError('FORBIDDEN','读取完整原生 Item 需要对此 Session 的 Session 权限。');
     if(workerRunId&&!worker)throw new DomainError('FORBIDDEN','Worker Run does not own this Turn');
     const native=await this.deps.runner.workspaceHistory(principal,projectId,scope.sessionId,{turnId,itemId,limit:1,detail});
     const raw=native.entries.find(e=>e.turnId===turnId&&e.nativeItemId===itemId);
@@ -546,12 +557,13 @@ export class SessionTimelineService {
   private projectDirectInput(principal:Principal,scope:Scope,raw:WorkspaceMessage,source:NativeInputSource|null,
     record:DirectInputRecord|undefined):WorkspaceMessage|null{
     if(!source||!record||!raw.turnId||!raw.nativeItemId||raw.clientId!==record.inputId||
-      record.projectId!==scope.projectId||!principal.projectIds.includes(scope.projectId)||
+      record.projectId!==scope.projectId||!isProjectMember(principal,scope.projectId)||
+      !hasPermission(principal,scope.projectId,'session')||!mayAccessSession(principal,scope.projectId,scope.sessionId!)||
       record.sessionId!==scope.sessionId||record.actualTurnId!==raw.turnId||
       record.nativeItemId!==raw.nativeItemId||record.source.kind!==source.kind||
       record.source.id!==(source.kind==='run'?source.runId:source.messageId)||
       raw.inputReference)return null;
-    const readable=record.actorId===principal.actorId||principal.permissions.includes('review');
+    const readable=record.actorId===principal.actorId||hasPermission(principal,scope.projectId,'session');
     const {inputReference:_,...publicInput}=raw;
     return {...publicInput,body:readable?bounded(record.content):'已接受的即时补充',
       author:{kind:'actor',id:record.actorId,label:record.actorId},origin:originOf(source),

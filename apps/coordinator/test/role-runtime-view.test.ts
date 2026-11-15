@@ -12,7 +12,7 @@ import { buildServer } from "../src/server.js";
 import { roleRuntimeView, type RoleRuntimeViewDeps } from "../src/session-preparation/role-runtime-view.js";
 
 const projectId = "00000000-0000-4000-8000-000000000001", roleId = "00000000-0000-4000-8000-000000000002";
-const principal: Principal = { actorId: "lead", projectIds: [projectId], permissions: ["read", "write", "review"] };
+const principal: Principal = { actorId: "lead", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true };
 const businessPaths = [".agents/skills/evoloop-workflow/SKILL.md"];
 
 async function skill(dir: string, name: string) {
@@ -164,8 +164,8 @@ test("the Role runtime route reads the live view for project readers and says wh
     if (!p.projectIds.includes(project)) throw new DomainError("FORBIDDEN", "project read required");
     return {} as never;
   } } as unknown as RoleRuntimeViewDeps["service"];
-  const credentials = [{ token, actorId: "reader", projectIds: [projectId], permissions: ["read" as const] },
-    { token: foreign, actorId: "other", projectIds: ["00000000-0000-4000-8000-000000000099"], permissions: ["read" as const] }];
+  const credentials = [{ token, actorId: "reader", projectIds: [projectId], permissions: [] as ('task'|'document'|'session'|'management')[] },
+    { token: foreign, actorId: "other", projectIds: ["00000000-0000-4000-8000-000000000099"], permissions: [] as ('task'|'document'|'session'|'management')[] }];
   const url = `/api/projects/${projectId}/roles/${roleId.toUpperCase()}/runtime`;
   const app = await buildServer({ service: service as unknown as WorkflowService, credentials,
     roleRuntimeView: (who, project, role) => roleRuntimeView({ ...base, service }, who, project, role) });
@@ -186,8 +186,8 @@ test("the Role runtime route reads the live view for project readers and says wh
 test("a Role without a Session starts in its own grant's directory whoever is looking; the skills show to every reader, the path only to a reviewer or a holder of the grant (#fa93783c)", async () => {
   const l = await layout();
   try {
-    const reader: Principal = { actorId: "plain-reader", projectIds: [projectId], permissions: ["read"] };
-    const holder: Principal = { actorId: "grant-holder", projectIds: [projectId], permissions: ["read", "write"] };
+    const reader: Principal = { actorId: "plain-reader", projectIds: [projectId], permissions: [] };
+    const holder: Principal = { actorId: "grant-holder", projectIds: [projectId], permissions: ["task", "document", "session"] };
     const grants = [{ actorId: "grant-holder", cwd: l.repo }];
     // 1. A project reader with no grant: the project skill is listed, the directory is "configured" and its path is not sent.
     const seen = await roleRuntimeView(deps(l, { grants }), reader, projectId, roleId);

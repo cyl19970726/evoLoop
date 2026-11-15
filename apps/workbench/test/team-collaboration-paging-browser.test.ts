@@ -37,7 +37,7 @@ test("协作回执 reads later rows one page at a time and holds their writes wh
     const send = (value: unknown, status = 200) => { res.writeHead(status, { "content-type": "application/json" }); res.end(JSON.stringify(value)); };
     if (url.pathname.startsWith("/api/")) {
       const root = `/api/projects/${projectId}`, base = `${root}/collaboration`, path = url.pathname;
-      if (path === "/api/session") return send({ principal: { actorId: "owner", projectIds: [projectId], permissions: ["read", "write", "review"] }, capabilities: {} });
+      if (path === "/api/session") return send({ principal: { actorId: "owner", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true }, capabilities: {} });
       if (path === root) return send({ id: projectId, title: "协作分页项目", createdAt: stamp });
       if (path.startsWith(`${root}/tasks/`)) {
         const taskId = path.slice(`${root}/tasks/`.length);

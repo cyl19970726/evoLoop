@@ -29,9 +29,9 @@ async function fixture(t: test.TestContext) {
     try { await admin.query(`DROP SCHEMA "${schema}" CASCADE`); } finally { await admin.end(); }
   });
   const projectId = randomUUID();
-  const reviewer: Principal = { actorId: "reviewer", projectIds: [projectId], permissions: ["read", "write", "review"] };
-  const writer: Principal = { actorId: "writer", projectIds: [projectId], permissions: ["read", "write"] };
-  const consumer: Principal = { actorId: "requirements-agent", identityKind: "agent", projectIds: [projectId], permissions: ["read", "write"] };
+  const reviewer: Principal = { actorId: "reviewer", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true };
+  const writer: Principal = { actorId: "writer", projectIds: [projectId], permissions: ["task", "document", "session"] };
+  const consumer: Principal = { actorId: "requirements-agent", identityKind: "agent", projectIds: [projectId], permissions: ["task", "document", "session"] };
   const workflow = new WorkflowService({ uow: new PostgresUnitOfWork(pool), clock: { now: () => new Date().toISOString() },
     ids: { next: randomUUID }, hasher: { hash: (s: string) => createHash("sha256").update(s).digest("hex") } });
   const issue = async (who: Principal, command: Record<string, unknown>) =>
@@ -137,7 +137,7 @@ test("the projection says waiting for the precondition until it is marked, and n
 
   // Marking: reviewer only, current delivery only, once.
   const markCommand = { type: "task.acceptancePrecondition.mark", taskId, deliveryId, evidence: "released in the build that contains the PR" };
-  await assert.rejects(f.issue(f.writer, markCommand), /Permission review is required/);
+  await assert.rejects(f.issue(f.writer, markCommand), /Decision authority for task is required/);
   await f.applied(f.reviewer, markCommand);
   const again = await f.issue(f.reviewer, markCommand);
   assert.equal((again as { code: string }).code, "ALREADY_MARKED");
@@ -456,8 +456,8 @@ test("item 5: the owed list route accepts direct=0 like no flag, ignores unknown
   const token = "c".repeat(40);
   const failing = new Proxy(f.relay, { get: (target, key) => key === "mineDirect" ? async () => { throw Object.assign(new Error("boom"), { code: "WORK_INDEX_BROKEN" }); } : (target as never)[key] }) as typeof f.relay;
   const logged: string[] = [];
-  const app = await buildServer({ service: f.workflow, acceptanceRelay: f.relay, credentials: [{ token, actorId: f.consumer.actorId, identityKind: "agent", projectIds: [f.projectId], permissions: ["read", "write"] }] });
-  const broken = await buildServer({ service: f.workflow, acceptanceRelay: failing, credentials: [{ token, actorId: f.consumer.actorId, identityKind: "agent", projectIds: [f.projectId], permissions: ["read", "write"] }] });
+  const app = await buildServer({ service: f.workflow, acceptanceRelay: f.relay, credentials: [{ token, actorId: f.consumer.actorId, identityKind: "agent", projectIds: [f.projectId], permissions: ["task", "document", "session"] }] });
+  const broken = await buildServer({ service: f.workflow, acceptanceRelay: failing, credentials: [{ token, actorId: f.consumer.actorId, identityKind: "agent", projectIds: [f.projectId], permissions: ["task", "document", "session"] }] });
   (broken.log as unknown as { error: (...args: unknown[]) => void }).error = (...args: unknown[]) => { logged.push(JSON.stringify(args)); };
   t.after(async () => { await app.close(); await broken.close(); });
   const get = (server: typeof app, query: string) => server.inject({ url: `/api/projects/${f.projectId}/acceptance-relay/mine${query}`, headers: { authorization: `Bearer ${token}` } });

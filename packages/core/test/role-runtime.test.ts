@@ -8,7 +8,7 @@ import { RoleRuleError } from "../src/roles/index.js";
 import { applyRoleRuntime, sessionRuntimeProvider } from "../src/roles/runtime.js";
 
 const projectId = randomUUID();
-const principal: Principal = { actorId: "lead", projectIds: [projectId], permissions: ["write", "review"] };
+const principal: Principal = { actorId: "lead", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true };
 const nowUtc = "2026-11-09T02:00:00.000Z";
 const both = ["codex", "claude"] as const;
 

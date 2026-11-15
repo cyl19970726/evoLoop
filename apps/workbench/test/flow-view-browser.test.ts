@@ -46,6 +46,22 @@ test("1440 and 390 wide, light and dark: the right layout, no page-level horizon
     assert.ok(nodes >= (layout === "canvas" ? 13 : 7), `${width} ${scheme}: ${nodes} nodes`);
     assert.ok(await page.locator("[data-event]").count() >= 10, "the event list is there");
     if (layout === "canvas") for (const text of ["调度板", "通知包", "使用者", "Leader"]) assert.ok(await page.getByText(text).first().isVisible(), text);
+    // The 已验收 cell names its window itself, in the lanes as on the canvas (the fixture has no window, so it says 窗口内; a live page says 近 N 小时).
+    const windowLabel = page.locator("[data-station-window]");
+    assert.equal(await windowLabel.count(), 1, `${width} ${scheme}: one 已验收 cell`);
+    assert.ok(await windowLabel.isVisible(), `${width} ${scheme}: the window label is visible`);
+    assert.equal((await windowLabel.textContent())?.trim(), "窗口内");
+    assert.match(await page.locator('[data-node="station:已验收"]').innerText(), /已验收/);
+    // Every kind of node is on the page at this width, and activating each one shows a detail (a fixture node says it has no real object; it never stays silent).
+    for (const id of ["people.user", "people.requirements", "people.scheduler", "people.notices", "people.external", "leader", "packets", ...["待派发", "队伍", "运行中", "待验收", "已验收", "已合并", "已发布"].map(x => `station:${x}`)])
+      assert.equal(await page.locator(`[data-node="${id}"]`).count(), 1, `${width} ${scheme}: node ${id}`);
+    for (const id of ["people.external", "packets", "station:已发布", "station:已验收"]) {
+      await page.locator(`[data-node="${id}"]`).click();
+      const detail = page.locator("[data-node-detail]");
+      await detail.waitFor();
+      assert.match((await detail.innerText()).trim(), /夹具节点没有真实对象/, `${width} ${scheme}: ${id} shows its detail`);
+    }
+    assert.ok(overflow <= 0 && (await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)) <= 0, `${width} ${scheme}: still no horizontal scroll after selecting nodes`);
     if (shots) await page.screenshot({ path: `${shots}/flow-${width}-${scheme}.png`, fullPage: true });
     await context.close();
   }

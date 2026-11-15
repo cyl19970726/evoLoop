@@ -1,4 +1,5 @@
-import type { AppliedResult, CommandResult, Operation, OutboxEvent, Principal, RuntimeRunRecord, RuntimeSessionRecord } from "@evoloop/contracts";
+import { hasAnyDecisionAuthority, hasDecisionAuthority, hasPermission, isProjectMember,
+  type AppliedResult, type CommandResult, type Operation, type OutboxEvent, type Principal, type RuntimeRunRecord, type RuntimeSessionRecord } from "@evoloop/contracts";
 import { DomainError } from "@evoloop/contracts/ports";
 import type { DocumentSource, GitSourceRef } from "@evoloop/contracts/sources";
 import { formalSourceDecisionSchema, registerGitReferenceSchema, taskExternalReferenceSchema } from "@evoloop/contracts/references";
@@ -35,9 +36,10 @@ const studyIntentId = (hash: (value: string) => string, ...parts: string[]): str
   const hex = hash(JSON.stringify(parts));
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-5${hex.slice(13, 16)}-${((parseInt(hex[16]!, 16) & 3) | 8).toString(16)}${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
 };
-function authority(principal: Principal, command: ReferenceCommand, permission: "write" | "review"): void {
-  if (!principal.actorId || principal.actorId !== command.actorId || !principal.projectIds.includes(command.projectId) ||
-      !principal.permissions.includes(permission)) throw new DomainError("FORBIDDEN", "Project reference authority is required");
+function authority(principal: Principal, command: ReferenceCommand, decision: boolean): void {
+  if (principal.actorId !== command.actorId || !hasPermission(principal, command.projectId, "task") ||
+      decision && !hasDecisionAuthority(principal, command.projectId, "task"))
+    throw new DomainError("FORBIDDEN", "Project task reference authority is required");
 }
 function replay(prior: Operation, principal: Principal, hash: string): CommandResult {
   if (prior.actorId !== principal.actorId || prior.commandHash !== hash)
@@ -75,7 +77,7 @@ async function journal(deps: ReferenceDependencies, principal: Principal, comman
 /** The adapter validates full commit, allowlisted path, permissions and SHA before metadata enters PG. */
 export async function registerFixedGitReference(deps: ReferenceDependencies, principal: Principal, input: unknown): Promise<CommandResult> {
   const command = registerGitReferenceSchema.parse(input);
-  authority(principal, command, "write");
+  authority(principal, command, false);
   const existing = await deps.uow.read(command.projectId, reader => reader.getOperation(command.operationId));
   const commandHash = deps.hashText(canonical({ command, actorId: principal.actorId }));
   if (existing) return replay(existing, principal, commandHash);
@@ -93,7 +95,7 @@ export async function registerFixedGitReference(deps: ReferenceDependencies, pri
 
 export async function recordFormalSourceDecision(deps: ReferenceDependencies, principal: Principal, input: unknown): Promise<CommandResult> {
   const command = formalSourceDecisionSchema.parse(input);
-  authority(principal, command, "review");
+  authority(principal, command, true);
   const prior = await deps.uow.read(command.projectId, reader => reader.getOperation(command.operationId));
   const commandHash = deps.hashText(canonical({ command, actorId: principal.actorId }));
   if (prior) return replay(prior, principal, commandHash);
@@ -135,9 +137,9 @@ export async function applyDeclaredStudyReference(deps: ReferenceDependencies, p
 async function decideReference(deps: ReferenceDependencies, principal: Principal, input: unknown,
   provenance?: StudyReferenceProvenance): Promise<CommandResult> {
   const command = taskExternalReferenceSchema.parse(input);
-  authority(principal, command, provenance ? "write" : "review");
+  authority(principal, command, !provenance);
   if (provenance && (command.kind !== "run" || command.decision !== "adopt" ||
-    command.expectedHeadVersion !== 0 || !principal.permissions.includes("read")))
+    command.expectedHeadVersion !== 0 || !isProjectMember(principal, command.projectId)))
     throw new DomainError("STUDY_AUTHORITY_DENIED", "Study material may only adopt one declared Run into a fresh slot");
   if (provenance) {
     const parts = [provenance.declarationId, provenance.inboxId, provenance.sourceDecisionId];

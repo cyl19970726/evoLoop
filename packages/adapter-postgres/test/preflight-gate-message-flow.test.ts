@@ -26,8 +26,8 @@ const pool = new pg.Pool({ connectionString: url, options: `-c search_path=${sch
 const uow = new PostgresUnitOfWork(pool);
 const hash = (text: string) => createHash("sha256").update(text).digest("hex");
 const p = randomUUID(), role = randomUUID(), roleRev = randomUUID();
-const lead: Principal = { actorId: "lead", projectIds: [p], permissions: ["read", "write", "review"] };
-const human: Principal = { actorId: "human-actor", projectIds: [p], permissions: ["read", "write"] };
+const lead: Principal = { actorId: "lead", projectIds: [p], permissions: ["task", "document", "session", "management"], decisions: true };
+const human: Principal = { actorId: "human-actor", projectIds: [p], permissions: ["task", "document", "session"] };
 const clock = { now: () => new Date().toISOString() };
 const deps = { uow, clock, ids: { next: randomUUID }, hasher: { hash } };
 const workflow = new WorkflowService(deps);

@@ -44,7 +44,7 @@ test("reconciliation overview hides empty review counts and maps cognition histo
         const root = `/api/projects/${projectId}`;
         let value: unknown = { items: [], nextCursor: null };
         if (url.pathname === "/api/session") value = {
-          principal: { actorId: "reader", projectIds: [projectId], permissions: ["read"] }, capabilities: {},
+          principal: { actorId: "reader", projectIds: [projectId], permissions: [] }, capabilities: {},
         };
         else if (url.pathname === root) value = { id: projectId, title: "现场回归项目", createdAt: stamp };
         else if (url.pathname === `${root}/tasks`) value = { items: [ordinaryTask], nextCursor: null };

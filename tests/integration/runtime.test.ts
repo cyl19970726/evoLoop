@@ -42,7 +42,7 @@ const workflow = new WorkflowService(deps);
 const runtime = new RuntimeWorkflowService(deps);
 withPersistedResumeProfile(runtime,uow);
 const projectId = randomUUID();
-const principal: Principal = { actorId: "runtime-owner", projectIds: [projectId], permissions: ["read", "write", "review"] };
+const principal: Principal = { actorId: "runtime-owner", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true };
 const issue = async (data: Record<string, unknown>, operationId = randomUUID()): Promise<CommandResult> =>
   workflow.execute(principal, { ...data, projectId, operationId } as Command);
 const applied = (result: CommandResult) => {
@@ -86,8 +86,8 @@ test("runtime reservations freeze task basis and recover uncertain native starts
   const oldCommand={...reserveSession,projectId,operationId:sessionOperation};
   const ownerToken="o".repeat(40),otherToken="n".repeat(40);
   const app=await buildServer({service:workflow,credentials:[
-    {token:ownerToken,actorId:principal.actorId,projectIds:[projectId],permissions:["read","write","review"]},
-    {token:otherToken,actorId:"other-reviewer",projectIds:[projectId],permissions:["read","write","review"]}],
+    {token:ownerToken,actorId:principal.actorId,projectIds:[projectId],permissions:["task", "document", "session", "management"], decisions: true},
+    {token:otherToken,actorId:"other-reviewer",projectIds:[projectId],permissions:["task", "document", "session", "management"], decisions: true}],
     runtime:{status:()=>({available:false,error:"offline"})} as RuntimeRunner});
   try{
     const post=(token:string,payload:unknown)=>app.inject({method:"POST",url:"/api/commands",
@@ -173,16 +173,16 @@ test("runtime reservations freeze task basis and recover uncertain native starts
   const firstTerminal = await runtime.recordTurn(projectId, runId, "turn-1", "interrupted", "Premature native list observation", { cursor: "cursor-1", itemsDigest: "sha256:items" });
   const oldEvents = await workflow.listRuntimeEvents(principal, projectId, runId);
   const oldTask = await workflow.getTask(principal, projectId, taskId);
-  const reviewer: Principal = { actorId: "runtime-reviewer", projectIds: [projectId], permissions: ["read", "review"] };
+  const reviewer: Principal = { actorId: "runtime-reviewer", projectIds: [projectId], permissions: ["session", "management"], decisions: true };
   const checkpoint = { itemsDigest: "a".repeat(64), completedAtUtc: "2026-10-20T12:00:00.000Z" };
   await assert.rejects(runtime.reconcileTerminalObservation(projectId, runId, "foreign-turn", "completed", "Confirmed", checkpoint,
     firstTerminal.version, reviewer, "Native history completed later"), /does not match bound run/);
   await assert.rejects(runtime.reconcileTerminalObservation(projectId, runId, "turn-1", "completed", "Confirmed", checkpoint,
     firstTerminal.version + 1, reviewer, "Native history completed later"), /run changed/);
   await assert.rejects(runtime.reconcileTerminalObservation(projectId, runId, "turn-1", "completed", "Confirmed", checkpoint,
-    firstTerminal.version, { ...reviewer, permissions: ["read"] }, "Native history completed later"), /review permission/);
+    firstTerminal.version, { ...reviewer, permissions: [] }, "Native history completed later"), /Session decision authority/);
   await assert.rejects(runtime.reconcileTerminalObservation(projectId, runId, "turn-1", "completed", "Confirmed", checkpoint,
-    firstTerminal.version, { ...reviewer, projectIds: [randomUUID()] }, "Native history completed later"), /review permission/);
+    firstTerminal.version, { ...reviewer, projectIds: [randomUUID()] }, "Native history completed later"), /Session decision authority/);
   await assert.rejects(runtime.reconcileTerminalObservation(projectId, runId, "turn-1", "completed", "Confirmed",
     { ...checkpoint, completedAtUtc: "not-a-date" }, firstTerminal.version, reviewer, "Invalid native timestamp"), /completed UTC/);
   const completed = await runtime.reconcileTerminalObservation(projectId, runId, "turn-1", "completed", "Native turn completed",
@@ -213,7 +213,7 @@ test("runtime reservations freeze task basis and recover uncertain native starts
   assert.ok(events.some(item => item.kind === "run.status" && item.cursor === "cursor-1"));
   assert.ok(events.some(item => item.kind === "handoff.read"));
   assert.ok(events.some(item => item.kind === "runtime.approvalDeclined"));
-  await assert.rejects(workflow.getRuntimeRun({ actorId: "foreign", projectIds: [randomUUID()], permissions: ["read"] }, projectId, runId), /Permission read/);
+  await assert.rejects(workflow.getRuntimeRun({ actorId: "foreign", projectIds: [randomUUID()], permissions: [] }, projectId, runId), /Project membership is required/);
   assert.equal(await uow.read(randomUUID(), tx => tx.getRuntimeRun(runId)), null);
 
   const resumeKnown=async(sourceId:string)=>{
@@ -367,7 +367,7 @@ test("runtime reservations freeze task basis and recover uncertain native starts
   let reviewFailure:unknown;
   let nativeAvailable=true;
   const reviewApp=await buildServer({service:workflow,credentials:[{
-    token:ownerToken,actorId:principal.actorId,projectIds:[projectId],permissions:['read','write','review'],
+    token:ownerToken,actorId:principal.actorId,projectIds:[projectId],permissions:['task', 'document', 'session', 'management'], decisions: true,
   }],hasRuntimeGrant:()=>true,runtime:{
     nativeStartsAvailable:()=>nativeAvailable,
     readPreTurnContinuationDecision:(p:string,id:string,actor:Principal,

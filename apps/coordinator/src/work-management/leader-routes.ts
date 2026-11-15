@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import type { Principal } from "@evoloop/contracts";
+import { hasDecisionAuthority, type Principal } from "@evoloop/contracts";
 import {
   leaderWorkDependenciesCommandSchema, leaderWorkPlanCommandSchema, leaderWorkReviewCommandSchema,
 } from "@evoloop/contracts/work-index";
@@ -55,8 +55,8 @@ export function registerLeaderWorkRoutes(app: FastifyInstance, service: LeaderPr
 
   app.put("/api/projects/:projectId/work-management/tasks/:taskId/plan", async request => {
     const p = task(request.params), who = principal(request);
-    if (!who.permissions.includes("write") || !who.permissions.includes("review"))
-      throw new DomainError("FORBIDDEN", "Project review permission is required for Leader planning");
+    if (!hasDecisionAuthority(who, p.projectId, "task"))
+      throw new DomainError("FORBIDDEN", "Task decision authority is required for Leader planning");
     await service.getProject(who, p.projectId);
     const body = z.record(z.string(), z.unknown()).parse(request.body);
     if ((body.projectId !== undefined && body.projectId !== p.projectId) ||
@@ -68,8 +68,8 @@ export function registerLeaderWorkRoutes(app: FastifyInstance, service: LeaderPr
 
   app.put("/api/projects/:projectId/work-management/tasks/:taskId/dependencies", async request => {
     const p = task(request.params), who = principal(request);
-    if (!who.permissions.includes("write") || !who.permissions.includes("review"))
-      throw new DomainError("FORBIDDEN", "Project review permission is required for Leader planning");
+    if (!hasDecisionAuthority(who, p.projectId, "task"))
+      throw new DomainError("FORBIDDEN", "Task decision authority is required for Leader planning");
     await service.getProject(who, p.projectId);
     const body = z.record(z.string(), z.unknown()).parse(request.body);
     if ((body.projectId !== undefined && body.projectId !== p.projectId) ||
@@ -81,8 +81,8 @@ export function registerLeaderWorkRoutes(app: FastifyInstance, service: LeaderPr
 
   app.put("/api/projects/:projectId/work-management/tasks/:taskId/review", async request => {
     const p = task(request.params), who = principal(request);
-    if (!who.permissions.includes("write") || !who.permissions.includes("review"))
-      throw new DomainError("FORBIDDEN", "Project review permission is required for Leader review decisions");
+    if (!hasDecisionAuthority(who, p.projectId, "task"))
+      throw new DomainError("FORBIDDEN", "Task decision authority is required for Leader review decisions");
     await service.getProject(who, p.projectId);
     const body = z.record(z.string(), z.unknown()).parse(request.body);
     if ((body.projectId !== undefined && body.projectId !== p.projectId) ||

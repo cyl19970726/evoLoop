@@ -5,7 +5,7 @@ import { contextHandoffSummary, contextPressure } from "../src/context-budget.ts
 import { inclusiveRuntimeUsage, UsageService, usageBudget, usageDay } from "../src/usage.ts";
 
 const projectId = "00000000-0000-4000-8000-000000000001";
-const principal: Principal = { actorId: "reader", projectIds: [projectId], permissions: ["read", "write"] };
+const principal: Principal = { actorId: "reader", projectIds: [projectId], permissions: ["task", "document", "session"] };
 const contextConfig: ContextBudgetConfig = { enabled: true, maxInputTokens: 150_000, warningRatio: 0.8, pauseOrdinaryTurns: true };
 
 test("usageDay uses the configured local calendar day, not the UTC date", () => {

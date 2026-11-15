@@ -81,7 +81,7 @@ test("跨空间返回: task → agent → task (same tab), table → agent, 统�
       const root = `/api/projects/${projectId}`;
       const path = decodeURIComponent(url.pathname);
       let value: unknown = { items: [], nextCursor: null, metadata }, status = 200;
-      if (path === "/api/session") value = { principal: { actorId: "reader", projectIds: [projectId], permissions: ["read", "write", "review"] }, capabilities: {} };
+      if (path === "/api/session") value = { principal: { actorId: "reader", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true }, capabilities: {} };
       else if (path === "/api/projects") value = [{ id: projectId, title: "返回链接夹具", createdAt: stamp }];
       else if (path === root) value = { id: projectId, title: "返回链接夹具", createdAt: stamp };
       else if (path === `${root}/tasks`) value = { items: tasks, nextCursor: null };

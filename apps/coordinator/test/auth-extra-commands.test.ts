@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { randomUUID } from "node:crypto";
 import { authConfigSchema, authenticate } from "../src/auth.ts";
 
-const entry = (extra: Record<string, unknown> = {}) => ({ token: "t".repeat(40), actorId: "docs-arch", projectIds: [randomUUID()], permissions: ["read", "write"], ...extra });
+const entry = (extra: Record<string, unknown> = {}) => ({ token: "t".repeat(40), actorId: "docs-arch", projectIds: [randomUUID()], permissions: ["task", "document", "session"], ...extra });
 
 test("the identity file accepts only archive and restore as extra commands, and refuses anything else when it is read", () => {
   assert.ok(authConfigSchema.safeParse([entry({ extraCommands: ["document.archive", "document.restore"] })]).success);
@@ -18,7 +18,7 @@ test("an authenticated principal carries the extra commands apart from its permi
   const config = authConfigSchema.parse([entry({ extraCommands: ["document.archive"] })]);
   const principal = authenticate(`Bearer ${"t".repeat(40)}`, config)!;
   assert.deepEqual(principal.extraCommands, ["document.archive"]);
-  assert.deepEqual(principal.permissions, ["read", "write"], "permissions are not widened");
+  assert.deepEqual(principal.permissions, ["task", "document", "session"], "permissions are not widened");
   const plain = authenticate(`Bearer ${"t".repeat(40)}`, authConfigSchema.parse([entry()]))!;
   assert.equal(plain.extraCommands, undefined);
 });

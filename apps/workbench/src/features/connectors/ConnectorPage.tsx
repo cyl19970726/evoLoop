@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useState, type FormEvent } from "react";
+import { hasDecisionAuthority } from "@evoloop/contracts";
 import type { ConnectorRoute, ConnectorRouteRecord } from "@evoloop/contracts/message-connectors";
 import { ApiError, errorDiagnostic, errorText } from "../../shared/api";
 import { RefreshCw } from "lucide-react";
@@ -97,7 +98,7 @@ const firstRead = (projectId: string): RouteRead => ({ projectId, routes: null, 
 export function ConnectorPage({ context }: { context: MutationContext }) {
   const { token, projectId, principal } = context;
   const client = connectorClient(token, projectId);
-  const canReview = principal.permissions.includes("write") && principal.permissions.includes("review");
+  const canReview = hasDecisionAuthority(principal, projectId, "management");
   const [read, setRead] = useState<RouteRead>(() => firstRead(projectId));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");

@@ -11,8 +11,8 @@ import { packetContent, LeaderResultNoticePump, type LeaderResultNotice, type Le
 const projectId="00000000-0000-4000-8000-000000000001";
 const roleId="00000000-0000-4000-8000-000000000002";
 const sessionId="00000000-0000-4000-8000-000000000003";
-const sender:Principal={actorId:"system:leader-result-notifier",projectIds:[projectId],permissions:["read","write"]};
-const receiver:Principal={actorId:"leader-actor",projectIds:[projectId],permissions:["read","write","review"]};
+const sender:Principal={actorId:"system:leader-result-notifier",projectIds:[projectId],permissions:['task','document','session']};
+const receiver:Principal={actorId:"leader-actor",projectIds:[projectId],permissions:['task','document','session','management'],decisions:true};
 const target={projectId,sessionId,receiverRoleId:roleId,receiverActorId:receiver.actorId,senderActorId:sender.actorId};
 const config:LeaderResultNoticeConfig={enabled:true,targets:[target]};
 const session:RuntimeSessionRecord={projectId,id:sessionId,roleId,cwd:"/tmp/leader-notice",authorizationScope:"project",
@@ -203,7 +203,7 @@ test("missing receiver grant stays pending with a reason and publishes after gra
 
 test("a receiver without Leader review authority is not awakened",async()=>{
   const f=fixture();
-  f.setPrincipals([sender,{...receiver,permissions:["read","write"]}]);
+  f.setPrincipals([sender,{...receiver,permissions:['task','document','session'],decisions:false}]);
   await f.pump.tick();
   assert.equal(f.commands.length,0);
   assert.equal(f.pendingReason,"LEADER_RECEIVER_UNAVAILABLE");

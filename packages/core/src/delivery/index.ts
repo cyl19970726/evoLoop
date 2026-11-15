@@ -1,4 +1,4 @@
-import type { Command, CommandResult, Principal, TaskDetail } from "@evoloop/contracts";
+import { hasDecisionAuthority, hasPermission, type Command, type CommandResult, type Principal, type TaskDetail } from "@evoloop/contracts";
 import type { DeliveryStore, IncomingRecord } from "@evoloop/contracts/delivery";
 import { DomainError } from "@evoloop/contracts/ports";
 
@@ -7,7 +7,8 @@ export class CollaborationRuleError extends DomainError {
 }
 const forbid = (message: string): never => { throw new CollaborationRuleError("FORBIDDEN", message); };
 function reviewer(principal: Principal, projectId: string): void {
-  if (!principal.actorId || !principal.projectIds.includes(projectId) || !principal.permissions.includes("read") || !principal.permissions.includes("write") || !principal.permissions.includes("review")) forbid("project review authority required");
+  if (!hasPermission(principal, projectId, "task") || !hasDecisionAuthority(principal, projectId, "task"))
+    forbid("project task decision authority required");
 }
 export interface IncomingWorkflow {
   getTask(principal: Principal, projectId: string, taskId: string): Promise<TaskDetail>;

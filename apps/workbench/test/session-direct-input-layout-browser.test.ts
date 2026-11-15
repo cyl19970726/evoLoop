@@ -43,7 +43,7 @@ test("unknown direct input keeps a readable long history at the original window 
       const root = `/api/projects/${projectId}`;
       const direct = `${root}/sessions/${sessionId}`;
       let value: unknown = { items: [], nextCursor: null, metadata }, status = 200;
-      if (url.pathname === "/api/session") value = { principal: { actorId: "reader", projectIds: [projectId], permissions: ["read", "write"] }, capabilities: {} };
+      if (url.pathname === "/api/session") value = { principal: { actorId: "reader", projectIds: [projectId], permissions: ["task", "document", "session"] }, capabilities: {} };
       else if (url.pathname === root) value = { id: projectId, title: "测试项目", createdAt: timelineStamp };
       else if (url.pathname === `${direct}/direct-input-capability`) value = { available: true, mode: "start", expectedTurnId: null,
         reasonCode: "READY_TO_START", observedAt: timelineStamp };
@@ -159,7 +159,7 @@ test("a pre-reservation direct grant denial clears unknown pending and leaves on
       const root = `/api/projects/${projectId}`;
       const direct = `${root}/sessions/${sessionId}`;
       let value: unknown = { items: [], nextCursor: null, metadata }, status = 200;
-      if (url.pathname === "/api/session") value = { principal: { actorId: "reader", projectIds: [projectId], permissions: ["read", "write"] }, capabilities: {} };
+      if (url.pathname === "/api/session") value = { principal: { actorId: "reader", projectIds: [projectId], permissions: ["task", "document", "session"] }, capabilities: {} };
       else if (url.pathname === root) value = { id: projectId, title: "测试项目", createdAt: timelineStamp };
       else if (url.pathname === `${direct}/direct-input-capability`) value = { available: true, mode: "start", expectedTurnId: null,
         reasonCode: "READY_TO_START", observedAt: timelineStamp };

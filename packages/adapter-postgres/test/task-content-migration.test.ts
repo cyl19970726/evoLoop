@@ -114,22 +114,22 @@ test("012 backfills nonempty legacy history byte-exactly without rewriting seale
   try {
     const workflow = new WorkflowService({ uow: new PostgresUnitOfWork(workflowPool),
       clock: { now: () => now }, ids: { next: randomUUID }, hasher: { hash } });
-    const deferredBefore = await workflow.getTask({ actorId: "owner", projectIds: [projectId!], permissions: ["read", "write", "review"] }, projectId!, deferredTaskId);
+    const deferredBefore = await workflow.getTask({ actorId: "owner", projectIds: [projectId!], permissions: ["task", "document", "session", "management"], decisions: true }, projectId!, deferredTaskId);
     assert.equal(deferredBefore.task.state, "todo");
     assert.equal(deferredBefore.revision.state, "deferred");
     const updateOperationId = randomUUID();
-    const updatedDeferred = await workflow.execute({ actorId: "owner", projectIds: [projectId!], permissions: ["read", "write", "review"] },
+    const updatedDeferred = await workflow.execute({ actorId: "owner", projectIds: [projectId!], permissions: ["task", "document", "session", "management"], decisions: true },
       { type: "task.update", projectId: projectId!, operationId: updateOperationId, taskId: deferredTaskId,
         expectedVersion: 3, title: "reframed task", content: "new body", acceptance: "new check",
         owner: "owner", reason: "reframe old deferred task" });
     assert.equal(updatedDeferred.status, "applied");
-    const deferredAfter = await workflow.getTask({ actorId: "owner", projectIds: [projectId!], permissions: ["read", "write", "review"] }, projectId!, deferredTaskId);
+    const deferredAfter = await workflow.getTask({ actorId: "owner", projectIds: [projectId!], permissions: ["task", "document", "session", "management"], decisions: true }, projectId!, deferredTaskId);
     assert.equal(deferredAfter.task.version, 4);
     assert.equal(deferredAfter.revision.state, "todo");
-    assert.equal((await workflow.getTaskRevision({ actorId: "owner", projectIds: [projectId!], permissions: ["read", "write", "review"] },
+    assert.equal((await workflow.getTaskRevision({ actorId: "owner", projectIds: [projectId!], permissions: ["task", "document", "session", "management"], decisions: true },
       projectId!, deferredTaskId, deferredRevisionId)).revision.state, "deferred");
     assert.equal((await client.query("SELECT count(*)::int AS n FROM operation_journal WHERE project_id=$1 AND operation_id=$2", [projectId, updateOperationId])).rows[0].n, 1);
-    const started = await workflow.execute({ actorId: "owner", projectIds: [projectId!], permissions: ["read", "write", "review"] },
+    const started = await workflow.execute({ actorId: "owner", projectIds: [projectId!], permissions: ["task", "document", "session", "management"], decisions: true },
       { type: "task.start", projectId: projectId!, operationId: randomUUID(), taskId: taskId!, expectedVersion: 2,
         reason: "Resume migrated approved work" });
     assert.equal(started.status, "applied");

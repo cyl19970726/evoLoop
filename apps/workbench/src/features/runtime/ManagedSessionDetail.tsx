@@ -2,6 +2,7 @@
 // upgrade, and closing it. A close is offered only when nothing in what was read blocks it, and every blocker is
 // named; the service checks again when the request is sent.
 import { useState } from "react";
+import { hasDecisionAuthority, hasPermission } from "@evoloop/contracts";
 import { ChevronLeft, RefreshCw } from "lucide-react";
 import type { RuntimeRunRecord, RuntimeSessionRecord } from "@evoloop/contracts/runtime";
 import { Button, Notice, StatusTag } from "@evoloop/ui";
@@ -40,7 +41,6 @@ export function ManagedSessionDetail({ context, session, name, runs, runsRead, s
   });
   const blockers = closeBlockers(session, { runsRead, runs, queues: queues.error || !queues.data ? null : queues.data });
   const queueReading = queues.isPending;
-  const permissions = context.principal.permissions;
   const own = runs.filter(run => run.sessionId === session.id);
   const readOnly = new Set(sessions.filter(item => item.sandbox === "read-only").map(item => item.id));
   const agentName = useAgentName(projectId, session.id);
@@ -70,9 +70,10 @@ export function ManagedSessionDetail({ context, session, name, runs, runsRead, s
       <p className="text-small text-text-secondary" data-profile="">{profileText(session, recoveryActivationLabel)}</p>
       <p className={mutedText}>智能体与职责的登记不表示任何任务正在此处运行；请核对队列与具体运行。</p>
     </PageSection>
-    {needsFullAccessUpgrade(session) && permissions.includes("write") && permissions.includes("review") && <PageSection title="登记为完整权限"
+    {needsFullAccessUpgrade(session) && hasPermission(context.principal, context.projectId, "session") &&
+      hasDecisionAuthority(context.principal, context.projectId, "session") && <PageSection title="登记为完整权限"
       description="填写为原智能体创建者配置的精确授权模型；服务端按原创建者、职责、工作目录及范围核验。提交后会在原智能体与原生线程上登记新配置修订，仍须核对激活；历史运行不会改写。">
-      <ActionForm key={session.executionProfile!.revision.revisionId} context={context} review embedded title="升级原智能体执行配置"
+      <ActionForm key={session.executionProfile!.revision.revisionId} context={context} requiredPermissions={["session"]} decision embedded title="升级原智能体执行配置"
         baseline={{ sessionVersion: session.version, profileRevision: session.executionProfile!.revision.revisionId }} fields={[
         { name: "targetModel", label: "原创建者精确授权的目标模型" }, { name: "evidenceRef", label: "本次授权依据" }, reasonField,
       ]} build={v => {
@@ -99,7 +100,7 @@ export function ManagedSessionDetail({ context, session, name, runs, runsRead, s
       {!queueReading && blockers.length === 0 && <>
         <p className="text-small text-text-secondary">在本次读到的运行与队列中没有发现在途运行或占用。消息与具体分派的完整核对在<a className="text-primary hover:underline" href={`${sessionHref(projectId, `owned:${session.id}`)}`}>智能体空间的关闭面板</a>；提交时服务端会再次检查。</p>
         <ActionForm key={`${session.id}:${session.version}`} context={{ ...context, draftScope: `runtime-close:${session.id}`, draftBaseline: String(session.version) }}
-          review embedded title="请求关闭受管智能体" fields={[{ ...reasonField, label: "关闭理由与核对依据" }]}
+          requiredPermissions={["session"]} decision embedded title="请求关闭受管智能体" fields={[{ ...reasonField, label: "关闭理由与核对依据" }]}
           build={v => ({ type: "runtime.session.close", sessionId: session.id, expectedVersion: session.version, reason: v.reason })} />
       </>}
     </PageSection>

@@ -83,7 +83,7 @@ export function TaskBasisTab({ context, detail, reads, canReview }: {
     <TabSection title="待复核的依据变化" meta={`${pending.length} 项`}>
       {pending.length === 0 ? <p className="text-label text-text-secondary">当前没有待复核的依据变化。</p>
         : <>
-          <Fine>每项变化单独处理：先读任务固定的旧版和文档的新版，再决定采用新版或保留旧版。{canReview ? "" : "当前身份没有复核权限，可以阅读两版。"}</Fine>
+          <Fine>每项变化单独处理：先读任务固定的旧版和文档的新版，再决定采用新版或保留旧版。{canReview ? "" : "当前身份没有任务决定权限，可以阅读两版。"}</Fine>
           <div className="flex flex-col" data-impact-list="">
             {pending.map((impact, index) => <ImpactItem key={impact.id} context={context} detail={detail} impact={impact}
               title={reads[impact.documentId]?.data?.document?.title ?? (reads[impact.documentId]?.error ? "文档名称暂不可读" : "正在读取文档名称…")}
@@ -127,9 +127,9 @@ function ImpactItem({ context, detail, impact, title, canReview, defaultOpen }: 
       </div>
       <FullIdentifiers rows={[{ label: "文档", value: impact.documentId }, { label: "任务固定修订", value: impact.fromRevisionId },
         { label: "文档新修订", value: impact.toRevisionId }, { label: "变化记录", value: impact.id }]} />
-      {!canReview ? <Fine>当前身份没有复核权限，不能决定采用或保留。</Fine>
+      {!canReview ? <Fine>当前身份没有任务决定权限，不能决定采用或保留。</Fine>
         : !before.data || !after.data ? <Fine>读到两版后才能决定。</Fine>
-          : <div className="flex flex-col"><ActionRow title="决定采用新版或保留旧版" description="读完两版再决定；提交时按打开这里时的任务版本核对。"><CommandForm context={context} label={`复核《${title}》的变化`} submitLabel="提交复核决定" baseline={impactSeen(detail.task, impact)}
+          : <div className="flex flex-col"><ActionRow title="决定采用新版或保留旧版" description="读完两版再决定；提交时按打开这里时的任务版本核对。"><CommandForm context={context} label={`复核《${title}》的变化`} submitLabel="提交复核决定" permission="task" decision baseline={impactSeen(detail.task, impact)}
             fields={[
               { name: "decision", label: "这次变化怎样影响任务", kind: "radio", initial: "adopt",
                 options: [{ value: "adopt", label: "采用新版" }, { value: "retain", label: "保留任务固定的旧版" }] },

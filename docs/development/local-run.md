@@ -41,11 +41,23 @@ import { randomBytes, randomUUID } from 'node:crypto';
 const projectId = randomUUID();
 writeFileSync(process.env.EVOLOOP_AUTH_FILE, JSON.stringify([{
   token: randomBytes(32).toString('hex'), actorId: 'local-owner',
-  projectIds: [projectId], permissions: ['read', 'write', 'review']
+  projectIds: [projectId], permissions: ['task', 'document', 'session', 'management'],
+  identityKind: 'human'
 }], null, 2), { mode: 0o600, flag: 'wx' });
 console.log({ projectId });
 JS
 ```
+
+`permissions` 只列可写的对象类别；进入项目本身即可读取普通任务、文档，以及 Session 的存在、状态和一般对话，不另设 `read`。人类身份随所属类别获得决定权；智能体身份还须显式写 `"decisions": true`。`sessionIds` 为空或省略表示本项目全部 Session；非空数组把 Session 写入和完整原生记录读取限定到列出的 Session。`extraCommands` 只能列出 `document.archive`、`document.restore` 这类逐命令例外，不授予文档类别以外的权限。
+
+旧身份文件中的 `read`/`write`/`review` 不会被服务静默解释。先保留原文件，再用当前 CLI 转换：
+
+```bash
+npm run --silent cli -- identity migrate --input legacy-auth.json --out auth.json \
+  --confirm-review-as-management
+```
+
+`read` 变为项目成员读取；`write` 变为 `task`、`document`、`session` 写权限；`review` 只有在明确确认后才变为 `management` 加决定权。因此 `read` + `write` 的 owner-proxy 身份不会被授予开工、关闭或阶段决定；需要这些动作时，单独给 agent 身份加 `"decisions": true`。命令先打印逐身份的转换前后表，再写 0600 新文件；没有 `--confirm-review-as-management` 时只要含 `review` 就拒绝，避免把旧复核权静默扩大成项目管理。
 
 集成默认关闭。以 `0600` 权限创建 `.local/integrations.json`，初始内容如下（`repositories`、`feishu`、`knowledge` 均可暂时省略）：
 
@@ -60,9 +72,9 @@ JS
 
 Leader 结果通知、即时输入、托管压缩、普通 Task 的每日复制和阶段关注各有自己的配置、打开和核对步骤，见[运行接线手册](runtime-operations.md)。
 
-日程 grant 须明确 `projectId`、`actorId`、`scopeId`、`roleId`，与日程当前修订的授权一致；当前身份仍须该项目 `write` 和 `review` 权限。未配置 `template.managedTarget` 时，tick 只创建 `todo` Task 及其固定主正文。新修订可显式绑定已限定同一 active Stage 的既有 `{loopId,stageId}`，同库物化后将经核验的到期来源送给指定 Loop；认知需要工作时复用该 todo，仍按当前 runtime grant、预算与 Task 规则启动，不由 tick 直接运行。旧修订不自动升级为受管工作。停用、失去 coordinator 锁、撤权、过期和异常的状态见 `/api/projects/PROJECT_ID/scheduling/status`。runtime grant 须明确 `projectId`、`actorId`、`roleId`、`authorizationScope` 与绝对路径 `cwd`；每个新 Session 固定 `danger-full-access`、`approvalPolicy: never` 和正常网络。精确授权仍限定 actor、项目、Role、scope 与业务对象，不要把 OS 执行权限理解为项目数据授权。`repositories` 可按项目登记只读 Git 根目录与路径白名单；`feishu` 启用时须给凭据、Bitable 字段映射及逐项目/行为者、显式 `scope: "project"` 的 `grants`，自动轮询另需 `pollEnabled`。用户已将飞书 connector 留待后续，本轮不以实连为完成条件。飞书尚无真实租户验证，不要把 fake HTTP 测试当作实连；当前配置仅支持明确的项目全范围授权，拒绝未落实入站过滤的 owner 范围。身份在启动时读取，修改后重启；HTTP 认证使用启动时的身份快照，重启后才会采用新凭据。集成配置分两种：是否启用运行时、`runtime` 下的执行配置和 `repositories` 的仓库登记等在启动时读取，改后要重启；日程授权、Leader 通知、即时输入和每日复制授权等在使用时重读，见[运行接线手册](runtime-operations.md#共同做法)。普通 Run 封存器会再读当前身份文件，文件修改可能在 HTTP 重启前提前收紧原签署者的新写入资格；已提交 Delivery 的固定回读仍可继续。
+日程 grant 须明确 `projectId`、`actorId`、`scopeId`、`roleId`，与日程当前修订的授权一致；当前身份仍须该项目 `management` 权限和决定权。未配置 `template.managedTarget` 时，tick 只创建 `todo` Task 及其固定主正文。新修订可显式绑定已限定同一 active Stage 的既有 `{loopId,stageId}`，同库物化后将经核验的到期来源送给指定 Loop；认知需要工作时复用该 todo，仍按当前 runtime grant、预算与 Task 规则启动，不由 tick 直接运行。旧修订不自动升级为受管工作。停用、失去 coordinator 锁、撤权、过期和异常的状态见 `/api/projects/PROJECT_ID/scheduling/status`。runtime grant 须明确 `projectId`、`actorId`、`roleId`、`authorizationScope` 与绝对路径 `cwd`；每个新 Session 固定 `danger-full-access`、`approvalPolicy: never` 和正常网络。精确授权仍限定 actor、项目、Role、scope 与业务对象，不要把 OS 执行权限理解为项目数据授权。`repositories` 可按项目登记只读 Git 根目录与路径白名单；`feishu` 启用时须给凭据、Bitable 字段映射及逐项目/行为者、显式 `scope: "project"` 的 `grants`，自动轮询另需 `pollEnabled`。用户已将飞书 connector 留待后续，本轮不以实连为完成条件。飞书尚无真实租户验证，不要把 fake HTTP 测试当作实连；当前配置仅支持明确的项目全范围授权，拒绝未落实入站过滤的 owner 范围。身份在启动时读取，修改后重启；HTTP 认证使用启动时的身份快照，重启后才会采用新凭据。集成配置分两种：是否启用运行时、`runtime` 下的执行配置和 `repositories` 的仓库登记等在启动时读取，改后要重启；日程授权、Leader 通知、即时输入和每日复制授权等在使用时重读，见[运行接线手册](runtime-operations.md#共同做法)。普通 Run 封存器会再读当前身份文件，文件修改可能在 HTTP 重启前提前收紧原签署者的新写入资格；已提交 Delivery 的固定回读仍可继续。
 
-如要接外置 Wiki，另加 `knowledge` 配置：`enabled`、回环 HTTP `baseUrl`、仓库外绝对路径 `manifestRoot`、`maintainerId`、`projectIds`。`maintainerId` 必须与实际发布/对账身份的 `actorId` 一致，且该身份具有对应项目的 review 权限；任意标签或另一个未配置的身份不会取得维护权。Wiki 正文和修订由外置后端持有，PostgreSQL 只保存可核对引用；不要把正文、原始 session 或私有运行材料写入 Git。当前 0.5.1 已通过受限真实写读、重启回读和产品候选审核发布；这不证明语义索引、多写者安全或生产恢复。
+如要接外置 Wiki，另加 `knowledge` 配置：`enabled`、回环 HTTP `baseUrl`、仓库外绝对路径 `manifestRoot`、`maintainerId`、`projectIds`。`maintainerId` 必须与实际发布/对账身份的 `actorId` 一致，且该身份具有对应项目的 `document` 写权限和文档决定权；任意标签或另一个未配置的身份不会取得维护权。Wiki 正文和修订由外置后端持有，PostgreSQL 只保存可核对引用；不要把正文、原始 session 或私有运行材料写入 Git。当前 0.5.1 已通过受限真实写读、重启回读和产品候选审核发布；这不证明语义索引、多写者安全或生产恢复。
 
 ```bash
 chmod 600 "$EVOLOOP_AUTH_FILE" "$EVOLOOP_INTEGRATIONS_FILE"
@@ -97,7 +109,7 @@ npm run start:hub
 
 ## 受管自动循环候选
 
-在独立数据库迁移至当前代码要求的最新版本（含 **038**）后使用本切片；不要借启动自动升级其他会话的试用库。原有集成可保持关闭。要实连 worker，另配置 `orchestration`：`enabled`、已具本项目 read/write/review 权限的 `controllerActorId`、仓库外绝对路径 `workerRoot`、`credentialTtlMs`（1 分钟至 24 小时）和 `pollIntervalMs`（0.5 至 60 秒）。每个认知或业务职责须有控制者自己的唯一 runtime profile，含精确 actor、项目、Role、scope、目录和模型字段；新 Session 均按 full/never/联网创建，不再按职责选择 sandbox 或消息专用 profile。同一项目/actor/职责/scope/目录的重复 profile 被拒绝。
+在独立数据库迁移至当前代码要求的最新版本（含 **038**）后使用本切片；不要借启动自动升级其他会话的试用库。原有集成可保持关闭。要实连 worker，另配置 `orchestration`：`enabled`、已具本项目 `task`、`document`、`session` 写权限和决定权的 `controllerActorId`、仓库外绝对路径 `workerRoot`、`credentialTtlMs`（1 分钟至 24 小时）和 `pollIntervalMs`（0.5 至 60 秒）。每个认知或业务职责须有控制者自己的唯一 runtime profile，含精确 actor、项目、Role、scope、目录和模型字段；新 Session 均按 full/never/联网创建，不再按职责选择 sandbox 或消息专用 profile。同一项目/actor/职责/scope/目录的重复 profile 被拒绝。
 
 worker 的 `cwd` 是启动上下文，不是文件读取白名单；当前 Session 有完整 OS 执行权限和正常网络。仓库、Task、Document 等业务对象仍由各自精确身份和 API 授权约束。`workerRoot` 保存 0700/0600 的短期凭据和 wrapper，不能位于开发 checkout。CLI 回执放在获准的私有工作目录 `.local/worker-receipts/RUN_ID`。不要把真实配置、令牌、回执、原始 session 或外部正文提交 Git。配置在启动时读取，变更需要重启；撤销 broker 凭据与暂停 Loop 是不同操作。
 
@@ -147,7 +159,7 @@ Claude 运行时：新实例的 Dev Role 已在用，有真实 Run，尚未验�
 
 Role 的 skill 选择决定每个 Turn 放进模型上下文的 skill，用 `role runtime set` 或工作台角色卡片修改，下一个 Turn 生效。evoLoop 业务 skill 按 Role 配置始终加载；项目、个人与运行时内置 skill 按开关加载，`add`、`remove` 按名称单独增减；会修改运行时自身配置的内置 skill（例如安装器）默认不加载。Codex 由线程配置关闭未选的 skill，业务 skill 经 Role 上下文交付；Claude 在 `claude.skillBundle` 为默认的 `true` 时，把选中的 skill 链接成本次 Turn 的本地插件并关闭其余。工作目录仓库把 `.claude/skills` 链接到 `.agents/skills` 时（本仓库即如此），Claude 原生读到的同一份 skill 会按名称关闭，每个 skill 只经插件加载一次。`runtime.roleSkills[].builtinSkills` 已被这项选择取代，旧配置仍可加载但不再生效。选择只决定上下文，不是安全边界。
 
-`role runtime show` 与工作台角色卡片每次读取时都实时取值。Codex 角色在最近一个 Session 的工作目录（没有时用这个角色自己的授权目录：不按查看者过滤，有多个时取排序后的第一个并写明共几个；路径只给有复核权限或本人持有该角色运行授权的人，其他读者看到“已配置”，项目 skill 的名称对所有项目读者显示；角色没有任何运行授权时写明原因）询问运行中的 App Server 的 skill、插件与 MCP 列表；Claude 角色按文件列出 skill，再用最近一次 Turn 启动时的报告补上内置 skill、插件与 MCP，尚无 Turn 时注明内置 skill 待首个 Turn 后显示。运行时不可用时退回按文件推断，并在结果中标明来源。Codex 由插件提供的 skill 可能不出现在它的列表中。
+`role runtime show` 与工作台角色卡片每次读取时都实时取值。Codex 角色在最近一个 Session 的工作目录（没有时用这个角色自己的授权目录：不按查看者过滤，有多个时取排序后的第一个并写明共几个；路径只给有项目管理决定权或本人持有该角色运行授权的人，其他读者看到“已配置”，项目 skill 的名称对所有项目读者显示；角色没有任何运行授权时写明原因）询问运行中的 App Server 的 skill、插件与 MCP 列表；Claude 角色按文件列出 skill，再用最近一次 Turn 启动时的报告补上内置 skill、插件与 MCP，尚无 Turn 时注明内置 skill 待首个 Turn 后显示。运行时不可用时退回按文件推断，并在结果中标明来源。Codex 由插件提供的 skill 可能不出现在它的列表中。
 
 重启或恢复 owned Session 前，核持久 actor、Role、scope、cwd、model、sandbox、approvalPolicy 与当前业务授权，先对账在途和未知 Run。新 Session 用 `danger-full-access`、`never` 与正常网络；旧 Session、旧 Run 和其配置快照保持原值。恢复时对原 `thread/resume` 明确传入完整配置；新 App Server 可恢复未加载的旧 Thread，同进程已加载而权限回显不符时保持 unknown。只有原生线程/恢复/启动回执明确确认 full/never 权限才标记 active；`thread/read` 不含权限时不能作为丢失回执或恢复成功的证据。模型修订使用原 Thread 上独立、持久的 activation，不创建假 Run，也不改旧 Run snapshot；配置 revision、activation 状态与 provider 实际模型遥测分开记录。旧 readonly protocol 检查字段 `readOnlyProtocolVerified` 仅为解析兼容保留，忽略其值，不要求设置，也不作为新 Session 的准入条件。动态授权失效不能借静态授权继续。
 
@@ -245,7 +257,7 @@ node scripts/restore.mjs --from /absolute/private-backups/evoloop-20261020 \
 - `commit`、`builtAt` 由服务端读**已部署目录根部的 `build-info.json`**（`{"commit": "<7–40 位十六进制>", "builtAt": "<ISO 时间>"}`）。文件缺失、不是合法 JSON 或字段不合规时，两者都是 `null`，页面写“版本未读到”，不回退旧值。
 - `startedAt` 是服务进程启动时间，页面叫“启动时间”，不是发布时间。
 - 发布脚本在 `build` 步骤（构建和 carry-assets 之后）把 `build-info.json` 写进源码目录根（`commit` 是该目录 `HEAD` 的完整哈希，`builtAt` 是写入时的 UTC 时间）；写不出来（取不到提交哈希、目录不可写）这一步失败，此时还没有停服务，什么都没有变。`post-check` 钩子通过后，发布脚本自己再请求配置里的 `versionUrl`（`GET /api/version`），`commit` 必须与本次发布的提交一致（互为前缀，7–40 位）；服务还没起来会按 `versionCheck.retries`（默认 10）、`intervalMs`（默认 3000）重试，最后仍不一致或读不到提交就**判发布失败**，按现有规则停掉并恢复旧服务，发布记录里 `acceptance.versionCheck` 写 `failed` 与原因，成功时写 `passed` 与读到的提交。`versionUrl` 是必填的（私有配置里写服务自己的地址）；确实不检查要显式写 `skipVersionCheck: true`，发布记录会写 `skipped by config` 并打警告。回滚（`rollback`）不做这个检查。私有发布钩子里原来临时补写 `build-info.json` 的部分在这个版本生效后可以去掉（由需求 Session 处理）。
-- `/milestones` 读已部署的 `docs/roadmap.md` 阶段表；阶段与路线图阶段的关联存在 `stage_phase_key`（迁移 101），用 `stage.phaseKey.set`（review 权限）设置；未关联显示“未登记”。
+- `/milestones` 读已部署的 `docs/roadmap.md` 阶段表；阶段与路线图阶段的关联存在 `stage_phase_key`（迁移 101），用 `stage.phaseKey.set`（Task 决定权）设置；未关联显示“未登记”。
 
 ### 开放 PR 抢同一个迁移号
 
@@ -363,7 +375,7 @@ git diff --check
 - **命令**：`EVOLOOP_BOUNDARY_CONFIG=<私有配置> node scripts/ops/boundary-check.mjs --day YYYY-MM-DD`（或 `--from ISO --to ISO`；`--flagged-only` 只列要看的行，`--json` 给机器读）。配置在仓库外、绝对路径，字段：`repo`、`utcOffsetMinutes`（本地时区偏移，如塔什干 300）、`databaseUrl`（只读事务打开，不写）、`humanActors`（使用者的身份名）、`identityFiles`（存放身份令牌的文件路径片段）、`mergeTrainLogs.dir`、`transcriptRoots`（Codex 与 Claude 会话记录目录）、`privateFiles[].globs`（正式运行目录里的私有文件，含备份）。私有路径和数据库地址只在这份配置里，不进仓库，也不进输出。
 - **四张表**：①窗口内合并的 PR 与实际发起者：GitHub 的合并者永远是同一个账号，所以看合并列车日志里有没有、会话记录里谁运行了 `merge-gate.mjs merge … --execute`（含 `for` 循环和一行多条）、`gh pr merge`，并把该会话平时用的身份（它的命令里最常出现的 `agent-cli/<身份>/`）和合并配置所属身份对照；不同则写“借用他人合并配置”，两处都没有则写“发起者无记录”。②私有文件的修改时间、备份、是否仍能解析、键名与条目数变化（只写名字和数量，不写值），以及改动前后 5 分钟内命令里提到该文件的会话。③`humanActors` 名下的写入（直接输入、`operation_journal`、会话消息）；库里没有“是否出自工作台”这一项，所以只给能核对的证据：写入前后 10 分钟内有哪个会话的命令引用了身份文件，没有就写“来源未证实”，不猜。④窗口内的关闭记录和依据观察：依据里提到“候选”且没有“正式……读回/已验证”字样的列出，并写任务声明的阶段。
 - **只写会话编号、时间和条数**，不写命令原文、文件内容或令牌值。会话记录是本机文件，脚本只在本机读。
-- **不会给出假的“全部正常”**：下面这些都**列出来或写“核对不完整”**，不会归到“本人发起”：认不出发起会话的身份或合并配置所属身份的合并（含用环境变量 `EVOLOOP_MERGE_CONFIG` 传配置；同一会话用过多个 CLI 身份时不按用得最多的认定，写出各身份次数）、没有经过合并门的合并（`gh pr merge`、`gh api …/merge`，写明方式和发起会话）、合并列车日志与会话记录冲突的合并、没有任何记录的合并；没有交付可核依据的关闭；依据里是正向判定：只认“正式环境/实例/数据库/版本被读回且成功”、并且同一句里带时间、版本/提交、PR/Run 编号或命令这类完成证据的；条件、地点、截止时间、下一步这类措辞**按整句检查**（同一句里别的子句出现也不算读回），完成证据必须在读回所在子句里、紧跟读回之后（括号里的“时间，提交号”算同一子句），并且证据要**验证**，不靠词表判断真假：提交号必须能在本仓库解析到（`deadbeef` 这类解析不到的十六进制词不算）、Run/交付/观察编号必须在库里存在、时间必须不晚于依据观察的写入时间（任何晚于观察的时间都是计划、排期或 ETA，整个证据作废；没有年份的时间按观察所在年份、UTC 读）；单独的 PR 编号、只有日期、命令、版本号都不算；证据短语里出现 之前/之后/以前/以后/计划/截止/下一步/待/预计/将/会 这类截点或将来措辞也作废（“已进行”“已完成”除外）；没法验证时（没有观察时间、解析不了）一律列出。**读回后紧邻的证据短语是一张白名单**：括号里（没有括号时是同一子句里读回之后的部分）只能有实际时间、提交号、带标签的 Run/交付/观察/操作/会话编号、分隔符，以及“已/已经/已完成/已进行”；多出任何别的词（planned、pending、TBD、稍后、届时、明天、等…合入、发版后、回头…再看、will run、命令、PR 编号、版本号、环境说明）都是“其他内容”，整句列出，哪怕时间在过去、提交号能解析。英文计划词（ETA、scheduled、pending、planned、TBD、will）按整词匹配，BETA 不是 ETA。**计划语义优先于时间和提交号**：句子里出现 预定、排期、定于、scheduled、ETA、再做、还没、等…合并/发布/部署、拟、目标、下一步 等，即使提交号能解析、时间在观察之前也列出；“发布后/合并后/部署后/上线后”同理，除非同一句明说“已读回/已验证/已通过”；没有证据的空话、条件（只要…就、要是…就、如果…则）、先后（读回通过后签）、希望/目标/期望/计划一律列出。读回的具体写法是（“正式”要直接限定环境，“非正式”“正式包”不算；读回通过/成功/一致、已验证、实测通过；同一分句里出现自建、候选、本地、沙箱、演练等处所的不算；“读回通过后再签”“需…才能关闭”“如果…则关闭”“预计/预期/计划/拟/将”这类条件和计划措辞也不算），“正式发布成功”“已通过评审”“发布前候选已通过”“读回另行安排”“读回失败/等正式读回/TODO/缺/未/待”都不算读回；`transcriptRoots` 指向存在但没有任何会话记录的目录、或窗口内有使用者身份的写入却没有任何会话命令可核对来源，同样写“核对不完整”；任何来源没有配置（`transcriptRoots`、`privateFiles`、`identityFiles`、`mergeTrainLogs.dir`、`databaseUrl`）或读不到、GitHub 合并列表达到上限，报告第一行写“⚠ 核对不完整”，命令以非零退出码（2）结束。声明了“阶段：候选”的任务按候选关闭不列。
+- **不会给出假的“全部正常”**：下面这些都**列出来或写“核对不完整”**，不会归到“本人发起”：认不出发起会话的身份或合并配置所属身份的合并（含用环境变量 `EVOLOOP_MERGE_CONFIG` 传配置；同一会话用过多个 CLI 身份时不按用得最多的认定，写出各身份次数）、没有经过合并门的合并（`gh pr merge`、`gh api …/merge`，写明方式和发起会话）、合并列车日志与会话记录冲突的合并、没有任何记录的合并、合并命令晚于 GitHub 合并时间或已失败（或结果记录缺失）而不能证明是它合并的 PR、GitHub 没给合并时间的 PR；会话记录里读不了的行（坏 JSON、缺时间戳）按文件和行号计数，读不了的单个文件（会话记录、合并列车日志、私有文件）只隔离那一个并写出名字，任何一种都使报告第一行写“核对不完整”、退出码非零；报告首部写明所依据的判定约定修订号（边界核对判定约定 7c58f1f4 修订 2）；没有交付可核依据的关闭；依据里是正向判定：只认“正式环境/实例/数据库/版本被读回且成功”、并且同一句里带时间、版本/提交、PR/Run 编号或命令这类完成证据的；条件、地点、截止时间、下一步这类措辞**按整句检查**（同一句里别的子句出现也不算读回），完成证据必须在读回所在子句里、紧跟读回之后（括号里的“时间，提交号”算同一子句），并且证据要**验证**，不靠词表判断真假：提交号必须能在本仓库解析到（`deadbeef` 这类解析不到的十六进制词不算）、Run/交付/观察编号必须在库里存在、时间必须不晚于依据观察的写入时间（任何晚于观察的时间都是计划、排期或 ETA，整个证据作废；没有年份的时间按观察所在年份、UTC 读）；单独的 PR 编号、只有日期、命令、版本号都不算；证据短语里出现 之前/之后/以前/以后/计划/截止/下一步/待/预计/将/会 这类截点或将来措辞也作废（“已进行”“已完成”除外）；没法验证时（没有观察时间、解析不了）一律列出。**读回后紧邻的证据短语是一张白名单**：括号里（没有括号时是同一子句里读回之后的部分）只能有实际时间、提交号、带标签的 Run/交付/观察/操作/会话编号、分隔符，以及“已/已经/已完成/已进行”；多出任何别的词（planned、pending、TBD、稍后、届时、明天、等…合入、发版后、回头…再看、will run、命令、PR 编号、版本号、环境说明）都是“其他内容”，整句列出，哪怕时间在过去、提交号能解析。英文计划词（ETA、scheduled、pending、planned、TBD、will）按整词匹配，BETA 不是 ETA。**计划语义优先于时间和提交号**：句子里出现 预定、排期、定于、scheduled、ETA、再做、还没、等…合并/发布/部署、拟、目标、下一步 等，即使提交号能解析、时间在观察之前也列出；“发布后/合并后/部署后/上线后”同理，除非同一句明说“已读回/已验证/已通过”；没有证据的空话、条件（只要…就、要是…就、如果…则）、先后（读回通过后签）、希望/目标/期望/计划一律列出。读回的具体写法是（“正式”要直接限定环境，“非正式”“正式包”不算；读回通过/成功/一致、已验证、实测通过；同一分句里出现自建、候选、本地、沙箱、演练等处所的不算；“读回通过后再签”“需…才能关闭”“如果…则关闭”“预计/预期/计划/拟/将”这类条件和计划措辞也不算），“正式发布成功”“已通过评审”“发布前候选已通过”“读回另行安排”“读回失败/等正式读回/TODO/缺/未/待”都不算读回；`transcriptRoots` 指向存在但没有任何会话记录的目录、或窗口内有使用者身份的写入却没有任何会话命令可核对来源，同样写“核对不完整”；任何来源没有配置（`transcriptRoots`、`privateFiles`、`identityFiles`、`mergeTrainLogs.dir`、`databaseUrl`）或读不到、GitHub 合并列表达到上限，报告第一行写“⚠ 核对不完整”，命令以非零退出码（2）结束。声明了“阶段：候选”的任务按候选关闭不列。
 - **局限**：判断“借用”靠会话记录里被执行的命令（heredoc 里写的、grep/echo 里引用的不算；Codex 数组形式 `["bash","-lc","…"]` 取其中的脚本；`for` 循环、一行多条、`gh pr merge` 的任意参数顺序、同一条命令里的 `NAME=…merge-gate.mjs` 变量都能读）；写进脚本文件里的循环、别名、变量定义在别的命令里的会漏，漏掉的显示为“发起者无记录”。表③看会话的所有工具调用参数（含 Read/Edit 的 `file_path`、数组形式的命令），范围是整个窗口，并写出最近一次与写入相差几分钟——距离远的证据弱，由人判断。表②只看最后修改时间（写入后把时间改回去或复制保留时间的看不到），按完整文件名匹配会话。表④靠文字匹配，不是结构化的阶段字段；一句话里同时有“正式”和成功字样、而该句带否定、失败、待办的，不算正式读回。
 
 ## 原生文字与选项提问

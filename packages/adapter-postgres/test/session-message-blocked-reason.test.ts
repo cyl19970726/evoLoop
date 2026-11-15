@@ -19,7 +19,7 @@ const schema=`el_blocked_${randomUUID().replaceAll('-','').slice(0,16)}`;
 const pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`});
 const uow=new PostgresUnitOfWork(pool);
 const projectId=randomUUID(),sessionId=randomUUID(),roleId=randomUUID(),messageId=randomUUID(),now='2026-10-26T00:00:00.000Z';
-const principal:Principal={actorId:'reader',projectIds:[projectId],permissions:['read','write','review']};
+const principal:Principal={actorId:'reader',projectIds:[projectId],permissions:['task','document','session','management'],decisions:true};
 const baseGrant:SessionMessageDispatchGrant={projectId,sessionId,senderActorId:'sender',receiverRoleId:roleId,
   receiverActorId:'receiver',cwd:'/tmp/evoloop-blocked-reason',maxTurns:3,enabled:true};
 let currentGrant:SessionMessageDispatchGrant|null=baseGrant;

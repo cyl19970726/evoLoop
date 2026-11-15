@@ -118,7 +118,7 @@ test('rework counter-examples: an agent with no stated senderClass, an unknown i
 
 test('rework: the identity file accepts senderClass, rejects an unknown class and two credentials of one actor that disagree, and authentication carries it', () => {
   const token = (n: string) => n.repeat(32).slice(0, 32);
-  const entry = (extra: Record<string, unknown>) => ({ token: token('a'), actorId: 'requirements-claude-agent', projectIds: [project], permissions: ['read', 'write'], ...extra });
+  const entry = (extra: Record<string, unknown>) => ({ token: token('a'), actorId: 'requirements-claude-agent', projectIds: [project], permissions: ['task', 'document', 'session'], ...extra });
   const ok = authConfigSchema.parse([entry({ senderClass: 'requirements' })]);
   assert.equal(authenticate(`Bearer ${token('a')}`, ok)?.senderClass, 'requirements');
   assert.equal(authenticate(`Bearer ${token('a')}`, authConfigSchema.parse([entry({})]))?.senderClass, undefined, 'no stated class: none is invented');

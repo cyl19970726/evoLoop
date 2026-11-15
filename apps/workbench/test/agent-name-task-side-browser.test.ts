@@ -64,7 +64,7 @@ async function start(t: TestContext, fixtures: Fixture[]) {
       let value: unknown = { items: [], nextCursor: null, metadata }, status = 200;
       const fixture = fixtures.find(f => path === `${root}/tasks/${f.taskId}` || path.startsWith(`${root}/tasks/${f.taskId}/`) || path === `${root}/work-management/tasks/${f.taskId}`);
       const agent = fixtures.find(f => path === `${root}/session-work/${agentKey(f.linkId)}` || path === `${root}/session-work/${agentKey(f.linkId)}/profile`);
-      if (path === "/api/session") value = { principal: { actorId: "lead", projectIds: [projectId], permissions: ["read", "write", "review"] }, capabilities: {} };
+      if (path === "/api/session") value = { principal: { actorId: "lead", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true }, capabilities: {} };
       else if (path === "/api/projects") value = [{ id: projectId, title: "名称夹具", createdAt: stamp }];
       else if (path === root) value = { id: projectId, title: "名称夹具", createdAt: stamp };
       else if (path === `${root}/tasks`) value = { items: fixtures.map(task), nextCursor: null };

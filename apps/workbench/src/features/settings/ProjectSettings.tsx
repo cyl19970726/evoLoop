@@ -51,7 +51,10 @@ export function ProjectSettings({ context }: { context: MutationContext; refresh
         ["身份类型", principal.identityKind ? identityLabel[principal.identityKind] ?? principal.identityKind : "未报告"],
         ["可用权限", principal.permissions.length
           ? <ul key="p" className="flex flex-wrap gap-1.5">{principal.permissions.map(permission => <li key={permission} className="rounded-full bg-field px-2.5 py-0.5 text-caption text-foreground">{permissionLabel[permission] ?? permission}</li>)}</ul>
-          : "未声明权限"],
+          : "只读成员"],
+        ["决定类", principal.identityKind === "human" || principal.decisions === true ? "随所属类别获得" : "未授予"],
+        ["项目范围", <span key="projects" className="break-all">{principal.projectIds.join("、")}</span>],
+        ["Session 范围", principal.sessionIds?.length ? <span key="sessions" className="break-all">{principal.sessionIds.join("、")}</span> : "本项目全部 Session"],
         ["最后读取", identityReadText({ hasData: !!session.data, fetching: session.isFetching, failed: !!session.error, readAt: readTime(session.dataUpdatedAt) })],
       ]} />
       <p className="text-caption text-muted-foreground">具体对象、操作和固定版本仍由服务端核验；连接已有智能体不会自动获得发消息或启动执行的权限。</p>

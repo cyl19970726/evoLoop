@@ -1,4 +1,5 @@
-import type { Operation, Principal, RuntimeSessionRecord } from "@evoloop/contracts";
+import { hasDecisionAuthority, hasPermission, type Operation, type Principal, type RuntimeSessionRecord }
+  from "@evoloop/contracts";
 import { createHash } from "node:crypto";
 import type { RoleRecord } from "@evoloop/contracts/roles";
 import type { SessionMessageRecord } from "@evoloop/contracts/session-messages";
@@ -372,10 +373,8 @@ export class LeaderResultNoticePump {
     const target=config.targets.find(value=>value.projectId===projectId);
     if(!target)return {recipient:null,reason:"LEADER_TARGET_UNCONFIGURED"};
     if(target.senderActorId===target.receiverActorId)return {recipient:null,reason:"LEADER_ACTORS_IDENTICAL"};
-    const sender=principals.find(p=>p.actorId===target.senderActorId&&p.projectIds.includes(projectId)&&
-      p.permissions.includes("read")&&p.permissions.includes("write"));
-    const receiver=principals.find(p=>p.actorId===target.receiverActorId&&p.projectIds.includes(projectId)&&
-      p.permissions.includes("read")&&p.permissions.includes("write")&&p.permissions.includes("review"));
+    const sender=principals.find(p=>p.actorId===target.senderActorId&&hasPermission(p,projectId,"session"));
+    const receiver=principals.find(p=>p.actorId===target.receiverActorId&&hasDecisionAuthority(p,projectId,"session"));
     if(!sender)return {recipient:null,reason:"NOTICE_SENDER_UNAVAILABLE"};
     if(!receiver)return {recipient:null,reason:"LEADER_RECEIVER_UNAVAILABLE"};
     const roles=(await this.roles(sender,projectId)).filter(role=>role.proposal.templateKey==="lead"&&
@@ -484,8 +483,7 @@ export class LeaderResultNoticePump {
   }
 
   private sender(principals:Principal[],projectId:string,actorId:string):Principal|null{
-    return principals.find(p=>p.actorId===actorId&&p.projectIds.includes(projectId)&&
-      p.permissions.includes("read")&&p.permissions.includes("write"))??null;
+    return principals.find(p=>p.actorId===actorId&&hasPermission(p,projectId,"session"))??null;
   }
 
   private command(notice:LeaderResultNotice,recipient:LeaderResultRecipient){

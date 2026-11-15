@@ -56,7 +56,7 @@ async function startFixture(t: { after(fn: () => unknown): void }) {
     const p = `/api/projects/${projectId}`;
     const send = (value: unknown, status = 200) => { res.writeHead(status, { "content-type": "application/json" }); res.end(JSON.stringify(value)); };
     if (url.pathname.startsWith("/api/")) {
-      if (url.pathname === "/api/session") return send({ principal: { actorId: "fixture", projectIds: [projectId], permissions: ["read", "write", "review"] }, capabilities: {} });
+      if (url.pathname === "/api/session") return send({ principal: { actorId: "fixture", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true }, capabilities: {} });
       if (url.pathname === "/api/commands" && req.method === "POST") {
         let body = ""; for await (const chunk of req) body += chunk;
         const command = JSON.parse(body) as { operationId: string; documentId?: string };

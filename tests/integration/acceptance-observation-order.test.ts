@@ -29,8 +29,8 @@ test("an observation earlier than the arrangement is refused at any offset down 
   const pool = new pg.Pool({ connectionString: database, options: `-c search_path=${schema}` });
   t.after(async () => { await pool.end(); const admin = new pg.Client({ connectionString: database }); await admin.connect(); try { await admin.query(`DROP SCHEMA "${schema}" CASCADE`); } finally { await admin.end(); } });
   const projectId = randomUUID();
-  const reviewer: Principal = { actorId: "leader-reviewer", projectIds: [projectId], permissions: ["read", "write", "review"] };
-  const human: Principal = { actorId: "named-human", identityKind: "human", projectIds: [projectId], permissions: ["read", "write"] };
+  const reviewer: Principal = { actorId: "leader-reviewer", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true };
+  const human: Principal = { actorId: "named-human", identityKind: "human", projectIds: [projectId], permissions: ["task", "document", "session"] };
   const workflow = new WorkflowService({ uow: new PostgresUnitOfWork(pool), clock: { now: () => new Date().toISOString() }, ids: { next: randomUUID },
     hasher: { hash: (value: string) => createHash("sha256").update(value).digest("hex") } });
   const service = new AcceptanceRelayService({ pool, workflow, messages: {} as never, principals: async () => [], canWrite: () => false, leaderSession: async () => null,

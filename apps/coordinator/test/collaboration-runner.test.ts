@@ -10,7 +10,7 @@ import { CollaborationRunner } from "../src/collaboration/runner.js";
 
 test("unconfigured connector reports notConfigured and never claims outbox",async()=>{
   const projectId=randomUUID();let claims=0;
-  const principal:Principal={actorId:"owner",projectIds:[projectId],permissions:["read","write","review"]};
+  const principal:Principal={actorId:"owner",projectIds:[projectId],permissions:["task","document","session","management"],decisions:true};
   const store={recoverInterrupted:async()=>0,claimNext:async()=>{claims++;return null;}} as unknown as DeliveryStore;
   const runner=new CollaborationRunner({store,workflow:{} as WorkflowService,connector:null,consumerId:"feishu",principals:[principal],canWrite:()=>true,allowProjection:async()=>true});
   await runner.pump();
@@ -23,8 +23,8 @@ test("review action rejects principal outside project before store or connector"
   const projectId=randomUUID();let touched=false;
   const store={claimUnknown:async()=>{touched=true;return null;}} as unknown as DeliveryStore;
   const runner=new CollaborationRunner({store,workflow:{} as WorkflowService,connector:{} as never,consumerId:"feishu",principals:[],canWrite:()=>true,allowProjection:async()=>true});
-  const outsider:Principal={actorId:"outsider",projectIds:[],permissions:["read","write","review"]};
-  await assert.rejects(()=>runner.reconcile(outsider,projectId,randomUUID()),/review and current integration grant/);
+  const outsider:Principal={actorId:"outsider",projectIds:[],permissions:["task","document","session","management"],decisions:true};
+  await assert.rejects(()=>runner.reconcile(outsider,projectId,randomUUID()),/decision authority and current integration grant/);
   assert.equal(touched,false);
 });
 
@@ -34,7 +34,7 @@ test("automatic polling requires an explicit bounded interval",()=>{
 
 test("current integration grant is required before remote scan and candidate persistence",async()=>{
   const projectId=randomUUID(),taskId=randomUUID();let allowed=true,remoteCalls=0,candidates=0;
-  const principal:Principal={actorId:"owner",projectIds:[projectId],permissions:["read","write","review"]};
+  const principal:Principal={actorId:"owner",projectIds:[projectId],permissions:["task","document","session","management"],decisions:true};
   const store={recordIncoming:async()=>{candidates++;throw new Error("unexpected candidate");}} as unknown as DeliveryStore;
   const connector={listRemote:async()=>{remoteCalls++;allowed=false;return {records:[{recordId:"remote-1",entityId:taskId,
     localVersion:1,operationId:"op",title:"Changed",status:"todo",modifiedTime:"1"}],nextCursor:null};}} as never;
@@ -47,7 +47,7 @@ test("current integration grant is required before remote scan and candidate per
 });
 
 test("stop waits for an in-flight claim before returning",async()=>{
-  const projectId=randomUUID(),principal:Principal={actorId:"owner",projectIds:[projectId],permissions:["read","write","review"]};
+  const projectId=randomUUID(),principal:Principal={actorId:"owner",projectIds:[projectId],permissions:["task","document","session","management"],decisions:true};
   let release!:()=>void,completed=false;
   const store={recoverInterrupted:async()=>0,claimNext:async()=>new Promise<null>(resolve=>{release=()=>resolve(null);})} as unknown as DeliveryStore;
   const runner=new CollaborationRunner({store,workflow:{} as WorkflowService,connector:{} as never,consumerId:"feishu",principals:[principal],
@@ -62,7 +62,7 @@ test("stop waits for an in-flight claim before returning",async()=>{
 
 test("unknown incoming operation and in-progress Task cannot replay a remote revision", async () => {
   const projectId=randomUUID(),taskId=randomUUID(),incomingId=randomUUID(),operationId=randomUUID();
-  const principal:Principal={actorId:"owner",projectIds:[projectId],permissions:["read","write","review"]};
+  const principal:Principal={actorId:"owner",projectIds:[projectId],permissions:["task","document","session","management"],decisions:true};
   const candidate:IncomingRecord={projectId,id:incomingId,operationId,state:"unknown",sourceEventId:"external-event",observedAtUtc:"2026-10-20T09:00:00.000Z",
     reviewedBy:null,reviewedAtUtc:null,entityId:taskId,remoteRecordId:"remote-1",observedLocalVersion:1,observedRemoteOperationId:"remote-op",
     observedRemoteModifiedTime:"1",actor:{platformUserId:"user",projectActorId:"owner",sourceEventId:"external-event",verified:true},
