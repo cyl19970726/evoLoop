@@ -97,9 +97,13 @@ test("human and agent acceptance preserve exact Delivery, recipient and temporar
     headers:{authorization:`Bearer ${humanToken}`},
     payload:{projectId,taskId,relayId:saved.relayId,operationId:linkOperation,expectedVersion:2,observationId}});
   assert.equal(observationResponse.statusCode,200,observationResponse.body);
+  assert.deepEqual({status:observationResponse.json().status,operationId:observationResponse.json().operationId,
+    relayId:observationResponse.json().relayId,observationId:observationResponse.json().observationId},
+    {status:"recorded",operationId:linkOperation,relayId:saved.relayId,observationId});
   await relay.linkObservation(human,projectId,taskId,saved.relayId,observationId,linkOperation,2);
   const item=(await relay.list(projectId,taskId))[0] as Record<string,unknown>;
   assert.equal(item.observationId,observationId);
+  assert.equal(item.observationOperationId,linkOperation);
   assert.equal(item.humanReadAt!==null,true);
   const overviewResponse=await app.inject({url:`/api/projects/${projectId}/acceptance-relay/overview`,
     headers:{authorization:`Bearer ${reviewerToken}`}});
