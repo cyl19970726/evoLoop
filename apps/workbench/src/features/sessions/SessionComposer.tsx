@@ -225,7 +225,8 @@ export function SessionComposer({ context, snapshot, entries, activeTurn, live, 
     {command.outcome && <p role={command.outcome.failed ? "alert" : "status"} className={command.outcome.failed ? "text-caption text-destructive" : "text-caption text-muted-foreground"}>{command.outcome.message}
       {/* The service's original answer, folded: for a missing message grant that is only the code (no configuration text, no local path). */}
       {command.outcome.detail && <ErrorDetails failure={{ text: command.outcome.message, detail: command.outcome.detail }} />}</p>}
-    {delivered && <p role="status" data-sent-result={delivered.kind} className="text-caption text-muted-foreground">{sentResultText(delivered)}</p>}
+    {/* One status for one input: once the receipt reads 已读到, the earlier 已插入/已开始 line is replaced, not left beside it. */}
+    {delivered && !(direct.itemRecorded && (delivered.kind === "inserted" || delivered.kind === "started")) && <p role="status" data-sent-result={delivered.kind} className="text-caption text-muted-foreground">{sentResultText(delivered)}</p>}
     {outcome && <p role={outcome.failed ? "alert" : "status"} className={outcome.failed ? "text-caption text-destructive" : "text-caption text-muted-foreground"}>{outcome.text}</p>}
     <Composer
       value={value}

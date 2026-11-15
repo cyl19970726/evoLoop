@@ -56,6 +56,8 @@ export interface DirectInput {
   /** Sends `content` as 即时输入: accepted now, refused (rejected or not sent at all) or unknown until it is checked. */
   send(content: string): Promise<DirectSendResult>;
   receipt: React.ReactNode;
+  /** The accepted input's native Item is recorded: the receipt above now says 已读到, so the "just sent" line for it (已插入当前这一轮 / 已开始新的一轮) is out of date. */
+  itemRecorded: boolean;
 }
 
 /** `active` is false for agents the runtime does not manage (external ones): nothing is read or sent. */
@@ -178,5 +180,6 @@ export function useDirectInput({ projectId, sessionId, actorId, active, onAccept
     </div>}
     {error && !pendingId && <p className="text-caption text-destructive" role="alert">{error}</p>}
   </>;
-  return { capability: active ? capability.isPending ? undefined : current ?? null : null, pending: unknown, busy, send, receipt: view };
+  return { capability: active ? capability.isPending ? undefined : current ?? null : null, pending: unknown, busy, send, receipt: view,
+    itemRecorded: receipt?.state === "accepted" && !!receipt.nativeItemId };
 }

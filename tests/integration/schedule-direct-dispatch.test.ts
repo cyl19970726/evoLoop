@@ -58,7 +58,9 @@ async function rig(t: import("node:test").TestContext) {
     sessionDenial: sessionDenial(pool, async (): Promise<DirectAuthorizationConfig> => { config.reads++; return { runtime: { enabled: config.enabled },
       hasRuntimeGrant: scope => config.allGranted || config.granted.has(scope.cwd), allowedRuntimeCwd: async () => true }; }),
     recipientDenial: async (_project, sessionId) => config.recipientDenied.get(sessionId) ?? null, onError: error => config.errors.push(error.message) });
-  const T0 = Date.now();
+  // Pinned to 03:00 UTC of YESTERDAY, not to the moment the test runs: the daily budget counts calendar days, so a base near midnight UTC makes T0 + a few hours fall on the next day
+  // (seen at 22:24 UTC); and a base at 03:00 of today is still in the future before 03:00 (the schedule refuses a watermark ahead of now, seen at 01:5x UTC).
+  const T0 = new Date().setUTCHours(3, 0, 0, 0) - 24 * 3600_000;
   let scheduleSeq = 0;
   /** An hourly schedule (skip while the previous occurrence is open) whose first trigger is one hour after T0. */
   const makeSchedule = async (overrides: Record<string, unknown> = {}) => {
