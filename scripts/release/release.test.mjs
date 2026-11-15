@@ -391,7 +391,11 @@ test("the build step carries the previous version's chunk files into the new bui
   await go(root, { runner });
   assert.deepEqual((await readdir(assets("r1"))).sort(), ["ArrangementPage-NEW.js", "ArrangementPage-OLD.js", "vendor-1.js"]);
   assert.equal(await readFile(join(assets("r1"), "vendor-1.js"), "utf8"), "new vendor", "a same-named file is not overwritten");
-  assert.deepEqual((await stateOf(root, "r1")).acceptance.carriedAssets, { generation: 1, copied: 1, expired: 0, unchanged: 1, bytes: "old page".length });
+  const carried = (await stateOf(root, "r1")).acceptance.carriedAssets;
+  const { oldestUsableEntry, ...counts } = carried;
+  assert.deepEqual(counts, { generation: 1, copied: 1, expired: 0, unchanged: 1, bytes: "old page".length, retainedGenerations: 2 });
+  assert.equal(oldestUsableEntry.generation, 0, "the readback names the oldest entry that still works");
+  assert.match(oldestUsableEntry.builtAt, /^\d{4}-\d\d-\d\dT/);
   order(log, "sh", "stop"); // carried before anything is stopped
 });
 
@@ -403,7 +407,7 @@ test("carryAssets can be switched off and is validated in the config", async () 
   const runner = async (argv, options) => { if (argv[0] === "sh") { await mkdir(assets("r1"), { recursive: true }); await writeFile(join(assets("r1"), "A-NEW.js"), "y"); } return inner(argv, options); };
   await run({ config: { ...base(root), carryAssets: false }, id: "r1", execute: true, env: ENV, log: quiet, runner });
   assert.deepEqual(await readdir(assets("r1")), ["A-NEW.js"]);
-  for (const bad of [{ keep: 0 }, { keep: 1.5 }, { assetsDir: "/abs" }, { assetsDir: "../x" }, "yes"])
+  for (const bad of [{ keep: 0 }, { keep: 1.5 }, { keepDays: -1 }, { keepDays: "7" }, { assetsDir: "/abs" }, { assetsDir: "../x" }, "yes"])
     assert.throws(() => loadConfig(JSON.stringify({ ...base("/srv/x"), carryAssets: bad }), "/etc/r.json"), /carryAssets/);
-  assert.ok(loadConfig(JSON.stringify({ ...base("/srv/x"), carryAssets: { keep: 5, assetsDir: "web/dist/assets" } }), "/etc/r.json"));
+  assert.ok(loadConfig(JSON.stringify({ ...base("/srv/x"), carryAssets: { keep: 5, keepDays: 14, assetsDir: "web/dist/assets" } }), "/etc/r.json"));
 });
