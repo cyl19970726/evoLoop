@@ -363,6 +363,16 @@ node --import tsx tests/manual/session-compaction-e1.ts
 
 **读回与限制。** `ops_alert` 表里可以读到每条的状态、开始／结束时间、送达时间、尝试次数和最后一次错误（没有专门的 CLI 命令）。限制：只有一个出口；告警只在协调器运行时发，协调器自己停了发不出（这类情况需要出口之外的存活探测，不在本 Task）；正式环境的出口配置和一次送达核验在发布后另做。
 
+### 额度读数：放行以来用了上个周期的多少（Task a319d0ef）
+
+DeepSeek 额度已用完四次，没有一次事先预警；用量是算术题，所以有一个只读脚本 `scripts/ops/quota-reading.mjs`（任何人或定时任务可运行）：
+
+- **数据来源。** 各 Codex Session 原生记录（`rollout-*-<线程>.jsonl`）里带时间戳的 `token_count` 累计值取差，所以有小时以下的粒度（按日账本不够）；提供方暂停/放行记录读自 `runtime_provider_hold`（只读事务），也可在配置里直接给 `holds`。不读账单、不调提供方接口、不写库、不发消息。
+- **周期。** 当前周期从最近一次放行算起；上一个完整周期是前一次放行到下一次暂停开启。暂停还开着时输出“暂停中”，没有上一个完整周期（至少要两次放行记录）时输出“无法估计”，不给数字。
+- **输出。** 一行中文结论（例如“放行 2.3 小时，已用上个周期的 22%，照现在的速度约 21:30 用完”，过 60%、80% 时标“已过 60% 线”等）；当前周期已用的输入、其中未命中缓存的、输出，分 Session 列出；相当于上个周期的百分之几（三种分开给，另按 `weights` 折算一个合计，默认只算输入）；按最近 `windowHours`（默认 2）小时的速度预计几点到 100%。配置里给了 `recharge`（充值金额和每百万 token 的单价）就按金额算，不需要上个周期。`--json` 给机器读（`flags` 列出已过的提醒线），`--now ISO` 回放某个历史时刻。
+- **配置。** 私有配置经 `EVOLOOP_QUOTA_CONFIG` 传入（仓库外的绝对路径）：`codexSessionsRoot`、`utcOffsetMinutes`、`databaseUrl`+`projectId` 或 `holds`，可选 `provider`、`windowHours`、`warnAt`、`weights`、`recharge`、`sessionLabels`。读不到某个记录文件时只跳过那个文件，第一行写“读数不完整”，退出码 2。
+- **接进定时代班**由需求 Session 做，不在这个脚本里。
+
 ## 6. 受管 Session 编制所需配置
 
 给一个 Role 新建受管 Session，要同时配好：业务身份（身份文件里对本项目有 read 与 write）、`runtime.grants`（含工作区 `cwd`）、Role 级 `runtime.materialCli`、**`residentQueue.roleActors`** 与 `residentQueue.enabled`、**成对配置的 `sessionMessages.grants`**，以及 `runtime.enabled`。完整清单、每项的格式和生效时机见 [Agent CLI：编制所需私有配置清单](agent-cli.md#编制所需私有配置清单session-prepare-缺项时)。
