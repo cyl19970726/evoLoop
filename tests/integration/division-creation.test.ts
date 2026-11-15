@@ -31,7 +31,9 @@ const sha=(s:string)=>createHash("sha256").update(s).digest("hex");
 const projectId=randomUUID(),goalId=randomUUID(),stageId=randomUUID(),loopId=randomUUID();
 const cognitionRole=fixtureRoleId("cognition-role"),cognition="researcher",controller="controller";
 const parentTaskId=randomUUID(),firstTaskId=randomUUID(),documentId=randomUUID();
-const principal=(actorId:string,review=false):Principal=>({actorId,projectIds:[projectId],permissions:review?["read","write","review"]:["read","write"]});
+const principal=(actorId:string,review=false):Principal=>({actorId,projectIds:[projectId],
+  permissions:review?["task","document","session","management"]:["task","document","session"],
+  ...(review?{decisions:true}:{})});
 
 test("PG new Role creation commits with binding, rolls back on failure, and serializes competing choices",async t=>{
   const schema=`el_m3creation_${randomUUID().replaceAll("-","").slice(0,14)}`;
@@ -78,7 +80,7 @@ test("PG new Role creation commits with binding, rolls back on failure, and seri
     getDelegationTemplate:async(p:string,id:string)=>p===projectId&&id===template.id?{template,hash:templateHash}:null,
     getTrialController:async(p:string,actor:string)=>p===projectId&&actor===controller?principal(controller,true):null,
     verifyProposalMaterial:async(reader:Principal,p:string,id:string,revisionId:string,hash:string)=>{
-      if (!reader.permissions.includes("read")) return false;
+      if (!reader.projectIds.includes(p)) return false;
       const revision=await workflow.getDocumentPayloadRevision(reader,p,id,revisionId);
       return revision.body!==null&&sha(revision.body)===hash&&revision.contentHash===hash;
     }};

@@ -122,8 +122,8 @@ test('one intent survives duplicate dispatch and holds the Session after termina
 
 test('official Task and Run lifecycle releases A only after current consumer acceptance, then B can claim',async()=>{
   const p=randomUUID(),q=randomUUID(),role=randomUUID(),roleRev=randomUUID(),session=randomUUID(),taskA=randomUUID(),taskB=randomUUID(),entryA=randomUUID(),entryB=randomUUID(),runId=randomUUID();
-  const principal={actorId:'lead',projectIds:[p],permissions:['read','write','review'] as Array<'read'|'write'|'review'>};
-  const executor={actorId:'worker',projectIds:[p],permissions:['read','write'] as Array<'read'|'write'>};
+  const principal={actorId:'lead',projectIds:[p],permissions:['task','document','session','management'] as ('task'|'document'|'session'|'management')[],decisions:true};
+  const executor={actorId:'worker',projectIds:[p],permissions:['task','document','session'] as ('task'|'document'|'session'|'management')[]};
   const apply=async(command:Parameters<typeof workflow.execute>[1],actingPrincipal=principal)=>{const result=await workflow.execute(actingPrincipal,command);assert.equal(result.status,'applied',JSON.stringify(result));return result;};
   await apply({type:'project.create',projectId:p,operationId:randomUUID(),title:'Queue lifecycle'});
   const client=await pool.connect();try{await client.query('BEGIN');
@@ -173,7 +173,7 @@ test('official Task and Run lifecycle releases A only after current consumer acc
       expectedVersion:afterRun.version,...deliveryIntent},executor);
     assert.equal((await uow.read(p,r=>r.getDelivery(delivery.revisionId!)))?.submittedByActorId,executor.actorId);
     await work.query('BEGIN');assert.equal(await queue.releaseResidentQueueAccepted(claimId),false);await work.query('COMMIT');
-    const other={actorId:'other-reviewer',projectIds:[p],permissions:['read','write'] as Array<'read'|'write'>};
+    const other={actorId:'other-reviewer',projectIds:[p],permissions:['task','document','session'] as ('task'|'document'|'session'|'management')[]};
     await apply({type:'observation.record',projectId:p,operationId:randomUUID(),taskId:taskA,deliveryId:delivery.revisionId!,
       observer:other.actorId,observerKind:'agent',result:'used',evidence:'Other reviewer used A',reason:'Independent use'},other);
     const beforeWrongClose=(await uow.read(p,r=>r.getTask(taskA)))!;
@@ -206,7 +206,7 @@ test('queue claim, old Loop Session, duplicate messages, Delivery and release fa
   let claimId=queueIntentId('claim',p,queueId,entryId,'1','1');
   let runId=queueIntentId('run',p,queueId,entryId,'1','1','1');
   let operationId=queueIntentId('run.reserve',p,queueId,entryId,'1','1','1');
-  const lead={actorId:'lead',projectIds:[p],permissions:['read','write','review'] as Array<'read'|'write'|'review'>};
+  const lead={actorId:'lead',projectIds:[p],permissions:['task','document','session','management'] as ('task'|'document'|'session'|'management')[],decisions:true};
   let grantEnabled=true,leadEnabled=true;
   const centralUow=new PostgresUnitOfWork(pool,{grant:async()=>grantEnabled,binding:async()=>true,lead:async()=>leadEnabled,
     input:async(reader,id)=>canonicalTaskInputJson(await taskInputSignature(reader,(await reader.getTask(id))!))});
@@ -314,7 +314,7 @@ test('queue claim, old Loop Session, duplicate messages, Delivery and release fa
   assert.equal((await pool.query('SELECT 1 FROM runtime_run WHERE project_id=$1 AND run_id=$2',
     [p,oldLoopRun])).rowCount,0,'old Loop cannot create a second Run on the claimed Session');
   const channel=channels.items.find(x=>x.collaboration?.runId===runId)!;
-  const worker={actorId:'worker',projectIds:[p],permissions:['read','write'] as Array<'read'|'write'>};
+  const worker={actorId:'worker',projectIds:[p],permissions:['task','document','session'] as ('task'|'document'|'session'|'management')[]};
   const fixedMessage=async(body:string)=>{
     const documentId=randomUUID(),revisionId=randomUUID();
     const client=await pool.connect();try{
@@ -511,7 +511,7 @@ test('first queue claim and old Loop reserve serialize on an idle shared Session
   for(const first of ['queue','loop'] as const){
     const p=randomUUID(),role=randomUUID(),roleRevision=randomUUID(),sessionId=randomUUID();
     const queuedTask=randomUUID(),loopTask=randomUUID(),queueId=randomUUID(),entryId=randomUUID();
-    const lead={actorId:'lead',projectIds:[p],permissions:['read','write','review'] as Array<'read'|'write'|'review'>};
+    const lead={actorId:'lead',projectIds:[p],permissions:['task','document','session','management'] as ('task'|'document'|'session'|'management')[],decisions:true};
     const authority={grant:async()=>true,binding:async()=>true,lead:async()=>true,
       input:async(reader:Reader,id:string)=>
         canonicalTaskInputJson(await taskInputSignature(reader,(await reader.getTask(id))!))};
@@ -635,7 +635,7 @@ test('first queue claim and old Loop reserve serialize on an idle shared Session
 test('amended input drops superseded fixed answers while continuing the same claim',async()=>{
   const p=randomUUID(),role=randomUUID(),roleRev=randomUUID(),taskId=randomUUID(),sessionId=randomUUID();
   const queueId=randomUUID(),entryId=randomUUID(),claimId=randomUUID(),firstRunId=randomUUID(),firstOperationId=randomUUID();
-  const lead={actorId:'lead',projectIds:[p],permissions:['read','write','review'] as Array<'read'|'write'|'review'>};
+  const lead={actorId:'lead',projectIds:[p],permissions:['task','document','session','management'] as ('task'|'document'|'session'|'management')[],decisions:true};
   const centralUow=new PostgresUnitOfWork(pool,{grant:async()=>true,binding:async()=>true,lead:async()=>true,
     input:async(reader,id)=>canonicalTaskInputJson(await taskInputSignature(reader,(await reader.getTask(id))!))});
   const central=new WorkflowService({uow:centralUow,clock:{now:()=>new Date().toISOString()},ids:{next:randomUUID},hasher:{hash},
@@ -686,7 +686,7 @@ test('amended input drops superseded fixed answers while continuing the same cla
     }catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
     return {documentId,revisionId};
   };
-  const worker={actorId:'worker',projectIds:[p],permissions:['read','write'] as Array<'read'|'write'>};
+  const worker={actorId:'worker',projectIds:[p],permissions:['task','document','session'] as ('task'|'document'|'session'|'management')[]};
   const questionBody=await fixedMessage('Should this Task target X?');
   const question=await central.execute(worker,{type:'discussion.message.post',projectId:p,operationId:randomUUID(),
     discussionId:sourceChannel.id,expectedVersion:1,kind:'question',recipientActorId:'lead',body:questionBody});

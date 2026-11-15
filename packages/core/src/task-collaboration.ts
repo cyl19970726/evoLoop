@@ -1,5 +1,5 @@
 import type { TaskCollaborationCommand, DiscussionEvent, DiscussionRecord, TaskCollaborationPayload } from "@evoloop/contracts/discussions";
-import type { AppliedResult, DocumentRevision, Principal } from "@evoloop/contracts";
+import { hasDecisionAuthority, hasPermission, type AppliedResult, type DocumentRevision, type Principal } from "@evoloop/contracts";
 import { DomainError, type ContentHasher, type Transaction } from "@evoloop/contracts/ports";
 import { canonicalTaskInputJson, taskInputSignature } from "./task-input.js";
 import { parseQueueHandoff } from "@evoloop/contracts/runtime-handoff";
@@ -48,10 +48,10 @@ const actionRequestOf = (item: DiscussionEvent): Extract<TaskCollaborationPayloa
 
 export async function applyTaskCollaboration(ctx: Context): Promise<{ result: AppliedResult; effects: Array<{ kind: string; entityId: string; version: number }> }> {
   const { tx, command, principal, now } = ctx;
-  if (!principal.actorId || !principal.projectIds.includes(command.projectId) || !principal.permissions.includes("write"))
-    fail("FORBIDDEN", "Actual project principal with write access required");
+  if (!hasPermission(principal, command.projectId, "task"))
+    fail("FORBIDDEN", "Actual project principal with Task access required");
   if (command.type === "discussion.openTask") {
-    if (!principal.permissions.includes("review")) fail("FORBIDDEN", "Opening a Task channel requires review authority");
+    if (!hasDecisionAuthority(principal, command.projectId, "task")) fail("FORBIDDEN", "Opening a Task channel requires Task decision authority");
     if (principal.actorId === command.recipientActorId) fail("INVALID_PARTICIPANTS", "Issuer and recipient must differ");
     if (await tx.getDiscussion(command.discussionId) || await tx.getDocument(command.documentId)) fail("ALREADY_EXISTS", "Discussion or Document already exists");
     const task = need(await tx.getTask(command.task.id), "Task");
@@ -186,7 +186,8 @@ export async function applyTaskCollaboration(ctx: Context): Promise<{ result: Ap
       authorityEvidence: command.authorityEvidence, expiresAt: command.expiresAt, acceptance: command.acceptance, detail: command.detail };
     revisionId = command.detail.revisionId;
   } else if (command.type === "discussion.action.decide") {
-    if (principal.actorId !== issuer || !principal.permissions.includes("review")) fail("FORBIDDEN", "Action decision requires issuer review authority");
+    if (principal.actorId !== issuer || !hasDecisionAuthority(principal, command.projectId, "task"))
+      fail("FORBIDDEN", "Action decision requires issuer Task decision authority");
     const requested = get(command.requestEventId);
     const action = actionRequestOf(requested);
     if (events.some(item => item.collaborationPayload?.type === "action_decision" && item.collaborationPayload.requestEventId === requested.id))
@@ -201,7 +202,7 @@ export async function applyTaskCollaboration(ctx: Context): Promise<{ result: Ap
     if (decided.kind !== "action_decision" || decided.collaborationPayload?.type !== "action_decision" ||
       decided.collaborationPayload.requestEventId !== requested.id || decided.collaborationPayload.decision !== "approved")
       fail("ACTION_NOT_APPROVED", "Action requires its approved decision");
-    if (action.executorActorId !== principal.actorId || !principal.permissions.includes("review"))
+    if (action.executorActorId !== principal.actorId || !hasDecisionAuthority(principal, command.projectId, "task"))
       fail("EXECUTOR_HELD", "Actual executor lacks this action's review authority");
     const prior = events.filter(item => item.collaborationPayload?.type === "action_execution" && item.collaborationPayload.requestEventId === requested.id);
     if (!prior.length && expired(action.expiresAt, now)) fail("ACTION_EXPIRED", "Action approval has expired");

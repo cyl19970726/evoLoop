@@ -8,8 +8,8 @@ import { canonicalJson } from "@evoloop/core";
 import { createOrdinaryRunSealer, type OrdinaryRunSealerDependencies } from "../src/ordinary-run-submission/seal.js";
 
 const projectId = randomUUID(), taskId = randomUUID(), runId = randomUUID(), sessionId = randomUUID();
-const actor: Principal = { actorId: "ordinary-signer", projectIds: [projectId], permissions: ["read", "write"] };
-const sealer: Principal = { actorId: "reviewer", projectIds: [projectId], permissions: ["read", "write", "review"] };
+const actor: Principal = { actorId: "ordinary-signer", projectIds: [projectId], permissions: ["task", "document", "session"] };
+const sealer: Principal = { actorId: "reviewer", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true };
 const run: RuntimeRunRecord = { projectId, id: runId, taskId, sessionId, taskRevisionId: randomUUID(), basisSetId: randomUUID(),
   operationId: randomUUID(), input: "fixed", inputHash: "a".repeat(64), state: "completed", version: 4,
   nativeTurnId: "turn", interruptRequested: false, resultSummary: "untrusted", actorId: actor.actorId,

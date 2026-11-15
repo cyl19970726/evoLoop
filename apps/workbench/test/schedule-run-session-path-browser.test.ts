@@ -50,7 +50,7 @@ test("old Schedule occurrence reaches its exact closed Run Session workspace", {
       requests.push(url.pathname);
       const root = `/api/projects/${projectId}`;
       let value: unknown = { items: [], nextCursor: null };
-      if (url.pathname === "/api/session") value = { principal: { actorId: "reader", projectIds: [projectId], permissions: ["read"] }, capabilities: {} };
+      if (url.pathname === "/api/session") value = { principal: { actorId: "reader", projectIds: [projectId], permissions: [] }, capabilities: {} };
       else if (url.pathname === root) value = { id: projectId, title: "旧日程项目", createdAt: stamp };
       else if (url.pathname === `${root}/schedules`) value = [{ projectId, id: scheduleId, version: 5, currentRevisionId: revisionId, state: "stopped", watermarkUtc: stamp, revision }];
       else if (url.pathname === `${root}/scheduling/status`) value = { state: "stopped", lastTickAt: stamp, lastError: null, lastCreated: 1, grants: [] };

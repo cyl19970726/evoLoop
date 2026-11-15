@@ -25,9 +25,9 @@ const clock={now:()=>new Date().toISOString()},ids={next:randomUUID};
 const project=randomUUID(),role=randomUUID(),roleRevision=randomUUID(),session=randomUUID();
 const taskA=randomUUID(),taskB=randomUUID(),queueId=randomUUID(),entryA=randomUUID(),entryB=randomUUID(),messageId=randomUUID();
 const cwd='/tmp/evoloop-conversation-queue-fixture';
-const lead={actorId:'lead',projectIds:[project],permissions:['read','write','review'] as Array<'read'|'write'|'review'>};
-const sender={actorId:'sender',projectIds:[project],permissions:['read','write','review'] as Array<'read'|'write'|'review'>};
-const executor={actorId:'worker',projectIds:[project],permissions:['read','write'] as Array<'read'|'write'>};
+const lead={actorId:'lead',projectIds:[project],permissions:['task','document','session','management'] as ('task'|'document'|'session'|'management')[],decisions:true};
+const sender={actorId:'sender',projectIds:[project],permissions:['task','document','session','management'] as ('task'|'document'|'session'|'management')[],decisions:true};
+const executor={actorId:'worker',projectIds:[project],permissions:['task','document','session'] as ('task'|'document'|'session'|'management')[]};
 const uow=new PostgresUnitOfWork(pool,{grant:async()=>true,binding:async()=>true,lead:async()=>true,
   input:async(reader,taskId)=>canonicalTaskInputJson(await taskInputSignature(reader,(await reader.getTask(taskId))!))});
 const workflow=new WorkflowService({uow,clock,ids,hasher:{hash},

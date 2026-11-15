@@ -1,4 +1,4 @@
-import type { Principal, RuntimeSessionRecord } from '@evoloop/contracts';
+import { hasPermission, mayAccessSession, type Principal, type RuntimeSessionRecord } from '@evoloop/contracts';
 import type { RuntimeBinding, RuntimePort } from '@evoloop/contracts/runtime';
 import type { NativeWorkspacePage, NativeWorkspaceReadOptions, WorkspaceRuntimeUpdate } from '@evoloop/contracts/session-timeline';
 import { DomainError, type UnitOfWork } from '@evoloop/contracts/ports';
@@ -27,7 +27,8 @@ export class ReadOnlyWorkspaceOwner implements WorkspaceHistoryOwner {
   onWorkspaceUpdate(_listener:(event:WorkspaceRuntimeUpdate)=>void){return ()=>{}}
   onWorkspaceDisconnect(listener:(reason:string)=>void){return this.deps.adapter.onDisconnect(listener)}
   async workspaceBinding(principal:Principal,projectId:string,sessionId:string):Promise<RuntimeBinding>{
-    if(!principal.actorId||!principal.projectIds.includes(projectId)||!principal.permissions.includes('read'))
+    if(!principal.actorId||!hasPermission(principal,projectId,'session')||
+      !mayAccessSession(principal,projectId,sessionId))
       throw new DomainError('FORBIDDEN','Project read access is required');
     const session=await this.deps.uow.read(projectId,r=>r.getRuntimeSession(sessionId));
     if(!session||session.id!==sessionId||session.projectId!==projectId||!session.nativeThreadId||!session.nativeSessionId||

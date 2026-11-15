@@ -37,7 +37,7 @@ async function open(t: TestContext, answer: (path: string) => Answer | null, set
     if (url.pathname.startsWith("/api/")) {
       const path = decodeURIComponent(url.pathname);
       let found: Answer = { value: { items: [], nextCursor: null } };
-      if (path === "/api/session") found = { value: { principal: { actorId: "reviewer", projectIds: [projectId], permissions: ["read", "write", "review"] }, capabilities: {} } };
+      if (path === "/api/session") found = { value: { principal: { actorId: "reviewer", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true }, capabilities: {} } };
       else if (path === `/api/projects/${projectId}`) found = { value: { id: projectId, title: "连接回归项目", createdAt: stamp } };
       else if (path.endsWith("/impacts")) found = { value: [] };
       else found = answer(path) ?? found;

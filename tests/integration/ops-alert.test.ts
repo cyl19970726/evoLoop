@@ -43,7 +43,7 @@ async function harness(t: { after: (fn: () => Promise<void>) => void }) {
   const projectId = randomUUID(), role = fixtureRoleId("ops-alert-owner");
   await pool.query("INSERT INTO project(project_id,title,created_at) VALUES($1,'Ops alert',now())", [projectId]);
   await seedFixtureRole(pool, projectId, role);
-  const reviewer = { actorId: "lead", projectIds: [projectId], permissions: ["read" as const, "write" as const, "review" as const] };
+  const reviewer = { actorId: "lead", projectIds: [projectId], permissions: ["task", "document", "session", "management"] as const, decisions: true };
   const state = { outlet: { kind: "webhook", url: "http://127.0.0.1:1/unused", headers: {}, timeoutMs: 1500 } as AlertOutletConfig, stallMinutes: 30, offsetMs: 0, canWrite: true, gaveUp: [] as string[], errors: 0 };
   const pump = () => new OpsAlertPump({ pool, projects: async () => [projectId], canWrite: () => state.canWrite, now: () => new Date(Date.now() + state.offsetMs),
     settings: async (): Promise<AlertSettings> => ({ enabled: true, pollIntervalMs: 15000, stallMinutes: state.stallMinutes, outlet: state.outlet }),

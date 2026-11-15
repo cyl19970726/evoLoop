@@ -2,7 +2,7 @@ import { reviewMetadata, validatePreviousReview } from "./organization-review.js
 import type { BlobPayload, BlobStore } from "@evoloop/contracts/sources";
 import { documentPayloadCommandSchema } from "@evoloop/contracts/process-documents";
 import type { DocumentPayloadCommand, DocumentPayloadRevision, DocumentPayloadTransaction, DocumentPayloadUnitOfWork, RegisteredDocumentBlob } from "@evoloop/contracts/process-documents";
-import type { AppliedResult, CommandResult, Operation, OutboxEvent, Principal } from "@evoloop/contracts";
+import { hasPermission, type AppliedResult, type CommandResult, type Operation, type OutboxEvent, type Principal } from "@evoloop/contracts";
 import { DomainError } from "@evoloop/contracts/ports";
 
 function canonicalJson(value: unknown): string {
@@ -19,8 +19,8 @@ function canonicalJson(value: unknown): string {
 
 function requireWriter(principal: Principal, command: DocumentPayloadCommand): void {
   if (!principal.actorId || !principal.projectIds.includes(command.projectId) ||
-    !principal.permissions.includes("write") || command.author !== principal.actorId)
-    throw new DomainError("FORBIDDEN", "Project write permission and matching author are required");
+    !hasPermission(principal, command.projectId, "document") || command.author !== principal.actorId)
+    throw new DomainError("FORBIDDEN", "Project document permission and matching author are required");
 }
 
 function sameOperation(prior: Operation, actorId: string, hash: string): CommandResult {

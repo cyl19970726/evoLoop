@@ -24,7 +24,7 @@ const task = { projectId: "10000001-0000-4000-8000-000000000001", id: "10000003-
   content: "已写正文", acceptance: "独立验收", owner, state: "todo" };
 const detail = { task, revision: { id: task.currentRevisionId }, basis: null, links: [], impacts: [], deliveries: [], observations: [], closures: [] } as unknown as TaskDetail;
 const context = { token: "fixture", projectId: task.projectId,
-  principal: { actorId: "editor", projectIds: [task.projectId], permissions: ["read", "write"] }, blocked: false,
+  principal: { actorId: "editor", projectIds: [task.projectId], permissions: ["task", "document", "session"] }, blocked: false,
   onAttempt: () => true, onKnown: () => {}, onChanged: () => {}, draftScope: `task:${task.id}`, draftBaseline: task.currentRevisionId } as MutationContext;
 
 test("Task edit remains available while the Role directory is loading or unavailable", () => {
@@ -55,7 +55,7 @@ test("Task actions expose planning, dependency and exact-position Leader review"
     actionKey: "task:fixture",
   };
   const reviewContext = { ...context,
-    principal: { ...context.principal, permissions: ["read", "write", "review"] } } as MutationContext;
+    principal: { ...context.principal, permissions: ["task", "document", "session", "management"], decisions: true } } as MutationContext;
   const html = render(actions({ context: reviewContext, detail, leader, open: "review" }));
   assert.match(html, /设置计划、截止与优先级/);
   assert.match(html, /设置前置任务依赖/);
@@ -135,7 +135,7 @@ const deliveredDetail = { ...detail, task: { ...task, state: "in_progress", vers
     technicalResult: "passed", technicalEvidence: "ok", reason: "deliver", actorId: "author", createdAt: "2026-11-01T00:00:00Z" }] } as unknown as TaskDetail;
 
 test("while the precondition is not marked the page says so and offers no use-observation or close entrance; once marked both return", () => {
-  const writer = { ...context, principal: { ...context.principal, permissions: ["read", "write", "review"] } } as MutationContext;
+  const writer = { ...context, principal: { ...context.principal, permissions: ["task", "document", "session", "management"], decisions: true } } as MutationContext;
   const waiting = waitingLeader({ acceptanceTarget: "named_agent", acceptancePrecondition: "release", readiness: "waiting_precondition", namedAgent: "agent", preconditionMark: null });
   const blocked = render(actions({ context: writer, detail: deliveredDetail, leader: waiting, open: "observation" }));
   assert.match(blocked, /前置：未满足（等待发布，尚未标记已满足）/);

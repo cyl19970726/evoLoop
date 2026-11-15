@@ -11,7 +11,7 @@ import { applyWorkflow } from "../src/workflow.ts";
 const id = (n: number) => `00000000-0000-4000-8000-${n.toString().padStart(12, "0")}`;
 const hash = "a".repeat(64);
 const projectId = id(1), taskId = id(2), primaryId = id(3), sourceRevisionId = id(4), basisId = id(5);
-const principal: Principal = { actorId: "reviewer", projectIds: [projectId], permissions: ["read", "write", "review"] };
+const principal: Principal = { actorId: "reviewer", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true };
 const task: Task = { projectId, id: taskId, version: 2, currentRevisionId: sourceRevisionId, title: "Check source",
   content: "Read the fixed evidence", contentDocumentId: primaryId, contentRevisionId: id(6),
   acceptance: "Record the result", owner: "evaluator", kind: "validation", state: "in_progress" };

@@ -1,6 +1,7 @@
 import type { Pool } from "pg";
 import { createHash } from "node:crypto";
-import type { Operation, Principal, RuntimeRunRecord } from "@evoloop/contracts";
+import { hasDecisionAuthority, isProjectMember, type Operation, type Principal, type RuntimeRunRecord }
+  from "@evoloop/contracts";
 import type { Delivery } from "@evoloop/contracts/workflow";
 import type { OrdinaryRunSubmissionCommand, OrdinaryRunSubmissionRecord } from "@evoloop/contracts/ordinary-run-submission";
 import { DomainError, type UnitOfWork } from "@evoloop/contracts/ports";
@@ -39,23 +40,23 @@ export class OrdinaryRunSubmissionService {
   }
 
   async getByOperation(principal: Principal, projectId: string, operationId: string): Promise<OrdinaryRunSubmissionRecord | null> {
-    if (!principal.projectIds.includes(projectId) || !principal.permissions.includes("read"))
-      throw new DomainError("FORBIDDEN", "Project read permission is required");
+    if (!isProjectMember(principal, projectId))
+      throw new DomainError("FORBIDDEN", "Project membership is required");
     return this.withStore(projectId, async store => {
       const record = await store.getByOperationId(operationId);
-      if (record && record.submittedBy !== principal.actorId && !principal.permissions.includes("review"))
+      if (record && record.submittedBy !== principal.actorId && !hasDecisionAuthority(principal, projectId, "task"))
         throw new DomainError("FORBIDDEN", "Only the signer or a reviewer can read this submission");
       return record;
     });
   }
 
   async getByRun(principal: Principal, projectId: string, runId: string): Promise<OrdinaryRunSubmissionRecord | null> {
-    if (!principal.projectIds.includes(projectId) || !principal.permissions.includes("read"))
-      throw new DomainError("FORBIDDEN", "Project read permission is required");
+    if (!isProjectMember(principal, projectId))
+      throw new DomainError("FORBIDDEN", "Project membership is required");
     return this.withStore(projectId, async store => {
       const record = await store.get(runId);
       if (!record && !await store.getRun(runId)) throw new DomainError("NOT_FOUND", "Run not found");
-      if (record && record.submittedBy !== principal.actorId && !principal.permissions.includes("review"))
+      if (record && record.submittedBy !== principal.actorId && !hasDecisionAuthority(principal, projectId, "task"))
         throw new DomainError("FORBIDDEN", "Only the signer or a reviewer can read this submission");
       return record;
     });

@@ -24,7 +24,7 @@ async function prepare(entries: MaterialCliBinding[], writers: string[]) {
     getRuntimeSession: async () => { throw new DomainError("NOT_FOUND", "missing"); }, listRoleSessionBindings: empty, listRoleRevisions: empty, listRoleReviews: empty,
     listRoleHandoffs: empty, listSchedules: empty, listScheduleRevisions: empty, listScheduleOccurrences: empty,
     listRoles: async () => ({ items: [], nextCursor: null }) } as unknown as WorkflowService;
-  const app = await buildServer({ service, credentials: [{ token, actorId: "lead", projectIds: [projectId], permissions: ["read", "write", "review"] }],
+  const app = await buildServer({ service, credentials: [{ token, actorId: "lead", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true }],
     sessionPreparation: async input => ({ runtimeAvailable: true, grantReady: true, cwdReady: true,
       materialCli: await prepareMaterialCli(entries, input, { ready: async () => true, projectWriter: async (_project, actor) => writers.includes(actor) }),
       roleActorId: "dev-agent", skills: [{ path: ".agents/skills/evoloop-workflow/SKILL.md", commit: "a".repeat(40), contentHash: "b".repeat(64), readSubcommand: "get /fixed" }] }) });

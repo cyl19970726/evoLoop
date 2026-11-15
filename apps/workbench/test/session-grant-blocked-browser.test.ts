@@ -49,7 +49,7 @@ test("a message blocked for a missing grant is visible on the Session page with 
     const url = new URL(req.url!, "http://127.0.0.1"); const root = `/api/projects/${projectId}`;
     if (url.pathname.startsWith("/api/")) {
       let value: unknown = { items: [], nextCursor: null, metadata }, status = 200;
-      if (url.pathname === "/api/session") value = { principal: { actorId: "reader", projectIds: [projectId], permissions: ["read", "write", "review"] }, capabilities: {} };
+      if (url.pathname === "/api/session") value = { principal: { actorId: "reader", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true }, capabilities: {} };
       else if (url.pathname === root) value = { id: projectId, title: "授权受阻测试", createdAt: stamp };
       else if (url.pathname === `${root}/sessions/${sessionId}/direct-input-capability`) value = { available: false, mode: null, expectedTurnId: null, reasonCode: "DIRECT_STEER_DISABLED", observedAt: stamp };
       else if (url.pathname === `${root}/session-work`) value = { items: [leader], nextCursor: null, observationCursor: "1", metadata,

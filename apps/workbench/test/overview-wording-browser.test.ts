@@ -46,7 +46,7 @@ test("overview wording: next step and responsibility in words, codes mapped, ide
       if (url.pathname.startsWith("/api/")) {
         const base = `/api/projects/${projectId}`;
         let value: unknown = { items: [], nextCursor: null }, status = 200;
-        if (url.pathname === "/api/session") value = { principal: { actorId: "reader", projectIds: [projectId], permissions: ["read"] }, capabilities: {} };
+        if (url.pathname === "/api/session") value = { principal: { actorId: "reader", projectIds: [projectId], permissions: [] }, capabilities: {} };
         else if (url.pathname === base) value = { id: projectId, title: "用语回归项目", createdAt: stamp };
         else if (url.pathname === `${base}/impacts`) value = [];
         else if (url.pathname === `${base}/goals`) value = { items: [{ projectId, id: goalId, version: 1, outcome: "让新用户第一次就能用上",

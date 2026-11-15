@@ -4,13 +4,16 @@
 // their baseline in the shared memory-only store (`context.draftScope` names the attempt, the revision or the
 // definition), and can be copied as text when the baseline moved.
 import type { ReactNode } from "react";
+import type { Permission } from "@evoloop/contracts";
 import { ActionForm, type ActionFormProps, type Field, type MutationContext } from "../../shared/ActionForm";
 
 export interface EvaluationFormProps {
   context: MutationContext; title: string; fields: Field[];
   build: ActionFormProps["build"];
-  /** Writes in evaluations need the review permission, as before. */
-  review?: boolean;
+  /** The object class owning the evaluation command. */
+  permission: Permission;
+  /** Whether the command is decision-class. */
+  decision?: boolean;
   onApplied?: ActionFormProps["onApplied"];
   /** Shown above the fields. */
   intro?: ReactNode;
@@ -20,7 +23,7 @@ export interface EvaluationFormProps {
   collapsible?: boolean;
 }
 
-export function EvaluationForm({ context, title, fields, build, review = false, onApplied, intro, hold, collapsible = true }: EvaluationFormProps) {
-  return <ActionForm context={context} title={title} fields={fields} build={build} review={review} onApplied={onApplied}
+export function EvaluationForm({ context, title, fields, build, permission, decision = false, onApplied, intro, hold, collapsible = true }: EvaluationFormProps) {
+  return <ActionForm context={context} title={title} fields={fields} build={build} requiredPermissions={[permission]} decision={decision} onApplied={onApplied}
     notes={intro} paused={hold} embedded={!collapsible} />;
 }

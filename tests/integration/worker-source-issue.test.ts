@@ -26,7 +26,7 @@ const loopId = id(), inboxId = id(), dispatchId = id(), runId = id(), sessionId 
 const operationId = id(), sourceEventId = id(), actorId = "worker-original-business";
 const builderRoleId=fixtureRoleId("builder");
 const now = "2026-10-23T00:00:00Z";
-const identity: WorkerIdentity = { principal: { actorId: "worker-current-cognition", projectIds: [projectId], permissions: ["read", "write", "review"] },
+const identity: WorkerIdentity = { principal: { actorId: "worker-current-cognition", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true },
   scope: { projectId, loopId, taskId, runId, sessionId, roleId: "planner", kind: "cognition", allowedRoleIds: ["planner", builderRoleId] } };
 
 before(async () => {
@@ -70,7 +70,7 @@ before(async () => {
     getAuthorizationFact: async () => null, canActAsRole: async () => false, wasActorRole: async () => false,
   }), now: () => new Date(now).toISOString(), nextId: id,
     hash: value => createHash("sha256").update(value).digest("hex")});
-  const reviewer = {actorId: "fixture", projectIds: [projectId], permissions: ["read", "write", "review"] as Array<"read" | "write" | "review">};
+  const reviewer = {actorId: "fixture", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true};
   const enrolled = await orchestration.execute(reviewer, {type: "loop.enroll", projectId, operationId: id(), loopId,
     goalId, stageId, cognitiveRoleId: "planner", allowedBusinessRoleIds: ["builder"],
     sourceAfter: {createdAtUtc: "2026-10-22T23:59:59.000Z", eventId: null},
@@ -139,12 +139,12 @@ test("only the exact current dispatch source Issue can be linked, even before ad
 });
 
 test("scoped HTTP publishes original Issue, creates linked Tasks, and core start rejects adoption drift", async () => {
-  const owner = { actorId: "source-test-owner", projectIds: [projectId], permissions: ["read", "write", "review"] as Array<"read" | "write" | "review"> };
+  const owner = { actorId: "source-test-owner", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true };
   const workflow = new WorkflowService({ uow: new PostgresUnitOfWork(pool),
     clock: { now: () => now }, ids: { next: id },
     hasher: { hash: (body: string) => createHash("sha256").update(body).digest("hex") } });
   const app = await buildServer({ service: workflow, credentials: [{ token: "o".repeat(40), actorId: owner.actorId,
-    projectIds: [projectId], permissions: ["read", "write", "review"] }], workers: {
+    projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true }], workers: {
     authenticate: async header => header === "Bearer fixture-worker" ? identity : null,
     facts: worker => workerGuardFacts(pool, worker),
   }});

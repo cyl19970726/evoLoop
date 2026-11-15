@@ -16,12 +16,12 @@ test("profile revision authority reloads the exact Session actor and new model g
   const session={projectId,id:randomUUID(),actorId:"business-owner",roleId:grant.roleId,
     authorizationScope:grant.authorizationScope,cwd,sandbox:grant.sandbox,
     approvalPolicy:grant.approvalPolicy,model:"old-model",state:"ready"} as RuntimeSessionRecord;
-  const principal={actorId:"controller",projectIds:[projectId],permissions:["read","write","review"] as Array<"read"|"write"|"review">};
+  const principal={actorId:"controller",projectIds:[projectId],permissions:["task","document","session","management"] as ('task'|'document'|'session'|'management')[],decisions:true};
   let reviewer=true;
   const authority=staticRecoveryAuthority(()=>loadIntegrations(file),async()=>[{
     token:"r".repeat(40),actorId:"controller",projectIds:[projectId],
-    permissions:reviewer?["read","write","review"]:["read","write"],
-  },{token:"b".repeat(40),actorId:"business-owner",projectIds:[projectId],permissions:["read","write","review"]}]);
+    permissions:reviewer?["task","document","session","management"]:["task","document","session"],decisions:reviewer,
+  },{token:"b".repeat(40),actorId:"business-owner",projectIds:[projectId],permissions:['task','document','session','management'],decisions:true}]);
   const target={model:"reviewed-model",sandbox:"danger-full-access" as const,approvalPolicy:"never" as const};
   try {
     await writeFile(file,JSON.stringify({runtime:{enabled:true,grants:[grant]}}));

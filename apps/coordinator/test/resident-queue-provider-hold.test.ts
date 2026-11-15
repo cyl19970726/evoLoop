@@ -5,7 +5,7 @@ import { DomainError } from "@evoloop/contracts/ports";
 import { ResidentQueuePump } from "../src/resident-queue/pump.js";
 
 const projectId = randomUUID(), queueId = randomUUID(), entryId = randomUUID(), sessionId = randomUUID(), taskId = randomUUID();
-const lead = { actorId: "lead", projectIds: [projectId], permissions: ["read", "write", "review"] as Array<"read" | "write" | "review"> };
+const lead = { actorId: "lead", projectIds: [projectId], permissions: ["task", "document", "session", "management"] as ('task'|'document'|'session'|'management')[], decisions: true };
 const queue = { projectId, id: queueId, version: 3, adoptedVersion: 3, actorId: "lead", entries: [{
   id: entryId, state: "queued", position: 0, sessionId, taskId, dependsOn: [], version: 5, claimId: null, holdCode: null, useRequired: false }] };
 

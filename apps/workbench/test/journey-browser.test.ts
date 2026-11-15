@@ -57,7 +57,7 @@ test("目标与阶段 reads goals, stages and their tasks in words, keeps drafts
       let value: unknown = { items: [], nextCursor: null }, status = 200;
       const stages = [stage(stageActive, goalA, "首个可用版本", "active"), stage(stageReviewed, goalA, "试用反馈", "reviewed", state.current ? 4 : 3),
         stage(stageProposed, goalB, "对外说明初稿", state.accepted ? "active" : "proposed", state.accepted ? 2 : 1)];
-      if (path === "/api/session") value = { principal: { actorId: "leader-actor", projectIds: [projectId], permissions: ["read", "write", "review"] }, capabilities: {} };
+      if (path === "/api/session") value = { principal: { actorId: "leader-actor", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true }, capabilities: {} };
       else if (path === root) value = { id: projectId, title: "目标与阶段夹具", createdAt: stamp };
       else if (path === `${root}/goals`) value = state.failRecords ? (status = 503, { message: "目标暂不可读" }) : { items: [
         { ...goal(goalA, "让试用团队每天用上工作台", state.goalVersion), ...state.goalVersion > 1 ? { scope: "本季度和下季度" } : {} }, goal(goalB, "整理第二季度的对外说明")], nextCursor: null };

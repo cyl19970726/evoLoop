@@ -25,8 +25,9 @@ const queuedIds: string[] = [];
 const workflow = new WorkflowService({ uow, clock: { now: () => pinnedNow ?? new Date(tick += 1000).toISOString() },
   ids: { next: () => queuedIds.shift() ?? randomUUID() }, hasher: { hash: sha } });
 const actor = "document-history-test";
-const all: Permission[] = ["read", "write", "review"];
-const principal = (projectIds: string[], permissions: Permission[] = all): Principal => ({ actorId: actor, projectIds, permissions });
+const all: Permission[] = ["task", "document", "session", "management"];
+const principal = (projectIds: string[], permissions: Permission[] = all): Principal =>
+  ({ actorId: actor, projectIds, permissions, decisions: true });
 
 before(async () => { await migrate(connectionString, schema); });
 after(async () => {
@@ -144,7 +145,7 @@ test("cursor pages cover the history once and cannot move to another document or
   assert.equal((await list(projectId, documentId, 100)).items.length, 4);
 });
 
-test("missing and foreign documents are not found; projects without read access are forbidden", async () => {
+test("missing and foreign documents are not found; non-members of the project are forbidden", async () => {
   const projectId = await project();
   const otherProject = await project();
   const foreign = await documentWithHistory(otherProject);
@@ -152,7 +153,7 @@ test("missing and foreign documents are not found; projects without read access 
   await assert.rejects(workflow.listDocumentRevisions(principal([projectId, otherProject]), projectId, foreign.documentId),
     { code: "NOT_FOUND" }, "a document of another project is not found through this project");
   await assert.rejects(workflow.listDocumentRevisions(principal([projectId]), otherProject, foreign.documentId), { code: "FORBIDDEN" });
-  await assert.rejects(workflow.listDocumentRevisions(principal([otherProject], ["write"]), otherProject, foreign.documentId), { code: "FORBIDDEN" });
+  await assert.rejects(workflow.listDocumentRevisions(principal([], ["document"]), otherProject, foreign.documentId), { code: "FORBIDDEN" });
 });
 
 test("two revisions in the same millisecond keep save order whatever their IDs", async () => {

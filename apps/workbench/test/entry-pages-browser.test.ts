@@ -24,7 +24,7 @@ test("login, project list and settings pages use the new layout and keep their b
         if (auth !== "Bearer fixture-token") { res.writeHead(401, { "content-type": "application/json" }); res.end(JSON.stringify({ error: "unauthorized" })); return; }
         let value: unknown = { items: [], nextCursor: null };
         if (url.pathname === "/api/session") value = {
-          principal: { actorId: "zhang-reviewer", projectIds: [projectId, missingId], permissions: ["read", "write", "review"], identityKind: "human" },
+          principal: { actorId: "zhang-reviewer", projectIds: [projectId, missingId], permissions: ["task", "document", "session", "management"], decisions: true, identityKind: "human" },
           capabilities: {},
         };
         else if (url.pathname === `/api/projects/${missingId}`) { res.writeHead(404, { "content-type": "application/json" }); res.end(JSON.stringify({ error: "not found" })); return; }

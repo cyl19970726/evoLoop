@@ -11,9 +11,9 @@ import { OrchestrationError, OrchestrationService } from "../src/orchestration/i
 const projectId = randomUUID(), goalId = randomUUID(), stageId = randomUUID(), loopId = randomUUID(), cognitiveRoleId = randomUUID(), workerRoleId = randomUUID(), taskId = randomUUID(), scopeId = randomUUID();
 const at = "2026-10-23T09:00:00.000Z", after = "2026-10-23T09:00:01.000Z";
 const source0 = randomUUID(), source1 = randomUUID(), feedbackDispatchId = randomUUID();
-const reviewer: Principal = { actorId: "reviewer", projectIds: [projectId], permissions: ["write", "review"] };
-const cognition: Principal = { actorId: "cognition", projectIds: [projectId], permissions: ["write"] };
-const worker: Principal = { actorId: "worker", projectIds: [projectId], permissions: ["write"] };
+const reviewer: Principal = { actorId: "reviewer", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true };
+const cognition: Principal = { actorId: "cognition", projectIds: [projectId], permissions: ["task", "document", "session", "management"] };
+const worker: Principal = { actorId: "worker", projectIds: [projectId], permissions: ["task", "document", "session", "management"] };
 const op = () => randomUUID();
 const cmd = <T extends OrchestrationCommand>(value: Omit<T, "projectId" | "operationId">): T => ({ projectId, operationId: op(), ...value }) as T;
 const failed = (code: string) => (error: unknown) => error instanceof OrchestrationError && error.code === code;
@@ -155,7 +155,7 @@ test("terminal missing-intent gap from cognition becomes one recovery inbox, whi
       reason: "native Run ended", requestedBy: cognition.actorId, createdAtUtc: at, updatedAtUtc: at });
   });
   // The old source projection had no dispatch.gap, so there could be no recovery inbox.
-  assert.equal((await h.service.listSourceFacts({ ...reviewer, permissions: ["read", "write", "review"] }, projectId, loopId)).items.some(x => x.kind === "dispatch.gap"), false);
+  assert.equal((await h.service.listSourceFacts({ ...reviewer, permissions: ["task", "document", "session", "management"], decisions: true }, projectId, loopId)).items.some(x => x.kind === "dispatch.gap"), false);
   await h.service.execute(reviewer, cmd({ type: "dispatch.gap", dispatchId: gapDispatchId,
     expectedVersion: 4, reason: "Worker intent gap: absent", evidenceRef: null }));
   const gap = h.data.events.find(e => e.kind === "dispatch.gap")!;
@@ -405,7 +405,7 @@ test("operation replay rechecks actor binding and retains one immutable audit de
   const h = harness(); const command = cmd<Extract<OrchestrationCommand, { type: "loop.enroll" }>>({ type: "loop.enroll", loopId, goalId, stageId, cognitiveRoleId, allowedBusinessRoleIds: [workerRoleId], sourceAfter: { createdAtUtc: at, eventId: source0 }, maxRuns: 2, maxConcurrent: 1, reason: "bounded pilot" });
   const first = await h.service.execute(reviewer, command), replay = await h.service.execute(reviewer, command);
   assert.equal(first.replayed, false); assert.equal(replay.replayed, true); assert.equal(h.data.events.length, 1);
-  await assert.rejects(() => h.service.execute({ ...reviewer, permissions: ["write"] }, command), failed("FORBIDDEN"));
+  await assert.rejects(() => h.service.execute({ ...reviewer, permissions: ["task", "document", "session"] }, command), failed("FORBIDDEN"));
   await assert.rejects(() => h.service.execute(reviewer, { ...command, reason: "different" }), failed("OPERATION_CONFLICT"));
 });
 
@@ -471,8 +471,8 @@ test("worker feedback is only from this loop's completed business dispatch", asy
 test("operation reads stay actor-scoped and a paused loop can finish an existing inbox", async () => {
   const h = harness(); await h.enroll(); const inbox = await h.accept();
   const operationId = [...h.data.operations.values()].find(op => op.result.entityId === inbox.entityId)!.id;
-  await assert.rejects(() => h.service.getOperation({ ...reviewer, permissions: ["read", "write", "review"] }, projectId, operationId), failed("FORBIDDEN"));
-  const reader = { ...cognition, permissions: ["read", "write"] as Principal["permissions"] };
+  await assert.rejects(() => h.service.getOperation({ ...reviewer, permissions: ["task", "document", "session", "management"], decisions: true }, projectId, operationId), failed("FORBIDDEN"));
+  const reader = { ...cognition, permissions: ["task", "document", "session"] as Principal["permissions"] };
   assert.equal((await h.service.getOperation(reader, projectId, operationId))?.id, operationId);
   await h.service.execute(reviewer, cmd({ type: "loop.state", loopId, expectedVersion: 1, state: "paused", reason: "hold" }));
   await h.ack(inbox.entityId);
@@ -646,7 +646,7 @@ test("review control resumes one terminal waiting cognition from fixed Issue wit
 });
 
 test("waiting resume rejects unapproved actors, stale or unsafe work, exhausted budget and non-Issue sources",async()=>{
-  for(const mutation of ["worker","noReview","noWrite","stale","child","divisionIntent","unknown","budget","paused","stopped","foreign","notIssue","wrongDecision","unsettled"] as const){
+  for(const mutation of ["worker","noReview","noDecision","stale","child","divisionIntent","unknown","budget","paused","stopped","foreign","notIssue","wrongDecision","unsettled"] as const){
     const f=waitingIssueFixture();await f.make();let principal=reviewer;
     const command=f.command();
     f.h.change(value=>{
@@ -665,9 +665,9 @@ test("waiting resume rejects unapproved actors, stale or unsafe work, exhausted 
       }
     });
     if(mutation==="worker")principal={...reviewer,actorId:"worker-test"};
-    if(mutation==="noReview")principal={...reviewer,permissions:["read","write"]};
-    if(mutation==="noWrite")principal={...reviewer,permissions:["read","review"]};
-    const code={worker:"FORBIDDEN",noReview:"FORBIDDEN",noWrite:"FORBIDDEN",stale:"VERSION_CONFLICT",
+    if(mutation==="noReview")principal={...reviewer,permissions:["task","document","session"]};
+    if(mutation==="noDecision")principal={...reviewer,decisions:false};
+    const code={worker:"FORBIDDEN",noReview:"FORBIDDEN",noDecision:"FORBIDDEN",stale:"VERSION_CONFLICT",
       child:"WAITING_UNAVAILABLE",divisionIntent:"WAITING_UNAVAILABLE",unknown:"RUN_NOT_TERMINAL",budget:"BUDGET_EXHAUSTED",paused:"LOOP_PAUSED",
       stopped:"LOOP_STOPPED",foreign:"WAITING_UNAVAILABLE",notIssue:"SOURCE_UNAVAILABLE",
       wrongDecision:"WAITING_UNAVAILABLE",unsettled:"WAITING_UNAVAILABLE"}[mutation];
@@ -810,7 +810,7 @@ test("budget extension rejects wrong authority, state, expected max, size and op
     const command=cmd({type:"loop.extendBudget",loopId,expectedLoopVersion:initial.version,
       expectedMaxRuns:initial.maxRuns,maxRuns:initial.maxRuns+1,evidenceRef:"owner:one-run",reason:"Bounded retry"});
     if(mutation==="actor")principal={...reviewer,actorId:"other-reviewer"};
-    if(mutation==="review")principal={...reviewer,permissions:["write"]};
+    if(mutation==="review")principal={...reviewer,permissions:["task","document","session"]};
     if(mutation==="worker")principal={...reviewer,actorId:"worker-fake"};
     h.change(value=>{
       if(mutation==="active"||mutation==="stopped")value.loops.set(loopId,{...value.loops.get(loopId)!,state:mutation});
@@ -923,7 +923,7 @@ test("controller reserves budget before Task transfer and confirms only its jour
   await assert.rejects(()=>f.h.service.execute(reviewer,consume()),failed("INVALID_CAUSALITY"));
   f.h.change(value=>{value.dispatches.set(dispatchId,{...value.dispatches.get(dispatchId)!,state:"accepted",
     runtimeRunId:value.runId});value.runState="requested";});
-  const receiver:Principal={actorId:`worker-${randomUUID()}`,projectIds:[projectId],permissions:["read","write"]};
+  const receiver:Principal={actorId:`worker-${randomUUID()}`,projectIds:[projectId],permissions:["task","document","session","management"]};
   f.h.setDelegatedWorkerScope({projectId,loopId,taskId,runId:f.h.data.runId,roleId:workerRoleId,kind:"business"});
   const deliveryDecision=cmd({type:"worker.decision",decisionId:randomUUID(),dispatchId,
     runId:f.h.data.runId,kind:"failed",reason:"Cannot complete",evidenceRefs:[]});
@@ -958,7 +958,7 @@ test("an already requested static child prevents a later division intent, while 
 
 test("current cognition worker may sign only the exact brokered parent under an explicit template", async () => {
   const f=divisionFixture();await f.setup();
-  const runtimeWorker:Principal={actorId:`worker-${randomUUID()}`,projectIds:[projectId],permissions:["read","write","review"]};
+  const runtimeWorker:Principal={actorId:`worker-${randomUUID()}`,projectIds:[projectId],permissions:["task","document","session","management"],decisions:true};
   const scope={projectId,loopId,taskId,runId:f.parentRunId,roleId:cognitiveRoleId,kind:"cognition"};
   const request=f.decision();
   await assert.rejects(()=>f.h.service.execute(runtimeWorker,request),failed("FORBIDDEN"));
@@ -989,7 +989,7 @@ test("current cognition worker may sign only the exact brokered parent under an 
   const waiting=await f.h.service.execute(cognition,cmd({type:"worker.decision",decisionId:randomUUID(),
     dispatchId:f.parentDispatchId,runId:f.parentRunId,kind:"waiting",divisionDecisionId:chosen.entityId,
     reason:"Use the fixed prior intent",evidenceRefs:[]}));
-  assert.equal((await f.h.service.getDecision({...reviewer,permissions:["read","write","review"]},projectId,waiting.entityId))?.divisionDecisionId,chosen.entityId);
+  assert.equal((await f.h.service.getDecision({...reviewer,permissions:["task","document","session","management"],decisions:true},projectId,waiting.entityId))?.divisionDecisionId,chosen.entityId);
 });
 
 test("division intent closes when cognition has signed a final choice or its Run ended", async () => {
@@ -1014,7 +1014,7 @@ test("method-only intent needs no delegated Role and a later stop leaves it unus
   const stopped=await f.h.service.execute(cognition,cmd({type:"worker.decision",decisionId:randomUUID(),
     dispatchId:f.parentDispatchId,runId:f.parentRunId,kind:"stop",divisionDecisionId:null,
     reason:"Stop after inspection",evidenceRefs:[]}));
-  assert.equal((await f.h.service.getDecision({...reviewer,permissions:["read","write","review"]},projectId,stopped.entityId))?.divisionDecisionId,null);
+  assert.equal((await f.h.service.getDecision({...reviewer,permissions:["task","document","session","management"],decisions:true},projectId,stopped.entityId))?.divisionDecisionId,null);
 });
 
 test("method on the current in-progress cognition Task can submit its own work but cannot invent a waiting handoff", async () => {

@@ -2,7 +2,7 @@
 // is its own task with its own result; editing changes this occurrence by default, “本次及后续” is chosen
 // explicitly, and stopping the series is separate from cancelling one occurrence.
 import React from "react";
-import { commandSchema, type TaskDetail } from "@evoloop/contracts";
+import { commandSchema, hasDecisionAuthority, hasPermission, type TaskDetail } from "@evoloop/contracts";
 import { api, errorText, type TaskTimingView } from "../../shared/api";
 import type { MutationContext } from "../../shared/ActionForm";
 import { useProjectQuery } from "../../shared/query";
@@ -37,8 +37,8 @@ export function TaskScheduleSection({ context, detail }: { context: MutationCont
   const timing = read.data ?? null;
   let version: number | null = null, versionError = "";
   if (read.data !== undefined) try { version = timingVersion(timing); } catch (cause) { versionError = errorText(cause); }
-  const permissions = context.principal.permissions;
-  const canWrite = permissions.includes("write"), canReview = canWrite && permissions.includes("review");
+  const canWrite = hasPermission(context.principal, projectId, "task");
+  const canStopSeries = hasDecisionAuthority(context.principal, projectId, "task");
   const editableThis = task.state === "todo";
   // A failed reread keeps the last answer on screen but nothing is written from it.
   const writable = read.data !== undefined && !read.error && !versionError && version !== null;
@@ -55,32 +55,32 @@ export function TaskScheduleSection({ context, detail }: { context: MutationCont
   const set = (repeat: "none" | "daily", scope: Scope) => (values: Record<string, string>, seen: typeof baseline) =>
     timingFormPayload(task.id, seen.taskVersion, timingAt(seen), { executeAt: values.executeAt ?? "", timezone: values.timezone ?? "",
       repeat: (values.repeat as "none" | "daily" | undefined) ?? repeat, scope: (values.scope as Scope | undefined) ?? scope, reason: values.reason ?? "" });
-  const actions: { key: string; title: string; description: string; needs: "write" | "review"; form: React.ReactNode }[] = [];
+  const actions: { key: string; title: string; description: string; needs: "write" | "decision"; form: React.ReactNode }[] = [];
   if (writable && !timing && editableThis) {
     actions.push({ key: "set-once", title: "设置本次执行时间", description: "只这一次在约定时间执行。", needs: "write",
-      form: <CommandForm context={context} options={timingOptions} submitLabel="保存执行时间" baseline={baseline} fields={[...timeFields, reasonField("调整理由")]} build={set("none", "this")} /> });
-    actions.push({ key: "set-daily", title: "设置每天重复", description: "从本次起每天在同一时刻生成一份独立的任务。", needs: "review",
-      form: <CommandForm context={context} options={timingOptions} submitLabel="设置每天重复" baseline={baseline} fields={[...timeFields, reasonField("调整理由")]} build={set("daily", "this_and_future")} /> });
+      form: <CommandForm context={context} permission="task" options={timingOptions} submitLabel="保存执行时间" baseline={baseline} fields={[...timeFields, reasonField("调整理由")]} build={set("none", "this")} /> });
+    actions.push({ key: "set-daily", title: "设置每天重复", description: "从本次起每天在同一时刻生成一份独立的任务。", needs: "write",
+      form: <CommandForm context={context} permission="task" options={timingOptions} submitLabel="设置每天重复" baseline={baseline} fields={[...timeFields, reasonField("调整理由")]} build={set("daily", "this_and_future")} /> });
   }
   if (writable && timing?.repeat === "none" && editableThis) {
     actions.push({ key: "adjust-once", title: "调整本次执行时间", description: "只改这一次。", needs: "write",
-      form: <CommandForm context={context} options={timingOptions} submitLabel="保存执行时间" baseline={baseline} fields={[...timeFields, reasonField("调整理由")]} build={set("none", "this")} /> });
-    actions.push({ key: "make-daily", title: "改为每天重复", description: "从本次起每天生成一份独立的任务。", needs: "review",
-      form: <CommandForm context={context} options={timingOptions} submitLabel="改为每天重复" baseline={baseline} fields={[...timeFields, reasonField("调整理由")]} build={set("daily", "this_and_future")} /> });
+      form: <CommandForm context={context} permission="task" options={timingOptions} submitLabel="保存执行时间" baseline={baseline} fields={[...timeFields, reasonField("调整理由")]} build={set("none", "this")} /> });
+    actions.push({ key: "make-daily", title: "改为每天重复", description: "从本次起每天生成一份独立的任务。", needs: "write",
+      form: <CommandForm context={context} permission="task" options={timingOptions} submitLabel="改为每天重复" baseline={baseline} fields={[...timeFields, reasonField("调整理由")]} build={set("daily", "this_and_future")} /> });
   }
   if (writable && timing?.repeat === "daily") {
-    actions.push({ key: "adjust-daily", title: "调整执行时间与重复规则", description: editableThis ? "默认只改本次；“本次及后续”要另选。" : "本次已开始或结束，只能改以后的。", needs: "review",
-      form: <CommandForm context={context} options={timingOptions} submitLabel="保存调整" baseline={baseline} build={set("daily", editableThis ? "this" : "future")} fields={[...timeFields,
+    actions.push({ key: "adjust-daily", title: "调整执行时间与重复规则", description: editableThis ? "默认只改本次；“本次及后续”要另选。" : "本次已开始或结束，只能改以后的。", needs: "write",
+      form: <CommandForm context={context} permission="task" options={timingOptions} submitLabel="保存调整" baseline={baseline} build={set("daily", editableThis ? "this" : "future")} fields={[...timeFields,
         { name: "repeat", label: "重复规则", kind: "select", initial: timing.repeat, options: [{ value: "none", label: "仅本次" }, { value: "daily", label: "每天固定时间" }] },
         { name: "scope", label: "修改范围", kind: "select", initial: editableThis ? "this" : "future", options: [
           ...(editableThis ? [{ value: "this", label: "只改本次（默认）" }, { value: "this_and_future", label: "本次及后续" }] : []),
           { value: "future", label: "只改以后的；本次不变" }] },
         reasonField("调整理由")]} /> });
-    if (timing.seriesState === "active") actions.push({ key: "stop", title: "停止以后重复", description: "只停止以后生成；已经生成或正在执行的任务各自保留。", needs: "review",
-      form: <CommandForm context={context} options={timingOptions} submitLabel="停止以后重复" danger baseline={baseline} fields={[reasonField("停止理由")]}
+    if (timing.seriesState === "active") actions.push({ key: "stop", title: "停止以后重复", description: "只停止以后生成；已经生成或正在执行的任务各自保留。", needs: "decision",
+      form: <CommandForm context={context} permission="task" decision options={timingOptions} submitLabel="停止以后重复" danger baseline={baseline} fields={[reasonField("停止理由")]}
         build={(values, seen) => timingStopPayload(task.id, timingAt(seen)!, values.reason ?? "")} /> });
-    if (timing.seriesState === "active" && editableThis) actions.push({ key: "prompt-this", title: "修改本次任务要求", description: "默认只改本次；可以选“本次及后续”。", needs: "review",
-      form: <CommandForm context={context} options={timingOptions} submitLabel="保存本次任务要求" baseline={baseline} fields={[
+    if (timing.seriesState === "active" && editableThis) actions.push({ key: "prompt-this", title: "修改本次任务要求", description: "默认只改本次；可以选“本次及后续”。", needs: "write",
+      form: <CommandForm context={context} permission="task" options={timingOptions} submitLabel="保存本次任务要求" baseline={baseline} fields={[
         { name: "scope", label: "修改范围", kind: "select", initial: "this", options: [{ value: "this", label: "只改本次（默认）" }, { value: "this_and_future", label: "本次及后续" }] },
         { name: "title", label: "任务名称", initial: task.title, maxLength: 240 },
         { name: "content", label: "任务正文", kind: "textarea", rows: 6, initial: task.content, maxLength: 65536 },
@@ -88,8 +88,8 @@ export function TaskScheduleSection({ context, detail }: { context: MutationCont
         reasonField("修改理由")]}
         build={(values, seen) => seriesCurrentPromptCommand(detail, seen, { scope: values.scope ?? "", title: values.title ?? "",
           content: values.content ?? "", acceptance: values.acceptance ?? "", reason: values.reason ?? "" })} /> });
-    if (timing.seriesState === "active") actions.push({ key: "prompt-future", title: "只修改以后的任务要求", description: "已生成的任务和它们固定的执行依据不变。", needs: "review",
-      form: <CommandForm context={context} options={timingOptions} submitLabel="保存以后的任务要求" baseline={{ ...baseline, template: timing.futureTemplate.content }} fields={[
+    if (timing.seriesState === "active") actions.push({ key: "prompt-future", title: "只修改以后的任务要求", description: "已生成的任务和它们固定的执行依据不变。", needs: "write",
+      form: <CommandForm context={context} permission="task" options={timingOptions} submitLabel="保存以后的任务要求" baseline={{ ...baseline, template: timing.futureTemplate.content }} fields={[
         { name: "title", label: "以后的任务名称", initial: timing.futureTemplate.title, maxLength: 4000 },
         { name: "content", label: "以后的任务正文", kind: "textarea", rows: 6, initial: timing.futureTemplate.content, maxLength: 65536 },
         { name: "acceptance", label: "以后的验收要求", kind: "textarea", initial: timing.futureTemplate.acceptance, maxLength: 4000 },
@@ -97,7 +97,7 @@ export function TaskScheduleSection({ context, detail }: { context: MutationCont
         build={(values, seen) => seriesFuturePromptCommand(task.id, seen, timing, { title: values.title ?? "", content: values.content ?? "",
           acceptance: values.acceptance ?? "", reason: values.reason ?? "" })} /> });
   }
-  const shown = actions.filter(action => action.needs === "write" ? canWrite : canReview);
+  const shown = actions.filter(action => action.needs === "write" ? canWrite : canStopSeries);
   const hidden = actions.length - shown.length;
   return <TabSection id="task-schedule" title="执行时间与重复">
     <ReadNote read={read} what="执行时间" />
@@ -106,7 +106,7 @@ export function TaskScheduleSection({ context, detail }: { context: MutationCont
       : <p className="text-label text-text-secondary">这项任务没有约定执行时间。</p>)}
     {read.data !== undefined && !editableThis && <Fine>本次任务已经开始或结束，本次的执行依据保持固定。{timing?.repeat === "daily" ? "仍可修改以后的要求或停止以后重复。" : ""}</Fine>}
     {shown.length > 0 && <div className="flex flex-col">{shown.map(action => <ActionRow key={action.key} title={action.title} description={action.description}>{action.form}</ActionRow>)}</div>}
-    {hidden > 0 && <Fine>另有 {hidden} 项时间调整需要审阅权限，当前身份不能执行。</Fine>}
+    {hidden > 0 && <Fine>另有 {hidden} 项时间调整需要任务决定权限，当前身份不能执行。</Fine>}
   </TabSection>;
 }
 

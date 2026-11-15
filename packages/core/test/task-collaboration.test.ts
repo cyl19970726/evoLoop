@@ -10,8 +10,8 @@ const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")
 const hash = (body: string) => createHash("sha256").update(body).digest("hex");
 const projectId = id(1), discussionId = id(2), taskId = id(3), taskRevisionId = id(4),
   sessionId = id(5), runId = id(6), channelDocumentId = id(7);
-const issuer: Principal = { actorId: "issuer", projectIds: [projectId], permissions: ["read", "write", "review"] };
-const worker: Principal = { actorId: "worker", projectIds: [projectId], permissions: ["read", "write"] };
+const issuer: Principal = { actorId: "issuer", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true };
+const worker: Principal = { actorId: "worker", projectIds: [projectId], permissions: ["task", "document", "session"] };
 const executor: Principal = { ...issuer };
 const ref = (n: number) => ({ documentId: id(n), revisionId: id(n + 100) });
 

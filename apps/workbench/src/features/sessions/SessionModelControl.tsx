@@ -4,6 +4,7 @@
 // The 运行环境 card (RuntimeEnvironmentCard) lays the pieces out: the adjust button at its top right, a reason only when
 // the button cannot be used, alerts only when something needs checking, and the revision facts in 配置记录.
 import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { hasDecisionAuthority } from '@evoloop/contracts';
 import type { SessionRecoveryView } from '@evoloop/contracts/session-recovery';
 import { Button, Select } from '@evoloop/ui';
 import { errorText } from '../../shared/api';
@@ -69,7 +70,7 @@ export function useModelControl({context,sessionId,recovery,busy,onApplied}:{
   const observedProfile=recovery ? recovery.executionProfile : profile;
   const options=models?.options?.find(option=>option.model===selectedModel)?.supportedReasoningEfforts??[];
   const fullAccess=runtime?.sandbox==='danger-full-access'&&runtime.approvalPolicy==='never';
-  const permitted=context.principal.permissions.includes('write')&&context.principal.permissions.includes('review');
+  const permitted=hasDecisionAuthority(context.principal,context.projectId,'session');
   const canEdit=permitted&&!context.blocked&&!!recovery&&!viewMismatch&&!reading&&runtime?.state==='ready'&&fullAccess&&!!currentRevision&&
     models?.status==='available'&&!!models.options?.length&&observedProfile?.activationState!=='attempting'&&
     observedProfile?.activationState!=='unknown';
@@ -97,7 +98,7 @@ export function useModelControl({context,sessionId,recovery,busy,onApplied}:{
       </Select></label>
     {options.length?<ActionForm key={`${sessionId}:${runtime!.version}:${selectedModel}`} context={{...context,
       draftScope:`session-model:${sessionId}`,draftBaseline:`${runtime!.version}:${currentRevision!.revisionId}`}}
-      title="保存下一轮的模型与强度" review requiredPermissions={['write','review']} embedded
+      title="保存下一轮的模型与强度" decision requiredPermissions={['session']} embedded
       fields={[{name:'reasoningEffort',label:'思考强度',kind:'select',options:options.map(value=>({value,label:value})),
         value:options.includes(currentRevision!.reasoningEffort??'')?currentRevision!.reasoningEffort!:''},
         {name:'reason',label:'调整理由',kind:'textarea'},

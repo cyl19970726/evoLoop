@@ -17,9 +17,9 @@ const service = new WorkflowService({ uow: new PostgresUnitOfWork(pool),
   clock: { now: () => new Date().toISOString() }, ids: { next: randomUUID },
   hasher: { hash: value => createHash("sha256").update(value).digest("hex") } });
 const projectId = randomUUID();
-const reviewer: Principal = { actorId: "discussion-reviewer", projectIds: [projectId], permissions: ["read", "write", "review"] };
-const writer: Principal = { actorId: "discussion-writer", projectIds: [projectId], permissions: ["read", "write"] };
-const foreign: Principal = { actorId: "foreign", projectIds: [randomUUID()], permissions: ["read", "write", "review"] };
+const reviewer: Principal = { actorId: "discussion-reviewer", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true };
+const writer: Principal = { actorId: "discussion-writer", projectIds: [projectId], permissions: ["task", "document", "session"] };
+const foreign: Principal = { actorId: "foreign", projectIds: [randomUUID()], permissions: ["task", "document", "session", "management"], decisions: true };
 const issue = (principal: Principal, data: Record<string, unknown>, operationId = randomUUID()) =>
   service.execute(principal, { ...data, projectId, operationId } as Command);
 function applied(receipt: CommandResult) {
@@ -106,7 +106,7 @@ test("manual discussion handoff freezes baselines and appends corrigible decisio
   assert.match(initial.body!, /只.*人工登记|不证明 Codex 会话已收到/);
   assert.equal((await service.getDocument(writer, projectId, documentId)).document.adoptedRevisionId, null);
   assert.equal((await pool.query("SELECT count(*)::int AS n FROM discussion WHERE project_id=$1", [projectId])).rows[0]?.n, 1);
-  await assert.rejects(service.getDiscussion(foreign, projectId, discussionId), /Permission read/);
+  await assert.rejects(service.getDiscussion(foreign, projectId, discussionId), /Project membership is required/);
   assert.equal((await service.listDiscussions(writer, projectId, 10)).items.length, 1);
   rejected(await issue(reviewer, { type: "discussion.decision.record", discussionId, expectedVersion: 1,
     documentRevisionId: prepared.revisionId, choice: "Research", reason: "Too early", unresolved: "Trial",
@@ -123,7 +123,7 @@ test("manual discussion handoff freezes baselines and appends corrigible decisio
   const decision = { type: "discussion.decision.record", discussionId, expectedVersion: 2,
     documentRevisionId: handoff.revisionId, choice: "Research", reason: "Consumer use remains unclear",
     unresolved: "Second team still needs a trial", relookCondition: "After external trial", evidence: "Recorded discussion notes" };
-  await assert.rejects(issue(writer, decision), /Permission review/);
+  await assert.rejects(issue(writer, decision), /Decision authority for task is required/);
   rejected(await issue(reviewer, { ...decision, documentRecovery: { expectedDocumentVersion: 2,
     reason: "There is no external edit to recover" } }), "RECOVERY_NOT_NEEDED");
   const decided = applied(await issue(reviewer, decision));
@@ -172,8 +172,8 @@ test("manual discussion handoff freezes baselines and appends corrigible decisio
   assert.equal(journalBefore?.code, "DOCUMENT_CHANGED", "ordinary refusal remains durably journaled");
   const recovery = { ...nextDecision,
     documentRecovery: { expectedDocumentVersion: 5, reason: "Reviewer observed the independent edit and explicitly restores discussion continuity" } };
-  await assert.rejects(issue(writer, recovery), /Permission review/);
-  await assert.rejects(issue(foreign, recovery), /Permission review/);
+  await assert.rejects(issue(writer, recovery), /Decision authority for task is required/);
+  await assert.rejects(issue(foreign, recovery), /Permission task is required/);
   rejected(await issue(reviewer, { ...recovery, documentRecovery: { ...recovery.documentRecovery,
     expectedDocumentVersion: 4 } }), "VERSION_CONFLICT");
   rejected(await issue(reviewer, { ...recovery, documentRevisionId: corrected.revisionId }), "DOCUMENT_CHANGED");

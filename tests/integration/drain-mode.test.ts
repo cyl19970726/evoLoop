@@ -16,8 +16,8 @@ const schema = `el_drain_${randomUUID().replaceAll("-", "").slice(0, 12)}`;
 const pool = new pg.Pool({ connectionString: url, options: `-c search_path=${schema}` });
 const projectId = randomUUID(), otherProject = randomUUID(), roleId = randomUUID(), sessionId = randomUUID();
 const at = "2026-11-10T00:00:00.000Z";
-const maintainer: Principal = { actorId: "maintainer", projectIds: [projectId, otherProject], permissions: ["read", "write", "review"] };
-const business: Principal = { actorId: "business-session", projectIds: [projectId], permissions: ["read", "write", "review"] };
+const maintainer: Principal = { actorId: "maintainer", projectIds: [projectId, otherProject], permissions: ["task", "document", "session", "management"], decisions: true };
+const business: Principal = { actorId: "business-session", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true };
 
 before(async () => {
   await migrate(url!, schema);
@@ -112,7 +112,7 @@ test("a message is still saved while draining, and a drained instance releases b
   await drain.set(maintainer, "start", "saving test");
   const before = (await drain.status()).queued.messages;
   const messageId = randomUUID();
-  const result = await workflow.execute({ ...business, permissions: ["read", "write"] }, { type: "session.message.post", projectId, operationId: randomUUID(), messageId, target: { kind: "owned", sessionId }, content: "排空时的新消息" });
+  const result = await workflow.execute({ ...business, permissions: ["task", "document", "session"] }, { type: "session.message.post", projectId, operationId: randomUUID(), messageId, target: { kind: "owned", sessionId }, content: "排空时的新消息" });
   assert.equal(result.status, "applied", JSON.stringify(result));
   const saved = (await pool.query("SELECT state,content FROM session_message WHERE message_id=$1", [messageId])).rows[0];
   assert.deepEqual([saved.state, saved.content], ["queued", "排空时的新消息"], "saved and queued, nothing started");
@@ -123,7 +123,7 @@ test("a message is still saved while draining, and a drained instance releases b
 test("only an instance maintainer may start or release; anyone may read the state; the lists are the maintainer's", async () => {
   assert.equal(await isInstanceMaintainer(pool, maintainer), true);
   assert.equal(await isInstanceMaintainer(pool, business), false, "a Session with review in one project is not a maintainer of the instance");
-  assert.equal(await isInstanceMaintainer(pool, { ...maintainer, permissions: ["read", "write"] }), false);
+  assert.equal(await isInstanceMaintainer(pool, { ...maintainer, permissions: ["task", "document", "session"] }), false);
   const drain = new DrainControl(pool, { cacheMs: 0 });
   const tokens = { maintainer: "m".repeat(40), business: "b".repeat(40) };
   const base = { getProject: async () => ({ id: projectId }) } as Record<string, unknown>;

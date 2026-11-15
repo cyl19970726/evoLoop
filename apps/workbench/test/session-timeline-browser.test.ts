@@ -92,7 +92,7 @@ test("dual-source history keeps the reader anchor, exhausts cursors, merges live
           value = directReceipt;
         }
       }
-      else if (url.pathname === "/api/session") value = { principal: { actorId: "reader", projectIds: [projectId], permissions: ["read", "write"] }, capabilities: {} };
+      else if (url.pathname === "/api/session") value = { principal: { actorId: "reader", projectIds: [projectId], permissions: ["task", "document", "session"] }, capabilities: {} };
       else if (url.pathname === root) value = { id: projectId, title: "测试项目", createdAt: stamp };
       else if (url.pathname === `${root}/session-work`) {
         const membership = url.searchParams.get("membership") ?? "current";
@@ -786,7 +786,7 @@ test("a reset survives a busy read, unavailable history and stale pagination res
     if (url.pathname.startsWith("/api/")) {
       const root = `/api/projects/${projectId}`;
       let value: unknown = { items: [], nextCursor: null, metadata }, status = 200;
-      if (url.pathname === "/api/session") value = { principal: { actorId: "reader", projectIds: [projectId], permissions: ["read", "write"] }, capabilities: {} };
+      if (url.pathname === "/api/session") value = { principal: { actorId: "reader", projectIds: [projectId], permissions: ["task", "document", "session"] }, capabilities: {} };
       else if (url.pathname === root) value = { id: projectId, title: "时间线重置竞态测试", createdAt: stamp };
       else if (url.pathname === `${root}/session-work`) value = { items: [snapshotFor(sessionKey).session], nextCursor: null,
         observationCursor: "0", metadata, totals: { current: 1, historical: 0, unclassified: 0 },
@@ -953,7 +953,7 @@ test("revocation invalidates a held homepage, inspector and cache until an expli
     const url = new URL(req.url, "http://127.0.0.1"), root = `/api/projects/${projectId}`;
     if (url.pathname.startsWith("/api/")) {
       let value: unknown = { items: [], nextCursor: null, metadata }, status = 200;
-      if (url.pathname === "/api/session") value = { principal: { actorId: "reader", projectIds: [projectId], permissions: ["read", "write", "review"] }, capabilities: {} };
+      if (url.pathname === "/api/session") value = { principal: { actorId: "reader", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true }, capabilities: {} };
       else if (url.pathname === root) value = { id: projectId, title: "撤权竞态测试", createdAt: stamp };
       else if (url.pathname === `${root}/session-work`) value = { items: [snapshotFor(sessionKey).session], nextCursor: null,
         observationCursor: "0", metadata, totals: { current: 1, historical: 0, unclassified: 0 },

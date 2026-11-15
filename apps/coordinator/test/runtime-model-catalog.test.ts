@@ -32,7 +32,7 @@ test("model catalog and reservation apply the same exact authorization and activ
     listRoles:async()=>({items:[],nextCursor:null}),listRoleRevisions:async()=>[],listRoleReviews:async()=>[],
     listRoleHandoffs:async()=>[],listRoleSessionBindings:async()=>[],listSchedules:async()=>[],
     listScheduleRevisions:async()=>[],listScheduleOccurrences:async()=>[]} as unknown as WorkflowService;
-  const app=await buildServer({service,credentials:[{token,actorId:"reviewer",projectIds:[projectId],permissions:["read","write","review"]}],
+  const app=await buildServer({service,credentials:[{token,actorId:"reviewer",projectIds:[projectId],permissions:['task','document','session','management'],decisions:true}],
     runtime:{status:()=>({available:true,error:null})} as RuntimeRunner,
     runtimeGrants:()=>[grant],hasRuntimeGrant:scope=>scope.roleId===grant.roleId&&scope.cwd===grant.cwd&&
       scope.authorizationScope===grant.authorizationScope&&scope.sandbox===grant.sandbox&&grantAllowsModel(grant,scope.model),
@@ -101,7 +101,7 @@ test("CLI preparation reaches the coordinator with the exact selected slug",asyn
     listRoleHandoffs:async()=>[],listSchedules:async()=>[],listScheduleRevisions:async()=>[],
     listScheduleOccurrences:async()=>[]} as unknown as WorkflowService;
   const scopedGrant={...grant,roleId};
-  const app=await buildServer({service,credentials:[{token,actorId:"reviewer",projectIds:[projectId],permissions:["read","write","review"]}],
+  const app=await buildServer({service,credentials:[{token,actorId:"reviewer",projectIds:[projectId],permissions:['task','document','session','management'],decisions:true}],
     runtime:{status:()=>({available:true,error:null})} as RuntimeRunner,runtimeGrants:()=>[scopedGrant],
     hasRuntimeGrant:scope=>scope.roleId===roleId&&grantAllowsModel(scopedGrant,scope.model),
     allowedRuntimeCwd:async()=>true,
@@ -134,7 +134,7 @@ test("a legacy grant without exact models cannot create a new Session even when 
       listRoles:async()=>({items:[],nextCursor:null}),listRoleRevisions:async()=>[],listRoleReviews:async()=>[],
       listRoleHandoffs:async()=>[],listRoleSessionBindings:async()=>[],listSchedules:async()=>[],
       listScheduleRevisions:async()=>[],listScheduleOccurrences:async()=>[]} as unknown as WorkflowService,
-    credentials:[{token,actorId:"reviewer",projectIds:[projectId],permissions:["read","write","review"]}],
+    credentials:[{token,actorId:"reviewer",projectIds:[projectId],permissions:['task','document','session','management'],decisions:true}],
     runtime:{status:()=>({available:true,error:null})} as RuntimeRunner,
     runtimeGrants:()=>[legacy],hasRuntimeGrant:scope=>grantAllowsModel(legacy,scope.model),
     allowedRuntimeCwd:async()=>true,

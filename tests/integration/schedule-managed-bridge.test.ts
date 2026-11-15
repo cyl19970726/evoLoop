@@ -31,7 +31,7 @@ const schema = `schedule_bridge_${randomUUID().replaceAll("-", "").slice(0, 16)}
 const pool = new pg.Pool({ connectionString: url, options: `-c search_path=${schema}` });
 const projectId = randomUUID(), owner = "schedule-owner", cognition = fixtureRoleId("cognition-role"), business = fixtureRoleId("business-role");
 const goalId = randomUUID(), stageId = randomUUID(), loopId = randomUUID(), otherLoopId = randomUUID();
-const principal = (actorId = owner) => ({ actorId, projectIds: [projectId], permissions: ["read", "write", "review"] as Array<"read" | "write" | "review"> });
+const principal = (actorId = owner) => ({ actorId, projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true });
 const sha = (s: string) => createHash("sha256").update(s).digest("hex");
 let now = new Date().toISOString();
 const workflow = new WorkflowService({ uow: new PostgresUnitOfWork(pool), clock: { now: () => now }, ids: { next: randomUUID }, hasher: { hash: sha } });
@@ -59,7 +59,7 @@ test("a targeted Schedule occurrence creates one Stage Task and enters only its 
   const directory = await mkdtemp(join(tmpdir(), "evoloop-schedule-bridge-"));
   const token = randomUUID() + randomUUID();
   const app = await buildServer({ service: workflow,
-    credentials: [{ token, actorId: owner, projectIds: [projectId], permissions: ["read", "write", "review"] }],
+    credentials: [{ token, actorId: owner, projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true }],
     schedulingGrants: () => [{ projectId, actorId: owner, scopeId: "schedule-scope", roleId: business }],
     workers: { authenticate: header => broker.authenticate(header), facts: identity => workerGuardFacts(pool, identity) },
     orchestration: { service: orchestration } });

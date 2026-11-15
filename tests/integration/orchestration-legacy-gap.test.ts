@@ -27,7 +27,7 @@ if(!url||!/evoloop.*test/.test(new URL(url).pathname))throw new Error("dedicated
 const schema=`el_legacy_gap_${randomUUID().replaceAll("-","").slice(0,16)}`;
 const pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`});
 const projectId=randomUUID(),actor="legacy-gap-reviewer",role=fixtureRoleId("legacy-cognition"),scope="legacy-scope";
-const principal={actorId:actor,projectIds:[projectId],permissions:["read","write","review"] as Array<"read"|"write"|"review">};
+const principal={actorId:actor,projectIds:[projectId],permissions:["task", "document", "session", "management"], decisions: true};
 const hash=(text:string)=>createHash("sha256").update(text).digest("hex");
 const uow=new PostgresUnitOfWork(pool);
 const workflow=new WorkflowService({uow,clock:{now:()=>new Date().toISOString()},ids:{next:randomUUID},hasher:{hash}});

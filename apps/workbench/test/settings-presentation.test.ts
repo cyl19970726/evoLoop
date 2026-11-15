@@ -6,19 +6,22 @@ import { identityChanges, identityReadText } from "../src/features/settings/sett
 
 const projectId = "10000000-0000-4000-8000-000000000001";
 const other = "10000000-0000-4000-8000-000000000002";
-const login: Principal = { actorId: "lead", projectIds: [projectId], permissions: ["read", "write"], identityKind: "human" };
+const login: Principal = { actorId: "lead", projectIds: [projectId], permissions: ["task", "document", "session"], identityKind: "human" };
 
 test("nothing differs when the identity read again is the one signed in", () => {
-  assert.deepEqual(identityChanges(login, { ...login, permissions: ["write", "read"] }, projectId), []);
+  assert.deepEqual(identityChanges(login, { ...login, permissions: ["session", "task", "document"] }, projectId), []);
 });
 
 test("changed permissions, kind, identity and access are each said", () => {
-  assert.deepEqual(identityChanges(login, { ...login, permissions: ["read", "review"] }, projectId),
-    ["新增权限：审阅与复核", "不再有的权限：提交业务变更"]);
-  assert.deepEqual(identityChanges(login, { ...login, identityKind: "agent" }, projectId), ["身份类型由人变为智能体"]);
-  assert.deepEqual(identityChanges(login, { ...login, identityKind: undefined }, projectId), ["身份类型由人变为未报告"]);
+  assert.deepEqual(identityChanges(login, { ...login, permissions: ["management"], decisions: true }, projectId),
+    ["新增权限：项目管理", "不再有的权限：任务、文档、Session"],
+    "a human already has decision authority for its object classes");
+  const agent: Principal = { ...login, identityKind: "agent" };
+  assert.deepEqual(identityChanges(agent, { ...agent, decisions: true }, projectId), ["新增决定权限"]);
+  assert.deepEqual(identityChanges(login, { ...login, identityKind: "agent" }, projectId), ["不再有决定权限", "身份类型由人变为智能体"]);
+  assert.deepEqual(identityChanges(login, { ...login, identityKind: undefined }, projectId), ["不再有决定权限", "身份类型由人变为未报告"]);
   assert.deepEqual(identityChanges(login, { ...login, actorId: "other", projectIds: [other] }, projectId),
-    ["读回的身份是 other，登录时是 lead", "读回的身份已不能访问本项目"]);
+    ["读回的身份是 other，登录时是 lead", "读回的身份已不能访问本项目", "项目范围已变化"]);
 });
 
 test("the identity's read time says whether what is shown is current", () => {

@@ -28,12 +28,12 @@ const pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`}
 const hash=(value:string)=>createHash("sha256").update(value).digest("hex");
 const projectId=randomUUID(),controllerId="study-controller",reviewerId="study-reviewer",role=fixtureRoleId("cognition"),sourceRole=fixtureRoleId("business");
 const controllerCredential={token:"c".repeat(40),actorId:controllerId,projectIds:[projectId],
-  permissions:["read","write","review"] as Array<"read"|"write"|"review">};
+  permissions:["task", "document", "session", "management"], decisions: true};
 const reviewerCredentials:AuthConfig=[{token:"r".repeat(40),actorId:reviewerId,
-  projectIds:[projectId],permissions:["read","write","review"]},controllerCredential];
+  projectIds:[projectId],permissions:["task", "document", "session", "management"], decisions: true},controllerCredential];
 const currentReviewer=async(project:string,actor:string)=>
   hasCurrentStudyReviewer(reviewerCredentials,project,actor);
-const principal=(actorId:string,permissions:Array<"read"|"write"|"review">=["read","write","review"])=>( {actorId,projectIds:[projectId],permissions} );
+const principal=(actorId:string,permissions:Array<"task"|"document"|"session"|"management">=["task","document","session","management"],decisions=true)=>( {actorId,projectIds:[projectId],permissions,decisions} );
 const controller=principal(controllerId),reviewer=principal(reviewerId);
 const uow=new PostgresUnitOfWork(pool);
 const workflow=new WorkflowService({uow,clock:{now:()=>new Date().toISOString()},ids:{next:randomUUID},hasher:{hash}});
@@ -117,12 +117,12 @@ test("declared finite Run study copies exact formal refs, dispatches once and re
   const declare=(overrides:Record<string,unknown>={})=>command(reviewer,{type:"loop.studyMaterial.declare",loopId,
     expectedLoopVersion:firstLoop.version,declarationId,controllerActorId:controllerId,sourceTaskId,
     sourceTaskRevisionId:fixedSourceRevision,sourceDecisionIds:[sourceDecisionId],reason:"Study",...overrides});
-  await assert.rejects(command(principal("writer",["read","write"]),{type:"loop.studyMaterial.declare",loopId,
+  await assert.rejects(command(principal("writer",["task","document","session"]),{type:"loop.studyMaterial.declare",loopId,
     expectedLoopVersion:firstLoop.version,declarationId,controllerActorId:controllerId,sourceTaskId,
     sourceTaskRevisionId:fixedSourceRevision,sourceDecisionIds:[sourceDecisionId],reason:"Study"}),
     (error:unknown)=>error instanceof OrchestrationError&&error.code==="FORBIDDEN");
   await assert.rejects(orchestration.execute({actorId:"foreign-reviewer",projectIds:[randomUUID()],
-    permissions:["read","write","review"]},{type:"loop.studyMaterial.declare",projectId,
+    permissions:["task", "document", "session", "management"], decisions: true},{type:"loop.studyMaterial.declare",projectId,
     operationId:randomUUID(),loopId,expectedLoopVersion:firstLoop.version,declarationId,
     controllerActorId:controllerId,sourceTaskId,sourceTaskRevisionId:fixedSourceRevision,
     sourceDecisionIds:[sourceDecisionId],reason:"Foreign project"}),
@@ -206,7 +206,7 @@ test("declared finite Run study copies exact formal refs, dispatches once and re
   const dispatch=(await store.read(projectId,reader=>reader.getDispatch(dispatched.entityId)))!;
   await store.transaction(projectId,tx=>tx.updateDispatch({...dispatch,version:dispatch.version+1,
     state:"accepted",runtimeRunId:readerRunId},dispatch.version));
-  const facts=workerGuardFacts(pool,{principal:principal("worker-study",["read"]),scope:{projectId,
+  const facts=workerGuardFacts(pool,{principal:principal("worker-study",[]),scope:{projectId,
     loopId,taskId,runId:readerRunId,sessionId:readerSessionId,roleId:role,kind:"cognition",
     allowedRoleIds:[role]}},currentReviewer);
   assert.equal(await facts.fixedRunTrace!(sourceRunId),true);
@@ -223,7 +223,7 @@ test("declared finite Run study copies exact formal refs, dispatches once and re
     hasGrant:grant=>grant.roleId===sourceRole?sourceGrant:readerGrant,
     workerTraceAuthority:(identity,targetRunId)=>workerGuardFacts(pool,identity,currentReviewer).fixedRunTrace!(targetRunId)});
   const app=await buildServer({service:workflow,credentials:[{token:"o".repeat(40),actorId:controllerId,
-    projectIds:[projectId],permissions:["read","write","review"]}],
+    projectIds:[projectId],permissions:["task", "document", "session", "management"], decisions: true}],
     references:{uow,gitForPrincipal:async()=>referenceDeps.git,knowledgeForPrincipal:async()=>({})} as never,
     documents:{uow,blobsForPrincipal:async()=>({}) as never},
     workers:{authenticate:header=>broker.authenticate(header),facts:identity=>workerGuardFacts(pool,identity,currentReviewer)},
@@ -255,7 +255,7 @@ test("declared finite Run study copies exact formal refs, dispatches once and re
   assert.equal((await readSourceMetadata()).statusCode,403,"revoked reader grant cannot disclose fixed Run metadata");
   readerGrant=true;
   const originalReviewer={...reviewerCredentials[0]!,permissions:[...reviewerCredentials[0]!.permissions]};
-  for(const withdrawn of [["read","write"],["write","review"],[]] as const){
+  for(const withdrawn of [["task","document","session"],["document"],[]] as const){
     if(withdrawn.length)reviewerCredentials[0]!.permissions=[...withdrawn];
     else reviewerCredentials.splice(0,1);
     assert.equal(await currentReviewer(projectId,controllerId),true,
@@ -318,7 +318,7 @@ test("declared finite Run study copies exact formal refs, dispatches once and re
     contentHash:inputHash,reason:"Declared",actionImpact:"Compare"},{
       declarationId:secondDeclarationId,loopId:secondLoopId,inboxId:secondAccepted.entityId,
       sourceDecisionId:replaced.decisionId}));
-  for(const withdrawn of [["read","write"],["write","review"],[]] as const){
+  for(const withdrawn of [["task","document","session"],["document"],[]] as const){
     if(withdrawn.length)reviewerCredentials[0]!.permissions=[...withdrawn];
     else reviewerCredentials.splice(0,1);
     await assert.rejects(command(controller,{type:"dispatch.request",inboxId:secondAccepted.entityId,
@@ -341,7 +341,7 @@ test("declared finite Run study copies exact formal refs, dispatches once and re
   const secondDispatches=await orchestration.listDispatches(controller,projectId,secondLoopId,10);
   assert.equal(secondDispatches.items.length,0,"revocation after copy cannot start a Run");
 
-  for(const withdrawn of [["read","write"],["write","review"],[]] as const){
+  for(const withdrawn of [["task","document","session"],["document"],[]] as const){
     const copyLoopId=randomUUID(),copyDeclarationId=randomUUID();
     await command(reviewer,{type:"loop.enroll",loopId:copyLoopId,goalId,stageId,cognitiveRoleId:role,
       allowedBusinessRoleIds:[sourceRole],sourceAfter:{createdAtUtc:"2020-01-01T00:00:00.000Z",eventId:null},

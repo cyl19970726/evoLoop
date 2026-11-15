@@ -23,9 +23,9 @@ const deps = { uow, clock: { now: () => new Date().toISOString() }, ids: { next:
 const workflow = new WorkflowService(deps);
 const runtime = new RuntimeWorkflowService(deps);
 const p = randomUUID(), role = randomUUID(), roleRev = randomUUID(), session = randomUUID();
-const lead: Principal = { actorId: "lead", projectIds: [p], permissions: ["read", "write", "review"] };
-const worker: Principal = { actorId: "worker", projectIds: [p], permissions: ["read", "write", "review"] };
-const targetOwner: Principal = { actorId: "target-owner", projectIds: [p], permissions: ["read", "write", "review"] };
+const lead: Principal = { actorId: "lead", projectIds: [p], permissions: ["task", "document", "session", "management"], decisions: true };
+const worker: Principal = { actorId: "worker", projectIds: [p], permissions: ["task", "document", "session"], decisions: true };
+const targetOwner: Principal = { actorId: "target-owner", projectIds: [p], permissions: ["task", "document", "session", "management"], decisions: true };
 
 before(async () => {
   await migrate(url!, schema);

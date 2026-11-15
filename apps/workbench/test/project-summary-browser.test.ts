@@ -49,7 +49,7 @@ test("overview shows scoped queue evidence, preserves stale read and refreshes o
       const projectId = url.pathname.includes(`/projects/${b}`) ? b : a;
       const base = `/api/projects/${projectId}`;
       let value:unknown = {items:[],nextCursor:null}, status=200;
-      if (url.pathname === "/api/session") value={principal:{actorId:"reader",projectIds:[a,b],permissions:["read"]},capabilities:{}};
+      if (url.pathname === "/api/session") value={principal:{actorId:"reader",projectIds:[a,b],permissions:[]},capabilities:{}};
       else if (url.pathname === base) value={id:projectId,title:projectId === a ? "项目甲" : "项目乙",createdAt:stamp};
       else if (url.pathname === `${base}/impacts`) value=[];
       else if (url.pathname === `${base}/stages`) value=[];

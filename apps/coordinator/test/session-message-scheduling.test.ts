@@ -8,7 +8,7 @@ import type { SessionMessageService } from '@evoloop/core/session-messages';
 import { sessionMessageCanStart } from '../src/session-messages/scheduling.ts';
 
 const projectId=randomUUID(),sessionId=randomUUID(),taskId=randomUUID(),roleId=randomUUID(),queueId=randomUUID(),entryId=randomUUID(),claimId=randomUUID();
-const lead:Principal={actorId:'lead',projectIds:[projectId],permissions:['read','write','review']};
+const lead:Principal={actorId:'lead',projectIds:[projectId],permissions:['task','document','session','management'],decisions:true};
 const message:SessionMessageRecord={projectId,id:randomUUID(),operationId:randomUUID(),target:{kind:'owned',sessionId},
   senderActorId:'sender',content:'Question',context:null,replyToMessageId:null,state:'queued',version:1,blockedReason:null,
   readReceipt:null,createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()};

@@ -42,9 +42,9 @@ const uow = new PostgresUnitOfWork(pool);
 const deps = { uow, clock: { now: () => new Date().toISOString() }, ids: { next: randomUUID }, hasher: { hash } };
 const workflow = new WorkflowService(deps), runtime = new RuntimeWorkflowService(deps);
 const projectId = randomUUID();
-const lead: Principal = { actorId: "leader-actor", projectIds: [projectId], permissions: ["read", "write", "review"] };
-const dev: Principal = { actorId: "dev-actor", projectIds: [projectId], permissions: ["read", "write"] };
-const human: Principal = { actorId: "named-human", projectIds: [projectId], permissions: ["read", "write"], identityKind: "human" };
+const lead: Principal = { actorId: "leader-actor", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true };
+const dev: Principal = { actorId: "dev-actor", projectIds: [projectId], permissions: ["task", "document", "session"] };
+const human: Principal = { actorId: "named-human", projectIds: [projectId], permissions: ["task", "document", "session"], identityKind: "human" };
 const token = randomUUID() + randomUUID();
 const apply = async (command: Record<string, unknown>, who: Principal = lead) => {
   const r = await workflow.execute(who, { projectId, operationId: randomUUID(), ...command } as never);
@@ -151,7 +151,7 @@ const reads = { board: (id: string) => readWorkBoard(pool, id), events: (id: str
 const hub = new SchedEventHub({ head: id => headSeq(pool, id), read: (id, after, limit) => readSchedEvents(pool, id, { after, limit }) }, 500);
 const app = await buildServer({ service: workflow, sessionWork: new SessionObservationService({ uow }), workBoard: { reads, hub, keepAliveMs: 2000 },
   webRoot: resolve(import.meta.dirname, "../../apps/workbench/dist"),
-  credentials: [{ token, actorId: lead.actorId, projectIds: [projectId], permissions: ["read", "write", "review"] }] } as never);
+  credentials: [{ token, actorId: lead.actorId, projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true }] } as never);
 let refuse = false, openStreams = 0, streamsOpened = 0;
 app.addHook("onRequest", async (request, reply) => {
   if (refuse && request.url.includes("/work-board/")) return reply.code(503).send({ message: "stopped for the test" });
