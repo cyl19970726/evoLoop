@@ -104,7 +104,7 @@ export function readerTokenForScope(scope:BrowserReadScope,
   const readers=credentials.filter(item=>item.actorId===scope.readerActorId);
   const reader=readers.length===1?readers[0]:undefined;
   return reader?.projectIds.length===1 && reader.projectIds[0]===scope.projectId &&
-    reader.permissions.length===1 && reader.permissions[0]==="read" ? reader.token : null;
+    reader.permissions.length===0 ? reader.token : null;
 }
 
 function redactBrowserSecrets(value:string,readerToken:string|null):string {

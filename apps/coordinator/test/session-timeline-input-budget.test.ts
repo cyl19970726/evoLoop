@@ -13,7 +13,7 @@ import { SessionTimelineService } from '../src/session-timeline/index.js';
 
 const id=(n:number)=>`00000000-0000-4000-8000-${String(n).padStart(12,'0')}`;
 const project=id(1),sessionId=id(2),key=`owned:${sessionId}`,thread='native-thread',now='2026-11-01T00:00:00.000Z';
-const reader:Principal={actorId:'reader',projectIds:[project],permissions:['read']};
+const reader:Principal={actorId:'reader',projectIds:[project],permissions:['session']};
 const session:RuntimeSessionRecord={projectId:project,id:sessionId,roleId:'role',cwd:'/tmp',authorizationScope:'scope',model:null,sandbox:'read-only',
   approvalPolicy:'on-request',state:'ready',version:1,nativeThreadId:thread,nativeSessionId:'native-session',operationId:id(99),actorId:'agent',createdAt:now,updatedAt:now};
 const COUNT=30;

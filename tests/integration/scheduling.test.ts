@@ -24,7 +24,7 @@ test("real PG schedule reservation creates one todo Task and survives replay", a
   const ownerRoleId = fixtureRoleId("schedule-owner");
   await seedFixtureRole(pool, projectId, ownerRoleId);
   const scheduleId = randomUUID(), revisionId = randomUUID();
-  const principal: Principal = { actorId: "schedule-owner", projectIds: [projectId], permissions: ["read", "write", "review"] };
+  const principal: Principal = { actorId: "schedule-owner", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true };
   const definition: ScheduleDefinition = {
     projectId, id: scheduleId, version: 1, currentRevisionId: revisionId, state: "active", watermarkUtc: "2026-10-20T09:00:00.000Z",
     revision: { projectId, scheduleId, id: revisionId, version: 1, timezone: "Asia/Taipei",
@@ -70,7 +70,7 @@ test("concurrent ticks reserve the same UTC occurrence once", async t => {
   await pool.query("INSERT INTO project(project_id,title,created_at) VALUES($1,'concurrent fixture',now())", [projectId]);
   const ownerRoleId = fixtureRoleId("owner");
   await seedFixtureRole(pool, projectId, ownerRoleId);
-  const principal: Principal = { actorId: "owner", projectIds: [projectId], permissions: ["write", "review"] };
+  const principal: Principal = { actorId: "owner", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true };
   const definition: ScheduleDefinition = { projectId, id: scheduleId, version: 1, currentRevisionId: revisionId, state: "active", watermarkUtc: "2026-10-20T09:00:00.000Z", revision: {
     projectId, scheduleId, id: revisionId, version: 1, timezone: "UTC", rule: { kind: "once", atUtc: "2026-10-20T10:00:00.000Z" }, misfire: { kind: "latest" }, overlap: "skip",
     template: { title: "One task", content: "# Do one check", acceptance: "Evidence exists", owner: ownerRoleId }, authorization: { scopeId: "scope", roleId: "role", authorizedBy: "owner", expiresAtUtc: null },

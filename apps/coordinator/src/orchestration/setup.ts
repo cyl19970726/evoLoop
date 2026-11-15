@@ -1,7 +1,8 @@
 import type { Pool } from "pg";
 import { createHash, randomUUID } from "node:crypto";
 import { isAbsolute, join, resolve, sep } from "node:path";
-import type { Principal, RuntimeRunRecord, RuntimeSessionRecord } from "@evoloop/contracts";
+import { isProjectMember, type Permission, type Principal,
+  type RuntimeRunRecord, type RuntimeSessionRecord } from "@evoloop/contracts";
 import type { OrchestrationDispatch } from "@evoloop/contracts/orchestration";
 import type { WorkflowService } from "@evoloop/core";
 import { OrchestrationService } from "@evoloop/core/orchestration";
@@ -96,7 +97,7 @@ export function managedWorkerEvidence(options: {
   verifyProposalMaterial(principal: Principal, projectId: string, documentId: string, revisionId: string, hash: string): Promise<boolean>;
 }) {
   const currentStudySourceRun = async (projectId: string, runId: string) => {
-    if (!options.controllerPrincipal.projectIds.includes(projectId)) return false;
+    if (!isProjectMember(options.controllerPrincipal, projectId)) return false;
     const run = await options.workflow.getRuntimeRun(options.controllerPrincipal,projectId,runId).catch(() => null);
     const session = run ? await options.workflow.getRuntimeSession(options.controllerPrincipal,projectId,run.sessionId).catch(() => null) : null;
     return !!run && !!session && await options.runSessionAvailable(projectId,run,session);
@@ -129,9 +130,10 @@ export function managedLoopController<G extends {projectId: string; actorId: str
   const entry = credentials.find(value => value.actorId === controllerActorId);
   return {entry, grants: entry ? runtimeGrants.filter(value => value.actorId === entry.actorId && entry.projectIds.includes(value.projectId)) : []};
 }
-/** Without read, write and review the service does not start managed loops at all. */
+/** A managed-loop controller must hold every object class and management decision authority. */
 export const controllerAuthorized = (entry: AuthConfig[number]): boolean =>
-  (["read", "write", "review"] as const).every(permission => entry.permissions.includes(permission));
+  (["task", "document", "session"] as Permission[]).every(permission => entry.permissions.includes(permission)) &&
+  (entry.identityKind === "human" || entry.decisions === true);
 /** The controller acts for a project's Role only through exactly one grant; none or several leave the Role without it. */
 export function managedControllerGrant<G extends {projectId: string; roleId: string}>(grants: readonly G[],
   projectId: string, roleId: string): G | null {
@@ -159,7 +161,10 @@ export function setupManagedLoops(options: {
   const {entry, grants} = managedLoopController(options.credentials, config.controllerActorId, options.integrations.runtime.grants);
   if (!entry || !controllerAuthorized(entry))
     throw new Error("Managed loop controller requires one configured reviewer identity");
-  const controllerPrincipal: Principal = {actorId: entry.actorId, projectIds: [...entry.projectIds], permissions: [...entry.permissions]};
+  const controllerPrincipal: Principal = {actorId: entry.actorId, projectIds: [...entry.projectIds],
+    permissions: [...entry.permissions], ...(entry.decisions === undefined ? {} : {decisions: entry.decisions}),
+    ...(entry.sessionIds ? {sessionIds: [...entry.sessionIds]} : {}),
+    identityKind: entry.identityKind ?? "agent"};
   const currentStudyReviewer = async (projectId: string, actorId: string) =>
     hasCurrentStudyReviewer(options.credentials,projectId,actorId);
   const broker = new WorkerCredentialBroker({workerRoot: root, apiUrl: options.apiUrl,
@@ -200,7 +205,7 @@ export function setupManagedLoops(options: {
     getDelegationTemplate: options.integrations.getDelegationTemplate,
     getWorkerScope: async actorId => (await broker.identityForActor(actorId))?.scope ?? null,
     canReadStudySourceRun: async (principal, projectId, runId) => {
-      if (!principal.projectIds.includes(projectId) || !principal.permissions.includes("read")) return false;
+      if (!isProjectMember(principal, projectId)) return false;
       const run = await options.workflow.getRuntimeRun(principal, projectId, runId).catch(() => null);
       const session = run ? await options.workflow.getRuntimeSession(principal, projectId, run.sessionId).catch(() => null) : null;
       return !!run && !!session && await options.runSessionAvailable(projectId, run, session);

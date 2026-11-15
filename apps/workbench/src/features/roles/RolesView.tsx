@@ -99,7 +99,7 @@ export function RolesView({ context, refresh }: { context: MutationContext; refr
           </div>
         </header>
         {showProposal && <PageSection title="提出有证据的职责试行" description="提案会保存观察与备选方案；审阅接受后才进入试行。首项任务需通过普通任务流程承接。">
-          <ActionForm context={{ ...context, draftScope: "role:propose" }} embedded title="提出职责试行" fields={proposalFields}
+          <ActionForm context={{ ...context, draftScope: "role:propose" }} embedded requiredPermissions={["management"]} title="提出职责试行" fields={proposalFields}
             build={v => ({ type: "role.propose", roleId: crypto.randomUUID(), proposal: buildProposal(v) })} onApplied={() => setProposing(false)} />
         </PageSection>}
         <SectionBoundary label="基础职责"><RoleTemplates projectId={projectId} /></SectionBoundary>

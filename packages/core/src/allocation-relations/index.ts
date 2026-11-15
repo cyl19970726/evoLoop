@@ -1,4 +1,4 @@
-import type { Principal } from '@evoloop/contracts';
+import { isProjectMember, type Principal } from '@evoloop/contracts';
 import type { AllocationRelationQuery, AllocationTracePage } from '@evoloop/contracts/allocation-relations';
 import { DomainError, type UnitOfWork } from '@evoloop/contracts/ports';
 import { z } from 'zod';
@@ -20,7 +20,7 @@ export class AllocationRelationsService {
   constructor(private readonly deps: { uow: UnitOfWork }) {}
 
   async list(principal: Principal, projectId: string, query: unknown): Promise<AllocationTracePage> {
-    if (!principal.actorId || !principal.projectIds.includes(projectId) || !principal.permissions.includes('read'))
+    if (!isProjectMember(principal, projectId))
       throw new DomainError('FORBIDDEN', 'Project read access is required');
     const parsed = querySchema.parse(query) as AllocationRelationQuery;
     return this.deps.uow.read(projectId, async reader => {

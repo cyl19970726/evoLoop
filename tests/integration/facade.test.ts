@@ -24,8 +24,9 @@ const pool = new pg.Pool({ connectionString: url, options: `-c search_path=${sch
 const uow = new PostgresUnitOfWork(pool);
 const service = new WorkflowService({ uow, clock: { now: () => now }, ids: { next: randomUUID }, hasher: { hash } });
 const projectId = randomUUID();
-const reviewer: Principal = { actorId: "manager", projectIds: [projectId], permissions: ["read", "write", "review"] };
-const writer: Principal = { ...reviewer, permissions: ["read", "write"] };
+const reviewer: Principal = { actorId: "manager", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true };
+const writer: Principal = { ...reviewer, permissions: ["task", "document", "session"] };
+const manager: Principal = { ...writer, permissions: ["task", "document", "session", "management"] };
 const command = (type: Command["type"], fields: Record<string, unknown>, operationId = randomUUID()): Command =>
   ({ type, projectId, operationId, ...fields }) as Command;
 const applied = (result: CommandResult) => { assert.equal(result.status, "applied", JSON.stringify(result)); return result; };
@@ -70,9 +71,9 @@ test("common facade journals role and schedule decisions and reads external docu
   })));
 
   const propose = command("role.propose", { roleId, proposal: proposal(taskId) });
-  const first = applied(await service.execute(writer, propose));
-  assert.deepEqual(await service.execute(writer, propose), first, "same operation replays one receipt");
-  await assert.rejects(() => service.execute(writer, { ...propose, proposal: proposal(randomUUID()) }),
+  const first = applied(await service.execute(manager, propose));
+  assert.deepEqual(await service.execute(manager, propose), first, "same operation replays one receipt");
+  await assert.rejects(() => service.execute(manager, { ...propose, proposal: proposal(randomUUID()) }),
     (error: unknown) => error instanceof Error && error.message.includes("different command"));
   rejected(await service.execute(reviewer, command("role.decide", {
     roleId, expectedVersion: 99, decision: "accept-trial", reason: "stale reviewer",
@@ -112,7 +113,7 @@ test("common facade journals role and schedule decisions and reads external docu
   });
   await assert.rejects(() => service.execute(writer, command("schedule.create", {
     ...scheduleFields, scheduleId: randomUUID(), revisionId: randomUUID(), watermarkUtc: now, state: "active",
-  })), /Permission review/);
+  })), /Permission management/);
   const scheduled = applied(await service.execute(reviewer, createSchedule));
   assert.deepEqual(await service.execute(reviewer, createSchedule), scheduled);
   rejected(await service.execute(reviewer, command("schedule.revise", {
@@ -151,7 +152,7 @@ test("common facade journals role and schedule decisions and reads external docu
   rejected(await service.execute(writer, command("document.revise", {
     documentId, expectedVersion: 1, body: "# Mismatched Markdown", reason: "wrong surface",
   })), "FORMAT_CHANGE_REQUIRES_PAYLOAD");
-  await assert.rejects(() => service.getDocument({ ...reviewer, projectIds: [] }, projectId, documentId), /Permission read/);
+  await assert.rejects(() => service.getDocument({ ...reviewer, projectIds: [] }, projectId, documentId), /Project membership is required/);
 
   const client = await pool.connect();
   try {

@@ -69,8 +69,11 @@ export function registerProjectConfigurationRoutes(app: FastifyInstance,
     return read(projectId, members && (() => members.list(projectId)), (value): ProjectMembersView => ({ projectId,
       status: "available", source: members!.kind, identityFile: value.identityFile,
       items: value.items.map(item => ({ actorId: item.actorId, identityKind: item.identityKind, canRead: item.canRead,
-        canWrite: item.canWrite, canReview: item.canReview,
+        permissions: [...item.permissions], decisions: item.decisions, projectIds: [...item.projectIds],
+        sessionIds: [...item.sessionIds], canWrite: item.canWrite, canReview: item.canReview,
         pending: item.pending ? { identityKind: item.pending.identityKind, canRead: item.pending.canRead,
+          permissions: [...item.pending.permissions], decisions: item.pending.decisions,
+          projectIds: [...item.pending.projectIds], sessionIds: [...item.pending.sessionIds],
           canWrite: item.pending.canWrite, canReview: item.pending.canReview } : null })) }));
   });
 }

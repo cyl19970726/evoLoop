@@ -33,8 +33,9 @@ export interface AppShellProps {
   notices?: ShellNoticeItem[];
 }
 
+const permissionLabel: Record<string, string> = { task: "任务", document: "文档", session: "Session", management: "项目管理" };
 const permissionText = (permissions: readonly string[]) =>
-  permissions.includes("review") ? "可读写与复核" : permissions.includes("write") ? "可读写" : "只读";
+  permissions.length ? `可写：${permissions.map(permission => permissionLabel[permission] ?? permission).join("、")}` : "只读";
 
 export function AppShell(props: AppShellProps) {
   const { route, projectId, actor } = props;

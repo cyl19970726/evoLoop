@@ -10,8 +10,8 @@ import { SessionTimelineService, type WorkspaceHistoryOwner } from '../src/sessi
 
 const id=(n:number)=>`00000000-0000-4000-8000-${String(n).padStart(12,'0')}`;
 const project=id(1),sessionId=id(2),key=`owned:${sessionId}`,thread='native-thread',now='2026-11-11T00:00:00.000Z';
-const reader:Principal={actorId:'reader',projectIds:[project],permissions:['read']};
-const outsider:Principal={actorId:'outsider',projectIds:[],permissions:['read']};
+const reader:Principal={actorId:'reader',projectIds:[project],permissions:['session']};
+const outsider:Principal={actorId:'outsider',projectIds:[],permissions:['session']};
 const base={author:{kind:'session' as const,id:sessionId,label:'Agent'},origin:null,occurredAt:null,observedAt:now,
   freshness:'persisted' as const,truncated:false};
 const reasoning=(item:string,turnId:string,body:string,readable=true):WorkspaceEntry=>({...base,id:`native:${thread}:${turnId}:${item}`,
@@ -33,7 +33,7 @@ function service(page:NativeWorkspacePage){
     sessionMessages:{listSessionMessages:async()=>({items:[],nextCursor:null}),listSessionMessageProcessing:async()=>[],getSessionMessages:async()=>[]},
   })} as unknown as UnitOfWork;
   const snapshots={snapshot:async(p:Principal,projectId:string)=>{
-    if(!p.projectIds.includes(projectId)||!p.permissions.includes('read'))throw new DomainError('FORBIDDEN','scope');
+    if(!p.projectIds.includes(projectId)||!p.permissions.includes('session'))throw new DomainError('FORBIDDEN','scope');
     return {session:{key,target:{kind:'owned',sessionId},title:'Session'}};
   }} as unknown as SessionObservationService;
   const runner={workspaceBinding:async()=>({nativeThreadId:thread,nativeSessionId:'native-session'}),

@@ -16,9 +16,10 @@ const pool = new pg.Pool({ connectionString: url, options: `-c search_path=${sch
 const workflow = new WorkflowService({ uow: new PostgresUnitOfWork(pool), clock: { now: () => new Date().toISOString() }, ids: { next: randomUUID },
   hasher: { hash: (s: string) => createHash("sha256").update(s).digest("hex") } });
 const p = randomUUID();
-const leader: Principal = { actorId: "leader", projectIds: [p], permissions: ["read", "write", "review"] };
-const user: Principal = { actorId: "the-user", projectIds: [p], permissions: ["read", "write", "review"], identityKind: "human" };
-const other: Principal = { actorId: "someone-else", projectIds: [p], permissions: ["read", "write"] };
+const leader: Principal = { actorId: "leader", projectIds: [p], permissions: ["task", "document", "session", "management"], decisions: true };
+const user: Principal = { actorId: "the-user", projectIds: [p], permissions: ["task", "document", "session", "management"], decisions: true, identityKind: "human" };
+const other: Principal = { actorId: "someone-else", projectIds: [p], permissions: ["task", "document", "session"], decisions: true };
+const noDecision: Principal = { actorId: "no-decision", projectIds: [p], permissions: ["task", "document", "session"] };
 
 before(async () => {
   await migrate(url!, schema);
@@ -90,8 +91,8 @@ test("a decision request is listed only for the identity it names, can be answer
   // The asker can withdraw an open request; a request cannot be asked of oneself or by someone without review.
   const second = randomUUID();
   await send(leader, { type: "decision.request.create", requestId: second, requestedFrom: user.actorId, subject: "Another", question: "Q?" });
-  const noReview = await send(other, { type: "decision.request.withdraw", requestId: second, expectedVersion: 1, reason: "r" }).catch(e => ({ code: (e as { code: string }).code }));
-  assert.equal((noReview as { code?: string }).code, "FORBIDDEN");
+  const noDecisionAuthority = await send(noDecision, { type: "decision.request.withdraw", requestId: second, expectedVersion: 1, reason: "r" }).catch(e => ({ code: (e as { code: string }).code }));
+  assert.equal((noDecisionAuthority as { code?: string }).code, "FORBIDDEN");
   assert.equal((await send(leader, { type: "decision.request.withdraw", requestId: second, expectedVersion: 1, reason: "no longer needed" })).status, "applied");
   assert.ok(!(await mine()).items.some(i => i.id === second));
   const self = await send(leader, { type: "decision.request.create", requestId: randomUUID(), requestedFrom: leader.actorId, subject: "x", question: "y" });

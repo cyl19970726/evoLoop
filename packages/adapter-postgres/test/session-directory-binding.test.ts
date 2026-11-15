@@ -15,7 +15,7 @@ const uow = new PostgresUnitOfWork(pool);
 const project = randomUUID(), role = randomUUID(), roleRevision = randomUUID();
 const at = "2026-11-10T00:00:00.000Z";
 const reserveAndBind = randomUUID(), prepared = randomUUID(), unbound = randomUUID(), closedBound = randomUUID(), second = randomUUID();
-const scope = JSON.stringify({ actorId: "reader", permissions: ["read"] });
+const scope = JSON.stringify({ actorId: "reader", permissions: [] });
 
 async function session(id: string, provider: "codex" | "claude", model: string | null, state = "ready") {
   await pool.query(`INSERT INTO runtime_session(project_id,session_id,role_id,cwd,authorization_scope,sandbox,approval_policy,state,version,native_thread_id,native_session_id,operation_id,actor_id,created_at,updated_at,runtime_provider,model)

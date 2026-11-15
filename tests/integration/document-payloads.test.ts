@@ -85,7 +85,7 @@ test("real PostgreSQL and BlobStore: immutable inline and bundle revisions, owne
     !!await uow.read(payload.projectId, reader => reader.getRegisteredBlob(payload.id)));
   const deps = { uow, blobs, hashText: (text: string) => hash(text), nextId: randomUUID,
     now: () => new Date().toISOString() };
-  const principal: Principal = { actorId: "test", projectIds: [projectId], permissions: ["read", "write"] };
+  const principal: Principal = { actorId: "test", projectIds: [projectId], permissions: ["task", "document", "session"] };
   const common = { projectId, operationId: randomUUID(), documentId, author: "test", reason: "test", originalName: "report.md" };
   const first = randomUUID();
   const gitId = randomUUID();
@@ -106,10 +106,10 @@ test("real PostgreSQL and BlobStore: immutable inline and bundle revisions, owne
     source: { storage: "inline", body: "different" } }), /different command/);
   await assert.rejects(importDocumentPayload(deps,
     { ...principal, actorId: "other" }, { ...createCommand, author: "other" }), /different command/);
-  await assert.rejects(importDocumentPayload(deps, { ...principal, permissions: ["read"] },
+  await assert.rejects(importDocumentPayload(deps, { ...principal, permissions: [] },
     { ...createCommand, operationId: randomUUID(), format: "html", mediaType: "text/html",
       source: { storage: "blob", payloadRef: randomUUID(), contentHash: hash("unprovided"), size: 10,
-        entrypoint: "index.html", assets: [] } }), /write permission/);
+        entrypoint: "index.html", assets: [] } }), /document permission/);
   await assert.rejects(importDocumentPayload(deps, principal,
     { ...createCommand, operationId: randomUUID(), author: "self-reported-other" }), /matching author/);
   assert.equal((await uow.read(projectId, r => r.getDocumentPayloadRevision(documentId, first)))?.body, "# first");

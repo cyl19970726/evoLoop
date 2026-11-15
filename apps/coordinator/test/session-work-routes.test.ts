@@ -15,7 +15,7 @@ const sessionKey = `external:${linkId}`;
 test("Session work routes parse bounded query parameters and pass the authenticated principal", async () => {
   const app = Fastify();
   const seen: unknown[][] = [];
-  const principal = { actorId: "reader", projectIds: [projectId], permissions: ["read"] };
+  const principal = { actorId: "reader", projectIds: [projectId], permissions: [] };
   app.decorateRequest("principal", null);
   app.addHook("onRequest", async request => { request.principal = principal; });
   app.setErrorHandler((error, _request, reply) => reply.code(error instanceof z.ZodError ? 400 : 500).send({ code: "INVALID_INPUT" }));
@@ -39,7 +39,7 @@ test("Session work routes parse bounded query parameters and pass the authentica
 
 test("execution projection is awaited for the selected snapshot and never probed per directory row", async () => {
   const app = Fastify();
-  const principal = { actorId: "writer", projectIds: [projectId], permissions: ["read", "write"] as Array<"read" | "write"> };
+  const principal = { actorId: "writer", projectIds: [projectId], permissions: ["task", "document", "session"] as Array<"task" | "document" | "session"> };
   const session = { key: sessionKey, capabilities: {} } as ObservedSession;
   let executionReads = 0;
   app.decorateRequest("principal", null);
@@ -47,7 +47,7 @@ test("execution projection is awaited for the selected snapshot and never probed
   registerSessionWorkRoutes(app, {
     directory: async () => ({ items: [session], nextCursor: null }),
     snapshot: async () => ({ session }),
-  } as unknown as SessionObservationService, (_principal, value) => value, async (reader, project, value) => {
+  } as unknown as SessionObservationService, (_principal, _project, value) => value, async (reader, project, value) => {
     assert.equal(reader, principal); assert.equal(project, projectId); assert.equal(value, session);
     executionReads++;
     return { ...value, capabilities: { ...value.capabilities, ordinaryExecution: {

@@ -44,7 +44,7 @@ const pid=randomUUID(),owner="controller",cognition="cognition-actor",cognitiveR
 const roleId=randomUUID(),goalId=randomUUID(),stageId=randomUUID(),loopId=randomUUID();
 const parentTaskId=randomUUID(),firstTaskId=randomUUID(),documentId=randomUUID();
 const scope="m3-exact",cwd=join(tmpdir(),`evoloop-m3-execution-${randomUUID()}`);
-const principal=(actorId:string)=>({actorId,projectIds:[pid],permissions:["read","write","review"] as Array<"read"|"write"|"review">});
+const principal=(actorId:string)=>({actorId,projectIds:[pid],permissions:["task", "document", "session", "management"], decisions: true});
 
 test("PG bounded division reserves, transfers by Task CAS, starts once, and receives a brokered handoff",async t=>{
   const schema=`el_m3_${randomUUID().replaceAll("-","").slice(0,16)}`;
@@ -250,7 +250,7 @@ test("PG bounded division reserves, transfers by Task CAS, starts once, and rece
   await issue(owner,{type:"dispatch.resolve",dispatchId:childId,claimToken:childToken,result:"accepted",
     runtimeRunId:runId,reason:"Durable child Run"});
   const app=await buildServer({service:workflow,credentials:[{token:"c".repeat(40),actorId:owner,
-    projectIds:[pid],permissions:["read","write","review"]}] as never,
+    projectIds:[pid],permissions:["task", "document", "session", "management"], decisions: true}] as never,
     orchestration:{service:orchestration,delegationChoices:async()=>({items:[{template,hash:templateHash}]})},
     documents:{uow,blobsForPrincipal:async()=>({read:async()=>({status:"unavailable",reason:"fixture"})}) as never},
     workers:{authenticate:header=>broker.authenticate(header),facts:identity=>workerGuardFacts(pool,identity)}});

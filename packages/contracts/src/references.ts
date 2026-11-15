@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { hasPermission, type Permission } from "./identity.js";
 import type { BasisSet, Document, Impact, Operation, OutboxEvent, Principal, Task, TaskRevision, RuntimeRunRecord, RuntimeSessionRecord } from "./index.js";
 import type { RegisteredGitSource, DocumentPayloadRevision } from "./process-documents.js";
 
@@ -76,7 +77,8 @@ export interface ReferenceUnitOfWork {
   read<T>(projectId: string, action: (reader: ReferenceReader) => Promise<T>): Promise<T>;
   transaction<T>(projectId: string, action: (tx: ReferenceTransaction) => Promise<T>): Promise<T>;
 }
-export function requireReferencePrincipal(principal: Principal, projectId: string, actorId: string, permission: "read" | "write" | "review"): void {
-  if (!principal.actorId || principal.actorId !== actorId || !principal.projectIds.includes(projectId) || !principal.permissions.includes(permission))
+export function requireReferencePrincipal(principal: Principal, projectId: string, actorId: string, permission?: Permission): void {
+  if (!principal.actorId || principal.actorId !== actorId || !principal.projectIds.includes(projectId) ||
+      permission && !hasPermission(principal, projectId, permission))
     throw new Error("Project reference authority is unavailable");
 }

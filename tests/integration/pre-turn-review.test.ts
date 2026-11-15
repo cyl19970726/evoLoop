@@ -93,7 +93,7 @@ const uow=new PostgresUnitOfWork(pool);
 const projectId=randomUUID(),sessionId=randomUUID(),roleId=randomUUID(),threadId=randomUUID();
 const messageId=randomUUID(),messageOperationId=randomUUID(),processingId=randomUUID(),processingOperationId=randomUUID();
 const now=new Date().toISOString(),cwd='/tmp/qa-pr200-host';
-const reviewer={actorId:'qa-reviewer',projectIds:[projectId],permissions:['read' as const,'write' as const,'review' as const]};
+const reviewer={actorId:'qa-reviewer',projectIds:[projectId],permissions:['task', 'document', 'session', 'management'], decisions: true};
 const grant={projectId,sessionId,senderActorId:'qa-sender',receiverRoleId:roleId,receiverActorId:'qa-receiver',cwd,maxTurns:3,enabled:true};
 const workflow=new WorkflowService({uow,clock:{now:()=>new Date().toISOString()},ids:{next:randomUUID},
   hasher:{hash:(s:string)=>s}});
@@ -122,8 +122,8 @@ try{
   const token='v'.repeat(40),readerToken='r'.repeat(40);
   let nativeAvailable=true;
   const app=await buildServer({service:workflow,sessionMessages:messages,hasRuntimeGrant:scope=>scope.actorId==='qa-reviewer',
-    credentials:[{token,actorId:reviewer.actorId,projectIds:[projectId],permissions:['read','write','review']},
-      {token:readerToken,actorId:'qa-reader',projectIds:[projectId],permissions:['read']}],
+    credentials:[{token,actorId:reviewer.actorId,projectIds:[projectId],permissions:['task', 'document', 'session', 'management'], decisions: true},
+      {token:readerToken,actorId:'qa-reader',projectIds:[projectId],permissions:[]}],
     runtime:{nativeStartsAvailable:()=>nativeAvailable,status:()=>({available:nativeAvailable,faults:[]})} as unknown as RuntimeRunner});
   try{
     const path=`/api/projects/${projectId}/session-messages/${messageId}/pre-turn-continue`;

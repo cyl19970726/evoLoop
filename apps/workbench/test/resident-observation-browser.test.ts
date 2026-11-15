@@ -133,7 +133,7 @@ test("resident observation keeps acceptance, host authority and task replies dis
     if (url.pathname.startsWith("/api/")) {
       const p = `/api/projects/${projectId}`;
       let value:unknown = page([]);
-      if (url.pathname === "/api/session") value = {principal:{actorId:"lead",projectIds:[projectId,otherProjectId],permissions:["read"]},capabilities:{}};
+      if (url.pathname === "/api/session") value = {principal:{actorId:"lead",projectIds:[projectId,otherProjectId],permissions:[]},capabilities:{}};
       else if (url.pathname === `/api/projects/${otherProjectId}`) value = {id:otherProjectId,title:"另一夹具项目",createdAt:stamp};
       else if (url.pathname === `/api/projects/${otherProjectId}/roles`) value = page([{...role,projectId:otherProjectId}]);
       else if (url.pathname === `/api/projects/${otherProjectId}/roles/${roleId}/hosts`) {

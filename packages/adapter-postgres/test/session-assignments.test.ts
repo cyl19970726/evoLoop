@@ -65,7 +65,7 @@ test("official queue and direct Run commands cannot bypass a concrete external a
   const clock = { now: () => new Date().toISOString() }, ids = { next: randomUUID };
   const workflow = new WorkflowService({ uow, clock, ids, hasher: { hash: value => createHash("sha256").update(value).digest("hex") } });
   const runtime = new RuntimeWorkflowService({ uow, clock, ids });
-  const principal = { actorId: "lead", projectIds: [projectId], permissions: ["read", "write", "review"] as Array<"read" | "write" | "review"> };
+  const principal = { actorId: "lead", projectIds: [projectId], permissions: ["task", "document", "session", "management"] as ("task" | "document" | "session" | "management")[], decisions: true };
   const tid = randomUUID(), sid = randomUUID(), qid = randomUUID(), eid = randomUUID();
   const apply = (command: Parameters<typeof workflow.execute>[1]) => workflow.execute(principal, command);
   const accepted = async (command: Parameters<typeof workflow.execute>[1]) => {
@@ -125,7 +125,7 @@ test("authenticated API returns null before first assignment and preserves missi
   const workflow = new WorkflowService({ uow, clock: { now: () => new Date().toISOString() }, ids: { next: randomUUID },
     hasher: { hash: value => createHash("sha256").update(value).digest("hex") } });
   const principal = { actorId: "lead", projectIds: [projectId, otherProjectId],
-    permissions: ["read", "write", "review"] as Array<"read" | "write" | "review"> };
+    permissions: ["task", "document", "session", "management"] as ("task" | "document" | "session" | "management")[], decisions: true };
   const apply = async (p: string, command: Record<string, unknown>) => {
     const result = await workflow.execute(principal, { projectId: p, operationId: randomUUID(), ...command } as never);
     assert.equal(result.status, "applied", JSON.stringify(result)); return result;
@@ -151,8 +151,8 @@ test("authenticated API returns null before first assignment and preserves missi
     acceptance: "Not visible in another project", owner: otherRoleId });
   const token = randomUUID() + randomUUID(), foreignToken = randomUUID() + randomUUID(), writeToken = randomUUID() + randomUUID();
   const app = await buildServer({ service: workflow, sessionWork: new SessionObservationService({ uow }), credentials: [
-    { token, ...principal }, { token: foreignToken, actorId: "foreign-reader", projectIds: [otherProjectId], permissions: ["read"] },
-    { token: writeToken, actorId: "writer-only", projectIds: [projectId], permissions: ["write"] }] });
+    { token, ...principal }, { token: foreignToken, actorId: "foreign-reader", projectIds: [otherProjectId], permissions: [] },
+    { token: writeToken, actorId: "writer-only", projectIds: [projectId], permissions: ["task", "document", "session"] }] });
   const path = (id: string) => `/api/projects/${projectId}/tasks/${id}/assignment`;
   const get = (id: string, auth = token) => app.inject({ url: path(id), headers: { authorization: `Bearer ${auth}` } });
   try {
@@ -161,7 +161,9 @@ test("authenticated API returns null before first assignment and preserves missi
     assert.equal((await get(randomUUID())).statusCode, 404);
     assert.equal((await get(foreignTaskId)).statusCode, 404, "a Task that exists elsewhere is still missing here");
     assert.equal((await get(firstTaskId, foreignToken)).statusCode, 403);
-    assert.equal((await get(firstTaskId, writeToken)).statusCode, 403);
+    const writerRead = await get(firstTaskId, writeToken);
+    assert.equal(writerRead.statusCode, 200, "project membership is enough to read the assignment");
+    assert.equal(writerRead.json(), null);
     assert.equal((await app.inject({ url: path(firstTaskId) })).statusCode, 401);
     const task = (await workflow.getTask(principal, projectId, firstTaskId)).task;
     const assigned = await app.inject({ method: "POST", url: "/api/commands", headers: { authorization: `Bearer ${token}` },
@@ -216,7 +218,7 @@ test("exact HostLink profiles and assignment revisions persist; CAS and immutabl
 
 test("Session identities are persisted on creation and versioned without changing profile classification", async () => {
   const uow = new PostgresUnitOfWork(pool);
-  const principal = { actorId: "lead", projectIds: [projectId], permissions: ["read", "write", "review"] as Array<"read" | "write" | "review"> };
+  const principal = { actorId: "lead", projectIds: [projectId], permissions: ["task", "document", "session", "management"] as ("task" | "document" | "session" | "management")[], decisions: true };
   const workflow = new WorkflowService({ uow, clock: { now: () => new Date().toISOString() },
     ids: { next: randomUUID }, hasher: { hash: value => createHash("sha256").update(value).digest("hex") } });
   const target = { kind: "external" as const, linkId: link1 };

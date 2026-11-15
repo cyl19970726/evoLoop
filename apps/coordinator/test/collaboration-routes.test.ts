@@ -10,7 +10,7 @@ import type { CollaborationRunner } from "../src/collaboration/runner.js";
 
 test("status is readable without an integration grant, while private detail and writes are denied", async t => {
   const projectId = randomUUID(), eventId = randomUUID();
-  const principal: Principal = { actorId: "owner", projectIds: [projectId], permissions: ["read", "write", "review"] };
+  const principal: Principal = { actorId: "owner", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true };
   let allowed = false, reads = 0, mutations = 0;
   const store = {
     list: async () => { reads++; return { items: [], nextCursor: null }; },

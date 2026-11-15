@@ -2,12 +2,12 @@
 // (shared/command: useCommand and CommandFrame); what is particular to discussions is the baseline each form fixes
 // (discussionBaseline.ts).
 import type { ReactNode } from "react";
-import type { Permission } from "@evoloop/contracts";
+import { hasPermission, type Permission } from "@evoloop/contracts";
 import { Select } from "@evoloop/ui";
 import type { MutationContext } from "../../shared/command";
 
 export function canWrite(context: MutationContext, permission: Permission): boolean {
-  return context.principal.permissions.includes(permission);
+  return hasPermission(context.principal, context.projectId, permission);
 }
 
 export const muted = "text-caption text-muted-foreground";

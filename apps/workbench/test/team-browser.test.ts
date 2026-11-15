@@ -34,7 +34,7 @@ test("团队 switches views in the inner rail, lists roles there and opens organ
       if (url.pathname.startsWith("/api/")) {
         const root = `/api/projects/${projectId}`;
         let value: unknown = { items: [], nextCursor: null };
-        if (url.pathname === "/api/session") value = { principal: { actorId: "reader", projectIds: [projectId], permissions: ["read"] }, capabilities: {} };
+        if (url.pathname === "/api/session") value = { principal: { actorId: "reader", projectIds: [projectId], permissions: [] }, capabilities: {} };
         else if (url.pathname === root) value = { id: projectId, title: "团队回归项目", createdAt: stamp };
         else if (url.pathname === `${root}/roles`) value = { items: roles, nextCursor: null };
         else if (url.pathname.startsWith(`${root}/roles/`) && (url.pathname.endsWith("/hosts") || url.pathname.endsWith("/bindings"))) value = [];

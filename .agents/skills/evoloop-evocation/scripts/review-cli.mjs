@@ -60,7 +60,7 @@ async function main(){
   const flags={};for(let i=0;i<options.length;i+=2){if(!options[i].startsWith('--')||options[i+1]===undefined)throw new Error('Expected an option and value');flags[options[i].slice(2)]=options[i+1];}
   const bundle=extname(input)==='.json'?JSON.parse(await readFile(input,'utf8')):{};
   const projectId=bundle.projectId??config.projectId,principal=session.principal;
-  if(!principal.projectIds.includes(projectId)||!principal.permissions.includes('write'))throw new Error('Current project CLI cannot save this report');
+  if(!principal.projectIds.includes(projectId)||!principal.permissions.includes('document'))throw new Error('Current project CLI cannot save this report');
   const filename=bundle.bodyFile?resolve(dirname(input),bundle.bodyFile):resolve(input);
   const fileBytes=await readFile(filename);
   const body=new TextDecoder('utf-8',{fatal:true,ignoreBOM:true}).decode(fileBytes),format=['.html','.htm'].includes(extname(filename).toLowerCase())?'html':'markdown';

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { Principal, RuntimeRunRecord, Operation } from "@evoloop/contracts";
+import { hasPermission, type Principal, type RuntimeRunRecord, type Operation } from "@evoloop/contracts";
 import type { Delivery } from "@evoloop/contracts/workflow";
 import type { OrdinaryRunSubmissionRecord } from "@evoloop/contracts/ordinary-run-submission";
 import type { WorkflowService } from "@evoloop/core";
@@ -117,8 +117,7 @@ export function createOrdinaryRunSealer(deps: OrdinaryRunSealerDependencies) {
         (s.deliveryIntent.technicalResult === "passed" && currentRun.state !== "completed"))
         return blocked(s, "TERMINAL_RUN_VERSION_CHANGED");
       const actor = await deps.resolveSubmittedActor(s.projectId, s.submittedBy);
-      if (!actor || actor.actorId !== s.submittedBy || !actor.projectIds.includes(s.projectId) ||
-        !actor.permissions.includes("read") || !actor.permissions.includes("write"))
+      if (!actor || actor.actorId !== s.submittedBy || !hasPermission(actor, s.projectId, "task"))
         return blocked(s, "SUBMITTED_ACTOR_UNAVAILABLE");
       fence();
       try { await deps.workflow.execute(actor, command); }

@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import type { Pool } from "pg";
 import { z } from "zod";
-import type { Principal } from "@evoloop/contracts";
+import { hasDecisionAuthority, isProjectMember, type Principal } from "@evoloop/contracts";
 import type { WorkflowService } from "@evoloop/core";
 import { trialAttentionThreshold, trialAttentionThresholdMs } from "@evoloop/core";
 import { PgTaskAttention } from "@evoloop/adapter-postgres";
@@ -13,9 +13,8 @@ import type { LeaderWorkTimingStage } from "@evoloop/contracts/work-index";
 
 const uuid=z.uuid();
 function actor(p:Principal|null,projectId:string,write=false):Principal{
-  if(!p||!p.projectIds.includes(projectId)||!p.permissions.includes("read")||
-    (write&&(!p.permissions.includes("write")||!p.permissions.includes("review"))))
-    throw new DomainError("FORBIDDEN","Task attention requires project read or write and review permission");
+  if(!p||!isProjectMember(p,projectId)||(write&&!hasDecisionAuthority(p,projectId,"management")))
+    throw new DomainError("FORBIDDEN","Task attention requires project membership and, for writes, management decision authority");
   return p;
 }
 export function registerTaskAttentionRoutes(app:FastifyInstance,service:WorkflowService,pool:Pool):void{

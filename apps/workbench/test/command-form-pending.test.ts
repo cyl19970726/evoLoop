@@ -8,7 +8,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { FieldInput, FormPendingContext, fieldOptional, useCommand, useFormPending, type FormField, type MutationContext, type SavedDraft } from "../src/shared/command/index.ts";
 
 const projectId = "10000001-0000-4000-8000-000000000001";
-const context = (): MutationContext => ({ token: "", projectId, principal: { actorId: "reader", projectIds: [projectId], permissions: ["read", "write", "review"] } as MutationContext["principal"],
+const context = (): MutationContext => ({ token: "", projectId, principal: { actorId: "reader", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true } as MutationContext["principal"],
   blocked: false, onAttempt: () => true, onKnown: () => undefined, onChanged: () => undefined });
 
 function hookRunner<P, R>(hook: (props: P) => R) {

@@ -1,4 +1,4 @@
-import type { AppliedResult, Principal } from "@evoloop/contracts";
+import { hasPermission, type AppliedResult, type Principal } from "@evoloop/contracts";
 import { DomainError, type Transaction } from "@evoloop/contracts/ports";
 import type { ScheduleDispatchCommand } from "@evoloop/contracts/schedule-dispatch";
 import { applySessionLine } from "../session-line/index.js";
@@ -12,7 +12,7 @@ const fail = (code: string, message: string): never => { throw new DomainError(c
  */
 export async function applyScheduleDispatch(tx: Transaction, principal: Principal, command: ScheduleDispatchCommand, now: string,
   nextId: () => string): Promise<{ result: AppliedResult; effects: Array<{ kind: string; entityId: string; version: number }> }> {
-  if (!principal.permissions.includes("review")) fail("FORBIDDEN", "Scheduled dispatch decisions need project review permission");
+  if (!hasPermission(principal, command.projectId, "management")) fail("FORBIDDEN", "Scheduled dispatch needs project management permission");
   const port = tx.scheduleDispatch ?? fail("CAPABILITY_UNAVAILABLE", "Scheduled dispatch storage is unavailable");
   const done = (entityId: string, version: number) => ({ result: { status: "applied", operationId: command.operationId, entityId, version } as AppliedResult,
     effects: [{ kind: command.type, entityId, version }] });

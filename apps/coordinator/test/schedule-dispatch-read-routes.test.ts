@@ -13,7 +13,7 @@ const roleId = "00000000-0000-4000-8000-000000000003";
 
 test("direct-dispatch facts have project-read routes and preserve dispatch pagination", async () => {
   const calls: unknown[] = [];
-  const reader: Principal = { actorId: "reader", projectIds: [projectId], permissions: ["read"] };
+  const reader: Principal = { actorId: "reader", projectIds: [projectId], permissions: [] };
   const policy = { projectId, scheduleId, mode: "direct", state: "active", version: 1 };
   const list = { projectId, roleId, version: 1, sessionIds: [] };
   const dispatchPage = { items: [], nextCursor: "next" };
