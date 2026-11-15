@@ -10,6 +10,7 @@ import type { Principal } from "@evoloop/contracts";
 import type { NativeResumeRejection } from "@evoloop/contracts/runtime";
 import { migrate, PostgresUnitOfWork } from "../src/index.ts";
 import { SessionMessagePump } from "../../../apps/coordinator/src/session-messages/pump.ts";
+import { RuntimeRunner } from "../../../apps/coordinator/src/runtime/runner.ts";
 
 /**
  * Task 94a753a6 (11-12 rework): the queued-message flow after a failed Run, end to end through the real message pump.
@@ -193,4 +194,36 @@ test("a real failure still blocks: an unknown outcome and a failed Run that had 
   assert.equal(started.length, count, "neither queued message started");
   assert.equal((await messageState(unknownMessage)).state, "queued"); assert.equal((await messageState(turnMessage)).state, "queued");
   assertHeldByGate();
+});
+
+test("a requested Run without requester authority is rejected once and releases its queued message to the real pump", async () => {
+  finishTurns(); await pumpTicks(); errors.length = 0;
+  const sessionId = await newSession();
+  const messageId = await queueMessage(sessionId, "delivered after the unauthorized Run is rejected");
+  const requested = await reserveRun(sessionId, await startedTask("No requester runtime authority"));
+  assert.equal(requested.result.status, "applied");
+  assert.equal((await run(requested.runId)).state, "requested");
+  assert.equal((await messageState(messageId)).state, "queued");
+
+  const runner = new RuntimeRunner({
+    runtimeFactory: () => fakeRuntime as never, workflow, trusted: runtime, principals: [lead],
+    canWrite: () => true, allowedCwd: async () => true, hasGrant: () => true,
+    mayDispatchRun: async () => false,
+    requesterAuthorityMissing: async (_run, session) => session.id === sessionId,
+  });
+  (runner as unknown as { available: boolean }).available = true;
+  await runner.pump();
+
+  assert.equal((await run(requested.runId)).state, "failed");
+  assert.equal((await run(requested.runId)).nativeTurnId, null);
+  assert.equal((await gate(sessionId)).phase, "open");
+  errors.length = 0;
+  const count = started.length;
+  await pumpTicks();
+  assert.ok(started.slice(count).some(text => text.includes("delivered after the unauthorized Run is rejected")),
+    "the queued message starts after the rejected Run releases the Session");
+  assert.notEqual((await messageState(messageId)).state, "queued");
+  assert.ok(errors.every(error => (error as { code?: string }).code === "RECOVERY_BLOCKED"),
+    "only older Sessions deliberately left blocked by earlier cases are reported");
+  finishTurns(); await pumpTicks();
 });

@@ -24,7 +24,8 @@ export interface DirectDispatchDeps {
   onError?(error: Error): void;
 }
 
-interface Candidate { sid: string; ord: number; qlen: number; running: boolean; ready: boolean; gateOpen: boolean; profileOk: boolean; headSuspended: boolean }
+interface Candidate { sid: string; ord: number; qlen: number; running: boolean; ready: boolean; gateOpen: boolean; profileOk: boolean; headSuspended: boolean;
+  sessionActorId: string | null }
 /** An entry still occupies its line while it waits, is being started, or its Run is running. A started entry whose Run has ended is finished work: it neither counts nor can be removed. */
 const live = (alias: string) => `(${alias}.state IN ('queued','suspended','starting') OR (${alias}.state='started' AND ${alias}.run_ended_at IS NULL))`;
 /** A line entry only counts while its Task is open: the entry of a cancelled or closed Task is a stale occupant, never work waiting. */
@@ -48,7 +49,7 @@ export class ScheduleDirectDispatcher {
         await this.deps.pool.query("SELECT schedule_direct_fall_back($1,$2,$3::timestamptz,$4,$5,$6::timestamptz)", [projectId, row.schedule_id, plannedAt, reason, blocked, now]);
         counts.fellBack++;
       };
-      const picked = await this.choose(projectId, String(row.owner));
+      const picked = await this.choose(projectId, String(row.owner), principal.actorId);
       if (!picked.sessionId) { await fallBack(picked.denial ?? "NO_AVAILABLE_SESSION", true); continue; }
       const chosen = picked.sessionId;
       const task = await this.deps.pool.query("SELECT version FROM task WHERE project_id=$1 AND task_id=$2", [projectId, row.task_id]);
@@ -117,16 +118,17 @@ export class ScheduleDirectDispatcher {
 
   /**
    * Idle first, then the shortest line, then the list's own order. A Session is passed over when it is not ready, its recovery gate is closed, its execution
-   * profile is refused, the head of its line is suspended, its execution authorization is missing, or its signing identity does not resolve. Nobody left:
+   * profile is refused, the head of its line is suspended, it is the controller's own Session, its execution authorization is missing, or its signing identity does not resolve. Nobody left:
    * the reason of the first listed Session (in list order) is the reason given, never a different one.
    */
-  private async choose(projectId: string, roleId: string): Promise<{ sessionId: string | null; denial: string | null }> {
+  private async choose(projectId: string, roleId: string, controllerActorId: string): Promise<{ sessionId: string | null; denial: string | null }> {
     const rows = (await this.deps.pool.query<Candidate>(`WITH list AS (SELECT s.sid, s.ord FROM direct_dispatch_list l, unnest(l.session_ids) WITH ORDINALITY s(sid,ord)
         WHERE l.project_id=$1 AND l.role_id::text=$2)
       SELECT list.sid::text AS sid, list.ord::int AS ord,
         (SELECT count(*)::int FROM session_line_entry e WHERE e.project_id=$1 AND e.session_id=list.sid AND ${OPEN_ENTRY}) AS qlen,
         EXISTS(SELECT 1 FROM runtime_run r WHERE r.project_id=$1 AND r.session_id=list.sid AND r.state IN ('requested','dispatching','running','unknown')) AS running,
         COALESCE(rs.state='ready' AND rs.role_id=$2,false) AS ready,
+        rs.actor_id::text AS "sessionActorId",
         NOT EXISTS(SELECT 1 FROM session_recovery_gate g WHERE g.project_id=$1 AND g.session_id=list.sid AND g.phase<>'open') AS "gateOpen",
         NOT EXISTS(SELECT 1 FROM session_execution_profile p WHERE p.project_id=$1 AND p.session_id=list.sid AND p.activation_state IN ('rejected','unknown')) AS "profileOk",
         EXISTS(SELECT 1 FROM session_line_entry h WHERE h.project_id=$1 AND h.session_id=list.sid AND h.state='suspended'
@@ -138,7 +140,8 @@ export class ScheduleDirectDispatcher {
     let first: string | null = null;
     for (const candidate of rows) {
       let why: string | null = !candidate.ready ? "NOT_AVAILABLE:SESSION_NOT_READY" : !candidate.gateOpen ? "NOT_AVAILABLE:RECOVERY_GATE_CLOSED"
-        : !candidate.profileOk ? "NOT_AVAILABLE:EXECUTION_PROFILE_UNAVAILABLE" : candidate.headSuspended ? "NOT_AVAILABLE:HEAD_SUSPENDED" : null;
+        : !candidate.profileOk ? "NOT_AVAILABLE:EXECUTION_PROFILE_UNAVAILABLE" : candidate.headSuspended ? "NOT_AVAILABLE:HEAD_SUSPENDED"
+        : candidate.sessionActorId === controllerActorId ? "NOT_AVAILABLE:CONTROLLER_SESSION" : null;
       if (!why && this.deps.sessionDenial) { const refused = await this.deps.sessionDenial(projectId, candidate.sid); if (refused) why = `NOT_AUTHORIZED:${refused}`; }
       if (!why && this.deps.recipientDenial) { const refused = await this.deps.recipientDenial(projectId, candidate.sid); if (refused) why = `RECIPIENT_UNAVAILABLE:${refused}`.slice(0, 300); }
       if (why) first ??= why; else usable.push(candidate);

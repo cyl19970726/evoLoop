@@ -49,7 +49,10 @@ export async function applySessionLine(tx: Transaction, principal: Principal, co
     if ((await tx.listRuntimeRuns(task.id)).some(run => !TERMINAL_RUN.has(run.state))) fail("TASK_BUSY", "resolve the Task's current Run before queueing it");
     if (command.source === "schedule" && !command.scheduleId) fail("SCHEDULE_REQUIRED", "a scheduled entry names its schedule");
     if (await lines.getLiveSessionLineEntryForTask(task.id)) fail("TASK_ALREADY_QUEUED", "This Task is already waiting in a Session line");
-    if (await lines.getSessionLine(session.id)) await touch(session.id);
+    const line = await lines.getSessionLine(session.id);
+    if (session.actorId === (line?.controllerActorId ?? actorId))
+      fail("SELF_SESSION_LINE_FORBIDDEN", `不能把 Task 排进控制者自己的 Session 队伍（${session.id}）；自己的 Task 直接执行，不经队伍`);
+    if (line) await touch(session.id);
     else
       await lines.insertSessionLine({ projectId: command.projectId, sessionId: session.id, controllerActorId: actorId, version: 1, createdAt: now, updatedAt: now });
     const entry = await lines.insertSessionLineEntry({ projectId: command.projectId, id: nextId(), sessionId: session.id, taskId: task.id,
@@ -98,8 +101,16 @@ export async function applySessionLine(tx: Transaction, principal: Principal, co
   }
   if (command.type === "line.resume") {
     if (entry.state !== "suspended") fail("ENTRY_NOT_SUSPENDED", "only a suspended entry can be resumed");
+    let cancelled: { messageId: string; reason: string } | null = null;
+    const pending = entry.messageId ? await tx.sessionMessages?.getSessionMessage(entry.messageId) : null;
+    if (pending?.state === "queued" && pending.target.kind === "owned" && pending.target.sessionId === entry.sessionId) {
+      const reason = "SESSION_LINE_ATTEMPT_SUPERSEDED: 上一尝试的执行确认请求未送达，恢复后重新请求";
+      await tx.sessionMessages!.updateSessionMessage({ ...pending, state: "cancelled", blockedReason: reason,
+        version: pending.version + 1, updatedAt: now }, pending.version);
+      cancelled = { messageId: pending.id, reason };
+    }
     const next = await save(entry, { state: "queued", step: null, suspendReason: null });
-    await event(entry.sessionId, next, "entry.resumed", { reason: command.reason });
+    await event(entry.sessionId, next, "entry.resumed", { reason: command.reason, cancelledMessage: cancelled });
     return { result: ok(command, entry.id, next.version), effects: [effect(next)] };
   }
   if (command.type === "line.begin") {

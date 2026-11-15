@@ -568,6 +568,14 @@ const runner = runtimeFactory ? new RuntimeRunner({ runtimeFactory, workflow: se
         approvalPolicy:session.approvalPolicy}),
       dynamicAdmission ? () => dynamicAdmission.canStartRun(run,session) : undefined);
   },
+  requesterAuthorityMissing: async (run, session) => {
+    const current = await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE);
+    return !!current.runtime?.enabled &&
+      !await isBoundDynamicSession(pool, run.projectId, run.sessionId) &&
+      !current.hasRuntimeGrant({projectId:session.projectId,actorId:run.actorId,roleId:session.roleId,
+        authorizationScope:session.authorizationScope,cwd:session.cwd,sandbox:session.sandbox,model:session.model,
+        approvalPolicy:session.approvalPolicy});
+  },
   hasGrant: async (scope,session) => {
     const current=await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE);
     return session

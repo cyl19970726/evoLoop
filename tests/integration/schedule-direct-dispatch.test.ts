@@ -31,6 +31,7 @@ async function rig(t: import("node:test").TestContext) {
   const projectId = randomUUID();
   const lead: Principal = { actorId: "lead", projectIds: [projectId], permissions: ["read", "write", "review"] };
   const writer: Principal = { actorId: "writer", projectIds: [projectId], permissions: ["read", "write"] };
+  const sessionActor: Principal = { actorId: "session-actor", projectIds: [projectId], permissions: ["read", "write", "review"] };
   const deps = { uow: new PostgresUnitOfWork(pool), clock: { now: () => new Date().toISOString() }, ids: { next: randomUUID },
     hasher: { hash: (value: string) => createHash("sha256").update(value).digest("hex") } };
   const workflow = new WorkflowService(deps), runtime = new RuntimeWorkflowService(deps);
@@ -39,9 +40,9 @@ async function rig(t: import("node:test").TestContext) {
     .then(r => ({ code: (r as { code?: string }).code ?? r.status }), (error: { code?: string; message: string }) => ({ code: error.code ?? error.message }));
   await applied(lead, { type: "project.create", title: "Direct dispatch" });
   const role = fixtureRoleId("scheduled-role"); await seedFixtureRole(pool, projectId, role);
-  const session = async (cwd = "/tmp/direct") => {
+  const session = async (cwd = "/tmp/direct", who: Principal = sessionActor) => {
     const sessionId = randomUUID();
-    await applied(lead, { type: "runtime.session.reserve", sessionId, roleId: role, cwd, authorizationScope: "project", sandbox: "danger-full-access", approvalPolicy: "never" });
+    await applied(who, { type: "runtime.session.reserve", sessionId, roleId: role, cwd, authorizationScope: "project", sandbox: "danger-full-access", approvalPolicy: "never" });
     await runtime.beginSessionCreate(projectId, sessionId);
     const saved = (await deps.uow.read(projectId, r => r.getRuntimeSession(sessionId)))!;
     await runtime.bindSession(projectId, sessionId, { owner: "evoloop-codex-app-server", projectId, sessionId, roleId: role, cwd, authorizationScope: "project",
@@ -84,8 +85,22 @@ async function rig(t: import("node:test").TestContext) {
   const records = async (kind: string) => (await pool.query("SELECT task_id, source_ref FROM leader_event_record WHERE project_id=$1 AND kind=$2 ORDER BY occurred_at", [projectId, kind])).rows;
   const leaderTask = async (title: string) => { const taskId = randomUUID(); await applied(lead, { type: "task.create", taskId, title, content: `# ${title}`, acceptance: "ok", owner: role }); return taskId; };
   const appendLeader = async (sessionId: string, taskId: string) => applied(lead, { type: "line.append", sessionId, taskId, expectedTaskVersion: 1, source: "leader", reason: "arranged" });
-  return { dispatcher, store, config, pool, projectId, lead, writer, workflow, role, session, makeSchedule, fire, dispatchAt, setList, setPolicy, taskOfOccurrence, notices, logOf, lineOf, records, leaderTask, appendLeader, applied, refused, T0 };
+  return { dispatcher, store, config, pool, projectId, lead, writer, sessionActor, workflow, role, session, makeSchedule, fire, dispatchAt, setList, setPolicy, taskOfOccurrence, notices, logOf, lineOf, records, leaderTask, appendLeader, applied, refused, T0 };
 }
+
+test("a direct list Session created by the controller is refused and the Task returns to the Leader", async t => {
+  const r = await rig(t);
+  const own = await r.session("/tmp/own-direct", r.lead);
+  await r.setList([own]);
+  const scheduleId = await r.makeSchedule();
+  await r.setPolicy(scheduleId);
+  await r.fire(1);
+  const taskId = await r.taskOfOccurrence(scheduleId);
+  assert.deepEqual(await r.dispatchAt(1), { dispatched: 0, fellBack: 1 });
+  assert.deepEqual(await r.lineOf(own), []);
+  assert.deepEqual((await r.logOf(scheduleId)).map(row => [row.state, row.reason]), [["fell_back", "NOT_AVAILABLE:CONTROLLER_SESSION"]]);
+  assert.deepEqual((await r.notices(taskId)).map(row => row.kind), ["direct_dispatch_blocked", "task_todo"]);
+});
 
 test("a direct schedule's Task is made without a triage notice, then appended to the line of the first idle Session on the list; the Leader gets a record, not a notice", async t => {
   const r = await rig(t);
