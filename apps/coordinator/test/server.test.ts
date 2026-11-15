@@ -391,7 +391,17 @@ test("workbench path addresses load the page; API and unknown files keep their o
       assert.match(String(real.headers["content-type"]), /^image\/svg\+xml/, url);
     }
     assert.equal((await app.inject({ url: "/api/session" })).statusCode, 401, "API stays behind the token");
-    assert.equal((await app.inject({ url: "/assets/missing.js" })).statusCode, 404, "a missing asset is not the page");
+    assert.equal((await app.inject({ url: "/assets/missing.css" })).statusCode, 404, "a missing non-script asset is not the page");
+    assert.equal((await app.inject({ url: "/missing/other.js" })).statusCode, 404, "only /assets/ scripts get the old-tab answer");
+    // Defect 581441ad: a missing page chunk answers an old tab with a notice module that fails the import with the known message.
+    const stale = await app.inject({ url: "/assets/SchedulesPage-OLDHASH.js" });
+    assert.equal(stale.statusCode, 200);
+    assert.match(String(stale.headers["content-type"]), /^text\/javascript/);
+    assert.equal(stale.headers["cache-control"], "no-store", "a later release can bring the real file back under that name");
+    assert.match(stale.body, /工作台已经更新到新版本/);
+    assert.match(stale.body, /throw new Error\("Failed to fetch dynamically imported module/);
+    assert.equal((await app.inject({ method: "POST", url: "/assets/x.js" })).statusCode, 404);
+    assert.equal((await app.inject({ url: "/assets/index.html-not-here" })).statusCode, 404);
   } finally { await app.close(); await rm(webRoot, { recursive: true, force: true }); }
 });
 

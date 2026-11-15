@@ -119,7 +119,7 @@
 
 ## 产品缺口（不归 skill，另建 Task）
 
-1. **全新项目建不出第一个 Role。** `task.create` 要求负责人是 trial/active Role，`role.propose` 要求引用已存在的未完成 Task；skill 暂用一次性的数据库引导绕过。
+1. **全新项目建不出第一个 Role。** `task.create` 要求负责人是 trial/active Role，`role.propose` 要求引用已存在的未完成 Task；试跑时 skill 暂用一次性的数据库引导绕过。2026-11-15 已由 Task `11b676a4` 用 `role.bootstrap` 修复，数据库引导已从当前 skill 删除；本页前文保留试跑当时的事实。
 2. **同 Role 下有独立身份的验收 Session 过不了 `session prepare`**（`material_cli_actor_mismatch`），与 DEC-038 的验收做法冲突。
 3. **`models` 不列出未授权的模型目录**，第一次授权只能从运行时文件里找候选。
 4. **CLI 长轮询的默认超时短于等待时间**（`--wait 30` 对 15 秒）。
