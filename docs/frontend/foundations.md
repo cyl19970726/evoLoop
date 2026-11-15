@@ -30,7 +30,7 @@
 | `text-muted` | 说明、时间、占位 | `#635d57` | `#9f9a94` |
 | `border` / `border-strong` | 细线 / 强调分隔 | `#e4dfd8` / `#d0c9c1` | `#2a2826` / `#3e3b38` |
 | `accent` / `accent-soft` | 链接、选中、进行中 / 选中底色 | `#2a52a8` / `#e5edfc` | `#90aef3` / `#222d47` |
-| `warning` / `warning-soft` | 等你处理、待验收 | `#906106` / `#fceed1` | `#e3b667` / `#362913` |
+| `warning` / `warning-soft` | 等你处理、待验收 | `#825805` / `#fceed1` | `#e3b667` / `#362913` |
 | `danger` / `danger-soft` | 受阻、失败、返工、危险操作 | `#a3203a` / `#fde9e9` | `#ec8287` / `#3f1e20` |
 | `done` / `done-soft` | 完成、通过（淡紫，不是绿色） | `#72487c` / `#f5eaf7` | `#c99dd3` / `#332337` |
 | `count-bg` / `count-fg` | “待我处理”等计数点（墨色，不像报错） | `#1c1714` / `#fcfbf8` | `#eae7e3` / `#161412` |

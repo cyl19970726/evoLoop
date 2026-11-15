@@ -5,7 +5,7 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 // DEC-049: light "xuan paper" and dark "pine soot". The values below are section 3 of the colour specification
-// (process Document 8a853985, revision bf9f93e5, hash 1e91efbf); tokens.css must match them exactly, and every text colour must reach 4.5:1
+// (process Document 8a853985, revision 7986f123 = rev 2 of 2026-11-15: light warning #825805); tokens.css must match them exactly, and every text colour must reach 4.5:1
 // on every surface it is drawn on (WCAG AA, small text). Both checks read tokens.css itself, so a changed token fails here in CI.
 const tokensPath = join(dirname(fileURLToPath(import.meta.url)), "../src/tokens.css");
 const css = readFileSync(tokensPath, "utf8");
@@ -35,7 +35,7 @@ const specification: Array<[string, string, string]> = [
   ["accent-strong", "#1b4090", "#b2c9fb"],
   ["accent-soft", "#e5edfc", "#222d47"],
   ["on-accent", "#ffffff", "#0f1216"],
-  ["warning", "#906106", "#e3b667"],
+  ["warning", "#825805", "#e3b667"],
   ["warning-soft", "#fceed1", "#362913"],
   ["danger", "#a3203a", "#ec8287"],
   ["danger-soft", "#fde9e9", "#3f1e20"],
@@ -73,11 +73,12 @@ export function contrast(a: string, b: string): number {
   return (hi + 0.05) / (lo + 0.05);
 }
 
-// Every text colour with every surface it is drawn on. Neutral text goes on all six surfaces; role colours on the plain surfaces and their own soft fill.
+// Every text colour with every surface it is drawn on. Neutral text and role colours go on all six surfaces; role colours also on their own soft fill.
 const surfaces = ["surface-sunken", "background", "surface-raised", "surface-muted", "surface-field", "surface-selected"];
 const pairs: Array<[string, string]> = [];
 for (const text of ["text", "text-secondary", "text-muted"]) for (const surface of surfaces) pairs.push([text, surface]);
-for (const role of ["accent", "accent-strong", "warning", "danger", "done"]) for (const surface of ["background", "surface-raised", "surface-muted"]) pairs.push([role, surface]);
+// Role colours are drawn as text on every surface, including the field (inputs) and the selected row (rework of Task d101d50f: warning measured 4.21 and 3.96 there).
+for (const role of ["accent", "accent-strong", "warning", "danger", "done"]) for (const surface of surfaces) pairs.push([role, surface]);
 pairs.push(["accent", "accent-soft"], ["accent-strong", "accent-soft"], ["warning", "warning-soft"], ["danger", "danger-soft"], ["done", "done-soft"],
   ["on-accent", "accent"], ["on-brand", "brand"], ["on-user-bubble", "user-bubble"], ["count-fg", "count-bg"],
   ["text", "accent-soft"], ["text", "warning-soft"], ["text", "danger-soft"], ["text", "done-soft"], ["text-secondary", "warning-soft"], ["text-secondary", "danger-soft"],
