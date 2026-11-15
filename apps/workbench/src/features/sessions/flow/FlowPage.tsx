@@ -3,19 +3,13 @@
 import { useMemo } from "react";
 import { Button, ErrorState, LoadingState } from "@evoloop/ui";
 import type { SchedEvent } from "@evoloop/contracts/work-board";
-import { href } from "../../../shared/ui/shared";
-import { sessionHref } from "../SessionNavigation";
 import { FlowView } from "./FlowView";
+import { openInfoOf } from "./flowOpen";
 import { learnContext } from "./flowModel";
 import { useFlowData } from "./useFlowData";
 
 /** The real objects an event opens. A Task, a delivery, a run, an arrangement and an observation are all read on their Task; a message, on its Session. */
-export function openTargetsOf(projectId: string, event: SchedEvent): Array<{ label: string; href: string }> {
-  const out: Array<{ label: string; href: string }> = [];
-  if (event.taskId) out.push({ label: "打开任务", href: href(projectId, "task", event.taskId) });
-  if (event.sessionId) out.push({ label: "打开 Session", href: sessionHref(projectId, `owned:${event.sessionId}`) });
-  return out;
-}
+export function openTargetsOf(projectId: string, event: SchedEvent): Array<{ label: string; href: string }> { return openInfoOf(projectId, event).targets; }
 
 export function FlowPage({ token, projectId, leaderSessionId, active = true }: { token: string; projectId: string; leaderSessionId: string | null; active?: boolean }) {
   // Subscribed only while this component is mounted: leaving the tab or the page unmounts it and the stream is closed.
@@ -29,5 +23,5 @@ export function FlowPage({ token, projectId, leaderSessionId, active = true }: {
   return <FlowView board={data.board} events={data.events} context={context} source="live"
     connection={{ state: data.connection, error: data.error, lastSeq: data.lastSeq, reconnects: data.reconnects }}
     windowNote={`近 ${data.windowHours} 小时${data.truncated ? "（窗口内事件太多，最早的一部分没有读）" : ""}`}
-    openTargets={event => openTargetsOf(projectId, event)} />;
+    windowHours={data.windowHours} openInfo={event => openInfoOf(projectId, event)} />;
 }

@@ -1,6 +1,7 @@
 // 统筹安排 › 动态 (DEC-045 F1): the scheduling flow as a picture. The layout, the event-to-picture mapping, the live / pause / replay controls
 // and the accessibility rules, driven by whatever `events` and `board` it is given. It reads nothing by itself: FlowPage feeds it the work
 // board (source "live") and the sample route /ui/flow feeds it hand-written fixtures, which the page says on screen.
+import type { OpenInfo } from "./flowOpen";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Pause, Play, Radio } from "lucide-react";
 import { Button, cn } from "@evoloop/ui";
@@ -57,12 +58,16 @@ export interface FlowViewProps {
   connection?: FlowConnectionInfo;
   /** What the loaded events cover, said on screen (e.g. "近 6 小时；更早的没有读"). */
   windowNote?: string;
-  /** The real objects an event opens (a Task, a Session); empty when the event has none. */
-  openTargets?: (event: SchedEvent) => Array<{ label: string; href: string }>;
+  /** The real objects an event opens, what the links do not say, and the pull request (or why it cannot be read). */
+  openInfo?: (event: SchedEvent) => OpenInfo;
+  /** How many hours the loaded events and the 已验收 count cover. Said on the 已验收 cell itself. */
+  windowHours?: number;
+  /** Which event is selected at first (used by tests and by deep links). */
+  selectSeq?: number;
 }
 type Mode = "live" | "paused" | "replay";
 
-export function FlowView({ board, events, context, source, startAt, connection, windowNote, openTargets }: FlowViewProps) {
+export function FlowView({ board, events, context, source, startAt, connection, windowNote, openInfo, windowHours, selectSeq }: FlowViewProps) {
   const reduced = useMedia("(prefers-reduced-motion: reduce)");
   const narrow = useMedia("(max-width: 640px)");
   const live = source === "live";
@@ -73,7 +78,7 @@ export function FlowView({ board, events, context, source, startAt, connection, 
   const newer = Math.max(0, events.length - 1 - cursor);
   const [hidden, setHidden] = useState<Set<FlowGroup>>(new Set());
   const [stuckOnly, setStuckOnly] = useState(false);
-  const [selected, setSelected] = useState<{ type: "event"; seq: number } | { type: "node"; id: NodeId } | null>(null);
+  const [selected, setSelected] = useState<{ type: "event"; seq: number } | { type: "node"; id: NodeId } | null>(selectSeq !== undefined ? { type: "event", seq: selectSeq } : null);
   const [fresh, setFresh] = useState<SchedEvent[]>([]);
   const [flash, setFlash] = useState<Set<NodeId>>(new Set());
   const timers = useRef<number[]>([]);
@@ -187,9 +192,14 @@ export function FlowView({ board, events, context, source, startAt, connection, 
       <dt className="text-muted-foreground">打开</dt>
       <dd>{(() => {
         if (source === "fixture") return "夹具事件没有真实对象";
-        const targets = openTargets?.(selectedEvent) ?? [];
-        return targets.length ? <span className="flex flex-wrap gap-x-3">{targets.map(t => <a key={t.href} className="text-accent-foreground underline" href={t.href} data-open="">{t.label}</a>)}</span> : "这类对象没有单独的页面";
+        const info = openInfo?.(selectedEvent) ?? { targets: [], notes: [], pr: null };
+        if (!info.targets.length && !info.notes.length) return "这类对象没有单独的页面";
+        return <span className="flex flex-col gap-0.5">
+          {info.targets.length > 0 && <span className="flex flex-wrap gap-x-3">{info.targets.map(t => <a key={t.href} className="text-accent-foreground underline" href={t.href} data-open="">{t.label}</a>)}</span>}
+          {info.notes.map(note => <span key={note} className="text-caption text-muted-foreground" data-open-note="">{note}</span>)}
+        </span>;
       })()}</dd>
+      {source === "live" && openInfo?.(selectedEvent)?.pr && <><dt className="text-muted-foreground">PR</dt><dd data-pr="">{openInfo(selectedEvent)!.pr}</dd></>}
     </dl>;
   })() : selected?.type === "node" ? <p className="text-small">{selected.id}：{selected.id.startsWith("session:") ? sessionStatus(selected.id.slice(8)).text : "固定节点"}</p> : <p className="text-small text-muted-foreground">点画面上的节点或列表里的一行，看详情。</p>;
 
@@ -269,7 +279,7 @@ export function FlowView({ board, events, context, source, startAt, connection, 
         {sessions.length > MAX_SESSIONS && <p className="absolute right-6 bottom-24 text-caption text-muted-foreground">另有 {sessions.length - MAX_SESSIONS} 个 Session，见“统筹安排”</p>}
         <ol aria-label="对象轨道">
           {stations.map((s, i) => <li key={s.station} className="absolute bottom-2 flex -translate-x-1/2 flex-col items-center text-caption" style={{ left: `${((100 + i * ((W - 200) / (STATIONS.length - 1))) / W) * 100}%` }}>
-            <span className="tabular-nums font-medium">{s.count === null ? "读不到" : s.count}</span><span className="text-muted-foreground">{s.station}</span></li>)}
+            <span className="tabular-nums font-medium">{s.count === null ? "读不到" : s.count}</span><span className="text-muted-foreground">{s.station}</span>{s.station === "已验收" && <span className="text-muted-foreground" data-station-window="">{windowHours ? `近 ${windowHours} 小时` : "窗口内"}</span>}</li>)}
         </ol>
       </div>
       <div className="grid gap-4 @2xl:grid-cols-2 md:grid-cols-2"><div>{eventList}</div><div>{detail}</div></div>
