@@ -153,7 +153,7 @@ flowchart TB
 | 第二种会话运行时 | `packages/adapter-claude-agent-sdk` | `RuntimePort` 实现（PR #224）；每个 Turn 启动一个 Claude Code 进程，适配器自管 Turn 账本、专用配置目录、子进程环境白名单、禁用工具与 Role skill 插件；能力差别见[Session 运行时](session-runtime.md#7-codex-与-claude-能力对照) | `contracts`、Claude Agent SDK | 读取用户个人的 Claude 设置、记忆或账号连接器；跨 Session 原生消息；任务验收 |
 | 外部消息平台网关 | `packages/connector-wechat` | 消息平台网关的命令封装：只允许固定的一组网关命令，逐项校验会话 ID、投递 ID、文本长度与请求 ID 后调用本机网关（PR #221） | Zod、受控子进程 | 自行决定路由或授权、持有平台凭据、直接写库；路由合同由协调层按[消息 Connector](message-connectors.md)执行 |
 | 工作台设计体系 | `packages/ui` | 工作台设计体系：设计 token 单一来源、Tailwind 主题、Logo 与共享组件（DEC-036、DEC-037）；组件只接收调用方给的文字，不认识业务对象 | 界面组件库 | 依赖 `contracts`、发请求或持有业务状态 |
-| Hub 账号与成员 | `apps/hub` | 独立进程、独立 PostgreSQL 数据库与迁移目录；人类账号、邀请、登录会话、个人令牌哈希、服务身份、项目元数据、成员权限与审计；PR2 不接机器、不代理 coordinator | Fastify、`pg` | 保存 Task/Document 正文或 Session 原生记录；共享 coordinator 数据库；从 Hub 管理员身份自动获得项目权限 |
+| Hub 账号与成员 | `apps/hub` | 独立进程、独立 PostgreSQL 数据库与迁移目录；人类账号、邀请、登录会话、个人令牌哈希、服务身份、项目元数据、成员权限与审计；PR2 不接机器、不代理 coordinator；PR3（本 PR 合入后）加入机器、长连接、按项目转发与 Hub 签名身份，见 [Hub 第 12 节](hub.md#12-机器加入长连接与按项目转发h1-pr3task-93307c7a) | Fastify、`pg` | 保存 Task/Document 正文或 Session 原生记录；共享 coordinator 数据库；从 Hub 管理员身份自动获得项目权限 |
 
 `packages/testkit` 仅在出现跨适配器故障测试的重复夹具时新增，可提供可控时钟、故障注入和合同测试；它不属于生产依赖。现有 `scripts/docs/` 保持文档工具，不因 npm workspaces 自动成为业务包。
 

@@ -52,7 +52,7 @@ Role 的运行时与 skill 用 `role runtime show ROLE_UUID --project UUID` 实�
 
 准备状态须同时核实际 Session 的 full/never 配置、执行配置激活、恢复门及业务 CLI actor 与队列 Role actor 一致；仅有新 grant 不代表旧 Session 已可接任务。状态响应列出缺项和原恢复状态，不会静默修订旧执行配置。固定版 skill 的响应也列出它直接引用的 `references/*.md` 和仓库 `docs/**/*.md` 的同提交 hash 与按需读取命令；读取其中一份时再返回它的直接子引用。需要这些方法时沿返回的命令逐层读取，避免从 Session 的旧工作区取得另一版本。路径必须从该 skill 出发逐层链接，深度和单层数量有界，循环引用不继续展开。项目业务 skill 的 `references/writing.md`、`ordinary-handoff.md`、`results.md` 分别供 Lead 写任务、普通 Session 接手和成果写作；这些方法入口不替代本节的身份、固定版本和恢复合同。
 
-从仓库运行 `npm run --silent cli -- help` 查看**当前构建实际支持**的语法；`command types`、`command schema TYPE` 列出通用命令及其校验结构；`request types`、`request schema NAME` 列出专用请求、嵌套必填字段和枚举。不要按文档中的例子猜一个服务器不存在的命令。`--help`、`id`、schema/type 查询无需凭据；业务读取与写入需要 `EVOLOOP_API_URL`、`EVOLOOP_TOKEN`，可用 `EVOLOOP_PROJECT` 指定默认项目。令牌通过私有环境变量提供，不写入命令行参数、JSON 请求文件或公开日志；承载配置的本机文件应在仓库外或明确被 Git 忽略。
+从仓库运行 `npm run --silent cli -- help` 查看**当前构建实际支持**的语法；`command types`、`command schema TYPE` 列出通用命令及其校验结构；`request types`、`request schema NAME` 列出专用请求、嵌套必填字段和枚举。不要按文档中的例子猜一个服务器不存在的命令。`--help`、`id`、schema/type 查询无需凭据；业务读取与写入需要 `EVOLOOP_API_URL`、`EVOLOOP_TOKEN`，可用 `EVOLOOP_PROJECT` 指定默认项目。**经 Hub 使用项目（H1 PR3，本 PR 合入后才算已合入）：** 把 `EVOLOOP_API_URL` 指向 Hub，`EVOLOOP_TOKEN` 换成该账号的个人令牌或服务身份令牌，其余用法不变——CLI 读 `/api/session`（Hub 自己回答，带可到达的 `projectIds`）绑定意图，其余请求由 Hub 按项目转发到项目所在的机器；结果与直连一致，权限由 Hub 的成员权限（三类、Session 列表）与机器上的 coordinator 共同决定，操作记录的 `actor` 是该账号或服务身份。Hub 不转发流式事件接口。机器自己的 Agent 团队仍用本机令牌走 `127.0.0.1`，不经 Hub。`evoloop machine join|status|leave` 是这台机器与 Hub 之间的命令，不需要 coordinator 令牌，见[本机运行](local-run.md#hub-骨架与机器加入h1-pr2pr3)。令牌通过私有环境变量提供，不写入命令行参数、JSON 请求文件或公开日志；承载配置的本机文件应在仓库外或明确被 Git 忽略。
 
 ```sh
 npm run --silent cli -- help

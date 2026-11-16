@@ -8,6 +8,8 @@ import { DomainError } from "@evoloop/contracts/ports";
 import { sessionPreparationHints } from "@evoloop/contracts/session-preparation";
 import type { WorkflowService } from "@evoloop/core";
 import { authenticate, authConfigSchema, type AuthConfig } from "./auth.js";
+import { HUB_IDENTITY_HEADER } from "@evoloop/contracts";
+import { HubIdentityError, type HubIdentityVerifier } from "./hub/identity.js";
 import { z } from "zod";
 import type { RuntimeRunner } from "./runtime/runner.js";
 import { runInputPage } from "./runtime/input-read.js";
@@ -193,6 +195,8 @@ export async function buildServer(options: {
   sourceConfiguration?(principal: Principal | null): {git: boolean; wiki: boolean};
   /** This project's repositories, capabilities and members; a part left out answers `unavailable`. */
   projectConfiguration?: ProjectConfigurationSource;
+  /** Accepts the identity the Hub signs for a forwarded request (only on a machine that joined a Hub). */
+  hubIdentity?: { verifier: HubIdentityVerifier; onRejected?(reason: string): void; onAccepted?(identity: import("./hub/identity.js").HubIdentity): void };
 }) {
   const credentials = authConfigSchema.parse(options.credentials);
   const app = Fastify({ logger: false, bodyLimit: 128 * 1024 });
@@ -206,6 +210,23 @@ export async function buildServer(options: {
     if (!request.url.startsWith("/api/")) return;
     // The version is as public as /health: the commit, the build time and the start time only.
     if (options.milestones && request.method === "GET" && request.url.split("?")[0] === "/api/version") return;
+    const hubHeader = request.headers[HUB_IDENTITY_HEADER];
+    if (hubHeader !== undefined) {
+      // A request the Hub forwarded. It carries a signed identity and nothing else: an Authorization header next to it is ambiguous, so neither is trusted.
+      const value = Array.isArray(hubHeader) ? hubHeader[0] : hubHeader;
+      const rejected = (reason: string) => { options.hubIdentity?.onRejected?.(reason); return reply.code(401).send({ code: "UNAUTHENTICATED", message: "转发身份未被接受。" }); };
+      if (!options.hubIdentity || !value || request.headers.authorization !== undefined) return rejected("hub identity not usable here");
+      try {
+        const accepted = await options.hubIdentity.verifier.verify(value, { method: request.method, url: request.url });
+        request.principal = accepted.principal;
+        options.hubIdentity.onAccepted?.(accepted.identity);
+      } catch (error) {
+        return rejected(error instanceof HubIdentityError ? error.reason : "verification failed");
+      }
+      if (request.method !== "GET" && request.method !== "HEAD" && options.canWrite && !options.canWrite())
+        return reply.code(503).send({ code: "UNAVAILABLE", message: "协调者资格不可用；请保留操作 ID 并回读。" });
+      return;
+    }
     request.principal = authenticate(request.headers.authorization, credentials);
     if (!request.principal && options.workers) {
       request.workerIdentity = await options.workers.authenticate(request.headers.authorization);

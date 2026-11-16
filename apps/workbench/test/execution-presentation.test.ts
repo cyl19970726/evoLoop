@@ -95,3 +95,15 @@ test("thread history and refused dispatches read as words; codes and source IDs 
   assert.deepEqual(view.ids, [["检查代码", "FIXED_SOURCE_UNAVAILABLE"], ["来源", "doc-1"], ["来源修订", "rev-1"]]);
   assert.equal(preflightView({ ...report, code: "NEW_CODE", source: null }).title, "原因未识别");
 });
+
+test("执行服务 line: reachable is not healthy — faults and an error are said next to 已接通 (task f2c9a6d1)", async () => {
+  const { serviceLine, faultLines } = await import("../src/features/runtime/executionPresentation");
+  assert.equal(serviceLine({ available: true, error: null, faults: [] }), "已接通");
+  assert.equal(serviceLine({ available: true, error: null }), "已接通");
+  assert.equal(serviceLine({ available: true, error: "会话归档尚未核实", faults: [{ sessionId: "s", phase: "session_close", category: "native_rejected", observedAtUtc: "" }] }), "已接通，但有 1 条故障未清除");
+  assert.equal(serviceLine({ available: true, error: "只有提示", faults: [] }), "已接通，但有提示");
+  assert.equal(serviceLine({ available: false, error: "没配置", faults: [] }), "未接通：没配置");
+  const lines = faultLines({ faults: [{ sessionId: "s", phase: "session_close", category: "native_rejected", message: "归档未核实", observedAtUtc: "" }, { sessionId: null, phase: "mystery", category: "odd", observedAtUtc: "" }] });
+  assert.deepEqual(lines.map(line => [line.title, line.text, line.sessionId]), [["关闭智能体 · 原生服务拒绝", "归档未核实", "s"], ["mystery · odd", "", null]], "an unknown phase or category is shown as it is, not guessed");
+  assert.deepEqual(faultLines({}), []);
+});

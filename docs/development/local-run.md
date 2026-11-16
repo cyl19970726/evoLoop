@@ -84,7 +84,7 @@ npm start
 
 在浏览器打开服务监听的本机回环地址（端口由 `EVOLOOP_PORT` 设定，未设时用代码里的默认值），用身份文件中的 token 登录。令牌只留在当前页面内存，刷新后需重新登录。更新应用后请刷新已打开的标签页并重新登录；旧标签页仍可能运行旧版本界面，本轮独立消费曾因此失败，刷新后才成功，失败观察仍保留。服务只监听回环地址。迁移不会在启动时自动执行。C5 将 Task 正文归入 Document 并改为四态；既有实例须单独运行迁移并同步服务、CLI 和界面版本，本轮未自动升级其他会话的预览或持久数据。同一数据库只允许一个 coordinator 持有专用连接锁；锁丢失后写入不可用，不是双机自动接管证明。
 
-### Hub 骨架（未接机器）
+### Hub 骨架与机器加入（H1 PR2、PR3）
 
 Hub 是独立进程和独立数据库，不能复用 coordinator 的项目库。先准备一个只给 Hub 的 PostgreSQL 数据库和私有环境文件；不要把数据库 URL、初始密码或恢复 dump 提交到仓库。下面的 `<...>` 都代表私有值。
 
@@ -96,7 +96,19 @@ npm run hub:init -- --email admin@example.test --name 'Hub Admin' --password-fil
 npm run start:hub
 ```
 
-`hub:init` 只用于创建第一位 Hub 管理员；已有管理员时会拒绝。默认监听 `127.0.0.1:4319`，由同站 HTTPS 入口反向代理；`HUB_PORT` 可覆盖端口。备份、恢复和完整 API 合同见 [Hub 账号、邀请与项目成员](../architecture/hub.md)。测试或演练不要连接正式实例的 `55432`；用 `npm run test-pg` 约定的一次性实例，并在演练后停止、删除。
+`hub:init` 只用于创建第一位 Hub 管理员；已有管理员时会拒绝。默认监听 `127.0.0.1:4319`，由同站 HTTPS 入口反向代理；`HUB_PORT` 可覆盖端口。备份、恢复和完整 API 合同见 [Hub 账号、邀请与项目成员](../architecture/hub.md)。
+
+**让一台机器加入 Hub（PR3，本 PR 合入后才算已合入）。** 先在这台机器上装好 evoLoop 并让 coordinator 能正常启动（它仍只听 `127.0.0.1`）。Hub 管理员 `POST /api/admin/machines` 取得一次性加入码（10 分钟、只能用一次），然后在**这台机器上**运行：
+
+```sh
+evoloop machine join --hub https://hub.example --code <加入码> --workspace-root <允许的代码根目录>
+```
+
+命令会列出要允许的根目录并要求在这台机器上确认一次（终端里回答 y；脚本里确认过后加 `--yes`）；密钥对在本机生成，只有公钥与根目录上传。凭据保存在 `~/.evoloop/machine/machine.json`（`EVOLOOP_MACHINE_DIR` 可改目录），权限 0600。**重启 coordinator**，它启动后自己向 Hub 建立长连接并保持心跳；Hub 的 `GET /api/admin/machines` 显示 `online`。本机配置里所有项目目录（运行授权、委派模板、仓库）必须在允许根目录下，否则 coordinator 拒绝加载这份配置。`evoloop machine status` 看状态，`evoloop machine leave` 退出（先通知 Hub 再删本机凭据；项目数据与 coordinator 不受影响）。Hub 管理员 `DELETE /api/admin/machines/{id}` 可从 Hub 一侧移除，凭据当场失效。
+
+核对机器没有新增对外监听：`lsof -nP -iTCP -sTCP:LISTEN` 里应只有原来的 `127.0.0.1` coordinator（连接器只向外连）。浏览器与 CLI 经 Hub 使用项目：`EVOLOOP_API_URL` 指向 Hub，`EVOLOOP_TOKEN` 用个人令牌或服务身份令牌（见[CLI 指南](agent-cli.md)）。
+
+自建一个 Hub 加一台机器做候选核对的最小步骤：用一次性 PostgreSQL 建 Hub 库，`hub:init` 建管理员，起 Hub（`HUB_HOST=127.0.0.1`，同机试用即可，`HUB_PUBLIC_ORIGIN` 填访问用的地址），管理员登录后创建账号、项目（`projectId` 填机器上 coordinator 里已有的项目 ID，`machineId` 填刚登记的机器）、个人令牌与服务身份，再按上面加入机器。不要使用正式实例的端口 `55432`，不要把真实令牌、主机名或路径写进仓库。测试或演练不要连接正式实例的 `55432`；用 `npm run test-pg` 约定的一次性实例，并在演练后停止、删除。
 
 ## 在常驻主机上运行
 
@@ -312,6 +324,15 @@ git diff --check
 **发现失败会让 `test:unit` 失败。** 发现脚本在找不到任何测试、输出不是 `scripts/…test.mjs` 路径、有重复项或崩溃时，先不输出任何东西并以非零退出；命令里的 `files=$(…) && [ -n "$files" ] &&` 让整条命令随之停止（发现脚本被改坏而“退出 0 却什么也不输出”时，`[ -n "$files" ]` 也会拦住），而不是少跑脚本测试还显示通过。
 
 **排除与分组。** 发现脚本只跳过另有归属的目录：`scripts/docs`、`scripts/architecture-map`（它们的 `.js` 套件属 `test:docs`）和 `scripts/research`（研究代码）。但**覆盖检查的全集不套用这份跳过表**，只排除 `node_modules`：在这些目录里放一个 `.test.mjs`，既没有 `test:unit` 发现它，`test:docs` 也只匹配 `*.test.js`，覆盖检查会失败——把它移出这些目录、改成 `.test.js` 让 `test:docs` 跑，或登记到 `MANUAL_ONLY` 并写明理由。确实无法在 CI 运行的测试登记在 `scripts/lib/script-tests.mjs` 的 `MANUAL_ONLY` 里，这是唯一的排除办法，发现脚本据此跳过（目前只有 `scripts/backup.test.mjs`：它需要专用的 `evoloop_backup_test` 库和 PostgreSQL 18 客户端工具，CI 里没有，按本页的备份章节手动运行）。`scripts/ci-test-coverage.test.mjs` 沿工作流里的 `npm run` 逐层展开，找出没人运行、也不在 `MANUAL_ONLY` 里的测试并失败；`MANUAL_ONLY` 里的条目失效（文件不在了，或 CI 开始运行它）时也失败，免得清单悄悄过期。
+
+### 浏览器测试要接进 CI 的 `browser` 作业
+
+**新增一个会在 CI 里跑的浏览器测试，只需新增文件 `apps/workbench/test/<名字>-ci-browser.test.ts`（子目录也可），不要改 `package.json`。** `npm run test:browser` 先用 `files=$(node scripts/lib/browser-tests.mjs)` 找出文件再交给 `node --test`，命令本身不再列文件。以前所有文件逐个列在 `test:browser` 的同一行里，#469 与 #470 各加一个测试就在这一行冲突，#470 因此做了两次纯冲突返工。
+
+- **命名规则就是入口。** 以 `-ci-browser.test.ts` 结尾的文件进 CI；其余 `*-browser.test.ts` 仍只在本机运行，和以前一样。
+- **冻结的旧名单。** `scripts/lib/browser-tests.mjs` 里的 `LEGACY` 只收迁移前就在 CI 跑、但名字不以 `-ci-browser` 结尾的 6 个文件（button-colors、flow-view、runtime-fault-display、session-live-shape、task-used-waits、theme-switch），**不要往里加**，新测试按命名规则取名。名单里的文件不存在时，发现会报错退出。
+- **发现失败会让 `test:browser` 失败。** 找不到任何测试、输出不是 `apps/workbench/test/…-browser.test.ts` 路径、有重复或崩溃时，发现脚本先不输出任何东西并以非零退出，命令里的 `files=$(…) && [ -n "$files" ] &&` 随之停止，而不是少跑浏览器测试还显示通过。`scripts/lib/browser-tests.test.mjs` 固定了迁移前的 10 个文件必须仍被收集，并检查新增文件无需改任何清单即被发现。
+- 本机运行与环境变量见[开发规范](standards.md)里 hook 检查一节（先 `npm run build`，再设 `EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE`）。
 
 ### 集成测试与 PostgreSQL 锁表
 

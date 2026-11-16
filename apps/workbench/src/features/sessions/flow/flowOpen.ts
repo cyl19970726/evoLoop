@@ -119,9 +119,10 @@ export function nodeInfoOf(projectId: string, node: NodeId, board: WorkBoardSnap
         }
         if (station === "已验收") {
           lines.push(`所读窗口内关闭的任务数，不是总数（近 ${windowHours ?? "?"} 小时）；数量由事件流里的关闭事件数出，快照不含`);
-          notes.push(`${NODE_UNAVAILABLE}快照不含已关闭任务的清单，这里的数是窗口内的关闭事件数；要看已关闭的任务，到任务列表里选“已关闭”。`);
+          notes.push(`${NODE_UNAVAILABLE}快照不含已关闭任务的清单，这里的数是窗口内的关闭事件数；要看已关闭的任务，打开任务列表并把状态筛选选为“已完成”（关闭后的任务就是已完成）。`);
         } else lines.push(`${count === null ? "读不到" : count} 个，取自调度板快照`);
         targets.push({ label: "打开任务列表", href: tasks });
+        if (station === "已验收") targets.push({ label: "打开已完成的任务", href: `${tasks}?state=done` });
         return { title: station, lines, targets, notes };
       }
       return { title: String(node), lines, targets, notes: [`${NODE_UNAVAILABLE}不认识的节点，没有可打开的对象。`] };
