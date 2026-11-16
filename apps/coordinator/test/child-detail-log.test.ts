@@ -3,7 +3,7 @@ import { mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promise
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { createChildDetailSink } from "../src/runtime/child-detail-log.ts";
+import { createChildDetailSink, createRefusalSink } from "../src/runtime/child-detail-log.ts";
 
 const detail = (n: number) => ({ startId: `0000000${n}-aaaa-4bbb-8ccc-dddddddddddd`, pid: 100 + n, startedAtUtc: "2026-11-16T10:00:00.000Z", exitedAtUtc: `2026-11-16T10:0${n}:00.000Z`,
   exitCode: 0, exitSignal: null, firstLossReason: "stdout_closed" as const, stopReason: "process_exited" as const,
@@ -34,6 +34,32 @@ test("a child's private detail is one 0600 file in a 0700 directory; the log lin
     // The directory would have to be made inside a regular file (ENOTDIR on every platform; a path under /proc can make a recursive mkdir spin on Linux).
     await writeFile(join(directory, "blocker"), "x");
     createChildDetailSink({ directory: join(directory, "blocker", "diag"), log: line => broken.push(line) })(detail(4));
+    assert.match(broken[0] ?? "", /private detail could not be written/);
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test("a refused request's native words are one private 0600 file; the log line names the file and has none of the text; the newest stay", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "evoloop-refusal-"));
+  try {
+    const lines: string[] = [];
+    const sink = createRefusalSink({ directory: join(directory, "diag"), keep: 2, log: line => lines.push(line) });
+    const refusal = (attempt: number) => ({ projectId: "p", messageId: `0000000${attempt}-aaaa-4bbb-8ccc-dddddddddddd`, sessionId: "s", method: "thread/resume", code: -32600, category: "server_rejected",
+      attempt, maxAttempts: 4, nativeMessage: `cannot resume running thread 01a1befd with stale path: requested /Users/someone/a, active /Users/someone/b ${"z".repeat(5000)}`, nativeData: { codexErrorInfo: "x" } });
+    for (const n of [1, 2, 3]) sink(refusal(n));
+    const files = (await readdir(join(directory, "diag"))).sort();
+    assert.equal(files.length, 2, "the oldest was removed");
+    const path = join(directory, "diag", files.at(-1)!);
+    assert.equal((await stat(path)).mode & 0o777, 0o600);
+    assert.equal((await stat(join(directory, "diag"))).mode & 0o777, 0o700);
+    const saved = JSON.parse(await readFile(path, "utf8"));
+    assert.match(saved.nativeMessage, /^cannot resume running thread 01a1befd with stale path/);
+    assert.ok(saved.nativeMessage.length <= 4001, "the text is bounded");
+    assert.deepEqual([saved.method, saved.code, saved.category, saved.attempt], ["thread/resume", -32600, "server_rejected", 3]);
+    assert.match(lines[2]!, /Codex refused thread\/resume \(server_rejected, code -32600\) before any Turn start: message=00000003 attempt=3\/4 detail=.*codex-refusal-/);
+    assert.doesNotMatch(lines.join("\n"), /stale path|Users|zzzz/, "the public log never carries the native text");
+    await writeFile(join(directory, "blocker"), "x");
+    const broken: string[] = [];
+    createRefusalSink({ directory: join(directory, "blocker", "diag"), log: line => broken.push(line) })(refusal(1));
     assert.match(broken[0] ?? "", /private detail could not be written/);
   } finally { await rm(directory, { recursive: true, force: true }); }
 });

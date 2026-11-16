@@ -153,6 +153,7 @@ export class RuntimeRunner {
   /** Keep the previous native child's bounded diagnostics when recover replaces its adapter. */
   private priorNativeChildDiagnostics: NativeChildDiagnostic[] = [];
   private recovering: Promise<void> | null = null;
+  private replacing = false;
   private autoLoop: Promise<void> | null = null;
   private autoWake: (() => void) | null = null;
   private autoAttempts: number[] = [];
@@ -607,7 +608,23 @@ export class RuntimeRunner {
     this.recovering = this.reopen().finally(() => { this.recovering = null; });
     return this.recovering;
   }
-  private async reopen(): Promise<void> {
+  /**
+   * Replaces one provider's runtime although it still reports ready (defect 548712ac: a Codex child that is alive but refuses `thread/resume` for a loaded Thread).
+   * Only when the host says nothing else is running on it, because replacing the child ends every Turn that child is running. Answers whether it was replaced.
+   */
+  async replaceProvider(provider: RuntimeProvider, workInFlight: () => Promise<boolean>): Promise<boolean> {
+    if (this.stopped || !this.available || !this.deps.canWrite() || this.recovering || this.replacing || !this.providers().includes(provider)) return false;
+    // Held across the inspection too, so two requests never overlap.
+    this.replacing = true;
+    try {
+      if (await workInFlight()) return false;
+      if (this.stopped || !this.available || this.recovering) return false;
+      this.recovering = this.reopen([provider]).finally(() => { this.recovering = null; });
+      await this.recovering;
+      return true;
+    } finally { this.replacing = false; }
+  }
+  private async reopen(force: readonly RuntimeProvider[] = []): Promise<void> {
     this.available = false;
     if (this.busy) await this.busy;
     this.detachWorkspaceRuntime();
@@ -617,10 +634,10 @@ export class RuntimeRunner {
       // Several runtimes: replace only those that lost readiness, so a Turn another runtime is running keeps going.
       // With every runtime ready the fault is not a lost connection, and everything is replaced as before.
       const routed = this.runtime instanceof ProviderRoutedRuntime && this.runtime.canReplace() &&
-        this.runtime.unreadyProviders().length ? this.runtime : null;
+        (this.runtime.unreadyProviders().length || force.length) ? this.runtime : null;
       // A replacement must wait for proof that the previous owned child exited.
       let replaced: RuntimeProvider[];
-      if (routed) replaced = await routed.closeUnready();
+      if (routed) replaced = await routed.closeProviders([...new Set([...routed.unreadyProviders(), ...force])]);
       else { replaced = this.providers(); await this.runtime.close(); }
       await this.runtime.flushChildDiagnostics?.();
       await this.deps.nativeInputs?.drain();

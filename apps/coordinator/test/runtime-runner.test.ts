@@ -2086,3 +2086,45 @@ test("killing the real Codex child recovers the runner by itself, with a new chi
     assert.ok(details[0]!.recentProtocol.length > 0, "its last protocol lines are kept");
   } finally { await runner.stop(); }
 });
+
+// ---- Replacing a Codex child that is alive but refuses a native operation (defect 548712ac) ----
+test("a ready Codex runtime is replaced on request only when nothing else runs on it; the Claude runtime is not touched", async () => {
+  const codex = new FakeRuntime(), claude = new FakeRuntime();
+  let claudeCloses = 0, codexCloses = 0;
+  const closeClaude = claude.close.bind(claude), closeCodex = codex.close.bind(codex);
+  claude.close = async () => { claudeCloses++; await closeClaude(); };
+  codex.close = async () => { codexCloses++; await closeCodex(); };
+  const built: RuntimeProvider[] = [];
+  const recovered: RuntimeProvider[][] = [];
+  const runner = autoRunner({ codex, claude }, provider => { built.push(provider); return new FakeRuntime(); }, { enabled: false }, recovered);
+  try {
+    await runner.start();
+    assert.equal(runner.status().available, true);
+    assert.equal(await runner.replaceProvider("codex", async () => true), false, "work in flight: nothing is replaced");
+    assert.deepEqual(built, []); assert.equal(codexCloses, 0); assert.equal(runner.status().available, true);
+    assert.equal(await runner.replaceProvider("codex", async () => false), true);
+    assert.deepEqual(built, ["codex"], "only Codex was rebuilt, although it reported ready");
+    assert.equal(codexCloses, 1); assert.equal(claudeCloses, 0, "the other runtime and its Turns were not closed");
+    assert.equal(claude.isReady(), true);
+    assert.deepEqual(recovered.at(-1), ["codex"]);
+    assert.equal(runner.status().available, true);
+    assert.equal(await runner.replaceProvider("claude" as RuntimeProvider, async () => false) && built.at(-1) === "claude", true, "any driven provider can be named");
+  } finally { await runner.stop(); }
+  const stopped = autoRunner({ codex: new FakeRuntime() }, () => new FakeRuntime(), { enabled: false });
+  assert.equal(await stopped.replaceProvider("codex", async () => false), false, "a runner that was never started does not replace anything");
+});
+
+test("a Codex runtime is not replaced behind a recovery that is already running, or for a provider this service does not drive", async () => {
+  const codex = new FakeRuntime();
+  const runner = autoRunner({ codex }, () => new FakeRuntime(), { enabled: false });
+  try {
+    await runner.start();
+    assert.equal(await runner.replaceProvider("claude", async () => false), false, "Claude is not driven here");
+    let release!: () => void;
+    const gate = new Promise<void>(resolveGate => { release = resolveGate; });
+    const first = runner.replaceProvider("codex", async () => { await gate; return false; });
+    assert.equal(await runner.replaceProvider("codex", async () => false), false, "an inspection already under way; two replacements never overlap");
+    release();
+    assert.equal(await first, true);
+  } finally { await runner.stop(); }
+});

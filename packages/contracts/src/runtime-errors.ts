@@ -81,6 +81,11 @@ export class RuntimeServerError extends RuntimeProtocolError {
   readonly rejectedThreadId: string | null;
   /** A classified steer refusal only; never used as a generic retry signal. */
   readonly steerRejection: RuntimeSteerRejection | null;
+  /**
+   * The native side's own words for the refusal. Private: not enumerable (so it is not in JSON, logs of the error object or any copy of it), never part of
+   * `message`, and meant only for a host-private diagnostic sink (defect 548712ac). Public evidence stays the category and code above.
+   */
+  declare readonly privateNative: { message: string; data: unknown };
   constructor(public readonly method: string, public readonly requestId: number, public readonly code: number,
     nativeMessage: string, requestedThreadId?: string, nativeData?: unknown) {
     const category = serverErrorCategory(method, code, nativeMessage);
@@ -92,6 +97,7 @@ export class RuntimeServerError extends RuntimeProtocolError {
     this.preTurnWriterConflict = category === "writer_conflict" && rejectedThreadId === requestedThreadId;
     // Only the structured refusal, or 0.167's exact review/compaction wording, means the Turn kind
     // cannot take input. MisalignmentSteer is a continuation hint on a failed Turn, not a steer refusal.
+    Object.defineProperty(this, "privateNative", { value: { message: nativeMessage, data: nativeData }, enumerable: false });
     this.steerRejection = method !== "turn/steer" ? null :
       nonSteerableErrorInfo(nativeData) || /cannot steer (a )?(review|compact(ion)?) turn/i.test(nativeMessage)
         ? "non_steerable_turn" : null;
