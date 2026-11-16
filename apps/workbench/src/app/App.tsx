@@ -2,7 +2,8 @@ import { Component, Suspense, useEffect, useMemo, useRef, useState, useLayoutEff
 import type { Operation } from "@evoloop/contracts";
 import { ApiError, api, errorText, type Session } from "../shared/api";
 import { describeFailure } from "../shared/errorPresentation";
-import { onUnauthorized, signIn, signOut } from "../shared/identity";
+import { authMode, onUnauthorized, scopedPrincipal, signIn, signOut } from "../shared/identity";
+import { hubOfflineNotice } from "../shared/hubPresentation";
 import type { MutationContext, RecoverableCommand } from "../shared/command/context";
 import { clearCommandDrafts } from "../shared/command/drafts";
 import { askConfirm, cancelConfirms, confirmHostFailed, currentConfirm, onConfirmRetry, onConfirmUnavailable } from "../shared/confirm";
@@ -202,7 +203,8 @@ export function App() {
     window.addEventListener("beforeunload", beforeUnload);
     return () => window.removeEventListener("beforeunload", beforeUnload);
   }, []);
-  const projectRead = useProjectQuery(projectId ?? "", ["project"], () => client.project(projectId!), { enabled: !!session });
+  // Behind the Hub the project read also says whether the project's machine is connected; it is read again often enough to show a machine coming back.
+  const projectRead = useProjectQuery(projectId ?? "", ["project"], () => client.project(projectId!), { enabled: !!session, ...authMode() === "hub" ? { refetchInterval: 10_000 } : {} });
   // Drain mode: the instance is being emptied for a release; read often while it is.
   const drainRead = useProjectQuery(projectId ?? "", ["instance", "drain"], signal => client.instanceDrain(signal), { enabled: !!session && !!projectId, refetchInterval: 15_000, retry: false });
   const drain = drainNotice(drainRead.data, iso => new Date(iso).toLocaleString("zh-CN"));
@@ -255,13 +257,15 @@ export function App() {
     signIn(value); setAuthNotice("");
     setToken(value); setSession(next);
   }} />;
-  const principal = session.principal;
+  const principal = scopedPrincipal(session.principal, projectId);
   const context: MutationContext = { token, projectId: projectId ?? "", principal, blocked: visibleReceipts.some(r => r.projectId === projectId), onAttempt: beginAttempt, onKnown: finishKnown, onChanged: changed };
   async function logout() {
     if (document.querySelector('[data-dirty="true"]') && !await askConfirm({ title: "退出并清除草稿？", description: "还有未提交的草稿。退出会清除本页草稿。",
       confirmLabel: "退出并清除草稿", cancelLabel: "先不退出", danger: true })) return;
     if (visibleReceipts.length && !await askConfirm({ title: `仍有 ${visibleReceipts.length} 个结果未确认的操作，确定退出？`,
       description: "回执会留在当前浏览器会话；退出后请用同一身份登录核对。", confirmLabel: "仍要退出", cancelLabel: "先不退出" })) return;
+    // Behind the Hub the login is the Hub's cookie: leaving ends it there too, not only in this page.
+    if (authMode() === "hub") await api(token).hubLogout();
     endSession();
   }
   /** A check confirmed the operation. `origin` is the original object as 结果未知的操作 found it (none on the project list). */
@@ -289,6 +293,7 @@ export function App() {
       button: { label: "关闭", onClick: () => { setOperationNotice(""); setOperationDetail(null); setOperationLink(null); }, quiet: true } }] : [],
     ...projectId ? providerHoldNotices(holdsRead.data, href(projectId, "sessions")) : [],
     ...projectId && holdsRead.isError ? [providerHoldReadFailure(holdsRead.error, href(projectId, "sessions"))] : [],
+    ...hubOfflineNotice((projectRead.data as { machine?: { name: string; online: boolean; state: string } | null } | undefined)?.machine) ? [hubOfflineNotice((projectRead.data as { machine?: { name: string; online: boolean; state: string } | null }).machine)!] : [],
     ...projectError ? [{ key: "project", tone: "error" as const, text: `项目暂不可读取：${projectError}`, button: { label: "重试读取项目", onClick: context.onChanged } }] : [],
     ...drain ? [{ key: drain.key, tone: drain.tone, text: drain.text, ...(drain.detail ? { detail: drain.detail } : {}) }] : [],
     ...route.section !== "inbox" && inbox.state === "unknown" ? [{ key: "inbox", tone: "waiting" as const, text: inbox.text, link: { href: href(projectId, "inbox"), label: "去待我处理核对" } }] : [],

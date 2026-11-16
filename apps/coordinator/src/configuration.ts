@@ -103,6 +103,13 @@ const integrationSchema = z.strictObject({
     grants: z.array(z.strictObject({ projectId: z.uuid(), sessionId: z.uuid(), senderActorId: z.string().min(1).max(100),
       receiverActorId: z.string().min(1).max(100),
       receiverRoleId: z.string().min(1).max(4000), cwd: absolute, maxTurns: z.number().int().positive().safe().optional(), enabled: z.boolean(),
+      /**
+       * Who the sender is. `local` (default): an identity of this machine's token file, which must also be a current writer there. `hub`: the sender is a Hub
+       * account (its actor ID arrives in a request the Hub signed and this coordinator verified, never in the token file); this explicit entry is what lets it send,
+       * on top of the Session permission the signed identity carries. A Hub account without such an entry is refused as before, and nothing here maps a Hub account to
+       * a local identity (#219, Task 9ea06625).
+       */
+      senderKind: z.enum(["local", "hub"]).default("local"),
     })).max(200).refine(values => new Set(values.map(g => `${g.projectId}:${g.sessionId}:${g.senderActorId}`)).size === values.length,
       "Ordinary conversation grants must be unique per project, recipient Session and sender"),
     /** Separate from full-access ordinary grants; each entry names one reviewed conversation route. */

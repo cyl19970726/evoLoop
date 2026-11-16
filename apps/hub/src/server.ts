@@ -7,6 +7,7 @@ import { Gateway } from "./gateway.js";
 import { registerMachineRoutes } from "./machine-routes.js";
 import { MachineStore } from "./machines.js";
 import { registerRoutes } from "./routes.js";
+import { registerWorkbench } from "./workbench.js";
 import { HubService } from "./service.js";
 import { HubStore } from "./store.js";
 
@@ -75,10 +76,13 @@ export function buildHubApp(options: HubAppOptions): FastifyInstance {
     reply.header("referrer-policy", "no-referrer");
     reply.header("x-frame-options", "DENY");
     reply.header("cache-control", "no-store");
-    reply.header(
-      "content-security-policy",
-      "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
-    );
+    // The workbench pages set their own policy (apps/hub/src/workbench.ts); everything else keeps the strict one.
+    if (!reply.hasHeader("content-security-policy")) {
+      reply.header(
+        "content-security-policy",
+        "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
+      );
+    }
     return payload;
   });
 
@@ -116,12 +120,13 @@ export function buildHubApp(options: HubAppOptions): FastifyInstance {
     return reply.code(404).type("text/html; charset=utf-8").send(errorPage(404, "页面不存在。"));
   });
 
-  registerRoutes(app, service, store, config);
   const machines = options.machines ?? new MachineStore(store.pool);
   const gateway = options.gateway ?? new Gateway({
     heartbeatMs: config.machineHeartbeatMs ?? 15_000, forwardTimeoutMs: config.forwardTimeoutMs ?? 60_000, maxResponseBytes: config.maxResponseBytes ?? 8 * 1024 * 1024,
   });
+  registerRoutes(app, service, store, config, { machines, gateway });
   registerMachineRoutes(app, { config, store, service, machines, gateway });
+  if (config.webRoot) registerWorkbench(app, config.webRoot);
   app.addHook("onClose", async () => { gateway.close(); });
   return app;
 }

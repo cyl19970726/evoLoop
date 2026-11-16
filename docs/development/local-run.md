@@ -108,6 +108,8 @@ evoloop machine join --hub https://hub.example --code <加入码> --workspace-ro
 
 核对机器没有新增对外监听：`lsof -nP -iTCP -sTCP:LISTEN` 里应只有原来的 `127.0.0.1` coordinator（连接器只向外连）。浏览器与 CLI 经 Hub 使用项目：`EVOLOOP_API_URL` 指向 Hub，`EVOLOOP_TOKEN` 用个人令牌或服务身份令牌（见[CLI 指南](agent-cli.md)）。
 
+**工作台经 Hub 登录（PR4，本 PR 合入后才算已合入）。** 构建工作台（`npm --workspace apps/workbench run build`）后，Hub 默认托管检出里的 `apps/workbench/dist`（`HUB_WEB_ROOT` 可指向别处；没有 `index.html` 就不托管，只有 API 与纯页面）。`HUB_PUBLIC_ORIGIN` 必须是浏览器实际打开的地址（写请求的 `Origin` 与它比较）；cookie 是 `Secure`，浏览器只在 HTTPS 或回环地址上保存它。打开 Hub 地址，用 Hub 账号邮箱与密码登录，列出的是自己的项目与各自的机器状态。本地令牌模式不变：直接打开 coordinator 的地址仍是粘贴令牌。Hub 账号要经工作台给 Session 发消息，需要在私有配置的 `sessionMessages.grants` 加一项 `"senderKind":"hub"` 的授权，见 [Hub 第 13 节](../architecture/hub.md#13-工作台经-hub-登录h1-pr4task-9ea06625)。
+
 自建一个 Hub 加一台机器做候选核对的最小步骤：用一次性 PostgreSQL 建 Hub 库，`hub:init` 建管理员，起 Hub（`HUB_HOST=127.0.0.1`，同机试用即可，`HUB_PUBLIC_ORIGIN` 填访问用的地址），管理员登录后创建账号、项目（`projectId` 填机器上 coordinator 里已有的项目 ID，`machineId` 填刚登记的机器）、个人令牌与服务身份，再按上面加入机器。不要使用正式实例的端口 `55432`，不要把真实令牌、主机名或路径写进仓库。测试或演练不要连接正式实例的 `55432`；用 `npm run test-pg` 约定的一次性实例，并在演练后停止、删除。
 
 ## 在常驻主机上运行

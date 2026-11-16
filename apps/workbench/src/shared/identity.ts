@@ -9,18 +9,30 @@ export function authMode(doc: Pick<Document, "querySelector"> | null = typeof do
 }
 
 let token = "";
+let csrf = "";
 const unauthorized = new Set<() => void>();
 
 /** After a verified login: later requests carry this token. */
 export function signIn(value: string): void { token = value; }
 /** Logout or a lost session: no request carries the old token again. */
-export function signOut(): void { token = ""; }
+export function signOut(): void { token = ""; csrf = ""; }
+/** Behind the Hub: the CSRF token the Hub gave with the login or the session read. In memory only, never in a URL, storage or cookie the page can read. */
+export function setCsrfToken(value: string): void { csrf = value; }
 export function signedInToken(): string { return token; }
 
 /** Authentication for one request. A token given explicitly (the login check) wins; cookies go same-origin only. */
-export function requestAuth(explicit?: string): { headers: Record<string, string>; credentials: RequestCredentials } {
+export function requestAuth(explicit?: string, method = "GET"): { headers: Record<string, string>; credentials: RequestCredentials } {
   const value = explicit || token;
-  return { headers: value ? { Authorization: `Bearer ${value}` } : {}, credentials: "same-origin" };
+  const headers: Record<string, string> = value ? { Authorization: `Bearer ${value}` } : {};
+  // A write with the Hub's cookie also carries its CSRF token (the Hub checks the Origin too).
+  if (!value && csrf && !["GET", "HEAD"].includes(method.toUpperCase())) headers["X-Hub-CSRF"] = csrf;
+  return { headers, credentials: "same-origin" };
+}
+
+/** What the Hub says one project lets this caller do. Without it (a local coordinator) the identity's own permissions stand. */
+export function scopedPrincipal<T extends { permissions: readonly string[] }>(principal: T & { projectPermissions?: Record<string, string[]> }, projectId: string | null): T {
+  const scoped = projectId ? principal.projectPermissions?.[projectId] : undefined;
+  return scoped ? { ...principal, permissions: scoped } as T : principal;
 }
 
 /** The app signs out when any request answers 401: the token or cookie is no longer accepted. */

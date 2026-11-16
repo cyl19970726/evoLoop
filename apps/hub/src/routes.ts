@@ -2,6 +2,8 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { assertCsrf, authenticate, sessionCsrfToken, type Principal } from "./auth.js";
 import { clearSessionCookie, sessionCookie } from "./cookies.js";
 import type { HubConfig } from "./config.js";
+import type { Gateway } from "./gateway.js";
+import type { MachineStore } from "./machines.js";
 import { HubError } from "./errors.js";
 import {
   adminPage,
@@ -80,7 +82,26 @@ const publicPrincipal = (principal: Principal): Record<string, unknown> =>
         auth: principal.auth,
       };
 
-export function registerRoutes(app: FastifyInstance, service: HubService, store: HubStore, config: HubConfig): void {
+/** Where a project runs and whether that machine is connected now: what the workbench's project list shows. Offline is a fact about the link, never about a Run. */
+export type ProjectMachine = { machineId: string; name: string; state: "pending" | "active" | "removed"; online: boolean } | null;
+
+export function registerRoutes(app: FastifyInstance, service: HubService, store: HubStore, config: HubConfig,
+  extras: { machines?: MachineStore; gateway?: Gateway } = {}): void {
+  const machineOf = async (machineId: string | null): Promise<ProjectMachine> => {
+    if (!machineId || !extras.machines || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(machineId)) return null;
+    const machine = await extras.machines.get(machineId);
+    return machine ? { machineId: machine.machineId, name: machine.name, state: machine.state, online: machine.state === "active" && !!extras.gateway?.online(machine.machineId) } : null;
+  };
+  const withMachine = async <T extends { machineId: string | null }>(project: T): Promise<T & { machine: ProjectMachine }> => ({ ...project, machine: await machineOf(project.machineId) });
+  /** The object classes this caller holds in one project, as the signed identity will carry them. */
+  const permissionsIn = async (principal: Principal, project: { projectId: string; membership: { canTask: boolean; canDocument: boolean; canSession: boolean; isProjectAdmin: boolean } | null }): Promise<string[]> => {
+    if (principal.kind === "human") {
+      const member = project.membership;
+      return member ? [...(member.canTask ? ["task"] : []), ...(member.canDocument ? ["document"] : []), ...(member.canSession ? ["session"] : []), ...(member.isProjectAdmin ? ["management"] : [])] : [];
+    }
+    const grant = await store.getServiceGrant(principal.serviceIdentityId, project.projectId);
+    return grant ? [...(grant.canTask ? ["task"] : []), ...(grant.canDocument ? ["document"] : []), ...(grant.canSession ? ["session"] : [])] : [];
+  };
   const principalFor = async (request: FastifyRequest): Promise<Principal> => {
     const principal = await authenticate(store, request, service.clock());
     if (!principal) throw new HubError(401, "AUTH_REQUIRED", "Sign in or provide a bearer token.");
@@ -141,9 +162,17 @@ export function registerRoutes(app: FastifyInstance, service: HubService, store:
   app.get("/api/session", async request => {
     const principal = await principalFor(request);
     // `projectIds` is what the CLI binds its intent to (the same field the coordinator's own session answer has): the projects this caller can reach through the Hub.
-    const projectIds = (await service.myProjects(principal)).map(project => project.projectId);
+    const projects = await service.myProjects(principal);
+    const projectIds = projects.map(project => project.projectId);
+    // The workbench's own session shape (`permissions`, `capabilities`) is filled from the same facts: `permissions` is what the caller holds in any project, and
+    // `projectPermissions` says which project holds what, so a page for one project shows what the caller may do there. The coordinator checks every request again
+    // from the signed identity; these only decide what the page offers.
+    const projectPermissions: Record<string, string[]> = {};
+    for (const project of projects) projectPermissions[project.projectId] = await permissionsIn(principal, project as never);
+    const permissions = [...new Set(Object.values(projectPermissions).flat())];
     return {
-      principal: { ...publicPrincipal(principal), projectIds },
+      principal: { ...publicPrincipal(principal), projectIds, permissions, projectPermissions, identityKind: principal.kind === "human" ? "human" : "agent", ...(principal.kind === "human" ? { decisions: true } : {}) },
+      capabilities: {},
       csrfToken: sessionCsrfToken(request, principal),
     };
   });
@@ -169,13 +198,13 @@ export function registerRoutes(app: FastifyInstance, service: HubService, store:
 
   app.get("/api/projects", async request => {
     const principal = await principalFor(request);
-    return { projects: await service.myProjects(principal) };
+    return { projects: await Promise.all((await service.myProjects(principal)).map(withMachine)) };
   });
 
   app.get("/api/projects/:projectId", async request => {
     const principal = await principalFor(request);
     const { projectId } = request.params as Params;
-    return { project: await service.getProject(principal, uuid(projectId, "projectId")) };
+    return { project: await withMachine(await service.getProject(principal, uuid(projectId, "projectId"))) };
   });
 
   app.get("/api/projects/:projectId/members", async request => {
@@ -314,7 +343,8 @@ export function registerRoutes(app: FastifyInstance, service: HubService, store:
     return reply.code(204).send();
   });
 
-  app.get("/", async (request, reply) => {
+  // With the workbench installed it answers at `/`; the plain pages below stay for administration and as a fallback.
+  if (!config.webRoot) app.get("/", async (request, reply) => {
     const principal = await cookiePrincipalFor(request, true);
     return principal ? redirect(reply, "/app") : redirect(reply, "/login");
   });

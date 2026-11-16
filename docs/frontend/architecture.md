@@ -108,7 +108,7 @@ QueryService 返回 `observedAt`、对象与 revision、权限能力、分源状
 
 - **现状**（PR4c）：`shared/identity.ts` 是唯一的身份来源，所有请求经 `shared/api.ts` 的同一处读取它。
   - **本机令牌**：用户在登录门输入令牌，只存在页面内存，请求带 `Authorization` 头。
-  - **Hub 登录**：Hub 托管的页面带 `<meta name="evoloop-auth" content="hub">`，登录门不要令牌，直接用同源 cookie 核对 `/api/session`；Origin/CSRF 校验在 Hub 一侧（#219）。
+  - **Hub 登录**：Hub 托管工作台的静态文件（`apps/hub/src/workbench.ts`），页面带 `<meta name="evoloop-auth" content="hub">`。登录门先用同源 cookie 核对 `/api/session`，没有登录才出邮箱与密码的表单（`POST /api/auth/login`）；写请求带内存里的 `X-Hub-CSRF`，Origin 与 CSRF 校验在 Hub 一侧（#219）。`/api/session` 由 Hub 回答，除 `projectIds` 外带 `permissions`（调用者在任一项目里持有的类别）与 `projectPermissions`（每个项目各持有什么），页面按当前项目取后者；项目详情与项目列表也由 Hub 回答并带 `machine`（名称、状态、是否在线）；其余 `/api/projects/{id}/…` 与 `/api/commands` 由 Hub 转发到项目所在的机器。Hub 的错误形状 `{error:{code,message}}` 在 `shared/api.ts` 里转成与 coordinator 相同的 `{code,message}`，机器离线等 Hub 的代码在 `shared/errorCodes.ts` 里有中文。
   - **新代码**：调用 `api()` 不传令牌即用当前身份；上面说的少数读取和登录门、项目列表、操作核对仍从 `MutationContext.token` 或页面参数传令牌。
   - **401**：任何请求收到 401 视为登录失效：清空查询缓存、草稿、恢复意图和页面缓存，回登录门并说明原因。地址保留，未确认的操作回执保留给同一身份。
   - **403**：403 只说明某个对象无权读取，由页面自己说明。只有读取项目本身得到 403 时，外壳重读身份；项目已不在授权内就清掉它的缓存，回到项目列表并提示。

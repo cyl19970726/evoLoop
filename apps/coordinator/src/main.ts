@@ -149,6 +149,16 @@ const configuredUsageTimeZone = integrations.runtime?.dailyBudget?.timeZone ?? "
 const currentIdentity = async () => parseAuthConfig(JSON.parse(await readFile(authFile,"utf8")));
 const currentProjectWriter = async (projectId:string,actorId:string) =>
   isProjectWriter(await currentIdentity(),projectId,actorId);
+/**
+ * A Hub account has no entry in this machine's token file, so the "current writer" test cannot find it there. It sends only on an explicit grant: an enabled
+ * `sessionMessages.grants` entry for this project and sender marked `"senderKind":"hub"`. The request itself still arrived with a signed identity holding the
+ * Session permission. Used for the sender alone; receivers and every other writer test are unchanged (Task 9ea06625).
+ */
+const currentSenderWriter = async (projectId:string,actorId:string) => {
+  if(await currentProjectWriter(projectId,actorId))return true;
+  const messages=(await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE)).sessionMessages;
+  return !!messages?.enabled&&messages.grants.some(g=>g.enabled&&g.projectId===projectId&&g.senderActorId===actorId&&g.senderKind==="hub");
+};
 const resolveSessionLineRecipient=async(projectId:string,sessionId:string)=>{
     // The Session's own signing identity, never its creator or a guess from the Role.
     const row=(await pool.query(`SELECT s.role_id,s.actor_id,(SELECT count(*)::int FROM runtime_session o WHERE o.project_id=s.project_id
@@ -1068,6 +1078,7 @@ const app = await buildServer({ service, credentials, canWrite: lease.canWrite, 
     loadConfiguration: () => loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE),
     runtimeAvailable: () => runner?.status().available === true,
     isProjectWriter: currentProjectWriter,
+    isSenderWriter: currentSenderWriter,
     canExecuteSession: currentSessionExecutionAuthority,
     readSession: (projectId, sessionId) => uow.read(projectId, reader => reader.getRuntimeSession(sessionId)),
     turnsUsed: (projectId, sessionId, senderActorId) => uow.read(projectId, async reader => {
@@ -1120,7 +1131,7 @@ const app = await buildServer({ service, credentials, canWrite: lease.canWrite, 
     const session = await service.getRuntimeSession(principal, projectId, sessionId);
     return ordinaryMessageGrantProblem({ projectId, senderActorId: principal.actorId, session,
       sessionMessages: (await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE)).sessionMessages,
-      isProjectWriter: actorId => currentProjectWriter(projectId, actorId) });
+      isProjectWriter: actorId => currentProjectWriter(projectId, actorId), isSenderWriter: actorId => currentSenderWriter(projectId, actorId) });
   },
   sessionPreparation: async input => {
     const current=await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE);

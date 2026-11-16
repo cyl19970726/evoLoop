@@ -45,6 +45,8 @@ export type HubIdentityDeps = {
   /** Actor IDs of the identities in this machine's own token file; a Hub account may not take one of them. */
   localActorIds(): ReadonlySet<string>;
   now?: () => number;
+  /** When this coordinator started, in ms. Identities signed before it are refused (default: when the verifier is built). */
+  startedAt?: number;
 };
 
 const PROJECT_PATH = /^\/api\/projects\/([0-9a-f-]{36})\//i;
@@ -55,7 +57,13 @@ const PROJECT_PATH = /^\/api\/projects\/([0-9a-f-]{36})\//i;
  */
 export class HubIdentityVerifier {
   private readonly seen = new Map<string, number>();
-  constructor(private readonly deps: HubIdentityDeps) {}
+  /**
+   * The one-use record (`seen`) is in memory, so a restart forgets it. Instead of keeping it across restarts, an identity the Hub signed before this coordinator
+   * started is refused: whatever was captured and used, or not yet used, in the minute before a restart cannot be played afterwards. The cost is that a request the
+   * Hub signed just before a restart fails once and is signed again on retry.
+   */
+  private readonly startedAtSeconds: number;
+  constructor(private readonly deps: HubIdentityDeps) { this.startedAtSeconds = Math.floor((deps.startedAt ?? (deps.now ?? Date.now)()) / 1000); }
 
   async verify(header: string, request: { method: string; url: string }): Promise<{ principal: Principal; identity: HubIdentity }> {
     const credentials = this.deps.credentials();
@@ -78,6 +86,7 @@ export class HubIdentityVerifier {
     const now = Math.floor((this.deps.now ?? Date.now)() / 1000);
     if (payload.aud !== credentials.machineId) throw new HubIdentityError("issued for another machine");
     if (payload.exp <= now - 0) throw new HubIdentityError("expired");
+    if (payload.iat < this.startedAtSeconds) throw new HubIdentityError("signed before this coordinator started");
     if (payload.iat > now + SKEW_SECONDS || payload.exp - payload.iat > MAX_LIFETIME_SECONDS) throw new HubIdentityError("lifetime not allowed");
     if (payload.method !== request.method.toUpperCase()) throw new HubIdentityError("issued for another method");
     if (payload.target !== createHash("sha256").update(request.url, "utf8").digest("base64url")) throw new HubIdentityError("issued for another target");

@@ -275,3 +275,19 @@ coordinator 收到带 `x-evoloop-hub-identity` 头的请求时，**只**按身�
 - 没有流式转发（事件流）、没有多台机器共载、没有网页建项目选机器、没有工作台登录页（PR4）、没有正式部署；Hub 连接表是内存的，只支持单个 Hub 进程。
 - 签名密钥存在 Hub 库里（备份按密钥材料保护），支持多把公钥并存，但没有轮换流程。
 - 没有在真实机器、真实 HTTPS 入口或使用者手里验证；候选阶段只证明自建 Hub 与真实 PostgreSQL。
+
+## 13. 工作台经 Hub 登录（H1 PR4，Task 9ea06625）
+
+状态：代码与自动测试已写，**本 PR 合入后才算已合入**；没有在真实 HTTPS 入口、真实机器或使用者手里验证，正式阶段（Hub 正式部署后使用者本人登录一次）另记。
+
+- **Hub 托管工作台。** `HUB_WEB_ROOT`（默认是检出里的 `apps/workbench/dist`，没有 `index.html` 就不托管）里的文件由 Hub 在 `/`、`/ui`、`/p/…`、`/assets/…`、`/favicon.svg`、`/theme-init.js` 提供，`index.html` 里加一条 `<meta name="evoloop-auth" content="hub">`，页面据此用 Hub 登录。工作台页面用与 coordinator 相同的内容安全策略；Hub 自己的页面（`/login`、`/app`、`/admin`……）仍是严格策略，也还在，作回退与管理用。一个旧版本的页面块文件已不在服务器上时，脚本得到一个“工作台已经更新，请刷新页面”的模块（登录仍然有效，不需要重新填写令牌），别的文件 404；文件名只允许普通字符，没有路径穿越。
+- **登录。** 登录页是邮箱与密码，走 `POST /api/auth/login`（同源 `Origin`），Hub 设 HttpOnly + Secure + SameSite=Strict 的 cookie，页面读不到；CSRF 令牌放在页面内存里，写请求带 `X-Hub-CSRF`。令牌、密码、cookie 都不进 URL、localStorage 或 sessionStorage。会话 12 小时（`HUB_SESSION_TTL_SECONDS`）；刷新页面不需要重新登录；登出结束 Hub 上的会话；过期或 401 回到登录页并写“登录已失效”。本地令牌模式（没有 meta 标签的页面）原样保留。
+- **会话与项目列表。** `GET /api/session` 除原有字段外还带 `permissions`、`projectPermissions`、`identityKind`、`capabilities`（工作台的 session 形状）；`GET /api/projects` 与 `GET /api/projects/{id}` 带 `machine`（`{machineId,name,state,online}`，没有登记机器时为 `null`）。人只看到自己是成员的项目，Hub 管理员不因此看到任何项目；别人的项目 403。
+- **离线。** 项目所在的机器没有连上时，项目仍然列出，写“机器 名称 · 离线 · 暂不可读写（不代表运行失败）”，转发请求得到 `503 MACHINE_OFFLINE`；这是对连接的描述，**不改写任何 Run 或交付的状态**（机器上的运行不依赖 Hub）。机器被移除后项目不再指向它。
+- **查看规则（DEC-048 第 1 项）。** 项目成员能看项目里的任务、文档，以及 Session 的存在、状态、摘要和一般对话；完整原生记录与工具输入输出需要对这个 Session 的 Session 权限（`session` 类别，且成员的 Session 列表不限定到别的 Session）。这条规则在 coordinator 一侧，用 PR3 的签名身份里带来的权限与 Session 列表判断（`session-timeline` 对 `originalToolDetail` 与完整原生记录的检查）；没有 Session 权限时页面写“完整原生记录需要此 Session 的 Session 权限”。
+- **Hub 账号发送消息要显式授权。** 本机“当前写入者”检查只认本机令牌文件里的身份。经 Hub 来的 Hub 账号要给 Session 发消息，需要私有配置 `sessionMessages.grants` 里有一项把 `senderActorId` 写成这个 Hub 账号的 actor ID 并带 `"senderKind":"hub"`（其余字段与本机授权相同：Session、接收方身份、职责、目录）；没有这一项仍然被拒，并提示要加什么。这只放宽**发送者**的“当前写入者”检查，不把 Hub 账号当成任何本机身份，接收方与别处的写入者检查不变；请求本身仍要带 Session 权限的签名身份。
+- **签名身份重启后仍只能用一次。** PR3 的单次使用记录在内存里。现在 coordinator 拒绝**早于它启动时间签发**的身份：重启前抓到的、用过的或没用过的身份，重启后都不能再用；代价是重启瞬间在途的请求会失败一次，重试时重新签发。Hub 与机器的时钟若相差数秒，重启后头几秒签发的身份也会被拒一次。
+- **服务身份**按项目授权、默认只读，不变（需求 Session 已确认）。
+- **深链。** 交付里记的工作台链接若写着页面当前打开的地址（Hub 的地址），在同一标签里打开；别的主机与相似的主机仍是外部链接（`shared/api.ts` 的 `ownWorkbenchAddress`）。
+
+**没有做的 / 没有验证的**：Hub 正式部署与使用者本人登录；流式接口（事件流）不经 Hub；密码找回与两步验证；多机共载；真实受管 Session 在 Hub 断线时继续跑；Hub 账号消息授权只做了单元层验证，没有经真实 Session 发出一条。

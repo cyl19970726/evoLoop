@@ -17,6 +17,8 @@ export type HubConfig = {
   /** Largest request body and largest machine answer the Hub forwards. */
   forwardBodyLimitBytes?: number;
   maxResponseBytes?: number;
+  /** Directory with the built workbench (index.html and assets). When set the Hub serves the workbench at `/`, `/p/…` and `/assets/…`. */
+  webRoot?: string;
 };
 
 const positiveInteger = (value: string | undefined, fallback: number, name: string): number => {
@@ -40,6 +42,7 @@ export function normalizeOrigin(value: string): string {
 }
 
 export function loadHubConfig(env: NodeJS.ProcessEnv = process.env): HubConfig & { databaseUrl: string } {
+  const webRoot = env.HUB_WEB_ROOT?.trim();
   const databaseUrl = loadHubDatabaseUrl(env);
   const publicOrigin = normalizeOrigin(env.HUB_PUBLIC_ORIGIN ?? "");
   return {
@@ -57,6 +60,7 @@ export function loadHubConfig(env: NodeJS.ProcessEnv = process.env): HubConfig &
     forwardTimeoutMs: positiveInteger(env.HUB_FORWARD_TIMEOUT_SECONDS, 60, "HUB_FORWARD_TIMEOUT_SECONDS") * 1000,
     forwardBodyLimitBytes: positiveInteger(env.HUB_FORWARD_BODY_LIMIT_BYTES, 128 * 1024, "HUB_FORWARD_BODY_LIMIT_BYTES"),
     maxResponseBytes: positiveInteger(env.HUB_MAX_RESPONSE_BYTES, 8 * 1024 * 1024, "HUB_MAX_RESPONSE_BYTES"),
+    ...(webRoot ? { webRoot } : {}),
   };
 }
 
