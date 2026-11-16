@@ -171,6 +171,9 @@ test("people nodes and the tray: the scheduler and the requirements Session open
   for (const station of ["已合并", "已发布"]) { const info = nodeInfoOf(P, stationNode(station), fixtureBoard, null); assert.deepEqual(info.targets, []); assert.match(info.notes[0]!, /^读不到：调度事件流今天不含合并与发布/); }
   const closed = nodeInfoOf(P, stationNode("已验收"), fixtureBoard, null, 6);
   assert.ok(closed.lines.some(l => l.includes("近 6 小时")), "the 已验收 node says its window"); assert.match(closed.targets[0]!.href, /\/work$/);
+  assert.ok(!closed.notes.join("").includes("选“已关闭”"), "no instruction to pick a filter that does not exist");
+  assert.match(closed.notes.join(""), /“已完成”/);
+  assert.match(closed.targets.find(t => t.label === "打开已完成的任务")!.href, /\/work\?state=done$/, "a link to the filter that exists");
 });
 
 test("the detail on screen renders a node's links and its 读不到 reasons for a live board, and nothing is invented for a fixture node", () => {
