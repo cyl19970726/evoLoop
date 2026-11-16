@@ -38,7 +38,9 @@ export interface SessionLineEntry {
   step: SessionLineStep | null; attempt: number; stepTry: number;
   assignOperationId: string | null; startOperationId: string | null; reassignOperationId: string | null; reserveOperationId: string | null; messageId: string | null;
   suspendReason: string | null; withdrawnReason: string | null;
-  source: "leader" | "schedule"; sourceActorId: string; scheduleId: string | null; releaseRule: "run_end";
+  source: "leader" | "schedule" | "rework"; sourceActorId: string; scheduleId: string | null;
+  /** Internal rework entries cite the exact failed/unused observation and Delivery that created them. */
+  reworkObservationId: string | null; reworkDeliveryId: string | null; releaseRule: "run_end";
   runId: string | null; runEndedAt: string | null; version: number; appendedAt: string; updatedAt: string;
 }
 export interface SessionLineEvent {

@@ -9,6 +9,7 @@ import { parseQueueHandoff } from "@evoloop/contracts/runtime-handoff";
 import { canonicalTaskInputJson, taskInputSignature } from "../task-input.js";
 import { sessionRuntimeProvider } from "../roles/runtime.js";
 import { RoleRuleError } from "../roles/index.js";
+import { assertRunReserveAvailable, taskDispatchConflict } from "../task-dispatch-guard.js";
 
 type ReserveCommand = Extract<Command, { type: "runtime.session.reserve" | "runtime.session.close" | "runtime.run.reserve" | "runtime.run.interrupt" | "runtime.run.stop" | "runtime.run.abandonReadOnly" | "runtime.handoff.record" }>;
 type Effect = { kind: string; entityId: string; version: number };
@@ -162,13 +163,15 @@ export async function reserveRuntime({ tx, command, principal, now, nextId, hash
     throw new DomainError("FULL_EXECUTION_REQUIRED", "Upgrade the Session execution profile before starting new work");
   await tx.recovery?.assertStartupAllowed(session.id,'run',command.runId);
   const task = required(await tx.getTask(command.taskId), "task");
-  await tx.sessionLines?.assertNotQueuedInLine(task.id, command.operationId);
   await requireAssignedSession(tx, task, command.sessionId, !!queueClaim);
   try { await tx.queue?.assertQueueVacant(task.id,session.id,queueClaim?.claimId,queueClaim?.runId,queueClaim?.operationId); }
   catch { throw new DomainError("QUEUE_OCCUPIED", "Task or Session has an unreleased queue claim"); }
   if(queueClaim && (queueClaim.runId!==command.runId||queueClaim.operationId!==command.operationId||queueClaim.taskId!==task.id||queueClaim.sessionId!==session.id))
     throw new DomainError("QUEUE_CLAIM_MISMATCH", "queue reservation does not match its active claim");
   if (task.version !== command.expectedVersion) throw new DomainError("VERSION_CONFLICT", `Task version mismatch: expectedVersion must be the Task's current version (now ${task.version}), not a Session version; or the Task changed since dispatch was requested`, task.version);
+  const guardConflict = !queueClaim && !command.evaluation ? await taskDispatchConflict(tx, task) : null;
+  if (guardConflict && !guardConflict.delivery && !guardConflict.run)
+    await tx.sessionLines?.assertNotQueuedInLine(task.id, command.operationId);
   if (task.state !== "in_progress") {
     throw new DomainError("TASK_NOT_READY", "only explicitly started in-progress tasks may dispatch");
   }
@@ -188,6 +191,15 @@ export async function reserveRuntime({ tx, command, principal, now, nextId, hash
     throw new DomainError("TASK_DEPENDENCY_BLOCKED",
       `Task dependencies require current acceptance before dispatch: ${dependencyBlockers.slice(0, 3)
         .map(item => `${item.title} (${item.currentRevisionId})`).join(", ")}`);
+  // Keep queue/dependency failures in their existing order, then apply the shared delivery guard before any write.
+  // Evaluation reserves are a controlled internal route: each attempt derives a fresh Task revision and a fresh Session.
+  // An adopted resident-queue claim has its own reviewed gate. All other ordinary reserves must pass the guard, except
+  // an exact still-current Task-answer continuation, which is validated against its fixed collaboration event.
+  if (!queueClaim && !command.evaluation)
+    await assertRunReserveAvailable(tx, task, command.operationId, {
+      principal, sessionId: session.id, input: command.input,
+    });
+  await tx.sessionLines?.assertNotQueuedInLine(task.id, command.operationId);
   const previous = required(await tx.getTaskRevision(task.id, task.currentRevisionId), "task revision");
   const originalBasis = required(previous.basisSetId ? await tx.getBasisSet(task.id, previous.id, previous.basisSetId) : null, "sealed basis");
   const previousExternal = command.evaluation ? await tx.listTaskExternalSnapshot(task.id, previous.id) : [];

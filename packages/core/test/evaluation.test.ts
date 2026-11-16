@@ -48,6 +48,7 @@ function fixture() {
     insertEvaluationConclusion: async (value: EvaluationConclusion) => { state.conclusions.push(value); },
     getDelivery: async (key: string) => state.deliveries.find(item => item.id === key) ?? null,
     insertDelivery: async (value: Delivery) => { state.deliveries.push(value); },
+    listDeliveries: async (key: string) => state.deliveries.filter(item => item.taskId === key),
     listObservations: async () => [],
     getRuntimeSession: async (key: string) => state.sessions.find(item => item.id === key) ?? null,
     updateRuntimeSession: async (next: any) => { state.sessions[state.sessions.findIndex(item => item.id === next.id)] = next; },
