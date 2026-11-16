@@ -1,5 +1,6 @@
 import type { Pool } from "pg";
 import { DomainError } from "@evoloop/contracts/ports";
+import { readLeaderWorkPhaseCounts } from "./work-index.js";
 import { GATE_ATTENTION_MINUTES, type SchedEvent, SchedEventsPage, WorkBoardInFlight, WorkBoardLeaderItem, WorkBoardQueueItem, WorkBoardSession, WorkBoardSnapshot, WorkBoardWaitingTask, WorkBoardWork } from "@evoloop/contracts/work-board";
 
 type Db = Pick<Pool, "query">;
@@ -152,8 +153,15 @@ export async function readWorkBoard(pool: Pool, projectId: string): Promise<Work
     // Closed recovery gates first, in the full snapshot as in the brief.
     awaiting.sort((a, b) => Number(b.kind === "recovery_gate") - Number(a.kind === "recovery_gate"));
     const packets = await q(`SELECT packet_id,session_id,state FROM leader_notice_packet WHERE project_id=$1 AND state IN ('building','sent','delivered','unknown','blocked')`);
-    const relays = await q(`SELECT relay_id,session_id,state,(SELECT title FROM task t WHERE t.project_id=r.project_id AND t.task_id=r.task_id) AS title
-      FROM task_acceptance_relay r WHERE project_id=$1 AND state IN ('pending','linked') ORDER BY created_at DESC LIMIT 100`);
+    // An arrangement still in flight: its message was arranged or sent (pending/linked), its Task is still open, and its recipient has not yet linked an observation.
+    // `linked` means the arrangement's message is saved and bound to it, not that anyone has replied; nothing ends an arrangement when its Task closes, so rows of
+    // closed Tasks stay `linked` and are not in flight (defect 422d95ce). The list is capped for size, the count is not.
+    const relayOpen = `FROM task_acceptance_relay r JOIN task t ON t.project_id=r.project_id AND t.task_id=r.task_id
+      WHERE r.project_id=$1 AND r.state IN ('pending','linked') AND t.state NOT IN ('done','cancelled')
+        AND NOT EXISTS(SELECT 1 FROM task_acceptance_observation_link l WHERE l.project_id=r.project_id AND l.relay_id=r.relay_id)`;
+    const relays = await q(`SELECT r.relay_id,r.session_id,r.state,t.title ${relayOpen} ORDER BY r.created_at DESC LIMIT 100`);
+    const relaysUnanswered = num((await q(`SELECT count(*)::int AS n ${relayOpen}`))[0].n);
+    const phaseCounts = await readLeaderWorkPhaseCounts(client, projectId);
     const inFlight: WorkBoardInFlight[] = [
       ...entries.map(e => ({ kind: "queue_entry" as const, id: e.entry_id, title: e.title ?? null, state: e.state, sessionId: e.session_id })),
       ...sessions.flatMap(s => s.current ? [{ kind: s.current.kind === "run" ? "run" as const : "message" as const, id: s.current.id, title: s.current.taskTitle, state: "running", sessionId: s.sessionId }] : []),
@@ -164,7 +172,9 @@ export async function readWorkBoard(pool: Pool, projectId: string): Promise<Work
       sessions: sessions.length, running: sessions.filter(s => s.current).length, queued: entries.filter(e => e.state === "queued").length,
       held: entries.filter(e => e.state === "held").length, claimed: entries.filter(e => e.state === "claimed").length,
       queuedMessages: sessions.reduce((n, s) => n + s.queuedMessages, 0), readyNotQueued: readyNotQueued.length, openPackets: packets.length,
-      pendingAcceptance: relays.length, awaitingLeader: awaiting.length,
+      // 待验收 is Tasks whose current Delivery has no declared-consumer conclusion: the Leader index's awaiting_acceptance, the same number the Task list shows.
+      // Arrangements waiting for their recipient's reply are a different thing and are counted under their own name.
+      pendingAcceptance: phaseCounts.awaiting_acceptance!, acceptanceRelaysUnanswered: relaysUnanswered, awaitingLeader: awaiting.length,
     };
     await client.query("COMMIT");
     return { projectId, observedAt: new Date().toISOString(), eventSeq, sessions, readyNotQueued, awaitingLeader: awaiting,

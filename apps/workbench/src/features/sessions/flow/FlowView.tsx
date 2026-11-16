@@ -251,6 +251,7 @@ export function FlowView({ board, events, context, source, startAt, connection, 
       <Button variant="row" data-node={stationNode(s.station)} aria-pressed={selected?.type === "node" && selected.id === stationNode(s.station)} onClick={() => setSelected({ type: "node", id: stationNode(s.station) })}
         className={cn("flex h-auto items-center gap-1.5 rounded-md px-1.5 py-1 text-left text-small", selected?.type === "node" && selected.id === stationNode(s.station) && "bg-selected")}>
         <span>{s.station}</span><span className="tabular-nums font-medium">{s.count === null ? "读不到" : s.count}</span>
+        {s.note && <span className="text-caption text-muted-foreground" data-station-note="">{s.note}</span>}
         {s.station === "已验收" && <span className="text-caption text-muted-foreground" data-station-window="">{windowLabel}</span>}</Button></li>)}</ol>;
 
   if (narrow) {
@@ -302,7 +303,7 @@ export function FlowView({ board, events, context, source, startAt, connection, 
           {stations.map((s, i) => <li key={s.station} className="absolute bottom-2 flex -translate-x-1/2 flex-col items-center text-caption" style={{ left: `${((100 + i * ((W - 200) / (STATIONS.length - 1))) / W) * 100}%` }}>
             <Button variant="row" data-node={stationNode(s.station)} aria-pressed={selected?.type === "node" && selected.id === stationNode(s.station)} onClick={() => setSelected({ type: "node", id: stationNode(s.station) })}
               className={cn("flex h-auto flex-col items-center rounded-md px-1.5 py-0.5 text-caption", selected?.type === "node" && selected.id === stationNode(s.station) && "bg-selected")}>
-              <span className="tabular-nums font-medium">{s.count === null ? "读不到" : s.count}</span><span className="text-muted-foreground">{s.station}</span>{s.station === "已验收" && <span className="text-muted-foreground" data-station-window="">{windowLabel}</span>}</Button></li>)}
+              <span className="tabular-nums font-medium">{s.count === null ? "读不到" : s.count}</span><span className="text-muted-foreground">{s.station}</span>{s.note && <span className="text-muted-foreground" data-station-note="">{s.note}</span>}{s.station === "已验收" && <span className="text-muted-foreground" data-station-window="">{windowLabel}</span>}</Button></li>)}
         </ol>
       </div>
       <div className="grid gap-4 @2xl:grid-cols-2 md:grid-cols-2"><div>{eventList}</div><div>{detail}</div></div>
