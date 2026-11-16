@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, readdir, rm, stat } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -31,7 +31,9 @@ test("a child's private detail is one 0600 file in a 0700 directory; the log lin
     assert.doesNotMatch(lines.join("\n"), /boom|private path/, "the public log never carries stderr");
     // A sink that cannot write says so without throwing into the transport.
     const broken: string[] = [];
-    createChildDetailSink({ directory: "/proc/definitely/not/writable/here", log: line => broken.push(line) })(detail(4));
+    // The directory would have to be made inside a regular file (ENOTDIR on every platform; a path under /proc can make a recursive mkdir spin on Linux).
+    await writeFile(join(directory, "blocker"), "x");
+    createChildDetailSink({ directory: join(directory, "blocker", "diag"), log: line => broken.push(line) })(detail(4));
     assert.match(broken[0] ?? "", /private detail could not be written/);
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
