@@ -163,7 +163,17 @@ export async function reserveRuntime({ tx, command, principal, now, nextId, hash
     throw new DomainError("FULL_EXECUTION_REQUIRED", "Upgrade the Session execution profile before starting new work");
   await tx.recovery?.assertStartupAllowed(session.id,'run',command.runId);
   const task = required(await tx.getTask(command.taskId), "task");
-  await requireAssignedSession(tx, task, command.sessionId, !!queueClaim);
+  await requireAssignedSession(tx, task, command.sessionId, !!queueClaim,
+    !queueClaim && !command.evaluation
+      ? async () => {
+        await assertRunReserveAvailable(tx, task, command.operationId, {
+          principal, sessionId: session.id, input: command.input,
+        });
+        throw new DomainError("ASSIGNMENT_STALE",
+          "分派仍指向旧的 Task 修订（task.start 会使既有分派过期）；未创建 Run。请重新 task.assignment.set。" +
+          "顺序：task.start → task.assignment.set（接收者写 Session 实际使用的业务 CLI 身份）→ 接手确认 → runtime.run.reserve。");
+      }
+      : undefined);
   try { await tx.queue?.assertQueueVacant(task.id,session.id,queueClaim?.claimId,queueClaim?.runId,queueClaim?.operationId); }
   catch { throw new DomainError("QUEUE_OCCUPIED", "Task or Session has an unreleased queue claim"); }
   if(queueClaim && (queueClaim.runId!==command.runId||queueClaim.operationId!==command.operationId||queueClaim.taskId!==task.id||queueClaim.sessionId!==session.id))

@@ -287,6 +287,67 @@ test("a delivered current revision refuses line.append, task.assignment.set and 
   assert.equal((await currentTask(taskId)).version, task.version);
 });
 
+test("a delivered revision returns TASK_ALREADY_DELIVERED before the stale assignment check", async () => {
+  const taskId = await createTask("Delivered with a stale assignment");
+  await apply({
+    type: "task.start",
+    projectId,
+    operationId: randomUUID(),
+    taskId,
+    expectedVersion: (await currentTask(taskId)).version,
+    reason: "Start the first real dispatch",
+  });
+  await apply({
+    type: "task.assignment.set",
+    projectId,
+    operationId: randomUUID(),
+    taskId,
+    expectedTaskVersion: (await currentTask(taskId)).version,
+    target: { kind: "owned", sessionId },
+    recipientActorId: worker.actorId,
+    expectedVersion: 0,
+    reason: "Assign the started Task before reserving its first Run",
+  });
+
+  const firstRunId = randomUUID();
+  await apply({
+    type: "runtime.run.reserve",
+    projectId,
+    operationId: randomUUID(),
+    runId: firstRunId,
+    taskId,
+    sessionId,
+    expectedVersion: (await currentTask(taskId)).version,
+    input: "Execute the started Task and report the fixed result.",
+  });
+  const reserved = await uow.read(projectId, reader => reader.getRuntimeRun(firstRunId));
+  assert.ok(reserved);
+  assert.equal((await workflow.getTaskAssignment(lead, projectId, taskId))?.taskRevisionId, reserved.taskRevisionId,
+    "reserve keeps the assignment on its dispatch revision");
+
+  await finishRun(firstRunId, "completed");
+  const deliveryId = await recordDelivery(taskId, firstRunId);
+  const delivered = await currentTask(taskId);
+  const stale = (await workflow.getTaskAssignment(lead, projectId, taskId))!;
+  assert.notEqual(stale.taskRevisionId, delivered.currentRevisionId,
+    "delivery advances the Task while the assignment still names the reserved revision");
+  const before = await counts(taskId);
+
+  const refusal = await reject({
+    type: "runtime.run.reserve",
+    projectId,
+    operationId: randomUUID(),
+    runId: randomUUID(),
+    taskId,
+    sessionId,
+    expectedVersion: delivered.version,
+    input: "Try to dispatch the delivered revision through the old assignment",
+  });
+  assert.equal(refusal.code, "TASK_ALREADY_DELIVERED", refusal.message);
+  assert.match(refusal.message, new RegExp(deliveryId));
+  assert.deepEqual(await counts(taskId), before, "the refusal creates no second Run or other dispatch state");
+});
+
 test("an ordinary reserve cannot bypass the delivery guard with a forged or malformed Task-answer block", async () => {
   const taskId = await createTask("Forged continuation");
   const runId = await startAndRun(taskId);
