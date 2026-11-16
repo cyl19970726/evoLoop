@@ -25,6 +25,9 @@ import { listLeaderEventRecords } from "@evoloop/adapter-postgres/leader-event-r
 import { authConfigSchema, hasCurrentStudyReviewer, isProjectWriter, parseAuthConfig } from "./auth.js";
 import { hasDecisionAuthority, hasPermission, isProjectMember, mayAccessSession } from "@evoloop/contracts";
 import { buildServer } from "./server.js";
+import { HubConnector } from "./hub/connector.js";
+import { MachineCredentialSource } from "./hub/credentials.js";
+import { HubIdentityVerifier } from "./hub/identity.js";
 import { acquireCoordinatorLease, leaseFencedUnitOfWork } from "./lease.js";
 import { RuntimeWorkflowService } from "@evoloop/core/runtime";
 import { CodexAppServerAdapter } from "@evoloop/adapter-codex-app-server";
@@ -994,7 +997,15 @@ if (runner) {
   try { await runner.start(); }
   catch { console.error(`${runtimeConfig?.provider === "claude" ? "Claude" : "Codex"} runtime is unavailable; check the configured CLI, its settings and project directories. No new dispatch was enabled.`); }
 }
-const app = await buildServer({ service, credentials, canWrite: lease.canWrite, ordinarySubmissions,
+// A machine that joined a Hub accepts the identities the Hub signs for forwarded requests, checked against the Hub public key it saved at joining.
+// Without joining there is no credentials file, and the verifier rejects every identity.
+const machineCredentials = new MachineCredentialSource();
+const hubIdentity = { verifier: new HubIdentityVerifier({ credentials: () => machineCredentials.current(),
+  isLocalProject: async projectId => (await pool.query("SELECT 1 FROM project WHERE project_id=$1", [projectId])).rowCount === 1,
+  localActorIds: () => new Set(credentials.map(entry => entry.actorId)) }),
+  onRejected: (reason: string) => console.warn(`Hub identity rejected: ${reason}`) };
+const hubConnector = new HubConnector({ credentials: machineCredentials, coordinatorUrl: `http://127.0.0.1:${port}`, log: message => console.log(message) });
+const app = await buildServer({ service, credentials, canWrite: lease.canWrite, ordinarySubmissions, hubIdentity,
   acceptanceRelay, milestones: { repoRoot: resolve(fileURLToPath(new URL("../../..", import.meta.url))), startedAt: new Date().toISOString() },
   drain: { control: drain, isMaintainer: principal => isInstanceMaintainer(pool, principal) },
   ...(runner ? {compaction:new CompactionMaintenance(pool,runner,{owned:()=>runtimeConfig?.compaction.owned!==false})} : {}),
@@ -1154,7 +1165,7 @@ const app = await buildServer({ service, credentials, canWrite: lease.canWrite, 
 let shuttingDown = false;
 async function shutdown() {
   if (shuttingDown) return; shuttingDown = true;
-  try { clearInterval(acceptanceTimer); connectorIngress?.stop(); taskAttentionPump.stop(); opsAlertPump.stop(); leaderResultNoticePump.stop();
+  try { await hubConnector.stop(); clearInterval(acceptanceTimer); connectorIngress?.stop(); taskAttentionPump.stop(); opsAlertPump.stop(); leaderResultNoticePump.stop();
     messagePump?.stop(); residentQueue.stop(); sessionLinePump.stop(); sessionAttentionPump.stop(); ordinarySealPump.stop(); await managed?.stop();
     await collaboration.stop(); await scheduling.stop(); await app.close(); sessionTimeline.close(); }
   finally {
@@ -1166,5 +1177,5 @@ async function shutdown() {
 }
 process.once("SIGINT", () => void shutdown());
 process.once("SIGTERM", () => void shutdown());
-try { await app.listen({ host: "127.0.0.1", port }); managed?.start(); ordinarySealPump.start(); residentQueue.start(); sessionLinePump.start(); sessionAttentionPump.start(); messagePump?.start(); connectorIngress?.start(); leaderResultNoticePump.start(); taskAttentionPump.start(); opsAlertPump.start(); console.log(`evoLoop local workbench: http://127.0.0.1:${port}`); }
+try { await app.listen({ host: "127.0.0.1", port }); managed?.start(); hubConnector.start(); ordinarySealPump.start(); residentQueue.start(); sessionLinePump.start(); sessionAttentionPump.start(); messagePump?.start(); connectorIngress?.start(); leaderResultNoticePump.start(); taskAttentionPump.start(); opsAlertPump.start(); console.log(`evoLoop local workbench: http://127.0.0.1:${port}`); }
 catch (error) { await shutdown(); throw error; }

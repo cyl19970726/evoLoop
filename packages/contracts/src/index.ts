@@ -22,6 +22,7 @@ import { providerHoldCommands } from "./provider-hold.js";
 import { nativeInputReplyCommand } from "./native-input.js";
 import { taskAttentionCommands } from "./task-attention.js";
 export * from "./identity.js";
+export * from "./machine.js";
 export { taskAttentionThresholdsSetSchema, taskAttentionFollowUpSetSchema,
   taskAttentionPublicationRecordSchema, taskAttentionResolveSchema,
   taskAttentionStageSchema, taskAttentionSource } from "./task-attention.js";

@@ -54,7 +54,8 @@
     "./work-board": "./dist/work-board.js",
     "./leader-notices": "./dist/leader-notices.js",
     "./session-timeline": "./dist/session-timeline.js",
-    "./project-configuration": "./dist/project-configuration.js"
+    "./project-configuration": "./dist/project-configuration.js",
+    "./machine": "./dist/machine.js"
   },
   "dependencies": {
     "zod": "4.6.7"

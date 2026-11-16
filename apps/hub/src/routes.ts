@@ -140,8 +140,10 @@ export function registerRoutes(app: FastifyInstance, service: HubService, store:
 
   app.get("/api/session", async request => {
     const principal = await principalFor(request);
+    // `projectIds` is what the CLI binds its intent to (the same field the coordinator's own session answer has): the projects this caller can reach through the Hub.
+    const projectIds = (await service.myProjects(principal)).map(project => project.projectId);
     return {
-      principal: publicPrincipal(principal),
+      principal: { ...publicPrincipal(principal), projectIds },
       csrfToken: sessionCsrfToken(request, principal),
     };
   });
