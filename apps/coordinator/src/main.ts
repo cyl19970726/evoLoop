@@ -25,10 +25,11 @@ import { listLeaderEventRecords } from "@evoloop/adapter-postgres/leader-event-r
 import { authConfigSchema, hasCurrentStudyReviewer, isProjectWriter, parseAuthConfig } from "./auth.js";
 import { hasDecisionAuthority, hasPermission, isProjectMember, mayAccessSession } from "@evoloop/contracts";
 import { buildServer } from "./server.js";
+import { codexWorkInFlight } from "./runtime/codex-work.js";
+import { createChildDetailSink, createRefusalSink } from "./runtime/child-detail-log.js";
 import { HubConnector } from "./hub/connector.js";
 import { MachineCredentialSource } from "./hub/credentials.js";
 import { HubIdentityVerifier } from "./hub/identity.js";
-import { createChildDetailSink } from "./runtime/child-detail-log.js";
 import { acquireCoordinatorLease, leaseFencedUnitOfWork } from "./lease.js";
 import { RuntimeWorkflowService } from "@evoloop/core/runtime";
 import { CodexAppServerAdapter } from "@evoloop/adapter-codex-app-server";
@@ -93,7 +94,7 @@ import { SessionObservationService } from "@evoloop/core/session-observation";
 import { AllocationRelationsService } from "@evoloop/core/allocation-relations";
 import { SessionMessageService } from "@evoloop/core/session-messages";
 import type { SessionMessageManualStopPreflight } from "@evoloop/contracts/session-messages";
-import { SessionMessagePump } from "./session-messages/pump.js";
+import { SessionMessagePump, defaultResumeRefusalPolicy } from "./session-messages/pump.js";
 import { ordinaryTurnAdmission } from "./session-messages/ordinary-turn-admission.js";
 import { PgDirectInputs } from "@evoloop/adapter-postgres/direct-input";
 import { createDirectInputService } from "./direct-input/integration.js";
@@ -775,8 +776,11 @@ const senderClassOf = async (projectId: string, actorId: string): Promise<Sender
   const current = await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE);
   return resolveSenderClass(await currentIdentity(), current.leaderResultNotices?.targets.find(t => t.projectId === projectId), projectId, actorId);
 };
+const refusalSink = createRefusalSink();
 const messagePump = runner ? new SessionMessagePump({ service: messageService, runtime: () => runner.nativeAdapter(),
   lock: sessionSteerLock,
+  resumeRefusal: { ...defaultResumeRefusalPolicy, record: refusal => refusalSink(refusal),
+    remedy: async refusal => (await runner.replaceProvider("codex", () => codexWorkInFlight(pool, refusal.messageId))) ? "replaced" : "skipped" },
   senderClass: message => senderClassOf(message.projectId, message.senderActorId),
   roleContext: async message => {
     if(message.target.kind!=="owned")return null;

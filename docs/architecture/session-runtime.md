@@ -118,6 +118,13 @@ stateDiagram-v2
 - **在途消息与恢复门不变**：恢复只开新子进程，不启动任何 Turn、不创建任何东西，所以不会重放。在途消息 Turn 由消息泵按原样读回**原 Thread 的原 Turn**：终态明确就按现有规则结算（C 已经是现状）；读不回或不明确就记 unknown、关闭该 Session 的恢复门，仍由有权者 `resume`——这一点没有改，因为自动关门之后再自动放开等于替人做“这条消息到底发出去没有”的判断。
 - **状态**：`GET /api/projects/{id}/runtime` 多一个 `autoRecover`：`state`（`disabled|idle|waiting_for_exit|scheduled|recovering|exhausted|no_exit_evidence`）、`attempts`、`maxAttempts`、`nextAttemptAtUtc`、`lastError`、`reason`。
 
+**Codex 拒绝恢复仍加载着的线程（缺陷 548712ac，与上一条分开）。** 子进程没有退出、仍报告就绪，但对一条普通消息开始前的 `thread/resume` 返回 `-32600`（`server_rejected`）；原来这条消息直接记 `failed`、该 Session 的恢复门转 `blocked`，Leader 只能等人，一次停了 1.6 小时。因为 `thread/resume` 在 `turn/start` 之前，**这个方法本身就证明没有发出过任何 Turn**，适配器也还没有消耗这次操作（`fullTurnAttempts` 在发出 `turn/start` 前才登记），所以同一个已保留的操作可以再试：
+
+- **触发条件**：只有 `thread/resume` 被 `-32600` 拒绝且不是“已有活跃写入者”（那条走原来的 `preTurnWriterConflict` 路径）；已有 native Turn 的消息、`turn/start` 的拒绝、别的错误码，都不走这条路径，行为不变。
+- **处理**：消息保持 `processing/dispatching` 与原操作 ID（不新开派发，不会重复），记一条 `RESUME_REJECTED_RETRY: …` 的阻塞说明（只有方法、分类、错误码、第几次），恢复门不关；5 秒、30 秒、2 分钟后各再试一次，共 4 次。第 2 次失败后、第 2 次重试之前，**换一次 Codex 子进程**（每条消息最多一次，且只在没有任何别的工作跑在 Codex 上时：没有其他 Codex 消息 Turn、Run 在 dispatching/running/unknown，没有 live 的原生 Turn 在进行；Claude 的 Turn 不算也不受影响）；有别的工作就不换，说明里写“not replaced”。4 次都被拒就按原来的办法 `failed` 并关恢复门，原因里写明“after 4 attempts”，仍由有权者处理。次数在内存里，协调服务重启后重新计。
+- **私有诊断**：每次拒绝，原生拒绝的方法、错误码、分类、**原文与数据**写进主机私有目录（与上一条同一目录）的 `codex-refusal-<时间>-<消息前 8 位>-<第几次>.json`（0600，目录 0700，每个文本最多 4000 字符，保留最新 50 个）；日志只有一行，写方法、分类、错误码和文件路径。原文不进数据库、API、阻塞说明、失败原因和日志正文：`RuntimeServerError.privateNative` 不可枚举，不在 `message`、JSON 或错误对象的任何拷贝里。
+- **没有做的**：没有调用 `thread/unsubscribe`——钉住的协议面里没有它，我没有可核对的 schema，也没有真实 Codex 可试；换子进程是 2026-11-16 那次事故里已证明有效的办法。
+
 **子进程退出时留下的私有诊断（B）。** 子进程的 stderr 末尾（最多 16 KiB）和退出前最后 40 条协议行（只有方向、种类、方法名和 ID，不含参数和结果）在子进程 stdio 关闭后写成这台主机上的一个文件：`$EVOLOOP_DIAGNOSTICS_DIR`（默认 `~/.evoloop/diagnostics`，目录 0700）下的 `codex-child-<退出时间>-<startId 前 8 位>.json`，文件 0600，每行最多 600 字符，保留最新 20 个。服务日志只有一行：退出码或信号、首次丢失原因、stderr 字节数和这个文件的路径。**stderr 不进数据库、不进任何 API 答复、不进 `nativeChildDiagnostics`、不进日志正文**，因为它可能含私有路径或内容；读它要有这台主机上的文件权限。
 
 两种运行时的影响范围不同：Codex 的所有 Session 共用一个 App Server 子进程，连接断开会影响所有在途 Turn；Claude 每个 Turn 一个进程，一个 Turn 出问题不影响别的 Turn。同时驱动两种运行时时，恢复只替换失去就绪的那一种；但合成后的运行时只有在两者都就绪时才算就绪，所以 Codex 断开期间，Claude Session 的消息泵也会暂停，直到协调服务恢复，正在运行的 Claude Turn 不会被打断（PR #224）。

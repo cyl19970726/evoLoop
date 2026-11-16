@@ -96,13 +96,14 @@ export class ProviderRoutedRuntime implements ManagedRuntime {
    * Recovery, step 1: closes the runtimes that are not ready while every listener can still observe their exit.
    * Runtimes that are still ready, and the Turns they are running, are left untouched.
    */
-  async closeUnready(): Promise<RuntimeProvider[]> {
+  async closeUnready(): Promise<RuntimeProvider[]> { return this.closeProviders(this.unreadyProviders()); }
+  /** Closes exactly these runtimes (which may still be ready: a child that is alive but refuses a native operation). The others are left untouched. */
+  async closeProviders(providers: readonly RuntimeProvider[]): Promise<RuntimeProvider[]> {
     if (!this.replace) throw new Error("This routed runtime cannot replace a single provider");
-    const providers = this.unreadyProviders();
     const results = await Promise.allSettled(providers.map(provider => this.children.get(provider)!.close()));
     const failed = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
     if (failed) throw failed.reason;
-    return providers;
+    return [...providers];
   }
   /** Recovery, step 2: a new instance for each closed provider, with every current listener moved over to it. */
   rebuild(providers: readonly RuntimeProvider[]): void {
