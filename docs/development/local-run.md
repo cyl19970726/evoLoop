@@ -318,8 +318,8 @@ git diff --check
 **新增一个会在 CI 里跑的浏览器测试，只需新增文件 `apps/workbench/test/<名字>-ci-browser.test.ts`（子目录也可），不要改 `package.json`。** `npm run test:browser` 先用 `files=$(node scripts/lib/browser-tests.mjs)` 找出文件再交给 `node --test`，命令本身不再列文件。以前所有文件逐个列在 `test:browser` 的同一行里，#469 与 #470 各加一个测试就在这一行冲突，#470 因此做了两次纯冲突返工。
 
 - **命名规则就是入口。** 以 `-ci-browser.test.ts` 结尾的文件进 CI；其余 `*-browser.test.ts` 仍只在本机运行，和以前一样。
-- **冻结的旧名单。** `scripts/lib/browser-tests.mjs` 里的 `LEGACY` 只收迁移前就在 CI 跑、但名字不以 `-ci-browser` 结尾的 5 个文件（button-colors、flow-view、session-live-shape、task-used-waits、theme-switch），**不要往里加**，新测试按命名规则取名。名单里的文件不存在时，发现会报错退出。
-- **发现失败会让 `test:browser` 失败。** 找不到任何测试、输出不是 `apps/workbench/test/…-browser.test.ts` 路径、有重复或崩溃时，发现脚本先不输出任何东西并以非零退出，命令里的 `files=$(…) && [ -n "$files" ] &&` 随之停止，而不是少跑浏览器测试还显示通过。`scripts/lib/browser-tests.test.mjs` 固定了迁移前的 9 个文件必须仍被收集，并检查新增文件无需改任何清单即被发现。
+- **冻结的旧名单。** `scripts/lib/browser-tests.mjs` 里的 `LEGACY` 只收迁移前就在 CI 跑、但名字不以 `-ci-browser` 结尾的 6 个文件（button-colors、flow-view、runtime-fault-display、session-live-shape、task-used-waits、theme-switch），**不要往里加**，新测试按命名规则取名。名单里的文件不存在时，发现会报错退出。
+- **发现失败会让 `test:browser` 失败。** 找不到任何测试、输出不是 `apps/workbench/test/…-browser.test.ts` 路径、有重复或崩溃时，发现脚本先不输出任何东西并以非零退出，命令里的 `files=$(…) && [ -n "$files" ] &&` 随之停止，而不是少跑浏览器测试还显示通过。`scripts/lib/browser-tests.test.mjs` 固定了迁移前的 10 个文件必须仍被收集，并检查新增文件无需改任何清单即被发现。
 - 本机运行与环境变量见[开发规范](standards.md)里 hook 检查一节（先 `npm run build`，再设 `EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE`）。
 
 ### 集成测试与 PostgreSQL 锁表

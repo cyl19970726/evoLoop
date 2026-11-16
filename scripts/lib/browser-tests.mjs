@@ -19,6 +19,7 @@ export const CI_PATTERN = /-ci-browser\.test\.ts$/;
 export const LEGACY = [
   "apps/workbench/test/button-colors-browser.test.ts",
   "apps/workbench/test/flow-view-browser.test.ts",
+  "apps/workbench/test/runtime-fault-display-browser.test.ts",
   "apps/workbench/test/session-live-shape-browser.test.ts",
   "apps/workbench/test/task-used-waits-browser.test.ts",
   "apps/workbench/test/theme-switch-browser.test.ts",

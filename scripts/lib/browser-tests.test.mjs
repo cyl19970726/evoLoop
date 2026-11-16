@@ -12,6 +12,7 @@ const BEFORE = [
   "apps/workbench/test/chunk-retention-ci-browser.test.ts",
   "apps/workbench/test/delivery-link-ci-browser.test.ts",
   "apps/workbench/test/flow-view-browser.test.ts",
+  "apps/workbench/test/runtime-fault-display-browser.test.ts",
   "apps/workbench/test/focus-ring-ci-browser.test.ts",
   "apps/workbench/test/key-pages-ci-browser.test.ts",
   "apps/workbench/test/session-live-shape-browser.test.ts",
