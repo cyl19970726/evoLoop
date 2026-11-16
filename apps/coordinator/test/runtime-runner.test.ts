@@ -1956,7 +1956,7 @@ const autoRunner = (children: { codex: FakeRuntime; claude?: FakeRuntime }, buil
   const workflow = { getProject: async () => ({ id: projectId }), listRuntimeSessions: async () => [], listRuntimeRuns: async () => [] } as unknown as WorkflowService;
   const trusted = { recoverDispatching: async (_project: string, providers: RuntimeProvider[]) => { recovered.push([...providers]); return { sessions: [], runs: [] }; } } as unknown as RuntimeWorkflowService;
   return new RuntimeRunner({ runtimeFactory: () => routed, workflow, trusted, principals: [{ actorId, projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true }],
-    canWrite: () => true, allowedCwd: async () => true, hasGrant: () => true, autoRecover: { delaysMs: [20, 20, 20], windowMs: 60_000, exitEvidenceWaitMs: 300, ...policy } });
+    canWrite: () => true, allowedCwd: async () => true, hasGrant: () => true, autoRecover: { enabled: true, delaysMs: [20, 20, 20], windowMs: 60_000, exitEvidenceWaitMs: 300, ...policy } });
 };
 const waitFor = async (what: string, read: () => boolean, ms = 3000) => { const end = Date.now() + ms; while (!read()) { if (Date.now() > end) throw new Error(`timed out: ${what}`); await new Promise(done => setTimeout(done, 10)); } };
 
@@ -2026,7 +2026,7 @@ test("a lost Claude runtime, a disabled policy and an explicit recovery in the m
   const claudeOnly = new FakeRuntime(); Object.assign(claudeOnly, { capabilities: () => ({ provider: "claude" }) });
   let builds = 0;
   const single = new RuntimeRunner({ runtimeFactory: () => claudeOnly as unknown as ManagedRuntime, workflow: {} as WorkflowService, trusted: { recoverDispatching: async () => ({ sessions: [], runs: [] }) } as unknown as RuntimeWorkflowService,
-    principals: [], canWrite: () => true, allowedCwd: async () => true, hasGrant: () => true, autoRecover: { delaysMs: [10], exitEvidenceWaitMs: 100 } });
+    principals: [], canWrite: () => true, allowedCwd: async () => true, hasGrant: () => true, autoRecover: { enabled: true, delaysMs: [10], exitEvidenceWaitMs: 100 } });
   try {
     await single.start();
     claudeOnly.disconnect("lost");
@@ -2069,7 +2069,7 @@ test("killing the real Codex child recovers the runner by itself, with a new chi
   const trusted = { recoverDispatching: async () => ({ sessions: [], runs: [] }), recordNativeChildDiagnostic: async () => undefined } as unknown as RuntimeWorkflowService;
   const runner = new RuntimeRunner({ runtimeFactory: () => make() as unknown as ManagedRuntime, workflow, trusted,
     principals: [{ actorId, projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true }],
-    canWrite: () => true, allowedCwd: async () => true, hasGrant: () => true, autoRecover: { delaysMs: [30, 30, 30], windowMs: 60_000, exitEvidenceWaitMs: 5_000 } });
+    canWrite: () => true, allowedCwd: async () => true, hasGrant: () => true, autoRecover: { enabled: true, delaysMs: [30, 30, 30], windowMs: 60_000, exitEvidenceWaitMs: 5_000 } });
   try {
     await runner.start();
     assert.equal(runner.status().available, true);

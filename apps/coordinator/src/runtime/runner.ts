@@ -30,7 +30,8 @@ interface TaskInputMaterial { input: string; sources: EvaluationFixedRef[]; revi
 type RuntimeFaultPhase = "project_scan" | "session_create" | "session_name_sync" | "session_close" | "profile_activation" | "run_preflight" | "business_profile_restore" | "run_start" | "run_bind" | "run_reconcile" | "approval_receipt";
 /** Limits of automatic recovery of a lost Codex child. `delaysMs` is the wait before each attempt, so its length is the attempts allowed inside `windowMs`. */
 export interface AutoRecoverPolicy { enabled: boolean; delaysMs: number[]; windowMs: number; exitEvidenceWaitMs: number }
-export const defaultAutoRecoverPolicy: AutoRecoverPolicy = { enabled: true, delaysMs: [5_000, 30_000, 120_000], windowMs: 30 * 60_000, exitEvidenceWaitMs: 30_000 };
+/** Off unless the service turns it on (the coordinator does, apps/coordinator/src/main.ts): a runner built by a test or a tool never starts a child by itself. */
+export const defaultAutoRecoverPolicy: AutoRecoverPolicy = { enabled: false, delaysMs: [5_000, 30_000, 120_000], windowMs: 30 * 60_000, exitEvidenceWaitMs: 30_000 };
 export interface AutoRecoverView {
   state: "disabled" | "idle" | "waiting_for_exit" | "scheduled" | "recovering" | "exhausted" | "no_exit_evidence";
   attempts: number; maxAttempts: number; nextAttemptAtUtc: string | null; lastError: string | null; reason: string | null;
@@ -191,7 +192,7 @@ export class RuntimeRunner {
     blobsForPrincipal?: (principal: Principal) => BlobStore | Promise<BlobStore>;
     /** Shared with direct input and the ordinary-message pump; a busy Session defers this Run to its next poll. */
     steerLock?: SessionSteerLock;
-    /** Automatic recovery of a lost Codex child (defect 5766e9e3); on by default, limits below. */
+    /** Automatic recovery of a lost Codex child (defect 5766e9e3); off unless enabled here, limits in `defaultAutoRecoverPolicy`. */
     autoRecover?: Partial<AutoRecoverPolicy>;
   }) {
     this.runtime = deps.runtimeFactory();
@@ -626,6 +627,8 @@ export class RuntimeRunner {
       await this.deps.nativeObservation?.drain();
       this.priorNativeChildDiagnostics=this.status().nativeChildDiagnostics;
       this.unsubscribeChildDiagnostic?.(); this.unsubscribeChildDiagnostic=null;
+      // Stopped while the old child was being closed: do not start another one.
+      if (this.stopped) throw new Error("Runtime runner stopped during recovery");
       if (routed) routed.rebuild(replaced);
       else this.runtime = this.deps.runtimeFactory();
       this.registered.clear(); this.checkedNames.clear(); this.interruptAttempted.clear();

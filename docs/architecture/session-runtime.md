@@ -114,7 +114,7 @@ stateDiagram-v2
 
 - **只在证据已证实时**：断开的只是 Codex 运行时（只驱动 Claude，或 Claude 一方断开，不自动恢复），并且最近一条子进程诊断是 `exitObserved:true` 且不是 `adapter_closed`。断开后最多等 30 秒看退出是否被观察到；没观察到就**不**恢复（旧子进程可能还活着），`status().error` 写明“没有观察到旧子进程已退出”，`autoRecover.state` 为 `no_exit_evidence`，仍要有权者显式恢复。
 - **退避与上限**：第 1、2、3 次分别在 5 秒、30 秒、2 分钟后尝试；30 分钟窗口内最多 3 次。第 3 次也失败（或新子进程起不来）就停止，`autoRecover.state` 为 `exhausted`，`status().error` 写“自动恢复已尝试 3 次仍未成功，已停止，需要检查后显式恢复”，`autoRecover.lastError` 留最后一次失败原因的前 200 个字符。有权者显式 `runtime.recover` 随时有效，并让还没到点的自动恢复让位。审批回执失败等其他不可用原因不触发自动恢复。
-- **开关**：环境变量 `EVOLOOP_RUNTIME_AUTO_RECOVER=off` 关闭（`autoRecover.state` 为 `disabled`）。不需要改私有配置。
+- **开关**：协调服务启动时默认打开；环境变量 `EVOLOOP_RUNTIME_AUTO_RECOVER=off` 关闭（`autoRecover.state` 为 `disabled`）。`RuntimeRunner` 自身默认关闭，只有协调服务的装配处打开，所以测试或工具里构造的 runner 不会自己拉起子进程。不需要改私有配置。
 - **在途消息与恢复门不变**：恢复只开新子进程，不启动任何 Turn、不创建任何东西，所以不会重放。在途消息 Turn 由消息泵按原样读回**原 Thread 的原 Turn**：终态明确就按现有规则结算（C 已经是现状）；读不回或不明确就记 unknown、关闭该 Session 的恢复门，仍由有权者 `resume`——这一点没有改，因为自动关门之后再自动放开等于替人做“这条消息到底发出去没有”的判断。
 - **状态**：`GET /api/projects/{id}/runtime` 多一个 `autoRecover`：`state`（`disabled|idle|waiting_for_exit|scheduled|recovering|exhausted|no_exit_evidence`）、`attempts`、`maxAttempts`、`nextAttemptAtUtc`、`lastError`、`reason`。
 
