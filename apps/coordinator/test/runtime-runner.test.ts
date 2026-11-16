@@ -1944,3 +1944,145 @@ test("a known old Run result reads its own Item pages without scanning the Threa
     assert.equal(runtime.starts,0);assert.equal(resumes,0);assert.equal(historical.nativeTurnId,"older-known-turn");
   }finally{await runner.stop();}
 });
+
+// ---- Automatic recovery of a lost Codex child (defect 5766e9e3) ----
+const lostChild = (exitObserved: boolean, stopReason: "stdout_closed" | "process_exited" | "adapter_closed" = exitObserved ? "process_exited" : "stdout_closed") => ({
+  startId: randomUUID(), pid: 4242, startedAtUtc: "2026-11-16T10:00:00.000Z", observedAtUtc: new Date().toISOString(), firstLossAtUtc: new Date().toISOString(),
+  firstLossReason: "stdout_closed" as const, stopReason, exitObserved, exitedAtUtc: exitObserved ? new Date().toISOString() : null,
+  exitCode: exitObserved ? 0 : null, exitSignal: null, nativeTurnOutcome: "unknown" as const });
+const autoRunner = (children: { codex: FakeRuntime; claude?: FakeRuntime }, build: (provider: RuntimeProvider) => FakeRuntime, policy: Record<string, unknown> = {}, recovered: RuntimeProvider[][] = []) => {
+  const map = new Map<RuntimeProvider, ManagedRuntime>([["codex", children.codex as unknown as ManagedRuntime], ...(children.claude ? [["claude", children.claude as unknown as ManagedRuntime] as [RuntimeProvider, ManagedRuntime]] : [])]);
+  const routed = new ProviderRoutedRuntime(map, "codex", provider => build(provider) as unknown as ManagedRuntime);
+  const workflow = { getProject: async () => ({ id: projectId }), listRuntimeSessions: async () => [], listRuntimeRuns: async () => [] } as unknown as WorkflowService;
+  const trusted = { recoverDispatching: async (_project: string, providers: RuntimeProvider[]) => { recovered.push([...providers]); return { sessions: [], runs: [] }; } } as unknown as RuntimeWorkflowService;
+  return new RuntimeRunner({ runtimeFactory: () => routed, workflow, trusted, principals: [{ actorId, projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true }],
+    canWrite: () => true, allowedCwd: async () => true, hasGrant: () => true, autoRecover: { enabled: true, delaysMs: [20, 20, 20], windowMs: 60_000, exitEvidenceWaitMs: 300, ...policy } });
+};
+const waitFor = async (what: string, read: () => boolean, ms = 3000) => { const end = Date.now() + ms; while (!read()) { if (Date.now() > end) throw new Error(`timed out: ${what}`); await new Promise(done => setTimeout(done, 10)); } };
+
+test("a Codex child that exited is replaced by itself; the Claude runtime and its Turns are left alone", async () => {
+  const codex = new FakeRuntime(), claude = new FakeRuntime();
+  let claudeCloses = 0;
+  const closeClaude = claude.close.bind(claude);
+  claude.close = async () => { claudeCloses++; await closeClaude(); };
+  const built: RuntimeProvider[] = [], replacements: FakeRuntime[] = [];
+  const recovered: RuntimeProvider[][] = [];
+  const runner = autoRunner({ codex, claude }, provider => { built.push(provider); const next = new FakeRuntime(); replacements.push(next); return next; }, {}, recovered);
+  try {
+    await runner.start();
+    Object.assign(codex, { listChildDiagnostics: () => [lostChild(true)] });
+    codex.disconnect("stdout closed");
+    assert.equal(runner.status().available, false);
+    await waitFor("the runner to recover by itself", () => runner.status().available);
+    assert.deepEqual(built, ["codex"], "only Codex was rebuilt");
+    assert.equal(claudeCloses, 0, "the other runtime was not closed");
+    assert.deepEqual(recovered.at(-1), ["codex"]);
+    assert.equal(runner.status().autoRecover.state, "idle");
+    assert.equal(runner.status().error, null);
+    // Recovery opens a new child; it starts no Turn and creates nothing: nothing that was in flight is replayed.
+    assert.deepEqual(replacements.map(next => [next.starts, next.creates]), [[0, 0]]);
+  } finally { await runner.stop(); }
+});
+
+test("without proof that the lost child exited nothing is replaced, and the status says why", async () => {
+  const codex = new FakeRuntime(), built: RuntimeProvider[] = [];
+  const runner = autoRunner({ codex }, provider => { built.push(provider); return new FakeRuntime(); }, { exitEvidenceWaitMs: 150 });
+  try {
+    await runner.start();
+    Object.assign(codex, { listChildDiagnostics: () => [lostChild(false)] });
+    codex.disconnect("stdout closed");
+    await waitFor("the decision not to recover", () => runner.status().autoRecover.state === "no_exit_evidence");
+    await new Promise(done => setTimeout(done, 100));
+    assert.deepEqual(built, [], "a child that may still be alive is not replaced behind its back");
+    assert.equal(runner.status().available, false);
+    assert.match(runner.status().error ?? "", /没有观察到旧子进程已退出/);
+    // The exit shows up later (it was only late): explicit recovery still works as before.
+    Object.assign(codex, { listChildDiagnostics: () => [lostChild(true)] });
+    await runner.recover();
+    assert.equal(runner.status().available, true);
+  } finally { await runner.stop(); }
+});
+
+test("a child that keeps failing is retried a few times and then left for a person, with the reason readable", async () => {
+  const codex = new FakeRuntime(); let builds = 0;
+  const runner = autoRunner({ codex }, () => { builds++; const failing = new FakeRuntime(); failing.open = async () => { throw new Error("spawn failed: private detail"); }; return failing; });
+  try {
+    await runner.start();
+    Object.assign(codex, { listChildDiagnostics: () => [lostChild(true)] });
+    codex.disconnect("stdout closed");
+    await waitFor("automatic recovery to give up", () => runner.status().autoRecover.state === "exhausted");
+    assert.equal(builds, 3, "three attempts, not an endless restart loop");
+    const status = runner.status();
+    assert.equal(status.available, false);
+    assert.match(status.error ?? "", /自动恢复已尝试 3 次仍未成功，已停止/);
+    assert.equal(status.autoRecover.attempts, 3);
+    assert.ok(status.autoRecover.lastError, "the last failure is kept");
+    await new Promise(done => setTimeout(done, 150));
+    assert.equal(builds, 3, "it does not try again by itself");
+  } finally { await runner.stop(); }
+});
+
+test("a lost Claude runtime, a disabled policy and an explicit recovery in the meantime are never recovered automatically", async () => {
+  const claudeOnly = new FakeRuntime(); Object.assign(claudeOnly, { capabilities: () => ({ provider: "claude" }) });
+  let builds = 0;
+  const single = new RuntimeRunner({ runtimeFactory: () => claudeOnly as unknown as ManagedRuntime, workflow: {} as WorkflowService, trusted: { recoverDispatching: async () => ({ sessions: [], runs: [] }) } as unknown as RuntimeWorkflowService,
+    principals: [], canWrite: () => true, allowedCwd: async () => true, hasGrant: () => true, autoRecover: { enabled: true, delaysMs: [10], exitEvidenceWaitMs: 100 } });
+  try {
+    await single.start();
+    claudeOnly.disconnect("lost");
+    await new Promise(done => setTimeout(done, 200));
+    assert.equal(single.status().available, false, "a Claude loss stays an explicit recovery");
+    assert.equal(single.status().autoRecover.state, "idle");
+  } finally { await single.stop(); }
+  const codex = new FakeRuntime();
+  const off = autoRunner({ codex }, () => { builds++; return new FakeRuntime(); }, { enabled: false });
+  try {
+    await off.start();
+    Object.assign(codex, { listChildDiagnostics: () => [lostChild(true)] });
+    codex.disconnect("stdout closed");
+    await new Promise(done => setTimeout(done, 200));
+    assert.equal(builds, 0);
+    assert.equal(off.status().autoRecover.state, "disabled");
+  } finally { await off.stop(); }
+  const another = new FakeRuntime(); let rebuilt = 0;
+  const manual = autoRunner({ codex: another }, () => { rebuilt++; return new FakeRuntime(); }, { delaysMs: [400, 400, 400] });
+  try {
+    await manual.start();
+    Object.assign(another, { listChildDiagnostics: () => [lostChild(true)] });
+    another.disconnect("stdout closed");
+    await waitFor("the first attempt to be scheduled", () => manual.status().autoRecover.state === "scheduled");
+    await manual.recover();
+    await new Promise(done => setTimeout(done, 600));
+    assert.equal(rebuilt, 1, "the person's recovery was the only one; the schedule stood down");
+    assert.equal(manual.status().autoRecover.state, "idle");
+  } finally { await manual.stop(); }
+});
+
+test("killing the real Codex child recovers the runner by itself, with a new child, and leaves the private detail of the old one", async () => {
+  const { CodexAppServerAdapter } = await import("@evoloop/adapter-codex-app-server");
+  const fixture = new URL("../../../packages/adapter-codex-app-server/test/fixture.mjs", import.meta.url).pathname;
+  const details: Array<{ exitSignal: string | null; recentProtocol: unknown[] }> = [];
+  const adapters: InstanceType<typeof CodexAppServerAdapter>[] = [];
+  const make = () => { const adapter = new CodexAppServerAdapter({ executable: process.execPath, spawnArgs: [fixture, "normal"], initializationTimeoutMs: 5_000,
+    onChildDetail: detail => { details.push(detail); } }); adapters.push(adapter); return adapter; };
+  const workflow = { getProject: async () => ({ id: projectId }), listRuntimeSessions: async () => [], listRuntimeRuns: async () => [] } as unknown as WorkflowService;
+  const trusted = { recoverDispatching: async () => ({ sessions: [], runs: [] }), recordNativeChildDiagnostic: async () => undefined } as unknown as RuntimeWorkflowService;
+  const runner = new RuntimeRunner({ runtimeFactory: () => make() as unknown as ManagedRuntime, workflow, trusted,
+    principals: [{ actorId, projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true }],
+    canWrite: () => true, allowedCwd: async () => true, hasGrant: () => true, autoRecover: { enabled: true, delaysMs: [30, 30, 30], windowMs: 60_000, exitEvidenceWaitMs: 5_000 } });
+  try {
+    await runner.start();
+    assert.equal(runner.status().available, true);
+    const first = adapters[0]!;
+    process.kill((first as unknown as { ownedProcess: { pid: number } }).ownedProcess.pid, "SIGKILL");
+    await waitFor("the runner to lose the child", () => !runner.status().available, 5000);
+    await waitFor("the runner to recover by itself", () => runner.status().available && adapters.length === 2, 8000);
+    assert.equal(adapters.length, 2, "one new child, not a restart loop");
+    assert.equal(runner.status().error, null);
+    const diagnostics = runner.status().nativeChildDiagnostics;
+    assert.ok(diagnostics.some(item => item.exitObserved && item.exitSignal === "SIGKILL"), "the exit of the first child is on record");
+    await waitFor("the first child's private detail", () => details.length >= 1, 5000);
+    assert.equal(details[0]!.exitSignal, "SIGKILL");
+    assert.ok(details[0]!.recentProtocol.length > 0, "its last protocol lines are kept");
+  } finally { await runner.stop(); }
+});

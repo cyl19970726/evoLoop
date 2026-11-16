@@ -28,6 +28,14 @@ import { buildEvaluationPacket, canonicalEvaluationJson, evaluationPacketBlobId,
 
 interface TaskInputMaterial { input: string; sources: EvaluationFixedRef[]; revision: TaskRevision; basis: BasisSet }
 type RuntimeFaultPhase = "project_scan" | "session_create" | "session_name_sync" | "session_close" | "profile_activation" | "run_preflight" | "business_profile_restore" | "run_start" | "run_bind" | "run_reconcile" | "approval_receipt";
+/** Limits of automatic recovery of a lost Codex child. `delaysMs` is the wait before each attempt, so its length is the attempts allowed inside `windowMs`. */
+export interface AutoRecoverPolicy { enabled: boolean; delaysMs: number[]; windowMs: number; exitEvidenceWaitMs: number }
+/** Off unless the service turns it on (the coordinator does, apps/coordinator/src/main.ts): a runner built by a test or a tool never starts a child by itself. */
+export const defaultAutoRecoverPolicy: AutoRecoverPolicy = { enabled: false, delaysMs: [5_000, 30_000, 120_000], windowMs: 30 * 60_000, exitEvidenceWaitMs: 30_000 };
+export interface AutoRecoverView {
+  state: "disabled" | "idle" | "waiting_for_exit" | "scheduled" | "recovering" | "exhausted" | "no_exit_evidence";
+  attempts: number; maxAttempts: number; nextAttemptAtUtc: string | null; lastError: string | null; reason: string | null;
+}
 type RuntimeFaultCategory = "authorization" | "native_rejected" | "verification" | "unavailable" | "unknown_outcome";
 export interface RuntimeFault { projectId: string; sessionId: string | null; runId: string | null;
   phase: RuntimeFaultPhase; category: RuntimeFaultCategory; message: string; observedAtUtc: string;
@@ -145,6 +153,11 @@ export class RuntimeRunner {
   /** Keep the previous native child's bounded diagnostics when recover replaces its adapter. */
   private priorNativeChildDiagnostics: NativeChildDiagnostic[] = [];
   private recovering: Promise<void> | null = null;
+  private autoLoop: Promise<void> | null = null;
+  private autoWake: (() => void) | null = null;
+  private autoAttempts: number[] = [];
+  private autoState: AutoRecoverView = { state: "idle", attempts: 0, maxAttempts: 0, nextAttemptAtUtc: null, lastError: null, reason: null };
+  private readonly autoPolicy: AutoRecoverPolicy;
   private unsubscribeDisconnect: (() => void) | null = null;
   private unsubscribeChildDiagnostic: (() => void) | null = null;
   private unsubscribeApproval: (() => void) | null = null;
@@ -179,7 +192,14 @@ export class RuntimeRunner {
     blobsForPrincipal?: (principal: Principal) => BlobStore | Promise<BlobStore>;
     /** Shared with direct input and the ordinary-message pump; a busy Session defers this Run to its next poll. */
     steerLock?: SessionSteerLock;
-  }) { this.runtime = deps.runtimeFactory(); }
+    /** Automatic recovery of a lost Codex child (defect 5766e9e3); off unless enabled here, limits in `defaultAutoRecoverPolicy`. */
+    autoRecover?: Partial<AutoRecoverPolicy>;
+  }) {
+    this.runtime = deps.runtimeFactory();
+    this.autoPolicy = { ...defaultAutoRecoverPolicy, ...deps.autoRecover };
+    this.autoState.maxAttempts = this.autoPolicy.delaysMs.length;
+    if (!this.autoPolicy.enabled) this.autoState.state = "disabled";
+  }
   /**
    * The coordinator's runtime; with a binding, the runtime that drives that Session. A routed composite answers for
    * every provider at once, and a single runtime answers only for its own provider.
@@ -399,6 +419,7 @@ export class RuntimeRunner {
     }
     return { available: this.available && this.runtime.isReady(),
       error: this.serviceError ?? faults.at(-1)?.message ?? null, faults,
+      autoRecover: { ...this.autoState },
       nativeChildDiagnostics: [...diagnostics.values()]
         .sort((a,b)=>b.observedAtUtc.localeCompare(a.observedAtUtc)).slice(0,16) };
   }
@@ -484,6 +505,7 @@ export class RuntimeRunner {
       this.available = false;
       this.serviceError = "Codex 执行连接已断开；需要显式恢复。";
       this.workspaceDisconnected(reason);
+      this.beginAutoRecover();
     });
     this.unsubscribeApproval = this.runtime.onApprovalRequest(async request => {
       const approval = { id: request.id, method: request.method,
@@ -503,6 +525,80 @@ export class RuntimeRunner {
         throw new Error("Approval evidence unavailable");
       }
     });
+  }
+  /**
+   * A lost Codex child is replaced by itself, but only on proof and within limits (defect 5766e9e3):
+   * - only when everything that is not ready is the Codex runtime, and only after its child's exit was actually observed (not just a closed stdout),
+   *   so a child that may still be alive is never replaced behind its back;
+   * - after 5 s, then 30 s, then 2 min, at most three times inside 30 minutes; after that it stops, says why in `status().error`, and waits for an explicit
+   *   `runtime.recover`, as it always did;
+   * - `reopen` replaces only the runtimes that lost readiness, so a Claude Turn that is running keeps going.
+   * What happens to a message Turn that was in flight is unchanged: the original native Turn is read back, settled if it ended, and otherwise it is unknown and the
+   * Session's recovery gate closes for a person. Nothing is replayed.
+   */
+  private beginAutoRecover(): void {
+    if (!this.autoPolicy.enabled || this.stopped || this.autoLoop) return;
+    this.autoLoop = this.runAutoRecover().catch(() => undefined).finally(() => { this.autoLoop = null; });
+  }
+  private autoSleep(ms: number): Promise<void> {
+    return new Promise(resolveSleep => {
+      const timer = setTimeout(() => { this.autoWake = null; resolveSleep(); }, ms);
+      timer.unref();
+      this.autoWake = () => { clearTimeout(timer); this.autoWake = null; resolveSleep(); };
+    });
+  }
+  private autoRecoverable(): boolean {
+    const routed = this.runtime instanceof ProviderRoutedRuntime && this.runtime.canReplace() ? this.runtime : null;
+    const lost = routed ? routed.unreadyProviders() : this.providers();
+    return lost.length > 0 && lost.every(provider => provider === "codex");
+  }
+  private lostChildExitProven(): boolean {
+    const latest = this.status().nativeChildDiagnostics[0];
+    return !!latest && latest.exitObserved && latest.stopReason !== "adapter_closed";
+  }
+  private autoSettled(): boolean { return this.stopped || (this.available && this.runtime.isReady()); }
+  private setAuto(patch: Partial<AutoRecoverView>): void { this.autoState = { ...this.autoState, ...patch }; }
+  private async runAutoRecover(): Promise<void> {
+    const policy = this.autoPolicy;
+    if (!this.autoRecoverable()) { this.setAuto({ state: "idle", reason: "not a Codex child loss; explicit recovery only" }); return; }
+    const deadline = Date.now() + policy.exitEvidenceWaitMs;
+    this.setAuto({ state: "waiting_for_exit", reason: "waiting for proof that the lost Codex child exited", nextAttemptAtUtc: null });
+    while (!this.lostChildExitProven()) {
+      if (this.autoSettled()) { this.setAuto({ state: "idle", reason: null }); return; }
+      if (Date.now() >= deadline) {
+        this.serviceError = "Codex 执行连接已断开，且没有观察到旧子进程已退出；不自动恢复，需要核对后显式恢复。";
+        this.setAuto({ state: "no_exit_evidence", reason: "the lost child's exit was not observed in time; not replacing a child that may still be alive" });
+        return;
+      }
+      await this.autoSleep(250);
+    }
+    for (;;) {
+      if (this.autoSettled()) { this.setAuto({ state: "idle", reason: null, nextAttemptAtUtc: null }); return; }
+      const now = Date.now();
+      this.autoAttempts = this.autoAttempts.filter(at => now - at < policy.windowMs);
+      if (this.autoAttempts.length >= policy.delaysMs.length) {
+        this.serviceError = `Codex 执行连接已断开；自动恢复已尝试 ${this.autoAttempts.length} 次仍未成功，已停止，需要检查后显式恢复。`;
+        this.setAuto({ state: "exhausted", attempts: this.autoAttempts.length, nextAttemptAtUtc: null,
+          reason: `automatic recovery stopped after ${this.autoAttempts.length} attempts within ${Math.round(policy.windowMs / 60000)} minutes` });
+        return;
+      }
+      const delay = policy.delaysMs[this.autoAttempts.length]!;
+      this.serviceError = `Codex 执行连接已断开；${Math.round(delay / 1000)} 秒后自动恢复（第 ${this.autoAttempts.length + 1}/${policy.delaysMs.length} 次）。`;
+      this.setAuto({ state: "scheduled", attempts: this.autoAttempts.length, nextAttemptAtUtc: new Date(now + delay).toISOString(), reason: "the lost child's exit was observed" });
+      await this.autoSleep(delay);
+      if (this.autoSettled()) { this.setAuto({ state: "idle", reason: null, nextAttemptAtUtc: null }); return; }
+      // A coordinator that cannot write now is not an attempt: wait for it to be able to, then go on.
+      if (!this.deps.canWrite()) { await this.autoSleep(5000); continue; }
+      this.autoAttempts.push(Date.now());
+      this.setAuto({ state: "recovering", attempts: this.autoAttempts.length, nextAttemptAtUtc: null });
+      try {
+        await this.recover();
+        this.setAuto({ state: "idle", reason: null, lastError: null });
+        return;
+      } catch (error) {
+        this.setAuto({ lastError: error instanceof Error ? error.message.slice(0, 200) : "recovery failed" });
+      }
+    }
   }
   async recover(): Promise<void> {
     if (this.stopped || !this.deps.canWrite()) throw new Error("Coordinator cannot recover runtime now");
@@ -531,6 +627,8 @@ export class RuntimeRunner {
       await this.deps.nativeObservation?.drain();
       this.priorNativeChildDiagnostics=this.status().nativeChildDiagnostics;
       this.unsubscribeChildDiagnostic?.(); this.unsubscribeChildDiagnostic=null;
+      // Stopped while the old child was being closed: do not start another one.
+      if (this.stopped) throw new Error("Runtime runner stopped during recovery");
       if (routed) routed.rebuild(replaced);
       else this.runtime = this.deps.runtimeFactory();
       this.registered.clear(); this.checkedNames.clear(); this.interruptAttempted.clear();
@@ -1385,6 +1483,7 @@ export class RuntimeRunner {
   }
   async stop(): Promise<void> {
     this.stopped = true; this.available = false;
+    this.autoWake?.();
     if (this.timer) clearInterval(this.timer);
     if (this.busy) await this.busy;
     this.detachWorkspaceRuntime();
