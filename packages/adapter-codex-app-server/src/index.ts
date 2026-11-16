@@ -222,6 +222,27 @@ export interface NativeChildDiagnostic {
   nativeTurnOutcome: 'unknown';
 }
 
+/**
+ * What one child left behind when it ended, for the host's private diagnostics only (defect 5766e9e3). `stderrTail` is the last bytes the child wrote to stderr
+ * and may hold private paths or content, so it never goes into `NativeChildDiagnostic`, the database or any API; the sink (`onChildDetail`) decides where on
+ * the host it is kept. `recentProtocol` is the last protocol lines in both directions with their method names and ids only, never their parameters or results.
+ */
+export interface NativeChildExitDetail {
+  startId: string;
+  pid: number | null;
+  startedAtUtc: string;
+  exitedAtUtc: string;
+  exitCode: number | null;
+  exitSignal: NodeJS.Signals | null;
+  firstLossReason: NativeChildStopReason | null;
+  stopReason: NativeChildStopReason | null;
+  stderrTail: string;
+  stderrTruncated: boolean;
+  recentProtocol: Array<{ at: string; direction: 'out' | 'in'; kind: 'request' | 'response' | 'notification' | 'serverRequest'; method: string | null; id: number | string | null; error?: boolean }>;
+}
+const STDERR_TAIL_BYTES = 16 * 1024;
+const PROTOCOL_TAIL_ENTRIES = 40;
+
 export interface CodexAppServerOptions {
   executable?: string;
   expectedVersion?: string;
@@ -250,6 +271,8 @@ export interface CodexAppServerOptions {
   maxLineBytes?: number;
   /** Actual child exit evidence, independent of a transport EOF. */
   onExited?: (receipt:{pid:number;code:number|null;signal:NodeJS.Signals|null})=>void|Promise<void>;
+  /** The private side of a child's end: its stderr tail and last protocol lines. Called once per child after its stdio closed. Must not throw; failures are ignored. */
+  onChildDetail?: (detail: NativeChildExitDetail)=>void;
   /** Explicit per-request approval, never a session-wide grant. Default is deny. */
   decideApproval?: (request: RuntimeApprovalRequest, binding: RuntimeBinding) => Promise<"accept" | "decline">;
   /** Required to restore a persisted binding after restart. Must consult the trusted project store. */
@@ -358,6 +381,8 @@ export class CodexAppServerAdapter implements RuntimePort {
   private connectionId: string | null = null;
   private childStartedAtUtc: string | null = null;
   private childDiagnostics: NativeChildDiagnostic[] = [];
+  /** The current child's last protocol lines (see NativeChildExitDetail); replaced for each child. */
+  private protocolTail: NativeChildExitDetail['recentProtocol'] | null = null;
   private childDiagnosticListeners = new Set<(diagnostic:NativeChildDiagnostic)=>void|Promise<void>>();
   private diagnosticDelivery:Promise<void> = Promise.resolve();
   private diagnosticDeliveryFailed = false;
@@ -660,11 +685,32 @@ export class CodexAppServerAdapter implements RuntimePort {
       child.once('exit',()=>resolveExit());
       child.once('error',()=>{if(!child.pid)resolveExit();});
     });
-    child.stderr.resume(); // Do not persist stderr: it may contain private paths or content.
+    // stderr is not persisted in diagnostics or the database: it may contain private paths or content. A bounded tail is kept in memory for the
+    // host's private sink (onChildDetail) and goes nowhere else.
+    let stderrTail=Buffer.alloc(0),stderrTruncated=false;
+    child.stderr.on("data",(chunk:Buffer)=>{
+      stderrTail=Buffer.concat([stderrTail,chunk]);
+      if(stderrTail.length>STDERR_TAIL_BYTES){stderrTail=stderrTail.subarray(stderrTail.length-STDERR_TAIL_BYTES);stderrTruncated=true;}
+    });
+    const protocol:NativeChildExitDetail['recentProtocol']=[];
+    this.protocolTail=protocol;
+    let exitInfo:{code:number|null;signal:NodeJS.Signals|null;at:string}|null=null,detailSent=false;
+    const sendDetail=():void=>{
+      if(detailSent||!exitInfo||!this.options.onChildDetail)return;
+      detailSent=true;
+      const diagnostic=this.childDiagnostics.find(entry=>entry.startId===startId);
+      try{this.options.onChildDetail({startId,pid:Number.isSafeInteger(child.pid)?child.pid!:null,startedAtUtc:diagnostic?.startedAtUtc??this.childStartedAtUtc??exitInfo.at,
+        exitedAtUtc:exitInfo.at,exitCode:exitInfo.code,exitSignal:exitInfo.signal,firstLossReason:diagnostic?.firstLossReason??null,stopReason:diagnostic?.stopReason??null,
+        stderrTail:stderrTail.toString("utf8"),stderrTruncated,recentProtocol:[...protocol]});}catch{/* a diagnostics sink cannot break transport */}
+    };
+    // After stdio closed the stderr tail is complete; if a grandchild keeps the pipes open, send what there is shortly after the exit.
+    child.once("close",()=>sendDetail());
     child.on("error", () => {if(this.child===child)this.disconnect('child process error','spawn_error');});
     // EPIPE after the child stops reading must not become an uncaught coordinator exception.
     child.stdin.on("error", () => {if(this.child===child)this.disconnect('stdin error','stdin_error');});
     child.on("exit", (code, signal) => {
+      exitInfo={code,signal,at:new Date().toISOString()};
+      const late=setTimeout(sendDetail,1000);late.unref();
       if(Number.isSafeInteger(child.pid)&&this.options.onExited){
         this.exitDelivery=Promise.resolve().then(()=>this.options.onExited!({pid:child.pid!,code,signal}));
         void this.exitDelivery.catch(()=>undefined);
@@ -770,6 +816,8 @@ export class CodexAppServerAdapter implements RuntimePort {
    * called the bytes may reach the App Server, so any later loss stays an unknown outcome.
    */
   private send(message: unknown): void {
+    const sent = object(message);
+    this.noteProtocol('out', nonempty(sent?.method) ? ("id" in sent! ? 'request' : 'notification') : 'response', sent);
     const method = nonempty(object(message)?.method) ? object(message)!.method as string : "response";
     if (!this.child || !this.child.stdin.writable || this.child.stdin.destroyed)
       throw new RuntimeNotSentError(method, "App Server disconnected");
@@ -821,10 +869,21 @@ export class CodexAppServerAdapter implements RuntimePort {
     });
   }
 
+  /** Method names and ids only, never parameters or results. */
+  private noteProtocol(direction: 'out' | 'in', kind: NativeChildExitDetail['recentProtocol'][number]['kind'], message: Record<string, unknown> | null): void {
+    const tail = this.protocolTail;
+    if (!tail) return;
+    const id = typeof message?.id === 'number' || typeof message?.id === 'string' ? message.id : null;
+    tail.push({ at: new Date().toISOString(), direction, kind, method: nonempty(message?.method) ? message.method as string : null, id,
+      ...(message && 'error' in message ? { error: true } : {}) });
+    if (tail.length > PROTOCOL_TAIL_ENTRIES) tail.shift();
+  }
+
   private receive(line: string): void {
     let message: Record<string, unknown> | null;
-    try { message = object(JSON.parse(line)); } catch { this.disconnect("malformed JSON"); return; }
+    try { message = object(JSON.parse(line)); } catch { this.noteProtocol('in', 'notification', null); this.disconnect("malformed JSON"); return; }
     if (!message) { this.disconnect("non-object message"); return; }
+    this.noteProtocol('in', 'method' in message ? ('id' in message ? 'serverRequest' : 'notification') : 'response', message);
     if ("method" in message) {
       if (!nonempty(message.method)) { this.disconnect("invalid method"); return; }
       if ("id" in message) { void this.serverRequest(message).catch(() => this.disconnect("server request response failed")); return; }
