@@ -8,7 +8,7 @@
 
 | 组件 | 用途 | 规则 |
 | --- | --- | --- |
-| Button | 触发操作 | 胶囊形。变体：`primary`（墨色，每屏最多一个）、`secondary`（默认）、`ghost`（列表与工具栏）、`danger`（不可逆操作）；尺寸 `default`、`compact`。文字以动词开头，2–6 个字。另有三种不是胶囊的变体，默认尺寸 `inline`（不带高度、内边距和字号）：`link` 是写在文字里的操作（“重试”“在右栏查看”），墨蓝字、悬停下划线；`row` 是点了会改变页面所显示内容的行或卡片（阶段、循环、目录项），用 `aria-pressed` 标出选中项；`tab` 是页签条里的一项，用 `aria-selected` |
+| Button | 触发操作 | 胶囊形。变体：`primary`（陶土实底，每屏最多一个）、`secondary`（默认，陶土浅底；悬停与按下是实色，不用透明度）、`ghost`（列表与工具栏）、`danger`（不可逆操作）；尺寸 `default`、`compact`。文字以动词开头，2–6 个字。另有三种不是胶囊的变体，默认尺寸 `inline`（不带高度、内边距和字号）：`link` 是写在文字里的操作（“重试”“在右栏查看”），墨蓝字、悬停下划线；`row` 是点了会改变页面所显示内容的行或卡片（阶段、循环、目录项），用 `aria-pressed` 标出选中项，选中的行是墨蓝浅底 `accent-soft`、字 `accent-strong`（DEC-051）；`tab` 是页签条里的一项，用 `aria-selected`，选中同样是墨蓝浅底 |
 | IconButton | 只有图标的操作 | `label` 必填，用作可读名称和悬停提示 |
 | Field、Input、Textarea、Select | 表单输入 | 标签在上，说明和错误在下，三者都和输入框关联；错误写原因和改法。Select 是原生下拉，外观同 Input；`compact` 用于工具栏和左栏的筛选 |
 | Checkbox、RadioGroup | 多选、单选 | 基于 Radix。放进 `<label>` 和文字写在一起，点文字也能勾选；空格切换，单选组用方向键移动并选中，Enter 不切换，也不提交表单（原生的会）；在表单里仍随表单提交值。单选组用 `aria-labelledby` 指向组标题（`legend`） |
@@ -22,7 +22,7 @@
 | Table | 表格视图、版本差异 | 原生表格语义，表格内部横向滚动，行点击不吞掉单元格里的链接 |
 | ListRow | 左栏和列表里的一行 | 用细线分隔，不做成一张张卡片 |
 | CollapsibleRow | 一行摘要，点开看详情 | 收起时一行灰字，展开后缩进显示 |
-| AgentAvatar、AgentMark、PersonAvatar | 智能体头像、智能体自选的标识、人的账号 | 按职责取底色、按实例取发型与配饰，规则见[设计基础](foundations.md#智能体头像)；人的账号用陶土底（`brand`）首字母；陶土只用于 Logo 与账号头像 |
+| AgentAvatar、AgentMark、PersonAvatar | 智能体头像、智能体自选的标识、人的账号 | 按职责取底色、按实例取发型与配饰，规则见[设计基础](foundations.md#智能体头像)；人的账号用陶土底（`brand`）首字母；陶土用于按钮、Logo 与账号头像，不用于状态、计数和链接（DEC-051） |
 | Logo | 产品标志 | 只用 `packages/ui/src/` 里的三个 SVG，规则见[设计基础](foundations.md#logo) |
 
 ## 状态组件

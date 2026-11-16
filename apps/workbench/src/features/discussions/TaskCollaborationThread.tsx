@@ -104,7 +104,7 @@ function ThreadItem({ projectId, thread, from, focusEventId }: { projectId: stri
       </p>
       {shown.length === 0 && <p className="text-label text-text-secondary">频道已登记，但还没有协作消息或回执。</p>}
       {shown.length > 0 && <ol className="flex flex-col gap-2">{shown.map(event => <li key={event.id} id={`collaboration-event-${event.id}`} {...(event.id === focusEventId ? { "data-target-question": "", "aria-current": "true" as const } : {})}
-        className={`flex min-w-0 scroll-mt-20 flex-col gap-1 border-l-2 py-1 pl-3 ${event.id === focusEventId ? "border-primary bg-selected" : "border-border"} text-label text-foreground [overflow-wrap:anywhere]`}>
+        className={`flex min-w-0 scroll-mt-20 flex-col gap-1 border-l-2 py-1 pl-3 ${event.id === focusEventId ? "border-primary bg-accent" : "border-border"} text-label text-foreground [overflow-wrap:anywhere]`}>
         <EventContent projectId={projectId} taskId={task.id} event={event} events={events} />
         <p className={note}>{actorText(event.actorId)} · {date(event.createdAt)}</p>
       </li>)}</ol>}

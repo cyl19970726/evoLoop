@@ -66,13 +66,13 @@ export function RolesView({ context, refresh }: { context: MutationContext; refr
     <ContextRailContent>
       <nav aria-label="职责目录" className="flex flex-col gap-0.5 pt-1">
         <a href={href(projectId, "roles")} aria-current={!target ? "page" : undefined}
-          className={cn("rounded-lg px-3 py-1.5 text-small outline-none focus-visible:shadow-[var(--focus-ring)]", !target ? "bg-raised font-medium text-foreground shadow-sm" : "text-text-secondary hover:bg-selected")}>全部职责与基础职责</a>
+          className={cn("rounded-lg px-3 py-1.5 text-small outline-none focus-visible:shadow-[var(--focus-ring)]", !target ? "bg-accent font-medium text-accent-strong hover:bg-accent" : "text-text-secondary hover:bg-selected")}>全部职责与基础职责</a>
         {list.loading && <span className="px-3 py-2 text-caption text-muted-foreground">正在读取职责…</span>}
         {list.error && <span className="px-3 py-2 text-caption text-destructive">职责{roles.length ? "未读完整，下列是上次读回" : "暂不可读"}；原因见中间页首。</span>}
         {groups.map(group => <div key={group.key} className="flex flex-col gap-0.5">
           <span className="px-3 pb-1 pt-3 text-caption text-muted-foreground">{group.label} · {group.items.length}</span>
           {group.items.map(item => <a key={item.id} href={roleLink(item)} aria-current={target === item.id ? "page" : undefined}
-            className={cn("flex flex-col rounded-lg px-3 py-1.5 outline-none focus-visible:shadow-[var(--focus-ring)]", target === item.id ? "bg-raised shadow-sm" : "hover:bg-selected")}>
+            className={cn("flex flex-col rounded-lg px-3 py-1.5 outline-none focus-visible:shadow-[var(--focus-ring)]", target === item.id ? "bg-accent hover:bg-accent" : "hover:bg-selected")}>
             <span className="truncate text-small text-foreground">{item.proposal.title}</span>
             <span className="truncate text-caption text-muted-foreground">{roleStateText[item.state]}</span>
           </a>)}
