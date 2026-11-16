@@ -1,5 +1,5 @@
 import type { Document, DocumentRevision } from "@evoloop/contracts";
-import { safeArtifactHref } from "./api.ts";
+import { ownWorkbenchAddress, safeArtifactHref } from "./api.ts";
 import { isProjectRoute } from "./ui/returnRoute.ts";
 
 export interface DeliveryArtifactInput {
@@ -19,8 +19,8 @@ const knowledgeRoute = new RegExp(`^/p/([^/?#]+)/knowledge\\?knowledgeId=${uuid}
 const evaluationRoute = new RegExp(`^/p/([^/?#]+)/evaluations/${uuid}\\?revision=(${uuid})$`, "i");
 
 /** Only a fixed document route in the current project may be given a fetched title. */
-export function deliveryTarget(input: DeliveryArtifactInput, projectId: string, sourceContext?: string): DeliveryTarget {
-  const safe = safeArtifactHref(input.artifactRef, projectId);
+export function deliveryTarget(input: DeliveryArtifactInput, projectId: string, sourceContext?: string, currentOrigin?: string): DeliveryTarget {
+  const safe = safeArtifactHref(input.artifactRef, projectId, currentOrigin);
   const match = safe && documentRoute.exec(safe);
   if (match) {
     if (decodeURIComponent(match[1]!) !== projectId || match[3]!.toLowerCase() !== input.artifactRevision.toLowerCase())
@@ -41,7 +41,7 @@ export function deliveryTarget(input: DeliveryArtifactInput, projectId: string, 
   if (safe.startsWith("/p/")) return { kind: "fallback", label: "项目内产物链接（标题未核实）", href: safe };
   try {
     const url = new URL(safe);
-    if (["127.0.0.1", "localhost", "[::1]"].includes(url.hostname) && (url.hash.startsWith("#/p/") || url.pathname.startsWith("/p/")))
+    if (ownWorkbenchAddress(url, currentOrigin) && (url.hash.startsWith("#/p/") || url.pathname.startsWith("/p/")))
       return { kind: "fallback", label: "其他项目或无法核实的本机链接", href: null };
     return { kind: "fallback", label: `外部产物 · ${url.hostname}`, href: safe };
   } catch { return { kind: "fallback", label: "未识别的产物引用", href: null }; }

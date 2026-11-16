@@ -4,8 +4,10 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ChevronRight, LogOut, RefreshCw } from "lucide-react";
 import { Button, EmptyState, Logo, Notice } from "@evoloop/ui";
-import type { Operation, Principal, Project } from "@evoloop/contracts";
-import { api, errorText } from "../../shared/api";
+import type { Operation, Principal } from "@evoloop/contracts";
+import { api, errorText, hubProjectView, type ProjectView } from "../../shared/api";
+import { authMode } from "../../shared/identity";
+import { machineText } from "../../shared/hubPresentation";
 import { ActionForm, type MutationContext } from "../../shared/ActionForm";
 import { serviceErrorCodes } from "../../shared/errorCodes";
 import { registerErrorCodes } from "../../shared/errorPresentation";
@@ -30,10 +32,14 @@ export function ProjectChooser({ token, principal, receipts, operationNotice, op
   const listKey = queryKeys.identity(principal.actorId, "projects", ...principal.projectIds);
   const list = useQuery({
     queryKey: listKey,
-    queryFn: () => Promise.all(principal.projectIds.map(async id => {
-      try { return { project: await api(token).project(id), id }; }
-      catch { return { project: null as Project | null, id }; }
-    })),
+    queryFn: async (): Promise<Array<{ project: ProjectView | null; id: string }>> => {
+      // Behind the Hub one read lists the projects with where each runs; the Hub, not the coordinator, knows the projects a person belongs to.
+      if (authMode() === "hub") return (await api(token).hubProjects()).map(hub => ({ project: hubProjectView(hub), id: hub.projectId }));
+      return Promise.all(principal.projectIds.map(async id => {
+        try { return { project: await api(token).project(id) as ProjectView, id }; }
+        catch { return { project: null as ProjectView | null, id }; }
+      }));
+    },
   });
   const projects = (list.data ?? []).flatMap(r => r.project && principal.projectIds.includes(r.project.id) ? [r.project] : []);
   const missing = (list.data ?? []).filter(r => !r.project).map(r => r.id);
@@ -78,6 +84,8 @@ export function ProjectChooser({ token, principal, receipts, operationNotice, op
             <span className="flex min-w-0 flex-1 flex-col">
               <strong className="truncate font-semibold">{project.title}</strong>
               <span className="text-caption text-muted-foreground">建立于 {date(project.createdAt)}{pending ? ` · ${pending} 项操作待核对` : ""}</span>
+              {authMode() === "hub" && <span data-machine={project.machine?.online ? "online" : "offline"} className="text-caption text-muted-foreground">
+                {machineText(project.machine)}{project.machine && !project.machine.online ? " · 暂不可读写（不代表运行失败）" : ""}</span>}
             </span>
             <ChevronRight size={18} aria-hidden="true" className="shrink-0 text-muted-foreground" />
           </a>

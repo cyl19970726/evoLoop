@@ -43,6 +43,8 @@ const requiredDatabase = new Map([
   ["schedule-managed-bridge.test.ts", "evoloop_schedule_bridge_test"],
   ["hub.test.ts", "evoloop_hub_test"],
   ["hub-machine.test.ts", "evoloop_hub_test"],
+  ["hub-workbench.test.ts", "evoloop_hub_test"],
+  ["hub-workbench-browser.test.ts", "evoloop_hub_test"],
 ]);
 // Older integration fixtures allow only letters/underscores in their dedicated
 // database name; the caller's base may contain digits (for example, v1).

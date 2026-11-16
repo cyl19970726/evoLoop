@@ -21,17 +21,34 @@ export function AuthGate({ onSuccess, hasReceipts, notice, prefetch }: {
   onSuccess: (token: string, session: Session) => void; hasReceipts: boolean; notice: string; prefetch: () => void;
 }) {
   const [input, setInput] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  // Behind the Hub the first look at the cookie is not a failure: no login yet just means the form is shown.
+  const [looked, setLooked] = useState(false);
   const hub = authMode() === "hub";
   async function check(value: string) {
     setBusy(true); setError("");
     try {
       const session = await api(value).session();
-      setInput("");
+      setInput(""); setPassword("");
       onSuccess(value, session);
-    } catch (cause) { setError(hub && cause instanceof ApiError && cause.status === 401 ? "尚未登录 Hub，或登录已过期。" : errorText(cause)); }
-    finally { setBusy(false); }
+    } catch (cause) {
+      if (hub && cause instanceof ApiError && cause.status === 401) { if (looked) setError("登录没有成功或已过期，请重新登录。"); }
+      else setError(errorText(cause));
+    }
+    finally { setBusy(false); setLooked(true); }
+  }
+  async function signIn(event: FormEvent) {
+    event.preventDefault();
+    if (!email.trim() || !password || busy) return;
+    setBusy(true); setError("");
+    try {
+      await api("").hubLogin(email.trim(), password);
+      setPassword("");
+      await check("");
+    } catch (cause) { setError(errorText(cause)); setPassword(""); setBusy(false); }
   }
   useEffect(() => { prefetch(); }, [prefetch]);
   // Behind the Hub the browser already carries the login; check it once instead of asking for a token.
@@ -54,10 +71,21 @@ export function AuthGate({ onSuccess, hasReceipts, notice, prefetch }: {
         </div>
         {notice && <p role="alert" className={noticeClass.error}>{notice}</p>}
         {hub
-          ? <>
-            <p className="text-small text-text-secondary">通过 Hub 的登录读取你有权限的项目。</p>
-            <button type="button" className={button} disabled={busy} onClick={() => void check("")}>{busy ? "正在核对…" : "重新检查登录"}</button>
-          </>
+          ? !looked ? <p role="status" className="text-small text-text-secondary">正在核对登录…</p>
+          : <form onSubmit={signIn} className="flex flex-col gap-4" aria-label="登录">
+            <div className="flex flex-col gap-1.5">
+              <label htmlFor="hub-email" className="text-label font-semibold text-foreground">邮箱</label>
+              <input id="hub-email" type="email" autoComplete="username" value={email} onChange={event => setEmail(event.target.value)} required
+                className="h-9 w-full rounded-md border-0 bg-field px-3 text-small text-foreground outline-none transition-shadow focus-visible:shadow-[var(--focus-ring)]" />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <label htmlFor="hub-password" className="text-label font-semibold text-foreground">密码</label>
+              <input id="hub-password" type="password" autoComplete="current-password" value={password} onChange={event => setPassword(event.target.value)} required aria-describedby="hub-hint"
+                className="h-9 w-full rounded-md border-0 bg-field px-3 text-small text-foreground outline-none transition-shadow focus-visible:shadow-[var(--focus-ring)]" />
+              <p id="hub-hint" className="m-0 text-caption text-muted-foreground">用 Hub 账号登录；刷新页面后登录仍然有效，不需要重新填写。</p>
+            </div>
+            <button type="submit" className={button} disabled={busy}>{busy ? "正在登录…" : "登录"}</button>
+          </form>
           : <form onSubmit={submit} className="flex flex-col gap-4">
             <div className="flex flex-col gap-1.5">
               <label htmlFor="token" className="text-label font-semibold text-foreground">访问令牌</label>
