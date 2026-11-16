@@ -313,6 +313,15 @@ git diff --check
 
 **排除与分组。** 发现脚本只跳过另有归属的目录：`scripts/docs`、`scripts/architecture-map`（它们的 `.js` 套件属 `test:docs`）和 `scripts/research`（研究代码）。但**覆盖检查的全集不套用这份跳过表**，只排除 `node_modules`：在这些目录里放一个 `.test.mjs`，既没有 `test:unit` 发现它，`test:docs` 也只匹配 `*.test.js`，覆盖检查会失败——把它移出这些目录、改成 `.test.js` 让 `test:docs` 跑，或登记到 `MANUAL_ONLY` 并写明理由。确实无法在 CI 运行的测试登记在 `scripts/lib/script-tests.mjs` 的 `MANUAL_ONLY` 里，这是唯一的排除办法，发现脚本据此跳过（目前只有 `scripts/backup.test.mjs`：它需要专用的 `evoloop_backup_test` 库和 PostgreSQL 18 客户端工具，CI 里没有，按本页的备份章节手动运行）。`scripts/ci-test-coverage.test.mjs` 沿工作流里的 `npm run` 逐层展开，找出没人运行、也不在 `MANUAL_ONLY` 里的测试并失败；`MANUAL_ONLY` 里的条目失效（文件不在了，或 CI 开始运行它）时也失败，免得清单悄悄过期。
 
+### 浏览器测试要接进 CI 的 `browser` 作业
+
+**新增一个会在 CI 里跑的浏览器测试，只需新增文件 `apps/workbench/test/<名字>-ci-browser.test.ts`（子目录也可），不要改 `package.json`。** `npm run test:browser` 先用 `files=$(node scripts/lib/browser-tests.mjs)` 找出文件再交给 `node --test`，命令本身不再列文件。以前所有文件逐个列在 `test:browser` 的同一行里，#469 与 #470 各加一个测试就在这一行冲突，#470 因此做了两次纯冲突返工。
+
+- **命名规则就是入口。** 以 `-ci-browser.test.ts` 结尾的文件进 CI；其余 `*-browser.test.ts` 仍只在本机运行，和以前一样。
+- **冻结的旧名单。** `scripts/lib/browser-tests.mjs` 里的 `LEGACY` 只收迁移前就在 CI 跑、但名字不以 `-ci-browser` 结尾的 5 个文件（button-colors、flow-view、session-live-shape、task-used-waits、theme-switch），**不要往里加**，新测试按命名规则取名。名单里的文件不存在时，发现会报错退出。
+- **发现失败会让 `test:browser` 失败。** 找不到任何测试、输出不是 `apps/workbench/test/…-browser.test.ts` 路径、有重复或崩溃时，发现脚本先不输出任何东西并以非零退出，命令里的 `files=$(…) && [ -n "$files" ] &&` 随之停止，而不是少跑浏览器测试还显示通过。`scripts/lib/browser-tests.test.mjs` 固定了迁移前的 9 个文件必须仍被收集，并检查新增文件无需改任何清单即被发现。
+- 本机运行与环境变量见[开发规范](standards.md)里 hook 检查一节（先 `npm run build`，再设 `EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE`）。
+
 ### 集成测试与 PostgreSQL 锁表
 
 **现象。** CI 的 `app` 检查偶尔报 `out of shared memory`，提示调大 `max_locks_per_transaction`（#347 一次，#339 一次；#347 重跑通过，#339 的失败当时有 4 个文件同时挂）。
