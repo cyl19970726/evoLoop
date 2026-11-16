@@ -1,0 +1,31 @@
+/* Proposal A (small step) — palette fine-tuning for 宣纸 / 松烟. Apply on top of tokens.css; see the report for the revision table.
+   Task 294a4d38: base is main with #470 (DEC-051). accent-soft stays as it is (it is also the running pill's fill, whose text contrast must not drop); hues stay warm; no pure white or black fields; buttons and status colours are not touched. */
+:root {
+  --surface-sunken: #e9e4dc;   /* rail and canvas a step deeper: panel/rail 1.15 → 1.22 */
+  --surface-muted: #f1ede6;   /* soft blocks: 1.08 → 1.13 against the panel */
+  --surface-field: #e5e0d7;   /*  */
+  --surface-selected: #e0d9ce;   /*  */
+  --border: #d9d3ca;   /* 1.28 → 1.44 against the panel */
+  --border-strong: #c4bbb0;   /* lines on the flow canvas and the sunken rail */
+  --warning: #7c5304;   /* a hair darker: keeps 4.5:1 on the stronger selected fill, same hue */
+}
+:root[data-theme="dark"] {
+  --surface-raised: #2b2825;   /* dark cards: 1.15 → 1.25 against the panel */
+  --surface-muted: #211e1c;   /* soft blocks: 1.08 → 1.13 against the panel */
+  --surface-field: #322f2b;
+  --surface-selected: #383430;
+  --border: #363330;   /* 1.28 → 1.44 against the panel */
+  --border-strong: #4a4642;   /* lines on the flow canvas and the sunken rail */
+  --text-muted: #aaa59f;   /* dark: keeps 4.5:1 on the lighter fills */
+}
+
+/* Components, not tokens. The final implementation would move these into the components' classes; here they are in one sheet so a proposal is one file.
+   (4) The blue notice bar is the same fill as a selected row; it keeps its meaning but not its weight: a soft block with a thin blue edge. */
+[data-ui] [role="status"].bg-accent { background-color: var(--surface-muted); box-shadow: inset 3px 0 0 var(--accent); }
+/* (2) The tab strip: the selected tab (accent-soft) reads against a darker track — light: the hover grey; dark: the rail colour — and carries a thin ring besides the fill. */
+:root { --tab-track: var(--surface-selected); }
+:root[data-theme="dark"] { --tab-track: var(--surface-sunken); }
+[data-ui] [role="tablist"].bg-field, [data-ui] nav.bg-field.rounded-full { background-color: var(--tab-track); }
+[data-ui] [role="tab"][aria-selected="true"], [data-ui] [role="tab"][data-state="active"], [data-ui] nav.bg-field.rounded-full > a[aria-current="page"] { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent); }
+/* (3) The flow graph: links one step stronger than a hairline. */
+[data-stage] path { stroke: var(--border-strong); stroke-width: 1.5; }

@@ -1,0 +1,37 @@
+/* Proposal B (larger step) — as A, further apart, with an edge on the selected item. */
+:root {
+  --surface-sunken: #e4ded4;   /* 1.15 → 1.26 */
+  --background: #faf8f3;   /* the panel a little warmer so white cards lift: 1.03 → 1.06 */
+  --surface-muted: #eee9e0;   /*  */
+  --surface-field: #e1dbd0;   /*  */
+  --surface-selected: #dcd4c8;   /*  */
+  --border: #d2cbc0;   /* 1.28 → 1.52 */
+  --border-strong: #bbb1a4;   /*  */
+  --text-muted: #5b554f;   /* keeps 4.5:1 on the stronger fills */
+  --warning: #775000;   /* darker, same hue (keeps 4.5:1 on the selected fill) */
+}
+:root[data-theme="dark"] {
+  --surface-sunken: #090807;   /* 1.15 → 1.26 */
+  --background: #171513;   /* the panel a little warmer so white cards lift: 1.03 → 1.06 */
+  --surface-raised: #2f2c28;
+  --surface-muted: #232019;
+  --surface-field: #363330;
+  --surface-selected: #3c3833;
+  --border: #3d3a35;   /* 1.28 → 1.52 */
+  --border-strong: #55514b;
+  --text-muted: #b0aba5;   /* keeps 4.5:1 on the stronger fills */
+  --danger: #f08e92;   /* dark: a little lighter, same hue (4.5:1 on the stronger selected fill) */
+}
+
+/* Components, not tokens. The final implementation would move these into the components' classes; here they are in one sheet so a proposal is one file.
+   (4) The blue notice bar is the same fill as a selected row; it keeps its meaning but not its weight: a soft block with a thin blue edge. */
+[data-ui] [role="status"].bg-accent { background-color: var(--surface-muted); box-shadow: inset 3px 0 0 var(--accent); }
+/* (2) The tab strip: the selected tab (accent-soft) reads against a darker track — light: the hover grey; dark: the rail colour — and carries a thin ring besides the fill. */
+:root { --tab-track: var(--surface-selected); }
+:root[data-theme="dark"] { --tab-track: var(--surface-sunken); }
+[data-ui] [role="tablist"].bg-field, [data-ui] nav.bg-field.rounded-full { background-color: var(--tab-track); }
+[data-ui] [role="tab"][aria-selected="true"], [data-ui] [role="tab"][data-state="active"], [data-ui] nav.bg-field.rounded-full > a[aria-current="page"] { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent); }
+/* (3) The flow graph: links one step stronger than a hairline. */
+[data-stage] path { stroke: var(--border-strong); stroke-width: 1.5; }
+/* (2) B only: the place you are gets an edge as well as a fill — a tab (the ring is in A too) a row or card a 3px bar — so it does not rest on the fill alone. */
+[data-ui] a[aria-current="page"], [data-ui] button[aria-pressed="true"].rounded-md, [data-ui] button[aria-current="true"] { box-shadow: inset 3px 0 0 var(--accent); }
