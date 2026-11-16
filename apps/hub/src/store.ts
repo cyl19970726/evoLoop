@@ -232,6 +232,9 @@ export type PersonalToken = {
   revokedAt: string | null;
 };
 
+/** What a service identity may do in each project it is scoped to: nothing but read unless granted (decisions only when explicit, DEC-048). */
+export type ServiceGrant = { canTask: boolean; canDocument: boolean; canSession: boolean; sessionIds: string[]; decisions: boolean };
+
 export type ServiceIdentity = {
   serviceIdentityId: string;
   actorId: string;
@@ -504,6 +507,7 @@ export class HubStore {
       createdBy: string;
       at: Date;
       projectIds: string[];
+      grant: ServiceGrant;
     },
   ): Promise<ServiceIdentity> {
     const result = await client.query<ServiceIdentityRow>(
@@ -514,8 +518,10 @@ export class HubStore {
     );
     for (const projectId of input.projectIds) {
       await client.query(
-        "INSERT INTO hub_service_identity_project(service_identity_id, project_id) VALUES ($1, $2)",
-        [input.serviceIdentityId, projectId],
+        `INSERT INTO hub_service_identity_project(service_identity_id, project_id, can_task, can_document, can_session, session_ids, decisions)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [input.serviceIdentityId, projectId, input.grant.canTask, input.grant.canDocument, input.grant.canSession,
+          input.grant.sessionIds, input.grant.decisions],
       );
       await client.query(
         "INSERT INTO hub_project_actor(project_id, actor_id, kind) VALUES ($1, $2, 'service')",
@@ -560,6 +566,16 @@ export class HubStore {
       [row.service_identity_id],
     );
     return { ...serviceIdentityOf(row), projectIds: scopes.rows.map(scope => scope.project_id) };
+  }
+
+  async getServiceGrant(serviceIdentityId: string, projectId: string): Promise<ServiceGrant | null> {
+    const result = await this.pool.query<{ can_task: boolean; can_document: boolean; can_session: boolean; session_ids: string[]; decisions: boolean }>(
+      `SELECT can_task, can_document, can_session, session_ids, decisions FROM hub_service_identity_project
+       WHERE service_identity_id=$1 AND project_id=$2`,
+      [serviceIdentityId, projectId],
+    );
+    const row = result.rows[0];
+    return row ? { canTask: row.can_task, canDocument: row.can_document, canSession: row.can_session, sessionIds: row.session_ids, decisions: row.decisions } : null;
   }
 
   async revokeServiceIdentity(client: PoolClient, serviceIdentityId: string, at: Date): Promise<boolean> {

@@ -84,7 +84,7 @@ npm start
 
 在浏览器打开服务监听的本机回环地址（端口由 `EVOLOOP_PORT` 设定，未设时用代码里的默认值），用身份文件中的 token 登录。令牌只留在当前页面内存，刷新后需重新登录。更新应用后请刷新已打开的标签页并重新登录；旧标签页仍可能运行旧版本界面，本轮独立消费曾因此失败，刷新后才成功，失败观察仍保留。服务只监听回环地址。迁移不会在启动时自动执行。C5 将 Task 正文归入 Document 并改为四态；既有实例须单独运行迁移并同步服务、CLI 和界面版本，本轮未自动升级其他会话的预览或持久数据。同一数据库只允许一个 coordinator 持有专用连接锁；锁丢失后写入不可用，不是双机自动接管证明。
 
-### Hub 骨架（未接机器）
+### Hub 骨架与机器加入（H1 PR2、PR3）
 
 Hub 是独立进程和独立数据库，不能复用 coordinator 的项目库。先准备一个只给 Hub 的 PostgreSQL 数据库和私有环境文件；不要把数据库 URL、初始密码或恢复 dump 提交到仓库。下面的 `<...>` 都代表私有值。
 
@@ -96,7 +96,19 @@ npm run hub:init -- --email admin@example.test --name 'Hub Admin' --password-fil
 npm run start:hub
 ```
 
-`hub:init` 只用于创建第一位 Hub 管理员；已有管理员时会拒绝。默认监听 `127.0.0.1:4319`，由同站 HTTPS 入口反向代理；`HUB_PORT` 可覆盖端口。备份、恢复和完整 API 合同见 [Hub 账号、邀请与项目成员](../architecture/hub.md)。测试或演练不要连接正式实例的 `55432`；用 `npm run test-pg` 约定的一次性实例，并在演练后停止、删除。
+`hub:init` 只用于创建第一位 Hub 管理员；已有管理员时会拒绝。默认监听 `127.0.0.1:4319`，由同站 HTTPS 入口反向代理；`HUB_PORT` 可覆盖端口。备份、恢复和完整 API 合同见 [Hub 账号、邀请与项目成员](../architecture/hub.md)。
+
+**让一台机器加入 Hub（PR3，本 PR 合入后才算已合入）。** 先在这台机器上装好 evoLoop 并让 coordinator 能正常启动（它仍只听 `127.0.0.1`）。Hub 管理员 `POST /api/admin/machines` 取得一次性加入码（10 分钟、只能用一次），然后在**这台机器上**运行：
+
+```sh
+evoloop machine join --hub https://hub.example --code <加入码> --workspace-root <允许的代码根目录>
+```
+
+命令会列出要允许的根目录并要求在这台机器上确认一次（终端里回答 y；脚本里确认过后加 `--yes`）；密钥对在本机生成，只有公钥与根目录上传。凭据保存在 `~/.evoloop/machine/machine.json`（`EVOLOOP_MACHINE_DIR` 可改目录），权限 0600。**重启 coordinator**，它启动后自己向 Hub 建立长连接并保持心跳；Hub 的 `GET /api/admin/machines` 显示 `online`。本机配置里所有项目目录（运行授权、委派模板、仓库）必须在允许根目录下，否则 coordinator 拒绝加载这份配置。`evoloop machine status` 看状态，`evoloop machine leave` 退出（先通知 Hub 再删本机凭据；项目数据与 coordinator 不受影响）。Hub 管理员 `DELETE /api/admin/machines/{id}` 可从 Hub 一侧移除，凭据当场失效。
+
+核对机器没有新增对外监听：`lsof -nP -iTCP -sTCP:LISTEN` 里应只有原来的 `127.0.0.1` coordinator（连接器只向外连）。浏览器与 CLI 经 Hub 使用项目：`EVOLOOP_API_URL` 指向 Hub，`EVOLOOP_TOKEN` 用个人令牌或服务身份令牌（见[CLI 指南](agent-cli.md)）。
+
+自建一个 Hub 加一台机器做候选核对的最小步骤：用一次性 PostgreSQL 建 Hub 库，`hub:init` 建管理员，起 Hub（`HUB_HOST=127.0.0.1`，同机试用即可，`HUB_PUBLIC_ORIGIN` 填访问用的地址），管理员登录后创建账号、项目（`projectId` 填机器上 coordinator 里已有的项目 ID，`machineId` 填刚登记的机器）、个人令牌与服务身份，再按上面加入机器。不要使用正式实例的端口 `55432`，不要把真实令牌、主机名或路径写进仓库。测试或演练不要连接正式实例的 `55432`；用 `npm run test-pg` 约定的一次性实例，并在演练后停止、删除。
 
 ## 在常驻主机上运行
 

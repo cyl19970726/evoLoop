@@ -3,6 +3,9 @@ import { bearerToken } from "./auth.js";
 import { assertSameOrigin, type HubConfig } from "./config.js";
 import { asHubError } from "./errors.js";
 import { errorPage } from "./pages.js";
+import { Gateway } from "./gateway.js";
+import { registerMachineRoutes } from "./machine-routes.js";
+import { MachineStore } from "./machines.js";
 import { registerRoutes } from "./routes.js";
 import { HubService } from "./service.js";
 import { HubStore } from "./store.js";
@@ -11,6 +14,8 @@ export type HubAppOptions = {
   config: HubConfig;
   store: HubStore;
   service?: HubService;
+  machines?: MachineStore;
+  gateway?: Gateway;
   logger?: FastifyServerOptions["logger"];
 };
 
@@ -60,6 +65,8 @@ export function buildHubApp(options: HubAppOptions): FastifyInstance {
     const method = request.method.toUpperCase();
     if (!["POST", "PUT", "PATCH", "DELETE"].includes(method)) return;
     if (bearerToken(request)) return;
+    // A machine proves itself with its own signature over the request, not with a browser Origin.
+    if (request.url.startsWith("/api/machine/")) return;
     assertSameOrigin(request.headers.origin, config.publicOrigin);
   });
 
@@ -110,5 +117,11 @@ export function buildHubApp(options: HubAppOptions): FastifyInstance {
   });
 
   registerRoutes(app, service, store, config);
+  const machines = options.machines ?? new MachineStore(store.pool);
+  const gateway = options.gateway ?? new Gateway({
+    heartbeatMs: config.machineHeartbeatMs ?? 15_000, forwardTimeoutMs: config.forwardTimeoutMs ?? 60_000, maxResponseBytes: config.maxResponseBytes ?? 8 * 1024 * 1024,
+  });
+  registerMachineRoutes(app, { config, store, service, machines, gateway });
+  app.addHook("onClose", async () => { gateway.close(); });
   return app;
 }
