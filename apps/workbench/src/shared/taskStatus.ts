@@ -21,6 +21,10 @@ export const phaseStatus: Record<LeaderWorkPhase, StatusPresentation> = {
   blocked: { tone: "blocked", label: "受阻" },
   awaiting_delivery: { tone: "waiting", label: "待交付" },
   awaiting_acceptance: { tone: "waiting", label: "待验收" },
+  // Signed used already: nothing is left to accept, only a different wait (defect b1f5d4c7).
+  awaiting_prerequisite: { tone: "waiting", label: "等前置" },
+  awaiting_release: { tone: "waiting", label: "等发布" },
+  awaiting_close: { tone: "waiting", label: "等关闭" },
   awaiting_assignment: { tone: "waiting", label: "待接手" },
   ready: { tone: "idle", label: "可开始" },
   running: { tone: "progress", label: "运行中" },
@@ -31,7 +35,7 @@ export const phaseStatus: Record<LeaderWorkPhase, StatusPresentation> = {
 
 /** The order the reconciliation summary counts phases in: what needs a decision first. */
 export const phaseOrder: readonly LeaderWorkPhase[] = [
-  "unknown", "rework", "blocked", "awaiting_delivery", "awaiting_acceptance", "awaiting_assignment", "ready", "running", "unassigned",
+  "unknown", "rework", "blocked", "awaiting_delivery", "awaiting_acceptance", "awaiting_prerequisite", "awaiting_release", "awaiting_close", "awaiting_assignment", "ready", "running", "unassigned",
 ];
 
 /**

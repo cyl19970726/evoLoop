@@ -2,7 +2,7 @@ import type { TaskDetail } from "@evoloop/contracts";
 import type { LeaderWorkTask } from "@evoloop/contracts/work-index";
 import type { WorkTaskStatus } from "../../shared/workStatusPresentation";
 
-const phaseOrder = ["unknown", "rework", "blocked", "awaiting_delivery", "awaiting_acceptance", "awaiting_assignment", "unassigned", "ready", "running"];
+const phaseOrder = ["unknown", "rework", "blocked", "awaiting_delivery", "awaiting_acceptance", "awaiting_prerequisite", "awaiting_release", "awaiting_close", "awaiting_assignment", "unassigned", "ready", "running"];
 export function selectAttention(rows: LeaderWorkTask[], statuses: Record<string, WorkTaskStatus>): LeaderWorkTask | null {
   return rows.filter(row => !["done", "cancelled"].includes(row.taskState) && statuses[row.taskId]?.cognition === false)
     .sort((a, b) => Number(a.review?.decision === "deferred") - Number(b.review?.decision === "deferred") ||
