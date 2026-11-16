@@ -157,6 +157,8 @@ export interface LeaderWorkTask {
   assignment: LeaderWorkAssignment | null;
   /** For `awaiting_prerequisite`: the open Task this one waits for and its current state; null in every other phase. */
   waitingTask?: { taskId: string; state: string } | null;
+  /** For `rework` that comes from the declared consumer's latest answer for the current Delivery: that answer (`notUsed` or `failed`); null in every other case (defect a29100df). */
+  consumerAnswer?: "notUsed" | "failed" | null;
   /** The Task's declared acceptance convention (DEC-042); null when it declared nothing. `readiness` is null until a delivery exists. */
   acceptanceConvention?: {
     acceptanceTarget: "human" | "leader" | "business_session" | "named_agent" | null;

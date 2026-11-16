@@ -106,6 +106,9 @@ function taskPhase(row: QueryResultRow): LeaderWorkPhase {
   if (row.delivery_id && row.delivery_result === "failed" &&
     (!row.run_updated_at || !row.delivery_created_at ||
       Date.parse(String(row.delivery_created_at)) >= Date.parse(String(row.run_updated_at)))) return "rework";
+  // The declared consumer's latest answer for this Delivery is notUsed or failed (defect a29100df): the acceptance question is answered, the next step is rework, not another acceptance.
+  // A newer Delivery has no answer yet, so it is back in 待验收 by itself; this reads the latest answer on the current Delivery only.
+  if (row.state === "in_progress" && row.delivery_id && (row.consumer_conclusion_result === "notUsed" || row.consumer_conclusion_result === "failed")) return "rework";
   if (row.state === "in_progress" && row.delivery_id && row.consumer_conclusion_result === "used") return usedWait(row);
   if (row.state === "in_progress" && row.delivery_id) return "awaiting_acceptance";
   if (row.assignment_state === "assigned") return "awaiting_assignment";
@@ -169,6 +172,8 @@ function taskFactsSql(includeClosed: boolean, taskParam?: 2 | 4): string {
            effective_delivery.created_at>=effective_run.updated_at) THEN 'rework'
         -- The declared consumer has answered used for this Delivery: the acceptance question is settled, only a different wait remains (defect b1f5d4c7).
         -- A release handoff (or a publisher wait) comes first, then another Task that is still open; a prerequisite that is already closed is not a wait.
+        -- The declared consumer's latest answer for the current Delivery is notUsed or failed: rework, not 待验收 (defect a29100df). A newer Delivery has no answer, so it is awaiting acceptance again.
+        WHEN t.state='in_progress' AND effective_delivery.delivery_id IS NOT NULL AND consumer_conclusion.result IN ('notUsed','failed') THEN 'rework'
         WHEN t.state='in_progress' AND effective_delivery.delivery_id IS NOT NULL AND consumer_conclusion.result='used' THEN
           CASE WHEN follow_up_wait.release_handoff IS NOT NULL OR follow_up_wait.waiting_on->>'kind'='publisher' THEN 'awaiting_release'
                WHEN follow_up_wait.waiting_on->>'kind'='task' AND waiting_task.open IS NOT FALSE THEN 'awaiting_prerequisite'
@@ -349,6 +354,14 @@ function conventionResponsible(row: QueryResultRow, phase: LeaderWorkPhase, base
 }
 
 /** The latest Run ended because someone stopped it: say so in the next step instead of reading it as failed work to redo. */
+function consumerRejected(row: QueryResultRow): boolean {
+  return row.consumer_conclusion_result === "notUsed" || row.consumer_conclusion_result === "failed";
+}
+/** Rework that comes from the declared consumer's answer says so: the delivery was judged, nobody is owed an acceptance, the author owes a new delivery. */
+function reworkAnswerAction(row: QueryResultRow, phase: LeaderWorkPhase, base: string): string {
+  if (phase !== "rework" || !row.delivery_id || !consumerRejected(row)) return base;
+  return `声明消费者已对当前交付判 ${row.consumer_conclusion_result}，不需要再验收；在原 Task 安排返工并重新交付，新交付登记后才回到待验收`;
+}
 function stoppedRunAction(row: QueryResultRow, phase: LeaderWorkPhase, base: string): string {
   if (!row.latest_run_stopped_at || phase === "running" || phase === "unknown") return base;
   return `上一个 Run 已按请求停止（${String(row.latest_run_stop_reason ?? "未写理由").slice(0, 120)}），不是待返工；${base}`;
@@ -734,8 +747,9 @@ export function leaderWorkTaskFromRow(row: QueryResultRow, observedAt: string): 
     kind: "task", taskId: row.task_id, version: int(row.version),
     currentRevisionId: row.current_revision_id, workChangeSequence: int(row.work_change_sequence ?? 0),
     title: row.title, taskKind: row.kind, taskState: row.state,
-    phase, nextAction: stoppedRunAction(row, phase, conventionAction(row, phase, taskAction(phase))),
+    phase, nextAction: stoppedRunAction(row, phase, reworkAnswerAction(row, phase, conventionAction(row, phase, taskAction(phase)))),
     responsible: conventionResponsible(row, phase, taskResponsibility(row, phase, timing)), assignment,
+    consumerAnswer: phase === "rework" && row.delivery_id && consumerRejected(row) ? row.consumer_conclusion_result as "notUsed" | "failed" : null,
     waitingTask: phase === "awaiting_prerequisite" && (row.follow_up_waiting_on as LeaderWorkWaitingFor | null)?.id
       ? { taskId: String((row.follow_up_waiting_on as LeaderWorkWaitingFor).id), state: String(row.waiting_task_state ?? "unknown") } : null,
     acceptanceConvention: acceptanceConvention(row),
