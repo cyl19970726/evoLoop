@@ -35,7 +35,7 @@ export function registerWorkStatusRoute(app: FastifyInstance, read: WorkStatuses
     return read(principal(request.principal), p.projectId!, q.taskIds);
   });
 }
-/** The team page's two overview reads stay explicit when managed orchestration is not configured. */
+/** The team page's two overview reads and the Task detail's context read stay explicit when managed orchestration is not configured. */
 export function registerOrchestrationDisabledRoutes(app: FastifyInstance, readProject: ProjectReader): void {
   app.get("/api/projects/:projectId/orchestration/status", async request => {
     const p = params.parse(request.params);
@@ -43,6 +43,13 @@ export function registerOrchestrationDisabledRoutes(app: FastifyInstance, readPr
     return {state: "disabled", running: false, busy: false, faults: [], lastError: null};
   });
   app.get("/api/projects/:projectId/orchestration/loops", async request => {
+    const p = params.parse(request.params);
+    page.parse(request.query);
+    await readProject(principal(request.principal), p.projectId!);
+    return {items: [], nextCursor: null};
+  });
+  // Task detail asks for the Task's loop context on every open; with no managed orchestration there is none, which is an empty page, not a missing route.
+  app.get("/api/projects/:projectId/orchestration/tasks/:id/context", async request => {
     const p = params.parse(request.params);
     page.parse(request.query);
     await readProject(principal(request.principal), p.projectId!);
