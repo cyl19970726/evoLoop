@@ -73,7 +73,7 @@ export const fixtureBoard: WorkBoardSnapshot = {
   ],
   readyNotQueued: [{ taskId: taskId(20), title: "补充发布流程说明", state: "todo", since: at(60) }, { taskId: taskId(21), title: "核对迁移号", state: "todo", since: at(75) }],
   awaitingLeader: [{ kind: "notice", id: subjectId(3), taskId: taskId(3), title: "使用观察已记录", state: "seen", since: at(7) }],
-  graph: { nodes: [], inFlight: [], counts: { sessions: 6, running: 1, queued: 0, held: 1, claimed: 0, queuedMessages: 1, readyNotQueued: 2, openPackets: 0, pendingAcceptance: 1, awaitingLeader: 1 } },
+  graph: { nodes: [], inFlight: [], counts: { sessions: 6, running: 1, queued: 0, held: 1, claimed: 0, queuedMessages: 1, readyNotQueued: 2, openPackets: 0, pendingAcceptance: 1, acceptanceRelaysUnanswered: 3, awaitingLeader: 1 } },
 };
 
 export const fixtureContext: FlowContext = {

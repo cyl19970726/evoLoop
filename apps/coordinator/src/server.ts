@@ -388,7 +388,13 @@ export async function buildServer(options: {
           throw new DomainError("FORBIDDEN", "当前请求者未获该职责和范围的执行授权。");
         }
         if(!dynamic)await requireActiveModel(session.executionProfile?.revision.model??session.model,sessionProvider(session));
-        await options.requireRunRecipient?.(principal, command, session);
+        try {
+          await options.requireRunRecipient?.(principal, command, session);
+        } catch (error) {
+          // A stale assignment must not mask the shared delivery guard. Let the command
+          // re-check it after the guard's exact continuation/rework allowances.
+          if (!(error instanceof DomainError && error.code === "ASSIGNMENT_STALE")) throw error;
+        }
       }
     }
     if (command.type === "schedule.create" || (command.type === "schedule.revise" && command.state === "active")) {

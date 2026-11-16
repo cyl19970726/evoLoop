@@ -8,6 +8,7 @@ import pg from "pg";
 import { WorkflowService } from "@evoloop/core";
 import type { BasisSet, Document, DocumentRevision, Project, Task, TaskRevision } from "@evoloop/contracts";
 import { PostgresUnitOfWork, migrate } from "../src/index.ts";
+import { readWorkBoard } from "../src/work-board.ts";
 import { PgLeaderWorkWriter, leaderWorkTaskFromRow, readLeaderWorkChanges, readLeaderWorkDocuments,
   readLeaderWorkTask, readLeaderWorkTasks } from "../src/work-index.ts";
 
@@ -1369,4 +1370,46 @@ test("a Task whose declared consumer signed used leaves 待验收 for exactly on
     [3, 3, 2, 1]);
   assert.equal(Object.entries(page.counts).filter(([key]) => !["total", "review_acknowledged", "review_deferred"].includes(key))
     .reduce((sum, [, value]) => sum + value, 0), page.total, "the classes are mutually exclusive and cover every Task");
+});
+
+/**
+ * Defect 422d95ce: the work board's (and the flow view's) 待验收 counted acceptance relays in pending/linked, capped at 100. `linked` only means the arrangement's message is
+ * saved and bound; nothing ends a relay when its Task closes, so 212 of 251 formal rows were `linked` on closed Tasks and the number sat at the cap.
+ */
+test("work board 待验收 is the Leader index's awaiting_acceptance, uncapped; relays still waiting for their recipient are counted under their own name", async () => {
+  const project: Project = { id: randomUUID(), title: "Board count", createdAt: now };
+  await uow.transaction(project.id, async tx => { await tx.insertProject(project); });
+  const relay = async (item: { head: Task; revision: TaskRevision }, state: string, deliveryOf: string) => {
+    await pool.query(`INSERT INTO task_acceptance_relay(project_id,relay_id,operation_id,request_hash,task_id,task_revision_id,delivery_id,stage,scope_key,scope_description,
+      publication_ref,reason,mode,recipient_actor_id,state,arranged_by,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,'candidate',$8,'scope',NULL,'fixture','human',
+      'named-human',$9,'leader',$10,$10)`, [project.id, randomUUID(), randomUUID(), hash(randomUUID()), item.head.id, item.revision.id, deliveryOf, `scope-${randomUUID()}`, state, now]);
+  };
+  const deliveryOf = async (item: { head: Task }) => (await pool.query("SELECT delivery_id FROM delivery WHERE project_id=$1 AND task_id=$2", [project.id, item.head.id])).rows[0].delivery_id as string;
+  const noConclusionLinked = await waitFixture(project.id, "No conclusion, relay linked", { observation: null });
+  const noConclusionPending = await waitFixture(project.id, "No conclusion, relay pending", { observation: null });
+  const noConclusionReleased = await waitFixture(project.id, "No conclusion, relay released", { observation: null });
+  const noRelay = await waitFixture(project.id, "No conclusion, no relay", { observation: null });
+  const usedWaitingRelease = await waitFixture(project.id, "Used, waiting for release, relay linked", { observation: "used",
+    handoff: { recipient: "requirements", artifactRef: "fixture://release", note: "ready", readyForPublicationAt: now } });
+  await relay(noConclusionLinked, "linked", await deliveryOf(noConclusionLinked));
+  await relay(noConclusionPending, "pending", await deliveryOf(noConclusionPending));
+  await relay(noConclusionReleased, "released", await deliveryOf(noConclusionReleased));
+  await relay(usedWaitingRelease, "linked", await deliveryOf(usedWaitingRelease));
+  // 125 relays that stayed `linked` after their Task closed: more than the old LIMIT 100, and none of them is waiting for acceptance.
+  for (let n = 0; n < 125; n++) {
+    const closed = await waitFixture(project.id, `Closed ${n}`, { state: "done", observation: "used" });
+    await relay(closed, "linked", await deliveryOf(closed));
+  }
+
+  const board = await readWorkBoard(pool, project.id);
+  const list = await readLeaderWorkTasks(pool, project.id, { view: "tasks", limit: 100 });
+  // Four open Tasks have no conclusion (whatever their relay says); the used Task waiting for release, and every closed Task, are not 待验收.
+  assert.equal(board.graph.counts.pendingAcceptance, 4);
+  assert.equal(board.graph.counts.pendingAcceptance, list.counts.awaiting_acceptance, "the board and the Task list count the same Tasks");
+  assert.equal(list.items.filter(item => item.phase === "awaiting_acceptance").length, 4);
+  assert.equal(list.counts.awaiting_release, 1);
+  // Relays still waiting for their recipient: open Task, pending or linked, no observation linked. Closed Tasks' linked rows and the released one are not.
+  assert.equal(board.graph.counts.acceptanceRelaysUnanswered, 3);
+  assert.equal(board.graph.inFlight.filter(item => item.kind === "acceptance").length, 3, "closed Tasks' relays are not in flight");
+  assert.notEqual(noRelay.head.id, usedWaitingRelease.head.id);
 });

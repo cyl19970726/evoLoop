@@ -9,8 +9,8 @@
   --background: #fcfbf8;       /* the raised work panel: content and right panel */
   --surface-raised: #ffffff;      /* cards that float on the panel, popovers, composer */
   --surface-muted: #f5f2ed;    /* soft blocks inside the panel: facts, tool steps, todo list */
-  --surface-field: #e7e3dc;    /* inputs, chips, secondary buttons */
-  --surface-selected: #e3dcd3; /* selected row in the rails and lists */
+  --surface-field: #e7e3dc;    /* inputs and chips (buttons are brand, DEC-051) */
+  --surface-selected: #e3dcd3; /* hovered row in the rails and lists (a selected row is accent-soft, DEC-051) */
 
   /* Colour: text */
   --text: #1c1714;
@@ -34,12 +34,20 @@
   --done-soft: #f5eaf7;
   --brand: #b1582b;
   --on-brand: #ffffff;
+  /* Buttons (DEC-051): the primary button is brand on on-brand; the secondary is the soft brand fill. Hover and pressed are solid colours, never opacity
+     (white on brand at 90% opacity is about 4.1:1); every state of every button reaches 4.5:1 (palette.test.ts). */
+  --brand-hover: #9c4a22;
+  --brand-pressed: #8a3f1b;
+  --brand-soft: #f6e6dc;
+  --on-brand-soft: #8f431d;
+  --brand-soft-hover: #f0d9ca;
+  --brand-soft-pressed: #e9ccb9;
 
   /* Colour: conversation */
   --user-bubble: #1c1714;
   --on-user-bubble: #fcfbf8;
 
-  /* Colour: counts (ink, so a count never reads as an error; brand is for the logo and the account avatar only) */
+  /* Colour: counts (ink, so a count never reads as an error; brand is for buttons, the logo and the account avatar, never for a state or a count) */
   --count-bg: #1c1714;
   --count-fg: #fcfbf8;
 
@@ -127,6 +135,12 @@
   --done-soft: #332337;
   --brand: #e18c5f;
   --on-brand: #15110d;
+  --brand-hover: #ea9a70;
+  --brand-pressed: #f0a984;
+  --brand-soft: #3a2518;
+  --on-brand-soft: #f0a77f;
+  --brand-soft-hover: #46301f;
+  --brand-soft-pressed: #523a27;
 
   --user-bubble: #393633;
   --on-user-bubble: #eae7e3;

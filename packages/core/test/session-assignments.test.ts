@@ -29,7 +29,7 @@ function fixture() {
     getRuntimeSession: async () => ({ projectId, id: sessionId, roleId, state: "ready" }),
     getTaskRevision: async (_taskId: string, revisionId: string) => revisions.get(revisionId) ?? null,
     getBasisSet: async (_taskId: string, revisionId: string) => bases.get(revisionId) ?? null,
-    listTaskExternalSnapshot: async () => [], getTaskProposal: async () => null,
+    listTaskExternalSnapshot: async () => [], getTaskProposal: async () => null, listDeliveries: async () => [],
     listRuntimeRuns: async () => runs,
     getHostLink: async (linkId: string) => ({ projectId, id: linkId, roleId, state: "verified", host: { kind: "external" } }),
     sessionAssignments: {

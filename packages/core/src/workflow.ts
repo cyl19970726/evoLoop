@@ -19,6 +19,7 @@ import { ArtifactReferenceError, parseArtifactReference } from "@evoloop/contrac
 import type { Transaction } from "@evoloop/contracts/ports";
 import { currentRetentions } from "./runtime/basis.js";
 import { canonicalTaskInputJson, taskInputSignature } from "./task-input.js";
+import { appendObservationRework } from "./task-dispatch-guard.js";
 
 type WorkflowCommand = Extract<
   Command,
@@ -441,7 +442,10 @@ export async function applyWorkflow({
         deliveryId: delivery.id, observer: c.observer, observerKind: c.observerKind, result: c.result,
         evidence: c.evidence, reason: c.reason, actorId, createdAt: now };
       await tx.insertObservation(observation);
-      return result(c.operationId, task.id, observation.id, task.version);
+      const rework = await appendObservationRework({ tx, task, delivery, observation, now, nextId });
+      const outcome = result(c.operationId, task.id, observation.id, task.version);
+      if (rework) outcome.effects.push({ kind: "line.append", entityId: rework.id, version: rework.version });
+      return outcome;
     }
     case "task.close": {
       const task = found(await tx.getTask(c.taskId), "task");

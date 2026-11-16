@@ -102,8 +102,8 @@ export function PrepareForm({ context, choices, rereading, onPrepared, onCancel 
     onKeep={() => command.rebase()} onRefill={refill} keepNote={keepNote} rereading={rereading} onCancel={onCancel} className="gap-4 rounded-xl"
     copy={draftText("准备讨论", prepareLabels, values)}>
     <div role="group" aria-label="讨论什么" className="flex flex-wrap gap-2">
-      {(["allocation", "direction"] as const).map(item => <Button key={item} size="compact" variant={kind === item ? "secondary" : "ghost"} aria-pressed={kind === item}
-        className={cn(kind === item && "bg-selected")} onClick={() => setKind(item)}>{item === "allocation" ? "讨论当前分工" : "讨论下一阶段"}</Button>)}
+      {(["allocation", "direction"] as const).map(item => <Button key={item} size="compact" variant="ghost" aria-pressed={kind === item}
+        className={cn(kind === item && "bg-accent text-accent-strong hover:bg-accent")} onClick={() => setKind(item)}>{item === "allocation" ? "讨论当前分工" : "讨论下一阶段"}</Button>)}
     </div>
     <p className={muted}>交接包固定所选目标的版本、可选的阶段与任务、已采纳文档，系统生成完整来源头，正文只补充本次的问题。</p>
     <TextField label="交接包标题" value={values.title} error={draft.error("title")} onChange={value => draft.set("title", value)} />
