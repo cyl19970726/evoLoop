@@ -63,7 +63,7 @@ async function serve(t: { after: (fn: () => unknown) => void }) {
       const path = decodeURIComponent(url.pathname);
       let value: unknown = { items: [], nextCursor: null }, status = 200;
       const tail = (prefix: string) => path.slice(prefix.length).split("/");
-      if (path === "/api/session") value = { principal: { actorId: "reader", projectIds: [projectId], permissions: ["read", "write", "review"] }, capabilities: {} };
+      if (path === "/api/session") value = { principal: { actorId: "reader", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true }, capabilities: {} };
       else if (path === "/api/projects") value = [{ id: projectId, title: "外壳夹具", createdAt: stamp }];
       else if (path === root) value = { id: projectId, title: "外壳夹具", createdAt: stamp };
       else if (path === `${root}/tasks`) value = { items: tasks, nextCursor: null };

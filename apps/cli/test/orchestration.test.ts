@@ -17,7 +17,7 @@ async function run(args: string[], state: string) {
     EVOLOOP_PROJECT: projectId, EVOLOOP_STATE_DIR: state }, { stdout: value => { stdout += value; }, stderr: value => { stderr += value; } });
   return { code, stdout, stderr };
 }
-const session = () => json({ principal: { actorId, projectIds: [projectId], permissions: ["read", "write"] } });
+const session = () => json({ principal: { actorId, projectIds: [projectId], permissions: ["task", "document", "session"] } });
 
 test("standalone orchestration schema discovery and exact named read routes", async t => {
   const state = await mkdtemp(join(tmpdir(), "evoloop-orch-cli-")); t.after(() => rm(state, { recursive: true, force: true }));

@@ -20,6 +20,13 @@ const DAY = 24 * 60 * 60 * 1000;
 
 const readJson = async path => { try { return JSON.parse(await readFile(path, "utf8")); } catch (error) { if (error.code === "ENOENT") return null; throw error; } };
 const listFiles = async dir => { try { return (await readdir(dir, { withFileTypes: true })).filter(entry => entry.isFile()).map(entry => entry.name); } catch (error) { if (error.code === "ENOENT") return null; throw error; } };
+/** The newest modification time (ISO) among `names` in `dir`, capped at `now`; null when there are none or any cannot be read. */
+export async function newestMtime(dir, names, now) {
+  if (!names.length) return null;
+  let newest = 0;
+  for (const name of names) { try { newest = Math.max(newest, (await stat(join(dir, name))).mtimeMs); } catch { return null; } }
+  return new Date(Math.min(newest, now.getTime())).toISOString();
+}
 const mtimeOf = async (path, now) => { try { const time = (await stat(path)).mtime; return (time > now ? now : time).toISOString(); } catch { return null; } }; // never later than this build
 
 /**
@@ -68,7 +75,12 @@ export async function carryAssets({ previousAssets, newAssets, keep = DEFAULT_KE
   const rerun = existing?.generation === generation;
   const carried = rerun ? { ...existing.carried } : {};
   const own = listed.filter(name => !(name in carried));
-  const builtAt = rerun && existing.builtAt ? existing.builtAt : now.toISOString();
+  // The build time is the build's own: the newest modification time among the files this build made (never later than `now`), not the moment they are
+  // carried or recorded. Only a build with no files of its own, or files whose time cannot be read, falls back to `now`.
+  // A later release was not built before the one it follows: the time is never earlier than the newest build time already recorded (and never later than `now`).
+  const fromFiles = await newestMtime(newAssets, own, now);
+  const floor = Math.max(0, ...base.generations.map(item => Date.parse(item.builtAt)).filter(Number.isFinite));
+  const builtAt = rerun && existing.builtAt ? existing.builtAt : new Date(Math.min(Math.max(fromFiles ? Date.parse(fromFiles) : now.getTime(), floor), now.getTime())).toISOString();
   const all = [...base.generations.filter(item => item.generation !== generation), { generation, builtAt, files: own }];
   const cutoff = Date.parse(builtAt) - keepDays * DAY;
   const retained = all.filter(item => item.generation > generation - keep || Date.parse(item.builtAt) > cutoff);

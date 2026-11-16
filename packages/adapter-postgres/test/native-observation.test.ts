@@ -28,7 +28,7 @@ after(async()=>{await pool.end();const c=new pg.Client({connectionString:url});a
   try{await c.query(`DROP SCHEMA "${schema}" CASCADE`);}finally{await c.end();}});
 
 test('one row, exact source binds after ACK, metadata cursor invalidates without native payload',async()=>{
-  const key=`owned:${sessionId}`, scope=JSON.stringify({actorId:'reader',permissions:['read']});
+  const key=`owned:${sessionId}`, scope=JSON.stringify({actorId:'reader',permissions:[]});
   const baseline=await uow.read(projectId,r=>r.sessionObservation!(scope).snapshot(key));
   assert.ok(baseline);
   const historyBefore=await uow.read(projectId,r=>r.sessionObservation!(scope).history(key,{limit:50}));

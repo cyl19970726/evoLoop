@@ -6,7 +6,7 @@ import type { ScheduleCommand, ScheduleDefinition, SchedulingTransaction } from 
 import { applySchedule } from "../src/scheduling/commands.js";
 
 const projectId = randomUUID();
-const principal: Principal = { actorId: "reviewer", projectIds: [projectId], permissions: ["read", "write", "review"] };
+const principal: Principal = { actorId: "reviewer", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true };
 const now = "2026-10-20T12:00:00.000Z";
 const create = (): Extract<ScheduleCommand, { type: "schedule.create" }> => ({
   type: "schedule.create", projectId, scheduleId: randomUUID(), revisionId: randomUUID(), operationId: randomUUID(),
@@ -85,7 +85,7 @@ test("scheduled human acceptance must name its consumer before the definition is
 
 test("only the named human can change a human-required Schedule acceptance contract across pause and resume", async () => {
   const namedHuman: Principal = { actorId: "actual-user", projectIds: [projectId],
-    permissions: ["read", "write", "review"], identityKind: "human" };
+    permissions: ["task", "document", "session", "management"], decisions: true, identityKind: "human" };
   const initial = create();
   initial.authorization.expiresAtUtc = null;
   initial.template.consumer = namedHuman.actorId;

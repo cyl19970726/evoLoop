@@ -23,8 +23,8 @@ test("a left-over or stuck arrangement is released with a reason and closure the
   const pool = new pg.Pool({ connectionString: database, options: `-c search_path=${schema}` });
   t.after(async () => { await pool.end(); const admin = new pg.Client({ connectionString: database }); await admin.connect(); try { await admin.query(`DROP SCHEMA "${schema}" CASCADE`); } finally { await admin.end(); } });
   const projectId = randomUUID();
-  const reviewer: Principal = { actorId: "reviewer", projectIds: [projectId], permissions: ["read", "write", "review"] };
-  const writer: Principal = { actorId: "writer", projectIds: [projectId], permissions: ["read", "write"] };
+  const reviewer: Principal = { actorId: "reviewer", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true };
+  const writer: Principal = { actorId: "writer", projectIds: [projectId], permissions: ["task", "document", "session"] };
   const workflow = new WorkflowService({ uow: new PostgresUnitOfWork(pool), clock: { now: () => new Date().toISOString() }, ids: { next: randomUUID },
     hasher: { hash: (value: string) => createHash("sha256").update(value).digest("hex") } });
   const issue = async (command: Record<string, unknown>) => { const r = await workflow.execute(reviewer, { ...command, projectId, operationId: randomUUID() } as never); assert.equal(r.status, "applied", JSON.stringify(r)); return r; };
@@ -124,7 +124,7 @@ test("session-mode: a stuck arrangement whose message was replied or completed i
   const pool = new pg.Pool({ connectionString: database, options: `-c search_path=${schema}` });
   t.after(async () => { await pool.end(); const admin = new pg.Client({ connectionString: database }); await admin.connect(); try { await admin.query(`DROP SCHEMA "${schema}" CASCADE`); } finally { await admin.end(); } });
   const projectId = randomUUID();
-  const reviewer: Principal = { actorId: "reviewer", projectIds: [projectId], permissions: ["read", "write", "review"] };
+  const reviewer: Principal = { actorId: "reviewer", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true };
   const workflow = new WorkflowService({ uow: new PostgresUnitOfWork(pool), clock: { now: () => new Date().toISOString() }, ids: { next: randomUUID },
     hasher: { hash: (value: string) => createHash("sha256").update(value).digest("hex") } });
   await workflow.execute(reviewer, { type: "project.create", projectId, title: "Relay release session", operationId: randomUUID() } as never);

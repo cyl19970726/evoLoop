@@ -6,7 +6,7 @@
 // the object (`context.draftScope`). See docs/frontend/components.md, “提交表单”.
 import * as React from "react";
 import type { ReactNode } from "react";
-import type { AppliedResult, CommandResult, Permission } from "@evoloop/contracts";
+import type { AppliedResult, CommandResult, ExtraCommand, Permission } from "@evoloop/contracts";
 import { CommandForm, type FormField } from "./command/CommandForm";
 import type { MutationContext } from "./command/context";
 import { commandDrafts, draftKeyFor } from "./command/drafts";
@@ -42,8 +42,10 @@ export interface ActionFormProps {
   build(values: Record<string, string>, seen: ActionBaseline): Record<string, unknown>;
   /** Every fixed input the command depends on (versions, revisions, the object picked), as it is now. */
   baseline?: Baseline | undefined;
-  /** Sending needs the review permission (write by default); `requiredPermissions` names them exactly. */
-  review?: boolean; requiredPermissions?: Permission[];
+  /** A decision-class command; `requiredPermissions` names the owning object classes exactly. */
+  decision?: boolean; requiredPermissions?: Permission[];
+  /** A specifically granted legacy extra command may pass the decision gate, never the class gate. */
+  extraCommand?: ExtraCommand | undefined;
   onApplied?: (result: AppliedResult) => void;
   validateCommand?: (command: Record<string, unknown>) => void;
   sendCommand?: (command: SubmittableCommand) => Promise<CommandResult>;
@@ -61,13 +63,14 @@ export interface ActionFormProps {
  * A command as a form, folded behind its title unless `embedded`. A form with a kept draft opens, so its notices are
  * seen. The draft is kept only when `context.draftScope` names the object.
  */
-export function ActionForm({ context, title, fields, build, baseline, review = false, requiredPermissions, onApplied, validateCommand, sendCommand,
+export function ActionForm({ context, title, fields, build, baseline, decision = false, requiredPermissions, extraCommand, onApplied, validateCommand, sendCommand,
   initiallyOpen = false, embedded = false, submitOnModEnter = false, notes, paused }: ActionFormProps) {
   const draftKey = context.draftScope ? draftKeyFor(context, context.draftScope, title) : undefined;
   const [startOpen] = React.useState(() => initiallyOpen || !!(draftKey && commandDrafts.get(draftKey)));
   const form = <CommandForm<ActionBaseline> context={context} label={title} submitLabel={title} fields={fields.map(toFormField)}
     baseline={actionBaseline(baseline, context.draftBaseline)} build={build} onApplied={onApplied}
-    permission={requiredPermissions ?? (review ? "review" : "write")} notes={notes} paused={paused} submitOnModEnter={submitOnModEnter}
+    permission={requiredPermissions} decision={decision} extraCommand={extraCommand}
+    notes={notes} paused={paused} submitOnModEnter={submitOnModEnter}
     options={{ validate: validateCommand, send: sendCommand, draft: draftKey ? { store: commandDrafts, key: draftKey } : undefined }}
     surface="plain" copyable />;
   if (embedded) return form;

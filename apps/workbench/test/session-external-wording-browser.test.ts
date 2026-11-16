@@ -64,7 +64,7 @@ test("external agents are named without the short identifier, same-role ones sta
       const agentPath = path.startsWith(`${root}/session-work/`) ? path.slice(`${root}/session-work/`.length) : "";
       const agent = agents.find(item => agentPath === item.key || agentPath.startsWith(`${item.key}/`));
       let value: unknown = { items: [], nextCursor: null, metadata }, status = 200;
-      if (path === "/api/session") value = { principal: { actorId: "reader", projectIds: [projectId], permissions: ["read", "write"] }, capabilities: {} };
+      if (path === "/api/session") value = { principal: { actorId: "reader", projectIds: [projectId], permissions: ["task", "document", "session"] }, capabilities: {} };
       else if (path === root) value = { id: projectId, title: "外部智能体用语", createdAt: stamp };
       else if (path === `${root}/session-work`) {
         const membership = url.searchParams.get("membership") ?? "current";

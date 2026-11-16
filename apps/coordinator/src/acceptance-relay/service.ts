@@ -4,7 +4,8 @@ import { readLeaderWorkTasks } from "@evoloop/adapter-postgres/work-index";
 import { observationLinkProblem } from "./observation-link.js";
 import { createHash } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
-import type { Principal, RuntimeSessionRecord } from "@evoloop/contracts";
+import { hasDecisionAuthority, hasPermission, isProjectMember, mayAccessSession,
+  type Principal, type RuntimeSessionRecord } from "@evoloop/contracts";
 import { DomainError } from "@evoloop/contracts/ports";
 import { type AcceptanceArrangeInput, type AcceptanceCapacityView, type AcceptanceReleaseInput } from "@evoloop/contracts/acceptance-relay";
 import type { WorkflowService } from "@evoloop/core";
@@ -60,7 +61,7 @@ export class AcceptanceRelayService {
   }) {}
 
   async arrange(principal: Principal, input: AcceptanceArrangeInput): Promise<AcceptanceRelayRecord> {
-    if (!principal.projectIds.includes(input.projectId) || !principal.permissions.includes("review"))
+    if (!hasDecisionAuthority(principal, input.projectId, "task"))
       throw new DomainError("FORBIDDEN", "Acceptance arrangement requires project review authority");
     if (input.mode !== "human" && input.senderActorId !== principal.actorId)
       throw new DomainError("SENDER_MISMATCH", "The arranging reviewer must be the declared message sender");
@@ -199,7 +200,7 @@ export class AcceptanceRelayService {
   }
 
   async mine(principal: Principal, projectId: string): Promise<unknown[]> {
-    if (!principal.projectIds.includes(projectId) || !principal.permissions.includes("read"))
+    if (!isProjectMember(principal, projectId))
       throw new DomainError("FORBIDDEN", "Project read authority required");
     const result = await this.deps.pool.query(`SELECT a.project_id,a.relay_id,a.task_id,a.task_revision_id,a.delivery_id,a.version,
       a.stage,a.scope_key,a.scope_description,a.entrypoint,a.publication_ref,a.created_at,
@@ -224,7 +225,7 @@ export class AcceptanceRelayService {
    * acceptance precondition (release, migration, ...) is marked met for the current delivery.
    */
   async mineDirect(principal: Principal, projectId: string): Promise<{ items: unknown[]; complete: boolean; tasksRead: number }> {
-    if (!principal.projectIds.includes(projectId) || !principal.permissions.includes("read"))
+    if (!isProjectMember(principal, projectId))
       throw new DomainError("FORBIDDEN", "Project read authority required");
     const maxPages = 40;
     let tasks: LeaderWorkTask[] = [], complete = false;
@@ -270,7 +271,7 @@ export class AcceptanceRelayService {
 
   /** Capacity is a snapshot of persisted obligations. It does not claim native writer ownership. */
   async capacity(principal: Principal, projectId: string): Promise<unknown[]> {
-    if (!principal.projectIds.includes(projectId) || !principal.permissions.includes("read"))
+    if (!isProjectMember(principal, projectId))
       throw new DomainError("FORBIDDEN", "Project read authority required");
     const leaderSession = await this.deps.leaderSession(projectId);
     const result = await this.deps.pool.query(`SELECT s.session_id,s.role_id,s.actor_id,s.cwd,s.state,s.native_thread_id,
@@ -335,8 +336,8 @@ export class AcceptanceRelayService {
 
   async humanRead(principal: Principal, projectId: string, taskId: string, relayId: string, operationId: string,
     expectedVersion: number, evidence: string): Promise<void> {
-    if (principal.identityKind !== "human" || !principal.projectIds.includes(projectId) ||
-      !principal.permissions.includes("read")) throw new DomainError("TRUSTED_HUMAN_REQUIRED","Human recipient credential required");
+    if (principal.identityKind !== "human" || !isProjectMember(principal, projectId))
+      throw new DomainError("TRUSTED_HUMAN_REQUIRED","Human recipient credential required");
     const client=await this.deps.pool.connect();
     try {
       await client.query("BEGIN");
@@ -369,7 +370,7 @@ export class AcceptanceRelayService {
    * not an obstacle) and while its message is already running.
    */
   async release(principal: Principal, input: AcceptanceReleaseInput): Promise<{ relayId: string; state: "released"; version: number }> {
-    if (!principal.projectIds.includes(input.projectId) || !principal.permissions.includes("review"))
+    if (!hasDecisionAuthority(principal, input.projectId, "task"))
       throw new DomainError("FORBIDDEN", "Releasing an acceptance arrangement requires project review authority");
     const client = await this.deps.pool.connect();
     try {
@@ -415,7 +416,7 @@ export class AcceptanceRelayService {
   /** Links an existing workflow observation; the actor credential and saved native Turn are distinct evidence. */
   async linkObservation(principal: Principal, projectId: string, taskId: string, relayId: string, observationId: string,
     operationId: string, expectedVersion: number): Promise<void> {
-    if(!principal.projectIds.includes(projectId)||!principal.permissions.includes("read"))
+    if(!isProjectMember(principal,projectId))
       throw new DomainError("FORBIDDEN","Project read authority required");
     const client=await this.deps.pool.connect();
     try{
@@ -475,7 +476,7 @@ export class AcceptanceRelayService {
   }
 
   async retirementStatus(principal: Principal, projectId: string, sessionId: string): Promise<unknown> {
-    if(!principal.projectIds.includes(projectId)||!principal.permissions.includes("read"))
+    if(!isProjectMember(principal,projectId))
       throw new DomainError("FORBIDDEN","Project read authority required");
     const result=await this.deps.pool.query(`SELECT s.session_id,s.role_id,s.cwd,s.version,s.state,
       s.native_thread_id,s.close_operation_id,s.close_verified_at,p.tenure,
@@ -520,7 +521,7 @@ export class AcceptanceRelayService {
 
   async approveRetirement(principal: Principal, input: {projectId:string;sessionId:string;decisionId:string;
     closeOperationId:string;expectedSessionVersion:number;reason:string;handoffEvidence:string}): Promise<unknown> {
-    if(!principal.projectIds.includes(input.projectId)||!principal.permissions.includes("review"))
+    if(!hasDecisionAuthority(principal,input.projectId,"session"))
       throw new DomainError("FORBIDDEN","Session retirement needs project review authority");
     const client=await this.deps.pool.connect();
     try{
@@ -602,8 +603,8 @@ export class AcceptanceRelayService {
     if (!current) { await this.setState(item,"superseded","Current Delivery or Session binding changed"); return; }
     if(!await this.publicationReady(item)){await hold("PUBLICATION_PENDING");return;}
     const principals = await this.deps.principals();
-    const sender = principals.find(p => p.actorId === item.senderActorId && p.projectIds.includes(item.projectId) &&
-      p.permissions.includes("read") && p.permissions.includes("write"));
+    const sender = principals.find(p => p.actorId === item.senderActorId && hasPermission(p,item.projectId,"session") &&
+      mayAccessSession(p,item.projectId,item.sessionId!));
     if (!sender) { await hold("SENDER_UNAVAILABLE"); return; }
     const session = await this.deps.workflow.getRuntimeSession(sender,item.projectId,item.sessionId);
     const problem = await this.deps.qualify({projectId:item.projectId,session,senderActorId:item.senderActorId,receiverActorId:item.recipientActorId});

@@ -1,6 +1,7 @@
 import type { AppliedResult, Principal } from "@evoloop/contracts";
 import { DomainError, type Transaction } from "@evoloop/contracts/ports";
 import type { SessionLineCommand, SessionLineEntry } from "@evoloop/contracts/session-line";
+import { assertTaskDispatchAvailable } from "../task-dispatch-guard.js";
 
 type Effect = { kind: string; entityId: string; version: number };
 const TERMINAL_RUN = new Set(["completed", "failed", "interrupted"]);
@@ -47,6 +48,7 @@ export async function applySessionLine(tx: Transaction, principal: Principal, co
     if (task.version !== command.expectedTaskVersion) throw new DomainError("VERSION_CONFLICT", "Task changed", task.version);
     if (task.state === "done" || task.state === "cancelled") fail("TASK_NOT_OPEN", "a finished Task cannot wait in a line; reopen it first");
     if (task.owner !== session.roleId) fail("ROLE_MISMATCH", "Task owner must match the Session's Role");
+    await assertTaskDispatchAvailable(tx, task, command.operationId);
     if ((await tx.listRuntimeRuns(task.id)).some(run => !TERMINAL_RUN.has(run.state))) fail("TASK_BUSY", "resolve the Task's current Run before queueing it");
     if (command.source === "schedule" && !command.scheduleId) fail("SCHEDULE_REQUIRED", "a scheduled entry names its schedule");
     if (await lines.getLiveSessionLineEntryForTask(task.id)) fail("TASK_ALREADY_QUEUED", "This Task is already waiting in a Session line");
@@ -60,7 +62,8 @@ export async function applySessionLine(tx: Transaction, principal: Principal, co
     const entry = await lines.insertSessionLineEntry({ projectId: command.projectId, id: nextId(), sessionId: session.id, taskId: task.id,
       state: "queued", step: null, attempt: 0, stepTry: 0, assignOperationId: null, startOperationId: null, reassignOperationId: null,
       reserveOperationId: null, messageId: null, suspendReason: null, withdrawnReason: null, source: command.source, sourceActorId: actorId,
-      scheduleId: command.scheduleId ?? null, releaseRule: "run_end", runId: null, runEndedAt: null, version: 1, appendedAt: now, updatedAt: now });
+      reworkObservationId: null, reworkDeliveryId: null, scheduleId: command.scheduleId ?? null, releaseRule: "run_end",
+      runId: null, runEndedAt: null, version: 1, appendedAt: now, updatedAt: now });
     await event(session.id, entry, "entry.appended", { source: command.source, scheduleId: command.scheduleId ?? null, position: entry.position, reason: command.reason });
     return { result: ok(command, entry.id, entry.version), effects: [effect(entry)] };
   }

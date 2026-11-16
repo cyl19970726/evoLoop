@@ -1,3 +1,4 @@
+import { hasDecisionAuthority } from "@evoloop/contracts";
 import type {
   AppliedResult,
   BasisSet,
@@ -18,6 +19,7 @@ import { ArtifactReferenceError, parseArtifactReference } from "@evoloop/contrac
 import type { Transaction } from "@evoloop/contracts/ports";
 import { currentRetentions } from "./runtime/basis.js";
 import { canonicalTaskInputJson, taskInputSignature } from "./task-input.js";
+import { appendObservationRework } from "./task-dispatch-guard.js";
 
 type WorkflowCommand = Extract<
   Command,
@@ -433,13 +435,17 @@ export async function applyWorkflow({
         throw new DomainError("TRUSTED_HUMAN_REQUIRED", "human-required acceptance needs the declared human's credential");
       if (c.observerKind === "agent" && c.observer !== actorId)
         throw new DomainError("OBSERVER_MISMATCH", "agent use must be reported by that agent");
-      if (c.observerKind === "human" && !proposal?.acceptanceMode && !principal.permissions.includes("review"))
+      if (c.observerKind === "human" && !proposal?.acceptanceMode &&
+        !hasDecisionAuthority(principal, c.projectId, "task"))
         throw new DomainError("ATTESTATION_REQUIRED", "external human use requires reviewer attestation");
       const observation: ConsumerObservation = { projectId: c.projectId, id: nextId(), taskId: task.id,
         deliveryId: delivery.id, observer: c.observer, observerKind: c.observerKind, result: c.result,
         evidence: c.evidence, reason: c.reason, actorId, createdAt: now };
       await tx.insertObservation(observation);
-      return result(c.operationId, task.id, observation.id, task.version);
+      const rework = await appendObservationRework({ tx, task, delivery, observation, now, nextId });
+      const outcome = result(c.operationId, task.id, observation.id, task.version);
+      if (rework) outcome.effects.push({ kind: "line.append", entityId: rework.id, version: rework.version });
+      return outcome;
     }
     case "task.close": {
       const task = found(await tx.getTask(c.taskId), "task");

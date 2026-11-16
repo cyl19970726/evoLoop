@@ -51,7 +51,7 @@ test("协作回执 reconciles, reads attempts, polls, applies a remote edit and 
             item.state = body.decision === "apply" ? "applied" : "rejected"; item.reviewedBy = "owner"; item.reviewedAtUtc = stamp;
             value = { state: item.state, operationId: item.operationId, reason: body.reason };
           }
-        } else if (path === "/api/session") value = { principal: { actorId: "owner", projectIds: [projectId], permissions: ["read", "write", "review"] }, capabilities: {} };
+        } else if (path === "/api/session") value = { principal: { actorId: "owner", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true }, capabilities: {} };
         else if (path === root) value = { id: projectId, title: "协作回执回归项目", createdAt: stamp };
         else if (path.startsWith(`${root}/tasks/`)) value = { task: tasks.find(item => path.endsWith(item.id)) };
         else if (path === base) value = { configured: true, verifiedAtUtc, error: null, deliveries: { items: deliveries, nextCursor: null }, incoming: { items: incomings, nextCursor: null },
@@ -168,7 +168,7 @@ test("协作回执 says it cannot judge when the collaboration state cannot be r
       const root = `/api/projects/${projectId}`;
       if (url.pathname.startsWith("/api/")) {
         if (url.pathname === `${root}/collaboration`) { res.writeHead(503, { "content-type": "application/json" }); res.end(JSON.stringify({ message: "协作服务暂时不可用" })); return; }
-        const value = url.pathname === "/api/session" ? { principal: { actorId: "owner", projectIds: [projectId], permissions: ["read", "write", "review"] }, capabilities: {} }
+        const value = url.pathname === "/api/session" ? { principal: { actorId: "owner", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true }, capabilities: {} }
           : url.pathname === root ? { id: projectId, title: "协作回执回归项目", createdAt: stamp } : { items: [], nextCursor: null };
         res.writeHead(200, { "content-type": "application/json" }); res.end(JSON.stringify(value)); return;
       }

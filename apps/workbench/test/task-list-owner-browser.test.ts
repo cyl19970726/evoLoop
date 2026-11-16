@@ -53,7 +53,7 @@ test("Task list resolves only displayed Role owners and rejects stale or failed 
       attentionState="open";attentionVersion=1;res.end("ok");return;}
     if (url.pathname.startsWith("/api/")) {
       const p=`/api/projects/${projectId}`; let value:unknown={items:[],nextCursor:null}, status=200;
-      if (url.pathname === "/api/session") value={principal:{actorId:"reader",projectIds:[projectId],permissions:["read","review","write"]},capabilities:{}};
+      if (url.pathname === "/api/session") value={principal:{actorId:"reader",projectIds:[projectId],permissions:["task","document","session","management"],decisions:true},capabilities:{}};
       else if (url.pathname === p) value={id:projectId,title:"夹具项目",createdAt:stamp};
       else if (url.pathname === `${p}/tasks`) value=url.searchParams.has("cursor")
         ? {items:[task("30000009-0000-4000-8000-000000000009",offPageRole,"跨页任务")],nextCursor:null}

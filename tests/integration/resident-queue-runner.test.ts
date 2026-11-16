@@ -88,7 +88,7 @@ for(const scenario of ['normal','lost','rework-completed','rework-failed','rewor
   });
   const projectId=randomUUID(),roleId=randomUUID(),roleRevisionId=randomUUID(),taskId=randomUUID();
   const sessionId=randomUUID(),queueId=randomUUID(),entryId=randomUUID();
-  const controller:Principal={actorId:'queue-controller',projectIds:[projectId],permissions:['read','write','review']};
+  const controller:Principal={actorId:'queue-controller',projectIds:[projectId],permissions:['task', 'document', 'session', 'management'], decisions: true};
   const businessActor='role-worker';
   assert.notEqual(controller.actorId,businessActor);
   const uow=new PostgresUnitOfWork(pool,{grant:async()=>true,binding:async()=>true,lead:async()=>true,
@@ -168,7 +168,7 @@ for(const scenario of ['normal','lost','rework-completed','rework-failed','rewor
     assert.equal(pending?.taskRevisionId,dispatched.currentRevisionId,
       'the existing workspace acknowledgement action stays available after dispatch');
     assert.equal(pending?.actorId,controller.actorId,'assignment history attributes the queue claimant');
-    const recipient:Principal={actorId:businessActor,projectIds:[projectId],permissions:['read','write']};
+    const recipient:Principal={actorId:businessActor,projectIds:[projectId],permissions:['task', 'document', 'session']};
     const ack={type:'task.assignment.acknowledge' as const,projectId,operationId:randomUUID(),
       taskId,expectedTaskVersion:dispatched.version,expectedVersion:pending!.version,
       evidence:'Recipient read the same fixed Task after queue dispatch'};
@@ -323,8 +323,8 @@ for(const scenario of ['normal','lost','rework-completed','rework-failed','rewor
   if(scenario==='normal'){
     const ordinary=new OrdinaryRunSubmissionService(pool,uow);
     ordinaryApp=await buildServer({service:workflow,ordinarySubmissions:ordinary,
-      credentials:[{token:workerToken,actorId:businessActor,projectIds:[projectId],permissions:['read','write']},
-        {token:leadToken,actorId:controller.actorId,projectIds:[projectId],permissions:['read','write','review']}]});
+      credentials:[{token:workerToken,actorId:businessActor,projectIds:[projectId],permissions:['task', 'document', 'session']},
+        {token:leadToken,actorId:controller.actorId,projectIds:[projectId],permissions:['task', 'document', 'session', 'management'], decisions: true}]});
     const intent={projectId,operationId:randomUUID(),submissionId:randomUUID(),deliveryOperationId:randomUUID(),
       runId:runBefore.id,taskId,sessionId,taskRevisionId:runBefore.taskRevisionId,runInputHash:runBefore.inputHash,
       deliveryIntent:{artifactRef:'repo://ordinary-artifact',artifactRevision:'fixed-v1',contentHash:hash('ordinary-artifact'),
@@ -443,8 +443,8 @@ for(const scenario of ['normal','lost','rework-completed','rework-failed','rewor
               return operation;
             },
             resolveSubmittedActor:async()=>signerAuthorized?
-              {actorId:businessActor,projectIds:[projectId],permissions:['read','write']}:null,
-            workflow:sealWorkflow,sealer:{actorId:'system:ordinary-run-sealer',projectIds:[projectId],permissions:['read','write','review']},
+              {actorId:businessActor,projectIds:[projectId],permissions:['task', 'document', 'session']}:null,
+            workflow:sealWorkflow,sealer:{actorId:'system:ordinary-run-sealer',projectIds:[projectId],permissions:['task', 'document', 'session', 'management'], decisions: true},
             now:()=>new Date().toISOString(),canWrite:()=>true})(p,r)});
         await seal.cycle();
         assert.equal((await ordinary.readSubmission(projectId,runBefore.id))?.state,'unknown');

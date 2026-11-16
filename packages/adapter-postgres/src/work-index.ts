@@ -23,8 +23,8 @@ export interface LeaderWorkQuery {
 }
 
 const phaseOrder: Record<LeaderWorkPhase, number> = {
-  unknown: 0, rework: 1, blocked: 2, awaiting_acceptance: 3, awaiting_delivery: 4,
-  awaiting_assignment: 5, ready: 6, running: 7, unassigned: 8, closed: 9, cancelled: 10,
+  unknown: 0, rework: 1, blocked: 2, awaiting_acceptance: 3, awaiting_prerequisite: 4, awaiting_release: 5, awaiting_close: 6,
+  awaiting_delivery: 7, awaiting_assignment: 8, ready: 9, running: 10, unassigned: 11, closed: 12, cancelled: 13,
 };
 
 interface SnapshotCursor {
@@ -78,6 +78,14 @@ function relatedTaskChangeScope(projectColumn: string, taskColumn: string, chang
   )`;
 }
 
+/** The wait that is left once the declared consumer has signed `used` (defect b1f5d4c7). The same order as the `phase` CASE in taskFactsSql. */
+function usedWait(row: QueryResultRow): LeaderWorkPhase {
+  const waiting = row.follow_up_task_revision_id === row.current_revision_id ? row.follow_up_waiting_on as LeaderWorkWaitingFor | null : null;
+  if (row.current_release_handoff && row.follow_up_task_revision_id === row.current_revision_id || waiting?.kind === "publisher") return "awaiting_release";
+  if (waiting?.kind === "task" && row.waiting_task_open !== false) return "awaiting_prerequisite";
+  return "awaiting_close";
+}
+
 function taskPhase(row: QueryResultRow): LeaderWorkPhase {
   if (row.phase) return row.phase as LeaderWorkPhase;
   if (row.state === "cancelled") return "cancelled";
@@ -98,6 +106,7 @@ function taskPhase(row: QueryResultRow): LeaderWorkPhase {
   if (row.delivery_id && row.delivery_result === "failed" &&
     (!row.run_updated_at || !row.delivery_created_at ||
       Date.parse(String(row.delivery_created_at)) >= Date.parse(String(row.run_updated_at)))) return "rework";
+  if (row.state === "in_progress" && row.delivery_id && row.consumer_conclusion_result === "used") return usedWait(row);
   if (row.state === "in_progress" && row.delivery_id) return "awaiting_acceptance";
   if (row.assignment_state === "assigned") return "awaiting_assignment";
   if (row.state === "todo" && (!row.assignment_state || row.assignment_state === "released")) return "unassigned";
@@ -135,6 +144,8 @@ function taskFactsSql(includeClosed: boolean, taskParam?: 2 | 4): string {
       review_latest.created_at AS review_created_at,
       review_latest.reviewed_change_sequence AS review_change_sequence,
       closure.closure_id IS NOT NULL AS has_closure,
+      consumer_conclusion.result AS consumer_conclusion_result,
+      waiting_task.state AS waiting_task_state,waiting_task.open AS waiting_task_open,
       CASE
         WHEN t.state='cancelled' THEN 'cancelled'
         WHEN t.state='done' OR closure.closure_id IS NOT NULL THEN 'closed'
@@ -156,6 +167,12 @@ function taskFactsSql(includeClosed: boolean, taskParam?: 2 | 4): string {
         WHEN effective_delivery.delivery_id IS NOT NULL AND effective_delivery.technical_result='failed' AND
           (effective_run.updated_at IS NULL OR effective_delivery.created_at IS NULL OR
            effective_delivery.created_at>=effective_run.updated_at) THEN 'rework'
+        -- The declared consumer has answered used for this Delivery: the acceptance question is settled, only a different wait remains (defect b1f5d4c7).
+        -- A release handoff (or a publisher wait) comes first, then another Task that is still open; a prerequisite that is already closed is not a wait.
+        WHEN t.state='in_progress' AND effective_delivery.delivery_id IS NOT NULL AND consumer_conclusion.result='used' THEN
+          CASE WHEN follow_up_wait.release_handoff IS NOT NULL OR follow_up_wait.waiting_on->>'kind'='publisher' THEN 'awaiting_release'
+               WHEN follow_up_wait.waiting_on->>'kind'='task' AND waiting_task.open IS NOT FALSE THEN 'awaiting_prerequisite'
+               ELSE 'awaiting_close' END
         WHEN t.state='in_progress' AND effective_delivery.delivery_id IS NOT NULL THEN 'awaiting_acceptance'
         WHEN assignment.state='assigned' THEN 'awaiting_assignment'
         WHEN t.state='todo' AND (assignment.state IS NULL OR assignment.state='released') THEN 'unassigned'
@@ -195,6 +212,18 @@ function taskFactsSql(includeClosed: boolean, taskParam?: 2 | 4): string {
     LEFT JOIN LATERAL (SELECT o.result,o.observer,o.observer_kind,o.created_at FROM consumer_observation o
       WHERE o.project_id=t.project_id AND o.delivery_id=effective_delivery.delivery_id
       ORDER BY o.sequence DESC LIMIT 1) observation ON true
+    LEFT JOIN LATERAL (SELECT o.result FROM consumer_observation o
+      WHERE o.project_id=t.project_id AND o.delivery_id=effective_delivery.delivery_id
+        AND o.observer=(SELECT p.consumer FROM task_proposal p JOIN task_revision r ON r.project_id=p.project_id AND r.task_id=p.task_id
+          AND r.revision_id=p.task_revision_id WHERE p.project_id=t.project_id AND p.task_id=t.task_id ORDER BY r.version DESC LIMIT 1)
+      ORDER BY o.sequence DESC LIMIT 1) consumer_conclusion ON true
+    LEFT JOIN LATERAL (SELECT f.waiting_on,f.release_handoff FROM task_attention_follow_up f
+      WHERE f.project_id=t.project_id AND f.task_id=t.task_id AND f.task_revision_id=t.current_revision_id) follow_up_wait ON true
+    LEFT JOIN LATERAL (SELECT wt.state,
+        (wt.state NOT IN ('done','cancelled') AND NOT EXISTS(SELECT 1 FROM task_closure wc
+          WHERE wc.project_id=wt.project_id AND wc.task_id=wt.task_id AND wc.task_revision_id=wt.current_revision_id)) AS open
+      FROM task wt WHERE follow_up_wait.waiting_on->>'kind'='task' AND wt.project_id=t.project_id
+        AND wt.task_id::text=follow_up_wait.waiting_on->>'id') waiting_task ON true
     LEFT JOIN LATERAL (SELECT count(*)::int AS pending_impact_count FROM impact_review i
       WHERE i.project_id=t.project_id AND i.task_id=t.task_id AND i.state='pending') pending_impact ON true
     LEFT JOIN LATERAL (SELECT e.hold_code FROM resident_queue_entry e
@@ -245,9 +274,10 @@ function taskFactsSql(includeClosed: boolean, taskParam?: 2 | 4): string {
 
 const taskOrderSql = `CASE facts.phase
     WHEN 'unknown' THEN 0 WHEN 'rework' THEN 1 WHEN 'blocked' THEN 2
-    WHEN 'awaiting_acceptance' THEN 3 WHEN 'awaiting_delivery' THEN 4
-    WHEN 'awaiting_assignment' THEN 5 WHEN 'ready' THEN 6 WHEN 'running' THEN 7
-    WHEN 'unassigned' THEN 8 WHEN 'closed' THEN 9 WHEN 'cancelled' THEN 10
+    WHEN 'awaiting_acceptance' THEN 3 WHEN 'awaiting_prerequisite' THEN 4 WHEN 'awaiting_release' THEN 5 WHEN 'awaiting_close' THEN 6
+    WHEN 'awaiting_delivery' THEN 7
+    WHEN 'awaiting_assignment' THEN 8 WHEN 'ready' THEN 9 WHEN 'running' THEN 10
+    WHEN 'unassigned' THEN 11 WHEN 'closed' THEN 12 WHEN 'cancelled' THEN 13
   END,
   COALESCE(facts.due_at, 'infinity'::timestamptz),COALESCE(facts.priority,99),
   facts.title,facts.task_id`;
@@ -279,6 +309,9 @@ function taskAction(phase: LeaderWorkPhase): string {
     case "blocked": return "先处理待复核依据、依赖或队列阻断，再决定承接";
     case "awaiting_delivery": return "核对 Run 终态与本人提交；缺交付时保留缺口，不猜结果";
     case "awaiting_acceptance": return "由声明验收责任者核对当前交付与实际使用";
+    case "awaiting_prerequisite": return "声明消费者已对当前交付签 used；等待所列前置 Task 完成后再关闭，不需要再验收";
+    case "awaiting_release": return "声明消费者已对当前交付签 used；等待所列发布责任者发布，之后再关闭，不需要再验收";
+    case "awaiting_close": return "声明消费者已对当前交付签 used；只差负责关闭的责任者按验收结论关闭，不需要再验收";
     case "ready": return "核对当前版本后按既有 assignment/queue 规则安排执行";
     case "awaiting_assignment": return "等待承接者确认当前 assignment 与 Task 修订";
     case "running": return "等待当前 Run 的真实终态，运行结束不代表验收";
@@ -322,6 +355,25 @@ function stoppedRunAction(row: QueryResultRow, phase: LeaderWorkPhase, base: str
 }
 function taskResponsibility(row: QueryResultRow, phase: LeaderWorkPhase,
   timing: LeaderWorkTaskTiming): LeaderWorkTask["responsible"] {
+  if (phase === "awaiting_close") {
+    // The answer exists, so nobody is owed an acceptance. The follow-up names who closes; without a named responsible party (or when it only
+    // pointed at a Task that has since closed) the Leader closes.
+    const waiting = row.follow_up_task_revision_id === row.current_revision_id ? row.follow_up_waiting_on as LeaderWorkWaitingFor | null : null;
+    if (waiting && ["leader", "role", "session", "user"].includes(waiting.kind) && waiting.id)
+      return { kind: waiting.kind as "leader", id: waiting.id, label: `负责关闭：${waiting.id}` };
+    return { kind: "leader", id: null, label: "负责关闭的 Leader（未登记具体身份）" };
+  }
+  if (phase === "awaiting_release") {
+    const publisher = (row.current_release_handoff as { recipient?: string } | null)?.recipient ??
+      (timing.current.waitingFor.kind === "publisher" ? timing.current.waitingFor.id : null);
+    return publisher ? { kind: "publisher", id: publisher, label: `发布维护者 ${publisher}` }
+      : { kind: "unknown", id: null, label: "发布责任者未登记" };
+  }
+  if (phase === "awaiting_prerequisite") {
+    const id = (row.follow_up_waiting_on as LeaderWorkWaitingFor | null)?.id ?? null;
+    return id ? { kind: "task", id, label: `前置任务 ${id}（${row.waiting_task_state ?? "状态未读到"}）` }
+      : { kind: "unknown", id: null, label: "前置任务未登记" };
+  }
   if (phase === "awaiting_acceptance") {
     const waiting = timing.current.waitingFor;
     if (waiting.kind === "consumer" && waiting.id)
@@ -630,7 +682,9 @@ function taskTiming(row: QueryResultRow, observedAt: string): LeaderWorkTaskTimi
   if (current.stage === "awaiting_acceptance" && followUpWaiting?.kind &&
     (typeof followUpWaiting.id === "string" || followUpWaiting.id === null))
     current.waitingFor = followUpWaiting.id === null || followUpWaiting.kind === "unknown"
-      ? { kind: "unknown", id: null } : followUpWaiting;
+      ? { kind: "unknown", id: null }
+      // A Task this one was waiting for has since closed (or was cancelled): it is no longer anyone's next move (defect b1f5d4c7).
+      : followUpWaiting.kind === "task" && row.waiting_task_open === false ? { kind: "leader", id: null } : followUpWaiting;
   if (current.stage === "awaiting_publication" &&
     (row.follow_up_task_revision_id !== row.current_revision_id || !currentArtifactRef)) {
     const sameRevision = row.follow_up_task_revision_id === row.current_revision_id;
@@ -682,6 +736,8 @@ export function leaderWorkTaskFromRow(row: QueryResultRow, observedAt: string): 
     title: row.title, taskKind: row.kind, taskState: row.state,
     phase, nextAction: stoppedRunAction(row, phase, conventionAction(row, phase, taskAction(phase))),
     responsible: conventionResponsible(row, phase, taskResponsibility(row, phase, timing)), assignment,
+    waitingTask: phase === "awaiting_prerequisite" && (row.follow_up_waiting_on as LeaderWorkWaitingFor | null)?.id
+      ? { taskId: String((row.follow_up_waiting_on as LeaderWorkWaitingFor).id), state: String(row.waiting_task_state ?? "unknown") } : null,
     acceptanceConvention: acceptanceConvention(row),
     latestRun: row.latest_run_id ? { runId: row.latest_run_id, state: row.latest_run_state,
       ...(row.latest_run_stopped_at ? { stopped: { at: iso(row.latest_run_stopped_at), reason: row.latest_run_stop_reason ?? null } } : {}) } : null,
@@ -872,6 +928,18 @@ function assertSnapshot(cursor: SnapshotCursor | null, view: LeaderWorkView, pro
   if (cursor && (cursor.projectId !== projectId || cursor.view !== view || cursor.includeClosed !== includeClosed ||
     cursor.sequence !== sequence || cursor.taskId !== taskId))
     throw new DomainError("WORK_INDEX_CHANGED", "待处理工作已变化；请从第一页重新核对，不能把旧页当成完整快照");
+}
+
+/**
+ * How many open Tasks are in each phase, from the same classification the Leader index lists (taskFactsSql). Not paged and not capped: the work board's
+ * 待验收 is `counts.awaiting_acceptance`, so it can only equal the Task list's (defect 422d95ce). Closed and cancelled Tasks are not in it.
+ */
+export async function readLeaderWorkPhaseCounts(db: Database, projectId: string): Promise<Record<string, number>> {
+  const result = await db.query(`${taskFactsSql(false)}
+    SELECT phase,count(*)::int AS n FROM facts GROUP BY phase`, [projectId]);
+  const counts: Record<string, number> = Object.fromEntries(Object.keys(phaseOrder).map(phase => [phase, 0]));
+  for (const row of result.rows) counts[row.phase as string] = int(row.n);
+  return counts;
 }
 
 export async function readLeaderWorkTasks(db: Database, projectId: string, query: LeaderWorkQuery,

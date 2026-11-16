@@ -104,12 +104,13 @@ export function foldPackets(events: SchedEvent[], ctx: FlowContext, cap: number)
 // ---- the object track ----
 export const STATIONS = ["待派发", "队伍", "运行中", "待验收", "已验收", "已合并", "已发布"] as const;
 /** One count per station, from the snapshot; null is "读不到" (the stream does not carry merges and releases today). */
-export function stationCounts(board: WorkBoardSnapshot, closedInWindow: number | null): Array<{ station: (typeof STATIONS)[number]; count: number | null }> {
+export function stationCounts(board: WorkBoardSnapshot, closedInWindow: number | null): Array<{ station: (typeof STATIONS)[number]; count: number | null; note?: string }> {
   const c = board.graph.counts;
   const n = (key: string) => typeof c[key] === "number" ? c[key]! : null;
   const queued = n("queued") === null || n("held") === null || n("claimed") === null ? null : n("queued")! + n("held")! + n("claimed")!;
   return [{ station: "待派发", count: board.readyNotQueued.length }, { station: "队伍", count: queued }, { station: "运行中", count: n("running") },
-    { station: "待验收", count: n("pendingAcceptance") }, { station: "已验收", count: closedInWindow }, { station: "已合并", count: null }, { station: "已发布", count: null }];
+    // 待验收 is the Tasks whose current Delivery has no consumer conclusion (the Task list's number). Arrangements still waiting for their recipient are a different count and say so.
+    { station: "待验收", count: n("pendingAcceptance"), ...(n("acceptanceRelaysUnanswered") === null ? {} : { note: `接力未回复 ${n("acceptanceRelaysUnanswered")}` }) }, { station: "已验收", count: closedInWindow }, { station: "已合并", count: null }, { station: "已发布", count: null }];
 }
 
 /** Where the board is stuck, from the snapshot alone: held line entries, a closed recovery gate, a held provider, blocked packets. */

@@ -54,7 +54,7 @@ async function studyScenario(t:TestContext,ending:"child"|"child-retry"|"child-m
   const controllerId="study-controller",reviewerId="study-reviewer",role=fixtureRoleId("cognition"),business=fixtureRoleId("business");
   const scope="study-cognition-scope",cwd=`/tmp/evoloop-waiting-study-${"c".repeat(180)}`;
   const principal=(actorId:string)=>({actorId,projectIds:[projectId],
-    permissions:["read","write","review"] as Array<"read"|"write"|"review">});
+    permissions:["task", "document", "session", "management"], decisions: true});
   const controller=principal(controllerId),reviewer=principal(reviewerId);
   const uow=new PostgresUnitOfWork(pool),clock={now:()=>new Date().toISOString()},ids={next:randomUUID};
   const workflow=new WorkflowService({uow,clock,ids,hasher:{hash}}),runtime=new RuntimeWorkflowService({uow,clock,ids});
@@ -365,7 +365,7 @@ async function studyScenario(t:TestContext,ending:"child"|"child-retry"|"child-m
     workerTraceAuthority:(who,target)=>workerGuardFacts(pool,who,async(_project,actor)=>
       actor===reviewerId&&reviewerCurrent).fixedRunTrace!(target)});
   const app=await buildServer({service:workflow,credentials:[{token:"o".repeat(40),actorId:controllerId,
-    projectIds:[projectId],permissions:["read","write","review"]}],
+    projectIds:[projectId],permissions:["task", "document", "session", "management"], decisions: true}],
     references:{uow,gitForPrincipal:async()=>referenceDeps.git,knowledgeForPrincipal:async()=>({})} as never,
     documents:{uow,blobsForPrincipal:async()=>({}) as never},
     orchestration:{service:orchestration},

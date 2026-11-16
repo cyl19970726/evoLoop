@@ -28,7 +28,7 @@ test("a delayed retry preserves statuses from a newly loaded Task page", { skip:
     if (url.pathname.startsWith("/api/")) {
       const root = `/api/projects/${projectId}`;
       let value: unknown = { items: [], nextCursor: null }, responseStatus = 200;
-      if (url.pathname === "/api/session") value = { principal: { actorId: "reader", projectIds: [projectId], permissions: ["read"] }, capabilities: {} };
+      if (url.pathname === "/api/session") value = { principal: { actorId: "reader", projectIds: [projectId], permissions: [] }, capabilities: {} };
       else if (url.pathname === root) value = { id: projectId, title: "回归项目", createdAt: stamp };
       else if (url.pathname === `${root}/tasks`) value = url.searchParams.has("cursor")
         ? { items: [task(secondId, "第二页任务")], nextCursor: null }

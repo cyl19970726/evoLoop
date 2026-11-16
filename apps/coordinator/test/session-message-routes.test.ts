@@ -15,7 +15,7 @@ test("message reads bind cursors to identity and recipient and enforce a UTF-8 b
   const app = Fastify();
   app.decorateRequest("principal", null);
   app.addHook("onRequest", async request => {
-    request.principal = { actorId: request.headers.authorization ?? "reader", projectIds: [projectId], permissions: ["read"] };
+    request.principal = { actorId: request.headers.authorization ?? "reader", projectIds: [projectId], permissions: [] };
   });
   app.setErrorHandler((error, _request, reply) => reply.code(error instanceof z.ZodError ? 400 :
     error instanceof DomainError && error.code === "FORBIDDEN" ? 403 : 409).send({ code: error instanceof DomainError ? error.code : "INVALID_INPUT" }));

@@ -90,7 +90,7 @@ export function DocumentTable({ projectId, list, state, update, toolbar, actorId
             const [first, ...others] = work?.references ?? [];
             const owner = document.primaryTaskId && !work?.references.some(reference => reference.taskId === document.primaryTaskId)
               ? <a href={taskLinkFrom(projectId, document.primaryTaskId, from)} className="text-caption text-primary hover:underline">所属任务</a> : null;
-            return <tr key={document.id} className={cn("border-t border-border align-top", state.lastOpened === document.id && "bg-selected/60")}>
+            return <tr key={document.id} className={cn("border-t border-border align-top", state.lastOpened === document.id && "bg-accent")}>
               <td className="px-4 py-3">
                 <a href={href(projectId, "document", document.id)} data-document-title={document.id} onClick={() => open(document.id)}
                   className="font-medium text-foreground outline-none [overflow-wrap:anywhere] hover:text-primary hover:underline focus-visible:shadow-[var(--focus-ring)]">{document.title}</a>

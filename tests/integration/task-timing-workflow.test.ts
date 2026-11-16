@@ -21,7 +21,7 @@ test("ordinary Task create and start enforce once and serial daily timing", asyn
   const projectId = randomUUID(), owner = randomUUID();
   await pool.query("INSERT INTO project(project_id,title,created_at) VALUES($1,'Timing workflow fixture',now())", [projectId]);
   await seedFixtureRole(pool, projectId, owner);
-  const principal = { actorId: "timing-reviewer", projectIds: [projectId], permissions: ["read", "write", "review"] as const };
+  const principal = { actorId: "timing-reviewer", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true };
   let now = "2026-11-06T00:00:00.000Z";
   const once = randomUUID(), daily = randomUUID();
   const workflow = new WorkflowService({ uow: new PostgresUnitOfWork(pool), clock: { now: () => now },

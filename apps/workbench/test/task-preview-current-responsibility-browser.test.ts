@@ -50,7 +50,7 @@ test("ordinary Task row, right-column facts and the full task use current QA res
       const root = `/api/projects/${projectId}`;
       let value: unknown = { items: [], nextCursor: null };
       if (url.pathname === "/api/session") value = {
-        principal: { actorId: "reader", projectIds: [projectId], permissions: ["read"] }, capabilities: {},
+        principal: { actorId: "reader", projectIds: [projectId], permissions: [] }, capabilities: {},
       };
       else if (url.pathname === root) value = { id: projectId, title: "合成夹具项目", createdAt: stamp };
       else if (url.pathname === `${root}/tasks`) value = { items: [task], nextCursor: null };

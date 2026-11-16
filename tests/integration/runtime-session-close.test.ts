@@ -30,7 +30,7 @@ test("CLI close command reaches HTTP admission and stores one durable owned clos
   const projectId = randomUUID(), sessionId = randomUUID(), operationId = randomUUID();
   const actorId = "close-reviewer", cwd = "/tmp/evoloop-session-close";
   const token = randomUUID() + randomUUID();
-  const principal = { actorId, projectIds: [projectId], permissions: ["read", "write", "review"] as Array<"read" | "write" | "review"> };
+  const principal = { actorId, projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true };
   const created = await workflow.execute(principal, { type: "project.create", projectId,
     operationId: randomUUID(), title: "Session close fixture" });
   assert.equal(created.status, "applied");
@@ -41,7 +41,7 @@ test("CLI close command reaches HTTP admission and stores one durable owned clos
     nativeSessionId: "owned-session", operationId: randomUUID(), actorId, createdAt: now, updatedAt: now }));
   const runtime = { status: () => ({ available: true, error: null }) } as RuntimeRunner;
   const app = await buildServer({ service: workflow, credentials: [{ token, actorId,
-    projectIds: [projectId], permissions: ["read", "write", "review"] }], runtime,
+    projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true }], runtime,
     hasRuntimeGrant: scope => scope.projectId === projectId && scope.actorId === actorId &&
       scope.roleId === "operator" && scope.authorizationScope === "project" && scope.cwd === cwd && scope.sandbox === "danger-full-access" });
   const origin = await app.listen({ host: "127.0.0.1", port: 0 });

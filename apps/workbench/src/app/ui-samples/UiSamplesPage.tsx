@@ -218,7 +218,7 @@ export default function UiSamplesPage() {
         </header>
 
         <main className="mx-auto flex max-w-[1080px] flex-col gap-4 px-4 pb-16 pt-2 md:px-8">
-          <Section title="按钮与输入" note="主按钮每屏最多一个；按钮是胶囊形，文字链接、可选中的行和页签不是">
+          <Section title="按钮与输入" note="主按钮（陶土实底）每屏最多一个，次要按钮是陶土浅底；按钮是胶囊形，文字链接、可选中的行和页签不是">
             <Row label="按钮">
               <Button variant="primary">通过验收</Button>
               <Button>退回返工</Button>
@@ -268,7 +268,7 @@ export default function UiSamplesPage() {
             </div>
           </Section>
 
-          <Section title="列表、折叠与页签" note="列表行用选中底色区分，不做成卡片">
+          <Section title="列表、折叠与页签" note="选中的行用墨蓝浅底区分，不做成卡片">
             <div className="grid gap-4 md:grid-cols-[300px_minmax(0,1fr)]">
               <div className="flex flex-col gap-0.5 rounded-lg bg-sunken p-2">
                 {sampleTasks.map(task => {

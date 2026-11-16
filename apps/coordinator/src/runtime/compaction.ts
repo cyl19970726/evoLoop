@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { Pool, PoolClient } from 'pg';
-import type { Principal } from '@evoloop/contracts';
+import { hasDecisionAuthority, mayAccessSession, type Principal } from '@evoloop/contracts';
 import { DomainError } from '@evoloop/contracts/ports';
 import { RuntimeCompactionPreflightError } from '@evoloop/adapter-codex-app-server';
 import { RuntimeServerError, RuntimeUnknownError, type RuntimeBinding, type RuntimeCompactionObservation } from '@evoloop/contracts/runtime';
@@ -57,8 +57,7 @@ export class CompactionMaintenance {
       throw new DomainError('CAPABILITY_UNAVAILABLE','The native runtime does not accept owner compaction requests');
   }
   private authorize(principal:Principal,projectId:string){
-    if(!principal.projectIds.includes(projectId)||!principal.permissions.includes('review')||
-      !principal.permissions.includes('write')||principal.actorId.startsWith('worker-'))
+    if(!hasDecisionAuthority(principal,projectId,'session')||principal.actorId.startsWith('worker-'))
       throw new DomainError('FORBIDDEN','Compaction maintenance requires a project reviewer');
   }
   private async row(projectId:string,operationId:string,client:Pool|PoolClient=this.pool):Promise<Row|null>{
@@ -67,14 +66,18 @@ export class CompactionMaintenance {
     return result.rows[0]??null;
   }
   async read(principal:Principal,projectId:string,operationId:string){
-    if(!principal.projectIds.includes(projectId)||!principal.permissions.includes('review'))
+    if(!hasDecisionAuthority(principal,projectId,'session'))
       throw new DomainError('FORBIDDEN','Compaction history requires a project reviewer');
     const saved=await this.row(projectId,operationId);
     if(!saved)throw new DomainError('NOT_FOUND','Compaction operation not found');
+    if(!mayAccessSession(principal,projectId,saved.session_id))
+      throw new DomainError('FORBIDDEN','Compaction history is limited to the granted Session');
     return view(saved);
   }
   async start(principal:Principal,projectId:string,sessionId:string,input:CompactionIntent){
     this.authorize(principal,projectId);
+    if(!mayAccessSession(principal,projectId,sessionId))
+      throw new DomainError('FORBIDDEN','Compaction maintenance is limited to the granted Session');
     const existing=await this.row(projectId,input.operationId);
     if(existing){
       assertSame(existing,sessionId,input,principal.actorId);
@@ -219,6 +222,8 @@ export class CompactionMaintenance {
     this.authorize(principal,projectId);
     const saved=await this.row(projectId,operationId);
     if(!saved)throw new DomainError('NOT_FOUND','Compaction operation not found');
+    if(!mayAccessSession(principal,projectId,saved.session_id))
+      throw new DomainError('FORBIDDEN','Compaction reconciliation is limited to the granted Session');
     if(saved.state==='completed'||saved.state==='failed')return this.read(principal,projectId,operationId);
     // The request ID is saved before writing to native stdin. A lost response
     // and an unrelated later compaction Turn cannot establish acceptance.

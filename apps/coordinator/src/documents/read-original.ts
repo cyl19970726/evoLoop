@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { Principal } from "@evoloop/contracts";
+import { isProjectMember, type Principal } from "@evoloop/contracts";
 import type { DocumentPayloadRevision, DocumentPayloadUnitOfWork, RegisteredDocumentBlob } from "@evoloop/contracts/process-documents";
 import type { BlobPayload, BlobStore } from "@evoloop/contracts/sources";
 import type { DocumentOriginalRead } from "../runtime/materials.js";
@@ -15,7 +15,7 @@ export interface OriginalReaderOptions {
 export async function readDocumentOriginal(
   options: OriginalReaderOptions, principal: Principal, revision: DocumentPayloadRevision,
 ): Promise<DocumentOriginalRead> {
-  if (!principal.permissions.includes("read") || !principal.projectIds.includes(revision.projectId))
+  if (!isProjectMember(principal, revision.projectId))
     return { status: "unavailable", reason: "forbidden" };
   if (revision.body !== null) {
     if (revision.payloadRef !== null || revision.assetsManifest.length ||

@@ -9,6 +9,12 @@
 //             by test-pg.mjs, or a directory name matching config.legacyPgNames: nothing else is ever touched), nobody
 //             connected (unknown counts as connected), not just started, and (with a marker) its worktree is gone or
 //             reclaimed in this run.
+// Dependency directories (node_modules, reinstallable; sources, untracked files, branches and commits are never touched) are reclaimed in
+// three more places, each with its own checks:
+//   tmp copy:  a copy under a configured tmp root whose name matches config.tmpCopyNames (acceptance Sessions' temporary clones and instances)
+//   merged worktree: a linked worktree whose PR is MERGED but which does not meet the strict whole-tree conditions above (dirty, unpushed)
+//   old release: a release directory under config.releaseRoot that is neither the current release nor the previous complete one
+//   all three: not protected, no process has it as its working directory, nothing changed in it for config.depsIdleMinutes.
 // Private values (clone paths, workspace roots, protected production/release paths) come from a config file OUTSIDE the
 // repository: EVOLOOP_DISK_CONFIG. Nothing here deletes by age.
 import { execFileSync } from "node:child_process";
@@ -20,6 +26,8 @@ import { MARKER } from "./test-pg.mjs";
 
 export const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const GB = 1024 ** 3;
+// <name>-main-<7-hex commit>-<yyyymmdd>: how a release directory is named, whatever the host user is called.
+const DEFAULT_RELEASE_NAMES = String.raw`^[\w.-]+-main-[0-9a-f]{7}-\d{8}$`;
 
 const real = path => { try { return realpathSync(path); } catch { return resolve(path); } };
 export const within = (path, root) => { const a = real(path), b = real(root); return a === b || a.startsWith(b + sep); };
@@ -37,8 +45,12 @@ export function loadConfig(text, path) {
   };
   const result = { repos: absList("repos", true), workspaceRoots: absList("workspaceRoots", true), protectedPaths: absList("protectedPaths", true),
     testPgRoots: absList("testPgRoots", false), legacyPgNames: (config.legacyPgNames ?? []).map(pattern => new RegExp(pattern)), protectedPorts: (config.protectedPorts ?? []).map(Number),
+    tmpCopyRoots: absList("tmpCopyRoots", false), tmpCopyNames: (config.tmpCopyNames ?? []).map(pattern => new RegExp(pattern)),
+    releaseRoot: config.releaseRoot ?? null, releaseNames: new RegExp(config.releaseNames ?? DEFAULT_RELEASE_NAMES), depsIdleMinutes: config.depsIdleMinutes ?? 120,
     minFreeGB: config.minFreeGB ?? 20, pgMinAgeMinutes: config.pgMinAgeMinutes ?? 30, pgIdleMinutes: config.pgIdleMinutes ?? 120, baseBranch: config.baseBranch ?? "main", remote: config.remote ?? "origin", repo: config.repo ?? null };
   if (!Number.isFinite(result.minFreeGB) || result.minFreeGB < 0) throw new Error("config.minFreeGB must be a number");
+  if (result.releaseRoot !== null && (typeof result.releaseRoot !== "string" || !isAbsolute(result.releaseRoot) || within(result.releaseRoot, repoRoot))) throw new Error("config.releaseRoot must be an absolute path outside the repository");
+  if (!Number.isFinite(result.depsIdleMinutes) || result.depsIdleMinutes < 0) throw new Error("config.depsIdleMinutes must be a number");
   return result;
 }
 
@@ -82,6 +94,49 @@ export function instanceSkipReasons(facts, config, { reclaimedWorktrees = new Se
   else if (facts.idleMinutes < config.pgIdleMinutes) reasons.push(`数据目录 ${Math.round(facts.idleMinutes)} 分钟前还有写入,不足 ${config.pgIdleMinutes} 分钟空闲`);
   if (facts.ageMinutes !== null && facts.ageMinutes < config.pgMinAgeMinutes) reasons.push(`刚启动 ${Math.round(facts.ageMinutes)} 分钟,不足 ${config.pgMinAgeMinutes} 分钟`);
   if (facts.marker?.worktree && existsSync(facts.marker.worktree) && !reclaimedWorktrees.has(real(facts.marker.worktree))) reasons.push(`所属工作树 ${facts.marker.worktree} 仍在使用`);
+  return reasons;
+}
+
+/**
+ * Directories that are protected by what they ARE, whatever the private config says (or does not say): the formal instance's own directory
+ * (it holds the database or the receipts of its bootstrap, service registration or tunnel) and a tunnel's directory (cloudflared runtime files).
+ * `entries` is a function (relative path -> boolean: does it exist). The config's protectedPaths are an addition to this, never the only guard.
+ */
+export function builtInProtection(exists) {
+  const reasons = [];
+  if (["bootstrap-receipt.json", "launchd-receipt.json", "launchd-stable-receipt.json", "tunnel-receipt.json", "postgres/PG_VERSION", "postgres/data/PG_VERSION"].some(exists)) reasons.push("内置保护:正式实例目录(有数据库或引导/服务/隧道回执),不依赖配置,永不回收");
+  if (["runtime/cloudflared.stderr.log", "runtime/cloudflared.stdout.log", "runtime/cloudflared.pid", "runtime/cloudflared.yml", "runtime/cloudflared.json", "cloudflared"].some(exists)) reasons.push("内置保护:隧道配置目录(有 cloudflared 运行文件),不依赖配置,永不回收");
+  return reasons;
+}
+
+/**
+ * Why the dependency directories of a place may not be removed. `facts`: { path, kind: "tmp-copy" | "worktree" | "release", processes (list or null),
+ * recentChange (a path changed inside the idle window, null = unknown, false = none), plus per kind: tmp-copy: nothing more; worktree: pr, branch;
+ * release: isCurrent, isPrevious }. Empty list = remove its node_modules.
+ */
+export function depsSkipReasons(facts, config) {
+  const reasons = [...(facts.builtIn ?? [])];
+  if (config.protectedPaths.some(p => within(facts.path, p) || within(p, facts.path))) reasons.push("路径受保护(正式数据库目录、隧道配置目录或发布目录相关),永不回收");
+  if (facts.kind === "tmp-copy") {
+    if (!(config.tmpCopyRoots ?? []).some(root => inside(facts.path, root))) reasons.push("不在配置的临时目录根下");
+    else if (!(config.tmpCopyNames ?? []).some(pattern => pattern.test(basename(facts.path)))) reasons.push("目录名不匹配 tmpCopyNames:不能确定是验收临时副本,不触碰");
+  } else if (facts.kind === "worktree") {
+    if (!facts.branch || facts.detached) reasons.push("HEAD 是游离状态,没有分支可对应 PR");
+    else if (facts.prUnknown) reasons.push("无法查询这个分支的 PR 状态");
+    else if (!facts.pr) reasons.push(`分支 ${facts.branch} 没有对应的 PR`);
+    else if (facts.pr.open) reasons.push(`PR #${facts.pr.open} 还开着`);
+    else if (facts.pr.state !== "MERGED") reasons.push(`PR #${facts.pr.number} 已关闭但没有合并`);
+  } else if (facts.kind === "release") {
+    if (!config.releaseRoot || !inside(facts.path, config.releaseRoot)) reasons.push("不在配置的发布目录根下");
+    else if (!(config.releaseNames ?? new RegExp(DEFAULT_RELEASE_NAMES)).test(basename(facts.path))) reasons.push("目录名不匹配 releaseNames:不是发布目录,不触碰");
+    if (facts.isCurrent) reasons.push("是当前发布(current 指向它)");
+    if (facts.isPrevious) reasons.push("是上一个完整发布(保留作回退)");
+    if (facts.isNewerThanCurrent) reasons.push("比当前发布还新:可能是正在准备的下一个发布,不动");
+  } else reasons.push(`未知类型 ${facts.kind}`);
+  if (facts.processes === null) reasons.push("无法检查有没有进程以它为工作目录");
+  else if (facts.processes.length) reasons.push(`有进程以它为工作目录(${facts.processes.slice(0, 3).map(p => `${p.command}[${p.pid}]`).join(", ")})`);
+  if (facts.recentChange === null) reasons.push("无法确认最近有没有改动");
+  else if (facts.recentChange) reasons.push(`${config.depsIdleMinutes ?? 120} 分钟内有改动(${facts.recentChange === true ? "" : facts.recentChange})`.replace("()", ""));
   return reasons;
 }
 
@@ -150,6 +205,35 @@ export function makeAdapters(config, exec = execFileSync) {
     },
     sizeBytes: path => { try { return Number(run("du", ["-sk", path]).split("\t")[0]) * 1024; } catch { return null; } },
     removeWorktree: (repo, path) => { git(repo, "worktree", "remove", path); },
+    // node_modules directories up to `depth` levels below `dir` (never looking inside one, nor inside .git).
+    findDeps: (dir, depth = 3) => {
+      const found = [];
+      const walk = (current, level) => {
+        let entries; try { entries = readdirSync(current, { withFileTypes: true }); } catch { return; }
+        for (const entry of entries) {
+          if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
+          const child = join(current, entry.name);
+          if (entry.name === "node_modules") found.push(child);
+          else if (entry.name !== ".git" && level < depth) walk(child, level + 1);
+        }
+      };
+      walk(dir, 1);
+      return found;
+    },
+    // A path (relative) of one file changed within `minutes`, ignoring node_modules and .git; false = none; null = could not look.
+    recentChange: (dir, minutes) => {
+      try {
+        const out = run("find", [dir, "(", "-name", "node_modules", "-o", "-name", ".git", ")", "-prune", "-o", "-type", "f", "-mmin", `-${Math.max(1, Math.ceil(minutes))}`, "-print", "-quit"]).trim();
+        return out ? out.slice(dir.length + 1) || true : false;
+      } catch { return null; }
+    },
+    pathExists: path => existsSync(path),
+    listDirs: root => { try { return readdirSync(root, { withFileTypes: true }).filter(entry => entry.isDirectory() && !entry.isSymbolicLink()).map(entry => join(root, entry.name)); } catch { return null; } },
+    realpath: path => real(path),
+    // A release that was deployed has both source/ and runtime/; a build that was only made (or aborted) has less and is not a rollback target.
+    deployed: dir => existsSync(join(dir, "source")) && existsSync(join(dir, "runtime")),
+    mtimeMs: path => { try { return statSync(path).mtimeMs; } catch { return null; } },
+    removeDeps: path => { if (basename(path) !== "node_modules") throw new Error("refusing to remove a directory that is not node_modules"); rmSync(path, { recursive: true, force: true }); },
     freeBytes: path => { const s = statfsSync(path); return s.bavail * s.bsize; },
     // Running test PostgreSQL postmasters: `postgres ... -D DIR ...` (children are "postgres: ..." and are skipped).
     pgProcesses: () => run("ps", ["-axo", "pid=,etime=,command="]).split("\n").map(line => {
@@ -220,11 +304,48 @@ export async function survey({ adapter, config, onlyBranch = null, now = Date.no
     if (managed) facts.connections = adapter.pgConnections({ pid: proc.pid, binary: proc.binary, port });
     instances.push({ kind: "instance", dataDir, port, pid: proc.pid, dir, facts, bytes: adapter.sizeBytes(dataDir) });
   }
-  return { worktrees, instances, processesKnown: processes !== null };
+  return { worktrees, instances, processesKnown: processes !== null, processes };
+}
+
+export const DEPS_CLASSES = { "tmp-copy": "/tmp 验收临时副本", worktree: "已合并 PR 的工作树依赖", release: "旧发布依赖" };
+
+/**
+ * The places whose node_modules may be reclaimed, each with the reasons it may not (empty = reclaim). Worktrees that the run removes
+ * whole are not listed again. `wholeRemoved` holds the real paths of worktrees removed (or planned) in this run.
+ */
+export function surveyDeps({ adapter, config, surveyed, wholeRemoved = new Set(), now = Date.now() }) {
+  const items = [];
+  const processes = surveyed.processes ?? null;
+  const using = dir => (processes === null ? null : processes.filter(p => within(p.cwd, dir)));
+  const bytesOf = dirs => dirs.reduce((sum, dir) => sum + (adapter.sizeBytes(dir) ?? 0), 0);
+  const add = (cls, path, facts) => {
+    const depsDirs = adapter.findDeps(path);
+    if (!depsDirs.length) return;
+    items.push({ class: cls, path, depsDirs, bytes: bytesOf(depsDirs), reasons: depsSkipReasons({ path, ...facts, builtIn: builtInProtection(rel => adapter.pathExists(join(path, rel))), processes: using(path), recentChange: adapter.recentChange(path, config.depsIdleMinutes ?? 120) }, config) });
+  };
+  for (const root of config.tmpCopyRoots ?? []) {
+    for (const dir of adapter.listDirs(root) ?? []) if ((config.tmpCopyNames ?? []).some(pattern => pattern.test(basename(dir)))) add("tmp-copy", dir, { kind: "tmp-copy" });
+  }
+  for (const entry of surveyed.worktrees) {
+    if (!entry.facts || entry.isMain || !entry.facts.underWorkspace || !adapter.dirExists(entry.path) || wholeRemoved.has(real(entry.path))) continue;
+    add("worktree", entry.path, { kind: "worktree", branch: entry.branch, detached: entry.detached, pr: entry.facts.pr, prUnknown: entry.facts.prUnknown });
+  }
+  if (config.releaseRoot) {
+    const dirs = (adapter.listDirs(config.releaseRoot) ?? []).filter(dir => (config.releaseNames ?? new RegExp(DEFAULT_RELEASE_NAMES)).test(basename(dir)));
+    const current = (() => { const link = adapter.realpath(join(config.releaseRoot, "current")); return dirs.map(real).includes(link) ? link : null; })();
+    // The previous release is the newest other one that was deployed (source/ and runtime/) and is a release at all: a build that was made but never
+    // deployed, an aborted one, or the formal instance's or a tunnel's directory (which can be newer) is not what a rollback would go back to.
+    const isRelease = dir => builtInProtection(rel => adapter.pathExists(join(dir, rel))).length === 0 && !config.protectedPaths.some(p => within(dir, p) || within(p, dir));
+    const previous = dirs.filter(dir => real(dir) !== current && isRelease(dir) && adapter.deployed(dir)).sort((a, b) => (adapter.mtimeMs(b) ?? 0) - (adapter.mtimeMs(a) ?? 0))[0] ?? null;
+    for (const dir of dirs) add("release", dir, { kind: "release", isCurrent: real(dir) === current, isPrevious: previous !== null && real(dir) === real(previous),
+      isNewerThanCurrent: current !== null && real(dir) !== current && (adapter.mtimeMs(dir) ?? 0) > (adapter.mtimeMs(current) ?? Infinity) });
+  }
+  return items;
 }
 
 /** Decide, then (only with execute) act. Returns the full report data. */
 export async function reclaim({ adapter, config, execute = false, onlyBranch = null, now = Date.now(), log = () => {} }) {
+  const freeBefore = adapter.freeBytes(config.workspaceRoots[0]);
   const surveyed = await survey({ adapter, config, onlyBranch, now });
   const reclaimed = [], skipped = [], failed = [];
   const reclaimedWorktrees = new Set();
@@ -266,11 +387,24 @@ export async function reclaim({ adapter, config, execute = false, onlyBranch = n
       reclaimed.push({ kind: "instance", path: item.dir, port: item.port, bytes: item.bytes }); log(`stopped and removed instance ${item.dir}`);
     } catch (error) { failed.push({ kind: "instance", path: item.dataDir, error: error.message.split("\n")[0] }); }
   }
+  const deps = surveyDeps({ adapter, config, surveyed, wholeRemoved: execute ? reclaimedWorktrees : planned, now });
+  for (const item of deps) {
+    if (item.reasons.length) { skipped.push({ kind: "deps", class: item.class, path: item.path, bytes: item.bytes, reasons: item.reasons }); continue; }
+    if (!execute) { reclaimed.push({ kind: "deps", class: item.class, path: item.path, bytes: item.bytes, dryRun: true }); continue; }
+    try {
+      for (const dir of item.depsDirs) adapter.removeDeps(dir);
+      reclaimed.push({ kind: "deps", class: item.class, path: item.path, bytes: item.bytes }); log(`removed node_modules in ${item.path}`);
+    } catch (error) { failed.push({ kind: "deps", class: item.class, path: item.path, error: error.message.split("\n")[0] }); }
+  }
+  const byClass = Object.fromEntries(Object.keys(DEPS_CLASSES).map(cls => {
+    const rec = reclaimed.filter(item => item.kind === "deps" && item.class === cls), skp = skipped.filter(item => item.kind === "deps" && item.class === cls);
+    return [cls, { reclaimedCount: rec.length, reclaimedBytes: rec.reduce((sum, item) => sum + (item.bytes ?? 0), 0), skippedCount: skp.length, skippedBytes: skp.reduce((sum, item) => sum + (item.bytes ?? 0), 0) }];
+  }));
   const free = adapter.freeBytes(config.workspaceRoots[0]);
   const linked = surveyed.worktrees.filter(w => !w.isMain && w.facts);
   return {
     generatedAt: new Date(now).toISOString(), execute, onlyBranch,
-    freeBytes: free, minFreeBytes: config.minFreeGB * GB, lowSpace: free < config.minFreeGB * GB,
+    freeBytesBefore: freeBefore, freeBytes: free, deps: byClass, minFreeBytes: config.minFreeGB * GB, lowSpace: free < config.minFreeGB * GB,
     worktrees: { count: linked.length, totalBytes: linked.reduce((sum, w) => sum + (w.bytes ?? 0), 0) },
     instances: { running: surveyed.instances.length, underTestRoots: surveyed.instances.filter(i => i.dir).length, totalBytes: surveyed.instances.reduce((sum, i) => sum + (i.bytes ?? 0), 0) },
     reclaimed, skipped, failed, processesKnown: surveyed.processesKnown,
@@ -285,9 +419,15 @@ export function formatReport(report) {
   lines.push(`工作树:${report.worktrees.count} 个,共 ${gb(report.worktrees.totalBytes)};测试实例:运行中 ${report.instances.running} 个(数据目录合计约 ${gb(report.instances.totalBytes)},其中在测试实例根目录下 ${report.instances.underTestRoots} 个)`);
   const rec = report.reclaimed;
   lines.push("", `${report.execute ? "本次回收" : "将回收"}(${rec.length}):`);
-  for (const item of rec) lines.push(`  - ${item.kind === "worktree" ? "工作树" : "测试实例"} ${item.path}${item.branch ? `(${item.branch})` : ""}${item.port ? ` 端口 ${item.port}` : ""} ${item.bytes == null ? "" : gb(item.bytes)}`);
+  const label = item => (item.kind === "worktree" ? "工作树" : item.kind === "deps" ? `${DEPS_CLASSES[item.class] ?? "依赖"}(node_modules)` : "测试实例");
+  for (const item of rec) lines.push(`  - ${label(item)} ${item.path}${item.branch ? `(${item.branch})` : ""}${item.port ? ` 端口 ${item.port}` : ""} ${item.bytes == null ? "" : gb(item.bytes)}`);
+  if (report.deps) {
+    lines.push("", `依赖目录回收(按类别;${report.execute ? "已回收" : "可回收"} / 跳过):`);
+    for (const [cls, name] of Object.entries(DEPS_CLASSES)) { const d = report.deps[cls]; lines.push(`  - ${name}:${report.execute ? "回收" : "可回收"} ${d.reclaimedCount} 处 ${gb(d.reclaimedBytes)};跳过 ${d.skippedCount} 处 ${gb(d.skippedBytes)}`); }
+    if (report.freeBytesBefore != null) lines.push(`  - 执行前后可用空间(statfs):${gb(report.freeBytesBefore)} → ${gb(report.freeBytes)}(差 ${gb(report.freeBytes - report.freeBytesBefore)};脚本回收合计 ${gb(rec.reduce((sum, item) => sum + (item.bytes ?? 0), 0))},“du 大小”与实际释放可能不同)`);
+  }
   lines.push("", `跳过(${report.skipped.length}):`);
-  for (const item of report.skipped) lines.push(`  - ${item.kind === "worktree" ? "工作树" : "测试实例"} ${item.path}${item.branch ? `(${item.branch})` : ""}${item.port ? ` 端口 ${item.port}` : ""}:${item.reasons.join(";")}`);
+  for (const item of report.skipped) lines.push(`  - ${label(item)} ${item.path}${item.branch ? `(${item.branch})` : ""}${item.port ? ` 端口 ${item.port}` : ""}:${item.reasons.join(";")}`);
   if (report.failed.length) { lines.push("", `失败(${report.failed.length}):`); for (const item of report.failed) lines.push(`  - ${item.kind} ${item.path}:${item.error}`); }
   if (!report.processesKnown) lines.push("", "注意:无法列出进程工作目录(lsof 不可用),所有工作树都因此被跳过。");
   return lines.join("\n");

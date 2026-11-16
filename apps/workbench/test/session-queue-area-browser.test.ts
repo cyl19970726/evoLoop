@@ -50,7 +50,7 @@ async function run(queued: number, t: import("node:test").TestContext, withdrawa
       let value: unknown = { items: [], nextCursor: null, metadata }, status = 200;
       const body = async () => { let text = ""; for await (const chunk of req) text += String(chunk); return JSON.parse(text) as Record<string, unknown>; };
       const taskMatch = new RegExp(`^${root}/tasks/${id(1000).slice(0, -4)}(\\d{4})$`).exec(url.pathname);
-      if (url.pathname === "/api/session") value = { principal: { actorId: "reader", projectIds: [projectId], permissions: ["read", "write", "review"] }, capabilities: {} };
+      if (url.pathname === "/api/session") value = { principal: { actorId: "reader", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true }, capabilities: {} };
       else if (url.pathname === root) value = { id: projectId, title: "队列测试项目", createdAt: stamp };
       else if (url.pathname === "/api/commands" && req.method === "POST") {
         const command = await body(); if (command.type === "session.message.cancel") withdrawals.push(String(command.messageId));

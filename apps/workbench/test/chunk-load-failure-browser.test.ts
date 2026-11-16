@@ -24,7 +24,7 @@ test("a page chunk that cannot be fetched shows the updated-workbench state, is 
     const url = new URL(req.url!, "http://127.0.0.1");
     if (url.pathname.startsWith("/api/")) {
       let value: unknown = { items: [], nextCursor: null };
-      if (url.pathname === "/api/session") value = { principal: { actorId: "reader", projectIds: [projectId], permissions: ["read", "write", "review"], identityKind: "human" }, capabilities: {} };
+      if (url.pathname === "/api/session") value = { principal: { actorId: "reader", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true, identityKind: "human" }, capabilities: {} };
       else if (url.pathname === `/api/projects/${projectId}`) value = { id: projectId, title: "分块加载回归项目", createdAt: stamp };
       else if (url.pathname.endsWith("/impacts")) value = [];
       res.writeHead(200, { "content-type": "application/json" }); res.end(JSON.stringify(value)); return;

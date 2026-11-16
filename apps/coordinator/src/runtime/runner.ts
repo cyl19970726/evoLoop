@@ -1,6 +1,8 @@
 import { ProviderRoutedRuntime, runtimeForBinding, runtimeForProvider, runtimeProvidersOf } from "./routed.js";
 import { createHash, randomUUID } from "node:crypto";
-import type { BasisSet, Command, EvaluationFixedRef, Principal, RuntimeRunRecord, RuntimeSessionRecord, TaskRevision } from "@evoloop/contracts";
+import { hasDecisionAuthority, hasPermission, isProjectMember, mayAccessSession,
+  type BasisSet, type Command, type EvaluationFixedRef, type Principal, type RuntimeRunRecord,
+  type RuntimeSessionRecord, type TaskRevision } from "@evoloop/contracts";
 import type { RuntimeBinding, RuntimeCapabilityListing, RuntimeCompactionObservation, RuntimeObservedCapabilities, RuntimePage, RuntimePort, RuntimeSessionSpec, RuntimeTurn, EvaluationPacketBinding, RuntimeWorkTrace, RuntimeReconcilePartial } from "@evoloop/contracts/runtime";
 import type { NativeWorkspacePage, NativeWorkspaceReadOptions, WorkspaceRuntimeUpdate } from "@evoloop/contracts/session-timeline";
 import type { BlobStore } from "@evoloop/contracts/sources";
@@ -26,6 +28,14 @@ import { buildEvaluationPacket, canonicalEvaluationJson, evaluationPacketBlobId,
 
 interface TaskInputMaterial { input: string; sources: EvaluationFixedRef[]; revision: TaskRevision; basis: BasisSet }
 type RuntimeFaultPhase = "project_scan" | "session_create" | "session_name_sync" | "session_close" | "profile_activation" | "run_preflight" | "business_profile_restore" | "run_start" | "run_bind" | "run_reconcile" | "approval_receipt";
+/** Limits of automatic recovery of a lost Codex child. `delaysMs` is the wait before each attempt, so its length is the attempts allowed inside `windowMs`. */
+export interface AutoRecoverPolicy { enabled: boolean; delaysMs: number[]; windowMs: number; exitEvidenceWaitMs: number }
+/** Off unless the service turns it on (the coordinator does, apps/coordinator/src/main.ts): a runner built by a test or a tool never starts a child by itself. */
+export const defaultAutoRecoverPolicy: AutoRecoverPolicy = { enabled: false, delaysMs: [5_000, 30_000, 120_000], windowMs: 30 * 60_000, exitEvidenceWaitMs: 30_000 };
+export interface AutoRecoverView {
+  state: "disabled" | "idle" | "waiting_for_exit" | "scheduled" | "recovering" | "exhausted" | "no_exit_evidence";
+  attempts: number; maxAttempts: number; nextAttemptAtUtc: string | null; lastError: string | null; reason: string | null;
+}
 type RuntimeFaultCategory = "authorization" | "native_rejected" | "verification" | "unavailable" | "unknown_outcome";
 export interface RuntimeFault { projectId: string; sessionId: string | null; runId: string | null;
   phase: RuntimeFaultPhase; category: RuntimeFaultCategory; message: string; observedAtUtc: string;
@@ -143,6 +153,11 @@ export class RuntimeRunner {
   /** Keep the previous native child's bounded diagnostics when recover replaces its adapter. */
   private priorNativeChildDiagnostics: NativeChildDiagnostic[] = [];
   private recovering: Promise<void> | null = null;
+  private autoLoop: Promise<void> | null = null;
+  private autoWake: (() => void) | null = null;
+  private autoAttempts: number[] = [];
+  private autoState: AutoRecoverView = { state: "idle", attempts: 0, maxAttempts: 0, nextAttemptAtUtc: null, lastError: null, reason: null };
+  private readonly autoPolicy: AutoRecoverPolicy;
   private unsubscribeDisconnect: (() => void) | null = null;
   private unsubscribeChildDiagnostic: (() => void) | null = null;
   private unsubscribeApproval: (() => void) | null = null;
@@ -177,7 +192,14 @@ export class RuntimeRunner {
     blobsForPrincipal?: (principal: Principal) => BlobStore | Promise<BlobStore>;
     /** Shared with direct input and the ordinary-message pump; a busy Session defers this Run to its next poll. */
     steerLock?: SessionSteerLock;
-  }) { this.runtime = deps.runtimeFactory(); }
+    /** Automatic recovery of a lost Codex child (defect 5766e9e3); off unless enabled here, limits in `defaultAutoRecoverPolicy`. */
+    autoRecover?: Partial<AutoRecoverPolicy>;
+  }) {
+    this.runtime = deps.runtimeFactory();
+    this.autoPolicy = { ...defaultAutoRecoverPolicy, ...deps.autoRecover };
+    this.autoState.maxAttempts = this.autoPolicy.delaysMs.length;
+    if (!this.autoPolicy.enabled) this.autoState.state = "disabled";
+  }
   /**
    * The coordinator's runtime; with a binding, the runtime that drives that Session. A routed composite answers for
    * every provider at once, and a single runtime answers only for its own provider.
@@ -211,8 +233,8 @@ export class RuntimeRunner {
   }
   async compactionBinding(principal:Principal, projectId:string, sessionId:string,
     expectedVersion:number, threadId:string):Promise<RuntimeBinding>{
-    if(!principal.projectIds.includes(projectId)||!principal.permissions.includes('review')||
-      !principal.permissions.includes('write')||principal.actorId.startsWith('worker-'))
+    if(!hasDecisionAuthority(principal,projectId,'session')||!mayAccessSession(principal,projectId,sessionId)||
+      principal.actorId.startsWith('worker-'))
       throw new DomainError('FORBIDDEN','Compaction requires a project maintenance reviewer');
     if(!this.nativeStartsAvailable()||!this.runtime.isReady())
       throw new DomainError('RUNTIME_UNAVAILABLE','Original owner connection is unavailable');
@@ -280,8 +302,8 @@ export class RuntimeRunner {
     command:Extract<Command,{type:"runtime.session.executionProfile.revise"}>):Promise<void> {
     // Legacy model/policy-only activation uses a different native path.
     if(!command.reasoningEffort)return;
-    if(!principal.projectIds.includes(command.projectId)||!principal.permissions.includes("write")||
-      !principal.permissions.includes("review")||principal.actorId.startsWith("worker-"))
+    if(!hasDecisionAuthority(principal,command.projectId,"session")||
+      !mayAccessSession(principal,command.projectId,command.sessionId)||principal.actorId.startsWith("worker-"))
       throw new DomainError("FORBIDDEN","执行配置修订需要本项目复核者的写入与复核权限。");
     const session=await this.deps.workflow.getRuntimeSession(principal,command.projectId,command.sessionId);
     if(session.projectId!==command.projectId||session.id!==command.sessionId)
@@ -359,6 +381,7 @@ export class RuntimeRunner {
   async workspaceHistory(principal:Principal,projectId:string,sessionId:string,
     options:NativeWorkspaceReadOptions):Promise<NativeWorkspacePage>{
     const session=await this.deps.workflow.getRuntimeSession(principal,projectId,sessionId);
+    this.requireFullSessionRead(principal, session);
     if(session.projectId!==projectId||session.id!==sessionId||!session.nativeThreadId||!session.nativeSessionId)
       throw new DomainError("RUNTIME_READ_UNAVAILABLE","此会话没有可验证的原生历史绑定。");
     if(!this.runtime.readWorkspaceHistory)
@@ -396,6 +419,7 @@ export class RuntimeRunner {
     }
     return { available: this.available && this.runtime.isReady(),
       error: this.serviceError ?? faults.at(-1)?.message ?? null, faults,
+      autoRecover: { ...this.autoState },
       nativeChildDiagnostics: [...diagnostics.values()]
         .sort((a,b)=>b.observedAtUtc.localeCompare(a.observedAtUtc)).slice(0,16) };
   }
@@ -423,13 +447,13 @@ export class RuntimeRunner {
     }
   }
   private principal(projectId: string): Principal {
-    const principal = this.deps.principals.find(p => p.projectIds.includes(projectId) && p.permissions.includes("read") && p.permissions.includes("write"));
+    const principal = this.deps.principals.find(p => hasPermission(p, projectId, "session"));
     if (!principal) throw new Error("Project authority is unavailable");
     return principal;
   }
   private async authorized(session: RuntimeSessionRecord, actorId = session.actorId): Promise<boolean> {
-    return this.deps.principals.some(p => p.actorId === actorId && p.projectIds.includes(session.projectId) &&
-      p.permissions.includes("read") && p.permissions.includes("write") && p.permissions.includes("review")) &&
+    return this.deps.principals.some(p => p.actorId === actorId &&
+      hasDecisionAuthority(p, session.projectId, "session") && mayAccessSession(p, session.projectId, session.id)) &&
       await this.deps.hasGrant({ projectId: session.projectId, actorId, roleId: session.roleId,
         authorizationScope: session.authorizationScope, cwd: session.cwd, sandbox: session.sandbox,
         model: session.model, approvalPolicy: session.approvalPolicy }, session);
@@ -481,6 +505,7 @@ export class RuntimeRunner {
       this.available = false;
       this.serviceError = "Codex 执行连接已断开；需要显式恢复。";
       this.workspaceDisconnected(reason);
+      this.beginAutoRecover();
     });
     this.unsubscribeApproval = this.runtime.onApprovalRequest(async request => {
       const approval = { id: request.id, method: request.method,
@@ -500,6 +525,80 @@ export class RuntimeRunner {
         throw new Error("Approval evidence unavailable");
       }
     });
+  }
+  /**
+   * A lost Codex child is replaced by itself, but only on proof and within limits (defect 5766e9e3):
+   * - only when everything that is not ready is the Codex runtime, and only after its child's exit was actually observed (not just a closed stdout),
+   *   so a child that may still be alive is never replaced behind its back;
+   * - after 5 s, then 30 s, then 2 min, at most three times inside 30 minutes; after that it stops, says why in `status().error`, and waits for an explicit
+   *   `runtime.recover`, as it always did;
+   * - `reopen` replaces only the runtimes that lost readiness, so a Claude Turn that is running keeps going.
+   * What happens to a message Turn that was in flight is unchanged: the original native Turn is read back, settled if it ended, and otherwise it is unknown and the
+   * Session's recovery gate closes for a person. Nothing is replayed.
+   */
+  private beginAutoRecover(): void {
+    if (!this.autoPolicy.enabled || this.stopped || this.autoLoop) return;
+    this.autoLoop = this.runAutoRecover().catch(() => undefined).finally(() => { this.autoLoop = null; });
+  }
+  private autoSleep(ms: number): Promise<void> {
+    return new Promise(resolveSleep => {
+      const timer = setTimeout(() => { this.autoWake = null; resolveSleep(); }, ms);
+      timer.unref();
+      this.autoWake = () => { clearTimeout(timer); this.autoWake = null; resolveSleep(); };
+    });
+  }
+  private autoRecoverable(): boolean {
+    const routed = this.runtime instanceof ProviderRoutedRuntime && this.runtime.canReplace() ? this.runtime : null;
+    const lost = routed ? routed.unreadyProviders() : this.providers();
+    return lost.length > 0 && lost.every(provider => provider === "codex");
+  }
+  private lostChildExitProven(): boolean {
+    const latest = this.status().nativeChildDiagnostics[0];
+    return !!latest && latest.exitObserved && latest.stopReason !== "adapter_closed";
+  }
+  private autoSettled(): boolean { return this.stopped || (this.available && this.runtime.isReady()); }
+  private setAuto(patch: Partial<AutoRecoverView>): void { this.autoState = { ...this.autoState, ...patch }; }
+  private async runAutoRecover(): Promise<void> {
+    const policy = this.autoPolicy;
+    if (!this.autoRecoverable()) { this.setAuto({ state: "idle", reason: "not a Codex child loss; explicit recovery only" }); return; }
+    const deadline = Date.now() + policy.exitEvidenceWaitMs;
+    this.setAuto({ state: "waiting_for_exit", reason: "waiting for proof that the lost Codex child exited", nextAttemptAtUtc: null });
+    while (!this.lostChildExitProven()) {
+      if (this.autoSettled()) { this.setAuto({ state: "idle", reason: null }); return; }
+      if (Date.now() >= deadline) {
+        this.serviceError = "Codex 执行连接已断开，且没有观察到旧子进程已退出；不自动恢复，需要核对后显式恢复。";
+        this.setAuto({ state: "no_exit_evidence", reason: "the lost child's exit was not observed in time; not replacing a child that may still be alive" });
+        return;
+      }
+      await this.autoSleep(250);
+    }
+    for (;;) {
+      if (this.autoSettled()) { this.setAuto({ state: "idle", reason: null, nextAttemptAtUtc: null }); return; }
+      const now = Date.now();
+      this.autoAttempts = this.autoAttempts.filter(at => now - at < policy.windowMs);
+      if (this.autoAttempts.length >= policy.delaysMs.length) {
+        this.serviceError = `Codex 执行连接已断开；自动恢复已尝试 ${this.autoAttempts.length} 次仍未成功，已停止，需要检查后显式恢复。`;
+        this.setAuto({ state: "exhausted", attempts: this.autoAttempts.length, nextAttemptAtUtc: null,
+          reason: `automatic recovery stopped after ${this.autoAttempts.length} attempts within ${Math.round(policy.windowMs / 60000)} minutes` });
+        return;
+      }
+      const delay = policy.delaysMs[this.autoAttempts.length]!;
+      this.serviceError = `Codex 执行连接已断开；${Math.round(delay / 1000)} 秒后自动恢复（第 ${this.autoAttempts.length + 1}/${policy.delaysMs.length} 次）。`;
+      this.setAuto({ state: "scheduled", attempts: this.autoAttempts.length, nextAttemptAtUtc: new Date(now + delay).toISOString(), reason: "the lost child's exit was observed" });
+      await this.autoSleep(delay);
+      if (this.autoSettled()) { this.setAuto({ state: "idle", reason: null, nextAttemptAtUtc: null }); return; }
+      // A coordinator that cannot write now is not an attempt: wait for it to be able to, then go on.
+      if (!this.deps.canWrite()) { await this.autoSleep(5000); continue; }
+      this.autoAttempts.push(Date.now());
+      this.setAuto({ state: "recovering", attempts: this.autoAttempts.length, nextAttemptAtUtc: null });
+      try {
+        await this.recover();
+        this.setAuto({ state: "idle", reason: null, lastError: null });
+        return;
+      } catch (error) {
+        this.setAuto({ lastError: error instanceof Error ? error.message.slice(0, 200) : "recovery failed" });
+      }
+    }
   }
   async recover(): Promise<void> {
     if (this.stopped || !this.deps.canWrite()) throw new Error("Coordinator cannot recover runtime now");
@@ -528,6 +627,8 @@ export class RuntimeRunner {
       await this.deps.nativeObservation?.drain();
       this.priorNativeChildDiagnostics=this.status().nativeChildDiagnostics;
       this.unsubscribeChildDiagnostic?.(); this.unsubscribeChildDiagnostic=null;
+      // Stopped while the old child was being closed: do not start another one.
+      if (this.stopped) throw new Error("Runtime runner stopped during recovery");
       if (routed) routed.rebuild(replaced);
       else this.runtime = this.deps.runtimeFactory();
       this.registered.clear(); this.checkedNames.clear(); this.interruptAttempted.clear();
@@ -796,12 +897,24 @@ export class RuntimeRunner {
   }
   /** Register provenance and inspect metadata for reads without opening another native writer. */
   private async readBinding(session: RuntimeSessionRecord): Promise<RuntimeBinding> {
-    if (!(await this.authorized(session) && await this.deps.allowedCwd(session.projectId, session.cwd) || await this.owned(session)))
+    if (!(await this.readAuthorized(session) && await this.deps.allowedCwd(session.projectId, session.cwd) || await this.owned(session)))
       throw new DomainError("FORBIDDEN", "当前会话授权或工作目录已失效，无法读取原生历史。");
     const binding = bindingOf(session);
     await this.runtime.registerBinding(binding);
     await this.runtime.inspect(binding);
     return binding;
+  }
+  private async readAuthorized(session: RuntimeSessionRecord, actorId = session.actorId): Promise<boolean> {
+    return this.deps.principals.some(p => p.actorId === actorId &&
+      hasPermission(p, session.projectId, "session") && mayAccessSession(p, session.projectId, session.id)) &&
+      await this.deps.hasGrant({ projectId: session.projectId, actorId, roleId: session.roleId,
+        authorizationScope: session.authorizationScope, cwd: session.cwd, sandbox: session.sandbox,
+        model: session.model, approvalPolicy: session.approvalPolicy }, session);
+  }
+  private requireFullSessionRead(principal: Principal, session: RuntimeSessionRecord): void {
+    if (!hasPermission(principal, session.projectId, "session") ||
+        !mayAccessSession(principal, session.projectId, session.id))
+      throw new DomainError("FORBIDDEN", "读取完整原生记录需要对此 Session 的 Session 权限。");
   }
   private readFailure(error: unknown): DomainError {
     if (error instanceof DomainError) return error;
@@ -811,6 +924,7 @@ export class RuntimeRunner {
   }
   async history(principal: Principal, projectId: string, sessionId: string) {
     const session = await this.deps.workflow.getRuntimeSession(principal, projectId, sessionId);
+    this.requireFullSessionRead(principal, session);
     try {
       const binding = await this.readBinding(session);
       const turns: RuntimeTurn[] = [];
@@ -998,7 +1112,7 @@ export class RuntimeRunner {
   }
 
   async readEvaluationPacket(principal: Principal, projectId: string, runId: string) {
-    if (!principal.projectIds.includes(projectId) || !principal.permissions.includes("read"))
+    if (!isProjectMember(principal, projectId))
       throw new Error("Project read authority is unavailable for evaluation packet");
     const run = await this.deps.workflow.getRuntimeRun(principal, projectId, runId);
     if (run.projectId !== projectId || !run.evaluationBinding || !run.evaluationPacket)
@@ -1256,6 +1370,7 @@ export class RuntimeRunner {
     const run = await this.deps.workflow.getRuntimeRun(principal, projectId, runId);
     if (!run.nativeTurnId) throw new DomainError("RUNTIME_READ_UNAVAILABLE", "此运行尚未绑定原生 Turn，没有可确认的原生答复；请先阅读运行回执。");
     const session = await this.deps.workflow.getRuntimeSession(principal, projectId, run.sessionId);
+    this.requireFullSessionRead(principal, session);
     try {
       const binding = await this.readBinding(session);
       // The persisted owned binding and exact Turn ID identify the result.
@@ -1272,7 +1387,7 @@ export class RuntimeRunner {
       "projectId" | "id" | "taskId" | "taskRevisionId" | "inputHash" | "state" | "nativeTurnId">> {
     const scope = identity.scope;
     if (identity.principal.actorId !== principal.actorId || scope.projectId !== projectId ||
-        !principal.projectIds.includes(projectId) || !principal.permissions.includes("read") ||
+        !isProjectMember(principal, projectId) ||
         !this.deps.workerTraceAuthority)
       throw new DomainError("FORBIDDEN", "受管读取者身份或固定引用不可用。");
     const reader = await this.deps.workflow.getRuntimeRun(principal, projectId, scope.runId);
@@ -1293,13 +1408,16 @@ export class RuntimeRunner {
   }
   async trace(principal: Principal, projectId: string, runId: string, initialCursor?: string,
     workerIdentity?: WorkerIdentity, turnCursor?: string): Promise<RuntimeWorkTrace> {
-    const reviewer = !!principal.actorId && principal.projectIds.includes(projectId) && principal.permissions.includes("read") &&
-      principal.permissions.includes("review") && this.deps.principals.some(p => p.actorId === principal.actorId &&
-        p.projectIds.includes(projectId) && p.permissions.includes("read") && p.permissions.includes("review"));
-    if (workerIdentity) await this.workerFixedRunMetadata(principal, projectId, runId, workerIdentity);
-    else if (!reviewer) throw new DomainError("FORBIDDEN", "读取工作轨迹需要本项目读取和复核权限。");
-    if (!this.runtime.readWorkPage) throw new DomainError("RUNTIME_READ_UNAVAILABLE", "当前执行适配器不支持工作轨迹读取。");
     const run = await this.deps.workflow.getRuntimeRun(principal, projectId, runId);
+    if (workerIdentity) await this.workerFixedRunMetadata(principal, projectId, runId, workerIdentity);
+    else {
+      const session = await this.deps.workflow.getRuntimeSession(principal, projectId, run.sessionId);
+      this.requireFullSessionRead(principal, session);
+      if (!this.deps.principals.some(p => p.actorId === principal.actorId &&
+          hasPermission(p, projectId, "session") && mayAccessSession(p, projectId, run.sessionId)))
+        throw new DomainError("FORBIDDEN", "读取工作轨迹需要本 Session 的 Session 权限。");
+    }
+    if (!this.runtime.readWorkPage) throw new DomainError("RUNTIME_READ_UNAVAILABLE", "当前执行适配器不支持工作轨迹读取。");
     if (run.projectId !== projectId || !run.nativeTurnId)
       throw new DomainError("RUNTIME_READ_UNAVAILABLE", "此运行尚无可核对的受管原生 Turn。");
     const session = await this.deps.workflow.getRuntimeSession(principal, projectId, run.sessionId);
@@ -1333,12 +1451,14 @@ export class RuntimeRunner {
   async reconcile(principal: Principal, projectId: string, runId: string, expectedVersion: number, reason: string,
     turnCursor?: string): Promise<RuntimeRunRecord | RuntimeReconcilePartial> {
     if (!this.available || !this.runtime.isReady() || !this.deps.canWrite()) throw new Error("Runtime readback is unavailable");
-    if (!principal.actorId || !principal.projectIds.includes(projectId) || !principal.permissions.includes("read") ||
-      !principal.permissions.includes("review") || !this.deps.principals.some(p => p.actorId === principal.actorId &&
-        p.projectIds.includes(projectId) && p.permissions.includes("read") && p.permissions.includes("review")))
+    if (!principal.actorId || !hasDecisionAuthority(principal, projectId, "session") ||
+      !this.deps.principals.some(p => p.actorId === principal.actorId &&
+        hasDecisionAuthority(p, projectId, "session")))
       throw new Error("Project review authority is unavailable");
     if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 1 || !reason.trim()) throw new Error("Version and review reason are required");
     const run = await this.deps.workflow.getRuntimeRun(principal, projectId, runId);
+    if (!mayAccessSession(principal, projectId, run.sessionId))
+      throw new Error("Session-scoped review authority is unavailable");
     if (run.version !== expectedVersion || !run.nativeTurnId || !["completed", "failed", "interrupted"].includes(run.state))
       throw new Error("Bound terminal run version is required for readback");
     const session = await this.deps.workflow.getRuntimeSession(principal, projectId, run.sessionId);
@@ -1363,6 +1483,7 @@ export class RuntimeRunner {
   }
   async stop(): Promise<void> {
     this.stopped = true; this.available = false;
+    this.autoWake?.();
     if (this.timer) clearInterval(this.timer);
     if (this.busy) await this.busy;
     this.detachWorkspaceRuntime();

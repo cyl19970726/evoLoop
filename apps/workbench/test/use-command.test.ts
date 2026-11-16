@@ -55,7 +55,7 @@ const taskId = "10000002-0000-4000-8000-000000000002";
 type Log = { attempts: RecoverableCommand[]; changed: number; known: string[] };
 const newLog = (): Log => ({ attempts: [], changed: 0, known: [] });
 function contextWith(log: Log, patch: Partial<MutationContext> = {}): MutationContext {
-  return { token: "", projectId, principal: { actorId: "reader", projectIds: [projectId], permissions: ["read", "write", "review"] }, blocked: false,
+  return { token: "", projectId, principal: { actorId: "reader", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true }, blocked: false,
     onAttempt: command => { log.attempts.push(command); return true; }, onKnown: id => { log.known.push(id); }, onChanged: () => { log.changed++; }, ...patch };
 }
 const reply = (body: unknown, status = 200) => async () => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -290,8 +290,9 @@ test("a write that is read back late does not carry an edit made in between over
 });
 
 test("small rules: permissions, messages for the person, and drafts kept before the form state had a base", () => {
-  assert.equal(permissionText(["read", "write"], ["review"]), "当前身份没有审阅权限。");
-  assert.equal(permissionText(["read", "write"], ["write"]), null);
+  const writer = { actorId: "writer", projectIds: [projectId], permissions: ["document"] as const };
+  assert.equal(permissionText(writer, projectId, ["task"]), "当前身份没有任务类写入权限。");
+  assert.equal(permissionText(writer, projectId, ["document"]), null);
   assert.equal(personMessage(new Error("模型不在授权与目录交集内")), "模型不在授权与目录交集内");
   assert.equal(personMessage(new Error("Unexpected token")), "请补全必需字段并检查输入格式。", "an English or internal message is not shown");
   assert.deepEqual(restoredFormState({ reason: "旧草稿" }, { reason: "", title: "名" }), { base: { reason: "", title: "名" }, values: { reason: "旧草稿", title: "名" } });

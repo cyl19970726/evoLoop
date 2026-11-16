@@ -21,9 +21,12 @@ function preferredEntry(prior: WorkspaceEntry, next: WorkspaceEntry): WorkspaceE
   return next;
 }
 
+/** A list that is not a list is empty: the client checks the shapes (shared/sessionShapes.ts), and this is the second line, so a bad value never reaches a spread. */
+const asList = <T>(value: readonly T[] | null | undefined): readonly T[] => Array.isArray(value) ? value : [];
+
 function uniqueEntries(entries: WorkspaceEntry[]): WorkspaceEntry[] {
   const result = new Map<string, WorkspaceEntry>();
-  for (const entry of entries) {
+  for (const entry of asList(entries)) {
     const key = workspaceEntryKey(entry), prior = result.get(key);
     const repeatedFullMessage = prior?.kind === "message" && entry.kind === "message" && prior.id === entry.id
       && prior.state === entry.state && prior.state !== "running" && !prior.truncated
@@ -36,7 +39,7 @@ function uniqueEntries(entries: WorkspaceEntry[]): WorkspaceEntry[] {
 /** Merge canonical pages around shared identities. beforeKey is the requested source cursor's boundary. */
 export function mergeWorkspaceEntries(previous: WorkspaceEntry[], incoming: WorkspaceEntry[], older = false,
   beforeKey?: string | null): WorkspaceEntry[] {
-  const prior = uniqueEntries(previous), next = uniqueEntries(incoming);
+  const prior = uniqueEntries(previous), next = uniqueEntries(incoming);   // both tolerate a non-list
   const replacements = new Map(next.map(entry => [workspaceEntryKey(entry), entry]));
   const result = prior.map(entry => replacements.has(workspaceEntryKey(entry))
     ? preferredEntry(entry, replacements.get(workspaceEntryKey(entry))!) : entry);
@@ -83,8 +86,8 @@ export function settleEndedTools(entries: WorkspaceEntry[], turns: readonly Pick
 }
 
 export function mergeWorkspaceTurns(previous: WorkspaceTurn[], incoming: WorkspaceTurn[]): WorkspaceTurn[] {
-  const next = new Map(previous.map(turn => [turn.id, turn]));
-  for (const turn of incoming) {
+  const next = new Map(asList(previous).map(turn => [turn.id, turn]));
+  for (const turn of asList(incoming)) {
     const prior = next.get(turn.id);
     const terminal = prior && ["completed", "failed", "interrupted", "declined"].includes(prior.state);
     next.set(turn.id, prior ? { ...prior, ...turn, startedAt: turn.startedAt ?? prior.startedAt,

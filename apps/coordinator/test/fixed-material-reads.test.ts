@@ -22,7 +22,7 @@ const fixed: DocumentPayloadRevision = { projectId, documentId, id: revisionId, 
   author: "owner", reason: "fixed", createdAt: "2026-01-01T00:00:00Z" };
 const other: DocumentPayloadRevision = { ...fixed, documentId: otherDocumentId, id: otherRevisionId, body: "背景", payloadRef: null,
   assetsManifest: [], contentHash: digest("背景"), originalName: "background.md", format: "markdown", mediaType: "text/markdown" };
-const principal: Principal = { actorId: "reader", projectIds: [projectId], permissions: ["read"] };
+const principal: Principal = { actorId: "reader", projectIds: [projectId], permissions: [] };
 const revision: TaskRevision = { projectId, taskId, id: taskRevisionId, version: 1, title: "Pinned task", content: "task",
   contentDocumentId: documentId, contentRevisionId: revisionId, kind: "research", acceptance: "验收内容".repeat(1000), owner: "reader",
   state: "in_progress", basisSetId: id(10), actorId: "reader", reason: "fixed", createdAt: "2026-01-01T00:00:00Z" };

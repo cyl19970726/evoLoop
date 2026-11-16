@@ -113,7 +113,7 @@ async function serve(t: TestContext, fx: Fixture) {
         }
         if (failure) return send(failure.status, failure.body);
       }
-      if (url.pathname === "/api/session") value = { principal: { actorId: "reviewer", projectIds: [projectId], permissions: ["read", "write", "review"] }, capabilities: {} };
+      if (url.pathname === "/api/session") value = { principal: { actorId: "reviewer", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true }, capabilities: {} };
       else if (url.pathname === root) value = { id: projectId, title: "知识回归项目", createdAt: stamp };
       else if (url.pathname === `${k}/capabilities`) value = { backendVersion: "fixture", backendReachable: !state.degraded, fixedRevisionRead: state.degraded ? "unavailable" : "adapter_verified",
         conditionalPublish: "single_maintainer_adapter", boundedRelations: "adapter_verified", migration: "unsupported", semanticIndex: "unverified" };

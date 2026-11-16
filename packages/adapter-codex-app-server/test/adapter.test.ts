@@ -399,6 +399,43 @@ test('unexpected child exit retains a bounded private-free diagnostic and no Tur
   assert.deepEqual(adapter.lastChildDiagnostic(),diagnostic);
 });
 
+test('the private detail of an ended child has its stderr tail and last protocol lines, and none of it reaches the public diagnostic',async t=>{
+  const details:Array<import('../src/index.ts').NativeChildExitDetail>=[];
+  const adapter=testAdapter({executable:process.execPath,spawnArgs:[fixture,'exit-private-stderr'],onChildDetail:detail=>{details.push(detail);}});
+  t.after(()=>adapter.close().catch(()=>undefined));
+  const disconnected=new Promise<void>(resolveDisconnected=>adapter.onDisconnect(()=>resolveDisconnected()));
+  await adapter.open();await disconnected;
+  const started=Date.now();while(!details.length&&Date.now()-started<5000)await new Promise(resolveWait=>setTimeout(resolveWait,20));
+  assert.equal(details.length,1,'one detail per child');
+  const detail=details[0]!;
+  const diagnostic=adapter.lastChildDiagnostic()!;
+  assert.equal(detail.startId,diagnostic.startId);
+  assert.equal(detail.exitCode,23);
+  assert.equal(detail.firstLossReason,'stdout_closed');
+  assert.match(detail.stderrTail,/private fixture credential and user body/);
+  assert.equal(detail.stderrTruncated,false);
+  const protocol=detail.recentProtocol.map(entry=>`${entry.direction}:${entry.kind}:${entry.method??'-'}`);
+  assert.ok(protocol.includes('out:request:initialize'),protocol.join(','));
+  assert.ok(protocol.includes('in:response:-'),'the initialize answer is there');
+  assert.ok(protocol.includes('out:notification:initialized'));
+  assert.doesNotMatch(JSON.stringify(detail.recentProtocol),/userAgent|platformFamily|clientInfo/,'method names and ids only, never parameters or results');
+  assert.doesNotMatch(JSON.stringify(diagnostic),/private fixture credential|stderr/);
+});
+
+test('an unbounded stderr keeps only its bounded tail',async t=>{
+  const details:Array<import('../src/index.ts').NativeChildExitDetail>=[];
+  const adapter=testAdapter({executable:process.execPath,spawnArgs:[fixture,'exit-noisy-stderr'],onChildDetail:detail=>{details.push(detail);}});
+  t.after(()=>adapter.close().catch(()=>undefined));
+  const disconnected=new Promise<void>(resolveDisconnected=>adapter.onDisconnect(()=>resolveDisconnected()));
+  await adapter.open();await disconnected;
+  const started=Date.now();while(!details.length&&Date.now()-started<5000)await new Promise(resolveWait=>setTimeout(resolveWait,20));
+  const detail=details[0]!;
+  assert.equal(detail.stderrTruncated,true);
+  assert.ok(Buffer.byteLength(detail.stderrTail)<=16*1024);
+  assert.match(detail.stderrTail,/last line$/m,'the end of the output is what is kept');
+  assert.doesNotMatch(detail.stderrTail,/first line/);
+});
+
 test('child diagnostics retain only the newest sixteen separate starts',async t=>{
   let exitDone:()=>void=()=>{};
   const adapter=testAdapter({executable:process.execPath,spawnArgs:[fixture,'exit-private-stderr'],

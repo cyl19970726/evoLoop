@@ -33,7 +33,7 @@ const receipts = [
 test("结果未知的操作, 仓库规范 and 项目设置: back to the object, sources chosen by name, the identity read again",
   { skip: !modulePath && "Set EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE" }, async t => {
     const { chromium } = (await import(pathToFileURL(modulePath!).href)).default;
-    const state = { permissions: ["read", "write", "review"], failSession: false, repositories: "fixture", failCapabilities: false };
+    const state = { permissions: ["task", "document", "session", "management"], decisions: true, failSession: false, repositories: "fixture", failCapabilities: false };
     const posts: Array<{ path: string; body: Record<string, unknown> }> = [];
     const reads: string[] = [];
     const server = createServer(async (req, res) => {
@@ -121,7 +121,7 @@ test("结果未知的操作, 仓库规范 and 项目设置: back to the object, 
     assert.equal(await settings.getByRole("list", { name: "各类记录的入口" }).getByRole("link", { name: /^结果未知的操作/ }).count(), 1,
       "the entry uses the navigation's name for the page");
     await shoot(settings, "settings");
-    state.permissions = ["read", "review"];
+    state.permissions = ["document"];
     await settings.getByRole("button", { name: "重新读取" }).click();
     await access.getByText("与登录时读回的不同").waitFor();
     assert.match(await access.innerText(), /不再有的权限：提交业务变更/);
@@ -131,7 +131,7 @@ test("结果未知的操作, 仓库规范 and 项目设置: back to the object, 
     await access.getByText("上次读回，当前待核对").first().waitFor({ timeout: 20000 });
     assert.match(await access.innerText(), /身份与权限本次重新读取失败：身份服务暂不可用/);
     assert.match(await access.locator("dl").innerText(), /审阅与复核[\s\S]*最后读取[\s\S]*上次读回，当前待核对/, "the last answer stays, marked");
-    state.failSession = false; state.permissions = ["read", "write", "review"];
+    state.failSession = false; state.permissions = ["task", "document", "session", "management"];
 
     // 仓库规范: what the server declared, then a Git source registered and a formal decision with the revision chosen by name.
     await go(settings, `/p/${projectId}/repository`);

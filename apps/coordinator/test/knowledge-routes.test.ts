@@ -48,8 +48,8 @@ test("knowledge HTTP: fixed source gate, separate review/publish, durable candid
     payloadRef: null, contentHash: hash("# source"), entrypoint: null, assetsManifest: [],
     author: "owner", reason: "fixture", createdAt: new Date().toISOString() };
   const detail: DocumentDetail = { document: doc, current: fixed, adopted: fixed };
-  const writer: Principal = { actorId: "writer", projectIds: [projectId], permissions: ["read", "write"] };
-  const maintainer: Principal = { actorId: "maintainer", projectIds: [projectId], permissions: ["read", "write", "review"] };
+  const writer: Principal = { actorId: "writer", projectIds: [projectId], permissions: ["task", "document", "session"] };
+  const maintainer: Principal = { actorId: "maintainer", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true };
   const app = Fastify();
   app.decorateRequest("principal", null);
   app.addHook("onRequest", async (request, reply) => {

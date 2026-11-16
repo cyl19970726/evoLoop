@@ -7,7 +7,7 @@ import type { WorkerIdentity } from "../src/workers/types.ts";
 const u = randomUUID;
 const projectId = u(), loopId = u(), goalId = u(), stageId = u(), taskId = u(), runId = u(), sessionId = u(),
   otherTaskId = u(), deliveryId = u(), inboxId = u(), documentId = u(), revisionId = u(), gitId = u(), wikiId = u(), parentDispatchId = u();
-const worker: WorkerIdentity = { principal: { actorId: `worker-${u()}`, projectIds: [projectId], permissions: ["read", "write"] },
+const worker: WorkerIdentity = { principal: { actorId: `worker-${u()}`, projectIds: [projectId], permissions: ["task", "document", "session"] },
   scope: { projectId, loopId, taskId, runId, sessionId, roleId: "builder", kind: "business", allowedRoleIds: ["builder"] } };
 const facts: WorkerGuardFacts = {
   loop: async id => id === loopId ? { projectId, state: "active", goalId, stageId, cognitiveRoleId: "planner", allowedBusinessRoleIds: ["builder"] } : null,

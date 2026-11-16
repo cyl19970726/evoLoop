@@ -278,10 +278,10 @@ export const isTaskTimingScope = (scopeId: string): boolean =>
 /** The schedule grants of one actor in one project while scheduling is enabled (schedule.create authorization). */
 export const schedulingGrantsFor = (configuration: SchedulingConfiguration | undefined, projectId: string, actorId: string) =>
   configuration?.enabled ? configuration.grants.filter(grant => grant.projectId === projectId && grant.actorId === actorId) : [];
-/** Daily-copy grants the scheduling pump acts on: enabled, and held by an actor with read, write and review. */
+/** Daily-copy grants the scheduling pump acts on: enabled, and held by an actor with Task write and decision authority. */
 export const activeTaskTimingGrants = (configuration: SchedulingConfiguration | undefined, identities: AuthConfig) =>
   configuration?.enabled ? configuration.taskTimingGrants.filter(grant =>
-    credentialGrants(identities, grant.projectId, grant.actorId, ["read", "write", "review"])) : [];
+    credentialGrants(identities, grant.projectId, grant.actorId, ["task"], { decisions: true })) : [];
 /** The external knowledge backend serves this project. */
 export const knowledgeServesProject = (knowledge: IntegrationFile["knowledge"], projectId: string): boolean =>
   !!knowledge?.enabled && knowledge.projectIds.includes(projectId);

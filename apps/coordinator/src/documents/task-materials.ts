@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { idSchema, type Principal, type BasisSet, type TaskRevision } from "@evoloop/contracts";
+import { idSchema, isProjectMember, type Principal, type BasisSet, type TaskRevision } from "@evoloop/contracts";
 import type { DocumentPayloadRevision, DocumentPayloadUnitOfWork } from "@evoloop/contracts/process-documents";
 import type { ReferenceUnitOfWork } from "@evoloop/contracts/references";
 import { DomainError } from "@evoloop/contracts/ports";
@@ -20,8 +20,8 @@ export function registerTaskMaterialRoutes(app: FastifyInstance, options: Option
     const { projectId, id: taskId, revisionId } = z.strictObject({ projectId: idSchema, id: idSchema,
       revisionId: idSchema }).parse(request.params);
     const principal = request.principal;
-    if (!principal || !principal.projectIds.includes(projectId) || !principal.permissions.includes("read"))
-      throw new DomainError("FORBIDDEN", "Project read permission is required");
+    if (!principal || !isProjectMember(principal, projectId))
+      throw new DomainError("FORBIDDEN", "Project membership is required");
     const { revision, basis } = await options.workflow.getTaskRevision(principal, projectId, taskId, revisionId);
     if (revision.projectId !== projectId || revision.taskId !== taskId || revision.id !== revisionId ||
       (revision.basisSetId === null) !== (basis === null) || basis &&

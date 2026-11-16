@@ -37,15 +37,15 @@ async function fixture() {
     read: async (_project: string, action: (tx: Transaction) => Promise<unknown>) => action(tx) } as UnitOfWork;
   const service = new WorkflowService({ uow, ids: { next: randomUUID }, clock: { now: () => "2026-10-24T01:00:00Z" },
     hasher: { hash: value => createHash("sha256").update(value).digest("hex") } });
-  const worker: WorkerIdentity = { principal: { actorId: "worker-temporary", projectIds: [projectId], permissions: ["read", "write"] },
+  const worker: WorkerIdentity = { principal: { actorId: "worker-temporary", projectIds: [projectId], permissions: ["task", "document", "session"] },
     scope: { projectId, sessionId, loopId: randomUUID(), taskId: randomUUID(), runId: randomUUID(),
       roleId: "temporary-experience", kind: "business", allowedRoleIds: ["temporary-experience"] } };
   const facts = { loop: async () => ({ projectId, state: "active", goalId: randomUUID(), stageId: null,
     cognitiveRoleId: "planner", allowedBusinessRoleIds: [worker.scope.roleId] }) } as unknown as WorkerGuardFacts;
   const app = await buildServer({ service, credentials: [
-    { token: "r".repeat(40), actorId: "reviewer", projectIds: [projectId], permissions: ["read", "write", "review"] },
-    { token: "o".repeat(40), actorId: "readonly", projectIds: [projectId], permissions: ["read"] },
-    { token: "f".repeat(40), actorId: "foreign-reviewer", projectIds: [randomUUID()], permissions: ["read", "write", "review"] },
+    { token: "r".repeat(40), actorId: "reviewer", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true },
+    { token: "o".repeat(40), actorId: "readonly", projectIds: [projectId], permissions: [] },
+    { token: "f".repeat(40), actorId: "foreign-reviewer", projectIds: [randomUUID()], permissions: ["task", "document", "session", "management"], decisions: true },
   ], runtime: { status: () => ({ available: true, error: null }) } as RuntimeRunner,
   hasRuntimeGrant: () => false,
   workers: { authenticate: async header => header === `Bearer ${"w".repeat(40)}` ? worker : null, facts: () => facts } });

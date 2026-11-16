@@ -15,6 +15,8 @@ import { readFileSync, realpathSync } from "node:fs";
 import { dirname, isAbsolute, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
+import { describeOpenPrConflicts, openPrMigrationConflicts } from "../lib/migration-numbers.mjs";
+import { readOpenPrState } from "../check-open-pr-migrations.mjs";
 
 export const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 
@@ -255,6 +257,8 @@ export function makeAdapters(config, exec = execFileSync) {
     cleanMergeTree: (first, second) => {
       try { run("git", ["-C", repoRoot, "fetch", "--quiet", "origin", first, second]); return run("git", ["-C", repoRoot, "merge-tree", "--write-tree", first, second]).trim().split("\n")[0]; } catch { return null; }
     },
+    // The open PRs with their files and the base branch's migration files (fetched first), for the migration-number check.
+    openMigrationState: () => { try { run("git", ["-C", repoRoot, "fetch", "--quiet", config.remote ?? "origin", config.baseBranch ?? "main"]); } catch { /* the check below still reads what is there */ } return readOpenPrState({ repo: config.repo, base: `${config.remote ?? "origin"}/${config.baseBranch ?? "main"}`, exec }); },
     updateBranch: (number, head) => { gh("api", "-X", "PUT", `repos/${repo()}/pulls/${number}/update-branch`, "-f", `expected_head_sha=${head}`); },
     merge: (number, head) => gh("pr", "merge", String(number), ...repoArgs, `--${config.mergeMethod}`, "--match-head-commit", head),
   };
@@ -275,7 +279,15 @@ export async function checkPr({ adapter, number, options = {}, baseBranch = "mai
   if (options.manual?.taskId && !ids.map(id => id.toLowerCase()).includes(options.manual.taskId.toLowerCase())) throw new Error(`--task ${options.manual.taskId} 不是这个项目的 Task`);
   const tasks = await loadTasks(adapter, pr, ids, options);
   const lineage = needsLineage({ pr, tasks, options }) ? await buildLineage(adapter, pr.headRefOid) : undefined;
-  return { pr, files, result: evaluatePr({ pr, files, tasks, taskIds: ids, options, baseBranch, lineage }) };
+  const result = evaluatePr({ pr, files, tasks, taskIds: ids, options, baseBranch, lineage });
+  // Another OPEN PR with the same migration number cannot both land: refuse before the merge, naming both (the CI check sees this only when it last ran).
+  if (typeof adapter.openMigrationState === "function" && files.some(file => /^packages\/adapter-postgres\/(?:migrations|schema)\/\d{3}_/.test(file))) {
+    let clash = null, unreadable = null;
+    try { clash = openPrMigrationConflicts({ ...adapter.openMigrationState(), only: pr.number }); } catch (error) { unreadable = String(error.message).split("\n")[0]; }
+    if (unreadable) { result.verdict = "refuse"; result.reasons.push(`无法核对其他开放 PR 是否占用同一个迁移号(${unreadable}):这个 PR 改了迁移文件,核对不了就不放行`); }
+    else if (clash.conflicts.length) { result.verdict = "refuse"; result.reasons.push(describeOpenPrConflicts(clash)); result.migrationConflicts = clash.conflicts; }
+  }
+  return { pr, files, result };
 }
 
 const hours = ms => { const m = Math.floor(ms / 60000); return m >= 60 ? `${Math.floor(m / 60)}h${String(m % 60).padStart(2, "0")}m` : `${m}m`; };

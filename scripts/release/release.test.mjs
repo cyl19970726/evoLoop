@@ -3,12 +3,12 @@ import { mkdtemp, mkdir, readdir, readlink, readFile, rm, symlink, writeFile } f
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative } from "node:path";
 import test from "node:test";
-import { STEPS, checkDatabaseTarget, loadConfig, repoRoot, rollback, run, selectSteps } from "./release.mjs";
+import { STEPS, checkDatabaseTarget, checkVersion, loadConfig, repoRoot, rollback, run, sameCommit, selectSteps, writeBuildInfo } from "./release.mjs";
 import { duplicateMigrationNumbers } from "./preflight.mjs";
 
 const hooks = { "wait-idle": ["wait"], stop: ["stop"], start: ["start"], "post-check": ["check"] };
 const base = (root, extraHooks = {}) => ({ releaseRoot: join(root, "rel"), currentLink: join(root, "current"), stateDir: join(root, "state"),
-  backup: { out: join(root, "bk"), blobRoot: join(root, "blobs") }, database: { name: "evoloop_live_db" }, skipTests: true, hooks: { ...hooks, ...extraHooks } });
+  backup: { out: join(root, "bk"), blobRoot: join(root, "blobs") }, database: { name: "evoloop_live_db" }, skipTests: true, skipVersionCheck: true, hooks: { ...hooks, ...extraHooks } });
 const ENV = { EVOLOOP_DATABASE_URL: "postgres://u:p@db.example:5432/evoloop_live_db" };
 const SHA = "c".repeat(40);
 const quiet = () => {};
@@ -410,4 +410,87 @@ test("carryAssets can be switched off and is validated in the config", async () 
   for (const bad of [{ keep: 0 }, { keep: 1.5 }, { keepDays: -1 }, { keepDays: "7" }, { assetsDir: "/abs" }, { assetsDir: "../x" }, "yes"])
     assert.throws(() => loadConfig(JSON.stringify({ ...base("/srv/x"), carryAssets: bad }), "/etc/r.json"), /carryAssets/);
   assert.ok(loadConfig(JSON.stringify({ ...base("/srv/x"), carryAssets: { keep: 5, keepDays: 14, assetsDir: "web/dist/assets" } }), "/etc/r.json"));
+});
+
+// ---- Task b3f61c08: the release writes build-info.json and proves /api/version reports the released commit.
+const withVersionCheck = (root, over = {}) => ({ ...base(root), skipVersionCheck: false, versionUrl: "http://127.0.0.1:4319/api/version", versionCheck: { retries: 2, intervalMs: 0 }, ...over });
+const goChecked = (root, { runner, fetchVersion, config = {}, id = "r1" }) => run({ config: withVersionCheck(root, config), id, execute: true, env: ENV, log: quiet, runner, fetchVersion, sleep: async () => {} });
+
+test("V1. the build step writes build-info.json with the release commit and a build time, and records it", async () => {
+  const root = await fresh();
+  const { runner } = sim();
+  const seen = [];
+  const result = await goChecked(root, { runner, fetchVersion: async url => { seen.push(url); return { commit: SHA, builtAt: "2026-11-15T08:00:00.000Z" }; } });
+  const info = JSON.parse(await readFile(join(root, "rel", "r1", "build-info.json"), "utf8"));
+  assert.equal(info.commit, SHA);
+  assert.ok(!Number.isNaN(Date.parse(info.builtAt)) && new Date(info.builtAt).toISOString() === info.builtAt);
+  assert.deepEqual(result.acceptance.buildInfo, info);
+  assert.equal(result.acceptance.versionCheck.result, "passed");
+  assert.equal(result.acceptance.versionCheck.commit, SHA);
+  assert.deepEqual(seen, ["http://127.0.0.1:4319/api/version"]);
+});
+
+test("V2. the file is written where the server reads it: the source directory root (sourceSubdir honoured)", async () => {
+  const root = await fresh();
+  const { runner } = sim();
+  await goChecked(root, { runner, config: { sourceSubdir: "source" }, fetchVersion: async () => ({ commit: SHA }) });
+  assert.equal(JSON.parse(await readFile(join(root, "rel", "r1", "source", "build-info.json"), "utf8")).commit, SHA);
+});
+
+test("V3. a service that reports another commit fails the post-check: the old service is restored, the failure is recorded, the link goes back", async () => {
+  const root = await fresh();
+  const { log, runner } = sim();
+  await assert.rejects(goChecked(root, { runner, fetchVersion: async () => ({ commit: "a".repeat(40) }) }), /Version check failed after 3 tries: the service reports commit aaaaaaaaaaaa, not the release commit cccccccccccc/);
+  const saved = await stateOf(root, "r1");
+  assert.equal(saved.failedAt, "post-check");
+  assert.equal(saved.recovery.result, "restored");
+  assert.equal(saved.acceptance.versionCheck.result, "failed");
+  assert.equal(saved.acceptance.postCheck, "failed");
+  assert.equal(await readlink(join(root, "current")), join(root, "rel", "old"), "the link points back at the previous release");
+  assert.ok(log.lastIndexOf("start") > log.indexOf("check"), "the old version was started again after the failed check");
+});
+
+test("V4. a service that reports no commit (build-info.json missing) fails the same way; a service that is slow to answer is asked again", async () => {
+  const root = await fresh();
+  const { runner } = sim();
+  await assert.rejects(goChecked(root, { runner, fetchVersion: async () => ({ commit: null, builtAt: null }) }), /the service reports no commit/);
+  const root2 = await fresh();
+  let calls = 0;
+  const ok = await goChecked(root2, { runner: sim().runner, fetchVersion: async () => { calls += 1; if (calls < 3) throw new Error("connect ECONNREFUSED"); return { commit: SHA }; } });
+  assert.equal(ok.acceptance.versionCheck.attempts, 3);
+  const root3 = await fresh();
+  await assert.rejects(goChecked(root3, { runner: sim().runner, fetchVersion: async () => { throw new Error("connect ECONNREFUSED"); } }), /no usable answer \(connect ECONNREFUSED\)/);
+});
+
+test("V5. if build-info.json cannot be written the build step fails before anything is stopped", async () => {
+  const root = await fresh();
+  const failing = sim();
+  const runner = async (argv, options) => (argv[0] === "git" && argv.includes("rev-parse") && argv.includes("HEAD") && !argv.some(part => String(part).startsWith("origin/")) && failing.log.includes("sh") ? "not-a-hash" : failing.runner(argv, options));
+  await assert.rejects(goChecked(root, { runner, fetchVersion: async () => ({ commit: SHA }) }), /Cannot write build-info.json/);
+  assert.ok(!failing.log.includes("stop"), `nothing was stopped: ${failing.log.join(",")}`);
+  const saved = await stateOf(root, "r1");
+  assert.equal(saved.failedAt, "build"); assert.equal(saved.recovery, undefined);
+});
+
+test("V6. the config needs versionUrl (http or https) unless skipVersionCheck is set; the skip is recorded and warned about", async () => {
+  const withoutUrl = { ...base("/srv/x"), skipVersionCheck: undefined };
+  assert.throws(() => loadConfig(JSON.stringify(withoutUrl), "/etc/r.json"), /config\.versionUrl .* is required, or set config\.skipVersionCheck: true/);
+  assert.throws(() => loadConfig(JSON.stringify({ ...withoutUrl, versionUrl: "ftp://x/api/version" }), "/etc/r.json"), /versionUrl/);
+  assert.ok(loadConfig(JSON.stringify({ ...withoutUrl, versionUrl: "http://127.0.0.1:4318/api/version" }), "/etc/r.json"));
+  assert.ok(loadConfig(JSON.stringify(base("/srv/x")), "/etc/r.json"), "skipVersionCheck: true is an explicit opt-out");
+  assert.throws(() => loadConfig(JSON.stringify({ ...base("/srv/x"), skipVersionCheck: "yes" }), "/etc/r.json"), /must be true or false/);
+  assert.throws(() => loadConfig(JSON.stringify({ ...withoutUrl, versionUrl: "http://h/v", versionCheck: { retries: -1 } }), "/etc/r.json"), /versionCheck\.retries/);
+  const root = await fresh(); const lines = [];
+  const result = await run({ config: base(root), id: "r1", execute: true, env: ENV, log: line => lines.push(line), runner: sim().runner });
+  assert.equal(result.acceptance.versionCheck, "skipped by config");
+  assert.ok(lines.some(line => /WARN version check skipped/.test(line)));
+});
+
+test("V7. sameCommit takes a prefix of either side (7 to 40 hex digits) and nothing else; the dry run says build-info and the version check are planned", async () => {
+  assert.ok(sameCommit(SHA, SHA) && sameCommit(SHA.slice(0, 7), SHA) && sameCommit(SHA, SHA.slice(0, 12)));
+  assert.ok(!sameCommit(null, SHA) && !sameCommit("", SHA) && !sameCommit("cccccc", SHA) && !sameCommit("d".repeat(7), SHA) && !sameCommit("not-hex!", SHA));
+  const root = await fresh(); const lines = [];
+  await run({ config: withVersionCheck(root), id: "r1", execute: false, env: ENV, log: line => lines.push(line), runner: sim().runner });
+  assert.ok(lines.some(line => /PLAN build:.*write build-info\.json/.test(line)));
+  assert.ok(lines.some(line => /PLAN post-check:.*GET \/api\/version must report the release commit/.test(line)));
 });
