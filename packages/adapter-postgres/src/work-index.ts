@@ -930,6 +930,18 @@ function assertSnapshot(cursor: SnapshotCursor | null, view: LeaderWorkView, pro
     throw new DomainError("WORK_INDEX_CHANGED", "待处理工作已变化；请从第一页重新核对，不能把旧页当成完整快照");
 }
 
+/**
+ * How many open Tasks are in each phase, from the same classification the Leader index lists (taskFactsSql). Not paged and not capped: the work board's
+ * 待验收 is `counts.awaiting_acceptance`, so it can only equal the Task list's (defect 422d95ce). Closed and cancelled Tasks are not in it.
+ */
+export async function readLeaderWorkPhaseCounts(db: Database, projectId: string): Promise<Record<string, number>> {
+  const result = await db.query(`${taskFactsSql(false)}
+    SELECT phase,count(*)::int AS n FROM facts GROUP BY phase`, [projectId]);
+  const counts: Record<string, number> = Object.fromEntries(Object.keys(phaseOrder).map(phase => [phase, 0]));
+  for (const row of result.rows) counts[row.phase as string] = int(row.n);
+  return counts;
+}
+
 export async function readLeaderWorkTasks(db: Database, projectId: string, query: LeaderWorkQuery,
   observedAtOverride?: string): Promise<LeaderWorkPage<LeaderWorkTask>> {
   return withReadSnapshot(db, async snapshot => {
