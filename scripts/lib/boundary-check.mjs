@@ -51,8 +51,8 @@ const exitOk = output => {
 /**
  * What one transcript line did with tools, read once: the commands it ran (Codex function_call, Claude tool_use, each with the line's UTC time and
  * its call id), the results it reports for earlier calls (Codex function_call_output, Claude tool_result: ok true / false / null when the status
- * is not stated), and a `defect` when the line cannot be read: it mentions a tool call but is not valid JSON, or it holds a call with no usable
- * timestamp. A defect is never silent; the caller counts it and names the file and line. Lines that are not tool records give nothing and no defect.
+ * is not stated), and a `defect` when the line cannot be read: it mentions a tool call but is not valid JSON, or it is a call record (Claude `assistant`, Codex `function_call`) with no usable
+ * timestamp (a mirror record such as `api-request-blob` has none by design and is neither). A defect is never silent; the caller counts it and names the file and line. Lines that are not tool records give nothing and no defect.
  * The text is the call's whole argument list, so a file read through a Read/Edit tool's file_path or an array-form command counts
  * the same as a shell command; it is only ever matched against, never printed.
  */
@@ -77,7 +77,11 @@ export function inspectLine(line) {
   const time = at ? new Date(at) : null;
   const usable = time && Number.isFinite(time.getTime());
   const commands = usable ? calls.filter(call => call.text).map(call => ({ at: time.toISOString(), command: call.text, callId: call.callId })) : [];
-  return { commands, results, defect: !usable && calls.some(call => call.text) ? "缺时间戳或时间戳读不出" : null };
+  // A missing time is a defect only on a record that IS a call: Claude `assistant`, Codex `function_call`. Other records may hold tool_use content without a time
+  // by design (Claude `api-request-blob` mirrors the API request: only hash, message, sessionId and type; the same call is on the neighbouring `assistant` line,
+  // which has its time), so they are neither commands nor bad lines.
+  const isCallRecord = record.type === "assistant" || payload?.type === "function_call";
+  return { commands, results, defect: !usable && isCallRecord && calls.some(call => call.text) ? "缺时间戳或时间戳读不出" : null };
 }
 
 /** The commands of one transcript line with their time (see inspectLine); [] for anything else. */
