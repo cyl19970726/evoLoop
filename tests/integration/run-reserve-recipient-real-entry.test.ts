@@ -9,6 +9,7 @@ import { migrate, PostgresUnitOfWork } from "@evoloop/adapter-postgres";
 import type { Principal } from "@evoloop/contracts";
 import { buildServer } from "../../apps/coordinator/src/server.js";
 import { createReserveRecipientCheck } from "../../apps/coordinator/src/runtime/recipient-preflight.js";
+import { seedSealingWorkerSubmission } from "../../packages/adapter-postgres/test/signed-worker-fixture.js";
 
 const database = process.env.TEST_DATABASE_URL;
 if (!database || !/^evoloop(?:_[a-z0-9]+)*_test$/.test(decodeURIComponent(new URL(database).pathname.slice(1))))
@@ -85,7 +86,8 @@ async function setup(t: import("node:test").TestContext, cliActorId: string | nu
     return run({ type: "task.assignment.set", projectId, operationId: randomUUID(), taskId, expectedTaskVersion: await version(taskId),
       target: { kind: "owned", sessionId }, recipientActorId: recipient, expectedVersion: current?.version ?? 0, reason: "assign" } as never);
   };
-  return { guardCalls: () => guarded, reserve, runRows, newTask, start, assign, version, projectId, sessionId };
+  return { guardCalls: () => guarded, reserve, runRows, newTask, start, assign, version, projectId, sessionId,
+    service, runtime, uow, pool, lead };
 }
 
 test("a Run reserve for an independent-acceptance Task is refused at the real HTTP entry, naming the missing item and creating no Run", async t => {
@@ -115,6 +117,55 @@ test("a Run reserve for an independent-acceptance Task is refused at the real HT
   attempt = await rig.reserve(task, await rig.version(task));
   assert.equal(attempt.response.statusCode, 200, attempt.body);
   assert.equal(await rig.runRows(), before + 1, "exactly one Run was reserved");
+});
+
+test("a delivered revision is refused with TASK_ALREADY_DELIVERED before a stale assignment at the real HTTP entry", async t => {
+  const rig = await setup(t, null);
+  const taskId = await rig.newTask("Delivered before stale assignment", true);
+  await rig.start(taskId);
+  await rig.assign(taskId, "worker");
+
+  const first = await rig.reserve(taskId, await rig.version(taskId));
+  assert.equal(first.response.statusCode, 200, first.body);
+  const fixedRun = (await rig.uow.read(rig.projectId, reader => reader.getRuntimeRun(first.runId)))!;
+  await rig.runtime.beginDispatch(rig.projectId, first.runId);
+  await rig.runtime.bindTurn(rig.projectId, first.runId, { id: `turn-${first.runId}`, status: "running" },
+    { kind: "startReply", operationId: fixedRun.operationId });
+  await rig.runtime.recordTurn(rig.projectId, first.runId, `turn-${first.runId}`, "completed", "Fixed result",
+    { completedAtUtc: new Date().toISOString() });
+
+  const taskBeforeDelivery = (await rig.uow.read(rig.projectId, reader => reader.getTask(taskId)))!;
+  const deliveryOperationId = randomUUID();
+  const intent = {
+    artifactRef: `fixture:${randomUUID()}`,
+    artifactRevision: "v1",
+    contentHash: createHash("sha256").update(deliveryOperationId).digest("hex"),
+    technicalResult: "passed" as const,
+    technicalEvidence: `#test ${first.runId.slice(0, 8)} fixed candidate result`,
+    reason: "Record the candidate result",
+  };
+  await seedSealingWorkerSubmission(rig.pool, rig.projectId, taskId, first.runId, rig.lead.actorId,
+    deliveryOperationId, taskBeforeDelivery.version, intent);
+  const delivery = await rig.service.execute(rig.lead, {
+    type: "delivery.record",
+    projectId: rig.projectId,
+    operationId: deliveryOperationId,
+    taskId,
+    runId: first.runId,
+    expectedVersion: taskBeforeDelivery.version,
+    ...intent,
+  });
+  assert.equal(delivery.status, "applied", JSON.stringify(delivery));
+
+  const delivered = (await rig.uow.read(rig.projectId, reader => reader.getTask(taskId)))!;
+  const stale = (await rig.service.getTaskAssignment(rig.lead, rig.projectId, taskId))!;
+  assert.notEqual(stale.taskRevisionId, delivered.currentRevisionId);
+  const before = await rig.runRows();
+  const attempt = await rig.reserve(taskId, delivered.version);
+  assert.notEqual(attempt.response.statusCode, 200, attempt.body);
+  assert.match(attempt.body, /TASK_ALREADY_DELIVERED/);
+  assert.doesNotMatch(attempt.body, /ASSIGNMENT_STALE/);
+  assert.equal(await rig.runRows(), before, "the refused redispatch creates no second Run");
 });
 
 test("with a configured business CLI identity, an assignment to any other identity is refused; the matching one is accepted", async t => {

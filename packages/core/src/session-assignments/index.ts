@@ -5,6 +5,7 @@ import type { SessionTarget } from "@evoloop/contracts/session-work";
 import type { SessionIdentity } from "@evoloop/contracts/session-identity";
 import { fallbackSessionIdentity } from "@evoloop/contracts/session-identity";
 import { canonicalTaskInputJson, taskInputSignature } from "../task-input.js";
+import { assertTaskDispatchAvailable } from "../task-dispatch-guard.js";
 
 type AssignmentTx = Transaction & { sessionAssignments?: SessionAssignmentTransaction };
 export interface SessionAssignmentContext {
@@ -88,7 +89,7 @@ export async function applySessionAssignment({ tx, command, principal, now }: Se
   const previous = await store.getTaskSessionAssignment(task.id);
   ensureVersion(previous?.version ?? 0, command.expectedVersion, "Task assignment");
   if (command.type !== "task.assignment.release") ensureVersion(task.version, command.expectedTaskVersion, "Task");
-  if (command.type === "task.assignment.set" || command.type === "task.assignment.release")
+  if (command.type === "task.assignment.release")
     await tx.sessionLines?.assertNotQueuedInLine(task.id, command.operationId);
   if (command.type === "task.assignment.set") {
     if (!hasDecisionAuthority(principal, command.projectId, "task")) fail("FORBIDDEN", "Assignment requires Task decision authority");
@@ -97,6 +98,8 @@ export async function applySessionAssignment({ tx, command, principal, now }: Se
     const role = requireRecord(await tx.getRole(roleId), "Role");
     if (["retirement-pending", "retired", "rejected", "deferred"].includes(role.state))
       fail("ROLE_UNAVAILABLE", "Target Role cannot receive an assignment");
+    await assertTaskDispatchAvailable(tx, task, command.operationId);
+    await tx.sessionLines?.assertNotQueuedInLine(task.id, command.operationId);
     await store.assertTaskAssignmentMovable(task.id);
     const record: TaskSessionAssignment = { projectId: command.projectId, taskId: task.id,
       version: command.expectedVersion + 1, taskRevisionId: task.currentRevisionId, target: command.target,

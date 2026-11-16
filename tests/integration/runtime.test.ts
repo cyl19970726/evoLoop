@@ -238,17 +238,31 @@ test("runtime reservations freeze task basis and recover uncertain native starts
       .every(r=>['completed','failed','interrupted'].includes(r.state)));
   };
   const followupId = randomUUID();
-  const followup = applied(await issue({ ...reserveRun, runId: followupId,
-    expectedVersion: ready.version! + 1, input: "Inspect the first native result and continue this accepted task" }));
-  const followupRun = await workflow.getRuntimeRun(principal, projectId, followupId);
-  assert.notEqual(followupRun.taskRevisionId, run.taskRevisionId, "each Turn freezes a new task revision");
+  rejected(await issue({ ...reserveRun, runId: followupId,
+    expectedVersion: ready.version! + 1, input: "Inspect the first native result and continue this accepted task" }),
+    "TASK_ALREADY_DELIVERED");
+  assert.equal(await uow.read(projectId, tx => tx.getRuntimeRun(followupId)), null,
+    "a completed Run cannot be followed by an ordinary reserve on the same Task revision");
+
+  const followupTaskId = randomUUID();
+  applied(await issue({ type: "task.create", taskId: followupTaskId, title: "Follow-up output",
+    content: "# One artifact\nContinue with a separately accepted Task.", acceptance: "Review output",
+    owner: ownerRoleId, documentIds: [documentId], evidence: "Follow-up accepted requirement" }));
+  const followupReady = applied(await issue({ type: "task.start", taskId: followupTaskId, expectedVersion: 1,
+    basis: [{ documentId, revisionId: document.revisionId }], reason: "Begin follow-up task" }));
+  const followupRunId = randomUUID();
+  const followup = applied(await issue({ ...reserveRun, runId: followupRunId, taskId: followupTaskId,
+    expectedVersion: followupReady.version, input: "Inspect the first native result and continue accepted work" }));
+  const followupRun = await workflow.getRuntimeRun(principal, projectId, followupRunId);
+  assert.notEqual(followupRun.taskRevisionId, followupReady.revisionId, "each Turn freezes a new task revision");
   assert.equal((await workflow.getTaskRevision(principal, projectId, taskId, run.taskRevisionId)).basis?.id,
     run.basisSetId, "the first Turn keeps its sealed basis");
-  rejected(await issue({ ...reserveRun, runId: randomUUID(), expectedVersion: ready.version! + 2 }), "SESSION_BUSY");
-  await runtime.beginDispatch(projectId, followupId);
-  await runtime.bindTurn(projectId, followupId, { id: "turn-2", status: "running" },
+  rejected(await issue({ ...reserveRun, runId: randomUUID(), taskId: followupTaskId,
+    expectedVersion: followupReady.version + 1 }), "SESSION_BUSY");
+  await runtime.beginDispatch(projectId, followupRunId);
+  await runtime.bindTurn(projectId, followupRunId, { id: "turn-2", status: "running" },
     { kind: "historyMarker", operationId: followup.operationId });
-  assert.equal((await runtime.recordTurn(projectId, followupId, "turn-2", "completed", "Follow-up native Turn completed")).state,
+  assert.equal((await runtime.recordTurn(projectId, followupRunId, "turn-2", "completed", "Follow-up native Turn completed")).state,
     "completed");
   assert.equal((await workflow.getTask(principal, projectId, taskId)).task.state, "in_progress",
     "native completion never closes the accepted Task");
