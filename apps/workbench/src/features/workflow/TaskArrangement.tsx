@@ -2,6 +2,7 @@
 // the Leader records for it) and 阶段区间、计划与来源 (the current work's next step, stage time, plan, sources,
 // acceptance, execution, delivery, the Leader's decision, the result notices and the prerequisites). Server text
 // written for agents and raw identifiers stay in the full-identifier layer.
+import { currentStageText, usedWaitResponsibility } from "../../shared/leaderWorkLoad";
 import React from "react";
 import { hasPermission, type TaskAttentionFollowUp, type TaskAttentionItem, type TaskDetail } from "@evoloop/contracts";
 import type { LeaderNotice } from "@evoloop/contracts/leader-notices";
@@ -239,7 +240,7 @@ export function TaskArrangementFacts({ projectId, detail, leader, responsibleNam
   return <div className="flex flex-col gap-4" data-task-arrangement="">
     <p data-task-next="" className="rounded-lg bg-accent px-4 py-2.5 text-label text-foreground"><strong>下一步：</strong>{workItemNextStep(leader)}</p>
     {timing ? <div className="flex flex-col gap-1">
-      <p className="text-label text-foreground">{timingStageLabel[timing.current.stage] ?? "阶段未知"} · 本阶段 {date(timing.current.startedAt ?? undefined)} 起 · 已历时 {timingDuration(timing.current.elapsedMs)} · {waitingText(timing.current.waitingFor, leader.assignment)}</p>
+      <p className="text-label text-foreground">{currentStageText(timing.current.stage, leader.phase, timingStageLabel[timing.current.stage] ?? "阶段未知")} · 本阶段 {date(timing.current.startedAt ?? undefined)} 起 · 已历时 {timingDuration(timing.current.elapsedMs)} · {usedWaitResponsibility(leader) ?? waitingText(timing.current.waitingFor, leader.assignment)}</p>
       <Fine>任务创建 {timing.createdAt ? date(timing.createdAt) : "未知"} · 发布证据 {timing.publication.source === "explicit" && timing.publication.at ? `已发布 ${date(timing.publication.at)}` : "未知；具备发布条件不代表已发布"} ·
         最近有效进展 {timing.latestEffectiveProgress ? date(timing.latestEffectiveProgress.at) : "未知"} · 执行活动 {timing.executionActivity
           ? `${date(timing.executionActivity.at)} · ${timing.executionActivity.freshness === "live" ? "新近观察" : timing.executionActivity.freshness === "stale" ? "观察已过期" : "新鲜度未知"}` : "未知"}</Fine>

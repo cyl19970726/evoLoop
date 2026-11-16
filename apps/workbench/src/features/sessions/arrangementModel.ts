@@ -74,7 +74,7 @@ export interface Arrangement {
 }
 
 export const dueSoonMs = 3 * 24 * 60 * 60 * 1000;
-const startedPhases = new Set<LeaderWorkTask["phase"]>(["running", "awaiting_delivery", "awaiting_acceptance", "rework"]);
+const startedPhases = new Set<LeaderWorkTask["phase"]>(["running", "awaiting_delivery", "awaiting_acceptance", "awaiting_prerequisite", "awaiting_release", "awaiting_close", "rework"]);
 
 export function targetKeyOf(target: ObservedSession["target"]): string {
   return target.kind === "owned" ? `owned:${target.sessionId}` : `external:${target.linkId}`;

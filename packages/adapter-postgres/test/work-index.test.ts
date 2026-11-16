@@ -1282,3 +1282,91 @@ test("change sequence allocation waits for the earlier uncommitted project write
     second.release();
   }
 });
+
+/**
+ * Defect b1f5d4c7: a Task whose declared consumer already signed `used` for the current Delivery was still counted as 待验收, with a closed Task as its next
+ * responsibility. Real shape per Task: in_progress, one passed Delivery, the declared consumer's observation, and the Leader's follow-up (waiting_on / release handoff).
+ */
+async function waitFixture(projectId: string, title: string, options: { observation?: "used" | "failed" | null; observer?: string;
+  state?: Task["state"]; waitingOn?: { kind: string; id: string | null } | null; handoff?: Record<string, string> | null } = {}) {
+  const item = task(projectId, title, options.state ?? "in_progress");
+  await uow.transaction(projectId, async tx => {
+    await tx.insertDocument(item.primary.head);
+    await tx.insertDocumentRevision(item.primary.revision);
+    await tx.insertTask(item.head);
+    await tx.insertTaskRevision(item.revision);
+    await tx.insertSealedBasisSet(item.basis);
+  });
+  await pool.query(`INSERT INTO task_proposal(project_id,task_id,task_revision_id,stage_id,consumer,use_required,evidence,stop_condition,created_at)
+    VALUES($1,$2,$3,NULL,'accept-agent',true,'evidence','stop',$4)`, [projectId, item.head.id, item.revision.id, now]);
+  const deliveryId = randomUUID();
+  await pool.query(`INSERT INTO delivery(project_id,delivery_id,task_id,task_revision_id,artifact_ref,artifact_revision,content_hash,technical_result,
+    technical_evidence,reason,actor_id,created_at) VALUES($1,$2,$3,$4,'fixture://pr','r1',$5,'passed','fixture','fixture',$6,$7)`,
+    [projectId, deliveryId, item.head.id, item.revision.id, hash(title), actor, now]);
+  if (options.observation) await pool.query(`INSERT INTO consumer_observation(project_id,observation_id,task_id,delivery_id,observer,observer_kind,result,
+    evidence,reason,actor_id,created_at) VALUES($1,$2,$3,$4,$5,'agent',$6,'checked','checked',$5,$7)`,
+    [projectId, randomUUID(), item.head.id, deliveryId, options.observer ?? "accept-agent", options.observation, now]);
+  if (options.waitingOn || options.handoff) await pool.query(`INSERT INTO task_attention_follow_up(project_id,task_id,task_revision_id,version,waiting_on,
+    decision,action_taken,release_handoff,actor_id,reason,updated_at) VALUES($1,$2,$3,1,$4::jsonb,'waiting','waiting',$5::jsonb,$6,'fixture',$7)`,
+    [projectId, item.head.id, item.revision.id, options.waitingOn ? JSON.stringify(options.waitingOn) : null,
+      options.handoff ? JSON.stringify(options.handoff) : null, actor, now]);
+  return item;
+}
+
+test("a Task whose declared consumer signed used leaves 待验收 for exactly one of 等关闭／等发布／等前置, counts and rows from the same classification", async () => {
+  const project: Project = { id: randomUUID(), title: "Used waits", createdAt: now };
+  await uow.transaction(project.id, async tx => { await tx.insertProject(project); });
+  const open = await waitFixture(project.id, "Open prerequisite", { observation: null });
+  const closedPrerequisite = await waitFixture(project.id, "Closed prerequisite", { state: "done" });
+  const waitingAcceptance = await waitFixture(project.id, "No conclusion yet", { observation: null });
+  const failed = await waitFixture(project.id, "Consumer failed", { observation: "failed" });
+  const onlyOtherSigned = await waitFixture(project.id, "Someone else signed", { observation: "used", observer: "not-the-consumer" });
+  const close = await waitFixture(project.id, "Used, waiting for close", { observation: "used" });
+  const closeAfterClosed = await waitFixture(project.id, "Used, prerequisite closed", { observation: "used",
+    waitingOn: { kind: "task", id: closedPrerequisite.head.id } });
+  const prerequisite = await waitFixture(project.id, "Used, prerequisite open", { observation: "used",
+    waitingOn: { kind: "task", id: open.head.id } });
+  const release = await waitFixture(project.id, "Used, release handoff", { observation: "used",
+    handoff: { recipient: "requirements", artifactRef: "fixture://release", note: "ready", readyForPublicationAt: now } });
+  const publisherWait = await waitFixture(project.id, "Used, publisher wait", { observation: "used", waitingOn: { kind: "publisher", id: "requirements" } });
+  const namedCloser = await waitFixture(project.id, "Used, leader closes", { observation: "used", waitingOn: { kind: "leader", id: "leader-codex-agent" } });
+  // The closure itself: a closed prerequisite needs a closure row at its current revision to count as satisfied elsewhere, but the wait only needs state done.
+
+  const page = await readLeaderWorkTasks(pool, project.id, { view: "tasks", limit: 100 });
+  const phase = (item: { head: Task }) => page.items.find(x => x.taskId === item.head.id)!;
+  // No conclusion (or someone other than the declared consumer signed): still waiting for acceptance, never hidden.
+  assert.equal(phase(waitingAcceptance).phase, "awaiting_acceptance");
+  assert.equal(phase(onlyOtherSigned).phase, "awaiting_acceptance");
+  assert.equal(phase(open).phase, "awaiting_acceptance");
+  assert.equal(phase(failed).phase, "rework", "a failed conclusion is rework, not a wait");
+  // Signed used: out of 待验收, and each in exactly one other class with its actual responsible party.
+  assert.equal(phase(close).phase, "awaiting_close");
+  assert.deepEqual(phase(close).responsible, { kind: "leader", id: null, label: "负责关闭的 Leader（未登记具体身份）" });
+  assert.equal(phase(namedCloser).phase, "awaiting_close");
+  assert.equal(phase(namedCloser).responsible.id, "leader-codex-agent");
+  assert.equal(phase(prerequisite).phase, "awaiting_prerequisite");
+  assert.deepEqual([phase(prerequisite).responsible.kind, phase(prerequisite).responsible.id], ["task", open.head.id]);
+  assert.match(phase(prerequisite).responsible.label, /前置任务 .*（in_progress）/, "the prerequisite's current state is shown");
+  assert.equal(phase(release).phase, "awaiting_release");
+  assert.deepEqual([phase(release).responsible.kind, phase(release).responsible.id], ["publisher", "requirements"]);
+  assert.equal(phase(publisherWait).phase, "awaiting_release");
+  assert.deepEqual([phase(publisherWait).responsible.kind, phase(publisherWait).responsible.id], ["publisher", "requirements"]);
+  // The prerequisite closed: it is no longer anyone's next move, in the phase, the responsible party and the timing's waitingFor alike.
+  assert.equal(phase(closeAfterClosed).phase, "awaiting_close");
+  assert.notEqual(phase(closeAfterClosed).responsible.id, closedPrerequisite.head.id);
+  assert.deepEqual(phase(closeAfterClosed).responsible.kind, "leader");
+  assert.notEqual(phase(closeAfterClosed).timing.current.waitingFor.kind, "task");
+  assert.deepEqual(phase(prerequisite).waitingTask, { taskId: open.head.id, state: "in_progress" }, "the prerequisite's id and current state are structured, not only in a label");
+  assert.equal(phase(close).waitingTask, null);
+  // A conclusion is not closure: all of them are still open Tasks.
+  for (const item of [close, closeAfterClosed, prerequisite, release, publisherWait, namedCloser]) assert.equal(phase(item).taskState, "in_progress");
+  // The counts and the rows come from one classification.
+  const byPhase = new Map<string, number>();
+  for (const item of page.items) byPhase.set(item.phase, (byPhase.get(item.phase) ?? 0) + 1);
+  for (const name of ["awaiting_acceptance", "awaiting_close", "awaiting_release", "awaiting_prerequisite", "rework"])
+    assert.equal(page.counts[name], byPhase.get(name) ?? 0, `${name} count equals its rows`);
+  assert.deepEqual([page.counts.awaiting_acceptance, page.counts.awaiting_close, page.counts.awaiting_release, page.counts.awaiting_prerequisite],
+    [3, 3, 2, 1]);
+  assert.equal(Object.entries(page.counts).filter(([key]) => !["total", "review_acknowledged", "review_deferred"].includes(key))
+    .reduce((sum, [, value]) => sum + value, 0), page.total, "the classes are mutually exclusive and cover every Task");
+});

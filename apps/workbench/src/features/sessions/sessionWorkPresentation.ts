@@ -227,7 +227,7 @@ export function nextWork({ kind, currentTaskId, line, queue, assignments, partia
     seen.add(item.task.id);
     const phase = phaseOf(item.task.id);
     // Delivered and waiting for someone else's acceptance: the agent has nothing more to do on it.
-    if (phase === "awaiting_acceptance" || phase === "closed" || phase === "cancelled") {
+    if (phase === "awaiting_acceptance" || phase === "awaiting_prerequisite" || phase === "awaiting_release" || phase === "awaiting_close" || phase === "closed" || phase === "cancelled") {
       ended.push({ item, label: phase === "awaiting_acceptance" ? "已交付，等验收" : phaseStatus[phase].label });
       continue;
     }

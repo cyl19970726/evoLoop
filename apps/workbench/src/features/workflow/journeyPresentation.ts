@@ -31,6 +31,7 @@ export function stageNextStep(stage: Pick<Stage, "state">, tasks: readonly Stage
   const has = (...phases: LeaderWorkTask["phase"][]) => open.some(task => phases.includes(task.phase));
   if (has("unknown")) return "有任务上次执行的结果未知：先核对，不要重复派发。";
   if (has("awaiting_acceptance")) return "核对交付与实际使用，按验收条件决定能否关闭。";
+  if (has("awaiting_prerequisite", "awaiting_release", "awaiting_close")) return "验收者已有结论：只差关闭、发布或前置任务，核对各任务所列的等待对象。";
   if (has("rework", "blocked")) return "先处理待返工或受阻的任务，再推进其他工作。";
   if (has("running", "awaiting_delivery")) return "继续执行，并登记可核对的交付。";
   if (open.length) return "核对任务正文与来源，安排承接后开始。";
