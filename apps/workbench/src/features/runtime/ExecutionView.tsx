@@ -23,7 +23,7 @@ import { AgentName } from "./AgentName";
 import { ManagedSessionCreate } from "./ManagedSessionCreate";
 import { ManagedSessionDetail, RoleLabel } from "./ManagedSessionDetail";
 import { RunList } from "./RunList";
-import { executionHref, fullGrants, permissionsText, sessionGroups, sessionStateLine, sessionStateText, sessionStateTone, sessionTargetNotice, uuidPattern } from "./executionPresentation";
+import { executionHref, faultLines, fullGrants, serviceLine, permissionsText, sessionGroups, sessionStateLine, sessionStateText, sessionStateTone, sessionTargetNotice, uuidPattern } from "./executionPresentation";
 import { useRoleNames } from "./useRoleNames";
 import { failureOf, type Failure } from "../../shared/errorPresentation";
 import { ErrorDetails } from "../../shared/ui/ErrorDetails";
@@ -86,7 +86,7 @@ export function ExecutionView({ context, refresh, sessionId }: { context: Mutati
     : sessionsRead.isPending ? "正在读取受管智能体与运行…" : "受管智能体尚未读回。";
   const serviceFacts = status.data
     ? <FactList rows={[
-      ["执行服务", status.data.available ? "已接通" : `未接通${status.data.error ? `：${status.data.error}` : ""}`],
+      ["执行服务", serviceLine(status.data)],
       ["可创建智能体的完整权限授权", status.data.grants.length ? `${grants.length} 项（共 ${status.data.grants.length} 项授权）` : "当前身份在本项目没有执行授权"],
       ["读取时间", `${stamp(status.dataUpdatedAt)}${statusError ? "（本次核对失败，上次读回）" : ""}`],
     ]} />
@@ -138,6 +138,14 @@ export function ExecutionView({ context, refresh, sessionId }: { context: Mutati
             ? <p className="text-small text-text-secondary">执行服务已接通。{grants.length ? `当前身份有 ${grants.length} 项可创建智能体的完整权限授权。` : status.data.grants.length
               ? "当前没有同时允许完整本机权限、无需逐次审批和联网的精确授权；请核对项目执行配置后再创建新智能体。" : "当前身份在本项目没有执行授权，不能创建新智能体。"}</p>
             : <Notice tone="waiting" title="执行服务尚未接通">{status.data.error || "已有运行记录仍保留；不自动重发结果未知的启动。"}</Notice>)}
+          {status.data?.available && (faultLines(status.data).length > 0 || status.data.error) && <Notice tone="waiting" title={faultLines(status.data).length ? `有 ${faultLines(status.data).length} 条运行故障未清除` : "执行服务有提示"} data-testid="runtime-faults">
+            {status.data.error && !(status.data.faults ?? []).some(fault => fault.message === status.data!.error) && <p>{status.data.error}</p>}   {/* the service puts the latest fault's sentence in `error` too; once is enough */}
+            {faultLines(status.data).length > 0 && <ul className="mt-1 flex flex-col gap-1">{faultLines(status.data).map(fault => <li key={fault.key}>
+              <span className="font-medium">{fault.title}</span>{fault.text && <span>：{fault.text}</span>}
+              {fault.sessionId && <> <a className="text-primary underline" href={executionHref(projectId, fault.sessionId)}>查看这个智能体</a></>}
+            </li>)}</ul>}
+            <p className="mt-1 text-caption">故障是服务当前仍记着的未核实事项；已有运行记录保留，不自动重发结果未知的启动。</p>
+          </Notice>}
           {statusError && <Notice tone="error">执行服务状态{status.data ? "本次核对失败，上面是上次读回" : "暂不可读"}：{statusError}<ErrorDetails error={status.error} /></Notice>}
           {status.data && !status.data.available && hasDecisionAuthority(context.principal, projectId, "management") && <Button className="w-fit" disabled={recovering} onClick={() => void recover()}>{recovering ? "恢复核对中…" : "受控恢复执行连接"}</Button>}
           {recoverError && <Notice tone="error">恢复未完成：{recoverError.text}。请先读取运行状态，不要重复发起。<ErrorDetails failure={recoverError} /></Notice>}
