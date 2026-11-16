@@ -49,6 +49,13 @@ export type LeaderWorkPhase =
   | "blocked"
   | "awaiting_delivery"
   | "awaiting_acceptance"
+  /**
+   * The declared consumer already signed `used` for the current Delivery, so these Tasks are no longer awaiting acceptance (defect b1f5d4c7). What is left is
+   * a different, mutually exclusive wait: for the Task to be closed, for a release/publication, or for another open Task. A conclusion is not closure.
+   */
+  | "awaiting_close"
+  | "awaiting_release"
+  | "awaiting_prerequisite"
   | "ready"
   | "awaiting_assignment"
   | "running"
@@ -148,6 +155,8 @@ export interface LeaderWorkTask {
     label: string;
   };
   assignment: LeaderWorkAssignment | null;
+  /** For `awaiting_prerequisite`: the open Task this one waits for and its current state; null in every other phase. */
+  waitingTask?: { taskId: string; state: string } | null;
   /** The Task's declared acceptance convention (DEC-042); null when it declared nothing. `readiness` is null until a delivery exists. */
   acceptanceConvention?: {
     acceptanceTarget: "human" | "leader" | "business_session" | "named_agent" | null;

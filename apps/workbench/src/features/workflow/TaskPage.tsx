@@ -17,7 +17,7 @@ import { taskOrigin } from "./taskOrigin";
 import { legacyDecisionLabel } from "./taskListPresentation";
 import { navigateTaskTab, scrollToTaskSection, taskRunFromHash, taskSectionFromHash, taskSessionReturn, type TaskSection } from "../../shared/taskNavigation";
 import { timingDuration, timingStageLabel } from "../../shared/taskTiming";
-import { leaderProjectionMatchesTask } from "../../shared/leaderWorkLoad";
+import { currentStageText, leaderProjectionMatchesTask } from "../../shared/leaderWorkLoad";
 import { phaseStatus, taskStateStatus } from "../../shared/taskStatus";
 import { ResponsibleName } from "../../shared/ui/RecordName";
 import type { ReadState } from "./taskFactsPresentation";
@@ -276,7 +276,7 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
         </section>
         <section aria-labelledby={`${panelId("overview")}-progress`} className="flex flex-col gap-3" data-task-progress="">
           <h2 id={`${panelId("overview")}-progress`} className={heading}>进展与讨论</h2>
-          {projection?.timing && <p className="text-label text-text-secondary">现在：{timingStageLabel[projection.timing.current.stage] ?? "阶段未知"} · 本阶段已历时 {timingDuration(projection.timing.current.elapsedMs)}{projection.latestProgress ? ` · 最近进展 ${progressEventName(projection.latestProgress)}（${date(projection.latestProgress.changedAt)}）` : " · 最近进展未记录"}</p>}
+          {projection?.timing && <p className="text-label text-text-secondary">现在：{currentStageText(projection.timing.current.stage, projection.phase, timingStageLabel[projection.timing.current.stage] ?? "阶段未知")} · 本阶段已历时 {timingDuration(projection.timing.current.elapsedMs)}{projection.latestProgress ? ` · 最近进展 ${progressEventName(projection.latestProgress)}（${date(projection.latestProgress.changedAt)}）` : " · 最近进展未记录"}</p>}
           <TimingLine projectId={projectId} taskId={id} onOpen={openSchedule} />
           <TaskCollaborationThread projectId={projectId} taskId={id} refresh={refresh + readVersion} from={taskOrigin(projectId, detail.task, context.principal.actorId)} />
           {leaderTask && <TaskAttentionSection key={`${projectId}:${id}:${detail.task.currentRevisionId}`} context={taskContext} detail={detail} leader={leaderTask} />}
