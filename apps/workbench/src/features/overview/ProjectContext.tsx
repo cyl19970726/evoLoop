@@ -126,7 +126,7 @@ export function ProjectContext({ token, projectId, refresh, active }: { token: s
   </div>;
   const choose = (id: string) => setSelection({ scope, id });
   const stageButton = (item: Stage) => <Button variant="row" key={item.id} aria-pressed={stage?.id === item.id} onClick={() => choose(item.id)}
-    className="rounded-lg px-3 py-2 text-small aria-pressed:bg-raised aria-pressed:shadow-sm">
+    className="rounded-lg px-3 py-2 text-small aria-pressed:bg-accent aria-pressed:text-accent-strong">
     <span className="line-clamp-2">{item.deliverable}</span>
   </Button>;
   return <section data-ui="" className="project-context flex flex-col gap-3" aria-label="目标、当前取舍与使用反馈" aria-busy={reading}>

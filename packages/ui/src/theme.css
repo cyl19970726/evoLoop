@@ -29,6 +29,13 @@
   --color-count-fg: var(--count-fg);
   --color-brand: var(--brand);
   --color-on-brand: var(--on-brand);
+  --color-brand-hover: var(--brand-hover);
+  --color-brand-pressed: var(--brand-pressed);
+  --color-brand-soft: var(--brand-soft);
+  --color-on-brand-soft: var(--on-brand-soft);
+  --color-brand-soft-hover: var(--brand-soft-hover);
+  --color-brand-soft-pressed: var(--brand-soft-pressed);
+  --color-accent-strong: var(--accent-strong);
   --color-text-secondary: var(--text-secondary);
   --color-user-bubble: var(--user-bubble);
   --color-on-user-bubble: var(--on-user-bubble);

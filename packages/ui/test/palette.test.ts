@@ -43,6 +43,13 @@ const specification: Array<[string, string, string]> = [
   ["done-soft", "#f5eaf7", "#332337"],
   ["brand", "#b1582b", "#e18c5f"],
   ["on-brand", "#ffffff", "#15110d"],
+  // DEC-051: the secondary button (soft brand fill; values from the decision) and the solid hover/pressed fills of both buttons (implementer's choice, checked below).
+  ["brand-soft", "#f6e6dc", "#3a2518"],
+  ["on-brand-soft", "#8f431d", "#f0a77f"],
+  ["brand-hover", "#9c4a22", "#ea9a70"],
+  ["brand-pressed", "#8a3f1b", "#f0a984"],
+  ["brand-soft-hover", "#f0d9ca", "#46301f"],
+  ["brand-soft-pressed", "#e9ccb9", "#523a27"],
   ["user-bubble", "#1c1714", "#393633"],
   ["on-user-bubble", "#fcfbf8", "#eae7e3"],
   ["count-bg", "#1c1714", "#eae7e3"],
@@ -83,6 +90,10 @@ pairs.push(["accent", "accent-soft"], ["accent-strong", "accent-soft"], ["warnin
   ["on-accent", "accent"], ["on-brand", "brand"], ["on-user-bubble", "user-bubble"], ["count-fg", "count-bg"],
   ["text", "accent-soft"], ["text", "warning-soft"], ["text", "danger-soft"], ["text", "done-soft"], ["text-secondary", "warning-soft"], ["text-secondary", "danger-soft"],
   ["text-muted", "surface-selected"]);
+// DEC-051: a selected row or tab is accent-soft with accent-strong text; text and every role colour must read on it (status colours on the new selected fill: ≥4.5).
+for (const text of ["accent-strong", "text", "text-secondary", "text-muted", "accent", "warning", "danger", "done"]) pairs.push([text, "accent-soft"]);
+// DEC-051: the primary button in its three states (white / near-black on brand) and the secondary button in its three states, in both modes.
+pairs.push(["on-brand", "brand-hover"], ["on-brand", "brand-pressed"], ["on-brand-soft", "brand-soft"], ["on-brand-soft", "brand-soft-hover"], ["on-brand-soft", "brand-soft-pressed"]);
 
 test("every text colour reaches 4.5:1 on its background, in both modes", () => {
   const low: string[] = [];
@@ -110,6 +121,26 @@ test("no green status colour: no role colour has a hue between 90 and 160 degree
     const h = hue(valueOf(mode, name));
     assert.ok(h === null || h < 90 || h > 160, `${mode} --${name} is green-ish (hue ${h?.toFixed(0)})`);
   }
+});
+
+test("DEC-051: the brand colour is a button colour, not a state: no state, count or link colour equals a brand token", () => {
+  for (const mode of ["light", "dark"] as const) {
+    const brandish = ["brand", "brand-soft", "brand-hover", "brand-pressed", "brand-soft-hover", "brand-soft-pressed"].map(name => valueOf(mode, name));
+    for (const name of ["accent", "accent-strong", "accent-soft", "warning", "warning-soft", "danger", "danger-soft", "done", "done-soft", "count-bg", "count-fg"])
+      assert.ok(!brandish.includes(valueOf(mode, name)), `${mode} --${name} must not equal a brand token`);
+  }
+});
+
+test("DEC-051: hover and pressed are solid fills, not opacity, on the primary and secondary button", () => {
+  const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../src/components/button.tsx"), "utf8");
+  const line = (variant: string) => source.split("\n").find(l => l.trim().startsWith(`${variant}:`)) ?? "";
+  for (const variant of ["primary", "secondary"]) {
+    assert.match(line(variant), /hover:bg-/, `${variant} has a solid hover fill`);
+    assert.match(line(variant), /active:bg-/, `${variant} has a solid pressed fill`);
+    assert.doesNotMatch(line(variant), /opacity/, `${variant} does not use opacity for hover or pressed`);
+  }
+  assert.match(line("primary"), /bg-brand text-on-brand/);
+  assert.match(line("secondary"), /bg-brand-soft text-on-brand-soft/);
 });
 
 test("the failure colour and the count dot are different colours, and the count dot is not the brand colour", () => {

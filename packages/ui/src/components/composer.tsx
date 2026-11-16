@@ -205,7 +205,7 @@ export function Composer({
               aria-disabled={entry.type === "command" && entry.item.unavailable ? true : undefined}
               onMouseDown={event => { event.preventDefault(); pick(entry); }}
               onMouseEnter={() => setActive(index)}
-              className={cn("flex items-center gap-2.5 rounded-md px-2.5 py-2", entry.type === "command" && entry.item.unavailable ? "cursor-not-allowed opacity-70" : "cursor-pointer", selected && "bg-selected")}
+              className={cn("flex items-center gap-2.5 rounded-md px-2.5 py-2", entry.type === "command" && entry.item.unavailable ? "cursor-not-allowed opacity-70" : "cursor-pointer", selected && "bg-accent text-accent-strong")}
             >
               {entry.type === "command" ? (
                 <>
@@ -280,7 +280,7 @@ export function Composer({
         )}
         <div className="flex items-end gap-2.5">
           {onAttach && (
-            <button type="button" aria-label="添加任务、文档或文件" onClick={onAttach} disabled={disabled} className="inline-flex size-[34px] shrink-0 cursor-pointer items-center justify-center rounded-full border-0 bg-muted text-text-secondary outline-none hover:bg-field focus-visible:shadow-[var(--focus-ring)]">
+            <button type="button" aria-label="添加任务、文档或文件" onClick={onAttach} disabled={disabled} className="inline-flex size-[34px] shrink-0 cursor-pointer items-center justify-center rounded-full border-0 bg-brand-soft text-on-brand-soft outline-none hover:bg-brand-soft-hover active:bg-brand-soft-pressed focus-visible:shadow-[var(--focus-ring)]">
               <Plus aria-hidden="true" className="size-4" />
             </button>
           )}
@@ -304,16 +304,16 @@ export function Composer({
             onFocus={() => setDismissed(null)}
             className="max-h-40 min-h-[34px] min-w-0 flex-1 resize-none border-0 bg-transparent px-0.5 py-1.5 text-body leading-(--leading-tight) text-foreground outline-none placeholder:text-muted-foreground"
           />
-          {showStop && <button type="button" aria-label="停止这一轮" title="停止这一轮（Esc）" onClick={onStop} className="inline-flex size-9 shrink-0 cursor-pointer items-center justify-center rounded-full border-0 bg-foreground text-background outline-none hover:opacity-90 focus-visible:shadow-[var(--focus-ring)]">
+          {showStop && <button type="button" aria-label="停止这一轮" title="停止这一轮（Esc）" onClick={onStop} className="inline-flex size-9 shrink-0 cursor-pointer items-center justify-center rounded-full border-0 bg-brand text-on-brand outline-none hover:bg-brand-hover active:bg-brand-pressed focus-visible:shadow-[var(--focus-ring)]">
               <Square aria-hidden="true" className="size-3.5 fill-current" strokeWidth={0} />
             </button>}
           {splitSend && onQueue ? (
             <div role="group" aria-label="发送方式" className="flex shrink-0 items-center gap-1.5">
-              <button type="button" data-send-way="insert" onClick={send} disabled={!value.trim() || disabled || busy} className="inline-flex h-9 cursor-pointer items-center justify-center whitespace-nowrap rounded-full border-0 bg-foreground px-3.5 text-small font-medium text-background outline-none hover:opacity-90 focus-visible:shadow-[var(--focus-ring)] disabled:cursor-default disabled:bg-field disabled:text-muted-foreground disabled:opacity-100">{splitSend.sendLabel}</button>
+              <button type="button" data-send-way="insert" onClick={send} disabled={!value.trim() || disabled || busy} className="inline-flex h-9 cursor-pointer items-center justify-center whitespace-nowrap rounded-full border-0 bg-brand px-3.5 text-small font-medium text-on-brand outline-none hover:bg-brand-hover active:bg-brand-pressed focus-visible:shadow-[var(--focus-ring)] disabled:cursor-default disabled:opacity-50">{splitSend.sendLabel}</button>
               <button type="button" data-send-way="queue" onClick={queue} disabled={!value.trim() || disabled || busy} className="inline-flex h-9 cursor-pointer items-center justify-center whitespace-nowrap rounded-full border border-border bg-transparent px-3.5 text-small font-medium text-foreground outline-none hover:bg-field focus-visible:shadow-[var(--focus-ring)] disabled:cursor-default disabled:text-muted-foreground disabled:opacity-100">{splitSend.queueLabel}</button>
             </div>
           ) : !showStop && (
-            <button type="button" aria-label={sendLabels[mode]} title={sendLabels[mode]} onClick={send} disabled={!value.trim() || disabled || busy} className="inline-flex size-9 shrink-0 cursor-pointer items-center justify-center rounded-full border-0 bg-foreground text-background outline-none hover:opacity-90 focus-visible:shadow-[var(--focus-ring)] disabled:cursor-default disabled:bg-field disabled:text-muted-foreground disabled:opacity-100">
+            <button type="button" aria-label={sendLabels[mode]} title={sendLabels[mode]} onClick={send} disabled={!value.trim() || disabled || busy} className="inline-flex size-9 shrink-0 cursor-pointer items-center justify-center rounded-full border-0 bg-brand text-on-brand outline-none hover:bg-brand-hover active:bg-brand-pressed focus-visible:shadow-[var(--focus-ring)] disabled:cursor-default disabled:opacity-50">
               <ArrowUp aria-hidden="true" className="size-4" strokeWidth={2.4} />
             </button>
           )}

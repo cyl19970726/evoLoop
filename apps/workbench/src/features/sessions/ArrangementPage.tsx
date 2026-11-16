@@ -197,7 +197,7 @@ function Stat({ label, value, note, tone, onClick }: { label: string; value: num
     <span className="text-caption text-muted-foreground">{label}{note && <span className="text-text-secondary"> · {note}</span>}</span>
   </>;
   const box = "flex min-w-0 flex-col gap-0.5 rounded-xl bg-field px-4 py-3 text-left";
-  return onClick ? <Button variant="row" onClick={onClick} className={cn(box, "items-stretch font-normal text-foreground hover:bg-selected hover:text-foreground")}>{body}</Button> : <div className={box}>{body}</div>;
+  return onClick ? <Button variant="row" onClick={onClick} className={cn(box, "items-stretch bg-card font-normal text-foreground shadow-sm hover:bg-accent hover:text-foreground")}>{body}</Button> : <div className={box}>{body}</div>;
 }
 
 /** Project-wide counts the agent directory reports, independent of how many agents were read. */
@@ -263,7 +263,7 @@ export function ArrangementPage({ context, refresh, flow }: { context: MutationC
     </header>
     <div role="tablist" aria-label="统筹安排的视图" className="-mt-2 flex gap-1">
       {([["board", "安排"], ["flow", "动态"]] as const).map(([id, label]) =>
-        <Button key={id} role="tab" size="compact" aria-selected={view === id} onClick={() => chooseView(id)} className={cn(view === id && "bg-selected font-medium")}>{label}</Button>)}
+        <Button key={id} role="tab" variant="tab" size="compact" aria-selected={view === id} onClick={() => chooseView(id)} className={cn(view === id && "font-medium")}>{label}</Button>)}
     </div>
     {view === "flow" ? <div role="tabpanel" aria-label="动态">
       {sessions.isPending ? <LoadingState label="正在读取智能体目录" lines={2} />

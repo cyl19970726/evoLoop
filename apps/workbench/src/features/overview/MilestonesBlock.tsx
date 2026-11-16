@@ -8,7 +8,7 @@ import { NOT_REGISTERED, milestoneRows, versionView } from "./milestonesPresenta
 const card = "flex min-w-0 flex-col gap-1.5 rounded-xl bg-raised px-4 py-3 shadow-sm compact:gap-2 compact:p-5";
 const muted = "text-caption text-muted-foreground";
 const heading = "text-label font-semibold text-foreground";
-const toneClass = { done: "bg-done-soft text-done", progress: "bg-selected text-primary", partial: "bg-warning-soft text-warning", idle: "bg-field text-text-secondary", none: "border border-dashed border-border text-text-secondary" } as const;
+const toneClass = { done: "bg-done-soft text-done", progress: "bg-accent text-primary", partial: "bg-warning-soft text-warning", idle: "bg-field text-text-secondary", none: "border border-dashed border-border text-text-secondary" } as const;
 
 export function MilestonesBlock({ projectId, active }: { projectId: string; active: boolean }) {
   const version = useProjectQuery(projectId, ["overview", "version"], signal => api().version(signal), { enabled: active, retry: false });
@@ -39,7 +39,7 @@ export function MilestonesBlock({ projectId, active }: { projectId: string; acti
             <span>阶段</span><span>要交付什么</span><span>退出证据</span><span>状态</span><span>节点日期</span></div>
           <ol className="m-0 flex list-none flex-col p-0">
             {rows.map(row => <li key={row.id} data-phase={row.id} data-current={row.current ? "true" : undefined} aria-current={row.current ? "step" : undefined}
-              className={`grid grid-cols-[minmax(0,1fr)_auto] items-center @sm:grid-cols-[minmax(0,1fr)_auto_7.5rem] gap-x-2 border-t border-border px-2 py-1 first:border-t-0 @3xl:grid-cols-[9rem_minmax(0,1.2fr)_minmax(0,1.5fr)_6rem_7rem] @3xl:gap-x-3 ${row.current ? "bg-selected shadow-[inset_3px_0_0_var(--accent)]" : ""}`}>
+              className={`grid grid-cols-[minmax(0,1fr)_auto] items-center @sm:grid-cols-[minmax(0,1fr)_auto_7.5rem] gap-x-2 border-t border-border px-2 py-1 first:border-t-0 @3xl:grid-cols-[9rem_minmax(0,1.2fr)_minmax(0,1.5fr)_6rem_7rem] @3xl:gap-x-3 ${row.current ? "bg-accent shadow-[inset_3px_0_0_var(--accent)]" : ""}`}>
               <span className="col-start-1 row-start-1 min-w-0 text-small font-medium @3xl:col-start-1 @3xl:row-start-1">
                 <a className="text-primary hover:underline" href={href(projectId, "journey")}>{row.id} {row.title}</a>
                 {row.current && <span className="ml-1 text-caption font-semibold text-primary">当前</span>}</span>
