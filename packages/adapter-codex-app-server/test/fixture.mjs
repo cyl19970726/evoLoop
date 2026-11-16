@@ -39,8 +39,8 @@ for await (const line of lines) {
     if(mode==='exit-noisy-stderr'){
       process.stderr.write('first line\n');
       for(let index=0;index<2000;index++)process.stderr.write(`noise ${index} ${'x'.repeat(40)}\n`);
-      process.stderr.write('last line\n');
-      process.exit(1);
+      // Exit only once the pipe has taken everything: an exit with writes pending may drop the end of the output.
+      process.stderr.write('last line\n',()=>process.exit(1));
     }
     if(mode==='stdout-eof-live'){
       process.on('SIGTERM',()=>{});
