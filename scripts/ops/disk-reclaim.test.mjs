@@ -6,6 +6,8 @@ import { join } from "node:path";
 import test from "node:test";
 import { countClientBackends, formatReport, instanceDir, instanceSkipReasons, loadConfig, makeAdapters, reclaim, repoRoot, worktreeSkipReasons } from "./disk-reclaim.mjs";
 import { MARKER } from "./test-pg.mjs";
+import { symlinkSync as linkTo, utimesSync as touchAt, mkdirSync as mkdirP, writeFileSync as writeF } from "node:fs";
+import { builtInProtection, depsSkipReasons, formatReport as formatDiskReport } from "./disk-reclaim.mjs";
 
 const git = (cwd, ...args) => execFileSync("git", ["-C", cwd, "-c", "user.email=t@example.com", "-c", "user.name=t", ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
 const GB = 1024 ** 3;
@@ -38,6 +40,7 @@ const base = (w, over = {}) => ({ ...makeAdapters(w.config), prFor: prs({}), cwd
 const run = (w, over = {}, options = {}) => reclaim({ adapter: base(w, over), config: w.config, ...options });
 const merged = number => ({ number, state: "MERGED", open: null });
 const reasonsFor = (report, path) => report.skipped.find(item => item.path === path)?.reasons.join(" | ") ?? "";
+const depsReasonsFor = (report, path) => report.skipped.find(item => item.kind === "deps" && item.path === path)?.reasons.join(" | ") ?? "";
 
 test("a merged, clean, pushed, unused worktree is reclaimed; branch and commits stay", async () => {
   const w = world();
@@ -392,4 +395,135 @@ test("ORDER counterexamples: the orphan match never widens what a scoped run may
   // the test roots even though their markers name this branch: only instances under a test root are ever matched.
   for (const path of [prod, foreign, fixtures.otherBranch.dataDir, fixtures.noBranch.dataDir, fixtures.pathStillThere.dataDir, fixtures.legacy.dataDir]) assert.equal(skipped(path), "", path);
   assert.ok(!stopped.some(path => path.includes("prod-db") || path.includes("somebody-elses")));
+});
+
+// ---- Task e5a1c9d3: node_modules of tmp copies, merged-PR worktrees and old releases; the report lists each class with its skips.
+const HOUR = 3600_000;
+const aged = (path, hoursAgo) => { const t = new Date(Date.now() - hoursAgo * HOUR); touchAt(path, t, t); };
+/** A directory with a node_modules (one file in it) and one source file last changed `hoursAgo` hours ago. */
+function copyWithDeps(dir, hoursAgo) {
+  mkdirP(join(dir, "node_modules", "pkg"), { recursive: true });
+  writeF(join(dir, "node_modules", "pkg", "index.js"), "x".repeat(4096));
+  writeF(join(dir, "src.txt"), "source\n");
+  for (const path of [join(dir, "node_modules", "pkg", "index.js"), join(dir, "node_modules", "pkg"), join(dir, "node_modules"), join(dir, "src.txt"), dir]) aged(path, hoursAgo);
+  return dir;
+}
+
+test("D1. tmp copies: node_modules goes only from matching names, with no process and nothing changed in 2 hours; the skips say why; sources stay", async () => {
+  const w = world();
+  const tmp = join(w.root, "tmp"); mkdirP(tmp, { recursive: true });
+  const old = copyWithDeps(join(tmp, "acc2-wt1"), 5), recent = copyWithDeps(join(tmp, "acc2-wt2"), 0.2), busy = copyWithDeps(join(tmp, "acc2-wt3"), 5), other = copyWithDeps(join(tmp, "someone-else"), 5);
+  Object.assign(w.config, { tmpCopyRoots: [tmp], tmpCopyNames: [/^acc2-/], depsIdleMinutes: 120 });
+  const over = { cwds: () => [{ pid: 77, command: "node", cwd: join(busy, "sub") }] };
+  const dry = await run(w, over);
+  assert.ok(existsSync(join(old, "node_modules")), "a dry run deletes nothing");
+  assert.deepEqual(dry.reclaimed.filter(item => item.kind === "deps").map(item => [item.class, item.path, item.dryRun]), [["tmp-copy", old, true]]);
+  const done = await run(w, over, { execute: true });
+  assert.ok(!existsSync(join(old, "node_modules")) && existsSync(join(old, "src.txt")), "node_modules goes, the source stays");
+  assert.ok(existsSync(join(recent, "node_modules")) && existsSync(join(busy, "node_modules")) && existsSync(join(other, "node_modules")));
+  assert.match(reasonsFor(done, recent), /120 分钟内有改动/);
+  assert.match(reasonsFor(done, busy), /有进程以它为工作目录\(node\[77\]\)/);
+  assert.equal(reasonsFor(done, other), "", "a name that does not match is not listed and not touched");
+  assert.deepEqual([done.deps["tmp-copy"].reclaimedCount, done.deps["tmp-copy"].skippedCount], [1, 2]);
+  assert.ok(done.deps["tmp-copy"].reclaimedBytes >= 4096);
+});
+
+test("D2. merged-PR worktrees that fail the whole-tree conditions still lose node_modules; open PR, a process and recent changes are skipped with the reason", async () => {
+  const w = world();
+  const dirty = w.worktree("dirty-merged"), open = w.worktree("open-pr", { merged: false }), busy = w.worktree("busy-merged"), fresh = w.worktree("fresh-merged");
+  for (const [dir, name] of [[dirty, "dirty-merged"], [open, "open-pr"], [busy, "busy-merged"], [fresh, "fresh-merged"]]) {
+    copyWithDeps(dir, dir === fresh ? 0.1 : 6);
+    if (dir !== fresh) for (const file of ["a.txt", `${name}.txt`]) aged(join(dir, file), 6); // the committed files of an idle worktree are old too
+  }
+  writeF(join(dirty, "untracked-note.txt"), "keep me\n"); aged(join(dirty, "untracked-note.txt"), 6);
+  const prsMap = prs({ "dirty-merged": merged(1), "open-pr": { number: 2, state: "OPEN", open: 2 }, "busy-merged": merged(3), "fresh-merged": merged(4) });
+  const over = { prFor: prsMap, cwds: () => [{ pid: 9, command: "vite", cwd: busy }] };
+  const done = await run(w, over, { execute: true });
+  assert.ok(existsSync(dirty) && existsSync(join(dirty, "untracked-note.txt")), "the worktree and its untracked file stay");
+  assert.ok(!existsSync(join(dirty, "node_modules")), "only its node_modules goes");
+  assert.deepEqual(done.reclaimed.filter(item => item.class === "worktree").map(item => item.path), [dirty]);
+  assert.match(depsReasonsFor(done, open), /PR #2 还开着/);
+  assert.match(depsReasonsFor(done, busy), /有进程以它为工作目录/);
+  assert.match(depsReasonsFor(done, fresh), /分钟内有改动/);
+  assert.ok(existsSync(join(open, "node_modules")) && existsSync(join(busy, "node_modules")) && existsSync(join(fresh, "node_modules")));
+});
+
+test("D3. old releases lose node_modules; the current release, the previous deployed one (not a newer build that was never deployed) and protected paths are kept", async () => {
+  const w = world();
+  const releases = join(w.root, "rel"); mkdirP(releases, { recursive: true });
+  const make = (name, hoursAgo, complete = true, deployed = true) => { const dir = join(releases, name); mkdirP(dir, { recursive: true }); if (complete) { mkdirP(join(dir, "source"), { recursive: true }); copyWithDeps(join(dir, "source"), hoursAgo); if (deployed) mkdirP(join(dir, "runtime")); } aged(dir, hoursAgo); return dir; };
+  const oldest = make("box-main-aaaaaaa-20261101", 400), older = make("box-main-bbbbbbb-20261110", 100), previous = make("box-main-ccccccc-20261113", 30), aborted = make("box-main-ddddddd-20261115", 5, false), builtOnly = make("box-main-fffffff-20261115", 1, true, false), current = make("box-main-eeeeeee-20261115", 2);
+  const formal = join(releases, "box-release-20261108"); mkdirP(join(formal, "source"), { recursive: true }); copyWithDeps(join(formal, "source"), 900);
+  linkTo(current, join(releases, "current"));
+  Object.assign(w.config, { releaseRoot: releases, releaseNames: /^box-main-/, protectedPaths: [...w.config.protectedPaths, formal] });
+  const done = await run(w, {}, { execute: true });
+  for (const dir of [oldest, older]) assert.ok(!existsSync(join(dir, "source", "node_modules")), dir);
+  for (const dir of [previous, current]) assert.ok(existsSync(join(dir, "source", "node_modules")), dir);
+  assert.ok(existsSync(join(formal, "source", "node_modules")), "a protected release is never touched");
+  assert.deepEqual(done.reclaimed.filter(item => item.class === "release").map(item => item.path).sort(), [older, oldest].sort());
+  assert.match(reasonsFor(done, current), /是当前发布/);
+  assert.match(reasonsFor(done, previous), /是上一个完整发布/);
+  assert.ok(existsSync(aborted));
+  assert.ok(existsSync(join(builtOnly, "source", "node_modules")), "a build newer than the current release may be the next one being prepared: untouched");
+  assert.match(depsReasonsFor(done, builtOnly), /比当前发布还新/);
+  assert.match(reasonsFor(done, previous), /是上一个完整发布/, "the previous release is the newest DEPLOYED one, not the newest directory");
+});
+
+test("D4. depsSkipReasons: protected paths, unknown process data and unknown recent changes block; only node_modules can be removed", () => {
+  const tmp = realpathSync(tmpdir());
+  const config = { protectedPaths: ["/data/formal"], tmpCopyRoots: [tmp], tmpCopyNames: [/^acc2-/], depsIdleMinutes: 120 };
+  assert.deepEqual(depsSkipReasons({ path: join(tmp, "acc2-x"), kind: "tmp-copy", processes: [], recentChange: false }, config), []);
+  assert.match(depsSkipReasons({ path: "/data/formal/x", kind: "tmp-copy", processes: [], recentChange: false }, config).join("|"), /受保护/);
+  assert.match(depsSkipReasons({ path: join(tmp, "acc2-x"), kind: "tmp-copy", processes: null, recentChange: null }, config).join("|"), /无法检查有没有进程.*无法确认最近有没有改动/);
+  assert.match(depsSkipReasons({ path: join(tmp, "other"), kind: "tmp-copy", processes: [], recentChange: false }, config).join("|"), /不匹配 tmpCopyNames/);
+  assert.throws(() => makeAdapters(config).removeDeps("/tmp/acc2-x/src"), /not node_modules/);
+});
+
+test("D5. the report names the three classes with reclaimed and skipped amounts, and the free space before and after", async () => {
+  const w = world();
+  const tmp = join(w.root, "tmp"); mkdirP(tmp, { recursive: true });
+  copyWithDeps(join(tmp, "acc2-wt1"), 5); copyWithDeps(join(tmp, "acc2-wt2"), 0.1);
+  Object.assign(w.config, { tmpCopyRoots: [tmp], tmpCopyNames: [/^acc2-/] });
+  const done = await run(w, {}, { execute: true });
+  const text = formatDiskReport(done);
+  assert.match(text, /依赖目录回收/);
+  assert.match(text, /\/tmp 验收临时副本:回收 1 处 .*跳过 1 处/);
+  assert.match(text, /已合并 PR 的工作树依赖:回收 0 处/);
+  assert.match(text, /旧发布依赖:回收 0 处/);
+  assert.match(text, /执行前后可用空间\(statfs\)/);
+});
+
+test("D6. the formal instance directory and a tunnel directory are protected by what they are, with protectedPaths empty of them or the release root missing from the config", async () => {
+  const w = world();
+  const releases = join(w.root, "rel"); mkdirP(releases, { recursive: true });
+  const make = (name, hoursAgo, extra = () => {}) => { const dir = join(releases, name); mkdirP(join(dir, "source", "x"), { recursive: true }); copyWithDeps(join(dir, "source"), hoursAgo); mkdirP(join(dir, "runtime"), { recursive: true }); extra(dir); aged(dir, hoursAgo); return dir; };
+  const plain = make("box-main-1111111-20261101", 400);
+  const formal = make("box-main-2222222-20261102", 20, dir => { writeF(join(dir, "bootstrap-receipt.json"), "{}"); mkdirP(join(dir, "postgres"), { recursive: true }); writeF(join(dir, "postgres", "PG_VERSION"), "18\n"); });
+  const tunnel = make("box-final-main-3333333-20261103", 10, dir => writeF(join(dir, "runtime", "cloudflared.stderr.log"), "log"));
+  const previous = make("box-main-4444444-20261113", 30), current = make("box-main-5555555-20261115", 2);
+  linkTo(current, join(releases, "current"));
+  // protectedPaths names none of them: only what the directories are keeps the formal and tunnel ones safe
+  Object.assign(w.config, { releaseRoot: releases, protectedPaths: [join(w.root, "somewhere-else")] });
+  const done = await run(w, {}, { execute: true });
+  assert.ok(!existsSync(join(plain, "source", "node_modules")), "an ordinary old release is cleaned");
+  assert.ok(existsSync(join(formal, "source", "node_modules")), "the formal instance directory keeps its node_modules");
+  assert.ok(existsSync(join(tunnel, "source", "node_modules")), "the tunnel directory keeps its node_modules");
+  assert.match(depsReasonsFor(done, formal), /内置保护:正式实例目录/);
+  assert.match(depsReasonsFor(done, tunnel), /内置保护:隧道配置目录/);
+  for (const dir of [previous, current]) assert.ok(existsSync(join(dir, "source", "node_modules")));
+  assert.match(depsReasonsFor(done, previous), /是上一个完整发布/, "the formal and tunnel directories are newer than the previous release but are not mistaken for it");
+  // the release root is not in the config at all: no release is touched, formal included
+  delete w.config.releaseRoot;
+  const again = await run(w, {}, { execute: true });
+  assert.deepEqual(again.reclaimed.filter(item => item.class === "release"), []);
+  assert.ok(existsSync(join(formal, "source", "node_modules")) && existsSync(join(previous, "source", "node_modules")));
+});
+
+test("D7. builtInProtection reads the markers only: receipts or a database for the formal instance, cloudflared files for a tunnel, nothing for an ordinary release", () => {
+  const has = set => path => set.includes(path);
+  assert.deepEqual(builtInProtection(has([])), []);
+  assert.match(builtInProtection(has(["launchd-receipt.json"])).join("|"), /正式实例目录/);
+  assert.match(builtInProtection(has(["postgres/PG_VERSION"])).join("|"), /正式实例目录/);
+  assert.match(builtInProtection(has(["runtime/cloudflared.stderr.log"])).join("|"), /隧道配置目录/);
+  assert.equal(builtInProtection(has(["bootstrap-receipt.json", "runtime/cloudflared.pid"])).length, 2);
 });

@@ -360,6 +360,16 @@ git diff --check
 - 工作树：只回收 git 的链接工作树，主克隆本体永不回收；它的分支对应的 PR 已**合并**（还开着、已关闭未合并、没有 PR、查询失败都跳过）；没有未提交内容（已修改、已暂存、未跟踪的文件都算）；没有未进入远端主分支或 PR 头的提交；没有进程以它为工作目录（Session 或 Run 在里面工作就会在 `lsof` 里出现；列不出进程时全部跳过）；在 `workspaceRoots` 之内且不在 `protectedPaths` 之内；没有被锁定。**不按“多久没改动”判断。** 回收用 `git worktree remove`（不加 `--force`），分支和提交都还在。
 - 测试实例：只处理 `testPgRoots` 之下、且能确认是测试实例的：带 `test-pg.mjs` 写的归属标记，或目录名匹配 `legacyPgNames`；其他项目的数据库即使在同一目录下也不碰。受保护的路径和端口永不触碰；没有客户端连接（从进程表数 postmaster 的客户端子进程，不登录；数不出来按有连接处理）；数据目录最近 `pgIdleMinutes` 分钟没有写入（零连接可能只是两次跑测试之间）；不是刚启动；停止前再复查一次连接；带标记的实例，其工作树还在使用时保留，工作树已不在或本次一并回收时才回收。停止用 `pg_ctl stop -m fast`，再删除实例目录。
 
+**依赖目录回收（node_modules，可重装；源码、未跟踪文件、分支和提交都不碰）。** 2026-11-15 可用空间跌到 4.2 GB，大头在整棵删条件覆盖不到的地方，所以另有三类，各自的检查都在脚本里，报告分类列出回收量和跳过清单：
+- `/tmp 验收临时副本`：`tmpCopyRoots`（如 `/private/tmp`）之下、目录名匹配 `tmpCopyNames` 的目录（验收 Session 的临时克隆和实例）；
+- `已合并 PR 的工作树依赖`：链接工作树里 PR 已合并、但因有未提交/未跟踪内容或未推送提交而过不了整棵删条件的，只删它的 `node_modules`，工作树本身和未跟踪文件留着；PR 还开着、已关闭未合并、没有 PR、查询失败都跳过；
+- `旧发布依赖`：`releaseRoot` 之下名字匹配 `releaseNames`（默认 `<名字>-main-<7 位提交>-<yyyymmdd>`）的发布目录；**当前发布**（`current` 指向）与**上一个完整发布**（除当前外最新、且部署过的：有 `source/` 和 `runtime/`；只构建过或中断的构建不算——这条规则最初只看 `source/`，2026-11-15 实跑时误把一个没部署过的较新构建当作上一个发布，真正的上一个发布 b285313 的依赖被删，已用当前发布的同锁文件依赖克隆恢复）保留，比当前发布还新的目录（可能是正在准备的下一个发布）不动；受保护路径（正式库目录、隧道配置目录，**必须写进 `protectedPaths`**，名字也符合发布目录命名）永不触碰。
+三类共同的条件：路径不在 `protectedPaths` 内；没有进程以它为工作目录（列不出进程时全部跳过）；`depsIdleMinutes`（默认 120）分钟内没有文件改动（`find -mmin`，忽略 `node_modules` 与 `.git`；查不出按有改动处理）。删除只作用于名为 `node_modules` 的目录，别的名字会被拒绝。报告里还有执行前后的可用空间（`statfs`）和脚本回收合计：二者可以不同（`du` 是占用大小，回收后文件系统还有别的变化），以主机 `df -k` 复核。新增配置字段都是可选的：`tmpCopyRoots`、`tmpCopyNames`、`releaseRoot`、`releaseNames`、`depsIdleMinutes`。
+
+**内置保护，不依赖配置。** 一个目录里有 `bootstrap-receipt.json`、`launchd-receipt.json`、`tunnel-receipt.json` 或 `postgres/PG_VERSION` 就是正式实例目录，有 `runtime/cloudflared.*` 就是隧道配置目录：这两类永不回收，也不会被当成“上一个发布”；`protectedPaths` 是在此之外的补充。配置里没有 `releaseRoot` 时旧发布这一类根本不运行。
+
+**不依赖例行 Task 的巡检与告警（`npm run ops:patrol`）。** 例行日程（每 12 小时）在上一轮的 Task 没结束时会按 `overlap: skip` 跳过，2026-11-13 20:00 到 11-15 08:00（+05）连跳 4 次，磁盘回收、报告和低空间告警一起停了两天。`scripts/ops/ops-patrol.mjs` 把这几件事从那个 Task 里拿出来：运行 `disk-reclaim`（加 `--execute` 才真正回收）、读被监视日程最近的时刻、发现被跳过的时刻或可用空间低于 `minFreeGB` 时用 `work send` 把计数、编号和时间发给 Leader Session（不含路径和命令）。同一个被跳过的时刻只告知一次，低空间在 `alertIntervalMinutes`（默认 360）内不重复；告警那一行按实际状态写（仍低于阈值就写“空间仍低于阈值”，不会写“空间正常”）；告警没送出、日程读不出来都使退出码为 1（调度器看得见），低空间为 3。私有配置里加 `patrol` 对象：`cli`（智能体 CLI 的绝对路径）、`projectId`、`leaderSessionKey`、`watchSchedules`（日程 ID 列表）、`stateFile`（仓库外的绝对路径，记录已告知的内容）、可选 `skipLookbackHours`（默认 48）、`messagePrefix`（放在消息前面的文字，例如标明这是测试）。**谁来触发它**要选一个不会被例行 Task 卡住的方式：主机定时器（launchd/cron；安装是全局设置，需要使用者授权，仓库不替人安装），或一个单独的日程（它自己的 overlap 只看自己上一个 Task；Task 内容就是运行这条命令并贴出输出，交付即关闭；创建日程需要日程授权者）。
+
 **测试实例的约定**（`scripts/ops/test-pg.mjs`，现有位置有四种、名字对不上工作树，回收只能靠猜）：
 - 位置：`EVOLOOP_TEST_PG_ROOT/<名字>/`（私有的绝对路径，不在仓库内），一个实例一个目录，数据在 `data/`。
 - 名字：工作树目录的名字（小写字母、数字、`-`、`_`），数据库名 `evoloop_<名字，- 换成 _>_test`，符合集成测试的保护检查。
