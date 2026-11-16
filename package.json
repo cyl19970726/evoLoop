@@ -19,6 +19,7 @@
     "check:migrations": "node scripts/check-migration-numbers.mjs",
     "check:open-pr-migrations": "node scripts/check-open-pr-migrations.mjs",
     "disk:reclaim": "node scripts/ops/disk-reclaim.mjs",
+    "ops:patrol": "node scripts/ops/ops-patrol.mjs",
     "quota:reading": "node scripts/ops/quota-reading.mjs",
     "boundary:check": "node scripts/ops/boundary-check.mjs",
     "worktree:new": "node scripts/ops/new-worktree.mjs",
