@@ -32,3 +32,32 @@ export function createChildDetailSink(options: { directory?: string; keep?: numb
     }
   };
 }
+
+export interface NativeRefusalDetail {
+  projectId: string; messageId: string; sessionId: string; method: string; code: number; category: string; attempt: number; maxAttempts: number;
+  nativeMessage: string | null; nativeData: unknown;
+}
+const REFUSAL_FILE = /^codex-refusal-.*\.json$/;
+
+/**
+ * The native side's own words for a refused request (defect 548712ac: `thread/resume` code -32600 was only ever recorded as a category, so nobody could tell which of two
+ * refusals it was). One file per refusal beside the child details, with the same rules: 0600 in a 0700 directory, newest `keep` stay, the log line names the file and carries
+ * none of the text. Public evidence stays the method, category and code.
+ */
+export function createRefusalSink(options: { directory?: string; keep?: number; log?: (line: string) => void; now?: () => Date } = {}): (detail: NativeRefusalDetail) => void {
+  const directory = options.directory ?? privateDiagnosticsDirectory(), keep = options.keep ?? 50, log = options.log ?? (line => console.error(line));
+  return detail => {
+    try {
+      mkdirSync(directory, { recursive: true, mode: 0o700 });
+      chmodSync(directory, 0o700);
+      const at = (options.now?.() ?? new Date()).toISOString();
+      const path = join(directory, `codex-refusal-${at.replace(/[^0-9]/g, "").slice(0, 17)}-${detail.messageId.slice(0, 8)}-${detail.attempt}.json`);
+      const clip = (value: string | null): string | null => value === null ? null : value.length > 4000 ? `${value.slice(0, 4000)}…` : value;
+      writeFileSync(path, `${JSON.stringify({ ...detail, nativeMessage: clip(detail.nativeMessage), recordedAtUtc: at }, null, 2)}\n`, { mode: 0o600 });
+      for (const stale of readdirSync(directory).filter(name => REFUSAL_FILE.test(name)).sort().slice(0, -keep)) rmSync(join(directory, stale), { force: true });
+      log(`Codex refused ${detail.method} (${detail.category}, code ${detail.code}) before any Turn start: message=${detail.messageId.slice(0, 8)} attempt=${detail.attempt}/${detail.maxAttempts} detail=${path}`);
+    } catch {
+      log(`Codex refused ${detail.method} (${detail.category}, code ${detail.code}) before any Turn start: message=${detail.messageId.slice(0, 8)}; its private detail could not be written.`);
+    }
+  };
+}
