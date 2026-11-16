@@ -1288,7 +1288,7 @@ test("change sequence allocation waits for the earlier uncommitted project write
  * Defect b1f5d4c7: a Task whose declared consumer already signed `used` for the current Delivery was still counted as 待验收, with a closed Task as its next
  * responsibility. Real shape per Task: in_progress, one passed Delivery, the declared consumer's observation, and the Leader's follow-up (waiting_on / release handoff).
  */
-async function waitFixture(projectId: string, title: string, options: { observation?: "used" | "failed" | null; observer?: string;
+async function waitFixture(projectId: string, title: string, options: { observation?: "used" | "failed" | "notUsed" | null; observer?: string;
   state?: Task["state"]; waitingOn?: { kind: string; id: string | null } | null; handoff?: Record<string, string> | null } = {}) {
   const item = task(projectId, title, options.state ?? "in_progress");
   await uow.transaction(projectId, async tx => {
@@ -1412,4 +1412,57 @@ test("work board 待验收 is the Leader index's awaiting_acceptance, uncapped; 
   assert.equal(board.graph.counts.acceptanceRelaysUnanswered, 3);
   assert.equal(board.graph.inFlight.filter(item => item.kind === "acceptance").length, 3, "closed Tasks' relays are not in flight");
   assert.notEqual(noRelay.head.id, usedWaitingRelease.head.id);
+});
+
+/**
+ * Defect a29100df: the declared consumer's latest answer for the current Delivery is notUsed (or failed): 待验收 was wrong, the timeline said 返工中. Four shapes:
+ * notUsed, failed, used then notUsed, notUsed and then the author delivered again (the new Delivery has no answer yet).
+ */
+test("a current Delivery the declared consumer judged notUsed or failed is rework, not 待验收; the latest answer wins; a newer Delivery with no answer is 待验收 again", async () => {
+  const project: Project = { id: randomUUID(), title: "Not used", createdAt: now };
+  await uow.transaction(project.id, async tx => { await tx.insertProject(project); });
+  const later = (seconds: number) => new Date(Date.parse(now) + seconds * 1000).toISOString();
+  const answer = (item: { head: Task }, deliveryId: string, result: string, at: string, observer = "accept-agent") => pool.query(
+    `INSERT INTO consumer_observation(project_id,observation_id,task_id,delivery_id,observer,observer_kind,result,evidence,reason,actor_id,created_at)
+     VALUES($1,$2,$3,$4,$5,'agent',$6,'checked','checked',$5,$7)`, [project.id, randomUUID(), item.head.id, deliveryId, observer, result, at]);
+  const deliveryOf = async (item: { head: Task }) => (await pool.query(`SELECT delivery_id FROM delivery WHERE project_id=$1 AND task_id=$2 ORDER BY created_at DESC LIMIT 1`,
+    [project.id, item.head.id])).rows[0].delivery_id as string;
+
+  const notUsed = await waitFixture(project.id, "Consumer said notUsed", { observation: "notUsed" });
+  const failed = await waitFixture(project.id, "Consumer said failed", { observation: "failed" });
+  const usedThenNotUsed = await waitFixture(project.id, "Used, then notUsed", { observation: "used" });
+  await answer(usedThenNotUsed, await deliveryOf(usedThenNotUsed), "notUsed", later(60));
+  const notUsedThenRedelivered = await waitFixture(project.id, "NotUsed, then a new Delivery", { observation: "notUsed" });
+  await pool.query(`INSERT INTO delivery(project_id,delivery_id,task_id,task_revision_id,artifact_ref,artifact_revision,content_hash,technical_result,
+    technical_evidence,reason,actor_id,created_at) SELECT project_id,$3,task_id,task_revision_id,'fixture://pr2','r2',$4,'passed','fixture','redelivered',actor_id,$5
+    FROM delivery WHERE project_id=$1 AND task_id=$2 ORDER BY created_at LIMIT 1`, [project.id, notUsedThenRedelivered.head.id, randomUUID(), hash("redelivered"), later(120)]);
+  const notUsedThenUsed = await waitFixture(project.id, "NotUsed, then used", { observation: "notUsed" });
+  await answer(notUsedThenUsed, await deliveryOf(notUsedThenUsed), "used", later(60));
+  const noAnswer = await waitFixture(project.id, "No answer yet", { observation: null });
+  const otherSignedNotUsed = await waitFixture(project.id, "Someone else said notUsed", { observation: "notUsed", observer: "not-the-consumer" });
+  const usedWait = await waitFixture(project.id, "Used, waiting for close", { observation: "used" });
+
+  const page = await readLeaderWorkTasks(pool, project.id, { view: "tasks", limit: 100 });
+  const row = (item: { head: Task }) => page.items.find(x => x.taskId === item.head.id)!;
+  for (const item of [notUsed, failed, usedThenNotUsed]) {
+    assert.equal(row(item).phase, "rework", `${item.head.title}: rework`);
+    assert.deepEqual([row(item).responsible.kind, row(item).responsible.id], ["role", item.head.owner], "the next responsibility is the author's Role, not the acceptor");
+    assert.equal(row(item).timing.current.stage, "rework", "the timeline stage says the same");
+    assert.match(row(item).nextAction, /不需要再验收；在原 Task 安排返工并重新交付/);
+  }
+  assert.match(row(notUsed).nextAction, /判 notUsed/); assert.match(row(failed).nextAction, /判 failed/); assert.match(row(usedThenNotUsed).nextAction, /判 notUsed/);
+  assert.equal(row(notUsedThenRedelivered).phase, "awaiting_acceptance", "a new Delivery without an answer is back in 待验收");
+  assert.equal(row(notUsedThenUsed).phase, "awaiting_close", "the latest answer wins: notUsed then used is a used wait");
+  assert.equal(row(noAnswer).phase, "awaiting_acceptance", "no answer yet stays in 待验收");
+  assert.equal(row(otherSignedNotUsed).phase, "awaiting_acceptance", "only the declared consumer's answer counts");
+  assert.equal(row(usedWait).phase, "awaiting_close", "#469's used classes do not regress");
+  assert.equal(page.counts.rework, 3); assert.equal(page.counts.awaiting_acceptance, 3); assert.equal(page.counts.awaiting_close, 2);
+  const byPhase = new Map<string, number>();
+  for (const item of page.items) byPhase.set(item.phase, (byPhase.get(item.phase) ?? 0) + 1);
+  for (const name of ["awaiting_acceptance", "awaiting_close", "rework"]) assert.equal(page.counts[name], byPhase.get(name) ?? 0, `${name} count equals its rows`);
+  // The same Task read alone (the detail) classifies the same.
+  for (const item of [notUsed, usedThenNotUsed, notUsedThenRedelivered]) {
+    const single = await readLeaderWorkTasks(pool, project.id, { view: "tasks", limit: 1, taskId: item.head.id });
+    assert.equal(single.items[0]!.phase, row(item).phase);
+  }
 });
