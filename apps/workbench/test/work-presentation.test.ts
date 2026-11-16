@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { LeaderWorkPhase } from "@evoloop/contracts/work-index";
 import {
-  nameOnly, nameText, workNextStep, responsibleKind, responsibleSessionKey, responsibleText,
+  nameOnly, nameText, workNextStep, workItemNextStep, responsibleKind, responsibleSessionKey, responsibleText,
 } from "../src/shared/workPresentation.ts";
 import { roleStateLabel, roleStateText, roleTakesWork } from "../src/shared/rolePresentation.ts";
 
@@ -87,4 +87,13 @@ test("role states read as words, and only established or trial roles take work n
   assert.equal(roleTakesWork("active"), true);
   assert.equal(roleTakesWork("trial"), true);
   assert.equal(roleTakesWork("retirement-pending"), false);
+});
+
+test("rework that follows the declared consumer's answer says so; plain rework and every other phase keep their wording (defect a29100df)", () => {
+  const base = { pendingImpactCount: 0, dependencies: [], queueHold: null } as never;
+  assert.equal(workItemNextStep({ ...base, phase: "rework", consumerAnswer: "notUsed" }), "验收者已判 notUsed，不需要再验收；先在原任务安排返工并重新交付，新交付登记后才回到待验收");
+  assert.match(workItemNextStep({ ...base, phase: "rework", consumerAnswer: "failed" }), /验收者已判 failed/);
+  assert.equal(workItemNextStep({ ...base, phase: "rework", consumerAnswer: null }), workNextStep("rework"), "a failed Run is still 'check the failed result'");
+  assert.equal(workItemNextStep({ ...base, phase: "rework" }), workNextStep("rework"), "an older server sends no consumerAnswer");
+  assert.equal(workItemNextStep({ ...base, phase: "awaiting_acceptance", consumerAnswer: "notUsed" }), workNextStep("awaiting_acceptance"), "only rework is reworded");
 });

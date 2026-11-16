@@ -7,6 +7,8 @@ import type { Principal } from "@evoloop/contracts";
 import type { TaskCollaborationPayload } from "@evoloop/contracts/discussions";
 import { directInputConfigurationSchema } from "./direct-input/configuration.js";
 import { credentialGrants, type AuthConfig } from "./auth.js";
+import { MachineCredentialSource } from "./hub/credentials.js";
+import { realPathInsideRoots } from "./hub/roots.js";
 
 const canonical = (value: unknown): string => JSON.stringify(value, (_key, item: unknown) => item && typeof item === "object" && !Array.isArray(item) ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a.localeCompare(b))) : item);
 export const delegationTemplateHash = (template: DelegationTemplate): string => createHash("sha256").update(canonical(template)).digest("hex");
@@ -328,12 +330,25 @@ export function hasExactEngineeringActionGrant(grants:EngineeringActionGrant[],p
     g.inputHash===action.inputHash&&Date.parse(g.expiresAt)>=Date.parse(action.expiresAt)&&Date.parse(g.expiresAt)>nowMs&&
     g.paths.length===action.scope.paths.length&&g.paths.every((p,i)=>p===action.scope.paths[i]));
 }
-export async function loadIntegrations(path?: string) {
+/**
+ * @param options.allowedRoots the code roots this machine confirmed when it joined a Hub (`evoloop machine join`); by default read from the machine's own
+ * credentials, and none when it has not joined. Every project directory the configuration binds — runtime grants, delegation templates, repositories —
+ * must then be inside one of them, or the configuration is refused as a whole (DEC-048 item 6). The exact-path and realpath rules below stay as they were.
+ */
+export async function loadIntegrations(path?: string, options: { allowedRoots?: readonly string[] | null } = {}) {
   let configuration: z.infer<typeof integrationSchema>;
   try { configuration = integrationSchema.parse(path ? JSON.parse(await readFile(path, "utf8")) : {}); }
   catch { throw new Error("Invalid integration configuration: check the external file and schema; values are not logged."); }
   const runtime = configuration.runtime;
   const grants = runtime?.enabled ? runtime.grants : [];
+  const roots = options.allowedRoots !== undefined ? options.allowedRoots : new MachineCredentialSource().current()?.allowedRoots ?? null;
+  if (roots) {
+    const bound = [...grants.map(g => g.cwd), ...(runtime?.enabled ? runtime.delegationTemplates.map(t => t.cwd) : []), ...configuration.repositories.map(r => r.root)];
+    for (const directory of bound) {
+      if (!await realPathInsideRoots(roots, directory))
+        throw new Error("Invalid integration configuration: a project directory is outside the roots this machine allowed when it joined the Hub.");
+    }
+  }
   const allowedRuntimeCwds = (projectId: string): string[] => [...new Set(grants.filter(g => g.projectId === projectId).map(g => g.cwd))];
   const hasRuntimeGrant = (scope: RuntimeGrant): boolean => grants.some(g =>
     g.projectId === scope.projectId && g.actorId === scope.actorId && g.roleId === scope.roleId &&
@@ -343,12 +358,15 @@ export async function loadIntegrations(path?: string) {
   const allowedRuntimeCwd = async (projectId: string, cwd: string): Promise<boolean> => {
     if (!allowedRuntimeCwds(projectId).includes(cwd) &&
       !(runtime?.enabled && runtime.delegationTemplates.some(t => t.projectId === projectId && t.cwd === cwd))) return false;
-    try { return await realpath(cwd) === cwd; } catch { return false; }
+    try { if (await realpath(cwd) !== cwd) return false; } catch { return false; }
+    // Every start and resume asks again: a directory outside the machine's allowed roots is never used, whatever the configuration says.
+    return roots ? await realPathInsideRoots(roots, cwd) !== null : true;
   };
   const getDelegationTemplate = async (projectId: string, templateId: string) => {
     const template = runtime?.enabled ? runtime.delegationTemplates.find(value => value.projectId === projectId && value.id === templateId) : undefined;
     if (!template) return null;
     try { if (await realpath(template.cwd) !== template.cwd) return null; } catch { return null; }
+    if (roots && await realPathInsideRoots(roots, template.cwd) === null) return null;
     return { template, hash: delegationTemplateHash(template) };
   };
   return { runtime, sessionMessages: configuration.sessionMessages, directInputs: configuration.directInputs,

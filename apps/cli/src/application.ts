@@ -17,6 +17,7 @@ class IdentityFileError extends Error {
 import { allocationRelationsPath } from "./allocation-relations.js";
 import { fixedHash, materialAsset, materialBody, materialCatalog, materialHandoff, materialRunInput } from "./lightweight-materials.js";
 import { prepareSession } from "./session-preparation.js";
+import { MachineCommandError, machineCommand } from "./machine.js";
 import { MessageBodyError, parseSessionTarget, readMessageBody } from "./message-send.js";
 import { directInputOutcome, missingForInsert, queuedMessageOutcome } from "./session-input.js";
 
@@ -24,9 +25,9 @@ type Environment = Record<string, string | undefined>;
 interface IO { stdout(text: string): void; stderr(text: string): void; stdin?(): AsyncIterable<Uint8Array> }
 class UsageError extends Error { readonly code = "INVALID_INPUT"; }
 interface Args { words: string[]; options: Map<string, string | true> }
-const values = new Set(["project", "revision", "limit", "cursor", "turn-cursor", "messages-cursor", "source", "turn-id", "after", "wait-ms", "out", "file", "id", "receipt", "attempt", "task", "state", "phase", "signal", "waiting-on-kind", "waiting-on-id", "stage", "knowledge", "loop", "search", "membership", "importance", "role", "session", "discussion", "message", "kind", "hash", "asset-hash", "model", "effort", "color", "mark", "reason", "evidence-ref", "operation", "provider", "project-skills", "personal", "builtin", "add", "remove", "context-task", "context-revision", "reply-to", "message-id","mode","content","input", "wait", "from", "to", "category"]);
+const values = new Set(["hub", "code", "workspace-root", "project", "revision", "limit", "cursor", "turn-cursor", "messages-cursor", "source", "turn-id", "after", "wait-ms", "out", "file", "id", "receipt", "attempt", "task", "state", "phase", "signal", "waiting-on-kind", "waiting-on-id", "stage", "knowledge", "loop", "search", "membership", "importance", "role", "session", "discussion", "message", "kind", "hash", "asset-hash", "model", "effort", "color", "mark", "reason", "evidence-ref", "operation", "provider", "project-skills", "personal", "builtin", "add", "remove", "context-task", "context-revision", "reply-to", "message-id","mode","content","input", "wait", "from", "to", "category"]);
 const longPollTimeout = (configured: number, waitMs: number) => Math.max(configured, Math.min(300_000, waitMs + 5_000));
-const switches = ["help", "history", "graph", "events", "revisions", "result", "trace", "occurrences", "dispatch", "dispatches", "direct-list", "reviews", "handoffs", "bindings", "route", "hosts", "attempts", "recovery", "inputs", "observation", "documents", "closed", "brief", "stdin", "confirm-review-as-management"];
+const switches = ["yes", "local-only", "help", "history", "graph", "events", "revisions", "result", "trace", "occurrences", "dispatch", "dispatches", "direct-list", "reviews", "handoffs", "bindings", "route", "hosts", "attempts", "recovery", "inputs", "observation", "documents", "closed", "brief", "stdin", "confirm-review-as-management"];
 function uuid(value: string | undefined, label: string): string {
   if (!idSchema.safeParse(value).success) throw new UsageError(`${label} must be a UUID.`);
   return value!;
@@ -136,6 +137,7 @@ const help = {
     "knowledge UUID --project UUID [--revision UUID | --history | --graph]", "candidate UUID --project UUID", "operation UUID --project UUID",
     `read ${[...Object.keys(reads), ...Object.keys(orchestrationReads)].join("|")} UUID --project UUID [${readModes.map(name => `--${name}`).join(" | ")}] [--cursor ITEM_CURSOR --turn-cursor TURN_CURSOR for run --trace]`,
     "read schedule UUID --project UUID (--dispatch | --dispatches [--limit 1..100 --cursor CURSOR]); read role UUID --project UUID --direct-list",
+    "machine join --hub URL --code CODE --workspace-root DIR[,DIR] [--yes] | machine status | machine leave [--local-only] (this machine and a Hub; no coordinator token; roots are confirmed once)",
     "command types", "command schema TYPE", "command run JSON_FILE", "command JSON_FILE (legacy)", "request types", "request schema NAME",
     "request schema reference.task-decide (reviewed Run: kind=run, referenceId=Run ID, revision=source TaskRevision ID, contentHash=Run inputHash; read run ID --trace for native evidence)",
     "request NAME --project UUID --file JSON_FILE [--id UUID] [--receipt UUID for endpoints without server operation IDs]",
@@ -152,6 +154,10 @@ async function dispatch(args: Args, env: Environment, io: IO): Promise<unknown> 
   const action = args.words[0];
   if (!action || action === "help" || args.options.has("help")) return help;
   if (action === "id") { check(args, 1); return { id: randomUUID() }; }
+  if (action === "machine") {
+    // Local to this machine and the Hub: no coordinator token. join/leave/status read and write only the machine's own private credentials.
+    return machineCommand(args.words.slice(1), args.options, env, io);
+  }
   if (action === "identity" && args.words[1] === "migrate") {
     check(args, 2, ["input", "out", "confirm-review-as-management"]);
     const input = option(args, "input");
@@ -711,12 +717,12 @@ async function dispatch(args: Args, env: Environment, io: IO): Promise<unknown> 
 export async function runCli(args: string[], env: Environment = process.env, io: IO = { stdout: text => process.stdout.write(text), stderr: text => process.stderr.write(text) }): Promise<number> {
   try { const result = await dispatch(parse(args), env, io); io.stdout(JSON.stringify(result) + "\n"); return record(result)?.status === "partial" ? 4 : 0; }
   catch (error) {
-    const invalid = error instanceof UsageError || error instanceof RequestInputError || error instanceof MessageBodyError || record(error)?.name === "ZodError" || error instanceof SyntaxError || error instanceof TypeError ||
+    const invalid = (error instanceof MachineCommandError && error.code === "INVALID_INPUT") || error instanceof UsageError || error instanceof RequestInputError || error instanceof MessageBodyError || record(error)?.name === "ZodError" || error instanceof SyntaxError || error instanceof TypeError ||
       error instanceof CliApiError && error.status === 0 && !error.unconfirmed && error.code.startsWith("INVALID_");
-    const code = invalid ? "INVALID_INPUT" : error instanceof CliApiError || error instanceof ReceiptError || error instanceof MaterialError || error instanceof IdentityFileError ? error.code : "LOCAL_IO_ERROR";
+    const code = invalid ? "INVALID_INPUT" : error instanceof CliApiError || error instanceof ReceiptError || error instanceof MaterialError || error instanceof IdentityFileError || error instanceof MachineCommandError ? error.code : "LOCAL_IO_ERROR";
     const payload = error instanceof CliApiError ? { code, status: error.status, message: error.message, data: error.data }
       : error instanceof ReceiptError ? { code, message: error.message, data: error.data }
-      : error instanceof MaterialError || error instanceof MessageBodyError || error instanceof IdentityFileError ? { code, message: error.message }
+      : error instanceof MaterialError || error instanceof MessageBodyError || error instanceof IdentityFileError || error instanceof MachineCommandError ? { code, message: error.message }
       : { code, message: invalid ? error instanceof UsageError || error instanceof RequestInputError ? error.message : "Input does not match CLI/schema; use help or command schema TYPE."
         : record(error)?.code === "ENOENT" ? "The input file or export parent directory is missing; preserve the requested path and create the parent before exporting."
         : "Local operation failed; preserve input and inspect the requested file/state path." };
