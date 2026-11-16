@@ -193,7 +193,7 @@ export function ContextPanelColumn({ embedded = false }: { embedded?: boolean } 
       <div role="tablist" aria-label="右栏内容" className="flex min-w-0 flex-1 gap-1 overflow-x-auto">
         {providers > 0 && <Button role="tab" variant="tab" aria-selected={showFacts} onClick={() => setActive("facts")}>信息</Button>}
         {/* An opened object's tab and its close button share one highlight. */}
-        {tabs.map(tab => <span key={tab.id} className={cn("flex shrink-0 items-center rounded-md", active === tab.id ? "bg-selected" : "hover:bg-selected")}>
+        {tabs.map(tab => <span key={tab.id} className={cn("flex shrink-0 items-center rounded-md", active === tab.id ? "bg-accent" : "hover:bg-selected")}>
           <Button role="tab" variant="tab" aria-selected={active === tab.id} onClick={() => setActive(tab.id)} title={tab.title}
             className="min-w-0 max-w-40 pr-1 hover:bg-transparent aria-selected:bg-transparent"><span className="truncate">{tab.title}</span></Button>
           <IconButton label={`关闭 ${tab.title}`} icon={<X aria-hidden="true" />} className="size-6 rounded-sm [&_svg]:size-3.5" onClick={() => close(tab.id)} />

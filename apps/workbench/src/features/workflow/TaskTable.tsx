@@ -187,7 +187,7 @@ function TableRow({ task, list, projectId, selected, onSelect, linkFor, columns,
     <Button variant="link" aria-pressed={selected} onClick={() => onSelect(task.id)} className="min-w-0 flex-1 justify-start whitespace-normal text-left font-medium text-foreground">{title}</Button>
     <a href={linkFor(task.id)} aria-label={`打开任务：${task.title}`} title="打开任务" className="shrink-0 rounded-sm p-0.5 text-muted-foreground hover:bg-field hover:text-foreground"><ArrowUpRight size={15} aria-hidden="true" /></a>
   </div>;
-  const rowClass = cn("border-b border-border", selected ? "bg-selected" : "hover:bg-field/50");
+  const rowClass = cn("border-b border-border", selected ? "bg-accent" : "hover:bg-field/50");
   // The compact list: what a phone screen needs to pick a task, in one column; the six columns stay in 表格.
   if (stacked) return <tr className={rowClass} data-task-row={task.id}>
     <td className={cell}>

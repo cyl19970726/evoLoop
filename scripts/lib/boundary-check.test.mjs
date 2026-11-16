@@ -671,3 +671,46 @@ test("M8. one transcript whose stat fails is named and skipped alone: a dangling
   assert.match(all.join("\n"), /会话记录读不了（dangling\.jsonl：ENOENT）/);
   assert.equal(exitCodeFor({ problems: all }), 2);
 });
+
+// ---- Task ac254c1a, 2026-11-16: the formal run on the deployed code said "核对不完整" for 1,157 lines that were all Claude `api-request-blob` records.
+// Real shape (from a session record): { type, hash, message: { role, content: [thinking, tool_use, …] }, sessionId } and NO timestamp, by design.
+const blobLine = (command, sessionId = "5f6ad90d-3021-4219-8384-1eb90b06d356") => JSON.stringify({ type: "api-request-blob", hash: "9f2c1d", sessionId,
+  message: { role: "assistant", content: [{ type: "thinking", thinking: "…" }, { type: "tool_use", id: "toolu_01blob", name: "Bash", input: { command } }] } });
+const assistantLine = (at, command, id = "toolu_01blob") => JSON.stringify({ type: "assistant", timestamp: at, sessionId: "5f6ad90d", message: { role: "assistant", content: [{ type: "tool_use", id, name: "Bash", input: { command } }] } });
+const assistantNoTime = command => JSON.stringify({ type: "assistant", sessionId: "5f6ad90d", message: { role: "assistant", content: [{ type: "tool_use", id: "toolu_02", name: "Bash", input: { command } }] } });
+
+test("B1. an api-request-blob (a mirror of the API request, no timestamp by design) is neither a command nor a bad line; its neighbouring assistant line still gives the command with its time", () => {
+  const blob = inspectLine(blobLine("node /x/merge-gate.mjs merge --pr 9 --execute"));
+  assert.deepEqual(blob, { commands: [], results: [], defect: null });
+  const real = inspectLine(assistantLine("2026-11-12T07:00:00.000Z", "node /x/merge-gate.mjs merge --pr 9 --execute"));
+  assert.equal(real.defect, null);
+  assert.deepEqual(real.commands.map(item => [item.at, item.callId]), [["2026-11-12T07:00:00.000Z", "toolu_01blob"]]);
+  assert.deepEqual(commandsOfLine(blobLine("ls")), []);
+});
+
+test("B2. a call record that really has no time is still a defect: a Claude assistant line and a Codex function_call, and an unreadable time; bad JSON is still a defect", () => {
+  assert.equal(inspectLine(assistantNoTime("ls")).defect, "缺时间戳或时间戳读不出");
+  assert.equal(inspectLine(JSON.stringify({ type: "response_item", payload: { type: "function_call", call_id: "c", arguments: JSON.stringify({ cmd: "ls" }) } })).defect, "缺时间戳或时间戳读不出");
+  assert.equal(inspectLine(assistantLine("not-a-time", "ls")).defect, "缺时间戳或时间戳读不出");
+  assert.equal(inspectLine("{broken tool_use").defect, "JSON 无法解析");
+  // other records that mention tool_use without being calls: a tool_result in a user line, an attachment
+  assert.equal(inspectLine(JSON.stringify({ type: "user", timestamp: "2026-11-12T07:00:01Z", message: { content: [{ type: "tool_result", tool_use_id: "toolu_01blob", is_error: false, content: "ok" }] } })).defect, null);
+});
+
+test("B3. a transcript of real-shaped lines: blobs plus their assistant lines read clean (no 核对不完整, exit code 0); one real assistant line without a time makes it incomplete and is named by file and line", async () => {
+  const root = mkdtempSync(join(tmpdir(), "bcb-"));
+  const at = "2026-11-12T06:59:00Z";
+  const lines = [blobLine("node /x/merge-gate.mjs merge --pr 7 --execute"), assistantLine(at, "node /x/merge-gate.mjs merge --pr 7 --execute", "toolu_01a"), blobLine("ls"), assistantLine(at, "ls", "toolu_01b")];
+  writeFileSync(join(root, "real.jsonl"), `${lines.join("\n")}\n`);
+  const clean = [];
+  const transcripts = await readTranscripts([root], Date.parse("2026-11-12T00:00:00Z"), Date.parse("2026-11-13T00:00:00Z"), clean);
+  assert.deepEqual(clean, [], "1 blob per call: nothing is reported");
+  assert.equal(transcripts.length, 1);
+  assert.deepEqual(transcripts[0].commands.map(item => item.command), ["node /x/merge-gate.mjs merge --pr 7 --execute", "ls"], "each call once: the blobs add nothing");
+  assert.equal(exitCodeFor({ problems: clean }), 0);
+  writeFileSync(join(root, "real.jsonl"), `${[...lines, assistantNoTime("pwd")].join("\n")}\n`);
+  const dirty = [];
+  await readTranscripts([root], Date.parse("2026-11-12T00:00:00Z"), Date.parse("2026-11-13T00:00:00Z"), dirty);
+  assert.match(dirty.join("\n"), /会话记录有 1 行无法解析：real\.jsonl:5（缺时间戳或时间戳读不出）/);
+  assert.equal(exitCodeFor({ problems: dirty }), 2);
+});
