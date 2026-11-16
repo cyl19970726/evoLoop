@@ -6,7 +6,7 @@ import { responsibleText } from "./workPresentation.js";
 
 export const leaderPhaseLabel: Record<LeaderWorkPhase, string> = {
   unknown: "结果未知", rework: "待返工", blocked: "受阻", awaiting_delivery: "待结果交付",
-  awaiting_acceptance: "待验收", awaiting_assignment: "待接手", ready: "可开始",
+  awaiting_acceptance: "待验收", awaiting_prerequisite: "等前置", awaiting_release: "等发布", awaiting_close: "等关闭", awaiting_assignment: "待接手", ready: "可开始",
   running: "运行中", unassigned: "未分派", closed: "已关闭", cancelled: "已取消",
 };
 
@@ -45,6 +45,28 @@ function sessionText(item: LeaderWorkTask, name: string | undefined, describesKi
   return `${item.assignment?.targetKind === "external" ? "外部智能体" : "智能体"} · ${shown || "名称待核对"}`;
 }
 
+const waitingTaskState: Record<string, string> = { todo: "待开始", in_progress: "进行中", done: "已完成", cancelled: "已取消" };
+/**
+ * Who a Task that already has a used conclusion waits for (defect b1f5d4c7): the Task to close first, the publisher, or whoever closes it. Said with the
+ * concrete party the service named, never as an acceptance owed.
+ */
+export function usedWaitResponsibility(item: Pick<LeaderWorkTask, "phase" | "responsible" | "waitingTask">): string | null {
+  if (item.phase === "awaiting_prerequisite")
+    return item.waitingTask ? `前置任务 ${item.waitingTask.taskId.slice(0, 8)} · 当前${waitingTaskState[item.waitingTask.state] ?? "状态未读到"}` : "前置任务未登记";
+  if (item.phase === "awaiting_release") return item.responsible.id ? `发布维护者 ${item.responsible.id}` : "发布责任者未登记";
+  if (item.phase === "awaiting_close") return item.responsible.id ? `负责关闭 · ${item.responsible.id}` : "项目统筹 · 负责关闭";
+  return null;
+}
+
+/**
+ * The Task's current stage clock, in words. Its interval is still the one that began with the Delivery (the timing history is not rewritten), but once the declared
+ * consumer has signed used, "等待验收" would contradict the phase on the same row, so it reads as the wait that is left.
+ */
+export function currentStageText(stage: string | undefined, phase: LeaderWorkPhase | null | undefined, plain: string): string {
+  return stage === "awaiting_acceptance" && (phase === "awaiting_close" || phase === "awaiting_release" || phase === "awaiting_prerequisite")
+    ? `验收已有结论，${leaderPhaseLabel[phase]}` : plain;
+}
+
 export function leaderWorkItemPresentation(
   item: LeaderWorkTask, status?: WorkTaskStatus, resolvedRoleTitle?: string, resolvedSessionTitle?: string, sessionNameDescribesKind = false,
 ): { title: string; responsibility: string } {
@@ -59,9 +81,10 @@ export function leaderWorkItemPresentation(
       responsibility: item.responsible.kind === "session" ? sessionText(item, resolvedSessionTitle, sessionNameDescribesKind) : "责任与来源待核对",
     };
   const roleTitle = item.responsible.kind === "role" && item.responsible.id ? resolvedRoleTitle?.trim() : null;
+  const waiting = usedWaitResponsibility(item);
   return {
     title: item.title,
-    responsibility: item.responsible.kind === "session"
+    responsibility: waiting ? waiting : item.responsible.kind === "session"
       ? sessionText(item, resolvedSessionTitle, sessionNameDescribesKind)
       : roleTitle ? `负责 ${roleTitle}` : responsibleText(item.responsible, item.assignment, { state: "reading" }),
   };

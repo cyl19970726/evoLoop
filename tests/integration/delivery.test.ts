@@ -26,7 +26,7 @@ async function taskEvent(pool:pg.Pool,projectId:string,owner:string,version=1) {
   await seedFixtureRole(pool,projectId,ownerRoleId);
   const workflow=new WorkflowService({uow:new PostgresUnitOfWork(pool),clock:{now:()=>time},ids:{next:randomUUID},
     hasher:{hash:value=>createHash("sha256").update(value).digest("hex")}});
-  const result=await workflow.execute({actorId:owner,projectIds:[projectId],permissions:["read","write","review"]},
+  const result=await workflow.execute({actorId:owner,projectIds:[projectId],permissions:["task", "document", "session", "management"], decisions: true},
     {type:"task.create",projectId,operationId,taskId,title:"Fixture task",content:"# Check evidence",
       acceptance:"Record result",owner:ownerRoleId,consumer:"report-consumer",evidence:"Remote title review",
       stopCondition:"Review the incoming correction"} as never);
@@ -63,7 +63,7 @@ async function remoteFixture(){
 
 test("outbox projection uses fenced claim, survives lost HTTP reply, and reconciles without second POST",async t=>{
   await migrate(url);const pool=new pg.Pool({connectionString:url,max:5});t.after(()=>pool.end());
-  const projectId=randomUUID(),principal:Principal={actorId:"owner",projectIds:[projectId],permissions:["read","write","review"]};
+  const projectId=randomUUID(),principal:Principal={actorId:"owner",projectIds:[projectId],permissions:["task", "document", "session", "management"], decisions: true};
   await pool.query("INSERT INTO project(project_id,title,created_at) VALUES($1,'delivery fixture',now())",[projectId]);
   const item=await taskEvent(pool,projectId,principal.actorId);
   const fx=await remoteFixture();t.after(fx.close);
@@ -86,7 +86,7 @@ test("outbox projection uses fenced claim, survives lost HTTP reply, and reconci
   assert.equal(await runner.pollIncoming(principal,projectId),1);
   const candidate=(await store.listIncoming(projectId,"feishu")).items[0]!;
   assert.equal(candidate.reviewOnly,true);assert.equal(candidate.actor,null);
-  await assert.rejects(()=>reviewIncomingChange({store,workflow,consumerId:"feishu",nowUtc:()=>time,verifyRemote:item=>runner.verifyIncomingCandidate(item,principal)},{...principal,permissions:["read","write"]},projectId,candidate.id,"apply","accept"),
+  await assert.rejects(()=>reviewIncomingChange({store,workflow,consumerId:"feishu",nowUtc:()=>time,verifyRemote:item=>runner.verifyIncomingCandidate(item,principal)},{...principal,permissions:["task", "document", "session"],decisions:false},projectId,candidate.id,"apply","accept"),
     (error:unknown)=>error instanceof CollaborationRuleError&&error.code==="FORBIDDEN");
   assert.equal((await workflow.getTask(principal,projectId,item.taskId)).task.title,"Fixture task");
   const binding=(await store.getBinding(projectId,item.taskId,"feishu"))!;
@@ -118,7 +118,7 @@ test("expired dispatch is unknown and concurrent claims never duplicate an event
 
 test("real Task lifecycle and scheduled todo events enter the Task projection without primary Document events",async t=>{
   await migrate(url);const pool=new pg.Pool({connectionString:url,max:4});t.after(()=>pool.end());
-  const projectId=randomUUID(),taskId=randomUUID(),documentId=randomUUID(),principal:Principal={actorId:"owner",projectIds:[projectId],permissions:["read","write","review"]};
+  const projectId=randomUUID(),taskId=randomUUID(),documentId=randomUUID(),principal:Principal={actorId:"owner",projectIds:[projectId],permissions:["task", "document", "session", "management"], decisions: true};
   const workflow=new WorkflowService({uow:new PostgresUnitOfWork(pool),clock:{now:()=>time},ids:{next:randomUUID},
     hasher:{hash:value=>createHash("sha256").update(value).digest("hex")}});
   const issue=(type:string,rest:Record<string,unknown>)=>workflow.execute(principal,{type,projectId,operationId:randomUUID(),...rest} as never);
@@ -131,7 +131,7 @@ test("real Task lifecycle and scheduled todo events enter the Task projection wi
   await yes(issue("task.create",{taskId,title:"Report",content:"# Produce report",acceptance:"Consumer uses report",owner:ownerRoleId,documentIds:[documentId],consumer:"report-consumer",useRequired:true,evidence:"Need report"}));
   const active=await yes(issue("task.start",{taskId,expectedVersion:1,basis:[{documentId,revisionId:doc.revisionId}],reason:"Begin"}));
   const delivered=await yes(issue("delivery.record",{taskId,expectedVersion:active.version,artifactRef:"repo://report",artifactRevision:"fixed-commit",contentHash:"a".repeat(64),technicalResult:"passed",technicalEvidence:"Tested report",reason:"Deliver"}));
-  const consumer={actorId:"report-consumer",projectIds:[projectId],permissions:["read","write"] as Array<"read"|"write">};
+  const consumer={actorId:"report-consumer",projectIds:[projectId],permissions:["task", "document", "session"]};
   await yes(workflow.execute(consumer,{type:"observation.record",projectId,operationId:randomUUID(),taskId,
     deliveryId:delivered.revisionId,observer:consumer.actorId,observerKind:"agent",result:"used",
     evidence:"Consumer completed report",reason:"Observed"} as never));

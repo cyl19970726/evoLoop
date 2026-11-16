@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: read
+  pull-requests: read   # check:open-pr-migrations lists the other open PRs and their files
 
 # Some unit tests also open a dedicated PostgreSQL test database, so both jobs start the test PostgreSQL.
 # The `app` job below is the only required-check name; it summarises the parallel jobs,
@@ -29,6 +30,11 @@ jobs:
       - run: npm ci
       # The PR is checked out merged into main, so a migration number main already holds shows up here, before any build.
       - run: npm run check:migrations
+      # Another OPEN PR that took the same migration number is invisible in the merged tree above (#442 and #448 both took 110). Only on pull requests.
+      - if: github.event_name == 'pull_request'
+        run: npm run check:open-pr-migrations -- --pr ${{ github.event.pull_request.number }}
+        env:
+          GH_TOKEN: ${{ github.token }}
       # Only react/rules-of-hooks, over apps/workbench/src and packages/ui/src (every .tsx in the repo): a hook after a condition or early return fails here (PR #386 / React #310).
       - run: npm run lint:hooks
       - run: npm run build

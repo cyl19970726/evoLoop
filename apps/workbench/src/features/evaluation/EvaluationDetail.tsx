@@ -136,7 +136,7 @@ export function EvaluationDetail({ context, read, selectedRevision, hold }: {
           <p className={cn(muted, "m-0")}>修订追加，不覆盖旧版；每版的尝试与结论各自保留。</p>
           <ul className="m-0 flex list-none flex-col gap-1 p-0">{[...revisions].sort((a, b) => b.version - a.version).map(item => <li key={item.id}>
             <a aria-current={item.id === revision.id ? "page" : undefined} href={evaluationHref(projectId, item.evaluationId, item.id)}
-              className={cn("flex flex-col rounded-md px-2 py-1.5 text-small outline-none hover:bg-selected focus-visible:shadow-[var(--focus-ring)]", item.id === revision.id ? "bg-selected font-medium text-foreground" : "text-text-secondary")}>
+              className={cn("flex flex-col rounded-md px-2 py-1.5 text-small outline-none hover:bg-selected focus-visible:shadow-[var(--focus-ring)]", item.id === revision.id ? "bg-accent font-medium text-accent-strong hover:bg-accent" : "text-text-secondary")}>
               <span>v{item.version}{item.id === latest?.id ? " · 最新" : ""}</span><span className={muted}>{date(item.createdAt)} · {actorText(item.actorId)}</span>
             </a></li>)}</ul>
         </PanelSection>
@@ -185,7 +185,8 @@ function ConclusionForm({ context, revision, assessments, attempts, conclusions,
   context: MutationContext; revision: EvaluationRevision; assessments: EvaluationAssessment[]; attempts: EvaluationAttempt[]; conclusions: EvaluationConclusion[]; hold?: string | undefined;
 }) {
   const replaced = new Set(conclusions.map(item => item.supersedesId).filter((id): id is string => !!id));
-  return <EvaluationForm context={{ ...context, draftScope: `evaluation-conclusion:${revision.id}`, draftBaseline: revision.id }} review hold={hold}
+  return <EvaluationForm context={{ ...context, draftScope: `evaluation-conclusion:${revision.id}`, draftBaseline: revision.id }}
+    permission="management" decision hold={hold}
     title={conclusions.length ? "追加更正结论" : "记录评价结论"} fields={[
       { name: "assessmentIds", label: "纳入逐次判定", kind: "multi", options: assessments.map(item => option(item.id, assessmentName(item, revision, attempts, date))) },
       { name: "supersedesId", label: "更正此前结论（可选）", kind: "select", optional: true, options: conclusions.filter(item => !replaced.has(item.id)).map(item => option(item.id, `${labelOf(comparabilityLabels, item.comparability)} · ${date(item.createdAt)} · ${actorText(item.actorId)}`)) },

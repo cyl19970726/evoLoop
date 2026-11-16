@@ -2,7 +2,7 @@
 
 本页定义工作台共用的设计 token、Logo 和状态的视觉表达。数值只在 `packages/ui/src/tokens.css` 维护一份，文档只说明用途和规则。
 
-**目标与现状。** 视觉已定稿（[DEC-037](../decisions.md#用户已确定的方向)，具体色值由 [DEC-049](../decisions.md#用户已确定的方向) 改为浅色“宣纸”、深色“松烟”）：暖纸底、墨蓝强调、陶土品牌色（只用于 Logo 与账号头像），浅色为默认，另有一套深色。token 在 `packages/ui/src/tokens.css`，Tailwind 主题在 `packages/ui/src/theme.css`，元素的默认样式（正文字体与行高、文字颜色、等宽数字、键盘焦点框、选中底色、减少动效）在 `packages/ui/src/base.css`，也只引用 token。旧的全局 CSS 和旧变量名已在 #229 PR10 删除，工作台只有一个样式入口 `apps/workbench/src/main.css`，不写规则，页面用 Tailwind 工具类引用 token。`apps/workbench/test/style-budget.test.ts` 固定这几条：颜色字面量只出现在 `tokens.css`（头像插画的配色在 `avatar.tsx`，见下文），工作台不写 CSS 规则，源码里不再有 `data-legacy`。迁移由[前端改版 issue #229](https://github.com/cyl19970726/evoLoop/issues/229) 跟踪。
+**目标与现状。** 视觉已定稿（[DEC-037](../decisions.md#用户已确定的方向)，具体色值由 [DEC-049](../decisions.md#用户已确定的方向) 改为浅色“宣纸”、深色“松烟”）：暖纸底、墨蓝强调、陶土品牌色（Logo、账号头像和按钮，DEC-051），浅色为默认，另有一套深色。token 在 `packages/ui/src/tokens.css`，Tailwind 主题在 `packages/ui/src/theme.css`，元素的默认样式（正文字体与行高、文字颜色、等宽数字、键盘焦点框、选中底色、减少动效）在 `packages/ui/src/base.css`，也只引用 token。旧的全局 CSS 和旧变量名已在 #229 PR10 删除，工作台只有一个样式入口 `apps/workbench/src/main.css`，不写规则，页面用 Tailwind 工具类引用 token。`apps/workbench/test/style-budget.test.ts` 固定这几条：颜色字面量只出现在 `tokens.css`（头像插画的配色在 `avatar.tsx`，见下文），工作台不写 CSS 规则，源码里不再有 `data-legacy`。迁移由[前端改版 issue #229](https://github.com/cyl19970726/evoLoop/issues/229) 跟踪。
 
 ## 颜色
 
@@ -18,8 +18,8 @@
 | `background` | 工作面板：中间内容与右栏 | `#fcfbf8` | `#161412` |
 | `surface-raised` | 浮在面板上的卡片、弹层、输入框、选中的列表项 | `#ffffff` | `#24211f` |
 | `surface-muted` | 面板里的柔底色块：事实卡片、工具步骤、待办 | `#f5f2ed` | `#1c1a18` |
-| `surface-field` | 输入底、筛选标签、次要按钮 | `#e7e3dc` | `#2a2725` |
-| `surface-selected` | 左栏和列表的选中行 | `#e3dcd3` | `#322e2a` |
+| `surface-field` | 输入底、筛选标签（按钮不用灰色，DEC-051） | `#e7e3dc` | `#2a2725` |
+| `surface-selected` | 左栏和列表里悬停的行（选中的行用 `accent-soft`，DEC-051） | `#e3dcd3` | `#322e2a` |
 
 ### 文字、线条与角色
 
@@ -29,27 +29,48 @@
 | `text-secondary` | 辅助文字 | `#49423d` | `#c0bbb6` |
 | `text-muted` | 说明、时间、占位 | `#635d57` | `#9f9a94` |
 | `border` / `border-strong` | 细线 / 强调分隔 | `#e4dfd8` / `#d0c9c1` | `#2a2826` / `#3e3b38` |
-| `accent` / `accent-soft` | 链接、选中、进行中 / 选中底色 | `#2a52a8` / `#e5edfc` | `#90aef3` / `#222d47` |
+| `accent` / `accent-soft` / `accent-strong` | 链接、进行中 / 选中的行、标签与菜单项的底色 / 选中项上的字 | `#2a52a8` / `#e5edfc` | `#90aef3` / `#222d47` |
 | `warning` / `warning-soft` | 等你处理、待验收 | `#825805` / `#fceed1` | `#e3b667` / `#362913` |
 | `danger` / `danger-soft` | 受阻、失败、返工、危险操作 | `#a3203a` / `#fde9e9` | `#ec8287` / `#3f1e20` |
 | `done` / `done-soft` | 完成、通过（淡紫，不是绿色） | `#72487c` / `#f5eaf7` | `#c99dd3` / `#332337` |
 | `count-bg` / `count-fg` | “待我处理”等计数点（墨色，不像报错） | `#1c1714` / `#fcfbf8` | `#eae7e3` / `#161412` |
-| `brand` / `on-brand` | Logo 的对外版本、账号头像（不用于状态或计数）/ 其上的文字 | `#b1582b` / `#ffffff` | `#e18c5f` / `#15110d` |
+| `brand` / `on-brand` | **主按钮底**、Logo 的对外版本、账号头像（不用于状态、计数和链接）/ 其上的文字 | `#b1582b` / `#ffffff` | `#e18c5f` / `#15110d` |
+| `brand-hover` / `brand-pressed` | 主按钮悬停 / 按下的实色（不用透明度叠加） | `#9c4a22` / `#8a3f1b` | `#ea9a70` / `#f0a984` |
+| `brand-soft` / `on-brand-soft` | **次要按钮**的陶土浅底 / 其上的字 | `#f6e6dc` / `#8f431d` | `#3a2518` / `#f0a77f` |
+| `brand-soft-hover` / `brand-soft-pressed` | 次要按钮悬停 / 按下的实色 | `#f0d9ca` / `#e9ccb9` | `#46301f` / `#523a27` |
 | `user-bubble` | 人发的消息气泡（深色底、浅色字） | `#1c1714` | `#393633` |
 
-- 主按钮用墨色：`text` 作底、`background` 作字，每屏最多一个；墨蓝 `accent` 不用来做按钮底色。
+- **按钮不用灰色（DEC-051）**：主按钮用陶土实底（`brand` 底、`on-brand` 字），每屏最多一个；次要按钮用陶土浅底（`brand-soft` 底、`on-brand-soft` 字）；悬停与按下换成上表的实色，不用 `opacity` 叠加（浅色主按钮叠 90% 不透明度后白字只有约 4.1:1），默认、悬停、按下三态都 ≥ 4.5:1，禁用态照旧半透明。透明按钮、危险按钮、链接和焦点框不变。灰色（`surface-field`）只留给页面底、各层面板和输入框。
+- **选中的行、标签和菜单项（DEC-051）**：墨蓝浅底 `accent-soft`、字 `accent-strong`（`bg-accent text-accent-strong`）；悬停的行仍是 `surface-selected`，选中的行悬停时保持 `accent-soft`。墨蓝仍不用来做按钮底色，陶土仍不用于状态、计数和链接。
 - **不使用绿色**，包括青绿、薄荷绿和绿色状态（DEC-029）。“完成、通过”用淡紫 `done` 加勾和文字（DEC-049），“在线”用图标和文字；不引入色相约 90°–160° 的状态色。
 - 颜色之外总有文字或图标；不靠色点表达唯一含义。
 - 以上组合都满足 4.5:1 对比度（小字）；`packages/ui/test/palette.test.ts` 在 CI 里读 `tokens.css` 逐项算两种模式下所有文字与底色的组合，并核对每个 token 与 DEC-049 色值表一致，改任何一个值都会让它失败。
 - **状态标签与计数（DEC-049）**：下图是组件样例页的“状态”和“列表”两节，浅色与深色各一张（`/ui`，假数据）。运行中、等待、失败、完成（淡紫）、待办（空心）、未知（虚线）在一行里彼此分得开，计数点是墨色。
+
+- **按钮（DEC-051）**：下图是组件样例页“按钮与输入”一节，浅色与深色各一张（`/ui`，假数据）：主按钮陶土实底，次要按钮陶土浅底，可选中的行与页签条里的选中项是墨蓝浅底。
+
+![按钮与输入，浅色](../assets/palette/dec051-buttons-light.png)
+![按钮与输入，深色](../assets/palette/dec051-buttons-dark.png)
 
 ![状态与计数，浅色](../assets/palette/dec049-status-light.png)
 ![状态与计数，深色](../assets/palette/dec049-status-dark.png)
 ![任务列表里的状态，浅色](../assets/palette/dec049-list-light.png)
 ![任务列表里的状态，深色](../assets/palette/dec049-list-dark.png)
 
-- 深色通过 `<html data-theme="dark">` 切换；跟随系统的开关在新外壳（PR5）里加。
+- 深色通过 `<html data-theme="dark">` 切换；入口和规则见下一节“主题与外观”。
 
+## 主题与外观
+
+**入口。** 账号菜单（宽屏在内层栏底部的设置按钮，窄屏在底部标签栏“我的”）里的“外观”：跟随系统、浅色、深色三选一，当前项带对勾，默认“跟随系统”。每个页面都能到。控件是三个 `menuitemradio`，代码在 `apps/workbench/src/app/shell/AppShell.tsx`，规则在 `apps/workbench/src/shared/theme.ts`。
+
+**规则。**
+- **偏好只属于这个浏览器**：存在 `localStorage` 的 `evoloop.theme`（`light` / `dark`；“跟随系统”就是没有这个键）。不进项目数据，不进服务端。读不到或写不进存储时按“跟随系统”，页面照常可用，选择只在当前页面内生效。
+- **首次绘制前就生效**：`apps/workbench/public/theme-init.js` 在 `<head>` 里同步读取偏好并设置 `<html data-theme>` 与 `color-scheme`，所以不会先闪一下浅色。它是单独的文件而不是内联脚本，因为页面的内容安全策略只允许同源脚本。它和 `theme.ts` 的规则一致，改一处要改另一处。
+- **跟随系统时不用刷新**：监听 `prefers-color-scheme` 的变化；其他标签页改了偏好也会同步。
+- **样例页自管**：`/ui` 和 `/ui/flow` 的临时开关只在样例页打开期间管 `data-theme`（页面上带 `data-theme-sample` 标记，正式偏好的应用暂停），离开后恢复正式偏好；样例页的开关不写偏好。
+- 不改色值与页面结构；色值仍以 DEC-049 为准。
+
+测试：`apps/workbench/test/theme-switch-browser.test.ts`（真实浏览器，宽屏与窄屏）覆盖入口、三个选项、跟随系统不刷新、刷新后保持、首绘不闪、存储不可读、样例页不改偏好。
 ## 文字
 
 | token | 大小 | 用途 |

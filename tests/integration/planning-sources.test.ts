@@ -27,8 +27,8 @@ const projectId = randomUUID(), goalId = randomUUID(), stageId = randomUUID(), o
   otherStageId = randomUUID(), loopId = randomUUID(), taskId = randomUUID(), cognitiveTaskId = randomUUID(), otherTaskId = randomUUID(),
   documentId = randomUUID(), draftId = randomUUID();
 const plannerRole = fixtureRoleId("planner"), builderRole = fixtureRoleId("builder");
-const owner: Principal = {actorId: "planning-owner", projectIds: [projectId], permissions: ["read", "write", "review"]};
-const worker: WorkerIdentity = {principal: {actorId: `worker-${randomUUID()}`, projectIds: [projectId], permissions: ["read", "write"]},
+const owner: Principal = {actorId: "planning-owner", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true};
+const worker: WorkerIdentity = {principal: {actorId: `worker-${randomUUID()}`, projectIds: [projectId], permissions: ["task", "document", "session"]},
   scope: {projectId, loopId, taskId: cognitiveTaskId, runId: randomUUID(), sessionId: randomUUID(),
     roleId: plannerRole, kind: "cognition", allowedRoleIds: [plannerRole, builderRole]}};
 const workflow = new WorkflowService({uow, clock: {now: () => "2026-10-24T00:00:00.000Z"},

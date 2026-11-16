@@ -31,7 +31,7 @@ test("创建日程 and 保存日程修订: role and grant by name, a local time 
         const body = await new Promise<string>(done => { let text = ""; req.on("data", chunk => { text += chunk; }); req.on("end", () => done(text)); });
         const base = `/api/projects/${projectId}`;
         let value: unknown = { items: [], nextCursor: null };
-        if (url.pathname === "/api/session") value = { principal: { actorId: "reader", projectIds: [projectId], permissions: ["read", "write", "review"] }, capabilities: {} };
+        if (url.pathname === "/api/session") value = { principal: { actorId: "reader", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true }, capabilities: {} };
         else if (url.pathname === base) value = { id: projectId, title: "日程表单项目", createdAt: stamp };
         else if (url.pathname === `${base}/impacts`) value = [];
         else if (url.pathname === `${base}/schedules`) value = schedules;
@@ -185,7 +185,7 @@ test("保存日程修订 without touching the times sends them as stored: the la
         const body = await new Promise<string>(done => { let text = ""; req.on("data", chunk => { text += chunk; }); req.on("end", () => done(text)); });
         const base = `/api/projects/${projectId}`;
         let value: unknown = { items: [], nextCursor: null };
-        if (url.pathname === "/api/session") value = { principal: { actorId: "reader", projectIds: [projectId], permissions: ["read", "write", "review"] }, capabilities: {} };
+        if (url.pathname === "/api/session") value = { principal: { actorId: "reader", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true }, capabilities: {} };
         else if (url.pathname === base) value = { id: projectId, title: "日程表单项目", createdAt: stamp };
         else if (url.pathname === `${base}/impacts`) value = [];
         else if (url.pathname === `${base}/schedules`) value = [schedule];

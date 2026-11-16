@@ -24,7 +24,7 @@ test('HTTP compaction admits a current static grant and rejects revoked or chang
   const pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`});
   try{
     const projectId=randomUUID(),sessionId=randomUUID(),threadId=randomUUID(),roleId=randomUUID();
-    const reviewer={actorId:'maintainer',projectIds:[projectId],permissions:['read' as const,'write' as const,'review' as const]};
+    const reviewer={actorId:'maintainer',projectIds:[projectId],permissions:['task', 'document', 'session', 'management'], decisions: true};
     const revisionId=randomUUID();
     const owner={projectId,id:sessionId,roleId,actorId:'leader',cwd:'/tmp/compact-static',
       authorizationScope:'resident:leader',model:'gpt-6-astra',sandbox:'danger-full-access',
@@ -190,13 +190,13 @@ test('durable compaction uses one native request and never opens a blocked gate 
         return 'compact-turn';
       }} as unknown as RuntimeRunner;
     const service=new CompactionMaintenance(pool,fake);
-    const actor={actorId:'maintainer',projectIds:[projectId],permissions:['read' as const,'write' as const,'review' as const]};
+    const actor={actorId:'maintainer',projectIds:[projectId],permissions:['task', 'document', 'session', 'management'], decisions: true};
     const token='m'.repeat(40);
     const workflow=new WorkflowService({uow:new PostgresUnitOfWork(pool),
       clock:{now:()=>new Date().toISOString()},ids:{next:randomUUID},hasher:{hash:(value:string)=>value}});
     const readToken='r'.repeat(40);
     const app=await buildServer({service:workflow,credentials:[{token,...actor},
-      {token:readToken,actorId:'reader',projectIds:[projectId],permissions:['read']}],compaction:service});
+      {token:readToken,actorId:'reader',projectIds:[projectId],permissions:[]}],compaction:service});
     try{
     const path=`/api/projects/${projectId}/runtime/sessions/${sessionId}/compactions`;
     observation={...before,model:'gpt-6-sol'};

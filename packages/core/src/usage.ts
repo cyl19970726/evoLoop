@@ -1,4 +1,4 @@
-import type { Principal } from "@evoloop/contracts";
+import { isProjectMember, type Principal } from "@evoloop/contracts";
 import type { RuntimeUsage } from "@evoloop/contracts/runtime";
 import type {
   ContextBudgetConfig, SessionUsage, UsageBudget, UsageBudgetConfig, UsageBucketRow, UsageDay, UsageDelta, UsageOverview, UsageTotals,
@@ -21,18 +21,19 @@ export function usageDay(at: string, timeZone: string): string {
 }
 
 const zero = (): UsageTotals => ({ inputTokens: 0, outputTokens: 0, cachedInputTokens: 0,
-  costUsd: 0, costReported: true });
+  costUsd: 0, costReported: true, costScope: "all_turns" });
 const add = (target: UsageTotals, row: Pick<UsageTotals, "inputTokens" | "outputTokens" |
-  "cachedInputTokens" | "costUsd" | "costReported">) => {
+  "cachedInputTokens" | "costUsd" | "costReported" | "costScope">) => {
   target.inputTokens += row.inputTokens;
   target.outputTokens += row.outputTokens;
   target.cachedInputTokens += row.cachedInputTokens;
   target.costUsd = (target.costUsd ?? 0) + (row.costUsd ?? 0);
   target.costReported = target.costReported && row.costReported;
+  if (row.costScope === "runs_only") target.costScope = "runs_only";
 };
 const dayOf = (row: UsageBucketRow): UsageDay => ({ day: row.day, inputTokens: row.inputTokens,
   outputTokens: row.outputTokens, cachedInputTokens: row.cachedInputTokens,
-  costUsd: row.costReported ? row.costUsd : null, costReported: row.costReported });
+  costUsd: row.costReported ? row.costUsd : null, costReported: row.costReported, costScope: row.costScope });
 
 /**
  * Token fields for the daily ledger. Claude's SDK reports `input_tokens` without cache reads or
@@ -83,8 +84,8 @@ export class UsageService {
   async overview(principal: Principal, projectId: string, from: string, to: string,
     timeZone: string, config: UsageBudgetConfig | null,
     contextConfig?: ContextBudgetConfig | null): Promise<UsageOverview> {
-    if (!principal.projectIds.includes(projectId) || !principal.permissions.includes("read"))
-      throw new DomainError("FORBIDDEN", "Project read permission is required");
+    if (!isProjectMember(principal, projectId))
+      throw new DomainError("FORBIDDEN", "Project membership is required");
     if (!dayPattern.test(from) || !dayPattern.test(to) || from > to)
       throw new DomainError("INVALID_USAGE_RANGE", "Usage range must be an ordered pair of YYYY-MM-DD days");
     const today = usageDay(this.deps.clock.now(), timeZone);

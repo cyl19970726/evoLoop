@@ -5,7 +5,7 @@
 // against: switching stages and coming back keeps what was typed, and a draft written on an older version is never
 // sent as if it were current.
 import React from "react";
-import type { Goal, Stage, StageReview } from "@evoloop/contracts";
+import type { Goal, Permission, Stage, StageReview } from "@evoloop/contracts";
 import { Button, Notice } from "@evoloop/ui";
 import { CommandForm, restoredFormState, type FormField, type MutationContext, type SavedDraft } from "../../shared/command";
 import { nextChoiceLabel } from "./journeyPresentation";
@@ -21,16 +21,16 @@ type Values = Record<string, string>;
  * prefix of drafts written for an earlier record of the same object (an older review), offered to bring over but
  * never sent as they are. `paused` explains why sending waits (the content on screen is being checked).
  */
-export function RecordForm({ context, label, submitLabel, fields, initial, baseline, permission, paused, draftKey, earlierDrafts, build, onApplied }: {
+export function RecordForm({ context, label, submitLabel, fields, initial, baseline, permission, decision = false, paused, draftKey, earlierDrafts, build, onApplied }: {
   context: MutationContext; label: string; submitLabel: string; fields: FormField[]; initial: Values;
-  baseline?: string; permission: "write" | "review"; paused?: string | null; draftKey: string; earlierDrafts?: string;
+  baseline?: string; permission: Permission; decision?: boolean; paused?: string | null; draftKey: string; earlierDrafts?: string;
   build(values: Values, seen: string | undefined): Record<string, unknown>; onApplied?(): void;
 }) {
   const drafts = React.useContext(DraftsContext);
   const [, setLooked] = React.useState(0);
   const earlier = earlierDrafts && drafts ? [...drafts.keys()].find(key => key.startsWith(earlierDrafts) && key !== draftKey) : undefined;
   const drop = (key: string) => { drafts?.delete(key); setLooked(count => count + 1); };
-  return <CommandForm<string | undefined> context={context} label={label} submitLabel={submitLabel} permission={permission} paused={paused}
+  return <CommandForm<string | undefined> context={context} label={label} submitLabel={submitLabel} permission={permission} decision={decision} paused={paused}
     fields={fields.map(field => ({ ...field, initial: initial[field.name] ?? "" }))} baseline={baseline} build={build} onApplied={onApplied}
     options={{ draft: drafts ? { store: drafts, key: draftKey } : undefined }} surface="plain" clearable
     notes={form => earlier && !form.dirty && <Notice tone="waiting" title="还有一份针对较早回看写的草稿" data-earlier-draft=""
@@ -68,14 +68,14 @@ const reason: FormField = { name: "reason", label: "理由与依据", kind: "tex
 const pick = (values: Record<string, string>, names: string[]) => Object.fromEntries(names.map(name => [name, values[name] ?? ""]));
 
 export function GoalCreateForm({ context, paused, onApplied }: { context: MutationContext; paused?: string | null; onApplied?(): void }) {
-  return <RecordForm context={context} label="建立目标" submitLabel="保存目标" permission="write" paused={paused} draftKey={draftKeys.goalNew} fields={goalFields}
+  return <RecordForm context={context} label="建立目标" submitLabel="保存目标" permission="task" paused={paused} draftKey={draftKeys.goalNew} fields={goalFields}
     initial={Object.fromEntries(goalFields.map(field => [field.name, ""]))} onApplied={onApplied}
     build={values => ({ type: "goal.create", goalId: crypto.randomUUID(), ...pick(values, goalFields.map(field => field.name)) })} />;
 }
 
 export function GoalReviseForm({ context, goal, paused }: { context: MutationContext; goal: Goal; paused?: string | null }) {
   const names = goalFields.map(field => field.name);
-  return <RecordForm context={context} label="修订目标" submitLabel="保存修订" permission="write" paused={paused} draftKey={draftKeys.goal(goal.id)}
+  return <RecordForm context={context} label="修订目标" submitLabel="保存修订" permission="task" paused={paused} draftKey={draftKeys.goal(goal.id)}
     fields={[...goalFields, reason]} baseline={String(goal.version)} initial={{ ...pick(goal as unknown as Record<string, string>, names), reason: "" }}
     build={(values, seen) => ({ type: "goal.revise", goalId: goal.id, expectedVersion: Number(seen), ...pick(values, [...names, "reason"]) })} />;
 }
@@ -85,13 +85,13 @@ export function StageProposeForm({ context, goal, paused }: { context: MutationC
     { name: "deliverable", label: "阶段交付", kind: "textarea", maxLength: 4000, hint: "这一阶段要交出什么。" },
     { name: "learningQuestion", label: "学习问题", kind: "textarea", maxLength: 4000, hint: "这一阶段想弄清什么。" }, reason,
   ];
-  return <RecordForm context={context} label="提出阶段" submitLabel="提出阶段" permission="write" paused={paused} draftKey={draftKeys.stageNew(goal.id)}
+  return <RecordForm context={context} label="提出阶段" submitLabel="提出阶段" permission="task" paused={paused} draftKey={draftKeys.stageNew(goal.id)}
     fields={fields} initial={{ deliverable: "", learningQuestion: "", reason: "" }}
     build={values => ({ type: "stage.propose", stageId: crypto.randomUUID(), goalId: goal.id, ...pick(values, ["deliverable", "learningQuestion", "reason"]) })} />;
 }
 
 export function StageAcceptForm({ context, stage, paused }: { context: MutationContext; stage: Stage; paused?: string | null }) {
-  return <RecordForm context={context} label="接受阶段" submitLabel="接受阶段" permission="review" paused={paused} draftKey={draftKeys.accept(stage.id)}
+  return <RecordForm context={context} label="接受阶段" submitLabel="接受阶段" permission="task" decision paused={paused} draftKey={draftKeys.accept(stage.id)}
     fields={[reason]} baseline={String(stage.version)} initial={{ reason: "" }}
     build={(values, seen) => ({ type: "stage.accept", stageId: stage.id, expectedVersion: Number(seen), reason: values.reason })} />;
 }
@@ -106,14 +106,14 @@ const reviewFields: FormField[] = [
 const reviewNames = reviewFields.map(field => field.name);
 
 export function StageReviewForm({ context, stage, paused }: { context: MutationContext; stage: Stage; paused?: string | null }) {
-  return <RecordForm context={context} label="记录阶段回看" submitLabel="记录回看" permission="review" paused={paused} draftKey={draftKeys.review(stage.id)}
+  return <RecordForm context={context} label="记录阶段回看" submitLabel="记录回看" permission="task" decision paused={paused} draftKey={draftKeys.review(stage.id)}
     fields={reviewFields} baseline={String(stage.version)} initial={Object.fromEntries(reviewNames.map(name => [name, ""]))}
     build={(values, seen) => ({ type: "stage.review", stageId: stage.id, expectedVersion: Number(seen), ...pick(values, reviewNames) })} />;
 }
 
 /** A correction names the latest review it replaces; the old judgement stays in the history. */
 export function StageCorrectForm({ context, stage, latest, paused }: { context: MutationContext; stage: Stage; latest: StageReview; paused?: string | null }) {
-  return <RecordForm context={context} label="追加阶段回看纠正" submitLabel="追加纠正" permission="review" paused={paused} draftKey={draftKeys.correct(stage.id, latest.id)} earlierDrafts={draftKeys.corrections(stage.id)}
+  return <RecordForm context={context} label="追加阶段回看纠正" submitLabel="追加纠正" permission="task" decision paused={paused} draftKey={draftKeys.correct(stage.id, latest.id)} earlierDrafts={draftKeys.corrections(stage.id)}
     fields={reviewFields} baseline={`${stage.version}:${latest.id}`}
     initial={{ ...pick(latest as unknown as Record<string, string>, reviewNames.filter(name => name !== "reason")), reason: "" }}
     build={(values, seen) => {

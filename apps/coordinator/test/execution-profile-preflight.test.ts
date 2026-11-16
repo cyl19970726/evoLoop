@@ -12,7 +12,7 @@ import { buildServer } from "../src/server.js";
 
 function fixture() {
   const projectId=randomUUID(),sessionId=randomUUID(),revisionId=randomUUID();
-  const principal:Principal={actorId:"reviewer",projectIds:[projectId],permissions:["read","write","review"]};
+  const principal:Principal={actorId:"reviewer",projectIds:[projectId],permissions:['task','document','session','management'],decisions:true};
   const revision={projectId,sessionId,revisionId,version:1,model:"old-model",reasoningEffort:"low",
     sandbox:"danger-full-access" as const,approvalPolicy:"never" as const,cwd:"/tmp/profile-preflight",
     authorizationScope:"bounded",provenance:"reserved" as const,previousRevisionId:null,
@@ -96,7 +96,7 @@ for(const scenario of ["notLoaded with history","loaded with history","running w
 test("profile preflight checks caller permission, exact binding grant and both versions before native reads",async()=>{
   for(const kind of ["permission","grant","version","revision"]){
     const f=fixture();let p=f.principal,c=f.command;
-    if(kind==="permission")p={...p,permissions:["read","review"]};
+    if(kind==="permission")p={...p,permissions:['management'],decisions:true};
     if(kind==="grant")f.setGrant(false);
     if(kind==="version")c={...c,expectedVersion:2};
     if(kind==="revision")c={...c,expectedExecutionProfileRevisionId:randomUUID()};

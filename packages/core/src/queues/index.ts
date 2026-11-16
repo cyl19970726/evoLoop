@@ -1,4 +1,4 @@
-import type { Principal, TaskProposal } from '@evoloop/contracts';
+import { hasPermission, type Principal, type TaskProposal } from '@evoloop/contracts';
 import { queueCommandSchema } from '@evoloop/contracts/queues';
 import type { QueueCommand,QueueTransaction,ResidentQueue,ResidentQueueEntry,QueueSourceFacts,QueueReleaseEvidence,QueueHoldCode } from '@evoloop/contracts/queues';
 import { canonicalTaskInputJson,taskInputSignature } from '../task-input.js';
@@ -43,10 +43,10 @@ export async function applyQueue(tx:QueueTransaction,readerOrPrincipal:Reader|Pr
   const ctx=(context??inputOrContext) as QueueContext;
   const parsed=queueCommandSchema.safeParse(input);if(!parsed.success)return fail('INVALID_COMMAND',parsed.error.message);
   const c=parsed.data;
-  if(!principal.actorId||!principal.projectIds.includes(c.projectId)||!principal.permissions.includes('review'))return fail('FORBIDDEN','project review permission required');
+  if(!hasPermission(principal,c.projectId,'management'))return fail('FORBIDDEN','project management permission required');
   if(!await tx.queueControllerCurrent(principal.actorId))return fail('QUEUE_AUTHORIZATION','current queue controller authority required');
   const leadOnly=['queue.create','queue.reorder','queue.amend','queue.adopt','queue.release','queue.stop','queue.hold','queue.unhold','queue.extendBudget','queue.retryFailed','queue.continue'];
-  if(leadOnly.includes(c.type)&&!principal.permissions.includes('write'))return fail('FORBIDDEN','Lead write permission required');
+  if(leadOnly.includes(c.type)&&!hasPermission(principal,c.projectId,'management'))return fail('FORBIDDEN','Lead management permission required');
   const result=(queue:ResidentQueue|null,claimId:string|null=null,runId:string|null=null,hold:QueueHoldCode|null=null):QueueResult=>({queueId:c.queueId,version:queue?.version??0,claimId,runId,held:hold});
   if(c.type==='queue.create'){
     const entries:ResidentQueueEntry[]=[];

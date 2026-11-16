@@ -68,7 +68,7 @@ test("rebuilt legacy parts read, write and fail as the record allows, at three w
         posts.push({ path: url.pathname, body: payload });
         value = { status: "applied", operationId: payload.operationId, entityId: url.pathname.endsWith("/git") ? gitRef : decisionId };
       }
-      else if (url.pathname === "/api/session") value = { principal: { actorId: "lead", projectIds: [projectId], permissions: ["read", "write", "review"] }, capabilities: {} };
+      else if (url.pathname === "/api/session") value = { principal: { actorId: "lead", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true }, capabilities: {} };
       else if (url.pathname === p) value = { id: projectId, title: "旧组件换新", createdAt: stamp };
       else if (url.pathname === `${p}/tasks/${taskId}` || url.pathname === `${p}/tasks/${otherTaskId}`) {
         const current = url.pathname.endsWith(taskId) ? task : { ...task, id: otherTaskId, currentRevisionId: otherTaskId, title: "补齐来源" };

@@ -1,6 +1,7 @@
 // The task's right column (docs/frontend/layout.md 右栏, 任务): state and reconciliation phase → the agent that took
 // it → related documents → delivery and use → version. The same blocks serve the task page and the table view's
 // selected row. Documents open as tabs beside the center (useContextPanel().openInPanel), never replacing it.
+import { currentStageText, usedWaitResponsibility } from "../../shared/leaderWorkLoad";
 import React from "react";
 import type { TaskDetail } from "@evoloop/contracts";
 import type { LeaderWorkTask } from "@evoloop/contracts/work-index";
@@ -105,8 +106,8 @@ function StatusFacts({ context, detail, read, linkForTab }: {
     </div>
     {open || projection ? <Fact label="下一步">{phase.next}
       {projection && <span className="mt-0.5 block text-caption text-muted-foreground"><ResponsibleName projectId={projectId} item={projection} /></span>}</Fact> : null}
-    {timing && <Fact label="阶段时间">{timingStageLabel[timing.current.stage] ?? "阶段未知"}
-      <span className="mt-0.5 block text-caption text-muted-foreground">已历时 {timingDuration(timing.current.elapsedMs)} · {waitingText(timing.current.waitingFor, projection?.assignment ?? null)}</span></Fact>}
+    {timing && <Fact label="阶段时间">{currentStageText(timing.current.stage, projection?.phase, timingStageLabel[timing.current.stage] ?? "阶段未知")}
+      <span className="mt-0.5 block text-caption text-muted-foreground">已历时 {timingDuration(timing.current.elapsedMs)} · {(projection && usedWaitResponsibility(projection)) ?? waitingText(timing.current.waitingFor, projection?.assignment ?? null)}</span></Fact>}
     {projection?.plan && (projection.plan.priority || projection.plan.dueAt || projection.plan.plannedStartAt) && <Fact label="优先级与截止">
       {[projection.plan.priority ? `P${projection.plan.priority}` : "", projection.plan.dueAt ? `截止 ${taskTimestamp(projection.plan.dueAt)}` : "",
         projection.plan.plannedStartAt ? `计划开始 ${taskTimestamp(projection.plan.plannedStartAt)}` : ""].filter(Boolean).join(" · ")}</Fact>}

@@ -23,7 +23,7 @@ import { PrepareForm } from "./DiscussionForms";
 import { discussionAddress, discussionHref, listRow, prepareHref, scopeOptions, type ListScope } from "./discussionPresentation";
 
 function PrepareView({ context, choices }: { context: MutationContext; choices: ReturnType<typeof useProjectQuery<Choices>> }) {
-  if (!canWrite(context, "write")) return <Notice tone="waiting">当前身份没有写入权限，不能准备讨论。</Notice>;
+  if (!canWrite(context, "task")) return <Notice tone="waiting">当前身份没有任务写入权限，不能准备讨论。</Notice>;
   if (choices.isPending) return <LoadingState lines={4} label="正在读取可固定的目标与来源" />;
   if (choices.isError) return <ErrorState title="可选的目标与来源没有读全" happened={errorText(choices.error)} diagnostics={diagnosticOf(choices.error)}
     next="交接包要固定完整的选择，读全之前不生成。请重新读取。" action={<Button size="compact" onClick={() => void choices.refetch()}>重新读取</Button>} />;
@@ -59,8 +59,8 @@ export function DiscussionPanel({ context, refresh }: { context: MutationContext
       <nav aria-label="讨论列表" className="flex flex-col gap-0.5 pt-2">
         <div className="flex items-center justify-between gap-2 px-3 pb-1.5 pt-2">
           <span className="text-caption text-muted-foreground">{listed ? `讨论 · ${items.length}${list.more || list.repeatedCursor ? "+" : ""}` : "讨论"}</span>
-          {canWrite(context, "write") && <a href={prepareHref(projectId)} aria-current={address.preparing ? "page" : undefined}
-            className={cn("inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-caption text-text-secondary outline-none hover:bg-selected focus-visible:shadow-[var(--focus-ring)]", address.preparing && "bg-selected text-foreground")}>
+          {canWrite(context, "task") && <a href={prepareHref(projectId)} aria-current={address.preparing ? "page" : undefined}
+            className={cn("inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-caption text-text-secondary outline-none hover:bg-selected focus-visible:shadow-[var(--focus-ring)]", address.preparing && "bg-accent text-accent-strong hover:bg-accent")}>
             <Plus size={12} aria-hidden="true" />准备讨论</a>}
         </div>
         <label className="px-3 pb-2"><span className="sr-only">讨论范围</span>
@@ -76,7 +76,7 @@ export function DiscussionPanel({ context, refresh }: { context: MutationContext
           const row = listRow(item, taskName(item.task?.id), scope === "all", choices.isPending);
           const selected = !address.preparing && item.id === selectedId;
           return <a key={item.id} href={discussionHref(projectId, item.id)} aria-current={selected ? "page" : undefined}
-            className={cn("flex flex-col rounded-lg px-3 py-1.5 outline-none focus-visible:shadow-[var(--focus-ring)]", selected ? "bg-raised shadow-sm" : "hover:bg-selected")}>
+            className={cn("flex flex-col rounded-lg px-3 py-1.5 outline-none focus-visible:shadow-[var(--focus-ring)]", selected ? "bg-accent hover:bg-accent" : "hover:bg-selected")}>
             <span className="truncate text-small text-foreground">{row.title}</span>
             {row.meta && <span className="truncate text-caption text-muted-foreground">{row.meta}</span>}
           </a>;
@@ -90,7 +90,7 @@ export function DiscussionPanel({ context, refresh }: { context: MutationContext
     <div className="flex flex-wrap items-center justify-between gap-3">
       <p className="min-w-0 max-w-[620px] flex-[1_1_320px] text-small leading-(--leading-body) text-text-secondary">从固定材料理解问题、取舍和后续关系。准备、交接、决定和实际接手各有独立记录，没有新的取舍时不必制造讨论。</p>
       <div className="flex shrink-0 items-center gap-2">
-        {canWrite(context, "write") && !address.preparing && <Button asChild><a href={prepareHref(projectId)}><Plus aria-hidden="true" />准备讨论</a></Button>}
+        {canWrite(context, "task") && !address.preparing && <Button asChild><a href={prepareHref(projectId)}><Plus aria-hidden="true" />准备讨论</a></Button>}
         <Button variant="ghost" disabled={list.reading || list.checking || detail.isFetching} onClick={context.onChanged}><RefreshCw aria-hidden="true" className={list.reading || list.checking || detail.isFetching ? "animate-spin motion-reduce:animate-none" : undefined} />重新读取</Button>
       </div>
     </div>

@@ -4,7 +4,7 @@ import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import type { WorkflowService } from "@evoloop/core";
+import { authorizeCommand, type WorkflowService } from "@evoloop/core";
 import { RuntimeRunner } from "../src/runtime/runner.js";
 import { buildServer } from "../src/server.js";
 import { delegationTemplateHash, hasExactEngineeringActionGrant, loadIntegrations, runtimeThreadConfig, runtimeThreadConfigForSession } from "../src/configuration.js";
@@ -19,8 +19,8 @@ const cwd = process.cwd();
 const grant = { projectId, actorId: "reviewer", roleId: "temporary-role", authorizationScope: "task:bounded",
   cwd, sandbox: "danger-full-access" as const, approvalPolicy: "never" as const };
 const credentials = [
-  { token, actorId: "reviewer", projectIds: [projectId], permissions: ["read", "write", "review"] as const },
-  { token: "w".repeat(40), actorId: "writer", projectIds: [projectId], permissions: ["read", "write"] as const },
+  { token, actorId: "reviewer", projectIds: [projectId], permissions: ["task", "document", "session", "management"] as ('task'|'document'|'session'|'management')[], decisions: true },
+  { token: "w".repeat(40), actorId: "writer", projectIds: [projectId], permissions: ["task", "document"] as ('task'|'document'|'session'|'management')[] },
 ];
 const headers = { authorization: `Bearer ${token}` };
 const command = { type: "runtime.session.reserve", projectId, operationId, sessionId,
@@ -71,7 +71,7 @@ test("resident queue business actor bindings have one actor per project and Role
 });
 test("engineering action grant matches the actual project as well as scope, hash and expiry",()=>{
   const otherProjectId=randomUUID();
-  const principal={actorId:"executor",projectIds:[projectId,otherProjectId],permissions:["read","write","review"] as Array<"read"|"write"|"review">};
+  const principal={actorId:"executor",projectIds:[projectId,otherProjectId],permissions:["task","document","session","management"] as ('task'|'document'|'session'|'management')[],decisions:true};
   const action={type:"action_request" as const,requestId:randomUUID(),executorActorId:principal.actorId,
     actionType:"pr.create" as const,scope:{repository:"evoLoop",worktree:"/tmp/evoloop-action",
       paths:["packages/core/src/index.ts"],commit:"abc123"},inputHash:"a".repeat(64),
@@ -378,10 +378,10 @@ test("explicit terminal reconciliation requires review and the exact current ses
   } finally { await app.close(); }
 });
 
-test("project read reviewer can inspect a bound trace without execution grant while reserve and reconcile stay denied", async () => {
+test("Session reader can inspect a bound trace without decision or execution grant while management stays out", async () => {
   const runId = randomUUID();
   let reads = 0, mutations = 0;
-  const traceToken = "q".repeat(40);
+  const traceToken = "q".repeat(40), managerToken = "m".repeat(40);
   const traceHeaders = { authorization: `Bearer ${traceToken}` };
   const service = { ...workManagementQueries,
     execute: async () => { mutations++; return { status: "applied" }; },
@@ -393,13 +393,17 @@ test("project read reviewer can inspect a bound trace without execution grant wh
       reads++; return { runId, cursor: cursor ?? null, source: "owned-native-history" };
     } } as unknown as RuntimeRunner;
   const app = await buildServer({ service, credentials: [...credentials,
-    { token: traceToken, actorId: "trace-reviewer", projectIds: [projectId], permissions: ["read", "review"] }] as never,
+    { token: traceToken, actorId: "session-reader", projectIds: [projectId], permissions: ["session"],
+      sessionIds: [sessionId], decisions: false },
+    { token: managerToken, actorId: "trace-manager", projectIds: [projectId], permissions: ["management"],
+      decisions: true }] as never,
     runtime, runtimeGrants: (_project, actor) => actor === "reviewer" ? [grant] : [], hasRuntimeGrant: scope => scope.actorId === "reviewer",
     allowedRuntimeCwd: async () => true });
   try {
     const url = `/api/projects/${projectId}/runtime/runs/${runId}/trace`;
     assert.equal((await app.inject({ method: "GET", url, headers: { authorization: `Bearer ${"w".repeat(40)}` } })).statusCode, 403);
     assert.equal((await app.inject({ method: "GET", url: `/api/projects/${randomUUID()}/runtime/runs/${runId}/trace`, headers: traceHeaders })).statusCode, 403);
+    assert.equal((await app.inject({ method: "GET", url, headers: { authorization: `Bearer ${managerToken}` } })).statusCode, 403);
     const accepted = await app.inject({ method: "GET", url: `${url}?cursor=page-2`, headers: traceHeaders });
     assert.equal(accepted.statusCode, 200, accepted.body);
     assert.equal(accepted.json().cursor, "page-2");
@@ -436,6 +440,85 @@ test("closed Session keeps its Run metadata readable but denies trace through HT
     const trace = await app.inject({ method: "GET", url: `${base}/trace`, headers });
     assert.equal(trace.statusCode, 403, trace.body);
     assert.equal(nativeReads, 0);
+  } finally { await app.close(); }
+});
+
+test("a Session-scoped identity sees another Run's status but cannot read its full native record", async () => {
+  const allowedRun = randomUUID(), otherRun = randomUUID(), otherSession = randomUUID();
+  let nativeReads = 0;
+  const readerToken = "v".repeat(40);
+  const service = { ...workManagementQueries,
+    getRuntimeRun: async (_principal: Principal, _projectId: string, runId: string) => ({
+      id: runId,
+      projectId,
+      taskId: randomUUID(),
+      taskRevisionId: randomUUID(),
+      sessionId: runId === otherRun ? otherSession : sessionId,
+      operationId: randomUUID(),
+      input: "input",
+      inputHash: "hash",
+      state: "completed",
+      version: 2,
+      nativeTurnId: "turn",
+      interruptRequested: false,
+      resultSummary: null,
+      actorId: "reader",
+      createdAt: "2026-11-15T00:00:00.000Z",
+      updatedAt: "2026-11-15T00:00:00.000Z",
+    }),
+    getRuntimeSession: async () => ({ id: sessionId, projectId, roleId: "role", state: "ready" }),
+  } as unknown as WorkflowService;
+  const runtime = {
+    status: () => ({ available: true, error: null }),
+    trace: async (_principal: Principal, _projectId: string, runId: string) => {
+      nativeReads++;
+      return { runId, source: "owned-native-history" };
+    },
+  } as unknown as RuntimeRunner;
+  const app = await buildServer({
+    service,
+    credentials: [{ token: readerToken, actorId: "session-reader", projectIds: [projectId],
+      permissions: ["session"], sessionIds: [sessionId], decisions: false }],
+    runtime,
+  });
+  const headers = { authorization: `Bearer ${readerToken}` };
+  try {
+    const otherMetadata = await app.inject({ method: "GET", url: `/api/projects/${projectId}/runtime/runs/${otherRun}`, headers });
+    assert.equal(otherMetadata.statusCode, 200);
+    assert.equal(otherMetadata.json().sessionId, otherSession, "status remains visible to project members");
+    const denied = await app.inject({ method: "GET", url: `/api/projects/${projectId}/runtime/runs/${otherRun}/trace`, headers });
+    assert.equal(denied.statusCode, 403);
+    assert.equal(nativeReads, 0);
+    const allowed = await app.inject({ method: "GET", url: `/api/projects/${projectId}/runtime/runs/${allowedRun}/trace`, headers });
+    assert.equal(allowed.statusCode, 200, allowed.body);
+    assert.equal(nativeReads, 1);
+  } finally { await app.close(); }
+});
+
+test("a Session-scoped identity cannot post a message to another Session through the command route", async () => {
+  const actorId = "session-writer", token = "u".repeat(40);
+  let executions = 0;
+  const base = { ...workManagementQueries,
+    execute: async (principal: Principal, command: Parameters<WorkflowService["execute"]>[1]) => {
+      authorizeCommand(principal, command);
+      executions++;
+      return { status: "applied", operationId: command.operationId, entityId: command.operationId, version: 1 };
+    },
+    getOperation: async () => null,
+  };
+  const service = new Proxy(base, { get: (target, name) => name in target ? target[name as string] : async () => undefined }) as unknown as WorkflowService;
+  const app = await buildServer({ service, credentials: [{ token, actorId, projectIds: [projectId],
+    permissions: ["session"], sessionIds: [sessionId], decisions: false }] });
+  const headers = { authorization: `Bearer ${token}` };
+  const post = (targetSessionId: string) => app.inject({ method: "POST", url: "/api/commands", headers,
+    payload: { type: "session.message.post", projectId, operationId: randomUUID(), messageId: randomUUID(),
+      target: { kind: "owned", sessionId: targetSessionId }, content: "message" } });
+  try {
+    assert.equal((await post(sessionId)).statusCode, 200);
+    const denied = await post(randomUUID());
+    assert.equal(denied.statusCode, 403);
+    assert.equal(denied.json().code, "FORBIDDEN");
+    assert.equal(executions, 1, "the other Session was refused before any message was saved");
   } finally { await app.close(); }
 });
 

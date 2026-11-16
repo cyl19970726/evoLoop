@@ -38,7 +38,7 @@ test("Session creation requires a catalog model authorized by the selected grant
     if (url.pathname.startsWith("/api/")) {
       const root = `/api/projects/${projectId}`;
       let value: unknown = { items: [], nextCursor: null }, status = 200;
-      if (url.pathname === "/api/session") value = { principal: { actorId: "reviewer", projectIds: [projectId], permissions: ["read", "write", "review"] }, capabilities: {} };
+      if (url.pathname === "/api/session") value = { principal: { actorId: "reviewer", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true }, capabilities: {} };
       else if (url.pathname === "/api/commands" && req.method === "POST") {
         let body = ""; for await (const chunk of req) body += String(chunk);
         const command = JSON.parse(body) as Record<string, unknown>; commands.push(command);

@@ -152,7 +152,7 @@ function DecisionRow({ context, item }: { context: MutationContext; item: Decisi
     {problem && <p className={`${mutedText} px-3`} role="status" data-decision-link-problem="">{problem}</p>}
     <p className={`${mutedText} px-3`}>{item.detail}</p>
     {item.kind === "decision_request" && <div className="px-3">
-      <ActionForm context={context} embedded title="答复" fields={[
+      <ActionForm context={context} embedded requiredPermissions={["task"]} decision title="答复" fields={[
         item.options.length ? { name: "answer", label: "你的决定", kind: "select" as const, options: item.options.map(value => option(value, value)) } : { name: "answer", label: "你的决定", kind: "textarea" as const },
         { name: "reason", label: "理由", kind: "textarea" as const }]}
         build={values => ({ type: "decision.request.answer", requestId: item.id, expectedVersion: item.version, answer: values.answer, reason: values.reason })} />

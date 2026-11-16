@@ -77,7 +77,7 @@ test("optional isolated Chromium enforces the browser request boundary",{skip:!m
         </script></body></html>`);
     } else if(path==="/api/session") {
       response.writeHead(request.headers.authorization===`Bearer ${token}`?200:403,{"content-type":"application/json"});
-      response.end(JSON.stringify({principal:{actorId:"reader",projectIds:[projectId],permissions:["read"]}}));
+      response.end(JSON.stringify({principal:{actorId:"reader",projectIds:[projectId],permissions:[]}}));
     } else if(path===projectRoot) {
       response.writeHead(request.headers.authorization===`Bearer ${token}`?200:403,{"content-type":"application/json"});
       response.end(JSON.stringify({id:projectId,title:"Fixture Project"}));
@@ -249,7 +249,7 @@ test("isolated Chromium follows complete Task pages for every status and TaskDet
       </script></body></html>`);
     } else if(path==="/api/session"){
       response.writeHead(200,{"content-type":"application/json"});
-      response.end(JSON.stringify({principal:{actorId:"reader",projectIds:[projectId],permissions:["read"]}}));
+      response.end(JSON.stringify({principal:{actorId:"reader",projectIds:[projectId],permissions:[]}}));
     } else if(path===first || path===second){
       const ids=path===first?firstIds:secondIds;
       const complete=()=>{response.writeHead(200,{"content-type":"application/json"});
@@ -366,7 +366,7 @@ test("built task list and 目标与阶段 read through the guarded context",
     }
     if(request.headers.authorization!==`Bearer ${token}`){response.writeHead(403);response.end();return;}
     const json=(value:unknown)=>{response.writeHead(200,{"content-type":"application/json"});response.end(JSON.stringify(value));};
-    if(path==="/api/session")return json({principal:{actorId:"reader",projectIds:[projectId],permissions:["read"]},capabilities:{}});
+    if(path==="/api/session")return json({principal:{actorId:"reader",projectIds:[projectId],permissions:[]},capabilities:{}});
     if(path===base)return json({id:projectId,title:"Built App Fixture"});
     if(path===first)return json({items:firstTasks,nextCursor:taskAt(50)});
     if(path===second)return json({items:secondTasks,nextCursor:null});
@@ -466,7 +466,7 @@ test("a list response finishing after its tool call is cancelled grants no TaskD
             .catch(()=>document.querySelector('#result').textContent='detail blocked'),1500);
         });</script></body></html>`);
     }else if(path==="/api/session"){
-      response.writeHead(200,{"content-type":"application/json"});response.end(JSON.stringify({principal:{actorId:"reader",projectIds:[projectId],permissions:["read"]}}));
+      response.writeHead(200,{"content-type":"application/json"});response.end(JSON.stringify({principal:{actorId:"reader",projectIds:[projectId],permissions:[]}}));
     }else if(path===first){
       setTimeout(()=>{response.writeHead(200,{"content-type":"application/json"});
         response.end(JSON.stringify({items:[{id:listedTask,projectId}],nextCursor:null}));},650);

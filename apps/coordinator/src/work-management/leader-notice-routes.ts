@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import type { Principal } from "@evoloop/contracts";
+import { hasDecisionAuthority, type Principal } from "@evoloop/contracts";
 import { DomainError } from "@evoloop/contracts/ports";
 import { z } from "zod";
 import { leaderNoticeRecoverySchema, type LeaderEventRecordKind } from "@evoloop/contracts/leader-notices";
@@ -56,8 +56,8 @@ export function registerLeaderNoticeRoutes(app: FastifyInstance,
     if (!request.principal) throw new DomainError("FORBIDDEN", "Authentication required");
     const { projectId, packetId } = z.strictObject({ projectId: z.uuid(), packetId: z.uuid() }).parse(request.params);
     const who = request.principal;
-    if (!who.permissions.includes("write") || !who.permissions.includes("review"))
-      throw new DomainError("FORBIDDEN", "Project review permission is required for Leader notice packet recovery");
+    if (!hasDecisionAuthority(who, projectId, "management"))
+      throw new DomainError("FORBIDDEN", "Management decision authority is required for Leader notice packet recovery");
     await service.getProject(who, projectId);
     return notices.recoverPacket!(who, projectId, packetId, leaderNoticePacketRecoverySchema.parse(request.body).reason);
   });
@@ -65,8 +65,8 @@ export function registerLeaderNoticeRoutes(app: FastifyInstance,
     if (!request.principal) throw new DomainError("FORBIDDEN", "Authentication required");
     const { projectId, noticeId } = z.strictObject({projectId:z.uuid(),noticeId:z.uuid()}).parse(request.params);
     const who=request.principal;
-    if (!who.permissions.includes("write") || !who.permissions.includes("review"))
-      throw new DomainError("FORBIDDEN", "Project review permission is required for Leader notice recovery");
+    if (!hasDecisionAuthority(who, projectId, "management"))
+      throw new DomainError("FORBIDDEN", "Management decision authority is required for Leader notice recovery");
     await service.getProject(who, projectId);
     const input=leaderNoticeRecoverySchema.parse(request.body);
     return notices.recover!(projectId, noticeId, input, who.actorId);

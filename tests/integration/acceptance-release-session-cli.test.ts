@@ -30,13 +30,13 @@ test("real CLI, session mode: a stuck arrangement whose message was replied is r
   const directory = await mkdtemp(join(tmpdir(), "evoloop-release-cli-"));
   const projectId = randomUUID();
   const tokens = { reviewer: randomUUID() + randomUUID(), human: randomUUID() + randomUUID() };
-  const reviewer: Principal = { actorId: "leader-reviewer", projectIds: [projectId], permissions: ["read", "write", "review"] };
+  const reviewer: Principal = { actorId: "leader-reviewer", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true };
   const workflow = new WorkflowService({ uow: new PostgresUnitOfWork(pool), clock: { now: () => new Date().toISOString() }, ids: { next: randomUUID },
     hasher: { hash: (value: string) => createHash("sha256").update(value).digest("hex") } });
   const relayService = new AcceptanceRelayService({ pool, workflow, messages: {} as never, principals: async () => [], canWrite: () => false, leaderSession: async () => null, qualify: async () => null, capabilities: async () => [] });
   const app = await buildServer({ service: workflow, acceptanceRelay: relayService, credentials: [
-    { token: tokens.reviewer, actorId: reviewer.actorId, projectIds: [projectId], permissions: ["read", "write", "review"] },
-    { token: tokens.human, actorId: "named-human", projectIds: [projectId], permissions: ["read", "write"], identityKind: "human" }] } as never);
+    { token: tokens.reviewer, actorId: reviewer.actorId, projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true },
+    { token: tokens.human, actorId: "named-human", projectIds: [projectId], permissions: ["task", "document", "session"], identityKind: "human" }] } as never);
   const apiUrl = await app.listen({ host: "127.0.0.1", port: 0 });
   t.after(async () => { await app.close(); await pool.end(); const admin = new pg.Client({ connectionString: database }); await admin.connect(); try { await admin.query(`DROP SCHEMA "${schema}" CASCADE`); } finally { await admin.end(); } await rm(directory, { recursive: true, force: true }); });
 

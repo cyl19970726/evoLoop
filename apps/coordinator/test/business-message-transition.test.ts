@@ -85,7 +85,7 @@ for(const scenario of scenarios){
       events.push('ordinary message turn/start');return nativeMessageStart(binding,content,op);
     };
     const runner=new RuntimeRunner({runtimeFactory:()=>adapter,workflow,trusted,
-      principals:[{actorId,projectIds:[projectId],permissions:['read','write','review']}],
+      principals:[{actorId,projectIds:[projectId],permissions:['task','document','session','management'],decisions:true}],
       canWrite:()=>true,allowedCwd:async()=>true,hasGrant:()=>true});
     (runner as unknown as {lightweightInput:()=>Promise<{input:string;protocol:string;contentHash:string;byteLength:number}>}).lightweightInput=async()=>
       ({input,protocol:'evoloop-lightweight-v1',contentHash:'a'.repeat(64),byteLength:Buffer.byteLength(input)});

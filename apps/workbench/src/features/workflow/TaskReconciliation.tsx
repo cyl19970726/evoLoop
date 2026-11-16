@@ -7,7 +7,7 @@ import { Badge, CollapsibleRow, StatusTag } from "@evoloop/ui";
 import { api, errorText } from "../../shared/api";
 import { agentDisplayName, agentNameCollisions, agentNameIsGenerated } from "../../shared/agentNamePresentation";
 import { agentNameKey, readAgent } from "../../shared/agentRead";
-import { leaderWorkItemPresentation, loadLeaderWorkStatuses } from "../../shared/leaderWorkLoad";
+import { currentStageText, leaderWorkItemPresentation, loadLeaderWorkStatuses } from "../../shared/leaderWorkLoad";
 import { queryKeys, useProjectQuery } from "../../shared/query";
 import { tableOrigin } from "./taskOrigin";
 import { phaseOrder, phaseStatus } from "../../shared/taskStatus";
@@ -95,7 +95,7 @@ export function LeaderOverview({ projectId, page, statuses, roleNames, actorId }
           {key && <> · <a className="text-primary hover:underline" href={sessionHref(projectId, key, actorId ? tableOrigin(projectId, actorId, undefined, { id: item.taskId, title: presentation.title }) : null)}>打开智能体</a></>}
           {item.plan?.priority ? ` · P${item.plan.priority}` : ""}{item.dependencies.length ? ` · ${item.dependencies.length} 项依赖` : ""}
           {item.plan?.dueAt ? ` · 截止 ${new Date(item.plan.dueAt).toLocaleString("zh-CN")}` : " · 截止未设置"}</p>
-        <p className="text-caption text-muted-foreground">创建 {timingDate(item.timing?.createdAt)} · 当前阶段 {item.timing ? timingStageLabel[item.timing.current.stage] : "未知"} · 已历时 {timingDuration(item.timing?.current.elapsedMs)}</p>
+        <p className="text-caption text-muted-foreground">创建 {timingDate(item.timing?.createdAt)} · 当前阶段 {item.timing ? currentStageText(item.timing.current.stage, item.phase, timingStageLabel[item.timing.current.stage]) : "未知"} · 已历时 {timingDuration(item.timing?.current.elapsedMs)}</p>
         {item.review && <p className="text-caption text-muted-foreground">统筹{item.review.decision === "deferred" ? "已暂缓" : "已核对"}：{item.review.reason} · {new Date(item.review.at).toLocaleString("zh-CN")}</p>}
       </li>;
     })}</ol> : <p className="text-label text-muted-foreground">当前没有未关闭的工作。</p>}

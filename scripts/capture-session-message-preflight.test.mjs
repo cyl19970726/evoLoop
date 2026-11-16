@@ -60,10 +60,10 @@ test('Root identity comes from the old service response and cannot be self-decla
       return { ok: true, json: async () => ({ principal }) };
     };
     assert.equal(await authenticatedRoot(projectId, 4318, reply({
-      actorId: 'root-actor', projectIds: [projectId], permissions: ['read', 'review'],
+      actorId: 'root-actor', projectIds: [projectId], permissions: ['management'], decisions: true,
     })), 'root-actor');
     await assert.rejects(authenticatedRoot(projectId, 4318, reply({
-      actorId: 'reviewer', projectIds: [projectId], permissions: ['read', 'review'],
+      actorId: 'reviewer', projectIds: [projectId], permissions: ['management'], decisions: true,
     })), /ROOT_IDENTITY_UNVERIFIED/);
   } finally {
     if (previousToken === undefined) delete process.env.PREFLIGHT_ROOT_TOKEN;

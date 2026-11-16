@@ -28,15 +28,15 @@ test("paged work status uses exact project facts and separates formal cognition 
   const projectId=randomUUID(),otherProjectId=randomUUID(),goalId=randomUUID(),stageId=randomUUID();
   const cognitionId=randomUUID(),researchId=randomUUID(),loopId=randomUUID(),ownerId="work-status-owner";
   const plannerRole=fixtureRoleId("planner"), researcherRole=fixtureRoleId("researcher"), builderRole=fixtureRoleId("builder");
-  const principal={actorId:ownerId,projectIds:[projectId],permissions:["read","write","review"] as Array<"read"|"write"|"review">};
+  const principal={actorId:ownerId,projectIds:[projectId],permissions:["task", "document", "session", "management"], decisions: true};
   const store=new PgOrchestrationStore(pool,{getAuthorizationFact:async(project,scope)=>project===projectId && scope==="fixture-scope" ?
     {projectId,scopeId:scope,actorId:ownerId,roleId:plannerRole,active:true}:null,
     canActAsRole:async()=>true,wasActorRole:async()=>false});
   const orchestration=new OrchestrationService({store,now:()=>new Date().toISOString(),nextId:randomUUID,hash});
   const token=randomUUID()+randomUUID(),otherToken=randomUUID()+randomUUID();
   const app=await buildServer({service:workflow,credentials:[
-    {token,actorId:ownerId,projectIds:[projectId],permissions:["read","write","review"]},
-    {token:otherToken,actorId:"unrelated",projectIds:[otherProjectId],permissions:["read"]}],
+    {token,actorId:ownerId,projectIds:[projectId],permissions:["task", "document", "session", "management"], decisions: true},
+    {token:otherToken,actorId:"unrelated",projectIds:[otherProjectId],permissions:[]}],
     orchestration:{service:orchestration,workStatuses:(who,p,ids)=>readWorkStatuses(pool,workflow,who,p,ids)}});
   t.after(async()=>{await app.close();await pool.end();const admin=new pg.Client({connectionString:database});
     await admin.connect();try{await admin.query(`DROP SCHEMA "${schema}" CASCADE`);}finally{await admin.end();}});
@@ -75,7 +75,7 @@ test("paged work status uses exact project facts and separates formal cognition 
     artifactRevision:"v2",contentHash:hash("report"),technicalResult:"passed",technicalEvidence:"Fixture",
     reason:"Latest fixed research report"});
   assert.ok(oldDelivery.revisionId > delivery.revisionId,"older delivery ID sorts after the newer one at the same timestamp");
-  const consumer={actorId:"声明消费者",projectIds:[projectId],permissions:["read","write"] as Array<"read"|"write">};
+  const consumer={actorId:"声明消费者",projectIds:[projectId],permissions:["task", "document", "session"]};
   const use=await workflow.execute(consumer,{type:"observation.record",projectId,operationId:randomUUID(),taskId:researchId,
     deliveryId:delivery.revisionId,observer:consumer.actorId,observerKind:"agent",result:"used",
     evidence:"Actual fixture use",reason:"Observed use"});

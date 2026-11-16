@@ -52,7 +52,7 @@ test("a task's version line says in Chinese who made it and why; identifiers sta
       const root = `/api/projects/${projectId}`;
       const path = decodeURIComponent(url.pathname);
       let value: unknown = { items: [], nextCursor: null }, status = 200;
-      if (path === "/api/session") value = { principal: { actorId: "reader", projectIds: [projectId], permissions: ["read", "write", "review"] }, capabilities: {} };
+      if (path === "/api/session") value = { principal: { actorId: "reader", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true }, capabilities: {} };
       else if (path === root) value = { id: projectId, title: "任务用语夹具", createdAt: stamp };
       else if (path === `${root}/tasks`) value = { items: tasks, nextCursor: null };
       else if (path === `${root}/schedules`) value = [schedule];

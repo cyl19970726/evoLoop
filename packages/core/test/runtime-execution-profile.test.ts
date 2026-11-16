@@ -120,7 +120,7 @@ test('a closed accepted Task must reopen before its source Run terminal result c
     action(tx)} as UnitOfWork,clock:{now:()=>now},ids:{next:randomUUID}});
   await assert.rejects(()=>service.reconcileTerminalObservation(projectId,runId,'owned-turn','failed',null,
     {itemsDigest:'a'.repeat(64),completedAtUtc:now},4,
-    {actorId,projectIds:[projectId],permissions:['read','write','review']},'Native failure confirmed'),
+    {actorId,projectIds:[projectId],permissions:['task','document','session','management'],decisions:true},'Native failure confirmed'),
   error=>error instanceof Error && 'code' in error && error.code==='TASK_REOPEN_REQUIRED');
   assert.equal(run.state,'completed');
 });

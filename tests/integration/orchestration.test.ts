@@ -37,7 +37,7 @@ if(!url||!/evoloop.*test/.test(new URL(url).pathname))throw new Error("dedicated
 const schema=`el_orch_${randomUUID().replaceAll("-","").slice(0,16)}`;
 const pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`});
 const projectId=randomUUID(),actor="cognitive-actor",worker="worker-actor",cognitiveRole=fixtureRoleId("cognition"),businessRole=fixtureRoleId("business-role"),scopeId="test-worker-scope",cognitiveScope="test-cognitive-scope";
-const principal=(actorId:string)=>({actorId,projectIds:[projectId],permissions:["read","write","review"] as Array<"read"|"write"|"review">});
+const principal=(actorId:string)=>({actorId,projectIds:[projectId],permissions:["task", "document", "session", "management"], decisions: true});
 const sha=(s:string)=>createHash("sha256").update(s).digest("hex");
 const workflow=new WorkflowService({uow:new PostgresUnitOfWork(pool),clock:{now:()=>new Date().toISOString()},ids:{next:randomUUID},hasher:{hash:sha}});
 const runtimeUow=new PostgresUnitOfWork(pool);

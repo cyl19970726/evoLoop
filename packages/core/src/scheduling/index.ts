@@ -1,4 +1,4 @@
-import type { Principal } from "@evoloop/contracts";
+import { hasPermission, type Principal } from "@evoloop/contracts";
 import type { Occurrence, ScheduleDefinition, ScheduleStore } from "@evoloop/contracts/scheduling";
 import { computeDue, validateScheduleRevision } from "./due.js";
 
@@ -6,8 +6,8 @@ export class ScheduleAccessError extends Error {
   constructor(message: string) { super(message); this.name = "ScheduleAccessError"; }
 }
 
-function authorize(principal: Principal, projectId: string, review = false): void {
-  if (!principal.projectIds.includes(projectId) || !principal.permissions.includes("write") || review && !principal.permissions.includes("review")) throw new ScheduleAccessError("schedule project or permission denied");
+function authorize(principal: Principal, projectId: string): void {
+  if (!hasPermission(principal, projectId, "management")) throw new ScheduleAccessError("schedule project or permission denied");
 }
 
 /** Core chooses slots and scope; the store atomically reserves each occurrence and proposed Task. */
@@ -15,14 +15,14 @@ export class SchedulingService {
   constructor(private readonly store: ScheduleStore) {}
 
   async create(principal: Principal, definition: ScheduleDefinition): Promise<ScheduleDefinition> {
-    authorize(principal, definition.projectId, true);
+    authorize(principal, definition.projectId);
     validateScheduleRevision(definition.revision);
     if (definition.version !== 1 || definition.revision.version !== 1 || definition.revision.actorId !== principal.actorId || definition.revision.authorization.authorizedBy !== principal.actorId || definition.revision.projectId !== definition.projectId || definition.revision.scheduleId !== definition.id || definition.revision.id !== definition.currentRevisionId) throw new ScheduleAccessError("invalid new schedule authority or revision");
     return this.store.create(definition);
   }
 
   async revise(principal: Principal, definition: ScheduleDefinition, expectedVersion: number): Promise<ScheduleDefinition> {
-    authorize(principal, definition.projectId, true);
+    authorize(principal, definition.projectId);
     validateScheduleRevision(definition.revision);
     if (definition.version !== expectedVersion + 1 || definition.revision.version !== definition.version || definition.revision.actorId !== principal.actorId || definition.revision.authorization.authorizedBy !== principal.actorId || definition.revision.projectId !== definition.projectId || definition.revision.scheduleId !== definition.id || definition.revision.id !== definition.currentRevisionId) throw new ScheduleAccessError("invalid schedule revision authority");
     return this.store.revise(definition, expectedVersion);

@@ -25,7 +25,7 @@ test("failed or cancelled acceptance is blocked once, reassignable and removable
     try{await admin.query(`DROP SCHEMA "${schema}" CASCADE`)}finally{await admin.end()}
   });
   const projectId=randomUUID(),taskId=randomUUID(),deliveryId=randomUUID();
-  const reviewer:Principal={actorId:"reviewer",projectIds:[projectId],permissions:["read","write","review"]};
+  const reviewer:Principal={actorId:"reviewer",projectIds:[projectId],permissions:["task", "document", "session", "management"], decisions: true};
   const workflow=new WorkflowService({uow:new PostgresUnitOfWork(pool),clock:{now:()=>new Date().toISOString()},
     ids:{next:randomUUID},hasher:{hash:(s:string)=>createHash("sha256").update(s).digest("hex")}});
   const issue=async(command:Record<string,unknown>)=>{

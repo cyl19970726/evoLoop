@@ -8,7 +8,7 @@ import { SchedulingPump, type ScheduleGrant, type TaskTimingGrant } from "../src
 const projectId = randomUUID(), scheduleId = randomUUID(), revisionId = randomUUID();
 const at = "2026-10-20T10:00:00.000Z";
 const grant: ScheduleGrant = { projectId, actorId: "scheduler-owner", scopeId: "scope:daily", roleId: "temporary-role" };
-const credentials: AuthConfig = [{ token: "t".repeat(32), actorId: grant.actorId, projectIds: [projectId], permissions: ["read", "write", "review"] }];
+const credentials: AuthConfig = [{ token: "t".repeat(32), actorId: grant.actorId, projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true }];
 const definition: ScheduleDefinition = {
   projectId, id: scheduleId, version: 1, currentRevisionId: revisionId, state: "active",
   watermarkUtc: "2026-10-20T09:00:00.000Z",
@@ -59,7 +59,7 @@ test("pump reports disabled, lease loss and revoked authority without producing 
   assert.equal((await f.pump.tickOnce()).state, "unavailable");
   f.setWritable(true); f.setGrants([]);
   assert.equal((await f.pump.tickOnce()).state, "no-authority");
-  f.setGrants([grant]); f.setCredentials([{ ...credentials[0]!, permissions: ["read"] }]);
+  f.setGrants([grant]); f.setCredentials([{ ...credentials[0]!, permissions: [], decisions: false }]);
   assert.equal((await f.pump.tickOnce()).state, "no-authority");
   assert.equal(f.created, 0);
 });
@@ -116,15 +116,15 @@ test("Role timing capability works for new Task IDs without authorizing legacy S
   }});
   f.setGrants([]);
   f.setTimingGrants([{projectId,actorId:grant.actorId,roleId:grant.roleId}]);
-  f.setCredentials([{...credentials[0]!,permissions:["read","write","review"]}]);
+  f.setCredentials([{...credentials[0]!,permissions:["task","document","session","management"],decisions:true}]);
   assert.equal((await f.pump.tickOnce()).state,"completed");
   assert.deepEqual(received,["task-timing:*"]);
   assert.equal(f.created,0);
   f.setCredentials([]);
   assert.equal((await f.pump.tickOnce()).state,"no-authority");
-  f.setCredentials([{...credentials[0]!,permissions:["read","write"]}]);
+  f.setCredentials([{...credentials[0]!,permissions:["task","document","session"],decisions:false}]);
   assert.equal((await f.pump.tickOnce()).state,"no-authority");
-  f.setCredentials([{...credentials[0]!,permissions:["read","write","review"]}]);
+  f.setCredentials([{...credentials[0]!,permissions:["task","document","session","management"],decisions:true}]);
   f.setTimingGrants([{projectId:randomUUID(),actorId:grant.actorId,roleId:grant.roleId}]);
   assert.equal((await f.pump.tickOnce()).state,"no-authority");
   f.setTimingGrants([]);

@@ -40,7 +40,7 @@ for (const scenario of ["visible", "failure", "closed", "mine"] as const) test({
     if (url.pathname.startsWith("/api/")) {
       const root = `/api/projects/${projectId}`;
       let value: unknown = { items: [], nextCursor: null }, status = 200;
-      if (url.pathname === "/api/session") value = { principal: { actorId: "reader", projectIds: [projectId], permissions: ["read"] }, capabilities: {} };
+      if (url.pathname === "/api/session") value = { principal: { actorId: "reader", projectIds: [projectId], permissions: [] }, capabilities: {} };
       else if (url.pathname === root) value = { id: projectId, title: "分页回归项目", createdAt: stamp };
       else if (url.pathname === `${root}/tasks`) {
         const cursor = url.searchParams.get("cursor") ?? "first"; cursors.push(cursor);

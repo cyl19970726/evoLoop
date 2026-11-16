@@ -21,7 +21,7 @@ let allowedEfforts: readonly string[] | null = null;
 const workflow = new WorkflowService({ ...base, recoveryAuthority: { canRevise: async () => true, effortAppliesNextTurn: () => nextTurnRuntime, allowedEfforts: () => allowedEfforts } });
 const runtime = new RuntimeWorkflowService(base);
 const p = randomUUID(), role = randomUUID(), roleRev = randomUUID();
-const lead: Principal = { actorId: "lead", projectIds: [p], permissions: ["read", "write", "review"] };
+const lead: Principal = { actorId: "lead", projectIds: [p], permissions: ["task", "document", "session", "management"], decisions: true };
 
 before(async () => {
   await migrate(url!, schema);

@@ -7,7 +7,7 @@ import type { OrdinaryRunSubmissionRecord } from "@evoloop/contracts/ordinary-ru
 import { registerOrdinaryRunSubmissionRoutes } from "../src/ordinary-run-submission/routes.js";
 
 const projectId = randomUUID(), runId = randomUUID();
-const principal: Principal = { actorId: "signer", projectIds: [projectId], permissions: ["read", "write"] };
+const principal: Principal = { actorId: "signer", projectIds: [projectId], permissions: ["task", "document", "session"] };
 const record = { projectId, runId, submittedBy: principal.actorId, state: "sealed",
   terminalRunVersion: 4, deliveryIntent: { technicalResult: "passed" } } as OrdinaryRunSubmissionRecord;
 

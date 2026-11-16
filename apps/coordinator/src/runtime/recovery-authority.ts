@@ -1,4 +1,4 @@
-import type { Principal, RuntimeSessionRecord } from "@evoloop/contracts";
+import { hasDecisionAuthority, mayAccessSession, type Principal, type RuntimeSessionRecord } from "@evoloop/contracts";
 import type { AuthConfig } from "../auth.js";
 import { hasCurrentStudyReviewer } from "../auth.js";
 import type { loadIntegrations } from "../configuration.js";
@@ -9,9 +9,8 @@ export function staticRecoveryAuthority(
   currentIdentity: () => Promise<AuthConfig>,
 ) {
   return { canRevise: async (principal: Principal, session: RuntimeSessionRecord, target: {model:string;sandbox:"danger-full-access";approvalPolicy:"never"}): Promise<boolean> => {
-    if (!principal.actorId || !principal.projectIds.includes(session.projectId) ||
-      !principal.permissions.includes("read") || !principal.permissions.includes("write") ||
-      !principal.permissions.includes("review") || !target.model) return false;
+    if (!principal.actorId || !hasDecisionAuthority(principal, session.projectId, "session") ||
+      !mayAccessSession(principal, session.projectId, session.id) || !target.model) return false;
     const identity=await currentIdentity();
     if (!hasCurrentStudyReviewer(identity, session.projectId, principal.actorId) ||
       !hasCurrentStudyReviewer(identity, session.projectId, session.actorId)) return false;

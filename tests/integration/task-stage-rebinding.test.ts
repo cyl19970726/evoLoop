@@ -20,15 +20,15 @@ test("reviewed-stage Task can be explicitly detached and rebound without changin
   const projectId = randomUUID(), otherProjectId = randomUUID(), taskId = randomUUID();
   const oldStageId = randomUUID(), nextStageId = randomUUID(), proposedStageId = randomUUID(), foreignStageId = randomUUID();
   const goalId = randomUUID(), foreignGoalId = randomUUID();
-  const principal: Principal = { actorId: "owner", projectIds: [projectId, otherProjectId], permissions: ["read", "write", "review"] };
+  const principal: Principal = { actorId: "owner", projectIds: [projectId, otherProjectId], permissions: ["task", "document", "session", "management"], decisions: true };
   const token = randomUUID(), writerToken = randomUUID(), revokedToken = randomUUID();
   const service = new WorkflowService({ uow: new PostgresUnitOfWork(pool),
     clock: { now: () => "2026-10-21T00:00:00.000Z" }, ids: { next: randomUUID },
     hasher: { hash: value => createHash("sha256").update(value).digest("hex") } });
   const app = await buildServer({ service, credentials: [
     { token, ...principal },
-    { token: writerToken, actorId: "writer", projectIds: [projectId], permissions: ["read", "write"] },
-    { token: revokedToken, actorId: principal.actorId, projectIds: [projectId], permissions: ["read", "write"] },
+    { token: writerToken, actorId: "writer", projectIds: [projectId], permissions: ["task", "document", "session"] },
+    { token: revokedToken, actorId: principal.actorId, projectIds: [projectId], permissions: ["task", "document", "session"] },
   ] });
   t.after(async () => {
     await app.close(); await pool.end();

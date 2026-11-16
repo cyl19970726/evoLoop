@@ -19,7 +19,7 @@ const executed: unknown[] = [];
 type Message = { state: string; operationId: string; senderActorId: string; target: { kind: "owned"; sessionId: string };
   context: { taskId: string; taskRevisionId: string } | null; content: string };
 const service = new AcceptanceRelayService({ pool, canWrite: () => true, leaderSession: async () => null, qualify: async () => null, capabilities: async () => [],
-  principals: async () => [{ actorId: "leader", projectIds: [projectId], permissions: ["read", "write", "review"] }],
+  principals: async () => [{ actorId: "leader", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true }],
   workflow: { getRuntimeSession: async () => ({}), execute: async (_p: unknown, command: unknown) => { executed.push(command); },
     getOperation: async (_p: unknown, _project: string, operationId: string) => {
       const m = (await pool.query(`SELECT message_id FROM session_message WHERE project_id=$1 AND operation_id=$2`, [projectId, operationId])).rows[0];

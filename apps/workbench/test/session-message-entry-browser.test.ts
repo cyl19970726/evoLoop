@@ -56,7 +56,7 @@ test("Session message entry distinguishes saving, execution and manual handoff",
     if (url.pathname.startsWith("/api/")) {
       const root = `/api/projects/${projectId}`;
       let value: unknown = { items: [], nextCursor: null }, status = 200;
-      if (url.pathname === "/api/session") value = { principal: { actorId: "reader", projectIds: [projectId], permissions: ["read", "write"] }, capabilities: {} };
+      if (url.pathname === "/api/session") value = { principal: { actorId: "reader", projectIds: [projectId], permissions: ["task", "document", "session"] }, capabilities: {} };
       else if (url.pathname === "/api/commands" && req.method === "POST") {
         let body = ""; for await (const chunk of req) body += String(chunk);
         const command = JSON.parse(body) as { operationId: string; messageId: string; target: unknown; content: string };
@@ -173,7 +173,7 @@ test("the authenticated receiver can record a read while its exact message Turn 
     if (url.pathname === "/__fixture/set") { mode = url.searchParams.get("mode") as typeof mode; res.end("ok"); return; }
     if (url.pathname.startsWith("/api/")) {
       let value: unknown = { items: [], nextCursor: null }, status = 200;
-      if (url.pathname === "/api/session") value = { principal: { actorId: "receiver", projectIds: [projectId], permissions: ["read", "write"] }, capabilities: {} };
+      if (url.pathname === "/api/session") value = { principal: { actorId: "receiver", projectIds: [projectId], permissions: ["task", "document", "session"] }, capabilities: {} };
       else if (url.pathname === root) value = { id: projectId, title: "测试项目", createdAt: stamp };
       else if (url.pathname === `${root}/session-work/${encodeURIComponent(keys.disabled)}`) value = snapshot(keys.disabled, "测试中不派发消息");
       else if (url.pathname === `${root}/session-work/${encodeURIComponent(keys.disabled)}/timeline`) value = timelinePage(keys.disabled, {

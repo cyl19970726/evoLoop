@@ -16,7 +16,7 @@ async function fixture(){
   const session={projectId,id:sessionId,state:'ready',version:3,model:'approved-model',roleId:'role',actorId:'business',nativeThreadId:'native-thread',nativeSessionId:'native-session',cwd:'/isolated',authorizationScope:'read-only-task',sandbox:'read-only',approvalPolicy:'on-request',
     executionProfile:{revision:{projectId,sessionId,revisionId:profileId,version:1,model:'approved-model',sandbox:'read-only',approvalPolicy:'on-request',cwd:'/isolated',authorizationScope:'read-only-task',provenance:'reserved',previousRevisionId:null,operationId:randomUUID(),actorId:'business',reason:'Original registration',evidenceRef:null,createdAt:now},activationState:'active',activeRevisionId:profileId,activationOperationId:null,attemptedAt:null,activationEvidence:null}};
   const source={projectId,id:sourceRunId,sessionId,taskId,taskRevisionId:revisionId,state:'failed',version:4,input:'Exact prior input including any fixed answers',inputHash:hash('Exact prior input including any fixed answers'),evaluationBinding:null};
-  const principal={actorId:'lead',projectIds:[projectId],permissions:['read','write','review']};
+  const principal={actorId:'lead',projectIds:[projectId],permissions:['task','document','session','management'],decisions:true};
   let gate={projectId,sessionId,version:1,phase:'blocked',causeKind:'run',causeId:sourceRunId,causeState:'failed',reason:'Observed native failure',queueId,claimId,retryRunId:null,resumeMessageId:messageId,decisionOperationId:null,updatedAt:now};
   const entry={projectId,queueId,id:entryId,taskId,taskRevisionId:revisionId,sourceInputJson:'',sessionId,roleId:'role',position:0,dependsOn:[],consumerId:'consumer',useRequired:true,releaseRule:'accepted',state:'claimed',holdCode:null,holdReason:null,claimId,version:1};
   const queue={projectId,id:queueId,version:1,adoptedVersion:1,maxRuns:2,reason:'Two tasks',actorId:'lead',entries:[entry]};
@@ -129,7 +129,7 @@ test('bounded recovery observation marks the 21st decision as partial and never 
 
 test("a provider hold refusal is thrown and never journalled, so the same operation ID is evaluated afresh after the release", async () => {
   const projectId = "00000000-0000-4000-8000-0000000000a1", operationId = "00000000-0000-4000-8000-0000000000a2";
-  const reviewer = { actorId: "lead", projectIds: [projectId], permissions: ["read", "write", "review"] as Array<"read" | "write" | "review"> };
+  const reviewer = { actorId: "lead", projectIds: [projectId], permissions: ["task", "document", "session", "management"] as ("task" | "document" | "session" | "management")[], decisions: true };
   const journal = new Map<string, unknown>();
   const { DomainError } = await import("../src/index.ts");
   let refusal = new DomainError("PROVIDER_HELD", "provider paused");
@@ -157,7 +157,7 @@ test("a provider hold refusal is thrown and never journalled, so the same operat
 
 test("a release names its hold, and one Session's failure (domain or not) never rolls back the others; gates closed while reading are picked up", async () => {
   const projectId = "00000000-0000-4000-8000-0000000000c1";
-  const reviewer = { actorId: "lead", projectIds: [projectId], permissions: ["read", "write", "review"] as Array<"read" | "write" | "review"> };
+  const reviewer = { actorId: "lead", projectIds: [projectId], permissions: ["task", "document", "session", "management"] as ("task" | "document" | "session" | "management")[], decisions: true };
   const { WorkflowService, DomainError } = await import("../src/index.ts");
   const hold = { id: "00000000-0000-4000-8000-0000000000c2", version: 4, provider: "codex" as const };
   const sessions = ["s1", "s2", "s3"];

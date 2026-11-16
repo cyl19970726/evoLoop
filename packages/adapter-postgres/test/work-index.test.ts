@@ -8,6 +8,7 @@ import pg from "pg";
 import { WorkflowService } from "@evoloop/core";
 import type { BasisSet, Document, DocumentRevision, Project, Task, TaskRevision } from "@evoloop/contracts";
 import { PostgresUnitOfWork, migrate } from "../src/index.ts";
+import { readWorkBoard } from "../src/work-board.ts";
 import { PgLeaderWorkWriter, leaderWorkTaskFromRow, readLeaderWorkChanges, readLeaderWorkDocuments,
   readLeaderWorkTask, readLeaderWorkTasks } from "../src/work-index.ts";
 
@@ -18,7 +19,7 @@ const pool = new pg.Pool({ connectionString, options: `-c search_path=${schema}`
 const uow = new PostgresUnitOfWork(pool);
 const actor = "work-index-test", now = "2026-10-28T00:00:00.000Z";
 const hash = (value: string) => createHash("sha256").update(value).digest("hex");
-const principal = { actorId: actor, projectIds: [] as string[], permissions: ["read", "write", "review"] as Array<"read" | "write" | "review"> };
+const principal = { actorId: actor, projectIds: [] as string[], permissions: ["task", "document", "session", "management"] as ("task" | "document" | "session" | "management")[], decisions: true };
 
 before(async () => { await migrate(connectionString, schema); });
 after(async () => {
@@ -243,7 +244,7 @@ test("Task.start and Leader plan/review use one project-before-row lock order", 
     hasher: { hash } });
   const writer = new PgLeaderWorkWriter(lockOrderPool);
   const who = { actorId: actor, projectIds: [fixture.project.id],
-    permissions: ["read", "write", "review"] as Array<"read" | "write" | "review"> };
+    permissions: ["task", "document", "session", "management"] as ("task" | "document" | "session" | "management")[], decisions: true };
   try {
     const plan = {
       projectId: fixture.project.id, operationId: randomUUID(), taskId: fixture.dependent.head.id,
@@ -314,7 +315,7 @@ test("Leader review compares the exact per-Task change position read before the 
   const fixture = await seedProject();
   const writer = new PgLeaderWorkWriter(pool);
   const who = { actorId: actor, projectIds: [fixture.project.id],
-    permissions: ["read", "write", "review"] as Array<"read" | "write" | "review"> };
+    permissions: ["task", "document", "session", "management"] as ("task" | "document" | "session" | "management")[], decisions: true };
   const initial = await readLeaderWorkTasks(pool, fixture.project.id, { view: "tasks", limit: 10 });
   const dependentPosition = initial.items.find(item => item.taskId === fixture.dependent.head.id)!.workChangeSequence;
 
@@ -400,7 +401,7 @@ test("direct prerequisite close and reopen invalidate only the dependent review 
   const fixture = await seedProject();
   const writer = new PgLeaderWorkWriter(pool);
   const who = { actorId: actor, projectIds: [fixture.project.id],
-    permissions: ["read", "write", "review"] as Array<"read" | "write" | "review"> };
+    permissions: ["task", "document", "session", "management"] as ("task" | "document" | "session" | "management")[], decisions: true };
   const workflow = new WorkflowService({ uow, clock: { now: () => now }, ids: { next: randomUUID },
     hasher: { hash } });
   const dependentId = fixture.dependent.head.id;
@@ -493,7 +494,7 @@ test("runtime reservation enforces current Task acceptance and invalidates after
   const workflow = new WorkflowService({ uow, clock: { now: () => now }, ids: { next: randomUUID },
     hasher: { hash } });
   const who = { actorId: actor, projectIds: [fixture.project.id],
-    permissions: ["read", "write", "review"] as Array<"read" | "write" | "review"> };
+    permissions: ["task", "document", "session", "management"] as ("task" | "document" | "session" | "management")[], decisions: true };
   const sessionId = randomUUID();
   await uow.transaction(fixture.project.id, async tx => {
     await tx.insertRuntimeSession({ projectId: fixture.project.id, id: sessionId, roleId: actor,
@@ -734,7 +735,7 @@ test("a failed Run from an earlier Task revision does not mark the new revision 
   const workflow = new WorkflowService({ uow, clock: { now: () => now }, ids: { next: randomUUID },
     hasher: { hash } });
   const who = { actorId: actor, projectIds: [fixture.project.id],
-    permissions: ["read", "write", "review"] as Array<"read" | "write" | "review"> };
+    permissions: ["task", "document", "session", "management"] as ("task" | "document" | "session" | "management")[], decisions: true };
   const reopened = await workflow.execute(who, { type: "task.reopen", projectId: fixture.project.id,
     operationId: randomUUID(), taskId: fixture.prerequisite.head.id, expectedVersion: 1,
     reason: "Open a corrected revision" });
@@ -751,7 +752,7 @@ test("closure may advance the Task revision without hiding the Delivery it accep
   const workflow = new WorkflowService({ uow, clock: { now: () => now }, ids: { next: randomUUID },
     hasher: { hash } });
   const who = { actorId: actor, projectIds: [fixture.project.id],
-    permissions: ["read", "write", "review"] as Array<"read" | "write" | "review"> };
+    permissions: ["task", "document", "session", "management"] as ("task" | "document" | "session" | "management")[], decisions: true };
   const sessionId = randomUUID(), runId = randomUUID();
   await uow.transaction(fixture.project.id, async tx => {
     await tx.insertRuntimeSession({ projectId: fixture.project.id, id: sessionId, roleId: actor,
@@ -848,7 +849,7 @@ test("a new Run after an attributed Delivery remains the current attempt", async
   const workflow = new WorkflowService({ uow, clock: { now: () => now }, ids: { next: randomUUID },
     hasher: { hash } });
   const who = { actorId: actor, projectIds: [fixture.project.id],
-    permissions: ["read", "write", "review"] as Array<"read" | "write" | "review"> };
+    permissions: ["task", "document", "session", "management"] as ("task" | "document" | "session" | "management")[], decisions: true };
   const delivered = await workflow.execute(who, { type: "delivery.record", projectId: fixture.project.id,
     operationId: randomUUID(), taskId: fixture.prerequisite.head.id, expectedVersion: 1,
     runId: oldRunId, artifactRef: "fixture://first", artifactRevision: "v1", contentHash: hash("first"),
@@ -1001,7 +1002,7 @@ test("the SQL timing query keeps four reserved Runs through their automatic assi
   const workflow = new WorkflowService({ uow, clock: { now: () => clock }, ids: { next: randomUUID },
     hasher: { hash } });
   const who = { actorId: actor, projectIds: [projectId],
-    permissions: ["read", "write", "review"] as Array<"read" | "write" | "review"> };
+    permissions: ["task", "document", "session", "management"] as ("task" | "document" | "session" | "management")[], decisions: true };
   await uow.transaction(projectId, async tx => {
     await tx.insertRuntimeSession({ projectId, id: sessionId, roleId: actor,
       cwd: "/tmp/leader-work", authorizationScope: "project", model: null, sandbox: "danger-full-access",
@@ -1281,4 +1282,134 @@ test("change sequence allocation waits for the earlier uncommitted project write
     first.release();
     second.release();
   }
+});
+
+/**
+ * Defect b1f5d4c7: a Task whose declared consumer already signed `used` for the current Delivery was still counted as 待验收, with a closed Task as its next
+ * responsibility. Real shape per Task: in_progress, one passed Delivery, the declared consumer's observation, and the Leader's follow-up (waiting_on / release handoff).
+ */
+async function waitFixture(projectId: string, title: string, options: { observation?: "used" | "failed" | null; observer?: string;
+  state?: Task["state"]; waitingOn?: { kind: string; id: string | null } | null; handoff?: Record<string, string> | null } = {}) {
+  const item = task(projectId, title, options.state ?? "in_progress");
+  await uow.transaction(projectId, async tx => {
+    await tx.insertDocument(item.primary.head);
+    await tx.insertDocumentRevision(item.primary.revision);
+    await tx.insertTask(item.head);
+    await tx.insertTaskRevision(item.revision);
+    await tx.insertSealedBasisSet(item.basis);
+  });
+  await pool.query(`INSERT INTO task_proposal(project_id,task_id,task_revision_id,stage_id,consumer,use_required,evidence,stop_condition,created_at)
+    VALUES($1,$2,$3,NULL,'accept-agent',true,'evidence','stop',$4)`, [projectId, item.head.id, item.revision.id, now]);
+  const deliveryId = randomUUID();
+  await pool.query(`INSERT INTO delivery(project_id,delivery_id,task_id,task_revision_id,artifact_ref,artifact_revision,content_hash,technical_result,
+    technical_evidence,reason,actor_id,created_at) VALUES($1,$2,$3,$4,'fixture://pr','r1',$5,'passed','fixture','fixture',$6,$7)`,
+    [projectId, deliveryId, item.head.id, item.revision.id, hash(title), actor, now]);
+  if (options.observation) await pool.query(`INSERT INTO consumer_observation(project_id,observation_id,task_id,delivery_id,observer,observer_kind,result,
+    evidence,reason,actor_id,created_at) VALUES($1,$2,$3,$4,$5,'agent',$6,'checked','checked',$5,$7)`,
+    [projectId, randomUUID(), item.head.id, deliveryId, options.observer ?? "accept-agent", options.observation, now]);
+  if (options.waitingOn || options.handoff) await pool.query(`INSERT INTO task_attention_follow_up(project_id,task_id,task_revision_id,version,waiting_on,
+    decision,action_taken,release_handoff,actor_id,reason,updated_at) VALUES($1,$2,$3,1,$4::jsonb,'waiting','waiting',$5::jsonb,$6,'fixture',$7)`,
+    [projectId, item.head.id, item.revision.id, options.waitingOn ? JSON.stringify(options.waitingOn) : null,
+      options.handoff ? JSON.stringify(options.handoff) : null, actor, now]);
+  return item;
+}
+
+test("a Task whose declared consumer signed used leaves 待验收 for exactly one of 等关闭／等发布／等前置, counts and rows from the same classification", async () => {
+  const project: Project = { id: randomUUID(), title: "Used waits", createdAt: now };
+  await uow.transaction(project.id, async tx => { await tx.insertProject(project); });
+  const open = await waitFixture(project.id, "Open prerequisite", { observation: null });
+  const closedPrerequisite = await waitFixture(project.id, "Closed prerequisite", { state: "done" });
+  const waitingAcceptance = await waitFixture(project.id, "No conclusion yet", { observation: null });
+  const failed = await waitFixture(project.id, "Consumer failed", { observation: "failed" });
+  const onlyOtherSigned = await waitFixture(project.id, "Someone else signed", { observation: "used", observer: "not-the-consumer" });
+  const close = await waitFixture(project.id, "Used, waiting for close", { observation: "used" });
+  const closeAfterClosed = await waitFixture(project.id, "Used, prerequisite closed", { observation: "used",
+    waitingOn: { kind: "task", id: closedPrerequisite.head.id } });
+  const prerequisite = await waitFixture(project.id, "Used, prerequisite open", { observation: "used",
+    waitingOn: { kind: "task", id: open.head.id } });
+  const release = await waitFixture(project.id, "Used, release handoff", { observation: "used",
+    handoff: { recipient: "requirements", artifactRef: "fixture://release", note: "ready", readyForPublicationAt: now } });
+  const publisherWait = await waitFixture(project.id, "Used, publisher wait", { observation: "used", waitingOn: { kind: "publisher", id: "requirements" } });
+  const namedCloser = await waitFixture(project.id, "Used, leader closes", { observation: "used", waitingOn: { kind: "leader", id: "leader-codex-agent" } });
+  // The closure itself: a closed prerequisite needs a closure row at its current revision to count as satisfied elsewhere, but the wait only needs state done.
+
+  const page = await readLeaderWorkTasks(pool, project.id, { view: "tasks", limit: 100 });
+  const phase = (item: { head: Task }) => page.items.find(x => x.taskId === item.head.id)!;
+  // No conclusion (or someone other than the declared consumer signed): still waiting for acceptance, never hidden.
+  assert.equal(phase(waitingAcceptance).phase, "awaiting_acceptance");
+  assert.equal(phase(onlyOtherSigned).phase, "awaiting_acceptance");
+  assert.equal(phase(open).phase, "awaiting_acceptance");
+  assert.equal(phase(failed).phase, "rework", "a failed conclusion is rework, not a wait");
+  // Signed used: out of 待验收, and each in exactly one other class with its actual responsible party.
+  assert.equal(phase(close).phase, "awaiting_close");
+  assert.deepEqual(phase(close).responsible, { kind: "leader", id: null, label: "负责关闭的 Leader（未登记具体身份）" });
+  assert.equal(phase(namedCloser).phase, "awaiting_close");
+  assert.equal(phase(namedCloser).responsible.id, "leader-codex-agent");
+  assert.equal(phase(prerequisite).phase, "awaiting_prerequisite");
+  assert.deepEqual([phase(prerequisite).responsible.kind, phase(prerequisite).responsible.id], ["task", open.head.id]);
+  assert.match(phase(prerequisite).responsible.label, /前置任务 .*（in_progress）/, "the prerequisite's current state is shown");
+  assert.equal(phase(release).phase, "awaiting_release");
+  assert.deepEqual([phase(release).responsible.kind, phase(release).responsible.id], ["publisher", "requirements"]);
+  assert.equal(phase(publisherWait).phase, "awaiting_release");
+  assert.deepEqual([phase(publisherWait).responsible.kind, phase(publisherWait).responsible.id], ["publisher", "requirements"]);
+  // The prerequisite closed: it is no longer anyone's next move, in the phase, the responsible party and the timing's waitingFor alike.
+  assert.equal(phase(closeAfterClosed).phase, "awaiting_close");
+  assert.notEqual(phase(closeAfterClosed).responsible.id, closedPrerequisite.head.id);
+  assert.deepEqual(phase(closeAfterClosed).responsible.kind, "leader");
+  assert.notEqual(phase(closeAfterClosed).timing.current.waitingFor.kind, "task");
+  assert.deepEqual(phase(prerequisite).waitingTask, { taskId: open.head.id, state: "in_progress" }, "the prerequisite's id and current state are structured, not only in a label");
+  assert.equal(phase(close).waitingTask, null);
+  // A conclusion is not closure: all of them are still open Tasks.
+  for (const item of [close, closeAfterClosed, prerequisite, release, publisherWait, namedCloser]) assert.equal(phase(item).taskState, "in_progress");
+  // The counts and the rows come from one classification.
+  const byPhase = new Map<string, number>();
+  for (const item of page.items) byPhase.set(item.phase, (byPhase.get(item.phase) ?? 0) + 1);
+  for (const name of ["awaiting_acceptance", "awaiting_close", "awaiting_release", "awaiting_prerequisite", "rework"])
+    assert.equal(page.counts[name], byPhase.get(name) ?? 0, `${name} count equals its rows`);
+  assert.deepEqual([page.counts.awaiting_acceptance, page.counts.awaiting_close, page.counts.awaiting_release, page.counts.awaiting_prerequisite],
+    [3, 3, 2, 1]);
+  assert.equal(Object.entries(page.counts).filter(([key]) => !["total", "review_acknowledged", "review_deferred"].includes(key))
+    .reduce((sum, [, value]) => sum + value, 0), page.total, "the classes are mutually exclusive and cover every Task");
+});
+
+/**
+ * Defect 422d95ce: the work board's (and the flow view's) 待验收 counted acceptance relays in pending/linked, capped at 100. `linked` only means the arrangement's message is
+ * saved and bound; nothing ends a relay when its Task closes, so 212 of 251 formal rows were `linked` on closed Tasks and the number sat at the cap.
+ */
+test("work board 待验收 is the Leader index's awaiting_acceptance, uncapped; relays still waiting for their recipient are counted under their own name", async () => {
+  const project: Project = { id: randomUUID(), title: "Board count", createdAt: now };
+  await uow.transaction(project.id, async tx => { await tx.insertProject(project); });
+  const relay = async (item: { head: Task; revision: TaskRevision }, state: string, deliveryOf: string) => {
+    await pool.query(`INSERT INTO task_acceptance_relay(project_id,relay_id,operation_id,request_hash,task_id,task_revision_id,delivery_id,stage,scope_key,scope_description,
+      publication_ref,reason,mode,recipient_actor_id,state,arranged_by,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,'candidate',$8,'scope',NULL,'fixture','human',
+      'named-human',$9,'leader',$10,$10)`, [project.id, randomUUID(), randomUUID(), hash(randomUUID()), item.head.id, item.revision.id, deliveryOf, `scope-${randomUUID()}`, state, now]);
+  };
+  const deliveryOf = async (item: { head: Task }) => (await pool.query("SELECT delivery_id FROM delivery WHERE project_id=$1 AND task_id=$2", [project.id, item.head.id])).rows[0].delivery_id as string;
+  const noConclusionLinked = await waitFixture(project.id, "No conclusion, relay linked", { observation: null });
+  const noConclusionPending = await waitFixture(project.id, "No conclusion, relay pending", { observation: null });
+  const noConclusionReleased = await waitFixture(project.id, "No conclusion, relay released", { observation: null });
+  const noRelay = await waitFixture(project.id, "No conclusion, no relay", { observation: null });
+  const usedWaitingRelease = await waitFixture(project.id, "Used, waiting for release, relay linked", { observation: "used",
+    handoff: { recipient: "requirements", artifactRef: "fixture://release", note: "ready", readyForPublicationAt: now } });
+  await relay(noConclusionLinked, "linked", await deliveryOf(noConclusionLinked));
+  await relay(noConclusionPending, "pending", await deliveryOf(noConclusionPending));
+  await relay(noConclusionReleased, "released", await deliveryOf(noConclusionReleased));
+  await relay(usedWaitingRelease, "linked", await deliveryOf(usedWaitingRelease));
+  // 125 relays that stayed `linked` after their Task closed: more than the old LIMIT 100, and none of them is waiting for acceptance.
+  for (let n = 0; n < 125; n++) {
+    const closed = await waitFixture(project.id, `Closed ${n}`, { state: "done", observation: "used" });
+    await relay(closed, "linked", await deliveryOf(closed));
+  }
+
+  const board = await readWorkBoard(pool, project.id);
+  const list = await readLeaderWorkTasks(pool, project.id, { view: "tasks", limit: 100 });
+  // Four open Tasks have no conclusion (whatever their relay says); the used Task waiting for release, and every closed Task, are not 待验收.
+  assert.equal(board.graph.counts.pendingAcceptance, 4);
+  assert.equal(board.graph.counts.pendingAcceptance, list.counts.awaiting_acceptance, "the board and the Task list count the same Tasks");
+  assert.equal(list.items.filter(item => item.phase === "awaiting_acceptance").length, 4);
+  assert.equal(list.counts.awaiting_release, 1);
+  // Relays still waiting for their recipient: open Task, pending or linked, no observation linked. Closed Tasks' linked rows and the released one are not.
+  assert.equal(board.graph.counts.acceptanceRelaysUnanswered, 3);
+  assert.equal(board.graph.inFlight.filter(item => item.kind === "acceptance").length, 3, "closed Tasks' relays are not in flight");
+  assert.notEqual(noRelay.head.id, usedWaitingRelease.head.id);
 });

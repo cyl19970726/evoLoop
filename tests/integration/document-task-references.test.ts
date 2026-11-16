@@ -25,9 +25,9 @@ test("document reverse Task lookup returns current exact references in UUID page
   await migrate(database!, schema);
   const pool = new pg.Pool({ connectionString: database, options: `-c search_path=${schema}` });
   const projectId = randomUUID(), sourceDocumentId = randomUUID();
-  const owner: Principal = { actorId: "document-reference-owner", projectIds: [projectId], permissions: ["read", "write", "review"] };
-  const readOnly: Principal = { actorId: "document-reference-reader", projectIds: [projectId], permissions: ["read"] };
-  const writer: Principal = { actorId: "document-reference-writer", projectIds: [projectId], permissions: ["write"] };
+  const owner: Principal = { actorId: "document-reference-owner", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true };
+  const readOnly: Principal = { actorId: "document-reference-reader", projectIds: [projectId], permissions: [] };
+  const writer: Principal = { actorId: "document-reference-writer", projectIds: [projectId], permissions: ["task", "document", "session"] };
   const ownerToken = randomUUID() + randomUUID(), readerToken = randomUUID() + randomUUID(), writerToken = randomUUID() + randomUUID();
   const service = new WorkflowService({ uow: new PostgresUnitOfWork(pool),
     clock: { now: () => new Date().toISOString() }, ids: { next: randomUUID },
@@ -118,8 +118,8 @@ test("document reverse Task lookup returns current exact references in UUID page
   assert.equal(wrongProject.statusCode, 403);
   const missingDocument = await app.inject({ url: endpoint(randomUUID()), headers });
   assert.equal(missingDocument.statusCode, 404);
-  const noRead = await app.inject({ url: endpoint(sourceDocumentId), headers: { authorization: `Bearer ${writerToken}` } });
-  assert.equal(noRead.statusCode, 403);
+  const memberRead = await app.inject({ url: endpoint(sourceDocumentId), headers: { authorization: `Bearer ${writerToken}` } });
+  assert.equal(memberRead.statusCode, 200, "project membership is enough to read reverse references");
   const isolatedService = new WorkflowService({
     uow: { read: (id, action) => new PostgresUnitOfWork(pool).read(id, reader => action(new Proxy(reader, {
       get(target, key, receiver) { return key === "listDocumentTaskReferences" ? undefined : Reflect.get(target, key, receiver); },

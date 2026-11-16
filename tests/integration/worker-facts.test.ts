@@ -31,7 +31,7 @@ const schema=`el_workerfacts_${randomUUID().replaceAll("-","").slice(0,16)}`;
 const pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`});
 const projectId=randomUUID(),owner="fact-owner",worker="worker-fact-business",cognitiveActor="worker-fact-cognition";
 const businessRole=fixtureRoleId("fact-business"),cognitiveRole=fixtureRoleId("fact-cognition");
-const principal=(actorId:string)=>({actorId,projectIds:[projectId],permissions:["read","write","review"] as Array<"read"|"write"|"review">});
+const principal=(actorId:string)=>({actorId,projectIds:[projectId],permissions:["task", "document", "session", "management"], decisions: true});
 const hash=(value:string)=>createHash("sha256").update(value).digest("hex");
 const uow=new PostgresUnitOfWork(pool);
 const workflow=new WorkflowService({uow,clock:{now:()=>new Date().toISOString()},ids:{next:randomUUID},hasher:{hash}});

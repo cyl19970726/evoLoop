@@ -21,8 +21,8 @@ test("a reviewed todo update seals a replacement basis and preserves old receipt
     try { await admin.query(`DROP SCHEMA "${schema}" CASCADE`); } finally { await admin.end(); } });
   const projectId = randomUUID(), taskId = randomUUID(), oldDocId = randomUUID(), newDocId = randomUUID();
   const outsiderDocId = randomUUID(), draftDocId = randomUUID();
-  const owner: Principal = { actorId: "fixture-owner", projectIds: [projectId], permissions: ["read", "write", "review"] };
-  const writer: Principal = { ...owner, actorId: "fixture-writer", permissions: ["read", "write"] };
+  const owner: Principal = { actorId: "fixture-owner", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true };
+  const writer: Principal = { ...owner, actorId: "fixture-writer", permissions: ["task", "document", "session"], decisions: false };
   const service = new WorkflowService({ uow: new PostgresUnitOfWork(pool), clock: { now: () => "2026-10-24T04:00:00.000Z" },
     ids: { next: randomUUID }, hasher: { hash: value => createHash("sha256").update(value).digest("hex") } });
   const send = (principal: Principal, body: Record<string, unknown>, operationId = randomUUID()) =>
@@ -57,7 +57,7 @@ test("a reviewed todo update seals a replacement basis and preserves old receipt
     expectedVersion: reopened.version, title: before.task.title, content: before.task.content,
     acceptance: before.task.acceptance, owner: before.task.owner, reason: "Select exact report", ...fields });
   await assert.rejects(() => send(writer, update({ basis: [] })), (e: unknown) => (e as {code?: string}).code === "FORBIDDEN");
-  await assert.rejects(() => send({ ...owner, permissions: ["write", "review"] }, update({ basis: [] })),
+  await assert.rejects(() => send({ ...owner, permissions: ["management"], decisions: true }, update({ basis: [] })),
     (e: unknown) => (e as {code?: string}).code === "FORBIDDEN");
   rejected(await send(owner, update({ retentions: [] })), "INVALID_RETENTION");
   rejected(await send(owner, update({ basis: [{ documentId: outsiderDocId, revisionId: outsiderRevision }] })), "UNLINKED_DOCUMENT");

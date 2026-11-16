@@ -46,7 +46,7 @@ test("managed agents in 分工与运行 keep Role names, full grants and activat
     if (url.pathname==="/__fixture/reads") {res.end(JSON.stringify(reads));return;}
     if (url.pathname.startsWith("/api/")) {
       const p=`/api/projects/${projectId}`;let value:unknown={items:[],nextCursor:null},status=200;
-      if (url.pathname==="/api/session") value={principal:{actorId:"reader",projectIds:[projectId],permissions:["read","write","review"]},capabilities:{}};
+      if (url.pathname==="/api/session") value={principal:{actorId:"reader",projectIds:[projectId],permissions:["task","document","session","management"],decisions:true},capabilities:{}};
       else if (url.pathname==="/api/commands" && req.method==="POST") {
         let body="";for await(const chunk of req)body+=String(chunk);
         reservedCommand=JSON.parse(body) as Record<string,unknown>;

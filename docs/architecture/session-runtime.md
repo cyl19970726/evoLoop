@@ -4,6 +4,8 @@
 
 本页只写设计和已合入的实现。“已实现（合入）”、“新实例上实际配置并用过”、“已验收”是三件不同的事：本页每一项都写明合入它的 PR 与 schema；新实例上打开了哪些配置、用过什么、验收到哪一步，以[阶段路线的当前基线](../roadmap.md#当前基线)为准。Codex 协议握手、版本指纹和桌面宿主的细节见[Codex 接入](codex-integration.md)。
 
+**读取边界（DEC-048）。** 项目成员可以读取 Session 目录、存在与状态、一般对话和项目只读视图，用来判断谁在做什么。完整原生历史、Turn/Item、工具调用输入与输出、工作轨迹和思考内容另需 `session` 类别，并受凭据的 `sessionIds` 范围限制：只限 Session X 的身份读不到 Session Y 的完整记录，但仍能看到 Y 的存在与状态。只有 `management` 类别、没有 `session` 类别的身份可以管理项目和角色，不能借管理权限读完整原生记录。
+
 ## 1. 四个对象
 
 | 对象 | 是什么 | 记录在哪里 |
@@ -24,7 +26,7 @@
 - **预检失败不关门（迁移 083）**：Run 在发出前就失败（`requested → failed`，没有原生 Turn、没有队列认领、门是 open），模型从未启动，没有未决的事，所以门保持 open，排队的消息照常启动、下一个 Run 照常预留，不需要 `runtime.session.recovery.resume`。原生拒绝（发出之后）、结果未知、已有原生 Turn 的失败、已在认领中的 Run 仍然关门，须显式 resume。可重复的受控验收路径：对一次性 PostgreSQL（做法见[磁盘回收与测试实例约定](../development/local-run.md#磁盘回收与测试实例约定)）运行 `TEST_DATABASE_URL=… node --import tsx scripts/ops/preflight-gate-acceptance.ts [--out FILE]`，它用真实服务、迁移和消息泵（只有原生运行时是脚本化的）依次构造“预检失败后排队消息自动继续”和“真实失败仍关门、显式 resume 后继续”，输出 Run、消息、恢复门的前后版本和各命令回执；它不接触正式实例，也不需要在生产里加测试后门。
 - **原生失败类别**：Turn 失败时，适配器把原生错误归为 `quota_exhausted`（额度/余额，HTTP 402）、`authentication_failed`、`context_window_exceeded`、`connection_lost`、`provider_unavailable`、`rate_limited` 等，保存在消息处理记录（`failure_category`，迁移 084）并随恢复门读出；工作台把它们归为四类显示：额度/鉴权（运行受阻，需账户使用者充值或重新授权）、上下文超长、连接中断、其他。类别只说明原因，不改变单个恢复门的决定规则。**分类只认结构化事实**：Codex 的 `codexErrorInfo` 变体（`usageLimitExceeded`、`unauthorized`、各变体带的 `httpStatusCode`）、JSON 包里的 `status` 与错误 `type`/`code`（如 `insufficient_quota`），以及**单独成行**的 “402 Payment Required” “401 Unauthorized” 这类状态行；Claude 一侧用 SDK 的错误类和 `api_error_status`（数字）。文字里任何位置出现的 “401”“402” 不算状态（例如限流提示里的 “Requested 401.”、请求编号里的 402）。429 先于额度关键词判断，只有提供方用 `insufficient_quota` 之类的代码明说余额用尽才算额度；403 是“请求被拒绝”，不触发暂停。
 - **提供方暂停（迁移 085）**：消息 Turn 以 `quota_exhausted` 或 `authentication_failed` 失败时，同一提供方（Codex / Claude）开一条 `runtime_provider_hold`（每个提供方至多一条生效），因为该提供方的每个 Session 都会以同样原因失败。暂停期间该提供方的新 Run 预留与新消息启动一律在启动检查处被拒（`PROVIDER_HELD`）：消息保持排队、写明阻塞原因，不失败、不逐个关恢复门；**被暂停拒绝的命令不写入操作日志**（`WorkflowService.execute` 直接抛出 `PROVIDER_HELD`，不保存为“已拒绝”的结果），所以带固定操作编号的常驻队列认领、编排派发和 Session 队伍的步骤在放行后用同一个编号重新判定，而不是永远重放那次拒绝；这些泵在暂停期间只是等待，不记日志、不挂起条目；其他提供方与其他错误类别（上下文超长、连接断开、其他）不受影响。额度恢复后，复核者提交一次 `runtime.providerHold.release`：解除暂停，并把被该类失败关闭的各 Session 的恢复门逐个经审计过的恢复路径放行（每个 Session 各留一条恢复决定），做不到的 Session 记入 `release_summary.skipped` 并保持关闭，不拖累其他。读取：`GET /api/projects/:id/runtime/provider-holds`。消息路径和 **Task Run 路径**的失败都会触发：Run 以 `quota_exhausted` 或 `authentication_failed` 失败时，类别记在 `runtime_run.failure_category`（迁移 094），同一提供方开暂停；暂停期间其他 Run 保持 `requested`（`beginDispatch` 被拒后什么也不保存），不失败、不逐个关恢复门；放行时因 Run 失败而关闭的恢复门同样经审计过的恢复路径放行（带未释放队列认领、必须显式重试的 Run 记入 `skipped`，由各自的决定处理）。恢复面板对 Run 失败也显示四类说明。**放行命令必须带暂停编号 `holdId`**：暂停被放行后又新开的暂停编号不同，旧命令被拒绝（`PROVIDER_HOLD_CHANGED`），不会放掉没人看过的新暂停。放行时每个 Session 的恢复在各自的保存点里执行，任何错误（含数据库错误）只记入该 Session 的 `skipped`，不让整次放行回滚；列表读取之后才被该类失败关闭的门，在放行前再读一次（最多三轮）补上。**即时输入**：暂停期间 Session 空闲时不能直启（能力查询答 `PROVIDER_HELD`，提交被拒），文字改存为普通排队消息，放行后按顺序处理；补入正在运行的 Turn 不受影响。工作台的“运行受阻”横幅列出受影响的会话；读不到暂停列表时写“暂时读不到，这不表示没有暂停”，并把服务端 5xx 与连接中断分开说明。
-- **队列控制者**：登记为某个常驻队列负责人的身份，只有它能对队列里失败的 Run 发起重试。
+- **队列控制者**：登记为某个常驻队列负责人的身份，只有它能对队列里失败的 Run 发起重试。控制者以 `management` 与决定权创建、采纳并推进队列；成功 `queue.claim` 内部的 Task 协作通道沿用同一决定权，不隐含要求 `task` 类别。只有 `management`、没有决定权的身份仍在 `queue.create`、`queue.adopt` 或 `queue.claim` 前被拒，且不留下队列、条目、assignment、Run 或确认。
 - **工作轨迹**：一次 Run 在原生会话里的工具调用和输出记录；**连续工作区**：按时间顺序阅读一个 Session 全部历史的视图。
 
 一个协调服务可以同时驱动两种运行时。私有运行配置的 `runtime.providers` 列出要驱动的运行时，`runtime.provider` 是尚未绑定的 Role 首次预留 Session 时采用的默认值。每个 Session 一直由创建它的运行时驱动，路由按原生绑定的归属决定（`apps/coordinator/src/runtime/routed.ts`）。没有列入 `providers` 的运行时，它的 Session 仍可读取，但不会被驱动。
@@ -68,12 +70,13 @@ stateDiagram-v2
 每个常驻业务 Session 可有一条**队伍**（`session_line`、`session_line_entry`，迁移 087），按 Leader 派发的先后顺序，做完一个再接下一个。它是新的小机制，现有的批量常驻队列（027）原样不动。
 
 - **项的状态**：排队中、挂起、启动中、已开始、已撤下。进行中的三种状态在 `(project_id, task_id)` 上有部分唯一索引，同一个 Task 不能同时排在两处；已开始的项不占索引，返工可以再排。
-- **命令**（都要 review 权限）：`line.append` 追加到队尾；`line.move` 只前移或后移一步，不提交整列顺序；`line.remove` 撤下；`line.resume` 把挂起的项放回排队。`line.begin`、`line.advance`、`line.started`、`line.suspend`、`line.withdrawReturned` 记录队伍调度程序的每一步。
+- **命令**（都要 `management` 类别）：`line.append` 追加到队尾；`line.move` 只前移或后移一步，不提交整列顺序；`line.remove` 撤下；`line.resume` 把挂起的项放回排队。`line.begin`、`line.advance`、`line.started`、`line.suspend`、`line.withdrawReturned` 记录队伍调度程序的每一步。
 - **控制者不排进自己的 Session**：追加前按队伍确认消息接收者的同一套解析取 Session 的业务身份（Session 自己的 `runtime.materialCli` 精确条目优先，Role 级只在唯一 Session 时使用），与队伍控制者比较；相等时拒绝为 `SELF_SESSION_LINE_FORBIDDEN`，说明“自己的 Task 直接执行，不经队伍”，且不写队伍、分派、确认消息、assignment 或 Run。**不能把 `runtime_session.actor_id`（创建者）当成业务身份**：同一个身份可以创建别人的正常开发 Session，Leader 自己的 Session 也可能由 `target-owner` 创建。定时直派使用同一业务身份判据，遇到这样的候选 Session 不追加，按现有规则退回 Leader，分发记录写 `NOT_AVAILABLE:CONTROLLER_SESSION`。
+- **交付后不再从外部开一轮**：当前 Task 修订已有未取代 Delivery，或已有 requested/dispatching/running/unknown/completed Run 时，`line.append`、`task.assignment.set`、外部 `runtime.run.reserve` 都返回 `TASK_ALREADY_DELIVERED`，消息带 Task 修订及原 Delivery/Run 引用，且不写队伍项、assignment、确认消息或 Run。failed/interrupted 且无 Delivery 的 Run 仍可正常重试。声明的消费者对最新 Delivery 记录 `failed` 或 `notUsed` 后，服务端只为原 Delivery 建一条 `source=rework` 队伍项；只有该项登记的精确内部操作可继续，外部三入口仍拒绝，完成后必须产生新 Delivery。冻结评价尝试和已核对固定答复的 Task 问答续轮保留各自既有受控路径。详见迁移 113 与接口合同。
 - **防止绕过**：排队、挂起或启动中的 Task，在 `task.start`、`runtime.run.reserve`、`task.assignment.set` 与 `task.assignment.release` 上被拒（`QUEUED_IN_SESSION_LINE`）。例外只有这一项自己登记的操作 ID：开始前的分派、开始 Task、开始后的分派、预留 Run，且仅在“启动中”时有效。要另行安排，先撤下。
 - **轮到时**：Session 没有未结束的 Run、没有处理中的消息、也没有比这一项更早排队的未处理消息（谁先到谁先）时，队伍调度程序对排头一项依次做：①`task.assignment.set` 把 Task 分派给这个 Session 的业务身份，并发一条带固定 Task 修订的执行确认请求消息；②等 Session 用扩展后的 `task.assignment.acknowledge` 确认（`verdict=confirm`、`plan`、`expectedRevisionId`）或退回（`verdict=return`、`missing`）；③确认后 `task.start`、在开始后的修订上再次 `task.assignment.set`、普通的 `runtime.run.reserve`，记下 Run。每一步的操作 ID 由“队伍项 + 第几次尝试 + 重试次数”决定，重放安全。消息一侧同样让位：比某个排队或启动中的队伍项更晚到的消息，消息泵暂不处理（该项自己的确认请求除外），两边都不饿死。容量视图（`work acceptance`）把 `lineQueued`（排队中、挂起的项）与 `lineStarting`（正在启动，占用 Session）分开：排队项不会让 Session 判为没空，队伍在开始前写的分派也不算未完成分派。
 - **重试封顶与临时受阻**：“还在忙”类拒绝（Session 忙、消息忙、版本冲突）按退避重试（默认 2 秒起每次加倍、上限 1 分钟），同一步最多重试 5 次，超过即挂起（`RETRY_LIMIT`，写明最后一次拒绝的原因，`entry.suspended`，`level: immediate`），不会每次轮询都写一条 `entry.retried`；恢复闸门被拦（`RECOVERY_BLOCKED`）自己不会放开，不重试，直接挂起。等待确认时，确认请求消息的 `blockedReason` 以 `SESSION_INPUT_BUSY` 开头表示被另一次原生送入暂挂，会自行放开，队伍项继续等；其他原因仍按 `MESSAGE_UNDELIVERED` 挂起。开 Run 前对已开始（`in_progress`）和未开始的 Task 同样复核“确认的修订等于当前修订”，队伍自己的 `task.start` 产生的新修订不算改动；不一致按 `CONFIRMATION_STALE` 挂起且不开 Run。调度程序每轮只读未结束的项（排队、挂起、进行中，以及已开始但还没记 Run 结束的项），历史项不再每 2 秒全部读一遍。
-- **受阻与退回**：任何一步被拒且不是“还在忙”（如依据待复核、授权缺失、没有业务身份，或同一 Role 的多个 Session 里这个 Session 没有自己的身份配置——接收者只取该 Session 自己的签署身份，不按 Role 猜，见[运行接线手册](../development/runtime-operations.md)），这一项在写任何 assignment、确认请求或 Run 之前挂起并写明原因（点名该 Session），写一条 `entry.suspended` 事件（`level: immediate`），后面的项照常往前走。被退回的项撤出队伍，Task 保持未开始、回到作者那里，写 `entry.returned` 事件（`level: summary`）。事件进入有序的 `session_line_event`，供调度板（Q2）读取；通知分级（W5）上线前，这些事件还没有被送成通知。
+- **受阻与退回**：任何一步被拒且不是“还在忙”（如依据待复核、授权缺失、没有业务身份，或同一 Role 的多个 Session 里这个 Session 没有自己的身份配置——接收者只取该 Session 自己的签署身份，不按 Role 猜，见[运行接线手册](../development/runtime-operations.md)），这一项在写任何 assignment、确认请求或 Run 之前挂起并写明原因（点名该 Session），写一条 `entry.suspended` 事件（`level: immediate`），后面的项照常往前走。被退回的项撤出队伍，Task 保持未开始、回到作者那里，写 `entry.returned` 事件（`level: summary`）。事件进入有序的 `session_line_event`，供调度板（Q2）读取。迁移 106 的代码把挂起与退回接成“立即级 / 汇总级”；正式实例已读回 2 条队伍挂起通知，退回通知为 0 条，所以“退回→汇总级”目前只有代码与设计依据，尚无正式样本。
 - **重试与重放**：被拒的结果会记进操作记录，同一操作 ID 重放只会拿回同一个拒绝。所以只表示“还在忙”的拒绝（`SESSION_BUSY`、`SESSION_MESSAGE_BUSY`、`VERSION_CONFLICT`、`RECOVERY_BLOCKED`）由 `line.retry` 登记一组新的操作 ID（由项、尝试次数和重试次数决定）后再试；其他拒绝挂起。动手前先查已发生的事实：分派已是当前修订就不再分派，确认请求消息已在就不再发，确定的 Run ID 已存在就只补记 `line.started`，所以崩溃或丢回复后不会开第二个 Run。
 - **确认的等待与换尝试**：等待确认时，不带结论的普通 `task.assignment.acknowledge` 被拒（`CONFIRMATION_VERDICT_REQUIRED`）；确认请求消息失败、被取消或受阻，挂起为 `MESSAGE_UNDELIVERED`；超过确认期限（默认 1 小时）挂起为 `CONFIRMATION_TIMEOUT`。`line.resume` 开始第 2 次尝试时，同一事务把第 1 次仍为 `queued` 的确认请求改为 `cancelled`，原因以 `SESSION_LINE_ATTEMPT_SUPERSEDED` 开头，并在 `entry.resumed` 事件里记下该消息；新尝试另发自己的确认请求。`task.start` 前要求确认记录的 `expectedRevisionId` 等于 Task 当前修订，否则不开始、挂起为 `CONFIRMATION_STALE`（数据库守卫同样拒绝，`LINE_CONFIRMATION_STALE`）。各项登记的操作 ID 只在自己的步骤里豁免。
 - **撤下**：没有为该项预留 Run 时，停在 start 步骤的项也可以撤下。
@@ -85,7 +88,7 @@ stateDiagram-v2
 
 停止请求和实际停止是两件事。Codex 调用 `turn/interrupt` 后继续等最终的 `turn/completed`；Claude 向本 Turn 的进程发中断，10 秒内没有回应就终止它。停止请求已收到，不等于工作已经停下，也不等于副作用没有发生。PR #184 增加了消息的中断、人工停止与启动前预检（schema 048–050）。
 
-**请求停止一个 Run（DEC-043，迁移 078）。** 业务 Run 的范围变了、不再需要时，有 review 权限且持有该 Session 精确执行授权的身份提交 `runtime.run.stop`（带 Run 的当前版本和理由）。它只在 Run 上记一个**停止标记**（时间、理由、请求人，写入后不能改也不能撤），**不新增 Run 状态**。按 Run 当时的状态处理：还是“已请求”的直接判失败、不再派发；已有 Turn 的沿用现有中断路径，由 runner 调适配器中断，终态仍以运行时观察为准；正处于“派发中”、还没有 Turn 的不判失败（原生启动可能已经发出），标记保留，等 Turn 绑定时立刻中断。同一事务里：已签但未封存（`submitted`、`blocked`）的提交意图作废为 `rejected: RUN_STOPPED`；该 Session 里与这个 Task 相关、还在排队的消息的阻塞原因标成“被取代”（消息本身仍由发送人决定取消或重发）。此后，数据库触发器拒绝任何引用该 Run 的新提交和交付，也拒绝在这个 Task 上还有未结束的已停止 Run 时不带 Run 的交付；已作废的意图对原操作 ID 重放和新操作 ID 都返回同一个 `RUN_STOPPED`；封存者遇到已停止的 Run 一律不封存。已停止 Run 的失败或中断**不会关闭恢复门**（门原本开着就保持开着），也不产生“结束未提交”“提交受阻”这两类 Leader 通知，只留一条 `run.stopRequested` 运行事件；Run 终态之后，同一个 Session 立刻能接新的 Run，Task 也可以重开、修订、重新派发。**已停止的 Run 先成为 `unknown`、之后读回为 `interrupted`、`failed` 或 `completed` 时**，被它关闭的恢复门自动打开（参照 059 对已核实直接输入的做法，只开这一个 gate，队列认领持有的门不动）。已停止的 Run 若持有队列认领，失败/中断照常关门，由队列的重试决定处理。被取代的消息有持久标记（`superseded_at`，迁移 079），选取与准入都排除，发送人取消或确认后才重新可投递；`runtime.run.stop` 之后撤回的派发直接判为失败，不再回到 `requested`，`beginDispatch` 与预检续接也拒绝已停止的 Run。工作索引不再把已按请求停止的 Run 显示成待返工（阶段回到等待下一个 Run，Run 带 `stopped`）。
+**请求停止一个 Run（DEC-043，迁移 078）。** 业务 Run 的范围变了、不再需要时，有 Session 类别与 Session 决定权、且持有该 Session 精确执行授权的身份提交 `runtime.run.stop`（带 Run 的当前版本和理由）。它只在 Run 上记一个**停止标记**（时间、理由、请求人，写入后不能改也不能撤），**不新增 Run 状态**。按 Run 当时的状态处理：还是“已请求”的直接判失败、不再派发；已有 Turn 的沿用现有中断路径，由 runner 调适配器中断，终态仍以运行时观察为准；正处于“派发中”、还没有 Turn 的不判失败（原生启动可能已经发出），标记保留，等 Turn 绑定时立刻中断。同一事务里：已签但未封存（`submitted`、`blocked`）的提交意图作废为 `rejected: RUN_STOPPED`；该 Session 里与这个 Task 相关、还在排队的消息的阻塞原因标成“被取代”（消息本身仍由发送人决定取消或重发）。此后，数据库触发器拒绝任何引用该 Run 的新提交和交付，也拒绝在这个 Task 上还有未结束的已停止 Run 时不带 Run 的交付；已作废的意图对原操作 ID 重放和新操作 ID 都返回同一个 `RUN_STOPPED`；封存者遇到已停止的 Run 一律不封存。已停止 Run 的失败或中断**不会关闭恢复门**（门原本开着就保持开着），也不产生“结束未提交”“提交受阻”这两类 Leader 通知，只留一条 `run.stopRequested` 运行事件；Run 终态之后，同一个 Session 立刻能接新的 Run，Task 也可以重开、修订、重新派发。**已停止的 Run 先成为 `unknown`、之后读回为 `interrupted`、`failed` 或 `completed` 时**，被它关闭的恢复门自动打开（参照 059 对已核实直接输入的做法，只开这一个 gate，队列认领持有的门不动）。已停止的 Run 若持有队列认领，失败/中断照常关门，由队列的重试决定处理。被取代的消息有持久标记（`superseded_at`，迁移 079），选取与准入都排除，发送人取消或确认后才重新可投递；`runtime.run.stop` 之后撤回的派发直接判为失败，不再回到 `requested`，`beginDispatch` 与预检续接也拒绝已停止的 Run。工作索引不再把已按请求停止的 Run 显示成待返工（阶段回到等待下一个 Run，Run 带 `stopped`）。
 
 **停止后的恢复门（迁移 079 的补充）。** 恢复门等待的下一条消息不会是被取代而未确认的消息：Run 变 unknown 时选下一条会跳过它；叫停核实后若门仍指向这样的消息，直接完全打开而不是进入 `message_pending`；门（`message_pending`）所等的消息被发送者取消时，门释放为 `open`（持有队列认领的门回到 `awaiting_acceptance`）；仍为 `blocked` 的门保留指向，由恢复决定点名并清掉已取消的那条。已停止、处于 unknown、从未发出 turn/start 的 Run：预检证明未审时保持 unknown（证据没审过，不能断定回合没有开始），门保持关闭。审阅者用现有的 `approvePreTurnContinuation` 给出结论时，对已停止的 Run 它的含义是“证据属实、回合从未开始、Run 结束”而不是“继续”：同一事务先记审阅（证明变 approved，事件 `run.reviewed`），再把 Run 判为 failed，由核实后重开门的规则打开门，Session 可以接新的 Run；原生启动不会再发出。校验的是原操作、版本、证明与关闭中的门，不再要求 Session 配置仍可继续。证明已被批准但启动未发出的已停止 Run，`claimPreTurnContinuation` 同样把它判为 failed，不再每轮重试。未停止 Run 的批准与续接不变。
 
@@ -143,7 +146,7 @@ flowchart TD
 
 **同一个输入 ID 只表示一个意图。** 重复提交（包括补回执丢失后的重试）先读该 ID 已保存的结果并照它回答：已转排队的返回同一份“已排队”回执，不会再发成第二条消息；已被运行时接收、结果未知的输入保持原结果。普通消息入口（`session.message.post`）拒绝“消息 ID 已是一条未被拒绝的即时输入”的提交（`INPUT_ID_IS_DIRECT_INPUT`），所以同一段文字不会既插入又排队。工作台把预占之前的明确拒绝（授权缺失、`TURN_CHANGED`、`SESSION_BUSY` 等）当作没有保存任何输入：文字保留，按钮解锁，可以重新选择插入或排队；5xx 和丢失的回答才算结果未知。
 
-**人的插入先于等待中的通知包。** Session 空闲时，人的插入在预占时同步占用唯一的处理槽位；已排队等待的通知（包括今后的通知包）不会与它并排启动，等这一轮结束后按顺序再处理。顺序由存储层的单槽位保证，并有测试覆盖（`direct-input.test.ts`）；通知包本身（W2）尚未上线。
+**人的插入先于等待中的通知包。** Session 空闲时，人的插入在预占时同步占用唯一的处理槽位；已排队等待的通知（包括通知包）不会与它并排启动，等这一轮结束后按顺序再处理。顺序由存储层的单槽位保证，并有测试覆盖（`direct-input.test.ts`）；通知包已有独立的逐项记录（W1），把通知包送入正在执行的这一轮（W2）仍未实施。
 
 规则如下：
 
@@ -172,7 +175,7 @@ flowchart TD
 
 工作台入口与核对按钮的设计见[Sessions 页面](../frontend/pages/sessions.md)，配置、入口、对账与检查清单见[运行接线手册](../development/runtime-operations.md#2-即时输入)。
 
-### 调度架构的目标变化（DEC-045，已决定、未实施）
+### 调度架构的落地状态（DEC-045）
 
 DEC-045 在现有即时输入之外增加三类输入，并把“接下来做什么”从 Leader 的上下文搬到每个 Session 的队伍：
 
@@ -181,13 +184,27 @@ DEC-045 在现有即时输入之外增加三类输入，并把“接下来做什
 - **每个常驻业务 Session 一条队伍。** 新工作追加到队尾，Leader 可相对前移、后移或撤下；轮到一项时，先由执行者做轻量执行确认，高风险 Task 先过方案审阅，再依次开始、分派、预留 Run，三步用由队伍项和第几次尝试决定的固定操作 ID，可安全重放。依据待复核、阶段无效、定时未到、依赖未满足或授权缺失时挂起并给 Leader 立即级通知，后面的项照常往前走；Run 结束就放行下一项。验收安排仍走消息队列，一项一轮；Session 空闲时，队伍项与排队消息按到达先后轮流处理。对应 Q1；调度板 `work board` 的快照与事件流对应 Q2：迁移 105 在既有表上挂触发器，每个状态变化在同一事务里写一行元数据事件，覆盖通知、任务、消息、验收四类；`work board` 读快照，`work events` 与 SSE 按序号读和续传，进程内一个共享读取者分发给所有订阅者，三项指标（进队等待、Session 空转、新情况纳入时间）由事件算出，事件保留 30 天。真实实例的读回（事件完整性、指标与手工核对、p95、续传与缺口）待独立验收；工作台页面不在此内。
 - **日程到点分发。** 生成 Task 后默认交 Leader 安排，也可按 Leader 的直派名单直接追加到队伍：先选空闲 Session，没有空闲就选队伍最短的，再按名单顺序；只分发，不立即开始；忙就排队，引擎不新建 Session。对应 S1；测量工具与基线对应 M0。
 
-当前实现（W1，迁移 089）已让 Leader 通知可以走通知包（私有配置 `leaderResultNotices.packets`，默认关闭）：逐项状态、人的消息先于通知包（真取消后才撤回）、读到后失败的至少送达一次与按包恢复；包的步骤只由通知发送身份运行；W2 的执行中送入、W5 的分级仍未做。其余仍是旧路径：任务详情里的“驻留 Session 队列”是旧的批量常驻队列，不充当新的 Session 队伍；`session_direct_input` 只记录人的即时输入，还没有通知包送入（通知包现在只开新一轮）；Codex 0.167 的送入能力与 Claude 一侧的补入都还要按 W3/W4 审定。上述能力上线前，页面和正文都不能把它们写成已具备；工作台调度板页面要等第一阶段检验通过后，由另行安排的原生 Session 设计并实现。
+**逐项状态（2026-11-15 只读核对）。** “已合入”只指 main 有代码或迁移，“已配置”只指正式实例有对应配置或策略，“已真实使用”要求在正式实例读回行为事实；“未实施”指还没有进入 main。三者都不能代替独立验收。
+
+| 能力 | 已合入 | 正式实例 | 当前结论 |
+| --- | --- | --- | --- |
+| Session 队伍（Q1） | PR #338，迁移 087 | 2026-11-15 的事件查询读回队伍项入队、轮到与 Run 结束放行的连续事件 | 已合入、已真实使用；整条调度架构的独立验收另记 |
+| 调度板与事件流（Q2） | PR #414，迁移 105 | `work board` 可读快照与 `eventSeq`；事件流和三项指标可读 | 已合入、已真实使用；事件完整性、指标与续传的独立验收另记 |
+| Leader 通知包（W1） | PR #354，迁移 089 | 通知包开关已打开；最近 20 条通知都读回 `viaPacket=true`，并读回包建立、送出与看到事件 | 已合入、已配置、已真实使用；逐包处置与恢复的独立验收另记 |
+| 人发消息插入或排队（W2b） | PR #350，迁移 096 | 2026-11-15 的事件查询读回 4 条 `message.inserted` 与 7 条空闲直启 `message.started`；普通排队路径另有持续记录 | 已合入、已配置；事件只证明原生接收或直启开始，读到与采用仍未核对，不能据此写成完整“已真实使用” |
+| 通知分级与队伍通知（W5） | PR #412、#415，迁移 104、106 | 2026-11-15 分页读回的通知中，`line_entry_suspended` 有 2 条且均为 `immediate`，`line_confirmation_returned` 为 0；其他通知同时有 `immediate` 与 `digest` | 已合入、已真实使用（仅有挂起样本）；退回为汇总级仍只有代码与设计依据，尚无正式样本，整体未验收 |
+| 定时直派（S1） | PR #422，迁移 108 | 已有 3 条 `direct_dispatched` 记录，另有 1 条来源标为 `WITHDRAWN_TO_LEADER` 的已撤回直派；当前 CI/CD 日程为 `direct`，最近一次因 `PREVIOUS_STILL_OPEN` 跳过，尚无该日程的成功直派 | 已合入、已配置、已真实使用（其他日程）；当前 CI/CD 直派尚未端到端成功，整体未验收 |
+| 通知包送入 Leader 正在执行的这一轮（W2） | 未合入 | 无 | 未实施；当前 W1 通知包只开新一轮 |
+| Codex 0.167 的送入复核与 Claude 侧补入（W3、W4） | main 已有可选 Codex 版本与 `turn/steer`；W3 的 0.167 送入审定与夹具，以及 W4 的 Claude 侧补入尚未合入 | 无 0.167 送入复核或 Claude 补入的正式读回 | 部分基础能力已合入；所述复核与 Claude 侧补入未实施 |
+| 调度测量工具与基线（M0） | 只读脚本 `scripts/scheduling-metrics.mjs`、使用说明 `docs/development/scheduling-metrics.md` 与事件指标读取已合入；正式基线报告 `420b321f-3dd2-4c0b-abff-f69f0bdf92ef@6dd1ed0c-c082-45cd-bb13-1fb36cb6dea2` 可读 | 2026-11-15 读到 `work metrics` 与上述基线报告 | 只读测量与基线已合入、可读；自动调度、按指标触发处置与常态治理未随之实施，不能写成自动调度或自动治理已完成 |
+
+其余仍是旧路径：任务详情里的“驻留 Session 队列”是旧的批量常驻队列，不充当新的 Session 队伍；`session_direct_input` 只记录人的即时输入，还没有通知包送入。W2、W3、W4 的上述新增能力未落地前，页面和正文都不能把它们写成已具备；M0 的只读测量可读，也不能写成自动治理已具备；工作台调度板页面同样要由另行安排的原生 Session 设计并实现。
 
 ## 4. 托管压缩
 
 两种运行时都会在上下文快满时自己压缩（能力声明 `compaction.autoCompacts: true`）。托管压缩是另一件事：Session 因失败被恢复门挡住时，由维护者显式请求一次原生压缩，再决定是否恢复。实现合入于 PR #210、#215、#218、#222，记录表是 schema 058 的 `session_compaction`。
 
-1. **只在恢复门 `blocked` 时可用。** 请求方要有项目 review 与 write 权限和该 Session 的精确运行授权。请求写明原 Session、原 Thread、当前 Session 版本和恢复门版本。
+1. **只在恢复门 `blocked` 时可用。** 请求方要有 Session 类别与 Session 决定权和该 Session 的精确运行授权。请求写明原 Session、原 Thread、当前 Session 版本和恢复门版本。
 2. **先存意图，再发一次。** 服务核对原失败 Turn 的已知终态后，把意图写入 `session_compaction`，然后在当前连接上发**一次** `thread/compact/start`。同一操作 ID 只读回原结果；回包丢失时保持 `unknown`，不再发第二次。
 3. **完成要有原生证据。** `{}` 应答只记为 `accepted`。只有同一个压缩 Turn 出现持久的压缩 Item 和完成时间、Turn 结束且 Thread 空闲，才记 `completed`。
 4. **压缩不开门。** 完成后仍由有权者单独执行 `runtime.session.recovery.resume`。
@@ -200,7 +217,7 @@ DEC-045 在现有即时输入之外增加三类输入，并把“接下来做什
 原生运行时的自动压缩会在上下文快满时发生，但压缩只缩短保留窗口；之后每轮工具输出与通知正文会继续把窗口填回去。2026-11-11 对一个正式 Leader 线程的只读测量是 148 轮、17 次压缩、按轮最大输入的均值 218,162、中位数 229,557、p90 267,289 个词元，线程累计输入 381,888,271，其中 136 轮达到或超过 150,000。因此把自动压缩当成唯一治理手段不够，服务另加两道可配置的普通 Turn 准入：
 
 - **上下文交接。** `runtime.contextBudget`（默认关闭；打开后 `maxInputTokens` 默认 150,000，`warningRatio` 默认 0.8）比较该 Session 最新原生观察的当前上下文。达到 `warning` 只提示；达到 `handoff_required` 时，普通 Leader 结果通知保留在队列中并写明 `CONTEXT_HANDOFF_REQUIRED`，不再启动新 Turn。业务 Task Run 与使用者自己发的消息不受这道门影响。维护者用同一职责开启新 Session／新线程，把原 Session、原生 Thread、固定 Task 和未处理通知作为第一责任写进交接摘要；`contextHandoffSummary()` 生成一段只引用固定标识、不含原生对话正文的摘要。新线程接手前，旧线程的 Task、交付、验收和通知仍各按原记录判断，不能因为交接而视为已读或已接受。
-- **每日总额。** `runtime.dailyBudget`（默认关闭；`maxInputTokens` 与 `maxCostUsd` 至少设一个，`warningRatio` 默认 0.8，`pauseOrdinaryTurns` 默认 `true`）按项目配置的 IANA 时区聚合 `session_usage_daily`。`warning` 只提示，`exhausted` 时同样只暂停普通结果通知；业务 Task Run 不受影响，消息保留可恢复的阻断原因。费用只累加运行时实际报告的成本；有任何一笔记账没有成本时，费用上限判为 `unknown`，不会把未报告当成 0。
+- **每日总额。** `runtime.dailyBudget`（默认关闭；`maxInputTokens` 与 `maxCostUsd` 至少设一个，`warningRatio` 默认 0.8，`pauseOrdinaryTurns` 默认 `true`）按项目配置的 IANA 时区聚合 `session_usage_daily`。`warning` 只提示，`exhausted` 时同样只暂停普通结果通知；业务 Task Run 不受影响，消息保留可恢复的阻断原因。费用只累加运行时实际报告的成本，**包含 Run 和消息 Turn 的全部轮次**（缺陷 44ba20f6：此前消息 Turn 只记 token、费用记 0，Claude Session 的日费用只是实际的一部分）；有任何一笔记账没有成本时，费用上限判为 `unknown`，不会把未报告当成 0。
 
 按 Session、按天的用量与费用由 `GET /api/projects/:projectId/runtime/usage?from=YYYY-MM-DD&to=YYYY-MM-DD` 读取。工作台按对象分开呈现这同一个读取：智能体页右栏“上下文与用量”只放这个 Session 的事实——上下文压力（当前大小对交接阈值的进度）、今日输入 / 输出 / 缓存输入 / 费用和本会话累计；项目每日上限、近 7 天项目用量和计日时区在统筹安排的“项目用量”块。项目接近或达到每日上限时，智能体右栏只写一行提醒，链到该块（`#project-usage`）。呈现规则见[智能体页](../frontend/pages/sessions.md#右栏信息层级)。用量来源按运行时分开：Codex 的累计原生观察是权威来源，Runtime Run 的终态账本只用于没有累计原生观察的运行时（例如 Claude），避免同一 Turn 重复记账。账本的“输入”统一包含缓存读取与缓存创建：Codex v2 的 `input_tokens` 已含 `cached_input_tokens`，Claude SDK 的三个字段相加；缓存字段只作子集展示。项目每日上限合计当日所有 Session 和运行时。Codex 的日账本只在同一 Thread 的累计快照之间取差；新 Turn、无 usage 的观察和重连保留上一累计基线，同一 pump 内的每个用量通知按顺序参与差值，复位后的中间请求不会只剩最后一条 `last`。Codex v2 每条通知都带必填的 `total`，连接已有 Thread 时只重放最新快照，不重投任意旧读数；没有累计基线或只带 `last` 的兼容分支不属于正常 Codex 路径，不能用来解释重复投递。原生观察缺失时显示“未知”，不按 0 计。
 
@@ -253,7 +270,7 @@ Codex 一列有几项取决于运行配置选的协议版本。“现代协议�
 | 浏览器只读桥 | 实验性，需单独配置 `browserRead` | 不支持 |
 | 进程故障的影响范围 | 共用子进程断开会影响所有在途 Turn | 只影响出问题的那个 Turn |
 
-**Claude 适配器账本里的思考内容。** 从 PR #341 起，适配器账本（专用 Claude 配置目录下 `evoloop-ledger/<project>/<native-session>.jsonl`，本机私有运行材料，不进 Git）除输入、回复与工具调用名外，还保存每个 thinking 块的可读文字，即 Claude 以 `--thinking-display summarized` 返回的摘要原文。thinking 块的签名、`redacted_thinking` 的密文都不保存，空块和加密块只记“不可读”；工具的输入与输出仍不保存。账本只追加、适配器不删除，所以这些思考文字的保留期与账本相同：随该 Session 的专用配置目录一直保留，直到运维按本机运行材料的方式清理。读取只有一条路：协调服务的会话时间线（`work timeline`、工作台智能体页），每次请求都核对读者对该项目有读取权限；思考内容不进入 Run 结果、Run 轨迹、普通消息回复、Leader 通知或通知包。原生 Claude 转录（`projects/*.jsonl`）由 Claude Code 自己保存，不在此范围内。
+**Claude 适配器账本里的思考内容。** 从 PR #341 起，适配器账本（专用 Claude 配置目录下 `evoloop-ledger/<project>/<native-session>.jsonl`，本机私有运行材料，不进 Git）除输入、回复与工具调用名外，还保存每个 thinking 块的可读文字，即 Claude 以 `--thinking-display summarized` 返回的摘要原文。thinking 块的签名、`redacted_thinking` 的密文都不保存，空块和加密块只记“不可读”；工具的输入与输出仍不保存。账本只追加、适配器不删除，所以这些思考文字的保留期与账本相同：随该 Session 的专用配置目录一直保留，直到运维按本机运行材料的方式清理。读取只有一条路：协调服务的会话时间线（`work timeline`、工作台智能体页），每次请求都核对读者有该项目的 Session 类别，并受 `sessionIds` 范围限制；项目普通成员只看到存在、状态和一般对话，看不到完整原生历史。思考内容不进入 Run 结果、Run 轨迹、普通消息回复、Leader 通知或通知包。原生 Claude 转录（`projects/*.jsonl`）由 Claude Code 自己保存，不在此范围内。
 
 **一轮的回复只记一次。** Claude 先把收尾的回答作为助手文字块流式发出，随后又在结果里重复同一段文字；适配器把前者记为过程文字（commentary），后者记为最终回复（final_answer）。读取账本时，紧挨在最终回复之前、正文完全相同的那条过程文字并入最终回复，所以时间线和工作台里同一轮的回复只出现一次；这条规则在读取时生效，修复前写下的账本也按同样方式读出。正文不同或中间隔着工具调用的过程文字照常保留。
 

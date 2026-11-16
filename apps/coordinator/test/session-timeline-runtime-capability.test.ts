@@ -14,7 +14,7 @@ import { SessionTimelineService, type WorkspaceHistoryOwner } from '../src/sessi
 // updates and any runtime's history reader, so the timeline must ask the Session's own runtime instead.
 const id=(n:number)=>`00000000-0000-4000-8000-${String(n).padStart(12,'0')}`;
 const project=id(1),now='2026-11-09T00:00:00.000Z';
-const reader:Principal={actorId:'reader',projectIds:[project],permissions:['read']};
+const reader:Principal={actorId:'reader',projectIds:[project],permissions:['session']};
 const sessionOf=(n:number,provider:RuntimeProvider):RuntimeSessionRecord=>({projectId:project,id:id(n),roleId:'role',cwd:'/tmp',
   authorizationScope:'scope',model:null,sandbox:'read-only',approvalPolicy:'on-request',state:'ready',version:1,
   nativeThreadId:`${provider}-thread`,nativeSessionId:`${provider}-native-session`,operationId:id(n+90),actorId:'agent',

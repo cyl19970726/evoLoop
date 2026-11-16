@@ -48,7 +48,7 @@ test('capture waits for exact Turn source; reply uses actor and CAS; attempted i
   assert.deepEqual(await service.capture(c),first);
   const noSource={type:'session.input.reply' as const,projectId,operationId:randomUUID(),inputRequestId:c.id,
     expectedVersion:1,answers:{q1:['A']}};
-  await assert.rejects(()=>uow.transaction(projectId,tx=>applyNativeInputReply(tx,{actorId:'agent',projectIds:[projectId],permissions:['write']},noSource,now)),/not awaiting/);
+  await assert.rejects(()=>uow.transaction(projectId,tx=>applyNativeInputReply(tx,{actorId:'agent',projectIds:[projectId],permissions:['task','document','session']},noSource,now)),/not awaiting/);
   const messageId=randomUUID(),processingId=randomUUID();
   await pool.query(`INSERT INTO session_message(project_id,message_id,operation_id,target_kind,session_id,sender_actor_id,
     content,state,version,created_at,updated_at) VALUES($1,$2,$3,'owned',$4,'sender','Question','processing',1,$5,$5)`,
@@ -59,14 +59,14 @@ test('capture waits for exact Turn source; reply uses actor and CAS; attempted i
     [projectId,processingId,messageId,sessionId,randomUUID(),'a'.repeat(64),now]);
   assert.equal(await service.refreshSources(projectId,sessionId),1);
   const linked=(await service.get(projectId,c.id))!;assert.equal(linked.source?.kind,'message');
-  await assert.rejects(()=>uow.transaction(projectId,tx=>applyNativeInputReply(tx,{actorId:'stranger',projectIds:[projectId],permissions:['write']},
+  await assert.rejects(()=>uow.transaction(projectId,tx=>applyNativeInputReply(tx,{actorId:'stranger',projectIds:[projectId],permissions:['task','document','session']},
     {...noSource,expectedVersion:linked.version},now)),/initiating actor/);
-  await assert.rejects(()=>uow.transaction(projectId,tx=>applyNativeInputReply(tx,{actorId:'sender',projectIds:[projectId],permissions:['write']},
+  await assert.rejects(()=>uow.transaction(projectId,tx=>applyNativeInputReply(tx,{actorId:'sender',projectIds:[projectId],permissions:['task','document','session']},
     {...noSource,expectedVersion:linked.version,answers:{q1:['C']}},now)),/native option/);
-  await uow.transaction(projectId,tx=>applyNativeInputReply(tx,{actorId:'sender',projectIds:[projectId],permissions:['write']},
+  await uow.transaction(projectId,tx=>applyNativeInputReply(tx,{actorId:'sender',projectIds:[projectId],permissions:['task','document','session']},
     {...noSource,expectedVersion:linked.version},now));
   const saved=(await service.get(projectId,c.id))!;assert.equal(saved.response?.actorId,'sender');
-  await assert.rejects(()=>uow.transaction(projectId,tx=>applyNativeInputReply(tx,{actorId:'sender',projectIds:[projectId],permissions:['write']},
+  await assert.rejects(()=>uow.transaction(projectId,tx=>applyNativeInputReply(tx,{actorId:'sender',projectIds:[projectId],permissions:['task','document','session']},
     {...noSource,expectedVersion:linked.version},now)),/changed/);
   const claimed=await service.claimResponse(projectId,c.id,connectionId);assert.equal(claimed?.response?.outcome,'attempted');
   assert.equal(await service.claimResponse(projectId,c.id,connectionId),null);
@@ -81,7 +81,7 @@ test('capture waits for exact Turn source; reply uses actor and CAS; attempted i
   const captured=await racingService.capture(racingCapture);
   assert.equal(captured.source?.kind,'message');
   const replyOperationId=randomUUID();
-  await uow.transaction(projectId,tx=>applyNativeInputReply(tx,{actorId:'sender',projectIds:[projectId],permissions:['write']},
+  await uow.transaction(projectId,tx=>applyNativeInputReply(tx,{actorId:'sender',projectIds:[projectId],permissions:['task','document','session']},
     {type:'session.input.reply',projectId,operationId:replyOperationId,inputRequestId:racingCapture.id,
       expectedVersion:captured.version,answers:{q1:['B']}},'2026-10-27T00:00:01.000Z'));
   localNow='2026-10-27T00:00:02.000Z';
@@ -159,7 +159,7 @@ test('business command journal replays exact reviewer reply without a second mut
   const c=capture(6,'native-turn-1');const pending=await service.capture(c);
   assert.equal(pending.source?.kind,'message');
   const workflow=new WorkflowService({uow,clock,ids,hasher:{hash:(s:string)=>createHash('sha256').update(s).digest('hex')}});
-  const principal={actorId:'reviewer',projectIds:[projectId],permissions:['write','review'] as ('write'|'review')[]};
+  const principal={actorId:'reviewer',projectIds:[projectId],permissions:['task','document','session','management'] as ('task'|'document'|'session'|'management')[],decisions:true};
   const command={type:'session.input.reply' as const,projectId,operationId:randomUUID(),inputRequestId:c.id,
     expectedVersion:pending.version,answers:{q1:['B']}};
   const first=await workflow.execute(principal,command);assert.equal(first.status,'applied');
@@ -171,7 +171,7 @@ test('business command journal replays exact reviewer reply without a second mut
 
 test('Run source links only the exact project Session and Turn, including after terminal settlement',async()=>{
   const workflow=new WorkflowService({uow,clock,ids,hasher:{hash:(s:string)=>createHash('sha256').update(s).digest('hex')}});
-  const lead={actorId:'run-issuer',projectIds:[projectId],permissions:['write','review'] as ('write'|'review')[]};
+  const lead={actorId:'run-issuer',projectIds:[projectId],permissions:['task','document','session','management'] as ('task'|'document'|'session'|'management')[],decisions:true};
   const taskId=randomUUID(),taskOwnerRoleId=randomUUID(),taskOwnerRoleRevisionId=randomUUID();
   const runSessionId=randomUUID(),runId=randomUUID(),runOperationId=randomUUID(),turn='run-native-turn';
   await seedTrialRole(taskOwnerRoleId,taskOwnerRoleRevisionId);

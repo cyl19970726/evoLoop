@@ -86,7 +86,7 @@ test("Sessions is the sole directory and renders conversation, source, reply and
     if (url.pathname.startsWith("/api/")) {
       const root = `/api/projects/${projectId}`;
       let value: unknown = { items: [], nextCursor: null, metadata }, status = 200;
-      if (url.pathname === "/api/session") value = { principal: { actorId: "reader", projectIds: [projectId], permissions: ["read", "write", "review"] }, capabilities: {} };
+      if (url.pathname === "/api/session") value = { principal: { actorId: "reader", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true }, capabilities: {} };
       else if (url.pathname === root) value = { id: projectId, title: "Sessions 设计测试", createdAt: stamp };
       else if (url.pathname === `${root}/impacts`) value = [];
       else if (url.pathname === `${root}/runtime/sessions`) {

@@ -21,8 +21,8 @@ const deps = { uow, clock: { now: () => new Date().toISOString() }, ids: { next:
 const workflow = new WorkflowService(deps);
 const runtime = new RuntimeWorkflowService(deps);
 const project = randomUUID(), role = randomUUID();
-const reviewer = { actorId: 'lead', projectIds: [project], permissions: ['read' as const, 'write' as const, 'review' as const] };
-const writer = { actorId: 'worker', projectIds: [project], permissions: ['read' as const, 'write' as const] };
+const reviewer = { actorId: 'lead', projectIds: [project], permissions: ['task','document','session','management'] as ('task'|'document'|'session'|'management')[], decisions: true };
+const writer = { actorId: 'worker', projectIds: [project], permissions: ['task','document','session'] as ('task'|'document'|'session'|'management')[] };
 
 before(async () => {
   await migrate(url!, schema);
@@ -159,9 +159,9 @@ test('a Run that is dispatching is marked, not failed, and its Turn is interrupt
   assert.equal(bound.interruptRequested, true, 'the Turn that binds after a stop is interrupted at once');
 });
 
-test('only a live, unstopped Run at its current version can be stopped; review permission is needed; the marker is final', async () => {
+test('only a live, unstopped Run at its current version can be stopped; Session decision authority is needed; the marker is final', async () => {
   const f = await fixture('running');
-  await assert.rejects(stop(f, 1, writer), /Permission review is required/);
+  await assert.rejects(stop(f, 1, writer), /Decision authority for session is required/);
   assert.equal((await stop(f, 7) as { code: string }).code, 'VERSION_CONFLICT');
   assert.equal((await stop(f)).status, 'applied');
   const again = await stop(f, 2);

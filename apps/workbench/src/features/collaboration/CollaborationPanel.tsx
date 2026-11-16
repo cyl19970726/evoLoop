@@ -7,7 +7,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { ChevronRight, RefreshCw } from "lucide-react";
 import type { DeliveryRecord, IncomingRecord } from "@evoloop/contracts/delivery";
-import type { Page, TaskDetail } from "@evoloop/contracts";
+import { hasDecisionAuthority, type Page, type TaskDetail } from "@evoloop/contracts";
 import {
   Badge, Button, CollapsibleRow, Dialog, DialogContent, DialogDescription, DialogFooter, DialogTitle, EmptyState, ErrorState, Field, Input,
   LoadingState, Notice, RefreshingIndicator, StatusTag,
@@ -225,7 +225,7 @@ export function CollaborationPanel({ context }: { context: MutationContext; refr
   const [message, setMessage] = useState<{ text: string; error: boolean; detail?: string | undefined } | null>(null);
   const [receipts, setReceipts] = useState<Receipt[]>(() => receiptsFor(store(), projectId, principal.actorId));
   const reloadReceipts = () => setReceipts(receiptsFor(store(), projectId, principal.actorId));
-  const allowed = principal.permissions.includes("review") && principal.permissions.includes("write") && !context.blocked;
+  const allowed = hasDecisionAuthority(principal, projectId, "task") && !context.blocked;
   const data = overview.data;
   const deliveries = data ? mergeById([...data.deliveries.items, ...moreDeliveries.items], item => item.eventId) : [];
   const incoming = data ? mergeById([...data.incoming.items, ...moreIncoming.items], item => item.id) : [];

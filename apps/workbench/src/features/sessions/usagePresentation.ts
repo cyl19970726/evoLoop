@@ -17,12 +17,16 @@ export function tokenFullText(value: number | null | undefined): string | null {
   return `${Math.trunc(value).toLocaleString("en-US")} 个令牌`;
 }
 
-export function costText(value: Pick<UsageDay, "costUsd" | "costReported"> | null | undefined): string {
+/**
+ * The cost of a bucket. A day recorded before cost covered message Turns (migration 112, defect 44ba20f6) is marked 此前只含 Run: its tokens cover every Turn but its
+ * cost covers Runs only, so the number is a lower bound and is not shown as if it were the whole day.
+ */
+export function costText(value: Pick<UsageDay, "costUsd" | "costReported"> & { costScope?: "all_turns" | "runs_only" } | null | undefined): string {
   if (!value || !value.costReported || value.costUsd === null || value.costUsd === undefined) return "未报告";
-  return `$${value.costUsd.toFixed(4)}`;
+  return `$${value.costUsd.toFixed(4)}${value.costScope === "runs_only" ? "（此前只含 Run）" : ""}`;
 }
 
-export function usageDayText(day: Pick<UsageDay, "inputTokens" | "outputTokens" | "cachedInputTokens" | "costUsd" | "costReported">): string {
+export function usageDayText(day: Pick<UsageDay, "inputTokens" | "outputTokens" | "cachedInputTokens" | "costUsd" | "costReported"> & { costScope?: "all_turns" | "runs_only" }): string {
   return `输入 ${tokenText(day.inputTokens)} · 输出 ${tokenText(day.outputTokens)} · 缓存输入 ${tokenText(day.cachedInputTokens)} · 费用 ${costText(day)}`;
 }
 

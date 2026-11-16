@@ -441,6 +441,7 @@ test("the level of a notice is a function of its kind, and the TypeScript table 
   }
   const levelOf = (kind: string) => seen[kind];
   for (const kind of ["acceptance_blocked", "run_submission_blocked", "run_without_submission", "task_question", "task_blocker", "observation_failed", "line_entry_suspended", "direct_dispatch_blocked", "direct_circuit_open"]) assert.equal(levelOf(kind), "immediate", kind);
+  // session_repeated_failure is immediate too; it needs three preflight-failed Runs, so tests/integration/session-unusable.test.ts checks its level against the contract.
   for (const kind of ["delivery", "observation_used", "observation", "task_todo", "task_attention", "line_confirmation_returned", "schedule_skips_escalated"]) assert.equal(levelOf(kind), "digest", kind);
 });
 

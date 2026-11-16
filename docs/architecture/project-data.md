@@ -46,11 +46,11 @@ issue/report 可带不可变 `origin`：Task ID、可空的 Run ID，以及服�
 
 任务决定历史读取每个真实 TaskRevision 的状态、理由、操作者、时间与当时封存依据，不从当前状态或操作摘要倒推。已回看阶段的纠正须指定最新同阶段 Review 和当前版本，追加 `supersedesReviewId`、StageRevision 与 Review；旧判断保持不变，也不会顺带改变 Task。
 
-阶段归属随任务修订保存。`task.update.stageId` 省略时沿用原关联，显式 `null` 解除关联，指定 ID 则关联本项目的 active 阶段。显式提供该字段同时要求 write 与 review 权限；实际变更只允许 todo 且无在途或结果未知的 Run。非空关联仍须有 consumer、evidence 和 stopCondition。操作核对 expectedVersion，原子追加 TaskRevision/TaskProposal 及 journal/outbox；旧关联、已回看阶段和已拒绝的启动操作保持原样。`task.start` 继续拒绝当前仍关联非 active 阶段的任务。
+阶段归属随任务修订保存。`task.update.stageId` 省略时沿用原关联，显式 `null` 解除关联，指定 ID 则关联本项目的 active 阶段。显式提供该字段同时要求 `task` 类别与 Task 决定权；实际变更只允许 todo 且无在途或结果未知的 Run。非空关联仍须有 consumer、evidence 和 stopCondition。操作核对 expectedVersion，原子追加 TaskRevision/TaskProposal 及 journal/outbox；旧关联、已回看阶段和已拒绝的启动操作保持原样。`task.start` 继续拒绝当前仍关联非 active 阶段的任务。
 
 待处理 Task 在上游改版时不会生成进行中任务的 Impact。`task.start.retentions` 为这条路径逐项提交旧文档修订、当前观察的已采纳修订和保留理由；核心核对同项目、已关联且已发布的所选来源，以服务端身份和时间写入新封存 BasisSet。检查和 TaskRevision、journal/outbox 同事务完成，既有拒绝操作不改写。省略 basis 时可继承仍有效的保留记录；显式重选 basis 时必须同时明确所需保留项。派发只接受与当前已采纳修订相符的记录，上游再次改版会使旧观察失效；进行中的 Impact/BasisDecision 路径继续独立工作。PostgreSQL 的封存约束保护保留记录，不能事后补写理由或改变观察版本。
 
-待处理 Task 也可在 `task.update` 显式重选本轮外部固定输入：`basis` 是完整替换集合，`[]` 只保留自动加入的主正文，省略则沿用旧集合与普通更新权限。`retentions` 只能随显式 `basis`；旧修订采用版、观察到的当前采纳版和逐项理由沿用 `task.start` 校验。此分支须同项目 read/write/review、当前 Task 版本、已发布且已关联的固定修订、无在途或结果未知 Run；进行中先正常重开。核心核 inline 原文 hash 或 Blob 注册清单/hash，Blob 实际字节仍须经既有 original 读取链核验，重选成功不证明字节已读。正文同次变更时以新主修订封存，正文相同则沿用原修订。操作在同一事务追加 TaskRevision、sealed BasisSet、journal/outbox；历史 Run 和旧集合不改。选择不会启动 Task，后续正常 `task.start` 继续核当前材料与派发权限；已经受理但尚未 reserve 的派发只可按原 Task CAS 失败，不能悄悄继承新输入。
+待处理 Task 也可在 `task.update` 显式重选本轮外部固定输入：`basis` 是完整替换集合，`[]` 只保留自动加入的主正文，省略则沿用旧集合与普通 `task` 写入权限。`retentions` 只能随显式 `basis`；旧修订采用版、观察到的当前采纳版和逐项理由沿用 `task.start` 校验。显式分支持有同一 `task` 类别与 Task 决定权，且须核当前 Task 版本、已发布且已关联的固定修订、无在途或结果未知 Run；进行中先正常重开。核心核 inline 原文 hash 或 Blob 注册清单/hash，Blob 实际字节仍须经既有 original 读取链核验，重选成功不证明字节已读。正文同次变更时以新主修订封存，正文相同则沿用原修订。操作在同一事务追加 TaskRevision、sealed BasisSet、journal/outbox；历史 Run 和旧集合不改。选择不会启动 Task，后续正常 `task.start` 继续核当前材料与派发权限；已经受理但尚未 reserve 的派发只可按原 Task CAS 失败，不能悄悄继承新输入。
 
 负责人讨论沿同一授权 Command/Query API 和 Journal/outbox 提交。准备时固定 Goal/Stage 版本、所选 Task 修订与已采用过程文档；承接观察和讨论决定追加到交接文档修订中，人工登记者与时间单独标明。修改须核对讨论版本与交接文档现行修订，避免覆盖在文档入口另做的修改。后续对象只建立固定链接，执行和亲用仍按各对象记录验证；决定纠正保留旧事件并要求重新核对后续链接。目标会话标签或引用不构成原生会话归属、送达或自动回写证明。
 

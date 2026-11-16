@@ -83,7 +83,7 @@ test("the composer sends, adds, queues, stops, lists skills and agents, and says
       const root = `/api/projects/${projectId}`;
       let value: unknown = { items: [], nextCursor: null, metadata }, status = 200;
       const body = async () => { let text = ""; for await (const chunk of req) text += String(chunk); return JSON.parse(text) as Record<string, unknown>; };
-      if (url.pathname === "/api/session") value = { principal: { actorId: "reader", projectIds: [projectId], permissions: ["read", "write", "review"] }, capabilities: {} };
+      if (url.pathname === "/api/session") value = { principal: { actorId: "reader", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true }, capabilities: {} };
       else if (url.pathname === root) value = { id: projectId, title: "输入框测试项目", createdAt: stamp };
       else if (url.pathname === "/api/commands" && req.method === "POST") {
         const command = await body(); commands.push(command);
@@ -416,7 +416,7 @@ test("a send whose answer was lost, once checked as received or applied, clears 
     const json = (value: unknown, status = 200) => { res.writeHead(status, { "content-type": "application/json" }); res.end(JSON.stringify(value)); };
     const body = async () => { let text = ""; for await (const chunk of req) text += String(chunk); return JSON.parse(text) as Record<string, unknown>; };
     if (url.pathname.startsWith("/api/")) {
-      if (url.pathname === "/api/session") return json({ principal: { actorId: "reader", projectIds: [projectId], permissions: ["read", "write", "review"] }, capabilities: {} });
+      if (url.pathname === "/api/session") return json({ principal: { actorId: "reader", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true }, capabilities: {} });
       if (url.pathname === root) return json({ id: projectId, title: "输入框测试项目", createdAt: stamp });
       if (url.pathname === "/api/commands" && req.method === "POST") {
         // The ordinary message is applied, but its answer is lost on the way back.

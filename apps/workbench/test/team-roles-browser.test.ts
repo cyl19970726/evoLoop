@@ -44,7 +44,7 @@ test("职责 and 分工与运行 read and write in the shell layout, and old run
   const commands: Array<Record<string, unknown>> = [];
   let available = true, recovered = 0;
   // Later in the test: a reader who may write but not review, and a Role list with a second page that fails once.
-  let permissions = ["read", "write", "review"], paged = false, failNextPage = true;
+  let permissions = ["task", "document", "session", "management"], paged = false, failNextPage = true;
   const server = createServer(async (req, res) => {
     const url = new URL(req.url!, "http://127.0.0.1");
     if (url.pathname.startsWith("/api/")) {
@@ -240,8 +240,9 @@ test("职责 and 分工与运行 read and write in the shell layout, and old run
   await page.evaluate(hash => { location.hash = hash; }, `/p/${projectId}/runtime?session=${id(12)}`);
   await page.locator(`#runtime-session-${id(12)}`).waitFor();
 
-  // A reader with write but no review permission can propose a Role (role.propose needs write only) but not decide.
-  permissions = ["read", "write"]; paged = true;
+  // A reader with the management class but no decision authority can propose a Role (role.propose is non-decision)
+  // but not decide it.
+  permissions = ["management"]; paged = true;
   const writer = await browser.newPage({ viewport: { width: 1440, height: 900 } });
   writer.on("pageerror", error => errors.push(error.message));
   await writer.goto(`${base}/p/${projectId}/roles`);
@@ -261,12 +262,12 @@ test("职责 and 分工与运行 read and write in the shell layout, and old run
   await writer.getByRole("button", { name: "提出职责试行" }).first().click();
   const proposalForm = writer.getByRole("region", { name: "提出有证据的职责试行" });
   await proposalForm.getByLabel("职责名称").waitFor();
-  assert.equal(await proposalForm.getByRole("button", { name: "提出职责试行" }).isEnabled(), true, "write permission is enough to propose");
-  assert.equal(await proposalForm.getByText("当前身份没有审阅权限").count(), 0);
+  assert.equal(await proposalForm.getByRole("button", { name: "提出职责试行" }).isEnabled(), true, "the management class is enough to propose");
+  assert.equal(await proposalForm.getByText("当前身份没有这些对象类别的决定权限。").count(), 0);
   await writer.getByRole("navigation", { name: "职责目录" }).getByRole("link", { name: /测试验收/ }).click();
   const decision = writer.locator(`#role-${id(2)}`).getByRole("region", { name: "下一步" });
   await decision.locator("summary", { hasText: "决定是否试行" }).click();
-  await decision.getByText("当前身份没有审阅权限。").waitFor();
-  assert.equal(await decision.getByRole("button", { name: "决定是否试行" }).isDisabled(), true, "deciding still needs review permission");
+  await decision.getByText("当前身份没有这些对象类别的决定权限。").waitFor();
+  assert.equal(await decision.getByRole("button", { name: "决定是否试行" }).isDisabled(), true, "deciding still needs decision authority");
   assert.deepEqual(errors, []);
 });

@@ -6,7 +6,7 @@ import { authMode } from "../../shared/identity";
 
 // The login page is part of the first load, so it uses Tailwind classes directly instead of the @evoloop/ui
 // components (which bring tailwind-merge and icons). The classes follow Button, Input and Notice.
-const button = "inline-flex h-9 cursor-pointer items-center justify-center rounded-full bg-foreground px-4 text-small font-medium text-background outline-none transition-opacity hover:opacity-90 focus-visible:shadow-[var(--focus-ring)] disabled:pointer-events-none disabled:opacity-50";
+const button = "inline-flex h-9 cursor-pointer items-center justify-center rounded-full bg-brand px-4 text-small font-medium text-on-brand outline-none transition-colors hover:bg-brand-hover active:bg-brand-pressed focus-visible:shadow-[var(--focus-ring)] disabled:pointer-events-none disabled:opacity-50";
 const noticeClass = { error: "rounded-lg bg-danger-soft px-4 py-3 text-label leading-(--leading-body) text-text-secondary", waiting: "rounded-lg bg-warning-soft px-4 py-3 text-label leading-(--leading-body) text-text-secondary" };
 
 /** Shown on development servers so a preview is never mistaken for the released workbench. */
