@@ -70,6 +70,11 @@ test('ordinary Task work status reads without managed Loop, runtime or runner', 
     const loops = await app.inject({ url: `/api/projects/${projectId}/orchestration/loops`, headers: auth });
     assert.equal(loops.statusCode, 200, loops.body);
     assert.deepEqual(loops.json(), { items: [], nextCursor: null });
+    const context = await app.inject({ url: `/api/projects/${projectId}/orchestration/tasks/${taskId}/context?limit=50`, headers: auth });
+    assert.equal(context.statusCode, 200, context.body);
+    assert.deepEqual(context.json(), { items: [], nextCursor: null });
+    assert.equal((await app.inject({ url: `/api/projects/${id(9)}/orchestration/tasks/${taskId}/context`, headers: auth })).statusCode, 403);
+    assert.equal((await app.inject({ url: `/api/projects/${projectId}/orchestration/tasks/${taskId}/context?limit=0`, headers: auth })).statusCode, 400);
     assert.equal((await app.inject({ url: `/api/projects/${id(9)}/orchestration/status`, headers: auth })).statusCode, 403);
     assert.equal((await app.inject({ url: `/api/projects/${id(9)}/orchestration/loops`, headers: auth })).statusCode, 403);
     assert.equal((await app.inject({ url: `/api/projects/${projectId}/orchestration/loops?limit=0`, headers: auth })).statusCode, 400);
@@ -78,7 +83,7 @@ test('ordinary Task work status reads without managed Loop, runtime or runner', 
     assert.equal(failed.statusCode, 503);
     assert.equal(failed.json().code, 'RESULT_UNCONFIRMED');
     assert.equal(failed.body.includes('private database connection string'), false);
-    assert.equal(projectReads, 7);
+    assert.equal(projectReads, 9);
   } finally { await app.close(); }
 });
 
