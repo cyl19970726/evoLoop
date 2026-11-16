@@ -25,6 +25,7 @@ import { listLeaderEventRecords } from "@evoloop/adapter-postgres/leader-event-r
 import { authConfigSchema, hasCurrentStudyReviewer, isProjectWriter, parseAuthConfig } from "./auth.js";
 import { hasDecisionAuthority, hasPermission, isProjectMember, mayAccessSession } from "@evoloop/contracts";
 import { buildServer } from "./server.js";
+import { createChildDetailSink } from "./runtime/child-detail-log.js";
 import { acquireCoordinatorLease, leaseFencedUnitOfWork } from "./lease.js";
 import { RuntimeWorkflowService } from "@evoloop/core/runtime";
 import { CodexAppServerAdapter } from "@evoloop/adapter-codex-app-server";
@@ -459,6 +460,7 @@ const createCodexRuntime = (runtimeConfig: NonNullable<typeof integrations.runti
   blockedVersions: runtimeConfig.blockedVersions.map(version => `codex-cli ${version}`),
   ...(runtimeConfig.codexHome ? { codexHome: runtimeConfig.codexHome } : {}),
   nativeUserInput: runtimeConfig.nativeUserInput,
+  onChildDetail: createChildDetailSink(),
   workspaceExperimental: runtimeConfig.protocolVersion === "0.166.0-alpha.6",
   verifyBinding: verifyRuntimeBinding,
   authorizeExecutionProfileActivation: async (current,target,revisionId,operationId) => {
@@ -495,7 +497,7 @@ const runtimeFactory = runtimeConfig?.enabled ? (): ManagedRuntime => {
 } : null;
 let managedCliBroker: WorkerCredentialBroker | null = null;
 const sessionSteerLock = new SessionSteerLock();
-const runner = runtimeFactory ? new RuntimeRunner({ runtimeFactory, workflow: service, trusted: trustedRuntime, nativeInputs, nativeObservation,
+const runner = runtimeFactory ? new RuntimeRunner({ runtimeFactory, autoRecover: { enabled: process.env.EVOLOOP_RUNTIME_AUTO_RECOVER !== "off" }, workflow: service, trusted: trustedRuntime, nativeInputs, nativeObservation,
   steerLock: sessionSteerLock,
   profileForSession: (_principal, session) => uow.read(session.projectId, async reader => {
     if (!reader.sessionAssignments) throw new Error("Session profile storage unavailable");

@@ -106,9 +106,19 @@ stateDiagram-v2
 
 | 情况 | 怎样判断 | 系统怎样继续 |
 | --- | --- | --- |
-| 运行时连接丢失 | 原生子进程退出或连接断开；协调服务保留首次丢失与确认退出两条诊断 | 有权者请求 `runtime.recover` 重建连接，再按原 Run 的 Turn 历史和完成时间用 `runtime.reconcile` 对账。离线时不能把数据库里的 `running` 直接结算。 |
+| 运行时连接丢失 | 原生子进程退出或连接断开；协调服务保留首次丢失与确认退出两条诊断 | **Codex 子进程的退出已被观察到时，协调服务自己恢复**（缺陷 5766e9e3，本 PR 合入后才算已合入，见下一小节）。其他情况、自动恢复停止后：有权者请求 `runtime.recover` 重建连接，再按原 Run 的 Turn 历史和完成时间用 `runtime.reconcile` 对账。离线时不能把数据库里的 `running` 直接结算。 |
 | 原 Thread 被其他宿主占用 | `thread/resume` 明确返回同一 Thread 的 `-32600 active writer`，且还没有调用 `turn/start` | 在原 Run 或消息处理上保存 `preTurnProof`（证明这次确实还没发出 Turn 的凭证），恢复门保持 `blocked`。确认原 Thread 的写入权已交还后，复核者调用 `pre-turn-continue`，在**原 Thread** 上继续，不新建 Session。 |
 | 原生结果未知 | 发送后回包丢失、超时或历史暂时读不到 | 保留原操作 ID 与占用，只读对账；不重放提示或消息。 |
+
+**Codex 子进程退出后的自动恢复（缺陷 5766e9e3）。** 起因：正式实例上 Codex 子进程在 stdout 关闭后以退出码 0 退出，`exitObserved` 已是 `true`，但执行服务一直 `available:false`，整个实例 70 分钟开不出新的 Run 和消息轮，直到有人显式 `runtime.recover`。现在 `RuntimeRunner` 在下面全部成立时自己恢复，复用既有的 `reopen()`（先证明旧子进程已退出，只替换失去连接的提供方，另一提供方正在跑的 Turn 不受影响）：
+
+- **只在证据已证实时**：断开的只是 Codex 运行时（只驱动 Claude，或 Claude 一方断开，不自动恢复），并且最近一条子进程诊断是 `exitObserved:true` 且不是 `adapter_closed`。断开后最多等 30 秒看退出是否被观察到；没观察到就**不**恢复（旧子进程可能还活着），`status().error` 写明“没有观察到旧子进程已退出”，`autoRecover.state` 为 `no_exit_evidence`，仍要有权者显式恢复。
+- **退避与上限**：第 1、2、3 次分别在 5 秒、30 秒、2 分钟后尝试；30 分钟窗口内最多 3 次。第 3 次也失败（或新子进程起不来）就停止，`autoRecover.state` 为 `exhausted`，`status().error` 写“自动恢复已尝试 3 次仍未成功，已停止，需要检查后显式恢复”，`autoRecover.lastError` 留最后一次失败原因的前 200 个字符。有权者显式 `runtime.recover` 随时有效，并让还没到点的自动恢复让位。审批回执失败等其他不可用原因不触发自动恢复。
+- **开关**：环境变量 `EVOLOOP_RUNTIME_AUTO_RECOVER=off` 关闭（`autoRecover.state` 为 `disabled`）。不需要改私有配置。
+- **在途消息与恢复门不变**：恢复只开新子进程，不启动任何 Turn、不创建任何东西，所以不会重放。在途消息 Turn 由消息泵按原样读回**原 Thread 的原 Turn**：终态明确就按现有规则结算（C 已经是现状）；读不回或不明确就记 unknown、关闭该 Session 的恢复门，仍由有权者 `resume`——这一点没有改，因为自动关门之后再自动放开等于替人做“这条消息到底发出去没有”的判断。
+- **状态**：`GET /api/projects/{id}/runtime` 多一个 `autoRecover`：`state`（`disabled|idle|waiting_for_exit|scheduled|recovering|exhausted|no_exit_evidence`）、`attempts`、`maxAttempts`、`nextAttemptAtUtc`、`lastError`、`reason`。
+
+**子进程退出时留下的私有诊断（B）。** 子进程的 stderr 末尾（最多 16 KiB）和退出前最后 40 条协议行（只有方向、种类、方法名和 ID，不含参数和结果）在子进程 stdio 关闭后写成这台主机上的一个文件：`$EVOLOOP_DIAGNOSTICS_DIR`（默认 `~/.evoloop/diagnostics`，目录 0700）下的 `codex-child-<退出时间>-<startId 前 8 位>.json`，文件 0600，每行最多 600 字符，保留最新 20 个。服务日志只有一行：退出码或信号、首次丢失原因、stderr 字节数和这个文件的路径。**stderr 不进数据库、不进任何 API 答复、不进 `nativeChildDiagnostics`、不进日志正文**，因为它可能含私有路径或内容；读它要有这台主机上的文件权限。
 
 两种运行时的影响范围不同：Codex 的所有 Session 共用一个 App Server 子进程，连接断开会影响所有在途 Turn；Claude 每个 Turn 一个进程，一个 Turn 出问题不影响别的 Turn。同时驱动两种运行时时，恢复只替换失去就绪的那一种；但合成后的运行时只有在两者都就绪时才算就绪，所以 Codex 断开期间，Claude Session 的消息泵也会暂停，直到协调服务恢复，正在运行的 Claude Turn 不会被打断（PR #224）。
 
