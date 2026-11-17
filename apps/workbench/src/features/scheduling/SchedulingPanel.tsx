@@ -22,11 +22,13 @@ import { FullIdentifiers } from "../../shared/ui/FullIdentifiers";
 import { RoleName } from "../../shared/ui/RecordName";
 
 import {
-  coordinatorErrorText, grantEmptyText, latestOccurrence, nextTimeText, occurrenceLabel, occurrenceReasonKnown,
-  occurrenceReasonText, scheduleFromPath, scheduleReadView, scheduleRuleText, scheduleTaskHref, scheduleTime, zoneName,
+  coordinatorErrorText, grantEmptyText, latestOccurrence, nextTimeText, occurrenceLabel,
+  scheduleFromPath, scheduleReadView, scheduleRuleText, scheduleTaskHref, scheduleTime, zoneName,
 } from "./presentation";
 import { currentPath, onNavigate } from "../../shared/navigation";
 import { TimedTasksSection } from "./TimedTasksSection";
+import { DispatchFacts, TriggerList, useScheduleDispatch } from "./ScheduleDispatch";
+import { triggerRows } from "./dispatch";
 import { timingFromPath } from "./timedTasks";
 
 // Times of the schedule itself (rule instants, planned times, watermark, expiry) are said in the schedule's own zone,
@@ -153,7 +155,7 @@ export function SchedulingPanel({ context, refresh }: { context: MutationContext
     <header className="flex flex-wrap items-start justify-between gap-3">
       <div className="min-w-0">
         <h1 className="text-title font-semibold text-foreground" tabIndex={-1}>日程</h1>
-        <p className="mt-1 text-small text-text-secondary">日程只按授权范围创建待办任务；生成后仍要在任务里核对责任、计划、依赖与执行。</p>
+        <p className="mt-1 text-small text-text-secondary">日程是项目里的规则：到点由协调器按授权创建待办任务，并交给 Leader 或直派到队伍；生成后仍要在任务里核对责任、计划、依赖与执行。下方“定时任务”是某个 Task 自己的执行时间，不是日程定义。</p>
         <p className={cn(muted, "schedule-read-scope mt-1")} role="status">{value ? `日程与当前身份授权读于 ${date(value.observedAt)}；已读 ${schedules.length} 项。${fresh ? "" : "以下保留上次读回，授权与后续触发待核对。"}`
           : loading ? "正在读取本项目日程与当前身份授权…" : "本项目日程与当前身份授权尚未读回。"}</p>
       </div>
@@ -229,18 +231,20 @@ function ScheduleCard({ definition, context, grants, names, status, fresh, loadi
   }, [historyScope]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => () => { historyEpoch.current++; }, []);
   const revision = definition.revision;
+  const dispatch = useScheduleDispatch(context.token, context.projectId, definition.id, definition.version, historyReadAt);
   const last = history ? latestOccurrence(history.occurrences) : null;
   const editContext = { ...context, draftScope: `schedule:${definition.id}`, draftBaseline: `${definition.version}:${definition.currentRevisionId}` };
   // A produced task opens with “返回日程：<名称>” back to this schedule.
   const taskHref = (taskId: string) => scheduleTaskHref(context.projectId, taskId, { id: definition.id, title: definition.revision.template.title }, context.principal.actorId);
   const created = history?.occurrences.filter(item => item.taskId) ?? [];
   // An occurrence is said in the zone of the revision that planned it.
-  const zoneOf = (revisionId: string) => history?.revisions.find(item => item.id === revisionId)?.timezone ?? revision.timezone;
+  const zoneOf = (revisionId: string | null) => !revisionId ? revision.timezone : history?.revisions.find(item => item.id === revisionId)?.timezone ?? revision.timezone;
   const card = "flex flex-col gap-3 rounded-xl bg-raised p-4 shadow-sm compact:p-5";
   return <article className="schedule-definition flex flex-col gap-4" aria-label={revision.template.title}>
     <header className="flex flex-col gap-1.5">
       <div className="flex flex-wrap items-center gap-2">
         <h2 className="text-heading font-semibold text-foreground">{revision.template.title}</h2>
+        <span className="rounded-full bg-field px-2.5 py-0.5 text-caption text-muted-foreground" data-kind="schedule">日程定义 · 规则</span>
         <span className={cn("rounded-full px-2.5 py-0.5 text-caption", stateTone[definition.state])}>{stateLabel[definition.state]} · v{definition.version}</span>
       </div>
       <p className="flex items-center gap-1.5 text-small text-text-secondary"><CalendarClock size={15} aria-hidden="true" />{ruleText(revision.rule, revision.timezone)} · 责任 <RoleName projectId={context.projectId} roleId={revision.template.owner} /></p>
@@ -263,22 +267,18 @@ function ScheduleCard({ definition, context, grants, names, status, fresh, loadi
           { label: "所属目标", value: targetRead.goalId ?? (targetRead.state === "checking" ? "正在核对" : "未能读回") }] : [],
       ]} />
     </section>
+    <DispatchFacts read={dispatch} />
     <section aria-label="发生记录" className={card}>
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h3 className="text-label font-semibold text-foreground">发生记录</h3>
+        <h3 className="text-label font-semibold text-foreground">最近触发（发生记录）</h3>
         <Button size="compact" variant="ghost" onClick={() => void readHistory()} disabled={busy}>{busy ? "读取中…" : "重新读取记录"}</Button>
       </div>
       {error && <UiNotice tone="error">{error}</UiNotice>}
       {history ? <>
         <p className={muted}>本定义 v{definition.version} 的记录读于 {historyReadAt ? date(historyReadAt) : "未核"}{error || !fresh ? " · 保留上次读回" : ""}。生成任务不等于已执行，也不等于已验收。</p>
-        {history.occurrences.length === 0 ? <p className="text-small text-text-secondary">尚无已检查的发生时刻；定义日程不等于执行任务。</p>
-          : <ol className="flex flex-col">{[...history.occurrences].reverse().map(item => <li key={`${item.revisionId}:${item.plannedAtUtc}`} className="flex flex-col gap-0.5 border-t border-border py-2.5 first:border-t-0">
-            <span className="text-small font-medium text-foreground">{scheduleTime(item.plannedAtUtc, zoneOf(item.revisionId))} · {occurrenceLabel(item)}</span>
-            <span className="text-small text-text-secondary">{occurrenceReasonText(item.reason)}</span>
-            {item.taskId && <a href={taskHref(item.taskId)} className="w-fit text-caption text-foreground underline">阅读此任务</a>}
-            <FullIdentifiers rows={[{ label: "操作", value: item.operationId }, { label: "任务", value: item.taskId }, { label: "日程修订", value: item.revisionId },
-              { label: "原因原文", value: occurrenceReasonKnown(item.reason) ? null : item.reason, text: true }]} />
-          </li>)}</ol>}
+        {history.occurrences.length === 0 && !dispatch.data?.logs.length ? <p className="text-small text-text-secondary">尚无已检查的发生时刻；定义日程不等于执行任务。</p>
+          : <TriggerList rows={triggerRows(history.occurrences, dispatch.data ? dispatch.data.logs : null)} zoneOf={zoneOf} taskHref={taskHref}
+            dispatchProblem={dispatch.isError ? errorText(dispatch.error) : dispatch.isPending ? "正在读取" : null} />}
         <details className="text-small"><summary className="cursor-pointer text-text-secondary">日程修订 · {history.revisions.length} 版已读</summary>
           {history.revisions.length === 0 ? <p className={cn(muted, "mt-2")}>尚无修订记录。</p> : <ol className="mt-2 flex flex-col gap-2">{history.revisions.map(item => <li key={item.id} className="flex flex-col gap-0.5">
             <span className="font-medium text-foreground">v{item.version} · {ruleText(item.rule, item.timezone)}</span>

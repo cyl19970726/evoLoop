@@ -79,7 +79,8 @@ export function ProjectChooser({ token, principal, receipts, operationNotice, op
       {projects.length > 0 && <ul aria-label="项目" className="flex flex-col gap-2">{projects.map(project => {
         const pending = receipts.filter(r => r.projectId === project.id).length;
         return <li key={project.id}>
-          <a className="project-item flex items-center gap-3 rounded-xl bg-raised px-4 py-3 text-foreground shadow-sm outline-none hover:bg-selected focus-visible:shadow-[var(--focus-ring)]" href={href(project.id, "work")}>
+          <div className="flex items-center gap-1 rounded-xl bg-raised shadow-sm hover:bg-selected">
+          <a className="project-item flex min-w-0 flex-1 items-center gap-3 rounded-xl px-4 py-3 text-foreground outline-none focus-visible:shadow-[var(--focus-ring)]" href={href(project.id, "overview")}>
             <span aria-hidden="true" className="flex size-10 shrink-0 items-center justify-center rounded-md bg-accent font-semibold text-accent-foreground">{projectInitial(project.title)}</span>
             <span className="flex min-w-0 flex-1 flex-col">
               <strong className="truncate font-semibold">{project.title}</strong>
@@ -89,6 +90,8 @@ export function ProjectChooser({ token, principal, receipts, operationNotice, op
             </span>
             <ChevronRight size={18} aria-hidden="true" className="shrink-0 text-muted-foreground" />
           </a>
+          <a data-project-work="" className="mr-3 shrink-0 rounded-md px-2 py-1.5 text-small text-text-secondary outline-none hover:text-foreground hover:underline focus-visible:shadow-[var(--focus-ring)]" href={href(project.id, "work")} aria-label={`${project.title} 的任务列表`}>任务列表</a>
+          </div>
         </li>;
       })}</ul>}
       {!projects.length && !reading && !missing.length && <EmptyState title="还没有可读取的项目" reason="当前身份没有任何项目的授权。请让项目管理员把你加入项目，再点“刷新项目”。" />}

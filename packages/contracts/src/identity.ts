@@ -22,6 +22,11 @@ export interface Principal {
   extraCommands?: ExtraCommand[] | undefined;
   identityKind?: "agent" | "human" | undefined;
   senderClass?: "requirements" | "leader" | "session" | undefined;
+  /**
+   * Where this principal came from, set only by the code that verified it: `hub` for an identity the Hub signed for this one request (HubIdentityVerifier). The local token file
+   * cannot set it (principalFromAuthEntry copies fields by name), and nothing may infer it from an actor ID. A sender grant marked `senderKind: "hub"` counts only for `hub`.
+   */
+  origin?: "hub" | undefined;
 }
 
 export const authConfigSchema = z.array(z.strictObject({
