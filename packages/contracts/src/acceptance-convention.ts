@@ -20,7 +20,15 @@ export const acceptanceReadiness = (precondition: string | null | undefined, mar
   !precondition || precondition === "none" || marked ? "ready" : "waiting_precondition";
 
 export const acceptanceConventionCommands = [
+  /**
+   * `satisfiedAt` is when the release (refresh, migration, restart) the evidence names took place. The service refuses a time earlier than the Delivery was recorded (an earlier
+   * release cannot contain it) or in the future, so a mark that cites the wrong release is refused instead of being kept for good (Task e7b2d9a4). It proves "not earlier", not
+   * "contains this Delivery": which release carries which change is still the marker's statement, in `evidence`.
+   */
   z.strictObject({ projectId: z.uuid(), operationId: z.uuid(), type: z.literal("task.acceptancePrecondition.mark"),
-    taskId: z.uuid(), deliveryId: z.uuid(), evidence: z.string().trim().min(1).max(4000) }),
+    taskId: z.uuid(), deliveryId: z.uuid(), evidence: z.string().trim().min(1).max(4000), satisfiedAt: z.iso.datetime() }),
+  /** Withdraws the Delivery's current mark so it can be marked again. The mark and its evidence stay readable, with who withdrew it, when and why; nothing is overwritten. */
+  z.strictObject({ projectId: z.uuid(), operationId: z.uuid(), type: z.literal("task.acceptancePrecondition.void"),
+    taskId: z.uuid(), deliveryId: z.uuid(), reason: z.string().trim().min(1).max(4000) }),
 ];
 export type AcceptancePreconditionMarkCommand = z.infer<(typeof acceptanceConventionCommands)[number]>;
