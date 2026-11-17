@@ -130,13 +130,13 @@ test("the projection says waiting for the precondition until it is marked, and n
   const waiting = (await readLeaderWorkTask(f.pool, f.projectId, taskId))!;
   assert.equal(waiting.phase, "awaiting_acceptance");
   assert.deepEqual(waiting.acceptanceConvention, { acceptanceTarget: "named_agent", acceptancePrecondition: "release",
-    readiness: "waiting_precondition", namedAgent: "requirements-agent", preconditionMark: null });
+    readiness: "waiting_precondition", namedAgent: "requirements-agent", preconditionMark: null, preconditionVoided: [] });
   assert.match(waiting.nextAction, /等待发布后才可验收（尚未标记已满足）/);
   assert.match(waiting.nextAction, /requirements-agent.*直接验收.*不要安排接力/);
   assert.equal(waiting.responsible.id, "requirements-agent");
 
   // Marking: reviewer only, current delivery only, once.
-  const markCommand = { type: "task.acceptancePrecondition.mark", taskId, deliveryId, evidence: "released in the build that contains the PR" };
+  const markCommand = { type: "task.acceptancePrecondition.mark", taskId, deliveryId, evidence: "released in the build that contains the PR", satisfiedAt: new Date().toISOString() };
   await assert.rejects(f.issue(f.writer, markCommand), /Decision authority for task is required/);
   await f.applied(f.reviewer, markCommand);
   const again = await f.issue(f.reviewer, markCommand);
@@ -150,7 +150,7 @@ test("the projection says waiting for the precondition until it is marked, and n
   assert.equal((await readLeaderWorkTask(f.pool, f.projectId, plain))!.acceptanceConvention, null);
   const noPrecondition = await f.createTask({ acceptancePrecondition: "none" });
   const noDelivery = await f.deliver(noPrecondition);
-  const refused = await f.issue(f.reviewer, { type: "task.acceptancePrecondition.mark", taskId: noPrecondition, deliveryId: noDelivery, evidence: "x" });
+  const refused = await f.issue(f.reviewer, { type: "task.acceptancePrecondition.mark", taskId: noPrecondition, deliveryId: noDelivery, evidence: "x", satisfiedAt: new Date().toISOString() });
   assert.equal((refused as { code: string }).code, "NO_PRECONDITION");
 });
 
@@ -200,7 +200,7 @@ test("mine lists, for an Agent consumer, the deliveries the workbench 等我使�
   assert.deepEqual([...byTask.keys()].sort(), [waitingTask, readyTask, notUsedTask, othersLastTask].sort());
 
   // After the precondition is marked the same entry reads ready; another identity sees nothing of mine; no read permission is refused.
-  await f.applied(f.reviewer, { type: "task.acceptancePrecondition.mark", taskId: waitingTask, deliveryId: waitingDelivery, evidence: "released" });
+  await f.applied(f.reviewer, { type: "task.acceptancePrecondition.mark", taskId: waitingTask, deliveryId: waitingDelivery, evidence: "released", satisfiedAt: new Date().toISOString() });
   const after = (await f.relay.mineDirect(f.consumer, f.projectId)).items as Array<{ taskId: string; readiness: string }>;
   assert.equal(after.find(item => item.taskId === waitingTask)?.readiness, "ready");
   assert.deepEqual((await f.relay.mineDirect({ ...f.consumer, actorId: "unrelated-agent" }, f.projectId)).items, []);
@@ -388,7 +388,7 @@ test("item 1: marking the precondition is a work change: a paged read in progres
   const first = await readLeaderWorkTasks(f.pool, f.projectId, { view: "tasks", limit: 1, includeClosed: false });
   assert.ok(first.nextCursor, "there is a second page");
   const before = first.changeSequence;
-  await f.applied(f.reviewer, { type: "task.acceptancePrecondition.mark", taskId, deliveryId, evidence: "released in the build that has the PR" });
+  await f.applied(f.reviewer, { type: "task.acceptancePrecondition.mark", taskId, deliveryId, evidence: "released in the build that has the PR", satisfiedAt: new Date().toISOString() });
   const after = await readLeaderWorkTasks(f.pool, f.projectId, { view: "tasks", limit: 50, includeClosed: false });
   assert.ok(after.changeSequence > before, "the mark moved the change sequence");
   await assert.rejects(readLeaderWorkTasks(f.pool, f.projectId, { view: "tasks", limit: 1, includeClosed: false, cursor: first.nextCursor! }), { code: "WORK_INDEX_CHANGED" },
@@ -405,7 +405,7 @@ test("item 2: who marked the precondition, on what evidence and when is read bac
   const { taskId, deliveryId } = await waitingTask(f);
   assert.equal((await readLeaderWorkTask(f.pool, f.projectId, taskId))!.acceptanceConvention!.preconditionMark, null, "not marked: nothing to show");
   const evidence = "released in the build that contains the PR";
-  await f.applied(f.reviewer, { type: "task.acceptancePrecondition.mark", taskId, deliveryId, evidence });
+  await f.applied(f.reviewer, { type: "task.acceptancePrecondition.mark", taskId, deliveryId, evidence, satisfiedAt: new Date().toISOString() });
   const mark = (await readLeaderWorkTask(f.pool, f.projectId, taskId))!.acceptanceConvention!.preconditionMark!;
   assert.equal(mark.actorId, "reviewer"); assert.equal(mark.evidence, evidence);
   assert.ok(!Number.isNaN(Date.parse(mark.markedAt)), "a real time");
@@ -477,4 +477,67 @@ test("item 5: the owed list route accepts direct=0 like no flag, ignores unknown
   assert.equal(body.directComplete, false); assert.equal(body.directError, "WORK_INDEX_BROKEN");
   assert.match(body.directMessage, /没有读完整/, "the response says the list is incomplete");
   assert.ok(logged.some(line => /WORK_INDEX_BROKEN/.test(line)), "the failure is logged");
+});
+
+// ---- Task e7b2d9a4: a mark cannot cite a release that cannot contain the delivery, and a wrong mark can be withdrawn and made again ----
+const at = (ms: number) => new Date(ms).toISOString();
+async function deliveredAt(f: Awaited<ReturnType<typeof fixture>>, taskId: string, deliveryId: string) {
+  return (await f.pool.query("SELECT created_at FROM delivery WHERE project_id=$1 AND delivery_id=$2", [f.projectId, deliveryId])).rows[0].created_at.getTime() as number;
+}
+
+test("e7b2d9a4 item 1: a release earlier than the delivery is refused with what is missing; one at or after it is accepted; one in the future is refused", async t => {
+  const f = await fixture(t);
+  const { taskId, deliveryId } = await waitingTask(f);
+  const recorded = await deliveredAt(f, taskId, deliveryId);
+  const mark = (satisfiedAt: string) => f.issue(f.reviewer, { type: "task.acceptancePrecondition.mark", taskId, deliveryId, evidence: "发布列表包含 #416", satisfiedAt });
+  const early = await mark(at(recorded - 3 * 3600_000)) as { status: string; code: string; message: string };
+  assert.equal(early.status, "rejected"); assert.equal(early.code, "PRECONDITION_BEFORE_DELIVERY");
+  assert.match(early.message, /earlier than this Delivery was recorded/); assert.match(early.message, /at or after/);
+  assert.equal((await readLeaderWorkTask(f.pool, f.projectId, taskId))!.acceptanceConvention!.readiness, "waiting_precondition", "the refused mark changed nothing");
+  assert.equal((await f.pool.query("SELECT count(*)::int AS n FROM task_acceptance_precondition_mark WHERE project_id=$1", [f.projectId])).rows[0].n, 0);
+  const future = await mark(at(Date.now() + 3600_000)) as { code: string };
+  assert.equal(future.code, "PRECONDITION_IN_FUTURE");
+  await assert.rejects(f.issue(f.reviewer, { type: "task.acceptancePrecondition.mark", taskId, deliveryId, evidence: "x" }), /satisfiedAt/, "a mark without the time of the release is not accepted");
+  await f.applied(f.reviewer, { type: "task.acceptancePrecondition.mark", taskId, deliveryId, evidence: "发布列表包含 #456", satisfiedAt: at(recorded + 1000) });
+  const ready = (await readLeaderWorkTask(f.pool, f.projectId, taskId))!;
+  assert.equal(ready.acceptanceConvention!.readiness, "ready");
+  assert.equal(ready.acceptanceConvention!.preconditionMark!.satisfiedAt, at(recorded + 1000));
+});
+
+test("e7b2d9a4 item 2: a wrong mark is withdrawn and made again; the first mark, its evidence and the reason stay readable; nothing is overwritten", async t => {
+  const f = await fixture(t);
+  const { taskId, deliveryId } = await waitingTask(f);
+  const recorded = await deliveredAt(f, taskId, deliveryId);
+  const wrongTime = at(recorded + 500);
+  const first = await f.applied(f.reviewer, { type: "task.acceptancePrecondition.mark", taskId, deliveryId, evidence: "发布列表包含 #416（写错了）", satisfiedAt: wrongTime });
+  assert.equal((await f.issue(f.reviewer, { type: "task.acceptancePrecondition.mark", taskId, deliveryId, evidence: "again", satisfiedAt: at(recorded + 600) }) as { code: string }).code, "ALREADY_MARKED");
+  // Withdrawal: reviewer only, needs a reason, and it must have something to withdraw.
+  const void_ = { type: "task.acceptancePrecondition.void", taskId, deliveryId, reason: "引用了上午的发布，该交付 14:5x 才发布" };
+  await assert.rejects(f.issue(f.writer, void_), /Decision authority for task is required/);
+  await assert.rejects(f.issue(f.reviewer, { ...void_, reason: "  " }), /reason/, "a withdrawal needs a reason");
+  await f.applied(f.reviewer, void_);
+  const waiting = (await readLeaderWorkTask(f.pool, f.projectId, taskId))!;
+  assert.equal(waiting.acceptanceConvention!.readiness, "waiting_precondition", "withdrawn: the delivery waits again");
+  assert.equal(waiting.acceptanceConvention!.preconditionMark, null);
+  assert.deepEqual(waiting.acceptanceConvention!.preconditionVoided.map(v => [v.actorId, v.evidence, v.satisfiedAt, v.voidedBy, v.voidReason]),
+    [["reviewer", "发布列表包含 #416（写错了）", wrongTime, "reviewer", "引用了上午的发布，该交付 14:5x 才发布"]], "the withdrawn mark, its evidence and the reason are still read back");
+  assert.equal((await f.issue(f.reviewer, void_) as { code: string }).code, "ALREADY_VOIDED");
+  // Marking again: the new mark is the effective one, the old one is kept as it was.
+  await f.applied(f.reviewer, { type: "task.acceptancePrecondition.mark", taskId, deliveryId, evidence: "发布列表包含 #456（c9e98a61）", satisfiedAt: at(recorded + 900) });
+  const ready = (await readLeaderWorkTask(f.pool, f.projectId, taskId))!;
+  assert.equal(ready.acceptanceConvention!.readiness, "ready");
+  assert.equal(ready.acceptanceConvention!.preconditionMark!.evidence, "发布列表包含 #456（c9e98a61）");
+  assert.equal(ready.acceptanceConvention!.preconditionVoided.length, 1);
+  const rows = (await f.pool.query("SELECT generation,evidence FROM task_acceptance_precondition_mark WHERE project_id=$1 AND delivery_id=$2 ORDER BY generation", [f.projectId, deliveryId])).rows;
+  assert.deepEqual(rows.map(r => [r.generation, r.evidence]), [[1, "发布列表包含 #416（写错了）"], [2, "发布列表包含 #456（c9e98a61）"]], "two rows: the first is untouched");
+  // The rows cannot be changed or removed afterwards.
+  await assert.rejects(f.pool.query("UPDATE task_acceptance_precondition_mark SET evidence='x' WHERE project_id=$1", [f.projectId]), /immutable|cannot/i);
+  await assert.rejects(f.pool.query("DELETE FROM task_acceptance_precondition_mark_void WHERE project_id=$1", [f.projectId]), /immutable|cannot/i);
+  // Withdrawing needs a mark; a withdrawal is also a change on the Task's feed for incremental readers.
+  const second = await f.createTask({ acceptancePrecondition: "release" });
+  const secondDelivery = await f.deliver(second);
+  assert.equal((await f.issue(f.reviewer, { type: "task.acceptancePrecondition.void", taskId: second, deliveryId: secondDelivery, reason: "x" }) as { code: string }).code, "NOT_MARKED");
+  assert.ok(first.status === "applied");
+  const feed = (await f.pool.query("SELECT count(*)::int AS n FROM leader_work_change WHERE project_id=$1 AND task_id=$2 AND entity_kind='delivery'", [f.projectId, taskId])).rows[0].n;
+  assert.ok(feed >= 3, "mark, withdrawal and the second mark are each a change");
 });
