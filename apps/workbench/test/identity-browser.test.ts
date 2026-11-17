@@ -57,6 +57,9 @@ test("a 401 signs out and clears the page; a revoked project returns to the proj
   await page.locator('[data-shell=rail] a[href="/"]').click();
   await page.getByRole("heading", { name: "你的项目" }).waitFor();
   assert.equal(await page.locator(`a[href="/p/${projectA}/work"]`).count(), 0, "the list rereads each project; A is no longer readable");
+  // Task 523a91e9: the readable project's card opens its overview, with the task list one link beside it.
+  assert.equal(await page.locator(`a.project-item[href="/p/${projectB}/overview"]`).count(), 1, "the project card goes to the overview");
+  assert.equal(await page.locator(`a[data-project-work][href="/p/${projectB}/work"]`).count(), 1, "the task list stays one link away");
   await page.evaluate(path => { const link = Object.assign(document.createElement("a"), { href: path }); document.body.append(link); link.click(); link.remove(); }, `/p/${projectB}/settings`);
   await page.locator('aside[aria-label="项目导航"] a[href="/"]', { hasText: "乙项目" }).waitFor();
   // A saved link to the revoked project, opened inside the app.
