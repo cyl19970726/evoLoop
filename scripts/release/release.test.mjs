@@ -494,3 +494,40 @@ test("V7. sameCommit takes a prefix of either side (7 to 40 hex digits) and noth
   assert.ok(lines.some(line => /PLAN build:.*write build-info\.json/.test(line)));
   assert.ok(lines.some(line => /PLAN post-check:.*GET \/api\/version must report the release commit/.test(line)));
 });
+
+test("K1. skill sync: the release records which workspaces read the release's skills and which do not; a missing directory or a broken sync never fails the release", async () => {
+  const root = await fresh();
+  const { runner: inner } = sim();
+  const source = join(root, "rel", "r1");
+  // the fake `git worktree add` creates the source directory; this one also puts the release's skills in it
+  const runner = async (argv, options) => {
+    const out = await inner(argv, options);
+    if (argv[0] === "git" && argv.includes("worktree")) { await mkdir(join(source, ".agents", "skills", "x"), { recursive: true }); await writeFile(join(source, ".agents", "skills", "x", "SKILL.md"), "x\n"); }
+    return out;
+  };
+  const config = { ...base(root), skillSync: { workspaces: [join(root, "no-such-workspace")], lister: async () => [] } };
+  const lines = [];
+  const result = await run({ config, id: "r1", execute: true, env: ENV, log: line => lines.push(line), runner });
+  assert.equal(result.steps.at(-1).step, "post-check");
+  const saved = await stateOf(root, "r1");
+  assert.equal(saved.acceptance.postCheck, "passed", "the release still succeeded");
+  assert.equal(saved.acceptance.skillSync.summary, "技能同步：1 个工作区，0 个一致（其中本次更新 0 个），1 个未同步，下次发布再试");
+  assert.deepEqual(saved.acceptance.skillSync.unsynced.map(item => item.reason), ["目录不存在"]);
+  assert.ok(lines.some(line => /技能同步：1 个工作区/.test(line)) && lines.some(line => /未同步 .*no-such-workspace：目录不存在/.test(line)));
+  // a release with no skillSync configured records nothing about it
+  const root2 = await fresh();
+  await run({ config: base(root2), id: "r2", execute: true, env: ENV, log: quiet, runner: sim().runner });
+  assert.equal((await stateOf(root2, "r2")).acceptance.skillSync, undefined);
+  // a source directory without skills: recorded as not checked, the release is still fine
+  const root3 = await fresh();
+  await run({ config: { ...base(root3), skillSync: { workspaces: [join(root3, "w")] } }, id: "r3", execute: true, env: ENV, log: quiet, runner: sim().runner });
+  const third = await stateOf(root3, "r3");
+  assert.equal(third.acceptance.postCheck, "passed"); assert.match(third.acceptance.skillSync.summary, /没有核对/);
+});
+
+test("K2. the skill sync workspaces are config: absolute, outside the repository", () => {
+  const ok = { ...base("/srv/x"), skillSync: { workspaces: ["/srv/ws/one"] } };
+  assert.doesNotThrow(() => loadConfig(JSON.stringify(ok), "/etc/release.json"));
+  assert.throws(() => loadConfig(JSON.stringify({ ...ok, skillSync: { workspaces: ["rel/ws"] } }), "/etc/release.json"), /absolute paths/);
+  assert.throws(() => loadConfig(JSON.stringify({ ...ok, skillSync: { workspaces: [join(repoRoot, "apps")] } }), "/etc/release.json"), /outside the repository/);
+});
