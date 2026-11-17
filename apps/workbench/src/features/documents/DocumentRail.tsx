@@ -2,7 +2,6 @@
 // search and filters, the loaded documents with the open one highlighted, and what the list covers. A document opened
 // here is remembered like one opened from the table, so the table puts focus back on that row on return.
 import { useEffect, useRef } from "react";
-import { ReadingSpaceSwitch } from "../../shared/ui/ReadingSpaceSwitch";
 import { Button, ListRow, RefreshingIndicator } from "@evoloop/ui";
 import { href } from "../../shared/routes";
 import { ContextRailContent } from "../../shared/ui/ContextRail";
@@ -27,7 +26,6 @@ function DocumentRailList({ projectId, scope, selectedId }: { projectId: string;
   }, [selectedId, shown]);
   const empty = emptyListText({ filtered: list.filtered, more: list.more });
   return <section data-ui="" aria-label="文档列表" className="flex flex-col gap-2.5 pb-2">
-    <ReadingSpaceSwitch projectId={projectId} current="documents" className="mx-1" />
     <DocumentFilters state={state} update={update} />
     {list.error && <p role="alert" className="mx-1 rounded-md bg-danger-soft px-3 py-2 text-caption text-text-secondary">
       列表本次没有读回：{list.error}。{list.stale ? "下面是上次读回的列表，当前待核对。" : ""}

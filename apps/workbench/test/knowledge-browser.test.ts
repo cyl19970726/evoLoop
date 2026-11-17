@@ -198,7 +198,7 @@ test("知识空间 reads, filters, switches pages without collapsing the right c
     const page = await open(1440, 900);
     await page.getByRole("heading", { name: "知识空间", level: 1 }).waitFor();
     const rail = page.locator("aside[aria-label=项目导航]");
-    assert.equal(await rail.getByRole("navigation", { name: "文档与知识" }).getByRole("link", { name: "知识" }).getAttribute("aria-current"), "page");
+    assert.equal(await rail.getByRole("navigation", { name: "工作分区" }).getByRole("link", { name: /^知识空间/ }).getAttribute("aria-current"), "page");
     const directory = rail.getByRole("region", { name: "知识目录" });
     await directory.getByRole("navigation", { name: "专题目录" }).getByRole("link", { name: /布局专题/ }).waitFor();
     assert.match(await directory.innerText(), /已载入 3 项 · 后续页面未读/);
@@ -258,7 +258,7 @@ test("知识空间 reads, filters, switches pages without collapsing the right c
     assert.match(await main.innerText(), /这一版没有登记来源，正文待复核/);
 
     // From the index, a page opens from a loading state, not from the page read before.
-    await rail.getByRole("navigation", { name: "文档与知识" }).getByRole("link", { name: "知识" }).click();
+    await rail.getByRole("navigation", { name: "工作分区" }).getByRole("link", { name: /^知识空间/ }).click();
     await main.getByRole("heading", { name: "知识空间", level: 1 }).waitFor();
     await directory.getByRole("link", { name: /列表要写明覆盖范围/ }).click();
     await main.getByText("正在读取「列表要写明覆盖范围」").waitFor({ state: "attached" });
@@ -266,7 +266,7 @@ test("知识空间 reads, filters, switches pages without collapsing the right c
     await main.getByRole("heading", { name: "列表要写明覆盖范围", level: 1 }).waitFor();
 
     // ---- Propose a candidate, reject the existing one, accept ours, publish (result unknown), reconcile.
-    await page.locator("aside[aria-label=项目导航]").getByRole("navigation", { name: "文档与知识" }).getByRole("link", { name: "知识" }).click();
+    await page.locator("aside[aria-label=项目导航]").getByRole("navigation", { name: "工作分区" }).getByRole("link", { name: /^知识空间/ }).click();
     await main.getByRole("button", { name: "提出候选" }).click();
     await main.getByRole("heading", { name: "提出知识候选" }).waitFor();
     await main.getByLabel("标题").fill("右栏入口要有名字");
@@ -312,7 +312,7 @@ test("知识空间 reads, filters, switches pages without collapsing the right c
 
     // ---- Degraded: the service is unreachable; the index says so and what can still be done.
     state.degraded = true;
-    await page.locator("aside[aria-label=项目导航]").getByRole("navigation", { name: "文档与知识" }).getByRole("link", { name: "知识" }).click();
+    await page.locator("aside[aria-label=项目导航]").getByRole("navigation", { name: "工作分区" }).getByRole("link", { name: /^知识空间/ }).click();
     await main.getByRole("button", { name: "重新读取" }).click();
     await main.getByText("知识服务暂不可达").waitFor();
     await main.getByRole("heading", { name: "此时仍可做什么" }).waitFor();
@@ -376,7 +376,7 @@ test("知识空间 writes: request bodies, conflicts, unknown results by the ori
     const rail = page.locator("aside[aria-label=项目导航]");
     const directory = rail.getByRole("region", { name: "知识目录" });
     const index = async () => {
-      await rail.getByRole("navigation", { name: "文档与知识" }).getByRole("link", { name: "知识" }).click();
+      await rail.getByRole("navigation", { name: "工作分区" }).getByRole("link", { name: /^知识空间/ }).click();
       await main.getByRole("heading", { name: "知识空间", level: 1 }).waitFor();
     };
     await directory.getByText(/知识列表这次没有读回/).waitFor();

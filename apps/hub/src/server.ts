@@ -1,9 +1,9 @@
-import Fastify, { type FastifyInstance, type FastifyServerOptions } from "fastify";
+import Fastify, { type FastifyBaseLogger, type FastifyInstance, type FastifyServerOptions } from "fastify";
 import { bearerToken } from "./auth.js";
 import { assertSameOrigin, type HubConfig } from "./config.js";
 import { asHubError } from "./errors.js";
 import { errorPage } from "./pages.js";
-import { Gateway } from "./gateway.js";
+import { Gateway, type GatewayEvent } from "./gateway.js";
 import { registerMachineRoutes } from "./machine-routes.js";
 import { MachineStore } from "./machines.js";
 import { registerRoutes } from "./routes.js";
@@ -17,6 +17,8 @@ export type HubAppOptions = {
   service?: HubService;
   machines?: MachineStore;
   gateway?: Gateway;
+  /** Also told every machine-connection event (the Hub logs them either way). */
+  onGatewayEvent?: (event: GatewayEvent) => void;
   logger?: FastifyServerOptions["logger"];
 };
 
@@ -33,6 +35,19 @@ const safeLogger = (logger: FastifyServerOptions["logger"]): NonNullable<Fastify
     serializers: { ...logger.serializers, req: requestLogView },
   };
 };
+
+/** The Hub's readable record of a machine's connection: who connected, which process, what was refused or replaced. IDs only; never a key, token or signature. */
+export function logGatewayEvent(log: Pick<FastifyBaseLogger, "warn" | "info">, event: GatewayEvent): void {
+  const text = {
+    attached: "machine connected", reattached_same_process: "machine reconnected from the same process (its old link was replaced)",
+    replaced_stale: "machine connection replaced: the previous connection had gone quiet",
+    conflict: "machine connection REFUSED: another process is already connected as this machine (two coordinators share one machine credential?)",
+    dropped: "machine connection closed",
+  }[event.type];
+  const fields = { machineId: event.machineId, connectionId: event.connectionId, instance: event.instance?.slice(0, 8) ?? null, existingInstance: event.existingInstance?.slice(0, 8) ?? null,
+    existingBeatAgeMs: event.existingBeatAgeMs, existingUpMs: event.existingUpMs, conflictCount: event.conflictCount, reason: event.reason };
+  if (event.type === "conflict" || event.type === "replaced_stale") log.warn(fields, text); else log.info(fields, text);
+}
 
 export function buildHubApp(options: HubAppOptions): FastifyInstance {
   const { config, store } = options;
@@ -123,6 +138,7 @@ export function buildHubApp(options: HubAppOptions): FastifyInstance {
   const machines = options.machines ?? new MachineStore(store.pool);
   const gateway = options.gateway ?? new Gateway({
     heartbeatMs: config.machineHeartbeatMs ?? 15_000, forwardTimeoutMs: config.forwardTimeoutMs ?? 60_000, maxResponseBytes: config.maxResponseBytes ?? 8 * 1024 * 1024,
+    onEvent: event => { options.onGatewayEvent?.(event); logGatewayEvent(app.log, event); },
   });
   registerRoutes(app, service, store, config, { machines, gateway });
   registerMachineRoutes(app, { config, store, service, machines, gateway });

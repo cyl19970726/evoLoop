@@ -4,7 +4,7 @@ import { href, type Route, type Section } from "../../shared/routes";
 
 export type Space = "work" | "agents" | "inbox";
 
-export interface NavItem { section: Section; label: string; children?: readonly NavItem[] }
+export interface NavItem { section: Section; label: string; /** One line under a child entry, for siblings that are easy to mix up. */ hint?: string; children?: readonly NavItem[] }
 
 /** The work space's sections. Pages that used to open only from deep links are listed under their section. */
 export const workNavigation: readonly NavItem[] = [
@@ -15,9 +15,9 @@ export const workNavigation: readonly NavItem[] = [
     { section: "evaluations", label: "评价与后果" },
   ] },
   { section: "documents", label: "文档与知识", children: [
-    { section: "documents", label: "过程文档" },
-    { section: "knowledge", label: "知识空间" },
-    { section: "repository", label: "仓库规范" },
+    { section: "documents", label: "过程文档", hint: "工作依据与报告" },
+    { section: "knowledge", label: "知识空间", hint: "长期的知识页" },
+    { section: "repository", label: "仓库规范", hint: "固定 Git 来源" },
   ] },
   { section: "schedules", label: "日程" },
   { section: "arrangement", label: "团队", children: [
