@@ -123,9 +123,9 @@ Leader 读到交付后，按 Task 声明的验收方式，用 `acceptance.assign
   3. 等目标 Session 做执行确认（它自己的回合，`task.assignment.acknowledge` verdict=confirm）；确认后泵开出 Run，队伍项为 `started`。
   4. 交付后安排验收：**只发一条普通消息不够**——它让验收 Session 知道有活，但验收接力记录为空，之后没有可链接的安排；用 `request acceptance.assign --project P --id T --file BODY.json`（`mode: session`，`sessionId` 是验收 Session，`senderActorId` 是自己），读回接力 `linked`、消息 `queued`；验收者用自己的身份读 `acceptance-relay/mine?direct=1` 能看到这一项。
   5. 记录：`reason` 里写明代派与时间；事后在需求 Session 的过程文档里留一条。
-- **Leader 恢复后对账。** 额度释放后 Leader 的看板不会把该 Task 当作“已就绪、没在队伍里”再提；它的 `task.start` 因 `QUEUED_IN_SESSION_LINE` 被拒。**但缺口：Leader（或任何有审阅权限的身份）对同一个已交付、未关闭的 Task 再 `line.append` 不被拒绝**，Session 再给一次确认就会开出第二个 Run（自建实例读回：Run 数 1 → 2）。恢复后先读 Task 的队伍项与交付，不要对它再追加；Leader 的“新 Task 待分诊”类通知可能仍在待处理，它的通知泵在这个实例里没有运行，是否会被判过期没有验证。
+- **Leader 恢复后对账。** 额度释放后 Leader 的看板不会把该 Task 当作“已就绪、没在队伍里”再提；它的 `task.start` 因 `QUEUED_IN_SESSION_LINE` 被拒。对当前修订已交付的 Task，Leader（或任何有审阅权限的身份）再 `line.append`（给原 Session 或同一职责的另一个 Session）、`task.assignment.set`、`runtime.run.reserve`，在当前 main（含 1314c6f5 守卫）上**都返回 `TASK_ALREADY_DELIVERED`**，Run 数、assignment 和队伍项都不变（自建实例读回，原文返回见 Task b6afe4a5 的复跑报告）。要重做同一个 Task，只能由声明的消费者对最新交付记 `notUsed`／`failed`，服务端只为原交付登记一条 `source=rework` 的内部队伍项，原 Session 确认后开出一个新 Run（并派生新的 Task 修订），新交付登记后外部三入口对新修订同样被拒。Leader 的“新 Task 待分诊”类通知可能仍在待处理，它的通知泵在这个实例里没有运行，是否会被判过期没有验证。
 - **没验证的部分。** 原生步骤（开始派发、绑定 Turn、记录完成）由脚本替身；交付行直接写入（真实交付要经 Run 的签名提交）；验收 Session 对消息的处理与已读回执、观察链接与 `task.close` 没有走；没有在正式环境做任何一步。
-- **最小的产品改动建议。** `line.append`（以及 `task.assignment.set`）拒绝当前修订上已有未被取代的交付或已完成 Run 的 Task（例如 `TASK_ALREADY_DELIVERED`），要重做须走明确的返工路径。
+- **产品守卫已有。** 原先的缺口（对已交付 Task 再 `line.append` 会开出第二个 Run）已由 1314c6f5 的 `TASK_ALREADY_DELIVERED` 守卫关闭，见上一条。
 
 ## 2. 即时输入
 

@@ -35,14 +35,16 @@ const uow = new PostgresUnitOfWork(pool);
 const deps = { uow, clock: { now: () => new Date().toISOString() }, ids: { next: randomUUID }, hasher: { hash }, runtimeProviders: ["codex", "claude"] as const };
 const workflow = new WorkflowService(deps), runtime = new RuntimeWorkflowService(deps);
 const projectId = randomUUID();
-const operator: Principal = { actorId: "instance-builder", projectIds: [projectId], permissions: ["read", "write", "review"] };
+const operator: Principal = { actorId: "instance-builder", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true };
+// The permission model on current main: task / document / session / management (+ decisions) replace read / write / review. A "reviewer" is management plus decisions; a plain writer has task, document, session.
+const full = ["task", "document", "session", "management"] as const, plain = ["task", "document", "session"] as const;
 const identities = {
-  standin: { actorId: "standin-requirements", permissions: ["read", "write", "review"] as const, token: randomUUID() + randomUUID() },   // NOT the Leader
-  leader: { actorId: "leader-actor", permissions: ["read", "write", "review"] as const, token: randomUUID() + randomUUID() },
-  worker: { actorId: "claude-dev-worker", permissions: ["read", "write"] as const, token: randomUUID() + randomUUID() },
-  acceptor: { actorId: "acceptor-agent", permissions: ["read", "write"] as const, token: randomUUID() + randomUUID() },
+  standin: { actorId: "standin-requirements", permissions: full, decisions: true, token: randomUUID() + randomUUID() },   // NOT the Leader
+  leader: { actorId: "leader-actor", permissions: full, decisions: true, token: randomUUID() + randomUUID() },
+  worker: { actorId: "claude-dev-worker", permissions: plain, token: randomUUID() + randomUUID() },
+  acceptor: { actorId: "acceptor-agent", permissions: plain, token: randomUUID() + randomUUID() },
 };
-const principal = (who: keyof typeof identities): Principal => ({ actorId: identities[who].actorId, projectIds: [projectId], permissions: [...identities[who].permissions] });
+const principal = (who: keyof typeof identities): Principal => ({ actorId: identities[who].actorId, projectIds: [projectId], permissions: [...identities[who].permissions], ...((identities[who] as any).decisions ? { decisions: true } : {}) });
 const apply = async (command: Record<string, unknown>, who: Principal = operator) => { const r = await workflow.execute(who, { projectId, operationId: randomUUID(), ...command } as never); assert.equal(r.status, "applied", JSON.stringify(r)); return r; };
 await apply({ type: "project.create", title: "Leader down" });
 
@@ -65,13 +67,14 @@ async function session(roleId: string, provider: "codex" | "claude") {
   const saved = (await uow.read(projectId, r => r.getRuntimeSession(sessionId)))!;
   await runtime.bindSession(projectId, sessionId, { owner: provider === "claude" ? "evoloop-claude-agent-sdk" : "evoloop-codex-app-server", projectId, sessionId, roleId, cwd: "/tmp/ld", authorizationScope: "project", nativeThreadId: `thread-${sessionId}`, nativeSessionId: `native-${sessionId}`,
     resumeProfile: { actorId: saved.actorId, model: saved.model, sandbox: saved.sandbox, approvalPolicy: saved.approvalPolicy, executionProfileRevisionId: saved.executionProfile!.revision.revisionId } });
-  await apply({ type: "role.bindSession", roleId, expectedVersion: 1, sessionId, note: "bound" });
+  const roleVersion = Number((await pool.query("SELECT version FROM role_definition WHERE project_id=$1 AND role_id=$2", [projectId, roleId])).rows[0].version);
+  await apply({ type: "role.bindSession", roleId, expectedVersion: roleVersion, sessionId, note: "bound" });
   const row = (await pool.query("SELECT runtime_provider FROM runtime_session WHERE project_id=$1 AND session_id=$2", [projectId, sessionId])).rows[0];
   assert.equal(row.runtime_provider, provider, `the ${provider} Session has provider ${row.runtime_provider}`);
   return sessionId;
 }
 const roles = { lead: await role("项目 Leader", "lead", "codex"), dev: await role("功能开发（Claude）", null, "claude"), acc: await role("验收（Claude）", null, "claude") };
-const S = { leader: await session(roles.lead, "codex"), dev: await session(roles.dev, "claude"), acc: await session(roles.acc, "claude") };
+const S = { leader: await session(roles.lead, "codex"), dev: await session(roles.dev, "claude"), dev2: await session(roles.dev, "claude"), acc: await session(roles.acc, "claude") };
 
 // ---- the coordinator: real HTTP server; real session line pump with the NON-Leader credentials only ----
 const messages = new SessionMessageService({ uow, clock: { now: () => new Date().toISOString() }, ids: { next: randomUUID }, grantFor: async () => null });
@@ -79,7 +82,9 @@ const relay = new AcceptanceRelayService({ pool, workflow, messages, principals:
 const reads = { board: (id: string) => readWorkBoard(pool, id), events: (id: string, q: Parameters<typeof readSchedEvents>[2]) => readSchedEvents(pool, id, q) };
 const hub = new SchedEventHub({ head: id => headSeq(pool, id), read: (id, after, limit) => readSchedEvents(pool, id, { after, limit }) }, 500);
 const app = await buildServer({ service: workflow, acceptanceRelay: relay, sessionWork: new SessionObservationService({ uow }), workBoard: { reads, hub },
-  credentials: Object.values(identities).map(i => ({ token: i.token, actorId: i.actorId, projectIds: [projectId], permissions: [...i.permissions] })) } as never);
+  // The execution service answers (a stand-in for the native runtime): without it `runtime.run.reserve` stops at RUNTIME_UNAVAILABLE before the Task guard is ever reached.
+  runtime: { status: () => ({ available: true, error: null, faults: [] }) }, listRuntimeModels: async () => ({ status: "available", models: [], error: null, observedAtUtc: new Date().toISOString() }), hasRuntimeGrant: () => true,
+  credentials: Object.values(identities).map(i => ({ token: i.token, actorId: i.actorId, projectIds: [projectId], permissions: [...i.permissions], ...((i as any).decisions ? { decisions: true } : {}) })) } as never);
 const apiUrl = await app.listen({ host: "127.0.0.1", port: 0 });
 const pump = new SessionLinePump({ workflow, credentials: async () => [principal("standin"), principal("worker")], enabled: async () => true, canWrite: () => true, pollIntervalMs: 1000,
   onError: error => { throw error; }, recipientActorId: async () => identities.worker.actorId, retryBackoffMs: () => 0 });
@@ -192,7 +197,7 @@ try {
   assert.equal(relays.items.length, 1); assert.equal(item.messageState, "queued");
   const mine = await cli("acceptor", ["get", `/api/projects/${projectId}/acceptance-relay/mine?direct=1`], "any");
   log(`  验收者自己读 acceptance-relay/mine：${JSON.stringify(mine).slice(0, 200)}`);
-  log("\n=== Q3. Leader 恢复（额度释放）：它的看板、检查点、通知会不会把同一个 Task 再派一次 ===");
+  log("\n=== Q3（返工复跑，当前 main）. Leader 恢复后对已交付的同一修订再派：三个外部入口都应被拒；一次性内部返工仍可用 ===");
   const holdRow = (await pool.query("SELECT hold_id,version FROM runtime_provider_hold WHERE project_id=$1 AND state='held'", [projectId])).rows[0];
   await command("leader", { type: "runtime.providerHold.release", provider: "codex", holdId: holdRow.hold_id, expectedVersion: Number(holdRow.version), evidenceRef: "quota restored", reason: "额度恢复" }, "any");
   log(`  hold 状态：${JSON.stringify((await pool.query("SELECT state FROM runtime_provider_hold WHERE project_id=$1", [projectId])).rows)}`);
@@ -200,27 +205,61 @@ try {
   const ready = (leaderBoard.ready ?? []).map((r: any) => r.task);
   log(`  Leader 的看板“已就绪、没在任何队伍里”的任务：${JSON.stringify(ready)}（T=${T}）`);
   assert.ok(!ready.includes(T), "T is not offered to the Leader as ready-but-unqueued");
-  const attempts: Array<[string, any]> = [];
-  attempts.push(["line.append 同一 Task 给另一个 Claude Session", await command("leader", { type: "line.append", sessionId: S.dev, taskId: T, expectedTaskVersion: (await task(T)).version, reason: "Leader 恢复后重派" }, "any")]);
-  attempts.push(["runtime.run.reserve 同一 Task", await command("leader", { type: "runtime.run.reserve", runId: randomUUID(), taskId: T, sessionId: S.dev, expectedVersion: (await task(T)).version, input: "again" }, "any")]);
-  attempts.push(["task.start 同一 Task", await command("leader", { type: "task.start", taskId: T, expectedVersion: (await task(T)).version, reason: "again" }, "any")]);
-  log(`  Leader 重派尝试读回：${attempts.map(([n, r]) => `${n} → ${r.error?.data?.code ?? r.error?.code ?? r.status}`).join("；")}`);
-  assert.equal(await runsOf(T), 1, "still exactly one Run for T right after the Leader's attempts");
-  const notices = (await pool.query("SELECT kind, state FROM leader_result_notice WHERE project_id=$1 AND task_id=$2 ORDER BY occurred_at", [projectId, T])).rows;
-  log(`  Leader 的通知行（关于 T，Leader 的通知泵在本实例里没有运行，所以只读行）：${JSON.stringify(notices)}`);
+  const lineOf = async () => (await workflow.listSessionLineEntries(operator, projectId, S.dev, true)).filter(e => e.taskId === T);
+  const describe = (e: any) => `${e.source ?? "?"}/${e.state}/${e.step}${e.runId ? "/run" : ""}`;
+  const assignmentSnapshot = async () => { const a = (await workflow.getTaskAssignment(operator, projectId, T))!; return { version: a.version, target: JSON.stringify(a.target), recipient: a.recipientActorId, state: a.state }; };
+  const externalAttempts = async (label: string) => {
+    const t = await task(T); const a = (await workflow.getTaskAssignment(operator, projectId, T))!;
+    log(`  --- ${label}：Leader 对 T（修订 ${t.currentRevisionId.slice(0, 8)}）逐个尝试三个外部入口 ---`);
+    const out: Array<[string, any]> = [
+      ["line.append → Claude Session", await command("leader", { type: "line.append", sessionId: S.dev, taskId: T, expectedTaskVersion: t.version, reason: "Leader 恢复后重派" }, "any")],
+      ["line.append → 同一职责的另一个 Claude Session", await command("leader", { type: "line.append", sessionId: S.dev2, taskId: T, expectedTaskVersion: t.version, reason: "Leader 恢复后重派到别处" }, "any")],
+      ["task.assignment.set", await command("leader", { type: "task.assignment.set", taskId: T, expectedTaskVersion: t.version, target: { kind: "owned", sessionId: S.dev }, recipientActorId: identities.worker.actorId, expectedVersion: a.version, reason: "Leader 恢复后重设分派" }, "any")],
+      ["runtime.run.reserve", await command("leader", { type: "runtime.run.reserve", runId: randomUUID(), taskId: T, sessionId: S.dev, expectedVersion: t.version, input: "again" }, "any")],
+    ];
+    for (const [name, r] of out) { const code = r.error?.data?.code ?? r.error?.data?.data?.code ?? r.error?.code; log(`  ${name} → ${code}`); assert.equal(code, "TASK_ALREADY_DELIVERED", `${name}: ${JSON.stringify(r)}`); }
+  };
+  const runsBefore = await runsOf(T), assignBefore = await assignmentSnapshot(), lineBefore = (await lineOf()).map(describe);
+  log(`  尝试之前：Run 数 ${runsBefore}，assignment ${JSON.stringify(assignBefore)}，T 在 Claude Session 队伍里的项 ${JSON.stringify(lineBefore)}`);
+  await externalAttempts("第一次（交付已登记，尚无验收结论）");
   await settle();
-  const entries = (await workflow.listSessionLineEntries(operator, projectId, S.dev, true)).filter(e => e.taskId === T);
-  log(`  T 在 Claude Session 队伍里的项：${entries.map(e => `${e.state}/${e.step}${e.runId ? "/run" : ""}`).join("、")}（第二项是 Leader 恢复后追加的）`);
-  const second = entries.find(e => e.state === "starting");
-  assert.ok(second, "the Leader's second append became an entry waiting for the Session's confirmation");
-  log(`  第二次追加之后 T 的 Run 数：${await runsOf(T)}（在 Session 确认之前仍是 1）`);
-  assert.equal(await runsOf(T), 1);
-  log("  反例（缺口）：假如 Claude Session 没有发现这个 Task 已交付、又给了一次“确认”：");
-  const a2 = (await workflow.getTaskAssignment(operator, projectId, T))!;
-  const t2 = await task(T);
-  const ack2 = await command("worker", { type: "task.assignment.acknowledge", taskId: T, expectedVersion: a2.version, expectedTaskVersion: t2.version, evidence: "read", verdict: "confirm", plan: "again", expectedRevisionId: t2.currentRevisionId }, "any");
+  const assignAfter = await assignmentSnapshot(), lineAfter = (await lineOf()).map(describe);
+  log(`  尝试之后：Run 数 ${await runsOf(T)}，assignment ${JSON.stringify(assignAfter)}，队伍项 ${JSON.stringify(lineAfter)}`);
+  assert.equal(await runsOf(T), 1, "still exactly one Run"); assert.deepEqual(assignAfter, assignBefore, "the assignment did not change"); assert.deepEqual(lineAfter, lineBefore, "no line entry was added");
+  log("  通知行与 Leader 的通知泵：本实例里泵没有运行，不在这一项里证明。");
+
+  log("\n  --- 一次性内部返工：声明的消费者（acceptor-agent）对当前交付记 notUsed ---");
+  const deliveryOfT = (await cli("standin", ["task", T, "--project", projectId])).deliveries[0].id;
+  const revisionBefore = (await task(T)).currentRevisionId;
+  const obs = await command("acceptor", { type: "observation.record", taskId: T, deliveryId: deliveryOfT, observer: identities.acceptor.actorId, observerKind: "agent", result: "notUsed", evidence: "checked the fixed result", reason: "send it back once" });
+  assert.equal(obs.status, "applied");
+  const reworkEntries = (await lineOf()).filter(e => (e as any).source === "rework");
+  log(`  观察之后 T 的队伍项：${JSON.stringify((await lineOf()).map(describe))}（source=rework 的有 ${reworkEntries.length} 条）`);
+  assert.equal(reworkEntries.length, 1, "one Delivery has one internal rework entry");
+  assert.equal((await task(T)).currentRevisionId, revisionBefore, "the Task revision is unchanged");
+  await externalAttempts("返工项已登记、未开始时，外部三入口仍被拒");
   await settle();
-  log(`  确认读回：${JSON.stringify(ack2).slice(0, 200)}；T 的 Run 数：${await runsOf(T)}`);
+  const a3 = (await workflow.getTaskAssignment(operator, projectId, T))!; const t3 = await task(T);
+  log(`  返工项推进到确认：assignment state=${a3.state} v${a3.version}`);
+  const ack3 = await command("worker", { type: "task.assignment.acknowledge", taskId: T, expectedVersion: a3.version, expectedTaskVersion: t3.version, evidence: "read the fixed Task and the notUsed observation", verdict: "confirm", plan: "fix it in the original Session", expectedRevisionId: t3.currentRevisionId }, "any");
+  log(`  原 Session 确认返工：${ack3.status ?? JSON.stringify(ack3).slice(0, 120)}`);
+  await settle();
+  const runsAfterRework = await runsOf(T);
+  log(`  返工之后 T 的 Run 数：${runsAfterRework}；队伍项 ${JSON.stringify((await lineOf()).map(describe))}`);
+  assert.equal(runsAfterRework, 2, "the rework made exactly one new Run");
+  const run2 = (await pool.query("SELECT run_id, task_revision_id, state FROM runtime_run WHERE project_id=$1 AND task_id=$2 ORDER BY created_at DESC LIMIT 1", [projectId, T])).rows[0];
+  log(`  第二个 Run：${JSON.stringify(run2)}（修订与第一个相同：${run2.task_revision_id === revisionBefore}）`);
+  log("  [替身] 原生步骤：第二个 Run 开始派发 → 绑定 Turn → 记录完成；新交付行直接写入");
+  await finishRun(run2.run_id);
+  await pool.query(`INSERT INTO delivery(project_id,delivery_id,task_id,task_revision_id,run_id,artifact_ref,artifact_revision,content_hash,technical_result,technical_evidence,reason,actor_id,created_at) VALUES($1,$2,$3,$4,$5,'fixture:report-2','r2',$6,'passed','checked','rework delivery',$7,now())`,
+    [projectId, randomUUID(), T, (await task(T)).currentRevisionId, run2.run_id, hash(`${T}-2`), identities.worker.actorId]);
+  const delivered2 = await cli("standin", ["task", T, "--project", projectId]);
+  log(`  交付读回：${delivered2.deliveries.map((d: any) => `${d.id.slice(0, 8)} ${d.technicalResult}`).join(", ")}（两份）`);
+  assert.equal(delivered2.deliveries.length, 2);
+  await externalAttempts("返工完成、新交付登记后（同一修订第二次再派）");
+  await settle();
+  assert.equal(await runsOf(T), 2, "no third Run");
+  log(`  最终：Run 数 ${await runsOf(T)}，队伍项 ${JSON.stringify((await lineOf()).map(describe))}`);
   log("\n=== Q4. 需要的授权：只有读写、没有审阅的身份做同样的事 ===");
   const T4 = await newTask("授权对照任务", roles.dev);
   const noReview = await command("worker", { type: "line.append", sessionId: S.dev, taskId: T4, expectedTaskVersion: (await task(T4)).version, reason: "no review permission" }, "any");
