@@ -334,8 +334,12 @@ function acceptanceConvention(row: QueryResultRow): NonNullable<LeaderWorkTask["
     readiness: row.delivery_id ? acceptanceReadiness(row.acceptance_precondition, row.precondition_marked === true) : null,
     namedAgent: row.acceptance_target === "named_agent" ? String(row.consumer ?? "") || null : null,
     // The mark belongs to the delivery it was made for: a newer delivery has none until it is marked.
-    preconditionMark: row.precondition_mark ? { actorId: String(row.precondition_mark.actorId), evidence: String(row.precondition_mark.evidence),
-      markedAt: new Date(String(row.precondition_mark.markedAt)).toISOString() } : null };
+    preconditionMark: row.precondition_mark ? { markId: String(row.precondition_mark.markId), actorId: String(row.precondition_mark.actorId), evidence: String(row.precondition_mark.evidence),
+      markedAt: new Date(String(row.precondition_mark.markedAt)).toISOString(),
+      satisfiedAt: row.precondition_mark.satisfiedAt ? new Date(String(row.precondition_mark.satisfiedAt)).toISOString() : null } : null,
+    preconditionVoided: (Array.isArray(row.precondition_voided) ? row.precondition_voided : []).map((v: Record<string, unknown>) => ({ markId: String(v.markId), actorId: String(v.actorId),
+      evidence: String(v.evidence), markedAt: new Date(String(v.markedAt)).toISOString(), satisfiedAt: v.satisfiedAt ? new Date(String(v.satisfiedAt)).toISOString() : null,
+      voidedBy: String(v.voidedBy), voidedAt: new Date(String(v.voidedAt)).toISOString(), voidReason: String(v.voidReason) })) };
 }
 /** A delivery that is waiting for its precondition is not "ready to accept"; a named-agent Task needs no arrangement. */
 function conventionAction(row: QueryResultRow, phase: LeaderWorkPhase, base: string): string {
@@ -976,9 +980,14 @@ export async function readLeaderWorkTasks(db: Database, projectId: string, query
       SELECT facts.*,proposal.consumer,proposal.use_required,
         proposal.acceptance_target,proposal.acceptance_precondition,
         EXISTS(SELECT 1 FROM task_acceptance_precondition_mark pm WHERE pm.project_id=facts.project_id
-          AND pm.delivery_id=facts.delivery_id) AS precondition_marked,
-        (SELECT jsonb_build_object('actorId',pm.actor_id,'evidence',pm.evidence,'markedAt',pm.created_at)
-          FROM task_acceptance_precondition_mark pm WHERE pm.project_id=facts.project_id AND pm.delivery_id=facts.delivery_id) AS precondition_mark,
+          AND pm.delivery_id=facts.delivery_id AND NOT EXISTS(SELECT 1 FROM task_acceptance_precondition_mark_void v WHERE v.project_id=pm.project_id AND v.mark_id=pm.mark_id)) AS precondition_marked,
+        (SELECT jsonb_build_object('markId',pm.mark_id,'actorId',pm.actor_id,'evidence',pm.evidence,'markedAt',pm.created_at,'satisfiedAt',pm.satisfied_at)
+          FROM task_acceptance_precondition_mark pm WHERE pm.project_id=facts.project_id AND pm.delivery_id=facts.delivery_id
+          AND NOT EXISTS(SELECT 1 FROM task_acceptance_precondition_mark_void v WHERE v.project_id=pm.project_id AND v.mark_id=pm.mark_id) ORDER BY pm.generation DESC LIMIT 1) AS precondition_mark,
+        COALESCE((SELECT jsonb_agg(jsonb_build_object('markId',pm.mark_id,'actorId',pm.actor_id,'evidence',pm.evidence,'markedAt',pm.created_at,'satisfiedAt',pm.satisfied_at,
+            'voidedBy',v.actor_id,'voidedAt',v.created_at,'voidReason',v.reason) ORDER BY pm.generation)
+          FROM task_acceptance_precondition_mark pm JOIN task_acceptance_precondition_mark_void v ON v.project_id=pm.project_id AND v.mark_id=pm.mark_id
+          WHERE pm.project_id=facts.project_id AND pm.delivery_id=facts.delivery_id),'[]'::jsonb) AS precondition_voided,
         (SELECT o.result FROM consumer_observation o WHERE o.project_id=facts.project_id AND o.delivery_id=facts.delivery_id
           AND o.observer=proposal.consumer ORDER BY o.sequence DESC LIMIT 1) AS consumer_own_result,
         stage.stage_id,stage.deliverable AS stage_deliverable,

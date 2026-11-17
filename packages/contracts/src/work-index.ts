@@ -167,7 +167,9 @@ export interface LeaderWorkTask {
     /** Set for `named_agent`: the business identity that accepts directly. */
     namedAgent: string | null;
     /** Who marked the current delivery's precondition met, on what evidence and when; null when not marked (or no delivery yet). */
-    preconditionMark: { actorId: string; evidence: string; markedAt: string } | null;
+    preconditionMark: { markId: string; actorId: string; evidence: string; markedAt: string; satisfiedAt: string | null } | null;
+    /** Marks that were withdrawn for this delivery, oldest first: who marked them, on what evidence, and who withdrew them, when and why. */
+    preconditionVoided: Array<{ markId: string; actorId: string; evidence: string; markedAt: string; satisfiedAt: string | null; voidedBy: string; voidedAt: string; voidReason: string }>;
   } | null;
   latestRun: LeaderWorkRunFact | null;
   delivery: LeaderWorkDeliveryFact | null;
