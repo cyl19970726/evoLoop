@@ -44,6 +44,7 @@ const requiredDatabase = new Map([
   ["hub.test.ts", "evoloop_hub_test"],
   ["hub-machine.test.ts", "evoloop_hub_test"],
   ["hub-machine-conflict.test.ts", "evoloop_hub_test"],
+  ["hub-respond-limit.test.ts", "evoloop_hub_test"],
   ["hub-workbench.test.ts", "evoloop_hub_test"],
   ["hub-workbench-browser.test.ts", "evoloop_hub_test"],
 ]);

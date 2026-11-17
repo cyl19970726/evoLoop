@@ -210,7 +210,7 @@ export class HubConnector {
     const identity = typeof frame.identity === "string" ? frame.identity : "";
     const json = (status: number, code: string, message: string) => this.answer(credentials, frame, status, "application/json", Buffer.from(JSON.stringify({ code, message })));
     if (!isForwardablePath(method, path)) return json(403, "FORWARD_PATH_REFUSED", "This machine only accepts the project API and the command endpoint.");
-    if (!identity) return json(401, "UNAUTHENTICATED", "转发身份未被接受。");
+    if (!identity) { this.log("A forwarded request arrived without a signed identity and was refused here (401); it never reached the coordinator."); return json(401, "UNAUTHENTICATED", "转发身份未被接受。"); }
     const target = new URL(path, this.options.coordinatorUrl);
     // Belt and braces: whatever the path was, the request goes to this coordinator's own origin, nowhere else.
     if (target.origin !== new URL(this.options.coordinatorUrl).origin) return json(403, "FORWARD_PATH_REFUSED", "This machine only accepts the project API and the command endpoint.");
@@ -224,6 +224,8 @@ export class HubConnector {
         ...(body && method !== "GET" ? { body } : {}),
       });
       const answer = Buffer.from(await local.arrayBuffer());
+      // The coordinator said no to the signed identity: the reason is in the coordinator's own log (Hub identity rejected: …); here only that it happened.
+      if (local.status === 401) this.log("The coordinator refused a forwarded request's identity (401); its log says why.");
       if (answer.length > MAX_ANSWER_BYTES) return json(502, "ANSWER_TOO_LARGE", "The coordinator's answer is larger than the connector forwards.");
       await this.answer(credentials, frame, local.status, local.headers.get("content-type"), answer);
     } catch {
@@ -233,11 +235,23 @@ export class HubConnector {
     }
   }
 
-  private async answer(credentials: MachineCredentials, frame: Frame, status: number, contentType: string | null, body: Buffer): Promise<void> {
+  /**
+   * Hand the coordinator's answer to the Hub. If the Hub refuses it (non-2xx), say so in one line that carries the status and the size and never the body, and, unless the
+   * answer was already the small error, send the Hub a small 502 (ANSWER_REJECTED) for the same request so it fails at once instead of waiting for its forward timeout.
+   * Nothing is retried when the Hub says the request is no longer pending (404) or does not accept the machine's signature (401/403): another answer cannot change that.
+   */
+  private async answer(credentials: MachineCredentials, frame: Frame, status: number, contentType: string | null, body: Buffer, small = false): Promise<void> {
     const id = typeof frame.id === "string" ? frame.id : "";
     if (!id) return;
     try {
-      await this.post(credentials, "respond", JSON.stringify({ id, status, contentType, body: body.toString("base64") }));
+      const response = await this.post(credentials, "respond", JSON.stringify({ id, status, contentType, body: body.toString("base64") }));
+      if (response.ok) return;
+      const refused = response.status;
+      await response.body?.cancel().catch(() => undefined);
+      this.log(`A forwarded request's answer was refused by the Hub (HTTP ${refused}, ${body.length} bytes, answer status ${status}).`);
+      if (small || refused === 404 || refused === 401 || refused === 403) return;
+      const message = "The Hub did not accept the machine's answer; the request is failed here instead of waiting for its timeout.";
+      await this.answer(credentials, frame, 502, "application/json", Buffer.from(JSON.stringify({ code: "ANSWER_REJECTED", message })), true);
     } catch {
       this.log("A forwarded request's answer could not be delivered to the Hub.");
     }

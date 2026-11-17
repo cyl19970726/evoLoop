@@ -40,6 +40,14 @@ export function safeProjectPath(projectId: string, rest: string, rawQuery: strin
   return `/api/projects/${projectId}/${rest}${rawQuery ? `?${rawQuery}` : ""}`;
 }
 
+export const DEFAULT_MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
+/** The JSON frame around the base64 body: id, status, content type and keys. A fixed allowance well above what it needs. */
+const RESPOND_FRAME_ALLOWANCE_BYTES = 8 * 1024;
+/** The largest `/api/machine/respond` body for a Hub that forwards responses up to `maxResponseBytes`: base64 grows the bytes by 4/3 (whole groups of 3), plus the frame. */
+export function respondBodyLimit(maxResponseBytes: number): number {
+  return Math.ceil(maxResponseBytes / 3) * 4 + RESPOND_FRAME_ALLOWANCE_BYTES;
+}
+
 export function registerMachineRoutes(app: FastifyInstance, deps: {
   config: HubConfig; store: HubStore; service: HubService; machines: MachineStore; gateway: Gateway;
 }): void {
@@ -174,7 +182,9 @@ export function registerMachineRoutes(app: FastifyInstance, deps: {
     return reply.send({ ok: true, connected });
   });
 
-  app.post("/api/machine/respond", async (request, reply) => {
+  // The machine's answer carries the forwarded response as base64 inside a small JSON frame, so its body is larger than the response it carries. This route gets its own limit,
+  // derived from the largest response the Hub forwards (`maxResponseBytes`); every other route keeps the global `bodyLimitBytes` (64 KB by default).
+  app.post("/api/machine/respond", { bodyLimit: respondBodyLimit(config.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES) }, async (request, reply) => {
     const raw = rawBody(request);
     const machine = await machineFor(request, "respond", raw);
     let record: Record<string, unknown>;
