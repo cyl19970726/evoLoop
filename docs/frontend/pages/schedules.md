@@ -27,6 +27,26 @@
 
 现状（#229 PR9c）：日程列表在内层栏（窄屏另有下拉）；中间是所选日程的检查目的与任务材料、发生记录和修订表单，其下是“定时任务”一栏；右栏是触发条件、下次时间（按规则推算的预览）、产生的任务、授权与协调器。创建日程是中间的单独视图。创建、修订和停用表单是共同的[提交表单](../components.md#提交表单)，修订还核对授权是否变化（#229 F3）：职责和日程授权按名称选择，时间按日程时区填写；完整标识在“来源与完整标识”里。
 
+## 日程定义、Task 定时与每次触发（Task 9e45cd20）
+
+| 部分 | 写什么 |
+| --- | --- |
+| 日程定义 | 项目里的规则（何时检查、交给谁、怎样验收），所选日程标题旁标“日程定义 · 规则” |
+| Task 定时 | 页面下方“定时任务”一栏，标“Task 自己的执行时间”，写明“这不是上面的日程定义”：某个 Task 自己的一次定时或每日重复 |
+| 最近触发 | 所选日程的发生记录，新的在前：计划时间、结果、原因、能点开的任务。结果以派发记录为准，没有则用日程发生记录：已直派到队伍、交回 Leader 安排、已跳过（没有生成任务）、待派发、已创建待办任务（没有直派记录时注明） |
+| 跳过与交回 | 写原因，中文在前、代码在旁（`PREVIOUS_STILL_OPEN`、`DAILY_BUDGET`、`POLICY_PAUSED` 等）；页面不认识的代码写“原因代码页面未收录”，原文放进完整标识。跳过链到仍未关闭的那个任务 |
+| 直派 | 写放进队伍的时间，注明放进队伍不等于已开始或已完成；在队伍里等过上限并已告知 Leader 的另列 |
+| 派发方式 | 交 Leader 安排（没有登记直派策略时写“按默认”）或直派到队伍；策略状态（生效中、已暂停、已撤销、已熔断）、连续跳过次数、等待上限与每日预算 |
+| 已升级给 Leader | 按跳过所指的任务读通知，读到 `schedule_skips_escalated` 就写条数和最近时间，没读到写没有读到，读失败写未知 |
+| 读取 | 只读，用现有接口 `GET /schedules/:id/dispatch`（策略，没有登记时为 null）、`GET /schedules/:id/dispatches`（最多读 500 条，更多时写明只读到最早的部分）和任务的通知读取，没有新增后端接口 |
+| 读不到 | 派发记录读失败时，当前方式写“未知，不推断为交 Leader”，触发列表只剩日程自己的发生记录，并说明谁接了任务、是否直派未知 |
+
+![日程触发与派发方式，1440](../../assets/frontend-pages/schedules-dispatch-1440.png)
+
+![日程触发与派发方式，390](../../assets/frontend-pages/schedules-dispatch-390.png)
+
+![派发记录读不到时，390](../../assets/frontend-pages/schedules-dispatch-390-unknown.png)
+
 ## 内容与状态
 
 通用的空、加载、失败、未知规则见[共同原则](../principles.md)。
@@ -63,8 +83,8 @@
 
 | 范围 | 路径 |
 | --- | --- |
-| 源码（`apps/workbench/src/`） | `features/scheduling/SchedulingPanel.tsx`（内层栏日程列表、所选日程、右栏、创建视图）、`features/scheduling/scheduleForm.ts`（创建与修订表单的字段和命令）、`shared/zonedTime.ts`（当地时间与时区换算，与协调器同一规则）、`shared/ui/LocalTimeInput.ts`（日期时间控件与较早 / 较晚的选择）、`features/scheduling/presentation.ts`（规则、下次时间、触发原因与授权用语，生成任务带“返回日程”的链接；每日规则的本地时刻用 `packages/contracts/src/scheduling.ts` 的 `dailyRuleInstant`，与 `packages/core/src/scheduling/due.ts` 共用）、`features/scheduling/managedTarget.ts`、`features/scheduling/client.ts`；指定验收人用 `shared/ui/MemberChoice.tsx`（`scheduleForm.ts` 的 `withMemberChoice`）；名称与来源层在 `shared/ui/RecordName.tsx`、`shared/ui/FullIdentifiers.tsx`；定时任务一栏在 `features/scheduling/TimedTasksSection.tsx`（列表、状态与失败写法）和 `features/scheduling/timedTasks.ts`（下次时间用语、`?timing=` 地址与返回链接）；任务详情里的“执行时间与重复”是另一套机制，在 `features/workflow/TaskScheduleSection.tsx`，修改仍在那里 |
-| 测试（`apps/workbench/test/`） | `schedule-form.test.ts`（命令与原表单一致）、`zoned-time.test.ts`（与 `computeDue` 对照夏令时）、`schedule-form-browser.test.ts`、`command-form-browser.test.ts`、`schedule-presentation.test.ts`、`schedule-next-instant.test.ts`、`schedule-managed-target.test.ts`、`schedule-wording-browser.test.ts`、`schedule-run-session-path-browser.test.ts`（阅读此任务再返回日程）、`legacy-bits-browser.test.ts`（另一时区的日程）、`member-presentation.test.ts`、`member-choice-browser.test.ts`（按成员选指定验收人）、`timed-tasks.test.ts`（定时任务一栏：三类样本与反例、下次时间（含每日首份未到点）与时区、读取失败与协调器不可用的写法、返回日程原位置、列表读取合同）；后端 `packages/adapter-postgres/test/task-timing.test.ts`（项目级列表与分页） |
+| 源码（`apps/workbench/src/`） | `features/scheduling/dispatch.ts`（触发与派发记录的合并、原因用语）、`features/scheduling/ScheduleDispatch.tsx`（派发方式与最近触发）、`features/scheduling/SchedulingPanel.tsx`（内层栏日程列表、所选日程、右栏、创建视图）、`features/scheduling/scheduleForm.ts`（创建与修订表单的字段和命令）、`shared/zonedTime.ts`（当地时间与时区换算，与协调器同一规则）、`shared/ui/LocalTimeInput.ts`（日期时间控件与较早 / 较晚的选择）、`features/scheduling/presentation.ts`（规则、下次时间、触发原因与授权用语，生成任务带“返回日程”的链接；每日规则的本地时刻用 `packages/contracts/src/scheduling.ts` 的 `dailyRuleInstant`，与 `packages/core/src/scheduling/due.ts` 共用）、`features/scheduling/managedTarget.ts`、`features/scheduling/client.ts`；指定验收人用 `shared/ui/MemberChoice.tsx`（`scheduleForm.ts` 的 `withMemberChoice`）；名称与来源层在 `shared/ui/RecordName.tsx`、`shared/ui/FullIdentifiers.tsx`；定时任务一栏在 `features/scheduling/TimedTasksSection.tsx`（列表、状态与失败写法）和 `features/scheduling/timedTasks.ts`（下次时间用语、`?timing=` 地址与返回链接）；任务详情里的“执行时间与重复”是另一套机制，在 `features/workflow/TaskScheduleSection.tsx`，修改仍在那里 |
+| 测试（`apps/workbench/test/`） | `schedule-dispatch.test.ts`、`schedule-dispatch-browser.test.ts`（五种触发样本、派发方式、读失败写未知，两种宽度）、`schedule-form.test.ts`（命令与原表单一致）、`zoned-time.test.ts`（与 `computeDue` 对照夏令时）、`schedule-form-browser.test.ts`、`command-form-browser.test.ts`、`schedule-presentation.test.ts`、`schedule-next-instant.test.ts`、`schedule-managed-target.test.ts`、`schedule-wording-browser.test.ts`、`schedule-run-session-path-browser.test.ts`（阅读此任务再返回日程）、`legacy-bits-browser.test.ts`（另一时区的日程）、`member-presentation.test.ts`、`member-choice-browser.test.ts`（按成员选指定验收人）、`timed-tasks.test.ts`（定时任务一栏：三类样本与反例、下次时间（含每日首份未到点）与时区、读取失败与协调器不可用的写法、返回日程原位置、列表读取合同）；后端 `packages/adapter-postgres/test/task-timing.test.ts`（项目级列表与分页） |
 
 ## 相关
 
