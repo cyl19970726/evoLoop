@@ -43,16 +43,17 @@ test("allowed roots are compared by path components, and a link that leads out o
 });
 
 type Fake = { hub: Server; local: Server; hubUrl: string; localUrl: string; answers: Array<{ id: string; status: number; body: string }>; localRequests: Array<{ method: string; url: string; headers: IncomingMessage["headers"] }>;
-  push(frame: Record<string, unknown>): void; endStream(): void; connections: number; stop(): Promise<void> };
+  push(frame: Record<string, unknown>): void; endStream(): void; connections: number; connectHeaders: Array<Record<string, string | string[] | undefined>>; stop(): Promise<void> };
 
 async function fake(connectStatus: () => { status: number; code?: string } = () => ({ status: 200 })): Promise<Fake> {
   let stream: ServerResponse | null = null;
-  const state: Fake = { answers: [], localRequests: [], connections: 0, push: frame => { stream?.write(`${JSON.stringify(frame)}\n`); }, endStream: () => { stream?.end(); } } as Fake;
+  const state: Fake = { answers: [], localRequests: [], connections: 0, connectHeaders: [], push: frame => { stream?.write(`${JSON.stringify(frame)}\n`); }, endStream: () => { stream?.end(); } } as Fake;
   state.hub = createServer((request, response) => {
     const chunks: Buffer[] = [];
     request.on("data", chunk => chunks.push(chunk));
     request.on("end", () => {
       if (request.url === "/api/machine/connect") {
+        state.connectHeaders.push(request.headers);
         const answer = connectStatus();
         if (answer.status !== 200) { response.writeHead(answer.status, { "content-type": "application/json" }); response.end(JSON.stringify({ error: { code: answer.code ?? "X" } })); return; }
         state.connections++;
@@ -135,4 +136,52 @@ test("the connector reconnects after the link drops, stops when the Hub says the
     await rm(join(directory, "machine.json"));
     await until(() => connector.state === "idle");
   } finally { await connector.stop(); await hub.stop(); await rm(directory, { recursive: true, force: true }); }
+});
+
+// Task b8460d62: a second live process on the machine's credentials is refused by the Hub; this coordinator says so, does not hammer, and connects once the other is gone.
+test("a connection the Hub refuses as a conflict is reported readably, retried slowly, and succeeds once the other process is gone; each process sends its own instance ID", async () => {
+  let refuse = true;
+  const hub = await fake(() => refuse ? { status: 409, code: "MACHINE_CONNECTION_CONFLICT" } : { status: 200 });
+  const { directory, source } = await credentialsFor(hub.hubUrl);
+  const logs: string[] = [];
+  const connector = new HubConnector({ credentials: source, coordinatorUrl: hub.localUrl, log: message => logs.push(message), backoffMs: { initial: 20, max: 150 }, idleCheckMs: 30 });
+  connector.start();
+  try {
+    await until(() => connector.conflicts >= 2, 4000);
+    assert.equal(connector.state, "conflict");
+    assert.match(logs[0] ?? "", /refused this coordinator's connection \(conflict 1\)/);
+    assert.ok((logs[0] ?? "").includes(machineId) && /EVOLOOP_MACHINE_DIR/.test(logs[0] ?? ""), "names the machine and the remedy");
+    assert.ok(!logs.join("\n").includes("PRIVATE KEY"), "no key in the record");
+    // Not a hot loop: after the first refusal the connector waits at the longest backoff (150 ms here), so ~300 ms holds a handful of attempts at most.
+    const attempts = hub.connectHeaders.length; await new Promise(done => setTimeout(done, 300));
+    assert.ok(hub.connectHeaders.length - attempts <= 3, `slow retry (${hub.connectHeaders.length - attempts} attempts in 300 ms)`);
+    refuse = false;
+    await until(() => connector.state === "online", 4000);
+    const ids = new Set(hub.connectHeaders.map(headers => headers["x-evoloop-machine-instance"]));
+    assert.equal(ids.size, 1, "one process, one instance ID across its reconnects");
+    assert.match(String([...ids][0]), /^[0-9a-f-]{36}$/);
+    assert.notEqual([...ids][0], new HubConnector({ credentials: source, coordinatorUrl: hub.localUrl }).instanceId, "another process has another ID");
+  } finally { await connector.stop(); await hub.stop(); await rm(directory, { recursive: true, force: true }); }
+});
+
+test("a Hub that replaces this connection again and again is named in the log (an older Hub replaces silently)", async () => {
+  const hub = await fake();
+  const { directory, source } = await credentialsFor(hub.hubUrl);
+  const logs: string[] = [];
+  const connector = new HubConnector({ credentials: source, coordinatorUrl: hub.localUrl, log: message => logs.push(message), backoffMs: { initial: 20, max: 40 }, idleCheckMs: 30 });
+  connector.start();
+  try {
+    for (let n = 1; n <= 3; n++) { await until(() => hub.connections === n && connector.state === "online"); hub.push({ t: "bye", reason: "replaced" }); }
+    await until(() => logs.some(line => /3 times within a minute: another process is probably connecting/.test(line)), 4000);
+  } finally { await connector.stop(); await hub.stop(); await rm(directory, { recursive: true, force: true }); }
+});
+
+test("without a named directory the credential source reads nothing, even where a default location holds credentials", async () => {
+  const { machineDirectory, unusedDefaultCredentials } = await import("../src/hub/credentials.ts");
+  assert.equal(machineDirectory({}), null);
+  assert.equal(machineDirectory({ EVOLOOP_MACHINE_DIR: "  " }), null);
+  assert.equal(machineDirectory({ EVOLOOP_MACHINE_DIR: "/somewhere" }), "/somewhere");
+  assert.equal(new MachineCredentialSource(null).current(), null);
+  assert.equal(new MachineCredentialSource(null).path, null);
+  assert.equal(unusedDefaultCredentials({ EVOLOOP_MACHINE_DIR: "/somewhere" }), false);
 });
