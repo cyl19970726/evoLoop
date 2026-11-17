@@ -30,6 +30,7 @@ import { createChildDetailSink, createRefusalSink } from "./runtime/child-detail
 import { HubConnector } from "./hub/connector.js";
 import { MachineCredentialSource } from "./hub/credentials.js";
 import { HubIdentityVerifier } from "./hub/identity.js";
+import { logHubIdentityRejected } from "./hub/log.js";
 import { acquireCoordinatorLease, leaseFencedUnitOfWork } from "./lease.js";
 import { RuntimeWorkflowService } from "@evoloop/core/runtime";
 import { CodexAppServerAdapter } from "@evoloop/adapter-codex-app-server";
@@ -1018,7 +1019,7 @@ const machineCredentials = new MachineCredentialSource();
 const hubIdentity = { verifier: new HubIdentityVerifier({ credentials: () => machineCredentials.current(),
   isLocalProject: async projectId => (await pool.query("SELECT 1 FROM project WHERE project_id=$1", [projectId])).rowCount === 1,
   localActorIds: () => new Set(credentials.map(entry => entry.actorId)) }),
-  onRejected: (reason: string) => console.warn(`Hub identity rejected: ${reason}`) };
+  onRejected: (reason: string) => logHubIdentityRejected(reason) };
 const hubConnector = new HubConnector({ credentials: machineCredentials, coordinatorUrl: `http://127.0.0.1:${port}`, log: message => console.log(message) });
 const app = await buildServer({ service, credentials, canWrite: lease.canWrite, ordinarySubmissions, hubIdentity,
   acceptanceRelay, milestones: { repoRoot: resolve(fileURLToPath(new URL("../../..", import.meta.url))), startedAt: new Date().toISOString() },
