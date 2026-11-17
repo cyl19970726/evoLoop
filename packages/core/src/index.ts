@@ -236,6 +236,15 @@ export class WorkflowService {
     });
   }
 
+  /** The Task and Delivery a precondition mark or its withdrawal is about: the Delivery belongs to the Task and is its current one (the same notion of current as the acceptance relay). */
+  private async preconditionTarget(tx: Transaction, taskId: string, deliveryId: string) {
+    const task = required(await tx.getTask(taskId), "Task");
+    const delivery = required(await tx.getDelivery(deliveryId), "Delivery");
+    if (delivery.taskId !== task.id) throw new DomainError("TARGET_MISMATCH", "The delivery belongs to another Task");
+    const latest = [...await tx.listDeliveries(task.id)].sort((x, y) => x.createdAt.localeCompare(y.createdAt) || x.id.localeCompare(y.id)).at(-1);
+    if (!latest || latest.id !== delivery.id) throw new DomainError("DELIVERY_NOT_CURRENT", "Only the Task's current delivery can be marked");
+    return { task, delivery };
+  }
   private async apply(tx: Transaction, principal: Principal, command: Command, now: string): Promise<Outcome> {
     if (command.type.startsWith("task.attention."))
       return applyTaskAttention(tx, command as import("@evoloop/contracts").TaskAttentionCommand,
@@ -707,18 +716,29 @@ export class WorkflowService {
           { kind: "document", entityId: main.id, version: documentVersion }] };
       }
       case "task.acceptancePrecondition.mark": {
-        const task = required(await tx.getTask(command.taskId), "Task");
-        const delivery = required(await tx.getDelivery(command.deliveryId), "Delivery");
-        if (delivery.taskId !== task.id) throw new DomainError("TARGET_MISMATCH", "The delivery belongs to another Task");
-        // The same notion of current as the acceptance relay: the newest delivery by creation time, then ID.
-        const latest = [...await tx.listDeliveries(task.id)].sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id)).at(-1);
-        if (!latest || latest.id !== delivery.id) throw new DomainError("DELIVERY_NOT_CURRENT", "Only the Task's current delivery can be marked");
+        const { task, delivery } = await this.preconditionTarget(tx, command.taskId, command.deliveryId);
         const proposal = await tx.getTaskProposal(task.id);
         if (!proposal?.acceptancePrecondition || proposal.acceptancePrecondition === "none")
           throw new DomainError("NO_PRECONDITION", "The Task declares no acceptance precondition to mark");
-        if (await tx.getPreconditionMark(delivery.id)) throw new DomainError("ALREADY_MARKED", "This delivery's precondition is already marked");
+        const latest = await tx.latestPreconditionMark(delivery.id);
+        if (latest && !latest.voided)
+          throw new DomainError("ALREADY_MARKED", "This delivery's precondition is already marked. If that mark is wrong, withdraw it with task.acceptancePrecondition.void (its evidence stays readable) and mark again.");
+        // The least the service can check from what it has: a release before the Delivery was recorded cannot contain it, and one that has not happened yet is not a release.
+        const satisfied = Date.parse(command.satisfiedAt), recorded = Date.parse(delivery.createdAt);
+        if (satisfied < recorded)
+          throw new DomainError("PRECONDITION_BEFORE_DELIVERY", `The ${command.satisfiedAt} release is earlier than this Delivery was recorded (${delivery.createdAt}), so it cannot contain it. Mark it with a release, refresh, migration or restart that happened at or after ${delivery.createdAt}; if none has yet, wait for one.`);
+        if (satisfied > Date.parse(now) + 60_000)
+          throw new DomainError("PRECONDITION_IN_FUTURE", `The ${command.satisfiedAt} time is in the future (now ${now}); mark the precondition once it has happened.`);
         await tx.insertPreconditionMark({ projectId: command.projectId, markId: this.deps.ids.next(), taskId: task.id,
-          deliveryId: delivery.id, actorId, evidence: command.evidence, createdAt: now });
+          deliveryId: delivery.id, actorId, evidence: command.evidence, satisfiedAt: new Date(satisfied).toISOString(), generation: (latest?.generation ?? 0) + 1, createdAt: now });
+        return { result: { ...base, entityId: task.id, version: task.version }, effects: [{ kind: "task", entityId: task.id, version: task.version }] };
+      }
+      case "task.acceptancePrecondition.void": {
+        const { task, delivery } = await this.preconditionTarget(tx, command.taskId, command.deliveryId);
+        const latest = await tx.latestPreconditionMark(delivery.id);
+        if (!latest) throw new DomainError("NOT_MARKED", "This delivery has no precondition mark to withdraw");
+        if (latest.voided) throw new DomainError("ALREADY_VOIDED", "The current mark of this delivery is already withdrawn; mark it again with task.acceptancePrecondition.mark");
+        await tx.insertPreconditionVoid({ projectId: command.projectId, markId: latest.markId, taskId: task.id, deliveryId: delivery.id, actorId, reason: command.reason, createdAt: now });
         return { result: { ...base, entityId: task.id, version: task.version }, effects: [{ kind: "task", entityId: task.id, version: task.version }] };
       }
       case "task.reviewBasis": {

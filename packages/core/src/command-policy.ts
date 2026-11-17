@@ -40,6 +40,7 @@ export const commandPermissionPolicy = {
   "stage.review": task(true),
   "stage.review.correct": task(true),
   "task.acceptancePrecondition.mark": task(true),
+  "task.acceptancePrecondition.void": task(true),
   "task.timing.set": task(),
   "task.timing.stop": task(true),
 
