@@ -121,7 +121,8 @@ export function TaskWorkspace({ context, refresh, active, taskId, selectedRevisi
   const tabLink = (id: string) => (tab: TaskSection) => taskId === id && active
     ? taskTabHref(currentPath(), projectId, id, tab, principal.actorId) : linkFor(id, tab);
   const rail = <ContextRailContent><div data-ui="">
-    <a href={href(projectId, "create-task")} className="mb-1 flex items-center gap-1.5 rounded-md px-3 py-2 text-label font-medium text-text-secondary no-underline outline-none hover:bg-field/60 hover:text-foreground focus-visible:shadow-[var(--focus-ring)]"><Plus size={15} aria-hidden="true" />新建任务</a>
+    {/* The list page has 新建任务 as its one primary action in the header; the rail offers it only on a task's own page, which has none (docs/frontend/pages/tasks.md). */}
+    {taskId && <a href={href(projectId, "create-task")} className="mb-1 flex items-center gap-1.5 rounded-md px-3 py-2 text-label font-medium text-text-secondary no-underline outline-none hover:bg-field/60 hover:text-foreground focus-visible:shadow-[var(--focus-ring)]"><Plus size={15} aria-hidden="true" />新建任务</a>}
     <TaskRail list={list} view={view} onView={setView} selectedId={selected || null} linkFor={id => linkFor(id)} /></div></ContextRailContent>;
   if (taskId) return <>
     {rail}

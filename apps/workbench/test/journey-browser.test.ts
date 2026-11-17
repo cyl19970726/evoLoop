@@ -284,12 +284,14 @@ test("目标与阶段 reads goals, stages and their tasks in words, keeps drafts
   });
   assert.deepEqual(errors, []);
 
-  // The task page offers 新建任务 in its inner rail; the create page fits 390 without sideways scrolling.
+  // The task list has one 新建任务, the primary in its header (not a second one in the rail); a task's own page offers it in the inner rail (task 4f6c948f). The create page fits 390 without sideways scrolling.
   await page.goto(`${base}/p/${projectId}/work`);
   await login();
-  await page.locator("[data-shell='object-list']").getByRole("link", { name: "新建任务" }).waitFor();
+  await main.getByRole("link", { name: "新建任务" }).waitFor();
+  assert.equal(await page.getByRole("link", { name: "新建任务" }).count(), 1, "one 新建任务 on the task list");
+  assert.equal(await page.locator("[data-shell='object-list']").getByRole("link", { name: "新建任务" }).count(), 0, "not repeated in the rail");
   await shot("tasks-rail-entry-1440");
-  await page.locator("[data-shell='object-list']").getByRole("link", { name: "新建任务" }).click();
+  await main.getByRole("link", { name: "新建任务" }).click();
   await page.waitForURL(/\/tasks\/new$/);
   await main.getByRole("heading", { level: 1, name: "新建任务" }).waitFor();
   assert.match(await main.getByRole("link", { name: "返回任务列表" }).getAttribute("href") ?? "", new RegExp(`^/p/${projectId}/work`));
