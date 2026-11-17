@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -107,4 +107,30 @@ test("S5. processes: only those whose working directory is the workspace or insi
   const lister = async () => [{ pid: 1, command: "a", cwd: "/w/one" }, { pid: 2, command: "b", cwd: "/w/one/sub" }, { pid: 3, command: "c", cwd: "/w/one-other" }, { pid: 4, command: "d", cwd: "/w" }];
   assert.deepEqual((await processesIn("/w/one", { lister })).map(item => item.pid), [1, 2]);
   assert.equal(await processesIn("/w/one", { lister: async () => { throw new Error("x"); } }), null);
+});
+
+test("S6. a workspace written through a symlink is still seen as in use: the process list is compared by real path (the /tmp -> /private/tmp case)", async () => {
+  const { root, repo, c1, c2 } = origin();
+  const want = await skillHashes(repo);
+  const busy = clone(root, repo, "busy-real", c1);
+  const link = join(root, "busy-link");
+  symlinkSync(busy, link); // the configured path goes through a symlink, the process's working directory is the real one
+  // 1. a process list that reports the real path (what lsof does), and a workspace configured through the link
+  const fake = async () => [{ pid: 7, command: "codex", cwd: join(busy, "apps") }];
+  assert.deepEqual((await processesIn(link, { lister: fake })).map(item => item.pid), [7]);
+  const viaLink = await syncWorkspace({ path: link, sha: c2, want, lister: fake });
+  assert.equal(viaLink.result, "unsynced"); assert.match(viaLink.reason, /正被使用（codex\[7\]/);
+  assert.equal(git(busy, "rev-parse", "HEAD"), c1, "not switched");
+  // 2. the other direction: a process list that reports the link, a workspace configured by its real path
+  assert.deepEqual((await processesIn(busy, { lister: async () => [{ pid: 8, command: "claude", cwd: link }] })).map(item => item.pid), [8]);
+  // 3. a real process and the default lsof lister, a workspace configured through the link
+  const child = spawn("sleep", ["30"], { cwd: busy, stdio: "ignore" });
+  try {
+    await new Promise(done => setTimeout(done, 300));
+    const real = await syncWorkspace({ path: link, sha: c2, want });
+    assert.equal(real.result, "unsynced", "a live process in the workspace is found through the link"); assert.match(real.reason, /正被使用（sleep\[\d+\]/);
+    assert.equal(git(busy, "rev-parse", "HEAD"), c1);
+  } finally { child.kill(); }
+  // a directory that is only similarly named is not inside it
+  assert.deepEqual(await processesIn(busy, { lister: async () => [{ pid: 9, command: "x", cwd: `${busy}-other` }] }), []);
 });

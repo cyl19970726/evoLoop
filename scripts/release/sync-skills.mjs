@@ -11,7 +11,7 @@
 //   afterwards every updated workspace is read back and compared file by file with the release; one that still differs is unsynced.
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { readdir, readFile, stat } from "node:fs/promises";
+import { readdir, readFile, realpath, stat } from "node:fs/promises";
 import { isAbsolute, join, sep } from "node:path";
 
 export const SKILLS_DIR = ".agents/skills";
@@ -45,10 +45,23 @@ export const differences = (want, have) => {
   return [...names].filter(name => want.get(name) !== have?.get(name)).sort();
 };
 
-/** Processes whose working directory is inside `dir` (a Session or a Run that works there): [{ pid, command }]. null when the list cannot be read. */
+/**
+ * Processes whose working directory is inside `dir` (a Session or a Run that works there): [{ pid, command }]. null when the list cannot be read.
+ * Both sides are compared as real paths: `lsof` reports the real directory (on macOS /private/tmp/…), while the configured workspace may be written through a
+ * symlink (/tmp/…), and comparing the two as plain strings would call a workspace in use idle.
+ */
 export async function processesIn(dir, { lister = defaultLister } = {}) {
   let all; try { all = await lister(); } catch { return null; }
-  return all.filter(item => item.cwd === dir || item.cwd.startsWith(dir + sep));
+  const real = async path => { try { return await realpath(path); } catch { return path; } };
+  const roots = new Set([dir, await real(dir)]);
+  const inside = cwd => [...roots].some(root => cwd === root || cwd.startsWith(root + sep));
+  const out = [], seen = new Map();
+  for (const item of all) {
+    if (inside(item.cwd)) { out.push(item); continue; }
+    if (!seen.has(item.cwd)) seen.set(item.cwd, await real(item.cwd));
+    if (inside(seen.get(item.cwd))) out.push(item);
+  }
+  return out;
 }
 async function defaultLister() {
   const out = (await run(["lsof", "-a", "-d", "cwd", "-Fpcn"])).split("\n"), list = [];
