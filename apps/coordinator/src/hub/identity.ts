@@ -104,6 +104,7 @@ export class HubIdentityVerifier {
       projectIds: [payload.projectId],
       permissions: [...payload.permissions],
       identityKind: payload.sub.kind === "human" ? "human" : "agent",
+      origin: "hub",   // the one place a principal gets this: the Hub's signature was verified above
       ...(payload.decisions ? { decisions: true } : {}),
       ...(payload.sessionIds.length ? { sessionIds: [...payload.sessionIds] } : {}),
     };
