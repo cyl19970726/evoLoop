@@ -39,3 +39,16 @@ test("each list, the resource block and the metadata block, null or of the wrong
   assert.equal(oneResource.resources.inputTokens.value, 1, "the resources that are there are kept"); assert.equal(oneResource.resources.cost.value, null);
   assert.match(oneResource.metadata.limitations.join(""), /缺少 resources.cost/);
 });
+
+test("a phase or state this build does not know reads as unrecognised, with the unknown tone, not as undefined", async () => {
+  const { phaseStatus, taskStateStatus } = await import("../src/shared/taskStatus");
+  const { leaderPhaseLabel } = await import("../src/shared/leaderWorkLoad");
+  assert.deepEqual(phaseStatus.running, { tone: "progress", label: "运行中" }, "a known phase is unchanged");
+  for (const value of ["awaiting_something_new", "", "constructor", "toString", "__proto__"]) {
+    assert.deepEqual(phaseStatus[value as never], { tone: "unknown", label: "阶段未识别" }, JSON.stringify(value));
+    assert.deepEqual(taskStateStatus[value as never], { tone: "unknown", label: "状态未识别" }, JSON.stringify(value));
+    assert.equal(leaderPhaseLabel[value as never], "阶段未识别", JSON.stringify(value));
+  }
+  assert.equal(leaderPhaseLabel.rework, "待返工");
+  assert.deepEqual(Object.keys(phaseStatus).includes("running"), true, "the known keys are still enumerable");
+});

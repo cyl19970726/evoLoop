@@ -4,11 +4,14 @@ import type {
 import { cognitionSummary, type WorkTaskStatus } from "./workStatusPresentation.js";
 import { responsibleText } from "./workPresentation.js";
 
-export const leaderPhaseLabel: Record<LeaderWorkPhase, string> = {
+/** A phase this build does not know reads as "阶段未识别", not as nothing (Task c3a8e5d1). */
+const withUnrecognisedLabel = <K extends string>(known: Record<K, string>, fallback: string): Record<K, string> =>
+  new Proxy(known, { get: (target, key) => typeof key === "string" && Object.hasOwn(target, key) ? target[key as K] : typeof key === "symbol" || key === "then" ? undefined : fallback });
+export const leaderPhaseLabel: Record<LeaderWorkPhase, string> = withUnrecognisedLabel({
   unknown: "结果未知", rework: "待返工", blocked: "受阻", awaiting_delivery: "待结果交付",
   awaiting_acceptance: "待验收", awaiting_prerequisite: "等前置", awaiting_release: "等发布", awaiting_close: "等关闭", awaiting_assignment: "待接手", ready: "可开始",
   running: "运行中", unassigned: "未分派", closed: "已关闭", cancelled: "已取消",
-};
+}, "阶段未识别");
 
 export interface LeaderDocumentLoad {
   items: Map<string, LeaderWorkDocument>;

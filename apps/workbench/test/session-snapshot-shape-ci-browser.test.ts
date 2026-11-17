@@ -42,5 +42,21 @@ test("a Session snapshot with a field null or of the wrong type never takes the 
     else if (!text.includes("已核对：1024 下右栏默认收起")) failures.push(`${field}=${label}: the conversation is not on the page`);
     await context.close();
   }
+  // A Task phase this build does not know (a newer service, an older tab) is "未识别", not a crash: `phaseStatus[phase].tone` used to throw on it.
+  for (const phase of ["awaiting_something_new", ""]) {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: "zh-CN" });
+    const page = await context.newPage();
+    await page.route(/\/work-management\/tasks\/[0-9a-f-]+$/, async route => {
+      const response = await route.fetch(); const body = await response.json();
+      await route.fulfill({ response, body: JSON.stringify({ ...body, phase }) });
+    });
+    await page.goto(`${fixture.base}${scene.path}`);
+    await page.getByLabel("访问令牌").fill(token); await page.getByRole("button", { name: "进入", exact: true }).click();
+    await page.waitForTimeout(3500);
+    const text = await page.locator("body").innerText();
+    if (/这一页显示出错/.test(text)) failures.push(`task phase ${JSON.stringify(phase)}: error boundary`);
+    else if (!text.includes("已核对：1024 下右栏默认收起")) failures.push(`task phase ${JSON.stringify(phase)}: the conversation is not on the page`);
+    await context.close();
+  }
   assert.deepEqual(failures, [], "no field takes the page into the boundary, and the conversation stays");
 });
